@@ -1,59 +1,277 @@
 ---
-// SpriteSheetGeneratorTool — packs many images into one sprite sheet PNG
-// (MaxRects packing or a uniform grid) with optional transparent-edge trim,
-// spacing, margin, extrude and power-of-two size, and exports TexturePacker
-// JSON Hash / JSON Array, Sparrow/Starling XML or CSS. No upload. Only the
-// layout and export options are persisted (policy: preference).
+// SpriteSheetGeneratorTool — packs many images into one sprite sheet (MaxRects
+// packing or a uniform grid) with optional transparent-edge trim, identical-image
+// merging, spacing, margin, extrude and power-of-two size. Input: files, folders,
+// pasted files, every frame of animated GIFs, SVG at a chosen scale. Output: PNG or
+// WebP plus TexturePacker JSON Hash / JSON Array, Sparrow/Starling XML or CSS.
+// No upload. Only the layout and export options are persisted (policy: preference).
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
+
+// strings:start
+const STRINGS = {
+  en: {
+    dropHint: 'Drop images or a folder here, or paste them with Ctrl/Cmd+V',
+    dropHintMore: 'Drop, paste or select more images to add them',
+    formatsHint: 'PNG · JPG · WebP · GIF (every frame) · SVG · BMP · AVIF',
+    selectFiles: 'Select images', selectFolder: 'Select folder', addFiles: 'Add images',
+    listAria: 'Images', listCount: '{n} images · {size}',
+    sortLabel: 'Sort', sortName: 'Name', sortAdded: 'Added', clearAll: 'Clear all', removeAria: 'Remove {name}',
+    optionsTitle: 'Options',
+    layoutLabel: 'Layout', layoutPacked: 'Packed', layoutGrid: 'Grid',
+    columnsLabel: 'Columns', columnsAuto: 'Auto', maxWidthLabel: 'Max width',
+    spacingLabel: 'Spacing (px)', marginLabel: 'Margin (px)', extrudeLabel: 'Extrude (px)',
+    trimLabel: 'Trim transparent edges', aliasLabel: 'Pack identical images once', potLabel: 'Power of two size',
+    keepExtLabel: 'Keep file extensions in frame names', gifFramesLabel: 'Add every frame of animated GIFs',
+    formatLabel: 'Data format', fmtHash: 'JSON Hash (Phaser, PixiJS)', fmtArray: 'JSON Array (Phaser)', fmtXml: 'XML (Sparrow / Starling)', fmtCss: 'CSS',
+    imageFormatLabel: 'Image format', imgPng: 'PNG', imgWebp: 'WebP (lossless)', imgWebpNo: 'WebP (this browser cannot encode it)',
+    svgScaleLabel: 'SVG scale', cssRatioLabel: 'CSS pixel ratio',
+    sheetNameLabel: 'Sheet name',
+    meta: '{w}×{h} px · {n} sprites · fill {fill}%',
+    metaAlias: '{w}×{h} px · {n} sprites, {u} unique · fill {fill}%',
+    showBounds: 'Show bounds', previewAria: 'Sprite sheet preview',
+    downloadImage: 'Download {ext}', downloadData: 'Download {ext}', copy: 'Copy', copied: 'Copied', dataAria: 'Sprite sheet data',
+    statusLoading: 'Loading image {i} / {n}…',
+    statusGifLoading: 'Splitting {name}: frame {i} / {n}…',
+    statusSvgLoading: 'Redrawing SVG {i} / {n}…',
+    statusAdded: 'Images added: {n}',
+    statusSkippedType: 'Skipped, not an image or could not be decoded: {files}',
+    statusSkippedSize: 'Skipped, larger than 8,192 px per side: {files}',
+    statusSkippedSvg: 'Skipped, SVG without a usable size (width and height, or a viewBox): {files}',
+    statusSkippedCount: 'Skipped {n} images: the limit is 1,000 images.',
+    statusIgnored: 'Files in the folder that are not images were ignored: {n}.',
+    moreFiles: '{files} and {n} more',
+    statusGifFrames: 'Animated GIFs split into frames: {files}',
+    statusGifFirst: 'GIF files added their first frame only, because "Add every frame of animated GIFs" is off.',
+    statusGifBudget: 'Too large to split here, so only the first frame was added: {files}. The {link} explains the limits.',
+    gifLink: 'GIF Splitter',
+    statusTooBig: 'The sprite sheet would be {w}×{h} px, above the canvas limit of mobile browsers (16,777,216 px, max 16,384 px per side). Reduce spacing, change Max width or the layout, or remove some images.',
+    statusWidened: '{name} is wider than Max width, so the sheet is {w} px wide.',
+    statusAlias: '{n} images are identical to another image and share its place on the sheet.',
+    noteXmlTrim: 'Trimmed frames in XML: Phaser 3.90 and earlier read their original size wrongly (Phaser issue #7245, fixed in Phaser 4.0), which moves sprites that use a non-default origin. For Phaser 3, use JSON Hash or turn off Trim.',
+    noteCssTrim: 'CSS frames use the trimmed size, so trimmed icons lose their transparent padding. Turn off Trim to keep every icon at its original size.',
+    noteCssFraction: 'At pixel ratio {r}, some sizes or positions are not whole CSS pixels, for example {example}. Use images whose sizes, and a spacing, that divide by {r}.',
+    noteGpu: 'The sheet is {w}×{h} px. Many Android phones (about a quarter of those in Web3D Survey) only accept WebGL textures up to 4,096 px per side. Lower Max width or split the images into two sheets if you target them.',
+    noteWebpTooBig: 'A WebP image can be at most 16,383 px per side, and this sheet is {w}×{h} px. Use PNG or make the sheet smaller.',
+    statusExportFailed: 'Export failed — the browser could not encode the {ext} image.',
+    statusCopyFailed: 'Copy was blocked — select the text and copy it manually.',
+  },
+  zh: {
+    dropHint: '把图片或文件夹拖到这里，或用 Ctrl/Cmd+V 粘贴',
+    dropHintMore: '继续拖入、粘贴或选择图片即可追加',
+    formatsHint: 'PNG · JPG · WebP · GIF（每一帧） · SVG · BMP · AVIF',
+    selectFiles: '选择图片', selectFolder: '选择文件夹', addFiles: '追加图片',
+    listAria: '图片列表', listCount: '{n} 张图片 · {size}',
+    sortLabel: '排序', sortName: '文件名', sortAdded: '添加顺序', clearAll: '全部清空', removeAria: '移除 {name}',
+    optionsTitle: '选项',
+    layoutLabel: '排布', layoutPacked: '紧凑', layoutGrid: '网格',
+    columnsLabel: '列数', columnsAuto: '自动', maxWidthLabel: '最大宽度',
+    spacingLabel: '间距（px）', marginLabel: '外边距（px）', extrudeLabel: '边缘扩展（px）',
+    trimLabel: '裁剪透明边', aliasLabel: '相同图片只放一次', potLabel: '尺寸取 2 的幂',
+    keepExtLabel: '帧名保留扩展名', gifFramesLabel: '动图 GIF 拆成每一帧',
+    formatLabel: '数据格式', fmtHash: 'JSON Hash（Phaser、PixiJS）', fmtArray: 'JSON Array（Phaser）', fmtXml: 'XML（Sparrow / Starling）', fmtCss: 'CSS',
+    imageFormatLabel: '图片格式', imgPng: 'PNG', imgWebp: 'WebP（无损）', imgWebpNo: 'WebP（此浏览器无法编码）',
+    svgScaleLabel: 'SVG 倍率', cssRatioLabel: 'CSS 像素比',
+    sheetNameLabel: '图集文件名',
+    meta: '{w}×{h} px · {n} 个精灵 · 填充率 {fill}%',
+    metaAlias: '{w}×{h} px · {n} 个精灵，其中 {u} 个不重复 · 填充率 {fill}%',
+    showBounds: '显示边框', previewAria: '雪碧图预览',
+    downloadImage: '下载 {ext}', downloadData: '下载 {ext}', copy: '复制', copied: '已复制', dataAria: '雪碧图数据',
+    statusLoading: '正在读取第 {i} / {n} 张图片…',
+    statusGifLoading: '正在拆分 {name}：第 {i} / {n} 帧…',
+    statusSvgLoading: '正在重绘第 {i} / {n} 个 SVG…',
+    statusAdded: '已添加 {n} 张图片',
+    statusSkippedType: '已跳过（不是图片或无法解码）：{files}',
+    statusSkippedSize: '已跳过（单边超过 8192 px）：{files}',
+    statusSkippedSvg: '已跳过（SVG 没有可用尺寸：既没有 width 和 height，也没有 viewBox）：{files}',
+    statusSkippedCount: '已跳过 {n} 张图片：上限为 1000 张。',
+    statusIgnored: '文件夹里有 {n} 个文件不是图片，已忽略。',
+    moreFiles: '{files} 等，另有 {n} 个',
+    statusGifFrames: '已把动图 GIF 拆成帧：{files}',
+    statusGifFirst: '「动图 GIF 拆成每一帧」已关闭，GIF 只添加了第一帧。',
+    statusGifBudget: '这些 GIF 太大，无法在这里拆帧，只添加了第一帧：{files}。限制说明见{link}。',
+    gifLink: 'GIF 拆帧工具',
+    statusTooBig: '雪碧图将达到 {w}×{h} px，超出移动端浏览器的 canvas 上限（16,777,216 像素、单边 16,384 px）。请减小间距、调整最大宽度或排布方式，或减少图片。',
+    statusWidened: '{name} 比最大宽度还宽，图集宽度已放大到 {w} px。',
+    statusAlias: '有 {n} 张图片与另一张完全相同，与它共用图集上的同一块位置。',
+    noteXmlTrim: 'XML 里有裁剪过的帧：Phaser 3.90 及更早版本读取这类帧的原始尺寸有误（Phaser issue #7245，Phaser 4.0 已修复），设置了非默认原点的精灵会错位。用 Phaser 3 时请选 JSON Hash，或关闭裁剪。',
+    noteCssTrim: 'CSS 按裁剪后的尺寸输出，裁剪过的图标会失去四周的透明留白。要保持图标原尺寸，请关闭「裁剪透明边」。',
+    noteCssFraction: '像素比为 {r} 时，有尺寸或位置不是整数 CSS 像素，例如 {example}。请让图片尺寸和间距都能被 {r} 整除。',
+    noteGpu: '图集为 {w}×{h} px。不少 Android 手机（Web3D Survey 中约四分之一）只支持单边 4096 px 以内的 WebGL 纹理。面向这些设备时，请调小最大宽度，或把图片分成两张图集。',
+    noteWebpTooBig: 'WebP 单边最大 16,383 px，这张图集是 {w}×{h} px。请改用 PNG 或缩小图集。',
+    statusExportFailed: '导出失败：浏览器无法编码 {ext} 图片。',
+    statusCopyFailed: '复制被拦截，请手动选中文本复制。',
+  },
+  ja: {
+    dropHint: '画像やフォルダーをここにドロップ、または Ctrl/Cmd+V で貼り付け',
+    dropHintMore: 'ドロップ・貼り付け・選択で画像を追加できます',
+    formatsHint: 'PNG · JPG · WebP · GIF（全フレーム） · SVG · BMP · AVIF',
+    selectFiles: '画像を選択', selectFolder: 'フォルダーを選択', addFiles: '画像を追加',
+    listAria: '画像一覧', listCount: '画像 {n} 枚 · {size}',
+    sortLabel: '並び順', sortName: 'ファイル名', sortAdded: '追加順', clearAll: 'すべて削除', removeAria: '{name} を削除',
+    optionsTitle: 'オプション',
+    layoutLabel: '配置', layoutPacked: '詰め込み', layoutGrid: 'グリッド',
+    columnsLabel: '列数', columnsAuto: '自動', maxWidthLabel: '最大幅',
+    spacingLabel: '間隔（px）', marginLabel: '外側余白（px）', extrudeLabel: 'エッジ拡張（px）',
+    trimLabel: '透明な余白をトリム', aliasLabel: '同じ画像は 1 回だけ配置', potLabel: 'サイズを 2 のべき乗に',
+    keepExtLabel: 'フレーム名に拡張子を残す', gifFramesLabel: 'アニメーション GIF を全フレームに分解',
+    formatLabel: 'データ形式', fmtHash: 'JSON Hash（Phaser・PixiJS）', fmtArray: 'JSON Array（Phaser）', fmtXml: 'XML（Sparrow / Starling）', fmtCss: 'CSS',
+    imageFormatLabel: '画像形式', imgPng: 'PNG', imgWebp: 'WebP（ロスレス）', imgWebpNo: 'WebP（このブラウザーでは書き出せません）',
+    svgScaleLabel: 'SVG の倍率', cssRatioLabel: 'CSS のピクセル比',
+    sheetNameLabel: 'シート名',
+    meta: '{w}×{h} px · スプライト {n} 個 · 充填率 {fill}%',
+    metaAlias: '{w}×{h} px · スプライト {n} 個（重複なし {u} 個） · 充填率 {fill}%',
+    showBounds: '枠を表示', previewAria: 'スプライトシートのプレビュー',
+    downloadImage: '{ext} をダウンロード', downloadData: '{ext} をダウンロード', copy: 'コピー', copied: 'コピーしました', dataAria: 'スプライトシートのデータ',
+    statusLoading: '画像 {i} / {n} を読み込み中…',
+    statusGifLoading: '{name} を分解中：フレーム {i} / {n}…',
+    statusSvgLoading: 'SVG {i} / {n} を描き直し中…',
+    statusAdded: '{n} 枚の画像を追加しました',
+    statusSkippedType: 'スキップ（画像ではない、またはデコードできない）：{files}',
+    statusSkippedSize: 'スキップ（一辺が 8,192 px を超える）：{files}',
+    statusSkippedSvg: 'スキップ（サイズを決められない SVG。width と height、または viewBox がない）：{files}',
+    statusSkippedCount: '{n} 枚をスキップしました。上限は 1,000 枚です。',
+    statusIgnored: 'フォルダー内の画像以外のファイル {n} 件を無視しました。',
+    moreFiles: '{files} ほか {n} 件',
+    statusGifFrames: 'アニメーション GIF をフレームに分解しました：{files}',
+    statusGifFirst: '「アニメーション GIF を全フレームに分解」がオフのため、GIF は最初のフレームだけを追加しました。',
+    statusGifBudget: '大きすぎてここでは分解できないため、最初のフレームだけを追加しました：{files}。上限は{link}で確認できます。',
+    gifLink: 'GIF 分解ツール',
+    statusTooBig: 'スプライトシートが {w}×{h} px になり、モバイルブラウザの canvas 上限（16,777,216 ピクセル、一辺 16,384 px）を超えます。間隔を減らす、最大幅や配置を変える、または画像を減らしてください。',
+    statusWidened: '{name} が最大幅より広いため、シート幅を {w} px にしました。',
+    statusAlias: '{n} 枚の画像はほかの画像と同一のため、シート上の同じ位置を共有しています。',
+    noteXmlTrim: 'XML にトリムしたフレームがあります。Phaser 3.90 以前はこの元サイズを誤って読みます（Phaser issue #7245、Phaser 4.0 で修正）。既定以外の origin を使うスプライトがずれるため、Phaser 3 では JSON Hash を使うか、トリムをオフにしてください。',
+    noteCssTrim: 'CSS はトリム後のサイズで書き出すため、トリムしたアイコンは周りの透明な余白を失います。元のサイズを保つにはトリムをオフにしてください。',
+    noteCssFraction: 'ピクセル比 {r} では、サイズや位置が整数の CSS ピクセルにならない箇所があります（例：{example}）。画像サイズと間隔を {r} で割り切れる値にしてください。',
+    noteGpu: 'シートは {w}×{h} px です。Android 端末の一部（Web3D Survey では約 4 分の 1）は WebGL テクスチャが一辺 4,096 px までです。対象にする場合は最大幅を下げるか、2 枚のシートに分けてください。',
+    noteWebpTooBig: 'WebP は一辺 16,383 px までですが、このシートは {w}×{h} px です。PNG にするか、シートを小さくしてください。',
+    statusExportFailed: '書き出しに失敗しました。ブラウザが {ext} 画像をエンコードできません。',
+    statusCopyFailed: 'コピーがブロックされました。テキストを選択して手動でコピーしてください。',
+  },
+  ko: {
+    dropHint: '이미지나 폴더를 여기로 드롭하거나 Ctrl/Cmd+V로 붙여넣기',
+    dropHintMore: '드롭·붙여넣기·선택으로 이미지를 더 추가할 수 있습니다',
+    formatsHint: 'PNG · JPG · WebP · GIF(모든 프레임) · SVG · BMP · AVIF',
+    selectFiles: '이미지 선택', selectFolder: '폴더 선택', addFiles: '이미지 추가',
+    listAria: '이미지 목록', listCount: '이미지 {n}개 · {size}',
+    sortLabel: '정렬', sortName: '파일명', sortAdded: '추가 순서', clearAll: '모두 지우기', removeAria: '{name} 제거',
+    optionsTitle: '옵션',
+    layoutLabel: '배치', layoutPacked: '빈틈없이', layoutGrid: '그리드',
+    columnsLabel: '열 수', columnsAuto: '자동', maxWidthLabel: '최대 너비',
+    spacingLabel: '간격 (px)', marginLabel: '바깥 여백 (px)', extrudeLabel: '가장자리 확장 (px)',
+    trimLabel: '투명 여백 트림', aliasLabel: '같은 이미지는 한 번만 배치', potLabel: '크기를 2의 거듭제곱으로',
+    keepExtLabel: '프레임 이름에 확장자 유지', gifFramesLabel: '움직이는 GIF를 모든 프레임으로 분할',
+    formatLabel: '데이터 형식', fmtHash: 'JSON Hash (Phaser, PixiJS)', fmtArray: 'JSON Array (Phaser)', fmtXml: 'XML (Sparrow / Starling)', fmtCss: 'CSS',
+    imageFormatLabel: '이미지 형식', imgPng: 'PNG', imgWebp: 'WebP (무손실)', imgWebpNo: 'WebP (이 브라우저는 인코딩 불가)',
+    svgScaleLabel: 'SVG 배율', cssRatioLabel: 'CSS 픽셀 비율',
+    sheetNameLabel: '시트 이름',
+    meta: '{w}×{h} px · 스프라이트 {n}개 · 채움률 {fill}%',
+    metaAlias: '{w}×{h} px · 스프라이트 {n}개(중복 제외 {u}개) · 채움률 {fill}%',
+    showBounds: '경계 표시', previewAria: '스프라이트 시트 미리보기',
+    downloadImage: '{ext} 다운로드', downloadData: '{ext} 다운로드', copy: '복사', copied: '복사됨', dataAria: '스프라이트 시트 데이터',
+    statusLoading: '이미지 {i} / {n} 읽는 중…',
+    statusGifLoading: '{name} 분할 중: 프레임 {i} / {n}…',
+    statusSvgLoading: 'SVG {i} / {n} 다시 그리는 중…',
+    statusAdded: '이미지 {n}개 추가됨',
+    statusSkippedType: '건너뜀(이미지가 아니거나 디코딩 실패): {files}',
+    statusSkippedSize: '건너뜀(한 변이 8,192px 초과): {files}',
+    statusSkippedSvg: '건너뜀(크기를 정할 수 없는 SVG: width와 height, viewBox가 모두 없음): {files}',
+    statusSkippedCount: '이미지 {n}개를 건너뛰었습니다. 한도는 1,000개입니다.',
+    statusIgnored: '폴더 안의 이미지가 아닌 파일 {n}개를 무시했습니다.',
+    moreFiles: '{files} 외 {n}개',
+    statusGifFrames: '움직이는 GIF를 프레임으로 분할했습니다: {files}',
+    statusGifFirst: '"움직이는 GIF를 모든 프레임으로 분할"이 꺼져 있어 GIF는 첫 프레임만 추가했습니다.',
+    statusGifBudget: '너무 커서 여기서 분할할 수 없어 첫 프레임만 추가했습니다: {files}. 한도는 {link}에서 확인하세요.',
+    gifLink: 'GIF 프레임 추출기',
+    statusTooBig: '스프라이트 시트가 {w}×{h} px가 되어 모바일 브라우저의 canvas 한도(16,777,216픽셀, 한 변 16,384px)를 넘습니다. 간격을 줄이거나 최대 너비·배치를 바꾸거나 이미지를 줄이세요.',
+    statusWidened: '{name}이(가) 최대 너비보다 넓어 시트 너비를 {w} px로 늘렸습니다.',
+    statusAlias: '이미지 {n}개가 다른 이미지와 똑같아서 시트의 같은 자리를 함께 씁니다.',
+    noteXmlTrim: 'XML에 트림한 프레임이 있습니다. Phaser 3.90 이하는 이 프레임의 원래 크기를 잘못 읽습니다(Phaser issue #7245, Phaser 4.0에서 수정). 기본값이 아닌 origin을 쓰는 스프라이트가 어긋나므로 Phaser 3에서는 JSON Hash를 쓰거나 트림을 끄세요.',
+    noteCssTrim: 'CSS는 트림한 크기로 내보내므로 트림한 아이콘은 주변의 투명 여백을 잃습니다. 원래 크기를 유지하려면 트림을 끄세요.',
+    noteCssFraction: '픽셀 비율 {r}에서는 크기나 위치가 정수 CSS 픽셀이 아닌 곳이 있습니다(예: {example}). 이미지 크기와 간격을 {r}로 나누어떨어지게 하세요.',
+    noteGpu: '시트가 {w}×{h} px입니다. 일부 Android 기기(Web3D Survey 기준 약 4분의 1)는 WebGL 텍스처가 한 변 4,096px까지입니다. 이런 기기를 지원하려면 최대 너비를 낮추거나 시트를 둘로 나누세요.',
+    noteWebpTooBig: 'WebP는 한 변이 최대 16,383px인데 이 시트는 {w}×{h} px입니다. PNG를 쓰거나 시트를 줄이세요.',
+    statusExportFailed: '내보내기 실패 — 브라우저가 {ext} 이미지를 인코딩하지 못했습니다.',
+    statusCopyFailed: '복사가 차단되었습니다 — 텍스트를 선택해 직접 복사하세요.',
+  },
+};
+// strings:end
+const T = STRINGS[lang] ?? STRINGS.en;
+const langPrefix = lang === 'en' ? '' : '/' + lang;
+const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/bmp,image/avif,.png,.jpg,.jpeg,.webp,.gif,.svg,.bmp,.avif';
 ---
 
 <div>
-  <div class="ssg-wrap" id="ssg-wrap" data-lang={lang}>
-    <div id="ssg-drop" class="ssg-drop" role="button" tabindex="0">
-      <div class="ssg-drop-inner">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-        </svg>
-        <p data-i18n="dropHint">Drop images here, or <strong>click to select</strong></p>
-        <p class="ssg-hint" data-i18n="pasteHint">You can also paste copied image files with Ctrl/Cmd+V</p>
-        <p class="ssg-hint" data-i18n="formatsHint">PNG · JPG · WebP · GIF (first frame) · SVG · BMP · AVIF</p>
+  <div class="ssg-wrap" id="ssg-wrap">
+    <div id="ssg-drop" class="ssg-drop">
+      <svg class="ssg-drop-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+      </svg>
+      <div class="ssg-drop-text">
+        <p id="ssg-drop-hint" class="ssg-drop-hint">{T.dropHint}</p>
+        <p class="ssg-hint">{T.formatsHint}</p>
       </div>
-      <input type="file" id="ssg-file" multiple accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/bmp,image/avif,.png,.jpg,.jpeg,.webp,.gif,.svg,.bmp,.avif" class="ssg-file-input" tabindex="-1" aria-label="Select images" data-i18n-aria="dropAria" />
+      <div class="ssg-drop-actions">
+        <button type="button" id="ssg-pick" class="btn-primary ssg-pick">{T.selectFiles}</button>
+        <button type="button" id="ssg-pick-dir" class="btn-secondary ssg-pick-dir">{T.selectFolder}</button>
+      </div>
+      <input type="file" id="ssg-file" multiple accept={ACCEPT} hidden />
+      <input type="file" id="ssg-dir" webkitdirectory multiple hidden />
     </div>
+
+    <div id="ssg-status" class="tool-status" role="status" aria-live="polite"></div>
+
+    <section id="ssg-output" class="ssg-panel" hidden>
+      <div class="ssg-actions">
+        <button type="button" id="ssg-dl-img" class="btn-primary">{T.downloadImage.replace('{ext}', 'PNG')}</button>
+        <button type="button" id="ssg-dl-data" class="btn-secondary">{T.downloadData.replace('{ext}', 'JSON')}</button>
+        <button type="button" id="ssg-copy" class="btn-copy ssg-copy">{T.copy}</button>
+      </div>
+      <div class="ssg-meta-row">
+        <p id="ssg-meta" class="ssg-meta"></p>
+        <label class="ssg-check"><input type="checkbox" id="ssg-bounds" /><span>{T.showBounds}</span></label>
+      </div>
+      <div class="ssg-preview">
+        <div class="ssg-stage">
+          <canvas id="ssg-canvas" class="ssg-canvas" role="img" aria-label={T.previewAria}></canvas>
+          <svg id="ssg-bounds-layer" class="ssg-bounds" aria-hidden="true" preserveAspectRatio="none" hidden></svg>
+        </div>
+      </div>
+      <textarea id="ssg-data" class="tool-textarea ssg-data" rows="8" readonly spellcheck="false" aria-label={T.dataAria}></textarea>
+    </section>
 
     <section id="ssg-list-panel" class="ssg-panel" hidden>
       <div class="ssg-list-head">
         <span id="ssg-count" class="ssg-count"></span>
         <div class="ssg-list-tools">
           <label class="ssg-inline-field">
-            <span class="tool-label" data-i18n="sortLabel">Sort</span>
+            <span class="tool-label">{T.sortLabel}</span>
             <select id="ssg-order" class="tool-input ssg-select">
-              <option value="name" data-i18n="sortName">Name</option>
-              <option value="added" data-i18n="sortAdded">Added</option>
+              <option value="name">{T.sortName}</option>
+              <option value="added">{T.sortAdded}</option>
             </select>
           </label>
-          <button type="button" id="ssg-clear" class="btn-ghost" data-i18n="clearAll">Clear all</button>
+          <button type="button" id="ssg-clear" class="btn-ghost">{T.clearAll}</button>
         </div>
       </div>
-      <div id="ssg-list" class="ssg-list" role="list" aria-label="Images" data-i18n-aria="listAria"></div>
+      <div id="ssg-list" class="ssg-list" role="list" aria-label={T.listAria}></div>
     </section>
 
-    <section class="ssg-panel">
+    <section class="ssg-panel" aria-label={T.optionsTitle}>
       <div class="ssg-options">
         <fieldset class="ssg-field ssg-fieldset">
-          <legend class="tool-label" data-i18n="layoutLabel">Layout</legend>
+          <legend class="tool-label">{T.layoutLabel}</legend>
           <div class="ssg-seg">
-            <label><input type="radio" name="ssg-layout" value="packed" checked /><span data-i18n="layoutPacked">Packed</span></label>
-            <label><input type="radio" name="ssg-layout" value="grid" /><span data-i18n="layoutGrid">Grid</span></label>
+            <label><input type="radio" name="ssg-layout" value="packed" checked /><span>{T.layoutPacked}</span></label>
+            <label><input type="radio" name="ssg-layout" value="grid" /><span>{T.layoutGrid}</span></label>
           </div>
         </fieldset>
         <label class="ssg-field" id="ssg-columns-field" hidden>
-          <span class="tool-label" data-i18n="columnsLabel">Columns</span>
-          <input type="number" id="ssg-columns" class="tool-input" min="1" max="1000" step="1" inputmode="numeric" placeholder="Auto" data-i18n-placeholder="columnsAuto" />
+          <span class="tool-label">{T.columnsLabel}</span>
+          <input type="number" id="ssg-columns" class="tool-input" min="1" max="1000" step="1" inputmode="numeric" placeholder={T.columnsAuto} />
         </label>
         <label class="ssg-field" id="ssg-maxwidth-field">
-          <span class="tool-label" data-i18n="maxWidthLabel">Max width</span>
+          <span class="tool-label">{T.maxWidthLabel}</span>
           <select id="ssg-maxwidth" class="tool-input ssg-select">
             <option value="512">512 px</option>
             <option value="1024">1024 px</option>
@@ -63,207 +281,80 @@ const { lang = 'en' } = Astro.props;
           </select>
         </label>
         <label class="ssg-field">
-          <span class="tool-label" data-i18n="spacingLabel">Spacing (px)</span>
+          <span class="tool-label">{T.spacingLabel}</span>
           <input type="number" id="ssg-spacing" class="tool-input" min="0" max="64" step="1" inputmode="numeric" />
         </label>
         <label class="ssg-field">
-          <span class="tool-label" data-i18n="marginLabel">Margin (px)</span>
+          <span class="tool-label">{T.marginLabel}</span>
           <input type="number" id="ssg-margin" class="tool-input" min="0" max="64" step="1" inputmode="numeric" />
         </label>
         <label class="ssg-field">
-          <span class="tool-label" data-i18n="extrudeLabel">Extrude (px)</span>
+          <span class="tool-label">{T.extrudeLabel}</span>
           <input type="number" id="ssg-extrude" class="tool-input" min="0" max="8" step="1" inputmode="numeric" />
         </label>
         <label class="ssg-field">
-          <span class="tool-label" data-i18n="formatLabel">Data format</span>
+          <span class="tool-label">{T.formatLabel}</span>
           <select id="ssg-format" class="tool-input ssg-select">
-            <option value="hash" data-i18n="fmtHash">JSON Hash</option>
-            <option value="array" data-i18n="fmtArray">JSON Array</option>
-            <option value="xml" data-i18n="fmtXml">XML (Sparrow / Starling)</option>
-            <option value="css" data-i18n="fmtCss">CSS</option>
+            <option value="hash">{T.fmtHash}</option>
+            <option value="array">{T.fmtArray}</option>
+            <option value="xml">{T.fmtXml}</option>
+            <option value="css">{T.fmtCss}</option>
+          </select>
+        </label>
+        <label class="ssg-field" id="ssg-ratio-field" hidden>
+          <span class="tool-label">{T.cssRatioLabel}</span>
+          <select id="ssg-ratio" class="tool-input ssg-select">
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="3">3×</option>
           </select>
         </label>
         <label class="ssg-field">
-          <span class="tool-label" data-i18n="sheetNameLabel">Sheet name</span>
+          <span class="tool-label">{T.imageFormatLabel}</span>
+          <select id="ssg-imgfmt" class="tool-input ssg-select">
+            <option value="png">{T.imgPng}</option>
+            <option value="webp" id="ssg-webp-option">{T.imgWebp}</option>
+          </select>
+        </label>
+        <label class="ssg-field">
+          <span class="tool-label">{T.svgScaleLabel}</span>
+          <select id="ssg-svgscale" class="tool-input ssg-select">
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="3">3×</option>
+            <option value="4">4×</option>
+          </select>
+        </label>
+        <label class="ssg-field">
+          <span class="tool-label">{T.sheetNameLabel}</span>
           <input type="text" id="ssg-name" class="tool-input" maxlength="100" spellcheck="false" autocomplete="off" />
         </label>
       </div>
       <div class="ssg-checks">
-        <label class="ssg-check" id="ssg-trim-field"><input type="checkbox" id="ssg-trim" /><span data-i18n="trimLabel">Trim transparent edges</span></label>
-        <label class="ssg-check"><input type="checkbox" id="ssg-pot" /><span data-i18n="potLabel">Power of two size</span></label>
+        <label class="ssg-check" id="ssg-trim-field"><input type="checkbox" id="ssg-trim" /><span>{T.trimLabel}</span></label>
+        <label class="ssg-check" id="ssg-alias-field"><input type="checkbox" id="ssg-alias" /><span>{T.aliasLabel}</span></label>
+        <label class="ssg-check"><input type="checkbox" id="ssg-pot" /><span>{T.potLabel}</span></label>
+        <label class="ssg-check"><input type="checkbox" id="ssg-keepext" /><span>{T.keepExtLabel}</span></label>
+        <label class="ssg-check"><input type="checkbox" id="ssg-gifframes" /><span>{T.gifFramesLabel}</span></label>
       </div>
-    </section>
-
-    <div id="ssg-status" class="tool-status" aria-live="polite"></div>
-
-    <section id="ssg-output" class="ssg-panel" hidden>
-      <div class="ssg-meta-row">
-        <p id="ssg-meta" class="ssg-meta"></p>
-        <label class="ssg-check"><input type="checkbox" id="ssg-bounds" /><span data-i18n="showBounds">Show bounds</span></label>
-      </div>
-      <div class="ssg-preview">
-        <div class="ssg-stage">
-          <canvas id="ssg-canvas" class="ssg-canvas" role="img" aria-label="Sprite sheet preview" data-i18n-aria="previewAria"></canvas>
-          <svg id="ssg-bounds-layer" class="ssg-bounds" aria-hidden="true" preserveAspectRatio="none" hidden></svg>
-        </div>
-      </div>
-      <div class="ssg-actions">
-        <button type="button" id="ssg-dl-png" class="btn-primary" data-i18n="downloadPng">Download PNG</button>
-        <button type="button" id="ssg-dl-data" class="btn-secondary">Download JSON</button>
-        <button type="button" id="ssg-copy" class="btn-copy ssg-copy" data-i18n="copy">Copy</button>
-      </div>
-      <textarea id="ssg-data" class="tool-textarea ssg-data" rows="10" readonly spellcheck="false" aria-label="Sprite sheet data" data-i18n-aria="dataAria"></textarea>
     </section>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: T, langPrefix }}>
     (function () {
-      var STRINGS = {
-        en: {
-          dropAria: 'Select images',
-          dropHint: 'Drop images here, or <strong>click to select</strong>',
-          pasteHint: 'You can also paste copied image files with Ctrl/Cmd+V',
-          formatsHint: 'PNG · JPG · WebP · GIF (first frame) · SVG · BMP · AVIF',
-          listAria: 'Images', listCount: '{n} images · {size}',
-          sortLabel: 'Sort', sortName: 'Name', sortAdded: 'Added', clearAll: 'Clear all', removeAria: 'Remove {name}',
-          layoutLabel: 'Layout', layoutPacked: 'Packed', layoutGrid: 'Grid',
-          columnsLabel: 'Columns', columnsAuto: 'Auto', maxWidthLabel: 'Max width',
-          spacingLabel: 'Spacing (px)', marginLabel: 'Margin (px)', extrudeLabel: 'Extrude (px)',
-          trimLabel: 'Trim transparent edges', potLabel: 'Power of two size',
-          formatLabel: 'Data format', fmtHash: 'JSON Hash', fmtArray: 'JSON Array', fmtXml: 'XML (Sparrow / Starling)', fmtCss: 'CSS',
-          sheetNameLabel: 'Sheet name',
-          meta: '{w}×{h} px · {n} sprites · fill {fill}%', showBounds: 'Show bounds', previewAria: 'Sprite sheet preview',
-          downloadPng: 'Download PNG', downloadData: 'Download {ext}', copy: 'Copy', copied: 'Copied', dataAria: 'Sprite sheet data',
-          statusLoading: 'Loading image {i} / {n}…',
-          statusAdded: 'Images added: {n}',
-          statusSkippedType: 'Skipped, not an image or could not be decoded: {files}',
-          statusSkippedSize: 'Skipped, larger than 8,192 px per side: {files}',
-          statusSkippedSvg: 'Skipped, SVG without width, height or viewBox: {files}',
-          statusSkippedCount: 'Skipped {n} files: the limit is 1,000 images.',
-          moreFiles: '{files} and {n} more',
-          statusGif: 'GIF files add their first frame only. To use every frame, split the GIF with the {link} first.',
-          gifLink: 'GIF Splitter',
-          statusTooBig: 'The sprite sheet would be {w}×{h} px, above the canvas limit of mobile browsers (16,777,216 px, max 16,384 px per side). Reduce spacing, change Max width or the layout, or remove some images.',
-          statusWidened: '{name} is wider than Max width, so the sheet is {w} px wide.',
-          statusExportFailed: 'Export failed — the browser could not encode the PNG',
-          statusCopyFailed: 'Copy was blocked — select the text and copy it manually',
-        },
-        zh: {
-          dropAria: '选择图片',
-          dropHint: '把图片拖到这里，或<strong>点击选择</strong>',
-          pasteHint: '也可以用 Ctrl/Cmd+V 粘贴已复制的图片文件',
-          formatsHint: 'PNG · JPG · WebP · GIF（第一帧） · SVG · BMP · AVIF',
-          listAria: '图片列表', listCount: '{n} 张图片 · {size}',
-          sortLabel: '排序', sortName: '文件名', sortAdded: '添加顺序', clearAll: '全部清空', removeAria: '移除 {name}',
-          layoutLabel: '排布', layoutPacked: '紧凑', layoutGrid: '网格',
-          columnsLabel: '列数', columnsAuto: '自动', maxWidthLabel: '最大宽度',
-          spacingLabel: '间距（px）', marginLabel: '外边距（px）', extrudeLabel: '边缘扩展（px）',
-          trimLabel: '裁剪透明边', potLabel: '尺寸取 2 的幂',
-          formatLabel: '数据格式', fmtHash: 'JSON Hash', fmtArray: 'JSON Array', fmtXml: 'XML（Sparrow / Starling）', fmtCss: 'CSS',
-          sheetNameLabel: '图集文件名',
-          meta: '{w}×{h} px · {n} 个精灵 · 填充率 {fill}%', showBounds: '显示边框', previewAria: '雪碧图预览',
-          downloadPng: '下载 PNG', downloadData: '下载 {ext}', copy: '复制', copied: '已复制', dataAria: '雪碧图数据',
-          statusLoading: '正在读取第 {i} / {n} 张图片…',
-          statusAdded: '已添加 {n} 张图片',
-          statusSkippedType: '已跳过（不是图片或无法解码）：{files}',
-          statusSkippedSize: '已跳过（单边超过 8192 px）：{files}',
-          statusSkippedSvg: '已跳过（SVG 没有 width、height 或 viewBox）：{files}',
-          statusSkippedCount: '已跳过 {n} 个文件：上限为 1000 张图片。',
-          moreFiles: '{files} 等，另有 {n} 个',
-          statusGif: 'GIF 只取第一帧。要用全部帧，请先用{link}拆帧。',
-          gifLink: 'GIF 拆帧工具',
-          statusTooBig: '雪碧图将达到 {w}×{h} px，超出移动端浏览器的 canvas 上限（16,777,216 像素、单边 16,384 px）。请减小间距、调整最大宽度或排布方式，或减少图片。',
-          statusWidened: '{name} 比最大宽度还宽，图集宽度已放大到 {w} px。',
-          statusExportFailed: '导出失败：浏览器无法编码 PNG',
-          statusCopyFailed: '复制被拦截，请手动选中文本复制',
-        },
-        ja: {
-          dropAria: '画像を選択',
-          dropHint: '画像をここにドロップ、または<strong>クリックして選択</strong>',
-          pasteHint: 'コピーした画像ファイルを Ctrl/Cmd+V で貼り付けることもできます',
-          formatsHint: 'PNG · JPG · WebP · GIF（最初のフレーム） · SVG · BMP · AVIF',
-          listAria: '画像一覧', listCount: '画像 {n} 枚 · {size}',
-          sortLabel: '並び順', sortName: 'ファイル名', sortAdded: '追加順', clearAll: 'すべて削除', removeAria: '{name} を削除',
-          layoutLabel: '配置', layoutPacked: '詰め込み', layoutGrid: 'グリッド',
-          columnsLabel: '列数', columnsAuto: '自動', maxWidthLabel: '最大幅',
-          spacingLabel: '間隔（px）', marginLabel: '外側余白（px）', extrudeLabel: 'エッジ拡張（px）',
-          trimLabel: '透明な余白をトリム', potLabel: 'サイズを 2 のべき乗に',
-          formatLabel: 'データ形式', fmtHash: 'JSON Hash', fmtArray: 'JSON Array', fmtXml: 'XML（Sparrow / Starling）', fmtCss: 'CSS',
-          sheetNameLabel: 'シート名',
-          meta: '{w}×{h} px · スプライト {n} 個 · 充填率 {fill}%', showBounds: '枠を表示', previewAria: 'スプライトシートのプレビュー',
-          downloadPng: 'PNG をダウンロード', downloadData: '{ext} をダウンロード', copy: 'コピー', copied: 'コピーしました', dataAria: 'スプライトシートのデータ',
-          statusLoading: '画像 {i} / {n} を読み込み中…',
-          statusAdded: '{n} 枚の画像を追加しました',
-          statusSkippedType: 'スキップ（画像ではない、またはデコードできない）：{files}',
-          statusSkippedSize: 'スキップ（一辺が 8,192 px を超える）：{files}',
-          statusSkippedSvg: 'スキップ（width・height・viewBox のない SVG）：{files}',
-          statusSkippedCount: '{n} 個のファイルをスキップしました。上限は 1,000 枚です。',
-          moreFiles: '{files} ほか {n} 件',
-          statusGif: 'GIF は最初のフレームだけを追加します。全フレームを使うには、先に{link}で分解してください。',
-          gifLink: 'GIF 分解ツール',
-          statusTooBig: 'スプライトシートが {w}×{h} px になり、モバイルブラウザの canvas 上限（16,777,216 ピクセル、一辺 16,384 px）を超えます。間隔を減らす、最大幅や配置を変える、または画像を減らしてください。',
-          statusWidened: '{name} が最大幅より広いため、シート幅を {w} px にしました。',
-          statusExportFailed: '書き出しに失敗しました。ブラウザが PNG をエンコードできません',
-          statusCopyFailed: 'コピーがブロックされました。テキストを選択して手動でコピーしてください',
-        },
-        ko: {
-          dropAria: '이미지 선택',
-          dropHint: '이미지를 여기로 드롭하거나 <strong>클릭해서 선택</strong>',
-          pasteHint: '복사한 이미지 파일을 Ctrl/Cmd+V로 붙여넣을 수도 있습니다',
-          formatsHint: 'PNG · JPG · WebP · GIF(첫 프레임) · SVG · BMP · AVIF',
-          listAria: '이미지 목록', listCount: '이미지 {n}개 · {size}',
-          sortLabel: '정렬', sortName: '파일명', sortAdded: '추가 순서', clearAll: '모두 지우기', removeAria: '{name} 제거',
-          layoutLabel: '배치', layoutPacked: '빈틈없이', layoutGrid: '그리드',
-          columnsLabel: '열 수', columnsAuto: '자동', maxWidthLabel: '최대 너비',
-          spacingLabel: '간격 (px)', marginLabel: '바깥 여백 (px)', extrudeLabel: '가장자리 확장 (px)',
-          trimLabel: '투명 여백 트림', potLabel: '크기를 2의 거듭제곱으로',
-          formatLabel: '데이터 형식', fmtHash: 'JSON Hash', fmtArray: 'JSON Array', fmtXml: 'XML (Sparrow / Starling)', fmtCss: 'CSS',
-          sheetNameLabel: '시트 이름',
-          meta: '{w}×{h} px · 스프라이트 {n}개 · 채움률 {fill}%', showBounds: '경계 표시', previewAria: '스프라이트 시트 미리보기',
-          downloadPng: 'PNG 다운로드', downloadData: '{ext} 다운로드', copy: '복사', copied: '복사됨', dataAria: '스프라이트 시트 데이터',
-          statusLoading: '이미지 {i} / {n} 읽는 중…',
-          statusAdded: '이미지 {n}개 추가됨',
-          statusSkippedType: '건너뜀(이미지가 아니거나 디코딩 실패): {files}',
-          statusSkippedSize: '건너뜀(한 변이 8,192px 초과): {files}',
-          statusSkippedSvg: '건너뜀(width, height, viewBox가 없는 SVG): {files}',
-          statusSkippedCount: '파일 {n}개를 건너뛰었습니다. 한도는 이미지 1,000개입니다.',
-          moreFiles: '{files} 외 {n}개',
-          statusGif: 'GIF는 첫 프레임만 추가됩니다. 모든 프레임을 쓰려면 먼저 {link}로 분할하세요.',
-          gifLink: 'GIF 프레임 추출기',
-          statusTooBig: '스프라이트 시트가 {w}×{h} px가 되어 모바일 브라우저의 canvas 한도(16,777,216픽셀, 한 변 16,384px)를 넘습니다. 간격을 줄이거나 최대 너비·배치를 바꾸거나 이미지를 줄이세요.',
-          statusWidened: '{name}이(가) 최대 너비보다 넓어 시트 너비를 {w} px로 늘렸습니다.',
-          statusExportFailed: '내보내기 실패 — 브라우저가 PNG를 인코딩하지 못했습니다',
-          statusCopyFailed: '복사가 차단되었습니다 — 텍스트를 선택해 직접 복사하세요',
-        },
-      };
-      var wrapEl = document.getElementById('ssg-wrap');
-      var lang = wrapEl.getAttribute('data-lang') || 'en';
-      if (!STRINGS[lang]) lang = 'en';
-      var t = STRINGS[lang];
-      var langPrefix = lang === 'en' ? '' : '/' + lang;
-      wrapEl.querySelectorAll('[data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.innerHTML = t[key];
-      });
-      wrapEl.querySelectorAll('[data-i18n-aria]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-aria');
-        if (t[key]) el.setAttribute('aria-label', t[key]);
-      });
-      wrapEl.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-placeholder');
-        if (t[key]) el.setAttribute('placeholder', t[key]);
-      });
       function fmt(str, vars) {
         return str.replace(/\{(\w+)\}/g, function (m, k) { return vars[k] !== undefined ? String(vars[k]) : m; });
       }
 
       /* ── engine:start ── */
-      // Pure, DOM-free naming, trimming, layout and export helpers —
+      // Pure, DOM-free naming, trimming, hashing, layout and export helpers —
       // extracted verbatim by scripts/test-sprite-sheet-generator.mjs. Keep
       // this block free of DOM/canvas APIs.
 
       // 16,777,216 px (4096²) is the iOS Safari per-canvas area limit.
-      var SSG_LIMITS = { maxImages: 1000, maxImageSide: 8192, maxSide: 16384, maxArea: 16777216 };
+      // WEBP_MAX_DIMENSION in libwebp is 16,383. 4,096 px is the smallest
+      // WebGL2 MAX_TEXTURE_SIZE that Web3D Survey reports.
+      var SSG_LIMITS = { maxImages: 1000, maxImageSide: 8192, maxSide: 16384, maxArea: 16777216, webpMaxSide: 16383, gpuSafeSide: 4096 };
       var SSG_APP_URL = 'https://zerotool.dev/tools/sprite-sheet-generator/';
 
       // Case-insensitive natural order: digit runs compare by value, so
@@ -277,7 +368,7 @@ const { lang = 'en' } = Astro.props;
 
       function fileStem(name) {
         var dot = name.lastIndexOf('.');
-        return dot > 0 ? name.slice(0, dot) : name;
+        return dot > 0 && name.indexOf('/', dot) < 0 && name.charAt(dot - 1) !== '/' ? name.slice(0, dot) : name;
       }
 
       function naturalCompareText(sa, sb) {
@@ -311,9 +402,8 @@ const { lang = 'en' } = Astro.props;
         return names.map(function (raw) {
           var name = String(raw);
           if (!used.has(name)) { used.add(name); return name; }
-          var dot = name.lastIndexOf('.');
-          var stem = dot > 0 ? name.slice(0, dot) : name;
-          var ext = dot > 0 ? name.slice(dot) : '';
+          var stem = fileStem(name);
+          var ext = name.slice(stem.length);
           for (var k = 2; ; k++) {
             var cand = stem + ' (' + k + ')' + ext;
             if (!taken.has(cand) && !used.has(cand)) {
@@ -325,9 +415,45 @@ const { lang = 'en' } = Astro.props;
         });
       }
 
+      // Path inside a dropped or selected folder, without the folder itself
+      // ("/hero/walk/01.png" or "hero/walk/01.png" → "walk/01.png"), the
+      // TexturePacker naming: sub-folder names are part of the sprite name.
+      function folderPath(path) {
+        var parts = String(path == null ? '' : path).split('/').filter(Boolean);
+        return parts.length > 1 ? parts.slice(1).join('/') : parts.join('/');
+      }
+
+      function isImagePath(path) {
+        return /\.(png|jpe?g|webp|gif|svg|bmp|avif)$/i.test(String(path));
+      }
+
+      // Hidden files and folders (".DS_Store", ".git/…") and the Finder /
+      // Explorer helper files that end up in zipped asset folders.
+      function isHiddenPath(path) {
+        return String(path).split('/').some(function (p) {
+          return p.charAt(0) === '.' || p === '__MACOSX' || /^(thumbs\.db|desktop\.ini)$/i.test(p);
+        });
+      }
+
+      // The file extension of the last path segment ("walk/01.png" → "walk/01").
+      // A name that is only an extension (".png") is kept.
+      function stripExt(path) {
+        var s = String(path);
+        var out = s.replace(/\.[^./]*$/, '');
+        return out && out.charAt(out.length - 1) !== '/' ? out : s;
+      }
+
+      // Frame names in list order: the path, without the extension when
+      // keepExt is false (TexturePacker's "Trim sprite names"), made unique.
+      function frameNames(paths, keepExt) {
+        return uniqueNames(paths.map(function (p) { return keepExt ? String(p) : stripExt(p); }));
+      }
+
+      // ASCII letters, digits, ".", "_", "-", plus the "$" and "!" that RPG Maker
+      // MZ reads at the start of a character file name.
       function sanitizeSheetName(name) {
         var out = String(name == null ? '' : name).trim()
-          .replace(/[^A-Za-z0-9._-]+/g, '-')
+          .replace(/[^A-Za-z0-9._$!-]+/g, '-')
           .replace(/-{2,}/g, '-')
           .replace(/^-+|-+$/g, '');
         return /[A-Za-z0-9]/.test(out) ? out : 'spritesheet';
@@ -337,7 +463,7 @@ const { lang = 'en' } = Astro.props;
       // letters, digits, _ and -. May be empty or start with a digit; buildCss
       // handles both.
       function cssClassName(fileName) {
-        return String(fileName).replace(/\.[^.]*$/, '')
+        return String(fileName).replace(/\.[^./]*$/, '')
           .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
           .toLowerCase()
           .replace(/[^\p{L}\p{N}_-]+/gu, '-')
@@ -345,24 +471,16 @@ const { lang = 'en' } = Astro.props;
           .replace(/^-+|-+$/g, '');
       }
 
-      // Pixel size of an SVG from its root width/height/viewBox attributes.
-      // Only unitless or px lengths count. A missing side follows the viewBox
-      // aspect ratio; with neither width/height nor a viewBox, returns null.
-      function svgIntrinsicSize(width, height, viewBox) {
-        function len(v) {
-          var m = /^\s*(\d*\.?\d+(?:e[+-]?\d+)?)\s*(px)?\s*$/i.exec(v == null ? '' : String(v));
-          var n = m ? parseFloat(m[1]) : 0;
-          return n > 0 && isFinite(n) ? n : 0;
-        }
-        var w = len(width), h = len(height);
-        var vb = String(viewBox == null ? '' : viewBox).trim().split(/[\s,]+/).map(Number);
-        var vw = 0, vh = 0;
-        if (vb.length === 4 && isFinite(vb[2]) && isFinite(vb[3]) && vb[2] > 0 && vb[3] > 0) { vw = vb[2]; vh = vb[3]; }
-        if (w && !h && vw) h = w * vh / vw;
-        else if (h && !w && vw) w = h * vw / vh;
-        else if (!w && !h && vw) { w = vw; h = vh; }
-        if (!w || !h) return null;
-        return { w: Math.max(1, Math.round(w)), h: Math.max(1, Math.round(h)) };
+      // Pixel size of an SVG drawn at `scale`, from analyzeSvg (absolute CSS
+      // units, a missing side from the viewBox, as Chrome sizes an <img>).
+      // null when the SVG gives no size of its own (Chrome would use
+      // 300 × 150) or a side needs a layout (%, vw…) and there is no viewBox.
+      function svgRasterSize(analysis, scale) {
+        var s = analysis && analysis.size;
+        if (!s || s.source === 'default') return null;
+        if (!s.viewBox && s.notes.length) return null;
+        var f = Number(scale) > 0 ? Number(scale) : 1;
+        return { w: Math.max(1, Math.round(s.width * f)), h: Math.max(1, Math.round(s.height * f)) };
       }
 
       // Bounding box of pixels with alpha > 0 in RGBA data. A fully
@@ -381,6 +499,41 @@ const { lang = 'en' } = Astro.props;
         }
         if (maxY < 0) return { x: 0, y: 0, w: 1, h: 1, empty: true };
         return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1, empty: false };
+      }
+
+      // Two independent 32-bit hashes (FNV-1a and MurmurHash3's mixing) over
+      // RGBA pixels read as 32-bit words, fed row strip by row strip. With the
+      // size in the key, two different images get the same key with odds of
+      // about 1 in 2^64.
+      function pixelHashStart() { return { a: 2166136261, b: 0x9747b28c }; }
+      function pixelHashUpdate(state, words) {
+        var a = state.a, b = state.b;
+        for (var i = 0; i < words.length; i++) {
+          var w = words[i];
+          a = Math.imul(a ^ w, 16777619);
+          var k = Math.imul(w, 0xcc9e2d51);
+          k = (k << 15) | (k >>> 17);
+          k = Math.imul(k, 0x1b873593);
+          b ^= k;
+          b = (b << 13) | (b >>> 19);
+          b = (Math.imul(b, 5) + 0xe6546b64) | 0;
+        }
+        state.a = a; state.b = b;
+        return state;
+      }
+      function pixelHashKey(state, w, h) {
+        return w + 'x' + h + ':' + (state.a >>> 0).toString(16) + ':' + (state.b >>> 0).toString(16);
+      }
+
+      // For each item, the index of the first item with the same key (itself
+      // when its key is new or null).
+      function aliasIndex(keys) {
+        var first = new Map();
+        return keys.map(function (k, i) {
+          if (k == null) return i;
+          if (!first.has(k)) first.set(k, i);
+          return first.get(k);
+        });
       }
 
       function nextPow2(n) {
@@ -411,7 +564,6 @@ const { lang = 'en' } = Astro.props;
       function rectContains(a, b) {
         return b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
       }
-
       // MaxRects, Best Short Side Fit, into a binW × binH bin. Places items in
       // `order`; returns positions indexed like pw/ph, or null if one does
       // not fit. Free rects stay maximal: every split produces the up to 4
@@ -581,6 +733,74 @@ const { lang = 'en' } = Astro.props;
         return { width: W, height: H, columns: cols, rows: rows, cellW: cellW, cellH: cellH, frames: frames, draws: draws };
       }
 
+      // The whole sheet layout for items [{ name, w, h, trim, keyFull, keyTrim }]
+      // in frame order. opts: layout ('packed' | 'grid'), columns, maxWidth,
+      // spacing, margin, extrude, pot, trim, alias. In packed mode with alias on,
+      // items with the same pixel key (trimmed box when trimming) are packed once
+      // and share that frame rectangle; each keeps its own source offset.
+      // Returns { width, height, frames, draws, drawn, unique, widened, widestName };
+      // draws are the copies to make: { index, sx, sy, sw, sh, dx, dy, edge }.
+      function layoutSheet(list, opts) {
+        var frames = [], draws = [], drawn = [];
+        var base = { spacing: opts.spacing, margin: opts.margin, extrude: opts.extrude, pot: opts.pot };
+        if (opts.layout === 'grid') {
+          base.columns = opts.columns;
+          var g = gridLayout(list.map(function (it) { return { w: it.w, h: it.h }; }), base);
+          list.forEach(function (it, i) {
+            var f = g.frames[i];
+            frames.push({ name: it.name, x: f.x, y: f.y, w: f.w, h: f.h, trimmed: false, sourceX: 0, sourceY: 0, sourceW: f.w, sourceH: f.h });
+            drawn.push({ w: it.w, h: it.h });
+            draws.push({ index: i, sx: 0, sy: 0, sw: it.w, sh: it.h, dx: g.draws[i].x, dy: g.draws[i].y, edge: f });
+          });
+          return { width: g.width, height: g.height, frames: frames, draws: draws, drawn: drawn, unique: list.length, widened: false, widestName: null };
+        }
+        base.maxWidth = opts.maxWidth;
+        var rects = list.map(function (it) { return opts.trim ? it.trim : { x: 0, y: 0, w: it.w, h: it.h }; });
+        var canon = aliasIndex(list.map(function (it) { return opts.alias ? (opts.trim ? it.keyTrim : it.keyFull) : null; }));
+        var uniq = [], slot = [];
+        canon.forEach(function (c, i) { if (c === i) { slot[i] = uniq.length; uniq.push(i); } });
+        var p = packMaxRects(uniq.map(function (i) { return rects[i]; }), base);
+        var widest = null;
+        list.forEach(function (it, i) {
+          var r = rects[i], pos = p.rects[slot[canon[i]]];
+          frames.push({
+            name: it.name, x: pos.x, y: pos.y, w: r.w, h: r.h,
+            trimmed: r.w !== it.w || r.h !== it.h,
+            sourceX: r.x, sourceY: r.y, sourceW: it.w, sourceH: it.h,
+          });
+          if (canon[i] !== i) return;
+          drawn.push({ w: r.w, h: r.h });
+          draws.push({ index: i, sx: r.x, sy: r.y, sw: r.w, sh: r.h, dx: pos.x, dy: pos.y, edge: { x: pos.x, y: pos.y, w: r.w, h: r.h } });
+          if (!widest || r.w > widest.w) widest = { w: r.w, name: it.name };
+        });
+        return { width: p.width, height: p.height, frames: frames, draws: draws, drawn: drawn, unique: uniq.length, widened: p.widened, widestName: widest ? widest.name : null };
+      }
+
+      // Animations by name, as TexturePacker and the PixiJS sprite sheet
+      // format use them: frames whose names differ only in a trailing number
+      // form one animation named by the rest, without a separator before the
+      // number ("walk_01.png", "walk_02.png" → "walk"). Groups of one frame
+      // are left out; frames are ordered by number.
+      function detectAnimations(names) {
+        var groups = new Map();
+        names.forEach(function (name) {
+          var m = /^(.*?)[ _.-]*(\d+)$/.exec(stripExt(name));
+          if (!m || !m[1] || /\/$/.test(m[1])) return;
+          if (!groups.has(m[1])) groups.set(m[1], []);
+          groups.get(m[1]).push({ name: String(name), digits: m[2].replace(/^0+(?=\d)/, '') });
+        });
+        var out = Object.create(null), any = false;
+        groups.forEach(function (list, key) {
+          if (list.length < 2) return;
+          list.sort(function (a, b) {
+            return a.digits.length - b.digits.length || (a.digits < b.digits ? -1 : a.digits > b.digits ? 1 : 0) || naturalCompare(a.name, b.name);
+          });
+          out[key] = list.map(function (e) { return e.name; });
+          any = true;
+        });
+        return any ? out : null;
+      }
+
       // frames: [{ name, x, y, w, h, trimmed, sourceX, sourceY, sourceW, sourceH }]
       // meta: { image, width, height }
       function frameEntry(f) {
@@ -607,7 +827,11 @@ const { lang = 'en' } = Astro.props;
       function buildJsonHash(frames, meta) {
         var map = Object.create(null);
         frames.forEach(function (f) { map[f.name] = frameEntry(f); });
-        return JSON.stringify({ frames: map, meta: atlasMeta(meta) }, null, 2);
+        var out = { frames: map };
+        var anims = detectAnimations(frames.map(function (f) { return f.name; }));
+        if (anims) out.animations = anims;
+        out.meta = atlasMeta(meta);
+        return JSON.stringify(out, null, 2);
       }
 
       function buildJsonArray(frames, meta) {
@@ -648,41 +872,751 @@ const { lang = 'en' } = Astro.props;
         return out.join('\n') + '\n';
       }
 
+      // A sheet length in CSS px at pixel ratio r (at most 3 decimals).
+      function cssLength(v, r) {
+        return Math.round(v / (r > 1 ? r : 1) * 1000) / 1000;
+      }
+
       // `.{prefix}` sets the sheet as background; `.{prefix}-{name}` sizes
       // and positions one frame. The prefix comes from the sheet name and
       // gets "sprite-" in front if it would start with a digit. Frame tokens
-      // that collide get "-2", "-3"….
+      // that collide get "-2", "-3"…. With meta.ratio r > 1 (images drawn at
+      // r× for high-density screens) every length is divided by r and the
+      // base class sets background-size, so one sheet pixel is 1/r CSS px.
       function buildCss(frames, meta) {
+        var r = meta.ratio > 1 ? Math.floor(meta.ratio) : 1;
         var prefix = cssClassName(meta.image) || 'spritesheet';
         if (/^[0-9]/.test(prefix)) prefix = 'sprite-' + prefix;
         var used = new Set();
-        function px(v) { return v ? '-' + v + 'px' : '0'; }
+        function px(v) { var n = cssLength(v, r); return n ? '-' + n + 'px' : '0'; }
         var out = [
           '.' + prefix + ' {',
           '  display: inline-block;',
           '  background-image: url("' + meta.image + '");',
           '  background-repeat: no-repeat;',
-          '}',
         ];
+        if (r > 1) out.push('  background-size: ' + cssLength(meta.width, r) + 'px ' + cssLength(meta.height, r) + 'px;');
+        out.push('}');
         frames.forEach(function (f) {
           var base = cssClassName(f.name) || 'frame';
           var token = base;
           for (var k = 2; used.has(token); k++) token = base + '-' + k;
           used.add(token);
           out.push('', '.' + prefix + '-' + token + ' {',
-            '  width: ' + f.w + 'px;',
-            '  height: ' + f.h + 'px;',
+            '  width: ' + cssLength(f.w, r) + 'px;',
+            '  height: ' + cssLength(f.h, r) + 'px;',
             '  background-position: ' + px(f.x) + ' ' + px(f.y) + ';',
             '}');
         });
         return out.join('\n') + '\n';
       }
+
+      // Warnings about the finished sheet for the chosen export.
+      // o: { format, imageFormat, frames, width, height, ratio }. Returns
+      // [{ code, kind, ...values }]; kind 'error' blocks the image download.
+      function exportNotes(o) {
+        var notes = [];
+        var trimmed = o.frames.some(function (f) { return f.trimmed; });
+        var side = Math.max(o.width, o.height);
+        if (o.format === 'xml' && trimmed) notes.push({ code: 'xmlTrim', kind: 'info' });
+        if (o.format === 'css') {
+          if (trimmed) notes.push({ code: 'cssTrim', kind: 'info' });
+          var r = o.ratio > 1 ? Math.floor(o.ratio) : 1;
+          if (r > 1) {
+            var example = null;
+            if (o.width % r || o.height % r) example = o.width % r ? o.width : o.height;
+            for (var i = 0; i < o.frames.length && example === null; i++) {
+              var f = o.frames[i];
+              [f.w, f.h, f.x, f.y].forEach(function (v) { if (example === null && v % r) example = v; });
+            }
+            if (example !== null) notes.push({ code: 'cssFraction', kind: 'info', r: r, example: example + ' px → ' + cssLength(example, r) + ' px' });
+          }
+        }
+        if (o.imageFormat === 'webp' && side > SSG_LIMITS.webpMaxSide) notes.push({ code: 'webpTooBig', kind: 'error', w: o.width, h: o.height });
+        if (side > SSG_LIMITS.gpuSafeSide) notes.push({ code: 'gpu', kind: 'info', w: o.width, h: o.height });
+        return notes;
+      }
+
+      // ── Copied verbatim from GifSplitterTool.astro (engine block). scripts/test-sprite-sheet-generator.mjs
+      // checks that every declaration below stays identical to the original. ──
+
+      // Decoding budget. Frames are kept as RGBA in memory: 50M px = 200 MB.
+      // 16,777,216 px (4096²) is the iOS Safari per-canvas area limit.
+      var GS_LIMITS = { maxPixels: 50000000, maxFrames: 1000, maxCanvasArea: 16777216, maxSide: 16384 };
+
+      function isGif(bytes) {
+        if (!bytes || bytes.length < 6) return false;
+        return bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38 &&
+          (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61;
+      }
+
+      // Walk a chain of data sub-blocks starting at `p` without copying.
+      // Tolerates a file that ends mid-chain: `size` counts the data bytes
+      // that are present and complete=false. `end` is just past the chain.
+      function scanSubBlocks(bytes, p) {
+        var len = bytes.length, q = p, size = 0;
+        while (q < len) {
+          var n = bytes[q];
+          if (n === 0) return { size: size, end: q + 1, complete: true };
+          size += Math.min(n, len - q - 1);
+          q += 1 + n;
+        }
+        return { size: size, end: len, complete: false };
+      }
+
+      // Concatenate a chain of data sub-blocks starting at `p` (used for the
+      // small extension blocks; image data is read in place by lzwRun).
+      function readSubBlocks(bytes, p) {
+        var len = bytes.length, q = p;
+        var scan = scanSubBlocks(bytes, p);
+        var data = new Uint8Array(scan.size), o = 0;
+        while (q < len) {
+          var n2 = bytes[q];
+          if (n2 === 0) { q++; break; }
+          var take = Math.min(n2, len - q - 1);
+          data.set(bytes.subarray(q + 1, q + 1 + take), o);
+          o += take;
+          q += 1 + n2;
+        }
+        return { data: data, end: scan.end, complete: scan.complete };
+      }
+
+      // Parse the GIF block structure without decoding pixels, so size and
+      // frame count are known before any heavy work. Image data is not
+      // copied: each frame records where its sub-block chain starts in
+      // gif.bytes (`dataStart`) and how many data bytes it holds (`dataSize`).
+      function parseGif(bytes) {
+        if (!isGif(bytes)) throw new Error('NOT_GIF');
+        var len = bytes.length;
+        var gif = { width: 0, height: 0, globalColorTable: null, loopCount: null, frames: [], truncated: false, bytes: bytes };
+        if (len < 13) { gif.truncated = true; return gif; }
+        gif.width = bytes[6] | (bytes[7] << 8);
+        gif.height = bytes[8] | (bytes[9] << 8);
+        var packed = bytes[10];
+        var p = 13;
+        if (packed & 0x80) {
+          var gctLen = 3 * (1 << ((packed & 7) + 1));
+          if (p + gctLen > len) { gif.truncated = true; return gif; }
+          gif.globalColorTable = bytes.subarray(p, p + gctLen);
+          p += gctLen;
+        }
+        var gce = null;
+        while (p < len) {
+          var introducer = bytes[p++];
+          if (introducer === 0x3B) break;
+          if (introducer === 0x21) {
+            if (p >= len) { gif.truncated = true; break; }
+            var label = bytes[p++];
+            var ext = readSubBlocks(bytes, p);
+            p = ext.end;
+            var d = ext.data;
+            if (label === 0xF9 && d.length >= 4) {
+              gce = { disposal: (d[0] >> 2) & 7, transparentIndex: (d[0] & 1) ? d[3] : -1, delayCs: d[1] | (d[2] << 8) };
+            } else if (label === 0xFF && d.length >= 14) {
+              var id = String.fromCharCode.apply(null, Array.prototype.slice.call(d.subarray(0, 11)));
+              if ((id === 'NETSCAPE2.0' || id === 'ANIMEXTS1.0') && d[11] === 1) {
+                gif.loopCount = d[12] | (d[13] << 8);
+              }
+            }
+            if (!ext.complete) { gif.truncated = true; break; }
+          } else if (introducer === 0x2C) {
+            if (p + 9 > len) { gif.truncated = true; break; }
+            var frame = {
+              left: bytes[p] | (bytes[p + 1] << 8),
+              top: bytes[p + 2] | (bytes[p + 3] << 8),
+              width: bytes[p + 4] | (bytes[p + 5] << 8),
+              height: bytes[p + 6] | (bytes[p + 7] << 8),
+              interlaced: false, localColorTable: null, minCodeSize: 0, dataStart: 0, dataSize: 0,
+              disposal: gce ? gce.disposal : 0,
+              transparentIndex: gce ? gce.transparentIndex : -1,
+              delayCs: gce ? gce.delayCs : 0,
+              complete: true,
+            };
+            var fpacked = bytes[p + 8];
+            frame.interlaced = !!(fpacked & 0x40);
+            p += 9;
+            if (fpacked & 0x80) {
+              var lctLen = 3 * (1 << ((fpacked & 7) + 1));
+              if (p + lctLen > len) { gif.truncated = true; break; }
+              frame.localColorTable = bytes.subarray(p, p + lctLen);
+              p += lctLen;
+            }
+            if (p >= len) { gif.truncated = true; break; }
+            frame.minCodeSize = bytes[p++];
+            var img = scanSubBlocks(bytes, p);
+            frame.dataStart = p;
+            frame.dataSize = img.size;
+            frame.complete = img.complete;
+            p = img.end;
+            gce = null;
+            if (!img.complete) {
+              gif.truncated = true;
+              if (img.size > 0) gif.frames.push(frame);
+              break;
+            }
+            gif.frames.push(frame);
+          } else {
+            // Unknown block introducer (junk after the last frame): stop like browsers do.
+            break;
+          }
+        }
+        if (!gif.width || !gif.height) {
+          var mw = 0, mh = 0;
+          for (var i = 0; i < gif.frames.length; i++) {
+            var f = gif.frames[i];
+            mw = Math.max(mw, f.left + f.width);
+            mh = Math.max(mh, f.top + f.height);
+          }
+          if (!gif.width) gif.width = mw;
+          if (!gif.height) gif.height = mh;
+        }
+        return gif;
+      }
+
+      // Variable-width GIF LZW decoder state. The code stream is read in
+      // place from the sub-block chain that starts at bytes[start] (a length
+      // byte). Codes grow up to 12 bits; once the table is full it keeps
+      // reading 12-bit codes without adding entries (deferred clear).
+      // Decoding stops at the end code, on an invalid code, at the chain's
+      // zero-length terminator, or where the file ends (a sub-block cut short
+      // gives the bytes that are present). `indices` holds the output,
+      // `count` the number of pixel indices produced so far; `done` is set
+      // when nothing more will be produced.
+      function createLzw(minCodeSize, bytes, start, pixelCount) {
+        var valid = minCodeSize >= 1 && minCodeSize <= 8;
+        var clear = 1 << minCodeSize;
+        var lzw = {
+          minCodeSize: minCodeSize, bytes: bytes, pixelCount: pixelCount,
+          indices: new Uint8Array(pixelCount), count: 0, done: !valid || pixelCount === 0,
+          codeSize: minCodeSize + 1, avail: clear + 2, oldCode: -1, first: 0,
+          datum: 0, bits: 0, pos: start, left: 0, top: 0,
+          prefix: new Uint16Array(4096), suffix: new Uint8Array(4096), stack: new Uint8Array(4097),
+        };
+        if (valid) for (var c = 0; c < clear; c++) lzw.suffix[c] = c;
+        return lzw;
+      }
+
+      // Decode until `limit` indices exist in total or the stream ends. Can
+      // stop in the middle of a code's output; the rest waits on the stack.
+      function lzwRun(lzw, limit) {
+        if (lzw.done) return;
+        var pixelCount = lzw.pixelCount;
+        if (limit > pixelCount) limit = pixelCount;
+        var minCodeSize = lzw.minCodeSize, bytes = lzw.bytes, out = lzw.indices;
+        var clear = 1 << minCodeSize, eoi = clear + 1;
+        var codeSize = lzw.codeSize, codeMask = (1 << codeSize) - 1;
+        var avail = lzw.avail, oldCode = lzw.oldCode, first = lzw.first;
+        var prefix = lzw.prefix, suffix = lzw.suffix, stack = lzw.stack;
+        var datum = lzw.datum, bits = lzw.bits, i = lzw.pos, left = lzw.left, op = lzw.count, top = lzw.top;
+        var blen = bytes.length, ended = false;
+        while (top > 0 && op < limit) out[op++] = stack[--top];
+        decode: while (op < limit) {
+          while (bits < codeSize) {
+            if (i >= blen) { ended = true; break decode; }
+            if (left === 0) {
+              left = bytes[i++];
+              if (left === 0 || i >= blen) { ended = true; break decode; }
+            }
+            datum |= bytes[i++] << bits;
+            bits += 8;
+            left--;
+          }
+          var code = datum & codeMask;
+          datum >>>= codeSize;
+          bits -= codeSize;
+          if (code === clear) {
+            codeSize = minCodeSize + 1;
+            codeMask = (1 << codeSize) - 1;
+            avail = clear + 2;
+            oldCode = -1;
+            continue;
+          }
+          if (code === eoi) { ended = true; break; }
+          if (oldCode === -1) {
+            if (code >= clear) { ended = true; break; }
+            out[op++] = code;
+            oldCode = code;
+            first = code;
+            continue;
+          }
+          var inCode = code;
+          if (code > avail) { ended = true; break; }
+          if (code === avail) {
+            stack[top++] = first;
+            code = oldCode;
+          }
+          while (code >= clear) {
+            stack[top++] = suffix[code];
+            code = prefix[code];
+          }
+          first = suffix[code];
+          stack[top++] = first;
+          if (avail < 4096) {
+            prefix[avail] = oldCode;
+            suffix[avail] = first;
+            avail++;
+            if ((avail & codeMask) === 0 && avail < 4096) {
+              codeSize++;
+              codeMask = (1 << codeSize) - 1;
+            }
+          }
+          oldCode = inCode;
+          while (top > 0 && op < limit) out[op++] = stack[--top];
+        }
+        lzw.codeSize = codeSize; lzw.avail = avail; lzw.oldCode = oldCode; lzw.first = first;
+        lzw.datum = datum; lzw.bits = bits; lzw.pos = i; lzw.left = left; lzw.count = op; lzw.top = top;
+        lzw.done = ended || op >= pixelCount;
+      }
+
+      // Row order of an interlaced image: decoded row r lands on map[r].
+      function interlaceRows(h) {
+        var map = new Uint32Array(h), r = 0;
+        var starts = [0, 4, 2, 1], steps = [8, 8, 4, 2];
+        for (var pass = 0; pass < 4; pass++) {
+          for (var y = starts[pass]; y < h; y += steps[pass]) map[r++] = y;
+        }
+        return map;
+      }
+
+      // Paint decoded indices [from, to) onto the RGBA canvas; `to` must not
+      // exceed the decoded count and the range may start or end inside a row.
+      // `rows` is interlaceRows(f.height) for an interlaced frame, else null.
+      // Transparent-index pixels and pixels past the decoded count leave the
+      // canvas untouched; indices outside the palette (or with no palette at
+      // all) paint opaque black.
+      function blitRange(canvas, W, H, f, indices, from, to, palette, rows) {
+        var fw = f.width, fh = f.height;
+        if (!fw || !fh || from >= to) return;
+        var trans = f.transparentIndex;
+        var palLen = palette ? Math.floor(palette.length / 3) : 0;
+        for (var r = Math.floor(from / fw); r < fh && r * fw < to; r++) {
+          var y = f.top + (rows ? rows[r] : r);
+          if (y >= H) continue;
+          var rowStart = r * fw, rowEnd = Math.min(rowStart + fw, to);
+          for (var k = Math.max(rowStart, from); k < rowEnd; k++) {
+            var ci = indices[k];
+            if (ci === trans) continue;
+            var x = f.left + (k - rowStart);
+            if (x >= W) break;
+            var o = (y * W + x) * 4;
+            if (ci < palLen) {
+              canvas[o] = palette[ci * 3];
+              canvas[o + 1] = palette[ci * 3 + 1];
+              canvas[o + 2] = palette[ci * 3 + 2];
+            } else {
+              canvas[o] = 0; canvas[o + 1] = 0; canvas[o + 2] = 0;
+            }
+            canvas[o + 3] = 255;
+          }
+        }
+      }
+
+      function clearRect(canvas, W, H, f) {
+        var x1 = Math.min(f.left + f.width, W), y1 = Math.min(f.top + f.height, H);
+        if (f.left >= x1) return;
+        for (var y = f.top; y < y1; y++) canvas.fill(0, (y * W + f.left) * 4, (y * W + x1) * 4);
+      }
+
+      // Browsers play delays of 0 or 1 centisecond at 100 ms.
+      function frameDurationMs(delayCs) {
+        return delayCs <= 1 ? 100 : delayCs * 10;
+      }
+
+      // Composite frames one at a time, the way a browser shows them:
+      // apply the previous frame's disposal (2 = clear its rect to transparent,
+      // 3 = restore the canvas from before it was drawn), then draw this frame.
+      // Yields undefined after each `chunk` pixels of LZW or blit work, and
+      // the frame result when a frame is done. `work.done` counts that work in
+      // pixels (each frame pixel is decoded once and drawn once).
+      function* compositeSteps(gif, chunk, work) {
+        var W = gif.width, H = gif.height;
+        var canvas = new Uint8ClampedArray(W * H * 4);
+        var pending = null;
+        for (var index = 0; index < gif.frames.length; index++) {
+          if (pending) {
+            if (pending.mode === 2) clearRect(canvas, W, H, pending.frame);
+            else canvas.set(pending.saved);
+            pending = null;
+          }
+          var f = gif.frames[index];
+          var area = f.width * f.height;
+          var frameStart = work.done;
+          var saved = f.disposal === 3 ? canvas.slice() : null;
+          var lzw = createLzw(f.minCodeSize, gif.bytes, f.dataStart, area);
+          lzwRun(lzw, chunk);
+          work.done = frameStart + lzw.count;
+          while (!lzw.done) {
+            yield;
+            lzwRun(lzw, lzw.count + chunk);
+            work.done = frameStart + lzw.count;
+          }
+          // A truncated frame decodes fewer pixels; count the rest as done.
+          work.done = frameStart + area;
+          var palette = f.localColorTable || gif.globalColorTable;
+          var rows = f.interlaced ? interlaceRows(f.height) : null;
+          for (var k = 0; k < lzw.count; k += chunk) {
+            if (k > 0) yield;
+            var end = Math.min(lzw.count, k + chunk);
+            blitRange(canvas, W, H, f, lzw.indices, k, end, palette, rows);
+            work.done = frameStart + area + end;
+          }
+          work.done = frameStart + 2 * area;
+          if (f.disposal === 2) pending = { mode: 2, frame: f };
+          else if (f.disposal === 3) pending = { mode: 3, saved: saved };
+          yield {
+            index: index,
+            rgba: canvas.slice(),
+            delayCs: f.delayCs,
+            durationMs: frameDurationMs(f.delayCs),
+            disposal: f.disposal,
+            complete: f.complete && lzw.count >= f.width * f.height,
+          };
+        }
+      }
+
+      // step() does about `chunk` pixels of work (no limit if chunk is not
+      // positive) and returns the finished frame, undefined if the current
+      // frame is not done yet, or null when all frames are done.
+      // progress() is the finished share of that work, from 0 to 1, so it
+      // also moves while one large frame decodes.
+      function createCompositor(gif, chunk) {
+        var work = { done: 0, total: 0 };
+        for (var i = 0; i < gif.frames.length; i++) work.total += 2 * gif.frames[i].width * gif.frames[i].height;
+        var finished = false;
+        var steps = compositeSteps(gif, chunk > 0 ? chunk : Infinity, work);
+        return {
+          width: gif.width, height: gif.height, total: gif.frames.length,
+          step: function () {
+            var r = steps.next();
+            if (r.done) finished = true;
+            return r.done ? null : r.value;
+          },
+          progress: function () {
+            if (finished) return 1;
+            return work.total > 0 ? Math.min(1, work.done / work.total) : 0;
+          },
+        };
+      }
+
+      function checkBudget(gif) {
+        var L = GS_LIMITS, W = gif.width, H = gif.height, n = gif.frames.length;
+        var pixels = W * H * n;
+        if (W > L.maxSide || H > L.maxSide || W * H > L.maxCanvasArea) return { ok: false, reason: 'frameSize', pixels: pixels };
+        for (var i = 0; i < n; i++) {
+          if (gif.frames[i].width * gif.frames[i].height > L.maxCanvasArea) return { ok: false, reason: 'frameSize', pixels: pixels };
+        }
+        if (n > L.maxFrames) return { ok: false, reason: 'frames', pixels: pixels };
+        if (pixels > L.maxPixels) return { ok: false, reason: 'pixels', pixels: pixels };
+        return { ok: true, reason: null, pixels: pixels };
+      }
+
+      function baseName(fileName) {
+        var name = String(fileName || '').replace(/\.[^.]+$/, '').trim();
+        return name || 'animation';
+      }
+
+      // Zero-pad a 1-based frame number to max(3, digits of total).
+      function padFrameNo(frameNo, total) {
+        var pad = Math.max(3, String(total).length);
+        var num = String(frameNo);
+        while (num.length < pad) num = '0' + num;
+        return num;
+      }
+
+      function frameFileName(base, frameNo, total, ext) {
+        return base + '-frame-' + padFrameNo(frameNo, total) + '.' + ext;
+      }
+
+      // ── Copied verbatim from SvgToPngConverterTool.astro (engine block). scripts/test-sprite-sheet-generator.mjs
+      // checks that every declaration below stays identical to the original. ──
+
+      var SVG_NS = 'http://www.w3.org/2000/svg';
+
+      var XLINK_NS = 'http://www.w3.org/1999/xlink';
+
+      // CSS absolute units in px (CSS Values and Units Level 4, section 6.2).
+      var ABS_UNITS = { '': 1, px: 1, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6, pt: 4 / 3, pc: 16 };
+
+      function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+
+      // { px } for absolute and font-relative lengths; { px: null, unit } when the length
+      // needs a layout to resolve (%, ex, ch, vw…) or is not a positive number; null when absent.
+      function parseLength(value, fontSize) {
+        if (value == null) return null;
+        var s = String(value).trim();
+        if (s === '' || s.toLowerCase() === 'auto') return null;
+        var m = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)$/i.exec(s);
+        if (!m) return { px: null, unit: s };
+        var n = parseFloat(m[1]);
+        var unit = m[2].toLowerCase();
+        var px;
+        if (hasOwn(ABS_UNITS, unit)) px = n * ABS_UNITS[unit];
+        else if (unit === 'em') px = n * fontSize;
+        else if (unit === 'rem') px = n * 16;
+        else return { px: null, unit: unit };
+        if (!(px > 0) || !isFinite(px)) return { px: null, unit: 'invalid' };
+        return { px: px };
+      }
+
+      function parseStyle(style) {
+        var out = {};
+        String(style || '').split(';').forEach(function (decl) {
+          var i = decl.indexOf(':');
+          if (i < 0) return;
+          var key = decl.slice(0, i).trim().toLowerCase();
+          var value = decl.slice(i + 1).replace(/!important\s*$/i, '').trim();
+          if (key) out[key] = value;
+        });
+        return out;
+      }
+
+      function parseViewBox(value) {
+        if (value == null) return null;
+        var parts = String(value).trim().split(/[\s,]+/);
+        if (parts.length !== 4) return null;
+        var n = parts.map(Number);
+        if (n.some(function (x) { return !isFinite(x); })) return null;
+        if (!(n[2] > 0) || !(n[3] > 0)) return null;
+        return { x: n[0], y: n[1], width: n[2], height: n[3] };
+      }
+
+      // The size the SVG has on its own, in CSS px. Follows what Chrome reports as the
+      // natural size of an <img>, except that a viewBox alone gives the viewBox size
+      // (Chrome gives 300 × 150).
+      function intrinsicSize(attrs) {
+        var style = parseStyle(attrs.style);
+        var fsLen = parseLength(hasOwn(style, 'font-size') ? style['font-size'] : attrs['font-size'], 16);
+        var fontSize = fsLen && fsLen.px ? fsLen.px : 16;
+        var notes = [];
+        function dim(name) {
+          var raw = hasOwn(style, name) ? style[name] : attrs[name];
+          var len = parseLength(raw, fontSize);
+          if (len && len.px == null) notes.push({ code: 'relativeSize', attr: name, value: String(raw).trim() });
+          return len && len.px != null ? len.px : null;
+        }
+        var w = dim('width');
+        var h = dim('height');
+        var vb = parseViewBox(attrs.viewBox);
+        var source = 'size';
+        if (w == null || h == null) {
+          if (vb) {
+            if (w != null) h = w * vb.height / vb.width;
+            else if (h != null) w = h * vb.width / vb.height;
+            else { w = vb.width; h = vb.height; source = 'viewBox'; }
+          } else {
+            if (w == null && h == null) source = 'default';
+            if (w == null) w = 300;
+            if (h == null) h = 150;
+          }
+        }
+        return { width: w, height: h, viewBox: vb, source: source, notes: notes };
+      }
+
+      function decodeXml(s) {
+        return String(s).replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, function (m, e) {
+          var k = e.toLowerCase();
+          if (k === 'amp') return '&';
+          if (k === 'lt') return '<';
+          if (k === 'gt') return '>';
+          if (k === 'quot') return '"';
+          if (k === 'apos') return "'";
+          var cp = k.charAt(1) === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
+          return cp > 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : m;
+        });
+      }
+
+      function skipDeclaration(src, i) {
+        var depth = 0, quote = null;
+        for (var j = i + 2; j < src.length; j++) {
+          var c = src.charAt(j);
+          if (quote) { if (c === quote) quote = null; continue; }
+          if (c === '"' || c === "'") quote = c;
+          else if (c === '[') depth++;
+          else if (c === ']') depth--;
+          else if (c === '>' && depth <= 0) return j + 1;
+        }
+        return src.length;
+      }
+
+      var TAG_NAME = /[A-Za-z_][\w.\-]*(?::[\w.\-]+)?/y;
+
+      var ATTR_NAME = /[^\s=\/>]+/y;
+
+      var SPACE = /\s/;
+
+      function readStartTag(src, i) {
+        TAG_NAME.lastIndex = i + 1;
+        var m = TAG_NAME.exec(src);
+        if (!m) return null;
+        var n = src.length;
+        var tag = { name: m[0], start: i, attrs: [], selfClosing: false, closeStart: n, end: n };
+        var j = i + 1 + m[0].length;
+        while (j < n) {
+          while (j < n && SPACE.test(src.charAt(j))) j++;
+          var c = src.charAt(j);
+          if (c === '>') { tag.closeStart = j; tag.end = j + 1; return tag; }
+          if (c === '/' && src.charAt(j + 1) === '>') { tag.closeStart = j; tag.end = j + 2; tag.selfClosing = true; return tag; }
+          ATTR_NAME.lastIndex = j;
+          var am = ATTR_NAME.exec(src);
+          if (!am) { j++; continue; }
+          var start = j;
+          j += am[0].length;
+          var k = j;
+          while (k < n && SPACE.test(src.charAt(k))) k++;
+          if (src.charAt(k) !== '=') { tag.attrs.push({ name: am[0], value: '', rawValue: '', quote: '', start: start, end: j }); continue; }
+          k++;
+          while (k < n && SPACE.test(src.charAt(k))) k++;
+          var q = src.charAt(k), raw, end;
+          if (q === '"' || q === "'") {
+            var close = src.indexOf(q, k + 1);
+            if (close < 0) close = n;
+            raw = src.slice(k + 1, close);
+            end = Math.min(n, close + 1);
+          } else {
+            q = '';
+            var e = k;
+            while (e < n && !SPACE.test(src.charAt(e)) && src.charAt(e) !== '>') e++;
+            raw = src.slice(k, e);
+            end = e;
+          }
+          tag.attrs.push({ name: am[0], value: decodeXml(raw), rawValue: raw, quote: q, start: start, end: end });
+          j = end;
+        }
+        return tag;
+      }
+
+      // Start tags in document order, with attribute positions. Comments, CDATA sections,
+      // processing instructions, the DOCTYPE (with its internal subset) and end tags are skipped.
+      function scanMarkup(src) {
+        var tags = [];
+        var i = 0, n = src.length, e;
+        while (i < n) {
+          var lt = src.indexOf('<', i);
+          if (lt < 0) break;
+          if (src.startsWith('<!--', lt)) { e = src.indexOf('-->', lt + 4); i = e < 0 ? n : e + 3; continue; }
+          if (src.startsWith('<![CDATA[', lt)) { e = src.indexOf(']]>', lt + 9); i = e < 0 ? n : e + 3; continue; }
+          if (src.startsWith('<?', lt)) { e = src.indexOf('?>', lt + 2); i = e < 0 ? n : e + 2; continue; }
+          if (src.startsWith('<!', lt)) { i = skipDeclaration(src, lt); continue; }
+          if (src.charAt(lt + 1) === '/') { e = src.indexOf('>', lt); i = e < 0 ? n : e + 1; continue; }
+          var tag = readStartTag(src, lt);
+          if (!tag) { i = lt + 1; continue; }
+          tags.push(tag);
+          i = tag.end;
+        }
+        return tags;
+      }
+
+      function attrOf(tag, names) {
+        for (var i = 0; i < tag.attrs.length; i++) if (names.indexOf(tag.attrs[i].name) >= 0) return tag.attrs[i];
+        return null;
+      }
+
+      function isLocalRef(url) {
+        var u = String(url).trim().toLowerCase();
+        return u === '' || u.charAt(0) === '#' || u.indexOf('data:') === 0;
+      }
+
+      function cssRefs(css, refs) {
+        var importRe = /@import\s+(?:url\(\s*)?(['"]?)([^'")\s;]+)\1/gi, m;
+        while ((m = importRe.exec(css))) if (!isLocalRef(m[2])) refs.imports.push(decodeXml(m[2]));
+        var rest = css.replace(/@import[^;]*;?/gi, '');
+        var urlRe = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi;
+        while ((m = urlRe.exec(rest))) if (!isLocalRef(m[2])) refs.css.push(decodeXml(m[2]));
+      }
+
+      function analyzeSvg(text) {
+        var src = String(text == null ? '' : text);
+        if (src.charCodeAt(0) === 0xFEFF) src = src.slice(1);
+        if (!src.trim()) return { error: { code: 'empty' } };
+        var tags = scanMarkup(src);
+        if (!tags.length) return { error: { code: 'notSvg' } };
+        var root = tags[0];
+        if (root.name !== 'svg') return { error: { code: 'rootNotSvg', name: root.name } };
+        var attrs = {};
+        root.attrs.forEach(function (a) { attrs[a.name] = a.value; });
+        var fixes = [];
+        if (!hasOwn(attrs, 'xmlns')) fixes.push('xmlns');
+        if (/\bxlink:/.test(src) && src.indexOf('xmlns:xlink') < 0) fixes.push('xlink');
+        var refs = { images: [], uses: [], css: [], imports: [], foreignObject: false, script: false };
+        var strip = [];
+        var styleText = [];
+        tags.forEach(function (tag) {
+          var local = tag.name.split(':').pop();
+          if (local === 'image' || local === 'feImage') {
+            var href = attrOf(tag, ['href', 'xlink:href']);
+            if (href && !isLocalRef(href.value)) { refs.images.push(href.value); strip.push(href); }
+          } else if (local === 'use') {
+            var ref = attrOf(tag, ['href', 'xlink:href']);
+            if (ref && !isLocalRef(ref.value)) refs.uses.push(ref.value);
+          } else if (local === 'foreignObject') {
+            refs.foreignObject = true;
+          } else if (local === 'script') {
+            refs.script = true;
+          } else if (local === 'style' && !tag.selfClosing) {
+            var close = src.indexOf('</', tag.end);
+            styleText.push(src.slice(tag.end, close < 0 ? src.length : close).replace(/<!\[CDATA\[|\]\]>/g, ''));
+          }
+          tag.attrs.forEach(function (a) {
+            if (a.name === 'style') styleText.push(a.value);
+            if (/^on/i.test(a.name)) refs.script = true;
+          });
+        });
+        cssRefs(styleText.join('\n'), refs);
+        return { source: src, tags: tags, root: root, attrs: attrs, size: intrinsicSize(attrs), fixes: fixes, refs: refs, strip: strip };
+      }
+
+      function num(n) { return String(Math.round(n * 10000) / 10000); }
+
+      // The SVG to draw: width and height set to the output size, a viewBox added when
+      // missing (so the drawing scales), missing namespaces added, external image links
+      // removed (Chrome draws a broken-image icon for them). Everything else, including
+      // line breaks, is kept, so XML error line numbers match the input.
+      function buildSvg(text, analysis, plan) {
+        var src = analysis.source;
+        var root = analysis.root;
+        var edits = [];
+        function removeAttr(a) {
+          var s = a.start;
+          while (s > 0 && SPACE.test(src.charAt(s - 1))) s--;
+          edits.push({ start: s, end: a.end, text: '' });
+        }
+        var add = [];
+        var hasViewBox = !!analysis.size.viewBox;
+        root.attrs.forEach(function (a) {
+          if (a.name === 'width' || a.name === 'height' || (a.name === 'viewBox' && !hasViewBox)) removeAttr(a);
+          else if (a.name === 'style') {
+            var kept = a.rawValue.split(';').map(function (d) { return d.trim(); }).filter(function (d) {
+              if (!d) return false;
+              var key = d.split(':')[0].trim().toLowerCase();
+              return key !== 'width' && key !== 'height';
+            }).join(';');
+            if (kept === a.rawValue) return;
+            if (kept) edits.push({ start: a.start, end: a.end, text: 'style=' + (a.quote || '"') + kept + (a.quote || '"') });
+            else removeAttr(a);
+          }
+        });
+        if (analysis.fixes.indexOf('xmlns') >= 0) add.push('xmlns="' + SVG_NS + '"');
+        if (analysis.fixes.indexOf('xlink') >= 0) add.push('xmlns:xlink="' + XLINK_NS + '"');
+        if (!hasViewBox) add.push('viewBox="0 0 ' + num(analysis.size.width) + ' ' + num(analysis.size.height) + '"');
+        add.push('width="' + plan.width + '"', 'height="' + plan.height + '"');
+        edits.push({ start: root.closeStart, end: root.closeStart, text: ' ' + add.join(' ') });
+        analysis.strip.forEach(removeAttr);
+        edits.sort(function (a, b) { return b.start - a.start || b.end - a.end; });
+        var out = src;
+        edits.forEach(function (e) { out = out.slice(0, e.start) + e.text + out.slice(e.end); });
+        return out;
+      }
       /* ── engine:end ── */
 
       var SLUG = 'sprite-sheet-generator';
       var $ = function (id) { return document.getElementById(id); };
+      var wrapEl = $('ssg-wrap');
       var dropEl = $('ssg-drop');
+      var dropHintEl = $('ssg-drop-hint');
+      var pickBtn = $('ssg-pick');
+      var pickDirBtn = $('ssg-pick-dir');
       var fileInput = $('ssg-file');
+      var dirInput = $('ssg-dir');
       var listPanel = $('ssg-list-panel');
       var countEl = $('ssg-count');
       var orderSelect = $('ssg-order');
@@ -697,22 +1631,30 @@ const { lang = 'en' } = Astro.props;
       var marginInput = $('ssg-margin');
       var extrudeInput = $('ssg-extrude');
       var formatSelect = $('ssg-format');
+      var ratioField = $('ssg-ratio-field');
+      var ratioSelect = $('ssg-ratio');
+      var imgFmtSelect = $('ssg-imgfmt');
+      var webpOption = $('ssg-webp-option');
+      var svgScaleSelect = $('ssg-svgscale');
       var nameInput = $('ssg-name');
       var trimField = $('ssg-trim-field');
       var trimInput = $('ssg-trim');
+      var aliasField = $('ssg-alias-field');
+      var aliasInput = $('ssg-alias');
       var potInput = $('ssg-pot');
+      var keepExtInput = $('ssg-keepext');
+      var gifFramesInput = $('ssg-gifframes');
       var statusEl = $('ssg-status');
       var outputEl = $('ssg-output');
       var metaEl = $('ssg-meta');
       var boundsInput = $('ssg-bounds');
       var canvas = $('ssg-canvas');
       var boundsLayer = $('ssg-bounds-layer');
-      var dlPngBtn = $('ssg-dl-png');
+      var dlImgBtn = $('ssg-dl-img');
       var dlDataBtn = $('ssg-dl-data');
       var copyBtn = $('ssg-copy');
       var dataEl = $('ssg-data');
 
-      var SVG_NS = 'http://www.w3.org/2000/svg';
       var THUMB_MAX = 96;
       var MAX_WIDTHS = [512, 1024, 2048, 4096, 8192];
       var FORMATS = {
@@ -721,14 +1663,30 @@ const { lang = 'en' } = Astro.props;
         xml: { ext: 'xml', mime: 'application/xml', build: buildXml },
         css: { ext: 'css', mime: 'text/css', build: buildCss },
       };
+      var IMAGE_FORMATS = {
+        png: { ext: 'png', mime: 'image/png' },
+        webp: { ext: 'webp', mime: 'image/webp' },
+      };
       var prefs = {
         layout: 'packed', columns: 0, maxWidth: 2048, spacing: 2, margin: 0, extrude: 0,
-        trim: true, pot: false, order: 'name', format: 'hash', sheetName: 'spritesheet', showBounds: false,
+        trim: true, alias: true, pot: false, keepExt: true, gifFrames: true, order: 'name',
+        format: 'hash', imageFormat: 'png', svgScale: 1, cssRatio: 1, sheetName: 'spritesheet', showBounds: false,
       };
 
-      var items = [];          // added order: { seq, fileName, name, bytes, source, w, h, trim, el, nameEl, removeBtn }
+      // Chromium writes lossless WebP for quality 1.0; Safari cannot encode WebP
+      // and returns PNG instead.
+      var webpOk = (function () {
+        try {
+          var c = document.createElement('canvas');
+          c.width = 1; c.height = 1;
+          return c.toDataURL('image/webp').indexOf('data:image/webp') === 0;
+        } catch (e) { return false; }
+      })();
+      if (!webpOk) { webpOption.disabled = true; webpOption.textContent = t.imgWebpNo; }
+
+      var items = [];          // { seq, path, kind, svgText, bytes, source, w, h, trim, keyFull, keyTrim, name, el, thumbEl, nameEl, sizeEl, removeBtn }
       var seq = 0, loadToken = 0, addQueue = Promise.resolve();
-      var addNotes = [], buildNotes = [];
+      var addNotes = [], layoutNotes = [], exportNoteList = [], actionNotes = [];
       var built = null;        // { frames, width, height }
       var rebuildTimer = 0;
       var scratch = null, scratchCtx = null;
@@ -741,12 +1699,15 @@ const { lang = 'en' } = Astro.props;
         prefs.spacing = toInt(saved.spacing, 0, 64, 2);
         prefs.margin = toInt(saved.margin, 0, 64, 0);
         prefs.extrude = toInt(saved.extrude, 0, 8, 0);
-        if (typeof saved.trim === 'boolean') prefs.trim = saved.trim;
-        if (typeof saved.pot === 'boolean') prefs.pot = saved.pot;
+        ['trim', 'alias', 'pot', 'keepExt', 'gifFrames', 'showBounds'].forEach(function (k) {
+          if (typeof saved[k] === 'boolean') prefs[k] = saved[k];
+        });
         if (saved.order === 'name' || saved.order === 'added') prefs.order = saved.order;
         if (FORMATS[saved.format]) prefs.format = saved.format;
+        if (IMAGE_FORMATS[saved.imageFormat] && (saved.imageFormat !== 'webp' || webpOk)) prefs.imageFormat = saved.imageFormat;
+        prefs.svgScale = toInt(saved.svgScale, 1, 4, 1);
+        prefs.cssRatio = toInt(saved.cssRatio, 1, 3, 1);
         if (typeof saved.sheetName === 'string') prefs.sheetName = sanitizeSheetName(saved.sheetName.slice(0, 100));
-        if (typeof saved.showBounds === 'boolean') prefs.showBounds = saved.showBounds;
       }
       function savePrefs() {
         if (window.ztPersist) window.ztPersist.save(SLUG, prefs);
@@ -759,18 +1720,26 @@ const { lang = 'en' } = Astro.props;
         marginInput.value = String(prefs.margin);
         extrudeInput.value = String(prefs.extrude);
         trimInput.checked = prefs.trim;
+        aliasInput.checked = prefs.alias;
         potInput.checked = prefs.pot;
+        keepExtInput.checked = prefs.keepExt;
+        gifFramesInput.checked = prefs.gifFrames;
         orderSelect.value = prefs.order;
         formatSelect.value = prefs.format;
+        imgFmtSelect.value = prefs.imageFormat;
+        svgScaleSelect.value = String(prefs.svgScale);
+        ratioSelect.value = String(prefs.cssRatio);
         nameInput.value = prefs.sheetName;
         boundsInput.checked = prefs.showBounds;
-        toggleLayoutFields();
+        toggleFields();
       }
-      function toggleLayoutFields() {
+      function toggleFields() {
         var grid = prefs.layout === 'grid';
         columnsField.hidden = !grid;
         maxWidthField.hidden = grid;
         trimField.hidden = grid;
+        aliasField.hidden = grid;
+        ratioField.hidden = prefs.format !== 'css';
       }
 
       function formatBytes(n) {
@@ -784,10 +1753,15 @@ const { lang = 'en' } = Astro.props;
         return fmt(t.moreFiles, { files: names.slice(0, 10).join(', '), n: names.length - 10 });
       }
 
+      function noteText(n) {
+        var key = { xmlTrim: 'noteXmlTrim', cssTrim: 'noteCssTrim', cssFraction: 'noteCssFraction', gpu: 'noteGpu', webpTooBig: 'noteWebpTooBig' }[n.code];
+        return { kind: n.kind === 'error' ? 'error' : 'info', text: fmt(t[key], n) };
+      }
+
       function renderStatus(progressText) {
         statusEl.textContent = '';
-        statusEl.className = 'tool-status';
-        var notes = progressText ? [{ kind: 'info', text: progressText }] : addNotes.concat(buildNotes);
+        var notes = progressText ? [{ kind: 'info', text: progressText }]
+          : addNotes.concat(layoutNotes, exportNoteList.map(noteText), actionNotes);
         notes.forEach(function (note) {
           var line = document.createElement('span');
           line.className = 'ssg-status-line is-' + note.kind;
@@ -812,6 +1786,10 @@ const { lang = 'en' } = Astro.props;
         else { source.width = 0; source.height = 0; }
       }
 
+      function pause() {
+        return new Promise(function (resolve) { setTimeout(resolve, 0); });
+      }
+
       function loadImage(url) {
         return new Promise(function (resolve, reject) {
           var img = new Image();
@@ -822,19 +1800,16 @@ const { lang = 'en' } = Astro.props;
       }
 
       // SVG goes through <img>: createImageBitmap does not take SVG blobs in
-      // every browser. The root gets explicit width/height so the raster
-      // size is the intrinsic size from svgIntrinsicSize.
-      async function decodeSvg(file) {
-        var text = await file.text();
-        var doc = new DOMParser().parseFromString(text, 'image/svg+xml');
-        var root = doc.documentElement;
-        if (!root || root.localName !== 'svg' || doc.getElementsByTagName('parsererror').length) return { reason: 'type' };
-        var size = svgIntrinsicSize(root.getAttribute('width'), root.getAttribute('height'), root.getAttribute('viewBox'));
+      // every browser. buildSvg sets width/height to the raster size, adds a
+      // missing xmlns and removes external image links.
+      async function rasterSvg(text) {
+        var analysis = analyzeSvg(text);
+        if (analysis.error) return { reason: 'type' };
+        var size = svgRasterSize(analysis, prefs.svgScale);
         if (!size) return { reason: 'svg' };
         if (size.w > SSG_LIMITS.maxImageSide || size.h > SSG_LIMITS.maxImageSide) return { reason: 'size' };
-        root.setAttribute('width', String(size.w));
-        root.setAttribute('height', String(size.h));
-        var url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(doc)], { type: 'image/svg+xml' }));
+        var svg = buildSvg(text, analysis, { width: size.w, height: size.h });
+        var url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
         try {
           var img = await loadImage(url);
           var c = document.createElement('canvas');
@@ -842,60 +1817,109 @@ const { lang = 'en' } = Astro.props;
           c.height = size.h;
           c.getContext('2d').drawImage(img, 0, 0, size.w, size.h);
           return { source: c, w: size.w, h: size.h };
+        } catch (e) {
+          return { reason: 'type' };
         } finally {
           URL.revokeObjectURL(url);
         }
       }
 
-      async function decodeFile(file) {
-        var name = file.name || '';
-        if (file.type === 'image/svg+xml' || /\.svg$/i.test(name)) return decodeSvg(file);
+      // Every frame of an animated GIF, composited the way browsers show it,
+      // named like the GIF Splitter names its PNG files.
+      async function splitGif(gif, path, token) {
+        var comp = createCompositor(gif, 1 << 20);
+        var base = baseName(path);
+        var out = [], f, shown = -1;
+        while ((f = comp.step()) !== null) {
+          if (token !== loadToken) { out.forEach(function (e) { release(e.source); }); return null; }
+          if (f === undefined) { await pause(); continue; }
+          if (f.index !== shown) { shown = f.index; renderStatus(fmt(t.statusGifLoading, { name: path, i: f.index + 1, n: comp.total })); }
+          var bmp = await createImageBitmap(new ImageData(f.rgba, comp.width, comp.height));
+          out.push({ path: frameFileName(base, f.index + 1, comp.total, 'png'), kind: 'bitmap', source: bmp, w: comp.width, h: comp.height });
+          await pause();
+        }
+        return out;
+      }
+
+      // Decodes one file into one or more images: { images, gif } or { reason }.
+      async function decodeFile(file, path, token) {
+        var name = file.name || path || '';
+        if (file.type === 'image/svg+xml' || /\.svg$/i.test(name)) {
+          var text = await file.text();
+          var r = await rasterSvg(text);
+          if (r.reason) return { reason: r.reason };
+          return { images: [{ path: path, kind: 'svg', svgText: text, source: r.source, w: r.w, h: r.h }] };
+        }
+        var gifNote = null;
+        if (file.type === 'image/gif' || /\.gif$/i.test(name)) {
+          var gif = null;
+          try { gif = parseGif(new Uint8Array(await file.arrayBuffer())); } catch (e) { gif = null; }
+          if (gif && gif.frames.length > 1) {
+            if (!prefs.gifFrames) gifNote = 'first';
+            else if (checkBudget(gif).ok && gif.width <= SSG_LIMITS.maxImageSide && gif.height <= SSG_LIMITS.maxImageSide) {
+              var frames = await splitGif(gif, path, token);
+              if (!frames) return { images: [] };
+              return { images: frames, gif: 'frames' };
+            } else gifNote = 'budget';
+          }
+        }
         var bmp;
         try { bmp = await createImageBitmap(file); } catch (e) { return { reason: 'type' }; }
         if (!bmp.width || !bmp.height) { release(bmp); return { reason: 'type' }; }
         if (bmp.width > SSG_LIMITS.maxImageSide || bmp.height > SSG_LIMITS.maxImageSide) { release(bmp); return { reason: 'size' }; }
-        return { source: bmp, w: bmp.width, h: bmp.height, gif: file.type === 'image/gif' || /\.gif$/i.test(name) };
+        return { images: [{ path: path, kind: 'bitmap', source: bmp, w: bmp.width, h: bmp.height }], gif: gifNote };
       }
 
-      // Read the image in horizontal strips of at most 4M px so the scratch
-      // canvas stays small; merge each strip's trimBounds.
-      function computeTrim(source, w, h) {
+      // Trim box and pixel hashes (whole image and trimmed box), reading the
+      // image in horizontal strips of at most 4M px so the scratch canvas
+      // stays small.
+      function analyzePixels(source, w, h) {
         var full = { x: 0, y: 0, w: w, h: h };
-        var stripH = Math.max(1, Math.min(h, Math.floor(4194304 / w)));
         if (!scratch) {
           scratch = document.createElement('canvas');
           scratchCtx = scratch.getContext('2d', { willReadFrequently: true });
         }
-        scratch.width = w;
-        scratch.height = stripH;
-        var minX = w, minY = -1, maxX = -1, maxY = -1;
+        function strips(rect, fn) {
+          var stripH = Math.max(1, Math.min(rect.h, Math.floor(4194304 / rect.w)));
+          scratch.width = rect.w;
+          scratch.height = stripH;
+          for (var y = 0; y < rect.h; y += stripH) {
+            var sh = Math.min(stripH, rect.h - y);
+            scratchCtx.clearRect(0, 0, rect.w, stripH);
+            scratchCtx.drawImage(source, rect.x, rect.y + y, rect.w, sh, 0, 0, rect.w, sh);
+            var data = scratchCtx.getImageData(0, 0, rect.w, sh).data;
+            fn(data, y, sh);
+          }
+        }
         try {
-          for (var y = 0; y < h; y += stripH) {
-            var sh = Math.min(stripH, h - y);
-            scratchCtx.clearRect(0, 0, w, stripH);
-            scratchCtx.drawImage(source, 0, y, w, sh, 0, 0, w, sh);
-            var b = trimBounds(scratchCtx.getImageData(0, 0, w, sh).data, w, sh);
-            if (b.empty) continue;
+          var minX = w, minY = -1, maxX = -1, maxY = -1;
+          var hf = pixelHashStart();
+          strips(full, function (data, y, sh) {
+            pixelHashUpdate(hf, new Uint32Array(data.buffer, data.byteOffset, data.length >> 2));
+            var b = trimBounds(data, w, sh);
+            if (b.empty) return;
             if (minY < 0) minY = y + b.y;
             maxY = y + b.y + b.h - 1;
             minX = Math.min(minX, b.x);
             maxX = Math.max(maxX, b.x + b.w - 1);
+          });
+          var keyFull = pixelHashKey(hf, w, h);
+          var trim = maxY < 0 ? { x: 0, y: 0, w: 1, h: 1 } : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+          var keyTrim = keyFull;
+          if (trim.w !== w || trim.h !== h) {
+            var ht = pixelHashStart();
+            strips(trim, function (data) { pixelHashUpdate(ht, new Uint32Array(data.buffer, data.byteOffset, data.length >> 2)); });
+            keyTrim = pixelHashKey(ht, trim.w, trim.h);
           }
+          return { trim: trim, keyFull: keyFull, keyTrim: keyTrim };
         } catch (e) {
-          return full;
+          return { trim: full, keyFull: null, keyTrim: null };
         }
-        if (maxY < 0) return { x: 0, y: 0, w: 1, h: 1 };
-        return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
       }
 
       var REMOVE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
-      function createItemEl(it) {
-        var el = document.createElement('div');
-        el.className = 'ssg-item';
-        el.setAttribute('role', 'listitem');
-        var thumb = document.createElement('div');
-        thumb.className = 'ssg-thumb';
+      function drawThumb(it) {
         var scale = Math.min(1, THUMB_MAX / Math.max(it.w, it.h));
         var tc = document.createElement('canvas');
         tc.width = Math.max(1, Math.round(it.w * scale));
@@ -904,24 +1928,33 @@ const { lang = 'en' } = Astro.props;
         var tctx = tc.getContext('2d');
         tctx.imageSmoothingQuality = 'high';
         tctx.drawImage(it.source, 0, 0, tc.width, tc.height);
-        thumb.appendChild(tc);
-        var nameEl = document.createElement('span');
-        nameEl.className = 'ssg-item-name';
-        var sizeEl = document.createElement('span');
-        sizeEl.className = 'ssg-item-size';
-        sizeEl.textContent = it.w + '×' + it.h;
+        it.thumbEl.textContent = '';
+        it.thumbEl.appendChild(tc);
+        it.sizeEl.textContent = it.w + '×' + it.h;
+      }
+
+      function createItemEl(it) {
+        var el = document.createElement('div');
+        el.className = 'ssg-item';
+        el.setAttribute('role', 'listitem');
+        it.thumbEl = document.createElement('div');
+        it.thumbEl.className = 'ssg-thumb';
+        it.nameEl = document.createElement('span');
+        it.nameEl.className = 'ssg-item-name';
+        it.sizeEl = document.createElement('span');
+        it.sizeEl.className = 'ssg-item-size';
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'ssg-remove';
         btn.dataset.seq = String(it.seq);
         btn.innerHTML = REMOVE_ICON;
-        el.appendChild(thumb);
-        el.appendChild(nameEl);
-        el.appendChild(sizeEl);
+        el.appendChild(it.thumbEl);
+        el.appendChild(it.nameEl);
+        el.appendChild(it.sizeEl);
         el.appendChild(btn);
         it.el = el;
-        it.nameEl = nameEl;
         it.removeBtn = btn;
+        drawThumb(it);
       }
 
       function sortedItems() {
@@ -933,7 +1966,7 @@ const { lang = 'en' } = Astro.props;
       }
 
       function renderList() {
-        var names = uniqueNames(items.map(function (it) { return it.fileName; }));
+        var names = frameNames(items.map(function (it) { return it.path; }), prefs.keepExt);
         var bytes = 0;
         items.forEach(function (it, i) {
           it.name = names[i];
@@ -947,47 +1980,138 @@ const { lang = 'en' } = Astro.props;
         var frag = document.createDocumentFragment();
         sortedItems().forEach(function (it) { frag.appendChild(it.el); });
         listEl.appendChild(frag);
+        var compact = items.length > 0;
+        dropEl.classList.toggle('is-compact', compact);
+        dropHintEl.textContent = compact ? t.dropHintMore : t.dropHint;
+        pickBtn.textContent = compact ? t.addFiles : t.selectFiles;
+        // Ctrl/Cmd+Enter clicks the first .btn-primary: the image download once there is a sheet.
+        pickBtn.classList.toggle('btn-primary', !compact);
+        pickBtn.classList.toggle('btn-secondary', compact);
       }
 
-      async function addFilesNow(files, token) {
+      // entries: [{ file, path, folder }]. Folder entries that are hidden or
+      // not images are dropped (counted when not hidden).
+      async function addEntriesNow(entries, token) {
         if (token !== loadToken) return;
         addNotes = [];
-        var room = Math.max(0, SSG_LIMITS.maxImages - items.length);
-        var over = Math.max(0, files.length - room);
-        if (over) files = files.slice(0, room);
-        var skipped = { type: [], size: [], svg: [] }, added = 0, gifs = 0;
-        for (var i = 0; i < files.length; i++) {
-          renderStatus(fmt(t.statusLoading, { i: i + 1, n: files.length }));
-          var file = files[i], r;
-          try { r = await decodeFile(file); } catch (e) { r = { reason: 'type' }; }
-          if (token !== loadToken) { release(r.source); return; }
-          if (r.reason) { skipped[r.reason].push(file.name || 'image'); continue; }
-          var it = {
-            seq: seq++, fileName: file.name || 'image.png', name: '', bytes: file.size || 0,
-            source: r.source, w: r.w, h: r.h, trim: computeTrim(r.source, r.w, r.h),
-          };
-          createItemEl(it);
-          items.push(it);
-          added++;
-          if (r.gif) gifs++;
+        actionNotes = [];
+        var wasEmpty = !items.length;
+        var ignored = 0, list = [];
+        entries.forEach(function (e) {
+          if (e.folder) {
+            if (isHiddenPath(e.path)) return;
+            if (!isImagePath(e.path)) { ignored++; return; }
+          }
+          list.push(e);
+        });
+        var skipped = { type: [], size: [], svg: [] }, added = 0, over = 0;
+        var gifFrames = [], gifFirst = [], gifBudget = [];
+        for (var i = 0; i < list.length; i++) {
+          var room = SSG_LIMITS.maxImages - items.length;
+          if (room <= 0) { over += list.length - i; break; }
+          renderStatus(fmt(t.statusLoading, { i: i + 1, n: list.length }));
+          var e = list[i], r;
+          try { r = await decodeFile(e.file, e.path, token); } catch (err) { r = { reason: 'type' }; }
+          if (token !== loadToken) { if (r.images) r.images.forEach(function (im) { release(im.source); }); return; }
+          if (r.reason) { skipped[r.reason].push(e.path); continue; }
+          if (r.gif === 'frames') gifFrames.push(e.path);
+          else if (r.gif === 'first') gifFirst.push(e.path);
+          else if (r.gif === 'budget') gifBudget.push(e.path);
+          var images = r.images;
+          if (images.length > room) {
+            over += images.length - room;
+            images.slice(room).forEach(function (im) { release(im.source); });
+            images = images.slice(0, room);
+          }
+          images.forEach(function (im) {
+            var px = analyzePixels(im.source, im.w, im.h);
+            var it = {
+              seq: seq++, path: im.path, kind: im.kind, svgText: im.svgText || null,
+              bytes: images.length > 1 ? 0 : (e.file.size || 0),
+              source: im.source, w: im.w, h: im.h, trim: px.trim, keyFull: px.keyFull, keyTrim: px.keyTrim, name: '',
+            };
+            if (images.length > 1 && im === images[0]) it.bytes = e.file.size || 0;
+            createItemEl(it);
+            items.push(it);
+            added++;
+          });
         }
         if (scratch) { scratch.width = 0; scratch.height = 0; }
         if (added) addNotes.push({ kind: 'success', text: fmt(t.statusAdded, { n: added }) });
+        if (gifFrames.length) addNotes.push({ kind: 'info', text: fmt(t.statusGifFrames, { files: fileList(gifFrames) }) });
+        if (gifFirst.length) addNotes.push({ kind: 'info', text: t.statusGifFirst });
+        if (gifBudget.length) addNotes.push({ kind: 'info', text: fmt(t.statusGifBudget, { files: fileList(gifBudget) }), link: { href: langPrefix + '/tools/gif-splitter/', text: t.gifLink } });
         if (skipped.type.length) addNotes.push({ kind: 'error', text: fmt(t.statusSkippedType, { files: fileList(skipped.type) }) });
         if (skipped.size.length) addNotes.push({ kind: 'error', text: fmt(t.statusSkippedSize, { files: fileList(skipped.size) }) });
         if (skipped.svg.length) addNotes.push({ kind: 'error', text: fmt(t.statusSkippedSvg, { files: fileList(skipped.svg) }) });
         if (over) addNotes.push({ kind: 'error', text: fmt(t.statusSkippedCount, { n: over }) });
-        if (gifs) addNotes.push({ kind: 'info', text: t.statusGif, link: { href: langPrefix + '/tools/gif-splitter/', text: t.gifLink } });
+        if (ignored) addNotes.push({ kind: 'info', text: fmt(t.statusIgnored, { n: ignored }) });
         renderList();
-        renderStatus();
-        if (added) scheduleRebuild(0);
+        if (added) {
+          rebuild();
+          if (wasEmpty) revealOutput();
+        } else {
+          renderStatus();
+        }
       }
 
-      function addFiles(list) {
-        var files = Array.prototype.slice.call(list || []);
-        if (!files.length) return;
+      // On a phone the first sheet may start below the screen; bring the
+      // download buttons into view once.
+      function revealOutput() {
+        if (outputEl.hidden) return;
+        var r = outputEl.getBoundingClientRect();
+        if (r.top > window.innerHeight - 120) {
+          var top = statusEl.getBoundingClientRect().top + window.scrollY - 12;
+          window.scrollTo({ top: top, behavior: 'smooth' });
+        }
+      }
+
+      function addEntries(entries) {
+        if (!entries.length) return;
+        entries.sort(function (a, b) { return naturalCompare(a.path, b.path); });
         var token = loadToken;
-        addQueue = addQueue.then(function () { return addFilesNow(files, token); }).catch(function () {});
+        addQueue = addQueue.then(function () { return addEntriesNow(entries, token); }).catch(function () {});
+      }
+
+      function filesToEntries(list) {
+        return Array.prototype.slice.call(list || []).map(function (f) {
+          var rel = f.webkitRelativePath;
+          return rel ? { file: f, path: folderPath(rel), folder: true } : { file: f, path: f.name || 'image.png', folder: false };
+        });
+      }
+
+      function readEntry(entry, out) {
+        return new Promise(function (resolve) {
+          if (entry.isFile) {
+            entry.file(function (file) { out.push({ file: file, path: folderPath(entry.fullPath), folder: true }); resolve(); }, function () { resolve(); });
+            return;
+          }
+          if (!entry.isDirectory) { resolve(); return; }
+          var reader = entry.createReader(), all = [];
+          (function next() {
+            reader.readEntries(function (batch) {
+              if (!batch.length) {
+                Promise.all(all.map(function (c) { return readEntry(c, out); })).then(resolve);
+                return;
+              }
+              all = all.concat(Array.prototype.slice.call(batch));
+              next();
+            }, function () { resolve(); });
+          })();
+        });
+      }
+
+      function addFromDrop(dt) {
+        var dtItems = dt.items ? Array.prototype.slice.call(dt.items) : [];
+        var entries = dtItems.map(function (it) { return it.kind === 'file' && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null; });
+        if (!entries.some(function (e) { return e && e.isDirectory; })) { addEntries(filesToEntries(dt.files)); return; }
+        var files = dtItems.map(function (it) { return it.kind === 'file' ? it.getAsFile() : null; });
+        var out = [];
+        Promise.all(entries.map(function (e, i) {
+          if (e && e.isDirectory) return readEntry(e, out);
+          if (files[i]) out.push({ file: files[i], path: files[i].name || 'image.png', folder: false });
+          return Promise.resolve();
+        })).then(function () { addEntries(out); });
       }
 
       function removeItem(seqNo) {
@@ -1007,8 +2131,28 @@ const { lang = 'en' } = Astro.props;
         items.forEach(function (it) { it.el.remove(); release(it.source); });
         items = [];
         addNotes = [];
+        actionNotes = [];
         renderList();
         if (rebuildTimer) { clearTimeout(rebuildTimer); rebuildTimer = 0; }
+        rebuild();
+      }
+
+      async function rerasterSvgs(token) {
+        var svgs = items.filter(function (it) { return it.kind === 'svg'; });
+        for (var i = 0; i < svgs.length; i++) {
+          renderStatus(fmt(t.statusSvgLoading, { i: i + 1, n: svgs.length }));
+          var it = svgs[i];
+          var r = await rasterSvg(it.svgText);
+          if (token !== loadToken) { release(r.source); return; }
+          if (r.reason || items.indexOf(it) < 0) { release(r.source); continue; }
+          release(it.source);
+          var px = analyzePixels(r.source, r.w, r.h);
+          it.source = r.source; it.w = r.w; it.h = r.h;
+          it.trim = px.trim; it.keyFull = px.keyFull; it.keyTrim = px.keyTrim;
+          drawThumb(it);
+        }
+        if (scratch) { scratch.width = 0; scratch.height = 0; }
+        renderList();
         rebuild();
       }
 
@@ -1024,6 +2168,7 @@ const { lang = 'en' } = Astro.props;
         canvas.height = 0;
         dataEl.value = '';
         boundsLayer.textContent = '';
+        exportNoteList = [];
       }
 
       function extrudeEdges(ctx, r, e) {
@@ -1040,42 +2185,19 @@ const { lang = 'en' } = Astro.props;
 
       function rebuild() {
         rebuildTimer = 0;
-        buildNotes = [];
+        layoutNotes = [];
+        actionNotes = [];
         if (!items.length) { hideOutput(); renderStatus(); return; }
         var list = sortedItems();
-        var frames = [], sizes = [], ops = [], W, H;
-        var opts = { spacing: prefs.spacing, margin: prefs.margin, extrude: prefs.extrude, pot: prefs.pot };
-        if (prefs.layout === 'grid') {
-          opts.columns = prefs.columns;
-          var g = gridLayout(list.map(function (it) { return { w: it.w, h: it.h }; }), opts);
-          W = g.width; H = g.height;
-          list.forEach(function (it, i) {
-            var f = g.frames[i];
-            frames.push({ name: it.name, x: f.x, y: f.y, w: f.w, h: f.h, trimmed: false, sourceX: 0, sourceY: 0, sourceW: f.w, sourceH: f.h });
-            sizes.push({ w: it.w, h: it.h });
-            ops.push({ it: it, sx: 0, sy: 0, sw: it.w, sh: it.h, dx: g.draws[i].x, dy: g.draws[i].y, edge: f });
-          });
-        } else {
-          opts.maxWidth = prefs.maxWidth;
-          var rects = list.map(function (it) { return prefs.trim ? it.trim : { x: 0, y: 0, w: it.w, h: it.h }; });
-          var p = packMaxRects(rects, opts);
-          W = p.width; H = p.height;
-          var widest = null;
-          list.forEach(function (it, i) {
-            var r = rects[i], pos = p.rects[i];
-            frames.push({
-              name: it.name, x: pos.x, y: pos.y, w: r.w, h: r.h,
-              trimmed: r.w !== it.w || r.h !== it.h,
-              sourceX: r.x, sourceY: r.y, sourceW: it.w, sourceH: it.h,
-            });
-            sizes.push({ w: r.w, h: r.h });
-            ops.push({ it: it, sx: r.x, sy: r.y, sw: r.w, sh: r.h, dx: pos.x, dy: pos.y, edge: { x: pos.x, y: pos.y, w: r.w, h: r.h } });
-            if (!widest || r.w > widest.w) widest = { w: r.w, name: it.name };
-          });
-          if (p.widened) buildNotes.push({ kind: 'info', text: fmt(t.statusWidened, { name: widest.name, w: W }) });
-        }
+        var L = layoutSheet(list, {
+          layout: prefs.layout, columns: prefs.columns, maxWidth: prefs.maxWidth, spacing: prefs.spacing,
+          margin: prefs.margin, extrude: prefs.extrude, pot: prefs.pot, trim: prefs.trim, alias: prefs.alias,
+        });
+        var W = L.width, H = L.height, frames = L.frames, unique = L.unique;
+        if (L.widened) layoutNotes.push({ kind: 'info', text: fmt(t.statusWidened, { name: L.widestName, w: W }) });
+        if (unique < frames.length) layoutNotes.push({ kind: 'info', text: fmt(t.statusAlias, { n: frames.length - unique }) });
         if (!fitsLimits(W, H)) {
-          buildNotes.push({ kind: 'error', text: fmt(t.statusTooBig, { w: W, h: H }) });
+          layoutNotes.push({ kind: 'error', text: fmt(t.statusTooBig, { w: W, h: H }) });
           hideOutput();
           renderStatus();
           return;
@@ -1085,12 +2207,15 @@ const { lang = 'en' } = Astro.props;
         var ctx = canvas.getContext('2d');
         ctx.imageSmoothingEnabled = false;
         ctx.clearRect(0, 0, W, H);
-        ops.forEach(function (op) {
-          ctx.drawImage(op.it.source, op.sx, op.sy, op.sw, op.sh, op.dx, op.dy, op.sw, op.sh);
+        L.draws.forEach(function (op) {
+          ctx.drawImage(list[op.index].source, op.sx, op.sy, op.sw, op.sh, op.dx, op.dy, op.sw, op.sh);
         });
-        if (prefs.extrude) ops.forEach(function (op) { extrudeEdges(ctx, op.edge, prefs.extrude); });
+        if (prefs.extrude) L.draws.forEach(function (op) { extrudeEdges(ctx, op.edge, prefs.extrude); });
         built = { frames: frames, width: W, height: H };
-        metaEl.textContent = fmt(t.meta, { w: W, h: H, n: frames.length, fill: Math.round(fillRatio(sizes, W, H) * 100) });
+        var fill = Math.round(fillRatio(L.drawn, W, H) * 100);
+        metaEl.textContent = unique < frames.length
+          ? fmt(t.metaAlias, { w: W, h: H, n: frames.length, u: unique, fill: fill })
+          : fmt(t.meta, { w: W, h: H, n: frames.length, fill: fill });
         refreshData();
         renderBounds();
         outputEl.hidden = false;
@@ -1098,12 +2223,16 @@ const { lang = 'en' } = Astro.props;
       }
 
       function sheetName() { return sanitizeSheetName(prefs.sheetName); }
+      function imageInfo() { return IMAGE_FORMATS[prefs.imageFormat] || IMAGE_FORMATS.png; }
 
       function refreshData() {
         var fmtInfo = FORMATS[prefs.format];
+        var img = imageInfo();
         dlDataBtn.textContent = fmt(t.downloadData, { ext: fmtInfo.ext.toUpperCase() });
+        dlImgBtn.textContent = fmt(t.downloadImage, { ext: img.ext === 'webp' ? 'WebP' : 'PNG' });
         if (!built) return;
-        dataEl.value = fmtInfo.build(built.frames, { image: sheetName() + '.png', width: built.width, height: built.height });
+        dataEl.value = fmtInfo.build(built.frames, { image: sheetName() + '.' + img.ext, width: built.width, height: built.height, ratio: prefs.cssRatio });
+        exportNoteList = exportNotes({ format: prefs.format, imageFormat: prefs.imageFormat, frames: built.frames, width: built.width, height: built.height, ratio: prefs.cssRatio });
       }
 
       function renderBounds() {
@@ -1139,29 +2268,48 @@ const { lang = 'en' } = Astro.props;
         setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
       }
 
-      /* ── Input: drop zone click / keyboard / drag / paste ── */
+      function showActionError(text) {
+        actionNotes = [{ kind: 'error', text: text }];
+        renderStatus();
+      }
+
+      /* ── Input: buttons, drop zone, folders, paste ── */
+      pickBtn.addEventListener('click', function (e) { e.stopPropagation(); fileInput.click(); });
+      pickDirBtn.addEventListener('click', function (e) { e.stopPropagation(); dirInput.click(); });
       dropEl.addEventListener('click', function (e) {
-        if (e.target !== fileInput) fileInput.click();
-      });
-      dropEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+        if (e.target === dropEl || e.target.closest('.ssg-drop-text, .ssg-drop-icon')) fileInput.click();
       });
       dropEl.addEventListener('dragover', function (e) { e.preventDefault(); dropEl.classList.add('drag-over'); });
       dropEl.addEventListener('dragleave', function () { dropEl.classList.remove('drag-over'); });
       fileInput.addEventListener('change', function () {
-        addFiles(this.files);
+        addEntries(filesToEntries(this.files));
+        this.value = '';
+      });
+      dirInput.addEventListener('change', function () {
+        addEntries(filesToEntries(this.files));
         this.value = '';
       });
       wrapEl.addEventListener('dragover', function (e) { e.preventDefault(); });
       wrapEl.addEventListener('drop', function (e) {
         e.preventDefault();
         dropEl.classList.remove('drag-over');
-        if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
+        if (e.dataTransfer) addFromDrop(e.dataTransfer);
       });
       document.addEventListener('paste', function (e) {
         if (!e.clipboardData || !e.clipboardData.files || !e.clipboardData.files.length) return;
         e.preventDefault();
-        addFiles(e.clipboardData.files);
+        addEntries(filesToEntries(e.clipboardData.files));
+      });
+      // The page-wide Ctrl/Cmd+L empties text fields and the saved options;
+      // here it also removes the images. Options stay as they are.
+      document.addEventListener('keydown', function (e) {
+        if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        if (!wrapEl.contains(document.activeElement)) return;
+        setTimeout(function () {
+          clearAll();
+          nameInput.value = prefs.sheetName;
+          savePrefs();
+        }, 0);
       });
 
       /* ── Image list ── */
@@ -1171,7 +2319,7 @@ const { lang = 'en' } = Astro.props;
       });
       clearBtn.addEventListener('click', function () {
         clearAll();
-        dropEl.focus();
+        pickBtn.focus();
       });
       orderSelect.addEventListener('change', function () {
         prefs.order = orderSelect.value === 'added' ? 'added' : 'name';
@@ -1185,7 +2333,7 @@ const { lang = 'en' } = Astro.props;
         r.addEventListener('change', function () {
           if (!r.checked) return;
           prefs.layout = r.value === 'grid' ? 'grid' : 'packed';
-          toggleLayoutFields();
+          toggleFields();
           savePrefs();
           scheduleRebuild();
         });
@@ -1210,20 +2358,45 @@ const { lang = 'en' } = Astro.props;
         savePrefs();
         scheduleRebuild();
       });
-      trimInput.addEventListener('change', function () {
-        prefs.trim = trimInput.checked;
-        savePrefs();
-        scheduleRebuild();
-      });
-      potInput.addEventListener('change', function () {
-        prefs.pot = potInput.checked;
-        savePrefs();
-        scheduleRebuild();
-      });
+      function bindCheck(input, key, after) {
+        input.addEventListener('change', function () {
+          prefs[key] = input.checked;
+          savePrefs();
+          after();
+        });
+      }
+      bindCheck(trimInput, 'trim', function () { scheduleRebuild(); });
+      bindCheck(aliasInput, 'alias', function () { scheduleRebuild(); });
+      bindCheck(potInput, 'pot', function () { scheduleRebuild(); });
+      bindCheck(keepExtInput, 'keepExt', function () { renderList(); scheduleRebuild(0); });
+      bindCheck(gifFramesInput, 'gifFrames', function () {});
+      bindCheck(boundsInput, 'showBounds', function () { renderBounds(); });
       formatSelect.addEventListener('change', function () {
         prefs.format = FORMATS[formatSelect.value] ? formatSelect.value : 'hash';
+        toggleFields();
         savePrefs();
         refreshData();
+        renderStatus();
+      });
+      ratioSelect.addEventListener('change', function () {
+        prefs.cssRatio = toInt(ratioSelect.value, 1, 3, 1);
+        savePrefs();
+        refreshData();
+        renderStatus();
+      });
+      imgFmtSelect.addEventListener('change', function () {
+        prefs.imageFormat = IMAGE_FORMATS[imgFmtSelect.value] && (imgFmtSelect.value !== 'webp' || webpOk) ? imgFmtSelect.value : 'png';
+        imgFmtSelect.value = prefs.imageFormat;
+        savePrefs();
+        refreshData();
+        renderStatus();
+      });
+      svgScaleSelect.addEventListener('change', function () {
+        prefs.svgScale = toInt(svgScaleSelect.value, 1, 4, 1);
+        savePrefs();
+        if (!items.some(function (it) { return it.kind === 'svg'; })) return;
+        var token = loadToken;
+        addQueue = addQueue.then(function () { return rerasterSvgs(token); }).catch(function () {});
       });
       nameInput.addEventListener('input', function () {
         prefs.sheetName = nameInput.value;
@@ -1236,26 +2409,22 @@ const { lang = 'en' } = Astro.props;
         savePrefs();
         refreshData();
       });
-      boundsInput.addEventListener('change', function () {
-        prefs.showBounds = boundsInput.checked;
-        savePrefs();
-        renderBounds();
-      });
 
       /* ── Output actions ── */
-      dlPngBtn.addEventListener('click', function () {
+      dlImgBtn.addEventListener('click', function () {
         flushRebuild();
         if (!built) return;
-        var name = sheetName() + '.png';
+        var img = imageInfo();
+        var label = img.ext === 'webp' ? 'WebP' : 'PNG';
+        if (exportNoteList.some(function (n) { return n.kind === 'error'; })) { renderStatus(); return; }
         try {
           canvas.toBlob(function (blob) {
-            if (!blob) { buildNotes = [{ kind: 'error', text: t.statusExportFailed }]; renderStatus(); return; }
-            downloadBlob(blob, name);
-            if (window.trackTool) window.trackTool(SLUG, 'png');
-          }, 'image/png');
+            if (!blob || blob.type !== img.mime) { showActionError(fmt(t.statusExportFailed, { ext: label })); return; }
+            downloadBlob(blob, sheetName() + '.' + img.ext);
+            if (window.trackTool) window.trackTool(SLUG, img.ext);
+          }, img.mime, 1);
         } catch (e) {
-          buildNotes = [{ kind: 'error', text: t.statusExportFailed }];
-          renderStatus();
+          showActionError(fmt(t.statusExportFailed, { ext: label }));
         }
       });
       dlDataBtn.addEventListener('click', function () {
@@ -1268,14 +2437,19 @@ const { lang = 'en' } = Astro.props;
       copyBtn.addEventListener('click', function () {
         flushRebuild();
         if (!dataEl.value) return;
-        function failed() { buildNotes = [{ kind: 'error', text: t.statusCopyFailed }]; renderStatus(); }
-        if (!navigator.clipboard || !navigator.clipboard.writeText) { failed(); return; }
-        navigator.clipboard.writeText(dataEl.value).then(function () {
+        function done() {
           copyBtn.textContent = t.copied;
           copyBtn.classList.add('copied');
           setTimeout(function () { copyBtn.textContent = t.copy; copyBtn.classList.remove('copied'); }, 1500);
           if (window.trackTool) window.trackTool(SLUG, 'copy');
-        }, failed);
+        }
+        function fallback() {
+          var ok = false;
+          try { dataEl.focus(); dataEl.select(); ok = document.execCommand('copy'); } catch (e) { ok = false; }
+          if (ok) done(); else showActionError(t.statusCopyFailed);
+        }
+        if (!navigator.clipboard || !navigator.clipboard.writeText) { fallback(); return; }
+        navigator.clipboard.writeText(dataEl.value).then(done, fallback);
       });
 
       loadPrefs();
@@ -1290,10 +2464,13 @@ const { lang = 'en' } = Astro.props;
     .ssg-wrap [hidden] { display: none; }
 
     .ssg-drop {
-      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.6rem;
       border: 2px dashed var(--color-border);
       border-radius: var(--radius-md);
-      padding: 2rem 1rem;
+      padding: 1.25rem 1rem;
       text-align: center;
       cursor: pointer;
       transition: border-color var(--transition-fast), background var(--transition-fast);
@@ -1304,29 +2481,34 @@ const { lang = 'en' } = Astro.props;
       border-color: var(--color-primary);
       background: var(--color-surface);
     }
-    .ssg-drop:focus-visible {
-      outline: none;
-      border-color: var(--color-primary);
-      box-shadow: 0 0 0 4px var(--color-primary-light);
-    }
-    .ssg-drop-inner {
+    .ssg-drop-icon { color: var(--color-text-secondary); flex-shrink: 0; }
+    .ssg-drop-text {
       display: flex;
       flex-direction: column;
-      align-items: center;
-      gap: 0.4rem;
+      gap: 0.3rem;
       color: var(--color-text-secondary);
-      pointer-events: none;
+      min-width: 0;
     }
-    .ssg-drop-inner p { margin: 0; font-size: 0.95rem; }
-    .ssg-drop-inner .ssg-hint { font-size: 0.8rem; }
-    .ssg-file-input {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      opacity: 0;
-      cursor: pointer;
+    .ssg-drop-text p { margin: 0; }
+    .ssg-drop-hint { font-size: 0.95rem; }
+    .ssg-hint { font-size: 0.8rem; }
+    .ssg-drop-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.5rem;
+      cursor: default;
     }
+    .ssg-drop.is-compact {
+      flex-direction: row;
+      flex-wrap: wrap;
+      padding: 0.6rem 0.75rem;
+      text-align: left;
+    }
+    .ssg-drop.is-compact .ssg-drop-icon,
+    .ssg-drop.is-compact .ssg-hint { display: none; }
+    .ssg-drop.is-compact .ssg-drop-text { flex: 1 1 14rem; }
+    .ssg-drop.is-compact .ssg-drop-hint { font-size: 0.88rem; }
 
     .ssg-panel {
       display: flex;
@@ -1569,9 +2751,14 @@ const { lang = 'en' } = Astro.props;
       gap: 0.5rem;
     }
     .ssg-actions .ssg-copy { min-height: 40px; padding: 0.52rem 1.1rem; font-size: 0.9rem; }
-    .ssg-data { min-height: 200px; }
+    .ssg-data { min-height: 160px; }
 
     @media (max-width: 640px) {
+      .ssg-drop { padding: 1rem 0.75rem; }
+      .ssg-drop-icon { display: none; }
+      .ssg-pick-dir { display: none; }
+      .ssg-drop-actions .btn-primary,
+      .ssg-drop-actions .btn-secondary { min-height: 44px; }
       .ssg-list {
         grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
         max-height: 50vh;
@@ -1580,6 +2767,7 @@ const { lang = 'en' } = Astro.props;
       .ssg-actions .btn-primary,
       .ssg-actions .btn-secondary,
       .ssg-actions .ssg-copy { flex: 1 1 45%; min-height: 44px; }
+      .ssg-preview { max-height: 360px; }
     }
   </style>
 </div>

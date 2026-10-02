@@ -19,6 +19,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import yaml from 'js-yaml';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/YamlValidatorTool.astro'), 'utf8');
@@ -117,7 +119,7 @@ check('single document ok', v('a: [1, 2]').ok);
   const big = 'x: 1\n' + '\n'.repeat(20000) + 'y';
   const t0 = Date.now();
   v(big);
-  check('long blank runs stay fast', Date.now() - t0 < 1000, (Date.now() - t0) + ' ms');
+  check('long blank runs stay fast', Date.now() - t0 < 1000 * PERF_SLACK, (Date.now() - t0) + ' ms');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');

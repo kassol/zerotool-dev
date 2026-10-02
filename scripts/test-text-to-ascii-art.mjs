@@ -37,6 +37,8 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TextToAsciiArtTool.astro'), 'utf8');
@@ -288,7 +290,7 @@ eq('input limit', E.MAX_INPUT, 2000);
   const t0 = performance.now();
   for (const n of fontNames) E.renderFiglet(fonts[n], long, { layout: 'overlap' });
   const ms = performance.now() - t0;
-  check('12 fonts × ' + E.MAX_INPUT + ' characters without a width limit in under 1.5 s (' + Math.round(ms) + ' ms)', ms < 1500);
+  check('12 fonts × ' + E.MAX_INPUT + ' characters without a width limit in under 1.5 s (' + Math.round(ms) + ' ms)', ms < 1500 * PERF_SLACK);
 }
 
 // ---------- examples in the tool pages ----------

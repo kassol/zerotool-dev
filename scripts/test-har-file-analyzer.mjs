@@ -21,6 +21,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const componentSrc = readFileSync(join(root, 'src/components/tools/HarFileAnalyzerTool.astro'), 'utf8');
@@ -443,7 +445,7 @@ function baseEntry(over = {}) {
   const big = E.buildIndex(many);
   const dt = performance.now() - t;
   check('200,000 entries index without stack overflow', big.rows.length === 200000 && big.max > big.min, 'min ' + big.min);
-  check('200,000 entries index in under 3 s', dt < 3000, Math.round(dt) + ' ms');
+  check('200,000 entries index in under 3 s', dt < 3000 * PERF_SLACK, Math.round(dt) + ' ms');
 }
 
 // ---------- formatting ----------

@@ -38,7 +38,7 @@ top10.forEach((name, i) => {
 });
 
 const bcrypt = read('src/components/tools/BcryptGeneratorTool.astro');
-check('bcrypt cost slider is 4–14, default 12', /id="bcg-rounds"[^>]*min="4" max="14" value="12"/.test(bcrypt) && text.includes('cost factor from 4 to 14 (default 12)'));
+check('bcrypt cost choice is 4–31, default 12', /length: 28 \}, \(_, i\) => i \+ 4/.test(bcrypt) && /selected=\{c === 12\}/.test(bcrypt) && text.includes('cost factor from 4 to 31 (default 12)'));
 const csp = read('src/components/tools/CspHeaderGeneratorTool.astro');
 check("CSP generator uses the 'nonce-{RANDOM}' placeholder", csp.includes("'nonce-{RANDOM}'") && text.includes("'nonce-{RANDOM}'"));
 const hash = read('src/components/tools/HashGeneratorTool.astro');

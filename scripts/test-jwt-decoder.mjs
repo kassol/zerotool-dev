@@ -130,8 +130,12 @@ eq('highlight spans kept', E.syntaxHighlight({ a: 1, b: true, c: null, d: 'x' })
   has('RS256 row', row('RS256, PS256 (2048-bit key)', sigs.RS256));
   has('ES256 row', row('ES256', sigs.ES256));
   has('EdDSA row', row('EdDSA (Ed25519)', sigs.EdDSA));
-  const der = cryptoSign('sha256', input, ec.privateKey).length;
-  eq('DER ES256 signature is 70-72 bytes', der >= 70 && der <= 72, true);
+  // DER length depends on the random signature: r and s are each 32 bytes, plus a 0x00 when the
+  // top bit is set, minus leading zero bytes. Check the length from the structure, not a fixed range.
+  const derSig = cryptoSign('sha256', input, ec.privateKey);
+  const intLen = (off) => derSig[off + 1];
+  const rLen = intLen(2), sLen = intLen(4 + rLen);
+  eq('DER ES256 signature is SEQUENCE(INTEGER r, INTEGER s)', derSig[0] === 0x30 && derSig[2] === 0x02 && derSig[4 + rLen] === 0x02 && derSig.length === 2 + derSig[1] && derSig[1] === 4 + rLen + sLen && rLen <= 33 && sLen <= 33, true);
 
   // code blocks
   let pyjwt = false;
