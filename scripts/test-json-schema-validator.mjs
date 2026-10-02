@@ -82,6 +82,22 @@ const lib = {
 };
 const T = STRINGS.en;
 
+if (process.argv[2] === '--fill') {
+  // rewrites the output blocks of the 4 tool pages with the engine's output (review the diff)
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const file = join(root, 'src/content/tools/json-schema-validator/' + lang + '.mdx');
+    let text = readFileSync(file, 'utf8');
+    for (const ex of examplesOf(text).reverse()) {
+      if (ex.broken) continue;
+      const o = ex.outBlock;
+      text = text.slice(0, o.start) + '```text\n' + exampleOutput(ex, STRINGS[lang]) + '\n```' + text.slice(o.end);
+    }
+    writeFileSync(file, text);
+  }
+  console.log('filled');
+  process.exit(0);
+}
+
 let failures = 0, passes = 0, skips = 0;
 function check(name, ok, detail) {
   if (ok) { passes++; return; }
@@ -488,8 +504,11 @@ for (const [text, code, line, col] of SYN) {
     ['7', { items: [{ type: 'integer' }], additionalItems: false }, [1, 2]], ['2019-09', { items: [{ type: 'integer' }], additionalItems: false }, [1, 2]],
     ['2020-12', { multipleOf: 0.01 }, 0.075], ['2020-12', { multipleOf: 0.01 }, 19.99], ['2020-12', { type: 'number', maximum: 1e308 }, 1e308],
   ];
-  // documented difference: Ajv skips "__proto__" in properties (Python applies it)
+  // documented differences: Ajv skips "__proto__" in properties (Python applies it); \d is ASCII
+  // in ECMA-262 but matches full-width digits in Python re (ja tool page)
   const KNOWN_DIFF = [['2020-12', { properties: { ['__proto__']: { type: 'number' } } }, JSON.parse('{"__proto__":"foo"}')]];
+  const DIGIT = ['2020-12', { type: 'string', pattern: '^\\d{3}-\\d{4}$' }, '１０５-００１１'];
+  CORPUS.push(['4', { type: 'object', required: ['score'], properties: { score: { type: 'number', minimum: 0, maximum: 100, exclusiveMaximum: true }, rank: { const: 'A' } } }, { score: 99, rank: 'B' }]);
   if (!ver || !/^4\./.test(ver)) skip('Python jsonschema comparison (' + py + ': ' + (ver || 'not installed') + ')');
   else {
     const script = 'import json,sys\nfrom jsonschema import Draft4Validator as V4, Draft6Validator as V6, Draft7Validator as V7, Draft201909Validator as V19, Draft202012Validator as V20\nM={"4":V4,"6":V6,"7":V7,"2019-09":V19,"2020-12":V20}\nprint(json.dumps([M[d](s).is_valid(x) for d,s,x in json.load(sys.stdin)]))';
@@ -498,6 +517,30 @@ for (const [text, code, line, col] of SYN) {
     CORPUS.forEach(([d, s, x], i) => check('Python jsonschema ' + ver + ' agrees: [' + d + '] ' + JSON.stringify(s) + ' ' + JSON.stringify(x), valid(s, x, d, false) === pyRes[i], [valid(s, x, d, false), pyRes[i]]));
     const diffPy = JSON.parse(execFileSync(py, ['-c', script], { input: JSON.stringify(KNOWN_DIFF.map(([d, s, x]) => [d, s, x])).replace('{}', '{"__proto__":{"type":"number"}}') }).toString());
     check('known difference: Ajv skips properties named __proto__, Python does not', diffPy[0] === false && valid(KNOWN_DIFF[0][1], KNOWN_DIFF[0][2]) === true);
+    const dPy = JSON.parse(execFileSync(py, ['-c', script], { input: JSON.stringify([DIGIT]) }).toString());
+    check('known difference (ja page): \\d matches full-width digits in Python, not in ECMA-262', dPy[0] === true && valid(DIGIT[1], DIGIT[2]) === false);
+    // tool-page examples: the errors Python reports (paths and keywords) are the tool's, except the documented \d case
+    const pagePy = 'import json,sys\nfrom jsonschema import validators\nout=[]\nfor s,d in json.load(sys.stdin):\n    V=validators.validator_for(s)\n    out.append(sorted("/"+"/".join(str(x) for x in e.absolute_path)+" "+e.validator for e in V(s).iter_errors(d)))\nprint(json.dumps(out))';
+    const pageCases = [];
+    for (const lang of ['en', 'ja', 'ko']) {
+      for (const ex of examplesOf(readFileSync(join(root, 'src/content/tools/json-schema-validator/' + lang + '.mdx'), 'utf8'))) {
+        if (ex.broken || ex.extras || ex.opts.menu) continue;
+        let sc, da; try { sc = JSON.parse(ex.schema); da = JSON.parse(ex.data); } catch { continue; }
+        if (sc.$schema === undefined || /"\$ref":\s*"(?!#)/.test(JSON.stringify(sc))) continue; // no external $ref: Python would fetch it
+        pageCases.push([lang, sc, da]);
+      }
+    }
+    check('page examples compared with Python: at least 4', pageCases.length >= 4, pageCases.length);
+    const pyErr = JSON.parse(execFileSync(py, ['-c', pagePy], { input: JSON.stringify(pageCases.map((c) => [c[1], c[2]])) }).toString());
+    pageCases.forEach(([lang, sc, da], i) => {
+      const r = run(JSON.stringify(sc), JSON.stringify(da), { formats: false });
+      const mine = [];
+      const walk = (it) => { if (!it.branches) mine.push((it.keyPath && it.keyword !== 'additionalProperties' && it.keyword !== 'unevaluatedProperties' ? it.path : it.path || '/') .replace(/^$/, '/') + ' ' + it.keyword); };
+      (r.docs[0] ? r.docs[0].groups : []).forEach((g) => g.items.forEach(walk));
+      const want = pyErr[i].filter((x) => x !== '/postalCode pattern');
+      const got = mine.map((x) => x.replace(/^\/ /, '/ ')).filter((x) => x !== '/postalCode pattern').sort();
+      check('[' + lang + '] page example ' + (sc.title || Object.keys(sc.properties || {}).join(',')) + ': Python jsonschema reports the same errors', JSON.stringify(got) === JSON.stringify(want.sort()), [got, want]);
+    });
   }
 }
 
@@ -513,26 +556,56 @@ for (const [text, code, line, col] of SYN) {
   console.log('  perf: ' + (dataText.length / 1e6).toFixed(1) + ' MB validated in ' + Math.round(ms) + ' ms');
 }
 
-// ---------- 12. tool pages: {/* jsv-ex: {...} */} + schema block + data block + output block ----------
+// ---------- 12. tool pages: {/* jsv-ex: {...} */} + schema, data and output blocks ----------
+// {"same": true} reuses the previous example's schema and data (only the output block follows);
+// {"extras": true} uses the nearest {/* jsv-extra */} block above as a referenced schema.
+// `node scripts/test-json-schema-validator.mjs --fill` rewrites the output blocks from the engine.
+function examplesOf(text) {
+  const fence = /```[a-z]*\n([\s\S]*?)```/y;
+  const blocks = (from, n) => {
+    const out = []; let i = from;
+    while (out.length < n) {
+      const ws = /\s*/y; ws.lastIndex = i; ws.exec(text); i = ws.lastIndex;
+      fence.lastIndex = i; const m = fence.exec(text);
+      if (!m) return null;
+      out.push({ body: m[1], start: i, end: fence.lastIndex }); i = fence.lastIndex;
+    }
+    return out;
+  };
+  const list = []; let prev = null;
+  for (const m of text.matchAll(/\{\/\* jsv-ex: (\{.*?\}) \*\/\}/g)) {
+    const opts = JSON.parse(m[1]);
+    const b = blocks(m.index + m[0].length, opts.same ? 1 : 3);
+    if (!b) { list.push({ opts, broken: true }); continue; }
+    const ex = { opts, schema: opts.same && prev ? prev.schema : b[0].body, data: opts.same && prev ? prev.data : b[1].body, outBlock: b[b.length - 1] };
+    if (opts.extras) {
+      const k = text.lastIndexOf('{/* jsv-extra */}', m.index);
+      const eb = k >= 0 ? blocks(k + '{/* jsv-extra */}'.length, 1) : null;
+      ex.extras = eb ? eb[0].body : '';
+    }
+    list.push(ex); prev = ex;
+  }
+  return list;
+}
+function exampleOutput(ex, L) {
+  const res = E.runValidation(lib, { schemaText: ex.schema, dataText: ex.data, extrasText: ex.extras || '', menu: ex.opts.menu || 'auto', formats: ex.opts.formats !== false }, L, null);
+  const lines = [E.statusText(res, L)];
+  const rep = E.reportText(res, L);
+  if (rep) lines.push(rep);
+  res.notices.forEach((x) => lines.push('* ' + E.noticeText(x, L)));
+  return lines.join('\n');
+}
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const rel = 'src/content/tools/json-schema-validator/' + lang + '.mdx';
   const text = readFileSync(join(root, rel), 'utf8');
-  const re = /\{\/\* jsv-ex: (\{.*?\}) \*\/\}\s*```(?:json|yaml)\n([\s\S]*?)```\s*```(?:json|yaml|text)\n([\s\S]*?)```\s*```text\n([\s\S]*?)```/g;
-  let n = 0;
-  for (const m of text.matchAll(re)) {
-    n++;
-    const opts = JSON.parse(m[1]);
-    const res = run(m[2], m[3], { menu: opts.menu, formats: opts.formats, T: STRINGS[lang] });
-    const lines = [E.statusText(res, STRINGS[lang])];
-    const rep = E.reportText(res, STRINGS[lang]);
-    if (rep) lines.push(rep);
-    res.notices.forEach((x) => lines.push('* ' + E.noticeText(x, STRINGS[lang])));
-    const want = m[4].trim();
-    check(rel + ' example ' + n + ' output matches the engine', lines.join('\n') === want, lines.join('\n'));
-  }
-  check(rel + ' has at least 3 jsv-ex examples', n >= 3, n);
-  const re2 = /\{\/\* jsv-check: (\{.*?\}) \*\/\}/g;
-  for (const m of text.matchAll(re2)) {
+  const list = examplesOf(text);
+  list.forEach((ex, i) => {
+    if (ex.broken) { check(rel + ' example ' + (i + 1) + ' has its blocks', false); return; }
+    const got = exampleOutput(ex, STRINGS[lang]);
+    check(rel + ' example ' + (i + 1) + ' output matches the engine', ex.outBlock.body.trim() === got, got);
+  });
+  check(rel + ' has at least 3 jsv-ex examples', list.length >= 3, list.length);
+  for (const m of text.matchAll(/\{\/\* jsv-check: (\{.*?\}) \*\/\}/g)) {
     const c = JSON.parse(m[1]);
     const got = valid(c.schema, c.data, c.draft || '2020-12', c.formats !== false);
     check(rel + ' jsv-check ' + m[1], got === c.valid, got);

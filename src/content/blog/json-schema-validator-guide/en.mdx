@@ -118,7 +118,7 @@ Two more details that cause bugs. `integer` means a number with no fractional pa
 | Ajv 8.18.0 | Strict mode throws `unknown format "email" ignored in schema at path "#/properties/email"` at compile time; with `strict: false` the format is ignored | Add [ajv-formats](https://github.com/ajv-validator/ajv-formats) |
 | Python jsonschema 4.26.0 | Not checked, in any draft | Pass `format_checker=Draft202012Validator.FORMAT_CHECKER`; install `jsonschema[format]` for `date-time`, `uri` and others |
 | Go santhosh-tekuri/jsonschema v6.0.3 | Checked for draft-07 schemas; not checked for 2019-09, 2020-12 or schemas without `$schema` | Call `compiler.AssertFormat()` |
-| ZeroTool JSON Schema Validator | Checked in both Draft-07 and 2020-12 modes | Uses ajv-formats for 15 formats |
+| ZeroTool JSON Schema Validator | Checked in every draft while Check format is on (the default) | Uses ajv-formats for 15 formats; turn the switch off for the 2020-12 default |
 
 Even with checking on, the three implementations accept different strings. With formats enabled (Python with only the base install, which registers checkers for `date`, `email`, `idn-email`, `ipv4`, `ipv6`, `regex` and `uuid`):
 
@@ -193,20 +193,20 @@ With `AssertFormat()` it printed all five problems, including `'not-an-email' is
 
 ## Checking a schema in the browser
 
-The [ZeroTool JSON Schema Validator](/tools/json-schema-validator/) runs Ajv 8 with ajv-formats in your browser; the schema and data are not uploaded. Choose **Draft-07** or **Draft 2020-12** in the menu before validating: the menu decides which Ajv class compiles the schema, and a `$schema` from the other draft is a compile error. A 2020-12 schema in Draft-07 mode reports `Schema compilation error: no schema with key or ref "https://json-schema.org/draft/2020-12/schema"`.
+The [ZeroTool JSON Schema Validator](/tools/json-schema-validator/) runs Ajv 8 with ajv-formats in your browser; the schema and data are not uploaded. It reads the draft from `$schema` (draft-04 to 2020-12) and uses 2020-12 when `$schema` is missing, the same default as Python jsonschema and Go v6. The menu can force a draft; a `$schema` from another draft then produces a note instead of a compile error.
 
-All errors are listed, not just the first (Ajv's `allErrors`), each with the JSON Pointer path, the message and Ajv's parameters. The tool's own invalid example (Draft-07 user schema, data with an empty name, a negative age, a bad email, an unknown role and an extra key) gives:
+All errors are listed, not just the first (Ajv's `allErrors`), grouped by the JSON Pointer path in the data, with the line and column and the keyword in the schema. The tool's own invalid example (Draft-07 user schema, data with an empty name, a negative age, a bad email, an unknown role and an extra key) gives, with **Copy errors**:
 
 {/* js-tool */}
 ```text
-(root) must NOT have additional properties (additionalProperty: "extra")
-/name must NOT have fewer than 1 characters (limit: 1)
-/age must be >= 0 (comparison: ">=", limit: 0)
-/email must match format "email" (format: "email")
-/role must be equal to one of the allowed values (allowedValues: ["admin","user","guest"])
+(root) (line 6, column 3): property "extra" is not allowed (additionalProperties)  schema #/additionalProperties
+/name (line 2, column 11): must have at least 1 character(s); has 0  schema #/properties/name/minLength
+/age (line 3, column 10): must be ≥ 0, but is -5  schema #/properties/age/minimum
+/email (line 4, column 12): is not a valid "email"  schema #/properties/email/format
+/role (line 5, column 11): must be one of "admin", "user", "guest"  schema #/properties/role/enum
 ```
 
-The tool runs Ajv with `strict: false`, so unknown keywords such as `prefixItems` in a Draft-07 schema are ignored rather than reported, as in Python and Go. Run Ajv in strict mode in your build if you want those caught. Formats outside the ajv-formats list (`idn-email`, `iri`, custom names) are accepted without a check.
+The tool runs Ajv in non-strict mode, so unknown keywords such as `prefixItems` in a Draft-07 schema are ignored, as in Python and Go, but each one is listed under the result: `Unknown keyword "prefixItems" at # is ignored.` Formats outside the ajv-formats list (`idn-email`, `iri`, custom names) pass and are listed the same way.
 
 ## Mistakes that pass review
 

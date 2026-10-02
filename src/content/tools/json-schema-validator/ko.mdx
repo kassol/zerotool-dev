@@ -1,79 +1,138 @@
 ---
-seoTitle: "JSON Schema 유효성 검사기 — JSON을 온라인으로 스키마 검증 | ZeroTool"
-seoDescription: "JSON 데이터를 JSON Schema에 대해 온라인으로 검사. Draft-07 및 Draft 2020-12 지원. 오류 경로(예: /items/0/name)와 상세 메시지 표시. 무료, 100% 클라이언트사이드."
+seoTitle: "JSON Schema 검증기 | ZeroTool"
+seoDescription: "JSON, YAML, JSON Lines를 JSON Schema(draft-04~2020-12)로 검증하는 유효성 검사 도구. 오류에서 데이터 행과 스키마 키워드로 이동하고, NFD 한글과 큰 정수도 짚어 줍니다."
 faqItems:
-  - question: "지원되는 JSON Schema 초안은 무엇인가요?"
-    answer: "Draft-07(가장 널리 사용되며 OpenAPI 3.0 및 많은 검사기와 호환)과 Draft 2020-12(최신 명세)를 지원합니다. 검증 전 드롭다운으로 초안을 전환하세요."
-  - question: "format(email, date, uuid)도 검증하나요?"
-    answer: "네, 두 초안 모두에서 검증합니다. ajv-formats로 검증하는 format은 email, uri, uri-reference, uri-template, date, time, date-time, duration, hostname, ipv4, ipv6, uuid, json-pointer, relative-json-pointer, regex입니다. 예를 들어 \"not-an-email\"은 \"format\": \"email\"을 통과하지 못합니다. idn-email, iri, 사용자 정의 이름 등 그 밖의 format은 검증하지 않습니다. Draft 2020-12는 format을 기본적으로 주석으로 다루고 검증 여부를 구현이 고르게 하며, 이 도구는 검증합니다."
-  - question: "/user/age 같은 오류 경로는 무엇을 의미하나요?"
-    answer: "오류 경로는 JSON Pointer 구문(RFC 6901)을 따릅니다. /user/age는 user 객체 내의 age 속성이 유효성 검사에 실패했음을 의미합니다. 루트 객체는 /로 표시되며, 배열 항목은 /items/0, /items/1 등으로 나타납니다."
-  - question: "JSON Schema란 무엇인가요?"
-    answer: "JSON Schema는 JSON 문서를 주석 처리하고 유효성을 검사하기 위한 어휘입니다. JSON 객체의 예상 구조, 유형, 필수 필드, 값 범위, 패턴을 정의할 수 있습니다. API 요청/응답 검증, 설정 파일 검증, 데이터 파이프라인 검증 등에 널리 사용됩니다."
-  - question: "배열을 루트로 하는 JSON을 검증할 수 있나요?"
-    answer: "네. 스키마를 배열로 정의하세요(예: {\"type\": \"array\", \"items\": {\"type\": \"string\"}}). 그런 다음 [\"a\", \"b\"]와 같은 JSON 배열을 데이터로 붙여넣으면 됩니다."
-  - question: "데이터가 서버로 전송되나요?"
-    answer: "아니요. 유효성 검사는 AJV 라이브러리를 사용하여 브라우저에서 완전히 실행됩니다. 스키마와 JSON 데이터는 사용자의 기기를 벗어나지 않습니다."
+  - question: "어떤 JSON Schema 드래프트를 지원하나요?"
+    answer: "draft-04, draft-06, draft-07, 2019-09, 2020-12입니다. $schema로 드래프트를 판단하고, $schema가 없으면 2020-12로 검증합니다(Python jsonschema, Go santhosh-tekuri/jsonschema와 같은 기본값). 메뉴에서 드래프트를 지정할 수도 있으며, $schema와 다르면 안내를 표시합니다."
+  - question: "입력한 데이터가 서버로 전송되나요?"
+    answer: "전송되지 않습니다. 스키마와 데이터는 브라우저 탭 안에서 Ajv가 검증하며, $ref가 가리키는 URL도 내려받지 않습니다. 참조되는 스키마는 \"참조되는 스키마\" 칸에 붙여넣으세요. 브라우저에는 드래프트 메뉴와 \"format 검사\" 설정만 저장됩니다."
+  - question: "세 글자 이름이 maxLength 5를 넘는다고 나오는 이유는 무엇인가요?"
+    answer: "한글이 NFD(자모 분해) 형태로 들어 있기 때문입니다. maxLength는 유니코드 문자(코드 포인트) 수를 세는데, '홍길동'은 NFC로는 3자, NFD로는 초성·중성·종성으로 나뉘어 9자입니다. macOS 파일 이름에서 복사한 텍스트가 NFD인 경우가 많습니다. 서버에서 NFC로 정규화한 뒤 검증하세요."
+  - question: "format(email, date 등)도 검사하나요?"
+    answer: "\"format 검사\"가 켜져 있으면(기본값) ajv-formats가 구현한 email, uri, date, date-time, time, duration, hostname, ipv4, ipv6, uuid 등 15가지를 검사합니다. idn-email, iri 같은 나머지는 그대로 통과하고 안내에 표시됩니다. 끄면 format은 주석으로만 쓰이며, 2020-12 규격과 Python jsonschema의 기본 동작과 같습니다."
+  - question: "다른 검증기와 결과가 다르면 어느 쪽이 맞나요?"
+    answer: "결과 아래의 안내를 먼저 보세요. 흔한 원인은 드래프트 차이, draft-07에서 $ref 옆 키워드(규격상 무시), OpenAPI 3.0의 nullable(JSON Schema 키워드가 아님), format 검사 여부, 2^53을 넘는 정수입니다. 이 도구는 무시한 키워드와 바뀐 숫자를 모두 안내합니다."
 ---
 
-<h2>사용 방법</h2>
-<ol>
-  <li>왼쪽에 <strong>JSON Schema</strong>를, 오른쪽에 <strong>JSON 데이터</strong>를 붙여넣습니다.</li>
-  <li>드롭다운에서 스키마 초안(Draft-07 또는 Draft 2020-12)을 선택합니다.</li>
-  <li><strong>Validate</strong> 버튼을 클릭합니다 (<kbd>Ctrl</kbd>+<kbd>Enter</kbd> 단축키 사용 가능).</li>
-  <li>유효한 경우 데이터가 스키마에 일치한다는 녹색 메시지가 표시됩니다.</li>
-  <li>유효하지 않은 경우 각 오류의 <strong>JSON 경로</strong>, 오류 메시지, 추가 파라미터가 나열됩니다.</li>
-</ol>
+## 사용 방법
 
-<p><strong>Load Example</strong>을 클릭하면 샘플 User 스키마와 JSON이 자동으로 채워져 바로 사용해볼 수 있습니다.</p>
+1. 왼쪽에 **스키마**, 오른쪽에 **데이터**를 붙여넣거나 파일을 엽니다(끌어다 놓기도 됩니다). 둘 다 JSON과 YAML을 받고, 데이터는 JSON Lines(한 줄에 JSON 하나)도 읽습니다.
+2. 입력하면 바로 검증합니다. **검증**(또는 Ctrl/⌘+Enter)으로 다시 실행할 수 있고, 1 MB를 넘는 입력은 버튼을 눌렀을 때만 검증합니다.
+3. 오류는 데이터 위치별로 묶입니다. 경로를 누르면 데이터 칸에서 해당 값이, `스키마 #/…`를 누르면 스키마 칸에서 해당 키워드가 선택됩니다.
+4. 스키마의 `$ref`가 다른 파일을 가리키면 **참조되는 스키마**를 열고 그 파일을 붙여넣습니다. URL은 내려받지 않습니다.
 
-<h2>오류 출력 이해하기</h2>
+## 예: 회원 가입 데이터의 NFD 한글
 
-<p>각 유효성 검사 오류에는 세 가지 정보가 포함됩니다:</p>
-<ul>
-  <li><strong>경로</strong> — 실패한 값의 JSON Pointer (예: <code>/items/0/price</code>, 최상위 레벨은 <code>(root)</code>).</li>
-  <li><strong>메시지</strong> — AJV의 쉬운 설명 (예: <em>must be integer</em>, <em>must have required property 'name'</em>).</li>
-  <li><strong>파라미터</strong> — 허용된 타입, 최솟값, 필요한 패턴 등 추가 컨텍스트.</li>
-</ul>
+macOS의 HFS+ 파일 시스템은 파일 이름을 분해된 형태(NFD)로 저장합니다([Apple Technical Q&A QA1173](https://developer.apple.com/library/archive/qa/qa1173/_index.html)). 그런 텍스트가 섞여 들어오면 화면에는 '홍길동'으로 보여도 길이 검사에서 걸립니다. 아래 데이터의 `name`은 JSON 이스케이프로 쓴 NFD '홍길동'입니다.
 
-<h2>주요 JSON Schema 키워드</h2>
-<ul>
-  <li><code>type</code> — JSON 타입 제한: <code>string</code>, <code>number</code>, <code>integer</code>, <code>boolean</code>, <code>array</code>, <code>object</code>, <code>null</code>.</li>
-  <li><code>required</code> — 객체에 반드시 있어야 하는 속성 이름 배열.</li>
-  <li><code>properties</code> — 객체의 각 명명된 속성에 대한 제약 정의.</li>
-  <li><code>additionalProperties: false</code> — <code>properties</code>에 없는 속성 거부.</li>
-  <li><code>minimum</code> / <code>maximum</code> — 숫자 범위 제약.</li>
-  <li><code>minLength</code> / <code>maxLength</code> — 문자열 길이 제약.</li>
-  <li><code>pattern</code> — 정규식으로 문자열 검증 (예: <code>"^[a-z]+"</code>).</li>
-  <li><code>enum</code> — 고정된 값 집합으로 제한.</li>
-  <li><code>format</code> — <code>email</code>, <code>date</code>, <code>uuid</code> 같은 문자열 형식 검증(아래 참조).</li>
-  <li><code>items</code> — 배열 요소의 스키마 정의.</li>
-</ul>
-
-<h2>format 검증</h2>
-<p>이 도구는 Draft-07과 Draft 2020-12 모두에서 <code>format</code> 키워드를 검증합니다. 대상 형식은 다음과 같습니다(<a href="https://github.com/ajv-validator/ajv-formats" rel="noopener">ajv-formats</a> 구현): <code>email</code>, <code>uri</code>, <code>uri-reference</code>, <code>uri-template</code>, <code>date</code>, <code>time</code>, <code>date-time</code>, <code>duration</code>, <code>hostname</code>, <code>ipv4</code>, <code>ipv6</code>, <code>uuid</code>, <code>json-pointer</code>, <code>relative-json-pointer</code>, <code>regex</code>. 맞지 않는 값은 <em>must match format "email"</em> 오류가 납니다.</p>
-<ul>
-  <li>그 밖의 형식(<code>idn-email</code>, <code>idn-hostname</code>, <code>iri</code>, <code>iri-reference</code>, 사용자 정의 이름)은 검증하지 않고 그대로 통과시킵니다.</li>
-  <li><code>format</code>은 문자열에만 적용됩니다. 숫자에 <code>"format": "email"</code>을 지정해도 통과합니다.</li>
-  <li>같은 스키마라도 다른 검증기에서는 결과가 다를 수 있습니다. <a href="https://json-schema.org/draft/2020-12/json-schema-validation" rel="noopener">JSON Schema 2020-12</a>(Validation 7.2절)는 <code>format</code>을 기본적으로 주석으로 보고 검증은 선택 사항으로 둡니다. <a href="https://json-schema.org/draft-07/json-schema-validation" rel="noopener">Draft-07</a>(7.2절)도 구현이 고르게 합니다. 운영 환경의 검증기가 format을 검증하지 않으면 여기서 실패한 데이터가 그쪽에서는 통과할 수 있습니다.</li>
-  <li><code>date-time</code>과 <code>time</code>에는 RFC 3339대로 시간대(<code>Z</code> 또는 <code>+09:00</code>)가 필요합니다.</li>
-</ul>
-
-<h2>스키마 예시</h2>
-
+{/* jsv-ex: {} */}
 ```json
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["name", "age"],
+  "required": ["name", "bizNo"],
   "properties": {
-    "name":  { "type": "string", "minLength": 1 },
-    "age":   { "type": "integer", "minimum": 0 },
-    "email": { "type": "string" }
-  },
-  "additionalProperties": false
+    "name": { "type": "string", "minLength": 2, "maxLength": 5 },
+    "bizNo": { "type": "string", "pattern": "^[0-9]{3}-[0-9]{2}-[0-9]{5}$" },
+    "phone": { "type": "string", "pattern": "^01[016789]-[0-9]{3,4}-[0-9]{4}$" }
+  }
 }
 ```
+```json
+{
+  "name": "\u1112\u1169\u11bc\u1100\u1175\u11af\u1103\u1169\u11bc",
+  "bizNo": "123-45-6789",
+  "phone": "010-1234-5678"
+}
+```
+```text
+오류 2개, 위치 2곳(Draft 2020-12).
+/name (2행 11열): 5자 이하여야 합니다. 9자입니다  스키마 #/properties/name/maxLength
+/bizNo (3행 12열): 패턴 ^[0-9]{3}-[0-9]{2}-[0-9]{5}$과(와) 맞지 않습니다  스키마 #/properties/bizNo/pattern
+```
 
-<p>유효한 데이터: <code>{'{"name":"Alice","age":30}'}</code><br />
-유효하지 않은 데이터: <code>{'{"name":"","age":-1,"extra":true}'}</code> — 세 개의 오류가 발생합니다.</p>
+`maxLength`는 유니코드 문자(코드 포인트) 수를 셉니다. NFC '홍길동'은 3자라 통과하고, NFD는 초성·중성·종성이 각각 1자라 9자가 됩니다. 사업자등록번호는 마지막 묶음이 다섯 자리여야 하는데 네 자리라서 `pattern`에 걸렸습니다.
+
+## 예: `$schema` 없이 붙여넣은 draft-07 스키마
+
+`$schema`가 없으면 2020-12로 검증합니다. draft-07 스타일로 `items`를 배열로 쓴 스키마는 2020-12에서는 스키마 자체가 잘못된 것이 됩니다.
+
+{/* jsv-ex: {} */}
+```json
+{
+  "type": "array",
+  "items": [{ "type": "string" }, { "type": "integer" }],
+  "additionalItems": false
+}
+```
+```json
+["서울", 3, "추가"]
+```
+```text
+스키마 자체가 규격에 맞지 않습니다(Draft 2020-12):
+#/items: object | boolean여야 하는데 array입니다 — Draft 2020-12의 "items"는 스키마 하나만 받습니다. 배열 형식은 draft-07 문법입니다. 위치별 스키마는 "prefixItems"를 쓰세요.
+* $schema가 없어 Draft 2020-12로 검증했습니다. "$schema"를 쓰거나 메뉴에서 드래프트를 고르세요.
+* Draft 2020-12에서는 #의 "additionalItems"가 무시됩니다. "prefixItems"와 "items"를 쓰세요.
+* 스키마에 draft-07 문법 "items" (array), "additionalItems"가 있습니다. Draft 7을 고르거나 "$schema"를 쓰세요.
+```
+
+메뉴에서 Draft 7을 고르면 같은 스키마가 draft-07 규칙으로 검증되고, 세 번째 항목이 `additionalItems`에 걸립니다.
+
+{/* jsv-ex: {"menu": "7", "same": true} */}
+```text
+오류 1개(Draft 7).
+(루트) (1행 1열): 항목은 2개까지입니다. 3개 있습니다  스키마 #/additionalItems
+```
+
+## 예: JSON Lines로 내보낸 로그
+
+한 줄에 JSON 하나씩 붙여넣으면 줄마다 따로 검증하고, 오류가 있는 줄을 알려 줍니다.
+
+{/* jsv-ex: {} */}
+```json
+{ "type": "object", "required": ["userId", "action"], "properties": { "userId": { "type": "integer" }, "action": { "enum": ["로그인", "로그아웃", "결제"] } } }
+```
+```text
+{"userId": 101, "action": "로그인"}
+{"userId": "102", "action": "결제"}
+{"userId": 103, "action": "환불"}
+```
+```text
+문서 3개 중 2개에 오류가 있습니다(Draft 2020-12).
+문서 1(1행): 유효
+문서 2(2행)
+  /userId (2행 12열): integer여야 하는데 string입니다  스키마 #/properties/userId/type
+문서 3(3행)
+  /action (3행 27열): "로그인", "로그아웃", "결제" 중 하나여야 합니다  스키마 #/properties/action/enum
+* 데이터를 JSON Lines로 읽었습니다. 3줄을 한 줄씩 검증합니다.
+* $schema가 없어 Draft 2020-12로 검증했습니다. "$schema"를 쓰거나 메뉴에서 드래프트를 고르세요.
+```
+
+## 오류를 묶는 방식
+
+Ajv는 `oneOf` / `anyOf`에서 실패한 모든 분기의 오류를 나열합니다. "카드"와 "계좌" 두 가지 결제 수단 중 카드 번호 자릿수가 틀리면 Ajv는 오류 5개를 내고, 그중 3개는 상관없는 계좌 분기에서 나옵니다. 이 도구는 `/payment`에 오류 1개만 보여 주고 **가장 가까운 분기**(오류가 가장 적은 분기, `const` 판별 필드가 맞지 않는 분기는 뒤로)를 펼치며 나머지는 접어 둡니다. 분기가 `$ref`여도 같습니다. `if` / `then` 조건에서 실패하면 `then`에서 나온 오류를 바로 보여 주고 "then" 경유라고 표시하므로, 어떤 조건 때문에 필수가 되었는지 알 수 있습니다.
+
+## 다른 온라인 도구와 비교
+
+2026-10-02에 Bing(한국)에서 "JSON Schema 검증" 결과에 나온 LiteDevTools의 JSON Schema 검증기로 같은 입력을 시험했습니다.
+
+| 입력 | 올바른 결과 | LiteDevTools | 이 도구 |
+|---|---|---|---|
+| draft-07에서 `$ref` 옆의 `maxLength` | `maxLength` 무시, 유효 | `maxLength` 오류 | 유효(무시했다고 안내) |
+| `"required": ["constructor"]`와 `{}` | 무효 | 유효 | 무효 |
+| `"nullable": true`인 문자열에 `null` | 무효 | 무효 | 무효(안내 표시) |
+| 2020-12 `prefixItems`와 `"items": false`, `[1, "x"]` | 무효 | 유효 | 무효 |
+| `oneOf` 결제 수단 오류 | — | fails oneOf만 표시 | 가장 가까운 분기의 오류 표시 |
+| YAML 데이터 | — | 미지원 | 지원 |
+
+두 도구 모두 브라우저 안에서 동작하며, 시험 중에 데이터를 담은 요청은 없었습니다.
+
+## 제한
+
+- 검증 엔진은 Ajv 8.18(ajv-formats 3.0.1, ajv-draft-04 1.0.0)입니다. 공식 [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite)에서 draft-07은 929개 중 928개, 2020-12는 1,301개 중 1,249개를 통과합니다. 실패는 Ajv의 제약으로 `$dynamicRef`(25개), `unevaluatedItems`와 `contains` 조합, `__proto__`라는 이름의 속성 등입니다. `$dynamicRef`가 있는 스키마에는 안내를 표시합니다.
+- `$ref`의 URL은 내려받지 않습니다.
+- 2^53을 넘는 정수는 정밀도를 잃고, 중복된 키는 마지막 값만 남습니다. 둘 다 행 번호와 함께 안내합니다.
+- YAML 오류는 경로만 표시하고 행 번호는 표시하지 않습니다.
+- 1 MB를 넘는 입력은 "검증" 버튼으로 실행하고, 20 MB를 넘는 파일은 읽지 않습니다.
+
+샘플 데이터에서 스키마를 만들려면 [JSON → JSON Schema](/ko/tools/json-to-json-schema/), YAML 문법만 확인하려면 [YAML 유효성 검사기](/ko/tools/yaml-validator/), API 명세 전체를 검증하려면 [OpenAPI 유효성 검사기](/ko/tools/openapi-validator/)를 쓰세요.

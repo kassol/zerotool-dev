@@ -1,79 +1,146 @@
 ---
-seoTitle: "JSON Schema バリデーター — JSONをオンラインでスキーマ検証 | ZeroTool"
-seoDescription: "JSONデータをJSONスキーマに対してオンライン検証。Draft-07・Draft 2020-12対応。エラーパス（例：/items/0/name）と詳細メッセージを表示。無料、完全ブラウザ完結。"
+seoTitle: "JSON Schema 検証ツール | ZeroTool"
+seoDescription: "JSON Schema（draft-04〜2020-12）で JSON・YAML・JSON Lines を検証するバリデーター。エラーの行とスキーマの位置に移動でき、全角文字や大きな整数も指摘します。"
 faqItems:
-  - question: "対応しているJSONスキーマのドラフトは何ですか？"
-    answer: "Draft-07（最も広く使用されており、OpenAPI 3.0や多くのバリデーターと互換性あり）とDraft 2020-12（最新仕様）に対応しています。検証前にドロップダウンでドラフトを切り替えてください。"
-  - question: "format（email、date、uuid）も検証しますか？"
-    answer: "はい、どちらのドラフトでも検証します。ajv-formats で検証する format は email, uri, uri-reference, uri-template, date, time, date-time, duration, hostname, ipv4, ipv6, uuid, json-pointer, relative-json-pointer, regex です。たとえば \"not-an-email\" は \"format\": \"email\" に適合しません。idn-email、iri、独自の名前など、それ以外の format は検証しません。Draft 2020-12 では format は既定で注釈として扱われ、検証するかどうかは実装が選べます。このツールは検証します。"
-  - question: "/user/ageのようなエラーパスはどういう意味ですか？"
-    answer: "エラーパスはJSON Pointer構文（RFC 6901）に従います。/user/ageはuserオブジェクト内のageプロパティが検証に失敗したことを意味します。ルートオブジェクトは/で表し、配列アイテムは/items/0、/items/1などの形式になります。"
-  - question: "JSONスキーマとは何ですか？"
-    answer: "JSONスキーマはJSONドキュメントを注釈・検証するための語彙です。JSONオブジェクトの構造・型・必須フィールド・値の範囲・パターンを定義できます。APIのリクエスト/レスポンス検証、設定ファイルの検証、データパイプラインの検証などに広く活用されています。"
-  - question: "配列をルートとするJSONを検証できますか？"
-    answer: "はい。スキーマを配列として定義し（例：{\"type\": \"array\", \"items\": {\"type\": \"string\"}}）、データに[\"a\", \"b\"]のようなJSON配列を貼り付ければ検証できます。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。検証はすべてブラウザ内でAJVライブラリを使用して実行されます。スキーマとJSONデータはお使いのデバイスから外に出ることはありません。"
+  - question: "どの JSON Schema ドラフトに対応していますか？"
+    answer: "draft-04、draft-06、draft-07、2019-09、2020-12 です。$schema からドラフトを判定し、$schema がなければ 2020-12 として検証します（Python jsonschema や Go の santhosh-tekuri/jsonschema と同じ既定値）。メニューでドラフトを指定することもでき、$schema と食い違うときは注意を表示します。"
+  - question: "入力したデータは送信されますか？"
+    answer: "送信されません。スキーマとデータはブラウザのタブの中で Ajv が検証し、$ref が指す URL もダウンロードしません。参照先のスキーマは「参照先のスキーマ」欄に貼り付けてください。ブラウザに保存するのはドラフトのメニューと「format を検証」の設定だけです。"
+  - question: "全角数字の郵便番号が pattern に合わないのはなぜですか？"
+    answer: "JSON Schema の pattern は ECMA-262（JavaScript）の正規表現で、\\d は半角の 0〜9 だけに一致します。全角の「１２３」は一致しません。Python の jsonschema は Python の re を使うため \\d が全角数字にも一致し、同じデータが通ることがあります。入力側で全角を半角に変換するか、許可したい文字をパターンに書いてください。"
+  - question: "format（email、date など）は検証されますか？"
+    answer: "「format を検証」がオン（既定）のとき、ajv-formats が実装する email、uri、date、date-time、time、duration、hostname、ipv4、ipv6、uuid など 15 種類を検証します。idn-email や iri などはそのまま通り、注意欄に表示されます。オフにすると format は注釈になり、2020-12 仕様や Python jsonschema の既定と同じ動作になります。"
+  - question: "draft-04 の古いスキーマはそのまま使えますか？"
+    answer: "使えます。$schema が draft-04 なら、真偽値の exclusiveMinimum / exclusiveMaximum や id を draft-04 の意味で解釈します。逆に const や if / then / else は draft-04 にないため無視し、注意欄に「不明なキーワード」として表示します。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li>左側に <strong>JSONスキーマ</strong>、右側に <strong>JSONデータ</strong>を貼り付けます。</li>
-  <li>ドロップダウンからスキーマドラフト（Draft-07またはDraft 2020-12）を選択します。</li>
-  <li><strong>Validate</strong> ボタンをクリックします（または <kbd>Ctrl</kbd>+<kbd>Enter</kbd>）。</li>
-  <li>有効な場合、データがスキーマに適合していることを示す緑のメッセージが表示されます。</li>
-  <li>無効な場合、各エラーの <strong>JSONパス</strong>・エラーメッセージ・追加パラメータが一覧表示されます。</li>
-</ol>
+## 使い方
 
-<p><strong>Load Example</strong> をクリックすると、サンプルのUserスキーマとJSONが自動入力され、すぐに試せます。</p>
+1. 左に **スキーマ**、右に **データ** を貼り付けるか、ファイルを開きます（ドラッグ＆ドロップも可）。どちらも JSON と YAML に対応し、データは JSON Lines（1 行に 1 つの JSON）も読めます。
+2. 入力すると自動で検証します。**検証**（または Ctrl/⌘+Enter）で再実行できます。1 MB を超える入力はボタンを押したときだけ検証します。
+3. エラーはデータの場所ごとにまとまっています。パスをクリックするとデータ欄の該当箇所が、`スキーマ #/…` をクリックするとスキーマ欄のキーワードが選択されます。
+4. スキーマの `$ref` が別ファイルを指している場合は、**参照先のスキーマ** を開いてそのファイルを貼り付けます。URL からの取得は行いません。
 
-<h2>エラー出力の見方</h2>
+## 例：住所フォームの郵便番号
 
-<p>各バリデーションエラーは3つの情報を含みます：</p>
-<ul>
-  <li><strong>パス</strong> — 失敗した値へのJSONポインター（例：<code>/items/0/price</code>、トップレベルは<code>(root)</code>）。</li>
-  <li><strong>メッセージ</strong> — AJVによる分かりやすいエラー説明（例：<em>must be integer</em>、<em>must have required property 'name'</em>）。</li>
-  <li><strong>パラメータ</strong> — 許可される型・最小値・必要なパターンなどの追加情報。</li>
-</ul>
+日本の住所のときだけ郵便番号と都道府県を必須にする、よくある `if` / `then` の書き方です。IME で入力したまま送られてきたデータを検証します。
 
-<h2>よく使うJSONスキーマのキーワード</h2>
-<ul>
-  <li><code>type</code> — JSONの型を制限：<code>string</code>・<code>number</code>・<code>integer</code>・<code>boolean</code>・<code>array</code>・<code>object</code>・<code>null</code>。</li>
-  <li><code>required</code> — オブジェクトに必須のプロパティ名の配列。</li>
-  <li><code>properties</code> — オブジェクトの各プロパティの制約を定義。</li>
-  <li><code>additionalProperties: false</code> — <code>properties</code>に定義されていないプロパティを拒否。</li>
-  <li><code>minimum</code> / <code>maximum</code> — 数値の範囲制約。</li>
-  <li><code>minLength</code> / <code>maxLength</code> — 文字列の長さ制約。</li>
-  <li><code>pattern</code> — 正規表現で文字列を検証（例：<code>"^[a-z]+"</code>）。</li>
-  <li><code>enum</code> — 固定の値セットに制限。</li>
-  <li><code>format</code> — <code>email</code>、<code>date</code>、<code>uuid</code> などの文字列形式を検証（下記参照）。</li>
-  <li><code>items</code> — 配列要素のスキーマを定義。</li>
-</ul>
-
-<h2>format の検証</h2>
-<p>このツールは Draft-07 と Draft 2020-12 のどちらでも <code>format</code> キーワードを検証します。対象の形式は次のとおりです（<a href="https://github.com/ajv-validator/ajv-formats" rel="noopener">ajv-formats</a> が実装）：<code>email</code>、<code>uri</code>、<code>uri-reference</code>、<code>uri-template</code>、<code>date</code>、<code>time</code>、<code>date-time</code>、<code>duration</code>、<code>hostname</code>、<code>ipv4</code>、<code>ipv6</code>、<code>uuid</code>、<code>json-pointer</code>、<code>relative-json-pointer</code>、<code>regex</code>。適合しない値は <em>must match format "email"</em> のエラーになります。</p>
-<ul>
-  <li>それ以外の形式（<code>idn-email</code>、<code>idn-hostname</code>、<code>iri</code>、<code>iri-reference</code>、独自の名前）は検証せず、そのまま通します。</li>
-  <li><code>format</code> は文字列にだけ適用されます。数値に <code>"format": "email"</code> を指定しても通ります。</li>
-  <li>同じスキーマでも、他のバリデーターでは結果が変わることがあります。<a href="https://json-schema.org/draft/2020-12/json-schema-validation" rel="noopener">JSON Schema 2020-12</a>（Validation 7.2 節）では <code>format</code> は既定で注釈で、検証は任意です。<a href="https://json-schema.org/draft-07/json-schema-validation" rel="noopener">Draft-07</a>（7.2 節）も実装に選択を任せています。本番のバリデーターが format を検証しない場合、ここで失敗するデータがそちらでは通ることがあります。</li>
-  <li><code>date-time</code> と <code>time</code> には RFC 3339 のとおりタイムゾーン（<code>Z</code> や <code>+09:00</code>）が必要です。</li>
-</ul>
-
-<h2>スキーマの例</h2>
-
+{/* jsv-ex: {} */}
 ```json
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["name", "age"],
+  "required": ["country", "name"],
   "properties": {
-    "name":  { "type": "string", "minLength": 1 },
-    "age":   { "type": "integer", "minimum": 0 },
-    "email": { "type": "string" }
+    "country": { "enum": ["JP", "US"] },
+    "name": { "type": "string", "maxLength": 20 },
+    "furigana": { "type": "string", "pattern": "^[ァ-ヶー　]+$" }
   },
-  "additionalProperties": false
+  "if": { "properties": { "country": { "const": "JP" } } },
+  "then": {
+    "required": ["postalCode", "prefecture"],
+    "properties": { "postalCode": { "type": "string", "pattern": "^\\d{3}-\\d{4}$" } }
+  }
 }
 ```
+```json
+{
+  "country": "JP",
+  "name": "山田太郎",
+  "furigana": "やまだたろう",
+  "postalCode": "１０５-００１１"
+}
+```
+```text
+エラー 3 件、3 か所（Draft 2020-12）。
+（ルート） (1 行 1 列): 必須プロパティ "prefecture" がありません ["then" 経由]  スキーマ #/then/required
+/furigana (4 行 15 列): パターン ^[ァ-ヶー　]+$ に一致しません  スキーマ #/properties/furigana/pattern
+/postalCode (5 行 17 列): パターン ^\d{3}-\d{4}$ に一致しません ["then" 経由]  スキーマ #/then/properties/postalCode/pattern
+```
 
-<p>有効なデータ：<code>{'{"name":"Alice","age":30}'}</code><br />
-無効なデータ：<code>{'{"name":"","age":-1,"extra":true}'}</code> — 3つのエラーが発生します。</p>
+`then` から来たエラーには「"then" 経由」と付くので、`if` の条件が成り立ったために必須になった項目だとわかります。郵便番号は数字が全角なので `\d` に一致しません。
+
+{/* jsv-check: {"schema": {"type": "string", "pattern": "^\\d{3}-\\d{4}$"}, "data": "１０５-００１１", "valid": false} */}
+同じスキーマとデータを Python の jsonschema 4.26.0 で検証すると、郵便番号はエラーになりません。Python の `re` では `\d` が全角数字にも一致するためです。JSON Schema の `pattern` は [ECMA-262 の正規表現](https://json-schema.org/draft/2020-12/json-schema-validation#section-6.3.3)と定められているので、このツール（Ajv）の判定が仕様どおりです。サーバー側を Python で検証しているなら、全角を半角に変換してから検証するか、`[0-9]` のように書くと両者がそろいます。
+
+## 例：全角スペースが混ざった JSON
+
+IME をオンにしたまま JSON を手で書くと、全角スペースや「」が紛れ込みます。`JSON.parse` は「Unexpected token」としか言いませんが、このツールは文字と位置を示します。
+
+{/* jsv-ex: {} */}
+```json
+{ "type": "object", "required": ["name"] }
+```
+```json
+{
+  "name":　"山田太郎"
+}
+```
+```text
+データが正しい JSON・YAML・JSON Lines ではありません。
+2 行 10 列：全角文字 "　" があります。JSON の記号と空白は半角です
+```
+
+エラーをクリックすると、データ欄でその文字が選択されます。全角のコロン `：`、カンマ `，`、引用符 `「」` `“”` も同じように指摘します。
+
+## 例：draft-04 の古いスキーマ
+
+古いツールが生成したスキーマには draft-04 のものが残っています。draft-04 の `exclusiveMaximum` は真偽値で、`maximum` の値を含まないことを表します。
+
+{/* jsv-ex: {} */}
+```json
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "type": "object",
+  "required": ["score"],
+  "properties": {
+    "score": { "type": "number", "minimum": 0, "maximum": 100, "exclusiveMaximum": true },
+    "rank": { "const": "A" }
+  }
+}
+```
+```json
+{ "score": 100, "rank": "B" }
+```
+```text
+エラー 1 件（Draft 4）。
+/score (1 行 12 列): < 100 でなければなりませんが、100 です  スキーマ #/properties/score/maximum
+* #/properties/rank の不明なキーワード "const" は無視されます。
+```
+
+`const` は draft-06 で追加されたキーワードなので、draft-04 では無視されます（Python jsonschema の `Draft4Validator` も同じ判定です）。同じスキーマをメニューで 2020-12 に切り替えると、真偽値の `exclusiveMaximum` は 2020-12 では不正なので、スキーマ自体のエラーになります。
+
+{/* jsv-ex: {"menu": "2020-12", "same": true} */}
+```text
+スキーマ自体が仕様に合っていません（Draft 2020-12）：
+#/properties/score/exclusiveMaximum: number でなければなりませんが、boolean です
+* $schema は Draft 4 ですが、メニューで Draft 2020-12 を指定しています。
+```
+
+## エラーのまとめ方
+
+Ajv は `oneOf` / `anyOf` で失敗したすべての分岐のエラーを並べます。「カード」と「銀行口座」の 2 種類の支払い方法でカード番号の桁数を間違えると、Ajv の出力は 5 件になり、そのうち 3 件は関係のない銀行口座の分岐から来ます。このツールは `/payment` に 1 件だけ表示し、**最も近い分岐**（エラーが最も少ない分岐。`const` の判別フィールドが合わない分岐は後回し）を開き、残りは折りたたみます。分岐が `$ref` でも同じです。
+
+## 他のオンラインツールとの比較
+
+2026-10-02 に、Bing（日本）で「JSON Schema 検証」の 1 位だった ToolkitsLab の JSON Schema 検証ツールで同じ入力を試しました。
+
+| 入力 | 正しい結果 | ToolkitsLab | このツール |
+|---|---|---|---|
+| draft-07 で `$ref` の横に `maxLength` | `maxLength` は無視、有効 | `maxLength` のエラー | 有効（無視した旨を表示） |
+| `"required": ["constructor"]` と `{}` | 無効 | 検証に成功しました | 無効 |
+| `"nullable": true` の文字列に `null` | 無効 | 検証に成功しました | 無効（注意を表示） |
+| 2020-12 の `$schema` | 2020-12 で検証 | スキーマエラー: no schema with key or ref | 2020-12 で検証 |
+| YAML のデータ | — | JSON 構文エラー | 対応 |
+
+どちらもブラウザ内で動作し、テスト中にデータを含む通信はありませんでした。
+
+## 制限
+
+- 検証エンジンは Ajv 8.18（ajv-formats 3.0.1、ajv-draft-04 1.0.0）です。公式の [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite) では draft-04 が 617/618、draft-07 が 928/929、2020-12 が 1,249/1,301 件に合格します。不合格は Ajv の制約で、`$dynamicRef`（25 件）、`unevaluatedItems` と `contains` の組み合わせ、`__proto__` という名前のプロパティなどです。`$dynamicRef` を含むスキーマでは注意を表示します。
+- `$ref` の URL はダウンロードしません。
+- 2^53 を超える整数は精度が落ち、重複したキーは最後の値だけが残ります。どちらも行番号付きで注意を表示します。
+- YAML のエラーはパスだけを表示し、行番号は出ません。
+- 1 MB を超える入力は「検証」ボタンで実行し、20 MB を超えるファイルは読み込みません。
+
+サンプルデータからスキーマを作るなら [JSON → JSON Schema](/ja/tools/json-to-json-schema/)、YAML の構文だけを確認するなら [YAML バリデーター](/ja/tools/yaml-validator/)、API 定義全体を検証するなら [OpenAPI バリデーター](/ja/tools/openapi-validator/) を使ってください。

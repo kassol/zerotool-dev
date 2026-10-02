@@ -335,7 +335,7 @@ const STRINGS = {
     large: '入力が大きいため、「検証」を押すとチェックします。',
     loading: '検証プログラムを読み込み中…',
     loadFailed: '検証プログラムを読み込めませんでした。接続を確認して再試行してください。',
-    valid: '有効：データはスキーマに適合しています（{draft}）。',
+    valid: '有効：スキーマに適合しています（{draft}）。',
     validDocs: '有効：{n} 個のドキュメントすべてがスキーマに適合しています（{draft}）。',
     invalidOne: 'エラー 1 件（{draft}）。',
     invalidMany: 'エラー {n} 件、{locations} か所（{draft}）。',
@@ -1052,7 +1052,7 @@ const S = STRINGS[lang] || STRINGS.en;
       case 'const': return fmt(K.const, { value: preview(p.allowedValue, 60) });
       case 'minItems': case 'maxItems': return fmt(K[e.keyword], { limit: p.limit, actual: Array.isArray(v) ? v.length : '?' });
       case 'minProperties': case 'maxProperties': return fmt(K[e.keyword], { limit: p.limit, actual: isObj(v) ? Object.keys(v).length : '?' });
-      case 'uniqueItems': return fmt(K.uniqueItems, { i: p.i, j: p.j });
+      case 'uniqueItems': return fmt(K.uniqueItems, { j: Math.min(p.i, p.j), i: Math.max(p.i, p.j) });
       case 'contains': return p.maxContains !== undefined ? fmt(K.maxContains, { limit: p.maxContains }) : fmt(K.minContains, { limit: p.minContains !== undefined ? p.minContains : 1 });
       case 'propertyNames': return fmt(K.propertyNames, { name: p.propertyName });
       case 'oneOf': return p.passingSchemas ? fmt(K.oneOfMany, { branches: [].concat(p.passingSchemas).join(', ') }) : K.oneOfNone;
@@ -1351,7 +1351,7 @@ const S = STRINGS[lang] || STRINGS.en;
         var fn = ajv.compile(prep.schema);
         if (unchecked.length) notices.push({ code: 'formatUnchecked', formats: unchecked.map(function (f) { return '"' + f + '"'; }).join(', ') });
         if (input.formats === false) notices.push({ code: 'formatOff' });
-        return { ok: true, draft: draft, validate: fn, notices: notices, root: prep.schema };
+        return { ok: true, draft: draft, validate: fn, notices: notices, root: prep.schema, ids: Object.keys(ids) };
       } catch (e) {
         var m = /^unknown format "(.+)" ignored in schema/.exec(e && e.message || '');
         if (m && unchecked.indexOf(m[1]) < 0 && unchecked.length < 100) { unchecked.push(m[1]); return null; }
@@ -1438,7 +1438,7 @@ const S = STRINGS[lang] || STRINGS.en;
       var ok = built.validate(doc.value);
       var tree = ok ? [] : nestErrors(built.validate.errors, built.root);
       if (!ok) bad++;
-      var groups = groupNodes(tree, doc, T, s);
+      var groups = groupNodes(tree, doc, T, s, built.ids);
       groups.forEach(function (g) { total += g.count; });
       locations += groups.length;
       if (doc.text !== null && doc.text !== undefined) scanNotices(doc, 'data', res.notices, T, groups);
@@ -1493,11 +1493,19 @@ const S = STRINGS[lang] || STRINGS.en;
       if (sp) { e.range = [s.docs[0].base + sp[0], s.docs[0].base + sp[1]]; e.line = lineCol(s.docs[0].text, sp[0]).line; }
     });
   }
-  function itemOf(node, data, T, schemaDoc) {
+  // Ajv writes the schema path of an error inside a referenced schema as "<$id>/properties/…";
+  // shown as "<$id>#/properties/…".
+  function schemaPathOf(sp, ids) {
+    if (!sp || sp.charAt(0) === '#' || sp.indexOf('#') >= 0) return sp;
+    var best = '';
+    (ids || []).forEach(function (id) { var base = id.replace(/#$/, ''); if ((sp === base || sp.indexOf(base + '/') === 0) && base.length > best.length) best = base; });
+    return best ? best + '#' + sp.slice(best.length) : sp;
+  }
+  function itemOf(node, data, T, schemaDoc, ids) {
     var e = node.e, p = e.params || {};
     var name = e.keyword === 'additionalProperties' ? p.additionalProperty : e.keyword === 'unevaluatedProperties' ? p.unevaluatedProperty : e.keyword === 'propertyNames' ? p.propertyName : null;
     var it = {
-      keyword: e.keyword, path: e.instancePath, schemaPath: e.schemaPath,
+      keyword: e.keyword, path: e.instancePath, schemaPath: schemaPathOf(e.schemaPath, ids),
       message: describe(e, data, T), via: node.via || null,
       keyPath: name !== null && name !== undefined ? e.instancePath + '/' + escSeg(name) : null,
     };
@@ -1507,17 +1515,17 @@ const S = STRINGS[lang] || STRINGS.en;
     if (v !== undefined && ['required', 'additionalProperties', 'unevaluatedProperties', 'propertyNames', 'dependentRequired', 'dependencies', 'oneOf', 'anyOf', 'not', 'if', 'minProperties', 'maxProperties', 'minItems', 'maxItems', 'unevaluatedItems', 'items', 'additionalItems', 'uniqueItems', 'contains'].indexOf(e.keyword) < 0) it.value = preview(v);
     if (node.branches) {
       it.closest = node.closest;
-      it.branches = node.branches.map(function (b) { return { index: b.index, items: b.nodes.map(function (x) { return itemOf(x, data, T, schemaDoc); }) }; });
+      it.branches = node.branches.map(function (b) { return { index: b.index, items: b.nodes.map(function (x) { return itemOf(x, data, T, schemaDoc, ids); }) }; });
     }
     return it;
   }
-  function groupNodes(tree, doc, T, schemaDoc) {
+  function groupNodes(tree, doc, T, schemaDoc, ids) {
     var groups = [], byPath = {};
     tree.forEach(function (node) {
       var path = node.e.instancePath;
       var g = byPath[path];
       if (!g) { g = byPath[path] = { path: path, items: [], count: 0 }; groups.push(g); }
-      g.items.push(itemOf(node, doc.value, T, schemaDoc));
+      g.items.push(itemOf(node, doc.value, T, schemaDoc, ids));
       g.count++;
     });
     return groups;
