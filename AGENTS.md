@@ -173,6 +173,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-02 — ai-token-counter 将统计、预分词与 BPE 移入可终止的工具专用 Worker，按需加载词表；编辑或清空终止旧任务，页面只接收完整计数与有限 token 展示数据。原算法移到局部 engine，费用规则不变。定向测试与隔离组件页面验证通过；正式构建、部署验收与主线程 ≤100ms 性能门槛由发布线复核，当前隔离实测尚未全部达标。
+
 - 2026-10-02 — 修复 bcrypt-generator 的 worker 缓存回归：v1.138.56 页面发送 bench / hash，固定 URL 缓存的旧 worker 只处理 generate / verify，导致按钮停在 0%。组件构建期按 worker 源码 SHA-256 生成版本 URL；worker 继续接受 generate / verify，兼容缓存的旧页面。回归测试预置 v1.138.55 原始 worker 并运行实际客户端 factory，验证新 URL 下的计时、生成与校验，以及四语言构建产物的内容哈希。
 - 2026-10-02 — protobuf-to-json 移除历史保留的 Long 页面运行时：组件只加载 `protobuf.min.js`（仅用于 Schema 反射解析），五种 64 位类型继续由现有 BigInt 引擎编解码；确认全站无运行引用后删除 `public/vendor/long.min.js`。2026-09-30 引入 Long 与本日精品化时保留加载顺序的记录描述的是历史状态，当前以本条为准。测试页面 vm 不注入 Long；protobufjs 独立对照 vm 使用锁文件已有的 npm Long 与同 realm 构造器，保留精度对照，不新增依赖、不改变协议功能或 vendor 版本。
 

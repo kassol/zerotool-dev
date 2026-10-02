@@ -48,6 +48,8 @@ src/
 
 ## 变更日志
 
+- 2026-10-02 — ai-token-counter 的统计、预分词与 BPE 移到可终止的工具专用 Worker；原算法声明机械迁移到 `ai-token-counter-engine.js`，客户端只接收计数、统计与每种分词器前 2,000 个展示 token。输入变化 / 清空终止旧 Worker，加载失败可重试；词表仍按需加载，Worker 由 Vite 按内容生成版本地址。
+
 - 2026-10-02 — bcrypt worker URL 在构建期按源码 SHA-256 生成版本参数，协议更新自动避开旧缓存；worker 保留 generate / verify 旧协议以兼容已缓存页面。修正博客目录说明。
 - 2026-04-26 — 初版
 - 2026-09-26 — 工具页路由改为 `astro.config.mjs` 的 `toolRoutes()` 按 registry 注入（每工具一个入口），删除 `pages/tools/[slug].astro` 与 `pages/{lang}/tools/[slug].astro`；`registry.ts` 改为 slug → 组件文件名；新增 `components/ToolPage.astro`
