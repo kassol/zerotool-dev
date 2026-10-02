@@ -38,7 +38,7 @@ if (s < 0 || e <= s) { console.error('FAIL: engine block not found'); process.ex
 const E = new Function(source.slice(s, e) + `
 return { eastAsianWidthClass, displayWidth, encodeCell, escapePipes, escapeInline, buildMarkdown, splitRow,
   parseMarkdownTable, parseDelimited, detectDelimiter, detectFormat, rowsToTable, jsonToTable, htmlTableRows,
-  gridFromHtmlRows, emptyTable, cloneTable, insertRow, deleteRow, insertColumn, deleteColumn, moveColumn,
+  gridFromHtmlRows, parseFullwidthTable, emptyTable, cloneTable, insertRow, deleteRow, insertColumn, deleteColumn, moveColumn,
   moveRow, cellNumber, sortRows, transpose };`)();
 
 let passes = 0;
@@ -292,6 +292,11 @@ eq('ambiguous-width option widens ○', E.buildMarkdown({ headers: ['対応'], r
   eq('"\\\\|" read the GitHub way (one cell) and reported', [dbl.table.rows[0], dbl.doubleBackslash], [['x\\|y', '2'], 1]);
   check('our own escape is not reported as "\\\\|"', E.parseMarkdownTable(E.buildMarkdown({ headers: ['a'], rows: [['x\\|y']], align: ['none'] }, { style: 'aligned', plain: true, newline: 'br' }).markdown).doubleBackslash === 0);
   eq('<br> variants become line breaks', E.parseMarkdownTable('| a |\n|---|\n| x<br>y<BR/>z<br />w |').table.rows[0][0], 'x\ny\nz\nw');
+  const fw = E.parseFullwidthTable('｜ 項目 ｜ 状態 ｜\n｜ーーー｜：－－：｜\n｜ 東京 ｜ ○ ｜');
+  eq('full-width pipes read as ASCII, delimiter row with full-width hyphens and colons', [fw.table, fw.fullwidth], [{ headers: ['項目', '状態'], rows: [['東京', '○']], align: ['none', 'center'] }, true]);
+  check('full-width colon in a cell is kept', E.parseFullwidthTable('｜注意：A｜B｜\n｜---｜---｜\n｜x｜y｜').table.headers[0] === '注意：A');
+  check('no full-width pipe: null', E.parseFullwidthTable('| a |\n|---|') === null);
+  eq('detectFormat finds a full-width table', E.detectFormat('｜a｜b｜\n｜-｜-｜'), 'markdown');
   eq('BOM and CRLF', E.parseMarkdownTable('\uFEFF| a |\r\n|---|\r\n| 1 |\r\n').table, { headers: ['a'], rows: [['1']], align: ['none'] });
 }
 
@@ -409,6 +414,8 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
   eq('header / delimiter mismatch is no table anywhere', ['github', 'gitee', 'zenn', 'qiita'].map((p) => /<table/.test(mism[p])).concat([/<table/.test(render(mism.markdown))]), [false, false, false, false, false]);
   const para = F['table right after a paragraph line'];
   eq('a table can follow a paragraph line directly', ['github', 'gitee', 'zenn', 'qiita'].map((p) => tableTexts(para[p]).length).concat([tableTexts(render(para.markdown)).length]), [2, 2, 2, 2, 2]);
+  const fwp = F['full-width pipes'];
+  eq('full-width pipes are no table anywhere', ['github', 'gitee', 'zenn', 'qiita'].map((p) => /<table/.test(fwp[p])).concat([/<table/.test(render(fwp.markdown))]), [false, false, false, false, false]);
   const cjk = F['CJK punctuation next to **'];
   eq('**注意：**ここ is not bold on GitHub, Gitee, Zenn, Qiita or micromark', ['github', 'gitee', 'zenn', 'qiita'].map((p) => /<strong>/.test(cjk[p])).concat([/<strong>/.test(render(cjk.markdown))]), [false, false, false, false, false]);
 }
@@ -437,7 +444,7 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
       if (spec.import) {
         const fmtName = spec.import.format;
         let t;
-        if (fmtName === 'markdown') t = E.parseMarkdownTable(spec.import.text).table;
+        if (fmtName === 'markdown') t = (E.parseMarkdownTable(spec.import.text) || E.parseFullwidthTable(spec.import.text)).table;
         else if (fmtName === 'json') { const j = E.jsonToTable(JSON.parse(spec.import.text)); t = j.headers ? { headers: j.headers, rows: j.rows, align: j.headers.map(() => 'none') } : E.rowsToTable(j.rows, true, 'Column').table; }
         else t = E.rowsToTable(E.parseDelimited(spec.import.text, fmtName === 'tsv' ? '\t' : fmtName === 'csv-semicolon' ? ';' : E.detectDelimiter(spec.import.text)).filter((r) => !(r.length === 1 && r[0] === '')), spec.import.firstRowHeader !== false, 'Column').table;
         if (spec.align) t.align = spec.align;

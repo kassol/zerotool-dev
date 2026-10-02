@@ -62,6 +62,7 @@ const FOREIGN = [
   { name: 'header and delimiter cell counts differ', markdown: '| a | b |\n|---|\n| 1 | 2 |' },
   { name: 'table right after a paragraph line', markdown: 'Some text\n| a | b |\n|---|---|\n| 1 | 2 |' },
   { name: 'CJK punctuation next to **', markdown: '| a |\n|---|\n| **注意：**ここ |' },
+  { name: 'full-width pipes', markdown: '｜ 項目 ｜ 状態 ｜\n｜ --- ｜ --- ｜\n｜ 東京 ｜ ○ ｜' },
 ];
 
 async function github(text) {
