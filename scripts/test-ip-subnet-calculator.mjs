@@ -110,6 +110,12 @@ eq('/24', E.calculate('192.168.1.130', 24), {
 eq('/31 has 2 usable (RFC 3021)', [E.calculate('10.0.0.1', 31).first, E.calculate('10.0.0.1', 31).last, E.calculate('10.0.0.1', 31).usable],
   ['10.0.0.0', '10.0.0.1', '2']);
 eq('/32', E.calculate('10.0.0.1', 32).cidr, '10.0.0.1/32');
+// RFC 3021 §2: the two addresses of a /31 are host addresses, so it has no broadcast address;
+// a /32 is one address (RFC 4632 §3.1 host route). The engine reports none instead of the
+// last address of the block, and /30 still has one.
+eq('/31 has no broadcast address', E.calculate('203.0.113.9', 31).broadcast, null);
+eq('/32 has no broadcast address', E.calculate('198.51.100.7', 32).broadcast, null);
+eq('/30 keeps its broadcast address', E.calculate('203.0.113.9', 30).broadcast, '203.0.113.11');
 eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast], ['0.0.0.0', '255.255.255.255']);
 
 // ---------- page script: the dropdown rewrites a typed prefix ----------
@@ -151,6 +157,19 @@ eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast
   el('isc-input').value = '198.51.100.7/24x';
   el('isc-input').fire('input');
   eq('bad prefix error text', [el('isc-error').hidden, el('isc-error').textContent], [false, 'The CIDR prefix must be a whole number from 0 to 32 (e.g. /24).']);
+  el('isc-input').value = '203.0.113.9/31';
+  el('isc-input').fire('input');
+  eq('/31 broadcast cell says none', el('isc-broadcast').textContent, 'None (/31 point-to-point link, RFC 3021)');
+  el('isc-input').value = '198.51.100.7/32';
+  el('isc-input').fire('input');
+  eq('/32 broadcast cell says none', el('isc-broadcast').textContent, 'None (/32 is a single address)');
+  el('isc-input').value = '203.0.113.9/30';
+  el('isc-input').fire('input');
+  eq('/30 broadcast cell is an address', el('isc-broadcast').textContent, '203.0.113.11');
+  for (const lang of ['zh', 'ja', 'ko']) {
+    const block = new RegExp('\\n        ' + lang + ': \\{([\\s\\S]*?)\\n        \\}').exec(source);
+    check(lang + ' has the no-broadcast strings', !!block && /noBroadcast31: '/.test(block[1]) && /noBroadcast32: '/.test(block[1]));
+  }
 }
 
 // ---------- examples on the English tool page ----------
@@ -159,7 +178,7 @@ eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast
   for (const [input, dd] of [['192.168.1.77/26', 24], ['172.31.100.5/20', 24], ['203.0.113.9/31', 24], ['198.51.100.7', 32]]) {
     const p = E.parseInput(input, dd);
     const r = E.calculate(p.ip, p.prefix);
-    const row = `<td>${r.network} / ${r.broadcast}</td><td>${r.mask} / ${r.wildcard}</td><td>${r.first} – ${r.last}</td><td>${r.usable}</td>`;
+    const row = `<td>${r.network} / ${r.broadcast ?? 'none'}</td><td>${r.mask} / ${r.wildcard}</td><td>${r.first} – ${r.last}</td><td>${r.usable}</td>`;
     check('page row for ' + input, page.includes(row), row);
   }
   for (const bad of ['10.0.0.01', '0x0a.0.0.1', '10.1']) eq('page invalid ' + bad, E.parseInput(bad, 24).error, 'ip');
