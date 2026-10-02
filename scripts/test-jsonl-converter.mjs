@@ -1,0 +1,118 @@
+// Read: JsonlConverterTool.astro's complete inline script. Write: stdout only.
+// Drive the shipped click/input/download handlers with DOM substitutes; no mirrored converter.
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+
+const source = readFileSync(new URL('../src/components/tools/JsonlConverterTool.astro', import.meta.url), 'utf8');
+let passed = 0, failed = 0;
+async function test(name, run) {
+  try { await run(); passed++; }
+  catch (e) { failed++; console.log('FAIL ' + name + ': ' + e.message); }
+}
+function page(lang = 'en') {
+  const elements = new Map(), copied = [], downloads = [], timers = new Map(), readers = [];
+  let timerId = 0;
+  function element() {
+    const events = {};
+    return { value: '', checked: false, disabled: false, textContent: '', children: [],
+      classList: { toggle() {} }, addEventListener(k, fn) { events[k] = fn; },
+      fire(k) { return events[k]?.({}); }, click() { if (!this.disabled) { if (this.download) downloads.push(this.href); return this.fire('click'); } },
+      appendChild(child) { this.children.push(child); }, remove() {} };
+  }
+  const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
+  get('jlc-ignore-empty').checked = get('jlc-pretty-json').checked = true;
+  vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
+    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element, body: element() },
+    window: {}, navigator: { clipboard: { writeText: async text => copied.push(text) } }, Blob,
+    URL: { createObjectURL: blob => blob, revokeObjectURL() {} },
+    FileReader: class { constructor() { readers.push(this); } readAsText(file) { this.file = file; }
+      finish(text) { this.result = text; this.onload(); } fail() { this.onerror(); } },
+    setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id)
+  });
+  return { get, copied, downloads, readers, open(target) { get('jlc-open-' + target).click(); get('jlc-file').files = [{ name: 'sample.txt' }]; get('jlc-file').fire('change'); return readers.at(-1); },
+    flush() { const tasks = [...timers.values()]; timers.clear(); tasks.forEach(fn => fn()); } };
+}
+const records = ['9007199254740991', '9007199254740992', '9007199254740993', '1e400', '-0', '1.00', '1E+03', '1e-400', '{"n":9007199254740993,"a":[-0,1e400],"s":"1e400"}'];
+for (const raw of records) {
+  await test('JSONL → JSON preserves ' + raw, () => {
+    const p = page(); p.get('jlc-pretty-json').checked = false;
+    p.get('jlc-jsonl').value = raw; p.get('jlc-to-json').click();
+    assert.equal(p.get('jlc-json').value, '[' + raw + ']');
+  });
+  await test('JSON → JSONL preserves ' + raw, () => {
+    const p = page(); p.get('jlc-json').value = '[' + raw + ']'; p.get('jlc-to-jsonl').click();
+    assert.equal(p.get('jlc-jsonl').value, raw);
+  });
+}
+await test('duplicate keys keep the last value at every depth', () => {
+  const p = page(); p.get('jlc-json').value = '[{"n":1,"n":1e400,"a":{"x":2,"x":-0},"__proto__":3}]';
+  p.get('jlc-to-jsonl').click(); assert.equal(p.get('jlc-jsonl').value, '{"n":1e400,"a":{"x":-0},"__proto__":3}');
+});
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  await test(lang + ' multi-line error clears old JSON and blocks copy/download', async () => {
+    const p = page(lang); p.get('jlc-jsonl').value = '{"ok":1}'; p.get('jlc-to-json').click();
+    p.get('jlc-jsonl').value = '9007199254740993\n{"bad":}\n1e400'; p.get('jlc-to-json').click();
+    assert.equal(p.get('jlc-json').value, ''); assert.equal(p.get('jlc-copy-json').disabled, true);
+    assert.equal(p.get('jlc-download-json').disabled, true); assert.equal(p.get('jlc-error-lines').textContent, '1');
+    assert.match(JSON.stringify(p.get('jlc-issues-list').children.at(-1)), /2/);
+    p.get('jlc-copy-json').click(); p.get('jlc-download-json').click();
+    assert.equal(p.copied.length, 0); assert.equal(p.downloads.length, 0);
+  });
+  await test(lang + ' invalid/non-array/empty JSON clears old JSONL', () => {
+    for (const raw of ['[1,]', '{}', '']) {
+      const p = page(lang); p.get('jlc-json').value = '[1]'; p.get('jlc-to-jsonl').click();
+      p.get('jlc-json').value = raw; p.get('jlc-to-jsonl').click();
+      assert.equal(p.get('jlc-jsonl').value, ''); assert.equal(p.get('jlc-copy-jsonl').disabled, true);
+      assert.equal(p.get('jlc-download-jsonl').disabled, true);
+    }
+  });
+}
+await test('valid-only is explicit and preserves numbers on download', async () => {
+  const p = page(); p.get('jlc-jsonl').value = '9007199254740993\n{bad}\n1e400';
+  p.get('jlc-download-jsonl').click(); assert.equal(p.downloads.length, 0);
+  p.get('jlc-valid-only').checked = true; p.get('jlc-to-json').click();
+  p.get('jlc-download-jsonl').click(); assert.equal(await p.downloads.at(-1).text(), '9007199254740993\n1e400');
+});
+await test('pretty output keeps numbers, escapes, empty containers and scalar records', () => {
+  const p = page(); p.get('jlc-jsonl').value = '{"n":1e400,"s":"a\\nb"}\n[]\n{}\nnull\ntrue'; p.get('jlc-to-json').click();
+  assert.equal(p.get('jlc-json').value, '[\n  {\n    "n": 1e400,\n    "s": "a\\nb"\n  },\n  [],\n  {},\n  null,\n  true\n]');
+});
+await test('editing either input invalidates the opposite output immediately', () => {
+  const p = page(); p.get('jlc-jsonl').value = '1'; p.get('jlc-to-json').click();
+  p.get('jlc-jsonl').value = '{'; p.get('jlc-jsonl').fire('input');
+  assert.equal(p.get('jlc-json').value, '');
+  p.get('jlc-json').value = '[1]'; p.get('jlc-to-jsonl').click(); p.get('jlc-json').fire('input');
+  assert.equal(p.get('jlc-jsonl').value, '');
+});
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  await test(lang + ' invalid file keeps the conversion error', () => {
+    for (const target of ['json', 'jsonl']) { const p = page(lang); p.open(target).finish('{bad}');
+      assert.match(p.get('jlc-status').className, /error/); assert.equal(p.get('jlc-copy-json').disabled, true); }
+  });
+  await test(lang + ' read failure invalidates both successful outputs', () => {
+    const p = page(lang); p.get('jlc-jsonl').value = '1'; p.get('jlc-to-json').click(); p.open('json').fail();
+    p.get('jlc-copy-json').click(); p.get('jlc-download-jsonl').click();
+    assert.equal(p.copied.length, 0); assert.equal(p.downloads.length, 0); assert.match(p.get('jlc-status').className, /error/);
+  });
+}
+await test('a later file selection wins and retains its captured target', () => {
+  const p = page(); const first = p.open('json'); const last = p.open('jsonl'); last.finish('2'); first.finish('[1]');
+  assert.equal(p.get('jlc-jsonl').value, '2'); assert.equal(p.get('jlc-json').value, '');
+});
+await test('editing, clearing and converting invalidate pending file callbacks', () => {
+  for (const action of ['input', 'clear', 'convert']) { const p = page(); const reader = p.open('json');
+    p.get('jlc-jsonl').value = '3';
+    if (action === 'input') p.get('jlc-jsonl').fire('input');
+    if (action === 'clear') p.get('jlc-clear').click();
+    if (action === 'convert') p.get('jlc-to-json').click();
+    const before = p.get('jlc-json').value; reader.finish('[1]'); assert.equal(p.get('jlc-json').value, before);
+  }
+});
+await test('pending validation cannot clear an explicit valid-only output', () => {
+  const p = page(); p.get('jlc-jsonl').value = '1\n{bad}'; p.get('jlc-jsonl').fire('input');
+  p.get('jlc-valid-only').checked = true; p.get('jlc-to-json').click(); p.flush();
+  assert.equal(p.get('jlc-json').value, '[\n  1\n]'); assert.equal(p.get('jlc-download-json').disabled, false);
+});
+console.log(`${passed} passed, ${failed} failed`);
+process.exitCode = failed ? 1 : 0;

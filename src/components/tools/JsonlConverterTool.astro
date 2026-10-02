@@ -263,6 +263,8 @@
       var emptyLinesEl = document.getElementById('jlc-empty-lines');
       var copyJsonlBtn = document.getElementById('jlc-copy-jsonl');
       var copyJsonBtn = document.getElementById('jlc-copy-json');
+      var downloadJsonBtn = document.getElementById('jlc-download-json');
+      var downloadJsonlBtn = document.getElementById('jlc-download-jsonl');
       var pendingFileTarget = 'jsonl';
       var lastJsonOutput = '';
       var lastJsonlOutput = '';
@@ -287,6 +289,78 @@
         el.classList.toggle('jlc-input-error', !!hasError);
       }
 
+      // JSON.parse validates syntax only. Number values are never used: retain their tokens.
+      function parseLossless(text) {
+        JSON.parse(text);
+        var tokens = text.match(/"(?:\\[\s\S]|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}\[\],:]/g);
+        var stack = [];
+        var root;
+        function add(node) {
+          var parent = stack[stack.length - 1];
+          if (!parent) root = node;
+          else if (parent.node.kind === 'array') parent.node.values.push(node);
+          else parent.node.values[parent.key] = node;
+        }
+        tokens.forEach(function (token) {
+          var frame = stack[stack.length - 1];
+          if (token === '{' || token === '[') {
+            var node = { kind: token === '[' ? 'array' : 'object', values: token === '[' ? [] : Object.create(null) };
+            add(node);
+            stack.push({ node: node, key: null, needsKey: token === '{' });
+          } else if (token === '}' || token === ']') stack.pop();
+          else if (token === ',') { if (frame.node.kind === 'object') frame.needsKey = true; }
+          else if (token !== ':') {
+            if (frame && frame.needsKey) {
+              frame.key = JSON.parse(token);
+              frame.needsKey = false;
+            } else {
+              add({ kind: 'scalar', raw: token[0] === '"' ? JSON.stringify(JSON.parse(token)) : token });
+            }
+          }
+        });
+        return root;
+      }
+
+      function stringifyLossless(node, pretty) {
+        var chunks = [];
+        var work = [{ node: node, depth: 0 }];
+        while (work.length) {
+          var item = work.pop();
+          if (typeof item === 'string') { chunks.push(item); continue; }
+          var current = item.node;
+          if (current.kind === 'scalar') { chunks.push(current.raw); continue; }
+          var array = current.kind === 'array';
+          var keys = array ? current.values.map(function (_, i) { return i; }) : Object.keys(current.values);
+          var open = array ? '[' : '{';
+          var close = array ? ']' : '}';
+          if (!keys.length) { chunks.push(open + close); continue; }
+          chunks.push(open);
+          work.push((pretty ? '\n' + '  '.repeat(item.depth) : '') + close);
+          for (var i = keys.length - 1; i >= 0; i--) {
+            var key = keys[i];
+            if (i < keys.length - 1) work.push(',');
+            work.push({ node: current.values[key], depth: item.depth + 1 });
+            work.push((pretty ? '\n' + '  '.repeat(item.depth + 1) : '') +
+              (array ? '' : JSON.stringify(key) + (pretty ? ': ' : ':')));
+          }
+        }
+        return chunks.join('');
+      }
+
+      function invalidateOutput(target) {
+        if (target === 'json') jsonEl.value = '';
+        if (target === 'jsonl') jsonlEl.value = '';
+        lastJsonOutput = '';
+        lastJsonlOutput = '';
+        copyJsonBtn.disabled = copyJsonlBtn.disabled = true;
+        downloadJsonBtn.disabled = downloadJsonlBtn.disabled = true;
+      }
+
+      function enableOutput() {
+        copyJsonBtn.disabled = downloadJsonBtn.disabled = !lastJsonOutput;
+        copyJsonlBtn.disabled = downloadJsonlBtn.disabled = !lastJsonlOutput;
+      }
+
       function parseJsonl(text, ignoreEmpty) {
         var lines = text.length ? text.split('\n') : [];
         var values = [];
@@ -304,7 +378,7 @@
             return;
           }
           try {
-            values.push({ line: lineNumber, value: JSON.parse(trimmed), raw: trimmed });
+            values.push({ line: lineNumber, value: parseLossless(trimmed), raw: trimmed });
           } catch (e) {
             errors.push({
               line: lineNumber,
@@ -365,6 +439,7 @@
       }
 
       function validateJsonl() {
+        cancelPending();
         var result = parseJsonl(jsonlEl.value, ignoreEmptyEl.checked);
         updateStats(result);
         renderIssues(result.errors);
@@ -372,6 +447,7 @@
         if (!jsonlEl.value.trim()) {
           clearStatus();
         } else if (result.errors.length > 0) {
+          invalidateOutput('json');
           setStatus(t.strictErrors, 'error');
         } else {
           setStatus(t.validJsonl, 'success');
@@ -381,11 +457,13 @@
 
       function compactJsonlFromValues(values) {
         return values.map(function (record) {
-          return JSON.stringify(record.value);
+          return stringifyLossless(record.value, false);
         }).join('\n');
       }
 
       function convertJsonlToJson() {
+        cancelPending();
+        invalidateOutput('json');
         var result = parseJsonl(jsonlEl.value, ignoreEmptyEl.checked);
         updateStats(result);
         renderIssues(result.errors);
@@ -401,16 +479,19 @@
         }
 
         var values = result.values.map(function (record) { return record.value; });
-        var json = JSON.stringify(values, null, prettyJsonEl.checked ? 2 : 0);
+        var json = stringifyLossless({ kind: 'array', values: values }, prettyJsonEl.checked);
         var jsonl = compactJsonlFromValues(result.values);
         jsonEl.value = json;
         lastJsonOutput = json;
         lastJsonlOutput = jsonl;
+        enableOutput();
         setStatus(msg(t.convertedToJson, { n: values.length }), result.errors.length > 0 ? 'info' : 'success');
         window.trackTool && window.trackTool('jsonl-converter', 'jsonl_to_json');
       }
 
       function convertJsonToJsonl() {
+        cancelPending();
+        invalidateOutput('jsonl');
         var raw = jsonEl.value.trim();
         if (!raw) {
           setStatus(t.emptyInput, 'none');
@@ -418,23 +499,24 @@
         }
 
         try {
-          var parsed = JSON.parse(raw);
-          if (!Array.isArray(parsed)) {
+          var parsed = parseLossless(raw);
+          if (parsed.kind !== 'array') {
             throw new Error(t.jsonArrayRequired);
           }
-          var lines = parsed.map(function (item) {
-            return JSON.stringify(item);
+          var lines = parsed.values.map(function (item) {
+            return stringifyLossless(item, false);
           });
           var jsonl = lines.join('\n');
           jsonlEl.value = jsonl;
           lastJsonlOutput = jsonl;
-          lastJsonOutput = JSON.stringify(parsed, null, prettyJsonEl.checked ? 2 : 0);
+          lastJsonOutput = stringifyLossless(parsed, prettyJsonEl.checked);
+          enableOutput();
           setInputError(jsonEl, false);
           var result = parseJsonl(jsonl, true);
           updateStats(result);
           renderIssues(result.errors);
           setInputError(jsonlEl, false);
-          setStatus(msg(t.convertedToJsonl, { n: parsed.length }), 'success');
+          setStatus(msg(t.convertedToJsonl, { n: parsed.values.length }), 'success');
           window.trackTool && window.trackTool('jsonl-converter', 'json_to_jsonl');
         } catch (e) {
           setInputError(jsonEl, true);
@@ -468,6 +550,7 @@
       }
 
       function openFile(target) {
+        cancelPending();
         pendingFileTarget = target;
         fileEl.value = '';
         fileEl.click();
@@ -489,10 +572,11 @@
         window.trackTool && window.trackTool('jsonl-converter', 'validate');
       });
       document.getElementById('jlc-clear').addEventListener('click', function () {
+        cancelPending();
         jsonlEl.value = '';
         jsonEl.value = '';
-        lastJsonOutput = '';
-        lastJsonlOutput = '';
+        invalidateOutput();
+        clearTimeout(jsonlTimer);
         updateStats({ total: 0, valid: 0, empty: 0, errors: [] });
         renderIssues([]);
         setInputError(jsonlEl, false);
@@ -502,51 +586,67 @@
       document.getElementById('jlc-load-sample').addEventListener('click', loadSample);
       document.getElementById('jlc-open-jsonl').addEventListener('click', function () { openFile('jsonl'); });
       document.getElementById('jlc-open-json').addEventListener('click', function () { openFile('json'); });
-      document.getElementById('jlc-download-json').addEventListener('click', function () {
-        var output = jsonEl.value.trim() || lastJsonOutput;
-        downloadText('jsonl-converted.json', 'application/json;charset=utf-8', output);
+      downloadJsonBtn.addEventListener('click', function () {
+        if (!downloadJsonBtn.disabled) downloadText('jsonl-converted.json', 'application/json;charset=utf-8', lastJsonOutput);
       });
-      document.getElementById('jlc-download-jsonl').addEventListener('click', function () {
-        var result = parseJsonl(jsonlEl.value, true);
-        var output = compactJsonlFromValues(result.values) || lastJsonlOutput || jsonlEl.value.trim();
-        downloadText('jsonl-converted.jsonl', 'application/x-ndjson;charset=utf-8', output);
+      downloadJsonlBtn.addEventListener('click', function () {
+        if (!downloadJsonlBtn.disabled) downloadText('jsonl-converted.jsonl', 'application/x-ndjson;charset=utf-8', lastJsonlOutput);
       });
       copyJsonlBtn.addEventListener('click', function () {
-        copyText(jsonlEl.value || lastJsonlOutput, copyJsonlBtn);
+        if (!copyJsonlBtn.disabled) copyText(lastJsonlOutput, copyJsonlBtn);
       });
       copyJsonBtn.addEventListener('click', function () {
-        copyText(jsonEl.value || lastJsonOutput, copyJsonBtn);
+        if (!copyJsonBtn.disabled) copyText(lastJsonOutput, copyJsonBtn);
       });
 
       fileEl.addEventListener('change', function () {
         var file = fileEl.files && fileEl.files[0];
         if (!file) return;
+        cancelPending();
+        var generation = fileGeneration;
+        var target = pendingFileTarget;
+        invalidateOutput(target === 'json' ? 'jsonl' : 'json');
         var reader = new FileReader();
         reader.onload = function () {
+          if (generation !== fileGeneration) return;
           var text = String(reader.result || '');
-          if (pendingFileTarget === 'json') {
+          if (target === 'json') {
             jsonEl.value = text;
             convertJsonToJsonl();
           } else {
             jsonlEl.value = text;
-            validateJsonl();
+            var result = validateJsonl();
+            if (!result.errors.length && text.trim()) setStatus(msg(t.fileLoaded, { name: file.name }), 'success');
           }
-          setStatus(msg(t.fileLoaded, { name: file.name }), 'success');
         };
         reader.onerror = function () {
+          if (generation !== fileGeneration) return;
+          invalidateOutput(target === 'json' ? 'jsonl' : 'json');
           setStatus(t.fileReadError, 'error');
         };
         reader.readAsText(file);
       });
 
       var jsonlTimer = null;
+      var fileGeneration = 0;
+      function cancelPending() {
+        clearTimeout(jsonlTimer);
+        fileGeneration++;
+      }
       jsonlEl.addEventListener('input', function () {
+        cancelPending();
+        invalidateOutput('json');
         clearTimeout(jsonlTimer);
         jsonlTimer = setTimeout(validateJsonl, 350);
       });
 
-      ignoreEmptyEl.addEventListener('change', validateJsonl);
-      validOnlyEl.addEventListener('change', validateJsonl);
+      jsonEl.addEventListener('input', function () {
+        cancelPending();
+        invalidateOutput('jsonl');
+        clearStatus();
+      });
+      ignoreEmptyEl.addEventListener('change', function () { invalidateOutput('json'); validateJsonl(); });
+      validOnlyEl.addEventListener('change', function () { invalidateOutput('json'); validateJsonl(); });
       prettyJsonEl.addEventListener('change', function () {
         if (jsonlEl.value.trim()) convertJsonlToJson();
       });
@@ -562,6 +662,7 @@
         }
       });
 
+      invalidateOutput();
       renderIssues([]);
     })();
   </script>
