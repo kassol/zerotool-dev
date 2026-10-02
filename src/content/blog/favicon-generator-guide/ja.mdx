@@ -1,146 +1,137 @@
 ---
-title: "Favicon ジェネレーター：モダンなマルチファイルセットをブラウザで作る"
-description: "ブラウザだけで完全なモダン favicon セットを生成 — ICO、複数サイズ PNG、apple-touch-icon、manifest をアップロード不要で。ICO ファイル形式、PWA maskable アイコン、各ブラウザが実際に何を要求するかを解説。"
+title: "ファビコンのサイズは何px？必要な5種類とブラウザが実際に読むファイル"
+description: "ファビコンのサイズを仕様とブラウザの実測で整理。favicon.icoの16・32・48、iPhone用180、マニフェストの192・512、SVG、Google検索の条件、WordPressのサイトアイコンが出力するサイズまで解説します。"
 pubDate: 2026-04-29
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "ja"
-tags: ["favicon", "favicon-generator", "pwa", "web-manifest", "developer-tools"]
+tags: ["ファビコン", "favicon", "apple-touch-icon", "wordpress", "pwa"]
 ---
 
-Google で技術的なことを検索し、各結果のサイト名の横にある小さなアイコンを見てください。それがサイトのファビコンです。Google は 2019 年にモバイル検索結果でファビコンの表示を始め、現在は結果のサイト名の横に表示しています（[Google 検索セントラル](https://developers.google.com/search/docs/appearance/favicon-in-search?hl=ja)）。そこで見分けのつくファビコンがないサイトは放置されているように見え、くっきりとしたブランドらしいファビコンがあれば手入れが行き届いて見えます。この小さなマークは、ユーザーがクリックするかどうか決める場所でドメインの隣に表示されます。
+ファビコンのサイズ一覧を検索すると、16 から 512 まで十数種類の数字が並んだ表がたくさん見つかります。ただ、どのサイズを誰が使うのかまで書いてある表は多くありません。この記事では、HTML の仕様、Apple のドキュメント、Web App Manifest、Google 検索セントラル、WordPress のソースコードという一次情報と、ブラウザが実際にどのファイルを取りに来るかの実測から、本当に必要なサイズを絞り込みます。
 
-[Favicon ジェネレーターを開く →](/ja/tools/favicon-generator/)
+実測は 2026-10-02 に、macOS 上の Chromium 152（デバイスピクセル比 2、つまり Retina 画面）で行いました。テスト用のページをページごとに別のポートで配信し、ページを開いたときにサーバーへ届いたリクエストをすべて記録しています。アイコンは ZeroTool のファビコンジェネレーターで作ったものです。
 
-その小さなマークは、ブラウザタブ・ブックマークバー・OS タスクバー・iOS ホーム画面・Android PWA インストール・RSS リーダー・ショートカットタイルを横断して生き残る、数少ないビジュアル要素の 1 つです。それぞれの場面が少しずつ違うファイルを要求します — サイズが違い、ときに形式が違い、ときに専用の manifest エントリが必要です。本稿は、モダンな favicon セットの実際の姿、なぜ単一の `favicon.ico` ではもう足りないか、ランタイムで各ファイルが何の役割を担うか、そして ZeroTool ジェネレーターがどのようにバイトをアップロードせずブラウザ内でパッケージを組み立てるかを扱います。
+## 用途がはっきりしているのは 5 種類
 
-## モダンブラウザが実際に要求するファイル
+| サイズ | ファイル | 使う場所 | 根拠 |
+|---|---|---|---|
+| 16×16・32×32（と 48×48） | `favicon.ico`、または `<link rel="icon">` の PNG | ブラウザのタブ、ブックマーク、履歴 | [HTML Standard の `rel=icon`](https://html.spec.whatwg.org/multipage/links.html#rel-icon) |
+| 48×48 より大きいもの | トップページで指定したアイコン | Google 検索結果 | [Google 検索セントラル](https://developers.google.com/search/docs/appearance/favicon-in-search?hl=ja) |
+| 180×180 | `apple-touch-icon.png` | iPhone の「ホーム画面に追加」 | [Apple: Configuring Web Applications](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/ConfiguringWebApplications/ConfiguringWebApplications.html) |
+| 192×192・512×512 | マニフェストに書く PNG | Android やデスクトップ版 Chrome でのインストール | [web.dev のインストール要件](https://web.dev/articles/install-criteria) |
+| 可変 | `type="image/svg+xml"` の SVG | SVG アイコンに対応したブラウザ | HTML Standard（`sizes="any"`） |
 
-ブラウザがどのファイルを取りに行くかは、ページの `<link>` タグとユーザーの操作で決まります。自分のサイトで DevTools を開いてリロードし、Network パネルを見てください。デスクトップブラウザは通常、タブ用に選んだアイコン 1 つだけを取得します。入り口は次の 3 つです：
+一覧表によく出てくる 57、72、114、144 は昔の iOS 端末、150 や 310 は Windows のタイル向けで、上の一次情報が今求めているサイズではありません。Apple のドキュメントは iPad 用に 152×152 と 167×167 も挙げていますが、ちょうどのサイズがなければ「推奨サイズより大きいもののうち最小のもの」を使うと書いているので、180×180 が 1 つあれば iPad でも使われます。
 
-| リクエスト | 用途 | 備考 |
-|---|---|---|
-| `/favicon.ico` | ページがアイコンを宣言していないとき、ブラウザはこのパスにフォールバックする | 複数サイズのコンテナ。ルートのパスしか試さないツールやクローラーのために残しておく |
-| `<link rel="icon">` の href が指す画像 | タブ、ブックマーク、履歴 | ブラウザは `sizes` と `type` で候補から選ぶ。[HTML 標準](https://html.spec.whatwg.org/multipage/links.html#rel-icon)は選択をブラウザに任せている |
-| `<link rel="apple-touch-icon">` の href が指す画像 | iOS Safari の「ホーム画面に追加」 | 標準サイズは 180×180 |
+## Chromium が実際に取りに行ったファイル
 
-Android Chrome で PWA としてインストールすると、リクエストは増えます：
-
-| リクエスト | 用途 |
+| ページの `<head>` | HTML の後に来たリクエスト |
 |---|---|
-| `/site.webmanifest`（または `manifest.json`） | Chrome、Edge、Brave、Samsung Internet — PWA をインストールできる場所すべて |
-| manifest の `icons` 配列で宣言された 192×192 と 512×512 PNG | Android ホーム画面アイコン、起動画面、Android 共有シート |
+| アイコンの指定なし | `/favicon.ico` |
+| ジェネレーターの HTML（ICO、16・32・48 の PNG、apple-touch-icon、マニフェスト） | `/site.webmanifest`、`/favicon.ico` |
+| 16・32・48 の PNG の `link` だけ | `/favicon-32.png` |
+| 3 つの PNG の後に ICO の `link` | `/favicon.ico` |
+| `sizes="32x32"` の ICO、SVG、apple-touch-icon の順 | `/icon.svg` |
+| 32×32 の PNG の `link` だけ | `/favicon-32.png` |
 
-アイコンを `purpose: "maskable"` と指定すると、Android はランチャーに応じて円形や角丸四角のマスクをかけ、ランチャーのグリッドでネイティブアプリのように見せます。maskable アイコンは見える部分をセーフゾーン（アイコンサイズの 40% を半径とする円、各辺およそ 10% の余白）に収める必要があり、はみ出すとマスクで切られます（[web.dev](https://web.dev/articles/maskable-icon)）。web.dev は 1 つのファイルに `"any maskable"` を書くことを勧めていません。マスク用に余白を取ったアイコンは、そのまま表示される場所で小さく見えるためです。`any` 用と `maskable` 用は別ファイルにしましょう。
+この結果から 4 つのことが分かります。
 
-そして長いテールがあります。Windows 8・10 のピン留めサイトのタイルは `browserconfig.xml` を読みますが、Windows 11 にはライブタイルがありません。古い Safari はピン留めタブを `<link rel="mask-icon">` で宣言した単色 SVG で描いていました。古い Android Chrome はホーム画面のショートカットに `apple-touch-icon` を使っていました。一部のジェネレーターが 20 以上のファイルを出力するのはこのためです。
+1 つ目に、`/favicon.ico` を自動で取りに行くのは、ページがアイコンを何も指定していないときだけです。HTML Standard も、アイコンの `link` がない場合にサイトのルートの `/favicon.ico` を取得してよい（may）と定めています。PNG を指定して ICO を指定しなかったページでは、`/favicon.ico` へのリクエストは一度も来ませんでした。
 
-## なぜ単一の `favicon.ico` では足りないか
+2 つ目に、ICO の `link` があると、書く順番に関係なく ICO が選ばれました。Retina 画面の 16pt のタブには 32px の画像が要りますが、ICO の中に入っているので足ります。このとき 16・32・48 の PNG は使われていません。
 
-歴史的なデフォルトは、ICO を 1 つサイトルートに置いてブラウザに任せる、でした。モニタが最大 1280×1024、タブが 16 ピクセル四方だった頃はそれで十分でした。2 つの出来事がそれを壊しました：
+3 つ目に、SVG の `link` があると SVG だけが読まれました。
 
-1. **Retina ディスプレイ。** 16×16 の ICO をブラウザが 32 論理ピクセルに拡大して 2× ディスプレイで表示すると、ぼやけます。`<link rel="icon" type="image/png" sizes="32x32">` タグはブラウザにデバイスピクセル比に合った正しいリソースを選ばせます。
-2. **タブ以外の OS サーフェス。** iOS のホーム画面アイコン、Android のホーム画面アイコン、PWA のスプラッシュ画面は、それぞれセットから特定のサイズを取り、どれも 16 ピクセルの ICO は使いません。必要なのは 180、192、512 と、どれが何かを伝える manifest です。
+4 つ目に、デスクトップの Chromium は `apple-touch-icon.png` を取りに来ませんでしたが、マニフェストはページを開いた時点で取得しました。どのアイコンを使うかはブラウザ任せと HTML Standard に書かれているので、Firefox や Safari では違う結果になる可能性があります。この実測は Chromium だけのものです。
 
-修正策はモダンセットです：互換のための小さな ICO、モダンな `<link rel="icon">` 用のいくつかの PNG サイズ、iOS 用の apple-touch-icon、そして PWA アイコンを含む webmanifest。
+## Google 検索に表示されるファビコンの条件
 
-## 完全なファイルリストと各ファイルのランタイム役割
+検索結果のサイト名の横に出るファビコンについて、Google は「[検索結果に表示されるファビコンを定義する](https://developers.google.com/search/docs/appearance/favicon-in-search?hl=ja)」で次の条件を挙げています。
 
-ZeroTool ジェネレーターが出力するファイルと、ランタイムで誰が使うかを並べます：
+- 正方形（縦横比 1:1）で、8×8 ピクセル以上。さまざまな場所できれいに見えるよう、48×48 ピクセルより大きいものを推奨しています。
+- 対応形式は BMP、GIF、ICO、PNG、JPEG、PPM、TIFF です。SVG は含まれていないので、SVG を使う場合も ICO か PNG の `link` を残します。
+- ファビコンはホスト名ごとに 1 つです。`example.jp` と `blog.example.jp` は別々に設定できますが、`example.jp/blog` のようなサブディレクトリには設定できません。
+- Googlebot がトップページを、Googlebot-Image がアイコンのファイルをクロールできる必要があります。robots.txt でアイコンのパスを拒否すると表示されません。
+- アイコンの URL は頻繁に変えないこと。反映には数日から数週間かかることがあります。
 
-| ファイル | サイズ | 利用場面 |
-|---|---|---|
-| `favicon.ico` | 16+32+48 マルチサイズ | 古いブラウザ、ブックマークマネージャ、「規範名を最初にリクエスト」コードパス |
-| `favicon-16.png` | 16×16 | 標準 DPI モニタのブラウザタブ |
-| `favicon-32.png` | 32×32 | Retina モニタのタブ、一部のブックマーク UI |
-| `favicon-48.png` | 48×48 | HTML スニペットで宣言。Google 検索は 48×48 より大きいアイコンを推奨 |
-| `favicon-64.png` | 64×64 | スニペットからは参照されない。必要なら `<link>` を追加 |
-| `favicon-96.png` | 96×96 | スニペットからは参照されない |
-| `favicon-128.png` | 128×128 | スニペットからは参照されない |
-| `apple-touch-icon.png` | 180×180 | iOS Safari の「ホーム画面に追加」 |
-| `android-chrome-192.png` | 192×192 | PWA インストール後の Android ホーム画面（manifest アイコン） |
-| `android-chrome-512.png` | 512×512 | Android のスプラッシュ画面など大きな表示 |
-| `site.webmanifest` | text | 192/512 PNG、テーマカラー、`purpose: "any maskable"` を宣言（ファイルを分ける件は上を参照） |
+Search Console にファビコン専用のレポートはありません。急ぐときは、URL 検査ツールでトップページのインデックス登録をリクエストします。
 
-11 ファイルです。合計サイズは素材次第で、フラットな絵文字や単純な SVG は写真よりずっと小さく圧縮されます。
+## WordPress の「サイトアイコン」が出力しているもの
 
-## ICO 形式の仕組み
+日本の個人サイトや企業サイトでは、WordPress の「サイトアイコン」（クラシックテーマならカスタマイザーの「サイト基本情報」）でファビコンを設定することが多いはずです。カスタマイザーの説明文にあるとおり、画像は正方形で 512×512 ピクセル以上が求められます。
 
-`favicon.ico` はセット中で最も奇妙なファイルです。PNG より古く、Windows 3.0 で生まれ、当初はデバイス独立ビットマップ（DIB / BMP）フレームを運んでいました。今のジェネレーターはほとんどが PNG 圧縮エントリを使い、Windows Vista 以降のシェル、IE 11、それ以降のすべてのブラウザがネイティブサポートしています。PNG 圧縮エントリは小さく、アルファを保持し、フォーマットも素直です。
+WordPress のソースコードの [`wp_site_icon()`](https://github.com/WordPress/wordpress-develop/blob/trunk/src/wp-includes/general-template.php) を読むと、出力されるのは次の 4 つです。
 
-ICO ファイルは次の構造です：
+- `<link rel="icon" sizes="32x32">`（32×32）
+- `<link rel="icon" sizes="192x192">`（192×192）
+- `<link rel="apple-touch-icon">`（180×180）
+- `<meta name="msapplication-TileImage">`（270×270、Windows のタイル用）
 
-```text
-ICONDIR (6 バイト)
-├── reserved (2 バイト、ゼロ)
-├── type (2 バイト、1 = ICO、2 = CUR)
-└── count (2 バイト)
+ICO は出力されません。代わりに、サーバーに `favicon.ico` の実ファイルがない場合、WordPress 5.4 以降は `/favicon.ico` へのリクエストを受け、サイトアイコンの 32×32 版へリダイレクトします（未設定なら WordPress のロゴ画像へ。[`do_favicon()`](https://github.com/WordPress/wordpress-develop/blob/trunk/src/wp-includes/functions.php)）。レンタルサーバーの `public_html` に `favicon.ico` を置くと、サーバーがそのファイルを直接返すので、こちらが優先されます。サイトアイコンとは別の画像を置くと、ブラウザやツールによって違うアイコンが見えることになるので、どちらか一方にそろえます。
 
-ICONDIRENTRY × count (各 16 バイト)
-├── width (1 バイト、0 は 256 を意味)
-├── height (1 バイト、0 は 256 を意味)
-├── colorCount (1 バイト、32-bit ではゼロ)
-├── reserved (1 バイト、ゼロ)
-├── colorPlanes (2 バイト、1)
-├── bitsPerPixel (2 バイト、32)
-├── imageSize (4 バイト)
-└── imageOffset (4 バイト — ICO ファイル内の絶対オフセット)
+## iPhone のホーム画面：apple-touch-icon は 180×180
 
-(画像ペイロードはディレクトリの後ろに連結)
+iPhone で「ホーム画面に追加」したときのアイコンは `apple-touch-icon` です。Apple のドキュメントは、ページに `<link rel="apple-touch-icon" href="...">` を書く方法と、`link` がなければサイトのルートで `apple-touch-icon` で始まる名前のファイルを探す方法の 2 つを説明しています。180×180 は Retina の iPhone 向け（60pt の 3 倍）として挙げられているサイズです。
+
+角丸は iOS が付けるので、正方形のまま作ります。透明部分がどう描かれるかは Apple のドキュメントに書かれていないため、背景を塗りつぶした画像にしておくと端末による差が出ません。
+
+## Android とインストール：192・512 とマスカブル
+
+Web サイトをアプリとしてインストールできるようにするには、Chrome の[インストール要件](https://web.dev/articles/install-criteria)を満たすマニフェストが必要です。`name` か `short_name`、`start_url`、`display`（`fullscreen`、`standalone`、`minimal-ui`、`window-controls-overlay` のいずれか）、そして 192px と 512px のアイコンです。
+
+Android のランチャーはアイコンを円や角丸四角などの形に切り抜きます。`"purpose": "maskable"` を付けたアイコンは切り抜いてよいという意味で、ロゴは中心から幅の 40% を半径とする円の中に収める必要があります。外側の 10% は切られることがあるからです（[web.dev: マスカブルアイコン](https://web.dev/articles/maskable-icon)）。同じ記事は、1 つのファイルに `"any maskable"` と両方を書くことを勧めていません。切り抜き用の余白を取ったアイコンを、そのまま表示する場面でも使うとロゴが小さく見えるためです。`any` 用と `maskable` 用は別のファイルにします。Chrome の DevTools の「Application → Manifest」で、切り抜き後の安全領域を確認できます。
+
+## favicon.ico の中身
+
+ICO ファイルは、6 バイトのヘッダー、画像 1 枚につき 16 バイトのディレクトリ項目、そのあとに画像本体が続く形式です。各項目には幅と高さ（各 1 バイト、0 は 256 を意味する）、1 ピクセルあたりのビット数、画像のバイト数、ファイル先頭からの位置が入ります。Windows Vista 以降は画像部分にビットマップではなく PNG ファイルをそのまま入れられ、ブラウザもこの形式を読めます。
+
+{/* fav-ico: {"sizes":{"16":343,"32":539,"48":714},"total":1650} */}
+
+実測に使った `favicon.ico`（「Z」の文字アイコン）を Python の `struct` で読むと、次のとおりでした。
+
+| 項目 | 幅 × 高さ | ビット数 | バイト数 | 位置 | 中身 |
+|---|---|---|---|---|---|
+| 1 | 16 × 16 | 32 | 343 | 54 | PNG |
+| 2 | 32 × 32 | 32 | 539 | 397 | PNG |
+| 3 | 48 × 48 | 32 | 714 | 936 | PNG |
+
+最初の画像は 54 バイト目（6 + 3 × 16）から始まり、ファイル全体は 1,650 バイトです。16・32・48 を 1 つの ICO にまとめておけば、通常の画面と Retina 画面のタブ、Windows のショートカットをまかなえます。それより大きいサイズは、マニフェストや apple-touch-icon が指す PNG に任せます。
+
+## SVG ファビコンとダークモード
+
+SVG のアイコンはどのサイズにも拡大縮小でき、ファイル内の `<style>` に `prefers-color-scheme` のメディアクエリを書けば、OS のテーマに合わせて色を変えることもできます。
+
+```html
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 ```
 
-PNG エントリの場合、imageSize は完全な PNG ファイル（自身の IHDR / IDAT / IEND チャンクを含む）のサイズで、imageOffset はその PNG の先頭バイトを指します。ICONDIRENTRY の幅と高さは PNG 自身の幅と高さに合わせてください。読み取り側はデコードする前にディレクトリを見てエントリを選びます。
+上の実測の 5 番目のページで、Chromium が取りに来たのは `icon.svg` だけでした。ICO の行は、SVG アイコンに対応していないブラウザと、SVG を対応形式に挙げていない Google 検索のために残します。テーマを切り替えたときにタブのアイコンが描き直されるかはブラウザ次第で、今回は確かめていません。また、ファビコンの SVG は画像として描画されるため、外部のフォントや画像、スクリプトは読み込まれません。必要なものはファイルの中に含めます。
 
-ZeroTool ジェネレーターは 16・32・48 の PNG を ICO に詰め、それより大きいサイズは入れません。より多くのピクセルが必要なブラウザは `<link rel="icon">` の PNG、apple-touch-icon、manifest から取得します。この ICO を Windows のデスクトップアイコン（256×256 まで使われる）にも使いたいなら、そのサイズを含む ICO を別に作ってください。
+## ZeroTool のジェネレーターで作る手順と、直しておく点
 
-## ZIP コンテナの仕組み
+[ファビコンジェネレーター](/ja/tools/favicon-generator/)は、絵文字、1〜4 文字のテキスト、アップロードした画像、貼り付けた SVG をブラウザ内のキャンバスに描き、11 個のファイルを ZIP にまとめます。画像はどこにもアップロードされません。実測では、初期設定のロケット絵文字（透明背景）と、青背景の「Z」の 2 通りで作りました。
 
-ブラウザは 11 ファイルを 11 回のダウンロードを発火させずに 1 クリックで届ける必要があり、ジェネレーターはそれらを ZIP にまとめます。ZIP はサードパーティツールなしにどの OS でも開けるため、長年デフォルトコンテナです。中身は層構造です：local file header と続くペイロードのシーケンス、その後すべてのエントリをリストする「central directory」、最後にリーダーへ central directory の開始位置を伝える「end-of-central-directory」レコード。
+{/* fav-files: {"names":["favicon.ico","favicon-16.png","favicon-32.png","favicon-48.png","favicon-64.png","favicon-96.png","favicon-128.png","apple-touch-icon.png","android-chrome-192.png","android-chrome-512.png","site.webmanifest"],"letter":[1650,343,539,714,904,1328,1852,2744,3003,9286,417],"letterStats":"11 files · 22.2 KB","emoji":[6029,855,1770,3350,5382,10278,16203,29689,33238,98017,417],"emojiStats":"11 files · 200.4 KB"} */}
 
-各エントリのペイロードエンコード方法は 2 つ：STORED（無圧縮）か DEFLATE。PNG はすでに圧縮済みなので、DEFLATE をかけてもほとんど縮みません。ZeroTool ジェネレーターは全エントリに STORED を使い、DEFLATE の実装をページに載せていません。
+| ファイル | ピクセル | ロケット絵文字 | 文字「Z」 | 使われ方 |
+|---|---|---|---|---|
+| `favicon.ico` | 16・32・48 | 6,029 B | 1,650 B | タブ（Chromium が選んだ） |
+| `favicon-16.png` | 16 | 855 B | 343 B | `link` はあるが Chromium は取得せず |
+| `favicon-32.png` | 32 | 1,770 B | 539 B | 同上 |
+| `favicon-48.png` | 48 | 3,350 B | 714 B | 同上 |
+| `favicon-64.png` | 64 | 5,382 B | 904 B | どの `link` からも参照されない |
+| `favicon-96.png` | 96 | 10,278 B | 1,328 B | 同上 |
+| `favicon-128.png` | 128 | 16,203 B | 1,852 B | 同上 |
+| `apple-touch-icon.png` | 180 | 29,689 B | 2,744 B | iPhone のホーム画面 |
+| `android-chrome-192.png` | 192 | 33,238 B | 3,003 B | マニフェスト |
+| `android-chrome-512.png` | 512 | 98,017 B | 9,286 B | マニフェスト |
+| `site.webmanifest` | — | 417 B | 417 B | ページを開いた時点で取得 |
 
-CRC-32 は ZIP 仕様で唯一スキップできない部分です。各エントリは未圧縮バイトの 32-bit CRC を必ず持つ必要があります。ジェネレーターはスクリプト起動時に 256 エントリのルックアップテーブルを事前計算し、ファイル毎にバイトを 1 回スキャンします。ファイル名は General Purpose Bit Field のビット 11 で UTF-8 として宣言され、macOS Finder、Windows Explorer、7-Zip で非 ASCII 名がそのまま読めます。
+ツールの表示は、絵文字が「11 files · 200.4 KB」、文字が「11 files · 22.2 KB」でした。カラー絵文字はグラデーションが多いため、PNG が平たい文字の 10 倍ほどになります。絵文字は OS の絵文字フォントで描かれるので、Mac と Windows で作ると見た目が変わります。どの環境でも同じ結果にしたいときは、画像か SVG の入力を使います。
 
-## Canvas パイプライン
-
-各 PNG の描画は同じ 5 ステップを踏みます：
-
-```javascript
-// 1 つのターゲットサイズの擬似コード
-const canvas = createCanvas(size, size);
-const ctx = canvas.getContext('2d');
-
-if (shape !== 'square') {
-  drawShapePath(ctx, shape, size);
-  ctx.clip();           // 角丸 / 円形のアルファマスク
-}
-if (bgMode === 'color') {
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(0, 0, size, size);
-}
-const inner = size * (1 - padding * 2);
-drawSourceCentered(ctx, source, size, inner);  // emoji / text / image / svg
-const pngArrayBuffer = await canvasToPng(canvas);
-```
-
-`canvas.toBlob('image/png')` が重労働を担います — リサンプリング、アルファのエンコード。出力は `IHDR`、1 つ以上の `IDAT` チャンク、`IEND` を持つ完全な PNG です。IDAT 内の zlib 圧縮レベルはブラウザが決めるため、ファイルサイズはブラウザによって少し違います。
-
-知っておくべき失敗モードは 3 つあります：
-
-1. **canvas の汚染。** canvas が汚染されると `toBlob` は `SecurityError` を投げます。ジェネレーターはこれを捕まえ、先に SVG 内の外部リソースをインライン化するよう案内します。
-2. **カラー絵文字フォントがない。** カラー絵文字フォントのない Linux 環境では、canvas は代替グリフ（多くは空の四角）を描き、それがすべての PNG に入ります。ジェネレーターはこれを検出しないので、プレビューを確認するか、画像 / SVG 入力に切り替えてください。
-3. **大きな画像のメモリ圧迫。** ジェネレーターは 9 サイズを 1 つずつ描画し、各 `toBlob` を await します。9 つの canvas を同時に保持しません。
-
-## SVG・絵文字・クロスプラットフォーム一貫性問題
-
-最も微妙な出力差はカラー絵文字フォントから来ます。macOS は Apple Color Emoji、Windows は Segoe UI Emoji、Android と多くの Linux デスクトップは Noto Color Emoji を搭載し、同じコードポイント（たとえば 🚀）でもフォントごとに描き方が違います。
-
-macOS で favicon を生成し、Windows から訪問者が来ても、訪問者は生成された favicon を見るだけです — バイトはすでに PNG に焼き込まれています。Canvas レンダラーは絵文字を開発者のマシンで描かれた通りにキャプチャし、それらのピクセルをすべての訪問者に届けます。だからマシンを 1 台選び、1 度生成すれば、その後すべての訪問者にとって結果は一貫します。一貫性が問題になるのは開発者自身の反復作業です：6 か月後に別の OS で再生成すると、わずかに異なる favicon が出力されます。
-
-マシン横断でピクセル単位の一致が欲しければ、Image または SVG 入力に切り替えてください。SVG ベクターマークは OS フォントスタックではなく SVG 自身に基づいて決定論的にビットマップ化されます。代償は SVG が自己完結している必要があることです — リモートリソースへの `<image href>` 不可、外部 `<use>` フラグメント不可、リモート `@font-face` URL 不可。貼る前にすべてをインライン化してください。
-
-## HTML スニペットがやってくれること
-
-ジェネレーターはこのスニペットを出力し、`<head>` の中に置きます：
+ツールが出す HTML は次のとおりです。
 
 ```html
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -152,43 +143,36 @@ macOS で favicon を生成し、Windows から訪問者が来ても、訪問者
 <meta name="theme-color" content="#ffffff">
 ```
 
-いくつかの細かい点：
+`site.webmanifest`（テーマカラーは初期値、背景は透明の場合）はこうなります。
 
-- HTML 標準は、ブラウザが `sizes` と `type` を使ってすべての `<link rel="icon">` 候補から選ぶことを認めており、優先順位は定めていません。ICO を先頭に置くのは慣習で、必須ではありません。
-- `<meta name="theme-color">` はモバイル Safari と Chrome のアドレスバー、インストール済み PWA のタイトルバーの色を制御します。favicon ではありませんが、同じ head 内に住み、ブランドカラーの判断を共有するため favicon セットと一緒に旅をします。
-- ファイル名 `site.webmanifest` は慣習で、多くのチュートリアルは `manifest.json` を使います。どちらでも動きます。プロジェクトの他箇所が使っている方に合わせるのが楽です。
-- iOS Safari はホーム画面に `apple-touch-icon` があればそれを使います。Android Chrome はインストールされた Web アプリに manifest のアイコンを使います。
+```json
+{
+  "name": "",
+  "short_name": "",
+  "icons": [
+    {
+      "src": "/android-chrome-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/android-chrome-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "theme_color": "#ffffff",
+  "background_color": "#ffffff",
+  "display": "standalone"
+}
+```
 
-## 他のジェネレーターとの比較
+公開前に、次の 3 点を直しておくことをおすすめします。
 
-[RealFaviconGenerator](https://realfavicongenerator.net/) は老舗の定番で、プラットフォーム固有の選択肢が多く、既存サイトのファビコン設定をチェックする機能もあります。そうした選択肢が必要なら使いましょう。
+1. `name` と `short_name` にサイト名を入れ、`"start_url": "/"` を足します。空のままでは Chrome のインストール要件を満たしません。
+2. `"any maskable"` を `"any"` に変えます。マスカブルアイコンが必要なら、ロゴが中央の円に収まるよう余白を取った 512px の画像を別に作り、`"purpose": "maskable"` で追加します。円形のロゴなら各辺 10% 程度、四角いロゴは角も円に収める必要があるので 22% 程度の余白が目安です（ジェネレーターの余白は 30% まで設定できます）。
+3. 不要なら、どこからも参照されない 64・96・128 の PNG と、ICO がある場合に Chromium が使わなかった 16・32・48 の PNG の行を削除します。
 
-[favicon.io](https://favicon.io/) は考え方が ZeroTool に最も近く、入力がシンプル（絵文字、テキスト、画像）で、webmanifest を含む小さなパッケージを出力します。
-
-ZeroTool ジェネレーターは 11 ファイル、webmanifest、コピペ用の HTML スニペットを出力し、すべてブラウザ内で描画してソース画像をアップロードしません。
-
-## デプロイ前チェックリスト
-
-パッケージをデプロイする前に、これらを通してください：
-
-1. **11 ファイルをサイトルートに配置。** アイコン宣言が見つからないブラウザやクローラーはルートの `/favicon.ico` を取りに行き、HTML スニペットと manifest もルートのパスを使っています。
-2. **HTML スニペットを `<head>` 内に貼る。** PNG と apple-touch-icon は、ページが `<link>` で宣言したときだけ使われます。
-3. **`site.webmanifest` の `name` と `short_name` を更新。** プレースホルダ名で出荷しないよう、ジェネレーターは空のままにしています。
-4. **DevTools の Application パネルでテスト。** Application → Manifest に解析済みの manifest、解決されたアイコン、エラーが表示されます。「Show only the minimum safe area for maskable icons」で maskable の切り抜きをプレビューできます。
-5. **iOS の経路を確認。** 実機の iPhone（または iOS シミュレーター）で「ホーム画面に追加」を試します。iOS は角丸を自分で付け、透過は保持しないので、apple-touch-icon には不透明な背景を付けてください。
-6. **Google 検索のファビコンを確認。** Google は正方形で 8×8 以上を必須とし、48×48 より大きいサイズを推奨しています（[Google 検索セントラル](https://developers.google.com/search/docs/appearance/favicon-in-search?hl=ja)）。反映されるのはトップページの再クロール後で、Search Console にファビコンのレポートはありません。
-7. **ブランドが変わったら作り直す。** favicon セットを一回限りの資産ではなくビルド成果物として扱ってください。ソースファイル（ジェネレーターに与えた SVG または高解像度 PNG）をバージョン管理に入れ、マークやテーマカラーが変わったら同じソースから再生成します。
-
-## プライバシーに関するメモ
-
-パイプライン全体がブラウザ内で動くため、ソース画像はどのバージョンも端末を離れません。これは見かけ以上に重要です。未発表の製品のファビコンを作るとき、アップロード型のジェネレーターを使えばブランドマークをそのサービスに渡すことになります。ZeroTool は画像を手元に残します。DevTools → Network を開いて Generate を押すと、画像を運ぶリクエストはなく、計測イベントはツール名と操作だけを記録します。
-
-## さらに読む
-
-- [Apple の「Configuring web content」ガイド：apple-touch-icon サイジング](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/ConfiguringWebApplications/ConfiguringWebApplications.html)
-- [W3C Web App Manifest 仕様](https://www.w3.org/TR/appmanifest/) — manifest icon `purpose` 値の事実源
-- [web.dev：PWA における Maskable アイコン](https://web.dev/articles/maskable-icon)
-- [Google Search Central：検索結果に表示する favicon の定義](https://developers.google.com/search/docs/appearance/favicon-in-search)
-- [PKWARE ZIP file format specification (APPNOTE.TXT)](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT) — 完全な ZIP レイアウトを読みたい人向け
-
-ZeroTool 関連ツール：[SVG → PNG 変換器](/ja/tools/svg-to-png-converter/)、[WebP 変換器](/ja/tools/webp-converter/)、[画像 Base64 変換器](/ja/tools/image-to-base64/)、[QRコードジェネレーター](/ja/tools/qr-code-generator/)。
+ファイルはサイトのルートに置きます。HTML とマニフェストがルートからのパスで書かれているためです。WordPress の場合は、サイトアイコンを設定済みなら `link` が二重にならないよう、どちらか一方にしてください。最後に、DevTools の「Application → Manifest」、iPhone の「ホーム画面に追加」、Google がトップページを再クロールした後の検索結果で確認します。高解像度の元画像を作るときは [SVG PNG 変換ツール](/ja/tools/svg-to-png-converter/)が使えます。

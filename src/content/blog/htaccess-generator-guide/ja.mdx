@@ -1,270 +1,208 @@
 ---
-title: ".htaccessジェネレーター：mod_rewriteを暗記せずにApache設定を生成"
-description: "HTTPSリダイレクト・CORS・キャッシュ・Basic認証など.htaccessの主要ルールを解説。よくあるミスと、オンラインで正確な.htaccessを即生成する方法を紹介します。"
+title: ".htaccessとは？Apache 2.4で確かめた書き方・読み込み条件・リダイレクトの落とし穴"
+description: ".htaccessが読まれる条件（AllowOverride）、エックスサーバー・ロリポップでの置き場所、mod_rewriteの[L]と[END]、2.2と2.4の書き方の違いを、Apache 2.4.67の実測結果つきで解説します。"
 pubDate: 2026-04-07
-updatedDate: 2026-10-01
+updatedDate: 2026-10-02
 lang: "ja"
-tags: ["htaccess", "apache", "htaccess-generator", "web-server", "developer-tools"]
+tags: [".htaccess", "apache", "mod_rewrite", "レンタルサーバー", "wordpress"]
 ---
 
-**.htaccess ジェネレーター**を使えば、mod_rewrite の構文を覚えたり括弧の位置ミスで 500 エラーを出したりすることなく、有効な Apache `.htaccess` 設定を生成できます。`.htaccess`（"hypertext access" の略）はディレクトリごとの設定ファイルで、Apache がリクエストのたびに読み込みます。メインのサーバー設定を触らずにリダイレクト・ヘッダー・認証・圧縮を制御できます。
+`.htaccess` は、Apache HTTP Server がディレクトリごとに読む設定ファイルです。メインの設定ファイル（`httpd.conf`）を編集できない共用レンタルサーバーでも、リダイレクト、アクセス制限、キャッシュヘッダーなどを自分で設定できます。ファイルを置いたディレクトリとその下のすべてのディレクトリに効き、Apache は変更を次のリクエストから反映するので、再起動も要りません。
 
-## .htaccess の用途と使うべき場面
+便利な反面、書き間違い 1 行でディレクトリ全体が 500 エラーになり、逆に書いたことが何も効かないこともあります。この記事では、そうした挙動を Apache 2.4.67（macOS 同梱版）を手元で起動して確かめた結果とあわせて説明します。検証は 2026-10-02 に、ドキュメントルートに `.htaccess` を置いて `http.client` でリクエストを送り、ステータスコードとエラーログを読む方法で行いました。
 
-`.htaccess` は `AllowOverride` が有効な Apache サーバーでのみ動作します。Nginx や CDN のみの構成では使えません（LiteSpeed Web Server は `.htaccess` を読み込みます）。Nginx にはディレクトリごとの設定ファイルに相当するものがなく、ルールは `server {}` ブロックに書きます。
+## .htaccess が読まれる条件：AllowOverride
 
-`.htaccess` が適切な場面：
+`.htaccess` を読むかどうか、読むならどのディレクティブを許すかは、メイン設定の [`AllowOverride`](https://httpd.apache.org/docs/2.4/mod/core.html#allowoverride) で決まります。Apache 2.3.9 以降の既定値は `None` で、この場合 `.htaccess` は読まれません。中身が間違っていてもエラーにならず、ただ無視されます。
 
-- `httpd.conf` を編集できない共有ホスティング
-- WordPress・Joomla・Drupal（すべてパーマリンクに `.htaccess` を使用）
-- サーバーの再起動なしに素早くルールを適用したい場合
+```apache
+RewriteEngin On
+```
 
-メインのサーバー設定や Nginx を選ぶべき場面：
+{/* hta-apache: {"override":"None","requests":[["/",200]]} */}
+{/* hta-apache: {"override":"All","requests":[["/",500],["/app.css",500]],"log":"Invalid command 'RewriteEngin'"} */}
 
-- 高トラフィックのサイト（`.htaccess` はリクエストのたびに再読み込みされるためレイテンシが増加）
-- コンテナやサーバーレス環境
-- すべての仮想ホストにまたがってグローバルに適用する必要があるルール
+`RewriteEngine` を 1 文字打ち間違えたこの 1 行は、`AllowOverride None` では 200 のまま何も起きず、`AllowOverride All` ではトップページも CSS も 500 になりました。エラーログには `.htaccess: Invalid command 'RewriteEngin', perhaps misspelled or defined by a module not included in the server configuration` と記録されます。500 が出たら、まずエラーログでファイル名と行の内容を確認します。エックスサーバーではサーバーパネルの「[エラーログ](https://www.xserver.ne.jp/manual/man_server_logerror.php)」で確認できます。
 
-## 必須の .htaccess ルール
+`AllowOverride` には `All` と `None` のほかに、`AuthConfig`（認証）、`FileInfo`（リダイレクトや `mod_rewrite`、ヘッダー）、`Indexes`、`Limit`、`Options` といった分類があり、許可された分類のディレクティブだけを書けます。許可されていない分類のディレクティブがあると、構文が正しくても 500 です。
 
-### HTTPS 強制（HTTP から HTTPS へのリダイレクト）
+```apache
+Options -Indexes
+```
 
-最もよく使われる `.htaccess` ルールです。すべての HTTP トラフィックを HTTPS にリダイレクトします。Google のランキングシグナルにもなります。
+{/* hta-apache: {"override":"FileInfo","requests":[["/",500]],"log":"Options not allowed here"} */}
+
+`AllowOverride FileInfo` のディレクトリでこの 1 行を置くと、500 になり、エラーログは `Options not allowed here` でした。VPS や自社サーバーで設定を作るときは、使うディレクティブの分類を `AllowOverride` に入れるか、そもそもメイン設定に書きます。
+
+## 毎回のリクエストで読まれることのコスト
+
+Apache の [.htaccess チュートリアル](https://httpd.apache.org/docs/2.4/howto/htaccess.html)は、メイン設定を編集できるなら `.htaccess` は使わないよう勧めています。理由は 2 つです。
+
+1 つ目は性能です。`AllowOverride` が有効だと、Apache はリクエストのたびに、対象ファイルのあるディレクトリから上位のすべてのディレクトリで `.htaccess` を探して読みます。チュートリアルの例では、`/www/htdocs/example` のファイルへの 1 回のリクエストで、`/.htaccess`、`/www/.htaccess`、`/www/htdocs/.htaccess`、`/www/htdocs/example/.htaccess` の 4 つを確認します。ファイルが存在しなくても探す処理は発生します。
+
+2 つ目は管理のしやすさです。設定がディレクトリのあちこちに散ると、どこで何が効いているのか追いにくくなります。メイン設定の `<Directory>` に書けば、起動時に一度だけ読まれ、構文の誤りも `apachectl configtest` で事前に見つかります。`configtest` は `.htaccess` を読まないので、`.htaccess` の誤りは実際にリクエストを送るまで分からない点にも注意してください。
+
+つまり `.htaccess` は、メイン設定に手が届かない共用レンタルサーバーのための仕組みです。日本の個人サイトや中小企業のサイトの多くがこの環境で動いているので、今でも欠かせないファイルになっています。
+
+## レンタルサーバーでの置き場所と編集方法
+
+エックスサーバーでは、サーバーパネルの「[.htaccess編集](https://www.xserver.ne.jp/manual/man_server_htaccess.php)」でドメインごとの `public_html/.htaccess` を直接編集できます。マニュアルによると、ファイルがなければ保存時に作成され、文字コードは UTF-8 で保存されます。サブディレクトリの `.htaccess` はこの画面では編集できず、ファイルマネージャか FTP を使います。同じマニュアルには、サーバーパネルの機能や WordPress が `.htaccess` に自動で書き込んでいる記述があるので、心当たりがなくても不用意に消さないようにという注意があります。エックスサーバーは nginx を併用していますが、Apache 用の `.htaccess` をそのまま使えると明記しています。
+
+ロリポップ！の「[.htaccess利用方法](https://lolipop.jp/manual/hp/htaccess)」は、Windows では先頭がドットのファイル名を扱いにくいので `htaccess.txt` などの名前で作り、FTP でアップロードしてから名前を変える手順を案内しています。アップロード後のパーミッションは 604 です。設定は置いたディレクトリとその下に効き、たとえば `/hoge` に置けば `/hoge` と `/hoge/moge` に適用され、`/abc` には適用されません。
+
+どちらのサーバーでも、編集前に今のファイルを手元に保存しておき、編集後はトップページと主要なページを開いて 500 になっていないか確かめます。`.htaccess` の誤りはサイト全体を止めるので、元に戻せる状態で触ることが一番の安全策です。
+
+## mod_rewrite の [L] と [END]：ループの実例
+
+`.htaccess` で一番よく使われるのは `mod_rewrite` です。ここで誤解されやすいのが `[L]` フラグです。[mod_rewrite のドキュメント](https://httpd.apache.org/docs/2.4/rewrite/flags.html#flag_l)にあるとおり、`[L]` は「この回の書き換え処理を終える」だけで、`.htaccess`（ディレクトリ単位の文脈）では、書き換え後の URL で内部リダイレクトが起き、ルールがもう一度最初から適用されます。
 
 ```apache
 RewriteEngine On
-RewriteCond %{HTTPS} off
-RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+RewriteRule ^(.*)$ app/$1 [L]
 ```
 
-SSL を終端するロードバランサーの背後にある場合は、転送ヘッダーを使います：
+{/* hta-apache: {"override":"All","requests":[["/foo",500]],"log":"AH00124"} */}
+
+すべてのリクエストを `app/` 以下へ書き換えるつもりのこのルールで `/foo` を開くと、500 になりました。`/foo` は `/app/foo` に、`/app/foo` は `/app/app/foo` に、と書き換えが続き、10 回の内部リダイレクトで打ち切られます。エラーログは `AH00124: Request exceeded the limit of 10 internal redirects due to probable configuration error.` です。
+
+Apache 2.4 では [`[END]`](https://httpd.apache.org/docs/2.4/rewrite/flags.html#flag_end) が使えます。`[END]` は書き換えを終え、内部リダイレクト後の再適用も止めます。ドキュメントも、ディレクトリ単位のルールにはほとんどの場合 `[END]` が向いていると書いています。
 
 ```apache
 RewriteEngine On
-RewriteCond %{HTTP:X-Forwarded-Proto} !https
-RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+RewriteRule ^(.*)$ app/$1 [END]
 ```
 
-### WWW あり/なしの統一
+{/* hta-apache: {"override":"All","requests":[["/foo",200]]} */}
 
-どちらか一方を正規の形式として、他方をリダイレクトします：
-
-```apache
-# WWW なしを正規形式に
-RewriteEngine On
-RewriteCond %{HTTP_HOST} ^www\.(.*)$ [NC]
-RewriteRule ^(.*)$ https://%1/$1 [R=301,L]
-```
-
-```apache
-# WWW ありを正規形式に
-RewriteEngine On
-RewriteCond %{HTTP_HOST} !^www\. [NC]
-RewriteRule ^(.*)$ https://www.%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
-```
-
-### 301 恒久リダイレクト
-
-特定のページを新しい URL に移動します：
-
-```apache
-Redirect 301 /old-page https://yourdomain.com/new-page
-```
-
-正規表現を使ったパターンマッチングのリダイレクト：
+同じリクエストが 200 になり、`app/foo` の中身が返りました。`[END]` のない 2.2 系でも動く書き方にするなら、書き換え済みの URL を条件で除外します。
 
 ```apache
 RewriteEngine On
-RewriteRule ^blog/(.+)$ /articles/$1 [R=301,L]
+RewriteCond %{REQUEST_URI} !^/app/
+RewriteRule ^(.*)$ app/$1 [L]
 ```
 
-### カスタム 404 エラーページ
+{/* hta-apache: {"override":"All","requests":[["/foo",200]]} */}
+
+WordPress が書き込む標準のブロックも、この考え方で作られています。
 
 ```apache
-ErrorDocument 404 /404.html
-ErrorDocument 500 /500.html
-ErrorDocument 403 /403.html
-```
-
-### CORS ヘッダー
-
-特定ドメインまたはすべてのオリジンからのクロスオリジンリクエストを許可します：
-
-```apache
-# 特定のオリジンを許可
-<IfModule mod_headers.c>
-  Header set Access-Control-Allow-Origin "https://app.yourdomain.com"
-  Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
-  Header set Access-Control-Allow-Headers "Content-Type, Authorization"
+# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
 </IfModule>
+# END WordPress
 ```
+
+{/* hta-apache: {"override":"All","requests":[["/foo",200],["/app.css",200]]} */}
+
+存在しないパス `/foo` は `/index.php` に渡され、実在する `app.css` はそのまま返ります。2 回目の処理では先頭の `RewriteRule ^index\.php$ - [L]` が「書き換えない」で止めるので、ループしません。`# BEGIN WordPress` と `# END WordPress` の間は WordPress がパーマリンク設定の保存時に書き直すので、自分のルールはこの外側に書きます。
+
+`mod_rewrite` まわりでは、ほかに 2 つの症状を確認しました。`RewriteEngine On` を書き忘れると、ルールはエラーにもならず黙って無視されます（`RewriteRule ^old$ /new [R=301,L]` だけを置いた場合、`/old` は 404 のままでした）。また、ディレクトリで `Options FollowSymLinks` と `SymLinksIfOwnerMatch` がどちらも無効だと、ルールに当たるリクエストはすべて 403 になり、エラーログに `AH00670` が出ます。
+
+{/* hta-apache: {"override":"All","options":"None","requests":[["/foo",403]],"log":"AH00670","ht":"RewriteEngine On\nRewriteRule ^(.*)$ app/$1 [END]\n"} */}
+
+## Apache 2.2 の書き方と 2.4 の書き方
+
+アクセス制限の書き方は、Apache 2.4 で変わりました。2.2 の `Order` / `Deny` / `Allow` は、2.4 では [mod_access_compat](https://httpd.apache.org/docs/2.4/mod/mod_access_compat.html) が読み込まれているときだけ動く互換機能で、本来の書き方は [mod_authz_core](https://httpd.apache.org/docs/2.4/mod/mod_authz_core.html) の `Require` です。
 
 ```apache
-# すべてのオリジンを許可（公開 API やフォント配信）
-<IfModule mod_headers.c>
-  Header set Access-Control-Allow-Origin "*"
-</IfModule>
-```
-
-### Basic 認証（パスワード保護）
-
-ディレクトリをユーザー名とパスワードで保護します：
-
-```apache
-AuthType Basic
-AuthName "Restricted Area"
-AuthUserFile /path/to/.htpasswd
-Require valid-user
-```
-
-`.htpasswd` ファイルの生成：
-
-```bash
-htpasswd -c /path/to/.htpasswd username
-# パスワードの入力を求められます
-```
-
-ディレクトリ全体でなく特定のファイルを保護する場合：
-
-```apache
-<Files "admin.php">
-  AuthType Basic
-  AuthName "Admin"
-  AuthUserFile /path/to/.htpasswd
-  Require valid-user
+<Files "index.php">
+Order deny,allow
+Deny from all
 </Files>
 ```
 
-### Gzip 圧縮
+{/* hta-apache: {"override":"All","requests":[["/",500]],"log":"Invalid command 'Order'"} */}
+{/* hta-apache: {"override":"All","compat":true,"requests":[["/index.php",403],["/",200]]} */}
 
-テキストベースのレスポンスを圧縮して転送サイズを削減します。WOFF と WOFF2 のフォントはすでに圧縮済みなので対象から外します：
+`mod_access_compat` なしの Apache では、このファイルだけでサイト全体が 500 になり、エラーログは `Invalid command 'Order'` でした。モジュールを読み込むと `index.php` は 403、ほかは 200 になります。ネットで見つかる古い記事の多くは 2.2 の書き方なので、コピーする前に確認が必要です。
 
-```apache
-<IfModule mod_deflate.c>
-  AddOutputFilterByType DEFLATE text/html text/plain text/css
-  AddOutputFilterByType DEFLATE application/javascript application/json
-  AddOutputFilterByType DEFLATE application/xml image/svg+xml
-</IfModule>
-```
-
-### ブラウザキャッシュヘッダー
-
-静的アセットのキャッシュ期間をブラウザに伝えます：
+レンタルサーバーの公式マニュアルにも 2.2 の書き方は残っています。ロリポップ！の「[WordPressログインページの.htaccess編集方法](https://lolipop.jp/manual/blog/wordpress-htaccess)」に載っている `wp-login.php` の制限は `Order deny,allow`、`Deny from all`、`Allow from` の形です。互換モジュールが有効なサーバーなら動きますが、[Apache の移行ガイド](https://httpd.apache.org/docs/2.4/upgrading.html)は、`Order` などの古いディレクティブと `Require` を混ぜることは技術的には可能でも推奨しない（discouraged）と書き、互換モジュールは古いディレクティブだけの設定を移行するためのものだと説明しています。新しく書くルールは、たとえば次のように `Require` だけで書きます。
 
 ```apache
-<IfModule mod_expires.c>
-  ExpiresActive On
-
-  # 画像
-  ExpiresByType image/jpeg "access plus 1 year"
-  ExpiresByType image/png "access plus 1 year"
-  ExpiresByType image/webp "access plus 1 year"
-  ExpiresByType image/svg+xml "access plus 1 month"
-  ExpiresByType image/x-icon "access plus 1 year"
-
-  # CSS と JavaScript
-  ExpiresByType text/css "access plus 1 month"
-  ExpiresByType application/javascript "access plus 1 month"
-
-  # フォント
-  ExpiresByType font/woff2 "access plus 1 year"
-  ExpiresByType font/woff "access plus 1 year"
-
-  # HTML — 長くキャッシュしない
-  ExpiresByType text/html "access plus 0 seconds"
-</IfModule>
+<Files "wp-login.php">
+  Require ip 192.0.2.10
+</Files>
 ```
 
-Vite・webpack・Next.js のようにファイル名にコンテンツハッシュを使う場合は `immutable` を使って最大限のキャッシュ効率を得られます：
+## HTTPS 化と www の統一：書き方を比べる
 
-```apache
-<FilesMatch "\.[0-9a-f]{8,}\.(js|css|woff2)$">
-  Header set Cache-Control "public, max-age=31536000, immutable"
-</FilesMatch>
-```
-
-### ホットリンク防止
-
-他のサイトが画像を埋め込んで帯域幅を消費することを防ぎます：
+エックスサーバーのマニュアル「[Webサイトの常時SSL化](https://www.xserver.ne.jp/manual/man_server_fullssl.php)」は、次の 3 行を既存の設定を消さずに先頭へ追記するよう案内しています。独自 SSL を設定しただけでは `https://` へ自動転送されないためです。
 
 ```apache
 RewriteEngine On
-RewriteCond %{HTTP_REFERER} !^$
-RewriteCond %{HTTP_REFERER} !^https?://(www\.)?yourdomain\.com/ [NC]
-RewriteRule \.(jpg|jpeg|png|gif|webp|svg)$ - [F,L]
+RewriteCond %{HTTPS} !on
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 ```
 
-### セキュリティヘッダー
+ZeroTool のジェネレーターが出力するのは `RewriteCond %{HTTPS} off` で、条件の向きが違うだけで意味は同じです。どちらも `%{HTTPS}` は Apache 自身が受けた接続を表すので、ロードバランサーや CDN が TLS を終端して Apache には HTTP で渡す構成では常に `off` になり、リダイレクトが止まらなくなります。その場合はプロキシ側で HTTPS 化するか、プロキシが付けるヘッダーを条件にします。
+
+www の統一では、ロリポップ！の「[URLの書き換え](https://lolipop.jp/manual/hp/htaccess-08)」が `RewriteCond %{HTTP_HOST} ^www\.hogemoge\.com` と `RewriteRule ^(.*) http://hogemoge.com/$1 [R=301,L]` のように、ホスト名を直接書く例を載せています。転送先が `http://` なので、HTTPS のサイトでそのまま使うと、`https://www.` → `http://` → `https://` と余分な往復が増えます。転送先は `https://` に書き換えて使います。ジェネレーターの www 統一は転送先が常に `https://` ですが、ホスト名を書かずに「`www.` で始まらないホストすべて」に `www.` を足すので、`blog.example.jp` のようなサブドメインまで `www.blog.example.jp` に転送します。サブドメインを使うサイトでは、ホスト名を書いた形のほうが安全です。
+
+## ZeroTool のジェネレーターの出力と、足りないもの
+
+[.htaccess ジェネレーター](/ja/tools/htaccess-generator/)を初期状態のまま使うと、次のファイルが出力されます（HTTPS 強制、ディレクトリインデックス、ブラウザキャッシュ、セキュリティの最初の 3 項目が ON）。
+
+{/* hta-default */}
 
 ```apache
-<IfModule mod_headers.c>
-  # クリックジャッキングを防止
-  Header always set X-Frame-Options "SAMEORIGIN"
-
-  # MIME タイプスニッフィングを防止
-  Header always set X-Content-Type-Options "nosniff"
-
-  # 古い XSS フィルターを無効化（OWASP と MDN は 0 を推奨）
-  Header always set X-XSS-Protection "0"
-
-  # リファラーポリシー
-  Header always set Referrer-Policy "strict-origin-when-cross-origin"
-
-  # PHP のバージョンヘッダーを削除（Server ヘッダーはここでは消せません。メイン設定で ServerTokens Prod を指定）
-  Header always unset X-Powered-By
+# Force HTTPS
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 </IfModule>
+
+# Directory Index
+DirectoryIndex index.php index.html index.htm
+
+# Browser Caching
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/gif "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType text/css "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+  ExpiresByType text/javascript "access plus 1 month"
+  ExpiresByType font/woff "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType font/ttf "access plus 1 year"
+  ExpiresByType application/x-font-ttf "access plus 1 year"
+  ExpiresByType application/vnd.ms-fontobject "access plus 1 year"
+</IfModule>
+
+# Security
+Options -Indexes
+<Files ".htaccess">
+  Require all denied
+</Files>
+<Files ".env">
+  Require all denied
+</Files>
 ```
 
-## .htaccess ルールのテスト
+{/* hta-apache: {"override":"All","ht":"tool-default","requests":[["/",301,null,"https://example.test/"],["/.env",403],["/.htaccess",403]]} */}
+{/* hta-apache: {"override":"All","ht":"tool-default-no-https","requests":[["/app.css",200,"max-age=2592000"],["/a.ttf",200,"max-age=31536000"],["/emptydir/",403]]} */}
 
-### curl — リダイレクトの確認
+Apache 2.4.67 に置いて HTTP でリクエストすると、`/` は `https://example.test/` への 301 になりました。`/.env` と `/.htaccess` は、リダイレクトより先にアクセス制御が働くので 403 です。HTTPS の部分を外して試すと、CSS には `Cache-Control: max-age=2592000`（1 か月）、TTF には `max-age=31536000`（1 年）が付き、インデックスファイルのないディレクトリは 403 でした。`font/ttf` と `application/x-font-ttf` の両方が並んでいるのは、Apache 2.4 同梱の `mime.types` が `.ttf` を `font/ttf` にしているからです。
 
-```bash
-# リダイレクトをたどって最終 URL を表示
-curl -L -I https://yourdomain.com/old-page
+エックスサーバーには、サーバーパネルの「[ブラウザキャッシュ設定](https://www.xserver.ne.jp/manual/man_server_expires.php)」もあります。マニュアルによると、この機能は対象の静的ファイルに最大 7 日間のキャッシュヘッダーを付け、`.htaccess` で `Cache-Control` や `Expires` を設定している場合はそちらが優先されます。ジェネレーターのキャッシュ設定を入れると、パネルの設定より長い期間になる点を承知しておいてください。
 
-# すべてのリダイレクトのホップを表示
-curl -v https://yourdomain.com/old-page 2>&1 | grep -E "< HTTP|Location:"
-```
+ジェネレーターの出力について、ほかに知っておくべき点です。
 
-### CORS ヘッダーのテスト
+- `<Files ".htaccess">` のブロックは、Apache 2.4 同梱の `httpd.conf` にある `<Files ".ht*">` と同じ働きです。重複しても害はありません。
+- `.env` のブロックは名前が完全に一致するファイルだけを守ります。`.env.local` や `.env.production` は配信されるので、こうしたファイルはドキュメントルートの外に置きます。
+- XSS・クリックジャッキング対策のヘッダーを ON にすると、`X-XSS-Protection` は `"0"` で出力されます。古いブラウザの XSS フィルターは悪用の余地があったため、[OWASP の HTTP Headers Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#x-xss-protection) は 0 にするか送らないよう勧めています。
+- カスタムリダイレクトは `Redirect` ディレクティブで 1 件だけです。`Redirect` は前方一致なので、`/old-blog` の転送は `/old-blog/2024/post` にも効きます。
+- Basic 認証、CORS、gzip 圧縮、エラーページの項目はありません。Basic 認証のパスワードファイルは [htpasswd 生成ツール](/ja/tools/htpasswd-generator/)で作れます。エックスサーバーやロリポップ！では、サーバーパネルの「アクセス制限」から同じ設定ができます。
 
-```bash
-curl -H "Origin: https://other.com" \
-     -H "Access-Control-Request-Method: GET" \
-     -I https://yourdomain.com/api/resource
-```
-
-### Gzip のテスト
-
-```bash
-curl -H "Accept-Encoding: gzip" -I https://yourdomain.com/
-# 確認事項: Content-Encoding: gzip
-```
-
-### キャッシュヘッダーの確認
-
-```bash
-curl -I https://yourdomain.com/static/app.js
-# 確認事項: Cache-Control と Expires ヘッダー
-```
-
-## よくあるミス
-
-**1. `RewriteEngine On` の漏れ** — `RewriteRule` を使うすべてのブロックの先頭にこの行が必要です。忘れると mod_rewrite はルールを黙って無視します。500 エラーになる場合は、mod_rewrite 自体が読み込まれていません。
-
-**2. ルールの順序** — Apache はルールを上から下に処理し、`[L]` はその回の処理を終えます。`.htaccess` では書き換え後の URL がもう一度ルールを通るため、処理を止めたいときは `[END]`（Apache 2.4.3 以降）を使います。広いルールより前に特定のルールを置いてください。
-
-**3. 無限リダイレクトループ** — HTTPS リダイレクトが既に HTTPS の場合にも実行されるとループになります。必ず `%{HTTPS} off` または `%{HTTP:X-Forwarded-Proto} !https` を確認してください。
-
-**4. .htpasswd へのパス** — ファイルシステムの絶対パスを使ってください。`AuthUserFile` の相対パスは `.htaccess` のあるディレクトリではなく `ServerRoot` を基準に解決されます。
-
-**5. `mod_rewrite` が有効になっていない** — Ubuntu/Debian では `sudo a2enmod rewrite && sudo systemctl restart apache2` を実行してください。
-
-## 推測なしで .htaccess を構築する
-
-リダイレクト・認証・キャッシュルールを正しく組み合わせるには、慎重な順序付けと構文が必要です。
-
-[htaccess ジェネレーターを試す →](/ja/tools/htaccess-generator/)
-
-ジェネレーターが扱うのは HTTPS、www の有無、`DirectoryIndex`、ブラウザキャッシュ、いくつかのセキュリティルール、1件の `Redirect` で、各ブロックの先頭にはブロック名のコメントが入ります。圧縮・CORS・認証・エラーページ・直リンク防止はジェネレーターにないため、上の例からコピーしてください。
+出力を貼り付けたら、`curl -I http://example.jp/` で 301 と `Location` を、`curl -I https://example.jp/style.css` で `Cache-Control` を確かめます。500 が出たら、エラーログで原因の行を確認してから直してください。
