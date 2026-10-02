@@ -1,193 +1,220 @@
 ---
-title: "MIME Type Lookup: A Reference and Magic-Bytes Sniffer for Uploads"
-description: "Stop trusting file extensions for upload validation. How the IANA media-type registry works, how magic-bytes detection runs in the browser, and which Content-Type to put in your HTTP headers."
+title: "MIME Types: Syntax, the IANA Registry, Server Defaults and File Sniffing"
+description: "What a MIME type is and how to write one, which types IANA registers, what Nginx and Apache actually send, how Chrome enforces types, and why file extensions and magic bytes disagree."
 pubDate: 2026-05-21
-updatedDate: 2026-05-21
+updatedDate: 2026-10-02
 lang: "en"
-tags: ["mime-type", "content-type", "file-upload", "web-security", "developer-tools"]
+tags: ["mime-type", "content-type", "http", "file-upload", "web-security"]
 ---
 
-A common upload bug: a form accepts `invoice.pdf`, the server copies whatever `Content-Type` the browser sent into object storage, and later the stored object turns out to carry `application/octet-stream` (some clients and storage SDKs fall back to it when they do not recognize a file), so the link downloads instead of opening inline. Nothing on the server ever checked what the bytes were.
+A MIME type, or media type in current standards, is the label that says what format a sequence of bytes is in: `text/html`, `image/png`, `application/json`. HTTP sends it in the `Content-Type` header so the browser knows whether to render a page, decode an image, run a script or save a file. Email uses the same labels for attachments, which is where the name came from: MIME is Multipurpose Internet Mail Extensions.
 
-That single line of metadata is the slip every upload bug starts with. The fix is a habit: confirm the byte-level type before you trust the extension, the form field, or `File.type`.
+This guide covers how a type is written, who registers types, what two popular web servers send by default, how Chrome reacts when the type is wrong, and how to tell a file's real format from its bytes. The server and browser results were measured on 2 October 2026 with Nginx 1.30.5 and Apache httpd 2.4.68 in Docker and Chrome 152 on macOS. The lookup and sniffing examples come from ZeroTool's [MIME Type Lookup](/tools/mime-type-lookup/), and this site's tests recompute them from the tool's code.
 
-[Open the MIME Type Lookup tool →](/tools/mime-type-lookup/)
+## How a MIME type is written
 
-## The two jobs a MIME type does
+[RFC 9110 §8.3.1](https://www.rfc-editor.org/rfc/rfc9110#section-8.3.1) gives the HTTP grammar:
 
-A media type — the formal name in RFC 6838 — does two completely different things at once.
+```text
+media-type = type "/" subtype parameters
+```
 
-| Surface | Role of the MIME type | What goes wrong if it is wrong |
+The type and subtype are case-insensitive. Parameters follow after semicolons as `name=value` pairs; parameter names are case-insensitive, and whether a value is depends on the parameter. RFC 9110 lists four equivalent ways to say "HTML in UTF-8" and prefers the first:
+
+```text
+text/html;charset=utf-8
+Text/HTML;Charset="utf-8"
+text/html; charset="utf-8"
+text/html;charset=UTF-8
+```
+
+[RFC 6838 §4.2](https://www.rfc-editor.org/rfc/rfc6838#section-4.2) restricts registered names further: letters, digits and `! # $ & - ^ _ . +`, starting with a letter or digit, up to 127 characters, and it asks for 64 or fewer. Two characters carry meaning:
+
+- **The part before the first dot is a tree.** No dot is the standards tree (`application/json`). `vnd.` is the vendor tree (`application/vnd.ms-excel`), `prs.` is the personal tree, and `x.` is the unregistered tree, which "cannot be registered" and is "strongly discouraged". Names starting with `x-` (`application/x-7z-compressed`) are not in the `x.` tree: RFC 6838 §3.4 says they "are no longer considered to be members of this tree", and widely used ones may be registered under their current name.
+- **The part after the last plus is a structured syntax suffix.** `application/ld+json` and `image/svg+xml` tell a generic parser the bytes are JSON or XML underneath.
+
+Common parameters are `charset` for text, `boundary` for `multipart/form-data`, and `profile` or `version` for some JSON-based types.
+
+## The registry and its top-level types
+
+IANA's [Media Types registry](https://www.iana.org/assignments/media-types/media-types.xhtml), last updated 24 September 2026 when downloaded for this guide, has eleven top-level types. The counts are the rows in each registry's CSV:
+
+| Top-level type | Registered subtypes | Notes |
 |---|---|---|
-| HTTP `Content-Type` header | Tells the user agent how to render the response body | PDFs download instead of opening; HTML serves as plain text |
-| HTTP `Accept` header | Tells the server which formats the client can consume | API returns XML to a JSON-only client and parsing blows up |
-| `Content-Disposition` filename guess | Browser picks an extension when saving | `report` saved with no extension, OS shrugs |
-| Email MIME parts | Mailers pick a renderer for attachments | Excel files open in the browser as gibberish |
-| File system metadata (macOS Uniform Type Identifiers such as `com.adobe.pdf`) | Finder picks the open-with app; macOS maps UTIs to and from MIME types | A file with the wrong extension opens in the wrong app |
-| API metadata (S3, R2, Azure Blob) | CDN sets the egress `Content-Type` | Same headers, same display problems, but now cached |
+| `application` | 1,807 | 22 marked obsolete or deprecated |
+| `audio` | 165 | |
+| `example` | 0 | Reserved for documentation by RFC 4735; no subtype can be registered |
+| `font` | 6 | Added by RFC 8081 in 2017: `collection`, `otf`, `sfnt`, `ttf`, `woff`, `woff2` |
+| `haptics` | 3 | Added by RFC 9695 |
+| `image` | 88 | |
+| `message` | 27 | |
+| `model` | 44 | 3D formats such as `model/gltf+json` |
+| `multipart` | 17 | |
+| `text` | 107 | |
+| `video` | 97 | |
 
-A lookup table flattens those six surfaces into one decision: given an extension or a recognized file format, what string belongs in the slot? That is the search panel in the tool — type `.pdf`, get `application/pdf`; type `application/json`, see the extension `.json`; type `image` and the whole `image/*` family fans out.
+Registered and common are different lists. The MIME Type Lookup tool has 155 entries chosen for web work; checked against the IANA files, 106 of them are registered and 49 are not. The unregistered ones include several that every web developer uses:
 
-## What a MIME type actually looks like
+- `video/webm` and `audio/webm`.
+- `audio/wav` and `audio/x-wav`; the audio registry has no WAV entry at all.
+- `image/x-icon`; the registered form is `image/vnd.microsoft.icon`.
+- `text/yaml`; the registered type is `application/yaml` (RFC 9512).
+- `application/x-7z-compressed`, `video/x-matroska` and the `text/x-*` source-code types.
 
-The grammar is dull but precise. Every value is `top-level/subtype`, optionally followed by `;` and parameter pairs.
+The tool also keeps two registered types that IANA marks obsolete: `application/javascript` and `application/ecmascript`. [RFC 9239](https://www.rfc-editor.org/rfc/rfc9239) (2022) made `text/javascript` the one JavaScript type and moved the others to "OBSOLETED in favor of text/javascript". Searching `.js` in the tool returns both `application/javascript` and `text/javascript` because both appear on real servers.
 
-```
-application/json
-text/html; charset=utf-8
-multipart/form-data; boundary=----abc123
-image/svg+xml
-application/vnd.openxmlformats-officedocument.wordprocessingml.document
-```
+A few extensions map to more than one type in the tool's table, and those are the ones that cause bugs: `.ts` is MPEG transport stream video (`video/mp2t`) and TypeScript source (`text/x-typescript`); `.xml` is `application/xml` and `text/xml`; `.ico` is `image/x-icon` and `image/vnd.microsoft.icon`.
 
-The IANA top-level registry has grown over the years — `example` and `haptics` are recent additions — but nine of them carry essentially all web traffic, and those nine are the ones this tool covers:
+## What Nginx and Apache send by default
 
-- `application` — opaque or structured byte streams (PDF, JSON, ZIP, every Office format)
-- `image` — raster and vector images
-- `audio` — encoded audio streams
-- `video` — encoded video streams
-- `text` — human-readable text (HTML, CSV, source code)
-- `font` — modern WOFF / TTF / OTF outlines
-- `multipart` — composite messages (form uploads, emails with attachments)
-- `message` — encapsulated messages (RFC 822 emails, embedded HTTP)
-- `model` — 3D geometry (glTF, OBJ, STL)
+Each server maps file extensions to types with a table. These are the `Content-Type` headers the official Docker images (`nginx:stable-alpine`, `httpd:2.4-alpine`) sent for files with each extension, with no configuration changes:
 
-Subtypes follow tree-structured conventions:
-
-- `vnd.*` for vendor-specific formats (`application/vnd.ms-excel`)
-- `prs.*` for personal or experimental
-- `x.` (with a dot) for the unregistered tree defined in RFC 6838; the older `x-` prefix is a pre-6838 convention now treated as a no-op legacy form
-- A `+suffix` like `+json` or `+xml` tells parsers the wrapper format (`application/manifest+json` is JSON underneath)
-
-Parameters carry encoding hints. The most common one is `charset`, which makes `text/html` actually decodable by the browser. Lose `charset=utf-8` on a Chinese page and you are back in the 2003 mojibake era.
-
-## Magic bytes: when the extension lies
-
-Magic bytes are how `file(1)` has been identifying formats on Unix since 1973. Almost every binary format begins with a fixed sequence the parser uses to confirm the rest of the stream is what its extension claims.
-
-| Format | First bytes (hex) | Notes |
+| Extension | Nginx 1.30.5 | Apache httpd 2.4.68 |
 |---|---|---|
-| PNG | `89 50 4E 47 0D 0A 1A 0A` | The CRLF + EOF dance catches FTP ASCII-mode corruption |
-| JPEG | `FF D8 FF` | Plus a fourth byte that identifies the variant (JFIF, EXIF, …) |
-| GIF | `47 49 46 38 37 61` or `47 49 46 38 39 61` | The version literally spelled out: `GIF87a` / `GIF89a` |
-| PDF | `25 50 44 46` (`%PDF`) | Followed by `-1.7` or whatever revision |
-| ZIP | `50 4B 03 04` | Every ZIP-backed format inherits this: docx, xlsx, jar, epub, apk |
-| WebP | `52 49 46 46 …  57 45 42 50` | RIFF container with `WEBP` at offset 8 |
-| MP4 | `…  66 74 79 70 …` | `ftyp` magic at byte 4, not byte 0 — easy to miss |
-| Tar (POSIX ustar) | `75 73 74 61 72` | Sits at byte 257, deep in the header |
-| SQLite database | `53 51 4C 69 74 65 20 66 6F 72 6D 61 74 20 33 00` | Literally `SQLite format 3` followed by a NUL terminator |
-| WebAssembly | `00 61 73 6D` | `\0asm` |
+| `.js` | `application/javascript` | `text/javascript` |
+| `.mjs` | `application/octet-stream` | `text/javascript` |
+| `.json` | `application/json` | `application/json` |
+| `.wasm` | `application/wasm` | `application/wasm` |
+| `.svg` | `image/svg+xml` | `image/svg+xml` |
+| `.webp` | `image/webp` | `image/webp` |
+| `.avif` | `image/avif` | `image/avif` |
+| `.heic` | `application/octet-stream` | `image/heic` |
+| `.jxl` | `application/octet-stream` | `image/jxl` |
+| `.woff2` | `font/woff2` | `font/woff2` |
+| `.csv` | `application/octet-stream` | `text/csv` |
+| `.xml` | `text/xml` | `application/xml` |
+| `.m4a` | `audio/x-m4a` | `audio/mp4` |
+| `.ts` | `video/mp2t` | `video/mp2t` |
+| `.webmanifest` | `application/octet-stream` | no `Content-Type` header |
+| `.md`, `.yaml`, `.toml`, `.map` | `application/octet-stream` | no `Content-Type` header |
+| unknown extension | `application/octet-stream` | no `Content-Type` header |
 
-Three subtleties bite people:
+Nginx falls back to `default_type application/octet-stream` from its `nginx.conf`. Apache 2.4 has no default type, so a file it does not recognize goes out with no `Content-Type` at all and the browser has to guess.
 
-1. **Containers look identical at the byte level.** A `.docx`, `.xlsx`, `.pptx`, `.epub`, `.apk`, and `.jar` all start with `50 4B 03 04`. The byte-level type really is `application/zip`. To recover the application-level type you have to crack the central directory and check for `[Content_Types].xml`, `META-INF/MANIFEST.MF`, or `mimetype`.
-2. **Some magics sit at non-zero offsets.** MP4 hides `ftyp` at byte 4 — a 64-byte read catches it easily. Tar's `ustar` lives at byte 257 and ISO 9660 has `CD001` at byte 32769; both demand a larger initial slice. The browser tool sniffs the first 64 bytes, which means it identifies MP4 but skips tar and ISO. If you need either, fall back to `file(1)` locally.
-3. **Plain text formats have no fixed header.** CSV, JSON, SQL, plain text — there is nothing to look at. You can guess via entropy, BOM markers, or content sniffing (the way browsers used to over-aggressively do until WHATWG locked it down), but no signature is going to confirm a file is JSON without parsing it.
+The `.mjs` row matters most. A page on the Nginx container loading `<script type="module" src="/mod.mjs">` never ran the module, and Chrome logged:
 
-The Sniff file tab in the tool runs a tight loop over 37 signatures, all client-side. Drop a file in and it reads only the first 64 bytes — enough for the common web formats it ships with — and reports the first match. The browser's own `File.type` is shown alongside, so when they disagree you see which one to trust.
-
-## A real upload-validation pipeline
-
-Here is the validation flow most servers actually need, ordered cheapest first.
-
-```python
-import magic  # python-magic, wraps libmagic
-
-ALLOWED = {
-    "image/jpeg": {".jpg", ".jpeg"},
-    "image/png":  {".png"},
-    "image/webp": {".webp"},
-    "application/pdf": {".pdf"},
-}
-
-def validate_upload(stream, claimed_name, claimed_type):
-    head = stream.read(4096)
-    stream.seek(0)
-
-    sniffed = magic.from_buffer(head, mime=True)
-    if sniffed not in ALLOWED:
-        return False, f"sniffed type {sniffed!r} not allowed"
-
-    ext = "." + claimed_name.rsplit(".", 1)[-1].lower()
-    if ext not in ALLOWED[sniffed]:
-        return False, f"extension {ext!r} does not match {sniffed!r}"
-
-    # claimed_type is informational only; never the basis of a decision
-    return True, sniffed
+```text
+Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "application/octet-stream". Strict MIME type checking is enforced for module scripts per HTML spec.
 ```
 
-The same logic in Node, using the `file-type` package which reads a byte buffer the same way the browser tool does:
+The same page on the Apache container ran it. To fix Nginx, add the types after the stock table. Putting `types { … }` on its own inside a `server` block looks right but replaces the whole inherited table: in the test, `.svg` and `.json` were then served as `application/octet-stream`. This version keeps the rest of the table:
 
-```javascript
-import { fileTypeFromBuffer } from "file-type";
-
-const ALLOWED = new Map([
-  ["image/jpeg", new Set([".jpg", ".jpeg"])],
-  ["image/png",  new Set([".png"])],
-  ["application/pdf", new Set([".pdf"])],
-]);
-
-export async function validateUpload(buffer, claimedName) {
-  const sniffed = await fileTypeFromBuffer(buffer);
-  if (!sniffed || !ALLOWED.has(sniffed.mime)) {
-    throw new Error(`sniffed ${sniffed?.mime ?? "unknown"} not allowed`);
-  }
-  const ext = "." + claimedName.split(".").pop().toLowerCase();
-  if (!ALLOWED.get(sniffed.mime).has(ext)) {
-    throw new Error(`extension ${ext} mismatches ${sniffed.mime}`);
-  }
-  return sniffed.mime;
+```nginx
+server {
+    include /etc/nginx/mime.types;
+    types {
+        text/javascript js mjs;
+    }
 }
 ```
 
-And for ad-hoc shell inspection of a suspicious download:
+Nginx 1.30.5 warns `duplicate extension "js", content type: "text/javascript", previous content type: "application/javascript"` on start and then uses the later mapping. On Apache, `AddType text/javascript .mjs` does the same job for servers whose table lacks it.
 
-```bash
-file --mime-type --brief mystery.bin
-xxd -l 16 mystery.bin
+## How Chrome treats a wrong type
+
+Browsers do not trust the extension in the URL, but they do look at the type. Two rules from the [Fetch standard](https://fetch.spec.whatwg.org/) decide most cases:
+
+1. A script request is blocked if the response type starts with `audio/`, `image/` or `video/`, or is `text/csv` (Fetch §2.10).
+2. If the response also has `X-Content-Type-Options: nosniff`, a script is blocked unless the type is a JavaScript MIME type, and a stylesheet is blocked unless the type is `text/css` (Fetch §3.6.1).
+
+A test page loaded the same one-line script under six types. Chrome 152 ran two of them:
+
+| Response headers for the script | Result |
+|---|---|
+| `Content-Type: text/plain` | Ran |
+| `Content-Type: application/json` | Ran |
+| `Content-Type: text/plain` + `nosniff` | Blocked: "MIME type ('text/plain') is not executable, and strict MIME type checking is enabled" |
+| `Content-Type: application/octet-stream` + `nosniff` | Blocked, same message |
+| `Content-Type: image/png` | Blocked: "MIME type ('image/png') is not executable" |
+| `Content-Type: text/csv` | Blocked: "MIME type ('text/csv') is not executable" |
+
+A stylesheet served as `text/plain` from a page in standards mode was not applied either. `nosniff` is worth sending on every response: it turns a mislabelled script from a silent success into an error you notice, and stops a browser from running an uploaded text file as a script.
+
+## Reading a file's real type from its bytes
+
+Most binary formats begin with a fixed byte sequence, often called magic bytes: PNG starts with `89 50 4E 47 0D 0A 1A 0A`, PDF with `%PDF`, ZIP with `PK\x03\x04`. The [WHATWG MIME Sniffing standard](https://mimesniff.spec.whatwg.org/) defines the patterns browsers use, and `file(1)` on Unix uses a much larger database.
+
+The tool's Sniff file tab reads the first 64 bytes of a file, tries 37 signatures in order, and reports the first match. If none matches it shows the browser's `File.type`, or `application/octet-stream` when the browser has none. These eleven files were dropped onto it in Chrome 152 and also run through `file --mime-type` (file 5.41, macOS):
+
+{/* mime-sniff */}
+| File | First bytes | Tool result | Chrome `File.type` | `file` 5.41 |
+|---|---|---|---|---|
+| `photo.jpg` (a PNG renamed) | `89 50 4E 47 0D 0A 1A 0A` | `image/png` | `image/jpeg` | `image/png` |
+| `report.docx` | `50 4B 03 04 0A 00 00 00` | `application/zip` + ZIP container note | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | same as Chrome |
+| `book.epub` | `50 4B 03 04 14 00 00 00` | `application/zip` + ZIP container note | `application/epub+zip` | `application/epub+zip` |
+| `pic.avif` | `00 00 00 1C 66 74 79 70 61 76 69 66` | `image/avif` | `image/avif` | `image/avif` |
+| `tone.mp3` (no ID3 tag) | `FF FB 50 C4` | `audio/mpeg` | `audio/mpeg` | `audio/mpeg` |
+| `voice.m4a` | `00 00 00 1C 66 74 79 70 4D 34 41 20` | `video/mp4` | `audio/x-m4a` | `audio/x-m4a` |
+| `ls-binary` (macOS `/bin/ls`) | `CA FE BA BE 00 00 00 03` | `application/java-vm` | none | `application/x-mach-binary` |
+| `parts.csv` | `42 4D 57 20` (`BMW `) | `image/bmp` | `text/csv` | `text/plain` |
+| `logo.svg` | `3C 73 76 67` (`<svg`) | `image/svg+xml` (no signature; from `File.type`) | `image/svg+xml` | `image/svg+xml` |
+| `user.json` | `7B 22 69 64` (`{"id`) | `application/json` (no signature; from `File.type`) | `application/json` | `application/json` |
+| `app.ts` | `63 6F 6E 73` (`cons`) | `application/octet-stream` (no signature, no `File.type`) | none | `text/plain` |
+
+What the table shows:
+
+- **The extension and the bytes disagree, and the bytes win.** Chrome derives `File.type` from the file name, so `photo.jpg` reports `image/jpeg` even though it is a PNG. This is why an upload handler must not copy the browser's type into storage.
+- **ZIP-based formats look identical at the start.** DOCX, XLSX, EPUB, JAR and APK all begin with a ZIP local file header. `file` tells DOCX and EPUB apart by reading further into the archive; the tool stops at 64 bytes and says the file may be one of several ZIP-based formats.
+- **Short signatures produce false matches.** `CA FE BA BE` is the Java class file magic and also the header of a macOS universal binary, so `/bin/ls` comes out as `application/java-vm`. A CSV whose first line starts with `BM` matches the two-byte BMP signature. `M4A ` is an MP4 brand for audio, and the tool reports every MP4-family brand it knows as `video/mp4`.
+- **Text formats have no signature.** JSON, CSV, SVG and source code can only be identified by parsing. Chrome gives no type for `.ts`, so the tool falls back to `application/octet-stream`.
+
+Formats whose marker is further in, such as tar (`ustar` at byte 257) and ISO 9660 images (`CD001` at byte 32769), are outside the 64-byte window. Use `file` for those.
+
+## Checking uploads on the server
+
+A safe upload check decides the type from the bytes, compares it with the extension, and ignores the `Content-Type` the client sent. This Node module allows four formats and rejects everything else, including a PNG named `.jpg`:
+
+{/* mime-run */}
+```js
+// check-upload.mjs
+import { open } from 'node:fs/promises';
+
+const ALLOWED = [
+  { mime: 'image/png', exts: ['.png'], test: (b) => b.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) },
+  { mime: 'image/jpeg', exts: ['.jpg', '.jpeg'], test: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  { mime: 'image/webp', exts: ['.webp'], test: (b) => b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP' },
+  { mime: 'application/pdf', exts: ['.pdf'], test: (b) => b.toString('latin1', 0, 5) === '%PDF-' },
+];
+
+export async function checkUpload(path, originalName) {
+  const file = await open(path);
+  const head = Buffer.alloc(64);
+  const { bytesRead } = await file.read(head, 0, 64, 0);
+  await file.close();
+  const bytes = head.subarray(0, bytesRead);
+  const match = ALLOWED.find((t) => t.test(bytes));
+  if (!match) return { ok: false, reason: 'file type not allowed' };
+  const dot = originalName.lastIndexOf('.');
+  const ext = dot < 0 ? '' : originalName.slice(dot).toLowerCase();
+  if (!match.exts.includes(ext)) return { ok: false, reason: `content is ${match.mime} but the name ends in "${ext}"` };
+  return { ok: true, mime: match.mime };
+}
 ```
 
-The browser tool covers the same `file --mime-type --brief` style of check for the web formats it knows about, on whichever machine you happen to be on, with no upload. For exotic formats — CAD files, scientific data, niche archive variants — `libmagic` remains the deeper reference.
+For a wider set of formats, libraries such as `file-type` for Node or `python-magic` (a wrapper around libmagic, the library behind `file`) read more of the file and know far more signatures. Whatever detects the type, store the detected value and send it back as the `Content-Type` when serving the file, together with `X-Content-Type-Options: nosniff`.
 
-## Common pitfalls
+Detecting the format does not make a file safe. `image/svg+xml` is XML and can contain `<script>`; a correctly identified PDF can still carry a malicious payload. Type checks decide which handler gets the file, not whether its content is trustworthy.
 
-**Trusting `Content-Type` from the request.** The browser sends what the OS said the file was, which is derived from the extension on most platforms. Whatever the user uploads, treat the client-side type as a hint and verify it server-side.
+## charset and the Excel BOM are separate problems
 
-**Setting `Content-Type: application/octet-stream` on everything.** Storage SDKs default to this when they cannot guess. Browsers respond by downloading instead of rendering, even for images and PDFs. Always set a real type before writing to object storage.
+The `charset` parameter tells a browser how to decode text it receives: `Content-Type: text/csv; charset=utf-8` makes the browser read the response as UTF-8. It applies to that HTTP response and nothing else.
 
-**Forgetting the charset on `text/*`.** Without a `charset` parameter (or a BOM), a browser may decode `text/csv` or `text/plain` with a locale-dependent default. Excel is a separate case: the HTTP header is not saved with the downloaded file, so a UTF-8 CSV without a BOM opens in the system code page, for example GBK on Simplified Chinese Windows. Send `charset=utf-8` and add a BOM to CSV files meant for Excel.
+When the user downloads the CSV and opens it in Excel, the HTTP header is gone; only the file is saved. Microsoft's support article [Opening CSV UTF-8 files correctly in Excel](https://support.microsoft.com/en-us/office/opening-csv-utf-8-files-correctly-in-excel-8a935af5-3416-4edd-ba7e-3dfd2bc4a032) explains that a UTF-8 CSV with a byte order mark opens correctly by double-click, and gives an import route for files without one. So a CSV export for Excel users needs both: `charset=utf-8` in the header for the browser, and the bytes `EF BB BF` at the start of the file for Excel.
 
-**Mixing up `application/javascript` and `text/javascript`.** RFC 9239 (2022) made `text/javascript` the only standard value and explicitly marked `application/javascript` and every other historical alias obsolete. Browsers still execute scripts served under the older types out of compatibility, but if you control the response headers, `text/javascript; charset=utf-8` is the right answer.
+## When application/octet-stream is the right answer
 
-**Sniffing in production on huge files.** Reading 64 bytes is cheap. Reading 50 GB to identify a video container is not. Always cap the slice. The browser tool does this with `File.slice(0, 64)`.
+`application/octet-stream` means arbitrary binary data. [RFC 2046 §4.5.1](https://www.rfc-editor.org/rfc/rfc2046#section-4.5.1) says the recommended action for it is to offer to put the data in a file, which is what browsers do. That makes it correct for encrypted blobs, firmware images and other downloads with no more specific type.
 
-**Assuming SVG is harmless.** `image/svg+xml` is XML and can contain `<script>` tags. Browsers will execute them in some contexts (notably when the SVG is loaded as a document instead of via `<img>`). The byte sniff just confirms the format; sanitization is a separate problem.
+It is the wrong default for files whose type you know. An image or PDF stored as `application/octet-stream` is downloaded instead of displayed. If you want a known type to download rather than open, send the real type with `Content-Disposition: attachment; filename="report.pdf"` ([RFC 6266](https://www.rfc-editor.org/rfc/rfc6266)) instead of hiding the type.
 
-## When `application/octet-stream` is actually correct
+## Sources
 
-Counter-intuitively, the right answer for unknown binary data is `application/octet-stream`. It tells the recipient "treat this as raw bytes, do not try to render it." Use it for:
+- [RFC 6838](https://www.rfc-editor.org/rfc/rfc6838): media type specifications and registration procedures
+- [RFC 9110 §8.3](https://www.rfc-editor.org/rfc/rfc9110#section-8.3): Content-Type and the media type grammar
+- [IANA Media Types registry](https://www.iana.org/assignments/media-types/media-types.xhtml) (updated 2026-09-24)
+- [RFC 9239](https://www.rfc-editor.org/rfc/rfc9239): updates to ECMAScript media types
+- [Fetch standard](https://fetch.spec.whatwg.org/) §2.10 and §3.6.1; [MIME Sniffing standard](https://mimesniff.spec.whatwg.org/)
+- [Nginx `types` directive](https://nginx.org/en/docs/http/ngx_http_core_module.html#types)
+- [RFC 2046 §4.5.1](https://www.rfc-editor.org/rfc/rfc2046#section-4.5.1), [RFC 6266](https://www.rfc-editor.org/rfc/rfc6266)
 
-- Encrypted blobs where the inner format is none of the server's business
-- Generic file downloads where you want a save dialog instead of inline display
-- API endpoints that return opaque payloads (firmware, models, archives)
-
-The mistake is using it as a default for files you do know — that breaks the inline-display path browsers rely on for images and PDFs.
-
-## How this lookup differs from the alternatives
-
-`mimetype.io` is a large reference of MIME types and extensions. ZeroTool's tool is narrower: a 155-entry curated catalog with category chips, a 4-language UI, and a sniffer whose result panel puts the sniffed MIME, likely extension, raw hex and the browser-reported type side by side for upload-validation work.
-
-Static lookup lists answer "what's the Content-Type of `.xyz`" but do not identify a file from its bytes.
-
-`file(1)` and `libmagic` are the gold standard, with hundreds of signatures including formats this tool deliberately skips. If you regularly handle CAD files, scientific data, or niche archive variants, install `libmagic` locally. For day-to-day web development the browser tool covers the routine cases without leaving the tab.
-
-The tradeoff is deliberate: 155 lookup entries and 37 byte-level signatures, weighted toward the formats actually seen on the modern web. Everything runs client-side, nothing uploads, the database is baked into the page at build time.
-
-## Further reading
-
-- [HTTP Status Codes](/tools/http-status-codes/) — the other half of your HTTP response headers
-- [URL Parser](/tools/url-parser/) — when you need to inspect a download URL in detail
-- [File Hash Checker](/tools/file-hash-checker/) — verify integrity once you know the type
-- [RFC 6838: Media Type Specifications and Registration Procedures](https://www.rfc-editor.org/rfc/rfc6838) — the actual standard
-- [IANA Media Types Registry](https://www.iana.org/assignments/media-types/media-types.xhtml) — the authoritative list
-- [MDN: Incomplete list of MIME types](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Common_types) — what browsers actually recognize
+Related tools: [File Hash Checker](/tools/file-hash-checker/) to verify a download once you know what it is, [Image to Base64](/tools/image-to-base64/), which also identifies images from their bytes before building a data URI, and [HTTP Status Codes](/tools/http-status-codes/) for the rest of the response.
