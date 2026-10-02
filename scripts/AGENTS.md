@@ -115,6 +115,8 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-02 — 新增 `test-protobuf-parser-security.mjs`：读取真实页面引擎与 vendor，在独立 vm 中以硬超时覆盖 option EOF 循环、constructor / __proto__ 写入、内建对象属性描述符不变及随后合法 Schema 恢复；检查 vendor 与锁定 npm 产物逐字一致。只写 stdout，CI 随全部测试运行。
+
 - 2026-10-02 — protobuf 页面运行时清理：`test-protobuf-to-json.mjs` 改为无 Long 的页面 vm 与独立 Long-enabled 对照 vm（304 → 336 项）；五种 64 位类型增加编码与解码的上下界 / 超过 2^53 回归。下方历史记录中的双 vendor 页面加载检查已被替换；protoc / Python fixtures 保持原样。IndexNow 忽略路径测试改用仍存在的 protobuf vendor。
 
 - 2026-10-02 — 发版收尾复核：`sync-jq-web.mjs` 条目补上真实的源码补丁、classic worker 与 `run()` 调用；sprite-sheet 回归条目按实际测试更新为 1277 项并补列新增覆盖。
