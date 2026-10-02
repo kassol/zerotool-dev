@@ -38,7 +38,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   console.error('FAIL: could not locate the engine block in HtmlEntityTool.astro');
   process.exit(1);
 }
-const { encodeHtml } = new Function(source.slice(startIndex, endIndex) + '\nreturn { encodeHtml };')();
+const { encodeHtml, countReferences } = new Function(source.slice(startIndex, endIndex) + '\nreturn { encodeHtml, countReferences };')();
 
 let failures = 0;
 let passes = 0;
@@ -46,6 +46,18 @@ function eq(name, actual, expected) {
   if (actual === expected) { passes++; return; }
   failures++;
   console.log('FAIL: ' + name + '\n  expected ' + JSON.stringify(expected) + '\n  actual   ' + JSON.stringify(actual));
+}
+
+// The decode status counts character references. Named references may contain digits
+// (WHATWG entities.json: &frac12; &sup2; &there4;); every name with a semicolon counts once.
+eq('names with digits are counted', countReferences('&frac12; &sup2; &there4;'), 3);
+eq('named, decimal and hex references', countReferences('&amp;&#65;&#x41;&lt;'), 4);
+eq('not references', countReferences('& amp; &1a; &#; &#x; a&b'), 0);
+{
+  const fixture = JSON.parse(readFileSync(join(root, 'scripts/test-html-entity.fixtures.json'), 'utf8'));
+  const names = Object.keys(fixture.whatwgEntities).filter((n) => n.endsWith(';'));
+  eq('fixture has the WHATWG names', names.length > 2000, true);
+  eq('every WHATWG name with a semicolon counts once', names.filter((n) => countReferences(n) !== 1).join(' '), '');
 }
 
 eq('special characters', encodeHtml('&<>"\'').text, '&amp;&lt;&gt;&quot;&#39;');
