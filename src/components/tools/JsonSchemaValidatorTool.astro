@@ -1,402 +1,2077 @@
 ---
-// JsonSchemaValidatorTool — validate JSON data against a JSON Schema (Draft-07 / Draft 2020-12)
+// JsonSchemaValidatorTool — validate JSON / YAML / JSON Lines data against a JSON Schema
+// (draft-04, -06, -07, 2019-09, 2020-12) with Ajv 8 in the browser. The draft comes from
+// $schema unless the menu forces one; no $schema means 2020-12 (as Python jsonschema and Go
+// santhosh-tekuri/jsonschema). Errors are grouped by data location and linked to the line in
+// the data and the keyword in the schema; failed oneOf / anyOf branches are folded under the
+// summary. External $ref targets are never fetched. Only the draft menu and the format switch
+// are saved (ztPersist 'preference'); schema and data are not stored or sent.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    draftLabel: 'Draft',
+    draftAuto: 'Auto (from $schema)',
+    formatToggle: 'Check format',
+    examples: 'Examples',
+    exUser: 'User (valid)',
+    exUserErrors: 'User with errors',
+    exOneOf: 'Payment (oneOf + $ref)',
+    exYaml: 'YAML config (2020-12)',
+    validate: 'Validate',
+    schemaLabel: 'Schema',
+    dataLabel: 'Data',
+    open: 'Open file',
+    clear: 'Clear',
+    schemaPh: '{ "type": "object", "required": ["name"] }  — JSON or YAML',
+    dataPh: '{ "name": "Alice" }  — JSON, YAML or JSON Lines',
+    extrasSummary: 'Referenced schemas ($ref targets)',
+    extrasHelp: 'Paste schemas that your $ref points to, each with its "$id". Separate several with a line containing only ---. Nothing is downloaded.',
+    extrasPh: '{ "$id": "https://example.com/address.json", "type": "object" }',
+    copyText: 'Copy errors',
+    copyJson: 'Copy as JSON',
+    copied: 'Copied!',
+    copyFailed: 'Copy failed. Select the text and copy it by hand.',
+    root: '(root)',
+    fmtJson: 'JSON',
+    fmtYaml: 'YAML',
+    fmtJsonl: 'JSON Lines',
+    fileTooBig: '{name} is larger than 20 MB.',
+    fileRead: 'Could not read {name}.',
+    empty: 'Paste a schema and data. The result updates as you type.',
+    large: 'Large input: press Validate to check it.',
+    loading: 'Loading the validator…',
+    loadFailed: 'Could not load the validator. Check your connection and try again.',
+    valid: 'Valid: the data matches the schema ({draft}).',
+    validDocs: 'Valid: all {n} documents match the schema ({draft}).',
+    invalidOne: '1 error ({draft}).',
+    invalidMany: '{n} errors at {locations} locations ({draft}).',
+    invalidDocs: '{bad} of {n} documents have errors ({draft}).',
+    schemaParse: 'The schema is not valid JSON or YAML.',
+    dataParse: 'The data is not valid JSON, YAML or JSON Lines.',
+    extrasParse: 'A referenced schema is not valid JSON or YAML.',
+    schemaInvalid: 'The schema itself is not valid ({draft}):',
+    schemaFail: 'The schema cannot be used ({draft}):',
+    noticesTitle: 'Notes',
+    docLabel: 'Document {n}',
+    docLine: 'Document {n} (line {line})',
+    docValid: 'valid',
+    lineCol: 'line {line}, column {col}',
+    schemaAt: 'schema {path}',
+    valueLabel: 'value {value}',
+    moreGroups: '{n} more locations are not shown. Copy the errors to see all of them.',
+    closest: 'Closest match: branch {n}',
+    otherBranches: 'Other branches ({n})',
+    branch: 'Branch {n}',
+    branchNoErrors: 'no errors in this branch',
+    via: 'via "{kw}"',
+    parse: {
+      at: 'Line {line}, column {col}: {reason}',
+      empty: 'the input is empty',
+      trailingComma: 'trailing comma before the closing bracket',
+      comment: 'comments are not allowed in JSON',
+      singleQuote: 'JSON strings and property names need double quotes (")',
+      smartQuote: 'curly quotes ({ch}) are not JSON quotes; use straight double quotes (")',
+      fullWidth: 'full-width character {ch}; JSON needs ASCII punctuation and spaces',
+      unquotedKey: 'property names must be in double quotes',
+      missingComma: 'missing comma between values',
+      missingColon: 'missing colon after the property name',
+      unterminatedString: 'the string is not closed',
+      controlChar: 'a raw line break or tab inside a string; write \\n or \\t',
+      badEscape: 'invalid escape sequence in a string',
+      badNumber: 'invalid number (no leading zeros, "+", ".5", NaN or Infinity in JSON)',
+      badLiteral: 'unknown word; JSON only has true, false and null',
+      unexpectedEnd: 'the input ends too early (a bracket or quote is not closed)',
+      extraData: 'more data after the end of the JSON value',
+      extraDataJsonl: 'more data after the end of the JSON value; for JSON Lines, put one complete value on each line',
+      unexpectedChar: 'unexpected character {ch}',
+      yaml: 'YAML: {reason}',
+      multiDocSchema: 'the schema has {n} YAML documents; use one',
+    },
+    schemaErr: {
+      missingRef: '$ref "{ref}" at {path} cannot be resolved. URLs are not downloaded: paste that schema under Referenced schemas with "$id": "{id}".',
+      missingLocal: '$ref "{ref}" at {path} points to nothing in this schema.',
+      badPattern: 'Invalid regular expression at {path}: {pattern} ({message}).',
+      extraNoId: 'Referenced schema {n} has no "$id", so no $ref can reach it.',
+      extraDraft: 'Referenced schema {id} declares $schema "{uri}"; all schemas must use {draft}.',
+      extraDup: 'Two referenced schemas use the same "$id": {id}.',
+      compile: 'Ajv could not compile the schema: {message}',
+      itemsArray: 'In {draft}, "items" takes one schema; the array form is draft-07 syntax. Use "prefixItems" for per-position schemas.',
+    },
+    notice: {
+      noSchema: 'No $schema: validated as {draft}. Add "$schema" or pick a draft in the menu.',
+      schemaUnknown: '$schema "{uri}" is not one of the five drafts; validated as {draft}.',
+      schemaNonCanonical: '$schema "{uri}" is read as {draft}, but the official form is "{canonical}"; other validators may not recognize it.',
+      schemaMismatch: '$schema says {schemaDraft}; the menu forces {draft}.',
+      olderSyntax: 'The schema uses {keywords}, which is draft-07 syntax: pick Draft 7 or add "$schema".',
+      refSiblings: 'In {draft}, keywords next to "$ref" are ignored: {keywords} at {path}.',
+      unknownKeyword: 'Unknown keyword "{keyword}" at {path} is ignored.',
+      unknownKeywordMany: 'Unknown keyword "{keyword}" is ignored ({count} places, first at {path}).',
+      suggestion: 'Did you mean "{suggestion}"?',
+      nullable: '"nullable" at {path} is an OpenAPI 3.0 keyword, not JSON Schema, and is ignored. Use "type": [{types}].',
+      idKeyword: '"id" at {path} is the draft-04 keyword and is ignored; {draft} uses "$id".',
+      dependencies: '"dependencies" at {path} is ignored in {draft}; use "dependentRequired" or "dependentSchemas".',
+      additionalItems: '"additionalItems" at {path} is ignored in {draft}; use "prefixItems" with "items".',
+      formatUnchecked: 'Format {formats} is not checked; any string passes.',
+      formatOff: 'Format checking is off: "format" is only an annotation.',
+      dynamicRef: 'Ajv supports $dynamicRef and $recursiveRef only in part (it fails some of the official JSON Schema Test Suite cases for them); check this result with a second validator.',
+      dupKey: 'Duplicate key "{key}" in {side} at {path} (line {line}). JSON.parse keeps the last value, so the earlier one is not validated.',
+      unsafeInt: 'The number {raw} in {side} at {path} (line {line}) is beyond 2^53, so JavaScript reads it as {parsed}; it is validated as {parsed}.',
+      bom: 'Removed the byte order mark (BOM) at the start of the {side}.',
+      yamlRead: 'The {side} is read as YAML ({n} document(s)). Dates and yes / no stay strings (YAML 1.2 core schema).',
+      jsonlRead: 'The data is read as JSON Lines: {n} lines, each validated on its own.',
+      sideSchema: 'schema',
+      sideData: 'data',
+    },
+    kw: {
+      type: 'must be {expected}, but is {actual}',
+      required: 'missing required property "{name}"',
+      additionalProperties: 'property "{name}" is not allowed (additionalProperties)',
+      unevaluatedProperties: 'property "{name}" is not allowed (unevaluatedProperties)',
+      unevaluatedItems: 'only {limit} items are allowed (unevaluatedItems); has {actual}',
+      items: 'only {limit} items are allowed; has {actual}',
+      dependentRequired: 'property "{property}" requires {deps}',
+      compare: 'must be {comparison} {limit}, but is {value}',
+      multipleOf: 'must be a multiple of {multipleOf}, but is {value}',
+      minLength: 'must have at least {limit} character(s); has {actual}',
+      maxLength: 'must have at most {limit} character(s); has {actual}',
+      pattern: 'does not match the pattern {pattern}',
+      format: 'is not a valid "{format}"',
+      enum: 'must be one of {values}',
+      const: 'must be {value}',
+      minItems: 'must have at least {limit} items; has {actual}',
+      maxItems: 'must have at most {limit} items; has {actual}',
+      minProperties: 'must have at least {limit} properties; has {actual}',
+      maxProperties: 'must have at most {limit} properties; has {actual}',
+      uniqueItems: 'items {j} and {i} are equal (uniqueItems)',
+      minContains: 'must contain at least {limit} matching item(s)',
+      maxContains: 'must contain at most {limit} matching items',
+      propertyNames: 'property name "{name}" is not allowed (propertyNames)',
+      oneOfNone: 'does not match any oneOf branch',
+      oneOfMany: 'matches more than one oneOf branch ({branches})',
+      anyOf: 'does not match any anyOf branch',
+      not: 'must not match the "not" schema',
+      falseSchema: 'is not allowed here (schema false)',
+      if: 'does not match the "{kw}" schema',
+    },
+  },
+  zh: {
+    draftLabel: '草案',
+    draftAuto: '自动（按 $schema）',
+    formatToggle: '检查 format',
+    examples: '示例',
+    exUser: '用户（有效）',
+    exUserErrors: '用户（有错误）',
+    exOneOf: '支付方式（oneOf + $ref）',
+    exYaml: 'YAML 配置（2020-12）',
+    validate: '验证',
+    schemaLabel: 'Schema',
+    dataLabel: '数据',
+    open: '打开文件',
+    clear: '清空',
+    schemaPh: '{ "type": "object", "required": ["name"] }  —— JSON 或 YAML',
+    dataPh: '{ "name": "张三" }  —— JSON、YAML 或 JSON Lines',
+    extrasSummary: '被引用的 Schema（$ref 目标）',
+    extrasHelp: '把 $ref 指向的 Schema 粘贴在这里，每个都要有 "$id"。多个之间用单独一行 --- 分隔。工具不会下载任何网址。',
+    extrasPh: '{ "$id": "https://example.com/address.json", "type": "object" }',
+    copyText: '复制错误',
+    copyJson: '复制为 JSON',
+    copied: '已复制',
+    copyFailed: '复制失败，请手动选中文字复制。',
+    root: '（根）',
+    fmtJson: 'JSON',
+    fmtYaml: 'YAML',
+    fmtJsonl: 'JSON Lines',
+    fileTooBig: '{name} 超过 20 MB。',
+    fileRead: '无法读取 {name}。',
+    empty: '粘贴 Schema 和数据，结果随输入更新。',
+    large: '输入较大：点击“验证”开始检查。',
+    loading: '正在加载校验器……',
+    loadFailed: '校验器加载失败，请检查网络后重试。',
+    valid: '有效：数据符合 Schema（{draft}）。',
+    validDocs: '有效：全部 {n} 个文档都符合 Schema（{draft}）。',
+    invalidOne: '1 个错误（{draft}）。',
+    invalidMany: '{n} 个错误，涉及 {locations} 个位置（{draft}）。',
+    invalidDocs: '{n} 个文档中有 {bad} 个不符合（{draft}）。',
+    schemaParse: 'Schema 不是有效的 JSON 或 YAML。',
+    dataParse: '数据不是有效的 JSON、YAML 或 JSON Lines。',
+    extrasParse: '被引用的 Schema 不是有效的 JSON 或 YAML。',
+    schemaInvalid: 'Schema 本身不合规（{draft}）：',
+    schemaFail: '这个 Schema 无法使用（{draft}）：',
+    noticesTitle: '提示',
+    docLabel: '第 {n} 个文档',
+    docLine: '第 {n} 个文档（第 {line} 行）',
+    docValid: '有效',
+    lineCol: '第 {line} 行第 {col} 列',
+    schemaAt: 'Schema {path}',
+    valueLabel: '值 {value}',
+    moreGroups: '还有 {n} 个位置未显示，复制错误可查看全部。',
+    closest: '最接近的分支：第 {n} 个',
+    otherBranches: '其他分支（{n}）',
+    branch: '分支 {n}',
+    branchNoErrors: '该分支没有错误',
+    via: '经由 "{kw}"',
+    parse: {
+      at: '第 {line} 行第 {col} 列：{reason}',
+      empty: '输入为空',
+      trailingComma: '右括号前多了一个逗号',
+      comment: 'JSON 不允许注释',
+      singleQuote: 'JSON 的字符串和属性名必须用双引号（"）',
+      smartQuote: '{ch} 是中文引号，JSON 要用英文双引号（"）',
+      fullWidth: '全角字符 {ch}；JSON 的标点和空格必须是半角',
+      unquotedKey: '属性名必须加双引号',
+      missingComma: '两个值之间缺少逗号',
+      missingColon: '属性名后缺少冒号',
+      unterminatedString: '字符串没有闭合',
+      controlChar: '字符串里有直接的换行或制表符，要写成 \\n 或 \\t',
+      badEscape: '字符串里的转义序列无效',
+      badNumber: '数字写法无效（JSON 不允许前导 0、“+”、“.5”、NaN、Infinity）',
+      badLiteral: '未知单词；JSON 只有 true、false、null',
+      unexpectedEnd: '输入提前结束（有括号或引号没有闭合）',
+      extraData: 'JSON 值结束后还有内容',
+      extraDataJsonl: 'JSON 值结束后还有内容；如果是 JSON Lines，每行必须是一个完整的值',
+      unexpectedChar: '意外的字符 {ch}',
+      yaml: 'YAML：{reason}',
+      multiDocSchema: 'Schema 含有 {n} 个 YAML 文档，只能有一个',
+    },
+    schemaErr: {
+      missingRef: '{path} 的 $ref "{ref}" 无法解析。工具不会下载网址：请把该 Schema 粘贴到“被引用的 Schema”，并写上 "$id": "{id}"。',
+      missingLocal: '{path} 的 $ref "{ref}" 在本 Schema 中找不到目标。',
+      badPattern: '{path} 的正则表达式无效：{pattern}（{message}）。',
+      extraNoId: '第 {n} 个被引用的 Schema 没有 "$id"，任何 $ref 都引用不到它。',
+      extraDraft: '被引用的 Schema {id} 声明了 $schema "{uri}"；所有 Schema 必须使用 {draft}。',
+      extraDup: '两个被引用的 Schema 使用了相同的 "$id"：{id}。',
+      compile: 'Ajv 无法编译这个 Schema：{message}',
+      itemsArray: '{draft} 中 "items" 只能是一个 Schema，数组写法是 draft-07 的语法。按位置约束请用 "prefixItems"。',
+    },
+    notice: {
+      noSchema: '没有 $schema：按 {draft} 验证。请添加 "$schema" 或在菜单中选择草案。',
+      schemaUnknown: '$schema "{uri}" 不属于这五个草案；按 {draft} 验证。',
+      schemaNonCanonical: '$schema "{uri}" 按 {draft} 读取，但官方写法是 "{canonical}"，其他校验器可能不认。',
+      schemaMismatch: '$schema 写的是 {schemaDraft}，菜单强制使用 {draft}。',
+      olderSyntax: 'Schema 用到了 {keywords}，这是 draft-07 的语法：请选 Draft 7 或添加 "$schema"。',
+      refSiblings: '{draft} 中与 "$ref" 并列的关键字会被忽略：{path} 的 {keywords}。',
+      unknownKeyword: '{path} 的未知关键字 "{keyword}" 被忽略。',
+      unknownKeywordMany: '未知关键字 "{keyword}" 被忽略（共 {count} 处，第一处在 {path}）。',
+      suggestion: '是不是想写 "{suggestion}"？',
+      nullable: '{path} 的 "nullable" 是 OpenAPI 3.0 的关键字，不属于 JSON Schema，会被忽略。请写 "type": [{types}]。',
+      idKeyword: '{path} 的 "id" 是 draft-04 的关键字，会被忽略；{draft} 使用 "$id"。',
+      dependencies: '{draft} 会忽略 {path} 的 "dependencies"；请改用 "dependentRequired" 或 "dependentSchemas"。',
+      additionalItems: '{draft} 会忽略 {path} 的 "additionalItems"；请用 "prefixItems" 配合 "items"。',
+      formatUnchecked: '不检查格式 {formats}，任何字符串都能通过。',
+      formatOff: '已关闭 format 检查："format" 只作注解。',
+      dynamicRef: 'Ajv 对 $dynamicRef 和 $recursiveRef 的支持不完整（官方 JSON Schema Test Suite 中这部分有用例不通过），请用另一个校验器复核这个结果。',
+      dupKey: '{side}的 {path} 有重复的键 "{key}"（第 {line} 行）。JSON.parse 只保留最后一个值，前面的值不会被验证。',
+      unsafeInt: '{side}的 {path} 中的数字 {raw}（第 {line} 行）超过 2^53，JavaScript 读成了 {parsed}，验证的是 {parsed}。',
+      bom: '已去掉{side}开头的字节顺序标记（BOM）。',
+      yamlRead: '{side}按 YAML 读取（{n} 个文档）。日期和 yes / no 保持为字符串（YAML 1.2 core schema）。',
+      jsonlRead: '数据按 JSON Lines 读取：共 {n} 行，逐行验证。',
+      sideSchema: 'Schema ',
+      sideData: '数据',
+    },
+    kw: {
+      type: '必须是 {expected}，实际是 {actual}',
+      required: '缺少必填属性 "{name}"',
+      additionalProperties: '不允许属性 "{name}"（additionalProperties）',
+      unevaluatedProperties: '不允许属性 "{name}"（unevaluatedProperties）',
+      unevaluatedItems: '最多允许 {limit} 项（unevaluatedItems），实际 {actual} 项',
+      items: '最多允许 {limit} 项，实际 {actual} 项',
+      dependentRequired: '有属性 "{property}" 时必须同时有 {deps}',
+      compare: '必须 {comparison} {limit}，实际是 {value}',
+      multipleOf: '必须是 {multipleOf} 的倍数，实际是 {value}',
+      minLength: '至少 {limit} 个字符，实际 {actual} 个',
+      maxLength: '最多 {limit} 个字符，实际 {actual} 个',
+      pattern: '不匹配正则 {pattern}',
+      format: '不是有效的 "{format}"',
+      enum: '必须是 {values} 之一',
+      const: '必须等于 {value}',
+      minItems: '至少 {limit} 项，实际 {actual} 项',
+      maxItems: '最多 {limit} 项，实际 {actual} 项',
+      minProperties: '至少 {limit} 个属性，实际 {actual} 个',
+      maxProperties: '最多 {limit} 个属性，实际 {actual} 个',
+      uniqueItems: '第 {j} 项和第 {i} 项重复（uniqueItems）',
+      minContains: '至少要有 {limit} 项符合 contains',
+      maxContains: '最多只能有 {limit} 项符合 contains',
+      propertyNames: '属性名 "{name}" 不允许（propertyNames）',
+      oneOfNone: '不符合 oneOf 的任何一个分支',
+      oneOfMany: '同时符合 oneOf 的多个分支（{branches}）',
+      anyOf: '不符合 anyOf 的任何一个分支',
+      not: '不能符合 "not" 中的 Schema',
+      falseSchema: '这里不允许任何值（Schema 为 false）',
+      if: '不符合 "{kw}" 中的 Schema',
+    },
+  },
+  ja: {
+    draftLabel: 'ドラフト',
+    draftAuto: '自動（$schema から）',
+    formatToggle: 'format を検証',
+    examples: 'サンプル',
+    exUser: 'ユーザー（有効）',
+    exUserErrors: 'ユーザー（エラーあり）',
+    exOneOf: '支払い方法（oneOf + $ref）',
+    exYaml: 'YAML 設定（2020-12）',
+    validate: '検証',
+    schemaLabel: 'スキーマ',
+    dataLabel: 'データ',
+    open: 'ファイルを開く',
+    clear: 'クリア',
+    schemaPh: '{ "type": "object", "required": ["name"] }  — JSON または YAML',
+    dataPh: '{ "name": "山田太郎" }  — JSON・YAML・JSON Lines',
+    extrasSummary: '参照先のスキーマ（$ref の参照先）',
+    extrasHelp: '$ref が指すスキーマを貼り付けてください。それぞれ "$id" が必要です。複数ある場合は --- だけの行で区切ります。URL からのダウンロードは行いません。',
+    extrasPh: '{ "$id": "https://example.com/address.json", "type": "object" }',
+    copyText: 'エラーをコピー',
+    copyJson: 'JSON でコピー',
+    copied: 'コピーしました',
+    copyFailed: 'コピーできませんでした。テキストを選択して手動でコピーしてください。',
+    root: '（ルート）',
+    fmtJson: 'JSON',
+    fmtYaml: 'YAML',
+    fmtJsonl: 'JSON Lines',
+    fileTooBig: '{name} は 20 MB を超えています。',
+    fileRead: '{name} を読み込めませんでした。',
+    empty: 'スキーマとデータを貼り付けてください。入力に合わせて結果が更新されます。',
+    large: '入力が大きいため、「検証」を押すとチェックします。',
+    loading: '検証プログラムを読み込み中…',
+    loadFailed: '検証プログラムを読み込めませんでした。接続を確認して再試行してください。',
+    valid: '有効：データはスキーマに適合しています（{draft}）。',
+    validDocs: '有効：{n} 個のドキュメントすべてがスキーマに適合しています（{draft}）。',
+    invalidOne: 'エラー 1 件（{draft}）。',
+    invalidMany: 'エラー {n} 件、{locations} か所（{draft}）。',
+    invalidDocs: '{n} 個のドキュメントのうち {bad} 個にエラーがあります（{draft}）。',
+    schemaParse: 'スキーマが正しい JSON / YAML ではありません。',
+    dataParse: 'データが正しい JSON・YAML・JSON Lines ではありません。',
+    extrasParse: '参照先のスキーマが正しい JSON / YAML ではありません。',
+    schemaInvalid: 'スキーマ自体が仕様に合っていません（{draft}）：',
+    schemaFail: 'このスキーマは使えません（{draft}）：',
+    noticesTitle: '注意',
+    docLabel: 'ドキュメント {n}',
+    docLine: 'ドキュメント {n}（{line} 行目）',
+    docValid: '有効',
+    lineCol: '{line} 行 {col} 列',
+    schemaAt: 'スキーマ {path}',
+    valueLabel: '値 {value}',
+    moreGroups: 'ほかに {n} か所あります。すべて見るにはエラーをコピーしてください。',
+    closest: '最も近い分岐：{n} 番目',
+    otherBranches: 'ほかの分岐（{n}）',
+    branch: '分岐 {n}',
+    branchNoErrors: 'この分岐にはエラーがありません',
+    via: '"{kw}" 経由',
+    parse: {
+      at: '{line} 行 {col} 列：{reason}',
+      empty: '入力が空です',
+      trailingComma: '閉じかっこの前に余分なカンマがあります',
+      comment: 'JSON にコメントは書けません',
+      singleQuote: 'JSON の文字列とプロパティ名はダブルクォート（"）で囲みます',
+      smartQuote: '{ch} は全角の引用符です。半角のダブルクォート（"）を使ってください',
+      fullWidth: '全角文字 {ch} があります。JSON の記号と空白は半角です',
+      unquotedKey: 'プロパティ名はダブルクォートで囲みます',
+      missingComma: '値と値の間にカンマがありません',
+      missingColon: 'プロパティ名の後にコロンがありません',
+      unterminatedString: '文字列が閉じていません',
+      controlChar: '文字列の中に改行やタブがそのまま入っています。\\n や \\t と書きます',
+      badEscape: '文字列のエスケープが正しくありません',
+      badNumber: '数値の書き方が正しくありません（JSON では先頭の 0、「+」、「.5」、NaN、Infinity は使えません）',
+      badLiteral: '不明な語です。JSON にあるのは true、false、null だけです',
+      unexpectedEnd: '入力が途中で終わっています（かっこか引用符が閉じていません）',
+      extraData: 'JSON の値の後に余分なデータがあります',
+      extraDataJsonl: 'JSON の値の後に余分なデータがあります。JSON Lines なら 1 行に 1 つの完全な値を書きます',
+      unexpectedChar: '予期しない文字 {ch}',
+      yaml: 'YAML：{reason}',
+      multiDocSchema: 'スキーマに YAML ドキュメントが {n} 個あります。1 個にしてください',
+    },
+    schemaErr: {
+      missingRef: '{path} の $ref "{ref}" を解決できません。URL はダウンロードしません。そのスキーマを "$id": "{id}" 付きで「参照先のスキーマ」に貼り付けてください。',
+      missingLocal: '{path} の $ref "{ref}" の参照先がこのスキーマにありません。',
+      badPattern: '{path} の正規表現が正しくありません：{pattern}（{message}）。',
+      extraNoId: '参照先のスキーマ {n} に "$id" がないため、$ref から参照できません。',
+      extraDraft: '参照先のスキーマ {id} は $schema "{uri}" を宣言しています。すべてのスキーマで {draft} を使ってください。',
+      extraDup: '参照先のスキーマ 2 つが同じ "$id" を使っています：{id}。',
+      compile: 'Ajv がスキーマをコンパイルできません：{message}',
+      itemsArray: '{draft} の "items" はスキーマ 1 つだけを取ります。配列での指定は draft-07 の構文です。位置ごとの指定には "prefixItems" を使います。',
+    },
+    notice: {
+      noSchema: '$schema がないため {draft} として検証しました。"$schema" を書くか、メニューでドラフトを選んでください。',
+      schemaUnknown: '$schema "{uri}" は 5 つのドラフトのどれでもありません。{draft} として検証しました。',
+      schemaNonCanonical: '$schema "{uri}" を {draft} として読みましたが、公式の表記は "{canonical}" です。ほかの検証ツールでは認識されないことがあります。',
+      schemaMismatch: '$schema は {schemaDraft} ですが、メニューで {draft} を指定しています。',
+      olderSyntax: 'スキーマに draft-07 の構文 {keywords} があります。Draft 7 を選ぶか "$schema" を書いてください。',
+      refSiblings: '{draft} では "$ref" と並べたキーワードは無視されます：{path} の {keywords}。',
+      unknownKeyword: '{path} の不明なキーワード "{keyword}" は無視されます。',
+      unknownKeywordMany: '不明なキーワード "{keyword}" は無視されます（{count} か所、最初は {path}）。',
+      suggestion: '"{suggestion}" の書き間違いではありませんか？',
+      nullable: '{path} の "nullable" は OpenAPI 3.0 のキーワードで、JSON Schema では無視されます。"type": [{types}] と書いてください。',
+      idKeyword: '{path} の "id" は draft-04 のキーワードで、無視されます。{draft} では "$id" を使います。',
+      dependencies: '{draft} では {path} の "dependencies" は無視されます。"dependentRequired" か "dependentSchemas" を使ってください。',
+      additionalItems: '{draft} では {path} の "additionalItems" は無視されます。"prefixItems" と "items" を使ってください。',
+      formatUnchecked: 'format {formats} は検証しません。どんな文字列も通ります。',
+      formatOff: 'format の検証はオフです。"format" は注釈としてだけ扱われます。',
+      dynamicRef: 'Ajv の $dynamicRef / $recursiveRef 対応は一部のみです（公式の JSON Schema Test Suite で失敗するケースがあります）。別の検証ツールでも結果を確認してください。',
+      dupKey: '{side}の {path} にキー "{key}" が重複しています（{line} 行目）。JSON.parse は最後の値だけを残すため、前の値は検証されません。',
+      unsafeInt: '{side}の {path} の数値 {raw}（{line} 行目）は 2^53 を超えるため、JavaScript では {parsed} になります。{parsed} として検証しました。',
+      bom: '{side}の先頭にあった BOM（バイトオーダーマーク）を取り除きました。',
+      yamlRead: '{side}を YAML として読みました（ドキュメント {n} 個）。日付や yes / no は文字列のままです（YAML 1.2 core schema）。',
+      jsonlRead: 'データを JSON Lines として読みました。{n} 行を 1 行ずつ検証します。',
+      sideSchema: 'スキーマ',
+      sideData: 'データ',
+    },
+    kw: {
+      type: '{expected} でなければなりませんが、{actual} です',
+      required: '必須プロパティ "{name}" がありません',
+      additionalProperties: 'プロパティ "{name}" は許可されていません（additionalProperties）',
+      unevaluatedProperties: 'プロパティ "{name}" は許可されていません（unevaluatedProperties）',
+      unevaluatedItems: '要素は {limit} 個までです（unevaluatedItems）。{actual} 個あります',
+      items: '要素は {limit} 個までです。{actual} 個あります',
+      dependentRequired: 'プロパティ "{property}" があるときは {deps} も必要です',
+      compare: '{comparison} {limit} でなければなりませんが、{value} です',
+      multipleOf: '{multipleOf} の倍数でなければなりませんが、{value} です',
+      minLength: '{limit} 文字以上必要です。{actual} 文字です',
+      maxLength: '{limit} 文字以下でなければなりません。{actual} 文字です',
+      pattern: 'パターン {pattern} に一致しません',
+      format: '"{format}" として正しくありません',
+      enum: '{values} のいずれかでなければなりません',
+      const: '{value} でなければなりません',
+      minItems: '要素が {limit} 個以上必要です。{actual} 個です',
+      maxItems: '要素は {limit} 個以下でなければなりません。{actual} 個です',
+      minProperties: 'プロパティが {limit} 個以上必要です。{actual} 個です',
+      maxProperties: 'プロパティは {limit} 個以下でなければなりません。{actual} 個です',
+      uniqueItems: '{j} 番目と {i} 番目の要素が同じです（uniqueItems）',
+      minContains: 'contains に合う要素が {limit} 個以上必要です',
+      maxContains: 'contains に合う要素は {limit} 個までです',
+      propertyNames: 'プロパティ名 "{name}" は許可されていません（propertyNames）',
+      oneOfNone: 'oneOf のどの分岐にも一致しません',
+      oneOfMany: 'oneOf の複数の分岐に一致しています（{branches}）',
+      anyOf: 'anyOf のどの分岐にも一致しません',
+      not: '"not" のスキーマに一致してはいけません',
+      falseSchema: 'ここには値を置けません（スキーマが false）',
+      if: '"{kw}" のスキーマに一致しません',
+    },
+  },
+  ko: {
+    draftLabel: '드래프트',
+    draftAuto: '자동($schema 기준)',
+    formatToggle: 'format 검사',
+    examples: '예제',
+    exUser: '사용자(유효)',
+    exUserErrors: '사용자(오류 있음)',
+    exOneOf: '결제 수단(oneOf + $ref)',
+    exYaml: 'YAML 설정(2020-12)',
+    validate: '검증',
+    schemaLabel: '스키마',
+    dataLabel: '데이터',
+    open: '파일 열기',
+    clear: '지우기',
+    schemaPh: '{ "type": "object", "required": ["name"] }  — JSON 또는 YAML',
+    dataPh: '{ "name": "홍길동" }  — JSON, YAML, JSON Lines',
+    extrasSummary: '참조되는 스키마($ref 대상)',
+    extrasHelp: '$ref가 가리키는 스키마를 붙여넣으세요. 각각 "$id"가 있어야 합니다. 여러 개는 --- 만 있는 줄로 구분합니다. URL은 내려받지 않습니다.',
+    extrasPh: '{ "$id": "https://example.com/address.json", "type": "object" }',
+    copyText: '오류 복사',
+    copyJson: 'JSON으로 복사',
+    copied: '복사됨',
+    copyFailed: '복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.',
+    root: '(루트)',
+    fmtJson: 'JSON',
+    fmtYaml: 'YAML',
+    fmtJsonl: 'JSON Lines',
+    fileTooBig: '{name} 파일이 20 MB를 넘습니다.',
+    fileRead: '{name} 파일을 읽지 못했습니다.',
+    empty: '스키마와 데이터를 붙여넣으세요. 입력할 때마다 결과가 바뀝니다.',
+    large: '입력이 커서 자동 검사를 멈췄습니다. 검증을 누르세요.',
+    loading: '검증기를 불러오는 중…',
+    loadFailed: '검증기를 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.',
+    valid: '유효: 데이터가 스키마에 맞습니다({draft}).',
+    validDocs: '유효: 문서 {n}개가 모두 스키마에 맞습니다({draft}).',
+    invalidOne: '오류 1개({draft}).',
+    invalidMany: '오류 {n}개, 위치 {locations}곳({draft}).',
+    invalidDocs: '문서 {n}개 중 {bad}개에 오류가 있습니다({draft}).',
+    schemaParse: '스키마가 올바른 JSON이나 YAML이 아닙니다.',
+    dataParse: '데이터가 올바른 JSON, YAML, JSON Lines가 아닙니다.',
+    extrasParse: '참조되는 스키마가 올바른 JSON이나 YAML이 아닙니다.',
+    schemaInvalid: '스키마 자체가 규격에 맞지 않습니다({draft}):',
+    schemaFail: '이 스키마를 사용할 수 없습니다({draft}):',
+    noticesTitle: '참고',
+    docLabel: '문서 {n}',
+    docLine: '문서 {n}({line}행)',
+    docValid: '유효',
+    lineCol: '{line}행 {col}열',
+    schemaAt: '스키마 {path}',
+    valueLabel: '값 {value}',
+    moreGroups: '표시하지 않은 위치가 {n}곳 더 있습니다. 전체는 오류를 복사해서 확인하세요.',
+    closest: '가장 가까운 분기: {n}번째',
+    otherBranches: '다른 분기({n})',
+    branch: '분기 {n}',
+    branchNoErrors: '이 분기에는 오류가 없습니다',
+    via: '"{kw}" 경유',
+    parse: {
+      at: '{line}행 {col}열: {reason}',
+      empty: '입력이 비어 있습니다',
+      trailingComma: '닫는 괄호 앞에 쉼표가 남아 있습니다',
+      comment: 'JSON에는 주석을 쓸 수 없습니다',
+      singleQuote: 'JSON 문자열과 속성 이름은 큰따옴표(")로 감쌉니다',
+      smartQuote: '{ch}는 둥근 따옴표입니다. 곧은 큰따옴표(")를 쓰세요',
+      fullWidth: '전각 문자 {ch}가 있습니다. JSON의 기호와 공백은 반각이어야 합니다',
+      unquotedKey: '속성 이름은 큰따옴표로 감싸야 합니다',
+      missingComma: '값 사이에 쉼표가 없습니다',
+      missingColon: '속성 이름 뒤에 콜론이 없습니다',
+      unterminatedString: '문자열이 닫히지 않았습니다',
+      controlChar: '문자열 안에 줄바꿈이나 탭이 그대로 있습니다. \\n 또는 \\t로 쓰세요',
+      badEscape: '문자열의 이스케이프가 잘못되었습니다',
+      badNumber: '숫자 형식이 잘못되었습니다(JSON에서는 앞자리 0, "+", ".5", NaN, Infinity를 쓸 수 없습니다)',
+      badLiteral: '알 수 없는 단어입니다. JSON에는 true, false, null만 있습니다',
+      unexpectedEnd: '입력이 중간에 끝났습니다(괄호나 따옴표가 닫히지 않았습니다)',
+      extraData: 'JSON 값이 끝난 뒤에 데이터가 더 있습니다',
+      extraDataJsonl: 'JSON 값이 끝난 뒤에 데이터가 더 있습니다. JSON Lines라면 한 줄에 완전한 값 하나를 씁니다',
+      unexpectedChar: '예상하지 못한 문자 {ch}',
+      yaml: 'YAML: {reason}',
+      multiDocSchema: '스키마에 YAML 문서가 {n}개 있습니다. 하나만 넣으세요',
+    },
+    schemaErr: {
+      missingRef: '{path}의 $ref "{ref}"를 찾을 수 없습니다. URL은 내려받지 않습니다. 그 스키마를 "$id": "{id}"와 함께 "참조되는 스키마"에 붙여넣으세요.',
+      missingLocal: '{path}의 $ref "{ref}"가 가리키는 대상이 이 스키마에 없습니다.',
+      badPattern: '{path}의 정규식이 잘못되었습니다: {pattern} ({message}).',
+      extraNoId: '참조되는 스키마 {n}에 "$id"가 없어 어떤 $ref로도 참조할 수 없습니다.',
+      extraDraft: '참조되는 스키마 {id}가 $schema "{uri}"를 선언했습니다. 모든 스키마가 {draft}를 써야 합니다.',
+      extraDup: '참조되는 스키마 두 개가 같은 "$id"를 씁니다: {id}.',
+      compile: 'Ajv가 스키마를 컴파일하지 못했습니다: {message}',
+      itemsArray: '{draft}의 "items"는 스키마 하나만 받습니다. 배열 형식은 draft-07 문법입니다. 위치별 스키마는 "prefixItems"를 쓰세요.',
+    },
+    notice: {
+      noSchema: '$schema가 없어 {draft}로 검증했습니다. "$schema"를 쓰거나 메뉴에서 드래프트를 고르세요.',
+      schemaUnknown: '$schema "{uri}"는 다섯 드래프트 중 어느 것도 아닙니다. {draft}로 검증했습니다.',
+      schemaNonCanonical: '$schema "{uri}"를 {draft}로 읽었지만 공식 표기는 "{canonical}"입니다. 다른 검증기는 인식하지 못할 수 있습니다.',
+      schemaMismatch: '$schema는 {schemaDraft}이지만 메뉴에서 {draft}를 지정했습니다.',
+      olderSyntax: '스키마에 draft-07 문법 {keywords}가 있습니다. Draft 7을 고르거나 "$schema"를 쓰세요.',
+      refSiblings: '{draft}에서는 "$ref" 옆의 키워드가 무시됩니다: {path}의 {keywords}.',
+      unknownKeyword: '{path}의 알 수 없는 키워드 "{keyword}"는 무시됩니다.',
+      unknownKeywordMany: '알 수 없는 키워드 "{keyword}"는 무시됩니다({count}곳, 처음 위치 {path}).',
+      suggestion: '"{suggestion}"의 오타가 아닌지 확인하세요.',
+      nullable: '{path}의 "nullable"은 OpenAPI 3.0 키워드라 JSON Schema에서는 무시됩니다. "type": [{types}]로 쓰세요.',
+      idKeyword: '{path}의 "id"는 draft-04 키워드라 무시됩니다. {draft}에서는 "$id"를 씁니다.',
+      dependencies: '{draft}에서는 {path}의 "dependencies"가 무시됩니다. "dependentRequired"나 "dependentSchemas"를 쓰세요.',
+      additionalItems: '{draft}에서는 {path}의 "additionalItems"가 무시됩니다. "prefixItems"와 "items"를 쓰세요.',
+      formatUnchecked: 'format {formats}은(는) 검사하지 않습니다. 어떤 문자열도 통과합니다.',
+      formatOff: 'format 검사가 꺼져 있습니다. "format"은 주석으로만 쓰입니다.',
+      dynamicRef: 'Ajv는 $dynamicRef와 $recursiveRef를 일부만 지원합니다(공식 JSON Schema Test Suite의 일부 사례가 실패합니다). 다른 검증기로도 결과를 확인하세요.',
+      dupKey: '{side}의 {path}에 키 "{key}"가 중복되어 있습니다({line}행). JSON.parse는 마지막 값만 남기므로 앞의 값은 검증되지 않습니다.',
+      unsafeInt: '{side}의 {path}에 있는 숫자 {raw}({line}행)는 2^53을 넘어 JavaScript에서 {parsed}이(가) 됩니다. {parsed}(으)로 검증했습니다.',
+      bom: '{side} 앞의 BOM(바이트 순서 표시)을 제거했습니다.',
+      yamlRead: '{side}를 YAML로 읽었습니다(문서 {n}개). 날짜와 yes / no는 문자열로 남습니다(YAML 1.2 core schema).',
+      jsonlRead: '데이터를 JSON Lines로 읽었습니다. {n}줄을 한 줄씩 검증합니다.',
+      sideSchema: '스키마',
+      sideData: '데이터',
+    },
+    kw: {
+      type: '{expected}여야 하는데 {actual}입니다',
+      required: '필수 속성 "{name}"이(가) 없습니다',
+      additionalProperties: '속성 "{name}"은(는) 허용되지 않습니다(additionalProperties)',
+      unevaluatedProperties: '속성 "{name}"은(는) 허용되지 않습니다(unevaluatedProperties)',
+      unevaluatedItems: '항목은 {limit}개까지입니다(unevaluatedItems). {actual}개 있습니다',
+      items: '항목은 {limit}개까지입니다. {actual}개 있습니다',
+      dependentRequired: '속성 "{property}"가 있으면 {deps}도 있어야 합니다',
+      compare: '{comparison} {limit}여야 하는데 {value}입니다',
+      multipleOf: '{multipleOf}의 배수여야 하는데 {value}입니다',
+      minLength: '{limit}자 이상이어야 합니다. {actual}자입니다',
+      maxLength: '{limit}자 이하여야 합니다. {actual}자입니다',
+      pattern: '패턴 {pattern}과(와) 맞지 않습니다',
+      format: '올바른 "{format}"이(가) 아닙니다',
+      enum: '{values} 중 하나여야 합니다',
+      const: '{value}여야 합니다',
+      minItems: '항목이 {limit}개 이상이어야 합니다. {actual}개입니다',
+      maxItems: '항목이 {limit}개 이하여야 합니다. {actual}개입니다',
+      minProperties: '속성이 {limit}개 이상이어야 합니다. {actual}개입니다',
+      maxProperties: '속성이 {limit}개 이하여야 합니다. {actual}개입니다',
+      uniqueItems: '{j}번째와 {i}번째 항목이 같습니다(uniqueItems)',
+      minContains: 'contains에 맞는 항목이 {limit}개 이상 있어야 합니다',
+      maxContains: 'contains에 맞는 항목은 {limit}개까지입니다',
+      propertyNames: '속성 이름 "{name}"은(는) 허용되지 않습니다(propertyNames)',
+      oneOfNone: 'oneOf의 어느 분기와도 맞지 않습니다',
+      oneOfMany: 'oneOf의 여러 분기와 동시에 맞습니다({branches})',
+      anyOf: 'anyOf의 어느 분기와도 맞지 않습니다',
+      not: '"not"의 스키마와 맞으면 안 됩니다',
+      falseSchema: '여기에는 값을 둘 수 없습니다(스키마가 false)',
+      if: '"{kw}"의 스키마와 맞지 않습니다',
+    },
+  },
+};
+const S = STRINGS[lang] || STRINGS.en;
 ---
 
-<div>
-  <div class="jsv-wrap"
-    data-msg-paste=""
-    data-msg-invalid-schema=""
-    data-msg-invalid-data=""
-    data-msg-valid=""
-    data-msg-invalid=""
-    data-msg-schema-error=""
-  >
-
-    <div class="jsv-toolbar">
-      <label for="jsv-draft-select" class="jsv-label" data-i18n="schemaDraft">Schema Draft:</label>
-      <select id="jsv-draft-select" class="jsv-select">
-        <option value="07" selected>Draft-07 (most common)</option>
-        <option value="2020">Draft 2020-12</option>
+<div class="jsv-wrap" id="jsv-wrap" data-lang={lang} data-strings={JSON.stringify(S)}>
+  <div class="jsv-toolbar">
+    <label class="jsv-field">
+      <span class="jsv-field-label">{S.draftLabel}</span>
+      <select id="jsv-draft" class="tool-input jsv-select">
+        <option value="auto">{S.draftAuto}</option>
+        <option value="2020-12">Draft 2020-12</option>
+        <option value="2019-09">Draft 2019-09</option>
+        <option value="7">Draft 7</option>
+        <option value="6">Draft 6</option>
+        <option value="4">Draft 4</option>
       </select>
-      <button id="jsv-load-example" class="btn-ghost" type="button" data-i18n="loadExample">Load Example</button>
-      <button id="jsv-validate" class="btn-primary" type="button" data-i18n="validate">Validate</button>
-    </div>
+    </label>
+    <label class="jsv-check">
+      <input type="checkbox" id="jsv-formats" checked />
+      <span>{S.formatToggle}</span>
+    </label>
+    <label class="jsv-field jsv-field-ex">
+      <span class="jsv-field-label">{S.examples}</span>
+      <select id="jsv-example" class="tool-input jsv-select">
+        <option value="">{S.examples}…</option>
+        <option value="user">{S.exUser}</option>
+        <option value="userErrors">{S.exUserErrors}</option>
+        <option value="oneOf">{S.exOneOf}</option>
+        <option value="yaml">{S.exYaml}</option>
+      </select>
+    </label>
+    <button id="jsv-validate" class="btn-primary jsv-validate" type="button">{S.validate}</button>
+  </div>
 
-    <div class="jsv-panels">
-      <div class="jsv-panel">
-        <label for="jsv-schema">
-          <span data-i18n="jsonSchema">JSON Schema</span>
-          <button id="jsv-clear-schema" class="btn-ghost btn-xs" type="button" data-i18n="clear">Clear</button>
-        </label>
-        <textarea id="jsv-schema" spellcheck="false" placeholder='{"type":"object","properties":{"name":{"type":"string"}}}' ></textarea>
+  <p id="jsv-status" class="jsv-status" role="status" aria-live="polite">{S.empty}</p>
+
+  <div class="jsv-panels">
+    <div class="jsv-panel" data-side="schema">
+      <div class="jsv-panel-head">
+        <label for="jsv-schema" class="jsv-panel-label">{S.schemaLabel}</label>
+        <span class="jsv-badge" id="jsv-schema-fmt" hidden></span>
+        <span class="jsv-panel-actions">
+          <button class="btn-ghost jsv-mini" type="button" data-open="schema">{S.open}</button>
+          <button class="btn-ghost jsv-mini" type="button" data-clear="schema">{S.clear}</button>
+        </span>
       </div>
-      <div class="jsv-panel">
-        <label for="jsv-data">
-          <span data-i18n="jsonData">JSON Data</span>
-          <button id="jsv-clear-data" class="btn-ghost btn-xs" type="button" data-i18n="clear">Clear</button>
-        </label>
-        <textarea id="jsv-data" spellcheck="false" placeholder='{"name":"Alice"}'></textarea>
-      </div>
+      <textarea id="jsv-schema" class="tool-textarea jsv-text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder={S.schemaPh}></textarea>
     </div>
+    <div class="jsv-panel" data-side="data">
+      <div class="jsv-panel-head">
+        <label for="jsv-data" class="jsv-panel-label">{S.dataLabel}</label>
+        <span class="jsv-badge" id="jsv-data-fmt" hidden></span>
+        <span class="jsv-panel-actions">
+          <button class="btn-ghost jsv-mini" type="button" data-open="data">{S.open}</button>
+          <button class="btn-ghost jsv-mini" type="button" data-clear="data">{S.clear}</button>
+        </span>
+      </div>
+      <textarea id="jsv-data" class="tool-textarea jsv-text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder={S.dataPh}></textarea>
+    </div>
+  </div>
+  <input type="file" id="jsv-file" accept=".json,.yaml,.yml,.jsonl,.ndjson,.txt,application/json,application/yaml,text/yaml" hidden />
 
-    <div id="jsv-status" class="jsv-status" aria-live="polite"></div>
+  <details class="jsv-extras" id="jsv-extras">
+    <summary>{S.extrasSummary}</summary>
+    <p class="jsv-help">{S.extrasHelp}</p>
+    <textarea id="jsv-extra" class="tool-textarea jsv-text jsv-extra-text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder={S.extrasPh} aria-label={S.extrasSummary}></textarea>
+  </details>
 
-    <div id="jsv-errors" class="jsv-errors" style="display:none"></div>
-
+  <div id="jsv-result" class="jsv-result" hidden>
+    <div class="jsv-result-actions">
+      <button type="button" class="btn-copy" id="jsv-copy-text">{S.copyText}</button>
+      <button type="button" class="btn-copy" id="jsv-copy-json">{S.copyJson}</button>
+    </div>
+    <div id="jsv-out"></div>
   </div>
 </div>
 
-<script is:inline>
-  (function () {
-    var STRINGS = {
-      en: { schemaDraft: 'Schema Draft:', loadExample: 'Load Example', validate: 'Validate', jsonSchema: 'JSON Schema', jsonData: 'JSON Data', clear: 'Clear', msgPaste: 'Paste a JSON Schema and JSON Data, then click Validate.', msgInvalidSchema: 'Invalid JSON Schema: ', msgInvalidData: 'Invalid JSON Data: ', msgValid: 'Valid \u2014 JSON data matches the schema.', msgInvalid: 'Invalid \u2014 JSON data does not match the schema.', msgSchemaError: 'Schema compilation error: ' },
-      zh: { schemaDraft: 'Schema 草案：', loadExample: '加载示例', validate: '验证', jsonSchema: 'JSON Schema', jsonData: 'JSON 数据', clear: '清除', msgPaste: '粘贴 JSON Schema 和 JSON 数据，然后点击验证。', msgInvalidSchema: '无效 JSON Schema：', msgInvalidData: '无效 JSON 数据：', msgValid: '有效 \u2014 JSON 数据符合 Schema。', msgInvalid: '无效 \u2014 JSON 数据不符合 Schema。', msgSchemaError: 'Schema 编译错误：' },
-      ja: { schemaDraft: 'Schema ドラフト：', loadExample: '例を読み込む', validate: '検証', jsonSchema: 'JSON Schema', jsonData: 'JSON データ', clear: 'クリア', msgPaste: 'JSON Schema と JSON データを貼り付けて検証をクリックしてください。', msgInvalidSchema: '無効な JSON Schema：', msgInvalidData: '無効な JSON データ：', msgValid: '有効 \u2014 JSON データは Schema に適合します。', msgInvalid: '無効 \u2014 JSON データは Schema に適合しません。', msgSchemaError: 'Schema コンパイルエラー：' },
-      ko: { schemaDraft: 'Schema 초안:', loadExample: '예제 불러오기', validate: '검증', jsonSchema: 'JSON Schema', jsonData: 'JSON 데이터', clear: '지우기', msgPaste: 'JSON Schema와 JSON 데이터를 붙여넣고 검증을 클릭하세요.', msgInvalidSchema: '유효하지 않은 JSON Schema: ', msgInvalidData: '유효하지 않은 JSON 데이터: ', msgValid: '유효 \u2014 JSON 데이터가 Schema에 적합합니다.', msgInvalid: '유효하지 않음 \u2014 JSON 데이터가 Schema에 적합하지 않습니다.', msgSchemaError: 'Schema 컴파일 오류: ' }
-    };
-    var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-    var t = STRINGS[pageLang] || STRINGS.en;
-    document.querySelectorAll('.jsv-wrap [data-i18n]').forEach(function(el) {
-      var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-    });
-    var wrap = document.querySelector('.jsv-wrap');
-    if (wrap) {
-      wrap.dataset.msgPaste = t.msgPaste;
-      wrap.dataset.msgInvalidSchema = t.msgInvalidSchema;
-      wrap.dataset.msgInvalidData = t.msgInvalidData;
-      wrap.dataset.msgValid = t.msgValid;
-      wrap.dataset.msgInvalid = t.msgInvalid;
-      wrap.dataset.msgSchemaError = t.msgSchemaError;
-    }
-  })();
-</script>
-
 <script>
-  import Ajv from 'ajv';
-  import Ajv2020 from 'ajv/dist/2020';
-  import addFormats from 'ajv-formats';
-
-  const schemaEl  = document.getElementById('jsv-schema') as HTMLTextAreaElement;
-  const dataEl    = document.getElementById('jsv-data') as HTMLTextAreaElement;
-  const statusEl  = document.getElementById('jsv-status')!;
-  const errorsEl  = document.getElementById('jsv-errors')!;
-  const draftSel  = document.getElementById('jsv-draft-select') as HTMLSelectElement;
-  const validateBtn  = document.getElementById('jsv-validate')!;
-  const loadExBtn    = document.getElementById('jsv-load-example')!;
-  const clearSchBtn  = document.getElementById('jsv-clear-schema')!;
-  const clearDataBtn = document.getElementById('jsv-clear-data')!;
-
-  const jsvWrap = document.querySelector('.jsv-wrap') as HTMLElement;
-  const MSG_PASTE          = jsvWrap?.dataset.msgPaste          || 'Paste a JSON Schema and JSON Data, then click Validate.';
-  const MSG_INVALID_SCHEMA = jsvWrap?.dataset.msgInvalidSchema  || 'Invalid JSON Schema: ';
-  const MSG_INVALID_DATA   = jsvWrap?.dataset.msgInvalidData    || 'Invalid JSON Data: ';
-  const MSG_VALID          = jsvWrap?.dataset.msgValid          || 'Valid \u2014 JSON data matches the schema.';
-  const MSG_INVALID        = jsvWrap?.dataset.msgInvalid        || 'Invalid \u2014 JSON data does not match the schema.';
-  const MSG_SCHEMA_ERROR   = jsvWrap?.dataset.msgSchemaError    || 'Schema compilation error: ';
-
-  const EXAMPLE_SCHEMA = JSON.stringify({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "User",
-    "type": "object",
-    "required": ["name", "age", "email"],
-    "properties": {
-      "name":  { "type": "string",  "minLength": 1 },
-      "age":   { "type": "integer", "minimum": 0, "maximum": 120 },
-      "email": { "type": "string",  "format": "email" },
-      "role":  { "type": "string",  "enum": ["admin", "user", "guest"] }
-    },
-    "additionalProperties": false
-  }, null, 2);
-
-  const EXAMPLE_DATA = JSON.stringify({
-    "name": "Alice",
-    "age": 30,
-    "email": "alice@example.com",
-    "role": "admin"
-  }, null, 2);
-
-  const EXAMPLE_DATA_INVALID = JSON.stringify({
-    "name": "",
-    "age": -5,
-    "email": "not-an-email",
-    "role": "superuser",
-    "extra": "not allowed"
-  }, null, 2);
-
   /* ── engine:start ── */
+  // Pure functions; Ajv, its draft classes, ajv-formats and js-yaml are passed in as `lib`
+  // ({ Ajv, Ajv2019, Ajv2020, AjvDraft04, addFormats, draft06Meta, yaml }), so the test runs
+  // this block in Node against the same packages.
+  var DRAFTS = ['4', '6', '7', '2019-09', '2020-12'];
+  var DEFAULT_DRAFT = '2020-12';
+  var META_URIS = {
+    '4': 'http://json-schema.org/draft-04/schema#',
+    '6': 'http://json-schema.org/draft-06/schema#',
+    '7': 'http://json-schema.org/draft-07/schema#',
+    '2019-09': 'https://json-schema.org/draft/2019-09/schema',
+    '2020-12': 'https://json-schema.org/draft/2020-12/schema',
+  };
+  var DRAFT_NAMES = { '4': 'Draft 4', '6': 'Draft 6', '7': 'Draft 7', '2019-09': 'Draft 2019-09', '2020-12': 'Draft 2020-12' };
   // "format" is checked (asserted) for the JSON Schema formats that ajv-formats implements.
-  // Draft 2020-12 treats format as an annotation unless the validator opts in to assertion;
-  // this tool opts in. Formats not in this list (idn-email, iri, custom names) are ignored.
+  // Draft 2019-09 and 2020-12 treat format as an annotation unless the validator opts in;
+  // this tool opts in while "Check format" is on. Formats outside the list are accepted and
+  // listed in a note.
   var ASSERTED_FORMATS = [
     'date', 'time', 'date-time', 'duration', 'email', 'hostname', 'ipv4', 'ipv6',
     'uri', 'uri-reference', 'uri-template', 'uuid', 'json-pointer', 'relative-json-pointer', 'regex',
   ];
+  // Keywords Ajv implements beyond (or outside) each draft. Removing them makes Ajv ignore
+  // them as the specification and Python jsonschema do; they are then reported as unknown.
+  //   nullable: OpenAPI 3.0, not JSON Schema (Ajv accepts null with it).
+  //   id: draft-04 only (Ajv throws "NOT SUPPORTED" in later drafts).
+  //   const / contains / propertyNames / if / then / else: added after draft-04 or draft-06.
+  //   dependencies: split into dependentRequired / dependentSchemas in 2019-09.
+  //   $recursiveRef / $recursiveAnchor: 2019-09 only, replaced by $dynamicRef in 2020-12.
+  var REMOVED_KEYWORDS = {
+    '4': ['nullable', 'const', 'contains', 'propertyNames', 'if', 'then', 'else'],
+    '6': ['nullable', 'id', 'if', 'then', 'else'],
+    '7': ['nullable', 'id'],
+    '2019-09': ['nullable', 'id', 'dependencies'],
+    '2020-12': ['nullable', 'id', 'dependencies', '$recursiveRef', '$recursiveAnchor'],
+  };
+  var SINGLE_SCHEMA = ['additionalItems', 'additionalProperties', 'contains', 'propertyNames', 'not', 'if', 'then', 'else', 'unevaluatedItems', 'unevaluatedProperties', 'contentSchema'];
+  var ARRAY_SCHEMA = ['allOf', 'anyOf', 'oneOf', 'prefixItems'];
+  var MAP_SCHEMA = ['properties', 'patternProperties', 'dependentSchemas'];
+  var CONTAINERS = ['definitions', '$defs'];
+  // Draft 4–7: "All other properties in a $ref object MUST be ignored." Annotations are kept
+  // because they change nothing; definitions stay because JSON Pointers may point into them.
+  var KEEP_WITH_REF = ['$ref', '$schema', 'definitions', '$comment', 'title', 'description', 'default', 'examples', 'readOnly', 'writeOnly'];
+  var MAX_NOTES = 50;
 
-  function createAjv(draft, lib) {
-    var Ctor = draft === '2020' ? lib.Ajv2020 : lib.Ajv;
-    var ajv = new Ctor({ allErrors: true, strict: false });
-    lib.addFormats(ajv, ASSERTED_FORMATS);
+  function fmt(tpl, params) {
+    return String(tpl).replace(/\{(\w+)\}/g, function (m, k) {
+      return params && params[k] !== undefined && params[k] !== null ? String(params[k]) : m;
+    });
+  }
+  function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  // plain assignment of "__proto__" would set the prototype instead of a property
+  function put(o, k, v) { Object.defineProperty(o, k, { value: v, enumerable: true, writable: true, configurable: true }); }
+  function escSeg(s) { return String(s).replace(/~/g, '~0').replace(/\//g, '~1'); }
+  function pointerOf(segs) { return segs.map(function (s) { return '/' + escSeg(s); }).join(''); }
+  function segmentsOf(ptr) {
+    if (!ptr) return [];
+    return ptr.slice(1).split('/').map(function (s) { return s.replace(/~1/g, '/').replace(/~0/g, '~'); });
+  }
+  function getAt(value, ptr) {
+    var segs = segmentsOf(ptr), v = value;
+    for (var i = 0; i < segs.length; i++) {
+      if (v === null || typeof v !== 'object' || !has(v, segs[i])) return undefined;
+      v = v[segs[i]];
+    }
+    return v;
+  }
+  function typeOf(v) {
+    if (v === null) return 'null';
+    if (Array.isArray(v)) return 'array';
+    if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'number';
+    return typeof v;
+  }
+  function codePoints(s) { var n = 0; for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); if (c < 0xd800 || c > 0xdbff || i + 1 >= s.length) n++; else { var d = s.charCodeAt(i + 1); if (d >= 0xdc00 && d <= 0xdfff) i++; n++; } } return n; }
+  function preview(v, max) {
+    var s;
+    try { s = JSON.stringify(v); } catch (e) { s = String(v); }
+    if (s === undefined) s = String(v);
+    max = max || 80;
+    return s.length > max ? s.slice(0, max - 1) + '…' : s;
+  }
+  function lineCol(text, offset) {
+    var line = 1, last = -1;
+    for (var i = text.indexOf('\n'); i !== -1 && i < offset; i = text.indexOf('\n', i + 1)) { line++; last = i; }
+    return { line: line, col: offset - last };
+  }
+
+  /* $schema → draft. Accepts http and https and an optional trailing "#"; reports the
+     non-official forms, which Ajv, Python jsonschema and Go v6 do not all recognize. */
+  function draftOfUri(uri) {
+    if (typeof uri !== 'string') return null;
+    var m = /^(https?):\/\/json-schema\.org\/(?:draft-0([467])\/schema|draft\/(2019-09|2020-12)\/schema)(#?)$/.exec(uri.trim());
+    if (!m) return null;
+    var draft = m[2] || m[3];
+    var canonical = META_URIS[draft];
+    var bare = canonical.replace(/#$/, '');
+    var u = uri.trim();
+    return { draft: draft, canonical: u === canonical || u === bare || u === bare + '#' ? true : false, official: canonical };
+  }
+  function detectDraft(schema, menu) {
+    var uri = isObj(schema) && typeof schema.$schema === 'string' ? schema.$schema : null;
+    var d = draftOfUri(uri);
+    var notices = [];
+    if (!menu || menu === 'auto') {
+      if (d) {
+        if (!d.canonical) notices.push({ code: 'schemaNonCanonical', uri: uri, canonical: d.official, draft: d.draft });
+        return { draft: d.draft, source: 'schema', notices: notices };
+      }
+      notices.push(uri !== null ? { code: 'schemaUnknown', uri: uri, draft: DEFAULT_DRAFT } : { code: 'noSchema', draft: DEFAULT_DRAFT });
+      return { draft: DEFAULT_DRAFT, source: 'default', notices: notices };
+    }
+    if (d && d.draft !== menu) notices.push({ code: 'schemaMismatch', schemaDraft: d.draft, draft: menu });
+    else if (uri !== null && !d) notices.push({ code: 'schemaUnknown', uri: uri, draft: menu });
+    return { draft: menu, source: 'menu', notices: notices };
+  }
+
+  function createAjv(draft, lib, formats) {
+    var opts = {
+      allErrors: true,
+      strictSchema: 'log', strictTypes: false, strictTuples: false, strictRequired: false,
+      allowUnionTypes: true,
+      // without this, {"required": ["constructor"]} passes {} because ({}).constructor exists
+      ownProperties: true,
+      validateFormats: formats !== false,
+      logger: { log: function () {}, warn: function () {}, error: function () {} },
+    };
+    var ajv;
+    if (draft === '4') ajv = new lib.AjvDraft04(opts);
+    else if (draft === '6') { ajv = new lib.Ajv(opts); ajv.addMetaSchema(lib.draft06Meta); }
+    else if (draft === '7') ajv = new lib.Ajv(opts);
+    else if (draft === '2019-09') ajv = new lib.Ajv2019(opts);
+    else ajv = new lib.Ajv2020(opts);
+    (REMOVED_KEYWORDS[draft] || []).forEach(function (k) { if (ajv.getKeyword(k)) ajv.removeKeyword(k); });
+    if (formats !== false) lib.addFormats(ajv, ASSERTED_FORMATS);
     return ajv;
+  }
+  function knownKeywords(ajv, draft) {
+    var known = {};
+    Object.keys(ajv.RULES.keywords).forEach(function (k) { if (k !== '$async') known[k] = true; });
+    if (draft === '2019-09' || draft === '2020-12') known.$anchor = true;
+    return known;
+  }
+
+  function editDistance(a, b) {
+    if (Math.abs(a.length - b.length) > 2) return 3;
+    var prev = [], cur, i, j;
+    for (j = 0; j <= b.length; j++) prev[j] = j;
+    for (i = 1; i <= a.length; i++) {
+      cur = [i];
+      for (j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  function suggestKeyword(k, known) {
+    var lower = k.toLowerCase(), best = null, bestD = 3;
+    Object.keys(known).forEach(function (cand) {
+      if (cand.toLowerCase() === lower) { best = cand; bestD = -1; return; }
+      if (bestD < 0 || k.length < 4) return;
+      var d = editDistance(lower, cand.toLowerCase());
+      if (d < bestD) { bestD = d; best = cand; }
+    });
+    return bestD <= 2 ? best : null;
+  }
+
+  /* Walks the schema in schema positions and returns a copy that Ajv compiles. The copy has
+     the root $schema set to the chosen draft, and (draft 4–7) $ref siblings removed. Also
+     collects unknown keywords, $ref locations and invalid regular expressions. */
+  function prepareSchema(schema, draft, known, ctx) {
+    ctx = ctx || {};
+    var notices = [], errors = [], refs = [], unknown = {}, older = {}, dynamic = false;
+    var legacyRef = draft === '4' || draft === '6' || draft === '7';
+    function checkRegex(p, path) {
+      try { new RegExp(p, 'u'); } catch (e) { errors.push({ code: 'badPattern', path: path, pattern: p, message: e.message }); }
+    }
+    function walkMap(v, segs) {
+      if (!isObj(v)) return v;
+      var m = {};
+      Object.keys(v).forEach(function (name) { put(m, name, walk(v[name], segs.concat(name))); });
+      return m;
+    }
+    function walk(node, segs) {
+      if (!isObj(node)) return node;
+      var path = '#' + pointerOf(segs);
+      var out = {};
+      var hasRef = typeof node.$ref === 'string';
+      if (hasRef) refs.push({ ref: node.$ref, path: path + '/$ref' });
+      if ((has(node, '$dynamicRef') && known.$dynamicRef) || (has(node, '$recursiveRef') && known.$recursiveRef)) dynamic = true;
+      var ignored = [];
+      Object.keys(node).forEach(function (k) {
+        var v = node[k];
+        var here = segs.concat(k);
+        if (legacyRef && hasRef && KEEP_WITH_REF.indexOf(k) < 0) { ignored.push(k); return; }
+        if (CONTAINERS.indexOf(k) >= 0) { put(out, k, walkMap(v, here)); return; }
+        if (!known[k]) {
+          var u = unknown[k] || (unknown[k] = { count: 0, path: path, node: node });
+          u.count++;
+          // Ajv's type check reads "nullable" even when the keyword is removed; drop it
+          if (k !== 'nullable') put(out, k, v);
+          return;
+        }
+        if (k === 'items') {
+          if (Array.isArray(v)) {
+            if (draft === '2020-12') older.items = true;
+            put(out, k, v.map(function (s, i) { return walk(s, here.concat(i)); }));
+          } else put(out, k, walk(v, here));
+        } else if (SINGLE_SCHEMA.indexOf(k) >= 0) {
+          put(out, k, walk(v, here));
+        } else if (ARRAY_SCHEMA.indexOf(k) >= 0 && Array.isArray(v)) {
+          put(out, k, v.map(function (s, i) { return walk(s, here.concat(i)); }));
+        } else if (MAP_SCHEMA.indexOf(k) >= 0) {
+          put(out, k, walkMap(v, here));
+          if (k === 'patternProperties' && isObj(v)) Object.keys(v).forEach(function (p) { checkRegex(p, '#' + pointerOf(here.concat(p))); });
+        } else if (k === 'dependencies' && isObj(v)) {
+          var dm = {};
+          Object.keys(v).forEach(function (name) { put(dm, name, Array.isArray(v[name]) ? v[name] : walk(v[name], here.concat(name))); });
+          put(out, k, dm);
+        } else {
+          put(out, k, v);
+          if (k === 'pattern' && typeof v === 'string') checkRegex(v, path + '/pattern');
+        }
+      });
+      // Ajv refuses "enum": [] although draft-06 and later allow it (nothing is valid); an
+      // extra false branch in allOf has the same meaning.
+      if (Array.isArray(out.enum) && out.enum.length === 0 && draft !== '4') {
+        delete out.enum;
+        out.allOf = Array.isArray(out.allOf) ? out.allOf.concat([false]) : [false];
+      }
+      if (ignored.length) notices.push({ code: 'refSiblings', path: path, keywords: ignored.map(function (k) { return '"' + k + '"'; }).join(', '), draft: draft });
+      return out;
+    }
+    var copy = walk(schema, []);
+    if (isObj(copy)) {
+      var root = {};
+      root.$schema = META_URIS[draft];
+      Object.keys(copy).forEach(function (k) { if (k !== '$schema') put(root, k, copy[k]); });
+      copy = root;
+    }
+    Object.keys(unknown).forEach(function (k) {
+      var u = unknown[k];
+      if (k === 'nullable') {
+        var t = u.node.type;
+        var types = (Array.isArray(t) ? t : typeof t === 'string' ? [t] : ['string']).filter(function (x) { return x !== 'null'; }).concat('null');
+        notices.push({ code: 'nullable', path: u.path, types: types.map(function (x) { return '"' + x + '"'; }).join(', ') });
+      } else if (k === 'id' && draft !== '4') notices.push({ code: 'idKeyword', path: u.path, draft: draft });
+      else if (k === 'dependencies') { notices.push({ code: 'dependencies', path: u.path, draft: draft }); older.dependencies = true; }
+      else if (k === 'additionalItems' && draft === '2020-12') { notices.push({ code: 'additionalItems', path: u.path, draft: draft }); older.additionalItems = true; }
+      else notices.push({ code: u.count > 1 ? 'unknownKeywordMany' : 'unknownKeyword', keyword: k, path: u.path, count: u.count, suggestion: suggestKeyword(k, known) });
+    });
+    if (dynamic) notices.push({ code: 'dynamicRef' });
+    if (ctx.source === 'default' && (draft === '2019-09' || draft === '2020-12')) {
+      var kws = Object.keys(older).filter(function (k) { return !(k === 'additionalItems' && draft === '2019-09'); });
+      if (kws.length) notices.push({ code: 'olderSyntax', keywords: kws.map(function (k) { return '"' + k + '"' + (k === 'items' ? ' (array)' : ''); }).join(', ') });
+    }
+    return { schema: copy, notices: notices, errors: errors, refs: refs };
+  }
+
+  /* Ajv reports every failed branch of a oneOf / anyOf, then the summary. Errors inside a
+     $ref'd branch carry the schema path of the referenced location, not of the branch, so
+     branches are found by contiguity (Ajv pushes a branch's errors right before the summary)
+     and by matching each branch's own path and its local $ref targets. The branch with the
+     fewest errors, not counting branches whose const / enum discriminator fails, is shown as
+     the closest match. "if" summaries are folded into the then / else errors they explain. */
+  function resolveLocal(root, ptr) {
+    if (ptr === '#') return root;
+    if (typeof ptr !== 'string' || ptr.indexOf('#/') !== 0) return undefined;
+    var v = root, segs = segmentsOf(ptr.slice(1));
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i];
+      try { s = decodeURIComponent(s); } catch (e) {}
+      if (v === null || typeof v !== 'object' || !has(v, s)) return undefined;
+      v = v[s];
+    }
+    return v;
+  }
+  function localTargets(root, node, out, depth) {
+    if (depth > 20 || node === null || typeof node !== 'object') return out;
+    if (Array.isArray(node)) { node.forEach(function (x) { localTargets(root, x, out, depth); }); return out; }
+    Object.keys(node).forEach(function (k) {
+      var v = node[k];
+      if (k === '$ref' && typeof v === 'string' && v.indexOf('#/') === 0 && out.indexOf(v) < 0) {
+        out.push(v);
+        localTargets(root, resolveLocal(root, v), out, depth + 1);
+      } else if (typeof v === 'object') localTargets(root, v, out, depth);
+    });
+    return out;
+  }
+  function within(path, base) { return base === '' || path === base || path.indexOf(base + '/') === 0; }
+  function startsAt(sp, prefix) { return sp === prefix || sp.indexOf(prefix + '/') === 0; }
+  function parentPath(sp) { return sp.slice(0, sp.lastIndexOf('/')) || '#'; }
+  function lastSeg(sp) { return sp.slice(sp.lastIndexOf('/') + 1); }
+  function leafCount(nodes) {
+    var n = 0;
+    nodes.forEach(function (x) {
+      var br = x.branches ? x.branches.filter(function (b) { return b.index === x.closest; })[0] : null;
+      n += br && br.nodes.length ? leafCount(br.nodes) : 1;
+    });
+    return n;
+  }
+
+  function nestErrors(raw, root) {
+    var seen = {}, list = [];
+    (raw || []).forEach(function (e) {
+      var key = e.instancePath + '|' + e.schemaPath + '|' + JSON.stringify(e.params);
+      if (!seen[key]) { seen[key] = true; list.push(e); }
+    });
+    var pending = [];
+    list.forEach(function (e) {
+      var isBranch = (e.keyword === 'oneOf' || e.keyword === 'anyOf') && !(e.params && e.params.passingSchemas);
+      var isIf = e.keyword === 'if';
+      if (!isBranch && !isIf) { pending.push({ e: e }); return; }
+      var S = e.schemaPath, P = e.instancePath, parent = parentPath(S);
+      var own = isIf ? parent + '/' + (e.params && e.params.failingKeyword) : S;
+      var block = [];
+      while (pending.length) {
+        var c = pending[pending.length - 1], sp = c.e.schemaPath;
+        if (!within(c.e.instancePath, P)) break;
+        if (startsAt(sp, parent) && sp !== parent && !startsAt(sp, own)) {
+          var kw = segmentsOf(sp.slice(parent.length))[0];
+          if (CONTAINERS.indexOf(kw) < 0) break;
+        }
+        block.unshift(pending.pop());
+      }
+      if (isIf) {
+        if (!block.length) { pending.push({ e: e }); return; }
+        block.forEach(function (c) { if (!c.via) c.via = e.params.failingKeyword; pending.push(c); });
+        return;
+      }
+      var arr = root !== undefined ? resolveLocal(root, S) : undefined;
+      var n = Array.isArray(arr) ? arr.length : 0;
+      var prefixes = [];
+      for (var i = 0; i < n; i++) prefixes.push([S + '/' + i].concat(localTargets(root, arr[i], [], 0)));
+      var branches = [];
+      for (var b = 0; b < n; b++) branches.push({ index: b, nodes: [] });
+      var cur = 0;
+      block.forEach(function (c) {
+        var cands = [];
+        for (var i2 = 0; i2 < n; i2++) if (prefixes[i2].some(function (p) { return startsAt(c.e.schemaPath, p); })) cands.push(i2);
+        if (cands.length) {
+          var pick = cands.filter(function (x) { return x >= cur; })[0];
+          cur = pick === undefined ? cands[0] : pick;
+        }
+        if (!branches[cur]) branches[cur] = { index: cur, nodes: [] };
+        branches[cur].nodes.push(c);
+      });
+      branches = branches.filter(Boolean);
+      var best = null, bestScore = Infinity;
+      branches.forEach(function (br) {
+        if (!br.nodes.length) return;
+        var disc = br.nodes.filter(function (x) { return (x.e.keyword === 'const' || x.e.keyword === 'enum') && x.e.instancePath !== P && segmentsOf(x.e.instancePath.slice(P.length)).length === 1; }).length;
+        var score = leafCount(br.nodes) + disc * 100;
+        if (score < bestScore) { bestScore = score; best = br.index; }
+      });
+      pending.push({ e: e, branches: branches, closest: best });
+    });
+    return pending;
+  }
+
+  /* One error → message in the page language (T = STRINGS[lang]). */
+  function describe(e, data, T) {
+    var p = e.params || {}, K = T.kw, v = getAt(data, e.instancePath);
+    switch (e.keyword) {
+      case 'type': return fmt(K.type, { expected: Array.isArray(p.type) ? p.type.join(' | ') : p.type, actual: typeOf(v) });
+      case 'required': return fmt(K.required, { name: p.missingProperty });
+      case 'additionalProperties': return fmt(K.additionalProperties, { name: p.additionalProperty });
+      case 'unevaluatedProperties': return fmt(K.unevaluatedProperties, { name: p.unevaluatedProperty });
+      case 'unevaluatedItems': return fmt(K.unevaluatedItems, { limit: p.limit !== undefined ? p.limit : p.len, actual: Array.isArray(v) ? v.length : '?' });
+      case 'additionalItems': case 'items': if (p.limit !== undefined) return fmt(K.items, { limit: p.limit, actual: Array.isArray(v) ? v.length : '?' }); break;
+      case 'dependencies': case 'dependentRequired': return fmt(K.dependentRequired, { property: p.property, deps: String(p.deps).split(', ').map(function (d) { return '"' + d + '"'; }).join(', ') });
+      case 'minimum': case 'maximum': case 'exclusiveMinimum': case 'exclusiveMaximum': return fmt(K.compare, { comparison: p.comparison === '>=' ? '≥' : p.comparison === '<=' ? '≤' : p.comparison, limit: p.limit, value: preview(v) });
+      case 'multipleOf': return fmt(K.multipleOf, { multipleOf: p.multipleOf, value: preview(v) });
+      case 'minLength': return fmt(K.minLength, { limit: p.limit, actual: typeof v === 'string' ? codePoints(v) : '?' });
+      case 'maxLength': return fmt(K.maxLength, { limit: p.limit, actual: typeof v === 'string' ? codePoints(v) : '?' });
+      case 'pattern': return fmt(K.pattern, { pattern: p.pattern });
+      case 'format': return fmt(K.format, { format: p.format });
+      case 'enum': return fmt(K.enum, { values: (p.allowedValues || []).map(function (x) { return preview(x, 40); }).join(', ') });
+      case 'const': return fmt(K.const, { value: preview(p.allowedValue, 60) });
+      case 'minItems': case 'maxItems': return fmt(K[e.keyword], { limit: p.limit, actual: Array.isArray(v) ? v.length : '?' });
+      case 'minProperties': case 'maxProperties': return fmt(K[e.keyword], { limit: p.limit, actual: isObj(v) ? Object.keys(v).length : '?' });
+      case 'uniqueItems': return fmt(K.uniqueItems, { i: p.i, j: p.j });
+      case 'contains': return p.maxContains !== undefined ? fmt(K.maxContains, { limit: p.maxContains }) : fmt(K.minContains, { limit: p.minContains !== undefined ? p.minContains : 1 });
+      case 'propertyNames': return fmt(K.propertyNames, { name: p.propertyName });
+      case 'oneOf': return p.passingSchemas ? fmt(K.oneOfMany, { branches: [].concat(p.passingSchemas).join(', ') }) : K.oneOfNone;
+      case 'anyOf': return K.anyOf;
+      case 'not': return K.not;
+      case 'false schema': return K.falseSchema;
+      case 'if': return fmt(K.if, { kw: p.failingKeyword });
+    }
+    return e.message || e.keyword;
+  }
+
+  /* Text-level helpers ------------------------------------------------------------------ */
+
+  // Called only after JSON.parse failed: finds the first error and names the usual causes
+  // (comments, trailing commas, single or curly quotes, full-width punctuation from an IME).
+  function jsonSyntaxError(text) {
+    var i = 0, n = text.length;
+    var SMART = '\u201c\u201d\u2018\u2019\u300c\u300d';
+    var WIDE = '\u3000\uff1a\uff0c\uff5b\uff5d\uff3b\uff3d\uff02';
+    function fail(code, at, ch) { throw { jsonErr: true, code: code, offset: at === undefined ? i : at, ch: ch }; }
+    function special(c) {
+      if (SMART.indexOf(c) >= 0) fail('smartQuote', i, c);
+      if (WIDE.indexOf(c) >= 0) fail('fullWidth', i, c);
+    }
+    function ws() {
+      while (i < n) {
+        var c = text[i];
+        if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue; }
+        if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) fail('comment');
+        if (c === '#') fail('comment');
+        break;
+      }
+    }
+    var NUM = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+    var WORD = /[A-Za-z_$][\w$]*/y;
+    function str() {
+      var s = i; i++;
+      while (i < n) {
+        var c = text.charCodeAt(i);
+        if (c === 34) { i++; return; }
+        if (c === 92) {
+          var e = text[i + 1];
+          if (e !== undefined && '"\\/bfnrt'.indexOf(e) >= 0) { i += 2; continue; }
+          if (e === 'u' && /^[0-9a-fA-F]{4}$/.test(text.substr(i + 2, 4))) { i += 6; continue; }
+          fail('badEscape');
+        }
+        if (c < 0x20) fail('controlChar');
+        i++;
+      }
+      fail('unterminatedString', s);
+    }
+    function num() {
+      NUM.lastIndex = i;
+      var m = NUM.exec(text);
+      if (!m || m[0] === '-' || m[0] === '') fail('badNumber');
+      i += m[0].length;
+      if (i < n && /[0-9.eE]/.test(text[i])) fail('badNumber');
+    }
+    function startsValue(c) { return c === '{' || c === '[' || c === '"' || c === '-' || (c >= '0' && c <= '9') || c === 't' || c === 'f' || c === 'n'; }
+    function value(depth) {
+      if (depth > 3000) fail('unexpectedChar');
+      ws();
+      if (i >= n) fail('unexpectedEnd');
+      var c = text[i];
+      if (c === '{') return obj(depth);
+      if (c === '[') return arr(depth);
+      if (c === '"') return str();
+      if (c === "'") fail('singleQuote');
+      special(c);
+      if (c === '-' || (c >= '0' && c <= '9')) return num();
+      if (c === '+' || c === '.') fail('badNumber');
+      WORD.lastIndex = i;
+      var m = WORD.exec(text);
+      if (m) {
+        if (m[0] === 'true' || m[0] === 'false' || m[0] === 'null') { i += m[0].length; return; }
+        if (m[0] === 'NaN' || m[0] === 'Infinity') fail('badNumber');
+        fail('badLiteral');
+      }
+      fail('unexpectedChar', i, c);
+    }
+    function obj(depth) {
+      i++; ws();
+      if (text[i] === '}') { i++; return; }
+      for (;;) {
+        ws();
+        if (i >= n) fail('unexpectedEnd');
+        var c = text[i];
+        if (c === "'") fail('singleQuote');
+        special(c);
+        if (c !== '"') { if (/[A-Za-z_$0-9]/.test(c)) fail('unquotedKey'); fail('unexpectedChar', i, c); }
+        str(); ws();
+        if (i >= n) fail('unexpectedEnd');
+        if (text[i] !== ':') { special(text[i]); fail('missingColon'); }
+        i++;
+        value(depth + 1); ws();
+        if (i >= n) fail('unexpectedEnd');
+        c = text[i];
+        if (c === ',') { var comma = i; i++; ws(); if (text[i] === '}') fail('trailingComma', comma); continue; }
+        if (c === '}') { i++; return; }
+        special(c);
+        if (c === '"' || /[A-Za-z_$]/.test(c)) fail('missingComma');
+        fail('unexpectedChar', i, c);
+      }
+    }
+    function arr(depth) {
+      i++; ws();
+      if (text[i] === ']') { i++; return; }
+      for (;;) {
+        value(depth + 1); ws();
+        if (i >= n) fail('unexpectedEnd');
+        var c = text[i];
+        if (c === ',') { var comma = i; i++; ws(); if (text[i] === ']') fail('trailingComma', comma); continue; }
+        if (c === ']') { i++; return; }
+        special(c);
+        if (startsValue(c)) fail('missingComma');
+        fail('unexpectedChar', i, c);
+      }
+    }
+    try {
+      ws();
+      if (i >= n) return { code: 'empty', offset: 0 };
+      value(0);
+      ws();
+      if (i < n) fail('extraData');
+      return null;
+    } catch (e) {
+      if (e && e.jsonErr) return { code: e.code, offset: e.offset, ch: e.ch };
+      throw e;
+    }
+  }
+
+  // One pass over text that JSON.parse accepted. Records the span of the values (and keys)
+  // asked for, duplicate keys (JSON.parse keeps the last) and integers beyond 2^53.
+  function scanJson(text, want, wantKeys) {
+    var res = { spans: {}, keys: {}, dups: [], unsafe: [] };
+    var i = 0, n = text.length;
+    function ws() { while (i < n) { var c = text.charCodeAt(i); if (c === 32 || c === 9 || c === 10 || c === 13) i++; else break; } }
+    function strEnd() { i++; while (i < n) { var c = text.charCodeAt(i); if (c === 34) { i++; return; } i += c === 92 ? 2 : 1; } }
+    function readKey(frame) {
+      var ks = i; strEnd(); var ke = i;
+      var key = JSON.parse(text.slice(ks, ke));
+      if (frame.seen[key]) { if (res.dups.length < MAX_NOTES) res.dups.push({ path: frame.ptr, key: key, offset: ks }); }
+      else frame.seen[key] = true;
+      var kp = frame.ptr + '/' + escSeg(key);
+      if (wantKeys && wantKeys[kp]) res.keys[kp] = [ks, ke];
+      ws(); i++; ws();
+      return kp;
+    }
+    var stack = [], cur = '';
+    ws();
+    for (;;) {
+      ws();
+      var start = i, c = text[i];
+      if (c === '{' || c === '[') {
+        i++; ws();
+        var frame = { obj: c === '{', ptr: cur, n: 0, start: start, seen: c === '{' ? Object.create(null) : null };
+        stack.push(frame);
+        if (text[i] === (c === '{' ? '}' : ']')) { i++; stack.pop(); if (want && want[frame.ptr] !== undefined) res.spans[frame.ptr] = [start, i]; }
+        else { cur = frame.obj ? readKey(frame) : frame.ptr + '/0'; continue; }
+      } else {
+        if (c === '"') strEnd();
+        else {
+          while (i < n) { var cc = text.charCodeAt(i); if (cc === 44 || cc === 93 || cc === 125 || cc === 32 || cc === 9 || cc === 10 || cc === 13) break; i++; }
+          if (c === '-' || (c >= '0' && c <= '9')) {
+            var raw = text.slice(start, i);
+            var num = Number(raw);
+            if ((/^-?\d+$/.test(raw) && !Number.isSafeInteger(num)) || !isFinite(num)) {
+              if (res.unsafe.length < MAX_NOTES) res.unsafe.push({ path: cur, raw: raw, parsed: String(num), offset: start });
+            }
+          }
+        }
+        if (want && want[cur] !== undefined) res.spans[cur] = [start, i];
+      }
+      // unwind
+      for (;;) {
+        if (!stack.length) return res;
+        ws();
+        var top = stack[stack.length - 1];
+        if (text[i] === ',') {
+          i++; ws(); top.n++;
+          cur = top.obj ? readKey(top) : top.ptr + '/' + top.n;
+          break;
+        }
+        i++;
+        stack.pop();
+        if (want && want[top.ptr] !== undefined) res.spans[top.ptr] = [top.start, i];
+      }
+    }
+  }
+
+  /* Text → documents. JSON first; text that starts with { [ or " must be JSON. Data whose
+     lines each parse as JSON is JSON Lines. Otherwise YAML (core schema, so 2026-10-02 and
+     yes stay strings); a YAML result that is only a scalar counts as a JSON error. */
+  function parseDocs(text, side, lib) {
+    var notices = [], base = 0;
+    if (text.charCodeAt(0) === 0xfeff) { text = text.slice(1); base = 1; notices.push({ code: 'bom', side: side }); }
+    if (!text.trim()) return { format: 'empty', docs: [], notices: notices };
+    try {
+      return { format: 'json', docs: [{ value: JSON.parse(text), text: text, base: base, line: 1 }], notices: notices };
+    } catch (e) { /* fall through */ }
+    var syn = jsonSyntaxError(text) || { code: 'unexpectedChar', offset: 0 };
+    var first = text.trimStart().charAt(0);
+    if (side === 'data' && (first === '{' || first === '[')) {
+      var lines = text.split('\n'), docs = [], off = 0, ok = true;
+      for (var li = 0; li < lines.length; li++) {
+        var raw = lines[li].replace(/\r$/, '');
+        if (raw.trim()) {
+          try { docs.push({ value: JSON.parse(raw), text: raw, base: base + off, line: li + 1 }); } catch (e2) { ok = false; break; }
+        }
+        off += lines[li].length + 1;
+      }
+      if (ok && docs.length > 1) {
+        notices.push({ code: 'jsonlRead', n: docs.length });
+        return { format: 'jsonl', docs: docs, notices: notices };
+      }
+    }
+    function jsonError() {
+      var lc = lineCol(text, syn.offset);
+      var code = syn.code === 'extraData' && side === 'data' ? 'extraDataJsonl' : syn.code;
+      return { format: 'error', error: { code: code, ch: syn.ch, offset: base + syn.offset, line: lc.line, col: lc.col }, notices: notices };
+    }
+    if (first === '{' || first === '[' || first === '"') return jsonError();
+    var vals;
+    try {
+      vals = lib.yaml.loadAll(text, null, { schema: lib.yaml.CORE_SCHEMA });
+    } catch (e3) {
+      if (!/[:\n]/.test(text.trim())) return jsonError();
+      var mark = e3 && e3.mark ? e3.mark : { line: 0, column: 0, position: 0 };
+      return { format: 'error', error: { code: 'yaml', reason: e3.reason || e3.message, offset: base + (mark.position || 0), line: mark.line + 1, col: mark.column + 1 }, notices: notices };
+    }
+    if (vals.length > 1) vals = vals.filter(function (x) { return x !== null && x !== undefined; });
+    if (!vals.some(function (x) { return x !== null && typeof x === 'object'; })) return jsonError();
+    if (side === 'schema' && vals.length > 1) return { format: 'error', error: { code: 'multiDocSchema', n: vals.length, offset: base, line: 1, col: 1 }, notices: notices };
+    notices.push({ code: 'yamlRead', side: side, n: vals.length });
+    return { format: 'yaml', docs: vals.map(function (v) { return { value: v, text: null, base: base, line: null }; }), notices: notices };
+  }
+
+  /* Referenced schemas: one or more documents (--- between them) or one JSON array of them. */
+  function parseExtras(text, lib) {
+    if (!text || !text.trim()) return { docs: [] };
+    var re = /^---[ \t]*\r?$/gm, parts = [], last = 0, m;
+    while ((m = re.exec(text))) { parts.push([last, m.index]); last = m.index + m[0].length; }
+    parts.push([last, text.length]);
+    var docs = [];
+    for (var i = 0; i < parts.length; i++) {
+      var slice = text.slice(parts[i][0], parts[i][1]);
+      if (!slice.trim()) continue;
+      var r = parseDocs(slice, 'extras', lib);
+      if (r.format === 'error') {
+        r.error.offset += parts[i][0];
+        r.error.line += lineCol(text, parts[i][0]).line - 1;
+        return { error: r.error };
+      }
+      r.docs.forEach(function (d) {
+        if (Array.isArray(d.value)) d.value.forEach(function (x) { docs.push(x); });
+        else docs.push(d.value);
+      });
+    }
+    return { docs: docs };
+  }
+
+  /* Schema (+ referenced schemas) → compiled validator or errors. */
+  function buildValidator(lib, input) {
+    var det = detectDraft(input.schema, input.menu);
+    var draft = det.draft;
+    var unchecked = [];
+    var attempt = function () {
+      var ajv = createAjv(draft, lib, input.formats);
+      unchecked.forEach(function (f) { ajv.addFormat(f, true); });
+      var known = knownKeywords(ajv, draft);
+      var notices = det.notices.slice();
+      var prep = prepareSchema(input.schema, draft, known, { source: det.source });
+      notices = notices.concat(prep.notices);
+      var errors = prep.errors.slice(), ids = {};
+      // extraUris (tests only): the retrieval URI of each referenced schema, as Ajv's addSchema key
+      var uris = input.extraUris || [];
+      (input.extras || []).forEach(function (doc, i) {
+        var id = isObj(doc) ? (typeof doc.$id === 'string' ? doc.$id : draft === '4' && typeof doc.id === 'string' ? doc.id : null) : null;
+        if (uris[i]) id = uris[i];
+        if (!id) { errors.push({ code: 'extraNoId', n: i + 1 }); return; }
+        if (ids[id]) { errors.push({ code: 'extraDup', id: id }); return; }
+        ids[id] = true;
+        if (doc.$schema !== undefined) {
+          var ed = draftOfUri(doc.$schema);
+          if (!ed || ed.draft !== draft) { errors.push({ code: 'extraDraft', id: id, uri: doc.$schema, draft: draft }); return; }
+        }
+        var p = prepareSchema(doc, draft, known, { source: 'extra' });
+        p.notices.forEach(function (x) { x.schemaId = id; notices.push(x); });
+        p.errors.forEach(function (x) { x.schemaId = id; errors.push(x); });
+        if (!ajv.validateSchema(p.schema)) { errors = errors.concat(metaErrors(ajv.errors, id, draft, p.schema)); return; }
+        try { ajv.addSchema(p.schema, uris[i] || undefined); } catch (e) { errors.push({ code: 'compile', message: e.message, schemaId: id }); }
+      });
+      if (errors.length) return { ok: false, stage: 'schema', draft: draft, notices: notices, errors: errors };
+      if (!ajv.validateSchema(prep.schema)) return { ok: false, stage: 'meta', draft: draft, notices: notices, errors: metaErrors(ajv.errors, null, draft, prep.schema) };
+      try {
+        var fn = ajv.compile(prep.schema);
+        if (unchecked.length) notices.push({ code: 'formatUnchecked', formats: unchecked.map(function (f) { return '"' + f + '"'; }).join(', ') });
+        if (input.formats === false) notices.push({ code: 'formatOff' });
+        return { ok: true, draft: draft, validate: fn, notices: notices, root: prep.schema };
+      } catch (e) {
+        var m = /^unknown format "(.+)" ignored in schema/.exec(e && e.message || '');
+        if (m && unchecked.indexOf(m[1]) < 0 && unchecked.length < 100) { unchecked.push(m[1]); return null; }
+        if (e && typeof e === 'object' && 'missingRef' in e) {
+          var rm = /can't resolve reference (.+) from id/.exec(e.message || '');
+          var raw = rm ? rm[1] : e.missingRef;
+          var where = prep.refs.filter(function (r) { return r.ref === raw; })[0];
+          var local = !e.missingSchema || raw.charAt(0) === '#';
+          return { ok: false, stage: 'schema', draft: draft, notices: notices, errors: [{ code: local ? 'missingLocal' : 'missingRef', ref: raw, id: e.missingSchema || raw, path: where ? where.path : '#' }] };
+        }
+        return { ok: false, stage: 'schema', draft: draft, notices: notices, errors: [{ code: 'compile', message: String(e && e.message || e) }] };
+      }
+    };
+    var r = null;
+    for (var tries = 0; r === null && tries < 101; tries++) r = attempt();
+    return r;
+  }
+  function metaErrors(raw, schemaId, draft, root) {
+    var out = [];
+    nestErrors(raw, undefined).forEach(function (node) {
+      var e = node.e;
+      if (node.branches && node.closest !== null && node.closest !== undefined) {
+        var br = node.branches.filter(function (b) { return b.index === node.closest; })[0];
+        if (br && br.nodes.length) e = br.nodes[0].e;
+      }
+      out.push({ code: 'meta', path: '#' + node.e.instancePath, error: e, root: root, schemaId: schemaId, itemsArray: draft === '2020-12' && /\/items$/.test(node.e.instancePath) && Array.isArray(getAt(root, node.e.instancePath)) });
+    });
+    var seen = {};
+    return out.filter(function (x) { var k = x.path + '|' + (x.error && x.error.keyword); if (seen[k]) return false; seen[k] = true; return true; });
+  }
+
+  /* Messages for the notices and schema errors above. */
+  function noticeText(n, T) {
+    var N = T.notice;
+    var p = {};
+    Object.keys(n).forEach(function (k) { p[k] = n[k]; });
+    if (p.draft) p.draft = DRAFT_NAMES[p.draft] || p.draft;
+    if (p.schemaDraft) p.schemaDraft = DRAFT_NAMES[p.schemaDraft] || p.schemaDraft;
+    if (p.side) p.side = p.side === 'schema' || p.side === 'extras' ? N.sideSchema : N.sideData;
+    if (p.path === '') p.path = T.root;
+    var s = fmt(N[n.code] || n.code, p);
+    if ((n.code === 'unknownKeyword' || n.code === 'unknownKeywordMany') && n.suggestion) s += ' ' + fmt(N.suggestion, { suggestion: n.suggestion });
+    if (n.schemaId) s = '[' + n.schemaId + '] ' + s;
+    return s;
+  }
+  function schemaErrorText(err, T) {
+    var p = {};
+    Object.keys(err).forEach(function (k) { p[k] = err[k]; });
+    if (p.draft) p.draft = DRAFT_NAMES[p.draft] || p.draft;
+    var s;
+    if (err.code === 'meta') {
+      s = (err.path === '#' ? T.root : err.path) + ': ' + describe(err.error, err.root, T);
+      if (err.itemsArray) s += ' — ' + fmt(T.schemaErr.itemsArray, { draft: DRAFT_NAMES['2020-12'] });
+    } else s = fmt(T.schemaErr[err.code] || err.code, p);
+    if (err.schemaId) s = '[' + err.schemaId + '] ' + s;
+    return s;
+  }
+  function parseErrorText(err, T) {
+    var reason = err.code === 'yaml' ? fmt(T.parse.yaml, { reason: err.reason }) : fmt(T.parse[err.code] || T.parse.unexpectedChar, { ch: err.ch !== undefined ? JSON.stringify(err.ch) : '', n: err.n });
+    return fmt(T.parse.at, { line: err.line, col: err.col, reason: reason });
+  }
+
+  /* Whole run: texts in, a plain result model out (also used by the test). */
+  function runValidation(lib, input, T, cache) {
+    var res = { state: 'empty', notices: [], schemaNotices: [], docs: [], draft: null };
+    var s = parseDocs(input.schemaText || '', 'schema', lib);
+    var d = parseDocs(input.dataText || '', 'data', lib);
+    res.schemaFormat = s.format; res.dataFormat = d.format;
+    res.notices = s.notices.concat(d.notices);
+    if (s.format === 'error') { res.state = 'schemaParse'; res.parseError = s.error; res.side = 'schema'; return res; }
+    if (d.format === 'error') { res.state = 'dataParse'; res.parseError = d.error; res.side = 'data'; return res; }
+    var ex = parseExtras(input.extrasText || '', lib);
+    if (ex.error) { res.state = 'extrasParse'; res.parseError = ex.error; res.side = 'extras'; return res; }
+    if (s.format === 'empty' || d.format === 'empty') return res;
+    var key = [input.menu, input.formats, input.schemaText, input.extrasText].join('\u0000');
+    var built = cache && cache.key === key ? cache.built : buildValidator(lib, { schema: s.docs[0].value, menu: input.menu, formats: input.formats, extras: ex.docs });
+    if (cache) { cache.key = key; cache.built = built; }
+    res.draft = built.draft;
+    res.notices = res.notices.concat(built.notices);
+    if (s.format === 'json') scanNotices(s.docs[0], 'schema', res.notices, T);
+    if (!built.ok) { res.state = built.stage === 'meta' ? 'schemaInvalid' : 'schemaFail'; res.schemaErrors = built.errors; locateSchema(res.schemaErrors, s); return res; }
+    var bad = 0, total = 0, locations = 0;
+    d.docs.forEach(function (doc, di) {
+      var ok = built.validate(doc.value);
+      var tree = ok ? [] : nestErrors(built.validate.errors, built.root);
+      if (!ok) bad++;
+      var groups = groupNodes(tree, doc, T, s);
+      groups.forEach(function (g) { total += g.count; });
+      locations += groups.length;
+      if (doc.text !== null && doc.text !== undefined) scanNotices(doc, 'data', res.notices, T, groups);
+      res.docs.push({ index: di, line: doc.line, valid: ok, groups: groups, raw: ok ? [] : built.validate.errors.slice() });
+    });
+    res.state = bad ? 'invalid' : 'valid';
+    res.bad = bad; res.errorCount = total; res.locations = locations;
+    return res;
+  }
+  function scanNotices(doc, side, notices, T, groups) {
+    var want = {}, wantKeys = {};
+    (groups || []).forEach(function (g) {
+      want[g.path] = 0;
+      g.items.forEach(function walkItem(it) {
+        want[it.path] = 0;
+        if (it.keyPath) wantKeys[it.keyPath] = 1;
+        (it.branches || []).forEach(function (b) { b.items.forEach(walkItem); });
+      });
+    });
+    var sc = scanJson(doc.text, want, wantKeys);
+    sc.dups.forEach(function (x) {
+      var lc = lineCol(doc.text, x.offset);
+      notices.push({ code: 'dupKey', side: side, path: x.path === '' ? T.root : x.path, key: x.key, line: lc.line + (doc.line || 1) - 1, offset: doc.base + x.offset, len: JSON.stringify(x.key).length });
+    });
+    sc.unsafe.forEach(function (x) {
+      var lc = lineCol(doc.text, x.offset);
+      notices.push({ code: 'unsafeInt', side: side, path: x.path === '' ? T.root : x.path, raw: x.raw, parsed: x.parsed, line: lc.line + (doc.line || 1) - 1, offset: doc.base + x.offset, len: x.raw.length });
+    });
+    (groups || []).forEach(function (g) {
+      function place(it) {
+        var span = it.keyPath && sc.keys[it.keyPath] ? sc.keys[it.keyPath] : sc.spans[it.path];
+        if (span) {
+          var lc = lineCol(doc.text, span[0]);
+          it.range = [doc.base + span[0], doc.base + span[1]];
+          it.line = lc.line + (doc.line || 1) - 1; it.col = lc.col;
+        }
+        (it.branches || []).forEach(function (b) { b.items.forEach(place); });
+      }
+      g.items.forEach(place);
+      var gs = sc.spans[g.path];
+      if (gs) { var glc = lineCol(doc.text, gs[0]); g.line = glc.line + (doc.line || 1) - 1; g.col = glc.col; g.range = [doc.base + gs[0], doc.base + gs[1]]; }
+    });
+    if (groups) groups.sort(function (a, b) { return (a.range ? a.range[0] : Infinity) - (b.range ? b.range[0] : Infinity); });
+  }
+  function locateSchema(errors, s) {
+    if (s.format !== 'json') return;
+    var want = {};
+    errors.forEach(function (e) { if (!e.schemaId && e.path && e.path.charAt(0) === '#') want[e.path.slice(1)] = 0; });
+    var sc = scanJson(s.docs[0].text, want, null);
+    errors.forEach(function (e) {
+      var sp = !e.schemaId && e.path ? sc.spans[e.path.slice(1)] : null;
+      if (sp) { e.range = [s.docs[0].base + sp[0], s.docs[0].base + sp[1]]; e.line = lineCol(s.docs[0].text, sp[0]).line; }
+    });
+  }
+  function itemOf(node, data, T, schemaDoc) {
+    var e = node.e, p = e.params || {};
+    var name = e.keyword === 'additionalProperties' ? p.additionalProperty : e.keyword === 'unevaluatedProperties' ? p.unevaluatedProperty : e.keyword === 'propertyNames' ? p.propertyName : null;
+    var it = {
+      keyword: e.keyword, path: e.instancePath, schemaPath: e.schemaPath,
+      message: describe(e, data, T), via: node.via || null,
+      keyPath: name !== null && name !== undefined ? e.instancePath + '/' + escSeg(name) : null,
+    };
+    if (schemaDoc && schemaDoc.format === 'json' && e.schemaPath.indexOf('#/') === 0) it.schemaPtr = e.schemaPath.slice(1);
+    else if (e.schemaPath === '#') it.schemaPtr = '';
+    var v = getAt(data, e.instancePath);
+    if (v !== undefined && ['required', 'additionalProperties', 'unevaluatedProperties', 'propertyNames', 'dependentRequired', 'dependencies', 'oneOf', 'anyOf', 'not', 'if', 'minProperties', 'maxProperties', 'minItems', 'maxItems', 'unevaluatedItems', 'items', 'additionalItems', 'uniqueItems', 'contains'].indexOf(e.keyword) < 0) it.value = preview(v);
+    if (node.branches) {
+      it.closest = node.closest;
+      it.branches = node.branches.map(function (b) { return { index: b.index, items: b.nodes.map(function (x) { return itemOf(x, data, T, schemaDoc); }) }; });
+    }
+    return it;
+  }
+  function groupNodes(tree, doc, T, schemaDoc) {
+    var groups = [], byPath = {};
+    tree.forEach(function (node) {
+      var path = node.e.instancePath;
+      var g = byPath[path];
+      if (!g) { g = byPath[path] = { path: path, items: [], count: 0 }; groups.push(g); }
+      g.items.push(itemOf(node, doc.value, T, schemaDoc));
+      g.count++;
+    });
+    return groups;
+  }
+
+  /* Status line, plain-text and JSON reports (status bar, copy buttons, page examples). */
+  function statusText(res, T) {
+    var draft = res.draft ? DRAFT_NAMES[res.draft] : '';
+    switch (res.state) {
+      case 'empty': return T.empty;
+      case 'schemaParse': case 'dataParse': case 'extrasParse': return T[res.state];
+      case 'schemaInvalid': case 'schemaFail': return fmt(T[res.state], { draft: draft });
+      case 'valid': return res.docs.length > 1 ? fmt(T.validDocs, { n: res.docs.length, draft: draft }) : fmt(T.valid, { draft: draft });
+    }
+    if (res.docs.length > 1) return fmt(T.invalidDocs, { bad: res.bad, n: res.docs.length, draft: draft });
+    return res.errorCount === 1 ? fmt(T.invalidOne, { draft: draft }) : fmt(T.invalidMany, { n: res.errorCount, locations: res.locations, draft: draft });
+  }
+  function reportText(res, T) {
+    var lines = [];
+    if (res.parseError) lines.push(parseErrorText(res.parseError, T));
+    (res.schemaErrors || []).forEach(function (e) { lines.push(schemaErrorText(e, T)); });
+    function itemLines(it, indent) {
+      var loc = (it.path === '' ? T.root : it.path) + (it.line ? ' (' + fmt(T.lineCol, { line: it.line, col: it.col }) + ')' : '');
+      lines.push(indent + loc + ': ' + it.message + (it.via ? ' [' + fmt(T.via, { kw: it.via }) + ']' : '') + (it.schemaPath ? '  ' + fmt(T.schemaAt, { path: it.schemaPath }) : ''));
+      (it.branches || []).forEach(function (b) {
+        lines.push(indent + '  ' + fmt(T.branch, { n: b.index + 1 }) + (b.index === it.closest ? ' *' : ''));
+        b.items.forEach(function (x) { itemLines(x, indent + '    '); });
+      });
+    }
+    res.docs.forEach(function (doc) {
+      if (res.docs.length > 1) lines.push(fmt(doc.line ? T.docLine : T.docLabel, { n: doc.index + 1, line: doc.line }) + (doc.valid ? ': ' + T.docValid : ''));
+      doc.groups.forEach(function (g) { g.items.forEach(function (it) { itemLines(it, res.docs.length > 1 ? '  ' : ''); }); });
+    });
+    return lines.join('\n');
+  }
+  // Ajv's own error objects (English messages), one entry per data document.
+  function reportJson(res) {
+    return JSON.stringify(res.docs.map(function (d) {
+      return { document: d.index + 1, valid: d.valid, errors: d.raw.map(function (e) { return { instancePath: e.instancePath, schemaPath: e.schemaPath, keyword: e.keyword, params: e.params, message: e.message }; }) };
+    }), null, 2);
   }
   /* ── engine:end ── */
 
-  function setStatus(msg: string, type: 'success' | 'error' | 'info' | '') {
-    statusEl.textContent = msg;
-    statusEl.className = 'jsv-status ' + type;
+  type Lib = any;
+  const wrap = document.getElementById('jsv-wrap') as HTMLElement;
+  const T: any = JSON.parse(wrap.dataset.strings || '{}');
+  const SLUG = 'json-schema-validator';
+  const schemaEl = document.getElementById('jsv-schema') as HTMLTextAreaElement;
+  const dataEl = document.getElementById('jsv-data') as HTMLTextAreaElement;
+  const extraEl = document.getElementById('jsv-extra') as HTMLTextAreaElement;
+  const extrasBox = document.getElementById('jsv-extras') as HTMLDetailsElement;
+  const draftSel = document.getElementById('jsv-draft') as HTMLSelectElement;
+  const formatsEl = document.getElementById('jsv-formats') as HTMLInputElement;
+  const exampleSel = document.getElementById('jsv-example') as HTMLSelectElement;
+  const validateBtn = document.getElementById('jsv-validate') as HTMLButtonElement;
+  const statusEl = document.getElementById('jsv-status') as HTMLElement;
+  const resultEl = document.getElementById('jsv-result') as HTMLElement;
+  const outEl = document.getElementById('jsv-out') as HTMLElement;
+  const fileEl = document.getElementById('jsv-file') as HTMLInputElement;
+  const copyTextBtn = document.getElementById('jsv-copy-text') as HTMLButtonElement;
+  const copyJsonBtn = document.getElementById('jsv-copy-json') as HTMLButtonElement;
+  const fmtBadges: Record<string, HTMLElement> = {
+    schema: document.getElementById('jsv-schema-fmt') as HTMLElement,
+    data: document.getElementById('jsv-data-fmt') as HTMLElement,
+  };
+  const AUTO_LIMIT = 1_000_000;
+  const MAX_GROUPS = 200;
+  const FILE_LIMIT = 20 * 1024 * 1024;
+
+  const EXAMPLES: Record<string, { schema: string; data: string; extras?: string }> = {
+    user: {
+      schema: JSON.stringify({
+        $schema: 'http://json-schema.org/draft-07/schema#',
+        title: 'User',
+        type: 'object',
+        required: ['name', 'age', 'email'],
+        properties: {
+          name: { type: 'string', minLength: 1 },
+          age: { type: 'integer', minimum: 0, maximum: 120 },
+          email: { type: 'string', format: 'email' },
+          role: { type: 'string', enum: ['admin', 'user', 'guest'] },
+        },
+        additionalProperties: false,
+      }, null, 2),
+      data: JSON.stringify({ name: 'Alice', age: 30, email: 'alice@example.com', role: 'admin' }, null, 2),
+    },
+    userErrors: {
+      schema: '',
+      data: JSON.stringify({ name: '', age: -5, email: 'not-an-email', role: 'superuser', extra: 'not allowed' }, null, 2),
+    },
+    oneOf: {
+      schema: JSON.stringify({
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        required: ['orderId', 'payment'],
+        properties: {
+          orderId: { type: 'string', pattern: '^ORD-[0-9]{6}$' },
+          payment: { oneOf: [{ $ref: '#/$defs/card' }, { $ref: '#/$defs/bank' }] },
+        },
+        $defs: {
+          card: {
+            type: 'object',
+            required: ['method', 'last4', 'expires'],
+            properties: {
+              method: { const: 'card' },
+              last4: { type: 'string', pattern: '^[0-9]{4}$' },
+              expires: { type: 'string', pattern: '^(0[1-9]|1[0-2])/[0-9]{2}$' },
+            },
+            additionalProperties: false,
+          },
+          bank: {
+            type: 'object',
+            required: ['method', 'iban'],
+            properties: { method: { const: 'bank' }, iban: { type: 'string', minLength: 15 } },
+            additionalProperties: false,
+          },
+        },
+      }, null, 2),
+      data: JSON.stringify({ orderId: 'ORD-004211', payment: { method: 'card', last4: '42', expires: '13/27' } }, null, 2),
+    },
+    yaml: {
+      schema: [
+        '$schema: https://json-schema.org/draft/2020-12/schema',
+        'type: object',
+        'allOf:',
+        '  - $ref: "#/$defs/service"',
+        'properties:',
+        '  replicas: { type: integer, minimum: 1 }',
+        '  release: { type: string, format: date }',
+        'unevaluatedProperties: false',
+        '$defs:',
+        '  service:',
+        '    type: object',
+        '    required: [name, port]',
+        '    properties:',
+        '      name: { type: string }',
+        '      port: { type: integer, minimum: 1, maximum: 65535 }',
+        '',
+      ].join('\n'),
+      data: [
+        'name: web',
+        'port: 8080',
+        'replicas: 0',
+        'release: 2026-10-02',
+        'replica: 3',
+        '',
+      ].join('\n'),
+    },
+  };
+  EXAMPLES.userErrors.schema = EXAMPLES.user.schema;
+
+  let libPromise: Promise<Lib> | null = null;
+  function loadLib(): Promise<Lib> {
+    if (!libPromise) {
+      libPromise = Promise.all([
+        import('ajv'),
+        import('ajv/dist/2019'),
+        import('ajv/dist/2020'),
+        import('ajv-draft-04'),
+        import('ajv-formats'),
+        import('ajv/dist/refs/json-schema-draft-06.json'),
+        import('js-yaml'),
+      ]).then((m: any[]) => ({
+        Ajv: m[0].default, Ajv2019: m[1].default, Ajv2020: m[2].default, AjvDraft04: m[3].default,
+        addFormats: m[4].default, draft06Meta: m[5].default, yaml: m[6].default || m[6],
+      }));
+      libPromise.catch(() => { libPromise = null; });
+    }
+    return libPromise;
   }
 
-  function escapeHtml(str: string): string {
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+  const prefs = (window as any).ztPersist?.load(SLUG) || {};
+  if (typeof prefs.draft === 'string' && Array.prototype.some.call(draftSel.options, (o: HTMLOptionElement) => o.value === prefs.draft)) draftSel.value = prefs.draft;
+  if (prefs.formats === false) formatsEl.checked = false;
+  function savePrefs() { (window as any).ztPersist?.save(SLUG, { draft: draftSel.value, formats: formatsEl.checked }); }
+
+  const cache: any = { key: null, built: null };
+  let lastResult: any = null;
+  let runId = 0;
+  let trackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function setStatus(text: string, kind: string) {
+    statusEl.textContent = text;
+    statusEl.className = 'jsv-status ' + kind;
   }
-
-  function renderErrors(errors: any[]) {
-    if (!errors || errors.length === 0) {
-      errorsEl.style.display = 'none';
-      return;
-    }
-    let html = `<div class="jsv-err-count">${errors.length} error${errors.length !== 1 ? 's' : ''} found</div>`;
-    html += '<ul class="jsv-err-list">';
-    for (const err of errors) {
-      const path = err.instancePath || '(root)';
-      const msg  = err.message || 'Validation failed';
-      const extra = err.params ? Object.entries(err.params).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(', ') : '';
-      html += `<li class="jsv-err-item">`;
-      html += `<span class="jsv-err-path">${escapeHtml(path)}</span> `;
-      html += `<span class="jsv-err-msg">${escapeHtml(msg)}</span>`;
-      if (extra) html += ` <span class="jsv-err-extra">(${escapeHtml(extra)})</span>`;
-      html += `</li>`;
-    }
-    html += '</ul>';
-    errorsEl.innerHTML = html;
-    errorsEl.style.display = '';
+  function el(tag: string, cls?: string, text?: string): HTMLElement {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
   }
-
-  function validate() {
-    const schemaRaw = schemaEl.value.trim();
-    const dataRaw   = dataEl.value.trim();
-
-    if (!schemaRaw || !dataRaw) {
-      setStatus(MSG_PASTE, '');
-      errorsEl.style.display = 'none';
-      return;
+  function textareaFor(side: string): HTMLTextAreaElement { return side === 'schema' ? schemaEl : side === 'extras' ? extraEl : dataEl; }
+  function jump(side: string, range: number[] | undefined) {
+    if (!range) return;
+    const ta = textareaFor(side);
+    if (side === 'extras') extrasBox.open = true;
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(range[0], range[1]);
+    const before = ta.value.slice(0, range[0]);
+    const line = before.split('\n').length - 1;
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+    ta.scrollTop = Math.max(0, line * lh - ta.clientHeight / 3);
+    const r = ta.getBoundingClientRect();
+    if (r.top < 0 || r.top > window.innerHeight - 80) ta.scrollIntoView({ block: 'center' });
+  }
+  function locLink(side: string, label: string, range: number[] | undefined, cls: string) {
+    if (!range) return el('span', cls, label);
+    const b = el('button', cls + ' jsv-link', label) as HTMLButtonElement;
+    b.type = 'button';
+    b.addEventListener('click', () => jump(side, range));
+    return b;
+  }
+  function schemaLink(it: any, schemaRanges: any) {
+    const label = fmt(T.schemaAt, { path: it.schemaPath });
+    const range = it.schemaPtr !== undefined ? schemaRanges[it.schemaPtr] : undefined;
+    return locLink('schema', label, range, 'jsv-schema-path');
+  }
+  function renderItem(it: any, schemaRanges: any, nested: boolean): HTMLElement {
+    const li = el('li', 'jsv-item');
+    const line = el('div', 'jsv-item-line');
+    if (nested) {
+      const where = (it.path === '' ? T.root : it.path) + (it.line ? ' · ' + fmt(T.lineCol, { line: it.line, col: it.col }) : '');
+      line.appendChild(locLink('data', where, it.range, 'jsv-path'));
     }
-
-    let schema: any, data: any;
-    try {
-      schema = JSON.parse(schemaRaw);
-    } catch (e: any) {
-      setStatus(MSG_INVALID_SCHEMA + e.message, 'error');
-      errorsEl.style.display = 'none';
-      return;
-    }
-    try {
-      data = JSON.parse(dataRaw);
-    } catch (e: any) {
-      setStatus(MSG_INVALID_DATA + e.message, 'error');
-      errorsEl.style.display = 'none';
-      return;
-    }
-
-    const draft = draftSel.value;
-    try {
-      const ajv = createAjv(draft, { Ajv, Ajv2020, addFormats });
-      const validateFn = ajv.compile(schema);
-      const valid = validateFn(data);
-
-      if (valid) {
-        errorsEl.style.display = 'none';
-        setStatus(MSG_VALID, 'success');
-        window.trackTool?.('json-schema-validator', 'validate_success');
-      } else {
-        renderErrors(validateFn.errors ?? []);
-        setStatus(MSG_INVALID, 'error');
-        window.trackTool?.('json-schema-validator', 'validate_error');
+    line.appendChild(el('span', 'jsv-msg', it.message));
+    if (it.via) line.appendChild(el('span', 'jsv-via', fmt(T.via, { kw: it.via })));
+    li.appendChild(line);
+    const meta = el('div', 'jsv-item-meta');
+    if (it.value !== undefined) meta.appendChild(el('code', 'jsv-value', fmt(T.valueLabel, { value: it.value })));
+    meta.appendChild(schemaLink(it, schemaRanges));
+    li.appendChild(meta);
+    if (it.branches && it.branches.length) {
+      const closest = it.branches.filter((b: any) => b.index === it.closest)[0];
+      const others = it.branches.filter((b: any) => b !== closest);
+      if (closest) {
+        li.appendChild(el('div', 'jsv-branch-title', fmt(T.closest, { n: closest.index + 1 })));
+        const ul = el('ul', 'jsv-items jsv-nested');
+        closest.items.forEach((x: any) => ul.appendChild(renderItem(x, schemaRanges, true)));
+        li.appendChild(ul);
       }
-    } catch (e: any) {
-      setStatus(MSG_SCHEMA_ERROR + e.message, 'error');
-      errorsEl.style.display = 'none';
+      if (others.length) {
+        const det = el('details', 'jsv-others') as HTMLDetailsElement;
+        det.appendChild(el('summary', '', fmt(T.otherBranches, { n: others.length })));
+        others.forEach((b: any) => {
+          det.appendChild(el('div', 'jsv-branch-title', fmt(T.branch, { n: b.index + 1 })));
+          const ul = el('ul', 'jsv-items jsv-nested');
+          if (!b.items.length) ul.appendChild(el('li', 'jsv-item', T.branchNoErrors));
+          b.items.forEach((x: any) => ul.appendChild(renderItem(x, schemaRanges, true)));
+          det.appendChild(ul);
+        });
+        li.appendChild(det);
+      }
     }
+    return li;
+  }
+  function schemaRangesFor(res: any): Record<string, number[]> {
+    const want: Record<string, number> = {};
+    const walk = (it: any) => { if (it.schemaPtr !== undefined) want[it.schemaPtr] = 0; (it.branches || []).forEach((b: any) => b.items.forEach(walk)); };
+    res.docs.forEach((d: any) => d.groups.forEach((g: any) => g.items.forEach(walk)));
+    if (res.schemaFormat !== 'json' || !Object.keys(want).length) return {};
+    let text = schemaEl.value, base = 0;
+    if (text.charCodeAt(0) === 0xfeff) { text = text.slice(1); base = 1; }
+    const sc = scanJson(text, want, null);
+    const out: Record<string, number[]> = {};
+    Object.keys(sc.spans).forEach((k) => { out[k] = [sc.spans[k][0] + base, sc.spans[k][1] + base]; });
+    return out;
+  }
+  function renderNotices(list: any[]) {
+    if (!list.length) return;
+    const box = el('div', 'jsv-notices');
+    box.appendChild(el('div', 'jsv-notices-title', T.noticesTitle));
+    const ul = el('ul', 'jsv-notice-list');
+    list.slice(0, 60).forEach((n: any) => {
+      const li = el('li', 'jsv-notice');
+      const text = noticeText(n, T);
+      if (n.offset !== undefined) {
+        const b = locLink(n.side === 'schema' ? 'schema' : 'data', text, [n.offset, n.offset + (n.len || 1)], 'jsv-notice-text');
+        li.appendChild(b);
+      } else li.textContent = text;
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+    outEl.appendChild(box);
+  }
+  function render(res: any) {
+    lastResult = res;
+    outEl.textContent = '';
+    for (const side of ['schema', 'data']) {
+      const f = side === 'schema' ? res.schemaFormat : res.dataFormat;
+      const badge = fmtBadges[side];
+      const label = f === 'json' ? T.fmtJson : f === 'yaml' ? T.fmtYaml : f === 'jsonl' ? T.fmtJsonl : '';
+      badge.textContent = label;
+      badge.hidden = !label;
+    }
+    copyTextBtn.hidden = copyJsonBtn.hidden = true;
+    if (res.state === 'empty') {
+      setStatus(statusText(res, T), 'none');
+      resultEl.hidden = !res.notices.length;
+      renderNotices(res.notices);
+      return;
+    }
+    if (res.state === 'schemaParse' || res.state === 'dataParse' || res.state === 'extrasParse') {
+      setStatus(statusText(res, T), 'error');
+      resultEl.hidden = false;
+      const box = el('ul', 'jsv-items');
+      const li = el('li', 'jsv-item');
+      li.appendChild(locLink(res.side, parseErrorText(res.parseError, T), [res.parseError.offset, res.parseError.offset + 1], 'jsv-msg'));
+      box.appendChild(li);
+      outEl.appendChild(box);
+      renderNotices(res.notices);
+      return;
+    }
+    if (res.state === 'schemaInvalid' || res.state === 'schemaFail') {
+      setStatus(statusText(res, T), 'error');
+      resultEl.hidden = false;
+      const box = el('ul', 'jsv-items');
+      res.schemaErrors.forEach((e: any) => {
+        const li = el('li', 'jsv-item');
+        li.appendChild(locLink('schema', schemaErrorText(e, T), e.range, 'jsv-msg'));
+        box.appendChild(li);
+      });
+      outEl.appendChild(box);
+      if (res.schemaErrors.some((e: any) => e.code === 'missingRef')) extrasBox.open = true;
+      renderNotices(res.notices);
+      return;
+    }
+    const multi = res.docs.length > 1;
+    setStatus(statusText(res, T), res.state === 'valid' ? 'success' : 'error');
+    resultEl.hidden = res.state === 'valid' && !res.notices.length;
+    copyTextBtn.hidden = copyJsonBtn.hidden = res.state === 'valid';
+    const schemaRanges = schemaRangesFor(res);
+    let shown = 0, hidden = 0;
+    res.docs.forEach((doc: any) => {
+      if (multi && doc.valid) return;
+      if (multi) outEl.appendChild(el('div', 'jsv-doc-title', fmt(doc.line ? T.docLine : T.docLabel, { n: doc.index + 1, line: doc.line })));
+      doc.groups.forEach((g: any) => {
+        if (shown >= MAX_GROUPS) { hidden++; return; }
+        shown++;
+        const box = el('div', 'jsv-group');
+        const head = el('div', 'jsv-group-head');
+        const where = g.path === '' ? T.root : g.path;
+        head.appendChild(locLink('data', where, g.range, 'jsv-path'));
+        if (g.line) head.appendChild(el('span', 'jsv-line', fmt(T.lineCol, { line: g.line, col: g.col })));
+        box.appendChild(head);
+        const ul = el('ul', 'jsv-items');
+        g.items.forEach((it: any) => {
+          const li = renderItem(it, schemaRanges, false);
+          if (it.range && it.keyPath) {
+            const m = li.querySelector('.jsv-msg');
+            if (m) { const b = locLink('data', m.textContent || '', it.range, 'jsv-msg'); m.replaceWith(b); }
+          }
+          ul.appendChild(li);
+        });
+        box.appendChild(ul);
+        outEl.appendChild(box);
+      });
+    });
+    if (hidden) outEl.appendChild(el('p', 'jsv-more', fmt(T.moreGroups, { n: hidden })));
+    renderNotices(res.notices);
   }
 
-  validateBtn.addEventListener('click', validate);
-
-  /* ── Real-time validate (debounced 300ms) ── */
-  let _jsvTimer: ReturnType<typeof setTimeout> | null = null;
-  function debouncedValidate() {
-    if (_jsvTimer) clearTimeout(_jsvTimer);
-    _jsvTimer = setTimeout(validate, 300);
+  async function run(manual: boolean) {
+    const id = ++runId;
+    const size = schemaEl.value.length + dataEl.value.length + extraEl.value.length;
+    if (!manual && size > AUTO_LIMIT) { setStatus(T.large, 'info'); return; }
+    if (!schemaEl.value.trim() && !dataEl.value.trim() && !extraEl.value.trim()) {
+      render({ state: 'empty', notices: [], docs: [] });
+      return;
+    }
+    let lib: Lib;
+    try {
+      if (!libPromise) setStatus(T.loading, 'info');
+      lib = await loadLib();
+    } catch {
+      if (id === runId) setStatus(T.loadFailed, 'error');
+      return;
+    }
+    if (id !== runId) return;
+    const res = runValidation(lib, {
+      schemaText: schemaEl.value, dataText: dataEl.value, extrasText: extraEl.value,
+      menu: draftSel.value, formats: formatsEl.checked,
+    }, T, cache);
+    render(res);
+    if (trackTimer) clearTimeout(trackTimer);
+    const action = res.state === 'valid' ? 'validate_success' : res.state === 'invalid' ? 'validate_error' : 'validate_' + res.state;
+    if (res.state !== 'empty') trackTimer = setTimeout(() => (window as any).trackTool?.(SLUG, action), manual ? 0 : 1500);
   }
-  schemaEl.addEventListener('input', debouncedValidate);
-  dataEl.addEventListener('input', debouncedValidate);
 
-  loadExBtn.addEventListener('click', () => {
-    schemaEl.value = EXAMPLE_SCHEMA;
-    dataEl.value   = EXAMPLE_DATA;
-    setStatus('', '');
-    errorsEl.style.display = 'none';
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  function schedule() {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => run(false), 300);
+  }
+
+  validateBtn.addEventListener('click', () => run(true));
+  [schemaEl, dataEl, extraEl].forEach((ta) => ta.addEventListener('input', schedule));
+  draftSel.addEventListener('change', () => { savePrefs(); run(true); });
+  formatsEl.addEventListener('change', () => { savePrefs(); run(true); });
+  exampleSel.addEventListener('change', () => {
+    const ex = EXAMPLES[exampleSel.value];
+    exampleSel.value = '';
+    if (!ex) return;
+    schemaEl.value = ex.schema;
+    dataEl.value = ex.data;
+    extraEl.value = ex.extras || '';
+    run(true);
   });
-
-  clearSchBtn.addEventListener('click', () => {
-    schemaEl.value = '';
-    if (!dataEl.value.trim()) {
-      setStatus('', '');
-      errorsEl.style.display = 'none';
+  wrap.querySelectorAll<HTMLButtonElement>('[data-clear]').forEach((b) => b.addEventListener('click', () => {
+    textareaFor(b.dataset.clear || '').value = '';
+    run(true);
+  }));
+  let openSide = 'data';
+  wrap.querySelectorAll<HTMLButtonElement>('[data-open]').forEach((b) => b.addEventListener('click', () => {
+    openSide = b.dataset.open || 'data';
+    fileEl.value = '';
+    fileEl.click();
+  }));
+  async function loadFile(file: File, side: string) {
+    if (file.size > FILE_LIMIT) { setStatus(fmt(T.fileTooBig, { name: file.name }), 'error'); return; }
+    try {
+      textareaFor(side).value = await file.text();
+      run(true);
+    } catch {
+      setStatus(fmt(T.fileRead, { name: file.name }), 'error');
     }
-  });
-
-  clearDataBtn.addEventListener('click', () => {
-    dataEl.value = '';
-    if (!schemaEl.value.trim()) {
-      setStatus('', '');
-      errorsEl.style.display = 'none';
-    }
-  });
-
-  /* Ctrl/Cmd+Enter to validate from either panel */
-  [schemaEl, dataEl].forEach(el => {
-    el.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) validate();
+  }
+  fileEl.addEventListener('change', () => { const f = fileEl.files && fileEl.files[0]; if (f) loadFile(f, openSide); });
+  wrap.querySelectorAll<HTMLElement>('.jsv-panel').forEach((panel) => {
+    panel.addEventListener('dragover', (e) => { if (e.dataTransfer && Array.prototype.includes.call(e.dataTransfer.types, 'Files')) { e.preventDefault(); panel.classList.add('jsv-drop'); } });
+    panel.addEventListener('dragleave', () => panel.classList.remove('jsv-drop'));
+    panel.addEventListener('drop', (e) => {
+      panel.classList.remove('jsv-drop');
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f) return;
+      e.preventDefault();
+      loadFile(f, panel.dataset.side || 'data');
     });
   });
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) setTimeout(() => run(true), 0);
+  });
 
-  /* Pre-load example on first visit */
-  if (!schemaEl.value.trim() && !dataEl.value.trim()) {
-    schemaEl.value = EXAMPLE_SCHEMA;
-    dataEl.value   = EXAMPLE_DATA;
+  async function copy(text: string, btn: HTMLButtonElement, label: string) {
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
+      ta.remove();
+    }
+    if (!ok) { setStatus(T.copyFailed, 'error'); return; }
+    btn.textContent = T.copied;
+    setTimeout(() => { btn.textContent = label; }, 1500);
   }
+  copyTextBtn.addEventListener('click', () => { if (lastResult) copy(reportText(lastResult, T), copyTextBtn, T.copyText); });
+  copyJsonBtn.addEventListener('click', () => { if (lastResult) copy(reportJson(lastResult), copyJsonBtn, T.copyJson); });
+
+  if (!schemaEl.value.trim() && !dataEl.value.trim()) {
+    schemaEl.value = EXAMPLES.user.schema;
+    dataEl.value = EXAMPLES.user.data;
+  }
+  run(false);
 </script>
 
 <style>
   .jsv-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
 
-  .jsv-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
+  .jsv-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem 0.9rem; }
+  .jsv-field { display: flex; flex-direction: column; gap: 0.25rem; }
+  .jsv-field-label { font-size: 0.78rem; font-weight: 650; color: var(--color-text-secondary); }
+  .jsv-select { font-family: var(--font-sans); font-size: 0.88rem; padding-right: 2rem; }
+  .jsv-check { display: inline-flex; align-items: center; gap: 0.4rem; min-height: 40px; font-size: 0.88rem; font-weight: 650; color: var(--color-text-secondary); cursor: pointer; }
+  .jsv-validate { margin-left: auto; }
 
-  .jsv-label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    white-space: nowrap;
-  }
+  .jsv-status { margin: 0; font-size: 0.9rem; font-weight: 650; min-height: 1.3rem; }
+  .jsv-status.success { color: var(--color-success); }
+  .jsv-status.error { color: var(--color-danger); }
+  .jsv-status.info { color: var(--color-primary); }
+  .jsv-status.none { color: var(--color-text-muted); font-weight: 500; }
 
-  .jsv-select {
-    font-size: 0.82rem;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+  .jsv-panels { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.75rem; }
+  .jsv-panel { display: flex; flex-direction: column; gap: 0.35rem; border-radius: var(--radius-md); }
+  .jsv-panel.jsv-drop { outline: 2px dashed var(--color-primary); outline-offset: 3px; }
+  .jsv-panel-head { display: flex; align-items: center; gap: 0.5rem; min-height: 32px; }
+  .jsv-panel-label { font-size: 0.85rem; font-weight: 700; color: var(--color-text-secondary); }
+  .jsv-badge { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em; padding: 0.1rem 0.45rem; border-radius: var(--radius-pill); background: var(--color-surface-muted); color: var(--color-text-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+  .jsv-panel-actions { margin-left: auto; display: inline-flex; flex: none; flex-wrap: nowrap; gap: 0.15rem; }
+  .jsv-mini { min-height: 32px; padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+  .jsv-text { min-height: 260px; font-size: 0.82rem; line-height: 1.5; tab-size: 2; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+  .jsv-extra-text { min-height: 120px; }
+
+  .jsv-extras { border-radius: var(--radius-md); }
+  .jsv-extras summary { cursor: pointer; font-size: 0.85rem; font-weight: 650; color: var(--color-text-secondary); padding: 0.2rem 0; }
+  .jsv-help { margin: 0.4rem 0; font-size: 0.82rem; color: var(--color-text-muted); }
+
+  .jsv-result { display: flex; flex-direction: column; gap: 0.6rem; }
+  .jsv-result-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: flex-end; }
+  .jsv-result-actions:has(> :not([hidden])) { min-height: 32px; }
+
+  .jsv-wrap :global(.jsv-group) {
+    border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
-    color: var(--color-text);
-    cursor: pointer;
+    box-shadow: inset 3px 0 0 var(--color-danger), inset 0 0 0 1px var(--color-border-soft);
+    padding: 0.55rem 0.8rem 0.6rem 0.95rem;
+    margin-bottom: 0.5rem;
   }
-
-  .jsv-panels {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
+  .jsv-wrap :global(.jsv-group-head) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.6rem; margin-bottom: 0.25rem; }
+  .jsv-wrap :global(.jsv-path) { font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; color: var(--color-primary); overflow-wrap: anywhere; }
+  .jsv-wrap :global(.jsv-line) { font-size: 0.76rem; color: var(--color-text-muted); }
+  .jsv-wrap :global(.jsv-items) { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .jsv-wrap :global(.jsv-nested) { margin: 0.25rem 0 0.2rem; padding-left: 0.8rem; border-left: 2px solid var(--color-border-soft); }
+  .jsv-wrap :global(.jsv-item) { font-size: 0.86rem; line-height: 1.45; color: var(--color-text); }
+  .jsv-wrap :global(.jsv-item-line) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.5rem; }
+  .jsv-wrap :global(.jsv-msg) { overflow-wrap: anywhere; }
+  .jsv-wrap :global(.jsv-via) { font-size: 0.74rem; color: var(--color-text-muted); }
+  .jsv-wrap :global(.jsv-item-meta) { display: flex; flex-wrap: wrap; gap: 0.15rem 0.7rem; margin-top: 0.1rem; }
+  .jsv-wrap :global(.jsv-value),
+  .jsv-wrap :global(.jsv-schema-path) { font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-text-muted); overflow-wrap: anywhere; background: none; padding: 0; }
+  .jsv-wrap :global(.jsv-branch-title) { margin-top: 0.3rem; font-size: 0.76rem; font-weight: 700; color: var(--color-text-secondary); }
+  .jsv-wrap :global(.jsv-others) { margin-top: 0.3rem; }
+  .jsv-wrap :global(.jsv-others > summary) { cursor: pointer; font-size: 0.78rem; font-weight: 650; color: var(--color-text-secondary); padding: 0.2rem 0; }
+  .jsv-wrap :global(.jsv-link) {
+    border: 0; padding: 0; margin: 0; background: none; font: inherit; text-align: left; cursor: pointer;
+    color: inherit; text-decoration: underline; text-decoration-color: var(--color-border); text-underline-offset: 2px;
   }
+  .jsv-wrap :global(.jsv-path.jsv-link) { color: var(--color-primary); }
+  .jsv-wrap :global(.jsv-link:hover) { text-decoration-color: currentColor; }
+  .jsv-wrap :global(.jsv-link:focus-visible) { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 3px; }
+  .jsv-wrap :global(.jsv-doc-title) { font-size: 0.82rem; font-weight: 700; color: var(--color-text-secondary); margin: 0.2rem 0; }
+  .jsv-wrap :global(.jsv-more) { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
+  .jsv-wrap :global(.jsv-notices) {
+    border-radius: var(--radius-md);
+    background: var(--color-surface-muted);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    padding: 0.55rem 0.8rem;
+  }
+  .jsv-wrap :global(.jsv-notices-title) { font-size: 0.76rem; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-secondary); margin-bottom: 0.25rem; }
+  .jsv-wrap :global(.jsv-notice-list) { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.25rem; }
+  .jsv-wrap :global(.jsv-notice) { font-size: 0.82rem; line-height: 1.45; color: var(--color-text-secondary); overflow-wrap: anywhere; }
 
+  @media (max-width: 760px) {
+    .jsv-panels { grid-template-columns: minmax(0, 1fr); }
+  }
   @media (max-width: 640px) {
-    .jsv-panels { grid-template-columns: 1fr; }
-  }
-
-  .jsv-panel { display: flex; flex-direction: column; gap: 0.35rem; }
-
-  .jsv-panel label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .jsv-panel textarea {
-    width: 100%;
-    min-height: 220px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.5;
-  }
-
-  .jsv-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
-
-  .btn-xs { font-size: 0.75rem !important; padding: 0.2rem 0.5rem !important; }
-
-  .jsv-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .jsv-status.success { color: #057a55; }
-  .jsv-status.error   { color: #c0392b; }
-  .jsv-status.info    { color: var(--color-text-secondary); }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .jsv-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .jsv-status.error   { color: #f87171; }
-  }
-  [data-theme="dark"] .jsv-status.success { color: #34d399; }
-  [data-theme="dark"] .jsv-status.error   { color: #f87171; }
-
-  /* Errors panel */
-  .jsv-errors {
-    border: 1px solid rgba(192, 57, 43, 0.35);
-    border-left: 3px solid #c0392b;
-    border-radius: var(--radius-sm);
-    background: rgba(192, 57, 43, 0.04);
-    padding: 0.65rem 1rem;
-  }
-
-  [data-theme="dark"] .jsv-errors {
-    border-color: rgba(248, 113, 113, 0.3);
-    border-left-color: #f87171;
-    background: rgba(248, 113, 113, 0.06);
-  }
-
-  .jsv-err-count {
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #c0392b;
-    margin-bottom: 0.4rem;
-  }
-
-  [data-theme="dark"] .jsv-err-count { color: #f87171; }
-
-  .jsv-err-list {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-  }
-
-  .jsv-err-item { font-size: 0.83rem; line-height: 1.4; }
-
-  .jsv-err-path {
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--color-primary);
-  }
-
-  .jsv-err-msg { color: var(--color-text); }
-
-  .jsv-err-extra {
-    font-size: 0.78rem;
-    color: var(--color-text-secondary);
-    font-family: var(--font-mono);
+    .jsv-toolbar { gap: 0.5rem 0.6rem; }
+    .jsv-field { flex: 1 1 9rem; }
+    .jsv-field-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .jsv-select { width: 100%; }
+    .jsv-check { min-height: 44px; }
+    .jsv-validate { margin-left: 0; flex: 1 1 auto; }
+    .jsv-mini { min-height: 44px; }
+    .jsv-text { min-height: 120px; height: 120px; }
+    .jsv-extras summary { padding: 0.7rem 0; }
+    .jsv-wrap :global(.jsv-link) { min-height: 24px; }
   }
 </style>

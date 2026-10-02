@@ -52,6 +52,7 @@ export const toolPersistencePolicy = {
   'color-palette-generator': 'preference',
   'image-color-palette': 'preference',
   'number-base': 'preference',
+  'json-schema-validator': 'preference',
 } as const satisfies Record<string, PersistencePolicy>;
 
 export const disabledPersistenceSlugs = Object.entries(toolPersistencePolicy)
