@@ -1,52 +1,211 @@
 ---
-seoTitle: "JSON Formatter & Validator — Free Online | ZeroTool"
-seoDescription: "Free online JSON formatter and validator. Prettify or minify JSON instantly in your browser. No data sent to servers. Works offline."
+seoTitle: "Format JSON Online — JSON Formatter & Validator | ZeroTool"
+seoDescription: "Format, minify and validate JSON in your browser. Big numbers like 1830000000000000001 stay exact, duplicate keys are flagged, and JSONC comments convert."
 faqItems:
-  - question: "Is my JSON data sent to any server?"
-    answer: "No. All processing happens entirely in your browser using JavaScript. Nothing is sent to any server."
-  - question: "What does the Validate button do?"
-    answer: "It checks whether your JSON is syntactically valid and shows the error location if not."
-  - question: "What indentation does the formatter use?"
-    answer: "2 spaces by default, which is the most common convention for JSON."
-  - question: "Can I use this on mobile?"
-    answer: "Yes, ZeroTool is fully responsive and works on any device."
+  - question: "Is my JSON sent to a server?"
+    answer: "No. Parsing and formatting run in your browser tab. The input is saved in this browser's local storage so it is still there when you come back; Clear removes it."
+  - question: "Why does another formatter turn my 19-digit ID into a different number?"
+    answer: "Most online formatters call JSON.parse, which stores every number as a 64-bit double. Integers above 9,007,199,254,740,991 (2^53 − 1) cannot all be stored, so 1830000000000000001 comes back as 1830000000000000000. This formatter keeps the digits you typed and lists the numbers JavaScript would change."
+  - question: "Can it format JSON with comments, like VS Code settings.json?"
+    answer: "Yes. Turn on Accept JSON5 / JSONC, or press Convert to JSON when the error appears. Comments are removed and trailing commas, single quotes and unquoted keys are rewritten; a note lists every kind of change. NaN and Infinity stay an error because JSON has no way to write them."
+  - question: "Does formatting change my data?"
+    answer: "Values stay the same. Whitespace changes, and string escapes are rewritten the way JSON.stringify writes them: \\u00e9 becomes é and \\/ becomes /. Numbers and duplicate keys are kept as written unless you choose otherwise."
+  - question: "What is the largest file it handles?"
+    answer: "Files up to 50 MB open. Input up to 2 MB is formatted as you type; above that, press Format. A 10 MB file formats in well under a second on a laptop."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Paste your JSON into the input box.</li>
-  <li>Click <strong>Format</strong> to prettify with 2-space indentation.</li>
-  <li>Click <strong>Minify</strong> to compress into a single line.</li>
-  <li>Click <strong>Validate</strong> to check for syntax errors without modifying output.</li>
-  <li>Click <strong>Copy</strong> to copy the result to clipboard.</li>
-</ol>
+## How to Use
 
-<h2>About JSON Formatter</h2>
-<p>
-  JSON (JavaScript Object Notation) is the most common data interchange format.
-  A formatter makes nested structures readable by adding indentation, while a minifier
-  strips whitespace to reduce payload size. Both operations keep the
-  parsed value, except for the cases listed under Limits below.
-</p>
-<p>
-  This tool runs entirely in your browser. No data ever leaves your machine.
-</p>
+1. Paste JSON into the input box, drop a `.json` file on the tool, or press **Open file**.
+2. Read the status line. Valid input is formatted at once; invalid input shows the line, the column and the cause, and **Go to error** selects the spot in the input.
+3. Pick **2 spaces**, **4 spaces** or **Tab**, or press **Minify** for one line.
+4. Switch the output to **Tree** to fold objects and arrays. Select a row to copy its JSON Pointer (`/items/0/price`) or its jq path (`.items[0].price`).
+5. Press **Copy** or **Download**. Notes under the panels list duplicate keys, numbers JavaScript would change and unpaired surrogates.
 
-## Common Errors and the Messages You Will See
+## What Formatting Keeps and What It Rewrites
 
-The formatter parses your input with the browser's `JSON.parse`, so the error after "Invalid JSON:" comes from the browser. These are the messages Chrome shows for the most common mistakes; Firefox and Safari word them differently.
+The formatter reads the text with its own parser, written to [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259) and tested against all 318 files of [JSONTestSuite](https://github.com/nst/JSONTestSuite): it accepts the same documents as `JSON.parse`. It differs from a `JSON.parse` + `JSON.stringify` round trip in three places:
 
-| Input | Problem | Message in Chrome | Fix |
-|---|---|---|---|
-| `{"a":1,}` | Trailing comma | `Expected double-quoted property name in JSON at position 7 (line 1 column 8)` | Remove the last comma |
-| `{'a':'b'}` | Single quotes | `Expected property name or '}' in JSON at position 1 (line 1 column 2)` | Use double quotes |
-| `{a: 1}` | Unquoted key | `Expected property name or '}' in JSON at position 1 (line 1 column 2)` | Quote the key |
-| `{"x": undefined}` | `undefined` is not a JSON value | `Unexpected token 'u', ... is not valid JSON` | Use `null` |
-| `{"a":1} // note` | Comment | `Unexpected non-whitespace character after JSON at position 8` | Delete the comment; [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259) has no comment syntax |
+- **Numbers are copied as written.** `1.0`, `0.10`, `1e2` and `12345678901234567890` come out unchanged.
+- **Duplicate keys are kept.** RFC 8259 §4 says names SHOULD be unique and that parsers handle duplicates in different ways; this tool keeps every copy and tells you where they are.
+- **A byte order mark is removed and reported.** `JSON.parse` rejects a leading U+FEFF; RFC 8259 §8.1 lets a parser ignore it.
+
+Whitespace and string escapes are rewritten. Strings are written the way `JSON.stringify` writes them, so `"\u00e9"` becomes `"é"` and `"\/"` becomes `"/"`. Turn on **Escape non-ASCII** to write every character above U+007E as `\uXXXX`, as `python3 -m json.tool` does by default.
+
+## Example: An Order ID Longer Than 16 Digits
+
+{/* jf: {"opts":{}} */}
+```json
+{"order_id":1830000000000000001,"total":19.90,"currency":"USD","items":[{"sku":"A-100","qty":2,"price":9.95}],"paid":true,"coupon":null}
+```
+
+Output with 2 spaces:
+
+```json
+{
+  "order_id": 1830000000000000001,
+  "total": 19.90,
+  "currency": "USD",
+  "items": [
+    {
+      "sku": "A-100",
+      "qty": 2,
+      "price": 9.95
+    }
+  ],
+  "paid": true,
+  "coupon": null
+}
+```
+
+A note lists 1830000000000000001 → 1830000000000000000 at /order_id: that is what JSON.parse returns. RFC 8259 §6 explains why: software that reads numbers as IEEE 754 doubles only exchanges integers between −(2^53 − 1) and 2^53 − 1 reliably. If a browser will read the field, send it as a string.
+
+Set **Numbers** to **As JavaScript reads them** to see what a script gets:
+
+{/* jf: {"opts":{"indent":""}} */}
+```json
+[1.0, 1e2, 0.10, -0, 1e400]
+```
+
+Kept as written (minified):
+
+```json
+[1.0,1e2,0.10,-0,1e400]
+```
+
+{/* jf: {"opts":{"indent":"","numbers":"js"}} */}
+```json
+[1.0, 1e2, 0.10, -0, 1e400]
+```
+
+As JavaScript reads them:
+
+```json
+[1,100,0.1,0,1e400]
+```
+
+`1e400` overflows a double: `JSON.parse` returns Infinity and `JSON.stringify` writes `null`, so the tool keeps the literal and says so.
+
+## Example: Duplicate Keys
+
+{/* jf: {"opts":{"indent":""}} */}
+```json
+{"retry": 3, "timeout": 30, "retry": 5}
+```
+
+With Duplicate keys set to Keep all, both entries stay and the note points at the second retry:
+
+```json
+{"retry":3,"timeout":30,"retry":5}
+```
+
+{/* jf: {"opts":{"indent":"","dupes":"last"}} */}
+```json
+{"retry": 3, "timeout": 30, "retry": 5}
+```
+
+With Keep the last, the output matches JSON.parse, jq and Python: the last value at the first position.
+
+```json
+{"retry":5,"timeout":30}
+```
+
+## Error Messages
+
+The status line names the cause in plain words, and the output panel shows the line before, the line with the error, and a caret:
+
+{/* jf: {"error":{"code":"trailingComma","line":3,"col":15}} */}
+```json
+{
+  "name": "api",
+  "port": 8080,
+}
+```
+
+Status: "Line 3, column 15: trailing comma before the closing bracket".
+
+```text
+2 |   "name": "api",
+3 |   "port": 8080,
+  |               ^
+```
+
+| Input | Message |
+|---|---|
+| `{"a":1} // note` | comments are not allowed in JSON |
+| `{'a': 1}` | JSON strings and property names need double quotes (") |
+| `{a: 1}` | property names must be in double quotes |
+| `{"ok": True}` | unknown word; JSON only has true, false and null, plus a note that True is Python and JSON writes it as true |
+| `[01]` | invalid number (no leading zeros, "+", ".5", NaN or Infinity in JSON) |
+| `{"a":“b”}` | curly quotes (“) are not JSON quotes; use straight double quotes (") |
+
+Near-JSON gets a one-click fix: JSON inside a Markdown code fence (common in chatbot answers), JSON escaped as a string (`{\"a\":1}`, common in logs), and one string holding JSON. JSON Lines input gets a link to the [JSONL Converter](/tools/jsonl-converter/).
+
+## Comments: JSONC and JSON5
+
+VS Code's `settings.json`, `tasks.json` and `launch.json` use [JSON with Comments](https://code.visualstudio.com/docs/languages/json#_json-with-comments): `//` and `/* */` comments, and trailing commas, which VS Code accepts with a warning. Plain JSON rejects both. With **Accept JSON5 / JSONC** on, the tool reads [JSON5](https://spec.json5.org/) (a superset of JSONC) and writes JSON:
+
+{/* jf: {"json5":true,"opts":{}} */}
+```jsonc
+{
+  // Editor
+  "editor.tabSize": 2,
+  "files.exclude": {
+    "**/.git": true,
+  },
+}
+```
+
+Output, with the note "Changed to make it JSON: 1 comment removed, 2 trailing commas":
+
+```json
+{
+  "editor.tabSize": 2,
+  "files.exclude": {
+    "**/.git": true
+  }
+}
+```
+
+Hex numbers become decimal (`0x1F90` → `8080`, exact at any size), `.5` becomes `0.5`, and single quotes become double quotes. On 103 test inputs the result matches the json5 2.2.3 package, except NaN and Infinity, which JSON cannot store.
+
+## Sorting Keys and Matching jq or Python
+
+**Sort keys** orders keys by Unicode code point at every level, the same order as `jq -S` and `python3 -m json.tool --sort-keys`. With 4 spaces and Escape non-ASCII on, the output is byte-for-byte what Python 3.12's `json.tool` prints for integer data:
+
+{/* jf: {"opts":{"sortKeys":true,"ascii":true,"indent":"    "}} */}
+```json
+{"name":"Zoë","city":"Kraków","age":30}
+```
+
+Output:
+
+```json
+{
+    "age": 30,
+    "city": "Krak\u00f3w",
+    "name": "Zo\u00eb"
+}
+```
+
+Where the three differ on numbers: jq 1.7.1 keeps literals but rewrites exponents (`1e2` → `1E+2`); Python turns `1e2` into `100.0` and `1e400` into `Infinity`, which is not valid JSON; this tool keeps both as written. The test script compares 400 random documents with jq and 120 with Python on every run where those exact versions are installed.
+
+## How It Compares
+
+Tested on 2026-10-02 in desktop Chromium with `{"id":12345678901234567890,"price":19.90,"big":1e400,"z":-0,"a":1,"a":2}`. None of these sites sent the JSON to a server during the test.
+
+| Tool | 19-digit ID | `1e400` | Duplicate `a` | Trailing comma |
+|---|---|---|---|---|
+| jsonformatter.org (Format / Beautify) | 12345678901234567000 | null | only `"a": 2`, no warning | "Expecting 'STRING', got '}'" |
+| JSONLint (Sort Keys) | 12345678901234567000, with a W050 warning on Validate | null, no warning | only `"a": 2`, W060 warning | E008 trailing comma |
+| ZeroTool | unchanged, listed in a note | unchanged, listed in a note | both kept, listed in a note | named, with a caret and a JSON5 fix |
+
+JSONLint warns about the integer and the duplicate, yet its Sort Keys output still changes them.
 
 ## Limits
 
-- **Large integers lose precision.** Numbers become JavaScript doubles, so integers above 2^53 − 1 change: `{"id": 12345678901234567890}` formats as `{"id": 12345678901234567000}`. Keep long IDs as strings.
-- **Duplicate keys collapse.** `{"a":1,"a":2}` becomes `{"a":2}`; the last value wins.
-- **Numbers are rewritten.** `1.0` becomes `1` and `1e3` becomes `1000`.
-- **Indentation is fixed at 2 spaces.**
+- Files up to 50 MB. Input over 2 MB waits for **Format**; output over 1 MB is shown without colours.
+- The tree shows 200 children at a time (**Show 200 more**), and **Expand all** stops after 2,000 rows.
+- Output is always JSON. JSON5 and JSONC are accepted as input but not written.
+- NaN, Infinity and `undefined` are errors with a hint; the tool never guesses a value.
+- It checks syntax, not structure. To check required fields and types, use the [JSON Schema Validator](/tools/json-schema-validator/); to filter or reshape, use the [jq Playground](/tools/jq-playground/) or the [JSONPath Tester](/tools/jsonpath-tester/).

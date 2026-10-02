@@ -425,6 +425,9 @@ if (jqVersion && /^jq-1\.7\.1(-|$)/.test(jqVersion)) {
     const mine = docs.map((d) => fmtOut(d, Object.assign({ dupes: 'last' }, o))).join('\n') + '\n';
     check('jq 1.7.1 `jq ' + args.join(' ') + '`: 400 documents identical (keep as written, last duplicate)', got === mine, got === null ? 'jq failed' : 'first difference at ' + [...got].findIndex((c, i) => c !== mine[i]));
   }
+  // The number table on the ja page and the en / zh text: jq keeps literals but rewrites exponents.
+  eq('jq 1.7.1 number literals (ja page table)', tool('jq', ['-c', '.'], '[1.0, 1e2, 12345678901234567890, 1e400, 1.5e-7]'), '[1.0,1E+2,12345678901234567890,1E+400,1.5E-7]\n');
+  eq('jq 1.7.1 rejects an unpaired high surrogate and replaces an unpaired low one (surrogate note)', [tool('jq', ['-c', '.'], '["\\ud800"]'), tool('jq', ['-c', '.'], '["\\udc00"]')], [null, '["\uFFFD"]\n']);
 } else skip('jq comparison', 'needs jq 1.7.1, found ' + (jqVersion || 'none'));
 const pyVersion = (() => { try { return execFileSync('python3', ['-c', 'import sys;print("%d.%d.%d"%sys.version_info[:3])'], { encoding: 'utf8' }).trim(); } catch (e) { return null; } })();
 if (pyVersion && /^3\.12\./.test(pyVersion)) {
@@ -442,6 +445,8 @@ if (pyVersion && /^3\.12\./.test(pyVersion)) {
     }
     check('Python ' + pyVersion + ' `python3 -m json.tool ' + args.join(' ') + '`: ' + docs.length + ' documents identical', ok === docs.length, bad);
   }
+  eq('Python 3.12 number literals (ja page table): 1e2 → 100.0, 1e400 → Infinity', tool('python3', ['-m', 'json.tool', '--compact'], '[1.0, 1e2, 12345678901234567890, 1e400]'), '[1.0,100.0,12345678901234567890,Infinity]\n');
+  eq('Python 3.12 escapes Korean by default (ko page)', tool('python3', ['-m', 'json.tool', '--compact'], '"홍길동"'), '"\\ud64d\\uae38\\ub3d9"\n');
 } else skip('Python json.tool comparison', 'needs Python 3.12, found ' + (pyVersion || 'none'));
 
 // ---------- 11. performance ----------
