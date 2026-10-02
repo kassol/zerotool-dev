@@ -24,6 +24,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TextToBinaryTool.astro'), 'utf8');
@@ -190,8 +192,8 @@ t0 = performance.now();
 const bigDec = dec(bigEnc.binary);
 const decMs = performance.now() - t0;
 eq('100k round trip', bigDec.text === big, true);
-check('100k encode under 1 s', encMs < 1000, encMs.toFixed(0) + ' ms');
-check('100k decode under 1 s', decMs < 1000, decMs.toFixed(0) + ' ms');
+check('100k encode under 1 s', encMs < 1000 * PERF_SLACK, encMs.toFixed(0) + ' ms');
+check('100k decode under 1 s', decMs < 1000 * PERF_SLACK, decMs.toFixed(0) + ' ms');
 console.log(`100k units: ${bigEnc.bytes} bytes, encode ${encMs.toFixed(0)} ms, decode ${decMs.toFixed(0)} ms`);
 
 // ---------- 4-language STRINGS ----------

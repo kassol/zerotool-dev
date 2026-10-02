@@ -39,6 +39,8 @@ import AjvDraft04 from 'ajv-draft-04';
 import addFormats from 'ajv-formats';
 import yaml from 'js-yaml';
 import { createRequire } from 'node:module';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -554,7 +556,7 @@ for (const [text, code, line, col] of SYN) {
   const t0 = performance.now();
   const r = run(schemaText, dataText);
   const ms = performance.now() - t0;
-  check('perf: ' + (dataText.length / 1e6).toFixed(1) + ' MB, 40,000 items with 41 errors in under 3 s', r.state === 'invalid' && r.errorCount === 41 && ms < 3000, Math.round(ms) + ' ms');
+  check('perf: ' + (dataText.length / 1e6).toFixed(1) + ' MB, 40,000 items with 41 errors in under 3 s', r.state === 'invalid' && r.errorCount === 41 && ms < 3000 * PERF_SLACK, Math.round(ms) + ' ms');
   console.log('  perf: ' + (dataText.length / 1e6).toFixed(1) + ' MB validated in ' + Math.round(ms) + ' ms');
 }
 

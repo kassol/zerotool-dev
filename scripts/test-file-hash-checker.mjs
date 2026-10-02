@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import vm from 'node:vm';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerSrc = readFileSync(join(root, 'public/vendor/file-hash-worker.js'), 'utf8');
@@ -269,7 +271,7 @@ if (E) {
   const t0 = performance.now();
   const vm2 = E.verify(many, manyFiles);
   const ms = performance.now() - t0;
-  check('5,000-line list × 1,000 files verifies in under 1 s', ms < 1000, ms.toFixed(0) + ' ms');
+  check('5,000-line list × 1,000 files verifies in under 1 s', ms < 1000 * PERF_SLACK, ms.toFixed(0) + ' ms');
   eq('5,000-line list × 1,000 files', [vm2.summary.ok, vm2.summary.missing], [1000, 4000]);
   const v6 = E.verify(P(H256), [f('a', 'x', { 'SHA-256': H256B }), f('b', 'y', { 'SHA-256': H256B })]);
   eq('bare value with several files: none match', [v6.files.a.status, v6.summary.bareNoMatch], ['nomatch', 1]);

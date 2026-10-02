@@ -21,6 +21,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SecretRedactorTool.astro'), 'utf8');
@@ -299,7 +301,7 @@ for (const [name, text] of localNegatives) {
   const t2 = performance.now();
   equal('1 MB round-trip exact', back.text === big, true);
   console.log('1 MB detect: ' + (t1 - t0).toFixed(1) + ' ms (' + r.hits.length + ' hits, ' + r.entries.length + ' placeholders); restore: ' + (t2 - t1).toFixed(1) + ' ms');
-  check('1 MB detect under 1000 ms in Node', t1 - t0 < 1000, (t1 - t0).toFixed(1) + ' ms');
+  check('1 MB detect under 1000 ms in Node', t1 - t0 < 1000 * PERF_SLACK, (t1 - t0).toFixed(1) + ' ms');
 }
 
 console.log('PASS ' + passes + '  FAIL ' + failures);
