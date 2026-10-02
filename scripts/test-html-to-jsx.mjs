@@ -21,6 +21,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { runInNewContext } from 'node:vm';
+import { transformSync } from 'esbuild';
+import { parseFragment } from 'parse5';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HtmlToJsxTool.astro'), 'utf8');
@@ -105,12 +109,12 @@ eq('Object.prototype names are not looked up', jsx('<x-a constructor="c" tostrin
 
 // ---------- style ----------
 eq('style → object', jsx('<div style="color: red; font-size: 14px">x</div>'),
-  "<div style={{ color: 'red', fontSize: '14px' }}>x</div>");
+  '<div style={{ "color": "red", "fontSize": "14px" }}>x</div>');
 eq('style with url quotes', jsx('<div style="background-image: url(\'a.png\')">x</div>'),
-  "<div style={{ backgroundImage: 'url(\\'a.png\\')' }}>x</div>");
-eq('style single-quoted', jsx("<p style='margin:0'>x</p>"), "<p style={{ margin: '0' }}>x</p>");
+  '<div style={{ "backgroundImage": "url(\'a.png\')" }}>x</div>');
+eq('style single-quoted', jsx("<p style='margin:0'>x</p>"), '<p style={{ "margin": "0" }}>x</p>');
 eq('style entities decoded', jsx('<p style="font-family: &quot;Inter&quot;">x</p>'),
-  "<p style={{ fontFamily: '\"Inter\"' }}>x</p>");
+  '<p style={{ "fontFamily": "\\\"Inter\\\"" }}>x</p>');
 
 // ---------- tags ----------
 eq('void tag self-closed', jsx('<br>'), '<br />');
@@ -122,7 +126,7 @@ eq('comment', jsx('<!-- footer -->'), '{/* footer */}');
 eq('text containing class= is untouched', jsx('<p>class="x" for="y"</p>'), '<p>class="x" for="y"</p>');
 eq('page example',
   jsx('<label for="email" class="lbl">Email</label>\n<input id="email" type="email" required>\n<div style="background-image: url(\'a.png\'); font-size:14px">x</div>\n<!-- footer -->'),
-  '<label htmlFor="email" className="lbl">Email</label>\n<input id="email" type="email" required />\n<div style={{ backgroundImage: \'url(\\\'a.png\\\')\', fontSize: \'14px\' }}>x</div>\n{/* footer */}');
+  '<label htmlFor="email" className="lbl">Email</label>\n<input id="email" type="email" required />\n<div style={{ "backgroundImage": "url(\'a.png\')", "fontSize": "14px" }}>x</div>\n{/* footer */}');
 
 // ---------- more attribute names (react-dom possibleStandardNames.js) ----------
 for (const [html, react] of [
@@ -150,6 +154,84 @@ eq('comment containing */', jsx('<!-- a */ b -->'), '{/* a * / b */}');
   check('page shows the login input', page.includes(input));
   check('page shows the login output', page.includes(out));
 }
+
+// A-HTMLJSX-STYLE / A-HTMLJSX-TEXT-BRACES: compile the actual entry point.
+// Optional real rendering uses an isolated, pinned React installation, never a new repo dependency.
+let React, renderToStaticMarkup;
+if (process.env.JSX_REACT_REFERENCE_DIR) {
+  const reference = createRequire(join(process.env.JSX_REACT_REFERENCE_DIR, 'package.json'));
+  React = reference('react');
+  ({ renderToStaticMarkup } = reference('react-dom/server'));
+  if (React.version !== '19.2.0' || reference('react-dom/package.json').version !== '19.2.0') throw Error('React reference must be 19.2.0');
+} else console.log('SKIP: real React rendering — set JSX_REACT_REFERENCE_DIR to isolated React/ReactDOM 19.2.0');
+function compiled(html) {
+  const code = transformSync('export default () => (' + jsx(html) + ');', { loader: 'jsx', format: 'cjs', jsxFactory: 'h' }).code;
+  const mod = { exports: {} };
+  const h = (type, props, ...children) => ({ type, props: props || {}, children });
+  new Function('h', 'module', 'exports', code)(h, mod, mod.exports);
+  return mod.exports.default();
+}
+function regression(name, fn) {
+  try { fn(); } catch (e) { check(name, false, e.errors?.[0]?.text || e.message); }
+}
+const styles = [
+  ['--Accent: red; color:blue', { '--Accent': 'red', color: 'blue' }],
+  ['-ms-transform:none; -webkit-mask:none', { msTransform: 'none', WebkitMask: 'none' }],
+  ['background-image:url(data:image/png;base64,AA==); color:red', { backgroundImage: 'url(data:image/png;base64,AA==)', color: 'red' }],
+  ['content:"a;b:c"; font-family:"a\\b"', { content: '"a;b:c"', fontFamily: '"a\\b"' }],
+  ['--token:var(--fallback, rgb(1 2 3)); COLOR:red;', { '--token': 'var(--fallback, rgb(1 2 3))', color: 'red' }],
+  ['--payload:{a:b;c:d};--list:[a;b]; content:"<>&{}"', { '--payload': '{a:b;c:d}', '--list': '[a;b]', content: '"<>&{}"' }],
+  ['--a:red; --A:blue; margin:0', { '--a': 'red', '--A': 'blue', margin: '0' }],
+  ['--x:a\\ ', { '--x': 'a\\ ' }],
+  ['--x:a\\  ;color:red', { '--x': 'a\\ ', color: 'red' }],
+  ['--x:\\61 ', { '--x': '\\61 ' }],
+  ['--x:a\u00a0', { '--x': 'a\u00a0' }],
+  ['content:"a\\\r\nb"', { content: '"a\\\r\nb"' }],
+];
+for (const [style, expected] of styles) regression('style compile ' + style, () => {
+  const html = '<p style="' + style.replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">x</p>';
+  eq('compiled style values ' + style, JSON.stringify(compiled(html).props.style), JSON.stringify(expected));
+  if (React) {
+    const actual = renderToStaticMarkup(React.createElement('p', compiled(html).props, 'x'));
+    const wanted = renderToStaticMarkup(React.createElement('p', { style: expected }, 'x'));
+    eq('React style readback ' + style, actual, wanted);
+  }
+});
+for (const text of ['{name}', 'a } b { c > d', '&amp; &#123;x&#125;', '{{user}} 😀']) regression('text compile ' + text, () => {
+  const tree = compiled('<p>' + text + '</p>');
+  const expected = parseFragment('<p>' + text + '</p>').childNodes[0].childNodes[0].value;
+  eq('compiled text is literal ' + text, tree.children.join(''), expected);
+  if (React) eq('React text readback ' + text, parseFragment(renderToStaticMarkup(React.createElement(tree.type, tree.props, ...tree.children))).childNodes[0].childNodes[0].value, expected);
+});
+regression('generated handler is not escaped as text', () => {
+  const tree = compiled('<button onclick="event.target.textContent = &quot;{done}&quot;">{go}</button>');
+  const event = { target: {} };
+  tree.props.onClick(event);
+  eq('handler remains executable', event.target.textContent, '{done}');
+  eq('button braces remain literal', tree.children[0], '{go}');
+});
+for (const style of ['color:red;color:blue', 'color:red !important', 'color', ':red', 'color:', 'color:url(a', 'content:"x', 'color:red)', 'co\\lor:red', 'color:/* x */red', '--x:a\\\nb', '--x:a\\\r\nb']) {
+  let error;
+  try { jsx('<p style=\'' + style + '\'>x</p>'); } catch (e) { error = e; }
+  check('refuses unrepresentable CSS ' + style, !!error?.code && Number.isInteger(error.position), error?.message);
+}
+// Run the full shipped inline script, so rejection cannot leave an old output copyable.
+for (const lang of ['en', 'zh', 'ja', 'ko']) regression('page refusal ' + lang, () => {
+  const nodes = {};
+  const node = (id) => nodes[id] ||= { value: '', disabled: false, textContent: '', listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } };
+  const document = { documentElement: { lang }, querySelectorAll: () => [], getElementById: node };
+  runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], { document, window: {}, navigator: {}, setTimeout: (fn) => fn(), clearTimeout() {} });
+  node('htj-input').value = '<p style="color:red">x</p>';
+  node('htj-input').listeners.input();
+  check('page valid output ' + lang, !!node('htj-output').value && !node('htj-copy').disabled);
+  node('htj-input').value = '<p style="color:red !important">x</p>';
+  node('htj-input').listeners.input();
+  check('page clears old output and disables copy ' + lang, node('htj-output').value === '' && node('htj-copy').disabled);
+  check('page explains refusal ' + lang, !!node('htj-status').textContent);
+  node('htj-input').value = '<p>{x}</p>';
+  node('htj-input').listeners.input();
+  check('page recovers after refusal ' + lang, !!node('htj-output').value && !node('htj-copy').disabled && node('htj-status').textContent === '');
+});
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
