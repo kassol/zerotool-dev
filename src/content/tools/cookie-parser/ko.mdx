@@ -1,53 +1,91 @@
 ---
-seoTitle: "Cookie 문자열 파서 — Cookie 헤더를 온라인으로 파싱 | ZeroTool"
-seoDescription: "Cookie 헤더 문자열을 이름/값 쌍 표로 파싱. HttpOnly, Secure, SameSite, Path, Domain, Expires, Max-Age 등 플래그 식별. URL 디코딩 토글, JSON 복사 지원. 100% 클라이언트사이드."
+seoTitle: "쿠키 파서·Set-Cookie 분석 | ZeroTool"
+seoDescription: "Cookie 헤더, Set-Cookie, cookies.txt를 붙여 넣으면 값을 디코딩하고, 브라우저가 각 쿠키를 저장할지 거부할지와 그 이유, 다음 요청에 실릴 Cookie 헤더를 보여 줍니다. 마스킹본도 복사할 수 있습니다."
 faqItems:
-  - question: "어떤 Cookie 형식을 지원하나요?"
-    answer: "표준 HTTP 요청 헤더 형식: 세미콜론으로 구분된 name=value 쌍(예: session=abc123; user=admin; theme=dark). 세미콜론과 등호 주변의 선택적 공백도 처리합니다."
-  - question: "Cookie 플래그란 무엇인가요?"
-    answer: "Set-Cookie 응답 헤더에서 키-값 쌍 뒤에 오는 속성입니다. HttpOnly, Secure, SameSite=Lax, Path=/, Domain=example.com, Expires=..., Max-Age=3600 등이 있으며 JavaScript 접근 제어, 보안 전송, 만료 시간 등 쿠키 동작을 제어합니다."
-  - question: "URL 디코딩 토글은 무엇을 하나요?"
-    answer: "활성화(기본값)하면 쿠키 값의 퍼센트 인코딩 문자가 디코딩됩니다. 예를 들어 %20은 공백이 되고 %3D는 =가 됩니다. 비활성화하면 원본 인코딩된 값이 표시됩니다."
-  - question: "잘못된 토큰은 어떻게 처리되나요?"
-    answer: "= 기호가 없고 알려진 플래그(HttpOnly, Secure 등)도 아닌 토큰은 조용히 건너뜁니다. 유효한 name=value 쌍은 모두 파싱되어 표시됩니다."
-  - question: "데이터가 서버로 전송되나요?"
-    answer: "아니요. 모든 파싱은 JavaScript를 사용하여 브라우저에서 완전히 수행됩니다. 쿠키 데이터는 절대 컴퓨터 밖으로 나가지 않습니다."
-  - question: "JSON 복사는 무엇을 생성하나요?"
-    answer: "파싱된 각 쿠키 이름을 키로, 해당 (선택적으로 URL 디코딩된) 값을 문자열 값으로 하는 JSON 객체입니다. 플래그는 JSON 출력에 포함되지 않습니다."
+  - question: "Cookie 헤더에 같은 이름이 두 번 나오는 이유는?"
+    answer: "브라우저는 이름·도메인·경로 조합으로 쿠키를 구분합니다. Path=/로 설정한 JSESSIONID와 Path=/member로 설정한 JSESSIONID는 서로 다른 쿠키이고, /member 아래로 가는 요청에는 둘 다 실리며 경로가 긴 쪽이 먼저 옵니다. Express와 PHP는 첫 번째 값을, Python의 http.cookies는 마지막 값을 씁니다. 오래된 쪽을 지우려면 Domain과 Path를 똑같이 맞추고 Max-Age=0을 붙인 Set-Cookie를 보내세요."
+  - question: "Set-Cookie를 보냈는데 브라우저에 쿠키가 없습니다. 왜 그런가요?"
+    answer: "흔한 원인은 SameSite=None인데 Secure가 없는 경우, __Host- 쿠키에 Domain이 있거나 Path가 /가 아닌 경우, Domain이 응답 호스트를 포함하지 않는 경우, http:// 페이지에서 Secure 쿠키를 설정한 경우, 이름과 값이 4096바이트를 넘는 경우입니다. 그 줄을 응답 URL과 함께 붙여 넣으면 카드에 ‘거부’와 이유가 나옵니다."
+  - question: "Expires와 Max-Age가 함께 있으면 무엇이 적용되나요?"
+    answer: "Max-Age입니다. Expires는 무시됩니다. Max-Age=0이나 음수는 삭제를 뜻합니다. 브라우저는 400일을 넘는 유효 기간을 400일로 줄입니다."
+  - question: "SameSite를 쓰지 않으면 어떻게 되나요?"
+    answer: "Chrome 80 이상과 Edge 86 이상은 SameSite=Lax로 처리해, 다른 사이트의 링크로 들어올 때는 보내지만 크로스 사이트 iframe, fetch, 폼 POST에는 싣지 않습니다. Firefox와 Safari는 크로스 사이트 요청에도 보냅니다. 브라우저마다 동작이 같도록 SameSite를 명시하세요."
+  - question: "붙여 넣은 쿠키가 어딘가로 전송되나요?"
+    answer: "아니요. 파싱은 브라우저 안에서 하고, 페이지는 그 내용을 담은 요청을 보내지 않으며 저장하지도 않습니다. 쿠키에는 세션 ID가 들어 있는 경우가 많아 이 페이지는 Google 애널리틱스와 AdSense를 불러오지 않습니다. 문의 글에 붙일 때는 ‘마스킹본 복사’로 값을 [redacted]로 바꾸세요."
 ---
 
-<h2>사용 방법</h2>
-<ol>
-  <li>원시 Cookie 헤더 문자열(예: 브라우저 DevTools에서 복사)을 텍스트 영역에 붙여넣습니다.</li>
-  <li><strong>파싱</strong>을 클릭하여 이름, 값, 플래그 열이 있는 표에 모든 쿠키를 표시합니다.</li>
-  <li><strong>URL 디코딩</strong>을 토글하여 퍼센트 인코딩된 문자를 디코딩할지 제어합니다.</li>
-  <li><strong>JSON</strong> 탭으로 전환하여 형식화된 JSON 객체로 쿠키를 확인합니다.</li>
-  <li><strong>JSON 복사</strong>를 클릭하여 JSON 객체를 클립보드에 복사합니다.</li>
-</ol>
+## 사용 방법
 
-<h2>입력 예시</h2>
+1. 가지고 있는 내용을 그대로 붙여 넣습니다. `Cookie` 요청 헤더, 한 줄 이상의 `Set-Cookie`(헤더 이름은 있어도 없어도 됨), `curl -i`·`curl -v` 출력, 개발자 도구의 ‘cURL로 복사’ 명령(`-b` 또는 `-H 'Cookie: …'`), `cookies.txt` 파일을 읽습니다. ‘자동’이 형식을 고르고, ‘Cookie’·‘Set-Cookie’로 고정할 수도 있습니다.
+2. Cookie 헤더는 표로 나옵니다. 디코딩한 값, 바이트 수, 같은 이름, JWT 값([JWT 디코더](/ko/tools/jwt-decoder/) 링크 포함), `JSESSIONID`·`_ga` 같은 흔한 이름의 뜻을 보여 줍니다.
+3. Set-Cookie는 줄마다 카드가 생기고, 브라우저가 **저장**·**삭제**·**거부** 중 무엇을 할지와 이유가 나옵니다. ‘다음 요청에는 어떤 쿠키가 실릴까?’를 열고 응답 URL과 다음 요청 URL을 넣으면 그 요청의 `Cookie` 헤더를 만들어 줍니다.
+4. ‘JSON 복사’는 객체(같은 이름은 첫 번째 값, Express·PHP와 같음)나 배열을 고를 수 있고, ‘마스킹본 복사’는 이름과 속성은 두고 값만 가립니다. ‘Set-Cookie 헤더 만들기’는 나중에 삭제할 때 쓸 줄도 함께 만듭니다.
 
-```
-session=abc123; user=admin; theme=dark; Path=/; HttpOnly; Secure; SameSite=Lax
-```
+## 예: ‘오늘 하루 보지 않기’ 쿠키가 아침 9시에 풀리는 이유
 
-<p>파서는 <code>session</code>, <code>user</code>, <code>theme</code>을 쿠키 행으로 표시하고 <code>Path=/</code>, <code>HttpOnly</code>, <code>Secure</code>, <code>SameSite=Lax</code>를 플래그로 표시합니다.</p>
+팝업의 ‘오늘 하루 보지 않기’는 보통 한국 시간 자정까지 남는 쿠키로 만듭니다. 2026년 10월 2일 낮에 이 버튼을 누른다면 만료 시각은 10월 3일 0시(KST), 즉 10월 2일 15:00 GMT여야 합니다.
 
-<h2>URL 인코딩 예시</h2>
+{/* ck-check: {"set": "popup_notice=Y; Path=/; Expires=Fri, 02 Oct 2026 15:00:00 GMT", "url": "https://www.example.co.kr/main", "verdict": "stored", "expires": "2026-10-02T15:00:00.000Z"} */}
+{/* ck-check: {"set": "popup_notice=Y; path=/; expires=Sat Oct 03 2026 00:00:00 GMT+0900 (한국 표준시)", "url": "https://www.example.co.kr/main", "verdict": "stored", "expires": "2026-10-03T00:00:00.000Z", "issues": ["expiresZone"]} */}
 
-```
-q=hello%20world; token=abc%3D123
+```text
+Set-Cookie: popup_notice=Y; Path=/; Expires=Fri, 02 Oct 2026 15:00:00 GMT
+document.cookie = "popup_notice=Y; path=/; expires=Sat Oct 03 2026 00:00:00 GMT+0900 (한국 표준시)"
 ```
 
-<p>URL 디코딩 활성화 시: <code>q</code> → <code>hello world</code>, <code>token</code> → <code>abc=123</code>. 비활성화 시 원본 인코딩된 문자열이 표시됩니다.</p>
+첫 줄은 `toUTCString()`으로 만든 날짜라 의도대로 2026-10-02 15:00 UTC에 만료됩니다. 둘째 줄은 `Date`를 그대로 문자열로 이어 붙여 `toString()` 결과가 들어간 경우입니다. 쿠키 날짜는 항상 GMT로 읽히므로 `GMT+0900`의 오프셋은 무시되고, 만료는 2026-10-03 00:00 UTC, 한국 시간으로 아침 9시가 됩니다. 그래서 팝업이 자정이 지나도 9시간 동안 다시 뜨지 않습니다. 2026-10-02에 Chromium 152의 `document.cookie`로 둘째 줄을 설정해 저장된 만료 시각이 이와 같음을 확인했습니다. 이 도구는 둘째 줄에 오프셋이 무시된다는 경고를 붙입니다.
 
-<h2>주요 Cookie 플래그</h2>
-<ul>
-  <li><strong>HttpOnly</strong> — JavaScript가 <code>document.cookie</code>로 쿠키에 접근하는 것을 방지하여 XSS 위험을 줄입니다.</li>
-  <li><strong>Secure</strong> — HTTPS 연결을 통해서만 쿠키가 전송됩니다.</li>
-  <li><strong>SameSite</strong> — 크로스사이트 쿠키 전송을 제어합니다(Strict, Lax 또는 None).</li>
-  <li><strong>Path</strong> — 쿠키를 서버의 특정 URL 경로로 제한합니다.</li>
-  <li><strong>Domain</strong> — 쿠키가 전송되는 도메인을 지정합니다.</li>
-  <li><strong>Expires</strong> — 쿠키의 절대 만료 날짜를 설정합니다.</li>
-  <li><strong>Max-Age</strong> — 지금부터 몇 초 후에 만료되는지 설정합니다.</li>
-</ul>
+## 예: EUC-KR로 인코딩된 닉네임과 두 개의 JSESSIONID
+
+{/* ck-check: {"cookie": "JSESSIONID=7F3A9C2E5B1D4F8A6C0E2B4D6F8A0C2E; nickname=%C8%AB%B1%E6%B5%BF; popup_notice=Y; JSESSIONID=guest", "json": {"JSESSIONID": "7F3A9C2E5B1D4F8A6C0E2B4D6F8A0C2E", "nickname": "%C8%AB%B1%E6%B5%BF", "popup_notice": "Y"}, "dup": ["JSESSIONID"], "redacted": "JSESSIONID=[redacted]; nickname=%C8%AB%B1%E6%B5%BF; popup_notice=Y; JSESSIONID=[redacted]"} */}
+
+```text
+JSESSIONID=7F3A9C2E5B1D4F8A6C0E2B4D6F8A0C2E; nickname=%C8%AB%B1%E6%B5%BF; popup_notice=Y; JSESSIONID=guest
+```
+
+- `nickname=%C8%AB%B1%E6%B5%BF`는 ‘홍길동’을 EUC-KR로 퍼센트 인코딩한 값입니다. UTF-8로 읽을 수 없어 원래 값 그대로 보여 주고 표시를 붙입니다. UTF-8이라면 `%ED%99%8D%EA%B8%B8%EB%8F%99`입니다. 오래된 페이지와 새 페이지가 서로 다른 인코딩으로 같은 쿠키를 쓰면 이렇게 깨집니다.
+- `JSESSIONID`가 두 번 있습니다. JSON 객체는 첫 번째 값을 가져, Express·PHP가 읽는 값과 같습니다.
+- ‘마스킹본 복사’를 ‘세션 ID와 토큰만’으로 두면 두 `JSESSIONID` 값만 `[redacted]`가 되고 `popup_notice`는 그대로 남습니다.
+
+## 속성별 브라우저 처리
+
+| 속성 | 이 도구가 적용하는 규칙 |
+|---|---|
+| `Expires` | [RFC 6265bis](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/) §5.1.1의 날짜 알고리즘으로 읽습니다. 시간대 표기는 무시하고 GMT로 봅니다. `2026-10-21T07:28:00Z` 같은 ISO 형식은 읽지 못해 세션 쿠키가 됩니다. |
+| `Max-Age` | Expires보다 우선. 0 이하는 삭제. 400일을 넘는 유효 기간은 400일로([Chrome 104부터](https://developer.chrome.com/blog/cookie-max-age-expires)). |
+| `Domain` | 앞의 점은 무시. 생략하면 설정한 호스트에만, 쓰면 모든 하위 도메인에 전송. |
+| `Path` | 생략하거나 `/`로 시작하지 않으면 응답 URL의 디렉터리. |
+| `SameSite` | 생략 시 Chrome 80+, Edge 86+는 Lax, Firefox·Safari는 다릅니다([MDN 호환성 데이터](https://developer.mozilla.org/ko/docs/Web/HTTP/Reference/Headers/Set-Cookie#브라우저_호환성)). `None`은 `Secure`가 필요. |
+| `Partitioned` | `Secure` 필요([CHIPS](https://datatracker.ietf.org/doc/draft-cutler-httpbis-partitioned-cookies/)). Chrome 114+, Firefox 141+, Safari 26.2+. |
+| 이름 접두사 | `__Secure-`는 Secure, `__Host-`는 Secure·Path=/·Domain 없음, `__Http-`·`__Host-Http-`는 여기에 HttpOnly까지(Chrome 140+, Firefox 143+). 대소문자 구분 없음. |
+| 크기 | 이름과 값이 UTF-8로 4096바이트를 넘으면 무시. 한글은 한 글자에 3바이트입니다. 속성 값이 1024바이트를 넘으면 그 속성만 무시. |
+
+## 실측: Chrome이 사양과 다른 점
+
+2026-10-02에 로컬 테스트 서버에서 각 줄을 Chromium 152로 보내고 실제로 저장된 쿠키를 읽었습니다. 날짜, 크기, 접두사, SameSite=None, Partitioned는 RFC 6265bis와 같았고 다음이 달랐습니다. 이 도구는 RFC대로 판정하고, 이런 줄에는 설명을 덧붙입니다.
+
+- `Max-Age=+60`: RFC는 무시, Chromium은 60초로 처리.
+- 값 중간의 탭: RFC는 허용, Chromium은 거부.
+- `Domain=.`: RFC는 빈 도메인(host-only), Chromium은 거부.
+- 기존 쿠키를 덮어쓰면 Chromium은 생성 시각을 새로 기록해 먼저 설정된 쿠키 뒤로 보냅니다. RFC는 원래 생성 시각을 유지합니다.
+
+## 서버가 Cookie 헤더를 읽는 방식
+
+| 읽는 쪽 | 같은 이름 | 큰따옴표로 감싼 값 | 값 안의 공백 |
+|---|---|---|---|
+| Express 5의 `req.cookies`(cookie-parser 1.4.7, cookie 0.7.2) | 첫 번째 | 따옴표 제거 | 유지 |
+| Python 3.12 [http.cookies](https://docs.python.org/ko/3/library/http.cookies.html) | 마지막 | 따옴표 제거 | 헤더 전체를 버림 |
+| PHP 8.4의 `$_COOKIE` | 첫 번째 | 따옴표 유지 | 유지 |
+
+PHP는 이름의 점과 공백을 밑줄로 바꿔 `connect.sid`를 `$_COOKIE['connect_sid']`로 받습니다. 이 도구는 해당 행에 이런 내용을 적어 줍니다.
+
+## 다른 쿠키 파서와의 차이
+
+2026-10-02에 Bing에서 ‘쿠키 파서’ 1위였던 LiteDevTools를 비롯해 다섯 도구에 같은 입력을 넣었습니다. 모두 내용을 서버로 보내지 않았습니다. LiteDevTools는 Set-Cookie 모드에서 줄을 제대로 나누지만 속성을 표로 옮겨 적을 뿐이라, `SameSite=None`에 Secure가 없는 것, `__Host-` 쿠키에 Domain이 있는 것을 지적하지 않고 `Max-Age=0`도 플래그 칸에 그대로 둡니다. 기본인 Cookie 모드에서는 `abc`처럼 `=`가 없는 항목을 값이 빈 이름으로 보여 줍니다. 브라우저는 반대로 이름이 없고 값이 `abc`인 쿠키로 저장합니다. 나머지 네 도구도 거부될 쿠키를 지적하지 않았습니다.
+
+## 제한
+
+- 공개 접미사 목록은 내장하지 않았습니다. Domain에 점이 없으면 경고하지만, `Domain=co.kr` 같은 값은 거부로 판정하지 않습니다(브라우저는 거부합니다).
+- 시뮬레이션은 각 Set-Cookie가 최상위 페이지의 응답에서 왔고, 그 전에는 쿠키가 없다고 가정합니다. SameSite를 쓰지 않은 새 쿠키를 Chrome이 2분 동안 크로스 사이트 POST에 싣는 예외는 다루지 않습니다.
+- 유효 기간은 붙여 넣은 시점부터 셉니다.
+- 브라우저 확장 프로그램이 내보내는 JSON은 읽지 않습니다. Cookie 헤더나 cookies.txt를 붙여 넣으세요.

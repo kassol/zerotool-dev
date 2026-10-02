@@ -102,7 +102,7 @@
 | CSS Triangle Generator | [/tools/css-triangle-generator](https://zerotool.dev/tools/css-triangle-generator) |
 | CSS Gradient Generator | [/tools/css-gradient-generator](https://zerotool.dev/tools/css-gradient-generator) |
 | Nano ID Generator | [/tools/nano-id-generator](https://zerotool.dev/tools/nano-id-generator) |
-| Cookie String Parser | [/tools/cookie-parser](https://zerotool.dev/tools/cookie-parser) |
+| Cookie Parser & Decoder | [/tools/cookie-parser](https://zerotool.dev/tools/cookie-parser) |
 | CSS Clip-Path Generator | [/tools/css-clip-path-generator](https://zerotool.dev/tools/css-clip-path-generator) |
 | Color Palette Generator | [/tools/color-palette-generator](https://zerotool.dev/tools/color-palette-generator) |
 | String Escape / Unescape | [/tools/string-escape](https://zerotool.dev/tools/string-escape) |

@@ -1,53 +1,94 @@
 ---
-seoTitle: "Cookie 文字列パーサー — Cookieヘッダーをオンラインで解析 | ZeroTool"
-seoDescription: "CookieヘッダーをName/Valueテーブルに解析。HttpOnly・Secure・SameSite・Path・Domain・Expires・Max-Ageなどのフラグを識別。URLデコード切替・JSONコピー対応。完全ブラウザ完結。"
+seoTitle: "Cookie 解析ツール・パーサー | ZeroTool"
+seoDescription: "Cookie ヘッダー・Set-Cookie・cookies.txt を貼り付けると、値のデコード、ブラウザーが各 Cookie を保存するか拒否するかとその理由、次のリクエストで送られる Cookie ヘッダーを表示。マスク済みコピーも。"
 faqItems:
-  - question: "対応しているCookie形式は？"
-    answer: "標準HTTPリクエストヘッダー形式：セミコロン区切りのname=valueペア（例：session=abc123; user=admin; theme=dark）。セミコロンや等号の前後の空白も処理します。"
-  - question: "Cookieフラグとは何ですか？"
-    answer: "Set-Cookieレスポンスヘッダーでキーと値の後に続く属性です。HttpOnly・Secure・SameSite=Lax・Path=/・Domain=example.com・Expires=...・Max-Age=3600などがあり、JavaScriptアクセス制御・セキュア送信・有効期限などのCookie動作を制御します。"
-  - question: "URLデコードの切替えは何をしますか？"
-    answer: "有効時（デフォルト）、Cookie値内のパーセントエンコードされた文字がデコードされます。例えば%20はスペースに、%3Dは=になります。無効時は元のエンコード済みの値が表示されます。"
-  - question: "無効なトークンはどうなりますか？"
-    answer: "=記号がなく既知のフラグ（HttpOnly・Secureなど）でもないトークンは静かにスキップされます。有効なname=valueペアはすべて解析・表示されます。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。すべての解析はJavaScriptを使用してブラウザ内で完全に行われます。Cookieデータはあなたのマシンの外に出ることはありません。"
-  - question: "JSONコピーは何を生成しますか？"
-    answer: "解析された各Cookie名をキー、その（オプションでURLデコードされた）値を文字列値とするJSONオブジェクトです。フラグはJSON出力に含まれません。"
+  - question: "Cookie ヘッダーに同じ名前が 2 つあるのはなぜですか？"
+    answer: "ブラウザーは名前・ドメイン・パスの組で Cookie を区別します。Path=/ で設定した PHPSESSID と Path=/mypage で設定した PHPSESSID は別の Cookie で、/mypage 以下へのリクエストには両方が付き、パスの長いほうが先になります。PHP の $_COOKIE と Express は最初の値、Python の http.cookies は最後の値を使います。古いほうを消すには、Domain と Path を同じにして Max-Age=0 を付けた Set-Cookie を返します。"
+  - question: "Set-Cookie を返したのにブラウザーに Cookie が残らないのはなぜですか？"
+    answer: "よくある原因は、SameSite=None なのに Secure がない、__Host- の Cookie に Domain がある・Path が / でない、Domain がレスポンスのホストを含まない、http:// のページから Secure 付きの Cookie を設定した、名前と値が 4096 バイトを超えた、のいずれかです。その行をレスポンス URL と一緒に貼り付けると、カードに「拒否」と理由が出ます。"
+  - question: "Expires と Max-Age の両方があるとどちらが使われますか？"
+    answer: "Max-Age です。Expires は無視されます。Max-Age=0 または負の値は削除の指示です。PHP の setcookie() は両方を出力しますが、同じ時刻を指しているので結果は変わりません。有効期間は最長 400 日に切り詰められます。"
+  - question: "SameSite を書かないとどうなりますか？"
+    answer: "Chrome 80 以降と Edge 86 以降は SameSite=Lax として扱い、他サイトのリンクから来たときは送りますが、クロスサイトの iframe・fetch・フォーム POST には付けません。Firefox と Safari はクロスサイトでも送ります。ブラウザーごとの差をなくすため、明示してください。"
+  - question: "貼り付けた Cookie はどこかへ送られますか？"
+    answer: "送られません。解析はブラウザー内で行い、ページはその内容を含むリクエストを一切送らず、保存もしません。Cookie にはセッション ID が含まれることが多いため、このページは Google アナリティクスと AdSense を読み込みません。問い合わせに貼るときは「マスク済みをコピー」で値を [redacted] に置き換えてください。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li>生のCookieヘッダー文字列（例：ブラウザのDevToolsからコピー）をテキストエリアに貼り付けます。</li>
-  <li><strong>解析</strong>をクリックして、名前・値・フラグ列を含むテーブルにすべてのCookieを表示します。</li>
-  <li><strong>URLデコード</strong>を切り替えてパーセントエンコードされた文字をデコードするかどうかを制御します。</li>
-  <li><strong>JSON</strong>タブに切り替えると、整形されたJSONオブジェクトとしてCookieが表示されます。</li>
-  <li><strong>JSONコピー</strong>をクリックしてJSONオブジェクトをクリップボードにコピーします。</li>
-</ol>
+## 使い方
 
-<h2>入力例</h2>
+1. 手元のデータをそのまま貼り付けます。`Cookie` リクエストヘッダー、`Set-Cookie` の行（ヘッダー名はあってもなくても可）、`curl -i` や `curl -v` の出力、DevTools の「cURL としてコピー」で得たコマンド（`-b` または `-H 'Cookie: …'`）、`cookies.txt` に対応します。「自動」が形式を判定し、「Cookie」「Set-Cookie」で固定もできます。
+2. Cookie ヘッダーは表になり、値のデコード結果、バイト数、同名の Cookie、JWT（[JWT デコーダー](/ja/tools/jwt-decoder/)へのリンク付き）、`PHPSESSID` や `_ga` などのよく見る名前の意味が出ます。
+3. Set-Cookie は 1 行ごとにカードになり、ブラウザーが**保存**・**削除**・**拒否**のどれをするかと理由が出ます。「次のリクエストで送られる Cookie は？」を開いてレスポンス URL と次のリクエスト URL を入れると、そのリクエストの `Cookie` ヘッダーを組み立てます。
+4. 「JSON をコピー」はオブジェクト（同名は最初の値、PHP や Express と同じ）か配列を選べます。「マスク済みをコピー」は名前と属性を残して値を隠します。「Set-Cookie ヘッダーを作成」では、あとで削除するための行も同時に出ます。
 
-```
-session=abc123; user=admin; theme=dark; Path=/; HttpOnly; Secure; SameSite=Lax
-```
+## 例：PHP の setcookie() が返した Set-Cookie を読む
 
-<p>パーサーは<code>session</code>・<code>user</code>・<code>theme</code>をCookie行として表示し、<code>Path=/</code>・<code>HttpOnly</code>・<code>Secure</code>・<code>SameSite=Lax</code>をフラグとして表示します。</p>
+Docker の公式イメージ php:8.4-cli（PHP 8.4.26）で `setcookie()` を呼び、`curl -i` で受け取ったヘッダーです（2026-10-02 実測。セッション Cookie だけ `PHPSESSID` に名前を変えています）。
 
-<h2>URLエンコード例</h2>
+{/* ck-check: {"set": "PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; path=/; secure; HttpOnly; SameSite=Lax", "url": "https://www.example.jp/mypage/login", "verdict": "stored", "domain": "www.example.jp", "path": "/"} */}
+{/* ck-check: {"set": "name=%E5%B1%B1%E7%94%B0%20%E5%A4%AA%E9%83%8E; expires=Wed, 21 Oct 2026 07:28:00 GMT; Max-Age=1656519; path=/", "url": "https://www.example.jp/mypage/login", "now": "2026-10-02T03:19:21Z", "verdict": "stored", "expires": "2026-10-21T07:28:00.000Z", "issues": ["bothLifetimes", "noSecure"]} */}
+{/* ck-check: {"set": "cart=deleted; expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0; path=/", "url": "https://www.example.jp/mypage/login", "verdict": "delete"} */}
 
-```
-q=hello%20world; token=abc%3D123
+```text
+Set-Cookie: PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; path=/; secure; HttpOnly; SameSite=Lax
+Set-Cookie: name=%E5%B1%B1%E7%94%B0%20%E5%A4%AA%E9%83%8E; expires=Wed, 21 Oct 2026 07:28:00 GMT; Max-Age=1656519; path=/
+Set-Cookie: cart=deleted; expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0; path=/
 ```
 
-<p>URLデコード有効時：<code>q</code>→<code>hello world</code>、<code>token</code>→<code>abc=123</code>。無効時は元のエンコード済み文字列が表示されます。</p>
+- 1 行目は Secure・HttpOnly・SameSite=Lax がそろい、警告は出ません。属性名が小文字（`path`、`secure`）でも区別なく読まれます。
+- 2 行目の値は「山田 太郎」をパーセントエンコードしたもので、空白は `%20` になっています。`expires` と `Max-Age` が両方あり、Max-Age が優先されますが、どちらも 2026-10-21 07:28:00 UTC を指しています。Secure と HttpOnly がない点は警告されます。
+- 3 行目は `setcookie('cart', '')` の出力です。PHP は値を `deleted` にして 1970 年の日付と `Max-Age=0` を付けるので、ツールは「削除」と判定します。
 
-<h2>主なCookieフラグ</h2>
-<ul>
-  <li><strong>HttpOnly</strong> — JavaScriptが<code>document.cookie</code>経由でCookieにアクセスするのを防ぎ、XSSリスクを軽減します。</li>
-  <li><strong>Secure</strong> — HTTPS接続でのみCookieが送信されます。</li>
-  <li><strong>SameSite</strong> — クロスサイトCookie送信を制御します（Strict・Lax・None）。</li>
-  <li><strong>Path</strong> — CookieをサーバーのURLパスに制限します。</li>
-  <li><strong>Domain</strong> — Cookieを送信するドメインを指定します。</li>
-  <li><strong>Expires</strong> — Cookieの絶対有効期限日を設定します。</li>
-  <li><strong>Max-Age</strong> — 今から何秒後に期限切れになるかを設定します。</li>
-</ul>
+## 例：Shift_JIS のまま入った値と同名の PHPSESSID
+
+{/* ck-check: {"cookie": "PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; connect.sid=s%3Aabc.def; name=%8ER%93c; PHPSESSID=guest", "json": {"PHPSESSID": "r4k8vq2m9n1p6s3t0w5x7y2z4b", "connect.sid": "s:abc.def", "name": "%8ER%93c"}, "dup": ["PHPSESSID"], "redacted": "PHPSESSID=[redacted]; connect.sid=[redacted]; name=%8ER%93c; PHPSESSID=[redacted]"} */}
+
+```text
+PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; connect.sid=s%3Aabc.def; name=%8ER%93c; PHPSESSID=guest
+```
+
+- `name=%8ER%93c` は「山田」を Shift_JIS のまま `urlencode()` した値です。UTF-8 として読めないため、ツールは元の値のまま表示して注記します。UTF-8 なら `%E5%B1%B1%E7%94%B0` になります。
+- `PHPSESSID` が 2 つあります。JSON のオブジェクトは最初の値を取り、`$_COOKIE['PHPSESSID']` と同じになります。
+- `connect.sid` は PHP では `$_COOKIE['connect_sid']` として届きます。PHP は名前のドットと空白をアンダースコアに置き換えるためで、ツールはその旨を表示します（PHP 8.4.26 で確認）。
+- 「マスク済みをコピー」を「セッション ID とトークンだけ」にすると、`PHPSESSID` と `connect.sid` の値が `[redacted]` になり、`name` は残ります。
+
+## 属性ごとのブラウザーの扱い
+
+| 属性 | ツールが適用するルール |
+|---|---|
+| `Expires` | [RFC 6265bis](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/) §5.1.1 の日付アルゴリズムで読みます。`2026-10-21T07:28:00Z` のような ISO 形式は読めず、セッション Cookie になります。日本時間ではなく GMT で書きます。 |
+| `Max-Age` | Expires より優先。0 以下は削除。400 日を超える有効期間は 400 日に（[Chrome は 104 以降](https://developer.chrome.com/blog/cookie-max-age-expires)）。 |
+| `Domain` | 先頭のドットは無視。省略すると発行元のホストだけ、指定するとすべてのサブドメインに送られます。 |
+| `Path` | 省略時や `/` で始まらないときは、レスポンス URL のディレクトリ。 |
+| `SameSite` | 省略時、Chrome 80 以降・Edge 86 以降は Lax、Firefox・Safari は違います（[MDN の互換性データ](https://developer.mozilla.org/ja/docs/Web/HTTP/Reference/Headers/Set-Cookie#ブラウザーの互換性)）。`None` には `Secure` が必要。 |
+| `Partitioned` | `Secure` が必要（[CHIPS](https://datatracker.ietf.org/doc/draft-cutler-httpbis-partitioned-cookies/)）。Chrome 114 以降、Firefox 141 以降、Safari 26.2 以降。 |
+| 名前のプレフィックス | `__Secure-` は Secure、`__Host-` は Secure・Path=/・Domain なし、`__Http-` と `__Host-Http-` はさらに HttpOnly が必要（Chrome 140 以降、Firefox 143 以降）。大文字小文字は区別しません。 |
+| サイズ | 名前と値の合計が UTF-8 で 4096 バイトを超えると無視。日本語は 1 文字 3 バイトです。属性の値が 1024 バイトを超えると、その属性だけ無視。 |
+
+## Chrome が仕様と違う点（実測）
+
+2026-10-02、ローカルのテストサーバーから Chromium 152 に各行を送り、実際に保存された Cookie を読み出しました。日付・サイズ・プレフィックス・SameSite=None・Partitioned は RFC 6265bis どおりで、違ったのは次の点です。ツールは RFC に従って判定し、これらに当たる行には注記を付けます。
+
+- `Max-Age=+60`：RFC では無視、Chromium は 60 秒として扱います。
+- 値の途中のタブ：RFC では可、Chromium は拒否します。
+- `Domain=.`：RFC では空のドメイン（host-only）、Chromium は拒否します。
+- 既存の Cookie を上書きすると、Chromium は作成時刻を新しくするため、先に設定された Cookie の後ろに回ります。RFC は元の作成時刻を引き継ぎます。
+
+## サーバー側の読み方
+
+| 読み手 | 同名の Cookie | `"引用符付き"` の値 | 値の中の空白 |
+|---|---|---|---|
+| PHP 8.4 の `$_COOKIE`（[setcookie の説明](https://www.php.net/manual/ja/function.setcookie.php)） | 最初の値 | 引用符を残す | 残す |
+| Express 5 の `req.cookies`（cookie-parser 1.4.7、cookie 0.7.2） | 最初の値 | 引用符を外す | 残す |
+| Python 3.12 の [http.cookies](https://docs.python.org/ja/3/library/http.cookies.html) | 最後の値 | 引用符を外す | ヘッダー全体を捨てる |
+
+## ほかの Cookie 解析ツールとの違い
+
+2026-10-02、Bing で「cookie 解析 ツール」の 1 位だった Torinoa Tools ほか、英語・中国語・韓国語の上位を含む 5 つのツールに同じ入力を貼り付けました。どれもサーバーには送信していません。Torinoa Tools の「Set-Cookie ヘッダー形式」に 3 行を貼ると 1 つの Cookie にまとめられ、Max-Age の欄が「0 Set-Cookie: __Host-csrf=x 秒」になりました。1 行ずつ貼った場合も、`SameSite=None` に Secure がないことや、`__Host-` に Domain があることへの指摘はなく、`Max-Age=0` は「0 秒」と表示されるだけで削除の意味は書かれません。ほかの 4 つも、拒否される Cookie を指摘しませんでした。
+
+## 制限
+
+- パブリックサフィックスリストは持っていません。Domain にドットがないときは警告しますが、`Domain=co.jp` のような値は拒否と判定しません（ブラウザーは拒否します）。
+- シミュレーションは、各 Set-Cookie がトップレベルのページのレスポンスから来て、それ以前に Cookie がない前提です。SameSite を書かない新しい Cookie を Chrome が 2 分間だけクロスサイトの POST に付ける例外は扱いません。
+- 有効期間は貼り付けた時点から数えます。
+- ブラウザー拡張がエクスポートする JSON は読みません。Cookie ヘッダーか cookies.txt を貼り付けてください。

@@ -1,53 +1,108 @@
 ---
-seoTitle: "Cookie String Parser Online — Parse Cookie Headers into Name/Value Table | ZeroTool"
-seoDescription: "Parse Cookie header strings into a structured name/value table. Identifies flags (HttpOnly, Secure, SameSite, Path, Domain, Expires, Max-Age). URL decode toggle. Copy as JSON. Free, 100% client-side."
+seoTitle: "Cookie Parser & Decoder for Cookie and Set-Cookie | ZeroTool"
+seoDescription: "Paste a Cookie header, Set-Cookie lines or cookies.txt to see decoded values, which cookies a browser keeps or rejects and why, and the next request's header."
 faqItems:
-  - question: "What Cookie format is supported?"
-    answer: "Standard HTTP Cookie header format: semicolon-separated name=value pairs, e.g. session=abc123; user=admin; theme=dark. The tool handles optional spaces around semicolons and equals signs."
-  - question: "What are Cookie flags?"
-    answer: "Flags are attributes that appear after the key=value pairs in a Set-Cookie header, like HttpOnly, Secure, SameSite=Lax, Path=/, Domain=example.com, Expires=..., or Max-Age=3600. They control cookie behavior such as JavaScript access, secure transmission, and expiry."
-  - question: "What does the URL Decode toggle do?"
-    answer: "When enabled (default), percent-encoded characters in cookie values are decoded — for example %20 becomes a space and %3D becomes =. Disable it to see the raw encoded value."
-  - question: "What happens with invalid tokens?"
-    answer: "Tokens without an = sign that are not recognized as known flags (HttpOnly, Secure, etc.) are silently skipped. All valid name=value pairs are still parsed and displayed."
-  - question: "Is any data sent to a server?"
-    answer: "No. All parsing is done entirely in your browser using JavaScript. Your cookie data never leaves your machine."
-  - question: "What does Copy JSON produce?"
-    answer: "A JSON object where each parsed cookie name becomes a key and its (optionally URL-decoded) value becomes the string value. Flags are excluded from the JSON output."
+  - question: "Why does my Cookie header contain the same name twice?"
+    answer: "A browser keys cookies by name, domain and path. A cookie set with Path=/ and another with the same name set with Path=/account are two cookies, and a request to /account carries both, the longer path first. Servers do not agree on which one to use: Express (the cookie package) and PHP take the first, Python's http.cookies takes the last. Delete the stale one with a Set-Cookie line that repeats its exact Domain and Path plus Max-Age=0."
+  - question: "Why did the browser ignore my Set-Cookie header?"
+    answer: "The common reasons are SameSite=None without Secure, a __Host- cookie with a Domain attribute or without Path=/, a Domain that does not cover the response host, a Secure cookie set from an http:// page, and a name plus value over 4096 bytes. Paste the line here with the response URL; the card for that cookie says Rejected and gives the reason."
+  - question: "Which wins, Expires or Max-Age?"
+    answer: "Max-Age. If both are present, the browser uses Max-Age and ignores Expires. Max-Age=0 or a negative number deletes the cookie, and browsers cap any lifetime at 400 days."
+  - question: "What happens if I leave SameSite out?"
+    answer: "Chrome (since 80) and Edge (since 86) treat the cookie as SameSite=Lax: it is sent when the user follows a link to your site, but not with cross-site iframes, fetch calls or form POSTs. Firefox and Safari still send it cross-site. Set SameSite explicitly so all browsers behave the same."
+  - question: "Is the cookie data sent anywhere?"
+    answer: "No. The page parses the text in your browser and sends no request with it, saves nothing, and does not load Google Analytics or AdSense, because cookies often hold session IDs. Copy redacted replaces values with [redacted] before you paste them into a ticket."
 ---
 
-<h2>How to Use</h2>
-<ol>
-  <li>Paste a raw Cookie header string (e.g. from browser DevTools) into the text area.</li>
-  <li>Click <strong>Parse</strong> to display all cookies in a table with Name, Value, and Flags columns.</li>
-  <li>Toggle <strong>URL Decode values</strong> to control whether percent-encoded characters are decoded.</li>
-  <li>Switch to the <strong>JSON</strong> tab to see the cookies as a formatted JSON object.</li>
-  <li>Click <strong>Copy JSON</strong> to copy the JSON object to your clipboard.</li>
-</ol>
+## How to Use
 
-<h2>Example Input</h2>
+1. Paste what you have: a `Cookie` request header, one or more `Set-Cookie` lines (with or without the header name), the output of `curl -i` or `curl -v`, a DevTools **Copy as cURL** command (`-b` or `-H 'Cookie: …'`), or a `cookies.txt` file. **Auto** picks the format; the **Cookie** and **Set-Cookie** buttons force it.
+2. For a Cookie header, the table shows each cookie, its decoded value, its size, repeated names, JWT values with a link to the [JWT Decoder](/tools/jwt-decoder/), and common names such as `_ga` or `PHPSESSID`.
+3. For Set-Cookie lines, each card says whether a browser **keeps**, **deletes** or **rejects** the cookie, and why. Open **Which cookies does the next request send?**, enter the response URL and the next request URL, and the tool builds the `Cookie` header that request would carry.
+4. **Copy JSON** gives an object (first value wins, as in Express) or an array. **Copy redacted** keeps names and attributes and hides values. **Build a Set-Cookie header** writes a header and the line that deletes it later.
 
-```
-session=abc123; user=admin; theme=dark; Path=/; HttpOnly; Secure; SameSite=Lax
-```
+## Example: A Cookie Header With a Repeated Name
 
-<p>The parser will show <code>session</code>, <code>user</code>, and <code>theme</code> as cookie rows, with <code>Path=/</code>, <code>HttpOnly</code>, <code>Secure</code>, and <code>SameSite=Lax</code> displayed as flags.</p>
+{/* ck-check: {"cookie": "theme=dark; sessionid=k8Qe2Vz9LmP4tR7wX1cY3nB6; _ga=GA1.1.1234567890.1759363200; sessionid=guest; lang=en-US", "json": {"theme": "dark", "sessionid": "k8Qe2Vz9LmP4tR7wX1cY3nB6", "_ga": "GA1.1.1234567890.1759363200", "lang": "en-US"}, "dup": ["sessionid"], "redacted": "theme=dark; sessionid=[redacted]; _ga=GA1.1.1234567890.1759363200; sessionid=[redacted]; lang=en-US"} */}
 
-<h2>URL Encoding Example</h2>
-
-```
-q=hello%20world; token=abc%3D123
+```text
+theme=dark; sessionid=k8Qe2Vz9LmP4tR7wX1cY3nB6; _ga=GA1.1.1234567890.1759363200; sessionid=guest; lang=en-US
 ```
 
-<p>With URL Decode enabled: <code>q</code> → <code>hello world</code>, <code>token</code> → <code>abc=123</code>. With it disabled, the raw encoded strings are shown.</p>
+The tool marks `sessionid` as repeated and the JSON object keeps the first value, `k8Qe2Vz9LmP4tR7wX1cY3nB6`. Two cookies with one name usually means one was set with `Path=/` and the other with a longer path. The simulator shows the order a browser uses:
 
-<h2>Common Cookie Flags</h2>
-<ul>
-  <li><strong>HttpOnly</strong> — prevents JavaScript from accessing the cookie via <code>document.cookie</code>, reducing XSS risk.</li>
-  <li><strong>Secure</strong> — cookie is only sent over HTTPS connections.</li>
-  <li><strong>SameSite</strong> — controls cross-site cookie sending (Strict, Lax, or None).</li>
-  <li><strong>Path</strong> — limits the cookie to a specific URL path on the server.</li>
-  <li><strong>Domain</strong> — specifies which domains the cookie is sent to.</li>
-  <li><strong>Expires</strong> — sets an absolute expiry date for the cookie.</li>
-  <li><strong>Max-Age</strong> — sets a relative expiry in seconds from now.</li>
-</ul>
+{/* ck-check: {"sim": ["sessionid=guest; Path=/", "sessionid=k8Qe2Vz9LmP4tR7wX1cY3nB6; Path=/account; Secure; HttpOnly"], "from": "https://www.example.com/account/login", "to": "https://www.example.com/account/orders", "header": "sessionid=k8Qe2Vz9LmP4tR7wX1cY3nB6; sessionid=guest"} */}
+
+```text
+Cookie: sessionid=k8Qe2Vz9LmP4tR7wX1cY3nB6; sessionid=guest
+```
+
+Longer paths go first, then the cookie set earlier ([RFC 6265bis §5.8.3](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/)). With **Copy redacted** set to "session IDs and tokens only", both `sessionid` values become `[redacted]` while `theme`, `_ga` and `lang` stay readable.
+
+## Example: Set-Cookie Lines From a Login Response
+
+These lines came back from `https://www.example.com/account/login`:
+
+{/* ck-check: {"set": "__Host-session=k8Qe2Vz9LmP4tR7wX1cY3nB6; Path=/; Secure; HttpOnly; SameSite=Lax", "url": "https://www.example.com/account/login", "verdict": "stored", "domain": "www.example.com", "path": "/"} */}
+{/* ck-check: {"set": "promo=spring; Domain=.example.com; Path=/; SameSite=None", "url": "https://www.example.com/account/login", "verdict": "rejected", "reject": ["noneNeedsSecure"], "issues": ["domainDot"]} */}
+{/* ck-check: {"set": "__Host-csrf=Zq3Lr8Tn5Wb2Ye7Hs4; Domain=www.example.com; Path=/; Secure", "url": "https://www.example.com/account/login", "verdict": "rejected", "reject": ["prefixHost"]} */}
+{/* ck-check: {"set": "cart=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT", "url": "https://www.example.com/account/login", "verdict": "delete"} */}
+{/* ck-check: {"set": "lang=en; Path=/account; Max-Age=31536000", "url": "https://www.example.com/account/login", "verdict": "stored", "path": "/account", "expires": "2027-10-02T03:00:00.000Z", "issues": ["noSecure", "noHttpOnly", "noSameSite"]} */}
+
+```text
+Set-Cookie: __Host-session=k8Qe2Vz9LmP4tR7wX1cY3nB6; Path=/; Secure; HttpOnly; SameSite=Lax
+Set-Cookie: promo=spring; Domain=.example.com; Path=/; SameSite=None
+Set-Cookie: __Host-csrf=Zq3Lr8Tn5Wb2Ye7Hs4; Domain=www.example.com; Path=/; Secure
+Set-Cookie: cart=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT
+Set-Cookie: lang=en; Path=/account; Max-Age=31536000
+```
+
+- `__Host-session` is kept: Secure, Path=/, no Domain, as the `__Host-` prefix requires.
+- `promo` is rejected: `SameSite=None` needs `Secure`. The leading dot in `.example.com` is ignored, so it would have reached every subdomain.
+- `__Host-csrf` is rejected: a `__Host-` cookie may not have a Domain attribute, even one equal to the host.
+- `cart` deletes any existing `cart` cookie on path `/`.
+- `lang` is kept for 365 days (Max-Age, counted from now), only on `/account` and below, and gets warnings for missing Secure, HttpOnly and SameSite.
+
+## What a Browser Does With Each Attribute
+
+| Attribute | Rule the tool applies |
+|---|---|
+| `Expires` | Read with the cookie date algorithm of RFC 6265bis §5.1.1. `2026-10-21T07:28:00Z` is not a valid cookie date, so the cookie becomes a session cookie. |
+| `Max-Age` | Wins over `Expires`. 0 or less deletes. Lifetimes over 400 days are cut to 400 days ([Chrome since 104](https://developer.chrome.com/blog/cookie-max-age-expires)). |
+| `Domain` | A leading dot is ignored. Without Domain the cookie is host-only; with it, every subdomain gets the cookie. |
+| `Path` | Missing or not starting with `/`: the directory of the response URL. |
+| `SameSite` | Missing: Lax in Chrome 80+ and Edge 86+, not in Firefox or Safari ([MDN browser data](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#browser_compatibility)). `None` requires `Secure`. |
+| `Partitioned` | Requires `Secure` ([CHIPS](https://datatracker.ietf.org/doc/draft-cutler-httpbis-partitioned-cookies/)); Chrome 114+, Firefox 141+, Safari 26.2+. |
+| Prefixes | `__Secure-` needs Secure; `__Host-` needs Secure, Path=/ and no Domain; `__Http-` and `__Host-Http-` also need HttpOnly ([layered cookies draft](https://datatracker.ietf.org/doc/draft-ietf-httpbis-layered-cookies/), Chrome 140+, Firefox 143+). Matched without regard to case. |
+| Size | Name plus value over 4096 bytes of UTF-8: the cookie is ignored. An attribute value over 1024 bytes: that attribute is ignored. |
+
+## Where Chrome Differs From the Specification
+
+We sent each line from a local test server to Chromium 152 on 2026-10-02 and read back what it stored. Chromium followed RFC 6265bis on dates, sizes, prefixes, SameSite=None and Partitioned, and differed on these points. The tool follows the RFC and adds a note when a line hits one of them:
+
+- `Max-Age=+60` is ignored by the RFC; Chromium accepts it as 60 seconds.
+- A tab inside a value is allowed by the RFC; Chromium rejects the cookie.
+- `Domain=.` is an empty domain (host-only) in the RFC; Chromium rejects the cookie.
+- When a cookie is replaced, Chromium gives it a new creation time, so it moves after cookies set before it. The RFC keeps the old time.
+
+## How Servers Read the Cookie Header
+
+| Reader | Repeated name | `"quoted"` value | A space in a value |
+|---|---|---|---|
+| Express 5 `req.cookies` ([cookie-parser](https://www.npmjs.com/package/cookie-parser) 1.4.7, cookie 0.7.2) | first wins | quotes removed | kept |
+| The [cookie package](https://www.npmjs.com/package/cookie) 1.1.1 | first wins | quotes kept | kept |
+| Python 3.12 [http.cookies](https://docs.python.org/3/library/http.cookies.html) | last wins | quotes removed | the whole header is dropped |
+| PHP 8.4 `$_COOKIE` | first wins | quotes kept | kept |
+
+PHP also turns dots and spaces in names into underscores, so `connect.sid` arrives as `$_COOKIE['connect_sid']`. The tool notes each of these cases on the cookie row.
+
+## Compared With Other Cookie Parsers
+
+On 2026-10-02 we pasted the same inputs into the top Bing results for "cookie parser" in four languages: ToolsForNerds, iotools.cloud, UU在线工具, Torinoa Tools and LiteDevTools. None sent the text to a server. ToolsForNerds, UU在线工具 and Torinoa read three `Set-Cookie:` lines as one cookie named `Set-Cookie: promo`, with the next line glued to its SameSite or Max-Age value. iotools.cloud and LiteDevTools (in its Set-Cookie mode) split the lines but list attributes as plain text. None of the five flagged `SameSite=None` without `Secure` or a `__Host-` cookie with `Domain`, or said that `Max-Age=0` deletes the cookie. For `sid=new; theme=dark; sid=old`, UU在线工具's JSON kept `old`, the value Express and PHP do not use.
+
+## Limits
+
+- The tool has no public suffix list. It warns when Domain has no dot, but accepts `Domain=co.uk`, which browsers reject.
+- The simulator assumes each Set-Cookie line came from a top-level response, with no cookies stored before. It does not model Chrome's two-minute exception that sends new Lax-by-default cookies with cross-site POSTs.
+- Lifetimes are counted from the moment you paste, not from the response time.
+- JSON exports from cookie editor extensions are not read; paste a Cookie header or a cookies.txt file instead.
