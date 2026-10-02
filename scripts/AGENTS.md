@@ -115,6 +115,8 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-02 — 加入 `test-css-clip-path-generator.mjs`：读组件真实函数，在 vm 与桩 DOM 中检查零值、小数、夹取回写、矩形 SVG 坐标、圆形百分比半径、inset 对向缩减、键盘与 pointercancel 回调、CSS 原值过滤及高亮文本往返；parse5 取自已有依赖。只读源码、只写 stdout，手动定向运行或 CI 随其他 test-*.mjs 运行。收尾时 Node 22 通过；完整初始化、多指针、浏览器 CSS.supports 与视觉行为尚未验收。
+
 - 2026-04-26 — 初版
 - 2026-04-26 — 加入 `audit.mjs`（13 维度静态校验）+ CI 巡检管线说明
 - 2026-05-22 — 加入 `test-har-invariant.mjs`（HAR waterfall spec-driven 回归测试，3 层 × 10 fixture）

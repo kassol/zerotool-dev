@@ -173,6 +173,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-02 — css-clip-path-generator 功能阶段保存，精品化尚未完成：组件修复零值、小数、矩形预览的圆形半径与 inset 对向偏移；加入 Pointer Events、方向键编辑、CSS 原值预览与引用过滤、高亮转义。新增定向测试通过 Node 22；最终源码未重新构建，浏览器验收、首屏布局、四语言正文与 SEO、竞品核验及依赖审计影响确认均待续。按快速收尾指令暂停全量检查，提交仅作为继续工作的检查点，未发布。
+
 - 2026-04-26 — 初始化 AGENTS.md 体系（根 + 6 子目录），梳理 CI/CD、Cloudflare、GA4/GSC/AdSense 集成关系
 - 2026-04-26 — 加入 `scripts/audit.mjs` 与 `.github/workflows/ci.yml`；将 `src/content/blog/AGENTS.md` 合并迁移到 `src/content/AGENTS.md` 规避 Astro collection schema 冲突
 - 2026-04-27 — 删除 `src/pages/tools/AGENTS.md`（Astro 把 `src/pages/` 下 .md 当作页面渲染，曾以 `/tools/AGENTS/` 公网泄漏并进入 sitemap）；slug 重命名约定上提至「全局规范」第 10 条；目录索引中 `src/pages/tools/` 不再标记子 AGENTS.md
