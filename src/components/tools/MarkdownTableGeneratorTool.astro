@@ -2,794 +2,1679 @@
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
-const labels = {
+// {n}, {rows}, {cols} … are filled by the script. Keys must match in all four languages
+// (scripts/test-markdown-table-generator.mjs checks this).
+/* ── strings:start ── */
+const STRINGS = {
   en: {
-    tabManual: 'Manual Editor',
-    tabCsv: 'CSV Paste',
-    tabJson: 'JSON Paste',
-    addRow: '+ Row',
-    addCol: '+ Column',
-    removeRow: '− Row',
-    removeCol: '− Column',
-    csvLabel: 'Paste CSV (comma, tab, or semicolon separated):',
-    jsonLabel: 'Paste JSON array of objects:',
-    copy: 'Copy',
-    copied: 'Copied!',
-    outputPlaceholder: 'Markdown table will appear here...',
-    header: 'Header',
-    markdownOutput: 'Markdown Output',
-    importedCsv: function(n: number) { return 'Imported ' + n + ' row(s) from CSV.'; },
-    importedJson: function(n: number) { return 'Imported ' + n + ' row(s) from JSON.'; },
+    tabEdit: 'Table', tabImport: 'Import data', copy: 'Copy Markdown', copied: 'Copied!', copyFailed: 'Copy failed. Select the text and press Ctrl+C.',
+    download: 'Download .md', viewMarkdown: 'Markdown', viewPreview: 'Preview', outputLabel: 'Markdown table',
+    toolbar: 'Table actions', rowAbove: '+ Row above', rowBelow: '+ Row below', deleteRow: 'Delete row',
+    colLeft: '+ Column left', colRight: '+ Column right', deleteCol: 'Delete column', moveLeft: '← Move column', moveRight: 'Move column →',
+    sortAsc: 'Sort A→Z', sortDesc: 'Sort Z→A', transpose: 'Transpose', undo: 'Undo', clear: 'Clear',
+    alignOf: 'Alignment of column {c}', alignNone: 'Default', alignLeft: 'Left', alignCenter: 'Center', alignRight: 'Right',
+    header: 'Header', column: 'Column', cellAria: 'Row {r}, column {c}', headerAria: 'Header of column {c}',
+    gridHint: 'Click a cell to type. Enter moves down, Shift+Enter adds a line break. Paste cells from Excel or Google Sheets into any cell.',
+    importLabel: 'Paste CSV, TSV (Excel, Google Sheets), JSON, an HTML table or a Markdown table',
+    importPlaceholder: 'name,role,city\nAlice,Engineer,Tokyo\nBob,"Designer, UI",Seoul',
+    formatLabel: 'Format', fmtAuto: 'Detect', fmtCsv: 'CSV (comma)', fmtCsvSemicolon: 'CSV (semicolon)', fmtTsv: 'TSV (tab)', fmtJson: 'JSON', fmtHtml: 'HTML table', fmtMarkdown: 'Markdown table',
+    firstRowHeader: 'First row is the header', importExample: 'Example',
+    optStyle: 'Layout', styleAligned: 'Aligned columns', styleCompact: 'Compact', optCellText: 'Cell text', cellMarkdown: 'Markdown', cellPlain: 'Plain text (escape * _ ` …)',
+    optBreaks: 'Line breaks', breaksBr: '<br>', breaksSpace: 'Space', optAmbiguous: 'Ambiguous-width characters (○ × ① →) are 2 columns wide',
+    previewEmpty: 'Nothing to preview.',
+    stats: 'Rows: {rows}, columns: {cols}.',
+    imported: 'Imported from {format}: rows {rows}, columns {cols}.',
+    pasted: 'Pasted {rows} × {cols} cells starting at {where}.',
+    addedCols: 'Some rows are longer than the header, so these columns were added: {cols}.',
+    spans: '{n} merged cells (colspan / rowspan) were split: the text is in the first cell, the others are empty.',
+    mdMoreTables: 'The text has {n} tables. Imported the first one (lines {from}–{to}).',
+    mdExtra: '{n} rows have more cells than the header. GitHub and other GFM renderers do not show those cells; they are kept here as extra columns ({cols}).',
+    mdDoubleBackslash: '{n} rows contain \\\\| (two backslashes before a pipe). GitHub, Qiita and Zenn keep the pipe inside the cell; micromark (remark, MDX, Astro) splits the cell there. The output uses \\\\\\| for a backslash followed by a pipe, which all of them read the same way.',
+    mdFullwidth: 'The table uses full-width pipes ｜ (U+FF5C). GFM only accepts the ASCII pipe |, so GitHub and other renderers show such a table as plain text. It was read with ASCII pipes, and the output uses them.',
+    noData: 'No data found.', htmlNoTable: 'No <table> element found in the HTML.',
+    mdNotFound: 'No Markdown table found. A table is a header row followed by a delimiter row such as | --- | --- | with the same number of cells.',
+    jsonSyntax: 'JSON error: {msg}', jsonNotArray: 'JSON must be an array of objects, an array of arrays or one object.', jsonEmpty: 'The JSON array is empty.', jsonItem: 'Item {n} is not an object.',
+    sorted: 'Sorted by “{col}” {kind}.', sortedNumber: 'as numbers', sortedText: 'as text',
+    transposed: 'Transposed. Rows: {rows}, columns: {cols}.', undone: 'Undone.', nothingToUndo: 'Nothing to undo.', cleared: 'Table cleared.',
+    noteBreaks: 'Line breaks written as <br>: {n}.', noteBreaksSpace: 'Line breaks written as spaces: {n}.', noteTabs: 'Tabs written as spaces: {n}.', notePipes: 'Pipes escaped as \\|: {n}.',
+    noteMarkdown: 'Cells that render differently from their text: {n} (for example * or _ become formatting). Set Cell text to Plain text to show them as typed.',
+    gridLimit: 'The editor shows the first {n} rows. The Markdown output has all {total} rows.',
+    rowsCols: '{rows} × {cols}'
   },
   zh: {
-    tabManual: '手动编辑',
-    tabCsv: 'CSV 粘贴',
-    tabJson: 'JSON 粘贴',
-    addRow: '+ 行',
-    addCol: '+ 列',
-    removeRow: '− 行',
-    removeCol: '− 列',
-    csvLabel: '粘贴 CSV（逗号、制表符或分号分隔）：',
-    jsonLabel: '粘贴 JSON 对象数组：',
-    copy: '复制',
-    copied: '已复制！',
-    outputPlaceholder: 'Markdown 表格将在此处显示...',
-    header: '表头',
-    markdownOutput: 'Markdown 输出',
-    importedCsv: function(n: number) { return '已从 CSV 导入 ' + n + ' 行。'; },
-    importedJson: function(n: number) { return '已从 JSON 导入 ' + n + ' 行。'; },
+    tabEdit: '表格', tabImport: '导入数据', copy: '复制 Markdown', copied: '已复制！', copyFailed: '复制失败。请选中文本后按 Ctrl+C。',
+    download: '下载 .md', viewMarkdown: 'Markdown', viewPreview: '预览', outputLabel: 'Markdown 表格',
+    toolbar: '表格操作', rowAbove: '+ 上方插入行', rowBelow: '+ 下方插入行', deleteRow: '删除行',
+    colLeft: '+ 左侧插入列', colRight: '+ 右侧插入列', deleteCol: '删除列', moveLeft: '← 左移列', moveRight: '右移列 →',
+    sortAsc: '升序排序', sortDesc: '降序排序', transpose: '行列互换', undo: '撤销', clear: '清空',
+    alignOf: '第 {c} 列的对齐方式', alignNone: '默认', alignLeft: '左对齐', alignCenter: '居中', alignRight: '右对齐',
+    header: '表头', column: '列', cellAria: '第 {r} 行第 {c} 列', headerAria: '第 {c} 列表头',
+    gridHint: '点击单元格输入。Enter 跳到下一行，Shift+Enter 在单元格内换行。可以把 Excel、WPS 或 Google 表格里复制的单元格直接粘贴到任意单元格。',
+    importLabel: '粘贴 CSV、TSV（Excel、WPS、Google 表格）、JSON、HTML 表格或 Markdown 表格',
+    importPlaceholder: '姓名,部门,城市\n张伟,研发部,北京\n李娜,"设计部, UI",上海',
+    formatLabel: '格式', fmtAuto: '自动识别', fmtCsv: 'CSV（逗号）', fmtCsvSemicolon: 'CSV（分号）', fmtTsv: 'TSV（制表符）', fmtJson: 'JSON', fmtHtml: 'HTML 表格', fmtMarkdown: 'Markdown 表格',
+    firstRowHeader: '第一行是表头', importExample: '示例',
+    optStyle: '排版', styleAligned: '列对齐', styleCompact: '紧凑', optCellText: '单元格内容', cellMarkdown: 'Markdown', cellPlain: '纯文本（转义 * _ ` 等）',
+    optBreaks: '换行', breaksBr: '<br>', breaksSpace: '空格', optAmbiguous: '把宽度不定的字符（○ × ① →）按 2 列计算',
+    previewEmpty: '没有可预览的内容。',
+    stats: '{rows} 行 × {cols} 列。',
+    imported: '已从 {format} 导入 {rows} 行 × {cols} 列。',
+    pasted: '已从{where}开始粘贴 {rows} × {cols} 个单元格。',
+    addedCols: '部分行比表头长，已补上这些列：{cols}。',
+    spans: '{n} 个合并单元格（colspan / rowspan）已拆开：文字放在第一个单元格，其余留空。',
+    mdMoreTables: '文本里有 {n} 个表格，已导入第一个（第 {from}–{to} 行）。',
+    mdExtra: '{n} 行的单元格比表头多。GitHub 等 GFM 渲染器不显示多出的单元格，这里把它们保留为额外的列（{cols}）。',
+    mdDoubleBackslash: '{n} 行含有 \\\\|（竖线前有两个反斜杠）。GitHub、Qiita、Zenn 把竖线留在单元格里，micromark（remark、MDX、Astro）在这里切开单元格。输出把「反斜杠 + 竖线」写成 \\\\\\|，几种渲染器的读法一致。',
+    mdFullwidth: '表格用的是全角竖线 ｜（U+FF5C）。GFM 只认半角竖线 |，GitHub 等渲染器会把这样的表格当成普通文字。已按半角竖线读取，输出也用半角。',
+    noData: '没有找到数据。', htmlNoTable: 'HTML 里没有 <table> 元素。',
+    mdNotFound: '没有找到 Markdown 表格。表格由表头行和紧随其后的分隔行（如 | --- | --- |）组成，两行的单元格数要相同。',
+    jsonSyntax: 'JSON 错误：{msg}', jsonNotArray: 'JSON 必须是对象数组、二维数组或单个对象。', jsonEmpty: 'JSON 数组为空。', jsonItem: '第 {n} 项不是对象。',
+    sorted: '已按“{col}”{kind}排序。', sortedNumber: '数值', sortedText: '文本',
+    transposed: '已行列互换：现在是 {rows} 行 × {cols} 列。', undone: '已撤销。', nothingToUndo: '没有可撤销的操作。', cleared: '已清空表格。',
+    noteBreaks: '{n} 处换行写成了 <br>。', noteBreaksSpace: '{n} 处换行写成了空格。', noteTabs: '{n} 个制表符写成了空格。', notePipes: '{n} 个竖线转义为 \\|。',
+    noteMarkdown: '{n} 个单元格渲染后与原文不同（例如 * 或 _ 变成了格式）。要原样显示，请把「单元格内容」设为纯文本。',
+    gridLimit: '编辑区只显示前 {n} 行，Markdown 输出包含全部 {total} 行。',
+    rowsCols: '{rows} × {cols}'
   },
   ja: {
-    tabManual: '手動編集',
-    tabCsv: 'CSV 貼り付け',
-    tabJson: 'JSON 貼り付け',
-    addRow: '+ 行',
-    addCol: '+ 列',
-    removeRow: '− 行',
-    removeCol: '− 列',
-    csvLabel: 'CSV を貼り付け（カンマ・タブ・セミコロン区切り）：',
-    jsonLabel: 'JSONオブジェクト配列を貼り付け：',
-    copy: 'コピー',
-    copied: 'コピーしました！',
-    outputPlaceholder: 'Markdownテーブルがここに表示されます...',
-    header: 'ヘッダー',
-    markdownOutput: 'Markdown 出力',
-    importedCsv: function(n: number) { return 'CSV から ' + n + ' 行をインポートしました。'; },
-    importedJson: function(n: number) { return 'JSON から ' + n + ' 行をインポートしました。'; },
+    tabEdit: '表', tabImport: 'データ取り込み', copy: 'Markdown をコピー', copied: 'コピーしました', copyFailed: 'コピーできませんでした。テキストを選択して Ctrl+C を押してください。',
+    download: '.md を保存', viewMarkdown: 'Markdown', viewPreview: 'プレビュー', outputLabel: 'Markdown テーブル',
+    toolbar: '表の操作', rowAbove: '+ 上に行', rowBelow: '+ 下に行', deleteRow: '行を削除',
+    colLeft: '+ 左に列', colRight: '+ 右に列', deleteCol: '列を削除', moveLeft: '← 列を左へ', moveRight: '列を右へ →',
+    sortAsc: '昇順で並べ替え', sortDesc: '降順で並べ替え', transpose: '行と列を入れ替え', undo: '元に戻す', clear: 'クリア',
+    alignOf: '{c} 列目の配置', alignNone: '指定なし', alignLeft: '左揃え', alignCenter: '中央揃え', alignRight: '右揃え',
+    header: '見出し', column: '列', cellAria: '{r} 行 {c} 列', headerAria: '{c} 列目の見出し',
+    gridHint: 'セルをクリックして入力します。Enter で下のセル、Shift+Enter でセル内改行。Excel や Google スプレッドシートでコピーしたセルは、どのセルにも貼り付けられます。',
+    importLabel: 'CSV、TSV（Excel、Google スプレッドシート）、JSON、HTML の表、Markdown テーブルを貼り付け',
+    importPlaceholder: '名前,部署,拠点\n佐藤,開発部,東京\n鈴木,"デザイン部, UI",大阪',
+    formatLabel: '形式', fmtAuto: '自動判定', fmtCsv: 'CSV（カンマ）', fmtCsvSemicolon: 'CSV（セミコロン）', fmtTsv: 'TSV（タブ）', fmtJson: 'JSON', fmtHtml: 'HTML の表', fmtMarkdown: 'Markdown テーブル',
+    firstRowHeader: '1 行目を見出しにする', importExample: '例',
+    optStyle: 'レイアウト', styleAligned: '列をそろえる', styleCompact: '詰める', optCellText: 'セルの内容', cellMarkdown: 'Markdown', cellPlain: 'プレーンテキスト（* _ ` などをエスケープ）',
+    optBreaks: '改行', breaksBr: '<br>', breaksSpace: 'スペース', optAmbiguous: '幅が曖昧な文字（○ × ① →）を全角（2 桁）として数える',
+    previewEmpty: 'プレビューする内容がありません。',
+    stats: '{rows} 行 × {cols} 列。',
+    imported: '{format} から {rows} 行 × {cols} 列を取り込みました。',
+    pasted: '{where}から {rows} × {cols} セルを貼り付けました。',
+    addedCols: '見出しより長い行があるため、次の列を追加しました：{cols}。',
+    spans: '結合セル（colspan / rowspan）{n} 個を分割しました。文字は先頭のセルに入り、残りは空欄です。',
+    mdMoreTables: 'テキストに表が {n} 個あります。最初の表（{from}〜{to} 行目）を取り込みました。',
+    mdExtra: '{n} 行で見出しよりセルが多くなっています。GitHub などの GFM レンダラーはこのセルを表示しません。ここでは追加の列（{cols}）として残しています。',
+    mdDoubleBackslash: '{n} 行に \\\\|（パイプの前にバックスラッシュ 2 個）があります。GitHub、Qiita、Zenn はパイプをセル内に残し、micromark（remark、MDX、Astro）はそこでセルを分けます。出力では「バックスラッシュ + パイプ」を \\\\\\| と書き、どれでも同じ表示になるようにしています。',
+    mdFullwidth: '表に全角の縦棒 ｜（U+FF5C）が使われています。GFM が区切りとして扱うのは半角の | だけなので、GitHub などではただの文章として表示されます。半角に読み替えて取り込み、出力も半角にしています。',
+    noData: 'データが見つかりません。', htmlNoTable: 'HTML に <table> 要素がありません。',
+    mdNotFound: 'Markdown テーブルが見つかりません。表は見出し行と、その直後の区切り行（| --- | --- | など）からなり、2 行のセル数が同じである必要があります。',
+    jsonSyntax: 'JSON エラー：{msg}', jsonNotArray: 'JSON はオブジェクトの配列、配列の配列、またはオブジェクト 1 個にしてください。', jsonEmpty: 'JSON の配列が空です。', jsonItem: '{n} 番目の要素がオブジェクトではありません。',
+    sorted: '「{col}」で{kind}並べ替えました。', sortedNumber: '数値として', sortedText: '文字列として',
+    transposed: '行と列を入れ替えました：{rows} 行 × {cols} 列。', undone: '元に戻しました。', nothingToUndo: '元に戻す操作がありません。', cleared: '表をクリアしました。',
+    noteBreaks: '改行 {n} 個を <br> にしました。', noteBreaksSpace: '改行 {n} 個をスペースにしました。', noteTabs: 'タブ {n} 個をスペースにしました。', notePipes: 'パイプ {n} 個を \\| にエスケープしました。',
+    noteMarkdown: '{n} 個のセルは表示が入力と変わります（* や _ が書式になるなど）。入力どおりに表示するには「セルの内容」をプレーンテキストにしてください。',
+    gridLimit: 'エディターには先頭 {n} 行だけを表示しています。Markdown 出力には全 {total} 行が入っています。',
+    rowsCols: '{rows} × {cols}'
   },
   ko: {
-    tabManual: '수동 편집',
-    tabCsv: 'CSV 붙여넣기',
-    tabJson: 'JSON 붙여넣기',
-    addRow: '+ 행',
-    addCol: '+ 열',
-    removeRow: '− 행',
-    removeCol: '− 열',
-    csvLabel: 'CSV 붙여넣기 (쉼표, 탭, 세미콜론 구분):',
-    jsonLabel: 'JSON 객체 배열 붙여넣기:',
-    copy: '복사',
-    copied: '복사됨!',
-    outputPlaceholder: 'Markdown 테이블이 여기에 표시됩니다...',
-    header: '헤더',
-    markdownOutput: 'Markdown 출력',
-    importedCsv: function(n: number) { return 'CSV에서 ' + n + '개 행을 가져왔습니다.'; },
-    importedJson: function(n: number) { return 'JSON에서 ' + n + '개 행을 가져왔습니다.'; },
-  },
+    tabEdit: '표', tabImport: '데이터 가져오기', copy: 'Markdown 복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 텍스트를 선택하고 Ctrl+C를 누르세요.',
+    download: '.md 다운로드', viewMarkdown: 'Markdown', viewPreview: '미리보기', outputLabel: 'Markdown 표',
+    toolbar: '표 편집', rowAbove: '+ 위에 행', rowBelow: '+ 아래에 행', deleteRow: '행 삭제',
+    colLeft: '+ 왼쪽에 열', colRight: '+ 오른쪽에 열', deleteCol: '열 삭제', moveLeft: '← 열 왼쪽으로', moveRight: '열 오른쪽으로 →',
+    sortAsc: '오름차순 정렬', sortDesc: '내림차순 정렬', transpose: '행/열 바꾸기', undo: '실행 취소', clear: '지우기',
+    alignOf: '{c}열 정렬', alignNone: '기본', alignLeft: '왼쪽', alignCenter: '가운데', alignRight: '오른쪽',
+    header: '헤더', column: '열', cellAria: '{r}행 {c}열', headerAria: '{c}열 헤더',
+    gridHint: '셀을 클릭해 입력합니다. Enter는 아래 셀로, Shift+Enter는 셀 안 줄바꿈입니다. Excel, 한셀, Google 스프레드시트에서 복사한 셀을 아무 셀에나 붙여 넣을 수 있습니다.',
+    importLabel: 'CSV, TSV(Excel, Google 스프레드시트), JSON, HTML 표, Markdown 표를 붙여 넣기',
+    importPlaceholder: '이름,부서,지역\n김민준,개발팀,서울\n이서연,"디자인팀, UI",부산',
+    formatLabel: '형식', fmtAuto: '자동 감지', fmtCsv: 'CSV(쉼표)', fmtCsvSemicolon: 'CSV(세미콜론)', fmtTsv: 'TSV(탭)', fmtJson: 'JSON', fmtHtml: 'HTML 표', fmtMarkdown: 'Markdown 표',
+    firstRowHeader: '첫 행을 헤더로 사용', importExample: '예시',
+    optStyle: '배치', styleAligned: '열 맞춤', styleCompact: '간결하게', optCellText: '셀 내용', cellMarkdown: 'Markdown', cellPlain: '일반 텍스트(* _ ` 등 이스케이프)',
+    optBreaks: '줄바꿈', breaksBr: '<br>', breaksSpace: '공백', optAmbiguous: '폭이 모호한 문자(○ × ① →)를 2칸으로 계산',
+    previewEmpty: '미리볼 내용이 없습니다.',
+    stats: '{rows}행 × {cols}열.',
+    imported: '{format}에서 {rows}행 × {cols}열을 가져왔습니다.',
+    pasted: '{where}부터 {rows} × {cols}개 셀을 붙여 넣었습니다.',
+    addedCols: '헤더보다 긴 행이 있어 다음 열을 추가했습니다: {cols}.',
+    spans: '병합된 셀(colspan / rowspan) {n}개를 나눴습니다. 텍스트는 첫 셀에 있고 나머지는 비어 있습니다.',
+    mdMoreTables: '텍스트에 표가 {n}개 있습니다. 첫 번째 표({from}–{to}행)를 가져왔습니다.',
+    mdExtra: '{n}개 행이 헤더보다 셀이 많습니다. GitHub 등 GFM 렌더러는 이 셀을 표시하지 않습니다. 여기서는 추가 열({cols})로 남겨 두었습니다.',
+    mdDoubleBackslash: '{n}개 행에 \\\\|(파이프 앞 백슬래시 2개)가 있습니다. GitHub, Qiita, Zenn은 파이프를 셀 안에 두고, micromark(remark, MDX, Astro)는 그 자리에서 셀을 나눕니다. 출력은 「백슬래시 + 파이프」를 \\\\\\|로 써서 모두 같게 읽히도록 합니다.',
+    mdFullwidth: '표에 전각 세로선 ｜(U+FF5C)이 쓰였습니다. GFM은 반각 | 만 구분자로 인식하므로 GitHub 등에서는 일반 텍스트로 보입니다. 반각으로 바꿔 읽었고 출력도 반각입니다.',
+    noData: '데이터가 없습니다.', htmlNoTable: 'HTML에 <table> 요소가 없습니다.',
+    mdNotFound: 'Markdown 표를 찾지 못했습니다. 표는 헤더 행과 바로 뒤의 구분 행(| --- | --- | 등)으로 이루어지며 두 행의 셀 수가 같아야 합니다.',
+    jsonSyntax: 'JSON 오류: {msg}', jsonNotArray: 'JSON은 객체 배열, 배열의 배열, 또는 객체 하나여야 합니다.', jsonEmpty: 'JSON 배열이 비어 있습니다.', jsonItem: '{n}번째 항목이 객체가 아닙니다.',
+    sorted: '“{col}” 열을 {kind} 정렬했습니다.', sortedNumber: '숫자로', sortedText: '텍스트로',
+    transposed: '행과 열을 바꿨습니다: {rows}행 × {cols}열.', undone: '실행 취소했습니다.', nothingToUndo: '취소할 작업이 없습니다.', cleared: '표를 지웠습니다.',
+    noteBreaks: '줄바꿈 {n}개를 <br>로 썼습니다.', noteBreaksSpace: '줄바꿈 {n}개를 공백으로 썼습니다.', noteTabs: '탭 {n}개를 공백으로 썼습니다.', notePipes: '파이프 {n}개를 \\|로 이스케이프했습니다.',
+    noteMarkdown: '셀 {n}개는 입력한 텍스트와 다르게 표시됩니다(* 나 _ 가 서식이 되는 등). 입력한 그대로 보이려면 「셀 내용」을 일반 텍스트로 바꾸세요.',
+    gridLimit: '편집기에는 처음 {n}행만 표시합니다. Markdown 출력에는 {total}행이 모두 들어 있습니다.',
+    rowsCols: '{rows} × {cols}'
+  }
 };
+/* ── strings:end ── */
 
-const L = labels[lang] ?? labels['en'];
+const L = STRINGS[lang] ?? STRINGS.en;
+const FORMATS = [['auto', L.fmtAuto], ['csv', L.fmtCsv], ['csv-semicolon', L.fmtCsvSemicolon], ['tsv', L.fmtTsv], ['json', L.fmtJson], ['html', L.fmtHtml], ['markdown', L.fmtMarkdown]];
+const ACTIONS = [['rowAbove', L.rowAbove], ['rowBelow', L.rowBelow], ['deleteRow', L.deleteRow], ['colLeft', L.colLeft], ['colRight', L.colRight], ['deleteCol', L.deleteCol], ['moveLeft', L.moveLeft], ['moveRight', L.moveRight], ['sortAsc', L.sortAsc], ['sortDesc', L.sortDesc], ['transpose', L.transpose], ['undo', L.undo], ['clear', L.clear]];
 ---
 
-<div
-  class="mdt-wrap"
-  data-copy={L.copy}
-  data-copied={L.copied}
-  data-header={L.header}
-  data-imported-csv-prefix={lang === 'en' ? 'Imported' : (lang === 'zh' ? '已从 CSV 导入' : (lang === 'ja' ? 'CSV から' : 'CSV에서'))}
-  data-imported-json-prefix={lang === 'en' ? 'Imported' : (lang === 'zh' ? '已从 JSON 导入' : (lang === 'ja' ? 'JSON から' : 'JSON에서'))}
-  data-lang={lang}
->
-
-  {/* Tab Bar */}
-  <div class="mdt-tabs" role="tablist">
-    <button class="mdt-tab active" data-tab="manual" role="tab" aria-selected="true">{L.tabManual}</button>
-    <button class="mdt-tab" data-tab="csv" role="tab" aria-selected="false">{L.tabCsv}</button>
-    <button class="mdt-tab" data-tab="json" role="tab" aria-selected="false">{L.tabJson}</button>
+<div class="mdt-wrap" data-lang={lang} data-strings={JSON.stringify(L)}>
+  <div class="mdt-bar">
+    <div class="mdt-tabs" role="tablist">
+      <button type="button" class="mdt-tab" role="tab" id="mdt-tab-edit" aria-selected="true" aria-controls="mdt-panel-edit" data-tab="edit">{L.tabEdit}</button>
+      <button type="button" class="mdt-tab" role="tab" id="mdt-tab-import" aria-selected="false" aria-controls="mdt-panel-import" data-tab="import" tabindex="-1">{L.tabImport}</button>
+    </div>
+    <button type="button" id="mdt-copy" class="btn-primary mdt-copy">{L.copy}</button>
   </div>
 
-  {/* Manual Editor Tab */}
-  <div class="mdt-tabpanel" id="mdt-panel-manual">
-    <div class="mdt-toolbar">
-      <button id="mdt-add-row" class="btn-ghost" type="button">{L.addRow}</button>
-      <button id="mdt-add-col" class="btn-ghost" type="button">{L.addCol}</button>
-      <button id="mdt-remove-row" class="btn-ghost" type="button">{L.removeRow}</button>
-      <button id="mdt-remove-col" class="btn-ghost" type="button">{L.removeCol}</button>
+  <div class="mdt-panel" id="mdt-panel-edit" role="tabpanel" aria-labelledby="mdt-tab-edit">
+    <div class="mdt-toolbar" role="toolbar" aria-label={L.toolbar}>
+      {ACTIONS.map(([id, label]) => <button type="button" class="mdt-act" data-act={id}>{label}</button>)}
     </div>
-    <div class="mdt-table-wrap">
-      <table class="mdt-table" id="mdt-table" aria-label="Editable table">
+    <div class="mdt-grid-wrap" id="mdt-grid-wrap">
+      <table class="mdt-grid" id="mdt-grid">
         <thead id="mdt-thead"></thead>
         <tbody id="mdt-tbody"></tbody>
       </table>
     </div>
+    <p class="mdt-hint">{L.gridHint}</p>
   </div>
 
-  {/* CSV Paste Tab */}
-  <div class="mdt-tabpanel hidden" id="mdt-panel-csv">
-    <label for="mdt-csv-input" class="mdt-label">{L.csvLabel}</label>
-    <textarea
-      id="mdt-csv-input"
-      class="mdt-textarea"
-      placeholder="name,age,city&#10;Alice,30,New York&#10;Bob,25,London"
-      spellcheck="false"
-      rows="8"
-    ></textarea>
+  <div class="mdt-panel" id="mdt-panel-import" role="tabpanel" aria-labelledby="mdt-tab-import" hidden>
+    <label for="mdt-import" class="tool-label">{L.importLabel}</label>
+    <textarea id="mdt-import" class="tool-textarea mdt-import" spellcheck="false" autocapitalize="off" autocomplete="off" rows="7" placeholder={L.importPlaceholder}></textarea>
+    <div class="mdt-import-opts">
+      <label class="mdt-opt"><span>{L.formatLabel}</span>
+        <select id="mdt-format" class="mdt-select">
+          {FORMATS.map(([v, label]) => <option value={v}>{label}</option>)}
+        </select>
+      </label>
+      <label class="mdt-opt"><input type="checkbox" id="mdt-first-header" checked /><span>{L.firstRowHeader}</span></label>
+      <button type="button" id="mdt-import-example" class="btn-ghost btn-sm">{L.importExample}</button>
+    </div>
   </div>
 
-  {/* JSON Paste Tab */}
-  <div class="mdt-tabpanel hidden" id="mdt-panel-json">
-    <label for="mdt-json-input" class="mdt-label">{L.jsonLabel}</label>
-    <textarea
-      id="mdt-json-input"
-      class="mdt-textarea"
-      placeholder='[{"name":"Alice","age":30},{"name":"Bob","age":25}]'
-      spellcheck="false"
-      rows="8"
-    ></textarea>
-  </div>
+  <p id="mdt-status" class="tool-status mdt-status" role="status" aria-live="polite"></p>
 
-  {/* Markdown Output */}
-  <div class="mdt-output-section">
-    <label class="mdt-label" for="mdt-output">
-      <span>{L.markdownOutput}</span>
-      <button id="mdt-copy" class="btn-copy" type="button">{L.copy}</button>
-    </label>
-    <textarea
-      id="mdt-output"
-      class="mdt-textarea mdt-output"
-      readonly
-      spellcheck="false"
-      rows="6"
-      placeholder={L.outputPlaceholder}
-    ></textarea>
-  </div>
-
-  <div id="mdt-status" class="mdt-status" aria-live="polite"></div>
-
-  <script is:inline>
-    (function () {
-      /* ── Labels from data attributes ── */
-      var wrap = document.currentScript
-        ? document.currentScript.closest('.mdt-wrap')
-        : document.querySelector('.mdt-wrap');
-      var COPY_LABEL = wrap ? wrap.dataset.copy : 'Copy';
-      var COPIED_LABEL = wrap ? wrap.dataset.copied : 'Copied!';
-      var HEADER_LABEL = wrap ? wrap.dataset.header : 'Header';
-      var pageLang = wrap ? (wrap.dataset.lang || 'en') : 'en';
-
-      /* ── i18n status messages ── */
-      var STATUS_STRINGS = {
-        en: {
-          csvImported: function(n) { return 'Imported ' + n + ' row(s) from CSV.'; },
-          jsonImported: function(n) { return 'Imported ' + n + ' row(s) from JSON.'; },
-          csvError: 'CSV error: ', jsonError: 'JSON error: '
-        },
-        zh: {
-          csvImported: function(n) { return '已从 CSV 导入 ' + n + ' 行。'; },
-          jsonImported: function(n) { return '已从 JSON 导入 ' + n + ' 行。'; },
-          csvError: 'CSV 错误：', jsonError: 'JSON 错误：'
-        },
-        ja: {
-          csvImported: function(n) { return 'CSV から ' + n + ' 行をインポートしました。'; },
-          jsonImported: function(n) { return 'JSON から ' + n + ' 行をインポートしました。'; },
-          csvError: 'CSV エラー：', jsonError: 'JSON エラー：'
-        },
-        ko: {
-          csvImported: function(n) { return 'CSV에서 ' + n + '개 행을 가져왔습니다.'; },
-          jsonImported: function(n) { return 'JSON에서 ' + n + '개 행을 가져왔습니다.'; },
-          csvError: 'CSV 오류: ', jsonError: 'JSON 오류: '
-        }
-      };
-      var ts = STATUS_STRINGS[pageLang] || STATUS_STRINGS.en;
-
-      /* ── State ── */
-      var COLS = 3;
-      var ROWS = 3;
-      var alignments = []; // 'left' | 'center' | 'right' per column
-
-      var thead = document.getElementById('mdt-thead');
-      var tbody = document.getElementById('mdt-tbody');
-      var outputEl = document.getElementById('mdt-output');
-      var statusEl = document.getElementById('mdt-status');
-      var copyBtn = document.getElementById('mdt-copy');
-
-      /* ── Helpers ── */
-      function setStatus(msg, isError) {
-        statusEl.textContent = msg;
-        statusEl.className = 'mdt-status ' + (isError ? 'error' : 'success');
-      }
-
-      function clearStatus() {
-        statusEl.textContent = '';
-        statusEl.className = 'mdt-status';
-      }
-
-      function getCellText(td) {
-        return td.textContent.trim();
-      }
-
-      function escapePipe(str) {
-        return str.replace(/\|/g, '\\|');
-      }
-
-      /* ── Build markdown from the editor table ── */
-      function generateMarkdown() {
-        var headers = [];
-        var ths = thead.querySelectorAll('th.mdt-cell');
-        for (var i = 0; i < ths.length; i++) {
-          headers.push(escapePipe(getCellText(ths[i])));
-        }
-
-        if (headers.length === 0) { outputEl.value = ''; return; }
-
-        var sep = [];
-        for (var c = 0; c < headers.length; c++) {
-          var al = alignments[c] || 'left';
-          if (al === 'center') sep.push(':---:');
-          else if (al === 'right') sep.push('---:');
-          else sep.push('---');
-        }
-
-        var lines = [];
-        lines.push('| ' + headers.join(' | ') + ' |');
-        lines.push('| ' + sep.join(' | ') + ' |');
-
-        var trs = tbody.querySelectorAll('tr');
-        for (var r = 0; r < trs.length; r++) {
-          var tds = trs[r].querySelectorAll('td.mdt-cell');
-          var cells = [];
-          for (var ci = 0; ci < tds.length; ci++) {
-            cells.push(escapePipe(getCellText(tds[ci])));
-          }
-          lines.push('| ' + cells.join(' | ') + ' |');
-        }
-
-        outputEl.value = lines.join('\n');
-      }
-
-      /* ── Alignment selector in each header ── */
-      function buildAlignSelect(colIdx) {
-        var wrap = document.createElement('span');
-        wrap.className = 'mdt-align-wrap';
-
-        var options = [
-          { val: 'left', label: '⇤' },
-          { val: 'center', label: '⇔' },
-          { val: 'right', label: '⇥' },
-        ];
-
-        options.forEach(function (opt) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.dataset.alignVal = opt.val;
-          btn.className = 'mdt-align-btn' + (alignments[colIdx] === opt.val ? ' active' : '');
-          btn.title = opt.val;
-          btn.textContent = opt.label;
-          btn.addEventListener('click', function (e) {
-            e.stopPropagation();
-            alignments[colIdx] = opt.val;
-            // update active state for siblings
-            var siblings = wrap.querySelectorAll('.mdt-align-btn');
-            siblings.forEach(function (s) {
-              s.classList.toggle('active', s.dataset.alignVal === opt.val);
-            });
-            generateMarkdown();
-            window.trackTool && window.trackTool('markdown_table_generator', 'align_' + opt.val);
-          });
-          wrap.appendChild(btn);
-        });
-
-        return wrap;
-      }
-
-      /* ── Wire up a header <th>: input regenerates markdown, focus selects all ── */
-      function attachHeaderCell(th) {
-        th.addEventListener('input', function () { generateMarkdown(); });
-        th.addEventListener('focus', function () {
-          var el = this;
-          setTimeout(function () {
-            var range = document.createRange();
-            range.selectNodeContents(el);
-            var sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-          }, 0);
-        });
-      }
-
-      /* ── Build/rebuild the editor table ── */
-      function buildTable(data) {
-        // data: { headers: string[], rows: string[][] }
-        COLS = data.headers.length;
-        ROWS = data.rows.length;
-
-        // Ensure alignments array is correct length
-        while (alignments.length < COLS) alignments.push('left');
-        alignments.length = COLS;
-
-        // Build header: row 1 = alignment controls, row 2 = editable text
-        thead.innerHTML = '';
-
-        var trAlign = document.createElement('tr');
-        trAlign.className = 'mdt-align-row';
-        data.headers.forEach(function (h, ci) {
-          var thAlign = document.createElement('th');
-          thAlign.className = 'mdt-align-cell';
-          thAlign.appendChild(buildAlignSelect(ci));
-          trAlign.appendChild(thAlign);
-        });
-        thead.appendChild(trAlign);
-
-        var trHead = document.createElement('tr');
-        trHead.className = 'mdt-header-row';
-        data.headers.forEach(function (h, ci) {
-          var th = document.createElement('th');
-          th.className = 'mdt-cell';
-          th.contentEditable = 'true';
-          th.spellcheck = false;
-          th.textContent = h;
-          attachHeaderCell(th);
-          trHead.appendChild(th);
-        });
-        thead.appendChild(trHead);
-
-        // Build body rows
-        tbody.innerHTML = '';
-        data.rows.forEach(function (row) {
-          var tr = document.createElement('tr');
-          for (var ci = 0; ci < COLS; ci++) {
-            var td = document.createElement('td');
-            td.className = 'mdt-cell';
-            td.contentEditable = 'true';
-            td.spellcheck = false;
-            td.textContent = row[ci] !== undefined ? row[ci] : '';
-            td.addEventListener('input', function () { generateMarkdown(); });
-            tr.appendChild(td);
-          }
-          tbody.appendChild(tr);
-        });
-
-        generateMarkdown();
-      }
-
-      function defaultHeaders(n) {
-        var h = [];
-        for (var i = 1; i <= n; i++) h.push(HEADER_LABEL + ' ' + i);
-        return h;
-      }
-
-      function defaultRows(r, c) {
-        var rows = [];
-        for (var i = 0; i < r; i++) {
-          var row = [];
-          for (var j = 0; j < c; j++) row.push('');
-          rows.push(row);
-        }
-        return rows;
-      }
-
-      /* ── Init with default 3×3 ── */
-      alignments = ['left', 'left', 'left'];
-      buildTable({ headers: defaultHeaders(3), rows: defaultRows(3, 3) });
-
-      /* ── Toolbar actions ── */
-      document.getElementById('mdt-add-row').addEventListener('click', function () {
-        var tr = document.createElement('tr');
-        for (var ci = 0; ci < COLS; ci++) {
-          var td = document.createElement('td');
-          td.className = 'mdt-cell';
-          td.contentEditable = 'true';
-          td.spellcheck = false;
-          td.addEventListener('input', function () { generateMarkdown(); });
-          tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-        ROWS++;
-        generateMarkdown();
-      });
-
-      document.getElementById('mdt-remove-row').addEventListener('click', function () {
-        if (ROWS <= 1) return;
-        tbody.removeChild(tbody.lastElementChild);
-        ROWS--;
-        generateMarkdown();
-      });
-
-      document.getElementById('mdt-add-col').addEventListener('click', function () {
-        alignments.push('left');
-        COLS++;
-
-        // Add align cell to the align row
-        var trAlign = thead.querySelector('tr.mdt-align-row');
-        var thAlign = document.createElement('th');
-        thAlign.className = 'mdt-align-cell';
-        thAlign.appendChild(buildAlignSelect(COLS - 1));
-        trAlign.appendChild(thAlign);
-
-        // Add header text cell to the header row
-        var trHead = thead.querySelector('tr.mdt-header-row');
-        var th = document.createElement('th');
-        th.className = 'mdt-cell';
-        th.contentEditable = 'true';
-        th.spellcheck = false;
-        th.textContent = HEADER_LABEL + ' ' + COLS;
-        attachHeaderCell(th);
-        trHead.appendChild(th);
-
-        // Add body cells
-        var trs = tbody.querySelectorAll('tr');
-        trs.forEach(function (tr) {
-          var td = document.createElement('td');
-          td.className = 'mdt-cell';
-          td.contentEditable = 'true';
-          td.spellcheck = false;
-          td.addEventListener('input', function () { generateMarkdown(); });
-          tr.appendChild(td);
-        });
-
-        generateMarkdown();
-      });
-
-      document.getElementById('mdt-remove-col').addEventListener('click', function () {
-        if (COLS <= 1) return;
-        alignments.pop();
-        COLS--;
-
-        var trAlign = thead.querySelector('tr.mdt-align-row');
-        if (trAlign && trAlign.lastElementChild) trAlign.removeChild(trAlign.lastElementChild);
-
-        var trHead = thead.querySelector('tr.mdt-header-row');
-        if (trHead && trHead.lastElementChild) trHead.removeChild(trHead.lastElementChild);
-
-        var trs = tbody.querySelectorAll('tr');
-        trs.forEach(function (tr) {
-          if (tr.lastElementChild) tr.removeChild(tr.lastElementChild);
-        });
-
-        generateMarkdown();
-      });
-
-      /* ── Tabs ── */
-      var tabs = document.querySelectorAll('.mdt-tab');
-      var panels = document.querySelectorAll('.mdt-tabpanel');
-
-      tabs.forEach(function (tab) {
-        tab.addEventListener('click', function () {
-          var target = tab.dataset.tab;
-
-          tabs.forEach(function (t) {
-            t.classList.toggle('active', t.dataset.tab === target);
-            t.setAttribute('aria-selected', t.dataset.tab === target ? 'true' : 'false');
-          });
-
-          panels.forEach(function (p) {
-            p.classList.toggle('hidden', p.id !== 'mdt-panel-' + target);
-          });
-
-          clearStatus();
-        });
-      });
-
-      /* ── Auto-detect delimiter for CSV ── */
-      function detectDelimiter(text) {
-        var firstLine = text.split('\n')[0];
-        var counts = {
-          ',': (firstLine.match(/,/g) || []).length,
-          '\t': (firstLine.match(/\t/g) || []).length,
-          ';': (firstLine.match(/;/g) || []).length,
-        };
-        if (counts['\t'] >= counts[','] && counts['\t'] >= counts[';']) return '\t';
-        if (counts[';'] > counts[',']) return ';';
-        return ',';
-      }
-
-      /* ── Simple CSV parser supporting quoted fields ── */
-      function parseCsv(text, delim) {
-        var rows = [];
-        var row = [];
-        var field = '';
-        var inQuote = false;
-        var i = 0;
-        var len = text.length;
-
-        while (i < len) {
-          var ch = text[i];
-          if (inQuote) {
-            if (ch === '"') {
-              if (i + 1 < len && text[i + 1] === '"') { field += '"'; i += 2; }
-              else { inQuote = false; i++; }
-            } else { field += ch; i++; }
-          } else {
-            if (ch === '"') { inQuote = true; i++; }
-            else if (ch === delim) { row.push(field); field = ''; i++; }
-            else if (ch === '\r') {
-              row.push(field); field = ''; rows.push(row); row = []; i++;
-              if (i < len && text[i] === '\n') i++;
-            } else if (ch === '\n') {
-              row.push(field); field = ''; rows.push(row); row = []; i++;
-            } else { field += ch; i++; }
-          }
-        }
-        if (field || row.length > 0) { row.push(field); rows.push(row); }
-        if (rows.length > 0) {
-          var last = rows[rows.length - 1];
-          if (last.length === 1 && last[0] === '') rows.pop();
-        }
-        return rows;
-      }
-
-      /* ── CSV Paste: parse on input ── */
-      document.getElementById('mdt-csv-input').addEventListener('input', function () {
-        var raw = this.value.trim();
-        if (!raw) { clearStatus(); return; }
-        try {
-          var delim = detectDelimiter(raw);
-          var parsed = parseCsv(raw, delim);
-          if (parsed.length < 1) throw new Error('No data found.');
-
-          var headers = parsed[0].map(function (h) { return h.trim(); });
-          var rows = parsed.slice(1).map(function (r) {
-            return r.map(function (c) { return c.trim(); });
-          });
-
-          alignments = headers.map(function () { return 'left'; });
-          buildTable({ headers: headers, rows: rows });
-          setStatus(ts.csvImported(rows.length), false);
-          window.trackTool && window.trackTool('markdown_table_generator', 'csv_import');
-        } catch (e) {
-          setStatus(ts.csvError + e.message, true);
-        }
-      });
-
-      /* ── engine:start ── */
-      // Columns are the keys of all objects, in the order they first appear (before: only the
-      // first object's keys). Objects and arrays in a cell are written as JSON text (before:
-      // "[object Object]"); null and missing keys are empty cells.
-      function jsonToTable(data) {
-        if (!Array.isArray(data)) throw new Error('JSON must be an array of objects.');
-        if (data.length === 0) throw new Error('JSON array is empty.');
-        var headers = [];
-        var seen = Object.create(null);
-        data.forEach(function (obj, i) {
-          if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
-            throw new Error('Item ' + (i + 1) + ' is not a plain object.');
-          }
-          Object.keys(obj).forEach(function (k) {
-            if (!(k in seen)) { seen[k] = true; headers.push(k); }
-          });
-        });
-        var rows = data.map(function (obj) {
-          return headers.map(function (k) {
-            if (!Object.prototype.hasOwnProperty.call(obj, k)) return '';
-            var v = obj[k];
-            if (v === null) return '';
-            if (typeof v === 'object') return JSON.stringify(v);
-            return String(v);
-          });
-        });
-        return { headers: headers, rows: rows };
-      }
-      /* ── engine:end ── */
-
-      /* ── JSON Paste: parse on input ── */
-      document.getElementById('mdt-json-input').addEventListener('input', function () {
-        var raw = this.value.trim();
-        if (!raw) { clearStatus(); return; }
-        try {
-          var table = jsonToTable(JSON.parse(raw));
-          var headers = table.headers;
-          var rows = table.rows;
-
-          alignments = headers.map(function () { return 'left'; });
-          buildTable({ headers: headers, rows: rows });
-          setStatus(ts.jsonImported(rows.length), false);
-          window.trackTool && window.trackTool('markdown_table_generator', 'json_import');
-        } catch (e) {
-          setStatus(ts.jsonError + e.message, true);
-        }
-      });
-
-      /* ── Copy button ── */
-      copyBtn.addEventListener('click', function () {
-        if (!outputEl.value) return;
-        navigator.clipboard.writeText(outputEl.value).then(function () {
-          copyBtn.textContent = COPIED_LABEL;
-          setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1500);
-          window.trackTool && window.trackTool('markdown_table_generator', 'copy');
-        });
-      });
-
-    })();
-  </script>
+  <section class="mdt-out" aria-labelledby="mdt-out-label">
+    <div class="mdt-out-head">
+      <span id="mdt-out-label" class="tool-label">{L.outputLabel}</span>
+      <div class="mdt-view" role="group">
+        <button type="button" class="mdt-view-btn" data-view="markdown" aria-pressed="true">{L.viewMarkdown}</button>
+        <button type="button" class="mdt-view-btn" data-view="preview" aria-pressed="false">{L.viewPreview}</button>
+      </div>
+      <button type="button" id="mdt-download" class="btn-ghost btn-sm">{L.download}</button>
+    </div>
+    <div class="mdt-out-opts">
+      <label class="mdt-opt"><span>{L.optStyle}</span>
+        <select id="mdt-style" class="mdt-select"><option value="aligned">{L.styleAligned}</option><option value="compact">{L.styleCompact}</option></select>
+      </label>
+      <label class="mdt-opt"><span>{L.optCellText}</span>
+        <select id="mdt-cell" class="mdt-select"><option value="markdown">{L.cellMarkdown}</option><option value="plain">{L.cellPlain}</option></select>
+      </label>
+      <label class="mdt-opt"><span>{L.optBreaks}</span>
+        <select id="mdt-breaks" class="mdt-select"><option value="br">{L.breaksBr}</option><option value="space">{L.breaksSpace}</option></select>
+      </label>
+      <label class="mdt-opt"><input type="checkbox" id="mdt-ambiguous" /><span>{L.optAmbiguous}</span></label>
+    </div>
+    <textarea id="mdt-output" class="tool-textarea mdt-output" readonly spellcheck="false" aria-labelledby="mdt-out-label"></textarea>
+    <div id="mdt-preview" class="mdt-preview" hidden></div>
+    <p id="mdt-notes" class="mdt-notes"></p>
+  </section>
 </div>
+
+<script>
+  const SLUG = 'markdown-table-generator';
+  const GRID_LIMIT = 1000;
+
+  /* ── engine:start ── */
+  // Plain JavaScript (no imports, no DOM): scripts/test-markdown-table-generator.mjs runs this block
+  // in Node. A table is { headers: string[], rows: string[][], align: string[] } where align is
+  // 'none' | 'left' | 'center' | 'right' per column and every cell is the text the user sees in the
+  // editor (line breaks as "\n").
+
+  // East Asian Width (UAX #11) from EastAsianWidth-18.0.0.txt: W and F ranges, and A ranges.
+  // Each entry is "<start - previous end>.<end - start>" in base 36.
+  var EAW_WIDE = '3cw.2n,3i3.1,e.1,5b.3,4.0,3.0,ei.1,m.1,r.7,h.b,18.0,b.5,4.0,e.0,9.1,i.1,6.1,9.0,6.0,m.0,8.1,2.0,5.0,3.0,8.0,5.1,t.0,10.0,2.0,5.2,2.0,1q.2,p.0,f.0,nw.1,1g.0,5.0,mj.p,2.2g,d.5x,r.26,3.2d,3.2u,6.16,2.2l,2.2d,a.1b,2.13,9.mkc,4.1i,wq.s,hw.8mb,6l9.e7,lt.9,n.y,2.i,2.3,46.2n,3k.6,m4a.4,c.6,a.5p6,11.x,2o.36,e.pd,f.1e,5y6.3,2.6,2.1,2.88,a.0,u.2,3.0,f.4,8.az,6bp.2e,a.m,5n2.0,5n.0,5b.0,3.9,k.0,2a.2,e.17,5.8,8.1,f.5,4b.w,d.8,2.1x,2.l,d.16,5.4,d.g,4.0,4.1y,2.0,2.56,3.1q,e.3,2.n,j.0,r.1,e.0,2f.2c,1d.1x,7.0,4.2,3.4,3.3,c.1,8.8,66.0,6.b,5.0,7w.1a,2.9,2.54,35.c,4.1y,2.0,4.h,2.c,4.b,zq.1ekd,3.1ekd';
+  var EAW_AMBIGUOUS = '4h.0,3.0,3.1,2.0,3.1,2.4,2.4,2.3,7.0,a.0,7.1,6.3,5.0,2.2,2.1,3.0,2.1,4.3,2.0,2.0,3.0,g.0,2.0,8.0,b.1,4.0,6.2,5.0,7.3,2.0,4.3,2.0,5.1,j.1,4.0,2r.0,2.0,2.0,2.0,2.0,2.0,2.0,2.0,39.0,g.0,2r.0,3.0,2.2,2.0,3.0,8.3,2.0,2.0,x.33,y.g,2.6,8.g,2.6,1k.0,f.1r,2.0,5hb.0,3.3,2.1,3.1,3.2,2.3,9.0,2.1,2.0,6.0,3.0,1i.0,b.0,2.3,14.0,2f.0,2.0,4.0,a.0,3.0,b.1,4.0,5.0,14.1,7.3,2.b,5.9,g.0,7.9,v.1,p.0,2.0,j.0,p.0,2.1,4.1,3.0,4.0,2.0,4.0,5.0,3.3,3.0,2.0,2.5,2.0,6.3,5.1,b.0,4.0,6.0,e.1,3.3,3.1,3.1,j.1,3.1,e.0,4.0,c.0,q.0,2b.0,9a.3t,2.2o,5.z,d.f,3.3,b.1,2.6,9.1,3.1,5.1,3.1,5.2,3.0,3.3,h.3,a.0,m.1,3.0,5.1,d.0,2.0,y.0,2.0,u.1,2.2,2.3,2.1,2.0,1b.1,w.0,7.7,2.4,2.c,2.0,5.1,2.6,3.0,2.3,2.1,2.1,1q.0,1l.9,rb.3,1db.7,yb5.4xr,zl.f,dq.0,1blv.a,6.t,3.1l,7.t,2.1,b.h,gxuc.6n,1e6p.1ekd,3.1ekd';
+
+  function decodeRanges(s) {
+    var out = [];
+    var prev = 0;
+    s.split(',').forEach(function (part) {
+      var p = part.split('.');
+      var start = prev + parseInt(p[0], 36);
+      var end = start + parseInt(p[1], 36);
+      out.push(start, end);
+      prev = end;
+    });
+    return out;
+  }
+  var WIDE_RANGES = decodeRanges(EAW_WIDE);
+  var AMBIGUOUS_RANGES = decodeRanges(EAW_AMBIGUOUS);
+
+  function inRanges(ranges, cp) {
+    var lo = 0;
+    var hi = ranges.length / 2 - 1;
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      if (cp < ranges[mid * 2]) hi = mid - 1;
+      else if (cp > ranges[mid * 2 + 1]) lo = mid + 1;
+      else return true;
+    }
+    return false;
+  }
+
+  // 'W' (Wide or Fullwidth), 'A' (Ambiguous) or 'N' (everything else, including Halfwidth and Narrow).
+  function eastAsianWidthClass(cp) {
+    if (inRanges(WIDE_RANGES, cp)) return 'W';
+    if (inRanges(AMBIGUOUS_RANGES, cp)) return 'A';
+    return 'N';
+  }
+
+  function eastAsianWidth(cp, ambiguousWide) {
+    var c = eastAsianWidthClass(cp);
+    return c === 'W' || (c === 'A' && ambiguousWide) ? 2 : 1;
+  }
+
+  // Column width of a string in a monospace font, by the rules of string-width 8.1.0 (the width
+  // markdownlint MD060 uses to check aligned tables): grapheme clusters; clusters made only of
+  // default-ignorable, control, mark or surrogate code points are 0; RGI emoji are 2; otherwise
+  // the East Asian Width of the first visible code point, plus trailing Halfwidth / Fullwidth
+  // Forms in the same cluster.
+  var ZERO_WIDTH_CLUSTER = /^(?:\p{Default_Ignorable_Code_Point}|\p{Control}|\p{Mark}|\p{Surrogate})+$/u;
+  var LEADING_NON_PRINTING = /^[\p{Default_Ignorable_Code_Point}\p{Control}\p{Format}\p{Mark}\p{Surrogate}]+/u;
+  var RGI_EMOJI = (function () {
+    try { return new RegExp('^\\p{RGI_Emoji}$', 'v'); }
+    catch (e) { return /^(?:\p{Regional_Indicator}{2}|\p{Extended_Pictographic}[\uFE0F\u{1F3FB}-\u{1F3FF}]?(?:\u200D\p{Extended_Pictographic}[\uFE0F\u{1F3FB}-\u{1F3FF}]?)*|[#*0-9]\uFE0F\u20E3)$/u; }
+  })();
+  var GRAPHEMES = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter() : null;
+
+  function graphemes(s) {
+    if (GRAPHEMES) {
+      var out = [];
+      var it = GRAPHEMES.segment(s)[Symbol.iterator]();
+      for (var n = it.next(); !n.done; n = it.next()) out.push(n.value.segment);
+      return out;
+    }
+    return Array.from(s);
+  }
+
+  function displayWidth(s, ambiguousWide) {
+    var width = 0;
+    var segs = graphemes(s);
+    for (var i = 0; i < segs.length; i++) {
+      var seg = segs[i];
+      if (ZERO_WIDTH_CLUSTER.test(seg)) continue;
+      if (RGI_EMOJI.test(seg)) { width += 2; continue; }
+      var base = seg.replace(LEADING_NON_PRINTING, '');
+      width += eastAsianWidth(base.codePointAt(0), ambiguousWide);
+      var rest = Array.from(seg).slice(1);
+      for (var j = 0; j < rest.length; j++) {
+        var cp = rest[j].codePointAt(0);
+        if (cp >= 0xff00 && cp <= 0xffef) width += eastAsianWidth(cp, ambiguousWide);
+      }
+    }
+    return width;
+  }
+
+  /* ── Cell text → Markdown ── */
+
+  function isAsciiPunct(ch) {
+    return /^[!-\/:-@\[-`{-~]$/.test(ch);
+  }
+
+  function isWordChar(ch) {
+    return !!ch && /[\p{L}\p{N}]/u.test(ch);
+  }
+
+  // Backslash-escape what CommonMark / GFM would read as inline syntax, so the cell shows the text
+  // as typed. Each escape is a CommonMark backslash escape of ASCII punctuation (spec 2.4).
+  function escapeInline(s) {
+    var chars = Array.from(s);
+    var out = '';
+    for (var i = 0; i < chars.length; i++) {
+      var ch = chars[i];
+      var prev = chars[i - 1];
+      var next = chars[i + 1];
+      if (ch === '\\') {
+        // A backslash is literal unless ASCII punctuation follows. A line break becomes <br>, so it
+        // counts as "<" here.
+        out += (next !== undefined && (isAsciiPunct(next) || next === '\n')) ? '\\\\' : '\\';
+      } else if (ch === '*' || ch === '`' || ch === '~' || ch === '[' || ch === '$') {
+        out += '\\' + ch;
+      } else if (ch === '_') {
+        // Underscores inside a word never start or end emphasis (CommonMark 6.2, rules 2 and 3).
+        out += (isWordChar(prev) && isWordChar(next)) ? '_' : '\\_';
+      } else if (ch === '<') {
+        // Raw HTML and autolinks start with "<" followed by a letter, "/", "!" or "?".
+        out += (next !== undefined && /[A-Za-z\/!?]/.test(next)) ? '\\<' : '<';
+      } else if (ch === '&') {
+        // Only an entity or numeric character reference changes the text.
+        var restText = chars.slice(i + 1, i + 40).join('');
+        out += /^(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{0,31});/.test(restText) ? '\\&' : '&';
+      } else {
+        out += ch;
+      }
+    }
+    return out;
+  }
+
+  // Escape "|" so the row is not split: a pipe stays escaped only when an odd number of
+  // backslashes precede it. GitHub (cmark-gfm), markdown-it and micromark agree on an odd count;
+  // with an even count ("\\|") micromark splits the cell and GitHub does not.
+  function escapePipes(s) {
+    var out = '';
+    var run = 0;
+    for (var i = 0; i < s.length; i++) {
+      var ch = s[i];
+      if (ch === '|') {
+        if (run % 2 === 0) out += '\\';
+        out += '|';
+        run = 0;
+      } else {
+        out += ch;
+        run = ch === '\\' ? run + 1 : 0;
+      }
+    }
+    return out;
+  }
+
+  // Returns the cell as one line of Markdown plus what was changed.
+  function encodeCell(text, opts) {
+    var info = { breaks: 0, tabs: 0, pipes: 0 };
+    var s = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+    if (s.indexOf('\t') >= 0) { info.tabs = s.split('\t').length - 1; s = s.replace(/\t/g, ' '); }
+    // GFM trims every cell; trim each line so "<br>" does not get stray spaces around it.
+    var lines = s.split('\n').map(function (l) { return l.replace(/^[ ]+|[ ]+$/g, ''); });
+    while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    while (lines.length > 1 && lines[0] === '') lines.shift();
+    info.breaks = lines.length - 1;
+    var br = opts.newline !== 'space';
+    var body = lines.map(function (l, i) {
+      var out = opts.plain ? escapeInline(l) : l;
+      // A backslash right before <br> would escape its "<": write it as a literal backslash.
+      if (br && i < lines.length - 1) {
+        var m = /\\+$/.exec(out);
+        if (m && m[0].length % 2 === 1) out += '\\';
+      }
+      return out;
+    }).join(br ? '<br>' : ' ');
+    var escaped = escapePipes(body);
+    info.pipes = escaped.length - body.length;
+    return { md: escaped, info: info };
+  }
+
+  function padCell(md, width, target, align) {
+    var gap = target - width;
+    if (gap <= 0) return md;
+    if (align === 'right') return repeat(' ', gap) + md;
+    if (align === 'center') {
+      var left = Math.floor(gap / 2);
+      return repeat(' ', left) + md + repeat(' ', gap - left);
+    }
+    return md + repeat(' ', gap);
+  }
+
+  function repeat(ch, n) {
+    var s = '';
+    for (var i = 0; i < n; i++) s += ch;
+    return s;
+  }
+
+  function delimiterCell(align, width) {
+    if (align === 'left') return ':' + repeat('-', width - 1);
+    if (align === 'center') return ':' + repeat('-', width - 2) + ':';
+    if (align === 'right') return repeat('-', width - 1) + ':';
+    return repeat('-', width);
+  }
+
+  // opts: { style: 'aligned' | 'compact', plain: bool, newline: 'br' | 'space', ambiguousWide: bool }
+  function buildMarkdown(table, opts) {
+    var cols = table.headers.length;
+    var align = [];
+    for (var c = 0; c < cols; c++) align.push(table.align[c] || 'none');
+    var stats = { breaks: 0, tabs: 0, pipes: 0 };
+    function enc(t) {
+      var r = encodeCell(t, opts);
+      stats.breaks += r.info.breaks; stats.tabs += r.info.tabs; stats.pipes += r.info.pipes;
+      return r.md;
+    }
+    var head = table.headers.map(enc);
+    var body = table.rows.map(function (row) {
+      var cells = [];
+      for (var c2 = 0; c2 < cols; c2++) cells.push(enc(row[c2] == null ? '' : row[c2]));
+      return cells;
+    });
+    var lines = [];
+    if (opts.style === 'compact') {
+      // One space on each side of every pipe; an empty cell is a single space ("| |").
+      var compactRow = function (cells) {
+        return '|' + cells.map(function (md) { return md === '' ? ' ' : ' ' + md + ' '; }).join('|') + '|';
+      };
+      lines.push(compactRow(head));
+      lines.push(compactRow(align.map(function (a) { return delimiterCell(a, a === 'center' ? 5 : 3 + (a === 'none' ? 0 : 1)); })));
+      body.forEach(function (cells) { lines.push(compactRow(cells)); });
+    } else {
+      var widths = [];
+      for (var c3 = 0; c3 < cols; c3++) {
+        var w = align[c3] === 'none' ? 3 : (align[c3] === 'center' ? 5 : 4);
+        w = Math.max(w, displayWidth(head[c3], opts.ambiguousWide));
+        body.forEach(function (cells) { w = Math.max(w, displayWidth(cells[c3], opts.ambiguousWide)); });
+        widths.push(w);
+      }
+      var row = function (cells) {
+        return '| ' + cells.map(function (md, i) {
+          return padCell(md, displayWidth(md, opts.ambiguousWide), widths[i], align[i]);
+        }).join(' | ') + ' |';
+      };
+      lines.push(row(head));
+      lines.push('| ' + align.map(function (a, i) { return delimiterCell(a, widths[i]); }).join(' | ') + ' |');
+      body.forEach(function (cells) { lines.push(row(cells)); });
+    }
+    return { markdown: lines.join('\n'), stats: stats };
+  }
+
+  /* ── Markdown table → table ── */
+
+  // Splits one table line the way GitHub (cmark-gfm) and markdown-it do: a "|" right after a
+  // backslash never splits, whatever comes before the backslash. Leading and trailing pipes are
+  // optional. Returns the raw cell strings (still escaped) and whether a "\\|" was seen.
+  function splitRow(line) {
+    var s = line.replace(/^[ \t]+|[ \t]+$/g, '');
+    if (s.charAt(0) === '|') s = s.slice(1);
+    var cells = [];
+    var cur = '';
+    var doubleBackslash = false;
+    var run = 0;
+    for (var i = 0; i < s.length; i++) {
+      var ch = s[i];
+      if (ch === '|' && run > 0) {
+        if (run % 2 === 0) doubleBackslash = true;
+        cur += '|';
+        run = 0;
+      } else if (ch === '|') {
+        cells.push(cur);
+        cur = '';
+        if (i === s.length - 1) { cur = null; break; }
+      } else {
+        cur += ch;
+        run = ch === '\\' ? run + 1 : 0;
+      }
+    }
+    if (cur !== null) cells.push(cur);
+    return { cells: cells.map(function (c) { return c.replace(/^[ \t]+|[ \t]+$/g, ''); }), doubleBackslash: doubleBackslash };
+  }
+
+  function hasUnescapedPipe(line) {
+    for (var i = 0; i < line.length; i++) {
+      if (line[i] === '\\') { i++; continue; }
+      if (line[i] === '|') return true;
+    }
+    return false;
+  }
+
+  function parseDelimiterRow(line) {
+    if (line === undefined || !/^ {0,3}\S/.test(line)) return null;
+    var parts = splitRow(line).cells;
+    if (!parts.length) return null;
+    var align = [];
+    for (var i = 0; i < parts.length; i++) {
+      var m = /^(:?)-+(:?)$/.exec(parts[i]);
+      if (!m) return null;
+      align.push(m[1] && m[2] ? 'center' : m[1] ? 'left' : m[2] ? 'right' : 'none');
+    }
+    return align;
+  }
+
+  // Lines that start another block end a table (GFM 0.29 section 4.10).
+  function startsBlock(line) {
+    return /^ {0,3}(?:>|#{1,6}(?:[ \t]|$)|```|~~~|(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)|(?:\*[ \t]*){3,}$|(?:-[ \t]*){3,}$|(?:_[ \t]*){3,}$|<)/.test(line);
+  }
+
+  // A cell of a parsed table: unescape "\|" (the table-level escape) and turn <br> into a line break.
+  function decodeCell(raw) {
+    return raw.replace(/\\\|/g, '|').replace(/<br\s*\/?>/gi, '\n');
+  }
+
+  // Finds the first GFM table in text (outside fenced code). Returns null when there is none.
+  function parseMarkdownTable(text) {
+    var lines = String(text).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
+    var fence = null;
+    var found = null;
+    var tables = 0;
+    for (var i = 0; i < lines.length - 1; i++) {
+      var line = lines[i];
+      var f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      if (fence) { if (f && f[1].charAt(0) === fence.charAt(0) && f[1].length >= fence.length) fence = null; continue; }
+      if (f) { fence = f[1]; continue; }
+      if (!/^ {0,3}\S/.test(line)) continue;
+      var align = parseDelimiterRow(lines[i + 1]);
+      if (!align) continue;
+      if (!hasUnescapedPipe(line) && !hasUnescapedPipe(lines[i + 1])) continue;
+      var head = splitRow(line);
+      if (head.cells.length !== align.length) continue;
+      tables++;
+      var body = [];
+      var j = i + 2;
+      for (; j < lines.length; j++) {
+        if (lines[j].trim() === '' || startsBlock(lines[j])) break;
+        body.push(splitRow(lines[j]));
+      }
+      if (!found) found = { head: head, align: align, body: body, startLine: i + 1, endLine: j };
+      i = j - 1;
+    }
+    if (!found) return null;
+    var cols = found.align.length;
+    var longest = cols;
+    var extraRows = 0;
+    var doubleBackslash = found.head.doubleBackslash ? 1 : 0;
+    found.body.forEach(function (r) {
+      if (r.cells.length > cols) { extraRows++; longest = Math.max(longest, r.cells.length); }
+      if (r.doubleBackslash) doubleBackslash++;
+    });
+    var headers = found.head.cells.map(decodeCell);
+    var alignOut = found.align.slice();
+    var added = [];
+    for (var c = cols; c < longest; c++) { headers.push('Column ' + (c + 1)); alignOut.push('none'); added.push(c + 1); }
+    var rows = found.body.map(function (r) {
+      var out = [];
+      for (var k = 0; k < longest; k++) out.push(r.cells[k] === undefined ? '' : decodeCell(r.cells[k]));
+      return out;
+    });
+    return {
+      table: { headers: headers, rows: rows, align: alignOut },
+      tables: tables,
+      startLine: found.startLine,
+      endLine: found.endLine,
+      extraRows: extraRows,
+      addedColumns: added,
+      doubleBackslash: doubleBackslash,
+    };
+  }
+
+  // A table typed with full-width pipes "｜" (U+FF5C) is not a GFM table: every renderer shows it
+  // as text. Read it with ASCII pipes, and in the delimiter row also accept full-width hyphens
+  // and colons, then report it. Returns null when that does not give a table either.
+  function parseFullwidthTable(text) {
+    var s = String(text);
+    if (s.indexOf('\uff5c') < 0) return null;
+    var lines = s.replace(/\r\n?/g, '\n').split('\n').map(function (l) {
+      var t = l.replace(/\uff5c/g, '|');
+      if (/^[\s|:\-\uff0d\u30fc\u2015\u2500\uff1a]+$/.test(t) && /[-\uff0d\u30fc\u2015\u2500]/.test(t)) {
+        t = t.replace(/[\uff0d\u30fc\u2015\u2500]/g, '-').replace(/\uff1a/g, ':');
+      }
+      return t;
+    });
+    var p = parseMarkdownTable(lines.join('\n'));
+    if (p) p.fullwidth = true;
+    return p;
+  }
+
+  /* ── CSV / TSV ── */
+
+  // RFC 4180 with the leniency spreadsheets need: a quote opens a quoted field only at the start of
+  // a field ("5" pipe" stays as typed), "" inside quotes is one quote, and a closing quote that is
+  // not followed by the delimiter or a line break is kept as text.
+  function parseDelimited(text, delim) {
+    var s = String(text).replace(/^\uFEFF/, '');
+    var rows = [];
+    var row = [];
+    var field = '';
+    var i = 0;
+    var n = s.length;
+    var atStart = true;
+    while (i < n) {
+      var ch = s[i];
+      if (atStart && ch === '"') {
+        var j = i + 1;
+        var val = '';
+        var closed = false;
+        while (j < n) {
+          if (s[j] === '"') {
+            if (s[j + 1] === '"') { val += '"'; j += 2; continue; }
+            closed = true; j++; break;
+          }
+          val += s[j]; j++;
+        }
+        var after = s[j];
+        if (closed && (j >= n || after === delim || after === '\n' || after === '\r')) {
+          field = val; i = j; atStart = false; continue;
+        }
+        // Not a well-formed quoted field: read it as plain text.
+        field += '"'; i++; atStart = false; continue;
+      }
+      atStart = false;
+      if (ch === delim) { row.push(field); field = ''; atStart = true; i++; }
+      else if (ch === '\r' || ch === '\n') {
+        row.push(field); rows.push(row); row = []; field = ''; atStart = true;
+        i += (ch === '\r' && s[i + 1] === '\n') ? 2 : 1;
+      } else { field += ch; i++; }
+    }
+    if (!atStart || field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  function countOutsideQuotes(line, ch) {
+    var n = 0;
+    var q = false;
+    for (var i = 0; i < line.length; i++) {
+      if (line[i] === '"') q = !q;
+      else if (!q && line[i] === ch) n++;
+    }
+    return n;
+  }
+
+  function detectDelimiter(text) {
+    var lines = String(text).replace(/^\uFEFF/, '').split(/\r\n?|\n/).filter(function (l) { return l !== ''; }).slice(0, 20);
+    if (!lines.length) return ',';
+    var best = ',';
+    var bestScore = -1;
+    ['\t', ',', ';', '|'].forEach(function (d) {
+      var counts = lines.map(function (l) { return countOutsideQuotes(l, d); });
+      if (counts[0] === 0) return;
+      var same = counts.filter(function (c) { return c === counts[0]; }).length;
+      var score = same * 1000 + counts[0] + (d === '\t' ? 0.5 : 0);
+      if (score > bestScore) { bestScore = score; best = d; }
+    });
+    return best;
+  }
+
+  /* ── Rows → table ── */
+
+  function columnLabel(prefix, i) {
+    return prefix + ' ' + (i + 1);
+  }
+
+  // rows: string[][] (first row is the header when firstRowHeader). Rows shorter than the widest
+  // row get empty cells; the header gets "Column N" for columns it does not have.
+  function rowsToTable(rows, firstRowHeader, columnPrefix) {
+    var prefix = columnPrefix || 'Column';
+    var width = 0;
+    rows.forEach(function (r) { if (r.length > width) width = r.length; });
+    if (width === 0) throw tableError('noData');
+    var headerSrc = firstRowHeader ? rows[0] : [];
+    var body = firstRowHeader ? rows.slice(1) : rows;
+    var added = [];
+    var headers = [];
+    for (var c = 0; c < width; c++) {
+      if (c < headerSrc.length) headers.push(headerSrc[c]);
+      else { headers.push(columnLabel(prefix, c)); if (firstRowHeader) added.push(c + 1); }
+    }
+    var out = body.map(function (r) {
+      var cells = [];
+      for (var k = 0; k < width; k++) cells.push(r[k] === undefined ? '' : r[k]);
+      return cells;
+    });
+    var align = [];
+    for (var a = 0; a < width; a++) align.push('none');
+    return { table: { headers: headers, rows: out, align: align }, addedColumns: added };
+  }
+
+  function tableError(code, args) {
+    var e = new Error(code);
+    e.code = code;
+    e.args = args || {};
+    return e;
+  }
+
+  /* ── JSON ── */
+
+  function jsonCell(v) {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  }
+
+  // Columns are the keys of all objects, in the order they first appear. Objects and arrays in a
+  // cell are written as JSON text; null and missing keys are empty cells. An array of arrays is
+  // read as rows; a single object is one row.
+  function jsonToTable(data) {
+    if (data !== null && typeof data === 'object' && !Array.isArray(data)) data = [data];
+    if (!Array.isArray(data)) throw tableError('jsonNotArray');
+    if (data.length === 0) throw tableError('jsonEmpty');
+    if (data.every(Array.isArray)) {
+      return { headers: null, rows: data.map(function (r) { return r.map(jsonCell); }) };
+    }
+    var headers = [];
+    var seen = Object.create(null);
+    data.forEach(function (obj, i) {
+      if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+        throw tableError('jsonItem', { n: i + 1 });
+      }
+      Object.keys(obj).forEach(function (k) {
+        if (!(k in seen)) { seen[k] = true; headers.push(k); }
+      });
+    });
+    var rows = data.map(function (obj) {
+      return headers.map(function (k) {
+        if (!Object.prototype.hasOwnProperty.call(obj, k)) return '';
+        return jsonCell(obj[k]);
+      });
+    });
+    return { headers: headers, rows: rows };
+  }
+
+  /* ── HTML table grid ── */
+
+  // rows: [{ text, colspan, rowspan, th }][] read from a <table> in document order. Places cells
+  // the way the HTML table model does (rowspan carries down, colspan spreads right); a spanned
+  // slot gets the cell's text only in its first slot and empty text in the rest.
+  function gridFromHtmlRows(rows) {
+    var grid = [];
+    var spans = 0;
+    rows.forEach(function (cells, r) {
+      if (!grid[r]) grid[r] = [];
+      var c = 0;
+      cells.forEach(function (cell) {
+        while (grid[r][c] !== undefined) c++;
+        var cs = Math.max(1, Math.min(1000, cell.colspan | 0 || 1));
+        var rs = Math.max(1, Math.min(65534, cell.rowspan | 0 || 1));
+        if (rs > rows.length - r) rs = rows.length - r;
+        if (cs > 1 || rs > 1) spans++;
+        for (var dr = 0; dr < rs; dr++) {
+          if (!grid[r + dr]) grid[r + dr] = [];
+          for (var dc = 0; dc < cs; dc++) grid[r + dr][c + dc] = (dr === 0 && dc === 0) ? cell.text : '';
+        }
+        c += cs;
+      });
+    });
+    var out = grid.map(function (row) {
+      var a = [];
+      for (var k = 0; k < row.length; k++) a.push(row[k] === undefined ? '' : row[k]);
+      return a;
+    });
+    return { rows: out, spans: spans };
+  }
+
+  // Reads the first <table> under root. A is a small adapter so the same code runs on browser DOM
+  // nodes and on parse5 nodes in the test: name(n) lower-case tag or '#text', children(n),
+  // text(n) for text nodes, attr(n, name).
+  var BLOCK_TAGS = { p: 1, div: 1, li: 1, ul: 1, ol: 1, dl: 1, dt: 1, dd: 1, h1: 1, h2: 1, h3: 1, h4: 1, h5: 1, h6: 1, pre: 1, blockquote: 1, table: 1, tr: 1, section: 1, article: 1, header: 1, footer: 1 };
+  var SKIP_TAGS = { script: 1, style: 1, template: 1, noscript: 1 };
+
+  function findFirst(node, tag, A) {
+    if (A.name(node) === tag) return node;
+    var kids = A.children(node);
+    for (var i = 0; i < kids.length; i++) {
+      var f = findFirst(kids[i], tag, A);
+      if (f) return f;
+    }
+    return null;
+  }
+
+  function cellTextOf(node, A) {
+    var out = '';
+    function walk(n) {
+      var name = A.name(n);
+      if (name === '#text') { out += A.text(n).replace(/[ \t\n\r\f]+/g, ' '); return; }
+      if (name === '#comment' || SKIP_TAGS[name]) return;
+      if (name === 'br') { out += '\n'; return; }
+      var block = !!BLOCK_TAGS[name];
+      if (block) out += '\n';
+      A.children(n).forEach(walk);
+      if (block) out += '\n';
+      if (name === 'td' || name === 'th') out += ' ';
+    }
+    A.children(node).forEach(walk);
+    return out.replace(/\u00a0/g, ' ').split('\n')
+      .map(function (l) { return l.replace(/^ +| +$/g, ''); })
+      .join('\n').replace(/\n{2,}/g, '\n').replace(/^\n+|\n+$/g, '');
+  }
+
+  function htmlTableRows(root, A) {
+    var table = findFirst(root, 'table', A);
+    if (!table) return null;
+    var head = [];
+    var body = [];
+    var foot = [];
+    function rowsOf(section, into) {
+      A.children(section).forEach(function (ch) { if (A.name(ch) === 'tr') into.push(ch); });
+    }
+    A.children(table).forEach(function (ch) {
+      var n = A.name(ch);
+      if (n === 'thead') rowsOf(ch, head);
+      else if (n === 'tbody') rowsOf(ch, body);
+      else if (n === 'tfoot') rowsOf(ch, foot);
+      else if (n === 'tr') body.push(ch);
+    });
+    var trs = head.concat(body, foot);
+    var allTh = false;
+    var rows = trs.map(function (tr, ri) {
+      var cells = [];
+      A.children(tr).forEach(function (c) {
+        var n = A.name(c);
+        if (n !== 'td' && n !== 'th') return;
+        cells.push({
+          text: cellTextOf(c, A),
+          colspan: parseInt(A.attr(c, 'colspan') || '1', 10) || 1,
+          rowspan: parseInt(A.attr(c, 'rowspan') || '1', 10) || 1,
+          th: n === 'th',
+        });
+      });
+      if (ri === 0) allTh = cells.length > 0 && cells.every(function (x) { return x.th; });
+      return cells;
+    }).filter(function (cells) { return cells.length > 0; });
+    return { rows: rows, headerRow: head.length > 0 || allTh };
+  }
+
+  /* ── Format detection ── */
+
+  function detectFormat(text) {
+    var s = String(text).replace(/^\uFEFF/, '');
+    var t = s.trim();
+    if (!t) return 'empty';
+    if (t.charAt(0) === '[' || t.charAt(0) === '{') {
+      try { JSON.parse(t); return 'json'; } catch (e) { /* fall through */ }
+    }
+    if (/<table[\s>]/i.test(s)) return 'html';
+    if (parseMarkdownTable(s) || parseFullwidthTable(s)) return 'markdown';
+    return detectDelimiter(s) === '\t' ? 'tsv' : 'csv';
+  }
+
+  /* ── Editing ── */
+
+  function cloneTable(t) {
+    return { headers: t.headers.slice(), rows: t.rows.map(function (r) { return r.slice(); }), align: t.align.slice() };
+  }
+
+  function emptyTable(cols, rows, headerPrefix) {
+    var t = { headers: [], rows: [], align: [] };
+    for (var c = 0; c < cols; c++) { t.headers.push(columnLabel(headerPrefix || 'Header', c)); t.align.push('none'); }
+    for (var r = 0; r < rows; r++) { var row = []; for (var k = 0; k < cols; k++) row.push(''); t.rows.push(row); }
+    return t;
+  }
+
+  function insertRow(t, at) {
+    var row = t.headers.map(function () { return ''; });
+    t.rows.splice(Math.max(0, Math.min(at, t.rows.length)), 0, row);
+  }
+
+  function deleteRow(t, at) {
+    if (at >= 0 && at < t.rows.length) t.rows.splice(at, 1);
+  }
+
+  function insertColumn(t, at, label) {
+    var i = Math.max(0, Math.min(at, t.headers.length));
+    t.headers.splice(i, 0, label);
+    t.align.splice(i, 0, 'none');
+    t.rows.forEach(function (r) { r.splice(i, 0, ''); });
+  }
+
+  function deleteColumn(t, at) {
+    if (t.headers.length <= 1 || at < 0 || at >= t.headers.length) return;
+    t.headers.splice(at, 1);
+    t.align.splice(at, 1);
+    t.rows.forEach(function (r) { r.splice(at, 1); });
+  }
+
+  function moveColumn(t, from, to) {
+    if (to < 0 || to >= t.headers.length || from === to) return;
+    function mv(a) { var x = a.splice(from, 1)[0]; a.splice(to, 0, x); }
+    mv(t.headers); mv(t.align);
+    t.rows.forEach(mv);
+  }
+
+  function moveRow(t, from, to) {
+    if (to < 0 || to >= t.rows.length || from === to) return;
+    var x = t.rows.splice(from, 1)[0];
+    t.rows.splice(to, 0, x);
+  }
+
+  // Number in a cell: full-width digits and signs (NFKC), thousands separators, a currency sign in
+  // front and a percent sign after. Returns NaN for anything else.
+  function cellNumber(s) {
+    var t = String(s).normalize('NFKC').replace(/\u2212/g, '-').trim();
+    t = t.replace(/^([+-]?)[$€£¥₩]\s*/, '$1').replace(/\s*%$/, '');
+    if (/^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(t)) t = t.replace(/,/g, '');
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(t)) return NaN;
+    return parseFloat(t);
+  }
+
+  // Sorts the body rows by one column. Numbers sort numerically when every non-empty cell in the
+  // column is a number; otherwise text sorts with Intl.Collator (numeric). Empty cells go last in
+  // both directions; equal rows keep their order.
+  function sortRows(t, col, dir, locale) {
+    var vals = t.rows.map(function (r) { return r[col] == null ? '' : String(r[col]); });
+    var nonEmpty = vals.filter(function (v) { return v.trim() !== ''; });
+    var numeric = nonEmpty.length > 0 && nonEmpty.every(function (v) { return !isNaN(cellNumber(v)); });
+    var collator = new Intl.Collator(locale || undefined, { numeric: true, sensitivity: 'base' });
+    var idx = t.rows.map(function (_, i) { return i; });
+    var sign = dir === 'desc' ? -1 : 1;
+    idx.sort(function (a, b) {
+      var va = vals[a].trim();
+      var vb = vals[b].trim();
+      if (va === '' || vb === '') return (va === '' ? 1 : 0) - (vb === '' ? 1 : 0) || a - b;
+      var d = numeric ? cellNumber(va) - cellNumber(vb) : collator.compare(va, vb);
+      return d !== 0 ? sign * d : a - b;
+    });
+    t.rows = idx.map(function (i) { return t.rows[i]; });
+    return numeric ? 'number' : 'text';
+  }
+
+  // Header row becomes the first column. Alignment resets.
+  function transpose(t) {
+    var all = [t.headers].concat(t.rows);
+    var cols = t.headers.length;
+    var out = [];
+    for (var c = 0; c < cols; c++) {
+      out.push(all.map(function (r) { return r[c] == null ? '' : r[c]; }));
+    }
+    var headers = out[0];
+    var align = headers.map(function () { return 'none'; });
+    return { headers: headers, rows: out.slice(1), align: align };
+  }
+  /* ── engine:end ── */
+
+  const wrap = document.querySelector('.mdt-wrap') as HTMLElement;
+  const T: Record<string, string> = JSON.parse(wrap.dataset.strings || '{}');
+  const pageLang = wrap.dataset.lang || 'en';
+  const $ = (id: string) => document.getElementById(id) as any;
+
+  function fmt(s: string, vars: Record<string, any>) {
+    return String(s).replace(/\{(\w+)\}/g, (m, k) => (vars[k] !== undefined ? String(vars[k]) : m));
+  }
+  function track(action: string) {
+    (window as any).trackTool && (window as any).trackTool('markdown_table_generator', action);
+  }
+
+  const thead = $('mdt-thead') as HTMLElement;
+  const tbody = $('mdt-tbody') as HTMLElement;
+  const outputEl = $('mdt-output') as HTMLTextAreaElement;
+  const previewEl = $('mdt-preview') as HTMLElement;
+  const statusEl = $('mdt-status') as HTMLElement;
+  const notesEl = $('mdt-notes') as HTMLElement;
+  const importEl = $('mdt-import') as HTMLTextAreaElement;
+  const formatEl = $('mdt-format') as HTMLSelectElement;
+  const firstHeaderEl = $('mdt-first-header') as HTMLInputElement;
+  const styleEl = $('mdt-style') as HTMLSelectElement;
+  const cellEl = $('mdt-cell') as HTMLSelectElement;
+  const breaksEl = $('mdt-breaks') as HTMLSelectElement;
+  const ambiguousEl = $('mdt-ambiguous') as HTMLInputElement;
+  const copyBtn = $('mdt-copy') as HTMLButtonElement;
+
+  let table = emptyTable(3, 3, T.header);
+  let cur = { r: 0, c: 0 };
+  let view = 'markdown';
+  const undoStack: any[] = [];
+  let lastMarkdown = '';
+
+  function setStatus(msg: string, kind: 'success' | 'error' | 'info' | 'none') {
+    statusEl.textContent = msg;
+    statusEl.className = 'tool-status mdt-status ' + (msg ? kind : '');
+  }
+
+  function pushUndo() {
+    undoStack.push(cloneTable(table));
+    if (undoStack.length > 50) undoStack.shift();
+  }
+
+  function options() {
+    return {
+      style: styleEl.value === 'compact' ? 'compact' : 'aligned',
+      plain: cellEl.value === 'plain',
+      newline: breaksEl.value === 'space' ? 'space' : 'br',
+      ambiguousWide: ambiguousEl.checked,
+    };
+  }
+
+  /* ── Persistence: only the output options and the view ── */
+  const persist = (window as any).ztPersist;
+  (function restore() {
+    const saved = (persist && persist.load(SLUG)) || {};
+    if (saved.style === 'compact' || saved.style === 'aligned') styleEl.value = saved.style;
+    if (saved.cell === 'plain' || saved.cell === 'markdown') cellEl.value = saved.cell;
+    if (saved.breaks === 'space' || saved.breaks === 'br') breaksEl.value = saved.breaks;
+    ambiguousEl.checked = saved.ambiguous === true;
+    if (saved.view === 'preview') view = 'preview';
+  })();
+  function savePrefs() {
+    if (persist) persist.save(SLUG, { style: styleEl.value, cell: cellEl.value, breaks: breaksEl.value, ambiguous: ambiguousEl.checked, view: view });
+  }
+
+  /* ── Grid ── */
+  let editableMode = 'plaintext-only';
+  (function () {
+    const probe = document.createElement('div');
+    try { probe.contentEditable = 'plaintext-only'; if (probe.contentEditable !== 'plaintext-only') editableMode = 'true'; }
+    catch (e) { editableMode = 'true'; }
+  })();
+
+  function makeCell(r: number, c: number, text: string) {
+    const div = document.createElement('div');
+    div.className = 'mdt-ce';
+    div.contentEditable = editableMode;
+    div.spellcheck = false;
+    div.setAttribute('role', 'textbox');
+    div.setAttribute('aria-multiline', 'true');
+    div.setAttribute('aria-label', r < 0 ? fmt(T.headerAria, { c: c + 1 }) : fmt(T.cellAria, { r: r + 1, c: c + 1 }));
+    div.dataset.r = String(r);
+    div.dataset.c = String(c);
+    div.textContent = text;
+    return div;
+  }
+
+  function renderGrid() {
+    const cols = table.headers.length;
+    thead.textContent = '';
+    tbody.textContent = '';
+    const alignRow = document.createElement('tr');
+    alignRow.className = 'mdt-align-row';
+    const corner = document.createElement('td');
+    corner.className = 'mdt-rn';
+    alignRow.appendChild(corner);
+    for (let c = 0; c < cols; c++) {
+      const th = document.createElement('td');
+      th.className = 'mdt-align-cell';
+      const sel = document.createElement('select');
+      sel.className = 'mdt-align';
+      sel.dataset.c = String(c);
+      sel.setAttribute('aria-label', fmt(T.alignOf, { c: c + 1 }));
+      [['none', T.alignNone], ['left', T.alignLeft], ['center', T.alignCenter], ['right', T.alignRight]].forEach(([v, label]) => {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = label;
+        sel.appendChild(o);
+      });
+      sel.value = table.align[c] || 'none';
+      th.appendChild(sel);
+      alignRow.appendChild(th);
+    }
+    thead.appendChild(alignRow);
+    const headRow = document.createElement('tr');
+    const headRn = document.createElement('th');
+    headRn.className = 'mdt-rn';
+    headRow.appendChild(headRn);
+    for (let c = 0; c < cols; c++) {
+      const th = document.createElement('th');
+      th.className = 'mdt-td mdt-th';
+      th.appendChild(makeCell(-1, c, table.headers[c]));
+      headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    const frag = document.createDocumentFragment();
+    const shown = Math.min(table.rows.length, GRID_LIMIT);
+    for (let r = 0; r < shown; r++) {
+      const tr = document.createElement('tr');
+      const rn = document.createElement('th');
+      rn.className = 'mdt-rn';
+      rn.scope = 'row';
+      rn.textContent = String(r + 1);
+      tr.appendChild(rn);
+      for (let c = 0; c < cols; c++) {
+        const td = document.createElement('td');
+        td.className = 'mdt-td';
+        td.appendChild(makeCell(r, c, table.rows[r][c] == null ? '' : table.rows[r][c]));
+        tr.appendChild(td);
+      }
+      frag.appendChild(tr);
+    }
+    tbody.appendChild(frag);
+    markCurrent();
+  }
+
+  function cellEl_(r: number, c: number) {
+    return wrap.querySelector('.mdt-ce[data-r="' + r + '"][data-c="' + c + '"]') as HTMLElement | null;
+  }
+
+  function markCurrent() {
+    wrap.querySelectorAll('.mdt-td.is-current').forEach((el) => el.classList.remove('is-current'));
+    const el = cellEl_(cur.r, cur.c);
+    if (el && el.parentElement) el.parentElement.classList.add('is-current');
+  }
+
+  function focusCell(r: number, c: number) {
+    const el = cellEl_(r, c);
+    if (!el) return;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+  }
+
+  function readCell(el: HTMLElement) {
+    let t = el.innerText;
+    if (t.endsWith('\n')) t = t.slice(0, -1);
+    return t;
+  }
+
+  function clampCur() {
+    cur.c = Math.max(0, Math.min(cur.c, table.headers.length - 1));
+    cur.r = Math.max(-1, Math.min(cur.r, table.rows.length - 1));
+  }
+
+  const grid = $('mdt-grid') as HTMLElement;
+  grid.addEventListener('input', (e) => {
+    const el = (e.target as HTMLElement).closest('.mdt-ce') as HTMLElement | null;
+    if (!el) return;
+    const r = +el.dataset.r!;
+    const c = +el.dataset.c!;
+    const text = readCell(el);
+    if (r < 0) table.headers[c] = text; else table.rows[r][c] = text;
+    scheduleOutput();
+  });
+  grid.addEventListener('change', (e) => {
+    const sel = e.target as HTMLSelectElement;
+    if (!sel.classList.contains('mdt-align')) return;
+    table.align[+sel.dataset.c!] = sel.value;
+    updateOutput();
+    track('align_' + sel.value);
+  });
+  grid.addEventListener('focusin', (e) => {
+    const el = (e.target as HTMLElement).closest('.mdt-ce') as HTMLElement | null;
+    if (!el) return;
+    cur = { r: +el.dataset.r!, c: +el.dataset.c! };
+    markCurrent();
+  });
+  grid.addEventListener('keydown', (e: KeyboardEvent) => {
+    const el = (e.target as HTMLElement).closest('.mdt-ce') as HTMLElement | null;
+    if (!el || e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229 || e.metaKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault();
+    const r = +el.dataset.r!;
+    const c = +el.dataset.c!;
+    if (r + 1 >= Math.min(table.rows.length, GRID_LIMIT)) {
+      if (table.rows.length >= GRID_LIMIT) return;
+      pushUndo();
+      insertRow(table, table.rows.length);
+      renderGrid();
+      updateOutput();
+    }
+    cur = { r: r + 1, c: c };
+    focusCell(r + 1, c);
+  });
+
+  const DOM_ADAPTER = {
+    name: (n: any) => (n.nodeType === 3 ? '#text' : n.nodeType === 8 ? '#comment' : n.nodeType === 1 ? n.nodeName.toLowerCase() : '#other'),
+    children: (n: any) => Array.prototype.slice.call(n.nodeType === 1 && n.nodeName === 'TEMPLATE' ? [] : n.childNodes),
+    text: (n: any) => n.nodeValue || '',
+    attr: (n: any, a: string) => (n.getAttribute ? n.getAttribute(a) : null),
+  };
+
+  function matrixFromClipboard(html: string, text: string) {
+    if (html && /<table[\s>]/i.test(html)) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const res = htmlTableRows(doc, DOM_ADAPTER);
+      if (res && res.rows.length) {
+        const g = gridFromHtmlRows(res.rows);
+        return { rows: g.rows, spans: g.spans };
+      }
+    }
+    if (text && text.indexOf('\t') >= 0) {
+      const rows = parseDelimited(text.replace(/\r?\n$/, ''), '\t');
+      return { rows: rows, spans: 0 };
+    }
+    return null;
+  }
+
+  grid.addEventListener('paste', (e: ClipboardEvent) => {
+    const el = (e.target as HTMLElement).closest('.mdt-ce') as HTMLElement | null;
+    if (!el || !e.clipboardData) return;
+    const html = e.clipboardData.getData('text/html');
+    const text = e.clipboardData.getData('text/plain');
+    const m = matrixFromClipboard(html, text);
+    e.preventDefault();
+    if (m && (m.rows.length > 1 || (m.rows[0] && m.rows[0].length > 1))) {
+      const r0 = +el.dataset.r!;
+      const c0 = +el.dataset.c!;
+      pushUndo();
+      pasteMatrix(r0, c0, m.rows);
+      renderGrid();
+      updateOutput();
+      const where = r0 < 0 ? fmt(T.headerAria, { c: c0 + 1 }) : fmt(T.cellAria, { r: r0 + 1, c: c0 + 1 });
+      let msg = fmt(T.pasted, { rows: m.rows.length, cols: m.rows.reduce((a, r) => Math.max(a, r.length), 0), where: where });
+      if (m.spans) msg += ' ' + fmt(T.spans, { n: m.spans });
+      setStatus(msg, 'success');
+      focusCell(r0, c0);
+      track('paste_cells');
+      return;
+    }
+    const single = m && m.rows[0] ? m.rows[0][0] : text;
+    document.execCommand('insertText', false, single);
+  });
+
+  function pasteMatrix(r0: number, c0: number, rows: string[][]) {
+    rows.forEach((cells, i) => {
+      const r = r0 + i;
+      cells.forEach((v, j) => {
+        const c = c0 + j;
+        while (c >= table.headers.length) insertColumn(table, table.headers.length, T.header + ' ' + (table.headers.length + 1));
+        if (r < 0) { table.headers[c] = v; return; }
+        while (r >= table.rows.length) insertRow(table, table.rows.length);
+        table.rows[r][c] = v;
+      });
+    });
+  }
+
+  /* ── Toolbar ── */
+  $('mdt-panel-edit').querySelector('.mdt-toolbar').addEventListener('click', (e: Event) => {
+    const btn = (e.target as HTMLElement).closest('.mdt-act') as HTMLElement | null;
+    if (!btn) return;
+    const act = btn.dataset.act;
+    clampCur();
+    const r = cur.r;
+    const c = cur.c;
+    if (act === 'undo') {
+      const prev = undoStack.pop();
+      if (!prev) { setStatus(T.nothingToUndo, 'info'); return; }
+      table = prev;
+      clampCur();
+      renderGrid(); updateOutput();
+      setStatus(T.undone, 'success');
+      return;
+    }
+    pushUndo();
+    let msg = '';
+    let next = { r: r, c: c };
+    if (act === 'rowAbove') { insertRow(table, Math.max(0, r)); next = { r: Math.max(0, r), c: c }; }
+    else if (act === 'rowBelow') { insertRow(table, r + 1); next = { r: r + 1, c: c }; }
+    else if (act === 'deleteRow') { if (r < 0 || table.rows.length === 0) { undoStack.pop(); return; } deleteRow(table, r); next = { r: Math.min(r, table.rows.length - 1), c: c }; }
+    else if (act === 'colLeft') { insertColumn(table, c, T.header + ' ' + (table.headers.length + 1)); next = { r: r, c: c }; }
+    else if (act === 'colRight') { insertColumn(table, c + 1, T.header + ' ' + (table.headers.length + 1)); next = { r: r, c: c + 1 }; }
+    else if (act === 'deleteCol') { if (table.headers.length <= 1) { undoStack.pop(); return; } deleteColumn(table, c); next = { r: r, c: Math.min(c, table.headers.length - 1) }; }
+    else if (act === 'moveLeft') { if (c === 0) { undoStack.pop(); return; } moveColumn(table, c, c - 1); next = { r: r, c: c - 1 }; }
+    else if (act === 'moveRight') { if (c >= table.headers.length - 1) { undoStack.pop(); return; } moveColumn(table, c, c + 1); next = { r: r, c: c + 1 }; }
+    else if (act === 'sortAsc' || act === 'sortDesc') {
+      const kind = sortRows(table, c, act === 'sortAsc' ? 'asc' : 'desc', pageLang);
+      msg = fmt(T.sorted, { col: table.headers[c] || String(c + 1), kind: kind === 'number' ? T.sortedNumber : T.sortedText });
+    } else if (act === 'transpose') {
+      table = transpose(table);
+      msg = fmt(T.transposed, { rows: table.rows.length, cols: table.headers.length });
+      next = { r: 0, c: 0 };
+    } else if (act === 'clear') {
+      table = emptyTable(3, 3, T.header);
+      msg = T.cleared;
+      next = { r: 0, c: 0 };
+    }
+    cur = next;
+    clampCur();
+    renderGrid();
+    updateOutput();
+    if (msg) setStatus(msg, 'success');
+    if (act !== 'clear' && act !== 'transpose') focusCell(cur.r, cur.c);
+    track(act || '');
+  });
+
+  /* ── Tabs ── */
+  const tabs = Array.prototype.slice.call(wrap.querySelectorAll('.mdt-tab')) as HTMLElement[];
+  function selectTab(name: string, focus: boolean) {
+    tabs.forEach((t) => {
+      const on = t.dataset.tab === name;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      if (on && focus) t.focus();
+    });
+    $('mdt-panel-edit').hidden = name !== 'edit';
+    $('mdt-panel-import').hidden = name !== 'import';
+  }
+  tabs.forEach((t) => {
+    t.addEventListener('click', () => selectTab(t.dataset.tab!, false));
+    t.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      selectTab(t.dataset.tab === 'edit' ? 'import' : 'edit', true);
+    });
+  });
+
+  /* ── Import ── */
+  const FORMAT_NAMES: Record<string, string> = { csv: 'CSV', 'csv-semicolon': 'CSV', tsv: 'TSV', json: 'JSON', html: 'HTML', markdown: 'Markdown' };
+  let importTimer: any = null;
+
+  function runImport() {
+    const text = importEl.value;
+    if (!text.trim()) { setStatus('', 'none'); return; }
+    let format = formatEl.value;
+    if (format === 'auto') format = detectFormat(text);
+    const notes: string[] = [];
+    let next: any;
+    try {
+      if (format === 'json') {
+        let data: any;
+        try { data = JSON.parse(text.replace(/^\uFEFF/, '')); }
+        catch (err: any) { throw Object.assign(new Error('jsonSyntax'), { code: 'jsonSyntax', args: { msg: err.message } }); }
+        const j = jsonToTable(data);
+        if (j.headers) next = { headers: j.headers, rows: j.rows, align: j.headers.map(() => 'none') };
+        else { const t2 = rowsToTable(j.rows, firstHeaderEl.checked, T.column); next = t2.table; if (t2.addedColumns.length) notes.push(fmt(T.addedCols, { cols: t2.addedColumns.map((n: number) => T.column + ' ' + n).join(', ') })); }
+      } else if (format === 'html') {
+        const doc = new DOMParser().parseFromString(text, 'text/html');
+        const res = htmlTableRows(doc, DOM_ADAPTER);
+        if (!res || !res.rows.length) throw Object.assign(new Error('htmlNoTable'), { code: 'htmlNoTable', args: {} });
+        const g = gridFromHtmlRows(res.rows);
+        const t2 = rowsToTable(g.rows, firstHeaderEl.checked, T.column);
+        next = t2.table;
+        if (g.spans) notes.push(fmt(T.spans, { n: g.spans }));
+        if (t2.addedColumns.length) notes.push(fmt(T.addedCols, { cols: t2.addedColumns.map((n: number) => T.column + ' ' + n).join(', ') }));
+      } else if (format === 'markdown') {
+        const p = parseMarkdownTable(text) || parseFullwidthTable(text);
+        if (!p) throw Object.assign(new Error('mdNotFound'), { code: 'mdNotFound', args: {} });
+        next = p.table;
+        if (p.fullwidth) notes.push(T.mdFullwidth);
+        if (p.tables > 1) notes.push(fmt(T.mdMoreTables, { n: p.tables, from: p.startLine, to: p.endLine }));
+        if (p.extraRows) notes.push(fmt(T.mdExtra, { n: p.extraRows, cols: p.addedColumns.map((n: number) => 'Column ' + n).join(', ') }));
+        if (p.doubleBackslash) notes.push(fmt(T.mdDoubleBackslash, { n: p.doubleBackslash }));
+      } else {
+        const delim = format === 'tsv' ? '\t' : format === 'csv-semicolon' ? ';' : formatEl.value === 'auto' ? detectDelimiter(text) : ',';
+        const rows = parseDelimited(text, delim).filter((r: string[]) => !(r.length === 1 && r[0] === ''));
+        const t2 = rowsToTable(rows, firstHeaderEl.checked, T.column);
+        next = t2.table;
+        if (t2.addedColumns.length) notes.push(fmt(T.addedCols, { cols: t2.addedColumns.map((n: number) => T.column + ' ' + n).join(', ') }));
+        if (delim === '\t') format = 'tsv';
+      }
+    } catch (err: any) {
+      const code = err && err.code;
+      setStatus(code && T[code] ? fmt(T[code], err.args || {}) : String(err && err.message), 'error');
+      return;
+    }
+    pushUndo();
+    table = next;
+    cur = { r: 0, c: 0 };
+    clampCur();
+    renderGrid();
+    updateOutput();
+    setStatus([fmt(T.imported, { rows: table.rows.length, cols: table.headers.length, format: FORMAT_NAMES[format] || format })].concat(notes).join(' '), 'success');
+    track('import_' + format);
+  }
+  importEl.addEventListener('input', () => { clearTimeout(importTimer); importTimer = setTimeout(runImport, 250); });
+  formatEl.addEventListener('change', runImport);
+  firstHeaderEl.addEventListener('change', runImport);
+  $('mdt-import-example').addEventListener('click', () => { importEl.value = importEl.placeholder; runImport(); });
+
+  /* ── Output ── */
+  let outputTimer: any = null;
+  function scheduleOutput() { clearTimeout(outputTimer); outputTimer = setTimeout(updateOutput, 120); }
+
+  function updateOutput() {
+    clearTimeout(outputTimer);
+    const opts = options();
+    const res = buildMarkdown(table, opts);
+    lastMarkdown = res.markdown;
+    outputEl.value = res.markdown;
+    const notes = [fmt(T.stats, { rows: table.rows.length, cols: table.headers.length })];
+    if (res.stats.breaks) notes.push(fmt(opts.newline === 'space' ? T.noteBreaksSpace : T.noteBreaks, { n: res.stats.breaks }));
+    if (res.stats.tabs) notes.push(fmt(T.noteTabs, { n: res.stats.tabs }));
+    if (res.stats.pipes) notes.push(fmt(T.notePipes, { n: res.stats.pipes }));
+    if (table.rows.length > GRID_LIMIT) notes.push(fmt(T.gridLimit, { n: GRID_LIMIT, total: table.rows.length }));
+    notesEl.textContent = notes.join(' ');
+    if (view === 'preview') renderPreview();
+    if (!opts.plain) checkMarkdownCells(res.markdown);
+  }
+
+  let mm: any = null;
+  function loadMicromark() {
+    if (!mm) {
+      mm = Promise.all([import('micromark'), import('micromark-extension-gfm')]).then(([a, b]) => ({
+        render: (src: string) => a.micromark(src, { extensions: [b.gfm()], htmlExtensions: [b.gfmHtml()], allowDangerousHtml: false, allowDangerousProtocol: false }),
+      }));
+    }
+    return mm;
+  }
+
+  // Cells whose Markdown renders differently from the same text escaped as plain text.
+  let checkSeq = 0;
+  function checkMarkdownCells(markdown: string) {
+    const seq = ++checkSeq;
+    const cells: string[] = table.headers.slice();
+    table.rows.forEach((r: string[]) => { for (let i = 0; i < r.length; i++) cells.push(r[i]); });
+    const suspects = cells.filter((s) => s && /[*_`~\[<&$\\!:]/.test(s)).slice(0, 5000);
+    if (!suspects.length) return;
+    loadMicromark().then((lib: any) => {
+      if (seq !== checkSeq || markdown !== lastMarkdown) return;
+      let n = 0;
+      suspects.forEach((s) => {
+        const md = encodeCell(s, { plain: false, newline: 'br' }).md;
+        const plain = encodeCell(s, { plain: true, newline: 'br' }).md;
+        if (lib.render('|' + md + '|\n|-|') !== lib.render('|' + plain + '|\n|-|')) n++;
+      });
+      if (n) notesEl.textContent += ' ' + fmt(T.noteMarkdown, { n: n });
+    });
+  }
+
+  function renderPreview() {
+    const md = lastMarkdown;
+    if (!md) { previewEl.textContent = T.previewEmpty; return; }
+    loadMicromark().then((lib: any) => {
+      if (md !== lastMarkdown) return;
+      previewEl.innerHTML = lib.render(md);
+      // micromark escapes raw HTML, so <br> arrives as text. Turn it back into a line break
+      // outside code; nothing else from the cells becomes markup.
+      const walker = document.createTreeWalker(previewEl, NodeFilter.SHOW_TEXT);
+      const texts: Text[] = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n as Text);
+      texts.forEach((t) => {
+        if (!/<br\s*\/?>/i.test(t.data) || (t.parentElement && t.parentElement.closest('code'))) return;
+        const parts = t.data.split(/<br\s*\/?>/i);
+        const frag = document.createDocumentFragment();
+        parts.forEach((p, i) => { if (i) frag.appendChild(document.createElement('br')); frag.appendChild(document.createTextNode(p)); });
+        t.replaceWith(frag);
+      });
+      previewEl.querySelectorAll('a[href]').forEach((a) => { a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener noreferrer'); });
+    });
+  }
+
+  function setView(v: string) {
+    view = v;
+    wrap.querySelectorAll('.mdt-view-btn').forEach((b) => b.setAttribute('aria-pressed', (b as HTMLElement).dataset.view === v ? 'true' : 'false'));
+    outputEl.hidden = v !== 'markdown';
+    previewEl.hidden = v !== 'preview';
+    if (v === 'preview') renderPreview();
+  }
+  wrap.querySelectorAll('.mdt-view-btn').forEach((b) => b.addEventListener('click', () => { setView((b as HTMLElement).dataset.view!); savePrefs(); }));
+
+  [styleEl, cellEl, breaksEl, ambiguousEl].forEach((el) => el.addEventListener('change', () => { updateOutput(); savePrefs(); }));
+
+  /* ── Copy and download ── */
+  copyBtn.addEventListener('click', () => {
+    const text = lastMarkdown;
+    if (!text) return;
+    const done = () => {
+      copyBtn.textContent = T.copied;
+      setTimeout(() => { copyBtn.textContent = T.copy; }, 1500);
+      track('copy');
+    };
+    const fallback = () => {
+      outputEl.hidden = false;
+      outputEl.focus();
+      outputEl.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      if (view !== 'markdown') outputEl.hidden = true;
+      if (ok) done(); else setStatus(T.copyFailed, 'error');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
+  });
+
+  $('mdt-download').addEventListener('click', () => {
+    if (!lastMarkdown) return;
+    const blob = new Blob([lastMarkdown + '\n'], { type: 'text/markdown;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'table.md';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    track('download');
+  });
+
+  /* ── Site-wide Ctrl/Cmd+L clears the tool ── */
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
+    const widget = document.querySelector('.tool-widget');
+    if (!widget || !document.activeElement || !widget.contains(document.activeElement)) return;
+    setTimeout(() => {
+      pushUndo();
+      table = emptyTable(3, 3, T.header);
+      cur = { r: 0, c: 0 };
+      renderGrid();
+      updateOutput();
+      setStatus(T.cleared, 'success');
+    }, 0);
+  });
+
+  renderGrid();
+  setView(view);
+  updateOutput();
+</script>
 
 <style is:global>
   .mdt-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
 
-  /* ── Tabs ── */
-  .mdt-tabs {
+  .mdt-bar {
     display: flex;
-    gap: 0.25rem;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 0.75rem;
     border-bottom: 1px solid var(--color-border);
-    padding-bottom: 0;
   }
-
+  .mdt-tabs { display: flex; gap: 0.25rem; }
   .mdt-tab {
-    padding: 0.4rem 0.9rem;
+    min-height: 40px;
+    padding: 0.45rem 0.95rem;
     border: 1px solid transparent;
     border-bottom: none;
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     background: none;
     color: var(--color-text-secondary);
-    font-size: 0.85rem;
+    font-size: 0.88rem;
     cursor: pointer;
     position: relative;
     bottom: -1px;
   }
-
   .mdt-tab:hover { color: var(--color-text); }
-
-  .mdt-tab.active {
+  .mdt-tab[aria-selected="true"] {
     background: var(--color-bg);
     border-color: var(--color-border);
     border-bottom-color: var(--color-bg);
     color: var(--color-text);
-    font-weight: 600;
+    font-weight: 650;
   }
+  .mdt-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+  .mdt-copy { margin-bottom: 0.4rem; }
 
-  /* ── Tab panels ── */
-  .mdt-tabpanel { display: flex; flex-direction: column; gap: 0.5rem; }
-  .mdt-tabpanel.hidden { display: none; }
+  .mdt-panel { display: flex; flex-direction: column; gap: 0.5rem; }
+  .mdt-panel[hidden] { display: none; }
 
-  /* ── Toolbar ── */
-  .mdt-toolbar { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-
-  /* ── Editable table ── */
-  .mdt-table-wrap { overflow-x: auto; }
-
-  .mdt-table {
-    border-collapse: collapse;
-    min-width: 100%;
-    font-size: 0.88rem;
-  }
-
-  .mdt-table thead tr { background: var(--color-bg-secondary); }
-
-  .mdt-align-row { background: var(--color-bg); }
-
-  .mdt-align-cell {
-    border: 1px solid var(--color-border);
-    padding: 0.2rem 0.4rem;
-    text-align: center;
-    white-space: nowrap;
-  }
-
-  .mdt-cell {
-    border: 1px solid var(--color-border);
-    padding: 0.4rem 0.6rem;
-    min-width: 80px;
-    vertical-align: top;
-    white-space: pre-wrap;
-    word-break: break-word;
-    position: relative;
-  }
-
-  th.mdt-cell {
-    font-weight: 600;
-  }
-
-  .mdt-cell[contenteditable]:focus {
-    outline: 2px solid var(--color-primary);
-    outline-offset: -1px;
-  }
-
-  tr:hover td.mdt-cell { background: var(--color-bg-secondary); }
-
-  /* ── Alignment buttons ── */
-  .mdt-align-wrap {
-    display: inline-flex;
-    gap: 1px;
-    flex-shrink: 0;
-    margin-left: auto;
-  }
-
-  .mdt-align-btn {
-    min-width: 24px;
-    min-height: 24px;
-    padding: 0 4px;
-    font-size: 0.7rem;
-    border: 1px solid var(--color-border);
-    border-radius: 3px;
-    background: var(--color-bg);
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    line-height: 1.4;
-  }
-
-  .mdt-align-btn.active {
-    background: var(--color-primary);
-    color: #fff;
-    border-color: var(--color-primary);
-  }
-
-  .mdt-align-btn:hover:not(.active) { background: var(--color-bg-secondary); }
-
-  /* ── Label row ── */
-  .mdt-label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
+  .mdt-toolbar {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
   }
-
-  /* ── Textareas ── */
-  .mdt-textarea {
-    width: 100%;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    padding: 0.75rem;
+  .mdt-act {
+    flex: 0 0 auto;
+    min-height: 30px;
+    padding: 0.2rem 0.6rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    resize: vertical;
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    font-size: 0.8rem;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .mdt-act:hover { color: var(--color-text); background: var(--color-bg-secondary); }
+  .mdt-act:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+  .mdt-act:active { transform: scale(0.96); }
+
+  .mdt-grid-wrap { overflow-x: auto; max-height: 26rem; overflow-y: auto; border-radius: var(--radius-sm); }
+  .mdt-grid { border-collapse: collapse; min-width: 100%; font-size: 0.88rem; }
+  .mdt-grid td, .mdt-grid th { border: 1px solid var(--color-border); padding: 0; vertical-align: top; }
+  .mdt-rn {
+    width: 2.2rem;
+    min-width: 2.2rem;
+    padding: 0.35rem 0.3rem !important;
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 400;
+    text-align: right;
     background: var(--color-bg-secondary);
+    user-select: none;
+  }
+  .mdt-align-cell { background: var(--color-bg-secondary); padding: 0.2rem !important; }
+  .mdt-align {
+    width: 100%;
+    min-height: 26px;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+  .mdt-th { background: var(--color-bg-secondary); }
+  .mdt-ce {
+    min-width: 6rem;
+    min-height: 2.2rem;
+    padding: 0.45rem 0.6rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    outline: none;
     color: var(--color-text);
-    line-height: 1.5;
   }
+  .mdt-th .mdt-ce { font-weight: 650; }
+  .mdt-td.is-current { box-shadow: inset 0 0 0 2px var(--color-primary-light); }
+  .mdt-ce:focus { box-shadow: inset 0 0 0 2px var(--color-primary); }
+  .mdt-hint { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); }
 
-  .mdt-textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .mdt-import { min-height: 9rem; }
+  .mdt-import-opts, .mdt-out-opts { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }
+  .mdt-opt { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--color-text-secondary); }
+  .mdt-select { min-height: 32px; padding: 0.2rem 0.5rem; font-size: 0.82rem; border: 1px solid var(--color-border); }
 
-  .mdt-output { background: var(--color-bg-secondary); }
+  .mdt-status { margin: 0; }
 
-  /* ── Output section ── */
-  .mdt-output-section { display: flex; flex-direction: column; gap: 0.4rem; }
-
-  /* ── Status ── */
-  .mdt-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .mdt-status.success { color: #057a55; }
-  .mdt-status.error { color: #c0392b; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .mdt-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .mdt-status.error { color: #f87171; }
-  }
-  [data-theme="dark"] .mdt-status.success { color: #34d399; }
-  [data-theme="dark"] .mdt-status.error { color: #f87171; }
-  /* Output box. It comes last so it overrides the rules above, as the
-     meta-tag generator's former shared .mtg-* rules did. */
-  .mdt-output-section {
-    margin-top: 1.1rem;
+  .mdt-out {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    padding: 0.8rem;
     border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    overflow: hidden;
   }
-  .mdt-output-section > .mdt-label {
-    padding: 0.6rem 0.75rem 0 1rem;
+  .mdt-out-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+  .mdt-out-head .tool-label { margin-right: auto; }
+  .mdt-view { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
+  .mdt-view-btn {
+    min-height: 30px;
+    padding: 0.2rem 0.75rem;
+    border: none;
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    font-size: 0.8rem;
+    cursor: pointer;
   }
+  .mdt-view-btn + .mdt-view-btn { border-left: 1px solid var(--color-border); }
+  .mdt-view-btn[aria-pressed="true"] { background: var(--color-primary); color: var(--color-primary-contrast); }
+  .mdt-view-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
   .mdt-output {
-    margin: 0;
-    padding: 0.95rem 1rem;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    line-height: 1.55;
-    color: var(--color-text);
+    min-height: 12rem;
     white-space: pre;
     overflow-x: auto;
-    min-height: 240px;
+    overflow-wrap: normal;
     background: var(--color-bg);
+    font-size: 0.82rem;
   }
+  .mdt-output[hidden], .mdt-preview[hidden] { display: none; }
+  .mdt-preview {
+    min-height: 6rem;
+    padding: 0.75rem;
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    font-size: 0.9rem;
+  }
+  .mdt-preview table { border-collapse: collapse; }
+  .mdt-preview th, .mdt-preview td { border: 1px solid var(--color-border); padding: 0.35rem 0.7rem; }
+  .mdt-preview th { background: var(--color-bg-secondary); }
+  .mdt-preview code { font-family: var(--font-mono); font-size: 0.85em; padding: 0.05em 0.3em; border-radius: 4px; background: var(--color-bg-secondary); }
+  .mdt-notes { margin: 0; font-size: 0.8rem; color: var(--color-text-muted); }
+
   @media (max-width: 640px) {
-    .mdt-output { font-size: 0.78rem; padding: 0.7rem 0.8rem; }
+    .mdt-bar { flex-wrap: wrap-reverse; }
+    .mdt-copy { flex: 1 1 100%; margin-bottom: 0.25rem; }
+    .mdt-tab { min-height: 44px; }
+    .mdt-toolbar { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 0.15rem; }
+    .mdt-act { min-height: 36px; }
+    .mdt-align, .mdt-select { min-height: 32px; }
+    .mdt-view-btn { min-height: 36px; }
+    .mdt-ce { min-width: 5.5rem; }
+    .mdt-hint { display: none; }
+    .mdt-output { font-size: 0.78rem; }
   }
 </style>
