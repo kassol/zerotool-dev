@@ -120,6 +120,9 @@ const isPow2 = (n) => n > 0 && (n & (n - 1)) === 0;
   equal('sheet: spaces only → spritesheet', E.sanitizeSheetName('   '), 'spritesheet');
   equal('sheet: null → spritesheet', E.sanitizeSheetName(null), 'spritesheet');
   equal('sheet: quotes replaced', E.sanitizeSheetName('a"b\'c<d>'), 'a-b-c-d');
+  equal('sheet: RPG Maker MZ $ and ! prefixes kept', E.sanitizeSheetName('$!hero'), '$!hero');
+  equal('sheet: $ alone → spritesheet', E.sanitizeSheetName('$'), 'spritesheet');
+  check('css: $ sheet name gives a valid class', /^\.hero \{/.test(E.buildCss([], { image: '$hero.png', width: 1, height: 1 })));
 }
 
 // ---------- cssClassName ----------
@@ -733,7 +736,37 @@ if (regenIndex > 0) await regenerate(process.argv[regenIndex + 1]);
   check('script: options saved through ztPersist', script.includes('window.ztPersist.save(SLUG, prefs)'));
 }
 
-// @@MDX_CHECKS@@
+// ---------- page examples marked {/* ssg-check: {...} */} ----------
+{
+  const DEFAULT_OPTS = { layout: 'packed', maxWidth: 2048, spacing: 2, margin: 0, extrude: 0, pot: false, trim: true, alias: true };
+  const BUILD = { hash: E.buildJsonHash, array: E.buildJsonArray, xml: E.buildXml, css: E.buildCss };
+  let total = 0;
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/sprite-sheet-generator', lang + '.mdx'), 'utf8');
+    const marks = [...mdx.matchAll(/\{\/\* ssg-check: (\{.*?\}) \*\/\}/g)];
+    check('page ' + lang + ': has examples marked ssg-check', marks.length >= 2, marks.length + ' marks');
+    marks.forEach((m, n) => {
+      total++;
+      const c = JSON.parse(m[1]);
+      const list = c.items.map(([name, w, h, trim, key]) => ({
+        name, w, h, trim: trim ? { x: trim[0], y: trim[1], w: trim[2], h: trim[3] } : { x: 0, y: 0, w, h },
+        keyFull: (key || name) + ':f', keyTrim: (key || name) + ':t',
+      }));
+      const L = E.layoutSheet(list, { ...DEFAULT_OPTS, ...(c.opts || {}) });
+      const label = 'page ' + lang + ' example ' + (n + 1);
+      if (c.expect.size) deepEqual(label + ': sheet size', [L.width, L.height], c.expect.size);
+      if (c.expect.unique) equal(label + ': unique images', L.unique, c.expect.unique);
+      const out = BUILD[c.format || 'hash'](L.frames, { image: c.image || 'spritesheet.png', width: L.width, height: L.height, ratio: c.ratio || 1 });
+      for (const t of c.text || []) {
+        check(label + ': output contains ' + JSON.stringify(t), out.includes(t), out.slice(0, 400));
+        check(label + ': page shows ' + JSON.stringify(t), mdx.includes(t));
+      }
+      if (c.notes) deepEqual(label + ': export notes', E.exportNotes({ format: c.format || 'hash', imageFormat: 'png', frames: L.frames, width: L.width, height: L.height, ratio: c.ratio || 1 }).map((x) => x.code), c.notes);
+    });
+  }
+  check('page examples: at least 8 checked', total >= 8, total + ' checked');
+}
+
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
