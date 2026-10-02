@@ -1,465 +1,2252 @@
 ---
-// No props needed — tool widget is language-independent
+// CookieParserTool — reads a Cookie request header, Set-Cookie response lines (one per line,
+// with or without the header name, from curl -v / -i, DevTools or Headers.get) or a Netscape
+// cookies.txt file. Set-Cookie lines go through the RFC 6265bis parsing and storage rules, so
+// the page says whether a browser keeps, deletes or rejects each cookie and why; a request
+// simulation shows which cookies the next request carries and in what order. A builder writes
+// Set-Cookie headers. Nothing is stored or sent: the page is a `disabled` sensitive tool page
+// (src/data/persistence.ts), so it also loads no analytics or ad scripts.
+//
+// The pure functions sit between the `engine:start` / `engine:end` markers so
+// scripts/test-cookie-parser.mjs runs the shipped code. TOKEN_RULES and the sensitive-name
+// helpers are copied from HarFileAnalyzerTool.astro; the test checks they match.
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// Counts are [one, other]; {n} is the number. Other placeholders are named.
+const STRINGS = {
+  en: {
+    readAs: 'Read as',
+    modeAuto: 'Auto',
+    modeCookie: 'Cookie',
+    modeSet: 'Set-Cookie',
+    inputLabel: 'Cookie data',
+    placeholder: 'Paste a Cookie header, Set-Cookie lines, curl -b / -H options or a cookies.txt file',
+    exCookie: 'Cookie example',
+    exSet: 'Set-Cookie example',
+    clear: 'Clear',
+    parse: 'Parse',
+    copyJson: 'Copy JSON',
+    copyRedacted: 'Copy redacted',
+    copy: 'Copy',
+    copied: 'Copied!',
+    copyFailed: 'Copy failed',
+    copyFailedLong: 'Copy failed. Select the text and copy it by hand.',
+    statusEmpty: 'Paste a Cookie header, Set-Cookie lines or a cookies.txt file. Nothing leaves this page.',
+    statusNothing: 'No cookies found in the text.',
+    statusCookie: ['Cookie header: 1 cookie, {bytes} bytes.', 'Cookie header: {n} cookies, {bytes} bytes.'],
+    statusSet: ['Set-Cookie: 1 cookie ({stored} kept, {del} deleted, {rejected} rejected).', 'Set-Cookie: {n} cookies ({stored} kept, {del} deleted, {rejected} rejected).'],
+    statusNs: 'cookies.txt: {n} cookies.',
+    notes: {
+      autoSet: 'Read as Set-Cookie because the text has attributes such as Path or Expires. Choose “Cookie” to read it as a request header.',
+      joinedCookie: '{n} Cookie lines were joined into one header (HTTP/2 and HTTP/3 may split the header; RFC 9113 §8.2.3).',
+      splitCombined: 'Line {line} held {n} cookies joined with commas (as Headers.get("set-cookie") returns them) and was split. A browser treats one Set-Cookie line as one cookie.',
+      skippedHeaders: 'Skipped {n} other header lines.',
+      fromCurl: 'Cookies were taken from a curl command (-b, --cookie or -H).'
+    },
+    cookieTitle: 'Cookie header · {n} · {bytes} bytes',
+    dupExplain: 'Repeated names: {names}. A browser sends one cookie per name, domain and path, so cookies set on different paths or domains arrive together, longer path first. Servers pick differently: Express (the cookie package) keeps the first, Python’s http.cookies keeps the last.',
+    colName: 'Name',
+    colValue: 'Value',
+    colNotes: 'Notes',
+    colFlags: 'Flags',
+    emptyName: '(no name)',
+    dupBadge: 'repeat #{i}',
+    firstBadge: 'first',
+    bytesLabel: '{n} bytes',
+    rawValue: 'Raw: {v}',
+    kindJwt: 'JWT, alg {alg}.',
+    jwtExpires: 'Expires {when}.',
+    jwtExpired: 'Expired {when}.',
+    openJwt: 'Open in JWT Decoder',
+    kind_json: 'JSON value.',
+    kind_base64json: 'Base64-encoded JSON.',
+    known: {
+      ga: 'Google Analytics 4: distinguishes users, 2 years by default.',
+      ga4: 'Google Analytics 4: keeps session state for one property, 2 years by default.',
+      cfbm: 'Cloudflare bot management; expires after 30 minutes of inactivity.',
+      cfclearance: 'Cloudflare: proof that a challenge was passed.',
+      cfuvid: 'Cloudflare rate limiting: tells apart visitors who share an IP address.',
+      phpsessid: 'PHP session ID (default session.name).',
+      jsessionid: 'Java Servlet session ID (default name).',
+      connectsid: 'Node.js express-session session ID (default name).',
+      djangosession: 'Django session ID (default SESSION_COOKIE_NAME).',
+      djangocsrf: 'Django CSRF token (default CSRF_COOKIE_NAME).',
+      aspnet: 'ASP.NET session state ID (default name).',
+      aspnetcore: 'ASP.NET Core session ID (default name).',
+      xsrf: 'CSRF token that Angular HttpClient copies into the X-XSRF-TOKEN header.',
+      hmlvt: 'Baidu Tongji: the visitor’s earlier visit times.',
+      hmlpvt: 'Baidu Tongji: the visitor’s current visit time.'
+    },
+    setTitle: 'Set-Cookie · {n} · {stored} kept · {del} deleted · {rejected} rejected',
+    verdict: { stored: 'Kept', delete: 'Deletes', rejected: 'Rejected' },
+    editInBuilder: 'Edit in builder',
+    fDomain: 'Domain',
+    fPath: 'Path',
+    fLifetime: 'Lifetime',
+    fSecure: 'Secure',
+    fHttpOnly: 'HttpOnly',
+    fSameSite: 'SameSite',
+    fPartitioned: 'Partitioned',
+    fPriority: 'Priority',
+    fSize: 'Size',
+    yes: 'yes',
+    no: 'no',
+    hostOnlyIs: '{host} only (host-only)',
+    hostOnlyUnknown: 'the response host only (host-only)',
+    domainAll: '{domain} and its subdomains',
+    pathDefaultIs: '{path} (default path)',
+    pathDefaultUnknown: 'default: the directory of the response URL',
+    lifeSession: 'session cookie (until the browser session ends)',
+    lifeDelete: 'deletes any existing cookie with this name, domain and path',
+    lifeAt: '{date} ({rel})',
+    sameSiteDefault: 'not set (Chrome, Edge: Lax; Firefox, Safari: None)',
+    sizeOf: '{n} of 4096 bytes (name + value)',
+    attrsSummary: 'Attributes ({n})',
+    attrStatus: { ok: 'used', ignored: 'ignored', default: 'ignored, default path', unknown: 'not a cookie attribute', overridden: 'overridden by a later one', nonstandard: 'Chrome only' },
+    reject: {
+      ctl: 'Contains control character 0x{hex} at position {pos}: the whole line is ignored.',
+      tooBig: 'Name and value are {n} bytes, over the 4096-byte limit: the cookie is ignored.',
+      empty: 'Both name and value are empty: the cookie is ignored.',
+      domainNonAscii: 'Domain contains non-ASCII characters: the cookie is ignored. Use the punycode form (xn--…).',
+      domainMismatch: 'Domain={domain} does not cover the response host {host}: the cookie is ignored.',
+      secureOnHttp: 'Secure cookie sent from an http:// page: ignored (only https and localhost may set it).',
+      noneNeedsSecure: 'SameSite=None without Secure: rejected by Chrome 80+, Edge 86+ and Firefox 131+.',
+      partitionedNeedsSecure: 'Partitioned without Secure: rejected (CHIPS requires Secure).',
+      prefixSecure: '{prefix} prefix requires Secure: the cookie is ignored.',
+      prefixHost: '{prefix} prefix requires Secure, Path=/ and no Domain. Problem: {why}.',
+      prefixHttp: '{prefix} prefix requires Secure and HttpOnly: the cookie is ignored.',
+      namelessPrefix: 'A cookie without a name may not have a value starting with __Secure-, __Host- or __Http-: ignored.'
+    },
+    issues: {
+      emptyName: 'Empty name: the browser sends only the value.',
+      noEq: 'No “=”: the whole text is the value of a cookie without a name (RFC 6265bis). Many server parsers drop it.',
+      ctl: 'Contains a control character; browsers never send one.',
+      nameNotToken: 'The name contains “{ch}”, which RFC 6265 does not allow in a cookie name; some servers drop it.',
+      valueSpace: 'The value contains “{ch}”. Browsers keep it, but Python’s http.cookies drops the whole Cookie header. Percent-encode the value or put it in double quotes.',
+      valueOctet: 'The value contains “{ch}”, which RFC 6265 does not allow unencoded. Python’s http.cookies drops this cookie and every cookie after it. Percent-encode the value.',
+      valueComma: 'The value contains a comma. RFC 6265 asks servers to encode it; old proxies that fold headers may split here.',
+      phpName: 'PHP reads this name as $_COOKIE["{php}"] (it turns dots and spaces into underscores).',
+      quoted: 'Quoted value: the quotes are part of the value in browsers; some servers strip them.',
+      attrInCookie: '“{name}” looks like a Set-Cookie attribute. A Cookie request header never contains attributes; choose “Set-Cookie” if this came from a response.',
+      badPercent: 'A “%” is not followed by two hex digits; the value is shown as is.',
+      notUtf8: 'The percent-encoded bytes are not UTF-8; the value is shown as is.',
+      bothLifetimes: 'Both Max-Age and Expires are set: Max-Age wins.',
+      twoDigitYear: 'Two-digit year in Expires, read as {year}.',
+      capped400: 'Lifetime over 400 days: browsers cap it at 400 days (RFC 6265bis §5.5; Chrome since version 104).',
+      domainEmpty: 'Empty Domain attribute: treated as host-only.',
+      domainDotOnly: 'Domain=. is an empty domain: RFC 6265bis makes the cookie host-only, but Chrome 152 rejects it.',
+      domainDot: 'The leading dot in Domain is ignored; the cookie still reaches subdomains.',
+      domainSingleLabel: 'Domain={domain} has no dot. Browsers reject public suffixes such as com or co.jp; Chrome 152 also rejects localhost.',
+      domainWide: 'Domain makes the cookie visible to every subdomain of {domain}. Leave Domain out to keep it on one host.',
+      pathDefault: 'Path={value} does not start with “/”, so it is ignored and the default path is used.',
+      tabInside: 'Contains a tab inside the name or value. RFC 6265bis allows it, but Chrome 152 rejects the cookie.',
+      overridden: '{attr} appears more than once; only the last one counts.',
+      badDate: 'Expires={value} is not a date the cookie date algorithm can read, so it is ignored and the cookie lasts for the session.',
+      badMaxAge: 'Max-Age={value} is not a whole number, so it is ignored.',
+      maxAgePlus: 'Max-Age={value}: RFC 6265bis ignores a leading “+”, but Chrome 152 accepts it.',
+      attrTooLong: '{attr} value is {n} bytes, over 1024, so the attribute is ignored.',
+      sameSiteInvalid: 'SameSite={value} is not Strict, Lax or None, so the cookie behaves as if SameSite were not set.',
+      flagValue: '{attr}={value}: the value is ignored; the attribute is on.',
+      attr_removed: '{attr} was a Chrome experiment that has been removed; browsers ignore it.',
+      attr_rfc2109: '{attr} comes from the obsolete RFC 2109 and is ignored.',
+      attr_rfc2965: '{attr} comes from the obsolete RFC 2965 (Set-Cookie2) and is ignored.',
+      unknownAttr: '{attr} is not a cookie attribute and is ignored.',
+      unknownAttrSuggest: '{attr} is not a cookie attribute and is ignored. Did you mean {suggest}?',
+      priority: 'Priority is a Chrome-only attribute that decides which cookies go first when a domain has too many.',
+      noSecure: 'No Secure: the cookie is also sent over plain http://.',
+      noHttpOnly: 'No HttpOnly: page scripts can read it through document.cookie.',
+      noSameSite: 'No SameSite: Chrome 80+ and Edge 86+ treat it as Lax; Firefox and Safari still send it on cross-site requests. Set it explicitly.',
+      thirdParty: 'SameSite=None without Partitioned: a third-party cookie, which browsers may block.'
+    },
+    simTitle: 'Which cookies does the next request send?',
+    respUrl: 'Response URL (where these Set-Cookie lines came from)',
+    reqUrl: 'Next request URL',
+    respPlaceholder: 'https://www.example.com/account/login',
+    reqPlaceholder: 'https://www.example.com/account/orders',
+    ctxLabel: 'Request type',
+    ctx: { 'same-site': 'Same-site request', 'cross-top': 'Cross-site link (top-level GET)', 'cross-sub': 'Cross-site iframe, fetch, image or POST' },
+    simHeader: 'Cookie header for {url}',
+    simNone: 'No cookie is sent.',
+    simNeedsUrl: 'Enter the response URL to place these cookies on a host, then the next request URL.',
+    simNeedsReq: 'Enter the next request URL.',
+    simOrder: 'Order: longer paths first, then the cookie set earlier (RFC 6265bis §5.8.3). Chrome 152 gives a replaced cookie a new creation time.',
+    simLaxNote: 'Chrome and Edge treat cookies without SameSite as Lax. Firefox and Safari would send them here.',
+    skip: {
+      expired: '{name}: expired.',
+      domain: '{name}: set for {domain}, which does not cover this host.',
+      path: '{name}: path {path} does not match this URL.',
+      secure: '{name}: Secure, and this URL is not https.',
+      sameSiteStrict: '{name}: SameSite=Strict, not sent on cross-site requests.',
+      sameSiteLax: '{name}: SameSite=Lax, sent on cross-site top-level GET only.',
+      sameSiteDefault: '{name}: no SameSite, treated as Lax by Chrome and Edge.',
+      partitioned: '{name}: Partitioned, kept for the site where it was set.'
+    },
+    nsTitle: 'cookies.txt · {n} cookies',
+    nsBad: 'Lines {lines} do not have 7 tab-separated fields and were skipped.',
+    nsExpired: 'expired',
+    optsTitle: 'Options',
+    optDecode: 'Decode percent-encoded values (UTF-8)',
+    optSplit: 'Split Set-Cookie values joined with commas',
+    optJson: 'JSON for a Cookie header',
+    optJsonObject: 'Object, first value wins (Express)',
+    optJsonArray: 'Array, every cookie',
+    optRedact: 'Redacted copy hides',
+    optRedactAll: 'every value',
+    optRedactSensitive: 'session IDs and tokens only',
+    buildTitle: 'Build a Set-Cookie header',
+    bName: 'Name',
+    bValue: 'Value',
+    bEncode: 'Percent-encode the value',
+    bDomain: 'Domain (empty = this host only)',
+    bPath: 'Path',
+    bLife: 'Lifetime',
+    bLifeSession: 'Session',
+    bLifeMaxAge: 'Max-Age (seconds)',
+    bLifeExpires: 'Expires (UTC)',
+    bSameSite: 'SameSite',
+    bSameSiteUnset: 'not set',
+    bPriority: 'Priority (Chrome)',
+    bPriorityUnset: 'not set',
+    bOut: 'Set-Cookie header',
+    bDel: 'Header that deletes it later',
+    buildEncodeHint: 'The value has characters that RFC 6265 does not allow unencoded. Turn on percent-encoding.',
+    exampleCookie: '_ga=GA1.1.1234567890.1759363200; sessionid=k8Qe2Vz9LmP4tR7wX1cY3nB6; theme=dark; cart=%7B%22items%22%3A3%7D; sessionid=guest; token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDI0IiwibmFtZSI6ImRlbW8iLCJleHAiOjE3OTg3NjE2MDB9.c2lnbmF0dXJlLW5vdC12ZXJpZmllZA',
+    exampleSet: 'Set-Cookie: __Host-session=k8Qe2Vz9LmP4tR7wX1cY3nB6; Path=/; Secure; HttpOnly; SameSite=Lax\nSet-Cookie: theme=dark; Path=/; Max-Age=31536000\nSet-Cookie: promo=spring; Domain=.example.com; Path=/; SameSite=None\nSet-Cookie: cart=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\nSet-Cookie: lang=en; Path=/account; Expires=Wed, 21 Oct 26 07:28:00 GMT; Secure',
+    exampleRespUrl: 'https://www.example.com/account/login',
+    exampleReqUrl: 'https://www.example.com/account/orders'
+  },
+  zh: {
+    readAs: '解析为',
+    modeAuto: '自动',
+    modeCookie: 'Cookie',
+    modeSet: 'Set-Cookie',
+    inputLabel: 'Cookie 数据',
+    placeholder: '粘贴 Cookie 请求头、Set-Cookie 行、curl 的 -b / -H 参数，或 cookies.txt 文件内容',
+    exCookie: 'Cookie 示例',
+    exSet: 'Set-Cookie 示例',
+    clear: '清空',
+    parse: '解析',
+    copyJson: '复制 JSON',
+    copyRedacted: '复制脱敏版',
+    copy: '复制',
+    copied: '已复制',
+    copyFailed: '复制失败',
+    copyFailedLong: '复制失败，请手动选中文本复制。',
+    statusEmpty: '粘贴 Cookie 请求头、Set-Cookie 行或 cookies.txt 内容。数据不会离开本页。',
+    statusNothing: '文本里没有找到 Cookie。',
+    statusCookie: ['Cookie 请求头：1 个 Cookie，{bytes} 字节。', 'Cookie 请求头：{n} 个 Cookie，{bytes} 字节。'],
+    statusSet: ['Set-Cookie：1 个 Cookie（保存 {stored}，删除 {del}，拒收 {rejected}）。', 'Set-Cookie：{n} 个 Cookie（保存 {stored}，删除 {del}，拒收 {rejected}）。'],
+    statusNs: 'cookies.txt：{n} 个 Cookie。',
+    notes: {
+      autoSet: '文本里有 Path、Expires 等属性，已按 Set-Cookie 解析。如果它是请求头，请选“Cookie”。',
+      joinedCookie: '{n} 行 Cookie 已合并为一个请求头（HTTP/2、HTTP/3 允许把它拆成多行，RFC 9113 §8.2.3）。',
+      splitCombined: '第 {line} 行是用逗号连起来的 {n} 个 Cookie（Headers.get("set-cookie") 就会这样返回），已拆开。浏览器会把一行 Set-Cookie 当作一个 Cookie。',
+      skippedHeaders: '已跳过 {n} 行其他响应头。',
+      fromCurl: 'Cookie 取自 curl 命令（-b、--cookie 或 -H）。'
+    },
+    cookieTitle: 'Cookie 请求头 · {n} 个 · {bytes} 字节',
+    dupExplain: '重名：{names}。浏览器按“名称 + 域名 + 路径”区分 Cookie，在不同路径或域名上设置的同名 Cookie 会一起发送，路径长的在前。服务端取哪个各不相同：Express（cookie 包）取第一个，Python 的 http.cookies 取最后一个。',
+    colName: '名称',
+    colValue: '值',
+    colNotes: '说明',
+    colFlags: '标志',
+    emptyName: '（无名称）',
+    dupBadge: '第 {i} 个同名',
+    firstBadge: '第 1 个',
+    bytesLabel: '{n} 字节',
+    rawValue: '原文：{v}',
+    kindJwt: 'JWT，算法 {alg}。',
+    jwtExpires: '{when}过期。',
+    jwtExpired: '已于{when}过期。',
+    openJwt: '用 JWT 解码器打开',
+    kind_json: 'JSON 值。',
+    kind_base64json: 'Base64 编码的 JSON。',
+    known: {
+      ga: 'Google Analytics 4：区分访客，默认 2 年。',
+      ga4: 'Google Analytics 4：保存某个媒体资源的会话状态，默认 2 年。',
+      cfbm: 'Cloudflare 机器人管理；30 分钟无操作后过期。',
+      cfclearance: 'Cloudflare：已通过质询的凭证。',
+      cfuvid: 'Cloudflare 速率限制：区分共用同一 IP 的访客。',
+      phpsessid: 'PHP 会话 ID（session.name 默认值）。',
+      jsessionid: 'Java Servlet 会话 ID（默认名称）。',
+      connectsid: 'Node.js express-session 会话 ID（默认名称）。',
+      djangosession: 'Django 会话 ID（SESSION_COOKIE_NAME 默认值）。',
+      djangocsrf: 'Django CSRF 令牌（CSRF_COOKIE_NAME 默认值）。',
+      aspnet: 'ASP.NET 会话状态 ID（默认名称）。',
+      aspnetcore: 'ASP.NET Core 会话 ID（默认名称）。',
+      xsrf: 'Angular HttpClient 会把它复制到 X-XSRF-TOKEN 请求头的 CSRF 令牌。',
+      hmlvt: '百度统计：访客历史访问时间。',
+      hmlpvt: '百度统计：访客当前访问时间。'
+    },
+    setTitle: 'Set-Cookie · {n} 个 · 保存 {stored} · 删除 {del} · 拒收 {rejected}',
+    verdict: { stored: '保存', delete: '删除', rejected: '拒收' },
+    editInBuilder: '在生成器里编辑',
+    fDomain: 'Domain',
+    fPath: 'Path',
+    fLifetime: '有效期',
+    fSecure: 'Secure',
+    fHttpOnly: 'HttpOnly',
+    fSameSite: 'SameSite',
+    fPartitioned: 'Partitioned',
+    fPriority: 'Priority',
+    fSize: '大小',
+    yes: '是',
+    no: '否',
+    hostOnlyIs: '仅 {host}（host-only）',
+    hostOnlyUnknown: '仅响应所在主机（host-only）',
+    domainAll: '{domain} 及其所有子域名',
+    pathDefaultIs: '{path}（默认路径）',
+    pathDefaultUnknown: '默认：响应 URL 所在的目录',
+    lifeSession: '会话 Cookie（浏览器会话结束即失效）',
+    lifeDelete: '删除同名、同域名、同路径的已有 Cookie',
+    lifeAt: '{date}（{rel}）',
+    sameSiteDefault: '未设置（Chrome、Edge 按 Lax；Firefox、Safari 按 None）',
+    sizeOf: '{n} / 4096 字节（名称 + 值）',
+    attrsSummary: '属性（{n}）',
+    attrStatus: { ok: '生效', ignored: '被忽略', default: '被忽略，用默认路径', unknown: '不是 Cookie 属性', overridden: '被后面的同名属性覆盖', nonstandard: '仅 Chrome' },
+    reject: {
+      ctl: '第 {pos} 个字符是控制字符 0x{hex}，整行被忽略。',
+      tooBig: '名称和值共 {n} 字节，超过 4096 字节上限，Cookie 被忽略。',
+      empty: '名称和值都为空，Cookie 被忽略。',
+      domainNonAscii: 'Domain 含非 ASCII 字符，Cookie 被忽略。请改用 punycode 形式（xn--…）。',
+      domainMismatch: 'Domain={domain} 不包含响应主机 {host}，Cookie 被忽略。',
+      secureOnHttp: '带 Secure 的 Cookie 来自 http:// 页面，被忽略（只有 https 与 localhost 能设置）。',
+      noneNeedsSecure: 'SameSite=None 但没有 Secure：Chrome 80+、Edge 86+、Firefox 131+ 拒收。',
+      partitionedNeedsSecure: 'Partitioned 但没有 Secure：被拒收（CHIPS 要求 Secure）。',
+      prefixSecure: '{prefix} 前缀要求 Secure，Cookie 被忽略。',
+      prefixHost: '{prefix} 前缀要求 Secure、Path=/ 且不带 Domain。不满足：{why}。',
+      prefixHttp: '{prefix} 前缀要求 Secure 与 HttpOnly，Cookie 被忽略。',
+      namelessPrefix: '没有名称的 Cookie，值不能以 __Secure-、__Host-、__Http- 开头，被忽略。'
+    },
+    issues: {
+      emptyName: '名称为空：浏览器只发送值。',
+      noEq: '没有“=”：整段文本是一个无名 Cookie 的值（RFC 6265bis）。很多服务端解析器会丢掉它。',
+      ctl: '含控制字符，浏览器不会发送这样的 Cookie。',
+      nameNotToken: '名称含“{ch}”，RFC 6265 不允许它出现在 Cookie 名称里，部分服务端会丢弃。',
+      valueSpace: '值含“{ch}”。浏览器照常保存，但 Python 的 http.cookies 会丢掉整个 Cookie 请求头。请对值做百分号编码，或用双引号括起来。',
+      valueOctet: '值含“{ch}”，RFC 6265 不允许未编码出现。Python 的 http.cookies 会丢掉这个 Cookie 及其后所有 Cookie。请对值做百分号编码。',
+      valueComma: '值含逗号。RFC 6265 建议服务端对它编码；折叠响应头的老代理可能在这里拆开。',
+      phpName: 'PHP 会把这个名称读成 $_COOKIE["{php}"]（点和空格会被换成下划线）。',
+      quoted: '值带双引号：浏览器把引号当作值的一部分，部分服务端会去掉引号。',
+      attrInCookie: '“{name}”像 Set-Cookie 的属性。Cookie 请求头里不会有属性；如果它来自响应，请选“Set-Cookie”。',
+      badPercent: '有“%”后面不是两位十六进制数字，按原文显示。',
+      notUtf8: '百分号编码的字节不是 UTF-8，按原文显示。',
+      bothLifetimes: '同时设置了 Max-Age 和 Expires：以 Max-Age 为准。',
+      twoDigitYear: 'Expires 用了两位年份，按 {year} 年读取。',
+      capped400: '有效期超过 400 天：浏览器会截到 400 天（RFC 6265bis §5.5；Chrome 104 起）。',
+      domainEmpty: 'Domain 属性为空：按 host-only 处理。',
+      domainDotOnly: 'Domain=. 等于空域名：RFC 6265bis 按 host-only 处理，但 Chrome 152 会拒收。',
+      domainDot: 'Domain 开头的点会被忽略，Cookie 仍会发给子域名。',
+      domainSingleLabel: 'Domain={domain} 里没有点。浏览器拒收 com、com.cn 这类公共后缀；Chrome 152 也拒收 localhost。',
+      domainWide: '设置 Domain 后，{domain} 的所有子域名都能收到这个 Cookie。不写 Domain 则只在当前主机生效。',
+      pathDefault: 'Path={value} 不以“/”开头，被忽略，改用默认路径。',
+      tabInside: '名称或值中间有制表符。RFC 6265bis 允许，但 Chrome 152 会拒收这个 Cookie。',
+      overridden: '{attr} 出现了多次，只有最后一个生效。',
+      badDate: 'Expires={value} 不能按 Cookie 日期算法解析，被忽略，Cookie 变成会话 Cookie。',
+      badMaxAge: 'Max-Age={value} 不是整数，被忽略。',
+      maxAgePlus: 'Max-Age={value}：RFC 6265bis 会忽略开头带“+”的值，但 Chrome 152 照样接受。',
+      attrTooLong: '{attr} 的值有 {n} 字节，超过 1024，该属性被忽略。',
+      sameSiteInvalid: 'SameSite={value} 不是 Strict、Lax 或 None，效果等同于没写 SameSite。',
+      flagValue: '{attr}={value}：值会被忽略，该属性仍然生效。',
+      attr_removed: '{attr} 是 Chrome 已移除的实验属性，浏览器会忽略。',
+      attr_rfc2109: '{attr} 出自已废止的 RFC 2109，会被忽略。',
+      attr_rfc2965: '{attr} 出自已废止的 RFC 2965（Set-Cookie2），会被忽略。',
+      unknownAttr: '{attr} 不是 Cookie 属性，会被忽略。',
+      unknownAttrSuggest: '{attr} 不是 Cookie 属性，会被忽略。是不是想写 {suggest}？',
+      priority: 'Priority 是 Chrome 独有的属性：同一域名 Cookie 过多时，决定先删哪些。',
+      noSecure: '没有 Secure：明文 http:// 请求也会带上它。',
+      noHttpOnly: '没有 HttpOnly：页面脚本能通过 document.cookie 读到它。',
+      noSameSite: '没有 SameSite：Chrome 80+、Edge 86+ 按 Lax 处理；Firefox、Safari 仍会在跨站请求中发送。建议显式设置。',
+      thirdParty: 'SameSite=None 且没有 Partitioned：属于第三方 Cookie，可能被浏览器拦截。'
+    },
+    simTitle: '下一次请求会带上哪些 Cookie？',
+    respUrl: '响应 URL（这些 Set-Cookie 来自哪个地址）',
+    reqUrl: '下一次请求的 URL',
+    respPlaceholder: 'https://www.example.com/account/login',
+    reqPlaceholder: 'https://www.example.com/account/orders',
+    ctxLabel: '请求类型',
+    ctx: { 'same-site': '同站请求', 'cross-top': '从其他站点点链接进入（顶层 GET）', 'cross-sub': '跨站 iframe、fetch、图片或 POST' },
+    simHeader: '发往 {url} 的 Cookie 请求头',
+    simNone: '不会发送任何 Cookie。',
+    simNeedsUrl: '先填响应 URL，确定这些 Cookie 属于哪个主机，再填下一次请求的 URL。',
+    simNeedsReq: '请填写下一次请求的 URL。',
+    simOrder: '顺序：路径长的在前，路径一样长时先设置的在前（RFC 6265bis §5.8.3）。Chrome 152 会给被覆盖的 Cookie 重新记创建时间。',
+    simLaxNote: 'Chrome、Edge 把没写 SameSite 的 Cookie 当作 Lax。Firefox、Safari 在这里仍会发送。',
+    skip: {
+      expired: '{name}：已过期。',
+      domain: '{name}：属于 {domain}，不包含这个主机。',
+      path: '{name}：路径 {path} 与这个 URL 不匹配。',
+      secure: '{name}：带 Secure，而这个 URL 不是 https。',
+      sameSiteStrict: '{name}：SameSite=Strict，跨站请求不发送。',
+      sameSiteLax: '{name}：SameSite=Lax，跨站时只在顶层 GET 导航中发送。',
+      sameSiteDefault: '{name}：没写 SameSite，Chrome、Edge 按 Lax 处理。',
+      partitioned: '{name}：Partitioned，只留在设置它的站点下。'
+    },
+    nsTitle: 'cookies.txt · {n} 个 Cookie',
+    nsBad: '第 {lines} 行不是 7 个制表符分隔的字段，已跳过。',
+    nsExpired: '已过期',
+    optsTitle: '选项',
+    optDecode: '解码百分号编码的值（UTF-8）',
+    optSplit: '拆分用逗号连在一起的 Set-Cookie',
+    optJson: 'Cookie 请求头的 JSON 格式',
+    optJsonObject: '对象，同名取第一个（Express）',
+    optJsonArray: '数组，保留每个 Cookie',
+    optRedact: '脱敏版隐藏',
+    optRedactAll: '所有值',
+    optRedactSensitive: '只隐藏会话 ID 与令牌',
+    buildTitle: '生成 Set-Cookie 响应头',
+    bName: '名称',
+    bValue: '值',
+    bEncode: '对值做百分号编码',
+    bDomain: 'Domain（留空 = 只在当前主机）',
+    bPath: 'Path',
+    bLife: '有效期',
+    bLifeSession: '会话',
+    bLifeMaxAge: 'Max-Age（秒）',
+    bLifeExpires: 'Expires（UTC）',
+    bSameSite: 'SameSite',
+    bSameSiteUnset: '不设置',
+    bPriority: 'Priority（Chrome）',
+    bPriorityUnset: '不设置',
+    bOut: 'Set-Cookie 响应头',
+    bDel: '日后删除它用的响应头',
+    buildEncodeHint: '值里有 RFC 6265 不允许直接出现的字符，请打开百分号编码。',
+    exampleCookie: 'Hm_lvt_8c5e2d1f0a9b4c7e6d3f2a1b0c9d8e7f=1759363200,1759449600; JSESSIONID=7F3A9C2E5B1D4F8A6C0E2B4D6F8A0C2E; theme=dark; username=%E5%BC%A0%E4%B8%89; JSESSIONID=guest; token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDI0IiwibmFtZSI6ImRlbW8iLCJleHAiOjE3OTg3NjE2MDB9.c2lnbmF0dXJlLW5vdC12ZXJpZmllZA',
+    exampleSet: 'Set-Cookie: JSESSIONID=7F3A9C2E5B1D4F8A6C0E2B4D6F8A0C2E; Path=/shop; Secure; HttpOnly\nSet-Cookie: username=%E5%BC%A0%E4%B8%89; Path=/; Max-Age=2592000\nSet-Cookie: channel=wechat; Domain=.example.cn; Path=/; SameSite=None\nSet-Cookie: cart=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\nSet-Cookie: __Host-csrf=Zq3Lr8Tn5Wb2Ye7Hs4; Domain=www.example.cn; Path=/; Secure',
+    exampleRespUrl: 'https://www.example.cn/shop/login',
+    exampleReqUrl: 'https://www.example.cn/shop/orders'
+  },
+  ja: {
+    readAs: '解析方法',
+    modeAuto: '自動',
+    modeCookie: 'Cookie',
+    modeSet: 'Set-Cookie',
+    inputLabel: 'Cookie データ',
+    placeholder: 'Cookie リクエストヘッダー、Set-Cookie の行、curl の -b / -H オプション、cookies.txt を貼り付け',
+    exCookie: 'Cookie の例',
+    exSet: 'Set-Cookie の例',
+    clear: 'クリア',
+    parse: '解析',
+    copyJson: 'JSON をコピー',
+    copyRedacted: 'マスク済みをコピー',
+    copy: 'コピー',
+    copied: 'コピーしました',
+    copyFailed: 'コピー失敗',
+    copyFailedLong: 'コピーできませんでした。テキストを選択して手動でコピーしてください。',
+    statusEmpty: 'Cookie ヘッダー、Set-Cookie の行、cookies.txt を貼り付けてください。データはこのページの外に出ません。',
+    statusNothing: 'Cookie が見つかりません。',
+    statusCookie: ['Cookie ヘッダー：1 件、{bytes} バイト。', 'Cookie ヘッダー：{n} 件、{bytes} バイト。'],
+    statusSet: ['Set-Cookie：1 件（保存 {stored}・削除 {del}・拒否 {rejected}）。', 'Set-Cookie：{n} 件（保存 {stored}・削除 {del}・拒否 {rejected}）。'],
+    statusNs: 'cookies.txt：{n} 件。',
+    notes: {
+      autoSet: 'Path や Expires などの属性があるため Set-Cookie として解析しました。リクエストヘッダーなら「Cookie」を選んでください。',
+      joinedCookie: '{n} 行の Cookie を 1 つのヘッダーにまとめました（HTTP/2・HTTP/3 では分割して送れます。RFC 9113 §8.2.3）。',
+      splitCombined: '{line} 行目はカンマでつながった {n} 件の Cookie（Headers.get("set-cookie") の返す形）なので分割しました。ブラウザーは Set-Cookie 1 行を 1 件として扱います。',
+      skippedHeaders: 'ほかのヘッダー {n} 行を読み飛ばしました。',
+      fromCurl: 'curl コマンド（-b、--cookie、-H）から Cookie を取り出しました。'
+    },
+    cookieTitle: 'Cookie ヘッダー · {n} 件 · {bytes} バイト',
+    dupExplain: '同じ名前：{names}。ブラウザーは「名前・ドメイン・パス」の組で Cookie を区別するため、別のパスやドメインに設定された同名 Cookie はまとめて送られ、パスの長いものが先になります。どれを使うかはサーバー次第で、Express（cookie パッケージ）は最初の値、Python の http.cookies は最後の値を取ります。',
+    colName: '名前',
+    colValue: '値',
+    colNotes: 'メモ',
+    colFlags: 'フラグ',
+    emptyName: '（名前なし）',
+    dupBadge: '同名 {i} 件目',
+    firstBadge: '1 件目',
+    bytesLabel: '{n} バイト',
+    rawValue: '元の値：{v}',
+    kindJwt: 'JWT（alg {alg}）。',
+    jwtExpires: '有効期限は{when}。',
+    jwtExpired: '{when}に期限切れ。',
+    openJwt: 'JWT デコーダーで開く',
+    kind_json: 'JSON の値。',
+    kind_base64json: 'Base64 でエンコードされた JSON。',
+    known: {
+      ga: 'Google アナリティクス 4：ユーザーの識別。既定の有効期間は 2 年。',
+      ga4: 'Google アナリティクス 4：プロパティごとのセッション状態。既定の有効期間は 2 年。',
+      cfbm: 'Cloudflare のボット対策。30 分操作がないと失効。',
+      cfclearance: 'Cloudflare：チャレンジ通過の証明。',
+      cfuvid: 'Cloudflare のレート制限：同じ IP アドレスを使う訪問者を区別。',
+      phpsessid: 'PHP のセッション ID（session.name の既定値）。',
+      jsessionid: 'Java Servlet のセッション ID（既定の名前）。',
+      connectsid: 'Node.js express-session のセッション ID（既定の名前）。',
+      djangosession: 'Django のセッション ID（SESSION_COOKIE_NAME の既定値）。',
+      djangocsrf: 'Django の CSRF トークン（CSRF_COOKIE_NAME の既定値）。',
+      aspnet: 'ASP.NET のセッション状態 ID（既定の名前）。',
+      aspnetcore: 'ASP.NET Core のセッション ID（既定の名前）。',
+      xsrf: 'Angular HttpClient が X-XSRF-TOKEN ヘッダーにコピーする CSRF トークン。',
+      hmlvt: 'Baidu 統計（百度统计）：過去の訪問時刻。',
+      hmlpvt: 'Baidu 統計（百度统计）：今回の訪問時刻。'
+    },
+    setTitle: 'Set-Cookie · {n} 件 · 保存 {stored} · 削除 {del} · 拒否 {rejected}',
+    verdict: { stored: '保存', delete: '削除', rejected: '拒否' },
+    editInBuilder: 'ビルダーで編集',
+    fDomain: 'Domain',
+    fPath: 'Path',
+    fLifetime: '有効期間',
+    fSecure: 'Secure',
+    fHttpOnly: 'HttpOnly',
+    fSameSite: 'SameSite',
+    fPartitioned: 'Partitioned',
+    fPriority: 'Priority',
+    fSize: 'サイズ',
+    yes: 'あり',
+    no: 'なし',
+    hostOnlyIs: '{host} のみ（host-only）',
+    hostOnlyUnknown: 'レスポンスのホストのみ（host-only）',
+    domainAll: '{domain} とそのサブドメイン',
+    pathDefaultIs: '{path}（既定のパス）',
+    pathDefaultUnknown: '既定：レスポンス URL のディレクトリ',
+    lifeSession: 'セッション Cookie（ブラウザーのセッション終了まで）',
+    lifeDelete: '名前・ドメイン・パスが同じ既存の Cookie を削除',
+    lifeAt: '{date}（{rel}）',
+    sameSiteDefault: '未指定（Chrome・Edge は Lax、Firefox・Safari は None として扱う）',
+    sizeOf: '{n} / 4096 バイト（名前 + 値）',
+    attrsSummary: '属性（{n}）',
+    attrStatus: { ok: '有効', ignored: '無視', default: '無視（既定のパス）', unknown: 'Cookie の属性ではない', overridden: '後の同名属性で上書き', nonstandard: 'Chrome のみ' },
+    reject: {
+      ctl: '{pos} 文字目に制御文字 0x{hex} があるため、行全体が無視されます。',
+      tooBig: '名前と値の合計が {n} バイトで、上限の 4096 バイトを超えるため無視されます。',
+      empty: '名前も値も空のため無視されます。',
+      domainNonAscii: 'Domain に ASCII 以外の文字があるため無視されます。punycode（xn--…）で書いてください。',
+      domainMismatch: 'Domain={domain} がレスポンスのホスト {host} を含まないため無視されます。',
+      secureOnHttp: 'Secure 付きの Cookie を http:// のページから設定しているため無視されます（https と localhost のみ可）。',
+      noneNeedsSecure: 'SameSite=None なのに Secure がない：Chrome 80 以降、Edge 86 以降、Firefox 131 以降は拒否します。',
+      partitionedNeedsSecure: 'Partitioned なのに Secure がない：拒否されます（CHIPS は Secure が必須）。',
+      prefixSecure: '{prefix} プレフィックスには Secure が必要なため無視されます。',
+      prefixHost: '{prefix} プレフィックスには Secure・Path=/・Domain なしが必要です。足りないもの：{why}。',
+      prefixHttp: '{prefix} プレフィックスには Secure と HttpOnly が必要なため無視されます。',
+      namelessPrefix: '名前のない Cookie の値は __Secure-・__Host-・__Http- で始められないため無視されます。'
+    },
+    issues: {
+      emptyName: '名前が空：ブラウザーは値だけを送ります。',
+      noEq: '「=」がない：全体が名前のない Cookie の値になります（RFC 6265bis）。多くのサーバー側パーサーは捨てます。',
+      ctl: '制御文字を含みます。ブラウザーはこのような Cookie を送りません。',
+      nameNotToken: '名前に RFC 6265 で使えない「{ch}」があります。サーバーによっては捨てられます。',
+      valueSpace: '値に「{ch}」があります。ブラウザーはそのまま保存しますが、Python の http.cookies は Cookie ヘッダー全体を捨てます。値をパーセントエンコードするか、ダブルクォートで囲んでください。',
+      valueOctet: '値に RFC 6265 がエンコードなしでは認めない「{ch}」があります。Python の http.cookies はこの Cookie と後ろの Cookie をすべて捨てます。値をパーセントエンコードしてください。',
+      valueComma: '値にカンマがあります。RFC 6265 はエンコードを求めており、ヘッダーを畳む古いプロキシはここで分割することがあります。',
+      phpName: 'PHP ではこの名前は $_COOKIE["{php}"] になります（ドットと空白がアンダースコアに置き換わります）。',
+      quoted: 'ダブルクォート付きの値：ブラウザーは引用符も値の一部として扱い、サーバーによっては外します。',
+      attrInCookie: '「{name}」は Set-Cookie の属性に見えます。Cookie リクエストヘッダーに属性は入りません。レスポンスから取ったなら「Set-Cookie」を選んでください。',
+      badPercent: '「%」の後ろが 16 進 2 桁ではないため、そのまま表示しています。',
+      notUtf8: 'パーセントエンコードされたバイト列が UTF-8 ではないため、そのまま表示しています。',
+      bothLifetimes: 'Max-Age と Expires の両方があります：Max-Age が優先されます。',
+      twoDigitYear: 'Expires の年が 2 桁で、{year} 年として読みます。',
+      capped400: '有効期間が 400 日を超えています：ブラウザーは 400 日に切り詰めます（RFC 6265bis §5.5、Chrome は 104 以降）。',
+      domainEmpty: 'Domain が空：host-only として扱います。',
+      domainDotOnly: 'Domain=. は空のドメインです：RFC 6265bis では host-only ですが、Chrome 152 は拒否します。',
+      domainDot: 'Domain 先頭のドットは無視されます。サブドメインにも送られる点は変わりません。',
+      domainSingleLabel: 'Domain={domain} にドットがありません。ブラウザーは com や co.jp のようなパブリックサフィックスを拒否し、Chrome 152 は localhost も拒否します。',
+      domainWide: 'Domain を付けると {domain} のすべてのサブドメインに送られます。1 つのホストに限るなら Domain を省きます。',
+      pathDefault: 'Path={value} が「/」で始まらないため無視され、既定のパスになります。',
+      tabInside: '名前か値の途中にタブがあります。RFC 6265bis では許されますが、Chrome 152 はこの Cookie を拒否します。',
+      overridden: '{attr} が複数あり、最後の 1 つだけが有効です。',
+      badDate: 'Expires={value} は Cookie の日付アルゴリズムで読めないため無視され、セッション Cookie になります。',
+      badMaxAge: 'Max-Age={value} は整数ではないため無視されます。',
+      maxAgePlus: 'Max-Age={value}：RFC 6265bis では先頭の「+」付きは無視ですが、Chrome 152 は受け付けます。',
+      attrTooLong: '{attr} の値が {n} バイトで 1024 を超えるため、この属性は無視されます。',
+      sameSiteInvalid: 'SameSite={value} は Strict・Lax・None のどれでもないため、SameSite を書かない場合と同じ扱いです。',
+      flagValue: '{attr}={value}：値は無視され、属性は有効になります。',
+      attr_removed: '{attr} は削除済みの Chrome の実験的属性で、無視されます。',
+      attr_rfc2109: '{attr} は廃止された RFC 2109 の属性で、無視されます。',
+      attr_rfc2965: '{attr} は廃止された RFC 2965（Set-Cookie2）の属性で、無視されます。',
+      unknownAttr: '{attr} は Cookie の属性ではないため無視されます。',
+      unknownAttrSuggest: '{attr} は Cookie の属性ではないため無視されます。{suggest} の誤りではありませんか。',
+      priority: 'Priority は Chrome 独自の属性で、1 つのドメインの Cookie が多すぎるときにどれから削除するかを決めます。',
+      noSecure: 'Secure がない：平文の http:// でも送られます。',
+      noHttpOnly: 'HttpOnly がない：ページのスクリプトが document.cookie で読めます。',
+      noSameSite: 'SameSite がない：Chrome 80 以降・Edge 86 以降は Lax として扱い、Firefox・Safari はクロスサイトでも送ります。明示してください。',
+      thirdParty: 'SameSite=None で Partitioned がない：サードパーティ Cookie なので、ブラウザーがブロックすることがあります。'
+    },
+    simTitle: '次のリクエストで送られる Cookie は？',
+    respUrl: 'レスポンス URL（この Set-Cookie を返した URL）',
+    reqUrl: '次のリクエスト URL',
+    respPlaceholder: 'https://www.example.com/account/login',
+    reqPlaceholder: 'https://www.example.com/account/orders',
+    ctxLabel: 'リクエストの種類',
+    ctx: { 'same-site': '同一サイトのリクエスト', 'cross-top': '他サイトのリンクから移動（トップレベル GET）', 'cross-sub': 'クロスサイトの iframe・fetch・画像・POST' },
+    simHeader: '{url} への Cookie ヘッダー',
+    simNone: '送られる Cookie はありません。',
+    simNeedsUrl: 'まずレスポンス URL を入れて Cookie のホストを決め、次にリクエスト URL を入れてください。',
+    simNeedsReq: '次のリクエスト URL を入れてください。',
+    simOrder: '順序：パスの長いものが先、同じ長さなら先に設定したものが先（RFC 6265bis §5.8.3）。Chrome 152 は上書きした Cookie の作成時刻を新しくします。',
+    simLaxNote: 'Chrome・Edge は SameSite のない Cookie を Lax として扱います。Firefox・Safari ならここでも送ります。',
+    skip: {
+      expired: '{name}：期限切れ。',
+      domain: '{name}：{domain} 向けで、このホストを含みません。',
+      path: '{name}：パス {path} がこの URL と一致しません。',
+      secure: '{name}：Secure 付きで、この URL は https ではありません。',
+      sameSiteStrict: '{name}：SameSite=Strict はクロスサイトのリクエストで送られません。',
+      sameSiteLax: '{name}：SameSite=Lax はクロスサイトではトップレベル GET でだけ送られます。',
+      sameSiteDefault: '{name}：SameSite がなく、Chrome・Edge では Lax 扱いです。',
+      partitioned: '{name}：Partitioned で、設定されたサイトの下でだけ使われます。'
+    },
+    nsTitle: 'cookies.txt · {n} 件',
+    nsBad: '{lines} 行目はタブ区切り 7 項目ではないため読み飛ばしました。',
+    nsExpired: '期限切れ',
+    optsTitle: 'オプション',
+    optDecode: 'パーセントエンコードされた値をデコード（UTF-8）',
+    optSplit: 'カンマでつながった Set-Cookie を分割',
+    optJson: 'Cookie ヘッダーの JSON 形式',
+    optJsonObject: 'オブジェクト、同名は最初の値（Express と同じ）',
+    optJsonArray: '配列、すべての Cookie',
+    optRedact: 'マスク対象',
+    optRedactAll: 'すべての値',
+    optRedactSensitive: 'セッション ID とトークンだけ',
+    buildTitle: 'Set-Cookie ヘッダーを作成',
+    bName: '名前',
+    bValue: '値',
+    bEncode: '値をパーセントエンコード',
+    bDomain: 'Domain（空 = このホストのみ）',
+    bPath: 'Path',
+    bLife: '有効期間',
+    bLifeSession: 'セッション',
+    bLifeMaxAge: 'Max-Age（秒）',
+    bLifeExpires: 'Expires（UTC）',
+    bSameSite: 'SameSite',
+    bSameSiteUnset: '指定しない',
+    bPriority: 'Priority（Chrome）',
+    bPriorityUnset: '指定しない',
+    bOut: 'Set-Cookie ヘッダー',
+    bDel: 'あとで削除するためのヘッダー',
+    buildEncodeHint: '値に RFC 6265 がエンコードなしでは認めない文字があります。パーセントエンコードを有効にしてください。',
+    exampleCookie: '_ga=GA1.1.1234567890.1759363200; PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; theme=dark; name=%E5%B1%B1%E7%94%B0%E5%A4%AA%E9%83%8E; PHPSESSID=guest; token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDI0IiwibmFtZSI6ImRlbW8iLCJleHAiOjE3OTg3NjE2MDB9.c2lnbmF0dXJlLW5vdC12ZXJpZmllZA',
+    exampleSet: 'Set-Cookie: PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; path=/; secure; HttpOnly; SameSite=Lax\nSet-Cookie: name=%E5%B1%B1%E7%94%B0%20%E5%A4%AA%E9%83%8E; expires=Wed, 21 Oct 2026 07:28:00 GMT; Max-Age=1656519; path=/\nSet-Cookie: ad_id=8842; Domain=.example.jp; Path=/; SameSite=None\nSet-Cookie: cart=deleted; expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0; path=/\nSet-Cookie: __Host-csrf=Zq3Lr8Tn5Wb2Ye7Hs4; Secure; Path=/; SameSite=Strict',
+    exampleRespUrl: 'https://www.example.jp/mypage/login',
+    exampleReqUrl: 'https://www.example.jp/mypage/orders'
+  },
+  ko: {
+    readAs: '해석 방식',
+    modeAuto: '자동',
+    modeCookie: 'Cookie',
+    modeSet: 'Set-Cookie',
+    inputLabel: '쿠키 데이터',
+    placeholder: 'Cookie 요청 헤더, Set-Cookie 줄, curl의 -b / -H 옵션, cookies.txt 파일을 붙여 넣으세요',
+    exCookie: 'Cookie 예시',
+    exSet: 'Set-Cookie 예시',
+    clear: '지우기',
+    parse: '파싱',
+    copyJson: 'JSON 복사',
+    copyRedacted: '마스킹본 복사',
+    copy: '복사',
+    copied: '복사됨',
+    copyFailed: '복사 실패',
+    copyFailedLong: '복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.',
+    statusEmpty: 'Cookie 헤더, Set-Cookie 줄, cookies.txt를 붙여 넣으세요. 데이터는 이 페이지 밖으로 나가지 않습니다.',
+    statusNothing: '쿠키를 찾지 못했습니다.',
+    statusCookie: ['Cookie 헤더: 쿠키 1개, {bytes}바이트.', 'Cookie 헤더: 쿠키 {n}개, {bytes}바이트.'],
+    statusSet: ['Set-Cookie: 쿠키 1개 (저장 {stored}, 삭제 {del}, 거부 {rejected}).', 'Set-Cookie: 쿠키 {n}개 (저장 {stored}, 삭제 {del}, 거부 {rejected}).'],
+    statusNs: 'cookies.txt: 쿠키 {n}개.',
+    notes: {
+      autoSet: 'Path, Expires 같은 속성이 있어 Set-Cookie로 해석했습니다. 요청 헤더라면 “Cookie”를 고르세요.',
+      joinedCookie: 'Cookie 줄 {n}개를 하나의 헤더로 합쳤습니다(HTTP/2, HTTP/3에서는 나눠 보낼 수 있음, RFC 9113 §8.2.3).',
+      splitCombined: '{line}번째 줄은 쉼표로 이어진 쿠키 {n}개(Headers.get("set-cookie")가 돌려주는 형태)라서 나눴습니다. 브라우저는 Set-Cookie 한 줄을 쿠키 하나로 처리합니다.',
+      skippedHeaders: '다른 헤더 {n}줄을 건너뛰었습니다.',
+      fromCurl: 'curl 명령(-b, --cookie, -H)에서 쿠키를 꺼냈습니다.'
+    },
+    cookieTitle: 'Cookie 헤더 · {n}개 · {bytes}바이트',
+    dupExplain: '같은 이름: {names}. 브라우저는 이름·도메인·경로 조합으로 쿠키를 구분하므로, 다른 경로나 도메인에 설정된 같은 이름의 쿠키가 함께 전송되며 경로가 긴 것이 먼저 옵니다. 어느 값을 쓰는지는 서버마다 다릅니다. Express(cookie 패키지)는 첫 번째, Python의 http.cookies는 마지막 값을 씁니다.',
+    colName: '이름',
+    colValue: '값',
+    colNotes: '설명',
+    colFlags: '플래그',
+    emptyName: '(이름 없음)',
+    dupBadge: '같은 이름 {i}번째',
+    firstBadge: '첫 번째',
+    bytesLabel: '{n}바이트',
+    rawValue: '원문: {v}',
+    kindJwt: 'JWT, alg {alg}.',
+    jwtExpires: '{when} 만료.',
+    jwtExpired: '{when} 만료됨.',
+    openJwt: 'JWT 디코더로 열기',
+    kind_json: 'JSON 값.',
+    kind_base64json: 'Base64로 인코딩된 JSON.',
+    known: {
+      ga: 'Google 애널리틱스 4: 사용자 구별, 기본 2년.',
+      ga4: 'Google 애널리틱스 4: 속성별 세션 상태 유지, 기본 2년.',
+      cfbm: 'Cloudflare 봇 관리. 30분 동안 활동이 없으면 만료.',
+      cfclearance: 'Cloudflare: 챌린지 통과 증명.',
+      cfuvid: 'Cloudflare 속도 제한: 같은 IP를 쓰는 방문자 구별.',
+      phpsessid: 'PHP 세션 ID(session.name 기본값).',
+      jsessionid: 'Java Servlet 세션 ID(기본 이름).',
+      connectsid: 'Node.js express-session 세션 ID(기본 이름).',
+      djangosession: 'Django 세션 ID(SESSION_COOKIE_NAME 기본값).',
+      djangocsrf: 'Django CSRF 토큰(CSRF_COOKIE_NAME 기본값).',
+      aspnet: 'ASP.NET 세션 상태 ID(기본 이름).',
+      aspnetcore: 'ASP.NET Core 세션 ID(기본 이름).',
+      xsrf: 'Angular HttpClient가 X-XSRF-TOKEN 헤더로 옮기는 CSRF 토큰.',
+      hmlvt: 'Baidu 통계(百度统计): 이전 방문 시각.',
+      hmlpvt: 'Baidu 통계(百度统计): 현재 방문 시각.'
+    },
+    setTitle: 'Set-Cookie · {n}개 · 저장 {stored} · 삭제 {del} · 거부 {rejected}',
+    verdict: { stored: '저장', delete: '삭제', rejected: '거부' },
+    editInBuilder: '생성기에서 편집',
+    fDomain: 'Domain',
+    fPath: 'Path',
+    fLifetime: '유효 기간',
+    fSecure: 'Secure',
+    fHttpOnly: 'HttpOnly',
+    fSameSite: 'SameSite',
+    fPartitioned: 'Partitioned',
+    fPriority: 'Priority',
+    fSize: '크기',
+    yes: '예',
+    no: '아니요',
+    hostOnlyIs: '{host}만(host-only)',
+    hostOnlyUnknown: '응답 호스트만(host-only)',
+    domainAll: '{domain} 및 모든 하위 도메인',
+    pathDefaultIs: '{path}(기본 경로)',
+    pathDefaultUnknown: '기본값: 응답 URL의 디렉터리',
+    lifeSession: '세션 쿠키(브라우저 세션이 끝날 때까지)',
+    lifeDelete: '이름·도메인·경로가 같은 기존 쿠키를 삭제',
+    lifeAt: '{date}({rel})',
+    sameSiteDefault: '지정 안 함(Chrome, Edge는 Lax, Firefox, Safari는 None으로 처리)',
+    sizeOf: '{n} / 4096바이트(이름 + 값)',
+    attrsSummary: '속성({n})',
+    attrStatus: { ok: '적용', ignored: '무시', default: '무시, 기본 경로', unknown: '쿠키 속성이 아님', overridden: '뒤의 같은 속성이 덮어씀', nonstandard: 'Chrome 전용' },
+    reject: {
+      ctl: '{pos}번째 문자가 제어 문자 0x{hex}라서 줄 전체가 무시됩니다.',
+      tooBig: '이름과 값이 {n}바이트로 4096바이트 한도를 넘어 쿠키가 무시됩니다.',
+      empty: '이름과 값이 모두 비어 있어 쿠키가 무시됩니다.',
+      domainNonAscii: 'Domain에 ASCII가 아닌 문자가 있어 쿠키가 무시됩니다. punycode(xn--…)로 쓰세요.',
+      domainMismatch: 'Domain={domain}이 응답 호스트 {host}를 포함하지 않아 쿠키가 무시됩니다.',
+      secureOnHttp: 'Secure 쿠키를 http:// 페이지에서 설정해 무시됩니다(https와 localhost만 가능).',
+      noneNeedsSecure: 'SameSite=None인데 Secure가 없음: Chrome 80+, Edge 86+, Firefox 131+가 거부합니다.',
+      partitionedNeedsSecure: 'Partitioned인데 Secure가 없음: 거부됩니다(CHIPS는 Secure 필수).',
+      prefixSecure: '{prefix} 접두사는 Secure가 필요해 쿠키가 무시됩니다.',
+      prefixHost: '{prefix} 접두사는 Secure, Path=/, Domain 없음이 필요합니다. 부족한 것: {why}.',
+      prefixHttp: '{prefix} 접두사는 Secure와 HttpOnly가 필요해 쿠키가 무시됩니다.',
+      namelessPrefix: '이름 없는 쿠키의 값은 __Secure-, __Host-, __Http-로 시작할 수 없어 무시됩니다.'
+    },
+    issues: {
+      emptyName: '이름이 비어 있음: 브라우저는 값만 보냅니다.',
+      noEq: '“=”가 없음: 전체가 이름 없는 쿠키의 값이 됩니다(RFC 6265bis). 서버 파서 대부분은 버립니다.',
+      ctl: '제어 문자가 있습니다. 브라우저는 이런 쿠키를 보내지 않습니다.',
+      nameNotToken: '이름에 RFC 6265가 쿠키 이름에 허용하지 않는 “{ch}”가 있어 서버에 따라 버려집니다.',
+      valueSpace: '값에 “{ch}”가 있습니다. 브라우저는 그대로 저장하지만 Python의 http.cookies는 Cookie 헤더 전체를 버립니다. 값을 퍼센트 인코딩하거나 큰따옴표로 감싸세요.',
+      valueOctet: '값에 RFC 6265가 인코딩 없이 허용하지 않는 “{ch}”가 있습니다. Python의 http.cookies는 이 쿠키와 뒤의 쿠키를 모두 버립니다. 값을 퍼센트 인코딩하세요.',
+      valueComma: '값에 쉼표가 있습니다. RFC 6265는 인코딩을 권하며, 헤더를 접는 오래된 프록시가 여기서 나눌 수 있습니다.',
+      phpName: 'PHP에서는 이 이름이 $_COOKIE["{php}"]가 됩니다(점과 공백이 밑줄로 바뀝니다).',
+      quoted: '큰따옴표로 감싼 값: 브라우저는 따옴표도 값으로 취급하고, 서버에 따라 따옴표를 뗍니다.',
+      attrInCookie: '“{name}”은 Set-Cookie 속성처럼 보입니다. Cookie 요청 헤더에는 속성이 없습니다. 응답에서 가져왔다면 “Set-Cookie”를 고르세요.',
+      badPercent: '“%” 뒤가 16진수 두 자리가 아니라서 원문 그대로 표시합니다.',
+      notUtf8: '퍼센트 인코딩된 바이트가 UTF-8이 아니라서 원문 그대로 표시합니다.',
+      bothLifetimes: 'Max-Age와 Expires가 모두 있습니다: Max-Age가 우선합니다.',
+      twoDigitYear: 'Expires의 연도가 두 자리라서 {year}년으로 읽습니다.',
+      capped400: '유효 기간이 400일을 넘습니다: 브라우저가 400일로 줄입니다(RFC 6265bis §5.5, Chrome은 104부터).',
+      domainEmpty: 'Domain 속성이 비어 있음: host-only로 처리합니다.',
+      domainDotOnly: 'Domain=.은 빈 도메인입니다: RFC 6265bis는 host-only로 처리하지만 Chrome 152는 거부합니다.',
+      domainDot: 'Domain 앞의 점은 무시되며, 하위 도메인에도 전송되는 것은 같습니다.',
+      domainSingleLabel: 'Domain={domain}에 점이 없습니다. 브라우저는 com, co.kr 같은 공개 접미사를 거부하고 Chrome 152는 localhost도 거부합니다.',
+      domainWide: 'Domain을 쓰면 {domain}의 모든 하위 도메인이 이 쿠키를 받습니다. 한 호스트로 한정하려면 Domain을 빼세요.',
+      pathDefault: 'Path={value}가 “/”로 시작하지 않아 무시되고 기본 경로를 씁니다.',
+      tabInside: '이름이나 값 중간에 탭이 있습니다. RFC 6265bis는 허용하지만 Chrome 152는 이 쿠키를 거부합니다.',
+      overridden: '{attr}가 여러 번 있어 마지막 것만 적용됩니다.',
+      badDate: 'Expires={value}는 쿠키 날짜 알고리즘으로 읽을 수 없어 무시되고 세션 쿠키가 됩니다.',
+      badMaxAge: 'Max-Age={value}는 정수가 아니라서 무시됩니다.',
+      maxAgePlus: 'Max-Age={value}: RFC 6265bis는 앞의 “+”를 무시하라고 하지만 Chrome 152는 받아들입니다.',
+      attrTooLong: '{attr} 값이 {n}바이트로 1024를 넘어 이 속성은 무시됩니다.',
+      sameSiteInvalid: 'SameSite={value}는 Strict, Lax, None이 아니라서 SameSite를 쓰지 않은 것과 같습니다.',
+      flagValue: '{attr}={value}: 값은 무시되고 속성은 켜집니다.',
+      attr_removed: '{attr}는 제거된 Chrome 실험 속성이라 무시됩니다.',
+      attr_rfc2109: '{attr}는 폐기된 RFC 2109의 속성이라 무시됩니다.',
+      attr_rfc2965: '{attr}는 폐기된 RFC 2965(Set-Cookie2)의 속성이라 무시됩니다.',
+      unknownAttr: '{attr}는 쿠키 속성이 아니라서 무시됩니다.',
+      unknownAttrSuggest: '{attr}는 쿠키 속성이 아니라서 무시됩니다. {suggest}를 쓰려던 것은 아닌가요?',
+      priority: 'Priority는 Chrome 전용 속성으로, 한 도메인의 쿠키가 너무 많을 때 어느 것부터 지울지 정합니다.',
+      noSecure: 'Secure가 없음: 암호화되지 않은 http://로도 전송됩니다.',
+      noHttpOnly: 'HttpOnly가 없음: 페이지 스크립트가 document.cookie로 읽을 수 있습니다.',
+      noSameSite: 'SameSite가 없음: Chrome 80+, Edge 86+는 Lax로 처리하고 Firefox, Safari는 크로스 사이트 요청에도 보냅니다. 명시하세요.',
+      thirdParty: 'SameSite=None인데 Partitioned가 없음: 서드파티 쿠키라서 브라우저가 막을 수 있습니다.'
+    },
+    simTitle: '다음 요청에는 어떤 쿠키가 실릴까?',
+    respUrl: '응답 URL(이 Set-Cookie를 보낸 주소)',
+    reqUrl: '다음 요청 URL',
+    respPlaceholder: 'https://www.example.com/account/login',
+    reqPlaceholder: 'https://www.example.com/account/orders',
+    ctxLabel: '요청 종류',
+    ctx: { 'same-site': '같은 사이트 요청', 'cross-top': '다른 사이트의 링크로 이동(최상위 GET)', 'cross-sub': '크로스 사이트 iframe, fetch, 이미지, POST' },
+    simHeader: '{url}로 가는 Cookie 헤더',
+    simNone: '전송되는 쿠키가 없습니다.',
+    simNeedsUrl: '먼저 응답 URL을 입력해 쿠키의 호스트를 정한 뒤, 다음 요청 URL을 입력하세요.',
+    simNeedsReq: '다음 요청 URL을 입력하세요.',
+    simOrder: '순서: 경로가 긴 것이 먼저, 길이가 같으면 먼저 설정된 것이 먼저(RFC 6265bis §5.8.3). Chrome 152는 덮어쓴 쿠키의 생성 시각을 새로 기록합니다.',
+    simLaxNote: 'Chrome, Edge는 SameSite가 없는 쿠키를 Lax로 처리합니다. Firefox, Safari라면 여기서도 보냅니다.',
+    skip: {
+      expired: '{name}: 만료됨.',
+      domain: '{name}: {domain}용이라 이 호스트를 포함하지 않습니다.',
+      path: '{name}: 경로 {path}가 이 URL과 맞지 않습니다.',
+      secure: '{name}: Secure인데 이 URL은 https가 아닙니다.',
+      sameSiteStrict: '{name}: SameSite=Strict는 크로스 사이트 요청에 실리지 않습니다.',
+      sameSiteLax: '{name}: SameSite=Lax는 크로스 사이트에서는 최상위 GET에만 실립니다.',
+      sameSiteDefault: '{name}: SameSite가 없어 Chrome, Edge에서는 Lax로 처리됩니다.',
+      partitioned: '{name}: Partitioned라서 설정된 사이트 아래에서만 쓰입니다.'
+    },
+    nsTitle: 'cookies.txt · 쿠키 {n}개',
+    nsBad: '{lines}번째 줄은 탭으로 구분된 7개 필드가 아니라서 건너뛰었습니다.',
+    nsExpired: '만료됨',
+    optsTitle: '옵션',
+    optDecode: '퍼센트 인코딩된 값 디코딩(UTF-8)',
+    optSplit: '쉼표로 이어진 Set-Cookie 나누기',
+    optJson: 'Cookie 헤더의 JSON 형식',
+    optJsonObject: '객체, 같은 이름은 첫 번째 값(Express와 같음)',
+    optJsonArray: '배열, 모든 쿠키',
+    optRedact: '마스킹 대상',
+    optRedactAll: '모든 값',
+    optRedactSensitive: '세션 ID와 토큰만',
+    buildTitle: 'Set-Cookie 헤더 만들기',
+    bName: '이름',
+    bValue: '값',
+    bEncode: '값 퍼센트 인코딩',
+    bDomain: 'Domain(비우면 이 호스트만)',
+    bPath: 'Path',
+    bLife: '유효 기간',
+    bLifeSession: '세션',
+    bLifeMaxAge: 'Max-Age(초)',
+    bLifeExpires: 'Expires(UTC)',
+    bSameSite: 'SameSite',
+    bSameSiteUnset: '지정 안 함',
+    bPriority: 'Priority(Chrome)',
+    bPriorityUnset: '지정 안 함',
+    bOut: 'Set-Cookie 헤더',
+    bDel: '나중에 삭제할 때 쓸 헤더',
+    buildEncodeHint: '값에 RFC 6265가 인코딩 없이 허용하지 않는 문자가 있습니다. 퍼센트 인코딩을 켜세요.',
+    exampleCookie: '_ga=GA1.1.1234567890.1759363200; JSESSIONID=7F3A9C2E5B1D4F8A6C0E2B4D6F8A0C2E; theme=dark; nickname=%ED%99%8D%EA%B8%B8%EB%8F%99; JSESSIONID=guest; token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDI0IiwibmFtZSI6ImRlbW8iLCJleHAiOjE3OTg3NjE2MDB9.c2lnbmF0dXJlLW5vdC12ZXJpZmllZA',
+    exampleSet: 'Set-Cookie: JSESSIONID=7F3A9C2E5B1D4F8A6C0E2B4D6F8A0C2E; Path=/; Secure; HttpOnly; SameSite=Lax\nSet-Cookie: nickname=%ED%99%8D%EA%B8%B8%EB%8F%99; Path=/; Max-Age=2592000\nSet-Cookie: popup_today=Y; Path=/; Expires=Wed, 21 Oct 2026 15:00:00 GMT\nSet-Cookie: ad=1; Domain=.example.co.kr; Path=/; SameSite=None\nSet-Cookie: __Host-csrf=Zq3Lr8Tn5Wb2Ye7Hs4; Domain=www.example.co.kr; Path=/; Secure',
+    exampleRespUrl: 'https://www.example.co.kr/member/login',
+    exampleReqUrl: 'https://www.example.co.kr/member/mypage'
+  },
+};
+
+const T = STRINGS[lang] ?? STRINGS.en;
 ---
-
-<div>
-  <div class="cp-wrap">
-    <div class="cp-input-section">
-      <label for="cp-input">
-        <span data-i18n="cookieHeader">Cookie Header</span>
-        <button id="cp-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
-      </label>
-      <textarea
-        id="cp-input"
-        placeholder={"session=abc123; user=admin; theme=dark; Path=/; HttpOnly; Secure"}
-        spellcheck="false"
-      ></textarea>
+<div class="ck-wrap" id="ck-wrap">
+  <div class="ck-top">
+    <div class="ck-modes" role="group" aria-label={T.readAs}>
+      <button type="button" class="ck-mode" data-mode="auto" aria-pressed="true">{T.modeAuto}</button>
+      <button type="button" class="ck-mode" data-mode="cookie" aria-pressed="false">{T.modeCookie}</button>
+      <button type="button" class="ck-mode" data-mode="set-cookie" aria-pressed="false">{T.modeSet}</button>
     </div>
-
-    <div class="cp-options">
-      <label class="cp-checkbox-label">
-        <input type="checkbox" id="cp-url-decode" checked />
-        <span data-i18n="urlDecode">URL Decode values</span>
-      </label>
-    </div>
-
-    <div class="cp-actions">
-      <button id="cp-parse" class="btn-primary" type="button" data-i18n="parse">Parse</button>
-      <button id="cp-copy-json" class="btn-ghost" type="button" data-i18n="copyJson">Copy JSON</button>
-    </div>
-
-    <div id="cp-status" class="cp-status" aria-live="polite"></div>
-
-    <div id="cp-result" class="cp-result" style="display:none">
-      <div class="cp-tabs" role="tablist">
-        <button class="cp-tab cp-tab-active" id="cp-tab-table" role="tab" data-i18n="tabTable">Table</button>
-        <button class="cp-tab" id="cp-tab-json" role="tab" data-i18n="tabJson">JSON</button>
-      </div>
-
-      <div id="cp-panel-table" class="cp-panel">
-        <div class="cp-table-wrap">
-          <table class="cp-table" id="cp-table">
-            <thead>
-              <tr>
-                <th data-i18n="colName">Name</th>
-                <th data-i18n="colValue">Value</th>
-                <th data-i18n="colFlags">Flags</th>
-              </tr>
-            </thead>
-            <tbody id="cp-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="cp-panel-json" class="cp-panel" style="display:none">
-        <pre id="cp-json-output" class="cp-json-pre"></pre>
-      </div>
+    <div class="ck-top-btns">
+      <button id="ck-ex-cookie" class="btn-ghost btn-sm" type="button">{T.exCookie}</button>
+      <button id="ck-ex-set" class="btn-ghost btn-sm" type="button">{T.exSet}</button>
+      <button id="ck-clear" class="btn-ghost btn-sm" type="button">{T.clear}</button>
     </div>
   </div>
+  <label class="ck-visually-hidden" for="ck-input">{T.inputLabel}</label>
+  <textarea
+    id="ck-input"
+    class="tool-textarea ck-input"
+    rows="5"
+    spellcheck="false"
+    autocapitalize="off"
+    autocorrect="off"
+    autocomplete="off"
+    data-1p-ignore
+    data-lpignore="true"
+    placeholder={T.placeholder}
+  ></textarea>
+  <div class="ck-bar">
+    <button id="ck-parse" class="btn-primary" type="button">{T.parse}</button>
+    <button id="ck-copy-json" class="btn-copy" type="button">{T.copyJson}</button>
+    <button id="ck-copy-redacted" class="btn-copy" type="button">{T.copyRedacted}</button>
+  </div>
+  <p id="ck-status" class="tool-status none" role="status" aria-live="polite">{T.statusEmpty}</p>
+  <ul id="ck-notes" class="ck-notes"></ul>
+  <div id="ck-out" class="ck-out"></div>
 
-  <script is:inline>
-    (function () {
-      var STRINGS = {
-        en: {
-          cookieHeader: 'Cookie Header', clear: 'Clear', parse: 'Parse', copyJson: 'Copy JSON',
-          urlDecode: 'URL Decode values', tabTable: 'Table', tabJson: 'JSON',
-          colName: 'Name', colValue: 'Value', colFlags: 'Flags',
-          pastePrompt: 'Paste a Cookie header string above and click Parse.',
-          copied: 'JSON copied to clipboard.',
-          copyFailed: 'Copy failed.',
-          parseFirst: 'Parse cookies first.',
-          parsed: '{n} cookie{s} parsed.',
-        },
-        zh: {
-          cookieHeader: 'Cookie 字符串', clear: '清除', parse: '解析', copyJson: '复制 JSON',
-          urlDecode: 'URL 解码值', tabTable: '表格', tabJson: 'JSON',
-          colName: '名称', colValue: '值', colFlags: '标志',
-          pastePrompt: '请粘贴 Cookie 字符串后点击解析。',
-          copied: 'JSON 已复制到剪贴板。',
-          copyFailed: '复制失败。',
-          parseFirst: '请先解析 Cookie。',
-          parsed: '已解析 {n} 个 Cookie。',
-        },
-        ja: {
-          cookieHeader: 'Cookie ヘッダー', clear: 'クリア', parse: '解析', copyJson: 'JSON コピー',
-          urlDecode: 'URL デコード', tabTable: 'テーブル', tabJson: 'JSON',
-          colName: '名前', colValue: '値', colFlags: 'フラグ',
-          pastePrompt: 'Cookieヘッダー文字列を貼り付けて解析をクリックしてください。',
-          copied: 'JSONをクリップボードにコピーしました。',
-          copyFailed: 'コピー失敗。',
-          parseFirst: 'まずCookieを解析してください。',
-          parsed: '{n}件のCookieを解析しました。',
-        },
-        ko: {
-          cookieHeader: 'Cookie 헤더', clear: '지우기', parse: '파싱', copyJson: 'JSON 복사',
-          urlDecode: 'URL 디코딩', tabTable: '표', tabJson: 'JSON',
-          colName: '이름', colValue: '값', colFlags: '플래그',
-          pastePrompt: 'Cookie 헤더 문자열을 붙여넣고 파싱을 클릭하세요.',
-          copied: 'JSON이 클립보드에 복사되었습니다.',
-          copyFailed: '복사 실패.',
-          parseFirst: '먼저 쿠키를 파싱하세요.',
-          parsed: '{n}개의 쿠키를 파싱했습니다.',
-        }
-      };
+  <details id="ck-sim" class="ck-box" hidden>
+    <summary>{T.simTitle}</summary>
+    <div class="ck-sim-grid">
+      <label class="tool-label" for="ck-resp-url">{T.respUrl}</label>
+      <input id="ck-resp-url" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder={T.respPlaceholder} />
+      <label class="tool-label" for="ck-req-url">{T.reqUrl}</label>
+      <input id="ck-req-url" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder={T.reqPlaceholder} />
+      <label class="tool-label" for="ck-ctx">{T.ctxLabel}</label>
+      <select id="ck-ctx" class="tool-input">
+        <option value="same-site">{T.ctx['same-site']}</option>
+        <option value="cross-top">{T.ctx['cross-top']}</option>
+        <option value="cross-sub">{T.ctx['cross-sub']}</option>
+      </select>
+    </div>
+    <div id="ck-sim-out" class="ck-sim-out" aria-live="polite"></div>
+  </details>
 
-      var FLAG_ATTRS = ['httponly', 'secure', 'samesite', 'path', 'domain', 'expires', 'max-age'];
+  <details class="ck-box">
+    <summary>{T.optsTitle}</summary>
+    <div class="ck-opts">
+      <label class="ck-check"><input id="ck-decode" type="checkbox" checked /> {T.optDecode}</label>
+      <label class="ck-check"><input id="ck-split" type="checkbox" checked /> {T.optSplit}</label>
+      <label class="ck-field"><span class="tool-label">{T.optJson}</span>
+        <select id="ck-json-format" class="tool-input">
+          <option value="object">{T.optJsonObject}</option>
+          <option value="array">{T.optJsonArray}</option>
+        </select>
+      </label>
+      <label class="ck-field"><span class="tool-label">{T.optRedact}</span>
+        <select id="ck-redact-mode" class="tool-input">
+          <option value="all">{T.optRedactAll}</option>
+          <option value="sensitive">{T.optRedactSensitive}</option>
+        </select>
+      </label>
+    </div>
+  </details>
 
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('[data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
-
-      var inputEl = document.getElementById('cp-input');
-      var statusEl = document.getElementById('cp-status');
-      var resultEl = document.getElementById('cp-result');
-      var tbodyEl = document.getElementById('cp-tbody');
-      var jsonOutputEl = document.getElementById('cp-json-output');
-      var parseBtn = document.getElementById('cp-parse');
-      var copyJsonBtn = document.getElementById('cp-copy-json');
-      var clearBtn = document.getElementById('cp-clear');
-      var urlDecodeCheckbox = document.getElementById('cp-url-decode');
-      var tabTable = document.getElementById('cp-tab-table');
-      var tabJson = document.getElementById('cp-tab-json');
-      var panelTable = document.getElementById('cp-panel-table');
-      var panelJson = document.getElementById('cp-panel-json');
-
-      var lastParsed = [];
-
-      function setStatus(msg, type) {
-        statusEl.textContent = msg;
-        statusEl.className = 'cp-status ' + (type || '');
-      }
-
-      function escapeHtml(str) {
-        return String(str)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;');
-      }
-
-      function tryUrlDecode(val) {
-        try { return decodeURIComponent(val); } catch (e) { return val; }
-      }
-
-      function parseCookies(text, urlDecode) {
-        var parts = text.split(';');
-        var cookies = [];
-
-        for (var i = 0; i < parts.length; i++) {
-          var part = parts[i].trim();
-          if (!part) continue;
-
-          var eqIdx = part.indexOf('=');
-
-          if (eqIdx === -1) {
-            var lower = part.toLowerCase();
-            for (var f = 0; f < FLAG_ATTRS.length; f++) {
-              if (lower === FLAG_ATTRS[f] || lower.startsWith(FLAG_ATTRS[f] + '=') || lower.startsWith(FLAG_ATTRS[f])) {
-                if (cookies.length > 0) {
-                  cookies[cookies.length - 1].flags.push(part);
-                }
-                break;
-              }
-            }
-            continue;
-          }
-
-          var name = part.slice(0, eqIdx).trim();
-          var value = part.slice(eqIdx + 1).trim();
-
-          if (!name) continue;
-
-          var lowerName = name.toLowerCase();
-          var isFlag = false;
-          for (var f = 0; f < FLAG_ATTRS.length; f++) {
-            if (lowerName === FLAG_ATTRS[f]) { isFlag = true; break; }
-          }
-
-          if (isFlag) {
-            if (cookies.length > 0) {
-              cookies[cookies.length - 1].flags.push(part);
-            }
-            continue;
-          }
-
-          cookies.push({
-            name: name,
-            rawValue: value,
-            value: urlDecode ? tryUrlDecode(value) : value,
-            flags: []
-          });
-        }
-
-        return cookies;
-      }
-
-      function renderTable(cookies) {
-        tbodyEl.innerHTML = '';
-        for (var i = 0; i < cookies.length; i++) {
-          var c = cookies[i];
-          var tr = document.createElement('tr');
-          var flagHtml = c.flags.map(function (f) {
-            return '<span class="cp-flag">' + escapeHtml(f) + '</span>';
-          }).join(' ');
-          tr.innerHTML =
-            '<td><code class="cp-name">' + escapeHtml(c.name) + '</code></td>' +
-            '<td><code class="cp-val">' + escapeHtml(c.value) + '</code></td>' +
-            '<td class="cp-flags-cell">' + flagHtml + '</td>';
-          tbodyEl.appendChild(tr);
-        }
-      }
-
-      function renderJson(cookies) {
-        var obj = {};
-        for (var i = 0; i < cookies.length; i++) {
-          obj[cookies[i].name] = cookies[i].value;
-        }
-        jsonOutputEl.textContent = JSON.stringify(obj, null, 2);
-      }
-
-      function parse() {
-        var text = inputEl.value;
-        if (!text.trim()) {
-          setStatus(t.pastePrompt, '');
-          tbodyEl.innerHTML = '';
-          jsonOutputEl.textContent = '';
-          resultEl.style.display = 'none';
-          lastParsed = [];
-          return;
-        }
-
-        var urlDecode = urlDecodeCheckbox.checked;
-        lastParsed = parseCookies(text, urlDecode);
-
-        renderTable(lastParsed);
-        renderJson(lastParsed);
-
-        resultEl.style.display = '';
-
-        var n = lastParsed.length;
-        var s = n !== 1 ? 's' : '';
-        setStatus(t.parsed.replace('{n}', n).replace('{s}', s), 'success');
-
-        window.trackTool && window.trackTool('cookie-parser', 'parse');
-      }
-
-      parseBtn.addEventListener('click', parse);
-
-      urlDecodeCheckbox.addEventListener('change', function () {
-        if (lastParsed.length > 0) parse();
-      });
-
-      copyJsonBtn.addEventListener('click', function () {
-        if (lastParsed.length === 0) {
-          setStatus(t.parseFirst, 'error');
-          return;
-        }
-        var obj = {};
-        for (var i = 0; i < lastParsed.length; i++) {
-          obj[lastParsed[i].name] = lastParsed[i].value;
-        }
-        var json = JSON.stringify(obj, null, 2);
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(json).then(function () {
-            setStatus(t.copied, 'success');
-          }).catch(function () {
-            setStatus(t.copyFailed, 'error');
-          });
-        } else {
-          var ta = document.createElement('textarea');
-          ta.value = json;
-          document.body.appendChild(ta);
-          ta.select();
-          try {
-            document.execCommand('copy');
-            setStatus(t.copied, 'success');
-          } catch (e) {
-            setStatus(t.copyFailed, 'error');
-          }
-          document.body.removeChild(ta);
-        }
-        window.trackTool && window.trackTool('cookie-parser', 'copy_json');
-      });
-
-      clearBtn.addEventListener('click', function () {
-        inputEl.value = '';
-        tbodyEl.innerHTML = '';
-        jsonOutputEl.textContent = '';
-        resultEl.style.display = 'none';
-        setStatus('', '');
-        lastParsed = [];
-      });
-
-      tabTable.addEventListener('click', function () {
-        tabTable.classList.add('cp-tab-active');
-        tabJson.classList.remove('cp-tab-active');
-        panelTable.style.display = '';
-        panelJson.style.display = 'none';
-      });
-
-      tabJson.addEventListener('click', function () {
-        tabJson.classList.add('cp-tab-active');
-        tabTable.classList.remove('cp-tab-active');
-        panelJson.style.display = '';
-        panelTable.style.display = 'none';
-      });
-
-      if (inputEl.value.trim()) {
-        parse();
-      }
-    })();
-  </script>
+  <details id="ck-build" class="ck-box">
+    <summary>{T.buildTitle}</summary>
+    <div class="ck-build-grid">
+      <label class="ck-field"><span class="tool-label">{T.bName}</span><input id="ck-b-name" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" value="session" /></label>
+      <label class="ck-field"><span class="tool-label">{T.bValue}</span><input id="ck-b-value" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" value="abc123" /></label>
+      <label class="ck-check ck-span"><input id="ck-b-encode" type="checkbox" /> {T.bEncode}</label>
+      <label class="ck-field"><span class="tool-label">{T.bDomain}</span><input id="ck-b-domain" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" /></label>
+      <label class="ck-field"><span class="tool-label">{T.bPath}</span><input id="ck-b-path" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" value="/" /></label>
+      <label class="ck-field"><span class="tool-label">{T.bLife}</span>
+        <select id="ck-b-life" class="tool-input">
+          <option value="session">{T.bLifeSession}</option>
+          <option value="max-age" selected>{T.bLifeMaxAge}</option>
+          <option value="expires">{T.bLifeExpires}</option>
+        </select>
+      </label>
+      <label class="ck-field"><span class="tool-label">{T.bLifeMaxAge}</span><input id="ck-b-maxage" class="tool-input" type="text" inputmode="numeric" value="3600" /></label>
+      <label class="ck-field"><span class="tool-label">{T.bLifeExpires}</span><input id="ck-b-expires" class="tool-input" type="datetime-local" /></label>
+      <label class="ck-field"><span class="tool-label">{T.bSameSite}</span>
+        <select id="ck-b-samesite" class="tool-input">
+          <option value="Lax" selected>Lax</option>
+          <option value="Strict">Strict</option>
+          <option value="None">None</option>
+          <option value="">{T.bSameSiteUnset}</option>
+        </select>
+      </label>
+      <label class="ck-field"><span class="tool-label">{T.bPriority}</span>
+        <select id="ck-b-priority" class="tool-input">
+          <option value="">{T.bPriorityUnset}</option>
+          <option value="Low">Low</option>
+          <option value="Medium">Medium</option>
+          <option value="High">High</option>
+        </select>
+      </label>
+      <div class="ck-checks ck-span">
+        <label class="ck-check"><input id="ck-b-secure" type="checkbox" checked /> Secure</label>
+        <label class="ck-check"><input id="ck-b-httponly" type="checkbox" checked /> HttpOnly</label>
+        <label class="ck-check"><input id="ck-b-partitioned" type="checkbox" /> Partitioned</label>
+      </div>
+    </div>
+    <div class="ck-b-result">
+      <div class="ck-b-head"><span class="tool-label">{T.bOut}</span><button id="ck-b-copy" class="btn-copy" type="button">{T.copy}</button></div>
+      <code id="ck-b-out" class="ck-code"></code>
+      <ul id="ck-b-issues" class="ck-issues"></ul>
+      <div class="ck-b-head"><span class="tool-label">{T.bDel}</span><button id="ck-b-copy-del" class="btn-copy" type="button">{T.copy}</button></div>
+      <code id="ck-b-del" class="ck-code"></code>
+    </div>
+  </details>
 </div>
 
+<script is:inline define:vars={{ S: T, pageLang: lang }}>
+  (function () {
+    /* ── engine:start ── */
+    // Parsing follows draft-ietf-httpbis-rfc6265bis-22 (RFC Editor queue, 1 December 2025),
+    // which obsoletes RFC 6265: §5.1.1 dates, §5.1.4 default path and path-match, §5.1.3
+    // domain-match, §5.6 Set-Cookie parsing, §5.7 storage model, §5.8.3 Cookie header order.
+    // __Http- and __Host-Http- come from draft-ietf-httpbis-layered-cookies-02 §4.1.3;
+    // Partitioned from draft-cutler-httpbis-partitioned-cookies-01 (CHIPS) §2.3.
+    var REDACTED = '[redacted]';
+    var MAX_PAIR_BYTES = 4096;           // §5.6 step 5: name + value
+    var MAX_ATTR_BYTES = 1024;           // §5.6 attribute step 6
+    var AGE_LIMIT_S = 34560000;          // §5.5: 400 days
+    var CTL_RE = /[\x00-\x08\x0A-\x1F\x7F]/;
+    var KNOWN_ATTRS = ['expires', 'max-age', 'domain', 'path', 'secure', 'httponly', 'samesite', 'partitioned', 'priority'];
+    var NONSTANDARD_ATTRS = { priority: 'chrome', sameparty: 'removed', comment: 'rfc2109', version: 'rfc2109', commenturl: 'rfc2965', discard: 'rfc2965', port: 'rfc2965' };
+    var FLAG_ATTRS = { secure: 1, httponly: 1, partitioned: 1 };
+    var ATTR_CASE = { expires: 'Expires', 'max-age': 'Max-Age', domain: 'Domain', path: 'Path', secure: 'Secure', httponly: 'HttpOnly', samesite: 'SameSite', partitioned: 'Partitioned', priority: 'Priority' };
+    var MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+    function trimWsp(s) { return String(s).replace(/^[ \t]+|[ \t]+$/g, ''); }
+    function utf8Len(s) {
+      var n = 0;
+      for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if (c < 0x80) n += 1;
+        else if (c < 0x800) n += 2;
+        else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length && (s.charCodeAt(i + 1) & 0xFC00) === 0xDC00) { n += 4; i++; }
+        else n += 3;
+      }
+      return n;
+    }
+    // RFC 9110 §5.6.2 token
+    function isToken(s) { return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(s); }
+    // RFC 6265 §4.1.1 cookie-value: *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
+    function cookieOctetIssue(v) {
+      var body = /^".*"$/.test(v) && v.length >= 2 ? v.slice(1, -1) : v;
+      for (var i = 0; i < body.length; i++) {
+        var c = body.charCodeAt(i);
+        if (c === 0x20) return { ch: ' ', kind: 'space' };
+        if (c === 0x22) return { ch: '"', kind: 'quote' };
+        if (c === 0x2C) return { ch: ',', kind: 'comma' };
+        if (c === 0x5C) return { ch: '\\', kind: 'backslash' };
+        if (c === 0x09) return { ch: '\t', kind: 'tab' };
+        if (c > 0x7E) return { ch: String.fromCodePoint(body.codePointAt(i)), kind: 'nonAscii' };
+      }
+      return null;
+    }
+
+    // Space: Python's http.cookies drops the whole header; quote, backslash, non-ASCII: it drops
+    // this cookie and the ones after it; comma: only RFC 6265 advice.
+    function octetIssue(oi) {
+      var code = oi.kind === 'space' || oi.kind === 'tab' ? 'valueSpace' : oi.kind === 'comma' ? 'valueComma' : 'valueOctet';
+      return { code: code, sev: oi.kind === 'comma' ? 'info' : 'warn', vars: { ch: oi.ch === ' ' ? '\u2420' : oi.ch === '\t' ? '\\t' : oi.ch } };
+    }
+
+    // ---- dates (§5.1.1) ----
+    function isDelim(c) {
+      return c === 0x09 || (c >= 0x20 && c <= 0x2F) || (c >= 0x3B && c <= 0x40) || (c >= 0x5B && c <= 0x60) || (c >= 0x7B && c <= 0x7E);
+    }
+    function dateTokens(s) {
+      var out = [], cur = '';
+      for (var i = 0; i < s.length; i++) {
+        if (isDelim(s.charCodeAt(i))) { if (cur) { out.push(cur); cur = ''; } }
+        else cur += s[i];
+      }
+      if (cur) out.push(cur);
+      return out;
+    }
+    function parseCookieDate(s) {
+      var toks = dateTokens(String(s));
+      var time = null, day = null, month = null, year = null, yearDigits = 0;
+      for (var i = 0; i < toks.length; i++) {
+        var t = toks[i], m;
+        if (!time && (m = /^(\d{1,2}):(\d{1,2}):(\d{1,2})(?:\D[\s\S]*)?$/.exec(t))) { time = [+m[1], +m[2], +m[3]]; continue; }
+        if (day === null && (m = /^(\d{1,2})(?:\D[\s\S]*)?$/.exec(t))) { day = +m[1]; continue; }
+        if (month === null && (m = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.exec(t))) { month = MONTHS.indexOf(m[1].toLowerCase()); continue; }
+        if (year === null && (m = /^(\d{2,4})(?:\D[\s\S]*)?$/.exec(t))) { year = +m[1]; yearDigits = m[1].length; continue; }
+      }
+      if (time === null || day === null || month === null || year === null) {
+        return { ok: false, missing: [time === null ? 'time' : '', day === null ? 'day' : '', month === null ? 'month' : '', year === null ? 'year' : ''].filter(Boolean) };
+      }
+      var twoDigit = false;
+      if (year >= 70 && year <= 99) { year += 1900; twoDigit = true; }
+      else if (year >= 0 && year <= 69) { year += 2000; twoDigit = true; }
+      if (day < 1 || day > 31) return { ok: false, range: 'day' };
+      if (year < 1601) return { ok: false, range: 'year' };
+      if (time[0] > 23) return { ok: false, range: 'hour' };
+      if (time[1] > 59) return { ok: false, range: 'minute' };
+      if (time[2] > 59) return { ok: false, range: 'second' };
+      var d = new Date(0);
+      d.setUTCFullYear(year, month, day);
+      d.setUTCHours(time[0], time[1], time[2], 0);
+      if (d.getUTCDate() !== day || d.getUTCMonth() !== month) return { ok: false, range: 'date' };
+      return { ok: true, ms: d.getTime(), twoDigit: twoDigit, yearDigits: yearDigits };
+    }
+    function httpDate(ms) { return new Date(ms).toUTCString(); }
+
+    // ---- URL helpers ----
+    function isIpHost(h) { return /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || /^\[.*\]$/.test(h); }
+    function domainMatch(host, domain) {
+      if (host === domain) return true;
+      return !isIpHost(host) && host.length > domain.length && host.slice(-domain.length - 1) === '.' + domain;
+    }
+    function defaultPath(uriPath) {
+      if (!uriPath || uriPath[0] !== '/') return '/';
+      var last = uriPath.lastIndexOf('/');
+      if (last === 0) return '/';
+      return uriPath.slice(0, last);
+    }
+    function pathMatch(reqPath, cookiePath) {
+      if (reqPath === cookiePath) return true;
+      if (reqPath.indexOf(cookiePath) !== 0) return false;
+      return cookiePath[cookiePath.length - 1] === '/' || reqPath[cookiePath.length] === '/';
+    }
+    // Browsers treat https and loopback hosts as secure (W3C Secure Contexts §3.2, potentially trustworthy).
+    function isSecureUrl(u) {
+      if (u.protocol === 'https:' || u.protocol === 'wss:') return true;
+      var h = u.hostname;
+      return h === 'localhost' || /\.localhost$/.test(h) || /^127\.\d+\.\d+\.\d+$/.test(h) || h === '[::1]';
+    }
+    function parseUrl(s) {
+      s = trimWsp(String(s || ''));
+      if (!s) return { url: null };
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = 'https://' + s;
+      try {
+        var u = new URL(s);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return { url: null, error: 'scheme' };
+        if (!u.hostname) return { url: null, error: 'host' };
+        return { url: u };
+      } catch (e) { return { url: null, error: 'invalid' }; }
+    }
+
+    // ---- values ----
+    function decodeValue(v) {
+      if (v.indexOf('%') < 0) return { text: v, changed: false };
+      try { var d = decodeURIComponent(v); return { text: d, changed: d !== v }; }
+      catch (e) {
+        var bad = /%(?![0-9A-Fa-f]{2})/.exec(v);
+        return { text: v, changed: false, error: bad ? 'badPercent' : 'notUtf8', pos: bad ? bad.index : -1 };
+      }
+    }
+    function b64urlJson(seg) {
+      try {
+        var s = seg.replace(/-/g, '+').replace(/_/g, '/');
+        while (s.length % 4) s += '=';
+        var bin = atob(s), bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+      } catch (e) { return undefined; }
+    }
+    // Known cookie names. Sources: Google Analytics "Google Analytics cookie usage on websites"
+    // (GA4); Cloudflare "Cloudflare Cookies";
+    // PHP session.name default; Jakarta Servlet SessionCookieConfig (JSESSIONID); express-session
+    // README (connect.sid); Django settings SESSION_COOKIE_NAME / CSRF_COOKIE_NAME; ASP.NET
+    // SessionStateSection.CookieName and ASP.NET Core SessionOptions; Angular HttpClient XSRF;
+    // Baidu Tongji "百度统计相关Cookie列表" (Hm_lvt_ / Hm_lpvt_).
+    var KNOWN_COOKIES = [
+      [/^_ga$/, 'ga'], [/^_ga_[A-Z0-9]+$/, 'ga4'],
+      [/^__cf_bm$/, 'cfbm'], [/^cf_clearance$/, 'cfclearance'], [/^_cfuvid$/, 'cfuvid'],
+      [/^PHPSESSID$/, 'phpsessid'], [/^JSESSIONID$/, 'jsessionid'], [/^connect\.sid$/, 'connectsid'],
+      [/^sessionid$/, 'djangosession'], [/^csrftoken$/, 'djangocsrf'], [/^ASP\.NET_SessionId$/, 'aspnet'],
+      [/^\.AspNetCore\.Session$/, 'aspnetcore'], [/^XSRF-TOKEN$/, 'xsrf'],
+      [/^Hm_lvt_[0-9a-f]+$/, 'hmlvt'], [/^Hm_lpvt_[0-9a-f]+$/, 'hmlpvt']
+    ];
+    var SESSION_KINDS = { phpsessid: 1, jsessionid: 1, connectsid: 1, djangosession: 1, aspnet: 1, aspnetcore: 1, cfclearance: 1 };
+    function knownCookie(name) {
+      for (var i = 0; i < KNOWN_COOKIES.length; i++) if (KNOWN_COOKIES[i][0].test(name)) return KNOWN_COOKIES[i][1];
+      return null;
+    }
+    function inspectValue(value) {
+      var v = value;
+      if (/^".*"$/.test(v) && v.length >= 2) v = v.slice(1, -1);
+      var d = decodeValue(v).text;
+      var m = /^(eyJ[A-Za-z0-9_-]+)\.(eyJ[A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)$/.exec(d);
+      if (m) {
+        var h = b64urlJson(m[1]), p = b64urlJson(m[2]);
+        if (h && typeof h === 'object' && p !== undefined) return { kind: 'jwt', alg: typeof h.alg === 'string' ? h.alg : '', exp: p && typeof p.exp === 'number' ? p.exp * 1000 : null };
+      }
+      if (/^[\[{]/.test(d)) { try { JSON.parse(d); return { kind: 'json' }; } catch (e) {} }
+      if (/^eyJ[A-Za-z0-9_+/=-]{6,}$/.test(d)) { var j = b64urlJson(d.replace(/=+$/, '')); if (j && typeof j === 'object') return { kind: 'base64json' }; }
+      return null;
+    }
+
+    // ---- redaction (copied from HarFileAnalyzerTool.astro; the test compares the source) ----
+    function notFiller(v) {
+      return !/^(.)\1*$/.test(v.replace(/-/g, ''));
+    }
+    function base64HasColon(v) {
+      try { return atob(v).indexOf(':') > 0; } catch (e) { return false; }
+    }
+    var TOKEN_RULES = [
+      { id: 'private-key', cat: 'private-key', label: 'PRIVATE_KEY', re: /-----BEGIN[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|$(?![\s\S]))/gd },
+      { id: 'anthropic-key', cat: 'ai', label: 'ANTHROPIC_KEY', re: /\bsk-ant-[a-z]{3,6}\d{2}-[A-Za-z0-9_-]{32,}/gd },
+      { id: 'openai-key', cat: 'ai', label: 'OPENAI_KEY', re: /\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{32,}/gd },
+      { id: 'openai-legacy-key', cat: 'ai', label: 'OPENAI_KEY', re: /\bsk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}\b/gd },
+      { id: 'huggingface-token', cat: 'ai', label: 'HF_TOKEN', re: /\bhf_[A-Za-z0-9]{34,}\b/gd },
+      { id: 'generic-sk-key', cat: 'ai', label: 'API_KEY', re: /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{31,}/gd },
+      { id: 'github-fine-grained-pat', cat: 'cloud', label: 'GITHUB_TOKEN', re: /\bgithub_pat_[A-Za-z0-9_]{80,}/gd },
+      { id: 'github-token', cat: 'cloud', label: 'GITHUB_TOKEN', re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/gd },
+      { id: 'gitlab-pat', cat: 'cloud', label: 'GITLAB_TOKEN', re: /\bglpat-[A-Za-z0-9_-]{20,}/gd },
+      { id: 'slack-webhook', cat: 'cloud', label: 'SLACK_WEBHOOK', re: /https:\/\/hooks\.slack\.com\/(?:services|workflows|triggers)\/[A-Za-z0-9+/_-]{20,}/gd },
+      { id: 'slack-token', cat: 'cloud', label: 'SLACK_TOKEN', re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/gd },
+      { id: 'stripe-secret-key', cat: 'cloud', label: 'STRIPE_KEY', re: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/gd },
+      { id: 'stripe-webhook-secret', cat: 'cloud', label: 'STRIPE_WEBHOOK_SECRET', re: /\bwhsec_[A-Za-z0-9+/=]{24,}/gd },
+      { id: 'aws-access-key-id', cat: 'cloud', label: 'AWS_ACCESS_KEY', re: /\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}\b/gd },
+      { id: 'aws-secret-access-key', cat: 'cloud', label: 'AWS_SECRET_KEY', re: /aws.{0,20}?secret.{0,20}?['"]?\s*[:=]\s*['"]?([A-Za-z0-9/+]{40})(?![A-Za-z0-9/+])/gdi },
+      { id: 'google-api-key', cat: 'cloud', label: 'GOOGLE_API_KEY', re: /\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/gd },
+      { id: 'google-oauth-secret', cat: 'cloud', label: 'GOOGLE_OAUTH_SECRET', re: /\bGOCSPX-[A-Za-z0-9_-]{28}(?![A-Za-z0-9_-])/gd },
+      { id: 'sendgrid-key', cat: 'cloud', label: 'SENDGRID_KEY', re: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/gd },
+      { id: 'npm-token', cat: 'cloud', label: 'NPM_TOKEN', re: /\bnpm_[A-Za-z0-9]{36}\b/gd },
+      { id: 'pypi-token', cat: 'cloud', label: 'PYPI_TOKEN', re: /\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}/gd },
+      { id: 'telegram-bot-token', cat: 'cloud', label: 'TELEGRAM_BOT_TOKEN', re: /\b\d{8,10}:AA[A-Za-z0-9_-]{33}(?![A-Za-z0-9_-])/gd },
+      // Feishu / Lark custom bot: https://open.feishu.cn/open-apis/bot/v2/hook/{token}
+      { id: 'feishu-webhook', cat: 'cloud', label: 'FEISHU_HOOK_TOKEN', check: notFiller, re: /\bopen\.(?:feishu\.cn|larksuite\.com)\/open-apis\/bot\/v2\/hook\/([A-Za-z0-9_-]{8,})/gd },
+      // WeCom message push: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={key}
+      { id: 'wecom-webhook-key', cat: 'cloud', label: 'WECOM_WEBHOOK_KEY', check: notFiller, re: /\bqyapi\.weixin\.qq\.com\/cgi-bin\/webhook\/[A-Za-z_]+\?(?:[^\s#'"]*?&)?key=([A-Za-z0-9-]{8,})(?![A-Za-z0-9_-])/gd },
+      { id: 'jwt', cat: 'token', label: 'JWT', re: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/gd },
+      // kintone password auth: Base64 of "login:password"
+      { id: 'kintone-password-auth', cat: 'token', label: 'KINTONE_AUTH', check: base64HasColon, re: /\bX-Cybozu-Authorization['"]?\s*[:=]\s*['"]?((?:[A-Za-z0-9+/]{4})+(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)(?![A-Za-z0-9+/=(])/gdi },
+      // Kakao REST API key: Authorization: KakaoAK {key}
+      { id: 'kakao-rest-api-key', cat: 'token', label: 'KAKAO_API_KEY', check: notFiller, re: /\bKakaoAK\s+([A-Za-z0-9]{16,})(?![A-Za-z0-9_-])/gdi },
+      { id: 'basic-auth-header', cat: 'token', label: 'BASIC_AUTH', re: /\bAuthorization\s*[:=]\s*['"]?Basic\s+([A-Za-z0-9+/]{8,}={0,2})/gdi },
+      { id: 'bearer-token', cat: 'token', label: 'BEARER_TOKEN', re: /\bBearer\s+([A-Za-z0-9._~+/-]{16,}={0,2})/gdi },
+      { id: 'url-credential', cat: 'password', label: 'URL_PASSWORD', re: /\b[a-z][a-z0-9+.-]{1,30}:\/\/[^\s:/?#@'"]+:([^\s/?#@'"]+)@/gdi },
+    ];
+
+    var SENS_SUBSTR = /(token|secret|passw(?:or)?d|passwd|pwd|apikey|sessionid|sessid|sessionkey|signature|credential|cookie|csrf|xsrf|jwt|bearer|privatekey|authorization|authkey|authcode|accesskey|secretkey|samlresponse|samlrequest|assertion|verifier)/;
+    // Names that describe a credential without holding one: token_type, expires, token_endpoint…
+    var NON_SECRET_TAIL = { type: 1, expires: 1, expiry: 1, ttl: 1, length: 1, count: 1, hint: 1, endpoint: 1, uri: 1, url: 1, method: 1, scope: 1 };
+    var SENS_WORDS = {
+      header: { session: 1, sid: 1, auth: 1, key: 1, sig: 1, ticket: 1, otp: 1 },
+      param: { session: 1, sid: 1, auth: 1, key: 1, sig: 1, ticket: 1, otp: 1, pass: 1, pin: 1 },
+      body: { session: 1, sid: 1, auth: 1, otp: 1, pass: 1, pin: 1, ticket: 1 }
+    };
+    function normName(name) { return String(name).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+    function nameWords(name) {
+      return String(name).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        .toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    }
+    // kind: 'header' | 'param' (query and form fields) | 'body' (JSON keys, multipart names)
+    function isSensitiveName(name, kind, extra) {
+      if (typeof name !== 'string' || !name) return false;
+      var lower = name.toLowerCase().replace(/^:/, '');
+      var norm = normName(lower);
+      if (!norm) return false;
+      if (extra && extra.has(norm)) return true;
+      if (lower.indexOf('access-control-') === 0) return false;
+      if (kind === 'param' && norm === 'code') return true;
+      var words = nameWords(name);
+      if (words.length > 1 && NON_SECRET_TAIL[words[words.length - 1]] === 1) return false;
+      if (SENS_SUBSTR.test(norm)) return true;
+      var set = SENS_WORDS[kind] || SENS_WORDS.param;
+      for (var i = 0; i < words.length; i++) if (set[words[i]] === 1) return true;
+      return false;
+    }
+
+    function shannon(s) {
+      var f = {}, n = s.length, h = 0;
+      for (var i = 0; i < n; i++) f[s[i]] = (f[s[i]] || 0) + 1;
+      for (var k in f) { var p = f[k] / n; h -= p * Math.log2(p); }
+      return h;
+    }
+    // Long random-looking strings: session IDs and tokens that carry no telling name.
+    // Letters and digits both make up a fair share (a GA client ID, mostly digits, does not count).
+    function looksRandom(v) {
+      if (v.length < 16 || !/^[A-Za-z0-9+/=_.~-]+$/.test(v)) return false;
+      var letters = (v.match(/[A-Za-z]/g) || []).length, digits = (v.match(/[0-9]/g) || []).length;
+      return letters / v.length >= 0.3 && digits / v.length >= 0.1 && shannon(v) >= 3.2;
+    }
+    function tokenRuleHit(v) {
+      for (var i = 0; i < TOKEN_RULES.length; i++) {
+        var r = TOKEN_RULES[i];
+        r.re.lastIndex = 0;
+        var m = r.re.exec(v);
+        if (m && (!r.check || r.check(typeof m[1] === 'string' && m[1] ? m[1] : m[0]))) return r.id;
+      }
+      return null;
+    }
+    // Why a cookie value counts as sensitive, or null.
+    function sensitiveReason(name, value) {
+      if (isSensitiveName(name, 'param', null)) return 'name';
+      var k = knownCookie(name);
+      if (k && SESSION_KINDS[k]) return 'name';
+      if (/(^|[._-])sess(ion)?([._-]|$)|_session$|^sid$/i.test(name)) return 'name';
+      var dv = decodeValue(value).text;
+      if (tokenRuleHit(dv)) return 'token';
+      if (looksRandom(dv)) return 'random';
+      return null;
+    }
+
+    // ---- Cookie request header ----
+    function parseCookieHeader(s) {
+      var pairs = [], seen = Object.create(null), pos = 0;
+      var parts = String(s).split(';');
+      for (var i = 0; i < parts.length; i++) {
+        var seg = parts[i], start = pos;
+        pos += seg.length + 1;
+        if (!trimWsp(seg)) continue;
+        var eq = seg.indexOf('=');
+        var name = eq < 0 ? '' : trimWsp(seg.slice(0, eq));
+        var value = eq < 0 ? trimWsp(seg) : trimWsp(seg.slice(eq + 1));
+        var p = { name: name, value: value, hasEq: eq >= 0, offset: start, index: pairs.length, issues: [] };
+        var key = name;
+        if (seen[key] === undefined) { seen[key] = [p.index]; p.dupOf = -1; }
+        else { p.dupOf = seen[key][0]; seen[key].push(p.index); }
+        pairs.push(p);
+      }
+      pairs.forEach(function (p) {
+        var iss = p.issues;
+        var all = seen[p.name];
+        if (all.length > 1) iss.push({ code: 'dup', sev: 'warn', vars: { n: all.length, i: all.indexOf(p.index) + 1 } });
+        if (!p.name) iss.push({ code: p.hasEq ? 'emptyName' : 'noEq', sev: 'info' });
+        if (CTL_RE.test(p.name + p.value)) iss.push({ code: 'ctl', sev: 'error' });
+        if (p.name && !isToken(p.name)) iss.push({ code: 'nameNotToken', sev: 'warn', vars: { ch: firstNonToken(p.name) } });
+        var oi = cookieOctetIssue(p.value);
+        if (oi) iss.push(octetIssue(oi));
+        if (/^".*"$/.test(p.value) && p.value.length >= 2) iss.push({ code: 'quoted', sev: 'info' });
+        var lower = (p.hasEq ? p.name : p.value).toLowerCase();
+        if (KNOWN_ATTRS.indexOf(lower) >= 0 && lower !== 'priority' && (lower !== 'path' || p.value[0] === '/')) iss.push({ code: 'attrInCookie', sev: 'warn', vars: { name: p.hasEq ? p.name : p.value } });
+        // PHP's $_COOKIE turns "." and " " in names into "_" (PHP 8.4.26, measured 2026-10-02).
+        if (/[. ]/.test(p.name)) iss.push({ code: 'phpName', sev: 'info', vars: { php: p.name.replace(/[. ]/g, '_') } });
+        var dec = decodeValue(p.value);
+        p.decoded = dec.text;
+        if (dec.error) iss.push({ code: dec.error, sev: 'info' });
+        p.info = inspectValue(p.value);
+        p.known = knownCookie(p.name);
+      });
+      var dupNames = Object.keys(seen).filter(function (k) { return seen[k].length > 1; });
+      return { pairs: pairs, bytes: utf8Len(String(s)), dupNames: dupNames };
+    }
+    function firstNonToken(s) {
+      for (var i = 0; i < s.length; i++) if (!isToken(s[i])) return s[i] === ' ' ? '␠' : s[i];
+      return '';
+    }
+
+    // ---- Set-Cookie (§5.6) ----
+    function editDistance(a, b) {
+      var d = [];
+      for (var i = 0; i <= a.length; i++) { d[i] = [i]; }
+      for (var j = 1; j <= b.length; j++) d[0][j] = j;
+      for (i = 1; i <= a.length; i++) for (j = 1; j <= b.length; j++) {
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      return d[a.length][b.length];
+    }
+    function suggestAttr(name) {
+      var n = name.toLowerCase().replace(/[^a-z]/g, '');
+      var best = null, bestD = 3;
+      for (var i = 0; i < KNOWN_ATTRS.length; i++) {
+        var k = KNOWN_ATTRS[i], kn = k.replace(/-/g, '');
+        if (n === kn) return ATTR_CASE[k];
+        var dd = editDistance(n, kn);
+        if (dd < bestD) { bestD = dd; best = ATTR_CASE[k]; }
+      }
+      return best;
+    }
+    function parseSetCookie(s) {
+      s = String(s);
+      var r = { raw: s, name: '', value: '', hasEq: true, attrs: [], fatal: [] };
+      var ctl = CTL_RE.exec(s);
+      if (ctl) r.fatal.push({ code: 'ctl', vars: { pos: ctl.index + 1, hex: ('0' + s.charCodeAt(ctl.index).toString(16).toUpperCase()).slice(-2) } });
+      var semi = s.indexOf(';');
+      var nv = semi < 0 ? s : s.slice(0, semi);
+      var rest = semi < 0 ? '' : s.slice(semi + 1);
+      var eq = nv.indexOf('=');
+      if (eq < 0) { r.hasEq = false; r.value = trimWsp(nv); }
+      else { r.name = trimWsp(nv.slice(0, eq)); r.value = trimWsp(nv.slice(eq + 1)); }
+      r.bytes = utf8Len(r.name) + utf8Len(r.value);
+      if (r.bytes > MAX_PAIR_BYTES) r.fatal.push({ code: 'tooBig', vars: { n: r.bytes } });
+      if (!r.name && !r.value) r.fatal.push({ code: 'empty' });
+      var avs = rest ? rest.split(';') : [];
+      for (var i = 0; i < avs.length; i++) {
+        var av = avs[i];
+        if (!trimWsp(av)) continue;
+        var e2 = av.indexOf('=');
+        var a = { raw: trimWsp(av), name: trimWsp(e2 < 0 ? av : av.slice(0, e2)), value: e2 < 0 ? '' : trimWsp(av.slice(e2 + 1)), hasEq: e2 >= 0 };
+        a.key = a.name.toLowerCase();
+        a.status = 'ok';
+        if (utf8Len(a.value) > MAX_ATTR_BYTES) { a.status = 'ignored'; a.reason = 'attrTooLong'; a.vars = { n: utf8Len(a.value) }; }
+        else if (a.key === 'expires') {
+          var pd = parseCookieDate(a.value);
+          if (pd.ok) { a.ms = pd.ms; a.twoDigit = pd.twoDigit; }
+          else { a.status = 'ignored'; a.reason = 'badDate'; }
+        } else if (a.key === 'max-age') {
+          if (/^-?\d+$/.test(a.value)) a.seconds = parseInt(a.value, 10);
+          else { a.status = 'ignored'; a.reason = /^\+\d+$/.test(a.value) ? 'maxAgePlus' : 'badMaxAge'; }
+        } else if (a.key === 'domain') {
+          a.domain = a.value.replace(/^\./, '').toLowerCase();
+          a.leadingDot = a.value[0] === '.';
+        } else if (a.key === 'path') {
+          if (!a.value || a.value[0] !== '/') { a.status = 'default'; a.reason = 'pathDefault'; }
+        } else if (FLAG_ATTRS[a.key]) {
+          if (a.hasEq && a.value !== '') a.flagValue = true;
+        } else if (a.key === 'samesite') {
+          var v = a.value.toLowerCase();
+          a.enforcement = v === 'none' ? 'None' : v === 'strict' ? 'Strict' : v === 'lax' ? 'Lax' : 'Default';
+          if (a.enforcement === 'Default') a.reason = 'sameSiteInvalid';
+        } else if (a.key === 'priority') {
+          var pv = a.value.toLowerCase();
+          a.status = 'nonstandard';
+          a.priority = pv === 'low' ? 'Low' : pv === 'high' ? 'High' : 'Medium';
+        } else {
+          a.status = 'unknown';
+          a.nonstandard = NONSTANDARD_ATTRS[a.key] || null;
+          a.suggest = a.nonstandard ? null : suggestAttr(a.name);
+        }
+        r.attrs.push(a);
+      }
+      // The last usable attribute of each kind wins (§5.7 steps 6, 7, 11, 17).
+      var lastIdx = {};
+      r.attrs.forEach(function (a, i) { if ((a.status === 'ok' || a.status === 'default' || a.status === 'nonstandard') && !FLAG_ATTRS[a.key]) lastIdx[a.key] = i; });
+      r.attrs.forEach(function (a, i) {
+        if ((a.status === 'ok' || a.status === 'default' || a.status === 'nonstandard') && !FLAG_ATTRS[a.key] && lastIdx[a.key] !== i) a.overridden = true;
+      });
+      return r;
+    }
+    function lastAttr(p, key) {
+      var found = null;
+      p.attrs.forEach(function (a) { if (a.key === key && (a.status === 'ok' || a.status === 'default' || a.status === 'nonstandard')) found = a; });
+      return found;
+    }
+    function hasFlag(p, key) { return p.attrs.some(function (a) { return a.key === key && a.status === 'ok'; }); }
+
+    // ctx: { now (ms), url: URL | null }
+    function analyzeSetCookie(p, ctx) {
+      var now = ctx.now, url = ctx.url || null;
+      var res = { name: p.name, value: p.value, bytes: p.bytes, reject: [], issues: [] };
+      p.fatal.forEach(function (f) { res.reject.push(f); });
+      var host = url ? url.hostname : null;
+
+      // Lifetime (§5.7 step 6, §5.5)
+      var ma = lastAttr(p, 'max-age'), ex = lastAttr(p, 'expires');
+      res.expiry = { type: 'session', ms: null, capped: false, source: null };
+      if (ma) {
+        res.expiry.source = 'max-age';
+        if (ma.seconds <= 0) res.expiry = { type: 'delete', ms: null, source: 'max-age', capped: false };
+        else {
+          var secs = Math.min(ma.seconds, AGE_LIMIT_S);
+          res.expiry = { type: 'persistent', ms: now + secs * 1000, capped: ma.seconds > AGE_LIMIT_S, source: 'max-age', seconds: ma.seconds };
+        }
+        if (ex) res.issues.push({ code: 'bothLifetimes', sev: 'info' });
+      } else if (ex) {
+        if (ex.ms <= now) res.expiry = { type: 'delete', ms: ex.ms, source: 'expires', capped: false };
+        else {
+          var capAt = now + AGE_LIMIT_S * 1000;
+          res.expiry = { type: 'persistent', ms: Math.min(ex.ms, capAt), capped: ex.ms > capAt, source: 'expires', given: ex.ms };
+        }
+        if (ex.twoDigit) res.issues.push({ code: 'twoDigitYear', sev: 'info', vars: { year: new Date(ex.ms).getUTCFullYear() } });
+      }
+      if (res.expiry.capped) res.issues.push({ code: 'capped400', sev: 'info' });
+
+      // Domain (§5.7 steps 7–10)
+      var dom = lastAttr(p, 'domain');
+      var domainAttr = dom ? dom.domain : '';
+      res.hostOnly = !domainAttr;
+      res.domain = domainAttr || host;
+      if (dom && !dom.domain) res.issues.push(dom.value === '.' ? { code: 'domainDotOnly', sev: 'warn' } : { code: 'domainEmpty', sev: 'info' });
+      if (dom && dom.domain && dom.leadingDot) res.issues.push({ code: 'domainDot', sev: 'info' });
+      if (domainAttr && /[^\x00-\x7F]/.test(domainAttr)) res.reject.push({ code: 'domainNonAscii' });
+      else if (domainAttr && url) {
+        if (!domainMatch(host, domainAttr)) res.reject.push({ code: 'domainMismatch', vars: { domain: domainAttr, host: host } });
+      }
+      if (domainAttr && domainAttr.indexOf('.') < 0 && !(host && host === domainAttr)) res.issues.push({ code: 'domainSingleLabel', sev: 'warn', vars: { domain: domainAttr } });
+      if (domainAttr && !res.reject.some(function (x) { return /^domain/.test(x.code); })) res.issues.push({ code: 'domainWide', sev: 'info', vars: { domain: domainAttr } });
+
+      // Path (§5.7 step 11)
+      var pa = lastAttr(p, 'path');
+      res.pathAttr = !!(pa && pa.status === 'ok');
+      res.path = res.pathAttr ? pa.value : (url ? defaultPath(url.pathname) : null);
+      if (pa && pa.status === 'default') res.issues.push({ code: 'pathDefault', sev: 'warn', vars: { value: pa.value } });
+
+      res.secure = hasFlag(p, 'secure');
+      res.httpOnly = hasFlag(p, 'httponly');
+      res.partitioned = hasFlag(p, 'partitioned');
+      var ss = lastAttr(p, 'samesite');
+      res.sameSite = ss ? ss.enforcement : 'Default';
+      var pr = lastAttr(p, 'priority');
+      res.priority = pr ? pr.priority : null;
+
+      if (url && res.secure && !isSecureUrl(url)) res.reject.push({ code: 'secureOnHttp' });
+      if (res.sameSite === 'None' && !res.secure) res.reject.push({ code: 'noneNeedsSecure' });
+      if (res.partitioned && !res.secure) res.reject.push({ code: 'partitionedNeedsSecure' });
+
+      // Name prefixes, matched case-insensitively (§5.4, §5.7 steps 20–22; layered-cookies §4.1.3)
+      var lower = p.name.toLowerCase();
+      if (lower.indexOf('__secure-') === 0 && !res.secure) res.reject.push({ code: 'prefixSecure', vars: { prefix: p.name.slice(0, 9) } });
+      if (lower.indexOf('__host-') === 0) {
+        var why = [];
+        if (!res.secure) why.push('Secure');
+        if (!res.hostOnly) why.push('Domain');
+        if (!res.pathAttr || pa.value !== '/') why.push('Path=/');
+        if (why.length) res.reject.push({ code: 'prefixHost', vars: { prefix: p.name.slice(0, lower.indexOf('__host-http-') === 0 ? 12 : 7), why: why.join(', ') } });
+      }
+      if ((lower.indexOf('__http-') === 0 || lower.indexOf('__host-http-') === 0) && !(res.secure && res.httpOnly)) {
+        res.reject.push({ code: 'prefixHttp', vars: { prefix: p.name.slice(0, lower.indexOf('__http-') === 0 ? 7 : 12) } });
+      }
+      if (!p.name && /^(__secure-|__host-|__http-)/i.test(p.value)) res.reject.push({ code: 'namelessPrefix' });
+      if (/\t/.test(p.name + p.value)) res.issues.push({ code: 'tabInside', sev: 'warn' });
+
+      // Attribute-level notes
+      p.attrs.forEach(function (a) {
+        if (a.overridden) res.issues.push({ code: 'overridden', sev: 'info', vars: { attr: a.name } });
+        if (a.reason === 'badDate') res.issues.push({ code: 'badDate', sev: 'warn', vars: { value: a.value } });
+        if (a.reason === 'badMaxAge') res.issues.push({ code: 'badMaxAge', sev: 'warn', vars: { value: a.value } });
+        if (a.reason === 'maxAgePlus') res.issues.push({ code: 'maxAgePlus', sev: 'warn', vars: { value: a.value } });
+        if (a.reason === 'attrTooLong') res.issues.push({ code: 'attrTooLong', sev: 'warn', vars: { attr: a.name, n: a.vars.n } });
+        if (a.reason === 'sameSiteInvalid') res.issues.push({ code: 'sameSiteInvalid', sev: 'warn', vars: { value: a.value } });
+        if (a.flagValue) res.issues.push({ code: 'flagValue', sev: 'warn', vars: { attr: a.name, value: a.value } });
+        if (a.status === 'unknown') {
+          if (a.nonstandard) res.issues.push({ code: 'attr_' + a.nonstandard, sev: 'info', vars: { attr: a.name } });
+          else res.issues.push({ code: a.suggest ? 'unknownAttrSuggest' : 'unknownAttr', sev: 'warn', vars: { attr: a.name, suggest: a.suggest || '' } });
+        }
+        if (a.status === 'nonstandard') res.issues.push({ code: 'priority', sev: 'info' });
+      });
+
+      if (p.name && !isToken(p.name)) res.issues.push({ code: 'nameNotToken', sev: 'warn', vars: { ch: firstNonToken(p.name) } });
+      var oi = cookieOctetIssue(p.value);
+      if (oi && oi.kind !== 'tab') res.issues.push(octetIssue(oi));
+      if (/^".*"$/.test(p.value) && p.value.length >= 2) res.issues.push({ code: 'quoted', sev: 'info' });
+      if (!p.name && p.value) res.issues.push({ code: p.hasEq ? 'emptyName' : 'noEq', sev: 'info' });
+
+      // Security hints for cookies the browser keeps
+      var sensitive = sensitiveReason(p.name, p.value);
+      res.sensitive = !!sensitive;
+      var kept = res.reject.length === 0 && res.expiry.type !== 'delete';
+      if (kept && !res.secure) res.issues.push({ code: 'noSecure', sev: 'warn' });
+      if (kept && !res.httpOnly) res.issues.push({ code: 'noHttpOnly', sev: sensitive ? 'warn' : 'info' });
+      if (kept && !ss) res.issues.push({ code: 'noSameSite', sev: 'info' });
+      if (kept && res.sameSite === 'None' && res.secure && !res.partitioned) res.issues.push({ code: 'thirdParty', sev: 'info' });
+
+      res.verdict = res.reject.length ? 'rejected' : res.expiry.type === 'delete' ? 'delete' : 'stored';
+      res.decoded = decodeValue(p.value);
+      res.info = inspectValue(p.value);
+      res.known = knownCookie(p.name);
+      res.attrs = p.attrs;
+      res.raw = p.raw;
+      return res;
+    }
+
+    // ---- input splitting ----
+    // A combined value such as Headers.get('set-cookie') joins several Set-Cookie fields with ", "
+    // (Fetch §2.2.2). Split at a comma only when the text after it starts with "token=".
+    function splitCombined(line) {
+      var parts = [], start = 0;
+      for (var i = 0; i < line.length; i++) {
+        if (line[i] !== ',') continue;
+        var j = i + 1;
+        while (j < line.length && (line[j] === ' ' || line[j] === '\t')) j++;
+        var k = j;
+        while (k < line.length && line[k] !== '=' && line[k] !== ';' && line[k] !== ',') k++;
+        if (k < line.length && line[k] === '=' && k > j && isToken(trimWsp(line.slice(j, k)))) {
+          parts.push(line.slice(start, i));
+          start = j;
+        }
+      }
+      parts.push(line.slice(start));
+      return parts;
+    }
+    var HEADER_RE = /^\s*(?:[<>]\s*)?(set-cookie2?|cookie)\s*:\s*/i;
+    var OTHER_HEADER_RE = /^\s*(?:[<>]\s*)?(?:HTTP\/\d(?:\.\d)?\s+\d{3}.*|(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+\S+\s+HTTP\/\d.*|:?[A-Za-z][A-Za-z0-9-]*\s*:\s*.*)$/;
+    var ATTR_HINT_RE = /;\s*(expires|max-age|domain|path|secure|httponly|samesite|partitioned|priority)\s*(=|;|$)/i;
+    var NETSCAPE_HEAD_RE = /^#\s*(Netscape\s+)?HTTP Cookie File/i;
+    function isNetscapeLine(l) {
+      var f = l.replace(/^#HttpOnly_/, '').split('\t');
+      return f.length === 7 && /^(TRUE|FALSE)$/i.test(f[1]) && /^(TRUE|FALSE)$/i.test(f[3]) && /^-?\d+$/.test(f[4]);
+    }
+    // mode: 'auto' | 'cookie' | 'set-cookie'; opts.split: split combined Set-Cookie values
+    function splitInput(text, mode, opts) {
+      opts = opts || {};
+      var src = String(text).replace(/^\uFEFF/, '');
+      var lines = src.split(/\r\n|\r|\n/);
+      var out = { cookieLines: [], setCookies: [], netscape: [], skipped: 0, notes: [], kind: 'empty', curl: false };
+      var plain = [];
+      var nsLines = lines.filter(function (l) { return l.trim() && !/^#(?!HttpOnly_)/.test(l); });
+      var isNs = mode === 'auto' && (lines.some(function (l) { return NETSCAPE_HEAD_RE.test(l); }) || (nsLines.length > 0 && nsLines.every(isNetscapeLine)));
+      if (isNs) {
+        out.netscape = parseNetscape(lines);
+        out.kind = 'netscape';
+        return out;
+      }
+      lines.forEach(function (line, n) {
+        if (!line.trim()) return;
+        // curl -b 'a=1; b=2', --cookie "...", -H 'Cookie: ...' (DevTools "Copy as cURL")
+        var curlRe = /(?:^|\s)(?:-b|--cookie)\s+(?:\$?'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")|(?:^|\s)(?:-H|--header)\s+(?:\$?'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/g;
+        var cm, curlHit = false;
+        if (/(^|\s)curl\s|^\s*-[bH]\s|^\s*--(cookie|header)\s/.test(line)) {
+          while ((cm = curlRe.exec(line))) {
+            if (cm[1] != null || cm[2] != null) { out.cookieLines.push({ text: (cm[1] != null ? cm[1] : cm[2]), line: n + 1 }); curlHit = true; }
+            else {
+              var hv = cm[3] != null ? cm[3] : cm[4];
+              var hm = HEADER_RE.exec(hv);
+              if (hm) {
+                curlHit = true;
+                var body = hv.slice(hm[0].length);
+                if (hm[1].toLowerCase() === 'cookie') out.cookieLines.push({ text: body, line: n + 1 });
+                else out.setCookies.push({ text: body, line: n + 1 });
+              }
+            }
+          }
+          if (curlHit) { out.curl = true; return; }
+        }
+        var m = HEADER_RE.exec(line);
+        if (m) {
+          var rest = line.slice(m[0].length);
+          if (m[1].toLowerCase() === 'cookie') out.cookieLines.push({ text: rest, line: n + 1 });
+          else out.setCookies.push({ text: rest, line: n + 1, header: true });
+          return;
+        }
+        // curl -v info lines ("* Connected to …"), status lines and other headers
+        if (/^\s*\*\s/.test(line) || (OTHER_HEADER_RE.test(line) && !/=/.test(line.split(':')[0]))) { out.skipped++; return; }
+        plain.push({ text: line, line: n + 1 });
+      });
+      if (plain.length) {
+        var asSet = mode === 'set-cookie' || (mode === 'auto' && (out.setCookies.length > 0 || plain.some(function (p) { return ATTR_HINT_RE.test(p.text); })));
+        if (mode === 'cookie') asSet = false;
+        if (asSet) plain.forEach(function (p) { out.setCookies.push(p); });
+        else plain.forEach(function (p) { out.cookieLines.push(p); });
+        if (mode === 'auto' && asSet && out.cookieLines.length === 0 && plain.length === lines.filter(function (l) { return l.trim(); }).length) out.notes.push({ code: 'autoSet' });
+      }
+      // Several Cookie lines form one header (RFC 9113 §8.2.3 allows splitting it).
+      if (out.cookieLines.length > 1) out.notes.push({ code: 'joinedCookie', vars: { n: out.cookieLines.length } });
+      if (opts.split !== false) {
+        var expanded = [];
+        out.setCookies.forEach(function (sc) {
+          var parts = splitCombined(sc.text);
+          if (parts.length > 1) out.notes.push({ code: 'splitCombined', vars: { line: sc.line, n: parts.length } });
+          parts.forEach(function (t) { expanded.push({ text: t.replace(/^\s+/, ''), line: sc.line }); });
+        });
+        out.setCookies = expanded;
+      }
+      if (out.skipped) out.notes.push({ code: 'skippedHeaders', vars: { n: out.skipped } });
+      if (out.curl) out.notes.push({ code: 'fromCurl' });
+      out.kind = out.setCookies.length && out.cookieLines.length ? 'both' : out.setCookies.length ? 'set-cookie' : out.cookieLines.length ? 'cookie' : 'empty';
+      return out;
+    }
+
+    // ---- Netscape cookies.txt (curl, wget, yt-dlp; format: curl.se/docs/http-cookies.html) ----
+    function parseNetscape(lines) {
+      var out = [];
+      lines.forEach(function (line, n) {
+        if (!line.trim()) return;
+        var httpOnly = false;
+        if (/^#HttpOnly_/.test(line)) { httpOnly = true; line = line.slice(10); }
+        else if (line[0] === '#') return;
+        var f = line.split('\t');
+        if (f.length !== 7) { out.push({ line: n + 1, error: 'nsFields', count: f.length }); return; }
+        var exp = parseInt(f[4], 10);
+        out.push({
+          line: n + 1, name: f[5], value: f[6], domain: f[0].replace(/^\./, '').toLowerCase(),
+          hostOnly: !/^TRUE$/i.test(f[1]), path: f[2] || '/', secure: /^TRUE$/i.test(f[3]),
+          httpOnly: httpOnly, expiresMs: exp > 0 ? exp * 1000 : null, session: !(exp > 0), sameSite: 'Default', partitioned: false
+        });
+      });
+      return out;
+    }
+
+    // ---- request simulation (§5.8.3) ----
+    // jar entries: { name, value, domain, hostOnly, path, secure, httpOnly, sameSite, partitioned, expiresMs, deleted }
+    // ctx: 'same-site' | 'cross-top' (cross-site top-level GET navigation) | 'cross-sub' (iframe, fetch, image, form POST)
+    function buildJar(setCookies, now) {
+      var jar = [], order = 0;
+      setCookies.forEach(function (a) {
+        if (a.verdict === 'rejected' || !a.domain) return;
+        var key = a.name + '\n' + a.domain + '\n' + a.hostOnly + '\n' + a.path + '\n' + a.partitioned;
+        jar = jar.filter(function (c) { return c.key !== key; });
+        if (a.verdict === 'delete') return;
+        jar.push({ key: key, name: a.name, value: a.value, domain: a.domain, hostOnly: a.hostOnly, path: a.path, secure: a.secure, httpOnly: a.httpOnly, sameSite: a.sameSite, partitioned: a.partitioned, expiresMs: a.expiry.ms, order: order++ });
+      });
+      return jar;
+    }
+    function simulate(jar, requestUrl, ctx, now) {
+      var host = requestUrl.hostname, path = requestUrl.pathname || '/';
+      var sent = [], skipped = [];
+      jar.forEach(function (c) {
+        var why = null;
+        if (c.expiresMs != null && c.expiresMs <= now) why = 'expired';
+        else if (c.hostOnly ? host !== c.domain : !domainMatch(host, c.domain)) why = 'domain';
+        else if (!pathMatch(path, c.path)) why = 'path';
+        else if (c.secure && !isSecureUrl(requestUrl)) why = 'secure';
+        else if (ctx === 'cross-top' && c.sameSite === 'Strict') why = 'sameSiteStrict';
+        else if (ctx === 'cross-sub' && c.sameSite !== 'None') why = c.sameSite === 'Default' ? 'sameSiteDefault' : 'sameSite' + c.sameSite;
+        else if (ctx === 'cross-sub' && c.partitioned) why = 'partitioned';
+        if (why) skipped.push({ cookie: c, why: why }); else sent.push(c);
+      });
+      sent.sort(function (a, b) { return (b.path.length - a.path.length) || (a.order - b.order); });
+      var header = sent.map(function (c) { return (c.name ? c.name + '=' : '') + c.value; }).join('; ');
+      return { header: header, sent: sent, skipped: skipped };
+    }
+
+    // ---- builder ----
+    function buildSetCookie(f) {
+      var parts = [];
+      var value = f.encode ? encodeURIComponent(f.value) : f.value;
+      parts.push((f.name ? f.name + '=' : '') + value);
+      if (f.domain) parts.push('Domain=' + f.domain);
+      if (f.path) parts.push('Path=' + f.path);
+      if (f.lifetime === 'max-age' && f.maxAge !== '' && f.maxAge != null) parts.push('Max-Age=' + f.maxAge);
+      if (f.lifetime === 'expires' && f.expiresMs != null && !isNaN(f.expiresMs)) parts.push('Expires=' + httpDate(f.expiresMs));
+      if (f.secure) parts.push('Secure');
+      if (f.httpOnly) parts.push('HttpOnly');
+      if (f.sameSite) parts.push('SameSite=' + f.sameSite);
+      if (f.partitioned) parts.push('Partitioned');
+      if (f.priority) parts.push('Priority=' + f.priority);
+      var line = parts.join('; ');
+      var del = [(f.name ? f.name + '=' : '')];
+      if (f.domain) del.push('Domain=' + f.domain);
+      if (f.path) del.push('Path=' + f.path);
+      del.push('Max-Age=0');
+      if (f.secure) del.push('Secure');
+      if (f.httpOnly) del.push('HttpOnly');
+      if (f.sameSite) del.push('SameSite=' + f.sameSite);
+      if (f.partitioned) del.push('Partitioned');
+      return { line: line, deleteLine: del.join('; ') };
+    }
+
+    // ---- redaction and JSON ----
+    // mode: 'all' (every value) | 'sensitive' (names, token formats and random-looking values)
+    function shouldRedact(name, value, mode) { return !!value && (mode === 'all' || !!sensitiveReason(name, value)); }
+    function redactCookieHeader(pairs, mode) {
+      var n = 0;
+      var text = pairs.map(function (p) {
+        var v = p.value;
+        if (shouldRedact(p.name, v, mode)) { v = REDACTED; n++; }
+        return (p.hasEq ? p.name + '=' : '') + v;
+      }).join('; ');
+      return { text: text, count: n };
+    }
+    function redactSetCookie(parsed, mode) {
+      var redact = shouldRedact(parsed.name, parsed.value, mode);
+      var head = (parsed.hasEq ? parsed.name + '=' : '') + (redact ? REDACTED : parsed.value);
+      var tail = parsed.attrs.map(function (a) { return a.raw; });
+      return { text: [head].concat(tail).join('; '), redacted: redact };
+    }
+    function cookiesToJson(pairs, format, decode) {
+      if (format === 'array') {
+        return JSON.stringify(pairs.map(function (p) {
+          var o = { name: p.name, value: decode ? p.decoded : p.value };
+          if (decode && p.decoded !== p.value) o.raw = p.value;
+          return o;
+        }), null, 2);
+      }
+      // First value wins, like the Node "cookie" package and Express req.cookies.
+      var obj = {};
+      pairs.forEach(function (p) { if (!Object.prototype.hasOwnProperty.call(obj, p.name)) obj[p.name] = decode ? p.decoded : p.value; });
+      return JSON.stringify(obj, null, 2);
+    }
+    function setCookiesToJson(list, decode) {
+      return JSON.stringify(list.map(function (a) {
+        return {
+          name: a.name, value: decode ? a.decoded.text : a.value,
+          domain: a.domain, hostOnly: a.hostOnly, path: a.path,
+          expires: a.expiry.type === 'persistent' ? new Date(a.expiry.ms).toISOString() : null,
+          session: a.expiry.type === 'session',
+          secure: a.secure, httpOnly: a.httpOnly, sameSite: a.sameSite, partitioned: a.partitioned,
+          priority: a.priority, browser: a.verdict,
+          rejectedBecause: a.reject.map(function (r) { return r.code; })
+        };
+      }), null, 2);
+    }
+    /* ── engine:end ── */
+
+    function $(id) { return document.getElementById(id); }
+    function fmt(s, vars) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? vars[k] : m; }); }
+    function plural(pair, n, vars) { var v = vars || {}; v.n = n; return fmt(n === 1 ? pair[0] : pair[1], v); }
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    }
+    function showChar(s) { return String(s).replace(/\t/g, '\\t').replace(/[\x00-\x08\x0A-\x1F\x7F]/g, function (c) { return '\\x' + ('0' + c.charCodeAt(0).toString(16)).slice(-2); }); }
+
+    var inputEl = $('ck-input'), statusEl = $('ck-status'), notesEl = $('ck-notes'), outEl = $('ck-out');
+    var simBox = $('ck-sim'), simResp = $('ck-resp-url'), simReq = $('ck-req-url'), simCtx = $('ck-ctx'), simOut = $('ck-sim-out');
+    var decodeEl = $('ck-decode'), splitEl = $('ck-split'), jsonFmtEl = $('ck-json-format'), redactEl = $('ck-redact-mode');
+    var copyJsonBtn = $('ck-copy-json'), copyRedBtn = $('ck-copy-redacted');
+    var modeBtns = document.querySelectorAll('#ck-wrap [data-mode]');
+    var mode = 'auto', current = null, trackTimer = null;
+    var rtf = (typeof Intl !== 'undefined' && Intl.RelativeTimeFormat) ? new Intl.RelativeTimeFormat(pageLang, { numeric: 'always' }) : null;
+
+    function setStatus(msg, tone) { statusEl.textContent = msg; statusEl.className = 'tool-status ' + (tone || 'none'); }
+    function relTime(ms, now) {
+      var diff = (ms - now) / 1000, abs = Math.abs(diff), unit, size;
+      if (abs >= 2 * 31536000) { unit = 'year'; size = 31536000; }
+      else if (abs >= 60 * 86400) { unit = 'month'; size = 2592000; }
+      else if (abs >= 2 * 86400) { unit = 'day'; size = 86400; }
+      else if (abs >= 2 * 3600) { unit = 'hour'; size = 3600; }
+      else if (abs >= 120) { unit = 'minute'; size = 60; }
+      else { unit = 'second'; size = 1; }
+      var v = Math.round(diff / size);
+      return rtf ? rtf.format(v, unit) : v + ' ' + unit;
+    }
+    function utcText(ms) { return new Date(ms).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC'); }
+    function issueText(it) { var t = S.issues[it.code]; return t ? fmt(t, it.vars) : it.code; }
+    function jwtHref() { return (pageLang === 'en' ? '' : '/' + pageLang) + '/tools/jwt-decoder/'; }
+
+    function valueBlock(value, decodedText, decodeOn, info, known, now) {
+      var box = el('div', 'ck-valbox');
+      var code = el('code', 'ck-val', showChar(decodeOn ? decodedText : value) || '\u2014');
+      if (!value) code.classList.add('ck-empty');
+      box.appendChild(code);
+      if (decodeOn && decodedText !== value) box.appendChild(el('div', 'ck-sub', fmt(S.rawValue, { v: showChar(value) })));
+      if (info) {
+        var line = el('div', 'ck-sub ck-kind');
+        if (info.kind === 'jwt') {
+          line.appendChild(document.createTextNode(fmt(S.kindJwt, { alg: info.alg || '?' }) + (info.exp ? ' ' + fmt(info.exp <= now ? S.jwtExpired : S.jwtExpires, { when: relTime(info.exp, now) }) : '') + ' '));
+          var a = el('a', 'ck-link', S.openJwt);
+          a.href = jwtHref();
+          line.appendChild(a);
+        } else line.textContent = S['kind_' + info.kind];
+        box.appendChild(line);
+      }
+      if (known) box.appendChild(el('div', 'ck-sub ck-known', S.known[known]));
+      return box;
+    }
+    function issueList(issues) {
+      var ul = el('ul', 'ck-issues');
+      issues.forEach(function (it) { ul.appendChild(el('li', 'ck-iss ck-iss-' + it.sev, issueText(it))); });
+      return ul;
+    }
+
+    function renderCookie(list) {
+      var pr = parseCookieHeader(list.map(function (l) { return l.text; }).join('; '));
+      var decodeOn = decodeEl.checked, now = Date.now();
+      var sec = el('section', 'ck-section');
+      sec.appendChild(el('h3', 'ck-h', fmt(S.cookieTitle, { n: pr.pairs.length, bytes: pr.bytes })));
+      if (pr.dupNames.length) sec.appendChild(el('p', 'ck-callout', fmt(S.dupExplain, { names: pr.dupNames.map(function (n) { return n || S.emptyName; }).join(', ') })));
+      var wrap = el('div', 'ck-table-wrap'), table = el('table', 'ck-table'), thead = el('thead'), tr = el('tr');
+      [S.colName, S.colValue, S.colNotes].forEach(function (h) { tr.appendChild(el('th', null, h)); });
+      thead.appendChild(tr); table.appendChild(thead);
+      var tbody = el('tbody');
+      pr.pairs.forEach(function (p) {
+        var row = el('tr');
+        var nameTd = el('td', 'ck-name-cell');
+        nameTd.appendChild(el('code', 'ck-name', p.name ? showChar(p.name) : S.emptyName));
+        if (p.dupOf >= 0) nameTd.appendChild(el('span', 'ck-badge ck-badge-warn', fmt(S.dupBadge, { i: p.issues.filter(function (x) { return x.code === 'dup'; })[0].vars.i })));
+        else if (pr.dupNames.indexOf(p.name) >= 0) nameTd.appendChild(el('span', 'ck-badge', S.firstBadge));
+        row.appendChild(nameTd);
+        var valTd = el('td');
+        valTd.appendChild(valueBlock(p.value, p.decoded, decodeOn, p.info, p.known, now));
+        row.appendChild(valTd);
+        var noteTd = el('td');
+        var iss = p.issues.filter(function (x) { return x.code !== 'dup'; });
+        noteTd.appendChild(el('div', 'ck-sub', fmt(S.bytesLabel, { n: utf8Len(p.name) + utf8Len(p.value) + (p.hasEq ? 1 : 0) })));
+        if (iss.length) noteTd.appendChild(issueList(iss));
+        row.appendChild(noteTd);
+        tbody.appendChild(row);
+      });
+      table.appendChild(tbody); wrap.appendChild(table); sec.appendChild(wrap);
+      return { section: sec, parsed: pr };
+    }
+
+    function verdictBadge(v) {
+      return el('span', 'ck-verdict ck-verdict-' + v, S.verdict[v]);
+    }
+    function field(dl, label, value) {
+      dl.appendChild(el('dt', null, label));
+      var dd = el('dd');
+      if (typeof value === 'string') dd.textContent = value; else dd.appendChild(value);
+      dl.appendChild(dd);
+    }
+    function lifetimeText(a, now) {
+      if (a.expiry.type === 'session') return S.lifeSession;
+      if (a.expiry.type === 'delete') return S.lifeDelete;
+      return fmt(S.lifeAt, { date: utcText(a.expiry.ms), rel: relTime(a.expiry.ms, now) }) + (a.expiry.source === 'max-age' ? ' \u00b7 Max-Age' : ' \u00b7 Expires');
+    }
+    function renderSetCookie(items, url) {
+      var now = Date.now(), decodeOn = decodeEl.checked;
+      var analyses = items.map(function (it) {
+        var p = parseSetCookie(it.text);
+        var a = analyzeSetCookie(p, { now: now, url: url });
+        a.parsed = p; a.line = it.line;
+        return a;
+      });
+      var sec = el('section', 'ck-section');
+      var counts = { stored: 0, delete: 0, rejected: 0 };
+      analyses.forEach(function (a) { counts[a.verdict]++; });
+      sec.appendChild(el('h3', 'ck-h', fmt(S.setTitle, { n: analyses.length, stored: counts.stored, del: counts.delete, rejected: counts.rejected })));
+      analyses.forEach(function (a, i) {
+        var card = el('article', 'ck-card ck-card-' + a.verdict);
+        var head = el('div', 'ck-card-head');
+        head.appendChild(el('code', 'ck-name', a.name ? showChar(a.name) : S.emptyName));
+        head.appendChild(verdictBadge(a.verdict));
+        var edit = el('button', 'btn-ghost btn-sm ck-edit', S.editInBuilder);
+        edit.type = 'button';
+        edit.addEventListener('click', function () { fillBuilder(a); });
+        head.appendChild(edit);
+        card.appendChild(head);
+        if (a.reject.length) {
+          var rj = el('ul', 'ck-issues');
+          a.reject.forEach(function (r) { rj.appendChild(el('li', 'ck-iss ck-iss-error', fmt(S.reject[r.code] || r.code, r.vars))); });
+          card.appendChild(rj);
+        }
+        card.appendChild(valueBlock(a.value, a.decoded.text, decodeOn, a.info, a.known, now));
+        var dl = el('dl', 'ck-fields');
+        field(dl, S.fDomain, a.hostOnly ? (a.domain ? fmt(S.hostOnlyIs, { host: a.domain }) : S.hostOnlyUnknown) : fmt(S.domainAll, { domain: a.domain }));
+        field(dl, S.fPath, a.path ? (a.pathAttr ? a.path : fmt(S.pathDefaultIs, { path: a.path })) : S.pathDefaultUnknown);
+        field(dl, S.fLifetime, lifetimeText(a, now));
+        field(dl, S.fSecure, a.secure ? S.yes : S.no);
+        field(dl, S.fHttpOnly, a.httpOnly ? S.yes : S.no);
+        field(dl, S.fSameSite, a.sameSite === 'Default' ? S.sameSiteDefault : a.sameSite);
+        if (a.partitioned) field(dl, S.fPartitioned, S.yes);
+        if (a.priority) field(dl, S.fPriority, a.priority);
+        field(dl, S.fSize, fmt(S.sizeOf, { n: a.bytes }));
+        card.appendChild(dl);
+        if (a.parsed.attrs.length) {
+          var det = el('details', 'ck-attrs');
+          det.appendChild(el('summary', null, fmt(S.attrsSummary, { n: a.parsed.attrs.length })));
+          var ul = el('ul', 'ck-attr-list');
+          a.parsed.attrs.forEach(function (at) {
+            var li = el('li');
+            li.appendChild(el('code', null, showChar(at.raw)));
+            var st = at.overridden ? 'overridden' : at.status;
+            li.appendChild(el('span', 'ck-attr-st ck-attr-' + st, S.attrStatus[st]));
+            ul.appendChild(li);
+          });
+          det.appendChild(ul);
+          card.appendChild(det);
+        }
+        var iss = a.issues.slice().sort(function (x, y) { return sevRank(x.sev) - sevRank(y.sev); });
+        if (iss.length) card.appendChild(issueList(iss));
+        sec.appendChild(card);
+      });
+      return { section: sec, analyses: analyses };
+    }
+    function sevRank(s) { return s === 'error' ? 0 : s === 'warn' ? 1 : 2; }
+
+    function renderNetscape(entries) {
+      var now = Date.now();
+      var sec = el('section', 'ck-section');
+      var good = entries.filter(function (e) { return !e.error; });
+      sec.appendChild(el('h3', 'ck-h', fmt(S.nsTitle, { n: good.length })));
+      var bad = entries.filter(function (e) { return e.error; });
+      if (bad.length) sec.appendChild(el('p', 'ck-callout', fmt(S.nsBad, { lines: bad.map(function (b) { return b.line; }).join(', ') })));
+      var wrap = el('div', 'ck-table-wrap'), table = el('table', 'ck-table'), thead = el('thead'), tr = el('tr');
+      [S.colName, S.colValue, S.fDomain, S.fPath, S.fLifetime, S.colFlags].forEach(function (h) { tr.appendChild(el('th', null, h)); });
+      thead.appendChild(tr); table.appendChild(thead);
+      var tbody = el('tbody');
+      good.forEach(function (e) {
+        var row = el('tr');
+        var nt = el('td'); nt.appendChild(el('code', 'ck-name', e.name || S.emptyName)); row.appendChild(nt);
+        var vt = el('td'); vt.appendChild(valueBlock(e.value, decodeValue(e.value).text, decodeEl.checked, inspectValue(e.value), knownCookie(e.name), now)); row.appendChild(vt);
+        function cell(label, text) { var td = el('td', null, text); td.setAttribute('data-label', label); row.appendChild(td); }
+        cell(S.fDomain, e.hostOnly ? e.domain : '.' + e.domain);
+        cell(S.fPath, e.path);
+        cell(S.fLifetime, e.session ? S.lifeSession : (e.expiresMs <= now ? S.nsExpired + ' ' : '') + utcText(e.expiresMs));
+        cell(S.colFlags, [e.secure ? 'Secure' : '', e.httpOnly ? 'HttpOnly' : ''].filter(Boolean).join(' ') || '\u2014');
+        tbody.appendChild(row);
+      });
+      table.appendChild(tbody); wrap.appendChild(table); sec.appendChild(wrap);
+      return { section: sec, entries: good };
+    }
+
+    function runSim() {
+      simOut.textContent = '';
+      if (!current || !current.jarSource) return;
+      var rq = parseUrl(simReq.value || simResp.value);
+      if (!rq.url) { simOut.appendChild(el('p', 'ck-muted', current.kind === 'set-cookie' && !parseUrl(simResp.value).url ? S.simNeedsUrl : S.simNeedsReq)); return; }
+      var now = Date.now();
+      var jar = current.kind === 'netscape' ? current.jarSource.map(function (e, i) {
+        return { name: e.name, value: e.value, domain: e.domain, hostOnly: e.hostOnly, path: e.path, secure: e.secure, httpOnly: e.httpOnly, sameSite: 'Default', partitioned: false, expiresMs: e.expiresMs, order: i };
+      }) : buildJar(current.jarSource, now);
+      var r = simulate(jar, rq.url, simCtx.value, now);
+      var head = el('div', 'ck-sim-head');
+      head.appendChild(el('span', 'tool-label', fmt(S.simHeader, { url: rq.url.origin + rq.url.pathname })));
+      var cb = el('button', 'btn-copy', S.copy);
+      cb.type = 'button';
+      cb.addEventListener('click', function () { copyText(r.header ? 'Cookie: ' + r.header : '', cb); });
+      if (r.header) head.appendChild(cb);
+      simOut.appendChild(head);
+      simOut.appendChild(el('code', 'ck-sim-header', r.header ? 'Cookie: ' + r.header : S.simNone));
+      if (r.sent.length > 1) simOut.appendChild(el('p', 'ck-muted', S.simOrder));
+      if (r.skipped.length) {
+        var ul = el('ul', 'ck-issues');
+        r.skipped.forEach(function (s) { ul.appendChild(el('li', 'ck-iss ck-iss-info', fmt(S.skip[s.why], { name: s.cookie.name || S.emptyName, path: s.cookie.path, domain: s.cookie.domain }))); });
+        simOut.appendChild(ul);
+      }
+      if (simCtx.value !== 'same-site' && r.skipped.some(function (s) { return s.why === 'sameSiteDefault'; })) simOut.appendChild(el('p', 'ck-muted', S.simLaxNote));
+    }
+
+    function render(scroll) {
+      var text = inputEl.value;
+      outEl.textContent = ''; notesEl.textContent = '';
+      current = null;
+      if (!text.trim()) {
+        setStatus(S.statusEmpty, 'none');
+        simBox.hidden = true;
+        return;
+      }
+      var sp = splitInput(text, mode, { split: splitEl.checked });
+      var respUrl = parseUrl(simResp.value).url;
+      current = { kind: sp.kind, split: sp };
+      sp.notes.forEach(function (n) { notesEl.appendChild(el('li', 'ck-note', fmt(S.notes[n.code], n.vars))); });
+      var msgs = [];
+      if (sp.kind === 'netscape') {
+        var ns = renderNetscape(sp.netscape);
+        outEl.appendChild(ns.section);
+        current.netscape = ns.entries;
+        current.jarSource = ns.entries;
+        msgs.push(fmt(S.statusNs, { n: ns.entries.length }));
+      } else {
+        if (sp.cookieLines.length) {
+          var rc = renderCookie(sp.cookieLines);
+          outEl.appendChild(rc.section);
+          current.cookie = rc.parsed;
+          msgs.push(plural(S.statusCookie, rc.parsed.pairs.length, { bytes: rc.parsed.bytes }));
+        }
+        if (sp.setCookies.length) {
+          var rs = renderSetCookie(sp.setCookies, respUrl);
+          outEl.appendChild(rs.section);
+          current.set = rs.analyses;
+          current.jarSource = rs.analyses;
+          var c = { stored: 0, delete: 0, rejected: 0 };
+          rs.analyses.forEach(function (a) { c[a.verdict]++; });
+          msgs.push(fmt(plural(S.statusSet, rs.analyses.length), { stored: c.stored, del: c.delete, rejected: c.rejected }));
+        }
+      }
+      if (sp.kind === 'set-cookie' || sp.kind === 'both') current.kind = 'set-cookie';
+      setStatus(msgs.join(' ') || S.statusNothing, msgs.length ? 'success' : 'info');
+      simBox.hidden = !current.jarSource;
+      if (current.jarSource) runSim();
+      if (scroll && outEl.firstChild) {
+        var r = outEl.getBoundingClientRect();
+        if (r.top > window.innerHeight - 80) outEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+      clearTimeout(trackTimer);
+      trackTimer = setTimeout(function () { if (window.trackTool) window.trackTool('cookie-parser', 'parse'); }, 1500);
+    }
+
+    function copyText(text, btn) {
+      function done(ok) {
+        if (!btn) return;
+        var label = btn.getAttribute('data-label') || btn.textContent;
+        btn.setAttribute('data-label', label);
+        btn.textContent = ok ? S.copied : S.copyFailed;
+        setTimeout(function () { btn.textContent = label; }, 1500);
+        if (!ok) setStatus(S.copyFailedLong, 'error');
+      }
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        done(ok);
+      }
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+      else fallback();
+    }
+
+    function jsonText() {
+      if (!current) return '';
+      var decodeOn = decodeEl.checked;
+      if (current.netscape) return JSON.stringify(current.netscape.map(function (e) {
+        return { name: e.name, value: decodeOn ? decodeValue(e.value).text : e.value, domain: e.domain, hostOnly: e.hostOnly, path: e.path, secure: e.secure, httpOnly: e.httpOnly, expires: e.expiresMs ? new Date(e.expiresMs).toISOString() : null, session: e.session };
+      }), null, 2);
+      var parts = [];
+      if (current.cookie) parts.push(cookiesToJson(current.cookie.pairs, jsonFmtEl.value, decodeOn));
+      if (current.set) parts.push(setCookiesToJson(current.set, decodeOn));
+      return parts.join('\n');
+    }
+    function redactedText() {
+      if (!current) return '';
+      var mode = redactEl.value, out = [];
+      if (current.netscape) {
+        return current.split.netscape.length ? inputEl.value.split(/\r\n|\r|\n/).map(function (line) {
+          var f = line.split('\t');
+          if (f.length === 7 && (line[0] !== '#' || /^#HttpOnly_/.test(line))) { if (shouldRedact(f[5], f[6], mode)) f[6] = REDACTED; return f.join('\t'); }
+          return line;
+        }).join('\n') : '';
+      }
+      if (current.cookie) out.push('Cookie: ' + redactCookieHeader(current.cookie.pairs, mode).text);
+      if (current.set) current.set.forEach(function (a) { out.push('Set-Cookie: ' + redactSetCookie(a.parsed, mode).text); });
+      return out.join('\n');
+    }
+    copyJsonBtn.addEventListener('click', function () {
+      if (!current) { setStatus(S.statusEmpty, 'info'); return; }
+      copyText(jsonText(), copyJsonBtn);
+      if (window.trackTool) window.trackTool('cookie-parser', 'copy_json');
+    });
+    copyRedBtn.addEventListener('click', function () {
+      if (!current) { setStatus(S.statusEmpty, 'info'); return; }
+      copyText(redactedText(), copyRedBtn);
+      if (window.trackTool) window.trackTool('cookie-parser', 'copy_redacted');
+    });
+
+    modeBtns.forEach(function (b) {
+      b.addEventListener('click', function () {
+        mode = b.getAttribute('data-mode');
+        modeBtns.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+        render(false);
+      });
+    });
+    inputEl.addEventListener('input', function () { render(false); });
+    [decodeEl, splitEl, jsonFmtEl].forEach(function (x) { x.addEventListener('change', function () { render(false); }); });
+    simResp.addEventListener('input', function () { render(false); });
+    [simReq, simCtx].forEach(function (x) { x.addEventListener('input', runSim); x.addEventListener('change', runSim); });
+    $('ck-parse').addEventListener('click', function () { render(true); });
+    $('ck-ex-cookie').addEventListener('click', function () {
+      inputEl.value = S.exampleCookie; simResp.value = ''; simReq.value = '';
+      setMode('auto'); render(true);
+    });
+    $('ck-ex-set').addEventListener('click', function () {
+      inputEl.value = S.exampleSet; simResp.value = S.exampleRespUrl; simReq.value = S.exampleReqUrl;
+      simBox.open = true;
+      setMode('auto'); render(true);
+    });
+    $('ck-clear').addEventListener('click', function () {
+      inputEl.value = ''; simResp.value = ''; simReq.value = '';
+      render(false); inputEl.focus();
+    });
+    function setMode(m) { mode = m; modeBtns.forEach(function (x) { x.setAttribute('aria-pressed', x.getAttribute('data-mode') === m ? 'true' : 'false'); }); }
+    /* ToolLayout clears text inputs on Ctrl/⌘+L; re-render once it has. */
+    document.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) setTimeout(function () { render(false); buildRender(); }, 0);
+    });
+
+    // ---- builder ----
+    var bf = {
+      name: $('ck-b-name'), value: $('ck-b-value'), encode: $('ck-b-encode'), domain: $('ck-b-domain'), path: $('ck-b-path'),
+      lifetime: $('ck-b-life'), maxAge: $('ck-b-maxage'), expires: $('ck-b-expires'), secure: $('ck-b-secure'), httpOnly: $('ck-b-httponly'),
+      sameSite: $('ck-b-samesite'), partitioned: $('ck-b-partitioned'), priority: $('ck-b-priority')
+    };
+    var bOut = $('ck-b-out'), bDel = $('ck-b-del'), bIssues = $('ck-b-issues');
+    function buildForm() {
+      var exMs = null;
+      if (bf.expires.value) { var t = Date.parse(bf.expires.value + 'Z'); exMs = isNaN(t) ? null : t; }
+      return {
+        name: bf.name.value.trim(), value: bf.value.value, encode: bf.encode.checked, domain: bf.domain.value.trim(), path: bf.path.value.trim(),
+        lifetime: bf.lifetime.value, maxAge: bf.maxAge.value.trim(), expiresMs: exMs, secure: bf.secure.checked, httpOnly: bf.httpOnly.checked,
+        sameSite: bf.sameSite.value, partitioned: bf.partitioned.checked, priority: bf.priority.value
+      };
+    }
+    function buildRender() {
+      var f = buildForm();
+      bf.maxAge.disabled = f.lifetime !== 'max-age';
+      bf.expires.disabled = f.lifetime !== 'expires';
+      bIssues.textContent = '';
+      if (!f.name && !f.value) { bOut.textContent = ''; bDel.textContent = ''; return; }
+      var b = buildSetCookie(f);
+      bOut.textContent = 'Set-Cookie: ' + b.line;
+      bDel.textContent = 'Set-Cookie: ' + b.deleteLine;
+      var a = analyzeSetCookie(parseSetCookie(b.line), { now: Date.now(), url: parseUrl(simResp.value).url });
+      var list = [];
+      a.reject.forEach(function (r) { list.push({ sev: 'error', text: fmt(S.reject[r.code] || r.code, r.vars) }); });
+      a.issues.forEach(function (it) { if (it.code !== 'domainWide') list.push({ sev: it.sev, text: issueText(it) }); });
+      if (f.name && !isToken(f.name)) list.unshift({ sev: 'error', text: fmt(S.issues.nameNotToken, { ch: firstNonToken(f.name) }) });
+      if (!f.encode && cookieOctetIssue(f.value)) list.push({ sev: 'warn', text: S.buildEncodeHint });
+      list.sort(function (x, y) { return sevRank(x.sev) - sevRank(y.sev); });
+      list.forEach(function (it) { bIssues.appendChild(el('li', 'ck-iss ck-iss-' + it.sev, it.text)); });
+    }
+    function fillBuilder(a) {
+      var p = a.parsed;
+      bf.name.value = p.name; bf.value.value = p.value; bf.encode.checked = false;
+      var d = lastAttr(p, 'domain'); bf.domain.value = d ? d.value : '';
+      var pa = lastAttr(p, 'path'); bf.path.value = pa ? pa.value : '';
+      var ma = lastAttr(p, 'max-age'), ex = lastAttr(p, 'expires');
+      if (ma) { bf.lifetime.value = 'max-age'; bf.maxAge.value = String(ma.seconds); }
+      else if (ex) { bf.lifetime.value = 'expires'; bf.expires.value = new Date(ex.ms).toISOString().slice(0, 16); }
+      else bf.lifetime.value = 'session';
+      bf.secure.checked = a.secure; bf.httpOnly.checked = a.httpOnly;
+      var ss = lastAttr(p, 'samesite'); bf.sameSite.value = ss && ss.enforcement !== 'Default' ? ss.enforcement : '';
+      bf.partitioned.checked = a.partitioned; bf.priority.value = a.priority || '';
+      var box = $('ck-build'); box.open = true;
+      buildRender();
+      box.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      bf.name.focus({ preventScroll: true });
+    }
+    Object.keys(bf).forEach(function (k) { bf[k].addEventListener('input', buildRender); bf[k].addEventListener('change', buildRender); });
+    $('ck-b-copy').addEventListener('click', function () { if (bOut.textContent) copyText(bOut.textContent, $('ck-b-copy')); });
+    $('ck-b-copy-del').addEventListener('click', function () { if (bDel.textContent) copyText(bDel.textContent, $('ck-b-copy-del')); });
+    buildRender();
+    if (inputEl.value) render(false);
+  })();
+</script>
+
 <style>
-  .cp-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .ck-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+  .ck-wrap [hidden] { display: none !important; }
+  .ck-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-  .cp-input-section { display: flex; flex-direction: column; gap: 0.4rem; }
+  .ck-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .ck-modes { display: inline-flex; border: 1px solid var(--color-border); border-radius: 999px; padding: 2px; background: var(--color-bg-secondary); }
+  .ck-mode {
+    border: 0; background: transparent; color: var(--color-text-secondary);
+    font: inherit; font-size: 0.82rem; padding: 0.3rem 0.8rem; border-radius: 999px; cursor: pointer;
+  }
+  .ck-mode[aria-pressed="true"] { background: var(--color-surface); color: var(--color-text); box-shadow: 0 1px 2px color-mix(in oklch, var(--color-text) 15%, transparent); font-weight: 600; }
+  .ck-mode:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+  .ck-top-btns { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 
-  .cp-input-section label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .ck-input { min-height: 0; resize: vertical; word-break: break-all; }
+  .ck-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .ck-wrap .tool-status { margin: 0; overflow-wrap: anywhere; }
+
+  .ck-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+  .ck-notes:empty { display: none; }
+  .ck-notes :global(.ck-note) {
+    font-size: 0.82rem; line-height: 1.45; padding: 0.35rem 0.6rem; border-radius: var(--radius-sm);
+    background: var(--color-surface-muted); color: var(--color-text-secondary);
   }
 
-  #cp-input {
-    width: 100%;
-    min-height: 120px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.5;
+  .ck-out { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
+  .ck-out:empty { display: none; }
+  .ck-out :global(.ck-section) { display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; }
+  .ck-out :global(.ck-h) { font-size: 0.95rem; margin: 0; color: var(--color-text); }
+  .ck-wrap :global(.ck-callout) {
+    margin: 0; font-size: 0.82rem; line-height: 1.5; padding: 0.5rem 0.7rem; border-radius: var(--radius-sm);
+    background: color-mix(in oklch, var(--color-accent) 12%, var(--color-surface)); color: var(--color-text);
   }
-
-  #cp-input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
-
-  .cp-options { display: flex; gap: 1rem; align-items: center; }
-
-  .cp-checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.85rem;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    user-select: none;
+  .ck-out :global(.ck-table-wrap) { overflow-x: auto; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+  .ck-out :global(.ck-table) { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+  .ck-out :global(.ck-table th) {
+    text-align: left; padding: 0.45rem 0.65rem; background: var(--color-bg-secondary); color: var(--color-text-secondary);
+    font-weight: 600; border-bottom: 1px solid var(--color-border); white-space: nowrap;
   }
-
-  .cp-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-
-  .cp-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .cp-status.success { color: #057a55; }
-  .cp-status.error   { color: #c0392b; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .cp-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .cp-status.error   { color: #f87171; }
+  .ck-out :global(.ck-table td) { padding: 0.45rem 0.65rem; border-bottom: 1px solid var(--color-border); vertical-align: top; min-width: 6rem; }
+  .ck-out :global(.ck-table tr:last-child td) { border-bottom: none; }
+  .ck-wrap :global(.ck-name) { font-family: var(--font-mono); font-size: 0.82rem; color: var(--color-primary); overflow-wrap: anywhere; }
+  .ck-wrap :global(.ck-val) { font-family: var(--font-mono); font-size: 0.82rem; color: var(--color-text); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .ck-wrap :global(.ck-empty) { color: var(--color-text-muted); }
+  .ck-wrap :global(.ck-valbox) { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+  .ck-wrap :global(.ck-sub) { font-size: 0.76rem; color: var(--color-text-muted); overflow-wrap: anywhere; }
+  .ck-wrap :global(.ck-kind) { color: var(--color-text-secondary); }
+  .ck-wrap :global(.ck-link) { color: var(--color-primary); }
+  .ck-wrap :global(.ck-badge) {
+    display: inline-block; margin-left: 0.35rem; padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 0.7rem;
+    border: 1px solid var(--color-border); color: var(--color-text-secondary); white-space: nowrap;
   }
-  [data-theme="dark"] .cp-status.success { color: #34d399; }
-  [data-theme="dark"] .cp-status.error   { color: #f87171; }
+  .ck-wrap :global(.ck-badge-warn) { border-color: color-mix(in oklch, var(--color-accent) 60%, transparent); color: var(--color-text); }
 
-  .cp-result { margin-top: 0.25rem; }
+  .ck-wrap :global(.ck-issues) { list-style: none; margin: 0.15rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+  .ck-wrap :global(.ck-issues:empty) { display: none; }
+  .ck-wrap :global(.ck-iss) { font-size: 0.8rem; line-height: 1.45; padding-left: 0.9rem; position: relative; color: var(--color-text-secondary); }
+  .ck-wrap :global(.ck-iss::before) { content: ''; position: absolute; left: 0.1rem; top: 0.5em; width: 0.42rem; height: 0.42rem; border-radius: 50%; background: var(--color-text-muted); }
+  .ck-wrap :global(.ck-iss-error) { color: var(--color-text); }
+  .ck-wrap :global(.ck-iss-error::before) { background: var(--color-danger); }
+  .ck-wrap :global(.ck-iss-warn::before) { background: var(--color-accent); }
+  .ck-wrap :global(.ck-iss-info::before) { background: var(--color-text-muted); }
 
-  .cp-tabs {
-    display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--color-border);
-    margin-bottom: 0.5rem;
+  .ck-out :global(.ck-card) {
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0.65rem 0.75rem;
+    display: flex; flex-direction: column; gap: 0.45rem; background: var(--color-surface); min-width: 0;
   }
+  .ck-out :global(.ck-card-rejected) { border-left: 3px solid var(--color-danger); }
+  .ck-out :global(.ck-card-delete) { border-left: 3px solid var(--color-accent); }
+  .ck-out :global(.ck-card-stored) { border-left: 3px solid var(--color-success); }
+  .ck-out :global(.ck-card-head) { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+  .ck-out :global(.ck-card-head .ck-name) { font-size: 0.9rem; font-weight: 600; }
+  .ck-out :global(.ck-edit) { margin-left: auto; }
+  .ck-out :global(.ck-verdict) { font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; }
+  .ck-out :global(.ck-verdict-stored) { background: color-mix(in oklch, var(--color-success) 18%, var(--color-surface)); color: var(--color-text); }
+  .ck-out :global(.ck-verdict-delete) { background: color-mix(in oklch, var(--color-accent) 22%, var(--color-surface)); color: var(--color-text); }
+  .ck-out :global(.ck-verdict-rejected) { background: color-mix(in oklch, var(--color-danger) 18%, var(--color-surface)); color: var(--color-text); }
+  .ck-out :global(.ck-fields) { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.2rem 0.8rem; margin: 0; font-size: 0.8rem; }
+  .ck-out :global(.ck-fields dt) { color: var(--color-text-muted); }
+  .ck-out :global(.ck-fields dd) { margin: 0; color: var(--color-text); overflow-wrap: anywhere; }
+  .ck-out :global(.ck-attrs summary) { cursor: pointer; font-size: 0.8rem; color: var(--color-text-secondary); width: fit-content; }
+  .ck-out :global(.ck-attr-list) { list-style: none; margin: 0.35rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; }
+  .ck-out :global(.ck-attr-list li) { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
+  .ck-out :global(.ck-attr-list code) { font-family: var(--font-mono); overflow-wrap: anywhere; }
+  .ck-out :global(.ck-attr-st) { color: var(--color-text-muted); }
+  .ck-out :global(.ck-attr-ok) { color: var(--color-text-secondary); }
 
-  .cp-tab {
-    padding: 0.4rem 1rem;
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: var(--color-text-secondary);
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-    transition: color 0.15s, border-color 0.15s;
+  .ck-box { border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; background: var(--color-surface); }
+  .ck-box > summary { cursor: pointer; font-size: 0.88rem; font-weight: 600; color: var(--color-text); }
+  .ck-box[open] > summary { margin-bottom: 0.55rem; }
+  .ck-sim-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.4rem 0.7rem; align-items: center; }
+  .ck-sim-grid .tool-label { margin: 0; }
+  .ck-sim-out { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
+  .ck-wrap :global(.ck-sim-head) { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .ck-wrap :global(.ck-sim-head .tool-label) { margin: 0; }
+  .ck-wrap :global(.ck-sim-header), .ck-code {
+    display: block; font-family: var(--font-mono); font-size: 0.8rem; padding: 0.5rem 0.65rem; border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary); border: 1px solid var(--color-border); overflow-wrap: anywhere; white-space: pre-wrap; color: var(--color-text);
   }
+  .ck-code:empty { display: none; }
+  .ck-wrap :global(.ck-muted) { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); }
 
-  .cp-tab:hover { color: var(--color-text); }
+  .ck-opts { display: flex; flex-wrap: wrap; gap: 0.5rem 1.2rem; align-items: flex-end; }
+  .ck-check { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.84rem; color: var(--color-text-secondary); cursor: pointer; }
+  .ck-field { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+  .ck-field .tool-label { margin: 0; }
+  .ck-build-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem 0.8rem; }
+  .ck-span { grid-column: 1 / -1; }
+  .ck-checks { display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; }
+  .ck-b-result { margin-top: 0.7rem; display: flex; flex-direction: column; gap: 0.4rem; }
+  .ck-b-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .ck-b-head .tool-label { margin: 0; }
 
-  .cp-tab.cp-tab-active {
-    color: var(--color-primary);
-    border-bottom-color: var(--color-primary);
-  }
-
-  .cp-table-wrap {
-    overflow-x: auto;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-  }
-
-  .cp-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.83rem;
-  }
-
-  .cp-table th {
-    text-align: left;
-    padding: 0.5rem 0.75rem;
-    background: var(--color-bg-secondary);
-    color: var(--color-text-secondary);
-    font-weight: 600;
-    border-bottom: 1px solid var(--color-border);
-    white-space: nowrap;
-  }
-
-  .cp-table td {
-    padding: 0.45rem 0.75rem;
-    border-bottom: 1px solid var(--color-border);
-    vertical-align: top;
-  }
-
-  .cp-table tr:last-child td { border-bottom: none; }
-
-  .cp-table tr:hover td { background: var(--color-bg-secondary); }
-
-  .cp-name { color: var(--color-primary); }
-  .cp-val  { color: var(--color-text); }
-
-  code { font-family: var(--font-mono); font-size: 0.82rem; }
-
-  .cp-flags-cell { font-size: 0.78rem; }
-
-  .cp-flag {
-    display: inline-block;
-    padding: 0.1rem 0.4rem;
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: 3px;
-    font-size: 0.75rem;
-    color: var(--color-text-secondary);
-    margin-right: 0.25rem;
-    font-family: var(--font-mono);
-    white-space: nowrap;
-  }
-
-  .cp-json-pre {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    padding: 0.75rem;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    overflow-x: auto;
-    white-space: pre;
-    color: var(--color-text);
-    margin: 0;
+  @media (max-width: 640px) {
+    .ck-mode { min-height: 32px; padding: 0.3rem 0.75rem; }
+    .ck-input { min-height: 96px; }
+    .ck-sim-grid { grid-template-columns: minmax(0, 1fr); }
+    .ck-build-grid { grid-template-columns: minmax(0, 1fr); }
+    .ck-box > summary { min-height: 32px; display: flex; align-items: center; }
+    .ck-out :global(.ck-fields) { grid-template-columns: minmax(0, 1fr); }
+    .ck-out :global(.ck-fields dd) { margin-bottom: 0.25rem; }
+    .ck-out :global(.ck-table thead) { display: none; }
+    .ck-out :global(.ck-table tr) { display: block; border-bottom: 1px solid var(--color-border); padding: 0.45rem 0.6rem; }
+    .ck-out :global(.ck-table tr:last-child) { border-bottom: none; }
+    .ck-out :global(.ck-table td) { display: block; border: 0; padding: 0.1rem 0; min-width: 0; }
+    .ck-out :global(.ck-table td[data-label]::before) { content: attr(data-label); display: block; font-size: 0.72rem; color: var(--color-text-muted); }
   }
 </style>
