@@ -33,6 +33,15 @@ function check(name, ok, detail) {
 function skip(name, why) { skips++; console.log('SKIP ' + name + ' (' + why + ')'); }
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function has(cmd, args) { const r = spawnSync(cmd, args, { encoding: 'utf8' }); return !r.error && r.status === 0; }
+// Engine behaviour (Unicode tables in particular) changes between releases, so each engine is only
+// compared at the version the expected results were recorded with; other versions are a SKIP.
+function versionOf(cmd, args) { const r = spawnSync(cmd, args, { encoding: 'utf8' }); return r.error || r.status !== 0 ? null : (r.stdout + r.stderr); }
+const PINNED = {
+  python3: [['--version'], /^Python 3\.12\./],
+  go: [['version'], /^go version go1\.27[.\s]/],
+  pcre2test: [['-version'], /^PCRE2 version 10\.49 /],
+};
+function hasPinned(cmd) { const out = versionOf(cmd, PINNED[cmd][0]); return !!out && PINNED[cmd][1].test(out.trim()); }
 
 // Same loop as run() in RegexTesterTool.astro: always global, zero-length matches advance lastIndex.
 function tester(pattern, flags, text) {
@@ -97,7 +106,7 @@ const tmp = mkdtempSync(join(tmpdir(), 'regex-cheat-sheet-'));
 try {
   // Python re
   const pyCases = cases.filter((c) => c.py !== undefined);
-  if (!has('python3', ['--version'])) skip('python re (' + pyCases.length + ' cases)', 'python3 not found');
+  if (!hasPinned('python3')) skip('python re (' + pyCases.length + ' cases)', 'python3 3.12 not found');
   else {
     const prog = `import re, json, sys
 F = {'i': re.I, 'm': re.M, 's': re.S, 'x': re.X}
@@ -117,7 +126,7 @@ print(json.dumps(out))`;
 
   // Go regexp (RE2 syntax); i/m/s become a (?ims) prefix
   const goCases = cases.filter((c) => c.go !== undefined);
-  if (!has('go', ['version'])) skip('go regexp (' + goCases.length + ' cases)', 'go not found');
+  if (!hasPinned('go')) skip('go regexp (' + goCases.length + ' cases)', 'go 1.27 not found');
   else {
     const prog = `package main
 import ("encoding/json"; "fmt"; "os"; "regexp")
@@ -145,7 +154,7 @@ func main() {
 
   // PCRE2 via pcre2test
   const pcCases = cases.filter((c) => c.pcre !== undefined);
-  if (!has('pcre2test', ['-version'])) skip('pcre2 (' + pcCases.length + ' cases)', 'pcre2test not found');
+  if (!hasPinned('pcre2test')) skip('pcre2 (' + pcCases.length + ' cases)', 'pcre2test 10.49 not found');
   else {
     // Subject lines: everything but ASCII letters and digits as \x{…}, so pcre2test keeps
     // trailing spaces and does not read backslashes.
@@ -178,7 +187,7 @@ func main() {
       const out = spawnSync(process.execPath, [file], { encoding: 'utf8' });
       check(name, out.status === 0 && out.stdout.trimEnd() === r.spec.expect, out.stdout + out.stderr);
     } else if (r.spec.lang === 'python') {
-      if (!has('python3', ['--version'])) { skip(name, 'python3 not found'); return; }
+      if (!hasPinned('python3')) { skip(name, 'python3 3.12 not found'); return; }
       const out = spawnSync('python3', ['-c', r.code], { encoding: 'utf8' });
       check(name, out.status === 0 && out.stdout.trimEnd() === r.spec.expect, out.stdout + out.stderr);
     }
