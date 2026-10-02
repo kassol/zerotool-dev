@@ -40,7 +40,7 @@ eq('services list becomes [[services]]', y2t('services:\n  - name: web\n  - name
 eq('1.10 becomes 1.1', y2t('version: 1.10'), 'version = 1.1\n');
 eq('YAML date becomes offset date-time', y2t('released: 2026-10-01'), 'released = 2026-10-01T00:00:00.000Z\n');
 eq('yes stays a string', y2t('flag: yes'), 'flag = "yes"\n');
-eq('large YAML integer loses precision', y2t('big: 9007199254740993'), 'big = 9007199254740992\n');
+eq('large YAML integer loses precision and is serialized as a float', y2t('big: 9007199254740993'), 'big = 9007199254740992.0\n');
 eq('hex becomes decimal', t2y('hex = 0xff'), 'hex: 255\n');
 eq('local time gains milliseconds', t2y('local = 09:30:00'), 'local: 09:30:00.000\n');
 eq('offset date-time keeps offset', t2y('created = 2026-10-01T09:30:00+09:00'), 'created: 2026-10-01T09:30:00.000+09:00\n');

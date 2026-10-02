@@ -173,6 +173,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-02 — 客户端解析器修复（smol-toml）：1.6.1 → 1.7.1，修复 GHSA-7w5x-hrqm-74c2 的数组注释 EOF 循环。TOML 消费者由 npm 打包，无独立 vendor。安全测试用子进程硬超时覆盖四种 EOF 与后续合法输入恢复；两个转换工具回归通过。新版 stringify 把超出安全整数范围的 Number 写成浮点字面量（增加 `.0`），yaml-toml 英文示例与测试同步；YAML 大整数读入时已丢精度的既有限制保留。
+
 - 2026-10-02 — 客户端解析器修复（protobufjs）：8.0.1 → 8.6.6，页面 vendor 与 npm distribution 逐字同步。GHSA-j3f2-48v5-ccww 的 option EOF 循环最低修复版为 8.6.6，GHSA-jvwf-75h9-cwgg 的内建对象污染修于 8.0.2；来源为 GitHub 官方 advisory 与 npm registry。适配新版 `Field.jsonName`（原 `options.json_name`），页面继续仅用 protobufjs 做 Schema 反射，64 位编解码仍用 BigInt、无 Long 运行时。安全测试以 vm 硬超时检查畸形输入、内建对象属性描述符与合法输入恢复；完整 protobuf 回归保留 protoc / Python fixtures。
 
 - 2026-10-02 — protobuf-to-json 移除历史保留的 Long 页面运行时：组件只加载 `protobuf.min.js`（仅用于 Schema 反射解析），五种 64 位类型继续由现有 BigInt 引擎编解码；确认全站无运行引用后删除 `public/vendor/long.min.js`。2026-09-30 引入 Long 与本日精品化时保留加载顺序的记录描述的是历史状态，当前以本条为准。测试页面 vm 不注入 Long；protobufjs 独立对照 vm 使用锁文件已有的 npm Long 与同 realm 构造器，保留精度对照，不新增依赖、不改变协议功能或 vendor 版本。

@@ -126,6 +126,8 @@ faqItems:                # 可选，结构化 FAQ
 
 ## 变更日志
 
+- 2026-10-02 — 解析器升级：yaml-toml 英文页注明 smol-toml 1.7.1，并同步大整数输出为浮点字面量的示例；该输入在 YAML 读入阶段已有的精度损失说明保留。
+
 - 2026-10-02 — 发版收尾复核：sprite-sheet-generator-guide 四语言草稿的对比表与限制段改为支持 PNG / WebP（取决于浏览器编码能力），保留 draft 状态与其他正文。
 
 - 2026-04-26 — 初版（合并自 `src/content/blog/AGENTS.md`，迁移到此处规避 Astro collection schema 冲突）
