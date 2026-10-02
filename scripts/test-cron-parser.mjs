@@ -24,6 +24,8 @@ process.env.TZ = 'America/New_York'; // fixed zone: run times are local, and one
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CronParserTool.astro'), 'utf8');
@@ -143,7 +145,7 @@ let t0 = Date.now();
 runs('0 0 29 2 *', start, 10);
 runs('0 0 30 2 *', start, 10);
 runs('* * * * *', start, 10);
-check('10 Feb 29 runs, an impossible date and every minute take < 500 ms', Date.now() - t0 < 500, (Date.now() - t0) + ' ms');
+check('10 Feb 29 runs, an impossible date and every minute take < 500 ms', Date.now() - t0 < 500 * PERF_SLACK, (Date.now() - t0) + ' ms');
 // America/New_York (set at the top): 2027-03-14 02:30 does not exist, cronie never matches it
 eq('non-existent DST time is skipped', runs('30 2 * * *', new Date(2027, 2, 13, 0, 0), 2), ['2027-03-13 02:30', '2027-03-15 02:30']);
 

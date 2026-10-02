@@ -41,6 +41,8 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { decodeHTML } from 'entities';
+// Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
+const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/StringEscapeTool.astro'), 'utf8');
@@ -568,7 +570,7 @@ const utf8hex = (s) => [...Buffer.from(s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDF
     const t1 = performance.now();
     if (!r.error) une(m, r.output);
     const t2 = performance.now();
-    check(m + ': 360,000 characters escape + unescape under 1.5 s', t2 - t0 < 1500, (t1 - t0).toFixed(0) + ' + ' + (t2 - t1).toFixed(0) + ' ms');
+    check(m + ': 360,000 characters escape + unescape under 1.5 s', t2 - t0 < 1500 * PERF_SLACK, (t1 - t0).toFixed(0) + ' + ' + (t2 - t1).toFixed(0) + ' ms');
   }
 }
 
