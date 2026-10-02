@@ -2,8 +2,8 @@
 //
 // Read:  src/components/tools/ProtobufToJsonTool.astro (extracts the engine block between the
 //        `engine:start` / `engine:end` markers, the order of its vendor <script> tags and the
-//        STRINGS table), public/vendor/protobuf.min.js, public/vendor/long.min.js,
-//        node_modules/long/package.json, scripts/test-protobuf-to-json.fixtures.json,
+//        STRINGS table), public/vendor/protobuf.min.js, node_modules/long/umd/index.js,
+//        scripts/test-protobuf-to-json.fixtures.json,
 //        src/content/tools/protobuf-to-json/{en,zh,ja,ko}.mdx
 // Write: stdout only. With --regenerate: scripts/test-protobuf-to-json.fixtures.json and a
 //        temporary directory under os.tmpdir() (removed at the end).
@@ -23,8 +23,8 @@
 //   JSON and, from that JSON, encode the same bytes.
 // - protoc --decode_raw output for the same bytes and for random byte strings: the raw text
 //   view must match it byte for byte, and inputs protoc rejects must be rejected.
-// - protobuf.js (same vm realm, long.js loaded first): its encoder and decoder round-trip
-//   random messages with the engine for a schema without well-known types.
+// - protobuf.js in a separate vm realm, with the locked npm Long loaded first: its encoder
+//   and decoder round-trip random messages with the Long-free page engine.
 //
 // Run: node scripts/test-protobuf-to-json.mjs
 //      node scripts/test-protobuf-to-json.mjs --regenerate   (needs protoc and a Python with
@@ -71,15 +71,9 @@ function throwsCode(name, fn, code) {
 }
 function skip(name, why) { skips++; console.log('SKIP: ' + name + ' — ' + why); }
 
-// ---------- the page loads long.js before protobuf.js ----------
+// ---------- the page loads only protobuf.js ----------
 const scriptSrcs = [...source.matchAll(/<script[^>]*\ssrc="([^"]+)"/g)].map((m) => m[1]);
-eq('component loads long.min.js then protobuf.min.js', scriptSrcs, ['/vendor/long.min.js', '/vendor/protobuf.min.js']);
-let longSrc = '';
-try { longSrc = readFileSync(join(root, 'public/vendor/long.min.js'), 'utf8'); } catch {}
-check('public/vendor/long.min.js exists', longSrc.length > 0);
-const longVersion = JSON.parse(readFileSync(join(root, 'node_modules/long/package.json'), 'utf8')).version;
-check('vendor long.min.js header names the long version protobufjs depends on',
-  longSrc.includes('long.js v' + longVersion), 'node_modules/long is ' + longVersion);
+eq('component loads only protobuf.min.js', scriptSrcs, ['/vendor/protobuf.min.js']);
 
 // ---------- browser-like context ----------
 const ctx = { atob, TextDecoder, TextEncoder };
@@ -94,7 +88,8 @@ const pb = ctx.protobuf;
 const E = ctx.__engine;
 const U8 = vm.runInContext('Uint8Array', ctx);
 const u8 = (arr) => U8.from(arr);
-check('protobuf.util.Long is the Long class from the page', pb && pb.util.Long && pb.util.Long === ctx.Long);
+check('page has no global Long', vm.runInContext('typeof Long === "undefined"', ctx));
+check('page protobuf.util.Long is absent', pb && pb.util.Long == null);
 
 function schema(files) { if (!Array.isArray(files)) files = [files]; return E.buildSchema(pb, files.map((f) => (typeof f === 'string' ? { name: 'main.proto', text: f } : f))); }
 function decodeJson(c, type, bytes, opts, indent) {
@@ -148,6 +143,20 @@ eq('map<string, int64>', big(lenDelim(9, [...lenDelim(1, [...Buffer.from('id')])
 eq('JSON text keeps the digits', decodeJson(BIG, 't.Big', [...key(2, 0), ...varint(U64)]), '{"u64":"18446744073709551615"}');
 eq('JSON → bytes keeps int64 digits', encodeHex(BIG, 't.Big', '{"i64":"9223372036854775807","u64":18446744073709551615}'),
   Buffer.from([...key(1, 0), ...varint(I64_MAX), ...key(2, 0), ...varint(U64)]).toString('hex'));
+for (const [name, field, wire, values, pack] of [
+  ['i64', 1, 0, [I64_MIN, I64_MAX, P53 + 1n], varint],
+  ['u64', 2, 0, [0n, U64, P53 + 1n], varint],
+  ['s64', 3, 0, [I64_MIN, I64_MAX, -(P53 + 1n)], (v) => varint(zigzag(v))],
+  ['f64', 4, 1, [0n, U64, P53 + 1n], fixed64],
+  ['sf64', 5, 1, [I64_MIN, I64_MAX, -(P53 + 1n)], fixed64],
+]) {
+  for (const value of values) {
+    const json = JSON.stringify({ [name]: value.toString() });
+    const bytes = value === 0n ? [] : [...key(field, wire), ...pack(value)];
+    eq('Long-free ' + name + ' encode ' + value, encodeHex(BIG, 't.Big', json), Buffer.from(bytes).toString('hex'));
+    eq('Long-free ' + name + ' decode ' + value, big(bytes), value === 0n ? {} : { [name]: value.toString() });
+  }
+}
 
 // ---------- byte input ----------
 const B = (text, fmt) => Array.from(E.readBytes(text, fmt).bytes);
@@ -462,7 +471,23 @@ if (typeof DecompressionStream === 'function') {
   eq('gunzip of a compressed gRPC payload', Array.from(out), msgBytes);
 } else skip('gunzip', 'DecompressionStream not available in this Node');
 
-// ---------- protobuf.js cross-check (same realm) ----------
+// ---------- protobuf.js cross-check (separate Long-enabled realm) ----------
+const oracleCtx = {};
+oracleCtx.window = oracleCtx;
+oracleCtx.self = oracleCtx;
+vm.createContext(oracleCtx);
+vm.runInContext(readFileSync(join(root, 'node_modules/long/umd/index.js'), 'utf8'), oracleCtx);
+vm.runInContext(readFileSync(join(root, 'public/vendor/protobuf.min.js'), 'utf8'), oracleCtx);
+const oraclePb = oracleCtx.protobuf;
+const oracleString = vm.runInContext('String', oracleCtx);
+const oracleNumber = vm.runInContext('Number', oracleCtx);
+const oracleU8 = vm.runInContext('Uint8Array', oracleCtx);
+check('oracle protobuf uses npm Long in its own realm', oraclePb.util.Long === oracleCtx.Long && !!oracleCtx.Long);
+check('oracle Long does not enter the page realm', ctx.Long === undefined && pb.util.Long == null);
+const oracleBig = oraclePb.parse('syntax = "proto3"; message Big { int64 i = 1; uint64 u = 2; }').root.lookupType('Big');
+eq('oracle preserves signed and unsigned 64-bit digits', oracleBig.toObject(
+  oracleBig.decode(oracleBig.encode(oracleBig.fromObject({ i: I64_MIN.toString(), u: U64.toString() })).finish()),
+  { longs: oracleString }), { i: I64_MIN.toString(), u: U64.toString() });
 let seed = 20261002;
 function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
 function ri(n) { return Math.floor(rnd() * n); }
@@ -477,7 +502,7 @@ message All {
   repeated Item items = 19; map<string, int64> m = 20; Item item = 21; repeated double rd = 22;
 }`;
 const PJ = schema(PJ_SCHEMA);
-const pjRoot = pb.parse(PJ_SCHEMA, { keepCase: true }).root;
+const pjRoot = oraclePb.parse(PJ_SCHEMA, { keepCase: true }).root;
 const PJAll = pjRoot.lookupType('pj.All');
 function rBig(signed) { const v = BigInt.asUintN(64, (BigInt(ri(2 ** 30)) << 34n) ^ BigInt(ri(2 ** 30)) ^ (BigInt(ri(16)) << 60n)); return signed ? BigInt.asIntN(64, v) : v; }
 function rStr() { const pool = ['a', 'Z', ' ', 'é', '中', '😀', '\n', '"']; let s = ''; for (let i = ri(6); i > 0; i--) s += pool[ri(pool.length)]; return s; }
@@ -510,8 +535,8 @@ for (let n = 0; n < 300; n++) {
   const mine = E.decodeTyped(PJ, 'pj.All', u8([...pbBytes]));
   const reenc = E.encodeToBytes(PJ, mine);
   const sortMap = (o) => { o.m = Object.fromEntries(Object.entries(o.m).sort()); return o; };
-  const back = sortMap(PJAll.toObject(PJAll.decode(reenc), { longs: String, enums: Number, bytes: String, defaults: true, arrays: true, objects: true }));
-  const want = sortMap(PJAll.toObject(PJAll.decode(pbBytes), { longs: String, enums: Number, bytes: String, defaults: true, arrays: true, objects: true }));
+  const back = sortMap(PJAll.toObject(PJAll.decode(oracleU8.from(reenc)), { longs: oracleString, enums: oracleNumber, bytes: oracleString, defaults: true, arrays: true, objects: true }));
+  const want = sortMap(PJAll.toObject(PJAll.decode(pbBytes), { longs: oracleString, enums: oracleNumber, bytes: oracleString, defaults: true, arrays: true, objects: true }));
   if (JSON.stringify(back) === JSON.stringify(want)) pjOk++;
   else if (pjOk + 5 > n) console.log('  protobuf.js mismatch: ' + JSON.stringify(obj));
 }

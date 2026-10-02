@@ -213,7 +213,7 @@ function ctx(extra = {}) {
     '.github/workflows/deploy.yml',
     'docs/spec.md',
     'public/_redirects',
-    'public/vendor/long.min.js',
+    'public/vendor/protobuf.min.js',
     'README.md',
   ];
   const r = mapChangedFiles(files, ctx());
