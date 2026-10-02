@@ -115,6 +115,8 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-02 — 新增 `test-yaml-parser-security.mjs`：读取已安装的 js-yaml，9 个子进程用例覆盖 DEFAULT_SCHEMA 与 OpenAPI 的 CORE_SCHEMA + merge、merge 链与重复别名、空来源预算、omap、正常合并、多文档、原型键与合法输入恢复。硬超时本机 3 秒 / CI 12 秒，超时 SIGKILL；只写 stdout/stderr，升级 js-yaml 时运行，CI 随全部测试执行。Node 22.23.3 下 9 组通过。
+
 - 2026-10-02 — 新增 `test-toml-parser-security.mjs`：读取锁定的 smol-toml，在带 SIGKILL 超时的子进程中拒绝四种 EOF 注释输入，随后验证中日韩文本、合法注释与 stringify 往返。只写 stdout/stderr，CI 随全部测试运行；升级 smol-toml 时运行。`test-yaml-toml.mjs` 同步 1.7.1 对不安全整数增加 `.0` 的实际输出。
 
 - 2026-10-02 — 新增 `test-protobuf-parser-security.mjs`：读取真实页面引擎与 vendor，在独立 vm 中以硬超时覆盖 option EOF 循环、constructor / __proto__ 写入、内建对象属性描述符不变及随后合法 Schema 恢复；检查 vendor 与锁定 npm 产物逐字一致。只写 stdout，CI 随全部测试运行。

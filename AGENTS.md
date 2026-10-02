@@ -173,6 +173,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-02 — 客户端解析器安全升级（js-yaml）：4.1.1 → 4.3.2，新增带子进程硬超时的安全回归，覆盖两种实际使用的 schema、merge 工作预算、omap、原型键及合法输入恢复；Node 22.23.3 下 9 组通过。按收尾要求暂停：预算错误本地化、页面版本与限制说明、三个转换工具的四项保真修复仍待完成；完整构建与浏览器验收待串行集成。
+
 - 2026-10-02 — 客户端解析器修复（smol-toml）：1.6.1 → 1.7.1，修复 GHSA-7w5x-hrqm-74c2 的数组注释 EOF 循环。TOML 消费者由 npm 打包，无独立 vendor。安全测试用子进程硬超时覆盖四种 EOF 与后续合法输入恢复；两个转换工具回归通过。新版 stringify 把超出安全整数范围的 Number 写成浮点字面量（增加 `.0`），yaml-toml 英文示例与测试同步；YAML 大整数读入时已丢精度的既有限制保留。
 
 - 2026-10-02 — 客户端解析器修复（protobufjs）：8.0.1 → 8.6.6，页面 vendor 与 npm distribution 逐字同步。GHSA-j3f2-48v5-ccww 的 option EOF 循环最低修复版为 8.6.6，GHSA-jvwf-75h9-cwgg 的内建对象污染修于 8.0.2；来源为 GitHub 官方 advisory 与 npm registry。适配新版 `Field.jsonName`（原 `options.json_name`），页面继续仅用 protobufjs 做 Schema 反射，64 位编解码仍用 BigInt、无 Long 运行时。安全测试以 vm 硬超时检查畸形输入、内建对象属性描述符与合法输入恢复；完整 protobuf 回归保留 protoc / Python fixtures。
