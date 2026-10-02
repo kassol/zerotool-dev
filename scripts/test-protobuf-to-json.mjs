@@ -424,6 +424,8 @@ eq('raw escapes', raw(lenDelim(1, [0x22, 0x27, 0x5c, 0xc3, 0xa9, 0x7f])), '1: "\
 eq('raw JSON: readable text stays a string', E.stringifyJson(E.rawJson(E.parseRaw(u8(lenDelim(1, [0x68, 0x69])), 0, 4, 0, null)), 0, false), '{"1":"hi"}');
 eq('raw JSON: repeated numbers become an array, big varints strings', E.stringifyJson(E.rawJson(E.parseRaw(u8([...key(1, 0), 1, ...key(1, 0), ...varint(U64)]), 0, 13, 0, null)), 0, false), '{"1":[1,"18446744073709551615"]}');
 eq('raw JSON: binary that is not a message is base64', E.stringifyJson(E.rawJson(E.parseRaw(u8(lenDelim(1, [0xff, 0xfe])), 0, 4, 0, null)), 0, false), '{"1":"base64://4="}');
+eq('raw JSON with other readings', E.stringifyJson(E.rawJson(E.parseRaw(u8([...key(1, 0), 3, ...key(2, 5), 0, 0, 0x80, 0xbf, ...key(3, 1), ...fixed64(-1n)]), 0, 16, 0, null), 0, true), 0, false),
+  '{"1":{"uint64":3,"sint64":-2},"2":{"hex":"0xbf800000","fixed32":3212836864,"sfixed32":-1082130432,"float":-1},"3":{"hex":"0xffffffffffffffff","fixed64":"18446744073709551615","sfixed64":-1,"double":"NaN"}}');
 throwsCode('raw: field 0 fails like protoc', () => E.parseRaw(u8([0x02, 0x00]), 0, 2, 0, null), 'fieldZero');
 
 // ---------- encoder output formats ----------

@@ -53,6 +53,7 @@ const STRINGS = {
     optRawView: 'Raw view',
     optRawJson: 'JSON',
     optRawProtoc: 'protoc --decode_raw',
+    optRawReadings: 'JSON with other readings',
     optIgnoreUnknown: 'Ignore unknown fields',
     optOutFmt: 'Output',
     optFrame: 'Add gRPC frame',
@@ -217,6 +218,7 @@ const STRINGS = {
     optRawView: '原始视图',
     optRawJson: 'JSON',
     optRawProtoc: 'protoc --decode_raw',
+    optRawReadings: 'JSON，附其他解读',
     optIgnoreUnknown: '忽略未知字段',
     optOutFmt: '输出',
     optFrame: '加 gRPC 帧头',
@@ -381,6 +383,7 @@ const STRINGS = {
     optRawView: 'raw 表示',
     optRawJson: 'JSON',
     optRawProtoc: 'protoc --decode_raw',
+    optRawReadings: 'JSON（ほかの解釈も表示）',
     optIgnoreUnknown: '未知のフィールドを無視',
     optOutFmt: '出力',
     optFrame: 'gRPC フレームを付ける',
@@ -545,6 +548,7 @@ const STRINGS = {
     optRawView: 'raw 보기',
     optRawJson: 'JSON',
     optRawProtoc: 'protoc --decode_raw',
+    optRawReadings: 'JSON(다른 해석 포함)',
     optIgnoreUnknown: '알 수 없는 필드 무시',
     optOutFmt: '출력',
     optFrame: 'gRPC 프레임 추가',
@@ -779,6 +783,7 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
         <label class="pbj-opt pbj-only-decode pbj-only-raw"><span>{L.optRawView}</span>
           <select id="pbj-rawview" class="tool-input pbj-select">
             <option value="json">{L.optRawJson}</option>
+            <option value="readings">{L.optRawReadings}</option>
             <option value="protoc">{L.optRawProtoc}</option>
           </select>
         </label>
@@ -1887,19 +1892,37 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
         try { s = utf8Decode(bytes, true); } catch (e) { return null; }
         return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(s) ? null : s;
       }
-      function rawJson(fields, depth) {
+      function bigJson(v) { return v <= 9007199254740991n && v >= -9007199254740991n ? new JNum(String(v)) : String(v); }
+      // readings: each number also shown as the other types that share its wire type.
+      function rawReadings(f) {
+        if (f.wt === 0) {
+          var o = new JObj([['uint64', bigJson(f.v)], ['sint64', bigJson((f.v >> 1n) ^ -(f.v & 1n))]]);
+          var signed = BigInt.asIntN(64, f.v);
+          if (signed !== f.v) o.e.push(['int64', bigJson(signed)]);
+          return o;
+        }
+        var dv = new DataView(new ArrayBuffer(8));
+        if (f.wt === 5) {
+          dv.setUint32(0, f.v, true);
+          return new JObj([['hex', '0x' + hex(f.v, 8)], ['fixed32', new JNum(String(f.v))], ['sfixed32', new JNum(String(dv.getInt32(0, true)))], ['float', floatJson(dv.getFloat32(0, true), true)]]);
+        }
+        dv.setBigUint64(0, f.v, true);
+        return new JObj([['hex', '0x' + hex(f.v, 16)], ['fixed64', bigJson(f.v)], ['sfixed64', bigJson(dv.getBigInt64(0, true))], ['double', floatJson(dv.getFloat64(0, true), false)]]);
+      }
+      function rawJson(fields, depth, readings) {
         depth = depth || 0;
         var o = new JObj(), index = new Map();
         fields.forEach(function (f) {
           var v;
-          if (f.wt === 0) v = f.v <= 9007199254740991n ? new JNum(String(f.v)) : String(f.v);
+          if (readings && (f.wt === 0 || f.wt === 1 || f.wt === 5)) v = rawReadings(f);
+          else if (f.wt === 0) v = bigJson(f.v);
           else if (f.wt === 5) v = '0x' + hex(f.v, 8);
           else if (f.wt === 1) v = '0x' + hex(f.v, 16);
-          else if (f.wt === 3) v = rawJson(f.v, depth + 1);
+          else if (f.wt === 3) v = rawJson(f.v, depth + 1, readings);
           else {
             var text = f.v.length ? readableText(f.v) : '';
             var nested = text === null ? rawNested(f, depth) : null;
-            v = text !== null ? text : nested ? rawJson(nested, depth + 1) : 'base64:' + toBase64(f.v);
+            v = text !== null ? text : nested ? rawJson(nested, depth + 1, readings) : 'base64:' + toBase64(f.v);
           }
           var k = String(f.num);
           if (!index.has(k)) { index.set(k, o.e.length); o.e.push([k, v]); }
@@ -2736,7 +2759,7 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
             try { fields = parseRaw(payloads[i], 0, payloads[i].length, 0, null); }
             catch (e) { return showError(e, notes); }
             if (prefs.rawView === 'protoc') texts.push(rawText(fields));
-            else trees.push(rawJson(fields));
+            else trees.push(rawJson(fields, 0, prefs.rawView === 'readings'));
           }
           if (!state.ctx) notes.push(S.note.rawHint);
           if (prefs.rawView === 'protoc') {
