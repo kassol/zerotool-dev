@@ -1,78 +1,88 @@
 ---
-seoTitle: "jq Playground オンライン — ブラウザで jq フィルタをテスト | ZeroTool"
-seoDescription: "公式 jq 1.7 エンジンで JSON に対し jq フィルタを実行。pipe / select / map / group_by / sort / reduce 完全対応、インストール・アップロード・登録不要。"
+seoTitle: "jq Playground オンライン | ZeroTool"
+seoDescription: "jq 1.7.1 をブラウザで実行。-r・-s・-n・--arg・JSON Lines に対応し、出力・stderr・終了コードはコマンドラインと同じ。エラーは位置と原因を表示します。"
 faqItems:
-  - question: "これは本物の jq ですか、それとも JavaScript 再実装ですか？"
-    answer: "公式 jq 1.7 の C ソースを jq-web 経由で WebAssembly にコンパイルした版です。フィルタは jq 本体が評価するため CLI と同じように動きますが、表示はいくつかの点で異なります（「制限」参照）。エンジンは初回約 1MB ダウンロード、以降はブラウザキャッシュにより遅延ゼロで動作します。"
-  - question: "どの jq 機能に対応していますか？"
-    answer: "jq 1.7 構文をフル対応 — pipe、select、map、group_by、sort_by、reduce、foreach、try/catch、カスタム関数 def、再帰下降 ..、文字列・数学・日付関数、全ビルトイン。CLI で動作するフィルタはここでも動きます。"
-  - question: "JSON とフィルタはサーバーに送信されますか？"
-    answer: "送信されません。jq エンジンは WebAssembly でブラウザ内のみで動作します。JSON とフィルタ式は端末を出ません。DevTools の Network タブで jq.wasm の一度きりのダウンロードのみが確認できます。"
-  - question: "JSON サイズの上限は？"
-    answer: "実用上限は約 50MB — それ以上になるとブラウザメモリと解析時間が顕著に増加します。GB 級の JSON ストリームはコマンドライン jq の --stream モードを使用してください。"
-  - question: "JSONPath Tester との違いは？"
-    answer: "JSONPath はパスでノードを選択するクエリ言語。jq はパイプ・条件・数学・関数定義を備えた完全な変換言語です。単純な検索は JSONPath Tester、整形・絞り込み・集計・再フォーマットは jq。"
+  - question: "本物の jq ですか、JavaScript の再実装ですか？"
+    answer: "jq 1.7.1 そのものです。公式の C ソースを jq-web 0.6.2 で WebAssembly にコンパイルしたもので、jq オプション フィルタ input.json と同じ形で実行します。テストでは 71 通りのフィルタについて、出力・エラー文・終了コードを jq 1.7.1 のコマンドラインとバイト単位で比べ、jq 1.7.1 マニュアルの例のうち環境変数を読まない 239 個がすべて一致することを確認しています。"
+  - question: "なぜ 1.8 ではなく 1.7.1 なのですか？"
+    answer: "Ubuntu 24.04、Debian 13、macOS の /usr/bin/jq が 1.7.1 だからです。ここで試したフィルタはそれらのマシンで同じ結果になります。jq 1.8 で追加された trim・ltrim・rtrim・trimstr・toboolean・skip・add/1・@urid を使うと、その旨を表示します。"
+  - question: "入力した JSON は送信されますか？"
+    answer: "送信されません。jq はこのタブの Web Worker で動きます。通信は初回のエンジン（jq.wasm、圧縮後約 1 MB）の読み込みだけです。共有リンクに入るのはフィルタ・オプション・変数名で、入力と変数の値は入りません。"
+  - question: "どのくらいの大きさまで扱えますか？"
+    answer: "ファイルは 200 MB までです。2 MB を超える入力はキー入力ごとには実行しないので「実行」を押してください。出力欄の表示は先頭 1 MB までで、コピーとダウンロードは全体です。10 秒（入力 1 MB ごとに 1 秒追加）を超える実行は止めます。"
+  - question: "ここでは動くのにターミナルでエラーになります。"
+    answer: "多くは引用符の問題です。「コマンドライン」欄のコマンドをコピーしてください。フィルタをシングルクォートで囲み、中のシングルクォートもエスケープしてあり、bash や zsh でそのまま動きます。PowerShell と cmd.exe は引用符の扱いが違います。jq --version で版も確認してください。"
 ---
 
-<h2>使い方</h2>
-<ol>
-  <li>左側の <strong>JSON 入力</strong> 欄に JSON を貼り付けまたは入力します（サンプル users データが事前にロード済み）。</li>
-  <li><strong>jq フィルタ</strong> 欄に式を入力するか、下の <strong>例</strong> pill をクリック。</li>
-  <li>結果は <strong>結果</strong> 欄に JSON シンタックスハイライト付きで表示されます。</li>
-  <li><strong>コピー</strong> ボタンで整形済み出力をクリップボードに転送できます。</li>
-</ol>
+## 使い方
 
-<h2>jq チートシート</h2>
-<ul>
-  <li><code>.</code> — 恒等フィルタ、入力をそのまま出力</li>
-  <li><code>.field</code> — プロパティ値の取得</li>
-  <li><code>.field?</code> — オプショナル取得（フィールド欠落時もエラーにしない）</li>
-  <li><code>.[]</code> — 配列・オブジェクトの値を反復</li>
-  <li><code>.[start:end]</code> — 配列スライス</li>
-  <li><code>f | g</code> — f の出力を g にパイプ</li>
-  <li><code>f, g</code> — f と g の両方を出力</li>
-  <li><code>select(cond)</code> — cond が真の値のみ残す</li>
-  <li><code>map(f)</code> — 配列の各要素に f を適用</li>
-  <li><code>group_by(.k)</code> — key でグループ化</li>
-  <li><code>sort_by(.k)</code> — key でソート</li>
-  <li><code>length</code>、<code>keys</code>、<code>values</code>、<code>type</code>、<code>has(k)</code> — イントロスペクション</li>
-  <li><code>add</code>、<code>min</code>、<code>max</code>、<code>unique</code> — 集計</li>
-  <li><code>tonumber</code>、<code>tostring</code>、<code>ascii_downcase</code>、<code>split("/")</code> — 変換</li>
-  <li><code>reduce</code>、<code>foreach</code>、<code>def</code> — 制御フローとカスタム関数</li>
-</ul>
+1. 「jq フィルタ」にフィルタを書くと、出力がその場で更新されます。
+2. 「入力」に JSON を貼り付けるか、ファイルを開きます。JSON 値が続けて並んだもの（JSON Lines、NDJSON）も jq コマンドと同じように読めます。
+3. オプションは jq に渡すのと同じ感覚でオンにします。`-r` は文字列を引用符なしで、`-s` はすべての入力を 1 つの配列に、`-n` は `null` から始めて `input` / `inputs` で入力を読み、`-R` はテキストを行ごとに、`-c` は 1 値 1 行で出力します。
+4. 「+ 変数」で `--arg`（文字列）や `--argjson`（JSON）を追加します。
+5. 「出力」に結果・stderr・終了コードが出ます。「コマンドライン」欄には同じ実行をシェルのコマンドにしたものが出るので、ターミナルに貼れば同じ結果になります。
 
-<h2>主な用途</h2>
-<p>
-  jq は shell パイプラインで JSON を扱う標準ツールです：<code>curl</code> による API レスポンス、Kubernetes
-  マニフェスト、CI/CD ログ、AWS CLI 出力、IaC ステート、データエクスポート。この Playground は小さなサンプル
-  でフィルタを試作してから、表現をそのまま <code>jq -r '...'</code> で大きなファイルに流すための場所です。
-</p>
-<p>
-  よくあるレシピ：<code>.items | map(&#123;id, name&#125;)</code> で API リスト応答を平坦化、
-  <code>group_by(.tag) | map(&#123;tag: .[0].tag, count: length&#125;)</code> でイベントを tag 別にバケット化、
-  <code>[.[] | .duration_ms] | add / length</code> で数値フィールドの平均を計算。
-</p>
+Qiita などにあるコマンド（`curl … | jq -r '.events[]'` のような 1 行）をフィルタ欄にそのまま貼ると、フィルタとオプションを取り込むか尋ね、使えないファイル名やオプションを一覧にします。
 
-<h2>例：注文データ</h2>
-<p>入力パネルに次の JSON を入れた場合です。</p>
+## 例：LINE の Webhook からテキストだけを取り出す
+
+LINE Messaging API の Webhook は `destination` と `events` 配列を送ってきます。各イベントには `type`、`source.userId`、`deliveryContext.isRedelivery`（再送かどうか）があり、テキストメッセージなら `message.text` が入ります（LINE 公式の OpenAPI 定義 [webhook.yml](https://github.com/line/line-openapi/blob/main/webhook.yml)）。テキスト・スタンプ・友だち追加が混ざった、次のような本文で試します（ID は架空のものです）。
 
 ```json
-{"order_id": 9007199254740993, "items": [{"sku":"A","qty":2},{"sku":"B","qty":1}]}
+{"destination":"U4af4980629","events":[
+ {"type":"message","mode":"active","timestamp":1790900000000,"source":{"type":"user","userId":"U4af4980629a"},"webhookEventId":"01J0EXAMPLE1","deliveryContext":{"isRedelivery":false},"replyToken":"b60d432864f44d079f6d8efe86cf404b","message":{"id":"325708","type":"text","quoteToken":"q3Plxr4AgKd","text":"明日 19 時に 2 名で予約したいです"}},
+ {"type":"message","mode":"active","timestamp":1790900001000,"source":{"type":"user","userId":"U4af4980629b"},"webhookEventId":"01J0EXAMPLE2","deliveryContext":{"isRedelivery":true},"replyToken":"8cf9239d56244f4197887e939187e19e","message":{"id":"325709","type":"sticker","stickerId":"52002734","packageId":"11537"}},
+ {"type":"follow","mode":"active","timestamp":1790900002000,"source":{"type":"user","userId":"U4af4980629c"},"webhookEventId":"01J0EXAMPLE3","deliveryContext":{"isRedelivery":false},"replyToken":"1a2b3c"}]}
 ```
 
-<ul>
-  <li><code>.items | map(.qty) | add</code> → <code>3</code>（1 個の値）</li>
-  <li><code>.items[] | .sku</code> → jq CLI と同じく <code>"A"</code> と <code>"B"</code> の 2 行（2 個の値）。<code>[.items[] | .sku]</code> は配列 1 つを出力し、カウンターは 1 個の値です。</li>
-  <li><code>.order_id</code> → <code>9007199254740993</code>。入力のテキストをそのまま jq に渡すため、2<sup>53</sup> を超える整数も全桁が残ります。</li>
-  <li><code>.items[] | select(.qty &gt; 5)</code> → 一致する要素がないため「（出力なし）」。</li>
-  <li><code>.a +</code>（途中までのフィルタ）→ <code>jq: error: syntax error, unexpected end of file … jq: 1 compile error</code>。CLI と同じコンパイルエラーです。</li>
-</ul>
+{/* jqp-check: {"input": "{\"destination\":\"U4af4980629\",\"events\":[\n {\"type\":\"message\",\"mode\":\"active\",\"timestamp\":1790900000000,\"source\":{\"type\":\"user\",\"userId\":\"U4af4980629a\"},\"webhookEventId\":\"01J0EXAMPLE1\",\"deliveryContext\":{\"isRedelivery\":false},\"replyToken\":\"b60d432864f44d079f6d8efe86cf404b\",\"message\":{\"id\":\"325708\",\"type\":\"text\",\"quoteToken\":\"q3Plxr4AgKd\",\"text\":\"明日 19 時に 2 名で予約したいです\"}},\n {\"type\":\"message\",\"mode\":\"active\",\"timestamp\":1790900001000,\"source\":{\"type\":\"user\",\"userId\":\"U4af4980629b\"},\"webhookEventId\":\"01J0EXAMPLE2\",\"deliveryContext\":{\"isRedelivery\":true},\"replyToken\":\"8cf9239d56244f4197887e939187e19e\",\"message\":{\"id\":\"325709\",\"type\":\"sticker\",\"stickerId\":\"52002734\",\"packageId\":\"11537\"}},\n {\"type\":\"follow\",\"mode\":\"active\",\"timestamp\":1790900002000,\"source\":{\"type\":\"user\",\"userId\":\"U4af4980629c\"},\"webhookEventId\":\"01J0EXAMPLE3\",\"deliveryContext\":{\"isRedelivery\":false},\"replyToken\":\"1a2b3c\"}]}", "filter": ".events[] | select(.type == \"message\" and .message.type == \"text\") | select(.deliveryContext.isRedelivery | not) | {user: .source.userId, text: .message.text}", "flags": {"c": true}, "stdout": "{\"user\":\"U4af4980629a\",\"text\":\"明日 19 時に 2 名で予約したいです\"}\n"} */}
 
-<h2>制限</h2>
-<ul>
-  <li>入力は 1 つの JSON 値である必要があります。先に JavaScript の <code>JSON.parse()</code> で確認するため、複数の値が並ぶストリーム（JSON Lines）は jq CLI なら読めますが、ここではエラーになります。</li>
-  <li>複数の出力は jq CLI と同じく、1 つずつ整形して順に表示します。カウンターはトップレベルの値の数です。</li>
-  <li>出力のないフィルタ（<code>empty</code> や、何も一致しない <code>select</code>）は「（出力なし）」と表示します。</li>
-  <li>コマンドラインオプションは使えません。<code>-r</code> の生文字列、<code>--arg</code>、<code>--slurp</code>、<code>--stream</code> はなく、結果は常に整形した JSON で表示されます。</li>
-  <li>エンジン <code>jq.wasm</code>（約 2.8 MB、gzip 後約 1 MB）は最初にフィルタを実行したときに読み込まれます。</li>
-</ul>
+`-c` をオンにして次のフィルタを実行すると、再送ではないテキストメッセージだけが 1 行で出ます。
+
+```
+.events[] | select(.type == "message" and .message.type == "text")
+| select(.deliveryContext.isRedelivery | not)
+| {user: .source.userId, text: .message.text}
+```
+
+```
+{"user":"U4af4980629a","text":"明日 19 時に 2 名で予約したいです"}
+```
+
+{/* jqp-check: {"input": "{\"events\":[{\"type\":\"message\",\"message\":{\"type\":\"text\",\"text\":\"明日 19 時に 2 名で予約したいです\"}},{\"type\":\"message\",\"message\":{\"type\":\"text\",\"text\":\"営業時間を教えてください\"}}]}", "filter": ".events[].message.text | select(test($kw))", "flags": {"r": true}, "args": [{"type": "string", "name": "kw", "value": "予約"}], "stdout": "明日 19 時に 2 名で予約したいです\n", "command": "jq -r --arg kw '予約' '.events[].message.text | select(test($kw))' input.json"} */}
+
+キーワードで絞るときは変数を使います。「+ 変数」で `kw` = `予約` を追加し、`-r` で `.events[].message.text | select(test($kw))` を実行すると「明日 19 時に 2 名で予約したいです」だけが出ます。コマンドライン欄は `jq -r --arg kw '予約' '.events[].message.text | select(test($kw))' input.json` です。
+
+## 例：日本語入力の全角記号
+
+日本語入力をオンにしたままフィルタを打つと、`｜` や `．`、`［］`、`”` が全角になりがちです。
+
+{/* jqp-check: {"input": "1", "filter": ".events[]｜.message．text", "flags": {}, "exit": 3, "hint": [], "shown": ["unexpected INVALID_CHARACTER"]} */}
+
+`.events[]｜.message．text` に対して jq が返すのは `syntax error, unexpected INVALID_CHARACTER, expecting end of file (Unix shell quoting issues?)` と終了コード 3 だけで、どの文字かは示しません。このページはフィルタ欄の下に、文字列の外にある全角記号・全角英数字・全角スペース（U+3000）を挙げ、「置き換える」で半角に直します。`"東京"` のように文字列の中にある全角文字はそのままです。
+
+## ターミナルと同じ結果
+
+実行はいつも `jq オプション フィルタ input.json` と同じで、input.json は入力の末尾に改行を足したものです。テストでは、オプション・変数・JSON Lines・構文エラーと実行時エラー・`halt_error`・`-e`・`--seq`・`--stream` を含む 71 ケースを、このページのエンジンと jq 1.7.1 のコマンドラインで実行し、stdout・stderr・終了コードをバイト単位で比べています。jq 1.7.1 マニュアルの例 241 個も、環境変数 `$PAGER` を読む 2 個を除いてすべて一致します。
+
+手元の版は `jq --version` で確認できます。Ubuntu 24.04（[1.7.1-3ubuntu0.24.04](https://packages.ubuntu.com/noble/jq)）、Debian 13（[1.7.1-6](https://packages.debian.org/trixie/jq)）、macOS 27 の `/usr/bin/jq`（`jq-1.7.1-apple` と表示）は 1.7.1、Homebrew は [1.8.2](https://formulae.brew.sh/formula/jq) です。1.8.0 の[変更点](https://github.com/jqlang/jq/blob/jq-1.8.2/NEWS.md)には、`trim` などの関数追加のほか、`ltrimstr` が文字列以外でエラーになる、`limit` に負の数を渡すとエラーになる、`-1 as $x | …` の結合順が変わる、といった互換性のない変更があります。1.7.1 では、エラーメッセージに列番号が出ません。
+
+{/* jqp-check: {"input": "{\"order_id\": 9007199254740993}", "filter": ".order_id, .order_id + 0", "flags": {}, "stdout": "9007199254740993\n9007199254740992\n"} */}
+
+大きな整数は書かれたまま出力されますが、計算すると倍精度浮動小数点になります。`{"order_id": 9007199254740993}` に `.order_id, .order_id + 0` を実行すると、1 つ目は `9007199254740993`、2 つ目は `9007199254740992` です。
+
+## 他のツールとの比較（2026-10-02 に実測）
+
+- **[play.jqlang.org](https://play.jqlang.org/)**（jq プロジェクト公式の Playground。jqplay.org はここへ転送）はブラウザ内で jq 1.8 を動かします。`trim` が使え、入力を含む通信は見当たりませんでした。出力とエラーを一緒に表示し、`repeat(1)` は約 30 秒で「Operation timed out」になりました。jq 1.8 を使っているならこちらが合います。
+- **byteflow.tools の jq プレイグラウンド**（Bing で「jq オンライン」上位）は、Chromium 152 ではどのフィルタも `Aborted(CompileError: WebAssembly.instantiate(): … violates the following Content Security Policy …)` となり、結果が出ませんでした。2 行の JSON Lines は実行前に「Invalid JSON: Unexpected non-whitespace character after JSON at position 8 (line 2 column 1)」で止まります。
+- **jqkungfu.com** はブラウザ内で jq.wasm を動かします。`[{"a":1},2]` に `.[] | .a` を実行すると `1` だけを表示してエラーを出さず、`9007199254740993` は `9007199254740992` になりました。
+
+## 制限
+
+- 入力以外のファイルは読めません。`--slurpfile`、`--rawfile`、`-f`、`-L`、`import`、`include`、`--args` / `--jsonargs` は使えません。
+- `$ENV` と `env` は WebAssembly 実行環境の固定値（HOME=/home/web_user）で、あなたの環境変数ではありません。`now` やローカル時刻の関数はブラウザの時計を使います。
+- 2 MB を超える入力は「実行」を押したときだけ動きます。2 MB を超えるファイルはエディタに表示しません。1 MB を超える出力は出力欄では途中までですが、コピーとダウンロードは全体です。
+- 10 秒（入力 1 MB ごとに 1 秒追加）を超える実行は止めます。メモリ不足や深すぎる再帰のときはエンジンを再起動します。
+- 色付き出力（`-C`）はありません。
+
+関連ツール：パスで値を取り出す [JSONPath テスター](/ja/tools/jsonpath-tester/)、整形用の [JSON フォーマッター](/ja/tools/json-formatter/)、JSON 配列と JSON Lines を変換する [JSONL コンバーター](/ja/tools/jsonl-converter/)、2 つの出力を比べる [JSON 差分チェッカー](/ja/tools/json-diff/)。

@@ -1,493 +1,1144 @@
 ---
-// JqPlaygroundTool — run jq filters against JSON via the official jq 1.7 WASM build.
-// The engine (jq.js + jq.wasm, ~1MB gzipped) is loaded lazily on first filter focus.
+// JqPlaygroundTool — run jq 1.7.1 (jq-web 0.6.2, WebAssembly) in a worker. A run is the same as
+// `jq FLAGS FILTER input.json`; stdout, stderr and the exit code are shown as jq prints them.
+// jq.wasm (about 1 MB compressed) is downloaded on first use, not on page load.
+import {
+  BOOL_OPTIONS, INDENT_VALUES, EXAMPLES, EXAMPLE_GROUPS, SAMPLE_INPUT, DEFAULT_FILTER, SAMPLE_OUTPUT,
+  highlightJson, countJsonValues, buildCommand, defaultOptions,
+} from './jq-playground-engine.js';
+
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
-const labels = {
+/* strings:start */
+const STRINGS = {
   en: {
-    jsonInput: 'JSON Input',
-    filter: 'jq Filter',
+    filter: 'jq filter',
+    run: 'Run',
+    stop: 'Stop',
     examples: 'Examples',
-    result: 'Result',
-    copy: 'Copy',
-    copied: 'Copied!',
+    examplesPick: 'Load an example…',
+    groups: { basics: 'Basics', build: 'Build objects and arrays', filter: 'Select and filter', aggregate: 'Group, sort, sum', paths: 'Paths and updates', strings: 'Strings and regex', formats: 'Formats (@csv, @base64, dates)', options: 'Options: --arg, -s, -n, -R', functions: 'Functions and control flow' },
+    options: 'Options',
+    opt: {
+      n: 'Null input: run the filter once with null as input; read the input with input / inputs',
+      R: 'Raw input: each input line is a string',
+      s: 'Slurp: read every input value into one array',
+      r: 'Raw output: print strings without quotes',
+      j: 'Join output: like -r, without a newline after each value',
+      a: 'ASCII output: write non-ASCII characters as \\uXXXX',
+      S: 'Sort the keys of every object',
+      c: 'Compact output: each value on one line',
+      e: 'Exit status from the last output: 1 when it is false or null, 4 when there is no output',
+      seq: 'Write the RS character before each value (RFC 7464 JSON text sequences)',
+      stream: 'Stream: print [path, leaf] events instead of whole values',
+    },
+    indent: 'Indent',
+    indentValues: { '2': '2 spaces', '4': '4 spaces', tab: 'Tab (--tab)', '0': '--indent 0', '1': '--indent 1', '3': '--indent 3', '5': '--indent 5', '6': '--indent 6', '7': '--indent 7' },
+    addArg: '+ Variable (--arg)',
+    argName: 'Name',
+    argValue: 'Value',
+    argType: 'Type',
+    argString: '--arg (string)',
+    argJson: '--argjson (JSON)',
+    argRemove: 'Remove variable',
+    input: 'Input',
+    inputHint: 'JSON, several JSON values one after another (JSON Lines), or text with -R.',
+    openFile: 'Open file',
     clear: 'Clear',
-    loadingEngine: 'Loading jq engine (~1MB, one-time download)…',
-    loadFailed: 'Failed to load jq engine. Refresh and try again.',
-    invalidJson: 'Invalid JSON',
-    errorPrefix: 'jq error:',
+    output: 'Output',
+    copy: 'Copy',
+    copied: 'Copied',
+    download: 'Download',
     noOutput: '(no output)',
-    matchCount: '{n} value',
-    matchCountPlural: '{n} values',
-    engineNote: 'Engine: jq 1.7 (WASM, cached after first load)',
+    valueOne: '1 value',
+    valueMany: '{n} values',
+    lineOne: '1 line',
+    lineMany: '{n} lines',
+    ranIn: '{ms} ms',
+    exitCode: 'exit code {n}',
+    stderr: 'stderr',
+    showInInput: 'Show in input',
+    showInFilter: 'Show in filter',
+    command: 'Command line',
+    copyCommand: 'Copy command',
+    copyLink: 'Copy link',
+    linkCopied: 'Link copied',
+    shareNote: 'The command reads the input from input.json. The link holds the filter, the options and the variable names; the input and the variable values stay on this device.',
+    engineLoading: 'Loading jq 1.7.1 (jq.wasm, about 1 MB compressed, cached after the first time)…',
+    engineFailed: 'Could not load the jq engine: {msg}',
+    retry: 'Retry',
+    running: 'Running… {s} s',
+    stopped: 'Stopped after {s} s. The filter may never finish (for example repeat or recurse without limit). The input and filter are unchanged.',
+    fatal: 'jq stopped: {msg}. This usually means it ran out of memory or recursed too deep. The engine has been restarted.',
+    bigInput: 'The input is {size}, so it does not run on every keystroke. Press Run (Ctrl/⌘ + Enter).',
+    clipped: 'Showing the first {shown} of {total}. Copy and Download use the whole output.',
+    notCounted: 'Output is {size}; values are not counted.',
+    fileOpened: 'Opened {name} ({size}). Files over {limit} are not shown in the editor; jq reads the whole file.',
+    fileTooBig: '{name} is {size}; the limit is {limit}.',
+    fileReadError: 'Could not read {name}.',
+    fileEncoding: '{name} is not valid UTF-8 text.',
+    closeFile: 'Close file',
+    exampleLoaded: 'Example loaded; it replaced your input.',
+    undo: 'Undo',
+    pastedCommand: 'This looks like a jq command line. Use its filter and options?',
+    pastedQuoted: 'The filter is wrapped in quotes. A shell removes them before jq sees the filter; jq here would see the quotes.',
+    apply: 'Apply',
+    removeQuotes: 'Remove quotes',
+    commandFiles: 'File names in the command are not read: {files}. Paste the content into Input.',
+    commandUnsupported: 'Not available on this page and left out: {opts}.',
+    commandIgnored: 'Ignored (they change only colour or buffering): {opts}.',
+    commandError: { unclosedSingle: 'The command has an unclosed single quote.', unclosedDouble: 'The command has an unclosed double quote.', noFilter: 'The command has no filter.', argMissing: '{option} needs a name and a value.', badIndent: '--indent takes a number from 0 to 7.', unknownOption: 'jq 1.7.1 has no option {option}.', fromFile: '-f reads the filter from a file; paste the filter itself.' },
+    suspicious: 'The filter contains {chars} outside strings. jq accepts only ASCII punctuation there; these usually come from an input method or a word processor.',
+    replace: 'Replace',
+    hint: {
+      inputSingleQuotes: 'JSON strings and keys need double quotes ("…"). Single quotes are a Python or JavaScript literal, not JSON.',
+      inputPython: 'True, False and None are Python. JSON uses true, false and null.',
+      inputTrailingComma: 'JSON does not allow a comma before } or ].',
+      inputNotJson: 'The input does not start like JSON. For plain text lines, turn on -R.',
+      jq18: '{name} was added in jq 1.8.0. This page runs jq 1.7.1 (the version in Ubuntu 24.04 and macOS /usr/bin/jq).',
+      undefinedVar: '${name} is not defined. Add it as a variable (--arg {name} value).',
+      addVar: 'Add ${name}',
+      noModules: 'Modules (import / include) need files on disk, which this page does not have. Paste the function definitions (def …;) before the filter.',
+      shellQuoting: 'jq found a character it cannot read. Check quotes copied from a shell command or a document.',
+      indexArray: 'The value is an array. Use .[].{key} or map(.{key}) to read {key} from each element.',
+      indexString: 'The value is a string. If it holds JSON text, parse it first: fromjson.{key}.',
+      iterateNull: '.[] got null: the field is missing on some input. Use .field[]? or (.field // [])[] to skip it.',
+      iterateScalar: '.[] works on arrays and objects only. Check the path before it.',
+      indexScalar: 'The value is {type}, not an object. Check the path, or add ? (.a?.b) to skip such values.',
+      typeMismatch: 'The two values have different types. Convert one first with tostring or tonumber.',
+      notNumber: 'tonumber got text that is not a number. Use try tonumber catch null to skip such values.',
+      objectKey: 'Object keys must be strings. Convert with tostring, for example {(.id | tostring): .name}.',
+      exitStatus: 'With -e the exit code is 1 because the last output is false or null.',
+    },
+    argProblem: { argNoName: 'Variable {row}: the name is empty.', argBadName: 'Variable {row}: "{name}" is not a valid name (letters, digits, _; not starting with a digit).', argDuplicate: 'Variable {row}: ${name} is defined twice.', argBadJson: 'Variable {row}: the value of --argjson {name} is not valid JSON.' },
+    engineNote: 'Engine: jq 1.7.1, the official C source compiled to WebAssembly (jq-web 0.6.2). It runs in a background worker in this tab; nothing is uploaded.',
   },
   zh: {
-    jsonInput: 'JSON 输入',
     filter: 'jq 过滤器',
+    run: '运行',
+    stop: '停止',
     examples: '示例',
-    result: '结果',
-    copy: '复制',
-    copied: '已复制！',
+    examplesPick: '载入示例…',
+    groups: { basics: '基础', build: '构造对象与数组', filter: '筛选', aggregate: '分组、排序、求和', paths: '路径与更新', strings: '字符串与正则', formats: '格式（@csv、@base64、日期）', options: '选项：--arg、-s、-n、-R', functions: '函数与流程控制' },
+    options: '选项',
+    opt: {
+      n: '空输入：以 null 为输入运行一次过滤器，用 input / inputs 读取输入',
+      R: '原始输入：每行输入作为一个字符串',
+      s: '合并（slurp）：把所有输入值读进一个数组',
+      r: '原始输出：字符串不带引号',
+      j: '连接输出：同 -r，每个值后不换行',
+      a: 'ASCII 输出：非 ASCII 字符写成 \\uXXXX',
+      S: '对象的键排序',
+      c: '紧凑输出：每个值一行',
+      e: '按最后一个输出设退出码：false 或 null 为 1，没有输出为 4',
+      seq: '每个值前加 RS 字符（RFC 7464 JSON 文本序列）',
+      stream: '流式：输出 [路径, 叶子值] 事件而不是整个值',
+    },
+    indent: '缩进',
+    indentValues: { '2': '2 个空格', '4': '4 个空格', tab: 'Tab（--tab）', '0': '--indent 0', '1': '--indent 1', '3': '--indent 3', '5': '--indent 5', '6': '--indent 6', '7': '--indent 7' },
+    addArg: '+ 变量（--arg）',
+    argName: '名称',
+    argValue: '值',
+    argType: '类型',
+    argString: '--arg（字符串）',
+    argJson: '--argjson（JSON）',
+    argRemove: '删除变量',
+    input: '输入',
+    inputHint: 'JSON、多个连续的 JSON 值（JSON Lines），或配合 -R 的纯文本。',
+    openFile: '打开文件',
     clear: '清空',
-    loadingEngine: '正在加载 jq 引擎（约 1MB，仅首次下载）…',
-    loadFailed: '加载 jq 引擎失败，请刷新页面重试。',
-    invalidJson: 'JSON 格式无效',
-    errorPrefix: 'jq 错误：',
+    output: '输出',
+    copy: '复制',
+    copied: '已复制',
+    download: '下载',
     noOutput: '（无输出）',
-    matchCount: '{n} 项结果',
-    matchCountPlural: '{n} 项结果',
-    engineNote: '引擎：jq 1.7（WASM，首次加载后浏览器缓存）',
+    valueOne: '1 个值',
+    valueMany: '{n} 个值',
+    lineOne: '1 行',
+    lineMany: '{n} 行',
+    ranIn: '{ms} 毫秒',
+    exitCode: '退出码 {n}',
+    stderr: 'stderr',
+    showInInput: '在输入中定位',
+    showInFilter: '在过滤器中定位',
+    command: '命令行',
+    copyCommand: '复制命令',
+    copyLink: '复制链接',
+    linkCopied: '链接已复制',
+    shareNote: '命令从 input.json 读取输入。链接包含过滤器、选项和变量名；输入内容和变量值留在本机。',
+    engineLoading: '正在加载 jq 1.7.1（jq.wasm，压缩后约 1 MB，首次下载后由浏览器缓存）…',
+    engineFailed: 'jq 引擎加载失败：{msg}',
+    retry: '重试',
+    running: '运行中… {s} 秒',
+    stopped: '运行 {s} 秒后已停止。过滤器可能不会结束（例如没有 limit 的 repeat 或 recurse）。输入和过滤器没有改动。',
+    fatal: 'jq 中止：{msg}。通常是内存不足或递归过深。引擎已重启。',
+    bigInput: '输入有 {size}，不在每次按键时运行。请按「运行」（Ctrl/⌘ + Enter）。',
+    clipped: '只显示前 {shown}（共 {total}）。复制和下载包含全部输出。',
+    notCounted: '输出有 {size}，不统计值的个数。',
+    fileOpened: '已打开 {name}（{size}）。超过 {limit} 的文件不在编辑框中显示，jq 读取整个文件。',
+    fileTooBig: '{name} 有 {size}，上限为 {limit}。',
+    fileReadError: '无法读取 {name}。',
+    fileEncoding: '{name} 不是有效的 UTF-8 文本。',
+    closeFile: '关闭文件',
+    exampleLoaded: '已载入示例，替换了原来的输入。',
+    undo: '撤销',
+    pastedCommand: '这看起来是一条 jq 命令。使用其中的过滤器和选项？',
+    pastedQuoted: '过滤器被引号包着。在 shell 里引号会在 jq 读到之前去掉，这里 jq 会读到引号。',
+    apply: '使用',
+    removeQuotes: '去掉引号',
+    commandFiles: '命令中的文件名不会被读取：{files}。请把文件内容粘贴到「输入」。',
+    commandUnsupported: '本页不支持，已忽略：{opts}。',
+    commandIgnored: '已忽略（只影响颜色或缓冲）：{opts}。',
+    commandError: { unclosedSingle: '命令中的单引号没有闭合。', unclosedDouble: '命令中的双引号没有闭合。', noFilter: '命令中没有过滤器。', argMissing: '{option} 需要名称和值。', badIndent: '--indent 只接受 0 到 7 的数字。', unknownOption: 'jq 1.7.1 没有 {option} 选项。', fromFile: '-f 从文件读取过滤器，请直接粘贴过滤器本身。' },
+    suspicious: '过滤器中字符串以外的位置有 {chars}。jq 在这些位置只接受 ASCII 标点，这些字符通常来自中文输入法或文档编辑器。',
+    replace: '替换',
+    hint: {
+      inputSingleQuotes: 'JSON 的字符串和键要用双引号（"…"）。单引号是 Python 或 JavaScript 的写法，不是 JSON。',
+      inputPython: 'True、False、None 是 Python 的写法，JSON 用 true、false、null。',
+      inputTrailingComma: 'JSON 不允许在 } 或 ] 前写逗号。',
+      inputNotJson: '输入开头不像 JSON。如果是逐行的纯文本，请打开 -R。',
+      jq18: '{name} 在 jq 1.8.0 才加入。本页运行的是 jq 1.7.1（Ubuntu 24.04 与 macOS 自带 /usr/bin/jq 的版本）。',
+      undefinedVar: '${name} 没有定义。请把它添加为变量（--arg {name} 值）。',
+      addVar: '添加 ${name}',
+      noModules: '模块（import / include）需要磁盘上的文件，本页没有。请把函数定义（def …;）写在过滤器前面。',
+      shellQuoting: 'jq 遇到了无法识别的字符。请检查从 shell 命令或文档中复制来的引号。',
+      indexArray: '这个值是数组。用 .[].{key} 或 map(.{key}) 读取每个元素的 {key}。',
+      indexString: '这个值是字符串。如果里面是 JSON 文本，先解析：fromjson.{key}。',
+      iterateNull: '.[] 收到了 null：某些输入没有这个字段。用 .field[]? 或 (.field // [])[] 跳过。',
+      iterateScalar: '.[] 只能用于数组和对象。请检查它前面的路径。',
+      indexScalar: '这个值是 {type}，不是对象。请检查路径，或加 ?（.a?.b）跳过这类值。',
+      typeMismatch: '两个值类型不同。先用 tostring 或 tonumber 转换其中一个。',
+      notNumber: 'tonumber 收到的文本不是数字。用 try tonumber catch null 跳过这类值。',
+      objectKey: '对象的键必须是字符串。用 tostring 转换，例如 {(.id | tostring): .name}。',
+      exitStatus: '开了 -e，最后一个输出是 false 或 null，所以退出码为 1。',
+    },
+    argProblem: { argNoName: '第 {row} 个变量：名称为空。', argBadName: '第 {row} 个变量：「{name}」不是有效的名称（字母、数字、下划线，不能以数字开头）。', argDuplicate: '第 {row} 个变量：${name} 定义了两次。', argBadJson: '第 {row} 个变量：--argjson {name} 的值不是有效的 JSON。' },
+    engineNote: '引擎：jq 1.7.1，官方 C 源码编译成 WebAssembly（jq-web 0.6.2），在本标签页的后台 worker 中运行，不上传任何内容。',
   },
   ja: {
-    jsonInput: 'JSON 入力',
     filter: 'jq フィルタ',
+    run: '実行',
+    stop: '停止',
     examples: '例',
-    result: '結果',
-    copy: 'コピー',
-    copied: 'コピーしました！',
+    examplesPick: '例を読み込む…',
+    groups: { basics: '基本', build: 'オブジェクト・配列の組み立て', filter: '絞り込み', aggregate: 'グループ化・並べ替え・合計', paths: 'パスと更新', strings: '文字列と正規表現', formats: 'フォーマット（@csv、@base64、日付）', options: 'オプション：--arg、-s、-n、-R', functions: '関数と制御構文' },
+    options: 'オプション',
+    opt: {
+      n: 'null 入力：入力を null としてフィルタを 1 回実行し、入力は input / inputs で読む',
+      R: '生の入力：入力の各行を文字列として読む',
+      s: 'スラープ：すべての入力値を 1 つの配列にまとめる',
+      r: '生の出力：文字列を引用符なしで出力',
+      j: '連結出力：-r と同じで、値ごとの改行なし',
+      a: 'ASCII 出力：非 ASCII 文字を \\uXXXX で出力',
+      S: 'オブジェクトのキーを並べ替える',
+      c: 'コンパクト出力：1 値 1 行',
+      e: '最後の出力で終了コードを決める：false か null なら 1、出力がなければ 4',
+      seq: '各値の前に RS 文字を付ける（RFC 7464 JSON テキストシーケンス）',
+      stream: 'ストリーム：値全体ではなく [パス, 葉の値] のイベントを出力',
+    },
+    indent: 'インデント',
+    indentValues: { '2': 'スペース 2', '4': 'スペース 4', tab: 'タブ（--tab）', '0': '--indent 0', '1': '--indent 1', '3': '--indent 3', '5': '--indent 5', '6': '--indent 6', '7': '--indent 7' },
+    addArg: '+ 変数（--arg）',
+    argName: '名前',
+    argValue: '値',
+    argType: '種類',
+    argString: '--arg（文字列）',
+    argJson: '--argjson（JSON）',
+    argRemove: '変数を削除',
+    input: '入力',
+    inputHint: 'JSON、続けて並んだ複数の JSON 値（JSON Lines）、または -R と組み合わせたテキスト。',
+    openFile: 'ファイルを開く',
     clear: 'クリア',
-    loadingEngine: 'jq エンジンを読み込み中（約 1MB、初回のみ）…',
-    loadFailed: 'jq エンジンの読み込みに失敗しました。再読み込みしてください。',
-    invalidJson: '無効な JSON',
-    errorPrefix: 'jq エラー：',
+    output: '出力',
+    copy: 'コピー',
+    copied: 'コピーしました',
+    download: 'ダウンロード',
     noOutput: '（出力なし）',
-    matchCount: '{n} 件',
-    matchCountPlural: '{n} 件',
-    engineNote: 'エンジン：jq 1.7（WASM、初回ロード後はキャッシュ）',
+    valueOne: '1 値',
+    valueMany: '{n} 値',
+    lineOne: '1 行',
+    lineMany: '{n} 行',
+    ranIn: '{ms} ミリ秒',
+    exitCode: '終了コード {n}',
+    stderr: 'stderr',
+    showInInput: '入力で表示',
+    showInFilter: 'フィルタで表示',
+    command: 'コマンドライン',
+    copyCommand: 'コマンドをコピー',
+    copyLink: 'リンクをコピー',
+    linkCopied: 'リンクをコピーしました',
+    shareNote: 'コマンドは input.json から入力を読みます。リンクに入るのはフィルタ・オプション・変数名だけで、入力と変数の値はこの端末に残ります。',
+    engineLoading: 'jq 1.7.1 を読み込み中（jq.wasm、圧縮後約 1 MB、2 回目以降はキャッシュ）…',
+    engineFailed: 'jq エンジンを読み込めませんでした：{msg}',
+    retry: '再試行',
+    running: '実行中… {s} 秒',
+    stopped: '{s} 秒で停止しました。フィルタが終わらない可能性があります（例：limit のない repeat や recurse）。入力とフィルタはそのままです。',
+    fatal: 'jq が停止しました：{msg}。多くはメモリ不足か再帰が深すぎるためです。エンジンを再起動しました。',
+    bigInput: '入力が {size} あるため、キー入力ごとには実行しません。「実行」（Ctrl/⌘ + Enter）を押してください。',
+    clipped: '先頭 {shown} を表示しています（全体 {total}）。コピーとダウンロードは出力全体です。',
+    notCounted: '出力が {size} あるため、値の数は数えていません。',
+    fileOpened: '{name}（{size}）を開きました。{limit} を超えるファイルはエディタに表示しませんが、jq はファイル全体を読みます。',
+    fileTooBig: '{name} は {size} です。上限は {limit} です。',
+    fileReadError: '{name} を読み込めませんでした。',
+    fileEncoding: '{name} は UTF-8 テキストではありません。',
+    closeFile: 'ファイルを閉じる',
+    exampleLoaded: '例を読み込み、入力を置き換えました。',
+    undo: '元に戻す',
+    pastedCommand: 'jq のコマンドラインのようです。フィルタとオプションを取り込みますか？',
+    pastedQuoted: 'フィルタが引用符で囲まれています。シェルでは jq に渡る前に引用符が外れますが、ここでは jq が引用符ごと読みます。',
+    apply: '取り込む',
+    removeQuotes: '引用符を外す',
+    commandFiles: 'コマンド中のファイル名は読みません：{files}。内容を「入力」に貼り付けてください。',
+    commandUnsupported: 'このページでは使えないため除外しました：{opts}。',
+    commandIgnored: '色やバッファだけに関わるため無視しました：{opts}。',
+    commandError: { unclosedSingle: 'コマンドのシングルクォートが閉じていません。', unclosedDouble: 'コマンドのダブルクォートが閉じていません。', noFilter: 'コマンドにフィルタがありません。', argMissing: '{option} には名前と値が必要です。', badIndent: '--indent に指定できるのは 0〜7 の数字です。', unknownOption: 'jq 1.7.1 に {option} オプションはありません。', fromFile: '-f はフィルタをファイルから読みます。フィルタそのものを貼り付けてください。' },
+    suspicious: 'フィルタの文字列以外の場所に {chars} があります。そこでは ASCII の記号しか使えません。日本語入力の全角記号や、文書作成ソフトの引用符でよく起きます。',
+    replace: '置き換える',
+    hint: {
+      inputSingleQuotes: 'JSON の文字列とキーはダブルクォート（"…"）です。シングルクォートは Python や JavaScript の書き方で、JSON ではありません。',
+      inputPython: 'True・False・None は Python の書き方です。JSON では true・false・null です。',
+      inputTrailingComma: 'JSON では } や ] の直前にカンマを書けません。',
+      inputNotJson: '入力が JSON の形で始まっていません。行ごとのテキストなら -R をオンにしてください。',
+      jq18: '{name} は jq 1.8.0 で追加されました。このページは jq 1.7.1（Ubuntu 24.04 と macOS の /usr/bin/jq と同じ版）です。',
+      undefinedVar: '${name} が定義されていません。変数として追加してください（--arg {name} 値）。',
+      addVar: '${name} を追加',
+      noModules: 'モジュール（import / include）にはディスク上のファイルが必要で、このページでは使えません。関数定義（def …;）をフィルタの前に書いてください。',
+      shellQuoting: 'jq が読めない文字があります。シェルのコマンドや文書からコピーした引用符を確認してください。',
+      indexArray: '値が配列です。各要素の {key} は .[].{key} か map(.{key}) で読みます。',
+      indexString: '値が文字列です。中身が JSON テキストなら先に解析します：fromjson.{key}。',
+      iterateNull: '.[] に null が渡りました。フィールドがない入力があります。.field[]? か (.field // [])[] で飛ばせます。',
+      iterateScalar: '.[] は配列とオブジェクトにしか使えません。その前のパスを確認してください。',
+      indexScalar: '値は {type} で、オブジェクトではありません。パスを確認するか、?（.a?.b）で飛ばします。',
+      typeMismatch: '2 つの値の型が違います。tostring か tonumber で片方を変換してください。',
+      notNumber: 'tonumber に数字でない文字列が渡りました。try tonumber catch null で飛ばせます。',
+      objectKey: 'オブジェクトのキーは文字列でなければなりません。例：{(.id | tostring): .name}。',
+      exitStatus: '-e が有効で、最後の出力が false か null なので終了コードは 1 です。',
+    },
+    argProblem: { argNoName: '変数 {row}：名前が空です。', argBadName: '変数 {row}：「{name}」は名前に使えません（英数字と _、先頭は数字以外）。', argDuplicate: '変数 {row}：${name} が 2 回定義されています。', argBadJson: '変数 {row}：--argjson {name} の値が JSON として正しくありません。' },
+    engineNote: 'エンジン：jq 1.7.1。公式の C ソースを WebAssembly にコンパイルしたもの（jq-web 0.6.2）を、このタブのバックグラウンド worker で実行します。何もアップロードしません。',
   },
   ko: {
-    jsonInput: 'JSON 입력',
     filter: 'jq 필터',
+    run: '실행',
+    stop: '중지',
     examples: '예시',
-    result: '결과',
-    copy: '복사',
-    copied: '복사됨!',
+    examplesPick: '예시 불러오기…',
+    groups: { basics: '기본', build: '객체·배열 만들기', filter: '골라내기', aggregate: '그룹·정렬·합계', paths: '경로와 수정', strings: '문자열과 정규식', formats: '형식(@csv, @base64, 날짜)', options: '옵션: --arg, -s, -n, -R', functions: '함수와 제어 흐름' },
+    options: '옵션',
+    opt: {
+      n: 'null 입력: 입력을 null로 두고 필터를 한 번 실행, 입력은 input / inputs로 읽음',
+      R: '원시 입력: 입력의 각 줄을 문자열로 읽음',
+      s: '슬러프: 모든 입력 값을 배열 하나로 모음',
+      r: '원시 출력: 문자열을 따옴표 없이 출력',
+      j: '이어 붙인 출력: -r과 같지만 값마다 줄바꿈 없음',
+      a: 'ASCII 출력: ASCII가 아닌 문자를 \\uXXXX로 출력',
+      S: '객체 키 정렬',
+      c: '압축 출력: 값 하나에 한 줄',
+      e: '마지막 출력으로 종료 코드 결정: false나 null이면 1, 출력이 없으면 4',
+      seq: '각 값 앞에 RS 문자 추가(RFC 7464 JSON 텍스트 시퀀스)',
+      stream: '스트림: 값 전체 대신 [경로, 잎 값] 이벤트 출력',
+    },
+    indent: '들여쓰기',
+    indentValues: { '2': '공백 2칸', '4': '공백 4칸', tab: '탭(--tab)', '0': '--indent 0', '1': '--indent 1', '3': '--indent 3', '5': '--indent 5', '6': '--indent 6', '7': '--indent 7' },
+    addArg: '+ 변수(--arg)',
+    argName: '이름',
+    argValue: '값',
+    argType: '종류',
+    argString: '--arg(문자열)',
+    argJson: '--argjson(JSON)',
+    argRemove: '변수 삭제',
+    input: '입력',
+    inputHint: 'JSON, 이어서 나열된 여러 JSON 값(JSON Lines), 또는 -R과 함께 쓰는 텍스트.',
+    openFile: '파일 열기',
     clear: '지우기',
-    loadingEngine: 'jq 엔진 로드 중 (약 1MB, 최초 1회)…',
-    loadFailed: 'jq 엔진 로드 실패. 페이지를 새로고침하세요.',
-    invalidJson: '유효하지 않은 JSON',
-    errorPrefix: 'jq 오류:',
+    output: '출력',
+    copy: '복사',
+    copied: '복사됨',
+    download: '다운로드',
     noOutput: '(출력 없음)',
-    matchCount: '{n}개',
-    matchCountPlural: '{n}개',
-    engineNote: '엔진: jq 1.7 (WASM, 최초 로드 후 캐시)',
+    valueOne: '값 1개',
+    valueMany: '값 {n}개',
+    lineOne: '1줄',
+    lineMany: '{n}줄',
+    ranIn: '{ms}ms',
+    exitCode: '종료 코드 {n}',
+    stderr: 'stderr',
+    showInInput: '입력에서 보기',
+    showInFilter: '필터에서 보기',
+    command: '명령줄',
+    copyCommand: '명령 복사',
+    copyLink: '링크 복사',
+    linkCopied: '링크를 복사했습니다',
+    shareNote: '명령은 input.json에서 입력을 읽습니다. 링크에는 필터, 옵션, 변수 이름만 들어가고 입력과 변수 값은 이 기기에 남습니다.',
+    engineLoading: 'jq 1.7.1 불러오는 중(jq.wasm, 압축 시 약 1MB, 처음 한 번만 내려받고 캐시)…',
+    engineFailed: 'jq 엔진을 불러오지 못했습니다: {msg}',
+    retry: '다시 시도',
+    running: '실행 중… {s}초',
+    stopped: '{s}초 후 중지했습니다. 필터가 끝나지 않을 수 있습니다(예: limit 없는 repeat, recurse). 입력과 필터는 그대로입니다.',
+    fatal: 'jq가 멈췄습니다: {msg}. 대개 메모리가 부족하거나 재귀가 너무 깊은 경우입니다. 엔진을 다시 시작했습니다.',
+    bigInput: '입력이 {size}이라 키를 누를 때마다 실행하지 않습니다. 「실행」(Ctrl/⌘ + Enter)을 누르세요.',
+    clipped: '앞부분 {shown}만 표시합니다(전체 {total}). 복사와 다운로드는 출력 전체입니다.',
+    notCounted: '출력이 {size}이라 값 개수는 세지 않습니다.',
+    fileOpened: '{name}({size})을 열었습니다. {limit}이 넘는 파일은 편집기에 표시하지 않지만 jq는 파일 전체를 읽습니다.',
+    fileTooBig: '{name}은 {size}입니다. 한도는 {limit}입니다.',
+    fileReadError: '{name}을 읽지 못했습니다.',
+    fileEncoding: '{name}은 UTF-8 텍스트가 아닙니다.',
+    closeFile: '파일 닫기',
+    exampleLoaded: '예시를 불러와 입력을 바꿨습니다.',
+    undo: '되돌리기',
+    pastedCommand: 'jq 명령줄로 보입니다. 필터와 옵션을 가져올까요?',
+    pastedQuoted: '필터가 따옴표로 감싸져 있습니다. 셸에서는 jq에 넘어가기 전에 따옴표가 빠지지만, 여기서는 jq가 따옴표까지 읽습니다.',
+    apply: '가져오기',
+    removeQuotes: '따옴표 제거',
+    commandFiles: '명령의 파일 이름은 읽지 않습니다: {files}. 내용을 「입력」에 붙여 넣으세요.',
+    commandUnsupported: '이 페이지에서 쓸 수 없어 뺐습니다: {opts}.',
+    commandIgnored: '색상이나 버퍼에만 관련되어 무시했습니다: {opts}.',
+    commandError: { unclosedSingle: '명령의 작은따옴표가 닫히지 않았습니다.', unclosedDouble: '명령의 큰따옴표가 닫히지 않았습니다.', noFilter: '명령에 필터가 없습니다.', argMissing: '{option}에는 이름과 값이 필요합니다.', badIndent: '--indent에는 0~7 숫자만 쓸 수 있습니다.', unknownOption: 'jq 1.7.1에는 {option} 옵션이 없습니다.', fromFile: '-f는 필터를 파일에서 읽습니다. 필터 자체를 붙여 넣으세요.' },
+    suspicious: '필터의 문자열 밖에 {chars}이(가) 있습니다. 이 자리에는 ASCII 기호만 쓸 수 있습니다. 한글 입력기의 전각 기호나 문서 편집기의 따옴표에서 자주 생깁니다.',
+    replace: '바꾸기',
+    hint: {
+      inputSingleQuotes: 'JSON의 문자열과 키는 큰따옴표("…")를 씁니다. 작은따옴표는 Python이나 JavaScript 표기이며 JSON이 아닙니다.',
+      inputPython: 'True, False, None은 Python 표기입니다. JSON은 true, false, null입니다.',
+      inputTrailingComma: 'JSON에서는 } 나 ] 바로 앞에 쉼표를 쓸 수 없습니다.',
+      inputNotJson: '입력이 JSON 형태로 시작하지 않습니다. 줄 단위 텍스트라면 -R을 켜세요.',
+      jq18: '{name}은 jq 1.8.0에서 추가되었습니다. 이 페이지는 jq 1.7.1(Ubuntu 24.04와 macOS /usr/bin/jq와 같은 버전)입니다.',
+      undefinedVar: '${name}이 정의되지 않았습니다. 변수로 추가하세요(--arg {name} 값).',
+      addVar: '${name} 추가',
+      noModules: '모듈(import / include)은 디스크의 파일이 필요해 이 페이지에서는 쓸 수 없습니다. 함수 정의(def …;)를 필터 앞에 쓰세요.',
+      shellQuoting: 'jq가 읽을 수 없는 문자가 있습니다. 셸 명령이나 문서에서 복사한 따옴표를 확인하세요.',
+      indexArray: '값이 배열입니다. 각 요소의 {key}는 .[].{key} 또는 map(.{key})로 읽습니다.',
+      indexString: '값이 문자열입니다. 안에 JSON 텍스트가 있다면 먼저 파싱하세요: fromjson.{key}.',
+      iterateNull: '.[]에 null이 들어왔습니다. 필드가 없는 입력이 있습니다. .field[]? 또는 (.field // [])[]로 건너뜁니다.',
+      iterateScalar: '.[]는 배열과 객체에만 쓸 수 있습니다. 앞쪽 경로를 확인하세요.',
+      indexScalar: '값이 {type}이며 객체가 아닙니다. 경로를 확인하거나 ?(.a?.b)를 붙여 건너뜁니다.',
+      typeMismatch: '두 값의 타입이 다릅니다. tostring이나 tonumber로 한쪽을 먼저 바꾸세요.',
+      notNumber: 'tonumber에 숫자가 아닌 문자열이 들어왔습니다. try tonumber catch null로 건너뜁니다.',
+      objectKey: '객체 키는 문자열이어야 합니다. 예: {(.id | tostring): .name}.',
+      exitStatus: '-e가 켜져 있고 마지막 출력이 false나 null이라 종료 코드가 1입니다.',
+    },
+    argProblem: { argNoName: '변수 {row}: 이름이 비어 있습니다.', argBadName: '변수 {row}: 「{name}」은 이름으로 쓸 수 없습니다(영문자, 숫자, _, 숫자로 시작 불가).', argDuplicate: '변수 {row}: ${name}이 두 번 정의되었습니다.', argBadJson: '변수 {row}: --argjson {name}의 값이 올바른 JSON이 아닙니다.' },
+    engineNote: '엔진: jq 1.7.1. 공식 C 소스를 WebAssembly로 컴파일한 것(jq-web 0.6.2)을 이 탭의 백그라운드 worker에서 실행합니다. 아무것도 업로드하지 않습니다.',
   },
 };
+/* strings:end */
 
-const L = labels[lang] ?? labels.en;
-
-const SAMPLE_JSON = `{
-  "users": [
-    {"name": "Alice", "age": 30, "dept": "eng",   "active": true},
-    {"name": "Bob",   "age": 25, "dept": "eng",   "active": false},
-    {"name": "Carol", "age": 35, "dept": "sales", "active": true},
-    {"name": "Dan",   "age": 28, "dept": "sales", "active": true}
-  ],
-  "count": 4
-}`;
-
-const EXAMPLES: { label: string; filter: string }[] = [
-  { label: '.',                                filter: '.' },
-  { label: '.users',                           filter: '.users' },
-  { label: '.users[]',                         filter: '.users[]' },
-  { label: '.users | length',                  filter: '.users | length' },
-  { label: 'keys',                             filter: 'keys' },
-  { label: 'map(.name)',                       filter: '.users | map(.name)' },
-  { label: 'select active',                    filter: '.users[] | select(.active)' },
-  { label: 'group_by dept',                    filter: '.users | group_by(.dept) | map({dept: .[0].dept, n: length})' },
-  { label: 'sort_by age',                      filter: '.users | sort_by(.age) | map(.name)' },
-  { label: 'sum ages',                         filter: '[.users[].age] | add' },
-];
+const T = STRINGS[lang] ?? STRINGS.en;
+const exampleLabel = (ex) => {
+  const flags = ex.flags ? Object.keys(ex.flags).filter((k) => ex.flags[k]).map((k) => BOOL_OPTIONS.find((d) => d.key === k)?.short || '--' + k) : [];
+  const args = (ex.args || []).map((a) => (a.type === 'json' ? '--argjson ' : '--arg ') + a.name);
+  const extra = [...flags, ...args];
+  return ex.filter + (extra.length ? '   (' + extra.join(' ') + ')' : '');
+};
+const sampleHtml = highlightJson(SAMPLE_OUTPUT);
+const sampleCount = countJsonValues(SAMPLE_OUTPUT);
+const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
 ---
 
-<div
-  class="jqp-wrap"
-  data-slug="jq-playground"
-  data-copy={L.copy}
-  data-copied={L.copied}
-  data-loading-engine={L.loadingEngine}
-  data-load-failed={L.loadFailed}
-  data-invalid-json={L.invalidJson}
-  data-error-prefix={L.errorPrefix}
-  data-no-output={L.noOutput}
-  data-match-count={L.matchCount}
-  data-match-count-plural={L.matchCountPlural}
->
-  <div class="jqp-layout">
-    {/* Left: JSON input */}
-    <div class="jqp-panel">
-      <div class="jqp-input-header">
-        <label class="tool-label" for="jqp-json">{L.jsonInput}</label>
-        <button id="jqp-clear" class="btn-ghost jqp-clear" type="button">{L.clear}</button>
+<div class="jqp-wrap" id="jqp-wrap" data-strings={JSON.stringify(T)} data-sample-input={SAMPLE_INPUT} data-default-filter={DEFAULT_FILTER}>
+  <div class="jqp-top">
+    <div class="jqp-filter-head">
+      <label class="tool-label" for="jqp-filter">{T.filter}</label>
+      <select id="jqp-examples" class="jqp-examples" aria-label={T.examples}>
+        <option value="">{T.examplesPick}</option>
+        {EXAMPLE_GROUPS.map((g) => (
+          <optgroup label={T.groups[g]}>
+            {EXAMPLES.filter((ex) => ex.group === g).map((ex) => <option value={ex.id}>{exampleLabel(ex)}</option>)}
+          </optgroup>
+        ))}
+      </select>
+    </div>
+    <div class="jqp-filter-row">
+      <textarea id="jqp-filter" class="tool-textarea jqp-filter" rows="2" spellcheck="false" autocomplete="off" autocapitalize="off">{DEFAULT_FILTER}</textarea>
+      <button id="jqp-run" class="btn-primary jqp-run" type="button">{T.run}</button>
+    </div>
+    <div id="jqp-filter-notes" class="jqp-notes" aria-live="polite"></div>
+    <div class="jqp-opts" role="group" aria-label={T.options}>
+      {BOOL_OPTIONS.map((d) => (
+        <button type="button" class="jqp-opt" data-opt={d.key} aria-pressed="false" title={T.opt[d.key]} aria-label={(d.short || d.long) + ' — ' + T.opt[d.key]}>{d.short || d.long}</button>
+      ))}
+      <label class="jqp-indent">
+        <span>{T.indent}</span>
+        <select id="jqp-indent">
+          {INDENT_VALUES.map((v) => <option value={v}>{T.indentValues[v]}</option>)}
+        </select>
+      </label>
+      <button type="button" id="jqp-add-arg" class="jqp-opt jqp-add-arg">{T.addArg}</button>
+    </div>
+    <div id="jqp-args" class="jqp-args"></div>
+  </div>
+
+  <div class="jqp-io">
+    <div class="jqp-panel" id="jqp-input-panel">
+      <div class="jqp-panel-head">
+        <label class="tool-label" for="jqp-input">{T.input}</label>
+        <span class="jqp-spacer"></span>
+        <button id="jqp-open" class="btn-ghost jqp-small" type="button">{T.openFile}</button>
+        <button id="jqp-clear" class="btn-ghost jqp-small" type="button">{T.clear}</button>
+        <input id="jqp-file" type="file" accept=".json,.jsonl,.ndjson,.geojson,.txt,.log,.csv,application/json,text/plain" hidden />
       </div>
-      <textarea id="jqp-json" class="tool-textarea jqp-json" spellcheck="false" autocomplete="off">{SAMPLE_JSON}</textarea>
+      <div id="jqp-file-banner" class="jqp-banner" hidden>
+        <span id="jqp-file-text"></span>
+        <button id="jqp-file-close" class="btn-ghost jqp-small" type="button">{T.closeFile}</button>
+      </div>
+      <textarea id="jqp-input" class="tool-textarea jqp-input" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="jqp-input-hint">{SAMPLE_INPUT}</textarea>
+      <p id="jqp-input-hint" class="jqp-hint-text">{T.inputHint}</p>
     </div>
 
-    {/* Right: filter + examples + result */}
     <div class="jqp-panel">
-      <label class="tool-label" for="jqp-filter">{L.filter}</label>
-      <input id="jqp-filter" class="tool-input jqp-filter" type="text" value=".users | map(.name)" spellcheck="false" autocomplete="off" />
-
-      <div class="jqp-examples-label">{L.examples}</div>
-      <div class="jqp-pills">
-        {EXAMPLES.map(ex => (
-          <button class="jqp-pill" type="button" data-filter={ex.filter}>{ex.label}</button>
-        ))}
+      <div class="jqp-panel-head">
+        <span class="tool-label" id="jqp-out-label">{T.output}</span>
+        <span id="jqp-count" class="jqp-count">{sampleCount === 1 ? T.valueOne : T.valueMany.replace('{n}', String(sampleCount))}</span>
+        <span id="jqp-exit" class="jqp-exit" hidden></span>
+        <span class="jqp-spacer"></span>
+        <button id="jqp-copy" class="btn-copy" type="button">{T.copy}</button>
+        <button id="jqp-download" class="btn-ghost jqp-small" type="button">{T.download}</button>
       </div>
-
-      <div class="jqp-result-header">
-        <span class="tool-label">{L.result}</span>
-        <span id="jqp-count" class="jqp-count"></span>
-        <button id="jqp-copy" class="btn-copy" type="button">{L.copy}</button>
+      <pre id="jqp-out" class="jqp-out" tabindex="0" aria-labelledby="jqp-out-label"><code id="jqp-code" set:html={sampleHtml}></code></pre>
+      <div id="jqp-status" class="jqp-status" role="status" aria-live="polite"></div>
+      <div id="jqp-stderr-box" class="jqp-stderr-box" hidden>
+        <div class="jqp-stderr-title">{T.stderr}</div>
+        <pre id="jqp-stderr" class="jqp-stderr"></pre>
+        <div id="jqp-locate" class="jqp-locate"></div>
       </div>
-
-      <pre id="jqp-pre" class="jqp-pre"><code id="jqp-code" class="jqp-code"></code></pre>
-
-      <div id="jqp-status" class="tool-status none jqp-engine-status"></div>
-      <p class="jqp-engine-note">{L.engineNote}</p>
+      <ul id="jqp-hints" class="jqp-hints" hidden></ul>
     </div>
   </div>
 
-  <script is:inline>
-    (function () {
-      var wrap = document.querySelector('.jqp-wrap');
-      if (!wrap) return;
+  <div class="jqp-cmd">
+    <div class="jqp-panel-head">
+      <span class="tool-label">{T.command}</span>
+      <span class="jqp-spacer"></span>
+      <button id="jqp-copy-cmd" class="btn-ghost jqp-small" type="button">{T.copyCommand}</button>
+      <button id="jqp-copy-link" class="btn-ghost jqp-small" type="button">{T.copyLink}</button>
+    </div>
+    <code id="jqp-cmd" class="jqp-cmd-text">{sampleCommand}</code>
+    <p class="jqp-hint-text">{T.shareNote}</p>
+  </div>
+  <p class="jqp-engine-note">{T.engineNote}</p>
+</div>
 
-      var SLUG = 'jq-playground';
-      var L = {
-        copy:          wrap.dataset.copy,
-        copied:        wrap.dataset.copied,
-        loadingEngine: wrap.dataset.loadingEngine,
-        loadFailed:    wrap.dataset.loadFailed,
-        invalidJson:   wrap.dataset.invalidJson,
-        errorPrefix:   wrap.dataset.errorPrefix,
-        noOutput:      wrap.dataset.noOutput,
-        matchOne:      wrap.dataset.matchCount,
-        matchMany:     wrap.dataset.matchCountPlural,
-      };
+<script>
+  // @ts-nocheck
+  import {
+    EXAMPLES, SAMPLE_INPUT, DEFAULT_FILTER, normalizeOptions, normalizeArgs, buildFlags, checkArgs,
+    buildCommand, detectPastedCommand, prepareInput, countJsonValues, countLines, outputIsJson, parseStderr,
+    inputErrorRange, lineRange, findSuspiciousChars, fixSuspiciousChars, hintsFor, encodeShare, decodeShare,
+    exampleState, highlightJson, escapeHtml, formatBytes, clipOutput, defaultOptions, parseJqCommand,
+  } from './jq-playground-engine.js';
 
-      var jsonEl   = document.getElementById('jqp-json');
-      var filterEl = document.getElementById('jqp-filter');
-      var codeEl   = document.getElementById('jqp-code');
-      var countEl  = document.getElementById('jqp-count');
-      var statusEl = document.getElementById('jqp-status');
-      var copyBtn  = document.getElementById('jqp-copy');
+  var SLUG = 'jq-playground';
+  var wrap = document.getElementById('jqp-wrap');
+  var T = JSON.parse(wrap.dataset.strings);
+  var $ = function (id) { return document.getElementById(id); };
+  var filterEl = $('jqp-filter'), inputEl = $('jqp-input'), runBtn = $('jqp-run'), codeEl = $('jqp-code');
+  var countEl = $('jqp-count'), exitEl = $('jqp-exit'), statusEl = $('jqp-status'), stderrBox = $('jqp-stderr-box');
+  var stderrEl = $('jqp-stderr'), locateEl = $('jqp-locate'), hintsEl = $('jqp-hints'), notesEl = $('jqp-filter-notes');
+  var argsEl = $('jqp-args'), indentEl = $('jqp-indent'), cmdEl = $('jqp-cmd'), copyBtn = $('jqp-copy');
+  var fileEl = $('jqp-file'), fileBanner = $('jqp-file-banner'), fileText = $('jqp-file-text'), examplesEl = $('jqp-examples');
 
-      /* ── ztPersist restore ── */
+  var AUTO_LIMIT = 2 * 1024 * 1024;      // inputs above this run only on Run
+  var EDITOR_LIMIT = 2 * 1024 * 1024;    // files above this stay out of the textarea
+  var FILE_LIMIT = 200 * 1024 * 1024;
+  var SHOW_LIMIT = 1024 * 1024;          // characters of output rendered
+  var HIGHLIGHT_LIMIT = 256 * 1024;
+  var COUNT_LIMIT = 50 * 1024 * 1024;
+  var PERSIST_INPUT_LIMIT = 40 * 1024;   // ztPersist keeps 50 KB per tool
+
+  var state = { opts: defaultOptions(), args: [], file: null, lastStdout: '', lastJson: true, notice: null };
+
+  function fill(tpl, p) {
+    return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return p && p[k] !== undefined ? String(p[k]) : m; });
+  }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function currentInput() { return state.file ? state.file.text : inputEl.value; }
+
+  /* ── options and variables ── */
+  function renderOptions() {
+    wrap.querySelectorAll('.jqp-opt[data-opt]').forEach(function (b) {
+      b.setAttribute('aria-pressed', state.opts[b.dataset.opt] ? 'true' : 'false');
+    });
+    indentEl.value = state.opts.indent;
+  }
+  function renderArgs() {
+    argsEl.textContent = '';
+    state.args.forEach(function (a, i) {
+      var row = el('div', 'jqp-arg');
+      var type = el('select', 'jqp-arg-type');
+      type.setAttribute('aria-label', T.argType);
+      [['string', T.argString], ['json', T.argJson]].forEach(function (o) {
+        var opt = el('option', '', o[1]); opt.value = o[0]; type.appendChild(opt);
+      });
+      type.value = a.type;
+      var name = el('input', 'tool-input jqp-arg-name');
+      name.type = 'text'; name.value = a.name; name.placeholder = T.argName; name.setAttribute('aria-label', T.argName);
+      name.spellcheck = false; name.autocomplete = 'off';
+      var value = el('input', 'tool-input jqp-arg-value');
+      value.type = 'text'; value.value = a.value; value.placeholder = T.argValue; value.setAttribute('aria-label', T.argValue);
+      value.spellcheck = false; value.autocomplete = 'off';
+      var del = el('button', 'btn-ghost jqp-arg-del', '×');
+      del.type = 'button'; del.setAttribute('aria-label', T.argRemove); del.title = T.argRemove;
+      type.addEventListener('change', function () { state.args[i].type = type.value; changed(); });
+      name.addEventListener('input', function () { state.args[i].name = name.value; changed(); });
+      value.addEventListener('input', function () { state.args[i].value = value.value; changed(); });
+      del.addEventListener('click', function () { state.args.splice(i, 1); renderArgs(); changed(); });
+      row.append(type, el('span', 'jqp-dollar', '$'), name, value, del);
+      argsEl.appendChild(row);
+    });
+  }
+
+  /* ── persistence ── */
+  function persist() {
+    try {
+      if (!window.ztPersist) return;
+      var data = { filter: filterEl.value, opts: state.opts, args: state.args };
+      if (!state.file && inputEl.value.length <= PERSIST_INPUT_LIMIT) data.json = inputEl.value;
+      window.ztPersist.save(SLUG, data);
+    } catch (e) {}
+  }
+
+  /* ── engine (worker) ── */
+  var worker = null, workerReady = false, loadError = null;
+  var nextId = 1, inflight = null, pending = null, waitTimer = null, tickTimer = null;
+
+  function startWorker() {
+    if (worker) return;
+    loadError = null;
+    workerReady = false;
+    setStatus(T.engineLoading, 'info');
+    try {
+      worker = new Worker('/jq-web/jq-worker.js');
+    } catch (e) {
+      failLoad(e && e.message ? e.message : String(e));
+      return;
+    }
+    worker.onmessage = onWorkerMessage;
+    worker.onerror = function (ev) {
+      if (!workerReady) { ev.preventDefault && ev.preventDefault(); failLoad(ev.message || 'worker error'); }
+    };
+  }
+  function failLoad(msg) {
+    loadError = msg;
+    killWorker();
+    inflight = null;
+    setStatus(fill(T.engineFailed, { msg: msg }), 'error', T.retry, function () { startWorker(); schedule(0); });
+  }
+  function killWorker() {
+    if (worker) { worker.terminate(); worker = null; }
+    workerReady = false;
+    clearTimeout(waitTimer); clearInterval(tickTimer);
+    runBtn.textContent = T.run; delete runBtn.dataset.stop;
+  }
+  function onWorkerMessage(ev) {
+    var m = ev.data || {};
+    if (m.type === 'ready') {
+      workerReady = true;
+      if (!inflight) setStatus('', '');
+      return;
+    }
+    if (m.type === 'loadError') { failLoad(m.message); return; }
+    if (m.type !== 'result' || !inflight || m.id !== inflight.id) return;
+    var req = inflight;
+    inflight = null;
+    clearTimeout(waitTimer); clearInterval(tickTimer);
+    runBtn.textContent = T.run; delete runBtn.dataset.stop;
+    if (pending) { var p = pending; pending = null; send(p); return; }
+    if (m.fatal) {
+      killWorker();
+      render(req, { stdout: m.stdout, stderr: m.stderr, exitCode: null });
+      setStatus(fill(T.fatal, { msg: String(m.fatal).replace(/[.\s]+$/, '') }), 'error');
+      return;
+    }
+    render(req, m);
+  }
+
+  function send(req) {
+    startWorker();
+    if (!worker) return;
+    inflight = req;
+    worker.postMessage({ id: req.id, input: req.input, filter: req.filter, flags: req.flags });
+    var started = Date.now();
+    var limit = 10000 + Math.round(req.input.length / 1e6) * 1000;
+    clearTimeout(waitTimer); clearInterval(tickTimer);
+    tickTimer = setInterval(function () {
+      var s = (Date.now() - started) / 1000;
+      if (s >= 1 && workerReady) { runBtn.textContent = T.stop; runBtn.dataset.stop = '1'; setStatus(fill(T.running, { s: s.toFixed(0) }), 'info'); }
+    }, 500);
+    var check = function () {
+      if (inflight !== req) return;
+      // Still loading the engine: wait for it without a time limit.
+      if (!workerReady) { waitTimer = setTimeout(check, 1000); return; }
+      stopRun(Math.round((Date.now() - started) / 1000));
+    };
+    waitTimer = setTimeout(check, limit);
+  }
+  function stopRun(seconds) {
+    killWorker();
+    inflight = null; pending = null;
+    clearOutput();
+    setStatus(fill(T.stopped, { s: seconds }), 'error');
+  }
+
+  /* ── run ── */
+  var gaTimer = null;
+  function run(manual) {
+    persist();
+    renderCommand();
+    var problems = checkArgs(state.args);
+    if (problems.length) {
+      showProblems(problems);
+      return;
+    }
+    var input = currentInput();
+    if (!manual && input.length > AUTO_LIMIT) {
+      setStatus(fill(T.bigInput, { size: formatBytes(input.length) }), 'info');
+      return;
+    }
+    var req = { id: nextId++, input: prepareInput(input), filter: filterEl.value.trim() === '' ? '.' : filterEl.value, flags: buildFlags(state.opts, state.args), raw: input, opts: Object.assign({}, state.opts), filterText: filterEl.value };
+    if (inflight) {
+      // jq is busy; replace the queued run. A run that has taken over 1.5 s is stopped instead.
+      if (Date.now() - (inflight.sentAt || Date.now()) > 1500 && workerReady) { killWorker(); inflight = null; send(stamp(req)); }
+      else pending = stamp(req);
+      return;
+    }
+    send(stamp(req));
+    clearTimeout(gaTimer);
+    gaTimer = setTimeout(function () { if (window.trackTool) window.trackTool(SLUG, 'run'); }, 1500);
+  }
+  function stamp(req) { req.sentAt = Date.now(); return req; }
+
+  var runTimer = null;
+  function schedule(delay) {
+    clearTimeout(runTimer);
+    runTimer = setTimeout(function () { run(false); }, delay === undefined ? 250 : delay);
+  }
+  function changed() {
+    renderNotes();
+    renderCommand();
+    schedule();
+  }
+
+  /* ── output ── */
+  function setStatus(text, kind, actionLabel, action) {
+    statusEl.textContent = '';
+    statusEl.className = 'jqp-status' + (kind ? ' jqp-status--' + kind : '');
+    if (!text) return;
+    statusEl.appendChild(el('span', '', text));
+    if (actionLabel) {
+      var b = el('button', 'btn-ghost jqp-small', actionLabel);
+      b.type = 'button';
+      b.addEventListener('click', action);
+      statusEl.appendChild(b);
+    }
+  }
+  function showProblems(problems) {
+    clearOutput();
+    var lines = problems.map(function (p) { return fill(T.argProblem[p.code], { row: p.row + 1, name: p.name }); });
+    setStatus(lines.join(' '), 'error');
+  }
+  function clearOutput() {
+    codeEl.textContent = '';
+    countEl.textContent = '';
+    exitEl.hidden = true;
+    stderrBox.hidden = true;
+    hintsEl.hidden = true;
+    copyBtn.disabled = true;
+    state.lastStdout = '';
+  }
+
+  function render(req, r) {
+    var stdout = r.stdout || '';
+    state.lastStdout = stdout;
+    state.lastJson = outputIsJson(req.opts);
+    if (state.notice) { setStatus(state.notice.text, 'info', state.notice.label, state.notice.action); state.notice = null; }
+    else setStatus('', '');
+    if (!stdout) {
+      codeEl.textContent = '';
+      codeEl.appendChild(el('span', 'jqp-no-output', T.noOutput));
+      countEl.textContent = '';
+    } else {
+      var clip = clipOutput(stdout, SHOW_LIMIT);
+      codeEl.innerHTML = state.lastJson && clip.shown.length <= HIGHLIGHT_LIMIT ? highlightJson(clip.shown) : escapeHtml(clip.shown);
+      if (clip.clipped) setStatus(fill(T.clipped, { shown: formatBytes(clip.shown.length), total: formatBytes(stdout.length) }), 'info');
+      if (stdout.length > COUNT_LIMIT) countEl.textContent = fill(T.notCounted, { size: formatBytes(stdout.length) });
+      else {
+        var n = state.lastJson ? countJsonValues(stdout) : countLines(stdout);
+        countEl.textContent = state.lastJson ? (n === 1 ? T.valueOne : fill(T.valueMany, { n: n })) : (n === 1 ? T.lineOne : fill(T.lineMany, { n: n }));
+      }
+      if (typeof r.ms === 'number') countEl.textContent += ' · ' + fill(T.ranIn, { ms: Math.max(1, Math.round(r.ms)) });
+    }
+    copyBtn.disabled = !stdout;
+    if (r.exitCode) { exitEl.hidden = false; exitEl.textContent = fill(T.exitCode, { n: r.exitCode }); }
+    else exitEl.hidden = true;
+
+    // stderr exactly as jq prints it, plus buttons that select the reported position.
+    var stderr = r.stderr || '';
+    stderrBox.hidden = !stderr;
+    stderrEl.textContent = stderr;
+    locateEl.textContent = '';
+    if (stderr) {
+      parseStderr(stderr).forEach(function (m) {
+        if (m.kind === 'parse' && !state.file) {
+          addLocate(T.showInInput, function () { var rg = inputErrorRange(req.raw, m); select(inputEl, rg.start, rg.end); });
+        } else if (m.kind === 'compile' && m.line) {
+          addLocate(T.showInFilter, function () { var rg = lineRange(req.filterText, m.line); select(filterEl, rg.start, rg.end); });
+        }
+      });
+    }
+    renderHints(hintsFor(r, { input: req.raw, filter: req.filterText, opts: req.opts }));
+  }
+  function addLocate(label, fn) {
+    if (locateEl.querySelector('[data-l="' + label + '"]')) return;
+    var b = el('button', 'btn-ghost jqp-small', label);
+    b.type = 'button'; b.dataset.l = label;
+    b.addEventListener('click', fn);
+    locateEl.appendChild(b);
+  }
+  function select(area, start, end) {
+    area.focus();
+    area.setSelectionRange(start, end);
+    // Scroll the selection into view: measure the line height and the line number.
+    var line = area.value.slice(0, start).split('\n').length - 1;
+    var lh = parseFloat(getComputedStyle(area).lineHeight) || 20;
+    area.scrollTop = Math.max(0, line * lh - area.clientHeight / 3);
+  }
+  function renderHints(hints) {
+    hintsEl.textContent = '';
+    hintsEl.hidden = !hints.length;
+    hints.forEach(function (h) {
+      var li = el('li', 'jqp-hint', fill(T.hint[h.code], h.params));
+      if (h.code === 'undefinedVar') {
+        var b = el('button', 'btn-ghost jqp-small', fill(T.hint.addVar, h.params));
+        b.type = 'button';
+        b.addEventListener('click', function () {
+          state.args.push({ type: 'string', name: h.params.name, value: '' });
+          renderArgs(); changed();
+          var inputs = argsEl.querySelectorAll('.jqp-arg-value');
+          if (inputs.length) inputs[inputs.length - 1].focus();
+        });
+        li.appendChild(document.createTextNode(' '));
+        li.appendChild(b);
+      }
+      hintsEl.appendChild(li);
+    });
+  }
+
+  /* ── notes under the filter: pasted command, quotes, input-method characters ── */
+  function renderNotes() {
+    notesEl.textContent = '';
+    var f = filterEl.value;
+    var pasted = detectPastedCommand(f);
+    if (pasted && pasted.kind === 'command') {
+      var p = pasted.parsed;
+      var note = el('div', 'jqp-note');
+      note.appendChild(el('span', '', T.pastedCommand + ' '));
+      var details = [];
+      if (p.files.length) details.push(fill(T.commandFiles, { files: p.files.join(', ') }));
+      if (p.unsupported.length) details.push(fill(T.commandUnsupported, { opts: p.unsupported.join(', ') }));
+      if (p.ignored.length) details.push(fill(T.commandIgnored, { opts: p.ignored.join(', ') }));
+      var b = el('button', 'btn-ghost jqp-small', T.apply);
+      b.type = 'button';
+      b.addEventListener('click', function () {
+        filterEl.value = p.filter;
+        state.opts = normalizeOptions(p.opts);
+        state.args = normalizeArgs(p.args);
+        renderOptions(); renderArgs(); changed();
+        if (details.length) setStatus(details.join(' '), 'info');
+      });
+      note.appendChild(b);
+      if (details.length) note.appendChild(el('div', 'jqp-note-sub', details.join(' ')));
+      notesEl.appendChild(note);
+    } else if (pasted && pasted.kind === 'quoted') {
+      var q = el('div', 'jqp-note');
+      q.appendChild(el('span', '', T.pastedQuoted + ' '));
+      var bq = el('button', 'btn-ghost jqp-small', T.removeQuotes);
+      bq.type = 'button';
+      bq.addEventListener('click', function () { filterEl.value = pasted.filter; changed(); });
+      q.appendChild(bq);
+      notesEl.appendChild(q);
+    } else if (/^\s*(\S*\/)?jq\s/.test(f)) {
+      var bad = parseJqCommand(f);
+      if (bad && !bad.ok) notesEl.appendChild(el('div', 'jqp-note jqp-note--error', fill(T.commandError[bad.error], bad)));
+    }
+    var sus = findSuspiciousChars(f);
+    if (sus.length) {
+      var chars = Array.from(new Set(sus.map(function (s) { return s.ch === '\u3000' ? 'U+3000' : s.ch === '\u00a0' ? 'U+00A0' : s.ch === '\u200b' ? 'U+200B' : s.ch; }))).join(' ');
+      var s = el('div', 'jqp-note jqp-note--warn');
+      s.appendChild(el('span', '', fill(T.suspicious, { chars: chars }) + ' '));
+      var bs = el('button', 'btn-ghost jqp-small', T.replace);
+      bs.type = 'button';
+      bs.addEventListener('click', function () { filterEl.value = fixSuspiciousChars(filterEl.value); changed(); });
+      s.appendChild(bs);
+      notesEl.appendChild(s);
+    }
+  }
+  function renderCommand() {
+    cmdEl.textContent = buildCommand(filterEl.value.trim() === '' ? '.' : filterEl.value, state.opts, state.args);
+  }
+
+  /* ── events ── */
+  wrap.querySelectorAll('.jqp-opt[data-opt]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var k = b.dataset.opt;
+      state.opts[k] = !state.opts[k];
+      renderOptions(); changed();
+    });
+  });
+  indentEl.addEventListener('change', function () { state.opts.indent = indentEl.value; changed(); });
+  $('jqp-add-arg').addEventListener('click', function () {
+    state.args.push({ type: 'string', name: '', value: '' });
+    renderArgs();
+    var names = argsEl.querySelectorAll('.jqp-arg-name');
+    names[names.length - 1].focus();
+  });
+  filterEl.addEventListener('input', changed);
+  inputEl.addEventListener('input', function () { schedule(inputEl.value.length > 200000 ? 600 : 250); });
+  runBtn.addEventListener('click', function () {
+    if (inflight && runBtn.dataset.stop) { stopRun(Math.round((Date.now() - inflight.sentAt) / 1000)); return; }
+    clearTimeout(runTimer);
+    run(true);
+    if (window.trackTool) window.trackTool(SLUG, 'run-button');
+  });
+
+  // Load the engine on the first interaction with the tool, not on page load.
+  ['focusin', 'pointerdown'].forEach(function (type) {
+    wrap.addEventListener(type, function () { startWorker(); }, { once: true });
+  });
+
+  var undoInput = null;
+  examplesEl.addEventListener('change', function () {
+    var ex = EXAMPLES.find(function (e) { return e.id === examplesEl.value; });
+    examplesEl.value = '';
+    if (!ex) return;
+    var st = exampleState(ex);
+    var before = currentInput();
+    var replacing = !state.file && before.trim() !== '' && before !== st.input && !EXAMPLES.some(function (e) { return exampleState(e).input === before; });
+    closeFile();
+    filterEl.value = st.filter;
+    inputEl.value = st.input;
+    state.opts = st.opts;
+    state.args = st.args;
+    renderOptions(); renderArgs(); renderNotes(); renderCommand();
+    if (replacing) {
+      undoInput = before;
+      state.notice = { text: T.exampleLoaded, label: T.undo, action: function () { inputEl.value = undoInput; undoInput = null; setStatus('', ''); schedule(0); } };
+    }
+    run(true);
+    if (window.trackTool) window.trackTool(SLUG, 'example');
+  });
+
+  $('jqp-clear').addEventListener('click', function () {
+    closeFile();
+    inputEl.value = '';
+    clearOutput();
+    setStatus('', '');
+    try { window.ztPersist && window.ztPersist.clear(SLUG); } catch (e) {}
+    persist();
+    inputEl.focus();
+    if (window.trackTool) window.trackTool(SLUG, 'clear');
+  });
+
+  // Global Ctrl/⌘+L (ToolLayout) empties every text field in the widget without input events.
+  document.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
+      setTimeout(function () {
+        if (inputEl.value === '' && filterEl.value === '') {
+          closeFile();
+          state.args = [];
+          renderArgs(); renderNotes(); renderCommand(); clearOutput(); setStatus('', '');
+        }
+      }, 0);
+    }
+  });
+
+  copyBtn.addEventListener('click', function () { copyText(state.lastStdout, copyBtn, T.copy, T.copied); if (window.trackTool) window.trackTool(SLUG, 'copy'); });
+  $('jqp-copy-cmd').addEventListener('click', function (e) { copyText(cmdEl.textContent, e.currentTarget, T.copyCommand, T.copied); });
+  $('jqp-copy-link').addEventListener('click', function (e) {
+    var url = location.origin + location.pathname + '#' + encodeShare(filterEl.value, state.opts, state.args);
+    copyText(url, e.currentTarget, T.copyLink, T.linkCopied);
+    if (window.trackTool) window.trackTool(SLUG, 'share');
+  });
+  $('jqp-download').addEventListener('click', function () {
+    if (!state.lastStdout) return;
+    var blob = new Blob([state.lastStdout], { type: state.lastJson ? 'application/json' : 'text/plain' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = state.lastJson ? (state.opts.c ? 'output.jsonl' : 'output.json') : 'output.txt';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  });
+
+  function copyText(text, btn, label, done) {
+    if (!text) return;
+    var ok = function () { btn.textContent = done; setTimeout(function () { btn.textContent = label; }, 1500); };
+    var fallback = function () {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { if (document.execCommand('copy')) ok(); } catch (e) {}
+      ta.remove();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, fallback);
+    else fallback();
+  }
+
+  /* ── files ── */
+  $('jqp-open').addEventListener('click', function () { fileEl.click(); });
+  fileEl.addEventListener('change', function () { if (fileEl.files && fileEl.files[0]) openFile(fileEl.files[0]); fileEl.value = ''; });
+  var inputPanel = $('jqp-input-panel');
+  inputPanel.addEventListener('dragover', function (e) { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf('Files') >= 0) { e.preventDefault(); inputPanel.classList.add('jqp-drop'); } });
+  inputPanel.addEventListener('dragleave', function () { inputPanel.classList.remove('jqp-drop'); });
+  inputPanel.addEventListener('drop', function (e) {
+    inputPanel.classList.remove('jqp-drop');
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    e.preventDefault();
+    openFile(f);
+  });
+  function openFile(f) {
+    startWorker();
+    if (f.size > FILE_LIMIT) { setStatus(fill(T.fileTooBig, { name: f.name, size: formatBytes(f.size), limit: formatBytes(FILE_LIMIT) }), 'error'); return; }
+    f.arrayBuffer().then(function (buf) {
+      var text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+      catch (e) { setStatus(fill(T.fileEncoding, { name: f.name }), 'error'); return; }
+      if (text.length > EDITOR_LIMIT) {
+        state.file = { name: f.name, size: f.size, text: text };
+        fileText.textContent = fill(T.fileOpened, { name: f.name, size: formatBytes(f.size), limit: formatBytes(EDITOR_LIMIT) });
+        fileBanner.hidden = false;
+        inputEl.value = text.slice(0, 20000);
+        inputEl.readOnly = true;
+        inputEl.classList.add('jqp-input--file');
+      } else {
+        closeFile();
+        inputEl.value = text;
+      }
+      clearTimeout(runTimer);
+      run(true);
+    }, function () { setStatus(fill(T.fileReadError, { name: f.name }), 'error'); });
+  }
+  function closeFile() {
+    if (!state.file) return;
+    state.file = null;
+    fileBanner.hidden = true;
+    inputEl.readOnly = false;
+    inputEl.classList.remove('jqp-input--file');
+    inputEl.value = '';
+  }
+  $('jqp-file-close').addEventListener('click', function () { closeFile(); clearOutput(); persist(); });
+
+  /* ── start ── */
+  // A shared link (#jq=…) sets the filter, options and variable names; the hash is removed
+  // from the address bar once read.
+  function applyShare() {
+    var shared = decodeShare(location.hash);
+    if (!shared || shared.error) return false;
+    filterEl.value = shared.filter;
+    state.opts = shared.opts;
+    state.args = shared.args;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    return true;
+  }
+  window.addEventListener('hashchange', function () {
+    if (applyShare()) { renderOptions(); renderArgs(); renderNotes(); renderCommand(); startWorker(); run(false); }
+  });
+  (function init() {
+    var restored = false;
+    if (applyShare()) {
+      restored = true;
+      try {
+        var saved0 = window.ztPersist && window.ztPersist.load(SLUG);
+        if (saved0 && typeof saved0.json === 'string') inputEl.value = saved0.json;
+      } catch (e) {}
+    } else {
       try {
         var saved = window.ztPersist && window.ztPersist.load(SLUG);
         if (saved && typeof saved === 'object') {
-          if (typeof saved.json === 'string')   jsonEl.value   = saved.json;
           if (typeof saved.filter === 'string') filterEl.value = saved.filter;
+          if (typeof saved.json === 'string') inputEl.value = saved.json;
+          state.opts = normalizeOptions(saved.opts);
+          state.args = normalizeArgs(saved.args);
+          restored = filterEl.value !== DEFAULT_FILTER || inputEl.value !== SAMPLE_INPUT || buildFlags(state.opts, state.args).length > 0;
         }
       } catch (e) {}
-
-      function persist() {
-        try {
-          window.ztPersist && window.ztPersist.save(SLUG, {
-            json: jsonEl.value, filter: filterEl.value
-          });
-        } catch (e) {}
-      }
-
-      function setStatus(text, kind) {
-        statusEl.textContent = text || '';
-        statusEl.className = 'tool-status jqp-engine-status ' + (kind || 'none');
-      }
-
-      /* ── jq engine lazy loader ── */
-      var jqInst = null;
-      var jqLoading = null;
-      function ensureJq() {
-        if (jqInst) return Promise.resolve(jqInst);
-        if (jqLoading) return jqLoading;
-        setStatus(L.loadingEngine, 'info');
-
-        // emscripten needs Module.locateFile set BEFORE jq.js evaluates,
-        // because jq.js immediately calls the factory at end-of-file.
-        try {
-          window.Module = {
-            locateFile: function (p) {
-              return p && p.indexOf('.wasm') !== -1 ? '/jq-web/jq.wasm' : p;
-            }
-          };
-        } catch (e) {}
-
-        jqLoading = new Promise(function (resolve, reject) {
-          var s = document.createElement('script');
-          s.src = '/jq-web/jq.js';
-          s.onload = function () {
-            // window.jq is now Promise<{json, raw}> after jq.js runs the IIFE.
-            Promise.resolve(window.jq).then(function (inst) {
-              jqInst = inst;
-              setStatus('', 'none');
-              resolve(inst);
-            }, function (err) {
-              setStatus(L.loadFailed, 'error');
-              reject(err);
-            });
-          };
-          s.onerror = function () {
-            setStatus(L.loadFailed, 'error');
-            reject(new Error('script load failed'));
-          };
-          document.head.appendChild(s);
-        });
-        return jqLoading;
-      }
-
-      /* ── JSON syntax highlight ── */
-      function escapeHtml(s) {
-        return String(s).replace(/[&<>]/g, function (c) {
-          return c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;';
-        });
-      }
-      function highlightJson(str) {
-        return escapeHtml(str).replace(
-          /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
-          function (m) {
-            if (/^"/.test(m)) {
-              if (/:$/.test(m)) return '<span class="jqp-hl-key">' + m + '</span>';
-              return '<span class="jqp-hl-str">' + m + '</span>';
-            }
-            if (/true|false/.test(m)) return '<span class="jqp-hl-bool">' + m + '</span>';
-            if (/null/.test(m))       return '<span class="jqp-hl-null">' + m + '</span>';
-            return '<span class="jqp-hl-num">' + m + '</span>';
-          }
-        );
-      }
-
-      function fmtCount(n) {
-        var tmpl = n === 1 ? L.matchOne : L.matchMany;
-        return tmpl ? tmpl.replace('{n}', String(n)) : '';
-      }
-
-      /* ── Run jq ── */
-      function showError(msg) {
-        codeEl.innerHTML = '<span class="jqp-error">' + escapeHtml(msg) + '</span>';
-        countEl.textContent = '';
-        copyBtn.disabled = true;
-      }
-
-      /* ── engine:start ── */
-      // Number of top-level JSON values in jq's output stream (jq prints one value per output,
-      // each followed by a newline; a single array is one value).
-      function countJsonValues(text) {
-        var n = 0, i = 0, len = text.length;
-        while (i < len) {
-          var c = text.charAt(i);
-          if (c === ' ' || c === '\n' || c === '\t' || c === '\r') { i++; continue; }
-          n++;
-          if (c === '"') {
-            i++;
-            while (i < len && text.charAt(i) !== '"') i += text.charAt(i) === '\\' ? 2 : 1;
-            i++;
-          } else if (c === '[' || c === '{') {
-            var depth = 0;
-            for (; i < len; i++) {
-              var d = text.charAt(i);
-              if (d === '"') {
-                i++;
-                while (i < len && text.charAt(i) !== '"') i += text.charAt(i) === '\\' ? 2 : 1;
-              } else if (d === '[' || d === '{') depth++;
-              else if (d === ']' || d === '}') { depth--; if (depth === 0) { i++; break; } }
-            }
-          } else {
-            while (i < len && !/[\s\[\]{}"]/.test(text.charAt(i))) i++;
-          }
-        }
-        return n;
-      }
-
-      // jq-web throws "Non-zero exit code: N" with jq's own message in .stderr.
-      function jqErrorText(e) {
-        if (e && typeof e.stderr === 'string' && e.stderr) return e.stderr.replace(/^undefined/, '');
-        return e && e.message ? e.message : String(e);
-      }
-      /* ── engine:end ── */
-
-      function showOutput(text) {
-        if (text === undefined || text === null || !String(text).trim()) {
-          codeEl.innerHTML = '<span class="jqp-no-output">' + L.noOutput + '</span>';
-          countEl.textContent = '';
-          copyBtn.disabled = true;
-          return;
-        }
-        codeEl.innerHTML = highlightJson(text);
-        countEl.textContent = fmtCount(countJsonValues(text));
-        copyBtn.disabled = false;
-      }
-
-      function run() {
-        persist();
-        var jsonText = jsonEl.value.trim();
-        var filter   = filterEl.value.trim();
-
-        if (!jsonText) {
-          codeEl.innerHTML = '';
-          countEl.textContent = '';
-          copyBtn.disabled = true;
-          return;
-        }
-
-        try { JSON.parse(jsonText); }
-        catch (e) { showError(L.invalidJson + ': ' + e.message); return; }
-
-        // The input text goes to jq unchanged (not through JSON.parse), so integers beyond
-        // 2^53 and number literals such as 1.000 print the way jq prints them.
-        ensureJq().then(function (jq) {
-          var text;
-          try { text = jq.raw(jsonText, filter || '.', []); }
-          catch (e) {
-            showError(L.errorPrefix + ' ' + jqErrorText(e));
-            return;
-          }
-          showOutput(text);
-          if (window.trackTool) window.trackTool(SLUG, 'run');
-        }).catch(function () {
-          // engine load failed; status already set
-        });
-      }
-
-      var runTimer = null;
-      function scheduleRun() {
-        clearTimeout(runTimer);
-        runTimer = setTimeout(run, 200);
-      }
-
-      jsonEl.addEventListener('input', scheduleRun);
-      filterEl.addEventListener('input', scheduleRun);
-
-      document.querySelectorAll('.jqp-pill').forEach(function (p) {
-        p.addEventListener('click', function () {
-          filterEl.value = p.dataset.filter || '';
-          run();
-          if (window.trackTool) window.trackTool(SLUG, 'example');
-        });
-      });
-
-      copyBtn.addEventListener('click', function () {
-        var txt = codeEl.textContent;
-        if (!txt) return;
-        navigator.clipboard.writeText(txt).then(function () {
-          copyBtn.classList.add('copied');
-          copyBtn.textContent = L.copied;
-          setTimeout(function () {
-            copyBtn.classList.remove('copied');
-            copyBtn.textContent = L.copy;
-          }, 1500);
-          if (window.trackTool) window.trackTool(SLUG, 'copy');
-        });
-      });
-
-      var clearBtn = document.getElementById('jqp-clear');
-      clearBtn.addEventListener('click', function () {
-        jsonEl.value = '';
-        filterEl.value = '';
-        codeEl.innerHTML = '';
-        countEl.textContent = '';
-        copyBtn.disabled = true;
-        setStatus('', 'none');
-        try { window.ztPersist && window.ztPersist.clear(SLUG); } catch (e) {}
-        if (window.trackTool) window.trackTool(SLUG, 'clear');
-      });
-
-      // Pre-warm engine when user touches the filter field.
-      filterEl.addEventListener('focus', function () { ensureJq(); }, { once: true });
-
-      // Initial paint.
-      run();
-    })();
-  </script>
-</div>
+    }
+    renderOptions(); renderArgs(); renderNotes(); renderCommand();
+    // The sample output is in the page already; run only when the state differs from it.
+    if (restored) { startWorker(); run(false); }
+  })();
+</script>
 
 <style is:global>
-  .jqp-wrap { display: flex; flex-direction: column; gap: 1rem; }
-
-  .jqp-layout {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-  }
-
-  @media (max-width: 760px) {
-    .jqp-layout { grid-template-columns: 1fr; }
-  }
-
-  .jqp-panel { display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; }
-
-  .jqp-input-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.6rem;
-  }
-
-  .jqp-clear {
-    min-height: 30px;
-    padding: 0.22rem 0.65rem;
-    font-size: 0.78rem;
-  }
-
-  .jqp-wrap .jqp-json {
-    min-height: 300px;
-    font-size: 0.85rem;
-    line-height: 1.5;
-  }
-
-  .jqp-wrap .jqp-filter {
-    font-size: 0.92rem;
-  }
-
-  .jqp-examples-label {
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-top: 0.2rem;
-  }
-
-  .jqp-pills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-
-  .jqp-pill {
+  .jqp-wrap { display: flex; flex-direction: column; gap: 0.9rem; }
+  .jqp-top { display: flex; flex-direction: column; gap: 0.5rem; }
+  .jqp-filter-head, .jqp-panel-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; min-height: 32px; }
+  .jqp-spacer { flex: 1; }
+  .jqp-wrap .jqp-examples { width: auto; max-width: min(100%, 24rem); margin-left: auto; font-size: 0.82rem; min-height: 32px; }
+  .jqp-filter-row { display: flex; gap: 0.6rem; align-items: stretch; }
+  .jqp-wrap .jqp-filter { flex: 1; min-height: 3.4rem; font-family: var(--font-mono); font-size: 0.92rem; line-height: 1.5; resize: vertical; }
+  .jqp-run { align-self: flex-start; min-width: 6.5rem; }
+  .jqp-opts { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+  .jqp-opt {
     font-family: var(--font-mono);
-    font-size: 0.74rem;
-    padding: 0.28rem 0.7rem;
+    font-size: 0.78rem;
+    min-height: 28px;
+    padding: 0.2rem 0.6rem;
     border: 0;
     border-radius: var(--radius-pill);
     background: var(--color-surface-muted);
     color: var(--color-text-secondary);
     cursor: pointer;
-    white-space: nowrap;
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+    transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
   }
-  @media (hover: hover) {
-    .jqp-pill:hover {
-      color: var(--color-primary);
-      background: var(--color-surface);
-      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
-    }
-  }
-  .jqp-pill:active { transform: scale(0.96); }
-
-  .jqp-result-header {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    margin-top: 0.2rem;
-  }
-
-  .jqp-count {
-    font-size: 0.78rem;
+  .jqp-opt[aria-pressed="true"] {
+    background: color-mix(in oklch, var(--color-primary) 14%, var(--color-surface));
     color: var(--color-primary);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 55%, transparent);
     font-weight: 700;
-    flex: 1;
   }
+  @media (hover: hover) { .jqp-opt:hover { color: var(--color-primary); } }
+  .jqp-opt:active { transform: scale(0.96); }
+  .jqp-add-arg { font-family: inherit; }
+  .jqp-indent { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: var(--color-text-secondary); }
+  .jqp-indent select { min-height: 28px; font-size: 0.78rem; }
+  .jqp-args { display: flex; flex-direction: column; gap: 0.4rem; }
+  .jqp-args:empty { display: none; }
+  .jqp-arg { display: grid; grid-template-columns: auto auto minmax(5rem, 9rem) 1fr auto; gap: 0.35rem; align-items: center; }
+  .jqp-arg-type { min-height: 36px; font-size: 0.8rem; }
+  .jqp-dollar { font-family: var(--font-mono); color: var(--color-text-muted); }
+  .jqp-wrap .jqp-arg-name, .jqp-wrap .jqp-arg-value { font-family: var(--font-mono); font-size: 0.85rem; min-width: 0; }
+  .jqp-arg-del { min-width: 32px; min-height: 32px; padding: 0; }
+  .jqp-notes { display: flex; flex-direction: column; gap: 0.35rem; }
+  .jqp-notes:empty { display: none; }
+  .jqp-note { font-size: 0.82rem; padding: 0.45rem 0.65rem; border-radius: var(--radius-md); background: var(--color-surface-muted); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+  .jqp-note--warn { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-warning, #b45309) 55%, transparent); }
+  .jqp-note--error { color: var(--color-danger); }
+  .jqp-note-sub { margin-top: 0.3rem; color: var(--color-text-muted); }
+  .jqp-small { min-height: 30px; padding: 0.2rem 0.65rem; font-size: 0.78rem; }
 
-  .jqp-pre {
+  .jqp-io { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+  /* One column: the output comes right after the filter, the input below it. */
+  @media (max-width: 760px) {
+    .jqp-io { grid-template-columns: minmax(0, 1fr); }
+    .jqp-io > .jqp-panel:last-child { order: -1; }
+  }
+  .jqp-panel { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; border-radius: var(--radius-md); }
+  .jqp-panel.jqp-drop { box-shadow: 0 0 0 2px var(--color-primary); }
+  .jqp-wrap .jqp-input { min-height: 320px; font-family: var(--font-mono); font-size: 0.84rem; line-height: 1.5; white-space: pre; overflow-wrap: normal; }
+  .jqp-input--file { color: var(--color-text-muted); }
+  .jqp-hint-text { margin: 0; font-size: 0.76rem; color: var(--color-text-muted); }
+  .jqp-banner { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; padding: 0.45rem 0.65rem; border-radius: var(--radius-md); background: var(--color-surface-muted); }
+  .jqp-banner[hidden] { display: none; }
+  .jqp-count { font-size: 0.78rem; color: var(--color-primary); font-weight: 700; }
+  .jqp-exit { font-size: 0.74rem; font-weight: 700; color: var(--color-danger); padding: 0.05rem 0.45rem; border-radius: var(--radius-pill); box-shadow: inset 0 0 0 1px currentColor; }
+  .jqp-exit[hidden] { display: none; }
+  .jqp-out {
     background: var(--color-bg-secondary);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
     border-radius: var(--radius-md);
@@ -497,41 +1148,54 @@ const EXAMPLES: { label: string; filter: string }[] = [
     font-family: var(--font-mono);
     font-size: 0.82rem;
     line-height: 1.55;
-    flex: 1;
-    min-height: 160px;
-    max-height: 460px;
+    min-height: 320px;
+    max-height: 520px;
   }
-
   .jqp-code { font-family: inherit; }
+  .jqp-status { font-size: 0.8rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; color: var(--color-text-secondary); }
+  .jqp-status:empty { display: none; }
+  .jqp-status--error { color: var(--color-danger); }
+  .jqp-stderr-box { border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 45%, transparent); padding: 0.55rem 0.75rem; }
+  .jqp-stderr-box[hidden] { display: none; }
+  .jqp-stderr-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted); }
+  .jqp-stderr { margin: 0.3rem 0 0; font-family: var(--font-mono); font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-danger); max-height: 220px; overflow: auto; }
+  .jqp-locate { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
+  .jqp-locate:empty { display: none; }
+  .jqp-hints { margin: 0; padding-left: 1.1rem; font-size: 0.82rem; display: flex; flex-direction: column; gap: 0.3rem; }
+  .jqp-hints[hidden] { display: none; }
+  .jqp-cmd { display: flex; flex-direction: column; gap: 0.4rem; }
+  .jqp-cmd-text { display: block; font-family: var(--font-mono); font-size: 0.82rem; padding: 0.6rem 0.8rem; border-radius: var(--radius-md); background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .jqp-engine-note { margin: 0; font-size: 0.74rem; color: var(--color-text-muted); }
 
-  .jqp-engine-status:empty { display: none; }
-  .jqp-engine-status { font-size: 0.8rem; }
-
-  .jqp-engine-note {
-    margin: 0;
-    font-size: 0.74rem;
-    color: var(--color-text-muted);
-  }
-
-  /* JSON syntax highlight — light */
   .jqp-hl-key  { color: oklch(46% 0.12 240); font-weight: 600; }
   .jqp-hl-str  { color: oklch(46% 0.11 145); }
-  .jqp-hl-num  { color: oklch(50% 0.14 40);  }
+  .jqp-hl-num  { color: oklch(50% 0.14 40); }
   .jqp-hl-bool { color: oklch(48% 0.16 295); }
   .jqp-hl-null { color: var(--color-text-muted); font-style: italic; }
-
-  .jqp-error    { color: var(--color-danger); white-space: pre-wrap; }
   .jqp-no-output { color: var(--color-text-muted); font-style: italic; }
-
-  /* Dark mode highlight */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .jqp-hl-key  { color: oklch(74% 0.13 240); }
     :root:not([data-theme="light"]) .jqp-hl-str  { color: oklch(75% 0.13 150); }
-    :root:not([data-theme="light"]) .jqp-hl-num  { color: oklch(76% 0.14 55);  }
+    :root:not([data-theme="light"]) .jqp-hl-num  { color: oklch(76% 0.14 55); }
     :root:not([data-theme="light"]) .jqp-hl-bool { color: oklch(76% 0.13 295); }
   }
   [data-theme="dark"] .jqp-hl-key  { color: oklch(74% 0.13 240); }
   [data-theme="dark"] .jqp-hl-str  { color: oklch(75% 0.13 150); }
-  [data-theme="dark"] .jqp-hl-num  { color: oklch(76% 0.14 55);  }
+  [data-theme="dark"] .jqp-hl-num  { color: oklch(76% 0.14 55); }
   [data-theme="dark"] .jqp-hl-bool { color: oklch(76% 0.13 295); }
+
+  @media (max-width: 640px) {
+    .jqp-filter-row { flex-direction: column; }
+    .jqp-run { min-height: 44px; }
+    .jqp-wrap .jqp-filter { min-height: 3.2rem; }
+    .jqp-opt, .jqp-indent select, .jqp-small, .jqp-examples { min-height: 32px; }
+    .jqp-wrap .jqp-examples { margin-left: 0; max-width: 100%; flex: 1; }
+    .jqp-run { align-self: stretch; }
+    .jqp-wrap .jqp-input { min-height: 180px; }
+    .jqp-out { min-height: 160px; }
+    .jqp-arg { grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto; }
+    .jqp-arg-type { grid-column: 1 / -1; }
+    .jqp-dollar { display: none; }
+    .jqp-arg-del { min-height: 44px; min-width: 44px; }
+  }
 </style>
