@@ -25,7 +25,7 @@ src/
 
 ## 模块规范
 
-- **客户端代码必须在 Astro `<script>` 中**：每个工具的 JS 写在对应 `.astro` 内联 `<script>`，不引入运行时框架
+- **客户端入口在 Astro `<script>` 中**：每个工具的页面交互写在对应 `.astro` 脚本，不引入运行时框架。ai-token-counter 与 json-formatter 的大文本引擎、runner 和 Worker 放在同目录的工具专用文件中；Worker 由 Vite 打包，页面只接收有界展示数据。
 - **零外部运行时依赖**：图标、SVG 全部内联；新增 npm 依赖前必须先评估是否能用浏览器原生 API 替代
 - **路径导入**：跨目录引用用相对路径（`../i18n/utils`），不配 alias
 - **类型源**：`data/tools.ts` 的 `ToolInfo` 是其他模块的事实类型源，不另立类型

@@ -1,7 +1,9 @@
 // JSON Formatter — parser, JSON5 conversion, serializer, notes, file decoding, page examples
 //
-// Read:  src/components/tools/JsonFormatterTool.astro (the real `engine:start` / `engine:end`
-//        block, the frontmatter STRINGS and the page script); the engine block of
+// Read:  src/components/tools/json-formatter-engine.js (the real `engine:start` / `engine:end`
+//        block); json-formatter-run.js and json-formatter.worker.js (the worker runner, client
+//        and entry, run here); JsonFormatterTool.astro (the frontmatter STRINGS and the page
+//        script); the engine block of
 //        JsonSchemaValidatorTool.astro (jsonSyntaxError and lineCol are copied from it and must
 //        stay identical); scripts/test-json-formatter.fixtures.json (JSONTestSuite and json5
 //        2.2.3 results, written by gen-json-formatter-fixtures.mjs);
@@ -31,11 +33,12 @@ function block(src, name) {
   if (s < 0 || e <= s) { console.error('FAIL: engine block not found in ' + name); process.exit(1); }
   return src.slice(s, e);
 }
-const engine = block(source, 'json-formatter');
+const engine = block(readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8'), 'json-formatter-engine.js');
 const E = new Function(engine + `
 return { fmt, escSeg, pointerOf, jqPathOf, lineCol, jsonSyntaxError, parseJson, decCanon, numberChange, analyze, innerJson, hintFor,
   cmpCodePoint, orderOf, quote, numberOut, scalarOut, serialize, highlight, codeFrame, firstBadUtf8, decodeBytes, kindOf, childrenOf };`)();
 const jsvEngine = block(readFileSync(join(root, 'src/components/tools/JsonSchemaValidatorTool.astro'), 'utf8'), 'json-schema-validator');
+const runSource = readFileSync(join(root, 'src/components/tools/json-formatter-run.js'), 'utf8');
 const fixtures = JSON.parse(readFileSync(join(root, 'scripts/test-json-formatter.fixtures.json'), 'utf8'));
 
 let failures = 0, passes = 0, skips = 0;
@@ -477,14 +480,16 @@ for (const lang of ['zh', 'ja', 'ko']) {
   check('STRINGS ' + lang + ': same placeholders as en', badPh.length === 0, badPh.join(', '));
 }
 {
-  const script = source.slice(source.indexOf('/* ── engine:end ── */'), source.indexOf('</script>'));
+  const script = source.slice(source.indexOf('<script>'), source.indexOf('</script>'));
   const used = new Set([...script.matchAll(/\bT\.([A-Za-z0-9]+(?:\.[A-Za-z0-9]+)?)/g)].map((m) => m[1]));
   const missing = [...used].filter((k) => k.split('.').reduce((o, p) => (o == null ? undefined : o[p]), STRINGS.en) === undefined);
   check('page script: every T.* key exists', missing.length === 0, missing.join(', '));
   const parseCodes = [...new Set([...engine.matchAll(/(?:fail|err)\('(\w+)'/g)].map((m) => m[1]))];
   const noMsg = parseCodes.filter((c) => !STRINGS.en.parse[c]);
   check('every error code the parsers raise has a message', noMsg.length === 0, noMsg.join(', '));
-  check('page script: no network, no direct storage; innerHTML only for highlight()', !/\bfetch\(|XMLHttpRequest|sendBeacon|localStorage|sessionStorage|document\.cookie/.test(script) && (script.match(/innerHTML/g) || []).length === 1 && /innerHTML = highlight\(/.test(script));
+  // highlight() now runs in the worker (json-formatter-run.js); the page writes its result.
+  check('page script: no network, no direct storage; innerHTML only for highlight()', !/\bfetch\(|XMLHttpRequest|sendBeacon|localStorage|sessionStorage|document\.cookie/.test(script) && (script.match(/innerHTML/g) || []).length === 1 && /innerHTML = res\.html;/.test(script)
+    && (runSource.match(/\.html = /g) || []).length === 1 && /v\.html = blockHtml\(highlight\(out\)\)/.test(runSource));
   check('persistence: json-formatter uses the default input policy', !/'json-formatter'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
 }
 
@@ -512,6 +517,198 @@ for (const lang of ['zh', 'ja', 'ko']) {
     }
   }
   check('tool pages: at least 12 annotated examples (' + count + ')', count >= 12);
+}
+
+// ---------- 14. worker runner, client protocol, real worker entry ----------
+{
+  const { viewOf, createFormatterRunner, createFormatterClient, HIGHLIGHT_LIMIT } = await import('../src/components/tools/json-formatter-run.js');
+  // Undo blockHtml: each block is <span class="jf-blk" style="…: auto {lines × 1.5}em">…</span>.
+  const blockRe = /<span class="jf-blk" style="contain-intrinsic-height: auto ([\d.]+)em">/g;
+  let blockBad = '';
+  function unblock(html) {
+    const parts = html.split(blockRe);
+    if (parts[0] !== '') blockBad = 'text before the first block';
+    let out = '';
+    for (let x = 1; x < parts.length; x += 2) {
+      const body = parts[x + 1];
+      if (!body.endsWith('</span>')) blockBad = 'block not closed';
+      const inner = body.slice(0, -7);
+      const lines = inner.split('\n').length - (inner.endsWith('\n') ? 1 : 0);
+      if (Number(parts[x]) !== lines * 1.5) blockBad = 'height hint ' + parts[x] + ' for ' + lines + ' lines';
+      if ((inner.match(/<span/g) || []).length !== (inner.match(/<\/span>/g) || []).length) blockBad = 'a highlight span crosses a block';
+      out += inner;
+    }
+    return out;
+  }
+  const pathOf = (segs) => (segs.length ? E.pointerOf(segs) : null);
+  // What the page computed itself before the worker (JsonFormatterTool.astro at v1.138.57).
+  function legacy(text, o) {
+    const res = E.analyze(text, { json5: !!o.json5 });
+    const v = { ok: !!res.ok, empty: !!res.empty, bom: !!res.bom };
+    if (res.ok) {
+      const out = E.serialize(res.root, o);
+      Object.assign(v, { out, inSize: new Blob([text]).size, outSize: new Blob([out]).size, big: out.length > 1_000_000 });
+      if (!v.big) v.html = E.highlight(out);
+      else { const cut = out.lastIndexOf('\n', 1_000_000); v.display = out.slice(0, cut > 0 ? cut : 1_000_000) + '\n…'; }
+      v.dups = res.dups.map((d) => ({ key: d.key, path: pathOf(d.path), line: E.lineCol(text, d.offset + res.base).line }));
+      v.numbers = res.numbers.map((x) => ({ kind: x.kind, raw: x.raw, js: x.js, path: pathOf(x.path), line: E.lineCol(text, x.offset + res.base).line }));
+      v.surrogates = res.surrogates.map((x) => ({ path: pathOf(x.path), line: E.lineCol(text, x.offset + res.base).line }));
+      v.counts = [res.dupCount, res.numberCount, res.surrogateCount];
+      v.rest = [res.mode, res.inner, res.changes, res.stats];
+    } else if (!res.empty) {
+      const off = res.error.offset + res.base;
+      v.frame = E.codeFrame(text, off);
+      v.errorRange = [off, Math.min(text.length, off + 1)];
+      v.ch = res.error.ch || text.charAt(res.error.offset) || '';
+      v.error = [res.error.code, res.error.offset];
+      v.hint = res.hint || null; v.json5 = res.json5 || null;
+    }
+    return { v, res };
+  }
+  const nl = (n) => '\n'.repeat(n);
+  const docs = [
+    '{"id":1830000000000000001,"name":"ZeroTool","price":19.90,"tags":["json","formatter"],"owner":{"login":"kassol","verified":true},"notes":null}',
+    '{\n "b": 1,\n "a": 2,' + nl(40) + ' "b": 3,\n "x": {"k":1,"k":2,"z":null,"k":[1e400,-0,1e-400]},\n "s": "\\ud800",\n "é": "\\ud83d\\ude00"\n}',
+    '\ufeff[1, 2,\n 3,,]', '\ufeff{"a": True}', '   ', '', '{"a":1,} // c', '```json\n{"a":1}\n```', '"{\\"a\\":1}"',
+    '{"a":1}\n{"b":2}', '[NaN]', '{"k": undefined}', '{\n"a":\n\t"x"\u3000}', '"{\\"inner\\":[1,2]}"',
+  ];
+  const optSets = [OPT({}), OPT({ indent: '', sortKeys: true, ascii: true, numbers: 'js', dupes: 'last' }), OPT({ indent: '\t', dupes: 'last' }), OPT({ json5: true, indent: '    ' })];
+  let same = 0, total = 0, bad = '';
+  for (const d of docs) for (const o of optSets) {
+    total++;
+    const { v: want } = legacy(d, o);
+    const got = viewOf(E.analyze(d, { json5: !!o.json5 }), d, o);
+    const g = { ok: got.ok, empty: got.empty, bom: got.bom };
+    if (got.ok) {
+      Object.assign(g, { out: got.out, inSize: got.inSize, outSize: got.outSize, big: got.big });
+      if (got.html !== undefined) g.html = unblock(got.html); else g.display = got.display;
+      Object.assign(g, { dups: got.dups, numbers: got.numbers, surrogates: got.surrogates, counts: [got.dupCount, got.numberCount, got.surrogateCount], rest: [got.mode, got.inner, got.changes, got.stats] });
+    } else if (!got.empty) Object.assign(g, { frame: got.frame, errorRange: got.errorRange, ch: got.error.ch, error: [got.error.code, got.error.offset], hint: got.hint, json5: got.json5 });
+    if (JSON.stringify(g) === JSON.stringify(want)) same++; else if (!bad) bad = JSON.stringify(d) + '\n' + JSON.stringify(g) + '\n' + JSON.stringify(want);
+  }
+  {
+    const items = []; for (let i = 0; i < 4400; i++) items.push({ id: 1e15 + i, s: 'a "q" <b>&' + i, n: [i, null, true] });
+    const t = JSON.stringify(items); const o = OPT({});
+    const got = viewOf(E.analyze(t, {}), t, o);
+    const blocks = (got.html.match(blockRe) || []).length;
+    check('highlighted output under 1 MB is split into ' + blocks + ' line-aligned blocks that join back to highlight()', !got.big && blocks > 30 && unblock(got.html) === E.highlight(E.serialize(E.analyze(t, {}).root, o)) && !blockBad, blockBad);
+  }
+  check('runner view equals the page computation before the worker: ' + same + '/' + total + ' document × option sets', same === total, bad);
+  {
+    const items = []; for (let i = 0; i < 12000; i++) items.push({ id: i, name: 'user ' + i + ' 名前', v: [i, 1.5, null] });
+    const big = JSON.stringify(items);
+    const o = OPT({});
+    const { v: want } = legacy(big, o);
+    const got = viewOf(E.analyze(big, {}), big, o);
+    check('runner: output over 1 MB is cut at a line end as before (' + (got.out.length / 1e6).toFixed(1) + ' MB)', got.big && got.html === undefined && got.display === want.display && got.out === want.out && HIGHLIGHT_LIMIT === 1_000_000);
+    const tree = viewOf(E.analyze(big, {}), big, Object.assign({}, o, { text: false }));
+    check('runner: tree view skips the display text but keeps the full output', tree.display === undefined && tree.html === undefined && tree.out === want.out);
+  }
+  // Tree pages equal childrenOf + the page preview, at every level of a document with duplicates.
+  {
+    const text = '{"z":[1,"x",{"k":true}],"a":{"d":1,"d":"' + 'y'.repeat(300) + '","c":[],"d":{}},"m":null,"a":[' + Array.from({ length: 450 }, (_, i) => i).join(',') + ']}';
+    const res = E.analyze(text, {});
+    const run = createFormatterRunner();
+    run({ type: 'analyze', text, json5: false, opts: OPT({}), docId: 3 });
+    let pages = 0, ok = true, why = '';
+    const previewOf = (v, o) => { const k = E.kindOf(v); if (k === 'object') return { count: v.k.length }; if (k === 'array') return { count: v.v.length }; const s = E.scalarOut(v, o); return { preview: s.length > 200 ? s.slice(0, 199) + '…' : s }; };
+    for (const o of [OPT({}), OPT({ sortKeys: true }), OPT({ dupes: 'last' }), OPT({ sortKeys: true, dupes: 'last', numbers: 'js' })]) {
+      const walk = (node, idxs) => {
+        const want = E.childrenOf(node, o);
+        const got = [];
+        for (let from = 0; ; from += 200) {
+          const p = run({ type: 'children', docId: 3, path: idxs, from, count: 200, opts: o });
+          pages++;
+          if (p.total !== want.length) { ok = false; why = 'total ' + idxs; }
+          got.push(...p.rows);
+          if (from + 200 >= p.total) break;
+        }
+        got.forEach((r, x) => {
+          const w = want[x], pv = previewOf(w.value, o);
+          const exp = { seg: w.seg, kind: E.kindOf(w.value), dup: !!w.dup, ...pv, hasKids: pv.count > 0 };
+          const g = { seg: r.seg, kind: r.kind, dup: r.dup, ...(r.count !== undefined ? { count: r.count } : { preview: r.preview }), hasKids: r.hasKids };
+          if (JSON.stringify(g) !== JSON.stringify(exp) || node.v[r.idx] !== w.value) { ok = false; why = JSON.stringify([idxs, g, exp]); }
+          if (r.hasKids) walk(w.value, idxs.concat([r.idx]));
+        });
+      };
+      walk(res.root, []);
+    }
+    check('tree pages (' + pages + ' requests) equal childrenOf rows and previews, duplicates and sorting included', ok, why);
+    check('stale tree and render requests are reported, not answered from another document', run({ type: 'children', docId: 2, path: [], from: 0, count: 1, opts: OPT({}) }).stale === true && run({ type: 'render', docId: 2, opts: OPT({}) }).stale === true && run({ type: 'children', docId: 3, path: [9, 9], from: 0, count: 1, opts: OPT({}) }).stale === true);
+    check('render request reformats the kept document', run({ type: 'render', docId: 3, opts: OPT({ indent: '' }) }).out === E.serialize(res.root, OPT({ indent: '' })));
+    const bytes = new TextEncoder().encode('\ufeff{"a":1}');
+    const u16 = new Uint8Array([0xff, 0xfe, ...Array.from('[1]').flatMap((c) => [c.charCodeAt(0), 0])]);
+    const dec = run({ type: 'decode', buffer: bytes.buffer, json5: false, opts: OPT({}), docId: 4 });
+    const dec16 = run({ type: 'decode', buffer: u16.buffer, json5: false, opts: OPT({}), docId: 5 });
+    const decBad = run({ type: 'decode', buffer: new Uint8Array([0x7b, 0xc3, 0x28]).buffer, json5: false, opts: OPT({}), docId: 6 });
+    check('decode request: bytes decoded like decodeBytes, then parsed (BOM, UTF-16LE, bad UTF-8)', dec.decoded.text === '\ufeff{"a":1}' && dec.view.bom && dec.view.out === '{\n  "a": 1\n}'
+      && dec16.decoded.encoding === 'UTF-16LE' && dec16.view.out === '[\n  1\n]' && decBad.decoded.error === 'notUtf8' && decBad.decoded.offset === 1 && !decBad.view);
+    check('a failed decode keeps the previous document', run({ type: 'render', docId: 5, opts: OPT({}) }).out === '[\n  1\n]');
+  }
+  // Client: a new analyze terminates a busy worker; tree requests do not.
+  {
+    const workers = [];
+    const client = createFormatterClient(() => { const w = { messages: [], transfers: [], terminated: false, postMessage(m, t) { this.messages.push(m); this.transfers.push(t); }, terminate() { this.terminated = true; } }; workers.push(w); return w; });
+    const first = client.analyze('old', false, OPT({})).catch((e) => e.name);
+    check('client is busy while a parse runs', client.busy === true);
+    let settledNew = false;
+    const second = client.analyze('new', false, OPT({})).then((r) => { settledNew = true; return r; });
+    const [w0, w1] = workers;
+    check('a new analyze terminates the busy worker and rejects the old request', w0.terminated && await first === 'AbortError');
+    w0.onmessage({ data: { id: w0.messages[0].id, type: 'result', result: 'stale' } });
+    await Promise.resolve();
+    check('late results from a terminated worker are ignored', !settledNew);
+    w1.onmessage({ data: { id: w1.messages[0].id, type: 'result', result: { ok: true } } });
+    const r2 = await second;
+    check('the new request resolves with its document id', r2.docId === w1.messages[0].docId && r2.view.ok === true && !client.busy);
+    const kids = client.children(r2.docId, [], 0, 200, OPT({}));
+    const kids2 = client.children(r2.docId, [0], 0, 200, OPT({}));
+    check('tree requests do not terminate the worker or mark it busy', !w1.terminated && !client.busy);
+    w1.onmessage({ data: { id: w1.messages[2].id, type: 'result', result: 'b' } });
+    w1.onmessage({ data: { id: w1.messages[1].id, type: 'result', result: 'a' } });
+    check('responses reach their own request in any order', await kids === 'a' && await kids2 === 'b');
+    const buf = new ArrayBuffer(4);
+    const dec = client.decode(buf, false, OPT({}));
+    check('decode transfers the file buffer instead of copying it', w1.transfers[3][0] === buf);
+    const errored = dec.catch((e) => e.message);
+    w1.onerror({ message: 'out of memory' });
+    check('worker failure rejects with its message; the next request starts a new worker', await errored === 'out of memory' && w1.terminated);
+    const again = client.analyze('x', false, OPT({}));
+    workers[2].onmessage({ data: { id: workers[2].messages[0].id, type: 'error', message: 'boom' } });
+    check('an error reply rejects only its request', await again.catch((e) => e.message) === 'boom' && !workers[2].terminated);
+    const idle = client.render(1, OPT({})).catch((e) => e.name);
+    client.dispose();
+    check('page disposal terminates the worker', workers[2].terminated && await idle === 'AbortError');
+  }
+  // The page keeps no parser or serializer on the main thread.
+  {
+    const script = source.slice(source.indexOf('<script>'), source.indexOf('</script>'));
+    check('page creates the Vite worker and has no synchronous parse / serialize / highlight / decode / lineCol', script.includes("./json-formatter.worker.js?worker")
+      && !/(?<![.\w])(analyze|serialize|parseJson|highlight|codeFrame|decodeBytes|lineCol|childrenOf)\s*\(/.test(script) && /import \{ fmt, pointerOf, jqPathOf \} from/.test(script));
+  }
+  // The real worker entry, in a Node worker thread.
+  {
+    const { Worker } = await import('node:worker_threads');
+    const entry = new URL('../src/components/tools/json-formatter.worker.js', import.meta.url).href;
+    const worker = new Worker(new URL('data:text/javascript,' + encodeURIComponent(`
+      import { parentPort } from 'node:worker_threads';
+      globalThis.self = { postMessage: (data) => parentPort.postMessage(data) };
+      await import(${JSON.stringify(entry)});
+      parentPort.on('message', (data) => self.onmessage({ data }));
+    `)), { type: 'module' });
+    try {
+      const ask = (m) => new Promise((resolve, reject) => {
+        const on = (d) => { if (d.id === m.id) { worker.off('message', on); resolve(d); } };
+        worker.on('message', on); worker.once('error', reject); worker.postMessage(m);
+      });
+      const text = '{"b":[1,2],"a":1830000000000000001}';
+      const a = await ask({ id: 1, type: 'analyze', text, json5: false, opts: OPT({ sortKeys: true }), docId: 9 });
+      const c = await ask({ id: 2, type: 'children', docId: 9, path: [], from: 0, count: 200, opts: OPT({ sortKeys: true }) });
+      const e = await ask({ id: 3, type: 'nope' });
+      check('real worker entry: analyze, children and error replies keep request ids', a.type === 'result' && a.result.out === fmtOut(text, { sortKeys: true })
+        && c.result.rows.map((r) => r.seg).join() === 'a,b' && c.result.rows[1].idx === 0 && e.type === 'error' && /Unknown request/.test(e.message));
+    } finally { await worker.terminate(); }
+  }
 }
 
 console.log((failures ? 'FAILED' : 'OK') + ': ' + passes + ' passed, ' + failures + ' failed, ' + skips + ' skipped');
