@@ -117,6 +117,7 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-03 — `test-har-file-analyzer.mjs` 1935 → 2028 项：删去 Worker 协议一节（组件已无 Worker）；新增分段执行：`loadJob` 在每 1 / 2 / 3 / 7 个单元让出一次时与 `buildIndex` + `scanSensitive` 结果相同，`redactJob` 在 5 组选项（全部 / 子集 / 不查别处 / 删正文与 IP 加自定义名称 / 不查令牌）× 4 种分段下与测试内照旧写出的单次 `redactHar` 逐字节、逐计数相同，`curlJob` 与直接调用一致；页面代码不再调用整份解析与脱敏函数、不建 Worker，按 `taskGen` 停止旧任务；已去掉的值拆成多个正则（9,000 余个值时多于 2 个、每个源码不足 40,000 字符、长值先替换、Base64 中的值、首次使用 3 秒内）
 - 2026-10-03 — `test-har-file-analyzer.mjs` 1887 → 1935 项：Worker 协议（用页面同样截取的 `engine:start` 到 `worker:end` 文本在替身作用域里运行，核对读取错误、索引与扫描、脱敏导出字节、子集与原样导出、遮盖详情、cURL 都与直接调用引擎一致，主线程代码不再调用解析与脱敏函数）；Base64 字符串（11 字符无填充、长 base64url 串内含值、无关串保留）、前缀相同时取最长值、20 万字符的值不溢栈、3,000 个值查 2 MB 文本的耗时上限
 - 2026-10-03 — `test-har-file-analyzer.mjs` 1826 → 1887 项：Base64 文本正文解码脱敏后重新编码（6 种文本类型、`size` 与 `compression`、大小写 `encoding`）、无法检查的正文与二进制 WebSocket 消息按原因移除并计数、明确删除正文时不留 `encoding` / `compression`、`log.comment` 不带回去掉的值、Cookie Parser 复制声明逐字一致；整份导出的独立复查（重新解析后用 Node `Buffer` 解码每个 Base64 正文，查找合成令牌及其 Base64 / URL 安全 / 百分号形式，不调用引擎函数）
 - 2026-10-02 — protobuf 页面运行时清理：`test-protobuf-to-json.mjs` 改为无 Long 的页面 vm 与独立 Long-enabled 对照 vm（304 → 336 项）；五种 64 位类型增加编码与解码的上下界 / 超过 2^53 回归。下方历史记录中的双 vendor 页面加载检查已被替换；protoc / Python fixtures 保持原样。IndexNow 忽略路径测试改用仍存在的 protobuf vendor。
