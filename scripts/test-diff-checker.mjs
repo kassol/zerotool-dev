@@ -232,5 +232,38 @@ fail.nodes.get('diff-original').value = ''; fail.nodes.get('diff-modified').valu
 eq('empty input starts no new worker', fail.workers.length, 1);
 await fail.close();
 
+// ---------- races: view changes during calculation, rapid paging ----------
+{
+  // 300 changed lines: unified has 600 rows (6 pages), side-by-side has 300 rows (3 pages).
+  const a = Array.from({ length: 300 }, (_, i) => 'x-' + i).join('\n');
+  const b = Array.from({ length: 300 }, (_, i) => 'y-' + i).join('\n');
+  const h = pageHarness('en');
+  h.nodes.get('diff-original').value = a; h.nodes.get('diff-modified').value = b;
+  h.click('diff-compare');
+  const w = h.workers.at(-1);
+  h.click('diff-view-side'); // before the first reply arrives
+  await waitFor(() => w.result && w.result.view === 'side');
+  eq('view chosen during calculation is the one shown', [w.result.view, w.result.page, w.result.total], ['side', 0, 300]);
+  eq('side view rendered after in-flight switch', h.nodes.get('diff-output').innerHTML.includes('diff-sbs'), true);
+  eq('page label after in-flight switch', h.nodes.get('diff-page').textContent, '1–100 / 300');
+
+  // Rapid paging: only the newest request renders.
+  h.click('diff-view-unified'); await waitFor(() => w.result.view === 'unified');
+  let replies = w.responses;
+  h.click('diff-next'); h.click('diff-next'); h.click('diff-next');
+  await waitFor(() => w.responses >= replies + 3);
+  eq('rapid next renders the last requested page', [w.result.page, h.nodes.get('diff-page').textContent], [3, '301–400 / 600']);
+
+  // Switch to the shorter view and page past its end before the new total arrives.
+  replies = w.responses;
+  h.click('diff-view-side');
+  for (let k = 0; k < 5; k++) h.click('diff-next');
+  await waitFor(() => w.responses >= replies + 6);
+  eq('paging past the end of the new view is clamped', [w.result.view, w.result.page, w.result.rows.length > 0], ['side', 2, true]);
+  eq('clamped page label', [h.nodes.get('diff-page').textContent, h.nodes.get('diff-next').disabled], ['201–300 / 300', true]);
+  eq('clamped page is not an empty result', h.nodes.get('diff-output').innerHTML.includes('No differences found'), false);
+  await h.close();
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
