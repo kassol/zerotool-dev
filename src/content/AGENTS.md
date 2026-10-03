@@ -130,6 +130,8 @@ faqItems:                # 可选，结构化 FAQ
 
 - 2026-10-03 — 转换保真补充：toml-json 四语言新增「精度超过毫秒的时间停止转 JSON」与「`-0.0` 保留负号」两条，yaml-toml 日期一节补 TOML → YAML 的精度停止与 YAML `-0.0` → TOML `-0.0`，yaml-json 限制段新增「日期必须存在、时间只保留到毫秒」一条（en / zh FAQ 同步），yaml-validator「预览是 JSON」一条补预览上方的提示、示例与预览中的实际值（四语言 FAQ 同步）；消息原文与示例由 `test-conversion-fidelity.mjs` 的 PAGE-TEXT-B 经页面入口复算并核对逐字出现。
 
+- 2026-10-03 — 转换保真补充第二轮：toml-json 四语言 `-0.0` 一条改为两个方向（TOML `offset = -0.0` → `"offset": -0.0`）并写明 JSON 整数 `-0` 写成 `0`（引 TOML 1.0 integer）；yaml-toml 日期一节加 TOML 本地日期时间转 YAML 的停止消息与「整数值浮点数仍写成浮点数（`ratio = 1.0`）」；yaml-json「类型会变的值」表新增带偏移时间换成 UTC 与 `-0.0` 两行，限制段新增「JSON 整数 `-0` 写成 `0`」（引 YAML 1.2 core schema tag resolution）；yaml-validator「预览是 JSON」一条写明负零写 `-0.0`、时间戳显示为 UTC。示例与消息由 `test-conversion-fidelity.mjs` 的 PAGE-TEXT-C 经页面入口复算。
+
 - 2026-10-02 — 解析器升级：yaml-toml 英文页注明 smol-toml 1.7.1，并同步大整数输出为浮点字面量的示例；该输入在 YAML 读入阶段已有的精度损失说明保留。
 
 - 2026-10-02 — 发版收尾复核：sprite-sheet-generator-guide 四语言草稿的对比表与限制段改为支持 PNG / WebP（取决于浏览器编码能力），保留 draft 状态与其他正文。
