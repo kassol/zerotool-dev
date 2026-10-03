@@ -384,7 +384,14 @@ for (const l of LONG) {
 }
 
 // ── 11. The shipped runner and client protocol ──────────────────────────────────
+// Vite `?url` imports (the worker loads vocabularies by URL) resolve here to the file URL.
+const URL_HOOK = 'data:text/javascript,' + encodeURIComponent(`export async function resolve(spec, ctx, next) {
+  if (!spec.endsWith('?url')) return next(spec, ctx);
+  const r = await next(spec.slice(0, -4), ctx);
+  return { url: 'data:text/javascript,' + encodeURIComponent('export default ' + JSON.stringify(r.url)), shortCircuit: true };
+}`);
 {
+  (await import('node:module')).register(URL_HOOK);
   const { createTokenRunner, createTokenClient } = await import('../src/components/tools/ai-token-counter-run.js');
   const ranks = {
     o200k: (await import('js-tiktoken/ranks/o200k_base')).default,
@@ -444,6 +451,8 @@ for (const l of LONG) {
   const entry = new URL('../src/components/tools/ai-token-counter.worker.js', import.meta.url).href;
   const worker = new Worker(new URL('data:text/javascript,' + encodeURIComponent(`
     import { parentPort } from 'node:worker_threads';
+    import { register } from 'node:module';
+    register(${JSON.stringify(URL_HOOK)});
     globalThis.self = { postMessage: data => parentPort.postMessage(data) };
     await import(${JSON.stringify(entry)});
     parentPort.on('message', data => self.onmessage({ data }));

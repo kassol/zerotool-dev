@@ -1,11 +1,8 @@
 import { createTiktokenEncoding, createHfBpeEncoding, encodeSteps, textStats, tokenLabel } from './ai-token-counter-engine.js';
 
 // Both the shipped worker and the tests call this runner. Only bounded token previews leave it.
-export function createTokenRunner(importRanks = async (key) => {
-  if (key === 'o200k') return (await import('js-tiktoken/ranks/o200k_base')).default;
-  if (key === 'cl100k') return (await import('js-tiktoken/ranks/cl100k_base')).default;
-  return import('../../data/deepseek-v4-tokenizer.mjs');
-}) {
+// importRanks(key) returns the o200k / cl100k rank data or the DeepSeek tokenizer module.
+export function createTokenRunner(importRanks) {
   const loaded = new Map();
   async function load(key) {
     if (!loaded.has(key)) {
