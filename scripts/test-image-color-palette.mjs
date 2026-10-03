@@ -42,6 +42,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import assert from 'node:assert/strict';
 import postcss from 'postcss';
 import { compile as twCompile } from 'tailwindcss';
 import * as sass from 'sass';
@@ -475,6 +476,103 @@ const STRINGS = new Function(source.slice(sStart, sEnd + 3) + '\nreturn STRINGS;
     }
   }
   check('tool pages carry icp-check annotations (≥ 8)', annotations >= 8, annotations);
+}
+
+// ── 12. Real page script: P3 work, cancellation and message isolation ──
+// Canvas supplies controlled P3 bytes; the actual copied countOutOfSrgb runs in the vm.
+function pageHarness({ p3 = true, readError = false } = {}) {
+  const timers = [], nodes = new Map(), reads = [], images = [];
+  let countCalls = 0;
+  class Node {
+    constructor(tag = 'div') {
+      this.tagName = tag.toUpperCase(); this.listeners = {}; this.children = []; this.style = {};
+      this.attrs = {}; this.value = ''; this.hidden = false; this.classes = new Set();
+      this.classList = { add: (x) => this.classes.add(x), remove: (x) => this.classes.delete(x), toggle() {} };
+    }
+    set textContent(v) { this.text = v; this.children = []; }
+    get textContent() { return this.text || ''; }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    dispatch(type, e = {}) { for (const fn of this.listeners[type] || []) fn({ target: this, ...e }); }
+    setAttribute(k, v) { this.attrs[k] = v; }
+    getAttribute(k) { return this.attrs[k]; }
+    appendChild(n) { this.children.push(n); return n; }
+    contains(n) { return n === this || [...nodes.values()].includes(n); }
+    querySelector(sel) { return this.children.flatMap((n) => n.children).find((n) => n.className === sel.slice(1)) || null; }
+    querySelectorAll() { return []; }
+    getBoundingClientRect() { return { bottom: 0, top: 0 }; }
+    remove() {} select() {} click() { this.dispatch('click'); }
+    getContext(type, opts = {}) {
+      const node = this;
+      return {
+        getContextAttributes: () => ({ colorSpace: p3 ? opts.colorSpace || 'srgb' : 'srgb' }),
+        drawImage(source, ...args) { this.source = source; this.y = args.length === 4 ? -args[1] : 0; },
+        clearRect() {}, fillRect() {}, beginPath() {}, arc() {}, fill() {}, moveTo() {}, lineTo() {}, closePath() {},
+        getImageData(x, y, w, h) {
+          if (opts.colorSpace === 'display-p3') {
+            if (readError) throw new Error('read failed');
+            reads.push({ w, h, canvasHeight: node.height });
+          }
+          const d = new Uint8ClampedArray(w * h * 4);
+          for (let i = 0; i < d.length; i += 4) {
+            d[i] = opts.colorSpace === 'display-p3' ? 255 : 30; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = 255;
+          }
+          return { data: d };
+        },
+      };
+    }
+  }
+  const document = new Node();
+  document.getElementById = (id) => { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); };
+  document.createElement = (tag) => new Node(tag);
+  document.querySelector = () => null;
+  document.body = new Node('body');
+  const window = { innerHeight: 900, matchMedia: () => ({ matches: false, addEventListener() {} }), scrollBy() {},
+    ztPersist: { load() {}, save() {}, clear() {} } };
+  let script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+  const countSignature = 'function countOutOfSrgb(px) {';
+  assert.equal(script.split(countSignature).length - 1, 1, 'instrument exactly one real P3 counter');
+  script = script.replace(countSignature, countSignature + ' recordCount();');
+  const ctx = vm.createContext({ document, window, t: STRINGS.en, navigator: { clipboard: { writeText: () => Promise.resolve() } },
+    Uint8ClampedArray, Uint8Array, ArrayBuffer, DataView, Blob, TextEncoder,
+    URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+    Image: class { constructor() { this.naturalWidth = 6000; this.naturalHeight = 4752; images.push(this); } decode() { return Promise.resolve(); } },
+    setTimeout: (fn) => { const timer = { fn }; timers.push(timer); return timer; },
+    clearTimeout: (timer) => { if (timer) timer.cancelled = true; },
+    recordCount: () => countCalls++, console,
+  });
+  vm.runInContext(script, ctx);
+  const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+  return { nodes, reads, document, window, flush, get countCalls() { return countCalls; },
+    async open(name = 'photo.jpg', type = 'image/jpeg') {
+      const n = document.getElementById('icp-file'); n.files = [{ name, type }]; n.dispatch('change');
+      if (type.startsWith('image/')) { images.at(-1).onload(); await flush(); }
+    },
+    async step() { const timer = timers.shift(); if (timer && !timer.cancelled) timer.fn(); await flush(); },
+    async drain() { for (let i = 0; timers.length && i < 1000; i++) await this.step(); },
+    clear() { document.activeElement = document.getElementById('icp-open'); document.dispatch('keydown', { key: 'l', ctrlKey: true }); },
+  };
+}
+{
+  const h = pageHarness(); await h.open();
+  const exportBefore = h.nodes.get('icp-code-out').textContent;
+  await h.step();
+  check('P3 scan yields before processing the whole sample', h.countCalls === 0 || h.reads.reduce((n, r) => n + r.w * r.h, 0) < 261625);
+  await h.drain();
+  check('real countOutOfSrgb is reached more than once', h.countCalls > 1, h.countCalls);
+  check('P3 reads are bounded strips', h.reads.length > 1 && h.reads.every((r) => r.h <= 16), h.reads);
+  check('controlled opaque P3 red produces the unchanged 100% warning', h.nodes.get('icp-status').textContent.includes('100.0%'));
+  eq('P3 scan leaves full export bytes unchanged', h.nodes.get('icp-code-out').textContent, exportBefore);
+
+  const c = pageHarness(); await c.open(); c.clear(); await c.drain();
+  check('global clear hides palette and export', c.nodes.get('icp-main').hidden && c.nodes.get('icp-export').hidden);
+  eq('global clear prevents the pending P3 read', c.reads.length, 0);
+
+  const m = pageHarness(); await m.open(); await m.step();
+  m.nodes.get('icp-copy-code').click(); await m.flush();
+  const copyMsg = m.nodes.get('icp-status').textContent; await m.drain();
+  eq('P3 completion does not overwrite a newer copy message', m.nodes.get('icp-status').textContent, copyMsg);
+  const u = pageHarness({ p3: false }); await u.open(); await u.drain();
+  check('unsupported P3 is explicit', /Display P3.*unavailable/i.test(u.nodes.get('icp-status').textContent));
 }
 
 console.log((failures ? 'FAIL' : 'PASS') + ': image-color-palette — ' + passes + ' passed, ' + failures + ' failed');
