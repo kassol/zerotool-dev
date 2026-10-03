@@ -163,6 +163,22 @@ for (const opts of [{}, { ts: true }, { ref: true }, { ts: true, ref: true, memo
     }
   } catch (e) { check('SVG nodes compile/render ' + JSON.stringify(opts), false, e.errors?.[0]?.text || e.message); }
 }
+// CSS declaration boundaries in a style attribute (same parser as html-to-jsx): semicolons
+// inside quotes and url(), entity-encoded quotes, CSS escapes and custom properties keep
+// their exact value after esbuild compilation.
+for (const [attr, expected] of [
+  ['background:url(data:image/png;base64,AA==);fill:red', { background: 'url(data:image/png;base64,AA==)', fill: 'red' }],
+  ["background-image:url('a;b.svg')", { backgroundImage: "url('a;b.svg')" }],
+  ['--label:&quot;a;b&quot;', { '--label': '"a;b"' }],
+  ['font-family:&quot;A\\&quot;B&quot;, serif', { fontFamily: '"A\\"B", serif' }],
+  ['content:"\\201C";-ms-filter:none', { content: '"\\201C"', msFilter: 'none' }],
+  ['--Brand-Color: #00f ; STROKE-WIDTH:2', { '--Brand-Color': '#00f', strokeWidth: '2' }],
+]) {
+  try {
+    const props = render("<svg style='" + attr.replace(/'/g, '&#39;') + "'></svg>", {}).props;
+    eq('SVG style boundary ' + attr, JSON.stringify(props.style), JSON.stringify(expected));
+  } catch (e) { check('SVG style boundary ' + attr, false, e.errors?.[0]?.text || e.message); }
+}
 for (const style of ['fill:red;fill:blue', 'fill:red !important', 'fill:url(a', 'fill:', 'fill', 'fill:/*x*/red']) {
   let error;
   try { body('<svg><path style="' + style + '"/></svg>'); } catch (e) { error = e; }

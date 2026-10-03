@@ -23,6 +23,13 @@
 // errors; ran SVGO on the main thread (a 2.9 MB file blocked the page for 1.7 s with
 // multipass); handled one file at a time.
 //
+// JSX export (2026-10-03): the copied svgToJsx was the old version (comments, <style> text and
+// style="" went into JSX unconverted, so esbuild failed). It is now copied with the CSS and text
+// helpers from SvgToJsxTool.astro (themselves identical to HtmlToJsxTool.astro). The page calls
+// tryFormatOutput(); a refused style is shown under the buttons, Copy is disabled, and the batch,
+// Download, the row downloads and the ZIP keep saving item.data (checked by running the real page
+// script with a fake DOM). The declaration extractor skips brackets in strings and regexes.
+//
 // Run: node scripts/test-svg-optimizer.mjs
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -35,6 +42,7 @@ import * as svgo from 'svgo/browser';
 import { builtinPlugins, VERSION as NODE_VERSION } from 'svgo';
 import sharp from 'sharp';
 import { transformSync } from 'esbuild';
+import { createRequire } from 'node:module';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const toolsDir = join(root, 'src/components/tools');
@@ -74,23 +82,45 @@ const NAMES = ['SVG_NS', 'analyzeSvg', 'buildSvg', 'scanMarkup', 'uniqueNames', 
   'defaultSettings', 'normalizeSettings', 'cleanPrefix', 'buildConfig', 'configSource', 'utf8Length', 'prepareInput', 'collectInfo',
   'inspect', 'errorInfo', 'renderPlan', 'compareImageData', 'verdict', 'diffMask', 'componentName', 'outputName', 'base64FromBytes',
   'formatOutput', 'gzipSize', 'isGzip', 'looksLikeSvgText'];
-const E = new Function(block + '\nreturn { ' + NAMES.join(', ') + ' };')();
+const E = new Function(block + '\nreturn { ' + NAMES.join(', ') + ', tryFormatOutput: typeof tryFormatOutput === "function" ? tryFormatOutput : null };')();
 
 // ---------- 1. declarations copied from other tools are identical ----------
+// Brackets are counted outside strings, template literals, regular expressions and comments
+// (the copied JSX helpers contain '{', '}' and '{{ ' in strings and /[{}<>]/ in a regex).
+// A `var` declaration ends at the first top-level `;`, a function at its matching `}`.
 function extractDecl(src, name) {
   const re = new RegExp('(^|\\n)([ \\t]*)(function\\*? ' + name + '\\(|var ' + name + ' =)');
   const m = re.exec(src);
   if (!m) return null;
   const start = m.index + m[1].length;
-  const eol = src.indexOf('\n', start);
-  const head = src.slice(start, eol < 0 ? src.length : eol);
-  const bal = (t) => (t.match(/[{(\[]/g) || []).length === (t.match(/[})\]]/g) || []).length;
-  if (/;\s*$/.test(head) && bal(head)) return head;
-  if (/^[ \t]*function/.test(head) && /\}\s*$/.test(head) && bal(head)) return head;
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) { const e = src.indexOf('\n', i); return src.slice(start, e < 0 ? src.length : e); }
+  const isFn = m[3].startsWith('function');
+  let depth = 0, prev = '', opened = false;
+  const endAt = (i) => { const e = src.indexOf('\n', i); return src.slice(start, e < 0 ? src.length : e); };
+  for (let i = start + m[2].length; i < src.length; i++) {
+    const c = src[i];
+    if (/\s/.test(c)) continue;
+    if (c === '/' && src[i + 1] === '/') { i = src.indexOf('\n', i); if (i < 0) return null; continue; }
+    if (c === '/' && src[i + 1] === '*') { i = src.indexOf('*/', i + 2) + 1; if (i <= 0) return null; continue; }
+    if (c === '"' || c === "'" || c === '`') {
+      for (i++; i < src.length && src[i] !== c; i++) if (src[i] === '\\') i++;
+      prev = c; continue;
+    }
+    if (c === '/' && (prev === '' || /[(,=:[!&|?{};+\-*%<>~^]/.test(prev) || /\b(return|typeof|case)$/.test(src.slice(start, i).trimEnd()))) {
+      let cls = false;
+      for (i++; i < src.length; i++) {
+        if (src[i] === '\\') { i++; continue; }
+        if (src[i] === '[') cls = true; else if (src[i] === ']') cls = false;
+        else if (src[i] === '/' && !cls) break;
+        else if (src[i] === '\n') return null;
+      }
+      prev = 'r'; continue;
+    }
+    if (c === '{' || c === '(' || c === '[') { depth++; if (c === '{') opened = true; }
+    else if (c === '}' || c === ')' || c === ']') {
+      if (--depth < 0) return null;
+      if (isFn && c === '}' && opened && depth === 0) return endAt(i);
+    } else if (!isFn && c === ';' && depth === 0) return endAt(i);
+    prev = c;
   }
   return null;
 }
@@ -103,7 +133,11 @@ const COPIES = [
   ['SvgToPngConverterTool.astro', ['SVG_NS', 'XLINK_NS', 'ABS_UNITS', 'hasOwn', 'parseLength', 'parseStyle', 'parseViewBox', 'intrinsicSize', 'decodeXml', 'skipDeclaration', 'TAG_NAME', 'ATTR_NAME', 'SPACE', 'readStartTag', 'scanMarkup', 'attrOf', 'isLocalRef', 'cssRefs', 'analyzeSvg', 'num', 'buildSvg', 'uniqueNames']],
   ['GifSplitterTool.astro', ['crcTable', 'crc32', 'zipStore']],
   ['ImageToBase64Tool.astro', ['URL_RAW', 'percentEncodeBytes']],
-  ['SvgToJsxTool.astro', ['SVG_ATTR_MAP', 'toCamelCase', 'jsxAttrName', 'ATTR_RE', 'processAttrs', 'TAG_RE', 'indent', 'svgToJsx']],
+  ['SvgToJsxTool.astro', ['SVG_ATTR_MAP', 'NAMED_ENTITIES', 'decodeEntities', 'jsxString', 'styleError', 'styleStringToObject', 'jsxText',
+    'toCamelCase', 'jsxAttrName', 'ATTR_RE', 'processAttrs', 'TAG_RE', 'indent', 'svgToJsx']],
+  // SvgToJsxTool copies its CSS and text lowering from HtmlToJsxTool; checking the same names
+  // against the HTML tool keeps all three tools on one implementation.
+  ['HtmlToJsxTool.astro', ['NAMED_ENTITIES', 'decodeEntities', 'jsxString', 'styleError', 'styleStringToObject', 'jsxText']],
 ];
 for (const [file, names] of COPIES) {
   const other = engineBlock(readFileSync(join(toolsDir, file), 'utf8'));
@@ -111,8 +145,17 @@ for (const [file, names] of COPIES) {
     const a = extractDecl(block, name);
     const b = other && extractDecl(other, name);
     check('copy: ' + name + ' is identical to ' + file, a !== null && b !== null && dedent(a) === dedent(b));
+    // The extractor must return the whole declaration: a cut-off copy does not parse.
+    let parses = false;
+    try { new Function(b); parses = true; } catch (e) { parses = false; }
+    check('copy: extracted ' + name + ' from ' + file + ' is a complete declaration', b !== null && parses);
   }
 }
+// The extractor ignores brackets inside strings and regular expressions.
+eq('extractor: brackets in strings and regex literals',
+  extractDecl('x\n  function f(a) {\n    return a.replace(/[{}]/g, \'{\') + "}" + `}`;\n  }\n  function g() {}\n', 'f'),
+  '  function f(a) {\n    return a.replace(/[{}]/g, \'{\') + "}" + `}`;\n  }');
+eq('extractor: var ends at the top-level semicolon', extractDecl('var A = { a: ";", b: /;/ };\nvar B = 1;', 'A'), 'var A = { a: ";", b: /;/ };');
 
 // ---------- 2. plugin lists match the installed SVGO ----------
 const presetDefault = builtinPlugins.find((p) => p.name === 'preset-default');
@@ -374,6 +417,168 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
   eq('component names', ['icon-check.svg', 'ArrowLeft.svgz', '24px.svg', '日本.svg', ''].map(E.componentName), ['IconCheck', 'ArrowLeft', 'Svg24px', 'SvgIcon', 'SvgIcon']);
   eq('output names', ['logo.svg', 'logo.SVGZ', 'a/b?.svg', '', '  '].map(E.outputName), ['logo.svg', 'logo.svg', 'a_b_.svg', 'optimized.svg', 'optimized.svg']);
   eq('unique names in a ZIP', E.uniqueNames(['a.svg', 'A.svg', 'b.svg', 'a.svg']), ['a.svg', 'A-2.svg', 'b.svg', 'a-3.svg']);
+}
+
+// The JSX copy must lower all SVG nodes, including styles retained by SVGO.
+{
+  let React, renderToStaticMarkup;
+  if (process.env.JSX_REACT_REFERENCE_DIR) {
+    const reference = createRequire(join(process.env.JSX_REACT_REFERENCE_DIR, 'package.json'));
+    React = reference('react');
+    ({ renderToStaticMarkup } = reference('react-dom/server'));
+    if (React.version !== '19.2.0' || reference('react-dom/package.json').version !== '19.2.0') throw Error('React reference must be 19.2.0');
+  } else skip('real React JSX rendering', 'set JSX_REACT_REFERENCE_DIR to isolated React/ReactDOM 19.2.0');
+  for (const input of ['<svg><!-- x --><style>.x { fill:red }</style><path style="fill:red"/></svg>', svgo.optimize(fixtures.figma, E.buildConfig(D)).data]) {
+    try {
+      const jsx = E.formatOutput('jsx', input, 'sample.svg');
+      const js = transformSync(jsx, { loader: 'jsx', format: 'cjs' }).code;
+      check('Optimizer JSX compiles retained nodes', !!js);
+      if (React) {
+        const mod = { exports: {} };
+        new Function('require', 'module', 'exports', js)(() => React, mod, mod.exports);
+        const out = renderToStaticMarkup(React.createElement(mod.exports.default, { width: 48 }));
+        check('Optimizer real React renders retained styles and caller props', out.includes('width="48"') && out.includes('style="') && !out.includes('<!--'), out);
+      }
+    } catch (e) { check('Optimizer JSX compiles/renders', false, e.errors?.[0]?.text || e.message); }
+  }
+  let refused = false;
+  const input = '<svg><path style="fill:red !important"/></svg>';
+  try { E.formatOutput('jsx', input, 'x.svg'); } catch (e) { refused = !!e.code; }
+  check('Optimizer JSX rejects unrepresentable inline style', refused);
+  eq('SVG download format remains available on JSX refusal', E.formatOutput('svg', input, 'x.svg'), input);
+  // tryFormatOutput is what the page calls: a refusal comes back as data, never as a throw.
+  check('tryFormatOutput exists in the engine', typeof E.tryFormatOutput === 'function');
+  if (E.tryFormatOutput) {
+    eq('tryFormatOutput: JSX refusal is returned with code and position', E.tryFormatOutput('jsx', input, 'x.svg'), { text: '', error: { code: 'priority', position: 9 } });
+    eq('tryFormatOutput: other formats unchanged', E.tryFormatOutput('svg', input, 'x.svg'), { text: input, error: null });
+    eq('tryFormatOutput: valid JSX', E.tryFormatOutput('jsx', '<svg/>', 'a.svg'), { text: E.formatOutput('jsx', '<svg/>', 'a.svg'), error: null });
+    for (const [svg, code] of [['<svg><path style="a:1;a:2"/></svg>', 'duplicate'], ['<svg><path style="fill:red/*x*/"/></svg>', 'comment'], ['<svg><path style="fill:url(a"/></svg>', 'syntax'], ['<svg><path style="f\\69ll:red"/></svg>', 'property']]) {
+      eq('tryFormatOutput: refusal code ' + code, (E.tryFormatOutput('jsx', svg, 'x.svg').error || {}).code, code);
+    }
+  }
+}
+
+// ---------- page wiring with a fake DOM ----------
+// Runs the real <script> of the component (imports replaced: the worker constructor throws, so
+// the page uses its main-thread fallback with the real runSvgo and svgo/browser). Checks that a
+// file whose optimized SVG the JSX export refuses does not stop the batch; that the single-file
+// download, the row download and the ZIP still save item.data; and that the code view and the
+// Copy button show the refusal instead of throwing.
+{
+  const { runSvgo } = await import(pathToFileURL(join(toolsDir, 'svg-optimizer-run.js')).href);
+  const sm = source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
+  const T = new Function(sm[1] + '\nreturn STRINGS;')().en;
+  const reasonPriority = T.jsxReasons ? T.jsxReasons.priority : '(missing jsxReasons)';
+  const scriptStart = source.indexOf('<script>\n');
+  let script = source.slice(scriptStart + 9, source.indexOf('</script>', scriptStart));
+  script = script.replace(/^\s*import SvgoWorker from [^\n]*\n/m, '').replace(/^\s*import \{ runSvgo \} from [^\n]*\n/m, '')
+    .replace("import('svgo/browser')", '__importSvgo()');
+  const blobs = new Map(); const downloads = []; const clipboard = []; let blobN = 0;
+  const byId = new Map();
+  function el(tag, id) {
+    const e = {
+      id, tagName: String(tag || 'div').toUpperCase(), children: [], dataset: {}, style: {}, hidden: false, disabled: false,
+      value: '', textContent: '', className: '', title: '', href: '', download: '', src: '', width: 0, height: 0, listeners: {},
+      classList: { add() {}, remove() {} },
+      addEventListener(t, f) { (this.listeners[t] ||= []).push(f); },
+      dispatch(t, ev) { for (const f of this.listeners[t] || []) f(Object.assign({ target: this, preventDefault() {} }, ev)); },
+      appendChild(c) { this.children.push(c); return c; },
+      replaceChildren(...c) { this.children = c; },
+      get firstChild() { return this.children[0]; },
+      setAttribute() {}, remove() {}, focus() {}, select() {}, scrollIntoView() {},
+      contains() { return false; },
+      getBoundingClientRect() { return { top: 0 }; },
+      getContext() { return { putImageData() {}, drawImage() {}, getImageData() { return { data: new Uint8ClampedArray(4) }; } }; },
+      click() {
+        if (this.tagName === 'A') downloads.push({ name: this.download, blob: blobs.get(this.href) });
+        this.dispatch('click', {});
+      },
+    };
+    return e;
+  }
+  const wrapEl = el('div', 'svgo-wrap');
+  wrapEl.dataset = { lang: 'en', strings: JSON.stringify(T) };
+  wrapEl.querySelectorAll = () => [];
+  byId.set('svgo-wrap', wrapEl);
+  const doc = {
+    body: el('body'), activeElement: null, listeners: {},
+    getElementById(id) { if (!byId.has(id)) byId.set(id, el('div', id)); return byId.get(id); },
+    createElement(tag) { return el(tag); },
+    addEventListener(t, f) { (this.listeners[t] ||= []).push(f); },
+    execCommand() { return false; },
+  };
+  class FakeURL extends URL {
+    static createObjectURL(b) { const u = 'blob:test/' + (++blobN); blobs.set(u, b); return u; }
+    static revokeObjectURL() {}
+  }
+  class FakeImage { set src(v) { setTimeout(() => this.onerror && this.onerror(), 0); } }
+  class FailingWorker { constructor() { throw new Error('no worker in test'); } }
+  const nav = { clipboard: { writeText(t) { clipboard.push(t); return Promise.resolve(); } } };
+  const win = { innerHeight: 800 };
+  const rejections = [];
+  const onRejection = (e) => rejections.push(String(e && e.message || e));
+  process.on('unhandledRejection', onRejection);
+  let pageError = null;
+  try {
+    new Function('document', 'window', 'navigator', 'Image', 'URL', 'SvgoWorker', 'runSvgo', '__importSvgo', script)(
+      doc, win, nav, FakeImage, FakeURL, FailingWorker, runSvgo, () => Promise.resolve(svgo));
+  } catch (e) { pageError = e.message; }
+  check('page: script runs with the fake DOM', pageError === null, pageError);
+  const $ = (id) => doc.getElementById(id);
+  const wait = async (cond, ms = 15000) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 20)); return cond(); };
+  const ok1 = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path style="fill:blue" d="M0 0h5v5z"/></svg>';
+  const bad = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path style="fill:red !important" d="M0 0h10v10z"/></svg>';
+  const ok2 = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>';
+  const optimized = [bad, ok1, ok2].map((s) => svgo.optimize(s, E.buildConfig(D)).data);
+  check('page: the refused file keeps an unrepresentable style after SVGO', /!important/.test(optimized[0]), optimized[0]);
+  if (pageError === null) {
+    $('svgo-format').value = 'jsx';
+    $('svgo-format').dispatch('change');
+    // The refused file is first, so it is the active one while the batch runs.
+    $('svgo-file').files = [new File([bad], 'bad.svg', { type: 'image/svg+xml' }), new File([ok1], 'one.svg', { type: 'image/svg+xml' }), new File([ok2], 'two.svg', { type: 'image/svg+xml' })];
+    $('svgo-file').dispatch('change');
+    const done = await wait(() => /^3 files:/.test($('svgo-status').textContent));
+    check('page: the batch finishes all 3 files with a refused JSX file active', done && !/failed/.test($('svgo-status').textContent), $('svgo-status').textContent + ' / ' + rejections.join(' | '));
+    eq('page: no unhandled rejection or exception', rejections, []);
+    const rows = $('svgo-rows').children;
+    eq('page: every row has an optimized size', rows.map((r) => r.children[2].textContent !== '—'), [true, true, true]);
+    const refusedEl = $('svgo-jsx-refused');
+    check('page: refused JSX clears the code view', $('svgo-code').textContent === '', $('svgo-code').textContent.slice(0, 80));
+    check('page: refused JSX disables Copy', $('svgo-copy').disabled === true);
+    check('page: the refusal is shown with its reason', refusedEl.hidden === false && refusedEl.textContent.includes(reasonPriority), refusedEl.textContent);
+    check('page: the result stays visible for download', $('svgo-result').hidden === false);
+    downloads.length = 0;
+    $('svgo-download').click();
+    await new Promise((r) => setTimeout(r, 0));
+    eq('page: single download saves item.data despite the JSX refusal', downloads.length === 1 ? [downloads[0].name, await downloads[0].blob.text()] : downloads, ['bad.svg', optimized[0]]);
+    downloads.length = 0;
+    for (const r of rows) r.children[5].firstChild.click();
+    eq('page: row downloads save item.data', await Promise.all(downloads.map(async (d) => [d.name, await d.blob.text()])), [['bad.svg', optimized[0]], ['one.svg', optimized[1]], ['two.svg', optimized[2]]]);
+    downloads.length = 0;
+    $('svgo-zip').click();
+    const zipText = downloads.length === 1 ? Buffer.from(await downloads[0].blob.arrayBuffer()).toString('utf8') : '';
+    check('page: the ZIP contains all three optimized files', optimized.every((s) => zipText.includes(s)) && /bad\.svg/.test(zipText), downloads.length);
+    clipboard.length = 0;
+    let copyError = null;
+    try { $('svgo-copy').click(); } catch (e) { copyError = e.message; }
+    check('page: Copy on a refused file does not throw', copyError === null, copyError);
+    eq('page: Copy on a refused file writes nothing', clipboard, []);
+    check('page: Copy on a refused file shows the reason in the status', $('svgo-status').textContent.includes(reasonPriority), $('svgo-status').textContent);
+    // Switching to a convertible file restores Copy and the code.
+    rows[1].children[0].firstChild.click();
+    check('page: a convertible file enables Copy again', $('svgo-copy').disabled === false && refusedEl.hidden === true);
+    check('page: a convertible file shows its JSX', $('svgo-code').textContent === E.formatOutput('jsx', optimized[1], 'one.svg'));
+    $('svgo-copy').click();
+    await new Promise((r) => setTimeout(r, 0));
+    eq('page: Copy writes the JSX of a convertible file', clipboard, [E.formatOutput('jsx', optimized[1], 'one.svg')]);
+    // The SVG format of the refused file can be copied.
+    $('svgo-rows').children[0].children[0].firstChild.click();
+    $('svgo-format').value = 'svg';
+    $('svgo-format').dispatch('change');
+    check('page: SVG format of the refused file is copyable', $('svgo-copy').disabled === false && refusedEl.hidden === true && $('svgo-code').textContent === optimized[0]);
+  }
+  await new Promise((r) => setTimeout(r, 50));
+  process.off('unhandledRejection', onRejection);
 }
 
 // ---------- 9. gzip, svgz, ZIP ----------
