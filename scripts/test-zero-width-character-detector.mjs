@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ZeroWidthCharacterDetectorTool.astro'), 'utf8');
@@ -183,6 +184,146 @@ for (const [name, f] of [['England', england], ['Scotland', scotland], ['Wales',
   const html = E.renderViz(text, E.scan(text).hits);
   check('renderViz escapes HTML', html.startsWith('&lt;b&gt;'), html);
   check('renderViz labels ZWSP with code point', html.includes('data-cp="U+200B"') && html.includes('>ZWSP<'), html);
+}
+
+// ---------- 7. bounded visualization (B-ZEROWIDTH-DOM-VOLUME) ----------
+const C = new Function(block + '\nreturn typeof renderVizChunk === "function" ? { renderVizChunk, VIZ_HITS, VIZ_UNITS } : null;')();
+check('engine exposes renderVizChunk with limits', !!C);
+const bigText = Array.from({ length: 100000 }, (_, i) => 'ab'[i % 2] + (i % 3 ? '\u200B' : tags('x'))).join('');
+const bigScan = E.scan(bigText);
+equal('100k fixture has 100,000 hits', bigScan.hits.length, 100000);
+if (C) {
+  // Chunks concatenate to the full rendering and never exceed the limits.
+  for (const [name, text] of [['mixed', 'Go ' + scotland + ' <b>&' + tags('Ignore.') + '\u202E end'], ['100k', bigText],
+    ['astral text', '\u{1F600}'.repeat(30) + '\u200B' + '\u{1F600}'.repeat(30)], ['no hits', 'plain <text>'], ['empty', '']]) {
+    const hits = E.scan(text).hits;
+    const limits = name === '100k' ? [[C.VIZ_HITS, C.VIZ_UNITS]] : [[1, 1], [2, 7], [3, 1000], [C.VIZ_HITS, C.VIZ_UNITS]];
+    for (const [mh, mu] of limits) {
+      let from = { hit: 0, index: 0 }, html = '', rounds = 0, maxChips = 0, overUnits = 0, stuck = 0;
+      for (;;) {
+        const r = C.renderVizChunk(text, hits, from, mh, mu);
+        html += r.html; rounds++;
+        maxChips = Math.max(maxChips, (r.html.match(/class="zwcd-chip /g) || []).length);
+        let widths = 0;
+        for (let k = from.hit; k < r.hit; k++) widths += hits[k].width;
+        if (r.index - from.index - widths > mu + (mu === 1 ? 1 : 0)) overUnits++;
+        if (r.done) break;
+        if (!(r.index > from.index || r.hit > from.hit)) { stuck++; break; }
+        from = { hit: r.hit, index: r.index };
+      }
+      equal(name + ' every chunk advances ' + mh + '/' + mu, stuck, 0);
+      equal(name + ' chunks rebuild renderViz ' + mh + '/' + mu, html, E.renderViz(text, hits));
+      check(name + ' chunk hit limit ' + mh, maxChips <= mh, maxChips);
+      equal(name + ' chunk text limit ' + mu, overUnits, 0);
+    }
+  }
+  const first = C.renderVizChunk(bigText, bigScan.hits, { hit: 0, index: 0 }, C.VIZ_HITS, C.VIZ_UNITS);
+  check('first 100k chunk is bounded to 1,000 chips', (first.html.match(/class="zwcd-chip /g) || []).length <= 1000);
+  // A surrogate pair is never split at a text budget boundary.
+  const astral = C.renderVizChunk('\u{1F600}\u{1F600}', [], { hit: 0, index: 0 }, 10, 3);
+  equal('text budget keeps surrogate pairs whole', astral.index, 2);
+}
+
+// ---------- 8. page script: 100k hits, load more, exports ----------
+function pageHarness() {
+  const byId = new Map(), downloads = [], clipboard = [];
+  const el = (id, extra = {}) => {
+    const node = { id, value: '', _text: '', innerHTML: '',
+      get textContent() { return this._text; }, set textContent(v) { this._text = v; this.innerHTML = ''; }, className: '', hidden: false, disabled: false, checked: false,
+      placeholder: '', style: {}, dataset: {}, listeners: {}, attrs: {}, classList: { add() {}, remove() {} },
+      addEventListener(k, f) { (this.listeners[k] ||= []).push(f); }, getAttribute(k) { return this.attrs[k]; },
+      setAttribute(k, v) { this.attrs[k] = String(v); }, focus() {}, click() {},
+      insertAdjacentHTML(pos, html) { this.innerHTML += html; }, ...extra };
+    if (id) byId.set(id, node);
+    return node;
+  };
+  const markup = source.slice(0, source.indexOf('<script is:inline>'));
+  for (const m of markup.matchAll(/id="([^"]+)"/g)) el(m[1]);
+  for (const m of markup.matchAll(/data-count="([^"]+)"/g)) el('count-' + m[1], { attrs: { 'data-count': m[1] } });
+  const visible = el('meta-visible'), total = el('meta-total');
+  const radios = ['all', 'zero-width', 'bidi', 'tag', 'variation'].map(v => el('mode-' + v, { value: v, checked: v === 'all' }));
+  const samples = ['trojan', 'tag', 'bom'].map(k => el('sample-' + k, { attrs: { 'data-sample': k } }));
+  const wrap = el('', {
+    dataset: { copy: 'Copy', copied: 'Copied', nothing: 'None', foundOne: '1 found', foundN: '{n} found', emptyStrip: '(empty)',
+      vizPartial: 'Showing {shown} of {n}', vizTruncated: 'Preview is partial', showMore: 'Show more' },
+    querySelector(sel) {
+      if (sel === '[data-meta="visible"]') return visible;
+      if (sel === '[data-meta="total"]') return total;
+      return byId.get(sel.slice(1)) || null;
+    },
+    querySelectorAll(sel) {
+      if (sel.includes('zwcd-mode')) return radios;
+      if (sel === '.zwcd-sample') return samples;
+      if (sel === '[data-count]') return [...byId.values()].filter(n => n.attrs['data-count']);
+      return [];
+    },
+  });
+  const fire = (node, k, e = {}) => (node.listeners[k] || []).forEach(f => f(e));
+  const doc = { listeners: {}, addEventListener(k, f) { (this.listeners[k] ||= []).push(f); },
+    querySelector: s => (s === '.zwcd-wrap' ? wrap : null), createElement: () => el(''),
+    body: { appendChild(a) { if (a.download) downloads.push(a); }, removeChild() {} }, execCommand: () => true };
+  const context = vm.createContext({
+    document: doc,
+    navigator: { clipboard: { writeText: t => { clipboard.push(t); return Promise.resolve(); } } },
+    Blob: class { constructor(parts) { this.text = parts.join(''); } },
+    URL: { createObjectURL: b => { downloads.push(b.text); return 'blob:x'; }, revokeObjectURL() {} },
+    setTimeout: f => { f(); return 0; }, window: { addEventListener() {} }, console,
+  });
+  vm.runInContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], context);
+  return { byId, radios, downloads, clipboard, fire, doc, input(text) { byId.get('zwcd-input').value = text; fire(byId.get('zwcd-input'), 'input'); } };
+}
+{
+  const h = pageHarness();
+  const t0 = performance.now();
+  h.input(bigText);
+  const ms = performance.now() - t0;
+  const viz = h.byId.get('zwcd-viz');
+  const chips = s => (s.match(/class="zwcd-chip /g) || []).length;
+  check('100k update renders at most 1,000 chips', chips(viz.innerHTML) <= 1000, chips(viz.innerHTML));
+  equal('100k summary counts every hit', h.byId.get('zwcd-summary').textContent, '100000 found');
+  equal('100k zero-width count', h.byId.get('count-zero-width').textContent, '66666');
+  equal('100k tag count', h.byId.get('count-tag').textContent, '33334');
+  equal('100k cleaned text is complete', h.byId.get('zwcd-cleaned').value, Array.from({ length: 100000 }, (_, i) => 'ab'[i % 2]).join(''));
+  check('100k update in Node under 1 s (' + Math.round(ms) + ' ms)', ms < 1000);
+  const moreRow = h.byId.get('zwcd-more-row'), more = h.byId.get('zwcd-more');
+  check('load more is offered', !!moreRow && moreRow.hidden === false);
+  if (more) {
+    equal('partial label', h.byId.get('zwcd-shown').textContent, 'Showing 1000 of 100000');
+    h.fire(more, 'click');
+    equal('load more appends the next 1,000', chips(viz.innerHTML), 2000);
+    let guard = 0;
+    while (!moreRow.hidden && guard++ < 200) h.fire(more, 'click');
+    equal('loading more eventually shows every hit', chips(viz.innerHTML), 100000);
+    equal('fully loaded visualization equals renderViz', viz.innerHTML, E.renderViz(bigText, bigScan.hits));
+  }
+  // Mode change keeps the complete cleaned text and resets the preview.
+  h.radios[0].checked = false; h.radios[3].checked = true; h.fire(h.radios[3], 'change');
+  equal('tag only strips all 33,334 tags', h.byId.get('zwcd-cleaned').value.length, bigText.length - 33334 * 2);
+  check('mode change resets the preview to one chunk', chips(viz.innerHTML) <= 1000);
+  // A new input replaces the old preview and hides load more.
+  h.input('a\u200Bb');
+  equal('small input renders one chip', chips(viz.innerHTML), 1);
+  equal('small input hides load more', moreRow?.hidden, true);
+}
+{
+  // Only invisible characters: the cleaned result is empty and exports nothing.
+  const h = pageHarness();
+  h.input('\u200B\u200B');
+  equal('empty cleaned result has no placeholder text in the value', h.byId.get('zwcd-cleaned').value, '');
+  equal('empty cleaned result is announced by placeholder', h.byId.get('zwcd-cleaned').placeholder, '(empty)');
+  h.fire(h.byId.get('zwcd-copy'), 'click');
+  equal('copy does not copy the placeholder', h.clipboard.length, 0);
+  h.fire(h.byId.get('zwcd-download'), 'click');
+  equal('download does not save the placeholder', h.downloads.length, 0);
+  h.input('a\u200B');
+  h.fire(h.byId.get('zwcd-download'), 'click');
+  equal('download saves the complete cleaned text', h.downloads[0], 'a');
+  // Ctrl/Cmd+L (ToolLayout) empties both text areas without an input event.
+  h.byId.get('zwcd-input').value = ''; h.byId.get('zwcd-cleaned').value = '';
+  h.fire(h.doc, 'keydown', { ctrlKey: true, key: 'l' });
+  h.fire(h.byId.get('zwcd-copy'), 'click');
+  equal('copy after Ctrl+L has nothing stale to copy', h.clipboard.length, 0);
+  equal('preview cleared after Ctrl+L', h.byId.get('zwcd-viz').innerHTML, '');
 }
 
 console.log(`${passes} passed, ${failures} failed`);
