@@ -117,9 +117,27 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-03 — 加入 `astro-page-harness.mjs`（模块，不以 `test-` 开头，CI 不执行；被测试 import）：读取工具组件 `.astro`，用 node_modules 的 typescript 把模块 `<script>` 转成 CommonJS，与 `is:inline` 脚本按文档顺序在 node:vm 中运行，提供替身 DOM（按 id / 选择器创建的元素、事件、禁用按钮不触发 click、`navigator.clipboard` 记录、可手动推进的 `setTimeout`）；frontmatter 有 `// strings:start` / `// strings:end` 时把 `STRINGS[lang]` 与 `lang` 写进指定元素的 `data-strings` / `data-lang`，相对 import 按组件目录解析；不写文件、不联网。加入 `test-conversion-fidelity.mjs`（1097 项，只写 stdout）：经页面入口（输入事件 + 300 ms 防抖、按钮、Ctrl+Enter、交换）驱动 yaml-toml、toml-json、yaml-json，按发现编号分组计数：A-YAML-TOML-INTEGER（2^53 ± 1、−2^53、TOML 64 位上下界与 2^63、十六进制，YAML → TOML / YAML → JSON / JSON → YAML / JSON → TOML 拒绝并列出路径；±(2^53 − 1) 原样转换；`1e20` 浮点字面量照常转换；TOML 方向解析器报错时也清空并停用复制）591 项，A-TOML-NULL-DROP（顶层、嵌套、数组中的 null 与含 `/` 和空格的键的 JSON Pointer 转义；空数组与空表保留）184 项，A-YAML-TOML-DATE（本地日期、带偏移与空格分隔的时间戳、小写 t、无偏移写 Z、一位数月日时、带引号的日期、数组与嵌套表、超过毫秒精度与 2 月 31 日、60 秒拒绝，生成的 TOML 由 smol-toml 读回核对类型）86 项，A-CONVERSION-NONFINITE（TOML / YAML 的 inf、-inf、nan 与嵌套位置转 JSON 拒绝，JSON `1e400` 拒绝，有限浮点数不变，YAML → TOML 保留 inf / nan）224 项；每个拒绝用例先转换有效输入，再核对旧输出清空、复制按钮停用且点击不写剪贴板、状态栏为错误并含路径与原值、使用页面语言，最后有效输入恢复；另 12 项核对 yaml-json 四语言页面逐字引用的停止与上限消息。修复前的组件上为 366 通过 / 719 失败（四项分别 201/390、69/115、21/65、75/149；页面文本 12 项后加，不在此数内）。加入 `test-yaml-limits.mjs`（209 项，只写 stdout）：核对 js-yaml 为 4.3.2 且 `maxDepth` / `maxTotalMergeKeys` / 合并序列上限的默认值与 `yaml-limits.js` 的 `YAML_LIMITS` 一致，四种输入（流式与块式嵌套 101 层、5,001 个合并、101 个合并来源）真实触发上限、刚好在上限内的输入可读；四语言下 `yamlLimitText` / `yamlErrorText` 不含英文原因且带数字与行列；yaml-json、yaml-toml 页面（输入与按钮）显示本地化上限、清空旧输出并停用复制；yaml-validator 页面的错误框（标题、原因、行列）；openapi-validator 引擎的 `parseText` 报出的原因经 `formatMessage` 按四语言 `yamlReasons` 的 `{n}` 键本地化；json-schema-validator 引擎块 `parseDocs` / `parseErrorText`；openapi-to-typescript 页面的 `generate()`；四个工具页四语言写明 js-yaml 4.3.2 与 100 / 10,000 上限。修复前为 65 通过 / 128 失败（页面文本检查后加，不在此数内）。`test-yaml-toml.mjs` 16 → 44 项、`test-toml-json.mjs` 13 → 28 项：改为经页面入口转换（此前只调用库函数，测不到组件里把 Date 变成空表、把 null 变成空字符串的处理），日期、null、大整数、`1e400` 的期望值改为新行为，并核对四语言页面逐字引用的示例输出与停止消息。`test-openapi-validator.mjs`：`yamlReasons` 中带 `{n}` 的键改为核对 loader 源码中 `'…('` 之前的文字。
+
+- 2026-10-02 — 新增 `test-yaml-parser-security.mjs`：读取已安装的 js-yaml，9 个子进程用例覆盖 DEFAULT_SCHEMA 与 OpenAPI 的 CORE_SCHEMA + merge、merge 链与重复别名、空来源预算、omap、正常合并、多文档、原型键与合法输入恢复。硬超时本机 3 秒 / CI 12 秒，超时 SIGKILL；只写 stdout/stderr，升级 js-yaml 时运行，CI 随全部测试执行。Node 22.23.3 下 9 组通过。
+
+- 2026-10-02 — 新增 `test-toml-parser-security.mjs`：读取锁定的 smol-toml，在带 SIGKILL 超时的子进程中拒绝四种 EOF 注释输入，随后验证中日韩文本、合法注释与 stringify 往返。只写 stdout/stderr，CI 随全部测试运行；升级 smol-toml 时运行。`test-yaml-toml.mjs` 同步 1.7.1 对不安全整数增加 `.0` 的实际输出。
+
+- 2026-10-02 — 新增 `test-protobuf-parser-security.mjs`：读取真实页面引擎与 vendor，在独立 vm 中以硬超时覆盖 option EOF 循环、constructor / __proto__ 写入、内建对象属性描述符不变及随后合法 Schema 恢复；检查 vendor 与锁定 npm 产物逐字一致。只写 stdout，CI 随全部测试运行。
+
+- 2026-10-02 — 转换工具收尾：`test-json-xml-converter.mjs` 73 → 136 项，XML 替身可改由 sax 1.6.1（svgo 的依赖，已在 node_modules）严格模式建树，新增标量 / null / `{}` 根在两种输出下的往返、映射限制与语法错误的状态前缀、面板快捷键 `stopPropagation` 与 Ctrl/⌘+L 复位、编辑清状态，以及 4 语言页面 `{/* jx-to-xml */}`、`{/* jx-to-json */}`、`{/* jx-error: … */}` 标注示例的复算；真实 DOMParser 仍以 ego-browser 验收为准。`test-jsonl-converter.mjs` 41 → 64 项，新增快捷键、Ctrl/⌘+L 清缓存、清空 JSONL 面板时计数归零，以及页面 `{/* jlc-check */}` / `{/* jlc-validate */}` 标注示例（输出面板、下载、复制与状态行、校验计数与 V8 报错原文）。`test-env-file-parser.mjs` 217 → 332 项，新增 Ctrl/⌘+L 复位、被跳过行的备注（含 `colonForm` 与 U+3000 键名）及页面 `{/* efp-check */}` 标注示例（导出、与 `dotenv.parse()` 对照、状态行、表格行、`util.parseEnv()` 对照）。
+
+- 2026-10-02 — `test-env-file-parser.mjs` 增加 dotenv 16.6.1 键/分隔符对照与完整 Parse/Export 入口、编辑/清空导出失效测试；Node 22.23.3 为 217 项通过。python-dotenv 对照因安装版本 1.1.0 与指南记录的 1.2.4 不同而跳过；`__proto__` 保留行为作为与 dotenv 的既有差异独立测试。
+
+- 2026-10-02 — `test-json-xml-converter.mjs` 改为运行组件完整内联脚本与双向按钮入口，覆盖 Unicode 元素名、路径拒绝、空对象与输出失效生命周期；Node 22.23.3 为 73 项通过。XML 解析使用节点替身，真实 DOMParser 验收尚未完成；旧日志里的名称替换规则已由本条对应的路径拒绝规则替代。
+
+- 2026-10-02 — 新增 `test-jsonl-converter.mjs`，在 vm 中运行组件完整内联脚本与按钮入口，覆盖双向数字原文、重复键、逐行错误、复制/下载缓存和文件读取/延迟校验生命周期；Node 22.23.3 为 41 项通过。未做浏览器或整站验收。
+
 - 2026-10-02 — protobuf 页面运行时清理：`test-protobuf-to-json.mjs` 改为无 Long 的页面 vm 与独立 Long-enabled 对照 vm（304 → 336 项）；五种 64 位类型增加编码与解码的上下界 / 超过 2^53 回归。下方历史记录中的双 vendor 页面加载检查已被替换；protoc / Python fixtures 保持原样。IndexNow 忽略路径测试改用仍存在的 protobuf vendor。
 
+- 2026-10-02 — `test-color-shades-generator.mjs` 407 → 1079 项（只写 stdout，Node 22 与 24 都通过）：用替身 DOM 执行组件整段客户端脚本与 `ToolLayout.astro` 的真实快捷键脚本，派发 input / change / click / keydown 事件。四语言覆盖初始 11 个色块复制、全部复制与下载字节，合法输入改为 `#ZZZ` / 非法 `rgb()` / 空输入后清空并禁用出口，无效时切换导出与色值格式、Ctrl/Cmd+L 清空、文本与拾色器恢复；直接派发 click 另验证空结果的处理器守卫。
 - 2026-10-02 — 发版收尾复核：`sync-jq-web.mjs` 条目补上真实的源码补丁、classic worker 与 `run()` 调用；sprite-sheet 回归条目按实际测试更新为 1277 项并补列新增覆盖。
+- 2026-10-03 — 加入 `test-css-clip-path-generator.mjs`：读组件真实函数，在 vm 与桩 DOM 中检查零值、小数、夹取回写、矩形 SVG 坐标、圆形百分比半径、inset 对向缩减、键盘与 pointercancel 回调、CSS 原值过滤（含括号与引号闭合）及高亮文本往返、参考框虚线随选项显示；再读 4 语言工具页的 `{/* cpg-check: {...} */}` 标注（每语言至少 3 处，共 22 处），用组件的 buildClipPath / cssOutput / PRESETS / updateCircleOverlay / updateInsetOverlay / makeDraggable 复算 CSS、预设、半径、inset 缩减、拖拽与方向键结果，并核对页面原文含同一文本。parse5 取自已有依赖；只读源码、只写 stdout，CI 随其他 test-*.mjs 运行。浏览器行为（CSS.supports、命中测试、复制）在 AGENTS.md 精品化条目中记录 ego-browser 实测，不在本测试内
 
 - 2026-04-26 — 初版
 - 2026-04-26 — 加入 `audit.mjs`（13 维度静态校验）+ CI 巡检管线说明

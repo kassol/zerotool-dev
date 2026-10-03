@@ -16,6 +16,20 @@ export function pickRoot(files) {
   return roots[0];
 }
 
+/* A js-yaml reason in the page language. Keys with {n} (the work limits, such as
+   "nesting exceeded maxDepth ({n})") match the same text with any number in that place. */
+function yamlReason(v, T) {
+  var table = T.yamlReasons || {};
+  if (Object.prototype.hasOwnProperty.call(table, v)) return table[v];
+  for (var key in table) {
+    if (key.indexOf('{n}') < 0) continue;
+    var parts = key.split('{n}').map(function (s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+    var m = new RegExp('^' + parts.join('(\\d+)') + '$').exec(String(v));
+    if (m) return table[key].replace('{n}', m[1]);
+  }
+  return v;
+}
+
 /* Message formatting: T.msg[code] with {name} placeholders; `detail` is a nested message. */
 export function formatMessage(p, T) {
   var tpl = (T.msg && T.msg[p.code]) || p.code;
@@ -23,7 +37,7 @@ export function formatMessage(p, T) {
   return tpl.replace(/\{(\w+)\}/g, function (_m, k) {
     var v = args[k];
     if (k === 'detail' && v && typeof v === 'object') return formatMessage(v, T);
-    if (k === 'reason') return (T.yamlReasons && T.yamlReasons[v]) || v;
+    if (k === 'reason') return yamlReason(v, T);
     if (k === 'kind' && T.kinds && T.kinds[v]) return T.kinds[v];
     if (k === 'where') return v ? (T.msg.atPath || ' ({path})').replace('{path}', v) : '';
     if (k === 'more') return v && v !== '0' ? (T.msg.moreErrors || ' (+{n})').replace('{n}', v) : '';

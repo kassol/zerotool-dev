@@ -1,11 +1,12 @@
-// Color Shades Generator — engine, export and page-example regression test
+// Color Shades Generator — engine, export, page-example and DOM regression test
 //
 // Read:  src/components/tools/ColorShadesGeneratorTool.astro (the real engine block between
 //        the `engine:start` / `engine:end` markers and the frontmatter STRINGS table, so this
 //        test cannot drift from the shipped source), node_modules/tailwindcss/theme.css
 //        (Tailwind CSS v4 default palette, the source of the reference curves),
 //        src/content/tools/color-shades-generator/{en,zh,ja,ko}.mdx (examples marked with
-//        `{/* csg: {...} */}` are regenerated and compared).
+//        `{/* csg: {...} */}` are regenerated and compared), src/layouts/ToolLayout.astro
+//        (the real page-wide keyboard shortcuts).
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -20,6 +21,8 @@
 // tools (postcss for CSS, tailwindcss v4 `compile()` for @theme, a vm sandbox for the v3
 // config, Dart Sass for SCSS, JSON.parse), every value read back to the same 8-bit color;
 // WCAG contrast and label colors (the 2026-09-27 fix); 4-language STRINGS; page examples.
+// DOM events: valid → invalid / empty → valid, all copy/download exits, format changes
+// while invalid, and the page-wide Ctrl/Cmd+L shortcut with the component's deferred update.
 //
 // Run: node scripts/test-color-shades-generator.mjs
 
@@ -642,6 +645,131 @@ if (E.buildExport && E.parseColor) {
     }
   }
   check('tool pages carry checked examples', examples >= 8, examples);
+}
+
+// ---------- 9. Real client script with DOM events ----------
+function makePage(lang) {
+  const ids = {}, clipboard = [], downloads = [], timers = [];
+  const blobs = new Map();
+  class Element {
+    constructor(tag = 'div') {
+      this.tagName = tag.toUpperCase(); this.value = ''; this.disabled = false;
+      this.children = []; this.listeners = {}; this.attributes = {}; this.style = {};
+      this.className = ''; this.text = '';
+      this.classList = {
+        add: (c) => { this.className += ' ' + c; },
+        remove: (c) => { this.className = this.className.split(/\s+/).filter((x) => x !== c).join(' '); }
+      };
+    }
+    set textContent(text) { this.text = String(text); this.children = []; }
+    get textContent() { return this.text + this.children.map((c) => c.textContent).join(''); }
+    setAttribute(k, v) { this.attributes[k] = String(v); }
+    removeAttribute(k) { delete this.attributes[k]; }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    appendChild(child) { this.children.push(child); return child; }
+    removeChild(child) { this.children.splice(this.children.indexOf(child), 1); }
+    click() {
+      if (this.disabled) return;
+      if (this.tagName === 'A') downloads.push({ name: this.download, blob: blobs.get(this.href) });
+      this.dispatch('click');
+    }
+    dispatch(type, extra = {}) {
+      const event = { target: this, preventDefault() { this.defaultPrevented = true; }, ...extra };
+      for (const fn of this.listeners[type] || []) fn(event);
+      return event;
+    }
+  }
+  // Read input defaults from the component; the two mapped selects use their first list item.
+  const markup = source.slice(source.indexOf('<div class="csg-wrap">'), source.indexOf('<script'));
+  for (const m of markup.matchAll(/<(\w+)\b([^>]*\bid="(csg-[^"]+)"[^>]*)>/g)) {
+    const el = ids[m[3]] = new Element(m[1]);
+    el.value = m[2].match(/\bvalue="([^"]*)"/)?.[1] || '';
+    el.disabled = /\bdisabled\b/.test(m[2]);
+  }
+  ids['csg-anchor'].value = 'auto';
+  ids['csg-format'].value = source.match(/const FORMAT_LIST = \['([^']+)'/)[1];
+  ids['csg-values'].value = source.match(/const VALUE_LIST = \['([^']+)'/)[1];
+  const widget = {
+    contains: (el) => Object.values(ids).includes(el),
+    querySelectorAll: () => [ids['csg-input'], ids['csg-name']]
+  };
+  const document = new Element();
+  Object.assign(document, {
+    body: new Element('body'), activeElement: ids['csg-input'],
+    getElementById: (id) => ids[id], createElement: (tag) => new Element(tag),
+    querySelector: (selector) => selector === '.tool-widget' ? widget : null
+  });
+  const context = vm.createContext({
+    document, S: STRINGS[lang], window: { ztPersist: { clear() {} } },
+    navigator: { clipboard: { writeText: async (text) => { clipboard.push(text); } } },
+    location: { search: '', pathname: '/tools/color-shades-generator/' }, URLSearchParams, Blob,
+    URL: { createObjectURL: (blob) => { const url = 'blob:' + blobs.size; blobs.set(url, blob); return url; }, revokeObjectURL() {} },
+    setTimeout: (fn) => { timers.push(fn); }
+  });
+  vm.runInContext(source.match(/<script is:inline define:vars=\{\{ S: L \}\}>([\s\S]*?)<\/script>/)[1], context);
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const ux = layout.slice(layout.indexOf('{/* Tool UX enhancements:'));
+  vm.runInContext(ux.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], context);
+  return {
+    ids, clipboard, downloads, document,
+    async flush() { await Promise.resolve(); while (timers.length) timers.shift()(); },
+    change(id, value, type = 'input') { ids[id].value = value; ids[id].dispatch(type); }
+  };
+}
+
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const page = makePage(lang), el = page.ids;
+  async function validOutputs(label, rgb) {
+    const scale = E.generateScale(rgb);
+    const expected = E.buildExport(scale, E.sanitizeName(el['csg-name'].value), el['csg-format'].value, el['csg-values'].value);
+    equal(lang + ' ' + label + ': 11 clickable shades', el['csg-scale'].children.length, 11);
+    equal(lang + ' ' + label + ': export text', el['csg-code'].textContent, expected);
+    check(lang + ' ' + label + ': exports enabled', !el['csg-copy'].disabled && !el['csg-download'].disabled);
+    check(lang + ' ' + label + ': error cleared', !el['csg-input'].attributes['aria-invalid']);
+    for (const [i, li] of el['csg-scale'].children.entries()) {
+      li.children[0].click();
+      equal(lang + ' ' + label + ': shade ' + i + ' copies current value', page.clipboard.at(-1), E.formatColor(scale.steps[i].rgb, el['csg-values'].value));
+    }
+    el['csg-copy'].click(); el['csg-download'].click();
+    await page.flush();
+    equal(lang + ' ' + label + ': copy all bytes', page.clipboard.at(-1), expected);
+    equal(lang + ' ' + label + ': download bytes', await page.downloads.at(-1).blob.text(), expected);
+    equal(lang + ' ' + label + ': filename', page.downloads.at(-1).name, E.exportFileName(el['csg-name'].value, el['csg-format'].value));
+  }
+  async function invalidOutputs(label) {
+    equal(lang + ' ' + label + ': old shades removed', el['csg-scale'].children.length, 0);
+    equal(lang + ' ' + label + ': old code removed', el['csg-code'].textContent, '');
+    equal(lang + ' ' + label + ': old notes removed', [el['csg-export-note'].textContent, el['csg-scale-note'].textContent], ['', '']);
+    check(lang + ' ' + label + ': exports disabled', el['csg-copy'].disabled && el['csg-download'].disabled);
+    equal(lang + ' ' + label + ': input marked invalid', el['csg-input'].attributes['aria-invalid'], 'true');
+    equal(lang + ' ' + label + ': localized error', el['csg-status'].textContent, STRINGS[lang].err[E.parseColor(el['csg-input'].value).code]);
+    const counts = [page.clipboard.length, page.downloads.length];
+    for (const li of el['csg-scale'].children) li.children[0].click();
+    el['csg-copy'].click(); el['csg-download'].click();
+    // Dispatch also tests the handlers' empty-state guards independently of disabled buttons.
+    el['csg-copy'].dispatch('click'); el['csg-download'].dispatch('click');
+    await page.flush();
+    equal(lang + ' ' + label + ': no clipboard or download writes', [page.clipboard.length, page.downloads.length], counts);
+  }
+  await validOutputs('initial', [59, 130, 246]);
+  for (const input of ['#ZZZ', 'rgb(59 130)', '']) {
+    page.change('csg-input', input);
+    await invalidOutputs(JSON.stringify(input));
+    page.change('csg-format', 'tw3', 'change');
+    page.change('csg-values', 'oklch', 'change');
+    await invalidOutputs(JSON.stringify(input) + ' after format change');
+    page.change('csg-input', '#facc15');
+    await validOutputs('recovered', [250, 204, 21]);
+  }
+  for (const modifier of ['ctrlKey', 'metaKey']) {
+    const event = page.document.dispatch('keydown', { key: 'l', [modifier]: true });
+    await page.flush();
+    check(lang + ' ' + modifier + '+L: shortcut consumed', event.defaultPrevented);
+    equal(lang + ' ' + modifier + '+L: page cleared text fields', [el['csg-input'].value, el['csg-name'].value], ['', '']);
+    await invalidOutputs(modifier + '+L');
+    page.change('csg-picker', '#16a34a');
+    await validOutputs('picker recovery', [22, 163, 74]);
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

@@ -472,7 +472,7 @@ if (typeof DecompressionStream === 'function') {
 } else skip('gunzip', 'DecompressionStream not available in this Node');
 
 // ---------- protobuf.js cross-check (separate Long-enabled realm) ----------
-const oracleCtx = {};
+const oracleCtx = { TextEncoder, TextDecoder };
 oracleCtx.window = oracleCtx;
 oracleCtx.self = oracleCtx;
 vm.createContext(oracleCtx);
