@@ -74,7 +74,7 @@ assert.match(script, /zt:clear/, 'site clear resets tool state');
 vm.runInContext(declaration('highlight'), context);
 assert.doesNotMatch(vm.runInContext('highlight("<img onerror=x>")', context), /<img/, 'raw CSS highlighting escapes user input');
 vm.runInContext(source.match(/\/\/ engine:start([\s\S]*?)\/\/ engine:end/)[1], context);
-for (const value of ['circle(40px at 50% 50%)', 'path("M 20 20 H 180 V 120 H 20 Z")', 'shape(from 50% 0%, line to 100% 100%, line to 0% 100%, close)', 'inset(10% round 16px) content-box', 'content-box', 'none']) {
+for (const value of ['path("M 0 0 H 10 (")', 'circle(40px at 50% 50%)', 'path("M 20 20 H 180 V 120 H 20 Z")', 'shape(from 50% 0%, line to 100% 100%, line to 0% 100%, close)', 'inset(10% round 16px) content-box', 'content-box', 'none']) {
   assert.equal(context.isLocalValue(value), true);
   const raw = context.cssOutput(value, true);
   assert.equal(raw, '.element {\n  -webkit-clip-path: ' + value + ';\n  clip-path: ' + value + ';\n}');
@@ -82,7 +82,7 @@ for (const value of ['circle(40px at 50% 50%)', 'path("M 20 20 H 180 V 120 H 20 
   const text = n => n.nodeName === '#text' ? n.value : (n.childNodes || []).map(text).join('');
   assert.equal(text(fragment), raw);
 }
-for (const value of ['url(https://example.com/x.svg#clip)', 'URL(#clip)', 'circle(50%);color:red', 'circle(var(--r))', '\\75rl(#x)', '<img src=x>', 'inherit', 'circle(v/**/ar(--r))', 'circle(env(safe-area-inset-top))']) assert.equal(context.isLocalValue(value), false, value);
+for (const value of ['url(https://example.com/x.svg#clip)', 'URL(#clip)', 'circle(50%);color:red', 'circle(var(--r))', '\\75rl(#x)', '<img src=x>', 'inherit', 'circle(v/**/ar(--r))', 'circle(env(safe-area-inset-top))', 'polygon(50% 0%, 100% 100%', 'path("M 0 0 H 10', 'circle(50%))', 'inset(10%) )(']) assert.equal(context.isLocalValue(value), false, value);
 // Real listener callbacks, including captured touch pointers and keyboard edits.
 const handle = node('interactive');
 handle.setPointerCapture = () => {};

@@ -746,7 +746,7 @@ const L = { ...labels[lang], ...extra[lang] };
           previewEl.style.clipPath = '';
           codeEl.textContent = '';
           copyBtn.disabled = true;
-          statusEl.textContent = local ? L.invalid : L.localOnly;
+          statusEl.textContent = local || !isClosed(value) ? L.invalid : L.localOnly;
           return;
         }
         copyBtn.disabled = false;
@@ -764,8 +764,20 @@ const L = { ...labels[lang], ...extra[lang] };
       }
 
       // engine:start
+      // CSS.supports() closes unclosed brackets and strings at the end of input, so check them here
+      function isClosed(value) {
+        var depth = 0, quote = '';
+        for (var i = 0; i < value.length; i++) {
+          var ch = value[i];
+          if (quote) { if (ch === quote) quote = ''; continue; }
+          if (ch === '"' || ch === "'") quote = ch;
+          else if (ch === '(') depth++;
+          else if (ch === ')' && --depth < 0) return false;
+        }
+        return depth === 0 && !quote;
+      }
       function isLocalValue(value) {
-        return !/[\\;{}]|\/\*|url\s*\(|var\s*\(|env\s*\(/i.test(value) &&
+        return isClosed(value) && !/[\\;{}]|\/\*|url\s*\(|var\s*\(|env\s*\(/i.test(value) &&
           /^(?:polygon|circle|ellipse|inset|path|shape|rect|xywh)\s*\(|^(?:none|border-box|padding-box|content-box|margin-box|fill-box|stroke-box|view-box)$/i.test(value);
       }
       function cssOutput(value, prefixed) {
