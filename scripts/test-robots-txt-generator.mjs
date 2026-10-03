@@ -10,8 +10,12 @@
 // - the output on load (one `*` block with `Disallow: /`, the state the tool page warns about);
 // - `rtg-build` annotations: a list of blocks ({ua, custom?, rules: [[type, path], ...]}) and a
 //   sitemap URL; the generated file must appear verbatim in a code block of the guide;
-// - `rtg-parse` annotations: a robots.txt body, a user agent, a path and the expected answer
-//   from Python's urllib.robotparser and from Protego (the RFC 9309 parser used by Scrapy).
+// - `rtg-parse` annotations: a robots.txt body, a user agent and paths. Each path is
+//   [path, urllib.robotparser before RFC 9309, Protego 0.7.0, urllib.robotparser with RFC 9309].
+//   CPython rewrote urllib.robotparser for RFC 9309 in gh-138907 (3.13.14 and 3.14.5; 3.12 and
+//   older keep the first-match rules). The test probes which rules the interpreter's module
+//   follows, checks that this agrees with its version, and compares against the matching column.
+//   The RFC 9309 column was recorded with Python 3.14.7, the old column with 3.12.11.
 //   urllib.robotparser runs whenever python3 is available; Protego checks are skipped (SKIP)
 //   unless `python3 -c "import protego"` works (set PYTHON to another interpreter if needed);
 // - the guides are indexable and have no template headings.
@@ -148,6 +152,25 @@ function pyOk(code) {
 const hasPython = pyOk('import urllib.robotparser');
 // Expected Protego results were recorded with 0.7.0; only that release is compared.
 const hasProtego = hasPython && pyOk('import importlib.metadata as m, sys; sys.exit(0 if m.version("protego") == "0.7.0" else 1)');
+// Which rules does this interpreter's urllib.robotparser follow? Under the old first-match rules
+// `Disallow: /a` above `Allow: /a/b` blocks /a/b; under RFC 9309 the longer Allow wins.
+const PROBE = `
+import json, sys, platform, urllib.robotparser as rp
+u = rp.RobotFileParser(); u.parse(['User-agent: *', 'Disallow: /a', 'Allow: /a/b'])
+v = sys.version_info[:3]
+print(json.dumps({'rfc': u.can_fetch('x', 'https://example.com/a/b'), 'version': platform.python_version(),
+  'impl': platform.python_implementation(),
+  'expectRfc': v >= (3, 14, 5) or (3, 13, 14) <= v < (3, 14)}))
+`;
+let urllibMode = null;
+if (hasPython) {
+  urllibMode = JSON.parse(execFileSync(PY, ['-c', PROBE]).toString());
+  console.log(`urllib.robotparser: Python ${urllibMode.version} (${urllibMode.impl}), ${urllibMode.rfc ? 'RFC 9309 rules' : 'first-match rules'}`);
+  // A distribution may backport gh-138907 to an older patch release, so a mismatch is only reported.
+  if (urllibMode.impl === 'CPython' && urllibMode.rfc !== urllibMode.expectRfc) {
+    console.log(`WARN: Python ${urllibMode.version} follows ${urllibMode.rfc ? 'RFC 9309' : 'first-match'} rules; upstream CPython changed in 3.13.14 / 3.14.5 (gh-138907)`);
+  }
+}
 const PARSE = `
 import json, sys, urllib.robotparser as rp
 cases = json.load(sys.stdin)
@@ -190,10 +213,16 @@ for (const lang of ['en', 'ja', 'ko']) {
   check(lang + ': has rtg-parse examples', cases.length > 0);
   if (!hasPython) { skips += cases.length; continue; }
   const flat = [];
-  for (const c of cases) for (const p of c.paths) flat.push({ txt: c.txt, ua: c.ua, path: p[0], urllib: p[1], protego: p[2] });
+  for (const c of cases) {
+    for (const p of c.paths) {
+      check(`${lang}: rtg-parse ${c.ua} ${p[0]} has 4 answers`, p.length === 4 && p.slice(1).every((x) => typeof x === 'boolean'), JSON.stringify(p));
+      flat.push({ txt: c.txt, ua: c.ua, path: p[0], urllib: urllibMode.rfc ? p[3] : p[1], protego: p[2] });
+    }
+  }
   const res = JSON.parse(execFileSync(PY, ['-c', PARSE], { input: JSON.stringify(flat) }).toString());
+  const rules = urllibMode.rfc ? 'RFC 9309' : 'first match';
   flat.forEach((c, i) => {
-    check(`${lang}: urllib.robotparser ${c.ua} ${c.path}`, res[i].urllib === c.urllib, `got ${res[i].urllib}`);
+    check(`${lang}: urllib.robotparser (${rules}) ${c.ua} ${c.path}`, res[i].urllib === c.urllib, `got ${res[i].urllib}`);
     if (hasProtego) check(`${lang}: Protego ${c.ua} ${c.path}`, res[i].protego === c.protego, `got ${res[i].protego}`);
     else skips++;
   });
