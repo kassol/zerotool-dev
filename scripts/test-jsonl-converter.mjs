@@ -125,6 +125,17 @@ await test('panel Ctrl+Enter stops the page-wide shortcut', () => {
   }
   assert.equal(p.get('jlc-jsonl').value, '1\n2');
 });
+await test('emptying the JSONL panel also resets its counters and issues', () => {
+  for (const action of ['non-array', 'invalid', 'edit']) {
+    const p = page(); p.get('jlc-jsonl').value = '1\n{bad}'; p.get('jlc-validate').click();
+    assert.equal(p.get('jlc-error-lines').textContent, '1');
+    if (action === 'edit') { p.get('jlc-json').value = '[1]'; p.get('jlc-json').fire('input'); }
+    else { p.get('jlc-json').value = action === 'invalid' ? '[1,' : '{}'; p.get('jlc-to-jsonl').click(); }
+    assert.equal(p.get('jlc-jsonl').value, '', action);
+    assert.deepEqual(['total', 'valid', 'error', 'empty'].map(k => p.get('jlc-' + k + '-lines').textContent), ['0', '0', '0', '0'], action);
+    assert.equal(p.get('jlc-issues-count').textContent, '0', action);
+  }
+});
 await test('Ctrl+L drops cached copy/download output', async () => {
   const p = page(); p.get('jlc-jsonl').value = '9007199254740993'; p.get('jlc-to-json').click();
   p.get('jlc-jsonl').value = ''; p.get('jlc-json').value = '';
