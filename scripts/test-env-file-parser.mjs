@@ -74,17 +74,19 @@ function entry(text, key) {
 
 // ---------- P3 dotenv dialect: exercise the complete Parse / Export JSON handlers ----------
 async function pageExport(text, lang = 'en') {
-  const elements = new Map(), downloads = [];
+  const elements = new Map(), downloads = [], docEvents = {}, timers = [];
   function element() { const events = {}; return { value: '', disabled: false, textContent: '', innerHTML: '', style: {}, children: [],
     addEventListener(k, fn) { events[k] = fn; }, click() { if (this.disabled) return; if (this.download) downloads.push(this.href); events.click?.(); },
     fire(k) { events[k]?.(); }, appendChild(child) { this.children.push(child); } }; }
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
-    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element },
-    window: {}, Blob, URL: { createObjectURL: blob => blob, revokeObjectURL() {} }
+    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element,
+      addEventListener(k, fn) { docEvents[k] = fn; } },
+    window: {}, Blob, URL: { createObjectURL: blob => blob, revokeObjectURL() {} }, setTimeout: fn => timers.push(fn)
   });
   get('efp-input').value = text; get('efp-parse').click(); get('efp-export-json').click();
-  return { output: downloads.length ? JSON.parse(await downloads[0].text()) : {}, status: get('efp-status').textContent, get, downloads };
+  return { output: downloads.length ? JSON.parse(await downloads[0].text()) : {}, status: get('efp-status').textContent, get, downloads,
+    pageClear() { get('efp-input').value = ''; docEvents.keydown?.({ key: 'l', ctrlKey: true }); timers.splice(0).forEach(fn => fn()); } };
 }
 eq('reference is dotenv 16.6.1', require('dotenv/package.json').version, '16.6.1');
 const dialectCases = [
@@ -100,15 +102,17 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     if (text.includes('__proto__=')) Object.defineProperty(expected, '__proto__', { value: 'value', enumerable: true });
      eq(lang + ' Parse/Export dialect ' + n, Object.entries(p.output).sort(), Object.entries(expected).sort());
   }
-  for (const action of ['empty', 'edit', 'clear']) {
+  for (const action of ['empty', 'edit', 'clear', 'page-clear']) {
     const p = await pageExport('A=old', lang);
     p.get('efp-input').value = action === 'edit' ? 'A=new' : '';
     if (action === 'empty') p.get('efp-parse').click();
     else if (action === 'edit') p.get('efp-input').fire('input');
-    else p.get('efp-clear').click();
+    else if (action === 'clear') p.get('efp-clear').click();
+    else p.pageClear();
     check(lang + ' ' + action + ' disables export', p.get('efp-export-json').disabled);
     p.get('efp-export-json').click();
     eq(lang + ' ' + action + ' cannot export old data', p.downloads.length, 1);
+    if (action === 'page-clear') eq(lang + ' page clear hides the old table', [p.get('efp-result').style.display, p.get('efp-status').textContent], ['none', '']);
   }
 }
 eq('dotenv drops __proto__; tool intentionally keeps this key', Object.keys(dotenv.parse('__proto__=value')), []);
