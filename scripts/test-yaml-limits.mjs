@@ -17,7 +17,7 @@
 
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import jsyaml from 'js-yaml';
@@ -134,8 +134,7 @@ for (const [tool, file, wrap, input, output, copy, status, , button] of PAGES) {
 /* ── json-schema-validator: parse errors (CORE_SCHEMA has no merge keys, so only depth) ── */
 {
   const source = readFileSync(join(root, 'src/components/tools/JsonSchemaValidatorTool.astro'), 'utf8');
-  const block = source.slice(source.indexOf('/* ── engine:start ── */'), source.indexOf('/* ── engine:end ── */'));
-  const E = new Function(block + '\nreturn { parseDocs, parseErrorText };')();
+  const E = await import(pathToFileURL(join(root, 'src/components/tools/json-schema-validator-engine.js')).href);
   const STRINGS = new Function(source.slice(source.indexOf('const STRINGS = '), source.indexOf('const S = STRINGS')) + '\nreturn STRINGS;')();
   for (const lang of LANGS) {
     for (const text of [DEEP_BLOCK, 'x: 1\nb: ' + '['.repeat(101) + ']'.repeat(101)]) {
