@@ -9,7 +9,7 @@ faqItems:
   - question: "Does it check format (email, date, uuid)?"
     answer: "Yes, while Check format is on (the default): email, uri, uri-reference, uri-template, date, time, date-time, duration, hostname, ipv4, ipv6, uuid, json-pointer, relative-json-pointer and regex, through ajv-formats. Other formats, such as idn-email or iri, pass and are listed in a note. Turn the switch off to treat format as an annotation, which is the default of the 2020-12 specification and of Python jsonschema."
   - question: "Why does my schema pass here and fail in another validator?"
-    answer: "Usually the draft, format checking or a keyword the draft does not have. The notes under the result list what this tool ignored: unknown keywords (with a suggestion for typos), keywords next to $ref in draft 4–7, nullable from OpenAPI 3.0, and formats it does not check. Another cause is a number above 2^53, which JavaScript cannot hold exactly; the tool warns when it sees one."
+    answer: "Usually the draft, format checking or a keyword the draft does not have. The notes under the result list what this tool ignored: unknown keywords (with a suggestion for typos), keywords next to $ref in draft 4–7, nullable from OpenAPI 3.0, and formats it does not check. Another cause is a number such as 9007199254740993 that JavaScript cannot hold exactly; when the schema compares numbers, this tool says \"Cannot be determined\" instead of giving a result."
   - question: "Can I validate a JSON array or many records at once?"
     answer: "Yes. Any JSON value can be the root, including an array. For many records, paste JSON Lines (one JSON value per line) or YAML documents separated by ---; each document is validated on its own and the result lists the ones with errors."
 ---
@@ -144,6 +144,33 @@ Document 3 (line 3)
 * No $schema: validated as Draft 2020-12. Add "$schema" or pick a draft in the menu.
 ```
 
+## When the result is "Cannot be determined"
+
+Ajv passes most of the official test suite, but it gets a few constructs wrong. For those inputs the tool gives no valid / invalid result: the status says **Cannot be determined**, the reasons are listed, and the copied text and JSON say the same (`"state": "unknown"`, `"valid": null`). A recursive tree schema that uses `$dynamicRef`, the 2020-12 keyword for extensible recursion, is one case:
+
+{/* jsv-ex: {} */}
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$dynamicAnchor": "node",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string" },
+    "children": { "type": "array", "items": { "$dynamicRef": "#node" } }
+  }
+}
+```
+```json
+{ "name": "root", "children": [{ "name": 1 }] }
+```
+```text
+Cannot be determined (Draft 2020-12): this input reaches a case the validator cannot check reliably, so no valid / invalid result is given. Reasons below.
+Cannot be determined, because:
+- "$dynamicRef" at #/properties/children/items/$dynamicRef: Ajv implements dynamic references only in part and gives wrong results on some official test cases.
+```
+
+If you do not extend the schema from another one, `"$ref": "#"` means the same here and the tool can check it. The other cases are `$recursiveRef` whose first target has no `"$recursiveAnchor": true`, nested `$id` with relative `$ref` (Ajv runs out of stack), `unevaluatedItems` / `unevaluatedProperties` together with `contains`, an `if` without both `then` and `else`, or `items` inside an `anyOf` / `oneOf` branch, a meta-schema whose `$vocabulary` adds or leaves out vocabularies, a property named `__proto__` that the data uses, and numbers that JavaScript cannot hold exactly (next section). In JSON Lines and multi-document YAML each document gets its own state: one invalid document makes the result invalid; otherwise one undetermined document makes it undetermined.
+
 ## How errors are grouped
 
 Ajv, the validator this tool runs, reports every failed branch of a `oneOf` or `anyOf`. For a payment that is either a card or a bank account, a card with a two-digit `last4` produces five Ajv errors: the two real problems, three complaints from the bank branch, and the summary. This tool shows one error at `/payment` and opens the **closest branch**, the one with the fewest errors, not counting a branch whose `const` discriminator (`"method": "bank"`) already fails. The other branches stay folded. The same works when each branch is a `$ref`. An `if` / `then` failure is shown as the `then` error with "via then".
@@ -169,17 +196,17 @@ We ran the same six inputs through the first results for "json schema validator"
 |---|---|---|---|---|---|---|---|
 | jsonschemavalidator.net | yes, schema and data to `/api/jsonschema/validate` | ignored | fails | fails | passes, no warning | correct | no |
 | jsonlint.com | no | applied | passes | passes | passes, no warning | correct | no |
-| ZeroTool | no | ignored, note | fails | fails, note | passes, warning | correct | yes |
+| ZeroTool | no | ignored, note | fails | fails, note | cannot be determined, note | correct | yes |
 
-The correct answers are: ignored, fails, fails, fails. No browser-side validator can get the 2^53 case right, because `JSON.parse` turns both numbers into 9007199254740992 before validation; this tool tells you the number was changed.
+The correct answers are: ignored, fails, fails, fails. No browser-side validator can get the 2^53 case right, because `JSON.parse` turns both numbers into 9007199254740992 before validation. This tool names the changed number and gives no verdict for it.
 
 ## Limits
 
-- The validator is Ajv 8.18 with ajv-formats 3.0.1 and ajv-draft-04 1.0.0. On the official [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite) it passes 617 of 618 draft-04 tests, 840 of 841 draft-06, 928 of 929 draft-07, 1,243 of 1,261 for 2019-09 and 1,249 of 1,301 for 2020-12. The failures are Ajv limitations: `$dynamicRef` (25 tests), `unevaluatedItems` with `contains`, nested `$id` with relative refs, custom vocabularies, and a property named `__proto__`, which Ajv skips. A schema with `$dynamicRef` shows a note.
+- The validator is Ajv 8.18 with ajv-formats 3.0.1 and ajv-draft-04 1.0.0. On the required tests of the official [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite) the tool gives the expected result for 616 of 618 draft-04 tests, 839 of 841 draft-06, 927 of 929 draft-07, 1,230 of 1,261 for 2019-09 and 1,210 of 1,301 for 2020-12, and says "Cannot be determined" for the rest (2, 2, 2, 31 and 91 tests); no test gets a wrong result. The rules look only at the schema and the data, so they also cover some tests Ajv would have passed: every `$dynamicRef` schema, for example.
 - `$ref` to a URL is never fetched. Paste the referenced schema, with its `$id`, under **Referenced schemas**.
-- Numbers are read with `JSON.parse`, so integers above 2^53 lose precision. Duplicate keys keep the last value. Both get a warning with the line.
+- Numbers are read with `JSON.parse`. A number that a JavaScript double cannot hold exactly, such as `9007199254740993`, `1.0000000000000001` or `1e400`, gets a note with its line (`0.1` and `1.0` are fine). When the schema compares numbers (`type`, `minimum`, `maximum`, `multipleOf`, `const`, `enum`, `uniqueItems`), that document is "Cannot be determined". Such a number in the schema, or any such number in YAML data, makes the result "Cannot be determined" in every case. Duplicate keys keep the last value and get a note.
 - Line numbers are shown for JSON and JSON Lines. YAML errors show the path only.
-- Inputs over 1 MB are checked when you press **Validate**; files over 20 MB are refused. A 6 MB array of 40,000 records validates in about half a second on a laptop.
+- Inputs over 1 MB are checked when you press **Validate**; files over 20 MB are refused. Validation runs in a Web Worker, so the page keeps responding; **Cancel** stops a long run. A 6 MB array of 40,000 records took about 2 seconds in our test, with no main-thread task of 50 ms or more while it ran (putting a 6 MB file into the text box is the slow part).
 - `pattern` is an ECMA-262 regular expression with the `u` flag. `\d` matches only ASCII digits, so Python `re` (where `\d` also matches `１２３`) can disagree.
 
 Related tools: generate a first schema from a sample with [JSON to JSON Schema](/tools/json-to-json-schema/), check YAML syntax with the [YAML Validator](/tools/yaml-validator/), and validate a whole API description with the [OpenAPI Validator](/tools/openapi-validator/).

@@ -28,7 +28,7 @@
 //      JSON_SCHEMA_TEST_SUITE_DIR=<checkout> also runs the full suite from that checkout.
 
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
@@ -70,9 +70,11 @@ if (process.argv[2] === '--regenerate') {
 
 // ---------- engine, strings, examples ----------
 const source = readFileSync(join(root, 'src/components/tools/JsonSchemaValidatorTool.astro'), 'utf8');
-const block = source.slice(source.indexOf('/* ── engine:start ── */'), source.indexOf('/* ── engine:end ── */'));
-if (!block) { console.error('FAIL: engine block not found'); process.exit(1); }
-const E = new Function(block + '\nreturn { DRAFTS, META_URIS, DRAFT_NAMES, ASSERTED_FORMATS, draftOfUri, detectDraft, createAjv, knownKeywords, prepareSchema, nestErrors, describe, jsonSyntaxError, scanJson, parseDocs, parseExtras, buildValidator, runValidation, noticeText, schemaErrorText, parseErrorText, statusText, reportText, reportJson, lineCol, getAt, codePoints };')();
+const ENGINE = join(root, 'src/components/tools/json-schema-validator-engine.js');
+const engineSrc = readFileSync(ENGINE, 'utf8');
+const runSrc = readFileSync(join(root, 'src/components/tools/json-schema-validator-run.js'), 'utf8');
+const workerSrc = readFileSync(join(root, 'src/components/tools/json-schema-validator.worker.js'), 'utf8');
+const E = await import(pathToFileURL(ENGINE).href);
 const STRINGS = new Function(source.slice(source.indexOf('const STRINGS = '), source.indexOf('const S = STRINGS')) + '\nreturn STRINGS;')();
 const exStart = source.indexOf('const EXAMPLES');
 const exEnd = source.indexOf('EXAMPLES.userErrors.schema = EXAMPLES.user.schema;');
@@ -121,7 +123,10 @@ function valid(schema, data, draft = '2020-12', formats = true) {
 const codes = (res) => res.notices.map((n) => n.code);
 
 // ---------- 1. official JSON Schema Test Suite ----------
-// Each entry: '<draft dir>|<file>|<group>|<test>' that still fails, with the reason.
+// Ajv 8.18 gives a wrong verdict (or a schema error) on these tests. The tool must now answer
+// "cannot be determined" for each of them; the rules that decide this look only at the schema
+// and data (json-schema-validator-engine.js unsupportedOf / validateDoc), never at test names.
+// Each entry: '<file>|<group>|<test>'.
 const KNOWN_FAILURES = {
   // Ajv skips properties named "__proto__" (prototype pollution guard), so the schema for it is never applied.
   proto: ['properties.json|properties whose names are Javascript object property names|__proto__ not valid'],
@@ -135,34 +140,168 @@ const KNOWN_FAILURES = {
   // Ajv does not honour a custom meta-schema's $vocabulary.
   vocabulary: ['vocabulary.json|schema that uses custom metaschema with with no validation vocabulary|no validation: invalid number, but it still validates'],
 };
-const DYNAMIC_REF_FAILS = 25; // dynamicRef.json in 2020-12: Ajv supports $dynamicRef only in part
-const EXPECTED_FAILS = {
+// dynamicRef.json in 2020-12: Ajv fails 25 tests; every test in that file is "cannot be determined"
+const EXPECTED_UNKNOWN = {
   draft4: [...KNOWN_FAILURES.proto],
   draft6: [...KNOWN_FAILURES.proto],
   draft7: [...KNOWN_FAILURES.proto],
   'draft2019-09': [...KNOWN_FAILURES.proto, ...KNOWN_FAILURES.recursive, ...KNOWN_FAILURES.relRefs, ...KNOWN_FAILURES.uneval2019, ...KNOWN_FAILURES.vocabulary],
   'draft2020-12': [...KNOWN_FAILURES.proto, ...KNOWN_FAILURES.relRefs, ...KNOWN_FAILURES.uneval2019, ...KNOWN_FAILURES.uneval2020extra, ...KNOWN_FAILURES.vocabulary],
 };
+// Each test is counted as pass (the tool's verdict equals the expected one), unknown (the tool
+// says "cannot be determined"; not a pass) or fail (wrong verdict, a schema error or a throw).
 function runSuite(tests, remotes, dir, formats) {
   const draft = DIRS[dir];
   const rem = Object.entries(remotes).filter(([rel]) => !rel.startsWith('draft') || rel.startsWith(dir + '/'));
-  let pass = 0, total = 0; const fails = [];
+  let pass = 0, total = 0, unknown = 0; const fails = [], unknowns = [], passes = [], reasons = {};
   for (const [file, groups] of tests) {
     for (const g of groups) {
       const needs = JSON.stringify(g.schema).includes('localhost:1234');
       const built = E.buildValidator(lib, { schema: g.schema, menu: draft, formats, extras: needs ? rem.map((r) => r[1]) : [], extraUris: needs ? rem.map((r) => 'http://localhost:1234/' + r[0]) : [] });
       for (const t of g.tests) {
         total++;
+        const name = file + '|' + g.description + '|' + t.description;
         let got;
-        if (!built.ok) got = 'error';
-        else { try { got = built.validate(t.data); } catch { got = 'throw'; } }
-        if (got === t.valid) pass++; else fails.push(file + '|' + g.description + '|' + t.description);
+        if (!built.ok && built.stage !== 'unknown') got = 'error';
+        else {
+          const r = E.validateDoc(built, t.data);
+          got = r.state === 'unknown' ? 'unknown' : r.valid;
+          if (got === 'unknown') r.reasons.forEach((x) => { reasons[x.code] = (reasons[x.code] || 0) + 1; });
+        }
+        if (got === 'unknown') { unknown++; unknowns.push(name); } else if (got === t.valid) { pass++; passes.push(name); } else fails.push(name);
       }
     }
   }
-  return { pass, total, fails };
+  return { pass, unknown, total, fails, unknowns, passes, reasons };
 }
 const fixture = JSON.parse(gunzipSync(readFileSync(FIXTURE)).toString());
+// "Cannot be determined": the official tests Ajv gets wrong, inexact numbers, "__proto__" and
+// vocabularies, through the shipped compilation and text entry points. `--reliability` runs only
+// this part (fast loop).
+function historic(dir) {
+  return dir === 'draft2019-09' ? [...KNOWN_FAILURES.proto, ...KNOWN_FAILURES.recursive, ...KNOWN_FAILURES.relRefs, ...KNOWN_FAILURES.uneval2019, ...KNOWN_FAILURES.vocabulary]
+    : dir === 'draft2020-12' ? [...KNOWN_FAILURES.proto, ...KNOWN_FAILURES.relRefs, ...KNOWN_FAILURES.uneval2019, ...KNOWN_FAILURES.uneval2020extra, ...KNOWN_FAILURES.vocabulary]
+    : [...KNOWN_FAILURES.proto];
+}
+const UNKNOWN_INPUTS = [
+  ['proto', '{"properties":{"__proto__":{"type":"number"}}}', '{"__proto__":"wrong"}', {}, 'proto'],
+  ['data integer', '{"maximum":9007199254740992}', '9007199254740993', {}, 'lossyData'],
+  ['negative integer', '{"minimum":-9007199254740992}', '-9007199254740993', {}, 'lossyData'],
+  ['fraction', '{"type":"integer"}', '1.0000000000000001', {}, 'lossyData'],
+  ['exponent', '{"maximum":9007199254740992}', '9.007199254740993e15', {}, 'lossyData'],
+  ['underflow', '{"const":0}', '1e-400', {}, 'lossyData'],
+  ['overflow', '{"type":"number"}', '1e400', {}, 'lossyData'],
+  ['enum', '{"enum":[1]}', '1.00000000000000001', {}, 'lossyData'],
+  ['schema integer', '{"maximum":9007199254740993}', '9007199254740992', {}, 'lossySchema'],
+  ['schema fraction', '{"multipleOf":1.0000000000000001}', '1', {}, 'lossySchema'],
+  ['schema negative', '{"exclusiveMinimum":-9007199254740993}', '-9007199254740992', {}, 'lossySchema'],
+  ['extra integer', '{"$ref":"https://fixture.example/number"}', '1', { extras: '{"$id":"https://fixture.example/number","enum":[9007199254740993]}' }, 'lossySchema'],
+  ['JSON Lines', '{"properties":{"n":{"maximum":9007199254740992}}}', '{"n":1}\n{"n":9007199254740993}', {}, 'lossyData'],
+  ['YAML data', '{"properties":{"n":{"maximum":9007199254740992}}}', 'n: 9007199254740993', {}, 'lossyData'],
+  ['YAML data key', '{"required":["9007199254740993"]}', '9007199254740993: x', {}, 'lossyData'],
+  ['YAML hex', '{"maximum":1}', 'n: 0x20000000000001', {}, 'lossyData'],
+  ['YAML schema', 'maximum: 9007199254740993', '1', {}, 'lossySchema'],
+  ['required vocabulary', '{"$vocabulary":{"https://fixture.example/vocab":true},"type":"string"}', '"x"', {}, 'vocabUnknown'],
+  ['custom meta-schema without validation', '{"$schema":"https://fixture.example/meta","minimum":10}', '1', { extras: '{"$id":"https://fixture.example/meta","$schema":"https://json-schema.org/draft/2020-12/schema","$vocabulary":{"https://json-schema.org/draft/2020-12/vocab/core":true,"https://json-schema.org/draft/2020-12/vocab/applicator":true}}' }, 'vocabMissing'],
+  ['dynamicRef', '{"$dynamicAnchor":"n","properties":{"c":{"$dynamicRef":"#n"}}}', '{"c":{}}', {}, 'dynamicRef'],
+  ['dynamicRef in a referenced schema', '{"$ref":"https://fixture.example/tree"}', '{}', { extras: '{"$id":"https://fixture.example/tree","$dynamicAnchor":"n","properties":{"c":{"$dynamicRef":"#n"}}}' }, 'dynamicRef'],
+  ['recursiveRef without initial anchor', '{"$schema":"https://json-schema.org/draft/2019-09/schema","$id":"https://fixture.example/base","$recursiveAnchor":true,"properties":{"a":{"$id":"inner","properties":{"b":{"$recursiveRef":"#"}}}}}', '{}', {}, 'recursiveRef'],
+  ['relative refs overflow', '{"$id":"http://example.com/a.json","properties":{"foo":{"$id":"b.json","$defs":{"inner":{"type":"string"}},"$ref":"#/$defs/inner"}},"$ref":"b.json"}', '{}', {}, 'refOverflow'],
+  ['unevaluated + if without else', '{"if":{"required":["a"]},"then":{"properties":{"a":{}}},"unevaluatedProperties":false}', '{"a":1}', {}, 'unevaluated'],
+  ['unevaluatedItems + contains', '{"contains":{"type":"string"},"unevaluatedItems":false}', '["a"]', {}, 'unevaluated'],
+  // 2019-09: "contains" gives unevaluatedItems no annotation (added in 2020-12), but Ajv 2019 uses it
+  ['2019-09 unevaluatedItems + contains', '{"$schema":"https://json-schema.org/draft/2019-09/schema","contains":{"type":"string"},"unevaluatedItems":false}', '["a"]', {}, 'unevaluated'],
+  ['unevaluatedItems + items in anyOf', '{"anyOf":[{"items":{"type":"string"}},true],"unevaluatedItems":false}', '["a"]', {}, 'unevaluated'],
+];
+// supported paths: these must keep a valid / invalid verdict
+const DETERMINED_INPUTS = [
+  ['plain maximum', '{"maximum":3}', '2', 'valid'], ['plain maximum fails', '{"maximum":3}', '4', 'invalid'],
+  ['0.1 is exact', '{"maximum":0.1}', '0.1', 'valid'], ['1.0 is exact', '{"type":"integer"}', '1.0', 'valid'],
+  ['2^53 + 2 is exact', '{"maximum":9007199254740994}', '9007199254740994', 'valid'],
+  ['large number without numeric keywords', '{"required":["id"]}', '{"id":9007199254740993}', 'valid'],
+  ['-0', '{"const":0}', '-0', 'valid'], ['1e2 = 100', '{"const":100}', '1e2', 'valid'],
+  ['YAML 0o17', '{"const":15}', 'n: 0o17\n', 'invalid'], ['YAML plain int', '{"properties":{"n":{"maximum":3}}}', 'n: 2\n', 'valid'],
+  ['required __proto__', '{"required":["__proto__"]}', '{}', 'invalid'],
+  ['properties __proto__, data without that key', '{"properties":{"__proto__":{"type":"number"}},"required":["a"]}', '{"a":1}', 'valid'],
+  ['constructor / toString', '{"required":["constructor","toString"]}', '{}', 'invalid'],
+  ['$recursiveRef with no anchor anywhere', '{"$schema":"https://json-schema.org/draft/2019-09/schema","properties":{"c":{"$recursiveRef":"#"}},"type":"object"}', '{"c":1}', 'invalid'],
+  ['$recursiveRef with anchors on both', '{"$schema":"https://json-schema.org/draft/2019-09/schema","$recursiveAnchor":true,"type":"object","properties":{"c":{"$recursiveRef":"#"}}}', '{"c":{"c":1}}', 'invalid'],
+  ['unevaluatedProperties + allOf + $ref', EXAMPLES.yaml.schema, EXAMPLES.yaml.data, 'invalid'],
+  ['unevaluatedProperties + if / then / else', '{"if":{"required":["a"]},"then":{"properties":{"a":{}}},"else":{"properties":{"b":{}}},"unevaluatedProperties":false}', '{"a":1}', 'valid'],
+  ['unused referenced schema with $dynamicRef', '{"type":"string"}', '"x"', 'valid', { extras: '{"$id":"https://fixture.example/tree","$dynamicAnchor":"n","properties":{"c":{"$dynamicRef":"#n"}}}' }],
+  ['standard meta-schema vocabularies', '{"$schema":"https://fixture.example/meta","minimum":10}', '1', 'invalid', { extras: '{"$id":"https://fixture.example/meta","$schema":"https://json-schema.org/draft/2020-12/schema","$vocabulary":{"https://json-schema.org/draft/2020-12/vocab/core":true,"https://json-schema.org/draft/2020-12/vocab/applicator":true,"https://json-schema.org/draft/2020-12/vocab/validation":true,"https://fixture.example/vocab/x":false}}' }],
+  ['oneOf example', EXAMPLES.oneOf.schema, EXAMPLES.oneOf.data, 'invalid'], ['user example', EXAMPLES.user.schema, EXAMPLES.user.data, 'valid'],
+];
+function reliabilityChecks() {
+  for (const dir of ['draft4', 'draft6', 'draft7', 'draft2019-09', 'draft2020-12']) {
+    const rem = Object.entries(fixture.remotes).filter(([p]) => !p.startsWith('draft') || p.startsWith(dir + '/'));
+    const keys = historic(dir);
+    for (const [file, groups] of fixture.tests[dir]) for (const g of groups) {
+      if (file !== 'dynamicRef.json' && !g.tests.some((t) => keys.includes(file + '|' + g.description + '|' + t.description))) continue;
+      const needs = JSON.stringify(g.schema).includes('localhost:1234');
+      const b = E.buildValidator(lib, { schema: g.schema, menu: DIRS[dir], formats: false, extras: needs ? rem.map((r) => r[1]) : [], extraUris: needs ? rem.map((r) => 'http://localhost:1234/' + r[0]) : [] });
+      for (const t of g.tests) {
+        const name = file + '|' + g.description + '|' + t.description;
+        let got;
+        try { if (!b.ok && b.stage !== 'unknown') got = 'schema-error'; else { const r = E.validateDoc(b, t.data); got = r.state === 'unknown' ? 'unknown' : r.valid; } }
+        catch (error) { got = 'throw:' + error.message; }
+        check(dir + '|' + name + (keys.includes(name) || file === 'dynamicRef.json' ? ' (Ajv was wrong): cannot be determined' : ': correct or cannot be determined'), keys.includes(name) ? got === 'unknown' : got === 'unknown' || got === t.valid, { expected: t.valid, got });
+      }
+    }
+  }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = STRINGS[lang];
+    for (const [name, schema, data, opts, reason] of UNKNOWN_INPUTS) {
+      const r = run(schema, data, { ...opts, T: L });
+      const tag = '[' + lang + '] ' + name;
+      check(tag + ': main state unknown (' + reason + ')', r.state === 'unknown' && r.reasons.some((x) => x.code === reason), [r.state, r.reasons.map((x) => x.code)]);
+      check(tag + ': unknown documents have null validity, no errors and their reasons', r.docs.length > 0 && r.docs.some((d) => d.state === 'unknown' && d.valid === null && d.raw.length === 0 && d.groups.length === 0 && d.reasons.length > 0));
+      const text = E.reportText(r, L), json = JSON.parse(E.reportJson(r, L));
+      check(tag + ': copies keep unknown', text.includes(L.unknown) && json.some((d) => d.state === 'unknown' && d.valid === null && d.reasons.length && d.reasons.every((x) => x.message && !/\{\w+\}/.test(x.message))));
+      check(tag + ': status and reasons are filled', !/\{\w+\}/.test(E.statusText(r, L)) && E.statusText(r, L) !== '' && r.reasons.every((x) => !/\{\w+\}|undefined/.test(E.reasonText(x, L))), [E.statusText(r, L), r.reasons.map((x) => E.reasonText(x, L))]);
+    }
+  }
+  for (const [name, schema, data, want, opts] of DETERMINED_INPUTS) {
+    const r = run(schema, data, opts || {});
+    check('supported path keeps its verdict: ' + name, r.state === want && !r.reasons.length, [r.state, r.reasons]);
+  }
+  {
+    const mixed = run('{"properties":{"n":{"maximum":5}}}', '{"n":1}\n{"n":9}\n{"n":9007199254740993}');
+    check('JSON Lines: invalid + unknown → invalid, counts both', mixed.state === 'invalid' && mixed.bad === 1 && mixed.unknown === 1 && E.statusText(mixed, T) === '1 of 3 documents have errors and 1 cannot be determined (Draft 2020-12).', E.statusText(mixed, T));
+    check('JSON Lines: per-document states', mixed.docs.map((d) => d.state).join() === 'valid,invalid,unknown' && JSON.parse(E.reportJson(mixed, T)).map((d) => String(d.valid)).join() === 'true,false,null');
+    const partial = run('{"properties":{"n":{"maximum":5}}}', '{"n":1}\n{"n":9007199254740993}');
+    check('JSON Lines: valid + unknown → unknown with the count', partial.state === 'unknown' && E.statusText(partial, T) === '1 of 2 documents cannot be determined; the other 1 match the schema (Draft 2020-12).', E.statusText(partial, T));
+    check('report text marks each document', E.reportText(partial, T).split('\n').includes('Document 2 (line 2): Cannot be determined'), E.reportText(partial, T));
+    const pd = run('{"properties":{"__proto__":{"type":"number"}}}', '{"x":1}\n{"__proto__":"x"}');
+    check('"__proto__": only the document with that key is unknown', pd.docs.map((d) => d.state).join() === 'valid,unknown');
+    check('decimalKey normalizes', E.decimalKey('1.500e2') === '15e1' && E.decimalKey('-0.00') === '0' && E.decimalKey('00012') === '12e0' && E.decimalKey('.5') === '5e-1');
+    const exact = ['0', '1', '-1', '0.1', '1.0', '1e2', '1E-7', '123.456', '9007199254740991', '9007199254740994', '1.7976931348623157e308', '5e-324', '0x1F', '0o17', '-0b101', '+12'];
+    const inexact = ['9007199254740993', '-9007199254740993', '1.0000000000000001', '1e-400', '1e400', '0.1000000000000000055511151231257827', '12345678901234567890.5', '0x20000000000001', '2e-324'];
+    check('isExactNumber: exact literals', exact.every((x) => E.isExactNumber(x, Number(x.replace(/^\+/, '').replace(/^-0b/, '-0b')) || (x === '-0b101' ? -5 : Number(x)))), exact.filter((x) => !E.isExactNumber(x, x === '-0b101' ? -5 : Number(x))));
+    check('isExactNumber: inexact literals', inexact.every((x) => !E.isExactNumber(x, Number(x))), inexact.filter((x) => E.isExactNumber(x, Number(x))));
+    // 20,000 random doubles: their shortest form is exact; changing the last digit far past the
+    // 17th significant digit is not
+    let seed = 5; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    let ok = 0, okBad = 0, n2 = 0;
+    for (let i = 0; i < 20000; i++) {
+      const v = (rnd() - 0.5) * Math.pow(10, Math.floor(rnd() * 40) - 20);
+      const sv = String(v);
+      if (E.isExactNumber(sv, Number(sv))) ok++;
+      const m = /^(-?)(\d+)(?:\.(\d+))?(e[+-]\d+)?$/.exec(sv);
+      if (!m) continue;
+      const longer = m[1] + m[2] + '.' + (m[3] || '') + '0000000000000000000001' + (m[4] || '');
+      n2++;
+      if (!E.isExactNumber(longer, Number(longer))) okBad++;
+    }
+    check('isExactNumber: 20,000 shortest forms are exact, the same with an extra far digit is not', ok === 20000 && okBad === n2, [ok, okBad, n2]);
+  }
+}
+if (process.argv[2] === '--reliability') {
+  reliabilityChecks();
+  console.log('reliability: ' + passes + ' PASS, ' + failures + ' FAIL');
+  process.exit(failures ? 1 : 0);
+}
+reliabilityChecks();
 check('suite fixture names its source commit and MIT license', /^[0-9a-f]{40}$/.test(fixture.source.commit) && fixture.source.license === 'MIT');
 const suiteCounts = {};
 for (const dir of Object.keys(DIRS)) {
@@ -171,21 +310,16 @@ for (const dir of Object.keys(DIRS)) {
   const formats = !(dir === 'draft2019-09' || dir === 'draft2020-12');
   const r = runSuite(fixture.tests[dir], fixture.remotes, dir, formats);
   suiteCounts[dir] = r;
-  let fails = r.fails;
-  if (dir === 'draft2020-12') {
-    const dyn = fails.filter((f) => f.startsWith('dynamicRef.json|'));
-    check('2020-12 dynamicRef.json: Ajv still fails ' + DYNAMIC_REF_FAILS + ' tests', dyn.length === DYNAMIC_REF_FAILS, dyn.length);
-    fails = fails.filter((f) => !f.startsWith('dynamicRef.json|'));
-  }
-  const exp = EXPECTED_FAILS[dir];
-  const unexpected = fails.filter((f) => !exp.includes(f));
-  const fixed = exp.filter((f) => !fails.includes(f));
-  check(dir + ': no failures outside the known Ajv limitations', unexpected.length === 0, unexpected.slice(0, 8));
-  check(dir + ': every known limitation still fails (update the list after an Ajv upgrade)', fixed.length === 0, fixed);
+  console.log('  suite ' + dir + ': ' + r.pass + ' pass, ' + r.unknown + ' cannot be determined, ' + r.fails.length + ' wrong, of ' + r.total + ' ' + JSON.stringify(r.reasons));
+  check(dir + ': no wrong verdicts (pass or cannot be determined only)', r.fails.length === 0, r.fails.slice(0, 8));
+  const keys = historic(dir).filter((k) => !r.unknowns.includes(k));
+  check(dir + ': every test Ajv gets wrong is "cannot be determined"', keys.length === 0, keys);
+  // Ajv got 25 dynamicRef.json tests wrong; with no wrong verdicts left they are all among these
+  if (dir === 'draft2020-12') check('2020-12 dynamicRef.json: at least 25 tests "cannot be determined"', r.unknowns.filter((u) => u.startsWith('dynamicRef.json|')).length >= 25);
 }
-// recorded totals (used in the tool pages)
-const TOTALS = { draft4: [617, 618], draft6: [840, 841], draft7: [928, 929], 'draft2019-09': [1243, 1261], 'draft2020-12': [1249, 1301] };
-for (const [dir, [p, t]] of Object.entries(TOTALS)) check(dir + ' suite total ' + p + '/' + t, suiteCounts[dir].pass === p && suiteCounts[dir].total === t, suiteCounts[dir].pass + '/' + suiteCounts[dir].total);
+// recorded totals (used in the tool pages): [pass, cannot be determined, total]
+const TOTALS = { draft4: [616, 2, 618], draft6: [839, 2, 841], draft7: [927, 2, 929], 'draft2019-09': [1230, 31, 1261], 'draft2020-12': [1210, 91, 1301] };
+for (const [dir, [p, u, t]] of Object.entries(TOTALS)) check(dir + ' suite ' + p + ' pass + ' + u + ' cannot be determined / ' + t, suiteCounts[dir].pass === p && suiteCounts[dir].unknown === u && suiteCounts[dir].total === t, [suiteCounts[dir].pass, suiteCounts[dir].unknown, suiteCounts[dir].total]);
 {
   // With "Check format" on (the default), the 2020-12 required tests that expect format to be
   // only an annotation fail, and nothing else changes.
@@ -331,11 +465,11 @@ for (const [text, code, line, col] of SYN) {
   const d = E.scanJson('{"id": 1, "x": {"id": 2}, "id": 3}', {}, null);
   check('scanJson duplicate keys', d.dups.length === 1 && d.dups[0].key === 'id' && d.dups[0].path === '');
   const u = E.scanJson('{"a": 9007199254740993, "b": 9007199254740991, "c": -9007199254740993, "d": 1e400, "e": 12345678901234567890.5}', {}, null);
-  check('scanJson integers beyond 2^53 and overflow', u.unsafe.map((x) => x.raw).join() === '9007199254740993,-9007199254740993,1e400', u.unsafe);
+  check('scanJson inexact numbers (beyond 2^53, overflow, too many digits)', u.unsafe.map((x) => x.raw).join() === '9007199254740993,-9007199254740993,1e400,12345678901234567890.5' && u.lossyCount === 4, u.unsafe);
   const keys = E.scanJson('{"a": {"extra": 1}}', { '/a': 0 }, { '/a/extra': 1 });
   check('scanJson key spans', JSON.stringify(keys.keys['/a/extra']) === '[7,14]');
   const r = run('{"type":"object","properties":{"id":{"type":"integer","maximum":9007199254740991}}}', '{"id": 1, "id": 9007199254740993}');
-  check('data notes: duplicate key and unsafe integer with lines', codes(r).includes('dupKey') && codes(r).includes('unsafeInt') && r.docs[0].groups[0].items[0].message === 'must be ≤ 9007199254740991, but is 9007199254740992');
+  check('data notes: duplicate key and inexact number with lines; the result cannot be determined', codes(r).includes('dupKey') && codes(r).includes('lossyNumber') && r.notices.find((n) => n.code === 'lossyNumber').line === 1 && r.state === 'unknown' && r.reasons[0].code === 'lossyData');
 }
 
 // ---------- 6. error tree, messages ----------
@@ -428,7 +562,7 @@ for (const [text, code, line, col] of SYN) {
   check('invalid patternProperties key', bpp.schemaErrors[0].code === 'badPattern' && bpp.schemaErrors[0].path === '#/patternProperties/(');
   const meta = run('{"type":"strng"}', '1');
   check('meta error: localized, with path and line', meta.state === 'schemaInvalid' && E.schemaErrorText(meta.schemaErrors[0], T) === '#/type: must be one of "array", "boolean", "integer", "null", "number", "object", "string"' && meta.schemaErrors[0].line === 1);
-  check('dynamicRef note', codes(run('{"$dynamicAnchor":"n","properties":{"c":{"$dynamicRef":"#n"}}}', '{}')).includes('dynamicRef'));
+  check('$dynamicRef: cannot be determined, with the place', (() => { const r2 = run('{"$dynamicAnchor":"n","properties":{"c":{"$dynamicRef":"#n"}}}', '{}'); return r2.state === 'unknown' && r2.reasons[0].code === 'dynamicRef' && r2.reasons[0].path === '#/properties/c/$dynamicRef'; })());
   check('https draft-07 $schema: note, validated as Draft 7', (() => { const r2 = run('{"$schema":"https://json-schema.org/draft-07/schema","type":"string"}', '1'); return r2.draft === '7' && codes(r2).includes('schemaNonCanonical'); })());
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const L = STRINGS[lang];
@@ -438,6 +572,7 @@ for (const [text, code, line, col] of SYN) {
       ...run('{"$schema":"https://json-schema.org/draft-07/schema","definitions":{"a":{}},"properties":{"b":{"$ref":"#/definitions/a","type":"string"}}}', 'a: 1\n---\nb: 2', { T: L }).notices,
       ...run('{"$schema":"http://json-schema.org/draft-07/schema#"}', '{"a":1}\n{"b":2}', { T: L, menu: '2020-12', formats: false }).notices,
       ...run('{"$schema":"https://example.com/s"}', '1', { T: L }).notices,
+      ...run('{"type":"object"}', 'n: 9007199254740993\n', { T: L }).notices,
     ];
     const got = new Set(all.map((n) => n.code));
     const want = Object.keys(STRINGS.en.notice).filter((k) => !/^side|^suggestion$/.test(k));
@@ -480,6 +615,14 @@ for (const [text, code, line, col] of SYN) {
   check('script does not touch storage directly (ztPersist only)', !/localStorage|sessionStorage|document\.cookie|indexedDB/.test(script));
   check('script does not use the network', !/\bfetch\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource/.test(script));
   check('script does not write HTML', !/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(script));
+  check('worker runs the run module', /import \{ runValidation \} from '\.\/json-schema-validator-run\.js'/.test(workerSrc) && /self\.postMessage\(\{ id, \.\.\.runValidation\(input, T\) \}\)/.test(workerSrc));
+  check('component starts the worker and falls back to the run module', script.includes("import ValidatorWorker from './json-schema-validator.worker.js?worker'") && script.includes("import('./json-schema-validator-run.js')"));
+  check('component drops stale and cancelled runs (terminate + sequence check)', /function abandon\(\)[\s\S]*?seq\+\+;[\s\S]*?stopWorker\(\)/.test(script) && /id === seq \? m\.runValidation/.test(script) && /d\.id !== pending\.id/.test(script));
+  check('component drops file reads that finish after an edit', /const gen = \+\+fileGen\[side\]/.test(script) && /if \(gen !== fileGen\[side\]\) return;/.test(script));
+  check('run module imports the bundled packages and the engine', ['ajv', 'ajv/dist/2019', 'ajv/dist/2020', 'ajv-draft-04', 'ajv-formats', 'ajv/dist/refs/json-schema-draft-06.json', 'js-yaml', './json-schema-validator-engine.js'].every((m) => runSrc.includes("from '" + m + "'")));
+  for (const [name, src] of [['engine', engineSrc], ['worker', workerSrc], ['run module', runSrc]]) {
+    check(name + ': no storage, network, DOM or HTML', !/localStorage|sessionStorage|document\.|window\.|\bfetch\(|XMLHttpRequest|sendBeacon|innerHTML/.test(src));
+  }
   check('persistence policy is preference', /'json-schema-validator': 'preference'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
   check('only the draft menu and the format switch are saved', /ztPersist\?\.save\(SLUG, \{ draft: draftSel\.value, formats: formatsEl\.checked \}\)/.test(script) && (script.match(/ztPersist\?\.save/g) || []).length === 1);
 }
@@ -531,6 +674,7 @@ for (const [text, code, line, col] of SYN) {
         if (ex.broken || ex.extras || ex.opts.menu) continue;
         let sc, da; try { sc = JSON.parse(ex.schema); da = JSON.parse(ex.data); } catch { continue; }
         if (sc.$schema === undefined || /"\$ref":\s*"(?!#)/.test(JSON.stringify(sc))) continue; // no external $ref: Python would fetch it
+        if (run(JSON.stringify(sc), JSON.stringify(da), { formats: false }).state === 'unknown') continue; // no errors to compare
         pageCases.push([lang, sc, da]);
       }
     }
