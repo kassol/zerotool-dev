@@ -7,7 +7,7 @@ faqItems:
   - question: "数据会上传吗？"
     answer: "不会。Schema 和数据在浏览器标签页里由 Ajv 校验，工具不会把它们发到任何服务器，也不会下载 $ref 指向的网址：被引用的 Schema 请粘贴到“被引用的 Schema”里。浏览器只保存草案菜单和“检查 format”开关这两项设置。"
   - question: "19 位的订单号为什么校验结果不对？"
-    answer: "浏览器用 JSON.parse 读数字，超过 2^53（9007199254740992）的整数会丢失精度，例如 1842390023517843457 会变成 1842390023517843500。工具会在提示里写出原值和读到的值。这类 ID 建议在接口里用字符串传输，Schema 写成 \"type\": \"string\" 加 pattern。"
+    answer: "浏览器用 JSON.parse 读数字，超过 2^53（9007199254740992）的整数会丢失精度，例如 1842390023517843457 会变成 1842390023517843500。Schema 要比较这类数字时，工具显示“无法确定”，并写出原值和读到的值，不按改写后的数下结论。这类 ID 建议在接口里用字符串传输，Schema 写成 \"type\": \"string\" 加 pattern。"
   - question: "会检查 format 吗？"
     answer: "“检查 format”打开时（默认）会检查 email、uri、date、date-time、time、duration、hostname、ipv4、ipv6、uuid 等 15 种（ajv-formats 实现）。idn-email、iri 等其他 format 直接通过，并在提示里列出。关闭开关后 format 只作注解，这也是 2020-12 规范和 Python jsonschema 的默认做法。"
   - question: "同一份 Schema 在别的工具里结果不同，以哪个为准？"
@@ -23,7 +23,7 @@ faqItems:
 
 ## 示例：订单回调里的 19 位订单号
 
-雪花算法生成的订单号常有 19 位，超出 JavaScript 数字能精确表示的范围（2^53）。下面这份回调数据有五处问题：
+雪花算法生成的订单号常有 19 位，超出 JavaScript 数字能精确表示的范围（2^53）。下面这份回调数据把订单号写成了数字：
 
 {/* jsv-ex: {} */}
 ```json
@@ -50,16 +50,49 @@ faqItems:
 }
 ```
 ```text
-5 个错误，涉及 5 个位置（Draft 2020-12）。
-/orderId (第 2 行第 14 列): 必须 ≤ 9007199254740991，实际是 1842390023517843500  Schema #/properties/orderId/maximum
+无法确定（Draft 2020-12）：输入涉及校验器无法可靠检查的情况，因此不给出有效或无效的结论。原因见下方。
+无法确定，原因：
+- 数据中有 JavaScript 无法精确表示的数字：1842390023517843457 被读成 1842390023517843500，而 Schema 会比较数字。
+* 数据的 /orderId 中的数字 1842390023517843457（第 2 行）无法在 JavaScript 中精确表示，被读成 1842390023517843500。
+```
+
+数据里写的是 1842390023517843457，浏览器读到的却是 1842390023517843500，而 Schema 要比较这个数字。按改写后的数去判定，结论可能是错的：不加 `maximum` 时这个字段会“通过”，但通过的是另一个数。所以工具不给出有效或无效的结论，只显示“无法确定”和原因，其他字段的错误也先不列出。Python jsonschema 用任意精度整数，会按原值判断；浏览器里的校验器都做不到。
+
+改法是让订单号在接口里按字符串传输，Schema 用 `pattern` 约束位数。改完后其余四处问题就显示出来了：
+
+{/* jsv-ex: {} */}
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["orderId", "mobile", "amount", "status"],
+  "properties": {
+    "orderId": { "type": "string", "pattern": "^[0-9]{19}$" },
+    "mobile": { "type": "string", "pattern": "^1[3-9][0-9]{9}$" },
+    "amount": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["待支付", "已支付", "已退款"] },
+    "receiver": { "type": "string", "minLength": 2, "maxLength": 10 }
+  }
+}
+```
+```json
+{
+  "orderId": "1842390023517843457",
+  "mobile": "1381234567",
+  "amount": 19.9,
+  "status": "已发货",
+  "receiver": "张"
+}
+```
+```text
+4 个错误，涉及 4 个位置（Draft 2020-12）。
 /mobile (第 3 行第 13 列): 不匹配正则 ^1[3-9][0-9]{9}$  Schema #/properties/mobile/pattern
 /amount (第 4 行第 13 列): 必须是 integer，实际是 number  Schema #/properties/amount/type
 /status (第 5 行第 13 列): 必须是 "待支付", "已支付", "已退款" 之一  Schema #/properties/status/enum
 /receiver (第 6 行第 15 列): 至少 2 个字符，实际 1 个  Schema #/properties/receiver/minLength
-* 数据的 /orderId 中的数字 1842390023517843457（第 2 行）超过 2^53，JavaScript 读成了 1842390023517843500，验证的是 1842390023517843500。
 ```
 
-`orderId` 的提示说明了问题所在：数据里写的是 1842390023517843457，校验的却是 1842390023517843500。不加 `maximum` 时这个字段会“通过”，但通过的是另一个数。Python jsonschema 用任意精度整数，会按原值判断；浏览器里的校验器都做不到，本工具能做的是把被改写的数字指出来。`amount` 以分为单位时应是整数，19.9 被 `"type": "integer"` 拦下；`minLength` 按 Unicode 字符计数，“张”是 1 个字符。
+`amount` 以分为单位时应是整数，19.9 被 `"type": "integer"` 拦下；`minLength` 按 Unicode 字符计数，“张”是 1 个字符。
 
 ## 示例：输入法打出的全角标点
 
