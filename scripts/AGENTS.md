@@ -117,6 +117,8 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-02 — 转换工具收尾：`test-json-xml-converter.mjs` 73 → 136 项，XML 替身可改由 sax 1.6.1（svgo 的依赖，已在 node_modules）严格模式建树，新增标量 / null / `{}` 根在两种输出下的往返、映射限制与语法错误的状态前缀、面板快捷键 `stopPropagation` 与 Ctrl/⌘+L 复位、编辑清状态，以及 4 语言页面 `{/* jx-to-xml */}`、`{/* jx-to-json */}`、`{/* jx-error: … */}` 标注示例的复算；真实 DOMParser 仍以 ego-browser 验收为准。`test-jsonl-converter.mjs` 41 → 64 项，新增快捷键、Ctrl/⌘+L 清缓存、清空 JSONL 面板时计数归零，以及页面 `{/* jlc-check */}` / `{/* jlc-validate */}` 标注示例（输出面板、下载、复制与状态行、校验计数与 V8 报错原文）。`test-env-file-parser.mjs` 217 → 332 项，新增 Ctrl/⌘+L 复位、被跳过行的备注（含 `colonForm` 与 U+3000 键名）及页面 `{/* efp-check */}` 标注示例（导出、与 `dotenv.parse()` 对照、状态行、表格行、`util.parseEnv()` 对照）。
+
 - 2026-10-02 — `test-env-file-parser.mjs` 增加 dotenv 16.6.1 键/分隔符对照与完整 Parse/Export 入口、编辑/清空导出失效测试；Node 22.23.3 为 217 项通过。python-dotenv 对照因安装版本 1.1.0 与指南记录的 1.2.4 不同而跳过；`__proto__` 保留行为作为与 dotenv 的既有差异独立测试。
 
 - 2026-10-02 — `test-json-xml-converter.mjs` 改为运行组件完整内联脚本与双向按钮入口，覆盖 Unicode 元素名、路径拒绝、空对象与输出失效生命周期；Node 22.23.3 为 73 项通过。XML 解析使用节点替身，真实 DOMParser 验收尚未完成；旧日志里的名称替换规则已由本条对应的路径拒绝规则替代。
