@@ -78,6 +78,14 @@ function analyze(line, url = 'https://www.example.com/account/login', now = NOW)
 const codes = (a) => a.issues.map((x) => x.code);
 const rcodes = (a) => a.reject.map((x) => x.code);
 
+// A-COOKIE-PUBLIC-SUFFIX: exercise the shipped storage and request paths.
+{
+  const r = analyze('sid=x; Domain=co.uk; Path=/; Secure; HttpOnly; SameSite=Lax', 'https://shop.co.uk/');
+  eq('public suffix co.uk is rejected for shop.co.uk', r.verdict, 'rejected');
+  eq('public suffix cookie never enters the jar', E.buildJar([r], NOW).length, 0);
+  eq('public suffix cookie is never sent to another registrant', E.simulate(E.buildJar([r], NOW), U('https://other.co.uk/'), 'same-site', NOW).header, '');
+}
+
 // ── Copied helpers match the HAR analyzer ────────────────────────────────────
 const har = readFileSync(join(root, 'src/components/tools/HarFileAnalyzerTool.astro'), 'utf8');
 function declaration(src, name) {
