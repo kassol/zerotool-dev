@@ -488,7 +488,8 @@ for (const lang of ['zh', 'ja', 'ko']) {
   const noMsg = parseCodes.filter((c) => !STRINGS.en.parse[c]);
   check('every error code the parsers raise has a message', noMsg.length === 0, noMsg.join(', '));
   // highlight() now runs in the worker (json-formatter-run.js); the page writes its result.
-  check('page script: no network, no direct storage; innerHTML only for highlight()', !/\bfetch\(|XMLHttpRequest|sendBeacon|localStorage|sessionStorage|document\.cookie/.test(script) && (script.match(/innerHTML/g) || []).length === 1 && /innerHTML = res\.html;/.test(script)
+  check('page script: no network, no direct storage; innerHTML only for highlight()', !/\bfetch\(|XMLHttpRequest|sendBeacon|localStorage|sessionStorage|document\.cookie/.test(script) && (script.match(/innerHTML|insertAdjacentHTML|outerHTML|createContextualFragment|document\.write/g) || []).length === 2
+    && /const parts: string\[\] = res\.html;/.test(script) && /outCode\.innerHTML = parts\.slice\(/.test(script) && /outCode\.insertAdjacentHTML\('beforeend', parts\.slice\(/.test(script)
     && (runSource.match(/\.html = /g) || []).length === 1 && /v\.html = blockHtml\(highlight\(out\)\)/.test(runSource));
   check('persistence: json-formatter uses the default input policy', !/'json-formatter'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
 }
@@ -525,8 +526,9 @@ for (const lang of ['zh', 'ja', 'ko']) {
   // Undo blockHtml: each block is <span class="jf-blk" style="…: auto {lines × 1.5}em">…</span>.
   const blockRe = /<span class="jf-blk" style="contain-intrinsic-height: auto ([\d.]+)em">/g;
   let blockBad = '';
-  function unblock(html) {
-    const parts = html.split(blockRe);
+  function unblock(list) {
+    if (!Array.isArray(list) || list.some((b) => (b.match(blockRe) || []).length !== 1)) blockBad = 'not one block per array item';
+    const parts = list.join('').split(blockRe);
     if (parts[0] !== '') blockBad = 'text before the first block';
     let out = '';
     for (let x = 1; x < parts.length; x += 2) {
@@ -590,7 +592,7 @@ for (const lang of ['zh', 'ja', 'ko']) {
     const items = []; for (let i = 0; i < 4400; i++) items.push({ id: 1e15 + i, s: 'a "q" <b>&' + i, n: [i, null, true] });
     const t = JSON.stringify(items); const o = OPT({});
     const got = viewOf(E.analyze(t, {}), t, o);
-    const blocks = (got.html.match(blockRe) || []).length;
+    const blocks = got.html.length;
     check('highlighted output under 1 MB is split into ' + blocks + ' line-aligned blocks that join back to highlight()', !got.big && blocks > 30 && unblock(got.html) === E.highlight(E.serialize(E.analyze(t, {}).root, o)) && !blockBad, blockBad);
   }
   check('runner view equals the page computation before the worker: ' + same + '/' + total + ' document × option sets', same === total, bad);

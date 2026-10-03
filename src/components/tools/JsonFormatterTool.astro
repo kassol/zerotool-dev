@@ -479,6 +479,8 @@ const jsonlHref = (lang === 'en' ? '' : '/' + lang) + '/tools/jsonl-converter/';
   const WORKING_DELAY = 150;
   // A long output is written into the <pre> in blocks of about this many characters (see showText).
   const DISPLAY_BLOCK = 16 * 1024;
+  const HTML_FIRST = 4;
+  const HTML_STEP = 4;
   const CV = typeof CSS !== 'undefined' && CSS.supports('content-visibility', 'auto');
   const SAMPLE = '{"id":1830000000000000001,"name":"ZeroTool","price":19.90,"tags":["json","formatter"],"owner":{"login":"kassol","verified":true},"updatedAt":"2026-10-02T09:30:00Z","notes":null}';
 
@@ -637,7 +639,21 @@ const jsonlHref = (lang === 'en' ? '' : '/' + lang) + '/tools/jsonl-converter/';
   function showText(res: any) {
     outCode.className = '';
     const gen = ++displayGen;
-    if (res.html !== undefined) { outCode.innerHTML = res.html; return; }
+    if (res.html !== undefined) {
+      // Highlighted output: line-aligned blocks of HTML from the worker (blockHtml). The first
+      // ones go in at once; the rest a few per task, so no single task parses the whole megabyte.
+      const parts: string[] = res.html;
+      outCode.innerHTML = parts.slice(0, HTML_FIRST).join('');
+      let i = HTML_FIRST;
+      const more = () => {
+        if (gen !== displayGen) return;
+        outCode.insertAdjacentHTML('beforeend', parts.slice(i, i + HTML_STEP).join(''));
+        i += HTML_STEP;
+        if (i < parts.length) setTimeout(more, 0);
+      };
+      if (i < parts.length) setTimeout(more, 0);
+      return;
+    }
     // Only the first 1 MB of a long output is shown (the worker cuts it at a line end). Laying
     // out that megabyte at once blocks the page for over a second, so it is split into blocks
     // with content-visibility: auto: the browser lays out only the blocks near the visible part.

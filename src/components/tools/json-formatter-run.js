@@ -12,10 +12,10 @@ function utf8Size(s) { return new Blob([s]).size; }
 // .jf-blk with content-visibility: auto, so the browser lays out only blocks near the visible
 // part. No highlight span crosses a line end (serialize writes line breaks only between
 // tokens), so every block is complete HTML. The height hint is the line count (white-space:
-// pre, line-height 1.5).
+// pre, line-height 1.5). Returns the blocks as an array, so the page can add them a few at a time.
 export const BLOCK = 16 * 1024;
 export function blockHtml(html) {
-  let out = '';
+  const out = [];
   for (let pos = 0; pos < html.length;) {
     let end = Math.min(html.length, pos + BLOCK);
     const nl = html.indexOf('\n', end);
@@ -23,7 +23,7 @@ export function blockHtml(html) {
     const part = html.slice(pos, end);
     let lines = part.charAt(part.length - 1) === '\n' ? 0 : 1;
     for (let i = part.indexOf('\n'); i !== -1; i = part.indexOf('\n', i + 1)) lines++;
-    out += '<span class="jf-blk" style="contain-intrinsic-height: auto ' + lines * 1.5 + 'em">' + part + '</span>';
+    out.push('<span class="jf-blk" style="contain-intrinsic-height: auto ' + lines * 1.5 + 'em">' + part + '</span>');
     pos = end;
   }
   return out;
