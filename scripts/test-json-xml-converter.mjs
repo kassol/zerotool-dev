@@ -33,20 +33,20 @@ function saxDoc(raw) {
   return { documentElement: root, querySelector: () => (error || !root ? { textContent: error || 'no root' } : null) };
 }
 function page(lang = 'en', root = node('root')) {
-  const elements = new Map(), copied = [], timers = new Map(); let id = 0;
+  const elements = new Map(), copied = [], timers = new Map(), docEvents = {}; let id = 0;
   const get = key => {
     if (!elements.has(key)) { const events = {}; elements.set(key, { value: '', checked: false, disabled: false, textContent: '',
-      addEventListener(k, fn) { events[k] = fn; }, fire(k) { events[k]?.({}); }, click() { if (!this.disabled) this.fire('click'); } }); }
+      addEventListener(k, fn) { events[k] = fn; }, fire(k, ev = {}) { events[k]?.(ev); }, click() { if (!this.disabled) this.fire('click'); } }); }
     return elements.get(key);
   };
   get('jx-root').value = 'root'; get('jx-pretty').checked = true;
   vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
-    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [] }, window: {},
+    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], addEventListener(k, fn) { docEvents[k] = fn; } }, window: {},
     navigator: { clipboard: { writeText: async v => copied.push(v) } },
     DOMParser: class { parseFromString(raw) { return root === 'sax' ? saxDoc(raw) : { documentElement: root, querySelector: () => null }; } },
     setTimeout(fn) { timers.set(++id, fn); return id; }, clearTimeout(i) { timers.delete(i); }
   });
-  return { get, copied, flush() { const jobs = [...timers.values()]; timers.clear(); jobs.forEach(fn => fn()); } };
+  return { get, copied, docKey(ev) { docEvents.keydown?.(ev); }, flush() { const jobs = [...timers.values()]; timers.clear(); jobs.forEach(fn => fn()); } };
 }
 const decl = '<?xml version="1.0" encoding="UTF-8"?>';
 for (const [raw, xml] of [
@@ -119,6 +119,30 @@ await test('clear cancels both pending timers', () => {
   assert.equal(p.get('jx-json').value, ''); assert.equal(p.get('jx-xml').value, '');
   assert.equal(p.get('jx-status').textContent, '');
 });
+// ToolLayout's document keydown clicks the first .btn-primary (JSON → XML) on Ctrl/Cmd+Enter and
+// empties text fields on Ctrl/Cmd+L without input events.
+await test('panel Ctrl+Enter stops the page-wide shortcut', () => {
+  const p = page('en', 'sax');
+  for (const id of ['jx-json', 'jx-xml']) {
+    const ev = { key: 'Enter', ctrlKey: true, stopped: false, prevented: false,
+      stopPropagation() { this.stopped = true; }, preventDefault() { this.prevented = true; } };
+    p.get(id).value = id === 'jx-json' ? '{"a":1}' : '<r><a>1</a></r>'; p.get(id).fire('keydown', ev);
+    assert.ok(ev.stopped && ev.prevented, id);
+  }
+  assert.deepEqual(JSON.parse(p.get('jx-json').value), { r: { a: '1' } });
+});
+await test('Ctrl+L resets copy buttons and status once both panels are empty', () => {
+  const p = page('en', 'sax'); p.get('jx-json').value = '{"a":1}'; p.get('jx-to-xml').click();
+  assert.equal(p.get('jx-copy-xml').disabled, false);
+  p.get('jx-json').value = ''; p.get('jx-xml').value = '';
+  p.docKey({ key: 'l', metaKey: true }); p.flush();
+  assert.equal(p.get('jx-copy-xml').disabled, true); assert.equal(p.get('jx-copy-json').disabled, true);
+  assert.equal(p.get('jx-status').textContent, '');
+});
+await test('copy buttons start disabled', () => {
+  const p = page(); assert.equal(p.get('jx-copy-json').disabled, true); assert.equal(p.get('jx-copy-xml').disabled, true);
+});
+
 // Valid input that the mapping rejects was labelled "Invalid JSON" / "Invalid XML".
 const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
