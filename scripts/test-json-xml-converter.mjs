@@ -173,4 +173,38 @@ for (const [raw, back] of [['"hello"', 'hello'], ['42', '42'], ['true', 'true'],
   });
 }
 
+// Tool pages: {/* jx-to-xml */} → the next ```json block, converted with pretty print and root
+// "root", must equal the next ```xml block; {/* jx-to-json */} the other way round (XML read by the
+// sax tree above). {/* jx-error: {"dir","input"} */} → the status line for that input must appear
+// in the next 700 characters of the page.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const rel = `src/content/tools/json-xml-converter/${lang}.mdx`;
+  const mdx = readFileSync(new URL('../' + rel, import.meta.url), 'utf8');
+  const fence = (from, kind) => { const m = mdx.slice(from).match(new RegExp('```' + kind + '\\n([\\s\\S]*?)\\n```')); return m ? m[1] : null; };
+  let n = 0;
+  for (const m of mdx.matchAll(/\{\/\* jx-to-(xml|json) \*\/\}/g)) {
+    n++;
+    await test(rel + ' example ' + n, () => {
+      const p = page(lang, 'sax'); p.get('jx-pretty').checked = true;
+      if (m[1] === 'xml') { p.get('jx-json').value = fence(m.index, 'json'); p.get('jx-to-xml').click(); assert.equal(p.get('jx-xml').value, fence(m.index, 'xml')); }
+      else { p.get('jx-xml').value = fence(m.index, 'xml'); p.get('jx-to-json').click(); assert.equal(p.get('jx-json').value, fence(m.index, 'json')); }
+    });
+  }
+  for (const m of mdx.matchAll(/\{\/\* jx-error: (\{.*?\}) \*\/\}/g)) {
+    n++;
+    await test(rel + ' error example ' + n, () => {
+      const spec = JSON.parse(m[1]), p = page(lang, 'sax');
+      p.get(spec.dir === 'json' ? 'jx-json' : 'jx-xml').value = spec.input;
+      p.get(spec.dir === 'json' ? 'jx-to-xml' : 'jx-to-json').click();
+      const status = p.get('jx-status').textContent;
+      assert.equal(p.get(spec.dir === 'json' ? 'jx-xml' : 'jx-json').value, '');
+      assert.ok(mdx.slice(m.index, m.index + 700).includes(status), status);
+    });
+  }
+  await test(rel + ' has checked examples', () => assert.ok(n >= 5, String(n)));
+  await test(rel + ' drops the old renaming and dropping claims', () => {
+    assert.ok(!/become[s]? <code>\{'_'\}<\/code>|<_2026>|are dropped|被直接丢弃|そのまま破棄|그대로 버려/.test(mdx));
+  });
+}
+
 console.log(`${passed} passed, ${failed} failed`); process.exitCode = failed ? 1 : 0;
