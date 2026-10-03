@@ -3,15 +3,15 @@ seoTitle: "Env File Parser Online — Parse .env Files & Export to JSON | ZeroTo
 seoDescription: "Parse .env files online. Visualize key-value pairs in a table, detect format errors (missing =, duplicate keys, empty values), and export to JSON. Free, 100% client-side."
 faqItems:
   - question: "What .env syntax is supported?"
-    answer: "The dotenv parsing rules: KEY=VALUE pairs, one per line, with an optional export prefix (export KEY=value). Lines starting with # are comments. A # after an unquoted value starts an inline comment, so PORT=5432 # default gives 5432, and a # inside quotes is kept. Quoted values can span several lines."
+    answer: "The rules of dotenv 16.6.1 (the dotenv package for Node.js): one KEY=VALUE pair per line, or KEY: value with a space after the colon, with an optional export prefix. A key may use letters, digits, _, . and -. Lines starting with # are comments. A # after an unquoted value starts an inline comment, so PORT=5432 # default gives 5432, and a # inside quotes is kept. Quoted values can span several lines."
   - question: "How are quoted values handled?"
     answer: "Single quotes, double quotes, and backticks around a value are removed, and whitespace inside them is kept. Only double-quoted values turn \\n into a line break. A quote that is not closed stays in the value, and the Notes column flags it."
   - question: "What counts as an error?"
-    answer: "Lines without an = sign are flagged as errors. Lines with an empty key are also flagged. Warnings are shown for empty values, duplicate keys, and non-standard key names (keys that don't match [A-Za-z_][A-Za-z0-9_]*)."
+    answer: "A line is an error when dotenv would skip it, and it is not exported: no = or colon (Missing = sign), an empty key, a key with a space or another character dotenv does not allow, such as MY KEY=1 (Non-standard key name), or a colon without a space after it or with a space before it, such as PORT:8080. Warnings are shown for empty values, duplicate keys, and keys that dotenv accepts but that do not match [A-Za-z_][A-Za-z0-9_]*, such as my.key or 9KEY; these keys are still exported."
   - question: "Is my .env file sent to a server?"
     answer: "No. All parsing happens in your browser using JavaScript, and the text is not saved between visits. Because .env files hold secrets, this page also does not load Google Analytics or AdSense."
   - question: "What does Export JSON produce?"
-    answer: "A JSON object where each valid key-value pair from the .env file becomes a property. Commented lines and parse errors are excluded. A duplicate key keeps its last value, as dotenv.parse() does; every occurrence still appears in the table with a warning. A key named __proto__ is exported as a normal property."
+    answer: "A JSON object with every key the table shows without an error, the same object dotenv.parse() returns. Commented lines and errors are excluded. A duplicate key keeps its last value, as in dotenv; every occurrence still appears in the table with a warning. One difference: a key named __proto__ is exported as a normal property, while dotenv.parse() leaves it out. Export JSON works only after Parse, and only when at least one key can be exported."
 ---
 
 <h2>How to Use</h2>
@@ -21,6 +21,11 @@ faqItems:
   <li>Review the <strong>Notes</strong> column — warnings highlight empty values, duplicate keys, or non-standard names; errors flag lines that can't be parsed.</li>
   <li>Click <strong>Export JSON</strong> to download the parsed data as a <code>env.json</code> file.</li>
 </ol>
+<p>
+  The table and <strong>Export JSON</strong> belong to the text you parsed. As soon as you edit the text, click <strong>Clear</strong> or
+  press Ctrl+L (Cmd+L on Mac) in the tool, the table is hidden and <strong>Export JSON</strong> is disabled until you click
+  <strong>Parse</strong> again, so a download never holds values from an older version of the file.
+</p>
 
 <h2>Example</h2>
 <p>This input uses made-up values and covers the cases the parser treats specially:</p>
@@ -68,19 +73,66 @@ BROKEN LINE
   compares its export with <code>dotenv.parse()</code> on this example and on a set of edge cases.
 </p>
 
+<h2>Colons, Spaces and Other Keys</h2>
+<p>
+  dotenv also reads <code>KEY: value</code>, as in YAML, but only with a space after the colon. A line that dotenv skips is an error in
+  the table and is left out of <strong>Export JSON</strong>; a key that dotenv accepts but that is unusual gets a warning and stays in the
+  export:
+</p>
+
+{/* efp-check: {"status":"2 valid, 1 warning, 2 errors.","rows":[[1,"ok","DB_HOST",""],[2,"ok","REDIS_URL",""],[3,"error","","Non-standard key name"],[4,"warn","my.key","Non-standard key name"],[5,"error","","Use KEY=value, or KEY: value with a space after the colon and none before it"]],"node":{"MY KEY":"1","my.key":"2"}} */}
+```
+DB_HOST: db.internal
+export REDIS_URL: redis://cache:6379/0
+MY KEY=1
+my.key=2
+PORT:8080
+```
+
+```json
+{
+  "DB_HOST": "db.internal",
+  "REDIS_URL": "redis://cache:6379/0",
+  "my.key": "2"
+}
+```
+
+<p>
+  The status line reads "2 valid, 1 warning, 2 errors." Line 3 (<code>MY KEY=1</code>) shows <em>Non-standard key name</em> as an error
+  because dotenv's key pattern <code>{'[\\w.-]+'}</code> has no space. Line 5 shows <em>Use KEY=value, or KEY: value with a space after the colon and
+  none before it</em>. Node.js has its own parser (<code>--env-file</code>, <code>util.parseEnv()</code>), and Node.js 22.23.3 reads this text
+  differently: it keeps <code>MY KEY</code> and <code>my.key</code> and ignores all three colon lines.
+</p>
+
+<p>A key named <code>__proto__</code> is the one place where the export differs from <code>dotenv.parse()</code>, which drops that key:</p>
+
+{/* efp-check: {"status":"2 valid.","toolOnly":["__proto__"]} */}
+```
+__proto__=keep
+A=1
+```
+
+```json
+{
+  "__proto__": "keep",
+  "A": "1"
+}
+```
+
 <h2>Limits</h2>
 <ul>
   <li><strong>No variable expansion.</strong> <code>{'${HOME}/data'}</code> stays as written. dotenv-expand, Docker Compose and some frameworks expand such references, so the value your app sees can differ.</li>
-  <li><strong>dotenv rules only.</strong> Other loaders differ: Docker Compose's <code>{'env_file'}</code>, Python's python-dotenv and shell <code>source</code> treat quotes, <code>export</code> and <code>#</code> in their own ways. Check the loader you actually use when a value contains quotes or <code>#</code>.</li>
+  <li><strong>dotenv rules only.</strong> Other loaders differ: Node.js <code>--env-file</code> (see above), Docker Compose's <code>{'env_file'}</code>, Python's python-dotenv and shell <code>source</code> treat quotes, colons, <code>export</code> and <code>#</code> in their own ways. Check the loader you actually use when a value contains quotes or <code>#</code>, or when a line uses a colon.</li>
   <li><strong>Values are shown in clear text.</strong> The table does not mask secrets, so mind screen sharing; nothing is stored or sent. To share a file safely, replace the values with the <a href="/tools/secret-redactor/">secret redactor</a> first.</li>
   <li><strong>JSON only.</strong> There is no export to YAML, shell <code>export</code> lines or a Kubernetes Secret; the downloaded file is always named <code>env.json</code>.</li>
 </ul>
 
 <h2>Common .env Pitfalls Detected</h2>
 <ul>
-  <li><strong>Missing = sign</strong> — the line cannot be parsed as a key-value pair.</li>
+  <li><strong>Missing = sign</strong> — the line has neither <code>=</code> nor a colon, so it cannot be parsed as a key-value pair.</li>
+  <li><strong>Colon without a space</strong> — <code>PORT:8080</code> and <code>PORT : 8080</code> are skipped by dotenv; write <code>PORT=8080</code> or <code>PORT: 8080</code>.</li>
   <li><strong>Empty value</strong> — the key exists but the value is blank; may cause runtime errors depending on your app.</li>
-  <li><strong>Duplicate key</strong> — the same key appears more than once; behavior depends on which dotenv library is used (first or last wins).</li>
-  <li><strong>Non-standard key name</strong> — keys should start with a letter or underscore and contain only letters, digits, and underscores.</li>
+  <li><strong>Duplicate key</strong> — the same key appears more than once; dotenv uses the last value, other loaders may not.</li>
+  <li><strong>Non-standard key name</strong> — keys should start with a letter or underscore and contain only letters, digits, and underscores. Keys with <code>.</code> or <code>-</code> or a leading digit still load in dotenv (warning); keys with a space or other characters do not (error).</li>
   <li><strong># in an unquoted value</strong> — dotenv starts a comment there, so <code>COLOR=#fff</code> is empty and <code>URL=https://example.com/#top</code> loses <code>#top</code>. Put the value in quotes. Rules: <a href="https://github.com/motdotla/dotenv#what-rules-does-the-parsing-engine-follow">dotenv parsing rules</a>.</li>
 </ul>

@@ -48,6 +48,7 @@ src/
 
 ## 变更日志
 
+- 2026-10-02 — color-shades-generator 任意颜色解析失败时清空当前色阶、导出代码与注记，并禁用复制全部和下载；合法输入恢复后重新启用。修复此前仅空输入会清空、其他非法输入仍可复制或下载旧色阶的问题。
 - 2026-10-02 — bcrypt worker URL 在构建期按源码 SHA-256 生成版本参数，协议更新自动避开旧缓存；worker 保留 generate / verify 旧协议以兼容已缓存页面。修正博客目录说明。
 - 2026-04-26 — 初版
 - 2026-09-26 — 工具页路由改为 `astro.config.mjs` 的 `toolRoutes()` 按 registry 注入（每工具一个入口），删除 `pages/tools/[slug].astro` 与 `pages/{lang}/tools/[slug].astro`；`registry.ts` 改为 slug → 组件文件名；新增 `components/ToolPage.astro`
