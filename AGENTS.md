@@ -173,6 +173,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-03 — har-file-analyzer 修复 Base64 正文绕过脱敏（盘点 A-HAR-BASE64-SAFE-CLAIM）：此前 `encoding: base64` 的正文不检查，Authorization 里去掉的令牌仍留在 Base64 JSON 响应里，报告却显示零残留。现在文本类型（text/*、JSON / +json、JavaScript、XML / +xml、SVG、表单）且为 UTF-8 的 Base64 正文先解码、脱敏，再编码写回（`size` 改为新字节数，删去失效的 `compression`）；二进制类型、非 UTF-8 字符集、无效 Base64、未知 `encoding` 的正文与二进制 WebSocket 消息（opcode 2）从脱敏副本中移除，按原因计数；原 HAR 不变。「别处出现也替换」与最后的复查也会解码 Base64 文本与 JSON 字符串转义，复查同时查明文、Base64（含无填充、URL 安全）与百分号编码形式；明确删除请求 / 响应正文时一并删去 `encoding` 与 `compression`。报告新增 Base64 解码个数与「未能检查而未放入」的分原因计数，导出卡片写明复查只针对已去掉的值；四语言文案与工具页把「可以直接附进工单」改为「附件前先看报告」，限制段改写 Base64 处理范围。测试新增独立复查：重新解析导出文件，用 Node `Buffer` 解码每个 Base64 正文，扫描 `fixtureSession123456789` 及其 Base64 / URL 安全 / 百分号形式。
+
 - 2026-10-02 — 修复 bcrypt-generator 的 worker 缓存回归：v1.138.56 页面发送 bench / hash，固定 URL 缓存的旧 worker 只处理 generate / verify，导致按钮停在 0%。组件构建期按 worker 源码 SHA-256 生成版本 URL；worker 继续接受 generate / verify，兼容缓存的旧页面。回归测试预置 v1.138.55 原始 worker 并运行实际客户端 factory，验证新 URL 下的计时、生成与校验，以及四语言构建产物的内容哈希。
 - 2026-10-02 — protobuf-to-json 移除历史保留的 Long 页面运行时：组件只加载 `protobuf.min.js`（仅用于 Schema 反射解析），五种 64 位类型继续由现有 BigInt 引擎编解码；确认全站无运行引用后删除 `public/vendor/long.min.js`。2026-09-30 引入 Long 与本日精品化时保留加载顺序的记录描述的是历史状态，当前以本条为准。测试页面 vm 不注入 Long；protobufjs 独立对照 vm 使用锁文件已有的 npm Long 与同 realm 构造器，保留精度对照，不新增依赖、不改变协议功能或 vendor 版本。
 

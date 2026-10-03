@@ -117,6 +117,7 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-03 — `test-har-file-analyzer.mjs` 1826 → 1887 项：Base64 文本正文解码脱敏后重新编码（6 种文本类型、`size` 与 `compression`、大小写 `encoding`）、无法检查的正文与二进制 WebSocket 消息按原因移除并计数、明确删除正文时不留 `encoding` / `compression`、`log.comment` 不带回去掉的值、Cookie Parser 复制声明逐字一致；整份导出的独立复查（重新解析后用 Node `Buffer` 解码每个 Base64 正文，查找合成令牌及其 Base64 / URL 安全 / 百分号形式，不调用引擎函数）
 - 2026-10-02 — protobuf 页面运行时清理：`test-protobuf-to-json.mjs` 改为无 Long 的页面 vm 与独立 Long-enabled 对照 vm（304 → 336 项）；五种 64 位类型增加编码与解码的上下界 / 超过 2^53 回归。下方历史记录中的双 vendor 页面加载检查已被替换；protoc / Python fixtures 保持原样。IndexNow 忽略路径测试改用仍存在的 protobuf vendor。
 
 - 2026-10-02 — 发版收尾复核：`sync-jq-web.mjs` 条目补上真实的源码补丁、classic worker 与 `run()` 调用；sprite-sheet 回归条目按实际测试更新为 1277 项并补列新增覆盖。

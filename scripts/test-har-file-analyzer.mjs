@@ -62,6 +62,27 @@ function allStrings(x, out = []) {
 }
 const contains = (har, value) => allStrings(har).some((s) => s.includes(value));
 
+// Cookie Parser keeps a source copy of these declarations. Changing HAR must not drift it.
+{
+  const cookie = readFileSync(join(root, 'src/components/tools/CookieParserTool.astro'), 'utf8');
+  const declaration = (src, name) => {
+    const lines = src.split('\n');
+    const at = lines.findIndex((line) => new RegExp('^\\s*(?:function|var) ' + name + '(?:\\b|\\()').test(line));
+    if (at < 0) return '';
+    const indent = lines[at].match(/^\s*/)[0];
+    let end = at + 1;
+    if (!/;\s*$|}\s*$/.test(lines[at])) {
+      while (end < lines.length && !new RegExp('^' + indent + '(?:};|})\\s*$').test(lines[end])) end++;
+      end++;
+    }
+    return lines.slice(at, end).map((line) => line.startsWith(indent) ? line.slice(indent.length) : line).join('\n');
+  };
+  for (const name of ['notFiller', 'base64HasColon', 'TOKEN_RULES', 'SENS_SUBSTR', 'NON_SECRET_TAIL', 'SENS_WORDS', 'normName', 'nameWords', 'isSensitiveName']) {
+    const mine = declaration(componentSrc, name);
+    check('Cookie source copy identical: ' + name, mine !== '' && mine === declaration(cookie, name));
+  }
+}
+
 // ---------- STRINGS ----------
 {
   const s0 = componentSrc.indexOf('const STRINGS = ');
@@ -260,7 +281,7 @@ const SID = 'demo-session-7f3a9c2e51';
 
   const dropped = E.redactHar(har, { tokens: true, everywhere: true, dropReq: true, dropRes: true, ips: true }, null);
   check('drop bodies: no response text', dropped.har.log.entries.every((e) => e.response.content.text === undefined));
-  check('drop bodies: request text empty', dropped.har.log.entries.filter((e) => e.request.postData).every((e) => e.request.postData.text === ''));
+  check('drop bodies: request text absent', dropped.har.log.entries.filter((e) => e.request.postData).every((e) => e.request.postData.text === undefined));
   check('drop IPs', dropped.har.log.entries.every((e) => e.serverIPAddress === undefined) && !contains(dropped.har, '203.0.113.30'));
   eq('drop bodies: counts', [dropped.counts.dropped, dropped.kept.req, dropped.kept.res], [6, 0, 0]);
   check('drop: email gone with the body', !contains(dropped.har, 'shopper@example.com'));
@@ -365,7 +386,20 @@ function baseEntry(over = {}) {
 
   const b64 = baseEntry();
   b64.response.content = { size: 3, mimeType: 'image/png', text: 'iVBORw0KGgo=', encoding: 'base64' };
-  eq('base64 body untouched', one(b64).har.log.entries[0].response.content.text, 'iVBORw0KGgo=');
+  eq('binary Base64 removed from redacted copy', one(b64).har.log.entries[0].response.content.text, undefined);
+
+  const encoded = baseEntry();
+  const session = 'fixtureSession123456789';
+  encoded.request.headers = [{ name: 'Authorization', value: 'Bearer ' + session }];
+  encoded.response.content = { size: 80, mimeType: 'application/json', encoding: 'base64', text: Buffer.from(JSON.stringify({ token: session, echo: session, ok: true })).toString('base64') };
+  const encodedBefore = JSON.stringify(encoded);
+  const exported = one(encoded);
+  // Independent oracle: reparse the output and use Node's byte decoder, never redactHar again.
+  const saved = JSON.parse(exported.json).log.entries[0].response.content;
+  const decoded = Buffer.from(saved.text || '', 'base64').toString('utf8');
+  check('Base64 decoded export has no fixture session despite left=0', !decoded.includes(session), 'left=' + exported.left);
+  check('Base64 JSON preserves non-secret data', decoded.includes('"ok":true'));
+  eq('Base64 original entry unchanged', JSON.stringify(encoded), encodedBefore);
 
   const ip = baseEntry({ serverIPAddress: '192.0.2.44' });
   ip.request.headers = [{ name: 'X-Forwarded-For', value: '198.51.100.7, 10.0.0.2' }];
@@ -387,6 +421,131 @@ function baseEntry(over = {}) {
   check('residue rule: mixed id eligible', E.residueEligible('abc12345') && E.residueEligible(SID));
   check('residue rule: long numbers only from 16 digits', !E.residueEligible('1790000000') && E.residueEligible('1234567890123456'));
   check('residue rule: long passphrase eligible', E.residueEligible('correct-horse-battery-staple'));
+}
+
+// ---------- Base64 bodies ----------
+// Independent decoding oracle: Buffer and TextDecoder, no production redaction helpers.
+{
+  const secret = 'fixtureSession123456789';
+  const cases = [
+    ['application/json', JSON.stringify({ nested: { token: secret }, echo: secret, ok: true })],
+    ['application/problem+json; charset=UTF-8', JSON.stringify({ password: secret, ok: true })],
+    ['text/html', '<p data-id="' + secret + '">public</p>'],
+    ['application/javascript', 'const echo="' + secret + '";'],
+    ['image/svg+xml', '<svg><desc>' + secret + '</desc></svg>'],
+    ['application/x-www-form-urlencoded', 'password=' + secret + '&ok=1'],
+  ];
+  for (const [mime, text] of cases) {
+    const entry = baseEntry();
+    entry.request.headers = [{ name: 'Authorization', value: 'Bearer ' + secret }];
+    entry.response.content = { size: Buffer.byteLength(text), compression: 4, mimeType: mime, encoding: 'base64', text: Buffer.from(text).toString('base64') };
+    const before = JSON.stringify(entry);
+    const result = one(entry);
+    const content = JSON.parse(result.json).log.entries[0].response.content;
+    const bytes = Buffer.from(content.text || '', 'base64');
+    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    check(mime + ': decoded export removes known secret', !decoded.includes(secret) && decoded.includes('redacted'));
+    eq(mime + ': size = decoded bytes', content.size, bytes.length);
+    eq(mime + ': stale compression omitted', content.compression, undefined);
+    eq(mime + ': one decoded Base64 body reported', result.coverage?.base64, 1);
+    eq(mime + ': original unchanged', JSON.stringify(entry), before);
+  }
+  for (const [label, mime, encoding, text, reason] of [
+    ['binary', 'image/png', 'base64', 'iVBORw0KGgo=', 'binary'],
+    ['missing MIME', '', 'base64', 'aGVsbG8=', 'binary'],
+    ['bad alphabet', 'application/json', 'base64', '%%%bad', 'base64'],
+    ['bad UTF8', 'text/plain', 'base64', Buffer.from([0xc3, 0x28]).toString('base64'), 'charset'],
+    ['unsupported charset', 'text/plain; charset=shift_jis', 'base64', 'aGVsbG8=', 'charset'],
+    ['unknown encoding', 'text/plain', 'gzip', 'opaque-data', 'encoding'],
+  ]) {
+    const entry = baseEntry();
+    entry.response.content = { size: 80, compression: 4, mimeType: mime, encoding, text };
+    const result = one(entry);
+    const content = JSON.parse(result.json).log.entries[0].response.content;
+    eq(label + ': opaque body removed', [content.text, content.encoding], [undefined, undefined]);
+    eq(label + ': removal reason counted', result.coverage?.removed?.[reason], 1);
+    eq(label + ': response body not counted as retained', result.kept.res, 0);
+    eq(label + ': captured timing/size metadata retained', [content.size, result.har.log.entries[0].time], [80, 3]);
+  }
+  const entry = baseEntry();
+  const escaped = [...secret].map((c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')).join('');
+  entry.request.headers = [{ name: 'Cookie', value: 'sid=' + secret }];
+  entry.request.postData = { mimeType: 'application/json', encoding: 'base64', text: Buffer.from('{"echo":"' + escaped + '"}').toString('base64') };
+  entry.response.content = { mimeType: 'text/plain', size: 100, encoding: 'base64', text: Buffer.from(secret + ' ' + Buffer.from(secret).toString('base64')).toString('base64') };
+  const result = one(entry);
+  const saved = JSON.parse(result.json).log.entries[0];
+  const request = JSON.parse(Buffer.from(saved.request.postData.text, 'base64').toString());
+  check('escaped JSON echo independently scanned', request.echo !== secret);
+  check('encoded known-value variant removed', !Buffer.from(saved.response.content.text, 'base64').toString().includes(Buffer.from(secret).toString('base64')));
+  const off = one(entry, { everywhere: false });
+  check('everywhere off: decoded residue counted', off.left > 0);
+  const token = baseEntry();
+  token.response.content = { mimeType: 'application/json', encoding: 'base64', text: Buffer.from(JSON.stringify({ echo: 'Bearer ' + secret })).toString('base64') };
+  check('overview inspects decoded Base64 tokens', E.scanSensitive({ log: { entries: [token] } }).tokens > 0);
+  const binaryWs = baseEntry({ _webSocketMessages: [{ opcode: 2, data: 'opaque-binary' }] });
+  eq('binary WebSocket message removed in copy', one(binaryWs).har.log.entries[0]._webSocketMessages[0].data, undefined);
+  for (const mime of ['application/json-binary', 'application/javascript-opaque', 'image/svg+xml-binary']) {
+    const e = baseEntry();
+    e.response.content = { mimeType: mime, size: 99, compression: 4, encoding: 'base64', text: Buffer.from(secret).toString('base64') };
+    const r = one(e);
+    eq(mime + ': MIME must match completely', r.coverage.removed.binary, 1);
+    eq(mime + ': removed body omits compression', r.har.log.entries[0].response.content.compression, undefined);
+  }
+  const upper = clone(entry);
+  upper.request.postData.encoding = 'BASE64';
+  upper.response.content.encoding = 'Base64';
+  const up = one(upper);
+  const u = JSON.parse(up.json).log.entries[0];
+  check('case-insensitive encoding: decoded echo replaced', !Buffer.from(u.request.postData.text, 'base64').toString().includes(secret));
+  eq('postData has no invented HAR content size', u.request.postData.size, undefined);
+  eq('encoding normalized on export', [u.request.postData.encoding, u.response.content.encoding], ['base64', 'base64']);
+  const dropped = one(upper, { dropReq: true, dropRes: true });
+  eq('explicit request removal omits text and encoding', [dropped.har.log.entries[0].request.postData.text, dropped.har.log.entries[0].request.postData.encoding], [undefined, undefined]);
+  upper.response.content.compression = 4;
+  eq('explicit response removal omits compression', one(upper, { dropRes: true }).har.log.entries[0].response.content.compression, undefined);
+  const commented = { log: { version: '1.2', comment: 'Echo: ' + secret, entries: [upper] } };
+  const cr = E.redactHar(commented, { tokens: true, everywhere: true });
+  check('log.comment does not reintroduce removed secret', !cr.error && !JSON.parse(cr.json).log.comment.includes(secret));
+}
+
+// ---------- whole-file residue scan of a redacted copy ----------
+// Oracle independent of the engine: walk every string of the saved JSON, decode every
+// `encoding: base64` text with Buffer, and look for the secret and its Base64 / URL forms.
+{
+  const secret = 'fixtureSession123456789';
+  const b64 = Buffer.from(secret).toString('base64');
+  const forms = [secret, b64, b64.replace(/=+$/, ''), b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''), encodeURIComponent(secret)];
+  const mk = (mime, text, enc = 'base64') => { const e = baseEntry(); e.response.content = { size: Buffer.byteLength(text), mimeType: mime, encoding: enc, text: enc === 'base64' ? Buffer.from(text).toString('base64') : text }; return e; };
+  const entries = [
+    baseEntry({ request: Object.assign(baseEntry().request, { headers: [{ name: 'Authorization', value: 'Bearer ' + secret }] }) }),
+    mk('application/json', JSON.stringify({ deep: [{ v: secret }], b: b64 })),
+    mk('text/html; charset=utf-8', '<html data-x="' + secret + '"></html>'),
+    mk('image/png', 'PNG' + secret),
+    mk('text/plain; charset=euc-kr', secret),
+    mk('application/octet-stream', secret),
+    baseEntry({ _webSocketMessages: [{ type: 'receive', opcode: 1, data: '{"s":"' + secret + '"}' }, { type: 'receive', opcode: 2, data: b64 }] }),
+  ];
+  const har = { log: { version: '1.2', creator: { name: 't', version: '1' }, entries } };
+  const before = JSON.stringify(har);
+  const res = E.redactHar(har, { tokens: true, everywhere: true }, null);
+  check('whole file: export succeeded', !res.error, JSON.stringify(res.error));
+  const hits = [];
+  const walk = (x, path) => {
+    if (typeof x === 'string') { for (const f of forms) if (x.includes(f)) hits.push(path + ' raw'); return; }
+    if (Array.isArray(x)) return x.forEach((y, i) => walk(y, path + '[' + i + ']'));
+    if (x && typeof x === 'object') {
+      for (const k of Object.keys(x)) walk(x[k], path + '.' + k);
+      if (typeof x.text === 'string' && String(x.encoding).toLowerCase() === 'base64') {
+        const t = Buffer.from(x.text, 'base64').toString('latin1') + '\n' + Buffer.from(x.text, 'base64').toString('utf8');
+        for (const f of forms) if (t.includes(f)) hits.push(path + '.text decoded');
+      }
+    }
+  };
+  walk(JSON.parse(res.json), 'root');
+  eq('whole file: independent scan finds no secret form', hits, []);
+  eq('whole file: engine left count', res.left, 0);
+  eq('whole file: coverage', res.coverage, { base64: 2, removed: { binary: 3, base64: 0, charset: 1, encoding: 0 } });
+  eq('whole file: original HAR unchanged', JSON.stringify(har), before);
 }
 
 // ---------- Firefox-shaped export ----------
