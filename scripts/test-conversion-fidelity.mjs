@@ -380,6 +380,34 @@ expectRejected(YD, 'yaml-json', 'y2j', '2026-02-31', '(root)', '2026-02-31');
   }
 }
 
+/* ── Pages quote the -0 / whole-float / local date-time / UTC offset behavior as the page shows it ── */
+{
+  const { readFileSync } = await import('node:fs');
+  const mdx = (tool, lang) => readFileSync(new URL(`../src/content/tools/${tool}/${lang}.mdx`, import.meta.url), 'utf8');
+  const shown = (tool, dir, text, lang = 'en') => { const page = open(tool, lang); const r = convert(page, tool, dir, text, 'input'); return { out: r.out.value, status: r.status.textContent }; };
+  const tz = shown('toml-json', 't2j', 'offset = -0.0').out, jz = shown('toml-json', 'j2t', '{"count":-0}').out;
+  const yf = shown('yaml-toml', 'y2t', 'ratio: 1.0').out;
+  const yo = shown('yaml-json', 'y2j', 'at: 2026-10-01T09:30:00+09:00\nzero: -0.0').out, jy = shown('yaml-json', 'j2y', '{"count":-0,"offset":-0.0}').out;
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const tj = mdx('toml-json', lang), yt = mdx('yaml-toml', lang), yj = mdx('yaml-json', lang), yv = mdx('yaml-validator', lang);
+    check('PAGE-TEXT-C', `toml-json ${lang}: -0.0 both ways and the integer -0`,
+      tz === '{\n  "offset": -0.0\n}' && jz === 'count = 0\n' && tj.includes('`offset = -0.0`') && tj.includes('`"offset": -0.0`') && tj.includes('`{"count":-0}`') && tj.includes('`count = 0`'), tz + ' | ' + jz);
+    const l = shown('yaml-toml', 't2y', '[build]\nstarted = 2026-10-01T09:30:00', lang);
+    check('PAGE-TEXT-C', `yaml-toml ${lang}: local date-time stop and whole floats`,
+      l.out === '' && yt.includes('<code>' + l.status + '</code>') && yt.includes('<code>started = 2026-10-01T09:30:00</code>') &&
+      yf === 'ratio = 1.0\n' && yt.includes('<code>ratio: 1.0</code>') && yt.includes('<code>ratio = 1.0</code>'), l.status);
+    check('PAGE-TEXT-C', `yaml-json ${lang}: offsets become UTC, -0.0 kept, JSON -0 becomes 0`,
+      yo === '{\n  "at": "2026-10-01T00:30:00.000Z",\n  "zero": -0.0\n}' && yj.includes('| `at: 2026-10-01T09:30:00+09:00` | `"2026-10-01T00:30:00.000Z"` |') && yj.includes('| `zero: -0.0` | `-0.0` |') &&
+      jy === 'count: 0\noffset: -0.0\n' && yj.includes('`{"count":-0,"offset":-0.0}`') && yj.includes('`count: 0`') && yj.includes('`offset: -0.0`'), yo + ' | ' + jy);
+    check('PAGE-TEXT-C', `yaml-validator ${lang}: preview writes -0.0 and UTC`,
+      yv.includes('`-0.0`') && yv.includes('`2026-10-01T09:30:00+09:00`') && yv.includes('`"2026-10-01T00:30:00.000Z"`'));
+  }
+  // the validator preview really shows the offset example in UTC
+  const page = loadPage('src/components/tools/YamlValidatorTool.astro', { dataset: { '.yv-wrap': { lang: 'en', msgValid: 'Valid' } } });
+  page.el('yv-input').value = 'at: 2026-10-01T09:30:00+09:00'; page.el('yv-validate').click();
+  check('PAGE-TEXT-C', 'yaml-validator preview shows the offset example in UTC', page.el('yv-preview-content').textContent === '{\n  "at": "2026-10-01T00:30:00.000Z"\n}');
+}
+
 /* ── Summary per finding ── */
 console.log('\nPer finding:');
 for (const [tag, c] of Object.entries(counts)) console.log(`  ${tag}: ${c.pass} passed, ${c.fail} failed`);
