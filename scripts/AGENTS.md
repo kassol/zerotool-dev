@@ -115,7 +115,7 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
-- 2026-10-02 — 加入 `test-css-clip-path-generator.mjs`：读组件真实函数，在 vm 与桩 DOM 中检查零值、小数、夹取回写、矩形 SVG 坐标、圆形百分比半径、inset 对向缩减、键盘与 pointercancel 回调、CSS 原值过滤及高亮文本往返；parse5 取自已有依赖。只读源码、只写 stdout，手动定向运行或 CI 随其他 test-*.mjs 运行。收尾时 Node 22 通过；完整初始化、多指针、浏览器 CSS.supports 与视觉行为尚未验收。
+- 2026-10-03 — 加入 `test-css-clip-path-generator.mjs`：读组件真实函数，在 vm 与桩 DOM 中检查零值、小数、夹取回写、矩形 SVG 坐标、圆形百分比半径、inset 对向缩减、键盘与 pointercancel 回调、CSS 原值过滤（含括号与引号闭合）及高亮文本往返、参考框虚线随选项显示；再读 4 语言工具页的 `{/* cpg-check: {...} */}` 标注（每语言至少 3 处，共 22 处），用组件的 buildClipPath / cssOutput / PRESETS / updateCircleOverlay / updateInsetOverlay / makeDraggable 复算 CSS、预设、半径、inset 缩减、拖拽与方向键结果，并核对页面原文含同一文本。parse5 取自已有依赖；只读源码、只写 stdout，CI 随其他 test-*.mjs 运行。浏览器行为（CSS.supports、命中测试、复制）在 AGENTS.md 精品化条目中记录 ego-browser 实测，不在本测试内
 
 - 2026-04-26 — 初版
 - 2026-04-26 — 加入 `audit.mjs`（13 维度静态校验）+ CI 巡检管线说明

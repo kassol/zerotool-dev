@@ -71,6 +71,7 @@ assert.match(declaration('makeDraggable'), /pointercancel/, 'touch cancellation 
 assert.doesNotMatch(declaration('applyBackground'), /bg\.style\.backgroundImage/, 'background choice changes the clipped element');
 assert.match(script, /catch[\s\S]*execCommand/, 'clipboard fallback handles rejected writes');
 assert.match(script, /zt:clear/, 'site clear resets tool state');
+assert.match(declaration('showFrame'), /boxGuides\.hidden = !on/, 'reference-box outlines follow the frame option');
 vm.runInContext(declaration('highlight'), context);
 assert.doesNotMatch(vm.runInContext('highlight("<img onerror=x>")', context), /<img/, 'raw CSS highlighting escapes user input');
 vm.runInContext(source.match(/\/\/ engine:start([\s\S]*?)\/\/ engine:end/)[1], context);
