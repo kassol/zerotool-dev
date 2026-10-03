@@ -3,7 +3,9 @@
 // Values JSON or YAML cannot hold as written stop the conversion with their JSON Pointer paths:
 // YAML .inf / .nan going to JSON, integers outside ±(2^53 − 1) on either side, JSON numbers
 // that overflow and YAML timestamps that are not real dates (2026-02-31) or have more than
-// millisecond precision (conversion-fidelity.js). The old output is cleared and its copy button disabled.
+// millisecond precision (conversion-fidelity.js). The old output is cleared and its copy button
+// disabled. -0.0 is written -0.0; the JSON integer -0 is 0. Valid timestamps become UTC ISO text
+// (the same instant; the written offset is not kept).
 // YAML errors from the js-yaml work limits are shown in the page language (yaml-limits.js).
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
@@ -57,7 +59,7 @@ const T = STRINGS[lang] || STRINGS.en;
 
   <script>
     import jsyaml from 'js-yaml';
-    import { yamlLoadSchema, parseJsonExact, findLosses, formatLosses } from './conversion-fidelity.js';
+    import { yamlLoadSchema, parseJsonExact, findLosses, formatLosses, stringifyJson } from './conversion-fidelity.js';
     import { yamlErrorText } from './yaml-limits.js';
 
     const yamlEl = document.getElementById('yj-yaml') as HTMLTextAreaElement;
@@ -78,7 +80,7 @@ const T = STRINGS[lang] || STRINGS.en;
       catch (e: any) { return { ok: false, message: S.invalidYaml + ': ' + yamlErrorText(e, LANG) }; }
       const found = findLosses(data, 'json');
       if (found.count) return { ok: false, message: formatLosses(found, 'JSON', LANG) };
-      return { ok: true, text: JSON.stringify(found.value, null, 2) };
+      return { ok: true, text: stringifyJson(found.value, 2) };
     }
 
     function jsonToYaml(raw: string): Result {

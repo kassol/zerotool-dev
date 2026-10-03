@@ -213,9 +213,62 @@ const NZ = 'B-NEGATIVE-ZERO';
 const negZero = (key) => (o) => Object.is(tomlParse(o)[key], -0);
 expectConverted(NZ, 'yaml-toml', 'y2t', 'x: -0.0', (o) => o === 'x = -0.0\n' && negZero('x')(o), 'YAML -0.0 becomes TOML -0.0');
 expectConverted(NZ, 'toml-json', 'j2t', '{"x":-0.0}', (o) => o === 'x = -0.0\n' && negZero('x')(o), 'JSON -0.0 becomes TOML -0.0');
-expectConverted(NZ, 'toml-json', 'j2t', '{"a":[-0.0,1],"b":{"c":-0},"t":[{"z":-0.0}]}',
+expectConverted(NZ, 'toml-json', 'j2t', '{"a":[-0.0,1],"b":{"c":-0.0},"t":[{"z":-0.0}]}',
   (o) => { const d = tomlParse(o); return Object.is(d.a[0], -0) && d.a[1] === 1 && Object.is(d.b.c, -0) && Object.is(d.t[0].z, -0) && o.includes('a = [ -0.0, 1 ]'); }, 'nested -0 in arrays, tables and arrays of tables');
-expectConverted(NZ, 'yaml-toml', 'y2t', 'x: 0.0\ny: 0', (o) => o === 'x = 0\ny = 0\n', 'positive zero unchanged');
+expectConverted(NZ, 'yaml-toml', 'y2t', 'x: 0.0\ny: 0', (o) => o === 'x = 0.0\ny = 0\n', 'positive zero keeps its type');
+
+/* ── C-NEGZERO-JSON ── JSON.stringify(-0) is "0"; JSON text can write -0.0, which JSON.parse reads
+   as -0 and parsers that keep integers apart (Python json) read as a float with its sign. */
+const NJ = 'C-NEGZERO-JSON';
+const jsonNegZero = (path) => (o) => Object.is(path(JSON.parse(o)), -0);
+expectConverted(NJ, 'toml-json', 't2j', 'x = -0.0', (o) => o === '{\n  "x": -0.0\n}' && jsonNegZero((d) => d.x)(o), 'TOML -0.0 becomes JSON -0.0');
+expectConverted(NJ, 'toml-json', 't2j', 'a = [-0.0, 0.0, 1.5]\n[t]\nz = -0.0\nzero = -0',
+  (o) => { const d = JSON.parse(o); return Object.is(d.a[0], -0) && Object.is(d.a[1], 0) && Object.is(d.t.z, -0) && Object.is(d.t.zero, 0) && o.includes('-0.0,') && o.includes('"zero": 0\n'); }, 'nested -0.0; integer -0 stays 0');
+expectConverted(NJ, 'yaml-json', 'y2j', 'x: -0.0\ny: [-0.0, 0]\nz: -0', (o) => o === '{\n  "x": -0.0,\n  "y": [\n    -0.0,\n    0\n  ],\n  "z": 0\n}', 'YAML -0.0 becomes JSON -0.0; YAML integer -0 is 0');
+expectConverted(NJ, 'yaml-json', 'y2j', '-0.0', (o) => o === '-0.0', '-0.0 as the whole document');
+expectConverted(NJ, 'yaml-json', 'y2j', 's: "\\0zt-neg0"\nx: -0.0', (o) => { const d = JSON.parse(o); return d.s === '\u0000zt-neg0' && Object.is(d.x, -0); }, 'a string that looks like the internal marker stays a string');
+
+/* ── C-JSON-INT-NEGZERO ── JSON integer -0 is the integer zero (TOML 1.0: "-0 and +0 are valid
+   and identical to an unprefixed zero"; YAML 1.2 core int); -0.0 is the negative float zero. */
+const JZ = 'C-JSON-INT-NEGZERO';
+expectConverted(JZ, 'yaml-json', 'j2y', '{"a":-0,"b":-0.0,"c":[-0,-0e0]}', (o) => o === 'a: 0\nb: -0.0\nc:\n  - 0\n  - -0.0\n', 'JSON -0 becomes YAML 0, -0.0 and -0e0 become -0.0');
+expectConverted(JZ, 'toml-json', 'j2t', '{"x":-0,"y":-0.0}', (o) => o === 'x = 0\ny = -0.0\n', 'JSON -0 becomes TOML 0, -0.0 becomes -0.0');
+
+/* ── C-YAML-FLOAT-TOML ── smol-toml writes whole floats as integers; TOML has 1.0. */
+const YF = 'C-YAML-FLOAT-TOML';
+expectConverted(YF, 'yaml-toml', 'y2t', 'a: 1.0\nb: 1e3\nc: [2.0, 3, 0.5]\nd: 1\ne: 1.5\nf: -3.0\ng: 1e21\nh: !!float 4',
+  (o) => o === 'a = 1.0\nb = 1000.0\nc = [ 2.0, 3, 0.5 ]\nd = 1\ne = 1.5\nf = -3.0\ng = 1e+21\nh = 4.0\n' && deep(tomlParse(o).c, [2, 3, 0.5]), 'whole YAML floats stay TOML floats; integers stay integers');
+expectConverted(YF, 'yaml-toml', 'y2t', 'server:\n  ratio: 1.0\nlist:\n  - {w: 2.0}', (o) => o.includes('ratio = 1.0\n') && o.includes('w = 2.0'), 'nested tables and arrays of tables');
+
+/* ── C-TOML-LOCAL-DATETIME ── a TOML local date-time has no offset; YAML reads a timestamp
+   without one as UTC (YAML timestamp type), so TOML → YAML would change its meaning. */
+const LD = 'C-TOML-LOCAL-DATETIME';
+expectRejected(LD, 'yaml-toml', 't2y', 'started = 1979-05-27T07:32:00', '/started', '1979-05-27T07:32:00');
+expectRejected(LD, 'yaml-toml', 't2y', '[run]\nat = [1979-05-27 07:32:00.5]', '/run/at/0', '1979-05-27 07:32:00.5');
+expectRejected(LD, 'yaml-toml', 't2y', 'x = { t = 1979-05-27t07:32:00 }', '/x/t', '1979-05-27t07:32:00', 'zh');
+expectRejected(LD, 'yaml-toml', 't2y', 'started = 1979-05-27T07:32:00', '/started', '1979-05-27T07:32:00', 'ja');
+expectRejected(LD, 'yaml-toml', 't2y', 'started = 1979-05-27T07:32:00', '/started', '1979-05-27T07:32:00', 'ko');
+expectConverted(LD, 'yaml-toml', 't2y', 'a = 1979-05-27T07:32:00Z\nb = 1979-05-27\nc = 07:32:00\nd = "1979-05-27T07:32:00"\n# e = 1979-05-27T07:32:00',
+  (o) => o === "a: 1979-05-27T07:32:00.000Z\nb: 1979-05-27\nc: 07:32:00.000\nd: '1979-05-27T07:32:00'\n", 'offset date-times, local dates, local times and strings convert');
+expectConverted(LD, 'toml-json', 't2j', 'started = 1979-05-27T07:32:00', (o) => o === '{\n  "started": "1979-05-27T07:32:00.000"\n}', 'TOML → JSON keeps the local date-time as text without an offset');
+
+/* ── C-VALIDATOR-NEGZERO ── the yaml-validator preview writes -0.0 like the converters. */
+{
+  const VZ = 'C-VALIDATOR-NEGZERO';
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: labels[lang].msgValid, msgValidMulti: labels[lang].msgValidMulti } } });
+    page.el('yv-input').value = 'x: -0.0\ny: [-0.0, 0]\nz: -0'; page.el('yv-validate').click();
+    const t = page.el('yv-preview-content').textContent;
+    check(VZ, `yaml-validator ${lang}: preview writes -0.0 and no note`, t === '{\n  "x": -0.0,\n  "y": [\n    -0.0,\n    0\n  ],\n  "z": 0\n}' && page.el('yv-preview-note').hidden === true, t);
+    page.el('yv-input').value = 'a: 1\n---\n-0.0'; page.el('yv-validate').click();
+    const t2 = page.el('yv-preview-content').textContent;
+    check(VZ, `yaml-validator ${lang}: -0.0 as a whole document in a multi-document preview`, t2 === '[\n  {\n    "a": 1\n  },\n  -0.0\n]', t2);
+  }
+}
 
 /* ── B-YAML-JSON-DATE ── js-yaml builds a Date with Date.UTC, which rolls impossible dates over. */
 const YD = 'B-YAML-JSON-DATE';

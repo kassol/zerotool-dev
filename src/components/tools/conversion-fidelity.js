@@ -17,8 +17,10 @@
 //   2026-02-31 (js-yaml rolls them over to March) are rejected. YAML timestamps going to JSON
 //   keep the Date js-yaml builds (UTC ISO text) and are checked the same way.
 // - TOML date-times and times with more than millisecond precision going to JSON or YAML
-//   (markTomlPrecision): smol-toml drops the digits after milliseconds.
-// - -0 going to TOML is written as -0.0 (TomlNegativeZero), not a loss.
+//   (markTomlTimes): smol-toml drops the digits after milliseconds. TOML local date-times going
+//   to YAML, which reads a timestamp without an offset as UTC.
+// Written correctly instead of refused: -0 going to TOML is -0.0 and a whole YAML float is 1.0
+// (TomlNumberText); -0 going to JSON is -0.0 (stringifyJson); the JSON integer -0 is 0.
 // The YAML validator uses the same walk with `preview` to list what its JSON preview changes.
 // Paths are JSON Pointers (RFC 6901). Nothing here touches the DOM, storage or network.
 
@@ -31,13 +33,20 @@ export class YamlTimestamp {
   constructor(raw, date) { this.raw = raw; this.date = date; }
 }
 
-/* -0 for smol-toml: its stringify writes every number through Number#toString, so -0 becomes `0`
-   (an integer, sign lost). Date values are written through toISOString() (stringify.js
-   stringifyValue, smol-toml 1.7.1), the same way TomlDate prints itself, so this Date stands in
-   for the TOML float -0.0 (TOML 1.0 "-0.0 and +0.0 are valid"). */
-export class TomlNegativeZero extends Date {
-  constructor() { super(0); }
-  toISOString() { return '-0.0'; }
+// A YAML float whose value is a whole number (1.0, 1e3): JavaScript keeps no float type, so
+// smol-toml would write it as the TOML integer 1. Only made with yamlLoadSchema `floats`.
+export class WholeFloat {
+  constructor(value) { this.value = value; }
+}
+
+/* A TOML number written as `text`. smol-toml's stringify writes numbers through Number#toString,
+   so -0 becomes `0` and 1.0 becomes `1` (an integer). Date values are written through
+   toISOString() (stringify.js stringifyValue, smol-toml 1.7.1), the same way TomlDate prints
+   itself, so this Date stands in for the float -0.0 (TOML 1.0 "-0.0 and +0.0 are valid") or a
+   whole float such as 1.0. */
+export class TomlNumberText extends Date {
+  constructor(text) { super(0); this.text = text; }
+  toISOString() { return this.text; }
 }
 
 const SAFE_INT_LITERAL = /^-?(0|[1-9][0-9]*)$/;
@@ -49,6 +58,8 @@ export function parseJsonExact(text) {
     var src = context && typeof context.source === 'string' ? context.source : null;
     var integral = src !== null ? SAFE_INT_LITERAL.test(src) : Number.isInteger(value) || !Number.isFinite(value);
     if (integral && !Number.isSafeInteger(value)) return new LossyValue('unsafeInteger', src !== null ? src : String(value), value);
+    // The integer literal -0 is the integer zero (TOML 1.0, YAML 1.2 int); -0.0 and -0e0 stay -0.
+    if (src !== null && integral && value === 0) return 0;
     if (!Number.isFinite(value)) return new LossyValue('numberRange', src !== null ? src : String(value), value);
     return value;
   });
@@ -56,7 +67,9 @@ export function parseJsonExact(text) {
 
 /* The js-yaml schema the converters load with: the default schema, with the int type marking
    integers outside the safe range and, with `timestamps`, timestamps kept as their text next to
-   the Date js-yaml builds (findLosses checks the text, then writes a TomlDate or the Date). */
+   the Date js-yaml builds (findLosses checks the text, then writes a TomlDate or the Date).
+   An integer is never -0 (js-yaml reads -0x0 as -0). With `floats`, a float with a whole value
+   becomes WholeFloat so TOML output keeps it a float. */
 export function yamlLoadSchema(jsyaml, opts) {
   var intType = jsyaml.types.int;
   var types = [new jsyaml.Type('tag:yaml.org,2002:int', {
@@ -64,9 +77,21 @@ export function yamlLoadSchema(jsyaml, opts) {
     resolve: intType.resolve,
     construct: function (data) {
       var v = intType.construct(data);
+      if (v === 0) return 0;
       return Number.isSafeInteger(v) ? v : new LossyValue('unsafeInteger', String(data), v);
     },
   })];
+  if (opts && opts.floats) {
+    var floatType = jsyaml.types.float;
+    types.push(new jsyaml.Type('tag:yaml.org,2002:float', {
+      kind: 'scalar',
+      resolve: floatType.resolve,
+      construct: function (data) {
+        var v = floatType.construct(data);
+        return Number.isInteger(v) && !Object.is(v, -0) ? new WholeFloat(v) : v;
+      },
+    }));
+  }
   if (opts && opts.timestamps) {
     var ts = jsyaml.types.timestamp;
     types.push(new jsyaml.Type('tag:yaml.org,2002:timestamp', {
@@ -110,6 +135,20 @@ export function yamlTimestampToToml(raw) {
   return { text: y + '-' + mo + '-' + d + 'T' + h + ':' + mi + ':' + s + (frac ? '.' + frac : '') + tz };
 }
 
+/* JSON.stringify, except that -0 is written -0.0: JSON.stringify writes it as 0, while JSON
+   text can say -0.0 (RFC 8259 number grammar), which JSON.parse reads back as -0. */
+export function stringifyJson(value, space) {
+  for (var n = 0; ; n++) {
+    var mark = '\u0000zt-neg0-' + n;
+    var clash = false;
+    var text = JSON.stringify(value, function (_key, v) {
+      if (v === mark) clash = true;
+      return Object.is(v, -0) ? mark : v;
+    }, space);
+    if (!clash) return text === undefined ? text : text.split(JSON.stringify(mark)).join('-0.0');
+  }
+}
+
 export function pointer(segs) {
   return segs.map(function (s) { return '/' + String(s).replace(/~/g, '~0').replace(/\//g, '~1'); }).join('');
 }
@@ -124,8 +163,8 @@ function isPlainObject(v) {
    (at most `opts.limit` listed, `count` all) and `value`, the root after replacing in place:
    YAML timestamps become TomlDate (TOML, `opts.TomlDate`) or the Date js-yaml built (JSON / YAML;
    impossible dates and more than millisecond precision are losses there too, since that Date
-   rolls 2026-02-31 over to March and keeps milliseconds), and -0 becomes TomlNegativeZero for
-   TOML. With `opts.preview`, a LossyValue is replaced by the value JavaScript holds instead, so
+   rolls 2026-02-31 over to March and keeps milliseconds); for TOML, -0 and WholeFloat become
+   TomlNumberText (-0.0, 1.0). With `opts.preview`, a LossyValue is replaced by the value JavaScript holds instead, so
    a preview can still show the data next to the list of losses. */
 export function findLosses(root, target, opts) {
   var o = opts || {};
@@ -146,7 +185,8 @@ export function findLosses(root, target, opts) {
       add(segs, 'nonFinite', Number.isNaN(v) ? 'nan' : v > 0 ? 'inf' : '-inf');
       return;
     }
-    if (target === 'toml' && Object.is(v, -0)) { set(new TomlNegativeZero()); return; }
+    if (v instanceof WholeFloat) { set(target === 'toml' ? new TomlNumberText(v.value.toFixed(1)) : v.value); return; }
+    if (target === 'toml' && Object.is(v, -0)) { set(new TomlNumberText('-0.0')); return; }
     if ((v === null || v === undefined) && target === 'toml') { add(segs, 'null', 'null'); return; }
     if (Array.isArray(v)) {
       for (var i = 0; i < v.length; i++) visit(v[i], segs.concat(i), (function (j) { return function (x) { v[j] = x; }; })(i));
@@ -159,16 +199,18 @@ export function findLosses(root, target, opts) {
   return { losses: losses, count: count, value: out };
 }
 
-/* TOML date-times and times with more than millisecond precision. smol-toml keeps
-   milliseconds and drops further digits (TOML 1.0 lets a parser truncate them), so the parsed
-   value no longer says what the text did. This finds such literals in the source (outside
-   strings and comments), parses a copy with each one replaced by a marker string, and returns
-   that data with a LossyValue('timestampPrecision', literal) at each place. Trailing zeros are
-   not a loss. Returns `data` unchanged when there is nothing to mark. `parse` is smol-toml's. */
-const TOML_TIME = /(?:[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ])?[0-9]{2}:[0-9]{2}:[0-9]{2}\.([0-9]+)(?:[Zz]|[+-][0-9]{2}:[0-9]{2})?/y;
+/* TOML date-times and times the target cannot hold. smol-toml keeps milliseconds and drops
+   further digits (TOML 1.0 lets a parser truncate them), so the parsed value no longer says what
+   the text did ('timestampPrecision'). With `localDateTime`, a local date-time (no offset) is a
+   loss too ('localDateTime'): YAML reads a timestamp without an offset as UTC. This finds such
+   literals in the source (outside strings and comments), parses a copy with each one replaced by
+   a marker string, and returns that data with a LossyValue(kind, literal) at each place.
+   Trailing zeros are not a loss. Returns `data` unchanged when there is nothing to mark.
+   `parse` is smol-toml's. */
+const TOML_TIME = /(?:([0-9]{4}-[0-9]{2}-[0-9]{2})[Tt ])?[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.([0-9]+))?([Zz]|[+-][0-9]{2}:[0-9]{2})?/y;
 const TOML_TOKEN_BEFORE = /[0-9A-Za-z_.:+-]/;
 
-function tomlLossyTimes(src) {
+function tomlLossyTimes(src, opts) {
   var found = [];
   var i = 0, n = src.length;
   while (i < n) {
@@ -192,7 +234,9 @@ function tomlLossyTimes(src) {
       TOML_TIME.lastIndex = i;
       var m = TOML_TIME.exec(src);
       if (m) {
-        if (/[1-9]/.test(m[1].slice(3))) found.push({ start: i, end: i + m[0].length, raw: m[0] });
+        var kind = m[2] && /[1-9]/.test(m[2].slice(3)) ? 'timestampPrecision'
+          : opts && opts.localDateTime && m[1] && !m[3] ? 'localDateTime' : null;
+        if (kind) found.push({ start: i, end: i + m[0].length, raw: m[0], kind: kind });
         i += m[0].length;
         continue;
       }
@@ -204,8 +248,8 @@ function tomlLossyTimes(src) {
   return found;
 }
 
-export function markTomlPrecision(src, parse, data) {
-  var found = tomlLossyTimes(src);
+export function markTomlTimes(src, parse, data, opts) {
+  var found = tomlLossyTimes(src, opts);
   if (!found.length) return data;
   var tag = 'zt-ms';
   while (src.indexOf(tag) !== -1) tag += '-';
@@ -214,14 +258,14 @@ export function markTomlPrecision(src, parse, data) {
   var last = 0;
   found.forEach(function (f, k) {
     var key = '\u0000' + tag + k;
-    marks[key] = f.raw;
+    marks[key] = f;
     text += src.slice(last, f.start) + '"\\u0000' + tag + k + '"';
     last = f.end;
   });
   text += src.slice(last);
   var marked = parse(text);
   function swap(v) {
-    if (typeof v === 'string' && Object.prototype.hasOwnProperty.call(marks, v)) return new LossyValue('timestampPrecision', marks[v]);
+    if (typeof v === 'string' && Object.prototype.hasOwnProperty.call(marks, v)) return new LossyValue(marks[v].kind, marks[v].raw);
     if (Array.isArray(v)) { for (var i = 0; i < v.length; i++) v[i] = swap(v[i]); }
     else if (isPlainObject(v)) Object.keys(v).forEach(function (k) { v[k] = swap(v[k]); });
     return v;
@@ -239,6 +283,7 @@ const TEXT = {
     null: 'null — TOML has no null',
     timestampPrecision: '{raw} has more than millisecond precision',
     timestampInvalid: '{raw} is not a valid date or time',
+    localDateTime: '{raw} is a local date-time, and YAML reads a time without an offset as UTC',
     more: 'and {n} more',
     root: '(root)',
   },
@@ -251,6 +296,7 @@ const TEXT = {
     null: 'null，TOML 没有 null',
     timestampPrecision: '{raw} 的精度超过毫秒',
     timestampInvalid: '{raw} 不是有效的日期或时间',
+    localDateTime: '{raw} 是本地日期时间，YAML 会把不带偏移的时间读作 UTC',
     more: '另有 {n} 处',
     root: '（根）',
   },
@@ -263,6 +309,7 @@ const TEXT = {
     null: 'null — TOML には null がありません',
     timestampPrecision: '{raw} はミリ秒より細かい精度を持っています',
     timestampInvalid: '{raw} は有効な日付・時刻ではありません',
+    localDateTime: '{raw} はローカル日時です。YAML はオフセットのない日時を UTC として読みます',
     more: 'ほか {n} 件',
     root: '（ルート）',
   },
@@ -275,6 +322,7 @@ const TEXT = {
     null: 'null — TOML에는 null이 없습니다',
     timestampPrecision: '{raw} — 밀리초보다 정밀합니다',
     timestampInvalid: '{raw} — 올바른 날짜나 시각이 아닙니다',
+    localDateTime: '{raw} — 로컬 날짜·시간입니다. YAML은 오프셋이 없는 시간을 UTC로 읽습니다',
     more: '외 {n}건',
     root: '(루트)',
   },
