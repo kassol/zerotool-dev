@@ -58,7 +58,7 @@ function gen(json, model, mode, timestamps, required) {
   const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
-    { querySelector: () => wrap, getElementById: (id) => elements[id] }, {}, { highlightElement() {} }, {}, () => 0, () => {});
+    { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
   elements['jtm-input'].value = json;
   groups['#jtm-lang-tabs .jtm-tab'].find((tab) => tab.dataset.lang === mode).handlers.click();
   groups['#jtm-ts-tabs .jtm-tab'].find((tab) => tab.dataset.ts === String(timestamps)).handlers.click();
@@ -68,6 +68,7 @@ function gen(json, model, mode, timestamps, required) {
 }
 // A page session: the real client script with stubs, driven by input events and buttons.
 function session() {
+  const docHandlers = {};
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {}, disabled: false,
       classList: { add() {}, remove() {} }, removeAttribute() {},
@@ -82,10 +83,16 @@ function session() {
   const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
-    { querySelector: () => wrap, getElementById: (id) => elements[id] }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
+    { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
   const type = (text) => { elements['jtm-input'].value = text; elements['jtm-input'].handlers.input(); };
   const state = () => ({ code: elements['jtm-output-code'].textContent, status: elements['jtm-status'].textContent, copyDisabled: elements['jtm-copy'].disabled });
-  return { type, state, click: (id) => elements['jtm-' + id].handlers.click() };
+  // ToolLayout's Ctrl/Cmd+L (src/layouts/ToolLayout.astro): when focus is inside the tool it sets every
+  // textarea and text input to '' without input events, then other keydown listeners run.
+  const shortcut = (init, focusInside = true) => {
+    if (focusInside) { elements['jtm-input'].value = ''; elements['jtm-model-name'].value = ''; }
+    for (const fn of docHandlers.keydown || []) fn({ key: 'l', ctrlKey: false, metaKey: false, preventDefault() {}, ...init });
+  };
+  return { type, state, shortcut, click: (id) => elements['jtm-' + id].handlers.click() };
 }
 {
   const s = session();
@@ -106,6 +113,24 @@ function session() {
   eq('stale output: empty input disables Copy', s.state().code === '' && s.state().copyDisabled, true);
   const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + '\nreturn labels;')();
   eq('stale output: the error prefix exists in 4 languages', ['en', 'zh', 'ja', 'ko'].every((l) => labels[l] && labels[l].msgInvalidJson && labels[l].msgInvalidJson.trim()), true);
+}
+{
+  // Ctrl/Cmd+L: ToolLayout empties the fields without input events; the output must not stay.
+  const s = session();
+  s.shortcut({ ctrlKey: true });
+  eq('Ctrl+L: the seeded output is cleared', s.state().code, '');
+  eq('Ctrl+L: Copy is disabled', s.state().copyDisabled, true);
+  eq('Ctrl+L: the status line is cleared', s.state().status, '');
+  s.type('{"age": 30}');
+  eq('Ctrl+L: the next input renders again and enables Copy', /age: (\{ type: )?Number/.test(s.state().code) && !s.state().copyDisabled, true);
+  s.type('{"a":');
+  s.shortcut({ metaKey: true, key: 'L' });
+  eq('Cmd+L (key "L") after an error clears the error status', s.state().status, '');
+  s.type('{"age": 30}');
+  s.shortcut({ ctrlKey: true }, false);
+  eq('Ctrl+L with focus outside the tool keeps the output', /age: (\{ type: )?Number/.test(s.state().code) && !s.state().copyDisabled, true);
+  s.shortcut({ key: 'l' });
+  eq('an L keydown without Ctrl/Cmd does not clear the output', /age: (\{ type: )?Number/.test(s.state().code) && !s.state().copyDisabled, true);
 }
 function parsesAsJs(code) { try { new Function(code); return true; } catch (e) { return e.message; } }
 function parsesAsTs(code) {

@@ -173,6 +173,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-03 — json-to-mongoose：同 json-to-java-pojo，全站 Ctrl/⌘+L 清空后旧的 Schema 代码与复制按钮仍保留；组件监听该快捷键，输入框已空时清空输出、停用复制、清掉状态行与错误样式，并取消未触发的防抖。ego-browser（本地构建，en / ko）：清空后输出 0 字符、复制停用，再输入 JSON 后恢复。测试见 scripts/AGENTS.md。
+
 - 2026-10-03 — json-to-java-pojo：全站 Ctrl/⌘+L 清空后旧的 Java 类与复制按钮仍保留（ToolLayout 的快捷键只把文本框与文本输入框设为空串、不发 input 事件，`src/layouts/ToolLayout.astro` 第 425–431 行；组件只在 input 事件里重算）。组件改为监听同一快捷键，在下一个任务里若输入框已空则清空输出、停用复制、清掉状态行与错误样式，并取消未触发的防抖（做法同 jsonl-converter / env-file-parser）；焦点不在工具内时 ToolLayout 不清空，输出照常保留。ego-browser（本地构建，en / ja）：清空后输出 0 字符、复制停用、状态为空，再输入 JSON 后恢复生成。测试见 scripts/AGENTS.md。
 
 - 2026-10-03 — 三个小缺陷（每个工具一个提交）。svg-optimizer：`renderActive()` 在渲染比对完成前把两张预览图写成 `img.src = ''`（空 src 解析为页面地址并触发 error 事件；线上 v1.138.60 每次压缩 2 次，结果出来前与 `finish()` 各渲染一次时为 4 次），改为 `showPreview()`：没有预览时移除 src 属性并隐藏图片，地址相同不重复赋值；ego-browser 本地构建 4 语言载入示例后资源错误 0，线上同操作 2 个。json-schema-validator：Ajv 的 multipleOf 用 double 相除，19.99 / 0.01、0.3 / 0.1、0.00000003 / 1e-8 判为无效，1e20 / 3 判为有效；`createAjv()` 改用自定义 `multipleOf` 关键字（`isMultipleOf()`），按两数最短十进制形式（`decimalKey`）用 BigInt 判断商是否为整数。到达校验的数字都精确（否则该文档已是「无法确定」），所以结论精确，不新增无法确定的情形；错误对象与 Ajv 同形（keyword、params.multipleOf、instancePath、schemaPath、message）。官方 Test Suite 前后相同：draft-04 616 / 2 / 0，draft-06 839 / 2 / 0，draft-07 927 / 2 / 0，2019-09 1,230 / 31 / 0，2020-12 1,210 / 91 / 0。4 语言工具页限制段补一句 multipleOf 的判定方式。未改 `jsonSyntaxError` / `lineCol`。json-to-java-pojo / json-to-mongoose：输入变成无效 JSON 时只显示错误、旧输出与复制按钮保留；改为清空输出并停用复制（空输入、「清空」同样），下次能转换时恢复；错误仍为 4 语言前缀加浏览器解析信息，与 jsonl-converter、json-xml-converter 一致；组件内给停用的复制按钮加样式。测试见 scripts/AGENTS.md。
