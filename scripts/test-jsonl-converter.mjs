@@ -11,26 +11,26 @@ async function test(name, run) {
   catch (e) { failed++; console.log('FAIL ' + name + ': ' + e.message); }
 }
 function page(lang = 'en') {
-  const elements = new Map(), copied = [], downloads = [], timers = new Map(), readers = [];
+  const elements = new Map(), copied = [], downloads = [], timers = new Map(), readers = [], docEvents = {};
   let timerId = 0;
   function element() {
     const events = {};
     return { value: '', checked: false, disabled: false, textContent: '', children: [],
       classList: { toggle() {} }, addEventListener(k, fn) { events[k] = fn; },
-      fire(k) { return events[k]?.({}); }, click() { if (!this.disabled) { if (this.download) downloads.push(this.href); return this.fire('click'); } },
+      fire(k, ev = {}) { return events[k]?.(ev); }, click() { if (!this.disabled) { if (this.download) downloads.push(this.href); return this.fire('click'); } },
       appendChild(child) { this.children.push(child); }, remove() {} };
   }
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   get('jlc-ignore-empty').checked = get('jlc-pretty-json').checked = true;
   vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
-    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element, body: element() },
+    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element, body: element(), addEventListener(k, fn) { docEvents[k] = fn; } },
     window: {}, navigator: { clipboard: { writeText: async text => copied.push(text) } }, Blob,
     URL: { createObjectURL: blob => blob, revokeObjectURL() {} },
     FileReader: class { constructor() { readers.push(this); } readAsText(file) { this.file = file; }
       finish(text) { this.result = text; this.onload(); } fail() { this.onerror(); } },
     setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id)
   });
-  return { get, copied, downloads, readers, open(target) { get('jlc-open-' + target).click(); get('jlc-file').files = [{ name: 'sample.txt' }]; get('jlc-file').fire('change'); return readers.at(-1); },
+  return { get, copied, downloads, readers, docKey(ev) { docEvents.keydown?.(ev); }, open(target) { get('jlc-open-' + target).click(); get('jlc-file').files = [{ name: 'sample.txt' }]; get('jlc-file').fire('change'); return readers.at(-1); },
     flush() { const tasks = [...timers.values()]; timers.clear(); tasks.forEach(fn => fn()); } };
 }
 const records = ['9007199254740991', '9007199254740992', '9007199254740993', '1e400', '-0', '1.00', '1E+03', '1e-400', '{"n":9007199254740993,"a":[-0,1e400],"s":"1e400"}'];
@@ -114,5 +114,27 @@ await test('pending validation cannot clear an explicit valid-only output', () =
   p.get('jlc-valid-only').checked = true; p.get('jlc-to-json').click(); p.flush();
   assert.equal(p.get('jlc-json').value, '[\n  1\n]'); assert.equal(p.get('jlc-download-json').disabled, false);
 });
+// ToolLayout's document keydown clicks the first .btn-primary (JSONL → JSON) on Ctrl/Cmd+Enter
+// and empties the text fields on Ctrl/Cmd+L without input events.
+await test('panel Ctrl+Enter stops the page-wide shortcut', () => {
+  const p = page();
+  for (const id of ['jlc-jsonl', 'jlc-json']) {
+    const ev = { key: 'Enter', metaKey: true, stopped: 0, prevented: 0, stopPropagation() { this.stopped++; }, preventDefault() { this.prevented++; } };
+    p.get(id).value = id === 'jlc-json' ? '[1, 2]' : '1'; p.get(id).fire('keydown', ev);
+    assert.ok(ev.stopped && ev.prevented, id);
+  }
+  assert.equal(p.get('jlc-jsonl').value, '1\n2');
+});
+await test('Ctrl+L drops cached copy/download output', async () => {
+  const p = page(); p.get('jlc-jsonl').value = '9007199254740993'; p.get('jlc-to-json').click();
+  p.get('jlc-jsonl').value = ''; p.get('jlc-json').value = '';
+  p.docKey({ key: 'L', ctrlKey: true }); p.flush();
+  for (const id of ['jlc-copy-json', 'jlc-copy-jsonl', 'jlc-download-json', 'jlc-download-jsonl']) {
+    assert.equal(p.get(id).disabled, true, id); p.get(id).click();
+  }
+  assert.equal(p.copied.length, 0); assert.equal(p.downloads.length, 0);
+  assert.equal(p.get('jlc-total-lines').textContent, '0'); assert.equal(p.get('jlc-status').textContent, '');
+});
+
 console.log(`${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;
