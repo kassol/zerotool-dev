@@ -119,6 +119,23 @@ await test('clear cancels both pending timers', () => {
   assert.equal(p.get('jx-json').value, ''); assert.equal(p.get('jx-xml').value, '');
   assert.equal(p.get('jx-status').textContent, '');
 });
+// Valid input that the mapping rejects was labelled "Invalid JSON" / "Invalid XML".
+const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  await test(lang + ' status prefix separates syntax errors from mapping limits', () => {
+    for (const k of Object.keys(STR.en)) assert.ok(STR[lang][k], lang + ' ' + k);
+    const p = page(lang, 'sax');
+    p.get('jx-json').value = '{"2026":1}'; p.get('jx-to-xml').click();
+    assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].cannotToXml + ': '), p.get('jx-status').textContent);
+    p.get('jx-json').value = '{"a":1,}'; p.get('jx-to-xml').click();
+    assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].invalidJson + ': '), p.get('jx-status').textContent);
+    p.get('jx-xml').value = '<r id="1"/>'; p.get('jx-to-json').click();
+    assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].cannotToJson + ': '), p.get('jx-status').textContent);
+    p.get('jx-xml').value = '<r>'; p.get('jx-to-json').click();
+    assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].invalidXml + ': '), p.get('jx-status').textContent);
+  });
+}
+
 // Pretty print used to write a scalar root as <root>\n  hello\n</root>: the indentation became
 // part of the root text, so pretty and compact output read back as different values.
 for (const [raw, back] of [['"hello"', 'hello'], ['42', '42'], ['true', 'true'], ['"  x  "', '  x  '], ['null', ''], ['{}', '']]) {

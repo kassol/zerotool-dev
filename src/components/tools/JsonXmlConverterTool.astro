@@ -60,6 +60,7 @@
           convertedToJson: 'Converted XML to JSON.',
           invalidJson: 'Invalid JSON',
           invalidXml: 'Invalid XML',
+          cannotToXml: 'Cannot convert to XML', cannotToJson: 'Cannot convert to JSON',
           emptyInput: 'Input is empty.',
           nameLoss: '{path}: this name cannot be used as an XML element name.',
           arrayLoss: '{path}: empty or nested arrays cannot be represented by repeated XML elements.',
@@ -75,6 +76,7 @@
           convertedToJson: '已将 XML 转换为 JSON。',
           invalidJson: '无效 JSON',
           invalidXml: '无效 XML',
+          cannotToXml: '无法转换为 XML', cannotToJson: '无法转换为 JSON',
           emptyInput: '输入为空。',
           nameLoss: '{path}：该名称不能用作 XML 元素名。',
           arrayLoss: '{path}：空数组或嵌套数组无法用重复 XML 元素表示。',
@@ -90,6 +92,7 @@
           convertedToJson: 'XMLをJSONに変換しました。',
           invalidJson: '無効なJSON',
           invalidXml: '無効なXML',
+          cannotToXml: 'XMLに変換できません', cannotToJson: 'JSONに変換できません',
           emptyInput: '入力が空です。',
           nameLoss: '{path}：この名前はXML要素名に使用できません。',
           arrayLoss: '{path}：空配列と入れ子の配列は繰り返しXML要素で表現できません。',
@@ -105,6 +108,7 @@
           convertedToJson: 'XML을 JSON으로 변환했습니다.',
           invalidJson: '유효하지 않은 JSON',
           invalidXml: '유효하지 않은 XML',
+          cannotToXml: 'XML로 변환할 수 없습니다', cannotToJson: 'JSON으로 변환할 수 없습니다',
           emptyInput: '입력이 비어 있습니다.',
           nameLoss: '{path}: 이 이름은 XML 요소 이름으로 사용할 수 없습니다.',
           arrayLoss: '{path}: 빈 배열과 중첩 배열은 반복 XML 요소로 표현할 수 없습니다.',
@@ -140,12 +144,19 @@
       }
 
       /* ── engine:start ── */
+      // Valid input that this element-only mapping cannot represent (not a syntax error).
+      function lossError(message) {
+        var e = new Error(message);
+        e.loss = true;
+        return e;
+      }
+
       /* ── JSON → XML ── */
       // XML 1.0 §2.3 NCName ranges: preserve names verbatim; namespaces need a separate mapping.
       function xmlName(key, path) {
         var n = String(key);
         if (!/^[A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD\u{10000}-\u{EFFFF}][A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD\u{10000}-\u{EFFFF}0-9.\-\u00B7\u0300-\u036F\u203F-\u2040]*$/u.test(n)) {
-          throw new Error(t.nameLoss.replace('{path}', path));
+          throw lossError(t.nameLoss.replace('{path}', path));
         }
         return n;
       }
@@ -153,7 +164,7 @@
       function xmlText(value, path) {
         var text = String(value);
         if (/[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u.test(text)) {
-          throw new Error(t.charLoss.replace('{path}', path));
+          throw lossError(t.charLoss.replace('{path}', path));
         }
         return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r/g, '&#13;');
       }
@@ -169,10 +180,10 @@
           return pad + open + close;
         }
         if (Array.isArray(val)) {
-          if (!val.length) throw new Error(t.arrayLoss.replace('{path}', path));
+          if (!val.length) throw lossError(t.arrayLoss.replace('{path}', path));
           return val.map(function (item, index) {
             var itemPath = path + '[' + index + ']';
-            if (Array.isArray(item)) throw new Error(t.arrayLoss.replace('{path}', itemPath));
+            if (Array.isArray(item)) throw lossError(t.arrayLoss.replace('{path}', itemPath));
             return jsonToXml(item, tagName, indent, pretty, itemPath);
           }).join(nl);
         }
@@ -221,21 +232,21 @@
           copyXmlBtn.disabled = false;
           setStatus(t.convertedToXml, false);
         } catch (e) {
-          setStatus(t.invalidJson + ': ' + e.message, true);
+          setStatus((e.loss ? t.cannotToXml : t.invalidJson) + ': ' + e.message, true);
         }
       }
 
       /* ── XML → JSON ── */
       function xmlNodeToJson(node, path) {
         if (node.attributes.length) {
-          throw new Error(t.attributeLoss.replace('{path}', path + '/@' + node.attributes[0].name));
+          throw lossError(t.attributeLoss.replace('{path}', path + '/@' + node.attributes[0].name));
         }
         var obj = Object.create(null);
         var children = Array.from(node.childNodes);
         var elemChildren = children.filter(function (n) { return n.nodeType === 1; });
         if (!elemChildren.length) return node.textContent;
         if (children.some(function (n) { return (n.nodeType === 3 || n.nodeType === 4) && n.nodeValue.trim() !== ''; })) {
-          throw new Error(t.mixedLoss.replace('{path}', path));
+          throw lossError(t.mixedLoss.replace('{path}', path));
         }
         var indices = Object.create(null);
         elemChildren.forEach(function (child) {
@@ -272,7 +283,7 @@
           copyJsonBtn.disabled = false;
           setStatus(t.convertedToJson, false);
         } catch (e) {
-          setStatus(t.invalidXml + ': ' + e.message, true);
+          setStatus((e.loss ? t.cannotToJson : t.invalidXml) + ': ' + e.message, true);
         }
       }
 
