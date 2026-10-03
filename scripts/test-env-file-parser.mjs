@@ -116,6 +116,15 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
 }
 eq('dotenv drops __proto__; tool intentionally keeps this key', Object.keys(dotenv.parse('__proto__=value')), []);
+// Lines dotenv skips name their cause: a valid key with a malformed `:` separator was reported
+// as "Non-standard key name".
+for (const [line, note] of [['PORT:8080', 'colonForm'], ['KEY : value', 'colonForm'], ['export KEY :v', 'colonForm'],
+  ['MY KEY=1', 'nonStandard'], ['MY KEY: 1', 'nonStandard'], ['A/B=1', 'nonStandard'], ['BROKEN LINE', 'missingEq'], ['=1', 'emptyKey']]) {
+  const e = E.parseEnv(line)[0];
+  const NOTE = { colonForm: 'Use KEY=value, or KEY: value with a space after the colon and none before it', nonStandard: 'Non-standard key name', missingEq: 'Missing = sign', emptyKey: 'Empty key' };
+  eq('skipped line ' + line, [e.type, e.error], ['error', NOTE[note]]);
+  eq('dotenv skips ' + line, Object.keys(dotenv.parse(line)), []);
+}
 
 // ---------- the reported defect ----------
 eq('export prefix is not part of the key', exported('export DB_HOST=localhost'), { DB_HOST: 'localhost' });
@@ -288,7 +297,7 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
 {
   const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
   const enKeys = Object.keys(STR.en.notes || {}).sort();
-  eq('en notes keys', enKeys, ['afterQuote', 'duplicate', 'emptyKey', 'emptyValue', 'hashComment', 'missingEq', 'multiline', 'nonStandard', 'unclosed']);
+  eq('en notes keys', enKeys, ['afterQuote', 'colonForm', 'duplicate', 'emptyKey', 'emptyValue', 'hashComment', 'missingEq', 'multiline', 'nonStandard', 'unclosed']);
   for (const lang of ['zh', 'ja', 'ko']) {
     eq(lang + ' notes keys', Object.keys(STR[lang].notes || {}).sort(), enKeys);
     eq(lang + ' top-level keys', Object.keys(STR[lang]).sort(), Object.keys(STR.en).sort());
