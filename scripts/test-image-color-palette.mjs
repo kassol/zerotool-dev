@@ -1,6 +1,7 @@
 // Image Color Palette Extractor — histogram, deterministic OKLab k-means, exports, palette files
 //
-// Read:  src/components/tools/ImageColorPaletteTool.astro (the real engine block between the
+// Read:  src/components/tools/ImageColorPaletteTool.astro and its 8d1d71a version via `git show`
+//        (the real engine block between the
 //        `engine:start` / `engine:end` markers, the STRINGS table between `strings:start` /
 //        `strings:end`, the page script), ColorPaletteGeneratorTool.astro and
 //        ColorBlindnessSimulatorTool.astro (engine blocks, to compare the copied declarations),
@@ -35,10 +36,20 @@
 //      persistence.ts stores only preferences for this tool.
 //  11. Tool pages: every `{/* icp-check: {...} */}` annotation is recomputed from the image in
 //      public/images and the expected values appear in the page text.
+//  12. The real page script in a vm with stub DOM, canvas and (optionally) worker: the Display P3
+//      check reads 16-row strips one task at a time on the main thread (sample, SVG, fallback)
+//      or in a worker for opened files (the worker runs the exact source text the page builds:
+//      countOutOfSrgb / opaqueOnly text and constants equal to the engine); new image, Ctrl+L,
+//      worker decode error, no P3 OffscreenCanvas, no P3 canvas, read error; a newer copy
+//      message is not overwritten; semi-transparent pixels stay uncounted.
+//  13. Every export (6 code formats × 4 value formats, .gpl, .ase) and the status are
+//      byte-identical between the page script of 8d1d71a and the current one on the same image
+//      (needs that commit in the checkout; SKIP otherwise).
 //
 // Run: node scripts/test-image-color-palette.mjs
 
 import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
@@ -478,16 +489,41 @@ const STRINGS = new Function(source.slice(sStart, sEnd + 3) + '\nreturn STRINGS;
   check('tool pages carry icp-check annotations (≥ 8)', annotations >= 8, annotations);
 }
 
-// ── 12. Real page script: P3 work, cancellation and message isolation ──
-// Canvas supplies controlled P3 bytes; the actual copied countOutOfSrgb runs in the vm.
-function pageHarness({ p3 = true, readError = false } = {}) {
-  const timers = [], nodes = new Map(), reads = [], images = [];
-  let countCalls = 0;
+// ── 12. Real page script: Display P3 check, cancellation, errors and message isolation ──
+// The real page script runs in a vm with stub DOM nodes. Canvas getImageData returns controlled
+// bytes; the copied countOutOfSrgb runs for real (instrumented to count calls). With `worker` on,
+// Worker / OffscreenCanvas / createImageBitmap are stubbed and the worker runs the exact source
+// text the page builds, in its own vm context.
+const WORKER_SIGNALS = { decodeError: 'decode failed' };
+function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = true, src = source,
+  srgbPixel = () => [30, 0, 0], p3Pixel = () => [255, 0, 0] } = {}) {
+  const timers = [], nodes = new Map(), reads = [], images = [], workers = [], blobs = new Map(), downloads = [];
+  let countCalls = 0, canvasIds = 0;
+  function fakeCtx(node, opts, p3ok, where) {
+    return {
+      getContextAttributes: () => ({ colorSpace: p3ok ? opts.colorSpace || 'srgb' : 'srgb' }),
+      drawImage(source2) { this.source = source2; },
+      clearRect() {}, fillRect() {}, beginPath() {}, arc() {}, fill() {}, moveTo() {}, lineTo() {}, closePath() {},
+      getImageData(x, y, w, h) {
+        const isP3 = opts.colorSpace === 'display-p3';
+        if (isP3) {
+          if (readError) throw new Error('read failed');
+          reads.push({ w, h, y, where, canvas: node.id, file: this.source && this.source.file && this.source.file.name });
+        }
+        const pick = isP3 ? (this.source && this.source.file && this.source.file.p3Pixel) || p3Pixel : srgbPixel;
+        const d = new Uint8ClampedArray(w * h * 4);
+        for (let i = 0, k = y * w; i < d.length; i += 4, k++) {
+          const [r, g, b, a = 255] = pick(k); d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = a;
+        }
+        return { data: d };
+      },
+    };
+  }
   class Node {
     constructor(tag = 'div') {
-      this.tagName = tag.toUpperCase(); this.listeners = {}; this.children = []; this.style = {};
+      this.tagName = tag.toUpperCase(); this.listeners = {}; this.children = []; this.style = {}; this.id = ++canvasIds;
       this.attrs = {}; this.value = ''; this.hidden = false; this.classes = new Set();
-      this.classList = { add: (x) => this.classes.add(x), remove: (x) => this.classes.delete(x), toggle() {} };
+      this.classList = { add: (x) => this.classes.add(x), remove: (x) => this.classes.delete(x), toggle() {}, contains: (x) => this.classes.has(x) };
     }
     set textContent(v) { this.text = v; this.children = []; }
     get textContent() { return this.text || ''; }
@@ -500,26 +536,9 @@ function pageHarness({ p3 = true, readError = false } = {}) {
     querySelector(sel) { return this.children.flatMap((n) => n.children).find((n) => n.className === sel.slice(1)) || null; }
     querySelectorAll() { return []; }
     getBoundingClientRect() { return { bottom: 0, top: 0 }; }
-    remove() {} select() {} click() { this.dispatch('click'); }
-    getContext(type, opts = {}) {
-      const node = this;
-      return {
-        getContextAttributes: () => ({ colorSpace: p3 ? opts.colorSpace || 'srgb' : 'srgb' }),
-        drawImage(source, ...args) { this.source = source; this.y = args.length === 4 ? -args[1] : 0; },
-        clearRect() {}, fillRect() {}, beginPath() {}, arc() {}, fill() {}, moveTo() {}, lineTo() {}, closePath() {},
-        getImageData(x, y, w, h) {
-          if (opts.colorSpace === 'display-p3') {
-            if (readError) throw new Error('read failed');
-            reads.push({ w, h, canvasHeight: node.height });
-          }
-          const d = new Uint8ClampedArray(w * h * 4);
-          for (let i = 0; i < d.length; i += 4) {
-            d[i] = opts.colorSpace === 'display-p3' ? 255 : 30; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = 255;
-          }
-          return { data: d };
-        },
-      };
-    }
+    remove() {} select() {}
+    click() { if (this.tagName === 'A' && this.download) downloads.push({ name: this.download, blob: blobs.get(this.href) }); this.dispatch('click'); }
+    getContext(type, opts = {}) { return fakeCtx(this, opts, p3, 'main'); }
   }
   const document = new Node();
   document.getElementById = (id) => { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); };
@@ -528,51 +547,186 @@ function pageHarness({ p3 = true, readError = false } = {}) {
   document.body = new Node('body');
   const window = { innerHeight: 900, matchMedia: () => ({ matches: false, addEventListener() {} }), scrollBy() {},
     ztPersist: { load() {}, save() {}, clear() {} } };
-  let script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+  let script = src.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
   const countSignature = 'function countOutOfSrgb(px) {';
   assert.equal(script.split(countSignature).length - 1, 1, 'instrument exactly one real P3 counter');
   script = script.replace(countSignature, countSignature + ' recordCount();');
-  const ctx = vm.createContext({ document, window, t: STRINGS.en, navigator: { clipboard: { writeText: () => Promise.resolve() } },
-    Uint8ClampedArray, Uint8Array, ArrayBuffer, DataView, Blob, TextEncoder,
-    URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+  const setTimeoutStub = (fn) => { const timer = { fn }; timers.push(timer); return timer; };
+  const URLStub = { createObjectURL: (b) => { const id = 'blob:' + (blobs.size + 1); blobs.set(id, b); return id; }, revokeObjectURL() {} };
+  class FakeWorker {
+    constructor(url) {
+      this.terminated = false; this.inbox = []; this.ready = false; this.posted = [];
+      workers.push(this);
+      const blob = blobs.get(url);
+      const self = { postMessage: (m) => {
+        if (this.terminated) return;
+        timers.push({ fn: () => { if (!this.terminated && this.onmessage) this.onmessage({ data: m }); } });
+      } };
+      class OffscreenCanvas { constructor(w, h) { this.width = w; this.height = h; this.id = 'off' + (++canvasIds); }
+        getContext(type, opts = {}) { return fakeCtx(this, opts, workerP3, 'worker'); } }
+      const wctx = vm.createContext({ self, OffscreenCanvas, Uint8ClampedArray, Float64Array, String, Math, Promise,
+        recordCount: () => { this.counts = (this.counts || 0) + 1; },
+        createImageBitmap: (file, opts) => { this.bitmapOpts = opts;
+          return file.decodeError ? Promise.reject(new Error(WORKER_SIGNALS.decodeError)) : Promise.resolve({ file, close() { this.closed = true; } }); } });
+      this.ctx = wctx;
+      blob.text().then((text) => {
+        this.source = text;
+        vm.runInContext(text, wctx);
+        this.ready = true;
+        for (const m of this.inbox) self.onmessage({ data: m });
+      });
+      this.self = self;
+    }
+    postMessage(m) { this.posted.push(m); if (this.ready) this.self.onmessage({ data: m }); else this.inbox.push(m); }
+    terminate() { this.terminated = true; }
+  }
+  const globals = { document, window, t: STRINGS.en, navigator: { clipboard: { writeText: () => Promise.resolve() } },
+    Uint8ClampedArray, Uint8Array, ArrayBuffer, DataView, Blob, TextEncoder, URL: URLStub,
     Image: class { constructor() { this.naturalWidth = 6000; this.naturalHeight = 4752; images.push(this); } decode() { return Promise.resolve(); } },
-    setTimeout: (fn) => { const timer = { fn }; timers.push(timer); return timer; },
-    clearTimeout: (timer) => { if (timer) timer.cancelled = true; },
-    recordCount: () => countCalls++, console,
-  });
+    setTimeout: setTimeoutStub, clearTimeout: (timer) => { if (timer) timer.cancelled = true; },
+    recordCount: () => countCalls++, console };
+  if (worker) {
+    globals.Worker = FakeWorker;
+    globals.OffscreenCanvas = class {};
+    globals.createImageBitmap = () => Promise.reject(new Error('main thread createImageBitmap is not used'));
+  }
+  const ctx = vm.createContext(globals);
   vm.runInContext(script, ctx);
-  const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
-  return { nodes, reads, document, window, flush, get countCalls() { return countCalls; },
-    async open(name = 'photo.jpg', type = 'image/jpeg') {
-      const n = document.getElementById('icp-file'); n.files = [{ name, type }]; n.dispatch('change');
-      if (type.startsWith('image/')) { images.at(-1).onload(); await flush(); }
+  const flush = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+  return { nodes, reads, workers, downloads, document, window, flush, ctx, get countCalls() { return countCalls; },
+    status() { return nodes.get('icp-status').textContent; },
+    async open(name = 'photo.jpg', type = 'image/jpeg', extra = {}) {
+      const file = { name, type, ...extra };
+      const n = document.getElementById('icp-file'); n.files = [file]; n.dispatch('change');
+      if (type.startsWith('image/')) { const im = images.at(-1); im.file = file; im.onload(); await flush(); }
     },
     async step() { const timer = timers.shift(); if (timer && !timer.cancelled) timer.fn(); await flush(); },
-    async drain() { for (let i = 0; timers.length && i < 1000; i++) await this.step(); },
+    async drain() { for (let i = 0; timers.length && i < 2000; i++) await this.step(); },
     clear() { document.activeElement = document.getElementById('icp-open'); document.dispatch('keydown', { key: 'l', ctrlKey: true }); },
   };
 }
+const SAMPLE_PIXELS = 575 * 455;   // fitImageSize(6000, 4752, SAMPLE_AREA)
 {
   const h = pageHarness(); await h.open();
   const exportBefore = h.nodes.get('icp-code-out').textContent;
   await h.step();
-  check('P3 scan yields before processing the whole sample', h.countCalls === 0 || h.reads.reduce((n, r) => n + r.w * r.h, 0) < 261625);
+  check('P3 scan yields before processing the whole sample', h.countCalls === 0 || h.reads.reduce((n, r) => n + r.w * r.h, 0) < SAMPLE_PIXELS);
   await h.drain();
   check('real countOutOfSrgb is reached more than once', h.countCalls > 1, h.countCalls);
-  check('P3 reads are bounded strips', h.reads.length > 1 && h.reads.every((r) => r.h <= 16), h.reads);
-  check('controlled opaque P3 red produces the unchanged 100% warning', h.nodes.get('icp-status').textContent.includes('100.0%'));
+  check('P3 reads are bounded strips', h.reads.length > 1 && h.reads.every((r) => r.h <= 16), JSON.stringify(h.reads.slice(0, 3)));
+  eq('main-path strips cover every sample row once', h.reads.map((r) => r.y + ':' + r.h).join(','),
+    Array.from({ length: Math.ceil(455 / 16) }, (_, i) => i * 16 + ':' + Math.min(16, 455 - i * 16)).join(','));
+  check('controlled opaque P3 red produces the unchanged 100% warning', h.status().includes('100.0%'), h.status());
   eq('P3 scan leaves full export bytes unchanged', h.nodes.get('icp-code-out').textContent, exportBefore);
 
   const c = pageHarness(); await c.open(); c.clear(); await c.drain();
   check('global clear hides palette and export', c.nodes.get('icp-main').hidden && c.nodes.get('icp-export').hidden);
   eq('global clear prevents the pending P3 read', c.reads.length, 0);
+  eq('global clear empties status and export code', [c.status(), c.nodes.get('icp-code-out').textContent], ['', '']);
+  const c2 = pageHarness(); await c2.open(); await c2.step(); const before = c2.reads.length; c2.clear(); await c2.drain();
+  eq('global clear stops a scan in progress', c2.reads.length, before);
+  eq('global clear keeps the status empty after the scan would have finished', c2.status(), '');
 
   const m = pageHarness(); await m.open(); await m.step();
   m.nodes.get('icp-copy-code').click(); await m.flush();
-  const copyMsg = m.nodes.get('icp-status').textContent; await m.drain();
-  eq('P3 completion does not overwrite a newer copy message', m.nodes.get('icp-status').textContent, copyMsg);
+  const copyMsg = m.status(); await m.drain();
+  eq('P3 completion does not overwrite a newer copy message', m.status(), copyMsg);
+  m.nodes.get('icp-k').value = '5'; m.nodes.get('icp-k').dispatch('input'); await m.flush();
+  check('the next render shows the P3 result after a copy message', m.status().includes('100.0%'), m.status());
+
   const u = pageHarness({ p3: false }); await u.open(); await u.drain();
-  check('unsupported P3 is explicit', /Display P3.*unavailable/i.test(u.nodes.get('icp-status').textContent));
+  check('unsupported P3 is explicit', /Display P3.*unavailable/i.test(u.status()), u.status());
+  const e = pageHarness({ readError: true }); await e.open(); await e.drain();
+  check('a failed P3 read is explicit and names the error', e.nodes.get('icp-main').hidden === false && /Display P3 check failed \(read failed\)/.test(e.status()), e.status());
+  check('a failed P3 read keeps the palette', e.nodes.get('icp-code-out').textContent.includes('--palette-1'));
+
+  // In-gamut P3 bytes (sRGB gray read back as P3) give no warning.
+  const g = pageHarness({ p3Pixel: () => [128, 128, 128] }); await g.open(); await g.drain();
+  check('in-gamut P3 bytes give no gamut note', !/sRGB/.test(g.status()), g.status());
+  // Partially transparent pixels are not counted (alpha < 255 → skipped), as before.
+  const tr = pageHarness({ p3Pixel: (k) => (k % 2 ? [255, 0, 0, 254] : [128, 128, 128, 255]) }); await tr.open(); await tr.drain();
+  check('semi-transparent out-of-gamut pixels are not counted', !/sRGB/.test(tr.status()), tr.status());
+  const half = pageHarness({ p3Pixel: (k) => (k % 2 ? [255, 0, 0] : [128, 128, 128]) }); await half.open(); await half.drain();
+  const halfPct = E.fmtShare(Math.floor(SAMPLE_PIXELS / 2) / SAMPLE_PIXELS);
+  check('every second opaque pixel outside sRGB → ' + halfPct + ' (count summed over strips)', half.status().includes(halfPct + ' of the pixels are outside sRGB'), half.status());
+
+  // Replacement: a second image cancels the first scan; only the second result appears.
+  const r = pageHarness(); await r.open('a.jpg', 'image/jpeg', { p3Pixel: () => [255, 0, 0] }); await r.step();
+  const firstCanvas = r.reads[0] && r.reads[0].canvas;
+  await r.open('b.jpg', 'image/jpeg', { p3Pixel: () => [128, 128, 128] }); await r.drain();
+  const afterB = r.reads.filter((x) => x.canvas === firstCanvas).length;
+  eq('replacing the image stops reads of the old scan', afterB, 1);
+  check('replacing the image shows only the new result', !/sRGB/.test(r.status()) && /b\.jpg/.test(r.nodes.get('icp-info').textContent), r.status());
+
+  // Worker path: the file is decoded and drawn in the worker; the main thread reads no P3 pixels.
+  const w = pageHarness({ worker: true }); await w.open(); await w.drain();
+  eq('worker path: one worker for the opened file', w.workers.length, 1);
+  eq('worker path: no P3 reads on the main thread', w.reads.filter((x) => x.where === 'main').length, 0);
+  check('worker path: bounded strips in the worker', w.reads.length === Math.ceil(455 / 16) && w.reads.every((x) => x.where === 'worker' && x.h <= 16 && x.w === 575));
+  check('worker path: the copied countOutOfSrgb runs per strip', w.workers[0].counts === Math.ceil(455 / 16), w.workers[0].counts);
+  check('worker path: 100% warning', w.status().includes('100.0%'), w.status());
+  check('worker path: worker terminated after the result', w.workers[0].terminated);
+  eq('worker path: message carries the sample size', w.workers[0].posted.map((x) => [x.w, x.h, x.strip, x.file.name]), [[575, 455, 16, 'photo.jpg']]);
+  eq('worker path: createImageBitmap applies EXIF orientation like <img>', w.workers[0].bitmapOpts, { imageOrientation: 'from-image' });
+  {
+    const ws = w.workers[0].source, wc = w.workers[0].ctx;
+    const mainCount = source.match(/function countOutOfSrgb\(px\) \{[\s\S]*?\n      \}/)[0];
+    check('worker source holds the page countOutOfSrgb text', ws.includes(mainCount.replace('function countOutOfSrgb(px) {', 'function countOutOfSrgb(px) { recordCount();')));
+    eq('worker GAMUT_TOLERANCE equals the engine value', vm.runInContext('GAMUT_TOLERANCE', wc), vm.runInNewContext(engineSrc + ';GAMUT_TOLERANCE'));
+    eq('worker M_P3_SRGB equals the engine matrix (exact doubles)', Array.from(vm.runInContext('M_P3_SRGB', wc)), Array.from(vm.runInNewContext(engineSrc + ';M_P3_SRGB')));
+    eq('worker TO_LINEAR equals the engine table (exact doubles)', Array.from(vm.runInContext('TO_LINEAR', wc)), Array.from(vm.runInNewContext(engineSrc + ';TO_LINEAR')));
+    const px = new Uint8ClampedArray(4 * 4096);
+    for (let i = 0; i < px.length; i++) px[i] = (i * 2654435761) >>> 24;
+    eq('worker countOutOfSrgb gives the engine result on 4,096 pixels', vm.runInContext('countOutOfSrgb', wc)(Uint8ClampedArray.from(px)), E.countOutOfSrgb(Uint8ClampedArray.from(px)));
+  }
+  // Worker fallbacks: decode failure and no display-p3 OffscreenCanvas draw on the main thread.
+  const wd = pageHarness({ worker: true }); await wd.open('x.heic', 'image/heic', { decodeError: true }); await wd.drain();
+  check('worker decode error falls back to main-thread strips', wd.workers[0].terminated && wd.reads.some((x) => x.where === 'main') && wd.status().includes('100.0%'), wd.status());
+  const wp = pageHarness({ worker: true, workerP3: false }); await wp.open(); await wp.drain();
+  check('worker without P3 OffscreenCanvas falls back to the main thread', wp.reads.filter((x) => x.where === 'worker').length === 0 && wp.reads.some((x) => x.where === 'main') && wp.status().includes('100.0%'), wp.status());
+  const wn = pageHarness({ worker: true, workerP3: false, p3: false }); await wn.open(); await wn.drain();
+  check('no P3 anywhere → explicit unavailable note', /Display P3.*unavailable/i.test(wn.status()), wn.status());
+  const wsvg = pageHarness({ worker: true }); await wsvg.open('icon.svg', 'image/svg+xml'); await wsvg.drain();
+  eq('SVG files are checked on the main thread (no worker)', [wsvg.workers.length, wsvg.reads.every((x) => x.where === 'main')], [0, true]);
+  // Clear and replacement terminate a running worker; its late reply changes nothing.
+  const wc2 = pageHarness({ worker: true }); await wc2.open(); await wc2.step(); wc2.clear(); await wc2.drain();
+  check('global clear terminates the worker', wc2.workers.length <= 1 && wc2.workers.every((x) => x.terminated) && wc2.status() === '' && wc2.nodes.get('icp-main').hidden, wc2.status());
+  const wr = pageHarness({ worker: true }); await wr.open('a.jpg', 'image/jpeg', { p3Pixel: () => [255, 0, 0] }); await wr.step();
+  await wr.open('b.jpg', 'image/jpeg', { p3Pixel: () => [128, 128, 128] }); await wr.drain();
+  check('a new file terminates the old worker; only the new result shows', wr.workers.length === 2 && wr.workers[0].terminated && !/sRGB/.test(wr.status()), wr.status());
+  // The sample canvas (no file) is checked on the main thread.
+  const sm = pageHarness({ worker: true }); sm.nodes.get('icp-sample').click(); await sm.flush(); await sm.drain();
+  eq('sample: no worker, main-thread strips', [sm.workers.length, sm.reads.length > 1], [0, true]);
+}
+
+// ── 13. Exports before / after the P3 change are byte-identical ──
+// The page script of 8d1d71a (before this change) and the current one run on the same image;
+// every code format × value format and both palette files are compared byte for byte.
+{
+  let before = null;
+  try { before = execFileSync('git', ['show', '8d1d71a:src/components/tools/ImageColorPaletteTool.astro'], { cwd: root, encoding: 'utf8' }); } catch (e) { before = null; }
+  if (!before) console.log('SKIP: 8d1d71a not in this checkout; export byte comparison skipped');
+  else {
+    const pattern = (k) => [(k * 37) % 256, (k * 91 + (k >> 9)) % 256, ((k >> 3) * 13) % 256, k % 7 === 0 ? 0 : 255];
+    async function exportsOf(src) {
+      const hh = pageHarness({ src, srgbPixel: pattern, p3Pixel: () => [255, 0, 0] });
+      await hh.open('photo.jpg'); await hh.drain();
+      const out = {};
+      for (const code of ['list', 'css', 'scss', 'tw4', 'tw3', 'json']) for (const val of ['hex', 'rgb', 'hsl', 'oklch']) {
+        hh.nodes.get('icp-code').value = code; hh.nodes.get('icp-code').dispatch('change');
+        hh.nodes.get('icp-values').value = val; hh.nodes.get('icp-values').dispatch('change');
+        out[code + '/' + val] = hh.nodes.get('icp-code-out').textContent;
+      }
+      hh.nodes.get('icp-gpl').click(); hh.nodes.get('icp-ase').click(); await hh.flush();
+      for (const d of hh.downloads) out[d.name] = Buffer.from(await d.blob.arrayBuffer()).toString('base64');
+      out.status = hh.status();
+      return out;
+    }
+    const a = await exportsOf(before), b = await exportsOf(source);
+    eq('exports: same set of outputs', Object.keys(b).sort(), Object.keys(a).sort());
+    for (const k of Object.keys(a)) if (k !== 'status') check('export byte-identical before/after: ' + k, a[k] === b[k] && a[k].length > 0, k);
+    eq('status (palette + P3 note) identical before/after', b.status, a.status);
+  }
 }
 
 console.log((failures ? 'FAIL' : 'PASS') + ': image-color-palette — ' + passes + ' passed, ' + failures + ' failed');
