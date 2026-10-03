@@ -2,14 +2,14 @@
 title: "robots.txt 작성법: 네이버 Yeti·구글봇이 읽는 규칙과 실측 예제"
 description: "RFC 9309와 네이버 서치어드바이저 가이드로 정리한 robots.txt 규칙. 그룹은 하나만 적용, 가장 긴 규칙 우선, 응답 코드별 처리 차이와 AI 크롤러 토큰까지 파서로 확인했습니다."
 pubDate: 2026-04-07
-updatedDate: 2026-10-02
+updatedDate: 2026-10-03
 lang: "ko"
 tags: ["robots.txt", "네이버 서치어드바이저", "yeti", "seo", "크롤러"]
 ---
 
 robots.txt는 사이트 루트에 두는 텍스트 파일로, 검색로봇에게 어떤 URL을 수집해도 되는지 알려 줍니다. 1994년에 시작된 관례였지만 2022년 9월 IETF 표준 [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309)가 되었고, [네이버 서치어드바이저의 robots.txt 가이드](https://searchadvisor.naver.com/guide/seo-basic-robots)도 이 표준을 근거로 듭니다. 문법은 단순하지만 실수가 잦은 지점이 세 군데 있습니다. 로봇은 그룹 하나만 따르고, 줄 순서가 아니라 더 긴 규칙이 이기며, 파일을 못 받아 오는 경우의 처리가 응답 코드마다 다릅니다.
 
-이 글의 예제 파일은 모두 2026-10-02에 두 가지 파서로 판정했습니다. Scrapy가 기본으로 쓰는 [Protego](https://github.com/scrapy/protego) 0.7.0과 Python 3.12의 `urllib.robotparser`입니다. 두 결과가 다를 때 RFC와 구글 문서에 맞는 쪽은 Protego입니다. 네이버의 판정 엔진은 공개되어 있지 않으므로, 네이버 쪽 동작은 서치어드바이저 문서에 적힌 범위에서만 다룹니다.
+이 글의 예제 파일은 모두 2026-10-02에 두 가지 파서로 판정했습니다. Scrapy가 기본으로 쓰는 [Protego](https://github.com/scrapy/protego) 0.7.0과 Python 3.12의 `urllib.robotparser`입니다. 두 결과가 다를 때 RFC와 구글 문서에 맞는 쪽은 Protego입니다. CPython은 Python 3.13.14와 3.14.5에서 이 모듈을 RFC 9309에 맞게 다시 작성했으므로([gh-138907](https://github.com/python/cpython/issues/138907)), 2026-10-03에 Python 3.14.7로도 같은 파일을 판정하고 결과가 달라지는 곳을 함께 적었습니다. 네이버의 판정 엔진은 공개되어 있지 않으므로, 네이버 쪽 동작은 서치어드바이저 문서에 적힌 범위에서만 다룹니다.
 
 ## 파일 위치와 네이버 검색로봇의 기본 동작
 
@@ -35,8 +35,8 @@ User-agent: Yeti
 Allow: /
 ```
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /\n\nUser-agent: Yeti\nAllow: /\n","ua":"Yeti","paths":[["/",true,true],["/a",true,true]]} */}
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /\n\nUser-agent: Yeti\nAllow: /\n","ua":"Googlebot","paths":[["/",false,false]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /\n\nUser-agent: Yeti\nAllow: /\n","ua":"Yeti","paths":[["/",true,true,true],["/a",true,true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /\n\nUser-agent: Yeti\nAllow: /\n","ua":"Googlebot","paths":[["/",false,false,false]]} */}
 
 두 파서 모두 Yeti는 전부 허용, Googlebot은 전부 차단으로 판정했습니다. 그런데 같은 규칙 때문에 의도와 반대가 되는 경우도 생깁니다. 장바구니 `/cart/`를 모든 로봇에게 막아 두고, 네이버에는 내부 검색 결과도 막으려고 Yeti 블록을 추가한 파일입니다.
 
@@ -50,8 +50,8 @@ User-agent: Yeti
 Disallow: /search/
 ```
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Yeti\nDisallow: /search/\n","ua":"Yeti","paths":[["/cart/",true,true],["/search/?q=1",false,false]]} */}
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Yeti\nDisallow: /search/\n","ua":"Googlebot","paths":[["/cart/",false,false]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Yeti\nDisallow: /search/\n","ua":"Yeti","paths":[["/cart/",true,true,true],["/search/?q=1",false,false,false]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Yeti\nDisallow: /search/\n","ua":"Googlebot","paths":[["/cart/",false,false,false]]} */}
 
 Yeti는 자기 그룹만 읽기 때문에 `/cart/`를 수집할 수 있게 됩니다. Yeti 블록에도 `Disallow: /cart/`를 반복해 적어야 합니다. 빙도 Bingbot 전용 섹션이 있으면 일반 섹션을 무시하니 공통 규칙을 반복하라고 안내합니다([Bing 도움말](https://www.bing.com/webmasters/help/how-to-create-a-robots-txt-file-cb7c31ec)). 구글은 `User-agent`, `Allow`, `Disallow` 외의 줄(`Sitemap` 등)은 그룹을 끊지 않는다고 설명하며, 빈 줄에도 구분의 의미는 없습니다.
 
@@ -69,23 +69,23 @@ Disallow: /
 Allow: /$
 ```
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /\nAllow: /$\n","ua":"Yeti","paths":[["/",false,true],["/index.html",false,false],["/?ref=a",false,false]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /\nAllow: /$\n","ua":"Yeti","paths":[["/",false,true,true],["/index.html",false,false,false],["/?ref=a",false,false,false]]} */}
 
-| 경로 | RFC 9309 기준으로 적용되는 규칙 | Protego | urllib.robotparser |
-|---|---|---|---|
-| `/` | `Allow: /$`가 `Disallow: /`보다 길다 | 허용 | 차단 |
-| `/index.html` | `$`가 맞지 않아 `Disallow: /` | 차단 | 차단 |
-| `/?ref=a` | 쿼리가 붙으면 `$`가 맞지 않음 | 차단 | 차단 |
+| 경로 | RFC 9309 기준으로 적용되는 규칙 | Protego | urllib.robotparser (Python 3.12) | urllib.robotparser (Python 3.14.7) |
+|---|---|---|---|---|
+| `/` | `Allow: /$`가 `Disallow: /`보다 길다 | 허용 | 차단 | 허용 |
+| `/index.html` | `$`가 맞지 않아 `Disallow: /` | 차단 | 차단 | 차단 |
+| `/?ref=a` | 쿼리가 붙으면 `$`가 맞지 않음 | 차단 | 차단 | 차단 |
 
-`urllib.robotparser`는 RFC 이전 방식으로 파일 위에서부터 처음 일치한 줄을 쓰고 `*`와 `$`를 해석하지 않아서 루트까지 차단으로 판정합니다. 이 모듈로 사이트를 점검하는 스크립트가 있다면 결과를 그대로 믿으면 안 됩니다.
+Python 3.12의 `urllib.robotparser`는 RFC 이전 방식으로 파일 위에서부터 처음 일치한 줄을 쓰고 `*`와 `$`를 해석하지 않아서 루트까지 차단으로 판정합니다. Python 3.13.14·3.14.5부터는 가장 긴 규칙과 `*`·`$`를 따르며, 3.14.7은 이 표의 세 경로를 모두 Protego와 같게 판정했습니다. 이 모듈로 사이트를 점검하는 스크립트가 있다면 먼저 실행 환경의 Python 버전을 확인하고, 3.12 이하라면 결과를 그대로 믿으면 안 됩니다.
 
 서치어드바이저의 또 다른 예제 `Disallow: /private*/`도 확인했습니다. `/private-image/a.jpg`, `/private/`, `/privatevideo/1`은 차단되지만 `/private.html`은 허용됩니다. `*` 뒤에 `/`가 있어서 디렉터리 형태의 경로만 걸리기 때문입니다.
 
-{/* rtg-parse: {"txt":"User-agent: Yeti\nDisallow: /private\u002a/\n","ua":"Yeti","paths":[["/private-image/a.jpg",true,false],["/private/",true,false],["/privatevideo/1",true,false],["/private.html",true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: Yeti\nDisallow: /private\u002a/\n","ua":"Yeti","paths":[["/private-image/a.jpg",true,false,false],["/private/",true,false,false],["/privatevideo/1",true,false,false],["/private.html",true,true,true]]} */}
 
 회원 영역을 막으면서 가입 페이지 하나만 열어 두는 경우도 길이로 결정됩니다.
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /member\nAllow: /member/join$\n","ua":"Yeti","paths":[["/member/join",false,true],["/member/join?ref=a",false,false],["/members",false,false]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /member\nAllow: /member/join$\n","ua":"Yeti","paths":[["/member/join",false,true,true],["/member/join?ref=a",false,false,false],["/members",false,false,false]]} */}
 
 ```text
 User-agent: *
