@@ -245,7 +245,7 @@ function pageHarness() {
   const samples = ['trojan', 'tag', 'bom'].map(k => el('sample-' + k, { attrs: { 'data-sample': k } }));
   const wrap = el('', {
     dataset: { copy: 'Copy', copied: 'Copied', nothing: 'None', foundOne: '1 found', foundN: '{n} found', emptyStrip: '(empty)',
-      vizPartial: 'Showing {shown} of {n}', vizTruncated: 'Preview is partial', showMore: 'Show more' },
+      vizPartial: 'Showing {from}–{to} of {n}', vizTruncated: 'Preview is partial' },
     querySelector(sel) {
       if (sel === '[data-meta="visible"]') return visible;
       if (sel === '[data-meta="total"]') return total;
@@ -285,16 +285,22 @@ function pageHarness() {
   equal('100k tag count', h.byId.get('count-tag').textContent, '33334');
   equal('100k cleaned text is complete', h.byId.get('zwcd-cleaned').value, Array.from({ length: 100000 }, (_, i) => 'ab'[i % 2]).join(''));
   check('100k update in Node under 1 s (' + Math.round(ms) + ' ms)', ms < 1000);
-  const moreRow = h.byId.get('zwcd-more-row'), more = h.byId.get('zwcd-more');
-  check('load more is offered', !!moreRow && moreRow.hidden === false);
-  if (more) {
-    equal('partial label', h.byId.get('zwcd-shown').textContent, 'Showing 1000 of 100000');
+  const moreRow = h.byId.get('zwcd-more-row'), more = h.byId.get('zwcd-more'), prev = h.byId.get('zwcd-prev');
+  check('paging is offered', !!moreRow && moreRow.hidden === false && !!prev);
+  if (more && prev) {
+    equal('page label', h.byId.get('zwcd-shown').textContent, 'Showing 1–1000 of 100000');
+    equal('first page has no previous', prev.disabled, true);
+    const page1 = viz.innerHTML;
     h.fire(more, 'click');
-    equal('load more appends the next 1,000', chips(viz.innerHTML), 2000);
-    let guard = 0;
-    while (!moreRow.hidden && guard++ < 200) h.fire(more, 'click');
-    equal('loading more eventually shows every hit', chips(viz.innerHTML), 100000);
-    equal('fully loaded visualization equals renderViz', viz.innerHTML, E.renderViz(bigText, bigScan.hits));
+    equal('next page replaces the preview with the next 1,000', JSON.stringify([chips(viz.innerHTML), h.byId.get('zwcd-shown').textContent]), JSON.stringify([1000, 'Showing 1001–2000 of 100000']));
+    h.fire(prev, 'click');
+    equal('previous page restores page 1', viz.innerHTML, page1);
+    let all = viz.innerHTML, guard = 0, maxChips = 0;
+    while (!more.disabled && guard++ < 200) { h.fire(more, 'click'); all += viz.innerHTML; maxChips = Math.max(maxChips, chips(viz.innerHTML)); }
+    equal('pages never hold more than 1,000 chips', maxChips, 1000);
+    equal('paging through reaches every hit', chips(all), 100000);
+    equal('all pages together equal renderViz', all, E.renderViz(bigText, bigScan.hits));
+    equal('last page label', h.byId.get('zwcd-shown').textContent, 'Showing 99001–100000 of 100000');
   }
   // Mode change keeps the complete cleaned text and resets the preview.
   h.radios[0].checked = false; h.radios[3].checked = true; h.fire(h.radios[3], 'change');
@@ -303,7 +309,7 @@ function pageHarness() {
   // A new input replaces the old preview and hides load more.
   h.input('a\u200Bb');
   equal('small input renders one chip', chips(viz.innerHTML), 1);
-  equal('small input hides load more', moreRow?.hidden, true);
+  equal('small input hides paging', moreRow?.hidden, true);
 }
 {
   // Only invisible characters: the cleaned result is empty and exports nothing.

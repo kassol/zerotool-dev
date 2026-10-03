@@ -35,9 +35,10 @@ const labels = {
     emptyAfterStrip: '(empty after stripping)',
     visibleLength: 'Visible',
     totalCodepoints: 'Code points',
-    vizPartial: 'Showing {shown} of {n} invisible characters. Stats, cleaned text and download cover the full input.',
+    vizPartial: 'Showing invisible characters {from}–{to} of {n}. Stats, cleaned text and download cover the full input.',
     vizTruncated: 'Preview is partial. Stats, cleaned text and download cover the full input.',
-    showMore: 'Show more',
+    vizPrev: 'Previous',
+    vizNext: 'Next',
   },
   zh: {
     inputLabel: '输入文本',
@@ -71,9 +72,10 @@ const labels = {
     emptyAfterStrip: '（清除后为空）',
     visibleLength: '可见字符',
     totalCodepoints: '码点总数',
-    vizPartial: '已显示 {n} 个不可见字符中的 {shown} 个。统计、清理后的文本与下载均按完整输入计算。',
+    vizPartial: '正在显示第 {from}–{to} 个不可见字符，共 {n} 个。统计、清理后的文本与下载均按完整输入计算。',
     vizTruncated: '预览只显示了部分内容。统计、清理后的文本与下载均按完整输入计算。',
-    showMore: '显示更多',
+    vizPrev: '上一页',
+    vizNext: '下一页',
   },
   ja: {
     inputLabel: '入力テキスト',
@@ -107,9 +109,10 @@ const labels = {
     emptyAfterStrip: '（除去後は空）',
     visibleLength: '可視文字数',
     totalCodepoints: 'コードポイント',
-    vizPartial: '不可視文字 {n} 件のうち {shown} 件を表示中。統計・除去後のテキスト・ダウンロードは入力全体が対象です。',
+    vizPartial: '不可視文字 {n} 件のうち {from}–{to} 件目を表示中。統計・除去後のテキスト・ダウンロードは入力全体が対象です。',
     vizTruncated: 'プレビューは一部のみ表示しています。統計・除去後のテキスト・ダウンロードは入力全体が対象です。',
-    showMore: 'さらに表示',
+    vizPrev: '前へ',
+    vizNext: '次へ',
   },
   ko: {
     inputLabel: '입력 텍스트',
@@ -143,9 +146,10 @@ const labels = {
     emptyAfterStrip: '(제거 후 비어있음)',
     visibleLength: '보이는 문자',
     totalCodepoints: '코드포인트',
-    vizPartial: '보이지 않는 문자 {n}개 중 {shown}개를 표시 중입니다. 통계, 정리된 텍스트, 다운로드는 입력 전체를 대상으로 합니다.',
+    vizPartial: '보이지 않는 문자 {n}개 중 {from}–{to}번째를 표시 중입니다. 통계, 정리된 텍스트, 다운로드는 입력 전체를 대상으로 합니다.',
     vizTruncated: '미리보기는 일부만 표시합니다. 통계, 정리된 텍스트, 다운로드는 입력 전체를 대상으로 합니다.',
-    showMore: '더 보기',
+    vizPrev: '이전',
+    vizNext: '다음',
   },
 } as const;
 
@@ -196,7 +200,10 @@ const L = labels[lang];
         </div>
         <div id="zwcd-more-row" class="zwcd-more" hidden>
           <span id="zwcd-shown" aria-live="polite"></span>
-          <button id="zwcd-more" class="btn-ghost zwcd-btn-sm" type="button">{L.showMore}</button>
+          <span class="zwcd-more-nav">
+            <button id="zwcd-prev" class="btn-ghost zwcd-btn-sm" type="button">{L.vizPrev}</button>
+            <button id="zwcd-more" class="btn-ghost zwcd-btn-sm" type="button">{L.vizNext}</button>
+          </span>
         </div>
       </div>
       <aside class="zwcd-stats" aria-label={L.statsLabel}>
@@ -262,7 +269,7 @@ const L = labels[lang];
     var FOUND_ONE = wrap.dataset.foundOne || '1 invisible character found';
     var FOUND_N = wrap.dataset.foundN || '{n} invisible characters found';
     var EMPTY_STRIP = wrap.dataset.emptyStrip || '(empty after stripping)';
-    var VIZ_PARTIAL = wrap.dataset.vizPartial || 'Showing {shown} of {n} invisible characters.';
+    var VIZ_PARTIAL = wrap.dataset.vizPartial || 'Showing invisible characters {from}–{to} of {n}.';
     var VIZ_TRUNCATED = wrap.dataset.vizTruncated || 'Preview is partial.';
 
     var input = wrap.querySelector('#zwcd-input');
@@ -279,9 +286,11 @@ const L = labels[lang];
     var totalEl = wrap.querySelector('[data-meta="total"]');
     var moreRow = wrap.querySelector('#zwcd-more-row');
     var moreBtn = wrap.querySelector('#zwcd-more');
+    var prevBtn = wrap.querySelector('#zwcd-prev');
     var shownEl = wrap.querySelector('#zwcd-shown');
     // Current preview state and the complete cleaned text used by copy and download.
-    var view = { text: '', hits: [], next: { hit: 0, index: 0 }, done: true };
+    // pages[k] is where preview page k starts; only one page is in the DOM at a time.
+    var view = { text: '', hits: [], pages: [{ hit: 0, index: 0 }], page: 0 };
     var cleanedText = '';
 
     /* ── engine:start ── */
@@ -483,14 +492,16 @@ const L = labels[lang];
       return 'all';
     }
 
-    function showChunk() {
-      var r = renderVizChunk(view.text, view.hits, view.next, VIZ_HITS, VIZ_UNITS);
-      viz.insertAdjacentHTML('beforeend', r.html);
-      view.next = { hit: r.hit, index: r.index };
-      view.done = r.done;
-      moreRow.hidden = r.done;
-      shownEl.textContent = r.done ? '' : view.hits.length
-        ? VIZ_PARTIAL.replace('{shown}', String(r.hit)).replace('{n}', String(view.hits.length))
+    function showPage() {
+      var from = view.pages[view.page];
+      var r = renderVizChunk(view.text, view.hits, from, VIZ_HITS, VIZ_UNITS);
+      viz.innerHTML = r.html;
+      if (!r.done) view.pages[view.page + 1] = { hit: r.hit, index: r.index };
+      moreRow.hidden = r.done && view.page === 0;
+      prevBtn.disabled = view.page === 0;
+      moreBtn.disabled = r.done;
+      shownEl.textContent = moreRow.hidden ? '' : view.hits.length && r.hit > from.hit
+        ? VIZ_PARTIAL.replace('{from}', String(from.hit + 1)).replace('{to}', String(r.hit)).replace('{n}', String(view.hits.length))
         : VIZ_TRUNCATED;
     }
 
@@ -499,9 +510,8 @@ const L = labels[lang];
       var result = scan(text);
       var hits = result.hits;
 
-      view = { text: text, hits: hits, next: { hit: 0, index: 0 }, done: true };
-      viz.textContent = '';
-      showChunk();
+      view = { text: text, hits: hits, pages: [{ hit: 0, index: 0 }], page: 0 };
+      showPage();
       cleanedText = hits.length ? strip(text, hits, getMode()) : text;
       cleaned.value = cleanedText;
       cleaned.placeholder = text && !cleanedText ? EMPTY_STRIP : '';
@@ -530,7 +540,10 @@ const L = labels[lang];
     }
 
     moreBtn.addEventListener('click', function () {
-      if (!view.done) showChunk();
+      if (view.pages[view.page + 1]) { view.page++; showPage(); }
+    });
+    prevBtn.addEventListener('click', function () {
+      if (view.page > 0) { view.page--; showPage(); }
     });
 
     // ToolLayout's Ctrl/Cmd+L empties the text areas without an input event; rescan so
@@ -694,6 +707,7 @@ const L = labels[lang];
     color: var(--color-text-muted);
   }
   .zwcd-more[hidden] { display: none; }
+  .zwcd-more-nav { display: inline-flex; gap: 0.4rem; }
   .zwcd-viz-wrap {
     min-width: 0;
     background: var(--color-bg-secondary);
