@@ -1,6 +1,6 @@
 // AI Token Counter — tokenizer engine, cost table and page examples
 //
-// Read:  src/components/tools/AiTokenCounterTool.astro (extracts the real engine block between the
+// Read:  src/components/tools/ai-token-counter-engine.js (extracts the real engine block between the
 //        `engine:start` / `engine:end` markers and the frontmatter STRINGS / SAMPLES tables, so this
 //        test cannot drift from the shipped source); js-tiktoken rank files in node_modules;
 //        src/data/deepseek-v4-tokenizer.mjs; scripts/test-ai-token-counter.fixtures.json;
@@ -56,13 +56,14 @@ const source = readFileSync(componentPath, 'utf8');
 
 const START = '/* ── engine:start ── */';
 const END = '/* ── engine:end ── */';
-const s0 = source.indexOf(START);
-const s1 = source.indexOf(END);
+const engineSource = readFileSync(join(root, 'src/components/tools/ai-token-counter-engine.js'), 'utf8');
+const s0 = engineSource.indexOf(START);
+const s1 = engineSource.indexOf(END);
 if (s0 < 0 || s1 <= s0) {
-  console.error('FAIL: engine block not found in AiTokenCounterTool.astro');
+   console.error('FAIL: engine block not found in ai-token-counter-engine.js');
   process.exit(1);
 }
-const E = new Function(source.slice(s0, s1) + `
+const E = new Function(engineSource.slice(s0, s1) + `
 return { unicodeWhiteSpace, createTiktokenEncoding, createHfBpeEncoding, encodeAll, encodeSteps, textStats,
   PRICES_CHECKED, PRICE_SOURCES, MODELS, costFor, formatMoney, formatPercent, tokenLabel, fill };`)();
 
@@ -378,8 +379,94 @@ for (const l of LONG) {
 {
   const script = source.slice(source.indexOf('<script>'), source.indexOf('</script>'));
   for (const api of ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource']) {
-    check(`component script does not use ${api}`, !script.includes(api));
+    check(`component script does not use ${api}`, !new RegExp('\\b' + api.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(script));
   }
+}
+
+// ── 11. The shipped runner and client protocol ──────────────────────────────────
+// Vite `?url` imports (the worker loads vocabularies by URL) resolve here to the file URL.
+const URL_HOOK = 'data:text/javascript,' + encodeURIComponent(`export async function resolve(spec, ctx, next) {
+  if (!spec.endsWith('?url')) return next(spec, ctx);
+  const r = await next(spec.slice(0, -4), ctx);
+  return { url: 'data:text/javascript,' + encodeURIComponent('export default ' + JSON.stringify(r.url)), shortCircuit: true };
+}`);
+{
+  (await import('node:module')).register(URL_HOOK);
+  const { createTokenRunner, createTokenClient } = await import('../src/components/tools/ai-token-counter-run.js');
+  const ranks = {
+    o200k: (await import('js-tiktoken/ranks/o200k_base')).default,
+    cl100k: (await import('js-tiktoken/ranks/cl100k_base')).default,
+    deepseek: await import('../src/data/deepseek-v4-tokenizer.mjs'),
+  };
+  const loads = [];
+  const run = createTokenRunner(async key => { loads.push(key); return ranks[key]; });
+  await run({ type: 'prefetch' });
+  check('idle prefetch only loads o200k', loads.join() === 'o200k');
+  const text = 'Hello 世界 🦜\r\n'.repeat(800);
+  const result = await run({ type: 'count', text, keys: ['o200k', 'cl100k', 'deepseek'] });
+  check('runner statistics equal the original engine', JSON.stringify(result.stats) === JSON.stringify(E.textStats(text)));
+  for (const key of ['o200k', 'cl100k', 'deepseek']) {
+    const ids = E.encodeAll(enc[key], text);
+    check(`${key}: runner full count and first 2000 ids/byte labels match`, result.results[key].count === ids.length &&
+      JSON.stringify(result.results[key].tokens) === JSON.stringify(ids.slice(0, 2000).map(id => ({ id, ...E.tokenLabel(enc[key].tokenBytes(id)) }))));
+  }
+  check('only requested tokenizers load, each once', loads.join() === 'o200k,cl100k,deepseek');
+  let tries = 0;
+  const retry = createTokenRunner(async () => { if (++tries === 1) throw new Error('load fixture'); return ranks.o200k; });
+  check('failed rank load is reported without a stale count', (await retry({ type: 'count', text: 'Hello!', keys: ['o200k'] })).failed.o200k === 'load fixture');
+  check('failed rank load can be retried', (await retry({ type: 'count', text: 'Hello!', keys: ['o200k'] })).results.o200k.count === 2);
+
+  const workers = [];
+  const client = createTokenClient(() => {
+    const worker = { messages: [], terminated: false, postMessage(data) { this.messages.push(data); }, terminate() { this.terminated = true; } };
+    workers.push(worker); return worker;
+  });
+  const first = client.count('old', ['o200k']).catch(error => error.name);
+  const old = workers[0];
+  client.cancel();
+  check('cancel terminates a busy worker and rejects the pending request', old.terminated && await first === 'AbortError');
+  let settled = false; let progress = 0;
+  const second = client.count('new', ['o200k'], () => progress++).then(value => { settled = true; return value; });
+  const fresh = workers[1]; const request = fresh.messages[0];
+  old.onmessage({ data: { id: old.messages[0].id, type: 'result', result: 'stale' } });
+  await Promise.resolve();
+  check('late results from a terminated worker cannot resolve a new request', !settled);
+  fresh.onmessage({ data: { id: request.id, type: 'progress', key: 'o200k', pct: 50 } });
+  fresh.onmessage({ data: { id: request.id, type: 'result', result: 'fresh' } });
+  check('fresh result and progress reach their matching request', await second === 'fresh' && progress === 1);
+  const broken = client.count('broken', ['o200k']).catch(error => error.message);
+  fresh.onerror();
+  check('worker failure terminates it and rejects the request', fresh.terminated && await broken === 'Worker failed');
+  const recovered = client.count('retry', ['o200k']);
+  const replacement = workers[2];
+  replacement.onmessage({ data: { id: replacement.messages[0].id, type: 'result', result: 'recovered' } });
+  check('next request recreates a failed worker', await recovered === 'recovered');
+  const pending = client.prefetch().catch(error => error.name);
+  client.dispose();
+  check('page disposal also terminates idle/prefetch work', replacement.terminated && await pending === 'AbortError');
+  check('page creates the content-versioned Vite worker', source.includes("./ai-token-counter.worker.js?worker"));
+  check('page has no synchronous text statistics or tokenizer call', !/\b(textStats|encodeSteps|createTiktokenEncoding|createHfBpeEncoding)\s*\(/.test(source));
+
+  const { Worker } = await import('node:worker_threads');
+  const entry = new URL('../src/components/tools/ai-token-counter.worker.js', import.meta.url).href;
+  const worker = new Worker(new URL('data:text/javascript,' + encodeURIComponent(`
+    import { parentPort } from 'node:worker_threads';
+    import { register } from 'node:module';
+    register(${JSON.stringify(URL_HOOK)});
+    globalThis.self = { postMessage: data => parentPort.postMessage(data) };
+    await import(${JSON.stringify(entry)});
+    parentPort.on('message', data => self.onmessage({ data }));
+  `)), { type: 'module' });
+  try {
+    const messages = [];
+    const result = await new Promise((resolve, reject) => {
+      worker.once('error', reject);
+      worker.on('message', data => { messages.push(data); if (data.type === 'result') resolve(data.result); if (data.type === 'error') reject(new Error(data.message)); });
+      worker.postMessage({ id: 7, type: 'count', text: 'Hello 世界 🦜', keys: ['o200k', 'cl100k', 'deepseek'] });
+    });
+    check('real worker entry preserves request ids and returns progress', messages.every(m => m.id === 7) && messages.some(m => m.type === 'progress'));
+    check('real worker entry counts all three tokenizers', ['o200k', 'cl100k', 'deepseek'].every(k => result.results[k].count === E.encodeAll(enc[k], 'Hello 世界 🦜').length));
+  } finally { await worker.terminate(); }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

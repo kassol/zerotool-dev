@@ -97,6 +97,9 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 模块规范
 
+- `test-json-formatter.mjs` 从 `json-formatter-engine.js` 读取引擎块（仍与 json-schema-validator 比对 `jsonSyntaxError` / `lineCol` 源码）；另运行 `json-formatter-run.js`：14 组文档 × 4 组选项的 `viewOf` 与改造前页面的计算逐项相同（输出、高亮、截断显示、字节数、提示行号与路径、错误帧、提示），树分页与 `childrenOf` 相同，客户端的终止、迟到回包、文件 buffer 转移与真实 Worker 入口（Node worker_threads）。页面脚本只允许 2 处 HTML 写入（`innerHTML` 与 `insertAdjacentHTML`），内容只能来自 Worker 的 `blockHtml(highlight(out))`。
+- `test-ai-token-counter.mjs` 从工具局部 `ai-token-counter-engine.js` 读取原引擎；另运行生产 runner、真实 Worker 入口与客户端协议，覆盖按需加载、失败重试、取消、迟到回包、重建与前 2,000 个 token ID / 半字符字节展示。仅跑本工具定向测试可验证 Worker 迁移；页面性能与正式构建验收另行记录。Worker 入口用 Vite `?url` 引入词表，测试用 `module.register` 的 resolve hook 把 `?url` 解析成文件 URL（主线程与 worker_threads 各注册一次）。
+
 - `test-bcrypt-generator.mjs` 用 fixture 中 v1.138.55 的原始 worker 预置固定 URL 缓存，运行页面真实 factory，验证新版 URL 绕开旧缓存并完成 bench / hash / 验签；另验证新版 worker 接受旧页面 generate / verify 请求。构建后校验四语言 HTML 内的 worker URL 与发布文件内容哈希相符。
 
 - **副作用清晰**：脚本注释开头必须写明读写哪些文件
@@ -259,3 +262,5 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-10-02 — `test-jwt-decoder.mjs` 的 DER ES256 签名改按 SEQUENCE(INTEGER r, INTEGER s) 结构断言（原「70–72 字节」区间在随机签名较短时偶发失败）；19 个测试的耗时上限乘 `PERF_SLACK`（CI 下 4 倍），循环规模不变；模块规范新增「测试不依赖随机结果的长度或本机速度」
 - 2026-10-02 — 新增 test-glassmorphism-generator.mjs（63 项），先读 GlassmorphismGeneratorTool.astro 的 engine:start/end 与四语工具页：输入边界（3 / 6 位 HEX、全角 NFKC、无效字符码点位置）、CSS / Tailwind v4 真实编译（esbuild transform、tailwindcss compile + @tailwind utilities 与 glass candidate）、不透明基线 / @supports / 手动 glass-opaque / 减少透明 / 强制颜色规则、WCAG 相对亮度与最差像素（4.499 不舍入判通过）、四语 STRINGS 键与占位符、seo 长度与正文范围、gsg-check 标注的 CSS 逐行复算及实心对比度。vm mock 直接驱动真实内联脚本，验证无效输入清旧结果、三种预览、系统查询 / 不支持滤镜 / Canvas 不支持、重置、完整复制 / 失败后备、图片异步作废 / 解码失败 / 大小上限与 blob 释放；静态断言组件不写 HTML、不存设置或图片、不发网络请求。真实 Canvas 滤镜、CSS 渲染、图片与媒体查询路径由 ego-browser 单独验收；测试无本机耗时断言，无新依赖。
 - 2026-10-03 — JSX 三工具收尾：`test-svg-optimizer.mjs` 226 → 320 项。声明提取器改为跳过字符串、模板字符串、正则与注释中的括号（复制的 JSX 辅助函数含 `'{'`、`'{{ '` 与 `/[{}<>]/`，旧计数会截断），并对每个提取结果做 `new Function` 解析检查；COPIES 增加 `NAMED_ENTITIES`、`decodeEntities`、`jsxString`、`styleError`、`styleStringToObject`、`jsxText`，并对后 6 个比对 `HtmlToJsxTool.astro`；新增 `tryFormatOutput` 的拒绝码与位置断言；新增页面脚本替身 DOM 测试：运行组件真实 `<script>`（Worker 构造抛错，走主线程 `runSvgo` + `svgo/browser`），JSX 格式下 3 个文件（首个被拒）批量全部完成、无未处理 rejection，单文件 / 行 / ZIP 下载内容等于 SVGO 输出，复制被拒时不写剪贴板并显示原因，切换文件或格式后恢复。`test-svg-to-jsx.mjs` 77 → 103 项：style 声明边界 6 例（url 内分号、实体引号、CSS 转义、自定义属性），4 语言页面的 ```svg / ```jsx 示例对由引擎复算，含 `<style>` 的示例用 React 19.2.0 渲染并核对页面引用的标记。`test-html-to-jsx.mjs` 165 → 177 项：4 语言页面「示例」输出由引擎复算。React 对照由 `JSX_REACT_REFERENCE_DIR` 指定，未设置时相关项 SKIP。
+
+- 2026-10-03 — `test-json-formatter.mjs` 130 → 151 项（1 项 SKIP 为 Python 版本）：改读 `json-formatter-engine.js`，新增 Worker runner / 客户端 / 真实 Worker 入口与 `blockHtml` 分块检查，HTML 写入断言改为上面的 2 处；`test-ai-token-counter.mjs` 仍 5,228 项，加 `?url` resolve hook。
