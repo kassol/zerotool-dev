@@ -443,6 +443,56 @@ eq('3.2 allows a URI reference as a security requirement name', codes(run('opena
   for (const lang of ['zh', 'ja', 'ko']) check(lang + ' boundary messages are translated', STRINGS[lang].msg['schema.boundaryMissing'] !== T.msg['schema.boundaryMissing'] && STRINGS[lang].msg['schema.boundaryNoEffect'] !== T.msg['schema.boundaryNoEffect']);
 }
 
+// ---------- large files: read-only window instead of the whole text in the textarea ----------
+{
+  const script = component.slice(component.indexOf('<script>'));
+  const vm1 = /\/\/ view:start[^\n]*\n([\s\S]*?)\/\/ view:end/.exec(script);
+  check('component has the window helpers', !!vm1);
+  const limits = /var VIEW_LIMIT = (\d+) \* (\d+), WIN_LINES = (\d+), WIN_CHARS = (\d+) \* (\d+);/.exec(script);
+  check('view limits declared', !!limits);
+  eq('view limits', limits && [limits[1] * limits[2], +limits[3], limits[4] * limits[5]], [524288, 300, 49152]);
+  const H = new Function('WIN_LINES', 'WIN_CHARS', vm1[1] + '\nreturn { countNl, winFrom, winAround, winBefore, lineAt };');
+  const lineOf = (t, o) => t.slice(0, o).split('\n').length;
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (const [WL, WC] of [[300, 49152], [5, 64]]) {
+    const V = H(WL, WC);
+    for (let k = 0; k < 40; k++) {
+      let t = '';
+      const lines = 1 + rnd(400);
+      for (let i = 0; i < lines; i++) t += 'x'.repeat(rnd(k % 5 === 0 ? 300 : 30)) + (rnd(10) ? '\n' : '');
+      if (!t.length) t = 'a';
+      // walking forward from the start covers the text exactly once, with the right line numbers
+      let w = V.winFrom(t, 0, 1), seen = '', ok = true, steps = 0;
+      while (true) {
+        ok = ok && w.line === lineOf(t, w.start) && w.end > w.start && w.end - w.start <= WC && V.countNl(t, w.start, w.end) <= WL;
+        seen += t.slice(w.start, w.end);
+        if (w.end >= t.length || ++steps > 100000) break;
+        const n = V.winFrom(t, w.end, w.line + V.countNl(t, w.start, w.end));
+        // and walking back from the next window returns to a window that ends at or after this start
+        const b = V.winBefore(t, n);
+        ok = ok && b.line === lineOf(t, b.start) && b.start <= w.end && b.end > b.start && b.start < n.start;
+        w = n;
+      }
+      check(`window walk covers the text (${WL}/${WC}, #${k})`, ok && seen === t);
+      for (let q = 0; q < 10; q++) {
+        const o = rnd(t.length);
+        const a = V.winAround(t, o, lineOf(t, o));
+        check(`window around offset contains it (${WL}/${WC}, #${k}.${q})`, a.start <= o && o < Math.max(a.end, a.start + 1) && a.line === lineOf(t, a.start), JSON.stringify([o, a]));
+        const ls = t.lastIndexOf('\n', o - 1) + 1, le = t.indexOf('\n', o);
+        eq('lineAt', V.lineAt(t, o), t.slice(o > 0 ? ls : 0, le < 0 ? t.length : le));
+      }
+    }
+    // a single very long line: the window starts inside the line near the offset
+    const long = 'a'.repeat(3 * WC) + '\nend';
+    const a = V.winAround(long, 2 * WC, 1);
+    check(`long line window (${WL}/${WC})`, a.start > 0 && a.start <= 2 * WC && a.end > 2 * WC && a.line === 1, JSON.stringify(a));
+  }
+  check('large roots are not put in the textarea in full', /function setRoot\(text\) \{\s*if \(text\.length > VIEW_LIMIT\)/.test(script) &&
+    !/input\.value = files\[/.test(script) && !/\.split\('\\n'\)/.test(script));
+  check('a newer file load wins over an older one', /if \(myLoad !== loadSeq\) return;/.test(script));
+}
+
 // ---------- messages in every language ----------
 const allCodes = new Set();
 const codeRe = /(?:add|push|addB)\((?:'(?:error|warning|info)'|level), '([a-z0-9]+\.[a-zA-Z0-9]+)'/g;

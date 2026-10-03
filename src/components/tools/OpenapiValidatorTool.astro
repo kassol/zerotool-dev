@@ -28,6 +28,8 @@ const STRINGS = {
     filesHint: 'Name each file by the path its $ref uses, relative to the main document (for example schemas/pet.yaml). Files are not uploaded.',
     fileName: 'File path', fileText: 'Content of {file}', addFile: 'Add file', remove: 'Remove',
     addMissing: 'Add {file}', mainFile: 'Main file name',
+    viewInfo: 'Read-only view of lines {a}–{b} of {file} ({mb} MB). Files this large are not put in the editor in full, so the page stays responsive; the whole text is validated.',
+    viewPrev: 'Previous lines', viewNext: 'Next lines', viewCopy: 'Copy full text', viewDownload: 'Download', viewEdit: 'Edit full text (slow)',
     filterAll: 'All', levelError: 'Error', levelWarning: 'Warning', levelInfo: 'Note',
     jump: 'Show line {line} in {file}', showAll: 'Show all {n}', copy: 'Copy results', copied: 'Copied', copyFail: 'Copy failed.',
     summaryTitle: 'Summary', sumTitle: 'API title', sumVersion: 'API version', sumSpec: 'Specification',
@@ -130,6 +132,8 @@ const STRINGS = {
     filesHint: '每个文件按 $ref 里写的路径命名，路径相对于主文档（例如 schemas/pet.yaml）。文件不会上传。',
     fileName: '文件路径', fileText: '{file} 的内容', addFile: '添加文件', remove: '移除',
     addMissing: '添加 {file}', mainFile: '主文件名',
+    viewInfo: '只读显示 {file} 的第 {a}–{b} 行（{mb} MB）。这么大的文件不整份放进编辑框，以免页面卡顿；校验仍针对全文。',
+    viewPrev: '上一段', viewNext: '下一段', viewCopy: '复制全文', viewDownload: '下载', viewEdit: '编辑全文（较慢）',
     filterAll: '全部', levelError: '错误', levelWarning: '警告', levelInfo: '提示',
     jump: '在 {file} 中显示第 {line} 行', showAll: '显示全部 {n} 条', copy: '复制结果', copied: '已复制', copyFail: '复制失败。',
     summaryTitle: '概要', sumTitle: 'API 名称', sumVersion: 'API 版本', sumSpec: '规范',
@@ -232,6 +236,8 @@ const STRINGS = {
     filesHint: '各ファイルには $ref に書かれたパス（メインのドキュメントからの相対パス。例：schemas/pet.yaml）を付けてください。ファイルはアップロードされません。',
     fileName: 'ファイルのパス', fileText: '{file} の内容', addFile: 'ファイルを追加', remove: '削除',
     addMissing: '{file} を追加', mainFile: 'メインのファイル名',
+    viewInfo: '{file} の {a}–{b} 行目を読み取り専用で表示しています（{mb} MB）。この大きさのファイルはページが重くならないよう全体を編集欄に入れません。検証は全文に対して行います。',
+    viewPrev: '前の行', viewNext: '次の行', viewCopy: '全文をコピー', viewDownload: 'ダウンロード', viewEdit: '全文を編集（遅くなります）',
     filterAll: 'すべて', levelError: 'エラー', levelWarning: '警告', levelInfo: '情報',
     jump: '{file} の {line} 行目を表示', showAll: '全 {n} 件を表示', copy: '結果をコピー', copied: 'コピーしました', copyFail: 'コピーできませんでした。',
     summaryTitle: '概要', sumTitle: 'API 名', sumVersion: 'API バージョン', sumSpec: '仕様',
@@ -334,6 +340,8 @@ const STRINGS = {
     filesHint: '각 파일 이름은 $ref에 적힌 경로(메인 문서 기준 상대 경로, 예: schemas/pet.yaml)로 정하세요. 파일은 업로드되지 않습니다.',
     fileName: '파일 경로', fileText: '{file} 내용', addFile: '파일 추가', remove: '삭제',
     addMissing: '{file} 추가', mainFile: '메인 파일 이름',
+    viewInfo: '{file}의 {a}–{b}번째 줄을 읽기 전용으로 보여 줍니다({mb} MB). 이렇게 큰 파일은 페이지가 느려지지 않도록 편집 칸에 전부 넣지 않으며, 검증은 전체 내용으로 합니다.',
+    viewPrev: '이전 줄', viewNext: '다음 줄', viewCopy: '전체 복사', viewDownload: '다운로드', viewEdit: '전체 편집(느림)',
     filterAll: '전체', levelError: '오류', levelWarning: '경고', levelInfo: '정보',
     jump: '{file}의 {line}번째 줄 보기', showAll: '{n}개 모두 보기', copy: '결과 복사', copied: '복사됨', copyFail: '복사하지 못했습니다.',
     summaryTitle: '요약', sumTitle: 'API 이름', sumVersion: 'API 버전', sumSpec: '사양',
@@ -481,6 +489,7 @@ const T = STRINGS[lang];
   <div class="oav-main" id="oav-drop">
     <label for="oav-input" class="tool-label oav-label">{T.inputLabel} <span class="oav-rootname" id="oav-rootname"></span></label>
     <textarea id="oav-input" class="tool-textarea oav-input" rows="12" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder={T.inputPh} aria-describedby="oav-status"></textarea>
+    <div id="oav-view" class="oav-view" hidden></div>
     <p class="oav-hint oav-desktop">{T.dropHint}</p>
   </div>
 
@@ -523,12 +532,17 @@ const T = STRINGS[lang];
   var input = $('oav-input'), statusEl = $('oav-status'), results = $('oav-results'), list = $('oav-list');
   var moreBtn = $('oav-more'), summaryBox = $('oav-summary'), summaryList = $('oav-summary-list');
   var filesBox = $('oav-files'), fileList = $('oav-file-list'), filesTitle = $('oav-files-title'), missingBox = $('oav-missing');
-  var rootNameEl = $('oav-rootname');
+  var rootNameEl = $('oav-rootname'), viewBar = $('oav-view');
 
   var AUTO_LIMIT = 2 * 1024 * 1024;
   var LOAD_LIMIT = 50 * 1024 * 1024;
   var LIST_LIMIT = 300;
-  var state = { rootName: 'openapi.yaml', extra: [], last: null, filter: 'all', showAll: false };
+  // Files larger than VIEW_LIMIT characters are not put in a textarea in full: laying out ~10 MB
+  // of text blocks the page for about half a second. The text stays in a variable (it is what is
+  // validated) and the textarea shows a read-only window of at most WIN_LINES lines / WIN_CHARS.
+  var VIEW_LIMIT = 512 * 1024, WIN_LINES = 300, WIN_CHARS = 48 * 1024;
+  // root: { text, view } while the main document is shown as a window, else null (the textarea holds it)
+  var state = { rootName: 'openapi.yaml', extra: [], last: null, filter: 'all', showAll: false, root: null };
 
   function fill(tpl, args) {
     return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return args && args[k] !== undefined ? String(args[k]) : m; });
@@ -543,6 +557,105 @@ const T = STRINGS[lang];
     statusEl.textContent = text;
     statusEl.className = 'oav-status' + (kind ? ' oav-status--' + kind : '');
   }
+
+  /* ── large text: windows ── */
+  // view:start (pure helpers, run by scripts/test-openapi-validator.mjs)
+  function countNl(t, a, b) {
+    var n = 0, i = t.indexOf('\n', a);
+    while (i >= 0 && i < b) { n++; i = t.indexOf('\n', i + 1); }
+    return n;
+  }
+  // window that starts at offset `start`, whose first character is on line `line`
+  function winFrom(t, start, line) {
+    var end = start, n = 0, cap = Math.min(t.length, start + WIN_CHARS);
+    while (n < WIN_LINES && end < cap) {
+      var nl = t.indexOf('\n', end);
+      if (nl < 0 || nl >= cap) { end = cap; break; }
+      end = nl + 1; n++;
+    }
+    if (end <= start) end = cap;
+    return { start: start, end: end, line: line };
+  }
+  function prevLineStart(t, s) { return s >= 2 ? t.lastIndexOf('\n', s - 2) + 1 : 0; }
+  // window that shows `offset` (on line `line`) with up to 40 lines before it
+  function winAround(t, offset, line) {
+    var floor = Math.max(0, offset - (WIN_CHARS >> 1));
+    var s = offset > 0 ? t.lastIndexOf('\n', offset - 1) + 1 : 0;
+    for (var k = 0; k < 40 && s > floor; k++) { var p = prevLineStart(t, s); if (p < floor) break; s = p; }
+    if (s < floor) s = floor;
+    return winFrom(t, s, line - countNl(t, s, offset));
+  }
+  function winBefore(t, w) {
+    var floor = Math.max(0, w.start - WIN_CHARS), s = w.start;
+    for (var k = 0; k < WIN_LINES && s > floor; k++) { var p = prevLineStart(t, s); if (p < floor) { s = floor; break; } s = p; }
+    return winFrom(t, s, w.line - countNl(t, s, w.start));
+  }
+  function lineAt(t, offset) {
+    var a = offset > 0 ? t.lastIndexOf('\n', offset - 1) + 1 : 0;
+    var b = t.indexOf('\n', offset);
+    return t.slice(a, b < 0 ? t.length : b);
+  }
+  // view:end
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (_e) {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.append(ta); ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (_e2) { ok = false; }
+      ta.remove();
+      return ok;
+    }
+  }
+  function download(name, text) {
+    var url = URL.createObjectURL(new Blob([text], { type: /\.json$/i.test(name) ? 'application/json' : 'application/yaml' }));
+    var a = document.createElement('a');
+    a.href = url; a.download = name.slice(name.lastIndexOf('/') + 1) || 'openapi.yaml';
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+  /* src: { text, view } for one large file; ta: its textarea; bar: the element for the controls.
+     onEdit(): called when the user asks for the whole text in the editor. */
+  function showWindow(src, ta, bar, name, onEdit) {
+    var t = src.text, w = src.view || (src.view = winFrom(t, 0, 1));
+    ta.readOnly = true;
+    ta.value = t.slice(w.start, w.end);
+    bar.hidden = false;
+    bar.textContent = '';
+    var b = w.line + countNl(t, w.start, Math.max(w.start, w.end - 1));
+    bar.append(el('span', 'oav-view-info', fill(T.viewInfo, { a: w.line, b: b, file: name, mb: (t.length / 1048576).toFixed(1) })));
+    function btn(label, fn, disabled) {
+      var x = el('button', 'btn-ghost btn-sm', label);
+      x.type = 'button'; x.disabled = !!disabled;
+      x.addEventListener('click', fn);
+      bar.append(x);
+      return x;
+    }
+    btn(T.viewPrev, function () { src.view = winBefore(t, w); showWindow(src, ta, bar, name, onEdit); ta.scrollTop = 0; }, w.start === 0);
+    btn(T.viewNext, function () { src.view = winFrom(t, w.end, w.line + countNl(t, w.start, w.end)); showWindow(src, ta, bar, name, onEdit); ta.scrollTop = 0; }, w.end >= t.length);
+    var cp = btn(T.viewCopy, async function () {
+      var ok = await copyText(t);
+      cp.textContent = ok ? T.copied : T.copyFail;
+      setTimeout(function () { cp.textContent = T.viewCopy; }, 1500);
+    });
+    btn(T.viewDownload, function () { download(name, t); });
+    btn(T.viewEdit, function () { bar.hidden = true; bar.textContent = ''; ta.readOnly = false; ta.value = t; onEdit(); });
+  }
+  function setRoot(text) {
+    if (text.length > VIEW_LIMIT) {
+      state.root = { text: text, view: null };
+      showRoot();
+    } else {
+      state.root = null;
+      input.readOnly = false;
+      viewBar.hidden = true; viewBar.textContent = '';
+      input.value = text;
+    }
+  }
+  function showRoot() {
+    showWindow(state.root, input, viewBar, state.rootName, function () { state.root = null; schedule(); });
+  }
+  function rootText() { return state.root ? state.root.text : input.value; }
 
   /* ── files ── */
   function normName(n) {
@@ -572,10 +685,14 @@ const T = STRINGS[lang];
       rm.addEventListener('click', function () { state.extra.splice(i, 1); renderFiles(); schedule(0); });
       row.append(lab, name, rm);
       var ta = el('textarea', 'tool-textarea oav-ftext');
-      ta.id = textId; ta.rows = 6; ta.spellcheck = false; ta.value = f.text;
+      ta.id = textId; ta.rows = 6; ta.spellcheck = false;
       ta.setAttribute('aria-label', fill(T.fileText, { file: f.name }));
-      ta.addEventListener('input', function () { f.text = ta.value; schedule(); });
-      box.append(row, ta);
+      ta.addEventListener('input', function () { if (!ta.readOnly) { f.text = ta.value; schedule(); } });
+      var bar = el('div', 'oav-view');
+      bar.hidden = true;
+      box.append(row, ta, bar);
+      if (f.text.length > VIEW_LIMIT && !f.edit) showWindow(f, ta, bar, f.name, function () { f.edit = true; f.view = null; });
+      else ta.value = f.text;
       fileList.append(box);
     });
   }
@@ -587,7 +704,9 @@ const T = STRINGS[lang];
     if (open) filesBox.open = true;
   }
 
+  var loadSeq = 0;
   async function loadFiles(fileArr) {
+    var myLoad = ++loadSeq;
     var picked = [], skipped = 0, total = 0;
     for (var i = 0; i < fileArr.length; i++) {
       var f = fileArr[i];
@@ -604,11 +723,13 @@ const T = STRINGS[lang];
     var files = {};
     for (var j = 0; j < picked.length; j++) {
       try { files[parts[j].join('/')] = await picked[j].file.text(); }
-      catch (_e) { setStatus(fill(T.readFail, { file: picked[j].path }), 'error'); return; }
+      catch (_e) { if (myLoad === loadSeq) setStatus(fill(T.readFail, { file: picked[j].path }), 'error'); return; }
+      if (myLoad !== loadSeq) return; // a newer load started
     }
     var root = pickRoot(files);
+    showIdle();
     state.rootName = root;
-    input.value = files[root];
+    setRoot(files[root]);
     state.extra = [];
     Object.keys(files).forEach(function (n) { if (n !== root) state.extra.push({ name: n, text: files[n] }); });
     renderFiles();
@@ -656,8 +777,9 @@ const T = STRINGS[lang];
   var timer = null, firstRun = true;
   function schedule(delay) {
     clearTimeout(timer);
-    var size = input.value.length + state.extra.reduce(function (s, f) { return s + f.text.length; }, 0);
-    if (!input.value.trim()) { showIdle(); return; }
+    var text = rootText();
+    var size = text.length + state.extra.reduce(function (s, f) { return s + f.text.length; }, 0);
+    if (!/\S/.test(text)) { showIdle(); return; }
     if (size > AUTO_LIMIT && delay !== 0) { setStatus(fill(T.autoOff, { mb: (size / 1048576).toFixed(1) })); return; }
     timer = setTimeout(run, delay === undefined ? 500 : delay);
   }
@@ -672,8 +794,8 @@ const T = STRINGS[lang];
 
   async function run() {
     clearTimeout(timer);
-    var text = input.value;
-    if (!text.trim()) { showIdle(); return; }
+    var text = rootText();
+    if (!/\S/.test(text)) { showIdle(); return; }
     var files = {};
     files[state.rootName] = text;
     state.extra.forEach(function (f) { if (f.name && f.name !== state.rootName) files[f.name] = f.text; });
@@ -736,7 +858,7 @@ const T = STRINGS[lang];
       li.append(badge, loc, msg);
       if (p.code !== 'parse.yaml' && p.path && p.path !== '#') li.append(el('code', 'oav-ptr', p.path));
       if (p.code === 'parse.yaml') {
-        var src = lineText(p.file, p.line);
+        var src = lineText(p);
         if (src !== null) li.append(el('code', 'oav-ptr oav-src', p.line + ' | ' + src));
       }
       frag.append(li);
@@ -747,35 +869,49 @@ const T = STRINGS[lang];
   }
 
   function textOf(file) {
-    if (file === state.rootName) return input.value;
+    if (file === state.rootName) return rootText();
     var f = state.extra.find(function (x) { return x.name === file; });
     return f ? f.text : null;
   }
-  function lineText(file, line) {
-    var t = textOf(file);
+  // the source line of a problem, read around its offset (no split of the whole text)
+  function lineText(p) {
+    var t = textOf(p.file);
     if (t === null) return null;
-    var s = t.replace(/^\uFEFF/, '').split('\n')[line - 1];
-    return s === undefined ? null : s.replace(/\r$/, '').slice(0, 200);
+    var bom = t.charCodeAt(0) === 0xfeff ? 1 : 0;
+    var off = Math.min(t.length, (p.offset || 0) + bom);
+    return lineAt(t, off).replace(/^\uFEFF/, '').replace(/\r$/, '').slice(0, 200);
   }
 
   function jump(p) {
-    var ta = input, t = input.value;
+    var ta = input, src = state.root, show = showRoot;
     if (p.file !== state.rootName) {
       var idx = state.extra.findIndex(function (x) { return x.name === p.file; });
       if (idx < 0) return;
       filesBox.open = true;
       ta = $('oav-ftext-' + idx);
       if (!ta) return;
-      t = ta.value;
+      var f = state.extra[idx];
+      src = ta.readOnly ? f : null;
+      show = function () { showWindow(f, ta, ta.nextElementSibling, f.name, function () { f.edit = true; f.view = null; }); };
     }
+    var t = src ? src.text : ta.value;
     var bom = t.charCodeAt(0) === 0xfeff ? 1 : 0;
     var start = Math.min(t.length, (p.offset || 0) + bom);
     var end = t.indexOf('\n', start);
     if (end < 0) end = t.length;
+    var before = Math.max(0, (p.line || 1) - 1); // lines above the problem in the textarea
+    if (src) {
+      // a large file: show the window around the problem and select in it
+      src.view = winAround(t, start, p.line || 1);
+      show();
+      var w = src.view;
+      before = countNl(t, w.start, start);
+      start -= w.start;
+      end = Math.min(end, w.end) - w.start;
+    }
     ta.focus({ preventScroll: true });
     ta.setSelectionRange(start, end);
     var lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
-    var before = t.slice(0, start).split('\n').length - 1;
     ta.scrollTop = Math.max(0, before * lh - ta.clientHeight / 3);
     var rect = ta.getBoundingClientRect();
     if (rect.top < 0 || rect.bottom > window.innerHeight) ta.scrollIntoView({ block: 'center' });
@@ -834,16 +970,18 @@ const T = STRINGS[lang];
   $('oav-validate').addEventListener('click', function () { run(); });
   input.addEventListener('input', function () { schedule(); });
   $('oav-example').addEventListener('click', function () {
-    input.value = EXAMPLE;
+    loadSeq++;
     state.rootName = 'openapi.yaml';
+    setRoot(EXAMPLE);
     state.extra = [];
     renderFiles();
     run();
   });
   $('oav-clear').addEventListener('click', function () {
-    input.value = '';
-    state.extra = [];
+    loadSeq++;
     state.rootName = 'openapi.yaml';
+    setRoot('');
+    state.extra = [];
     renderFiles();
     showIdle();
     input.focus();
@@ -869,15 +1007,8 @@ const T = STRINGS[lang];
   });
   moreBtn.addEventListener('click', function () { state.showAll = true; renderList(); });
   $('oav-copy').addEventListener('click', async function () {
-    var btn = this, text = reportText();
-    var ok = false;
-    try { await navigator.clipboard.writeText(text); ok = true; } catch (_e) {
-      var ta = document.createElement('textarea');
-      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
-      document.body.append(ta); ta.select();
-      try { ok = document.execCommand('copy'); } catch (_e2) { ok = false; }
-      ta.remove();
-    }
+    var btn = this;
+    var ok = await copyText(reportText());
     btn.textContent = ok ? T.copied : T.copyFail;
     setTimeout(function () { btn.textContent = T.copy; }, 1500);
   });
@@ -919,7 +1050,7 @@ const T = STRINGS[lang];
   // site-wide Ctrl/⌘+L clears the text fields; drop the extra files and the results with them
   document.addEventListener('keydown', function (e) {
     if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
-      setTimeout(function () { state.extra = []; state.rootName = 'openapi.yaml'; renderFiles(); showIdle(); }, 0);
+      setTimeout(function () { loadSeq++; state.extra = []; state.rootName = 'openapi.yaml'; setRoot(''); renderFiles(); showIdle(); }, 0);
     }
   });
 
@@ -935,6 +1066,9 @@ const T = STRINGS[lang];
   .oav-rootname { font-family: var(--font-mono); font-weight: 500; color: var(--color-text-muted); text-transform: none; letter-spacing: 0; }
   .oav-input { min-height: 260px; tab-size: 2; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
   .oav-hint { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
+  .oav-view, .oav-file-list :global(.oav-view) { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+  .oav-view[hidden], .oav-file-list :global(.oav-view[hidden]) { display: none; }
+  .oav-view :global(.oav-view-info), .oav-file-list :global(.oav-view-info) { flex: 1 1 100%; font-size: 0.82rem; color: var(--color-text-muted); }
   .oav-status { margin: 0; font-size: 0.9rem; color: var(--color-text-secondary); min-height: 1.3rem; }
   .oav-status--ok { color: var(--color-success); font-weight: 650; }
   .oav-status--error { color: var(--color-danger); font-weight: 650; }
