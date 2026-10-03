@@ -28,6 +28,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import { build } from 'esbuild';
+import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -81,6 +83,42 @@ const brief = (r) => r.problems.map((p) => `${p.level} ${p.code} ${p.line}:${p.c
 const codes = (r) => r.problems.map((p) => p.level + ' ' + p.code);
 const msgs = (r, t = T) => r.problems.map((p) => E.formatMessage(p, t));
 const errors = (r) => r.problems.filter((p) => p.level === 'error');
+const stableResult = ({ ms, ...result }) => result;
+
+// Exercise the same bundled run/worker entry as the page, without injected validators.
+const bundled = async (entry, globalName) => (await build({
+  entryPoints: [join(root, 'src/components/tools/' + entry)], bundle: true,
+  write: false, platform: 'browser', format: 'iife', globalName,
+})).outputFiles[0].text;
+const runtime = vm.createContext({ console, performance, TextEncoder, TextDecoder, URL });
+vm.runInContext(await bundled('openapi-validator-run.js', 'OAV'), runtime);
+const actualRun = (files, rootName = Object.keys(files)[0]) => {
+  const out = runtime.OAV.runValidation({ root: rootName, files });
+  check('real run entry returns a result', !out.error, out.error);
+  return out.result;
+};
+const replies = [];
+const workerContext = vm.createContext({ console, performance, TextEncoder, TextDecoder, URL,
+  self: { postMessage: (out) => replies.push(structuredClone(out)) } });
+vm.runInContext(await bundled('openapi-validator.worker.js', 'OAVWorker'), workerContext);
+for (const version of ['2.0', '3.0.4']) {
+  for (const key of ['exclusiveMinimum', 'exclusiveMaximum']) {
+    for (const value of [true, false]) {
+      const text = (version === '2.0' ? 'swagger: "2.0"' : 'openapi: ' + version) +
+        '\ninfo: {title: Fixture, version: "1"}\npaths: {}\n' +
+        (version === '2.0' ? 'definitions:\n' : 'components:\n  schemas:\n') +
+        (version === '2.0' ? '  N:\n    ' : '    N:\n      ') +
+        'type: number\n' + (version === '2.0' ? '    ' : '      ') + key + ': ' + value + '\n';
+      const r = actualRun({ 'fixture.yaml': text });
+      const pointer = version === '2.0' ? '#/definitions/N/' : '#/components/schemas/N/';
+      check(`real run ${version} ${key}=${value} requires its boundary`, errors(r).some((p) =>
+        p.path === pointer + key && p.file === 'fixture.yaml' && p.line === (version === '2.0' ? 7 : 8)));
+      workerContext.self.onmessage({ data: { id: 42, input: { root: 'fixture.yaml', files: { 'fixture.yaml': text } } } });
+      const reply = replies.pop();
+      eq('real worker and run agree', [reply.id, stableResult(reply.result)], [42, stableResult(r)]);
+    }
+  }
+}
 
 // ---------- wiring ----------
 for (const f of ['swagger-2.0.json', 'json-schema-draft-04.json', 'oas-3.0-2024-10-18.json', 'oas-3.1-2026-08-03.json', 'oas-3.2-2026-08-30.json']) {
