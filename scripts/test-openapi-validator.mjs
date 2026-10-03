@@ -21,6 +21,9 @@
 // together produced three unrelated messages; equivalent path templates, duplicate parameters,
 // undeclared security schemes, server variables, duplicate tags, examples that do not match
 // their schema and unused components were not reported; all messages were English only.
+// 2026-10-03: boolean exclusiveMinimum / exclusiveMaximum without minimum / maximum passed in
+// 2.0 and 3.0 (the official schemas drop the draft-04 `dependencies`); the real run and worker
+// bundles are exercised for it.
 //
 // Run: node scripts/test-openapi-validator.mjs
 
@@ -111,8 +114,13 @@ for (const version of ['2.0', '3.0.4']) {
         'type: number\n' + (version === '2.0' ? '    ' : '      ') + key + ': ' + value + '\n';
       const r = actualRun({ 'fixture.yaml': text });
       const pointer = version === '2.0' ? '#/definitions/N/' : '#/components/schemas/N/';
-      check(`real run ${version} ${key}=${value} requires its boundary`, errors(r).some((p) =>
-        p.path === pointer + key && p.file === 'fixture.yaml' && p.line === (version === '2.0' ? 7 : 8)));
+      // Swagger 2.0: draft-04 §5.1.2.1 / §5.1.3.1 MUST → error. OpenAPI 3.0: Wright-00 §5.3 / §5.5
+      // drops that MUST; without the limit the keyword has no effect → warning.
+      const want = version === '2.0' ? 'error schema.boundaryMissing' : 'warning schema.boundaryNoEffect';
+      check(`real run ${version} ${key}=${value} requires its boundary`, r.problems.some((p) =>
+        p.level + ' ' + p.code === want && p.path === pointer + key && p.file === 'fixture.yaml' &&
+        p.line === (version === '2.0' ? 7 : 8) && p.col === (version === '2.0' ? 5 : 7)));
+      if (version !== '2.0') check(`real run ${version} ${key}=${value} is not an error`, !errors(r).length, brief(r).join(' | '));
       workerContext.self.onmessage({ data: { id: 42, input: { root: 'fixture.yaml', files: { 'fixture.yaml': text } } } });
       const reply = replies.pop();
       eq('real worker and run agree', [reply.id, stableResult(reply.result)], [42, stableResult(r)]);
@@ -391,6 +399,48 @@ eq('3.2 allows a URI reference as a security requirement name', codes(run('opena
   ]);
   eq('Swagger 2.0 schema errors', brief(run('swagger: "2.0"\ninfo: {title: T}\npaths:\n  /a:\n    get:\n      responses: {}\n')), ['info swagger.convert 1:1 #/swagger', 'error schema.required 2:1 #/info', 'error schema.limit 6:7 #/paths/~1a/get/responses']);
   eq('Swagger 2.0 security message', msgs(r)[2], 'Security scheme "key" is not declared in securityDefinitions.');
+}
+
+// ---------- exclusiveMinimum / exclusiveMaximum without their limit ----------
+{
+  const bnd = (r) => brief(r).filter((s) => /boundary/.test(s));
+  const r2 = run('swagger: "2.0"\ninfo: {title: T, version: "1"}\npaths:\n  /a:\n    get:\n      parameters:\n' +
+    '        - {name: q, in: query, type: integer, exclusiveMaximum: true}\n' +
+    '        - {name: ids, in: query, type: array, items: {type: integer, exclusiveMinimum: true, items: {type: integer}}}\n' +
+    '        - {name: ok, in: query, type: integer, minimum: 1, exclusiveMinimum: true}\n' +
+    '        - {name: b, in: body, schema: {type: object, properties: {n: {type: number, exclusiveMinimum: true}}}}\n' +
+    '      responses:\n        "200":\n          description: ok\n          headers:\n' +
+    '            X-R: {type: integer, exclusiveMinimum: false}\n' +
+    '            X-L: {type: array, items: {type: integer, exclusiveMaximum: true}}\n' +
+    'definitions:\n  N: {type: number, maximum: 5, exclusiveMaximum: true, x-exclusiveMinimum: true}\n' +
+    '  R: {$ref: "#/definitions/N", exclusiveMinimum: true}\n' +
+    '  P: {type: object, properties: {exclusiveMinimum: {type: boolean}}}\n');
+  eq('2.0 boundary: parameters, items, body schema, headers', bnd(r2), [
+    'error schema.boundaryMissing 7:47 #/paths/~1a/get/parameters/0/exclusiveMaximum',
+    'error schema.boundaryMissing 8:70 #/paths/~1a/get/parameters/1/items/exclusiveMinimum',
+    'error schema.boundaryMissing 10:85 #/paths/~1a/get/parameters/3/schema/properties/n/exclusiveMinimum',
+    'error schema.boundaryMissing 15:34 #/paths/~1a/get/responses/200/headers/X-R/exclusiveMinimum',
+    'error schema.boundaryMissing 16:55 #/paths/~1a/get/responses/200/headers/X-L/items/exclusiveMaximum',
+  ]);
+  eq('2.0 boundary message', E.formatMessage(r2.problems.find((p) => p.code === 'schema.boundaryMissing'), T),
+    'exclusiveMaximum: true needs "maximum" in the same object. Swagger 2.0 uses JSON Schema draft 4, where exclusiveMaximum MUST come with maximum.');
+  const r3 = run('openapi: 3.0.4\ninfo: {title: T, version: "1"}\npaths:\n  /a:\n    get:\n      parameters:\n' +
+    '        - {name: q, in: query, schema: {type: integer, nullable: true, exclusiveMaximum: true}}\n' +
+    '      responses:\n        "200":\n          description: ok\n' +
+    'components:\n  schemas:\n    N: {type: number, nullable: true, minimum: 0, exclusiveMinimum: true}\n' +
+    '    L: {type: array, items: {allOf: [{type: integer, exclusiveMinimum: false}]}}\n' +
+    '    R: {$ref: "#/components/schemas/N", exclusiveMaximum: true}\n');
+  eq('3.0 boundary: warnings only, nullable and legal pairs kept', brief(r3).filter((s) => !/component\.unused/.test(s)), [
+    'warning schema.boundaryNoEffect 7:72 #/paths/~1a/get/parameters/0/schema/exclusiveMaximum',
+    'warning schema.boundaryNoEffect 14:54 #/components/schemas/L/items/allOf/0/exclusiveMinimum',
+  ]);
+  const r31 = run('openapi: 3.1.1\ninfo: {title: T, version: "1"}\ncomponents:\n  schemas:\n    N: {type: number, exclusiveMinimum: 0}\n');
+  eq('3.1 numeric exclusiveMinimum is not a boundary problem', bnd(r31), []);
+  const rf = runFiles({ 'api.yaml': 'swagger: "2.0"\ninfo: {title: T, version: "1"}\npaths: {}\ndefinitions:\n  N: {$ref: "defs.yaml#/N"}\n',
+    'defs.yaml': 'N:\n  type: integer\n  exclusiveMinimum: true\n' }, 'api.yaml');
+  eq('2.0 boundary located in the referenced file', bnd(rf).concat(rf.problems.filter((p) => p.code === 'schema.boundaryMissing').map((p) => p.file)),
+    ['error schema.boundaryMissing 3:3 #/N/exclusiveMinimum', 'defs.yaml']);
+  for (const lang of ['zh', 'ja', 'ko']) check(lang + ' boundary messages are translated', STRINGS[lang].msg['schema.boundaryMissing'] !== T.msg['schema.boundaryMissing'] && STRINGS[lang].msg['schema.boundaryNoEffect'] !== T.msg['schema.boundaryNoEffect']);
 }
 
 // ---------- messages in every language ----------

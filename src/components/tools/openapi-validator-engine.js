@@ -896,6 +896,39 @@ function schemaObjectChecks(version, C, lib, add) {
   });
 }
 
+/* Boolean exclusiveMinimum / exclusiveMaximum without minimum / maximum. The official Swagger 2.0
+   and OpenAPI 3.0 schemas take these keywords one by one and drop the draft-04 meta-schema's
+   `dependencies`, so Ajv does not see the problem (Spectral 6.17.0 and Redocly 2.57.0 do not
+   report it either).
+   - Swagger 2.0 takes the keywords from JSON Schema draft 4 (draft-fge-json-schema-validation-00
+     §5.1.2.1 / §5.1.3.1: "If "exclusiveMaximum" is present, "maximum" MUST also be present"),
+     for Schema Objects and for non-body Parameter, Header and Items Objects: an error.
+   - OpenAPI 3.0 takes them from draft-wright-json-schema-validation-00 §5.3 / §5.5, which drops
+     that MUST; the keyword only says whether the limit in maximum / minimum is exclusive, so
+     without the limit it has no effect: a warning.
+   A Schema Object with $ref is skipped (its siblings are ignored in 2.0 / 3.0). */
+var BOUNDARY = [['exclusiveMinimum', 'minimum'], ['exclusiveMaximum', 'maximum']];
+function boundaryChecks(version, C, add) {
+  if (version !== '2.0' && version !== '3.0') return;
+  function check(node, segs) {
+    if (!isObj(node) || typeof node.$ref === 'string') return;
+    BOUNDARY.forEach(function (b) {
+      if (typeof node[b[0]] !== 'boolean' || hasOwn(node, b[1])) return;
+      var args = { keyword: b[0], limit: b[1], value: String(node[b[0]]) };
+      if (version === '2.0') add('error', 'schema.boundaryMissing', segs.concat(b[0]), args);
+      else add('warning', 'schema.boundaryNoEffect', segs.concat(b[0]), args);
+    });
+  }
+  var seen = new Set();
+  C.schemaSlots.forEach(function (slot) { eachSubschema(slot.node, slot.segs, check, seen); });
+  if (version !== '2.0') return;
+  function itemsChain(node, segs) {
+    for (var i = 0; i < 30 && isObj(node); i++) { check(node, segs); node = node.items; segs = segs.concat('items'); }
+  }
+  C.parameters.forEach(function (p) { if (p.node.in !== 'body') itemsChain(p.node, p.segs); });
+  C.headers.forEach(function (h) { itemsChain(h.node, h.segs); });
+}
+
 /* Components that no reference, security requirement or discriminator mapping uses. A
    reference from inside the component itself does not count (recursive schemas). */
 function unusedComponents(project, rootName, version, add) {
@@ -1130,6 +1163,7 @@ export function validateProject(input, lib) {
   var C = collect(bdoc, version);
   semanticChecks(bdoc, version, C, addB);
   schemaObjectChecks(version, C, lib, addB);
+  boundaryChecks(version, C, addB);
   var exampleDone = exampleChecks(bdoc, version, C, lib, addB, EXAMPLE_BUDGET_MS);
   if (!exampleDone) push('info', 'example.budget', rootName, [], { seconds: String(EXAMPLE_BUDGET_MS / 1000) });
   unusedComponents(project, rootName, version, function (level, code, segs, args, file) { push(level, code, file, segs, args); });
