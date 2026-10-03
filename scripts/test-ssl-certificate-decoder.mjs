@@ -15,6 +15,7 @@
 // algorithm, extension list with critical flags, Key Usage, Extended Key Usage, Basic Constraints,
 // key identifiers and SCTs), and every chain link is checked with `openssl verify -partial_chain`.
 // Without openssl these comparisons are SKIPPED. The ML-DSA certificate needs OpenSSL 3.5+.
+// The -text key size line is read in both the OpenSSL 3.x and the 4.0 format (see below).
 // Certificates for structural edge cases (v1, time encodings, serial numbers, string types,
 // duplicate / unknown critical extensions, CA flags, path length) are built in memory with a
 // small DER encoder and signed with keys that node:crypto generates for this run only.
@@ -142,7 +143,13 @@ function compareWithOpenssl(label, pem) {
   eq(label + ' version', 'Version: ' + c.version, (text.match(/Version: (\d+)/) || [])[0]);
   const sigName = (text.match(/Signature Algorithm: (\S+)/) || [])[1];
   eq(label + ' signature algorithm', c.sigAlg.oid, OSSL_SIG[sigName] || sigName);
-  const bits = text.match(/Public-Key: \((\d+) bit\)/);
+  // OpenSSL 3.x prints "Public-Key: (256 bit)". From 4.0 the EC line is
+  // "Public-Key: (256 bit field, 128 bit security level)": the field degree replaces the bit count
+  // of the group order (commit e57f7941af, openssl/openssl#29539). For the named curves in the
+  // fixtures both numbers are the same; RSA keys keep the old form.
+  const keyLine = text.match(/Public-Key: \(([^)\n]*)\)/);
+  const bits = keyLine && keyLine[1].match(/^(\d+) bit(?: field, \d+ bit security level)?$/);
+  if (keyLine && !bits) check(label + ' key bits line recognized', false, keyLine[0]);
   eq(label + ' key bits', c.spki.bits || null, bits ? Number(bits[1]) : null);
   const curve = text.match(/ASN1 OID: (\S+)/);
   eq(label + ' curve', c.spki.curveAlias || null, curve ? curve[1] : null);
