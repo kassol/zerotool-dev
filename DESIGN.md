@@ -138,6 +138,16 @@ Required structure:
 
 Every tool UI fills the `.tool-widget` width. Use inner grids to create local structure, with `minmax(0, 1fr)` and `min-width: 0` on flexible children.
 
+### Tool Pages v2 (prototype, branch `proto/tool-page-redesign`)
+
+Slugs in `src/data/tool-layouts.ts` render `.tool-page--v2` instead of the structure above. Other tool pages are unchanged.
+
+- Shell: `width: min(100% - 2 × gutter, 2400px)` for `convert` and `analyze`, `1840px` for `generate`; the site nav widens to the same edge on these pages.
+- `.tool-first`: compact header (40px icon, display-serif H1 at `clamp(1.55rem, …, 2.35rem)`, description, trust text on the right) plus `.tool-widget--v2`, together `min-height: calc(100svh - var(--header-height))`. The tool component's root fills the widget (`flex: 1`); editors, palettes and lists grow into it. Below 760px the first screen does not fill and the tool stacks.
+- Layout by kind: `convert` puts input and output side by side at full height; `generate` puts controls in a 270–320px rail and the generated preview in the rest; `analyze` uses the full width and, from 1280px, opens request details beside the list.
+- Explanations live next to the control as toggletips (`src/components/Toggletip.astro`): a 24px "?" button (28px on phones) or a text button, a native `popover="auto"` panel in `--color-text` on `--color-bg`, light dismiss, Esc, text written in the HTML. Do not put block elements (lists, paragraphs) in a toggletip: it may sit inside a `<p>`.
+- The MDX body and the FAQ sit in one closed `<details class="tool-reference">` after the tool; headings keep their levels, the FAQ renders as H3 questions, and the FAQPage JSON-LD is unchanged. A link to `#heading` inside it opens it.
+
 ### Article Pages
 
 `src/layouts/ArticleLayout.astro` owns blog reading pages.

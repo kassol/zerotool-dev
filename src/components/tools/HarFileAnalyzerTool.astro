@@ -10,6 +10,7 @@
 // code. TOKEN_RULES are copied from SecretRedactorTool.astro; the test checks they match.
 // Opening, redaction and bulk cURL run in short slices (loadJob, redactJob, curlJob) so the
 // page keeps responding while a large file is processed.
+import Toggletip from '../Toggletip.astro';
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -119,6 +120,14 @@ const STRINGS = {
     exCopyCurl: 'Copy {requests} as cURL',
     exCurlRedact: 'Use redacted values',
     exCurlNote: 'Commands follow Chrome DevTools \u201cCopy as cURL\u201d: single quotes for bash, ^-escaping for cmd, no Accept-Encoding and no HTTP/2 pseudo-headers.',
+    tipAbout: 'About: {name}',
+    exportHow: 'How to export a HAR',
+    exportHowTip: 'Chrome or Edge: open DevTools, go to the Network panel, reproduce the problem and click Export HAR (sanitized). Since Chrome 130 that export leaves out the Cookie, Set-Cookie and Authorization headers; to include them, turn on Settings > Preferences > Network > Allow to generate HAR with sensitive data, then long-click Export and choose Export HAR (with sensitive data). Firefox: right-click the request list and choose Save All As HAR. Safari: use the Export button in the Network tab of Web Inspector.',
+    fileTip: 'A HAR is JSON with a log.entries array; log.version must be 1.x. Files up to 300 MB. Opening, the sensitive-data scan, redaction and cURL run in short steps, so the page keeps responding; Cancel stops opening a new file (the file on screen stays) or stops a running export. In Chrome on an Apple M1 Max, a 68 MB HAR with 13,253 requests opened in about 0.7 s and was redacted in about 2.7 s.',
+    searchTip: 'Matches the URL and the method. A space means AND and -word excludes: api -login keeps requests that contain api but not login. The status and type chips narrow the list further, and Redact & export can use the same filter.',
+    waterfallTip: 'Each bar starts at the request\u2019s startedDateTime and shows the HAR 1.2 timings: queued or stalled (blocked), DNS, connect, TLS (ssl), send, wait (time to first byte) and receive. A value of -1 means the phase did not happen and shows as N/A. Chrome and Safari count TLS inside connect; Firefox adds it separately, so the tool checks which sum matches each entry. The vertical lines mark DOMContentLoaded and load.',
+    namesTip: 'Names are matched by rules, not by meaning: a secret stored under a plain name such as value is only caught if it has a known token format. Add such names here, and names of personal data such as email or phone.',
+    base64Tip: 'Base64 bodies with a text type (JSON, HTML, JavaScript, XML, SVG, form data) are decoded as UTF-8, redacted and encoded again. Images, fonts and other binary types, other charsets, invalid Base64, unknown encodings and binary WebSocket messages cannot be checked, so the copy leaves them out and the report counts them by reason. The original file keeps them.',
     privacy: 'The file is read in this tab. Nothing is uploaded, and nothing is saved after you leave the page.',
   },
   zh: {
@@ -225,6 +234,14 @@ const STRINGS = {
     exCopyCurl: '把 {requests}复制为 cURL',
     exCurlRedact: '使用脱敏后的值',
     exCurlNote: '命令与 Chrome DevTools 的「Copy as cURL」一致：bash 用单引号，cmd 用 ^ 转义，不带 Accept-Encoding，也不带 HTTP/2 伪标头。',
+    tipAbout: '说明：{name}',
+    exportHow: '怎么导出 HAR',
+    exportHowTip: 'Chrome / Edge：打开开发者工具的 Network（网络）面板，复现问题后点 Export HAR (sanitized)。从 Chrome 130 起，这个导出不含 Cookie、Set-Cookie 和 Authorization 请求头；需要包含时，先在 Settings > Preferences > Network 勾选 Allow to generate HAR with sensitive data，再长按导出按钮选 Export HAR (with sensitive data)。Firefox：在请求列表上右键，选导出 HAR 的菜单项（英文界面为 Save All As HAR）。Safari：用网页检查器「网络」标签页的导出按钮。',
+    fileTip: 'HAR 是带 log.entries 数组的 JSON，log.version 须为 1.x。文件最大 300 MB。打开、敏感数据扫描、脱敏和 cURL 都拆成小段执行，期间页面仍响应点击；「取消」可停止打开新文件（当前显示的文件保留）或停止正在进行的导出。在 Apple M1 Max 的 Chrome 上，68 MB、13,253 个请求的 HAR 约 0.7 秒打开，脱敏导出约 2.7 秒。',
+    searchTip: '匹配 URL 和请求方法。空格表示「并且」，-词 表示排除：api -login 保留含 api、不含 login 的请求。状态和类型标签可以进一步缩小范围，「脱敏与导出」可以只导出筛选后的请求。',
+    waterfallTip: '每条横条从请求的 startedDateTime 开始，按 HAR 1.2 的 timings 分段：排队或阻塞（blocked）、DNS、连接、TLS（ssl）、发送、等待（首字节时间）和接收。值为 -1 表示该阶段没有发生，显示为 N/A。Chrome 和 Safari 把 TLS 算在连接里，Firefox 单独计算，工具按每个请求实际相符的总和来画。竖线标出 DOMContentLoaded 和 load。',
+    namesTip: '按名称规则判断，不按含义：凭据放在 value 这类普通字段名下、又不是已知令牌格式时认不出来。请把这类名称填在这里，邮箱、手机号这类个人信息的字段名也可以填。',
+    base64Tip: '文本类型（JSON、HTML、JavaScript、XML、SVG、表单）的 Base64 正文按 UTF-8 解码，脱敏后重新编码。图片、字体等二进制类型、其他字符集、无效的 Base64、encoding 未知的正文和二进制 WebSocket 消息无法检查，副本里不放入，报告按原因计数；原文件保持不变。',
     privacy: '文件只在这个标签页里读取，不会上传，离开页面后也不会保存。',
   },
   ja: {
@@ -331,6 +348,14 @@ const STRINGS = {
     exCopyCurl: '{requests}を cURL でコピー',
     exCurlRedact: 'マスク後の値を使う',
     exCurlNote: 'コマンドは Chrome DevTools の「Copy as cURL」と同じ書き方です：bash は一重引用符、cmd は ^ でエスケープ、Accept-Encoding と HTTP/2 の疑似ヘッダーは含めません。',
+    tipAbout: '説明：{name}',
+    exportHow: 'HAR の書き出し方',
+    exportHowTip: 'Chrome / Edge：DevTools の Network（ネットワーク）パネルで事象を再現し、エクスポートボタンを押します。Chrome 130 以降の既定の書き出しには Cookie、Set-Cookie、Authorization ヘッダーが含まれません。含める場合は設定の「ネットワーク」で「センシティブ データを含む HAR の生成を許可する」をオンにし、エクスポートボタンを長押しして「HAR（センシティブ データを含む）をエクスポート...」を選びます。Firefox：リクエスト一覧の右クリックメニュー（英語表示では Save All As HAR）。Safari：Web インスペクタの「ネットワーク」タブの書き出しボタン。',
+    fileTip: 'HAR は log.entries 配列を持つ JSON で、log.version は 1.x である必要があります。ファイルは 300 MB まで。読み込み、機密データの検出、マスク、cURL の生成は短い単位に分けて実行するため、その間もクリックに応答します。「キャンセル」で新しいファイルの読み込み（表示中のファイルは残ります）や実行中の書き出しを止められます。Apple M1 Max の Chrome で、68 MB・13,253 リクエストの HAR は約 0.7 秒で開き、マスクして書き出すのに約 2.7 秒かかりました。',
+    searchTip: 'URL とメソッドに一致させます。空白は AND、-語 は除外です：api -login は api を含み login を含まないリクエストを残します。ステータスと種類のチップでさらに絞り込め、「マスクして書き出す」でも同じ絞り込みを使えます。',
+    waterfallTip: '各バーはリクエストの startedDateTime から始まり、HAR 1.2 の timings を表示します：キュー待ち・停止（blocked）、DNS、接続、TLS（ssl）、送信、待機（最初のバイトまで）、受信。-1 はその段階がなかったことを表し、N/A と表示します。Chrome と Safari は TLS を接続に含め、Firefox は別に数えるため、リクエストごとにどちらの合計が合うかを確かめて描きます。縦線は DOMContentLoaded と load です。',
+    namesTip: '判定は名前の規則によるもので、意味は見ません。value のような一般的な名前に入った認証情報は、既知のトークン形式でなければ検出できません。そうした名前や、email・phone のような個人情報の名前をここに入れてください。',
+    base64Tip: 'テキスト形式（JSON、HTML、JavaScript、XML、SVG、フォーム）の Base64 ボディは UTF-8 としてデコードし、マスクしてから再エンコードします。画像・フォントなどのバイナリ、UTF-8 以外の文字コード、不正な Base64、encoding が不明なボディ、バイナリの WebSocket メッセージは調べられないため、コピーには入れず、理由ごとの件数をレポートに出します。元のファイルはそのままです。',
     privacy: 'ファイルはこのタブの中で読み込みます。アップロードはせず、ページを離れた後も保存しません。',
   },
   ko: {
@@ -437,11 +462,20 @@ const STRINGS = {
     exCopyCurl: '{requests}를 cURL로 복사',
     exCurlRedact: '마스킹한 값 사용',
     exCurlNote: '명령은 Chrome DevTools의 "Copy as cURL"과 같은 방식입니다. bash는 작은따옴표, cmd는 ^ 이스케이프를 쓰고 Accept-Encoding과 HTTP/2 의사 헤더는 넣지 않습니다.',
+    tipAbout: '설명: {name}',
+    exportHow: 'HAR 내보내는 방법',
+    exportHowTip: 'Chrome / Edge: 개발자 도구의 Network(네트워크) 패널에서 문제를 재현한 뒤 내보내기 버튼을 누릅니다. Chrome 130부터 기본 내보내기에는 Cookie, Set-Cookie, Authorization 헤더가 빠집니다. 포함하려면 Settings > Preferences > Network에서 Allow to generate HAR with sensitive data를 켜고, 내보내기 버튼을 길게 눌러 Export HAR (with sensitive data)를 고릅니다. Firefox: 요청 목록의 오른쪽 클릭 메뉴(영어 화면에서는 Save All As HAR). Safari: 웹 인스펙터의 네트워크 탭 내보내기 버튼.',
+    fileTip: 'HAR는 log.entries 배열이 있는 JSON이며 log.version은 1.x여야 합니다. 파일은 300MB까지입니다. 파일 열기, 민감 정보 검사, 마스킹, cURL 생성은 짧은 단위로 나누어 실행하므로 그동안에도 클릭에 응답합니다. "취소"로 새 파일 열기(표시 중인 파일은 그대로)나 진행 중인 내보내기를 멈출 수 있습니다. Apple M1 Max의 Chrome에서 68MB, 요청 13,253개 HAR은 약 0.7초 만에 열리고 마스킹 후 내보내기에 약 2.7초 걸렸습니다.',
+    searchTip: 'URL과 메서드를 대상으로 찾습니다. 공백은 AND, -단어는 제외입니다: api -login은 api를 포함하고 login은 포함하지 않는 요청을 남깁니다. 상태와 유형 칩으로 더 좁힐 수 있고, "마스킹 후 내보내기"도 같은 필터를 쓸 수 있습니다.',
+    waterfallTip: '각 막대는 요청의 startedDateTime에서 시작해 HAR 1.2 timings를 보여 줍니다: 대기·지연(blocked), DNS, 연결, TLS(ssl), 전송, 대기(첫 바이트까지), 수신. -1은 그 단계가 없었다는 뜻이며 N/A로 표시합니다. Chrome과 Safari는 TLS를 연결에 포함하고 Firefox는 따로 세므로, 요청마다 어느 합계가 맞는지 확인해 그립니다. 세로선은 DOMContentLoaded와 load입니다.',
+    namesTip: '이름 규칙으로 판단하며 의미는 보지 않습니다. value처럼 평범한 이름에 든 자격 증명은 알려진 토큰 형식이 아니면 찾지 못합니다. 그런 이름이나 email, phone 같은 개인정보 이름을 여기에 넣으세요.',
+    base64Tip: '텍스트 형식(JSON, HTML, JavaScript, XML, SVG, 폼)의 Base64 본문은 UTF-8로 디코딩해 마스킹한 뒤 다시 인코딩합니다. 이미지·글꼴 같은 바이너리, UTF-8이 아닌 문자 집합, 잘못된 Base64, encoding을 알 수 없는 본문, 바이너리 WebSocket 메시지는 검사할 수 없어 사본에 넣지 않고 이유별 개수를 보고서에 적습니다. 원본 파일은 그대로입니다.',
     privacy: '파일은 이 탭 안에서만 읽습니다. 업로드하지 않으며 페이지를 떠난 뒤에도 저장하지 않습니다.',
   },
 };
 
 const T = STRINGS[lang];
+const about = (name: string) => T.tipAbout.replace('{name}', name);
 const TYPE_KEYS = ['document', 'fetch', 'js', 'css', 'img', 'font', 'media', 'ws', 'other'] as const;
 const TYPE_LABEL: Record<string, string> = { document: T.tDocument, fetch: T.tFetch, js: T.tJs, css: T.tCss, img: T.tImg, font: T.tFont, media: T.tMedia, ws: T.tWs, other: T.tOther };
 const PHASE_UI = [
@@ -463,7 +497,7 @@ const SORT_COLS = [
 ];
 ---
 
-<div>
+<div class="har-root">
   <div class="har-shell" id="har-shell">
     <div class="har-start" id="har-start">
       <div class="har-drop" id="har-drop" role="button" tabindex="0" aria-label={T.dropAria}>
@@ -476,6 +510,7 @@ const SORT_COLS = [
       <div class="har-start-actions">
         <button type="button" class="btn-primary" id="har-choose">{T.chooseBtn}</button>
         <button type="button" class="btn-secondary" id="har-sample">{T.sampleBtn}</button>
+        <span class="har-start-help"><Toggletip id="har-tip-export" text={T.exportHow} label={T.exportHow} wide>{T.exportHowTip}</Toggletip><Toggletip id="har-tip-file" label={about(T.chooseBtn)} wide>{T.fileTip}</Toggletip></span>
       </div>
     </div>
     <input type="file" id="har-file" accept=".har,.json,application/json" hidden />
@@ -524,7 +559,10 @@ const SORT_COLS = [
     <section class="har-view" id="har-view-requests" role="tabpanel" aria-labelledby="har-tab-requests" hidden>
       <div class="har-toolbar">
         <label class="har-sr" for="har-search">{T.searchLabel}</label>
-        <input id="har-search" class="tool-input har-search" type="search" placeholder={T.searchPh} autocomplete="off" spellcheck="false" />
+        <div class="har-search-row">
+          <input id="har-search" class="tool-input har-search" type="search" placeholder={T.searchPh} autocomplete="off" spellcheck="false" />
+          <Toggletip id="har-tip-search" label={about(T.searchLabel)} wide>{T.searchTip}</Toggletip>
+        </div>
         <div class="har-chips" id="har-status-chips" role="group" aria-label={T.colStatus}></div>
         <div class="har-chips" id="har-type-chips" role="group" aria-label={T.colType}></div>
       </div>
@@ -535,6 +573,7 @@ const SORT_COLS = [
           <span class="har-legend-item"><i class="har-swatch har-mark-dcl"></i>{T.markDcl}</span>
           <span class="har-legend-item"><i class="har-swatch har-mark-load"></i>{T.markLoad}</span>
         </span>
+        <Toggletip id="har-tip-waterfall" label={about(T.colWaterfall)} wide>{T.waterfallTip}</Toggletip>
       </div>
       <div class="har-list" id="har-list" aria-label={T.listLabel}>
         <div class="har-head" id="har-head">
@@ -570,7 +609,7 @@ const SORT_COLS = [
         <h3 class="har-card-title">{T.exTitle}</h3>
         <p class="har-note">{T.exIntro}</p>
         <p class="har-note har-note-strong">{T.exAlways}</p>
-        <p class="har-note">{T.exCheckScope}</p>
+        <p class="har-note">{T.exCheckScope} <Toggletip id="har-tip-base64" label={about('Base64')} wide>{T.base64Tip}</Toggletip></p>
         <div class="har-options">
           <label class="har-check"><input type="checkbox" id="har-opt-tokens" checked /> {T.exTokens}</label>
           <label class="har-check"><input type="checkbox" id="har-opt-everywhere" checked /> {T.exEverywhere}</label>
@@ -578,7 +617,7 @@ const SORT_COLS = [
           <label class="har-check"><input type="checkbox" id="har-opt-res" /> {T.exDropRes}</label>
           <label class="har-check"><input type="checkbox" id="har-opt-ips" /> {T.exDropIps}</label>
         </div>
-        <label class="tool-label" for="har-opt-extra">{T.exExtra}</label>
+        <div class="har-label-row"><label class="tool-label" for="har-opt-extra">{T.exExtra}</label><Toggletip id="har-tip-names" label={about(T.exExtra)} wide>{T.namesTip}</Toggletip></div>
         <input id="har-opt-extra" class="tool-input har-extra" type="text" placeholder={T.exExtraPh} autocomplete="off" spellcheck="false" />
         <fieldset class="har-scope">
           <legend class="tool-label">{T.exScope}</legend>
@@ -2065,8 +2104,14 @@ const SORT_COLS = [
         var v = parseFloat(getComputedStyle(listBody).getPropertyValue('--har-row-h'));
         if (v > 0) rowH = v;
       }
+      // The list is as tall as the window allows once the tabs are scrolled up to the site
+      // header: window height minus the sticky header and the tabs, toolbar and legend above it.
       function rowsViewport() {
-        return Math.max(rowH * 4, Math.min(window.innerHeight * 0.62, rowH * 22));
+        var head = document.querySelector('.site-header');
+        var tabsEl = document.getElementById('har-tabs');
+        var above = tabsEl ? listBody.getBoundingClientRect().top - tabsEl.getBoundingClientRect().top : 0;
+        var fill = window.innerHeight - (head ? head.getBoundingClientRect().height : 0) - above - 20;
+        return Math.max(rowH * 6, fill);
       }
       function phaseTitle(tm) {
         return PHASE_KEYS.filter(function (k) { return tm[k] > 0; }).map(function (k) {
@@ -2704,8 +2749,38 @@ const SORT_COLS = [
   .har-report-bad { margin: 0; color: var(--color-danger); font-size: 0.86rem; }
   .har-privacy { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); }
 
+  /* Page redesign: the tool fills the first screen (ToolLayout), the drop zone takes that
+     space before a file is open, and wide screens put request details beside the list. */
+  .har-root { display: flex; flex-direction: column; min-height: 0; }
+  .har-shell { flex: 1 1 auto; }
+  .har-start { flex: 1 1 auto; }
+  .har-drop { flex: 1 1 auto; flex-direction: column; text-align: center; min-height: 220px; }
+  .har-drop-text { align-items: center; }
+  .har-drop-sub { max-width: 60ch; }
+  .har-start-actions { align-items: center; justify-content: center; }
+  .har-start-help { display: inline-flex; align-items: center; gap: 0.15rem; }
+  .har-search-row { display: flex; align-items: center; gap: 0.3rem; min-width: 0; }
+  .har-search-row .har-search { flex: 1 1 auto; width: auto; min-width: 0; }
+  .har-label-row { display: flex; align-items: center; gap: 0.25rem; }
+  .har-list-meta { align-items: center; }
+  @media (min-width: 1100px) {
+    .har-toolbar { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; }
+    .har-search-row { flex: 1 1 24rem; }
+    #har-view-export:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: start; }
+  }
+  @media (min-width: 1280px) {
+    #har-view-requests:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
+    #har-view-requests:has(> .har-detail:not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(440px, 40%); }
+    #har-view-requests > .har-toolbar, #har-view-requests > .har-list-meta { grid-column: 1 / -1; }
+    #har-view-requests > .har-list { grid-column: 1; }
+    /* contain: size keeps the detail from making the row taller than the list; it scrolls inside. */
+    #har-view-requests > .har-detail { grid-column: 2; grid-row: 3; align-self: stretch; contain: size; overflow: auto; min-height: min(calc(100svh - var(--header-height) - 10rem), 900px); }
+  }
+
   @media (max-width: 640px) {
-    .har-drop { min-height: 96px; padding: 0.9rem; gap: 0.7rem; }
+    .har-drop { min-height: 96px; padding: 0.9rem; gap: 0.7rem; flex-direction: row; text-align: left; }
+    .har-drop-text { align-items: flex-start; }
+    .har-start-help { flex: 1 1 100%; justify-content: center; }
     .har-drop-sub { font-size: 0.78rem; }
     .har-start-actions > button { flex: 1 1 auto; }
     .har-meta { padding: 0.3rem 0.45rem; }
