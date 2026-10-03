@@ -51,7 +51,7 @@ check('engine markers present', si >= 0 && ei > si);
 const E = new Function(componentSrc.slice(si, ei) + `
   return { REDACTED, TOL_MS, MAX_BYTES, TOKEN_RULES, parseIsoMs, normalizeTimings, typeOf, statusClass, transferOf, cacheOf,
     readHarText, checkHar, buildIndex, sortRows, filterRows, fmtMs, fmtBytes, curlFor, curlJoin, escPosix, escWin,
-    isSensitiveName, redactHar, redactEntry, newCtx, scanSensitive, looksSanitizedChrome, residueEligible, sampleHar };`)();
+    isSensitiveName, redactHar, redactEntry, newCtx, scanSensitive, loadJob, redactJob, curlJob, redactUrl, residueRegex, replaceKnown, countResidue, looksSanitizedChrome, residueEligible, sampleHar };`)();
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 function allStrings(x, out = []) {
@@ -547,59 +547,137 @@ function baseEntry(over = {}) {
   check('3,000 removed values over 2 MB of text: under 1.5 s', ms < 1500 * PERF_SLACK, ms.toFixed(0) + ' ms');
 }
 
-// ---------- worker protocol ----------
-// The page builds its Worker from the script text between `engine:start` and `worker:end`.
-// Run that same text with a stand-in scope and compare each reply with direct engine calls.
-await (async () => {
-  const W0 = componentSrc.indexOf('/* ── worker:end ── */');
-  check('worker markers present', componentSrc.indexOf('/* ── worker:start ── */') > ei && W0 > ei);
-  const workerSrc = componentSrc.slice(si, W0);
-  const main = componentSrc.slice(W0, componentSrc.indexOf('</script>', W0));
-  for (const fn of ['redactHar(', 'buildIndex(', 'scanSensitive(', 'readHarText(', 'redactEntry(', 'sampleHar('])
-    check('main thread does not call ' + fn, !main.includes(fn));
-  const replies = [];
-  const scope = { postMessage: (m) => replies.push(structuredClone(m)) };
-  new Function('scope', workerSrc + '\nharWorkerMain(scope);')(scope);
-  const send = async (m) => { replies.length = 0; scope.onmessage({ data: structuredClone(m) }); for (let k = 0; k < 50 && !replies.length; k++) await new Promise((r) => setTimeout(r, 5)); return replies[0]; };
-  const before = await send({ id: 1, type: 'entry', i: 0 });
-  eq('request before a file is loaded', [before.id, before.type], [1, 'error']);
-  const bad = await send({ id: 2, type: 'load', file: new Blob(['{nope']) });
-  eq('bad JSON reported by the worker', [bad.id, bad.type, bad.error], [2, 'loadError', 'json']);
-  const notHar = await send({ id: 3, type: 'load', text: '{"log":{}}' });
-  eq('not a HAR', notHar.error, 'notHar');
-  const har = E.sampleHar();
+// ---------- sliced redaction and cURL ----------
+// The page runs loadJob, redactJob and curlJob in slices on its own thread (no Worker).
+// redactJob must give the same bytes and report as the single-pass redaction it replaced,
+// written out here from the previous redactHar, for any slice boundary.
+{
+  const main = componentSrc.slice(ei, componentSrc.indexOf('</script>', ei));
+  for (const fn of ['redactHar(', 'buildIndex(', 'scanSensitive(', 'readHarText(', 'curlJoin(', 'new Worker', 'postMessage(m'])
+    check('page code does not call ' + fn, !main.includes(fn));
+  for (const fn of ['loadJob(', 'redactJob(', 'curlJob(', 'runJob(job, gen', 'gen !== taskGen', "priority: 'user-blocking'"])
+    check('page code runs work in slices: ' + fn, main.includes(fn));
+  check('engine has no worker code left', !componentSrc.includes('worker:start') && !componentSrc.includes('harWorkerMain'));
+
+  const legacy = (har, opts, indices, meta) => {
+    const log = har.log, ctx = E.newCtx(opts || {}), out = { log: {} };
+    Object.keys(log).forEach((k) => { if (k !== 'entries' && k !== 'pages') out.log[k] = structuredClone(log[k]); });
+    const list = indices ? indices.map((i) => log.entries[i]) : log.entries;
+    out.log.entries = list.map((e) => E.redactEntry(structuredClone(e), ctx));
+    if (Array.isArray(log.pages)) {
+      const refs = new Set(out.log.entries.map((e) => (e && typeof e === 'object' && !Array.isArray(e) ? e.pageref : undefined)));
+      out.log.pages = log.pages.filter((p) => !indices || !(p && typeof p === 'object' && !Array.isArray(p)) || refs.has(p.id)).map((p) => {
+        const c = structuredClone(p);
+        if (c && typeof c === 'object' && typeof c.title === 'string') c.title = E.redactUrl(c.title, ctx);
+        return c;
+      });
+    }
+    const re = E.residueRegex(ctx.removed);
+    if (re && ctx.opts.everywhere) E.replaceKnown(out.log, re, ctx);
+    const note = 'Redacted with ZeroTool HAR Analyzer (https://zerotool.dev/tools/har-file-analyzer/): ' + (meta && meta.summary ? meta.summary : 'credentials replaced by [redacted].');
+    out.log.comment = out.log.comment ? String(out.log.comment) + '\n' + note : note;
+    const json = JSON.stringify(out, null, 2), check = JSON.parse(json);
+    const left = re ? E.countResidue(check.log, re) : 0;
+    if (left && ctx.opts.everywhere) return { error: 'residue', count: left };
+    let total = 0;
+    ['credentials', 'cookies', 'params', 'body', 'tokens', 'elsewhere', 'ips'].forEach((k) => { total += ctx.counts[k]; });
+    return { har: check, json, counts: ctx.counts, kept: ctx.kept, names: Array.from(ctx.names), total, left, entries: check.log.entries.length, coverage: ctx.coverage };
+  };
   const secret = 'fixtureSession123456789';
+  const har = E.sampleHar();
+  har.log.comment = 'see ' + secret;
   har.log.entries[0].response.content = { size: 40, mimeType: 'application/json', encoding: 'base64', text: Buffer.from(JSON.stringify({ echo: secret })).toString('base64') };
   har.log.entries[0].request.headers.push({ name: 'Authorization', value: 'Bearer ' + secret });
-  const text = '\uFEFF' + JSON.stringify(har);
-  const ok = await send({ id: 4, type: 'load', file: new Blob([text]) });
-  eq('loaded reply', [ok.id, ok.type, typeof ok.sentAt], [4, 'loaded', 'number']);
-  const direct = E.readHarText(text).har;
-  eq('index equals direct buildIndex', ok.idx, structuredClone(E.buildIndex(direct)));
-  eq('sensitive scan equals direct', ok.sens, E.scanSensitive(direct));
-  eq('sanitized flag', ok.sanitized, false);
-  const opts = { tokens: true, everywhere: true, dropReq: false, dropRes: false, ips: false, extra: '' };
-  const ex = await send({ id: 5, type: 'export', redact: true, opts, indices: null });
-  const want = E.redactHar(direct, opts, null);
-  check('worker export is a Blob', ex.blob instanceof Blob);
-  eq('worker export bytes equal direct redactHar', await ex.blob.text(), want.json);
-  eq('worker report', ex.report, structuredClone({ counts: want.counts, kept: want.kept, names: want.names, total: want.total, left: want.left, entries: want.entries, coverage: want.coverage }));
-  check('worker export has no decoded secret', !Buffer.from(JSON.parse(await ex.blob.text()).log.entries[0].response.content.text, 'base64').toString().includes(secret));
-  const sub = await send({ id: 6, type: 'export', redact: true, opts, indices: [4, 5] });
-  eq('subset export', sub.report.entries, 2);
-  const raw = await send({ id: 7, type: 'export', redact: false, indices: [1] });
-  eq('raw subset keeps the entry as is', JSON.parse(await raw.blob.text()).log.entries[0], direct.log.entries[1]);
-  const entry = await send({ id: 8, type: 'entry', i: 4, mask: true });
-  eq('masked entry equals redactEntry', entry.entry, structuredClone(E.redactEntry(structuredClone(direct.log.entries[4]), E.newCtx({ tokens: true }))));
-  const plain = await send({ id: 9, type: 'entry', i: 4, mask: false });
-  eq('unmasked entry', plain.entry, direct.log.entries[4]);
-  const curl = await send({ id: 10, type: 'curl', indices: [4, 5], platform: 'unix', redact: true });
-  const ctx = E.newCtx({ tokens: true });
-  eq('curl equals direct', curl.text, E.curlJoin([4, 5].map((i) => E.curlFor(E.redactEntry(structuredClone(direct.log.entries[i]), ctx), 'unix')).filter(Boolean), 'unix'));
-  const sample = await send({ id: 11, type: 'load', sample: true });
-  eq('sample loads in the worker', [sample.type, sample.idx.rows.length], ['loaded', 10]);
-  check('original entries unchanged by export', JSON.stringify(direct) === JSON.stringify(E.readHarText(text).har));
-})();
+  har.log.entries[3].response.content = { size: 9, mimeType: 'image/png', encoding: 'base64', text: Buffer.from('PNG' + secret).toString('base64') };
+  har.log.entries.push('raw ' + secret, null, 7);
+  har.log.pages.push({ id: 'page_x', title: 'https://x.example/?sid=' + secret });
+  const before = JSON.stringify(har);
+  const all = { tokens: true, everywhere: true, dropReq: false, dropRes: false, ips: false, extra: '' };
+  const cases = [
+    ['all entries', all, null, undefined],
+    ['subset', all, [4, 5, 10], undefined],
+    ['not everywhere', Object.assign({}, all, { everywhere: false }), null, undefined],
+    ['drop bodies, ips, extra names', Object.assign({}, all, { dropReq: true, dropRes: true, ips: true, extra: 'theme' }), null, { summary: 'custom note' }],
+    ['no tokens', Object.assign({}, all, { tokens: false }), [0, 1, 2], undefined],
+  ];
+  for (const [label, opts, indices, meta] of cases) {
+    const want = legacy(har, opts, indices, meta);
+    for (const every of [1, 2, 5, 1e9]) {
+      const job = E.redactJob(har, opts, indices, meta);
+      let calls = 0, slices = 1;
+      while (!job.step(() => ++calls % every === 0)) slices++;
+      const got = job.result;
+      if (want.error) { eq('redactJob ' + label + ' / ' + every + ': residue error', got, want); continue; }
+      eq('redactJob ' + label + ' / ' + every + ': bytes', got.json, want.json);
+      eq('redactJob ' + label + ' / ' + every + ': report', [got.counts, got.kept, got.names, got.total, got.left, got.entries, got.coverage], [want.counts, want.kept, want.names, want.total, want.left, want.entries, want.coverage]);
+      if (every === 1) check('redactJob ' + label + ': yields between entries', slices > (indices || har.log.entries).length, String(slices));
+      check('redactJob ' + label + ': step after done stays done', job.step(() => true) === true);
+    }
+    check('redactHar equals legacy: ' + label, JSON.stringify(E.redactHar(har, opts, indices, meta).json) === JSON.stringify(want.json));
+  }
+  const res = E.redactHar(har, all, null);
+  check('sliced export has no decoded secret', !Buffer.from(JSON.parse(res.json).log.entries[0].response.content.text, 'base64').toString().includes(secret) && !res.json.includes(secret));
+  check('original HAR unchanged by redactJob', JSON.stringify(har) === before);
+
+  const order = [5, 0, 4, 9];
+  for (const [platform, redact] of [['unix', true], ['win', true], ['unix', false]]) {
+    const ctx = E.newCtx({ tokens: true });
+    const want = E.curlJoin(order.map((i) => { let e = har.log.entries[i]; if (redact) e = E.redactEntry(structuredClone(e), ctx); return E.curlFor(e, platform); }).filter(Boolean), platform);
+    for (const every of [1, 3, 1e9]) {
+      const job = E.curlJob(har, order, platform, redact);
+      let calls = 0;
+      while (!job.step(() => ++calls % every === 0));
+      eq('curlJob ' + platform + (redact ? ' masked' : '') + ' / ' + every, job.result, want);
+    }
+  }
+  const empty = E.curlJob(har, [], 'unix', true);
+  eq('curlJob with no requests', [empty.step(() => true), empty.result], [true, '']);
+}
+
+// ---------- removed values split over several patterns ----------
+// One prefix-tree pattern for 11,045 values took V8 33 s to run the first time; the values are
+// split so no pattern gets that large. Values that start alike must still be matched longest
+// first, also when their group is split.
+{
+  const removed = new Map();
+  for (let i = 0; i < 6000; i++) removed.set('tok-' + i + '-abcdefghijk', 1);
+  for (let i = 0; i < 3000; i++) removed.set('sharedPfx' + String(i).padStart(5, '0'), 1);
+  removed.set('sharedPfx00001-and-longer', 1);
+  removed.set('pw-7-correct-horse', 1);
+  const t0 = performance.now();
+  const res = E.residueRegex(removed);
+  check('many values: several patterns', Array.isArray(res) && res.length > 2, String(res.length));
+  check('many values: each pattern under 40,000 characters', res.every((r) => r.source.length < 40000), res.map((r) => r.source.length).join(','));
+  const ctx = E.newCtx({ tokens: true, everywhere: true });
+  const x = { a: 'x tok-5999-abcdefghijk y', b: 'see sharedPfx00001-and-longer!', c: 'sharedPfx02999 and pw-7-correct-horse', d: Buffer.from('id=sharedPfx01500').toString('base64') };
+  E.replaceKnown(x, res, ctx);
+  eq('many values: all replaced, longest first', x, { a: 'x [redacted] y', b: 'see [redacted]!', c: '[redacted] and [redacted]', d: '[redacted]' });
+  const ms = performance.now() - t0;
+  check('many values: first use under 3 s', ms < 3000 * PERF_SLACK, ms.toFixed(0) + ' ms');
+  eq('many values: residue count', E.countResidue({ s: 'tok-1-abcdefghijk sharedPfx00001-and-longer' }, res), 2);
+}
+
+// ---------- sliced opening ----------
+// loadJob runs buildIndex and scanSensitive one entry at a time; any slice boundary must give
+// the same result as the direct calls.
+{
+  const secret = 'fixtureSession123456789';
+  const har = E.sampleHar();
+  har.log.entries.push(42, null);
+  har.log.entries[1].response.content = { size: 40, mimeType: 'text/plain', encoding: 'base64', text: Buffer.from('Bearer ' + secret + 'abcdefghij').toString('base64') };
+  har.log.entries[2].request.url += '&access_token=' + secret;
+  const wantIdx = structuredClone(E.buildIndex(har)), wantSens = E.scanSensitive(har);
+  for (const every of [1, 2, 3, 7, 1e9]) {
+    const job = E.loadJob(har);
+    let calls = 0, steps = 0;
+    while (!job.step(() => ++calls % every === 0)) steps++;
+    eq('loadJob index, slice every ' + every, structuredClone(job.idx), wantIdx);
+    eq('loadJob scan, slice every ' + every, job.sens, wantSens);
+    if (every === 1) check('loadJob yields after each entry', steps >= har.log.entries.length * 3 - 1, String(steps));
+    check('loadJob step after done stays done', job.step(() => true) && job.idx !== null);
+  }
+  check('loadJob scan found the Base64 token', wantSens.tokens > 0 && wantSens.params > 0);
+}
 
 // ---------- whole-file residue scan of a redacted copy ----------
 // Oracle independent of the engine: walk every string of the saved JSON, decode every

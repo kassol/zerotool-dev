@@ -8,8 +8,8 @@
 // The pure functions sit between the `engine:start` / `engine:end` markers so
 // scripts/test-har-file-analyzer.mjs and scripts/test-har-invariant.mjs run the shipped
 // code. TOKEN_RULES are copied from SecretRedactorTool.astro; the test checks they match.
-// The page runs the script text from `engine:start` to `worker:end` in a Worker (blob URL),
-// so parsing, scanning, redaction and cURL leave the main thread.
+// Opening, redaction and bulk cURL run in short slices (loadJob, redactJob, curlJob) so the
+// page keeps responding while a large file is processed.
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -610,7 +610,6 @@ const SORT_COLS = [
 
   <script is:inline define:vars={{ S: T, TYPE_LABEL, pageLang: lang }}>
     (function () {
-      var SCRIPT_TEXT = document.currentScript ? document.currentScript.textContent : '';
       /* ── engine:start ── */
       var REDACTED = '[redacted]';
       var TOL_MS = 1.5;
@@ -759,37 +758,46 @@ const SORT_COLS = [
         return { har: data, version: version };
       }
 
-      function buildIndex(har) {
+      // buildIndex and scanSensitive are split into per-entry steps, so the page can run them
+      // in short slices (loadJob) and stay responsive while a large file opens.
+      function indexStart(har) {
         var log = har.log;
         var creator = isObj(log.creator) ? log.creator : {};
         var firefox = /firefox/i.test(str(creator.name)) || (isObj(log.browser) && /firefox/i.test(str(log.browser.name)));
-        var rows = [];
-        var stats = { badDates: 0, mismatch: 0, sslSeparate: 0, unknownSize: 0, skipped: 0 };
-        for (var i = 0; i < log.entries.length; i++) {
-          var e = log.entries[i];
-          if (!isObj(e)) { stats.skipped++; continue; }
-          var req = isObj(e.request) ? e.request : {};
-          var res = isObj(e.response) ? e.response : {};
-          var start = parseIsoMs(e.startedDateTime);
-          if (!isFinite(start)) stats.badDates++;
-          var tm = normalizeTimings(e.timings, e.time);
-          if (tm.mismatch) stats.mismatch++;
-          if (tm.convention === 'ssl-separate') stats.sslSeparate++;
-          var dur = tm.time >= 0 ? Math.max(tm.time, tm.sum) : tm.sum;
-          var url = str(req.url);
-          var parts = splitUrl(url);
-          var transfer = transferOf(e, firefox);
-          if (transfer < 0) stats.unknownSize++;
-          var content = isObj(res.content) ? res.content : {};
-          rows.push({
-            i: i, start: start, dur: dur, url: url, host: parts.host, name: parts.name,
-            method: str(req.method) || 'GET', status: num(res.status), statusText: str(res.statusText),
-            cls: statusClass(res.status), type: typeOf(e), mime: mimeOf(e),
-            transfer: transfer, size: num(content.size), tm: tm, cache: cacheOf(e),
-            error: str(res._error || e._error || ''), protocol: str(res.httpVersion || req.httpVersion),
-            remote: str(e.serverIPAddress), priority: str(e._priority), pageref: str(e.pageref)
-          });
-        }
+        return { log: log, creator: creator, firefox: firefox, rows: [], stats: { badDates: 0, mismatch: 0, sslSeparate: 0, unknownSize: 0, skipped: 0 } };
+      }
+      function indexEntry(st, e, i) {
+        var stats = st.stats;
+        if (!isObj(e)) { stats.skipped++; return; }
+        var req = isObj(e.request) ? e.request : {};
+        var res = isObj(e.response) ? e.response : {};
+        var start = parseIsoMs(e.startedDateTime);
+        if (!isFinite(start)) stats.badDates++;
+        var tm = normalizeTimings(e.timings, e.time);
+        if (tm.mismatch) stats.mismatch++;
+        if (tm.convention === 'ssl-separate') stats.sslSeparate++;
+        var dur = tm.time >= 0 ? Math.max(tm.time, tm.sum) : tm.sum;
+        var url = str(req.url);
+        var parts = splitUrl(url);
+        var transfer = transferOf(e, st.firefox);
+        if (transfer < 0) stats.unknownSize++;
+        var content = isObj(res.content) ? res.content : {};
+        st.rows.push({
+          i: i, start: start, dur: dur, url: url, host: parts.host, name: parts.name,
+          method: str(req.method) || 'GET', status: num(res.status), statusText: str(res.statusText),
+          cls: statusClass(res.status), type: typeOf(e), mime: mimeOf(e),
+          transfer: transfer, size: num(content.size), tm: tm, cache: cacheOf(e),
+          error: str(res._error || e._error || ''), protocol: str(res.httpVersion || req.httpVersion),
+          remote: str(e.serverIPAddress), priority: str(e._priority), pageref: str(e.pageref)
+        });
+      }
+      function buildIndex(har) {
+        var st = indexStart(har);
+        for (var i = 0; i < st.log.entries.length; i++) indexEntry(st, st.log.entries[i], i);
+        return indexFinish(st);
+      }
+      function indexFinish(st) {
+        var log = st.log, creator = st.creator, firefox = st.firefox, rows = st.rows, stats = st.stats;
         var min = Infinity, max = -Infinity;
         for (var r = 0; r < rows.length; r++) {
           if (!isFinite(rows[r].start)) continue;
@@ -1327,6 +1335,13 @@ const SORT_COLS = [
         if (/^\d+$/.test(v)) return v.length >= 16;
         return v.length >= 16 || (/[A-Za-z]/.test(v) && /\d/.test(v));
       }
+      // Returns a list of RegExps (or null) that together match every removed value. V8 took
+      // 7 ms to run one 38 KB prefix-tree pattern the first time, 0.8 s for 57 KB and 33 s for
+      // 208 KB (11,045 values from a 282 MB file), so the values are split into patterns of
+      // about RESIDUE_CHARS characters. Values that share their first 8 characters stay in one
+      // pattern where possible, and later patterns run first, so when one value starts with
+      // another the longer one is replaced first.
+      var RESIDUE_CHARS = 32000;
       function residueRegex(removed) {
         var vals = [];
         removed.forEach(function (n, v) {
@@ -1336,9 +1351,21 @@ const SORT_COLS = [
           if (pct !== v) vals.push(pct);
         });
         if (!vals.length) return null;
+        vals.sort();
+        var groups = [], cur = [], size = 0;
+        for (var i = 0; i < vals.length;) {
+          var key = vals[i].slice(0, 8), j = i, bucket = 0;
+          while (j < vals.length && vals[j].slice(0, 8) === key) bucket += vals[j++].length;
+          if (cur.length && size + bucket > RESIDUE_CHARS) { groups.push(cur); cur = []; size = 0; }
+          for (; i < j; i++) {
+            if (cur.length && size + vals[i].length > RESIDUE_CHARS) { groups.push(cur); cur = []; size = 0; }
+            cur.push(vals[i]); size += vals[i].length;
+          }
+        }
+        if (cur.length) groups.push(cur);
         // A prefix tree keeps the pattern small when many values share a start; the greedy
         // optional tail after a complete value makes the longest value win.
-        return new RegExp(trieSource(vals), 'g');
+        return groups.reverse().map(function (g) { return new RegExp(trieSource(g), 'g'); });
       }
       function trieSource(vals) {
         var root = {};
@@ -1376,15 +1403,21 @@ const SORT_COLS = [
         if (!/[\x80-\xff]/.test(raw)) return raw;
         return raw + '\n' + new TextDecoder().decode(latin1Bytes(raw));
       }
-      function replaceKnownIn(s, re, onHit) {
-        re.lastIndex = 0;
-        s = s.replace(re, function () { onHit(); return REDACTED; });
+      // res: the list from residueRegex.
+      function replaceKnownIn(s, res, onHit) {
+        for (var r = 0; r < res.length; r++) {
+          res[r].lastIndex = 0;
+          s = s.replace(res[r], function () { onHit(); return REDACTED; });
+        }
         B64_RUN.lastIndex = 0;
         return s.replace(B64_RUN, function (run) {
           var d = decodeRun(run);
-          re.lastIndex = 0;
-          if (!d || !re.test(d)) return run;
-          onHit(); return REDACTED;
+          if (!d) return run;
+          for (var r = 0; r < res.length; r++) {
+            res[r].lastIndex = 0;
+            if (res[r].test(d)) { onHit(); return REDACTED; }
+          }
+          return run;
         });
       }
       function countKnownIn(s, re) { var n = 0; replaceKnownIn(s, re, function () { n++; }); return n; }
@@ -1446,6 +1479,15 @@ const SORT_COLS = [
       // opts: { tokens, everywhere, dropReq, dropRes, ips, extra }; indices: entries to keep
       // (default all). Returns { har, json, report } or { error: 'residue', count }.
       function redactHar(har, opts, indices, meta) {
+        var job = redactJob(har, opts, indices, meta);
+        while (!job.step(function () { return false; }));
+        return job.result;
+      }
+      // redactHar one unit at a time, so the page can run it in short slices. Entries are
+      // redacted, searched for removed values and checked one by one; JSON.stringify of the
+      // whole copy and JSON.parse of the saved text are one unit each. step(over) works like
+      // loadJob's step; when it returns true, .result holds what redactHar returns.
+      function redactJob(har, opts, indices, meta) {
         var log = har.log;
         var ctx = newCtx(opts || {});
         var out = { log: {} };
@@ -1453,72 +1495,152 @@ const SORT_COLS = [
           if (k !== 'entries' && k !== 'pages') out.log[k] = structuredClone(log[k]);
         });
         var list = indices ? indices.map(function (i) { return log.entries[i]; }) : log.entries;
-        out.log.entries = list.map(function (e) { return redactEntry(structuredClone(e), ctx); });
-        if (Array.isArray(log.pages)) {
-          var refs = new Set(out.log.entries.map(function (e) { return isObj(e) ? e.pageref : undefined; }));
-          out.log.pages = log.pages.filter(function (p) { return !indices || !isObj(p) || refs.has(p.id); }).map(function (p) {
-            var c = structuredClone(p);
-            if (isObj(c) && typeof c.title === 'string') c.title = redactUrl(c.title, ctx);
-            return c;
-          });
+        var n = list.length, entries = out.log.entries = new Array(n);
+        var re = null, json = '', check = null, left = 0, phase = 0, i = 0;
+        // Everything in out.log except the entries, as replaceKnown and countResidue see it.
+        function rest(l) { var o = {}; Object.keys(l).forEach(function (k) { if (k !== 'entries') o[k] = l[k]; }); return o; }
+        function finish() {
+          if (left && ctx.opts.everywhere) return { error: 'residue', count: left };
+          var total = 0;
+          ['credentials', 'cookies', 'params', 'body', 'tokens', 'elsewhere', 'ips'].forEach(function (k) { total += ctx.counts[k]; });
+          return {
+            har: check, json: json, counts: ctx.counts, kept: ctx.kept, names: Array.from(ctx.names),
+            total: total, left: left, entries: check.log.entries.length, coverage: ctx.coverage
+          };
         }
-        var re = residueRegex(ctx.removed);
-        if (re && ctx.opts.everywhere) {
-          replaceKnown(out.log, re, ctx);
-        }
-        var note = 'Redacted with ZeroTool HAR Analyzer (https://zerotool.dev/tools/har-file-analyzer/): ' + (meta && meta.summary ? meta.summary : 'credentials replaced by [redacted].');
-        out.log.comment = out.log.comment ? str(out.log.comment) + '\n' + note : note;
-        var json = JSON.stringify(out, null, 2);
-        var check = JSON.parse(json);
-        var left = re ? countResidue(check.log, re) : 0;
-        if (left && ctx.opts.everywhere) return { error: 'residue', count: left };
-        var total = 0;
-        ['credentials', 'cookies', 'params', 'body', 'tokens', 'elsewhere', 'ips'].forEach(function (k) { total += ctx.counts[k]; });
-        return {
-          har: check, json: json, counts: ctx.counts, kept: ctx.kept, names: Array.from(ctx.names),
-          total: total, left: left, entries: check.log.entries.length, coverage: ctx.coverage
-        };
+        // A whole-file unit (the step after the last entry, stringify, parse) starts a slice
+        // of its own and ends it, so it does not add to other work in one task.
+        var job = { result: null, step: function (over) {
+          var worked = false;
+          while (!job.result) {
+            var whole = (phase === 0 && i >= n) || phase === 2 || phase === 3;
+            if (whole && worked) return false;
+            if (phase === 0) {
+              if (i < n) { entries[i] = redactEntry(structuredClone(list[i]), ctx); i++; }
+              else {
+                if (Array.isArray(log.pages)) {
+                  var refs = new Set(entries.map(function (e) { return isObj(e) ? e.pageref : undefined; }));
+                  out.log.pages = log.pages.filter(function (p) { return !indices || !isObj(p) || refs.has(p.id); }).map(function (p) {
+                    var c = structuredClone(p);
+                    if (isObj(c) && typeof c.title === 'string') c.title = redactUrl(c.title, ctx);
+                    return c;
+                  });
+                }
+                re = residueRegex(ctx.removed);
+                phase = re && ctx.opts.everywhere ? 1 : 2; i = 0;
+                if (phase === 1) {
+                  var r = rest(out.log);
+                  replaceKnown(r, re, ctx);
+                  Object.keys(r).forEach(function (k) { out.log[k] = r[k]; });
+                }
+              }
+            } else if (phase === 1) {
+              if (i < n) { if (typeof entries[i] === 'string') entries[i] = replaceKnownText(entries[i], re, ctx); else replaceKnown(entries[i], re, ctx); i++; }
+              else phase = 2;
+            } else if (phase === 2) {
+              var note = 'Redacted with ZeroTool HAR Analyzer (https://zerotool.dev/tools/har-file-analyzer/): ' + (meta && meta.summary ? meta.summary : 'credentials replaced by [redacted].');
+              out.log.comment = out.log.comment ? str(out.log.comment) + '\n' + note : note;
+              json = JSON.stringify(out, null, 2);
+              out = null;
+              phase = 3;
+            } else if (phase === 3) {
+              check = JSON.parse(json);
+              if (re) left = countResidue(rest(check.log), re);
+              phase = re ? 4 : 5; i = 0;
+            } else if (phase === 4) {
+              if (i < check.log.entries.length) { left += countResidue([check.log.entries[i]], re); i++; }
+              else phase = 5;
+            } else job.result = finish();
+            worked = true;
+            if (!job.result && (whole || over())) return false;
+          }
+          return true;
+        } };
+        return job;
+      }
+      // cURL commands for the listed entries in order, one entry per unit; .result is the text.
+      function curlJob(har, indices, platform, redact) {
+        var ctx = newCtx({ tokens: true }), cmds = [], i = 0;
+        var job = { result: null, step: function (over) {
+          while (i < indices.length) {
+            var en = har.log.entries[indices[i++]];
+            if (redact) en = redactEntry(structuredClone(en), ctx);
+            var c = curlFor(en, platform);
+            if (c) cmds.push(c);
+            if (over()) return false;
+          }
+          job.result = curlJoin(cmds, platform);
+          return true;
+        } };
+        return job;
       }
 
       // What the overview card reports before anything is removed.
-      function scanSensitive(har) {
-        var s = { cookie: 0, setCookie: 0, auth: 0, headers: 0, cookies: 0, params: 0, reqBodies: 0, resBodies: 0, tokens: 0 };
-        var probe = newCtx({ tokens: true });
-        har.log.entries.forEach(function (e) {
-          if (!isObj(e)) return;
-          var req = isObj(e.request) ? e.request : {};
-          var res = isObj(e.response) ? e.response : {};
-          [req.headers, res.headers].forEach(function (list) {
-            (Array.isArray(list) ? list : []).forEach(function (h) {
-              if (!isObj(h) || !str(h.value).trim()) return;
-              var n = str(h.name).toLowerCase();
-              if (n === 'cookie') s.cookie++;
-              else if (n === 'set-cookie' || n === 'set-cookie2') s.setCookie++;
-              else if (n === 'authorization' || n === 'proxy-authorization') s.auth++;
-              else if (isSensitiveName(str(h.name), 'header', null)) s.headers++;
-            });
+      // Two passes: counts first, then token-shaped strings in headers and bodies. Only tokens
+      // found in the second pass are reported, so the passes must not be interleaved.
+      function sensStart() {
+        return { s: { cookie: 0, setCookie: 0, auth: 0, headers: 0, cookies: 0, params: 0, reqBodies: 0, resBodies: 0, tokens: 0 }, probe: newCtx({ tokens: true }), t0: 0 };
+      }
+      function sensCount(st, e) {
+        if (!isObj(e)) return;
+        var s = st.s, probe = st.probe;
+        var req = isObj(e.request) ? e.request : {};
+        var res = isObj(e.response) ? e.response : {};
+        [req.headers, res.headers].forEach(function (list) {
+          (Array.isArray(list) ? list : []).forEach(function (h) {
+            if (!isObj(h) || !str(h.value).trim()) return;
+            var n = str(h.name).toLowerCase();
+            if (n === 'cookie') s.cookie++;
+            else if (n === 'set-cookie' || n === 'set-cookie2') s.setCookie++;
+            else if (n === 'authorization' || n === 'proxy-authorization') s.auth++;
+            else if (isSensitiveName(str(h.name), 'header', null)) s.headers++;
           });
-          [req.cookies, res.cookies].forEach(function (list) { (Array.isArray(list) ? list : []).forEach(function (c) { if (isObj(c) && c.value) s.cookies++; }); });
-          var c0 = probe.counts.params;
-          redactUrl(str(req.url), probe);
-          s.params += probe.counts.params - c0;
-          var pd = isObj(req.postData) ? req.postData : null;
-          if (pd && ((typeof pd.text === 'string' && pd.text) || (Array.isArray(pd.params) && pd.params.length))) s.reqBodies++;
-          if (isObj(res.content) && typeof res.content.text === 'string' && res.content.text) s.resBodies++;
-          if (Array.isArray(e._webSocketMessages) && e._webSocketMessages.length) s.resBodies++;
         });
-        var t0 = probe.counts.tokens;
-        har.log.entries.forEach(function (e) {
-          if (!isObj(e)) return;
-          var auth = isObj(e.request) && Array.isArray(e.request.headers) ? e.request.headers : [];
-          auth.forEach(function (h) { if (isObj(h) && !/^(authorization|proxy-authorization|cookie)$/i.test(str(h.name))) scanText(str(h.value), probe); });
-          var pd = isObj(e.request) && isObj(e.request.postData) ? e.request.postData : null;
-          if (pd && typeof pd.text === 'string') { var pdRead = readBody(pd); if (!pdRead.error) scanText(pdRead.text, probe); }
-          var c = isObj(e.response) && isObj(e.response.content) ? e.response.content : null;
-          if (c && typeof c.text === 'string') { var cRead = readBody(c); if (!cRead.error) scanText(cRead.text, probe); }
-        });
-        s.tokens = probe.counts.tokens - t0;
-        return s;
+        [req.cookies, res.cookies].forEach(function (list) { (Array.isArray(list) ? list : []).forEach(function (c) { if (isObj(c) && c.value) s.cookies++; }); });
+        var c0 = probe.counts.params;
+        redactUrl(str(req.url), probe);
+        s.params += probe.counts.params - c0;
+        var pd = isObj(req.postData) ? req.postData : null;
+        if (pd && ((typeof pd.text === 'string' && pd.text) || (Array.isArray(pd.params) && pd.params.length))) s.reqBodies++;
+        if (isObj(res.content) && typeof res.content.text === 'string' && res.content.text) s.resBodies++;
+        if (Array.isArray(e._webSocketMessages) && e._webSocketMessages.length) s.resBodies++;
+      }
+      function sensTokens(st, e) {
+        if (!isObj(e)) return;
+        var probe = st.probe;
+        var auth = isObj(e.request) && Array.isArray(e.request.headers) ? e.request.headers : [];
+        auth.forEach(function (h) { if (isObj(h) && !/^(authorization|proxy-authorization|cookie)$/i.test(str(h.name))) scanText(str(h.value), probe); });
+        var pd = isObj(e.request) && isObj(e.request.postData) ? e.request.postData : null;
+        if (pd && typeof pd.text === 'string') { var pdRead = readBody(pd); if (!pdRead.error) scanText(pdRead.text, probe); }
+        var c = isObj(e.response) && isObj(e.response.content) ? e.response.content : null;
+        if (c && typeof c.text === 'string') { var cRead = readBody(c); if (!cRead.error) scanText(cRead.text, probe); }
+      }
+      function sensFinish(st) { st.s.tokens = st.probe.counts.tokens - st.t0; return st.s; }
+      function scanSensitive(har) {
+        var st = sensStart();
+        har.log.entries.forEach(function (e) { sensCount(st, e); });
+        st.t0 = st.probe.counts.tokens;
+        har.log.entries.forEach(function (e) { sensTokens(st, e); });
+        return sensFinish(st);
+      }
+      // buildIndex + scanSensitive one entry at a time. step(over) runs until over() returns
+      // true or the work is done, and returns true when done; then .idx and .sens are set.
+      function loadJob(har) {
+        var entries = har.log.entries, n = entries.length;
+        var ix = indexStart(har), ss = sensStart(), phase = 0, i = 0;
+        var job = { idx: null, sens: null, step: function (over) {
+          while (phase < 3) {
+            if (i >= n) { phase++; i = 0; if (phase === 2) ss.t0 = ss.probe.counts.tokens; continue; }
+            if (phase === 0) indexEntry(ix, entries[i], i);
+            else if (phase === 1) sensCount(ss, entries[i]);
+            else sensTokens(ss, entries[i]);
+            i++;
+            if (over()) return false;
+          }
+          if (!job.idx) { job.idx = indexFinish(ix); job.sens = sensFinish(ss); }
+          return true;
+        } };
+        return job;
       }
       function looksSanitizedChrome(har, sens) {
         var c = isObj(har.log.creator) ? str(har.log.creator.name) : '';
@@ -1617,76 +1739,6 @@ const SORT_COLS = [
       }
       /* ── engine:end ── */
 
-      /* ── worker:start ── */
-      // Runs in a Worker made from the engine source above, so a large HAR is parsed, scanned
-      // and redacted off the main thread. The page keeps only the row index; entries, exports
-      // and cURL text are sent back on request. `scope` is the Worker global, or a stand-in
-      // that runs the same code on the page when a Worker cannot be created.
-      function harWorkerMain(scope) {
-        var har = null;
-        function reply(id, msg) { msg.id = id; msg.sentAt = performance.timeOrigin + performance.now(); scope.postMessage(msg); }
-        function loaded(id, data, steps) {
-          var r = checkHar(data);
-          if (r.error) { reply(id, { type: 'loadError', error: r.error, detail: r.detail }); return; }
-          har = r.har;
-          var t = performance.now(), idx = buildIndex(har);
-          steps.index = performance.now() - t;
-          t = performance.now();
-          var sens = scanSensitive(har);
-          steps.scan = performance.now() - t;
-          reply(id, { type: 'loaded', idx: idx, sens: sens, sanitized: looksSanitizedChrome(har, sens), steps: steps });
-        }
-        function load(id, m) {
-          var t0 = performance.now();
-          if (m.sample) { loaded(id, sampleHar(), {}); return; }
-          var read = m.file ? m.file.text() : Promise.resolve(m.text);
-          read.then(function (text) {
-            var t1 = performance.now(), data;
-            try { data = JSON.parse(String(text).replace(/^\uFEFF/, '')); }
-            catch (err) { reply(id, { type: 'loadError', error: 'json', detail: String(err && err.message || err) }); return; }
-            text = null;
-            loaded(id, data, { read: t1 - t0, parse: performance.now() - t1 });
-          }, function () { reply(id, { type: 'loadError', error: 'read' }); });
-        }
-        function subset(indices) {
-          var log = {};
-          Object.keys(har.log).forEach(function (k) { if (k !== 'entries') log[k] = har.log[k]; });
-          log.entries = indices ? indices.map(function (i) { return har.log.entries[i]; }) : har.log.entries;
-          return log;
-        }
-        scope.onmessage = function (ev) {
-          var m = ev.data, id = m.id;
-          try {
-            if (m.type === 'load') { load(id, m); return; }
-            if (!har) { reply(id, { type: 'error', message: 'no file' }); return; }
-            if (m.type === 'entry') {
-              var e = har.log.entries[m.i];
-              reply(id, { type: 'entry', entry: m.mask ? redactEntry(structuredClone(e), newCtx({ tokens: true })) : e });
-            } else if (m.type === 'export') {
-              if (!m.redact) {
-                var log = subset(m.indices);
-                reply(id, { type: 'exported', blob: new Blob([JSON.stringify({ log: log }, null, 2)], { type: 'application/json' }), entries: log.entries.length });
-                return;
-              }
-              var res = redactHar(har, m.opts, m.indices);
-              if (res.error) { reply(id, { type: 'exported', error: res.error, count: res.count }); return; }
-              reply(id, { type: 'exported', blob: new Blob([res.json], { type: 'application/json' }), report: {
-                counts: res.counts, kept: res.kept, names: res.names, total: res.total, left: res.left, entries: res.entries, coverage: res.coverage } });
-            } else if (m.type === 'curl') {
-              var ctx = newCtx({ tokens: true }), cmds = [];
-              m.indices.forEach(function (i) {
-                var en = har.log.entries[i];
-                if (m.redact) en = redactEntry(structuredClone(en), ctx);
-                var c = curlFor(en, m.platform);
-                if (c) cmds.push(c);
-              });
-              reply(id, { type: 'curl', text: curlJoin(cmds, m.platform) });
-            }
-          } catch (err) { reply(id, { type: 'error', message: String(err && err.message || err) }); }
-        };
-      }
-      /* ── worker:end ── */
-
       function $(id) { return document.getElementById(id); }
       function f(s, vars) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? vars[k] : m; }); }
       function nfmt(n) { return Number(n).toLocaleString('en-US'); }
@@ -1703,7 +1755,7 @@ const SORT_COLS = [
       var detailEl = $('har-detail'), detailBody = $('har-detail-body'), maskEl = $('har-mask');
       var searchEl = $('har-search'), statusChips = $('har-status-chips'), typeChips = $('har-type-chips');
 
-      var idx = null, sens = null, sanitized = false, fileName = '';
+      var har = null, idx = null, sens = null, sanitized = false, fileName = '';
       var sortKey = 'start', sortDesc = false;
       var filt = { query: '', status: new Set(), types: new Set() };
       var view = [];
@@ -1717,100 +1769,91 @@ const SORT_COLS = [
         statusEl.setAttribute('data-tone', tone || '');
       }
 
-      // ---------- worker ----------
-      // `current` holds the file on screen. A new file is parsed in its own worker (`loader`),
-      // which replaces `current` only when it succeeds; a newer file or Cancel terminates it.
-      // Replies are matched by request id, and requests to a terminated worker are dropped,
-      // so an older task cannot overwrite a newer result.
-      var current = null, loader = null, reqSeq = 0, pending = {}, workerUrl = '';
-      function engineSource() {
-        var a = SCRIPT_TEXT.indexOf('/* \u2500\u2500 engine:' + 'start \u2500\u2500 */');
-        var b = SCRIPT_TEXT.indexOf('/* \u2500\u2500 worker:' + 'end \u2500\u2500 */');
-        return a >= 0 && b > a ? SCRIPT_TEXT.slice(a, b) + '\nharWorkerMain(self);\n' : '';
-      }
-      function makeWorker() {
-        var w = { real: null, dead: false };
-        var onMsg = function (ev) { if (!w.dead) receive(w, ev.data); };
-        try {
-          if (!workerUrl) { var src = engineSource(); if (src) workerUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })); }
-          if (workerUrl && typeof Worker === 'function') {
-            w.real = new Worker(workerUrl);
-            w.real.onmessage = onMsg;
-            w.real.onerror = function (e) { e.preventDefault(); receive(w, { type: 'crash', message: e.message || '' }); };
-            w.post = function (m) { w.real.postMessage(m); };
-            w.stop = function () { w.dead = true; w.real.terminate(); };
-            return w;
-          }
-        } catch (err) { w.real = null; }
-        // Same code on this thread: no Worker support, or the script text was not readable.
-        var scope = { postMessage: function (m) { setTimeout(function () { onMsg({ data: m }); }, 0); } };
-        harWorkerMain(scope);
-        w.post = function (m) { setTimeout(function () { if (!w.dead) scope.onmessage({ data: m }); }, 0); };
-        w.stop = function () { w.dead = true; };
-        return w;
-      }
-      function stopWorker(w) {
-        if (!w) return;
-        w.stop();
-        Object.keys(pending).forEach(function (id) { if (pending[id].w === w) delete pending[id]; });
-      }
-      function request(w, msg, cb) {
-        if (!w) return 0;
-        msg.id = ++reqSeq;
-        pending[msg.id] = { w: w, cb: cb };
-        w.post(msg);
-        return msg.id;
-      }
-      function receive(w, msg) {
-        if (msg.type === 'crash') {
-          Object.keys(pending).forEach(function (id) { if (pending[id].w === w) { var p = pending[id]; delete pending[id]; p.cb({ type: 'error', message: msg.message }); } });
-          return;
-        }
-        var p = pending[msg.id];
-        if (!p || p.w !== w) return;
-        delete pending[msg.id];
-        if (msg.sentAt) performance.measure('har:message:' + msg.type, { start: msg.sentAt - performance.timeOrigin, end: performance.now() });
-        p.cb(msg);
-      }
-
       // ---------- loading ----------
+      // Opening, redaction and bulk cURL run on this thread in slices of about SLICE_MS, with a
+      // yield between slices, so the page keeps responding (JSON.parse of the file and of the
+      // saved copy, and JSON.stringify of the copy, cannot be split). A Worker was tried and
+      // dropped: in Chromium on a Mac (2026-10-03, ego lite) the same redaction took 14.4 s in a
+      // dedicated Worker against 2.0 s here, and a fixed CPU loop ran 2.8 times slower there.
+      // `taskGen` changes on a newer file, Cancel or close; an older task stops at its next
+      // slice and changes nothing. The file on screen is replaced only when the new one has been
+      // read completely.
       var busy = null;
       var cancelBtn = $('har-cancel');
       function setBusy(kind) { busy = kind; cancelBtn.hidden = !kind; }
-      function startLoad(msg, name) {
-        stopWorker(loader);
-        var w = loader = makeWorker();
+      var SLICE_MS = 40, taskGen = 0;
+      var yieldChannel = typeof MessageChannel === 'function' ? new MessageChannel() : null, yieldQueue = [];
+      if (yieldChannel) yieldChannel.port1.onmessage = function () { var fn = yieldQueue.shift(); if (fn) fn(); };
+      // In Chromium on a busy Mac, slices queued as messages or timeouts waited seconds between
+      // runs (68 MB: 1.9–31 s for 0.6 s of work); user-blocking tasks ran back to back (0.6 s).
+      // Without postTask, a message avoids the 4 ms clamp of nested setTimeout.
+      function yieldThen(fn) {
+        if (typeof scheduler === 'object' && scheduler && typeof scheduler.postTask === 'function') { scheduler.postTask(fn, { priority: 'user-blocking' }); return; }
+        if (yieldChannel) { yieldQueue.push(fn); yieldChannel.port2.postMessage(0); } else setTimeout(fn, 0);
+      }
+      // Runs job.step in slices until it is done, then calls onDone, unless taskGen moved on.
+      function runJob(job, gen, onDone) {
+        function slice() {
+          if (gen !== taskGen) return;
+          var end = performance.now() + SLICE_MS, finished;
+          try { finished = job.step(function () { return performance.now() >= end; }); }
+          catch (err) { setBusy(null); setStatus(String(err && err.message || err), 'error'); return; }
+          if (!finished) { yieldThen(slice); return; }
+          onDone();
+        }
+        yieldThen(slice);
+      }
+      function loadError(error, detail) {
+        if (error === 'json') setStatus(f(S.errJson, { msg: detail }), 'error');
+        else if (error === 'notHar') setStatus(S.errNotHar, 'error');
+        else if (error === 'version') setStatus(f(S.errVersion, { v: detail }), 'error');
+        else if (error === 'empty') setStatus(S.errEmpty, 'error');
+        else setStatus(S.errRead, 'error');
+      }
+      // src: { file: Blob }, { text: string } or { sample: true }
+      function startLoad(src, name) {
+        var gen = ++taskGen;
         var t0 = performance.now();
         setStatus(f(S.reading, { name: name }), '');
         setBusy('load');
-        request(w, msg, function (r) {
-          if (loader !== w) return;
-          loader = null;
-          setBusy(null);
-          if (r.type !== 'loaded') {
-            stopWorker(w);
-            if (r.error === 'json') setStatus(f(S.errJson, { msg: r.detail }), 'error');
-            else if (r.error === 'notHar') setStatus(S.errNotHar, 'error');
-            else if (r.error === 'version') setStatus(f(S.errVersion, { v: r.detail }), 'error');
-            else if (r.error === 'empty') setStatus(S.errEmpty, 'error');
-            else if (r.error === 'read') setStatus(S.errRead, 'error');
-            else setStatus(String(r.message || S.errRead), 'error');
-            return;
+        function done(fn) { if (gen !== taskGen) return; setBusy(null); fn(); }
+        (src.file ? src.file.text() : Promise.resolve(src.text || '')).then(function (text) {
+          if (gen !== taskGen) return;
+          performance.measure('har:read', { start: t0, end: performance.now() });
+          // Parse in its own task, apart from the one that decoded the file.
+          yieldThen(function () { parse(text); });
+        }, function () { done(function () { loadError('read'); }); });
+        function parse(text) {
+          if (gen !== taskGen) return;
+          var tp = performance.now(), data;
+          if (src.sample) data = sampleHar();
+          else {
+            try { data = JSON.parse(String(text).replace(/^\uFEFF/, '')); }
+            catch (err) { done(function () { loadError('json', String(err && err.message || err)); }); return; }
           }
-          stopWorker(current);
-          current = w;
-          ingest(r, name, t0);
-        });
+          text = null;
+          performance.measure('har:parse', { start: tp, end: performance.now() });
+          var r = checkHar(data);
+          if (r.error) { done(function () { loadError(r.error, r.detail); }); return; }
+          var job = loadJob(r.har), ts = performance.now();
+          runJob(job, gen, function () {
+            performance.measure('har:scan', { start: ts, end: performance.now() });
+            done(function () {
+              har = r.har;
+              ingest({ idx: job.idx, sens: job.sens, sanitized: looksSanitizedChrome(har, job.sens) }, name, t0);
+            });
+          });
+        }
       }
       function loadFile(file) {
         if (!file) return;
         if (file.size > MAX_BYTES) { setStatus(f(S.errTooBig, { size: fmtBytes(file.size), max: fmtBytes(MAX_BYTES) }), 'error'); return; }
-        startLoad({ type: 'load', file: file }, file.name);
+        startLoad({ file: file }, file.name);
       }
-      function loadText(text, name) { startLoad({ type: 'load', text: text }, name); }
+      function loadText(text, name) { startLoad({ text: text }, name); }
       cancelBtn.addEventListener('click', function () {
-        if (busy === 'load') { stopWorker(loader); loader = null; }
-        else if (busy === 'export') { Object.keys(pending).forEach(function (id) { if (pending[id].kind === 'export') delete pending[id]; }); }
+        if (!busy) return;
+        taskGen++;
         setBusy(null);
         setStatus(S.cancelled, '');
       });
@@ -1843,12 +1886,11 @@ const SORT_COLS = [
         if (idx.stats.skipped) msg += ' ' + f(S.skipped, { n: idx.stats.skipped });
         setStatus(msg, 'success');
         performance.measure('har:render', { start: tr, end: performance.now() });
-        Object.keys(r.steps || {}).forEach(function (k) { performance.measure('har:worker:' + k, { start: 0, duration: r.steps[k] }); });
         track('parse');
       }
       function resetAll() {
-        stopWorker(loader); stopWorker(current); loader = null; current = null; setBusy(null);
-        idx = null; sens = null; sanitized = false; view = []; selected = -1; entryCache = null;
+        taskGen++; setBusy(null);
+        har = null; idx = null; sens = null; sanitized = false; view = []; selected = -1; entryCache = null;
         startEl.hidden = false; metaEl.hidden = true; tabsEl.hidden = true;
         Object.keys(views).forEach(function (k) { views[k].hidden = true; });
         spacer.innerHTML = ''; detailBody.innerHTML = ''; detailEl.hidden = true;
@@ -2104,16 +2146,14 @@ const SORT_COLS = [
       });
 
       // ---------- detail ----------
-      // The entry comes from the worker; the last one is kept so switching sub-tabs is immediate.
-      var entryCache = null, detailSeq = 0;
+      // The last entry shown is kept, so switching sub-tabs does not redact it again.
+      var entryCache = null;
       function withEntry(i, mask, cb) {
-        if (entryCache && entryCache.i === i && entryCache.mask === mask) { cb(entryCache.entry); return; }
-        var seq = ++detailSeq;
-        request(current, { type: 'entry', i: i, mask: mask }, function (r) {
-          if (seq !== detailSeq || r.type !== 'entry') return;
-          entryCache = { i: i, mask: mask, entry: r.entry };
-          cb(r.entry);
-        });
+        if (!entryCache || entryCache.i !== i || entryCache.mask !== mask) {
+          var e = har.log.entries[i];
+          entryCache = { i: i, mask: mask, entry: mask ? redactEntry(structuredClone(e), newCtx({ tokens: true })) : e };
+        }
+        cb(entryCache.entry);
       }
       function kvList(list) {
         if (!Array.isArray(list) || !list.length) return '<p class="har-empty">' + esc(S.dNone) + '</p>';
@@ -2359,48 +2399,65 @@ const SORT_COLS = [
         return html;
       }
       function runExport(redact, fromOverview) {
-        if (!idx || !current || busy) return;
+        if (!idx || !har || busy) return;
         var indices = fromOverview ? null : scopeIndices();
         var count = indices ? indices.length : idx.rows.length;
         var report = $('har-report');
         var opts = fromOverview ? { tokens: true, everywhere: true, dropReq: false, dropRes: false, ips: false, extra: '' } : readOpts();
         setStatus(f(S.exWorking, { requests: plural(S.requests, count) }), '');
         setBusy('export');
-        var id = request(current, { type: 'export', redact: redact, opts: opts, indices: indices }, function (res) {
-          setBusy(null);
-          if (res.type !== 'exported') { setStatus(String(res.message || S.errRead), 'error'); return; }
-          if (!redact) {
+        var gen = ++taskGen;
+        if (!redact) {
+          // JSON.stringify cannot be split; it runs in one task after the status is painted.
+          yieldThen(function () {
+            if (gen !== taskGen) return;
+            setBusy(null);
+            var log = {};
+            Object.keys(har.log).forEach(function (k) { if (k !== 'entries') log[k] = har.log[k]; });
+            log.entries = indices ? indices.map(function (i) { return har.log.entries[i]; }) : har.log.entries;
             var rawName = baseName() + (indices ? '-subset' : '') + '.har';
-            saveBlob(res.blob, rawName);
-            report.innerHTML = '<p class="har-note">' + esc(f(S.exRawDone, { file: rawName, requests: plural(S.requests, res.entries) })) + '</p>';
+            saveBlob(JSON.stringify({ log: log }, null, 2), rawName);
+            report.innerHTML = '<p class="har-note">' + esc(f(S.exRawDone, { file: rawName, requests: plural(S.requests, log.entries.length) })) + '</p>';
             setStatus('', '');
             track('export_raw');
-            return;
-          }
+          });
+          return;
+        }
+        var job = redactJob(har, opts, indices), tx = performance.now();
+        runJob(job, gen, function () {
+          performance.measure('har:export', { start: tx, end: performance.now() });
+          setBusy(null);
+          var res = job.result;
           if (res.error === 'residue') {
             setStatus(f(S.exResidue, { n: nfmt(res.count) }), 'error');
             report.innerHTML = '<p class="har-report-bad">' + esc(f(S.exResidue, { n: nfmt(res.count) })) + '</p>';
             return;
           }
-          var rep = res.report;
           var name = baseName() + '-redacted.har';
-          saveBlob(res.blob, name);
-          report.innerHTML = reportHtml(rep, name);
-          setStatus(rep.left ? f(S.exDoneLeft, { file: name, n: nfmt(rep.total), left: nfmt(rep.left) }) : f(S.exDone, { file: name, n: nfmt(rep.total), requests: plural(S.requests, rep.entries) }), rep.left ? '' : 'success');
+          var tsv = performance.now();
+          saveBlob(res.json, name);
+          performance.measure('har:save', { start: tsv, end: performance.now() });
+          tsv = performance.now();
+          report.innerHTML = reportHtml(res, name);
+          performance.measure('har:report', { start: tsv, end: performance.now() });
+          setStatus(res.left ? f(S.exDoneLeft, { file: name, n: nfmt(res.total), left: nfmt(res.left) }) : f(S.exDone, { file: name, n: nfmt(res.total), requests: plural(S.requests, res.entries) }), res.left ? '' : 'success');
           if (fromOverview) { switchView('export'); }
           track('export_redacted');
         });
-        if (pending[id]) pending[id].kind = 'export';
       }
       $('har-export').addEventListener('click', function () { runExport(true, false); });
       $('har-export-raw').addEventListener('click', function () { runExport(false, false); });
       $('har-copy-curl').addEventListener('click', function () {
-        if (!idx || !current) return;
+        if (!idx || !har) return;
         var btn = $('har-copy-curl');
         var order = view.slice().sort(function (a, b) { return a.start - b.start || a.i - b.i; }).map(function (r) { return r.i; });
-        request(current, { type: 'curl', indices: order, platform: $('har-curl-platform').value, redact: $('har-curl-redact').checked }, function (r) {
-          if (r.type !== 'curl') { setStatus(String(r.message || S.copyFailed), 'error'); return; }
-          copyText(r.text, btn);
+        if (busy) return;
+        setBusy('curl');
+        var gen = ++taskGen;
+        var job = curlJob(har, order, $('har-curl-platform').value, $('har-curl-redact').checked);
+        runJob(job, gen, function () {
+          setBusy(null);
+          copyText(job.result, btn);
           track('copy_curl');
         });
       });
@@ -2410,7 +2467,7 @@ const SORT_COLS = [
       drop.addEventListener('click', pick);
       drop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
       $('har-choose').addEventListener('click', pick);
-      $('har-sample').addEventListener('click', function () { startLoad({ type: 'load', sample: true }, 'sample-shop.har'); track('sample'); });
+      $('har-sample').addEventListener('click', function () { startLoad({ sample: true }, 'sample-shop.har'); track('sample'); });
       $('har-reset').addEventListener('click', function () { resetAll(); drop.focus(); });
       fileInput.addEventListener('change', function () {
         if (fileInput.files && fileInput.files[0]) loadFile(fileInput.files[0]);
@@ -2435,7 +2492,7 @@ const SORT_COLS = [
       });
       // ToolLayout's Ctrl/Cmd+L clears text inputs inside the widget; also close the file.
       document.addEventListener('keydown', function (e) {
-        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && shell.contains(document.activeElement) && (idx || loader)) {
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && shell.contains(document.activeElement) && (idx || busy === 'load')) {
           setTimeout(function () { resetAll(); drop.focus(); }, 0);
         }
       });
