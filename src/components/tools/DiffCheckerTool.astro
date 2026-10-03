@@ -16,6 +16,7 @@
 
     <div class="diff-actions">
       <button id="diff-compare" class="btn-primary" data-i18n="compare">Compare</button>
+      <button id="diff-cancel" class="btn-secondary" data-i18n="cancel" hidden>Cancel</button>
       <button id="diff-swap" class="btn-secondary" data-i18n="swap">Swap</button>
       <button id="diff-clear" class="btn-ghost" data-i18n="clear">Clear</button>
       <div class="diff-view-toggle" role="group" aria-label="View mode">
@@ -27,6 +28,11 @@
     <div id="diff-status" class="diff-status" aria-live="polite"></div>
 
     <div id="diff-output" class="diff-output" data-view="unified"></div>
+    <div id="diff-pages" class="diff-actions" hidden>
+      <button id="diff-prev" class="btn-secondary" data-i18n="previous">Previous</button>
+      <span id="diff-page" aria-live="polite"></span>
+      <button id="diff-next" class="btn-secondary" data-i18n="next">Next</button>
+    </div>
   </div>
 
   <script is:inline>
@@ -39,6 +45,13 @@
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
+      var RUN_STRINGS = {
+        en: { cancel: 'Cancel', previous: 'Previous', next: 'Next', running: 'Comparing…', cancelled: 'Comparison cancelled.', unavailable: 'Comparison needs Web Workers. This browser could not start one.', failed: 'Comparison failed. Try again.' },
+        zh: { cancel: '取消', previous: '上一页', next: '下一页', running: '正在比较…', cancelled: '已取消比较。', unavailable: '比较需要 Web Worker，当前浏览器无法启动。', failed: '比较失败，请重试。' },
+        ja: { cancel: 'キャンセル', previous: '前へ', next: '次へ', running: '比較中…', cancelled: '比較を中止しました。', unavailable: '比較には Web Worker が必要です。このブラウザーでは起動できません。', failed: '比較に失敗しました。再試行してください。' },
+        ko: { cancel: '취소', previous: '이전', next: '다음', running: '비교 중…', cancelled: '비교를 취소했습니다.', unavailable: '비교에 Web Worker가 필요합니다. 이 브라우저에서 시작할 수 없습니다.', failed: '비교에 실패했습니다. 다시 시도해 주세요.' }
+      };
+      Object.keys(STRINGS).forEach(function (lang) { Object.assign(STRINGS[lang], RUN_STRINGS[lang]); });
       var t = STRINGS[pageLang] || STRINGS.en;
 
       // Apply i18n to static buttons
@@ -58,30 +71,53 @@
         return text.split(/\r\n|\r|\n/);
       }
 
-      // LCS diff
+      // Linear-space LCS. Carry the canonical traceback's middle-row crossing
+      // forward with each score. Equality wins, then addition wins ties, as before.
       function lcs(a, b) {
-        var m = a.length, n = b.length;
-        var dp = [];
-        for (var i = 0; i <= m; i++) { dp[i] = []; for (var j = 0; j <= n; j++) dp[i][j] = 0; }
-        for (var i = 1; i <= m; i++) {
-          for (var j = 1; j <= n; j++) {
-            dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
-          }
-        }
         var result = [];
-        var i = m, j = n;
-        while (i > 0 || j > 0) {
-          if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
-            result.unshift({ type: 'equal', val: a[i - 1] });
-            i--; j--;
-          } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-            result.unshift({ type: 'add', val: b[j - 1] });
-            j--;
-          } else {
-            result.unshift({ type: 'del', val: a[i - 1] });
-            i--;
+        // Compare small integer ids instead of strings in the O(n*m) loop; equal ids mean equal lines.
+        var ids = new Map(), ia = new Uint32Array(a.length), ib = new Uint32Array(b.length);
+        function id(line) { var v = ids.get(line); if (v === undefined) { v = ids.size; ids.set(line, v); } return v; }
+        for (var x = 0; x < a.length; x++) ia[x] = id(a[x]);
+        for (var y = 0; y < b.length; y++) ib[y] = id(b[y]);
+        ids = null;
+        function visit(a0, a1, b0, b1) {
+          var m = a1 - a0, n = b1 - b0;
+          if (!m) { for (var j = b0; j < b1; j++) result.push({ type: 'add', val: b[j] }); return; }
+          if (!n) { for (var i = a0; i < a1; i++) result.push({ type: 'del', val: a[i] }); return; }
+          if (m === 1) {
+            var k = b1 - 1;
+            while (k >= b0 && ia[a0] !== ib[k]) k--;
+            if (k < b0) {
+              result.push({ type: 'del', val: a[a0] });
+              for (var j = b0; j < b1; j++) result.push({ type: 'add', val: b[j] });
+            } else {
+              for (var j = b0; j < k; j++) result.push({ type: 'add', val: b[j] });
+              result.push({ type: 'equal', val: a[a0] });
+              for (var j = k + 1; j < b1; j++) result.push({ type: 'add', val: b[j] });
+            }
+            return;
           }
+          var mid = Math.floor(m / 2);
+          var prev = new Uint32Array(n + 1), cur = new Uint32Array(n + 1);
+          var old = new Uint32Array(n + 1), cross = new Uint32Array(n + 1);
+          for (var i = 1; i <= m; i++) {
+            for (var j = 1; j <= n; j++) {
+              var equal = ia[a0 + i - 1] === ib[b0 + j - 1];
+              cur[j] = equal ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+              if (i > mid) cross[j] = equal ? old[j - 1] : cur[j - 1] >= prev[j] ? cross[j - 1] : old[j];
+            }
+            if (i === mid) for (var j = 0; j <= n; j++) cross[j] = j;
+            var tmp = prev; prev = cur; cur = tmp;
+            if (i >= mid) { tmp = old; old = cross; cross = tmp; }
+          }
+          var k = old[n];
+          // No recursive call keeps its parent's score rows alive.
+          prev = cur = old = cross = tmp = null;
+          visit(a0, a0 + mid, b0, b0 + k);
+          visit(a0 + mid, a1, b0 + k, b1);
         }
+        visit(0, a.length, 0, b.length);
         return result;
       }
 
@@ -124,27 +160,68 @@
       var currentView = 'unified';
       var lastDiff = null;
       var lastAddCount = 0, lastDelCount = 0;
+      var worker = null, generation = 0, request = 0, page = 0, total = 0, ready = false;
+
+      function diffWorker() {
+        var unified = [], side = [], id, adds = 0, dels = 0;
+        self.onmessage = function (event) {
+          var data = event.data;
+          if (data.type === 'compare') {
+            id = data.id;
+            unified = lcs(splitLines(data.original), splitLines(data.modified));
+            var a = 0, b = 0;
+            unified.forEach(function (op) {
+              if (op.type !== 'add') a++;
+              if (op.type !== 'del') b++;
+              op.origLn = op.type === 'add' ? null : a;
+              op.modLn = op.type === 'del' ? null : b;
+              if (op.type === 'add') adds++;
+              if (op.type === 'del') dels++;
+            });
+            side = pairRows(unified);
+          }
+          var rows = data.view === 'side' ? side : unified;
+          // The page may have counted pages of the other view; clamp to this view's last page.
+          var p = Math.max(0, Math.min(data.page, Math.ceil(rows.length / 100) - 1));
+          var start = p * 100;
+          self.postMessage({ id: id, request: data.request, view: data.view, page: p,
+            total: rows.length, adds: adds, dels: dels, rows: rows.slice(start, start + 100) });
+        };
+      }
+
+      function stop() {
+        generation++; request++;
+        if (worker) worker.terminate();
+        worker = null; ready = false; lastDiff = null; page = 0; total = 0;
+        document.getElementById('diff-cancel').hidden = true;
+        document.getElementById('diff-compare').disabled = false;
+        document.getElementById('diff-pages').hidden = true;
+        document.getElementById('diff-page').textContent = '';
+        document.getElementById('diff-output').innerHTML = '';
+      }
+
+      function requestPage() {
+        if (!worker || !ready) return;
+        worker.postMessage({ type: 'page', id: generation, request: ++request, view: currentView, page: page });
+      }
 
       function renderUnified(diff) {
         var html = '';
-        var origLn = 0, modLn = 0;
         diff.forEach(function (op) {
+          var origLn = op.origLn, modLn = op.modLn;
           if (op.type === 'equal') {
-            origLn++; modLn++;
             html += '<div class="diff-line diff-equal">'
               + '<span class="diff-ln diff-ln-orig">' + origLn + '</span>'
               + '<span class="diff-ln diff-ln-mod">' + modLn + '</span>'
               + '<span class="diff-marker"> </span>'
               + '<span class="diff-text">' + esc(op.val) + '</span></div>';
           } else if (op.type === 'del') {
-            origLn++;
             html += '<div class="diff-line diff-del">'
               + '<span class="diff-ln diff-ln-orig">' + origLn + '</span>'
               + '<span class="diff-ln diff-ln-mod"></span>'
               + '<span class="diff-marker">-</span>'
               + '<span class="diff-text">' + esc(op.val) + '</span></div>';
           } else {
-            modLn++;
             html += '<div class="diff-line diff-add">'
               + '<span class="diff-ln diff-ln-orig"></span>'
               + '<span class="diff-ln diff-ln-mod">' + modLn + '</span>'
@@ -155,8 +232,7 @@
         return html || '<div class="diff-empty">' + t.no_diff + '</div>';
       }
 
-      function renderSideBySide(diff) {
-        var rows = pairRows(diff);
+      function renderSideBySide(rows) {
         var left = rows.map(function (r) { return r.left; });
         var right = rows.map(function (r) { return r.right; });
 
@@ -200,6 +276,7 @@
         var modVal = document.getElementById('diff-modified').value;
         var statusEl = document.getElementById('diff-status');
 
+        stop();
         if (!origVal && !modVal) {
           statusEl.textContent = t.empty;
           statusEl.className = 'diff-status error';
@@ -208,27 +285,54 @@
           return;
         }
 
-        var origLines = splitLines(origVal);
-        var modLines = splitLines(modVal);
-        lastDiff = lcs(origLines, modLines);
-        lastAddCount = 0; lastDelCount = 0;
-        lastDiff.forEach(function (op) {
-          if (op.type === 'add') lastAddCount++;
-          else if (op.type === 'del') lastDelCount++;
-        });
-
-        renderOutput();
-
-        if (lastAddCount === 0 && lastDelCount === 0) {
-          statusEl.textContent = t.identical;
-          statusEl.className = 'diff-status success';
-        } else {
-          statusEl.textContent = '+' + lastAddCount + ' / -' + lastDelCount;
-          statusEl.className = 'diff-status info';
-        }
+        var active = generation, url;
+        try {
+          url = URL.createObjectURL(new Blob([splitLines.toString(), lcs.toString(), pairRows.toString(),
+            '(' + diffWorker.toString() + ')();'], { type: 'text/javascript' }));
+          worker = new Worker(url);
+        } catch (error) {
+          stop(); statusEl.textContent = t.unavailable; statusEl.className = 'diff-status error'; return;
+        } finally { if (url) URL.revokeObjectURL(url); }
+        worker.onmessage = function (event) {
+          var data = event.data;
+          if (active !== generation || data.id !== active || data.request !== request) return;
+          ready = true;
+          if (data.view !== currentView) { page = 0; requestPage(); return; }
+          lastDiff = data.rows; page = data.page; total = data.total;
+          lastAddCount = data.adds; lastDelCount = data.dels;
+          renderOutput();
+          statusEl.textContent = lastAddCount || lastDelCount ? '+' + lastAddCount + ' / -' + lastDelCount : t.identical;
+          statusEl.className = 'diff-status ' + (lastAddCount || lastDelCount ? 'info' : 'success');
+          document.getElementById('diff-cancel').hidden = true;
+          document.getElementById('diff-compare').disabled = false;
+          document.getElementById('diff-pages').hidden = total <= 100;
+          document.getElementById('diff-prev').disabled = page === 0;
+          document.getElementById('diff-next').disabled = (page + 1) * 100 >= total;
+          document.getElementById('diff-page').textContent = (page * 100 + 1) + '–' + Math.min(total, (page + 1) * 100) + ' / ' + total;
+        };
+        worker.onerror = function () {
+          if (active !== generation) return;
+          stop(); statusEl.textContent = t.failed; statusEl.className = 'diff-status error';
+        };
+        statusEl.textContent = t.running; statusEl.className = 'diff-status info';
+        document.getElementById('diff-cancel').hidden = false;
+        document.getElementById('diff-compare').disabled = true;
+        worker.postMessage({ type: 'compare', id: active, request: ++request,
+          original: origVal, modified: modVal, view: currentView, page: 0 });
         window.trackTool && window.trackTool('diff_checker', 'compare');
       }
 
+      document.getElementById('diff-cancel').addEventListener('click', function () {
+        stop(); document.getElementById('diff-status').textContent = t.cancelled;
+      });
+      ['diff-prev', 'diff-next'].forEach(function (id, index) {
+        document.getElementById(id).addEventListener('click', function () {
+          if (!ready) return;
+          page = Math.max(0, Math.min(Math.ceil(total / 100) - 1, page + (index ? 1 : -1)));
+          requestPage();
+        });
+      });
+      window.addEventListener('pagehide', stop);
       // Auto-resize textarea
       function autoResize(ta) {
         ta.style.height = 'auto';
@@ -237,7 +341,7 @@
 
       ['diff-original', 'diff-modified'].forEach(function (id) {
         var ta = document.getElementById(id);
-        ta.addEventListener('input', function () { autoResize(ta); });
+        ta.addEventListener('input', function () { stop(); document.getElementById('diff-status').textContent = ''; autoResize(ta); });
       });
 
       document.getElementById('diff-compare').addEventListener('click', compare);
@@ -249,7 +353,7 @@
         orig.value = mod.value;
         mod.value = tmp;
         autoResize(orig); autoResize(mod);
-        lastDiff = null;
+        stop();
         document.getElementById('diff-output').innerHTML = '';
         document.getElementById('diff-status').textContent = t.swapped;
         document.getElementById('diff-status').className = 'diff-status';
@@ -260,7 +364,7 @@
         var mod = document.getElementById('diff-modified');
         orig.value = ''; mod.value = '';
         autoResize(orig); autoResize(mod);
-        lastDiff = null;
+        stop();
         document.getElementById('diff-output').innerHTML = '';
         document.getElementById('diff-status').textContent = '';
         document.getElementById('diff-status').className = 'diff-status';
@@ -270,14 +374,14 @@
         currentView = 'unified';
         document.getElementById('diff-view-unified').classList.add('active');
         document.getElementById('diff-view-side').classList.remove('active');
-        renderOutput();
+        page = 0; requestPage();
       });
 
       document.getElementById('diff-view-side').addEventListener('click', function () {
         currentView = 'side';
         document.getElementById('diff-view-side').classList.add('active');
         document.getElementById('diff-view-unified').classList.remove('active');
-        renderOutput();
+        page = 0; requestPage();
       });
     })();
   </script>
@@ -285,6 +389,7 @@
 
 <style>
   .diff-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .diff-wrap [hidden] { display: none; }
 
   .diff-inputs {
     display: grid;

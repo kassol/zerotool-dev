@@ -35,6 +35,10 @@ const labels = {
     emptyAfterStrip: '(empty after stripping)',
     visibleLength: 'Visible',
     totalCodepoints: 'Code points',
+    vizPartial: 'Showing invisible characters {from}–{to} of {n}. Stats, cleaned text and download cover the full input.',
+    vizTruncated: 'Preview is partial. Stats, cleaned text and download cover the full input.',
+    vizPrev: 'Previous',
+    vizNext: 'Next',
   },
   zh: {
     inputLabel: '输入文本',
@@ -68,6 +72,10 @@ const labels = {
     emptyAfterStrip: '（清除后为空）',
     visibleLength: '可见字符',
     totalCodepoints: '码点总数',
+    vizPartial: '正在显示第 {from}–{to} 个不可见字符，共 {n} 个。统计、清理后的文本与下载均按完整输入计算。',
+    vizTruncated: '预览只显示了部分内容。统计、清理后的文本与下载均按完整输入计算。',
+    vizPrev: '上一页',
+    vizNext: '下一页',
   },
   ja: {
     inputLabel: '入力テキスト',
@@ -101,6 +109,10 @@ const labels = {
     emptyAfterStrip: '（除去後は空）',
     visibleLength: '可視文字数',
     totalCodepoints: 'コードポイント',
+    vizPartial: '不可視文字 {n} 件のうち {from}–{to} 件目を表示中。統計・除去後のテキスト・ダウンロードは入力全体が対象です。',
+    vizTruncated: 'プレビューは一部のみ表示しています。統計・除去後のテキスト・ダウンロードは入力全体が対象です。',
+    vizPrev: '前へ',
+    vizNext: '次へ',
   },
   ko: {
     inputLabel: '입력 텍스트',
@@ -134,6 +146,10 @@ const labels = {
     emptyAfterStrip: '(제거 후 비어있음)',
     visibleLength: '보이는 문자',
     totalCodepoints: '코드포인트',
+    vizPartial: '보이지 않는 문자 {n}개 중 {from}–{to}번째를 표시 중입니다. 통계, 정리된 텍스트, 다운로드는 입력 전체를 대상으로 합니다.',
+    vizTruncated: '미리보기는 일부만 표시합니다. 통계, 정리된 텍스트, 다운로드는 입력 전체를 대상으로 합니다.',
+    vizPrev: '이전',
+    vizNext: '다음',
   },
 } as const;
 
@@ -148,6 +164,8 @@ const L = labels[lang];
   data-found-one={L.foundOne}
   data-found-n={L.foundN}
   data-empty-strip={L.emptyAfterStrip}
+  data-viz-partial={L.vizPartial}
+  data-viz-truncated={L.vizTruncated}
 >
   <section class="zwcd-section">
     <div class="zwcd-row">
@@ -176,8 +194,17 @@ const L = labels[lang];
   <section class="zwcd-section">
     <span id="zwcd-detection-label" class="tool-label">{L.detectionLabel}</span>
     <div class="zwcd-grid">
-      <div class="zwcd-viz-wrap">
-        <pre id="zwcd-viz" class="zwcd-viz" role="group" aria-labelledby="zwcd-detection-label"></pre>
+      <div class="zwcd-viz-col">
+        <div class="zwcd-viz-wrap">
+          <pre id="zwcd-viz" class="zwcd-viz" role="group" aria-labelledby="zwcd-detection-label"></pre>
+        </div>
+        <div id="zwcd-more-row" class="zwcd-more" hidden>
+          <span id="zwcd-shown" aria-live="polite"></span>
+          <span class="zwcd-more-nav">
+            <button id="zwcd-prev" class="btn-ghost zwcd-btn-sm" type="button">{L.vizPrev}</button>
+            <button id="zwcd-more" class="btn-ghost zwcd-btn-sm" type="button">{L.vizNext}</button>
+          </span>
+        </div>
       </div>
       <aside class="zwcd-stats" aria-label={L.statsLabel}>
         <div class="zwcd-stats-title">{L.statsLabel}</div>
@@ -242,6 +269,8 @@ const L = labels[lang];
     var FOUND_ONE = wrap.dataset.foundOne || '1 invisible character found';
     var FOUND_N = wrap.dataset.foundN || '{n} invisible characters found';
     var EMPTY_STRIP = wrap.dataset.emptyStrip || '(empty after stripping)';
+    var VIZ_PARTIAL = wrap.dataset.vizPartial || 'Showing invisible characters {from}–{to} of {n}.';
+    var VIZ_TRUNCATED = wrap.dataset.vizTruncated || 'Preview is partial.';
 
     var input = wrap.querySelector('#zwcd-input');
     var viz = wrap.querySelector('#zwcd-viz');
@@ -255,6 +284,14 @@ const L = labels[lang];
     var statCounts = wrap.querySelectorAll('[data-count]');
     var visibleEl = wrap.querySelector('[data-meta="visible"]');
     var totalEl = wrap.querySelector('[data-meta="total"]');
+    var moreRow = wrap.querySelector('#zwcd-more-row');
+    var moreBtn = wrap.querySelector('#zwcd-more');
+    var prevBtn = wrap.querySelector('#zwcd-prev');
+    var shownEl = wrap.querySelector('#zwcd-shown');
+    // Current preview state and the complete cleaned text used by copy and download.
+    // pages[k] is where preview page k starts; only one page is in the DOM at a time.
+    var view = { text: '', hits: [], pages: [{ hit: 0, index: 0 }], page: 0 };
+    var cleanedText = '';
 
     /* ── engine:start ── */
     // Covers every code point with Default_Ignorable_Code_Point in the Unicode
@@ -380,23 +417,53 @@ const L = labels[lang];
       return { hits: hits, visible: visible, total: total };
     }
 
-    function renderViz(text, hits) {
+    // One preview chunk holds at most VIZ_HITS chips and VIZ_UNITS UTF-16 units of
+    // surrounding text, so a huge input never builds one huge DOM. Stats, strip and
+    // download always use the full scan.
+    var VIZ_HITS = 1000;
+    var VIZ_UNITS = 20000;
+
+    function chip(h) {
+      var hex = 'U+' + h.codePoint.toString(16).toUpperCase().padStart(4, '0');
+      var title = hex + ' · ' + h.meta.desc;
+      return '<span class="zwcd-chip zwcd-chip-' + h.meta.category + '" title="' + escapeHtml(title) + '" data-cp="' + hex + '">' + escapeHtml(h.meta.name) + '</span>';
+    }
+
+    // from = { hit, index }: next hit to draw and the UTF-16 position already drawn.
+    function renderVizChunk(text, hits, from, maxHits, maxUnits) {
       var html = '';
-      var cursor = 0;
-      for (var k = 0; k < hits.length; k++) {
-        var h = hits[k];
-        if (h.index > cursor) {
-          html += escapeHtml(text.slice(cursor, h.index));
+      var k = from.hit;
+      var cursor = from.index;
+      var units = 0;
+      var shown = 0;
+      while (cursor < text.length) {
+        var h = k < hits.length ? hits[k] : null;
+        var end = h ? h.index : text.length;
+        if (end > cursor) {
+          var take = Math.min(end - cursor, maxUnits - units);
+          if (take < end - cursor && take > 0) {
+            var last = text.charCodeAt(cursor + take - 1);
+            // Keep a surrogate pair whole; a chunk always draws at least one character.
+            if (last >= 0xD800 && last <= 0xDBFF) take += take > 1 || units ? -1 : 1;
+          }
+          if (take > 0) {
+            html += escapeHtml(text.slice(cursor, cursor + take));
+            cursor += take;
+            units += take;
+          }
+          if (cursor < end) break;
         }
-        var hex = 'U+' + h.codePoint.toString(16).toUpperCase().padStart(4, '0');
-        var title = hex + ' · ' + h.meta.desc;
-        html += '<span class="zwcd-chip zwcd-chip-' + h.meta.category + '" title="' + escapeHtml(title) + '" data-cp="' + hex + '">' + escapeHtml(h.meta.name) + '</span>';
+        if (!h || shown >= maxHits) break;
+        html += chip(h);
         cursor = h.index + h.width;
+        k++;
+        shown++;
       }
-      if (cursor < text.length) {
-        html += escapeHtml(text.slice(cursor));
-      }
-      return html;
+      return { html: html, hit: k, index: cursor, done: cursor >= text.length };
+    }
+
+    function renderViz(text, hits) {
+      return renderVizChunk(text, hits, { hit: 0, index: 0 }, Infinity, Infinity).html;
     }
 
     function strip(text, hits, mode) {
@@ -425,28 +492,41 @@ const L = labels[lang];
       return 'all';
     }
 
+    function showPage() {
+      var from = view.pages[view.page];
+      var r = renderVizChunk(view.text, view.hits, from, VIZ_HITS, VIZ_UNITS);
+      viz.innerHTML = r.html;
+      if (!r.done) view.pages[view.page + 1] = { hit: r.hit, index: r.index };
+      moreRow.hidden = r.done && view.page === 0;
+      prevBtn.disabled = view.page === 0;
+      moreBtn.disabled = r.done;
+      shownEl.textContent = moreRow.hidden ? '' : view.hits.length && r.hit > from.hit
+        ? VIZ_PARTIAL.replace('{from}', String(from.hit + 1)).replace('{to}', String(r.hit)).replace('{n}', String(view.hits.length))
+        : VIZ_TRUNCATED;
+    }
+
     function update() {
       var text = input.value;
       var result = scan(text);
       var hits = result.hits;
 
+      view = { text: text, hits: hits, pages: [{ hit: 0, index: 0 }], page: 0 };
+      showPage();
+      cleanedText = hits.length ? strip(text, hits, getMode()) : text;
+      cleaned.value = cleanedText;
+      cleaned.placeholder = text && !cleanedText ? EMPTY_STRIP : '';
+      copyBtn.disabled = !cleanedText;
+      downloadBtn.disabled = !cleanedText;
+
       if (!text) {
-        viz.textContent = '';
-        cleaned.value = '';
         summary.textContent = NOTHING;
         summary.className = 'tool-status none';
       } else if (!hits.length) {
-        viz.textContent = text;
-        cleaned.value = text;
         summary.textContent = NOTHING;
         summary.className = 'tool-status success';
       } else {
-        viz.innerHTML = renderViz(text, hits);
-        var msg = hits.length === 1 ? FOUND_ONE : FOUND_N.replace('{n}', String(hits.length));
-        summary.textContent = msg;
+        summary.textContent = hits.length === 1 ? FOUND_ONE : FOUND_N.replace('{n}', String(hits.length));
         summary.className = 'tool-status error';
-        var cleanedText = strip(text, hits, getMode());
-        cleaned.value = cleanedText || (text.length > 0 ? EMPTY_STRIP : '');
       }
 
       var counts = { 'zero-width': 0, 'bidi': 0, 'tag': 0, 'variation': 0, 'formatting': 0 };
@@ -458,6 +538,21 @@ const L = labels[lang];
       visibleEl.textContent = String(result.visible);
       totalEl.textContent = String(result.total);
     }
+
+    moreBtn.addEventListener('click', function () {
+      if (view.pages[view.page + 1]) { view.page++; showPage(); }
+    });
+    prevBtn.addEventListener('click', function () {
+      if (view.page > 0) { view.page--; showPage(); }
+    });
+
+    // ToolLayout's Ctrl/Cmd+L empties the text areas without an input event; rescan so
+    // copy and download do not keep the old cleaned text.
+    document.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
+        setTimeout(function () { if (input.value !== view.text) update(); }, 0);
+      }
+    });
 
     function copy(text) {
       if (!text) return Promise.resolve(false);
@@ -509,7 +604,7 @@ const L = labels[lang];
     });
 
     copyBtn.addEventListener('click', function () {
-      copy(cleaned.value).then(function (ok) {
+      copy(cleanedText).then(function (ok) {
         if (!ok) return;
         copyBtn.textContent = COPIED;
         copyBtn.classList.add('copied');
@@ -521,7 +616,7 @@ const L = labels[lang];
     });
 
     downloadBtn.addEventListener('click', function () {
-      var text = cleaned.value;
+      var text = cleanedText;
       if (!text) return;
       var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
       var url = URL.createObjectURL(blob);
@@ -596,6 +691,23 @@ const L = labels[lang];
     grid-template-columns: minmax(0, 1fr) clamp(180px, 24%, 240px);
     gap: 1rem;
   }
+  .zwcd-viz-col {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .zwcd-more {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+  }
+  .zwcd-more[hidden] { display: none; }
+  .zwcd-more-nav { display: inline-flex; gap: 0.4rem; }
   .zwcd-viz-wrap {
     min-width: 0;
     background: var(--color-bg-secondary);

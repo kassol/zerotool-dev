@@ -25,7 +25,10 @@
       ></textarea>
     </div>
 
-    <div id="rgx-status" class="rgx-status" aria-live="polite"></div>
+    <div class="rgx-pattern-row">
+      <div id="rgx-status" class="rgx-status" aria-live="polite"></div>
+      <button id="rgx-cancel" type="button" class="btn-secondary" data-i18n="cancel" hidden>Cancel</button>
+    </div>
 
     <div class="rgx-field">
       <label data-i18n="highlightedMatches">Highlighted Matches</label>
@@ -41,22 +44,26 @@
         en: {
           testString: 'Test String', testPlaceholder: 'Paste your text here...', highlightedMatches: 'Highlighted Matches',
           noMatches: 'No matches.', matchFound: function(n) { return n + ' match' + (n > 1 ? 'es' : '') + ' found.'; },
-          invalidRegex: 'Invalid regex: ', matchLabel: 'Match', groupLabel: 'Group', andMore: function(n) { return '... and ' + n + ' more matches.'; }
+          invalidRegex: 'Invalid regex: ', matchLabel: 'Match', groupLabel: 'Group', andMore: function(n) { return '... and ' + n + ' more matches.'; },
+          cancel: 'Cancel', running: 'Matching… (2 s limit)', timeout: 'Stopped after 2 s. No complete result; simplify the pattern or shorten the text.', cancelled: 'Cancelled. No complete result.', workerError: 'Could not run the matching worker.', limited: ' Preview: first 100,000 UTF-16 units and 1,000 highlights; list: first 100 matches, first 20 groups, 1,000 units per value and 100,000 units in total. … marks shortened values.'
         },
         zh: {
           testString: '测试字符串', testPlaceholder: '在此粘贴文本...', highlightedMatches: '高亮匹配',
           noMatches: '无匹配项。', matchFound: function(n) { return '找到 ' + n + ' 个匹配项。'; },
-          invalidRegex: '无效的正则表达式：', matchLabel: '匹配', groupLabel: '组', andMore: function(n) { return '... 还有 ' + n + ' 个匹配项。'; }
+          invalidRegex: '无效的正则表达式：', matchLabel: '匹配', groupLabel: '组', andMore: function(n) { return '... 还有 ' + n + ' 个匹配项。'; },
+          cancel: '取消', running: '正在匹配…（限时 2 秒）', timeout: '已在 2 秒后停止。没有完整结果，请简化表达式或缩短文本。', cancelled: '已取消，没有完整结果。', workerError: '无法运行匹配 Worker。', limited: ' 预览只显示前 100,000 个 UTF-16 码元及 1,000 处高亮；列表显示前 100 个匹配及前 20 个组，每个值最多 1,000 码元、合计最多 100,000 码元。缩短的值以 … 标记。'
         },
         ja: {
           testString: 'テスト文字列', testPlaceholder: 'テキストを貼り付け...', highlightedMatches: 'マッチのハイライト',
           noMatches: 'マッチなし。', matchFound: function(n) { return n + ' 件マッチしました。'; },
-          invalidRegex: '無効な正規表現：', matchLabel: 'マッチ', groupLabel: 'グループ', andMore: function(n) { return '... 他 ' + n + ' 件のマッチ。'; }
+          invalidRegex: '無効な正規表現：', matchLabel: 'マッチ', groupLabel: 'グループ', andMore: function(n) { return '... 他 ' + n + ' 件のマッチ。'; },
+          cancel: 'キャンセル', running: 'マッチ処理中…（上限 2 秒）', timeout: '2 秒で停止しました。完全な結果はありません。パターンかテキストを短くしてください。', cancelled: 'キャンセルしました。完全な結果はありません。', workerError: 'マッチ用 Worker を実行できません。', limited: ' プレビューは先頭 100,000 UTF-16 単位と 1,000 件、一覧は先頭 100 件と 20 グループまでです。各値は 1,000 単位、合計 100,000 単位まで表示し、省略を … で示します。'
         },
         ko: {
           testString: '테스트 문자열', testPlaceholder: '텍스트를 붙여넣으세요...', highlightedMatches: '일치 항목 강조',
           noMatches: '일치하는 항목이 없습니다.', matchFound: function(n) { return n + '개 일치 항목을 찾았습니다.'; },
-          invalidRegex: '유효하지 않은 정규식: ', matchLabel: '일치', groupLabel: '그룹', andMore: function(n) { return '... 외 ' + n + '개 일치 항목.'; }
+          invalidRegex: '유효하지 않은 정규식: ', matchLabel: '일치', groupLabel: '그룹', andMore: function(n) { return '... 외 ' + n + '개 일치 항목.'; },
+          cancel: '취소', running: '일치 확인 중… (2초 제한)', timeout: '2초 후 중지했습니다. 완전한 결과가 없습니다. 패턴이나 텍스트를 줄이세요.', cancelled: '취소했습니다. 완전한 결과가 없습니다.', workerError: '일치 확인 Worker를 실행할 수 없습니다.', limited: ' 미리 보기는 처음 100,000 UTF-16 단위와 1,000개, 목록은 처음 100개와 20개 그룹까지입니다. 값마다 1,000단위, 합계 100,000단위까지 표시하며 줄인 값에는 …를 붙입니다.'
         }
       };
 
@@ -74,8 +81,52 @@
       var statusEl = document.getElementById('rgx-status');
       var highlightEl = document.getElementById('rgx-highlight');
       var matchesEl = document.getElementById('rgx-matches');
+      var cancelEl = document.getElementById('rgx-cancel');
       var flagCheckboxes = document.querySelectorAll('.rgx-flags input[type="checkbox"]');
       var rtTracked = false;
+      var worker = null, deadline = null, generation = 0;
+
+      // Serialized into a Blob Worker: RegExp.exec never runs on the page thread.
+      function matchWorker() {
+        self.onmessage = function (event) {
+          var input = event.data;
+          try {
+            var flags = input.flags;
+            var re = new RegExp(input.pattern, flags.includes('g') ? flags : flags + 'g');
+            var matches = [], count = 0, m, listBudget = 100000, clipped = false;
+            function preview(value) {
+              if (value === undefined) return value;
+              var limit = Math.min(1000, listBudget);
+              listBudget -= Math.min(value.length, limit);
+              if (value.length > limit) { clipped = true; return value.slice(0, limit) + '…'; }
+              return value;
+            }
+            while ((m = re.exec(input.text)) !== null) {
+              if (count < 1000) {
+                var item = { index: m.index, end: m.index + m[0].length };
+                if (count < 100) {
+                  item.match = preview(m[0]);
+                  item.groups = Array.from(m).slice(1, 21).map(preview);
+                  if (m.length > 21) clipped = true;
+                }
+                matches.push(item);
+              }
+              count++;
+              if (m[0].length === 0) re.lastIndex++;
+              if (!flags.includes('g')) break;
+            }
+            self.postMessage({ count: count, matches: matches, clipped: clipped });
+          } catch (e) { self.postMessage({ error: e.message }); }
+        };
+      }
+
+      function stop() {
+        generation++;
+        clearTimeout(deadline);
+        if (worker) worker.terminate();
+        worker = null;
+        cancelEl.hidden = true;
+      }
 
       function getFlags() {
         var f = '';
@@ -92,40 +143,67 @@
       }
 
       function run() {
+        stop();
         var pattern = patternEl.value;
         var text = testEl.value;
         highlightEl.innerHTML = '';
         matchesEl.innerHTML = '';
 
         if (!pattern) {
-          highlightEl.textContent = text;
+          highlightEl.textContent = text.slice(0, 100000);
           statusEl.textContent = '';
           statusEl.className = 'rgx-status';
           return;
         }
 
-        var flags = getFlags();
-        var re;
+        var id = generation;
+        statusEl.textContent = t.running;
+        statusEl.className = 'rgx-status';
+        cancelEl.hidden = false;
+        var url;
         try {
-          re = new RegExp(pattern, flags.includes('g') ? flags : flags + 'g');
+          url = URL.createObjectURL(new Blob(['(' + matchWorker.toString() + ')()'], { type: 'text/javascript' }));
+          worker = new Worker(url);
         } catch (e) {
-          statusEl.textContent = t.invalidRegex + e.message;
+          stop();
+          statusEl.textContent = t.workerError;
           statusEl.className = 'rgx-status error';
-          highlightEl.textContent = text;
           return;
-        }
+        } finally { if (url) URL.revokeObjectURL(url); }
+        worker.onerror = function () {
+          if (id !== generation) return;
+          stop();
+          statusEl.textContent = t.workerError;
+          statusEl.className = 'rgx-status error';
+        };
+        worker.onmessageerror = worker.onerror;
+        worker.onmessage = function (event) {
+          if (id !== generation) return;
+          stop();
+          if (event.data.error) {
+            statusEl.textContent = t.invalidRegex + event.data.error;
+            statusEl.className = 'rgx-status error';
+            highlightEl.textContent = text.slice(0, 100000);
+            return;
+          }
+          render(event.data, text);
+        };
+        deadline = setTimeout(function () {
+          if (id !== generation) return;
+          stop();
+          statusEl.textContent = t.timeout;
+          statusEl.className = 'rgx-status error';
+        }, 2000);
+        worker.postMessage({ pattern: pattern, flags: getFlags(), text: text });
+      }
 
-        var allMatches = [];
-        var m;
-        re.lastIndex = 0;
-        while ((m = re.exec(text)) !== null) {
-          allMatches.push({ index: m.index, end: m.index + m[0].length, match: m[0], groups: Array.from(m).slice(1) });
-          if (m[0].length === 0) re.lastIndex++; // avoid infinite loop on zero-length match
-          if (!flags.includes('g')) break;
-        }
-
-        var count = allMatches.length;
-        statusEl.textContent = count === 0 ? t.noMatches : t.matchFound(count);
+      function render(result, text) {
+        var allMatches = result.matches;
+        var count = result.count;
+        var limited = count > 100 || text.length > 100000 || result.clipped;
+        text = text.slice(0, 100000);
+        allMatches = allMatches.filter(function (m) { return m.end <= text.length; });
+        statusEl.textContent = (count === 0 ? t.noMatches : t.matchFound(count)) + (limited ? t.limited : '');
         statusEl.className = 'rgx-status ' + (count > 0 ? 'success' : 'none');
         if (count > 0 && !rtTracked) { rtTracked = true; window.trackTool && window.trackTool('regex_tester', 'match'); }
 
@@ -134,7 +212,7 @@
         var cursor = 0;
         allMatches.forEach(function (match) {
           html += escapeHtml(text.slice(cursor, match.index));
-          html += '<mark>' + escapeHtml(match.match) + '</mark>';
+          html += '<mark>' + escapeHtml(text.slice(match.index, match.end)) + '</mark>';
           cursor = match.end;
         });
         html += escapeHtml(text.slice(cursor));
@@ -144,7 +222,7 @@
         if (count > 0) {
           var ul = document.createElement('ul');
           ul.className = 'rgx-match-list';
-          allMatches.slice(0, 100).forEach(function (match, i) {
+          result.matches.slice(0, 100).forEach(function (match, i) {
             var li = document.createElement('li');
             var header = '<strong>' + t.matchLabel + ' ' + (i + 1) + ':</strong> <code>' + escapeHtml(match.match) + '</code> <span class="rgx-pos">(index ' + match.index + ')</span>';
             if (match.groups.length > 0 && match.groups.some(function(g){ return g !== undefined; })) {
@@ -166,18 +244,30 @@
 
       var _rtTimer = null;
       function debouncedRun() {
+        stop();
+        highlightEl.innerHTML = '';
+        matchesEl.innerHTML = '';
+        statusEl.textContent = '';
         clearTimeout(_rtTimer);
         _rtTimer = setTimeout(run, 300);
       }
       patternEl.addEventListener('input', debouncedRun);
       testEl.addEventListener('input', debouncedRun);
       flagCheckboxes.forEach(function (cb) { cb.addEventListener('change', debouncedRun); });
+      cancelEl.addEventListener('click', function () {
+        clearTimeout(_rtTimer);
+        stop();
+        statusEl.textContent = t.cancelled;
+        statusEl.className = 'rgx-status';
+      });
+      window.addEventListener && window.addEventListener('pagehide', function () { clearTimeout(_rtTimer); stop(); });
     })();
   </script>
 </div>
 
 <style>
   .rgx-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  #rgx-cancel[hidden] { display: none; }
 
   .rgx-pattern-row {
     display: flex;
