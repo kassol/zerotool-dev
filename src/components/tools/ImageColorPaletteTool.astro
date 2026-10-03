@@ -62,6 +62,8 @@ const STRINGS = {
     allIgnored: 'Every visible pixel was ignored. Turn off Ignore near-white or Ignore near-black.',
     allTransparent: 'The image is fully transparent, so there are no colors to extract.',
     gamut: '{pct} of the pixels are outside sRGB (Display P3 or wider); their colors are clipped to sRGB.',
+    gamutUnavailable: 'The Display P3 check is unavailable in this browser, so colors outside sRGB are not reported.',
+    gamutFailed: 'The Display P3 check failed ({msg}), so colors outside sRGB are not reported.',
     noImageInClipboard: 'The clipboard has no image. Copy an image or a screenshot, then paste again.',
     sampleName: 'sample.png',
     sampleLoaded: 'Loaded the sample image.',
@@ -125,6 +127,8 @@ const STRINGS = {
     allIgnored: '所有可见像素都被忽略了。请关闭「忽略近白色」或「忽略近黑色」。',
     allTransparent: '图片完全透明，没有可提取的颜色。',
     gamut: '{pct} 的像素超出 sRGB（Display P3 或更广的色域），这些颜色按 sRGB 截取。',
+    gamutUnavailable: '此浏览器不支持 Display P3 检查，超出 sRGB 的颜色不会提示。',
+    gamutFailed: 'Display P3 检查失败（{msg}），超出 sRGB 的颜色不会提示。',
     noImageInClipboard: '剪贴板里没有图片。请先复制图片或截图，再粘贴。',
     sampleName: '示例图.png',
     sampleLoaded: '已载入示例图。',
@@ -188,6 +192,8 @@ const STRINGS = {
     allIgnored: '見えている画素がすべて除外されました。「白に近い色を除外」か「黒に近い色を除外」をオフにしてください。',
     allTransparent: '画像が完全に透明なので、抽出できる色がありません。',
     gamut: '画素の {pct} が sRGB の外（Display P3 などの広色域）にあり、その色は sRGB に切り詰めています。',
+    gamutUnavailable: 'このブラウザでは Display P3 のチェックができないため、sRGB の外の色があっても表示しません。',
+    gamutFailed: 'Display P3 のチェックに失敗したため（{msg}）、sRGB の外の色があっても表示しません。',
     noImageInClipboard: 'クリップボードに画像がありません。画像かスクリーンショットをコピーしてから貼り付けてください。',
     sampleName: 'サンプル.png',
     sampleLoaded: 'サンプル画像を読み込みました。',
@@ -251,6 +257,8 @@ const STRINGS = {
     allIgnored: '보이는 픽셀이 모두 제외되었습니다. ‘흰색에 가까운 색 제외’나 ‘검은색에 가까운 색 제외’를 끄세요.',
     allTransparent: '이미지가 완전히 투명해서 추출할 색이 없습니다.',
     gamut: '픽셀의 {pct}가 sRGB 밖(Display P3 등 광색역)에 있어 그 색은 sRGB로 잘립니다.',
+    gamutUnavailable: '이 브라우저에서는 Display P3 검사를 할 수 없어 sRGB 밖의 색이 있어도 알리지 않습니다.',
+    gamutFailed: 'Display P3 검사에 실패해({msg}) sRGB 밖의 색이 있어도 알리지 않습니다.',
     noImageInClipboard: '클립보드에 이미지가 없습니다. 이미지나 스크린샷을 복사한 뒤 다시 붙여 넣으세요.',
     sampleName: '예시.png',
     sampleLoaded: '예시 이미지를 불러왔습니다.',
@@ -885,7 +893,9 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
       syncMore();
       if (narrow && narrow.addEventListener) narrow.addEventListener('change', syncMore);
 
+      var statusSeq = 0, renderSeq = -1;
       function setStatus(msg, kind) {
+        statusSeq++;
         statusEl.textContent = msg || '';
         statusEl.className = 'icp-status' + (msg && kind ? ' is-' + kind : '');
       }
@@ -926,21 +936,139 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
 
       // ── image loading ──
       function canvasFor(w, h) { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
-      function gamutShare(source, w, h) {
+      /* ── Display P3 check ──
+         The image is drawn at the palette sample size (same size, smoothing off, so the same
+         pixels) into a display-p3 canvas and the opaque pixels outside sRGB are counted.
+         Drawing a large photo into a display-p3 canvas converts the whole decoded image to
+         Display P3 in one step on the drawing thread (0.3–0.45 s for 28 megapixels in Chromium
+         152, paid by the first read; reading in strips does not split it). So an opened file is
+         decoded and drawn in a worker (createImageBitmap + OffscreenCanvas) when the browser has
+         both. The sample, SVG files (createImageBitmap does not decode an SVG Blob) and browsers
+         without them draw here and read P3_STRIP rows per task. Both paths read 16-row strips. */
+      var P3_STRIP = 16;
+      // Semi-transparent pixels come back unpremultiplied with large rounding errors; count opaque ones only.
+      function opaqueOnly(px) {
+        for (var i = 3; i < px.length; i += 4) if (px[i] < 255) px[i] = 0;
+        return px;
+      }
+      function p3WorkerMain() {
+        self.onmessage = function (e) {
+          var d = e.data;
+          createImageBitmap(d.file, { imageOrientation: 'from-image' }).then(function (bm) {
+            var c = new OffscreenCanvas(d.w, d.h);
+            var ctx = c.getContext('2d', { colorSpace: 'display-p3', willReadFrequently: true });
+            if (!ctx || !ctx.getContextAttributes || ctx.getContextAttributes().colorSpace !== 'display-p3') {
+              bm.close();
+              self.postMessage({ unsupported: true });
+              return;
+            }
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(bm, 0, 0, d.w, d.h);
+            bm.close();
+            var out = 0, total = 0;
+            for (var y = 0; y < d.h; y += d.strip) {
+              var r = countOutOfSrgb(opaqueOnly(ctx.getImageData(0, y, d.w, Math.min(d.strip, d.h - y), { colorSpace: 'display-p3' }).data));
+              out += r.out; total += r.total;
+            }
+            self.postMessage({ out: out, total: total });
+          }).catch(function (err) { self.postMessage({ error: String((err && (err.message || err.name)) || err) }); });
+        };
+      }
+      // The worker runs the same countOutOfSrgb and opaqueOnly (their source text) with the same
+      // constants (JSON numbers read back to the same doubles).
+      function p3WorkerSource() {
+        return 'var GAMUT_TOLERANCE = ' + JSON.stringify(GAMUT_TOLERANCE) + ';\n' +
+          'var M_P3_SRGB = ' + JSON.stringify(M_P3_SRGB) + ';\n' +
+          'var TO_LINEAR = new Float64Array(' + JSON.stringify(Array.prototype.slice.call(TO_LINEAR)) + ');\n' +
+          countOutOfSrgb.toString() + '\n' + opaqueOnly.toString() + '\n(' + p3WorkerMain.toString() + ')();\n';
+      }
+      var p3WorkerUrl = null;
+      var scan = null;     // the running check: { done, worker, timer, cancel() }
+      function cancelScan() { if (scan) { scan.cancel(); scan = null; } }
+      function yieldTask(fn) {
+        if (typeof scheduler !== 'undefined' && scheduler && scheduler.postTask) scheduler.postTask(fn).catch(function () {});
+        else setTimeout(fn, 0);
+      }
+      function isSvgFile(file) { return /svg/i.test(file.type || '') || /\.svg$/i.test(file.name || ''); }
+      function scanOnMain(job, source, w, h) {
+        var ctx;
         try {
           var c = canvasFor(w, h);
-          var ctx = c.getContext('2d', { colorSpace: 'display-p3', willReadFrequently: true });
-          if (!ctx || !ctx.getContextAttributes || ctx.getContextAttributes().colorSpace !== 'display-p3') return 0;
+          ctx = c.getContext('2d', { colorSpace: 'display-p3', willReadFrequently: true });
+          if (!ctx || !ctx.getContextAttributes || ctx.getContextAttributes().colorSpace !== 'display-p3') { job.finish({ unavailable: true }); return; }
           ctx.imageSmoothingEnabled = false;
           ctx.drawImage(source, 0, 0, w, h);
-          var d = ctx.getImageData(0, 0, w, h, { colorSpace: 'display-p3' }).data;
-          // Semi-transparent pixels come back unpremultiplied with large rounding errors; count opaque ones only.
-          for (var i = 3; i < d.length; i += 4) if (d[i] < 255) d[i] = 0;
-          var r = countOutOfSrgb(d);
-          return r.total ? r.out / r.total : 0;
-        } catch (e) { return 0; }
+        } catch (e) { job.finish({ error: e.message || e.name || String(e) }); return; }
+        var y = 0, out = 0, total = 0;
+        (function step() {
+          if (job.done) return;
+          try {
+            var r = countOutOfSrgb(opaqueOnly(ctx.getImageData(0, y, w, Math.min(P3_STRIP, h - y), { colorSpace: 'display-p3' }).data));
+            out += r.out; total += r.total;
+          } catch (e) { job.finish({ error: e.message || e.name || String(e) }); return; }
+          y += P3_STRIP;
+          if (y < h) yieldTask(step);
+          else job.finish({ out: out, total: total });
+        })();
       }
-      function setImage(source, w, h, name, okMsg) {
+      function scanInWorker(job, source, file, w, h) {
+        var worker;
+        try {
+          if (!p3WorkerUrl) p3WorkerUrl = URL.createObjectURL(new Blob([p3WorkerSource()], { type: 'text/javascript' }));
+          worker = new Worker(p3WorkerUrl);
+        } catch (e) { scanOnMain(job, source, w, h); return; }
+        job.worker = worker;
+        function fallback() {
+          worker.terminate(); job.worker = null;
+          if (!job.done) scanOnMain(job, source, w, h);
+        }
+        worker.onmessage = function (e) {
+          var d = e.data || {};
+          if (job.done) return;
+          // A file the worker cannot decode or a worker without a display-p3 OffscreenCanvas: draw here.
+          if (d.unsupported || d.error) { fallback(); return; }
+          worker.terminate(); job.worker = null;
+          job.finish({ out: d.out, total: d.total });
+        };
+        worker.onerror = function (e) { if (e && e.preventDefault) e.preventDefault(); if (!job.done) fallback(); };
+        worker.postMessage({ file: file, w: w, h: h, strip: P3_STRIP });
+      }
+      function startScan(current, source, file) {
+        cancelScan();
+        var job = scan = { done: false, worker: null, timer: null };
+        job.cancel = function () {
+          job.done = true;
+          clearTimeout(job.timer);
+          if (job.worker) { job.worker.terminate(); job.worker = null; }
+        };
+        job.finish = function (res) {
+          if (job.done) return;
+          job.cancel();
+          if (scan === job) scan = null;
+          if (img !== current) return;
+          if (res.unavailable) current.gamutState = 'unavailable';
+          else if (res.error) { current.gamutState = 'error'; current.gamutError = res.error; }
+          else { current.gamutState = 'done'; current.gamut = res.total ? res.out / res.total : 0; }
+          // Show the result with the palette status, unless a newer message (a copy) replaced it;
+          // the next render includes it then.
+          if (gamutNote(current) && statusSeq === renderSeq) render(current.okMsg);
+        };
+        // After the palette is on screen.
+        job.timer = setTimeout(function () {
+          if (job.done) return;
+          var useWorker = file && !isSvgFile(file) && typeof Worker !== 'undefined' &&
+            typeof OffscreenCanvas !== 'undefined' && typeof createImageBitmap !== 'undefined';
+          if (useWorker) scanInWorker(job, source, file, current.sw, current.sh);
+          else scanOnMain(job, source, current.sw, current.sh);
+        }, 50);
+      }
+      function gamutNote(im) {
+        if (im.gamutState === 'unavailable') return t.gamutUnavailable;
+        if (im.gamutState === 'error') return fill(t.gamutFailed, { msg: im.gamutError });
+        if (im.gamutState === 'done' && im.gamut >= 0.001) return fill(t.gamut, { pct: pctText(im.gamut) });
+        return '';
+      }
+      function setImage(source, w, h, name, okMsg, file) {
         var s = fitImageSize(w, h, SAMPLE_AREA);
         var data;
         try {
@@ -953,7 +1081,8 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
           setStatus(fill(t.readFailed, { name: name, msg: e.message || e.name }), 'error');
           return false;
         }
-        var current = img = { name: name, w: w, h: h, sw: s.w, sh: s.h, hist: buildHistogram(data), gamut: 0 };
+        cancelScan();
+        var current = img = { name: name, w: w, h: h, sw: s.w, sh: s.h, hist: buildHistogram(data), gamut: 0, gamutState: 'pending', okMsg: okMsg || '' };
         // preview: at most 960 px on the longer side, smoothed
         var pk = Math.min(1, 960 / Math.max(w, h));
         var pw = Math.max(1, Math.round(w * pk)), ph = Math.max(1, Math.round(h * pk));
@@ -966,13 +1095,7 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
         main.hidden = false;
         exportEl.hidden = false;
         recompute(okMsg || '');
-        // The Display P3 check redraws the image with color conversion (about 0.35 s for a
-        // 28-megapixel photo), so it runs after the palette is on screen.
-        setTimeout(function () {
-          if (img !== current) return;
-          current.gamut = gamutShare(source, s.w, s.h);
-          if (current.gamut >= 0.001) render(okMsg || '');
-        }, 50);
+        startScan(current, source, file);
         // Bring the first swatches into view (phones): the compact drop bar goes just below the
         // sticky site header.
         var chip = paletteEl.querySelector('.icp-chip');
@@ -1005,7 +1128,7 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
           var decoded = image.decode ? image.decode() : Promise.resolve();
           decoded.catch(function () {}).then(function () {
             if (gen !== loadGen) { URL.revokeObjectURL(url); return; }
-            var ok = setImage(image, w, h, name, '');
+            var ok = setImage(image, w, h, name, '', file);
             URL.revokeObjectURL(url);
             if (ok) track('extract');
           });
@@ -1050,8 +1173,10 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
         }
         if (result.transparent >= 0.001) msgs.push(fill(t.transparent, { pct: pctText(result.transparent) }));
         if (result.ignored > 0 && result.colors.length) msgs.push(fill(t.ignored, { pct: pctText(result.ignored) }));
-        if (img.gamut >= 0.001) msgs.push(fill(t.gamut, { pct: pctText(img.gamut) }));
+        var note = gamutNote(img);
+        if (note) msgs.push(note);
         setStatus(msgs.join(' '), kind);
+        renderSeq = statusSeq;
 
         var infoText = fill(t.imgInfo, { name: img.name, w: img.w, h: img.h }) + ' · ' +
           ((img.sw === img.w && img.sh === img.h) ? fill(t.sampledAll, { n: (img.sw * img.sh).toLocaleString() })
@@ -1226,6 +1351,24 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
         var target = e.target;
         if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
         if (wrap.contains(target) || target === document.body) setStatus(t.noImageInClipboard, 'info');
+      });
+
+      // The site-wide Ctrl/⌘+L shortcut clears the tool: the image, the palette, the export and
+      // any running Display P3 check or file load. Settings stay as they are.
+      function clearAll() {
+        cancelScan();
+        loadGen++;
+        img = null; result = null; shown = [];
+        main.hidden = true; exportEl.hidden = true;
+        drop.classList.remove('is-compact');
+        openBtn.textContent = t.open;
+        bar.textContent = ''; paletteEl.textContent = ''; markers.textContent = '';
+        codeOut.textContent = ''; info.textContent = '';
+        canvas.width = 0; canvas.height = 0;
+        setStatus('');
+      }
+      document.addEventListener('keydown', function (e) {
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) clearAll();
       });
     })();
   </script>
