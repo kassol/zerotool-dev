@@ -66,6 +66,47 @@ function gen(json, model, mode, timestamps, required) {
   elements['jtm-convert'].handlers.click();
   return elements['jtm-output-code'].textContent;
 }
+// A page session: the real client script with stubs, driven by input events and buttons.
+function session() {
+  function element(dataset = {}) {
+    return { dataset, value: '', textContent: '', className: '', handlers: {}, disabled: false,
+      classList: { add() {}, remove() {} }, removeAttribute() {},
+      addEventListener(event, fn) { this.handlers[event] = fn; } };
+  }
+  const elements = Object.fromEntries(['input', 'output-code', 'status', 'model-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jtm-' + id, element()]));
+  const groups = {
+    '#jtm-lang-tabs .jtm-tab': ['javascript', 'typescript'].map((lang) => element({ lang })),
+    '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
+    '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
+  };
+  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
+  const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
+  new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
+    { querySelector: () => wrap, getElementById: (id) => elements[id] }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
+  const type = (text) => { elements['jtm-input'].value = text; elements['jtm-input'].handlers.input(); };
+  const state = () => ({ code: elements['jtm-output-code'].textContent, status: elements['jtm-status'].textContent, copyDisabled: elements['jtm-copy'].disabled });
+  return { type, state, click: (id) => elements['jtm-' + id].handlers.click() };
+}
+{
+  const s = session();
+  eq('stale output: the seeded example renders and Copy is enabled', /new Schema\(/.test(s.state().code) && !s.state().copyDisabled, true);
+  s.type('{"name": "Alice",');
+  const bad = s.state();
+  eq('stale output: invalid JSON clears the output', bad.code, '');
+  eq('stale output: invalid JSON shows the error', bad.status.startsWith('Invalid JSON: '), true);
+  eq('stale output: invalid JSON disables Copy', bad.copyDisabled, true);
+  s.type('{"age": 30}');
+  eq('stale output: the next valid input renders again', /age: (\{ type: )?Number/.test(s.state().code), true);
+  eq('stale output: the next valid input enables Copy', s.state().copyDisabled, false);
+  s.click('clear');
+  eq('stale output: Clear empties the output and disables Copy', s.state().code === '' && s.state().copyDisabled, true);
+  s.click('example');
+  eq('stale output: Example enables Copy', s.state().copyDisabled, false);
+  s.type('   ');
+  eq('stale output: empty input disables Copy', s.state().code === '' && s.state().copyDisabled, true);
+  const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + '\nreturn labels;')();
+  eq('stale output: the error prefix exists in 4 languages', ['en', 'zh', 'ja', 'ko'].every((l) => labels[l] && labels[l].msgInvalidJson && labels[l].msgInvalidJson.trim()), true);
+}
 function parsesAsJs(code) { try { new Function(code); return true; } catch (e) { return e.message; } }
 function parsesAsTs(code) {
   const r = ts.transpileModule(code, { reportDiagnostics: true, compilerOptions: { module: ts.ModuleKind.ESNext } });
