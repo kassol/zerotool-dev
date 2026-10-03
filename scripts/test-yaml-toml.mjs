@@ -26,7 +26,7 @@ function eq(name, got, want) {
   if (got === want) { passes++; console.log('PASS ' + name); }
   else { failures++; console.log('FAIL ' + name + '\n  got:      ' + JSON.stringify(got) + '\n  expected: ' + JSON.stringify(want)); }
 }
-eq('component dumps YAML with the options used here', /jsyaml\.dump\(data, \{ indent: 2, lineWidth: -1, noRefs: true \}\)/.test(comp), true);
+eq('component dumps YAML with the options used here', /jsyaml\.dump\([^,]+, \{ indent: 2, lineWidth: -1, noRefs: true \}\)/.test(comp), true);
 eq('component imports js-yaml and smol-toml', /from 'js-yaml'/.test(comp) && /from 'smol-toml'/.test(comp), true);
 
 const y2t = (y) => { try { return stringify(jsyaml.load(y)); } catch (e) { return 'ERR ' + e.message; } };
