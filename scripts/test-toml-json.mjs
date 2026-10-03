@@ -6,9 +6,10 @@
 // Exit:  0 if all PASS, 1 if any FAIL
 //
 // Each conversion types into the page's own textarea, so the result is what the page shows
-// (smol-toml parse → JSON.stringify(data, null, 2), JSON.parse with source text → fidelity check
-// → smol-toml stringify). The inputs are the examples and limits on the en page; the two stop
-// messages are checked to appear verbatim on all four language pages.
+// (smol-toml parse, precision marks and fidelity check → JSON.stringify(found.value, null, 2);
+// JSON.parse with source text → fidelity check → smol-toml stringify). The inputs are the
+// examples and limits on the en page; the two stop messages are checked to appear verbatim on
+// all four language pages.
 //
 // Run: node scripts/test-toml-json.mjs
 
@@ -24,7 +25,7 @@ function eq(name, got, want) {
   if (got === want) { passes++; console.log('PASS ' + name); }
   else { failures++; console.log('FAIL ' + name + '\n  got:      ' + JSON.stringify(got) + '\n  expected: ' + JSON.stringify(want)); }
 }
-eq('component uses JSON.stringify(data, null, 2) and stringify(data)', /JSON\.stringify\(data, null, 2\)/.test(comp) && /stringify\(data\)/.test(comp), true);
+eq('component uses JSON.stringify(found.value, null, 2) and stringify(found.value)', /JSON\.stringify\(found\.value, null, 2\)/.test(comp) && /[^.]stringify\(found\.value\)/.test(comp), true);
 function convert(input, output, text, lang = 'en') {
   const page = loadPage('src/components/tools/TomlJsonTool.astro', { lang, stringsSelector: '.tj-wrap' });
   page.type(input, text);

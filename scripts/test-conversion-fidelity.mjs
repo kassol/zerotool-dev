@@ -183,6 +183,101 @@ expectConverted(NF, 'toml-json', 't2j', 'x = 1.5\ny = -0.25\nz = 1e300', (o) => 
 expectConverted(NF, 'yaml-json', 'y2j', 'x: 1.5\ny: -2.5e-3', (o) => deep(JSON.parse(o), { x: 1.5, y: -0.0025 }), 'finite floats unchanged');
 expectConverted(NF, 'yaml-toml', 'y2t', 'x: .inf\ny: -.inf\nz: .nan', (o) => o === 'x = inf\ny = -inf\nz = nan\n', 'TOML has inf and nan, so YAML → TOML keeps them');
 
+/* ── B-TOML-DATETIME-PRECISION ──
+   smol-toml keeps milliseconds (TOML 1.0 lets a parser truncate further digits), so a TOML
+   date-time or time with non-zero digits after the third fractional digit would reach JSON /
+   YAML changed. Literals inside strings and comments are text and stay as they are. */
+const TP = 'B-TOML-DATETIME-PRECISION';
+for (const [tool, dir] of [['toml-json', 't2j'], ['yaml-toml', 't2y']]) {
+  expectRejected(TP, tool, dir, 't = 2026-10-01T09:30:00.123456Z', '/t', '2026-10-01T09:30:00.123456Z');
+  expectRejected(TP, tool, dir, '[ev]\nat = 2026-10-01 09:30:00.1234+09:00', '/ev/at', '2026-10-01 09:30:00.1234+09:00');
+  expectRejected(TP, tool, dir, 'local = 1979-05-27T07:32:00.999999', '/local', '1979-05-27T07:32:00.999999');
+  expectRejected(TP, tool, dir, 'times = [09:30:00.5, 09:30:00.0001]', '/times/1', '09:30:00.0001');
+  expectRejected(TP, tool, dir, 'x = { "a/b" = 2026-10-01T00:00:00.0000001z }', '/x/a~1b', '2026-10-01T00:00:00.0000001z');
+  expectRejected(TP, tool, dir, '[[runs]]\nn = 1\n[[runs]]\nat = 2026-10-01T09:30:00.123456789-05:00', '/runs/1/at', '2026-10-01T09:30:00.123456789-05:00', 'ja');
+}
+expectRejected(TP, 'toml-json', 't2j', 't = 2026-10-01T09:30:00.123456Z', '/t', '2026-10-01T09:30:00.123456Z', 'zh');
+expectRejected(TP, 'yaml-toml', 't2y', 't = 2026-10-01T09:30:00.123456Z', '/t', '2026-10-01T09:30:00.123456Z', 'ko');
+expectConverted(TP, 'toml-json', 't2j', 't = 2026-10-01T09:30:00.123Z\nu = 2026-10-01T09:30:00.120000+09:00\nv = 09:30:00.5000',
+  (o) => deep(JSON.parse(o), { t: '2026-10-01T09:30:00.123Z', u: '2026-10-01T09:30:00.120+09:00', v: '09:30:00.500' }), 'millisecond precision and trailing zeros convert');
+expectConverted(TP, 'toml-json', 't2j',
+  's = "2026-10-01T09:30:00.123456Z"\nl = \'09:30:00.1234\'\nm = """\n2026-10-01T09:30:00.123456Z\n"""\nk = \'\'\'09:30:00.1234\'\'\'\n# at = 2026-10-01T09:30:00.123456Z\n"2026-10-01T09:30:00.123456Z" = 1',
+  (o) => deep(JSON.parse(o), { s: '2026-10-01T09:30:00.123456Z', l: '09:30:00.1234', m: '2026-10-01T09:30:00.123456Z\n', k: '09:30:00.1234', '2026-10-01T09:30:00.123456Z': 1 }), 'date-time text in strings, keys and comments is not a date');
+expectConverted(TP, 'toml-json', 't2j', 'e = "say \\"09:30:00.1234\\""\nq = """a""""\nv2 = 1.5 # 09:30:00.1234',
+  (o) => deep(JSON.parse(o), { e: 'say "09:30:00.1234"', q: 'a"', v2: 1.5 }), 'escaped quotes, a closing """" and a trailing comment');
+expectRejected(TP, 'toml-json', 't2j', 'q = """a""""\nt = 09:30:00.1234 # after a multi-line string', '/t', '09:30:00.1234');
+expectConverted(TP, 'yaml-toml', 't2y', 't = 2026-10-01T09:30:00.123+09:00', (o) => o === 't: 2026-10-01T09:30:00.123+09:00\n', 'millisecond date-time keeps its offset in YAML');
+
+/* ── B-NEGATIVE-ZERO ── smol-toml writes -0 as `0`; TOML has -0.0 (TOML 1.0 float). */
+const NZ = 'B-NEGATIVE-ZERO';
+const negZero = (key) => (o) => Object.is(tomlParse(o)[key], -0);
+expectConverted(NZ, 'yaml-toml', 'y2t', 'x: -0.0', (o) => o === 'x = -0.0\n' && negZero('x')(o), 'YAML -0.0 becomes TOML -0.0');
+expectConverted(NZ, 'toml-json', 'j2t', '{"x":-0.0}', (o) => o === 'x = -0.0\n' && negZero('x')(o), 'JSON -0.0 becomes TOML -0.0');
+expectConverted(NZ, 'toml-json', 'j2t', '{"a":[-0.0,1],"b":{"c":-0},"t":[{"z":-0.0}]}',
+  (o) => { const d = tomlParse(o); return Object.is(d.a[0], -0) && d.a[1] === 1 && Object.is(d.b.c, -0) && Object.is(d.t[0].z, -0) && o.includes('a = [ -0.0, 1 ]'); }, 'nested -0 in arrays, tables and arrays of tables');
+expectConverted(NZ, 'yaml-toml', 'y2t', 'x: 0.0\ny: 0', (o) => o === 'x = 0\ny = 0\n', 'positive zero unchanged');
+
+/* ── B-YAML-JSON-DATE ── js-yaml builds a Date with Date.UTC, which rolls impossible dates over. */
+const YD = 'B-YAML-JSON-DATE';
+expectRejected(YD, 'yaml-json', 'y2j', 'due: 2026-02-31', '/due', '2026-02-31');
+expectRejected(YD, 'yaml-json', 'y2j', 'd:\n  - 2026-13-01', '/d/0', '2026-13-01');
+expectRejected(YD, 'yaml-json', 'y2j', 't: 2026-10-01T24:00:00Z', '/t', '2026-10-01T24:00:00Z');
+expectRejected(YD, 'yaml-json', 'y2j', 't: 2026-02-29 10:00:00', '/t', '2026-02-29 10:00:00', 'zh');
+expectRejected(YD, 'yaml-json', 'y2j', 't: 2026-10-01T09:30:00.123456Z', '/t', '2026-10-01T09:30:00.123456Z', 'ja');
+expectRejected(YD, 'yaml-json', 'y2j', 'due: 2026-02-31', '/due', '2026-02-31', 'ko');
+expectConverted(YD, 'yaml-json', 'y2j', 'a: 2024-02-29\nb: 2026-10-01T09:30:00+09:00\nc: 2001-12-14 21:59:43.10 -5\nd: "2026-02-31"\ne: 2026-10-01T09:30:00.120000Z',
+  (o) => deep(JSON.parse(o), { a: '2024-02-29T00:00:00.000Z', b: '2026-10-01T00:30:00.000Z', c: '2001-12-15T02:59:43.100Z', d: '2026-02-31', e: '2026-10-01T09:30:00.120Z' }), 'valid dates and quoted text convert as before');
+expectConverted(YD, 'yaml-json', 'y2j', '2026-10-01', (o) => o === '"2026-10-01T00:00:00.000Z"', 'a date as the whole document');
+expectConverted(YD, 'yaml-json', 'y2j', 'base: &d 2026-10-01\nagain: *d', (o) => deep(JSON.parse(o), { base: '2026-10-01T00:00:00.000Z', again: '2026-10-01T00:00:00.000Z' }), 'an alias of a date');
+expectRejected(YD, 'yaml-json', 'y2j', '2026-02-31', '(root)', '2026-02-31');
+
+/* ── B-YAML-VALIDATOR-PREVIEW ── the JSON preview cannot show .inf / .nan, integers outside
+   ±(2^53 − 1) or impossible dates as written; the page keeps validating and names them. */
+{
+  const VP = 'B-YAML-VALIDATOR-PREVIEW';
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  const validate = (text, lang = 'en') => {
+    const L = labels[lang];
+    const dataset = { lang, msgEmpty: L.msgEmpty, msgValid: L.msgValid, msgInvalid: L.msgInvalid, msgValidMulti: L.msgValidMulti, msgInvalidMulti: L.msgInvalidMulti, docTitle: L.docTitle, docLines: L.docLines, docValid: L.docValid, copyJson: L.copyJson, copied: L.copied, errTitle: L.errTitle, errLine: L.errLine, errLineCol: L.errLineCol };
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': dataset } });
+    page.el('yv-input').value = text;
+    page.el('yv-validate').click();
+    return { page, L, note: page.el('yv-preview-note'), status: page.el('yv-status'), preview: page.el('yv-preview-content') };
+  };
+  const cases = [
+    ['size: .inf', [['/size', 'inf']]],
+    ['a:\n  - -.Inf\n  - .nan', [['/a/0', '-inf'], ['/a/1', 'nan']]],
+    ['id: 9007199254740993', [['/id', '9007199254740993']]],
+    ['due: 2026-02-31', [['/due', '2026-02-31']]],
+    ['x: 1\n---\ny: .inf\nz: 12345678901234567890', [['/1/y', 'inf'], ['/1/z', '12345678901234567890']]],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    for (const [text, items] of cases) {
+      const r = validate(text, lang);
+      const s = r.note.textContent || '';
+      check(VP, `yaml-validator ${lang} ${JSON.stringify(text)}: still valid with a preview`, /\bsuccess\b/.test(r.status.className) && r.preview.textContent !== '', r.status.textContent);
+      check(VP, `yaml-validator ${lang} ${JSON.stringify(text)}: note shown and names every path and value`,
+        r.note.hidden === false && items.every(([p, raw]) => s.includes(p) && s.includes(raw)) && s.startsWith(FIDELITY_TEXT[lang].preview.split('{target}')[0]), 'note=' + JSON.stringify(s) + ' hidden=' + r.note.hidden);
+    }
+    const ok = validate('n: 9007199254740991\nf: 1.5\nd: 2024-02-29\ns: ".inf"', lang);
+    check(VP, `yaml-validator ${lang}: values JSON can show need no note`, ok.note.hidden === true && !ok.note.textContent, JSON.stringify(ok.note.textContent));
+    check(VP, `yaml-validator ${lang}: preview of safe values unchanged`, ok.preview.textContent === JSON.stringify({ n: 9007199254740991, f: 1.5, d: '2024-02-29T00:00:00.000Z', s: '.inf' }, null, 2), ok.preview.textContent);
+  }
+  // A later valid input without such values clears the note; an invalid input hides it too.
+  const r = validate('size: .inf');
+  r.page.el('yv-input').value = 'size: 1'; r.page.el('yv-validate').click();
+  check(VP, 'note cleared by the next input', r.note.hidden === true && !r.note.textContent);
+  r.page.el('yv-input').value = 'size: .inf'; r.page.el('yv-validate').click();
+  r.page.el('yv-input').value = 'a: [1'; r.page.el('yv-validate').click();
+  check(VP, 'note hidden when the YAML is invalid', r.note.hidden === true && !r.note.textContent);
+  r.page.el('yv-input').value = 'size: .inf'; r.page.el('yv-validate').click();
+  r.page.el('yv-clear').click();
+  check(VP, 'note cleared by Clear', r.note.hidden === true && !r.note.textContent);
+}
+
 /* ── yaml-json pages: the stop and limit messages are quoted as the page shows them ── */
 {
   const { readFileSync } = await import('node:fs');

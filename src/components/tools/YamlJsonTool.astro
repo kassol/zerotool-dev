@@ -1,8 +1,9 @@
 ---
 // YamlJsonTool — bidirectional YAML ↔ JSON converter (bundles js-yaml from npm).
 // Values JSON or YAML cannot hold as written stop the conversion with their JSON Pointer paths:
-// YAML .inf / .nan going to JSON, integers outside ±(2^53 − 1) on either side and JSON numbers
-// that overflow (conversion-fidelity.js). The old output is cleared and its copy button disabled.
+// YAML .inf / .nan going to JSON, integers outside ±(2^53 − 1) on either side, JSON numbers
+// that overflow and YAML timestamps that are not real dates (2026-02-31) or have more than
+// millisecond precision (conversion-fidelity.js). The old output is cleared and its copy button disabled.
 // YAML errors from the js-yaml work limits are shown in the page language (yaml-limits.js).
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
@@ -67,7 +68,7 @@ const T = STRINGS[lang] || STRINGS.en;
     const yjWrap = document.querySelector('.yj-wrap') as HTMLElement;
     const S = JSON.parse(yjWrap.dataset.strings || '{}');
     const LANG = yjWrap.dataset.lang || 'en';
-    const YAML_SCHEMA = yamlLoadSchema(jsyaml);
+    const YAML_SCHEMA = yamlLoadSchema(jsyaml, { timestamps: true });
 
     type Result = { ok: true; text: string } | { ok: false; message: string };
 
@@ -77,7 +78,7 @@ const T = STRINGS[lang] || STRINGS.en;
       catch (e: any) { return { ok: false, message: S.invalidYaml + ': ' + yamlErrorText(e, LANG) }; }
       const found = findLosses(data, 'json');
       if (found.count) return { ok: false, message: formatLosses(found, 'JSON', LANG) };
-      return { ok: true, text: JSON.stringify(data, null, 2) };
+      return { ok: true, text: JSON.stringify(found.value, null, 2) };
     }
 
     function jsonToYaml(raw: string): Result {
@@ -86,7 +87,7 @@ const T = STRINGS[lang] || STRINGS.en;
       catch (e: any) { return { ok: false, message: S.invalidJson + ': ' + (e?.message || String(e)) }; }
       const found = findLosses(data, 'yaml');
       if (found.count) return { ok: false, message: formatLosses(found, 'YAML', LANG) };
-      return { ok: true, text: jsyaml.dump(data, { indent: 2, lineWidth: -1, noRefs: true }) };
+      return { ok: true, text: jsyaml.dump(found.value, { indent: 2, lineWidth: -1, noRefs: true }) };
     }
 
     function syncCopy() {

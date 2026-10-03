@@ -3,7 +3,8 @@
 // Values TOML cannot hold as written (null, integers outside ±(2^53 − 1), timestamps with more
 // than millisecond precision or impossible dates) stop the conversion with their JSON Pointer
 // paths: the old output is cleared and its copy button disabled (conversion-fidelity.js).
-// YAML dates become TOML local dates; YAML date-times become offset date-times.
+// YAML dates become TOML local dates; YAML date-times become offset date-times; -0 becomes
+// -0.0. TOML date-times and times with more than millisecond precision stop TOML → YAML.
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -56,7 +57,7 @@ const T = STRINGS[lang] || STRINGS.en;
   <script>
     import jsyaml from 'js-yaml';
     import { parse as tomlParse, stringify as tomlStringify, TomlDate } from 'smol-toml';
-    import { yamlLoadSchema, findLosses, formatLosses } from './conversion-fidelity.js';
+    import { yamlLoadSchema, findLosses, formatLosses, markTomlPrecision } from './conversion-fidelity.js';
     import { yamlErrorText } from './yaml-limits.js';
 
     const yamlEl = document.getElementById('yt-yaml') as HTMLTextAreaElement;
@@ -80,13 +81,17 @@ const T = STRINGS[lang] || STRINGS.en;
       }
       const found = findLosses(parsed, 'toml', { TomlDate });
       if (found.count) return { ok: false, message: formatLosses(found, 'TOML', LANG) };
-      try { return { ok: true, text: tomlStringify(parsed) }; }
+      try { return { ok: true, text: tomlStringify(found.value) }; }
       catch (e: any) { return { ok: false, message: S.invalidYaml + ': ' + (e?.message || String(e)) }; }
     }
 
     function tomlToYaml(raw: string): Result {
-      try { return { ok: true, text: jsyaml.dump(tomlParse(raw), { indent: 2, lineWidth: -1, noRefs: true }) }; }
+      let data: any;
+      try { data = markTomlPrecision(raw, tomlParse, tomlParse(raw)); }
       catch (e: any) { return { ok: false, message: S.invalidToml + ': ' + (e?.message || String(e)) }; }
+      const found = findLosses(data, 'yaml');
+      if (found.count) return { ok: false, message: formatLosses(found, 'YAML', LANG) };
+      return { ok: true, text: jsyaml.dump(found.value, { indent: 2, lineWidth: -1, noRefs: true }) };
     }
 
     function syncCopy() {
