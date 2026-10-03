@@ -3,9 +3,9 @@ seoTitle: "YAML TOML 변환기 — 무료 온라인 양방향 변환 | ZeroTool"
 seoDescription: "YAML과 TOML을 즉시 양방향 변환합니다. 중첩 객체, 배열, 일반 데이터 타입 지원. 무료, 브라우저에서 완결, 업로드 불필요."
 faqItems:
   - question: "어떤 데이터 타입을 지원합니까?"
-    answer: "문자열, 정수, 부동소수점, 불리언, 배열, 중첩 객체를 모두 지원합니다. YAML 앵커와 별칭은 변환 전에 해제됩니다. TOML의 날짜·시간은 따옴표 없는 ISO 8601 값(예: 2026-10-01T09:30:00.000+09:00)으로 출력되며, YAML 파서는 보통 타임스탬프로 읽습니다."
+    answer: "문자열, 정수, 부동소수점(inf와 nan 포함), 불리언, 배열, 중첩 객체, 날짜를 양방향으로 변환합니다. YAML 날짜(2026-10-01 등)는 TOML 로컬 날짜로, YAML 날짜·시간은 오프셋을 유지한 채 출력합니다. YAML 앵커와 별칭은 변환 전에 해제됩니다. TOML의 날짜·시간은 따옴표 없는 ISO 8601 값(예: 2026-10-01T09:30:00.000+09:00)으로 출력되며, YAML 파서는 보통 타임스탬프로 읽습니다."
   - question: "YAML에서 TOML 변환이 실패하는 이유는 무엇입니까?"
-    answer: "TOML은 루트 문서가 키-값 매핑이어야 합니다. 루트가 시퀀스(리스트)나 스칼라인 YAML 문서는 TOML로 표현할 수 없습니다. 또한 TOML은 null 값을 지원하지 않으므로, null 필드는 자동으로 빈 문자열로 변환되며 경고가 표시됩니다."
+    answer: "TOML은 루트 문서가 키-값 매핑이어야 하므로 루트가 리스트나 스칼라인 YAML은 변환할 수 없습니다. 또한 변환 중 값이 바뀌는 경우에는 변환하지 않고 각 필드를 경로(/service/owner 등)로 보여 줍니다. 대상은 null(TOML에는 null이 없음), ±(2^53 − 1)을 벗어나는 정수, 밀리초보다 정밀한 타임스탬프, 존재하지 않는 날짜입니다. 이때 TOML 패널은 비워지고, 변환할 수 있는 입력이 될 때까지 복사 버튼이 비활성화됩니다."
   - question: "YAML 다중 문서 스트림을 지원합니까?"
     answer: "아니요. 단일 문서 YAML만 지원합니다. ---로 구분된 다중 문서를 붙여 넣으면 'expected a single document in the stream' 오류가 나므로 문서를 하나씩 변환하세요."
   - question: "데이터가 서버로 전송됩니까?"
@@ -45,6 +45,49 @@ host = "localhost"
 port = 5432
 enabled = true
 ```
+
+<h2>날짜와 시간</h2>
+<p>YAML 타임스탬프는 문자열이 아니라 TOML 날짜로 출력합니다.</p>
+
+```yaml
+release:
+  date: 2026-10-01
+  at: 2026-10-01 09:30:00 +9
+  utc: 2026-10-01T00:30:00Z
+  label: "2026-10-01"
+  ratio: .inf
+```
+
+```toml
+[release]
+date = 2026-10-01
+at = 2026-10-01T09:30:00.000+09:00
+utc = 2026-10-01T00:30:00.000Z
+label = "2026-10-01"
+ratio = inf
+```
+
+<p>날짜만 있으면 TOML 로컬 날짜가 됩니다. 날짜·시간은 오프셋을 유지해 <code>+09:00</code>으로 씁니다. 오프셋이 없는 날짜·시간은 <code>Z</code>를 붙입니다. <a href="https://yaml.org/type/timestamp.html">YAML 타임스탬프 타입</a>이 이를 UTC로 정의하기 때문입니다. 따옴표로 감싼 <code>"2026-10-01"</code>은 문자열로 남고, <code>.inf</code>는 TOML <code>inf</code>가 됩니다. TOML 날짜는 밀리초까지만 담으므로 <code>09:30:00.123456Z</code>처럼 더 정밀한 타임스탬프나 <code>2026-02-31</code>처럼 없는 날짜가 있으면 변환을 멈춥니다.</p>
+
+<h2>TOML로 나타낼 수 없는 값</h2>
+<p>변환 중 값이 바뀌면 아무것도 변환하지 않고, 상태 줄에 각 필드를 JSON Pointer로 표시하고 이유를 씁니다.</p>
+
+```yaml
+service:
+  id: 9007199254740993
+  owner: ~
+```
+
+<p><code>변환하지 않았습니다: TOML에서는 다음 값을 바꾸지 않고 나타낼 수 없습니다: /service/id: 정수 9007199254740993 — ±(2^53 − 1) 범위를 벗어나 JavaScript에서 반올림됩니다; /service/owner: null — TOML에는 null이 없습니다</code></p>
+<p>TOML 패널은 비워지고 복사 버튼은 비활성화되어 이전 결과를 잘못 복사하지 않습니다. 큰 ID는 따옴표로 감싸고(<code>{'id: "9007199254740993"'}</code>) null을 바꾸거나 지운 뒤 다시 변환하세요. −(2<sup>53</sup> − 1)부터 2<sup>53</sup> − 1까지의 정수는 그대로 변환됩니다.</p>
+
+<h2>제한 사항</h2>
+<ul>
+  <li><strong>루트는 매핑이어야 하고 문서는 하나만 됩니다.</strong> <code>---</code>로 구분한 여러 문서는 <code>expected a single document in the stream, but found more</code> 오류가 납니다.</li>
+  <li><strong>큰 정수는 양방향 모두 멈춥니다.</strong> TOML → YAML에서는 <code>big = 9007199254740993</code>이 <code>integer value cannot be represented losslessly</code> 오류와 줄 번호를 냅니다. YAML → TOML에서는 위처럼 필드를 표시합니다.</li>
+  <li><strong>js-yaml 처리 한도.</strong> js-yaml 4.3.2는 중첩이 100단계를 넘거나, 병합 키(<code>{'<<'}</code>)가 처리하는 매핑과 키가 모두 10,000개를 넘거나, 병합 키 하나에 매핑을 100개 넘게 나열한 문서에서 멈춥니다. 오류에는 한도와 줄·열이 나옵니다.</li>
+  <li><strong>주석은 남지 않고 앵커는 펼쳐집니다.</strong></li>
+</ul>
 
 <h2>YAML과 TOML 비교</h2>
 <p>
