@@ -128,6 +128,8 @@ faqItems:                # 可选，结构化 FAQ
 
 - 2026-10-03 — 转换保真与 js-yaml 上限：yaml-toml、toml-json、yaml-json 四语言的限制段与 FAQ 改为「目标格式无法原样保存的值会停止转换并按路径列出」，示例输出与停止消息由 `test-yaml-toml.mjs`、`test-toml-json.mjs`、`test-conversion-fidelity.mjs` 经页面入口复算并核对逐字出现；yaml-toml 新增日期与「TOML 无法保存的值」两节（zh / ja / ko 另加限制段），toml-json 的转换示例去掉 `ratio = inf → null`；yaml-toml、yaml-json、yaml-validator、openapi-validator 四语言写明 js-yaml 4.3.2 的嵌套 100 层、合并键 10,000、单个合并键 100 个映射上限，js-yaml 版本文案改为 4.3.2。上一条中 yaml-toml 大整数「输出为浮点字面量」的示例已改为停止转换。
 
+- 2026-10-03 — 转换保真补充：toml-json 四语言新增「精度超过毫秒的时间停止转 JSON」与「`-0.0` 保留负号」两条，yaml-toml 日期一节补 TOML → YAML 的精度停止与 YAML `-0.0` → TOML `-0.0`，yaml-json 限制段新增「日期必须存在、时间只保留到毫秒」一条（en / zh FAQ 同步），yaml-validator「预览是 JSON」一条补预览上方的提示、示例与预览中的实际值（四语言 FAQ 同步）；消息原文与示例由 `test-conversion-fidelity.mjs` 的 PAGE-TEXT-B 经页面入口复算并核对逐字出现。
+
 - 2026-10-02 — 解析器升级：yaml-toml 英文页注明 smol-toml 1.7.1，并同步大整数输出为浮点字面量的示例；该输入在 YAML 读入阶段已有的精度损失说明保留。
 
 - 2026-10-02 — 发版收尾复核：sprite-sheet-generator-guide 四语言草稿的对比表与限制段改为支持 PNG / WebP（取决于浏览器编码能力），保留 draft 状态与其他正文。
