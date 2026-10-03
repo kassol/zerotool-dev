@@ -1,5 +1,8 @@
 ---
 // YamlValidatorTool — validate YAML syntax with detailed error messages and structure preview
+// The preview is JSON: values it cannot show as written (.inf / .nan, integers outside
+// ±(2^53 − 1), timestamps that are not real dates or have more than millisecond precision) are
+// listed under it with their JSON Pointer paths (conversion-fidelity.js); validation is unchanged.
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -133,6 +136,7 @@ const L = labels[lang];
         <span>{L.parsedStructure}</span>
         <button id="yv-copy-preview" class="btn-copy" type="button">{L.copyJson}</button>
       </div>
+      <p id="yv-preview-note" class="yv-preview-note" role="note" hidden></p>
       <pre id="yv-preview-content" class="yv-preview-content"></pre>
     </div>
   </div>
@@ -140,12 +144,14 @@ const L = labels[lang];
   <script>
     import jsyaml from 'js-yaml';
     import { yamlLimitText } from './yaml-limits.js';
+    import { yamlLoadSchema, findLosses, formatLosses, stringifyJson } from './conversion-fidelity.js';
 
     const inputEl   = document.getElementById('yv-input') as HTMLTextAreaElement;
     const statusEl  = document.getElementById('yv-status')!;
     const errorBox  = document.getElementById('yv-error-box')!;
     const previewEl = document.getElementById('yv-preview')!;
     const previewContent = document.getElementById('yv-preview-content')!;
+    const previewNote = document.getElementById('yv-preview-note')!;
     const validateBtn    = document.getElementById('yv-validate')!;
     const clearBtn       = document.getElementById('yv-clear')!;
     const copyPreviewBtn = document.getElementById('yv-copy-preview')!;
@@ -165,6 +171,7 @@ const L = labels[lang];
     const ERR_TITLE   = wrapEl.dataset.errTitle!;
     const ERR_LINE    = wrapEl.dataset.errLine!;
     const ERR_LINE_COL = wrapEl.dataset.errLineCol!;
+    const PREVIEW_SCHEMA = yamlLoadSchema(jsyaml, { timestamps: true });
 
     /* ── engine:start ── */
     // A line starting with `---` or `...` is a document marker and never scalar content
@@ -189,7 +196,8 @@ const L = labels[lang];
       return chunks;
     }
 
-    function validateYaml(text, yaml) {
+    // `options` go to loadAll (the page passes a schema that marks values JSON cannot show)
+    function validateYaml(text, yaml, options) {
       var chunks = splitDocuments(text);
       var docs = [];
       var ok = true;
@@ -199,7 +207,7 @@ const L = labels[lang];
         // pad with blank lines so error marks and snippets use the line numbers of the full text
         var padded = new Array(chunk.start + 1).join('\n') + chunk.text;
         try {
-          yaml.loadAll(padded).forEach(function (value) {
+          yaml.loadAll(padded, null, options).forEach(function (value) {
             docs.push({ ok: true, value: value, startLine: chunk.start + 1, endLine: chunk.end + 1 });
           });
         } catch (e) {
@@ -212,7 +220,7 @@ const L = labels[lang];
         // the whole stream is the reference for values; keep line ranges only when they line up
         var whole = null;
         try {
-          whole = yaml.loadAll(text);
+          whole = yaml.loadAll(text, null, options);
         } catch (e) {
           ok = false;
           var line = e.mark ? e.mark.line + 1 : 0;
@@ -242,6 +250,12 @@ const L = labels[lang];
       errorBox.innerHTML = '';
       previewEl.style.display = 'none';
       previewContent.textContent = '';
+      setNote('');
+    }
+
+    function setNote(text: string) {
+      previewNote.textContent = text;
+      previewNote.hidden = !text;
     }
 
     function parseYamlError(e: any) {
@@ -284,20 +298,22 @@ const L = labels[lang];
         setStatus(MSG_EMPTY, '');
         return;
       }
-      const result = validateYaml(text, jsyaml);
+      const result = validateYaml(text, jsyaml, { schema: PREVIEW_SCHEMA });
       const docs = result.documents;
       const multi = docs.length > 1;
       if (result.ok) {
         errorBox.style.display = 'none';
         errorBox.innerHTML = '';
-        const value = multi ? docs.map((d: any) => d.value) : (docs[0] ? docs[0].value : null);
-        previewContent.textContent = JSON.stringify(value, null, 2);
+        const found = findLosses(multi ? docs.map((d: any) => d.value) : (docs[0] ? docs[0].value : null), 'json', { preview: true });
+        previewContent.textContent = stringifyJson(found.value, 2);
+        setNote(found.count ? formatLosses(found, 'JSON', LANG, 'preview') : '');
         previewEl.style.display = '';
         setStatus(multi ? MSG_VALID_MULTI.replace('{n}', String(docs.length)) : MSG_VALID, 'success');
         (window as any).trackTool?.('yaml-validator', 'validate_success');
       } else {
         previewEl.style.display = 'none';
         previewContent.textContent = '';
+        setNote('');
         if (multi) {
           errorBox.innerHTML = docs.map((d: any) => {
             let title = DOC_TITLE.replace('{k}', String(d.index));
@@ -468,6 +484,18 @@ const L = labels[lang];
     font-weight: 600;
     color: var(--color-text-secondary);
   }
+
+  .yv-preview-note {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--color-text);
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+    overflow-wrap: anywhere;
+  }
+  .yv-preview-note[hidden] { display: none; }
 
   .yv-preview-content {
     margin: 0;
