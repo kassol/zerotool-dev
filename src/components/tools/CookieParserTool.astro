@@ -37,6 +37,9 @@ const STRINGS = {
     statusCookie: ['Cookie header: 1 cookie, {bytes} bytes.', 'Cookie header: {n} cookies, {bytes} bytes.'],
     statusSet: ['Set-Cookie: 1 cookie ({stored} kept, {del} deleted, {rejected} rejected).', 'Set-Cookie: {n} cookies ({stored} kept, {del} deleted, {rejected} rejected).'],
     statusNs: 'cookies.txt: {n} cookies.',
+    pslLoading: 'Loading the Public Suffix List to check Domain attributes…',
+    pslFailed: 'The Public Suffix List did not load, so cookies with a Domain attribute are marked “Not verified”. Reload the page to try again.',
+    unknownCount: '{n} not verified',
     notes: {
       autoSet: 'Read as Set-Cookie because the text has attributes such as Path or Expires. Choose “Cookie” to read it as a request header.',
       joinedCookie: '{n} Cookie lines were joined into one header (HTTP/2 and HTTP/3 may split the header; RFC 9113 §8.2.3).',
@@ -79,7 +82,7 @@ const STRINGS = {
       hmlpvt: 'Baidu Tongji: the visitor’s current visit time.'
     },
     setTitle: 'Set-Cookie · {n} · {stored} kept · {del} deleted · {rejected} rejected',
-    verdict: { stored: 'Kept', delete: 'Deletes', rejected: 'Rejected' },
+    verdict: { stored: 'Kept', delete: 'Deletes', rejected: 'Rejected', unknown: 'Not verified' },
     editInBuilder: 'Edit in builder',
     fDomain: 'Domain',
     fPath: 'Path',
@@ -116,7 +119,9 @@ const STRINGS = {
       prefixSecure: '{prefix} prefix requires Secure: the cookie is ignored.',
       prefixHost: '{prefix} prefix requires Secure, Path=/ and no Domain. Problem: {why}.',
       prefixHttp: '{prefix} prefix requires Secure and HttpOnly: the cookie is ignored.',
-      namelessPrefix: 'A cookie without a name may not have a value starting with __Secure-, __Host- or __Http-: ignored.'
+      namelessPrefix: 'A cookie without a name may not have a value starting with __Secure-, __Host- or __Http-: ignored.',
+      domainPublicSuffix: 'Domain={domain} is a public suffix (Public Suffix List rule {rule}): browsers ignore the cookie, because it would reach every site registered under it.',
+      domainPrivateSuffix: 'Domain={domain} is a public suffix in the private section of the Public Suffix List (rule {rule}): its operator gives subdomains to separate owners, so browsers ignore the cookie.'
     },
     issues: {
       emptyName: 'Empty name: the browser sends only the value.',
@@ -158,7 +163,9 @@ const STRINGS = {
       noSecure: 'No Secure: the cookie is also sent over plain http://.',
       noHttpOnly: 'No HttpOnly: page scripts can read it through document.cookie.',
       noSameSite: 'No SameSite: Chrome 80+ and Edge 86+ treat it as Lax; Firefox and Safari still send it on cross-site requests. Set it explicitly.',
-      thirdParty: 'SameSite=None without Partitioned: a third-party cookie, which browsers may block.'
+      thirdParty: 'SameSite=None without Partitioned: a third-party cookie, which browsers may block.',
+      pslUnknown: 'Domain={domain} could not be checked against the Public Suffix List, which has not loaded. A browser rejects the cookie if this is a public suffix.',
+      domainSuffixHost: 'Domain={domain} is a public suffix and equals the response host: the cookie becomes host-only (RFC 6265bis §5.7).'
     },
     simTitle: 'Which cookies does the next request send?',
     respUrl: 'Response URL (where these Set-Cookie lines came from)',
@@ -181,7 +188,9 @@ const STRINGS = {
       sameSiteStrict: '{name}: SameSite=Strict, not sent on cross-site requests.',
       sameSiteLax: '{name}: SameSite=Lax, sent on cross-site top-level GET only.',
       sameSiteDefault: '{name}: no SameSite, treated as Lax by Chrome and Edge.',
-      partitioned: '{name}: Partitioned, kept for the site where it was set.'
+      partitioned: '{name}: Partitioned, kept for the site where it was set.',
+      publicSuffix: '{name}: its domain {domain} is a public suffix, so a browser never stores it.',
+      pslUnknown: '{name}: the Public Suffix List has not loaded, so {domain} could not be checked.'
     },
     nsTitle: 'cookies.txt · {n} cookies',
     nsBad: 'Lines {lines} do not have 7 tab-separated fields and were skipped.',
@@ -239,6 +248,9 @@ const STRINGS = {
     statusCookie: ['Cookie 请求头：1 个 Cookie，{bytes} 字节。', 'Cookie 请求头：{n} 个 Cookie，{bytes} 字节。'],
     statusSet: ['Set-Cookie：1 个 Cookie（保存 {stored}，删除 {del}，拒收 {rejected}）。', 'Set-Cookie：{n} 个 Cookie（保存 {stored}，删除 {del}，拒收 {rejected}）。'],
     statusNs: 'cookies.txt：{n} 个 Cookie。',
+    pslLoading: '正在加载公共后缀列表，用来检查 Domain 属性……',
+    pslFailed: '公共后缀列表没有加载成功，带 Domain 属性的 Cookie 标为「未核实」。刷新页面后重试。',
+    unknownCount: '{n} 个未核实',
     notes: {
       autoSet: '文本里有 Path、Expires 等属性，已按 Set-Cookie 解析。如果它是请求头，请选“Cookie”。',
       joinedCookie: '{n} 行 Cookie 已合并为一个请求头（HTTP/2、HTTP/3 允许把它拆成多行，RFC 9113 §8.2.3）。',
@@ -281,7 +293,7 @@ const STRINGS = {
       hmlpvt: '百度统计：访客当前访问时间。'
     },
     setTitle: 'Set-Cookie · {n} 个 · 保存 {stored} · 删除 {del} · 拒收 {rejected}',
-    verdict: { stored: '保存', delete: '删除', rejected: '拒收' },
+    verdict: { stored: '保存', delete: '删除', rejected: '拒收', unknown: '未核实' },
     editInBuilder: '在生成器里编辑',
     fDomain: 'Domain',
     fPath: 'Path',
@@ -318,7 +330,9 @@ const STRINGS = {
       prefixSecure: '{prefix} 前缀要求 Secure，Cookie 被忽略。',
       prefixHost: '{prefix} 前缀要求 Secure、Path=/ 且不带 Domain。不满足：{why}。',
       prefixHttp: '{prefix} 前缀要求 Secure 与 HttpOnly，Cookie 被忽略。',
-      namelessPrefix: '没有名称的 Cookie，值不能以 __Secure-、__Host-、__Http- 开头，被忽略。'
+      namelessPrefix: '没有名称的 Cookie，值不能以 __Secure-、__Host-、__Http- 开头，被忽略。',
+      domainPublicSuffix: 'Domain={domain} 是公共后缀（公共后缀列表规则 {rule}）：浏览器忽略这个 Cookie，否则它会发给该后缀下注册的所有网站。',
+      domainPrivateSuffix: 'Domain={domain} 是公共后缀列表私有部分里的后缀（规则 {rule}）：运营方把子域名分给不同的人使用，浏览器忽略这个 Cookie。'
     },
     issues: {
       emptyName: '名称为空：浏览器只发送值。',
@@ -360,7 +374,9 @@ const STRINGS = {
       noSecure: '没有 Secure：明文 http:// 请求也会带上它。',
       noHttpOnly: '没有 HttpOnly：页面脚本能通过 document.cookie 读到它。',
       noSameSite: '没有 SameSite：Chrome 80+、Edge 86+ 按 Lax 处理；Firefox、Safari 仍会在跨站请求中发送。建议显式设置。',
-      thirdParty: 'SameSite=None 且没有 Partitioned：属于第三方 Cookie，可能被浏览器拦截。'
+      thirdParty: 'SameSite=None 且没有 Partitioned：属于第三方 Cookie，可能被浏览器拦截。',
+      pslUnknown: '公共后缀列表还没有加载，无法检查 Domain={domain}。如果它是公共后缀，浏览器会拒收这个 Cookie。',
+      domainSuffixHost: 'Domain={domain} 是公共后缀，且等于响应主机：Cookie 按 host-only 处理（RFC 6265bis §5.7）。'
     },
     simTitle: '下一次请求会带上哪些 Cookie？',
     respUrl: '响应 URL（这些 Set-Cookie 来自哪个地址）',
@@ -383,7 +399,9 @@ const STRINGS = {
       sameSiteStrict: '{name}：SameSite=Strict，跨站请求不发送。',
       sameSiteLax: '{name}：SameSite=Lax，跨站时只在顶层 GET 导航中发送。',
       sameSiteDefault: '{name}：没写 SameSite，Chrome、Edge 按 Lax 处理。',
-      partitioned: '{name}：Partitioned，只留在设置它的站点下。'
+      partitioned: '{name}：Partitioned，只留在设置它的站点下。',
+      publicSuffix: '{name}：域名 {domain} 是公共后缀，浏览器不会保存它。',
+      pslUnknown: '{name}：公共后缀列表还没有加载，无法检查 {domain}。'
     },
     nsTitle: 'cookies.txt · {n} 个 Cookie',
     nsBad: '第 {lines} 行不是 7 个制表符分隔的字段，已跳过。',
@@ -441,6 +459,9 @@ const STRINGS = {
     statusCookie: ['Cookie ヘッダー：1 件、{bytes} バイト。', 'Cookie ヘッダー：{n} 件、{bytes} バイト。'],
     statusSet: ['Set-Cookie：1 件（保存 {stored}・削除 {del}・拒否 {rejected}）。', 'Set-Cookie：{n} 件（保存 {stored}・削除 {del}・拒否 {rejected}）。'],
     statusNs: 'cookies.txt：{n} 件。',
+    pslLoading: 'Domain 属性を確認するため、Public Suffix List を読み込んでいます…',
+    pslFailed: 'Public Suffix List を読み込めなかったため、Domain 属性のある Cookie は「未確認」です。ページを再読み込みすると再試行します。',
+    unknownCount: '未確認 {n}',
     notes: {
       autoSet: 'Path や Expires などの属性があるため Set-Cookie として解析しました。リクエストヘッダーなら「Cookie」を選んでください。',
       joinedCookie: '{n} 行の Cookie を 1 つのヘッダーにまとめました（HTTP/2・HTTP/3 では分割して送れます。RFC 9113 §8.2.3）。',
@@ -483,7 +504,7 @@ const STRINGS = {
       hmlpvt: 'Baidu 統計（百度统计）：今回の訪問時刻。'
     },
     setTitle: 'Set-Cookie · {n} 件 · 保存 {stored} · 削除 {del} · 拒否 {rejected}',
-    verdict: { stored: '保存', delete: '削除', rejected: '拒否' },
+    verdict: { stored: '保存', delete: '削除', rejected: '拒否', unknown: '未確認' },
     editInBuilder: 'ビルダーで編集',
     fDomain: 'Domain',
     fPath: 'Path',
@@ -520,7 +541,9 @@ const STRINGS = {
       prefixSecure: '{prefix} プレフィックスには Secure が必要なため無視されます。',
       prefixHost: '{prefix} プレフィックスには Secure・Path=/・Domain なしが必要です。足りないもの：{why}。',
       prefixHttp: '{prefix} プレフィックスには Secure と HttpOnly が必要なため無視されます。',
-      namelessPrefix: '名前のない Cookie の値は __Secure-・__Host-・__Http- で始められないため無視されます。'
+      namelessPrefix: '名前のない Cookie の値は __Secure-・__Host-・__Http- で始められないため無視されます。',
+      domainPublicSuffix: 'Domain={domain} はパブリックサフィックスです（Public Suffix List のルール {rule}）。その下に登録されたすべてのサイトに送られてしまうため、ブラウザーは無視します。',
+      domainPrivateSuffix: 'Domain={domain} は Public Suffix List の PRIVATE 部にあるサフィックスです（ルール {rule}）。運営者がサブドメインを別々の利用者に割り当てるため、ブラウザーは無視します。'
     },
     issues: {
       emptyName: '名前が空：ブラウザーは値だけを送ります。',
@@ -562,7 +585,9 @@ const STRINGS = {
       noSecure: 'Secure がない：平文の http:// でも送られます。',
       noHttpOnly: 'HttpOnly がない：ページのスクリプトが document.cookie で読めます。',
       noSameSite: 'SameSite がない：Chrome 80 以降・Edge 86 以降は Lax として扱い、Firefox・Safari はクロスサイトでも送ります。明示してください。',
-      thirdParty: 'SameSite=None で Partitioned がない：サードパーティ Cookie なので、ブラウザーがブロックすることがあります。'
+      thirdParty: 'SameSite=None で Partitioned がない：サードパーティ Cookie なので、ブラウザーがブロックすることがあります。',
+      pslUnknown: 'Public Suffix List を読み込めていないため、Domain={domain} を確認できません。パブリックサフィックスならブラウザーは拒否します。',
+      domainSuffixHost: 'Domain={domain} はパブリックサフィックスで、レスポンスのホストと同じです。Cookie は host-only になります（RFC 6265bis §5.7）。'
     },
     simTitle: '次のリクエストで送られる Cookie は？',
     respUrl: 'レスポンス URL（この Set-Cookie を返した URL）',
@@ -585,7 +610,9 @@ const STRINGS = {
       sameSiteStrict: '{name}：SameSite=Strict はクロスサイトのリクエストで送られません。',
       sameSiteLax: '{name}：SameSite=Lax はクロスサイトではトップレベル GET でだけ送られます。',
       sameSiteDefault: '{name}：SameSite がなく、Chrome・Edge では Lax 扱いです。',
-      partitioned: '{name}：Partitioned で、設定されたサイトの下でだけ使われます。'
+      partitioned: '{name}：Partitioned で、設定されたサイトの下でだけ使われます。',
+      publicSuffix: '{name}：ドメイン {domain} がパブリックサフィックスなので、ブラウザーは保存しません。',
+      pslUnknown: '{name}：Public Suffix List を読み込めていないため、{domain} を確認できません。'
     },
     nsTitle: 'cookies.txt · {n} 件',
     nsBad: '{lines} 行目はタブ区切り 7 項目ではないため読み飛ばしました。',
@@ -643,6 +670,9 @@ const STRINGS = {
     statusCookie: ['Cookie 헤더: 쿠키 1개, {bytes}바이트.', 'Cookie 헤더: 쿠키 {n}개, {bytes}바이트.'],
     statusSet: ['Set-Cookie: 쿠키 1개 (저장 {stored}, 삭제 {del}, 거부 {rejected}).', 'Set-Cookie: 쿠키 {n}개 (저장 {stored}, 삭제 {del}, 거부 {rejected}).'],
     statusNs: 'cookies.txt: 쿠키 {n}개.',
+    pslLoading: 'Domain 속성을 확인하려고 공개 접미사 목록(Public Suffix List)을 불러오는 중…',
+    pslFailed: '공개 접미사 목록을 불러오지 못해 Domain 속성이 있는 쿠키는 ‘확인 못 함’으로 표시합니다. 페이지를 새로 고치면 다시 시도합니다.',
+    unknownCount: '확인 못 함 {n}',
     notes: {
       autoSet: 'Path, Expires 같은 속성이 있어 Set-Cookie로 해석했습니다. 요청 헤더라면 “Cookie”를 고르세요.',
       joinedCookie: 'Cookie 줄 {n}개를 하나의 헤더로 합쳤습니다(HTTP/2, HTTP/3에서는 나눠 보낼 수 있음, RFC 9113 §8.2.3).',
@@ -685,7 +715,7 @@ const STRINGS = {
       hmlpvt: 'Baidu 통계(百度统计): 현재 방문 시각.'
     },
     setTitle: 'Set-Cookie · {n}개 · 저장 {stored} · 삭제 {del} · 거부 {rejected}',
-    verdict: { stored: '저장', delete: '삭제', rejected: '거부' },
+    verdict: { stored: '저장', delete: '삭제', rejected: '거부', unknown: '확인 못 함' },
     editInBuilder: '생성기에서 편집',
     fDomain: 'Domain',
     fPath: 'Path',
@@ -722,7 +752,9 @@ const STRINGS = {
       prefixSecure: '{prefix} 접두사는 Secure가 필요해 쿠키가 무시됩니다.',
       prefixHost: '{prefix} 접두사는 Secure, Path=/, Domain 없음이 필요합니다. 부족한 것: {why}.',
       prefixHttp: '{prefix} 접두사는 Secure와 HttpOnly가 필요해 쿠키가 무시됩니다.',
-      namelessPrefix: '이름 없는 쿠키의 값은 __Secure-, __Host-, __Http-로 시작할 수 없어 무시됩니다.'
+      namelessPrefix: '이름 없는 쿠키의 값은 __Secure-, __Host-, __Http-로 시작할 수 없어 무시됩니다.',
+      domainPublicSuffix: 'Domain={domain}은 공개 접미사입니다(Public Suffix List 규칙 {rule}). 그 아래 등록된 모든 사이트로 전송되므로 브라우저가 쿠키를 무시합니다.',
+      domainPrivateSuffix: 'Domain={domain}은 Public Suffix List PRIVATE 부분의 접미사입니다(규칙 {rule}). 운영자가 하위 도메인을 서로 다른 사용자에게 나눠 주므로 브라우저가 쿠키를 무시합니다.'
     },
     issues: {
       emptyName: '이름이 비어 있음: 브라우저는 값만 보냅니다.',
@@ -764,7 +796,9 @@ const STRINGS = {
       noSecure: 'Secure가 없음: 암호화되지 않은 http://로도 전송됩니다.',
       noHttpOnly: 'HttpOnly가 없음: 페이지 스크립트가 document.cookie로 읽을 수 있습니다.',
       noSameSite: 'SameSite가 없음: Chrome 80+, Edge 86+는 Lax로 처리하고 Firefox, Safari는 크로스 사이트 요청에도 보냅니다. 명시하세요.',
-      thirdParty: 'SameSite=None인데 Partitioned가 없음: 서드파티 쿠키라서 브라우저가 막을 수 있습니다.'
+      thirdParty: 'SameSite=None인데 Partitioned가 없음: 서드파티 쿠키라서 브라우저가 막을 수 있습니다.',
+      pslUnknown: '공개 접미사 목록을 아직 불러오지 못해 Domain={domain}을 확인할 수 없습니다. 공개 접미사라면 브라우저가 쿠키를 거부합니다.',
+      domainSuffixHost: 'Domain={domain}은 공개 접미사이고 응답 호스트와 같습니다: 쿠키는 host-only가 됩니다(RFC 6265bis §5.7).'
     },
     simTitle: '다음 요청에는 어떤 쿠키가 실릴까?',
     respUrl: '응답 URL(이 Set-Cookie를 보낸 주소)',
@@ -787,7 +821,9 @@ const STRINGS = {
       sameSiteStrict: '{name}: SameSite=Strict는 크로스 사이트 요청에 실리지 않습니다.',
       sameSiteLax: '{name}: SameSite=Lax는 크로스 사이트에서는 최상위 GET에만 실립니다.',
       sameSiteDefault: '{name}: SameSite가 없어 Chrome, Edge에서는 Lax로 처리됩니다.',
-      partitioned: '{name}: Partitioned라서 설정된 사이트 아래에서만 쓰입니다.'
+      partitioned: '{name}: Partitioned라서 설정된 사이트 아래에서만 쓰입니다.',
+      publicSuffix: '{name}: 도메인 {domain}이 공개 접미사라서 브라우저가 저장하지 않습니다.',
+      pslUnknown: '{name}: 공개 접미사 목록을 불러오지 못해 {domain}을 확인할 수 없습니다.'
     },
     nsTitle: 'cookies.txt · 쿠키 {n}개',
     nsBad: '{lines}번째 줄은 탭으로 구분된 7개 필드가 아니라서 건너뛰었습니다.',
@@ -948,6 +984,14 @@ const T = STRINGS[lang] ?? STRINGS.en;
   </details>
 </div>
 
+<script>
+  // The Public Suffix List (MPL-2.0, src/data/public-suffix-list.mjs) is a separate chunk that the
+  // page script below fetches on first use; it is not part of the page script.
+  const w = window as unknown as { __ztCookiePsl?: () => Promise<unknown> };
+  w.__ztCookiePsl = () => import('../../data/public-suffix-list.mjs').then((m) => m.default);
+  window.dispatchEvent(new Event('zt-cookie-psl'));
+</script>
+
 <script is:inline define:vars={{ S: T, pageLang: lang }}>
   (function () {
     /* ── engine:start ── */
@@ -1050,6 +1094,62 @@ const T = STRINGS[lang] ?? STRINGS.en;
     function domainMatch(host, domain) {
       if (host === domain) return true;
       return !isIpHost(host) && host.length > domain.length && host.slice(-domain.length - 1) === '.' + domain;
+    }
+    // ---- Public Suffix List (publicsuffix.org/list, "Formal algorithm") ----
+    // The list is loaded on first use (src/data/public-suffix-list.mjs). Until then, and if it
+    // fails to load, a Domain attribute cannot be checked and the cookie gets the "unknown" verdict.
+    var psl = null;
+    function setPublicSuffixList(data) {
+      if (!data) { psl = null; return null; }
+      var rules = Object.create(null), exceptions = Object.create(null), n = 0;
+      ['icann', 'private'].forEach(function (section) {
+        String(data[section] || '').split('\n').forEach(function (r) {
+          if (!r) return;
+          n++;
+          if (r[0] === '!') exceptions[r.slice(1)] = section;
+          else rules[r] = section;
+        });
+      });
+      psl = { rules: rules, exceptions: exceptions, count: n, version: data.version || '' };
+      return psl;
+    }
+    // Public suffix of an ASCII, lowercase domain: { suffix, rule, section } or null for an empty
+    // label. An exception rule wins; otherwise the matching rule with the most labels; when no
+    // rule matches, the default rule "*" (the last label).
+    function publicSuffixOf(domain) {
+      if (!psl || !domain) return null;
+      var labels = String(domain).split('.');
+      if (labels.some(function (l) { return !l; })) return null;
+      var n = labels.length, i, cand;
+      for (i = 0; i < n; i++) {
+        cand = labels.slice(i).join('.');
+        if (psl.exceptions[cand]) return { suffix: labels.slice(i + 1).join('.'), rule: '!' + cand, section: psl.exceptions[cand] };
+      }
+      var best = { suffix: labels[n - 1], rule: '*', section: null }, bestLen = 1;
+      for (i = 0; i < n; i++) {
+        cand = labels.slice(i).join('.');
+        if (psl.rules[cand] && n - i > bestLen) { best = { suffix: cand, rule: cand, section: psl.rules[cand] }; bestLen = n - i; }
+        if (i > 0 && psl.rules['*.' + cand] && n - i + 1 > bestLen) {
+          best = { suffix: labels.slice(i - 1).join('.'), rule: '*.' + cand, section: psl.rules['*.' + cand] };
+          bestLen = n - i + 1;
+        }
+      }
+      return best;
+    }
+    // The registrable domain (public suffix plus one label), or null when the domain is itself a
+    // public suffix or has an empty label.
+    function registrableDomain(domain) {
+      var ps = publicSuffixOf(domain);
+      if (!ps) return null;
+      var labels = domain.split('.'), k = ps.suffix.split('.').length;
+      return labels.length > k ? labels.slice(labels.length - k - 1).join('.') : null;
+    }
+    // { known: false } before the list is loaded; otherwise { known: true, suffix: … | null }.
+    function publicSuffixCheck(domain) {
+      if (isIpHost(domain)) return { known: true, suffix: null };
+      if (!psl) return { known: false };
+      var ps = publicSuffixOf(domain);
+      return { known: true, suffix: ps && ps.suffix === domain ? ps : null };
     }
     function defaultPath(uriPath) {
       if (!uriPath || uriPath[0] !== '/') return '/';
@@ -1410,11 +1510,26 @@ const T = STRINGS[lang] ?? STRINGS.en;
       if (dom && !dom.domain) res.issues.push(dom.value === '.' ? { code: 'domainDotOnly', sev: 'warn' } : { code: 'domainEmpty', sev: 'info' });
       if (dom && dom.domain && dom.leadingDot) res.issues.push({ code: 'domainDot', sev: 'info' });
       if (domainAttr && /[^\x00-\x7F]/.test(domainAttr)) res.reject.push({ code: 'domainNonAscii' });
-      else if (domainAttr && url) {
-        if (!domainMatch(host, domainAttr)) res.reject.push({ code: 'domainMismatch', vars: { domain: domainAttr, host: host } });
+      else if (domainAttr) {
+        // §5.7 step 9: a public suffix as Domain makes the cookie host-only when it equals the
+        // request host and is ignored otherwise. Browsers use the whole Public Suffix List.
+        var psc = publicSuffixCheck(domainAttr), suffixRejected = false;
+        if (!psc.known) {
+          res.pslPending = true;
+          res.issues.push({ code: 'pslUnknown', sev: 'warn', vars: { domain: domainAttr } });
+        } else if (psc.suffix) {
+          if (host && host === domainAttr) {
+            res.hostOnly = true;
+            res.issues.push({ code: 'domainSuffixHost', sev: 'info', vars: { domain: domainAttr } });
+          } else {
+            res.reject.push({ code: psc.suffix.section === 'private' ? 'domainPrivateSuffix' : 'domainPublicSuffix', vars: { domain: domainAttr, rule: psc.suffix.rule } });
+            suffixRejected = true;
+          }
+        }
+        if (url && !suffixRejected && !domainMatch(host, domainAttr)) res.reject.push({ code: 'domainMismatch', vars: { domain: domainAttr, host: host } });
       }
-      if (domainAttr && domainAttr.indexOf('.') < 0 && !(host && host === domainAttr)) res.issues.push({ code: 'domainSingleLabel', sev: 'warn', vars: { domain: domainAttr } });
-      if (domainAttr && !res.reject.some(function (x) { return /^domain/.test(x.code); })) res.issues.push({ code: 'domainWide', sev: 'info', vars: { domain: domainAttr } });
+      if (domainAttr && !psl && domainAttr.indexOf('.') < 0 && !(host && host === domainAttr)) res.issues.push({ code: 'domainSingleLabel', sev: 'warn', vars: { domain: domainAttr } });
+      if (domainAttr && !res.hostOnly && !res.reject.some(function (x) { return /^domain/.test(x.code); })) res.issues.push({ code: 'domainWide', sev: 'info', vars: { domain: domainAttr } });
 
       // Path (§5.7 step 11)
       var pa = lastAttr(p, 'path');
@@ -1481,7 +1596,7 @@ const T = STRINGS[lang] ?? STRINGS.en;
       if (kept && !ss) res.issues.push({ code: 'noSameSite', sev: 'info' });
       if (kept && res.sameSite === 'None' && res.secure && !res.partitioned) res.issues.push({ code: 'thirdParty', sev: 'info' });
 
-      res.verdict = res.reject.length ? 'rejected' : res.expiry.type === 'delete' ? 'delete' : 'stored';
+      res.verdict = res.reject.length ? 'rejected' : res.pslPending ? 'unknown' : res.expiry.type === 'delete' ? 'delete' : 'stored';
       res.decoded = decodeValue(p.value);
       res.info = inspectValue(p.value);
       res.known = knownCookie(p.name);
@@ -1613,7 +1728,12 @@ const T = STRINGS[lang] ?? STRINGS.en;
     function buildJar(setCookies, now) {
       var jar = [], order = 0;
       setCookies.forEach(function (a) {
-        if (a.verdict === 'rejected' || !a.domain) return;
+        if (a.verdict === 'rejected' || a.verdict === 'unknown' || !a.domain) return;
+        // Same Public Suffix List rule as analyzeSetCookie, for entries analysed before it loaded.
+        if (!a.hostOnly) {
+          var psc = publicSuffixCheck(a.domain);
+          if (!psc.known || psc.suffix) return;
+        }
         var key = a.name + '\n' + a.domain + '\n' + a.hostOnly + '\n' + a.path + '\n' + a.partitioned;
         jar = jar.filter(function (c) { return c.key !== key; });
         if (a.verdict === 'delete') return;
@@ -1626,7 +1746,10 @@ const T = STRINGS[lang] ?? STRINGS.en;
       var sent = [], skipped = [];
       jar.forEach(function (c) {
         var why = null;
+        var psc = c.hostOnly ? null : publicSuffixCheck(c.domain);
         if (c.expiresMs != null && c.expiresMs <= now) why = 'expired';
+        else if (psc && !psc.known) why = 'pslUnknown';
+        else if (psc && psc.suffix) why = 'publicSuffix';
         else if (c.hostOnly ? host !== c.domain : !domainMatch(host, c.domain)) why = 'domain';
         else if (!pathMatch(path, c.path)) why = 'path';
         else if (c.secure && !isSecureUrl(requestUrl)) why = 'secure';
@@ -1731,6 +1854,23 @@ const T = STRINGS[lang] ?? STRINGS.en;
     var mode = 'auto', current = null, trackTimer = null;
     var rtf = (typeof Intl !== 'undefined' && Intl.RelativeTimeFormat) ? new Intl.RelativeTimeFormat(pageLang, { numeric: 'always' }) : null;
 
+    // Public Suffix List: 'idle' → 'loading' → 'ready' | 'failed'. Set-Cookie lines and
+    // cookies.txt wait for it, so no Domain attribute is judged before the list is there.
+    var pslState = 'idle';
+    function ensurePsl() {
+      if (pslState === 'ready' || pslState === 'failed') return true;
+      if (pslState === 'idle') {
+        pslState = 'loading';
+        var go = function () {
+          window.__ztCookiePsl().then(function (d) { setPublicSuffixList(d); pslState = 'ready'; }, function () { pslState = 'failed'; })
+            .then(function () { render(false); buildRender(); });
+        };
+        if (typeof window.__ztCookiePsl === 'function') go();
+        else window.addEventListener('zt-cookie-psl', go, { once: true });
+      }
+      return false;
+    }
+
     function setStatus(msg, tone) { statusEl.textContent = msg; statusEl.className = 'tool-status ' + (tone || 'none'); }
     function relTime(ms, now) {
       var diff = (ms - now) / 1000, abs = Math.abs(diff), unit, size;
@@ -1826,9 +1966,9 @@ const T = STRINGS[lang] ?? STRINGS.en;
         return a;
       });
       var sec = el('section', 'ck-section');
-      var counts = { stored: 0, delete: 0, rejected: 0 };
+      var counts = { stored: 0, delete: 0, rejected: 0, unknown: 0 };
       analyses.forEach(function (a) { counts[a.verdict]++; });
-      sec.appendChild(el('h3', 'ck-h', fmt(S.setTitle, { n: analyses.length, stored: counts.stored, del: counts.delete, rejected: counts.rejected })));
+      sec.appendChild(el('h3', 'ck-h', fmt(S.setTitle, { n: analyses.length, stored: counts.stored, del: counts.delete, rejected: counts.rejected }) + (counts.unknown ? ' \u00b7 ' + fmt(S.unknownCount, { n: counts.unknown }) : '')));
       analyses.forEach(function (a, i) {
         var card = el('article', 'ck-card ck-card-' + a.verdict);
         var head = el('div', 'ck-card-head');
@@ -1941,6 +2081,12 @@ const T = STRINGS[lang] ?? STRINGS.en;
         return;
       }
       var sp = splitInput(text, mode, { split: splitEl.checked });
+      if ((sp.kind === 'netscape' || sp.setCookies.length) && !ensurePsl()) {
+        setStatus(S.pslLoading, 'info');
+        simBox.hidden = true;
+        current = null;
+        return;
+      }
       var respUrl = parseUrl(simResp.value).url;
       current = { kind: sp.kind, split: sp };
       sp.notes.forEach(function (n) { notesEl.appendChild(el('li', 'ck-note', fmt(S.notes[n.code], n.vars))); });
@@ -1963,13 +2109,15 @@ const T = STRINGS[lang] ?? STRINGS.en;
           outEl.appendChild(rs.section);
           current.set = rs.analyses;
           current.jarSource = rs.analyses;
-          var c = { stored: 0, delete: 0, rejected: 0 };
+          var c = { stored: 0, delete: 0, rejected: 0, unknown: 0 };
           rs.analyses.forEach(function (a) { c[a.verdict]++; });
           msgs.push(fmt(plural(S.statusSet, rs.analyses.length), { stored: c.stored, del: c.delete, rejected: c.rejected }));
+          if (c.unknown) msgs.push(fmt(S.unknownCount, { n: c.unknown }) + '.');
         }
       }
       if (sp.kind === 'set-cookie' || sp.kind === 'both') current.kind = 'set-cookie';
-      setStatus(msgs.join(' ') || S.statusNothing, msgs.length ? 'success' : 'info');
+      if (pslState === 'failed' && (sp.kind === 'netscape' || sp.setCookies.length)) msgs.push(S.pslFailed);
+      setStatus(msgs.join(' ') || S.statusNothing, msgs.length ? (pslState === 'failed' && (sp.kind === 'netscape' || sp.setCookies.length) ? 'error' : 'success') : 'info');
       simBox.hidden = !current.jarSource;
       if (current.jarSource) runSim();
       if (scroll && outEl.firstChild) {
@@ -2049,7 +2197,9 @@ const T = STRINGS[lang] ?? STRINGS.en;
     [decodeEl, splitEl, jsonFmtEl].forEach(function (x) { x.addEventListener('change', function () { render(false); }); });
     simResp.addEventListener('input', function () { render(false); });
     [simReq, simCtx].forEach(function (x) { x.addEventListener('input', runSim); x.addEventListener('change', runSim); });
+    // A failed import() stays failed for this document (HTML module map), so a retry needs a reload.
     $('ck-parse').addEventListener('click', function () { render(true); });
+    inputEl.addEventListener('focus', ensurePsl, { once: true });
     $('ck-ex-cookie').addEventListener('click', function () {
       inputEl.value = S.exampleCookie; simResp.value = ''; simReq.value = '';
       setMode('auto'); render(true);
@@ -2091,6 +2241,7 @@ const T = STRINGS[lang] ?? STRINGS.en;
       bf.expires.disabled = f.lifetime !== 'expires';
       bIssues.textContent = '';
       if (!f.name && !f.value) { bOut.textContent = ''; bDel.textContent = ''; return; }
+      if (f.domain) ensurePsl();
       var b = buildSetCookie(f);
       bOut.textContent = 'Set-Cookie: ' + b.line;
       bDel.textContent = 'Set-Cookie: ' + b.deleteLine;
@@ -2199,12 +2350,14 @@ const T = STRINGS[lang] ?? STRINGS.en;
   .ck-out :global(.ck-card-rejected) { border-left: 3px solid var(--color-danger); }
   .ck-out :global(.ck-card-delete) { border-left: 3px solid var(--color-accent); }
   .ck-out :global(.ck-card-stored) { border-left: 3px solid var(--color-success); }
+  .ck-out :global(.ck-card-unknown) { border-left: 3px dashed var(--color-text-muted); }
   .ck-out :global(.ck-card-head) { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
   .ck-out :global(.ck-card-head .ck-name) { font-size: 0.9rem; font-weight: 600; }
   .ck-out :global(.ck-edit) { margin-left: auto; }
   .ck-out :global(.ck-verdict) { font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; }
   .ck-out :global(.ck-verdict-stored) { background: color-mix(in oklch, var(--color-success) 18%, var(--color-surface)); color: var(--color-text); }
   .ck-out :global(.ck-verdict-delete) { background: color-mix(in oklch, var(--color-accent) 22%, var(--color-surface)); color: var(--color-text); }
+  .ck-out :global(.ck-verdict-unknown) { background: var(--color-surface-muted); color: var(--color-text); }
   .ck-out :global(.ck-verdict-rejected) { background: color-mix(in oklch, var(--color-danger) 18%, var(--color-surface)); color: var(--color-text); }
   .ck-out :global(.ck-fields) { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.2rem 0.8rem; margin: 0; font-size: 0.8rem; }
   .ck-out :global(.ck-fields dt) { color: var(--color-text-muted); }

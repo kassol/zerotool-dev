@@ -49,11 +49,13 @@ JSESSIONID=7F3A9C2E5B1D4F8A6C0E2B4D6F8A0C2E; nickname=%C8%AB%B1%E6%B5%BF; popup_
 
 ## 속성별 브라우저 처리
 
+{/* ck-check: {"set": "sid=x; Domain=co.kr", "url": "https://www.example.co.kr/", "verdict": "rejected", "reject": ["domainPublicSuffix"]} */}
+
 | 속성 | 이 도구가 적용하는 규칙 |
 |---|---|
 | `Expires` | [RFC 6265bis](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/) §5.1.1의 날짜 알고리즘으로 읽습니다. 시간대 표기는 무시하고 GMT로 봅니다. `2026-10-21T07:28:00Z` 같은 ISO 형식은 읽지 못해 세션 쿠키가 됩니다. |
 | `Max-Age` | Expires보다 우선. 0 이하는 삭제. 400일을 넘는 유효 기간은 400일로([Chrome 104부터](https://developer.chrome.com/blog/cookie-max-age-expires)). |
-| `Domain` | 앞의 점은 무시. 생략하면 설정한 호스트에만, 쓰면 모든 하위 도메인에 전송. |
+| `Domain` | 앞의 점은 무시. 생략하면 설정한 호스트에만, 쓰면 모든 하위 도메인에 전송. [Public Suffix List](https://publicsuffix.org/)에 있는 공개 접미사는 거부: `https://www.example.co.kr/`에서 받은 `sid=x; Domain=co.kr`는 거부되고, 목록 PRIVATE 부분의 `Domain=github.io`도 같습니다. Domain이 응답 호스트와 같으면 host-only가 됩니다(RFC 6265bis §5.7 9단계). |
 | `Path` | 생략하거나 `/`로 시작하지 않으면 응답 URL의 디렉터리. |
 | `SameSite` | 생략 시 Chrome 80+, Edge 86+는 Lax, Firefox·Safari는 다릅니다([MDN 호환성 데이터](https://developer.mozilla.org/ko/docs/Web/HTTP/Reference/Headers/Set-Cookie#브라우저_호환성)). `None`은 `Secure`가 필요. |
 | `Partitioned` | `Secure` 필요([CHIPS](https://datatracker.ietf.org/doc/draft-cutler-httpbis-partitioned-cookies/)). Chrome 114+, Firefox 141+, Safari 26.2+. |
@@ -85,7 +87,7 @@ PHP는 이름의 점과 공백을 밑줄로 바꿔 `connect.sid`를 `$_COOKIE['c
 
 ## 제한
 
-- 공개 접미사 목록은 내장하지 않았습니다. Domain에 점이 없으면 경고하지만, `Domain=co.kr` 같은 값은 거부로 판정하지 않습니다(브라우저는 거부합니다).
+- 공개 접미사는 Public Suffix List의 고정 버전(2026-10-01, ICANN·PRIVATE 두 부분과 와일드카드·예외 규칙 포함)으로 판정합니다. 목록은 자주 바뀌므로 그 뒤에 추가된 접미사는 모릅니다. 브라우저도 내장 목록을 각자의 주기로 갱신합니다. 목록은 압축 후 약 45 KB이며, Set-Cookie나 cookies.txt를 처음 분석할 때 불러옵니다. 불러오기 전이나 실패했을 때는 Domain 속성이 있는 쿠키를 ‘확인 못 함’으로 표시하고, 요청 시뮬레이션에서 빼며, Domain을 판정하지 않습니다.
 - 시뮬레이션은 각 Set-Cookie가 최상위 페이지의 응답에서 왔고, 그 전에는 쿠키가 없다고 가정합니다. SameSite를 쓰지 않은 새 쿠키를 Chrome이 2분 동안 크로스 사이트 POST에 싣는 예외는 다루지 않습니다.
 - 유효 기간은 붙여 넣은 시점부터 셉니다.
 - 브라우저 확장 프로그램이 내보내는 JSON은 읽지 않습니다. Cookie 헤더나 cookies.txt를 붙여 넣으세요.

@@ -65,11 +65,13 @@ Set-Cookie: lang=en; Path=/account; Max-Age=31536000
 
 ## What a Browser Does With Each Attribute
 
+{/* ck-check: {"set": "sid=x; Domain=co.uk", "url": "https://shop.co.uk/", "verdict": "rejected", "reject": ["domainPublicSuffix"]} */}
+
 | Attribute | Rule the tool applies |
 |---|---|
 | `Expires` | Read with the cookie date algorithm of RFC 6265bis §5.1.1. `2026-10-21T07:28:00Z` is not a valid cookie date, so the cookie becomes a session cookie. |
 | `Max-Age` | Wins over `Expires`. 0 or less deletes. Lifetimes over 400 days are cut to 400 days ([Chrome since 104](https://developer.chrome.com/blog/cookie-max-age-expires)). |
-| `Domain` | A leading dot is ignored. Without Domain the cookie is host-only; with it, every subdomain gets the cookie. |
+| `Domain` | A leading dot is ignored. Without Domain the cookie is host-only; with it, every subdomain gets the cookie. A public suffix from the [Public Suffix List](https://publicsuffix.org/) is refused: `sid=x; Domain=co.uk` from `https://shop.co.uk/` is rejected, and so is `Domain=github.io` (a private-section rule). If the Domain equals the response host, the cookie becomes host-only (RFC 6265bis §5.7 step 9). |
 | `Path` | Missing or not starting with `/`: the directory of the response URL. |
 | `SameSite` | Missing: Lax in Chrome 80+ and Edge 86+, not in Firefox or Safari ([MDN browser data](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#browser_compatibility)). `None` requires `Secure`. |
 | `Partitioned` | Requires `Secure` ([CHIPS](https://datatracker.ietf.org/doc/draft-cutler-httpbis-partitioned-cookies/)); Chrome 114+, Firefox 141+, Safari 26.2+. |
@@ -102,7 +104,7 @@ On 2026-10-02 we pasted the same inputs into the top Bing results for "cookie pa
 
 ## Limits
 
-- The tool has no public suffix list. It warns when Domain has no dot, but accepts `Domain=co.uk`, which browsers reject.
+- Public suffixes come from a fixed copy of the Public Suffix List (version 2026-10-01, both the ICANN and the private sections, with wildcard and exception rules). The list is updated often; a suffix added later is not known to the tool, and browsers ship their own copy at their own pace. The list (about 45 KB compressed) loads the first time you parse Set-Cookie lines or a cookies.txt file. Until it has loaded, or if it fails to load, a cookie with a Domain attribute is marked “Not verified”, is left out of the request simulation, and its Domain is not judged.
 - The simulator assumes each Set-Cookie line came from a top-level response, with no cookies stored before. It does not model Chrome's two-minute exception that sends new Lax-by-default cookies with cross-site POSTs.
 - Lifetimes are counted from the moment you paste, not from the response time.
 - JSON exports from cookie editor extensions are not read; paste a Cookie header or a cookies.txt file instead.
