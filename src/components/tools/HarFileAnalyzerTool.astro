@@ -8,6 +8,8 @@
 // The pure functions sit between the `engine:start` / `engine:end` markers so
 // scripts/test-har-file-analyzer.mjs and scripts/test-har-invariant.mjs run the shipped
 // code. TOKEN_RULES are copied from SecretRedactorTool.astro; the test checks they match.
+// The page runs the script text from `engine:start` to `worker:end` in a Worker (blob URL),
+// so parsing, scanning, redaction and cURL leave the main thread.
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -20,6 +22,7 @@ const STRINGS = {
     chooseBtn: 'Choose HAR file',
     sampleBtn: 'Try a sample HAR',
     openOther: 'Open another file',
+    cancel: 'Cancel', cancelled: 'Cancelled. The file on screen is unchanged.',
     reading: 'Reading {name}\u2026',
     loaded: 'Read {requests} in {ms}.',
     requests: ['1 request', '{n} requests'],
@@ -125,6 +128,7 @@ const STRINGS = {
     chooseBtn: '选择 HAR 文件',
     sampleBtn: '用示例 HAR 试试',
     openOther: '打开其他文件',
+    cancel: '取消', cancelled: '已取消，当前显示的文件不变。',
     reading: '正在读取 {name}\u2026',
     loaded: '已读取 {requests}，用时 {ms}。',
     requests: ['1 个请求', '{n} 个请求'],
@@ -230,6 +234,7 @@ const STRINGS = {
     chooseBtn: 'HAR ファイルを選択',
     sampleBtn: 'サンプル HAR で試す',
     openOther: '別のファイルを開く',
+    cancel: 'キャンセル', cancelled: 'キャンセルしました。表示中のファイルはそのままです。',
     reading: '{name} を読み込み中\u2026',
     loaded: '{requests}を読み込みました（{ms}）。',
     requests: ['1 件のリクエスト', '{n} 件のリクエスト'],
@@ -335,6 +340,7 @@ const STRINGS = {
     chooseBtn: 'HAR 파일 선택',
     sampleBtn: '예제 HAR로 해 보기',
     openOther: '다른 파일 열기',
+    cancel: '취소', cancelled: '취소했습니다. 표시 중인 파일은 그대로입니다.',
     reading: '{name} 읽는 중\u2026',
     loaded: '{requests}를 읽었습니다({ms}).',
     requests: ['요청 1개', '요청 {n}개'],
@@ -481,7 +487,10 @@ const SORT_COLS = [
       <button type="button" class="btn-ghost btn-sm har-meta-reset" id="har-reset">{T.openOther}</button>
     </div>
 
-    <p id="har-status" class="tool-status har-status" role="status" aria-live="polite"></p>
+    <div class="har-status-row">
+      <p id="har-status" class="tool-status har-status" role="status" aria-live="polite"></p>
+      <button type="button" class="btn-ghost btn-sm" id="har-cancel" hidden>{T.cancel}</button>
+    </div>
 
     <div class="har-tabs" id="har-tabs" role="tablist" hidden>
       <button type="button" class="har-tab" role="tab" id="har-tab-overview" aria-controls="har-view-overview" aria-selected="true" data-view="overview">{T.tabOverview}</button>
@@ -601,6 +610,7 @@ const SORT_COLS = [
 
   <script is:inline define:vars={{ S: T, TYPE_LABEL, pageLang: lang }}>
     (function () {
+      var SCRIPT_TEXT = document.currentScript ? document.currentScript.textContent : '';
       /* ── engine:start ── */
       var REDACTED = '[redacted]';
       var TOL_MS = 1.5;
@@ -1208,6 +1218,11 @@ const SORT_COLS = [
         return scanText(text, ctx);
       }
       // HAR encodes bytes with Base64. Only known text MIME types and UTF-8 are inspected.
+      function latin1Bytes(raw) {
+        var bytes = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        return bytes;
+      }
       function readBody(body) {
         var encoding = str(body.encoding).toLowerCase();
         if (!encoding) return { text: body.text };
@@ -1220,7 +1235,7 @@ const SORT_COLS = [
         if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}(?:==)?|[A-Za-z0-9+/]{3}=?)?$/.test(encoded)) return { error: 'base64' };
         var raw;
         try { raw = atob(encoded); } catch (e) { return { error: 'base64' }; }
-        try { return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Uint8Array.from(raw, function (c) { return c.charCodeAt(0); })), base64: true }; }
+        try { return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(latin1Bytes(raw)), base64: true }; }
         catch (e) { return { error: 'charset' }; }
       }
       function writeBody(body, text, encoded) {
@@ -1316,17 +1331,63 @@ const SORT_COLS = [
         var vals = [];
         removed.forEach(function (n, v) {
           if (!residueEligible(v)) return;
-          vals.push(v, encodeURIComponent(v));
-          var bytes = new TextEncoder().encode(v), raw = '';
-          bytes.forEach(function (b) { raw += String.fromCharCode(b); });
-          var b64 = btoa(raw);
-          vals.push(b64, b64.replace(/=+$/, ''), b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+          vals.push(v);
+          var pct = encodeURIComponent(v);
+          if (pct !== v) vals.push(pct);
         });
-        vals = Array.from(new Set(vals));
         if (!vals.length) return null;
-        vals.sort(function (a, b) { return b.length - a.length; });
-        return new RegExp(vals.map(function (v) { return v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|'), 'g');
+        // A prefix tree keeps the pattern small when many values share a start; the greedy
+        // optional tail after a complete value makes the longest value win.
+        return new RegExp(trieSource(vals), 'g');
       }
+      function trieSource(vals) {
+        var root = {};
+        vals.forEach(function (v) {
+          var node = root;
+          for (var i = 0; i < v.length; i++) node = node[v[i]] || (node[v[i]] = {});
+          node.$end = true;
+        });
+        function esc1(k) { return k.replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&'); }
+        function emit(node) {
+          var keys = Object.keys(node).filter(function (k) { return k !== '$end'; });
+          if (!keys.length) return '';
+          var alts = keys.map(function (k) {
+            // Follow single-child chains in a loop, so a long value does not deepen the recursion.
+            var s = esc1(k), n = node[k], ks;
+            while (!n.$end && (ks = Object.keys(n)).length === 1) { s += esc1(ks[0]); n = n[ks[0]]; }
+            return s + emit(n);
+          });
+          var body = alts.length === 1 ? alts[0] : '(?:' + alts.join('|') + ')';
+          return node.$end ? '(?:' + body + ')?' : body;
+        }
+        return emit(root);
+      }
+      // A removed value can also sit in the text Base64-encoded, alone or inside a longer
+      // encoded string. Each run of Base64 characters is decoded and searched; a run that
+      // hides a removed value is replaced as a whole. Searching for the encoded forms instead
+      // would put every letter at the start of the pattern and make the search very slow.
+      var B64_RUN = /(?<![A-Za-z0-9+\/_-])[A-Za-z0-9+\/_-]{11,}={0,2}/g;
+      function decodeRun(run) {
+        var t = run.replace(/=+$/, '').replace(/-/g, '+').replace(/_/g, '/');
+        if (t.length % 4 === 1) t = t.slice(0, -1);
+        while (t.length % 4) t += '=';
+        var raw;
+        try { raw = atob(t); } catch (e) { return ''; }
+        if (!/[\x80-\xff]/.test(raw)) return raw;
+        return raw + '\n' + new TextDecoder().decode(latin1Bytes(raw));
+      }
+      function replaceKnownIn(s, re, onHit) {
+        re.lastIndex = 0;
+        s = s.replace(re, function () { onHit(); return REDACTED; });
+        B64_RUN.lastIndex = 0;
+        return s.replace(B64_RUN, function (run) {
+          var d = decodeRun(run);
+          re.lastIndex = 0;
+          if (!d || !re.test(d)) return run;
+          onHit(); return REDACTED;
+        });
+      }
+      function countKnownIn(s, re) { var n = 0; replaceKnownIn(s, re, function () { n++; }); return n; }
       function walkStrings(x, fn) {
         if (Array.isArray(x)) { for (var i = 0; i < x.length; i++) { if (typeof x[i] === 'string') x[i] = fn(x[i]); else walkStrings(x[i], fn); } }
         else if (isObj(x)) { for (var k in x) { if (!Object.prototype.hasOwnProperty.call(x, k)) continue; if (typeof x[k] === 'string') x[k] = fn(x[k]); else walkStrings(x[k], fn); } }
@@ -1334,8 +1395,11 @@ const SORT_COLS = [
 
       // Decode JSON string escapes before applying known-value replacement, preserving text
       // formatting when nothing changes. This also handles JSON bodies stored as Base64.
+      function mayHoldJsonEscapes(s) { return s.indexOf('\\') >= 0 && /^\s*[\[{"]/.test(s); }
       function replaceKnownText(text, re, ctx) {
-        var replace = function (s) { re.lastIndex = 0; return s.replace(re, function () { ctx.counts.elsewhere++; return REDACTED; }); };
+        var replace = function (s) { return replaceKnownIn(s, re, function () { ctx.counts.elsewhere++; }); };
+        // Without a backslash, JSON strings hold the same characters as the raw text.
+        if (!mayHoldJsonEscapes(text)) return replace(text);
         var parsed;
         try { parsed = JSON.parse(text); } catch (e) { return replace(text); }
         var before = ctx.counts.elsewhere;
@@ -1361,9 +1425,8 @@ const SORT_COLS = [
       function countResidue(root, re) {
         var count = 0, pending = [root];
         function inspect(s) {
-          re.lastIndex = 0;
-          var matches = s.match(re); if (matches) count += matches.length;
-          try { var value = JSON.parse(s); if (value && typeof value === 'object') pending.push(value); else if (typeof value === 'string' && value !== s) { re.lastIndex = 0; var m = value.match(re); if (m) count += m.length; } } catch (e) {}
+          count += countKnownIn(s, re);
+          if (mayHoldJsonEscapes(s)) try { var value = JSON.parse(s); if (value && typeof value === 'object') pending.push(value); else if (typeof value === 'string' && value !== s) count += countKnownIn(value, re); } catch (e) {}
         }
         while (pending.length) {
           var x = pending.pop();
@@ -1372,7 +1435,7 @@ const SORT_COLS = [
             if (typeof x[k] !== 'string') { pending.push(x[k]); return; }
             inspect(x[k]);
             if (k === 'text' && str(x.encoding).toLowerCase() === 'base64') {
-              try { var bytes = Uint8Array.from(atob(x[k]), function (c) { return c.charCodeAt(0); }); inspect(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
+              try { inspect(new TextDecoder('utf-8', { fatal: true }).decode(latin1Bytes(atob(x[k])))); }
               catch (e) { count++; }
             }
           });
@@ -1554,6 +1617,76 @@ const SORT_COLS = [
       }
       /* ── engine:end ── */
 
+      /* ── worker:start ── */
+      // Runs in a Worker made from the engine source above, so a large HAR is parsed, scanned
+      // and redacted off the main thread. The page keeps only the row index; entries, exports
+      // and cURL text are sent back on request. `scope` is the Worker global, or a stand-in
+      // that runs the same code on the page when a Worker cannot be created.
+      function harWorkerMain(scope) {
+        var har = null;
+        function reply(id, msg) { msg.id = id; msg.sentAt = performance.timeOrigin + performance.now(); scope.postMessage(msg); }
+        function loaded(id, data, steps) {
+          var r = checkHar(data);
+          if (r.error) { reply(id, { type: 'loadError', error: r.error, detail: r.detail }); return; }
+          har = r.har;
+          var t = performance.now(), idx = buildIndex(har);
+          steps.index = performance.now() - t;
+          t = performance.now();
+          var sens = scanSensitive(har);
+          steps.scan = performance.now() - t;
+          reply(id, { type: 'loaded', idx: idx, sens: sens, sanitized: looksSanitizedChrome(har, sens), steps: steps });
+        }
+        function load(id, m) {
+          var t0 = performance.now();
+          if (m.sample) { loaded(id, sampleHar(), {}); return; }
+          var read = m.file ? m.file.text() : Promise.resolve(m.text);
+          read.then(function (text) {
+            var t1 = performance.now(), data;
+            try { data = JSON.parse(String(text).replace(/^\uFEFF/, '')); }
+            catch (err) { reply(id, { type: 'loadError', error: 'json', detail: String(err && err.message || err) }); return; }
+            text = null;
+            loaded(id, data, { read: t1 - t0, parse: performance.now() - t1 });
+          }, function () { reply(id, { type: 'loadError', error: 'read' }); });
+        }
+        function subset(indices) {
+          var log = {};
+          Object.keys(har.log).forEach(function (k) { if (k !== 'entries') log[k] = har.log[k]; });
+          log.entries = indices ? indices.map(function (i) { return har.log.entries[i]; }) : har.log.entries;
+          return log;
+        }
+        scope.onmessage = function (ev) {
+          var m = ev.data, id = m.id;
+          try {
+            if (m.type === 'load') { load(id, m); return; }
+            if (!har) { reply(id, { type: 'error', message: 'no file' }); return; }
+            if (m.type === 'entry') {
+              var e = har.log.entries[m.i];
+              reply(id, { type: 'entry', entry: m.mask ? redactEntry(structuredClone(e), newCtx({ tokens: true })) : e });
+            } else if (m.type === 'export') {
+              if (!m.redact) {
+                var log = subset(m.indices);
+                reply(id, { type: 'exported', blob: new Blob([JSON.stringify({ log: log }, null, 2)], { type: 'application/json' }), entries: log.entries.length });
+                return;
+              }
+              var res = redactHar(har, m.opts, m.indices);
+              if (res.error) { reply(id, { type: 'exported', error: res.error, count: res.count }); return; }
+              reply(id, { type: 'exported', blob: new Blob([res.json], { type: 'application/json' }), report: {
+                counts: res.counts, kept: res.kept, names: res.names, total: res.total, left: res.left, entries: res.entries, coverage: res.coverage } });
+            } else if (m.type === 'curl') {
+              var ctx = newCtx({ tokens: true }), cmds = [];
+              m.indices.forEach(function (i) {
+                var en = har.log.entries[i];
+                if (m.redact) en = redactEntry(structuredClone(en), ctx);
+                var c = curlFor(en, m.platform);
+                if (c) cmds.push(c);
+              });
+              reply(id, { type: 'curl', text: curlJoin(cmds, m.platform) });
+            }
+          } catch (err) { reply(id, { type: 'error', message: String(err && err.message || err) }); }
+        };
+      }
+      /* ── worker:end ── */
+
       function $(id) { return document.getElementById(id); }
       function f(s, vars) { return String(s).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? vars[k] : m; }); }
       function nfmt(n) { return Number(n).toLocaleString('en-US'); }
@@ -1570,7 +1703,7 @@ const SORT_COLS = [
       var detailEl = $('har-detail'), detailBody = $('har-detail-body'), maskEl = $('har-mask');
       var searchEl = $('har-search'), statusChips = $('har-status-chips'), typeChips = $('har-type-chips');
 
-      var har = null, idx = null, sens = null, fileName = '';
+      var idx = null, sens = null, sanitized = false, fileName = '';
       var sortKey = 'start', sortDesc = false;
       var filt = { query: '', status: new Set(), types: new Set() };
       var view = [];
@@ -1584,30 +1717,109 @@ const SORT_COLS = [
         statusEl.setAttribute('data-tone', tone || '');
       }
 
+      // ---------- worker ----------
+      // `current` holds the file on screen. A new file is parsed in its own worker (`loader`),
+      // which replaces `current` only when it succeeds; a newer file or Cancel terminates it.
+      // Replies are matched by request id, and requests to a terminated worker are dropped,
+      // so an older task cannot overwrite a newer result.
+      var current = null, loader = null, reqSeq = 0, pending = {}, workerUrl = '';
+      function engineSource() {
+        var a = SCRIPT_TEXT.indexOf('/* \u2500\u2500 engine:' + 'start \u2500\u2500 */');
+        var b = SCRIPT_TEXT.indexOf('/* \u2500\u2500 worker:' + 'end \u2500\u2500 */');
+        return a >= 0 && b > a ? SCRIPT_TEXT.slice(a, b) + '\nharWorkerMain(self);\n' : '';
+      }
+      function makeWorker() {
+        var w = { real: null, dead: false };
+        var onMsg = function (ev) { if (!w.dead) receive(w, ev.data); };
+        try {
+          if (!workerUrl) { var src = engineSource(); if (src) workerUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })); }
+          if (workerUrl && typeof Worker === 'function') {
+            w.real = new Worker(workerUrl);
+            w.real.onmessage = onMsg;
+            w.real.onerror = function (e) { e.preventDefault(); receive(w, { type: 'crash', message: e.message || '' }); };
+            w.post = function (m) { w.real.postMessage(m); };
+            w.stop = function () { w.dead = true; w.real.terminate(); };
+            return w;
+          }
+        } catch (err) { w.real = null; }
+        // Same code on this thread: no Worker support, or the script text was not readable.
+        var scope = { postMessage: function (m) { setTimeout(function () { onMsg({ data: m }); }, 0); } };
+        harWorkerMain(scope);
+        w.post = function (m) { setTimeout(function () { if (!w.dead) scope.onmessage({ data: m }); }, 0); };
+        w.stop = function () { w.dead = true; };
+        return w;
+      }
+      function stopWorker(w) {
+        if (!w) return;
+        w.stop();
+        Object.keys(pending).forEach(function (id) { if (pending[id].w === w) delete pending[id]; });
+      }
+      function request(w, msg, cb) {
+        if (!w) return 0;
+        msg.id = ++reqSeq;
+        pending[msg.id] = { w: w, cb: cb };
+        w.post(msg);
+        return msg.id;
+      }
+      function receive(w, msg) {
+        if (msg.type === 'crash') {
+          Object.keys(pending).forEach(function (id) { if (pending[id].w === w) { var p = pending[id]; delete pending[id]; p.cb({ type: 'error', message: msg.message }); } });
+          return;
+        }
+        var p = pending[msg.id];
+        if (!p || p.w !== w) return;
+        delete pending[msg.id];
+        if (msg.sentAt) performance.measure('har:message:' + msg.type, { start: msg.sentAt - performance.timeOrigin, end: performance.now() });
+        p.cb(msg);
+      }
+
       // ---------- loading ----------
+      var busy = null;
+      var cancelBtn = $('har-cancel');
+      function setBusy(kind) { busy = kind; cancelBtn.hidden = !kind; }
+      function startLoad(msg, name) {
+        stopWorker(loader);
+        var w = loader = makeWorker();
+        var t0 = performance.now();
+        setStatus(f(S.reading, { name: name }), '');
+        setBusy('load');
+        request(w, msg, function (r) {
+          if (loader !== w) return;
+          loader = null;
+          setBusy(null);
+          if (r.type !== 'loaded') {
+            stopWorker(w);
+            if (r.error === 'json') setStatus(f(S.errJson, { msg: r.detail }), 'error');
+            else if (r.error === 'notHar') setStatus(S.errNotHar, 'error');
+            else if (r.error === 'version') setStatus(f(S.errVersion, { v: r.detail }), 'error');
+            else if (r.error === 'empty') setStatus(S.errEmpty, 'error');
+            else if (r.error === 'read') setStatus(S.errRead, 'error');
+            else setStatus(String(r.message || S.errRead), 'error');
+            return;
+          }
+          stopWorker(current);
+          current = w;
+          ingest(r, name, t0);
+        });
+      }
       function loadFile(file) {
         if (!file) return;
         if (file.size > MAX_BYTES) { setStatus(f(S.errTooBig, { size: fmtBytes(file.size), max: fmtBytes(MAX_BYTES) }), 'error'); return; }
-        setStatus(f(S.reading, { name: file.name }), '');
-        var t0 = performance.now();
-        file.text().then(function (text) {
-          setTimeout(function () { loadText(text, file.name, t0); }, 0);
-        }, function () { setStatus(S.errRead, 'error'); });
+        startLoad({ type: 'load', file: file }, file.name);
       }
-      function loadText(text, name, t0) {
-        if (t0 == null) t0 = performance.now();
-        var r = readHarText(text);
-        if (r.error === 'json') { setStatus(f(S.errJson, { msg: r.detail }), 'error'); return; }
-        if (r.error === 'notHar') { setStatus(S.errNotHar, 'error'); return; }
-        if (r.error === 'version') { setStatus(f(S.errVersion, { v: r.detail }), 'error'); return; }
-        if (r.error === 'empty') { setStatus(S.errEmpty, 'error'); return; }
-        ingest(r.har, name, t0);
-      }
-      function ingest(data, name, t0) {
-        har = data;
+      function loadText(text, name) { startLoad({ type: 'load', text: text }, name); }
+      cancelBtn.addEventListener('click', function () {
+        if (busy === 'load') { stopWorker(loader); loader = null; }
+        else if (busy === 'export') { Object.keys(pending).forEach(function (id) { if (pending[id].kind === 'export') delete pending[id]; }); }
+        setBusy(null);
+        setStatus(S.cancelled, '');
+      });
+      function ingest(r, name, t0) {
+        var tr = performance.now();
         fileName = name || 'capture.har';
-        idx = buildIndex(har);
-        sens = scanSensitive(har);
+        idx = r.idx;
+        sens = r.sens;
+        sanitized = r.sanitized;
         filt = { query: '', status: new Set(), types: new Set() };
         searchEl.value = '';
         sortKey = 'start'; sortDesc = false;
@@ -1630,10 +1842,13 @@ const SORT_COLS = [
         var msg = f(S.loaded, { requests: plural(S.requests, idx.rows.length), name: fileName, ms: fmtMs(performance.now() - t0) });
         if (idx.stats.skipped) msg += ' ' + f(S.skipped, { n: idx.stats.skipped });
         setStatus(msg, 'success');
+        performance.measure('har:render', { start: tr, end: performance.now() });
+        Object.keys(r.steps || {}).forEach(function (k) { performance.measure('har:worker:' + k, { start: 0, duration: r.steps[k] }); });
         track('parse');
       }
       function resetAll() {
-        har = null; idx = null; sens = null; view = []; selected = -1;
+        stopWorker(loader); stopWorker(current); loader = null; current = null; setBusy(null);
+        idx = null; sens = null; sanitized = false; view = []; selected = -1; entryCache = null;
         startEl.hidden = false; metaEl.hidden = true; tabsEl.hidden = true;
         Object.keys(views).forEach(function (k) { views[k].hidden = true; });
         spacer.innerHTML = ''; detailBody.innerHTML = ''; detailEl.hidden = true;
@@ -1699,7 +1914,7 @@ const SORT_COLS = [
         $('har-sens-list').innerHTML = items.map(function (x) { return '<li><span>' + esc(x[0]) + '</span><b>' + nfmt(x[1]) + '</b></li>'; }).join('');
         $('har-sens-intro').textContent = credentials ? S.sensIntro : S.sensNone;
         $('har-sens').classList.toggle('is-clean', !credentials);
-        $('har-sanitized-note').hidden = !looksSanitizedChrome(har, sens);
+        $('har-sanitized-note').hidden = !sanitized;
 
         // findings
         var fl = [];
@@ -1889,10 +2104,16 @@ const SORT_COLS = [
       });
 
       // ---------- detail ----------
-      function entryForDetail(i) {
-        var e = har.log.entries[i];
-        if (!maskEl.checked) return e;
-        return redactEntry(structuredClone(e), newCtx({ tokens: true }));
+      // The entry comes from the worker; the last one is kept so switching sub-tabs is immediate.
+      var entryCache = null, detailSeq = 0;
+      function withEntry(i, mask, cb) {
+        if (entryCache && entryCache.i === i && entryCache.mask === mask) { cb(entryCache.entry); return; }
+        var seq = ++detailSeq;
+        request(current, { type: 'entry', i: i, mask: mask }, function (r) {
+          if (seq !== detailSeq || r.type !== 'entry') return;
+          entryCache = { i: i, mask: mask, entry: r.entry };
+          cb(r.entry);
+        });
       }
       function kvList(list) {
         if (!Array.isArray(list) || !list.length) return '<p class="har-empty">' + esc(S.dNone) + '</p>';
@@ -1967,9 +2188,13 @@ const SORT_COLS = [
       }
       var curlPlatformDetail = 'unix';
       function renderDetail() {
-        if (selected < 0 || !har) return;
+        if (selected < 0 || !idx) return;
+        var want = selected, mask = maskEl.checked;
+        withEntry(want, mask, function (e) { if (selected === want && maskEl.checked === mask) paintDetail(e); });
+      }
+      function paintDetail(e) {
+        var t0 = performance.now();
         var r = rowByIndex(selected);
-        var e = entryForDetail(selected);
         var req = isObj(e.request) ? e.request : {};
         var res = isObj(e.response) ? e.response : {};
         $('har-detail-title').textContent = r.method + ' ' + (r.status > 0 ? r.status : S.statusFailedLabel) + ' \u00b7 ' + r.name;
@@ -2015,9 +2240,10 @@ const SORT_COLS = [
         if (pl) pl.addEventListener('change', function () { curlPlatformDetail = pl.value; renderDetail(); });
         var cp = $('har-detail-copy');
         if (cp) cp.addEventListener('click', function () { copyText(curlFor(e, curlPlatformDetail), cp); });
+        performance.measure('har:detail:' + subTab, { start: t0, end: performance.now() });
       }
       function openDetail(i, fromOverview) {
-        if (!har) return;
+        if (!idx) return;
         selected = i;
         if (fromOverview) {
           switchView('requests');
@@ -2133,55 +2359,50 @@ const SORT_COLS = [
         return html;
       }
       function runExport(redact, fromOverview) {
-        if (!har) return;
+        if (!idx || !current || busy) return;
         var indices = fromOverview ? null : scopeIndices();
         var count = indices ? indices.length : idx.rows.length;
         var report = $('har-report');
-        if (!redact) {
-          var log = {};
-          Object.keys(har.log).forEach(function (k) { if (k !== 'entries') log[k] = har.log[k]; });
-          log.entries = indices ? indices.map(function (i) { return har.log.entries[i]; }) : har.log.entries;
-          var rawName = baseName() + (indices ? '-subset' : '') + '.har';
-          saveBlob(JSON.stringify({ log: log }, null, 2), rawName);
-          report.innerHTML = '<p class="har-note">' + esc(f(S.exRawDone, { file: rawName, requests: plural(S.requests, log.entries.length) })) + '</p>';
-          track('export_raw');
-          return;
-        }
         var opts = fromOverview ? { tokens: true, everywhere: true, dropReq: false, dropRes: false, ips: false, extra: '' } : readOpts();
         setStatus(f(S.exWorking, { requests: plural(S.requests, count) }), '');
-        setTimeout(function () {
-          var res;
-          try { res = redactHar(har, opts, indices); }
-          catch (err) { setStatus(String(err && err.message || err), 'error'); return; }
+        setBusy('export');
+        var id = request(current, { type: 'export', redact: redact, opts: opts, indices: indices }, function (res) {
+          setBusy(null);
+          if (res.type !== 'exported') { setStatus(String(res.message || S.errRead), 'error'); return; }
+          if (!redact) {
+            var rawName = baseName() + (indices ? '-subset' : '') + '.har';
+            saveBlob(res.blob, rawName);
+            report.innerHTML = '<p class="har-note">' + esc(f(S.exRawDone, { file: rawName, requests: plural(S.requests, res.entries) })) + '</p>';
+            setStatus('', '');
+            track('export_raw');
+            return;
+          }
           if (res.error === 'residue') {
             setStatus(f(S.exResidue, { n: nfmt(res.count) }), 'error');
             report.innerHTML = '<p class="har-report-bad">' + esc(f(S.exResidue, { n: nfmt(res.count) })) + '</p>';
             return;
           }
+          var rep = res.report;
           var name = baseName() + '-redacted.har';
-          saveBlob(res.json, name);
-          report.innerHTML = reportHtml(res, name);
-          setStatus(res.left ? f(S.exDoneLeft, { file: name, n: nfmt(res.total), left: nfmt(res.left) }) : f(S.exDone, { file: name, n: nfmt(res.total), requests: plural(S.requests, res.entries) }), res.left ? '' : 'success');
+          saveBlob(res.blob, name);
+          report.innerHTML = reportHtml(rep, name);
+          setStatus(rep.left ? f(S.exDoneLeft, { file: name, n: nfmt(rep.total), left: nfmt(rep.left) }) : f(S.exDone, { file: name, n: nfmt(rep.total), requests: plural(S.requests, rep.entries) }), rep.left ? '' : 'success');
           if (fromOverview) { switchView('export'); }
           track('export_redacted');
-        }, 30);
+        });
+        if (pending[id]) pending[id].kind = 'export';
       }
       $('har-export').addEventListener('click', function () { runExport(true, false); });
       $('har-export-raw').addEventListener('click', function () { runExport(false, false); });
       $('har-copy-curl').addEventListener('click', function () {
-        if (!har) return;
-        var platform = $('har-curl-platform').value;
-        var redact = $('har-curl-redact').checked;
-        var ctx = newCtx({ tokens: true });
-        var cmds = [];
-        view.slice().sort(function (a, b) { return a.start - b.start || a.i - b.i; }).forEach(function (r) {
-          var e = har.log.entries[r.i];
-          if (redact) e = redactEntry(structuredClone(e), ctx);
-          var c = curlFor(e, platform);
-          if (c) cmds.push(c);
+        if (!idx || !current) return;
+        var btn = $('har-copy-curl');
+        var order = view.slice().sort(function (a, b) { return a.start - b.start || a.i - b.i; }).map(function (r) { return r.i; });
+        request(current, { type: 'curl', indices: order, platform: $('har-curl-platform').value, redact: $('har-curl-redact').checked }, function (r) {
+          if (r.type !== 'curl') { setStatus(String(r.message || S.copyFailed), 'error'); return; }
+          copyText(r.text, btn);
+          track('copy_curl');
         });
-        copyText(curlJoin(cmds, platform), $('har-copy-curl'));
-        track('copy_curl');
       });
 
       // ---------- input wiring ----------
@@ -2189,7 +2410,7 @@ const SORT_COLS = [
       drop.addEventListener('click', pick);
       drop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
       $('har-choose').addEventListener('click', pick);
-      $('har-sample').addEventListener('click', function () { var t0 = performance.now(); ingest(sampleHar(), 'sample-shop.har', t0); track('sample'); });
+      $('har-sample').addEventListener('click', function () { startLoad({ type: 'load', sample: true }, 'sample-shop.har'); track('sample'); });
       $('har-reset').addEventListener('click', function () { resetAll(); drop.focus(); });
       fileInput.addEventListener('change', function () {
         if (fileInput.files && fileInput.files[0]) loadFile(fileInput.files[0]);
@@ -2210,13 +2431,11 @@ const SORT_COLS = [
         var text = e.clipboardData && e.clipboardData.getData('text/plain');
         if (!text || !/^\s*\{/.test(text) || text.indexOf('"log"') < 0) return;
         e.preventDefault();
-        setStatus(f(S.reading, { name: 'clipboard' }), '');
-        var t0 = performance.now();
-        setTimeout(function () { loadText(text, 'pasted.har', t0); }, 0);
+        loadText(text, 'pasted.har');
       });
       // ToolLayout's Ctrl/Cmd+L clears text inputs inside the widget; also close the file.
       document.addEventListener('keydown', function (e) {
-        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && shell.contains(document.activeElement) && har) {
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && shell.contains(document.activeElement) && (idx || loader)) {
           setTimeout(function () { resetAll(); drop.focus(); }, 0);
         }
       });
@@ -2228,6 +2447,9 @@ const SORT_COLS = [
   .har-shell { display: flex; flex-direction: column; gap: 0.8rem; min-width: 0; position: relative; }
   .har-shell [hidden] { display: none !important; }
   .har-shell.is-dragover { outline: 2px dashed var(--color-primary); outline-offset: 6px; border-radius: var(--radius-lg); }
+  .har-status-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  .har-status-row .har-status { flex: 1 1 auto; min-width: 0; }
+  .har-status-row:has(.har-status:empty):has(#har-cancel[hidden]) { display: none; }
   .har-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
   .har-start { display: flex; flex-direction: column; gap: 0.6rem; }

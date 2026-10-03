@@ -508,6 +508,99 @@ function baseEntry(over = {}) {
   check('log.comment does not reintroduce removed secret', !cr.error && !JSON.parse(cr.json).log.comment.includes(secret));
 }
 
+// ---------- Base64 runs and the known-value pattern ----------
+{
+  const withHeader = (value, body, mime = 'text/plain') => {
+    const e = baseEntry();
+    e.request.headers = [{ name: 'Authorization', value: 'Bearer ' + value }];
+    e.response.content = { size: body.length, mimeType: mime, text: body };
+    return one(e);
+  };
+  const v8 = 'ab12cd34'; // 8 characters: Base64 without padding is 11 characters
+  const r1 = withHeader(v8, 'id=' + Buffer.from(v8).toString('base64').replace(/=+$/, '') + ' end');
+  check('11-character unpadded Base64 of an 8-character value replaced', !r1.json.includes(Buffer.from(v8).toString('base64').replace(/=+$/, '')) && r1.json.includes('id=[redacted] end'));
+  const long = 'fixtureSession123456789';
+  const wrapped = Buffer.from('{"user":"demo","sid":"' + long + '","n":1}').toString('base64url');
+  const r2 = withHeader(long, 'token ' + wrapped + ' tail');
+  check('value inside a longer Base64url run: run replaced', r2.json.includes('token [redacted] tail'));
+  const r3 = withHeader(long, 'plain ' + Buffer.from('nothing secret in here').toString('base64') + ' text');
+  check('unrelated Base64 run kept', r3.json.includes(Buffer.from('nothing secret in here').toString('base64')));
+  // Longest value wins when one removed value is a prefix of another.
+  const e4 = baseEntry();
+  e4.request.headers = [{ name: 'Cookie', value: 'a=prefixValue123; b=prefixValue123456789' }];
+  e4.response.content = { size: 10, mimeType: 'text/plain', text: 'x prefixValue123456789 y prefixValue123 z' };
+  const r4 = one(e4);
+  check('longest removed value replaced whole', JSON.parse(r4.json).log.entries[0].response.content.text === 'x [redacted] y [redacted] z');
+  const huge = 'q1' + 'x'.repeat(200000);
+  const e5 = baseEntry();
+  e5.request.headers = [{ name: 'X-Api-Key', value: huge }];
+  e5.response.content = { size: 10, mimeType: 'text/plain', text: 'echo ' + huge };
+  let r5; try { r5 = one(e5); } catch (err) { r5 = { error: String(err) }; }
+  check('200,000-character removed value: no stack overflow, echo replaced', !r5.error && !r5.json.includes(huge), String(r5.error));
+  const many = baseEntry();
+  many.request.headers = Array.from({ length: 3000 }, (_, i) => ({ name: 'X-Token-' + i, value: 'tok' + i + 'abcdefgh' }));
+  many.response.content = { size: 10, mimeType: 'text/plain', text: 'tok2999abcdefgh '.repeat(2000) + 'x'.repeat(2e6) };
+  const t0 = performance.now();
+  const r6 = one(many);
+  const ms = performance.now() - t0;
+  check('3,000 removed values over 2 MB of text: replaced', !r6.json.includes('tok2999abcdefgh'));
+  check('3,000 removed values over 2 MB of text: under 1.5 s', ms < 1500 * PERF_SLACK, ms.toFixed(0) + ' ms');
+}
+
+// ---------- worker protocol ----------
+// The page builds its Worker from the script text between `engine:start` and `worker:end`.
+// Run that same text with a stand-in scope and compare each reply with direct engine calls.
+await (async () => {
+  const W0 = componentSrc.indexOf('/* ── worker:end ── */');
+  check('worker markers present', componentSrc.indexOf('/* ── worker:start ── */') > ei && W0 > ei);
+  const workerSrc = componentSrc.slice(si, W0);
+  const main = componentSrc.slice(W0, componentSrc.indexOf('</script>', W0));
+  for (const fn of ['redactHar(', 'buildIndex(', 'scanSensitive(', 'readHarText(', 'redactEntry(', 'sampleHar('])
+    check('main thread does not call ' + fn, !main.includes(fn));
+  const replies = [];
+  const scope = { postMessage: (m) => replies.push(structuredClone(m)) };
+  new Function('scope', workerSrc + '\nharWorkerMain(scope);')(scope);
+  const send = async (m) => { replies.length = 0; scope.onmessage({ data: structuredClone(m) }); for (let k = 0; k < 50 && !replies.length; k++) await new Promise((r) => setTimeout(r, 5)); return replies[0]; };
+  const before = await send({ id: 1, type: 'entry', i: 0 });
+  eq('request before a file is loaded', [before.id, before.type], [1, 'error']);
+  const bad = await send({ id: 2, type: 'load', file: new Blob(['{nope']) });
+  eq('bad JSON reported by the worker', [bad.id, bad.type, bad.error], [2, 'loadError', 'json']);
+  const notHar = await send({ id: 3, type: 'load', text: '{"log":{}}' });
+  eq('not a HAR', notHar.error, 'notHar');
+  const har = E.sampleHar();
+  const secret = 'fixtureSession123456789';
+  har.log.entries[0].response.content = { size: 40, mimeType: 'application/json', encoding: 'base64', text: Buffer.from(JSON.stringify({ echo: secret })).toString('base64') };
+  har.log.entries[0].request.headers.push({ name: 'Authorization', value: 'Bearer ' + secret });
+  const text = '\uFEFF' + JSON.stringify(har);
+  const ok = await send({ id: 4, type: 'load', file: new Blob([text]) });
+  eq('loaded reply', [ok.id, ok.type, typeof ok.sentAt], [4, 'loaded', 'number']);
+  const direct = E.readHarText(text).har;
+  eq('index equals direct buildIndex', ok.idx, structuredClone(E.buildIndex(direct)));
+  eq('sensitive scan equals direct', ok.sens, E.scanSensitive(direct));
+  eq('sanitized flag', ok.sanitized, false);
+  const opts = { tokens: true, everywhere: true, dropReq: false, dropRes: false, ips: false, extra: '' };
+  const ex = await send({ id: 5, type: 'export', redact: true, opts, indices: null });
+  const want = E.redactHar(direct, opts, null);
+  check('worker export is a Blob', ex.blob instanceof Blob);
+  eq('worker export bytes equal direct redactHar', await ex.blob.text(), want.json);
+  eq('worker report', ex.report, structuredClone({ counts: want.counts, kept: want.kept, names: want.names, total: want.total, left: want.left, entries: want.entries, coverage: want.coverage }));
+  check('worker export has no decoded secret', !Buffer.from(JSON.parse(await ex.blob.text()).log.entries[0].response.content.text, 'base64').toString().includes(secret));
+  const sub = await send({ id: 6, type: 'export', redact: true, opts, indices: [4, 5] });
+  eq('subset export', sub.report.entries, 2);
+  const raw = await send({ id: 7, type: 'export', redact: false, indices: [1] });
+  eq('raw subset keeps the entry as is', JSON.parse(await raw.blob.text()).log.entries[0], direct.log.entries[1]);
+  const entry = await send({ id: 8, type: 'entry', i: 4, mask: true });
+  eq('masked entry equals redactEntry', entry.entry, structuredClone(E.redactEntry(structuredClone(direct.log.entries[4]), E.newCtx({ tokens: true }))));
+  const plain = await send({ id: 9, type: 'entry', i: 4, mask: false });
+  eq('unmasked entry', plain.entry, direct.log.entries[4]);
+  const curl = await send({ id: 10, type: 'curl', indices: [4, 5], platform: 'unix', redact: true });
+  const ctx = E.newCtx({ tokens: true });
+  eq('curl equals direct', curl.text, E.curlJoin([4, 5].map((i) => E.curlFor(E.redactEntry(structuredClone(direct.log.entries[i]), ctx), 'unix')).filter(Boolean), 'unix'));
+  const sample = await send({ id: 11, type: 'load', sample: true });
+  eq('sample loads in the worker', [sample.type, sample.idx.rows.length], ['loaded', 10]);
+  check('original entries unchanged by export', JSON.stringify(direct) === JSON.stringify(E.readHarText(text).har));
+})();
+
 // ---------- whole-file residue scan of a redacted copy ----------
 // Oracle independent of the engine: walk every string of the saved JSON, decode every
 // `encoding: base64` text with Buffer, and look for the secret and its Base64 / URL forms.
