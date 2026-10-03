@@ -1190,11 +1190,20 @@ const S = STRINGS[lang] || STRINGS.en;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => run(false), 300);
   }
+  // From the first keystroke the result on screen belongs to the previous text; until the
+  // debounced run starts, the status line must not present it as the current verdict.
+  function markStale() {
+    if (!lastResult || lastResult.state === 'empty') return;
+    resultEl.classList.add('jsv-stale');
+    copyTextBtn.hidden = copyJsonBtn.hidden = true;
+    const size = schemaEl.value.length + dataEl.value.length + extraEl.value.length;
+    setStatus(size > AUTO_LIMIT ? T.large : started ? T.validating : T.loading, 'info');
+  }
 
   // A file read that finishes after the box was edited, cleared or loaded again is dropped.
   const fileGen: Record<string, number> = { schema: 0, data: 0, extras: 0 };
   validateBtn.addEventListener('click', () => run(true));
-  ([['schema', schemaEl], ['data', dataEl], ['extras', extraEl]] as [string, HTMLTextAreaElement][]).forEach(([side, ta]) => ta.addEventListener('input', () => { fileGen[side]++; schedule(); }));
+  ([['schema', schemaEl], ['data', dataEl], ['extras', extraEl]] as [string, HTMLTextAreaElement][]).forEach(([side, ta]) => ta.addEventListener('input', () => { fileGen[side]++; markStale(); schedule(); }));
   draftSel.addEventListener('change', () => { savePrefs(); run(true); });
   formatsEl.addEventListener('change', () => { savePrefs(); run(true); });
   exampleSel.addEventListener('change', () => {

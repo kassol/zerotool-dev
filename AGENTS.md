@@ -173,6 +173,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 
 ## 变更日志
 
+- 2026-10-03 — json-schema-validator：v1.138.61 生产验收对同一个无 `$schema` 的 Schema 先记到「Valid …（Draft 7）」、后记到「1 error（Draft 2020-12）」。原因不在草案识别：引擎对同一文本无论 Worker 缓存还是主线程回退都给同一草案（`detectDraft` 只看 `$schema` 与菜单，缓存键含菜单与 Schema 原文，`json-schema-validator-engine.js` 第 110–125、1051 行）；验收脚本（`release-v1.138.61/run-prod.js` 第 193–199 行）写入新 Schema 与数据后等待状态类名含 success，而页面在 300 ms 防抖触发前仍显示预填示例（draft-07 的 User Schema）的绿色结果（ego-browser 时间线：写入后 0–407 ms 为「success | …（Draft 7）」，之后「正在验证」，565 ms 起「…（Draft 2020-12）」），脚本读到的是旧结果。修复：输入事件里先调用 `markStale()`——已有非空结果时立即变灰、隐藏复制，状态行改为「正在验证」（超过 1 MB 不自动校验时直接显示该提示），不等防抖；空状态不变。改后同一时间线写入即为「info | 正在验证」，随后 Draft 2020-12；按原验收脚本的等待方式，en / zh 与去掉 Worker 的主线程回退路径都记到 Draft 2020-12（有效、无效、再有效、点「验证」四次一致）。测试见 scripts/AGENTS.md。
+
 - 2026-10-03 — json-to-mongoose：同 json-to-java-pojo，全站 Ctrl/⌘+L 清空后旧的 Schema 代码与复制按钮仍保留；组件监听该快捷键，输入框已空时清空输出、停用复制、清掉状态行与错误样式，并取消未触发的防抖。ego-browser（本地构建，en / ko）：清空后输出 0 字符、复制停用，再输入 JSON 后恢复。测试见 scripts/AGENTS.md。
 
 - 2026-10-03 — json-to-java-pojo：全站 Ctrl/⌘+L 清空后旧的 Java 类与复制按钮仍保留（ToolLayout 的快捷键只把文本框与文本输入框设为空串、不发 input 事件，`src/layouts/ToolLayout.astro` 第 425–431 行；组件只在 input 事件里重算）。组件改为监听同一快捷键，在下一个任务里若输入框已空则清空输出、停用复制、清掉状态行与错误样式，并取消未触发的防抖（做法同 jsonl-converter / env-file-parser）；焦点不在工具内时 ToolLayout 不清空，输出照常保留。ego-browser（本地构建，en / ja）：清空后输出 0 字符、复制停用、状态为空，再输入 JSON 后恢复生成。测试见 scripts/AGENTS.md。
