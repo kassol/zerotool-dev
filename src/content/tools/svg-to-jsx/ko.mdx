@@ -78,28 +78,50 @@ export default PlusIcon;
 
 `xmlns`는 사라지고 `stroke-width`, `stroke-linecap`은 camelCase가 되며, 나머지 마크업은 그대로입니다. `{...props}`는 루트 자체 속성 뒤에 들어갑니다. svgr 기본값([`expandProps: 'end'`](https://react-svgr.com/docs/options/#expand-props))과 같은 위치라서 호출하는 쪽 값이 우선합니다. `<PlusIcon width={48} fill="red" />`는 48 px, 빨간색으로 렌더링되고 `height`는 24 그대로입니다. 값은 문자열로 남지만(`strokeWidth="2"`) React는 문자열과 숫자를 모두 받습니다. TypeScript, forwardRef, memo를 모두 켜면 같은 아이콘이 `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })`가 되고, `<svg>` 자체 속성 뒤에 `ref={ref} {...props}`, 끝에 `export default memo(PlusIcon);`가 붙습니다. React 19부터는 [`forwardRef`가 필요 없고](https://react.dev/reference/react/forwardRef) 함수 컴포넌트가 `ref`를 prop으로 받을 수 있습니다.
 
+Illustrator에서 **Internal CSS**로 내보내고 인라인 `style`과 `xlink:href`가 들어간 아이콘입니다. 컴포넌트 이름은 `Icon`:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 24 24"><!-- Generator: Adobe Illustrator --><defs><style>.cls-1{fill:#e11d48;}</style></defs><path id="a" class="cls-1" style="stroke:#000;stroke-width:2" d="M12 5v14"/><use xlink:href="#a"/></svg>
+```
+
+출력:
+
+```jsx
+import React from 'react';
+
+function Icon(props) {
+  return (
+    <svg viewBox="0 0 24 24" {...props}>{/* Generator: Adobe Illustrator */}<defs><style>{".cls-1{fill:#e11d48;}"}</style></defs><path id="a" className="cls-1" style={{ "stroke": "#000", "strokeWidth": "2" }} d="M12 5v14" /><use xlinkHref="#a" /></svg>
+  );
+}
+
+export default Icon;
+```
+
+주석은 `{/* ... */}`가 되며 React는 이를 그리지 않습니다. `<style>` 안의 CSS는 JavaScript 문자열 하나가 되어 중괄호가 더 이상 JSX로 읽히지 않습니다. 안의 엔티티는 디코딩하고 `<![CDATA[ ... ]]>` 감싸기는 벗깁니다. `style` 속성은 값을 그대로 옮긴 객체가 되고, `xlink:href`는 `xlinkHref`가 됩니다. esbuild 0.21.5로 컴파일하고 React 19.2.0 개발 빌드로 렌더링하면 `<svg viewBox="0 0 24 24"><defs><style>.cls-1{fill:#e11d48;}</style></defs><path id="a" class="cls-1" style="stroke:#000;stroke-width:2" d="M12 5v14"></path><use xlink:href="#a"></use></svg>`가 되며 콘솔 경고는 없습니다.
+
 ## 붙여넣기 전에: 내보내기 설정
 
 - **Figma**: 레이어를 선택하고 Export → SVG. ID로 요소를 다루지 않는다면 "Include "id" attribute"는 끈 채로 둡니다.
-- **Illustrator**: File → Export → Export As → SVG에서 Styling을 Presentation Attributes로 설정합니다(메뉴 이름은 영문판 기준). 나머지 Internal CSS와 Inline Style은 `<style>` 블록이나 `style="..."` 문자열을 만들며([Adobe: SVG 내보내기 옵션](https://helpx.adobe.com/illustrator/using/exporting-artwork.html)), 이 도구는 둘 다 바꾸지 않습니다(아래 표 참고).
-- `<!-- Generator: ... -->` 같은 주석이 있으면 붙여넣기 전에 지웁니다. `<?xml ... ?>` 선언은 도구가 지우지만 주석은 남깁니다.
+- **Illustrator**: File → Export → Export As → SVG(메뉴 이름은 영문판 기준). Styling을 Presentation Attributes로 두면 가장 짧은 컴포넌트가 됩니다. Internal CSS와 Inline Style은 `<style>` 블록이나 `style="..."` 문자열을 만들며([Adobe: SVG 내보내기 옵션](https://helpx.adobe.com/illustrator/using/exporting-artwork.html)), 이 도구는 위 예시처럼 CSS 문자열과 스타일 객체로 바꿉니다. `<style>` 블록은 페이지 전체에 적용되므로 두 아이콘이 모두 `.cls-1`을 쓰면 서로의 색을 바꿉니다.
+- `<?xml ... ?>` 선언은 도구가 지우고 주석은 JSX 주석으로 바꾸므로 `<!-- Generator: ... -->`를 먼저 지울 필요가 없습니다.
 
 ## 직접 고쳐야 하는 부분
 
-각 행은 출력을 esbuild 0.28로 컴파일하고 React 19로 렌더링해 확인했습니다.
+각 행은 출력을 esbuild 0.21.5로 컴파일하고 React 19.2.0으로 렌더링해 확인했습니다.
 
 | 붙여넣은 SVG | 도구 출력 | React에서의 결과 | 이렇게 바꾸기 |
 |---|---|---|---|
-| `<!-- 주석 -->` | 그대로 | 문법 오류: HTML 주석은 JSX가 아님 | 지우거나 `{/* ... */}`로 |
-| `<style>.cls-1{fill:#e11d48;}</style>` | 그대로 | 문법 오류: `{`가 JSX 표현식 시작으로 해석됨 | Presentation Attributes로 다시 내보내거나 CSS를 템플릿 리터럴로 감싸기: `` <style>{`.cls-1{fill:#e11d48;}`}</style> `` |
-| `style="fill:#e11d48"` | 문자열 그대로 | 렌더링 오류 "The `style` prop expects a mapping from style properties to values, not a string" | `style={{ fill: '#e11d48' }}` |
-| `xlink:href="#a"` | 그대로(`xmlns:xlink` 선언은 삭제) | React가 "Invalid DOM property" 경고. Babel은 기본적으로 네임스페이스 속성을 거부 | `href="#a"` |
+| `style="fill:red !important"`, 같은 속성 중복, `style` 안의 CSS 주석 | 출력 없음: 변환을 멈추고 복사를 끄며 상태 줄에 스타일 안의 위치를 표시 | — | 규칙을 `<style>` 블록이나 CSS 파일로 옮기거나 `!important`를 빼기 |
+| `<text>{count}</text>` | `<text>&#123;count&#125;</text>` | `{count}`라는 글자를 표시 | 변수를 쓰려면 직접 `{count}`로 고치기 |
 | 고정된 `fill` / `stroke` 색상 | 그대로 | 아이콘이 글자색을 따라가지 않음 | `fill="currentColor"` / `stroke="currentColor"` |
+| 다른 아이콘과 같은 클래스 이름을 쓰는 `<style>` | CSS 문자열 | 규칙이 페이지 전체에 적용됨 | 클래스 이름을 바꾸거나 Presentation Attributes로 내보내기 |
 
 ## 제한 사항
 
-- **XML 파서가 아니라 정규식으로 처리합니다.** 따옴표로 감싼 속성값에 `>`나 `/`가 있어도 괜찮지만 주석은 건너뛰지 않아서 `<!-- ... -->` 안에 쓴 태그도 변환됩니다.
-- **바뀌는 것은 속성 이름뿐입니다.** 값과 텍스트는 그대로 남아 `aria-label="class schedule"`은 `aria-label="class schedule"` 그대로입니다.
+- **XML 파서가 아니라 정규식으로 처리합니다.** 주석, `<style>` 블록, CDATA를 먼저 읽으므로 `<!-- ... -->` 안에 쓴 태그는 변환되지 않습니다. 따옴표로 감싼 속성값에 `>`나 `/`가 있어도 괜찮습니다. 닫히지 않은 태그는 보완하지 않습니다.
+- **값은 그대로 옮깁니다.** 바뀌는 것은 속성 이름뿐이라 `aria-label="class schedule"`은 `aria-label="class schedule"` 그대로입니다. 예외는 `style`(객체가 됨)과 텍스트로, 텍스트의 `{`, `}`, `<`, `>`는 `&#123;`, `&#125;`, `&lt;`, `&gt;`로 써서 React에는 원래 글자가 표시됩니다.
+- **React 객체로 보존할 수 없는 스타일은 변환하지 않습니다.** `style` 속성에 `!important`, 같은 속성 중복(CSS 대체 값), CSS 주석, 이스케이프가 들어간 속성 이름, 닫히지 않은 따옴표나 괄호가 있으면 변환을 멈추고, 입력을 고칠 때까지 출력을 지우고 복사를 끕니다.
 - **한 번에 컴포넌트 하나.** `{...props}`는 첫 번째 `<svg>`에만 붙습니다. 스프라이트는 아이콘 하나씩 붙여넣으세요.
 - **컴포넌트 이름**: 영문자, 숫자, `_`, `$` 외의 문자는 지워지고 첫 글자는 대문자가 됩니다(`plus-icon` → `Plusicon`). 한글 이름은 모두 지워져 `MyIcon`이 됩니다.
 - `data-*`와 `aria-*` 속성은 하이픈을 유지합니다. React가 요구하는 방식입니다.

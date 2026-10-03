@@ -51,6 +51,8 @@
     </div>
   </div>
 
+  <p id="stj-status" role="status" aria-live="polite"></p>
+
   <script is:inline>
     (function () {
       var STRINGS = {
@@ -64,6 +66,8 @@
           typescript: 'TypeScript (React.FC)',
           forwardRef: 'forwardRef',
           memo: 'memo',
+          refused: 'Cannot convert style at position {position}: {reason}. Output cleared.',
+          reasons: { syntax: 'invalid declaration or unclosed CSS syntax', property: 'unsupported or escaped property name', duplicate: 'repeated property cannot preserve CSS fallback order', priority: '!important cannot be preserved in a React style object', comment: 'CSS comments require manual conversion' },
         },
         zh: {
           inputLabel: 'SVG 输入',
@@ -75,6 +79,8 @@
           typescript: 'TypeScript (React.FC)',
           forwardRef: 'forwardRef 包裹',
           memo: 'memo 包裹',
+          refused: '样式第 {position} 个字符无法转换：{reason}。已清空输出。',
+          reasons: { syntax: '声明无效或 CSS 语法未闭合', property: '属性名不支持或含转义', duplicate: '重复属性无法保留 CSS 回退顺序', priority: 'React 样式对象无法保留 !important', comment: 'CSS 注释需要手动转换' },
         },
         ja: {
           inputLabel: 'SVG 入力',
@@ -86,6 +92,8 @@
           typescript: 'TypeScript (React.FC)',
           forwardRef: 'forwardRef ラップ',
           memo: 'memo ラップ',
+          refused: 'スタイルの {position} 文字目を変換できません：{reason}。出力を消去しました。',
+          reasons: { syntax: '宣言が無効、または CSS 構文が閉じていません', property: '未対応またはエスケープされたプロパティ名', duplicate: '重複プロパティの CSS フォールバック順序を保持できません', priority: 'React のスタイルオブジェクトでは !important を保持できません', comment: 'CSS コメントは手動で変換してください' },
         },
         ko: {
           inputLabel: 'SVG 입력',
@@ -97,6 +105,8 @@
           typescript: 'TypeScript (React.FC)',
           forwardRef: 'forwardRef 래핑',
           memo: 'memo 래핑',
+          refused: '스타일 {position}번째 문자를 변환할 수 없습니다: {reason}. 출력을 지웠습니다.',
+          reasons: { syntax: '잘못된 선언 또는 닫히지 않은 CSS 구문', property: '지원하지 않거나 이스케이프된 속성 이름', duplicate: '중복 속성의 CSS 대체 순서를 보존할 수 없습니다', priority: 'React 스타일 객체는 !important를 보존할 수 없습니다', comment: 'CSS 주석은 직접 변환해야 합니다' },
         },
       };
 
@@ -115,6 +125,7 @@
       var inputEl  = document.getElementById('stj-input');
       var outputEl = document.getElementById('stj-output');
       var copyBtn  = document.getElementById('stj-copy');
+      var statusEl = document.getElementById('stj-status');
       var nameEl   = document.getElementById('stj-name');
       var tsEl     = document.getElementById('stj-typescript');
       var frEl     = document.getElementById('stj-forwardref');
@@ -177,7 +188,103 @@
         'class':                 'className',
         'tabindex':              'tabIndex',
         'crossorigin':           'crossOrigin',
+        'xlink:href':            'xlinkHref',
+        'xlink:actuate':         'xlinkActuate',
+        'xlink:arcrole':         'xlinkArcrole',
+        'xlink:role':            'xlinkRole',
+        'xlink:show':            'xlinkShow',
+        'xlink:title':           'xlinkTitle',
+        'xlink:type':            'xlinkType',
+        'xml:base':              'xmlBase',
+        'xml:lang':              'xmlLang',
+        'xml:space':             'xmlSpace',
       };
+
+      // Same CSS and text lowering as HtmlToJsxTool; keep the copied declarations in sync.
+      var NAMED_ENTITIES = { quot: '"', apos: "'", amp: '&', lt: '<', gt: '>', nbsp: '\u00a0' };
+      function decodeEntities(str) {
+        return str.replace(/&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);/g, function (m, ref) {
+          if (ref.charAt(0) === '#') {
+            var code = ref.charAt(1) === 'x' || ref.charAt(1) === 'X'
+              ? parseInt(ref.slice(2), 16)
+              : parseInt(ref.slice(1), 10);
+            return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+          }
+          return Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, ref) ? NAMED_ENTITIES[ref] : m;
+        });
+      }
+      function jsxString(value) {
+        return JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+      }
+      function styleError(code, position) {
+        var error = new Error(code + ' at style position ' + (position + 1));
+        error.code = code;
+        error.position = position;
+        throw error;
+      }
+      function styleStringToObject(styleStr) {
+        var props = [];
+        var seen = Object.create(null);
+        var start = 0, colon = -1, valueEnd = 0, quote = '', stack = [];
+        function declaration(end) {
+          if (/^[ \t\n\r\f]*$/.test(styleStr.slice(start, end))) return;
+          if (colon < start) styleError('syntax', start);
+          var prop = styleStr.slice(start, colon).replace(/^[ \t\n\r\f]+|[ \t\n\r\f]+$/g, '');
+          var val = styleStr.slice(colon + 1, valueEnd).replace(/^[ \t\n\r\f]+/, '');
+          if (!val) styleError('syntax', colon + 1);
+          if (!/^(?:--[a-zA-Z0-9_-]+|-?[a-zA-Z][a-zA-Z0-9-]*)$/.test(prop)) styleError('property', start);
+          var custom = prop.indexOf('--') === 0;
+          var key = custom ? prop : prop.toLowerCase();
+          if (seen[key]) styleError('duplicate', start);
+          seen[key] = true;
+          var jsProp = custom ? prop : key.replace(/^-ms-/, 'ms-').replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+          props.push(jsxString(jsProp) + ': ' + jsxString(val));
+        }
+        for (var i = 0; i < styleStr.length; i++) {
+          var c = styleStr[i];
+          if (c === '\\') {
+            if (i + 1 === styleStr.length) styleError('syntax', i);
+            i++;
+            if (/[\n\r\f]/.test(styleStr[i])) {
+              if (!quote) styleError('syntax', i - 1);
+              if (styleStr[i] === '\r' && styleStr[i + 1] === '\n') i++;
+            } else if (/[0-9a-fA-F]/.test(styleStr[i])) {
+              var count = 1;
+              while (count < 6 && /[0-9a-fA-F]/.test(styleStr[i + 1] || '')) { i++; count++; }
+              if (/[ \t\n\r\f]/.test(styleStr[i + 1] || '')) {
+                i++;
+                if (styleStr[i] === '\r' && styleStr[i + 1] === '\n') i++;
+              }
+            }
+            if (colon >= start) valueEnd = i + 1;
+            continue;
+          }
+          if (colon >= start && !/[ \t\n\r\f]/.test(c) && (c !== ';' || quote || stack.length)) valueEnd = i + 1;
+          if (quote) {
+            if (c === quote) quote = '';
+            else if (/[\n\r\f]/.test(c)) styleError('syntax', i);
+            continue;
+          }
+          if (c === '"' || c === "'") { quote = c; continue; }
+          if (c === '/' && styleStr[i + 1] === '*') styleError('comment', i);
+          if (c === '(' || c === '[' || c === '{') { stack.push(c); continue; }
+          if (c === ')' || c === ']' || c === '}') {
+            if (stack.pop() !== { ')': '(', ']': '[', '}': '{' }[c]) styleError('syntax', i);
+            continue;
+          }
+          if (!stack.length) {
+            if (c === '!') styleError('priority', i);
+            if (c === ':' && colon < start) { colon = i; valueEnd = i + 1; }
+            if (c === ';') { declaration(i); start = i + 1; colon = -1; }
+          }
+        }
+        if (quote || stack.length) styleError('syntax', styleStr.length);
+        declaration(styleStr.length);
+        return '{{ ' + props.join(', ') + ' }}';
+      }
+      function jsxText(text) {
+        return text.replace(/[{}<>]/g, function (c) { return { '{': '&#123;', '}': '&#125;', '<': '&lt;', '>': '&gt;' }[c]; });
+      }
 
       // Generic camelCase converter for any remaining hyphenated attrs
       function toCamelCase(attr) {
@@ -193,8 +300,7 @@
         return name;
       }
 
-      // Process a single tag's attributes. Only names are converted; values are copied as
-      // written. xmlns and xmlns:* are dropped (not needed in JSX).
+      // Process names and inline styles; ordinary values keep their original quoting.
       var ATTR_RE = /(\s+)([^\s"'>\/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
       function processAttrs(attrStr) {
         if (!attrStr) return '';
@@ -203,6 +309,10 @@
           if (rawValue === undefined) return space + jsxAttrName(name);
           var quote = rawValue.charAt(0);
           var quoted = quote === '"' || quote === "'";
+          if (name.toLowerCase() === 'style') {
+            var value = quoted ? rawValue.slice(1, -1) : rawValue;
+            return space + 'style=' + styleStringToObject(decodeEntities(value));
+          }
           return space + jsxAttrName(name) + '=' + (quoted ? rawValue : '"' + rawValue + '"');
         });
       }
@@ -222,18 +332,37 @@
         // 1. Remove XML declaration
         var result = svgStr.replace(/<\?xml[^?]*\?>/g, '').trim();
 
-        // 2. Transform all tags: process attrs, ensure self-closing. The first <svg> gets
-        //    ref={ref} and {...props} after its own attributes, so caller props win
-        //    (svgr's default expandProps: 'end').
+        // Tokenize original SVG nodes before producing JSX expressions. CSS text stays a
+        // string; comments cannot expose their embedded tags to attribute conversion.
         var spreadDone = false;
-        result = result.replace(TAG_RE, function (match, tag, attrs, selfClose) {
+        var tokens = new RegExp('<!--[\\s\\S]*?-->|<style\\b(?:"[^"]*"|\'[^\']*\'|[^\'">])*?>[\\s\\S]*?<\\/style\\s*>|<!\\[CDATA\\[[\\s\\S]*?\\]\\]>|<\\/[a-zA-Z][a-zA-Z0-9.-]*\\s*>|' + TAG_RE.source, 'g');
+        var out = '', cursor = 0, match;
+        while ((match = tokens.exec(result))) {
+          out += jsxText(result.slice(cursor, match.index));
+          cursor = tokens.lastIndex;
+          var raw = match[0];
+          if (raw.indexOf('<!--') === 0) {
+            out += '{/*' + raw.slice(4, -3).replace(/\*\//g, '* /') + '*/}';
+            continue;
+          }
+          if (raw.indexOf('<![CDATA[') === 0) { out += '{' + jsxString(raw.slice(9, -3)) + '}'; continue; }
+          if (raw.indexOf('</') === 0) { out += raw; continue; }
+          var tagMatch = new RegExp('^' + TAG_RE.source).exec(raw);
+          var tag = tagMatch[1], attrs = tagMatch[2], selfClose = tagMatch[3];
           var processed = processAttrs(attrs || '');
           if (!spreadDone && tag === 'svg') {
             spreadDone = true;
             processed += useForwardRef ? ' ref={ref} {...props}' : ' {...props}';
           }
-          return '<' + tag + processed + (selfClose ? ' />' : '>');
-        });
+          if (tag === 'style' && !selfClose) {
+            var css = raw.slice(tagMatch[0].length).replace(/<\/style\s*>$/, '');
+            css = css.split(/(<!\[CDATA\[[\s\S]*?\]\]>)/g).map(function (part) {
+              return part.indexOf('<![CDATA[') === 0 ? part.slice(9, -3) : decodeEntities(part);
+            }).join('');
+            out += '<style' + processed + '>{' + jsxString(css) + '}</style>';
+          } else out += '<' + tag + processed + (selfClose ? ' />' : '>');
+        }
+        result = out + jsxText(result.slice(cursor));
 
         // 4. Indent the SVG body
         result = indent(result, 4);
@@ -293,9 +422,15 @@
         var useTs = tsEl.checked;
         var useFr = frEl.checked;
         var useMemo = memoEl.checked;
-        outputEl.value = svg ? svgToJsx(svg, name || 'MyIcon', useTs, useFr, useMemo) : '';
-        if (svg) {
-          window.trackTool && window.trackTool('svg_to_jsx', 'convert');
+        statusEl.textContent = '';
+        try {
+          outputEl.value = svg ? svgToJsx(svg, name || 'MyIcon', useTs, useFr, useMemo) : '';
+          copyBtn.disabled = !outputEl.value;
+          if (svg) window.trackTool && window.trackTool('svg_to_jsx', 'convert');
+        } catch (error) {
+          outputEl.value = '';
+          copyBtn.disabled = true;
+          statusEl.textContent = t.refused.replace('{position}', error.position + 1).replace('{reason}', t.reasons[error.code] || t.reasons.syntax);
         }
       }
 

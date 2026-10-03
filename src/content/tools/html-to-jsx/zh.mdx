@@ -7,7 +7,7 @@ faqItems:
   - question: "JSX 中为什么用 className 而不是 class？"
     answer: "JSX 会被编译为 JavaScript，而 class 是 JavaScript 的保留关键字。React 使用 className 来避免冲突，转换器会自动处理这个重命名。"
   - question: "内联样式如何转换？"
-    answer: "HTML 内联样式使用字符串：style=\"color: red; font-size: 14px\"。JSX 需要对象：style={{ color: 'red', fontSize: '14px' }}。转换器会解析字符串并将属性名改为驼峰命名。"
+    answer: "HTML 内联样式使用字符串：style=\"color: red; font-size: 14px\"。JSX 需要对象，转换器输出 style={{ \"color\": \"red\", \"fontSize\": \"14px\" }}。只在顶层分号处拆分声明，引号或 url(data:…) 里的分号留在值里；--accent 这类自定义属性按原名保留，每个值逐字复制。React 样式对象无法保留的写法（!important、同一属性写两次、CSS 注释、引号或括号未闭合）会被拒绝：清空输出、停用复制，状态栏给出字符位置。"
   - question: "HTML 注释会变成什么？"
     answer: "HTML 注释（<!-- text -->）会被转换为 JSX 表达式注释（{/* text */}），这是 React JSX 解析器唯一接受的注释形式。"
   - question: "数据会发送到服务器吗？"
@@ -27,7 +27,7 @@ faqItems:
 |------|-----|
 | `class="..."` | `className="..."` |
 | `for="..."` | `htmlFor="..."` |
-| `style="color:red"` | `style={{ color: 'red' }}` |
+| `style="color:red"` | `style={{ "color": "red" }}` |
 | `onclick="save()"` | `onClick={(event) => { save() }}` |
 | `ondblclick="..."` / `onmouseover="..."` | `onDoubleClick={...}` / `onMouseOver={...}` |
 | `tabindex` | `tabIndex` |
@@ -41,6 +41,7 @@ faqItems:
 | `<img src="...">` | `<img src="..." />` |
 | `<input ...>` | `<input ... />` |
 | `<!-- 注释 -->` | `{/* 注释 */}` |
+| 文本 `{name}`、`a < b` | `&#123;name&#125;`、`a &lt; b` |
 
 <h2>常见使用场景</h2>
 <ul>
@@ -67,7 +68,7 @@ faqItems:
 ```jsx
 <label htmlFor="email" className="lbl">Email</label>
 <input id="email" type="email" required />
-<div style={{ backgroundImage: 'url(\'a.png\')', fontSize: '14px' }}>x</div>
+<div style={{ "backgroundImage": "url('a.png')", "fontSize": "14px" }}>x</div>
 {/* footer */}
 ```
 
@@ -81,12 +82,13 @@ faqItems:
 | `<input type="checkbox" checked>` | 有 `checked` 却没有 `onChange`，字段变成只读 | `defaultChecked` |
 | `<option selected>` | React 在 `<select>` 上设置选中项 | `<select defaultValue="...">` |
 | `<textarea>hi</textarea>` | [`<textarea>` 不接受子节点](https://react.dev/reference/react-dom/components/textarea) | `<textarea defaultValue="hi" />` |
-| `<p>a < b and {name}</p>` | 文本里的 `<` 和 `{` 是 JSX 语法 | `a {'<'} b and {'{'}name{'}'}` |
+| `style="color:red !important"`（无输出） | 被拒绝：React 样式对象无法保留 `!important`，输出被清空 | 把规则移到 CSS 的 class 里，或去掉 `!important` |
 | 两个及以上顶层元素 | 组件只能返回一个元素 | 用 `<>...</>` 包起来 |
 | `<path stroke-width="2">` | SVG 属性不会被转换 | 用 [SVG 转 JSX](/zh/tools/svg-to-jsx/) |
 
 ## 限制
 
 - **属性值原样保留。** 只转换属性名，`href="/search?for=1&class=2"` 不会被改动，这与 [htmltojsx](https://github.com/reactjs/react-magic/blob/master/src/htmltojsx.js) 的做法相同。有两类值会变：`style` 转成对象；事件处理器的代码放进 `(event) => { ... }`，因为 React [需要函数](https://zh-hans.react.dev/learn/responding-to-events)而不是字符串，代码里的 `&quot;` 等实体会被解码。不是 DOM 事件的 `on*` 属性（如自定义元素上的 `onfoo`）原样保留。
-- **只处理标签。** 标签之间的文本原样保留；粘贴整个文档时，`<!DOCTYPE>`、`<html>`、`<head>`、`<body>` 也会留在结果里。只粘贴要放进组件的部分。
+- **文本字符不变。** 标签之间文本里的 `{`、`}`、`<`、`>` 写成 `&#123;`、`&#125;`、`&lt;`、`&gt;`，JSX 会还原成同样的字符，所以 `<p>{name}</p>` 显示文字 `{name}`，不会读取变量。其他文本原样保留；粘贴整个文档时，`<!DOCTYPE>`、`<html>`、`<head>`、`<body>` 也会留在结果里。只粘贴要放进组件的部分。
+- **无法保留的样式会被拒绝。** `!important`、同一属性写两次（如 `color:red;color:blue` 这类 CSS 回退）、CSS 注释、含转义的属性名、未闭合的引号或括号都会停止转换：清空输出、停用复制，状态栏写明样式中的字符位置，例如「样式第 11 个字符无法转换：React 样式对象无法保留 !important」。其他值（包括 `url(data:…;base64,…)` 与 `--accent` 这类自定义属性）作为 JSON 字符串逐字复制。
 - **不生成组件外壳。** 输出只是标记，放进组件的 `return (...)` 里使用。

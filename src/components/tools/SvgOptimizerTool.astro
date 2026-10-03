@@ -36,6 +36,8 @@ const STRINGS = {
     download: 'Download .svg', zip: 'Download all (.zip)',
     code: 'Output ({chars} characters)',
     jsxNote: 'For TypeScript, forwardRef or memo, paste the SVG into SVG to JSX.',
+    jsxRefused: 'Cannot convert to JSX: the style at character {position} {reason}. Download .svg and the other formats still work.',
+    jsxReasons: { syntax: 'is not a valid declaration or leaves CSS syntax unclosed', property: 'uses an unsupported or escaped property name', duplicate: 'repeats a property, and a React style object cannot keep the CSS fallback order', priority: 'uses !important, which a React style object cannot keep', comment: 'contains a CSS comment that needs manual conversion' },
     thFile: 'File', thBefore: 'Before', thAfter: 'After', thSaved: 'Saved', thCheck: 'Rendering', thSave: 'Save',
     rowSame: 'Same', rowMinor: 'Small differences', rowChanged: 'Different', rowFailed: 'Not compared', rowPending: '…', rowError: 'Error',
     settings: 'Settings', reset: 'Reset to defaults',
@@ -114,6 +116,8 @@ const STRINGS = {
     download: '下载 .svg', zip: '全部下载（.zip）',
     code: '输出（{chars} 个字符）',
     jsxNote: '需要 TypeScript、forwardRef 或 memo 时，把 SVG 粘贴到 SVG 转 JSX 工具。',
+    jsxRefused: '无法转成 JSX：样式第 {position} 个字符{reason}。下载 .svg 与其他复制格式不受影响。',
+    jsxReasons: { syntax: '处声明无效或 CSS 语法未闭合', property: '处属性名不支持或含转义', duplicate: '处属性重复，React 样式对象无法保留 CSS 回退顺序', priority: '处使用了 !important，React 样式对象无法保留', comment: '处有 CSS 注释，需要手动转换' },
     thFile: '文件', thBefore: '压缩前', thAfter: '压缩后', thSaved: '减少', thCheck: '渲染', thSave: '保存',
     rowSame: '相同', rowMinor: '略有不同', rowChanged: '不同', rowFailed: '未比对', rowPending: '…', rowError: '出错',
     settings: '设置', reset: '恢复默认',
@@ -192,6 +196,8 @@ const STRINGS = {
     download: '.svg をダウンロード', zip: 'すべてダウンロード（.zip）',
     code: '出力（{chars} 文字）',
     jsxNote: 'TypeScript・forwardRef・memo が必要なら、SVG を SVG → JSX コンバーターに貼り付けてください。',
+    jsxRefused: 'JSX に変換できません：スタイルの {position} 文字目{reason}。.svg のダウンロードと他のコピー形式は使えます。',
+    jsxReasons: { syntax: 'の宣言が無効、または CSS 構文が閉じていません', property: 'のプロパティ名が未対応、またはエスケープされています', duplicate: 'でプロパティが重複しており、React のスタイルオブジェクトでは CSS のフォールバック順序を保持できません', priority: 'の !important は React のスタイルオブジェクトで保持できません', comment: 'に CSS コメントがあり、手動で変換する必要があります' },
     thFile: 'ファイル', thBefore: '元', thAfter: '後', thSaved: '削減', thCheck: '描画', thSave: '保存',
     rowSame: '同じ', rowMinor: 'わずかな差', rowChanged: '差あり', rowFailed: '未比較', rowPending: '…', rowError: 'エラー',
     settings: '設定', reset: '初期設定に戻す',
@@ -270,6 +276,8 @@ const STRINGS = {
     download: '.svg 다운로드', zip: '모두 다운로드(.zip)',
     code: '출력({chars}자)',
     jsxNote: 'TypeScript, forwardRef, memo가 필요하면 SVG를 SVG → JSX 변환기에 붙여 넣으세요.',
+    jsxRefused: 'JSX로 변환할 수 없습니다: 스타일 {position}번째 문자{reason}. .svg 다운로드와 다른 복사 형식은 그대로 쓸 수 있습니다.',
+    jsxReasons: { syntax: '에서 선언이 잘못되었거나 CSS 구문이 닫히지 않았습니다', property: '의 속성 이름은 지원하지 않거나 이스케이프되어 있습니다', duplicate: '에서 속성이 중복되어 React 스타일 객체로는 CSS 대체 순서를 보존할 수 없습니다', priority: '의 !important는 React 스타일 객체로 보존할 수 없습니다', comment: '에 CSS 주석이 있어 직접 변환해야 합니다' },
     thFile: '파일', thBefore: '전', thAfter: '후', thSaved: '절감', thCheck: '렌더링', thSave: '저장',
     rowSame: '같음', rowMinor: '작은 차이', rowChanged: '다름', rowFailed: '비교 안 함', rowPending: '…', rowError: '오류',
     settings: '설정', reset: '기본값으로',
@@ -388,6 +396,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
         </select>
       </label>
     </div>
+    <p id="svgo-jsx-refused" class="svgo-jsx-refused" hidden></p>
     <p id="svgo-check" class="svgo-check" aria-live="polite"></p>
     <ul id="svgo-notes" class="svgo-notes"></ul>
     <div class="svgo-compare">
@@ -860,6 +869,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   }
 
   // ── copied verbatim from SvgToJsxTool.astro (scripts/test-svg-optimizer.mjs compares the source) ──
+  // SVG attribute → JSX camelCase map
   var SVG_ATTR_MAP = {
     'stroke-width':          'strokeWidth',
     'stroke-linecap':        'strokeLinecap',
@@ -915,12 +925,111 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
     'class':                 'className',
     'tabindex':              'tabIndex',
     'crossorigin':           'crossOrigin',
+    'xlink:href':            'xlinkHref',
+    'xlink:actuate':         'xlinkActuate',
+    'xlink:arcrole':         'xlinkArcrole',
+    'xlink:role':            'xlinkRole',
+    'xlink:show':            'xlinkShow',
+    'xlink:title':           'xlinkTitle',
+    'xlink:type':            'xlinkType',
+    'xml:base':              'xmlBase',
+    'xml:lang':              'xmlLang',
+    'xml:space':             'xmlSpace',
   };
 
+  // Same CSS and text lowering as HtmlToJsxTool; keep the copied declarations in sync.
+  var NAMED_ENTITIES = { quot: '"', apos: "'", amp: '&', lt: '<', gt: '>', nbsp: '\u00a0' };
+  function decodeEntities(str) {
+    return str.replace(/&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);/g, function (m, ref) {
+      if (ref.charAt(0) === '#') {
+        var code = ref.charAt(1) === 'x' || ref.charAt(1) === 'X'
+          ? parseInt(ref.slice(2), 16)
+          : parseInt(ref.slice(1), 10);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+      }
+      return Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, ref) ? NAMED_ENTITIES[ref] : m;
+    });
+  }
+  function jsxString(value) {
+    return JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  }
+  function styleError(code, position) {
+    var error = new Error(code + ' at style position ' + (position + 1));
+    error.code = code;
+    error.position = position;
+    throw error;
+  }
+  function styleStringToObject(styleStr) {
+    var props = [];
+    var seen = Object.create(null);
+    var start = 0, colon = -1, valueEnd = 0, quote = '', stack = [];
+    function declaration(end) {
+      if (/^[ \t\n\r\f]*$/.test(styleStr.slice(start, end))) return;
+      if (colon < start) styleError('syntax', start);
+      var prop = styleStr.slice(start, colon).replace(/^[ \t\n\r\f]+|[ \t\n\r\f]+$/g, '');
+      var val = styleStr.slice(colon + 1, valueEnd).replace(/^[ \t\n\r\f]+/, '');
+      if (!val) styleError('syntax', colon + 1);
+      if (!/^(?:--[a-zA-Z0-9_-]+|-?[a-zA-Z][a-zA-Z0-9-]*)$/.test(prop)) styleError('property', start);
+      var custom = prop.indexOf('--') === 0;
+      var key = custom ? prop : prop.toLowerCase();
+      if (seen[key]) styleError('duplicate', start);
+      seen[key] = true;
+      var jsProp = custom ? prop : key.replace(/^-ms-/, 'ms-').replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+      props.push(jsxString(jsProp) + ': ' + jsxString(val));
+    }
+    for (var i = 0; i < styleStr.length; i++) {
+      var c = styleStr[i];
+      if (c === '\\') {
+        if (i + 1 === styleStr.length) styleError('syntax', i);
+        i++;
+        if (/[\n\r\f]/.test(styleStr[i])) {
+          if (!quote) styleError('syntax', i - 1);
+          if (styleStr[i] === '\r' && styleStr[i + 1] === '\n') i++;
+        } else if (/[0-9a-fA-F]/.test(styleStr[i])) {
+          var count = 1;
+          while (count < 6 && /[0-9a-fA-F]/.test(styleStr[i + 1] || '')) { i++; count++; }
+          if (/[ \t\n\r\f]/.test(styleStr[i + 1] || '')) {
+            i++;
+            if (styleStr[i] === '\r' && styleStr[i + 1] === '\n') i++;
+          }
+        }
+        if (colon >= start) valueEnd = i + 1;
+        continue;
+      }
+      if (colon >= start && !/[ \t\n\r\f]/.test(c) && (c !== ';' || quote || stack.length)) valueEnd = i + 1;
+      if (quote) {
+        if (c === quote) quote = '';
+        else if (/[\n\r\f]/.test(c)) styleError('syntax', i);
+        continue;
+      }
+      if (c === '"' || c === "'") { quote = c; continue; }
+      if (c === '/' && styleStr[i + 1] === '*') styleError('comment', i);
+      if (c === '(' || c === '[' || c === '{') { stack.push(c); continue; }
+      if (c === ')' || c === ']' || c === '}') {
+        if (stack.pop() !== { ')': '(', ']': '[', '}': '{' }[c]) styleError('syntax', i);
+        continue;
+      }
+      if (!stack.length) {
+        if (c === '!') styleError('priority', i);
+        if (c === ':' && colon < start) { colon = i; valueEnd = i + 1; }
+        if (c === ';') { declaration(i); start = i + 1; colon = -1; }
+      }
+    }
+    if (quote || stack.length) styleError('syntax', styleStr.length);
+    declaration(styleStr.length);
+    return '{{ ' + props.join(', ') + ' }}';
+  }
+  function jsxText(text) {
+    return text.replace(/[{}<>]/g, function (c) { return { '{': '&#123;', '}': '&#125;', '<': '&lt;', '>': '&gt;' }[c]; });
+  }
+
+  // Generic camelCase converter for any remaining hyphenated attrs
   function toCamelCase(attr) {
     return attr.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
   }
 
+  // JSX name for one attribute name: known map first, then camelCase for any other
+  // hyphenated name (data-*, aria-* excluded)
   function jsxAttrName(name) {
     var lower = name.toLowerCase();
     if (Object.prototype.hasOwnProperty.call(SVG_ATTR_MAP, lower)) return SVG_ATTR_MAP[lower];
@@ -928,8 +1037,8 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
     return name;
   }
 
+  // Process names and inline styles; ordinary values keep their original quoting.
   var ATTR_RE = /(\s+)([^\s"'>\/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
-
   function processAttrs(attrStr) {
     if (!attrStr) return '';
     return attrStr.replace(ATTR_RE, function (_, space, name, rawValue) {
@@ -937,35 +1046,60 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
       if (rawValue === undefined) return space + jsxAttrName(name);
       var quote = rawValue.charAt(0);
       var quoted = quote === '"' || quote === "'";
+      if (name.toLowerCase() === 'style') {
+        var value = quoted ? rawValue.slice(1, -1) : rawValue;
+        return space + 'style=' + styleStringToObject(decodeEntities(value));
+      }
       return space + jsxAttrName(name) + '=' + (quoted ? rawValue : '"' + rawValue + '"');
     });
   }
 
   var TAG_RE = /<([a-zA-Z][a-zA-Z0-9.-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/g;
 
+  // Indent all lines by N spaces (for wrapping)
   function indent(str, spaces) {
     var pad = new Array(spaces + 1).join(' ');
     return str.split('\n').map(function (l) { return l ? pad + l : l; }).join('\n');
   }
 
+  // Main: convert SVG string to JSX component
   function svgToJsx(svgStr, compName, useTs, useForwardRef, useMemo) {
     if (!svgStr.trim()) return '';
 
     // 1. Remove XML declaration
     var result = svgStr.replace(/<\?xml[^?]*\?>/g, '').trim();
 
-    // 2. Transform all tags: process attrs, ensure self-closing. The first <svg> gets
-    //    ref={ref} and {...props} after its own attributes, so caller props win
-    //    (svgr's default expandProps: 'end').
+    // Tokenize original SVG nodes before producing JSX expressions. CSS text stays a
+    // string; comments cannot expose their embedded tags to attribute conversion.
     var spreadDone = false;
-    result = result.replace(TAG_RE, function (match, tag, attrs, selfClose) {
+    var tokens = new RegExp('<!--[\\s\\S]*?-->|<style\\b(?:"[^"]*"|\'[^\']*\'|[^\'">])*?>[\\s\\S]*?<\\/style\\s*>|<!\\[CDATA\\[[\\s\\S]*?\\]\\]>|<\\/[a-zA-Z][a-zA-Z0-9.-]*\\s*>|' + TAG_RE.source, 'g');
+    var out = '', cursor = 0, match;
+    while ((match = tokens.exec(result))) {
+      out += jsxText(result.slice(cursor, match.index));
+      cursor = tokens.lastIndex;
+      var raw = match[0];
+      if (raw.indexOf('<!--') === 0) {
+        out += '{/*' + raw.slice(4, -3).replace(/\*\//g, '* /') + '*/}';
+        continue;
+      }
+      if (raw.indexOf('<![CDATA[') === 0) { out += '{' + jsxString(raw.slice(9, -3)) + '}'; continue; }
+      if (raw.indexOf('</') === 0) { out += raw; continue; }
+      var tagMatch = new RegExp('^' + TAG_RE.source).exec(raw);
+      var tag = tagMatch[1], attrs = tagMatch[2], selfClose = tagMatch[3];
       var processed = processAttrs(attrs || '');
       if (!spreadDone && tag === 'svg') {
         spreadDone = true;
         processed += useForwardRef ? ' ref={ref} {...props}' : ' {...props}';
       }
-      return '<' + tag + processed + (selfClose ? ' />' : '>');
-    });
+      if (tag === 'style' && !selfClose) {
+        var css = raw.slice(tagMatch[0].length).replace(/<\/style\s*>$/, '');
+        css = css.split(/(<!\[CDATA\[[\s\S]*?\]\]>)/g).map(function (part) {
+          return part.indexOf('<![CDATA[') === 0 ? part.slice(9, -3) : decodeEntities(part);
+        }).join('');
+        out += '<style' + processed + '>{' + jsxString(css) + '}</style>';
+      } else out += '<' + tag + processed + (selfClose ? ' />' : '>');
+    }
+    result = out + jsxText(result.slice(cursor));
 
     // 4. Indent the SVG body
     result = indent(result, 4);
@@ -1352,6 +1486,17 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
     return svg;
   }
 
+  // What the page shows and copies. The JSX export refuses inline styles that a React style
+  // object cannot keep (svgToJsx throws with error.code and error.position); the refusal comes
+  // back as data so the batch, the downloads and the other formats keep working.
+  function tryFormatOutput(format, svg, fileName) {
+    try {
+      return { text: formatOutput(format, svg, fileName), error: null };
+    } catch (e) {
+      return { text: '', error: { code: e && typeof e.code === 'string' ? e.code : 'syntax', position: e && typeof e.position === 'number' ? e.position : 0 } };
+    }
+  }
+
   // gzip size as a web server would send it (CompressionStream, default level).
   function gzipSize(text) {
     if (typeof CompressionStream === 'undefined') return Promise.resolve(null);
@@ -1379,7 +1524,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   var downloadBtn = $('svgo-download'), copyBtn = $('svgo-copy'), formatEl = $('svgo-format');
   var checkEl = $('svgo-check'), notesEl = $('svgo-notes');
   var imgBefore = $('svgo-img-before'), imgAfter = $('svgo-img-after'), diffFig = $('svgo-fig-diff'), diffCanvas = $('svgo-diff');
-  var codeSummary = $('svgo-code-summary'), codeEl = $('svgo-code'), jsxNote = $('svgo-jsx-note');
+  var codeSummary = $('svgo-code-summary'), codeEl = $('svgo-code'), jsxNote = $('svgo-jsx-note'), jsxRefusedEl = $('svgo-jsx-refused');
   var batchEl = $('svgo-batch'), rowsEl = $('svgo-rows'), zipBtn = $('svgo-zip');
   var precisionEl = $('svgo-precision'), precisionVal = $('svgo-precision-val'), prefixEl = $('svgo-prefix');
   var multipassEl = $('svgo-multipass'), prettyEl = $('svgo-pretty');
@@ -1694,7 +1839,11 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   }
 
   // ── output ──
-  function outputText(item) { return formatOutput(settings.format, item.data, item.name || 'icon.svg'); }
+  // { text, error }: a JSX refusal is data here, so it cannot stop the batch or a download.
+  function outputText(item) { return tryFormatOutput(settings.format, item.data, item.name || 'icon.svg'); }
+  function refusalText(error) {
+    return fill(T.jsxRefused, { position: error.position + 1, reason: T.jsxReasons[error.code] || T.jsxReasons.syntax });
+  }
 
   function renderSummary(item) {
     sizesEl.textContent = formatBytes(item.before) + ' → ' + formatBytes(item.after);
@@ -1738,8 +1887,12 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
       diffFig.hidden = false;
     } else diffFig.hidden = true;
     var out = outputText(item);
-    codeEl.textContent = out.length > 200000 ? out.slice(0, 200000) + '\n…' : out;
-    codeSummary.textContent = fill(T.code, { chars: nf(out.length) });
+    // A refused JSX export clears the code and disables Copy; Download still saves item.data.
+    copyBtn.disabled = !!out.error;
+    jsxRefusedEl.hidden = !out.error;
+    jsxRefusedEl.textContent = out.error ? refusalText(out.error) : '';
+    codeEl.textContent = out.text.length > 200000 ? out.text.slice(0, 200000) + '\n…' : out.text;
+    codeSummary.textContent = fill(T.code, { chars: nf(out.text.length) });
     jsxNote.hidden = settings.format !== 'jsx';
   }
 
@@ -1835,7 +1988,9 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   copyBtn.addEventListener('click', function () {
     var item = items[active];
     if (!item || item.data == null) return;
-    copyText(outputText(item), copyBtn, T.copy);
+    var out = outputText(item);
+    if (out.error) { copyBtn.disabled = true; setStatus(refusalText(out.error), 'error'); return; }
+    copyText(out.text, copyBtn, T.copy);
     if (window.trackTool) window.trackTool(SLUG, 'copy');
   });
   copyConfigBtn.addEventListener('click', function () { copyText(configSource(settings, svgoVersion), copyConfigBtn, T.copyConfig); });
@@ -1994,6 +2149,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
 
   .svgo-code summary, .svgo-all summary { cursor: pointer; font-size: 0.88rem; font-weight: 650; color: var(--color-text-secondary); padding: 0.35rem 0; }
   .svgo-code summary:hover, .svgo-all summary:hover { color: var(--color-primary); }
+  .svgo-jsx-refused { margin: 0; font-size: 0.85rem; color: var(--color-danger); }
   .svgo-jsx-note { margin: 0.2rem 0 0.4rem; font-size: 0.82rem; color: var(--color-text-secondary); }
   .svgo-pre {
     margin: 0.3rem 0; max-height: 300px; overflow: auto; padding: 0.85rem;

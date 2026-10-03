@@ -30,6 +30,8 @@
     </div>
   </div>
 
+  <p id="htj-status" role="status" aria-live="polite"></p>
+
   <script is:inline>
     (function () {
       var STRINGS = {
@@ -39,6 +41,8 @@
           copy: 'Copy',
           copied: 'Copied!',
           placeholder: '<!-- paste your HTML here -->',
+          refused: 'Cannot convert style at position {position}: {reason}. Output cleared.',
+          reasons: { syntax: 'invalid declaration or unclosed CSS syntax', property: 'unsupported or escaped property name', duplicate: 'repeated property cannot preserve CSS fallback order', priority: '!important cannot be preserved in a React style object', comment: 'CSS comments require manual conversion' },
         },
         zh: {
           inputLabel: 'HTML 输入',
@@ -46,6 +50,8 @@
           copy: '复制',
           copied: '已复制！',
           placeholder: '<!-- 粘贴 HTML 到这里 -->',
+          refused: '样式第 {position} 个字符无法转换：{reason}。已清空输出。',
+          reasons: { syntax: '声明无效或 CSS 语法未闭合', property: '属性名不支持或含转义', duplicate: '重复属性无法保留 CSS 回退顺序', priority: 'React 样式对象无法保留 !important', comment: 'CSS 注释需要手动转换' },
         },
         ja: {
           inputLabel: 'HTML 入力',
@@ -53,6 +59,8 @@
           copy: 'コピー',
           copied: 'コピー済み！',
           placeholder: '<!-- HTMLをここに貼り付け -->',
+          refused: 'スタイルの {position} 文字目を変換できません：{reason}。出力を消去しました。',
+          reasons: { syntax: '宣言が無効、または CSS 構文が閉じていません', property: '未対応またはエスケープされたプロパティ名', duplicate: '重複プロパティの CSS フォールバック順序を保持できません', priority: 'React のスタイルオブジェクトでは !important を保持できません', comment: 'CSS コメントは手動で変換してください' },
         },
         ko: {
           inputLabel: 'HTML 입력',
@@ -60,6 +68,8 @@
           copy: '복사',
           copied: '복사됨!',
           placeholder: '<!-- HTML을 여기에 붙여넣기 -->',
+          refused: '스타일 {position}번째 문자를 변환할 수 없습니다: {reason}. 출력을 지웠습니다.',
+          reasons: { syntax: '잘못된 선언 또는 닫히지 않은 CSS 구문', property: '지원하지 않거나 이스케이프된 속성 이름', duplicate: '중복 속성의 CSS 대체 순서를 보존할 수 없습니다', priority: 'React 스타일 객체는 !important를 보존할 수 없습니다', comment: 'CSS 주석은 직접 변환해야 합니다' },
         },
       };
 
@@ -78,6 +88,7 @@
       var inputEl  = document.getElementById('htj-input');
       var outputEl = document.getElementById('htj-output');
       var copyBtn  = document.getElementById('htj-copy');
+      var statusEl = document.getElementById('htj-status');
 
       /* ── engine:start ── */
       // ---- Void elements that need explicit self-closing slash ----
@@ -188,25 +199,80 @@
         return '{(event) => { ' + code + end + '}}';
       }
 
-      // ---- Style string → JSX object ----
+      // CSS declarations split only at top-level semicolons. Preserve JS string bytes.
+      function jsxString(value) {
+        return JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+      }
+      function styleError(code, position) {
+        var error = new Error(code + ' at style position ' + (position + 1));
+        error.code = code;
+        error.position = position;
+        throw error;
+      }
       function styleStringToObject(styleStr) {
-        var pairs = styleStr.split(';');
         var props = [];
-        pairs.forEach(function (pair) {
-          var idx = pair.indexOf(':');
-          if (idx === -1) return;
-          var prop = pair.slice(0, idx).trim();
-          var val  = pair.slice(idx + 1).trim();
-          if (!prop || !val) return;
-          // camelCase CSS property
-          var jsProp = prop.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
-          // vendor prefix: first letter uppercase
-          if (/^(webkit|moz|ms|o)[A-Z]/.test(jsProp)) {
-            jsProp = jsProp.charAt(0).toUpperCase() + jsProp.slice(1);
+        var seen = Object.create(null);
+        var start = 0, colon = -1, valueEnd = 0, quote = '', stack = [];
+        function declaration(end) {
+          if (/^[ \t\n\r\f]*$/.test(styleStr.slice(start, end))) return;
+          if (colon < start) styleError('syntax', start);
+          var prop = styleStr.slice(start, colon).replace(/^[ \t\n\r\f]+|[ \t\n\r\f]+$/g, '');
+          var val = styleStr.slice(colon + 1, valueEnd).replace(/^[ \t\n\r\f]+/, '');
+          if (!val) styleError('syntax', colon + 1);
+          if (!/^(?:--[a-zA-Z0-9_-]+|-?[a-zA-Z][a-zA-Z0-9-]*)$/.test(prop)) styleError('property', start);
+          var custom = prop.indexOf('--') === 0;
+          var key = custom ? prop : prop.toLowerCase();
+          if (seen[key]) styleError('duplicate', start);
+          seen[key] = true;
+          var jsProp = custom ? prop : key.replace(/^-ms-/, 'ms-').replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+          props.push(jsxString(jsProp) + ': ' + jsxString(val));
+        }
+        for (var i = 0; i < styleStr.length; i++) {
+          var c = styleStr[i];
+          if (c === '\\') {
+            if (i + 1 === styleStr.length) styleError('syntax', i);
+            i++;
+            if (/[\n\r\f]/.test(styleStr[i])) {
+              if (!quote) styleError('syntax', i - 1);
+              if (styleStr[i] === '\r' && styleStr[i + 1] === '\n') i++;
+            } else if (/[0-9a-fA-F]/.test(styleStr[i])) {
+              var count = 1;
+              while (count < 6 && /[0-9a-fA-F]/.test(styleStr[i + 1] || '')) { i++; count++; }
+              if (/[ \t\n\r\f]/.test(styleStr[i + 1] || '')) {
+                i++;
+                if (styleStr[i] === '\r' && styleStr[i + 1] === '\n') i++;
+              }
+            }
+            if (colon >= start) valueEnd = i + 1;
+            continue;
           }
-          props.push(jsProp + ": '" + val.replace(/'/g, "\\'") + "'");
-        });
+          if (colon >= start && !/[ \t\n\r\f]/.test(c) && (c !== ';' || quote || stack.length)) valueEnd = i + 1;
+          if (quote) {
+            if (c === quote) quote = '';
+            else if (/[\n\r\f]/.test(c)) styleError('syntax', i);
+            continue;
+          }
+          if (c === '"' || c === "'") { quote = c; continue; }
+          if (c === '/' && styleStr[i + 1] === '*') styleError('comment', i);
+          if (c === '(' || c === '[' || c === '{') { stack.push(c); continue; }
+          if (c === ')' || c === ']' || c === '}') {
+            if (stack.pop() !== { ')': '(', ']': '[', '}': '{' }[c]) styleError('syntax', i);
+            continue;
+          }
+          if (!stack.length) {
+            if (c === '!') styleError('priority', i);
+            if (c === ':' && colon < start) { colon = i; valueEnd = i + 1; }
+            if (c === ';') { declaration(i); start = i + 1; colon = -1; }
+          }
+        }
+        if (quote || stack.length) styleError('syntax', styleStr.length);
+        declaration(styleStr.length);
         return '{{ ' + props.join(', ') + ' }}';
+      }
+
+      // Encode original text only; generated handler/style expressions stay executable.
+      function jsxText(text) {
+        return text.replace(/[{}<>]/g, function (c) { return { '{': '&#123;', '}': '&#125;', '<': '&lt;', '>': '&gt;' }[c]; });
       }
 
       // ---- Process a single tag's attributes ----
@@ -240,29 +306,37 @@
       // ---- Main conversion function ----
       var TAG_RE = /<([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/g;
       function htmlToJsx(html) {
-        // 1. HTML comments → JSX comments
-        // A */ inside the comment would end the JSX comment early
-        var result = html.replace(/<!--([\s\S]*?)-->/g, function (_, content) {
-          return '{/*' + content.replace(/\*\//g, '* /') + '*/}';
-        });
-
-        // 2. Process tags: find opening tags and transform attributes
-        result = result.replace(TAG_RE, function (match, tag, attrs, selfClose) {
+        var tokens = new RegExp('<!--[\\s\\S]*?-->|<\\/[a-zA-Z][a-zA-Z0-9-]*\\s*>|' + TAG_RE.source, 'g');
+        var result = '', cursor = 0, match;
+        while ((match = tokens.exec(html))) {
+          result += jsxText(html.slice(cursor, match.index));
+          cursor = tokens.lastIndex;
+          if (match[0].indexOf('<!--') === 0) {
+            result += '{/*' + match[0].slice(4, -3).replace(/\*\//g, '* /') + '*/}';
+            continue;
+          }
+          if (match[0].indexOf('</') === 0) { result += match[0]; continue; }
+          var tag = match[1], attrs = match[2], selfClose = match[3];
           var processedAttrs = processAttrs(attrs || '');
           var isVoid = VOID_TAGS.indexOf(tag.toLowerCase()) !== -1;
           var close = (isVoid || selfClose) ? ' />' : '>';
-          return '<' + tag + processedAttrs + close;
-        });
-
-        return result;
+          result += '<' + tag + processedAttrs + close;
+        }
+        return result + jsxText(html.slice(cursor));
       }
       /* ── engine:end ── */
 
       function convert() {
         var html = inputEl.value;
-        outputEl.value = html ? htmlToJsx(html) : '';
-        if (html) {
-          window.trackTool && window.trackTool('html_to_jsx', 'convert');
+        statusEl.textContent = '';
+        try {
+          outputEl.value = html ? htmlToJsx(html) : '';
+          copyBtn.disabled = !outputEl.value;
+          if (html) window.trackTool && window.trackTool('html_to_jsx', 'convert');
+        } catch (error) {
+          outputEl.value = '';
+          copyBtn.disabled = true;
+          statusEl.textContent = t.refused.replace('{position}', error.position + 1).replace('{reason}', t.reasons[error.code] || t.reasons.syntax);
         }
       }
 

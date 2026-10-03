@@ -2,6 +2,7 @@
 //
 // Read:  src/components/tools/SvgToJsxTool.astro (extracts the real engine block between the
 //        `engine:start` / `engine:end` markers, so this test cannot drift from the shipped source)
+//        and src/content/tools/svg-to-jsx/*.mdx (example pairs are recomputed)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -22,6 +23,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { transformSync } from 'esbuild';
+import { createRequire } from 'node:module';
+import { runInNewContext } from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SvgToJsxTool.astro'), 'utf8');
@@ -107,8 +110,8 @@ eq('xmlns and xmlns:* removed', body('<svg xmlns="http://www.w3.org/2000/svg" xm
   '<svg viewBox="0 0 1 1" {...props}></svg>');
 eq('xmlns inside a value is kept', body('<svg aria-label=" xmlns=&quot;x&quot;"></svg>'),
   '<svg aria-label=" xmlns=&quot;x&quot;" {...props}></svg>');
-eq('tags inside a comment are converted too (page limit)',
-  body('<svg><!-- <g class="x"> --></svg>'), '<svg {...props}><!-- <g className="x"> --></svg>');
+eq('comments are lowered without rewriting their embedded tags',
+  body('<svg><!-- <g class="x"> --></svg>'), '<svg {...props}>{/* <g class="x"> */}</svg>');
 eq('XML declaration removed', body('<?xml version="1.0" encoding="UTF-8"?>\n<svg></svg>'), '<svg {...props}></svg>');
 eq('multi-line attributes keep their line breaks',
   body('<svg\n  class="a"\n  viewBox="0 0 1 1">\n</svg>'),
@@ -134,6 +137,89 @@ for (const opts of [{}, { ts: true }, { ref: true }, { ts: true, ref: true, memo
 const plain = render(PLUS, {});
 eq('no caller props: SVG defaults', plain.props.width + ' ' + plain.props.fill, '24 none');
 eq('child path attributes compiled', render(PLUS, {}).children[0].props.strokeWidth, '2');
+
+// A-SVGJSX-UNLOWERED-NODES: actual component output, JSX/TSX compilation and real React readback.
+let React, renderToStaticMarkup;
+if (process.env.JSX_REACT_REFERENCE_DIR) {
+  const reference = createRequire(join(process.env.JSX_REACT_REFERENCE_DIR, 'package.json'));
+  React = reference('react');
+  ({ renderToStaticMarkup } = reference('react-dom/server'));
+  if (React.version !== '19.2.0' || reference('react-dom/package.json').version !== '19.2.0') throw Error('React reference must be 19.2.0');
+} else console.log('SKIP: real React rendering — set JSX_REACT_REFERENCE_DIR to isolated React/ReactDOM 19.2.0');
+const css = '.x { fill:red; --text:"a\\b" }\n@media (min-width:1px) { .x { opacity:.5 } }';
+const complex = '<svg width="24"><!-- <g class="x"> */ {x} --><style><![CDATA[' + css + ']]></style><g style="--Accent:red;-ms-transform:none;fill:blue"><text>{label}</text><use xlink:href="#shape"/></g></svg>';
+for (const opts of [{}, { ts: true }, { ref: true }, { ts: true, ref: true, memo: true }]) {
+  try {
+    const tree = render(complex, { width: 48 }, opts);
+    eq('style node string ' + JSON.stringify(opts), tree.children[0].children[0], css);
+    eq('inline style object ' + JSON.stringify(opts), JSON.stringify(tree.children[1].props.style), JSON.stringify({ '--Accent': 'red', msTransform: 'none', fill: 'blue' }));
+    eq('SVG text braces ' + JSON.stringify(opts), tree.children[1].children[0].children[0], '{label}');
+    eq('xlink mapped ' + JSON.stringify(opts), tree.children[1].children[1].props.xlinkHref, '#shape');
+    if (React) {
+      const code = transformSync(E.svgToJsx(complex, 'Icon', !!opts.ts, !!opts.ref, !!opts.memo), { loader: opts.ts ? 'tsx' : 'jsx', format: 'cjs' }).code;
+      const mod = { exports: {} };
+      new Function('require', 'module', 'exports', code)(() => React, mod, mod.exports);
+      const out = renderToStaticMarkup(React.createElement(mod.exports.default, { width: 48 }));
+      check('real React SVG readback ' + JSON.stringify(opts), out.includes('width="48"') && out.includes(css) && out.includes('--Accent:red') && out.includes('xlink:href="#shape"') && out.includes('{label}') && !out.includes('<!--'), out);
+    }
+  } catch (e) { check('SVG nodes compile/render ' + JSON.stringify(opts), false, e.errors?.[0]?.text || e.message); }
+}
+// CSS declaration boundaries in a style attribute (same parser as html-to-jsx): semicolons
+// inside quotes and url(), entity-encoded quotes, CSS escapes and custom properties keep
+// their exact value after esbuild compilation.
+for (const [attr, expected] of [
+  ['background:url(data:image/png;base64,AA==);fill:red', { background: 'url(data:image/png;base64,AA==)', fill: 'red' }],
+  ["background-image:url('a;b.svg')", { backgroundImage: "url('a;b.svg')" }],
+  ['--label:&quot;a;b&quot;', { '--label': '"a;b"' }],
+  ['font-family:&quot;A\\&quot;B&quot;, serif', { fontFamily: '"A\\"B", serif' }],
+  ['content:"\\201C";-ms-filter:none', { content: '"\\201C"', msFilter: 'none' }],
+  ['--Brand-Color: #00f ; STROKE-WIDTH:2', { '--Brand-Color': '#00f', strokeWidth: '2' }],
+]) {
+  try {
+    const props = render("<svg style='" + attr.replace(/'/g, '&#39;') + "'></svg>", {}).props;
+    eq('SVG style boundary ' + attr, JSON.stringify(props.style), JSON.stringify(expected));
+  } catch (e) { check('SVG style boundary ' + attr, false, e.errors?.[0]?.text || e.message); }
+}
+for (const style of ['fill:red;fill:blue', 'fill:red !important', 'fill:url(a', 'fill:', 'fill', 'fill:/*x*/red']) {
+  let error;
+  try { body('<svg><path style="' + style + '"/></svg>'); } catch (e) { error = e; }
+  check('SVG refuses unrepresentable CSS ' + style, !!error?.code && Number.isInteger(error.position));
+}
+// Every language page: each ```svg / ```jsx example pair is the converter's output; the
+// Illustrator example's rendered markup quoted on the page is what React 19.2.0 renders.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const page = readFileSync(join(root, 'src/content/tools/svg-to-jsx/' + lang + '.mdx'), 'utf8');
+  const pairs = [...page.matchAll(/```svg\n([\s\S]*?)\n```[\s\S]*?```jsx\n([\s\S]*?)\n```/g)];
+  eq('page examples found ' + lang, pairs.length, 2);
+  for (const [, input, output] of pairs) {
+    const name = (output.match(/function (\w+)\(props\)/) || [])[1];
+    eq('page example output ' + lang + ' ' + name, E.svgToJsx(input, name, false, false, false), output);
+    if (React && /<style>/.test(input)) {
+      const code = transformSync(output, { loader: 'jsx', format: 'cjs' }).code;
+      const mod = { exports: {} };
+      new Function('require', 'module', 'exports', code)(() => React, mod, mod.exports);
+      const html = renderToStaticMarkup(React.createElement(mod.exports.default));
+      check('page quotes the React markup ' + lang, page.includes('`' + html + '`'), html);
+    }
+  }
+  check('page no longer says comments and <style> are kept ' + lang, !/<style>\{`/.test(page));
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  try {
+    const nodes = {};
+    const node = (id) => nodes[id] ||= { value: id === 'stj-name' ? 'Icon' : '', checked: false, disabled: false, textContent: '', listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } };
+    runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], { document: { documentElement: { lang }, querySelectorAll: () => [], getElementById: node }, window: {}, navigator: {}, setTimeout: (fn) => fn(), clearTimeout() {} });
+    node('stj-input').value = '<svg><text>{x}</text></svg>';
+    node('stj-input').listeners.input();
+    check('SVG page valid output ' + lang, !!node('stj-output').value && !node('stj-copy').disabled);
+    node('stj-input').value = '<svg style="fill:red !important"/>';
+    node('stj-input').listeners.input();
+    check('SVG page clears old output/disables copy ' + lang, node('stj-output').value === '' && node('stj-copy').disabled && !!node('stj-status').textContent);
+    node('stj-input').value = '<svg/>';
+    node('stj-input').listeners.input();
+    check('SVG page recovers ' + lang, !!node('stj-output').value && !node('stj-copy').disabled && node('stj-status').textContent === '');
+  } catch (e) { check('SVG page refusal ' + lang, false, e.message); }
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
