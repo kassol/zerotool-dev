@@ -121,6 +121,10 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 - 2026-10-03 — AB 文本三工具：`test-regex-tester.mjs` 22 → 99 项（真实输入监听：回溯在 Worker 中、2 秒超时、取消、换输入作废旧结果、flags / 组 / 零长匹配 / UTF-16 下标不变）；`test-diff-checker.mjs` 2,013 → 6,059 项（旧整表回溯在 1–5 行 a/b 全组合上作为对照逐项相同；worker_threads 运行真实 Blob Worker：四语言计数、每页 100 行、取消 / 互换 / 清除 / pagehide / 改输入作废迟到回包、计算中切换视图、快速翻页、切到较短视图后越界翻页被夹到末页）；`test-zero-width-character-detector.mjs` 109 → 207 项（见上表）。均只写 stdout，Node 22.23.3 通过。
 
+- 2026-10-03 — `test-har-file-analyzer.mjs` 1935 → 2028 项：删去 Worker 协议一节（组件已无 Worker）；新增分段执行：`loadJob` 在每 1 / 2 / 3 / 7 个单元让出一次时与 `buildIndex` + `scanSensitive` 结果相同，`redactJob` 在 5 组选项（全部 / 子集 / 不查别处 / 删正文与 IP 加自定义名称 / 不查令牌）× 4 种分段下与测试内照旧写出的单次 `redactHar` 逐字节、逐计数相同，`curlJob` 与直接调用一致；页面代码不再调用整份解析与脱敏函数、不建 Worker，按 `taskGen` 停止旧任务；已去掉的值拆成多个正则（9,000 余个值时多于 2 个、每个源码不足 40,000 字符、长值先替换、Base64 中的值、首次使用 3 秒内）
+- 2026-10-03 — `test-har-file-analyzer.mjs` 1887 → 1935 项：Worker 协议（用页面同样截取的 `engine:start` 到 `worker:end` 文本在替身作用域里运行，核对读取错误、索引与扫描、脱敏导出字节、子集与原样导出、遮盖详情、cURL 都与直接调用引擎一致，主线程代码不再调用解析与脱敏函数）；Base64 字符串（11 字符无填充、长 base64url 串内含值、无关串保留）、前缀相同时取最长值、20 万字符的值不溢栈、3,000 个值查 2 MB 文本的耗时上限
+- 2026-10-03 — `test-har-file-analyzer.mjs` 1826 → 1887 项：Base64 文本正文解码脱敏后重新编码（6 种文本类型、`size` 与 `compression`、大小写 `encoding`）、无法检查的正文与二进制 WebSocket 消息按原因移除并计数、明确删除正文时不留 `encoding` / `compression`、`log.comment` 不带回去掉的值、Cookie Parser 复制声明逐字一致；整份导出的独立复查（重新解析后用 Node `Buffer` 解码每个 Base64 正文，查找合成令牌及其 Base64 / URL 安全 / 百分号形式，不调用引擎函数）
+
 - 2026-10-02 — 新增 `test-yaml-parser-security.mjs`：读取已安装的 js-yaml，9 个子进程用例覆盖 DEFAULT_SCHEMA 与 OpenAPI 的 CORE_SCHEMA + merge、merge 链与重复别名、空来源预算、omap、正常合并、多文档、原型键与合法输入恢复。硬超时本机 3 秒 / CI 12 秒，超时 SIGKILL；只写 stdout/stderr，升级 js-yaml 时运行，CI 随全部测试执行。Node 22.23.3 下 9 组通过。
 
 - 2026-10-02 — 新增 `test-toml-parser-security.mjs`：读取锁定的 smol-toml，在带 SIGKILL 超时的子进程中拒绝四种 EOF 注释输入，随后验证中日韩文本、合法注释与 stringify 往返。只写 stdout/stderr，CI 随全部测试运行；升级 smol-toml 时运行。`test-yaml-toml.mjs` 同步 1.7.1 对不安全整数增加 `.0` 的实际输出。

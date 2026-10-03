@@ -51,7 +51,7 @@ check('engine markers present', si >= 0 && ei > si);
 const E = new Function(componentSrc.slice(si, ei) + `
   return { REDACTED, TOL_MS, MAX_BYTES, TOKEN_RULES, parseIsoMs, normalizeTimings, typeOf, statusClass, transferOf, cacheOf,
     readHarText, checkHar, buildIndex, sortRows, filterRows, fmtMs, fmtBytes, curlFor, curlJoin, escPosix, escWin,
-    isSensitiveName, redactHar, redactEntry, newCtx, scanSensitive, looksSanitizedChrome, residueEligible, sampleHar };`)();
+    isSensitiveName, redactHar, redactEntry, newCtx, scanSensitive, loadJob, redactJob, curlJob, redactUrl, residueRegex, replaceKnown, countResidue, looksSanitizedChrome, residueEligible, sampleHar };`)();
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 function allStrings(x, out = []) {
@@ -61,6 +61,27 @@ function allStrings(x, out = []) {
   return out;
 }
 const contains = (har, value) => allStrings(har).some((s) => s.includes(value));
+
+// Cookie Parser keeps a source copy of these declarations. Changing HAR must not drift it.
+{
+  const cookie = readFileSync(join(root, 'src/components/tools/CookieParserTool.astro'), 'utf8');
+  const declaration = (src, name) => {
+    const lines = src.split('\n');
+    const at = lines.findIndex((line) => new RegExp('^\\s*(?:function|var) ' + name + '(?:\\b|\\()').test(line));
+    if (at < 0) return '';
+    const indent = lines[at].match(/^\s*/)[0];
+    let end = at + 1;
+    if (!/;\s*$|}\s*$/.test(lines[at])) {
+      while (end < lines.length && !new RegExp('^' + indent + '(?:};|})\\s*$').test(lines[end])) end++;
+      end++;
+    }
+    return lines.slice(at, end).map((line) => line.startsWith(indent) ? line.slice(indent.length) : line).join('\n');
+  };
+  for (const name of ['notFiller', 'base64HasColon', 'TOKEN_RULES', 'SENS_SUBSTR', 'NON_SECRET_TAIL', 'SENS_WORDS', 'normName', 'nameWords', 'isSensitiveName']) {
+    const mine = declaration(componentSrc, name);
+    check('Cookie source copy identical: ' + name, mine !== '' && mine === declaration(cookie, name));
+  }
+}
 
 // ---------- STRINGS ----------
 {
@@ -260,7 +281,7 @@ const SID = 'demo-session-7f3a9c2e51';
 
   const dropped = E.redactHar(har, { tokens: true, everywhere: true, dropReq: true, dropRes: true, ips: true }, null);
   check('drop bodies: no response text', dropped.har.log.entries.every((e) => e.response.content.text === undefined));
-  check('drop bodies: request text empty', dropped.har.log.entries.filter((e) => e.request.postData).every((e) => e.request.postData.text === ''));
+  check('drop bodies: request text absent', dropped.har.log.entries.filter((e) => e.request.postData).every((e) => e.request.postData.text === undefined));
   check('drop IPs', dropped.har.log.entries.every((e) => e.serverIPAddress === undefined) && !contains(dropped.har, '203.0.113.30'));
   eq('drop bodies: counts', [dropped.counts.dropped, dropped.kept.req, dropped.kept.res], [6, 0, 0]);
   check('drop: email gone with the body', !contains(dropped.har, 'shopper@example.com'));
@@ -365,7 +386,20 @@ function baseEntry(over = {}) {
 
   const b64 = baseEntry();
   b64.response.content = { size: 3, mimeType: 'image/png', text: 'iVBORw0KGgo=', encoding: 'base64' };
-  eq('base64 body untouched', one(b64).har.log.entries[0].response.content.text, 'iVBORw0KGgo=');
+  eq('binary Base64 removed from redacted copy', one(b64).har.log.entries[0].response.content.text, undefined);
+
+  const encoded = baseEntry();
+  const session = 'fixtureSession123456789';
+  encoded.request.headers = [{ name: 'Authorization', value: 'Bearer ' + session }];
+  encoded.response.content = { size: 80, mimeType: 'application/json', encoding: 'base64', text: Buffer.from(JSON.stringify({ token: session, echo: session, ok: true })).toString('base64') };
+  const encodedBefore = JSON.stringify(encoded);
+  const exported = one(encoded);
+  // Independent oracle: reparse the output and use Node's byte decoder, never redactHar again.
+  const saved = JSON.parse(exported.json).log.entries[0].response.content;
+  const decoded = Buffer.from(saved.text || '', 'base64').toString('utf8');
+  check('Base64 decoded export has no fixture session despite left=0', !decoded.includes(session), 'left=' + exported.left);
+  check('Base64 JSON preserves non-secret data', decoded.includes('"ok":true'));
+  eq('Base64 original entry unchanged', JSON.stringify(encoded), encodedBefore);
 
   const ip = baseEntry({ serverIPAddress: '192.0.2.44' });
   ip.request.headers = [{ name: 'X-Forwarded-For', value: '198.51.100.7, 10.0.0.2' }];
@@ -387,6 +421,302 @@ function baseEntry(over = {}) {
   check('residue rule: mixed id eligible', E.residueEligible('abc12345') && E.residueEligible(SID));
   check('residue rule: long numbers only from 16 digits', !E.residueEligible('1790000000') && E.residueEligible('1234567890123456'));
   check('residue rule: long passphrase eligible', E.residueEligible('correct-horse-battery-staple'));
+}
+
+// ---------- Base64 bodies ----------
+// Independent decoding oracle: Buffer and TextDecoder, no production redaction helpers.
+{
+  const secret = 'fixtureSession123456789';
+  const cases = [
+    ['application/json', JSON.stringify({ nested: { token: secret }, echo: secret, ok: true })],
+    ['application/problem+json; charset=UTF-8', JSON.stringify({ password: secret, ok: true })],
+    ['text/html', '<p data-id="' + secret + '">public</p>'],
+    ['application/javascript', 'const echo="' + secret + '";'],
+    ['image/svg+xml', '<svg><desc>' + secret + '</desc></svg>'],
+    ['application/x-www-form-urlencoded', 'password=' + secret + '&ok=1'],
+  ];
+  for (const [mime, text] of cases) {
+    const entry = baseEntry();
+    entry.request.headers = [{ name: 'Authorization', value: 'Bearer ' + secret }];
+    entry.response.content = { size: Buffer.byteLength(text), compression: 4, mimeType: mime, encoding: 'base64', text: Buffer.from(text).toString('base64') };
+    const before = JSON.stringify(entry);
+    const result = one(entry);
+    const content = JSON.parse(result.json).log.entries[0].response.content;
+    const bytes = Buffer.from(content.text || '', 'base64');
+    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    check(mime + ': decoded export removes known secret', !decoded.includes(secret) && decoded.includes('redacted'));
+    eq(mime + ': size = decoded bytes', content.size, bytes.length);
+    eq(mime + ': stale compression omitted', content.compression, undefined);
+    eq(mime + ': one decoded Base64 body reported', result.coverage?.base64, 1);
+    eq(mime + ': original unchanged', JSON.stringify(entry), before);
+  }
+  for (const [label, mime, encoding, text, reason] of [
+    ['binary', 'image/png', 'base64', 'iVBORw0KGgo=', 'binary'],
+    ['missing MIME', '', 'base64', 'aGVsbG8=', 'binary'],
+    ['bad alphabet', 'application/json', 'base64', '%%%bad', 'base64'],
+    ['bad UTF8', 'text/plain', 'base64', Buffer.from([0xc3, 0x28]).toString('base64'), 'charset'],
+    ['unsupported charset', 'text/plain; charset=shift_jis', 'base64', 'aGVsbG8=', 'charset'],
+    ['unknown encoding', 'text/plain', 'gzip', 'opaque-data', 'encoding'],
+  ]) {
+    const entry = baseEntry();
+    entry.response.content = { size: 80, compression: 4, mimeType: mime, encoding, text };
+    const result = one(entry);
+    const content = JSON.parse(result.json).log.entries[0].response.content;
+    eq(label + ': opaque body removed', [content.text, content.encoding], [undefined, undefined]);
+    eq(label + ': removal reason counted', result.coverage?.removed?.[reason], 1);
+    eq(label + ': response body not counted as retained', result.kept.res, 0);
+    eq(label + ': captured timing/size metadata retained', [content.size, result.har.log.entries[0].time], [80, 3]);
+  }
+  const entry = baseEntry();
+  const escaped = [...secret].map((c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')).join('');
+  entry.request.headers = [{ name: 'Cookie', value: 'sid=' + secret }];
+  entry.request.postData = { mimeType: 'application/json', encoding: 'base64', text: Buffer.from('{"echo":"' + escaped + '"}').toString('base64') };
+  entry.response.content = { mimeType: 'text/plain', size: 100, encoding: 'base64', text: Buffer.from(secret + ' ' + Buffer.from(secret).toString('base64')).toString('base64') };
+  const result = one(entry);
+  const saved = JSON.parse(result.json).log.entries[0];
+  const request = JSON.parse(Buffer.from(saved.request.postData.text, 'base64').toString());
+  check('escaped JSON echo independently scanned', request.echo !== secret);
+  check('encoded known-value variant removed', !Buffer.from(saved.response.content.text, 'base64').toString().includes(Buffer.from(secret).toString('base64')));
+  const off = one(entry, { everywhere: false });
+  check('everywhere off: decoded residue counted', off.left > 0);
+  const token = baseEntry();
+  token.response.content = { mimeType: 'application/json', encoding: 'base64', text: Buffer.from(JSON.stringify({ echo: 'Bearer ' + secret })).toString('base64') };
+  check('overview inspects decoded Base64 tokens', E.scanSensitive({ log: { entries: [token] } }).tokens > 0);
+  const binaryWs = baseEntry({ _webSocketMessages: [{ opcode: 2, data: 'opaque-binary' }] });
+  eq('binary WebSocket message removed in copy', one(binaryWs).har.log.entries[0]._webSocketMessages[0].data, undefined);
+  for (const mime of ['application/json-binary', 'application/javascript-opaque', 'image/svg+xml-binary']) {
+    const e = baseEntry();
+    e.response.content = { mimeType: mime, size: 99, compression: 4, encoding: 'base64', text: Buffer.from(secret).toString('base64') };
+    const r = one(e);
+    eq(mime + ': MIME must match completely', r.coverage.removed.binary, 1);
+    eq(mime + ': removed body omits compression', r.har.log.entries[0].response.content.compression, undefined);
+  }
+  const upper = clone(entry);
+  upper.request.postData.encoding = 'BASE64';
+  upper.response.content.encoding = 'Base64';
+  const up = one(upper);
+  const u = JSON.parse(up.json).log.entries[0];
+  check('case-insensitive encoding: decoded echo replaced', !Buffer.from(u.request.postData.text, 'base64').toString().includes(secret));
+  eq('postData has no invented HAR content size', u.request.postData.size, undefined);
+  eq('encoding normalized on export', [u.request.postData.encoding, u.response.content.encoding], ['base64', 'base64']);
+  const dropped = one(upper, { dropReq: true, dropRes: true });
+  eq('explicit request removal omits text and encoding', [dropped.har.log.entries[0].request.postData.text, dropped.har.log.entries[0].request.postData.encoding], [undefined, undefined]);
+  upper.response.content.compression = 4;
+  eq('explicit response removal omits compression', one(upper, { dropRes: true }).har.log.entries[0].response.content.compression, undefined);
+  const commented = { log: { version: '1.2', comment: 'Echo: ' + secret, entries: [upper] } };
+  const cr = E.redactHar(commented, { tokens: true, everywhere: true });
+  check('log.comment does not reintroduce removed secret', !cr.error && !JSON.parse(cr.json).log.comment.includes(secret));
+}
+
+// ---------- Base64 runs and the known-value pattern ----------
+{
+  const withHeader = (value, body, mime = 'text/plain') => {
+    const e = baseEntry();
+    e.request.headers = [{ name: 'Authorization', value: 'Bearer ' + value }];
+    e.response.content = { size: body.length, mimeType: mime, text: body };
+    return one(e);
+  };
+  const v8 = 'ab12cd34'; // 8 characters: Base64 without padding is 11 characters
+  const r1 = withHeader(v8, 'id=' + Buffer.from(v8).toString('base64').replace(/=+$/, '') + ' end');
+  check('11-character unpadded Base64 of an 8-character value replaced', !r1.json.includes(Buffer.from(v8).toString('base64').replace(/=+$/, '')) && r1.json.includes('id=[redacted] end'));
+  const long = 'fixtureSession123456789';
+  const wrapped = Buffer.from('{"user":"demo","sid":"' + long + '","n":1}').toString('base64url');
+  const r2 = withHeader(long, 'token ' + wrapped + ' tail');
+  check('value inside a longer Base64url run: run replaced', r2.json.includes('token [redacted] tail'));
+  const r3 = withHeader(long, 'plain ' + Buffer.from('nothing secret in here').toString('base64') + ' text');
+  check('unrelated Base64 run kept', r3.json.includes(Buffer.from('nothing secret in here').toString('base64')));
+  // Longest value wins when one removed value is a prefix of another.
+  const e4 = baseEntry();
+  e4.request.headers = [{ name: 'Cookie', value: 'a=prefixValue123; b=prefixValue123456789' }];
+  e4.response.content = { size: 10, mimeType: 'text/plain', text: 'x prefixValue123456789 y prefixValue123 z' };
+  const r4 = one(e4);
+  check('longest removed value replaced whole', JSON.parse(r4.json).log.entries[0].response.content.text === 'x [redacted] y [redacted] z');
+  const huge = 'q1' + 'x'.repeat(200000);
+  const e5 = baseEntry();
+  e5.request.headers = [{ name: 'X-Api-Key', value: huge }];
+  e5.response.content = { size: 10, mimeType: 'text/plain', text: 'echo ' + huge };
+  let r5; try { r5 = one(e5); } catch (err) { r5 = { error: String(err) }; }
+  check('200,000-character removed value: no stack overflow, echo replaced', !r5.error && !r5.json.includes(huge), String(r5.error));
+  const many = baseEntry();
+  many.request.headers = Array.from({ length: 3000 }, (_, i) => ({ name: 'X-Token-' + i, value: 'tok' + i + 'abcdefgh' }));
+  many.response.content = { size: 10, mimeType: 'text/plain', text: 'tok2999abcdefgh '.repeat(2000) + 'x'.repeat(2e6) };
+  const t0 = performance.now();
+  const r6 = one(many);
+  const ms = performance.now() - t0;
+  check('3,000 removed values over 2 MB of text: replaced', !r6.json.includes('tok2999abcdefgh'));
+  check('3,000 removed values over 2 MB of text: under 1.5 s', ms < 1500 * PERF_SLACK, ms.toFixed(0) + ' ms');
+}
+
+// ---------- sliced redaction and cURL ----------
+// The page runs loadJob, redactJob and curlJob in slices on its own thread (no Worker).
+// redactJob must give the same bytes and report as the single-pass redaction it replaced,
+// written out here from the previous redactHar, for any slice boundary.
+{
+  const main = componentSrc.slice(ei, componentSrc.indexOf('</script>', ei));
+  for (const fn of ['redactHar(', 'buildIndex(', 'scanSensitive(', 'readHarText(', 'curlJoin(', 'new Worker', 'postMessage(m'])
+    check('page code does not call ' + fn, !main.includes(fn));
+  for (const fn of ['loadJob(', 'redactJob(', 'curlJob(', 'runJob(job, gen', 'gen !== taskGen', "priority: 'user-blocking'"])
+    check('page code runs work in slices: ' + fn, main.includes(fn));
+  check('engine has no worker code left', !componentSrc.includes('worker:start') && !componentSrc.includes('harWorkerMain'));
+
+  const legacy = (har, opts, indices, meta) => {
+    const log = har.log, ctx = E.newCtx(opts || {}), out = { log: {} };
+    Object.keys(log).forEach((k) => { if (k !== 'entries' && k !== 'pages') out.log[k] = structuredClone(log[k]); });
+    const list = indices ? indices.map((i) => log.entries[i]) : log.entries;
+    out.log.entries = list.map((e) => E.redactEntry(structuredClone(e), ctx));
+    if (Array.isArray(log.pages)) {
+      const refs = new Set(out.log.entries.map((e) => (e && typeof e === 'object' && !Array.isArray(e) ? e.pageref : undefined)));
+      out.log.pages = log.pages.filter((p) => !indices || !(p && typeof p === 'object' && !Array.isArray(p)) || refs.has(p.id)).map((p) => {
+        const c = structuredClone(p);
+        if (c && typeof c === 'object' && typeof c.title === 'string') c.title = E.redactUrl(c.title, ctx);
+        return c;
+      });
+    }
+    const re = E.residueRegex(ctx.removed);
+    if (re && ctx.opts.everywhere) E.replaceKnown(out.log, re, ctx);
+    const note = 'Redacted with ZeroTool HAR Analyzer (https://zerotool.dev/tools/har-file-analyzer/): ' + (meta && meta.summary ? meta.summary : 'credentials replaced by [redacted].');
+    out.log.comment = out.log.comment ? String(out.log.comment) + '\n' + note : note;
+    const json = JSON.stringify(out, null, 2), check = JSON.parse(json);
+    const left = re ? E.countResidue(check.log, re) : 0;
+    if (left && ctx.opts.everywhere) return { error: 'residue', count: left };
+    let total = 0;
+    ['credentials', 'cookies', 'params', 'body', 'tokens', 'elsewhere', 'ips'].forEach((k) => { total += ctx.counts[k]; });
+    return { har: check, json, counts: ctx.counts, kept: ctx.kept, names: Array.from(ctx.names), total, left, entries: check.log.entries.length, coverage: ctx.coverage };
+  };
+  const secret = 'fixtureSession123456789';
+  const har = E.sampleHar();
+  har.log.comment = 'see ' + secret;
+  har.log.entries[0].response.content = { size: 40, mimeType: 'application/json', encoding: 'base64', text: Buffer.from(JSON.stringify({ echo: secret })).toString('base64') };
+  har.log.entries[0].request.headers.push({ name: 'Authorization', value: 'Bearer ' + secret });
+  har.log.entries[3].response.content = { size: 9, mimeType: 'image/png', encoding: 'base64', text: Buffer.from('PNG' + secret).toString('base64') };
+  har.log.entries.push('raw ' + secret, null, 7);
+  har.log.pages.push({ id: 'page_x', title: 'https://x.example/?sid=' + secret });
+  const before = JSON.stringify(har);
+  const all = { tokens: true, everywhere: true, dropReq: false, dropRes: false, ips: false, extra: '' };
+  const cases = [
+    ['all entries', all, null, undefined],
+    ['subset', all, [4, 5, 10], undefined],
+    ['not everywhere', Object.assign({}, all, { everywhere: false }), null, undefined],
+    ['drop bodies, ips, extra names', Object.assign({}, all, { dropReq: true, dropRes: true, ips: true, extra: 'theme' }), null, { summary: 'custom note' }],
+    ['no tokens', Object.assign({}, all, { tokens: false }), [0, 1, 2], undefined],
+  ];
+  for (const [label, opts, indices, meta] of cases) {
+    const want = legacy(har, opts, indices, meta);
+    for (const every of [1, 2, 5, 1e9]) {
+      const job = E.redactJob(har, opts, indices, meta);
+      let calls = 0, slices = 1;
+      while (!job.step(() => ++calls % every === 0)) slices++;
+      const got = job.result;
+      if (want.error) { eq('redactJob ' + label + ' / ' + every + ': residue error', got, want); continue; }
+      eq('redactJob ' + label + ' / ' + every + ': bytes', got.json, want.json);
+      eq('redactJob ' + label + ' / ' + every + ': report', [got.counts, got.kept, got.names, got.total, got.left, got.entries, got.coverage], [want.counts, want.kept, want.names, want.total, want.left, want.entries, want.coverage]);
+      if (every === 1) check('redactJob ' + label + ': yields between entries', slices > (indices || har.log.entries).length, String(slices));
+      check('redactJob ' + label + ': step after done stays done', job.step(() => true) === true);
+    }
+    check('redactHar equals legacy: ' + label, JSON.stringify(E.redactHar(har, opts, indices, meta).json) === JSON.stringify(want.json));
+  }
+  const res = E.redactHar(har, all, null);
+  check('sliced export has no decoded secret', !Buffer.from(JSON.parse(res.json).log.entries[0].response.content.text, 'base64').toString().includes(secret) && !res.json.includes(secret));
+  check('original HAR unchanged by redactJob', JSON.stringify(har) === before);
+
+  const order = [5, 0, 4, 9];
+  for (const [platform, redact] of [['unix', true], ['win', true], ['unix', false]]) {
+    const ctx = E.newCtx({ tokens: true });
+    const want = E.curlJoin(order.map((i) => { let e = har.log.entries[i]; if (redact) e = E.redactEntry(structuredClone(e), ctx); return E.curlFor(e, platform); }).filter(Boolean), platform);
+    for (const every of [1, 3, 1e9]) {
+      const job = E.curlJob(har, order, platform, redact);
+      let calls = 0;
+      while (!job.step(() => ++calls % every === 0));
+      eq('curlJob ' + platform + (redact ? ' masked' : '') + ' / ' + every, job.result, want);
+    }
+  }
+  const empty = E.curlJob(har, [], 'unix', true);
+  eq('curlJob with no requests', [empty.step(() => true), empty.result], [true, '']);
+}
+
+// ---------- removed values split over several patterns ----------
+// One prefix-tree pattern for 11,045 values took V8 33 s to run the first time; the values are
+// split so no pattern gets that large. Values that start alike must still be matched longest
+// first, also when their group is split.
+{
+  const removed = new Map();
+  for (let i = 0; i < 6000; i++) removed.set('tok-' + i + '-abcdefghijk', 1);
+  for (let i = 0; i < 3000; i++) removed.set('sharedPfx' + String(i).padStart(5, '0'), 1);
+  removed.set('sharedPfx00001-and-longer', 1);
+  removed.set('pw-7-correct-horse', 1);
+  const t0 = performance.now();
+  const res = E.residueRegex(removed);
+  check('many values: several patterns', Array.isArray(res) && res.length > 2, String(res.length));
+  check('many values: each pattern under 40,000 characters', res.every((r) => r.source.length < 40000), res.map((r) => r.source.length).join(','));
+  const ctx = E.newCtx({ tokens: true, everywhere: true });
+  const x = { a: 'x tok-5999-abcdefghijk y', b: 'see sharedPfx00001-and-longer!', c: 'sharedPfx02999 and pw-7-correct-horse', d: Buffer.from('id=sharedPfx01500').toString('base64') };
+  E.replaceKnown(x, res, ctx);
+  eq('many values: all replaced, longest first', x, { a: 'x [redacted] y', b: 'see [redacted]!', c: '[redacted] and [redacted]', d: '[redacted]' });
+  const ms = performance.now() - t0;
+  check('many values: first use under 3 s', ms < 3000 * PERF_SLACK, ms.toFixed(0) + ' ms');
+  eq('many values: residue count', E.countResidue({ s: 'tok-1-abcdefghijk sharedPfx00001-and-longer' }, res), 2);
+}
+
+// ---------- sliced opening ----------
+// loadJob runs buildIndex and scanSensitive one entry at a time; any slice boundary must give
+// the same result as the direct calls.
+{
+  const secret = 'fixtureSession123456789';
+  const har = E.sampleHar();
+  har.log.entries.push(42, null);
+  har.log.entries[1].response.content = { size: 40, mimeType: 'text/plain', encoding: 'base64', text: Buffer.from('Bearer ' + secret + 'abcdefghij').toString('base64') };
+  har.log.entries[2].request.url += '&access_token=' + secret;
+  const wantIdx = structuredClone(E.buildIndex(har)), wantSens = E.scanSensitive(har);
+  for (const every of [1, 2, 3, 7, 1e9]) {
+    const job = E.loadJob(har);
+    let calls = 0, steps = 0;
+    while (!job.step(() => ++calls % every === 0)) steps++;
+    eq('loadJob index, slice every ' + every, structuredClone(job.idx), wantIdx);
+    eq('loadJob scan, slice every ' + every, job.sens, wantSens);
+    if (every === 1) check('loadJob yields after each entry', steps >= har.log.entries.length * 3 - 1, String(steps));
+    check('loadJob step after done stays done', job.step(() => true) && job.idx !== null);
+  }
+  check('loadJob scan found the Base64 token', wantSens.tokens > 0 && wantSens.params > 0);
+}
+
+// ---------- whole-file residue scan of a redacted copy ----------
+// Oracle independent of the engine: walk every string of the saved JSON, decode every
+// `encoding: base64` text with Buffer, and look for the secret and its Base64 / URL forms.
+{
+  const secret = 'fixtureSession123456789';
+  const b64 = Buffer.from(secret).toString('base64');
+  const forms = [secret, b64, b64.replace(/=+$/, ''), b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''), encodeURIComponent(secret)];
+  const mk = (mime, text, enc = 'base64') => { const e = baseEntry(); e.response.content = { size: Buffer.byteLength(text), mimeType: mime, encoding: enc, text: enc === 'base64' ? Buffer.from(text).toString('base64') : text }; return e; };
+  const entries = [
+    baseEntry({ request: Object.assign(baseEntry().request, { headers: [{ name: 'Authorization', value: 'Bearer ' + secret }] }) }),
+    mk('application/json', JSON.stringify({ deep: [{ v: secret }], b: b64 })),
+    mk('text/html; charset=utf-8', '<html data-x="' + secret + '"></html>'),
+    mk('image/png', 'PNG' + secret),
+    mk('text/plain; charset=euc-kr', secret),
+    mk('application/octet-stream', secret),
+    baseEntry({ _webSocketMessages: [{ type: 'receive', opcode: 1, data: '{"s":"' + secret + '"}' }, { type: 'receive', opcode: 2, data: b64 }] }),
+  ];
+  const har = { log: { version: '1.2', creator: { name: 't', version: '1' }, entries } };
+  const before = JSON.stringify(har);
+  const res = E.redactHar(har, { tokens: true, everywhere: true }, null);
+  check('whole file: export succeeded', !res.error, JSON.stringify(res.error));
+  const hits = [];
+  const walk = (x, path) => {
+    if (typeof x === 'string') { for (const f of forms) if (x.includes(f)) hits.push(path + ' raw'); return; }
+    if (Array.isArray(x)) return x.forEach((y, i) => walk(y, path + '[' + i + ']'));
+    if (x && typeof x === 'object') {
+      for (const k of Object.keys(x)) walk(x[k], path + '.' + k);
+      if (typeof x.text === 'string' && String(x.encoding).toLowerCase() === 'base64') {
+        const t = Buffer.from(x.text, 'base64').toString('latin1') + '\n' + Buffer.from(x.text, 'base64').toString('utf8');
+        for (const f of forms) if (t.includes(f)) hits.push(path + '.text decoded');
+      }
+    }
+  };
+  walk(JSON.parse(res.json), 'root');
+  eq('whole file: independent scan finds no secret form', hits, []);
+  eq('whole file: engine left count', res.left, 0);
+  eq('whole file: coverage', res.coverage, { base64: 2, removed: { binary: 3, base64: 0, charset: 1, encoding: 0 } });
+  eq('whole file: original HAR unchanged', JSON.stringify(har), before);
 }
 
 // ---------- Firefox-shaped export ----------
