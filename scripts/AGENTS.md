@@ -97,7 +97,7 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 模块规范
 
-- `test-json-formatter.mjs` 从 `json-formatter-engine.js` 读取引擎块（仍与 json-schema-validator 比对 `jsonSyntaxError` / `lineCol` 源码）；另运行 `json-formatter-run.js`：14 组文档 × 4 组选项的 `viewOf` 与改造前页面的计算逐项相同（输出、高亮、截断显示、字节数、提示行号与路径、错误帧、提示），树分页与 `childrenOf` 相同，客户端的终止、迟到回包、文件 buffer 转移与真实 Worker 入口（Node worker_threads）。页面脚本只允许 2 处 HTML 写入（`innerHTML` 与 `insertAdjacentHTML`），内容只能来自 Worker 的 `blockHtml(highlight(out))`。
+- `test-json-formatter.mjs` 从 `json-formatter-engine.js` 读取引擎块（与 `json-schema-validator-engine.js` 比对 `jsonSyntaxError` / `lineCol` 源码，忽略所在代码块的缩进）；另运行 `json-formatter-run.js`：14 组文档 × 4 组选项的 `viewOf` 与改造前页面的计算逐项相同（输出、高亮、截断显示、字节数、提示行号与路径、错误帧、提示），树分页与 `childrenOf` 相同，客户端的终止、迟到回包、文件 buffer 转移与真实 Worker 入口（Node worker_threads）。页面脚本只允许 2 处 HTML 写入（`innerHTML` 与 `insertAdjacentHTML`），内容只能来自 Worker 的 `blockHtml(highlight(out))`。
 - `test-ai-token-counter.mjs` 从工具局部 `ai-token-counter-engine.js` 读取原引擎；另运行生产 runner、真实 Worker 入口与客户端协议，覆盖按需加载、失败重试、取消、迟到回包、重建与前 2,000 个 token ID / 半字符字节展示。仅跑本工具定向测试可验证 Worker 迁移；页面性能与正式构建验收另行记录。Worker 入口用 Vite `?url` 引入词表，测试用 `module.register` 的 resolve hook 把 `?url` 解析成文件 URL（主线程与 worker_threads 各注册一次）。
 
 - `test-bcrypt-generator.mjs` 用 fixture 中 v1.138.55 的原始 worker 预置固定 URL 缓存，运行页面真实 factory，验证新版 URL 绕开旧缓存并完成 bench / hash / 验签；另验证新版 worker 接受旧页面 generate / verify 请求。构建后校验四语言 HTML 内的 worker URL 与发布文件内容哈希相符。

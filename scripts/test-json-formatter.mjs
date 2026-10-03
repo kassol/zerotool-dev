@@ -3,9 +3,8 @@
 // Read:  src/components/tools/json-formatter-engine.js (the real `engine:start` / `engine:end`
 //        block); json-formatter-run.js and json-formatter.worker.js (the worker runner, client
 //        and entry, run here); JsonFormatterTool.astro (the frontmatter STRINGS and the page
-//        script); the engine block of
-//        JsonSchemaValidatorTool.astro (jsonSyntaxError and lineCol are copied from it and must
-//        stay identical); scripts/test-json-formatter.fixtures.json (JSONTestSuite and json5
+//        script); json-schema-validator-engine.js (jsonSyntaxError and lineCol are copied from
+//        it and must stay identical, ignoring block indentation); scripts/test-json-formatter.fixtures.json (JSONTestSuite and json5
 //        2.2.3 results, written by gen-json-formatter-fixtures.mjs);
 //        src/content/tools/json-formatter/*.mdx (`{/* jf: … */}` annotations); src/data/persistence.ts
 // Write: stdout only; the jq and Python comparisons pipe text through child processes.
@@ -37,7 +36,7 @@ const engine = block(readFileSync(join(root, 'src/components/tools/json-formatte
 const E = new Function(engine + `
 return { fmt, escSeg, pointerOf, jqPathOf, lineCol, jsonSyntaxError, parseJson, decCanon, numberChange, analyze, innerJson, hintFor,
   cmpCodePoint, orderOf, quote, numberOut, scalarOut, serialize, highlight, codeFrame, firstBadUtf8, decodeBytes, kindOf, childrenOf };`)();
-const jsvEngine = block(readFileSync(join(root, 'src/components/tools/JsonSchemaValidatorTool.astro'), 'utf8'), 'json-schema-validator');
+const jsvEngine = readFileSync(join(root, 'src/components/tools/json-schema-validator-engine.js'), 'utf8');
 const runSource = readFileSync(join(root, 'src/components/tools/json-formatter-run.js'), 'utf8');
 const fixtures = JSON.parse(readFileSync(join(root, 'scripts/test-json-formatter.fixtures.json'), 'utf8'));
 
@@ -60,11 +59,14 @@ function extractDecl(src, name) {
   const re = new RegExp('(^|\\n)([ \\t]*)function ' + name + '\\(');
   const m = re.exec(src);
   if (!m) return null;
-  const start = m.index + m[1].length;
+  const start = m.index + m[1].length + m[2].length;
   let depth = 0;
   for (let i = src.indexOf('{', start); i < src.length; i++) {
     if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+    else if (src[i] === '}' && --depth === 0) {
+      // Compare without the indentation of the enclosing block (the engines differ in nesting).
+      return src.slice(start, i + 1).split('\n').map((l) => (l.startsWith(m[2]) ? l.slice(m[2].length) : l)).join('\n');
+    }
   }
   return null;
 }

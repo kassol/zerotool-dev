@@ -22,14 +22,14 @@
     }).join('').replace(/^\[/, '.[');
   }
 
-  // Copied verbatim from JsonSchemaValidatorTool.astro (the test compares the source).
+  // Copied verbatim from json-schema-validator-engine.js (the test compares the source).
   function lineCol(text, offset) {
     var line = 1, last = -1;
     for (var i = text.indexOf('\n'); i !== -1 && i < offset; i = text.indexOf('\n', i + 1)) { line++; last = i; }
     return { line: line, col: offset - last };
   }
 
-  // Copied verbatim from JsonSchemaValidatorTool.astro (the test compares the source).
+  // Copied verbatim from json-schema-validator-engine.js (the test compares the source).
   // Called only after strict parsing failed: names the first error and its usual cause.
   function jsonSyntaxError(text) {
     var i = 0, n = text.length;
