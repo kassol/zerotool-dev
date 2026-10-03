@@ -116,3 +116,59 @@ for (let i=1;i<=100;i++) {
    assert.ok(Math.abs(context.ellipseShape.attrs.rx - context.ellipseShape.attrs.ry) < 1e-9);
 }
 console.log('PASS CSS clip-path regression checks');
+
+// Every number and CSS value quoted on the 4 tool pages is recomputed here.
+// Pages mark examples with {/* cpg-check: {...} */}; the expected text must also appear in the page.
+vm.runInContext(script.match(/var PRESETS = \{[\s\S]*?\};/)[0], context);
+const fmt = (n) => String(Math.round(n * 100) / 100);
+function setShape(c) {
+  context.currentShape = c.shape;
+  if (c.vertices) context.vertices = c.vertices.map(([x, y]) => ({ x, y }));
+  for (const [k, v] of Object.entries(c.values || {})) nodes.get('#cpg-' + k).value = String(v);
+}
+function runCheck(c) {
+  if (c.kind === 'value') { setShape(c); return vm.runInContext('buildClipPath()', context); }
+  if (c.kind === 'css') { setShape(c); return context.cssOutput(vm.runInContext('buildClipPath()', context), !!c.prefix); }
+  if (c.kind === 'preset') { context.currentShape = 'polygon'; context.vertices = context.PRESETS[c.name].map((v) => ({ ...v })); return vm.runInContext('buildClipPath()', context); }
+  if (c.kind === 'radius') {
+    context.currentShape = 'circle'; context.previewEl.clientWidth = c.w; context.previewEl.clientHeight = c.h;
+    nodes.get('#cpg-circle-r').value = String(c.r); context.updateCircleOverlay();
+    return fmt(context.ellipseShape.attrs.rx) + 'px';
+  }
+  if (c.kind === 'inset') {
+    context.previewEl.clientWidth = c.w; context.previewEl.clientHeight = c.h;
+    for (const [k, v] of Object.entries({ top: c.t, right: c.r, bottom: c.b, left: c.l, round: 0 })) nodes.get('#cpg-inset-' + k).value = String(v);
+    context.updateInsetOverlay();
+    const a = context.insetShape.attrs;
+    return [a.y / c.h * 100, 100 - (a.y + a.height) / c.h * 100, a.height].map((n, i) => fmt(n) + (i < 2 ? '%' : 'px')).join(' / ');
+  }
+  if (c.kind === 'drag' || c.kind === 'keys') {
+    context.vertices = [{ x: c.start[0], y: c.start[1] }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+    context.previewWrap = { querySelector() { return { getBoundingClientRect() { return { width: c.w || 300, height: c.h || 300 }; } }; } };
+    const h = node('check-handle'); h.setPointerCapture = () => {};
+    context.makeDraggable(h, 0);
+    if (c.kind === 'drag') {
+      h.listeners.pointerdown({ button: 0, pointerId: 7, clientX: 0, clientY: 0, preventDefault() {} });
+      h.listeners.pointermove({ clientX: c.dx, clientY: c.dy });
+      h.listeners.pointerup();
+    } else {
+      for (const key of c.keys) h.listeners.keydown({ key: key.replace('Shift+', ''), shiftKey: key.startsWith('Shift+'), preventDefault() {} });
+    }
+    return context.vertices[0].x + '% ' + context.vertices[0].y + '%';
+  }
+  throw new Error('unknown check kind ' + c.kind);
+}
+let checks = 0;
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const mdx = fs.readFileSync(new URL(`../src/content/tools/css-clip-path-generator/${lang}.mdx`, import.meta.url), 'utf8');
+  const found = [...mdx.matchAll(/\{\/\* cpg-check: (\{.*?\}) \*\/\}/g)];
+  assert.ok(found.length >= 3, `${lang}.mdx has at least 3 recomputed examples`);
+  for (const m of found) {
+    const c = JSON.parse(m[1]);
+    const got = runCheck(c);
+    assert.equal(got, c.expect, `${lang}.mdx ${m[1]}`);
+    assert.ok(mdx.includes(c.expect), `${lang}.mdx quotes ${c.expect}`);
+    checks++;
+  }
+}
+console.log(`PASS ${checks} tool-page examples recomputed by the component`);
