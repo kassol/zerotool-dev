@@ -7,7 +7,7 @@ faqItems:
   - question: "支持哪些语言模式？"
     answer: "JavaScript（CommonJS require/module.exports）和 TypeScript（ES module import/export，含 Document 接口和泛型 schema）。"
   - question: "JSON 类型如何映射到 Mongoose 类型？"
-    answer: "string→String、number→Number、boolean→Boolean、null→mongoose.Schema.Types.Mixed、基本类型数组→[Type]、对象数组→独立子 schema、嵌套对象→独立子 schema。"
+    answer: "string→String、number→Number、boolean→Boolean、所有样例都为 null 时→mongoose.Schema.Types.Mixed、各样例类型不同时→Mixed、基本类型数组→[Type]、对象数组→独立子 schema、嵌套对象→独立子 schema。"
   - question: "timestamps 选项有什么作用？"
     answer: "开启时，schema 会以 { timestamps: true } 创建，Mongoose 将自动管理 createdAt 和 updatedAt 字段。"
   - question: "所有字段都会标记为必填吗？"
@@ -28,7 +28,8 @@ faqItems:
 
 <h2>类型映射</h2>
 <ul>
-  <li><code>null</code> → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li><code>null</code> 可放入任何类型，推断时跳过；所有样例都是 <code>null</code> 的字段 → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li>各样例类型不同的字段（数字和字符串、对象和字符串）→ <code>mongoose.Schema.Types.Mixed</code>；ISO 日期时间与其他字符串混在一起 → <code>String</code></li>
   <li>字符串 → <code>String</code></li>
   <li>数字 → <code>Number</code></li>
   <li>布尔值 → <code>Boolean</code></li>
@@ -42,3 +43,46 @@ faqItems:
 <pre><code>{`{"username": "alice", "age": 28, "tags": ["admin"], "address": {"city": "London"}}`}</code></pre>
 <p>JavaScript 输出（timestamps 开启）：</p>
 <pre><code>{`const mongoose = require('mongoose');\nconst { Schema } = mongoose;\n\nconst addressSchema = new Schema({\n  city: { type: String },\n});\n\nconst userSchema = new Schema({\n  username: { type: String },\n  age: { type: Number },\n  tags: [String],\n  address: addressSchema,\n}, { timestamps: true });\n\nmodule.exports = mongoose.model('User', userSchema);`}</code></pre>
+
+<h2>示例：每个样例都参与类型推断</h2>
+
+{/* jtm-check: {"json":"[{\"code\":1,\"note\":null,\"seller\":{\"meta\":{\"x\":1}},\"buyer\":{\"meta\":{\"y\":\"2\"}}},{\"code\":\"A-2\",\"note\":\"gift\",\"tags\":[\"a\",1]}]","model":"Order","mode":"javascript","timestamps":false,"required":false} */}
+
+<p>根数组含两条订单，模型名称为 <code>Order</code>，JavaScript，timestamps 关闭：</p>
+<pre><code>{`[{"code":1,"note":null,"seller":{"meta":{"x":1}},"buyer":{"meta":{"y":"2"}}},{"code":"A-2","note":"gift","tags":["a",1]}]`}</code></pre>
+
+<p>输出：</p>
+<pre><code>{`const mongoose = require('mongoose');
+const { Schema } = mongoose;
+
+const metaSchema = new Schema({
+  x: { type: Number },
+});
+
+const sellerSchema = new Schema({
+  meta: metaSchema,
+});
+
+const buyerMetaSchema = new Schema({
+  y: { type: String },
+});
+
+const buyerSchema = new Schema({
+  meta: buyerMetaSchema,
+});
+
+const orderSchema = new Schema({
+  code: { type: mongoose.Schema.Types.Mixed },
+  note: { type: String },
+  seller: sellerSchema,
+  buyer: buyerSchema,
+  tags: [mongoose.Schema.Types.Mixed],
+}, { timestamps: false });
+
+module.exports = mongoose.model('Order', orderSchema);`}</code></pre>
+<ul>
+  <li><code>code</code> 一条是 <code>1</code>、另一条是 <code>"A-2"</code>，所以是 <code>Mixed</code>；写成 <code>Number</code> 会拒绝 <code>"A-2"</code>。<code>note</code> 一条是 <code>null</code>、一条是 <code>"gift"</code>，所以是 <code>String</code>。<code>tags</code> 里有字符串也有数字，元素为 <code>Mixed</code>。</li>
+  <li>两个 <code>meta</code> 对象字段不同，第二个用父级 key 作前缀（<code>buyerMetaSchema</code>）。同一个 key 下字段和类型都相同的对象共用一个 schema；加前缀后仍重名时再加数字。</li>
+  <li><code>Mixed</code> 字段不做类型转换和校验，内部改动要调用 <code>markModified()</code> Mongoose 才会保存。数据允许时请改成一种类型。</li>
+</ul>
+<p>工具的测试用 Mongoose 9.10.3 运行生成的 JavaScript，用每个样例创建文档，确认 <code>validateSync()</code> 通过、所有字段和值都保留（ISO 日期时间以 <code>Date</code> 保存，按 <code>toISOString()</code> 形式比较；样例里没有的数组字段会得到 Mongoose 的默认值 <code>[]</code>）。</p>

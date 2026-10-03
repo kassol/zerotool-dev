@@ -254,19 +254,6 @@ const L = labels[lang];
         return c.charAt(0).toUpperCase() + c.slice(1);
       }
 
-      function mergeObjects(objs) {
-        var result = {};
-        for (var i = 0; i < objs.length; i++) {
-          var keys = Object.keys(objs[i]);
-          for (var j = 0; j < keys.length; j++) {
-            if (!Object.prototype.hasOwnProperty.call(result, keys[j])) {
-              result[keys[j]] = objs[i][keys[j]];
-            }
-          }
-        }
-        return result;
-      }
-
       // TypeInfo kinds:
       // { kind: 'primitive', mongooseType: 'String'|'Number'|'Boolean' }
       // { kind: 'date' }
@@ -277,68 +264,104 @@ const L = labels[lang];
 
       var ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 
-      function inferTypeInfo(value, key, schemas) {
-        if (value === null) return { kind: 'mixed' };
-        if (typeof value === 'string') {
-          if (ISO_DATE_RE.test(value)) return { kind: 'date' };
-          return { kind: 'primitive', mongooseType: 'String' };
-        }
-        if (typeof value === 'number') return { kind: 'primitive', mongooseType: 'Number' };
-        if (typeof value === 'boolean') return { kind: 'primitive', mongooseType: 'Boolean' };
-
-        if (Array.isArray(value)) {
-          if (value.length === 0) return { kind: 'array-primitive', mongooseType: 'Mixed' };
-
-          var nonNull = value.filter(function (v) { return v !== null; });
-          if (nonNull.length === 0) return { kind: 'array-primitive', mongooseType: 'Mixed' };
-
-          var objItems = nonNull.filter(function (v) {
-            return typeof v === 'object' && !Array.isArray(v);
-          });
-
-          if (objItems.length > 0) {
-            var subSchemaName = toCamelCase(key) + 'Schema';
-            var subInterfaceName = 'I' + toPascalCase(key);
-            buildSchemaFromObj(mergeObjects(objItems), subSchemaName, subInterfaceName, schemas);
-            return { kind: 'array-ref', schemaName: subSchemaName, interfaceName: subInterfaceName };
-          }
-
-          var types = [];
-          for (var i = 0; i < nonNull.length; i++) {
-            var v = nonNull[i];
-            var t;
-            if (typeof v === 'string') t = 'String';
-            else if (typeof v === 'number') t = 'Number';
-            else if (typeof v === 'boolean') t = 'Boolean';
-            else t = 'Mixed';
-            if (types.indexOf(t) === -1) types.push(t);
-          }
-          return { kind: 'array-primitive', mongooseType: types.length === 1 ? types[0] : 'Mixed' };
-        }
-
-        if (typeof value === 'object') {
-          var subSchemaName2 = toCamelCase(key) + 'Schema';
-          var subInterfaceName2 = 'I' + toPascalCase(key);
-          buildSchemaFromObj(value, subSchemaName2, subInterfaceName2, schemas);
-          return { kind: 'ref', schemaName: subSchemaName2, interfaceName: subInterfaceName2 };
-        }
-
-        return { kind: 'mixed' };
+      function isPlainObject(v) {
+        return v !== null && typeof v === 'object' && !Array.isArray(v);
       }
 
-      function buildSchemaFromObj(obj, schemaName, interfaceName, schemas) {
-        for (var i = 0; i < schemas.length; i++) {
-          if (schemas[i].name === schemaName) return;
+      // Every sample of a field decides its type, not only the first. null fits any type and is
+      // skipped. ISO date-times and other strings give String; any other mix gives Mixed, so
+      // Mongoose keeps each sample value as it is.
+      function mergeScalars(values, detectDates) {
+        var types = [];
+        for (var i = 0; i < values.length; i++) {
+          var v = values[i], t;
+          if (typeof v === 'string') t = (detectDates && ISO_DATE_RE.test(v) && !isNaN(Date.parse(v))) ? 'Date' : 'String';
+          else if (typeof v === 'number') t = 'Number';
+          else if (typeof v === 'boolean') t = 'Boolean';
+          else t = 'Mixed';
+          if (types.indexOf(t) === -1) types.push(t);
+        }
+        if (types.length === 1) return types[0];
+        if (types.length === 2 && types.indexOf('Date') !== -1 && types.indexOf('String') !== -1) return 'String';
+        return 'Mixed';
+      }
+
+      function inferTypeInfo(values, key, ctx, parentStem) {
+        var present = values.filter(function (v) { return v !== null; });
+        if (present.length === 0) return { kind: 'mixed' };
+
+        if (present.every(isPlainObject)) {
+          var sub = buildSchema(present, key, parentStem, ctx);
+          return { kind: 'ref', schemaName: sub.name, interfaceName: sub.interfaceName };
         }
 
+        if (present.every(Array.isArray)) {
+          var items = [].concat.apply([], present);
+          var nonNull = items.filter(function (v) { return v !== null; });
+          if (nonNull.length === 0) return { kind: 'array-primitive', mongooseType: 'Mixed' };
+          // A null element in a sub-document array is not kept as null, so only arrays of objects
+          // without null get a sub-schema.
+          if (nonNull.length === items.length && items.every(isPlainObject)) {
+            var subArr = buildSchema(items, key, parentStem, ctx);
+            return { kind: 'array-ref', schemaName: subArr.name, interfaceName: subArr.interfaceName };
+          }
+          return { kind: 'array-primitive', mongooseType: mergeScalars(nonNull, false) };
+        }
+
+        var type = mergeScalars(present, true);
+        if (type === 'Date') return { kind: 'date' };
+        if (type === 'Mixed') return { kind: 'mixed' };
+        return { kind: 'primitive', mongooseType: type };
+      }
+
+      // Variable name stem for a key: camelCase without characters a JavaScript identifier rejects.
+      function nameStem(key) {
+        var stem = toCamelCase(String(key)).replace(/[^A-Za-z0-9_$]/g, '');
+        if (!stem) return 'field';
+        return /^[0-9]/.test(stem) ? '_' + stem : stem;
+      }
+
+      // Objects under the same key with the same fields and types share one schema. A different
+      // structure gets the parent key as a prefix (b.meta → bMetaSchema), then a number.
+      function buildSchema(objects, key, parentStem, ctx, fixedStem) {
+        var stem = fixedStem || nameStem(key);
+        var order = [];
+        var samples = Object.create(null);
+        for (var i = 0; i < objects.length; i++) {
+          var keys = Object.keys(objects[i]);
+          for (var j = 0; j < keys.length; j++) {
+            if (!samples[keys[j]]) { samples[keys[j]] = []; order.push(keys[j]); }
+            samples[keys[j]].push(objects[i][keys[j]]);
+          }
+        }
         var fields = [];
-        var keys = Object.keys(obj);
-        for (var i = 0; i < keys.length; i++) {
-          var typeInfo = inferTypeInfo(obj[keys[i]], keys[i], schemas);
-          fields.push({ key: keys[i], typeInfo: typeInfo });
+        for (var k = 0; k < order.length; k++) {
+          fields.push({ key: order[k], typeInfo: inferTypeInfo(samples[order[k]], order[k], ctx, stem) });
         }
+        var sig = JSON.stringify(fields.map(function (f) { return [f.key, f.typeInfo]; }));
+        if (!fixedStem) {
+          for (var si = 0; si < ctx.schemas.length; si++) {
+            if (ctx.schemas[si].stem === stem && ctx.schemas[si].sig === sig) return ctx.schemas[si];
+          }
+        }
+        var name = fixedStem || null;
+        var candidates = [stem, parentStem + toPascalCase(stem)];
+        for (var ci = 0; ci < candidates.length && !name; ci++) {
+          if (!ctx.taken[candidates[ci]]) name = candidates[ci];
+        }
+        for (var n = 2; !name; n++) if (!ctx.taken[stem + n]) name = stem + n;
+        ctx.taken[name] = true;
+        var schema = { stem: stem, sig: sig, name: name + 'Schema', interfaceName: 'I' + toPascalCase(name), fields: fields };
+        ctx.schemas.push(schema);
+        return schema;
+      }
 
-        schemas.push({ name: schemaName, interfaceName: interfaceName, fields: fields });
+      // Root schema from one object or from every object of a root array; it comes last in the list.
+      function buildRootSchema(objects, modelName, schemas) {
+        var stem = nameStem(modelName);
+        var ctx = { schemas: schemas, taken: Object.create(null) };
+        ctx.taken[stem] = true;
+        return buildSchema(objects, modelName, '', ctx, stem);
       }
 
       // required is applied to primitive/date/mixed/array-primitive fields only (not ref/array-ref)
@@ -472,19 +495,17 @@ const L = labels[lang];
 
         inputEl.classList.remove('error');
         var rawModelName = modelNameEl.value.trim() || 'User';
-        var schemaVarName = toCamelCase(rawModelName) + 'Schema';
-        var interfaceName = 'I' + toPascalCase(rawModelName);
 
         var schemas = [];
 
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          buildSchemaFromObj(parsed, schemaVarName, interfaceName, schemas);
+          buildRootSchema([parsed], rawModelName, schemas);
         } else if (Array.isArray(parsed)) {
           var objItems = parsed.filter(function (v) {
             return v !== null && typeof v === 'object' && !Array.isArray(v);
           });
           if (objItems.length > 0) {
-            buildSchemaFromObj(mergeObjects(objItems), schemaVarName, interfaceName, schemas);
+            buildRootSchema(objItems, rawModelName, schemas);
           } else {
             outputCodeEl.textContent = '// Array of primitives — no schema to generate';
             outputCodeEl.removeAttribute('data-highlighted');

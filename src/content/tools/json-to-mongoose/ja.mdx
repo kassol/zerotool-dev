@@ -7,7 +7,7 @@ faqItems:
   - question: "対応言語モードは何ですか？"
     answer: "JavaScript（CommonJS require/module.exports）とTypeScript（ES module import/export、Documentインターフェース・ジェネリックスキーマ付き）です。"
   - question: "JSON型はMongoose型にどう対応しますか？"
-    answer: "string→String、number→Number、boolean→Boolean、null→mongoose.Schema.Types.Mixed、プリミティブ配列→[Type]、オブジェクト配列→独立サブスキーマ、ネストオブジェクト→独立サブスキーマ。"
+    answer: "string→String、number→Number、boolean→Boolean、すべてのサンプルが null→mongoose.Schema.Types.Mixed、サンプルごとに型が違う→Mixed、プリミティブ配列→[Type]、オブジェクト配列→独立サブスキーマ、ネストオブジェクト→独立サブスキーマ。"
   - question: "timestampsオプションの効果は？"
     answer: "オンにすると{ timestamps: true }でスキーマが作成され、MongooseがcreatedAtとupdatedAtフィールドを自動管理します。"
   - question: "フィールドはrequiredになりますか？"
@@ -28,7 +28,8 @@ faqItems:
 
 <h2>型マッピング</h2>
 <ul>
-  <li><code>null</code> → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li><code>null</code> はどの型にも入るので推論では読み飛ばします。すべてのサンプルで <code>null</code> のフィールド → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li>サンプルごとに型が違うフィールド（数値と文字列、オブジェクトと文字列）→ <code>mongoose.Schema.Types.Mixed</code>。ISO 日時とほかの文字列が混ざる場合 → <code>String</code></li>
   <li>文字列 → <code>String</code></li>
   <li>数値 → <code>Number</code></li>
   <li>真偽値 → <code>Boolean</code></li>
@@ -42,3 +43,46 @@ faqItems:
 <pre><code>{`{"username": "alice", "age": 28, "tags": ["admin"], "address": {"city": "London"}}`}</code></pre>
 <p>JavaScript出力（timestampsオン）：</p>
 <pre><code>{`const mongoose = require('mongoose');\nconst { Schema } = mongoose;\n\nconst addressSchema = new Schema({\n  city: { type: String },\n});\n\nconst userSchema = new Schema({\n  username: { type: String },\n  age: { type: Number },\n  tags: [String],\n  address: addressSchema,\n}, { timestamps: true });\n\nmodule.exports = mongoose.model('User', userSchema);`}</code></pre>
+
+<h2>例：すべてのサンプルで型を決める</h2>
+
+{/* jtm-check: {"json":"[{\"code\":1,\"note\":null,\"seller\":{\"meta\":{\"x\":1}},\"buyer\":{\"meta\":{\"y\":\"2\"}}},{\"code\":\"A-2\",\"note\":\"gift\",\"tags\":[\"a\",1]}]","model":"Order","mode":"javascript","timestamps":false,"required":false} */}
+
+<p>注文 2 件のルート配列、モデル名 <code>Order</code>、JavaScript、timestamps オフ：</p>
+<pre><code>{`[{"code":1,"note":null,"seller":{"meta":{"x":1}},"buyer":{"meta":{"y":"2"}}},{"code":"A-2","note":"gift","tags":["a",1]}]`}</code></pre>
+
+<p>出力：</p>
+<pre><code>{`const mongoose = require('mongoose');
+const { Schema } = mongoose;
+
+const metaSchema = new Schema({
+  x: { type: Number },
+});
+
+const sellerSchema = new Schema({
+  meta: metaSchema,
+});
+
+const buyerMetaSchema = new Schema({
+  y: { type: String },
+});
+
+const buyerSchema = new Schema({
+  meta: buyerMetaSchema,
+});
+
+const orderSchema = new Schema({
+  code: { type: mongoose.Schema.Types.Mixed },
+  note: { type: String },
+  seller: sellerSchema,
+  buyer: buyerSchema,
+  tags: [mongoose.Schema.Types.Mixed],
+}, { timestamps: false });
+
+module.exports = mongoose.model('Order', orderSchema);`}</code></pre>
+<ul>
+  <li><code>code</code> は 1 件目が <code>1</code>、2 件目が <code>"A-2"</code> なので <code>Mixed</code> です。<code>Number</code> だと <code>"A-2"</code> を拒否します。<code>note</code> は <code>null</code> と <code>"gift"</code> なので <code>String</code> です。<code>tags</code> は文字列と数値が混ざるので要素が <code>Mixed</code> です。</li>
+  <li>2 つの <code>meta</code> はフィールドが違うので、2 つ目は親のキーを前に付けます（<code>buyerMetaSchema</code>）。同じキーでフィールドと型が同じオブジェクトは 1 つのスキーマを共有します。前置きしても名前が重なるときは番号を付けます。</li>
+  <li><code>Mixed</code> のフィールドは型変換も検証もされず、中を変更したときは <code>markModified()</code> を呼ばないと Mongoose が保存しません。データが許すなら 1 つの型にしてください。</li>
+</ul>
+<p>ツールのテストでは、生成した JavaScript を Mongoose 9.10.3 で実行し、各サンプルからドキュメントを作って <code>validateSync()</code> が通ること、すべてのフィールドと値が残ることを確認しています（ISO 日時は <code>Date</code> になり、<code>toISOString()</code> の形で比較。サンプルにない配列フィールドは Mongoose の既定値 <code>[]</code> になります）。</p>
