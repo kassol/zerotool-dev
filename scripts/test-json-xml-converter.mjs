@@ -1,16 +1,36 @@
-// Read: complete JsonXmlConverterTool.astro inline script. Write: stdout only.
-// Real click/input handlers; XML DOM substitutes are not a DOMParser implementation.
+// Read: complete JsonXmlConverterTool.astro inline script; the 4 tool pages
+//       (src/content/tools/json-xml-converter/{en,zh,ja,ko}.mdx). Write: stdout only.
+// Real click/input handlers; XML DOM substitutes (hand-built nodes, or a tree built with the
+// sax 1.6.1 strict parser for the page examples) are not a DOMParser implementation.
 // Actual DOMParser acceptance is checked separately in ego-browser.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
 
+const sax = createRequire(import.meta.url)('sax');
 const source = readFileSync(new URL('../src/components/tools/JsonXmlConverterTool.astro', import.meta.url), 'utf8');
 let passed = 0, failed = 0;
 async function test(name, fn) { try { await fn(); passed++; } catch (e) { failed++; console.log('FAIL ' + name + ': ' + e.message); } }
 function text(value, type = 3) { return { nodeType: type, nodeValue: value, textContent: value }; }
 function node(name, children = [], attrs = []) {
-  return { nodeType: 1, tagName: name, attributes: attrs, childNodes: children, textContent: children.map(n => n.textContent).join('') };
+  return { nodeType: 1, tagName: name, attributes: attrs, childNodes: children,
+    get textContent() { return children.filter(n => n.nodeType !== 7 && n.nodeType !== 8).map(n => n.textContent).join(''); } };
+}
+// XML text → substitute document; a sax error becomes a parsererror element
+function saxDoc(raw) {
+  const p = sax.parser(true), stack = [{ childNodes: [] }];
+  let error = null;
+  p.onerror = e => { error = error || e.message.split('\n')[0]; p.error = null; };
+  p.onopentag = t => { const n = node(t.name, [], Object.entries(t.attributes).map(([name, value]) => ({ name, value })));
+    stack.at(-1).childNodes.push(n); stack.push(n); };
+  p.onclosetag = () => stack.pop();
+  p.ontext = v => { if (stack.length > 1) stack.at(-1).childNodes.push(text(v)); };
+  p.oncdata = v => stack.at(-1).childNodes.push(text(v, 4));
+  p.oncomment = v => { if (stack.length > 1) stack.at(-1).childNodes.push(text(v, 8)); };
+  p.write(raw).close();
+  const root = stack[0].childNodes.find(n => n.nodeType === 1);
+  return { documentElement: root, querySelector: () => (error || !root ? { textContent: error || 'no root' } : null) };
 }
 function page(lang = 'en', root = node('root')) {
   const elements = new Map(), copied = [], timers = new Map(); let id = 0;
@@ -23,7 +43,7 @@ function page(lang = 'en', root = node('root')) {
   vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
     document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [] }, window: {},
     navigator: { clipboard: { writeText: async v => copied.push(v) } },
-    DOMParser: class { parseFromString() { return { documentElement: root, querySelector: () => null }; } },
+    DOMParser: class { parseFromString(raw) { return root === 'sax' ? saxDoc(raw) : { documentElement: root, querySelector: () => null }; } },
     setTimeout(fn) { timers.set(++id, fn); return id; }, clearTimeout(i) { timers.delete(i); }
   });
   return { get, copied, flush() { const jobs = [...timers.values()]; timers.clear(); jobs.forEach(fn => fn()); } };
@@ -99,4 +119,17 @@ await test('clear cancels both pending timers', () => {
   assert.equal(p.get('jx-json').value, ''); assert.equal(p.get('jx-xml').value, '');
   assert.equal(p.get('jx-status').textContent, '');
 });
+// Pretty print used to write a scalar root as <root>\n  hello\n</root>: the indentation became
+// part of the root text, so pretty and compact output read back as different values.
+for (const [raw, back] of [['"hello"', 'hello'], ['42', '42'], ['true', 'true'], ['"  x  "', '  x  '], ['null', ''], ['{}', '']]) {
+  for (const pretty of [true, false]) await test('root ' + raw + ' pretty=' + pretty + ' adds no text', () => {
+    const p = page('en', 'sax'); p.get('jx-pretty').checked = pretty;
+    p.get('jx-json').value = raw; p.get('jx-to-xml').click();
+    const xml = p.get('jx-xml').value;
+    assert.equal(xml, decl + (pretty ? '\n' : '') + (back ? '<root>' + back + '</root>' : '<root></root>'));
+    p.get('jx-xml').value = xml; p.get('jx-to-json').click();
+    assert.deepEqual(JSON.parse(p.get('jx-json').value), { root: back });
+  });
+}
+
 console.log(`${passed} passed, ${failed} failed`); process.exitCode = failed ? 1 : 0;
