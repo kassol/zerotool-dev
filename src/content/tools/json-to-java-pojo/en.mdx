@@ -5,7 +5,7 @@ faqItems:
   - question: "What does this tool generate?"
     answer: "It generates Java POJO (Plain Old Java Object) classes from JSON. Each nested object becomes its own named public class with private fields and getter/setter methods (or @Data with Lombok)."
   - question: "What annotation modes are supported?"
-    answer: "Four modes: None (pure POJO with getters/setters), Jackson (@JsonProperty), Gson (@SerializedName), and Lombok (@Data). Annotations are added only when the JSON key differs from the camelCase field name."
+    answer: "Four modes: None (pure POJO with getters/setters), Jackson (@JsonProperty), Gson (@SerializedName), and Lombok (@Data). Jackson and Gson modes annotate a field when its JSON key differs from the field name. Jackson mode also annotates the getter and setter when Jackson would derive another name from them (getURL is read as url). None and Lombok modes keep no original key."
   - question: "How are JSON types mapped to Java types?"
     answer: "string → String, integer → int (long when the value is outside the int range), float/double → double, a field that mixes int and double samples → double, boolean → boolean, null → Object, array → List<T>, nested object → separate class."
   - question: "When is the List import added?"
@@ -113,10 +113,53 @@ RootObject order = mapper.readValue(json, RootObject.class);`}</code></pre>
 
 <pre><code>{`public record Customer(String name, boolean vip) {}`}</code></pre>
 
+<h2>Example: Same Key With Two Shapes, and Keys Java Cannot Use (Jackson Mode)</h2>
+
+{/* jjp-check: {"json":"{\"billing\":{\"address\":{\"city\":\"Paris\"}},\"shipping\":{\"address\":{\"line1\":\"1 Main St\"}},\"class\":\"A\",\"2fa\":true,\"URL\":\"https://example.com\"}","mode":"jackson"} */}
+
+<pre><code>{`{"billing": {"address": {"city": "Paris"}}, "shipping": {"address": {"line1": "1 Main St"}}, "class": "A", "2fa": true, "URL": "https://example.com"}`}</code></pre>
+
+<p>Output (most accessors omitted):</p>
+
+<pre><code>{`import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class RootObject {
+    private Billing billing;
+    private Shipping shipping;
+    @JsonProperty("class")
+    private String classValue;
+    @JsonProperty("2fa")
+    private boolean t2fa;
+    @JsonProperty("URL")
+    private String uRL;
+
+    @JsonProperty("URL")
+    public String getURL() {
+    // other getters and setters omitted here
+}
+
+public class Address {
+    private String city;
+    // ...
+}
+
+public class ShippingAddress {
+    private String line1;
+    // ...
+}`}</code></pre>
+
+<ul>
+  <li>The two <code>{"address"}</code> objects have different fields, so the second gets the parent name as a prefix (<code>{"ShippingAddress"}</code>). Objects with the same fields and types share one class; if the prefixed name is also taken, a number is added.</li>
+  <li>Java keywords and literals get <code>{"Value"}</code> (<code>{"class"}</code> → <code>{"classValue"}</code>), a name that would start with a digit gets <code>{"T"}</code> (<code>{"2fa"}</code> → <code>{"t2fa"}</code>), and keys that become the same name get a number (<code>{"first-name"}</code> and <code>{"first_name"}</code> → <code>{"firstName"}</code> and <code>{"firstName2"}</code>). The annotation keeps the original key.</li>
+  <li>Jackson names the accessor <code>{"getURL()"}</code> <code>{"url"}</code>, not <code>{"uRL"}</code>. Without the annotation on the getter and setter, Jackson would see a second property and fail on the key <code>{"URL"}</code>. Gson reads fields only and needs no such annotation.</li>
+</ul>
+
+<p>With javac 21, Jackson 2.17.2 and Gson 2.11.0, each Jackson and Gson output in the tool's test compiles and reads its sample back to the same JSON; each Lombok 1.18.34 output compiles.</p>
+
 <h2>Limits</h2>
 <ul>
-  <li><strong>Names are not made unique.</strong> Two different objects under the same key (for example <code>address</code> in both <code>billing</code> and <code>shipping</code>) share one class; the first one seen wins and fields of the second are missing. Rename one key or edit the class.</li>
-  <li><strong>Keys that are not Java identifiers</strong> are turned into camelCase by dropping other characters (<code>first-name</code> → <code>firstName</code>), but a key that starts with a digit or is a Java keyword (<code>class</code>, <code>default</code>) produces a field javac rejects. The None mode then has no annotation to keep the original name.</li>
+  <li><strong>None and Lombok modes keep only the Java name.</strong> <code>{"classValue"}</code> and <code>{"t2fa"}</code> do not map to <code>{"class"}</code> and <code>{"2fa"}</code> there. Use Jackson or Gson mode when keys are not valid Java names.</li>
+  <li><strong>Jackson cannot write an empty key.</strong> <code>{'@JsonProperty("")'}</code> means "use the default name", so for the key <code>{'""'}</code> the tool writes <code>{'@JsonAlias("")'}</code> and a comment. Jackson then reads <code>{'{"": 4}'}</code>, but writes it back as <code>{'{"t": 4}'}</code>. Gson writes <code>{'@SerializedName("")'}</code> and keeps the key.</li>
   <li><strong>Primitive types cannot be null.</strong> <code>int</code>, <code>long</code>, <code>double</code> and <code>boolean</code> fields read a missing or <code>null</code> value as 0 or false with Jackson's default settings. Use <code>Integer</code>, <code>Long</code> and so on when absence matters.</li>
   <li><strong>A root array of primitives</strong> such as <code>[1, 2]</code> generates no class; the output is the comment <code>{"// Array of primitives — no class to generate"}</code>.</li>
   <li><strong>Lombok mode adds only <code>@Data</code>.</strong> It writes no <code>@JsonProperty</code> or <code>@SerializedName</code>, so snake_case keys need a naming strategy or hand-added annotations, as shown above.</li>

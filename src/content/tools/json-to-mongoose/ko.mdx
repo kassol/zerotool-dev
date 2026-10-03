@@ -7,7 +7,7 @@ faqItems:
   - question: "어떤 언어 모드를 지원하나요?"
     answer: "JavaScript(CommonJS require/module.exports)와 TypeScript(ES module import/export, Document 인터페이스와 제네릭 스키마 포함)를 지원합니다."
   - question: "JSON 타입은 Mongoose 타입으로 어떻게 매핑되나요?"
-    answer: "string→String, number→Number, boolean→Boolean, null→mongoose.Schema.Types.Mixed, 기본 타입 배열→[Type], 객체 배열→별도 서브스키마, 중첩 객체→별도 서브스키마."
+    answer: "string→String, number→Number, boolean→Boolean, 모든 샘플이 null→mongoose.Schema.Types.Mixed, 샘플마다 타입이 다름→Mixed, 기본 타입 배열→[Type], 객체 배열→별도 서브스키마, 중첩 객체→별도 서브스키마."
   - question: "timestamps 옵션은 어떤 역할을 하나요?"
     answer: "켜면 { timestamps: true }로 스키마가 생성되어 Mongoose가 createdAt, updatedAt 필드를 자동으로 관리합니다."
   - question: "모든 필드가 required로 생성되나요?"
@@ -28,7 +28,8 @@ faqItems:
 
 <h2>타입 매핑</h2>
 <ul>
-  <li><code>null</code> → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li><code>null</code>은 어떤 타입에도 들어가므로 추론에서 건너뜁니다. 모든 샘플에서 <code>null</code>인 필드 → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li>샘플마다 타입이 다른 필드(숫자와 문자열, 객체와 문자열) → <code>mongoose.Schema.Types.Mixed</code>. ISO 날짜·시간과 다른 문자열이 섞이면 → <code>String</code></li>
   <li>문자열 → <code>String</code></li>
   <li>숫자 → <code>Number</code></li>
   <li>불리언 → <code>Boolean</code></li>
@@ -42,3 +43,46 @@ faqItems:
 <pre><code>{`{"username": "alice", "age": 28, "tags": ["admin"], "address": {"city": "London"}}`}</code></pre>
 <p>JavaScript 출력(timestamps 켜짐):</p>
 <pre><code>{`const mongoose = require('mongoose');\nconst { Schema } = mongoose;\n\nconst addressSchema = new Schema({\n  city: { type: String },\n});\n\nconst userSchema = new Schema({\n  username: { type: String },\n  age: { type: Number },\n  tags: [String],\n  address: addressSchema,\n}, { timestamps: true });\n\nmodule.exports = mongoose.model('User', userSchema);`}</code></pre>
+
+<h2>예시: 모든 샘플로 타입 결정</h2>
+
+{/* jtm-check: {"json":"[{\"code\":1,\"note\":null,\"seller\":{\"meta\":{\"x\":1}},\"buyer\":{\"meta\":{\"y\":\"2\"}}},{\"code\":\"A-2\",\"note\":\"gift\",\"tags\":[\"a\",1]}]","model":"Order","mode":"javascript","timestamps":false,"required":false} */}
+
+<p>주문 2건의 루트 배열, 모델 이름 <code>Order</code>, JavaScript, timestamps 끔:</p>
+<pre><code>{`[{"code":1,"note":null,"seller":{"meta":{"x":1}},"buyer":{"meta":{"y":"2"}}},{"code":"A-2","note":"gift","tags":["a",1]}]`}</code></pre>
+
+<p>출력:</p>
+<pre><code>{`const mongoose = require('mongoose');
+const { Schema } = mongoose;
+
+const metaSchema = new Schema({
+  x: { type: Number },
+});
+
+const sellerSchema = new Schema({
+  meta: metaSchema,
+});
+
+const buyerMetaSchema = new Schema({
+  y: { type: String },
+});
+
+const buyerSchema = new Schema({
+  meta: buyerMetaSchema,
+});
+
+const orderSchema = new Schema({
+  code: { type: mongoose.Schema.Types.Mixed },
+  note: { type: String },
+  seller: sellerSchema,
+  buyer: buyerSchema,
+  tags: [mongoose.Schema.Types.Mixed],
+}, { timestamps: false });
+
+module.exports = mongoose.model('Order', orderSchema);`}</code></pre>
+<ul>
+  <li><code>code</code>는 한 건이 <code>1</code>, 다른 건이 <code>"A-2"</code>라서 <code>Mixed</code>입니다. <code>Number</code>면 <code>"A-2"</code>를 거부합니다. <code>note</code>는 <code>null</code>과 <code>"gift"</code>라서 <code>String</code>입니다. <code>tags</code>는 문자열과 숫자가 섞여 요소가 <code>Mixed</code>입니다.</li>
+  <li>두 <code>meta</code>는 필드가 달라서 두 번째에 부모 키를 앞에 붙입니다(<code>buyerMetaSchema</code>). 같은 키에서 필드와 타입이 같은 객체는 스키마 하나를 함께 씁니다. 앞에 붙여도 이름이 겹치면 번호를 붙입니다.</li>
+  <li><code>Mixed</code> 필드는 타입 변환과 검증을 하지 않고, 내부를 바꾸면 <code>markModified()</code>를 호출해야 Mongoose가 저장합니다. 데이터가 허용하면 한 타입으로 바꾸세요.</li>
+</ul>
+<p>도구 테스트는 생성된 JavaScript를 Mongoose 9.10.3으로 실행해 샘플마다 문서를 만들고, <code>validateSync()</code>가 통과하는지와 모든 필드·값이 남는지 확인합니다(ISO 날짜·시간은 <code>Date</code>가 되어 <code>toISOString()</code> 형태로 비교. 샘플에 없는 배열 필드는 Mongoose 기본값 <code>[]</code>가 됩니다).</p>

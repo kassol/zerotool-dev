@@ -7,7 +7,7 @@ faqItems:
   - question: "What language modes are supported?"
     answer: "JavaScript (CommonJS require/module.exports) and TypeScript (ES module import/export with Document interface and generic schema)."
   - question: "How are JSON types mapped to Mongoose types?"
-    answer: "string → String, number → Number, boolean → Boolean, null → mongoose.Schema.Types.Mixed, array of primitives → [Type], array of objects → separate sub-schema, nested object → separate sub-schema."
+    answer: "string → String, number → Number, boolean → Boolean, null → mongoose.Schema.Types.Mixed when every sample is null, array of primitives → [Type], array of objects → separate sub-schema, nested object → separate sub-schema."
   - question: "What does the timestamps option do?"
     answer: "When On, the schema is created with { timestamps: true }, which automatically adds createdAt and updatedAt fields managed by Mongoose."
   - question: "Are all fields marked as required?"
@@ -28,7 +28,8 @@ faqItems:
 
 <h2>Type Mapping</h2>
 <ul>
-  <li><code>null</code> → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li><code>null</code> fits any type and is skipped; a field that is <code>null</code> in every sample → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li>a field whose samples have different types (number and string, object and string) → <code>mongoose.Schema.Types.Mixed</code>; ISO date-times mixed with other strings → <code>String</code></li>
   <li>string that starts like an ISO 8601 date-time (<code>2026-10-01T09:30:00Z</code>) → <code>Date</code>; a plain date such as <code>2026-10-01</code> stays <code>String</code></li>
   <li>string → <code>String</code></li>
   <li>number → <code>Number</code></li>
@@ -95,10 +96,52 @@ export default mongoose.model<IProduct>('Product', productSchema);`}</code></pre
 </ul>
 <p>Keys that are not JavaScript identifiers, such as <code>release-date</code>, are quoted so the generated file parses.</p>
 
+<h2>Example: Every Sample Decides the Type</h2>
+
+{/* jtm-check: {"json":"[{\"code\":1,\"note\":null,\"seller\":{\"meta\":{\"x\":1}},\"buyer\":{\"meta\":{\"y\":\"2\"}}},{\"code\":\"A-2\",\"note\":\"gift\",\"tags\":[\"a\",1]}]","model":"Order","mode":"javascript","timestamps":false,"required":false} */}
+
+<p>A root array with two orders, model name <code>Order</code>, JavaScript, timestamps Off:</p>
+<pre><code>{`[{"code":1,"note":null,"seller":{"meta":{"x":1}},"buyer":{"meta":{"y":"2"}}},{"code":"A-2","note":"gift","tags":["a",1]}]`}</code></pre>
+
+<p>Output:</p>
+<pre><code>{`const mongoose = require('mongoose');
+const { Schema } = mongoose;
+
+const metaSchema = new Schema({
+  x: { type: Number },
+});
+
+const sellerSchema = new Schema({
+  meta: metaSchema,
+});
+
+const buyerMetaSchema = new Schema({
+  y: { type: String },
+});
+
+const buyerSchema = new Schema({
+  meta: buyerMetaSchema,
+});
+
+const orderSchema = new Schema({
+  code: { type: mongoose.Schema.Types.Mixed },
+  note: { type: String },
+  seller: sellerSchema,
+  buyer: buyerSchema,
+  tags: [mongoose.Schema.Types.Mixed],
+}, { timestamps: false });
+
+module.exports = mongoose.model('Order', orderSchema);`}</code></pre>
+<ul>
+  <li><code>code</code> is <code>1</code> in one order and <code>"A-2"</code> in the other, so it is <code>Mixed</code>; <code>Number</code> would reject <code>"A-2"</code>. <code>note</code> is <code>null</code> once and <code>"gift"</code> once, so it is <code>String</code>. <code>tags</code> mixes a string and a number, so its elements are <code>Mixed</code>.</li>
+  <li>The two <code>meta</code> objects have different fields, so the second gets the parent key as a prefix (<code>buyerMetaSchema</code>). Objects under the same key with the same fields and types share one schema; if the prefixed name is taken too, a number is added.</li>
+</ul>
+<p>The tool's test runs each generated JavaScript file with Mongoose 9.10.3, builds a document from every sample, and checks that <code>validateSync()</code> passes and that every field and value comes back (ISO date-times come back as <code>Date</code>, in <code>toISOString()</code> form; an array path missing from a sample comes back as <code>[]</code>, Mongoose's default for arrays).</p>
+
 <h2>Limits</h2>
 <ul>
-  <li><strong>The first value wins.</strong> When objects in an array are merged, a key takes its type from the first element that has it. <code>{'[{"v": null}, {"v": "x"}]'}</code> gives <code>Mixed</code>, not <code>String</code>.</li>
-  <li><strong>Same key, same schema.</strong> Two different objects under the same key name share one sub-schema; the first one seen decides its fields.</li>
+  <li><strong>Mixed accepts anything.</strong> A field typed <code>Mixed</code> because its samples disagree is not cast or validated, and Mongoose does not track changes inside it unless you call <code>markModified()</code>. Pick one type when the data allows it.</li>
+  <li><strong>Only objects at the root.</strong> In a root array, numbers, strings and arrays next to the objects are ignored; the schema describes the objects.</li>
   <li><strong>No ObjectId, enum, index or validation.</strong> A 24-character hex string stays <code>String</code>; add <code>Schema.Types.ObjectId</code> and <code>ref</code>, <code>unique</code>, <code>enum</code> or <code>min</code>/<code>max</code> yourself.</li>
   <li><strong>The TypeScript interface extends <code>Document</code>.</strong> The <a href="https://mongoosejs.com/docs/typescript.html">Mongoose TypeScript guide</a> lets Mongoose infer document types from the schema by default, and when you write an interface it uses a plain one (<code>interface IUser</code> passed as <code>{'Schema<IUser>'}</code>) without <code>extends Document</code>. To follow the guide, delete <code>extends Document</code> and the <code>Document</code> import.</li>
   <li><strong>A root array of primitives</strong> such as <code>["a", "b"]</code> generates no schema, only the comment <code>{"// Array of primitives — no schema to generate"}</code>.</li>

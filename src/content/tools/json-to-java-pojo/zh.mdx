@@ -5,7 +5,7 @@ faqItems:
   - question: "这个工具生成什么？"
     answer: "从 JSON 生成 Java POJO（Plain Old Java Object）类。每个嵌套对象都会成为独立的公共类，包含私有字段和 getter/setter 方法（Lombok 模式使用 @Data）。"
   - question: "支持哪些注解模式？"
-    answer: "四种模式：无注解（纯 POJO，含 getter/setter）、Jackson（@JsonProperty）、Gson（@SerializedName）和 Lombok（@Data）。仅当 JSON key 与 camelCase 字段名不一致时才添加注解。"
+    answer: "四种模式：无注解（纯 POJO，含 getter/setter）、Jackson（@JsonProperty）、Gson（@SerializedName）和 Lombok（@Data）。Jackson 和 Gson 模式在 JSON key 与字段名不一致时给字段加注解；Jackson 由 getter / setter 推出的名字与字段名不同时（getURL 被读作 url），Jackson 模式也给 getter 和 setter 加注解。无注解与 Lombok 模式不保留原 key。"
   - question: "JSON 类型如何映射到 Java 类型？"
     answer: "string→String、integer→int（超出 int 范围为 long）、float/double→double、boolean→boolean、null→Object、array→List<T>、嵌套对象→独立类。"
   - question: "何时会添加 List 导入？"
@@ -105,3 +105,52 @@ RootObject order = mapper.readValue(json, RootObject.class);`}</code></pre>
 <p>Java 16 及以上，简单的不可变模型可以改用 record，Jackson 2.12 起支持读取 record：</p>
 
 <pre><code>{`public record Customer(String name, boolean vip) {}`}</code></pre>
+
+<h2>示例：同名 key 结构不同、key 不是合法 Java 名（Jackson 模式）</h2>
+
+{/* jjp-check: {"json":"{\"billing\":{\"address\":{\"city\":\"Paris\"}},\"shipping\":{\"address\":{\"line1\":\"1 Main St\"}},\"class\":\"A\",\"2fa\":true,\"URL\":\"https://example.com\"}","mode":"jackson"} */}
+
+<pre><code>{`{"billing": {"address": {"city": "Paris"}}, "shipping": {"address": {"line1": "1 Main St"}}, "class": "A", "2fa": true, "URL": "https://example.com"}`}</code></pre>
+
+<p>输出（省略了大部分 getter / setter）：</p>
+
+<pre><code>{`import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class RootObject {
+    private Billing billing;
+    private Shipping shipping;
+    @JsonProperty("class")
+    private String classValue;
+    @JsonProperty("2fa")
+    private boolean t2fa;
+    @JsonProperty("URL")
+    private String uRL;
+
+    @JsonProperty("URL")
+    public String getURL() {
+    // 其余 getter / setter 省略
+}
+
+public class Address {
+    private String city;
+    // ...
+}
+
+public class ShippingAddress {
+    private String line1;
+    // ...
+}`}</code></pre>
+
+<ul>
+  <li>两个 <code>{"address"}</code> 字段不同，第二个用父级名作前缀（<code>{"ShippingAddress"}</code>）。字段和类型都相同的对象共用一个类；加前缀后仍重名时再加数字。</li>
+  <li>Java 关键字和字面量加 <code>{"Value"}</code>（<code>{"class"}</code> → <code>{"classValue"}</code>），会以数字开头的名字加 <code>{"T"}</code>（<code>{"2fa"}</code> → <code>{"t2fa"}</code>），变成同一个名字的 key 依次加数字（<code>{"first-name"}</code> 和 <code>{"first_name"}</code> → <code>{"firstName"}</code> 和 <code>{"firstName2"}</code>）。注解保留原 key。</li>
+  <li>Jackson 把 <code>{"getURL()"}</code> 读作 <code>{"url"}</code>，不是 <code>{"uRL"}</code>。getter 和 setter 不加注解时，Jackson 会多出一个属性，读到 <code>{"URL"}</code> 时报错。Gson 只读字段，不需要这条注解。</li>
+</ul>
+
+<p>工具的测试用 javac 21、Jackson 2.17.2 和 Gson 2.11.0 编译每段 Jackson / Gson 输出，读入样例再写回，结果与原 JSON 相同；每段 Lombok 1.18.34 输出都能编译。</p>
+
+<h2>限制</h2>
+<ul>
+  <li><strong>无注解与 Lombok 模式只有 Java 名。</strong>这两种模式下 <code>{"classValue"}</code>、<code>{"t2fa"}</code> 对应不到 <code>{"class"}</code>、<code>{"2fa"}</code>。key 不是合法 Java 名时请用 Jackson 或 Gson 模式。</li>
+  <li><strong>Jackson 写不出空 key。</strong><code>{'@JsonProperty("")'}</code> 表示「用默认名」，所以对 key <code>{'""'}</code> 工具写 <code>{'@JsonAlias("")'}</code> 加一行注释：Jackson 能读 <code>{'{"": 4}'}</code>，写回时是 <code>{'{"t": 4}'}</code>。Gson 模式写 <code>{'@SerializedName("")'}</code>，保留空 key。</li>
+</ul>

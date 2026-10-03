@@ -10,12 +10,22 @@
 // parse. They are now quoted (JSON.stringify). JavaScript output is parsed with `new Function`,
 // TypeScript output with the TypeScript compiler's syntactic diagnostics (transpileModule).
 // Also the two examples on the en tool page (JavaScript with timestamps; TypeScript with
-// required on), ISO date-time strings → Date, plain dates → String, null → Mixed, array of
-// objects → sub-schema with the keys of all elements (first value of each key decides its type).
+// required on), ISO date-time strings → Date, plain dates → String.
 //
+// Inference (A-MONGOOSE-ARRAY-INFERENCE): every sample of a field decides its type; null is
+// skipped (all null → Mixed); different types → Mixed, ISO date-time + other string → String;
+// arrays mixing objects and scalars → [Mixed]. Naming (A-MONGOOSE-NESTED-NAME): same key with
+// another shape gets the parent key as prefix (bMetaSchema), same shape shares one schema, the
+// root name is reserved. The {/* jtm-check */} examples on the 4 tool pages are recomputed.
+// With MONGOOSE_TEST_DIR pointing at a directory where require('mongoose') gives 9.10.3, each
+// RUNTIME sample is run through the generated JavaScript: validateSync() passes and every field
+// and value comes back (keys compared sorted, generated _id dropped only where the sample has
+// none, ISO strings on Date paths compared as toISOString()). Otherwise SKIP; no database.
+// AB_TYPES_EVIDENCE=<dir> writes generated files there.
 // Run: node scripts/test-json-to-mongoose.mjs
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import ts from 'typescript';
@@ -25,7 +35,7 @@ const source = readFileSync(join(root, 'src/components/tools/JsonToMongooseTool.
 const a = source.indexOf('/* ── engine:start ── */');
 const b = source.indexOf('/* ── engine:end ── */');
 if (a < 0 || b <= a) { console.error('FAIL: engine block not found'); process.exit(1); }
-const E = new Function(source.slice(a, b) + '\nreturn { buildSchemaFromObj, renderOutput, toCamelCase, toPascalCase, mergeObjects };')();
+const E = new Function(source.slice(a, b) + '\nreturn { buildRootSchema, renderOutput, toCamelCase, toPascalCase };')();
 
 let passes = 0, failures = 0;
 function eq(name, got, want) {
@@ -33,11 +43,28 @@ function eq(name, got, want) {
   else { failures++; console.log('FAIL ' + name + '\n  got:      ' + JSON.stringify(got) + '\n  expected: ' + JSON.stringify(want)); }
 }
 function gen(json, model, mode, timestamps, required) {
-  const p = JSON.parse(json);
-  const obj = Array.isArray(p) ? E.mergeObjects(p.filter((x) => x && typeof x === 'object' && !Array.isArray(x))) : p;
-  const schemas = [];
-  E.buildSchemaFromObj(obj, E.toCamelCase(model) + 'Schema', 'I' + E.toPascalCase(model), schemas);
-  return E.renderOutput(schemas, model, mode, timestamps, required);
+  function element(dataset = {}) {
+    return { dataset, value: '', textContent: '', className: '', handlers: {},
+      classList: { add() {}, remove() {} }, removeAttribute() {},
+      addEventListener(event, fn) { this.handlers[event] = fn; } };
+  }
+  const elements = Object.fromEntries(['input', 'output-code', 'status', 'model-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jtm-' + id, element()]));
+  elements['jtm-model-name'].value = model;
+  const groups = {
+    '#jtm-lang-tabs .jtm-tab': ['javascript', 'typescript'].map((lang) => element({ lang })),
+    '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
+    '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
+  };
+  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
+  const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
+  new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
+    { querySelector: () => wrap, getElementById: (id) => elements[id] }, {}, { highlightElement() {} }, {}, () => 0, () => {});
+  elements['jtm-input'].value = json;
+  groups['#jtm-lang-tabs .jtm-tab'].find((tab) => tab.dataset.lang === mode).handlers.click();
+  groups['#jtm-ts-tabs .jtm-tab'].find((tab) => tab.dataset.ts === String(timestamps)).handlers.click();
+  groups['#jtm-req-tabs .jtm-tab'].find((tab) => tab.dataset.req === String(required)).handlers.click();
+  elements['jtm-convert'].handlers.click();
+  return elements['jtm-output-code'].textContent;
 }
 function parsesAsJs(code) { try { new Function(code); return true; } catch (e) { return e.message; } }
 function parsesAsTs(code) {
@@ -67,7 +94,95 @@ eq('"release-date" quoted', js.includes('  "release-date": { type: String },'), 
 eq('$ok and _id2 stay bare', js.includes('  $ok: { type: Number },') && js.includes('  _id2: { type: Number },'), true);
 eq('"2fa" quoted', js.includes('  "2fa": { type: Boolean },'), true);
 
-eq('first value decides the type (null then string → Mixed)', gen('[{"v": null}, {"v": "x"}]', 'T', 'javascript', false, false).includes('v: { type: mongoose.Schema.Types.Mixed },'), true);
+eq('null is skipped: null then string → String', gen('[{"v": null}, {"v": "x"}]', 'T', 'javascript', false, false).includes('v: { type: String },'), true);
+
+const nestedRepro = '{"a":{"meta":{"x":1}},"b":{"meta":{"y":2}}}';
+const arrayRepro = '[{"value":1,"parts":[{"x":1},"keep",2,null,[3]]},{"value":"two","parts":[{"y":2}]}]';
+eq('A-MONGOOSE-ARRAY-INFERENCE: all root samples decide value type', gen(arrayRepro, 'Sample', 'javascript', false, false).includes('value: { type: mongoose.Schema.Types.Mixed },'), true);
+eq('A-MONGOOSE-ARRAY-INFERENCE: heterogeneous arrays use Mixed', gen(arrayRepro, 'Sample', 'javascript', false, false).includes('parts: [mongoose.Schema.Types.Mixed],'), true);
+eq('A-MONGOOSE-NESTED-NAME: real convert keeps b.meta.y', /const bMetaSchema = new Schema\(\{\n  y:/.test(gen(nestedRepro, 'Sample', 'javascript', false, false)), true);
+
+// {/* jtm-check: {"json", "model", "mode", "timestamps", "required"} */}: the next code block is the
+// input JSON and the one after it the full output, both as on the page.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const mdx = readFileSync(join(root, `src/content/tools/json-to-mongoose/${lang}.mdx`), 'utf8');
+  let count = 0;
+  for (const m of mdx.matchAll(/\{\/\* jtm-check: (\{.*\}) \*\/\}/g)) {
+    count++;
+    const spec = JSON.parse(m[1]);
+    const blocks = [...mdx.slice(m.index).matchAll(/<pre><code>\{`([\s\S]*?)`\}<\/code><\/pre>/g)].map((x) => new Function('return `' + x[1] + '`')());
+    eq(`${lang} jtm-check ${count}: input block`, blocks[0], spec.json);
+    eq(`${lang} jtm-check ${count}: output block`, blocks[1], gen(spec.json, spec.model, spec.mode, spec.timestamps, spec.required));
+  }
+  eq(`${lang} page has the inference example`, count >= 1, true);
+  eq(`${lang} page no longer says the first value decides`, /first value wins|首个值|最初の値|첫 값/.test(mdx), false);
+}
+
+if (process.env.AB_TYPES_EVIDENCE) {
+  mkdirSync(process.env.AB_TYPES_EVIDENCE, { recursive: true });
+  for (const [name, json] of [['nested', nestedRepro], ['array', arrayRepro]]) {
+    writeFileSync(join(process.env.AB_TYPES_EVIDENCE, name + '.cjs'), gen(json, 'Sample', 'javascript', false, false));
+  }
+  writeFileSync(join(process.env.AB_TYPES_EVIDENCE, 'ts-contract.ts'), gen('{"label":"sample"}', 'Sample', 'typescript', true, false) + '\nimport Model from "./ts-contract";\nconst doc = new Model({ label: "sample" });\ndoc.createdAt.toISOString();\ndoc.updatedAt.toISOString();\n');
+}
+
+// Key order is not data: compare with keys sorted at every level.
+const canon = (v) => JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x);
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+const RUNTIME = [
+  ['nested', nestedRepro],
+  ['array', arrayRepro],
+  ['page js', PAGE_JS],
+  ['page ts', PAGE_TS],
+  ['awkward keys', awkward],
+  ['dates and strings', '[{"at":"2026-10-01T09:30:00Z","note":"2026-10-01T09:30:00Z"},{"at":"2026-10-02T00:00:00.000Z","note":"later"},{"at":null}]'],
+  ['three shapes', '{"a":{"meta":{"x":1}},"b":{"meta":{"y":"2"}},"c":{"meta":{"x":3}},"d":{"meta":{"z":true}}}'],
+  ['object arrays', '[{"items":[{"sku":"A","qty":1}]},{"items":[{"sku":"B","note":"gift"}]},{"items":[]}]'],
+  ['object array with null', '{"items":[{"sku":"A"},null]}'],
+  ['scalars and objects', '[{"v":1},{"v":"x"},{"v":{"deep":1}},{"v":[1]},{"v":true}]'],
+  ['root name clash', '{"sample":{"x":1},"meta":{"sample":{"y":2}}}'],
+  ['empty and digit keys', '{"":{"a":1},"2fa":{"b":2}}'],
+  ['own _id', '{"_id":"abc","child":{"_id":7,"n":1}}'],
+  ['page order example', '[{"code":1,"note":null,"seller":{"meta":{"x":1}},"buyer":{"meta":{"y":"2"}}},{"code":"A-2","note":"gift","tags":["a",1]}]']
+];
+if (process.env.MONGOOSE_TEST_DIR) {
+  const require = createRequire(join(process.env.MONGOOSE_TEST_DIR, 'package.json'));
+  const mongoose = require('mongoose');
+  eq('fixed Mongoose runtime version', mongoose.version, '9.10.3');
+  for (const [name, json] of RUNTIME) {
+    try {
+      const isolated = new mongoose.Mongoose();
+      const module = { exports: {} };
+      new Function('require', 'module', gen(json, 'Sample', 'javascript', false, false))(() => isolated, module);
+      const samples = JSON.parse(json);
+      for (const [i, sample] of (Array.isArray(samples) ? samples : [samples]).entries()) {
+        const doc = new module.exports(sample);
+        eq(`${name}[${i}] validateSync`, doc.validateSync()?.message || true, true);
+        // Ignore only Mongoose's generated IDs, never sample fields or scalar values.
+        const actual = JSON.parse(JSON.stringify(doc.toObject({ versionKey: false })));
+        // A Date path casts an ISO string to a Date; it then serializes as toISOString().
+        function alignDates(want, got) {
+          if (typeof want === 'string' && typeof got === 'string' && ISO.test(want) && !isNaN(Date.parse(want)) && got === new Date(want).toISOString()) return got;
+          if (Array.isArray(want)) return want.map((v, k) => alignDates(v, Array.isArray(got) ? got[k] : undefined));
+          if (want && typeof want === 'object') return Object.fromEntries(Object.entries(want).map(([key, v]) => [key, alignDates(v, got && typeof got === 'object' ? got[key] : undefined)]));
+          return want;
+        }
+        const expected = alignDates(sample, actual);
+        // A generated _id is dropped only where the sample has no _id at that position.
+        function stripIds(value, want) {
+          if (Array.isArray(value)) return value.map((v, k) => stripIds(v, Array.isArray(want) ? want[k] : undefined));
+          if (value && typeof value === 'object') {
+            const has = (key) => want && typeof want === 'object' && !Array.isArray(want) && Object.hasOwn(want, key);
+            // Mongoose gives array paths a default [] (docs: SchemaTypes, Arrays); drop it only where the sample has no such key.
+            return Object.fromEntries(Object.entries(value).filter(([key, v]) => (key !== '_id' || has(key)) && !(Array.isArray(v) && v.length === 0 && !has(key))).map(([key, v]) => [key, stripIds(v, want && typeof want === 'object' ? want[key] : undefined)]));
+          }
+          return value;
+        }
+        eq(`${name}[${i}] retains every field and value`, canon(stripIds(actual, expected)), canon(expected));
+      }
+    } catch (e) { eq(name + ' runtime execution', e.message, true); }
+  }
+} else { console.log('SKIP Mongoose runtime (set MONGOOSE_TEST_DIR to an external mongoose@9.10.3 install)'); }
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
