@@ -7,7 +7,7 @@ faqItems:
   - question: "Why is className used instead of class in JSX?"
     answer: "JSX is compiled to JavaScript, and class is a reserved keyword in JavaScript. React uses className to avoid the collision. The converter handles this rename automatically."
   - question: "How are inline styles converted?"
-    answer: "HTML inline styles use a string: style=\"color: red; font-size: 14px\". JSX requires an object: style={{ color: 'red', fontSize: '14px' }}. The converter parses the string and produces camelCased property names."
+    answer: "HTML inline styles use a string: style=\"color: red; font-size: 14px\". JSX requires an object, so the converter writes style={{ \"color\": \"red\", \"fontSize\": \"14px\" }}. It splits declarations only at top-level semicolons, so a semicolon inside quotes or url(data:…) stays in the value, keeps custom properties such as --accent as written, and copies each value exactly. A style that a React style object cannot keep (!important, the same property twice, a CSS comment, an unclosed quote or bracket) is refused: the output is cleared, Copy is disabled and the status line gives the character position."
   - question: "What do HTML comments become in JSX?"
     answer: "HTML comments (<!-- text -->) are converted to JSX expression comments ({/* text */}), the only form React's JSX parser accepts."
   - question: "Is anything sent to a server?"
@@ -27,7 +27,7 @@ faqItems:
 |------|-----|
 | `class="..."` | `className="..."` |
 | `for="..."` | `htmlFor="..."` |
-| `style="color:red"` | `style={{ color: 'red' }}` |
+| `style="color:red"` | `style={{ "color": "red" }}` |
 | `onclick="save()"` | `onClick={(event) => { save() }}` |
 | `ondblclick="..."` / `onmouseover="..."` | `onDoubleClick={...}` / `onMouseOver={...}` |
 | `tabindex` | `tabIndex` |
@@ -43,6 +43,7 @@ faqItems:
 | `<img src="...">` | `<img src="..." />` |
 | `<input ...>` | `<input ... />` |
 | `<!-- comment -->` | `{/* comment */}` |
+| Text `{name}`, `a < b` | `&#123;name&#125;`, `a &lt; b` |
 
 <h2>Common Use Cases</h2>
 <ul>
@@ -69,7 +70,7 @@ Output:
 ```jsx
 <label htmlFor="email" className="lbl">Email</label>
 <input id="email" type="email" required />
-<div style={{ backgroundImage: 'url(\'a.png\')', fontSize: '14px' }}>x</div>
+<div style={{ "backgroundImage": "url('a.png')", "fontSize": "14px" }}>x</div>
 {/* footer */}
 ```
 
@@ -105,15 +106,15 @@ Six attribute names change (`novalidate`, `for`, `class`, `autocomplete`, `maxle
 | `<input type="checkbox" checked>` | A `checked` prop without `onChange` makes a read-only field | `defaultChecked` |
 | `<option selected>` | React sets the selection on `<select>` | `<select defaultValue="...">` |
 | `<textarea>hi</textarea>` | [`<textarea>` does not accept children](https://react.dev/reference/react-dom/components/textarea) | `<textarea defaultValue="hi" />` |
-| `<p>a < b and {name}</p>` | `<` and `{` in text are JSX syntax | `a {'<'} b and {'{'}name{'}'}` |
+| `style="color:red !important"` (no output) | Refused: a React style object cannot keep `!important`, so the output is cleared | Move the rule to a class in your CSS, or drop `!important` |
 | Two or more top-level elements | A component returns one element | Wrap them in `<>...</>` |
 | `<path stroke-width="2">` | SVG attributes are not converted | Use [SVG to JSX](/tools/svg-to-jsx/) |
 
 ## Limits
 
 - **Attribute values are copied as written.** Only attribute names change, so `href="/search?for=1&class=2"` stays the same. This is what the [htmltojsx](https://github.com/reactjs/react-magic/blob/master/src/htmltojsx.js) converter does too. Two values change: `style` becomes an object, and the code of an event handler goes into `(event) => { ... }`, because React [needs a function](https://react.dev/learn/responding-to-events), not a string. Entities such as `&quot;` in that code are decoded. An `on*` attribute that is not a DOM event, such as `onfoo` on a custom element, is kept as written.
-- **Tags only.** Text between tags is copied as is, and a full document keeps its `<!DOCTYPE>`, `<html>`, `<head>`, and `<body>`. Paste only the part that goes into the component.
+- **Text keeps its characters.** In text between tags, `{`, `}`, `<` and `>` are written as `&#123;`, `&#125;`, `&lt;` and `&gt;`, which JSX turns back into the same characters, so `<p>{name}</p>` renders the text `{name}` instead of reading a variable. Other text is copied as is, and a full document keeps its `<!DOCTYPE>`, `<html>`, `<head>`, and `<body>`. Paste only the part that goes into the component.
+- **Styles that cannot be kept are refused.** `!important`, a property written twice (`color:red;color:blue`, often a CSS fallback), CSS comments, escaped property names and unclosed quotes or brackets stop the conversion. The output is cleared, Copy is disabled and the status line names the character position in the style, for example “Cannot convert style at position 11: !important cannot be preserved in a React style object”. Other values, including `url(data:…;base64,…)` and custom properties like `--accent`, are copied character for character as JSON strings.
 - **No component wrapper.** The output is markup. Put it in the `return (...)` of your component.
 - **No HTML parsing or repair.** The converter rewrites opening tags it can match with a pattern; it does not build a DOM. Unclosed tags stay unclosed, and an attribute written twice (`class="a" CLASS="b"`) becomes two `className` props, which JSX does not allow. Paste markup that already validates.
-- **Text is not escaped.** A `<`, `>`, `{` or `}` in text is copied as is and breaks the JSX; see the table above.
 - **Comments.** A `*/` inside an HTML comment is written as `* /`, so the JSX comment does not end early.

@@ -78,28 +78,50 @@ export default PlusIcon;
 
 `xmlns` is gone, `stroke-width` and `stroke-linecap` are camelCase, and the markup is copied as written otherwise. `{...props}` comes after the root's own attributes, the same place as svgr's default ([`expandProps: 'end'`](https://react-svgr.com/docs/options/#expand-props)), so props you pass win: `<PlusIcon width={48} fill="red" />` renders 48 px and red, and `height` stays 24. Values stay strings (`strokeWidth="2"`); React accepts both strings and numbers here. With TypeScript, forwardRef and memo all on, the same icon becomes `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })` with `ref={ref} {...props}` after the `<svg>`'s own attributes and `export default memo(PlusIcon);`. In React 19 [`forwardRef` is no longer necessary](https://react.dev/reference/react/forwardRef): a function component can take `ref` as a prop.
 
+An Illustrator export with **Internal CSS**, an inline `style` and `xlink:href`, component name `Icon`:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 24 24"><!-- Generator: Adobe Illustrator --><defs><style>.cls-1{fill:#e11d48;}</style></defs><path id="a" class="cls-1" style="stroke:#000;stroke-width:2" d="M12 5v14"/><use xlink:href="#a"/></svg>
+```
+
+Output:
+
+```jsx
+import React from 'react';
+
+function Icon(props) {
+  return (
+    <svg viewBox="0 0 24 24" {...props}>{/* Generator: Adobe Illustrator */}<defs><style>{".cls-1{fill:#e11d48;}"}</style></defs><path id="a" className="cls-1" style={{ "stroke": "#000", "strokeWidth": "2" }} d="M12 5v14" /><use xlinkHref="#a" /></svg>
+  );
+}
+
+export default Icon;
+```
+
+The comment becomes `{/* ... */}`, which React does not render. The CSS inside `<style>` becomes one JavaScript string, so its braces are no longer read as JSX; entities in it are decoded and a `<![CDATA[ ... ]]>` wrapper is removed. The `style` attribute becomes an object whose values are copied as written, and `xlink:href` becomes `xlinkHref`. Compiled with esbuild 0.21.5 and rendered with the React 19.2.0 development build, it gives `<svg viewBox="0 0 24 24"><defs><style>.cls-1{fill:#e11d48;}</style></defs><path id="a" class="cls-1" style="stroke:#000;stroke-width:2" d="M12 5v14"></path><use xlink:href="#a"></use></svg>` with no console warning.
+
 ## Before You Paste: Export Settings
 
 - **Figma**: select the layer, then Export → SVG. Leave "Include 'id' attribute" off unless you target elements by ID.
-- **Illustrator**: File → Export → Export As → SVG, and set **Styling** to **Presentation Attributes**. The other two choices, Internal CSS and Inline Style, produce a `<style>` block or `style="..."` strings ([Adobe: SVG export options](https://helpx.adobe.com/illustrator/using/exporting-artwork.html)), and the converter does not rewrite either (see below).
-- If the file has a comment such as `<!-- Generator: ... -->`, delete it before pasting. The converter strips the `<?xml ... ?>` line but keeps comments.
+- **Illustrator**: File → Export → Export As → SVG. **Presentation Attributes** under **Styling** gives the shortest component. Internal CSS and Inline Style produce a `<style>` block or `style="..."` strings ([Adobe: SVG export options](https://helpx.adobe.com/illustrator/using/exporting-artwork.html)); the converter turns them into a CSS string and style objects, as in the example above. A `<style>` block applies to the whole page, so two icons that both use `.cls-1` change each other's colors.
+- The converter removes the `<?xml ... ?>` line and turns comments into JSX comments, so you do not need to delete `<!-- Generator: ... -->` first.
 
 ## What You Still Change by Hand
 
-Each row was checked by compiling the output with esbuild 0.28 and rendering it with React 19.
+Each row was checked by compiling the output with esbuild 0.21.5 and rendering it with React 19.2.0.
 
 | In the pasted SVG | What the converter outputs | Result in React | Change to |
 |---|---|---|---|
-| `<!-- comment -->` | Kept as is | Syntax error: HTML comments are not JSX | Delete it, or use `{/* ... */}` |
-| `<style>.cls-1{fill:#e11d48;}</style>` | Kept as is | Syntax error: `{` starts a JSX expression | Export with Presentation Attributes, or wrap the CSS in a template literal: `` <style>{`.cls-1{fill:#e11d48;}`}</style> `` |
-| `style="fill:#e11d48"` | Kept as a string | Render error: "The `style` prop expects a mapping from style properties to values, not a string" | `style={{ fill: '#e11d48' }}` |
-| `xlink:href="#a"` | Kept as is; the `xmlns:xlink` declaration is removed | React warns "Invalid DOM property"; Babel rejects namespaced attributes by default | `href="#a"` |
+| `style="fill:red !important"`, a property written twice, or a CSS comment in `style` | No output: the conversion is refused, Copy is disabled and the status line gives the position in the style | — | Move the rule into the `<style>` block or a CSS file, or remove `!important` |
+| `<text>{count}</text>` | `<text>&#123;count&#125;</text>` | Shows the text `{count}` | Write `{count}` yourself if you want a variable |
 | Hard-coded `fill` or `stroke` colors | Kept as is | The icon ignores the text color | `fill="currentColor"` / `stroke="currentColor"` |
+| `<style>` with class names shared by other icons | A CSS string | The rules apply to the whole page | Rename the classes, or export with Presentation Attributes |
 
 ## Limits
 
-- **Pattern matching, not an XML parser.** Quoted values may contain `>` and `/`, but comments are not skipped: a tag written inside `<!-- ... -->` is converted too.
-- **Only attribute names change.** Values and text are copied as written: `aria-label="class schedule"` stays `aria-label="class schedule"`.
+- **Pattern matching, not an XML parser.** Comments, `<style>` blocks and CDATA sections are read first, so a tag written inside `<!-- ... -->` is not converted. Quoted values may contain `>` and `/`. Unclosed tags are not repaired.
+- **Values are copied as written.** Only attribute names change: `aria-label="class schedule"` stays `aria-label="class schedule"`. The exceptions are `style`, which becomes an object, and text, where `{`, `}`, `<` and `>` are written as `&#123;`, `&#125;`, `&lt;` and `&gt;` so React shows the same characters.
+- **Styles a React object cannot keep are refused.** `!important`, the same property twice (a CSS fallback), CSS comments, escaped property names and unclosed quotes or brackets in a `style` attribute stop the conversion; the output is cleared and Copy is disabled until the input changes.
 - **One component per paste.** Only the first `<svg>` gets `{...props}`; paste sprite sheets one icon at a time.
 - **Component name**: characters other than letters, digits, `_` and `$` are dropped and the first letter is capitalized (`plus-icon` → `Plusicon`).
 - `data-*` and `aria-*` attributes keep their hyphens, as React expects.

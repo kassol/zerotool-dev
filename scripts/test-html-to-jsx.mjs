@@ -2,7 +2,8 @@
 //
 // Read:  src/components/tools/HtmlToJsxTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers, so this test cannot drift
-//        from the shipped source)
+//        from the shipped source); src/content/tools/html-to-jsx/*.mdx (the Example
+//        output of each language page is recomputed)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -153,6 +154,15 @@ eq('comment containing */', jsx('<!-- a */ b -->'), '{/* a * / b */}');
   eq('login form output', out, '<form action="/login" method="post" noValidate>\n  <label htmlFor="user" className="field-label">Username</label>\n  <input id="user" name="user" autoComplete="username" maxLength="32" autoFocus />\n  <button type="submit" onClick={(event) => { track("login") }}>Sign in</button>\n</form>');
   check('page shows the login input', page.includes(input));
   check('page shows the login output', page.includes(out));
+}
+
+// ---------- every language page: the Example output is the converter's output ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const page = readFileSync(join(root, 'src/content/tools/html-to-jsx/' + lang + '.mdx'), 'utf8');
+  const m = page.match(/```html\n([\s\S]*?)\n```[\s\S]*?```jsx\n([\s\S]*?)\n```/);
+  check('page example found ' + lang, !!m);
+  if (m) eq('page example output ' + lang, jsx(m[1]), m[2]);
+  check('page no longer says text is copied unescaped ' + lang, !page.includes("a {'<'} b and {'{'}name{'}'}"));
 }
 
 // A-HTMLJSX-STYLE / A-HTMLJSX-TEXT-BRACES: compile the actual entry point.

@@ -78,28 +78,50 @@ export default PlusIcon;
 
 `xmlns` 被删掉，`stroke-width`、`stroke-linecap` 改成驼峰，其余标记原样保留。`{...props}` 放在根元素自身属性之后，与 svgr 的默认值（[`expandProps: 'end'`](https://react-svgr.com/docs/options/#expand-props)）位置相同，调用方传的值优先：`<PlusIcon width={48} fill="red" />` 渲染成 48 px、红色，`height` 仍是 24。属性值仍是字符串（`strokeWidth="2"`），React 字符串和数字都接受。TypeScript、forwardRef、memo 全勾时，同一图标输出为 `const PlusIcon = forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>(function PlusIcon(props, ref) { ... })`，`<svg>` 自身属性之后是 `ref={ref} {...props}`，末尾 `export default memo(PlusIcon);`。React 19 起[不再需要 `forwardRef`](https://react.dev/reference/react/forwardRef)，函数组件可以直接把 `ref` 当作 prop 接收。
 
+Illustrator 用 **Internal CSS** 导出、带内联 `style` 与 `xlink:href` 的图标，组件名 `Icon`：
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 24 24"><!-- Generator: Adobe Illustrator --><defs><style>.cls-1{fill:#e11d48;}</style></defs><path id="a" class="cls-1" style="stroke:#000;stroke-width:2" d="M12 5v14"/><use xlink:href="#a"/></svg>
+```
+
+输出：
+
+```jsx
+import React from 'react';
+
+function Icon(props) {
+  return (
+    <svg viewBox="0 0 24 24" {...props}>{/* Generator: Adobe Illustrator */}<defs><style>{".cls-1{fill:#e11d48;}"}</style></defs><path id="a" className="cls-1" style={{ "stroke": "#000", "strokeWidth": "2" }} d="M12 5v14" /><use xlinkHref="#a" /></svg>
+  );
+}
+
+export default Icon;
+```
+
+注释变成 `{/* ... */}`，React 不会渲染它。`<style>` 里的 CSS 变成一个 JavaScript 字符串，其中的花括号不再被当作 JSX；里面的实体会被解码，`<![CDATA[ ... ]]>` 外壳会被去掉。`style` 属性变成对象，值按原文复制；`xlink:href` 变成 `xlinkHref`。用 esbuild 0.21.5 编译、React 19.2.0 开发版渲染，结果是 `<svg viewBox="0 0 24 24"><defs><style>.cls-1{fill:#e11d48;}</style></defs><path id="a" class="cls-1" style="stroke:#000;stroke-width:2" d="M12 5v14"></path><use xlink:href="#a"></use></svg>`，控制台没有警告。
+
 ## 粘贴前：导出设置
 
 - **Figma**：选中图层 → Export → SVG。除非要按 ID 操作元素，否则不勾「Include "id" attribute」。
-- **Illustrator**：File → Export → Export As → SVG，Styling 选 Presentation Attributes（菜单名按英文界面）。另外两项 Internal CSS、Inline Style 会生成 `<style>` 块或 `style="..."` 字符串（[Adobe：SVG 导出选项](https://helpx.adobe.com/illustrator/using/exporting-artwork.html)），本工具不会改写这两种写法（见下表）。
-- 文件里如果有 `<!-- Generator: ... -->` 这类注释，粘贴前删掉。工具会去掉 `<?xml ... ?>` 声明，但保留注释。
+- **Illustrator**：File → Export → Export As → SVG（菜单名按英文界面）。Styling 选 Presentation Attributes 得到的组件最短。Internal CSS、Inline Style 会生成 `<style>` 块或 `style="..."` 字符串（[Adobe：SVG 导出选项](https://helpx.adobe.com/illustrator/using/exporting-artwork.html)），本工具会把它们转成 CSS 字符串和样式对象，见上例。`<style>` 块对整个页面生效，两个图标都用 `.cls-1` 时会互相改颜色。
+- 工具会去掉 `<?xml ... ?>` 声明，并把注释转成 JSX 注释，`<!-- Generator: ... -->` 不必先删。
 
 ## 仍需手动修改的地方
 
-下表每一行都用 esbuild 0.28 编译输出、再用 React 19 渲染核对过。
+下表每一行都用 esbuild 0.21.5 编译输出、再用 React 19.2.0 渲染核对过。
 
 | 粘贴的 SVG 里 | 工具输出 | 在 React 中的结果 | 改成 |
 |---|---|---|---|
-| `<!-- 注释 -->` | 原样保留 | 语法错误：HTML 注释不是 JSX | 删掉，或改为 `{/* ... */}` |
-| `<style>.cls-1{fill:#e11d48;}</style>` | 原样保留 | 语法错误：`{` 会被当作 JSX 表达式开头 | 用 Presentation Attributes 重新导出，或把 CSS 包进模板字符串：`` <style>{`.cls-1{fill:#e11d48;}`}</style> `` |
-| `style="fill:#e11d48"` | 保留为字符串 | 渲染报错：「The `style` prop expects a mapping from style properties to values, not a string」 | `style={{ fill: '#e11d48' }}` |
-| `xlink:href="#a"` | 原样保留，`xmlns:xlink` 声明被删 | React 警告「Invalid DOM property」；Babel 默认拒绝带命名空间的属性 | `href="#a"` |
+| `style="fill:red !important"`、同一属性写两次、`style` 里有 CSS 注释 | 无输出：拒绝转换、停用复制，状态栏给出样式中的位置 | — | 把规则移到 `<style>` 块或 CSS 文件里，或去掉 `!important` |
+| `<text>{count}</text>` | `<text>&#123;count&#125;</text>` | 显示文字 `{count}` | 想用变量就自己改成 `{count}` |
 | 写死的 `fill` / `stroke` 颜色 | 原样保留 | 图标不跟随文字颜色 | `fill="currentColor"` / `stroke="currentColor"` |
+| `<style>` 里的类名和其他图标重复 | CSS 字符串 | 规则对整个页面生效 | 改类名，或用 Presentation Attributes 导出 |
 
 ## 限制
 
-- **用正则匹配，不是 XML 解析器**：带引号的属性值里可以有 `>` 和 `/`，但注释不会被跳过，写在 `<!-- ... -->` 里的标签也会被转换。
-- **只改属性名**：属性值和文字原样保留，`aria-label="class schedule"` 仍是 `aria-label="class schedule"`。
+- **用正则匹配，不是 XML 解析器**：先识别注释、`<style>` 块和 CDATA，所以写在 `<!-- ... -->` 里的标签不会被转换。带引号的属性值里可以有 `>` 和 `/`。不会补全未闭合的标签。
+- **值按原文复制**：只改属性名，`aria-label="class schedule"` 仍是 `aria-label="class schedule"`。例外是 `style`（变成对象）和文字：文字里的 `{`、`}`、`<`、`>` 写成 `&#123;`、`&#125;`、`&lt;`、`&gt;`，React 显示的仍是原字符。
+- **React 对象无法保留的样式会被拒绝**：`style` 属性里有 `!important`、同一属性写两次（CSS 回退）、CSS 注释、含转义的属性名、未闭合的引号或括号时停止转换，清空输出并停用复制，直到输入改变。
 - **一次一个组件**：只有第一个 `<svg>` 会加 `{...props}`，雪碧图请逐个图标粘贴。
 - **组件名**：字母、数字、`_`、`$` 以外的字符会被删掉，首字母自动大写（`plus-icon` → `Plusicon`）。中文组件名会被整段删掉，回退为 `MyIcon`。
 - `data-*` 与 `aria-*` 属性保留连字符，这也是 React 的要求。

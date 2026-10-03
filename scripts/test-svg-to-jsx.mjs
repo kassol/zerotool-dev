@@ -2,6 +2,7 @@
 //
 // Read:  src/components/tools/SvgToJsxTool.astro (extracts the real engine block between the
 //        `engine:start` / `engine:end` markers, so this test cannot drift from the shipped source)
+//        and src/content/tools/svg-to-jsx/*.mdx (example pairs are recomputed)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -183,6 +184,25 @@ for (const style of ['fill:red;fill:blue', 'fill:red !important', 'fill:url(a', 
   let error;
   try { body('<svg><path style="' + style + '"/></svg>'); } catch (e) { error = e; }
   check('SVG refuses unrepresentable CSS ' + style, !!error?.code && Number.isInteger(error.position));
+}
+// Every language page: each ```svg / ```jsx example pair is the converter's output; the
+// Illustrator example's rendered markup quoted on the page is what React 19.2.0 renders.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const page = readFileSync(join(root, 'src/content/tools/svg-to-jsx/' + lang + '.mdx'), 'utf8');
+  const pairs = [...page.matchAll(/```svg\n([\s\S]*?)\n```[\s\S]*?```jsx\n([\s\S]*?)\n```/g)];
+  eq('page examples found ' + lang, pairs.length, 2);
+  for (const [, input, output] of pairs) {
+    const name = (output.match(/function (\w+)\(props\)/) || [])[1];
+    eq('page example output ' + lang + ' ' + name, E.svgToJsx(input, name, false, false, false), output);
+    if (React && /<style>/.test(input)) {
+      const code = transformSync(output, { loader: 'jsx', format: 'cjs' }).code;
+      const mod = { exports: {} };
+      new Function('require', 'module', 'exports', code)(() => React, mod, mod.exports);
+      const html = renderToStaticMarkup(React.createElement(mod.exports.default));
+      check('page quotes the React markup ' + lang, page.includes('`' + html + '`'), html);
+    }
+  }
+  check('page no longer says comments and <style> are kept ' + lang, !/<style>\{`/.test(page));
 }
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   try {
