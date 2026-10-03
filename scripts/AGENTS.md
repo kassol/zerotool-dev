@@ -120,6 +120,7 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 2026-10-02 — protobuf 页面运行时清理：`test-protobuf-to-json.mjs` 改为无 Long 的页面 vm 与独立 Long-enabled 对照 vm（304 → 336 项）；五种 64 位类型增加编码与解码的上下界 / 超过 2^53 回归。下方历史记录中的双 vendor 页面加载检查已被替换；protoc / Python fixtures 保持原样。IndexNow 忽略路径测试改用仍存在的 protobuf vendor。
 
 - 2026-10-02 — 发版收尾复核：`sync-jq-web.mjs` 条目补上真实的源码补丁、classic worker 与 `run()` 调用；sprite-sheet 回归条目按实际测试更新为 1277 项并补列新增覆盖。
+- 2026-10-03 — 加入 `test-css-clip-path-generator.mjs`：读组件真实函数，在 vm 与桩 DOM 中检查零值、小数、夹取回写、矩形 SVG 坐标、圆形百分比半径、inset 对向缩减、键盘与 pointercancel 回调、CSS 原值过滤（含括号与引号闭合）及高亮文本往返、参考框虚线随选项显示；再读 4 语言工具页的 `{/* cpg-check: {...} */}` 标注（每语言至少 3 处，共 22 处），用组件的 buildClipPath / cssOutput / PRESETS / updateCircleOverlay / updateInsetOverlay / makeDraggable 复算 CSS、预设、半径、inset 缩减、拖拽与方向键结果，并核对页面原文含同一文本。parse5 取自已有依赖；只读源码、只写 stdout，CI 随其他 test-*.mjs 运行。浏览器行为（CSS.supports、命中测试、复制）在 AGENTS.md 精品化条目中记录 ego-browser 实测，不在本测试内
 
 - 2026-04-26 — 初版
 - 2026-04-26 — 加入 `audit.mjs`（13 维度静态校验）+ CI 巡检管线说明
