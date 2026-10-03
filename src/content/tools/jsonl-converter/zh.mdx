@@ -1,15 +1,15 @@
 ---
 seoTitle: "JSONL 转换器 — JSON Lines / NDJSON 转 JSON | ZeroTool"
-seoDescription: "在浏览器中将 JSONL 和 NDJSON 转为 JSON 数组，也可将 JSON 数组转回 JSON Lines，逐行校验并导出有效记录。"
+seoDescription: "在浏览器中将 JSONL 和 NDJSON 转为 JSON 数组，也可将 JSON 数组转回 JSON Lines，逐行校验并导出有效记录。雪花 ID 等大数字按原样保留。"
 faqItems:
   - question: "什么是 JSONL？"
     answer: "JSONL 也叫 JSON Lines 或 NDJSON，每一行保存一个完整 JSON 值，常用于日志、数据导出、流式 API 和 AI 数据集。"
   - question: "哪些 JSON 输入可以转成 JSONL？"
-    answer: "粘贴 JSON 数组即可。数组里的每一项会变成一行紧凑 JSONL，支持对象、数组、字符串、数字、布尔值和 null。"
+    answer: "粘贴 JSON 数组即可。数组里的每一项会变成一行紧凑 JSONL，保留对象、数组、字符串、布尔值和 null；数字按你写的字符原样输出，1830000000000000001、1.50、1e-7 都不变。"
   - question: "空行如何处理？"
     answer: "默认忽略空行。关闭该选项后，空行会作为逐行校验问题显示。"
   - question: "可以只导出有效 JSONL 记录吗？"
-    answer: "可以。启用“只转换有效行”，或在校验后使用 .jsonl 下载操作导出已成功解析的行。"
+    answer: "可以。勾选“只转换有效行”后点击 JSONL → JSON，JSON 数组里只有有效记录，“下载 .jsonl”按每行一条保存同样的记录。“校验”只检查各行，转换成功之前复制和下载按钮都不可用。"
   - question: "数据在哪里处理？"
     answer: "解析、校验、转换和文件导出都在你的浏览器内通过本地 JavaScript API 完成。"
 ---
@@ -18,36 +18,61 @@ faqItems:
 <ol>
   <li>把 JSONL / NDJSON 粘贴到左侧面板，或打开本地 <code>.jsonl</code>、<code>.ndjson</code>、<code>.json</code>、<code>.txt</code> 文件。</li>
   <li>点击 <strong>校验</strong>，逐行检查内容并看到解析错误所在行号。</li>
-  <li>点击 <strong>JSONL → JSON</strong>，把有效记录转换成 JSON 数组。</li>
+  <li>点击 <strong>JSONL → JSON</strong>，把记录转换成 JSON 数组。</li>
   <li>把 JSON 数组粘贴到右侧面板，点击 <strong>JSON → JSONL</strong>，生成紧凑的 JSON Lines 输出。</li>
-  <li>使用 <strong>下载 .json</strong> 或 <strong>下载 .jsonl</strong> 保存转换结果。</li>
+  <li>用 <strong>复制</strong>、<strong>下载 .json</strong> 或 <strong>下载 .jsonl</strong> 取出转换结果。</li>
 </ol>
 
-<h2>示例</h2>
-<p>输入 JSONL：</p>
+<h2>示例：订单日志里的雪花 ID</h2>
+<p>后端用 64 位整数做订单号时，数值常超过 2<sup>53</sup>，在 JavaScript 里先 <code>JSON.parse()</code> 再 <code>JSON.stringify()</code> 会改掉末几位。本工具只用 <code>JSON.parse()</code> 检查语法，输出时数字照抄输入的字符：</p>
 
+{/* jlc-check: {"dir":"jsonl","out":"json","status":"已将 2 条 JSONL 记录转换为 JSON 数组。"} */}
 ```json
-{"id":1,"event":"signup","user":"alice"}
-{"id":2,"event":"purchase","user":"bob","amount":29.99}
+{"order_id":1830000000000000001,"amount":88.50,"buyer":"张三"}
+{"order_id":1830000000000000002,"amount":12.00,"buyer":"\u674e\u56db"}
 ```
-
-<p>输出 JSON 数组：</p>
 
 ```json
 [
   {
-    "id": 1,
-    "event": "signup",
-    "user": "alice"
+    "order_id": 1830000000000000001,
+    "amount": 88.50,
+    "buyer": "张三"
   },
   {
-    "id": 2,
-    "event": "purchase",
-    "user": "bob",
-    "amount": 29.99
+    "order_id": 1830000000000000002,
+    "amount": 12.00,
+    "buyer": "李四"
   }
 ]
 ```
+
+<p>先解析再序列化会得到 <code>1830000000000000000</code> 和 <code>88.5</code>。字符串按 <code>JSON.stringify()</code> 的标准写法输出，所以 <code>{'"\\u674e\\u56db"'}</code> 变成 <code>"李四"</code>；紧凑 JSONL 里逗号后的空格也会去掉。</p>
+
+<p>反方向同样保留数字：</p>
+
+{/* jlc-check: {"dir":"json","out":"jsonl","status":"已将 2 个 JSON 数组项转换为 JSONL。"} */}
+```json
+[
+  {"order_id": 1830000000000000001, "amount": 88.50},
+  {"order_id": 1830000000000000002, "amount": 12.00}
+]
+```
+
+```json
+{"order_id":1830000000000000001,"amount":88.50}
+{"order_id":1830000000000000002,"amount":12.00}
+```
+
+<h2>复制与下载</h2>
+<p>
+  <strong>复制</strong>按钮和两个下载都取最近一次成功转换的结果。<strong>JSONL → JSON</strong> 之后，<strong>下载 .json</strong> 保存右侧的数组；
+  JSONL 一侧的<strong>复制</strong>和<strong>下载 .jsonl</strong> 给出转换后的记录，每行一条、紧凑格式。它不是你粘贴的原文：被“只转换有效行”略过的错误行不在里面，空格也去掉了。
+  <strong>JSON → JSONL</strong> 之后，<strong>下载 .json</strong> 按当前“格式化 JSON 输出”设置保存你的数组。
+</p>
+<p>
+  第一次转换之前这些按钮不可用；编辑任一侧、切换“忽略空行”或“只转换有效行”、点击<strong>清除</strong>（或在工具内按 Ctrl+L / Cmd+L）、转换失败或读取文件失败时，它们会立即变为不可用。转换失败时输出一侧被清空，不会复制到属于旧输入的结果。<strong>校验</strong>本身不会让它们变为可用。切换“格式化 JSON 输出”时，若 JSONL 一侧有内容，会重新执行 <strong>JSONL → JSON</strong>。
+</p>
 
 <h2>JSONL 与 JSON 数组的区别</h2>
 <p>
@@ -55,22 +80,29 @@ faqItems:
   这种按行组织的格式适合日志、流式导出、命令行处理和大数据集，每条记录都可以独立处理。
 </p>
 
-<h2>校验细节</h2>
-<p>
-  校验器会用 <code>JSON.parse()</code> 解析每一个非空行。解析成功的行会计入有效记录。
-  解析失败的行会显示在问题面板中，包含行号、解析消息和原始行预览。
-</p>
-
 <h2>示例：三行导出数据里有一行坏了</h2>
 <p>把下面内容粘贴到 JSONL 面板，点击<strong>校验</strong>：</p>
 
+{/* jlc-validate: {"counts":[3,2,1,0],"line":2,"message":"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"} */}
 ```json
 {"id":1,"event":"signup"}
 {"id":2,"event":"purchase",}
 {"id":3,"event":"cancel"}
 ```
 
-<p>计数显示共 3 行、有效 2 行、错误 1 行、空行 0。问题面板列出<strong>第 2 行</strong>和浏览器的解析消息，Chrome 给出 <code>{"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"}</code>（位置从该行行首算起），Firefox 与 Safari 的措辞不同。修好这一行或勾选<strong>只转换有效行</strong>之前，<strong>JSONL → JSON</strong> 会报错停止；勾选后输出第 1、3 条记录，并提示「已将 2 条 JSONL 记录转换为 JSON 数组。」</p>
+<p>计数显示共 3 行、有效 2 行、错误 1 行、空行 0。问题面板列出<strong>第 2 行</strong>和浏览器的解析消息，Chrome 给出 <code>{"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"}</code>（位置从该行行首算起），Firefox 与 Safari 的措辞不同。修好这一行或勾选<strong>只转换有效行</strong>之前，<strong>JSONL → JSON</strong> 会报错停止；勾选后输出第 1、3 条记录，提示「已将 2 条 JSONL 记录转换为 JSON 数组。」，<strong>下载 .jsonl</strong> 保存：</p>
+
+{/* jlc-check: {"dir":"jsonl","validOnly":true,"out":"download-jsonl","status":"已将 2 条 JSONL 记录转换为 JSON 数组。"} */}
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+```json
+{"id":1,"event":"signup"}
+{"id":3,"event":"cancel"}
+```
 
 <h2>命令行等价写法</h2>
 <p>需要写进脚本时，用 <a href="https://jqlang.org/manual/" target="_blank" rel="noopener">jq</a> 完成同样的转换（jq 1.7.1 实测输出）：</p>
@@ -86,7 +118,8 @@ jq -c . bad.jsonl                    # 遇到第一处错误就停止：
 
 <h2>限制</h2>
 <ul>
-  <li>数字由 JavaScript 的 <code>JSON.parse()</code> 解析，超过 2<sup>53</sup> 的整数在两个方向上都会丢精度：<code>{`{"order_id":9007199254740993}`}</code> 输出为 <code>9007199254740992</code>。jq 1.7 会保留原始字面量。大 ID 要原样往返，请存成字符串。</li>
+  <li><strong>重复键取最后一个值</strong>，与 <code>JSON.parse()</code> 相同：<code>{`{"x":1,"x":2}`}</code> 变成 <code>{`{"x":2}`}</code>，位置在第一个 <code>x</code> 处。</li>
+  <li><strong>形如数组下标的键会移到对象最前面</strong>并按数值升序排列，与 JavaScript 对象一致：<code>{`{"b":1,"2":2,"1":3}`}</code> 变成 <code>{`{"1":3,"2":2,"b":1}`}</code>，值不变。</li>
   <li><strong>JSON → JSONL</strong> 只接受顶层数组。对象或单个值会提示「JSON 输入必须是数组。」</li>
   <li>每条记录必须写在一行内。跨多行的格式化对象，它占的每一行都会报错。工具按换行符拆分并去掉每行首尾空白，Windows 的 CRLF 文件可以直接用。</li>
   <li>问题面板只列出前 40 个出错行，错误计数仍包含全部。</li>

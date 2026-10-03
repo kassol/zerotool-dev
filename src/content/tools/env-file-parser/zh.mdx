@@ -1,28 +1,31 @@
 ---
 seoTitle: ".env 文件解析器 — 在线解析 .env 并导出 JSON | ZeroTool"
-seoDescription: "在线解析 .env 文件，以表格形式可视化键值对，检测格式错误（缺少等号、重复键、空值），支持导出 JSON。免费，纯浏览器端运行。"
+seoDescription: "在线解析 .env 文件，以表格形式可视化键值对，按 dotenv 的规则检测缺少等号、冒号写法、重复键、空值等问题，并导出 JSON。免费，纯浏览器端运行。"
 faqItems:
   - question: "支持哪种 .env 语法？"
-    answer: "dotenv 的解析规则：每行一个 KEY=VALUE，可带 export 前缀（export KEY=value）。以 # 开头的行是注释。未加引号的值后面的 # 开始行内注释，所以 PORT=5432 # default 得到 5432；引号内的 # 保留。带引号的值可以跨多行。"
+    answer: "dotenv 16.6.1（Node.js 的 dotenv 包）的解析规则：每行一个 KEY=VALUE，或冒号后带空格的 KEY: value，可带 export 前缀。键名可以使用字母、数字、_、. 和 -。以 # 开头的行是注释。未加引号的值后面的 # 开始行内注释，所以 PORT=5432 # default 得到 5432；引号内的 # 保留。带引号的值可以跨多行。"
   - question: "如何处理带引号的值？"
     answer: "值两侧的单引号、双引号、反引号会被去掉，引号内的空白保留。只有双引号值会把 \\n 转成换行。没有闭合的引号保留在值里，备注列会标出。"
   - question: "什么情况会报错？"
-    answer: "没有等号的行会标记为错误，键为空的行同样报错。空值、重复键和非标准键名（不符合 [A-Za-z_][A-Za-z0-9_]* 规则）会显示警告。"
+    answer: "dotenv 会跳过的行显示为错误，也不会导出：既没有 = 也没有冒号（缺少 = 号）、键为空、键里有空格等 dotenv 不允许的字符（如 MY KEY=1，备注为键名不符合常见规则）、冒号后没有空格或冒号前有空格（如 PORT:8080）。空值、重复键，以及 dotenv 接受但不符合 [A-Za-z_][A-Za-z0-9_]* 的键（如 my.key、9KEY）显示警告，这些键照常导出。"
   - question: "数据会上传到服务器吗？"
-    answer: "不会。所有解析均在浏览器中通过 JavaScript 完成，您的密钥不会离开本地设备。"
+    answer: "不会。所有解析均在浏览器中通过 JavaScript 完成，文本不会在访问之间保存。.env 文件里通常有密钥，所以本页也不加载 Google Analytics 和 AdSense。"
   - question: "导出的 JSON 格式是什么？"
-    answer: "包含所有有效键值对的 JSON 对象。注释行和解析错误行不包含在内。重复键会在表格中标注警告，导出时同样包含（后者覆盖前者）。"
+    answer: "表格中所有没有报错的键组成的 JSON 对象，与 dotenv.parse() 的结果相同。注释行和报错行不包含在内。重复键取最后一个值，与 dotenv 一致；表格里每次出现都会标注警告。唯一的差别是名为 __proto__ 的键：本工具把它作为普通属性导出，dotenv.parse() 会丢掉它。导出 JSON 只在点击解析之后、并且至少有一个可导出的键时可用。"
 ---
 
 <h2>使用方法</h2>
 <ol>
   <li>将 <code>.env</code> 文件内容粘贴到文本框中。</li>
-  <li>点击 <strong>Parse</strong> 按钮，以表格形式查看所有键值对。</li>
-  <li>查看 <strong>备注</strong> 列——警告标注空值、重复键或非标准键名；错误标注无法解析的行。</li>
-  <li>点击 <strong>Export JSON</strong> 将解析结果下载为 <code>env.json</code> 文件。</li>
+  <li>点击 <strong>解析</strong>，以表格形式查看所有键值对。</li>
+  <li>查看 <strong>备注</strong> 列：警告标注空值、重复键或不常见的键名；错误标注 dotenv 会跳过的行。</li>
+  <li>点击 <strong>导出 JSON</strong>，将解析结果下载为 <code>env.json</code> 文件。</li>
 </ol>
+<p>表格和<strong>导出 JSON</strong> 对应的是你解析过的那份文本。只要编辑文本、点击<strong>清除</strong>或在工具内按 Ctrl+L（Mac 为 Cmd+L），表格就会隐藏，<strong>导出 JSON</strong> 不可用，直到再次点击<strong>解析</strong>，所以下载的内容不会来自旧版本的文件。</p>
 
-<h2>示例输入</h2>
+<h2>示例</h2>
+
+{/* efp-check: {"status":"有效 6 个，警告 2 个。","rows":[[2,"ok","DB_HOST",""],[3,"ok","DB_PORT",""],[4,"ok","DB_NAME",""],[5,"ok","DB_PASSWORD",""],[7,"warn","API_KEY","值为空"],[8,"ok","STRIPE_KEY",""],[10,"ok","APP_ENV",""],[11,"warn","APP_ENV","键重复"]]} */}
 ```
 # 数据库配置
 DB_HOST=localhost
@@ -37,13 +40,73 @@ APP_ENV=development
 APP_ENV=production
 ```
 
-<p>解析器会去除 <code>DB_PASSWORD</code> 的引号，将 <code>API_KEY</code> 标记为空值，并对重复出现的 <code>APP_ENV</code> 键发出警告。</p>
+<p>解析器去掉 <code>DB_PASSWORD</code> 的引号，把 <code>API_KEY</code> 标为“值为空”，第二个 <code>APP_ENV</code> 标为“键重复”，状态行显示“有效 6 个，警告 2 个。”。导出的 <code>env.json</code> 中 <code>APP_ENV</code> 取最后的值：</p>
+
+```json
+{
+  "DB_HOST": "localhost",
+  "DB_PORT": "5432",
+  "DB_NAME": "myapp",
+  "DB_PASSWORD": "s3cr3t",
+  "API_KEY": "",
+  "STRIPE_KEY": "your-stripe-key",
+  "APP_ENV": "production"
+}
+```
+
+<h2>冒号、空格与其他键名</h2>
+<p>dotenv 也接受类似 YAML 的 <code>KEY: value</code>，但冒号后必须有空格。dotenv 会跳过的行在表格中显示为错误，不进入导出；dotenv 接受但写法少见的键显示警告，照常导出：</p>
+
+{/* efp-check: {"status":"有效 2 个，警告 1 个，错误 2 个。","rows":[[1,"ok","SITE_NAME",""],[2,"ok","API_BASE",""],[3,"error","","键名不符合常见规则"],[4,"warn","feature.flag","键名不符合常见规则"],[5,"error","","应写成 KEY=value，或 KEY: value（冒号后有空格，前面没有空格）"]],"node":{"CDN HOST":"static.example.cn","feature.flag":"on"}} */}
+```
+SITE_NAME: 示例商城
+export API_BASE: https://api.example.cn/v1
+CDN HOST=static.example.cn
+feature.flag=on
+PORT:8080
+```
+
+```json
+{
+  "SITE_NAME": "示例商城",
+  "API_BASE": "https://api.example.cn/v1",
+  "feature.flag": "on"
+}
+```
+
+<p>
+  状态行显示“有效 2 个，警告 1 个，错误 2 个。”。第 3 行键名中有空格，dotenv 的键名规则 <code>{'[\\w.-]+'}</code> 不允许，所以是错误；第 5 行冒号后没有空格。
+  Node.js 自带的解析器（<code>--env-file</code>、<code>util.parseEnv()</code>）规则不同：Node.js 22.23.3 读这段文本时保留 <code>CDN HOST</code> 和 <code>feature.flag</code>，三行冒号写法全部忽略。
+</p>
+
+<p>名为 <code>__proto__</code> 的键是导出与 <code>dotenv.parse()</code> 唯一不同的地方，dotenv 会丢掉这个键：</p>
+
+{/* efp-check: {"status":"有效 2 个。","toolOnly":["__proto__"]} */}
+```
+__proto__=keep
+A=1
+```
+
+```json
+{
+  "__proto__": "keep",
+  "A": "1"
+}
+```
 
 <h2>常见 .env 问题检测</h2>
 <ul>
-  <li><strong>缺少等号</strong>——该行无法解析为键值对。</li>
+  <li><strong>缺少 = 号</strong>——该行既没有 <code>=</code> 也没有冒号，无法解析为键值对。</li>
+  <li><strong>冒号写法不对</strong>——<code>PORT:8080</code>、<code>PORT : 8080</code> 会被 dotenv 跳过，写成 <code>PORT=8080</code> 或 <code>PORT: 8080</code>。</li>
   <li><strong>空值</strong>——键存在但值为空，可能导致运行时错误。</li>
-  <li><strong>重复键</strong>——同一键出现多次，取哪个值取决于所使用的 dotenv 库。</li>
-  <li><strong>非标准键名</strong>——键名应以字母或下划线开头，仅包含字母、数字和下划线。</li>
+  <li><strong>重复键</strong>——同一键出现多次，dotenv 取最后一个值，其他加载器不一定如此。</li>
+  <li><strong>键名不符合常见规则</strong>——键名最好以字母或下划线开头，只含字母、数字和下划线。含 <code>.</code>、<code>-</code> 或以数字开头的键 dotenv 仍会加载（警告）；含空格等其他字符的键不会加载（错误）。</li>
   <li><strong>未加引号的值里有 #</strong>——dotenv 从这里开始算注释，所以 <code>COLOR=#fff</code> 是空值，<code>URL=https://example.com/#top</code> 会丢掉 <code>#top</code>。给值加上引号。规则见 <a href="https://github.com/motdotla/dotenv#what-rules-does-the-parsing-engine-follow">dotenv 解析规则</a>。</li>
+</ul>
+
+<h2>限制</h2>
+<ul>
+  <li><strong>不展开变量。</strong><code>{'${HOME}/data'}</code> 原样保留；dotenv-expand、Docker Compose 和部分框架会展开这类引用。</li>
+  <li><strong>只按 dotenv 的规则。</strong>Node.js <code>--env-file</code>、Docker Compose 的 <code>{'env_file'}</code>、Python 的 python-dotenv 和 shell 的 <code>source</code> 对引号、冒号、<code>export</code> 和 <code>#</code> 各有处理方式，请以实际使用的加载器为准。</li>
+  <li><strong>值以明文显示。</strong>表格不会遮盖密钥，共享屏幕时注意；需要分享文件时，先用 <a href="/zh/tools/secret-redactor/">API Key 脱敏工具</a>替换值。</li>
 </ul>

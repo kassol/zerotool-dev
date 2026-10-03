@@ -31,7 +31,6 @@ TOML には JSON にない型があり、その逆もあります。次の入力
 title = "x"
 created = 2026-09-29T10:00:00Z
 day = 2026-09-29
-ratio = inf
 
 [server]
 port = 8080
@@ -44,7 +43,6 @@ port = 8080
   "title": "x",
   "created": "2026-09-29T10:00:00.000Z",
   "day": "2026-09-29",
-  "ratio": null,
   "server": {
     "port": 8080
   }
@@ -53,6 +51,22 @@ port = 8080
 
 - **コメントは消えます。** JSON にコメントはありません。
 - **日付・時刻は文字列になります。** オフセット付き日時にはミリ秒（`.000Z`）が付きます。JSON から TOML に戻すと、TOML の日付ではなく引用符付きの文字列になります。
-- **`inf` と `nan` は `null` になります。** JSON には無限大も NaN もありません。
-- **2^53 − 1 を超える整数はエラーになります。** [TOML 1.0](https://toml.io/en/v1.0.0) は 64 ビット整数を認めていますが、パーサーは丸めずに `integer value cannot be represented losslessly` で止まります。
-- **TOML への変換では JSON の `null` が消えます。** TOML に null はないため、`{"a": null}` はエラーなしで空の文書になります。先に null を置き換えてください。
+- **`inf` と `nan` があると JSON に変換しません。** JSON には無限大も NaN もなく、`JSON.stringify` は `null` と書いてしまいます。次の TOML は
+
+  ```toml
+  ratio = inf
+
+  [limits]
+  max = nan
+  ```
+
+  `変換していません：JSON では次の値を変えずに表せません：/ratio：inf は JSON で表せません（JSON.stringify は null と書きます）；/limits/max：nan は JSON で表せません（JSON.stringify は null と書きます）` になります。
+- **±(2^53 − 1) を超える整数はどちらの方向でも変換しません。** [TOML 1.0](https://toml.io/en/v1.0.0) は 64 ビット整数を認めていますが、TOML パーサーは丸めずに `integer value cannot be represented losslessly` で止まります。JSON → TOML では `JSON.parse` が丸めてしまうため、フィールドを示して止めます。`1e400` のように倍精度の範囲を超える数値も示します。
+- **JSON の `null` があると TOML に変換しません。** TOML に null はありません。次の JSON は
+
+  ```json
+  {"user":{"id":9007199254740993,"nickname":null}}
+  ```
+
+  `変換していません：TOML では次の値を変えずに表せません：/user/id：整数 9007199254740993 は ±(2^53 − 1) を超えるため、JavaScript では丸められます；/user/nickname：null — TOML には null がありません` になります。大きな ID は文字列にし、null を置き換えるか削除してから変換し直してください。
+- **変換に失敗すると出力パネルは空になり**、コピーボタンは無効になるので、前の結果を誤ってコピーしません。

@@ -5,9 +5,9 @@ faqItems:
   - question: "支持哪些 YAML 特性？"
     answer: "支持所有标准 YAML 1.2 特性，包括嵌套对象、数组、多行字符串（字面量和折叠式）、锚点、别名以及所有标量类型（字符串、数字、布尔值、null、日期）。"
   - question: "可以转换多文档 YAML 吗？"
-    answer: "本工具转换单个 YAML 文档。如果输入包含由 --- 分隔的多个文档，仅转换第一个文档。"
+    answer: "不能。含 --- 分隔的多个文档时会报错 expected a single document in the stream, but found more。请一次转换一个文档，或用 YAML 验证器逐个检查文档。"
   - question: "YAML 数据类型如何映射到 JSON？"
-    answer: "YAML 字符串映射为 JSON 字符串，数字保持不变，布尔值映射为 true/false，null 映射为 null，日期映射为 ISO 字符串，序列/映射映射为数组/对象。"
+    answer: "YAML 字符串映射为 JSON 字符串，数字保持不变，布尔值映射为 true/false，null 映射为 null，日期映射为 ISO 字符串，序列/映射映射为数组/对象。.inf、.nan 和超出 ±(2^53 − 1) 的整数无法原样写入 JSON，工具会停止转换并列出这些字段。"
   - question: "数据会发送到服务器吗？"
     answer: "不会。所有转换完全在浏览器中通过 JavaScript 运行，数据不会离开您的设备。"
 ---
@@ -60,7 +60,7 @@ server:
 
 ## 类型会变的值
 
-本工具使用 js-yaml 4.1，遵循 [YAML 1.2](https://yaml.org/spec/1.2.2/) core schema，并支持时间戳。下列输入的转换结果如下：
+本工具使用 js-yaml 4.3.2，遵循 [YAML 1.2](https://yaml.org/spec/1.2.2/) core schema，并支持时间戳。下列输入的转换结果如下：
 
 | YAML | JSON | 说明 |
 |---|---|---|
@@ -75,6 +75,15 @@ server:
 ## 限制
 
 - **一次只转换一个文档。** 含 `---` 分隔的输入会报错 `expected a single document in the stream, but found more`。
+- **JSON 或 YAML 无法保存的值会停止转换。** YAML 的 `.inf`、`-.inf`、`.nan`，以及任一方向超出 ±(2^53 − 1) 的整数，在转换中会改变（`JSON.stringify` 写成 `null`，`JSON.parse` 和 js-yaml 会把大整数四舍五入）。状态栏按 JSON Pointer 列出每个字段。下面的 YAML：
+
+  ```yaml
+  size: .inf
+  id: 9007199254740993
+  ```
+
+  得到 `未转换：JSON 无法原样保存下列值：/size：inf 在 JSON 中没有写法（JSON.stringify 会写成 null）；/id：整数 9007199254740993 超出 ±(2^53 − 1)，JavaScript 会把它四舍五入`。`1e400` 这类超出双精度范围的 JSON 数字同样列出。大 ID 请加引号。输出面板会清空，复制按钮停用，直到输入可以转换。
+- **js-yaml 的处理上限。** js-yaml 4.3.2 遇到嵌套超过 100 层、合并键（`<<`）累计处理的映射和键超过 10,000 个、一个合并键列出超过 100 个映射的文档会停止，例如 `无效 YAML: 集合嵌套超过 100 层（js-yaml 默认上限） (1:103)`。
 - **重复的键会报错**（`duplicated mapping key`），不会静默覆盖。
 - **注释和锚点不保留。** 锚点和 `<<` 合并键会展开成普通的副本。
 - **JSON → YAML 时会给有歧义的字符串加引号**，例如 `'1.10'`、`'yes'`、`'NO'`，再读回来仍是字符串。

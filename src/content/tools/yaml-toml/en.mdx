@@ -3,9 +3,9 @@ seoTitle: "YAML to TOML Converter Online — Free Bidirectional Tool | ZeroTool"
 seoDescription: "Convert YAML to TOML and TOML to YAML instantly. Handles nested objects, arrays, and all common data types. Free, browser-based, no upload required."
 faqItems:
   - question: "What data types are supported?"
-    answer: "Strings, integers, floats, booleans, arrays, and nested objects are supported in both directions. YAML anchors and aliases are resolved before conversion, so each alias becomes a full copy. TOML date-times are written to YAML as unquoted ISO 8601 values (2026-10-01T09:30:00.000+09:00), which YAML parsers usually read back as timestamps."
+    answer: "Strings, integers, floats (including inf and nan), booleans, arrays, nested objects and dates are supported in both directions. A YAML date such as 2026-10-01 becomes a TOML local date, and a YAML date-time keeps its offset. YAML anchors and aliases are resolved before conversion, so each alias becomes a full copy. TOML date-times are written to YAML as unquoted ISO 8601 values (2026-10-01T09:30:00.000+09:00), which YAML parsers usually read back as timestamps."
   - question: "Why does my YAML fail to convert to TOML?"
-    answer: "TOML requires the root document to be a key-value mapping. YAML documents that have a sequence (list) or scalar as the root cannot be represented in TOML. Also, TOML does not support null values — null fields are automatically converted to empty strings and a warning is shown."
+    answer: "TOML requires the root document to be a key-value mapping, so a YAML list or scalar at the root cannot be converted. The tool also stops, and lists each field by its path (such as /service/owner), when a value would change on the way: null (TOML has no null), integers outside ±(2^53 − 1), timestamps with more than millisecond precision, and impossible dates. The TOML panel is cleared and its Copy button is disabled until the input converts."
   - question: "Are YAML multi-document streams supported?"
     answer: "No. Only single-document YAML is supported. Input with several documents separated by --- shows the error 'expected a single document in the stream'; convert one document at a time. The YAML validator on this site can check multi-document files."
   - question: "Is my data sent anywhere?"
@@ -18,7 +18,7 @@ faqItems:
   <li>To convert <strong>TOML → YAML</strong>: paste your TOML into the right panel — the YAML output updates automatically.</li>
   <li>Click <strong>Swap</strong> to exchange both panels and flip the conversion direction.</li>
   <li>Use <strong>Ctrl+Enter</strong> (or <strong>Cmd+Enter</strong> on Mac) as a keyboard shortcut from whichever panel you are editing.</li>
-  <li>Click <strong>Copy</strong> on either panel to copy the result to your clipboard.</li>
+  <li>Click <strong>Copy</strong> on either panel to copy the result to your clipboard. When a conversion fails, the output panel is cleared and its Copy button is disabled.</li>
 </ol>
 
 <h2>Worked Example</h2>
@@ -49,7 +49,7 @@ enabled = true
 <p>
   Notice that <code>tags</code> moved above <code>[database]</code>. In TOML every key after a <code>[table]</code> header belongs
   to that table, so top-level plain values must come first. The converter (<a href="https://github.com/squirrelchat/smol-toml">smol-toml</a>
-  1.6.1 for TOML, <a href="https://github.com/nodeca/js-yaml">js-yaml</a> 4.1.1 for YAML) reorders keys this way: within each table, plain values keep their order and sub-tables follow them.
+  1.7.1 for TOML, <a href="https://github.com/nodeca/js-yaml">js-yaml</a> 4.3.2 for YAML) reorders keys this way: within each table, plain values keep their order and sub-tables follow them.
 </p>
 
 <h2>Example: a Cargo.toml to YAML</h2>
@@ -99,21 +99,64 @@ bin:
   <thead><tr><th>Input</th><th>Output</th><th>Why</th></tr></thead>
   <tbody>
     <tr><td>YAML <code>version: 1.10</code></td><td>TOML <code>version = 1.1</code></td><td>Unquoted <code>1.10</code> is a float in YAML. Quote version numbers.</td></tr>
-    <tr><td>YAML <code>empty: ~</code></td><td>TOML <code>{'empty = ""'}</code> and a warning</td><td>TOML has no null.</td></tr>
-    <tr><td>YAML <code>released: 2026-10-01</code></td><td>TOML <code>released = 2026-10-01T00:00:00.000Z</code></td><td>js-yaml reads the date as midnight UTC; the TOML side gets an offset date-time, not a local date.</td></tr>
     <tr><td>YAML <code>flag: yes</code></td><td>TOML <code>{'flag = "yes"'}</code></td><td>js-yaml follows YAML 1.2, where only <code>true</code>/<code>false</code> are booleans.</td></tr>
-    <tr><td>YAML <code>big: 9007199254740993</code></td><td>TOML <code>big = 9007199254740992</code></td><td>Integers above 2<sup>53</sup> lose precision in JavaScript.</td></tr>
     <tr><td>TOML <code>hex = 0xff</code></td><td>YAML <code>hex: 255</code></td><td>Hex, octal and binary integers are written in decimal.</td></tr>
     <tr><td>TOML <code>local = 09:30:00</code></td><td>YAML <code>local: 09:30:00.000</code></td><td>Local times gain milliseconds.</td></tr>
   </tbody>
 </table>
 
+<h2>Dates and Times</h2>
+<p>YAML timestamps are written as TOML dates, not as strings:</p>
+
+```yaml
+release:
+  date: 2026-10-01
+  at: 2026-10-01 09:30:00 +9
+  utc: 2026-10-01T00:30:00Z
+  label: "2026-10-01"
+  ratio: .inf
+```
+
+```toml
+[release]
+date = 2026-10-01
+at = 2026-10-01T09:30:00.000+09:00
+utc = 2026-10-01T00:30:00.000Z
+label = "2026-10-01"
+ratio = inf
+```
+
+<p>
+  A date alone becomes a TOML local date. A date-time keeps its offset, written as <code>+09:00</code>; a date-time without an offset
+  is written with <code>Z</code>, because the <a href="https://yaml.org/type/timestamp.html">YAML timestamp type</a> reads it as UTC.
+  The quoted <code>"2026-10-01"</code> stays a string, and <code>.inf</code> becomes TOML <code>inf</code>. TOML dates keep
+  milliseconds, so a timestamp with more digits, such as <code>09:30:00.123456Z</code>, stops the conversion, and so does an impossible
+  date such as <code>2026-02-31</code>.
+</p>
+
+<h2>Values TOML Cannot Hold</h2>
+<p>When a value would change, nothing is converted. The status line lists each field as a JSON Pointer and says why:</p>
+
+```yaml
+service:
+  id: 9007199254740993
+  owner: ~
+```
+
+<p><code>Not converted: TOML cannot hold these values without changing them: /service/id: integer 9007199254740993 is outside ±(2^53 − 1), so JavaScript would round it; /service/owner: null — TOML has no null</code></p>
+<p>
+  The TOML panel is cleared and its Copy button is disabled, so an older result cannot be copied by mistake. Quote large IDs
+  (<code>{'id: "9007199254740993"'}</code>) and replace or remove nulls, then convert again. Integers from −(2<sup>53</sup> − 1) to
+  2<sup>53</sup> − 1 convert unchanged.
+</p>
+
 <h2>Limits and Error Messages</h2>
 <ul>
   <li><strong>Root must be a mapping.</strong> A YAML list or scalar at the top level gives "YAML root must be a mapping (object), not a scalar or sequence."</li>
   <li><strong>One document.</strong> YAML with <code>---</code> between documents gives "expected a single document in the stream, but found more".</li>
-  <li><strong>Large TOML integers are rejected,</strong> not rounded: <code>big = 9007199254740993</code> gives "integer value cannot be represented losslessly" with the line shown. The YAML → TOML direction does not have this check (see the table above).</li>
+  <li><strong>Large integers stop the conversion in both directions.</strong> TOML → YAML: <code>big = 9007199254740993</code> gives "integer value cannot be represented losslessly" with the line shown. YAML → TOML: the field is listed as above.</li>
   <li><strong>Duplicate TOML keys</strong> give "trying to redefine an already defined table or value", with the line and a caret under the problem.</li>
+  <li><strong>js-yaml work limits.</strong> js-yaml 4.3.2 stops a document whose collections are nested more than 100 levels deep, whose merge keys (<code>{'<<'}</code>) handle more than 10,000 mappings and keys in total, or that lists more than 100 mappings in one merge key. The error names the limit and its line and column.</li>
   <li><strong>Comments are dropped</strong> in both directions, because both parsers return plain data. Keep a copy of a commented file before converting it.</li>
   <li><strong>Anchors are expanded.</strong> <code>{'y: *a'}</code> becomes a full copy of the anchored mapping; the TOML output has no way to share it.</li>
 </ul>
