@@ -84,8 +84,8 @@ async function pageExport(text, lang = 'en') {
       addEventListener(k, fn) { docEvents[k] = fn; } },
     window: {}, Blob, URL: { createObjectURL: blob => blob, revokeObjectURL() {} }, setTimeout: fn => timers.push(fn)
   });
-  get('efp-input').value = text; get('efp-parse').click(); get('efp-export-json').click();
-  return { output: downloads.length ? JSON.parse(await downloads[0].text()) : {}, status: get('efp-status').textContent, get, downloads,
+  get('efp-input').value = text; get('efp-parse').click(); const parseStatus = get('efp-status').textContent; get('efp-export-json').click();
+  return { parseStatus, output: downloads.length ? JSON.parse(await downloads[0].text()) : {}, status: get('efp-status').textContent, get, downloads,
     pageClear() { get('efp-input').value = ''; docEvents.keydown?.({ key: 'l', ctrlKey: true }); timers.splice(0).forEach(fn => fn()); } };
 }
 eq('reference is dotenv 16.6.1', require('dotenv/package.json').version, '16.6.1');
@@ -119,7 +119,7 @@ eq('dotenv drops __proto__; tool intentionally keeps this key', Object.keys(dote
 // Lines dotenv skips name their cause: a valid key with a malformed `:` separator was reported
 // as "Non-standard key name".
 for (const [line, note] of [['PORT:8080', 'colonForm'], ['KEY : value', 'colonForm'], ['export KEY :v', 'colonForm'],
-  ['MY KEY=1', 'nonStandard'], ['MY KEY: 1', 'nonStandard'], ['A/B=1', 'nonStandard'], ['BROKEN LINE', 'missingEq'], ['=1', 'emptyKey']]) {
+  ['MY KEY=1', 'nonStandard'], ['MY KEY: 1', 'nonStandard'], ['SMTP\u3000HOST=x', 'nonStandard'], ['A/B=1', 'nonStandard'], ['BROKEN LINE', 'missingEq'], ['=1', 'emptyKey']]) {
   const e = E.parseEnv(line)[0];
   const NOTE = { colonForm: 'Use KEY=value, or KEY: value with a space after the colon and none before it', nonStandard: 'Non-standard key name', missingEq: 'Missing = sign', emptyKey: 'Empty key' };
   eq('skipped line ' + line, [e.type, e.error], ['error', NOTE[note]]);
@@ -290,6 +290,44 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
   const tpl = [/^## What (is|are) /mi, /^## .*Online/mi, /^## .* in Code$/mi, /^## (Summary|Conclusion)/mi].filter((re) => re.test(text));
   check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
   check(rel + ' sample has no provider key formats', !/\b(AKIA|sk_live_|sk_test_|ghp_|xox[bp]-|AIza)/.test(text));
+}
+
+// ---------- tool pages: {/* efp-check: {...} */} ----------
+// The next ``` block is the .env text, the following ```json block the Export JSON download (the
+// Parse / Export handlers run in the page language). status: the status line after Parse, which
+// must appear in the page; rows: [line, type, key, note] as the table shows them, every note in the
+// page; toolOnly: keys the export keeps and dotenv.parse() drops; node: util.parseEnv() output
+// (checked when Node has util.parseEnv).
+{
+  const util = await import('node:util');
+  const STRS = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const rel = 'src/content/tools/env-file-parser/' + lang + '.mdx';
+    const mdx = readFileSync(join(root, rel), 'utf8');
+    let n = 0;
+    for (const m of mdx.matchAll(/\{\/\* efp-check: (\{.*?\}) \*\/\}/g)) {
+      n++;
+      const spec = JSON.parse(m[1]);
+      const fences = [...mdx.slice(m.index).matchAll(/```\w*\n([\s\S]*?)```/g)].map((f) => f[1]);
+      const text = fences[0], expected = JSON.parse(fences[1]);
+      const p = await pageExport(text, lang);
+      eq(rel + ' example ' + n + ' export', JSON.stringify(p.output), JSON.stringify(expected));
+      const ref = dotenv.parse(text);
+      for (const k of spec.toolOnly || []) { check(rel + ' dotenv drops ' + k, !Object.keys(ref).includes(k)); Object.defineProperty(ref, k, { value: expected[k], enumerable: true }); }
+      eq(rel + ' example ' + n + ' keys as dotenv', Object.entries(p.output).sort(), Object.entries(ref).sort());
+      eq(rel + ' example ' + n + ' status', p.parseStatus, spec.status);
+      check(rel + ' example ' + n + ' status in page', mdx.includes(spec.status), spec.status);
+      if (spec.rows) {
+        const rows = E.parseEnv(text, STRS[lang].notes).filter((e) => e.type !== 'comment')
+          .map((e) => [e.lineNo, e.type, e.key || '', e.type === 'error' ? e.error : e.notes.join(STRS[lang].stSep)]);
+        eq(rel + ' example ' + n + ' rows', rows, spec.rows);
+        spec.rows.forEach((r) => r[3] && check(rel + ' note in page: ' + r[3], mdx.includes(r[3])));
+      }
+      if (spec.node && typeof util.parseEnv === 'function') eq(rel + ' example ' + n + ' util.parseEnv', { ...util.parseEnv(text) }, spec.node);
+    }
+    check(rel + ' has checked examples', n >= 2, n);
+    check(rel + ' drops the old FAQ claims', !/don't match \[A-Za-z_\]\[A-Za-z0-9_\]\*\)\./.test(mdx) && !/first or last wins|取哪个值取决于|どの値が使われるかは|어떤 값이 사용될지는/.test(mdx));
+  }
 }
 
 // ---------- notes and status line in the page language ----------
