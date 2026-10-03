@@ -413,7 +413,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 {
   const loader = readFileSync(join(root, 'node_modules/js-yaml/lib/loader.js'), 'utf8');
-  for (const k of Object.keys(T.yamlReasons)) check('js-yaml reports "' + k + '"', loader.includes("'" + k + "'"), k);
+  // keys with {n} are the work limits; js-yaml builds them as 'text (' + number + ')'
+  for (const k of Object.keys(T.yamlReasons)) check('js-yaml reports "' + k + '"', k.includes('{n}') ? loader.includes("'" + k.split('{n}')[0]) : loader.includes("'" + k + "'"), k);
 }
 check('every engine code is used with the English table', [...allCodes].every((c) => T.msg[c]));
 eq('nested detail is formatted in the page language', E.formatMessage({ code: 'example.mismatch', args: { where: '/id', detail: { code: 'schema.type', args: { type: 'integer' } }, more: '2' } }, STRINGS.zh),

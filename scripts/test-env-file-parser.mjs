@@ -26,6 +26,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import vm from 'node:vm';
 
 const require = createRequire(import.meta.url);
 const dotenv = require('dotenv');
@@ -69,6 +70,60 @@ function sameAsDotenv(name, text) {
 }
 function entry(text, key) {
   return E.parseEnv(text).find((e) => e.key === key);
+}
+
+// ---------- P3 dotenv dialect: exercise the complete Parse / Export JSON handlers ----------
+async function pageExport(text, lang = 'en') {
+  const elements = new Map(), downloads = [], docEvents = {}, timers = [];
+  function element() { const events = {}; return { value: '', disabled: false, textContent: '', innerHTML: '', style: {}, children: [],
+    addEventListener(k, fn) { events[k] = fn; }, click() { if (this.disabled) return; if (this.download) downloads.push(this.href); events.click?.(); },
+    fire(k) { events[k]?.(); }, appendChild(child) { this.children.push(child); } }; }
+  const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
+  vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
+    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element,
+      addEventListener(k, fn) { docEvents[k] = fn; } },
+    window: {}, Blob, URL: { createObjectURL: blob => blob, revokeObjectURL() {} }, setTimeout: fn => timers.push(fn)
+  });
+  get('efp-input').value = text; get('efp-parse').click(); const parseStatus = get('efp-status').textContent; get('efp-export-json').click();
+  return { parseStatus, output: downloads.length ? JSON.parse(await downloads[0].text()) : {}, status: get('efp-status').textContent, get, downloads,
+    pageClear() { get('efp-input').value = ''; docEvents.keydown?.({ key: 'l', ctrlKey: true }); timers.splice(0).forEach(fn => fn()); } };
+}
+eq('reference is dotenv 16.6.1', require('dotenv/package.json').version, '16.6.1');
+const dialectCases = [
+  'KEY: value', 'KEY:value', 'MY KEY=1', 'MY KEY: 1', 'my-key=1\nmy.key=2\n9KEY=3',
+  'export KEY: value', 'export   KEY = 1', 'KEY : value', 'KEY:\tvalue', 'KEY:\nNEXT=1',
+  'KEY:\n  "line1\nline2"\nNEXT=1', 'A: "a#b" # note\nB=2', '__proto__=value\nconstructor=ok',
+  '中文=1\nA=2', 'A/B=1\nA=2', 'GOOD=1\nMY KEY=2\nGOOD=3', 'KEY: \nNEXT=1'
+];
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  for (const [n, text] of dialectCases.entries()) {
+    const p = await pageExport(text, lang);
+    const expected = dotenv.parse(text);
+    if (text.includes('__proto__=')) Object.defineProperty(expected, '__proto__', { value: 'value', enumerable: true });
+     eq(lang + ' Parse/Export dialect ' + n, Object.entries(p.output).sort(), Object.entries(expected).sort());
+  }
+  for (const action of ['empty', 'edit', 'clear', 'page-clear']) {
+    const p = await pageExport('A=old', lang);
+    p.get('efp-input').value = action === 'edit' ? 'A=new' : '';
+    if (action === 'empty') p.get('efp-parse').click();
+    else if (action === 'edit') p.get('efp-input').fire('input');
+    else if (action === 'clear') p.get('efp-clear').click();
+    else p.pageClear();
+    check(lang + ' ' + action + ' disables export', p.get('efp-export-json').disabled);
+    p.get('efp-export-json').click();
+    eq(lang + ' ' + action + ' cannot export old data', p.downloads.length, 1);
+    if (action === 'page-clear') eq(lang + ' page clear hides the old table', [p.get('efp-result').style.display, p.get('efp-status').textContent], ['none', '']);
+  }
+}
+eq('dotenv drops __proto__; tool intentionally keeps this key', Object.keys(dotenv.parse('__proto__=value')), []);
+// Lines dotenv skips name their cause: a valid key with a malformed `:` separator was reported
+// as "Non-standard key name".
+for (const [line, note] of [['PORT:8080', 'colonForm'], ['KEY : value', 'colonForm'], ['export KEY :v', 'colonForm'],
+  ['MY KEY=1', 'nonStandard'], ['MY KEY: 1', 'nonStandard'], ['SMTP\u3000HOST=x', 'nonStandard'], ['A/B=1', 'nonStandard'], ['BROKEN LINE', 'missingEq'], ['=1', 'emptyKey']]) {
+  const e = E.parseEnv(line)[0];
+  const NOTE = { colonForm: 'Use KEY=value, or KEY: value with a space after the colon and none before it', nonStandard: 'Non-standard key name', missingEq: 'Missing = sign', emptyKey: 'Empty key' };
+  eq('skipped line ' + line, [e.type, e.error], ['error', NOTE[note]]);
+  eq('dotenv skips ' + line, Object.keys(dotenv.parse(line)), []);
 }
 
 // ---------- the reported defect ----------
@@ -237,12 +292,50 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
   check(rel + ' sample has no provider key formats', !/\b(AKIA|sk_live_|sk_test_|ghp_|xox[bp]-|AIza)/.test(text));
 }
 
+// ---------- tool pages: {/* efp-check: {...} */} ----------
+// The next ``` block is the .env text, the following ```json block the Export JSON download (the
+// Parse / Export handlers run in the page language). status: the status line after Parse, which
+// must appear in the page; rows: [line, type, key, note] as the table shows them, every note in the
+// page; toolOnly: keys the export keeps and dotenv.parse() drops; node: util.parseEnv() output
+// (checked when Node has util.parseEnv).
+{
+  const util = await import('node:util');
+  const STRS = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const rel = 'src/content/tools/env-file-parser/' + lang + '.mdx';
+    const mdx = readFileSync(join(root, rel), 'utf8');
+    let n = 0;
+    for (const m of mdx.matchAll(/\{\/\* efp-check: (\{.*?\}) \*\/\}/g)) {
+      n++;
+      const spec = JSON.parse(m[1]);
+      const fences = [...mdx.slice(m.index).matchAll(/```\w*\n([\s\S]*?)```/g)].map((f) => f[1]);
+      const text = fences[0], expected = JSON.parse(fences[1]);
+      const p = await pageExport(text, lang);
+      eq(rel + ' example ' + n + ' export', JSON.stringify(p.output), JSON.stringify(expected));
+      const ref = dotenv.parse(text);
+      for (const k of spec.toolOnly || []) { check(rel + ' dotenv drops ' + k, !Object.keys(ref).includes(k)); Object.defineProperty(ref, k, { value: expected[k], enumerable: true }); }
+      eq(rel + ' example ' + n + ' keys as dotenv', Object.entries(p.output).sort(), Object.entries(ref).sort());
+      eq(rel + ' example ' + n + ' status', p.parseStatus, spec.status);
+      check(rel + ' example ' + n + ' status in page', mdx.includes(spec.status), spec.status);
+      if (spec.rows) {
+        const rows = E.parseEnv(text, STRS[lang].notes).filter((e) => e.type !== 'comment')
+          .map((e) => [e.lineNo, e.type, e.key || '', e.type === 'error' ? e.error : e.notes.join(STRS[lang].stSep)]);
+        eq(rel + ' example ' + n + ' rows', rows, spec.rows);
+        spec.rows.forEach((r) => r[3] && check(rel + ' note in page: ' + r[3], mdx.includes(r[3])));
+      }
+      if (spec.node && typeof util.parseEnv === 'function') eq(rel + ' example ' + n + ' util.parseEnv', { ...util.parseEnv(text) }, spec.node);
+    }
+    check(rel + ' has checked examples', n >= 2, n);
+    check(rel + ' drops the old FAQ claims', !/don't match \[A-Za-z_\]\[A-Za-z0-9_\]\*\)\./.test(mdx) && !/first or last wins|取哪个值取决于|どの値が使われるかは|어떤 값이 사용될지는/.test(mdx));
+  }
+}
+
 // ---------- notes and status line in the page language ----------
 // The notes, errors and the status line were English on every language version of the page
 {
   const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
   const enKeys = Object.keys(STR.en.notes || {}).sort();
-  eq('en notes keys', enKeys, ['afterQuote', 'duplicate', 'emptyKey', 'emptyValue', 'hashComment', 'missingEq', 'multiline', 'nonStandard', 'unclosed']);
+  eq('en notes keys', enKeys, ['afterQuote', 'colonForm', 'duplicate', 'emptyKey', 'emptyValue', 'hashComment', 'missingEq', 'multiline', 'nonStandard', 'unclosed']);
   for (const lang of ['zh', 'ja', 'ko']) {
     eq(lang + ' notes keys', Object.keys(STR[lang].notes || {}).sort(), enKeys);
     eq(lang + ' top-level keys', Object.keys(STR[lang]).sort(), Object.keys(STR.en).sort());

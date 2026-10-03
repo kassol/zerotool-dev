@@ -1,33 +1,38 @@
 ---
 seoTitle: "JSON to XML Converter Online — Free JSON XML Tool | ZeroTool"
-seoDescription: "Convert JSON to XML and XML to JSON instantly in your browser. Customizable root element, pretty-print output, real-time conversion. Free, 100% client-side."
+seoDescription: "Convert JSON to XML and XML to JSON in your browser. Keeps element names as written, and stops with the exact path when an array, attribute or mixed content cannot be converted."
 faqItems:
   - question: "How does JSON to XML conversion work?"
-    answer: "JSON objects become XML elements. Each key becomes a child element, values become text content, arrays produce repeated elements with the same tag name, and null values produce empty elements."
+    answer: "Each object key becomes a child element with exactly that name, values become text, an array becomes repeated elements with the same name, and null or an empty object becomes an empty element. If a key is not a valid XML name, or an array is empty or nested, the tool writes no XML and shows the path of the first problem, for example $[\"m\"][0]."
   - question: "How does XML to JSON conversion work?"
-    answer: "The tool uses the browser's built-in DOMParser to parse XML, then recursively converts elements to JSON objects. Multiple sibling elements with the same name are grouped into a JSON array."
+    answer: "The browser's DOMParser reads the XML. A leaf element becomes a string, child elements become object keys, and sibling elements with the same name become an array. The root element name is the top-level key. Whitespace between child elements is ignored, comments are skipped, and CDATA counts as text."
   - question: "What is the root element option?"
-    answer: "XML requires a single root element that wraps all content. You can customize its name (default: 'root'). For XML to JSON conversion, the root element name becomes the top-level key in the JSON output."
+    answer: "XML needs one root element around everything. JSON → XML uses this name (default: root). It must be a valid XML name; a name such as \"123 data\" stops the conversion. XML → JSON ignores the option and uses the real root element name."
   - question: "Are XML attributes supported?"
-    answer: "No. Attributes are dropped: in <book id=\"bk101\">, the id does not appear in the JSON. If you need them, rewrite the attributes as child elements before converting. JSON → XML never produces attributes either."
+    answer: "No, and they are not dropped quietly. XML → JSON stops at the first attribute and names it, for example /catalog/book[1]/@id. Namespace declarations (xmlns, xmlns:x) are attributes too. Rewrite attributes as child elements before converting. JSON → XML never writes attributes."
   - question: "Is my data sent to any server?"
-    answer: "No. All conversion runs 100% in your browser. Your data never leaves your machine."
+    answer: "No. All conversion runs in your browser. Your data never leaves your machine."
 ---
 
 <h2>How to Use</h2>
 <ol>
-  <li>To convert <strong>JSON → XML</strong>: paste your JSON into the left panel and click <strong>JSON → XML</strong>, or type and conversion runs automatically.</li>
+  <li>To convert <strong>JSON → XML</strong>: paste your JSON into the left panel and click <strong>JSON → XML</strong>, or stop typing for a moment and the conversion runs.</li>
   <li>To convert <strong>XML → JSON</strong>: paste your XML into the right panel and click <strong>XML → JSON</strong>.</li>
-  <li>Customize the <strong>Root element</strong> name used when wrapping JSON output in XML.</li>
+  <li>Set the <strong>Root element</strong> name used when wrapping JSON output in XML.</li>
   <li>Toggle <strong>Pretty print</strong> to control whether output is indented or compact.</li>
-  <li>Use <strong>Ctrl+Enter</strong> (or <strong>Cmd+Enter</strong> on Mac) as a shortcut from whichever panel you're editing.</li>
+  <li>Press <strong>Ctrl+Enter</strong> (<strong>Cmd+Enter</strong> on Mac) in a panel to convert that panel.</li>
 </ol>
+<p>
+  While you edit one panel, the other panel is emptied and its <strong>Copy</strong> button is disabled until the new conversion
+  succeeds. A failed conversion leaves the other panel empty, so you never copy a result that belongs to older input.
+</p>
 
 <h2>Worked Examples</h2>
 
 <h3>Simple object</h3>
 <p>Input JSON:</p>
 
+{/* jx-to-xml */}
 ```json
 {"name": "Alice", "age": 30, "active": true}
 ```
@@ -44,13 +49,11 @@ faqItems:
 ```
 
 <h3>Nested objects</h3>
-<p>Input JSON:</p>
 
+{/* jx-to-xml */}
 ```json
 {"server": {"host": "localhost", "port": 8080}}
 ```
-
-<p>Output XML:</p>
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -62,27 +65,12 @@ faqItems:
 </root>
 ```
 
-<h3>Arrays</h3>
-<p>JSON arrays produce repeated XML elements with the tag name <code>item</code> at the top level, or the parent key name for nested arrays:</p>
+<h3>Arrays, null and empty objects</h3>
+<p>An array repeats the element of its key. A top-level array uses <code>item</code>. <code>null</code> and <code>{'{}'}</code> both become an empty element:</p>
 
+{/* jx-to-xml */}
 ```json
-{"tags": ["js", "xml", "api"]}
-```
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<root>
-  <tags>js</tags>
-  <tags>xml</tags>
-  <tags>api</tags>
-</root>
-```
-
-<h3>Arrays of objects and null</h3>
-<p>Each object in an array becomes one element named after the key, and <code>null</code> becomes an empty element:</p>
-
-```json
-{"order":{"id":1001,"items":[{"sku":"A-1","qty":2},{"sku":"B-7","qty":1}],"note":null}}
+{"order":{"id":1001,"items":[{"sku":"A-1","qty":2},{"sku":"B-7","qty":1}],"note":null,"meta":{}}}
 ```
 
 ```xml
@@ -99,45 +87,134 @@ faqItems:
       <qty>1</qty>
     </items>
     <note></note>
+    <meta></meta>
   </order>
 </root>
 ```
 
+<h3>Element names are kept as written</h3>
 <p>
-  Keys that are not valid XML names are rewritten: characters other than ASCII letters, digits, <code>{'_'}</code>, <code>-</code> and
-  <code>.</code> become <code>{'_'}</code>, and a name that would start with a digit, <code>-</code> or <code>.</code> gets a leading
-  <code>{'_'}</code>, because XML names must start with a letter or underscore. <code>{'{"2026": "q", "first name": "Ann", "a&b": "x<y"}'}</code> becomes
-  <code>{'<_2026>q</_2026>'}</code>, <code>{'<first_name>Ann</first_name>'}</code> and <code>{'<a_b>x&lt;y</a_b>'}</code>. The root element name
-  is cleaned the same way.
+  XML 1.0 allows letters from most scripts in names, so keys such as <code>名前</code> or <code>straße</code> become elements with the same
+  name. Text is escaped (<code>&lt;</code> and <code>&amp;</code>):
 </p>
+
+{/* jx-to-xml */}
+```json
+{"名前": "Ann", "straße": "Hauptstr. 1", "a-b.c": "x<y & z"}
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <名前>Ann</名前>
+  <straße>Hauptstr. 1</straße>
+  <a-b.c>x&lt;y &amp; z</a-b.c>
+</root>
+```
+
+<p>A single value is written as the root text, with no extra spaces or line breaks inside the root element:</p>
+
+{/* jx-to-xml */}
+```json
+"hello"
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<root>hello</root>
+```
+
+<h3>When JSON → XML stops</h3>
+<p>
+  The tool does not rename keys or drop data to make the XML fit. It writes nothing and shows the path of the first value it cannot
+  map:
+</p>
+<ul>
+  <li>
+    {/* jx-error: {"dir":"json","input":"{\"2026\": \"q\", \"first name\": \"Ann\"}"} */}
+    <code>{'{"2026": "q", "first name": "Ann"}'}</code> gives <code>{'Cannot convert to XML: $["2026"]: this name cannot be used as an XML element name.'}</code>
+    XML names cannot start with a digit or contain spaces. Names with <code>:</code> are refused as well, because a prefix needs a
+    namespace declaration that this mapping cannot write.
+  </li>
+  <li>
+    {/* jx-error: {"dir":"json","input":"{\"m\": [[1, 2], [3]]}"} */}
+    <code>{'{"m": [[1, 2], [3]]}'}</code> gives <code>{'Cannot convert to XML: $["m"][0]: empty or nested arrays cannot be represented by repeated XML elements.'}</code>
+    Repeated elements cannot show where one inner array ends and the next begins.
+  </li>
+  <li>
+    {/* jx-error: {"dir":"json","input":"{\"tags\": []}"} */}
+    <code>{'{"tags": []}'}</code> gives <code>{'Cannot convert to XML: $["tags"]: empty or nested arrays cannot be represented by repeated XML elements.'}</code>
+    An empty array would leave no element at all.
+  </li>
+</ul>
+<p>Strings with characters that XML 1.0 forbids, such as U+0000, stop the conversion the same way.</p>
 
 <h3>XML to JSON</h3>
 <p>Pasting this XML into the right panel:</p>
 
+{/* jx-to-json */}
 ```xml
 <catalog>
-  <book id="bk101">
+  <book>
+    <id>bk101</id>
     <author>Gambardella, Matthew</author>
     <price>44.95</price>
   </book>
-  <book id="bk102">
+  <book>
+    <id>bk102</id>
     <author>Ralls, Kim</author>
     <price>5.95</price>
   </book>
 </catalog>
 ```
 
-<p>gives <code>{'{"catalog": {"book": [{"author": "Gambardella, Matthew", "price": "44.95"}, {"author": "Ralls, Kim", "price": "5.95"}]}}'}</code> (indented in the tool).
-The two <code>book</code> elements form an array, the <code>id</code> attributes are gone, and <code>44.95</code> is a string.</p>
+<p>gives (pretty print on):</p>
+
+```json
+{
+  "catalog": {
+    "book": [
+      {
+        "id": "bk101",
+        "author": "Gambardella, Matthew",
+        "price": "44.95"
+      },
+      {
+        "id": "bk102",
+        "author": "Ralls, Kim",
+        "price": "5.95"
+      }
+    ]
+  }
+}
+```
+
+<p>The two <code>book</code> elements form an array, and <code>44.95</code> is a string.</p>
+
+<h3>When XML → JSON stops</h3>
+<ul>
+  <li>
+    {/* jx-error: {"dir":"xml","input":"<catalog><book id=\"bk101\"><author>Gambardella, Matthew</author></book></catalog>"} */}
+    <code>{'<catalog><book id="bk101">…</book></catalog>'}</code> gives <code>{'Cannot convert to JSON: /catalog/book[1]/@id: XML attributes cannot be represented by this JSON mapping.'}</code>
+    Move the value into a child element, as in the example above.
+  </li>
+  <li>
+    {/* jx-error: {"dir":"xml","input":"<p>Hello <b>world</b>!</p>"} */}
+    <code>{'<p>Hello <b>world</b>!</p>'}</code> gives <code>{'Cannot convert to JSON: /p: mixed text and child elements cannot be represented by this JSON mapping.'}</code>
+    Text next to child elements has no place in a JSON object.
+  </li>
+</ul>
+<p>
+  The path counts elements with the same name from 1, so <code>book[2]</code> is the second <code>book</code> under its parent.
+</p>
 
 <h2>Limits</h2>
 <ul>
-  <li><strong>XML → JSON values are always strings.</strong> XML has no number or boolean type, so <code>{'<qty>2</qty>'}</code> becomes <code>"2"</code>. Empty elements such as <code>{'<b/>'}</code> become <code>""</code>.</li>
+  <li><strong>XML → JSON values are always strings.</strong> XML has no number or boolean type, so <code>{'<qty>2</qty>'}</code> becomes <code>"2"</code>. Empty elements such as <code>{'<b/>'}</code> become <code>""</code>, which means JSON <code>null</code> and <code>{'{}'}</code> come back as <code>""</code> after a round trip.</li>
   <li><strong>One child or many changes the shape.</strong> <code>{'<order><item>A</item></order>'}</code> gives <code>{'{"item": "A"}'}</code>, but two <code>item</code> elements give an array. Code that reads the JSON must handle both.</li>
-  <li><strong>Attributes are dropped</strong> and <strong>mixed content loses its text</strong>: <code>{'<p>Hello <b>world</b>!</p>'}</code> gives <code>{'{"p": {"b": "world"}}'}</code>. Namespace prefixes stay in the keys (<code>"x:v"</code>).</li>
-  <li><strong>Nested and empty arrays do not survive.</strong> <code>{'{"m": [[1, 2], [3]]}'}</code> flattens to three <code>{'<m>'}</code> elements, and an empty array or object writes no child element, so a round trip does not give back the original JSON.</li>
-  <li><strong>Non-ASCII keys are replaced.</strong> A key such as <code>名前</code> becomes <code>{'__'}</code>, although XML allows such names. Rename keys in the JSON first if the element names matter.</li>
-  <li><strong>XML errors come from the browser's parser</strong>, for example <code>error on line 1 at column 20: Premature end of data in tag a line 1</code> in Chrome for an unclosed <code>{"<a>"}</code>. To indent or minify XML without converting it, use the <a href="/tools/xml-formatter/">XML formatter</a>.</li>
+  <li><strong>Text in leaf elements is kept exactly</strong>, including spaces and line breaks around it. Only whitespace between child elements is ignored. Comments and processing instructions are skipped.</li>
+  <li><strong>Attributes, namespace declarations and mixed content stop the conversion</strong> (see above). This tool does not offer an attribute mapping such as <code>@id</code> keys.</li>
+  <li><strong>XML syntax errors come from the browser's parser</strong>, so the wording differs between Chrome, Firefox and Safari. To indent or minify XML without converting it, use the <a href="/tools/xml-formatter/">XML formatter</a>.</li>
 </ul>
 
 <h2>JSON vs XML</h2>

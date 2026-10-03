@@ -20,6 +20,9 @@ const labels = {
     docTitle: 'Document {k}',
     docLines: 'lines {a}\u2013{b}',
     docValid: 'valid',
+    errTitle: 'Syntax error',
+    errLine: 'Line {line}',
+    errLineCol: 'Line {line}, column {col}',
   },
   zh: {
     inputLabel: 'YAML 输入',
@@ -37,6 +40,9 @@ const labels = {
     docTitle: '文档 {k}',
     docLines: '第 {a}\u2013{b} 行',
     docValid: '有效',
+    errTitle: '语法错误',
+    errLine: '第 {line} 行',
+    errLineCol: '第 {line} 行，第 {col} 列',
   },
   ja: {
     inputLabel: 'YAML 入力',
@@ -54,6 +60,9 @@ const labels = {
     docTitle: 'ドキュメント {k}',
     docLines: '{a}\u2013{b} 行目',
     docValid: '有効',
+    errTitle: '構文エラー',
+    errLine: '{line} 行目',
+    errLineCol: '{line} 行目、{col} 列目',
   },
   ko: {
     inputLabel: 'YAML 입력',
@@ -71,6 +80,9 @@ const labels = {
     docTitle: '문서 {k}',
     docLines: '{a}\u2013{b}행',
     docValid: '유효',
+    errTitle: '구문 오류',
+    errLine: '{line}행',
+    errLineCol: '{line}행 {col}열',
   },
 };
 
@@ -80,6 +92,10 @@ const L = labels[lang];
 <div>
   <div
     class="yv-wrap"
+    data-lang={lang}
+    data-err-title={L.errTitle}
+    data-err-line={L.errLine}
+    data-err-line-col={L.errLineCol}
     data-msg-empty={L.msgEmpty}
     data-msg-lib-missing={L.msgLibMissing}
     data-msg-valid={L.msgValid}
@@ -123,6 +139,7 @@ const L = labels[lang];
 
   <script>
     import jsyaml from 'js-yaml';
+    import { yamlLimitText } from './yaml-limits.js';
 
     const inputEl   = document.getElementById('yv-input') as HTMLTextAreaElement;
     const statusEl  = document.getElementById('yv-status')!;
@@ -144,6 +161,10 @@ const L = labels[lang];
     const DOC_VALID   = wrapEl.dataset.docValid!;
     const COPY_JSON   = wrapEl.dataset.copyJson!;
     const COPIED      = wrapEl.dataset.copied!;
+    const LANG        = wrapEl.dataset.lang || 'en';
+    const ERR_TITLE   = wrapEl.dataset.errTitle!;
+    const ERR_LINE    = wrapEl.dataset.errLine!;
+    const ERR_LINE_COL = wrapEl.dataset.errLineCol!;
 
     /* ── engine:start ── */
     // A line starting with `---` or `...` is a document marker and never scalar content
@@ -226,7 +247,9 @@ const L = labels[lang];
     function parseYamlError(e: any) {
       const msg = e.message || String(e);
       const reasonMatch = msg.match(/^([^\n]+?)(?:\s+at line\s+(\d+),\s+column\s+(\d+))?[:\n]/);
-      const reason = e.reason || (reasonMatch ? reasonMatch[1].trim() : msg.split('\n')[0].trim());
+      const rawReason = e.reason || (reasonMatch ? reasonMatch[1].trim() : msg.split('\n')[0].trim());
+      // js-yaml work limits (nesting depth, merge keys) are explained in the page language
+      const reason = yamlLimitText(rawReason, LANG) || rawReason;
       const line   = e.mark && e.mark.line   != null ? e.mark.line + 1   : null;
       const col    = e.mark && e.mark.column != null ? e.mark.column + 1 : null;
       const nlIdx  = msg.indexOf('\n');
@@ -242,12 +265,11 @@ const L = labels[lang];
     }
 
     function buildErrorHtml(info: { reason: string; line: number | null; col: number | null; snippet: string | null }) {
-      let html = '<div class="yv-err-title">Syntax Error</div>';
+      let html = '<div class="yv-err-title">' + escapeHtml(ERR_TITLE) + '</div>';
       html += '<div class="yv-err-reason">' + escapeHtml(info.reason) + '</div>';
       if (info.line != null) {
-        html += '<div class="yv-err-location">Line ' + info.line;
-        if (info.col != null) html += ', Column ' + info.col;
-        html += '</div>';
+        const loc = info.col != null ? ERR_LINE_COL.replace('{col}', String(info.col)) : ERR_LINE;
+        html += '<div class="yv-err-location">' + escapeHtml(loc.replace('{line}', String(info.line))) + '</div>';
       }
       if (info.snippet) {
         html += '<pre class="yv-err-snippet">' + escapeHtml(info.snippet) + '</pre>';

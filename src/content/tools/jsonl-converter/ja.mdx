@@ -1,53 +1,78 @@
 ---
 seoTitle: "JSONL コンバーター — JSON Lines / NDJSON を JSON に変換 | ZeroTool"
-seoDescription: "ブラウザ上で JSONL / NDJSON を JSON 配列に変換し、JSON 配列を JSON Lines に戻し、行ごとの検証と有効レコードのエクスポートを行えます。"
+seoDescription: "ブラウザ上で JSONL / NDJSON を JSON 配列に変換し、JSON 配列を JSON Lines に戻し、行ごとの検証と有効レコードのエクスポートを行えます。大きな ID などの数値は入力どおりの桁で残ります。"
 faqItems:
   - question: "JSONL とは何ですか？"
     answer: "JSONL は JSON Lines または NDJSON とも呼ばれ、1 行に 1 つの完全な JSON 値を保存する形式です。ログ、データエクスポート、ストリーミング API、AI データセットでよく使われます。"
   - question: "どんな JSON 入力を JSONL に変換できますか？"
-    answer: "JSON 配列を貼り付けてください。配列の各アイテムが 1 行のコンパクトな JSONL になり、オブジェクト、配列、文字列、数値、真偽値、null を保持します。"
+    answer: "JSON 配列を貼り付けてください。配列の各アイテムが 1 行のコンパクトな JSONL になります。オブジェクト、配列、文字列、真偽値、null を保持し、数値は書いたとおりの文字で出力するので、9007199254740993・1.50・1e-7 も変わりません。"
   - question: "空行はどう扱われますか？"
     answer: "初期設定では空行を無視します。オプションをオフにすると、空行が行単位の検証問題として表示されます。"
   - question: "有効な JSONL レコードだけをエクスポートできますか？"
-    answer: "できます。「有効な行だけ変換」を有効にするか、検証後に .jsonl 保存操作を使うと、解析に成功した行をエクスポートできます。"
+    answer: "できます。「有効な行だけ変換」をオンにして JSONL → JSON をクリックすると、JSON 配列には有効なレコードだけが入り、「.jsonl を保存」は同じレコードを 1 行 1 件で保存します。「検証」は行をチェックするだけで、変換が成功するまでコピーと保存のボタンは使えません。"
   - question: "データはどこで処理されますか？"
     answer: "解析、検証、変換、ファイル出力はすべてブラウザ内のローカル JavaScript API で実行されます。"
 ---
 
 <h2>使い方</h2>
 <ol>
-  <li>JSONL / NDJSON を左パネルに貼り付けるか、ローカルの <code>.jsonl</code>、<code>.ndjson</code>、<code>.json</code>、<code>.txt</code> ファイルを開きます。</li>
-  <li><strong>検証</strong> をクリックし、各行をチェックして解析エラーの行番号を確認します。</li>
-  <li><strong>JSONL → JSON</strong> をクリックし、有効なレコードから JSON 配列を作成します。</li>
-  <li>右パネルに JSON 配列を貼り付け、<strong>JSON → JSONL</strong> をクリックしてコンパクトな JSON Lines を生成します。</li>
-  <li><strong>.json を保存</strong> または <strong>.jsonl を保存</strong> で変換結果を保存します。</li>
+  <li>左のパネルに JSONL / NDJSON を貼り付けるか、ローカルの <code>.jsonl</code>、<code>.ndjson</code>、<code>.json</code>、<code>.txt</code> ファイルを開きます。</li>
+  <li><strong>検証</strong>をクリックすると各行をチェックし、解析エラーの行番号を表示します。</li>
+  <li><strong>JSONL → JSON</strong> をクリックすると、レコードから JSON 配列を作ります。</li>
+  <li>右のパネルに JSON 配列を貼り付けて <strong>JSON → JSONL</strong> をクリックすると、コンパクトな JSON Lines を出力します。</li>
+  <li><strong>コピー</strong>、<strong>.json を保存</strong>、<strong>.jsonl を保存</strong>で変換結果を取り出します。</li>
 </ol>
 
-<h2>変換例</h2>
-<p>入力 JSONL:</p>
+<h2>例：注文ログの大きな注文番号</h2>
+<p>注文番号などを 64 ビット整数で扱うシステムでは、値が 2<sup>53</sup> を超えることがあります。JavaScript で <code>JSON.parse()</code> してから <code>JSON.stringify()</code> すると末尾の桁が変わりますが、このツールは <code>JSON.parse()</code> を構文チェックだけに使い、数値は入力の文字をそのまま書き出します。</p>
 
+{/* jlc-check: {"dir":"jsonl","out":"json","status":"2 件の JSONL レコードを JSON 配列に変換しました。"} */}
 ```json
-{"id":1,"event":"signup","user":"alice"}
-{"id":2,"event":"purchase","user":"bob","amount":29.99}
+{"order_no":9007199254740993,"price":1980.00,"store":"渋谷店"}
+{"order_no":9007199254740995,"price":550.50,"store":"\u6885\u7530\u5e97"}
 ```
-
-<p>出力 JSON 配列:</p>
 
 ```json
 [
   {
-    "id": 1,
-    "event": "signup",
-    "user": "alice"
+    "order_no": 9007199254740993,
+    "price": 1980.00,
+    "store": "渋谷店"
   },
   {
-    "id": 2,
-    "event": "purchase",
-    "user": "bob",
-    "amount": 29.99
+    "order_no": 9007199254740995,
+    "price": 550.50,
+    "store": "梅田店"
   }
 ]
 ```
+
+<p>解析してから文字列に戻す方法では <code>9007199254740992</code>、<code>9007199254740996</code>、<code>1980</code>、<code>550.5</code> になります。文字列は <code>JSON.stringify()</code> の標準の書き方で出力するため、<code>{'"\\u6885\\u7530\\u5e97"'}</code> は <code>"梅田店"</code> になり、コンパクトな JSONL ではカンマの後の空白も消えます。</p>
+
+<p>逆方向でも数値は残ります。</p>
+
+{/* jlc-check: {"dir":"json","out":"jsonl","status":"2 件の JSON 配列アイテムを JSONL に変換しました。"} */}
+```json
+[
+  {"order_no": 9007199254740993, "price": 1980.00},
+  {"order_no": 9007199254740995, "price": 550.50}
+]
+```
+
+```json
+{"order_no":9007199254740993,"price":1980.00}
+{"order_no":9007199254740995,"price":550.50}
+```
+
+<h2>コピーと保存</h2>
+<p>
+  <strong>コピー</strong>ボタンと 2 つの保存ボタンは、最後に成功した変換の結果を使います。<strong>JSONL → JSON</strong> の後、<strong>.json を保存</strong>は右側の配列を保存し、
+  JSONL 側の<strong>コピー</strong>と<strong>.jsonl を保存</strong>は変換したレコードを 1 行 1 件のコンパクトな形で出します。貼り付けた原文とは違い、「有効な行だけ変換」で除いたエラー行は含まれず、空白も取り除かれています。
+  <strong>JSON → JSONL</strong> の後は、<strong>.json を保存</strong>が現在の「JSON を整形」の設定で配列を保存します。
+</p>
+<p>
+  最初の変換までボタンは使えません。どちらかのパネルを編集したとき、「空行を無視」「有効な行だけ変換」を切り替えたとき、<strong>クリア</strong>（またはツール内で Ctrl+L / Cmd+L）を押したとき、変換やファイル読み込みに失敗したときも、すぐに使えなくなります。変換に失敗すると出力側は空になるので、古い入力の結果をコピーすることはありません。<strong>検証</strong>だけではボタンは使えるようになりません。「JSON を整形」を切り替えると、JSONL 側に内容があれば <strong>JSONL → JSON</strong> をやり直します。
+</p>
 
 <h2>JSONL と JSON 配列</h2>
 <p>
@@ -55,22 +80,29 @@ faqItems:
   この行指向の形は、ログ、ストリーミングエクスポート、コマンドライン処理、大規模データセットに向いています。
 </p>
 
-<h2>検証の仕組み</h2>
-<p>
-  検証器は空行以外の各行を <code>JSON.parse()</code> で解析します。成功した行は有効レコードとしてカウントされます。
-  失敗した行は問題パネルに表示され、行番号、パーサーメッセージ、元の行の短いプレビューを確認できます。
-</p>
-
 <h2>例：3 行のエクスポートに壊れた行が 1 つ</h2>
 <p>次の内容を JSONL パネルに貼り付けて<strong>検証</strong>をクリックします。</p>
 
+{/* jlc-validate: {"counts":[3,2,1,0],"line":2,"message":"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"} */}
 ```json
 {"id":1,"event":"signup"}
 {"id":2,"event":"purchase",}
 {"id":3,"event":"cancel"}
 ```
 
-<p>カウンターは全 3 行、有効 2、エラー 1、空行 0 になります。問題パネルには<strong>2 行目</strong>とブラウザのパーサーメッセージが表示され、Chrome では <code>{"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"}</code>（位置はその行の先頭から数えた値）です。Firefox と Safari では文言が異なります。この行を直すか<strong>有効な行だけ変換</strong>をオンにするまで、<strong>JSONL → JSON</strong> はエラーで止まります。オンにすると 1 件目と 3 件目が出力され、「2 件の JSONL レコードを JSON 配列に変換しました。」と表示されます。</p>
+<p>カウンターは全 3 行、有効 2、エラー 1、空行 0 になります。問題パネルには<strong>2 行目</strong>とブラウザのパーサーメッセージが表示され、Chrome では <code>{"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"}</code>（位置はその行の先頭から数えた値）です。Firefox と Safari では文言が異なります。この行を直すか<strong>有効な行だけ変換</strong>をオンにするまで、<strong>JSONL → JSON</strong> はエラーで止まります。オンにすると 1 件目と 3 件目が出力されて「2 件の JSONL レコードを JSON 配列に変換しました。」と表示され、<strong>.jsonl を保存</strong>では次の内容が保存されます。</p>
+
+{/* jlc-check: {"dir":"jsonl","validOnly":true,"out":"download-jsonl","status":"2 件の JSONL レコードを JSON 配列に変換しました。"} */}
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+```json
+{"id":1,"event":"signup"}
+{"id":3,"event":"cancel"}
+```
 
 <h2>コマンドラインでの同等操作</h2>
 <p>スクリプトに組み込むなら <a href="https://jqlang.org/manual/" target="_blank" rel="noopener">jq</a> で同じ変換ができます（jq 1.7.1 の実際の出力）。</p>
@@ -86,7 +118,8 @@ jq -c . bad.jsonl                    # 最初のエラーで停止する:
 
 <h2>制限</h2>
 <ul>
-  <li>数値は JavaScript の <code>JSON.parse()</code> で解析するため、2<sup>53</sup> を超える整数はどちらの方向でも精度が落ちます。<code>{`{"order_id":9007199254740993}`}</code> は <code>9007199254740992</code> になります。jq 1.7 は元のリテラルを保持します。大きな ID をそのまま往復させたい場合は文字列で保存してください。</li>
+  <li><strong>重複キーは最後の値になります</strong>。<code>JSON.parse()</code> と同じで、<code>{`{"x":1,"x":2}`}</code> は最初の <code>x</code> の位置で <code>{`{"x":2}`}</code> になります。</li>
+  <li><strong>配列の添字のようなキーはオブジェクトの先頭に移り</strong>、数値の昇順に並びます（JavaScript のオブジェクトと同じ）。<code>{`{"b":1,"2":2,"1":3}`}</code> は <code>{`{"1":3,"2":2,"b":1}`}</code> になります。値は変わりません。</li>
   <li><strong>JSON → JSONL</strong> はトップレベルの配列だけを受け付けます。オブジェクトや単一の値では「JSON 入力は配列である必要があります。」と表示されます。</li>
   <li>1 レコードは 1 行に収める必要があります。複数行に整形したオブジェクトは、またがる行がすべてエラーになります。改行で分割し各行の前後の空白を除くため、Windows の CRLF ファイルはそのまま使えます。</li>
   <li>問題パネルに表示するのは最初の 40 行までです。エラー数のカウンターは全件を数えます。</li>
