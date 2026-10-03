@@ -5,11 +5,11 @@ faqItems:
   - question: "What does this tool generate?"
     answer: "It generates Mongoose schema definitions from JSON. Each nested object becomes its own named schema, and a model export is included at the bottom."
   - question: "What language modes are supported?"
-    answer: "JavaScript (CommonJS require/module.exports) and TypeScript (ES module import/export with Document interface and generic schema)."
+    answer: "JavaScript (CommonJS require/module.exports) and TypeScript (ES module import/export with a plain document interface passed to Schema<T> and model<T>, as in the Mongoose TypeScript guide)."
   - question: "How are JSON types mapped to Mongoose types?"
     answer: "string → String, number → Number, boolean → Boolean, null → mongoose.Schema.Types.Mixed when every sample is null, array of primitives → [Type], array of objects → separate sub-schema, nested object → separate sub-schema."
   - question: "What does the timestamps option do?"
-    answer: "When On, the schema is created with { timestamps: true }, which automatically adds createdAt and updatedAt fields managed by Mongoose."
+    answer: "When On, the schema is created with { timestamps: true }, which automatically adds createdAt and updatedAt fields managed by Mongoose. In TypeScript mode the interface also lists createdAt: Date and updatedAt: Date, unless your JSON already has a key with that name."
   - question: "Are all fields marked as required?"
     answer: "Not by default, since a JSON sample cannot show which fields are required. Turning the required switch On adds required: true to every field except nested schemas and arrays of objects; then remove it where a field is optional. Note that Mongoose's required validator rejects null, so a field that is null in your sample cannot stay required."
   - question: "Is my data sent to a server?"
@@ -55,7 +55,7 @@ faqItems:
 <p>Model name <code>product</code>, TypeScript, timestamps On, required On:</p>
 <pre><code>{`{"sku":"A-1","price":9.5,"created_at":"2026-10-01T09:30:00Z","release-date":"2026-10-01",
  "variants":[{"color":"red","stock":3},{"color":"blue","size":"M"}],"meta":null}`}</code></pre>
-<pre><code>{`import mongoose, { Document, Schema } from 'mongoose';
+<pre><code>{`import mongoose, { Schema } from 'mongoose';
 
 export interface IVariants {
   color: string;
@@ -63,13 +63,15 @@ export interface IVariants {
   size: string;
 }
 
-export interface IProduct extends Document {
+export interface IProduct {
   sku: string;
   price: number;
   created_at: Date;
   "release-date": string;
   variants: IVariants[];
   meta: any;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 const variantsSchema = new Schema({
@@ -88,12 +90,12 @@ const productSchema = new Schema<IProduct>({
 }, { timestamps: true });
 
 export default mongoose.model<IProduct>('Product', productSchema);`}</code></pre>
-<p>Three things to fix by hand before using it:</p>
+<p>Two things to fix by hand before using it:</p>
 <ul>
   <li><code>size</code> and <code>stock</code> each appear in only one variant, yet both are <code>required</code>. The array elements are merged into one sub-schema with every key, and the switch applies to all of them.</li>
   <li><code>meta</code> was <code>null</code>, so it is <code>Mixed</code> and <code>required</code>: Mongoose would reject the very document you pasted. Give it a real type or drop <code>required</code>.</li>
-  <li>With timestamps On, Mongoose adds <code>createdAt</code> and <code>updatedAt</code>, but the interface does not list them. Add them if your code reads them.</li>
 </ul>
+<p>The interface is a plain document interface, passed as <code>{'Schema<IProduct>'}</code> and <code>{'mongoose.model<IProduct>'}</code>, as in the <a href="https://mongoosejs.com/docs/typescript.html">Mongoose TypeScript guide</a> ("Using Generics"); it does not extend <code>Document</code>. With timestamps On, Mongoose adds <code>createdAt</code> and <code>updatedAt</code> of type <code>Date</code> (<a href="https://mongoosejs.com/docs/timestamps.html">Timestamps</a>), so the interface lists both and <code>doc.createdAt</code> type-checks on a document from <code>new Product()</code> and on a <code>.lean()</code> result. <code>created_at</code> from the JSON is a separate field. If the JSON already has a <code>createdAt</code> or <code>updatedAt</code> key, its own type is kept, because Mongoose then keeps that path as you defined it. The tool's test compiles every generated TypeScript file with TypeScript 5.9.3 in strict mode against Mongoose 9.10.3.</p>
 <p>Keys that are not JavaScript identifiers, such as <code>release-date</code>, are quoted so the generated file parses.</p>
 
 <h2>Example: Every Sample Decides the Type</h2>
@@ -143,7 +145,7 @@ module.exports = mongoose.model('Order', orderSchema);`}</code></pre>
   <li><strong>Mixed accepts anything.</strong> A field typed <code>Mixed</code> because its samples disagree is not cast or validated, and Mongoose does not track changes inside it unless you call <code>markModified()</code>. Pick one type when the data allows it.</li>
   <li><strong>Only objects at the root.</strong> In a root array, numbers, strings and arrays next to the objects are ignored; the schema describes the objects.</li>
   <li><strong>No ObjectId, enum, index or validation.</strong> A 24-character hex string stays <code>String</code>; add <code>Schema.Types.ObjectId</code> and <code>ref</code>, <code>unique</code>, <code>enum</code> or <code>min</code>/<code>max</code> yourself.</li>
-  <li><strong>The TypeScript interface extends <code>Document</code>.</strong> The <a href="https://mongoosejs.com/docs/typescript.html">Mongoose TypeScript guide</a> lets Mongoose infer document types from the schema by default, and when you write an interface it uses a plain one (<code>interface IUser</code> passed as <code>{'Schema<IUser>'}</code>) without <code>extends Document</code>. To follow the guide, delete <code>extends Document</code> and the <code>Document</code> import.</li>
+  <li><strong>Only the root schema is typed.</strong> Sub-schemas get an interface for the root interface to use, but <code>new Schema()</code> for them has no type argument, and fields are not optional even when <code>required</code> is Off. Mongoose does not check that the interface matches the schema (TypeScript guide), so mark optional fields with <code>?</code> yourself.</li>
   <li><strong>A root array of primitives</strong> such as <code>["a", "b"]</code> generates no schema, only the comment <code>{"// Array of primitives — no schema to generate"}</code>.</li>
 </ul>
 <p>For plain TypeScript types or a Zod schema from the same JSON, use <a href="/tools/json-to-typescript/">JSON to TypeScript</a> or <a href="/tools/json-to-zod/">JSON to Zod</a>.</p>

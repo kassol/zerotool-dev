@@ -422,7 +422,7 @@ const L = labels[lang];
           lines.push("const mongoose = require('mongoose');");
           lines.push("const { Schema } = mongoose;");
         } else {
-          lines.push("import mongoose, { Document, Schema } from 'mongoose';");
+          lines.push("import mongoose, { Schema } from 'mongoose';");
         }
         lines.push('');
 
@@ -436,9 +436,19 @@ const L = labels[lang];
             lines.push('}');
             lines.push('');
           }
-          lines.push('export interface ' + rootSchema.interfaceName + ' extends Document {');
+          // A plain document interface passed as Schema<T> and model<T>, as in the Mongoose TypeScript
+          // guide (mongoosejs.com/docs/typescript.html, "Using Generics"); no `extends Document`.
+          // timestamps: true adds createdAt / updatedAt of type Date unless the schema already has
+          // that path (mongoosejs.com/docs/timestamps.html; lib/helpers/timestamps/setupTimestamps.js).
+          lines.push('export interface ' + rootSchema.interfaceName + ' {');
+          var rootKeys = {};
           for (var j = 0; j < rootSchema.fields.length; j++) {
+            rootKeys[rootSchema.fields[j].key] = true;
             lines.push('  ' + propKey(rootSchema.fields[j].key) + ': ' + getTsFieldType(rootSchema.fields[j].typeInfo) + ';');
+          }
+          if (useTimestamps) {
+            if (!rootKeys.createdAt) lines.push('  createdAt: Date;');
+            if (!rootKeys.updatedAt) lines.push('  updatedAt: Date;');
           }
           lines.push('}');
           lines.push('');
