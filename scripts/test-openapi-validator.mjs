@@ -21,6 +21,9 @@
 // together produced three unrelated messages; equivalent path templates, duplicate parameters,
 // undeclared security schemes, server variables, duplicate tags, examples that do not match
 // their schema and unused components were not reported; all messages were English only.
+// 2026-10-03: boolean exclusiveMinimum / exclusiveMaximum without minimum / maximum passed in
+// 2.0 and 3.0 (the official schemas drop the draft-04 `dependencies`); the real run and worker
+// bundles are exercised for it.
 //
 // Run: node scripts/test-openapi-validator.mjs
 
@@ -28,6 +31,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import { build } from 'esbuild';
+import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -81,6 +86,47 @@ const brief = (r) => r.problems.map((p) => `${p.level} ${p.code} ${p.line}:${p.c
 const codes = (r) => r.problems.map((p) => p.level + ' ' + p.code);
 const msgs = (r, t = T) => r.problems.map((p) => E.formatMessage(p, t));
 const errors = (r) => r.problems.filter((p) => p.level === 'error');
+const stableResult = ({ ms, ...result }) => result;
+
+// Exercise the same bundled run/worker entry as the page, without injected validators.
+const bundled = async (entry, globalName) => (await build({
+  entryPoints: [join(root, 'src/components/tools/' + entry)], bundle: true,
+  write: false, platform: 'browser', format: 'iife', globalName,
+})).outputFiles[0].text;
+const runtime = vm.createContext({ console, performance, TextEncoder, TextDecoder, URL });
+vm.runInContext(await bundled('openapi-validator-run.js', 'OAV'), runtime);
+const actualRun = (files, rootName = Object.keys(files)[0]) => {
+  const out = runtime.OAV.runValidation({ root: rootName, files });
+  check('real run entry returns a result', !out.error, out.error);
+  return out.result;
+};
+const replies = [];
+const workerContext = vm.createContext({ console, performance, TextEncoder, TextDecoder, URL,
+  self: { postMessage: (out) => replies.push(structuredClone(out)) } });
+vm.runInContext(await bundled('openapi-validator.worker.js', 'OAVWorker'), workerContext);
+for (const version of ['2.0', '3.0.4']) {
+  for (const key of ['exclusiveMinimum', 'exclusiveMaximum']) {
+    for (const value of [true, false]) {
+      const text = (version === '2.0' ? 'swagger: "2.0"' : 'openapi: ' + version) +
+        '\ninfo: {title: Fixture, version: "1"}\npaths: {}\n' +
+        (version === '2.0' ? 'definitions:\n' : 'components:\n  schemas:\n') +
+        (version === '2.0' ? '  N:\n    ' : '    N:\n      ') +
+        'type: number\n' + (version === '2.0' ? '    ' : '      ') + key + ': ' + value + '\n';
+      const r = actualRun({ 'fixture.yaml': text });
+      const pointer = version === '2.0' ? '#/definitions/N/' : '#/components/schemas/N/';
+      // Swagger 2.0: draft-04 §5.1.2.1 / §5.1.3.1 MUST → error. OpenAPI 3.0: Wright-00 §5.3 / §5.5
+      // drops that MUST; without the limit the keyword has no effect → warning.
+      const want = version === '2.0' ? 'error schema.boundaryMissing' : 'warning schema.boundaryNoEffect';
+      check(`real run ${version} ${key}=${value} requires its boundary`, r.problems.some((p) =>
+        p.level + ' ' + p.code === want && p.path === pointer + key && p.file === 'fixture.yaml' &&
+        p.line === (version === '2.0' ? 7 : 8) && p.col === (version === '2.0' ? 5 : 7)));
+      if (version !== '2.0') check(`real run ${version} ${key}=${value} is not an error`, !errors(r).length, brief(r).join(' | '));
+      workerContext.self.onmessage({ data: { id: 42, input: { root: 'fixture.yaml', files: { 'fixture.yaml': text } } } });
+      const reply = replies.pop();
+      eq('real worker and run agree', [reply.id, stableResult(reply.result)], [42, stableResult(r)]);
+    }
+  }
+}
 
 // ---------- wiring ----------
 for (const f of ['swagger-2.0.json', 'json-schema-draft-04.json', 'oas-3.0-2024-10-18.json', 'oas-3.1-2026-08-03.json', 'oas-3.2-2026-08-30.json']) {
@@ -353,6 +399,98 @@ eq('3.2 allows a URI reference as a security requirement name', codes(run('opena
   ]);
   eq('Swagger 2.0 schema errors', brief(run('swagger: "2.0"\ninfo: {title: T}\npaths:\n  /a:\n    get:\n      responses: {}\n')), ['info swagger.convert 1:1 #/swagger', 'error schema.required 2:1 #/info', 'error schema.limit 6:7 #/paths/~1a/get/responses']);
   eq('Swagger 2.0 security message', msgs(r)[2], 'Security scheme "key" is not declared in securityDefinitions.');
+}
+
+// ---------- exclusiveMinimum / exclusiveMaximum without their limit ----------
+{
+  const bnd = (r) => brief(r).filter((s) => /boundary/.test(s));
+  const r2 = run('swagger: "2.0"\ninfo: {title: T, version: "1"}\npaths:\n  /a:\n    get:\n      parameters:\n' +
+    '        - {name: q, in: query, type: integer, exclusiveMaximum: true}\n' +
+    '        - {name: ids, in: query, type: array, items: {type: integer, exclusiveMinimum: true, items: {type: integer}}}\n' +
+    '        - {name: ok, in: query, type: integer, minimum: 1, exclusiveMinimum: true}\n' +
+    '        - {name: b, in: body, schema: {type: object, properties: {n: {type: number, exclusiveMinimum: true}}}}\n' +
+    '      responses:\n        "200":\n          description: ok\n          headers:\n' +
+    '            X-R: {type: integer, exclusiveMinimum: false}\n' +
+    '            X-L: {type: array, items: {type: integer, exclusiveMaximum: true}}\n' +
+    'definitions:\n  N: {type: number, maximum: 5, exclusiveMaximum: true, x-exclusiveMinimum: true}\n' +
+    '  R: {$ref: "#/definitions/N", exclusiveMinimum: true}\n' +
+    '  P: {type: object, properties: {exclusiveMinimum: {type: boolean}}}\n');
+  eq('2.0 boundary: parameters, items, body schema, headers', bnd(r2), [
+    'error schema.boundaryMissing 7:47 #/paths/~1a/get/parameters/0/exclusiveMaximum',
+    'error schema.boundaryMissing 8:70 #/paths/~1a/get/parameters/1/items/exclusiveMinimum',
+    'error schema.boundaryMissing 10:85 #/paths/~1a/get/parameters/3/schema/properties/n/exclusiveMinimum',
+    'error schema.boundaryMissing 15:34 #/paths/~1a/get/responses/200/headers/X-R/exclusiveMinimum',
+    'error schema.boundaryMissing 16:55 #/paths/~1a/get/responses/200/headers/X-L/items/exclusiveMaximum',
+  ]);
+  eq('2.0 boundary message', E.formatMessage(r2.problems.find((p) => p.code === 'schema.boundaryMissing'), T),
+    'exclusiveMaximum: true needs "maximum" in the same object. Swagger 2.0 uses JSON Schema draft 4, where exclusiveMaximum MUST come with maximum.');
+  const r3 = run('openapi: 3.0.4\ninfo: {title: T, version: "1"}\npaths:\n  /a:\n    get:\n      parameters:\n' +
+    '        - {name: q, in: query, schema: {type: integer, nullable: true, exclusiveMaximum: true}}\n' +
+    '      responses:\n        "200":\n          description: ok\n' +
+    'components:\n  schemas:\n    N: {type: number, nullable: true, minimum: 0, exclusiveMinimum: true}\n' +
+    '    L: {type: array, items: {allOf: [{type: integer, exclusiveMinimum: false}]}}\n' +
+    '    R: {$ref: "#/components/schemas/N", exclusiveMaximum: true}\n');
+  eq('3.0 boundary: warnings only, nullable and legal pairs kept', brief(r3).filter((s) => !/component\.unused/.test(s)), [
+    'warning schema.boundaryNoEffect 7:72 #/paths/~1a/get/parameters/0/schema/exclusiveMaximum',
+    'warning schema.boundaryNoEffect 14:54 #/components/schemas/L/items/allOf/0/exclusiveMinimum',
+  ]);
+  const r31 = run('openapi: 3.1.1\ninfo: {title: T, version: "1"}\ncomponents:\n  schemas:\n    N: {type: number, exclusiveMinimum: 0}\n');
+  eq('3.1 numeric exclusiveMinimum is not a boundary problem', bnd(r31), []);
+  const rf = runFiles({ 'api.yaml': 'swagger: "2.0"\ninfo: {title: T, version: "1"}\npaths: {}\ndefinitions:\n  N: {$ref: "defs.yaml#/N"}\n',
+    'defs.yaml': 'N:\n  type: integer\n  exclusiveMinimum: true\n' }, 'api.yaml');
+  eq('2.0 boundary located in the referenced file', bnd(rf).concat(rf.problems.filter((p) => p.code === 'schema.boundaryMissing').map((p) => p.file)),
+    ['error schema.boundaryMissing 3:3 #/N/exclusiveMinimum', 'defs.yaml']);
+  for (const lang of ['zh', 'ja', 'ko']) check(lang + ' boundary messages are translated', STRINGS[lang].msg['schema.boundaryMissing'] !== T.msg['schema.boundaryMissing'] && STRINGS[lang].msg['schema.boundaryNoEffect'] !== T.msg['schema.boundaryNoEffect']);
+}
+
+// ---------- large files: read-only window instead of the whole text in the textarea ----------
+{
+  const script = component.slice(component.indexOf('<script>'));
+  const vm1 = /\/\/ view:start[^\n]*\n([\s\S]*?)\/\/ view:end/.exec(script);
+  check('component has the window helpers', !!vm1);
+  const limits = /var VIEW_LIMIT = (\d+) \* (\d+), WIN_LINES = (\d+), WIN_CHARS = (\d+) \* (\d+);/.exec(script);
+  check('view limits declared', !!limits);
+  eq('view limits', limits && [limits[1] * limits[2], +limits[3], limits[4] * limits[5]], [524288, 300, 49152]);
+  const H = new Function('WIN_LINES', 'WIN_CHARS', vm1[1] + '\nreturn { countNl, winFrom, winAround, winBefore, lineAt };');
+  const lineOf = (t, o) => t.slice(0, o).split('\n').length;
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (const [WL, WC] of [[300, 49152], [5, 64]]) {
+    const V = H(WL, WC);
+    for (let k = 0; k < 40; k++) {
+      let t = '';
+      const lines = 1 + rnd(400);
+      for (let i = 0; i < lines; i++) t += 'x'.repeat(rnd(k % 5 === 0 ? 300 : 30)) + (rnd(10) ? '\n' : '');
+      if (!t.length) t = 'a';
+      // walking forward from the start covers the text exactly once, with the right line numbers
+      let w = V.winFrom(t, 0, 1), seen = '', ok = true, steps = 0;
+      while (true) {
+        ok = ok && w.line === lineOf(t, w.start) && w.end > w.start && w.end - w.start <= WC && V.countNl(t, w.start, w.end) <= WL;
+        seen += t.slice(w.start, w.end);
+        if (w.end >= t.length || ++steps > 100000) break;
+        const n = V.winFrom(t, w.end, w.line + V.countNl(t, w.start, w.end));
+        // and walking back from the next window returns to a window that ends at or after this start
+        const b = V.winBefore(t, n);
+        ok = ok && b.line === lineOf(t, b.start) && b.start <= w.end && b.end > b.start && b.start < n.start;
+        w = n;
+      }
+      check(`window walk covers the text (${WL}/${WC}, #${k})`, ok && seen === t);
+      for (let q = 0; q < 10; q++) {
+        const o = rnd(t.length);
+        const a = V.winAround(t, o, lineOf(t, o));
+        check(`window around offset contains it (${WL}/${WC}, #${k}.${q})`, a.start <= o && o < Math.max(a.end, a.start + 1) && a.line === lineOf(t, a.start), JSON.stringify([o, a]));
+        const ls = t.lastIndexOf('\n', o - 1) + 1, le = t.indexOf('\n', o);
+        eq('lineAt', V.lineAt(t, o), t.slice(o > 0 ? ls : 0, le < 0 ? t.length : le));
+      }
+    }
+    // a single very long line: the window starts inside the line near the offset
+    const long = 'a'.repeat(3 * WC) + '\nend';
+    const a = V.winAround(long, 2 * WC, 1);
+    check(`long line window (${WL}/${WC})`, a.start > 0 && a.start <= 2 * WC && a.end > 2 * WC && a.line === 1, JSON.stringify(a));
+  }
+  check('large roots are not put in the textarea in full', /function setRoot\(text\) \{\s*if \(text\.length > VIEW_LIMIT\)/.test(script) &&
+    !/input\.value = files\[/.test(script) && !/\.split\('\\n'\)/.test(script));
+  check('a newer file load wins over an older one', /if \(myLoad !== loadSeq\) return;/.test(script));
 }
 
 // ---------- messages in every language ----------
