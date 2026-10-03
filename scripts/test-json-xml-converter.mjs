@@ -106,6 +106,13 @@ await test('both empty inputs and pending edits invalidate old opposite output',
   p.get('jx-xml').value = '<root/>'; p.get('jx-to-json').click(); p.get('jx-xml').value = ''; p.get('jx-to-json').click();
   assert.equal(p.get('jx-json').value, '');
 });
+await test('editing a panel clears the status of the previous conversion', () => {
+  const p = page('en', 'sax'); p.get('jx-xml').value = '<r><a>1</a></r>'; p.get('jx-to-json').click();
+  assert.equal(p.get('jx-status').textContent, 'Converted XML to JSON.');
+  p.get('jx-json').value = '{"x":1}'; p.get('jx-json').fire('input'); assert.equal(p.get('jx-status').textContent, '');
+  p.flush(); assert.equal(p.get('jx-status').textContent, 'Converted JSON to XML.');
+  p.get('jx-xml').fire('input'); assert.equal(p.get('jx-status').textContent, '');
+});
 await test('opposite edit cancels the pending conversion', () => {
   const p = page('en', node('root', [node('new', [text('value')])]));
   p.get('jx-json').value = '{"old":1}'; p.get('jx-json').fire('input');
