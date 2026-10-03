@@ -5,7 +5,7 @@ faqItems:
   - question: "이 도구는 무엇을 생성합니까?"
     answer: "JSON에서 Java POJO(Plain Old Java Object) 클래스를 생성합니다. 중첩 객체는 각각 독립된 public 클래스가 되며, private 필드와 getter/setter 메서드를 포함합니다(Lombok 모드에서는 @Data 사용)."
   - question: "어떤 어노테이션 모드를 지원합니까?"
-    answer: "4가지 모드: 없음(순수 POJO, getter/setter 포함), Jackson(@JsonProperty), Gson(@SerializedName), Lombok(@Data). 어노테이션은 JSON 키와 camelCase 필드명이 다를 때만 추가됩니다."
+    answer: "4가지 모드: 없음(순수 POJO, getter/setter 포함), Jackson(@JsonProperty), Gson(@SerializedName), Lombok(@Data). Jackson·Gson 모드는 JSON 키와 필드명이 다를 때 필드에 어노테이션을 붙입니다. Jackson이 getter / setter에서 얻는 이름이 필드명과 다를 때(getURL은 url로 읽힘) Jackson 모드는 getter와 setter에도 붙입니다. 없음·Lombok 모드는 원래 키를 보존하지 않습니다."
   - question: "JSON 타입은 Java 타입으로 어떻게 매핑됩니까?"
     answer: "string→String, integer→int (int 범위 밖이면 long), float/double→double, boolean→boolean, null→Object, array→List<T>, 중첩 객체→독립 클래스."
   - question: "List 임포트는 언제 추가됩니까?"
@@ -105,3 +105,52 @@ RootObject order = mapper.readValue(json, RootObject.class);`}</code></pre>
 <p>Java 16 이상에서는 작은 불변 모델을 클래스 대신 record로 만들 수 있고, Jackson은 2.12부터 record를 읽습니다:</p>
 
 <pre><code>{`public record Customer(String name, boolean vip) {}`}</code></pre>
+
+<h2>예시: 같은 키의 다른 구조와 Java 이름이 될 수 없는 키 (Jackson 모드)</h2>
+
+{/* jjp-check: {"json":"{\"billing\":{\"address\":{\"city\":\"Paris\"}},\"shipping\":{\"address\":{\"line1\":\"1 Main St\"}},\"class\":\"A\",\"2fa\":true,\"URL\":\"https://example.com\"}","mode":"jackson"} */}
+
+<pre><code>{`{"billing": {"address": {"city": "Paris"}}, "shipping": {"address": {"line1": "1 Main St"}}, "class": "A", "2fa": true, "URL": "https://example.com"}`}</code></pre>
+
+<p>출력(getter / setter 대부분 생략):</p>
+
+<pre><code>{`import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class RootObject {
+    private Billing billing;
+    private Shipping shipping;
+    @JsonProperty("class")
+    private String classValue;
+    @JsonProperty("2fa")
+    private boolean t2fa;
+    @JsonProperty("URL")
+    private String uRL;
+
+    @JsonProperty("URL")
+    public String getURL() {
+    // 나머지 getter / setter 생략
+}
+
+public class Address {
+    private String city;
+    // ...
+}
+
+public class ShippingAddress {
+    private String line1;
+    // ...
+}`}</code></pre>
+
+<ul>
+  <li>두 <code>{"address"}</code>는 필드가 달라서 두 번째에 부모 이름을 앞에 붙입니다(<code>{"ShippingAddress"}</code>). 필드와 타입이 같은 객체는 클래스 하나를 함께 씁니다. 앞에 붙여도 이름이 겹치면 번호를 붙입니다.</li>
+  <li>Java 키워드와 리터럴에는 <code>{"Value"}</code>를 붙이고(<code>{"class"}</code> → <code>{"classValue"}</code>), 숫자로 시작할 이름에는 <code>{"T"}</code>를 붙이고(<code>{"2fa"}</code> → <code>{"t2fa"}</code>), 같은 이름이 되는 키에는 번호를 붙입니다(<code>{"first-name"}</code>과 <code>{"first_name"}</code> → <code>{"firstName"}</code>과 <code>{"firstName2"}</code>). 원래 키는 어노테이션에 남습니다.</li>
+  <li>Jackson은 <code>{"getURL()"}</code>을 <code>{"uRL"}</code>이 아니라 <code>{"url"}</code>로 읽습니다. getter와 setter에 어노테이션이 없으면 속성이 하나 더 생겨 <code>{"URL"}</code>을 읽을 때 오류가 납니다. Gson은 필드만 읽으므로 필요 없습니다.</li>
+</ul>
+
+<p>도구 테스트는 javac 21, Jackson 2.17.2, Gson 2.11.0으로 Jackson / Gson 출력을 각각 컴파일하고, 샘플을 읽었다가 다시 쓰면 원래 JSON과 같습니다. Lombok 1.18.34 출력도 모두 컴파일됩니다.</p>
+
+<h2>제한</h2>
+<ul>
+  <li><strong>없음·Lombok 모드는 Java 이름만 있습니다.</strong> 이 두 모드에서 <code>{"classValue"}</code>·<code>{"t2fa"}</code>는 <code>{"class"}</code>·<code>{"2fa"}</code>에 매핑되지 않습니다. 키가 Java 이름이 될 수 없으면 Jackson이나 Gson 모드를 쓰세요.</li>
+  <li><strong>Jackson은 빈 키를 쓸 수 없습니다.</strong> <code>{'@JsonProperty("")'}</code>는 '기본 이름을 쓴다'는 뜻이라 키 <code>{'""'}</code>에는 <code>{'@JsonAlias("")'}</code>와 주석을 출력합니다. Jackson은 <code>{'{"": 4}'}</code>를 읽지만 다시 쓰면 <code>{'{"t": 4}'}</code>가 됩니다. Gson 모드는 <code>{'@SerializedName("")'}</code>로 빈 키를 유지합니다.</li>
+</ul>

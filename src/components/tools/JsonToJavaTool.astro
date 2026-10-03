@@ -202,9 +202,12 @@ const L = labels[lang];
 
       /* ── engine:start ── */
       function toPascalCase(str) {
-        return str
+        var name = String(str)
           .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/[^a-zA-Z0-9_$]/g, '')
           .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+        if (!/^[A-Za-z_$]/.test(name)) name = 'T' + name;
+        return javaIdentifier(name);
       }
 
       function toCamelCase(str) {
@@ -216,6 +219,19 @@ const L = labels[lang];
         return str.charAt(0).toUpperCase() + str.slice(1);
       }
 
+      // Include literals and restricted type names, so every generated declaration compiles.
+      var JAVA_RESERVED = ('abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while true false null _ var yield record sealed permits').split(' ');
+      var JAVA_TYPES = ['Object', 'String', 'List', 'Integer', 'Long', 'Double', 'Boolean', 'Data', 'JsonProperty', 'JsonAlias', 'SerializedName'];
+      function javaIdentifier(name) {
+        return JAVA_RESERVED.indexOf(name) === -1 ? name : name + 'Value';
+      }
+      function javaString(value) {
+        var escapes = { '"': '\\"', '\\': '\\\\', '\n': '\\n', '\r': '\\r', '\t': '\\t', '\b': '\\b', '\f': '\\f' };
+        return '"' + value.replace(/["\\\x00-\x1f\x7f]/g, function (ch) {
+          return escapes[ch] || '\\' + ('00' + ch.charCodeAt(0).toString(8)).slice(-3);
+        }) + '"';
+      }
+
       function boxPrimitive(t) {
         if (t === 'int') return 'Integer';
         if (t === 'long') return 'Long';
@@ -224,7 +240,7 @@ const L = labels[lang];
         return t;
       }
 
-      function inferJavaType(value, key, classes) {
+      function inferJavaType(value, key, state, parent) {
         if (value === null) return 'Object';
         if (typeof value === 'boolean') return 'boolean';
         if (typeof value === 'number') {
@@ -242,13 +258,12 @@ const L = labels[lang];
             if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
               objectItems.push(item);
             } else {
-              var t = inferJavaType(item, key + 'Item', classes);
+              var t = inferJavaType(item, key + 'Item', state, parent);
               if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
             }
           }
           if (objectItems.length > 0) {
-            var itemClassName = toPascalCase(key) + 'Item';
-            mergeObjectsToClass(objectItems, itemClassName, classes);
+            var itemClassName = mergeJavaObjects(objectItems, toPascalCase(key) + 'Item', parent, state);
             if (primitiveTypes.indexOf(itemClassName) === -1) primitiveTypes.push(itemClassName);
           }
           var elType = boxPrimitive(primitiveTypes.length === 0 ? 'Object' : mergeTypes(primitiveTypes));
@@ -256,9 +271,7 @@ const L = labels[lang];
         }
 
         if (typeof value === 'object') {
-          var className = toPascalCase(key);
-          buildClass(value, className, classes);
-          return className;
+          return mergeJavaObjects([value], toPascalCase(key), parent, state);
         }
 
         return 'Object';
@@ -275,50 +288,84 @@ const L = labels[lang];
       }
 
       function buildClass(obj, name, classes) {
-        if (classes[name] !== undefined) return;
-        classes[name] = null;
-
-        var fields = [];
-        var keys = Object.keys(obj);
-        for (var i = 0; i < keys.length; i++) {
-          var k = keys[i];
-          var v = obj[k];
-          var type = inferJavaType(v, k, classes);
-          var fieldName = toCamelCase(k);
-          fields.push({ key: k, fieldName: fieldName, type: type });
-        }
-        classes[name] = fields;
+        return mergeObjectsToClass([obj], name, classes);
       }
 
       function mergeObjectsToClass(objects, name, classes) {
-        if (classes[name] !== undefined) return;
-        classes[name] = null;
+        name = toPascalCase(name);
+        if (JAVA_TYPES.indexOf(name) !== -1) name += 'Value';
+        var state = { list: [], byName: Object.create(null), reserved: Object.create(null) };
+        state.reserved[name] = true;
+        JAVA_TYPES.forEach(function (type) { state.reserved[type] = true; });
+        mergeJavaObjects(objects, name, '', state, name);
+        state.list.forEach(function (slot) {
+          Object.defineProperty(classes, slot.name, { value: slot.fields, enumerable: true, configurable: true });
+        });
+        return name;
+      }
 
-        var allKeys = {};
+      // Same base name and field structure reuse a declaration. Different structures use the
+      // parent prefix, then a numeric suffix, like the TypeScript / Go / Kotlin generators.
+      function mergeJavaObjects(objects, base, parent, state, fixedName) {
+        var slot = { name: null, base: base, sig: null, fields: null };
+        state.list.push(slot);
+        var context = fixedName || base;
+        var allKeys = Object.create(null);
         for (var i = 0; i < objects.length; i++) {
           var ks = Object.keys(objects[i]);
           for (var j = 0; j < ks.length; j++) {
-            if (!allKeys[ks[j]]) allKeys[ks[j]] = 0;
-            allKeys[ks[j]]++;
+            if (!allKeys[ks[j]]) allKeys[ks[j]] = [];
+            allKeys[ks[j]].push(objects[i][ks[j]]);
           }
         }
 
         var fields = [];
+        var usedFields = Object.create(null);
+        var usedMethods = Object.create(null);
         var keyList = Object.keys(allKeys);
         for (var ki = 0; ki < keyList.length; ki++) {
           var k = keyList[ki];
+          var values = allKeys[k];
           var types = [];
-          for (var oi = 0; oi < objects.length; oi++) {
-            if (objects[oi].hasOwnProperty(k)) {
-              var t = inferJavaType(objects[oi][k], k, classes);
+          if (values.every(function (v) { return v !== null && typeof v === 'object' && !Array.isArray(v); })) {
+            types.push(mergeJavaObjects(values, toPascalCase(k), context, state));
+          } else if (values.every(Array.isArray)) {
+            types.push(inferJavaType([].concat.apply([], values), k, state, context));
+          } else {
+            for (var oi = 0; oi < values.length; oi++) {
+              var t = inferJavaType(values[oi], k, state, context);
               if (types.indexOf(t) === -1) types.push(t);
             }
           }
           var type = mergeTypes(types);
-          var fieldName = toCamelCase(k);
+          var fieldBase = javaIdentifier(toCamelCase(k));
+          var fieldName = fieldBase;
+          for (var suffix = 2; usedFields[fieldName] || usedMethods[capitalize(fieldName)]; suffix++) fieldName = fieldBase + suffix;
+          usedFields[fieldName] = true;
+          usedMethods[capitalize(fieldName)] = true;
           fields.push({ key: k, fieldName: fieldName, type: type });
         }
-        classes[name] = fields;
+        var sig = JSON.stringify(fields.map(function (f) { return [f.key, f.type]; }).sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; }));
+        if (!fixedName) {
+          for (var si = 0; si < state.list.length; si++) {
+            var other = state.list[si];
+            if (other !== slot && other.base === base && other.sig === sig) {
+              state.list.splice(state.list.indexOf(slot), 1);
+              return other.name;
+            }
+          }
+        }
+        var candidates = [base, parent + base];
+        var name = fixedName || null;
+        for (var ci = 0; ci < candidates.length && !name; ci++) {
+          if (!state.byName[candidates[ci]] && !state.reserved[candidates[ci]]) name = candidates[ci];
+        }
+        for (var n = 2; !name; n++) {
+          if (!state.byName[base + n] && !state.reserved[base + n]) name = base + n;
+        }
+        slot.name = name; slot.sig = sig; slot.fields = fields;
+        state.byName[name] = slot;
+        return name;
       }
 
       function hasListType(classes) {
@@ -333,22 +380,37 @@ const L = labels[lang];
         return false;
       }
 
-      function renderGetterSetter(field) {
+      // Jackson names a getter / setter property by lower-casing the leading capitals after
+      // get / is / set (getURL → "url", getAB → "ab"). When that differs from the field name, the
+      // accessors form a second property, so they need the same explicit name as the field.
+      function jacksonAccessorName(fieldName) {
+        var cap = capitalize(fieldName);
+        var i = 0;
+        while (i < cap.length && /[A-Z]/.test(cap.charAt(i))) i++;
+        return cap.slice(0, i).toLowerCase() + cap.slice(i);
+      }
+      function jacksonAccessorsNeedName(field) {
+        return field.key !== '' && jacksonAccessorName(field.fieldName) !== field.fieldName;
+      }
+      function needsJackson(field) {
+        return field.key === '' || field.fieldName !== field.key || jacksonAccessorsNeedName(field);
+      }
+
+      function renderGetterSetter(field, mode) {
         var f = field.fieldName;
         var t = field.type;
         var cap = capitalize(f);
-        var isBoolWithIsPrefix = (t === 'boolean') && /^is[A-Z]/.test(f);
-        var getterName = (t === 'boolean') ? (isBoolWithIsPrefix ? f : 'is' + cap) : 'get' + cap;
-        // For boolean fields like isActive, setter property is "active" not "isActive"
-        var setterCap = isBoolWithIsPrefix ? capitalize(f.slice(2)) : cap;
-        var setterParam = isBoolWithIsPrefix ? f.slice(2, 3).toLowerCase() + f.slice(3) : f;
+        var getterName = (t === 'boolean') ? 'is' + cap : 'get' + cap;
+        var note = (mode === 'jackson' && jacksonAccessorsNeedName(field)) ? '    @JsonProperty(' + javaString(field.key) + ')\n' : '';
         return (
+          note +
           '    public ' + t + ' ' + getterName + '() {\n' +
           '        return ' + f + ';\n' +
           '    }\n' +
           '\n' +
-          '    public void set' + setterCap + '(' + t + ' ' + setterParam + ') {\n' +
-          '        this.' + f + ' = ' + setterParam + ';\n' +
+          note +
+          '    public void set' + cap + '(' + t + ' ' + f + ') {\n' +
+          '        this.' + f + ' = ' + f + ';\n' +
           '    }'
         );
       }
@@ -362,10 +424,14 @@ const L = labels[lang];
 
         for (var i = 0; i < fields.length; i++) {
           var f = fields[i];
-          if (mode === 'jackson' && f.fieldName !== f.key) {
-            lines.push('    @JsonProperty("' + f.key + '")');
+          if (mode === 'jackson' && f.key === '') {
+            // @JsonProperty("") means "use the default name", so Jackson can read "" only as an alias.
+            lines.push('    // Jackson reads the empty key "" but writes this field as "' + f.fieldName + '"');
+            lines.push('    @JsonAlias("")');
+          } else if (mode === 'jackson' && needsJackson(f)) {
+            lines.push('    @JsonProperty(' + javaString(f.key) + ')');
           } else if (mode === 'gson' && f.fieldName !== f.key) {
-            lines.push('    @SerializedName("' + f.key + '")');
+            lines.push('    @SerializedName(' + javaString(f.key) + ')');
           }
           lines.push('    private ' + f.type + ' ' + f.fieldName + ';');
         }
@@ -373,7 +439,7 @@ const L = labels[lang];
         if (mode !== 'lombok' && fields.length > 0) {
           lines.push('');
           for (var i = 0; i < fields.length; i++) {
-            lines.push(renderGetterSetter(fields[i]));
+            lines.push(renderGetterSetter(fields[i], mode));
             if (i < fields.length - 1) lines.push('');
           }
         }
@@ -389,15 +455,16 @@ const L = labels[lang];
         if (hasListType(classes)) importLines.push('import java.util.List;');
 
         if (mode === 'jackson') {
-          var need = false;
-          outer: for (var i = 0; i < names.length; i++) {
-            var flds = classes[names[i]];
-            if (!flds) continue;
+          var needAlias = false, needProperty = false;
+          for (var i = 0; i < names.length; i++) {
+            var flds = classes[names[i]] || [];
             for (var j = 0; j < flds.length; j++) {
-              if (flds[j].fieldName !== flds[j].key) { need = true; break outer; }
+              if (flds[j].key === '') needAlias = true;
+              else if (needsJackson(flds[j])) needProperty = true;
             }
           }
-          if (need) importLines.push('import com.fasterxml.jackson.annotation.JsonProperty;');
+          if (needAlias) importLines.push('import com.fasterxml.jackson.annotation.JsonAlias;');
+          if (needProperty) importLines.push('import com.fasterxml.jackson.annotation.JsonProperty;');
         } else if (mode === 'gson') {
           var need = false;
           outer: for (var i = 0; i < names.length; i++) {
