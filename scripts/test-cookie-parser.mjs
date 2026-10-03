@@ -106,7 +106,7 @@ const rcodes = (a) => a.reject.map((x) => x.code);
   const sync = await import(new URL('./sync-public-suffix-list.mjs', import.meta.url));
   const modText = readFileSync(join(root, 'src/data/public-suffix-list.mjs'), 'utf8');
   eq('PSL module: version and commit match the sync script', [PSL_DATA.version, PSL_DATA.commit, PSL_DATA.sha256], [sync.VERSION, sync.COMMIT, sync.SHA256_GIT]);
-  check('PSL module: MPL-2.0 notice and source are in the file', /Mozilla Public License, v\. 2\.0/.test(modText) && modText.includes(sync.SOURCE_URL) && PSL_DATA.license === 'MPL-2.0');
+  check('PSL module: MPL-2.0 notice and source are in the file', /Mozilla Public License, v\. 2\.0/.test(modText) && modText.includes(sync.SOURCE_URL) && PSL_DATA.license === 'MPL-2.0' && PSL_DATA.source === sync.SOURCE_URL && PSL_DATA.licenseUrl === 'https://mozilla.org/MPL/2.0/');
   const icann = PSL_DATA.icann.split('\n'), priv = PSL_DATA.private.split('\n');
   eq('PSL module: rule counts (ICANN, PRIVATE)', [icann.length, priv.length], [6949, 3384]);
   check('PSL module: has wildcard and exception rules in both sections', icann.some((r) => r.startsWith('*.')) && icann.some((r) => r[0] === '!') && priv.some((r) => r.startsWith('*.')));

@@ -15,6 +15,7 @@
 | `network.ts` | `networkToolSlugs`：因功能需要会联网的工具；每个 slug 在 4 个 i18n JSON 里有 `network.{slug}`，写明发出什么、发给谁。新增会发请求的工具（`fetch`、外部 URL 的 `<img>` 等）必须加进来。只在用户打开某个选项后才联网的工具放 `optionalNetworkToolSlugs`（保留「100% 客户端」徽章，i18n key 为 `networkOptional.{slug}`），About 页用 `aboutNetworkToolSlugs` / `aboutNetworkNoteKey()` 同时列出两类 | `layouts/ToolLayout.astro`（顶部提示替换 `tool.trustPrivacy`，并隐藏 `tool.trustClient`「100% 客户端」徽章）、`pages/{,zh/,ja/,ko/}about.astro`（联网工具清单） |
 | `llms.mjs` | llms 文件生成规则（纯 JS）：`buildLlmsTxt(data, lang)`、`buildLlmsFullTxt(data, pages)`、`howToSteps(body)`；各语言的站点说明是唯一手写内容 | `src/pages/llms.txt.ts`、`src/pages/{zh,ja,ko}/llms.txt.ts`、`src/pages/llms-full.txt.ts`、`scripts/test-llms-txt.mjs` |
 | `llms-input.ts` | 为 llms 端点收集数据：`tools.ts`、`network.ts`、`persistence.ts`、4 语言 i18n、英文工具页 mdx 的 `seoDescription` 与正文 | 上述 llms 端点 |
+| `public-suffix-list.mjs` | 生成文件，勿手改：公共后缀列表（publicsuffix.org，MPL-2.0，文件头有许可声明、来源、版本 2026-10-01_23-02-52_UTC、提交 6cd82aff 与 SHA-256）ICANN 6,949 条 + PRIVATE 3,384 条，含通配与例外规则，Unicode 规则转为 punycode；`export default { version, commit, sha256, license, icann, private }`，后两者为换行分隔的规则串。由 `scripts/sync-public-suffix-list.mjs` 从固定提交生成并校验 SHA-256（更新规程见 scripts/AGENTS.md）。约 158 KB，页面只经动态 import 按需加载（独立 chunk） | `components/tools/CookieParserTool.astro`（第一段 `<script>` 暴露加载函数，页面脚本解析 Set-Cookie 或 cookies.txt 时才加载）、`scripts/test-cookie-parser.mjs` |
 | `openapi-schemas/` | 官方 JSON Schema 原文（未改动）：`oas-3.0-2024-10-18.json`（draft-04）、`oas-3.1-2026-08-03.json`、`oas-3.2-2026-08-30.json`（draft 2020-12），取自 spec.openapis.org；`swagger-2.0.json`（draft-04，取自 OAI/OpenAPI-Specification `_archive_/schemas/v2.0/schema.json`）与它引用的 `json-schema-draft-04.json`（json-schema.org）。更新时换文件并同步 `openapi-validator-run.js` 的 import 与测试；draft-04 转换与 3.1 / 3.2 的 `$dynamicRef` 处理在 `openapi-validator-engine.js` | `components/tools/openapi-validator-run.js`（Web Worker 内加载）、`scripts/test-openapi-validator.mjs` |
 
 ## ToolInfo schema
@@ -68,3 +69,4 @@ interface ToolInfo {
 - 2026-09-30 — `network.ts` 新增 `optionalNetworkToolSlugs`（默认不联网、打开选项后才联网的工具，首个为 markdown-to-word 的「嵌入网络图片」）
 - 2026-09-30 — 新增 `llms.mjs` 与 `llms-input.ts`（llms 文件由构建期端点生成，工具条目随 `tools.ts` / `network.ts` / `persistence.ts` 自动更新）
 - 2026-10-01 — 新增 `deepseek-v4-tokenizer.mjs`（生成文件，勿手改）：ai-token-counter 的 DeepSeek V4 词表与合并表，由 `scripts/build-deepseek-tokenizer.mjs` 从 DeepSeek 官方 tokenizer.json 生成，页面按需动态 import（约 1.08 MB，gzip 577 KB）
+- 2026-10-03 — 新增 `public-suffix-list.mjs`（生成文件，勿手改）：cookie-parser 判断 Domain 属性是否为公共后缀，由 `scripts/sync-public-suffix-list.mjs` 生成，页面按需动态 import

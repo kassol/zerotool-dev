@@ -108,9 +108,12 @@ export function buildModule(text) {
     commit: COMMIT,
     sha256: SHA256_GIT,
     license: 'MPL-2.0',
+    licenseUrl: 'https://mozilla.org/MPL/2.0/',
+    source: SOURCE_URL,
     icann: p.icann.join('\n'),
     private: p.private.join('\n'),
   };
+  // The fields above repeat the notice, because minified builds drop comments.
   const body = 'export default {\n' + Object.entries(data).map(([k, v]) => `  ${k}: ${JSON.stringify(v)},`).join('\n') + '\n};\n';
   return { text: head + body, stats: { icann: p.icann.length, private: p.private.length, unicode: p.unicode, duplicates: p.duplicates } };
 }
