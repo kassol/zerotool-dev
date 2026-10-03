@@ -674,6 +674,7 @@ for (const [text, code, line, col] of SYN) {
         if (ex.broken || ex.extras || ex.opts.menu) continue;
         let sc, da; try { sc = JSON.parse(ex.schema); da = JSON.parse(ex.data); } catch { continue; }
         if (sc.$schema === undefined || /"\$ref":\s*"(?!#)/.test(JSON.stringify(sc))) continue; // no external $ref: Python would fetch it
+        if (run(JSON.stringify(sc), JSON.stringify(da), { formats: false }).state === 'unknown') continue; // no errors to compare
         pageCases.push([lang, sc, da]);
       }
     }
