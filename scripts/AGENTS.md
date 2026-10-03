@@ -125,6 +125,14 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 - 2026-10-02 — 新增 `test-protobuf-parser-security.mjs`：读取真实页面引擎与 vendor，在独立 vm 中以硬超时覆盖 option EOF 循环、constructor / __proto__ 写入、内建对象属性描述符不变及随后合法 Schema 恢复；检查 vendor 与锁定 npm 产物逐字一致。只写 stdout，CI 随全部测试运行。
 
+- 2026-10-02 — 转换工具收尾：`test-json-xml-converter.mjs` 73 → 136 项，XML 替身可改由 sax 1.6.1（svgo 的依赖，已在 node_modules）严格模式建树，新增标量 / null / `{}` 根在两种输出下的往返、映射限制与语法错误的状态前缀、面板快捷键 `stopPropagation` 与 Ctrl/⌘+L 复位、编辑清状态，以及 4 语言页面 `{/* jx-to-xml */}`、`{/* jx-to-json */}`、`{/* jx-error: … */}` 标注示例的复算；真实 DOMParser 仍以 ego-browser 验收为准。`test-jsonl-converter.mjs` 41 → 64 项，新增快捷键、Ctrl/⌘+L 清缓存、清空 JSONL 面板时计数归零，以及页面 `{/* jlc-check */}` / `{/* jlc-validate */}` 标注示例（输出面板、下载、复制与状态行、校验计数与 V8 报错原文）。`test-env-file-parser.mjs` 217 → 332 项，新增 Ctrl/⌘+L 复位、被跳过行的备注（含 `colonForm` 与 U+3000 键名）及页面 `{/* efp-check */}` 标注示例（导出、与 `dotenv.parse()` 对照、状态行、表格行、`util.parseEnv()` 对照）。
+
+- 2026-10-02 — `test-env-file-parser.mjs` 增加 dotenv 16.6.1 键/分隔符对照与完整 Parse/Export 入口、编辑/清空导出失效测试；Node 22.23.3 为 217 项通过。python-dotenv 对照因安装版本 1.1.0 与指南记录的 1.2.4 不同而跳过；`__proto__` 保留行为作为与 dotenv 的既有差异独立测试。
+
+- 2026-10-02 — `test-json-xml-converter.mjs` 改为运行组件完整内联脚本与双向按钮入口，覆盖 Unicode 元素名、路径拒绝、空对象与输出失效生命周期；Node 22.23.3 为 73 项通过。XML 解析使用节点替身，真实 DOMParser 验收尚未完成；旧日志里的名称替换规则已由本条对应的路径拒绝规则替代。
+
+- 2026-10-02 — 新增 `test-jsonl-converter.mjs`，在 vm 中运行组件完整内联脚本与按钮入口，覆盖双向数字原文、重复键、逐行错误、复制/下载缓存和文件读取/延迟校验生命周期；Node 22.23.3 为 41 项通过。未做浏览器或整站验收。
+
 - 2026-10-02 — protobuf 页面运行时清理：`test-protobuf-to-json.mjs` 改为无 Long 的页面 vm 与独立 Long-enabled 对照 vm（304 → 336 项）；五种 64 位类型增加编码与解码的上下界 / 超过 2^53 回归。下方历史记录中的双 vendor 页面加载检查已被替换；protoc / Python fixtures 保持原样。IndexNow 忽略路径测试改用仍存在的 protobuf vendor。
 
 - 2026-10-02 — `test-color-shades-generator.mjs` 407 → 1079 项（只写 stdout，Node 22 与 24 都通过）：用替身 DOM 执行组件整段客户端脚本与 `ToolLayout.astro` 的真实快捷键脚本，派发 input / change / click / keydown 事件。四语言覆盖初始 11 个色块复制、全部复制与下载字节，合法输入改为 `#ZZZ` / 非法 `rgb()` / 空输入后清空并禁用出口，无效时切换导出与色值格式、Ctrl/Cmd+L 清空、文本与拾色器恢复；直接派发 click 另验证空结果的处理器守卫。
