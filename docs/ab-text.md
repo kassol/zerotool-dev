@@ -64,3 +64,19 @@ production build, complete tests and production evidence remain release-line wor
 Work stopped at the user's closeout request after the one final Diff targeted run.
 No full build, merge, push, tag or release was run. Keep the worktree and evidence.
 Regex still needs comparable before/after heap evidence, including its Worker.
+
+## 2026-10-03 completion
+
+- Diff: page requests clamp to the current view (red 3 fail → green 6,059 / 0);
+  LCS compares integer line ids. Node 22.23.3, 10,000 lines per side: peak footprint
+  946 MB → 31 / 35 MB, time 2.9 s → 0.73 s (changed) and 1.6 s → 0.98 s (all different).
+- Zero-width: paged preview (1,000 chips / 20,000 other units per page), full stats,
+  cleaned text, copy and download; empty-after-strip no longer exported; rescan after
+  Ctrl/Cmd+L. Red 10 fail → green 207 / 0.
+- Browser: one worktree build, own static port, ego-browser; baseline = production
+  v1.138.58 (same component code as v1.138.57). Load average 37–98 during runs.
+  Regex longest task 1,730 → 84–109 ms; Diff click 2,359 → 1–2 ms sync, longest
+  2,358 → 92–106 ms; Zero-width input sync+layout 1,181 → 62–64 ms, DOM 100,444 → 1,453,
+  paging longtasks 100–148 ms (one 869 ms). The 100 ms target is not verified.
+- Four-language content updated for all three tools. Evidence:
+  /private/var/folders/5f/kz_wfwps12j6pdy0773l4_kw0000gn/T/opencode/zerotool-ab-text-final/.
