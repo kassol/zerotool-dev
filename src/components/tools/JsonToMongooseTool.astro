@@ -173,6 +173,7 @@ const L = labels[lang];
       var outputCodeEl = document.getElementById('jtm-output-code');
       var statusEl = document.getElementById('jtm-status');
       var modelNameEl = document.getElementById('jtm-model-name');
+      var copyBtn = document.getElementById('jtm-copy');
 
       var currentLang = 'javascript';
       var currentTimestamps = true;
@@ -473,10 +474,19 @@ const L = labels[lang];
 
       /* ── engine:end ── */
 
+      // No output (empty or invalid input): nothing stale stays on screen and Copy is off.
       function clearOutput() {
         outputCodeEl.textContent = '';
         outputCodeEl.removeAttribute('data-highlighted');
         outputCodeEl.className = '';
+        copyBtn.disabled = true;
+      }
+      function showOutput(text) {
+        outputCodeEl.textContent = text;
+        outputCodeEl.removeAttribute('data-highlighted');
+        outputCodeEl.className = 'language-javascript';
+        hljs.highlightElement(outputCodeEl);
+        copyBtn.disabled = false;
       }
 
       function convert() {
@@ -489,6 +499,7 @@ const L = labels[lang];
           parsed = JSON.parse(raw);
         } catch (e) {
           inputEl.classList.add('error');
+          clearOutput();
           setStatus(MSG_INVALID + e.message, true);
           return;
         }
@@ -507,29 +518,19 @@ const L = labels[lang];
           if (objItems.length > 0) {
             buildRootSchema(objItems, rawModelName, schemas);
           } else {
-            outputCodeEl.textContent = '// Array of primitives — no schema to generate';
-            outputCodeEl.removeAttribute('data-highlighted');
-            outputCodeEl.className = 'language-javascript';
-            hljs.highlightElement(outputCodeEl);
+            showOutput('// Array of primitives — no schema to generate');
             setStatus(MSG_GEN_ONE, false);
             window.trackTool && window.trackTool('json-to-mongoose', 'generate');
             return;
           }
         } else {
-          outputCodeEl.textContent = '// Primitive value — no schema to generate';
-          outputCodeEl.removeAttribute('data-highlighted');
-          outputCodeEl.className = 'language-javascript';
-          hljs.highlightElement(outputCodeEl);
+          showOutput('// Primitive value — no schema to generate');
           setStatus(MSG_GEN_ONE, false);
           window.trackTool && window.trackTool('json-to-mongoose', 'generate');
           return;
         }
 
-        var result = renderOutput(schemas, rawModelName, currentLang, currentTimestamps, currentRequired);
-        outputCodeEl.textContent = result;
-        outputCodeEl.removeAttribute('data-highlighted');
-        outputCodeEl.className = 'language-javascript';
-        hljs.highlightElement(outputCodeEl);
+        showOutput(renderOutput(schemas, rawModelName, currentLang, currentTimestamps, currentRequired));
         var count = schemas.length;
         var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', String(count));
         setStatus(msg, false);
@@ -562,13 +563,12 @@ const L = labels[lang];
         clearStatus();
       });
 
-      document.getElementById('jtm-copy').addEventListener('click', function () {
+      copyBtn.addEventListener('click', function () {
         var text = outputCodeEl.textContent;
-        if (!text) return;
-        var btn = document.getElementById('jtm-copy');
+        if (!text || copyBtn.disabled) return;
         navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = COPIED;
-          setTimeout(function () { btn.textContent = COPY; }, 1500);
+          copyBtn.textContent = COPIED;
+          setTimeout(function () { copyBtn.textContent = COPY; }, 1500);
         });
       });
 
@@ -704,6 +704,7 @@ const L = labels[lang];
   .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
   .jtm-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .jtm-status { font-size: 0.85rem; min-height: 1.2rem; }
+  #jtm-copy:disabled { opacity: 0.45; cursor: not-allowed; }
   .jtm-status.success { color: #057a55; }
   .jtm-status.error { color: #c0392b; }
 

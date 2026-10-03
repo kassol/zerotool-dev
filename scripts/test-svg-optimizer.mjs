@@ -486,6 +486,8 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
       replaceChildren(...c) { this.children = c; },
       get firstChild() { return this.children[0]; },
       setAttribute() {}, remove() {}, focus() {}, select() {}, scrollIntoView() {},
+      getAttribute(n) { return n === 'src' && this.src ? this.src : null; },
+      removeAttribute(n) { if (n === 'src') this.src = ''; },
       contains() { return false; },
       getBoundingClientRect() { return { top: 0 }; },
       getContext() { return { putImageData() {}, drawImage() {}, getImageData() { return { data: new Uint8ClampedArray(4) }; } }; },
@@ -625,6 +627,27 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
   check('script does not fetch or store anything itself', !/fetch\(|XMLHttpRequest|sendBeacon|localStorage|sessionStorage|document\.cookie/.test(script));
   check('settings saved through ztPersist (preference policy)', /window\.ztPersist\.save\(SLUG, settings\)/.test(script) && /'svg-optimizer': 'preference'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
   check('previews are <img> elements fed by blob URLs (scripts in the SVG do not run)', /new Image\(\)/.test(script) && /URL\.createObjectURL\(new Blob\(\[svg\]/.test(script));
+  // An empty src resolves to the page URL and fires an error event on every render without a preview.
+  check('script never assigns an empty src to a preview image', !/\.src\s*=[^;\n]*''/.test(script));
+  const showDecl = extractDecl(script, 'showPreview');
+  check('showPreview() is declared in the page script', !!showDecl);
+  if (showDecl) {
+    const showPreview = new Function(showDecl + '\nreturn showPreview;')();
+    const fakeImg = () => ({ attrs: {}, hidden: false, sets: [],
+      set src(v) { this.sets.push(v); this.attrs.src = v; }, get src() { return this.attrs.src || ''; },
+      getAttribute(n) { return n in this.attrs ? this.attrs[n] : null; },
+      removeAttribute(n) { delete this.attrs[n]; }, hasAttribute(n) { return n in this.attrs; } });
+    const img = fakeImg();
+    showPreview(img, 'blob:x/1');
+    check('showPreview: a URL is set and the image is shown', img.attrs.src === 'blob:x/1' && img.hidden === false);
+    showPreview(img, null);
+    check('showPreview: no URL removes the src attribute and hides the image', !img.hasAttribute('src') && img.hidden === true);
+    showPreview(img, '');
+    check('showPreview: an empty URL never reaches img.src', img.sets.every((v) => v !== '') && !img.hasAttribute('src'));
+    showPreview(img, 'blob:x/1');
+    showPreview(img, 'blob:x/1');
+    eq('showPreview: the same URL is not assigned again', img.sets, ['blob:x/1', 'blob:x/1']);
+  }
 }
 
 // ---------- 11. page examples ----------

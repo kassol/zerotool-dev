@@ -159,6 +159,7 @@ const L = labels[lang];
       var outputCodeEl = document.getElementById('jjp-output-code');
       var statusEl = document.getElementById('jjp-status');
       var rootNameEl = document.getElementById('jjp-root-name');
+      var copyBtn = document.getElementById('jjp-copy');
 
       var currentAnn = 'none';
 
@@ -491,10 +492,19 @@ const L = labels[lang];
       }
       /* ── engine:end ── */
 
+      // No output (empty or invalid input): nothing stale stays on screen and Copy is off.
       function clearOutput() {
         outputCodeEl.textContent = '';
         outputCodeEl.removeAttribute('data-highlighted');
         outputCodeEl.className = '';
+        copyBtn.disabled = true;
+      }
+      function showOutput(text) {
+        outputCodeEl.textContent = text;
+        outputCodeEl.removeAttribute('data-highlighted');
+        outputCodeEl.className = 'language-java';
+        hljs.highlightElement(outputCodeEl);
+        copyBtn.disabled = false;
       }
 
       function convert() {
@@ -507,6 +517,7 @@ const L = labels[lang];
           parsed = JSON.parse(raw);
         } catch (e) {
           inputEl.classList.add('error');
+          clearOutput();
           setStatus(MSG_INVALID + e.message, true);
           return;
         }
@@ -524,29 +535,19 @@ const L = labels[lang];
           if (objectItems.length > 0) {
             mergeObjectsToClass(objectItems, rootName, classes);
           } else {
-            outputCodeEl.textContent = '// Array of primitives — no class to generate';
-            outputCodeEl.removeAttribute('data-highlighted');
-            outputCodeEl.className = 'language-java';
-            hljs.highlightElement(outputCodeEl);
+            showOutput('// Array of primitives — no class to generate');
             setStatus(MSG_GENERATED, false);
             window.trackTool && window.trackTool('json-to-java-pojo', 'generate');
             return;
           }
         } else {
-          outputCodeEl.textContent = '// Primitive value — no class to generate';
-          outputCodeEl.removeAttribute('data-highlighted');
-          outputCodeEl.className = 'language-java';
-          hljs.highlightElement(outputCodeEl);
+          showOutput('// Primitive value — no class to generate');
           setStatus(MSG_GENERATED, false);
           window.trackTool && window.trackTool('json-to-java-pojo', 'generate');
           return;
         }
 
-        var result = renderClasses(classes, currentAnn);
-        outputCodeEl.textContent = result;
-        outputCodeEl.removeAttribute('data-highlighted');
-        outputCodeEl.className = 'language-java';
-        hljs.highlightElement(outputCodeEl);
+        showOutput(renderClasses(classes, currentAnn));
         var count = Object.keys(classes).length;
         var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
         setStatus(msg, false);
@@ -579,13 +580,12 @@ const L = labels[lang];
         clearStatus();
       });
 
-      document.getElementById('jjp-copy').addEventListener('click', function () {
+      copyBtn.addEventListener('click', function () {
         var text = outputCodeEl.textContent;
-        if (!text) return;
-        var btn = document.getElementById('jjp-copy');
+        if (!text || copyBtn.disabled) return;
         navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = COPIED;
-          setTimeout(function () { btn.textContent = COPY; }, 1500);
+          copyBtn.textContent = COPIED;
+          setTimeout(function () { copyBtn.textContent = COPY; }, 1500);
         });
       });
 
@@ -722,6 +722,7 @@ const L = labels[lang];
   .btn-sm { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
   .jjp-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .jjp-status { font-size: 0.85rem; min-height: 1.2rem; }
+  #jjp-copy:disabled { opacity: 0.45; cursor: not-allowed; }
   .jjp-status.success { color: #057a55; }
   .jjp-status.error { color: #c0392b; }
 
