@@ -163,6 +163,49 @@ function runSuite(tests, remotes, dir, formats) {
   return { pass, total, fails };
 }
 const fixture = JSON.parse(gunzipSync(readFileSync(FIXTURE)).toString());
+// Fast red/green loop through the shipped compilation and text entry points. Fixed official
+// cases select the regression corpus; production detection must never inspect their names.
+if (process.argv[2] === '--reliability') {
+  for (const dir of ['draft4', 'draft6', 'draft7', 'draft2019-09', 'draft2020-12']) {
+    const rem = Object.entries(fixture.remotes).filter(([p]) => !p.startsWith('draft') || p.startsWith(dir + '/'));
+    for (const [file, groups] of fixture.tests[dir]) for (const g of groups) {
+      const keys = EXPECTED_FAILS[dir];
+      if (file !== 'dynamicRef.json' && !g.tests.some(t => keys.includes(file + '|' + g.description + '|' + t.description))) continue;
+      const needs = JSON.stringify(g.schema).includes('localhost:1234');
+      const b = E.buildValidator(lib, { schema: g.schema, menu: DIRS[dir], formats: false, extras: needs ? rem.map(r => r[1]) : [], extraUris: needs ? rem.map(r => 'http://localhost:1234/' + r[0]) : [] });
+      for (const t of g.tests) {
+        let got;
+        try { got = b.stage === 'unknown' ? 'unknown' : !b.ok ? 'schema-error' : b.validate(t.data); }
+        catch (error) { got = 'throw:' + error.message; }
+        check(dir + '|' + file + '|' + g.description + '|' + t.description, got === 'unknown' || got === t.valid, { expected: t.valid, got });
+      }
+    }
+  }
+  const inputs = [
+    ['proto', '{"properties":{"__proto__":{"type":"number"}}}', '{"__proto__":"wrong"}', {}],
+    ['data integer', '{"maximum":9007199254740992}', '9007199254740993', {}],
+    ['negative integer', '{"minimum":-9007199254740992}', '-9007199254740993', {}],
+    ['fraction', '{"type":"integer"}', '1.0000000000000001', {}],
+    ['exponent', '{"maximum":9007199254740992}', '9.007199254740993e15', {}],
+    ['underflow', '{"const":0}', '1e-400', {}],
+    ['schema integer', '{"maximum":9007199254740993}', '9007199254740992', {}],
+    ['schema fraction', '{"multipleOf":1.0000000000000001}', '1', {}],
+    ['extra integer', '{"$ref":"https://fixture.example/number"}', '1', { extras: '{"$id":"https://fixture.example/number","enum":[9007199254740993]}' }],
+    ['JSON Lines', '{"properties":{"n":{"maximum":9007199254740992}}}', '{"n":1}\n{"n":9007199254740993}', {}],
+    ['YAML data', '{"properties":{"n":{"maximum":9007199254740992}}}', 'n: 9007199254740993', {}],
+    ['YAML schema', 'maximum: 9007199254740993', '1', {}],
+    ['required vocabulary', '{"$vocabulary":{"https://fixture.example/vocab":true},"type":"string"}', '"x"', {}],
+  ];
+  for (const [name, schema, data, opts] of inputs) {
+    const r = run(schema, data, opts);
+    check(name + ': unknown main state', r.state === 'unknown', r.state);
+    check(name + ': unknown documents have null validity and no asserted errors', r.docs.length > 0 && r.docs.some(d => d.state === 'unknown' && d.valid === null && d.raw.length === 0));
+    check(name + ': copies retain unknown', E.reportText(r, T).includes(T.unknown) && JSON.parse(E.reportJson(r)).some(d => d.state === 'unknown' && d.valid === null));
+  }
+  check('ordinary numbers retain verdicts', run('{"maximum":3}', '2').state === 'valid' && run('{"maximum":3}', '4').state === 'invalid');
+  console.log('reliability: ' + passes + ' PASS, ' + failures + ' FAIL');
+  process.exit(failures ? 1 : 0);
+}
 check('suite fixture names its source commit and MIT license', /^[0-9a-f]{40}$/.test(fixture.source.commit) && fixture.source.license === 'MIT');
 const suiteCounts = {};
 for (const dir of Object.keys(DIRS)) {
