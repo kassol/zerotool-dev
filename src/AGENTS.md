@@ -48,6 +48,8 @@ src/
 
 ## 变更日志
 
+- 2026-10-03 — json-formatter 引擎原样移到 `json-formatter-engine.js`；`json-formatter-run.js`（`viewOf`、runner、客户端）与 `json-formatter.worker.js` 承担解析、序列化、高亮、文件解码与树分页，页面只做展示。ai-token-counter 的 Worker 改为在入口用 `?url` 引入词表、运行时 `import(url)`，因为 Vite 的 IIFE Worker 不能拆分 chunk（此前正式构建失败）。
+
 - 2026-10-02 — ai-token-counter 的统计、预分词与 BPE 移到可终止的工具专用 Worker；原算法声明机械迁移到 `ai-token-counter-engine.js`，客户端只接收计数、统计与每种分词器前 2,000 个展示 token。输入变化 / 清空终止旧 Worker，加载失败可重试；词表仍按需加载，Worker 由 Vite 按内容生成版本地址。
 
 - 2026-10-02 — bcrypt worker URL 在构建期按源码 SHA-256 生成版本参数，协议更新自动避开旧缓存；worker 保留 generate / verify 旧协议以兼容已缓存页面。修正博客目录说明。
