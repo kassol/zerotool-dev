@@ -1,15 +1,15 @@
 ---
 seoTitle: "JSONL Converter Online — JSON Lines / NDJSON to JSON | ZeroTool"
-seoDescription: "Convert JSONL and NDJSON to JSON arrays, convert JSON arrays back to JSON Lines, validate each line, and export valid records in your browser."
+seoDescription: "Convert JSONL and NDJSON to JSON arrays and back, validate each line, and export valid records in your browser. Large IDs and other numbers keep the exact digits you pasted."
 faqItems:
   - question: "What is JSONL?"
     answer: "JSONL, also called JSON Lines or NDJSON, stores one complete JSON value per line. It is common in logs, data exports, streaming APIs, and AI datasets."
   - question: "What JSON input can be converted to JSONL?"
-    answer: "Paste a JSON array. Each array item becomes one compact JSONL line, preserving objects, arrays, strings, numbers, booleans, and null values."
+    answer: "Paste a JSON array. Each array item becomes one compact JSONL line. Objects, arrays, strings, booleans and null are kept, and numbers keep the digits you wrote: 9007199254740993, 1.50 and 1e-7 come out unchanged."
   - question: "How are empty lines handled?"
     answer: "Empty lines are ignored by default. Turn off the option to treat empty lines as line-level validation issues."
   - question: "Can I export only valid JSONL records?"
-    answer: "Yes. Enable Convert valid lines only, or use the .jsonl download action after validation to export the valid parsed lines."
+    answer: "Yes. Tick Convert valid lines only and click JSONL → JSON. The JSON array then holds the valid records, and Download .jsonl saves the same records one per line. Validate only checks the lines: the copy and download buttons stay disabled until a conversion succeeds."
   - question: "Where is my data processed?"
     answer: "All parsing, validation, conversion, and file export run inside your browser with local JavaScript APIs."
 ---
@@ -18,14 +18,15 @@ faqItems:
 <ol>
   <li>Paste JSONL / NDJSON into the left panel, or open a local <code>.jsonl</code>, <code>.ndjson</code>, <code>.json</code>, or <code>.txt</code> file.</li>
   <li>Click <strong>Validate</strong> to check each line and see exact line numbers for parse errors.</li>
-  <li>Click <strong>JSONL → JSON</strong> to build a JSON array from the valid records.</li>
+  <li>Click <strong>JSONL → JSON</strong> to build a JSON array from the records.</li>
   <li>Paste a JSON array into the right panel and click <strong>JSON → JSONL</strong> to create compact JSON Lines output.</li>
-  <li>Use <strong>Download .json</strong> or <strong>Download .jsonl</strong> to save the converted result.</li>
+  <li>Use <strong>Copy</strong>, <strong>Download .json</strong> or <strong>Download .jsonl</strong> to take the converted result.</li>
 </ol>
 
 <h2>Worked Example</h2>
 <p>Input JSONL:</p>
 
+{/* jlc-check: {"dir":"jsonl","out":"json","status":"Converted 2 JSONL records to a JSON array."} */}
 ```json
 {"id":1,"event":"signup","user":"alice"}
 {"id":2,"event":"purchase","user":"bob","amount":29.99}
@@ -49,28 +50,85 @@ faqItems:
 ]
 ```
 
+<h2>Numbers Keep Their Digits</h2>
+<p>
+  The tool uses <code>JSON.parse()</code> only to check the syntax. It writes every number with the characters from the input, so IDs
+  above 2<sup>53</sup>, trailing zeros and exponents survive both directions:
+</p>
+
+{/* jlc-check: {"dir":"jsonl","out":"json"} */}
+```json
+{"order_id":9007199254740993,"total":1.50,"rate":1e-7}
+{"order_id":9007199254740994, "note":"caf\u00e9", "total":0}
+```
+
+```json
+[
+  {
+    "order_id": 9007199254740993,
+    "total": 1.50,
+    "rate": 1e-7
+  },
+  {
+    "order_id": 9007199254740994,
+    "note": "café",
+    "total": 0
+  }
+]
+```
+
+<p>
+  A plain <code>JSON.parse()</code> followed by <code>JSON.stringify()</code> would write <code>9007199254740992</code> and
+  <code>1.5</code>. Strings are a different case: the tool writes them in the standard
+  <code>JSON.stringify()</code> form, so <code>{'"caf\\u00e9"'}</code> becomes <code>"café"</code>, and the space after a comma
+  disappears in compact JSONL.
+</p>
+
+<h2>Copy and Download</h2>
+<p>
+  The <strong>Copy</strong> buttons and both downloads use the result of the last successful conversion. After
+  <strong>JSONL → JSON</strong>, <strong>Download .json</strong> saves the array shown on the right, and the JSONL
+  <strong>Copy</strong> and <strong>Download .jsonl</strong> give the converted records one per line in compact form. That is not the
+  text you pasted: invalid lines left out by <strong>Convert valid lines only</strong> are gone and spacing is removed. After
+  <strong>JSON → JSONL</strong>, <strong>Download .json</strong> saves your array formatted with the current <strong>Pretty JSON output</strong>
+  setting.
+</p>
+<p>
+  The buttons are disabled before the first conversion and again as soon as you edit either panel, change <strong>Ignore empty
+  lines</strong> or <strong>Convert valid lines only</strong>, click <strong>Clear</strong> (or press Ctrl+L / Cmd+L in the tool),
+  or a conversion or a file read fails. Changing <strong>Pretty JSON output</strong> runs <strong>JSONL → JSON</strong> again when the JSONL panel has text. A failed conversion also empties the output panel, so you cannot
+  copy a result that belongs to older input. <strong>Validate</strong> on its own never enables them.
+</p>
+
 <h2>JSONL vs JSON Arrays</h2>
 <p>
   A JSON array wraps every record inside one large document. JSONL writes each record as a standalone JSON value on its own line.
   That line-oriented shape works well for logs, streaming exports, command-line processing, and large datasets where each record can be handled independently.
 </p>
 
-<h2>Validation Details</h2>
-<p>
-  The validator parses every non-empty line with <code>JSON.parse()</code>. Successful lines are counted as valid records.
-  Failed lines appear in the issue panel with the line number, parser message, and a short preview of the original line.
-</p>
-
 <h2>Example: One Bad Line in a Three-Line Export</h2>
 <p>Paste this into the JSONL panel and click <strong>Validate</strong>:</p>
 
+{/* jlc-validate: {"counts":[3,2,1,0],"line":2,"message":"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"} */}
 ```json
 {"id":1,"event":"signup"}
 {"id":2,"event":"purchase",}
 {"id":3,"event":"cancel"}
 ```
 
-<p>The counters show 3 lines, 2 valid, 1 error, 0 empty. The issue panel lists <strong>Line 2</strong> with the browser's parser message; Chrome reports <code>{"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"}</code> (the position counts from the start of that line). Firefox and Safari word the message differently. <strong>JSONL → JSON</strong> stops with an error until you fix the line or tick <strong>Convert valid lines only</strong>; with the option on, the tool outputs records 1 and 3 and reports "Converted 2 JSONL records to a JSON array."</p>
+<p>The counters show 3 lines, 2 valid, 1 error, 0 empty. The issue panel lists <strong>Line 2</strong> with the browser's parser message; Chrome reports <code>{"Expected double-quoted property name in JSON at position 27 (line 1 column 28)"}</code> (the position counts from the start of that line). Firefox and Safari word the message differently. <strong>JSONL → JSON</strong> stops with an error until you fix the line or tick <strong>Convert valid lines only</strong>. With the option on, the tool outputs records 1 and 3, reports "Converted 2 JSONL records to a JSON array.", and <strong>Download .jsonl</strong> saves:</p>
+
+{/* jlc-check: {"dir":"jsonl","validOnly":true,"out":"download-jsonl","status":"Converted 2 JSONL records to a JSON array."} */}
+```json
+{"id":1,"event":"signup"}
+{"id":2,"event":"purchase",}
+{"id":3,"event":"cancel"}
+```
+
+```json
+{"id":1,"event":"signup"}
+{"id":3,"event":"cancel"}
+```
 
 <h2>Command-Line Equivalents</h2>
 <p>For repeatable scripts, <a href="https://jqlang.org/manual/" target="_blank" rel="noopener">jq</a> does the same conversions (jq 1.7.1 output):</p>
@@ -86,7 +144,8 @@ jq -c . bad.jsonl                    # stops at the first bad line:
 
 <h2>Limits</h2>
 <ul>
-  <li>Numbers are parsed with JavaScript <code>JSON.parse()</code>, so integers above 2<sup>53</sup> lose precision in both directions: <code>{`{"order_id":9007199254740993}`}</code> comes out as <code>9007199254740992</code>. jq 1.7 keeps the original literal. Store large IDs as strings if they must survive the round trip.</li>
+  <li><strong>Duplicate keys keep the last value</strong>, as <code>JSON.parse()</code> does: <code>{`{"x":1,"x":2}`}</code> becomes <code>{`{"x":2}`}</code>, at the place of the first <code>x</code>.</li>
+  <li><strong>Keys that look like array indexes move to the front</strong> of their object, in ascending order, as in a JavaScript object: <code>{`{"b":1,"2":2,"1":3}`}</code> becomes <code>{`{"1":3,"2":2,"b":1}`}</code>. Values do not change.</li>
   <li><strong>JSON → JSONL</strong> accepts only a top-level array. An object or a single value produces "JSON input must be an array."</li>
   <li>Each record must sit on one line. A pretty-printed object spread across several lines fails on every line it spans. Lines are split on line feeds and trimmed, so Windows CRLF files work.</li>
   <li>The issue panel shows the first 40 failing lines; the error counter still counts all of them.</li>

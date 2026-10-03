@@ -136,5 +136,55 @@ await test('Ctrl+L drops cached copy/download output', async () => {
   assert.equal(p.get('jlc-total-lines').textContent, '0'); assert.equal(p.get('jlc-status').textContent, '');
 });
 
+// Tool pages (src/content/tools/jsonl-converter/{lang}.mdx):
+// {/* jlc-check: {"dir","validOnly","pretty","out","status"} */} → the next fenced block is the input of
+// the dir panel ("jsonl" / "json"); after the conversion, out ("json" / "jsonl" panel, or
+// "download-json" / "download-jsonl" / "copy-jsonl" / "copy-json") must equal the following block,
+// and status (optional) must be the status line. {/* jlc-validate: {"counts","line","message"} */} →
+// Validate on the next block gives these counters (lines, valid, errors, empty) and this message
+// for that line (V8 wording, the same engine as Chrome).
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const rel = `src/content/tools/jsonl-converter/${lang}.mdx`;
+  const mdx = readFileSync(new URL('../' + rel, import.meta.url), 'utf8');
+  const fences = from => [...mdx.slice(from).matchAll(/```\w*\n([\s\S]*?)\n```/g)].map(m => m[1]);
+  let n = 0;
+  for (const m of mdx.matchAll(/\{\/\* jlc-check: (\{.*?\}) \*\/\}/g)) {
+    n++;
+    await test(rel + ' example ' + n, async () => {
+      const spec = JSON.parse(m[1]), [input, expected] = fences(m.index), p = page(lang);
+      p.get('jlc-pretty-json').checked = spec.pretty !== false; p.get('jlc-valid-only').checked = !!spec.validOnly;
+      p.get(spec.dir === 'json' ? 'jlc-json' : 'jlc-jsonl').value = input;
+      p.get(spec.dir === 'json' ? 'jlc-to-jsonl' : 'jlc-to-json').click();
+      if (spec.status) { assert.equal(p.get('jlc-status').textContent, spec.status); assert.ok(mdx.includes(spec.status)); }
+      let out;
+      if (spec.out === 'json' || spec.out === 'jsonl') out = p.get('jlc-' + spec.out).value;
+      else if (spec.out.startsWith('download')) { p.get('jlc-' + spec.out).click(); out = await p.downloads.at(-1).text(); }
+      else { p.get('jlc-' + spec.out).click(); await 0; out = p.copied.at(-1); }
+      assert.equal(out, expected);
+    });
+  }
+  for (const m of mdx.matchAll(/\{\/\* jlc-validate: (\{.*?\}) \*\/\}/g)) {
+    n++;
+    await test(rel + ' validate example ' + n, () => {
+      const spec = JSON.parse(m[1]), [input] = fences(m.index), p = page(lang);
+      p.get('jlc-jsonl').value = input; p.get('jlc-validate').click();
+      assert.deepEqual(['total', 'valid', 'error', 'empty'].map(k => Number(p.get('jlc-' + k + '-lines').textContent)), spec.counts);
+      const row = p.get('jlc-issues-list').children.find(r => r.children?.[0]?.textContent.endsWith(' ' + spec.line));
+      assert.equal(row?.children[1].textContent, spec.message);
+      assert.ok(mdx.includes(spec.message));
+      for (const id of ['jlc-copy-json', 'jlc-copy-jsonl', 'jlc-download-json', 'jlc-download-jsonl']) assert.equal(p.get(id).disabled, true, id);
+    });
+  }
+  await test(rel + ' has checked examples and no 2^53 precision-loss claim', () => {
+    assert.ok(n >= 3, String(n));
+    assert.ok(!/lose precision|丢精度|精度が落ちます|정밀도가 떨어집니다/.test(mdx), 'old precision claim');
+    for (const [raw, out] of [['[{"b":1,"2":2,"1":3}]', '{"1":3,"2":2,"b":1}'], ['[{"x":1,"x":2}]', '{"x":2}']]) {
+      const p = page(lang); p.get('jlc-json').value = raw; p.get('jlc-to-jsonl').click();
+      assert.equal(p.get('jlc-jsonl').value, out); assert.ok(mdx.includes(raw.slice(1, -1)) && mdx.includes(out), 'limit ' + out);
+    }
+    assert.ok(!/after validation to export|校验后使用|検証後に \.jsonl|검증 후 \.jsonl/.test(mdx), 'old validate-then-download claim');
+  });
+}
+
 console.log(`${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;
