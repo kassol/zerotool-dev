@@ -158,5 +158,14 @@ for (const [tool, file, wrap, input, output, copy, status, , button] of PAGES) {
   }
 }
 
+/* ── pages that state the limits ── */
+for (const lang of LANGS) {
+  for (const tool of ['yaml-json', 'yaml-toml', 'yaml-validator', 'openapi-validator']) {
+    const text = readFileSync(join(root, 'src/content/tools', tool, lang + '.mdx'), 'utf8');
+    check(`${tool} ${lang} page states js-yaml 4.3.2 and the limits 100 / 10,000 / 100`,
+      text.includes('js-yaml 4.3.2') && text.includes('100') && text.includes('10,000') && !/js-yaml[^\n]{0,40}4\.1\.1|js-yaml 4\.1\b/.test(text));
+  }
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

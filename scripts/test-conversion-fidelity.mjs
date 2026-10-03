@@ -183,6 +183,23 @@ expectConverted(NF, 'toml-json', 't2j', 'x = 1.5\ny = -0.25\nz = 1e300', (o) => 
 expectConverted(NF, 'yaml-json', 'y2j', 'x: 1.5\ny: -2.5e-3', (o) => deep(JSON.parse(o), { x: 1.5, y: -0.0025 }), 'finite floats unchanged');
 expectConverted(NF, 'yaml-toml', 'y2t', 'x: .inf\ny: -.inf\nz: .nan', (o) => o === 'x = inf\ny = -inf\nz = nan\n', 'TOML has inf and nan, so YAML → TOML keeps them');
 
+/* ── yaml-json pages: the stop and limit messages are quoted as the page shows them ── */
+{
+  const { readFileSync } = await import('node:fs');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const text = readFileSync(new URL('../src/content/tools/yaml-json/' + lang + '.mdx', import.meta.url), 'utf8');
+    const page = open('yaml-json', lang);
+    convert(page, 'yaml-json', 'y2j', 'size: .inf\nid: 9007199254740993', 'input');
+    const stop = page.el('yj-status').textContent;
+    check('PAGE-TEXT', `yaml-json ${lang} page quotes the stop message`, text.includes('`' + stop + '`') && text.includes('size: .inf\n  id: 9007199254740993'), stop);
+    convert(page, 'yaml-json', 'y2j', 'a: ' + '['.repeat(101) + ']'.repeat(101), 'input');
+    const limit = page.el('yj-status').textContent;
+    check('PAGE-TEXT', `yaml-json ${lang} page quotes the nesting limit message`, text.includes('`' + limit + '`'), limit);
+    check('PAGE-TEXT', `yaml-json ${lang} page names js-yaml 4.3.2 and no longer says only the first document converts`,
+      text.includes('js-yaml 4.3.2') && !/js-yaml 4\.1\b/.test(text) && !/only the first document|仅转换第一个/.test(text));
+  }
+}
+
 /* ── Summary per finding ── */
 console.log('\nPer finding:');
 for (const [tag, c] of Object.entries(counts)) console.log(`  ${tag}: ${c.pass} passed, ${c.fail} failed`);

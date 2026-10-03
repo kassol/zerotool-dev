@@ -7,7 +7,7 @@ faqItems:
   - question: "Can JSON arrays of objects be converted to TOML?"
     answer: "Yes. JSON arrays of objects become TOML arrays of tables ([[table.name]] syntax). Primitive arrays become TOML inline arrays."
   - question: "What happens to JSON null values?"
-    answer: "TOML does not have a null type. Keys whose JSON value is null are left out of the TOML output without an error, so replace null values before converting."
+    answer: "TOML does not have a null type, so the conversion stops and lists each null field by its path (for example /user/nickname). Replace or remove the nulls and convert again."
   - question: "Is my data sent anywhere?"
     answer: "No. All conversion runs 100% in your browser. Your data never leaves your machine."
 ---
@@ -101,7 +101,6 @@ TOML has types that JSON lacks, and the reverse. This input:
 title = "x"
 created = 2026-09-29T10:00:00Z
 day = 2026-09-29
-ratio = inf
 
 [server]
 port = 8080
@@ -114,7 +113,6 @@ converts to:
   "title": "x",
   "created": "2026-09-29T10:00:00.000Z",
   "day": "2026-09-29",
-  "ratio": null,
   "server": {
     "port": 8080
   }
@@ -123,9 +121,25 @@ converts to:
 
 - **Comments are dropped.** JSON has no comments.
 - **Dates and times become strings.** An offset date-time gains milliseconds (`.000Z`). Converting the JSON back gives a quoted string, not a TOML date.
-- **`inf` and `nan` become `null`.** JSON has no infinity or NaN.
-- **Integers above 2^53 − 1 are rejected.** [TOML 1.0](https://toml.io/en/v1.0.0) allows 64-bit integers, but the parser stops with `integer value cannot be represented losslessly` rather than round them.
-- **JSON `null` is dropped when converting to TOML.** TOML has no null, so `{"a": null}` produces an empty document without an error. Replace nulls first.
+- **`inf` and `nan` stop the conversion to JSON.** JSON has no infinity or NaN, and `JSON.stringify` would write `null`. This TOML:
+
+  ```toml
+  ratio = inf
+
+  [limits]
+  max = nan
+  ```
+
+  gives `Not converted: JSON cannot hold these values without changing them: /ratio: inf has no JSON form (JSON.stringify would write null); /limits/max: nan has no JSON form (JSON.stringify would write null)`.
+- **Integers outside ±(2^53 − 1) stop the conversion in both directions.** [TOML 1.0](https://toml.io/en/v1.0.0) allows 64-bit integers, but the TOML parser stops with `integer value cannot be represented losslessly` rather than round them. In JSON → TOML, `JSON.parse` would round them, so the field is listed instead; a number too large for a double, such as `1e400`, is listed too.
+- **JSON `null` stops the conversion to TOML.** TOML has no null. This JSON:
+
+  ```json
+  {"user":{"id":9007199254740993,"nickname":null}}
+  ```
+
+  gives `Not converted: TOML cannot hold these values without changing them: /user/id: integer 9007199254740993 is outside ±(2^53 − 1), so JavaScript would round it; /user/nickname: null — TOML has no null`. Quote large IDs as strings and replace or remove nulls, then convert again.
+- **A failed conversion clears the output panel** and disables its Copy button, so an earlier result is not copied by mistake.
 - **JSON `1.0` becomes TOML `1`.** `JSON.parse` does not keep the difference between `1.0` and `1`, so a float that happens to be whole is written as a TOML integer. Write `1.5`-style values or fix the type by hand if your program checks it.
 - **The JSON root must be an object.** `[1, 2]` gives `stringify can only be called with an object`, because a TOML document is always a table.
 - **Redefinitions are errors.** TOML such as `a = 1` followed by `[a]` gives `trying to redefine an already defined table or value` with the line and a caret.
