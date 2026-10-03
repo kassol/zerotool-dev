@@ -121,6 +121,7 @@ converts to:
 
 - **Comments are dropped.** JSON has no comments.
 - **Dates and times become strings.** An offset date-time gains milliseconds (`.000Z`). Converting the JSON back gives a quoted string, not a TOML date.
+- **Times finer than milliseconds stop the conversion to JSON.** The TOML parser keeps milliseconds and drops further digits, which [TOML 1.0](https://toml.io/en/v1.0.0#offset-date-time) allows a parser to do. `started = 2026-10-01T09:30:00.123456Z` in a `[build]` table gives `Not converted: JSON cannot hold these values without changing them: /build/started: 2026-10-01T09:30:00.123456Z has more than millisecond precision`. Trailing zeros, as in `.120000`, lose nothing and convert. Dates and times inside strings and comments are text and are not checked.
 - **`inf` and `nan` stop the conversion to JSON.** JSON has no infinity or NaN, and `JSON.stringify` would write `null`. This TOML:
 
   ```toml
@@ -140,6 +141,7 @@ converts to:
 
   gives `Not converted: TOML cannot hold these values without changing them: /user/id: integer 9007199254740993 is outside ±(2^53 − 1), so JavaScript would round it; /user/nickname: null — TOML has no null`. Quote large IDs as strings and replace or remove nulls, then convert again.
 - **A failed conversion clears the output panel** and disables its Copy button, so an earlier result is not copied by mistake.
+- **`-0.0` keeps its sign.** The JSON `{"offset":-0.0}` gives `offset = -0.0`, a TOML float.
 - **JSON `1.0` becomes TOML `1`.** `JSON.parse` does not keep the difference between `1.0` and `1`, so a float that happens to be whole is written as a TOML integer. Write `1.5`-style values or fix the type by hand if your program checks it.
 - **The JSON root must be an object.** `[1, 2]` gives `stringify can only be called with an object`, because a TOML document is always a table.
 - **Redefinitions are errors.** TOML such as `a = 1` followed by `[a]` gives `trying to redefine an already defined table or value` with the line and a caret.

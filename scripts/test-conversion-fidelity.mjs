@@ -295,6 +295,38 @@ expectRejected(YD, 'yaml-json', 'y2j', '2026-02-31', '(root)', '2026-02-31');
   }
 }
 
+/* ── Pages quote the new stop messages, the -0.0 result and the validator note as the page shows them ── */
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const mdx = (tool, lang) => readFileSync(new URL(`../src/content/tools/${tool}/${lang}.mdx`, import.meta.url), 'utf8');
+  const shown = (tool, dir, text, lang) => { const page = open(tool, lang); const r = convert(page, tool, dir, text, 'input'); return { out: r.out.value, status: r.status.textContent }; };
+  const vsrc = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(vsrc.slice(vsrc.indexOf('const labels = '), vsrc.indexOf('const L = labels')) + '\n;labels');
+  const BUILD = '[build]\nstarted = 2026-10-01T09:30:00.123456Z';
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const tj = mdx('toml-json', lang), yt = mdx('yaml-toml', lang), yj = mdx('yaml-json', lang), yv = mdx('yaml-validator', lang);
+    const a = shown('toml-json', 't2j', BUILD, lang);
+    check('PAGE-TEXT-B', `toml-json ${lang} quotes the precision stop`, a.out === '' && tj.includes('`' + a.status + '`') && tj.includes('`started = 2026-10-01T09:30:00.123456Z`'), a.status);
+    const z = shown('toml-json', 'j2t', '{"offset":-0.0}', lang);
+    check('PAGE-TEXT-B', `toml-json ${lang} shows {"offset":-0.0} → offset = -0.0`, z.out === 'offset = -0.0\n' && tj.includes('`{"offset":-0.0}`') && tj.includes('`offset = -0.0`'), z.out);
+    const b = shown('yaml-toml', 't2y', BUILD, lang);
+    check('PAGE-TEXT-B', `yaml-toml ${lang} quotes the TOML → YAML precision stop`, b.out === '' && yt.includes('<code>' + b.status + '</code>'), b.status);
+    const z2 = shown('yaml-toml', 'y2t', 'offset: -0.0', lang);
+    check('PAGE-TEXT-B', `yaml-toml ${lang} says YAML -0.0 becomes TOML -0.0`, z2.out === 'offset = -0.0\n' && yt.split('<code>-0.0</code>').length === 3, z2.out);
+    const c = shown('yaml-json', 'y2j', 'due: 2026-02-31\nat: 2026-10-01T09:30:00.123456Z', lang);
+    check('PAGE-TEXT-B', `yaml-json ${lang} quotes the date stop`, c.out === '' && yj.includes('`' + c.status + '`') && yj.includes('due: 2026-02-31\n  at: 2026-10-01T09:30:00.123456Z'), c.status);
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid } } });
+    page.el('yv-input').value = 'size: .inf\nid: 9007199254740993\ndue: 2026-02-31'; page.el('yv-validate').click();
+    const note = page.el('yv-preview-note').textContent, prev = JSON.parse(page.el('yv-preview-content').textContent);
+    check('PAGE-TEXT-B', `yaml-validator ${lang} quotes the preview note and the preview values`,
+      yv.includes('`' + note + '`') && yv.includes('size: .inf\n  id: 9007199254740993\n  due: 2026-02-31') &&
+      prev.size === null && String(prev.id) === '9007199254740992' && prev.due === '2026-03-03T00:00:00.000Z' &&
+      yv.includes('`null`') && yv.includes('`9007199254740992`') && yv.includes('`"2026-03-03T00:00:00.000Z"`'), note);
+  }
+}
+
 /* ── Summary per finding ── */
 console.log('\nPer finding:');
 for (const [tag, c] of Object.entries(counts)) console.log(`  ${tag}: ${c.pass} passed, ${c.fail} failed`);
