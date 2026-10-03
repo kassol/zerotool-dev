@@ -25,6 +25,13 @@ import ts from 'typescript';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const requireFromRoot = createRequire(join(root, 'package.json'));
 
+class StubWorker {
+  postMessage() {}
+  terminate() {}
+  addEventListener() {}
+  removeEventListener() {}
+}
+
 export function readComponent(relPath) {
   const src = readFileSync(join(root, relPath), 'utf8');
   const fm = /^---\n([\s\S]*?)\n---/.exec(src);
@@ -114,7 +121,9 @@ export function loadPage(relPath, options = {}) {
     Map, Set, WeakMap, RegExp, Date, Symbol, BigInt, Intl, isFinite, isNaN, parseInt, parseFloat,
     exports: {}, module: { exports: {} },
     // Relative imports (./conversion-fidelity.js) resolve from the component's directory.
-    require: (name) => requireFromRoot(name.startsWith('.') ? join(root, dirname(relPath), name) : name),
+    // Vite `?worker` imports get a Worker stand-in that accepts messages and never replies.
+    require: (name) => name.endsWith('?worker') ? StubWorker
+      : requireFromRoot(name.startsWith('.') ? join(root, dirname(relPath), name) : name),
   };
   Object.assign(sandbox, options.globals || {});
   sandbox.window = sandbox;
