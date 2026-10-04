@@ -1005,6 +1005,7 @@ const { lang = 'en' } = Astro.props;
       var btnDecode = document.getElementById('csrd-decode');
       var btnExample = document.getElementById('csrd-example');
       var btnClear = document.getElementById('csrd-clear');
+      var generation = 0;
 
       function setStatus(msg, type) {
         statusEl.textContent = msg || '';
@@ -1017,9 +1018,11 @@ const { lang = 'en' } = Astro.props;
       }
 
       async function runDecode() {
+        var run = ++generation;
         var input = inputEl.value.trim();
         resultsEl.hidden = true;
         resultsEl.innerHTML = '';
+        setStatus('', 'none');
         if (!input) { setStatus(t.errEmpty, 'error'); return; }
         if (input.indexOf('PRIVATE KEY-----') !== -1) { setStatus(t.errIsPrivateKey, 'error'); return; }
 
@@ -1039,6 +1042,7 @@ const { lang = 'en' } = Astro.props;
 
         try {
           var sigState = await verifySignature(csr);
+          if (run !== generation) return;
           var sanExt = findExtension(csr.extensions, '2.5.29.17');
           var sans = [];
           if (sanExt) {
@@ -1054,11 +1058,13 @@ const { lang = 'en' } = Astro.props;
             fps.spkiPin = 'sha256/' + bytesToBase64(await digest('SHA-256', csr.spkiBytes));
           }
 
+          if (run !== generation) return;
           resultsEl.innerHTML = render(csr, checks, sans, fps);
           resultsEl.hidden = false;
           setStatus(pems.length > 1 ? t.bundleNotice.replace('{n}', pems.length) : t.decoded, pems.length > 1 ? 'info' : 'success');
           wireCopyButtons();
         } catch (e) {
+          if (run !== generation) return;
           setStatus(t.errUnexpected + (e && e.message ? e.message : String(e)), 'error');
         }
       }
@@ -1081,19 +1087,28 @@ const { lang = 'en' } = Astro.props;
       }
 
       btnDecode.addEventListener('click', runDecode);
-      btnExample.addEventListener('click', function () {
-        inputEl.value = EXAMPLE_PEM;
-        setStatus('', 'none');
-      });
-      btnClear.addEventListener('click', function () {
-        inputEl.value = '';
+      function resetResults() {
+        generation++;
         resultsEl.hidden = true;
         resultsEl.innerHTML = '';
         setStatus('', 'none');
+      }
+      inputEl.addEventListener('input', resetResults);
+      btnExample.addEventListener('click', function () {
+        resetResults();
+        inputEl.value = EXAMPLE_PEM;
+      });
+      btnClear.addEventListener('click', function () {
+        inputEl.value = '';
+        resetResults();
       });
 
       inputEl.addEventListener('keydown', function (e) {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runDecode(); }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); runDecode(); }
+      });
+      document.addEventListener('keydown', function (e) {
+        var wrap = document.querySelector('.csrd-wrap');
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap && wrap.contains(document.activeElement)) resetResults();
       });
 
       // No ztPersist wiring: persistence policy for csr-decoder is `disabled` because a CSR
