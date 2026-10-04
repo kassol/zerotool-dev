@@ -342,5 +342,41 @@ const script = source.slice(source.indexOf('/* ── engine:end ── */'), so
 check('page script does not use innerHTML / outerHTML / insertAdjacentHTML', !/innerHTML|outerHTML|insertAdjacentHTML/.test(script));
 check('page script writes card text with textContent', /c\.text\.textContent = r\.text/.test(script));
 
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  const style = source.slice(source.indexOf('<style is:global>'));
+  check('the tool root is .utc-wrap (it gets the height of the first screen)', /^\s*<div class="utc-wrap">/.test(markup) &&
+    /\.utc-wrap \{ display: flex; flex-direction: column; [^}]*min-height: 0; \}/.test(style));
+  check('input and card list use the shared two-pane classes', markup.includes('class="utc-panels zt-io"') &&
+    (markup.match(/class="utc-pane zt-io-pane"/g) || []).length === 2 &&
+    /<textarea id="utc-input" class="tool-textarea utc-textarea zt-io-fill"/.test(markup) &&
+    /<div class="utc-out zt-io-fill"[^>]*>\s*<div id="utc-plain"[\s\S]*<div id="utc-grid" class="utc-grid"><\/div>\s*<\/div>\s*<p class="utc-a11y">/.test(markup));
+  check('the status line is above the panes', markup.indexOf('id="utc-status"') < markup.indexOf('class="utc-panels zt-io"'));
+  check('the card list scrolls inside its pane (flex-basis 0, overflow auto) and stops below 860px',
+    /\.utc-out \{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(style) &&
+    /@media \(max-width: 860px\) \{[^@]*\.utc-out \{ flex: none; [^}]*overflow: visible; resize: none;/.test(style));
+  eq('one toggletip per explained control', (markup.match(/<Toggletip id="(utc-tip-\w+)"/g) || []).map((m) => m.slice(15, -1)),
+    ['utc-tip-input', 'utc-tip-cards', 'utc-tip-plain']);
+  for (const l of langs) {
+    eq('STRINGS ' + l + ' has the three toggletip texts', Object.keys(STRINGS[l].tips), ['input', 'cards', 'plain']);
+    check('STRINGS ' + l + ' toggletips are plain sentences', Object.values(STRINGS[l].tips).every((v) => v.length > 40 && !/[<>\n]|https?:/.test(v)));
+  }
+  check('toggletip text stays out of the inline script', source.includes('define:vars={{ t: CLIENT_T }}') &&
+    source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && !/\bt\.tips\b/.test(script));
+  check('Ctrl/Cmd+L refreshes the cards (back to the preview)',
+    /key === 'l' \|\| e\.key === 'L'\) && wrap\.contains\(document\.activeElement\)\) \{\s*setTimeout\(render, 0\);/.test(script));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'unicode-text-converter': 'convert'"));
+  for (const l of langs) {
+    const front = pages[l].slice(0, pages[l].indexOf('\n---\n', 4));
+    const body = pages[l].slice(front.length + 5);
+    eq(l + ' mdx: 4 steps in the frontmatter', (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "/gm) || []).length, 4);
+    check(l + ' mdx: no usage section in the body', !/^## (How to use|使用方法|使い方|사용 방법)\s*$/mi.test(body));
+    check(l + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한 사항)\s*$/m.test(body));
+    check(l + ' mdx: nothing says the note is under the input box', !/输入框下方|入力欄の下|입력창 아래/.test(pages[l]));
+  }
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

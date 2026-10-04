@@ -20,6 +20,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'svg-to-png-converter': 'convert',
   'image-to-base64': 'convert',
   'markdown-to-word': 'convert',
+  'unicode-text-converter': 'convert',
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
 };
