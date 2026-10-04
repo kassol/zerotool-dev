@@ -24,7 +24,8 @@
 // AB_TYPES_EVIDENCE=<dir> writes generated files there.
 // Run: node scripts/test-json-to-mongoose.mjs
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -58,7 +59,7 @@ function gen(json, model, mode, timestamps, required) {
   const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
-    { querySelector: () => wrap, getElementById: (id) => elements[id] }, {}, { highlightElement() {} }, {}, () => 0, () => {});
+    { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
   elements['jtm-input'].value = json;
   groups['#jtm-lang-tabs .jtm-tab'].find((tab) => tab.dataset.lang === mode).handlers.click();
   groups['#jtm-ts-tabs .jtm-tab'].find((tab) => tab.dataset.ts === String(timestamps)).handlers.click();
@@ -68,6 +69,7 @@ function gen(json, model, mode, timestamps, required) {
 }
 // A page session: the real client script with stubs, driven by input events and buttons.
 function session() {
+  const docHandlers = {};
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {}, disabled: false,
       classList: { add() {}, remove() {} }, removeAttribute() {},
@@ -82,10 +84,16 @@ function session() {
   const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
-    { querySelector: () => wrap, getElementById: (id) => elements[id] }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
+    { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
   const type = (text) => { elements['jtm-input'].value = text; elements['jtm-input'].handlers.input(); };
   const state = () => ({ code: elements['jtm-output-code'].textContent, status: elements['jtm-status'].textContent, copyDisabled: elements['jtm-copy'].disabled });
-  return { type, state, click: (id) => elements['jtm-' + id].handlers.click() };
+  // ToolLayout's Ctrl/Cmd+L (src/layouts/ToolLayout.astro): when focus is inside the tool it sets every
+  // textarea and text input to '' without input events, then other keydown listeners run.
+  const shortcut = (init, focusInside = true) => {
+    if (focusInside) { elements['jtm-input'].value = ''; elements['jtm-model-name'].value = ''; }
+    for (const fn of docHandlers.keydown || []) fn({ key: 'l', ctrlKey: false, metaKey: false, preventDefault() {}, ...init });
+  };
+  return { type, state, shortcut, click: (id) => elements['jtm-' + id].handlers.click() };
 }
 {
   const s = session();
@@ -107,6 +115,24 @@ function session() {
   const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + '\nreturn labels;')();
   eq('stale output: the error prefix exists in 4 languages', ['en', 'zh', 'ja', 'ko'].every((l) => labels[l] && labels[l].msgInvalidJson && labels[l].msgInvalidJson.trim()), true);
 }
+{
+  // Ctrl/Cmd+L: ToolLayout empties the fields without input events; the output must not stay.
+  const s = session();
+  s.shortcut({ ctrlKey: true });
+  eq('Ctrl+L: the seeded output is cleared', s.state().code, '');
+  eq('Ctrl+L: Copy is disabled', s.state().copyDisabled, true);
+  eq('Ctrl+L: the status line is cleared', s.state().status, '');
+  s.type('{"age": 30}');
+  eq('Ctrl+L: the next input renders again and enables Copy', /age: (\{ type: )?Number/.test(s.state().code) && !s.state().copyDisabled, true);
+  s.type('{"a":');
+  s.shortcut({ metaKey: true, key: 'L' });
+  eq('Cmd+L (key "L") after an error clears the error status', s.state().status, '');
+  s.type('{"age": 30}');
+  s.shortcut({ ctrlKey: true }, false);
+  eq('Ctrl+L with focus outside the tool keeps the output', /age: (\{ type: )?Number/.test(s.state().code) && !s.state().copyDisabled, true);
+  s.shortcut({ key: 'l' });
+  eq('an L keydown without Ctrl/Cmd does not clear the output', /age: (\{ type: )?Number/.test(s.state().code) && !s.state().copyDisabled, true);
+}
 function parsesAsJs(code) { try { new Function(code); return true; } catch (e) { return e.message; } }
 function parsesAsTs(code) {
   const r = ts.transpileModule(code, { reportDiagnostics: true, compilerOptions: { module: ts.ModuleKind.ESNext } });
@@ -120,8 +146,25 @@ eq('page example (JavaScript, timestamps on)', gen(PAGE_JS, 'User', 'javascript'
 const PAGE_TS = '{"sku":"A-1","price":9.5,"created_at":"2026-10-01T09:30:00Z","release-date":"2026-10-01","variants":[{"color":"red","stock":3},{"color":"blue","size":"M"}],"meta":null}';
 const tsOut = gen(PAGE_TS, 'product', 'typescript', true, true);
 eq('page example (TypeScript, required on)', tsOut,
-  "import mongoose, { Document, Schema } from 'mongoose';\n\nexport interface IVariants {\n  color: string;\n  stock: number;\n  size: string;\n}\n\nexport interface IProduct extends Document {\n  sku: string;\n  price: number;\n  created_at: Date;\n  \"release-date\": string;\n  variants: IVariants[];\n  meta: any;\n}\n\nconst variantsSchema = new Schema({\n  color: { type: String, required: true },\n  stock: { type: Number, required: true },\n  size: { type: String, required: true },\n});\n\nconst productSchema = new Schema<IProduct>({\n  sku: { type: String, required: true },\n  price: { type: Number, required: true },\n  created_at: { type: Date, required: true },\n  \"release-date\": { type: String, required: true },\n  variants: [variantsSchema],\n  meta: { type: mongoose.Schema.Types.Mixed, required: true },\n}, { timestamps: true });\n\nexport default mongoose.model<IProduct>('Product', productSchema);");
+  "import mongoose, { Schema } from 'mongoose';\n\nexport interface IVariants {\n  color: string;\n  stock: number;\n  size: string;\n}\n\nexport interface IProduct {\n  sku: string;\n  price: number;\n  created_at: Date;\n  \"release-date\": string;\n  variants: IVariants[];\n  meta: any;\n  createdAt: Date;\n  updatedAt: Date;\n}\n\nconst variantsSchema = new Schema({\n  color: { type: String, required: true },\n  stock: { type: Number, required: true },\n  size: { type: String, required: true },\n});\n\nconst productSchema = new Schema<IProduct>({\n  sku: { type: String, required: true },\n  price: { type: Number, required: true },\n  created_at: { type: Date, required: true },\n  \"release-date\": { type: String, required: true },\n  variants: [variantsSchema],\n  meta: { type: mongoose.Schema.Types.Mixed, required: true },\n}, { timestamps: true });\n\nexport default mongoose.model<IProduct>('Product', productSchema);");
 eq('page TypeScript example parses', parsesAsTs(tsOut), true);
+eq('en page shows the TypeScript example output', readFileSync(join(root, 'src/content/tools/json-to-mongoose/en.mdx'), 'utf8').includes('<pre><code>{`' + tsOut + '`}</code></pre>'), true);
+
+// TypeScript output follows the Mongoose 9 TypeScript guide (mongoosejs.com/docs/typescript.html,
+// "Using Generics"): a plain document interface passed as Schema<IUser> and model<IUser>, no
+// `extends Document`. With timestamps on, Mongoose adds createdAt and updatedAt of type Date
+// (mongoosejs.com/docs/timestamps.html) unless the schema already has that path
+// (lib/helpers/timestamps/setupTimestamps.js), so the interface lists them unless the sample has them.
+{
+  const on = gen('{"label":"sample"}', 'Sample', 'typescript', true, false);
+  const off = gen('{"label":"sample"}', 'Sample', 'typescript', false, false);
+  eq('TypeScript: no extends Document and no Document import', /extends Document|\bDocument\b/.test(on + off), false);
+  eq('TypeScript: timestamps on lists createdAt and updatedAt as Date', on.includes('export interface ISample {\n  label: string;\n  createdAt: Date;\n  updatedAt: Date;\n}'), true);
+  eq('TypeScript: timestamps off adds neither', /createdAt|updatedAt/.test(off), false);
+  const own = gen('{"createdAt":"yesterday","updatedAt":"2026-10-01T09:30:00Z","n":1}', 'Sample', 'typescript', true, false);
+  eq('TypeScript: a sample key named createdAt / updatedAt keeps its own type and is not repeated', (own.match(/createdAt:/g) || []).length === 2 && own.includes('  createdAt: string;\n  updatedAt: Date;\n  n: number;\n}'), true);
+  eq('TypeScript: JavaScript output unchanged by the timestamps fields', /createdAt|updatedAt/.test(gen('{"label":"sample"}', 'Sample', 'javascript', true, false)), false);
+}
 
 const awkward = '{"release-date": "x", "a b": 1, "2fa": true, "$ok": 1, "_id2": 2, "nested": {"x-y": [1, 2]}, "list": [{"k-1": null}]}';
 for (const mode of ['javascript', 'typescript']) {
@@ -224,6 +267,50 @@ if (process.env.MONGOOSE_TEST_DIR) {
     } catch (e) { eq(name + ' runtime execution', e.message, true); }
   }
 } else { console.log('SKIP Mongoose runtime (set MONGOOSE_TEST_DIR to an external mongoose@9.10.3 install)'); }
+
+// Strict tsc (repo TypeScript 5.9.3) of every RUNTIME sample's TypeScript output against the
+// external Mongoose 9.10.3 types: timestamps on/off × required on/off, one program. With
+// timestamps on, a hydrated document (new Model()) and a .lean() result read createdAt and
+// updatedAt; they must be Date unless the sample has its own key of that name. Before the fix
+// the interface extended Document without these fields: TS2339 on both.
+if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
+  const dir = mkdtempSync(join(tmpdir(), 'jtm-tsc-'));
+  try {
+    symlinkSync(join(process.env.MONGOOSE_TEST_DIR, 'node_modules'), join(dir, 'node_modules'));
+    const cases = [];
+    const extra = [['own timestamps keys', '{"createdAt":"yesterday","updatedAt":"2026-10-01T09:30:00Z","n":1}'], ['label', '{"label":"sample","count":1}']];
+    for (const [name, json] of RUNTIME.concat(extra)) {
+      for (const timestamps of [true, false]) {
+        for (const required of [false, true]) {
+          const n = cases.length;
+          const roots = JSON.parse(json);
+          const keys = new Set((Array.isArray(roots) ? roots : [roots]).filter((o) => o && typeof o === 'object' && !Array.isArray(o)).flatMap((o) => Object.keys(o)));
+          const read = (k) => keys.has(k) ? `void doc.${k}; if (lean) void lean.${k};` : `const h_${k}: Date = doc.${k}; if (lean) { const l_${k}: Date = lean.${k}; void l_${k}; } void h_${k};`;
+          writeFileSync(join(dir, `model_${n}.ts`), gen(json, 'Sample', 'typescript', timestamps, required));
+          writeFileSync(join(dir, `use_${n}.ts`), `import Model from './model_${n}';\nexport async function check() {\n  const doc = new Model();\n  const lean = await Model.findOne().lean();\n  ${timestamps ? read('createdAt') + '\n  ' + read('updatedAt') : 'void doc; void lean;'}\n}\n`);
+          cases.push({ n, label: `${name} timestamps=${timestamps} required=${required}` });
+        }
+      }
+    }
+    const program = ts.createProgram(cases.flatMap((c) => [join(dir, `model_${c.n}.ts`), join(dir, `use_${c.n}.ts`)]), {
+      strict: true, noEmit: true, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      target: ts.ScriptTarget.ES2022, skipLibCheck: true, esModuleInterop: true, types: [],
+    });
+    const diags = ts.getPreEmitDiagnostics(program);
+    const msg = (d) => (d.file ? d.file.fileName.slice(dir.length + 1) + ': ' : '') + 'TS' + d.code + ' ' + ts.flattenDiagnosticMessageText(d.messageText, '\n').slice(0, 160);
+    const global = diags.filter((d) => !d.file || !/\/(model|use)_\d+\.ts$/.test(d.file.fileName));
+    eq('tsc strict: no diagnostics outside the generated files', global.map(msg).join('\n') || true, true);
+    for (const c of cases) {
+      const mine = diags.filter((d) => d.file && new RegExp(`/(model|use)_${c.n}\\.ts$`).test(d.file.fileName));
+      eq(`tsc strict (TypeScript 5.9.3, Mongoose 9.10.3): ${c.label}`, mine.map(msg).join('\n') || true, true);
+    }
+    if (process.env.AB_TYPES_EVIDENCE) {
+      mkdirSync(process.env.AB_TYPES_EVIDENCE, { recursive: true });
+      writeFileSync(join(process.env.AB_TYPES_EVIDENCE, 'tsc-diagnostics.txt'), diags.map(msg).join('\n') + '\n');
+      writeFileSync(join(process.env.AB_TYPES_EVIDENCE, 'tsc-sample-model.ts'), readFileSync(join(dir, `model_${cases.findIndex((c) => c.label === 'label timestamps=true required=false')}.ts`), 'utf8'));
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+} else { console.log('SKIP TypeScript strict compile (set MONGOOSE_TEST_DIR to an external mongoose@9.10.3 install; needs TypeScript 5.9.3, have ' + ts.version + ')'); }
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

@@ -867,5 +867,54 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
 }
 
+// ---------- 11. same schema, same draft; the status between an edit and the debounced run ----------
+// v1.138.61 acceptance recorded "Valid … (Draft 7)" and then "1 error (Draft 2020-12)" for one
+// schema without $schema. The engine was not the cause: after the script wrote the new schema
+// and data, the seeded draft-07 example's green status stayed on screen until the 300 ms
+// debounce ran (ego-browser timeline: 0–407 ms "success | … (Draft 7)", then "Validating…",
+// then "… (Draft 2020-12)"), and the script's wait for "success" matched the old result.
+{
+  const NO_SCHEMA = '{"type":"number","multipleOf":0.01}';
+  const runCached = (schemaText, dataText, cache) => E.runValidation(lib, { schemaText, dataText, extrasText: '', menu: 'auto', formats: true }, T, cache);
+  const cache = { key: null, built: null };
+  const seq = [
+    runCached(EXAMPLES.user.schema, EXAMPLES.user.data, cache), runCached(EXAMPLES.user.schema, EXAMPLES.user.data, cache),
+    runCached(NO_SCHEMA, '19.99', cache), runCached(NO_SCHEMA, '19.995', cache), runCached(NO_SCHEMA, '19.99', null),
+    runCached(EXAMPLES.user.schema, EXAMPLES.user.data, cache),
+  ];
+  check('same schema text gives the same draft on every run (cached as in the worker, fresh as in the fallback)',
+    seq.map((r) => r.draft + ':' + r.state).join(' ') === '7:valid 7:valid 2020-12:valid 2020-12:invalid 2020-12:valid 7:valid', seq.map((r) => r.draft + ':' + r.state));
+  check('status lines name the draft of the schema text, not of the previous run', E.statusText(seq[2], T) === E.fmt(T.valid, { draft: 'Draft 2020-12' }) && E.statusText(seq[3], T) === E.fmt(T.invalidOne, { draft: 'Draft 2020-12' }), [E.statusText(seq[2], T), E.statusText(seq[3], T)]);
+
+  const { loadPage } = await import('./astro-page-harness.mjs');
+  const page = loadPage('src/components/tools/JsonSchemaValidatorTool.astro', { dataset: { 'jsv-wrap': { strings: JSON.stringify(T) } } });
+  const status = () => page.el('jsv-status').className.replace('jsv-status ', '') + ' | ' + page.el('jsv-status').textContent;
+  // render() after a finished run, as run() does (started = true before render)
+  const show = (res) => { page.ctx.__res = res; page.run('started = true; render(__res)'); };
+  show(seq[0]);
+  check('page: the seeded example shows its own result', status() === 'success | ' + E.fmt(T.valid, { draft: 'Draft 7' }), status());
+  page.el('jsv-schema').value = NO_SCHEMA;
+  page.el('jsv-schema').dispatch('input');
+  page.el('jsv-data').value = '19.99';
+  page.el('jsv-data').dispatch('input');
+  check('page: right after an edit (before the 300 ms run) the old verdict is no longer shown as current', status() === 'info | ' + T.validating, status());
+  check('page: right after an edit the old result is greyed and its copy buttons are hidden', page.el('jsv-result').classList.contains('jsv-stale') && page.el('jsv-copy-text').hidden && page.el('jsv-copy-json').hidden);
+  page.flush();
+  show(seq[2]);
+  check('page: the run for the new text names its draft', status() === 'success | ' + E.fmt(T.valid, { draft: 'Draft 2020-12' }), status());
+  page.el('jsv-data').value = '19.995';
+  page.el('jsv-data').dispatch('input');
+  check('page: a second edit shows "Validating…" again', status() === 'info | ' + T.validating, status());
+  page.flush();
+  page.el('jsv-data').value = 'x'.repeat(1_000_001);
+  page.el('jsv-data').dispatch('input');
+  check('page: an edit above the auto-run limit says so at once (no "Validating…")', status() === 'info | ' + T.large, status());
+  page.flush();
+  show({ state: 'empty', notices: [], docs: [] });
+  page.el('jsv-data').value = '1';
+  page.el('jsv-data').dispatch('input');
+  check('page: an edit after an empty result keeps the empty-state text until the run', status() === 'none | ' + T.empty, status());
+}
+
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);
