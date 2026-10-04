@@ -11,6 +11,7 @@ export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
   'number-base': 'compact',
+  'bcrypt-generator': 'compact',
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',

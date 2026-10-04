@@ -28,6 +28,8 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 import { createHash, webcrypto } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -635,7 +637,8 @@ function makePage(lang='en', layoutFirst=false) {
   const pageCrypto={getRandomValues:a=>webcrypto.getRandomValues(a),subtle:{digest(alg,bytes){if(!holdDigest)return webcrypto.subtle.digest(alg,bytes);const d=deferred();digests.push({d,alg,bytes:Uint8Array.from(bytes)});return d.promise;}}};
   const timeout=(fn,ms=0)=>{const t={id:++timerId,fn,ms};timers.push(t);return t.id;};
   const window={setTimeout:timeout,trackTool(){},ztPersist:{clear:s=>persist.push(s)}};
-  const context=vm.createContext({document:doc,window,navigator:{clipboard:stubClipboard},Worker,crypto:pageCrypto,TextEncoder,TextDecoder,Uint8Array,ArrayBuffer,atob,btoa,console,setTimeout:timeout,clearTimeout:id=>{const i=timers.findIndex(t=>t.id===id);if(i>=0)timers.splice(i,1);},S:STRINGS[lang],WORKER_URL:'/vendor/bcrypt-worker.js?probe',_slug:'bcrypt-generator'});
+  const { CLIENT_L }=vm.runInNewContext(source.slice(source.indexOf('const L = STRINGS[lang];'),source.indexOf('const PREFIX_OPTIONS'))+'\n({CLIENT_L});',{STRINGS,lang});
+  const context=vm.createContext({document:doc,window,navigator:{clipboard:stubClipboard},Worker,crypto:pageCrypto,TextEncoder,TextDecoder,Uint8Array,ArrayBuffer,atob,btoa,console,setTimeout:timeout,clearTimeout:id=>{const i=timers.findIndex(t=>t.id===id);if(i>=0)timers.splice(i,1);},S:CLIENT_L,WORKER_URL:'/vendor/bcrypt-worker.js?probe',_slug:'bcrypt-generator'});
   if(layoutFirst) vm.runInContext(keyboard,context);
   vm.runInContext(pageScript,context,{filename:'BcryptGeneratorTool.astro',timeout:5000});
   if(!layoutFirst) vm.runInContext(keyboard,context);
@@ -739,6 +742,81 @@ function makePage(lang='en', layoutFirst=false) {
     }
   }
   for(const [i,p] of pages.entries())check('page lifecycle '+i+' has no script errors or native clipboard calls',p.failures.length===0&&p.summary().fallbackCalls===0,p.failures);
+}
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses=passes,beforeFailures=failures;
+  const template=source.slice(source.indexOf('\n---\n')+5,source.indexOf('<script')).trim();
+  const pageScript=source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css=source.slice(source.indexOf('<style>')+7,source.indexOf('</style>'));
+  const rules=selector=>[...css.matchAll(new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\s*\\{([^}]*)\\}','g'))].map(m=>m[1]);
+  const prop=(r,key,value)=>new RegExp('(?:^|;)\\s*'+key+':\\s*'+value+'\\s*(?:;|$)').test(r);
+  const sha=text=>createHash('sha256').update(text).digest('hex');
+  const layouts=read('src/data/tool-layouts.ts');
+  check('bcrypt-generator is registered as compact', /'bcrypt-generator':\s*'compact'/.test(layouts));
+  check('tool root is directly bcg-wrap', /^<div class="bcg-wrap">/.test(template));
+  check('tab container uses shared segmented styles without duplicating them',/<div class="bcg-tabs zt-segmented" role="tablist">/.test(template)&&rules('.bcg-tabs').every(r=>!/display:|border-radius:|box-shadow:/.test(r)));
+  check('compact root is a natural-height shrinkable column',rules('.bcg-wrap').some(r=>prop(r,'display','flex')&&prop(r,'flex-direction','column')&&prop(r,'min-height','0')&&prop(r,'min-width','0'))&&!/\b(?:height|min-height):[^;]*(?:vh|svh)/.test(css));
+  for(const mode of ['gen','ver']){
+    check(mode+' main operation precedes reserved status and input',template.indexOf('id="bcg-'+mode+'-btn"')<template.indexOf('id="bcg-'+mode+'-status"')&&template.indexOf('id="bcg-'+mode+'-status"')<template.indexOf('id="bcg-'+mode+'-pw"'));
+    check(mode+' status remains keyboard reachable',new RegExp('id="bcg-'+mode+'-status"[^>]*tabindex="0"').test(template));
+  }
+  check('status keeps two lines, three on phone, and scrolls',rules('.bcg-wrap .tool-status').some(r=>prop(r,'height','3em')&&prop(r,'overflow','auto'))&&rules('.bcg-wrap .tool-status').some(r=>prop(r,'height','4.5em'))&&!/tool-status:empty[^}]*display:\s*none/.test(css));
+  check('prefix/cost share a shrinking grid',rules('.bcg-opts').some(r=>prop(r,'display','grid')&&prop(r,'grid-template-columns','minmax\\(0, 1fr\\) 7rem')));
+  check('Generate options precede action and input',template.indexOf('id="bcg-prefix"')<template.indexOf('id="bcg-gen-btn"'));
+  check('Check parsing cannot push input or primary operation down',template.indexOf('id="bcg-ver-parse"')>template.indexOf('id="bcg-ver-pw"')&&template.indexOf('id="bcg-ver-parse"')>template.indexOf('id="bcg-ver-btn"'));
+  for(const [id,selector,height] of [['gen-out','.bcg-out','12rem'],['ver-parse','.bcg-parse','12rem'],['ver-result','.bcg-result','6rem'],['ver-variants','.bcg-variants','12rem']]){
+    check(id+' has fixed height and internal scrolling',rules(selector).some(r=>prop(r,'height',height)&&prop(r,'overflow','auto')));
+    check(id+' allows keyboard scrolling',new RegExp('id="bcg-'+id+'"[^>]*tabindex="0"').test(template));
+  }
+  check('generated hash can scroll horizontally by keyboard',/id="bcg-gen-hash"[^>]*tabindex="0"/.test(template)&&rules('.bcg-wrap :global(.bcg-hash)').some(r=>prop(r,'white-space','pre')&&prop(r,'overflow-x','auto')&&prop(r,'min-width','0')));
+  check('dynamic variant hashes wrap inside vertically scrollable result',rules('.bcg-wrap :global(.bcg-variant .bcg-hash)').some(r=>prop(r,'white-space','normal')&&prop(r,'overflow-wrap','anywhere')));
+  check('password warning lists have bounded overflow',rules('.bcg-wrap :global(.bcg-issues)').some(r=>prop(r,'height','6rem')&&prop(r,'overflow','auto')));
+  check('hidden tabs/results retain precedence',/\.bcg-wrap \[hidden\]\s*\{\s*display:\s*none\s*!important/.test(css));
+  check('empty parse has no reserved preview',/\.bcg-parse:empty\s*\{\s*display:\s*none/.test(css));
+  check('responsive 860/640 rules and 44px phone tab/action remain',/@media \(max-width: 860px\)/.test(css)&&/@media \(max-width: 640px\)/.test(css)&&/\.bcg-tab, \.bcg-actions\s*\{\s*min-height:\s*44px/.test(css));
+  const buttons=[...template.matchAll(/<button\b([^>]*)>/g)];
+  check('all eight original static action buttons remain',buttons.length===8);
+  for(const id of ['tab-gen','tab-ver','gen-btn','gen-cancel','gen-copy','ver-example','ver-btn','ver-cancel'])check('original button bcg-'+id+' kept once',buttons.filter(m=>m[1].includes('id="bcg-'+id+'"')).length===1);
+  check('manual Generate and Check remain and input does not generate',pageScript.includes("genBtn.addEventListener('click', generate)")&&pageScript.includes("verBtn.addEventListener('click', verify)")&&pageScript.includes("genPw.addEventListener('input', function () { updateGenPw(); })"));
+  check('privacy and selected prefix consequences stay directly visible',/<p class="bcg-privacy">\{L.privacy\}<\/p>/.test(template)&&/<p id="bcg-prefix-note"/.test(template));
+  const tipKeys=['password','prefix','cost','generate','hash','verify','copy'].sort();
+  const tips=[...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  check('eight tip instances use seven explanation keys',tips.length===8&&new Set(tips.map(m=>m[2])).size===7);
+  check('tip IDs are unique',new Set(tips.map(m=>/id="([^"]+)"/.exec(m[1])[1])).size===8);
+  check('tips are separate from labels and summary',!/<(?:label|summary)\b[^>]*>(?:(?!<\/(?:label|summary)>)[\s\S])*?<Toggletip/.test(template));
+  for(const tip of tips)check('tip '+/id="([^"]+)"/.exec(tip[1])[1]+' is built in the selected language',/lang=\{lang\}/.test(tip[1])&&/about=\{L\.\w+\}/.test(tip[1])&&/^\{TIPS\.\w+\}$/.test(tip[2]));
+  check('page serializes only CLIENT_L and worker URL',/define:vars=\{\{ S: CLIENT_L, WORKER_URL \}\}/.test(source)&&!/TIPS|STRINGS|data-i18n/.test(pageScript));
+  check('protected engine bytes unchanged',sha(source.slice(startIndex,endIndex+END_MARK.length))==='7b4e5f81ff6b8bc56a545fb79775aea4cd06535650c789d8f47dcc5b28adc8a0');
+  check('complete page script remains byte-for-byte unchanged by layout',sha(pageScript)==='93c8e182f8ed43e11cbbd2277135782fa3d35f69f7d6a6e6320b298e9db21ef6');
+  const retained={"en": {"meta": "410ab5ed8e9db222b79fe36fe1f4afe9b4e7faa013fddb0681c69fcd3e511319", "body": "da35a319310d1b2b9ce34d81a66c5dbb09d5a343792fc3830199251620b0557c", "markers": 5}, "zh": {"meta": "8f8b008e996c53053b9f8db7c52100af15685c25583aa548d4ab1ffb07466843", "body": "5595c96180afe27134a315563b4353279ce50bad34a749251f1470cd0385a25f", "markers": 4}, "ja": {"meta": "9f4005ba458ee0f1e789a6631e10782bda424c4929a1d511e63b61cd67805949", "body": "a2b5c8fac997b361502e7e3a07a3227815c16530da1afb8615db6b962e3ad370", "markers": 3}, "ko": {"meta": "ed0c1eb51473c9aff56849fd84cd2a534b99b950dce4d2d2c130b40bf5e2cc18", "body": "1ce37191baf536ff2d98251e034a0aeebe17a3b29655b7949f7be917fd3082c6", "markers": 3}};
+  for(const lang of ['en','zh','ja','ko']){
+    const entry=STRINGS[lang];
+    check(lang+' tip keys are complete',Object.keys(entry.tips).sort().join()===tipKeys.join());
+    for(const key of tipKeys)check(lang+'.'+key+' tip is nonempty plain text',typeof entry.tips[key]==='string'&&entry.tips[key].trim()&&!/<[^>]*>|\n/.test(entry.tips[key]));
+    const {TIPS,CLIENT_L}=vm.runInNewContext(source.slice(source.indexOf('const L = STRINGS[lang];'),source.indexOf('const PREFIX_OPTIONS'))+'\n({TIPS,CLIENT_L});',{STRINGS,lang});
+    check(lang+' client keys exclude only tips',Object.keys(CLIENT_L).sort().join()===Object.keys(entry).filter(k=>k!=='tips').sort().join());
+    check(lang+' client contains no tip text',Object.values(TIPS).every(tip=>!JSON.stringify(CLIENT_L).includes(JSON.stringify(tip))));
+    const mdx=read('src/content/tools/bcrypt-generator/'+lang+'.mdx');
+    const [,meta,body]=/^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx),{steps}=loadYaml(meta);
+    check(lang+' has six bounded plain-text steps',steps.length===6&&steps.every(step=>typeof step==='string'&&step.length<=280&&!/<[^>]*>/.test(step))&&steps.join('').length<=1200);
+    for(const key of ['tabGen','prefix','cost','password','generate','copy','cancel','tabVer','example','verify'])check(lang+' steps use current '+key+' label',steps.some(step=>step.includes(entry[key])));
+    check(lang+' Usage removed and Limits retained',!/<h2>(?:How to use|怎么用|使い方|사용 방법)<\/h2>/.test(body)&&/<h2>(?:Limits|限制|制限|제한)<\/h2>/.test(body));
+    check(lang+' FAQ and SEO metadata byte-for-byte retained',sha(meta.replace(/^steps:\n(?:  - .*\n)*/m,''))===retained[lang].meta);
+    check(lang+' non-Usage body byte-for-byte retained',sha(body)===retained[lang].body);
+    check(lang+' all recalculation markers retained',(body.match(/bcg-check:/g)||[]).length===retained[lang].markers);
+  }
+  const require=createRequire(import.meta.url);
+  const {transform}=await import(require.resolve('@astrojs/compiler',{paths:[dirname(require.resolve('astro'))]}));
+  const {transform:transformJs}=await import('esbuild');
+  const compiled=await transform(source,{filename:'BcryptGeneratorTool.astro'});
+  check('Astro compiles the component without errors',compiled.diagnostics.every(d=>d.severity!==1),compiled.diagnostics);
+  await transformJs(compiled.code,{loader:'ts',format:'esm'});
+  check('compiled JavaScript parses',true);
+  check('Astro serialization excludes tips',compiled.code.includes('$$defineScriptVars({ S: CLIENT_L, WORKER_URL })')&&!compiled.code.includes('$$defineScriptVars({ S: L, WORKER_URL })'));
+  check('Astro resolves scoped CSS',compiled.css.every(x=>!x.includes(':global(')));
+  console.log('v2 page layout: '+(passes-beforePasses)+' passed, '+(failures-beforeFailures)+' failed');
 }
 
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);
