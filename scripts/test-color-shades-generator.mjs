@@ -792,7 +792,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     check(lang + ' v2 usage facts and empty state localized', Object.keys(STRINGS[lang].tips).length === 8 && Object.values(STRINGS[lang].tips).every(tip => tip.length > 10) && !!STRINGS[lang].empty);
     check(lang + ' v2 keeps reference and removes HowTo', !/^## (How to use|使用方法|使い方|사용 방법)$/m.test(mdx) && /^## (Limits|限制|制限|제한 사항)$/m.test(mdx) && meta.faqItems.length >= 4 && /csg:/.test(mdx));
   }
-  check('v2 scale and code scroll within bounded regions', /\.csg-scale \{[^}]*min-height: 0;[^}]*overflow: auto;/s.test(source) && /\.csg-code \{[^}]*height: 12rem;[^}]*overflow: auto;/s.test(source));
+  check('v2 scale, code and export note scroll within bounded regions', /\.csg-scale \{[^}]*min-height: 0;[^}]*overflow: auto;/s.test(source) && /\.csg-code \{[^}]*height: 12rem;[^}]*overflow: auto;/s.test(source) && /#csg-export-note \{ height: 4em; overflow: auto; \}/.test(source));
   check('v2 stack at shared breakpoint and retain mobile error status', /@media \(max-width: 860px\)/.test(source) && /\.csg-preview:has\(\.csg-scale:empty\) > :not\(\.csg-status\) \{ display: none; \}/.test(source));
   const compiled = await transform(source, { filename: 'ColorShadesGeneratorTool.astro' });
   check('v2 Astro compiles', !compiled.diagnostics.some(d => d.severity === 1));
