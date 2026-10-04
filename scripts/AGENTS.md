@@ -123,6 +123,8 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-04 — v2 版式推广第 1 批：12 个工具的测试各在末尾加「v2 page layout」一组（根元素是工具根、`.zt-io` / `.zt-io-pane` / `.zt-io-fill`、Toggletip 的 id 列表、气泡文案不进脚本、`tool-layouts.ts` 登记为 `convert`、四语言 mdx 有 `steps`、无用法节、限制节仍在），并覆盖各自的行为改动：text-to-binary 210 → 229（无「文本 → 二进制」按钮、Ctrl/⌘+L 清状态）；hmac-generator 199 → 232（`hidden` 的结果行与示例按钮真的隐藏、无「生成」按钮）；markdown-table-generator 209 → 291（tips 键集、占位符检查跳过非字符串）；svg-optimizer 324 → 362（空状态提示；页面级：import 失败一次 → 报错并出现「重试」→ 点重试出结果，无效 XML 不出重试）；protobuf-to-json 336 → 377；string-escape 223 → 292；jq-playground 1,319 → 1,409；svg-to-png-converter 336 → 413（空代码框转换不丢文件结果、框内 Ctrl/⌘+Enter 只转换一次、隐藏表头文案、Ctrl/⌘+L 清文件结果）；image-to-base64 334 → 433；markdown-to-word 173 → 222（勾选「嵌入网络图片」时显示联网后果）；unicode-text-converter 173 → 215（≥861px 列宽 1fr 2fr、限制清单）；aes-encrypt-decrypt 447 → 534（手机控件顺序、状态行预留高度、原始密钥与填 IV 时的成功消息、文件加密的 IV 警告、`err_openssl` 指向折叠区）。`test-llms-txt.mjs` 283 → 300：`plainText()` 还原 `<code>` 内的 MDX 字符串表达式、构建出的 5 个 llms 文件不含 NUL 字节、本批 12 个工具的 steps 范围检查。均只写 stdout。
+
 - 2026-10-04 — `audit.mjs` 新增 `tool_layouts` 检查（共 22 项）：用正则读 `src/data/tool-layouts.ts` 的 `toolPageKinds` 对象，键不在 `tools.ts` 或值不是 `convert` / `generate` / `analyze` 即 FAIL。验证：把一个键改成不存在的 slug、把一个值改成 `wide`，各得到 1 条 FAIL 与退出码 1，还原后 22 项全 PASS。
 
 - 2026-10-04 — 加入 `compare-dist.mjs`（两份构建的四语言工具页比对，归一化空白与 `/_astro/` 内容哈希）。验证：基线与自身比对 564 页相同、退出 0；改一个类名、删一个 `<link>`、缺一页各报为不同并退出 1；只改 CSS 文件哈希的页面算相同。

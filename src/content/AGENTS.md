@@ -133,6 +133,7 @@ faqItems:                # 可选，结构化 FAQ
 
 ## 变更日志
 
+- 2026-10-04 — v2 版式推广第 1 批（12 个转换类工具，清单见根 AGENTS.md 同日条目）：四语言 mdx 删去「用法」一节（`## How to …` 或 `<h2>` 加 `<ol>` 两种写法都有），步骤写入 `steps`；「限制」节保留在正文。随界面改动同步的正文：unicode-text-converter 的「输入框下方」改为「状态行」、en 示例的样式名、四语言限制节补下标；四语言正文与 FAQ 里没有再提到已删除的按钮（生成 HMAC、压缩、解码 / 编码 / 生成、换一个 SVG、文本 → 二进制）。steps 里形如标签的文字（`<img>`）会被 `llms.mjs` 的 `plainText()` 删掉，要写成实体（`&lt;img&gt;`）。
 - 2026-10-03 — tools collection 新增可选 frontmatter `steps`（`config.ts`）。json-formatter、color-palette-generator、har-file-analyzer 改为 v2 版式：4 语言删去「用法」「限制」两节，用法写入 `steps`，限制移入工具内说明气泡，其余正文与 FAQ 收进折叠区。
 - 2026-10-03 — 转换保真与 js-yaml 上限：yaml-toml、toml-json、yaml-json 四语言的限制段与 FAQ 改为「目标格式无法原样保存的值会停止转换并按路径列出」，示例输出与停止消息由 `test-yaml-toml.mjs`、`test-toml-json.mjs`、`test-conversion-fidelity.mjs` 经页面入口复算并核对逐字出现；yaml-toml 新增日期与「TOML 无法保存的值」两节（zh / ja / ko 另加限制段），toml-json 的转换示例去掉 `ratio = inf → null`；yaml-toml、yaml-json、yaml-validator、openapi-validator 四语言写明 js-yaml 4.3.2 的嵌套 100 层、合并键 10,000、单个合并键 100 个映射上限，js-yaml 版本文案改为 4.3.2。上一条中 yaml-toml 大整数「输出为浮点字面量」的示例已改为停止转换。
 
