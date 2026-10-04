@@ -26,6 +26,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'har-file-analyzer': 'analyze',
   'dns-lookup': 'analyze',
   'url-parser': 'analyze',
+  'json-schema-validator': 'analyze',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
