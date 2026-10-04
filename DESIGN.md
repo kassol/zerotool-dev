@@ -140,7 +140,7 @@ Every tool UI fills the `.tool-widget` width. Use inner grids to create local st
 
 ### Tool Pages v2
 
-Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page--v2`; the other tools keep the structure above until they are moved in batches. To move a tool: add its slug with a kind, make its component fill the height it gets, put explanations in toggletips, move the MDX "How to use" and "Limits" facts into the tool and the `steps` frontmatter, and run its tests, `test-llms-txt.mjs`, audit and build.
+Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page--v2`; the other tools keep the structure above until they are moved in batches. To move a tool: add its slug with a kind, make its component fill the height it gets, put explanations in toggletips, move the MDX "How to use" facts into the tool and the `steps` frontmatter (the "Limits" section stays in the MDX, see "Reference content"), and run its tests, `test-llms-txt.mjs`, audit and build.
 
 **Kinds** (pick by what the user mainly looks at):
 
@@ -171,6 +171,7 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 **Explanations in the tool**
 
 - Short hints sit next to the control they describe, as toggletips (`src/components/Toggletip.astro`): a 24px "?" button (28px on phones), or a text button (`text` prop) for a question the user may have before starting, such as "How to export a HAR". The panel is a native `popover="auto"`: click or tap opens it, a second click, a tap outside or Esc closes it, focus stays on the button. Panel colors are inverted (`--color-text` background, `--color-bg` text).
+- The "?" button's accessible name is built in `Toggletip.astro`: pass `lang` and `about` (the control's visible name) and it reads the pattern `tool.tipAbout` from `src/i18n` ("About: {name}"). Pass `label` only for a name that does not fit the pattern; a text button needs neither.
 - The text is in the HTML, in all four languages (component `STRINGS`), and states what the old MDX "How to use" section held (accepted input, what an option changes) plus the limits that belong to one control (the size limit next to the file button, what a check does not cover next to its option). Limits that are not tied to one control stay in the MDX "Limits" section. Write plain sentences; no lists or paragraphs inside (a toggletip may sit inside a `<p>`), no links.
 - Errors still name the cause and the fix in the status line.
 

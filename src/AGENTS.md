@@ -36,6 +36,8 @@ src/
 - `astro.config.mjs` 的 `toolRoutes()` 读 `components/tools/registry.ts`（slug → 组件文件名），为每个工具生成入口 `.generated/tool-routes/{slug}.astro` 并注入路由 `/[...lang]/tools/{slug}`（4 语言共用一个入口）
 - 入口 → `components/ToolPage.astro`（取 content 条目、渲染 `ToolLayout`）+ 只 import 本工具的 `components/tools/{Name}Tool.astro`（放进 `tool` slot）；非 EN 页向组件传 `lang` prop
 - 每个工具页的 CSS = 全站 CSS + 共享工具 CSS（`tool-common.css`、`ToolLayout`、`ShareButtons`、`AdUnit`）+ 本工具组件 CSS。组件不能依赖其他工具组件的样式（根 AGENTS.md 全局规范第 11 条）
+- `components/Toggletip.astro`（v2 工具页的说明气泡）→ `i18n/utils.t()` 取 `tool.tipAbout` 拼按钮的 aria-label（调用方传 `lang` 与 `about`）；组件没有 `<style>`，样式是 `styles/tool-common.css` 的 `.zt-tip*`
+- `styles/tool-common.css` 另含 convert 类工具的双栏布局类 `.zt-io` / `.zt-io-pane` / `.zt-io-fill`（用法见 DESIGN.md「Tool Pages v2」）
 - `BaseLayout.astro` → `i18n/utils.t()`（导航 / footer）
 - `components/SEO.astro` → `getCollection('blog')` 列出可收录（非 draft、非 noindex，判定在 `data/blog-index.mjs`）的语言变体生成 hreflang；noindex 页面不输出 hreflang
 - 工具页 → `data/tools.ts` 取元数据，`data/icons.ts` 取 SVG
@@ -47,6 +49,8 @@ src/
 - 新增 i18n 文案 key：4 个 JSON 文件同步加，避免运行时回退到 key 字符串
 
 ## 变更日志
+
+- 2026-10-04 — v2 版式推广前的共享改造：`Toggletip.astro` 的样式移入 `styles/tool-common.css`，新增 `lang` / `about` 两个 prop 并用 `i18n` 的 `tool.tipAbout` 拼 aria-label（3 个样板组件删去各自的 `tipAbout` 文案与本地函数）；`JsonFormatterTool` 的双栏布局抽成 `.zt-io` / `.zt-io-pane` / `.zt-io-fill`；`ToolLayout` 删去无效的 `wideToolSlugs` 与 `.tool-widget--wide`。`data/tool-layouts.ts` 的键与值由 `audit.mjs` 的 `tool_layouts` 检查。经过与比对结果见根 AGENTS.md 同日条目。
 
 - 2026-10-04 — 工具页 v2 版式：新增 `components/Toggletip.astro`（原生 popover 的说明气泡，内容写在 HTML 里，点击 / 触控打开，点外部或 Esc 关闭，无 popover 支持时退回 hidden）与 `data/tool-layouts.ts`；`ToolLayout` 对其中的 slug 渲染 v2 版式。json-formatter、color-palette-generator、har-file-analyzer 三个组件改为占满首屏的布局并加控件旁说明。
 
