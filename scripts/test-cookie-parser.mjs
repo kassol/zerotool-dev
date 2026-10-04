@@ -657,6 +657,8 @@ for (const lang of ['zh', 'ja', 'ko']) {
   check('v2: empty results give the first-screen space to input', /\.ck-wrap:has\(\.ck-out:empty\) \.ck-input-pane \{ flex: 1 1 0;/.test(css) && /\.ck-results:has\(\.ck-out:empty\) \{ display: none;/.test(css));
   check('v2: secondary tools stack at 860px', /@media \(max-width: 860px\)[\s\S]*?\.ck-secondary \{ grid-template-columns: minmax\(0, 1fr\);/.test(css));
   check('v2: mobile output keeps its height as results grow', /@media \(max-width: 860px\)[\s\S]*?\.ck-result-scroll \{ flex: none; height: 55svh; max-height: none; \}/.test(css));
+  check('v2: simulation results are a localized keyboard-accessible region', markup.includes('id="ck-sim-out" class="ck-sim-out" tabindex="0" role="region" aria-label={T.simTitle} aria-live="polite"'));
+  check('v2: simulation results keep a fixed scrolling height while URL hints keep natural height', /\.ck-sim-out:has\(:global\(\.ck-sim-head\)\) \{[^}]*height: min\(30svh, 10rem\);[^}]*overflow: auto;[^}]*flex: none;/.test(css) && !/\.ck-sim-out \{[^}]*height:/.test(css));
   check('v2: redundant Parse button, binding and translation key are removed', !source.includes('ck-parse') && Object.values(STRINGS).every((v) => !('parse' in v)));
   check('v2: input still parses without a button', source.includes("inputEl.addEventListener('input', function () { render(false); });"));
   check('v2: listed as an analyze page', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'cookie-parser': 'analyze'"));
