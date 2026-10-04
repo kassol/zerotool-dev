@@ -971,5 +971,53 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 check('tool pages carry checked examples', mdxChecks >= 8, mdxChecks + ' found');
 
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script is:inline define:vars'));
+  const at = (needle) => markup.indexOf(needle);
+  const inOrder = (...needles) => needles.every((n, i) => at(n) >= 0 && (i === 0 || at(needles[i - 1]) < at(n)));
+  check('the tool root is #pbj and carries the mode (it gets the height of the first screen)', /^<div class="pbj" id="pbj" data-mode="decode">/.test(markup));
+  check('mode and raw flags are set on the root', script.includes("root: $('pbj'), modes:") && script.includes("els.root.setAttribute('data-mode', mode);") &&
+    script.includes("els.root.setAttribute('data-raw', ") && !source.includes('pbj-grid'));
+  check('bar, options and status come before the panels', inOrder('class="pbj-bar"', 'class="pbj-options"', 'id="pbj-status"', 'class="pbj-panels zt-io"'));
+  eq('two panes: inputs on the left, output on the right', [...markup.matchAll(/class="(pbj-\w+) zt-io-pane"/g)].map((m) => m[1]), ['pbj-in', 'pbj-out']);
+  eq('the three input boxes and the output fill their panes', [...markup.matchAll(/<(?:textarea|pre) id="(pbj-\w+)" class="[^"]* zt-io-fill"/g)].map((m) => m[1]),
+    ['pbj-bytes', 'pbj-json', 'pbj-schema', 'pbj-output']);
+  check('the schema box is in the left pane; the notes are under the output', inOrder('class="pbj-in zt-io-pane"', 'id="pbj-bytes"', 'id="pbj-json"', 'id="pbj-schema"',
+    'class="pbj-out zt-io-pane"', 'id="pbj-output"', 'id="pbj-notes-wrap"'));
+  const tipIds = [...markup.matchAll(/<Toggletip id="pbj-tip-(\w+)" lang=\{lang\} about=\{L\.\w+\} wide>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+  const TIP_KEYS = ['modes', 'type', 'fmt', 'grpc', 'names', 'defaults', 'rawview', 'ignore', 'bytes', 'json', 'schema'];
+  eq('one toggletip per explained control', tipIds.map((m) => m[1]), TIP_KEYS);
+  check('each toggletip shows the text of its own key', tipIds.every((m) => m[1] === m[2]) && (markup.match(/<Toggletip /g) || []).length === TIP_KEYS.length);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' has text for every toggletip', Object.keys(STRINGS[lang].tips), TIP_KEYS);
+    check(lang + ' toggletips are plain sentences', Object.values(STRINGS[lang].tips).every((t) => t.length > 40 && !/[<>\n]|https?:/.test(t)));
+  }
+  check('toggletip text stays out of the inline script', source.includes('define:vars={{ S: CLIENT_L, EXAMPLE_SCHEMA, EXAMPLE_BYTES }}') &&
+    fm.includes('const L = STRINGS[lang];\n// The script gets every string except the toggletip text, which is in the HTML.\nconst { tips: TIPS, ...CLIENT_L } = L;') && !/S\.tips/.test(script));
+  check('the hint lines moved into the schema toggletip', !/schemaHintDecode|wktNote|pbj-hint/.test(source));
+  const css = source.slice(source.indexOf('<style>'));
+  check('a long output scrolls inside its pane instead of stretching the page', /@media \(min-width: 861px\) \{\s*\.pbj-output \{ flex-basis: 0; \}\s*\}/.test(css) && /\.pbj-output \{[^}]*overflow: auto;/.test(css));
+  check('the empty "Imported files" row stays hidden', css.includes('.pbj-files-wrap[hidden] { display: none; }') && markup.includes('<div id="pbj-files-wrap" class="pbj-files-wrap" hidden>'));
+  check('stacked, the output comes before the schema', /@media \(max-width: 860px\) \{[^@]*\.pbj-in \{ display: contents; \}\s*\.pbj-out \{ order: 2; \}\s*\.pbj-schema \{ order: 3; \}/.test(css));
+  // ToolLayout's Ctrl/Cmd+L empties the text boxes without input events; the component reruns,
+  // and an empty input goes through showEmpty(), which drops the old output and notes.
+  check('Ctrl/Cmd+L drops the loaded files and reruns', /key === 'l' \|\| e\.key === 'L'\)[\s\S]{0,200}setTimeout\(function \(\) \{ state\.files = \[\]; renderFiles\(\); rebuildSchema\(\); run\(\); \}, 0\);/.test(script));
+  check('an empty input clears the old output, bytes and notes', /function showEmpty\(text\) \{\s*state\.outText = '';\s*state\.lastBytes = null;\s*els\.output\.textContent = '';[\s\S]{0,120}setStatus\(text, 'none'\);\s*setNotes\(\[\]\);/.test(script) &&
+    script.includes("if (!text.trim()) return showEmpty(S.st.empty);") && script.includes("if (!text.trim()) return showEmpty(S.st.emptyJson);"));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'protobuf-to-json': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/protobuf-to-json/' + lang + '.mdx'), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    const steps = [...front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).matchAll(/^  - "(.*)"$/gm)].map((m) => m[1]);
+    eq(lang + ' mdx: 5 steps in the frontmatter', steps.length, 5);
+    check(lang + ' mdx: steps fit the llms-full.txt limits', steps.every((x) => x.length <= 280) && steps.join('').length <= 1200);
+    check(lang + ' mdx: no usage section in the body', !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body));
+    check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한)\s*$/m.test(body));
+  }
+}
+
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);

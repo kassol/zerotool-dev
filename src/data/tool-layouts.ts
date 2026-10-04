@@ -14,6 +14,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'hmac-generator': 'convert',
   'markdown-table-generator': 'convert',
   'svg-optimizer': 'convert',
+  'protobuf-to-json': 'convert',
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
 };
