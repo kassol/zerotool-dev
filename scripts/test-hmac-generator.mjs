@@ -390,6 +390,9 @@ check('visible(): CR, LF and tab are shown', E.visible('a\r\n\tb') === 'a␍␊\
   check('component script does not touch storage, cookies, the URL or the network',
     !/localStorage|sessionStorage|ztPersist|document\.cookie|location\.(hash|search|href)|history\.|fetch\(|XMLHttpRequest|sendBeacon/.test(script));
   check('component script does not write HTML', !/innerHTML|insertAdjacentHTML|outerHTML/.test(script));
+  // .hmac-results and .btn-ghost set display, so the hidden attribute needs a rule of its own.
+  check('result rows and the Example button are not displayed while the script hides them',
+    /\.hmac-results\[hidden\],[\s\S]{0,80}#hmac-example\[hidden\] \{ display: none; \}/.test(source));
   const persistence = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8');
   check('persistence policy for hmac-generator is disabled', /'hmac-generator':\s*'disabled'/.test(persistence));
   const langs = ['en', 'zh', 'ja', 'ko'];
@@ -487,6 +490,48 @@ check('visible(): CR, LF and tab are shown', E.visible('a\r\n\tb') === 'a␍␊\
     }
   }
   if (!runs) skip('code blocks', 'no hmac-run annotations');
+}
+
+// ── 12. v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ─────────────────────────────
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  check('the tool root is .hmac-wrap (it gets the height of the first screen)', /^<div class="hmac-wrap">/.test(markup) && /\.hmac-wrap \{[^}]*flex-direction: column;[^}]*min-height: 0;/.test(source));
+  check('inputs and results use the shared two-pane classes', markup.includes('class="hmac-panels zt-io"') &&
+    (markup.match(/class="hmac-pane zt-io-pane"/g) || []).length === 2 &&
+    markup.includes('class="tool-textarea hmac-msg zt-io-fill"') && markup.includes('class="hmac-outbox zt-io-fill"'));
+  const left = markup.slice(markup.indexOf('class="hmac-pane zt-io-pane"'), markup.lastIndexOf('class="hmac-pane zt-io-pane"'));
+  const right = markup.slice(markup.lastIndexOf('class="hmac-pane zt-io-pane"'));
+  check('left pane: message, format fields, key', ['id="hmac-msg"', 'class="hmac-extra"', 'id="hmac-key"'].every((x) => left.includes(x)) && !left.includes('hmac-results'));
+  check('right pane: results, signature check, signed string, notes', ['id="hmac-results"', 'id="hmac-expected"', 'id="hmac-verdict"', 'id="hmac-signed"', 'id="hmac-preset-note"', 'id="hmac-notes"'].every((x) => right.includes(x)));
+  check('status line sits between the option rows and the panes', markup.indexOf('id="hmac-options"') < markup.indexOf('id="hmac-status"') && markup.indexOf('id="hmac-status"') < markup.indexOf('hmac-panels'));
+  const tipIds = ['format', 'trunc', 'msg', 'ts', 'key', 'result', 'check'];
+  const found = (markup.match(/<Toggletip id="hmac-tip-\w+"/g) || []).map((m) => m.slice(24, -1));
+  check('one toggletip per explained control', found.join(',') === tipIds.join(','), found.join(','));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    check(`STRINGS.${lang}.tips has one plain sentence block per toggletip`, Object.keys(STRINGS[lang].tips).sort().join(',') === tipIds.slice().sort().join(',') &&
+      Object.values(STRINGS[lang].tips).every((v) => typeof v === 'string' && v.length > 40 && !/[{}<>\n]/.test(v)));
+  }
+  check('toggletip text stays out of the inline script', source.includes('define:vars={{ S: CLIENT_S }}') && source.includes('const { tips: TIPS, ...CLIENT_S } = L;'));
+  check('no Generate button: every input and option recomputes on its own', !markup.includes('hmac-generate') && !source.includes("$('hmac-generate')") &&
+    ['en', 'zh', 'ja', 'ko'].every((l) => !('generate' in STRINGS[l])) && !markup.includes('btn-primary') &&
+    source.includes("[algoEl, keyEncEl, eolEl, methodEl, upperEl].forEach(function (el) { el.addEventListener('change', recompute); });") &&
+    source.includes("[msgEl, keyEl, tsEl, idEl, urlEl, uriEl, accessEl, truncEl, expectedEl].forEach(function (el) { el.addEventListener('input', schedule); });"));
+  check('the empty hint hides when the result rows show', markup.includes('<p class="hmac-empty">{L.outEmpty}</p>') && source.includes('.hmac-outbox:has(.hmac-results:not([hidden])) .hmac-empty { display: none; }'));
+  check('Ctrl/Cmd+L recomputes, which clears the result when the fields are empty', /key === 'l' \|\| e\.key === 'L'\) && wrap\.contains\(document\.activeElement\)\) \{\s*setTimeout\(recompute, 0\);/.test(source) &&
+    /if \(empty\) \{\s*clearOutputs\(\);\s*setStatus\(statusEl, ''\);/.test(source));
+  check('stacks at 860px, phone details at 640px', (source.match(/@media \(max-width: (\d+)px\)/g) || []).join() === '@media (max-width: 860px),@media (max-width: 640px)');
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'hmac-generator': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, `src/content/tools/hmac-generator/${lang}.mdx`), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    const steps = (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "(.*)"$/gm) || []).map((l) => l.slice(5, -1));
+    check(lang + ' mdx: 5 steps in the frontmatter, within the llms-full.txt limits', steps.length === 5 && steps.every((x) => x.length <= 280) && steps.join('').length <= 1200, steps.length);
+    check(lang + ' mdx: no usage section in the body', !/^## (How to Use|使用步骤|使い方|사용 방법)\s*$/m.test(body));
+    check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한 사항)\s*$/m.test(body));
+    check(lang + ' mdx: no mention of the removed button or its shortcut', !/Generate HMAC|生成 HMAC|HMAC を計算|HMAC 생성'|Ctrl\/⌘\+Enter/.test(mdx));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? `, ${skips} skipped` : ''}`);

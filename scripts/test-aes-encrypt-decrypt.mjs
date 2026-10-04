@@ -36,6 +36,10 @@
 // - Guide and tool page code blocks interoperate with the tool (JS always, Python when
 //   python3 with cryptography exists).
 // - 4-language STRINGS tables have the same keys and the same {placeholders}.
+// - v2 page layout (DESIGN.md "Tool Pages v2"): root, two panes, key bar with IV / AAD before both
+//   actions, a status line above the boxes that keeps its height, the message for a filled IV field,
+//   err_openssl naming the reference block, five toggletips whose text stays out of the script and quotes the engine
+//   constants, Ctrl/Cmd+L handling, tool-layouts.ts entry, steps frontmatter in the 4 mdx files.
 //
 // Run: node scripts/test-aes-encrypt-decrypt.mjs
 
@@ -69,6 +73,7 @@ function check(name, ok, detail) {
   failures++;
   console.log('FAIL: ' + name + (detail !== undefined ? ' — ' + detail : ''));
 }
+function eq(name, got, want) { check(name, JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got)); }
 async function rejects(name, p, code) {
   try { await p; check(name, false, 'no error'); return null; } catch (e) {
     if (code) check(name + ' (code ' + code + ')', e && e.code === code, e && (e.code + ' / ' + e.message));
@@ -469,6 +474,113 @@ if (need('encryptFile') && need('decryptFile')) {
   check('persistence policy is disabled (no GA4 / AdSense, input never saved)', /'aes-encrypt-decrypt':\s*'disabled'/.test(policy));
   const script = source.slice(source.indexOf('<script'), source.indexOf('</script>'));
   check('component script does not use storage, URL or network', !/localStorage|sessionStorage|ztPersist|location\.|history\.|fetch\(|XMLHttpRequest|sendBeacon|indexedDB/.test(script));
+}
+
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  const script = source.slice(source.indexOf('<script'), source.indexOf('</script>'));
+  check('the tool root is .aes-wrap, a flex column that can shrink', /^\s*<div class="aes-wrap">/.test(markup) && /\.aes-wrap \{[^}]*flex-direction: column;[^}]*min-height: 0;/.test(source));
+  check('plaintext and ciphertext use the shared two-pane classes', (markup.match(/class="aes-io zt-io"/g) || []).length === 1 &&
+    (markup.match(/class="aes-pane zt-io-pane"/g) || []).length === 2 &&
+    (markup.match(/<textarea [^>]*class="tool-textarea aes-textarea zt-io-fill"/g) || []).length === 2);
+  check('plaintext is the left pane, ciphertext the right one', markup.indexOf('id="aes-plaintext"') < markup.indexOf('id="aes-ciphertext"'));
+  // The chosen file replaces the text box (setFile hides one and shows the other), so it fills the pane too.
+  check('the file chip fills the pane in place of the text box', (markup.match(/class="aes-file zt-io-fill" hidden/g) || []).length === 2 &&
+    /\.aes-box \{[^}]*display: flex;[^}]*flex: 1 1 auto;[^}]*min-height: 0;/.test(source));
+  check('each box is still the drop target of its text box', (markup.match(/<div class="aes-box">\s*<textarea /g) || []).length === 2 && script.includes('var box = slot.area.parentElement;'));
+  const bar = markup.slice(markup.indexOf('class="aes-keybar"'), markup.indexOf('class="aes-feedback"'));
+  check('key type, key, IV, AAD and both actions share the key bar', ['id="aes-advanced"', 'id="aes-iv"', 'id="aes-aad"', 'id="aes-mode"', 'id="aes-password"', 'id="aes-rawkey"', 'id="aes-toggle-pw"', 'id="aes-keyfmt"', 'id="aes-genkey"', 'id="aes-encrypt"', 'id="aes-decrypt"'].every((x) => bar.includes(x)));
+  // ToolLayout's Ctrl/Cmd+Enter clicks the first .btn-primary of the widget.
+  eq('Encrypt is the first primary button, Decrypt the second', (markup.match(/<button id="([\w-]+)" class="btn-primary/g) || []).map((m) => m.slice(12, m.indexOf('"', 12))), ['aes-encrypt', 'aes-decrypt']);
+  check('Ctrl/Cmd+Enter in the ciphertext box still decrypts', /cipherEl\.addEventListener\('keydown', function \(e\) \{\s*if \(\(e\.metaKey \|\| e\.ctrlKey\) && e\.key === 'Enter'\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); run\('decrypt'\); \}/.test(script));
+  // The user fills in every parameter, then presses a button: IV and AAD come before Encrypt and Decrypt in the
+  // source. Side by side they are pushed to the second row (order: 1); stacked they keep the source order.
+  check('IV and AAD come before Encrypt and Decrypt (source order; second row only when side by side)',
+    bar.indexOf('id="aes-genkey"') < bar.indexOf('id="aes-advanced"') && bar.indexOf('id="aes-aad"') < bar.indexOf('id="aes-encrypt"') &&
+    /\n  \.aes-advanced \{ order: 1; flex: 1 1 100%; display: grid;/.test(source) && /@media \(max-width: 860px\) \{\s*\.aes-advanced \{ order: 0; \}/.test(source));
+  // `.tool-widget input[type="password"] { max-width: 100% }` (tool-common.css) has specificity 0,2,1; one class would lose.
+  check('the key box is at most 44rem wide (the rule outranks the shared max-width)', source.includes('.aes-keybar .aes-key-input { max-width: 44rem; }') &&
+    /\.tool-widget input\[type="password"\],[\s\S]{0,400}max-width: 100%;/.test(readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8')));
+  check('the empty status line keeps its height (1 row, 2 stacked, 3 on phones), so a message does not move the boxes',
+    /\.aes-status \{[^}]*min-height: 1\.375rem; line-height: 1\.375rem;/.test(source) && source.includes('.aes-status[hidden] { display: block; visibility: hidden; }') &&
+    /@media \(max-width: 860px\) \{[^@]*\.aes-status \{ min-height: 2\.75rem; \}/.test(source) && /@media \(max-width: 640px\) \{[^@]*\.aes-status \{ min-height: 4\.125rem; \}/.test(source) && !source.includes('.aes-feedback:not(') && source.includes('.aes-download[hidden] { display: none; }'));
+  check('status line and download button sit between the key bar and the boxes', markup.indexOf('id="aes-advanced"') < markup.indexOf('id="aes-status"') && markup.indexOf('id="aes-status"') < markup.indexOf('id="aes-download"') && markup.indexOf('id="aes-download"') < markup.indexOf('aes-io zt-io'));
+  check('the status line stays until the next action (role=status, no timer)', /<p id="aes-status" class="tool-status aes-status" role="status" aria-live="polite" hidden>/.test(markup) && !/setTimeout\([^)]*setStatus/.test(script));
+  check('Output and Copy stay in the ciphertext head', (() => { const head = markup.slice(markup.indexOf('for="aes-ciphertext"'), markup.indexOf('id="aes-ciphertext"')); return head.includes('id="aes-encoding"') && head.includes('id="aes-copy"') && head.includes('id="aes-cipher-file-btn"'); })());
+  check('the note is under the boxes', markup.indexOf('aes-io zt-io') < markup.indexOf('class="aes-note"'));
+  eq('one toggletip per explained control', (markup.match(/<Toggletip id="aes-tip-[\w-]+"/g) || []).map((m) => m.slice(23, -1)), ['key', 'iv', 'aad', 'plain', 'cipher']);
+  check('no toggletip button inside a <label>', !/<label[^>]*>(?:(?!<\/label>)[\s\S])*<Toggletip/.test(markup));
+  const S = new Function(source.slice(source.indexOf('const STRINGS = {'), source.indexOf('\n};', source.indexOf('const STRINGS = {')) + 3) + '\nreturn STRINGS;')();
+  const tipKeys = ['aad', 'cipher', 'iv', 'key', 'plain'];
+  for (const l of ['en', 'zh', 'ja', 'ko']) {
+    eq('STRINGS.' + l + '.tips: one text per toggletip', Object.keys(S[l].tips || {}).sort(), tipKeys);
+    check('STRINGS.' + l + '.tips: plain sentences', Object.values(S[l].tips || {}).every((v) => typeof v === 'string' && v.length > 40 && !/[<>\n]/.test(v)));
+    check('STRINGS.' + l + ': the buttons carry no arrows (they are no longer between the boxes)', !('encryptWide' in S[l]) && !('decryptWide' in S[l]) && !/[←→↑↓]/.test(S[l].encrypt + S[l].decrypt));
+    // Each tip names the buttons by their current text.
+    check(l + ': tips name Encrypt, Decrypt, File…, Generate, Show, Output and Copy as the buttons read',
+      S[l].tips.plain.includes(S[l].encrypt) && S[l].tips.plain.includes(S[l].file) && S[l].tips.cipher.includes(S[l].decrypt) && S[l].tips.cipher.includes(S[l].file) &&
+      S[l].tips.cipher.includes(S[l].outputEncoding) && S[l].tips.cipher.includes(S[l].copy) && S[l].tips.key.includes(S[l].generate) && S[l].tips.key.includes(S[l].show) &&
+      S[l].tips.key.includes(S[l].modePassword) && S[l].tips.key.includes(S[l].modeRaw));
+  }
+  // With the IV field filled the engine writes ciphertext + tag only and uses the given IV, so the message must not
+  // say that the IV is new on every run.
+  check('engine: a given IV is used as it is and is not written to the output', block.includes("var riv = spec.iv || crypto.getRandomValues(new Uint8Array(IV_BYTES));") && block.includes('return spec.iv ? sealed : concat([riv, sealed]);'));
+  // Raw key mode has no salt (sealPayload: only the password branch makes one), and a file goes through the same
+  // sealPayload, so a file encrypted with a given IV also holds ciphertext + tag only.
+  check('engine: only the password branch makes a salt; encryptFile seals like encryptText', /if \(spec\.type === 'raw'\) \{[^}]*return spec\.iv \? sealed : concat\(\[riv, sealed\]\);\s*\}\s*var iv = [^\n]*\n\s*var salt = crypto\.getRandomValues/.test(block) && block.includes('var payload = await sealPayload(spec, bytes);'));
+  {
+    const key = E.parseRawKey('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f', 'hex');
+    const data = te.encode('hello file\n');
+    const withIv = await E.encryptFile({ type: 'raw', key, iv: E.parseIv('cafebabefacedbaddecaf888') }, data);
+    check('file + given IV: ciphertext + tag only (n + 16 bytes), the same bytes on every run', withIv.length === data.length + 16 && Buffer.from(withIv).equals(Buffer.from(await E.encryptFile({ type: 'raw', key, iv: E.parseIv('cafebabefacedbaddecaf888') }, data))), withIv.length);
+    const noIv = await E.encryptFile({ type: 'raw', key }, data);
+    check('file, no IV: a new 12-byte IV in front (12 + n + 16 bytes), no salt', noIv.length === 12 + data.length + 16, noIv.length);
+    const t1 = Buffer.from(await E.encryptText({ type: 'raw', key }, 'x'), 'base64');
+    check('text, raw key, no IV: 12 + n + 16 bytes, so there is no 16-byte salt to mention', t1.length === 12 + 1 + 16, t1.length);
+  }
+  check('text success message: entered IV, raw key without IV, or password; the IV warning follows only with an entered IV',
+    script.includes("setStatus(fmt(spec.iv ? S.encryptedIv : spec.type === 'raw' ? S.encryptedRaw : S.encrypted, { n: num(new TextEncoder().encode(plainEl.value).length) }) + (spec.iv ? ' ' + S.ivWarning : ''), spec.iv ? 'info' : 'success');"));
+  check('file success message: the same IV warning when a file is encrypted with an entered IV',
+    script.includes("var ivFile = kind === 'encrypt' && spec.iv;") && script.includes("setStatus(fmt(S.fileReady, { name: name, size: size(out.length) }) + (ivFile ? ' ' + S.ivWarning : ''), ivFile ? 'info' : 'success');"));
+  const i18nRef = (l) => JSON.parse(readFileSync(join(root, 'src/i18n/' + l + '.json'), 'utf8'))['tool.reference'];
+  const saltWord = { en: 'salt', zh: '盐', ja: 'ソルト', ko: '솔트' };
+  for (const l of ['en', 'zh', 'ja', 'ko']) {
+    check(l + ': ivWarning says the entered IV was used, what the output holds, and warns about reuse', typeof S[l].ivWarning === 'string' && !S[l].ivWarning.includes('{') && S[l].ivWarning.includes('GCM') && S[l].ivWarning.includes('800-38D') && S[l].ivWarning.split('IV').length >= 5);
+    check(l + ': encryptedIv only counts the bytes (the warning carries the rest)', S[l].encryptedIv.includes('{n}') && !S[l].encryptedIv.includes('IV') && !S[l].encryptedIv.includes(saltWord[l]));
+    check(l + ': encryptedRaw says the IV is new and does not mention a salt; the password message still names both', S[l].encryptedRaw.includes('{n}') && S[l].encryptedRaw.includes('IV') && !S[l].encryptedRaw.includes(saltWord[l]) && S[l].encrypted.includes(saltWord[l]) && S[l].encrypted.includes('IV'));
+    // The OpenSSL section is inside the folded reference block; the message names the block and the section.
+    const mdx = readFileSync(join(root, 'src/content/tools/aes-encrypt-decrypt/' + l + '.mdx'), 'utf8');
+    const heading = (mdx.match(/<h2>(OpenSSL[^<]*)<\/h2>/) || [])[1];
+    check(l + ': err_openssl names the reference block (tool.reference) and the OpenSSL section by its heading', !!heading && !!i18nRef(l) && S[l].err_openssl.includes(i18nRef(l)) && S[l].err_openssl.includes(heading), heading + ' / ' + i18nRef(l));
+  }
+  for (const k of tipKeys) check('tip "' + k + '" is rendered', markup.includes('{TIPS.' + k + '}'));
+  check('toggletip text stays out of the inline script', source.includes('define:vars={{ S: CLIENT_S }}') && source.includes('const { tips: TIPS, ...CLIENT_S } = L;') && !/S\.tips/.test(script));
+  // The numbers in the tips are the engine's constants.
+  check('tips state the engine constants (600,000 and 200,000 iterations, 16-byte salt, 12-byte IV, 256 MB, key sizes)',
+    /PBKDF2_ITERATIONS = \{ 1: 200000, 2: 600000 \}/.test(block) && /SALT_BYTES = 16, IV_BYTES = 12, TAG_BYTES = 16/.test(block) && /MAX_FILE_BYTES = 256 \* 1024 \* 1024/.test(block) &&
+    /bytes\.length !== 16 && bytes\.length !== 24 && bytes\.length !== 32/.test(block) && /\^\[0-9a-fA-F\]\{24\}\$/.test(block) &&
+    ['en', 'zh', 'ja', 'ko'].every((l) => S[l].tips.key.includes('600,000') && S[l].tips.key.includes('16') && S[l].tips.key.includes('v2:') && S[l].tips.cipher.includes('200,000') && S[l].tips.cipher.includes('600,000') &&
+      /256 ?MB/.test(S[l].tips.plain) && /256 ?MB/.test(S[l].tips.cipher) && S[l].tips.plain.includes('.enc') && S[l].tips.iv.includes('24') && S[l].tips.iv.includes('12')));
+  check('Ctrl/Cmd+L clears the password, IV, AAD, both files, the download and the status (ToolLayout clears the text fields)',
+    /key === 'l' \|\| e\.key === 'L'\) && wrap\.contains\(document\.activeElement\)\) \{\s*pwEl\.value = '';\s*ivEl\.value = '';\s*aadEl\.value = '';\s*setFile\(plainFile, null\);\s*setFile\(cipherFile, null\);/.test(script) &&
+    /function setFile\(slot, file\) \{[\s\S]{0,400}clearDownload\(\);\s*setStatus\(''\);\s*\}/.test(script));
+  eq('stacks at 860px, phone details at 640px', source.match(/@media \(max-width: \d+px\)/g), ['@media (max-width: 860px)', '@media (max-width: 640px)']);
+  check('no script breakpoint is left behind', !/matchMedia/.test(script));
+  check('the "?" buttons are not squeezed in flex rows', source.includes('.aes-wrap :global(.zt-tip) { flex: none; }'));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'aes-encrypt-decrypt': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/aes-encrypt-decrypt/' + lang + '.mdx'), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    const steps = (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "(.*)"$/gm) || []).map((x) => x.slice(5, -1));
+    check(lang + ' mdx: 5 steps in the frontmatter, within the llms-full.txt limits', steps.length === 5 && steps.every((x) => x.length <= 280) && steps.join('').length <= 1200, steps.length);
+    check(lang + ' mdx: steps use the current button names', [S[lang].encrypt, S[lang].decrypt, S[lang].file, S[lang].generate, S[lang].outputEncoding, S[lang].modePassword, S[lang].modeRaw].every((n) => steps.join(' ').includes(n)) && !/[←→↑↓]/.test(steps.join(' ')));
+    // This page writes its headings as HTML.
+    check(lang + ' mdx: no usage section in the body', !/<h2>(How to Encrypt and Decrypt|使用方法|使い方|사용 방법)<\/h2>/.test(body) && !/<ol>/.test(body) && !/^## /m.test(body));
+    check(lang + ' mdx: the limits section stays', /<h2>(Limitations|限制|制限|제한 사항)<\/h2>\n<ul>/.test(body));
+  }
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');

@@ -97,11 +97,18 @@ function tableTexts(html) {
   const keys = Object.keys(STRINGS.en).sort();
   langs.forEach((l) => eq('STRINGS ' + l + ' keys', Object.keys(STRINGS[l]).sort(), keys));
   langs.forEach((l) => keys.forEach((k) => {
+    if (typeof STRINGS.en[k] !== 'string') return; // tips: checked below
     const want = (STRINGS.en[k].match(/\{\w+\}/g) || []).sort();
     const got = (STRINGS[l][k].match(/\{\w+\}/g) || []).sort();
     if (JSON.stringify(want) !== JSON.stringify(got)) check('STRINGS ' + l + '.' + k + ' placeholders', false, got + ' vs ' + want);
   }));
   passes++;
+  // toggletip text: the same keys in every language, plain sentences (no placeholders, lists or links)
+  const tipKeys = Object.keys(STRINGS.en.tips).sort();
+  langs.forEach((l) => {
+    eq('STRINGS ' + l + ' tips keys', Object.keys(STRINGS[l].tips).sort(), tipKeys);
+    tipKeys.forEach((k) => check('STRINGS ' + l + '.tips.' + k + ' is a plain sentence', typeof STRINGS[l].tips[k] === 'string' && STRINGS[l].tips[k].length > 20 && !/\{\w+\}|\n|https?:/.test(STRINGS[l].tips[k])));
+  });
   // every T.xxx used by the script exists
   const used = [...new Set([...source.slice(e).matchAll(/\bT\.(\w+)/g)].map((m) => m[1]))];
   used.forEach((k) => check('STRINGS has ' + k, k in STRINGS.en));
@@ -472,6 +479,50 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
   const persistence = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8');
   check("persistence policy is 'preference'", /'markdown-table-generator': 'preference'/.test(persistence));
   check('IME composition does not trigger Enter navigation', /e\.isComposing/.test(script));
+}
+
+/* ── v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ── */
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script>'));
+  check('the tool root is .mdt-wrap (it gets the height of the first screen)', /^\s*<div class="mdt-wrap" /.test(markup));
+  check('grid and output sit in the shared two-pane grid', markup.includes('class="mdt-panels zt-io"') &&
+    markup.includes('<div class="mdt-in zt-io-pane">') && markup.includes('<section class="mdt-out zt-io-pane"'));
+  eq('the grid, the import box, the output and the preview fill their pane',
+    (markup.match(/<[^>]*\bzt-io-fill\b[^>]*>/g) || []).map((m) => (m.match(/id="([\w-]+)"/) || [])[1]).sort(),
+    ['mdt-grid-wrap', 'mdt-import', 'mdt-output', 'mdt-preview']);
+  check('both tab panels are inside the input pane', /<div class="mdt-in zt-io-pane">[\s\S]*id="mdt-panel-edit"[\s\S]*id="mdt-panel-import"[\s\S]*<section class="mdt-out/.test(markup));
+  check('buttons, options and status come before the panes', markup.indexOf('id="mdt-copy"') < markup.indexOf('class="mdt-out-opts"') &&
+    markup.indexOf('class="mdt-out-opts"') < markup.indexOf('id="mdt-status"') && markup.indexOf('id="mdt-status"') < markup.indexOf('class="mdt-panels zt-io"'));
+  check('notes stay under the output', markup.indexOf('id="mdt-preview"') < markup.indexOf('id="mdt-notes"') && markup.indexOf('id="mdt-notes"') < markup.indexOf('</section>'));
+  const tipIds = (markup.match(/<Toggletip id="mdt-tip-\w+"/g) || []).map((m) => m.slice(23, -1));
+  eq('one toggletip per explained control', tipIds, ['style', 'cell', 'breaks', 'ambiguous', 'grid', 'actions', 'import', 'header', 'output']);
+  const a = source.indexOf('/* ── strings:start ── */');
+  const b = source.indexOf('/* ── strings:end ── */');
+  const STRINGS = new Function(source.slice(a, b).replace('const STRINGS =', 'return'))();
+  eq('every tip key has a toggletip', tipIds.slice().sort(), Object.keys(STRINGS.en.tips).sort());
+  tipIds.forEach((id) => check('toggletip ' + id + ' shows TIPS.' + id, new RegExp('<Toggletip id="mdt-tip-' + id + '"[^>]*>\\{TIPS\\.' + id + '\\}</Toggletip>').test(markup)));
+  check('no toggletip inside a label or the tablist', !/<label[^>]*>(?:(?!<\/label>)[\s\S])*<Toggletip/.test(markup) && !/role="tablist">(?:(?!<\/div>)[\s\S])*<Toggletip/.test(markup));
+  check('toggletip text stays out of data-strings', source.includes('const { tips: TIPS, ...CLIENT_L } = L;') && markup.includes('data-strings={JSON.stringify(CLIENT_L)}') && !/\bT\.tips\b/.test(source.slice(e)));
+  check('the grid hint moved into the grid toggletip', !/gridHint|mdt-hint/.test(source));
+  // ToolLayout's Ctrl/Cmd+L empties the textareas without input events; the tool resets the table and writes the output again.
+  check('Ctrl/Cmd+L resets the table, the output and the status', /e\.key !== 'l' && e\.key !== 'L'[\s\S]{0,300}table = emptyTable\(3, 3, T\.header\);[\s\S]{0,120}renderGrid\(\);\s*updateOutput\(\);\s*setStatus\(T\.cleared, 'success'\);/.test(source));
+  const style = source.slice(source.indexOf('<style is:global>'));
+  check('stacking breakpoint is 860px, phone details at 640px', (style.match(/@media \((?:max|min)-width: \d+px\)/g) || []).join() === '@media (min-width: 861px),@media (max-width: 860px),@media (max-width: 640px)');
+  check('a long table scrolls inside its pane', /@media \(min-width: 861px\) \{\s*\.mdt-grid-wrap, \.mdt-preview \{ flex-basis: 0; \}/.test(style) && /\.mdt-grid-wrap \{ overflow: auto;/.test(style));
+  check('every selector keeps the mdt- prefix', [...style.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(^|[\s,>+~(])\.([a-z][\w-]*)/gm)].every((m) => m[2].startsWith('mdt-') || ['btn-primary', 'btn-ghost', 'zt-tip', 'tool-label'].includes(m[2])));
+  check('the actions toggletip keeps its width next to the scrolling button row', /\.mdt-acts \.zt-tip \{ flex: none; \}/.test(style));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'markdown-table-generator': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/markdown-table-generator', lang + '.mdx'), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    const steps = (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "(.*)"$/gm) || []).map((x) => x.slice(5, -1));
+    eq(lang + ' mdx: 5 steps in the frontmatter', steps.length, 5);
+    check(lang + ' mdx: steps are plain text within the llms limits', steps.every((x) => x.length <= 280 && !/[*`"]/.test(x)) && steps.join('').length <= 1200);
+    check(lang + ' mdx: no usage section in the body', !/^## (How to use|使用方法|使い方|사용 방법)\s*$/im.test(body));
+    check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한)\s*$/m.test(body));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);

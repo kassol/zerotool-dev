@@ -5,6 +5,8 @@
 // implementations in the engine block. The key and message stay in this tab: the component
 // never writes them to storage or the URL (persistence policy `disabled` in
 // src/data/persistence.ts) and makes no network requests.
+import Toggletip from '../Toggletip.astro';
+
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -31,7 +33,6 @@ const STRINGS = {
     method: 'Method',
     uri: 'Path and query',
     accessKey: 'Access key ID',
-    generate: 'Generate HMAC',
     upper: 'Uppercase hex',
     truncate: 'Truncate to',
     bits: 'bits',
@@ -41,6 +42,8 @@ const STRINGS = {
     copied: 'Copied!',
     copyFail: 'Copy failed. Select the text and copy it by hand.',
     outPreset: 'Value to send',
+    result: 'Result',
+    outEmpty: 'Enter a key or a message and the HMAC appears here.',
     signedTitle: 'Signed string',
     signedHint: 'exactly what goes into the HMAC; ␊ = line feed, ␍ = carriage return, ␉ = tab',
     keyStringTitle: 'HMAC key (the message is empty)',
@@ -110,6 +113,16 @@ const STRINGS = {
     d_otherBot: 'it matches the {other} formula. Feishu uses timestamp + "\\n" + secret as the key with an empty message; DingTalk uses the secret as the key and timestamp + "\\n" + secret as the message.',
     d_tsHeader: 'it matches with timestamp {ts} from the pasted header.',
     d_algo: 'it matches HMAC-{algo} with the same key and message.',
+    // Toggletip text next to the control it explains (DESIGN.md "Tool Pages v2").
+    tips: {
+      format: 'Custom HMAC takes any key and message and lets you choose the algorithm. Each other format builds the signed string the way that platform documents it, sets the algorithm, and adds a Value to send row with the header or parameter the platform uses. Feishu, DingTalk and NAVER Cloud sign a request that you send, so they have no body box. Example loads a published test case and is shown for the formats that have one.',
+      msg: 'The bytes to sign. In Custom HMAC they can be text (encoded as UTF-8), hex or Base64; the other formats take the raw request body as text. The box stores every line break as LF, so choose CRLF if the sender used CRLF. Hex may contain spaces, colons and a leading 0x. Base64 may use the standard or the URL-safe alphabet, with or without padding. Full-width characters from an IME are read as ASCII in hex and Base64. Text in Shift_JIS, GBK or EUC-KR has to be pasted as hex.',
+      key: 'In Custom HMAC the key can be text (UTF-8), hex or Base64. The other formats read it as the platform does: most as text (for Stripe including the whsec_ prefix), Chatwork after Base64 decoding, and Standard Webhooks by Base64-decoding the part after whsec_. HMAC first hashes a key that is longer than the hash block (64 bytes; 128 for SHA-384 and SHA-512) and pads a shorter key with zeros (RFC 2104). A note appears for a key longer than the block or shorter than the output. Spaces at either end of a text key are part of the key.',
+      ts: 'Unix time in the unit this format uses: seconds for Stripe, Slack, Standard Webhooks and Feishu, milliseconds for DingTalk and NAVER Cloud. Now fills in the current time. A note appears when the value is outside the window the platform accepts (5 minutes; 1 hour for Feishu and DingTalk) or looks like the other unit. For Stripe, an empty field is filled from t= in the pasted signature header.',
+      trunc: 'Keeps only the leftmost bits of the HMAC (RFC 2104 §5), in all three encodings. Enter a multiple of 8, from 8 up to the full length; leave it empty for the full value. A note appears below half of the output or below 80 bits. Available in Custom HMAC only.',
+      result: 'Updates as you type. Hex, Base64 and Base64url are the same bytes in three encodings. Value to send, added by the platform formats, is the header or parameter as that platform writes it. Signed string shows exactly what went into the HMAC, with line breaks and tabs made visible. Ctrl+L (⌘+L on a Mac) empties the text fields while the focus is in the tool.',
+      check: 'Paste what you received: a header such as sha256=…, t=…,v1=… or v1,…, a DingTalk URL with sign=…, or a bare hex or Base64 value. Bytes are compared, so hex in either case and Base64 both work; a truncated value of at least 10 bytes matches as a prefix. When it does not match, the tool tries the usual causes one at a time (a final line break, CRLF, spaces at the ends, reformatted JSON, another key encoding, key and message swapped, another algorithm) and names the first one that produces the pasted value. On your server, compare in constant time.',
+    },
     presets: {
       custom: 'Custom HMAC',
       github: 'GitHub webhook (X-Hub-Signature-256)',
@@ -174,7 +187,6 @@ const STRINGS = {
     method: '方法',
     uri: '路径与查询串',
     accessKey: 'Access key ID',
-    generate: '生成 HMAC',
     upper: '十六进制大写',
     truncate: '截断为',
     bits: '位',
@@ -184,6 +196,8 @@ const STRINGS = {
     copied: '已复制',
     copyFail: '复制失败，请选中文字手动复制。',
     outPreset: '要发送的值',
+    result: '结果',
+    outEmpty: '填入密钥或消息后，HMAC 显示在这里。',
     signedTitle: '签名串',
     signedHint: '进入 HMAC 的原文；␊ 为换行（LF），␍ 为回车（CR），␉ 为制表符',
     keyStringTitle: 'HMAC 密钥（消息为空）',
@@ -253,6 +267,15 @@ const STRINGS = {
     d_otherBot: '与{other}的算法一致。飞书把「时间戳 + \\n + 密钥」当密钥、消息为空；钉钉用密钥当密钥，「时间戳 + \\n + 密钥」当消息。',
     d_tsHeader: '改用粘贴内容里的时间戳 {ts} 后一致。',
     d_algo: '同样的密钥和消息用 HMAC-{algo} 计算时一致。',
+    tips: {
+      format: '「自定义 HMAC」可填任意密钥和消息，算法自选。其余格式按对应平台文档的规则拼出签名串，算法固定，并多出一行「要发送的值」，写成该平台使用的请求头或参数。飞书、钉钉和 NAVER Cloud 是对你发出的请求签名，所以没有请求体输入框。「示例」填入平台文档公布的测试数据，只在有这类数据的格式下显示。',
+      msg: '参与签名的字节。「自定义 HMAC」下可以是文本（按 UTF-8 编码）、十六进制或 Base64；其余格式把原始请求体当作文本。文本框里的换行一律是 LF，发送方用 CRLF 时请选 CRLF。十六进制可带空格、冒号和开头的 0x。Base64 可用标准或 URL 安全字母表，有无填充都能读。十六进制和 Base64 里用输入法打出的全角字符按半角读取。GBK、Shift_JIS、EUC-KR 编码的文本要以十六进制粘贴。',
+      key: '「自定义 HMAC」下密钥可以是文本（UTF-8）、十六进制或 Base64。其余格式按平台的规定读取：多数当作文本（Stripe 连同 whsec_ 前缀一起），Chatwork 先做 Base64 解码，Standard Webhooks 取 whsec_ 后面的部分做 Base64 解码。密钥超过哈希分组长度（64 字节，SHA-384 和 SHA-512 为 128 字节）时，HMAC 先对它做一次哈希；不足时补零（RFC 2104）。密钥超过分组长度或短于输出长度时会有提示。文本密钥两端的空格也算密钥的一部分。',
+      ts: '该格式所用单位的 Unix 时间：Stripe、Slack、Standard Webhooks、飞书用秒，钉钉和 NAVER Cloud 用毫秒。「当前时间」填入现在的时间。数值超出平台接受的范围（5 分钟，飞书和钉钉为 1 小时）或者像是另一种单位时会有提示。Stripe 格式下这一栏为空时，取所粘贴签名头里的 t=。',
+      trunc: '只保留 HMAC 最左边的若干位（RFC 2104 §5），三种写法都按截断后的字节输出。填 8 的倍数，最小 8，最大为完整长度；留空则输出完整结果。少于输出的一半或少于 80 位时会有提示。只在「自定义 HMAC」下可用。',
+      result: '随输入实时更新。Hex、Base64、Base64url 三行是同一组字节的三种写法。平台格式下多出的「要发送的值」是该平台实际使用的请求头或参数。「签名串」显示进入 HMAC 的原文，换行和制表符以可见符号标出。焦点在工具内时按 Ctrl+L（Mac 为 ⌘+L）清空各文本框。',
+      check: '粘贴收到的签名：sha256=…、t=…,v1=…、v1,… 这类请求头，带 sign=… 的钉钉 URL，或单独的十六进制、Base64 值。比较的是字节，所以十六进制（大小写均可）和 Base64 都能读；截断后的值不少于 10 字节时按前缀匹配。不一致时，工具逐个尝试常见原因（末尾换行、CRLF、两端空格、JSON 被重新格式化、密钥编码、密钥与消息对调、其他算法），指出第一个能算出所粘贴值的原因。服务端比较签名请用常数时间比较。',
+    },
     presets: {
       custom: '自定义 HMAC',
       github: 'GitHub Webhook（X-Hub-Signature-256）',
@@ -317,7 +340,6 @@ const STRINGS = {
     method: 'メソッド',
     uri: 'パスとクエリ',
     accessKey: 'Access key ID',
-    generate: 'HMAC を計算',
     upper: '16 進数を大文字に',
     truncate: '切り詰め',
     bits: 'ビット',
@@ -327,6 +349,8 @@ const STRINGS = {
     copied: 'コピーしました',
     copyFail: 'コピーできませんでした。文字を選択して手動でコピーしてください。',
     outPreset: '送信する値',
+    result: '結果',
+    outEmpty: '鍵かメッセージを入力すると、ここに HMAC が表示されます。',
     signedTitle: '署名対象の文字列',
     signedHint: 'HMAC に入る文字列そのもの。␊ は LF、␍ は CR、␉ はタブ',
     keyStringTitle: 'HMAC の鍵（メッセージは空）',
@@ -396,6 +420,15 @@ const STRINGS = {
     d_otherBot: '{other}の計算方法と一致します。Feishu は「タイムスタンプ + \\n + 鍵」を鍵にしてメッセージは空、DingTalk は鍵をそのまま鍵にして「タイムスタンプ + \\n + 鍵」をメッセージにします。',
     d_tsHeader: '貼り付けたヘッダーのタイムスタンプ {ts} を使うと一致します。',
     d_algo: '同じ鍵とメッセージで HMAC-{algo} を計算すると一致します。',
+    tips: {
+      format: '「カスタム HMAC」は任意の鍵とメッセージで計算し、アルゴリズムも選べます。ほかの形式は各サービスのドキュメントどおりに署名対象の文字列を組み立て、アルゴリズムを固定し、そのサービスが使うヘッダーやパラメーターの形で「送信する値」の行を追加します。Feishu・DingTalk・NAVER Cloud は自分が送るリクエストに署名する形式なので、ボディの入力欄はありません。「例」は公式ドキュメントに載っているテストデータを入力します。データのある形式でだけ表示されます。',
+      msg: '署名するバイト列です。「カスタム HMAC」ではテキスト（UTF-8 で符号化）・16 進数・Base64 を選べます。ほかの形式は受信したリクエストボディをテキストとして扱います。テキスト欄の改行はすべて LF になるので、送信側が CRLF なら CRLF を選びます。16 進数にはスペース、コロン、先頭の 0x があっても読めます。Base64 は標準と URL セーフのどちらの文字でも、パディングの有無にかかわらず読めます。16 進数と Base64 では、IME で入った全角文字を半角として読みます。Shift_JIS・GBK・EUC-KR のテキストは 16 進数で貼り付けてください。',
+      key: '「カスタム HMAC」では鍵をテキスト（UTF-8）・16 進数・Base64 から選べます。ほかの形式は各サービスの決まりどおりに読みます。多くはテキストのまま使い（Stripe は whsec_ も含めます）、Chatwork は Base64 デコードし、Standard Webhooks は whsec_ の後ろを Base64 デコードします。鍵がハッシュのブロック長（64 バイト。SHA-384 と SHA-512 は 128 バイト）より長いと HMAC は先に鍵をハッシュし、短いと 0 で埋めます（RFC 2104）。ブロック長より長い鍵と出力長より短い鍵には注意を表示します。テキストの鍵の前後にあるスペースも鍵に含まれます。',
+      ts: 'この形式が使う単位の Unix 時刻です。Stripe・Slack・Standard Webhooks・Feishu は秒、DingTalk と NAVER Cloud はミリ秒です。「現在時刻」を押すと今の時刻が入ります。サービスが受け付ける範囲（5 分。Feishu と DingTalk は 1 時間）を外れた値や、もう一方の単位に見える値には注意を表示します。Stripe では、この欄が空のとき、貼り付けた署名ヘッダーの t= を使います。',
+      trunc: 'HMAC の左端から指定したビット数だけを残します（RFC 2104 §5）。3 つの表記すべてに反映されます。8 の倍数で、8 から全長までの値を入力します。空欄なら全長です。出力の半分未満、または 80 ビット未満のときは注意を表示します。「カスタム HMAC」でだけ使えます。',
+      result: '入力に合わせて更新されます。Hex・Base64・Base64url は同じバイト列の 3 つの表記です。サービスの形式で追加される「送信する値」は、そのサービスが実際に使うヘッダーやパラメーターの形です。「署名対象の文字列」は HMAC に入った文字列そのもので、改行とタブを記号で表示します。ツール内にフォーカスがあるときに Ctrl+L（Mac は ⌘+L）を押すと、テキスト欄を空にします。',
+      check: '受け取った署名を貼り付けます。sha256=…、t=…,v1=…、v1,… のようなヘッダー、sign=… を含む DingTalk の URL、16 進数や Base64 の値だけでも読めます。バイト列で比較するので、16 進数（大文字でも小文字でも）と Base64 のどちらでも構いません。切り詰めた値は 10 バイト以上あれば先頭一致で判定します。一致しないときは、よくある原因（末尾の改行、CRLF、前後のスペース、JSON の整形、鍵のエンコード、鍵とメッセージの入れ違い、別のアルゴリズム）を 1 つずつ試し、貼り付けた値になる最初の原因を表示します。サーバーでは定数時間で比較してください。',
+    },
     presets: {
       custom: 'カスタム HMAC',
       github: 'GitHub Webhook（X-Hub-Signature-256）',
@@ -460,7 +493,6 @@ const STRINGS = {
     method: '메서드',
     uri: '경로와 쿼리',
     accessKey: 'Access key ID',
-    generate: 'HMAC 생성',
     upper: '16진수 대문자',
     truncate: '자르기',
     bits: '비트',
@@ -470,6 +502,8 @@ const STRINGS = {
     copied: '복사됨',
     copyFail: '복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.',
     outPreset: '보낼 값',
+    result: '결과',
+    outEmpty: '키나 메시지를 입력하면 여기에 HMAC이 표시됩니다.',
     signedTitle: '서명 대상 문자열',
     signedHint: 'HMAC에 들어가는 문자열 그대로. ␊는 LF, ␍는 CR, ␉는 탭',
     keyStringTitle: 'HMAC 키(메시지는 비어 있음)',
@@ -539,6 +573,15 @@ const STRINGS = {
     d_otherBot: '{other} 방식과 일치합니다. Feishu는 "타임스탬프 + \\n + 시크릿"을 키로 쓰고 메시지는 비워 두며, DingTalk는 시크릿을 키로, "타임스탬프 + \\n + 시크릿"을 메시지로 씁니다.',
     d_tsHeader: '붙여 넣은 헤더의 타임스탬프 {ts}를 쓰면 일치합니다.',
     d_algo: '같은 키와 메시지로 HMAC-{algo}를 계산하면 일치합니다.',
+    tips: {
+      format: "'직접 입력 HMAC'은 아무 키와 메시지로 계산하고 알고리즘도 고를 수 있습니다. 다른 형식은 각 서비스 문서대로 서명 대상 문자열을 만들고, 알고리즘을 고정하고, 그 서비스가 쓰는 헤더나 파라미터 모양으로 '보낼 값' 줄을 추가합니다. Feishu, DingTalk, 네이버 클라우드는 내가 보내는 요청에 서명하는 형식이라 본문 입력 칸이 없습니다. '예시'는 공식 문서에 실린 테스트 데이터를 채웁니다. 데이터가 있는 형식에서만 보입니다.",
+      msg: "서명할 바이트입니다. '직접 입력 HMAC'에서는 텍스트(UTF-8로 인코딩), 16진수, Base64 중에서 고릅니다. 다른 형식은 받은 요청 본문을 텍스트로 다룹니다. 텍스트 칸의 줄바꿈은 모두 LF가 되므로, 보낸 쪽이 CRLF를 썼다면 CRLF를 고르세요. 16진수에는 공백, 콜론, 앞의 0x가 있어도 됩니다. Base64는 표준 문자와 URL 안전 문자 모두, 패딩이 있든 없든 읽습니다. 16진수와 Base64에서는 입력기로 들어간 전각 문자를 반각으로 읽습니다. EUC-KR, Shift_JIS, GBK 텍스트는 16진수로 붙여 넣으세요.",
+      key: "'직접 입력 HMAC'에서는 키를 텍스트(UTF-8), 16진수, Base64 중에서 고릅니다. 다른 형식은 각 서비스 규칙대로 읽습니다. 대부분 텍스트 그대로 쓰고(Stripe는 whsec_ 접두사까지 포함), Chatwork는 Base64로 디코딩하고, Standard Webhooks는 whsec_ 뒤의 부분을 Base64로 디코딩합니다. 키가 해시 블록 길이(64바이트, SHA-384와 SHA-512는 128바이트)보다 길면 HMAC이 먼저 키를 해시하고, 짧으면 0으로 채웁니다(RFC 2104). 블록보다 긴 키와 출력보다 짧은 키에는 안내가 나옵니다. 텍스트 키의 앞뒤 공백도 키에 포함됩니다.",
+      ts: "이 형식이 쓰는 단위의 Unix 시각입니다. Stripe, Slack, Standard Webhooks, Feishu는 초, DingTalk와 네이버 클라우드는 밀리초입니다. '현재 시각'을 누르면 지금 시각이 들어갑니다. 서비스가 받아 주는 범위(5분, Feishu와 DingTalk는 1시간)를 벗어나거나 다른 단위로 보이는 값에는 안내가 나옵니다. Stripe에서는 이 칸이 비어 있으면 붙여 넣은 서명 헤더의 t= 값을 씁니다.",
+      trunc: "HMAC의 왼쪽부터 지정한 비트만 남깁니다(RFC 2104 §5). 세 가지 표기에 모두 적용됩니다. 8의 배수로, 8부터 전체 길이까지 입력합니다. 비워 두면 전체 길이입니다. 출력의 절반보다 짧거나 80비트보다 짧으면 안내가 나옵니다. '직접 입력 HMAC'에서만 쓸 수 있습니다.",
+      result: "입력하는 대로 바뀝니다. Hex, Base64, Base64url은 같은 바이트를 세 가지로 적은 것입니다. 서비스 형식에서 추가되는 '보낼 값'은 그 서비스가 실제로 쓰는 헤더나 파라미터 모양입니다. '서명 대상 문자열'은 HMAC에 들어간 문자열 그대로이며, 줄바꿈과 탭을 기호로 보여 줍니다. 도구 안에 포커스가 있을 때 Ctrl+L(Mac은 ⌘+L)을 누르면 텍스트 칸을 비웁니다.",
+      check: '받은 서명을 붙여 넣습니다. sha256=…, t=…,v1=…, v1,… 같은 헤더, sign=…이 들어 있는 DingTalk URL, 16진수나 Base64 값만 넣어도 읽습니다. 바이트로 비교하므로 16진수(대문자든 소문자든)와 Base64 모두 됩니다. 잘린 값은 10바이트 이상이면 앞부분 일치로 판정합니다. 일치하지 않으면 흔한 원인(끝의 줄바꿈, CRLF, 앞뒤 공백, JSON 재정렬, 키 인코딩, 키와 메시지 뒤바뀜, 다른 알고리즘)을 하나씩 시험해, 붙여 넣은 값이 나오는 첫 원인을 알려 줍니다. 서버에서는 상수 시간으로 비교하세요.',
+    },
     presets: {
       custom: '직접 입력 HMAC',
       github: 'GitHub 웹훅(X-Hub-Signature-256)',
@@ -592,17 +635,20 @@ const ORDER = {
 
 const L = STRINGS[lang];
 const order = ORDER[lang];
+// The script gets every string except the toggletip text, which is in the HTML.
+const { tips: TIPS, ...CLIENT_S } = L;
 ---
 <div class="hmac-wrap">
   <div class="hmac-top">
-    <label class="hmac-sel hmac-sel-preset">
-      <span class="hmac-cap">{L.format}</span>
+    <span class="hmac-sel hmac-sel-preset">
+      <label for="hmac-preset" class="hmac-cap">{L.format}</label>
       <select id="hmac-preset" class="tool-input">
         {order.map((id) => <option value={id}>{L.presets[id]}</option>)}
       </select>
-    </label>
-    <label class="hmac-sel">
-      <span class="hmac-cap">{L.algorithm}</span>
+      <Toggletip id="hmac-tip-format" lang={lang} about={L.format} wide>{TIPS.format}</Toggletip>
+    </span>
+    <span class="hmac-sel">
+      <label for="hmac-algo" class="hmac-cap">{L.algorithm}</label>
       <select id="hmac-algo" class="tool-input">
         <option value="SHA-256">SHA-256</option>
         <option value="SHA-512">SHA-512</option>
@@ -611,127 +657,153 @@ const order = ORDER[lang];
         <option value="SHA-1">SHA-1</option>
         <option value="MD5">MD5</option>
       </select>
-    </label>
-    <button id="hmac-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
-  </div>
-  <div class="hmac-field" id="hmac-msg-field">
-    <div class="hmac-head">
-      <label for="hmac-msg" id="hmac-msg-label" class="hmac-name">{L.message}</label>
-      <select id="hmac-msg-enc" class="hmac-mini" aria-label={L.msgEnc}>
-        <option value="text">{L.encText}</option>
-        <option value="hex">{L.encHex}</option>
-        <option value="base64">{L.encB64}</option>
-      </select>
-      <select id="hmac-eol" class="hmac-mini" aria-label={L.eol}>
-        <option value="lf">LF</option>
-        <option value="crlf">CRLF</option>
-      </select>
-      <span id="hmac-msg-bytes" class="hmac-meta"></span>
-    </div>
-    <textarea id="hmac-msg" class="tool-textarea hmac-msg" rows="3" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"></textarea>
+    </span>
+    <span class="hmac-top-end">
+      <button id="hmac-example" class="btn-ghost btn-sm" type="button">{L.example}</button>
+    </span>
   </div>
 
-  <div class="hmac-extra">
-    <div class="hmac-field" data-field="url" hidden>
-      <label for="hmac-url" class="hmac-name">{L.url}</label>
-      <input id="hmac-url" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
-    </div>
-    <div class="hmac-field" data-field="method" hidden>
-      <label for="hmac-method" class="hmac-name">{L.method}</label>
-      <select id="hmac-method" class="tool-input">
-        <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option>
-      </select>
-    </div>
-    <div class="hmac-field" data-field="uri" hidden>
-      <label for="hmac-uri" class="hmac-name">{L.uri}</label>
-      <input id="hmac-uri" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
-    </div>
-    <div class="hmac-field" data-field="id" hidden>
-      <label for="hmac-id" class="hmac-name">{L.webhookId}</label>
-      <input id="hmac-id" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
-    </div>
-    <div class="hmac-field" data-field="timestamp" hidden>
-      <label for="hmac-ts" class="hmac-name" id="hmac-ts-label">{L.timestamp}</label>
-      <div class="hmac-inline">
-        <input id="hmac-ts" class="tool-input" type="text" inputmode="numeric" spellcheck="false" autocomplete="off" />
-        <button id="hmac-now" class="btn-ghost btn-sm" type="button">{L.now}</button>
-      </div>
-    </div>
-    <div class="hmac-field" data-field="accessKey" hidden>
-      <label for="hmac-access" class="hmac-name">{L.accessKey}</label>
-      <input id="hmac-access" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
-    </div>
-  </div>
-
-  <div class="hmac-field">
-    <div class="hmac-head">
-      <label for="hmac-key" id="hmac-key-label" class="hmac-name">{L.keyLabels.custom}</label>
-      <select id="hmac-key-enc" class="hmac-mini" aria-label={L.keyEnc}>
-        <option value="text">{L.encText}</option>
-        <option value="hex">{L.encHex}</option>
-        <option value="base64">{L.encB64}</option>
-      </select>
-      <span id="hmac-key-bytes" class="hmac-meta"></span>
-    </div>
-    <div class="hmac-inline">
-      <input id="hmac-key" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
-      <button id="hmac-generate" class="btn-primary" type="button">{L.generate}</button>
-    </div>
-  </div>
-
-  <div id="hmac-results" class="hmac-results" hidden>
-    <div class="hmac-row hmac-row-main" id="hmac-row-preset" hidden>
-      <span class="hmac-row-label">{L.outPreset}</span>
-      <code id="hmac-out-preset" class="hmac-out"></code>
-      <button class="btn-copy" type="button" data-copy="hmac-out-preset">{L.copy}</button>
-    </div>
-    <div class="hmac-row">
-      <span class="hmac-row-label">Hex</span>
-      <code id="hmac-out-hex" class="hmac-out"></code>
-      <button class="btn-copy" type="button" data-copy="hmac-out-hex">{L.copy}</button>
-    </div>
-    <div class="hmac-row">
-      <span class="hmac-row-label">Base64</span>
-      <code id="hmac-out-b64" class="hmac-out"></code>
-      <button class="btn-copy" type="button" data-copy="hmac-out-b64">{L.copy}</button>
-    </div>
-    <div class="hmac-row">
-      <span class="hmac-row-label">Base64url</span>
-      <code id="hmac-out-b64url" class="hmac-out"></code>
-      <button class="btn-copy" type="button" data-copy="hmac-out-b64url">{L.copy}</button>
-    </div>
+  <div class="hmac-options" id="hmac-options">
+    <label class="hmac-check"><input type="checkbox" id="hmac-upper" /><span>{L.upper}</span></label>
+    <span class="hmac-trunc">
+      <label for="hmac-trunc">{L.truncate}</label>
+      <input id="hmac-trunc" class="tool-input" type="number" min="8" step="8" inputmode="numeric" placeholder={L.full} />
+      <span>{L.bits}</span>
+      <Toggletip id="hmac-tip-trunc" lang={lang} about={L.truncate} wide>{TIPS.trunc}</Toggletip>
+    </span>
   </div>
 
   <p id="hmac-status" class="tool-status none" role="status" aria-live="polite"></p>
 
-  <p id="hmac-preset-note" class="hmac-note" hidden></p>
+  <div class="hmac-panels zt-io">
+    <div class="hmac-pane zt-io-pane">
+      <div class="hmac-field" id="hmac-msg-field">
+        <div class="hmac-head">
+          <label for="hmac-msg" id="hmac-msg-label" class="hmac-name">{L.message}</label>
+          <Toggletip id="hmac-tip-msg" lang={lang} about={L.fMsg} wide>{TIPS.msg}</Toggletip>
+          <span class="hmac-head-end">
+            <select id="hmac-msg-enc" class="hmac-mini" aria-label={L.msgEnc}>
+              <option value="text">{L.encText}</option>
+              <option value="hex">{L.encHex}</option>
+              <option value="base64">{L.encB64}</option>
+            </select>
+            <select id="hmac-eol" class="hmac-mini" aria-label={L.eol}>
+              <option value="lf">LF</option>
+              <option value="crlf">CRLF</option>
+            </select>
+            <span id="hmac-msg-bytes" class="hmac-meta"></span>
+          </span>
+        </div>
+        <textarea id="hmac-msg" class="tool-textarea hmac-msg zt-io-fill" rows="3" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"></textarea>
+      </div>
 
-  <div class="hmac-options" id="hmac-options">
-    <label class="hmac-check"><input type="checkbox" id="hmac-upper" /><span>{L.upper}</span></label>
-    <label class="hmac-trunc">
-      <span>{L.truncate}</span>
-      <input id="hmac-trunc" class="tool-input" type="number" min="8" step="8" inputmode="numeric" placeholder={L.full} />
-      <span>{L.bits}</span>
-    </label>
+      <div class="hmac-extra">
+        <div class="hmac-field" data-field="url" hidden>
+          <label for="hmac-url" class="hmac-name">{L.url}</label>
+          <input id="hmac-url" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
+        </div>
+        <div class="hmac-field" data-field="method" hidden>
+          <label for="hmac-method" class="hmac-name">{L.method}</label>
+          <select id="hmac-method" class="tool-input">
+            <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option>
+          </select>
+        </div>
+        <div class="hmac-field" data-field="uri" hidden>
+          <label for="hmac-uri" class="hmac-name">{L.uri}</label>
+          <input id="hmac-uri" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
+        </div>
+        <div class="hmac-field" data-field="id" hidden>
+          <label for="hmac-id" class="hmac-name">{L.webhookId}</label>
+          <input id="hmac-id" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
+        </div>
+        <div class="hmac-field" data-field="timestamp" hidden>
+          <div class="hmac-head">
+            <label for="hmac-ts" class="hmac-name" id="hmac-ts-label">{L.timestamp}</label>
+            <Toggletip id="hmac-tip-ts" lang={lang} about={L.timestamp} wide>{TIPS.ts}</Toggletip>
+          </div>
+          <div class="hmac-inline">
+            <input id="hmac-ts" class="tool-input" type="text" inputmode="numeric" spellcheck="false" autocomplete="off" />
+            <button id="hmac-now" class="btn-ghost btn-sm" type="button">{L.now}</button>
+          </div>
+        </div>
+        <div class="hmac-field" data-field="accessKey" hidden>
+          <label for="hmac-access" class="hmac-name">{L.accessKey}</label>
+          <input id="hmac-access" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="hmac-field">
+        <div class="hmac-head">
+          <label for="hmac-key" id="hmac-key-label" class="hmac-name">{L.keyLabels.custom}</label>
+          <Toggletip id="hmac-tip-key" lang={lang} about={L.fKey} wide>{TIPS.key}</Toggletip>
+          <span class="hmac-head-end">
+            <select id="hmac-key-enc" class="hmac-mini" aria-label={L.keyEnc}>
+              <option value="text">{L.encText}</option>
+              <option value="hex">{L.encHex}</option>
+              <option value="base64">{L.encB64}</option>
+            </select>
+            <span id="hmac-key-bytes" class="hmac-meta"></span>
+          </span>
+        </div>
+        <input id="hmac-key" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
+      </div>
+    </div>
+
+    <div class="hmac-pane zt-io-pane">
+      <div class="hmac-head">
+        <span class="hmac-name" id="hmac-result-label">{L.result}</span>
+        <Toggletip id="hmac-tip-result" lang={lang} about={L.result} wide>{TIPS.result}</Toggletip>
+      </div>
+      <div class="hmac-outbox zt-io-fill" role="group" aria-labelledby="hmac-result-label">
+        <p class="hmac-empty">{L.outEmpty}</p>
+        <div id="hmac-results" class="hmac-results" hidden>
+          <div class="hmac-row hmac-row-main" id="hmac-row-preset" hidden>
+            <span class="hmac-row-label">{L.outPreset}</span>
+            <code id="hmac-out-preset" class="hmac-out"></code>
+            <button class="btn-copy" type="button" data-copy="hmac-out-preset">{L.copy}</button>
+          </div>
+          <div class="hmac-row">
+            <span class="hmac-row-label">Hex</span>
+            <code id="hmac-out-hex" class="hmac-out"></code>
+            <button class="btn-copy" type="button" data-copy="hmac-out-hex">{L.copy}</button>
+          </div>
+          <div class="hmac-row">
+            <span class="hmac-row-label">Base64</span>
+            <code id="hmac-out-b64" class="hmac-out"></code>
+            <button class="btn-copy" type="button" data-copy="hmac-out-b64">{L.copy}</button>
+          </div>
+          <div class="hmac-row">
+            <span class="hmac-row-label">Base64url</span>
+            <code id="hmac-out-b64url" class="hmac-out"></code>
+            <button class="btn-copy" type="button" data-copy="hmac-out-b64url">{L.copy}</button>
+          </div>
+        </div>
+
+        <div class="hmac-field hmac-verify">
+          <div class="hmac-head">
+            <label for="hmac-expected" class="hmac-name">{L.compareLabel}</label>
+            <Toggletip id="hmac-tip-check" lang={lang} about={L.compareLabel} wide>{TIPS.check}</Toggletip>
+          </div>
+          <input id="hmac-expected" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.comparePh} />
+          <p id="hmac-verdict" class="tool-status none" role="status" aria-live="polite" hidden></p>
+        </div>
+
+        <details class="hmac-details" id="hmac-signed-wrap" hidden>
+          <summary><span id="hmac-signed-title">{L.signedTitle}</span><span class="hmac-tip">{L.signedHint}</span></summary>
+          <pre id="hmac-signed" class="hmac-signed"></pre>
+        </details>
+      </div>
+
+      <p id="hmac-preset-note" class="hmac-note" hidden></p>
+
+      <ul id="hmac-notes" class="hmac-notes" hidden></ul>
+    </div>
   </div>
-
-  <div class="hmac-field hmac-verify">
-    <label for="hmac-expected" class="hmac-name">{L.compareLabel}</label>
-    <input id="hmac-expected" class="tool-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.comparePh} />
-    <p id="hmac-verdict" class="tool-status none" role="status" aria-live="polite" hidden></p>
-  </div>
-
-  <ul id="hmac-notes" class="hmac-notes" hidden></ul>
-
-  <details class="hmac-details" id="hmac-signed-wrap" hidden>
-    <summary><span id="hmac-signed-title">{L.signedTitle}</span><span class="hmac-tip">{L.signedHint}</span></summary>
-    <pre id="hmac-signed" class="hmac-signed"></pre>
-  </details>
 
   <p class="hmac-privacy">{L.privacy}</p>
 </div>
 
-<script is:inline define:vars={{ S: L }}>
+<script is:inline define:vars={{ S: CLIENT_S }}>
   (function () {
     /* ── engine:start ── */
     var ALGOS = {
@@ -1701,7 +1773,6 @@ const order = ORDER[lang];
     [msgEl, keyEl, tsEl, idEl, urlEl, uriEl, accessEl, truncEl, expectedEl].forEach(function (el) { el.addEventListener('input', schedule); });
     $('hmac-now').addEventListener('click', function () { tsEl.value = nowFor(currentPreset()); recompute(); });
     exampleBtn.addEventListener('click', loadExample);
-    $('hmac-generate').addEventListener('click', recompute);
 
     // The site-wide Ctrl/⌘+L shortcut empties text fields without input events.
     document.addEventListener('keydown', function (e) {
@@ -1716,28 +1787,33 @@ const order = ORDER[lang];
 </script>
 
 <style>
+  /* v2 "convert" layout: the root is a flex column, so the two panes (.zt-io in
+     tool-common.css) take the height that is left under the toolbar and status line. */
   .hmac-wrap {
     display: flex;
     flex-direction: column;
-    gap: 0.7rem;
+    gap: 0.6rem;
     min-width: 0;
+    min-height: 0;
   }
 
   .hmac-top {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
-    gap: 0.6rem;
-    align-items: end;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.9rem;
   }
 
   .hmac-sel {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     min-width: 0;
   }
 
-  .hmac-sel select { width: 100%; }
+  .hmac-sel select { min-width: 0; max-width: 100%; }
+
+  .hmac-top-end { display: inline-flex; margin-left: auto; }
 
   .hmac-wrap select.tool-input { font-family: var(--font-sans); }
 
@@ -1747,6 +1823,11 @@ const order = ORDER[lang];
     font-weight: 650;
     color: var(--color-text-secondary);
   }
+
+  #hmac-status,
+  #hmac-verdict { margin: 0; overflow-wrap: anywhere; }
+
+  .hmac-pane { gap: 0.6rem; }
 
   .hmac-note {
     margin: 0;
@@ -1764,17 +1845,28 @@ const order = ORDER[lang];
 
   .hmac-field[hidden],
   .hmac-row[hidden],
-  .hmac-options[hidden] { display: none; }
+  .hmac-results[hidden],
+  .hmac-options[hidden],
+  #hmac-example[hidden] { display: none; }
+
+  /* The message box takes the height that the other fields in the pane leave. */
+  #hmac-msg-field { flex: 1 1 auto; min-height: 0; }
 
   .hmac-head {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.25rem 0.4rem;
     flex-wrap: wrap;
     min-width: 0;
+    min-height: 28px;
   }
 
-  .hmac-head .hmac-name { margin-right: auto; }
+  .hmac-head-end {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+  }
 
   .hmac-mini {
     font-size: 0.78rem;
@@ -1791,9 +1883,7 @@ const order = ORDER[lang];
     font-variant-numeric: tabular-nums;
   }
 
-  .hmac-msg {
-    min-height: 96px;
-  }
+  .hmac-msg.zt-io-fill { min-height: 140px; }
 
   .hmac-extra {
     display: grid;
@@ -1815,7 +1905,27 @@ const order = ORDER[lang];
     min-width: 0;
   }
 
-  .hmac-inline .btn-primary { flex: 0 0 auto; }
+  /* Output pane: the rows, the signature check and the signed string share one box. */
+  .hmac-outbox {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    overflow: auto;
+    padding: 0.7rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+
+  .hmac-outbox.zt-io-fill { min-height: 220px; }
+
+  .hmac-empty {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+  }
+
+  .hmac-outbox:has(.hmac-results:not([hidden])) .hmac-empty { display: none; }
 
   .hmac-results {
     display: flex;
@@ -1830,7 +1940,7 @@ const order = ORDER[lang];
     align-items: center;
     padding: 0.45rem 0.6rem;
     border-radius: var(--radius-md);
-    background: var(--color-bg-secondary);
+    background: var(--color-surface);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
   }
 
@@ -1873,8 +1983,6 @@ const order = ORDER[lang];
     width: 6.5rem;
   }
 
-  .hmac-verify { padding-top: 0.2rem; }
-
   .hmac-notes {
     margin: 0;
     padding-left: 1.1rem;
@@ -1890,7 +1998,7 @@ const order = ORDER[lang];
 
   .hmac-details {
     border-radius: var(--radius-md);
-    background: var(--color-bg-secondary);
+    background: var(--color-surface);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
   }
 
@@ -1931,13 +2039,25 @@ const order = ORDER[lang];
     color: var(--color-text-muted);
   }
 
-  @media (max-width: 640px) {
-    .hmac-top {
-      grid-template-columns: minmax(0, 1fr) 6.6rem auto;
-      gap: 0.4rem;
-    }
+  /* Stacked: the panes take their own height, the output options go under them. */
+  @media (max-width: 860px) {
+    .hmac-options { order: 1; }
+    .hmac-privacy { order: 2; }
+    .hmac-msg.zt-io-fill { min-height: 96px; height: 140px; }
+    .hmac-outbox.zt-io-fill { min-height: 0; overflow: visible; resize: none; }
+  }
 
-    .hmac-top #hmac-example { padding-inline: 0.7rem; }
+  @media (max-width: 640px) {
+    /* One row: the format takes the width that the algorithm and Example leave. */
+    .hmac-top { flex-wrap: nowrap; gap: 0.4rem; }
+
+    .hmac-sel-preset { flex: 1 1 0; }
+
+    .hmac-sel-preset select { flex: 1 1 0; width: 0; }
+
+    .hmac-sel #hmac-algo { width: 7.2rem; }
+
+    .hmac-top #hmac-example { min-height: 44px; padding-inline: 0.6rem; }
 
     .hmac-top .hmac-cap {
       position: absolute;
@@ -1948,13 +2068,13 @@ const order = ORDER[lang];
       white-space: nowrap;
     }
 
-    .hmac-top #hmac-example { min-height: 44px; }
-
-    .hmac-msg { min-height: 76px; height: 76px; }
+    .hmac-msg.zt-io-fill { min-height: 96px; height: 96px; }
 
     .hmac-mini { min-height: 32px; }
 
     .hmac-head .hmac-meta { display: none; }
+
+    .hmac-outbox { padding: 0.5rem; }
 
     .hmac-row {
       grid-template-columns: 4.4rem minmax(0, 1fr) auto;

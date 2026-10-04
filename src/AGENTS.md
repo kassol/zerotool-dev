@@ -50,6 +50,7 @@ src/
 
 ## 变更日志
 
+- 2026-10-04 — v2 版式推广第 1 批：12 个转换类工具组件改为工具根 + `.zt-io` 双栏 + Toggletip 的结构（清单与各工具的行为改动见根 AGENTS.md 同日条目）；`styles/tool-common.css` 的 `.zt-io-fill` 改为 `flex: 1 1 0`（长输出在栏内滚动），`.zt-tip` 加 `flex: none`；`data/llms.mjs` 的 `plainText()` 递归还原保留片段。
 - 2026-10-04 — v2 版式推广前的共享改造：`Toggletip.astro` 的样式移入 `styles/tool-common.css`，新增 `lang` / `about` 两个 prop 并用 `i18n` 的 `tool.tipAbout` 拼 aria-label（3 个样板组件删去各自的 `tipAbout` 文案与本地函数）；`JsonFormatterTool` 的双栏布局抽成 `.zt-io` / `.zt-io-pane` / `.zt-io-fill`；`ToolLayout` 删去无效的 `wideToolSlugs` 与 `.tool-widget--wide`。`data/tool-layouts.ts` 的键与值由 `audit.mjs` 的 `tool_layouts` 检查。经过与比对结果见根 AGENTS.md 同日条目。
 
 - 2026-10-04 — 工具页 v2 版式：新增 `components/Toggletip.astro`（原生 popover 的说明气泡，内容写在 HTML 里，点击 / 触控打开，点外部或 Esc 关闭，无 popover 支持时退回 hidden）与 `data/tool-layouts.ts`；`ToolLayout` 对其中的 slug 渲染 v2 版式。json-formatter、color-palette-generator、har-file-analyzer 三个组件改为占满首屏的布局并加控件旁说明。

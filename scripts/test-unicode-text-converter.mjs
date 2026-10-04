@@ -303,6 +303,32 @@ for (const [l, input, id, want] of PAGE_EXAMPLES) {
   check('page ' + l + ' prints ' + JSON.stringify(want), pages[l].includes(want));
 }
 
+// Card notes printed next to the examples: the wording and the letters come from the tool.
+for (const [l, input, id, open, close] of [
+  ['en', 'Café Müller · Est. 2026', 'script', '(', ')'],
+  ['en', 'CO2 and x2+1', 'subscript', '(', ')'],
+  ['en', 'CO2 and x2+1', 'superscript', '(', ')'],
+  ['ja', 'カフェ Tokyo 2026', 'boldItalicSans', '（', '）'],
+]) {
+  const r = E.convert(E.analyze(input).source, id);
+  const note = open + E.fill(STRINGS[l].missing, { style: STRINGS[l].styles[id], chars: r.missing.join(' ') }) + close;
+  check('page ' + l + ' prints the card note ' + note, pages[l].includes(note));
+}
+
+// The limits section names every style that leaves an accented letter as typed.
+{
+  const plainAccent = E.STYLE_IDS.filter((id) => JSON.stringify(E.convert('é', id)) === JSON.stringify({ text: 'é', missing: ['é'] }));
+  eq('styles that keep é as typed and list it', plainAccent,
+    ['smallCaps', 'superscript', 'subscript', 'fullwidth', 'circled', 'negativeCircled', 'squared', 'negativeSquared']);
+  const LIMIT = {
+    en: 'Circled, squared, fullwidth, small-caps, superscript and subscript letters',
+    zh: '圆圈、方框、全角、小型大写、上标、下标里的 é',
+    ja: '丸囲み・四角囲み・全角・スモールキャピタル・上付き・下付きでは',
+    ko: '동그라미, 네모, 전각, 작은 대문자, 위첨자, 아래첨자에서는',
+  };
+  for (const l of Object.keys(LIMIT)) check('page ' + l + ' limits list subscript with the other styles', pages[l].includes(LIMIT[l]));
+}
+
 // The JavaScript snippet on the English page runs and matches the tool.
 {
   const m = pages.en.match(/```js\n([\s\S]*?)```/);
@@ -341,6 +367,44 @@ for (const l of langs) {
 const script = source.slice(source.indexOf('/* ── engine:end ── */'), source.indexOf('</script>'));
 check('page script does not use innerHTML / outerHTML / insertAdjacentHTML', !/innerHTML|outerHTML|insertAdjacentHTML/.test(script));
 check('page script writes card text with textContent', /c\.text\.textContent = r\.text/.test(script));
+
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  const style = source.slice(source.indexOf('<style is:global>'));
+  check('the tool root is .utc-wrap (it gets the height of the first screen)', /^\s*<div class="utc-wrap">/.test(markup) &&
+    /\.utc-wrap \{ display: flex; flex-direction: column; [^}]*min-height: 0; \}/.test(style));
+  check('input and card list use the shared two-pane classes', markup.includes('class="utc-panels zt-io"') &&
+    (markup.match(/class="utc-pane zt-io-pane"/g) || []).length === 2 &&
+    /<textarea id="utc-input" class="tool-textarea utc-textarea zt-io-fill"/.test(markup) &&
+    /<div class="utc-out zt-io-fill"[^>]*>\s*<div id="utc-plain"[\s\S]*<div id="utc-grid" class="utc-grid"><\/div>\s*<\/div>\s*<p class="utc-a11y">/.test(markup));
+  check('from 861px the card pane is twice as wide as the input pane',
+    /@media \(min-width: 861px\) \{\s*\.utc-panels \{ grid-template-columns: minmax\(0, 1fr\) minmax\(0, 2fr\); \}\s*\}/.test(style));
+  check('the status line is above the panes', markup.indexOf('id="utc-status"') < markup.indexOf('class="utc-panels zt-io"'));
+  check('the card list scrolls inside its pane (flex-basis 0, overflow auto) and stops below 860px',
+    /\.utc-out \{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(style) &&
+    /@media \(max-width: 860px\) \{[^@]*\.utc-out \{ flex: none; [^}]*overflow: visible; resize: none;/.test(style));
+  eq('one toggletip per explained control', (markup.match(/<Toggletip id="(utc-tip-\w+)"/g) || []).map((m) => m.slice(15, -1)),
+    ['utc-tip-input', 'utc-tip-cards', 'utc-tip-plain']);
+  for (const l of langs) {
+    eq('STRINGS ' + l + ' has the three toggletip texts', Object.keys(STRINGS[l].tips), ['input', 'cards', 'plain']);
+    check('STRINGS ' + l + ' toggletips are plain sentences', Object.values(STRINGS[l].tips).every((v) => v.length > 40 && !/[<>\n]|https?:/.test(v)));
+  }
+  check('toggletip text stays out of the inline script', source.includes('define:vars={{ t: CLIENT_T }}') &&
+    source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && !/\bt\.tips\b/.test(script));
+  check('Ctrl/Cmd+L refreshes the cards (back to the preview)',
+    /key === 'l' \|\| e\.key === 'L'\) && wrap\.contains\(document\.activeElement\)\) \{\s*setTimeout\(render, 0\);/.test(script));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'unicode-text-converter': 'convert'"));
+  for (const l of langs) {
+    const front = pages[l].slice(0, pages[l].indexOf('\n---\n', 4));
+    const body = pages[l].slice(front.length + 5);
+    eq(l + ' mdx: 4 steps in the frontmatter', (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "/gm) || []).length, 4);
+    check(l + ' mdx: no usage section in the body', !/^## (How to use|使用方法|使い方|사용 방법)\s*$/mi.test(body));
+    check(l + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한 사항)\s*$/m.test(body));
+    check(l + ' mdx: nothing says the note is under the input box', !/输入框下方|入力欄の下|입력창 아래/.test(pages[l]));
+  }
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

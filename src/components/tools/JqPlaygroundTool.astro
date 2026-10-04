@@ -2,6 +2,7 @@
 // JqPlaygroundTool — run jq 1.7.1 (jq-web 0.6.2, WebAssembly) in a worker. A run is the same as
 // `jq FLAGS FILTER input.json`; stdout, stderr and the exit code are shown as jq prints them.
 // jq.wasm (about 1 MB compressed) is downloaded on first use, not on page load.
+import Toggletip from '../Toggletip.astro';
 import {
   BOOL_OPTIONS, INDENT_VALUES, EXAMPLES, EXAMPLE_GROUPS, SAMPLE_INPUT, DEFAULT_FILTER, SAMPLE_OUTPUT,
   highlightJson, countJsonValues, buildCommand, defaultOptions,
@@ -43,7 +44,6 @@ const STRINGS = {
     argJson: '--argjson (JSON)',
     argRemove: 'Remove variable',
     input: 'Input',
-    inputHint: 'JSON, several JSON values one after another (JSON Lines), or text with -R.',
     openFile: 'Open file',
     clear: 'Clear',
     output: 'Output',
@@ -64,7 +64,6 @@ const STRINGS = {
     copyCommand: 'Copy command',
     copyLink: 'Copy link',
     linkCopied: 'Link copied',
-    shareNote: 'The command reads the input from input.json. The link holds the filter, the options and the variable names; the input and the variable values stay on this device.',
     engineLoading: 'Loading jq 1.7.1 (jq.wasm, about 1 MB compressed, cached after the first time)…',
     engineFailed: 'Could not load the jq engine: {msg}',
     retry: 'Retry',
@@ -113,6 +112,17 @@ const STRINGS = {
     },
     argProblem: { argNoName: 'Variable {row}: the name is empty.', argBadName: 'Variable {row}: "{name}" is not a valid name (letters, digits, _; not starting with a digit).', argDuplicate: 'Variable {row}: ${name} is defined twice.', argBadJson: 'Variable {row}: the value of --argjson {name} is not valid JSON.' },
     engineNote: 'Engine: jq 1.7.1, the official C source compiled to WebAssembly (jq-web 0.6.2). It runs in a background worker in this tab; nothing is uploaded.',
+    argsLabel: 'Variables (--arg, --argjson)',
+    // Toggletip text next to the control it explains (DESIGN.md "Tool Pages v2"). It is in the HTML and is not sent to the script.
+    tips: {
+      filter: "The filter runs 0.25 seconds after you stop typing; an empty filter runs as . (identity). Ctrl+Enter (\u2318+Enter on a Mac) runs it at once. Paste a whole command line such as curl \u2026 | jq -r '.items[]' and the page offers to take its filter, options and variables. It also offers to remove shell quotes around a filter and to replace fullwidth punctuation and curly quotes outside strings. import, include and -f need files on disk and are not available.",
+      run: "Runs the filter now. Input over 2 MB does not run as you type, so press Run for it. After 1 second the button turns into Stop. A run is stopped after 10 seconds plus 1 second per MB of input; a filter such as repeat(1) never finishes on its own.",
+      options: "Each button is a jq command-line option; turn it on as you would pass it to jq. -r prints strings without quotes, -c prints each value on one line, -s reads every input value into one array, -n starts from null so that the filter reads the input with input or inputs, and -R reads the input as lines of text. Hold the pointer over a button to read what it does. Indent sets the indentation of JSON output (--indent n or --tab).",
+      args: "Adds a variable that the filter reads as $name. --arg passes the value as a string; --argjson parses the value as JSON, so 10 is a number and {\"a\":1} is an object. A name has letters, digits and _ and does not start with a digit. The filter does not run while a name is invalid or used twice, or while an --argjson value is not valid JSON.",
+      input: "JSON, several JSON values one after another (JSON Lines, NDJSON), or plain text with -R. Open file reads a UTF-8 file of up to 200 MB; you can also drop a file on this panel. A file over 2 MB is not shown in the editor: you see its first 20,000 characters and jq reads the whole file. Input over 2 MB runs only when you press Run. Clear empties the input and the output and keeps the filter.",
+      output: "What jq writes to stdout, unchanged. When jq reports an error, its stderr text appears under the output and the exit code in the status line above the panels; Show in input and Show in filter select the position jq reports. The panel shows the first 1 MB and colours JSON up to 256 KB; Copy and Download always give the whole output. Download saves output.json, output.jsonl with -c, or output.txt with -r or -j.",
+      command: "The same run as a shell command: save your input as input.json and paste the command into bash or zsh. The filter and the variable values are quoted for a POSIX shell. Copy link copies a link that holds the filter, the options and the variable names; the input and the variable values stay on this device.",
+    },
   },
   zh: {
     filter: 'jq 过滤器',
@@ -145,7 +155,6 @@ const STRINGS = {
     argJson: '--argjson（JSON）',
     argRemove: '删除变量',
     input: '输入',
-    inputHint: 'JSON、多个连续的 JSON 值（JSON Lines），或配合 -R 的纯文本。',
     openFile: '打开文件',
     clear: '清空',
     output: '输出',
@@ -166,7 +175,6 @@ const STRINGS = {
     copyCommand: '复制命令',
     copyLink: '复制链接',
     linkCopied: '链接已复制',
-    shareNote: '命令从 input.json 读取输入。链接包含过滤器、选项和变量名；输入内容和变量值留在本机。',
     engineLoading: '正在加载 jq 1.7.1（jq.wasm，压缩后约 1 MB，首次下载后由浏览器缓存）…',
     engineFailed: 'jq 引擎加载失败：{msg}',
     retry: '重试',
@@ -215,6 +223,16 @@ const STRINGS = {
     },
     argProblem: { argNoName: '第 {row} 个变量：名称为空。', argBadName: '第 {row} 个变量：「{name}」不是有效的名称（字母、数字、下划线，不能以数字开头）。', argDuplicate: '第 {row} 个变量：${name} 定义了两次。', argBadJson: '第 {row} 个变量：--argjson {name} 的值不是有效的 JSON。' },
     engineNote: '引擎：jq 1.7.1，官方 C 源码编译成 WebAssembly（jq-web 0.6.2），在本标签页的后台 worker 中运行，不上传任何内容。',
+    argsLabel: '变量（--arg、--argjson）',
+    tips: {
+      filter: "停止输入 0.25 秒后运行；过滤器为空时按 .（原样输出）运行。按 Ctrl+Enter（Mac 为 \u2318+Enter）立即运行。把整条命令（例如 curl \u2026 | jq -r '.items[]'）粘进来，页面会提示使用其中的过滤器、选项和变量。过滤器两端带 shell 引号时可一键去掉，字符串以外的全角标点和弯引号可一键替换。import、include 和 -f 需要磁盘上的文件，这里不能用。",
+      run: "立即运行过滤器。输入超过 2 MB 时不随输入实时运行，要点「运行」。运行满 1 秒后按钮变成「停止」。运行超过 10 秒（每 MB 输入再加 1 秒）会被停止；repeat(1) 这类过滤器自己不会结束。",
+      options: "每个按钮是一个 jq 命令行选项，像给 jq 传参一样打开。-r 输出不带引号的字符串，-c 每个值一行，-s 把所有输入值读成一个数组，-n 以 null 为输入、由过滤器用 input 或 inputs 读取输入，-R 把输入按行读成文本。鼠标停在按钮上可以看到它的说明。「缩进」设置 JSON 输出的缩进（--indent n 或 --tab）。",
+      args: "添加一个变量，过滤器里用 $名称 读取。--arg 把值作为字符串传入；--argjson 把值按 JSON 解析，所以 10 是数字、{\"a\":1} 是对象。名称由字母、数字和下划线组成，不能以数字开头。名称无效或重复、--argjson 的值不是有效 JSON 时，过滤器不会运行。",
+      input: "JSON、多个连续的 JSON 值（JSON Lines、NDJSON），或配合 -R 的纯文本。「打开文件」读取 200 MB 以内的 UTF-8 文件，也可以把文件拖到这一栏。超过 2 MB 的文件不在编辑框里显示，只能看到前 20,000 个字符，jq 读取的是整个文件。输入超过 2 MB 时要点「运行」才会运行。「清空」清掉输入和输出，过滤器保留。",
+      output: "jq 写到 stdout 的内容，原样显示。jq 报错时，stderr 文本显示在输出下方，退出码显示在两栏上方的状态行；「在输入中定位」「在过滤器中定位」会选中 jq 报告的位置。输出框只显示前 1 MB，256 KB 以内的 JSON 带高亮；「复制」和「下载」始终是完整输出。下载的文件名是 output.json，开了 -c 时是 output.jsonl，开了 -r 或 -j 时是 output.txt。",
+      command: "同一次运行写成的 shell 命令：把输入存成 input.json，再把命令粘到 bash 或 zsh 里执行。过滤器和变量值已按 POSIX shell 的规则加引号。「复制链接」得到的链接包含过滤器、选项和变量名；输入内容和变量值留在本机。",
+    },
   },
   ja: {
     filter: 'jq フィルタ',
@@ -247,7 +265,6 @@ const STRINGS = {
     argJson: '--argjson（JSON）',
     argRemove: '変数を削除',
     input: '入力',
-    inputHint: 'JSON、続けて並んだ複数の JSON 値（JSON Lines）、または -R と組み合わせたテキスト。',
     openFile: 'ファイルを開く',
     clear: 'クリア',
     output: '出力',
@@ -268,7 +285,6 @@ const STRINGS = {
     copyCommand: 'コマンドをコピー',
     copyLink: 'リンクをコピー',
     linkCopied: 'リンクをコピーしました',
-    shareNote: 'コマンドは input.json から入力を読みます。リンクに入るのはフィルタ・オプション・変数名だけで、入力と変数の値はこの端末に残ります。',
     engineLoading: 'jq 1.7.1 を読み込み中（jq.wasm、圧縮後約 1 MB、2 回目以降はキャッシュ）…',
     engineFailed: 'jq エンジンを読み込めませんでした：{msg}',
     retry: '再試行',
@@ -317,6 +333,16 @@ const STRINGS = {
     },
     argProblem: { argNoName: '変数 {row}：名前が空です。', argBadName: '変数 {row}：「{name}」は名前に使えません（英数字と _、先頭は数字以外）。', argDuplicate: '変数 {row}：${name} が 2 回定義されています。', argBadJson: '変数 {row}：--argjson {name} の値が JSON として正しくありません。' },
     engineNote: 'エンジン：jq 1.7.1。公式の C ソースを WebAssembly にコンパイルしたもの（jq-web 0.6.2）を、このタブのバックグラウンド worker で実行します。何もアップロードしません。',
+    argsLabel: '変数（--arg、--argjson）',
+    tips: {
+      filter: "入力を止めて 0.25 秒後に実行します。フィルタが空のときは .（そのまま出力）として実行します。Ctrl+Enter（Mac は \u2318+Enter）ですぐに実行します。curl \u2026 | jq -r '.items[]' のようなコマンド全体を貼り付けると、フィルタ・オプション・変数を取り込むか尋ねます。フィルタを囲むシェルの引用符を外すこと、文字列の外にある全角記号や曲がった引用符を置き換えることもできます。import・include・-f はディスク上のファイルが必要なため使えません。",
+      run: "フィルタをすぐに実行します。2 MB を超える入力は入力中には実行しないので、「実行」を押してください。実行が 1 秒続くとボタンが「停止」に変わります。10 秒（入力 1 MB ごとに 1 秒追加）を超える実行は止めます。repeat(1) のようなフィルタは自分では終わりません。",
+      options: "ボタンはそれぞれ jq のコマンドラインオプションで、jq に渡すのと同じ感覚でオンにします。-r は文字列を引用符なしで出力し、-c は 1 値を 1 行で出力し、-s はすべての入力値を 1 つの配列にまとめ、-n は null から始めてフィルタが input や inputs で入力を読み、-R は入力をテキストの行として読みます。ボタンにポインタを合わせると説明が出ます。「インデント」は JSON 出力の字下げ（--indent n または --tab）を決めます。",
+      args: "フィルタから $名前 で読める変数を追加します。--arg は値を文字列として渡し、--argjson は値を JSON として解析するので、10 は数値、{\"a\":1} はオブジェクトになります。名前に使えるのは英数字と _ で、先頭は数字以外です。名前が正しくない、同じ名前が 2 回ある、--argjson の値が JSON として正しくない、のいずれかの間はフィルタを実行しません。",
+      input: "JSON、続けて並んだ複数の JSON 値（JSON Lines、NDJSON）、または -R と組み合わせたテキストを入れます。「ファイルを開く」は 200 MB までの UTF-8 ファイルを読み込みます。この欄にファイルをドロップしても開けます。2 MB を超えるファイルはエディタに表示せず、先頭 20,000 文字だけが見えますが、jq はファイル全体を読みます。2 MB を超える入力は「実行」を押したときだけ動きます。「クリア」は入力と出力を消し、フィルタは残します。",
+      output: "jq が stdout に書いた内容をそのまま表示します。jq がエラーを出すと、stderr の文は出力の下に、終了コードは 2 つの欄の上のステータス行に出ます。「入力で表示」「フィルタで表示」は jq が報告した位置を選択します。出力欄に表示するのは先頭 1 MB までで、256 KB までの JSON には色が付きます。「コピー」と「ダウンロード」は常に出力全体です。ダウンロードのファイル名は output.json、-c のときは output.jsonl、-r か -j のときは output.txt です。",
+      command: "同じ実行をシェルのコマンドにしたものです。入力を input.json として保存し、コマンドを bash か zsh に貼り付けます。フィルタと変数の値は POSIX シェル向けに引用符で囲んであります。「リンクをコピー」のリンクに入るのはフィルタ・オプション・変数名だけで、入力と変数の値はこの端末に残ります。",
+    },
   },
   ko: {
     filter: 'jq 필터',
@@ -349,7 +375,6 @@ const STRINGS = {
     argJson: '--argjson(JSON)',
     argRemove: '변수 삭제',
     input: '입력',
-    inputHint: 'JSON, 이어서 나열된 여러 JSON 값(JSON Lines), 또는 -R과 함께 쓰는 텍스트.',
     openFile: '파일 열기',
     clear: '지우기',
     output: '출력',
@@ -370,7 +395,6 @@ const STRINGS = {
     copyCommand: '명령 복사',
     copyLink: '링크 복사',
     linkCopied: '링크를 복사했습니다',
-    shareNote: '명령은 input.json에서 입력을 읽습니다. 링크에는 필터, 옵션, 변수 이름만 들어가고 입력과 변수 값은 이 기기에 남습니다.',
     engineLoading: 'jq 1.7.1 불러오는 중(jq.wasm, 압축 시 약 1MB, 처음 한 번만 내려받고 캐시)…',
     engineFailed: 'jq 엔진을 불러오지 못했습니다: {msg}',
     retry: '다시 시도',
@@ -419,11 +443,23 @@ const STRINGS = {
     },
     argProblem: { argNoName: '변수 {row}: 이름이 비어 있습니다.', argBadName: '변수 {row}: 「{name}」은 이름으로 쓸 수 없습니다(영문자, 숫자, _, 숫자로 시작 불가).', argDuplicate: '변수 {row}: ${name}이 두 번 정의되었습니다.', argBadJson: '변수 {row}: --argjson {name}의 값이 올바른 JSON이 아닙니다.' },
     engineNote: '엔진: jq 1.7.1. 공식 C 소스를 WebAssembly로 컴파일한 것(jq-web 0.6.2)을 이 탭의 백그라운드 worker에서 실행합니다. 아무것도 업로드하지 않습니다.',
+    argsLabel: '변수(--arg, --argjson)',
+    tips: {
+      filter: "입력을 멈추고 0.25초 뒤에 실행합니다. 필터가 비어 있으면 .(그대로 출력)으로 실행합니다. Ctrl+Enter(Mac은 \u2318+Enter)를 누르면 바로 실행합니다. curl \u2026 | jq -r '.items[]' 같은 명령 전체를 붙여 넣으면 필터, 옵션, 변수를 가져올지 묻습니다. 필터를 감싼 셸 따옴표를 제거하거나, 문자열 밖의 전각 기호와 둥근 따옴표를 바꿀 수도 있습니다. import, include, -f는 디스크의 파일이 필요해 쓸 수 없습니다.",
+      run: "필터를 바로 실행합니다. 2MB가 넘는 입력은 입력하는 동안 실행하지 않으니 「실행」을 누르세요. 실행이 1초 이어지면 버튼이 「중지」로 바뀝니다. 10초(입력 1MB마다 1초 추가)가 넘는 실행은 중지합니다. repeat(1) 같은 필터는 스스로 끝나지 않습니다.",
+      options: "버튼 하나가 jq 명령줄 옵션 하나이며, jq에 넘기듯이 켭니다. -r은 문자열을 따옴표 없이 출력하고, -c는 값 하나를 한 줄로 출력하고, -s는 모든 입력 값을 배열 하나로 모으고, -n은 null에서 시작해 필터가 input이나 inputs로 입력을 읽고, -R은 입력을 텍스트 줄로 읽습니다. 버튼에 포인터를 올리면 설명이 보입니다. 「들여쓰기」는 JSON 출력의 들여쓰기(--indent n 또는 --tab)를 정합니다.",
+      args: "필터에서 $이름으로 읽는 변수를 추가합니다. --arg는 값을 문자열로 넘기고, --argjson은 값을 JSON으로 파싱하므로 10은 숫자, {\"a\":1}은 객체가 됩니다. 이름에는 영문자, 숫자, _를 쓸 수 있고 숫자로 시작할 수 없습니다. 이름이 올바르지 않거나 두 번 쓰였거나 --argjson 값이 올바른 JSON이 아닌 동안에는 필터를 실행하지 않습니다.",
+      input: "JSON, 이어서 나열된 여러 JSON 값(JSON Lines, NDJSON), 또는 -R과 함께 쓰는 텍스트를 넣습니다. 「파일 열기」는 200MB 이하의 UTF-8 파일을 읽습니다. 이 칸에 파일을 끌어다 놓아도 됩니다. 2MB가 넘는 파일은 편집기에 표시하지 않고 앞 20,000자만 보이지만 jq는 파일 전체를 읽습니다. 2MB가 넘는 입력은 「실행」을 눌러야 실행됩니다. 「지우기」는 입력과 출력을 지우고 필터는 그대로 둡니다.",
+      output: "jq가 stdout에 쓴 내용을 그대로 보여 줍니다. jq가 오류를 내면 stderr 문구는 출력 아래에, 종료 코드는 두 칸 위의 상태 줄에 나옵니다. 「입력에서 보기」와 「필터에서 보기」는 jq가 알려 준 위치를 선택합니다. 출력 칸은 앞 1MB만 보여 주고, 256KB 이하의 JSON에는 색을 입힙니다. 「복사」와 「다운로드」는 항상 출력 전체입니다. 다운로드 파일 이름은 output.json이고, -c를 켜면 output.jsonl, -r이나 -j를 켜면 output.txt입니다.",
+      command: "같은 실행을 셸 명령으로 적은 것입니다. 입력을 input.json으로 저장하고 명령을 bash나 zsh에 붙여 넣으세요. 필터와 변수 값은 POSIX 셸에 맞게 따옴표로 감쌌습니다. 「링크 복사」로 얻는 링크에는 필터, 옵션, 변수 이름만 들어가고 입력과 변수 값은 이 기기에 남습니다.",
+    },
   },
 };
 /* strings:end */
 
 const T = STRINGS[lang] ?? STRINGS.en;
+// The script gets every string except the toggletip text, which is in the HTML.
+const { tips: TIPS, ...CLIENT_T } = T;
 const exampleLabel = (ex) => {
   const flags = ex.flags ? Object.keys(ex.flags).filter((k) => ex.flags[k]).map((k) => BOOL_OPTIONS.find((d) => d.key === k)?.short || '--' + k) : [];
   const args = (ex.args || []).map((a) => (a.type === 'json' ? '--argjson ' : '--arg ') + a.name);
@@ -435,10 +471,11 @@ const sampleCount = countJsonValues(SAMPLE_OUTPUT);
 const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
 ---
 
-<div class="jqp-wrap" id="jqp-wrap" data-strings={JSON.stringify(T)} data-sample-input={SAMPLE_INPUT} data-default-filter={DEFAULT_FILTER}>
+<div class="jqp-wrap" id="jqp-wrap" data-strings={JSON.stringify(CLIENT_T)} data-sample-input={SAMPLE_INPUT} data-default-filter={DEFAULT_FILTER}>
   <div class="jqp-top">
     <div class="jqp-filter-head">
       <label class="tool-label" for="jqp-filter">{T.filter}</label>
+      <Toggletip id="jqp-tip-filter" lang={lang} about={T.filter} wide>{TIPS.filter}</Toggletip>
       <select id="jqp-examples" class="jqp-examples" aria-label={T.examples}>
         <option value="">{T.examplesPick}</option>
         {EXAMPLE_GROUPS.map((g) => (
@@ -450,28 +487,42 @@ const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
     </div>
     <div class="jqp-filter-row">
       <textarea id="jqp-filter" class="tool-textarea jqp-filter" rows="2" spellcheck="false" autocomplete="off" autocapitalize="off">{DEFAULT_FILTER}</textarea>
-      <button id="jqp-run" class="btn-primary jqp-run" type="button">{T.run}</button>
+      <span class="jqp-run-cell">
+        <button id="jqp-run" class="btn-primary jqp-run" type="button">{T.run}</button>
+        <Toggletip id="jqp-tip-run" lang={lang} about={T.run} wide>{TIPS.run}</Toggletip>
+      </span>
     </div>
     <div id="jqp-filter-notes" class="jqp-notes" aria-live="polite"></div>
     <div class="jqp-opts" role="group" aria-label={T.options}>
       {BOOL_OPTIONS.map((d) => (
         <button type="button" class="jqp-opt" data-opt={d.key} aria-pressed="false" title={T.opt[d.key]} aria-label={(d.short || d.long) + ' — ' + T.opt[d.key]}>{d.short || d.long}</button>
       ))}
+      <Toggletip id="jqp-tip-options" lang={lang} about={T.options} wide>{TIPS.options}</Toggletip>
       <label class="jqp-indent">
         <span>{T.indent}</span>
         <select id="jqp-indent">
           {INDENT_VALUES.map((v) => <option value={v}>{T.indentValues[v]}</option>)}
         </select>
       </label>
-      <button type="button" id="jqp-add-arg" class="jqp-opt jqp-add-arg">{T.addArg}</button>
+      <span class="jqp-add">
+        <button type="button" id="jqp-add-arg" class="jqp-opt jqp-add-arg">{T.addArg}</button>
+        <Toggletip id="jqp-tip-args" lang={lang} about={T.argsLabel} wide>{TIPS.args}</Toggletip>
+      </span>
     </div>
     <div id="jqp-args" class="jqp-args"></div>
   </div>
 
-  <div class="jqp-io">
-    <div class="jqp-panel" id="jqp-input-panel">
+  <div class="jqp-statusline">
+    <span id="jqp-count" class="jqp-count">{sampleCount === 1 ? T.valueOne : T.valueMany.replace('{n}', String(sampleCount))}</span>
+    <span id="jqp-exit" class="jqp-exit" hidden></span>
+    <div id="jqp-status" class="jqp-status" role="status" aria-live="polite"></div>
+  </div>
+
+  <div class="jqp-io zt-io">
+    <div class="jqp-panel zt-io-pane" id="jqp-input-panel">
       <div class="jqp-panel-head">
         <label class="tool-label" for="jqp-input">{T.input}</label>
+        <Toggletip id="jqp-tip-input" lang={lang} about={T.input} wide>{TIPS.input}</Toggletip>
         <span class="jqp-spacer"></span>
         <button id="jqp-open" class="btn-ghost jqp-small" type="button">{T.openFile}</button>
         <button id="jqp-clear" class="btn-ghost jqp-small" type="button">{T.clear}</button>
@@ -481,21 +532,18 @@ const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
         <span id="jqp-file-text"></span>
         <button id="jqp-file-close" class="btn-ghost jqp-small" type="button">{T.closeFile}</button>
       </div>
-      <textarea id="jqp-input" class="tool-textarea jqp-input" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="jqp-input-hint">{SAMPLE_INPUT}</textarea>
-      <p id="jqp-input-hint" class="jqp-hint-text">{T.inputHint}</p>
+      <textarea id="jqp-input" class="tool-textarea jqp-input zt-io-fill" spellcheck="false" autocomplete="off" autocapitalize="off">{SAMPLE_INPUT}</textarea>
     </div>
 
-    <div class="jqp-panel">
+    <div class="jqp-panel zt-io-pane">
       <div class="jqp-panel-head">
         <span class="tool-label" id="jqp-out-label">{T.output}</span>
-        <span id="jqp-count" class="jqp-count">{sampleCount === 1 ? T.valueOne : T.valueMany.replace('{n}', String(sampleCount))}</span>
-        <span id="jqp-exit" class="jqp-exit" hidden></span>
+        <Toggletip id="jqp-tip-output" lang={lang} about={T.output} wide>{TIPS.output}</Toggletip>
         <span class="jqp-spacer"></span>
         <button id="jqp-copy" class="btn-copy" type="button">{T.copy}</button>
         <button id="jqp-download" class="btn-ghost jqp-small" type="button">{T.download}</button>
       </div>
-      <pre id="jqp-out" class="jqp-out" tabindex="0" aria-labelledby="jqp-out-label"><code id="jqp-code" set:html={sampleHtml}></code></pre>
-      <div id="jqp-status" class="jqp-status" role="status" aria-live="polite"></div>
+      <pre id="jqp-out" class="jqp-out zt-io-fill" tabindex="0" aria-labelledby="jqp-out-label"><code id="jqp-code" set:html={sampleHtml}></code></pre>
       <div id="jqp-stderr-box" class="jqp-stderr-box" hidden>
         <div class="jqp-stderr-title">{T.stderr}</div>
         <pre id="jqp-stderr" class="jqp-stderr"></pre>
@@ -506,14 +554,11 @@ const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
   </div>
 
   <div class="jqp-cmd">
-    <div class="jqp-panel-head">
-      <span class="tool-label">{T.command}</span>
-      <span class="jqp-spacer"></span>
-      <button id="jqp-copy-cmd" class="btn-ghost jqp-small" type="button">{T.copyCommand}</button>
-      <button id="jqp-copy-link" class="btn-ghost jqp-small" type="button">{T.copyLink}</button>
-    </div>
+    <span class="tool-label">{T.command}</span>
+    <Toggletip id="jqp-tip-command" lang={lang} about={T.command} wide>{TIPS.command}</Toggletip>
     <code id="jqp-cmd" class="jqp-cmd-text">{sampleCommand}</code>
-    <p class="jqp-hint-text">{T.shareNote}</p>
+    <button id="jqp-copy-cmd" class="btn-ghost jqp-small" type="button">{T.copyCommand}</button>
+    <button id="jqp-copy-link" class="btn-ghost jqp-small" type="button">{T.copyLink}</button>
   </div>
   <p class="jqp-engine-note">{T.engineNote}</p>
 </div>
@@ -948,6 +993,7 @@ const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
     if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
       setTimeout(function () {
         if (inputEl.value === '' && filterEl.value === '') {
+          clearTimeout(runTimer);
           closeFile();
           state.args = [];
           renderArgs(); renderNotes(); renderCommand(); clearOutput(); setStatus('', '');
@@ -1074,14 +1120,18 @@ const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
 </script>
 
 <style is:global>
-  .jqp-wrap { display: flex; flex-direction: column; gap: 0.9rem; }
+  /* v2 "convert" layout: the root is a flex column, so the input and output panes (.zt-io in
+     tool-common.css) take the height that is left under the filter, the options and the status
+     line. Global because the script creates the variable rows, notes and highlighted output. */
+  .jqp-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-height: 0; }
   .jqp-top { display: flex; flex-direction: column; gap: 0.5rem; }
-  .jqp-filter-head, .jqp-panel-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; min-height: 32px; }
+  .jqp-filter-head, .jqp-panel-head { display: flex; align-items: center; gap: 0.3rem 0.4rem; flex-wrap: wrap; min-height: 32px; }
   .jqp-spacer { flex: 1; }
   .jqp-wrap .jqp-examples { width: auto; max-width: min(100%, 24rem); margin-left: auto; font-size: 0.82rem; min-height: 32px; }
   .jqp-filter-row { display: flex; gap: 0.6rem; align-items: stretch; }
   .jqp-wrap .jqp-filter { flex: 1; min-height: 3.4rem; font-family: var(--font-mono); font-size: 0.92rem; line-height: 1.5; resize: vertical; }
-  .jqp-run { align-self: flex-start; min-width: 6.5rem; }
+  .jqp-run-cell { display: flex; align-items: center; align-self: flex-start; gap: 0.25rem; }
+  .jqp-run { min-width: 6.5rem; }
   .jqp-opts { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
   .jqp-opt {
     font-family: var(--font-mono);
@@ -1104,6 +1154,7 @@ const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
   }
   @media (hover: hover) { .jqp-opt:hover { color: var(--color-primary); } }
   .jqp-opt:active { transform: scale(0.96); }
+  .jqp-add { display: inline-flex; align-items: center; gap: 0.2rem; }
   .jqp-add-arg { font-family: inherit; }
   .jqp-indent { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: var(--color-text-secondary); }
   .jqp-indent select { min-height: 28px; font-size: 0.78rem; }
@@ -1122,17 +1173,17 @@ const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
   .jqp-note-sub { margin-top: 0.3rem; color: var(--color-text-muted); }
   .jqp-small { min-height: 30px; padding: 0.2rem 0.65rem; font-size: 0.78rem; }
 
-  .jqp-io { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
-  /* One column: the output comes right after the filter, the input below it. */
-  @media (max-width: 760px) {
-    .jqp-io { grid-template-columns: minmax(0, 1fr); }
-    .jqp-io > .jqp-panel:last-child { order: -1; }
-  }
-  .jqp-panel { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; border-radius: var(--radius-md); }
+  /* Count, exit code and messages of the last run, above the panes. The line keeps its height
+     when it is empty, so the panes do not move when a message appears. */
+  .jqp-statusline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.6rem; min-height: 1.5rem; }
+  .jqp-count:empty { display: none; }
+
+  /* Input and output side by side: .zt-io / .zt-io-pane / .zt-io-fill in tool-common.css
+     (grid, pane columns, and the stretch of the textarea and the output). */
+  .jqp-panel { border-radius: var(--radius-md); }
   .jqp-panel.jqp-drop { box-shadow: 0 0 0 2px var(--color-primary); }
-  .jqp-wrap .jqp-input { min-height: 320px; font-family: var(--font-mono); font-size: 0.84rem; line-height: 1.5; white-space: pre; overflow-wrap: normal; }
+  .jqp-wrap .jqp-input { font-family: var(--font-mono); font-size: 0.84rem; line-height: 1.5; white-space: pre; overflow-wrap: normal; }
   .jqp-input--file { color: var(--color-text-muted); }
-  .jqp-hint-text { margin: 0; font-size: 0.76rem; color: var(--color-text-muted); }
   .jqp-banner { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; padding: 0.45rem 0.65rem; border-radius: var(--radius-md); background: var(--color-surface-muted); }
   .jqp-banner[hidden] { display: none; }
   .jqp-count { font-size: 0.78rem; color: var(--color-primary); font-weight: 700; }
@@ -1148,23 +1199,28 @@ const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
     font-family: var(--font-mono);
     font-size: 0.82rem;
     line-height: 1.55;
-    min-height: 320px;
-    max-height: 520px;
+  }
+  /* Side by side: a long output scrolls inside its pane and does not make the page longer.
+     The filter, options, status line and command line take about 250px, so the panes may be
+     lower than the shared minimum, and the output gives room to stderr and the hints. */
+  @media (min-width: 861px) {
+    .jqp-io { min-height: 360px; }
+    .jqp-out { flex-basis: 0; min-height: 200px; }
   }
   .jqp-code { font-family: inherit; }
   .jqp-status { font-size: 0.8rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; color: var(--color-text-secondary); }
   .jqp-status:empty { display: none; }
   .jqp-status--error { color: var(--color-danger); }
-  .jqp-stderr-box { border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 45%, transparent); padding: 0.55rem 0.75rem; }
+  .jqp-stderr-box { flex: none; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-danger) 45%, transparent); padding: 0.55rem 0.75rem; }
   .jqp-stderr-box[hidden] { display: none; }
   .jqp-stderr-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted); }
   .jqp-stderr { margin: 0.3rem 0 0; font-family: var(--font-mono); font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-danger); max-height: 220px; overflow: auto; }
   .jqp-locate { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
   .jqp-locate:empty { display: none; }
-  .jqp-hints { margin: 0; padding-left: 1.1rem; font-size: 0.82rem; display: flex; flex-direction: column; gap: 0.3rem; }
+  .jqp-hints { flex: none; margin: 0; padding-left: 1.1rem; font-size: 0.82rem; display: flex; flex-direction: column; gap: 0.3rem; }
   .jqp-hints[hidden] { display: none; }
-  .jqp-cmd { display: flex; flex-direction: column; gap: 0.4rem; }
-  .jqp-cmd-text { display: block; font-family: var(--font-mono); font-size: 0.82rem; padding: 0.6rem 0.8rem; border-radius: var(--radius-md); background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .jqp-cmd { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+  .jqp-cmd-text { flex: 1 1 22rem; min-width: 0; font-family: var(--font-mono); font-size: 0.82rem; padding: 0.6rem 0.8rem; border-radius: var(--radius-md); background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
   .jqp-engine-note { margin: 0; font-size: 0.74rem; color: var(--color-text-muted); }
 
   .jqp-hl-key  { color: oklch(46% 0.12 240); font-weight: 600; }
@@ -1184,15 +1240,28 @@ const sampleCommand = buildCommand(DEFAULT_FILTER, defaultOptions(), []);
   [data-theme="dark"] .jqp-hl-num  { color: oklch(76% 0.14 55); }
   [data-theme="dark"] .jqp-hl-bool { color: oklch(76% 0.13 295); }
 
+  /* One column: the output comes right after the filter and the options, the input below it. */
+  @media (max-width: 860px) {
+    .jqp-io > .jqp-panel:last-child { order: -1; }
+    /* The status line holds two rows of text here. The "loading jq" message appears on the first
+       tap and wraps on a phone; with one row it pushed the panes down between pointerdown and
+       click, and the tap missed its button. */
+    .jqp-statusline { display: block; min-height: 2.75rem; line-height: 1.25rem; }
+    .jqp-statusline .jqp-count, .jqp-statusline .jqp-exit { margin-right: 0.5rem; }
+    .jqp-status { display: inline; }
+    .jqp-status button { margin-left: 0.4rem; }
+    .jqp-out { height: 300px; }
+    .jqp-wrap .jqp-input { height: 200px; }
+  }
   @media (max-width: 640px) {
     .jqp-filter-row { flex-direction: column; }
-    .jqp-run { min-height: 44px; }
+    .jqp-run { min-height: 44px; flex: 1; }
     .jqp-wrap .jqp-filter { min-height: 3.2rem; }
     .jqp-opt, .jqp-indent select, .jqp-small, .jqp-examples { min-height: 32px; }
     .jqp-wrap .jqp-examples { margin-left: 0; max-width: 100%; flex: 1; }
-    .jqp-run { align-self: stretch; }
-    .jqp-wrap .jqp-input { min-height: 180px; }
-    .jqp-out { min-height: 160px; }
+    .jqp-run-cell { align-self: stretch; }
+    .jqp-out { height: 240px; }
+    .jqp-wrap .jqp-input { height: 160px; }
     .jqp-arg { grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto; }
     .jqp-arg-type { grid-column: 1 / -1; }
     .jqp-dollar { display: none; }

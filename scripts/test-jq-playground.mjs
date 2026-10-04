@@ -458,6 +458,49 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': page says jq 1.7.1', mdx.includes('1.7.1'), lang);
 }
 
+// ── v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ──
+{
+  const markup = tool.slice(tool.indexOf('\n---\n', 4) + 5, tool.indexOf('<script>'));
+  check('the tool root is .jqp-wrap (it gets the height of the first screen)', /^\s*<div class="jqp-wrap" id="jqp-wrap"/.test(markup) && /\.jqp-wrap \{ display: flex; flex-direction: column; gap: [\d.]+rem; min-height: 0; \}/.test(tool));
+  check('input and output use the shared two-pane classes', markup.includes('class="jqp-io zt-io"') && (markup.match(/class="jqp-panel zt-io-pane"/g) || []).length === 2 &&
+    /<textarea id="jqp-input" class="tool-textarea jqp-input zt-io-fill"/.test(markup) && /<pre id="jqp-out" class="jqp-out zt-io-fill"/.test(markup));
+  check('input pane comes before the output pane', markup.indexOf('id="jqp-input"') < markup.indexOf('id="jqp-out"'));
+  check('filter, Run, options and the status line are above the panes', ['id="jqp-filter"', 'id="jqp-run"', 'class="jqp-opts"', 'id="jqp-count"', 'id="jqp-exit"', 'id="jqp-status"'].every((x) => markup.indexOf(x) > 0 && markup.indexOf(x) < markup.indexOf('zt-io')));
+  check('stderr and hints are under the output, the command line under the panes', markup.indexOf('id="jqp-out"') < markup.indexOf('id="jqp-stderr-box"') && markup.indexOf('id="jqp-stderr-box"') < markup.indexOf('id="jqp-hints"') && markup.indexOf('id="jqp-hints"') < markup.indexOf('class="jqp-cmd"'));
+  const tipIds = (markup.match(/<Toggletip id="(jqp-tip-\w+)"/g) || []).map((m) => m.slice(15, -1));
+  eq('one toggletip per explained control', tipIds, ['jqp-tip-filter', 'jqp-tip-run', 'jqp-tip-options', 'jqp-tip-args', 'jqp-tip-input', 'jqp-tip-output', 'jqp-tip-command']);
+  eq('every toggletip has its text, and every text is used', tipIds.map((id) => id.slice(8)), Object.keys(STRINGS.en.tips || {}));
+  for (const k of Object.keys(STRINGS.en.tips || {})) {
+    check('tip ' + k + ' is rendered from TIPS', markup.includes('>{TIPS.' + k + '}</Toggletip>'));
+    for (const lang of ['en', 'zh', 'ja', 'ko']) check(lang + ' tip ' + k + ' is a plain sentence', /\S/.test(STRINGS[lang].tips[k]) && !/[<>\n]|https?:/.test(STRINGS[lang].tips[k]));
+  }
+  check('toggletip text stays out of the page script', tool.includes('const { tips: TIPS, ...CLIENT_T } = T;') && markup.includes('data-strings={JSON.stringify(CLIENT_T)}') && !/\bT\.tips\b/.test(tool));
+  check('the notes replaced by toggletips are gone', !/inputHint|shareNote|jqp-hint-text|jqp-input-hint/.test(tool));
+  // Numbers the toggletips state, against the constants the script uses.
+  check('tips: 2 MB, 200 MB, 1 MB, 256 KB, 20,000 characters', /AUTO_LIMIT = 2 \* 1024 \* 1024/.test(tool) && /EDITOR_LIMIT = 2 \* 1024 \* 1024/.test(tool) && /FILE_LIMIT = 200 \* 1024 \* 1024/.test(tool) && /SHOW_LIMIT = 1024 \* 1024/.test(tool) && /HIGHLIGHT_LIMIT = 256 \* 1024/.test(tool) && tool.includes('text.slice(0, 20000)') &&
+    ['2 MB', '200 MB', '20,000'].every((x) => STRINGS.en.tips.input.includes(x)) && ['1 MB', '256 KB'].every((x) => STRINGS.en.tips.output.includes(x)));
+  check('tips: runs 0.25 s after typing, Stop after 1 s, stopped after 10 s + 1 s per MB', tool.includes('delay === undefined ? 250 : delay') && tool.includes('if (s >= 1 && workerReady)') && tool.includes('var limit = 10000 + Math.round(req.input.length / 1e6) * 1000;') &&
+    STRINGS.en.tips.filter.includes('0.25 seconds') && STRINGS.en.tips.run.includes('After 1 second') && STRINGS.en.tips.run.includes('10 seconds plus 1 second per MB'));
+  check('tips: download file names', tool.includes("a.download = state.lastJson ? (state.opts.c ? 'output.jsonl' : 'output.json') : 'output.txt';") && ['output.json,', 'output.jsonl with -c', 'output.txt with -r or -j'].every((x) => STRINGS.en.tips.output.includes(x)));
+  check('one breakpoint for stacking (860px), 640px for phones', !tool.includes('760px') && tool.includes('@media (max-width: 860px)') && tool.includes('.jqp-io > .jqp-panel:last-child { order: -1; }'));
+  check('stacked, the status line reserves two rows (the loading message must not move the panes on the first tap)', /@media \(max-width: 860px\) \{[^@]*\.jqp-statusline \{ display: block; min-height: 2\.75rem; line-height: 1\.25rem; \}[^@]*\.jqp-status \{ display: inline; \}/.test(tool) && /\.jqp-statusline \{ display: flex; [^}]*min-height: 1\.5rem; \}/.test(tool));
+  check('side by side, a long output scrolls inside its pane', /@media \(min-width: 861px\) \{\s*\.jqp-io \{ min-height: 360px; \}\s*\.jqp-out \{ flex-basis: 0; min-height: 200px; \}\s*\}/.test(tool) && !/\.jqp-out \{[^}]*max-height/.test(tool));
+  check('Ctrl/Cmd+L also drops a queued run', /key === 'l' \|\| e\.key === 'L'[\s\S]{0,160}if \(inputEl\.value === '' && filterEl\.value === ''\) \{\s*clearTimeout\(runTimer\);\s*closeFile\(\);[\s\S]{0,160}clearOutput\(\); setStatus\('', ''\);/.test(tool));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'jq-playground': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/jq-playground', lang + '.mdx'), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    const steps = (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "(.*)"$/gm) || []).map((l) => l.slice(5, -1));
+    eq(lang + ' mdx: 8 steps in the frontmatter, before faqItems', [steps.length, front.indexOf('\nsteps:\n') > 0 && front.indexOf('\nsteps:\n') < front.indexOf('\nfaqItems:')], [8, true]);
+    check(lang + ' mdx: steps fit llms-full.txt (280 characters each, 1200 in all)', steps.every((x) => x.length <= 280) && steps.join('').length <= 1200, steps.map((x) => x.length).join());
+    check(lang + ' mdx: steps are plain text', steps.every((x) => !/[`*\\]|\]\(/.test(x)));
+    check(lang + ' mdx: no usage section in the body', !/^## (How to use|用法|使い方|사용 방법)\s*$/im.test(body));
+    check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한)\s*$/m.test(body));
+  }
+}
+
 rmSync(tmp, { recursive: true, force: true });
 rmSync(cliDir, { recursive: true, force: true });
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);

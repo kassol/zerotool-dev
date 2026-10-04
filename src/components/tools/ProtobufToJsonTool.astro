@@ -5,6 +5,8 @@
 // into reflection objects; the wire decoder, the ProtoJSON printer and parser, and the encoder
 // are the engine block below, so 64-bit values use BigInt and every error carries a byte offset
 // or a JSON line and column. Inputs are not stored or sent; ztPersist keeps only the options.
+import Toggletip from '../Toggletip.astro';
+
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -34,9 +36,6 @@ const STRINGS = {
     typeLabel: 'Message type',
     typeRaw: 'No schema (raw decode)',
     typeNone: '— add a .proto schema —',
-    runDecode: 'Decode',
-    runEncode: 'Encode',
-    runSample: 'Generate',
     outLabel: 'Output',
     copy: 'Copy',
     copied: 'Copied!',
@@ -58,14 +57,26 @@ const STRINGS = {
     optOutFmt: 'Output',
     optFrame: 'Add gRPC frame',
     schemaLabel: '.proto schema',
-    schemaHintDecode: 'Optional for decoding: without it, fields show as numbers.',
     schemaPh: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 id = 2;\n}',
     addProto: 'Add .proto files',
     extraFiles: 'Imported files',
     removeFile: 'Remove {name}',
     mainFile: 'main.proto',
-    wktNote: 'google/protobuf/*.proto well-known types are built in.',
     notesTitle: 'Notes',
+    // Toggletip text next to the control it explains (DESIGN.md "Tool Pages v2"). It is in the HTML only.
+    tips: {
+      modes: 'Binary → JSON decodes Protobuf bytes. JSON → Binary encodes ProtoJSON back to bytes and needs a .proto schema and a message type. Sample JSON prints each field of the selected type once with a placeholder value. In every mode the output updates as you type. Switching to JSON → Binary while its box is empty fills the box with the JSON decoded from the bytes.',
+      type: 'The message that the bytes are decoded as, or that the JSON is encoded as. The list holds the types from your .proto files, and the first one that no other type uses as a field is preselected; that is usually the top-level message. No schema (raw decode), in Binary → JSON only, reads the wire format without names.',
+      fmt: 'Auto recognizes hex, Base64, an escaped string or a byte list and names the format in the status line. Text that is valid both as hex and as Base64 is read as hex, with a note; choose Base64 here when that is wrong.',
+      grpc: 'Auto removes gRPC framing when the input starts with a frame flag (00, 01, 80 or 81) and the 5-byte headers cover it exactly. Several messages print as a JSON array, gRPC-Web trailers go to the notes, and frames with the compressed flag are gunzipped; other compression is not supported. Yes reports a broken frame as an error. No keeps every byte as message data.',
+      names: 'lowerCamelCase prints the ProtoJSON name of each field: its json_name option when it has one, otherwise the field name in lowerCamelCase. As in .proto prints the names as the schema writes them. JSON → Binary accepts both forms whatever is selected here.',
+      defaults: 'ProtoJSON leaves out a field without presence (a plain proto3 field) when it holds its default value: 0, an empty string, false or the first enum value. Empty repeated and map fields are left out too. Turn this on to print them. A field with presence, such as an optional, oneof or message field, is printed only when the bytes set it.',
+      rawview: 'How bytes are shown when they are decoded without a schema. JSON shows a length-delimited value as text when it is readable, as a nested object when it parses as a message, and as base64 otherwise. JSON with other readings also shows each number as the other types of its wire type, such as sint64, sfixed64, float and double. protoc --decode_raw prints what protoc prints, which prefers nested messages.',
+      ignore: 'Off: a JSON key that is not a field of the message type stops the encoding, with its line and column and a suggestion when a similar field exists. On: such keys are skipped and listed in the notes, and an enum name that the schema does not define is skipped too.',
+      bytes: 'Paste hex (spaces, line breaks, colons and 0x prefixes are fine), Base64 (standard or URL-safe, with or without padding, or a data: URL), an escaped string such as a Python bytes literal or protoc octal escapes, or a list of byte values from -128 to 255. Decoding runs as you type. Open file, or a file dropped on the box, loads a binary file of up to 2 MB as hex.',
+      json: 'ProtoJSON for the selected message type; it is encoded as you type. A key can be the JSON name or the .proto name of a field. Integers can be numbers or strings, enums can be names or numbers, and bytes are Base64. An error gives the line and column.',
+      schema: 'The .proto source that names the fields. In Binary → JSON it is optional: without it, fields show as numbers. The other two modes need it. Add the files it imports with Add .proto files, or drop them on the box. The google/protobuf well-known types any, duration, empty, field_mask, struct, timestamp and wrappers are built in. A compiled descriptor set cannot be loaded, and custom options that extend descriptor.proto are ignored.',
+    },
     st: {
       decoded: 'Decoded {n} bytes as {type} ({fmt}).',
       decodedRaw: 'Decoded {n} bytes without a schema ({fmt}).',
@@ -199,9 +210,6 @@ const STRINGS = {
     typeLabel: '消息类型',
     typeRaw: '不用 Schema（原始解码）',
     typeNone: '— 先粘贴 .proto Schema —',
-    runDecode: '解码',
-    runEncode: '编码',
-    runSample: '生成',
     outLabel: '输出',
     copy: '复制',
     copied: '已复制！',
@@ -223,14 +231,25 @@ const STRINGS = {
     optOutFmt: '输出',
     optFrame: '加 gRPC 帧头',
     schemaLabel: '.proto Schema',
-    schemaHintDecode: '解码时可不填：没有 Schema 时字段显示为编号。',
     schemaPh: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 id = 2;\n}',
     addProto: '添加 .proto 文件',
     extraFiles: '被导入的文件',
     removeFile: '移除 {name}',
     mainFile: 'main.proto',
-    wktNote: 'google/protobuf/*.proto 知名类型已内置。',
     notesTitle: '说明',
+    tips: {
+      modes: '“二进制 → JSON”解码 Protobuf 字节。“JSON → 二进制”把 ProtoJSON 编码回字节，需要 .proto Schema 和消息类型。“示例 JSON”把所选类型的每个字段各列一次，值为占位值。三种模式都随输入更新输出。切到“JSON → 二进制”时如果 JSON 框为空，会填入由字节解码得到的 JSON。',
+      type: '字节按哪个消息解码，或 JSON 按哪个消息编码。列表里是你的 .proto 文件中的类型，默认选中第一个没有被其他类型用作字段的类型，一般就是顶层消息。“不用 Schema（原始解码）”只在“二进制 → JSON”中出现，按线路格式读取，不带字段名。',
+      fmt: '“自动”会识别十六进制、Base64、转义字符串或字节列表，并在状态栏写明按哪种格式读取。同一段文本既是合法十六进制又是合法 Base64 时按十六进制读取并给出说明；读错了就在这里选 Base64。',
+      grpc: '“自动”在输入以帧标志（00、01、80 或 81）开头、且各个 5 字节帧头正好覆盖全部输入时去掉 gRPC 帧。多条消息输出为 JSON 数组，gRPC-Web 的 trailers 写进说明，带压缩标志的帧先用 gzip 解压；其他压缩方式不支持。“有”在帧不完整时报错。“无”把所有字节都当作消息内容。',
+      names: '“lowerCamelCase”输出每个字段的 ProtoJSON 名：有 json_name 选项时用它，否则把字段名转成 lowerCamelCase。“与 .proto 相同”按 Schema 里的写法输出。“JSON → 二进制”两种写法都接受，与这里的选择无关。',
+      defaults: 'ProtoJSON 不输出取默认值（0、空字符串、false、枚举第一个值）的无存在性字段（proto3 普通字段），也不输出空的 repeated 和 map 字段。勾选后输出它们。有存在性的字段（optional、oneof、消息字段）只有在字节里设置了才输出。',
+      rawview: '不用 Schema 解码时字节怎样显示。“JSON”把长度前缀的值显示为文本（可读时）、嵌套对象（能按消息解析时）或 base64。“JSON，附其他解读”还列出每个数字按同一线路类型的其他类型读出的值，例如 sint64、sfixed64、float、double。“protoc --decode_raw”输出 protoc 打印的文本，优先按嵌套消息显示。',
+      ignore: '不勾选：JSON 里不属于该消息类型的键会让编码停止，报出行列号，有相近字段名时给出建议。勾选：这些键被跳过并列在说明里，Schema 中没有定义的枚举名也被跳过。',
+      bytes: '可粘贴十六进制（可带空格、换行、冒号和 0x 前缀）、Base64（标准或 URL 安全，有无填充都行，也可以是 data: URL）、转义字符串（如 Python 字节串或 protoc 的八进制转义），或 -128 到 255 的字节值列表。输入即解码。“打开文件”或把文件拖到框上，可载入 2 MB 以内的二进制文件，以十六进制显示。',
+      json: '所选消息类型的 ProtoJSON，输入即编码。键可以用字段的 JSON 名，也可以用 .proto 名。整数可写成数字或字符串，枚举可写名称或数值，bytes 用 Base64。出错时给出行列号。',
+      schema: '提供字段名的 .proto 源码。“二进制 → JSON”可不填，这时字段显示为编号；另外两种模式必须填。它 import 的文件用“添加 .proto 文件”加入，或拖到框上。google/protobuf 的知名类型 any、duration、empty、field_mask、struct、timestamp、wrappers 已内置。不能载入编译后的 descriptor set，扩展 descriptor.proto 的自定义选项会被忽略。',
+    },
     st: {
       decoded: '已按 {type} 解码 {n} 字节（{fmt}）。',
       decodedRaw: '已在没有 Schema 的情况下解码 {n} 字节（{fmt}）。',
@@ -364,9 +383,6 @@ const STRINGS = {
     typeLabel: 'メッセージ型',
     typeRaw: 'スキーマなし（raw デコード）',
     typeNone: '— .proto スキーマを貼り付け —',
-    runDecode: 'デコード',
-    runEncode: 'エンコード',
-    runSample: '生成',
     outLabel: '出力',
     copy: 'コピー',
     copied: 'コピーしました',
@@ -388,14 +404,25 @@ const STRINGS = {
     optOutFmt: '出力',
     optFrame: 'gRPC フレームを付ける',
     schemaLabel: '.proto スキーマ',
-    schemaHintDecode: 'デコードでは省略可。なしの場合はフィールド番号で表示します。',
     schemaPh: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 id = 2;\n}',
     addProto: '.proto を追加',
     extraFiles: 'import されるファイル',
     removeFile: '{name} を削除',
     mainFile: 'main.proto',
-    wktNote: 'google/protobuf/*.proto の Well-Known Types は組み込み済みです。',
     notesTitle: '補足',
+    tips: {
+      modes: '「バイナリ → JSON」は Protobuf のバイト列をデコードします。「JSON → バイナリ」は ProtoJSON をバイト列に戻し、.proto スキーマとメッセージ型が必要です。「サンプル JSON」は選んだ型の各フィールドを 1 回ずつ、仮の値で出力します。どのモードも入力と同時に出力を更新します。JSON 欄が空のまま「JSON → バイナリ」に切り替えると、バイト列をデコードした JSON が入ります。',
+      type: 'バイト列をどのメッセージとしてデコードするか、JSON をどのメッセージとしてエンコードするかを選びます。一覧には .proto ファイルの型が並び、ほかの型からフィールドとして使われていない最初の型（多くはトップレベルのメッセージ）が最初から選ばれます。「スキーマなし（raw デコード）」は「バイナリ → JSON」だけにあり、名前なしでワイヤ形式を読みます。',
+      fmt: '「自動」は 16 進、Base64、エスケープ文字列、バイト列を見分け、どの形式で読んだかをステータスに表示します。16 進としても Base64 としても正しい文字列は 16 進として読み、補足に表示します。違う場合はここで Base64 を選んでください。',
+      grpc: '「自動」は、入力がフレームのフラグ（00、01、80、81）で始まり、5 バイトのヘッダーが入力全体をちょうど区切るときに gRPC フレームを外します。メッセージが複数あれば JSON 配列で出力し、gRPC-Web の trailers は補足に表示し、圧縮フラグ付きのフレームは gzip で展開します。ほかの圧縮方式には対応していません。「あり」はフレームが壊れているとエラーにします。「なし」はすべてのバイトをメッセージとして読みます。',
+      names: '「lowerCamelCase」は各フィールドの ProtoJSON 名を出力します。json_name オプションがあればその名前、なければフィールド名を lowerCamelCase にしたものです。「.proto のまま」はスキーマに書かれた名前で出力します。「JSON → バイナリ」はこの設定に関係なく、どちらの名前も受け付けます。',
+      defaults: 'ProtoJSON では、存在情報を持たないフィールド（proto3 の通常のフィールド）がデフォルト値（0、空文字列、false、enum の最初の値）のとき出力しません。空の repeated と map も出力しません。オンにするとこれらも出力します。存在情報を持つフィールド（optional、oneof、メッセージ型）は、バイト列で設定されているときだけ出力します。',
+      rawview: 'スキーマなしでデコードしたときの表示方法です。「JSON」は長さ付きの値を、読める文字列なら文字列、メッセージとして読めるなら入れ子のオブジェクト、どちらでもなければ base64 で表示します。「JSON（ほかの解釈も表示）」は、各数値を同じワイヤタイプのほかの型（sint64、sfixed64、float、double など）として読んだ値も表示します。「protoc --decode_raw」は protoc と同じテキストを出力し、入れ子のメッセージを優先します。',
+      ignore: 'オフ：メッセージ型にないキーが JSON にあると、行と列、似た名前のフィールドがあればその候補を示してエンコードを止めます。オン：そのキーを飛ばして補足に一覧表示し、スキーマにない enum 名も飛ばします。',
+      bytes: '16 進（スペース、改行、コロン、0x 付きでも可）、Base64（標準・URL セーフ、パディングの有無は問わず、data: URL も可）、エスケープ文字列（Python のバイト列リテラルや protoc の 8 進エスケープ）、-128〜255 のバイト値の列を貼り付けられます。入力と同時にデコードします。「ファイルを開く」か、欄へのドロップで、2 MB までのバイナリファイルを 16 進として読み込みます。',
+      json: '選んだメッセージ型の ProtoJSON です。入力と同時にエンコードします。キーはフィールドの JSON 名でも .proto の名前でもかまいません。整数は数値でも文字列でも、enum は名前でも数値でも書け、bytes は Base64 です。エラーは行と列を示します。',
+      schema: 'フィールド名のもとになる .proto のソースです。「バイナリ → JSON」では省略でき、その場合はフィールド番号で表示します。ほかの 2 つのモードでは必要です。import 先のファイルは「.proto を追加」で入れるか、欄にドロップしてください。google/protobuf の Well-Known Types（any、duration、empty、field_mask、struct、timestamp、wrappers）は組み込み済みです。コンパイル済みの descriptor set は読み込めず、descriptor.proto を拡張するカスタムオプションは無視します。',
+    },
     st: {
       decoded: '{n} バイトを {type} としてデコードしました（{fmt}）。',
       decodedRaw: '{n} バイトをスキーマなしでデコードしました（{fmt}）。',
@@ -529,9 +556,6 @@ const STRINGS = {
     typeLabel: '메시지 타입',
     typeRaw: '스키마 없음(raw 디코딩)',
     typeNone: '— .proto 스키마를 붙여넣으세요 —',
-    runDecode: '디코딩',
-    runEncode: '인코딩',
-    runSample: '생성',
     outLabel: '출력',
     copy: '복사',
     copied: '복사됨!',
@@ -553,14 +577,25 @@ const STRINGS = {
     optOutFmt: '출력',
     optFrame: 'gRPC 프레임 추가',
     schemaLabel: '.proto 스키마',
-    schemaHintDecode: '디코딩에는 선택 사항입니다. 없으면 필드가 번호로 표시됩니다.',
     schemaPh: 'syntax = "proto3";\n\nmessage Person {\n  string name = 1;\n  int32 id = 2;\n}',
     addProto: '.proto 파일 추가',
     extraFiles: 'import되는 파일',
     removeFile: '{name} 제거',
     mainFile: 'main.proto',
-    wktNote: 'google/protobuf/*.proto 잘 알려진 타입(WKT)은 내장되어 있습니다.',
     notesTitle: '참고',
+    tips: {
+      modes: '“바이너리 → JSON”은 Protobuf 바이트를 디코딩합니다. “JSON → 바이너리”는 ProtoJSON을 바이트로 되돌리며 .proto 스키마와 메시지 타입이 필요합니다. “샘플 JSON”은 선택한 타입의 필드를 하나씩, 자리 표시 값으로 출력합니다. 어느 모드든 입력하는 대로 출력이 바뀝니다. JSON 칸이 빈 상태에서 “JSON → 바이너리”로 바꾸면 바이트를 디코딩한 JSON이 채워집니다.',
+      type: '바이트를 어떤 메시지로 디코딩할지, JSON을 어떤 메시지로 인코딩할지 고릅니다. 목록에는 .proto 파일의 타입이 나오고, 다른 타입이 필드로 쓰지 않는 첫 번째 타입(보통 최상위 메시지)이 처음부터 선택됩니다. “스키마 없음(raw 디코딩)”은 “바이너리 → JSON”에만 있으며 이름 없이 와이어 형식을 읽습니다.',
+      fmt: '“자동”은 16진수, Base64, 이스케이프 문자열, 바이트 목록을 구분하고 어떤 형식으로 읽었는지 상태 줄에 표시합니다. 16진수로도 Base64로도 유효한 텍스트는 16진수로 읽고 참고에 알립니다. 틀렸다면 여기서 Base64를 고르세요.',
+      grpc: '“자동”은 입력이 프레임 플래그(00, 01, 80, 81)로 시작하고 5바이트 헤더들이 입력 전체를 정확히 나눌 때 gRPC 프레임을 뗍니다. 메시지가 여러 개면 JSON 배열로 출력하고, gRPC-Web의 trailers는 참고에 표시하며, 압축 플래그가 있는 프레임은 gzip으로 풉니다. 다른 압축 방식은 지원하지 않습니다. “있음”은 프레임이 깨져 있으면 오류로 알립니다. “없음”은 모든 바이트를 메시지로 읽습니다.',
+      names: '“lowerCamelCase”는 각 필드의 ProtoJSON 이름을 출력합니다. json_name 옵션이 있으면 그 이름, 없으면 필드 이름을 lowerCamelCase로 바꾼 이름입니다. “.proto 그대로”는 스키마에 적힌 이름으로 출력합니다. “JSON → 바이너리”는 이 설정과 관계없이 두 이름을 모두 받습니다.',
+      defaults: 'ProtoJSON은 존재 여부를 기록하지 않는 필드(proto3의 일반 필드)가 기본값(0, 빈 문자열, false, enum의 첫 값)이면 출력하지 않습니다. 빈 repeated와 map 필드도 출력하지 않습니다. 켜면 이들도 출력합니다. 존재 여부를 기록하는 필드(optional, oneof, 메시지 필드)는 바이트에 설정되어 있을 때만 출력합니다.',
+      rawview: '스키마 없이 디코딩할 때의 표시 방식입니다. “JSON”은 길이 접두 값을 읽을 수 있는 텍스트면 문자열로, 메시지로 파싱되면 중첩 객체로, 둘 다 아니면 base64로 보여 줍니다. “JSON(다른 해석 포함)”은 각 숫자를 같은 와이어 타입의 다른 타입(sint64, sfixed64, float, double 등)으로 읽은 값도 보여 줍니다. “protoc --decode_raw”는 protoc이 출력하는 텍스트를 그대로 내며 중첩 메시지를 우선합니다.',
+      ignore: '끄면 메시지 타입에 없는 키가 JSON에 있을 때 줄과 열, 비슷한 필드가 있으면 그 이름을 알리고 인코딩을 멈춥니다. 켜면 그런 키를 건너뛰고 참고에 나열하며, 스키마에 없는 enum 이름도 건너뜁니다.',
+      bytes: '16진수(공백, 줄바꿈, 콜론, 0x 접두사 가능), Base64(표준·URL-safe, 패딩 유무 무관, data: URL 가능), 이스케이프 문자열(Python 바이트 리터럴이나 protoc 8진수 이스케이프), -128~255 범위의 바이트 값 목록을 붙여넣을 수 있습니다. 입력하는 대로 디코딩합니다. “파일 열기”나 칸에 파일을 끌어다 놓으면 2MB 이하의 바이너리 파일을 16진수로 불러옵니다.',
+      json: '선택한 메시지 타입의 ProtoJSON입니다. 입력하는 대로 인코딩합니다. 키는 필드의 JSON 이름이나 .proto 이름 모두 쓸 수 있습니다. 정수는 숫자나 문자열로, enum은 이름이나 숫자로 쓸 수 있고 bytes는 Base64입니다. 오류는 줄과 열을 알려 줍니다.',
+      schema: '필드 이름을 알려 주는 .proto 소스입니다. “바이너리 → JSON”에서는 생략할 수 있으며 그러면 필드가 번호로 표시됩니다. 다른 두 모드에는 필요합니다. import하는 파일은 “.proto 파일 추가”로 넣거나 칸에 끌어다 놓으세요. google/protobuf의 잘 알려진 타입(any, duration, empty, field_mask, struct, timestamp, wrappers)은 내장되어 있습니다. 컴파일된 descriptor set은 불러올 수 없고, descriptor.proto를 확장하는 커스텀 옵션은 무시합니다.',
+    },
     st: {
       decoded: '{n}바이트를 {type}(으)로 디코딩했습니다({fmt}).',
       decodedRaw: '{n}바이트를 스키마 없이 디코딩했습니다({fmt}).',
@@ -671,6 +706,8 @@ const STRINGS = {
   },
 };
 const L = STRINGS[lang];
+// The script gets every string except the toggletip text, which is in the HTML.
+const { tips: TIPS, ...CLIENT_L } = L;
 
 const EXAMPLE_SCHEMA = `syntax = "proto3";
 
@@ -702,14 +739,22 @@ enum Status {
 // protoc --encode=shop.v1.Order of the order in the tool page examples
 const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 6c 61 63 65 1a 14 0a 07 42 4b 2d 31 38 34 33 10 02 19 3d 0a d7 a3 70 fd 33 40 20 01 2a 0b 08 88 b4 f8 d5 06 10 80 e5 9a 77 32 0e 0a 07 63 68 61 6e 6e 65 6c 12 03 77 65 62';
 ---
-<div class="pbj" id="pbj">
+<div class="pbj" id="pbj" data-mode="decode">
   <script is:inline src="/vendor/protobuf.min.js"></script>
 
   <div class="pbj-bar">
-    <div class="pbj-modes" role="group" aria-label={L.modesAria}>
-      <button type="button" class="pbj-mode" data-mode="decode" aria-pressed="true">{L.modeDecode}</button>
-      <button type="button" class="pbj-mode" data-mode="encode" aria-pressed="false">{L.modeEncode}</button>
-      <button type="button" class="pbj-mode" data-mode="sample" aria-pressed="false">{L.modeSample}</button>
+    <div class="pbj-modes-wrap">
+      <div class="pbj-modes" role="group" aria-label={L.modesAria}>
+        <button type="button" class="pbj-mode" data-mode="decode" aria-pressed="true">{L.modeDecode}</button>
+        <button type="button" class="pbj-mode" data-mode="encode" aria-pressed="false">{L.modeEncode}</button>
+        <button type="button" class="pbj-mode" data-mode="sample" aria-pressed="false">{L.modeSample}</button>
+      </div>
+      <Toggletip id="pbj-tip-modes" lang={lang} about={L.modesAria} wide>{TIPS.modes}</Toggletip>
+    </div>
+    <div class="pbj-run">
+      <label class="tool-label pbj-type-label" for="pbj-type">{L.typeLabel}</label>
+      <select id="pbj-type" class="tool-input pbj-select pbj-type"></select>
+      <Toggletip id="pbj-tip-type" lang={lang} about={L.typeLabel} wide>{TIPS.type}</Toggletip>
     </div>
     <div class="pbj-bar-actions">
       <button type="button" id="pbj-example" class="btn-ghost">{L.example}</button>
@@ -717,24 +762,9 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
     </div>
   </div>
 
-  <div class="pbj-grid" data-mode="decode">
-    <div class="pbj-input">
-      <div class="pbj-only-decode">
-        <div class="pbj-head pbj-head-in">
-          <label class="tool-label" for="pbj-bytes">{L.bytesLabel}</label>
-        </div>
-        <textarea id="pbj-bytes" class="tool-textarea pbj-ta pbj-ta-bytes" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.bytesPh}></textarea>
-      </div>
-      <div class="pbj-only-encode">
-        <div class="pbj-head pbj-head-in">
-          <label class="tool-label" for="pbj-json">{L.jsonLabel}</label>
-        </div>
-        <textarea id="pbj-json" class="tool-textarea pbj-ta pbj-ta-json" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.jsonPh}></textarea>
-      </div>
-    </div>
-
-    <div class="pbj-inopts">
-      <label class="pbj-opt pbj-only-decode"><span>{L.fmtLabel}</span>
+  <div class="pbj-options">
+    <span class="pbj-optg pbj-only-decode">
+      <label class="pbj-opt"><span>{L.fmtLabel}</span>
         <select id="pbj-fmt" class="tool-input pbj-select">
           <option value="auto">{L.fmtAuto}</option>
           <option value="hex">{L.fmtHex}</option>
@@ -743,91 +773,121 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
           <option value="decimal">{L.fmtDecimal}</option>
         </select>
       </label>
-      <label class="pbj-opt pbj-only-decode"><span>{L.grpcLabel}</span>
+      <Toggletip id="pbj-tip-fmt" lang={lang} about={L.fmtLabel} wide>{TIPS.fmt}</Toggletip>
+    </span>
+    <span class="pbj-optg pbj-only-decode">
+      <label class="pbj-opt"><span>{L.grpcLabel}</span>
         <select id="pbj-grpc" class="tool-input pbj-select">
           <option value="auto">{L.grpcAuto}</option>
           <option value="yes">{L.grpcYes}</option>
           <option value="no">{L.grpcNo}</option>
         </select>
       </label>
-      <button type="button" id="pbj-open-bin" class="btn-secondary btn-sm pbj-only-decode">{L.openBin}</button>
-      <input type="file" id="pbj-bin-file" class="pbj-file" tabindex="-1" aria-hidden="true" />
-      <label class="pbj-check pbj-only-encode"><input type="checkbox" id="pbj-ignore-unknown" /><span>{L.optIgnoreUnknown}</span></label>
-    </div>
+      <Toggletip id="pbj-tip-grpc" lang={lang} about={L.grpcLabel} wide>{TIPS.grpc}</Toggletip>
+    </span>
+    <span class="pbj-optg pbj-only-decode pbj-only-typed">
+      <label class="pbj-opt"><span>{L.optNames}</span>
+        <select id="pbj-names" class="tool-input pbj-select">
+          <option value="json">{L.optNamesJson}</option>
+          <option value="proto">{L.optNamesProto}</option>
+        </select>
+      </label>
+      <Toggletip id="pbj-tip-names" lang={lang} about={L.optNames} wide>{TIPS.names}</Toggletip>
+    </span>
+    <span class="pbj-optg pbj-only-typed">
+      <label class="pbj-check"><input type="checkbox" id="pbj-defaults" /><span>{L.optDefaults}</span></label>
+      <Toggletip id="pbj-tip-defaults" lang={lang} about={L.optDefaults} wide>{TIPS.defaults}</Toggletip>
+    </span>
+    <label class="pbj-check pbj-only-typed"><input type="checkbox" id="pbj-enumnum" /><span>{L.optEnumNum}</span></label>
+    <span class="pbj-optg pbj-only-decode pbj-only-raw">
+      <label class="pbj-opt"><span>{L.optRawView}</span>
+        <select id="pbj-rawview" class="tool-input pbj-select">
+          <option value="json">{L.optRawJson}</option>
+          <option value="readings">{L.optRawReadings}</option>
+          <option value="protoc">{L.optRawProtoc}</option>
+        </select>
+      </label>
+      <Toggletip id="pbj-tip-rawview" lang={lang} about={L.optRawView} wide>{TIPS.rawview}</Toggletip>
+    </span>
+    <span class="pbj-optg pbj-only-encode">
+      <label class="pbj-check"><input type="checkbox" id="pbj-ignore-unknown" /><span>{L.optIgnoreUnknown}</span></label>
+      <Toggletip id="pbj-tip-ignore" lang={lang} about={L.optIgnoreUnknown} wide>{TIPS.ignore}</Toggletip>
+    </span>
+    <label class="pbj-opt pbj-only-encode"><span>{L.optOutFmt}</span>
+      <select id="pbj-outfmt" class="tool-input pbj-select">
+        <option value="hex">{L.fmtHex}</option>
+        <option value="base64">{L.fmtBase64}</option>
+        <option value="escaped">{L.fmtEscaped}</option>
+        <option value="carray">C array</option>
+      </select>
+    </label>
+    <label class="pbj-check pbj-only-encode"><input type="checkbox" id="pbj-frame" /><span>{L.optFrame}</span></label>
+  </div>
 
-    <div class="pbj-run">
-      <label class="tool-label pbj-type-label" for="pbj-type">{L.typeLabel}</label>
-      <div class="pbj-run-row">
-        <select id="pbj-type" class="tool-input pbj-select pbj-type"></select>
-        <button type="button" id="pbj-go" class="btn-primary">{L.runDecode}</button>
+  <p id="pbj-status" class="tool-status pbj-status" role="status" aria-live="polite"></p>
+
+  <div class="pbj-panels zt-io">
+    <div class="pbj-in zt-io-pane">
+      <div class="pbj-field pbj-only-decode">
+        <div class="pbj-head">
+          <label class="tool-label" for="pbj-bytes">{L.bytesLabel}</label>
+          <Toggletip id="pbj-tip-bytes" lang={lang} about={L.bytesLabel} wide>{TIPS.bytes}</Toggletip>
+          <span class="pbj-head-end">
+            <button type="button" id="pbj-open-bin" class="btn-secondary btn-sm">{L.openBin}</button>
+            <input type="file" id="pbj-bin-file" class="pbj-file" tabindex="-1" aria-hidden="true" />
+          </span>
+        </div>
+        <textarea id="pbj-bytes" class="tool-textarea pbj-ta pbj-ta-bytes zt-io-fill" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.bytesPh}></textarea>
+      </div>
+      <div class="pbj-field pbj-only-encode">
+        <div class="pbj-head">
+          <label class="tool-label" for="pbj-json">{L.jsonLabel}</label>
+          <Toggletip id="pbj-tip-json" lang={lang} about={L.jsonLabel} wide>{TIPS.json}</Toggletip>
+        </div>
+        <textarea id="pbj-json" class="tool-textarea pbj-ta pbj-ta-json zt-io-fill" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.jsonPh}></textarea>
+      </div>
+      <div class="pbj-field pbj-schema">
+        <div class="pbj-head">
+          <label class="tool-label" for="pbj-schema">{L.schemaLabel}</label>
+          <Toggletip id="pbj-tip-schema" lang={lang} about={L.schemaLabel} wide>{TIPS.schema}</Toggletip>
+          <span class="pbj-head-end">
+            <button type="button" id="pbj-add-proto" class="btn-ghost btn-sm">{L.addProto}</button>
+            <input type="file" id="pbj-proto-files" class="pbj-file" accept=".proto,text/plain" multiple tabindex="-1" aria-hidden="true" />
+          </span>
+        </div>
+        <textarea id="pbj-schema" class="tool-textarea pbj-ta pbj-ta-schema zt-io-fill" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.schemaPh}></textarea>
+        <div id="pbj-files-wrap" class="pbj-files-wrap" hidden>
+          <span class="pbj-files-title">{L.extraFiles}</span>
+          <ul id="pbj-files" class="pbj-files"></ul>
+        </div>
       </div>
     </div>
 
-    <div class="pbj-out">
+    <div class="pbj-out zt-io-pane">
       <div class="pbj-head">
         <span class="tool-label" id="pbj-out-label">{L.outLabel}</span>
-        <button type="button" id="pbj-copy" class="btn-copy">{L.copy}</button>
+        <span class="pbj-head-end">
+          <label class="pbj-opt pbj-not-encode"><span>{L.optIndent}</span>
+            <select id="pbj-indent" class="tool-input pbj-select">
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="0">{L.optIndentNone}</option>
+            </select>
+          </label>
+          <button type="button" id="pbj-use" class="btn-secondary btn-sm pbj-only-sample">{L.useAsInput}</button>
+          <button type="button" id="pbj-download" class="btn-secondary btn-sm pbj-only-encode">{L.download}</button>
+          <button type="button" id="pbj-copy" class="btn-copy">{L.copy}</button>
+        </span>
       </div>
-      <p id="pbj-status" class="tool-status pbj-status" role="status" aria-live="polite"></p>
-      <pre id="pbj-output" class="pbj-output" tabindex="0" aria-labelledby="pbj-out-label"></pre>
-      <div class="pbj-outopts">
-        <label class="pbj-opt pbj-only-decode pbj-only-typed"><span>{L.optNames}</span>
-          <select id="pbj-names" class="tool-input pbj-select">
-            <option value="json">{L.optNamesJson}</option>
-            <option value="proto">{L.optNamesProto}</option>
-          </select>
-        </label>
-        <label class="pbj-check pbj-only-typed"><input type="checkbox" id="pbj-defaults" /><span>{L.optDefaults}</span></label>
-        <label class="pbj-check pbj-only-typed"><input type="checkbox" id="pbj-enumnum" /><span>{L.optEnumNum}</span></label>
-        <label class="pbj-opt pbj-only-decode pbj-only-raw"><span>{L.optRawView}</span>
-          <select id="pbj-rawview" class="tool-input pbj-select">
-            <option value="json">{L.optRawJson}</option>
-            <option value="readings">{L.optRawReadings}</option>
-            <option value="protoc">{L.optRawProtoc}</option>
-          </select>
-        </label>
-        <label class="pbj-opt pbj-not-encode"><span>{L.optIndent}</span>
-          <select id="pbj-indent" class="tool-input pbj-select">
-            <option value="2">2</option>
-            <option value="4">4</option>
-            <option value="0">{L.optIndentNone}</option>
-          </select>
-        </label>
-        <label class="pbj-opt pbj-only-encode"><span>{L.optOutFmt}</span>
-          <select id="pbj-outfmt" class="tool-input pbj-select">
-            <option value="hex">{L.fmtHex}</option>
-            <option value="base64">{L.fmtBase64}</option>
-            <option value="escaped">{L.fmtEscaped}</option>
-            <option value="carray">C array</option>
-          </select>
-        </label>
-        <label class="pbj-check pbj-only-encode"><input type="checkbox" id="pbj-frame" /><span>{L.optFrame}</span></label>
-        <button type="button" id="pbj-download" class="btn-secondary btn-sm pbj-only-encode">{L.download}</button>
-        <button type="button" id="pbj-use" class="btn-secondary btn-sm pbj-only-sample">{L.useAsInput}</button>
-      </div>
+      <pre id="pbj-output" class="pbj-output zt-io-fill" tabindex="0" aria-labelledby="pbj-out-label"></pre>
       <div id="pbj-notes-wrap" class="pbj-notes-wrap" hidden>
         <p class="pbj-notes-title">{L.notesTitle}</p>
         <ul id="pbj-notes" class="pbj-notes"></ul>
       </div>
     </div>
-
-    <div class="pbj-schema">
-      <div class="pbj-head">
-        <label class="tool-label" for="pbj-schema">{L.schemaLabel}</label>
-        <button type="button" id="pbj-add-proto" class="btn-ghost btn-sm">{L.addProto}</button>
-        <input type="file" id="pbj-proto-files" class="pbj-file" accept=".proto,text/plain" multiple tabindex="-1" aria-hidden="true" />
-      </div>
-      <p class="pbj-hint pbj-only-decode">{L.schemaHintDecode} {L.wktNote}</p>
-      <p class="pbj-hint pbj-not-decode">{L.wktNote}</p>
-      <textarea id="pbj-schema" class="tool-textarea pbj-ta pbj-ta-schema" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder={L.schemaPh}></textarea>
-      <div id="pbj-files-wrap" class="pbj-files-wrap" hidden>
-        <span class="pbj-files-title">{L.extraFiles}</span>
-        <ul id="pbj-files" class="pbj-files"></ul>
-      </div>
-    </div>
   </div>
 
-  <script is:inline define:vars={{ S: L, EXAMPLE_SCHEMA, EXAMPLE_BYTES }}>
+  <script is:inline define:vars={{ S: CLIENT_L, EXAMPLE_SCHEMA, EXAMPLE_BYTES }}>
     (function () {
       /* ── engine:start ── */
       // Wire format: protobuf.dev/programming-guides/encoding. JSON mapping:
@@ -2573,8 +2633,8 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
       var SLUG = 'protobuf-to-json';
       function $(id) { return document.getElementById(id); }
       var els = {
-        grid: document.querySelector('.pbj-grid'), modes: document.querySelectorAll('.pbj-mode'),
-        bytes: $('pbj-bytes'), json: $('pbj-json'), schema: $('pbj-schema'), type: $('pbj-type'), go: $('pbj-go'),
+        root: $('pbj'), modes: document.querySelectorAll('.pbj-mode'),
+        bytes: $('pbj-bytes'), json: $('pbj-json'), schema: $('pbj-schema'), type: $('pbj-type'),
         fmt: $('pbj-fmt'), grpc: $('pbj-grpc'), ignoreUnknown: $('pbj-ignore-unknown'),
         names: $('pbj-names'), defaults: $('pbj-defaults'), enumNum: $('pbj-enumnum'), rawView: $('pbj-rawview'),
         indent: $('pbj-indent'), outFmt: $('pbj-outfmt'), frame: $('pbj-frame'),
@@ -2694,7 +2754,7 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
         syncRawFlag();
       }
       function syncRawFlag() {
-        els.grid.setAttribute('data-raw', prefs.mode === 'decode' && !els.type.value ? '1' : '0');
+        els.root.setAttribute('data-raw', prefs.mode === 'decode' && !els.type.value ? '1' : '0');
       }
 
       function ctxOrStatus(emptyText) {
@@ -2849,8 +2909,7 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
       function setMode(mode) {
         prefs.mode = mode;
         els.modes.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-mode') === mode ? 'true' : 'false'); });
-        els.grid.setAttribute('data-mode', mode);
-        els.go.textContent = mode === 'encode' ? S.runEncode : mode === 'sample' ? S.runSample : S.runDecode;
+        els.root.setAttribute('data-mode', mode);
         fillTypes();
       }
       els.modes.forEach(function (b) {
@@ -2890,7 +2949,6 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
       bindOpt(els.outFmt, 'outFmt'); bindOpt(els.frame, 'frame', true); bindOpt(els.ignoreUnknown, 'ignoreUnknown', true);
 
       els.type.addEventListener('change', function () { syncRawFlag(); run(); });
-      els.go.addEventListener('click', run);
       els.bytes.addEventListener('input', function () { schedule(250); });
       els.json.addEventListener('input', function () { schedule(300); });
       els.schema.addEventListener('input', function () {
@@ -3044,10 +3102,14 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
 </div>
 
 <style>
-.pbj { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+/* v2 "convert" layout (DESIGN.md "Tool Pages v2"): the root is a flex column, so the two
+   panes (.zt-io in tool-common.css) take the height that is left under the bar, the options
+   and the status line. data-mode and data-raw on the root choose which controls show. */
+.pbj { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; min-height: 0; }
 
-.pbj-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
-.pbj-bar-actions { display: flex; gap: 0.4rem; }
+.pbj-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; }
+.pbj-modes-wrap { display: inline-flex; align-items: center; gap: 0.25rem; }
+.pbj-bar-actions { display: flex; gap: 0.4rem; margin-left: auto; }
 .pbj-modes {
   display: inline-flex;
   border-radius: var(--radius-pill);
@@ -3072,46 +3134,38 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
 .pbj-mode[aria-pressed="true"] { background: var(--color-primary); color: var(--color-primary-contrast); }
 .pbj-mode:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
-.pbj-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-areas:
-    "input out"
-    "inopts out"
-    "run out"
-    "schema out";
-  grid-template-rows: auto auto auto 1fr;
-  gap: 0.7rem 1rem;
-  align-items: start;
-}
-.pbj-input { grid-area: input; min-width: 0; }
-.pbj-inopts { grid-area: inopts; }
-.pbj-run { grid-area: run; min-width: 0; }
-.pbj-out { grid-area: out; min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; }
-.pbj-schema { grid-area: schema; min-width: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.pbj-run { display: flex; align-items: center; gap: 0.4rem; flex: 1 1 18rem; min-width: 0; max-width: 36rem; }
+.pbj-type-label { margin: 0; white-space: nowrap; }
+.pbj-type { flex: 1 1 auto; min-width: 0; }
 
-.pbj-head { display: flex; align-items: center; gap: 0.5rem; min-height: 1.6rem; margin-bottom: 0.25rem; }
-.pbj-head .tool-label { margin: 0; flex: 1 1 auto; }
-.pbj-ta { width: 100%; box-sizing: border-box; font-family: var(--font-mono); font-size: 0.83rem; line-height: 1.5; resize: vertical; }
-.pbj-ta-bytes { min-height: 116px; }
-.pbj-ta-json { min-height: 220px; }
-.pbj-ta-schema { min-height: 300px; }
-
-.pbj-inopts, .pbj-outopts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 0.9rem; }
+.pbj-options { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1rem; }
+.pbj-optg { display: inline-flex; align-items: center; gap: 0.2rem; }
 .pbj-opt { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--color-text-secondary); }
 .pbj-check { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; color: var(--color-text-secondary); cursor: pointer; }
-.pbj-select { width: auto; min-height: 34px; padding-top: 0.25rem; padding-bottom: 0.25rem; font-size: 0.82rem; }
+.pbj-select { width: auto; min-height: 34px; padding-top: 0.25rem; padding-bottom: 0.25rem; font-family: var(--font-sans); font-size: 0.82rem; }
+.pbj-select.pbj-type { font-family: var(--font-mono); }
 .pbj-file { display: none; }
 
-.pbj-run-row { display: flex; gap: 0.5rem; align-items: stretch; }
-.pbj-type { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); }
-.pbj-run-row .btn-primary { flex: 0 0 auto; }
-
 .pbj-status { margin: 0; overflow-wrap: anywhere; }
+
+/* Left pane: the bytes or JSON box above the schema box. Each field is a column whose
+   textarea takes the height the field gets; the schema gets two thirds next to the bytes
+   box and half next to the JSON box. */
+.pbj-in { gap: 0.7rem; }
+.pbj-field { display: flex; flex-direction: column; gap: 0.4rem; flex: 1 1 0; min-width: 0; }
+.pbj-schema { flex-grow: 2; }
+.pbj[data-mode="encode"] .pbj-schema { flex-grow: 1; }
+.pbj-head { display: flex; align-items: center; gap: 0.25rem; min-height: 34px; }
+.pbj-head .tool-label { margin: 0; }
+.pbj-head-end { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.4rem 0.6rem; margin-left: auto; }
+.pbj-ta { box-sizing: border-box; font-size: 0.83rem; line-height: 1.5; }
+.pbj-ta-bytes { min-height: 96px; }
+.pbj-ta-json { min-height: 120px; }
+.pbj-ta-schema { min-height: 140px; }
+
 .pbj-output {
   margin: 0;
-  min-height: 260px;
-  max-height: 620px;
+  min-height: 180px;
   overflow: auto;
   padding: 0.8rem 1rem;
   border-radius: var(--radius-md);
@@ -3126,7 +3180,12 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
 }
 .pbj-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .pbj-output.pbj-output-error { white-space: pre-wrap; color: var(--color-danger); }
-.pbj-grid[data-mode="encode"] .pbj-output { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 160px; }
+.pbj[data-mode="encode"] .pbj-output { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Side by side, the output takes the height of the pane and scrolls inside it: with a
+   content-sized basis a long result would stretch the pane and the page instead. */
+@media (min-width: 861px) {
+  .pbj-output { flex-basis: 0; }
+}
 
 .pbj-output :global(.pbj-key) { color: #0b6a99; }
 .pbj-output :global(.pbj-str) { color: #1d7a36; }
@@ -3144,12 +3203,13 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
 :global([data-theme="dark"]) .pbj-output :global(.pbj-num) { color: #fca5a5; }
 :global([data-theme="dark"]) .pbj-output :global(.pbj-bool) { color: #c4b5fd; }
 
-.pbj-notes-wrap { font-size: 0.82rem; color: var(--color-text-secondary); }
+/* Notes sit under the output and scroll on their own, so the output keeps its height. */
+.pbj-notes-wrap { flex: none; max-height: 40%; overflow: auto; font-size: 0.82rem; color: var(--color-text-secondary); }
 .pbj-notes-title { margin: 0.2rem 0 0.25rem; font-weight: 700; color: var(--color-text); }
 .pbj-notes { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; overflow-wrap: anywhere; }
 
-.pbj-hint { margin: 0; font-size: 0.8rem; color: var(--color-text-muted); }
 .pbj-files-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--color-text-secondary); }
+.pbj-files-wrap[hidden] { display: none; }
 .pbj-files { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .pbj-files :global(.pbj-file-chip) {
   display: inline-flex; align-items: center; gap: 0.25rem;
@@ -3172,41 +3232,46 @@ const EXAMPLE_BYTES = '08 81 80 80 80 80 80 80 10 12 0c 41 64 61 20 4c 6f 76 65 
 .pbj-files :global(.pbj-file-x:hover) { color: var(--color-danger); }
 
 /* visibility by mode and decoder kind */
-.pbj-grid[data-mode="decode"] .pbj-only-encode,
-.pbj-grid[data-mode="decode"] .pbj-only-sample,
-.pbj-grid[data-mode="decode"] .pbj-not-decode,
-.pbj-grid[data-mode="encode"] .pbj-only-decode,
-.pbj-grid[data-mode="encode"] .pbj-only-sample,
-.pbj-grid[data-mode="encode"] .pbj-only-typed,
-.pbj-grid[data-mode="encode"] .pbj-not-encode,
-.pbj-grid[data-mode="sample"] .pbj-only-decode,
-.pbj-grid[data-mode="sample"] .pbj-only-encode,
-.pbj-grid[data-mode="sample"] .pbj-only-raw,
-.pbj-grid[data-raw="1"] .pbj-only-typed,
-.pbj-grid[data-raw="0"] .pbj-only-raw { display: none; }
-.pbj-grid[data-mode="sample"] .pbj-input,
-.pbj-grid[data-mode="sample"] .pbj-inopts { display: none; }
+.pbj[data-mode="decode"] .pbj-only-encode,
+.pbj[data-mode="decode"] .pbj-only-sample,
+.pbj[data-mode="encode"] .pbj-only-decode,
+.pbj[data-mode="encode"] .pbj-only-sample,
+.pbj[data-mode="encode"] .pbj-only-typed,
+.pbj[data-mode="encode"] .pbj-not-encode,
+.pbj[data-mode="sample"] .pbj-only-decode,
+.pbj[data-mode="sample"] .pbj-only-encode,
+.pbj[data-mode="sample"] .pbj-only-raw,
+.pbj[data-raw="1"] .pbj-only-typed,
+.pbj[data-raw="0"] .pbj-only-raw { display: none; }
 
+/* Stacked: the left pane dissolves, so its fields and the output pane are ordered as grid
+   items: the bytes or JSON box, the output, then the schema (first in Sample JSON, where it
+   is the only input). The options go after the panels. */
 @media (max-width: 860px) {
-  .pbj-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "input" "run" "out" "inopts" "schema";
-    grid-template-rows: none;
-  }
-  .pbj-ta-schema { min-height: 220px; }
+  .pbj-options { order: 5; }
+  .pbj-in { display: contents; }
+  .pbj-out { order: 2; }
+  .pbj-schema { order: 3; }
+  .pbj[data-mode="sample"] .pbj-schema { order: 1; }
+  .pbj-ta-bytes { height: 116px; }
+  .pbj-ta-json { height: 220px; }
+  .pbj-ta-schema { height: 220px; }
+  .pbj-output { max-height: 620px; }
+  .pbj-notes-wrap { max-height: none; }
 }
 @media (max-width: 640px) {
   .pbj-bar { gap: 0.4rem; }
-  .pbj-modes { flex: 1 1 100%; }
+  .pbj-modes-wrap { flex: 1 1 100%; }
+  .pbj-modes { flex: 1 1 auto; }
   .pbj-mode { flex: 1 1 0; min-height: 40px; padding: 0.3rem 0.4rem; white-space: normal; }
-  .pbj-bar-actions { flex: 1 1 100%; }
-  .pbj-bar-actions .btn-ghost { flex: 1 1 0; }
-  .pbj-head-in { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .pbj-run { flex: 1 1 100%; max-width: none; }
   .pbj-type-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .pbj-ta-bytes { min-height: 92px; }
-  .pbj-ta-json { min-height: 140px; }
+  .pbj-bar-actions { flex: 1 1 100%; margin-left: 0; }
+  .pbj-bar-actions .btn-ghost { flex: 1 1 0; }
+  .pbj-ta-bytes { height: 96px; }
+  .pbj-ta-json { height: 140px; }
   .pbj-select { min-height: 44px; }
   .pbj-check { min-height: 44px; }
-  .pbj-output { min-height: 200px; max-height: 480px; }
+  .pbj-output { max-height: 480px; }
 }
 </style>
