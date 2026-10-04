@@ -41,10 +41,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { inputText: 'Input Text', lowercase: 'Lowercase', trim: 'Trim', separator: 'Separator', sepHyphen: 'Hyphen (-)', sepUnderscore: 'Underscore (_)', sepDot: 'Dot (.)', slug: 'Slug', copy: 'Copy', copied: 'Copied!', emptyResult: 'Result is empty — all characters were removed.' },
-        zh: { inputText: '输入文本', lowercase: '小写', trim: '修剪', separator: '分隔符', sepHyphen: '连字符 (-)', sepUnderscore: '下划线 (_)', sepDot: '点 (.)', slug: 'Slug', copy: '复制', copied: '已复制！', emptyResult: '结果为空 — 所有字符已被移除。' },
-        ja: { inputText: '入力テキスト', lowercase: '小文字', trim: 'トリム', separator: '区切り文字', sepHyphen: 'ハイフン (-)', sepUnderscore: 'アンダースコア (_)', sepDot: 'ドット (.)', slug: 'Slug', copy: 'コピー', copied: 'コピー済み！', emptyResult: '結果が空です — すべての文字が削除されました。' },
-        ko: { inputText: '입력 텍스트', lowercase: '소문자', trim: '다듬기', separator: '구분자', sepHyphen: '하이픈 (-)', sepUnderscore: '밑줄 (_)', sepDot: '점 (.)', slug: 'Slug', copy: '복사', copied: '복사됨!', emptyResult: '결과가 비어 있습니다 — 모든 문자가 제거되었습니다.' }
+        en: { copyFail: 'Could not copy. Please select and copy the slug manually.', inputText: 'Input Text', lowercase: 'Lowercase', trim: 'Trim', separator: 'Separator', sepHyphen: 'Hyphen (-)', sepUnderscore: 'Underscore (_)', sepDot: 'Dot (.)', slug: 'Slug', copy: 'Copy', copied: 'Copied!', emptyResult: 'Result is empty — all characters were removed.' },
+        zh: { copyFail: '复制失败。请选中 Slug 后手动复制。', inputText: '输入文本', lowercase: '小写', trim: '修剪', separator: '分隔符', sepHyphen: '连字符 (-)', sepUnderscore: '下划线 (_)', sepDot: '点 (.)', slug: 'Slug', copy: '复制', copied: '已复制！', emptyResult: '结果为空 — 所有字符已被移除。' },
+        ja: { copyFail: 'コピーできませんでした。スラッグを選択して手動でコピーしてください。', inputText: '入力テキスト', lowercase: '小文字', trim: 'トリム', separator: '区切り文字', sepHyphen: 'ハイフン (-)', sepUnderscore: 'アンダースコア (_)', sepDot: 'ドット (.)', slug: 'Slug', copy: 'コピー', copied: 'コピー済み！', emptyResult: '結果が空です — すべての文字が削除されました。' },
+        ko: { copyFail: '복사하지 못했습니다. 슬러그를 선택하여 직접 복사하세요.', inputText: '입력 텍스트', lowercase: '소문자', trim: '다듬기', separator: '구분자', sepHyphen: '하이픈 (-)', sepUnderscore: '밑줄 (_)', sepDot: '점 (.)', slug: 'Slug', copy: '복사', copied: '복사됨!', emptyResult: '결과가 비어 있습니다 — 모든 문자가 제거되었습니다.' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -63,6 +63,9 @@
       var lowercaseEl = document.getElementById('sl-lowercase');
       var trimEl = document.getElementById('sl-trim');
       var separatorEl = document.getElementById('sl-separator');
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyError = false;
 
       /* ── engine:start ── */
       // Letters: the text is NFD-decomposed and combining marks (Mn) are removed, so
@@ -107,12 +110,25 @@
       }
       /* ── engine:end ── */
 
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError) {
+          statusEl.textContent = '';
+          statusEl.className = 'sl-status';
+          copyError = false;
+        }
+      }
+
       function update() {
+        invalidateCopy();
         var text = inputEl.value;
         if (!text) {
           resultEl.textContent = '';
           copyBtn.disabled = true;
           statusEl.textContent = '';
+          statusEl.className = 'sl-status';
           return;
         }
         var slug = slugify(text, { separator: separatorEl.value, lowercase: lowercaseEl.checked, trim: trimEl.checked });
@@ -135,13 +151,34 @@
       trimEl.addEventListener('change', update);
       separatorEl.addEventListener('change', update);
 
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var root = document.querySelector('.sl-wrap');
+        if (root && root.contains(document.activeElement)) {
+          clearTimeout(_trackTimer);
+          inputEl.value = '';
+          update();
+        }
+      });
+
       copyBtn.addEventListener('click', function () {
         var val = resultEl.textContent;
         if (!val) return;
-        navigator.clipboard.writeText(val).then(function () {
+        invalidateCopy();
+        var revision = copyRevision;
+        function done() {
+          if (revision !== copyRevision) return;
           copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+          copyTimer = setTimeout(function () { if (revision === copyRevision) copyBtn.textContent = t.copy; }, 1500);
+        }
+        function failed() {
+          if (revision !== copyRevision) return;
+          statusEl.textContent = t.copyFail;
+          statusEl.className = 'sl-status error';
+          copyError = true;
+        }
+        try { navigator.clipboard.writeText(val).then(done, failed); }
+        catch (e) { failed(); }
       });
     })();
   </script>
@@ -237,6 +274,7 @@
   }
 
   .sl-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .sl-status.error { color: var(--color-danger); }
   .sl-status.warn { color: #b45309; }
 
   @media (prefers-color-scheme: dark) {
