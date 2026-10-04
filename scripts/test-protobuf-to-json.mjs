@@ -1005,6 +1005,11 @@ check('tool pages carry checked examples', mdxChecks >= 8, mdxChecks + ' found')
   check('Ctrl/Cmd+L drops the loaded files and reruns', /key === 'l' \|\| e\.key === 'L'\)[\s\S]{0,200}setTimeout\(function \(\) \{ state\.files = \[\]; renderFiles\(\); rebuildSchema\(\); run\(\); \}, 0\);/.test(script));
   check('an empty input clears the old output, bytes and notes', /function showEmpty\(text\) \{\s*state\.outText = '';\s*state\.lastBytes = null;\s*els\.output\.textContent = '';[\s\S]{0,120}setStatus\(text, 'none'\);\s*setNotes\(\[\]\);/.test(script) &&
     script.includes("if (!text.trim()) return showEmpty(S.st.empty);") && script.includes("if (!text.trim()) return showEmpty(S.st.emptyJson);"));
+  check('no run button: typing, the type list, every option and both mode buttons run by themselves', !markup.includes('pbj-go') && !/els\.go\b/.test(script) && !/run(Decode|Encode|Sample):/.test(fm) &&
+    script.includes("els.bytes.addEventListener('input', function () { schedule(250); });") && script.includes("els.json.addEventListener('input', function () { schedule(300); });") &&
+    script.includes('state.schemaTimer = setTimeout(function () { rebuildSchema(); run(); }, 400);') && script.includes("els.type.addEventListener('change', function () { syncRawFlag(); run(); });") &&
+    /el\.addEventListener\('change', function \(\) \{\s*prefs\[key\] = isCheck \? el\.checked : el\.value;\s*savePrefs\(\);\s*run\(\);/.test(script) &&
+    /b\.addEventListener\('click', function \(\) \{[\s\S]{0,200}setMode\(mode\);\s*savePrefs\(\);\s*run\(\);/.test(script));
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
   check('listed as a convert page', layouts.includes("'protobuf-to-json': 'convert'"));
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
