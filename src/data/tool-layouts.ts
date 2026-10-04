@@ -14,6 +14,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'bcrypt-generator': 'compact',
   'aspect-ratio': 'compact',
   'basic-auth-header-generator': 'compact',
+  'chmod-calculator': 'compact',
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',

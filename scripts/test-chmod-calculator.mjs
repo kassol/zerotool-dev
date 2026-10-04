@@ -2,6 +2,7 @@
 //
 // Read:  src/components/tools/ChmodCalculatorTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers);
+//        src/content/tools/chmod-calculator/{en,zh,ja,ko}.mdx; ToolLayout.astro;
 //        src/content/blog/chmod-calculator-guide/{en,ja}.mdx (`chmod-check` / `chmod-ls` /
 //        `chmod-umask` / `chmod-gnu-dir` annotations, see the guide section below)
 // Write: a temporary directory under os.tmpdir() (removed at the end); stdout (test results)
@@ -18,6 +19,8 @@
 // Run: node scripts/test-chmod-calculator.mjs
 
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import yaml from 'js-yaml';
 import { readFileSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -209,6 +212,8 @@ const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), she
 if (!shortcut.includes("document.addEventListener('keydown'")) throw new Error('Missing shared shortcut');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 function page({ lang = 'en', shellFirst = false } = {}) {
+  const allStrings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
+  const { tips, ...t } = allStrings[lang];
   const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map();
   let now = 0, timerId = 0;
   const doc = { documentElement: { lang }, activeElement: null };
@@ -271,7 +276,10 @@ function page({ lang = 'en', shellFirst = false } = {}) {
   }
   const body = new Element('body'), widget = new Element();
   widget.className = 'tool-widget'; body.appendChild(widget);
-  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0]
+    .replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + t[key] + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => t[key]);
   const stack = [widget], voids = new Set(['input', 'br', 'hr', 'img']);
   for (const token of markup.matchAll(/<!--[\s\S]*?-->|<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
     if (token[0].startsWith('<!--')) continue;
@@ -303,7 +311,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
     },
   });
   const context = {
-    document: doc, console, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) },
+    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) },
     navigator: { clipboard: { writeText(value) {
       let resolve, reject;
       const promise = new Promise((a, b) => { resolve = a; reject = b; });
@@ -432,6 +440,65 @@ try {
   }
   await settle(); eq('all current and stale clipboard rejections are handled', unhandled.length, 0);
 } finally { process.off('unhandledRejection', onUnhandled); }
+
+
+console.log('\nv2 page layout');
+{
+  const preserved = {
+  "en": {
+    "body": "eeb8437e98fe635f1a854def067f294027227e6d3263f87c1615e0f26ddb8081",
+    "front": "8fc7813ebcfca1f03f94283699fdccedf56ec3c680fd8297336d26155ab30a70"
+  },
+  "zh": {
+    "body": "8fe2d044a7f3cd1b6540782b80795d5bd2cd9eba3d0d69fd0607e780ca7f0103",
+    "front": "d076ed359bc738f2b1a75a0dcaafa3bce406ebb928a12d068e72f4a2781babaf"
+  },
+  "ja": {
+    "body": "157399e6a89632183d8d2f4e6d093530de2c58887d145939fc51c1a26dfed6a4",
+    "front": "3dd49123770531aa3d96abf079b7ac87af614ca903e9c9dd85e6550bb11b4b6a"
+  },
+  "ko": {
+    "body": "bedd347e2b131078aaa72b4c70b27b28e14b185f3606c94a222a72f47047a249",
+    "front": "3d303bd1ce4a966903e2236f8977df37b0a2cef7c7987e85e06046da507d010c"
+  }
+};
+  const strings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
+  const leaves = (value, prefix = '') => Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? leaves(item, prefix + key + '.') : [[prefix + key, item]]);
+  const en = leaves(strings.en);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const rows = leaves(strings[lang]);
+    same(lang + ' recursive string keys match en', rows.map(([key]) => key), en.map(([key]) => key));
+    for (const [key, value] of rows) {
+      eq(lang + ' ' + key + ' is nonempty localized text', typeof value === 'string' && value.trim().length > 0, true);
+      same(lang + ' ' + key + ' placeholders match', [...value.matchAll(/\{\w+\}/g)].map(m => m[0]).sort(), [...en.find(([k]) => k === key)[1].matchAll(/\{\w+\}/g)].map(m => m[0]).sort());
+    }
+    const doc = readFileSync(join(root, `src/content/tools/chmod-calculator/${lang}.mdx`), 'utf8');
+    const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)/.exec(doc), meta = yaml.load(match[1]);
+    eq(lang + ' steps are present and bounded', Array.isArray(meta.steps) && meta.steps.length > 0 && meta.steps.length <= 8 && meta.steps.every(s => typeof s === 'string' && s.length <= 280) && meta.steps.join('').length <= 1200, true);
+    eq(lang + ' steps precede FAQ', match[1].indexOf('steps:') < match[1].indexOf('faqItems:'), true);
+    eq(lang + ' How to Use removed', /<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(match[2]), false);
+    const hash = value => createHash('sha256').update(value).digest('hex');
+    eq(lang + ' all remaining body sections unchanged', hash(match[2]), preserved[lang].body);
+    eq(lang + ' SEO and FAQ frontmatter unchanged', hash(match[1].replace(/\nsteps:\n(?:  - .*\n)+/, '\n')), preserved[lang].front);
+  }
+  const markup = source.split('---')[2].split('<script')[0];
+  eq('direct component root uses chmod-wrap', /^\s*<div class="chmod-wrap">/.test(markup), true);
+  eq('five distinct tips cover controls', new Set([...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1])).size, 5);
+  eq('frontmatter removes tips from client strings', source.includes('const { tips: TIPS, ...CLIENT_T } = T;'), true);
+  eq('script receives only selected client language', source.includes('define:vars={{ t: CLIENT_T }}'), true);
+  eq('runtime i18n removed', /data-i18n|var STRINGS|document\.documentElement\.lang/.test(source), false);
+  eq('all five real copy actions retained', (markup.match(/class="btn-copy"/g) || []).length, 5);
+  eq('no new Clear or redundant calculate action', !markup.includes('btn-primary') && !markup.includes('chmod-clear'), true);
+  eq('optional special bits start folded', /<details class="chmod-special-section">/.test(markup), true);
+  eq('component root stays natural height', /\.chmod-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0;/.test(source), true);
+  eq('errors have reserved scrollable space', /\.chmod-status\s*\{[^}]*height:\s*3rem;[^}]*overflow:\s*auto;/.test(source), true);
+  eq('command values have fixed height and internal horizontal scrolling', /\.chmod-output\s*\{[^}]*height:\s*2\.75rem;[^}]*overflow-x:\s*auto;[^}]*white-space:\s*pre;/.test(source), true);
+  eq('description height is bounded for maximum permissions', /\.chmod-description\s*\{[^}]*height:\s*4\.5em;[^}]*overflow:\s*auto;/.test(source), true);
+  eq('commands are reachable by keyboard', ['chmod-command', 'chmod-command-sym', 'chmod-find-perm'].every(id => new RegExp('id="' + id + '"[^>]*tabindex="0"').test(markup)), true);
+  eq('stack and phone breakpoints exist', source.includes('@media (max-width: 860px)') && source.includes('@media (max-width: 640px)'), true);
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  eq('registered as compact', /['"]chmod-calculator['"]\s*:\s*['"]compact['"]/.test(layouts), true);
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
