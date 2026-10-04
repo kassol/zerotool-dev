@@ -928,7 +928,9 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
         return Promise.resolve(fallback());
       }
       function copyValue(value) {
+        var seq = statusSeq;
         copyText(value).then(function (ok) {
+          if (seq !== statusSeq) return;
           setStatus(ok ? fill(t.copied, { value: value }) : t.copyFailed, ok ? 'ok' : 'error');
           if (ok) track('copy');
         });
@@ -1113,10 +1115,11 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
       var loadGen = 0;
       function openFile(file) {
         if (!file) return;
+        clearAll();
+        var gen = loadGen;
         var name = file.name || 'image';
         if (!isImageFile(file)) { setStatus(fill(t.notImage, { name: name }), 'error'); return; }
         setStatus(fill(t.loading, { name: name }), 'info');
-        var gen = ++loadGen;
         var url = URL.createObjectURL(file);
         var image = new Image();
         image.decoding = 'async';
@@ -1298,8 +1301,10 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
       });
       $('icp-copy-code').addEventListener('click', function () {
         if (!codeOut.textContent) return;
+        var seq = statusSeq, format = t['code_' + state.code];
         copyText(codeOut.textContent).then(function (ok) {
-          setStatus(ok ? fill(t.copiedCode, { format: t['code_' + state.code] }) : t.copyFailed, ok ? 'ok' : 'error');
+          if (seq !== statusSeq) return;
+          setStatus(ok ? fill(t.copiedCode, { format: format }) : t.copyFailed, ok ? 'ok' : 'error');
           if (ok) track('copy_code');
         });
       });
@@ -1358,6 +1363,7 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
       function clearAll() {
         cancelScan();
         loadGen++;
+        fileInput.value = '';
         img = null; result = null; shown = [];
         main.hidden = true; exportEl.hidden = true;
         drop.classList.remove('is-compact');
@@ -1368,7 +1374,11 @@ const LINK_PREFIX = lang === 'en' ? '' : `/${lang}`;
         setStatus('');
       }
       document.addEventListener('keydown', function (e) {
-        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) clearAll();
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          if (paletteEl.contains(document.activeElement)) openBtn.focus();
+          clearAll();
+        }
       });
     })();
   </script>

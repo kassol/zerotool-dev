@@ -495,9 +495,10 @@ const STRINGS = new Function(source.slice(sStart, sEnd + 3) + '\nreturn STRINGS;
 // Worker / OffscreenCanvas / createImageBitmap are stubbed and the worker runs the exact source
 // text the page builds, in its own vm context.
 const WORKER_SIGNALS = { decodeError: 'decode failed' };
-function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = true, src = source,
+function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = true, src = source, shellFirst = null, holdCopies = false,
   srgbPixel = () => [30, 0, 0], p3Pixel = () => [255, 0, 0] } = {}) {
-  const timers = [], nodes = new Map(), reads = [], images = [], workers = [], blobs = new Map(), downloads = [];
+  const timers = [], nodes = new Map(), reads = [], images = [], workers = [], blobs = new Map(), downloads = [], copies = [], clearCalls = [];
+  const faults = {};
   let countCalls = 0, canvasIds = 0;
   function fakeCtx(node, opts, p3ok, where) {
     return {
@@ -506,6 +507,7 @@ function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = 
       clearRect() {}, fillRect() {}, beginPath() {}, arc() {}, fill() {}, moveTo() {}, lineTo() {}, closePath() {},
       getImageData(x, y, w, h) {
         const isP3 = opts.colorSpace === 'display-p3';
+        if (!isP3 && faults.read) { faults.read = false; throw new Error('fixture image read'); }
         if (isP3) {
           if (readError) throw new Error('read failed');
           reads.push({ w, h, y, where, canvas: node.id, file: this.source && this.source.file && this.source.file.name });
@@ -525,28 +527,29 @@ function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = 
       this.attrs = {}; this.value = ''; this.hidden = false; this.classes = new Set();
       this.classList = { add: (x) => this.classes.add(x), remove: (x) => this.classes.delete(x), toggle() {}, contains: (x) => this.classes.has(x) };
     }
-    set textContent(v) { this.text = v; this.children = []; }
+    set textContent(v) { if (this.children.some(n => n.contains(document.activeElement))) document.activeElement = document.body; this.text = v; this.children = []; }
     get textContent() { return this.text || ''; }
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
-    dispatch(type, e = {}) { for (const fn of this.listeners[type] || []) fn({ target: this, ...e }); }
+    dispatch(type, e = {}) { const event = { target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...e }; for (const fn of this.listeners[type] || []) fn(event); return event; }
     setAttribute(k, v) { this.attrs[k] = v; }
     getAttribute(k) { return this.attrs[k]; }
-    appendChild(n) { this.children.push(n); return n; }
-    contains(n) { return n === this || [...nodes.values()].includes(n); }
+    appendChild(n) { this.children.push(n); n.parentElement = this; return n; }
+    contains(n) { return n === this || this.children.some(c => c.contains(n)) || (this === nodes.get('icp-wrap') && [...nodes.values()].some(c => c !== this && c.contains(n))); }
     querySelector(sel) { return this.children.flatMap((n) => n.children).find((n) => n.className === sel.slice(1)) || null; }
     querySelectorAll() { return []; }
     getBoundingClientRect() { return { bottom: 0, top: 0 }; }
-    remove() {} select() {}
+    remove() {} select() {} focus() { document.activeElement = this; }
     click() { if (this.tagName === 'A' && this.download) downloads.push({ name: this.download, blob: blobs.get(this.href) }); this.dispatch('click'); }
     getContext(type, opts = {}) { return fakeCtx(this, opts, p3, 'main'); }
   }
   const document = new Node();
-  document.getElementById = (id) => { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); };
+  const actualIds = new Set([...src.slice(src.indexOf('\n---', 4) + 4, src.indexOf('<script')).matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
+  document.getElementById = (id) => { assert.ok(actualIds.has(id), 'actual markup contains ' + id); if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); };
   document.createElement = (tag) => new Node(tag);
-  document.querySelector = () => null;
+  document.querySelector = s => s === '.tool-widget' ? nodes.get('icp-wrap') : null;
   document.body = new Node('body');
   const window = { innerHeight: 900, matchMedia: () => ({ matches: false, addEventListener() {} }), scrollBy() {},
-    ztPersist: { load() {}, save() {}, clear() {} } };
+    ztPersist: { load() {}, save() {}, clear(slug) { clearCalls.push(slug); } } };
   let script = src.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
   const countSignature = 'function countOutOfSrgb(px) {';
   assert.equal(script.split(countSignature).length - 1, 1, 'instrument exactly one real P3 counter');
@@ -580,7 +583,7 @@ function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = 
     postMessage(m) { this.posted.push(m); if (this.ready) this.self.onmessage({ data: m }); else this.inbox.push(m); }
     terminate() { this.terminated = true; }
   }
-  const globals = { document, window, t: STRINGS.en, navigator: { clipboard: { writeText: () => Promise.resolve() } },
+  const globals = { document, window, t: STRINGS.en, _slug: 'image-color-palette', navigator: { clipboard: { writeText(text) { const job = { text }; copies.push(job); return holdCopies ? new Promise((resolve, reject) => Object.assign(job, { resolve, reject })) : Promise.resolve(); } } },
     Uint8ClampedArray, Uint8Array, ArrayBuffer, DataView, Blob, TextEncoder, URL: URLStub,
     Image: class { constructor() { this.naturalWidth = 6000; this.naturalHeight = 4752; images.push(this); } decode() { return Promise.resolve(); } },
     setTimeout: setTimeoutStub, clearTimeout: (timer) => { if (timer) timer.cancelled = true; },
@@ -591,9 +594,13 @@ function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = 
     globals.createImageBitmap = () => Promise.reject(new Error('main thread createImageBitmap is not used'));
   }
   const ctx = vm.createContext(globals);
+  const layout = read('src/layouts/ToolLayout.astro');
+  const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+  if (shellFirst === true) vm.runInContext(shortcut, ctx);
   vm.runInContext(script, ctx);
+  if (shellFirst === false) vm.runInContext(shortcut, ctx);
   const flush = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
-  return { nodes, reads, workers, downloads, document, window, flush, ctx, get countCalls() { return countCalls; },
+  return { nodes, reads, workers, downloads, document, window, flush, ctx, images, copies, clearCalls, faults, get countCalls() { return countCalls; },
     status() { return nodes.get('icp-status').textContent; },
     async open(name = 'photo.jpg', type = 'image/jpeg', extra = {}) {
       const file = { name, type, ...extra };
@@ -727,6 +734,85 @@ const SAMPLE_PIXELS = 575 * 455;   // fitImageSize(6000, 4752, SAMPLE_AREA)
     for (const k of Object.keys(a)) if (k !== 'status') check('export byte-identical before/after: ' + k, a[k] === b[k] && a[k].length > 0, k);
     eq('status (palette + P3 note) identical before/after', b.status, a.status);
   }
+}
+
+// ── File replacement and asynchronous result lifecycle ──
+{
+  const base = { passes, failures };
+  const start = (p, name = 'next.png', type = 'image/png', method = 'change') => {
+    const file = { name, type };
+    if (method === 'drop') p.nodes.get('icp-wrap').dispatch('drop', { dataTransfer: { files: [file] } });
+    else { const n = p.nodes.get('icp-file'); n.files = [file]; n.value = name; n.dispatch('change'); }
+    const im = p.images.at(-1); if (im) im.file = file; return im;
+  };
+  const snapshot = p => ({ status: p.status(), main: p.nodes.get('icp-main').hidden, exports: p.nodes.get('icp-export').hidden, code: p.nodes.get('icp-code-out').textContent, info: p.nodes.get('icp-info').textContent, palette: p.nodes.get('icp-palette').children.length, width: p.nodes.get('icp-canvas').width, height: p.nodes.get('icp-canvas').height });
+  const empty = (name, p) => {
+    check(name + ' hides preview and exports', p.nodes.get('icp-main').hidden && p.nodes.get('icp-export').hidden);
+    eq(name + ' clears code, image details and swatches', [p.nodes.get('icp-code-out').textContent, p.nodes.get('icp-info').textContent, p.nodes.get('icp-palette').children.length], ['', '', 0]);
+    eq(name + ' clears preview pixels', [p.nodes.get('icp-canvas').width, p.nodes.get('icp-canvas').height], [0, 0]);
+    p.nodes.get('icp-copy-code').click(); p.nodes.get('icp-gpl').click(); p.nodes.get('icp-ase').click();
+    eq(name + ' cannot export previous image', p.downloads.length, 0);
+    eq(name + ' cannot copy previous code', p.copies.length, 0);
+  };
+  for (const fail of ['decode', 'zero size', 'read pixels', 'type']) {
+    const p = pageHarness(); await p.open('old.png', 'image/png');
+    const im = start(p, fail === 'type' ? 'bad.txt' : 'broken.png', fail === 'type' ? 'text/plain' : 'image/png', 'drop');
+    if (fail === 'decode') im.onerror();
+    if (fail === 'zero size') { im.naturalWidth = 0; im.onload(); }
+    if (fail === 'read pixels') { p.faults.read = true; im.onload(); }
+    await p.flush(); await p.drain();
+    empty(fail, p); check(fail + ' keeps a specific error', p.nodes.get('icp-status').className.includes('error') && /broken.png|bad.txt/.test(p.status()), p.status());
+    await p.open('recovered.png', 'image/png');
+    check(fail + ' recovers with a new image', !p.nodes.get('icp-main').hidden && p.nodes.get('icp-info').textContent.includes('recovered.png') && p.nodes.get('icp-code-out').textContent.includes('--palette-1'));
+  }
+  for (const phase of ['load', 'decode']) for (const action of ['invalid', 'clear', 'sample', 'new file']) for (const fail of [false, true]) {
+    const p = pageHarness({ shellFirst: false }); const im = start(p, 'slow.png');
+    let resolve, reject;
+    if (phase === 'decode') { im.decode = () => new Promise((a, b) => { resolve = a; reject = b; }); im.onload(); }
+    if (action === 'invalid') start(p, 'bad.txt', 'text/plain', 'drop');
+    if (action === 'clear') p.clear();
+    if (action === 'sample') p.nodes.get('icp-sample').click();
+    if (action === 'new file') await p.open('new.png', 'image/png');
+    await p.drain(); const expected = snapshot(p);
+    if (phase === 'decode') { if (fail) reject(new Error('fixture decode')); else resolve(); } else if (fail) im.onerror(); else im.onload();
+    await p.flush(); await p.drain();
+    eq('old ' + phase + '/' + action + '/error=' + fail + ' cannot change newer UI', snapshot(p), expected);
+  }
+  for (const shellFirst of [false, true]) {
+    const p = pageHarness({ shellFirst }); await p.open(); p.clear(); await p.drain();
+    empty('CtrlL order ' + shellFirst, p);
+    eq('CtrlL still executes shared clear order ' + shellFirst, p.clearCalls, ['image-color-palette']);
+    const q = pageHarness({ shellFirst }); await q.open(); q.nodes.get('icp-palette').querySelector('.icp-chip').focus();
+    const event = q.document.dispatch('keydown', { key: 'l', ctrlKey: true });
+    eq('focused swatch CtrlL prevents default order ' + shellFirst, event.defaultPrevented, true);
+    eq('focused swatch keeps shared clear order ' + shellFirst, q.clearCalls, ['image-color-palette']);
+    check('focused swatch moves focus to Open image order ' + shellFirst, q.document.activeElement === q.nodes.get('icp-open'));
+  }
+  for (const control of ['code', 'swatch']) for (const action of ['clear', 'new file', 'invalid', 'options']) for (const fail of [false, true]) {
+    const p = pageHarness({ holdCopies: true }); await p.open(); await p.drain();
+    if (control === 'code') p.nodes.get('icp-copy-code').click(); else p.nodes.get('icp-palette').querySelector('.icp-chip').click();
+    const copy = p.copies[0]; check(control + ' starts a real copy', !!copy?.text);
+    if (action === 'clear') p.clear();
+    if (action === 'new file') await p.open('new.png', 'image/png');
+    if (action === 'invalid') start(p, 'bad.txt', 'text/plain', 'drop');
+    if (action === 'options') { p.nodes.get('icp-k').value = '3'; p.nodes.get('icp-k').dispatch('input'); }
+    await p.drain(); const expected = snapshot(p);
+    fail ? copy.reject(new Error('fixture denied')) : copy.resolve(); await p.flush();
+    eq('late ' + control + ' copy preserves ' + action + '/error=' + fail, snapshot(p), expected);
+  }
+  for (const fail of [false, true]) {
+    const p = pageHarness({ holdCopies: true }); await p.open(); await p.drain(); p.nodes.get('icp-copy-code').click();
+    fail ? p.copies[0].reject(new Error('fixture denied')) : p.copies[0].resolve(); await p.flush();
+    eq('current copy still reports ' + (fail ? 'failure' : 'success'), p.nodes.get('icp-status').className, fail ? 'icp-status is-error' : 'icp-status is-ok');
+  }
+  {
+    const p = pageHarness({ holdCopies: true }); await p.open(); await p.drain(); const code = p.nodes.get('icp-code-out').textContent;
+    p.nodes.get('icp-copy-code').click(); p.nodes.get('icp-code').value = 'json'; p.nodes.get('icp-code').dispatch('change');
+    p.copies[0].resolve(); await p.flush();
+    eq('copy keeps the click-time code', p.copies[0].text, code);
+    eq('copy feedback names the click-time format', p.status(), STRINGS.en.copiedCode.replace('{format}', STRINGS.en.code_css));
+  }
+  console.log(`Page lifecycle: ${passes - base.passes} passed, ${failures - base.failures} failed`);
 }
 
 console.log((failures ? 'FAIL' : 'PASS') + ': image-color-palette — ' + passes + ' passed, ' + failures + ' failed');
