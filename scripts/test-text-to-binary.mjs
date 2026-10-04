@@ -232,5 +232,26 @@ if (stringsMatch) {
   check('decode error clears the text box', source.includes("textEl.value = '';\n          setStatus(fill(t.err[r.error], r), 'error');"));
 }
 
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  check('the tool root is .tb-wrap (it gets the height of the first screen)', /^\s*<div class="tb-wrap">/.test(markup));
+  check('both boxes use the shared two-pane classes', (markup.match(/class="tb-panel zt-io-pane"/g) || []).length === 2 &&
+    (markup.match(/<textarea [^>]*class="tool-textarea tb-box zt-io-fill"/g) || []).length === 2 && markup.includes('class="tb-panels zt-io"'));
+  eq('one toggletip per explained control', (markup.match(/<Toggletip id="(tb-tip-\w+)"/g) || []).map((m) => m.slice(15, -1)), ['tb-tip-sep', 'tb-tip-text', 'tb-tip-binary']);
+  check('toggletip text stays out of the inline script', source.includes('define:vars={{ t: CLIENT_T }}') && source.includes('const { tips: TIPS, ...CLIENT_T } = T;'));
+  check('Ctrl/Cmd+L clears the stale status', /key === 'l' \|\| e\.key === 'L'[\s\S]{0,200}if \(textEl\.value \|\| binEl\.value\) return;[\s\S]{0,80}setStatus\('', ''\);/.test(source));
+  const layouts = readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8');
+  check('listed as a convert page', layouts.includes("'text-to-binary': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(new URL(`../src/content/tools/text-to-binary/${lang}.mdx`, import.meta.url), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    eq(lang + ' mdx: 5 steps in the frontmatter', (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "/gm) || []).length, 5);
+    check(lang + ' mdx: no usage section in the body', !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body));
+    check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限事項|제한 사항)\s*$/m.test(body));
+  }
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
