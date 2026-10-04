@@ -94,6 +94,9 @@ const onUnhandled = reason => unhandled.push(String(reason));
 process.on('unhandledRejection', onUnhandled);
 const same = (name, actual, expected) => eq(name, JSON.stringify(actual), JSON.stringify(expected));
 
+const strings = vm.runInNewContext(source.slice(source.indexOf('const STRINGS ='), source.indexOf('const T = STRINGS[lang]')).replace(/\bas const\b/g, '') + '\nSTRINGS;');
+const escapeHTML = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+
 function pageVM(lang = 'en', shellFirst = false) {
   const key = 'hash';
   const clipboard = [], digests = [], timers = new Map(), tracks = [];
@@ -172,13 +175,14 @@ function pageVM(lang = 'en', shellFirst = false) {
   doc.body = new Element('body'); doc.documentElement.appendChild(doc.body);
   const widget = new Element('section'); widget.className = 'tool-widget'; doc.body.appendChild(widget);
   const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
-  widget.innerHTML = markup;
+  widget.innerHTML = markup.replace(/\{T\.([\w]+)\}/g, (_, key) => escapeHTML(strings[lang][key])).replace(/\{TIPS\.([\w]+)\}/g, (_, key) => escapeHTML(strings[lang].tips[key]));
   doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
   doc.createElement = tag => new Element(tag);
   doc.activeElement = doc.body;
   doc.execCommand = () => { throw Error('Forbidden unexpected execCommand'); };
   const sandbox = {
     document: doc, console, TextEncoder, TextDecoder, Event: EventStub,
+    t: Object.fromEntries(Object.entries(strings[lang]).filter(([key]) => key !== 'tips')),
     _slug: 'hash-generator', ztPersist: { clear() {} }, trackTool(...args) { tracks.push(args); },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
     navigator: { clipboard: {
@@ -275,6 +279,63 @@ const compiled=await transform(source,{filename:'HashGeneratorTool.astro'});
 for(const cls of ['hg-row','hg-label','hg-value']){
   eq('compiled CSS reaches generated '+cls,compiled.css.some(css=>new RegExp('\\.'+cls+'\\s*\\{').test(css)),true);
   eq('generated '+cls+' CSS does not require scope',compiled.css.some(css=>new RegExp('\\.'+cls+'\\[data-astro-cid').test(css)),false);
+}
+
+// ---------- v2 page layout ----------
+{
+  const markup=source.replace(/^---[\s\S]*?---\s*/,'').split('<script')[0];
+  const css=source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const tips=['input','generate','clear','copy'];
+  same('four control tips', [...markup.matchAll(/<Toggletip id="hg-tip-([^"]+)"/g)].map(m=>m[1]).sort(),tips.toSorted());
+  eq('direct tool root',/^<div class="hg-wrap">/.test(markup),true);
+  eq('root is a flex column with min-height zero',/\.hg-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css),true);
+  eq('controls and fixed status precede panels',markup.indexOf('hg-actions')<markup.indexOf('id="hg-status"')&&markup.indexOf('id="hg-status"')<markup.indexOf('hg-panels'),true);
+  eq('two shared panes',(markup.match(/zt-io-pane/g)||[]).length,2);
+  eq('input and output fill available height',(markup.match(/zt-io-fill/g)||[]).length,2);
+  eq('output has its own scroll region',/class="hg-output-body zt-io-fill" role="region" aria-labelledby="hg-output-label" tabindex="0"/.test(markup)&&/\.hg-output-body\s*\{\s*overflow: auto/.test(css),true);
+  eq('status has fixed height and internal overflow',/\.hg-status\s*\{[^}]*height: 2\.8em;[^}]*overflow: auto/.test(css),true);
+  eq('empty message disappears after real rows',/\.hg-output-pane:has\(\.hg-results:not\(:empty\)\) \.hg-empty\s*\{ display: none/.test(css),true);
+  eq('stacked empty output disappears',/@media \(max-width: 860px\)[\s\S]*?\.hg-output-pane:has\(\.hg-results:empty\)\s*\{ display: none/.test(css),true);
+  eq('mobile input remains bounded',/@media \(max-width: 640px\)[\s\S]*?\.hg-input\s*\{ height: 120px/.test(css),true);
+  eq('no runtime label replacement',!/data-i18n/.test(source),true);
+  eq('tips excluded from client variables',source.includes('const { tips: TIPS, ...CLIENT_T } = T;')&&compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'),true);
+  eq('manual Generate remains the primary action',/id="hg-hash" class="btn-primary"/.test(markup),true);
+  eq('registered convert',/['"]hash-generator['"]:\s*['"]convert['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
+  eq('labels contain no interactive children',[...markup.matchAll(/<label\b[\s\S]*?<\/label>/g)].every(m=>!/<Toggletip|<button/.test(m[0])),true);
+  const ids=[...markup.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);eq('unique markup IDs',new Set(ids).size,ids.length);
+  const protectedContent={
+  "en": {
+    "frontmatter": "1b647f3037c7ca961ca54770761f9850a148e7d7e0bc0cc5eec93cff7229c185",
+    "body": "bf7b654464cbd7e90712a33be5ae88f0a294478a55b9b75ff1c9b7bf50b0cfb9"
+  },
+  "zh": {
+    "frontmatter": "5345d79e734895ec3c604657455238499dce1f73619e6aba6084c573b540f351",
+    "body": "2d5b56e773f8f155325d521fda43948440978432756adb40b697e4c1375b722d"
+  },
+  "ja": {
+    "frontmatter": "17223732c6a03bb2a26b4a3357f68233ad3e500b49e93e0cc4babe60894e7e23",
+    "body": "7a66df4f83baeff237573e4643562ccd8c267a7a8369f4b59b1d09e27c25f808"
+  },
+  "ko": {
+    "frontmatter": "b13f2a3e9eb3aa60b35b3d71386a560665af86b04acb9a9051b17bf52fe34087",
+    "body": "e00f8e700a1a243bd183e1585e1f7ecffd247b3a6519911419d5d8852389aad4"
+  }
+};
+  const yaml=require('js-yaml');
+  const hash=text=>createHash('sha256').update(text).digest('hex');
+  for(const lang of Object.keys(labels)){
+    same(lang+': equal client text keys',Object.keys(strings[lang]).sort(),Object.keys(strings.en).sort());
+    same(lang+': complete tip keys',Object.keys(strings[lang].tips).sort(),tips.toSorted());
+    for(const key of tips)eq(lang+': tip '+key+' is plain nonempty text',typeof strings[lang].tips[key]==='string'&&strings[lang].tips[key].length>20&&!/[<>]|https?:/.test(strings[lang].tips[key]),true);
+    const doc=readFileSync(join(root,'src/content/tools/hash-generator/'+lang+'.mdx'),'utf8'),fm=doc.match(/^---\n([\s\S]*?)\n---/)[1],body=doc.slice(doc.indexOf('\n---',4)+4),meta=yaml.load(fm);
+    eq(lang+': four steps before FAQ',meta.steps.length===4&&fm.indexOf('steps:')<fm.indexOf('faqItems:'),true);
+    eq(lang+': bounded plain steps',meta.steps.every(x=>typeof x==='string'&&x.length<=280&&!/[<>]/.test(x))&&meta.steps.join('').length<=1200,true);
+    eq(lang+': FAQ and SEO byte protection',hash(fm.replace(/^steps:\n(?:  .*\n)*/m,'')),protectedContent[lang].frontmatter);
+    eq(lang+': all non-Usage body byte protection',hash(body),protectedContent[lang].body);
+    const p=pageVM(lang);eq(lang+': input label is local before IIFE',p.get('hg-input').parentElement.querySelector('label').textContent,strings[lang].inputLabel);eq(lang+': initial output has no rows',rows(p).length,0);eq(lang+': localized empty message',p.widget.querySelector('.hg-empty').textContent,strings[lang].emptyOutput);
+  }
+  eq('MD5 and SHA helpers unchanged',hash(source.slice(source.indexOf('      // Compact MD5'),source.indexOf('      var inputEl'))),'fa6dbe7d03462cdef083bac56db494bb240a4aa8d110cdec05eedbc7de7ef74f');
+  const {transform:parseJS}=require('esbuild');await parseJS(compiled.code,{loader:'ts'});eq('Astro output parses as JavaScript',true,true);
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
