@@ -31,6 +31,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'zero-width-character-detector': 'analyze',
   'csr-decoder': 'analyze',
   'cookie-parser': 'analyze',
+  'ai-token-counter': 'analyze',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
