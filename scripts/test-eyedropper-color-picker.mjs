@@ -307,7 +307,7 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
   const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a;reject=b;}); return {promise,resolve,reject}; };
   const microtasks = async () => { for(let i=0;i<16;i++) await Promise.resolve(); };
   function page(lang='en', shellFirst=false, initial={}) {
-    const ids=new Map(),timers=new Map(),images=[],picks=[],saved=[],cleared=[],revoked=[],urls=new Map(),copies=[];
+    const ids=new Map(),timers=new Map(),images=[],picks=[],saved=[],cleared=[],revoked=[],urls=new Map(),copies=[],observers=[],windowEvents={};
     let seq=0,prefs=structuredClone(initial);
     const doc={listeners:{},activeElement:null};
     function matches(n,s){return s.split(',').some(raw=>{let sel=raw.trim();const attrs=[...sel.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];sel=sel.replace(/\[[^\]]+\]/g,'');const id=/#([\w-]+)/.exec(sel),classes=[...sel.matchAll(/\.([\w-]+)/g)],tag=/^[\w-]+/.exec(sel);return(!id||n.id===id[1])&&classes.every(c=>n.classList.contains(c[1]))&&(!tag||n.tagName===tag[0].toUpperCase())&&attrs.every(a=>a[2]===undefined?n.getAttribute(a[1])!==null:n.getAttribute(a[1])===a[2]);});}
@@ -331,8 +331,9 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
       getBoundingClientRect(){return{left:0,top:0,width:300,height:200,bottom:200};}
     }
     class Canvas extends Element {
-      constructor(){super('canvas');this.width=300;this.height=150;this.pixel=[0,0,0,255];this.context={clearRect(){},drawImage:img=>{this.pixel=img.pixel||[0,0,0,255];},getContextAttributes:()=>({colorSpace:'srgb'}),getImageData:(x,y,w,h)=>{const data=new Uint8ClampedArray(w*h*4);for(let i=0;i<data.length;i+=4)data.set(this.pixel,i);return{data};},fillRect(){},strokeRect(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},arc(){},fill(){}};}
+      constructor(){super('canvas');this.width=300;this.height=150;this.pixel=[0,0,0,255];this.context={clearRect(){},drawImage:img=>{this.pixel=img.pixel||[0,0,0,255];this.pixelAt=img.pixelAt;},getContextAttributes:()=>({colorSpace:'srgb'}),getImageData:(x,y,w,h)=>{const data=new Uint8ClampedArray(w*h*4);for(let row=0;row<h;row++)for(let col=0;col<w;col++)data.set(this.pixelAt?this.pixelAt(x+col,y+row):this.pixel,(row*w+col)*4);return{data};},fillRect(){},strokeRect(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},arc(){},fill(){}};}
       getContext(){return this.context;}
+      getBoundingClientRect(){const left=this.rectLeft||0,top=this.rectTop||0,width=parseFloat(this.style.width)||this.width,height=parseFloat(this.style.height)||this.height;return{left,top,width,height,right:left+width,bottom:top+height};}
     }
     const body=new Element('body'),widget=new Element();widget.className='tool-widget';body.appendChild(widget);
     let markup=source.slice(source.indexOf('\n---',4)+4,source.indexOf('<script'));
@@ -343,7 +344,8 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
     const get=id=>{if(!ids.has(id))throw new Error('Actual markup ID missing '+id);return ids.get(id);};
     Object.assign(doc,{body,getElementById:get,createElement:tag=>tag==='canvas'?new Canvas():new Element(tag),querySelector:s=>s==='.tool-widget'?widget:s==='.tool-widget .btn-primary'?widget.querySelector('.btn-primary'):widget.querySelector(s),addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);},dispatch(type,extra={}){const e={type,target:this.activeElement,defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},...extra};for(const fn of this.listeners[type]||[])fn(e);return e;},execCommand:()=>false});
     class ControlledImage{set src(url){this.url=url;images.push({image:this,file:urls.get(url)});}}
-    const context={document:doc,console,t:STRINGS[lang],Image:ControlledImage,AbortController,Uint8ClampedArray,Promise,innerHeight:900,innerWidth:1366,scrollBy(){},addEventListener(){},CSS:{supports:()=>true},
+    class ControlledResizeObserver{constructor(callback){this.callback=callback;this.targets=new Set();observers.push(this);}observe(target){this.targets.add(target);}}
+    const context={document:doc,console,t:STRINGS[lang],Image:ControlledImage,ResizeObserver:ControlledResizeObserver,AbortController,Uint8ClampedArray,Promise,innerHeight:900,innerWidth:1366,scrollBy(){},addEventListener(type,fn){(windowEvents[type]??=[]).push(fn);},CSS:{supports:()=>true},
       EyeDropper:class{open(options){const job=deferred();job.options=options;picks.push(job);return job.promise;}},
       navigator:{clipboard:{writeText(text){copies.push(text);return Promise.resolve();}}},
       URL:{createObjectURL(file){const url='blob:fixture-'+(++seq);urls.set(url,file);return url;},revokeObjectURL(url){revoked.push(url);}},
@@ -352,12 +354,58 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
     context.window=context;vm.createContext(context);if(shellFirst)vm.runInContext(shortcut,context);vm.runInContext(pageScript,context);if(!shellFirst)vm.runInContext(shortcut,context);
     function zeros(){for(const[id,t]of[...timers])if(t.ms===0){timers.delete(id);t.fn();}}
     function startFile(name='sample.png'){get('ecp-file').files=[{name,type:'image/png'}];get('ecp-file').dispatch('change');return images.at(-1);}
-    function release(job,error=false){if(error)job.image.onerror();else{Object.assign(job.image,{naturalWidth:4,naturalHeight:2,pixel:[255,0,0,255]});job.image.onload();}}
+    function release(job,error=false,fixture={}){if(error)job.image.onerror();else{Object.assign(job.image,{naturalWidth:4,naturalHeight:2,pixel:[255,0,0,255]},fixture);job.image.onload();}}
+    function queueResize(width,height){const target=get('ecp-scroller');target.clientWidth=width;target.clientHeight=height;const pending=observers.filter(observer=>observer.targets.has(target));return()=>{for(const observer of pending)observer.callback([{target,contentRect:{width,height}}],observer);};}
+    function resize(width,height){queueResize(width,height)();}
     function shortcutClear(inside=true){(inside?get('ecp-hex'):body).focus();return doc.dispatch('keydown',{ctrlKey:true,key:'l'});}
     function snapshot(){return{fields:fields.map(f=>get('ecp-'+f).value),status:get('ecp-status').textContent,viewer:get('ecp-viewer').hidden,drop:get('ecp-drop').hidden,info:get('ecp-imginfo').textContent,pixel:[...get('ecp-canvas').pixel],size:[get('ecp-canvas').width,get('ecp-canvas').height],recent:get('ecp-recent-grid').children.length};}
-    return{get,doc,picks,images,saved,cleared,revoked,copies,zeros,startFile,release,shortcutClear,snapshot};
+    return{get,doc,picks,images,saved,cleared,revoked,copies,zeros,startFile,release,resize,queueResize,shortcutClear,snapshot,windowResize(){for(const fn of windowEvents.resize||[])fn();}};
   }
   const compare=(label,actual,expected)=>eq(label,JSON.stringify(actual),JSON.stringify(expected));
+  {
+    const p=page();p.release(p.startFile('portrait.png'),false,{naturalWidth:40,naturalHeight:80});
+    eq('Fit initially uses available container height',[p.get('ecp-canvas').style.width,p.get('ecp-canvas').style.height],['100px','200px']);
+    p.resize(300,120);
+    eq('Fit follows a shorter container without a window resize',[p.get('ecp-canvas').style.width,p.get('ecp-canvas').style.height],['60px','120px']);
+    p.resize(300,240);
+    eq('Fit fills a taller container again',[p.get('ecp-canvas').style.width,p.get('ecp-canvas').style.height],['120px','240px']);
+    p.resize(80,240);
+    eq('Fit follows container width changes',[p.get('ecp-canvas').style.width,p.get('ecp-canvas').style.height],['80px','160px']);
+    p.get('ecp-scroller').clientHeight=100;p.windowResize();
+    eq('window resize still updates Fit',[p.get('ecp-canvas').style.width,p.get('ecp-canvas').style.height],['50px','100px']);
+  }
+  {
+    const p=page(),canvas=p.get('ecp-canvas'),marker=p.get('ecp-marker');
+    // Pixel (10,20) is RGB(40,40,0) in this independent 40×80 source image.
+    p.release(p.startFile('coordinates.png'),false,{naturalWidth:40,naturalHeight:80,pixelAt:(x,y)=>[x*4,y*2,0,255]});
+    canvas.rectLeft=11;canvas.rectTop=23;
+    canvas.dispatch('pointerup',{pointerType:'mouse',button:0,clientX:37.25,clientY:74.25});
+    eq('Fit pointer picks the original image pixel',p.get('ecp-hex').value,'#282800');
+    p.get('ecp-p3').value='color(display-p3 1 0 0)';p.get('ecp-p3').dispatch('input');
+    check('typed P3 color exposes the actual layout-changing note',!p.get('ecp-note').hidden);
+    const before=p.snapshot(),saved=structuredClone(p.saved);
+    p.resize(300,120);
+    compare('container resize leaves current fields and image state untouched',p.snapshot(),before);
+    compare('container resize leaves stored preferences untouched',p.saved,saved);
+    close('container resize keeps the marker on the selected source pixel',[parseFloat(marker.style.left),parseFloat(marker.style.top)],[26.25,25.625],1e-10);
+    canvas.dispatch('pointerup',{pointerType:'mouse',button:0,clientX:26.75,clientY:53.75});
+    eq('resized Fit pointer still selects the same source pixel',p.get('ecp-hex').value,'#282800');
+    p.get('ecp-wrap').querySelector('[data-zoom="actual"]').click();
+    p.resize(30,50);
+    eq('Actual size stays one CSS pixel per source pixel after resize',[canvas.style.width,canvas.style.height],['40px','80px']);
+    check('Actual size keeps its scrollable mode',p.get('ecp-scroller').classList.contains('is-actual'));
+    canvas.dispatch('pointerup',{pointerType:'mouse',button:0,clientX:21.5,clientY:43.5});
+    eq('Actual size pointer selects the same source pixel',p.get('ecp-hex').value,'#282800');
+    p.get('ecp-wrap').querySelector('[data-zoom="fit"]').click();
+    eq('switching back to Fit uses the current container',[canvas.style.width,canvas.style.height],['25px','50px']);
+  }
+  for(const action of ['close','clear','shortcut']){
+    const p=page();p.release(p.startFile());const notify=p.queueResize(100,120);
+    if(action==='shortcut'){p.shortcutClear();p.zeros();}else p.get(action==='close'?'ecp-close':'ecp-clear').click();
+    const before=p.snapshot(),saved=structuredClone(p.saved);notify();
+    compare(`queued resize after ${action} cannot restore image or color`,p.snapshot(),before);
+    compare(`queued resize after ${action} does not write preferences`,p.saved,saved);
+  }
   {
     const p=page();p.release(p.startFile('ready.png'));
     check('image positive control opens the actual viewer',!p.get('ecp-viewer').hidden&&p.get('ecp-imginfo').textContent.includes('ready.png'));
