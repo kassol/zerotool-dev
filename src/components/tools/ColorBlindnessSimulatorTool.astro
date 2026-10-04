@@ -911,6 +911,12 @@ const DEFAULT_COLORS = {
       var state = { mode: 'image', view: 'all', compareType: 'deuteranopia', severity: 0.6 };
       var img = null;   // { source, name, fullW, fullH, scaled, thumb: ImageData, preview: ImageData|null }
       var renderGen = 0;
+      var inputRevision = 0, cancelCapture = null;
+      function beginInput() {
+        inputRevision++;
+        if (cancelCapture) cancelCapture();
+        return inputRevision;
+      }
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg || '';
@@ -1016,6 +1022,7 @@ const DEFAULT_COLORS = {
       }
       function openFile(file) {
         if (!file) return;
+        var revision = beginInput();
         var name = file.name || 'image';
         if (!isImageFile(file)) { setStatus(fill(t.notImage, { name: name }), 'error'); return; }
         setStatus(fill(t.loading, { name: name }), 'info');
@@ -1023,6 +1030,7 @@ const DEFAULT_COLORS = {
         var el = new Image();
         el.decoding = 'async';
         el.onload = function () {
+          if (revision !== inputRevision) { URL.revokeObjectURL(url); return; }
           var w = el.naturalWidth, h = el.naturalHeight;
           if (!w || !h) { URL.revokeObjectURL(url); setStatus(fill(t.imgError, { name: name }), 'error'); return; }
           // The object URL stays alive while the image is the current source (PNG downloads redraw it).
@@ -1034,6 +1042,7 @@ const DEFAULT_COLORS = {
         };
         el.onerror = function () {
           URL.revokeObjectURL(url);
+          if (revision !== inputRevision) return;
           setStatus(fill(t.imgError, { name: name }), 'error');
         };
         el.src = url;
@@ -1083,6 +1092,7 @@ const DEFAULT_COLORS = {
         return c;
       }
       function loadSample(status) {
+        beginInput();
         var c = sampleCanvas();
         if (img && img.url) URL.revokeObjectURL(img.url);
         setImage(c, c.width, c.height, t.sampleName, status ? t.sampleLoaded : '');
@@ -1123,24 +1133,43 @@ const DEFAULT_COLORS = {
       var md = navigator.mediaDevices;
       if (md && typeof md.getDisplayMedia === 'function') captureBtn.hidden = false;
       captureBtn.addEventListener('click', function () {
-        var stream = null;
+        var revision = beginInput();
+        var stream = null, video = null, resolveVideo = null;
         captureBtn.disabled = true;
-        function stop() { if (stream) stream.getTracks().forEach(function (tr) { tr.stop(); }); }
+        function stop() {
+          if (video) { video.onloadeddata = null; video.onerror = null; video.srcObject = null; }
+          if (stream) { stream.getTracks().forEach(function (tr) { tr.stop(); }); stream = null; }
+        }
+        function finish() {
+          if (cancelCapture !== cancel) return;
+          cancelCapture = null;
+          captureBtn.disabled = false;
+        }
+        function cancel() {
+          stop();
+          if (resolveVideo) { resolveVideo(null); resolveVideo = null; }
+          finish();
+        }
+        cancelCapture = cancel;
         Promise.resolve().then(function () {
+          if (revision !== inputRevision) return null;
           return md.getDisplayMedia({ video: true, audio: false });
         }).then(function (s) {
           stream = s;
-          var video = document.createElement('video');
+          if (!stream || revision !== inputRevision) { stop(); return null; }
+          video = document.createElement('video');
           video.muted = true;
           video.playsInline = true;
           video.srcObject = s;
           return new Promise(function (resolve, reject) {
-            video.onloadeddata = function () { resolve(video); };
-            video.onerror = function () { reject(new Error('video')); };
+            resolveVideo = resolve;
+            video.onloadeddata = function () { resolveVideo = null; resolve(video); };
+            video.onerror = function () { resolveVideo = null; reject(new Error('video')); };
             var p = video.play();
-            if (p && p.catch) p.catch(function () {});
+            if (p && p.catch) p.catch(reject);
           });
         }).then(function (video) {
+          if (!video || revision !== inputRevision) { stop(); return; }
           var w = video.videoWidth, h = video.videoHeight;
           var c = canvasFor(w, h);
           c.getContext('2d').drawImage(video, 0, 0, w, h);
@@ -1151,10 +1180,11 @@ const DEFAULT_COLORS = {
           track('capture');
         }).catch(function (err) {
           stop();
+          if (revision !== inputRevision) return;
           var name = err && err.name;
           if (name === 'NotAllowedError' || name === 'AbortError') setStatus(t.captureDenied, 'info');
           else setStatus(fill(t.captureFailed, { msg: (err && (err.message || err.name)) || '' }), 'error');
-        }).then(function () { captureBtn.disabled = false; });
+        }).then(finish);
       });
 
       // ── full-resolution PNG, processed in slices so the page stays responsive ──
@@ -1162,28 +1192,28 @@ const DEFAULT_COLORS = {
       function downloadType(type, btn) {
         if (!img || busy) return;
         busy = true;
-        var gen = ++renderGen;
+        var gen = ++renderGen, revision = inputRevision, severity = state.severity;
         var w = img.fullW, h = img.fullH, label = t[type];
         var buttons = wrap.querySelectorAll('.cbs-dl');
         buttons.forEach(function (b) { b.disabled = true; });
         function done(msg, kind) {
           busy = false;
           buttons.forEach(function (b) { b.disabled = false; });
-          if (msg !== undefined) setStatus(msg, kind);
+          if (revision === inputRevision && severity === state.severity && msg !== undefined) setStatus(msg, kind);
         }
         try {
           var c = canvasFor(w, h);
           var ctx = c.getContext('2d', { willReadFrequently: true });
           ctx.drawImage(img.source, 0, 0, w, h);
           var data = ctx.getImageData(0, 0, w, h);
-          var m = cvdMatrix(type, state.severity), pos = 0, len = data.data.length;
-          var name = downloadName(img.name, type, state.severity);
+          var m = cvdMatrix(type, severity), pos = 0, len = data.data.length;
+          var name = downloadName(img.name, type, severity);
           var step = function () {
             if (gen !== renderGen) { done(); return; }
             var end = Math.min(len, pos + SLICE_BYTES);
             simulatePixels(data.data, m, pos, end);
             pos = end;
-            setStatus(fill(t.rendering, { type: label, w: w, h: h, p: Math.floor(pos / len * 100) }), 'info');
+            if (revision === inputRevision && severity === state.severity) setStatus(fill(t.rendering, { type: label, w: w, h: h, p: Math.floor(pos / len * 100) }), 'info');
             if (pos < len) { setTimeout(step, 0); return; }
             ctx.putImageData(data, 0, 0);
             c.toBlob(function (blob) {
@@ -1277,7 +1307,8 @@ const DEFAULT_COLORS = {
             b.textContent = hex;
             b.setAttribute('aria-label', fill(t.swatchAria, { label: parsed.colors[i].label + ' · ' + typeLabel(row.type), hex: hex }));
             b.addEventListener('click', function () {
-              copyText(hex).then(function (ok) { setStatus(ok ? fill(t.copied, { value: hex }) : t.copyFailed, ok ? 'ok' : 'error'); });
+              var revision = inputRevision, severity = state.severity;
+              copyText(hex).then(function (ok) { if (revision === inputRevision && severity === state.severity) setStatus(ok ? fill(t.copied, { value: hex }) : t.copyFailed, ok ? 'ok' : 'error'); });
             });
             td.appendChild(b);
             tr.appendChild(td);
@@ -1307,6 +1338,7 @@ const DEFAULT_COLORS = {
         setStatus(msgs.join(' '), parsed.errors.length ? 'error' : bad.length ? 'warn' : 'ok');
       }
       colorsEl.addEventListener('input', function () {
+        beginInput();
         renderColors();
         clearTimeout(colorsTimer);
         colorsTimer = setTimeout(function () { track('palette'); }, 1500);
@@ -1325,6 +1357,7 @@ const DEFAULT_COLORS = {
       }
       function setMode(mode) {
         if (state.mode === mode) return;
+        beginInput();
         state.mode = mode;
         tabs.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-mode') === mode ? 'true' : 'false'); });
         imagePanel.hidden = mode !== 'image';
@@ -1360,9 +1393,22 @@ const DEFAULT_COLORS = {
       });
       severityInput.addEventListener('change', savePrefs);
 
-      // Ctrl/⌘+L (ToolLayout) empties the color list; refresh the result after it runs.
+      // Ctrl/⌘+L resets current input; ToolLayout keeps saved preferences.
       document.addEventListener('keydown', function (e) {
-        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) setTimeout(function () { if (state.mode === 'colors') renderColors(); }, 0);
+        if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L') || !wrap.contains(document.activeElement)) return;
+        e.preventDefault();
+        if (table.contains(document.activeElement)) colorsEl.focus();
+        clearTimeout(colorsTimer);
+        colorsTimer = 0;
+        if (sevFrame) cancelAnimationFrame(sevFrame);
+        sevFrame = 0;
+        fileInput.value = '';
+        colorsEl.value = '';
+        table.textContent = '';
+        tableWrap.hidden = true;
+        wrap.classList.remove('is-dragging');
+        loadSample(false);
+        if (state.mode === 'colors') renderColors();
       });
 
       // ── init ──
