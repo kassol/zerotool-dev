@@ -51,9 +51,8 @@ eq('JPEG', E.resultFormat('a.b.png', 'image/jpeg', 'image/jpeg'), { outName: 'a.
 eq('blob without a type keeps the requested name', E.resultFormat('x.png', 'image/png', ''), { outName: 'x.png', mime: 'image/png', fellBack: false });
 
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
-  const block = source.slice(source.indexOf(lang + ': {'), source.indexOf('\n        },', source.indexOf(lang + ': {')));
-  const m = /fellBack: '([^']*)'/.exec(block);
-  check(lang + ': fellBack string with {req} and {got}', m && m[1].includes('{req}') && m[1].includes('{got}'), lang);
+  const strings = new Function(source.slice(source.indexOf('const STRINGS = '), source.indexOf('/* ── strings:end ── */')) + 'return STRINGS;')();
+  check(lang + ': fellBack string with {req} and {got}', strings[lang].fellBack.includes('{req}') && strings[lang].fellBack.includes('{got}'), lang);
   const mdx = readFileSync(join(root, 'src/content/tools/image-compressor', lang + '.mdx'), 'utf8');
   check(lang + ': page no longer says the name keeps the chosen format', !/still names the file after the format you picked|仍按你选的格式命名|ファイル名は選んだ形式のまま|파일 이름은 선택한 형식대로/.test(mdx), lang);
 }
@@ -127,6 +126,7 @@ for (const cls of ['ic-card', 'ic-card-name', 'ic-card-sizes', 'ic-card-note', '
     const sandbox = { document, Blob, console, URL: { createObjectURL(blob) { const url = 'blob:test-' + ++serial; urls.set(url, blob); return url; }, revokeObjectURL(url) { revoked.add(url); } },
       Image: class { constructor() { this.naturalWidth = 64; this.naturalHeight = 48; images.push(this); } },
       setTimeout() {}, window: { ztPersist: { clear() { persistenceClears++; } } }, _slug: prefix === 'wc' ? 'webp-converter' : 'image-compressor' };
+    sandbox.t = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS.en;')();
     const context = createContext(sandbox);
     runInContext(inline[1], context);
     const keyStart = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
@@ -177,6 +177,79 @@ for (const cls of ['ic-card', 'ic-card-name', 'ic-card-sizes', 'ic-card-note', '
     p.get(prefix + '-quality').value = '42'; p.get(prefix + '-quality').dispatch('input');
     check('batch lifecycle: quality changes label without recompressing', p.images.length === imageCount && p.get(prefix + '-quality-val').textContent === '42' && p.rows().length === 1);
   }
+}
+
+// ---------- v2 page layout ----------
+{
+  const { createHash } = await import('node:crypto');
+  const { createRequire } = await import('node:module');
+  const { load: loadYaml } = await import('js-yaml');
+  const pageSource = source, prefix = 'ic', slug = 'image-compressor';
+  const markup = pageSource.slice(pageSource.indexOf('\n---\n') + 5, pageSource.indexOf('<script is:inline')).trim();
+  const table = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS;')();
+  const css = pageSource.slice(pageSource.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/<\/?style\b[^>]*>/g, '');
+  const rules = (selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].split(',').some((s) => s.trim() === selector)).map((m) => m[2]);
+  const property = (body, name, value) => new RegExp('(?:^|;)\\s*' + name + '\\s*:\\s*' + value + '\\s*(?:;|$)').test(body);
+  const hash = (s) => createHash('sha256').update(s).digest('hex');
+  check('analyze layout registered', new RegExp("'" + slug + "':\\s*'analyze'").test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('tool root is the direct first element', markup.startsWith('<div class="' + prefix + '-wrap" id="' + prefix + '-wrap">'));
+  check('root can shrink with available height', rules('.' + prefix + '-wrap').some((r) => property(r, 'display', 'flex') && property(r, 'flex-direction', 'column') && property(r, 'min-height', '0')));
+  check('empty state uses shared drop fill', markup.includes('class="' + prefix + '-drop zt-empty-drop"'));
+  check('results have zero-basis flex and internal scrolling', rules('.' + prefix + '-results').some((r) => property(r, 'flex', '1\\s+1\\s+0') && property(r, 'overflow', 'auto') && property(r, 'min-width', '0')));
+  check('result cards keep their height inside the scroll area', rules('.' + prefix + '-results :global(.' + prefix + '-card)').some((r) => property(r, 'flex', 'none')));
+  check('mobile results have a bounded height', rules('.' + prefix + '-results').some((r) => property(r, 'flex', 'none') && property(r, 'height', '[1-9][\\d.]*rem') && property(r, 'min-height', '0')));
+  for (const selector of ['.' + prefix + '-actions[hidden]', '.' + prefix + '-results[hidden]', '#' + prefix + '-download-all[hidden]']) check(selector + ' honors hidden', rules(selector).some((r) => property(r, 'display', 'none')));
+  check('status reserves two lines and scrolls', rules(prefix === 'wc' ? '.wc-status' : '#ic-status').some((r) => property(r, 'height', '3em') && property(r, 'overflow', 'auto') && property(r, 'flex', 'none')));
+  check('completed import compacts the drop target', rules('.' + prefix + '-wrap:has(.' + prefix + '-results:not([hidden])) .' + prefix + '-drop').some((r) => property(r, 'flex', 'none') && property(r, 'min-height', '0')));
+  check('860px stacks controls and 640px adjusts phone layout', /@media\s*\(max-width:\s*860px\)/.test(css) && /@media\s*\(max-width:\s*640px\)/.test(css));
+  check('download and clear remain explicit actions before status', ['download-all', 'clear'].every((key) => markup.indexOf('id="' + prefix + '-' + key + '"') < markup.indexOf('id="' + prefix + '-status"')));
+  check('status precedes the drop target and results', markup.indexOf('id="' + prefix + '-status"') < markup.indexOf('id="' + prefix + '-drop"') && markup.indexOf('id="' + prefix + '-drop"') < markup.indexOf('id="' + prefix + '-results"'));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
+  check('template IDs are unique', ids.length === new Set(ids).size);
+  check('no runtime i18n rewrite remains', !pageSource.includes('data-i18n'));
+  check('tips excluded from serialized strings', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T/.test(pageSource) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(pageSource));
+  const keys = prefix === 'wc' ? ['mode', 'quality', 'files', 'download'] : ['format', 'quality', 'resize', 'files', 'download'];
+  check('each control tip appears once', JSON.stringify([...markup.matchAll(/<Toggletip id="[a-z]+-tip-([^"]+)"/g)].map((m) => m[1]).sort()) === JSON.stringify([...keys].sort()));
+  check('file tips are outside the file-input overlay', !/<div id="[a-z]+-drop"[\s\S]*?<Toggletip/.test(markup.slice(markup.indexOf('<div id="' + prefix + '-drop"'))));
+  const retained = {
+    "en": [
+        "69cca5b2aa6ece31bbcb34e435abfabcb615a092246d07c720a7bb4ae54b8d7f",
+        "9cab4c9d7bf8ebedf8901a80747c56d4bc95671cd69f22a624d78b768f13a544"
+    ],
+    "zh": [
+        "a79f8868b73ecc52a18ae2d74ecd22fe3f0f3dc23299d2fef3d38139495416b1",
+        "498c366d1cabfd17add7e159e43d290bb4768729e8d88c1dd842a812ca0f5784"
+    ],
+    "ja": [
+        "89c3590f91aa0ffc8a0f5feab7af7bdb34802dfe7ed7d1317f19803dfbf47d33",
+        "472912a5864fc5ac67aac03b3193aee477bdbeff4ac75ebccd07a98d1ceac6ca"
+    ],
+    "ko": [
+        "187a35df0c29986a500d10eeb0767cfa6ef3b4f08bc0d0b9702123249642116c",
+        "ef38fbfdf030047be27f021a84df0161f3dfc0c8a9401d33d3f0989a02f31235"
+    ]
+};
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    check(lang + ' same string keys', JSON.stringify(Object.keys(table[lang]).sort()) === JSON.stringify(Object.keys(table.en).sort()));
+    check(lang + ' complete control tips', JSON.stringify(Object.keys(table[lang].tips).sort()) === JSON.stringify([...keys].sort()) && keys.every((key) => table[lang].tips[key].length > 20));
+    const { tips, ...client } = table[lang];
+    check(lang + ' tip text is absent from client payload', keys.every((key) => !JSON.stringify(client).includes(tips[key])));
+    const mdx = readFileSync(join(root, 'src/content/tools', slug, lang + '.mdx'), 'utf8');
+    const [, metadata, body] = mdx.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    const fm = loadYaml(metadata), steps = fm.steps || [];
+    check(lang + ' bounded plain-text steps', steps.length > 0 && steps.length <= 8 && steps.every((s) => typeof s === 'string' && s.length <= 280 && !/<[^>]+>|\*\*/.test(s)) && steps.join('').length <= 1200);
+    check(lang + ' steps name current download actions', steps.some((s) => s.includes(table[lang].downloadAll)) && steps.some((s) => s.includes(table[lang].download)));
+    check(lang + ' usage heading removed', !/<h2>(?:How to Use|使用方法|使用步骤|使い方|사용 방법)<\/h2>/.test(body));
+    check(lang + ' SEO and FAQ unchanged', hash(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')) === retained[lang][0]);
+    check(lang + ' all non-usage body content unchanged', hash(body) === retained[lang][1]);
+  }
+  const require = createRequire(import.meta.url);
+  const { transform: compileAstro } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: checkJs } = await import('esbuild');
+  let compileError = null;
+  try { const result = await compileAstro(pageSource, { filename: 'ImageCompressorTool.astro' }); await checkJs(result.code, { loader: 'ts', format: 'esm' }); }
+  catch (error) { compileError = error.message; }
+  check('Astro generated JavaScript is valid', compileError === null, compileError);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

@@ -1,15 +1,145 @@
 ---
-// ImageCompressorTool — compresses JPEG/PNG/WebP/GIF images locally via Canvas
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+/* ── strings:start ── */
+const STRINGS = {
+  "en": {
+    "imagesLabel": "Images",
+    "selectFiles": "Select image files",
+    "resizeAria": "Long edge in pixels",
+    "tips": {
+      "format": "Choose Keep original, JPEG, PNG or WebP before importing. Settings do not recompress existing results; select the files again. JPEG replaces transparency with white. If the browser outputs PNG instead, the download uses .png and the card explains the fallback.",
+      "quality": "Quality is 1–100, with a default of 75, for JPEG and WebP. PNG is lossless and ignores this value; the slider is disabled for PNG output or Keep original with a PNG first in the batch. Set quality before importing again.",
+      "resize": "Enable Resize long edge to before importing. The default is 1920 px. Images above the limit shrink proportionally; smaller images are not enlarged. The numeric input offers 64–16384 px. Reimport to apply changes.",
+      "files": "Select or drop JPEG, PNG, WebP or GIF files for automatic local compression. Each file is limited to 50 MB (50 × 1024 × 1024 bytes). Animation becomes a still image, and re-encoding drops metadata. Up to three images are processed at once.",
+      "download": "Each card shows dimensions and byte sizes before and after compression. A larger output is marked in red. Download saves one result; Download All starts one download per successful file, without a ZIP. The browser may ask to allow multiple downloads."
+    },
+    "formatLabel": "Output format:",
+    "keepOriginal": "Keep original",
+    "qualityLabel": "Quality:",
+    "resizeLabel": "Resize long edge to",
+    "dropHint": "Drop images here, or <strong>click to select</strong>",
+    "formatsHint": "JPEG / PNG / WebP / GIF · up to 50 MB each",
+    "downloadAll": "Download All",
+    "clear": "Clear",
+    "download": "Download",
+    "compressing": "Compressing…",
+    "done": "{ok} file(s) compressed",
+    "someFailed": ", {fail} failed",
+    "tooLarge": "File exceeds 50 MB limit",
+    "unsupported": "Unsupported format — try exiftool / ImageMagick locally",
+    "decodeFailed": "Could not decode this image",
+    "encodeFailed": "Browser could not encode the output",
+    "fellBack": "This browser cannot encode {req}, so it saved {got}. The file name uses the real format.",
+    "pngNote": "PNG is lossless — quality slider disabled"
+  },
+  "zh": {
+    "imagesLabel": "图片",
+    "selectFiles": "选择图片文件",
+    "resizeAria": "长边像素数",
+    "tips": {
+      "format": "导入前选择「保持原格式」、JPEG、PNG 或 WebP。修改设置不会重新压缩已有结果，请重新选择文件。JPEG 会把透明区域变成白色。浏览器若改为输出 PNG，下载文件使用 .png，结果卡片会说明原因。",
+      "quality": "JPEG 和 WebP 的质量范围为 1–100，默认 75。PNG 为无损输出，不使用此值；选择 PNG，或「保持原格式」且批次首张为 PNG 时，滑块禁用。设置后请重新导入。",
+      "resize": "导入前启用「长边缩放至」，默认 1920 px。超过上限的图片按比例缩小，小图不会放大。数字框提供 64–16384 px 的范围。修改后需重新导入才能应用。",
+      "files": "选择或拖入 JPEG、PNG、WebP、GIF 后，在本地自动压缩。单文件最大 50 MB（50 × 1024 × 1024 字节）。动图变为静态图，重新编码会丢掉元数据。最多同时处理三张图片。",
+      "download": "每张卡片显示压缩前后的尺寸和体积，变大的结果用红色标出。「下载」保存单个结果；「全部下载」为每个成功文件各发起一次下载，不打包 ZIP。浏览器可能询问是否允许多个下载。"
+    },
+    "formatLabel": "输出格式：",
+    "keepOriginal": "保持原格式",
+    "qualityLabel": "质量：",
+    "resizeLabel": "长边缩放至",
+    "dropHint": "把图片拖到这里，或者<strong>点击选择</strong>",
+    "formatsHint": "JPEG / PNG / WebP / GIF · 单文件 ≤ 50 MB",
+    "downloadAll": "全部下载",
+    "clear": "清除",
+    "download": "下载",
+    "compressing": "压缩中…",
+    "done": "已压缩 {ok} 张",
+    "someFailed": "，{fail} 张失败",
+    "tooLarge": "单文件超出 50 MB 上限",
+    "unsupported": "不支持的格式 — 请用 exiftool / ImageMagick 本地处理",
+    "decodeFailed": "无法解码此图片",
+    "encodeFailed": "浏览器无法编码该输出",
+    "fellBack": "当前浏览器无法编码 {req}，已保存为 {got}，文件名按实际格式命名。",
+    "pngNote": "PNG 是无损格式，质量滑块不生效"
+  },
+  "ja": {
+    "imagesLabel": "画像",
+    "selectFiles": "画像ファイルを選択",
+    "resizeAria": "長辺のピクセル数",
+    "tips": {
+      "format": "読み込み前に「元のまま」、JPEG、PNG、WebP を選択します。設定を変えても既存の結果は再圧縮しません。ファイルを再選択してください。JPEG では透明部分が白になります。ブラウザが PNG を出力した場合は .png で保存し、カードに説明を表示します。",
+      "quality": "JPEG と WebP の品質は 1〜100、既定値は 75 です。PNG は可逆で、この値を使いません。PNG 出力、または「元のまま」で先頭の画像が PNG のときはスライダーが無効になります。設定後に再度読み込んでください。",
+      "resize": "読み込み前に「長辺をリサイズ」を有効にします。既定値は 1920 px です。上限を超える画像だけを縦横比を保って縮小し、小さい画像は拡大しません。数値欄の範囲は 64〜16384 px です。変更後は再度読み込んでください。",
+      "files": "JPEG、PNG、WebP、GIF を選択またはドロップすると、ローカルで自動圧縮します。1 ファイルの上限は 50 MB（50 × 1024 × 1024 バイト）です。アニメーションは静止画になり、再エンコードでメタデータが消えます。同時に最大3画像を処理します。",
+      "download": "カードに圧縮前後の寸法とサイズを表示し、大きくなった結果は赤で示します。「ダウンロード」は1件、「すべてダウンロード」は成功したファイルごとに保存を開始します。ZIP にはまとめません。ブラウザが複数ダウンロードの許可を求める場合があります。"
+    },
+    "formatLabel": "出力フォーマット：",
+    "keepOriginal": "元のまま",
+    "qualityLabel": "品質：",
+    "resizeLabel": "長辺をリサイズ",
+    "dropHint": "画像をここにドロップ、または<strong>クリックして選択</strong>",
+    "formatsHint": "JPEG / PNG / WebP / GIF · 1 ファイル 50 MB まで",
+    "downloadAll": "すべてダウンロード",
+    "clear": "クリア",
+    "download": "ダウンロード",
+    "compressing": "圧縮中…",
+    "done": "{ok} 件圧縮完了",
+    "someFailed": "、{fail} 件失敗",
+    "tooLarge": "ファイルが 50 MB を超えています",
+    "unsupported": "非対応フォーマット — exiftool / ImageMagick をローカルで使用してください",
+    "decodeFailed": "この画像をデコードできません",
+    "encodeFailed": "ブラウザが出力をエンコードできません",
+    "fellBack": "このブラウザーは {req} をエンコードできないため {got} で保存しました。ファイル名は実際の形式に合わせています。",
+    "pngNote": "PNG はロスレス — 品質スライダーは無効"
+  },
+  "ko": {
+    "imagesLabel": "이미지",
+    "selectFiles": "이미지 파일 선택",
+    "resizeAria": "긴 변 픽셀 수",
+    "tips": {
+      "format": "가져오기 전에 원본 유지, JPEG, PNG 또는 WebP를 선택하세요. 설정을 바꿔도 기존 결과를 다시 압축하지 않습니다. 파일을 다시 선택하세요. JPEG는 투명 영역을 흰색으로 바꿉니다. 브라우저가 PNG를 출력하면 .png로 저장하고 카드에 안내를 표시합니다.",
+      "quality": "JPEG와 WebP 품질은 1~100이며 기본값은 75입니다. PNG는 무손실이며 이 값을 사용하지 않습니다. PNG 출력 또는 원본 유지에서 첫 파일이 PNG이면 슬라이더가 비활성화됩니다. 설정 후 다시 가져오세요.",
+      "resize": "가져오기 전에 긴 변 리사이즈를 켜세요. 기본값은 1920 px입니다. 한도보다 큰 이미지만 비율을 유지하며 줄이고 작은 이미지는 확대하지 않습니다. 숫자 입력 범위는 64~16384 px입니다. 변경 후 다시 가져와야 적용됩니다.",
+      "files": "JPEG, PNG, WebP, GIF를 선택하거나 드롭하면 로컬에서 자동 압축합니다. 파일당 최대 50 MB(50 × 1024 × 1024 바이트)입니다. 애니메이션은 정지 이미지가 되고 다시 인코딩하면 메타데이터가 사라집니다. 최대 세 이미지를 동시에 처리합니다.",
+      "download": "각 카드에 압축 전후 크기와 용량을 표시하고, 커진 결과는 빨간색으로 표시합니다. 다운로드는 하나를, 모두 다운로드는 성공한 파일마다 다운로드를 시작합니다. ZIP으로 묶지 않으며 브라우저가 여러 다운로드 허용을 요청할 수 있습니다."
+    },
+    "formatLabel": "출력 포맷:",
+    "keepOriginal": "원본 유지",
+    "qualityLabel": "품질:",
+    "resizeLabel": "긴 변 리사이즈",
+    "dropHint": "이미지를 여기로 드롭하거나 <strong>클릭해서 선택</strong>",
+    "formatsHint": "JPEG / PNG / WebP / GIF · 파일당 50 MB 이하",
+    "downloadAll": "모두 다운로드",
+    "clear": "지우기",
+    "download": "다운로드",
+    "compressing": "압축 중…",
+    "done": "{ok} 개 압축 완료",
+    "someFailed": ", {fail} 개 실패",
+    "tooLarge": "파일이 50 MB 한도를 초과합니다",
+    "unsupported": "지원하지 않는 포맷 — exiftool / ImageMagick을 로컬에서 사용하세요",
+    "decodeFailed": "이 이미지를 디코딩할 수 없습니다",
+    "encodeFailed": "브라우저가 출력을 인코딩할 수 없습니다",
+    "fellBack": "이 브라우저는 {req}를 인코딩할 수 없어 {got}로 저장했습니다. 파일 이름은 실제 형식을 따릅니다.",
+    "pngNote": "PNG는 무손실 — 품질 슬라이더 비활성화"
+  }
+};
+/* ── strings:end ── */
+const T = STRINGS[lang] ?? STRINGS.en;
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
 
-<div>
-  <div class="ic-wrap">
+<div class="ic-wrap" id="ic-wrap">
+    <div class="ic-controls">
     {/* Output format row */}
-    <div class="ic-format-row">
-      <span class="tool-label" data-i18n="formatLabel">Output format:</span>
+    <div class="ic-format-row" role="group" aria-label={T.formatLabel}>
+      <span class="tool-label">{T.formatLabel}</span>
       <label class="ic-radio-label">
         <input type="radio" name="ic-format" value="keep" checked />
-        <span data-i18n="keepOriginal">Keep original</span>
+        <span>{T.keepOriginal}</span>
       </label>
       <label class="ic-radio-label">
         <input type="radio" name="ic-format" value="image/jpeg" />
@@ -23,128 +153,64 @@
         <input type="radio" name="ic-format" value="image/webp" />
         WebP
       </label>
+      <Toggletip id="ic-tip-format" lang={lang} about={T.formatLabel}>{TIPS.format}</Toggletip>
     </div>
 
     {/* Quality slider */}
+    <div class="ic-quality-control">
     <div class="ic-quality-row" id="ic-quality-row">
       <label for="ic-quality" class="ic-quality-label">
-        <span data-i18n="qualityLabel">Quality:</span>
+        <span>{T.qualityLabel}</span>
         <strong id="ic-quality-val">75</strong>
       </label>
-      <input type="range" id="ic-quality" min="1" max="100" value="75" step="1" aria-label="Quality" />
+      <input type="range" id="ic-quality" min="1" max="100" value="75" step="1" aria-label={T.qualityLabel} />
+    </div>
+      <Toggletip id="ic-tip-quality" lang={lang} about={T.qualityLabel}>{TIPS.quality}</Toggletip>
     </div>
 
     {/* Resize row */}
     <div class="ic-resize-row">
       <label class="ic-resize-toggle">
         <input type="checkbox" id="ic-resize-toggle" />
-        <span data-i18n="resizeLabel">Resize long edge to</span>
+        <span>{T.resizeLabel}</span>
       </label>
       <div class="ic-resize-input-wrap">
-        <input type="number" id="ic-resize-px" class="tool-input ic-resize-px" min="64" max="16384" value="1920" disabled aria-label="Long edge in pixels" />
+        <input type="number" id="ic-resize-px" class="tool-input ic-resize-px" min="64" max="16384" value="1920" disabled aria-label={T.resizeAria} />
         <span class="ic-resize-suffix">px</span>
       </div>
+      <Toggletip id="ic-tip-resize" lang={lang} about={T.resizeLabel}>{TIPS.resize}</Toggletip>
     </div>
 
+    </div>
+    <div class="ic-toolbar">
+      <div class="ic-control"><span class="tool-label">{T.imagesLabel}</span><Toggletip id="ic-tip-files" lang={lang} about={T.selectFiles}>{TIPS.files}</Toggletip></div>
+      <div class="ic-control ic-export-help"><span>{T.download}</span><Toggletip id="ic-tip-download" lang={lang} about={T.download}>{TIPS.download}</Toggletip></div>
+      <div class="ic-actions" id="ic-actions" hidden>
+        <button id="ic-download-all" class="btn-primary" type="button">{T.downloadAll}</button>
+        <button id="ic-clear" class="btn-ghost" type="button">{T.clear}</button>
+      </div>
+    </div>
+    <div id="ic-status" class="tool-status" role="status" aria-live="polite"></div>
+
     {/* Drop zone */}
-    <div id="ic-drop" class="ic-drop" role="button" tabindex="0">
+    <div id="ic-drop" class="ic-drop zt-empty-drop" role="button" tabindex="0">
       <div class="ic-drop-inner">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
           <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
         </svg>
-        <p data-i18n="dropHint">Drop images here, or <strong>click to select</strong></p>
-        <p class="ic-hint" data-i18n="formatsHint">JPEG / PNG / WebP / GIF · up to 50 MB each</p>
+        <p set:html={T.dropHint} />
+        <p class="ic-hint">{T.formatsHint}</p>
       </div>
-      <input type="file" id="ic-file" accept="image/jpeg,image/png,image/webp,image/gif" multiple class="ic-file-input" aria-label="Select image files" />
+      <input type="file" id="ic-file" accept="image/jpeg,image/png,image/webp,image/gif" multiple class="ic-file-input" aria-label={T.selectFiles} />
     </div>
 
     {/* Results list */}
     <div id="ic-results" class="ic-results" hidden></div>
 
-    {/* Actions */}
-    <div class="ic-actions" id="ic-actions" hidden>
-      <button id="ic-download-all" class="btn-primary" type="button" data-i18n="downloadAll">Download All</button>
-      <button id="ic-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
-    </div>
+</div>
 
-    <div id="ic-status" class="tool-status" aria-live="polite"></div>
-  </div>
-
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          formatLabel: 'Output format:', keepOriginal: 'Keep original',
-          qualityLabel: 'Quality:', resizeLabel: 'Resize long edge to',
-          dropHint: 'Drop images here, or <strong>click to select</strong>',
-          formatsHint: 'JPEG / PNG / WebP / GIF · up to 50 MB each',
-          downloadAll: 'Download All', clear: 'Clear',
-          download: 'Download', compressing: 'Compressing…',
-          done: '{ok} file(s) compressed',
-          someFailed: ', {fail} failed',
-          tooLarge: 'File exceeds 50 MB limit',
-          unsupported: 'Unsupported format — try exiftool / ImageMagick locally',
-          decodeFailed: 'Could not decode this image',
-          encodeFailed: 'Browser could not encode the output',
-          fellBack: 'This browser cannot encode {req}, so it saved {got}. The file name uses the real format.',
-          pngNote: 'PNG is lossless — quality slider disabled',
-        },
-        zh: {
-          formatLabel: '输出格式：', keepOriginal: '保持原格式',
-          qualityLabel: '质量：', resizeLabel: '长边缩放至',
-          dropHint: '把图片拖到这里，或者<strong>点击选择</strong>',
-          formatsHint: 'JPEG / PNG / WebP / GIF · 单文件 ≤ 50 MB',
-          downloadAll: '全部下载', clear: '清除',
-          download: '下载', compressing: '压缩中…',
-          done: '已压缩 {ok} 张',
-          someFailed: '，{fail} 张失败',
-          tooLarge: '单文件超出 50 MB 上限',
-          unsupported: '不支持的格式 — 请用 exiftool / ImageMagick 本地处理',
-          decodeFailed: '无法解码此图片',
-          encodeFailed: '浏览器无法编码该输出',
-          fellBack: '当前浏览器无法编码 {req}，已保存为 {got}，文件名按实际格式命名。',
-          pngNote: 'PNG 是无损格式，质量滑块不生效',
-        },
-        ja: {
-          formatLabel: '出力フォーマット：', keepOriginal: '元のまま',
-          qualityLabel: '品質：', resizeLabel: '長辺をリサイズ',
-          dropHint: '画像をここにドロップ、または<strong>クリックして選択</strong>',
-          formatsHint: 'JPEG / PNG / WebP / GIF · 1 ファイル 50 MB まで',
-          downloadAll: 'すべてダウンロード', clear: 'クリア',
-          download: 'ダウンロード', compressing: '圧縮中…',
-          done: '{ok} 件圧縮完了',
-          someFailed: '、{fail} 件失敗',
-          tooLarge: 'ファイルが 50 MB を超えています',
-          unsupported: '非対応フォーマット — exiftool / ImageMagick をローカルで使用してください',
-          decodeFailed: 'この画像をデコードできません',
-          encodeFailed: 'ブラウザが出力をエンコードできません',
-          fellBack: 'このブラウザーは {req} をエンコードできないため {got} で保存しました。ファイル名は実際の形式に合わせています。',
-          pngNote: 'PNG はロスレス — 品質スライダーは無効',
-        },
-        ko: {
-          formatLabel: '출력 포맷:', keepOriginal: '원본 유지',
-          qualityLabel: '품질:', resizeLabel: '긴 변 리사이즈',
-          dropHint: '이미지를 여기로 드롭하거나 <strong>클릭해서 선택</strong>',
-          formatsHint: 'JPEG / PNG / WebP / GIF · 파일당 50 MB 이하',
-          downloadAll: '모두 다운로드', clear: '지우기',
-          download: '다운로드', compressing: '압축 중…',
-          done: '{ok} 개 압축 완료',
-          someFailed: ', {fail} 개 실패',
-          tooLarge: '파일이 50 MB 한도를 초과합니다',
-          unsupported: '지원하지 않는 포맷 — exiftool / ImageMagick을 로컬에서 사용하세요',
-          decodeFailed: '이 이미지를 디코딩할 수 없습니다',
-          encodeFailed: '브라우저가 출력을 인코딩할 수 없습니다',
-          fellBack: '이 브라우저는 {req}를 인코딩할 수 없어 {got}로 저장했습니다. 파일 이름은 실제 형식을 따릅니다.',
-          pngNote: 'PNG는 무손실 — 품질 슬라이더 비활성화',
-        },
-      };
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.innerHTML = t[key];
-      });
-
       var MAX_FILE = 50 * 1024 * 1024;
       var SUPPORTED_INPUT = { 'image/jpeg': 1, 'image/png': 1, 'image/webp': 1, 'image/gif': 1 };
 
@@ -487,7 +553,7 @@
   </script>
 
   <style>
-    .ic-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+    .ic-wrap { display: flex; flex-direction: column; gap: 0.65rem; min-width: 0; min-height: 0; }
 
     .ic-format-row {
       display: flex;
@@ -513,7 +579,7 @@
       transition: opacity var(--transition-fast);
     }
     .ic-quality-label { white-space: nowrap; min-width: 100px; }
-    .ic-quality-row input[type="range"] { flex: 1; }
+    .ic-quality-row input[type="range"] { flex: 1; min-width: 0; min-height: 2rem; }
 
     .ic-resize-row {
       display: flex;
@@ -552,8 +618,6 @@
       border: 2px dashed var(--color-border);
       border-radius: var(--radius-md);
       padding: 2rem 1rem;
-      text-align: center;
-      cursor: pointer;
       transition: border-color var(--transition-fast), background var(--transition-fast);
       background: var(--color-bg-secondary);
     }
@@ -587,11 +651,17 @@
     }
 
     .ic-results {
+      flex: 1 1 0;
+      min-height: 260px;
+      min-width: 0;
+      overflow: auto;
       display: flex;
       flex-direction: column;
       gap: 0.6rem;
     }
     .ic-results :global(.ic-card) {
+      flex: none;
+      min-width: 0;
       display: flex;
       align-items: center;
       gap: 0.75rem;
@@ -661,8 +731,39 @@
     @media (max-width: 640px) {
       .ic-quality-label { min-width: 86px; }
       .ic-resize-px { width: 6.4rem; }
-      .ic-actions .btn-primary,
-      .ic-actions .btn-ghost { flex: 1 1 100%; }
     }
-  </style>
-</div>
+
+    .ic-controls { display: grid; flex: none; grid-template-columns: minmax(14rem, 1fr) minmax(18rem, 1fr); align-items: center; gap: 0.5rem 1.5rem; }
+    .ic-format-row { grid-column: 1 / -1; }
+    .ic-radio-label { min-height: 2rem; }
+    .ic-quality-control { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+    .ic-quality-row { flex: 1; min-width: 0; }
+    #ic-status { flex: none; height: 3em; min-height: 0; overflow: auto; line-height: 1.5; margin: 0; }
+    .ic-drop:focus-within { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+  .ic-toolbar { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; min-height: 2.5rem; }
+  .ic-control { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+  .ic-control .tool-label { margin: 0; }
+  .ic-export-help { color: var(--color-text-secondary); font-size: 0.85rem; }
+  .ic-actions { margin-left: auto; align-items: center; }
+  .ic-wrap .ic-actions :is(.btn-primary, .btn-ghost) { flex: 0 0 auto; min-height: 2.25rem; }
+  .ic-actions[hidden], .ic-results[hidden], #ic-download-all[hidden] { display: none; }
+  .ic-wrap:has(.ic-results:not([hidden])) .ic-drop { flex: none; min-height: 0; padding: 0.6rem 1rem; }
+  .ic-wrap:has(.ic-results:not([hidden])) .ic-drop-inner { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 0.25rem 0.75rem; }
+  .ic-wrap:has(.ic-results:not([hidden])) .ic-drop-inner svg { display: none; }
+  .ic-results :global(.ic-card-error) { overflow-wrap: anywhere; }
+  .ic-results :global(.ic-dl) { min-height: 2.25rem; }
+  @media (max-width: 860px) {
+    .ic-controls { display: flex; flex-direction: column; align-items: stretch; }
+    .ic-quality-control { max-width: none; }
+    .ic-results { flex: none; height: 26rem; min-height: 0; }
+  }
+  @media (max-width: 640px) {
+    .ic-toolbar { display: grid; grid-template-columns: 1fr auto; grid-template-rows: 2rem 2.5rem; gap: 0.25rem 0.75rem; }
+    .ic-actions { grid-column: 1 / -1; margin-left: 0; }
+    .ic-drop { padding: 1rem; }
+    .ic-results :global(.ic-card) { gap: 0.5rem; padding: 0.6rem; }
+    .ic-results :global(.ic-thumb) { width: 40px; height: 40px; }
+  }
+
+</style>
