@@ -46,6 +46,12 @@ function hexToHsl(hex) {
   return `hsl(${h.h}, ${h.s}%, ${h.l}%)`;
 }
 
+// The initial preview must identify the same color as the picker and CSS swatch.
+const initialPicker = /<input\b[^>]*id="cc-picker"[^>]*value="([^"]+)"/.exec(source)?.[1];
+const initialLabel = /id="cc-swatch-label"[^>]*>([^<]+)<\/span>/.exec(source)?.[1];
+const swatchRule = /\.cc-swatch\s*\{([^}]+)\}/.exec(source)?.[1] || '';
+check('initial preview label matches picker and swatch', initialPicker === '#1a73e8' && initialLabel === initialPicker && /background:\s*#1a73e8\s*;/.test(swatchRule));
+
 // Named colors (CSS Color 4 §6.1) and their HSL forms.
 const named = [
   ['#008000', 'hsl(120, 100%, 25%)'], ['#ff0000', 'hsl(0, 100%, 50%)'], ['#ffffff', 'hsl(0, 0%, 100%)'],
