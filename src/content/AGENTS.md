@@ -101,7 +101,7 @@ faqItems:                # 可选，结构化 FAQ
 ---
 ```
 
-正文部分作为工具页底部的长尾内容（教程、用例、原理说明），SEO 关键。v2 版式的工具页（`src/data/tool-layouts.ts` 中的 slug）正文收在默认关闭的「示例、说明与常见问题」区，不再写「How to Use / 使用方法」与「Limits / 限制」两节：用法放进工具内的说明气泡与 `steps`，限制写进对应控件旁的说明气泡。
+正文部分作为工具页底部的长尾内容（教程、用例、原理说明），SEO 关键。v2 版式的工具页（`src/data/tool-layouts.ts` 中的 slug）正文收在默认关闭的「示例、说明与常见问题」区，不再写「How to Use / 使用方法」一节：用法放进工具内的说明气泡与 `steps`。「Limits / 限制」一节留在正文里；只有与单个控件绑定的限制另写进该控件旁的说明气泡（决策人 2026-10-04 的决定）。json-formatter、color-palette-generator、har-file-analyzer 三个样板在这项决定之前完成，限制已全部写在气泡里，正文没有「限制」节，不回填。
 
 `steps` 字段：
 - 用途：给 `/llms-full.txt` 提供「How to use」步骤（`src/data/llms.mjs` 的 `toolSteps()`：有 `steps` 用它，没有时仍从正文第一个以「How to」开头的 H2 下的有序列表抓取）。页面本身不渲染 `steps`。

@@ -140,7 +140,7 @@ Every tool UI fills the `.tool-widget` width. Use inner grids to create local st
 
 ### Tool Pages v2
 
-Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page--v2`; the other tools keep the structure above until they are moved in batches. To move a tool: add its slug with a kind, make its component fill the height it gets, put explanations in toggletips, move the MDX "How to use" and "Limits" facts into the tool and the `steps` frontmatter, and run its tests, `test-llms-txt.mjs`, audit and build.
+Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page--v2`; the other tools keep the structure above until they are moved in batches. To move a tool: add its slug with a kind, make its component fill the height it gets, put explanations in toggletips, move the MDX "How to use" facts into the tool and the `steps` frontmatter (the "Limits" section stays in the MDX, see "Reference content"), and run its tests, `test-llms-txt.mjs`, audit and build.
 
 **Kinds** (pick by what the user mainly looks at):
 
@@ -149,6 +149,17 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 | `convert` | Input and output side by side, both as tall as the first screen allows; options in one row above them; notes under the output. Stacks below 860px with options after the panels. | 2400px | `JsonFormatterTool` |
 | `generate` | A 270–320px control rail (inputs, options, code export) on the left; the generated preview fills the rest (palettes: six cards in two rows of three, monochromatic full width). Rail stacks on top below 860px. | 1840px | `ColorPaletteGeneratorTool` |
 | `analyze` | The result uses the full width. Before input, the drop zone fills the first screen. From 1280px, details open beside the list; lists grow with the window height. | 2400px | `HarFileAnalyzerTool` |
+
+**Shared classes** (`src/styles/tool-common.css`, loaded on every tool page)
+
+| Class | Use |
+|---|---|
+| `.zt-io` | The two-column grid of a `convert` tool. Its parent is the tool root, a flex column, so the grid takes the height that is left. One column at 860px and below. |
+| `.zt-io-pane` | One side of the grid: a flex column with the label row on top and the editor under it. |
+| `.zt-io-fill` | The textarea, `<pre>` or list that fills its pane (`flex: 1`, at least 300px, no resize handle). At 860px and below it stops stretching, is at least 120px high and can be resized; the tool sets the height there. |
+| `.zt-tip`, `.zt-tip-btn`, `.zt-tip-pop` | Toggletip button and panel. `Toggletip.astro` has no `<style>` of its own. |
+
+`convert` tools use `.zt-io`, `.zt-io-pane` and `.zt-io-fill` for the panels and keep their own class next to each for tool-specific rules (tab size, colors, phone heights). A rail class for `generate` and an empty-state drop zone for `analyze` are not shared yet: each has one user, and they move to `tool-common.css` when a second tool needs them.
 
 **Shell**
 
@@ -160,13 +171,15 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 **Explanations in the tool**
 
 - Short hints sit next to the control they describe, as toggletips (`src/components/Toggletip.astro`): a 24px "?" button (28px on phones), or a text button (`text` prop) for a question the user may have before starting, such as "How to export a HAR". The panel is a native `popover="auto"`: click or tap opens it, a second click, a tap outside or Esc closes it, focus stays on the button. Panel colors are inverted (`--color-text` background, `--color-bg` text).
-- The text is in the HTML, in all four languages (component `STRINGS`), and states facts the old MDX "How to use" and "Limits" sections held: accepted input, size limits, what an option changes, what the tool does not check. Write plain sentences; no lists or paragraphs inside (a toggletip may sit inside a `<p>`), no links.
+- The "?" button's accessible name is built in `Toggletip.astro`: pass `lang` and `about` (the control's visible name) and it reads the pattern `tool.tipAbout` from `src/i18n` ("About: {name}"). Pass `label` only for a name that does not fit the pattern; a text button needs neither.
+- The text is in the HTML, in all four languages (component `STRINGS`), and states what the old MDX "How to use" section held (accepted input, what an option changes) plus the limits that belong to one control (the size limit next to the file button, what a check does not cover next to its option). Limits that are not tied to one control stay in the MDX "Limits" section. Write plain sentences; no lists or paragraphs inside (a toggletip may sit inside a `<p>`), no links.
 - Errors still name the cause and the fix in the status line.
 
 **Reference content**
 
 - The MDX body and the FAQ sit in one closed `<details class="tool-reference" id="reference">` titled with `tool.reference` and `tool.referenceHint`. Heading levels stay; the FAQ renders as H3 questions with answers; the FAQPage JSON-LD is unchanged. A link to `#heading` inside it, or find-in-page, opens it.
-- Keep in the MDX: worked examples (with their test annotations), comparisons with other tools, background. Remove "How to use" and "Limits"; put the steps in the `steps` frontmatter (plain text, current button names, read by `toolSteps()` for llms-full.txt) and the limits in toggletips.
+- Keep in the MDX: worked examples (with their test annotations), comparisons with other tools, background, and the "Limits" section. Remove "How to use"; put the steps in the `steps` frontmatter (plain text, current button names, read by `toolSteps()` for llms-full.txt) and in toggletips. Write a limit that belongs to one control in that control's toggletip as well.
+- The three samples (json-formatter, color-palette-generator, har-file-analyzer) were finished before this decision (2026-10-04). All their limits are in toggletips and their MDX has no "Limits" section; do not move them back.
 
 ### Article Pages
 
