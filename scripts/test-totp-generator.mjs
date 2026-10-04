@@ -391,5 +391,146 @@ if (STRINGS) {
   }
 }
 
+// ---------- real page controls ----------
+// The DOM and QR drawing are stand-ins; the client handlers and Web Crypto are real.
+// The separate vendor round trips above verify the QR data itself. Fetch and clipboard
+// are local recorders and never send a request or touch the system clipboard.
+function totpPage(holdSign = false) {
+  const nodes = new Map(), listeners = {}, intervals = [], copied = [], requests = [], qr = [], randomBytes = [], pending = [];
+  const markup = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script src='));
+  for (const m of markup.matchAll(/<[^>]+\bid="(totp-[^"]+)"[^>]*>/g)) {
+    const tag = m[0], events = {};
+    nodes.set(m[1], {
+      id: m[1], value: /\bvalue="([^"]*)"/.exec(tag)?.[1] || '', hidden: /\bhidden\b/.test(tag),
+      textContent: '', className: '', innerHTML: '', style: {}, children: [],
+      addEventListener(name, fn) { (events[name] ||= []).push(fn); },
+      dispatch(name, event = {}) { for (const fn of events[name] || []) fn.call(this, { target: this, ...event }); },
+      click() { this.dispatch('click'); },
+      appendChild(node) { this.children.push(node); },
+    });
+  }
+  const el = (id) => nodes.get(id);
+  el('totp-algo').value = 'SHA-1'; el('totp-digits').value = '6';
+  const widget = { contains: (node) => [...nodes.values()].includes(node), querySelectorAll: () => ['totp-secret', 'totp-period', 'totp-time', 'totp-issuer', 'totp-account', 'totp-uri'].map(el) };
+  const document = {
+    getElementById: el, createElement: () => ({ style: {} }), hidden: false, activeElement: el('totp-secret'),
+    addEventListener(name, fn) { (listeners[name] ||= []).push(fn); },
+    querySelector: (selector) => ['.tool-widget', '.totp-wrap'].includes(selector) ? widget : null,
+  };
+  const context = {
+    document, S: Object.fromEntries(Object.entries(STRINGS.en).filter(([key]) => key !== 'tips')),
+    crypto: { subtle: holdSign ? {
+      importKey: (...args) => globalThis.crypto.subtle.importKey(...args),
+      sign: (...args) => new Promise(resolve => pending.push(async () => resolve(await globalThis.crypto.subtle.sign(...args)))),
+    } : globalThis.crypto.subtle, getRandomValues(bytes) { randomBytes.push(bytes.length); return globalThis.crypto.getRandomValues(bytes); } },
+    URL, URLSearchParams, Uint8Array, TextEncoder, console,
+    navigator: { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } },
+    location: { pathname: '/tools/totp-generator/' },
+    fetch(url, options) { requests.push({ url, options }); return Promise.resolve({ headers: { get: () => new Date().toUTCString() } }); },
+    QRCode: { toCanvas(canvas, uri, options, callback) { qr.push({ uri, options }); callback(null); } },
+    setInterval(fn) { intervals.push(fn); }, setTimeout() {},
+    ztPersist: { clear() {} }, _slug: 'totp-generator',
+  };
+  context.window = context;
+  const ctx = vm.createContext(context);
+  vm.runInContext(/<script is:inline define:vars[^>]*>([\s\S]*?)<\/script>/.exec(source)[1], ctx);
+  const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  vm.runInContext(shell.slice(shell.indexOf("      document.addEventListener('keydown', function(e) {"), shell.indexOf('      // ── Copy button visual feedback')), ctx);
+  return {
+    el, copied, requests, qr, randomBytes, pending,
+    input(id, value) { el(id).value = value; el(id).dispatch('input'); },
+    change(id, value) { el(id).value = value; el(id).dispatch('change'); },
+    tick() { intervals.forEach((fn) => fn()); },
+    clearShortcut(modifier = 'ctrlKey', inTool = true) {
+      document.activeElement = inTool ? el('totp-secret') : {};
+      (listeners.keydown || []).forEach((fn) => fn({ key: 'l', [modifier]: true, preventDefault() {} }));
+    },
+  };
+}
+async function pageSettles(predicate) {
+  const until = Date.now() + 10000;
+  while (!predicate() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 2));
+  return predicate();
+}
+{
+  const p = totpPage();
+  const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+  check('page starts with outputs hidden', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every((id) => p.el(id).hidden));
+  p.el('totp-time').value = '59'; p.el('totp-digits').value = '8'; p.input('totp-secret', secret);
+  check('typing the RFC secret computes without a generate action', await pageSettles(() => p.el('totp-code').textContent === '94287082'));
+  eq('page previous code matches independent HMAC', p.el('totp-prev').textContent, refHotp(ascii(SEED20), 0, 'SHA-1', 8));
+  eq('page next code matches independent HMAC', p.el('totp-next').textContent, refHotp(ascii(SEED20), 2, 'SHA-1', 8));
+  eq('fixed time stops countdown', p.el('totp-countdown').textContent, STRINGS.en.fixedTime);
+  eq('fixed time does not send a clock request', p.requests.length, 0);
+  check('code, URI and QR outputs reveal after input', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every((id) => !p.el(id).hidden));
+  eq('QR drawing receives the current URI', p.qr.at(-1).uri, p.el('totp-uri').value);
+  eq('QR dimensions and margin remain unchanged', p.qr.at(-1).options, { width: 192, margin: 2 });
+  p.el('totp-copy-code').click(); p.el('totp-copy-uri').click();
+  eq('both copy actions read current outputs', p.copied, ['94287082', 'otpauth://totp/Account?secret=' + secret + '&digits=8']);
+
+  p.input('totp-secret', 'otpauth://totp/Example:alice?secret=' + secret + '&issuer=Example&algorithm=SHA256&digits=8&period=60');
+  const expected = refHotp(ascii(SEED20), 0, 'SHA-256', 8);
+  check('importing a URI recalculates automatically', await pageSettles(() => p.el('totp-code').textContent === expected));
+  eq('URI import fills controls inside details', ['totp-secret', 'totp-algo', 'totp-digits', 'totp-period', 'totp-issuer', 'totp-account'].map((id) => p.el(id).value), [secret, 'SHA-256', '8', '60', 'Example', 'alice']);
+  check('nondefault settings keep the compatibility warning visible', !p.el('totp-ga-note').hidden);
+  check('URI import reports its settings', p.el('totp-status').textContent.includes(STRINGS.en.imported));
+
+  p.input('totp-issuer', 'x'.repeat(10000));
+  check('long issuer reaches the URI output', await pageSettles(() => p.el('totp-uri').value.includes('x'.repeat(10000))));
+  p.el('totp-copy-uri').click();
+  eq('copy keeps the full long URI', p.copied.at(-1), p.el('totp-uri').value);
+  p.input('totp-issuer', 'Invalid:Issuer');
+  check('invalid account metadata reports its error', await pageSettles(() => p.el('totp-status').className.includes('error')));
+  check('metadata error keeps the code but hides URI and QR', !p.el('totp-display').hidden && p.el('totp-uri-block').hidden && p.el('totp-qr-block').hidden);
+  eq('metadata error clears the copyable URI', p.el('totp-uri').value, '');
+
+  p.input('totp-secret', '!');
+  check('invalid secret hides all previous output', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every((id) => p.el(id).hidden));
+  const count = p.copied.length; p.el('totp-copy-code').click(); p.el('totp-copy-uri').click();
+  eq('invalid secret cannot copy an old output', p.copied.length, count);
+  p.input('totp-secret', '');
+  eq('empty input clears the status', p.el('totp-status').textContent, '');
+
+  p.el('totp-issuer').value = ''; p.el('totp-account').value = ''; p.el('totp-period').value = '30'; p.el('totp-digits').value = '6';
+  for (const [algorithm, size] of [['SHA-1', 20], ['SHA-256', 32], ['SHA-512', 64]]) {
+    p.el('totp-algo').value = algorithm; p.el('totp-gen-secret').click();
+    const n = E.normalizeSecret(p.el('totp-secret').value);
+    eq('Random uses the selected algorithm length: ' + algorithm, n.bytes.length, size);
+    const current = refHotp(n.bytes, 1, algorithm, 6);
+    check('Random computes its new code: ' + algorithm, await pageSettles(() => p.el('totp-code').textContent === current));
+  }
+  eq('Random uses crypto.getRandomValues for every algorithm', p.randomBytes, [20, 32, 64]);
+  p.clearShortcut(); p.tick();
+  check('Ctrl+L after a completed calculation clears all results', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every((id) => p.el(id).hidden));
+  eq('Ctrl+L clears the secret and output URI', [p.el('totp-secret').value, p.el('totp-uri').value], ['', '']);
+
+  p.el('totp-algo').value = 'SHA-1'; p.el('totp-period').value = '30'; p.input('totp-secret', secret);
+  check('live code requests the clock once', await pageSettles(() => p.requests.length === 1));
+  eq('clock check stays same-origin with no secret, query or body', p.requests[0], { url: '/tools/totp-generator/', options: { method: 'HEAD', cache: 'no-store' } });
+  p.change('totp-digits', '8');
+  check('changing digits updates the live code', await pageSettles(() => /^\d{8}$/.test(p.el('totp-code').textContent)));
+  eq('later calculations do not repeat the clock request', p.requests.length, 1);
+}
+
+// A first calculation has no state yet; clear must invalidate its pending HMACs.
+for (const modifier of ['ctrlKey', 'metaKey']) {
+  const p = totpPage(true);
+  const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+  p.el('totp-time').value = '59'; p.el('totp-digits').value = '8'; p.input('totp-secret', secret);
+  check(modifier + ': three HMACs are pending before first result', await pageSettles(() => p.pending.length === 3));
+  p.clearShortcut(modifier); p.tick();
+  for (const release of p.pending.splice(0)) await release();
+  for (let i = 0; i < 16; i++) await Promise.resolve();
+  check(modifier + ': pending HMACs cannot reveal old output', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every(id => p.el(id).hidden));
+  eq(modifier + ': pending HMACs leave code and URI cleared', [p.el('totp-code').textContent, p.el('totp-uri').value], ['------', '']);
+  p.el('totp-copy-code').click(); p.el('totp-copy-uri').click();
+  eq(modifier + ': old code and secret URI cannot be copied', p.copied.length, 0);
+  p.el('totp-period').value = '30'; p.el('totp-time').value = '59'; p.input('totp-secret', secret);
+  check(modifier + ': a new input starts new HMACs', await pageSettles(() => p.pending.length === 3));
+  p.clearShortcut(modifier, false);
+  for (const release of p.pending.splice(0)) await release();
+  check(modifier + ': outside focus keeps new work and recovery succeeds', await pageSettles(() => p.el('totp-code').textContent === '94287082'));
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
