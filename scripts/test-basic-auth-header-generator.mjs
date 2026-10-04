@@ -194,6 +194,30 @@ function makePage(lang='en',layoutFirst=false) {
         check(lang+' '+mode+' late copy '+outcome+' preserves '+change+' status',status.textContent===snapshot.status&&status.className===snapshot.kind);
         check(lang+' '+mode+' late copy '+outcome+' preserves '+change+' button',button.textContent===snapshot.button&&!button.classList.contains('copied'));
       }
+      {
+        const p=await page(lang);examples(p);p.holdClipboard();const button=p.copyButton(target),status=p.get('bahg-'+mode+'-status');
+        const conversionMessage=status.textContent,conversionKind=status.className;
+        button.click();check(lang+' '+mode+' copy preserves valid conversion notice',status.textContent===conversionMessage&&status.className===conversionKind);
+        p.clipboard[0].d.reject(new Error('first denial'));await settle();button.click();
+        check(lang+' '+mode+' retry clears only the prior copy failure at start',!status.textContent&&!status.className.includes('error'));
+        p.clipboard[1].d.resolve();await settle();
+        check(lang+' '+mode+' successful retry leaves no stale failure',button.classList.contains('copied')&&!status.textContent&&!status.className.includes('error'));
+      }
+      {
+        const p=await page(lang);examples(p);p.holdClipboard();const button=p.copyButton(target),status=p.get('bahg-'+mode+'-status');
+        button.click();p.clipboard[0].d.reject(new Error('first denial'));await settle();button.click();
+        if(mode==='generate'){p.set('bahg-username','bad:user');p.click('bahg-generate');}
+        else {p.set('bahg-decode-input','Bearer token');p.click('bahg-decode');}
+        const message=status.textContent;p.clipboard[1].d.resolve();await settle();
+        check(lang+' '+mode+' late successful retry preserves newer conversion error',status.textContent===message&&status.className.includes('error')&&!button.classList.contains('copied'));
+      }
+      {
+        const p=await page(lang);examples(p);p.holdClipboard();const button=p.copyButton(target),status=p.get('bahg-'+mode+'-status');
+        button.click();p.clipboard[0].d.reject(new Error('first denial'));await settle();button.click();
+        const other=p.copyButton(mode==='generate'?'bahg-token':'bahg-decoded-username');other.click();p.clipboard[2].d.reject(new Error('other button denied'));await settle();
+        p.clipboard[1].d.resolve();await settle();
+        check(lang+' '+mode+' successful retry cannot clear another button failure',button.classList.contains('copied')&&status.textContent===STRINGS[lang].copyFailed&&status.className.includes('error'));
+      }
       for(const failure of ['reject','missing-api','missing-method','sync-throw']) {
         const p=await page(lang);examples(p);const button=p.copyButton(target);
         if(failure==='reject')p.context.navigator.clipboard.writeText=()=>Promise.reject(new Error('denied'));
@@ -232,6 +256,11 @@ function makePage(lang='en',layoutFirst=false) {
         p.clipboard[0].d.reject(new Error('old denial'));await settle();
         check(lang+' '+mode+' old request failure cannot overwrite latest success',p.get('bahg-'+mode+'-status').textContent===status&&button.classList.contains('copied'));
       }
+    }
+    {
+      const p=await page(lang);p.set('bahg-decode-input','Basic dGVzdDoxMjOj');p.click('bahg-decode');const status=p.get('bahg-decode-status');
+      const message=status.textContent;p.copyButton('bahg-decoded-password').click();await settle();
+      check(lang+' copy preserves ISO-8859-1 decoding notice',message===STRINGS[lang].decodedLatin1&&status.textContent===message&&status.className.includes('info'));
     }
     {
       const p=await page(lang);examples(p);
