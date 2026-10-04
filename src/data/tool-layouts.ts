@@ -12,6 +12,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',
+  'markdown-table-generator': 'convert',
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
 };
