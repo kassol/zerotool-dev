@@ -1,7 +1,8 @@
 // ASCII Converter — code formats and strict reading of code tokens
 //
 // Read:  src/components/tools/AsciiConverterTool.astro (the engine block between the
-//        `engine:start` / `engine:end` markers)
+//        `engine:start` / `engine:end` markers, frontmatter and complete page script)
+//        src/content/tools/ascii-converter/{en,zh,ja,ko}.mdx; src/data/tool-layouts.ts
 //        src/layouts/ToolLayout.astro (actual shared keyboard handler)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
@@ -31,9 +32,22 @@ import { inspect } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
+import { toolSteps } from '../src/data/llms.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/AsciiConverterTool.astro'), 'utf8');
+const strings = vm.runInNewContext(source.slice(source.indexOf('const STRINGS ='), source.indexOf('const T = STRINGS[lang]')).replace(/\bas const\b/g, '') + '\nSTRINGS;');
+const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+const escapeHTML = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+function pageMarkup(lang) {
+  return markup.replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(strings[lang][key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(strings[lang][key]));
+}
+
 const startIndex = source.indexOf('/* ── engine:start ── */');
 const endIndex = source.indexOf('/* ── engine:end ── */');
 if (startIndex < 0 || endIndex <= startIndex) {
@@ -62,7 +76,12 @@ const toText = (s) => s.trim().split(/[\s,]+/).filter(Boolean).map((t) => String
 {
   const fmtOf = { fmtHex: 'hex', fmtOctal: 'oct', fmtBinary: 'bin' };
   const labels = [...source.matchAll(/(fmtHex|fmtOctal|fmtBinary)(?:": "|: '|">)[^'"<]*?\(([^)]+)\)/g)];
-  eq('format labels found (markup + 4 languages × 3)', labels.length, 15);
+  for (const [key, fmt] of Object.entries(fmtOf)) {
+    const value = { hex: 'hex', oct: 'oct', bin: 'bin' }[fmt];
+    const option = pageMarkup('en').match(new RegExp('<option value="' + value + '">([^<]+)</option>'));
+    labels.push([option?.[0], key, option?.[1].match(/\(([^)]+)\)/)?.[1]]);
+  }
+  eq('format labels found (built EN markup + 4 languages × 3)', labels.length, 15);
   for (const m of labels) eq('label sample ' + m[0], m[2], formatCode(65, fmtOf[m[1]]));
 }
 
@@ -279,9 +298,9 @@ function pageVM(lang = 'en', shellFirst = false) {
   const document = new Element('document'); document.documentElement = { lang };
   document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
   const widget = document.body.appendChild(new Element()); widget.className = 'tool-widget';
-  const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+  const renderedMarkup = pageMarkup(lang);
   const stack = [widget], voids = new Set(['input', 'br', 'hr', 'img']);
-  for (const match of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
+  for (const match of renderedMarkup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
     if (match[3] !== undefined) { stack.at(-1).text += match[3]; continue; }
     const tag = match[1];
     if (match[0].startsWith('</')) { if (stack.at(-1).tagName === tag.toUpperCase()) stack.pop(); continue; }
@@ -292,7 +311,8 @@ function pageVM(lang = 'en', shellFirst = false) {
   }
   document.getElementById = id => ids.get(id) || null;
   document.createElement = tag => new Element(tag);
-  const context = { document, console, Event: PageEvent, _slug: 'ascii-converter',
+  const { tips, ...clientStrings } = strings[lang];
+  const context = { document, console, Event: PageEvent, _slug: 'ascii-converter', t: JSON.parse(JSON.stringify(clientStrings)),
     ztPersist: { clear: slug => cleared.push(slug) }, trackTool: (...args) => tracked.push(args),
     setTimeout(fn, delay = 0) { const id = ++timerID; timers.set(id, { fn, due: now + delay, delay }); return id; },
     clearTimeout(id) { timers.delete(id); },
@@ -417,6 +437,104 @@ for(const lang of Object.keys(localized)) for(const side of ['text','codes']) {
 }
 samePage('all copy promises handled',unhandled,[]);
 process.removeListener('unhandledRejection',onUnhandled);
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const check = (name, value) => eq(name, !!value, true);
+  const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const tipIDs = ['format', 'text', 'codes', 'copy-text', 'copy-codes', 'reference'].map(key => 'ac-tip-' + key);
+  const tipKeys = ['text', 'codes', 'format', 'copy', 'reference'];
+  samePage('six tips bind to actual controls', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]).sort(), tipIDs.slice().sort());
+  check('direct flex root has zero minimum height', /^\s*<div class="ac-wrap">/.test(markup) && /\.ac-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+  check('controls precede fixed status and panels', markup.indexOf('ac-controls') < markup.indexOf('id="ac-status"') && markup.indexOf('id="ac-status"') < markup.indexOf('ac-panels'));
+  eq('one shared grid', (markup.match(/\bzt-io"/g) || []).length, 1);
+  eq('two shared panes', (markup.match(/\bzt-io-pane\b/g) || []).length, 2);
+  eq('two filling editors', (markup.match(/\bzt-io-fill\b/g) || []).length, 2);
+  check('both textareas stay editable', [...markup.matchAll(/<textarea\b[^>]*>/g)].length === 2 && !/<textarea\b[^>]*(?:readonly|disabled|hidden)/.test(markup));
+  check('mobile keeps both editable panes visible', !/display:\s*none|data-empty/.test(css));
+  samePage('both manual directions plus Clear and two copy buttons remain', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m => m[1]).sort(), ['ac-clear','ac-to-ascii','ac-to-text','ac-copy-text','ac-copy-codes'].sort());
+  eq('two primary actions retained', (markup.match(/class="btn-primary"/g) || []).length, 2);
+  check('labels and reference summary contain no nested interactive controls', [...markup.matchAll(/<(?:label|summary)\b[\s\S]*?<\/(?:label|summary)>/g)].every(m => !/<button|<Toggletip/.test(m[0])));
+  check('reference remains closed and keyboard-scrollable', /<details class="ac-ref">/.test(markup) && /class="ac-ref-table-wrap" tabindex="0" role="region" aria-label=\{T.refTable\}/.test(markup));
+  check('reference appears after both editors', markup.indexOf('ac-reference') > markup.indexOf('id="ac-codes"'));
+  check('status reserves height with internal scrolling', /\.ac-status\s*\{[^}]*height: 2\.8em;[^}]*overflow: auto;[^}]*overflow-wrap: anywhere/.test(css));
+  check('long editor contents scroll internally', /\.ac-box\s*\{[^}]*overflow: auto/.test(css));
+  check('860px editor height is bounded', /@media \(max-width: 860px\)\s*\{\s*\.ac-box\s*\{\s*height: 160px/.test(css));
+  check('640px editors, status and two manual buttons have phone rules', /@media \(max-width: 640px\)/.test(css) && /\.ac-box\s*\{\s*height: 120px/.test(css) && /\.ac-status\s*\{\s*height: 4\.2em/.test(css) && /\.ac-actions\s*\{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/.test(css));
+  check('select uses shared 44px phone control class', /id="ac-format-select" class="tool-input"/.test(markup));
+  check('reference has a bounded scroll region', /\.ac-ref-table-wrap\s*\{[^}]*max-height: 400px;[^}]*overflow: auto/.test(css));
+  check('dynamic reference cells use global selectors', /\.ac-ref-table :global\(td\)/.test(css) && /\.ac-ref-table :global\(tbody tr:last-child td\)/.test(css));
+  check('tips excluded before client serialization', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  check('language text has no runtime DOM replacement', !/data-i18n|document\.documentElement\.lang/.test(source));
+  check('registered as convert', /'ascii-converter':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  eq('markup IDs are unique', new Set(ids).size, ids.length);
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  eq('protected engine bytes stay exact', sha(source.slice(startIndex, endIndex + '/* ── engine:end ── */'.length)), '0d7a02bf521b2c4efe123aa4e134b2b139e07b645f9820a839211367f84340c2');
+  const retained = {
+  "en": {
+    "frontmatter": "77382afe2635f5aaa40531c204b2789b06598b54f44becbd66597930ae55d759",
+    "bodyWithoutUsage": "814be48c70f8c37fd79b43b06ce5b72062caf8af9897c8fb4826b1a202699b7e"
+  },
+  "zh": {
+    "frontmatter": "0d8981a44ef25f12dd08334d4ac639937cb8129869d5b90f1bda80798b8a5d76",
+    "bodyWithoutUsage": "731f0cc2d546aaeb397be982ca67fe382c050e094d8c9e3ee2223fe468aafc2a"
+  },
+  "ja": {
+    "frontmatter": "8f9e93c7f817790ef042554ffdc1458e3c6ab1b7fcb76c9827ad080abf586af3",
+    "bodyWithoutUsage": "afa19a948523573f78954663e8b82ca2dac40692094359f7d92f9cb8eefc8398"
+  },
+  "ko": {
+    "frontmatter": "f6a82621cf9fc1bab70091b917e412f7ac954b5faef7a14bed2c782a57d10b4e",
+    "bodyWithoutUsage": "549d2a7f0bb8963c6ed52baeea9436ba2c4aa51fff3f124964c793c47401154b"
+  }
+};
+  const countFixtures = {
+    en: { chars: ['Converted 1 character.', 'Converted 3 characters.'], codes: ['Converted 1 code.', 'Converted 3 codes.'] },
+    zh: { chars: ['已转换 1 个字符。', '已转换 3 个字符。'], codes: ['已转换 1 个码值。', '已转换 3 个码值。'] },
+    ja: { chars: ['1 文字を変換しました。', '3 文字を変換しました。'], codes: ['1 コードを変換しました。', '3 コードを変換しました。'] },
+    ko: { chars: ['1개 문자를 변환했습니다.', '3개 문자를 변환했습니다.'], codes: ['1개 코드를 변환했습니다.', '3개 코드를 변환했습니다.'] }
+  };
+  for (const lang of Object.keys(localized)) {
+    const entry = strings[lang], { tips, ...client } = entry;
+    samePage(lang + ': translation keys match', Object.keys(entry).sort(), Object.keys(strings.en).sort());
+    samePage(lang + ': five tip facts match', Object.keys(tips).sort(), tipKeys.slice().sort());
+    for (const key of tipKeys) check(lang + '/' + key + ': tip is one nonempty text', typeof tips[key] === 'string' && tips[key].trim().length > 0 && !tips[key].includes('\n'));
+    check(lang + ': serialized client excludes tips and their text', !('tips' in client) && Object.values(tips).every(tip => !JSON.stringify(client).includes(JSON.stringify(tip))));
+    check(lang + ': templates remain serializable', ['convertedChars','convertedCodes'].every(key => ['one','other'].every(form => typeof client[key][form] === 'string' && client[key][form].includes('{n}'))));
+    const mdx = readFileSync(join(root, 'src/content/tools/ascii-converter', lang + '.mdx'), 'utf8');
+    const split = mdx.indexOf('\n---\n', 4), metadata = mdx.slice(0, split), body = mdx.slice(split + 5);
+    const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
+    check(lang + ': five plain steps fit limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['toAscii','toText','copy','clear','refTable']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
+    eq(lang + ': FAQ and SEO bytes preserved', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
+    eq(lang + ': non-Usage body bytes preserved', sha(body), retained[lang].bodyWithoutUsage);
+    check(lang + ': Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    eq(lang + ': llms receives five steps', toolSteps(parsed).length, 5);
+    for (const [text, index] of [['A',0],['A😀\n',1]]) {
+      const p = pageVM(lang); p.input('ac-text', text); p.get('ac-to-ascii').click();
+      eq(lang + ': forward count ' + (index ? 3 : 1), p.get('ac-status').textContent, countFixtures[lang].chars[index]);
+      p.get('ac-to-text').click(); eq(lang + ': reverse count ' + (index ? 3 : 1), p.get('ac-status').textContent, countFixtures[lang].codes[index]);
+      eq(lang + ': actual count fixture round trip', p.get('ac-text').value, text);
+    }
+    const p = pageVM(lang);
+    for (const [id,key] of [['ac-to-ascii','toAscii'],['ac-to-text','toText'],['ac-clear','clear'],['ac-copy-text','copy'],['ac-copy-codes','copy']]) eq(lang + ': built label for ' + id, p.get(id).textContent, entry[key]);
+    const codes = p.get('ac-ref-tbody').children.flatMap(tr => tr.children.filter((_,i) => i % 3 === 1).map(td => td.textContent)).filter(Boolean).map(Number).sort((a,b)=>a-b);
+    samePage(lang + ': all 95 printable reference codes remain accessible', codes, Array.from({length:95},(_,i)=>i+32));
+    eq(lang + ': reference space remains SP', p.get('ac-ref-tbody').children[0].children[0].textContent, 'SP');
+  }
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'AsciiConverterTool.astro' });
+  check('Astro compilation has no errors', compiled.diagnostics.filter(d => d.severity === 1).length === 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('generated JS serializes client strings only', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  const compiledCSS = compiled.css.join('\n');
+  check('compiled dynamic table selectors contain no unresolved global', !compiledCSS.includes(':global(') && /\.ac-ref-table[^{}]* td\s*\{/.test(compiledCSS));
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
