@@ -30,6 +30,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'openapi-validator': 'analyze',
   'zero-width-character-detector': 'analyze',
   'csr-decoder': 'analyze',
+  'cookie-parser': 'analyze',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
