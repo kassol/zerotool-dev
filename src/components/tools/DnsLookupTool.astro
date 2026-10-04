@@ -48,7 +48,7 @@
 
     <div class="dnsl-actions">
       <button id="dnsl-lookup" class="btn-primary" type="button" data-i18n="lookup">Lookup</button>
-      <button id="dnsl-copy-json" class="btn-secondary" type="button" data-i18n="copyJson">Copy JSON</button>
+      <button id="dnsl-copy-json" class="btn-secondary" type="button" data-i18n="copyJson" disabled>Copy JSON</button>
       <button id="dnsl-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
     </div>
 
@@ -331,6 +331,16 @@
       }
 
       var lastSnapshot = null; // last lookup result for Copy JSON
+      var lookupGeneration = 0;
+
+      function clearResult() {
+        lastSnapshot = null;
+        resultEl.hidden = true;
+        copyJsonBtn.disabled = true;
+        panelRecords.innerHTML = '';
+        rawOut.textContent = '';
+        jsonOut.textContent = '';
+      }
 
       function setStatus(text, kind) {
         statusEl.textContent = text || '';
@@ -516,6 +526,8 @@
       }
 
       function runLookup() {
+        var generation = ++lookupGeneration;
+        clearResult();
         var raw = domainEl.value;
         var domain = normalizeDomain(raw);
         if (!domain) {
@@ -542,6 +554,7 @@
             );
           });
           Promise.all(promises).then(function (results) {
+            if (generation !== lookupGeneration) return;
             var elapsed = Math.round(((window.performance && window.performance.now) ? window.performance.now() : Date.now()) - t0);
             var merged = mergeAllResults(results);
             if (!merged._queries.length) { handleFailure(results[0].reason); return; }
@@ -550,11 +563,13 @@
         } else {
           setStatus(t.pending, 'info');
           query(domain, typeChoice, resolver).then(function (response) {
+            if (generation !== lookupGeneration) return;
             var elapsed = Math.round(((window.performance && window.performance.now) ? window.performance.now() : Date.now()) - t0);
             // Stash request type so raw view can show the QUESTION section.
             response._queries = [{ type: typeChoice }];
             finalize({ response: response, domain: domain, requestedType: typeChoice, resolver: resolver, elapsed: elapsed });
           }, function (err) {
+            if (generation !== lookupGeneration) return;
             handleFailure(err);
           });
         }
@@ -571,6 +586,7 @@
 
       function finalize(snapshot) {
         lastSnapshot = snapshot;
+        copyJsonBtn.disabled = false;
         renderSummary(snapshot);
         renderRecords(snapshot);
         renderRaw(snapshot);
@@ -592,23 +608,34 @@
       domainEl.addEventListener('keydown', function (ev) {
         if (ev.key === 'Enter') {
           ev.preventDefault();
+          ev.stopPropagation();
           runLookup();
         }
       });
 
       clearBtn.addEventListener('click', function () {
+        lookupGeneration++;
         domainEl.value = '';
-        resultEl.hidden = true;
-        lastSnapshot = null;
+        clearResult();
         setStatus('', '');
         domainEl.focus();
       });
 
+      // The shared shortcut clears fields without input events; discard pending results too.
+      document.addEventListener('keydown', function (ev) {
+        if (!(ev.ctrlKey || ev.metaKey) || (ev.key !== 'l' && ev.key !== 'L')) return;
+        if (!document.querySelector('.dnsl-wrap').contains(document.activeElement)) return;
+        lookupGeneration++;
+        clearResult();
+        setStatus('', '');
+      });
+
       copyJsonBtn.addEventListener('click', function () {
         if (!lastSnapshot) { setStatus(t.lookupFirst, 'error'); return; }
+        var generation = lookupGeneration;
         var text = jsonOut.textContent;
-        var done = function () { setStatus(t.copied, 'success'); };
-        var fail = function () { setStatus(t.copyFailed, 'error'); };
+        var done = function () { if (generation === lookupGeneration) setStatus(t.copied, 'success'); };
+        var fail = function () { if (generation === lookupGeneration) setStatus(t.copyFailed, 'error'); };
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done, fail); });
         } else {
