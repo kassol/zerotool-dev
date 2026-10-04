@@ -36,8 +36,9 @@
 // - Guide and tool page code blocks interoperate with the tool (JS always, Python when
 //   python3 with cryptography exists).
 // - 4-language STRINGS tables have the same keys and the same {placeholders}.
-// - v2 page layout (DESIGN.md "Tool Pages v2"): root, two panes, key bar with both actions, status
-//   line above the boxes, five toggletips whose text stays out of the script and quotes the engine
+// - v2 page layout (DESIGN.md "Tool Pages v2"): root, two panes, key bar with IV / AAD before both
+//   actions, a status line above the boxes that keeps its height, the message for a filled IV field,
+//   err_openssl naming the reference block, five toggletips whose text stays out of the script and quotes the engine
 //   constants, Ctrl/Cmd+L handling, tool-layouts.ts entry, steps frontmatter in the 4 mdx files.
 //
 // Run: node scripts/test-aes-encrypt-decrypt.mjs
@@ -488,11 +489,22 @@ if (need('encryptFile') && need('decryptFile')) {
   check('the file chip fills the pane in place of the text box', (markup.match(/class="aes-file zt-io-fill" hidden/g) || []).length === 2 &&
     /\.aes-box \{[^}]*display: flex;[^}]*flex: 1 1 auto;[^}]*min-height: 0;/.test(source));
   check('each box is still the drop target of its text box', (markup.match(/<div class="aes-box">\s*<textarea /g) || []).length === 2 && script.includes('var box = slot.area.parentElement;'));
-  const bar = markup.slice(markup.indexOf('class="aes-keybar"'), markup.indexOf('id="aes-advanced"'));
-  check('key type, key and both actions share the key bar', ['id="aes-mode"', 'id="aes-password"', 'id="aes-rawkey"', 'id="aes-toggle-pw"', 'id="aes-keyfmt"', 'id="aes-genkey"', 'id="aes-encrypt"', 'id="aes-decrypt"'].every((x) => bar.includes(x)));
+  const bar = markup.slice(markup.indexOf('class="aes-keybar"'), markup.indexOf('class="aes-feedback"'));
+  check('key type, key, IV, AAD and both actions share the key bar', ['id="aes-advanced"', 'id="aes-iv"', 'id="aes-aad"', 'id="aes-mode"', 'id="aes-password"', 'id="aes-rawkey"', 'id="aes-toggle-pw"', 'id="aes-keyfmt"', 'id="aes-genkey"', 'id="aes-encrypt"', 'id="aes-decrypt"'].every((x) => bar.includes(x)));
   // ToolLayout's Ctrl/Cmd+Enter clicks the first .btn-primary of the widget.
   eq('Encrypt is the first primary button, Decrypt the second', (markup.match(/<button id="([\w-]+)" class="btn-primary/g) || []).map((m) => m.slice(12, m.indexOf('"', 12))), ['aes-encrypt', 'aes-decrypt']);
   check('Ctrl/Cmd+Enter in the ciphertext box still decrypts', /cipherEl\.addEventListener\('keydown', function \(e\) \{\s*if \(\(e\.metaKey \|\| e\.ctrlKey\) && e\.key === 'Enter'\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); run\('decrypt'\); \}/.test(script));
+  // The user fills in every parameter, then presses a button: IV and AAD come before Encrypt and Decrypt in the
+  // source. Side by side they are pushed to the second row (order: 1); stacked they keep the source order.
+  check('IV and AAD come before Encrypt and Decrypt (source order; second row only when side by side)',
+    bar.indexOf('id="aes-genkey"') < bar.indexOf('id="aes-advanced"') && bar.indexOf('id="aes-aad"') < bar.indexOf('id="aes-encrypt"') &&
+    /\n  \.aes-advanced \{ order: 1; flex: 1 1 100%; display: grid;/.test(source) && /@media \(max-width: 860px\) \{\s*\.aes-advanced \{ order: 0; \}/.test(source));
+  // `.tool-widget input[type="password"] { max-width: 100% }` (tool-common.css) has specificity 0,2,1; one class would lose.
+  check('the key box is at most 44rem wide (the rule outranks the shared max-width)', source.includes('.aes-keybar .aes-key-input { max-width: 44rem; }') &&
+    /\.tool-widget input\[type="password"\],[\s\S]{0,400}max-width: 100%;/.test(readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8')));
+  check('the empty status line keeps its height (1 row, 2 stacked, 3 on phones), so a message does not move the boxes',
+    /\.aes-status \{[^}]*min-height: 1\.375rem; line-height: 1\.375rem;/.test(source) && source.includes('.aes-status[hidden] { display: block; visibility: hidden; }') &&
+    /@media \(max-width: 860px\) \{[^@]*\.aes-status \{ min-height: 2\.75rem; \}/.test(source) && /@media \(max-width: 640px\) \{[^@]*\.aes-status \{ min-height: 4\.125rem; \}/.test(source) && !source.includes('.aes-feedback:not(') && source.includes('.aes-download[hidden] { display: none; }'));
   check('status line and download button sit between the key bar and the boxes', markup.indexOf('id="aes-advanced"') < markup.indexOf('id="aes-status"') && markup.indexOf('id="aes-status"') < markup.indexOf('id="aes-download"') && markup.indexOf('id="aes-download"') < markup.indexOf('aes-io zt-io'));
   check('the status line stays until the next action (role=status, no timer)', /<p id="aes-status" class="tool-status aes-status" role="status" aria-live="polite" hidden>/.test(markup) && !/setTimeout\([^)]*setStatus/.test(script));
   check('Output and Copy stay in the ciphertext head', (() => { const head = markup.slice(markup.indexOf('for="aes-ciphertext"'), markup.indexOf('id="aes-ciphertext"')); return head.includes('id="aes-encoding"') && head.includes('id="aes-copy"') && head.includes('id="aes-cipher-file-btn"'); })());
@@ -510,6 +522,19 @@ if (need('encryptFile') && need('decryptFile')) {
       S[l].tips.plain.includes(S[l].encrypt) && S[l].tips.plain.includes(S[l].file) && S[l].tips.cipher.includes(S[l].decrypt) && S[l].tips.cipher.includes(S[l].file) &&
       S[l].tips.cipher.includes(S[l].outputEncoding) && S[l].tips.cipher.includes(S[l].copy) && S[l].tips.key.includes(S[l].generate) && S[l].tips.key.includes(S[l].show) &&
       S[l].tips.key.includes(S[l].modePassword) && S[l].tips.key.includes(S[l].modeRaw));
+  }
+  // With the IV field filled the engine writes ciphertext + tag only and uses the given IV, so the message must not
+  // say that the IV is new on every run.
+  check('engine: a given IV is used as it is and is not written to the output', block.includes("var riv = spec.iv || crypto.getRandomValues(new Uint8Array(IV_BYTES));") && block.includes('return spec.iv ? sealed : concat([riv, sealed]);'));
+  check('a filled IV field gets its own success message', script.includes("setStatus(fmt(spec.iv ? S.encryptedIv : S.encrypted, { n: num(new TextEncoder().encode(plainEl.value).length) }), spec.iv ? 'info' : 'success');") && !/ivWarning/.test(source));
+  const i18nRef = (l) => JSON.parse(readFileSync(join(root, 'src/i18n/' + l + '.json'), 'utf8'))['tool.reference'];
+  for (const l of ['en', 'zh', 'ja', 'ko']) {
+    check(l + ': encryptedIv says the entered IV was used, what the output holds, and warns about reuse', typeof S[l].encryptedIv === 'string' && S[l].encryptedIv.includes('{n}') && S[l].encryptedIv.includes('GCM') && S[l].encryptedIv.includes('800-38D') &&
+      S[l].encryptedIv.split('IV').length >= 4 && !S[l].encryptedIv.includes(S[l].encrypted.slice(S[l].encrypted.indexOf('{n}') + 3).trim().slice(-12)));
+    // The OpenSSL section is inside the folded reference block; the message names the block and the section.
+    const mdx = readFileSync(join(root, 'src/content/tools/aes-encrypt-decrypt/' + l + '.mdx'), 'utf8');
+    const heading = (mdx.match(/<h2>(OpenSSL[^<]*)<\/h2>/) || [])[1];
+    check(l + ': err_openssl names the reference block (tool.reference) and the OpenSSL section by its heading', !!heading && !!i18nRef(l) && S[l].err_openssl.includes(i18nRef(l)) && S[l].err_openssl.includes(heading), heading + ' / ' + i18nRef(l));
   }
   for (const k of tipKeys) check('tip "' + k + '" is rendered', markup.includes('{TIPS.' + k + '}'));
   check('toggletip text stays out of the inline script', source.includes('define:vars={{ S: CLIENT_S }}') && source.includes('const { tips: TIPS, ...CLIENT_S } = L;') && !/S\.tips/.test(script));
