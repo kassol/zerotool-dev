@@ -13,6 +13,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'number-base': 'compact',
   'bcrypt-generator': 'compact',
   'color-converter': 'compact',
+  'timestamp-converter': 'compact',
   'aspect-ratio': 'compact',
   'basic-auth-header-generator': 'compact',
   'chmod-calculator': 'compact',

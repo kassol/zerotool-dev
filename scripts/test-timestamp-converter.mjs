@@ -4,6 +4,7 @@
 //        the `engine:start` / `engine:end` markers and the 4-language STRINGS),
 //        src/content/tools/timestamp-converter/{en,zh,ja,ko}.mdx
 //        src/layouts/ToolLayout.astro (the exact shared shortcut handler)
+//        src/data/tool-layouts.ts (compact registration and four MDX content protection)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -18,6 +19,9 @@
 
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -78,13 +82,15 @@ eq('page no longer lists microseconds as unsupported', page.includes('Microsecon
 eq('page no longer says 13-digit seconds are always milliseconds', page.includes('**Seconds with 13 digits.**'), false);
 
 // ---------- strings ----------
-const block = /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source);
+const block = /const STRINGS = (\{[\s\S]*?\n\});/.exec(source);
 const STRINGS = new Function('return ' + block[1])();
 for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' keys', Object.keys(STRINGS[lang]).sort(), Object.keys(STRINGS.en).sort());
 for (const k of ['unit', 'unitAuto', 'unitS', 'unitMs', 'unitUs', 'unitNs', 'readAs']) eq('en has ' + k, k in STRINGS.en, true);
 
 // Complete page lifecycle. Only DOM/clipboard/timers are boundary doubles.
-const lifecycleScript = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const lifecycleScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+const lifecycleStrings = STRINGS;
+const clientFor = lang => vm.runInNewContext(source.slice(source.indexOf('const T = STRINGS[lang];'), source.indexOf('\n---', 4)) + '\nCLIENT_T;', { STRINGS: lifecycleStrings, lang });
 const lifecycleMarkup = source.replace(/^---[\s\S]*?---\s*/, '').split('<style>')[0].replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
 const lifecycleLayout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const lifecycleShortcut = lifecycleLayout.slice(lifecycleLayout.indexOf('// ── Keyboard shortcuts:'), lifecycleLayout.indexOf('// ── Copy button visual feedback'));
@@ -160,14 +166,16 @@ function lifecyclePage(lang = 'en', shellFirst = false) {
   doc = new Element('#document');
   doc.documentElement = new Element('html'); doc.documentElement.lang = lang; doc.appendChild(doc.documentElement);
   doc.body = new Element('body'); doc.documentElement.appendChild(doc.body);
-  const widget = new Element('section'); widget.className = 'tool-widget'; doc.body.appendChild(widget); parse(lifecycleMarkup, widget);
+  const widget = new Element('section'); widget.className = 'tool-widget'; doc.body.appendChild(widget); const text = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const markup = lifecycleMarkup.replace(/<Toggletip\b[^>]*>[\s\S]*?<\/Toggletip>/g, '').replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + text(lifecycleStrings[lang][key]) + '"').replace(/\{T\.(\w+)\}/g, (_, key) => text(lifecycleStrings[lang][key]));
+  parse(markup, widget);
   // Deliberately no ID map: duplicate IDs resolve to the first connected element in DOM order.
   doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
   doc.createElement = tag => new Element(tag);
   for (const select of doc.querySelectorAll('select')) select.value = select.querySelector('option').value;
   doc.activeElement = doc.body;
   const sandbox = {
-    document: doc, console, _slug: 'timestamp-converter', ztPersist: { clear() {} },
+    document: doc, console, t: clientFor(lang), _slug: 'timestamp-converter', ztPersist: { clear() {} },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value, resolve, reject }); return promise; } } },
     trackTool: (...args) => tracks.push(args),
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms }); return timerId; }, clearTimeout: id => timers.delete(id),
@@ -282,6 +290,76 @@ try {
 } finally {
   if (originalTimezone === undefined) delete process.env.TZ; else process.env.TZ = originalTimezone;
   process.off('unhandledRejection', captureUnhandled);
+}
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const check = (name, actual) => eq(name, !!actual, true);
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script')).trim();
+  const css = source.slice(source.indexOf('<style>') + 7, source.indexOf('</style>'));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  const sha = value => createHash('sha256').update(value).digest('hex');
+  const keys = ['convert', 'date', 'input', 'now', 'unit'];
+  check('timestamp-converter is registered as compact', /'timestamp-converter':\s*'compact'/.test(layouts));
+  check('root is a natural-height shrinkable column', template.startsWith('<div class="tc-wrap">') && /\.tc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0/.test(css) && !/\b(?:height|min-height):[^;]*(?:vh|svh)/.test(css));
+  check('timestamp buttons precede status, input and results', template.indexOf('id="tc-ts-convert"') < template.indexOf('id="tc-ts-status"') && template.indexOf('id="tc-ts-status"') < template.indexOf('id="tc-ts-input"') && template.indexOf('id="tc-ts-input"') < template.indexOf('id="tc-ts-results"'));
+  check('date status precedes input and results', template.indexOf('id="tc-date-status"') < template.indexOf('id="tc-date-input"') && template.indexOf('id="tc-date-input"') < template.indexOf('id="tc-date-results"'));
+  check('two directions have fixed scrolling status areas', /\.tc-wrap \.tc-status\s*\{[^}]*height: 3em;[^}]*overflow: auto/.test(css) && /\.tc-wrap \.tc-status\s*\{ height: 4.5em/.test(css));
+  check('two columns stack at 860 with phone controls at 640', /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/.test(css) && /@media \(max-width: 860px\)/.test(css) && /@media \(max-width: 640px\)/.test(css) && /\.tc-unit\s*\{ min-height: 44px/.test(css));
+  check('long input cannot expand the field', /\.tc-input-row input\s*\{[^}]*width: 100%; min-width: 0/.test(css));
+  check('result rows have a fixed height and shrinkable value column', /\.tc-results :global\(\.tc-row\)\s*\{[^}]*grid-template-columns: 6.5rem minmax\(0, 1fr\) auto;[^}]*height: 3.5rem/.test(css));
+  check('long result values scroll without wrapping or clipping the page', /\.tc-results :global\(\.tc-value\)\s*\{[^}]*min-width: 0; height: 3rem;[^}]*overflow-x: auto; overflow-y: hidden; white-space: pre/.test(css) && !/word-break: break-all|text-overflow: ellipsis/.test(css));
+  check('dynamic result values are keyboard scrollable and named', lifecycleScript.includes('<code class="tc-value" tabindex="0" aria-label="') && /:global\(\.tc-value\)/.test(css));
+  check('only redundant Date Convert is removed', !source.includes('tc-date-convert') && template.includes('id="tc-ts-convert"') && template.includes('id="tc-ts-now"') && lifecycleScript.includes("dateInput.addEventListener('change', convertDate)"));
+  check('hidden states retain display precedence', /\.tc-wrap \[hidden\]\s*\{ display: none !important/.test(css));
+  const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  check('five tips have stable unique IDs', JSON.stringify(tips.map(m => /id="tc-tip-([^"]+)"/.exec(m[1])?.[1]).sort()) === JSON.stringify(keys));
+  check('tips are outside labels and summaries', !/<(?:label|summary)\b[^>]*>(?:(?!<\/(?:label|summary)>)[\s\S])*?<Toggletip/.test(template));
+  for (const tip of tips) check('tip uses build-time language and matching content', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2] === '{TIPS.' + /id="tc-tip-([^"]+)"/.exec(tip[1])[1] + '}');
+  check('runtime i18n removed and only client strings serialized', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/data-i18n|STRINGS|TIPS/.test(lifecycleScript));
+  const engine = source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
+  check('exact engine bytes protected', sha(engine) === '478ed4b2739a9d8a0ddb6b24247629961e1988e624e7446675df6680c40f628e');
+  const retained = {
+  "en": [
+    "55d1e82a136d96647d098e99d6eecb89d171aed82505ea3372c03f893115da3a",
+    "14e6220ba8638e7dd11c5ba1ab30379963cf948724b6df311af4a698f027c840"
+  ],
+  "zh": [
+    "352f67eabeb26d41fddd0772df4cae3efbed3a06ba2ff9fc94f47ecc79df2d31",
+    "8a5c721c26b13b85b20a0910eff4c54b6260bb196e0868036155c1c5e4e11540"
+  ],
+  "ja": [
+    "92ce5aeadbcceb575f23c597affd6cbc09f7b9bde182d3926dca2e2d963d0975",
+    "30d1c088e3a8e11d5b3f0f7573a739ecdbd3ccc074955e6204857ea1e992aaf2"
+  ],
+  "ko": [
+    "16efbc179715169f50098160d9815acb8adf9b4b40f1388fc651fa62c5a02dd6",
+    "a5cc880b630ac38ee1d66bc31e9d0b46e397a8331068b79f6cfacadefa54cd03"
+  ]
+};
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const entry = lifecycleStrings[lang], client = clientFor(lang);
+    check(lang + ' all four languages share string keys', JSON.stringify(Object.keys(entry).sort()) === JSON.stringify(Object.keys(lifecycleStrings.en).sort()));
+    check(lang + ' tip keys match all actual controls', JSON.stringify(Object.keys(entry.tips).sort()) === JSON.stringify(keys));
+    for (const key of keys) check(lang + '/' + key + ' tip is plain nonempty text', typeof entry.tips[key] === 'string' && !!entry.tips[key].trim() && !/<[^>]*>|\n/.test(entry.tips[key]));
+    check(lang + ' client excludes tips and their text', !('tips' in client) && Object.values(entry.tips).every(tip => !JSON.stringify(client).includes(JSON.stringify(tip))));
+    const mdx = readFileSync(join(root, 'src/content/tools/timestamp-converter', lang + '.mdx'), 'utf8');
+    const [, meta, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx), { steps } = loadYaml(meta);
+    check(lang + ' five plain steps remain within llms limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['copy', 'convert', 'now', 'timestamp', 'dateTime']) check(lang + ' steps use the actual ' + key + ' label', steps.some(step => step.includes(entry[key])));
+    check(lang + ' Usage removed, Limits retained', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body) && /^## (?:Limits|限制|制限事項|제한 사항)/m.test(body));
+    check(lang + ' original FAQ/SEO unchanged', sha(meta.replace(/^steps:\n(?:  .*\n)*/m, '').trim()) === retained[lang][0]);
+    check(lang + ' non-Usage body byte-identical', sha(body) === retained[lang][1]);
+  }
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'TimestampConverterTool.astro' });
+  check('Astro reports no compilation error', compiled.diagnostics.filter(d => d.severity === 1).length === 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('generated JavaScript parses and serializes CLIENT_T', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
