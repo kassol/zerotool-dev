@@ -4,7 +4,8 @@
 //        `engine:start` / `engine:end` markers, the STRINGS table between `strings:start` /
 //        `strings:end`, the page script), ColorPaletteGeneratorTool.astro and
 //        EyedropperColorPickerTool.astro (engine blocks, to compare the copied declarations),
-//        src/data/persistence.ts, ToolLayout.astro keyboard handler, the 4 tool page mdx files
+//        src/data/persistence.ts, tool-layouts.ts, ToolLayout.astro keyboard handler,
+//        the 4 tool page mdx files
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -40,15 +41,19 @@
 //      expected values appear in the page text.
 //  12. Full page lifecycle: actual script + shared shortcut, controlled file/media/PNG/clipboard
 //      completion, synchronous clear to the initial sample, stale work and preference preservation.
+//  13. v2 page layout: analyze registration, bounded result panels, preserved controls,
+//      translated tips excluded from client strings, steps and retained non-usage MDX content.
 //
 // Run: node scripts/test-color-blindness-simulator.mjs
 
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { converter, filterDeficiencyProt, filterDeficiencyDeuter, filterDeficiencyTrit, differenceEuclidean, wcagContrast } from 'culori';
 import Color from 'colorjs.io';
+import { load as loadYaml } from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -341,12 +346,13 @@ eq('downloadName fallback', E.downloadName('', 'achromatopsia', 0.6), 'image-ach
 // ── 8. STRINGS ──
 const sStart = source.indexOf('/* ── strings:start ── */'), sEnd = source.indexOf('/* ── strings:end ── */');
 const STRINGS = new Function(source.slice(sStart, sEnd).replace('const STRINGS =', 'return') )();
+const clientStrings = new Function('STRINGS', 'lang', source.slice(source.indexOf('const T = STRINGS', sEnd), source.indexOf('const TYPES =', sEnd)) + '\nreturn { TIPS, CLIENT_T };');
 {
   const langs = ['en', 'zh', 'ja', 'ko'];
   const keys = Object.keys(STRINGS.en).sort();
   for (const l of langs) eq(l + ' has the same keys as en', Object.keys(STRINGS[l]).sort(), keys);
   const ph = (s) => (String(s).match(/\{\w+\}/g) || []).sort().join(',');
-  for (const l of langs) for (const k of keys) check(l + '.' + k + ' placeholders', ph(STRINGS[l][k]) === ph(STRINGS.en[k]), STRINGS[l][k]);
+  for (const l of langs) for (const k of keys.filter(k => k !== 'tips')) check(l + '.' + k + ' placeholders', typeof STRINGS[l][k] === 'string' && ph(STRINGS[l][k]) === ph(STRINGS.en[k]), STRINGS[l][k]);
   const script = source.slice(source.indexOf('<script is:inline'), source.indexOf('</script>'));
   const used = new Set([...script.matchAll(/\bt\.([A-Za-z_]+)/g)].map((m) => m[1]));
   for (const k of used) check('script key t.' + k + ' exists', k in STRINGS.en);
@@ -452,7 +458,7 @@ const shortcut = layoutSource.slice(shortcutStart, shortcutEnd);
 const microtasks = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 function deferred() { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return {promise,resolve,reject}; }
 function page(lang = 'en', prefs = null, shellFirst = false) {
-  const strings = STRINGS[lang];
+  const strings = clientStrings(STRINGS, lang).CLIENT_T;
   const defaults = vm.runInNewContext("const lang=" + JSON.stringify(lang) + ";\n" + src.slice(src.indexOf('const DEFAULT_COLORS = '), src.indexOf('\n---', src.indexOf('const DEFAULT_COLORS = '))) + '\nDEFAULT_COLORS');
   const clipboardJobs = [], faults = {};
   const nodes = [], ids = new Map(), timers = new Map(), imageJobs = [], mediaJobs = [], videos = [], blobs = [], downloads = [], revoked = [], urls = new Map(), tracks = [], savedPrefs = [], clearCalls = [];
@@ -722,6 +728,91 @@ for(const shellFirst of [false,true]) await scenario('CtrlL focused swatch order
 });
 
 console.log(`Page lifecycle: ${passes-lifecycleStart.passes} passed, ${failures-lifecycleStart.failures} failed`);
+}
+
+// ── v2 page layout ──
+{
+  const layoutStart = { passes, failures };
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script is:inline')).trimStart();
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css = source.slice(source.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/<\/?style\b[^>]*>/g, '');
+  const rules = (selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(m => m[1].split(',').some(s => s.trim() === selector)).map(m => m[2]);
+  const property = (body, name, value) => new RegExp('(?:^|;)\\s*' + name + '\\s*:\\s*' + value + '\\s*(?:;|$)').test(body);
+  check('analyze layout registered', /'color-blindness-simulator':\s*'analyze'/.test(read('src/data/tool-layouts.ts')));
+  check('tool root is the direct first element', /^<div class="cbs-wrap" id="cbs-wrap">/.test(template));
+  check('root flex column can shrink with its available height', rules('.cbs-wrap').some(r => property(r, 'display', 'flex') && property(r, 'flex-direction', 'column') && property(r, 'min-height', '0')));
+  for (const selector of ['.cbs-grid', '.cbs-compare', '.cbs-table-wrap']) {
+    check(selector + ' has zero-basis flex and internal scrolling', rules(selector).some(r => property(r, 'flex', '1\\s+1\\s+0') && property(r, 'overflow', 'auto') && property(r, 'min-width', '0')));
+    check(selector + ' has a bounded mobile height', rules(selector).some(r => property(r, 'flex', 'none') && property(r, 'height', '[1-9][\\d.]*(?:rem|px)') && property(r, 'min-height', '0')));
+    check(selector + ' honors hidden mode', rules(selector + '[hidden]').some(r => property(r, 'display', 'none')));
+  }
+  check('860px stacks results and 640px adjusts phone controls', /@media\s*\(max-width:\s*860px\)/.test(css) && /@media\s*\(max-width:\s*640px\)/.test(css));
+  check('phone comparison stacks original and simulation', /@media\s*\(max-width:\s*640px\)[\s\S]*?\.cbs-compare\s*\{[^}]*grid-template-columns:\s*1fr/.test(css));
+  check('status reserves height even when empty', rules('.cbs-status').some(r => property(r, 'height', '[1-9][\\d.]*(?:em|rem|px)') && property(r, 'flex', 'none') && property(r, 'overflow', 'auto')) && !/\.cbs-status:empty/.test(css));
+  check('color input stays short independently of its contents', rules('.cbs-colors').some(r => property(r, 'height', '[1-9][\\d.]*(?:rem|px)') && property(r, 'resize', 'none')));
+  check('empty desktop colors mode gives its input the available height', rules('.cbs-wrap:has(#cbs-table-wrap[hidden]) #cbs-colors-panel').some(r => property(r, 'flex', '1')) && rules('.cbs-wrap:has(#cbs-table-wrap[hidden]) .cbs-colors').some(r => property(r, 'flex', '1') && property(r, 'height', 'auto')));
+  check('controls and status precede full-width results', ['cbs-image-panel', 'cbs-colors-panel', 'cbs-viewctl', 'cbs-status'].every(id => template.indexOf('id="' + id + '"') >= 0 && template.indexOf('id="' + id + '"') < template.indexOf('id="cbs-grid"')));
+  check('image notes stay after results and scroll within reserved space', template.indexOf('id="cbs-imginfo"') > template.indexOf('id="cbs-table-wrap"') && rules('.cbs-image-note').some(r => property(r, 'height', '[1-9][\\d.]*(?:em|rem|px)') && property(r, 'overflow', 'auto')));
+  check('image note is hidden in colors mode', /\.cbs-wrap:has\(#cbs-image-panel\[hidden\]\)\s*>\s*\.cbs-image-note\s*\{\s*display:\s*none/.test(css));
+  check('both mode and result-view switches use shared segmented controls', /class="cbs-tabs zt-segmented"/.test(template) && /class="cbs-seg zt-segmented"/.test(template));
+  // Button identities read from e6748489, before the layout migration. The mapped PNG button
+  // still expands once for each of the eight engine types; no render button is added or removed.
+  const buttons = [...template.matchAll(/<button\b([^>]*)>/g)].map(m => m[1]);
+  const buttonIdentity = a => /\bid="([^"]+)"/.exec(a)?.[1] || /\bdata-view="([^"]+)"/.exec(a)?.[1] || (/\bdata-type=\{t\}/.test(a) ? 'PNG per type' : 'unknown');
+  eq('all previous action buttons remain', buttons.map(buttonIdentity).sort(), ['cbs-tab-image', 'cbs-tab-colors', 'cbs-open', 'cbs-capture', 'cbs-sample', 'all', 'compare', 'PNG per type', 'cbs-compare-dl'].sort());
+  check('all action buttons retain explicit button type', buttons.every(a => /\btype="button"/.test(a)));
+  eq('PNG card mapping retains eight types', vm.runInNewContext(source.match(/const TYPES = (.*?) as const;/)[1]), E.CVD_TYPES);
+  check('PNG controls still expand inside mapped result cards', /\{TYPES\.map\(\(t\) => \([\s\S]*?<button[^>]*data-type=\{t\}[\s\S]*?\)\)\}/.test(template));
+  check('file import remains available', /<input id="cbs-file" type="file" accept="image\/\*,\.svg,\.avif,\.webp"/.test(template));
+
+  const tipKeys = ['mode', 'open', 'capture', 'sample', 'severity', 'view', 'compare', 'download', 'colors'].sort();
+  const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  eq('nine distinct control tips', tips.map(m => /id="cbs-tip-([^"]+)"/.exec(m[1])?.[1]).sort(), tipKeys);
+  for (const tip of tips) {
+    const key = /id="cbs-tip-([^"]+)"/.exec(tip[1])?.[1];
+    check(key + ' tip has localized label and content', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2].includes('{TIPS.' + key + '}'));
+  }
+  check('only client strings enter inline script', /<script is:inline define:vars=\{\{ t: CLIENT_T \}\}>/.test(source) && !/\bt\.tips\b|\bTIPS\b/.test(script));
+  check('labels render at build time without runtime i18n rewriting', !source.includes('data-i18n'));
+  const placeholders = text => (text.match(/\{\w+\}/g) || []).sort();
+  function checkTipTree(lang, value, reference, path = 'tips') {
+    if (reference && typeof reference === 'object') {
+      check(lang + '.' + path + ' is an object', value !== null && typeof value === 'object' && !Array.isArray(value));
+      eq(lang + '.' + path + ' keys match en', Object.keys(value || {}).sort(), Object.keys(reference).sort());
+      for (const key of Object.keys(reference)) checkTipTree(lang, value?.[key], reference[key], path + '.' + key);
+    } else {
+      check(lang + '.' + path + ' is nonempty text', typeof value === 'string' && value.trim().length > 0);
+      eq(lang + '.' + path + ' placeholders match en', placeholders(String(value)), placeholders(reference));
+    }
+  }
+  // e6748489 snapshots: frontmatter without steps, and the complete body after removing only
+  // its localized How to Use section. Keep FAQ, SEO, Limits, examples and cbs-check annotations.
+  const retained = {
+    en: ['f335d0678d73e840', 'e64ed6939c7a26ce'],
+    zh: ['43f9b055b2143731', '3acc74e07943eb31'],
+    ja: ['b62c8a214b840ecb', 'aea1e91bd77d49e2'],
+    ko: ['76f7e8dd15702e06', 'e8b6f000b0091c1b'],
+  };
+  const hash = text => createHash('sha256').update(text.trim()).digest('hex').slice(0, 16);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' tip keys cover all controls', Object.keys(STRINGS[lang].tips).sort(), tipKeys);
+    checkTipTree(lang, STRINGS[lang].tips, STRINGS.en.tips);
+    const { TIPS, CLIENT_T } = clientStrings(STRINGS, lang);
+    eq(lang + ' frontmatter keeps tips for HTML', TIPS, STRINGS[lang].tips);
+    eq(lang + ' client keys exclude tips only', Object.keys(CLIENT_T).sort(), Object.keys(STRINGS[lang]).filter(k => k !== 'tips').sort());
+    check(lang + ' serialized client has no tip text', !('tips' in CLIENT_T) && Object.values(TIPS).every(tip => !JSON.stringify(CLIENT_T).includes(JSON.stringify(tip))));
+    const mdx = read('src/content/tools/color-blindness-simulator/' + lang + '.mdx');
+    const [, metadata, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx);
+    const { steps } = loadYaml(metadata);
+    check(lang + ' has one to eight plain-text steps', Array.isArray(steps) && steps.length > 0 && steps.length <= 8 && steps.every(s => typeof s === 'string' && s.trim() && !/<[^>]+>/.test(s)));
+    check(lang + ' steps fit per-step and total limits', Array.isArray(steps) && steps.every(s => s.length <= 280) && steps.join('').length <= 1200);
+    check(lang + ' usage heading removed', !/<h2>(?:How to Use|操作步骤|使い方|사용 방법)<\/h2>/.test(body));
+    check(lang + ' Limits retained', /<h2>(?:Limits|限制|制限|제한 사항)<\/h2>/.test(body));
+    eq(lang + ' SEO and FAQ unchanged from before layout', hash(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang][0]);
+    eq(lang + ' all non-usage body content unchanged', hash(body), retained[lang][1]);
+  }
+  console.log(`v2 page layout: ${passes-layoutStart.passes} passed, ${failures-layoutStart.failures} failed`);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

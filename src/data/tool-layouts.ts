@@ -35,6 +35,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'htpasswd-generator': 'generate',
   'sprite-sheet-generator': 'generate',
   'har-file-analyzer': 'analyze',
+  'color-blindness-simulator': 'analyze',
   'dns-lookup': 'analyze',
   'url-parser': 'analyze',
   'json-schema-validator': 'analyze',
