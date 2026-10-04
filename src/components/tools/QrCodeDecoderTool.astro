@@ -989,16 +989,23 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
       }
 
       var busy = 0;
+      function clearResults() {
+        current = null;
+        resultsEl.textContent = '';
+        resultArea.hidden = true;
+        inputs.classList.remove('qrd-compact');
+      }
       function processBlob(blob, source) {
         stopCamera();
+        clearResults();
         if (blob.type && blob.type.indexOf('image/') !== 0) {
           setStatus(fmt(t.errNotImage, { type: blob.type }), 'error');
           return;
         }
-        var job = ++busy;
+        var job = busy;
         setStatus(readerPromise ? t.decoding : t.loading, 'info');
         Promise.all([ensureReader().catch(function () { return null; }), loadImage(blob).catch(function () { return null; })]).then(function (res) {
-          if (job !== busy) return;
+          if (job !== busy) { if (res[1]) URL.revokeObjectURL(res[1].url); return; }
           var Z = res[0], loaded = res[1];
           if (!loaded) { setStatus(t.errRead, 'error'); return; }
           if (!Z) { URL.revokeObjectURL(loaded.url); setStatus(t.errLoad, 'error'); return; }
@@ -1024,7 +1031,7 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
       /* ── Inputs ── */
       dropzone.addEventListener('click', function () { fileInput.click(); });
       dropzone.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); fileInput.click(); }
       });
       fileInput.addEventListener('change', function () {
         if (fileInput.files && fileInput.files[0]) processBlob(fileInput.files[0], 'file');
@@ -1059,45 +1066,60 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
       });
 
       function decodeFromUrl() {
+        if (urlBtn.disabled) return;
         var value = urlInput.value.trim();
         if (!value) return;
+        stopCamera();
+        clearResults();
         var u;
         try { u = new URL(value); } catch (e) { u = null; }
         if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:')) { setStatus(t.errUrlScheme, 'error'); return; }
+        var job = busy;
         urlBtn.disabled = true;
         setStatus(t.decoding, 'info');
         ensureReader().catch(function () {});
         fetch(u.href, { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' })
           .then(function (response) {
+            if (job !== busy) return;
             if (!response.ok) { var err = new Error('status'); err.status = response.status; throw err; }
             return response.blob();
           })
           .then(function (blob) {
+            if (job !== busy) return;
             urlBtn.disabled = false;
             processBlob(blob.type ? blob : new Blob([blob], { type: 'image/*' }), 'url');
           })
           .catch(function (err) {
+            if (job !== busy) return;
             urlBtn.disabled = false;
             setStatus(err && err.status ? fmt(t.errUrlStatus, { status: err.status }) : t.errUrlFetch, 'error');
           });
       }
       urlBtn.addEventListener('click', decodeFromUrl);
-      urlInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); decodeFromUrl(); } });
+      urlInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); decodeFromUrl(); } });
 
-      clearBtn.addEventListener('click', function () {
-        busy++;
-        current = null;
-        resultsEl.textContent = '';
-        resultArea.hidden = true;
-        inputs.classList.remove('qrd-compact');
+      function clearAll() {
+        stopCamera();
+        clearResults();
         urlInput.value = '';
+        fileInput.value = '';
         setStatus('');
         dropzone.focus();
+      }
+      clearBtn.addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
+        }
       });
 
       /* ── Camera ── */
       var stream = null, scanTimer = null, scanning = false;
       function stopCamera() {
+        busy++;
+        urlBtn.disabled = false;
+        cameraBtn.disabled = false;
         if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
         scanning = false;
         if (stream) { stream.getTracks().forEach(function (tr) { tr.stop(); }); stream = null; }
@@ -1112,8 +1134,8 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
         if (name === 'NotReadableError' || name === 'TrackStartError' || name === 'AbortError') return t.errCamBusy;
         return fmt(t.errCam, { name: name || String(err) });
       }
-      function scanFrame(Z) {
-        if (!scanning) return;
+      function scanFrame(Z, job) {
+        if (!scanning || job !== busy) return;
         if (video.readyState >= 2 && video.videoWidth) {
           var size = fitSize(video.videoWidth, video.videoHeight, 1280 * 720);
           var canvas = document.createElement('canvas');
@@ -1121,26 +1143,31 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
           var ctx = canvas.getContext('2d', { willReadFrequently: true });
           ctx.drawImage(video, 0, 0, size.width, size.height);
           Z.readBarcodes(ctx.getImageData(0, 0, size.width, size.height), CAMERA_OPTIONS).then(function (results) {
-            if (!scanning) return;
+            if (!scanning || job !== busy) return;
             var valid = results.filter(function (r) { return r.isValid; });
             if (valid.length) {
               stopCamera();
               showResults(canvas, valid, null);
               track('source_camera');
             } else {
-              scanTimer = setTimeout(function () { scanFrame(Z); }, 120);
+              scanTimer = setTimeout(function () { scanFrame(Z, job); }, 120);
             }
-          }, function () { scanTimer = setTimeout(function () { scanFrame(Z); }, 250); });
+          }, function () { if (scanning && job === busy) scanTimer = setTimeout(function () { scanFrame(Z, job); }, 250); });
         } else {
-          scanTimer = setTimeout(function () { scanFrame(Z); }, 120);
+          scanTimer = setTimeout(function () { scanFrame(Z, job); }, 120);
         }
       }
       cameraBtn.addEventListener('click', function () {
+        if (cameraBtn.disabled) return;
+        stopCamera();
+        clearResults();
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setStatus(t.errCamNoSupport, 'error'); return; }
-        busy++;
+        var job = busy;
+        cameraBtn.disabled = true;
         setStatus('');
         navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
           .then(function (s) {
+            if (job !== busy) { s.getTracks().forEach(function (tr) { tr.stop(); }); return; }
             stream = s;
             video.srcObject = stream;
             cameraView.hidden = false;
@@ -1148,18 +1175,20 @@ const generatorHref = (lang === 'en' ? '' : '/' + lang) + '/tools/qr-code-genera
             resultArea.hidden = true;
             if (!readerPromise) setStatus(t.loading, 'info');
             return ensureReader().then(function (Z) {
+              if (job !== busy) return;
               setStatus('');
-              return video.play().then(function () { scanning = true; scanFrame(Z); });
+              return video.play().then(function () { if (job !== busy) return; scanning = true; scanFrame(Z, job); });
             }, function () { var e = new Error('reader'); e.readerError = true; throw e; });
           })
           .catch(function (err) {
+            if (job !== busy) return;
             stopCamera();
             setStatus(err && err.readerError ? t.errLoad : cameraError(err), 'error');
           });
         track('camera_start');
       });
       cameraStop.addEventListener('click', function () { stopCamera(); setStatus(''); });
-      document.addEventListener('visibilitychange', function () { if (document.hidden && stream) { stopCamera(); setStatus(''); } });
+      document.addEventListener('visibilitychange', function () { if (document.hidden && (stream || cameraBtn.disabled)) { stopCamera(); setStatus(''); } });
     })();
   </script>
 </div>

@@ -331,5 +331,164 @@ eq('safety: <script> text stays text', c('<script>alert(1)</script>').type, 'tex
   check('safety: nothing opened automatically', !/window\.open|location\.(href|assign|replace)\s*[=(]/.test(script));
 }
 
+// ---------- page lifecycle: real handlers with controlled async boundaries ----------
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+  return { promise, resolve, reject };
+}
+function pageFixture(options = {}) {
+  const nodes = new Map(), requests = [], permissions = [], images = [], revoked = [], copied = [], timers = new Map();
+  let timerId = 0, objectId = 0, decodeCalls = 0;
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  function element(tag = 'div') {
+    const listeners = new Map(); let text = '';
+    const n = { tagName: tag.toUpperCase(), children: [], style: {}, attrs: {}, value: '', disabled: false, hidden: false, className: '', readyState: 2, videoWidth: 64, videoHeight: 64,
+      get textContent() { return text + this.children.map((c) => c.textContent).join(''); },
+      set textContent(v) { text = String(v); this.children = []; },
+      get firstElementChild() { return this.children[0] || null; },
+      appendChild(c) { this.children.push(c); return c; },
+      setAttribute(k, v) { this.attrs[k] = String(v); },
+      getAttribute(k) { return this.attrs[k] ?? null; },
+      addEventListener(k, fn) { if (!listeners.has(k)) listeners.set(k, []); listeners.get(k).push(fn); },
+      dispatch(k, init = {}) {
+        const event = { type: k, target: this, defaultPrevented: false, stopped: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...init };
+        for (const fn of listeners.get(k) || []) fn(event);
+        if (k === 'keydown' && this !== document && !event.stopped) document.dispatch(k, event);
+        return event;
+      },
+      click() { if (!this.disabled) this.dispatch('click'); },
+      focus() { document.activeElement = this; },
+      contains(other) { return nodes.has(other?.id); },
+      querySelectorAll() { return [...nodes.values()].filter((v) => v.tagName === 'TEXTAREA' || v.attrs.type === 'text'); },
+      getBoundingClientRect() { return { top: 10, bottom: 50 }; }, scrollIntoView() {},
+      play() { return options.play?.promise || Promise.resolve(); },
+      getContext() { return { drawImage() {}, getImageData() { return { data: new Uint8ClampedArray(64 * 64 * 4), width: 64, height: 64 }; } }; }
+    };
+    n.classList = {
+      add(c) { if (!this.contains(c)) n.className += ' ' + c; },
+      remove(c) { n.className = n.className.split(/\s+/).filter((x) => x !== c).join(' '); },
+      contains(c) { return n.className.split(/\s+/).includes(c); }
+    };
+    return n;
+  }
+  for (const m of markup.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
+    const n = element(m[1]); n.id = m[3]; n.hidden = /\bhidden\b/.test(m[2]);
+    n.attrs.type = /\btype="([^"]+)"/.exec(m[2])?.[1]; nodes.set(n.id, n);
+  }
+  const document = Object.assign(element('document'), {
+    hidden: false, documentElement: element('html'), head: element('head'),
+    getElementById(id) { if (!nodes.has(id)) throw new Error('Missing id: ' + id); return nodes.get(id); },
+    querySelector(sel) { return sel === '.tool-widget .btn-primary' ? nodes.get('qrd-url-decode') : sel === '.tool-widget' ? nodes.get('qrd-wrap') : null; },
+    createElement: element
+  });
+  document.activeElement = nodes.get('qrd-url-input');
+  class BrowserURL extends URL {
+    static createObjectURL() { return 'blob:fixture-' + (++objectId); }
+    static revokeObjectURL(v) { revoked.push(v); }
+  }
+  class BrowserImage {
+    naturalWidth = 64; naturalHeight = 64;
+    set src(value) { images.push(value); Promise.resolve().then(() => options.imageFails ? this.onerror() : this.onload()); }
+  }
+  const decoder = { prepareZXingModule() { return options.reader?.promise || Promise.resolve(); }, readBarcodes() { decodeCalls++; return options.decode?.promise || Promise.resolve(options.results || []); } };
+  const ctx = { t: STRINGS.en, pageLang: 'en', document, URL: BrowserURL, Blob, Image: BrowserImage, TextEncoder, TextDecoder, Uint8Array, Uint8ClampedArray,
+    console, innerHeight: 844, ZXingWASM: decoder,
+    navigator: { clipboard: { writeText(value) { copied.push(value); return Promise.resolve(); } }, mediaDevices: { getUserMedia() { const d = deferred(); permissions.push(d); return d.promise; } } },
+    fetch(url, opts) { const d = deferred(); requests.push({ url, opts, ...d }); return d.promise; },
+    setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay }); return id; }, clearTimeout(id) { timers.delete(id); },
+    getComputedStyle() { return { getPropertyValue() { return '#b45309'; } }; },
+    ztPersist: { clear() {} }, _slug: 'qr-code-decoder'
+  };
+  ctx.window = ctx;
+  const context = vm.createContext(ctx);
+  vm.runInContext(source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1], context, { filename: 'QrCodeDecoderTool.astro' });
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const start = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
+  vm.runInContext(layout.slice(start, layout.indexOf('// ── Copy button visual feedback', start)), context, { filename: 'ToolLayout.shortcuts' });
+  return { nodes, requests, permissions, images, revoked, copied, timers, document, get decodeCalls() { return decodeCalls; },
+    url(v = 'https://example.com/qr.png') { nodes.get('qrd-url-input').value = v; },
+    respond(i = 0) { requests[i].resolve({ ok: true, blob() { return Promise.resolve(new Blob(['fixture'], { type: 'image/png' })); } }); },
+    shortcut(key = 'l') { nodes.get('qrd-url-input').dispatch('keydown', { key, ctrlKey: true }); }
+  };
+}
+async function settlePage() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
+function cameraStream() { const track = { stopped: 0, stop() { this.stopped++; } }; return { track, getTracks() { return [track]; } }; }
+{
+  for (const mod of [false, true]) {
+    const page = pageFixture(); page.url();
+    page.nodes.get('qrd-url-input').dispatch('keydown', { key: 'Enter', ctrlKey: mod });
+    eq('lifecycle: one ' + (mod ? 'Ctrl+Enter' : 'Enter') + ' starts one URL fetch', page.requests.length, 1);
+    page.nodes.get('qrd-url-input').dispatch('keydown', { key: 'Enter', ctrlKey: mod });
+    eq('lifecycle: repeated Enter while URL fetch is pending stays one request', page.requests.length, 1);
+  }
+  for (const action of ['clear', 'shortcut']) {
+    const page = pageFixture(); page.url(); page.nodes.get('qrd-url-decode').click();
+    if (action === 'clear') page.nodes.get('qrd-clear').click(); else page.shortcut();
+    page.respond(); await settlePage();
+    check('lifecycle: ' + action + ' cancels pending URL and prevents an old preview', page.images.length === 0 && page.nodes.get('qrd-result-area').hidden && page.nodes.get('qrd-status').textContent === '' && page.nodes.get('qrd-url-input').value === '' && !page.nodes.get('qrd-url-decode').disabled);
+  }
+  {
+    const page = pageFixture(); page.url(); page.nodes.get('qrd-url-decode').click(); page.nodes.get('qrd-clear').click();
+    page.requests[0].reject(new Error('offline')); await settlePage();
+    eq('lifecycle: failed obsolete URL request does not restore an error after Clear', page.nodes.get('qrd-status').textContent, '');
+  }
+  for (const action of ['clear', 'shortcut', 'hidden']) {
+    const page = pageFixture(), stream = cameraStream(); page.nodes.get('qrd-camera').click();
+    if (action === 'clear') page.nodes.get('qrd-clear').click();
+    else if (action === 'shortcut') page.shortcut();
+    else { page.document.hidden = true; page.document.dispatch('visibilitychange'); }
+    page.permissions[0].resolve(stream); await settlePage();
+    check('lifecycle: late camera permission after ' + action + ' stops its track', stream.track.stopped === 1 && page.nodes.get('qrd-camera-view').hidden && page.nodes.get('qrd-video').srcObject === null && page.decodeCalls === 0);
+  }
+  {
+    const page = pageFixture(), stream = cameraStream(); page.nodes.get('qrd-camera').click(); page.permissions[0].resolve(stream); await settlePage();
+    page.nodes.get('qrd-clear').click();
+    check('lifecycle: Clear stops an active camera and its scan timer', stream.track.stopped === 1 && page.nodes.get('qrd-camera-view').hidden && page.timers.size === 0);
+  }
+  for (const waitAt of ['reader', 'play']) {
+    const waiting = deferred(), page = pageFixture({ [waitAt]: waiting }), stream = cameraStream();
+    page.nodes.get('qrd-camera').click(); page.permissions[0].resolve(stream); await settlePage();
+    page.nodes.get('qrd-clear').click(); waiting.resolve(); await settlePage();
+    check('lifecycle: Clear during camera ' + waitAt + ' startup prevents scanning', stream.track.stopped === 1 && page.nodes.get('qrd-camera-view').hidden && page.decodeCalls === 0);
+  }
+  {
+    const decode = deferred(), page = pageFixture({ decode }), stream = cameraStream();
+    page.nodes.get('qrd-camera').click(); page.permissions[0].resolve(stream); await settlePage();
+    page.nodes.get('qrd-clear').click(); decode.reject(new Error('decode failed')); await settlePage();
+    check('lifecycle: old camera failure does not schedule another frame after Clear', stream.track.stopped === 1 && page.timers.size === 0 && page.nodes.get('qrd-status').textContent === '');
+  }
+  {
+    const page = pageFixture(); page.nodes.get('qrd-camera').click(); page.nodes.get('qrd-camera').click();
+    eq('lifecycle: only one pending camera permission request', page.permissions.length, 1);
+  }
+  {
+    const reader = deferred(), page = pageFixture({ reader }); page.nodes.get('qrd-file').files = [new Blob(['fixture'], { type: 'image/png' })]; page.nodes.get('qrd-file').dispatch('change');
+    await settlePage(); page.nodes.get('qrd-clear').click(); reader.resolve(); await settlePage();
+    check('lifecycle: cancelled image load releases its object URL', page.revoked.length === 1 && page.decodeCalls === 0);
+  }
+}
+
+// A fresh input owns the visible result even when reading it fails.
+for (const failure of ['not-image', 'bad-image', 'decode-error', 'url-fetch', 'url-scheme', 'camera-denied']) {
+  const opts = { results: [{ isValid: true, format: 'QRCode', bytes: new TextEncoder().encode('previous result') }] };
+  const page = pageFixture(opts), file = page.nodes.get('qrd-file');
+  file.files = [new Blob(['fixture'], { type: 'image/png' })]; file.dispatch('change'); await settlePage();
+  check('lifecycle: ' + failure + ' fixture first renders a successful result', !page.nodes.get('qrd-result-area').hidden && page.nodes.get('qrd-results').textContent.includes('previous result'));
+  if (failure === 'camera-denied') {
+    page.nodes.get('qrd-camera').click(); page.permissions[0].reject({ name: 'NotAllowedError' });
+  } else if (failure === 'url-scheme') {
+    page.url('data:image/png,abc'); page.nodes.get('qrd-url-decode').click();
+  } else if (failure === 'url-fetch') {
+    page.url(); page.nodes.get('qrd-url-decode').click(); page.requests[0].reject(new Error('offline'));
+  } else {
+    if (failure === 'bad-image') opts.imageFails = true;
+    if (failure === 'decode-error') { opts.decode = deferred(); opts.decode.reject(new Error('decode failed')); }
+    file.files = [new Blob(['fixture'], { type: failure === 'not-image' ? 'text/plain' : 'image/png' })]; file.dispatch('change');
+  }
+  await settlePage();
+  check('lifecycle: ' + failure + ' removes the previous result and its copy buttons', page.nodes.get('qrd-result-area').hidden && page.nodes.get('qrd-results').children.length === 0 && /error/.test(page.nodes.get('qrd-status').className));
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
