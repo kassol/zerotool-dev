@@ -24,6 +24,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'aes-encrypt-decrypt': 'convert',
   'color-palette-generator': 'generate',
   'qr-code-generator': 'generate',
+  'wifi-qr-code-generator': 'generate',
   'glassmorphism-generator': 'generate',
   'color-shades-generator': 'generate',
   'css-clip-path-generator': 'generate',

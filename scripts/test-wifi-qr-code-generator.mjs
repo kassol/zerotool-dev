@@ -8,6 +8,7 @@
 //        zxing-cpp); src/data/persistence.ts; src/content/tools/wifi-qr-code-generator/*.mdx
 //        (`{/* wqg-check: … */}` annotations)
 //        and ToolLayout.astro's real keyboard handler; the full page runs in a DOM stand-in
+//        Astro's installed compiler and esbuild also check the generated component JavaScript.
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -23,6 +24,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import sharp from 'sharp';
 
@@ -347,7 +349,7 @@ const keys = (o) => Object.keys(o).sort().join(',');
 const ph = (s) => (s.match(/\{\w+\}/g) || []).sort().join(',');
 for (const l of ['zh', 'ja', 'ko']) {
   eq('STRINGS keys ' + l, keys(STRINGS[l]), keys(STRINGS.en));
-  eq('placeholders ' + l, Object.keys(STRINGS.en).filter((k) => ph(STRINGS.en[k]) !== ph(STRINGS[l][k] || '')), []);
+  eq('placeholders ' + l, Object.keys(STRINGS.en).filter((k) => typeof STRINGS.en[k] === 'string' && ph(STRINGS.en[k]) !== ph(STRINGS[l][k] || '')), []);
 }
 const script = source.slice(source.indexOf('<script is:inline define:vars'));
 const usedKeys = [...script.matchAll(/\bt\.(\w+)/g)].map((m) => m[1]).concat([...engine.matchAll(/key: '(\w+)'|'(err\w+|field\w+)'/g)].map((m) => m[1] || m[2]));
@@ -360,13 +362,13 @@ check('persistence policy stays disabled (Wi-Fi password)', /'wifi-qr-code-gener
 // Browser boundaries only: DOM, scheduled frames, clipboard and a deferred canvas.toBlob.
 // Card text drawing is not simulated; its QR pixels come from the real paint function.
 // Every exported PNG is encoded by sharp and independently decoded by ZXing.
-function wifiPage() {
-  const nodes = new Map(), pendingBlobs = [], downloads = [], copied = [], urls = new Map(), timers = new Map(), frames = new Map();
+function wifiPage({ width = 300, height = 300, dpr = 1 } = {}) {
+  const nodes = new Map(), pendingBlobs = [], downloads = [], copied = [], urls = new Map(), timers = new Map(), frames = new Map(), observers = [];
   let sequence = 0;
   const document = { activeElement: null, listeners: {} };
   class Element {
     constructor(id = '', tag = 'div') {
-      Object.assign(this, { id, tagName: tag.toUpperCase(), type: 'text', value: '', checked: false, hidden: false, disabled: false, style: {}, attributes: {}, listeners: {}, children: [], className: '', parentNode: { clientWidth: 300 } });
+      Object.assign(this, { id, tagName: tag.toUpperCase(), type: 'text', value: '', checked: false, hidden: false, disabled: false, style: {}, attributes: {}, listeners: {}, children: [], className: '', parentNode: { clientWidth: width, clientHeight: height } });
     }
     set textContent(value) { this.text = String(value); this.children = []; }
     get textContent() { return (this.text || '') + this.children.map((child) => child.textContent).join(''); }
@@ -417,7 +419,8 @@ function wifiPage() {
     navigator: { clipboard: { async writeText(text) { copied.push(text); } } },
     setTimeout(fn, ms) { const id = ++sequence; timers.set(id, { fn, ms }); return id; }, clearTimeout(id) { timers.delete(id); },
     requestAnimationFrame(fn) { const id = ++sequence; frames.set(id, fn); return id; }, cancelAnimationFrame(id) { frames.delete(id); },
-    addEventListener() {}, devicePixelRatio: 1, ztPersist: { clear() {} }, _slug: 'wifi-qr-code-generator',
+    ResizeObserver: class { constructor(fn) { observers.push(fn); } observe() {} },
+    addEventListener() {}, devicePixelRatio: dpr, ztPersist: { clear() {} }, _slug: 'wifi-qr-code-generator',
   };
   sandbox.window = sandbox;
   const context = vm.createContext(sandbox);
@@ -432,6 +435,7 @@ function wifiPage() {
   }
   return {
     get, downloads, copied, pendingBlobs, frames, timers, flush,
+    resize(w, h, ratio = dpr) { Object.assign(get('wqg-canvas').parentNode, { clientWidth: w, clientHeight: h }); sandbox.devicePixelRatio = ratio; observers.forEach((fn) => fn()); },
     input(id, value, run = true) { get(id).value = value; get('wqg').dispatch('input', { target: get(id) }); if (run) flush(); },
     shortcut(mod = 'ctrlKey', inside = true, run = true) { document.activeElement = inside ? get('wqg-ssid') : new Element('outside'); document.dispatch('keydown', { [mod]: true, key: 'l' }); if (run) flush(); },
     async release() {
@@ -512,6 +516,23 @@ for (const mod of ['ctrlKey', 'metaKey']) {
   eq(mod + ': shortcut outside the tool schedules no redraw', [...outside.timers.values()].filter((timer) => timer.ms === 0).length, 0);
 }
 
+// Preview rendering follows the available width AND height, without changing export size.
+{
+  const page = wifiPage({ width: 900, height: 480 });
+  for (const [width, height, dpr, pixels, css] of [[900, 480, 1, 444, 444], [330, 280, 3, 777, 259], [900, 210, 2, 370, 185]]) {
+    page.resize(width, height, dpr);
+    const canvas = page.get('wqg-canvas'), name = width + 'x' + height + ' DPR ' + dpr;
+    eq(name + ': whole-pixel square canvas', [canvas.width, canvas.height], [pixels, pixels]);
+    eq(name + ': CSS dimensions fit the available preview', [canvas.style.width, canvas.style.height], [css + 'px', css + 'px']);
+    eq(name + ': preview independently decodes', (await decode(canvas.pixels, canvas.width, canvas.height))?.text, 'WIFI:T:WPA;S:Guest-WiFi;P:welcome-2026;;');
+  }
+  page.get('wqg-png').click(); await page.release();
+  const meta = await sharp(Buffer.from(await page.downloads[0].blob.arrayBuffer())).metadata();
+  eq('resizing the preview leaves 1024 target export at 999px', [meta.width, meta.height], [999, 999]);
+  page.shortcut(); page.resize(1200, 700, 1);
+  check('ResizeObserver after clear does not revive the preview', page.get('wqg-canvas').hidden && page.get('wqg-canvas').width === 0);
+}
+
 // ---------- 8. tool page claims (`{/* wqg-check: {...} */}` in the mdx) ----------
 const mdxDir = join(root, 'src/content/tools/wifi-qr-code-generator');
 let annotated = 0;
@@ -532,6 +553,48 @@ for (const f of readdirSync(mdxDir)) {
   }
 }
 check('tool pages carry checked examples', annotated >= 12, annotated);
+
+// ---------- v2 page layout ----------
+const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script src='));
+check('generate layout registered', /'wifi-qr-code-generator': 'generate'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('tool root directly contains the body and shared control rail', /^<div class="wqg" id="wqg">\s*<div class="wqg-body">\s*<div class="wqg-rail zt-rail">/.test(template));
+const ids = [...template.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
+eq('template IDs are unique', new Set(ids).size, ids.length);
+check('all six export and copy actions remain', ['png', 'svg', 'copy', 'card-png', 'card-svg', 'card-print'].every((key) => ids.includes('wqg-' + key)));
+check('main inputs and exports precede secondary options', ['ssid', 'password', 'sec', 'png', 'svg', 'copy'].every((key) => template.indexOf('id="wqg-' + key + '"') < template.indexOf('wqg-settings')));
+check('options, printable card controls and encoded text start collapsed', [...template.matchAll(/<details\b[^>]*>/g)].length === 3 && !/<details\b[^>]*\sopen(?:\s|>)/.test(template));
+check('warnings stay outside the collapsed rail', /<ul id="wqg-warn"/.test(template.slice(template.lastIndexOf('</details>'))));
+check('preview choices use one native radio group with QR selected', /id="wqg-view-qr" type="radio" name="wqg-view" value="qr" checked/.test(template) && /id="wqg-view-card" type="radio" name="wqg-view" value="card" \/>/.test(template));
+check('tips are excluded from serialized client strings', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = L/.test(source) && /define:vars=\{\{ t: CLIENT_T, pageLang: lang \}\}/.test(source));
+check('no runtime i18n rewrite', !source.includes('data-i18n'));
+check('desktop rail stays within the generate width range', /grid-template-columns: clamp\(270px, 26vw, 320px\) minmax\(0, 1fr\)/.test(source));
+check('status and warnings have fixed scrollable space', ['status', 'warn'].every((key) => new RegExp('\\.wqg-' + key + ' \\{[^}]*height: 4\\.5em;[^}]*overflow: auto').test(source)));
+check('card scrolls within the available preview height', /\.wqg-preview, \.wqg-card-view \{ flex: 1 1 0;[^}]*min-height: 0/.test(source) && /\.wqg-card-view \{ display: none; overflow: auto/.test(source));
+check('responsive breakpoints are 860 and 640px', /@media \(max-width: 860px\)/.test(source) && /@media \(max-width: 640px\)/.test(source) && !/max-width: 760px/.test(source));
+const tipKeys = ['ssid', 'password', 'security', 'export', 'ecl', 'size', 'colors', 'card'];
+eq('eight distinct control tips', [...template.matchAll(/<Toggletip id="wqg-tip-([^" ]+)"/g)].map((m) => m[1]).sort(), [...tipKeys].sort());
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq(lang + ' tip keys', Object.keys(STRINGS[lang].tips).sort(), [...tipKeys].sort());
+  check(lang + ' tips have content', tipKeys.every((key) => typeof STRINGS[lang].tips[key] === 'string' && STRINGS[lang].tips[key].length > 20));
+  check(lang + ' copy failure names the collapsed encoded text section', STRINGS[lang].copyFailed.includes(STRINGS[lang].encoded));
+  const mdx = readFileSync(join(root, 'src/content/tools/wifi-qr-code-generator', lang + '.mdx'), 'utf8');
+  const steps = /^steps:\n([\s\S]*?)(?=^\S)/m.exec(mdx)?.[1].match(/^  - .+$/gm) || [];
+  eq(lang + ' six usage steps', steps.length, 6);
+  check(lang + ' steps fit content limits', steps.every((step) => JSON.parse(step.slice(4)).length <= 280) && steps.reduce((n, step) => n + JSON.parse(step.slice(4)).length, 0) <= 1200);
+  check(lang + ' usage heading removed', !/^## (?:How to Make a WiFi QR Code|怎么生成 WiFi 二维码|WiFi QR コードの作り方|와이파이 QR코드 만드는 법)$/m.test(mdx));
+  check(lang + ' limits retained', /^## (?:Limits|限制|制限|제한)$/m.test(mdx));
+}
+{
+  const require = createRequire(import.meta.url);
+  const { transform: compileAstro } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: checkJs } = await import('esbuild');
+  let error = null;
+  try {
+    const result = await compileAstro(source, { filename: 'WifiQrCodeGeneratorTool.astro' });
+    await checkJs(result.code, { loader: 'ts', format: 'esm' });
+  } catch (e) { error = e.message; }
+  eq('Astro generated component JavaScript is valid', error, null);
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
