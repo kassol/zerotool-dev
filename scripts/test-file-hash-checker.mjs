@@ -460,7 +460,7 @@ if (E) {
     const STRINGS = new Function('return ' + componentSrc.slice(s0 + 'const STRINGS = '.length, s1 + 1))();
     const keys = Object.keys(STRINGS.en).sort();
     for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' has the same keys as en', Object.keys(STRINGS[lang]).sort(), keys);
-    const ph = (v) => JSON.stringify([...new Set((Array.isArray(v) ? v.join('|') : v).match(/\{[a-z]+\}/gi) || [])].sort());
+    const ph = (v) => JSON.stringify([...new Set((typeof v === 'string' ? v : JSON.stringify(v)).match(/\{[a-z]+\}/gi) || [])].sort());
     for (const lang of ['zh', 'ja', 'ko']) {
       for (const k of keys) check(lang + '.' + k + ' placeholders', ph(STRINGS[lang][k]) === ph(STRINGS.en[k]), ph(STRINGS[lang][k]) + ' vs ' + ph(STRINGS.en[k]));
     }
@@ -475,6 +475,61 @@ for (const [name, src] of [['worker', workerSrc], ['component', componentSrc]]) 
 }
 check('worker imports only the vendored hash-wasm', (workerSrc.match(/importScripts\(/g) || []).length === 1);
 check('component never reads a whole file into memory', !/\.arrayBuffer\(\)/.test(componentSrc));
+
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: analyze) ----------
+{
+  const markup = componentSrc.slice(componentSrc.indexOf('\n---\n', 4) + 5, componentSrc.indexOf('<script'));
+  const styles = componentSrc.slice(componentSrc.indexOf('<style'));
+  const stringsAt = componentSrc.indexOf('const STRINGS = '), stringsEnd = componentSrc.indexOf('} as const;', stringsAt);
+  const strings = new Function('return ' + componentSrc.slice(stringsAt + 16, stringsEnd + 1))();
+  check('v2 root directly receives shell height', /^\s*<div class="fhc-wrap" id="fhc-wrap">/.test(markup) && /\.fhc-wrap \{[^}]*min-height: 0/.test(styles));
+  check('v2 empty import uses the shared analyze class', markup.includes('class="fhc-drop zt-empty-drop"'));
+  check('v2 input, actions and reserved status precede result workspace', markup.indexOf('class="fhc-bar"') < markup.indexOf('class="fhc-verify"') && markup.indexOf('id="fhc-tools"') < markup.indexOf('id="fhc-status"') && markup.indexOf('id="fhc-status"') < markup.indexOf('class="fhc-workspace"'));
+  check('v2 result list has a positive-height parent and scrolls internally', /\.fhc-workspace \{[^}]*min-height: 300px/.test(styles) && /\.fhc-list \{[^}]*flex: 1 1 0;[^}]*overflow: auto/.test(styles));
+  check('v2 status reserves height even when empty', /\.fhc-status \{[^}]*height: 2\.9em;[^}]*overflow: auto/.test(styles) && !/\.fhc-status:empty/.test(styles));
+  check('v2 phone workspace has bounded height and dense options remain touchable', /max-width: 860px/.test(styles) && /height: 28rem/.test(styles) && /\.fhc-algo \{ min-height: 44px/.test(styles));
+  check('v2 optional expected input can be expanded without hiding verification results', /<details class="fhc-verify" id="fhc-verify-panel">/.test(markup) && markup.indexOf('id="fhc-verify-out"') > markup.indexOf('</details>'));
+  check('v2 tips and expected hint are excluded from client strings', componentSrc.includes('const { tips: TIPS, expectedHint, ...CLIENT_T } = T;') && componentSrc.includes('define:vars={{ S: CLIENT_T, pageLang: lang }}'));
+  const tipKeys = ['algorithms', 'files', 'expected', 'list', 'upper', 'clear', 'export'];
+  eq('v2 seven control tips are rendered once', [...markup.matchAll(/<Toggletip id="fhc-tip-([a-z]+)"/g)].map(m => m[1]), tipKeys);
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  eq('v2 control IDs stay unique', ids.length, new Set(ids).size);
+  for (const id of ['fhc-file','fhc-dir','fhc-expected','fhc-list-file','fhc-pick-dir','fhc-open-list','fhc-upper','fhc-out-algo','fhc-out-copy','fhc-out-dl','fhc-stop','fhc-clear','fhc-list','fhc-verify-out']) check('v2 retains control ' + id, ids.includes(id));
+  check('v2 analyze registration', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'file-hash-checker': 'analyze'"));
+  const unchanged = {
+  "en": {
+    "front": "79e115a3550197114167d0cc67eabb5b57f7199107aa6c020127c6195642fb7c",
+    "body": "19af8dfd741bb183b1b136763c153a6eb3be1ab6c0cc525d80f12e42719ee0af"
+  },
+  "zh": {
+    "front": "d1f4c44258cc589f06c8fdad2c4b7442cd5df7ea50a978e108789cc57269dd84",
+    "body": "613ed4941698f9e1c2e91fc71a46071d60ec9cddd993012ca83d8d07b8c25aa2"
+  },
+  "ja": {
+    "front": "9722797cfb2358f3b5832650c7617eefdc29128e6bdc391d14cee563823715c4",
+    "body": "863c984989a4faca7532efb50466df5ddefa42fe3881fcb3c36c38ef761d9ee6"
+  },
+  "ko": {
+    "front": "9f0280c19083b21a46f5825a50aecd02175e4b9837028e09c1ebce7baf5de53f",
+    "body": "be33bd465af9846c151c408ab0ef4f62634a679099ee528357c3cbeaf3846ee5"
+  }
+};
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  for (const lang of ['en','zh','ja','ko']) {
+    eq(lang + ' v2 tip keys match', Object.keys(strings[lang].tips).sort(), [...tipKeys].sort());
+    for (const [name,text] of Object.entries(strings[lang].tips)) check(lang + ' v2 plain tip ' + name, typeof text === 'string' && text.trim().length > 0 && !/[<>]|https?:/.test(text));
+    const mdx = readFileSync(join(root, 'src/content/tools/file-hash-checker', lang + '.mdx'), 'utf8');
+    const [front,body] = mdx.split('\n---\n');
+    const stepsText = front.slice(front.indexOf('\nsteps:\n') + 8, front.indexOf('\nfaqItems:'));
+    const steps = stepsText.split('\n').filter(line => line.startsWith('  - ')).map(line => JSON.parse(line.slice(4)));
+    eq(lang + ' v2 has five steps', steps.length, 5);
+    check(lang + ' v2 steps fit plain-text limits', steps.every(step => step.length <= 280 && !/[<>]/.test(step)) && steps.join('').length <= 1200);
+    eq(lang + ' v2 preserves metadata and FAQ', hash(front.replace(/\nsteps:\n[\s\S]*?(?=\nfaqItems:)/, '')), unchanged[lang].front);
+    eq(lang + ' v2 preserves body outside Usage', hash(body), unchanged[lang].body);
+    check(lang + ' v2 removes only the usage heading', !/^## (How to Use|使用方法|使い方|사용 방법)$/m.test(body));
+    check(lang + ' v2 retains Limits', /^## (Limits|限制|制限|한계)$/m.test(body));
+  }
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
