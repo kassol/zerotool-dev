@@ -23,6 +23,9 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import yaml from 'js-yaml';
+import { createRequire } from 'node:module';
+const { transform } = createRequire(import.meta.resolve('astro/package.json'))('@astrojs/compiler');
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CubicBezierGeneratorTool.astro'), 'utf8');
@@ -96,7 +99,7 @@ function loadCubicPage({ lang = 'en', clipboardMode = 'success', execResult = fa
     });
   }
   class Element {
-    constructor(tag = 'div') { Object.assign(this, { tagName: tag.toUpperCase(), id: '', type: tag === 'input' ? 'text' : '', value: '', defaultValue: '', checked: false, disabled: false, style: {}, dataset: {}, attrs: {}, children: [], listeners: {}, className: '', clientWidth: 300, clientHeight: 300, offsetWidth: 300, offsetHeight: 300, parentElement: { clientWidth: 600 } }); }
+    constructor(tag = 'div') { Object.assign(this, { tagName: tag.toUpperCase(), id: '', type: tag === 'input' ? 'text' : '', value: '', defaultValue: '', checked: false, disabled: false, scrollTop: 0, style: {}, dataset: {}, attrs: {}, children: [], listeners: {}, className: '', clientWidth: 300, clientHeight: 300, offsetWidth: 300, offsetHeight: 300, parentElement: { clientWidth: 600 } }); }
     set textContent(v) { this.text = String(v); this.children = []; }
     get textContent() { return (this.text || '') + this.children.map(c => c.textContent).join(''); }
     get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className += ' ' + c; }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); }, toggle(c, value) { const on = value ?? !this.contains(c); on ? this.add(c) : this.remove(c); return on; } }; }
@@ -112,7 +115,11 @@ function loadCubicPage({ lang = 'en', clipboardMode = 'success', execResult = fa
     appendChild(el) { this.children.push(el); return el; }
     append(...children) { this.children.push(...children); }
     removeChild(el) { this.children = this.children.filter(child => child !== el); }
-    remove() {} select() {} setPointerCapture() {}
+    getBoundingClientRect() { return { top: this.id === 'cbg-canvas' ? 416 : 100, left: 24, width: 300, height: 300 }; }
+    setPointerCapture(id) { this.pointerId = id; }
+    hasPointerCapture(id) { return this.pointerId === id; }
+    releasePointerCapture() { this.pointerId = null; }
+    remove() {} select() {}
   }
   const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
   for (const match of markup.matchAll(/<([a-z][\w-]*)\b([^>]*?)>/g)) {
@@ -191,6 +198,46 @@ check('failed repeat copy removes previous success feedback', !retry.get('cbg-co
 retry.ctx.navigator.clipboard.writeText = () => Promise.resolve();
 retry.get('cbg-copy').click(); await Promise.resolve();
 check('successful retry clears stale failure feedback', retry.get('cbg-copy').classList.contains('copied') && !retry.get('cbg-status').className.includes('error'));
+
+// ---------- v2 page layout ----------
+const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+const styles = source.match(/<style is:global>([\s\S]*?)<\/style>/)[1];
+const tipStrings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?);\nconst L =/)[1]);
+const tipIds = [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]);
+check('v2 generate registry', /'cubic-bezier-generator':\s*'generate'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 direct root with shared control rail', /^\s*<div\s+class="cbg-wrap"/.test(markup) && /class="cbg-rail zt-rail"/.test(markup));
+check('v2 primary input and operations before preview', ['cbg-p1x', 'cbg-p2y', 'cbg-play', 'cbg-reset', 'cbg-copy'].every(id => markup.indexOf('id="' + id + '"') < markup.indexOf('id="cbg-canvas"')));
+check('v2 retains all 12 presets and three output formats', buttons.length === 12 && [...markup.matchAll(/data-fmt="(css|scss|tailwind)"/g)].length === 3);
+check('v2 tips outside runtime serialization', !/TIPS|STRINGS/.test(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1]) && !/data-[\w-]+=\{TIPS/.test(markup));
+check('v2 unique tip anchors', tipIds.length === 7 && new Set(tipIds).size === tipIds.length);
+check('v2 flexible 270–320 rail and zero root minimum', /grid-template-columns:\s*clamp\(270px, 26vw, 320px\) minmax\(0, 1fr\)/.test(styles) && /\.cbg-wrap\s*\{[^}]*min-height:\s*0/.test(styles));
+check('v2 status reserves space even with none class', /#cbg-status\s*\{[^}]*display:\s*block;[^}]*height:\s*3.8em/.test(styles));
+check('v2 keyboard-reachable fixed-height output scrolls', /<pre class="cbg-output-pre" tabindex="0" role="region"/.test(markup) && /\.cbg-output-pre\s*\{[^}]*height:\s*11rem;[^}]*overflow:\s*auto/s.test(styles));
+check('v2 square SVG keeps original viewBox and has a keyboard-scrollable viewport', /viewBox="0 0 320 320"/.test(markup) && /class="cbg-canvas-wrap" tabindex="0" role="region"/.test(markup) && /\.cbg-canvas-wrap\s*\{[^}]*overflow:\s*auto/.test(styles));
+check('v2 canvas leaves scrollable room for Y=2 and Y=-2', /padding-top:\s*calc\(var\(--cbg-canvas-size\) \+ 1rem\)/.test(styles) && /padding-bottom:\s*calc\(var\(--cbg-canvas-size\) \* 2 \+ 1rem\)/.test(styles));
+check('v2 860 stacking and 640 touch targets', /max-width:\s*860px/.test(styles) && /max-width:\s*640px/.test(styles) && /\.cbg-num, \.cbg-duration, \.cbg-format, \.cbg-preset\s*\{\s*min-height:\s*44px/.test(styles));
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const tips = tipStrings[lang].tips;
+  check(lang + ' v2 same six nonempty fact keys', Object.keys(tips).join('|') === 'presets|points|curve|playback|format|reset' && Object.values(tips).every(t => typeof t === 'string' && t.trim()));
+  const mdx = readFileSync(join(root, 'src/content/tools/cubic-bezier-generator', lang + '.mdx'), 'utf8');
+  const meta = yaml.load(mdx.match(/^---\n([\s\S]*?)\n---/)[1]);
+  check(lang + ' v2 five bounded steps', meta.steps.length === 5 && meta.steps.every(s => typeof s === 'string' && s.length <= 280) && meta.steps.join('').length <= 1200);
+  check(lang + ' v2 FAQ and SEO remain', meta.faqItems.length === 5 && !!meta.seoTitle && !!meta.seoDescription);
+  check(lang + ' v2 preset references remain', /m2.material.io/.test(mdx) && /m3.material.io/.test(mdx) && /developer.apple.com/.test(mdx) && /tailwindcss.com/.test(mdx));
+}
+const positioned = loadCubicPage();
+eq('v2 initial SVG centered by scrolling only its viewport', positioned.wrap.querySelector('.cbg-canvas-wrap').scrollTop, 316);
+eq('v2 initial positioning does not scroll the page', positioned.document.body.scrollTop, 0);
+for (const y of [-2, 2]) {
+  const handle = positioned.get('cbg-h1');
+  handle.dispatch('pointerdown', { pointerId: 1 });
+  handle.dispatch('pointermove', { pointerId: 1, clientX: 24 + 300 * 0.25, clientY: 416 + 300 * (1 - y) });
+  handle.dispatch('pointerup', { pointerId: 1 });
+  eq('v2 original drag mapping keeps extreme ' + y, positioned.get('cbg-output-text').textContent, 'transition-timing-function: cubic-bezier(0.25, ' + y + ', 0.58, 1);');
+  eq('v2 original SVG control point agrees at ' + y, positioned.get('cbg-h1').getAttribute('cy'), String(320 - 320 * y));
+}
+const compiled = await transform(source, { filename: 'CubicBezierGeneratorTool.astro' });
+check('v2 Astro compiles and CSS global syntax resolves', !compiled.diagnostics.some(d => d.severity === 1) && compiled.css.length > 0 && compiled.css.every(css => !css.includes(':global(')));
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

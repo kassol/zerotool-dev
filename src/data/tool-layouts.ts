@@ -27,6 +27,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'glassmorphism-generator': 'generate',
   'color-shades-generator': 'generate',
   'css-clip-path-generator': 'generate',
+  'cubic-bezier-generator': 'generate',
   'totp-generator': 'generate',
   'text-to-ascii-art': 'generate',
   'pkce-generator': 'generate',
