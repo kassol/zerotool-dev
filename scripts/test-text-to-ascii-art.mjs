@@ -4,7 +4,8 @@
 //        the `engine:start` / `engine:end` markers, the frontmatter STRINGS table and FONT_NAMES),
 //        public/figlet-fonts/*.flf (the fonts the page loads),
 //        scripts/test-text-to-ascii-art.fixtures.json (figlet 2.2.5 output hashes),
-//        src/content/tools/text-to-ascii-art/{en,zh,ja,ko}.mdx (annotated examples), package.json
+//        src/content/tools/text-to-ascii-art/{en,zh,ja,ko}.mdx (annotated examples), package.json,
+//        src/layouts/ToolLayout.astro (real Ctrl/Cmd+L handler in PNG export regression)
 // Write: stdout only (test results). With --regenerate only: the fixtures file, plus temporary
 //        files under os.tmpdir() that are removed afterwards.
 // Exit:  0 if all PASS, 1 if any FAIL
@@ -37,6 +38,7 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import vm from 'node:vm';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -332,6 +334,155 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': formats for all copy options', ['plain', 'markdown', 'hash', 'slash', 'heredoc'].every((f) => typeof s.formats[f] === 'string'));
 }
 eq('fill', E.fill('{a} and {b}', { a: 1, b: 'x' }), '1 and x');
+
+// ---------- PNG export while the page changes ----------
+// Run the complete page script and its real FIGlet renderer against local font files.
+// Canvas records the page's drawing calls; only the browser's toBlob completion is held.
+// The PNG fixture is a valid opaque payload at this API boundary, not a substitute renderer.
+// Actual browser font rasterization is covered by the browser acceptance flow.
+function asciiExportPage() {
+  const nodes = new Map(), pendingBlobs = [], downloads = [], urls = new Map(), revoked = [], timers = new Map(), listeners = {};
+  const heldFonts = new Map();
+  let sequence = 0;
+  const document = { activeElement: null };
+  class Element {
+    constructor(id = '', tag = 'div') {
+      Object.assign(this, { id, tagName: tag.toUpperCase(), value: '', checked: false, hidden: false, disabled: false, textContent: '', className: '', children: [], listeners: {} });
+    }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    dispatch(type) { for (const fn of this.listeners[type] || []) fn.call(this, { target: this }); }
+    click() { if (this.disabled) return; if (this.tagName === 'A') downloads.push({ name: this.download, blob: urls.get(this.href), url: this.href }); this.dispatch('click'); }
+    appendChild(child) { this.children.push(child); return child; }
+    remove() {}
+    setAttribute() {}
+    contains(element) { return [...nodes.values()].includes(element); }
+    querySelectorAll() { return [get('taa-input')]; }
+  }
+  class Canvas {
+    constructor() {
+      this.width = this.height = 0;
+      this.drawn = [];
+      this.context = {
+        font: '', fillStyle: '', textBaseline: '',
+        measureText: () => ({ width: 8 }),
+        scale: (x, y) => this.drawn.push(['scale', x, y]),
+        fillRect: (...rect) => this.drawn.push(['background', ...rect, this.context.fillStyle]),
+        fillText: (text, x, y) => this.drawn.push(['glyph', text, x, y, this.context.fillStyle, this.context.font, this.context.textBaseline]),
+      };
+    }
+    getContext() { return this.context; }
+    toBlob(callback, mime) { pendingBlobs.push({ callback, mime, canvas: this, width: this.width, height: this.height, drawn: this.drawn.map((call) => [...call]) }); }
+  }
+  const get = (id) => { if (!nodes.has(id)) nodes.set(id, new Element(id)); return nodes.get(id); };
+  Object.assign(document, {
+    getElementById: get, body: new Element('body'),
+    createElement: (tag) => tag === 'canvas' ? new Canvas() : new Element('', tag), createTextNode: (text) => ({ textContent: text }),
+    querySelector: (selector) => selector === '.tool-widget' ? get('widget') : null,
+    addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
+  });
+  for (const [id, value] of Object.entries({ input: 'Hello World', font: 'Standard', layout: 'default', width: '0', format: 'plain' })) get('taa-' + id).value = value;
+  get('taa-trim').checked = true; get('taa-gallery').hidden = true;
+  const sandbox = {
+    console, Blob, document, S: STRINGS.en, FONT_NAMES,
+    fetch(url) {
+      const name = decodeURIComponent(url.slice('/figlet-fonts/'.length, -4));
+      const response = () => ({ ok: true, text: () => Promise.resolve(readFileSync(join(fontDir, name + '.flf'), 'utf8')) });
+      if (heldFonts.has(name)) return new Promise((resolve) => heldFonts.set(name, () => resolve(response())));
+      return Promise.resolve(response());
+    },
+    URL: { createObjectURL(blob) { const url = 'blob:ascii-' + (++sequence); urls.set(url, blob); return url; }, revokeObjectURL(url) { revoked.push(url); urls.delete(url); } },
+    getComputedStyle: () => ({ fontFamily: 'monospace', color: '#111111', backgroundColor: '#ffffff' }),
+    setTimeout(fn, ms) { const id = ++sequence; timers.set(id, { fn, ms }); return id; }, clearTimeout(id) { timers.delete(id); },
+    navigator: { clipboard: { writeText: () => Promise.resolve() } }, ztPersist: { clear() {} }, _slug: 'text-to-ascii-art',
+  };
+  sandbox.window = sandbox;
+  const ctx = vm.createContext(sandbox);
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const start = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
+  vm.runInContext(layout.slice(start, layout.indexOf('// ── Copy button visual feedback', start)), ctx);
+  const pageScript = /<script is:inline define:vars=[^>]*>([\s\S]*?)<\/script>/.exec(source);
+  vm.runInContext(pageScript[1], ctx, { filename: 'TextToAsciiArtTool.astro', lineOffset: source.slice(0, pageScript.index).split('\n').length - 1 });
+  function flush(ms) { for (const [id, timer] of [...timers]) if (timer.ms === ms) { timers.delete(id); timer.fn(); } }
+  return {
+    get, pendingBlobs, downloads, revoked,
+    text(value) { get('taa-input').value = value; get('taa-input').dispatch('input'); flush(120); },
+    font(value) { get('taa-font').value = value; get('taa-font').dispatch('change'); },
+    clearShortcut() { document.activeElement = get('taa-input'); for (const fn of listeners.keydown || []) fn({ ctrlKey: true, key: 'l', preventDefault() {} }); flush(0); },
+    holdFont(name) { heldFonts.set(name, null); }, releaseFont(name) { const done = heldFonts.get(name); heldFonts.delete(name); done(); },
+    cleanup() { flush(1000); },
+    release(job, blob) { try { job.callback(blob); return null; } catch (error) { return String(error); } },
+  };
+}
+async function asciiPageSettles(predicate) {
+  // Font responses are local resolved promises: drain their microtasks without running
+  // the held toBlob callbacks or unrelated debounce/cleanup timers.
+  for (let i = 0; i < 20 && !predicate(); i++) await Promise.resolve();
+  return predicate();
+}
+const pngFixture = () => new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=', 'base64')], { type: 'image/png' });
+const initialArt = E.formatOutput(E.renderFiglet(fonts.Standard, 'Hello World', {}), 'plain', true);
+for (const mutation of ['text', 'font', 'empty', 'shortcut', 'invalid']) {
+  const page = asciiExportPage();
+  check('PNG ' + mutation + ': real initial render settles', await asciiPageSettles(() => page.get('taa-output').textContent === initialArt));
+  page.get('taa-download-png').click();
+  eq('PNG ' + mutation + ': one encode requested', page.pendingBlobs.length, 1);
+  const job = page.pendingBlobs.shift(), image = pngFixture();
+  eq('PNG ' + mutation + ': browser encoder receives PNG MIME', job.mime, 'image/png');
+  eq('PNG ' + mutation + ': drawing uses the output at click time', job.drawn.filter((call) => call[0] === 'glyph').map((call) => call[1]).join(''), initialArt.replace(/[ \n]/g, ''));
+  check('PNG ' + mutation + ': canvas size is nonzero', job.width > 0 && job.height > 0);
+  if (mutation === 'text') {
+    page.text('New Text');
+    check('PNG text: new result finishes before old encoding', await asciiPageSettles(() => page.get('taa-output').textContent === E.formatOutput(E.renderFiglet(fonts.Standard, 'New Text', {}), 'plain', true)));
+  } else if (mutation === 'font') {
+    page.font('Big');
+    check('PNG font: new font finishes before old encoding', await asciiPageSettles(() => page.get('taa-output').textContent === E.formatOutput(E.renderFiglet(fonts.Big, 'Hello World', {}), 'plain', true)));
+  } else if (mutation === 'shortcut') page.clearShortcut();
+  else page.text(mutation === 'empty' ? '' : 'X'.repeat(E.MAX_INPUT + 1));
+  const outputAfterEdit = page.get('taa-output').textContent;
+  eq('PNG ' + mutation + ': page edits do not redraw the captured canvas', job.canvas.drawn, job.drawn);
+  eq('PNG ' + mutation + ': late completion does not throw', page.release(job, image), null);
+  eq('PNG ' + mutation + ': download keeps the original text and font name', page.downloads.map((d) => d.name), ['hello-world-standard.png']);
+  check('PNG ' + mutation + ': saves exactly the encoder payload', page.downloads[0]?.blob === image);
+  eq('PNG ' + mutation + ': completion leaves the current output alone', page.get('taa-output').textContent, outputAfterEdit);
+  page.cleanup();
+  eq('PNG ' + mutation + ': download URL is revoked after settlement', page.revoked.length, 1);
+}
+{
+  const page = asciiExportPage();
+  await asciiPageSettles(() => page.get('taa-output').textContent === initialArt);
+  page.get('taa-download-png').click(); const first = page.pendingBlobs.shift(), firstImage = pngFixture();
+  page.text('Second');
+  check('second PNG: changed text settles', await asciiPageSettles(() => page.get('taa-output').textContent === E.formatOutput(E.renderFiglet(fonts.Standard, 'Second', {}), 'plain', true)));
+  page.get('taa-download-png').click(); const second = page.pendingBlobs.shift(), secondImage = pngFixture();
+  eq('out-of-order PNG: second completes without error', page.release(second, secondImage), null);
+  eq('out-of-order PNG: first completes without error', page.release(first, firstImage), null);
+  eq('out-of-order PNG: each request keeps its filename', page.downloads.map((d) => d.name), ['second-standard.png', 'hello-world-standard.png']);
+  check('out-of-order PNG: each download receives its own image', page.downloads[0]?.blob === secondImage && page.downloads[1]?.blob === firstImage);
+  page.cleanup(); eq('out-of-order PNG: both URLs are released', page.revoked.length, 2);
+}
+{
+  const page = asciiExportPage();
+  await asciiPageSettles(() => page.get('taa-output').textContent === initialArt);
+  page.get('taa-download-png').click();
+  eq('PNG encoder failure does not throw', page.release(page.pendingBlobs.shift(), null), null);
+  eq('PNG encoder failure downloads nothing', page.downloads.length, 0);
+  eq('PNG encoder failure reports the existing error', page.get('taa-status').textContent, STRINGS.en.pngTooLarge);
+  check('PNG encoder failure leaves export available', !page.get('taa-download-png').disabled);
+  page.get('taa-download-png').click(); const image = pngFixture();
+  eq('PNG retry settles', page.release(page.pendingBlobs.shift(), image), null);
+  check('PNG retry downloads the new encoder result', page.downloads[0]?.blob === image);
+  page.cleanup(); eq('PNG failure creates no URL; retry releases its URL', page.revoked.length, 1);
+}
+{
+  const page = asciiExportPage();
+  await asciiPageSettles(() => page.get('taa-output').textContent === initialArt);
+  page.holdFont('Big'); page.font('Big');
+  page.text('Newest'); page.font('Standard');
+  const latest = E.formatOutput(E.renderFiglet(fonts.Standard, 'Newest', {}), 'plain', true);
+  check('font race: newer cached font render completes', await asciiPageSettles(() => page.get('taa-output').textContent === latest));
+  page.releaseFont('Big'); for (let i = 0; i < 20; i++) await Promise.resolve();
+  eq('font race: late earlier font keeps generation guard', page.get('taa-output').textContent, latest);
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
