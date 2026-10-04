@@ -75,6 +75,7 @@
       var dlAllBtn  = document.getElementById('wc-download-all');
 
       var convertedItems = []; // [{name, blob}]
+      var batchGeneration = 0;
 
       /* ── Helpers ── */
       function getMode() {
@@ -226,6 +227,7 @@
       /* ── Process files ── */
       function processFiles(files) {
         if (!files || files.length === 0) return;
+        var generation = ++batchGeneration;
 
         // Reset
         convertedItems = [];
@@ -241,6 +243,12 @@
         }
 
         Promise.all(promises).then(function (results) {
+          if (generation !== batchGeneration) {
+            results.forEach(function (r) {
+              if (r.ok) { URL.revokeObjectURL(r.thumbUrl); URL.revokeObjectURL(r.origUrl); }
+            });
+            return;
+          }
           var ok = 0, fail = 0;
           for (var j = 0; j < results.length; j++) {
             var r = results[j];
@@ -321,7 +329,9 @@
       });
 
       /* ── Clear ── */
-      document.getElementById('wc-clear').addEventListener('click', function () {
+      function clearResults() {
+        batchGeneration++;
+        if (resultsEl.contains(document.activeElement)) dropEl.focus();
         fileInput.value = '';
         convertedItems = [];
         resultsEl.innerHTML = '';
@@ -329,6 +339,10 @@
         actionsEl.hidden = true;
         statusEl.textContent = '';
         statusEl.className = 'wc-status';
+      }
+      document.getElementById('wc-clear').addEventListener('click', clearResults);
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && dropEl.closest('.wc-wrap').contains(document.activeElement)) clearResults();
       });
     })();
   </script>

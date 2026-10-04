@@ -139,5 +139,120 @@ check('quality label from STRINGS', /data-i18n="qualityLabel"/.test(src));
   }
 }
 
+// ---------- batch lifecycle: complete page script + actual shared keyboard handler ----------
+// Image decode and canvas encoding are controlled boundaries; all result writes and shortcuts
+// execute the production script. No browser, file dialog, or system clipboard is used.
+{
+  const { createContext, runInContext } = await import('node:vm');
+  const pageSource = src;
+  const prefix = 'wc';
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+  const file = (name) => ({ name, type: 'image/png', size: 500 });
+  function page() {
+    const nodes = [], byId = new Map(), images = [], encodes = [], downloads = [], urls = new Map(), revoked = new Set();
+    let document, wrap, serial = 0, persistenceClears = 0;
+    function matches(el, selector) {
+      return selector.split(',').some((part) => {
+        const attrs = [...part.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+        const simple = part.replace(/\[[^\]]+\]/g, '').trim(), tag = /^[\w-]+/.exec(simple), cls = /\.([\w-]+)/.exec(simple);
+        return (!tag || el.tagName === tag[0].toUpperCase()) && (!cls || el.className.split(/\s+/).includes(cls[1])) && attrs.every((a) => a[2] === undefined ? el.getAttribute(a[1]) !== null : el.getAttribute(a[1]) === a[2]);
+      });
+    }
+    class Element {
+      constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), attrs: {}, className: '', children: [], listeners: {}, value: '', style: {}, checked: false, hidden: false, disabled: false, files: [] }); }
+      set textContent(value) { this.text = String(value); this.html = null; this.children = []; }
+      get textContent() { return (this.text || '') + this.children.map((c) => c.textContent).join(''); }
+      set innerHTML(value) {
+        if (this.children.some((child) => child.contains(document?.activeElement))) document.activeElement = document.body;
+        this.html = String(value); this.text = ''; this.children = [];
+        for (const m of String(value).matchAll(/<([a-z][\w-]*)\b([^>]*)>/g)) { const el = new Element(m[1]); attributes(el, m[2]); this.appendChild(el); }
+      }
+      get innerHTML() { return this.html ?? this.textContent.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
+      setAttribute(key, value) { this.attrs[key] = String(value); if (['id', 'class', 'type', 'name', 'value'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); }
+      getAttribute(key) { return key === 'class' ? this.className : this.attrs[key] ?? null; }
+      get classList() { const el = this; return { add(c) { el.className += ' ' + c; }, remove(c) { el.className = el.className.split(/\s+/).filter((x) => x !== c).join(' '); } }; }
+      addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
+      dispatch(type, extra = {}) { const event = { target: this, preventDefault() { this.defaultPrevented = true; }, ...extra }; for (const callback of this.listeners[type] || []) callback.call(this, event); return event; }
+      appendChild(child) { this.children.push(child); child.parentElement = this; return child; }
+      removeChild(child) { this.children = this.children.filter((c) => c !== child); }
+      contains(el) { return this === el || (this === wrap && nodes.some((n) => n !== wrap && n.contains(el))) || this.children.some((c) => c.contains(el)); }
+      closest() { return wrap; }
+      focus() { document.activeElement = this; }
+      querySelectorAll(selector) { return this.children.flatMap((c) => [c, ...c.querySelectorAll('*')]).filter((c) => matches(c, selector)); }
+      querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+      click() { if (this.disabled) return; if (this.tagName === 'A') downloads.push({ name: this.download || this.getAttribute('download'), url: this.href || this.getAttribute('href') }); this.dispatch('click'); }
+      getContext() { return { drawImage() {}, fillRect() {} }; }
+      toBlob(callback, type) { encodes.push({ callback, type, done: false }); }
+    }
+    function attributes(el, text) {
+      for (const a of text.matchAll(/([\w-]+)="([^"]*)"/g)) el.setAttribute(a[1], a[2]);
+      for (const key of ['checked', 'hidden', 'disabled']) el[key] = new RegExp('\\b' + key + '(?:\\s|/|$)').test(text);
+    }
+    const inline = [...pageSource.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].find((m) => m[1].includes('(function'));
+    for (const m of pageSource.slice(0, inline.index).matchAll(/<([a-z][\w-]*)\b([^>]*)>/g)) {
+      const el = new Element(m[1]); attributes(el, m[2]); nodes.push(el); if (el.id) byId.set(el.id, el);
+    }
+    wrap = nodes.find((el) => el.className.split(/\s+/).includes(prefix + '-wrap'));
+    const get = (id) => { const el = byId.get(id); if (!el) throw new Error('Missing source ID: ' + id); return el; };
+    document = new Element('document'); document.body = new Element('body'); document.documentElement = { lang: 'en' }; document.activeElement = document.body;
+    document.createElement = (tag) => new Element(tag); document.getElementById = get; document.getElementsByName = (name) => nodes.filter((el) => el.name === name);
+    document.querySelectorAll = (selector) => nodes.filter((el) => matches(el, selector)); document.querySelector = (selector) => selector === '.tool-widget' ? wrap : document.querySelectorAll(selector)[0];
+    wrap.querySelectorAll = document.querySelectorAll;
+    const sandbox = { document, Blob, console, URL: { createObjectURL(blob) { const url = 'blob:test-' + ++serial; urls.set(url, blob); return url; }, revokeObjectURL(url) { revoked.add(url); } },
+      Image: class { constructor() { this.naturalWidth = 64; this.naturalHeight = 48; images.push(this); } },
+      setTimeout() {}, window: { ztPersist: { clear() { persistenceClears++; } } }, _slug: prefix === 'wc' ? 'webp-converter' : 'image-compressor' };
+    const context = createContext(sandbox);
+    runInContext(inline[1], context);
+    const keyStart = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
+    runInContext(layout.slice(keyStart, layout.indexOf('// ── Copy button visual feedback', keyStart)), context);
+    return { get, images, encodes, downloads, urls, revoked, document,
+      get persistenceClears() { return persistenceClears; },
+      drop(names) { get(prefix + '-drop').dispatch('drop', { dataTransfer: { files: names.map(file) } }); },
+      key(target = get(prefix + '-drop')) { target.focus(); return document.dispatch('keydown', { ctrlKey: true, key: 'l' }); },
+      async decode(index) { images[index].onload(); await flush(); },
+      async encode(index) { const job = encodes[index]; job.done = true; job.callback(new Blob(['encoded fixture'], { type: job.type })); await flush(); },
+      async ready(names) { const start = images.length, encodeStart = encodes.length; this.drop(names); for (let i = start; i < images.length; i++) await this.decode(i); for (let i = encodeStart; i < encodes.length; i++) if (!encodes[i].done) await this.encode(i); },
+      rows() { return get(prefix + '-results').children.map((card) => card.querySelector('.' + prefix + '-dl')?.getAttribute('download')); }
+    };
+  }
+  {
+    const p = page(); await p.ready(['first.png', 'second.png']);
+    check('batch lifecycle: two real result cards', p.rows().length === 2);
+    p.get(prefix + '-download-all').click(); check('batch lifecycle: Download All uses both current names', p.downloads.length === 2 && p.downloads[0].name.startsWith('first.') && p.downloads[1].name.startsWith('second.'));
+    p.key(p.document.body); check('batch lifecycle: CtrlL outside tool leaves results', p.rows().length === 2 && p.persistenceClears === 0);
+    const oldQuality = p.get(prefix + '-quality').value, event = p.key();
+    check('batch lifecycle: CtrlL clears result cards', p.rows().length === 0 && p.get(prefix + '-results').hidden);
+    check('batch lifecycle: CtrlL clears actions and status', p.get(prefix + '-actions').hidden && p.get(prefix + '-status').textContent === '');
+    check('batch lifecycle: CtrlL keeps quality and runs shared shortcut', p.get(prefix + '-quality').value === oldQuality && event.defaultPrevented && p.persistenceClears === 1);
+    await p.ready(['recovered.png']); check('batch lifecycle: new batch works after CtrlL', p.rows().length === 1 && p.rows()[0].startsWith('recovered.'));
+    const link = p.get(prefix + '-results').children[0].querySelector('.' + prefix + '-dl'); p.key(link);
+    check('batch lifecycle: focused result CtrlL preserves shared cleanup', p.rows().length === 0 && p.persistenceClears === 2);
+  }
+  {
+    const p = page(); p.drop(['slow-a.png', 'slow-b.png']); p.drop(['new.png']); await p.decode(2); await p.encode(0); const status = p.get(prefix + '-status').textContent;
+    await p.decode(0); await p.decode(1); for (let i = 1; i < p.encodes.length; i++) await p.encode(i);
+    check('batch lifecycle: old decode cannot append to new batch', p.rows().length === 1 && p.rows()[0].startsWith('new.'));
+    check('batch lifecycle: old decode cannot replace current status', p.get(prefix + '-status').textContent === status);
+  }
+  {
+    const p = page(); p.drop(['pending-decode.png']); p.key(); await p.decode(0);
+    for (let i = 0; i < p.encodes.length; i++) await p.encode(i);
+    check('batch lifecycle: CtrlL ignores old image decode', p.rows().length === 0 && p.get(prefix + '-results').hidden && p.get(prefix + '-status').textContent === '');
+  }
+  for (const cancel of ['shortcut', 'clear']) {
+    const p = page(); p.drop(['pending.png']); await p.decode(0);
+    if (cancel === 'shortcut') p.key();
+    else { await p.ready(['current.png']); p.get(prefix + '-clear').click(); }
+    for (let i = 0; i < p.encodes.length; i++) if (!p.encodes[i].done) await p.encode(i);
+    check('batch lifecycle: ' + cancel + ' ignores old encoding', p.rows().length === 0 && p.get(prefix + '-results').hidden && p.get(prefix + '-actions').hidden && p.get(prefix + '-status').textContent === '');
+  }
+  {
+    const p = page(); await p.ready(['settings.png']); const imageCount = p.images.length;
+    p.get(prefix + '-quality').value = '42'; p.get(prefix + '-quality').dispatch('input');
+    check('batch lifecycle: quality changes label without recompressing', p.images.length === imageCount && p.get(prefix + '-quality-val').textContent === '42' && p.rows().length === 1);
+  }
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
