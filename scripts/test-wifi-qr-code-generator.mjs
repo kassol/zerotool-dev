@@ -7,6 +7,7 @@
 //        builder the page loads); public/vendor/zxing-reader.js + .wasm (an independent decoder,
 //        zxing-cpp); src/data/persistence.ts; src/content/tools/wifi-qr-code-generator/*.mdx
 //        (`{/* wqg-check: … */}` annotations)
+//        and ToolLayout.astro's real keyboard handler; the full page runs in a DOM stand-in
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -354,6 +355,162 @@ eq('every key the script uses exists', [...new Set(usedKeys)].filter((k) => !(k 
 check('no storage, cookies or network in the script', !/localStorage|sessionStorage|document\.cookie|fetch\(|XMLHttpRequest|sendBeacon|ztPersist/.test(script));
 check('the page does not write HTML', !/innerHTML|insertAdjacentHTML|outerHTML|document\.write/.test(script));
 check('persistence policy stays disabled (Wi-Fi password)', /'wifi-qr-code-generator': 'disabled'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
+
+// ---------- page exports retain the image and filename from the click ----------
+// Browser boundaries only: DOM, scheduled frames, clipboard and a deferred canvas.toBlob.
+// Card text drawing is not simulated; its QR pixels come from the real paint function.
+// Every exported PNG is encoded by sharp and independently decoded by ZXing.
+function wifiPage() {
+  const nodes = new Map(), pendingBlobs = [], downloads = [], copied = [], urls = new Map(), timers = new Map(), frames = new Map();
+  let sequence = 0;
+  const document = { activeElement: null, listeners: {} };
+  class Element {
+    constructor(id = '', tag = 'div') {
+      Object.assign(this, { id, tagName: tag.toUpperCase(), type: 'text', value: '', checked: false, hidden: false, disabled: false, style: {}, attributes: {}, listeners: {}, children: [], className: '', parentNode: { clientWidth: 300 } });
+    }
+    set textContent(value) { this.text = String(value); this.children = []; }
+    get textContent() { return (this.text || '') + this.children.map((child) => child.textContent).join(''); }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    dispatch(type, extra = {}) { for (const fn of this.listeners[type] || []) fn.call(this, { type, target: this, preventDefault() {}, ...extra }); }
+    click() { if (this.disabled) return; if (this.tagName === 'A') downloads.push({ name: this.download, blob: urls.get(this.href) }); this.dispatch('click'); }
+    appendChild(child) { this.children.push(child); return child; }
+    remove() {}
+    focus() { document.activeElement = this; }
+    contains(el) { return [...nodes.values()].includes(el); }
+    querySelectorAll() { return [...nodes.values()].filter((el) => el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text')); }
+    setAttribute(key, value) { this.attributes[key] = String(value); }
+    getAttribute(key) { return this.attributes[key] ?? null; }
+    get classList() {
+      const el = this;
+      return { toggle(c, on) { const names = new Set(el.className.split(' ').filter(Boolean)); if (on) names.add(c); else names.delete(c); el.className = [...names].join(' '); } };
+    }
+  }
+  class Canvas extends Element {
+    constructor(id = '') {
+      super(id, 'canvas'); this.width = this.height = 0;
+      this.context = { fillStyle: '#000000', fillRect: (x, y, w, h) => this.rect(x, y, w, h), fillText() {} };
+    }
+    rect(x, y, w, h) {
+      if (this.pixels?.length !== this.width * this.height * 4) this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
+      const color = [...this.context.fillStyle.slice(1).match(/../g).map((v) => parseInt(v, 16)), 255];
+      for (let row = y; row < y + h; row++) for (let col = x; col < x + w; col++) this.pixels.set(color, (row * this.width + col) * 4);
+    }
+    getContext() { return this.context; }
+    toBlob(callback) { pendingBlobs.push({ callback, pixels: new Uint8ClampedArray(this.pixels), width: this.width, height: this.height }); }
+  }
+  const get = (id) => { if (!nodes.has(id)) nodes.set(id, id === 'wqg-canvas' ? new Canvas(id) : new Element(id)); return nodes.get(id); };
+  for (const match of source.matchAll(/<(input|textarea|select|button)[^>]*\bid="([^"]+)"[^>]*>/g)) {
+    const el = get(match[2]); el.tagName = match[1].toUpperCase(); el.type = /\btype="([^"]+)"/.exec(match[0])?.[1] || 'text';
+  }
+  Object.assign(document, {
+    body: new Element('body'), getElementById: get,
+    querySelector: (selector) => selector === '.tool-widget' ? get('wqg') : selector === '.tool-widget .btn-primary' ? get('wqg-png') : null,
+    createElement: (tag) => tag === 'canvas' ? new Canvas() : new Element('', tag),
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
+    dispatch(type, extra) { for (const fn of this.listeners[type] || []) fn({ type, preventDefault() {}, ...extra }); },
+  });
+  for (const [key, value] of Object.entries({ sec: 'WPA', ecl: 'M', size: '1024', fg: '#000000', bg: '#ffffff', 'card-title': 'Guest Wi-Fi' })) get('wqg-' + key).value = value;
+  get('wqg-card-pw').checked = true;
+  const sandbox = {
+    console, TextEncoder, TextDecoder, Uint8Array, Uint8ClampedArray, Blob, document, QRCode: Q, t: STRINGS.en, pageLang: 'en',
+    URL: { createObjectURL(blob) { const url = 'blob:wifi-' + (++sequence); urls.set(url, blob); return url; }, revokeObjectURL(url) { urls.delete(url); } },
+    navigator: { clipboard: { async writeText(text) { copied.push(text); } } },
+    setTimeout(fn, ms) { const id = ++sequence; timers.set(id, { fn, ms }); return id; }, clearTimeout(id) { timers.delete(id); },
+    requestAnimationFrame(fn) { const id = ++sequence; frames.set(id, fn); return id; }, cancelAnimationFrame(id) { frames.delete(id); },
+    addEventListener() {}, devicePixelRatio: 1, ztPersist: { clear() {} }, _slug: 'wifi-qr-code-generator',
+  };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  const pageScript = /<script is:inline define:vars=[^>]*>([\s\S]*?)<\/script>/.exec(source);
+  vm.runInContext(pageScript[1], context, { filename: 'WifiQrCodeGeneratorTool.astro', lineOffset: source.slice(0, pageScript.index).split('\n').length - 1 });
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const start = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
+  vm.runInContext(layout.slice(start, layout.indexOf('// ── Copy button visual feedback', start)), context);
+  function flush() {
+    const scheduled = [...frames.values()]; frames.clear(); scheduled.forEach((fn) => fn());
+    for (const [id, timer] of [...timers]) if (timer.ms === 0) { timers.delete(id); timer.fn(); }
+  }
+  return {
+    get, downloads, copied, pendingBlobs, frames, timers, flush,
+    input(id, value, run = true) { get(id).value = value; get('wqg').dispatch('input', { target: get(id) }); if (run) flush(); },
+    shortcut(mod = 'ctrlKey', inside = true, run = true) { document.activeElement = inside ? get('wqg-ssid') : new Element('outside'); document.dispatch('keydown', { [mod]: true, key: 'l' }); if (run) flush(); },
+    async release() {
+      const job = pendingBlobs.shift();
+      const png = await sharp(Buffer.from(job.pixels), { raw: { width: job.width, height: job.height, channels: 4 } }).png().toBuffer();
+      job.callback(new Blob([png], { type: 'image/png' }));
+      await new Promise(setImmediate); await new Promise(setImmediate);
+    },
+  };
+}
+for (const kind of ['png', 'card-png']) {
+  for (const action of ['edit', 'empty', 'ctrlL']) {
+    const page = wifiPage(), errors = [];
+    const reject = (error) => errors.push(String(error));
+    process.on('unhandledRejection', reject);
+    try {
+      page.input('wqg-ssid', 'Alpha-Network');
+      page.get('wqg-' + kind).click();
+      eq(kind + ': encoding waits for callback (' + action + ')', page.pendingBlobs.length, 1);
+      if (action === 'edit') page.input('wqg-ssid', 'Beta-Network');
+      else if (action === 'empty') page.input('wqg-ssid', '');
+      else page.shortcut();
+      await page.release();
+      const blob = page.downloads[0]?.blob;
+      let text = null;
+      if (blob) {
+        const { data, info } = await sharp(Buffer.from(await blob.arrayBuffer())).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        text = (await decode(new Uint8ClampedArray(data), info.width, info.height))?.text;
+      }
+      eq(kind + ': exported pixels retain click-time network after ' + action, text, 'WIFI:T:WPA;S:Alpha-Network;P:welcome-2026;;');
+      eq(kind + ': filename retains click-time network after ' + action, page.downloads[0]?.name, 'wifi-alpha-network' + (kind === 'card-png' ? '-card' : '') + '.png');
+      eq(kind + ': no late rejection after ' + action, errors, []);
+      if (action !== 'edit') check(kind + ': late download leaves cleared preview empty (' + action + ')', page.get('wqg-canvas').hidden && page.get('wqg-card-img').hidden && page.get('wqg-png').disabled);
+    } finally { process.removeListener('unhandledRejection', reject); }
+  }
+}
+
+// ---------- focused Ctrl/Command+L clears credentials before the next frame ----------
+for (const mod of ['ctrlKey', 'metaKey']) {
+  for (const shown of [false, true]) {
+    const page = wifiPage(), label = mod + (shown ? ' shown password' : ' masked password');
+    page.get('wqg-sec').value = 'WPA3'; page.get('wqg-ecl').value = 'H'; page.get('wqg-size').value = '256';
+    page.get('wqg-hidden').checked = true; page.get('wqg-card-pw').checked = false;
+    page.input('wqg-ssid', 'Old network ');
+    if (shown) page.get('wqg-pwd-toggle').click();
+    const preferences = () => ['sec', 'ecl', 'size', 'fg', 'bg'].map((id) => page.get('wqg-' + id).value)
+      .concat([page.get('wqg-hidden').checked, page.get('wqg-card-pw').checked, page.get('wqg-password').type]);
+    const before = preferences();
+    page.input('wqg-ssid', 'Queued network', false);
+    eq(label + ': input queues a render', page.frames.size, 1);
+    page.shortcut(mod, true, false);
+    eq(label + ': clears password synchronously', page.get('wqg-password').value, '');
+    eq(label + ': cancels pending input frame', page.frames.size, 0);
+    eq(label + ': shared handler clears SSID', page.get('wqg-ssid').value, '');
+    check(label + ': clears both previews synchronously', page.get('wqg-canvas').hidden && page.get('wqg-canvas').width === 0 && page.get('wqg-card-img').hidden);
+    check(label + ': disables all output actions synchronously', ['png', 'svg', 'copy', 'card-png', 'card-svg', 'card-print'].every((id) => page.get('wqg-' + id).disabled));
+    eq(label + ': clears encoded credentials synchronously', page.get('wqg-encoded').textContent, '');
+    eq(label + ': clears stale status synchronously', page.get('wqg-status').textContent, '');
+    eq(label + ': clears stale warnings synchronously', page.get('wqg-warn').textContent, '');
+    page.get('wqg-copy').click();
+    eq(label + ': cannot copy old credentials before redraw', page.copied, []);
+    page.flush();
+    eq(label + ': redraw reports empty SSID', page.get('wqg-status').textContent, STRINGS.en.errEmptySsid);
+    eq(label + ': options and checkbox values stay unchanged', preferences(), before);
+    page.input('wqg-ssid', 'New network');
+    eq(label + ': new SSID does not reuse the old password', page.get('wqg-status').textContent, STRINGS.en.errNoPassword);
+    check(label + ': missing password keeps output disabled', page.get('wqg-png').disabled && page.get('wqg-card-img').hidden);
+    page.input('wqg-password', 'new-password-2026');
+    const canvas = page.get('wqg-canvas');
+    eq(label + ': replacement credentials generate the new QR', (await decode(canvas.pixels, canvas.width, canvas.height))?.text, 'WIFI:T:WPA;R:1;S:New network;H:true;P:new-password-2026;;');
+  }
+  const outside = wifiPage(), oldStatus = outside.get('wqg-status').textContent;
+  outside.shortcut(mod, false, false);
+  eq(mod + ': shortcut outside the tool retains password', outside.get('wqg-password').value, 'welcome-2026');
+  eq(mod + ': shortcut outside the tool retains SSID', outside.get('wqg-ssid').value, 'Guest-WiFi');
+  eq(mod + ': shortcut outside the tool retains status', outside.get('wqg-status').textContent, oldStatus);
+  check(mod + ': shortcut outside the tool retains output', !outside.get('wqg-png').disabled && !outside.get('wqg-card-img').hidden);
+  eq(mod + ': shortcut outside the tool schedules no redraw', [...outside.timers.values()].filter((timer) => timer.ms === 0).length, 0);
+}
 
 // ---------- 8. tool page claims (`{/* wqg-check: {...} */}` in the mdx) ----------
 const mdxDir = join(root, 'src/content/tools/wifi-qr-code-generator');
