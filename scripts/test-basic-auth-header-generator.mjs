@@ -19,6 +19,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/BasicAuthHeaderGeneratorTool.astro'), 'utf8');
@@ -66,10 +69,9 @@ eq('empty input', errorOf('   '), 'missingDecode');
 eq('no colon', errorOf(Buffer.from('nocolon').toString('base64')), 'missingColon');
 
 // strings
-const keysOf = (lang) => {
-  const block = source.slice(source.indexOf(lang + ': {'), source.indexOf('}', source.indexOf(lang + ': {')));
-  return [...block.matchAll(/^\s+(\w+):/gm)].map((m) => m[1]).sort();
-};
+const tableStart=source.indexOf('const STRINGS = {'),tableEnd=source.indexOf('\n};',tableStart);
+const STRINGS=vm.runInNewContext(source.slice(tableStart,tableEnd+3)+';STRINGS;');
+const keysOf=lang=>Object.keys(STRINGS[lang]).sort();
 const en = keysOf('en');
 check('en has decodedLatin1', en.includes('decodedLatin1'));
 for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' STRINGS keys match en', keysOf(lang), en);
@@ -86,8 +88,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const pageScript = /<script\b[^>]*>([\s\S]*?)<\/script>/.exec(source)[1];
   const layout = readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
   const keyboard = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
-  const tableStart=pageScript.indexOf('var STRINGS = {'),tableEnd=pageScript.indexOf('\n      };',tableStart);
-  const STRINGS=vm.runInNewContext(pageScript.slice(tableStart,tableEnd+9)+';STRINGS;');
 function deferred() { let resolve,reject; const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject}; }
 async function settle() { for(let i=0;i<16;i++) await Promise.resolve(); }
 function makePage(lang='en',layoutFirst=false) {
@@ -134,14 +134,15 @@ function makePage(lang='en',layoutFirst=false) {
     addEventListener(t,f){if(!doc.listeners.has(t))doc.listeners.set(t,[]);doc.listeners.get(t).push(f);},
     execCommand(){fallbackCalls++;throw Error('Native fallback copy is forbidden in this VM');},
   });
-  let markup=source.slice(source.indexOf('---',3)+3,source.indexOf('<script'));
+  let markup=source.slice(source.indexOf('---',3)+3,source.indexOf('<script')).replace(/\{T\.(\w+)\}/g,(_,key)=>STRINGS[lang][key]??'');
   const stack=[widget], tag=/<\/?([a-z][\w:-]*)\b[^>]*>/gi;let m,offset=0;
   while((m=tag.exec(markup))){const before=markup.slice(offset,m.index);if(before.trim())stack.at(-1)._text+=before;offset=tag.lastIndex;const name=m[1].toLowerCase();if(m[0][1]==='/'){const i=stack.findLastIndex(x=>x.tagName===name.toUpperCase());if(i>0)stack.length=i;continue;}const attrs={};for(const a of m[0].matchAll(/\s([\w:-]+)(?:="([^"]*)")?/g))attrs[a[1]]=a[2]??'';const el=stack.at(-1).appendChild(new Element(name,attrs));if(!/^(input|br|hr|img|meta|link)$/.test(name)&&!m[0].endsWith('/>'))stack.push(el);}
   const get=id=>doc.getElementById(id);
   const stubClipboard={write(){const d=deferred();clipboard.push({api:'write',d});if(!holdClipboard)d.resolve();return d.promise;},writeText(text){const d=deferred();clipboard.push({api:'writeText',text,d});if(!holdClipboard)d.resolve();return d.promise;}};
   const timeout=(fn,ms=0)=>{const t={id:++timerId,fn,ms};timers.push(t);return t.id;};
   const window={setTimeout:timeout,trackTool(){},ztPersist:{clear:s=>persist.push(s)}};
-  const context=vm.createContext({document:doc,window,navigator:{clipboard:stubClipboard},TextEncoder,TextDecoder,Uint8Array,ArrayBuffer,atob,btoa,console,setTimeout:timeout,clearTimeout:id=>{const i=timers.findIndex(t=>t.id===id);if(i>=0)timers.splice(i,1);},_slug:'basic-auth-header-generator'});
+  const {CLIENT_T}=vm.runInNewContext(source.slice(source.indexOf('const T = STRINGS[lang];'),source.indexOf('\n---\n'))+'\n({CLIENT_T});',{STRINGS,lang});
+  const context=vm.createContext({t:CLIENT_T,document:doc,window,navigator:{clipboard:stubClipboard},TextEncoder,TextDecoder,Uint8Array,ArrayBuffer,atob,btoa,console,setTimeout:timeout,clearTimeout:id=>{const i=timers.findIndex(t=>t.id===id);if(i>=0)timers.splice(i,1);},_slug:'basic-auth-header-generator'});
   if(layoutFirst)vm.runInContext(keyboard,context);
   vm.runInContext(pageScript,context,{filename:'BasicAuthHeaderGeneratorTool.astro',timeout:5000});
   if(!layoutFirst)vm.runInContext(keyboard,context);
@@ -263,6 +264,16 @@ function makePage(lang='en',layoutFirst=false) {
       check(lang+' copy preserves ISO-8859-1 decoding notice',message===STRINGS[lang].decodedLatin1&&status.textContent===message&&status.className.includes('info'));
     }
     {
+      const p=await page(lang),username='u'.repeat(2048),password='p'.repeat(2048),token=Buffer.from(username+':'+password).toString('base64');
+      p.set('bahg-username',username);p.set('bahg-password',password);p.click('bahg-generate');
+      const expected={'bahg-full-header':'Authorization: Basic '+token,'bahg-token':token,'bahg-curl':'curl -H "Authorization: Basic '+token+'" https://example.com/api','bahg-fetch':"fetch('https://example.com/api', {\n  headers: {\n    Authorization: 'Basic "+token+"'\n  }\n});",'bahg-decoded-username':username,'bahg-decoded-password':password};
+      p.set('bahg-decode-input','Basic '+token);p.click('bahg-decode');
+      for(const [target,value] of Object.entries(expected)){
+        check(lang+' long output '+target+' contains complete bytes',p.get(target).textContent===value);
+        p.copyButton(target).click();await settle();check(lang+' long copy '+target+' contains complete bytes',p.clipboard.at(-1).text===value);
+      }
+    }
+    {
       const p=await page(lang);examples(p);
       for(const target of generated.concat(decoded)){const button=p.copyButton(target);button.click();await settle();check(lang+' copy target '+target+' preserves full text',p.clipboard.at(-1).text===p.get(target).textContent);}
       const old=p.get('bahg-full-header').textContent;p.set('bahg-password','changed');
@@ -273,6 +284,76 @@ function makePage(lang='en',layoutFirst=false) {
   await new Promise(resolve=>setImmediate(resolve));process.removeListener('unhandledRejection',onUnhandled);
   check('page copies never create an unhandled rejection',unhandled.length===0,unhandled);
   for(const [i,p] of pages.entries())check('page lifecycle '+i+' has no script errors or native clipboard calls',p.failures.length===0&&p.summary().fallbackCalls===0,p.failures);
+}
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses=passes,beforeFailures=failures;
+  const template=source.slice(source.indexOf('\n---\n')+5,source.indexOf('<script')).trim();
+  const pageScript=source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css=source.match(/<style[^>]*>([\s\S]*?)<\/style>/)[1];
+  const rules=selector=>[...css.matchAll(new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\s*\\{([^}]*)\\}','g'))].map(m=>m[1]);
+  const prop=(r,key,value)=>new RegExp('(?:^|;)\\s*'+key+':\\s*'+value+'\\s*(?:;|$)').test(r);
+  const sha=text=>createHash('sha256').update(text).digest('hex');
+  const read=p=>readFileSync(join(root,p),'utf8');
+  check('basic-auth-header-generator registered as compact',/'basic-auth-header-generator':\s*'compact'/.test(read('src/data/tool-layouts.ts')));
+  check('tool root is directly bahg-wrap',/^<div class="bahg-wrap">/.test(template)&&template.endsWith('</div>'));
+  check('root is a natural-height shrinkable column',rules('.bahg-wrap').some(r=>prop(r,'display','flex')&&prop(r,'flex-direction','column')&&prop(r,'min-height','0')&&prop(r,'min-width','0'))&&!/\b(?:height|min-height):[^;]*(?:vh|svh)/.test(css));
+  for(const [mode,input] of [['generate','username'],['decode','decode-input']]){
+    check(mode+' action/status precede main input',template.indexOf('id="bahg-'+mode+'"')<template.indexOf('id="bahg-'+mode+'-status"')&&template.indexOf('id="bahg-'+mode+'-status"')<template.indexOf('id="bahg-'+input+'"'));
+    check(mode+' status is keyboard scrollable',new RegExp('id="bahg-'+mode+'-status"[^>]*tabindex="0"').test(template));
+  }
+  check('status keeps two lines and three on phone',rules('.bahg-card .tool-status').some(r=>prop(r,'height','3em')&&prop(r,'overflow','auto'))&&rules('.bahg-card .tool-status').some(r=>prop(r,'height','4.5em')));
+  check('two input columns and snippet columns stack at 860',/@media \(max-width: 860px\)[\s\S]*?\.bahg-grid, \.bahg-snippet-grid\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/.test(css));
+  check('640 phone detail breakpoint exists',/@media \(max-width: 640px\)/.test(css));
+  check('password input keeps Show and help alongside it',rules('.bahg-password-row').every(r=>prop(r,'grid-template-columns','minmax\\(0, 1fr\\) auto')));
+  check('no smaller mobile button/input touch override',!/(?:min-height|height):\s*(?:2\d|3\d)px/.test(css));
+  check('actions avoid shared flexible button widening',/\.bahg-wrap \.bahg-actions \.btn-primary, \.bahg-wrap \.bahg-actions \.btn-secondary, \.bahg-wrap \.bahg-actions \.btn-ghost, \.bahg-button-help > button\s*\{\s*flex:\s*none/.test(css));
+  check('all four short result rows keep fixed height and shrinking value track',rules('.bahg-wrap .tool-result-row').some(r=>prop(r,'height','4rem')&&prop(r,'grid-template-columns','7rem minmax\\(0, 1fr\\) auto')));
+  check('long credential values scroll without truncation or wrapping',rules('.bahg-wrap .tool-result-value').some(r=>prop(r,'height','2.75rem')&&prop(r,'overflow-x','auto')&&prop(r,'overflow-y','hidden')&&prop(r,'white-space','pre'))&&!/text-overflow:\s*ellipsis/.test(css));
+  check('cURL/Fetch are fixed-height scrolling code blocks',rules('.bahg-wrap .bahg-snippet code').some(r=>prop(r,'display','block')&&prop(r,'height','7.5rem')&&prop(r,'overflow','auto')&&prop(r,'white-space','pre')));
+  for(const id of ['full-header','token','curl','fetch','decoded-username','decoded-password'])check('output '+id+' has Tab focus and accessible label',new RegExp('<code id="bahg-'+id+'"[^>]*tabindex="0"[^>]*aria-label=').test(template));
+  check('empty results remain hidden without empty previews',/\.bahg-wrap \[hidden\]\s*\{\s*display:\s*none\s*!important/.test(css)&&/id="bahg-generate-output"[^>]*hidden/.test(template)&&/id="bahg-decode-output"[^>]*hidden/.test(template));
+  check('HTTPS/Base64 safety note stays directly rendered',/<p class="bahg-privacy">\{T.privacy\}<\/p>/.test(template));
+  const buttons=[...template.matchAll(/<button\b([^>]*)>/g)];eq('all 13 original static buttons retained',buttons.length,13);
+  for(const id of ['generate','decode','load-generate-example','load-decode-example','clear-generate','clear-decode','toggle-password'])check('original '+id+' button retained once',buttons.filter(m=>m[1].includes('id="bahg-'+id+'"')).length===1);
+  check('all six copy targets remain',buttons.filter(m=>m[1].includes('data-copy-target=')).length===6);
+  check('manual Generate and Decode listeners retained',pageScript.includes("generateBtn.addEventListener('click', generateHeader)")&&pageScript.includes("decodeBtn.addEventListener('click', decodeHeader)")&&!/addEventListener\('input',/.test(pageScript));
+  check('disabled persistence policy retained',/'basic-auth-header-generator': 'disabled'/.test(read('src/data/persistence.ts'))&&!/localStorage|sessionStorage|ztPersist|document\.cookie/.test(pageScript));
+  const keys=['username','password','visibility','generate','copy','decode','token','snippets'].sort();
+  const tips=[...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];eq('eight tips use eight unique keys',tips.map(m=>/\{TIPS\.(\w+)\}/.exec(m[2])?.[1]).sort(),keys);
+  check('tip IDs unique',new Set(tips.map(m=>/id="([^"]+)"/.exec(m[1])[1])).size===8);
+  check('tips stay outside labels and summary',!/<(?:label|summary)\b[^>]*>(?:(?!<\/(?:label|summary)>)[\s\S])*?<Toggletip/.test(template));
+  for(const tip of tips)check(/id="([^"]+)"/.exec(tip[1])[1]+' uses selected language',/lang=\{lang\}/.test(tip[1])&&/about=/.test(tip[1]));
+  check('runtime language replacement removed',!/data-i18n|document\.documentElement\.lang|var STRINGS|TIPS/.test(pageScript)&&!template.includes('data-i18n'));
+  check('script serializes CLIENT_T only',/define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  check('engine retained byte-for-byte',sha(source.slice(startIndex,endIndex+END_MARK.length))==='255013361b5b68fd62c58577ea8678a18b3ee5e13b30d0da62b559e82d25e16e');
+  check('page script unchanged except removed runtime i18n',sha(pageScript)==='013a09c5d0bdcab483a8ecc0aca431dac2bca82f5770458afa04863d2dc207a6');
+  const retained={"en": {"meta": "84343e9645aa2ae8e10983a8a348b6262c01efb70077da959b1af38117423c72", "body": "653fce34bb3b7722525d0bafcc2c173aa64653801fd03c4392625f5607bb9d7b"}, "zh": {"meta": "df92ad4cc04fca68912fe754dc07a1163ce4bdb870709b39acbc44e57906939e", "body": "7c767b158fc71035ef64361bcf8438600f1c835d3853b28d3bf9554b245b6648"}, "ja": {"meta": "db9fdd01958ee9e876d00837e92e68a5548bd5f9365af85f88cc8c7c79254c19", "body": "343ec0a342d7c578c4c3304e50bcb9a442cfcda821f167509911dcdfb6a3b7f4"}, "ko": {"meta": "2cb2c109269b109700add82ed5fd80c2e03d75588a35c833fc5e5ce960f88898", "body": "24423142643ed7357a2260bfe516d20e35225990d2f325a5ede08395164cac82"}};
+  for(const lang of ['en','zh','ja','ko']){
+    const entry=STRINGS[lang];eq(lang+' tip keys complete',Object.keys(entry.tips).sort(),keys);
+    for(const key of keys)check(lang+'.'+key+' tip is nonempty plain text',typeof entry.tips[key]==='string'&&entry.tips[key].trim()&&!/<[^>]*>|\n/.test(entry.tips[key]));
+    const {TIPS,CLIENT_T}=vm.runInNewContext(source.slice(source.indexOf('const T = STRINGS[lang];'),source.indexOf('\n---\n'))+'\n({TIPS,CLIENT_T});',{STRINGS,lang});
+    eq(lang+' client excludes only tips',Object.keys(CLIENT_T).sort(),Object.keys(entry).filter(key=>key!=='tips').sort());
+    const originalClientHash={en:'d20ffca4a94f80a070636e9c6cd621b71cf5e8a0b2334efe9aa5691312822b61',zh:'a0bda8edca88e5a73368f65c331203f7efca241eae3b58555bb4e833d3f1c684',ja:'6fc7ec404a26a1fef2296417240ad226071456aed92e6a2ab5335d57ab2aa691',ko:'f0054169ca1d1be808d6ccef2ff7de5cc4692e04e20698b66434e048a4691d50'};
+    check(lang+' original client strings preserved exactly',sha(JSON.stringify(CLIENT_T))===originalClientHash[lang]);
+    check(lang+' serialized client has no tips',Object.values(TIPS).every(tip=>!JSON.stringify(CLIENT_T).includes(JSON.stringify(tip))));
+    const [,meta,body]=/^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(read('src/content/tools/basic-auth-header-generator/'+lang+'.mdx')),{steps}=loadYaml(meta);
+    check(lang+' six steps meet limits',steps.length===6&&steps.every(step=>typeof step==='string'&&step.length<=280&&!/<[^>]*>/.test(step))&&steps.join('').length<=1200);
+    for(const key of ['username','password','show','hide','generate','loadExample','copy','fullHeader','token','decodeInput','decode','clear'])check(lang+' steps use current '+key+' label',steps.some(step=>step.includes(entry[key])));
+    check(lang+' FAQ and SEO retained byte-for-byte',sha(meta.replace(/^steps:\n(?:  - .*\n)*/m,''))===retained[lang].meta);
+    check(lang+' entire original body retained byte-for-byte',sha(body)===retained[lang].body);
+    check(lang+' Limits retained',/<h2>(?:Limits|限制|制限|제한)<\/h2>/.test(body));
+  }
+  const require=createRequire(import.meta.url);
+  const {transform}=await import(require.resolve('@astrojs/compiler',{paths:[dirname(require.resolve('astro'))]}));
+  const {transform:transformJs}=await import('esbuild');
+  const compiled=await transform(source,{filename:'BasicAuthHeaderGeneratorTool.astro'});
+  check('Astro compiles without errors',compiled.diagnostics.every(d=>d.severity!==1),compiled.diagnostics);
+  await transformJs(compiled.code,{loader:'ts',format:'esm'});check('compiled JavaScript parses',true);
+  check('Astro serializes only client strings',compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })')&&!compiled.code.includes('$$defineScriptVars({ t: T })'));
+  check('compiled CSS has no unresolved scoping markers',compiled.css.length>0&&compiled.css.every(x=>!x.includes(':global(')));
+  console.log('v2 page layout: '+(passes-beforePasses)+' passed, '+(failures-beforeFailures)+' failed');
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
