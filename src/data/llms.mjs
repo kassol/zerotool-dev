@@ -339,9 +339,23 @@ function listItems(section) {
 export function howToSteps(body) {
   const section = h2Sections(body).find((s) => /^how to\b/i.test(s.title));
   if (!section) return [];
+  return limitSteps(listItems(section.content));
+}
+
+/**
+ * Steps for llms-full.txt. A tool page that lists its steps in the frontmatter `steps`
+ * field (pages whose usage section moved into the tool, see src/content/AGENTS.md) uses
+ * those; other pages fall back to howToSteps() on the body. Same limits either way.
+ */
+export function toolSteps(page) {
+  if (Array.isArray(page?.steps) && page.steps.length > 0) return limitSteps(page.steps);
+  return howToSteps(page?.body ?? '');
+}
+
+function limitSteps(items) {
   const steps = [];
   let total = 0;
-  for (const raw of listItems(section.content)) {
+  for (const raw of items) {
     const step = truncate(plainText(raw), MAX_STEP_CHARS);
     if (!step) continue;
     if (steps.length >= MAX_STEPS || total + step.length > MAX_HOWTO_CHARS) break;
@@ -353,7 +367,8 @@ export function howToSteps(body) {
 
 /**
  * `/llms-full.txt`: one H2 per tool, English, in category order. `pages` maps a slug to
- * the English tool page content entry `{ seoDescription, body }`.
+ * the English tool page content entry `{ seoDescription, steps, body }`; the "How to use"
+ * steps come from toolSteps().
  */
 export function buildLlmsFullTxt(data, pages) {
   const c = COPY.en;
@@ -383,7 +398,7 @@ export function buildLlmsFullTxt(data, pages) {
       if (data.sensitiveSlugs.includes(tool.slug)) {
         out.push('- Storage and tracking: saves nothing in the browser; the page loads neither Google Analytics nor AdSense.');
       }
-      const steps = howToSteps(page.body ?? '');
+      const steps = toolSteps(page);
       if (steps.length) {
         out.push('', 'How to use:', '');
         steps.forEach((step, i) => out.push(`${i + 1}. ${step}`));

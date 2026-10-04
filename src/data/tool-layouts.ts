@@ -1,6 +1,7 @@
-// Tool page redesign (prototype). Slugs listed here get the compact header, a layout
+// Tool page v2 layout. Slugs listed here get the compact header, a layout
 // chosen by tool type, the full-height first screen, and the reference content folded
 // into one <details>. Every other tool page keeps the shared layout unchanged.
+// To move a tool over, follow DESIGN.md "Tool Pages v2".
 //
 //   convert  — input and output side by side, both as tall as the screen allows
 //   generate — the generated preview leads; controls sit in a narrow rail
