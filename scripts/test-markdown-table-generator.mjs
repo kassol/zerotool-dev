@@ -509,7 +509,8 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
   const style = source.slice(source.indexOf('<style is:global>'));
   check('stacking breakpoint is 860px, phone details at 640px', (style.match(/@media \((?:max|min)-width: \d+px\)/g) || []).join() === '@media (min-width: 861px),@media (max-width: 860px),@media (max-width: 640px)');
   check('a long table scrolls inside its pane', /@media \(min-width: 861px\) \{\s*\.mdt-grid-wrap, \.mdt-preview \{ flex-basis: 0; \}/.test(style) && /\.mdt-grid-wrap \{ overflow: auto;/.test(style));
-  check('every selector keeps the mdt- prefix', [...style.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(^|[\s,>+~(])\.([a-z][\w-]*)/gm)].every((m) => m[2].startsWith('mdt-') || ['btn-primary', 'btn-ghost'].includes(m[2])));
+  check('every selector keeps the mdt- prefix', [...style.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(^|[\s,>+~(])\.([a-z][\w-]*)/gm)].every((m) => m[2].startsWith('mdt-') || ['btn-primary', 'btn-ghost', 'zt-tip', 'tool-label'].includes(m[2])));
+  check('the actions toggletip keeps its width next to the scrolling button row', /\.mdt-acts \.zt-tip \{ flex: none; \}/.test(style));
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
   check('listed as a convert page', layouts.includes("'markdown-table-generator': 'convert'"));
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
