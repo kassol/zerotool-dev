@@ -26,10 +26,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { inputLabel: 'Input Text', inputPlaceholder: 'Enter text to hash...', generate: 'Generate Hashes', clear: 'Clear', copy: 'Copy', copied: 'Copied!', hashing: 'Hashing...', hashesGenerated: 'Hashes generated.', errEmpty: 'Please enter some text.' },
-        zh: { inputLabel: '输入文本', inputPlaceholder: '输入要哈希的文本...', generate: '生成哈希', clear: '清除', copy: '复制', copied: '已复制！', hashing: '计算中...', hashesGenerated: '哈希已生成。', errEmpty: '请输入文本。' },
-        ja: { inputLabel: '入力テキスト', inputPlaceholder: 'ハッシュするテキストを入力...', generate: 'ハッシュを生成', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', hashing: '計算中...', hashesGenerated: 'ハッシュが生成されました。', errEmpty: 'テキストを入力してください。' },
-        ko: { inputLabel: '입력 텍스트', inputPlaceholder: '해시할 텍스트를 입력...', generate: '해시 생성', clear: '지우기', copy: '복사', copied: '복사됨!', hashing: '계산 중...', hashesGenerated: '해시가 생성되었습니다.', errEmpty: '텍스트를 입력해 주세요.' }
+        en: { inputLabel: 'Input Text', inputPlaceholder: 'Enter text to hash...', generate: 'Generate Hashes', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFail: 'Could not copy. Please select the hash and copy it manually.', hashing: 'Hashing...', hashesGenerated: 'Hashes generated.', errEmpty: 'Please enter some text.' },
+        zh: { inputLabel: '输入文本', inputPlaceholder: '输入要哈希的文本...', generate: '生成哈希', clear: '清除', copy: '复制', copied: '已复制！', copyFail: '复制失败。请选中哈希值后手动复制。', hashing: '计算中...', hashesGenerated: '哈希已生成。', errEmpty: '请输入文本。' },
+        ja: { inputLabel: '入力テキスト', inputPlaceholder: 'ハッシュするテキストを入力...', generate: 'ハッシュを生成', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFail: 'コピーできませんでした。ハッシュを選択して手動でコピーしてください。', hashing: '計算中...', hashesGenerated: 'ハッシュが生成されました。', errEmpty: 'テキストを入力してください。' },
+        ko: { inputLabel: '입력 텍스트', inputPlaceholder: '해시할 텍스트를 입력...', generate: '해시 생성', clear: '지우기', copy: '복사', copied: '복사됨!', copyFail: '복사하지 못했습니다. 해시를 선택하여 직접 복사하세요.', hashing: '계산 중...', hashesGenerated: '해시가 생성되었습니다.', errEmpty: '텍스트를 입력해 주세요.' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -110,6 +110,32 @@
       var inputEl = document.getElementById('hg-input');
       var statusEl = document.getElementById('hg-status');
       var resultsEl = document.getElementById('hg-results');
+      var runRevision = 0;
+      var running = false;
+      var copyRevision = 0;
+      var copyErrorBtn = null;
+
+      function clearStatus() {
+        copyErrorBtn = null;
+        statusEl.textContent = '';
+        statusEl.className = 'hg-status';
+      }
+
+      function invalidateCopies() {
+        copyRevision++;
+        resultsEl.querySelectorAll('.btn-copy').forEach(function (btn) {
+          clearTimeout(btn._hgCopyTimer);
+          btn.textContent = t.copy;
+        });
+        if (copyErrorBtn) clearStatus();
+      }
+
+      inputEl.addEventListener('input', function () {
+        runRevision++;
+        invalidateCopies();
+        if (running) clearStatus();
+        running = false;
+      });
 
       function makeRow(label, value) {
         var row = document.createElement('div');
@@ -119,15 +145,19 @@
       }
 
       document.getElementById('hg-hash').addEventListener('click', async function () {
+        var revision = ++runRevision;
+        invalidateCopies();
+        running = false;
+        resultsEl.innerHTML = '';
         var text = inputEl.value;
         if (!text) {
           statusEl.textContent = t.errEmpty;
           statusEl.className = 'hg-status error';
           return;
         }
+        running = true;
         statusEl.textContent = t.hashing;
         statusEl.className = 'hg-status';
-        resultsEl.innerHTML = '';
 
         try {
           var md5val = md5(text);
@@ -135,6 +165,8 @@
           var sha256val = await sha(text, 'SHA-256');
           var sha384val = await sha(text, 'SHA-384');
           var sha512val = await sha(text, 'SHA-512');
+          if (revision !== runRevision) return;
+          running = false;
 
           [
             ['MD5', md5val],
@@ -154,24 +186,49 @@
             btn.addEventListener('click', function () {
               var label = btn.getAttribute('data-label');
               var val = document.getElementById('hg-val-' + label).textContent;
-              navigator.clipboard.writeText(val).then(function () {
-                var prev = btn.textContent;
+              var copy = copyRevision;
+              var request = btn._hgCopyRequest = (btn._hgCopyRequest || 0) + 1;
+              clearTimeout(btn._hgCopyTimer);
+              btn.textContent = t.copy;
+              function current() { return copy === copyRevision && request === btn._hgCopyRequest; }
+              function done() {
+                if (!current()) return;
+                if (copyErrorBtn === btn) clearStatus();
                 btn.textContent = t.copied;
-                setTimeout(function () { btn.textContent = prev; }, 1500);
-              });
+                btn._hgCopyTimer = setTimeout(function () { if (current()) btn.textContent = t.copy; }, 1500);
+              }
+              function failed() {
+                if (!current()) return;
+                statusEl.textContent = t.copyFail;
+                statusEl.className = 'hg-status error';
+                copyErrorBtn = btn;
+              }
+              try { navigator.clipboard.writeText(val).then(done, failed); }
+              catch (e) { failed(); }
             });
           });
         } catch (e) {
+          if (revision !== runRevision) return;
+          running = false;
           statusEl.textContent = 'Error: ' + e.message;
           statusEl.className = 'hg-status error';
         }
       });
 
-      document.getElementById('hg-clear').addEventListener('click', function () {
+      function clearTool() {
+        runRevision++;
+        running = false;
+        invalidateCopies();
         inputEl.value = '';
         resultsEl.innerHTML = '';
-        statusEl.textContent = '';
-        statusEl.className = 'hg-status';
+        clearStatus();
+      }
+
+      document.getElementById('hg-clear').addEventListener('click', clearTool);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var root = document.querySelector('.hg-wrap');
+        if (root && root.contains(document.activeElement)) clearTool();
       });
     })();
   </script>
@@ -211,7 +268,7 @@
 
   .hg-results { display: flex; flex-direction: column; gap: 0.5rem; }
 
-  .hg-row {
+  :global(.hg-row) {
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -222,7 +279,7 @@
     flex-wrap: wrap;
   }
 
-  .hg-label {
+  :global(.hg-label) {
     font-size: 0.8rem;
     font-weight: 700;
     color: var(--color-primary);
@@ -231,7 +288,7 @@
     letter-spacing: 0.04em;
   }
 
-  .hg-value {
+  :global(.hg-value) {
     flex: 1;
     font-family: var(--font-mono);
     font-size: 0.82rem;
