@@ -7,7 +7,7 @@ faqItems:
   - question: "Can I convert multi-document YAML?"
     answer: "No. Input with several documents separated by --- shows the error 'expected a single document in the stream, but found more'. Convert one document at a time, or check the file with the YAML Validator, which reports each document separately."
   - question: "How are YAML data types mapped to JSON?"
-    answer: "YAML strings become JSON strings, numbers stay numbers, booleans become true/false, null becomes null, dates become ISO strings, and sequences/mappings become arrays/objects. .inf, .nan and integers outside ±(2^53 − 1) cannot be written to JSON unchanged, so the conversion stops and names those fields."
+    answer: "YAML strings become JSON strings, numbers stay numbers, booleans become true/false, null becomes null, dates become ISO strings, and sequences/mappings become arrays/objects. .inf, .nan, integers outside ±(2^53 − 1), impossible dates such as 2026-02-31 and times finer than milliseconds cannot be written to JSON unchanged, so the conversion stops and names those fields."
   - question: "Is my data sent anywhere?"
     answer: "No. All conversion runs 100% in your browser using JavaScript. Your data never leaves your machine."
 ---
@@ -136,6 +136,8 @@ The tool uses js-yaml 4.3.2, which follows the [YAML 1.2](https://yaml.org/spec/
 | `mode: 0755` | `755` | A leading zero is not octal in YAML 1.2; write `0o755` |
 | `zip: 01234` | `1234` | The leading zero is lost; quote codes like this |
 | `date: 2026-09-29` | `"2026-09-29T00:00:00.000Z"` | Dates become full UTC timestamps |
+| `at: 2026-10-01T09:30:00+09:00` | `"2026-10-01T00:30:00.000Z"` | Offsets become UTC. JSON has no date type, so the text is ISO 8601 in UTC: the same instant, but the written `+09:00` is not kept |
+| `zero: -0.0` | `-0.0` | Negative zero keeps its sign (`JSON.stringify` alone would write `0`) |
 | `empty:` | `null` | A key with no value is null |
 
 ## Limits
@@ -149,8 +151,17 @@ The tool uses js-yaml 4.3.2, which follows the [YAML 1.2](https://yaml.org/spec/
   ```
 
   gives `Not converted: JSON cannot hold these values without changing them: /size: inf has no JSON form (JSON.stringify would write null); /id: integer 9007199254740993 is outside ±(2^53 − 1), so JavaScript would round it`. A JSON number too large for a double, such as `1e400`, is listed the same way. Quote large IDs. The output panel is cleared and its Copy button is disabled until the input converts.
+- **Dates must be real, and times stop at milliseconds.** js-yaml builds dates with `Date.UTC`, which moves `2026-02-31` to March 3, and keeps only milliseconds. Such timestamps stop the conversion instead. This YAML:
+
+  ```yaml
+  due: 2026-02-31
+  at: 2026-10-01T09:30:00.123456Z
+  ```
+
+  gives `Not converted: JSON cannot hold these values without changing them: /due: 2026-02-31 is not a valid date or time; /at: 2026-10-01T09:30:00.123456Z has more than millisecond precision`. Quote a value that is meant as text (`due: "2026-02-31"`). Valid dates and times convert to UTC as shown in the table above.
 - **js-yaml work limits.** js-yaml 4.3.2 stops a document whose collections are nested more than 100 levels deep, whose merge keys (`<<`) handle more than 10,000 mappings and keys in total, or that lists more than 100 mappings in one merge key, for example `Invalid YAML: collections are nested more than 100 levels deep (the js-yaml default limit) (1:103)`.
 - **Duplicate keys are an error** (`duplicated mapping key`), not a silent overwrite.
 - **Errors show line and column.** A key indented one space too far gives `Invalid YAML: bad indentation of a mapping entry (2:3)` with the offending line marked; an unclosed `[` gives `unexpected end of the stream within a flow collection`. To check a file with several `---` documents, use the [YAML Validator](/tools/yaml-validator/), which reports each document separately.
 - **Comments and anchors are not kept.** Anchors and `<<` merge keys are expanded into plain copies.
+- **The JSON integer `-0` becomes `0`.** `{"count":-0,"offset":-0.0}` gives `count: 0` and `offset: -0.0`: [YAML 1.2](https://yaml.org/spec/1.2.2/#1032-tag-resolution) reads `-0` as the integer zero, and `-0.0` stays the negative float zero.
 - **JSON → YAML quotes ambiguous strings** such as `'1.10'`, `'yes'`, and `'NO'`, so they stay strings when read back.

@@ -25,6 +25,13 @@ import ts from 'typescript';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const requireFromRoot = createRequire(join(root, 'package.json'));
 
+class StubWorker {
+  postMessage() {}
+  terminate() {}
+  addEventListener() {}
+  removeEventListener() {}
+}
+
 export function readComponent(relPath) {
   const src = readFileSync(join(root, relPath), 'utf8');
   const fm = /^---\n([\s\S]*?)\n---/.exec(src);
@@ -61,6 +68,9 @@ function makeElement(key) {
     click() { if (!el.disabled) el.dispatch('click'); },
     focus() {}, blur() {}, select() {},
     querySelectorAll() { return []; },
+    // Child-node methods are no-ops: tests read values, text and classes, not built subtrees.
+    querySelector() { return null; }, closest() { return null; },
+    append() {}, prepend() {}, replaceChildren() {}, remove() {}, appendChild(c) { return c; },
   };
   el.classList = {
     add(...c) { const s = new Set(el.className.split(/\s+/).filter(Boolean)); c.forEach((x) => s.add(x)); el.className = [...s].join(' '); },
@@ -72,7 +82,11 @@ function makeElement(key) {
 }
 
 /* options: { lang = 'en', dataset: { selector: { key: value } },
-              stringsSelector: element that gets data-strings = JSON of STRINGS[lang] } */
+              stringsSelector: element that gets data-strings = JSON of STRINGS[lang],
+              preset: { id: value } — textarea / input values that exist before the scripts run
+                (typed while the deferred module script was loading, or restored by the browser),
+              active: id of the element that has focus when the scripts run,
+              globals: extra window properties (for example a ztPersist stand-in) } */
 export function loadPage(relPath, options = {}) {
   const lang = options.lang || 'en';
   const comp = readComponent(relPath);
@@ -82,6 +96,7 @@ export function loadPage(relPath, options = {}) {
   const get = (key) => { if (!elements.has(key)) elements.set(key, makeElement(key)); return elements.get(key); };
   for (const [sel, data] of Object.entries(options.dataset || {})) Object.assign(get(sel).dataset, data);
   if (strings && options.stringsSelector) Object.assign(get(options.stringsSelector).dataset, { strings: JSON.stringify(strings), lang });
+  for (const [id, value] of Object.entries(options.preset || {})) get(id).value = value;
 
   let timers = [];
   let timerSeq = 0;
@@ -96,6 +111,7 @@ export function loadPage(relPath, options = {}) {
     execCommand: () => false,
     body: makeElement('body'),
   };
+  document.activeElement = options.active ? get(options.active) : document.body;
   const sandbox = {
     document,
     navigator: { clipboard: { writeText: (t) => { clipboard.push(t); return Promise.resolve(); } } },
@@ -105,8 +121,11 @@ export function loadPage(relPath, options = {}) {
     Map, Set, WeakMap, RegExp, Date, Symbol, BigInt, Intl, isFinite, isNaN, parseInt, parseFloat,
     exports: {}, module: { exports: {} },
     // Relative imports (./conversion-fidelity.js) resolve from the component's directory.
-    require: (name) => requireFromRoot(name.startsWith('.') ? join(root, dirname(relPath), name) : name),
+    // Vite `?worker` imports get a Worker stand-in that accepts messages and never replies.
+    require: (name) => name.endsWith('?worker') ? StubWorker
+      : requireFromRoot(name.startsWith('.') ? join(root, dirname(relPath), name) : name),
   };
+  Object.assign(sandbox, options.globals || {});
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   const ctx = vm.createContext(sandbox);

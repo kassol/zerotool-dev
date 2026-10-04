@@ -3,7 +3,9 @@
 // Values TOML cannot hold as written (null, integers outside ±(2^53 − 1), timestamps with more
 // than millisecond precision or impossible dates) stop the conversion with their JSON Pointer
 // paths: the old output is cleared and its copy button disabled (conversion-fidelity.js).
-// YAML dates become TOML local dates; YAML date-times become offset date-times.
+// YAML dates become TOML local dates; YAML date-times become offset date-times; -0 becomes
+// -0.0 and whole floats stay floats (1.0). TOML date-times and times with more than millisecond
+// precision, and TOML local date-times (YAML would read them as UTC), stop TOML → YAML.
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -56,7 +58,7 @@ const T = STRINGS[lang] || STRINGS.en;
   <script>
     import jsyaml from 'js-yaml';
     import { parse as tomlParse, stringify as tomlStringify, TomlDate } from 'smol-toml';
-    import { yamlLoadSchema, findLosses, formatLosses } from './conversion-fidelity.js';
+    import { yamlLoadSchema, findLosses, formatLosses, markTomlTimes } from './conversion-fidelity.js';
     import { yamlErrorText } from './yaml-limits.js';
 
     const yamlEl = document.getElementById('yt-yaml') as HTMLTextAreaElement;
@@ -67,7 +69,7 @@ const T = STRINGS[lang] || STRINGS.en;
     const ytWrap = document.querySelector('.yt-wrap') as HTMLElement;
     const S = JSON.parse(ytWrap.dataset.strings || '{}');
     const LANG = ytWrap.dataset.lang || 'en';
-    const YAML_SCHEMA = yamlLoadSchema(jsyaml, { timestamps: true });
+    const YAML_SCHEMA = yamlLoadSchema(jsyaml, { timestamps: true, floats: true });
 
     type Result = { ok: true; text: string } | { ok: false; message: string };
 
@@ -80,13 +82,17 @@ const T = STRINGS[lang] || STRINGS.en;
       }
       const found = findLosses(parsed, 'toml', { TomlDate });
       if (found.count) return { ok: false, message: formatLosses(found, 'TOML', LANG) };
-      try { return { ok: true, text: tomlStringify(parsed) }; }
+      try { return { ok: true, text: tomlStringify(found.value) }; }
       catch (e: any) { return { ok: false, message: S.invalidYaml + ': ' + (e?.message || String(e)) }; }
     }
 
     function tomlToYaml(raw: string): Result {
-      try { return { ok: true, text: jsyaml.dump(tomlParse(raw), { indent: 2, lineWidth: -1, noRefs: true }) }; }
+      let data: any;
+      try { data = markTomlTimes(raw, tomlParse, tomlParse(raw), { localDateTime: true }); }
       catch (e: any) { return { ok: false, message: S.invalidToml + ': ' + (e?.message || String(e)) }; }
+      const found = findLosses(data, 'yaml');
+      if (found.count) return { ok: false, message: formatLosses(found, 'YAML', LANG) };
+      return { ok: true, text: jsyaml.dump(found.value, { indent: 2, lineWidth: -1, noRefs: true }) };
     }
 
     function syncCopy() {
@@ -167,9 +173,18 @@ const T = STRINGS[lang] || STRINGS.en;
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runToml();
     });
 
-    /* ── Page load: pre-fill example ── */
-    yamlEl.value = 'database:\n  host: localhost\n  port: 5432\n  enabled: true';
-    runYaml();
+    /* ── Page load ── Astro bundles this script as a module, which runs only after the page is
+       parsed. Text typed (or restored by the browser) before then had no input listener, so
+       convert it once now: the focused panel first, else the YAML panel, else the TOML panel.
+       The example fills the page only when both panels are empty. */
+    const focused = document.activeElement;
+    if (focused === tomlEl && tomlEl.value.trim()) runToml();
+    else if (yamlEl.value.trim()) runYaml();
+    else if (tomlEl.value.trim()) runToml();
+    else {
+      yamlEl.value = 'database:\n  host: localhost\n  port: 5432\n  enabled: true';
+      runYaml();
+    }
   </script>
 </div>
 

@@ -2,14 +2,14 @@
 title: "robots.txt Explained: Groups, Longest Match and How Crawlers Read the File"
 description: "How robots.txt works under RFC 9309: which group a crawler picks, why the longest rule wins, wildcards, status codes, AI crawler tokens, and tests with Protego and Python."
 pubDate: 2026-04-07
-updatedDate: 2026-10-02
+updatedDate: 2026-10-03
 lang: "en"
 tags: ["robots.txt", "rfc 9309", "crawling", "seo", "ai crawlers"]
 ---
 
 `robots.txt` is a plain-text file at the root of a host that tells crawlers which URL paths they may fetch. The convention dates from 1994; since September 2022 it has been an IETF standard, [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309), written by Martijn Koster and three Google engineers. The RFC is short, and most robots.txt mistakes come from three rules in it that people do not expect: a crawler obeys only one group, the longest matching path decides, and a server error counts as "disallow everything".
 
-This guide goes through those rules with real files. Each file was parsed with two libraries on 2026-10-02: [Protego](https://github.com/scrapy/protego) 0.7.0, the parser Scrapy uses by default, and `urllib.robotparser` from Python 3.12, which many scripts use without knowing that it follows older rules. Where they disagree, the RFC and Google's documentation are on Protego's side.
+This guide goes through those rules with real files. Each file was parsed with two libraries on 2026-10-02: [Protego](https://github.com/scrapy/protego) 0.7.0, the parser Scrapy uses by default, and `urllib.robotparser` from Python 3.12, which many scripts use without knowing that it follows older rules. Where they disagree, the RFC and Google's documentation are on Protego's side. CPython rewrote the module for RFC 9309 in Python 3.13.14 and 3.14.5 ([gh-138907](https://github.com/python/cpython/issues/138907)), so on 2026-10-03 every file was also run with Python 3.14.7, and the text notes where the two versions differ.
 
 ## Where the file lives and what it covers
 
@@ -38,16 +38,16 @@ User-agent: GPTBot
 Disallow: /
 ```
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Googlebot\nDisallow:\n\nUser-agent: GPTBot\nDisallow: /\n","ua":"Googlebot","paths":[["/cart/checkout",true,true]]} */}
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Googlebot\nDisallow:\n\nUser-agent: GPTBot\nDisallow: /\n","ua":"Googlebot-Image","paths":[["/cart/banner.png",true,true]]} */}
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Googlebot\nDisallow:\n\nUser-agent: GPTBot\nDisallow: /\n","ua":"Bingbot","paths":[["/cart/checkout",false,false],["/blog/",true,true]]} */}
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Googlebot\nDisallow:\n\nUser-agent: GPTBot\nDisallow: /\n","ua":"GPTBot","paths":[["/blog/",false,false]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Googlebot\nDisallow:\n\nUser-agent: GPTBot\nDisallow: /\n","ua":"Googlebot","paths":[["/cart/checkout",true,true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Googlebot\nDisallow:\n\nUser-agent: GPTBot\nDisallow: /\n","ua":"Googlebot-Image","paths":[["/cart/banner.png",true,true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Googlebot\nDisallow:\n\nUser-agent: GPTBot\nDisallow: /\n","ua":"Bingbot","paths":[["/cart/checkout",false,false,false],["/blog/",true,true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /cart/\n\nUser-agent: Googlebot\nDisallow:\n\nUser-agent: GPTBot\nDisallow: /\n","ua":"GPTBot","paths":[["/blog/",false,false,false]]} */}
 
 Both parsers agree on every case here. Bingbot falls into the `*` group and may not fetch `/cart/checkout`. Googlebot reads only its own group, which is empty, so `/cart/checkout` is allowed. Googlebot-Image also lands in that empty group: Google lists `Googlebot` as a second token for its image crawler ([common crawlers](https://developers.google.com/crawling/docs/crawlers-fetchers/google-common-crawlers)), and both parsers matched it to the Googlebot group too. GPTBot may fetch nothing. Bing's help page states the same rule for Bingbot: once it finds a section for itself, it ignores the generic one, so shared rules have to be repeated ([Bing: How to create a robots.txt file](https://www.bing.com/webmasters/help/how-to-create-a-robots-txt-file-cb7c31ec)). The fix is to copy `Disallow: /cart/` into the Googlebot group, or to delete that group.
 
 Lines other than `user-agent`, `allow` and `disallow` do not end a group. Google's documentation shows a `sitemap` line between two `user-agent` lines and treats them as one group:
 
-{/* rtg-parse: {"txt":"User-agent: a\nSitemap: https://example.com/sitemap.xml\n\nUser-agent: b\nDisallow: /\n","ua":"a","paths":[["/page",true,false]]} */}
+{/* rtg-parse: {"txt":"User-agent: a\nSitemap: https://example.com/sitemap.xml\n\nUser-agent: b\nDisallow: /\n","ua":"a","paths":[["/page",true,false,false]]} */}
 
 ```text
 User-agent: a
@@ -57,7 +57,7 @@ User-agent: b
 Disallow: /
 ```
 
-Protego blocks `/page` for crawler `a`, as Google does. `urllib.robotparser` allows it, because it starts a new entry at the blank line. Blank lines carry no meaning in RFC 9309; they are only for people.
+Protego blocks `/page` for crawler `a`, as Google does. `urllib.robotparser` in Python 3.12 allows it, because it starts a new entry at the blank line; Python 3.14.7 ignores the blank line and blocks it. Blank lines carry no meaning in RFC 9309; they are only for people.
 
 ## Allow, Disallow and the longest match
 
@@ -77,25 +77,25 @@ Allow: /*.css$
 Sitemap: https://example.com/sitemap.xml
 ```
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /shop/\nAllow: /shop/sale/\nDisallow: /*?sort=\nAllow: /*.css$\n\nSitemap: https://example.com/sitemap.xml\n","ua":"anybot","paths":[["/shop/sale/shoes",false,true],["/shop/sale/shoes?sort=price",false,true],["/shop/item?sort=price",false,false],["/blog/?sort=new",true,false],["/shop/theme.css",false,true],["/shop/theme.css?v=2",false,false],["/Shop/item",true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /shop/\nAllow: /shop/sale/\nDisallow: /*?sort=\nAllow: /*.css$\n\nSitemap: https://example.com/sitemap.xml\n","ua":"anybot","paths":[["/shop/sale/shoes",false,true,true],["/shop/sale/shoes?sort=price",false,true,false],["/shop/item?sort=price",false,false,false],["/blog/?sort=new",true,false,false],["/shop/theme.css",false,true,true],["/shop/theme.css?v=2",false,false,false],["/Shop/item",true,true,true]]} */}
 
-| URL path | Rule that decides (RFC 9309) | Protego | urllib.robotparser |
-|---|---|---|---|
-| `/shop/sale/shoes` | `Allow: /shop/sale/` (11 octets) beats `Disallow: /shop/` (6) | allowed | blocked |
-| `/shop/sale/shoes?sort=price` | `Allow: /shop/sale/` (11) beats `Disallow: /*?sort=` (8) | allowed | blocked |
-| `/shop/item?sort=price` | `Disallow: /*?sort=` (8) beats nothing longer | blocked | blocked |
-| `/blog/?sort=new` | `Disallow: /*?sort=` | blocked | allowed |
-| `/shop/theme.css` | `Allow: /*.css$` (7) beats `Disallow: /shop/` (6) | allowed | blocked |
-| `/shop/theme.css?v=2` | `$` fails because of the query, so `Disallow: /shop/` | blocked | blocked |
-| `/Shop/item` | nothing matches; paths are case-sensitive | allowed | allowed |
+| URL path | Rule that decides (RFC 9309) | Protego | urllib.robotparser, Python 3.12 | urllib.robotparser, Python 3.14.7 |
+|---|---|---|---|---|
+| `/shop/sale/shoes` | `Allow: /shop/sale/` (11 octets) beats `Disallow: /shop/` (6) | allowed | blocked | allowed |
+| `/shop/sale/shoes?sort=price` | `Allow: /shop/sale/` (11) beats `Disallow: /*?sort=` (8) | allowed | blocked | blocked |
+| `/shop/item?sort=price` | `Disallow: /*?sort=` (8) beats nothing longer | blocked | blocked | blocked |
+| `/blog/?sort=new` | `Disallow: /*?sort=` | blocked | allowed | blocked |
+| `/shop/theme.css` | `Allow: /*.css$` (7) beats `Disallow: /shop/` (6) | allowed | blocked | allowed |
+| `/shop/theme.css?v=2` | `$` fails because of the query, so `Disallow: /shop/` | blocked | blocked | blocked |
+| `/Shop/item` | nothing matches; paths are case-sensitive | allowed | allowed | allowed |
 
 The second row surprises people: a sorted URL inside `/shop/sale/` is crawlable, because the longer `Allow` beats the shorter wildcard `Disallow`. If you want sorted listings blocked everywhere, write a rule at least as long as the `Allow`, such as `Disallow: /shop/sale/*?sort=`.
 
-The right-hand column shows why `urllib.robotparser` is a poor test bench. It applies the first rule that matches in file order and does not understand `*` or `$`, so it treats `Disallow: /*?sort=` as a literal path and never matches it. If a script of yours relies on it, put each `Allow` above the `Disallow` it carves out and avoid wildcards.
+The Python 3.12 column shows why the old `urllib.robotparser` is a poor test bench. It applies the first rule that matches in file order and does not understand `*` or `$`, so it treats `Disallow: /*?sort=` as a literal path and never matches it. Python 3.13.14, 3.14.5 and later apply the longest match and understand `*` and `$`, and Python 3.14.7 agrees with Protego on every row but the second. There it measures a wildcard rule by the part of the URL it matched: `/*?sort=` covers all 22 characters of `/shop/sale/shoes?sort=`, so it beats the 11-character `Allow`. Google measures "the length of the rule path" ([How Google interprets the robots.txt specification](https://developers.google.com/crawling/docs/robots-txt/robots-txt-spec)), and so does Protego. If a script of yours relies on `urllib.robotparser`, check which Python runs it; on 3.12 or older, put each `Allow` above the `Disallow` it carves out and avoid wildcards.
 
 Two more matching details. A rule without a trailing slash is a prefix: `Disallow: /private` also blocks `/private-notes` and `/private.html`. And non-ASCII paths are compared percent-encoded, so `Disallow: /café` and `Disallow: /caf%C3%A9` are the same rule.
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /private\n","ua":"anybot","paths":[["/private-notes",false,false],["/Private/a",true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /private\n","ua":"anybot","paths":[["/private-notes",false,false,false],["/Private/a",true,true,true]]} */}
 
 ## Missing, broken, redirected or huge files
 

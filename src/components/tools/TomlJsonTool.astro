@@ -1,9 +1,10 @@
 ---
 // TomlJsonTool — bidirectional TOML ↔ JSON converter (smol-toml, bundled from npm).
 // Values the target cannot hold as written stop the conversion with their JSON Pointer paths:
-// TOML inf / nan going to JSON, JSON null going to TOML, JSON integers outside ±(2^53 − 1) and
-// JSON numbers that overflow (conversion-fidelity.js). The old output is cleared and its copy
-// button disabled.
+// TOML inf / nan going to JSON, TOML date-times and times with more than millisecond precision,
+// JSON null going to TOML, JSON integers outside ±(2^53 − 1) and JSON numbers that overflow
+// (conversion-fidelity.js). The old output is cleared and its copy button disabled. -0.0 is
+// written as -0.0 both ways; the JSON integer -0 is the integer 0.
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -56,7 +57,7 @@ const T = STRINGS[lang] || STRINGS.en;
 
   <script>
     import { parse, stringify } from 'smol-toml';
-    import { parseJsonExact, findLosses, formatLosses } from './conversion-fidelity.js';
+    import { parseJsonExact, findLosses, formatLosses, markTomlTimes, stringifyJson } from './conversion-fidelity.js';
 
     const tomlEl = document.getElementById('tj-toml') as HTMLTextAreaElement;
     const jsonEl = document.getElementById('tj-json') as HTMLTextAreaElement;
@@ -71,11 +72,11 @@ const T = STRINGS[lang] || STRINGS.en;
 
     function tomlToJson(raw: string): Result {
       let data: any;
-      try { data = parse(raw); }
+      try { data = markTomlTimes(raw, parse, parse(raw)); }
       catch (e: any) { return { ok: false, message: S.msgInvalidToml + ': ' + (e?.message || String(e)) }; }
       const found = findLosses(data, 'json');
       if (found.count) return { ok: false, message: formatLosses(found, 'JSON', LANG) };
-      return { ok: true, text: JSON.stringify(data, null, 2) };
+      return { ok: true, text: stringifyJson(found.value, 2) };
     }
 
     function jsonToToml(raw: string): Result {
@@ -84,7 +85,7 @@ const T = STRINGS[lang] || STRINGS.en;
       catch (e: any) { return { ok: false, message: S.msgInvalidJson + ': ' + (e?.message || String(e)) }; }
       const found = findLosses(data, 'toml');
       if (found.count) return { ok: false, message: formatLosses(found, 'TOML', LANG) };
-      try { return { ok: true, text: stringify(data) }; }
+      try { return { ok: true, text: stringify(found.value) }; }
       catch (e: any) { return { ok: false, message: S.msgError + ': ' + (e?.message || String(e)) }; }
     }
 
@@ -164,6 +165,13 @@ const T = STRINGS[lang] || STRINGS.en;
     jsonEl.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) document.getElementById('tj-to-toml')!.click();
     });
+    /* ── Page load ── Astro bundles this script as a module, which runs only after the page is
+       parsed. Text typed (or restored by the browser) before then had no input listener, so
+       convert it once now: the focused panel first, else the TOML panel, else the JSON panel. */
+    const focused = document.activeElement;
+    if (focused === jsonEl && jsonEl.value.trim()) runJson();
+    else if (tomlEl.value.trim()) runToml();
+    else if (jsonEl.value.trim()) runJson();
   </script>
 </div>
 

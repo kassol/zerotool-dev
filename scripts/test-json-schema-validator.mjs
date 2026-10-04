@@ -231,6 +231,20 @@ const DETERMINED_INPUTS = [
   ['unused referenced schema with $dynamicRef', '{"type":"string"}', '"x"', 'valid', { extras: '{"$id":"https://fixture.example/tree","$dynamicAnchor":"n","properties":{"c":{"$dynamicRef":"#n"}}}' }],
   ['standard meta-schema vocabularies', '{"$schema":"https://fixture.example/meta","minimum":10}', '1', 'invalid', { extras: '{"$id":"https://fixture.example/meta","$schema":"https://json-schema.org/draft/2020-12/schema","$vocabulary":{"https://json-schema.org/draft/2020-12/vocab/core":true,"https://json-schema.org/draft/2020-12/vocab/applicator":true,"https://json-schema.org/draft/2020-12/vocab/validation":true,"https://fixture.example/vocab/x":false}}' }],
   ['oneOf example', EXAMPLES.oneOf.schema, EXAMPLES.oneOf.data, 'invalid'], ['user example', EXAMPLES.user.schema, EXAMPLES.user.data, 'valid'],
+  // multipleOf is decided on the decimal values (Ajv's double division said 19.99 / 0.01 and 0.3 / 0.1
+  // are not multiples, and 1e20 / 3 is)
+  ['multipleOf 0.01: 19.99', '{"multipleOf":0.01}', '19.99', 'valid'], ['multipleOf 0.01: 4.35', '{"multipleOf":0.01}', '4.35', 'valid'],
+  ['multipleOf 0.01: 19.995', '{"multipleOf":0.01}', '19.995', 'invalid'],
+  ['multipleOf 0.1: 0.3', '{"multipleOf":0.1}', '0.3', 'valid'], ['multipleOf 0.1: 0.35', '{"multipleOf":0.1}', '0.35', 'invalid'],
+  ['multipleOf 1e-8: 0.00000003', '{"multipleOf":1e-8}', '0.00000003', 'valid'], ['multipleOf 1e-8: 1.000000015', '{"multipleOf":1e-8}', '1.000000015', 'invalid'],
+  ['multipleOf 1e-8: 123456.78901234', '{"multipleOf":1e-8}', '123456.78901234', 'valid'],
+  ['multipleOf 3: 1e20', '{"multipleOf":3}', '1e20', 'invalid'], ['multipleOf 3: 3e20', '{"multipleOf":3}', '3e20', 'valid'],
+  ['multipleOf 0.5: 1e308', '{"multipleOf":0.5}', '1e308', 'valid'], ['multipleOf 0.123456789: 1e308', '{"multipleOf":0.123456789}', '1e308', 'invalid'],
+  ['multipleOf 2.5: -7.5', '{"multipleOf":2.5}', '-7.5', 'valid'], ['multipleOf 0.01: 0', '{"multipleOf":0.01}', '0', 'valid'],
+  ['multipleOf 0.01 in YAML: 19.99', '{"properties":{"price":{"multipleOf":0.01}}}', 'price: 19.99\n', 'valid'],
+  ['multipleOf draft-04: 19.99', '{"$schema":"http://json-schema.org/draft-04/schema#","multipleOf":0.01}', '19.99', 'valid'],
+  ['multipleOf draft-07: 0.3', '{"$schema":"http://json-schema.org/draft-07/schema#","multipleOf":0.1}', '0.3', 'valid'],
+  ['multipleOf on a string is ignored', '{"multipleOf":0.1}', '"0.35"', 'valid'],
 ];
 function reliabilityChecks() {
   for (const dir of ['draft4', 'draft6', 'draft7', 'draft2019-09', 'draft2020-12']) {
@@ -274,6 +288,33 @@ function reliabilityChecks() {
     check('report text marks each document', E.reportText(partial, T).split('\n').includes('Document 2 (line 2): Cannot be determined'), E.reportText(partial, T));
     const pd = run('{"properties":{"__proto__":{"type":"number"}}}', '{"x":1}\n{"__proto__":"x"}');
     check('"__proto__": only the document with that key is unknown', pd.docs.map((d) => d.state).join() === 'valid,unknown');
+    {
+      // decimal multiples built as strings: value = k × divisor exactly, and value + 1 unit in a
+      // later decimal place is never a multiple
+      let s2 = 11; const r2 = () => { s2 = (s2 * 1103515245 + 12345) & 0x7fffffff; return s2 / 0x7fffffff; };
+      const dec = (n, p) => { const neg = n < 0n; let t = (neg ? -n : n).toString().padStart(p + 1, '0'); t = p ? t.slice(0, -p) + '.' + t.slice(-p) : t; return (neg ? '-' : '') + t; };
+      let good = 0, bad = 0, tried = 0, ajvWrong = 0;
+      for (let i = 0; i < 5000; i++) {
+        const p = Math.floor(r2() * 9), m = BigInt(1 + Math.floor(r2() * 999)), k = BigInt(Math.floor((r2() - 0.5) * 2e6));
+        const divisor = dec(m, p), value = dec(k * m, p);
+        const off = dec(k * m * 10n + 1n, p + 1);
+        if (!E.isExactNumber(divisor, Number(divisor)) || !E.isExactNumber(value, Number(value)) || !E.isExactNumber(off, Number(off))) continue;
+        tried++;
+        if (E.isMultipleOf(Number(value), Number(divisor))) good++;
+        if (!E.isMultipleOf(Number(off), Number(divisor))) bad++;
+        const q = Number(value) / Number(divisor);
+        if (q !== parseInt(q)) ajvWrong++;
+      }
+      check('isMultipleOf: exact multiples pass, value + a later unit fails (5,000 random decimals)', tried > 4000 && good === tried && bad === tried, [tried, good, bad]);
+      check('isMultipleOf: the random set includes cases where double division is not an integer', ajvWrong > 100, ajvWrong);
+      const inv = run('{"properties":{"price":{"multipleOf":0.01}}}', '{"price":19.995}');
+      const e0 = inv.docs[0] && inv.docs[0].raw[0];
+      check('multipleOf error keeps Ajv\'s shape (keyword, params, paths, message)', inv.state === 'invalid' && e0 && e0.keyword === 'multipleOf' && e0.params.multipleOf === 0.01 && e0.instancePath === '/price' && e0.schemaPath === '#/properties/price/multipleOf' && e0.message === 'must be multiple of 0.01', e0);
+      for (const lang of ['en', 'zh', 'ja', 'ko']) {
+        const t = E.reportText(run('{"multipleOf":0.01}', '19.995', { T: STRINGS[lang] }), STRINGS[lang]);
+        check('[' + lang + '] multipleOf message is filled', t.includes('0.01') && !/\{\w+\}|undefined/.test(t), t);
+      }
+    }
     check('decimalKey normalizes', E.decimalKey('1.500e2') === '15e1' && E.decimalKey('-0.00') === '0' && E.decimalKey('00012') === '12e0' && E.decimalKey('.5') === '5e-1');
     const exact = ['0', '1', '-1', '0.1', '1.0', '1e2', '1E-7', '123.456', '9007199254740991', '9007199254740994', '1.7976931348623157e308', '5e-324', '0x1F', '0o17', '-0b101', '+12'];
     const inexact = ['9007199254740993', '-9007199254740993', '1.0000000000000001', '1e-400', '1e400', '0.1000000000000000055511151231257827', '12345678901234567890.5', '0x20000000000001', '2e-324'];

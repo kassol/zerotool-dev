@@ -54,11 +54,13 @@ PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; connect.sid=s%3Aabc.def; name=%8ER%93c; PH
 
 ## 属性ごとのブラウザーの扱い
 
+{/* ck-check: {"set": "sid=x; Domain=co.jp", "url": "https://www.example.co.jp/", "verdict": "rejected", "reject": ["domainPublicSuffix"]} */}
+
 | 属性 | ツールが適用するルール |
 |---|---|
 | `Expires` | [RFC 6265bis](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/) §5.1.1 の日付アルゴリズムで読みます。`2026-10-21T07:28:00Z` のような ISO 形式は読めず、セッション Cookie になります。日本時間ではなく GMT で書きます。 |
 | `Max-Age` | Expires より優先。0 以下は削除。400 日を超える有効期間は 400 日に（[Chrome は 104 以降](https://developer.chrome.com/blog/cookie-max-age-expires)）。 |
-| `Domain` | 先頭のドットは無視。省略すると発行元のホストだけ、指定するとすべてのサブドメインに送られます。 |
+| `Domain` | 先頭のドットは無視。省略すると発行元のホストだけ、指定するとすべてのサブドメインに送られます。[Public Suffix List](https://publicsuffix.org/) にあるパブリックサフィックスは拒否されます。`https://www.example.co.jp/` からの `sid=x; Domain=co.jp` は拒否、リストの PRIVATE 部にある `Domain=github.io` も同じです。Domain がレスポンスのホストと同じときは host-only になります（RFC 6265bis §5.7 ステップ 9）。 |
 | `Path` | 省略時や `/` で始まらないときは、レスポンス URL のディレクトリ。 |
 | `SameSite` | 省略時、Chrome 80 以降・Edge 86 以降は Lax、Firefox・Safari は違います（[MDN の互換性データ](https://developer.mozilla.org/ja/docs/Web/HTTP/Reference/Headers/Set-Cookie#ブラウザーの互換性)）。`None` には `Secure` が必要。 |
 | `Partitioned` | `Secure` が必要（[CHIPS](https://datatracker.ietf.org/doc/draft-cutler-httpbis-partitioned-cookies/)）。Chrome 114 以降、Firefox 141 以降、Safari 26.2 以降。 |
@@ -88,7 +90,7 @@ PHPSESSID=r4k8vq2m9n1p6s3t0w5x7y2z4b; connect.sid=s%3Aabc.def; name=%8ER%93c; PH
 
 ## 制限
 
-- パブリックサフィックスリストは持っていません。Domain にドットがないときは警告しますが、`Domain=co.jp` のような値は拒否と判定しません（ブラウザーは拒否します）。
+- パブリックサフィックスは Public Suffix List の固定版（2026-10-01、ICANN 部と PRIVATE 部、ワイルドカードと例外ルールを含む）で判定します。リストは頻繁に更新されるため、その後に追加されたサフィックスはツールに入っていません。ブラウザーも内蔵のリストをそれぞれの周期で更新します。リストは圧縮後で約 45 KB で、Set-Cookie か cookies.txt を初めて解析するときに読み込みます。読み込み前や失敗したときは、Domain 属性のある Cookie を「未確認」とし、リクエストのシミュレーションに含めず、Domain も判定しません。
 - シミュレーションは、各 Set-Cookie がトップレベルのページのレスポンスから来て、それ以前に Cookie がない前提です。SameSite を書かない新しい Cookie を Chrome が 2 分間だけクロスサイトの POST に付ける例外は扱いません。
 - 有効期間は貼り付けた時点から数えます。
 - ブラウザー拡張がエクスポートする JSON は読みません。Cookie ヘッダーか cookies.txt を貼り付けてください。

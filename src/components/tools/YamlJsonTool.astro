@@ -1,8 +1,11 @@
 ---
 // YamlJsonTool — bidirectional YAML ↔ JSON converter (bundles js-yaml from npm).
 // Values JSON or YAML cannot hold as written stop the conversion with their JSON Pointer paths:
-// YAML .inf / .nan going to JSON, integers outside ±(2^53 − 1) on either side and JSON numbers
-// that overflow (conversion-fidelity.js). The old output is cleared and its copy button disabled.
+// YAML .inf / .nan going to JSON, integers outside ±(2^53 − 1) on either side, JSON numbers
+// that overflow and YAML timestamps that are not real dates (2026-02-31) or have more than
+// millisecond precision (conversion-fidelity.js). The old output is cleared and its copy button
+// disabled. -0.0 is written -0.0; the JSON integer -0 is 0. Valid timestamps become UTC ISO text
+// (the same instant; the written offset is not kept).
 // YAML errors from the js-yaml work limits are shown in the page language (yaml-limits.js).
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
@@ -56,7 +59,7 @@ const T = STRINGS[lang] || STRINGS.en;
 
   <script>
     import jsyaml from 'js-yaml';
-    import { yamlLoadSchema, parseJsonExact, findLosses, formatLosses } from './conversion-fidelity.js';
+    import { yamlLoadSchema, parseJsonExact, findLosses, formatLosses, stringifyJson } from './conversion-fidelity.js';
     import { yamlErrorText } from './yaml-limits.js';
 
     const yamlEl = document.getElementById('yj-yaml') as HTMLTextAreaElement;
@@ -67,7 +70,7 @@ const T = STRINGS[lang] || STRINGS.en;
     const yjWrap = document.querySelector('.yj-wrap') as HTMLElement;
     const S = JSON.parse(yjWrap.dataset.strings || '{}');
     const LANG = yjWrap.dataset.lang || 'en';
-    const YAML_SCHEMA = yamlLoadSchema(jsyaml);
+    const YAML_SCHEMA = yamlLoadSchema(jsyaml, { timestamps: true });
 
     type Result = { ok: true; text: string } | { ok: false; message: string };
 
@@ -77,7 +80,7 @@ const T = STRINGS[lang] || STRINGS.en;
       catch (e: any) { return { ok: false, message: S.invalidYaml + ': ' + yamlErrorText(e, LANG) }; }
       const found = findLosses(data, 'json');
       if (found.count) return { ok: false, message: formatLosses(found, 'JSON', LANG) };
-      return { ok: true, text: JSON.stringify(data, null, 2) };
+      return { ok: true, text: stringifyJson(found.value, 2) };
     }
 
     function jsonToYaml(raw: string): Result {
@@ -86,7 +89,7 @@ const T = STRINGS[lang] || STRINGS.en;
       catch (e: any) { return { ok: false, message: S.invalidJson + ': ' + (e?.message || String(e)) }; }
       const found = findLosses(data, 'yaml');
       if (found.count) return { ok: false, message: formatLosses(found, 'YAML', LANG) };
-      return { ok: true, text: jsyaml.dump(data, { indent: 2, lineWidth: -1, noRefs: true }) };
+      return { ok: true, text: jsyaml.dump(found.value, { indent: 2, lineWidth: -1, noRefs: true }) };
     }
 
     function syncCopy() {
@@ -165,6 +168,14 @@ const T = STRINGS[lang] || STRINGS.en;
     jsonEl.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) document.getElementById('yj-to-yaml')!.click();
     });
+
+    /* ── Page load ── Astro bundles this script as a module, which runs only after the page is
+       parsed. Text typed (or restored by the browser) before then had no input listener, so
+       convert it once now: the focused panel first, else the YAML panel, else the JSON panel. */
+    const focused = document.activeElement;
+    if (focused === jsonEl && jsonEl.value.trim()) runJson();
+    else if (yamlEl.value.trim()) runYaml();
+    else if (jsonEl.value.trim()) runJson();
   </script>
 </div>
 

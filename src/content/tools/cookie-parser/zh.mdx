@@ -58,11 +58,13 @@ Hm_lvt_8c5e2d1f0a9b4c7e6d3f2a1b0c9d8e7f=1759363200,1759449600; JSESSIONID=7F3A9C
 
 ## 浏览器怎样处理每个属性
 
+{/* ck-check: {"set": "sid=x; Domain=com.cn", "url": "https://www.example.com.cn/", "verdict": "rejected", "reject": ["domainPublicSuffix"]} */}
+
 | 属性 | 本工具采用的规则 |
 |---|---|
 | `Expires` | 按 [RFC 6265bis](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/) §5.1.1 的 Cookie 日期算法读取。`2026-10-21T07:28:00Z` 这种 ISO 格式读不出来，Cookie 会变成会话 Cookie。 |
 | `Max-Age` | 优先于 Expires；0 或负数表示删除；超过 400 天截到 400 天（[Chrome 104 起](https://developer.chrome.com/blog/cookie-max-age-expires)）。 |
-| `Domain` | 开头的点会被忽略。不写 Domain 只在当前主机生效，写了则所有子域名都能收到。 |
+| `Domain` | 开头的点会被忽略。不写 Domain 只在当前主机生效，写了则所有子域名都能收到。Domain 是[公共后缀列表](https://publicsuffix.org/)里的后缀时拒收：从 `https://www.example.com.cn/` 收到 `sid=x; Domain=com.cn` 会被拒收，`Domain=github.io` 这类列表私有部分的后缀也一样。Domain 恰好等于响应主机时，Cookie 按 host-only 处理（RFC 6265bis §5.7 第 9 步）。 |
 | `Path` | 不写或不以 `/` 开头时，取响应 URL 所在的目录。 |
 | `SameSite` | 不写时 Chrome 80+、Edge 86+ 按 Lax 处理，Firefox、Safari 不这样做（[MDN 兼容性数据](https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Reference/Headers/Set-Cookie#浏览器兼容性)）。`None` 必须同时有 `Secure`。 |
 | `Partitioned` | 必须有 `Secure`（[CHIPS 草案](https://datatracker.ietf.org/doc/draft-cutler-httpbis-partitioned-cookies/)）；Chrome 114+、Firefox 141+、Safari 26.2+ 支持。 |
@@ -94,7 +96,7 @@ PHP 还会把名称里的点和空格换成下划线。工具在对应的行里�
 
 ## 限制
 
-- 没有内置公共后缀列表。Domain 里没有点时会提示，但 `Domain=com.cn` 这类公共后缀不会判为拒收，浏览器实际会拒收。
+- 公共后缀取自公共后缀列表的固定版本（2026-10-01，包含 ICANN 与私有两部分，以及通配与例外规则）。列表经常更新，之后新增的后缀工具不知道；浏览器也按各自的节奏更新内置的列表。列表压缩后约 45 KB，第一次解析 Set-Cookie 或 cookies.txt 时才加载。加载完成前或加载失败时，带 Domain 属性的 Cookie 标为「未核实」，不进入请求模拟，也不判断它的 Domain。
 - 模拟假设每行 Set-Cookie 都来自顶层页面的响应，并且之前没有任何 Cookie；不模拟 Chrome 对未写 SameSite 的新 Cookie 允许跨站 POST 的 2 分钟例外。
 - 有效期从粘贴的时刻起算，不是响应时刻。
 - 不读取浏览器插件导出的 JSON；请粘贴 Cookie 请求头或 cookies.txt。

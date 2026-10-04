@@ -2,14 +2,14 @@
 title: "robots.txtの書き方と読まれ方：RFC 9309・WordPress・AIクローラー対策まで"
 description: "robots.txtをRFC 9309とGoogleの仕様で解説。従うグループは1つ、長いルールが勝つ、5xxは全拒否。WordPressの仮想robots.txt、エックスサーバーのAIクローラー遮断設定との違いも実測付きで。"
 pubDate: 2026-04-07
-updatedDate: 2026-10-02
+updatedDate: 2026-10-03
 lang: "ja"
 tags: ["robots.txt", "rfc 9309", "クローラー", "seo", "wordpress"]
 ---
 
 robots.txt は、サイトのルートに置くテキストファイルで、クローラーに「どの URL を取得してよいか」を伝えます。1994 年に始まった慣習ですが、2022 年 9 月に IETF の標準 [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309) になりました。書式は単純でも、つまずきやすい規則が 3 つあります。クローラーが従うのは 1 つのグループだけ、行の順番ではなく長いルールが勝つ、そしてサーバーエラーは「全部禁止」とみなされる、の 3 つです。
 
-この記事では、それぞれの規則を実際のファイルで確かめます。判定は 2026-10-02 に 2 つのライブラリで行いました。Scrapy が標準で使う [Protego](https://github.com/scrapy/protego) 0.7.0 と、Python 3.12 の `urllib.robotparser` です。両者の結果が食い違う箇所では、RFC と Google の仕様に沿っているのは Protego のほうです。
+この記事では、それぞれの規則を実際のファイルで確かめます。判定は 2026-10-02 に 2 つのライブラリで行いました。Scrapy が標準で使う [Protego](https://github.com/scrapy/protego) 0.7.0 と、Python 3.12 の `urllib.robotparser` です。両者の結果が食い違う箇所では、RFC と Google の仕様に沿っているのは Protego のほうです。なお CPython は Python 3.13.14 と 3.14.5 でこのモジュールを RFC 9309 に沿って書き直したため（[gh-138907](https://github.com/python/cpython/issues/138907)）、2026-10-03 に Python 3.14.7 でも同じファイルを判定し、結果が変わる箇所を併記しました。
 
 ## 置き場所と、日本で誰が読むか
 
@@ -19,7 +19,7 @@ robots.txt は、サイトのルートに置くテキストファイルで、ク
 
 ファイルは UTF-8 のプレーンテキストにします。Google は UTF-8 以外の文字を無視することがあると書いています。日本語のパスを含むルールは、比較の前に UTF-8 でパーセントエンコードされます。そのため `Disallow: /ブログ/下書き/` と書いても、`/%E3%83%96%E3%83%AD%E3%82%B0/%E4%B8%8B%E6%9B%B8%E3%81%8D/a` へのリクエストは正しく止まります。Shift_JIS で保存すると、このバイト列が一致しなくなります。
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /ブログ/下書き/\n","ua":"anybot","paths":[["/%E3%83%96%E3%83%AD%E3%82%B0/%E4%B8%8B%E6%9B%B8%E3%81%8D/a",false,false],["/%E3%83%96%E3%83%AD%E3%82%B0/",true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /ブログ/下書き/\n","ua":"anybot","paths":[["/%E3%83%96%E3%83%AD%E3%82%B0/%E4%B8%8B%E6%9B%B8%E3%81%8D/a",false,false,false],["/%E3%83%96%E3%83%AD%E3%82%B0/",true,true,true]]} */}
 
 もう 1 つの前提として、robots.txt は「お願い」であってアクセス制限ではありません。RFC 9309 の 3 節は、パスを書けばむしろ公開されると注意しています。管理画面の URL を隠す目的には使えず、守りたいページには Basic 認証などが必要です。また、クロールを止めてもインデックスからは消えません。Google は、ブロックした URL でも他ページからリンクされていればスニペットなしで表示することがあると説明しています。検索結果から外すには、ページをクロールさせたうえで `noindex` を返します。robots.txt で同じページを止めると、クローラーは `noindex` を読めなくなります。
 
@@ -39,8 +39,8 @@ User-agent: Bingbot
 Disallow: /search/
 ```
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /mypage/\n\nUser-agent: Bingbot\nDisallow: /search/\n","ua":"Bingbot","paths":[["/mypage/",true,true],["/search/?q=a",false,false]]} */}
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /mypage/\n\nUser-agent: Bingbot\nDisallow: /search/\n","ua":"Googlebot","paths":[["/mypage/",false,false],["/search/",true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /mypage/\n\nUser-agent: Bingbot\nDisallow: /search/\n","ua":"Bingbot","paths":[["/mypage/",true,true,true],["/search/?q=a",false,false,false]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /mypage/\n\nUser-agent: Bingbot\nDisallow: /search/\n","ua":"Googlebot","paths":[["/mypage/",false,false,false],["/search/",true,true,true]]} */}
 
 両パーサーとも、Bingbot は `/mypage/` を取得してよい、Googlebot は `/mypage/` を取得できない、と判定しました。Bingbot は自分のグループしか読まないので、`*` の `Disallow: /mypage/` は効かなくなります。Bing のヘルプも、Bingbot は自分用のセクションを見つけると汎用セクションを無視するので、共通のルールを繰り返し書くよう求めています（[How to Create a robots.txt File](https://www.bing.com/webmasters/help/how-to-create-a-robots-txt-file-cb7c31ec)）。Bingbot のブロックにも `Disallow: /mypage/` を書けば直ります。
 
@@ -66,17 +66,17 @@ Sitemap: https://example.jp/wp-sitemap.xml
 
 ここに、サイト内検索の結果ページ（WordPress では `?s=` パラメーター）を止める `Disallow: /*?s=` を足したファイルで判定すると、次のようになりました。
 
-{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /wp-admin/\nAllow: /wp-admin/admin-ajax.php\nDisallow: /*?s=\n\nSitemap: https://example.jp/wp-sitemap.xml\n","ua":"Googlebot","paths":[["/wp-admin/admin-ajax.php",false,true],["/wp-admin/options.php",false,false],["/?s=%E3%83%A9%E3%83%BC%E3%83%A1%E3%83%B3",true,false],["/blog/?s=test",true,false],["/2026/10/hello/",true,true]]} */}
+{/* rtg-parse: {"txt":"User-agent: *\nDisallow: /wp-admin/\nAllow: /wp-admin/admin-ajax.php\nDisallow: /*?s=\n\nSitemap: https://example.jp/wp-sitemap.xml\n","ua":"Googlebot","paths":[["/wp-admin/admin-ajax.php",false,true,true],["/wp-admin/options.php",false,false,false],["/?s=%E3%83%A9%E3%83%BC%E3%83%A1%E3%83%B3",true,false,false],["/blog/?s=test",true,false,false],["/2026/10/hello/",true,true,true]]} */}
 
-| パス | 決め手になるルール（RFC 9309） | Protego | urllib.robotparser |
-|---|---|---|---|
-| `/wp-admin/admin-ajax.php` | `Allow: /wp-admin/admin-ajax.php`（24 バイト）が `Disallow: /wp-admin/`（10）より長い | 許可 | 拒否 |
-| `/wp-admin/options.php` | `Disallow: /wp-admin/` | 拒否 | 拒否 |
-| `/?s=ラーメン`（エンコード済み） | `Disallow: /*?s=` | 拒否 | 許可 |
-| `/blog/?s=test` | `Disallow: /*?s=` | 拒否 | 許可 |
-| `/2026/10/hello/` | 一致なし | 許可 | 許可 |
+| パス | 決め手になるルール（RFC 9309） | Protego | urllib.robotparser（Python 3.12） | urllib.robotparser（Python 3.14.7） |
+|---|---|---|---|---|
+| `/wp-admin/admin-ajax.php` | `Allow: /wp-admin/admin-ajax.php`（24 バイト）が `Disallow: /wp-admin/`（10）より長い | 許可 | 拒否 | 許可 |
+| `/wp-admin/options.php` | `Disallow: /wp-admin/` | 拒否 | 拒否 | 拒否 |
+| `/?s=ラーメン`（エンコード済み） | `Disallow: /*?s=` | 拒否 | 許可 | 拒否 |
+| `/blog/?s=test` | `Disallow: /*?s=` | 拒否 | 許可 | 拒否 |
+| `/2026/10/hello/` | 一致なし | 許可 | 許可 | 許可 |
 
-`urllib.robotparser` は RFC 以前の流儀で、ファイルの上から最初に一致した行を使い、`*` と `$` を解釈しません。そのため WordPress 標準の robots.txt でさえ `admin-ajax.php` を拒否と判定します。自作のスクリプトでこのモジュールを使っているなら、`Allow` を対応する `Disallow` より上に書き、ワイルドカードを避けてください。Googlebot や Bingbot の判定とは一致しません。
+Python 3.12 の `urllib.robotparser` は RFC 以前の流儀で、ファイルの上から最初に一致した行を使い、`*` と `$` を解釈しません。そのため WordPress 標準の robots.txt でさえ `admin-ajax.php` を拒否と判定し、Googlebot や Bingbot の判定とは一致しません。Python 3.13.14・3.14.5 以降は最長一致と `*`・`$` に対応し、この表では 3.14.7 の結果が Protego と同じになりました。自作のスクリプトでこのモジュールを使っているなら、まず実行環境の Python のバージョンを確認してください。3.12 以前なら、`Allow` を対応する `Disallow` より上に書き、ワイルドカードを避けてください。
 
 もう 1 つ注意したいのは、末尾のスラッシュがないルールも前方一致だという点です。`Disallow: /member` は `/members` も `/member-list.html` も止めます。また、パスの大文字・小文字は区別されるので、`Disallow: /Admin/` では `/admin/` は止まりません。
 

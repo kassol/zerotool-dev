@@ -141,8 +141,34 @@ function createAjv(draft, lib, formats) {
   else if (draft === '2019-09') ajv = new lib.Ajv2019(opts);
   else ajv = new lib.Ajv2020(opts);
   (REMOVED_KEYWORDS[draft] || []).forEach(function (k) { if (ajv.getKeyword(k)) ajv.removeKeyword(k); });
+  ajv.removeKeyword('multipleOf');
+  ajv.addKeyword({ keyword: 'multipleOf', type: 'number', schemaType: 'number', errors: true, validate: validateMultipleOf });
   if (formats !== false) lib.addFormats(ajv, ASSERTED_FORMATS);
   return ajv;
+}
+/* multipleOf with exact decimal arithmetic. Ajv divides doubles: 19.99 / 0.01 is
+   1998.9999999999998 (reported as not a multiple) and 1e20 / 3 rounds to an integer (reported as
+   a multiple). A number that reaches validation is exact (otherwise the document is "cannot be
+   determined", see isExactNumber), so the shortest decimal form of the double is the value of
+   the literal, and "value / divisor is an integer" is decided on that form. */
+function decimalParts(x) {
+  var k = decimalKey(String(x));
+  if (k === '0') return { n: BigInt(0), e: 0 };
+  var at = k.indexOf('e');
+  return { n: BigInt(k.slice(0, at)), e: parseInt(k.slice(at + 1), 10) };
+}
+function pow10(n) { return BigInt('1' + new Array(n + 1).join('0')); }
+function isMultipleOf(value, divisor) {
+  if (!isFinite(value) || !isFinite(divisor) || !(divisor > 0)) return false;
+  var a = decimalParts(value), b = decimalParts(divisor), zero = BigInt(0);
+  if (a.n === zero) return true;
+  var d = a.e - b.e;
+  return d >= 0 ? (a.n * pow10(d)) % b.n === zero : a.n % (b.n * pow10(-d)) === zero;
+}
+function validateMultipleOf(schema, data) {
+  var ok = isMultipleOf(data, schema);
+  validateMultipleOf.errors = ok ? null : [{ keyword: 'multipleOf', params: { multipleOf: schema }, message: 'must be multiple of ' + schema }];
+  return ok;
 }
 function knownKeywords(ajv, draft) {
   var known = {};
@@ -1232,7 +1258,7 @@ function reportJson(res, T) {
 export {
   DRAFTS, DEFAULT_DRAFT, META_URIS, DRAFT_NAMES, ASSERTED_FORMATS, fmt, getAt, lineCol, codePoints,
   draftOfUri, detectDraft, createAjv, knownKeywords, prepareSchema, unsupportedOf, nestErrors, describe,
-  jsonSyntaxError, scanJson, decimalKey, isExactNumber, parseDocs, parseExtras, buildValidator, validateDoc,
+  jsonSyntaxError, scanJson, decimalKey, isExactNumber, isMultipleOf, parseDocs, parseExtras, buildValidator, validateDoc,
   hasProtoKey, runValidation, noticeText, schemaErrorText, parseErrorText, statusText, reasonText,
   reportText, reportJson,
 };
