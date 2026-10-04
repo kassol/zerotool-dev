@@ -563,6 +563,7 @@ for (const mutation of ['text', 'font', 'empty', 'shortcut', 'invalid']) {
   check('output fills the available height and scrolls internally', /\.taa-output\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
   check('gallery has bounded flex height and internal scrolling', /\.taa-gallery\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
   check('empty status keeps its reserved height', /\.taa-status\s*\{[^}]*height:\s*5rem/.test(css) && !/\.taa-status:empty/.test(css));
+  check('mobile results precede secondary settings', /\.taa-preview \{ order: 3; \}/.test(css) && /\.taa-details \{ order: 4; \}/.test(css));
   check('860px stacks the layout and 640px adjusts phone details', /@media \(max-width: 860px\)/.test(css) && /@media \(max-width: 640px\)/.test(css));
   check('mobile empty output hides only when no skipped-character warning exists', /\.taa-output-box:has\(\.taa-output:empty\):has\(\.taa-note\[hidden\]\)\s*\{\s*display:\s*none/.test(css));
   check('tips do not enter serialized client strings', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T/.test(source) && /const L = \{ \.\.\.CLIENT_T, lang \}/.test(source) && /define:vars=\{\{ S: L, FONT_NAMES \}\}/.test(source));
