@@ -746,7 +746,7 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
       return String(tpl).replace(/\{(\w+)\}/g, function (m, k) { return vars && Object.prototype.hasOwnProperty.call(vars, k) ? vars[k] : m; });
     }
     function fmtTime(ms) { var d = splitDuration(ms); return fill(S[d.unit], { n: d.n }); }
-    function setStatus(el, text, kind) { el.textContent = text || ''; el.className = 'tool-status ' + (kind || 'none'); }
+    function setStatus(el, text, kind) { delete el._bcgCopyError; el.textContent = text || ''; el.className = 'tool-status ' + (kind || 'none'); }
     function renderList(el, items) {
       el.textContent = '';
       items.forEach(function (it) {
@@ -791,15 +791,27 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
 
     function copyText(text, btn, statusEl) {
       if (!text) return;
-      var done = function () { btn.textContent = S.copied; setTimeout(function () { btn.textContent = S.copy; }, 1500); };
+      var isGen = statusEl === genStatus, revision = isGen ? genRevision : verRevision;
+      var owner = isGen ? genOut : verVariants, request = (btn._bcgCopyRequest || 0) + 1;
+      btn._bcgCopyRequest = request; btn.textContent = S.copy;
+      var current = function () {
+        return btn._bcgCopyRequest === request && revision === (isGen ? genRevision : verRevision)
+          && !owner.hidden && owner.contains(btn) && (!isGen || genHash.textContent === text);
+      };
+      var done = function () {
+        if (!current()) return;
+        if (statusEl._bcgCopyError === btn && statusEl.textContent === S.copyFail && statusEl.className === 'tool-status error') setStatus(statusEl, '');
+        btn.textContent = S.copied; setTimeout(function () { if (current()) btn.textContent = S.copy; }, 1500);
+      };
       var fallback = function () {
+        if (!current()) return;
         var ta = document.createElement('textarea');
         ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
         document.body.appendChild(ta); ta.select();
         var ok = false;
         try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
         document.body.removeChild(ta);
-        if (ok) done(); else setStatus(statusEl, S.copyFail, 'error');
+        if (ok) done(); else if (current()) { setStatus(statusEl, S.copyFail, 'error'); statusEl._bcgCopyError = btn; }
       };
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
       else fallback();
@@ -845,6 +857,7 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
 
     function cancelGenerate() {
       genRevision++; genClient.cancel();
+      $('bcg-gen-copy').textContent = S.copy;
       genBusy = false; genBtn.disabled = false; genCancel.hidden = true;
     }
 
@@ -866,6 +879,7 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
       var pw = genPw.value;
       if (!pw) { setStatus(genStatus, S.needPassword, 'error'); genPw.focus(); return; }
       var cost = Number(costSel.value), salt = makeSalt(prefixSel.value, cost, randomSaltBody()), revision = ++genRevision;
+      $('bcg-gen-copy').textContent = S.copy;
       genBusy = true; genBtn.disabled = true; genCancel.hidden = false;
       setStatus(genStatus, fill(S.working, { pct: 0 }), 'info');
       try {
@@ -877,6 +891,7 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
         bench = { cost: cost, ms: r.ms };
         var parsed = parseHash(r.hash);
         renderHash(genHash, parsed);
+        $('bcg-gen-copy').textContent = S.copy;
         renderParts(genParts, parsed);
         genOut.hidden = false;
         genBusy = false;

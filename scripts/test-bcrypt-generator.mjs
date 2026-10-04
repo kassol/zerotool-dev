@@ -579,8 +579,8 @@ function deferred() { let resolve,reject; const promise=new Promise((a,b)=>{reso
 async function settle() { for(let i=0;i<16;i++) await Promise.resolve(); }
 async function waitFor(predicate) { const end=Date.now()+1000;while(!predicate()){if(Date.now()>end)throw Error('Harness awaited condition timed out');await new Promise(resolve=>setTimeout(resolve,1));}await settle(); }
 function makePage(lang='en', layoutFirst=false) {
-  const all=[], ids=new Map(), timers=[], requests=[], workers=[], digests=[], persist=[], failures=[];
-  let timerId=0, holdDigest=false, fallbackCalls=0;
+  const all=[], ids=new Map(), timers=[], requests=[], workers=[], digests=[], persist=[], failures=[], copies=[], copyJobs=[], fallbackTexts=[];
+  let timerId=0, holdDigest=false, fallbackCalls=0, holdCopies=false, fallbackResult=null;
   const doc={listeners:new Map(),activeElement:null,documentElement:{lang}};
   const matches=(node,selector)=>{
     if(selector.includes(',')) return selector.split(',').some(x=>matches(node,x.trim()));
@@ -620,7 +620,7 @@ function makePage(lang='en', layoutFirst=false) {
     querySelector:s=>doc.body.querySelector(s),querySelectorAll:s=>doc.body.querySelectorAll(s),
     createElement:t=>new Element(t),createTextNode:t=>{const n=new Element('#text');n.textContent=t;return n;},
     addEventListener(t,f){if(!doc.listeners.has(t))doc.listeners.set(t,[]);doc.listeners.get(t).push(f);},
-    execCommand(){fallbackCalls++;throw Error('Native fallback copy is forbidden in this VM');},
+    execCommand(){fallbackCalls++;fallbackTexts.push(doc.activeElement?.value);if(fallbackResult===null)throw Error('Native fallback copy is forbidden in this VM');return fallbackResult;},
   });
   let markup=source.slice(source.indexOf('---',3)+3,source.indexOf('<script'));
   markup=markup.replace(/\{L\.(\w+)\}/g,(_,k)=>STRINGS[lang][k]??'');
@@ -628,7 +628,7 @@ function makePage(lang='en', layoutFirst=false) {
   while((m=tag.exec(markup))){const before=markup.slice(offset,m.index);if(before.trim())stack.at(-1)._text+=before;offset=tag.lastIndex;const name=m[1].toLowerCase();if(m[0][1]==='/'){const i=stack.findLastIndex(x=>x.tagName===name.toUpperCase());if(i>0)stack.length=i;continue;}const attrs={};for(const a of m[0].matchAll(/\s([\w:-]+)(?:="([^"]*)")?/g))attrs[a[1]]=a[2]??'';const el=stack.at(-1).appendChild(new Element(name,attrs));if(!/^(input|br|hr|img|meta|link)$/.test(name)&&!m[0].endsWith('/>'))stack.push(el);}
   const get=id=>doc.getElementById(id);
   get('bcg-prefix').value='$2b$';get('bcg-cost').value='4';
-  const stubClipboard={write(){return Promise.resolve();},writeText(){return Promise.resolve();}};
+  const stubClipboard={write(){return Promise.resolve();},writeText(text){copies.push(String(text));if(!holdCopies)return Promise.resolve();const d=deferred();copyJobs.push({text:String(text),d});return d.promise;}};
   class Worker {
     constructor(url){this.url=url;this.terminated=false;workers.push(this);}
     postMessage(m){const q={worker:this,msg:structuredClone(m),delivered:false};requests.push(q);if(m.type==='bench')queueMicrotask(()=>{if(!this.terminated)this.onmessage?.({data:{id:m.id,type:'result',ms:1}});});}
@@ -642,7 +642,10 @@ function makePage(lang='en', layoutFirst=false) {
   if(layoutFirst) vm.runInContext(keyboard,context);
   vm.runInContext(pageScript,context,{filename:'BcryptGeneratorTool.astro',timeout:5000});
   if(!layoutFirst) vm.runInContext(keyboard,context);
-  return {lang,get,widget,context,requests,workers,digests,persist,failures,
+  return {lang,get,widget,context,requests,workers,digests,persist,failures,copies,copyJobs,fallbackTexts,
+    holdCopies(){holdCopies=true;},fallback(value){fallbackResult=value;},
+    async releaseCopy(job,outcome='resolve'){if(!job)throw Error('Missing held copy');if(outcome==='resolve')job.d.resolve();else job.d.reject(Error('controlled clipboard failure'));await settle();},
+    copyTimers(){return timers.filter(t=>t.ms===1500);},async fireTimer(t){if(!t)throw Error('Missing captured copy timer');const i=timers.indexOf(t);if(i>=0)timers.splice(i,1);t.fn();await settle();},
     set(id,value){const el=get(id);el.value=value;el.fire('input');},click:id=>get(id).click(),
     ctrlL(id,meta=false){const el=get(id);el.focus();return el.fire('keydown',{key:'l',ctrlKey:!meta,metaKey:meta});},
     async timers(){const due=timers.filter(t=>t.ms===0);for(const t of due){timers.splice(timers.indexOf(t),1);t.fn();}await settle();},
@@ -741,6 +744,79 @@ function makePage(lang='en', layoutFirst=false) {
       check(lang+' Ctrl/L outside tool preserves input',p.get('bcg-gen-pw').value===PW&&p.persist.length===0);
     }
   }
+
+  // Clipboard completions belong to the output that was copied and to the latest
+  // copy on that button. Use real handlers, current worker responses and the real
+  // ToolLayout clear listener; no engine function or page script is rewritten.
+  {
+    const beforePasses=passes,beforeFailures=failures,copyPages=[];
+    async function copyPage(lang,order=false){const p=makePage(lang,order);copyPages.push(p);await settle();return p;}
+    async function ready(p,mode,hash=HASH){const q=mode==='gen'?await startGen(p):await startVer(p,hash);await p.release(q);const buttons=mode==='gen'?[p.get('bcg-gen-copy')]:p.get('bcg-ver-variants').querySelectorAll('button');return{buttons,values:mode==='gen'?[p.get('bcg-gen-hash').textContent]:buttons.map(b=>b.parentNode.querySelector('code').textContent)};}
+    const view=(p,mode,btn)=>({label:btn.textContent,status:p.get('bcg-'+mode+'-status').textContent,statusClass:p.get('bcg-'+mode+'-status').className,output:p.get(mode==='gen'?'bcg-gen-hash':'bcg-ver-result').textContent,hidden:p.get(mode==='gen'?'bcg-gen-out':'bcg-ver-result').hidden,busy:p.get('bcg-'+mode+'-btn').disabled});
+    for(const lang of ['en','zh','ja','ko'])for(const mode of ['gen','ver']){
+      {
+        const p=await copyPage(lang),nonCanonical=HASH.slice(0,-1)+E.B64[E.B64.indexOf(HASH.slice(-1))|1],r=await ready(p,mode,mode==='ver'?nonCanonical:HASH);
+        check(lang+' '+mode+' actual current output exists before copy',r.buttons.length===(mode==='gen'?1:3)&&(mode==='gen'?BC.compareSync(PW,r.values[0]):r.values[0]===HASH));
+        for(const [i,btn]of r.buttons.entries()){
+          const prior=p.copyTimers();btn.click();await settle();const timer=p.copyTimers().find(t=>!prior.includes(t));
+          check(lang+' '+mode+' current Copy '+i+' retains exact output bytes and success label',p.copies.at(-1)===r.values[i]&&btn.textContent===STRINGS[lang].copied&&p.summary().fallbackCalls===0);
+          await p.fireTimer(timer);check(lang+' '+mode+' current Copy '+i+' timer restores localized label',btn.textContent===STRINGS[lang].copy);
+        }
+      }
+      for(const fallback of [true,false]){
+        const p=await copyPage(lang),r=await ready(p,mode),btn=r.buttons[0];p.holdCopies();p.fallback(fallback);btn.click();await p.releaseCopy(p.copyJobs[0],'reject');
+        check(lang+' '+mode+' current rejection keeps controlled fallback '+fallback,p.summary().fallbackCalls===1&&p.fallbackTexts[0]===r.values[0]&&(fallback?btn.textContent===STRINGS[lang].copied:p.get('bcg-'+mode+'-status').textContent===STRINGS[lang].copyFail),{copy:p.copies.at(-1),fallback:p.fallbackTexts,status:p.get('bcg-'+mode+'-status').textContent});
+        if(!fallback){btn.click();await p.releaseCopy(p.copyJobs.at(-1));check(lang+' '+mode+' successful same-result retry clears its copy failure',btn.textContent===STRINGS[lang].copied&&p.get('bcg-'+mode+'-status').textContent===''&&p.get('bcg-'+mode+'-status').className==='tool-status none');}
+      }
+      {
+        const p=await copyPage(lang),r=await ready(p,mode),btn=r.buttons[0];p.holdCopies();p.fallback(false);btn.click();await p.releaseCopy(p.copyJobs[0],'reject');btn.click();const retry=p.copyJobs[1];
+        p.set(mode==='gen'?'bcg-gen-pw':'bcg-ver-hash','');p.click('bcg-'+mode+'-btn');await settle();const status=p.get('bcg-'+mode+'-status').textContent;await p.releaseCopy(retry);
+        check(lang+' '+mode+' successful copy cannot clear a newer real validation error',status===STRINGS[lang][mode==='gen'?'needPassword':'needHash']&&p.get('bcg-'+mode+'-status').textContent===status&&p.get('bcg-'+mode+'-status').className==='tool-status error');
+      }
+      const boundaries=mode==='gen'?['CtrlL','Cancel','new generation','result replacement']:['CtrlL','Cancel','new verification','password edit','hash edit','example'];
+      for(const boundary of boundaries)for(const outcome of ['resolve','reject']){
+        const p=await copyPage(lang,outcome==='reject'),r=await ready(p,mode),btn=r.buttons[0];
+        // Generate leaves the old hash visible while its next run is busy. This
+        // makes Copy then Cancel a reachable action order. Verify hides variants
+        // on its next run, so its pending copy begins before that run.
+        if(mode==='gen'&&(boundary==='Cancel'||boundary==='result replacement')){p.click('bcg-gen-btn');await settle();check(lang+' generate '+boundary+' setup is visible',!p.get('bcg-gen-cancel').hidden);}
+        p.holdCopies();btn.click();const job=p.copyJobs[0];
+        check(lang+' '+mode+' '+boundary+'/'+outcome+' copies current actual bytes before invalidation',job?.text===r.values[0]);
+        if(boundary==='CtrlL'){p.ctrlL('bcg-'+mode+'-pw',outcome==='reject');await p.timers();}
+        else if(boundary==='Cancel'){if(mode==='ver'){p.click('bcg-ver-btn');await settle();}p.click('bcg-'+mode+'-cancel');await settle();}
+        else if(boundary.startsWith('new ')){p.click('bcg-'+mode+'-btn');await settle();}
+        else if(boundary==='result replacement')await p.release(p.hashRequests().at(-1));
+        else if(boundary==='password edit')p.set('bcg-ver-pw',NEW);
+        else if(boundary==='hash edit')p.set('bcg-ver-hash','invalid');
+        else{p.click('bcg-ver-example');await settle();}
+        const before=view(p,mode,btn),fallbackBefore=p.summary().fallbackCalls;await p.releaseCopy(job,outcome);
+        check(lang+' '+mode+' stale '+outcome+' after '+boundary+' cannot change feedback or invoke fallback',JSON.stringify(view(p,mode,btn))===JSON.stringify(before)&&p.summary().fallbackCalls===fallbackBefore,{before,after:view(p,mode,btn),fallbackBefore,fallbackAfter:p.summary().fallbackCalls});
+      }
+      for(const outcome of ['resolve','reject']){
+        const p=await copyPage(lang),r=await ready(p,mode),btn=r.buttons[0];p.holdCopies();btn.click();const old=p.copyJobs[0];btn.click();const fresh=p.copyJobs[1];await p.releaseCopy(fresh);const before=view(p,mode,btn),fallback=p.summary().fallbackCalls;await p.releaseCopy(old,outcome);
+        check(lang+' '+mode+' older copy '+outcome+' cannot override newer copy',JSON.stringify(view(p,mode,btn))===JSON.stringify(before)&&p.summary().fallbackCalls===fallback,{before,after:view(p,mode,btn),fallback:p.summary().fallbackCalls});
+      }
+      {
+        const p=await copyPage(lang),r=await ready(p,mode),btn=r.buttons[0];const earlier=p.copyTimers();btn.click();await settle();const old=p.copyTimers().find(t=>!earlier.includes(t));const beforeSecond=p.copyTimers();btn.click();await settle();const fresh=p.copyTimers().find(t=>!beforeSecond.includes(t));await p.fireTimer(old);
+        check(lang+' '+mode+' old 1500ms callback cannot erase newer Copied feedback',btn.textContent===STRINGS[lang].copied);
+        await p.fireTimer(fresh);check(lang+' '+mode+' newest copy timer restores Copy',btn.textContent===STRINGS[lang].copy);
+      }
+      if(mode==='gen'){
+        const p=await copyPage(lang),r=await ready(p,mode),btn=r.buttons[0];btn.click();await settle();p.click('bcg-gen-btn');await settle();
+        check(lang+' new generation resets previous completed copy label immediately',btn.textContent===STRINGS[lang].copy);
+        p.click('bcg-gen-cancel');check(lang+' generation Cancel keeps neutral copy label',btn.textContent===STRINGS[lang].copy);
+        const p3=await copyPage(lang),r3=await ready(p3,mode),b3=r3.buttons[0];p3.click('bcg-gen-btn');await settle();b3.click();await settle();const hashBefore=p3.get('bcg-gen-hash').textContent;await p3.release(p3.hashRequests().at(-1));
+        check(lang+' newly completed hash resets feedback for copying the old displayed hash',b3.textContent===STRINGS[lang].copy&&p3.get('bcg-gen-hash').textContent!==hashBefore);
+        // Editing generation fields preserves the already displayed hash and the
+        // clicked-password snapshot. A copy of that still-current hash remains valid.
+        const p2=await copyPage(lang),r2=await ready(p2,mode),b2=r2.buttons[0];p2.holdCopies();b2.click();p2.set('bcg-gen-pw',NEW);await p2.releaseCopy(p2.copyJobs[0]);
+        check(lang+' generation password edit preserves copying the displayed hash snapshot',p2.copies[0]===r2.values[0]&&b2.textContent===STRINGS[lang].copied&&BC.compareSync(PW,p2.get('bcg-gen-hash').textContent));
+      }
+    }
+    for(const [i,p]of copyPages.entries())check('copy lifecycle '+i+' has no script errors',p.failures.length===0,p.failures);
+    console.log('copy lifecycle: '+(passes-beforePasses)+' passed, '+(failures-beforeFailures)+' failed');
+  }
+
   for(const [i,p] of pages.entries())check('page lifecycle '+i+' has no script errors or native clipboard calls',p.failures.length===0&&p.summary().fallbackCalls===0,p.failures);
 }
 
@@ -789,7 +865,7 @@ function makePage(lang='en', layoutFirst=false) {
   for(const tip of tips)check('tip '+/id="([^"]+)"/.exec(tip[1])[1]+' is built in the selected language',/lang=\{lang\}/.test(tip[1])&&/about=\{L\.\w+\}/.test(tip[1])&&/^\{TIPS\.\w+\}$/.test(tip[2]));
   check('page serializes only CLIENT_L and worker URL',/define:vars=\{\{ S: CLIENT_L, WORKER_URL \}\}/.test(source)&&!/TIPS|STRINGS|data-i18n/.test(pageScript));
   check('protected engine bytes unchanged',sha(source.slice(startIndex,endIndex+END_MARK.length))==='7b4e5f81ff6b8bc56a545fb79775aea4cd06535650c789d8f47dcc5b28adc8a0');
-  check('complete page script remains byte-for-byte unchanged by layout',sha(pageScript)==='93c8e182f8ed43e11cbbd2277135782fa3d35f69f7d6a6e6320b298e9db21ef6');
+  check('complete page script matches the copy-lifecycle fix snapshot',sha(pageScript)==='abdb34a0659c77996efb0827ece094974f5653aedf6b9e3ff483974b96e7f236');
   const retained={"en": {"meta": "410ab5ed8e9db222b79fe36fe1f4afe9b4e7faa013fddb0681c69fcd3e511319", "body": "da35a319310d1b2b9ce34d81a66c5dbb09d5a343792fc3830199251620b0557c", "markers": 5}, "zh": {"meta": "8f8b008e996c53053b9f8db7c52100af15685c25583aa548d4ab1ffb07466843", "body": "5595c96180afe27134a315563b4353279ce50bad34a749251f1470cd0385a25f", "markers": 4}, "ja": {"meta": "9f4005ba458ee0f1e789a6631e10782bda424c4929a1d511e63b61cd67805949", "body": "a2b5c8fac997b361502e7e3a07a3227815c16530da1afb8615db6b962e3ad370", "markers": 3}, "ko": {"meta": "ed0c1eb51473c9aff56849fd84cd2a534b99b950dce4d2d2c130b40bf5e2cc18", "body": "1ce37191baf536ff2d98251e034a0aeebe17a3b29655b7949f7be917fd3082c6", "markers": 3}};
   for(const lang of ['en','zh','ja','ko']){
     const entry=STRINGS[lang];
