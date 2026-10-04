@@ -513,13 +513,23 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
   check('no toggletip inside a label', !/<label[^>]*>(?:(?!<\/label>)[\s\S])*<Toggletip/.test(markup));
   check('toggletip text stays out of data-strings', source.includes('const { tips: TIPS, ...CLIENT_S } = S;') &&
     markup.includes('data-strings={JSON.stringify(CLIENT_S)}') && !/\bT\.tips\b/.test(source));
-  // "Embed web images": off in the markup, described by its toggletip, and the visible note is gone
-  check('the embed switch is unchecked in the markup and described by its toggletip',
-    markup.includes('<input type="checkbox" id="mw-embed-remote" aria-describedby="mw-tip-embed" />') && !/embedRemoteNote|mw-embed-note/.test(source));
+  // "Embed web images": off in the markup; what it sends is written under the privacy note and shown while the switch is on
+  check('the embed switch is unchecked in the markup and described by its note and its toggletip',
+    markup.includes('<input type="checkbox" id="mw-embed-remote" aria-describedby="mw-embed-note mw-tip-embed" />'));
+  check('the network note is under the privacy note and hidden until the switch is on',
+    /class="mw-privacy">[\s\S]*?<\/p>\s*<p id="mw-embed-note" class="mw-embed-note" hidden>\{S\.embedRemoteNote\}<\/p>/.test(markup) &&
+    source.includes('.mw-embed-note[hidden] { display: none; }'));
+  check('the network note names the IP address in every language', ['en', 'zh', 'ja', 'ko'].every((l) => /\bIP\b/.test(E.STRINGS[l].embedRemoteNote) && /http\(s\)/.test(E.STRINGS[l].embedRemoteNote)));
+  const script = source.slice(source.indexOf('/* ── engine:end ── */'), source.lastIndexOf('</script>'));
+  check('the note follows the switch: on load, on change, on Clear and on Ctrl/Cmd+L',
+    script.includes('function syncEmbedNote() { embedNote.hidden = !embedRemoteBox.checked; }') &&
+    /embedRemoteImages === true;\s*syncEmbedNote\(\);/.test(script) &&
+    /addEventListener\('change', \(\) => \{\s*syncEmbedNote\(\);/.test(script) &&
+    (script.match(/embedRemoteBox\.checked = false;\s*syncEmbedNote\(\);/g) || []).length === 2);
   check('the embed switch still starts from the saved value only', source.includes("embedRemoteBox.checked = ((window as any).ztPersist?.load(SLUG) || {}).embedRemoteImages === true;"));
   // ToolLayout's Ctrl/Cmd+L empties the editor without an input event; the tool drops the preview, status and switch state.
   check('Ctrl/Cmd+L refreshes the preview and clears the status and the switch',
-    /e\.key !== 'l' && e\.key !== 'L'\)\) return;\s*setTimeout\(\(\) => \{\s*if \(editor\.value\) return;\s*clearTimeout\(timer\);\s*embedRemoteBox\.checked = false;\s*setStatus\(''\);\s*refresh\(\);/.test(source));
+    /e\.key !== 'l' && e\.key !== 'L'\)\) return;\s*setTimeout\(\(\) => \{\s*if \(editor\.value\) return;\s*clearTimeout\(timer\);\s*embedRemoteBox\.checked = false;\s*syncEmbedNote\(\);\s*setStatus\(''\);\s*refresh\(\);/.test(source));
   const style = source.slice(source.lastIndexOf('\n<style>\n'));
   check('stacking breakpoint is 860px, phone details at 640px', (style.match(/@media \((?:max|min)-width: \d+px\)/g) || []).join() === '@media (min-width: 861px),@media (max-width: 860px),@media (max-width: 640px)');
   check('a long document scrolls inside the preview', /@media \(min-width: 861px\) \{\s*\.mw-preview \{ flex-basis: 0; \}/.test(style) && /\.mw-preview \{\s*overflow: auto;/.test(style) && !/max-height: 640px|min-height: 420px/.test(style));
