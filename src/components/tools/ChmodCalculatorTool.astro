@@ -93,7 +93,7 @@
           owner: 'Owner', group: 'Group', others: 'Others',
           numeric: 'Numeric', symbolic: 'Symbolic',
           command: 'Command', commandSym: 'Symbolic cmd', findPerm: 'find -perm',
-          copy: 'Copy', copied: 'Copied!',
+          copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed',
           specialBits: 'Special Bits',
           setuid: 'Setuid (4000)', setgid: 'Setgid (2000)', sticky: 'Sticky (1000)',
           errInvalidOctal: 'Invalid octal (use digits 0–7, up to 4 chars)',
@@ -105,7 +105,7 @@
           read: '读', write: '写', execute: '执行',
           owner: '所有者', group: '用户组', others: '其他',
           numeric: '数字', symbolic: '符号', command: '命令', commandSym: '符号命令', findPerm: 'find -perm',
-          copy: '复制', copied: '已复制！',
+          copy: '复制', copied: '已复制！', copyFailed: '复制失败',
           specialBits: '特殊位',
           setuid: 'Setuid (4000)', setgid: 'Setgid (2000)', sticky: '粘滞位 (1000)',
           errInvalidOctal: '无效八进制（0–7 数字，最多 4 位）',
@@ -117,7 +117,7 @@
           read: '読取', write: '書込', execute: '実行',
           owner: 'オーナー', group: 'グループ', others: 'その他',
           numeric: '数値', symbolic: 'シンボル', command: 'コマンド', commandSym: 'シンボルコマンド', findPerm: 'find -perm',
-          copy: 'コピー', copied: 'コピー済み！',
+          copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピー失敗',
           specialBits: '特殊ビット',
           setuid: 'SUID (4000)', setgid: 'SGID (2000)', sticky: 'スティッキー (1000)',
           errInvalidOctal: '無効な8進数（0〜7の数字、最大4桁）',
@@ -129,7 +129,7 @@
           read: '읽기', write: '쓰기', execute: '실행',
           owner: '소유자', group: '그룹', others: '기타',
           numeric: '숫자', symbolic: '기호', command: '명령어', commandSym: '기호 명령어', findPerm: 'find -perm',
-          copy: '복사', copied: '복사됨!',
+          copy: '복사', copied: '복사됨!', copyFailed: '복사 실패',
           specialBits: '특수 비트',
           setuid: 'SUID (4000)', setgid: 'SGID (2000)', sticky: '스티키 (1000)',
           errInvalidOctal: '잘못된 8진수 (0–7 숫자, 최대 4자리)',
@@ -158,6 +158,12 @@
 
       var WHO_ORDER = ['owner', 'group', 'others'];
       var PERM_MAP = { r: 4, w: 2, x: 1 };
+      var copyRevision = 0;
+
+      function resetCopyFeedback() {
+        copyRevision++;
+        document.querySelectorAll('.chmod-wrap .btn-copy').forEach(function (btn) { btn.textContent = t.copy; });
+      }
 
       function getCheckbox(who, perm) {
         return document.querySelector('input[data-who="' + who + '"][data-perm="' + perm + '"]');
@@ -258,6 +264,7 @@
       }
 
       function updateOutputsFromState() {
+        resetCopyFeedback();
         var digits = calcDigits();
         var special = getSpecialBits();
         var numeric = buildNumericStr(digits, special);
@@ -365,6 +372,7 @@
       // Numeric input
       var numericInput = document.getElementById('chmod-numeric');
       numericInput.addEventListener('input', function () {
+        resetCopyFeedback();
         var original = this.value;
         var raw = original.replace(/[^0-7]/g, '');
         this.value = raw;
@@ -393,6 +401,7 @@
       // Symbolic input
       var symbolicInput = document.getElementById('chmod-symbolic');
       symbolicInput.addEventListener('input', function () {
+        resetCopyFeedback();
         var raw = stripLsDecorations(this.value.trim());
         if (raw.length === 9) {
           if (applySymbolicToState(raw)) {
@@ -423,9 +432,14 @@
           var text = getText();
           if (!text) return;
           var btn = this;
+          resetCopyFeedback();
+          var revision = copyRevision;
           navigator.clipboard.writeText(text).then(function () {
+            if (revision !== copyRevision) return;
             btn.textContent = t.copied;
-            setTimeout(function () { btn.textContent = t.copy; }, 2000);
+            setTimeout(function () { if (revision === copyRevision) btn.textContent = t.copy; }, 2000);
+          }, function () {
+            if (revision === copyRevision) btn.textContent = t.copyFailed;
           });
         });
       }
@@ -435,6 +449,22 @@
       bindCopy('chmod-copy-command', function () { return document.getElementById('chmod-command').textContent; });
       bindCopy('chmod-copy-command-sym', function () { return document.getElementById('chmod-command-sym').textContent; });
       bindCopy('chmod-copy-find-perm', function () { return document.getElementById('chmod-find-perm').textContent; });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var wrap = document.querySelector('.chmod-wrap');
+        if (!wrap || !wrap.contains(document.activeElement)) return;
+        e.preventDefault();
+        resetCopyFeedback();
+        wrap.querySelectorAll('input[type="checkbox"]').forEach(function (cb) { cb.checked = false; });
+        numericInput.value = '';
+        symbolicInput.value = '';
+        ['chmod-command', 'chmod-command-sym', 'chmod-find-perm', 'chmod-description'].forEach(function (id) {
+          document.getElementById(id).textContent = '';
+        });
+        setError('chmod-numeric', '');
+        setError('chmod-symbolic', '');
+      });
 
       // Init
       updateOutputsFromState();
