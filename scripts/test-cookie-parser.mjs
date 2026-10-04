@@ -10,6 +10,7 @@
 //        src/data/persistence.ts; src/data/public-suffix-list.mjs (the list the page loads) and
 //        scripts/sync-public-suffix-list.mjs (its pinned version); scripts/test-cookie-parser.test_psl.txt
 //        (tests/test_psl.txt of the same Public Suffix List commit, CC0, the oracle)
+//        dist/tools/cookie-parser/index.html and its linked tool CSS (when built)
 // Write: stdout only (Python checks pipe through a child process; no files)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -658,10 +659,26 @@ for (const lang of ['zh', 'ja', 'ko']) {
   check('v2: secondary tools stack at 860px', /@media \(max-width: 860px\)[\s\S]*?\.ck-secondary \{ grid-template-columns: minmax\(0, 1fr\);/.test(css));
   check('v2: mobile output keeps its height as results grow', /@media \(max-width: 860px\)[\s\S]*?\.ck-result-scroll \{ flex: none; height: 55svh; max-height: none; \}/.test(css));
   check('v2: simulation results are a localized keyboard-accessible region', markup.includes('id="ck-sim-out" class="ck-sim-out" tabindex="0" role="region" aria-label={T.simTitle} aria-live="polite"'));
-  check('v2: simulation results keep a fixed scrolling height while URL hints keep natural height', /\.ck-sim-out:has\(:global\(\.ck-sim-head\)\) \{[^}]*height: min\(30svh, 10rem\);[^}]*overflow: auto;[^}]*flex: none;/.test(css) && !/\.ck-sim-out \{[^}]*height:/.test(css));
+  check('v2: simulation results keep a fixed scrolling height while URL hints keep natural height', /\.ck-wrap :global\(\.ck-sim-out:has\(\.ck-sim-head\)\) \{[^}]*height: min\(30svh, 10rem\);[^}]*overflow: auto;[^}]*flex: none;/.test(css) && !/\.ck-sim-out \{[^}]*height:/.test(css));
   check('v2: redundant Parse button, binding and translation key are removed', !source.includes('ck-parse') && Object.values(STRINGS).every((v) => !('parse' in v)));
   check('v2: input still parses without a button', source.includes("inputEl.addEventListener('input', function () { render(false); });"));
   check('v2: listed as an analyze page', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'cookie-parser': 'analyze'"));
+
+  // Astro must remove :global before browsers can apply the simulator's size constraint.
+  const builtPage = join(root, 'dist/tools/cookie-parser/index.html');
+  if (existsSync(builtPage)) {
+    const links = [...readFileSync(builtPage, 'utf8').matchAll(/<link\b[^>]*>/g)]
+      .filter((m) => /\brel="stylesheet"/.test(m[0]))
+      .map((m) => /\bhref="([^"]+)"/.exec(m[0])?.[1])
+      .filter((href) => href?.startsWith('/_astro/') && href.endsWith('.css'));
+    const toolCss = links.map((href) => readFileSync(join(root, 'dist', href.slice(1)), 'utf8'))
+      .filter((text) => text.includes('.ck-sim-out')).join('\n');
+    check('v2: built page links simulator CSS', toolCss.length > 0);
+    check('v2: compiled simulator CSS contains no unresolved Astro global selector', !toolCss.includes(':global('));
+    const rule = [...toolCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .find((m) => /(?:^|[\s,])\.ck-sim-out:has\(\.ck-sim-head\)(?:$|[\s,])/.test(m[1]));
+    check('v2: compiled simulator selector has the fixed height and scrolling declarations', !!rule && /height:\s*min\(30svh,\s*10rem\)/.test(rule[2]) && /overflow:\s*auto/.test(rule[2]) && /flex:\s*none/.test(rule[2]));
+  } else skip('v2: compiled simulator bounds', 'dist/tools/cookie-parser/index.html missing; run build');
 
   // Keep child nodes so table/card replacement and clearing are tested, not only status text.
   function pageFixture(lang, pslResult = 'ready') {
