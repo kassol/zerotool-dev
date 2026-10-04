@@ -150,6 +150,17 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 | `generate` | A 270–320px control rail (inputs, options, code export) on the left; the generated preview fills the rest (palettes: six cards in two rows of three, monochromatic full width). Rail stacks on top below 860px. | 1840px | `ColorPaletteGeneratorTool` |
 | `analyze` | The result uses the full width. Before input, the drop zone fills the first screen. From 1280px, details open beside the list; lists grow with the window height. | 2400px | `HarFileAnalyzerTool` |
 
+**Shared classes** (`src/styles/tool-common.css`, loaded on every tool page)
+
+| Class | Use |
+|---|---|
+| `.zt-io` | The two-column grid of a `convert` tool. Its parent is the tool root, a flex column, so the grid takes the height that is left. One column at 860px and below. |
+| `.zt-io-pane` | One side of the grid: a flex column with the label row on top and the editor under it. |
+| `.zt-io-fill` | The textarea, `<pre>` or list that fills its pane (`flex: 1`, at least 300px, no resize handle). At 860px and below it stops stretching, is at least 120px high and can be resized; the tool sets the height there. |
+| `.zt-tip`, `.zt-tip-btn`, `.zt-tip-pop` | Toggletip button and panel. `Toggletip.astro` has no `<style>` of its own. |
+
+`convert` tools use `.zt-io`, `.zt-io-pane` and `.zt-io-fill` for the panels and keep their own class next to each for tool-specific rules (tab size, colors, phone heights). A rail class for `generate` and an empty-state drop zone for `analyze` are not shared yet: each has one user, and they move to `tool-common.css` when a second tool needs them.
+
 **Shell**
 
 - Width `min(100% - 2 × clamp(0.5rem, 1.6vw, 1.75rem), max)`; the site nav widens to the same edge on these pages (`html:has(.tool-page--v2)` sets `--max-width`).
