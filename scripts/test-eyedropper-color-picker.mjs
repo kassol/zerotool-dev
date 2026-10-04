@@ -26,6 +26,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { load as loadYaml } from 'js-yaml';
 import Color from 'colorjs.io';
 import { parse as culoriParse, converter, colorsNamed, inGamut as culoriInGamut } from 'culori';
 
@@ -406,6 +408,53 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
     eq('active user-canceled picker reports localized status',p.get('ecp-status').textContent,STRINGS.en.canceled);
     eq('active rejection unlocks the screen button',p.get('ecp-pick').disabled,false);
   }
+}
+
+// ── v2 page layout ──
+{
+  const before={passes,failures};
+  const template=source.slice(source.indexOf('\n---\n')+5,source.indexOf('<script')).trim();
+  const css=source.slice(source.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g,'').replace(/<\/?style\b[^>]*>/g,'');
+  const rules=selector=>[...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(m=>m[1].split(',').some(s=>s.trim()===selector)).map(m=>m[2]);
+  const prop=(body,key,value)=>new RegExp('(?:^|;)\\s*'+key+'\\s*:\\s*'+value+'\\s*(?:;|$)').test(body);
+  check('analyze layout registered',/'eyedropper-color-picker':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
+  check('direct tool root',/^<div class="ecp-wrap" id="ecp-wrap">/.test(template));
+  check('root flex column can shrink',rules('.ecp-wrap').some(r=>prop(r,'display','flex')&&prop(r,'flex-direction','column')&&prop(r,'min-height','0')));
+  check('shared empty drop area fills input',/class="ecp-drop zt-empty-drop"/.test(template));
+  check('image result uses full width with zero-basis growth',rules('.ecp-image').some(r=>prop(r,'flex','1\\s+1\\s+0')&&prop(r,'min-width','0')&&prop(r,'min-height','280px')));
+  check('image preview has positive internal scroll area',rules('.ecp-scroller').some(r=>prop(r,'flex','1\\s+1\\s+0')&&prop(r,'overflow','auto')&&prop(r,'min-height','120px')));
+  check('phone image area has fixed height for short and large images',rules('.ecp-image').some(r=>prop(r,'flex','none')&&prop(r,'height','25rem')&&prop(r,'min-height','0')));
+  check('status height remains reserved',rules('.ecp-status').some(r=>prop(r,'height','3em')&&prop(r,'overflow','auto'))&&!css.includes('.ecp-status:empty'));
+  check('actions, editable color and status precede image',template.indexOf('id="ecp-pick"')<template.indexOf('id="ecp-hex"')&&template.indexOf('id="ecp-hex"')<template.indexOf('id="ecp-status"')&&template.indexOf('id="ecp-status"')<template.indexOf('id="ecp-image"'));
+  check('mobile uses 860 and 640 breakpoints',/@media\s*\(max-width:\s*860px\)/.test(css)&&/@media\s*\(max-width:\s*640px\)/.test(css));
+  check('hidden image and controls stay hidden',/\.ecp-wrap \[hidden\]\s*\{\s*display:\s*none\s*!important/.test(css));
+  check('unsupported screen tip hides with its unavailable control',rules('.ecp-control:has(#ecp-pick[hidden])').some(r=>prop(r,'display','none')));
+  check('dynamic recent colors remain globally styled',css.includes(':global(.ecp-chip)')&&css.includes(':global(.ecp-chip-fill)'));
+  check('storage consequence remains directly visible',/<p class="ecp-recent-note">\{L.recentNote\}<\/p>/.test(template));
+  check('only client strings are serialized',/define:vars=\{\{ t: CLIENT_T \}\}/.test(source)&&!source.slice(source.indexOf('<script')).includes('t.tips'));
+  check('UI has no runtime i18n rewriting',!source.includes('data-i18n'));
+  const buttons=[...template.matchAll(/<button\b([^>]*)>/g)].map(m=>m[1]);
+  const identity=a=>/\bid="([^"]+)"/.exec(a)?.[1]||/data-zoom="([^"]+)"/.exec(a)?.[1]||/data-copy="([^"]+)"/.exec(a)?.[1]||(/data-copy=\{f\}/.test(a)?'mapped format':'unknown');
+  eq('all existing button identities retained',buttons.map(identity).sort(),['ecp-pick','ecp-open','ecp-dialog','ecp-clear','fit','actual','ecp-close','hex','mapped format','ecp-copy-all','ecp-recent-clear'].sort());
+  const keys=['screen','open','dialog','clear','pixel','sample','zoom','color','copy','recent'].sort();
+  const tips=[...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  eq('ten control tip IDs',tips.map(m=>/id="ecp-tip-([^"]+)"/.exec(m[1])?.[1]).sort(),keys);
+  for(const tip of tips){const key=/id="ecp-tip-([^"]+)"/.exec(tip[1])[1];check(key+' tip is localized',/lang=\{lang\}/.test(tip[1])&&/about=\{L\.\w+\}/.test(tip[1])&&tip[2]==='{TIPS.'+key+'}');}
+  const retained={"en": ["8d95c28a9ffa54c8", "99cb20585b5f8d53"], "zh": ["943b165a4878695d", "769680b7765b3032"], "ja": ["bc071b569b6891bd", "8399d254430720f0"], "ko": ["31229a4208afc6fc", "6e1f5a8df1f30013"]};
+  const hash=text=>createHash('sha256').update(text.trim()).digest('hex').slice(0,16);
+  for(const lang of langs){
+    const strings=STRINGS[lang];eq(lang+' tip keys match',Object.keys(strings.tips).sort(),keys);
+    for(const key of keys)check(lang+'.'+key+' tip nonempty plain text',typeof strings.tips[key]==='string'&&strings.tips[key].length>0&&!/<[^>]*>|\n/.test(strings.tips[key]));
+    const client=vm.runInNewContext(source.slice(source.indexOf('const L = STRINGS[lang];'),source.indexOf('const FIELDS = '))+';({TIPS,CLIENT_T})',{STRINGS,lang});
+    eq(lang+' client excludes only tips',Object.keys(client.CLIENT_T).sort(),Object.keys(strings).filter(k=>k!=='tips').sort());
+    check(lang+' tip text is absent from client JSON',Object.values(client.TIPS).every(tip=>!JSON.stringify(client.CLIENT_T).includes(JSON.stringify(tip))));
+    const mdx=readFileSync(join(pageDir,lang+'.mdx'),'utf8'),[,meta,body]=/^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx),{steps}=loadYaml(meta);
+    check(lang+' steps plain text within limits',Array.isArray(steps)&&steps.length>0&&steps.length<=8&&steps.every(s=>typeof s==='string'&&s.trim()&&s.length<=280&&!/<[^>]*>/.test(s))&&steps.join('').length<=1200);
+    check(lang+' usage removed and limits retained',!/^## (How to pick a color|三种取色方式|使い方|추출 순서)$/m.test(body)&&/^## (Limits|限制|制限|제한)$/m.test(body));
+    eq(lang+' FAQ and SEO unchanged',hash(meta.replace(/^steps:\n(?:  .*\n)*/m,'')),retained[lang][0]);
+    eq(lang+' all body except usage unchanged',hash(body),retained[lang][1]);
+  }
+  console.log(`v2 page layout: ${passes-before.passes} passed, ${failures-before.failures} failed`);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
