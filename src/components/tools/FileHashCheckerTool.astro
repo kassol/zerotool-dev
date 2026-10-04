@@ -698,6 +698,8 @@ const ALGO_UI = [
       var cards = {};
       var rafPending = false;
       var notice = '';
+      var dropGeneration = 0;
+      var listGeneration = 0;
 
       function checkedAlgos() {
         return algoBoxes.filter(function (b) { return b.checked; }).map(function (b) { return b.getAttribute('data-algo'); });
@@ -833,6 +835,8 @@ const ALGO_UI = [
         changed();
       }
       function clearAll() {
+        dropGeneration++;
+        listGeneration++;
         stopAll(true);
         files = [];
         byKey = {};
@@ -864,11 +868,13 @@ const ALGO_UI = [
         });
       }
       function handleDrop(dt) {
+        var generation = dropGeneration;
         var items = dt.items ? Array.prototype.slice.call(dt.items) : [];
         var entries = items.map(function (it) { return it.kind === 'file' && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null; });
         if (entries.some(function (e) { return e && e.isDirectory; })) {
           var out = [];
           Promise.all(entries.map(function (e, i) { return e ? readEntries(e, '', out) : Promise.resolve(); })).then(function () {
+            if (generation !== dropGeneration) return;
             out.sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
             addFiles(out);
           });
@@ -879,12 +885,18 @@ const ALGO_UI = [
 
       /* ── checksum lists ── */
       function loadList(file) {
+        var generation = ++listGeneration;
         if (file.size > MAX_LIST_BYTES) { notice = fill(S.listTooBig, { file: file.name }); changed(); return; }
         file.text().then(function (text) {
+          if (generation !== listGeneration) return;
           listName = file.name;
           expectedEl.value = text;
           reparse();
           notice = fill(S.listLoaded, { file: file.name, entries: plural(S.entries, parsed.entries.length, pageLang) }) + (notice ? ' ' + notice : '');
+          changed();
+        }, function () {
+          if (generation !== listGeneration) return;
+          notice = S.errRead;
           changed();
         });
       }
@@ -1202,6 +1214,7 @@ const ALGO_UI = [
 
       var parseTimer = 0;
       expectedEl.addEventListener('input', function () {
+        listGeneration++;
         listName = null;
         clearTimeout(parseTimer);
         parseTimer = setTimeout(reparse, 150);
@@ -1212,6 +1225,8 @@ const ALGO_UI = [
       // ToolLayout's Ctrl/Cmd+L clears text inputs; also drop the files and the parsed list.
       document.addEventListener('keydown', function (e) {
         if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          dropGeneration++;
+          listGeneration++;
           setTimeout(function () { listName = null; clearAll(); reparse(); }, 0);
         }
       });
