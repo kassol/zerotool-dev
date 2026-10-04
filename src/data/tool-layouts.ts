@@ -27,6 +27,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'dns-lookup': 'analyze',
   'url-parser': 'analyze',
   'json-schema-validator': 'analyze',
+  'openapi-validator': 'analyze',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {

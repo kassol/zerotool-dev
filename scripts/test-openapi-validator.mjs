@@ -8,7 +8,8 @@
 //        src/data/openapi-schemas/*.json (official schemas the page loads);
 //        scripts/test-openapi-validator.fixtures.json (OAI learn.openapis.org examples, CC BY 4.0;
 //        Swagger Petstore v2 / v3, Apache 2.0); node_modules/js-yaml/lib/loader.js (parser
-//        error texts); src/content/tools/openapi-validator/*.mdx (examples marked {/* ov … */})
+//        error texts); src/content/tools/openapi-validator/*.mdx (examples marked {/* ov … */}),
+//        src/data/tool-layouts.ts (v2 page registration)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -539,6 +540,58 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
   check(lang + ' page has at least 3 checked examples', n >= 3, n);
   check(lang + ' page links to an official source', /spec\.openapis\.org/.test(mdx));
+}
+
+// ---------- v2 page layout ----------
+{
+  const markup = component.slice(component.indexOf('\n---\n', 4) + 5, component.indexOf('<script>'));
+  const style = component.slice(component.indexOf('<style>'));
+  check('tool root receives the first-screen height', /^\s*<div class="oav-wrap" id="oav-wrap"/.test(markup));
+  check('only client strings are serialized', component.includes('const { tips: TIPS, ...CLIENT_T } = T;')
+    && markup.includes('data-strings={JSON.stringify(CLIENT_T)}') && !markup.includes('JSON.stringify(T)'));
+  const tips = ['input', 'files', 'results', 'references'];
+  eq('four contextual help controls', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map((m) => m[1]),
+    ['oav-tip-files', 'oav-tip-input', 'oav-tip-results', 'oav-tip-references']);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ': contextual help covers the same controls', Object.keys(STRINGS[lang].tips || {}), tips);
+    check(lang + ': contextual help uses plain sentences', tips.every((key) => typeof STRINGS[lang].tips[key] === 'string'
+      && STRINGS[lang].tips[key].length > 1 && !/\n|https?:|<\/?[a-z]/i.test(STRINGS[lang].tips[key])));
+    check(lang + ': empty result hint is localized', typeof STRINGS[lang].resultEmpty === 'string' && STRINGS[lang].resultEmpty.length > 1);
+  }
+  for (const key of tips) check('help is rendered: ' + key, markup.includes('{TIPS.' + key + '}'));
+  check('client labels are rendered at build time', !component.includes('data-i18n'));
+  const script = component.slice(component.indexOf('<script>'), component.indexOf('</script>'));
+  const ids = [...new Set([...script.matchAll(/(?:\$|document\.getElementById)\('(oav-[\w-]+)'\)/g)].map((m) => m[1]))];
+  check('client element lookups are covered', ids.length >= 20);
+  for (const id of ids) eq('client element appears once: ' + id, [...markup.matchAll(/\bid="([^"]+)"/g)].filter((m) => m[1] === id).length, 1);
+  check('buttons precede status and input', markup.indexOf('id="oav-validate"') < markup.indexOf('id="oav-status"')
+    && markup.indexOf('id="oav-status"') < markup.indexOf('id="oav-input"'));
+  check('Validate remains available for inputs above the automatic limit', /id="oav-validate" class="btn-primary"/.test(markup)
+    && /size > AUTO_LIMIT && delay !== 0/.test(script));
+  check('file path refresh cannot erase its help control', /<summary><span id="oav-files-title"><\/span> <Toggletip id="oav-tip-references"/.test(markup));
+  check('results explain their empty state', markup.includes('<p class="oav-result-empty">{T.resultEmpty}</p>'));
+  const scroll = markup.slice(markup.indexOf('<div class="oav-results-scroll">'), markup.indexOf('<details id="oav-files"'));
+  for (const id of ['oav-list', 'oav-more', 'oav-missing', 'oav-summary']) check(id + ' stays inside the result scroll area', scroll.includes('id="' + id + '"'));
+  check('filters stay above the result scroll area', markup.indexOf('class="oav-filters"') < markup.indexOf('class="oav-results-scroll"'));
+  check('tool root can shrink', /\.oav-wrap \{[^}]*min-height: 0/.test(style));
+  check('result area grows with its bounded parent', /\.oav-results \{[^}]*flex: 1 1 0[^}]*min-height: 180px[^}]*overflow: hidden/.test(style));
+  check('long results scroll inside their own area', /\.oav-results-scroll \{[^}]*min-height: 0[^}]*overflow: auto/.test(style));
+  check('empty status retains two lines', /\.oav-status \{[^}]*min-height: 2.8em; line-height: 1.4/.test(style));
+  check('desktop empty state expands the input', /\.oav-wrap:has\(#oav-results\[hidden\]\) \.oav-input \{[^}]*flex: 1 1 0/.test(style));
+  check('tablet breakpoint stops empty stretching', /@media \(max-width: 860px\)[\s\S]*?\.oav-result-empty \{ display: none; \}/.test(style));
+  check('phone breakpoint keeps touch sizing separate', style.includes('@media (max-width: 640px)') && !style.includes('.oav-bar :global(button)'));
+  check('registered as an analyze page', /'openapi-validator':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/openapi-validator', lang + '.mdx'), 'utf8');
+    const front = /^---\n([\s\S]*?)\n---/.exec(mdx);
+    const data = jsyaml.load(front[1]);
+    const body = mdx.slice(front[0].length);
+    eq(lang + ': four user steps are in frontmatter', data.steps?.length, 4);
+    check(lang + ': steps fit the llms-full limits', Array.isArray(data.steps) && data.steps.every((step) => typeof step === 'string'
+      && step.length <= 280 && !/<\/?[a-z]/i.test(step)) && data.steps.reduce((sum, step) => sum + step.length, 0) <= 1200);
+    check(lang + ': no duplicate usage section', !/<h2>(?:How to use|使用步骤|使い方|사용 방법)<\/h2>/i.test(body));
+    check(lang + ': limitations remain in the article', /<h2>(?:Limits|限制|制限|제한)<\/h2>/.test(body));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
