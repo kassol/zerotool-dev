@@ -793,7 +793,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     check(lang + ' v2 keeps reference and removes HowTo', !/^## (How to use|使用方法|使い方|사용 방법)$/m.test(mdx) && /^## (Limits|限制|制限|제한 사항)$/m.test(mdx) && meta.faqItems.length >= 4 && /csg:/.test(mdx));
   }
   check('v2 scale and code scroll within bounded regions', /\.csg-scale \{[^}]*min-height: 0;[^}]*overflow: auto;/s.test(source) && /\.csg-code \{[^}]*height: 12rem;[^}]*overflow: auto;/s.test(source));
-  check('v2 stack at shared breakpoint and hide empty mobile preview', /@media \(max-width: 860px\)/.test(source) && /\.csg-preview:has\(\.csg-scale:empty\) \{ display: none; \}/.test(source));
+  check('v2 stack at shared breakpoint and retain mobile error status', /@media \(max-width: 860px\)/.test(source) && /\.csg-preview:has\(\.csg-scale:empty\) > :not\(\.csg-status\) \{ display: none; \}/.test(source));
   const compiled = await transform(source, { filename: 'ColorShadesGeneratorTool.astro' });
   check('v2 Astro compiles', !compiled.diagnostics.some(d => d.severity === 1));
 }
