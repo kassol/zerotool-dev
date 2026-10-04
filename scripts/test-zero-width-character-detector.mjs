@@ -332,5 +332,47 @@ function pageHarness() {
   equal('preview cleared after Ctrl+L', h.byId.get('zwcd-viz').innerHTML, '');
 }
 
+// ---------- 9. v2 page layout ----------
+{
+  const frontmatter = source.split('---')[1];
+  const strings = new Function('return (' + frontmatter.match(/const STRINGS = (\{[\s\S]*?\}) as const;/)[1] + ');')();
+  const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script is:inline>'));
+  const style = source.match(/<style is:global>([\s\S]*?)<\/style>/)[1];
+  const keys = ['input', 'detection', 'strip', 'cleaned'];
+  check('root is the tool element', /^\s*<div\s+class="zwcd-wrap"/.test(markup));
+  check('registry selects analyze', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'zero-width-character-detector': 'analyze'"));
+  check('four explained controls have distinct tips', JSON.stringify([...markup.matchAll(/<Toggletip id="zwcd-tip-(\w+)"/g)].map(m => m[1]).sort()) === JSON.stringify([...keys].sort()));
+  check('tips are built into markup without script serialization', !source.includes('define:vars') && !/data-\w+=\{[^}]*tips/.test(markup));
+  check('no detection button is introduced for live input', !markup.includes('btn-primary'));
+  check('hidden result is not overridden by flex', /\.zwcd-wrap \[hidden\] \{ display: none !important; \}/.test(style));
+  check('long results have a bounded scroll container', /\.zwcd-result-scroll \{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(style));
+  check('status has reserved space before input', markup.indexOf('id="zwcd-summary"') < markup.indexOf('id="zwcd-input"') && style.includes('min-height: 24px') && style.includes('min-height: 48px'));
+  check('tablet stacking starts at 860px', style.includes('@media (max-width: 860px)'));
+  check('tip buttons are outside labels', !/<label[^>]*>(?:(?!<\/label>)[\s\S])*<Toggletip/.test(markup));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    equal(lang + ' tip keys', Object.keys(strings[lang].tips).join(','), keys.join(','));
+    for (const key of keys) check(lang + ' has useful ' + key + ' help', strings[lang].tips[key].trim().length > 15);
+    check(lang + ' empty result text', strings[lang].resultEmpty.length > 10);
+    const mdx = readFileSync(join(root, 'src/content/tools/zero-width-character-detector', lang + '.mdx'), 'utf8');
+    const steps = (mdx.match(/steps:\n([\s\S]*?)faqItems:/) || [])[1] || '';
+    const values = [...steps.matchAll(/^  - (".*")$/gm)].map(m => JSON.parse(m[1]));
+    equal(lang + ' four steps', values.length, 4);
+    check(lang + ' steps fit schema', values.every(v => v.length <= 280) && values.join('').length <= 1200);
+    check(lang + ' old How to use removed', !/^## (?:How to use|使用步骤|使い方|사용 방법)$/m.test(mdx));
+    check(lang + ' limits retained', /^## (?:Limits|限制|制限|한계)$/m.test(mdx));
+  }
+  const h = pageHarness(), result = h.byId.get('zwcd-results');
+  check('initial empty state hides results', result.hidden);
+  h.input('ab');
+  check('visible-only input still shows inspection result', !result.hidden);
+  h.input('a\u200Bb');
+  check('invisible characters show result and full clean text', !result.hidden && h.byId.get('zwcd-cleaned').value === 'ab');
+  h.fire(h.byId.get('zwcd-clear'), 'click');
+  check('clear restores empty state', result.hidden && h.byId.get('zwcd-viz').innerHTML === '');
+  h.input('a\u200Bb'); h.byId.get('zwcd-input').value = '';
+  h.fire(h.doc, 'keydown', { ctrlKey: true, key: 'l' });
+  check('Ctrl+L restores empty state', result.hidden && h.byId.get('zwcd-cleaned').value === '');
+}
+
 console.log(`${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
