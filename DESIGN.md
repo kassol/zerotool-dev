@@ -158,6 +158,7 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 | `.zt-io-pane` | One side of the grid: a flex column with the label row on top and the editor under it. |
 | `.zt-io-fill` | The textarea, `<pre>` or list that fills its pane (`flex: 1 1 0`, at least 300px, no resize handle). The basis is 0 so that long output scrolls inside the pane and does not make the first screen taller; give a `<div>` or `<pre>` that holds results `overflow: auto`. At 860px and below it stops stretching, is at least 120px high and can be resized; the tool sets the height there. |
 | `.zt-tip`, `.zt-tip-btn`, `.zt-tip-pop` | Toggletip button and panel. `Toggletip.astro` has no `<style>` of its own. |
+| `.zt-empty-drop` | An `analyze` tool's empty drop zone: a centered flex column that fills the available height, with a 220px minimum. Keep the tool class for its border, colors, spacing and compact or mobile state. Used by HAR File Analyzer and QR Code Decoder. |
 
 `convert` tools use `.zt-io`, `.zt-io-pane` and `.zt-io-fill` for the panels and keep their own class next to each for tool-specific rules (tab size, colors, phone heights). Rules that the first batch (2026-10-04, 12 tools; `TextToBinaryTool` is the reference) settled:
 
@@ -167,7 +168,7 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 - A result pane with nothing in it shows one sentence that says what will appear (in all four languages); at 860px and below the empty pane is hidden.
 - The tool's own breakpoints are 860px (stack) and 640px (phone details).
 - A button whose action already ran when the input changed is removed, with its strings. If that button was also the only way to retry after a load failure, the failure message gets a Retry button (`SvgOptimizerTool`).
-- A consequence the user must see when choosing (an option that sends requests, a fixed IV) stays visible while the option is on; a toggletip holds the details only (`MarkdownToWordTool`). A rail class for `generate` and an empty-state drop zone for `analyze` are not shared yet: each has one user, and they move to `tool-common.css` when a second tool needs them.
+- A consequence the user must see when choosing (an option that sends requests, a fixed IV) stays visible while the option is on; a toggletip holds the details only (`MarkdownToWordTool`). The `generate` control rail moves to `tool-common.css` when a second tool needs it. Analyze drop zones use `.zt-empty-drop`.
 
 **Shell**
 
