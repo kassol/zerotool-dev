@@ -34,6 +34,7 @@ import { createRequire } from 'node:module';
 import sharp from 'sharp';
 import vm from 'node:vm';
 import { parseFragment } from 'parse5';
+import yaml from 'js-yaml';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -731,7 +732,7 @@ if (regenIndex > 0) await regenerate(process.argv[regenIndex + 1]);
   const keys = Object.keys(S.en).sort();
   for (const l of langs) deepEqual('strings: ' + l + ' has the same keys as en', Object.keys(S[l]).sort(), keys);
   const ph = (s) => (s.match(/\{\w+\}/g) || []).sort().join(',');
-  for (const l of langs) for (const k of keys) equal('strings: ' + l + '.' + k + ' placeholders', ph(S[l][k]), ph(S.en[k]));
+  for (const l of langs) for (const k of keys.filter(k => typeof S.en[k] === 'string')) equal('strings: ' + l + '.' + k + ' placeholders', ph(S[l][k]), ph(S.en[k]));
   const script = source.slice(source.indexOf('<script is:inline'), source.indexOf('</script>'));
   const used = new Set([...script.matchAll(/\bt\.(\w+)/g)].map((m) => m[1]));
   for (const k of used) check('strings: t.' + k + ' exists', keys.includes(k));
@@ -776,7 +777,7 @@ if (regenIndex > 0) await regenerate(process.argv[regenIndex + 1]);
 // ---------- actual page lifecycle: delayed canvas and directory APIs ----------
 // Only DOM/canvas/file-system APIs are doubled. The complete shipped IIFE runs unchanged.
 function loadSpritePage({ deferBitmap = [] } = {}) {
-  const ids = new Map(), timers = new Map(), urls = new Map(), downloads = [], blobs = [], decoded = [], pendingBitmaps = [];
+  const ids = new Map(), timers = new Map(), urls = new Map(), downloads = [], blobs = [], decoded = [], pendingBitmaps = [], scrolls = [];
   const document = { activeElement: null, listeners: {} };
   let serial = 0;
   function matches(el, selector) {
@@ -810,10 +811,10 @@ function loadSpritePage({ deferBitmap = [] } = {}) {
     closest(selector) { return matches(this, selector) ? this : this.parentElement?.closest(selector) || null; }
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
     dispatch(type, init = {}) { const event = { type, target: this, preventDefault() {}, stopPropagation() {}, ...init }; for (const fn of this.listeners[type] || []) fn.call(this, event); }
-    click() { if (this.disabled) return; if (this.tagName === 'A') downloads.push({ name: this.download, blob: urls.get(this.href) }); this.dispatch('click'); }
+    click() { if (this.disabled) return; this.clickCount = (this.clickCount || 0) + 1; if (this.tagName === 'A') downloads.push({ name: this.download, blob: urls.get(this.href) }); this.dispatch('click'); }
     focus() { document.activeElement = this; }
     select() {}
-    getBoundingClientRect() { return { top: 200, left: 0, width: 100, height: 100 }; }
+    getBoundingClientRect() { return { top: this.rectTop ?? 200, left: 0, width: 100, height: 100 }; }
     getContext() {
       const el = this;
       return { clearRect() { el.draws = []; }, drawImage(source) { el.draws.push(source.fixture || source.draws?.join('|') || 'canvas'); el.pixel = source.pixel || 1; }, getImageData(x, y, w, h) { const data = new Uint8ClampedArray(w * h * 4); for (let i = 0; i < data.length; i += 4) { data[i] = el.pixel || 1; data[i + 3] = 255; } return { data }; } };
@@ -833,12 +834,12 @@ function loadSpritePage({ deferBitmap = [] } = {}) {
   const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script is:inline'));
   for (const node of parseFragment(markup).childNodes) build(node, body);
   const wrap = ids.get('ssg-wrap'), get = id => { if (!ids.has(id)) throw new Error('Missing actual markup id: ' + id); return ids.get(id); };
-  Object.assign(document, { getElementById: get, querySelector: s => s === '.tool-widget' ? wrap : body.querySelector(s), createElement: tag => new Element(tag), createElementNS: (ns, tag) => new Element(tag), createDocumentFragment: () => new Element('#fragment'), createTextNode: text => { const el = new Element('#text'); el.textContent = text; return el; }, addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }, execCommand: () => true });
+  Object.assign(document, { getElementById: get, querySelector: s => s === '.tool-widget' ? wrap : s === '.tool-widget .btn-primary' ? wrap.querySelector('.btn-primary') : body.querySelector(s), createElement: tag => new Element(tag), createElementNS: (ns, tag) => new Element(tag), createDocumentFragment: () => new Element('#fragment'), createTextNode: text => { const el = new Element('#text'); el.textContent = text; return el; }, addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }, execCommand: () => true });
   const fm = source.slice(0, source.indexOf('\n---', 4));
-  const STRINGS = new Function('return ' + fm.slice(fm.indexOf('const STRINGS = ') + 'const STRINGS = '.length, fm.indexOf('// strings:end')).replace(/;\s*$/, ''))();
+  const runtimeStrings = vm.runInNewContext(fm.slice(fm.indexOf('const STRINGS = '), fm.indexOf('const langPrefix')) + '\nruntimeStrings', { lang: 'en' });
   const store = new Map(), localStorage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k), key: i => [...store.keys()][i] ?? null, get length() { return store.size; } };
   const policy = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8').match(/export const toolPersistencePolicy = ([\s\S]*?) as const/)[1];
-  const sandbox = { document, t: STRINGS.en, langPrefix: '', localStorage, toolPersistencePolicy: vm.runInNewContext('(' + policy + ')'), _slug: 'sprite-sheet-generator', Blob, console, innerHeight: 900, scrollY: 0, scrollTo() {},
+  const sandbox = { document, t: runtimeStrings, langPrefix: '', localStorage, toolPersistencePolicy: vm.runInNewContext('(' + policy + ')'), _slug: 'sprite-sheet-generator', Blob, console, innerHeight: 900, scrollY: 0, scrollTo(position) { scrolls.push(position); },
     URL: { createObjectURL(blob) { const id = 'blob:fixture-' + ++serial; urls.set(id, blob); return id; }, revokeObjectURL: id => urls.delete(id) },
     navigator: { clipboard: { writeText: () => Promise.resolve() } },
     createImageBitmap(file) { const bmp = { width: 2, height: 2, fixture: file.name, pixel: [...file.name].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 250 + 1, closed: false, close() { this.closed = true; } }; decoded.push(bmp); if (deferBitmap.includes(file.name)) return new Promise(resolve => pendingBitmaps.push(() => resolve(bmp))); return Promise.resolve(bmp); },
@@ -850,7 +851,8 @@ function loadSpritePage({ deferBitmap = [] } = {}) {
   const shortcutStart = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
   vm.runInContext(layout.slice(shortcutStart, layout.indexOf('// ── Copy button visual feedback', shortcutStart)), ctx);
   function flushZeroTimers() { for (const [id, timer] of [...timers]) if (timer.ms === 0) { timers.delete(id); timer.fn(); } }
-  return { get, wrap, ctx, downloads, blobs, decoded, pendingBitmaps, store,
+  return { get, wrap, ctx, downloads, blobs, decoded, pendingBitmaps, store, scrolls,
+    key(init) { const e = { preventDefault() {}, ...init }; for (const fn of document.listeners.keydown) fn(e); flushZeroTimers(); },
     change(id, value, event = 'change') { const el = get(id); el.value = value; el.dispatch(event); },
     importFiles(files) { const el = get('ssg-file'); el.files = files; el.dispatch('change'); },
     drop(dt) { wrap.dispatch('drop', { dataTransfer: dt }); },
@@ -932,6 +934,59 @@ for (const mode of ['clear', 'ctrl', 'meta']) {
   deepEqual('lifecycle drop without clear: both batches sorted naturally', page.names(), ['frame2.png', 'frame10.png']);
 }
 
+// ---------- v2 page layout ----------
+{
+  const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script is:inline'));
+  const styles = source.match(/<style is:global>([\s\S]*?)<\/style>/)[1];
+  const fm = source.slice(0, source.indexOf('\n---', 4));
+  const S = new Function('return ' + fm.slice(fm.indexOf('const STRINGS = ') + 'const STRINGS = '.length, fm.indexOf('// strings:end')).replace(/;\s*$/, ''))();
+  check('v2: generate registry', /'sprite-sheet-generator':\s*'generate'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('v2: component root is the tool', /^\s*<div class="ssg-wrap" id="ssg-wrap">/.test(markup));
+  check('v2: shared 270–320px rail', /class="ssg-rail zt-rail"/.test(markup) && /grid-template-columns:\s*clamp\(270px, 26vw, 320px\) minmax\(0, 1fr\)/.test(styles));
+  check('v2: controls and export precede preview', ['ssg-drop', 'ssg-dl-img', 'ssg-data', 'ssg-list', 'ssg-name'].every(id => markup.indexOf('id="' + id + '"') < markup.indexOf('id="ssg-canvas"')));
+  check('v2: data focus follows parameter controls', markup.indexOf('id="ssg-data"') > markup.indexOf('id="ssg-gifframes"'));
+  check('v2: segmented radio semantics retained', /class="ssg-seg zt-segmented"/.test(markup) && (markup.match(/type="radio" name="ssg-layout"/g) || []).length === 2);
+  check('v2: exports follow existing output hidden state', /\.ssg-wrap:has\(#ssg-output\[hidden\]\) \.ssg-export,\s*\.ssg-wrap:has\(#ssg-output\[hidden\]\) \.ssg-data-panel\s*\{\s*display:\s*none/.test(styles));
+  check('v2: empty explanation follows output visibility', /class="ssg-empty">\{emptyPreview\}/.test(markup) && /\.ssg-wrap:has\(#ssg-output:not\(\[hidden\]\)\) \.ssg-empty\s*\{\s*display:\s*none/.test(styles));
+  check('v2: status and metadata have bounded scroll areas', /#ssg-status\s*\{[^}]*height:\s*5rem;[^}]*overflow:\s*auto/.test(styles) && /\.ssg-meta\s*\{[^}]*height:\s*3.6em;[^}]*overflow:\s*auto/s.test(styles));
+  check('v2: long image list stays in a keyboard scroll area', /id="ssg-list" class="ssg-list" tabindex="0"/.test(markup) && /\.ssg-list\s*\{[^}]*height:\s*12rem;[^}]*overflow-y:\s*auto/s.test(styles));
+  check('v2: data fixed height and scrollable', /\.ssg-data\s*\{[^}]*height:\s*11rem;[^}]*resize:\s*none;[^}]*overflow:\s*auto/.test(styles));
+  check('v2: preview has zero flexible minimum and keyboard access', /class="ssg-preview" tabindex="0" role="region"/.test(markup) && /\.ssg-preview\s*\{[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0;[^}]*overflow:\s*auto/s.test(styles));
+  check('v2: stacks at 860 with fixed mobile preview', /max-width:\s*860px/.test(styles) && /\.ssg-preview\s*\{\s*height:\s*360px;\s*flex:\s*none/.test(styles) && /max-width:\s*640px/.test(styles));
+  const tips = [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]);
+  check('v2: fourteen unique tip controls', tips.length === 14 && new Set(tips).size === 14);
+  check('v2: help excluded from serialization', /const \{ tips, emptyPreview, \.\.\.runtimeStrings \} = T;/.test(source) && /define:vars=\{\{ t: runtimeStrings, langPrefix \}\}/.test(source));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const t = S[lang];
+    deepEqual('v2 ' + lang + ': twelve shared tip facts', Object.keys(t.tips), ['drop', 'order', 'layout', 'gaps', 'frame', 'gif', 'data', 'image', 'svg', 'sheet', 'clear', 'bounds']);
+    check('v2 ' + lang + ': nonempty help and empty-state text', typeof t.emptyPreview === 'string' && !!t.emptyPreview.trim() && Object.values(t.tips).every(x => typeof x === 'string' && !!x.trim()));
+    const runtime = vm.runInNewContext(fm.slice(fm.indexOf('const STRINGS = '), fm.indexOf('const langPrefix')) + '\nruntimeStrings', { lang });
+    check('v2 ' + lang + ': actual runtime excludes tips and empty text', !('tips' in runtime) && !('emptyPreview' in runtime) && Object.values(runtime).every(x => typeof x === 'string'));
+    const mdx = readFileSync(join(root, 'src/content/tools/sprite-sheet-generator', lang + '.mdx'), 'utf8');
+    const meta = yaml.load(mdx.match(/^---\n([\s\S]*?)\n---/)[1]);
+    check('v2 ' + lang + ': five bounded steps', meta.steps.length === 5 && meta.steps.every(s => typeof s === 'string' && s.length <= 280) && meta.steps.join('').length <= 1200);
+    check('v2 ' + lang + ': limits FAQ SEO and examples remain', /^## (Limits|限制|制限|제한)$/m.test(mdx) && meta.faqItems.length >= 4 && !!meta.seoTitle && !!meta.seoDescription && /ssg-check:/.test(mdx));
+    check('v2 ' + lang + ': HowTo section removed', !/^## (How to Use|使用步骤|使い方|사용 방법)$/m.test(mdx));
+  }
+  const page = loadSpritePage();
+  page.get('ssg-drop').dispatch('click', { target: page.get('ssg-tip-drop') });
+  equal('v2: import help does not invoke the file picker', page.get('ssg-file').clickCount || 0, 0);
+  page.get('ssg-pick').focus(); page.key({ key: 'Enter', ctrlKey: true });
+  equal('v2: real global primary shortcut opens file picker while empty', page.get('ssg-file').clickCount, 1);
+  page.get('ssg-output').rectTop = 950; page.get('ssg-status').rectTop = 420;
+  page.importFiles([spriteFile('first.png')]); await settleSprite();
+  equal('v2: first sheet invokes existing revealOutput once', page.scrolls.length, 1);
+  equal('v2: revealOutput positions the status before downloads', page.scrolls[0]?.top, 408);
+  page.key({ key: 'Enter', metaKey: true });
+  equal('v2: real global primary shortcut downloads the current image', page.blobs.length, 1);
+  page.importFiles([spriteFile('second.png')]); await settleSprite();
+  equal('v2: subsequent import does not force another reveal', page.scrolls.length, 1);
+  page.clear('clear'); page.key({ key: 'Enter', ctrlKey: true });
+  equal('v2: clear restores picker as the primary shortcut', page.get('ssg-file').clickCount, 2);
+  const { transform } = createRequire(import.meta.resolve('astro/package.json'))('@astrojs/compiler');
+  const compiled = await transform(source, { filename: 'SpriteSheetGeneratorTool.astro' });
+  check('v2: Astro compiles and all global CSS resolves', !compiled.diagnostics.some(d => d.severity === 1) && compiled.css.length > 0 && compiled.css.every(css => !css.includes(':global(')));
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
-

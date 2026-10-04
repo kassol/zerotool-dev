@@ -33,6 +33,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'text-to-ascii-art': 'generate',
   'pkce-generator': 'generate',
   'htpasswd-generator': 'generate',
+  'sprite-sheet-generator': 'generate',
   'har-file-analyzer': 'analyze',
   'dns-lookup': 'analyze',
   'url-parser': 'analyze',
