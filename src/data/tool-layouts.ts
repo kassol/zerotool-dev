@@ -12,6 +12,7 @@ export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact';
 export const toolPageKinds: Record<string, ToolPageKind> = {
   'number-base': 'compact',
   'bcrypt-generator': 'compact',
+  'color-converter': 'compact',
   'aspect-ratio': 'compact',
   'basic-auth-header-generator': 'compact',
   'chmod-calculator': 'compact',

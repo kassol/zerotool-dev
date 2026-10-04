@@ -3,6 +3,7 @@
 // Read:  src/components/tools/ColorConverterTool.astro (runs the real conversion functions between
 //        the `engine:start` / `engine:end` markers, so this test cannot drift from the shipped source)
 //        src/layouts/ToolLayout.astro (the exact shared shortcut handler)
+//        src/data/tool-layouts.ts and the four tool MDX pages (v2 content protection)
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -15,6 +16,9 @@
 
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -100,7 +104,9 @@ for (let h = -720; h <= 720; h += 37) for (const s of [-20, 0, 55, 100, 180]) fo
 
 
 // Complete page lifecycle. Only DOM/clipboard/timers are boundary doubles.
-const lifecycleScript = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const lifecycleScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+const lifecycleStrings = new Function('return ' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1])();
+const clientFor = lang => vm.runInNewContext(source.slice(source.indexOf('const T = STRINGS[lang];'), source.indexOf('\n---', 4)) + '\nCLIENT_T;', { STRINGS: lifecycleStrings, lang });
 const lifecycleMarkup = source.replace(/^---[\s\S]*?---\s*/, '').split('<style>')[0].replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
 const lifecycleLayout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const lifecycleShortcut = lifecycleLayout.slice(lifecycleLayout.indexOf('// ── Keyboard shortcuts:'), lifecycleLayout.indexOf('// ── Copy button visual feedback'));
@@ -176,14 +182,16 @@ function lifecyclePage(lang = 'en', shellFirst = false) {
   doc = new Element('#document');
   doc.documentElement = new Element('html'); doc.documentElement.lang = lang; doc.appendChild(doc.documentElement);
   doc.body = new Element('body'); doc.documentElement.appendChild(doc.body);
-  const widget = new Element('section'); widget.className = 'tool-widget'; doc.body.appendChild(widget); parse(lifecycleMarkup, widget);
+  const widget = new Element('section'); widget.className = 'tool-widget'; doc.body.appendChild(widget); const text = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const markup = lifecycleMarkup.replace(/<Toggletip\b[^>]*>[\s\S]*?<\/Toggletip>/g, '').replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + text(lifecycleStrings[lang][key]) + '"').replace(/\{T\.(\w+)\}/g, (_, key) => text(lifecycleStrings[lang][key]));
+  parse(markup, widget);
   // Deliberately no ID map: duplicate IDs resolve to the first connected element in DOM order.
   doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
   doc.createElement = tag => new Element(tag);
   for (const select of doc.querySelectorAll('select')) select.value = select.querySelector('option').value;
   doc.activeElement = doc.body;
   const sandbox = {
-    document: doc, console, _slug: 'color-converter', ztPersist: { clear() {} },
+    document: doc, console, t: clientFor(lang), _slug: 'color-converter', ztPersist: { clear() {} },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value, resolve, reject }); return promise; } } },
     trackTool: (...args) => tracks.push(args),
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms }); return timerId; }, clearTimeout: id => timers.delete(id),
@@ -267,6 +275,74 @@ try {
   }
   await settle(); check('all page copy rejections are handled', unhandled.length === 0, unhandled.join('; '));
 } finally { process.off('unhandledRejection', captureUnhandled); }
+
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script')).trim();
+  const css = source.slice(source.indexOf('<style>') + 7, source.indexOf('</style>'));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  const sha = value => createHash('sha256').update(value).digest('hex');
+  const keys = ['clear', 'hex', 'hsl', 'picker', 'rgb'];
+  check('color-converter is registered as compact', /'color-converter':\s*'compact'/.test(layouts));
+  check('tool root is a natural-height shrinkable column', template.startsWith('<div class="cc-wrap">') && /\.cc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0/.test(css) && !/\b(?:height|min-height):[^;]*(?:vh|svh)/.test(css));
+  check('Picker/Clear precede status, fields and color preview', template.indexOf('id="cc-clear"') < template.indexOf('id="cc-status"') && template.indexOf('id="cc-status"') < template.indexOf('id="cc-hex"') && template.indexOf('id="cc-hsl"') < template.indexOf('id="cc-swatch"'));
+  check('status reserves a fixed scrolling area at both sizes', /\.cc-wrap \.cc-status\s*\{[^}]*height: 3em;[^}]*overflow: auto/.test(css) && /\.cc-wrap \.cc-status\s*\{ height: 4.5em/.test(css));
+  check('field widths cannot grow from long original values', /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/.test(css) && /\.cc-input-row input\s*\{[^}]*width: 0; min-width: 0/.test(css));
+  check('preview label has fixed-height horizontal scrolling', /\.cc-swatch-label\s*\{[^}]*height: 2.5rem;[^}]*overflow-x: auto;[^}]*overflow-y: hidden;[^}]*white-space: nowrap/.test(css));
+  check('phone stacks fields with usable controls', /@media \(max-width: 860px\)/.test(css) && /@media \(max-width: 640px\)/.test(css) && /\.cc-picker-label\s*\{ min-height: 44px/.test(css));
+  check('original Clear, Picker and three Copy controls remain', ['cc-clear', 'cc-picker'].every(id => template.includes('id="' + id + '"')) && (template.match(/data-copy="cc-/g) || []).length === 3 && !template.includes('btn-primary'));
+  check('native picker keyboard focus is visible on its label', /#cc-picker:focus-visible \+ \.cc-picker-label/.test(css));
+  check('hidden states retain display precedence', /\.cc-wrap \[hidden\]\s*\{ display: none !important/.test(css));
+  const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  check('five tips have stable unique IDs', JSON.stringify(tips.map(m => /id="cc-tip-([^"]+)"/.exec(m[1])?.[1]).sort()) === JSON.stringify(keys));
+  check('tips are outside labels and summaries', !/<(?:label|summary)\b[^>]*>(?:(?!<\/(?:label|summary)>)[\s\S])*?<Toggletip/.test(template));
+  for (const tip of tips) check('tip uses build-time language and matching content', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2] === '{TIPS.' + /id="cc-tip-([^"]+)"/.exec(tip[1])[1] + '}');
+  check('runtime i18n removed and only client strings serialized', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/data-i18n|STRINGS|TIPS/.test(lifecycleScript));
+  const engine = source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
+  check('exact engine bytes protected', sha(engine) === 'f4515734c3724feb0413859e2e3c7cebc5af08ed0c896e176da458743146ebcd');
+  const retained = {
+  "en": [
+    "6a1e02e2cdd08e7b0f7899bc8636e3eb94c9bd22b5e0cdca895beaeb682cf46c",
+    "283f57c71043e251cdb7914407120b7fc65c82826a6fd28c6e06fbfa5304c317"
+  ],
+  "zh": [
+    "e271e275bbaa475abdbe8d1861c57ae6e5227f1e9ec130bca5bf77dc1bda5ef7",
+    "d8fcbd0309e48773a39041f76da63f83e21da4f25f268cc602d964b514ed298c"
+  ],
+  "ja": [
+    "388abf2493609d93e34c3c18fe29c90cecac7de3cdb978fd22b7f401979dec4a",
+    "56ba369d51c7fd8d71ba198957bd74ba403bdbafcfe8875bd94036f35659283b"
+  ],
+  "ko": [
+    "d22745172fe82dd599a4a6812e09c759f358f03e2ef3226d775b53202dcea82e",
+    "ea23051fcd1e5a87bbd122121306afe48a39e208a790760c84bf7269b4a206d8"
+  ]
+};
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const entry = lifecycleStrings[lang], client = clientFor(lang);
+    check(lang + ' all four languages share string keys', JSON.stringify(Object.keys(entry).sort()) === JSON.stringify(Object.keys(lifecycleStrings.en).sort()));
+    check(lang + ' tip keys match all actual controls', JSON.stringify(Object.keys(entry.tips).sort()) === JSON.stringify(keys));
+    for (const key of keys) check(lang + '/' + key + ' tip is plain nonempty text', typeof entry.tips[key] === 'string' && !!entry.tips[key].trim() && !/<[^>]*>|\n/.test(entry.tips[key]));
+    check(lang + ' client excludes tips and their text', !('tips' in client) && Object.values(entry.tips).every(tip => !JSON.stringify(client).includes(JSON.stringify(tip))));
+    const mdx = readFileSync(join(root, 'src/content/tools/color-converter', lang + '.mdx'), 'utf8');
+    const [, meta, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx), { steps } = loadYaml(meta);
+    check(lang + ' four plain steps remain within llms limits', steps.length === 4 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['copy', 'clear', 'pickColor']) check(lang + ' steps use the actual ' + key + ' label', steps.some(step => step.includes(entry[key])));
+    check(lang + ' Usage removed, Limits retained', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body) && /^## (?:Limits|限制|制限事項|제한 사항)/m.test(body));
+    check(lang + ' original FAQ/SEO unchanged', sha(meta.replace(/^steps:\n(?:  .*\n)*/m, '').trim()) === retained[lang][0]);
+    check(lang + ' non-Usage body byte-identical', sha(body) === retained[lang][1]);
+  }
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'ColorConverterTool.astro' });
+  check('Astro reports no compilation error', compiled.diagnostics.filter(d => d.severity === 1).length === 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('generated JavaScript parses and serializes CLIENT_T', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
