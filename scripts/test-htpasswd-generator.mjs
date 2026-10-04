@@ -399,5 +399,106 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
 }
 
+
+// ── M. Pending page actions must not publish after their inputs change ──────
+{
+  function page() {
+    const nodes = new Map(), events = {}, timers = [], pending = [], comparisons = [];
+    const document = { activeElement: null };
+    class Element {
+      constructor(id = '', tag = 'DIV') { Object.assign(this, { id, tagName: tag, value: '', textContent: '', hidden: false, disabled: false, className: '', listeners: {}, children: [], style: {} }); }
+      addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+      dispatch(type, extra = {}) { for (const fn of this.listeners[type] || []) fn.call(this, { target: this, ...extra }); }
+      click() { if (!this.disabled) this.dispatch('click'); }
+      appendChild(child) { this.children.push(child); }
+      getBoundingClientRect() { return { top: 100, bottom: 200 }; }
+      scrollIntoView() {}
+    }
+    const get = id => { if (!nodes.has(id)) nodes.set(id, new Element(id)); return nodes.get(id); };
+    for (const m of source.matchAll(/<(input|textarea|select|button)[^>]*\bid="([^"]+)"[^>]*>/g)) {
+      get(m[2]).tagName = m[1].toUpperCase(); get(m[2]).type = /\btype="([^"]+)"/.exec(m[0])?.[1] || 'text';
+    }
+    const widget = { contains: el => [...nodes.values()].includes(el) };
+    Object.assign(document, { getElementById: get, querySelector: () => widget,
+      createElement: tag => new Element('', tag.toUpperCase()),
+      addEventListener(type, fn) { (events[type] ||= []).push(fn); } });
+    const bc = { ...BC, hash(password, salt, callback, progress) { pending.push({ password, salt, callback, progress }); },
+      compare(password, hash, callback) { comparisons.push(() => callback(null, BC.compareSync(password, hash))); } };
+    get('htpw-format').value = 'bcrypt-2y'; get('htpw-cost').value = '4'; get('htpw-rounds').value = '5000';
+    const context = { document, S: STRINGS.en, navigator: {}, crypto, TextEncoder, TextDecoder, Uint8Array, atob, btoa,
+      setTimeout(fn, delay) { const id = timers.length; timers.push({ fn, delay }); return id; }, clearTimeout() {},
+      dcodeIO: { bcrypt: bc }, innerHeight: 900 };
+    context.window = context;
+    vm.runInNewContext(source.match(/<script is:inline define:vars=[^>]*>([\s\S]*?)<\/script>/)[1], context);
+    return { get, pending, comparisons,
+      type(id, value, type = 'input') { get(id).value = value; get(id).dispatch(type); },
+      clear() {
+        document.activeElement = get('htpw-user');
+        for (const fn of events.keydown || []) fn({ ctrlKey: true, key: 'l' });
+        for (const el of nodes.values()) if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' && el.type === 'text') el.value = '';
+        for (const job of timers.splice(0)) if (job.delay === 0) job.fn();
+      },
+      async release() {
+        const job = pending.shift();
+        const hash = BC.hashSync(job.password, job.salt);
+        job.progress?.(1); job.callback(null, hash);
+        for (let i = 0; i < 16; i++) await Promise.resolve();
+        return hash;
+      },
+    };
+  }
+  for (const action of ['edit', 'invalid user', 'format', 'clear']) {
+    const p = page(); p.type('htpw-user', 'alice'); p.type('htpw-pass', 'old-password');
+    p.get('htpw-generate').click();
+    check(action + ': actual page starts bcrypt', p.pending.length === 1);
+    if (action === 'edit') { p.type('htpw-user', 'bob'); p.type('htpw-pass', 'new-password'); }
+    if (action === 'invalid user') p.type('htpw-user', 'bad:name');
+    if (action === 'format') p.type('htpw-format', 'apr1', 'change');
+    if (action === 'clear') p.clear();
+    await p.release();
+    check(action + ': stale generation stays hidden and empty', p.get('htpw-out').hidden && p.get('htpw-line').textContent === '');
+    check(action + ': stale progress and success stay cleared', p.get('htpw-status').textContent === '');
+    check(action + ': stale command stays hidden', p.get('htpw-cmd-wrap').hidden);
+    check(action + ': controls reenable after cancellation', !p.get('htpw-generate').disabled);
+    p.type('htpw-user', 'carol'); p.type('htpw-pass', 'current-password'); p.type('htpw-format', 'bcrypt-2y', 'change');
+    p.get('htpw-generate').click(); const hash = await p.release();
+    check(action + ': next run publishes matching credentials', p.get('htpw-line').textContent === 'carol:' + hash && BC.compareSync('current-password', hash) && !p.get('htpw-out').hidden);
+    check(action + ': next command uses the same input', p.get('htpw-cmd').textContent === 'htpasswd -nB -C 4 carol');
+  }
+  for (const action of ['edit', 'clear', 'file edit']) {
+    const p = page(); p.type('htpw-user', 'alice'); p.type('htpw-pass', 'old-password'); p.type('htpw-file', '# keep\nbob:x\n');
+    p.get('htpw-upsert').click();
+    if (action === 'edit') p.type('htpw-user', 'carol');
+    if (action === 'clear') p.clear();
+    if (action === 'file edit') p.type('htpw-file', '# new file\n');
+    const before = p.get('htpw-file').value;
+    await p.release();
+    check(action + ': stale upsert cannot mutate file content', p.get('htpw-file').value === before);
+    check(action + ': stale upsert cannot report success', !p.get('htpw-file-status').className.includes('success'));
+  }
+  for (const action of ['batch edit', 'format', 'clear']) {
+    const p = page(); p.type('htpw-batch', 'alice:old-password\nbob:second-password');
+    p.get('htpw-batch-run').click();
+    check(action + ': batch starts its first hash', p.pending.length === 1);
+    if (action === 'batch edit') p.type('htpw-batch', 'carol:new-password');
+    if (action === 'format') p.type('htpw-format', 'apr1', 'change');
+    if (action === 'clear') p.clear();
+    await p.release();
+    check(action + ': canceled batch stops before hashing another line', p.pending.length === 0);
+    check(action + ': canceled batch has no published result or progress', p.get('htpw-batch-result').value === '' && p.get('htpw-batch-status').textContent === '');
+    check(action + ': batch controls recover', !p.get('htpw-batch-run').disabled);
+  }
+  for (const action of ['password edit', 'clear']) {
+    const p = page(); p.type('htpw-user', 'alice'); p.type('htpw-pass', 'old-password');
+    p.type('htpw-file', 'alice:' + BC.hashSync('old-password', 4)); p.get('htpw-check').click();
+    check(action + ': verify starts the actual bcrypt comparison', p.comparisons.length === 1);
+    if (action === 'password edit') p.type('htpw-pass', 'new-password'); else p.clear();
+    p.comparisons.shift()();
+    for (let i = 0; i < 16; i++) await Promise.resolve();
+    check(action + ': old verification cannot publish a result', p.get('htpw-file-status').textContent === '');
+    check(action + ': verification controls recover', !p.get('htpw-check').disabled);
+  }
+}
+
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);
 process.exit(failures ? 1 : 0);
