@@ -46,10 +46,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', pickColor: 'Pick Color' },
-        zh: { copy: '复制', copied: '已复制！', clear: '清除', pickColor: '选取颜色' },
-        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', pickColor: 'カラーを選択' },
-        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', pickColor: '색상 선택' },
+        en: { copy: 'Copy', copied: 'Copied!', copyFail: 'Copy failed. Please copy the value manually.', clear: 'Clear', pickColor: 'Pick Color' },
+        zh: { copy: '复制', copied: '已复制！', copyFail: '复制失败，请手动复制数值。', clear: '清除', pickColor: '选取颜色' },
+        ja: { copy: 'コピー', copied: 'コピー済み！', copyFail: 'コピーに失敗しました。値を手動でコピーしてください。', clear: 'クリア', pickColor: 'カラーを選択' },
+        ko: { copy: '복사', copied: '복사됨!', copyFail: '복사하지 못했습니다. 값을 직접 복사하세요.', clear: '지우기', pickColor: '색상 선택' },
       };
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
       var t = STRINGS[pageLang] || STRINGS.en;
@@ -64,6 +64,12 @@
       var swatchLabel = document.getElementById('cc-swatch-label');
       var statusEl = document.getElementById('cc-status');
       var picker = document.getElementById('cc-picker');
+      var copyRevision = 0, copyFailureId = 0;
+
+      function invalidateCopies() {
+        copyRevision++;
+        document.querySelectorAll('.cc-wrap .btn-copy').forEach(function (btn) { btn.textContent = t.copy; });
+      }
 
       function setStatus(msg, isErr) {
         statusEl.textContent = msg;
@@ -181,6 +187,7 @@
       }
 
       hexEl.addEventListener('input', function () {
+        invalidateCopies();
         var raw = this.value.trim().replace(/^#/, '');
         if (!raw) { clearStatus(); return; }
         if (raw.length === 3 || raw.length === 6) {
@@ -193,6 +200,7 @@
       });
 
       rgbEl.addEventListener('input', function () {
+        invalidateCopies();
         var val = this.value.trim();
         if (!val) { clearStatus(); return; }
         var rgb = parseRgb(val);
@@ -202,6 +210,7 @@
       });
 
       hslEl.addEventListener('input', function () {
+        invalidateCopies();
         var val = this.value.trim();
         if (!val) { clearStatus(); return; }
         var hsl = parseHsl(val);
@@ -215,11 +224,13 @@
       });
 
       picker.addEventListener('input', function () {
+        invalidateCopies();
         updateAll(this.value, 'picker');
         hexEl.value = this.value;
       });
 
       document.getElementById('cc-clear').addEventListener('click', function () {
+        invalidateCopies();
         hexEl.value = '';
         rgbEl.value = '';
         hslEl.value = '';
@@ -229,16 +240,28 @@
         clearStatus();
       });
 
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && document.querySelector('.cc-wrap').contains(document.activeElement)) {
+          document.getElementById('cc-clear').click();
+        }
+      });
+
       document.querySelectorAll('.btn-copy[data-copy]').forEach(function (btn) {
+        var requestId = 0, feedbackTimer = null;
         btn.addEventListener('click', function () {
           var id = btn.getAttribute('data-copy');
           var val = document.getElementById(id).value;
           if (!val) return;
+          var revision = copyRevision, request = ++requestId, failure = copyFailureId;
+          clearTimeout(feedbackTimer);
+          btn.textContent = t.copy;
+          function isCurrent() { return revision === copyRevision && request === requestId; }
           navigator.clipboard.writeText(val).then(function () {
-            var prev = btn.textContent;
+            if (!isCurrent()) return;
+            if (failure === copyFailureId && statusEl.textContent === t.copyFail) clearStatus();
             btn.textContent = t.copied;
-            setTimeout(function () { btn.textContent = prev; }, 1500);
-          });
+            feedbackTimer = setTimeout(function () { if (isCurrent()) btn.textContent = t.copy; }, 1500);
+          }, function () { if (isCurrent()) { copyFailureId++; setStatus(t.copyFail, true); } });
           window.trackTool && window.trackTool('color_converter', 'copy_' + id.replace('cc-', ''));
         });
       });
