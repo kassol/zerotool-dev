@@ -160,13 +160,14 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 **Explanations in the tool**
 
 - Short hints sit next to the control they describe, as toggletips (`src/components/Toggletip.astro`): a 24px "?" button (28px on phones), or a text button (`text` prop) for a question the user may have before starting, such as "How to export a HAR". The panel is a native `popover="auto"`: click or tap opens it, a second click, a tap outside or Esc closes it, focus stays on the button. Panel colors are inverted (`--color-text` background, `--color-bg` text).
-- The text is in the HTML, in all four languages (component `STRINGS`), and states facts the old MDX "How to use" and "Limits" sections held: accepted input, size limits, what an option changes, what the tool does not check. Write plain sentences; no lists or paragraphs inside (a toggletip may sit inside a `<p>`), no links.
+- The text is in the HTML, in all four languages (component `STRINGS`), and states what the old MDX "How to use" section held (accepted input, what an option changes) plus the limits that belong to one control (the size limit next to the file button, what a check does not cover next to its option). Limits that are not tied to one control stay in the MDX "Limits" section. Write plain sentences; no lists or paragraphs inside (a toggletip may sit inside a `<p>`), no links.
 - Errors still name the cause and the fix in the status line.
 
 **Reference content**
 
 - The MDX body and the FAQ sit in one closed `<details class="tool-reference" id="reference">` titled with `tool.reference` and `tool.referenceHint`. Heading levels stay; the FAQ renders as H3 questions with answers; the FAQPage JSON-LD is unchanged. A link to `#heading` inside it, or find-in-page, opens it.
-- Keep in the MDX: worked examples (with their test annotations), comparisons with other tools, background. Remove "How to use" and "Limits"; put the steps in the `steps` frontmatter (plain text, current button names, read by `toolSteps()` for llms-full.txt) and the limits in toggletips.
+- Keep in the MDX: worked examples (with their test annotations), comparisons with other tools, background, and the "Limits" section. Remove "How to use"; put the steps in the `steps` frontmatter (plain text, current button names, read by `toolSteps()` for llms-full.txt) and in toggletips. Write a limit that belongs to one control in that control's toggletip as well.
+- The three samples (json-formatter, color-palette-generator, har-file-analyzer) were finished before this decision (2026-10-04). All their limits are in toggletips and their MDX has no "Limits" section; do not move them back.
 
 ### Article Pages
 
