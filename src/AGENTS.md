@@ -39,6 +39,7 @@ src/
 - `components/Toggletip.astro`（v2 工具页的说明气泡）→ `i18n/utils.t()` 取 `tool.tipAbout` 拼按钮的 aria-label（调用方传 `lang` 与 `about`）；组件没有 `<style>`，样式是 `styles/tool-common.css` 的 `.zt-tip*`
 - `styles/tool-common.css` 另含 convert 类工具的双栏布局类 `.zt-io` / `.zt-io-pane` / `.zt-io-fill`（用法见 DESIGN.md「Tool Pages v2」）
 - analyze 类工具的空状态拖放区用共享 `.zt-empty-drop` 填满可用高度；边框、配色、间距与紧凑状态留在各工具组件（HAR、QR Decoder）。
+- generate 类工具的控件栏用共享 `.zt-rail`（flex 列、0.9rem 间距、最小宽高为 0）；面板、滚动与手机顺序留在各工具组件（Color Palette、QR Generator）。
 - `BaseLayout.astro` → `i18n/utils.t()`（导航 / footer）
 - `components/SEO.astro` → `getCollection('blog')` 列出可收录（非 draft、非 noindex，判定在 `data/blog-index.mjs`）的语言变体生成 hreflang；noindex 页面不输出 hreflang
 - 工具页 → `data/tools.ts` 取元数据，`data/icons.ts` 取 SVG
