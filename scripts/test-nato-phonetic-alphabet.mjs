@@ -2,7 +2,7 @@
 //
 // Read:  src/components/tools/NatoPhoneticAlphabetTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers, so this test cannot drift
-//        from the shipped source)
+//        from the shipped source); src/layouts/ToolLayout.astro shared keyboard handler
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -15,6 +15,8 @@
 // Run: node scripts/test-nato-phonetic-alphabet.mjs
 
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -119,6 +121,269 @@ if (stringsMatch) {
   eq('space label per language', ['en', 'zh', 'ja', 'ko'].map((l) => STRINGS[l].space), ['(space)', '（空格）', '（スペース）', '(공백)']);
   check('render passes the localized space label', source.includes('convert(text, t.unknown, t.space)'));
 }
+
+// ---------- real page controls ----------
+// This DOM supplies source-created elements and native value coercion. The complete
+// production IIFE and shared key handler run without replacing any application code.
+const clientScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)?.[1];
+const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+if (!clientScript || !shortcut.includes("document.addEventListener('keydown'")) throw Error('Actual page/shortcut missing');
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const unhandled = [];
+const onUnhandled = error => unhandled.push(String(error));
+process.on('unhandledRejection', onUnhandled);
+function pageVM(lang, shellFirst) {
+  const copies = [], timers = new Map(), clears = [], tracks = [];
+  let now = 0, timerID = 0, document, copyThrows = false;
+  const descendants = e => e.children.flatMap(c => [c, ...descendants(c)]);
+  function simple(e, selector) {
+    if (e.tagName === '#TEXT') return false;
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+    const classes = [...plain.matchAll(/\.([\w-]+)/g)].map(m => m[1]);
+    return (!tag || e.tagName === tag.toUpperCase()) && (!id || e.id === id)
+      && classes.every(c => e.className.split(/\s+/).includes(c))
+      && attrs.every(a => a[2] === undefined ? e.getAttribute(a[1]) !== null : e.getAttribute(a[1]) === a[2]);
+  }
+  function matches(e, selector) {
+    return selector.split(',').some(part => {
+      const parts = part.trim().split(/\s+(?![^\[]*\])/);
+      if (!simple(e, parts.pop())) return false;
+      let parent = e.parentNode;
+      while (parts.length) {
+        while (parent && !simple(parent, parts.at(-1))) parent = parent.parentNode;
+        if (!parent) return false;
+        parts.pop(); parent = parent.parentNode;
+      }
+      return true;
+    });
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', text: '', _value: '', hidden: false, disabled: false }); }
+    get cells() { return this.children.filter(c => c.tagName === 'TD' || c.tagName === 'TH'); }
+    get classList() { const e = this; return { add(c) { if (!e.className.split(/\s+/).includes(c)) e.className = (e.className + ' ' + c).trim(); }, remove(c) { e.className = e.className.split(/\s+/).filter(x => x !== c).join(' '); } }; }
+    closest(selector) { for (let e = this; e; e = e.parentNode) if (matches(e, selector)) return e; return null; }
+    set innerHTML(value) { if (value !== '') throw Error('Unexpected HTML insertion'); this.textContent = ''; }
+    get value() { return this._value; }
+    set value(v) { this._value = String(v); }
+    setAttribute(key, value) {
+      this.attributes[key] = String(value);
+      if (['id', 'class', 'type', 'value'].includes(key)) this[key === 'class' ? 'className' : key] = String(value);
+      if (key === 'hidden') this.hidden = true;
+    }
+    getAttribute(key) { return key === 'hidden' ? (this.hidden ? '' : null) : this.attributes[key] ?? null; }
+    get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
+    set textContent(value) { this.text = String(value); this.children = []; }
+    appendChild(e) { this.children.push(e); e.parentNode = this; return e; }
+    contains(e) { return this === e || descendants(this).includes(e); }
+    querySelectorAll(selector) { return descendants(this).filter(e => matches(e, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatch(type, extra = {}) {
+      const event = { type, target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...extra };
+      for (let e = this; e; e = e.parentNode) { event.currentTarget = e; for (const fn of e.listeners[type] || []) fn.call(e, event); if (event.stopped) break; }
+      return event;
+    }
+    click() { if (!this.disabled) return this.dispatch('click'); }
+    focus() { document.activeElement = this; }
+  }
+  document = new Element('#document'); document.documentElement = { lang };
+  document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
+  const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
+  const stack = [widget];
+  for (const token of markup.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)) {
+    const text = token[0];
+    if (text.startsWith('</')) { if (stack.length < 2) throw Error('Unbalanced source markup'); stack.pop(); }
+    else if (text.startsWith('<')) {
+      const tag = /^<([\w-]+)/.exec(text)[1], e = new Element(tag);
+      for (const attr of text.matchAll(/([\w-]+)="([^"]*)"/g)) e.setAttribute(attr[1], attr[2]);
+      for (const attr of ['hidden', 'disabled', 'readonly']) if (new RegExp('\\s' + attr + '(?=\\s|/?>)').test(text)) e.setAttribute(attr, '');
+      stack.at(-1).appendChild(e);
+      if (!/\/>$/.test(text) && !['input', 'br', 'hr', 'img'].includes(tag)) stack.push(e);
+    } else { const e = new Element('#text'); e.text = text; stack.at(-1).appendChild(e); }
+  }
+  if (stack.length !== 1) throw Error('Incomplete source markup');
+  document.createElement = tag => new Element(tag);
+  document.getElementById = id => descendants(document).find(e => e.id === id) ?? null;
+  const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing actual source ID ' + id); return e; };
+  const context = {
+    document, console, _slug: 'nato-phonetic-alphabet',
+    navigator: { clipboard: { writeText(value) {
+      if (copyThrows) throw Error('Controlled synchronous clipboard failure');
+      let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+      copies.push({ value: String(value), resolve, reject }); return promise;
+    } } },
+    setTimeout(fn, ms = 0) { const id = ++timerID; timers.set(id, { fn, due: now + ms }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    ztPersist: { clear(slug) { clears.push(slug); } }, trackTool(...args) { tracks.push(args); },
+  };
+  context.window = context; vm.createContext(context);
+  const shared = () => vm.runInContext(shortcut, context, { filename: 'ToolLayout.astro:keyboard' });
+  if (shellFirst) shared();
+  vm.runInContext(clientScript, context, { filename: 'NatoPhoneticAlphabetTool.astro:script' });
+  if (!shellFirst) shared();
+  function advance(ms) {
+    const target = now + ms;
+    for (;;) {
+      const next = [...timers].filter(([, t]) => t.due <= target).sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0];
+      if (!next) break;
+      now = next[1].due; timers.delete(next[0]); next[1].fn();
+    }
+    now = target;
+  }
+  return {
+    get, document, copies, clears, tracks, timers, advance,
+    input(id, value) { get(id).value = value; get(id).dispatch('input'); },
+    key(key = 'l', modifier = 'ctrlKey', target = 'nato-input') { (target ? get(target) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
+    copy() { get('nato-copy').click(); return copies.at(-1); },
+    setCopyThrows(value) { copyThrows = value; },
+    mode(mode) { document.querySelector('[data-mode="' + mode + '"]').click(); },
+    rows() { return get('nato-table-body').querySelectorAll('tr').map(tr => tr.cells.map(td => td.textContent)); },
+    snapshot() { return { input: get('nato-input').value, output: get('nato-output').value, rows: this.rows(), status: get('nato-status').textContent, copy: get('nato-copy').textContent }; },
+  };
+}
+
+// DOM visibility flags and the authored hidden selector are checked here. Actual
+// computed style and pointer hit testing are verified separately in the browser.
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, true]) {
+  const tag = `${lang}/${shellFirst ? 'shell-first' : 'tool-first'}`;
+  const p = pageVM(lang, shellFirst);
+  eq(tag + ' initial empty result', [p.get('nato-output').value, p.rows(), p.get('nato-status').textContent], ['', [], '']);
+  p.input('nato-input', 'AB'); p.advance(199);
+  eq(tag + ' preserves 200ms debounce', p.get('nato-output').value, ''); p.advance(1);
+  eq(tag + ' actual input produces words', p.get('nato-output').value, 'Alfa Bravo');
+  eq(tag + ' actual input produces table', p.rows(), [['A', 'Alfa'], ['B', 'Bravo']]);
+  p.mode('table');
+  eq(tag + ' Table hides only Word body', [p.get('nato-output').hidden, p.get('nato-output').closest('.nato-panel').hidden, p.get('nato-table-wrap').hidden], [true, false, false]);
+  check(tag + ' Table Copy has no hidden ancestor', !p.get('nato-copy').closest('[hidden]'));
+  eq(tag + ' Table serializes complete result', p.copy().value, 'A = Alfa\nB = Bravo'); p.copies.at(-1).resolve(); await settle();
+  p.mode('word');
+  eq(tag + ' Word hides Table and restores Word body', [p.get('nato-output').hidden, p.get('nato-table-wrap').hidden], [false, true]);
+  eq(tag + ' Word serializes complete result', p.copy().value, 'Alfa Bravo'); p.copies.at(-1).resolve(); await settle();
+  p.mode('table'); p.mode('word');
+  eq(tag + ' mode round trip preserves result data', [p.get('nato-output').value, p.rows()], ['Alfa Bravo', [['A', 'Alfa'], ['B', 'Bravo']]]);
+}
+check('authored hidden selector defeats textarea display rules', /\.nato-panel textarea\[hidden\]\s*\{\s*display:\s*none;\s*\}/.test(source));
+const require = createRequire(import.meta.url);
+const astroRequire = createRequire(require.resolve('astro/package.json'));
+const { transform } = await import(astroRequire.resolve('@astrojs/compiler'));
+const compiled = await transform(source, { filename: 'NatoPhoneticAlphabetTool.astro' });
+check('Astro reports no component compile errors', !compiled.diagnostics.some(d => d.severity === 1));
+check('compiled scoped CSS preserves the textarea hidden rule', compiled.css.some(css => /\.nato-panel[^{}]*textarea[^{}]*\[hidden\][^{}]*\{\s*display:\s*none/.test(css)));
+
+const STATUS = { en: 'Converted 2 characters.', zh: '已转换 2 个字符。', ja: '2 文字を変換しました。', ko: '2자를 변환했습니다.' };
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, true]) {
+  const tag = `${lang}/${shellFirst ? 'shell-first' : 'tool-first'}`;
+  for (const mode of ['word', 'table']) for (const pending of [false, true]) {
+    const p = pageVM(lang, shellFirst); p.input('nato-input', 'AB'); p.advance(200); p.mode(mode);
+    eq(tag + ' ' + mode + ' localized conversion summary', p.get('nato-status').textContent, STATUS[lang]);
+    if (pending) p.input('nato-input', 'CD');
+    const event = p.key(pending ? 'L' : 'l', pending ? 'metaKey' : 'ctrlKey', mode === 'word' ? 'nato-input' : 'nato-copy');
+    eq(tag + ' ' + mode + ' shortcut clears all current result data', [p.get('nato-input').value, p.get('nato-output').value, p.rows(), p.get('nato-status').textContent], ['', '', [], '']);
+    check(tag + ' shortcut prevents native navigation', event.defaultPrevented);
+    eq(tag + ' shortcut calls shared persistence clear once', p.clears, ['nato-phonetic-alphabet']);
+    p.advance(500); p.mode(mode === 'word' ? 'table' : 'word');
+    eq(tag + ' late render and mode switch cannot restore cleared result', [p.get('nato-output').value, p.rows(), p.get('nato-status').textContent], ['', [], '']);
+    p.input('nato-input', 'Ａ9😀'); p.advance(200);
+    eq(tag + ' valid and unknown inputs recover after shortcut', [p.get('nato-output').value, p.rows()], ['Alfa Niner [?]', [['Ａ','Alfa'],['9','Niner'],['😀','[?]']]]);
+  }
+  const p = pageVM(lang, shellFirst); p.input('nato-input', 'AB'); p.advance(200); p.mode('table');
+  const before = p.snapshot(); const outside = p.key('l', 'ctrlKey', null);
+  eq(tag + ' outside CtrlL keeps current data', p.snapshot(), before); check(tag + ' outside CtrlL not prevented', !outside.defaultPrevented);
+  p.get('nato-input').focus(); p.get('nato-input').dispatch('keydown', { key: 'l' });
+  eq(tag + ' plain L keeps current data', p.snapshot(), before);
+  p.get('nato-clear').click();
+  eq(tag + ' Clear empties both result representations and summary', [p.get('nato-input').value, p.get('nato-output').value, p.rows(), p.get('nato-status').textContent], ['', '', [], '']);
+}
+
+
+const COPY_TEXT = {
+  en: ['Copy', 'Copied!', 'Could not copy. Try again or copy the output manually.'],
+  zh: ['复制', '已复制！', '复制失败。请重试，或选中输出后手动复制。'],
+  ja: ['コピー', 'コピー済み！', 'コピーできませんでした。再試行するか、出力を選択して手動でコピーしてください。'],
+  ko: ['복사', '복사됨!', '복사하지 못했습니다. 다시 시도하거나 출력을 선택하여 직접 복사하세요.'],
+};
+const actions = {
+  clear: p => p.get('nato-clear').click(),
+  shortcut: p => p.key(),
+  pendingInput: p => p.input('nato-input', 'CD'),
+  newResult: p => { p.input('nato-input', 'CD'); p.advance(200); },
+  mode: p => p.mode('table'),
+  emptyInput: p => p.input('nato-input', ''),
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, true]) {
+  const tag = `${lang}/${shellFirst ? 'shell-first' : 'tool-first'}`;
+  const [copyLabel, copiedLabel, copyFailure] = COPY_TEXT[lang];
+  const populated = () => { const p = pageVM(lang, shellFirst); p.input('nato-input', 'AB'); p.advance(200); return p; };
+  for (const mode of ['word', 'table']) {
+    const p = populated(); p.mode(mode); const output = mode === 'word' ? 'Alfa Bravo' : 'A = Alfa\nB = Bravo';
+    const job = p.copy(); eq(tag + ' ' + mode + ' clipboard gets exact result', job.value, output);
+    unhandled.length = 0; job.reject(Error('controlled rejection')); await settle();
+    eq(tag + ' ' + mode + ' current rejection visible and localized', p.get('nato-status').textContent, copyFailure);
+    eq(tag + ' current rejection has no unhandled Promise', unhandled, []);
+    eq(tag + ' failure preserves result', [p.get('nato-output').value, p.rows()], ['Alfa Bravo', [['A','Alfa'],['B','Bravo']]]);
+    const retry = p.copy(); eq(tag + ' direct retry preserves exact copied text', retry.value, output);
+    retry.resolve(); await settle();
+    eq(tag + ' direct retry restores summary and succeeds', [p.get('nato-status').textContent, p.get('nato-copy').textContent], [STATUS[lang], copiedLabel]);
+    p.advance(1499); eq(tag + ' feedback lasts until own deadline', p.get('nato-copy').textContent, copiedLabel);
+    p.advance(1); eq(tag + ' feedback resets at own deadline', p.get('nato-copy').textContent, copyLabel);
+  }
+  {
+    const p = populated(); p.setCopyThrows(true); let thrown = '';
+    try { p.copy(); } catch (e) { thrown = String(e); }
+    eq(tag + ' synchronous writeText failure handled', thrown, '');
+    eq(tag + ' synchronous failure visible', p.get('nato-status').textContent, copyFailure);
+    p.setCopyThrows(false); p.copy().resolve(); await settle();
+    eq(tag + ' synchronous failure direct retry succeeds', [p.get('nato-status').textContent, p.get('nato-copy').textContent], [STATUS[lang], copiedLabel]);
+  }
+  for (const [name, action] of Object.entries(actions)) for (const completion of ['resolve', 'reject']) {
+    const p = populated(), job = p.copy(); action(p); const before = p.snapshot();
+    unhandled.length = 0; job[completion](Error('controlled old result')); await settle();
+    eq(tag + ' ' + name + ' late ' + completion + ' preserves current UI', p.snapshot(), before);
+    eq(tag + ' ' + name + ' late rejection handled', unhandled, []);
+  }
+  for (const oldFirst of [true, false]) for (const completion of ['resolve', 'reject']) {
+    const p = populated(), old = p.copy(), latest = p.copy(); unhandled.length = 0;
+    if (oldFirst) {
+      old[completion](Error('old')); await settle();
+      eq(tag + ' old ' + completion + ' cannot label pending newer copy', p.get('nato-copy').textContent, copyLabel);
+    }
+    latest.resolve(); await settle(); const current = p.snapshot();
+    if (!oldFirst) { old[completion](Error('old')); await settle(); }
+    eq(tag + ' ' + completion + ' completion order preserves newer copy', p.snapshot(), current);
+    eq(tag + ' latest copy succeeds in either completion order', p.get('nato-copy').textContent, copiedLabel);
+    eq(tag + ' reordered rejection handled', unhandled, []);
+  }
+  {
+    const p = populated(); p.copy().resolve(); await settle(); p.advance(1000); p.copy().resolve(); await settle();
+    p.advance(500); eq(tag + ' first timer cannot clear newer feedback', p.get('nato-copy').textContent, copiedLabel);
+    p.advance(999); eq(tag + ' newer feedback remains before deadline', p.get('nato-copy').textContent, copiedLabel);
+    p.advance(1); eq(tag + ' newer timer still settles', p.get('nato-copy').textContent, copyLabel);
+  }
+  for (const [name, action] of Object.entries(actions)) {
+    const p = populated(); p.copy().resolve(); await settle(); action(p);
+    eq(tag + ' ' + name + ' resets old Copied feedback immediately', p.get('nato-copy').textContent, copyLabel);
+    if (name === 'pendingInput' || name === 'emptyInput') p.advance(200);
+    const before = p.snapshot(); p.advance(2000);
+    eq(tag + ' ' + name + ' old timer preserves current UI', p.snapshot(), before);
+  }
+  {
+    const p = populated(); p.copy().resolve(); await settle();
+    const queued = [...p.timers.values()].filter(t => t.due === 1700); p.timers.clear(); p.advance(1500);
+    p.input('nato-input', 'CD'); p.advance(200); p.copy().resolve(); await settle(); const before = p.snapshot();
+    check(tag + ' captures actual completed-copy timer', queued.length > 0);
+    for (const timer of queued) timer.fn();
+    eq(tag + ' overdue callback cannot erase newer feedback', p.snapshot(), before);
+    p.advance(1500); eq(tag + ' new timer settles after held old timer', p.get('nato-copy').textContent, copyLabel);
+  }
+  const p = populated(); p.get('nato-clear').click(); p.copy(); p.mode('table'); p.copy();
+  eq(tag + ' empty Word and Table never call clipboard', p.copies.length, 0);
+}
+
+process.removeListener('unhandledRejection', onUnhandled);
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

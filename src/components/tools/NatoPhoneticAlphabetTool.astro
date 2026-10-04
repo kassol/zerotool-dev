@@ -89,10 +89,10 @@
       /* ── engine:end ── */
 
       var STRINGS = {
-        en: { labelInput:'Text', labelOutput:'NATO Codes', clear:'Clear', copy:'Copy', copied:'Copied!', modeLabel:'Output Mode', modeWord:'Word', modeTable:'Table', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'Char', thCode:'NATO Code', converted:'Converted {n} character{s}.', unknown:'[?]', space:'(space)' },
-        zh: { labelInput:'文本', labelOutput:'NATO 音标', clear:'清除', copy:'复制', copied:'已复制！', modeLabel:'输出模式', modeWord:'单词', modeTable:'表格', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'字符', thCode:'NATO 代号', converted:'已转换 {n} 个字符。', unknown:'[?]', space:'（空格）' },
-        ja: { labelInput:'テキスト', labelOutput:'NATO コード', clear:'クリア', copy:'コピー', copied:'コピー済み！', modeLabel:'出力モード', modeWord:'単語', modeTable:'テーブル', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'文字', thCode:'NATOコード', converted:'{n} 文字を変換しました。', unknown:'[?]', space:'（スペース）' },
-        ko: { labelInput:'텍스트', labelOutput:'NATO 코드', clear:'지우기', copy:'복사', copied:'복사됨!', modeLabel:'출력 모드', modeWord:'단어', modeTable:'표', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'문자', thCode:'NATO 코드', converted:'{n}자를 변환했습니다.', unknown:'[?]', space:'(공백)' }
+        en: { labelInput:'Text', labelOutput:'NATO Codes', clear:'Clear', copy:'Copy', copied:'Copied!', copyFail:'Could not copy. Try again or copy the output manually.', modeLabel:'Output Mode', modeWord:'Word', modeTable:'Table', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'Char', thCode:'NATO Code', converted:'Converted {n} character{s}.', unknown:'[?]', space:'(space)' },
+        zh: { labelInput:'文本', labelOutput:'NATO 音标', clear:'清除', copy:'复制', copied:'已复制！', copyFail:'复制失败。请重试，或选中输出后手动复制。', modeLabel:'输出模式', modeWord:'单词', modeTable:'表格', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'字符', thCode:'NATO 代号', converted:'已转换 {n} 个字符。', unknown:'[?]', space:'（空格）' },
+        ja: { labelInput:'テキスト', labelOutput:'NATO コード', clear:'クリア', copy:'コピー', copied:'コピー済み！', copyFail:'コピーできませんでした。再試行するか、出力を選択して手動でコピーしてください。', modeLabel:'出力モード', modeWord:'単語', modeTable:'テーブル', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'文字', thCode:'NATOコード', converted:'{n} 文字を変換しました。', unknown:'[?]', space:'（スペース）' },
+        ko: { labelInput:'텍스트', labelOutput:'NATO 코드', clear:'지우기', copy:'복사', copied:'복사됨!', copyFail:'복사하지 못했습니다. 다시 시도하거나 출력을 선택하여 직접 복사하세요.', modeLabel:'출력 모드', modeWord:'단어', modeTable:'표', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'문자', thCode:'NATO 코드', converted:'{n}자를 변환했습니다.', unknown:'[?]', space:'(공백)' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -112,17 +112,30 @@
       var tableBody = document.getElementById('nato-table-body');
       var copyBtn   = document.getElementById('nato-copy');
       var currentMode = 'word';
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyError = false;
+      var renderedStatus = '';
 
       function charMsg(n) {
         return t.converted.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
       }
 
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError) statusEl.textContent = renderedStatus;
+        copyError = false;
+      }
+
       function render() {
+        invalidateCopy();
         var text = inputEl.value;
         if (!text) {
           outputEl.value = '';
           tableBody.innerHTML = '';
-          statusEl.textContent = '';
+          statusEl.textContent = renderedStatus = '';
           return;
         }
         var result = convert(text, t.unknown, t.space);
@@ -141,13 +154,14 @@
           tableBody.appendChild(tr);
         });
 
-        statusEl.textContent = charMsg(result.chars);
+        statusEl.textContent = renderedStatus = charMsg(result.chars);
         window.trackTool && window.trackTool('nato_phonetic_alphabet', 'convert');
       }
 
       /* mode toggle */
       document.querySelectorAll('.nato-mode-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
+          invalidateCopy();
           document.querySelectorAll('.nato-mode-btn').forEach(function(b) {
             b.classList.remove('active');
             b.setAttribute('aria-pressed', 'false');
@@ -156,10 +170,10 @@
           btn.setAttribute('aria-pressed', 'true');
           currentMode = btn.getAttribute('data-mode');
           if (currentMode === 'table') {
-            outputEl.closest('.nato-panel').hidden = true;
+            outputEl.hidden = true;
             tableWrap.hidden = false;
           } else {
-            outputEl.closest('.nato-panel').hidden = false;
+            outputEl.hidden = false;
             tableWrap.hidden = true;
           }
         });
@@ -168,13 +182,22 @@
       /* realtime */
       var _timer = null;
       inputEl.addEventListener('input', function() {
+        invalidateCopy();
         clearTimeout(_timer);
         _timer = setTimeout(render, 200);
       });
 
-      document.getElementById('nato-clear').addEventListener('click', function() {
+      function clearAll() {
+        clearTimeout(_timer);
         inputEl.value = '';
         render();
+      }
+
+      document.getElementById('nato-clear').addEventListener('click', clearAll);
+      document.addEventListener('keydown', function(e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var root = document.querySelector('.nato-wrap');
+        if (root && root.contains(document.activeElement)) clearAll();
       });
 
       copyBtn.addEventListener('click', function() {
@@ -184,10 +207,23 @@
             }).join('\n')
           : outputEl.value;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function() {
+        invalidateCopy();
+        var revision = copyRevision;
+        function done() {
+          if (revision !== copyRevision) return;
           copyBtn.textContent = t.copied;
-          setTimeout(function() { copyBtn.textContent = t.copy; }, 1500);
-        });
+          copyTimer = setTimeout(function() {
+            if (revision === copyRevision) copyBtn.textContent = t.copy;
+          }, 1500);
+        }
+        function failed() {
+          if (revision !== copyRevision) return;
+          statusEl.textContent = t.copyFail;
+          copyError = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(done, failed);
+        } catch (e) { failed(); }
       });
     })();
   </script>
@@ -207,6 +243,7 @@
   }
 
   .nato-panel { display: flex; flex-direction: column; gap: 0.4rem; }
+  .nato-panel textarea[hidden] { display: none; }
 
   .nato-panel label {
     font-size: 0.85rem;
