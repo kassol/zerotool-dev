@@ -22,6 +22,9 @@ const toolsCollection = defineCollection({
   schema: z.object({
     seoTitle: z.string(),
     seoDescription: z.string(),
+    // Usage steps, plain text, for llms-full.txt. Used by tool pages whose usage section
+    // moved into the tool (src/data/tool-layouts.ts); see src/content/AGENTS.md.
+    steps: z.array(z.string()).optional(),
     faqItems: z.array(z.object({
       question: z.string(),
       answer: z.string(),

@@ -93,13 +93,20 @@ src/content/tools/{slug}/
 ---
 seoTitle: "..."          # 必填，工具页 <title>
 seoDescription: "..."    # 必填，工具页 <meta description>
+steps:                   # 可选，用法步骤（纯文本），v2 版式工具页必填
+  - "..."
 faqItems:                # 可选，结构化 FAQ
   - question: "..."
     answer: "..."
 ---
 ```
 
-正文部分作为工具页底部的长尾内容（教程、用例、原理说明），SEO 关键。
+正文部分作为工具页底部的长尾内容（教程、用例、原理说明），SEO 关键。v2 版式的工具页（`src/data/tool-layouts.ts` 中的 slug）正文收在默认关闭的「示例、说明与常见问题」区，不再写「How to Use / 使用方法」与「Limits / 限制」两节：用法放进工具内的说明气泡与 `steps`，限制写进对应控件旁的说明气泡。
+
+`steps` 字段：
+- 用途：给 `/llms-full.txt` 提供「How to use」步骤（`src/data/llms.mjs` 的 `toolSteps()`：有 `steps` 用它，没有时仍从正文第一个以「How to」开头的 H2 下的有序列表抓取）。页面本身不渲染 `steps`。
+- 写法：每步一个字符串，纯文本（不写 Markdown，`plainText()` 只做兜底清理），按当前界面的按钮与选项名称措辞，与工具内说明气泡一致；每步 ≤ 280 字符、合计 ≤ 1200 字符、最多 8 步（`MAX_STEP_CHARS` / `MAX_HOWTO_CHARS` / `MAX_STEPS`，超出会被截断）。
+- 范围：v2 版式工具页的 4 个语言都写（llms-full.txt 只用 en），其他工具不写；`scripts/test-llms-txt.mjs` 检查只有 `tool-layouts.ts` 中的 slug 有 `steps`、且 4 语言齐全。改界面文字时同步改 `steps`。
 
 ### tools 模块规范
 
@@ -126,6 +133,7 @@ faqItems:                # 可选，结构化 FAQ
 
 ## 变更日志
 
+- 2026-10-03 — tools collection 新增可选 frontmatter `steps`（`config.ts`）。json-formatter、color-palette-generator、har-file-analyzer 改为 v2 版式：4 语言删去「用法」「限制」两节，用法写入 `steps`，限制移入工具内说明气泡，其余正文与 FAQ 收进折叠区。
 - 2026-10-03 — 转换保真与 js-yaml 上限：yaml-toml、toml-json、yaml-json 四语言的限制段与 FAQ 改为「目标格式无法原样保存的值会停止转换并按路径列出」，示例输出与停止消息由 `test-yaml-toml.mjs`、`test-toml-json.mjs`、`test-conversion-fidelity.mjs` 经页面入口复算并核对逐字出现；yaml-toml 新增日期与「TOML 无法保存的值」两节（zh / ja / ko 另加限制段），toml-json 的转换示例去掉 `ratio = inf → null`；yaml-toml、yaml-json、yaml-validator、openapi-validator 四语言写明 js-yaml 4.3.2 的嵌套 100 层、合并键 10,000、单个合并键 100 个映射上限，js-yaml 版本文案改为 4.3.2。上一条中 yaml-toml 大整数「输出为浮点字面量」的示例已改为停止转换。
 
 - 2026-10-03 — 转换保真补充：toml-json 四语言新增「精度超过毫秒的时间停止转 JSON」与「`-0.0` 保留负号」两条，yaml-toml 日期一节补 TOML → YAML 的精度停止与 YAML `-0.0` → TOML `-0.0`，yaml-json 限制段新增「日期必须存在、时间只保留到毫秒」一条（en / zh FAQ 同步），yaml-validator「预览是 JSON」一条补预览上方的提示、示例与预览中的实际值（四语言 FAQ 同步）；消息原文与示例由 `test-conversion-fidelity.mjs` 的 PAGE-TEXT-B 经页面入口复算并核对逐字出现。

@@ -19,7 +19,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  plainText, howToSteps, buildLlmsTxt, buildLlmsFullTxt, toolUrl, llmsUrl,
+  plainText, howToSteps, toolSteps, buildLlmsTxt, buildLlmsFullTxt, toolUrl, llmsUrl,
   MAX_STEPS, MAX_STEP_CHARS, MAX_HOWTO_CHARS, CATEGORY_ORDER, LLMS_LANGS, SITE,
 } from '../src/data/llms.mjs';
 import { parseToolsSource } from './generate-og.mjs';
@@ -150,6 +150,14 @@ check('fixture full: network none for local tools', fxFull.includes('- Network: 
 check('fixture full: network note for network tools', fxFull.includes('- Network: sends-en.'));
 check('fixture full: sensitive storage line', /## Secret[\s\S]*?saves nothing in the browser/.test(fxFull));
 check('fixture full: steps copied', fxFull.includes('How to use:\n\n1. Do it.'));
+// Frontmatter steps win over the body's "How to" list; without them the body is used.
+equal('toolSteps: frontmatter steps first', toolSteps({ steps: ['Paste `JSON`.', '**Copy** it.'], body: '## How to Use\n\n1. Old.\n' }), [plainText('Paste `JSON`.'), 'Copy it.']);
+equal('toolSteps: empty steps fall back to the body', toolSteps({ steps: [], body: '## How to Use\n\n1. Old.\n' }), ['Old.']);
+equal('toolSteps: no steps field uses the body', toolSteps({ body: '## How to Use\n\n1. Old.\n' }), ['Old.']);
+equal('toolSteps: steps keep the MAX_STEPS limit', toolSteps({ steps: Array.from({ length: 12 }, (_, i) => 'Step ' + i + '.') }).length, MAX_STEPS);
+const stepsPages = { ...pages, alpha: { ...pages.alpha, steps: ['From frontmatter.'] } };
+const fxSteps = buildLlmsFullTxt(fixture, stepsPages);
+check('fixture full: frontmatter steps replace the body steps', fxSteps.slice(fxSteps.indexOf('## Alpha\n')).split(/\n(?=## )/)[0].includes('How to use:\n\n1. From frontmatter.'));
 throws('full: missing content entry throws', () => buildLlmsFullTxt(fixture, { zeta: pages.zeta }), /no English content entry/);
 
 // ── Built files ──────────────────────────────────────────────────────────────
@@ -259,6 +267,28 @@ if (missing.length) {
       check(`full: ${slug} entry says Network: None`, block.includes('- Network: None.'), block.slice(0, 200));
     }
   }
+  // Frontmatter `steps`: only the pages listed in src/data/tool-layouts.ts use it (their usage
+  // section moved into the tool). Every language has it; llms-full.txt shows the English steps.
+  const layoutSrc = readFileSync(join(root, 'src', 'data', 'tool-layouts.ts'), 'utf8');
+  const v2 = [...layoutSrc.matchAll(/^\s*'([a-z0-9-]+)': '(?:convert|generate|analyze)',$/gm)].map((m) => m[1]);
+  check('steps: tool-layouts.ts lists pages', v2.length > 0, layoutSrc.slice(0, 200));
+  const toolsDir = join(root, 'src', 'content', 'tools');
+  const withSteps = [];
+  for (const dir of readdirSync(toolsDir)) {
+    for (const lang of LLMS_LANGS) {
+      const src = readFileSync(join(toolsDir, dir, `${lang}.mdx`), 'utf8');
+      const fm = src.split(/^---$/m)[1] ?? '';
+      if (/^steps:/m.test(fm)) withSteps.push(`${dir}/${lang}`);
+    }
+  }
+  equal('steps: exactly the v2 pages, in every language', withSteps.sort(), v2.flatMap((s) => LLMS_LANGS.map((l) => `${s}/${l}`)).sort());
+  for (const slug of v2) {
+    const fm = readFileSync(join(toolsDir, slug, 'en.mdx'), 'utf8').split(/^---$/m)[1];
+    const first = fm.match(/^steps:\n\s+- "((?:[^"\\]|\\.)*)"/m)?.[1]?.replace(/\\"/g, '"');
+    const block = blocks.get(toolUrl(slug)) ?? '';
+    check(`full: ${slug} lists its frontmatter steps`, !!first && block.includes('How to use:\n\n1. ' + plainText(first)), block.slice(-400));
+  }
+
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

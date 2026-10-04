@@ -138,6 +138,36 @@ Required structure:
 
 Every tool UI fills the `.tool-widget` width. Use inner grids to create local structure, with `minmax(0, 1fr)` and `min-width: 0` on flexible children.
 
+### Tool Pages v2
+
+Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page--v2`; the other tools keep the structure above until they are moved in batches. To move a tool: add its slug with a kind, make its component fill the height it gets, put explanations in toggletips, move the MDX "How to use" and "Limits" facts into the tool and the `steps` frontmatter, and run its tests, `test-llms-txt.mjs`, audit and build.
+
+**Kinds** (pick by what the user mainly looks at):
+
+| Kind | Layout | Shell max width | Sample |
+|---|---|---:|---|
+| `convert` | Input and output side by side, both as tall as the first screen allows; options in one row above them; notes under the output. Stacks below 860px with options after the panels. | 2400px | `JsonFormatterTool` |
+| `generate` | A 270–320px control rail (inputs, options, code export) on the left; the generated preview fills the rest (palettes: six cards in two rows of three, monochromatic full width). Rail stacks on top below 860px. | 1840px | `ColorPaletteGeneratorTool` |
+| `analyze` | The result uses the full width. Before input, the drop zone fills the first screen. From 1280px, details open beside the list; lists grow with the window height. | 2400px | `HarFileAnalyzerTool` |
+
+**Shell**
+
+- Width `min(100% - 2 × clamp(0.5rem, 1.6vw, 1.75rem), max)`; the site nav widens to the same edge on these pages (`html:has(.tool-page--v2)` sets `--max-width`).
+- Header: 40px icon well, display-serif H1 `clamp(1.55rem, 1.05rem + 1.25vw, 2.35rem)`, description at 0.93rem, trust items as small muted text at the top right (below the title under 900px). No kicker label.
+- `.tool-first` (header + `.tool-widget--v2`) has `min-height: calc(100svh - var(--header-height))`; the widget is a flex column and the tool's root element gets `flex: 1`, so editors, previews and lists grow into the first screen. Below 760px the first screen does not fill; the tool stacks at its own height.
+- Page order: tool → share buttons / guide link → reference `<details id="reference">` (closed) → mid ad → related tools → bottom ad. Sensitive tools show no ads, as before.
+
+**Explanations in the tool**
+
+- Short hints sit next to the control they describe, as toggletips (`src/components/Toggletip.astro`): a 24px "?" button (28px on phones), or a text button (`text` prop) for a question the user may have before starting, such as "How to export a HAR". The panel is a native `popover="auto"`: click or tap opens it, a second click, a tap outside or Esc closes it, focus stays on the button. Panel colors are inverted (`--color-text` background, `--color-bg` text).
+- The text is in the HTML, in all four languages (component `STRINGS`), and states facts the old MDX "How to use" and "Limits" sections held: accepted input, size limits, what an option changes, what the tool does not check. Write plain sentences; no lists or paragraphs inside (a toggletip may sit inside a `<p>`), no links.
+- Errors still name the cause and the fix in the status line.
+
+**Reference content**
+
+- The MDX body and the FAQ sit in one closed `<details class="tool-reference" id="reference">` titled with `tool.reference` and `tool.referenceHint`. Heading levels stay; the FAQ renders as H3 questions with answers; the FAQPage JSON-LD is unchanged. A link to `#heading` inside it, or find-in-page, opens it.
+- Keep in the MDX: worked examples (with their test annotations), comparisons with other tools, background. Remove "How to use" and "Limits"; put the steps in the `steps` frontmatter (plain text, current button names, read by `toolSteps()` for llms-full.txt) and the limits in toggletips.
+
 ### Article Pages
 
 `src/layouts/ArticleLayout.astro` owns blog reading pages.

@@ -10,6 +10,7 @@ import { getRelatedTools, getToolName, getToolDescription } from '../data/tools'
 import { getToolIcon } from '../data/icons';
 import { toolPersistencePolicy, disabledPersistenceSlugs } from '../data/persistence';
 import { networkNoteKey } from '../data/network';
+import { toolPageKind } from '../data/tool-layouts';
 import { t } from '../i18n/utils';
 import '../styles/tool-common.css';
 
@@ -103,6 +104,9 @@ const wideToolSlugs = new Set([
   'meta-tag-generator',
 ]);
 const toolWidgetClass = wideToolSlugs.has(currentSlug) ? 'tool-widget tool-widget--wide' : 'tool-widget';
+// v2 layout: tools listed in src/data/tool-layouts.ts get the v2 page (compact
+// header, layout by tool type, reference content folded). Other tools are unchanged.
+const pageKind = toolPageKind(currentSlug);
 
 // Per-tool, per-language OG image — same naming rule as toolOgFileName() in scripts/generate-og.mjs
 const ogImage = lang === 'en' ? `/og/${currentSlug}.png` : `/og/${currentSlug}-${lang}.png`;
@@ -302,6 +306,101 @@ const breadcrumbJsonLd = {
     </script>
   </Fragment>
 
+  {pageKind && (
+    <div class={`tool-page tool-page--v2 tool-page--${pageKind}`}>
+      <div class="tool-first">
+        <header class="tool-head">
+          <span class="tool-head-icon" set:html={getToolIcon(currentSlug)} />
+          <div class="tool-head-copy">
+            <h1>{toolName}</h1>
+            <p class="tool-head-desc">{description}</p>
+          </div>
+          <ul class="tool-head-trust">
+            {!networkKey && <li>{t(lang, 'tool.trustClient')}</li>}
+            <li>{networkKey ? t(lang, networkKey) : t(lang, 'tool.trustPrivacy')}</li>
+            <li>{t(lang, 'tool.trustFree')}</li>
+          </ul>
+        </header>
+
+        <section class="tool-widget tool-widget--v2">
+          <slot name="tool" />
+        </section>
+      </div>
+
+      <div class="tool-after">
+        {guideLink && (
+          <a href={guideLink.href} class="tool-guide-link tool-guide-link--inline">
+            <span class="tool-guide-label">{t(lang, 'tool.readGuide')}</span>
+            <strong>{guideLink.title}</strong>
+          </a>
+        )}
+        <ShareButtons toolName={toolName} lang={lang} />
+      </div>
+
+      <details class="tool-reference" id="reference">
+        <summary class="tool-reference-summary">
+          <span class="tool-reference-title">{t(lang, 'tool.reference')}</span>
+          <span class="tool-reference-hint">{t(lang, 'tool.referenceHint')}</span>
+        </summary>
+        <div class="tool-reference-body">
+          <section class="tool-content">
+            <slot />
+          </section>
+          {faqItems.length > 0 && (
+            <section class="tool-faq tool-faq--flat">
+              <h2>FAQ</h2>
+              {faqItems.map(({ question, answer }) => (
+                <div class="tool-faq-item">
+                  <h3>{question}</h3>
+                  <p>{answer}</p>
+                </div>
+              ))}
+            </section>
+          )}
+        </div>
+      </details>
+
+      {!sensitive && <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_MID ?? ''} format="rectangle" />}
+
+      {relatedTools.length > 0 && (
+        <section class="related-tools">
+          <h2>{t(lang, 'tool.relatedTools')}</h2>
+          <div class="related-grid">
+            {relatedTools.map(tool => (
+              <a href={`${toolBase}/${tool.slug}/`} class="related-card" data-category={tool.category}>
+                <span class="related-icon" set:html={getToolIcon(tool.slug)} />
+                <span class="related-copy">
+                  <strong>{getToolName(tool, lang)}</strong>
+                  <span>{getToolDescription(tool, lang)}</span>
+                </span>
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!sensitive && <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_BOTTOM ?? ''} format="rectangle" />}
+
+      <script is:inline>
+        // Open the folded reference when a link points into it (#heading) or the
+        // browser's find-in-page lands inside it.
+        (function () {
+          var ref = document.getElementById('reference');
+          if (!ref) return;
+          function openFor(hash) {
+            if (!hash || hash.length < 2) return;
+            var el = null;
+            try { el = document.getElementById(decodeURIComponent(hash.slice(1))); } catch (e) {}
+            if (el && ref.contains(el)) { ref.open = true; el.scrollIntoView(); }
+          }
+          openFor(location.hash);
+          window.addEventListener('hashchange', function () { openFor(location.hash); });
+        })();
+      </script>
+    </div>
+  )}
+
+  {!pageKind && (
   <div class="tool-page">
     <header class="tool-header">
       <div class="tool-title-block">
@@ -396,6 +495,7 @@ const breadcrumbJsonLd = {
     {/* Bottom ad */}
     {!sensitive && <AdUnit slot={import.meta.env.PUBLIC_ADSENSE_SLOT_BOTTOM ?? ''} format="rectangle" />}
   </div>
+  )}
 
   {/* Tool UX enhancements: keyboard shortcuts + copy feedback + zt-recent tracking */}
   <script is:inline>
@@ -824,5 +924,175 @@ const breadcrumbJsonLd = {
     .tool-widget {
       border-radius: var(--radius-md);
     }
+  }
+
+  /* ── v2 layout (src/data/tool-layouts.ts) ────────────────────────────
+     Only pages whose slug is listed there render .tool-page--v2. */
+  .tool-page--v2 {
+    --v2-shell: 2400px;
+    --v2-gutter: clamp(0.5rem, 1.6vw, 1.75rem);
+    width: min(100% - 2 * var(--v2-gutter), var(--v2-shell));
+    padding: 0 0 4rem;
+  }
+  .tool-page--generate { --v2-shell: 1840px; }
+  /* The site nav lines up with the wider shell on these pages. */
+  :global(html:has(.tool-page--v2)) { --max-width: calc(min(100vw - 2 * clamp(0.5rem, 1.6vw, 1.75rem), 2400px) + 2rem); }
+  :global(html:has(.tool-page--generate)) { --max-width: calc(min(100vw - 2 * clamp(0.5rem, 1.6vw, 1.75rem), 1840px) + 2rem); }
+
+  /* First screen: the compact header plus the tool fill the viewport under the nav. */
+  .tool-first {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100svh - var(--header-height));
+    padding: 0.9rem 0 1rem;
+    gap: 0.8rem;
+  }
+
+  .tool-head {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    gap: 0.35rem 0.85rem;
+    align-items: center;
+  }
+  .tool-head-icon {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-icon);
+    color: var(--color-primary);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+  }
+  .tool-head-icon :global(svg) { width: 21px; height: 21px; }
+  .tool-head-copy { min-width: 0; }
+  .tool-head h1 {
+    margin: 0;
+    color: var(--color-text);
+    font-family: var(--font-display);
+    font-size: clamp(1.55rem, 1.05rem + 1.25vw, 2.35rem);
+    font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.022em;
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+  }
+  .tool-head-desc {
+    max-width: 92ch;
+    margin: 0.3rem 0 0;
+    color: var(--color-text-secondary);
+    font-size: 0.93rem;
+    line-height: 1.5;
+    text-wrap: pretty;
+  }
+  .tool-head-trust {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.15rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-align: right;
+  }
+  .tool-head-trust li { max-width: 34ch; }
+
+  .tool-widget--v2 {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    margin: 0;
+    padding: clamp(0.75rem, 1.1vw, 1.1rem);
+  }
+  .tool-widget--v2 > :global(*) { flex: 1 1 auto; min-height: 0; }
+
+  .tool-after {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem 1.2rem;
+  }
+  .tool-after :global(.share-bar) { margin: 0; padding: 0; border: 0; }
+  .tool-guide-link--inline { display: inline-flex; gap: 0.5rem; margin: 0; min-height: 44px; }
+
+  .tool-reference {
+    margin: 1.6rem 0 0;
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-card);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+  }
+  .tool-reference-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.2rem 1rem;
+    align-items: center;
+    min-height: 56px;
+    padding: 0.85rem 1.1rem;
+    cursor: pointer;
+    list-style: none;
+  }
+  .tool-reference-summary::-webkit-details-marker { display: none; }
+  .tool-reference-summary::after {
+    content: "";
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    width: 10px;
+    height: 10px;
+    border-right: 2px solid var(--color-text-muted);
+    border-bottom: 2px solid var(--color-text-muted);
+    transform: rotate(45deg) translate(-2px, -2px);
+    transition: transform var(--transition-med);
+  }
+  .tool-reference[open] > .tool-reference-summary::after { transform: rotate(225deg) translate(-2px, -2px); }
+  .tool-reference-summary:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: var(--radius-lg); }
+  .tool-reference-title {
+    color: var(--color-text);
+    font-family: var(--font-display);
+    font-size: clamp(1.2rem, 1rem + 0.6vw, 1.5rem);
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+  .tool-reference-hint { grid-column: 1; color: var(--color-text-muted); font-size: 0.86rem; }
+  .tool-reference-body {
+    padding: 0 clamp(1rem, 3vw, 2.5rem) 1.5rem;
+    border-top: 1px solid var(--color-border-soft);
+  }
+  .tool-page--v2 .tool-content { margin: 0.5rem auto 0; }
+  .tool-page--v2 .tool-content :global(h2:first-child) { margin-top: 1.4rem; }
+  .tool-faq--flat { margin: 2.2rem auto 0.5rem; }
+  .tool-faq--flat h2 { margin: 0 0 0.6rem; }
+  .tool-faq-item { padding: 0.75rem 0; border-top: 1px solid var(--color-border-soft); }
+  .tool-faq-item h3 { margin: 0 0 0.35rem; color: var(--color-text); font-family: var(--font-sans); font-size: 1rem; font-weight: 700; line-height: 1.4; }
+  .tool-faq-item p { margin: 0; color: var(--color-text-secondary); line-height: 1.7; }
+
+  .tool-page--v2 .related-tools { margin-top: 2rem; }
+  .tool-page--v2 .related-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); }
+
+  @media (max-width: 900px) {
+    .tool-head { grid-template-columns: 40px minmax(0, 1fr); }
+    .tool-head-trust { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.9rem; text-align: left; }
+    .tool-head-trust li { max-width: none; }
+  }
+  /* Phones: the tool stacks and grows with its content instead of filling the screen. */
+  @media (max-width: 760px) {
+    .tool-first { min-height: 0; padding-top: 0.75rem; }
+  }
+  @media (max-width: 640px) {
+    .tool-head { grid-template-columns: 34px minmax(0, 1fr); gap: 0.3rem 0.65rem; align-items: start; }
+    .tool-head-icon { width: 34px; height: 34px; border-radius: var(--radius-sm); }
+    .tool-head-icon :global(svg) { width: 18px; height: 18px; }
+    .tool-head-desc { font-size: 0.86rem; }
+    .tool-head-trust { font-size: 0.74rem; }
+    .tool-widget--v2 { padding: 0.65rem; border-radius: var(--radius-md); }
+    .tool-reference-summary { padding: 0.75rem 0.9rem; }
+    .tool-reference-body { padding: 0 0.9rem 1.2rem; }
   }
 </style>
