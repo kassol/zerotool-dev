@@ -80,10 +80,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { value: 'Value', unit: 'Unit', rootFontSize: 'Root Font Size (px)', viewportWidth: 'Viewport Width (px)', enterValue: 'Enter value...', copy: 'Copy', copied: 'Copied!', clear: 'Clear', converted: 'Converted.', invalid: 'Invalid number.' },
-        zh: { value: '数值', unit: '单位', rootFontSize: '根字体大小 (px)', viewportWidth: '视口宽度 (px)', enterValue: '请输入数值...', copy: '复制', copied: '已复制!', clear: '清除', converted: '已转换。', invalid: '无效数字。' },
-        ja: { value: '値', unit: '単位', rootFontSize: 'ルートフォントサイズ (px)', viewportWidth: 'ビューポート幅 (px)', enterValue: '値を入力...', copy: 'コピー', copied: 'コピー済み!', clear: 'クリア', converted: '変換済み。', invalid: '無効な数値。' },
-        ko: { value: '값', unit: '단위', rootFontSize: '루트 글꼴 크기 (px)', viewportWidth: '뷰포트 너비 (px)', enterValue: '값을 입력하세요...', copy: '복사', copied: '복사됨!', clear: '지우기', converted: '변환 완료.', invalid: '유효하지 않은 숫자.' }
+        en: { value: 'Value', unit: 'Unit', rootFontSize: 'Root Font Size (px)', viewportWidth: 'Viewport Width (px)', enterValue: 'Enter value...', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed.', clear: 'Clear', converted: 'Converted.', invalid: 'Invalid number.' },
+        zh: { value: '数值', unit: '单位', rootFontSize: '根字体大小 (px)', viewportWidth: '视口宽度 (px)', enterValue: '请输入数值...', copy: '复制', copied: '已复制!', copyFailed: '复制失败。', clear: '清除', converted: '已转换。', invalid: '无效数字。' },
+        ja: { value: '値', unit: '単位', rootFontSize: 'ルートフォントサイズ (px)', viewportWidth: 'ビューポート幅 (px)', enterValue: '値を入力...', copy: 'コピー', copied: 'コピー済み!', copyFailed: 'コピーに失敗しました。', clear: 'クリア', converted: '変換済み。', invalid: '無効な数値。' },
+        ko: { value: '값', unit: '단위', rootFontSize: '루트 글꼴 크기 (px)', viewportWidth: '뷰포트 너비 (px)', enterValue: '값을 입력하세요...', copy: '복사', copied: '복사됨!', copyFailed: '복사에 실패했습니다.', clear: '지우기', converted: '변환 완료.', invalid: '유효하지 않은 숫자.' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -108,6 +108,12 @@
       var outRem = document.getElementById('cu-out-rem');
       var outEm = document.getElementById('cu-out-em');
       var outVw = document.getElementById('cu-out-vw');
+      var copyRevision = 0;
+
+      function resetCopyFeedback() {
+        copyRevision++;
+        document.querySelectorAll('.cu-wrap .btn-copy[data-copy]').forEach(function (btn) { btn.textContent = t.copy; });
+      }
 
       function fmt(n) {
         // Round to 6 significant digits, strip trailing zeros
@@ -141,6 +147,7 @@
       }
 
       function convert() {
+        resetCopyFeedback();
         var raw = valueEl.value.trim();
         if (raw === '' || raw === '-') {
           clearOutputs();
@@ -186,11 +193,21 @@
       rootSizeEl.addEventListener('input', convert);
       viewportEl.addEventListener('input', convert);
 
-      document.getElementById('cu-clear').addEventListener('click', function () {
+      function clearAll() {
+        resetCopyFeedback();
         valueEl.value = '';
         clearOutputs();
         clearStatus();
         valueEl.focus();
+      }
+
+      document.getElementById('cu-clear').addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var wrap = document.querySelector('.cu-wrap');
+        if (!wrap || !wrap.contains(document.activeElement)) return;
+        e.preventDefault();
+        clearAll();
       });
 
       document.querySelectorAll('.cu-wrap .btn-copy[data-copy]').forEach(function (btn) {
@@ -198,9 +215,15 @@
           var id = btn.getAttribute('data-copy');
           var val = document.getElementById(id).value;
           if (!val) return;
+          resetCopyFeedback();
+          var revision = copyRevision;
           navigator.clipboard.writeText(val).then(function () {
+            if (revision !== copyRevision) return;
+            setStatus(t.converted, false);
             btn.textContent = t.copied;
-            setTimeout(function () { btn.textContent = t.copy; }, 1500);
+            setTimeout(function () { if (revision === copyRevision) btn.textContent = t.copy; }, 1500);
+          }, function () {
+            if (revision === copyRevision) setStatus(t.copyFailed, true);
           });
           window.trackTool && window.trackTool('css-unit-converter', 'copy');
         });
