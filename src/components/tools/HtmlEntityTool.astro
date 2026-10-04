@@ -65,10 +65,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { inputLabel: 'Input', outputLabel: 'Output', encode: 'Encode', decode: 'Decode', clear: 'Clear', copy: 'Copy', copied: 'Copied!', inputPlaceholder: 'Enter text to encode or encoded text to decode...' },
-        zh: { inputLabel: '输入', outputLabel: '输出', encode: '编码', decode: '解码', clear: '清除', copy: '复制', copied: '已复制！', inputPlaceholder: '输入要编码的文本或要解码的 HTML 实体...' },
-        ja: { inputLabel: '入力', outputLabel: '出力', encode: 'エンコード', decode: 'デコード', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', inputPlaceholder: 'エンコードするテキストまたはデコードする HTML エンティティを入力...' },
-        ko: { inputLabel: '입력', outputLabel: '출력', encode: '인코딩', decode: '디코딩', clear: '지우기', copy: '복사', copied: '복사됨!', inputPlaceholder: '인코딩할 텍스트 또는 디코딩할 HTML 엔티티를 입력...' }
+        en: { copyFail: 'Could not copy. Please select and copy the output manually.', inputLabel: 'Input', outputLabel: 'Output', encode: 'Encode', decode: 'Decode', clear: 'Clear', copy: 'Copy', copied: 'Copied!', inputPlaceholder: 'Enter text to encode or encoded text to decode...' },
+        zh: { copyFail: '复制失败。请选中输出内容后手动复制。', inputLabel: '输入', outputLabel: '输出', encode: '编码', decode: '解码', clear: '清除', copy: '复制', copied: '已复制！', inputPlaceholder: '输入要编码的文本或要解码的 HTML 实体...' },
+        ja: { copyFail: 'コピーできませんでした。出力を選択して手動でコピーしてください。', inputLabel: '入力', outputLabel: '出力', encode: 'エンコード', decode: 'デコード', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', inputPlaceholder: 'エンコードするテキストまたはデコードする HTML エンティティを入力...' },
+        ko: { copyFail: '복사하지 못했습니다. 출력을 선택하여 직접 복사하세요.', inputLabel: '입력', outputLabel: '출력', encode: '인코딩', decode: '디코딩', clear: '지우기', copy: '복사', copied: '복사됨!', inputPlaceholder: '인코딩할 텍스트 또는 디코딩할 HTML 엔티티를 입력...' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -89,15 +89,34 @@
       var copyBtn = document.getElementById('he-copy');
       var lastValidHtmlOutput = '';
       var heMode = 'encode'; // tracks last used direction
+      var copyError = false;
+      var copyRevision = 0;
+      var copyTimer = null;
 
       function setStatus(msg, isError) {
+        copyError = false;
         statusEl.textContent = msg;
         statusEl.className = 'he-status ' + (isError ? 'error' : 'success');
       }
 
       function clearStatus() {
+        copyError = false;
         statusEl.textContent = '';
         statusEl.className = 'he-status';
+      }
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError) clearStatus();
+      }
+
+      function clearResult() {
+        invalidateCopy();
+        outputEl.value = '';
+        lastValidHtmlOutput = '';
+        clearStatus();
       }
 
       /* ── engine:start ── */
@@ -141,10 +160,12 @@
       /* ── Real-time encode/decode (debounced 300ms, uses last direction) ── */
       var _heLiveTimer = null;
       inputEl.addEventListener('input', function () {
+        invalidateCopy();
         clearTimeout(_heLiveTimer);
         _heLiveTimer = setTimeout(function () {
+          invalidateCopy();
           var val = inputEl.value;
-          if (!val) { clearStatus(); return; }
+          if (!val) { clearResult(); return; }
           try {
             if (heMode === 'encode') {
               var r = encodeHtml(val);
@@ -164,9 +185,10 @@
       });
 
       encodeBtn.addEventListener('click', function () {
+        invalidateCopy();
         heMode = 'encode';
         var val = inputEl.value;
-        if (!val) { clearStatus(); return; }
+        if (!val) { clearResult(); return; }
         try {
           var r = encodeHtml(val);
           outputEl.value = r.text;
@@ -179,9 +201,10 @@
       });
 
       decodeBtn.addEventListener('click', function () {
+        invalidateCopy();
         heMode = 'decode';
         var val = inputEl.value;
-        if (!val) { clearStatus(); return; }
+        if (!val) { clearResult(); return; }
         try {
           var r = decodeHtml(val);
           outputEl.value = r.text;
@@ -194,17 +217,38 @@
       });
 
       document.getElementById('he-clear').addEventListener('click', function () {
+        clearTimeout(_heLiveTimer);
         inputEl.value = '';
-        outputEl.value = '';
-        clearStatus();
+        clearResult();
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var widget = document.querySelector('.he-wrap');
+        if (widget && widget.contains(document.activeElement)) {
+          clearTimeout(_heLiveTimer);
+          clearResult();
+        }
       });
 
       copyBtn.addEventListener('click', function () {
         if (!outputEl.value) return;
-        navigator.clipboard.writeText(outputEl.value).then(function () {
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        function done() {
+          if (revision !== copyRevision) return;
+          if (copyError) clearStatus();
           copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+          copyTimer = setTimeout(function () { if (revision === copyRevision) copyBtn.textContent = t.copy; }, 1500);
+        }
+        function failed() {
+          if (revision !== copyRevision) return;
+          setStatus(t.copyFail, true);
+          copyError = true;
+        }
+        try { navigator.clipboard.writeText(outputEl.value).then(done, failed); }
+        catch (e) { failed(); }
       });
     })();
   </script>
