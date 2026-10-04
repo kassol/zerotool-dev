@@ -390,6 +390,9 @@ check('visible(): CR, LF and tab are shown', E.visible('a\r\n\tb') === 'a␍␊\
   check('component script does not touch storage, cookies, the URL or the network',
     !/localStorage|sessionStorage|ztPersist|document\.cookie|location\.(hash|search|href)|history\.|fetch\(|XMLHttpRequest|sendBeacon/.test(script));
   check('component script does not write HTML', !/innerHTML|insertAdjacentHTML|outerHTML/.test(script));
+  // .hmac-results and .btn-ghost set display, so the hidden attribute needs a rule of its own.
+  check('result rows and the Example button are not displayed while the script hides them',
+    /\.hmac-results\[hidden\],[\s\S]{0,80}#hmac-example\[hidden\] \{ display: none; \}/.test(source));
   const persistence = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8');
   check('persistence policy for hmac-generator is disabled', /'hmac-generator':\s*'disabled'/.test(persistence));
   const langs = ['en', 'zh', 'ja', 'ko'];
