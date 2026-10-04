@@ -396,7 +396,7 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
   check('generate page has a shared control rail and a preview', markup.includes('class="pkce-rail zt-rail"') && markup.includes('class="pkce-preview"'));
   check('rail is 270–320px beside the preview', source.includes('grid-template-columns: clamp(270px, 24vw, 320px) minmax(0, 1fr)'));
   check('long request previews scroll inside flex children', source.includes('.pkce-out-text { align-self: stretch; overflow: auto; }') && source.includes('.pkce-results, .pkce-request { flex: 1 1 0; }'));
-  check('mobile puts the result before secondary settings', source.includes('@media (max-width: 860px)') && source.includes('.pkce-preview { order: 2; height: 34rem; flex: none; }') && source.includes('.pkce-advanced { order: 3; }'));
+  check('mobile puts the result before secondary settings', source.includes('@media (max-width: 860px)') && source.includes('.pkce-preview { order: 2; height: auto; flex: none; }') && source.includes('.pkce-advanced { order: 3; }'));
   check('empty result has a localized sentence and hides on mobile', markup.includes('id="pkce-empty"') && source.includes('.pkce-preview:has(#pkce-empty:not([hidden])) { display: none; }'));
   check('empty status rows reserve space', source.includes('#pkce-verifier-status[hidden] { display: block; visibility: hidden; }') && source.includes('#pkce-auth-status[hidden] { display: block; visibility: hidden; }'));
   check('random generation remains the primary action', /id="pkce-generate" class="btn-primary"/.test(markup));
