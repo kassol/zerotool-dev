@@ -526,11 +526,29 @@ if (need('encryptFile') && need('decryptFile')) {
   // With the IV field filled the engine writes ciphertext + tag only and uses the given IV, so the message must not
   // say that the IV is new on every run.
   check('engine: a given IV is used as it is and is not written to the output', block.includes("var riv = spec.iv || crypto.getRandomValues(new Uint8Array(IV_BYTES));") && block.includes('return spec.iv ? sealed : concat([riv, sealed]);'));
-  check('a filled IV field gets its own success message', script.includes("setStatus(fmt(spec.iv ? S.encryptedIv : S.encrypted, { n: num(new TextEncoder().encode(plainEl.value).length) }), spec.iv ? 'info' : 'success');") && !/ivWarning/.test(source));
+  // Raw key mode has no salt (sealPayload: only the password branch makes one), and a file goes through the same
+  // sealPayload, so a file encrypted with a given IV also holds ciphertext + tag only.
+  check('engine: only the password branch makes a salt; encryptFile seals like encryptText', /if \(spec\.type === 'raw'\) \{[^}]*return spec\.iv \? sealed : concat\(\[riv, sealed\]\);\s*\}\s*var iv = [^\n]*\n\s*var salt = crypto\.getRandomValues/.test(block) && block.includes('var payload = await sealPayload(spec, bytes);'));
+  {
+    const key = E.parseRawKey('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f', 'hex');
+    const data = te.encode('hello file\n');
+    const withIv = await E.encryptFile({ type: 'raw', key, iv: E.parseIv('cafebabefacedbaddecaf888') }, data);
+    check('file + given IV: ciphertext + tag only (n + 16 bytes), the same bytes on every run', withIv.length === data.length + 16 && Buffer.from(withIv).equals(Buffer.from(await E.encryptFile({ type: 'raw', key, iv: E.parseIv('cafebabefacedbaddecaf888') }, data))), withIv.length);
+    const noIv = await E.encryptFile({ type: 'raw', key }, data);
+    check('file, no IV: a new 12-byte IV in front (12 + n + 16 bytes), no salt', noIv.length === 12 + data.length + 16, noIv.length);
+    const t1 = Buffer.from(await E.encryptText({ type: 'raw', key }, 'x'), 'base64');
+    check('text, raw key, no IV: 12 + n + 16 bytes, so there is no 16-byte salt to mention', t1.length === 12 + 1 + 16, t1.length);
+  }
+  check('text success message: entered IV, raw key without IV, or password; the IV warning follows only with an entered IV',
+    script.includes("setStatus(fmt(spec.iv ? S.encryptedIv : spec.type === 'raw' ? S.encryptedRaw : S.encrypted, { n: num(new TextEncoder().encode(plainEl.value).length) }) + (spec.iv ? ' ' + S.ivWarning : ''), spec.iv ? 'info' : 'success');"));
+  check('file success message: the same IV warning when a file is encrypted with an entered IV',
+    script.includes("var ivFile = kind === 'encrypt' && spec.iv;") && script.includes("setStatus(fmt(S.fileReady, { name: name, size: size(out.length) }) + (ivFile ? ' ' + S.ivWarning : ''), ivFile ? 'info' : 'success');"));
   const i18nRef = (l) => JSON.parse(readFileSync(join(root, 'src/i18n/' + l + '.json'), 'utf8'))['tool.reference'];
+  const saltWord = { en: 'salt', zh: '盐', ja: 'ソルト', ko: '솔트' };
   for (const l of ['en', 'zh', 'ja', 'ko']) {
-    check(l + ': encryptedIv says the entered IV was used, what the output holds, and warns about reuse', typeof S[l].encryptedIv === 'string' && S[l].encryptedIv.includes('{n}') && S[l].encryptedIv.includes('GCM') && S[l].encryptedIv.includes('800-38D') &&
-      S[l].encryptedIv.split('IV').length >= 4 && !S[l].encryptedIv.includes(S[l].encrypted.slice(S[l].encrypted.indexOf('{n}') + 3).trim().slice(-12)));
+    check(l + ': ivWarning says the entered IV was used, what the output holds, and warns about reuse', typeof S[l].ivWarning === 'string' && !S[l].ivWarning.includes('{') && S[l].ivWarning.includes('GCM') && S[l].ivWarning.includes('800-38D') && S[l].ivWarning.split('IV').length >= 5);
+    check(l + ': encryptedIv only counts the bytes (the warning carries the rest)', S[l].encryptedIv.includes('{n}') && !S[l].encryptedIv.includes('IV') && !S[l].encryptedIv.includes(saltWord[l]));
+    check(l + ': encryptedRaw says the IV is new and does not mention a salt; the password message still names both', S[l].encryptedRaw.includes('{n}') && S[l].encryptedRaw.includes('IV') && !S[l].encryptedRaw.includes(saltWord[l]) && S[l].encrypted.includes(saltWord[l]) && S[l].encrypted.includes('IV'));
     // The OpenSSL section is inside the folded reference block; the message names the block and the section.
     const mdx = readFileSync(join(root, 'src/content/tools/aes-encrypt-decrypt/' + l + '.mdx'), 'utf8');
     const heading = (mdx.match(/<h2>(OpenSSL[^<]*)<\/h2>/) || [])[1];
