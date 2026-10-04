@@ -2,7 +2,8 @@
 //
 // Read:  src/components/tools/DnsLookupTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers, so this test cannot drift
-//        from the shipped source), ToolLayout.astro (real keyboard shortcuts).
+//        from the shipped source), ToolLayout.astro (real keyboard shortcuts),
+//        src/data/tool-layouts.ts and src/content/tools/dns-lookup/*.mdx.
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -17,12 +18,13 @@
 // AD only when every type validated, TC, partial errors, comments merged); 4-language STRINGS
 // have the same keys. The page suite executes the actual client scripts with a DOM and
 // deferred fetch stubs: result copying, tab changes, failures, cancellation, request order,
-// ALL and keyboard bubbling. It never sends a request.
+// ALL, keyboard bubbling, and v2 localization/content contracts. It never sends a request.
 //
 // Run: node scripts/test-dns-lookup.mjs
 
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import yaml from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -198,8 +200,8 @@ m = E.mergeAllResults([ok('TXT', { Status: 0, TC: true, AD: false, Answer: [] })
 eq('merge: TC propagates', m.TC, true);
 
 // ---------- STRINGS keys ----------
-const stringsMatch = source.match(/(?:var|const) STRINGS = (\{[\s\S]*?\n(?: {6})?\})(?: as const)?;/);
-check('STRINGS block found', !!stringsMatch);
+const stringsMatch = source.match(/const STRINGS = (\{[\s\S]*?\n\}) as const;/);
+check('frontmatter STRINGS block found', !!stringsMatch);
 if (stringsMatch) {
   const STRINGS = new Function('return ' + stringsMatch[1])();
   const enKeys = Object.keys(STRINGS.en).sort().join(',');
@@ -207,8 +209,6 @@ if (stringsMatch) {
     eq('STRINGS keys ' + lang, Object.keys(STRINGS[lang]).sort().join(','), enKeys);
   }
   check('STRINGS.en has summaryDnssecFailed', 'summaryDnssecFailed' in STRINGS.en);
-  const i18nKeys = [...source.matchAll(/data-i18n="([^"]+)"/g)].map((x) => x[1]);
-  for (const k of i18nKeys) check('data-i18n key ' + k + ' in STRINGS.en', k in STRINGS.en);
 }
 
 // ---------- real page entry points (no network) ----------
@@ -219,11 +219,12 @@ const shortcutScript = [...layoutSource.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)
   .map((match) => match[1]).find((code) => code.includes('// ── Keyboard shortcuts:'));
 check('actual ToolLayout keyboard script found', !!shortcutScript);
 const ALL_STRINGS = stringsMatch ? new Function('return ' + stringsMatch[1])() : null;
-function pageFixture(lang = 'en') {
+function pageFixture(lang = 'en', options = {}) {
   const elements = new Map();
   const documentListeners = new Map();
   const requests = [];
   const clipboard = [];
+  const clipboardRequests = [];
   const timers = new Map();
   let timerId = 0;
   let document;
@@ -290,6 +291,7 @@ function pageFixture(lang = 'en') {
     },
     querySelectorAll() { return []; },
     createElement: element,
+    execCommand() { if (options.copyFallbackFails) throw new Error('Copy failed'); return true; },
     addEventListener(type, callback) {
       if (!documentListeners.has(type)) documentListeners.set(type, []);
       documentListeners.get(type).push(callback);
@@ -301,7 +303,11 @@ function pageFixture(lang = 'en') {
     localStorage: { getItem() { return null; }, setItem() {} },
     ztPersist: { clear() {} },
     MutationObserver: class { observe() {} disconnect() {} },
-    navigator: { clipboard: { writeText(text) { clipboard.push(text); return Promise.resolve(); } } },
+    navigator: { clipboard: { writeText(text) {
+      clipboard.push(text);
+      if (options.deferClipboard) return new Promise((resolve, reject) => clipboardRequests.push({ resolve, reject }));
+      return Promise.resolve();
+    } } },
     setTimeout(callback, ms) { timers.set(++timerId, { callback, ms }); return timerId; },
     clearTimeout(id) { timers.delete(id); },
     fetch(url, options) {
@@ -315,7 +321,7 @@ function pageFixture(lang = 'en') {
   }
   vm.runInContext(shortcutScript, context, { filename: 'ToolLayout.astro' });
   return {
-    get, requests, clipboard, strings: ALL_STRINGS[lang], document,
+    get, requests, clipboard, clipboardRequests, strings: ALL_STRINGS[lang], document,
     lookup(value = 'example.com') { get('dnsl-domain').value = value; get('dnsl-lookup').click(); },
     async success(index = requests.length - 1, response = signedA) {
       requests[index].resolve({ ok: true, json: async () => structuredClone(response) });
@@ -480,6 +486,60 @@ for (const action of ['Clear', 'Ctrl+L']) {
   page.get('dnsl-copy-json').click();
   await new Promise(setImmediate);
   eq(action + ': late ALL result cannot be copied', page.clipboard.length, 0);
+}
+
+// Clipboard permission prompts may settle after Clear or the shared shortcut.
+for (const action of ['Clear', 'Ctrl+L']) {
+  for (const outcome of ['success', 'fallback success', 'fallback failure']) {
+    const page = pageFixture('en', { deferClipboard: true, copyFallbackFails: outcome === 'fallback failure' });
+    page.lookup();
+    await page.success();
+    page.get('dnsl-copy-json').click();
+    if (action === 'Clear') page.get('dnsl-clear').click(); else page.key('l');
+    if (outcome === 'success') page.clipboardRequests[0].resolve();
+    else page.clipboardRequests[0].reject(new Error('Clipboard permission denied'));
+    await new Promise(setImmediate);
+    eq(action + ': late copy ' + outcome + ' keeps status empty', page.get('dnsl-status').textContent, '');
+  }
+}
+
+// ---------- v2 page layout ----------
+{
+  const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1] || '';
+  const markup = source.replace(/^---\n[\s\S]*?\n---/, '').split('<script')[0].trim();
+  check('tool root owns the layout', /^<div class="dnsl-wrap"[^>]*>/.test(markup));
+  eq('four controls have contextual help', [...markup.matchAll(/<Toggletip\s+id="([^"]+)"/g)].map((match) => match[1]),
+    ['dnsl-tip-domain', 'dnsl-tip-type', 'dnsl-tip-resolver', 'dnsl-tip-results']);
+  check('labels render at build time', !source.includes('data-i18n'));
+  for (const id of new Set([...source.matchAll(/document\.getElementById\('([^']+)'\)/g)].map((match) => match[1]))) {
+    eq('client element appears once: ' + id, [...markup.matchAll(/\bid="([^"]+)"/g)].filter((match) => match[1] === id).length, 1);
+  }
+  check('strings are in the frontmatter', /const STRINGS = \{[\s\S]*\} as const;/.test(frontmatter));
+  check('one language is selected before rendering', /const T = STRINGS\[lang\];/.test(frontmatter));
+  check('help text stays out of the inline payload', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/.test(frontmatter)
+    && /<script[^>]*define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  if (ALL_STRINGS) {
+    const tips = ['domain', 'type', 'resolver', 'results'];
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      eq(lang + ': every control has translated help', Object.keys(ALL_STRINGS[lang].tips || {}), tips);
+      check(lang + ': help text is nonempty plain text', tips.every((key) => typeof ALL_STRINGS[lang].tips?.[key] === 'string'
+        && ALL_STRINGS[lang].tips[key].trim().length > 0 && !/<\/?[a-z]/i.test(ALL_STRINGS[lang].tips[key])));
+    }
+    for (const key of tips) check('help text is rendered for ' + key, markup.includes('{TIPS.' + key + '}'));
+  }
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('DNS lookup uses analyze layout', /'dns-lookup':\s*'analyze'/.test(layouts));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/dns-lookup/' + lang + '.mdx'), 'utf8');
+    const front = mdx.match(/^---\n([\s\S]*?)\n---/)?.[1] || '';
+    const data = yaml.load(front);
+    const body = mdx.slice(front.length + 8);
+    eq(lang + ': five user steps in frontmatter', data.steps?.length, 5);
+    check(lang + ': steps fit llms-full text limits', Array.isArray(data.steps) && data.steps.every((step) => typeof step === 'string' && step.length <= 280)
+      && data.steps.reduce((sum, step) => sum + step.length, 0) <= 1200);
+    check(lang + ': no duplicate how-to section', !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/mi.test(body));
+    check(lang + ': limitations remain in the article', /^## (Limits|限制|制限事項|제한 사항)\s*$/m.test(body));
+  }
 }
 
 console.log(`${passes} passed, ${failures} failed`);

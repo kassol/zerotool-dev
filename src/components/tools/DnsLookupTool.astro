@@ -1,14 +1,146 @@
 ---
-// DNS Lookup — query DNS records via DNS-over-HTTPS (Cloudflare + Google).
-// 100% client-side: queries are sent from the user's browser to the chosen DoH endpoint.
-// Language-independent widget; strings localized at runtime via document.documentElement.lang.
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+// DNS queries go directly to the selected DNS-over-HTTPS resolver.
+const STRINGS = {
+  en: {
+    typeLabel: "Record type",
+    resolverLabel: "Resolver",
+    resultLabel: "Results",
+    resultEmpty: "DNS records, resolver status and the response JSON appear here after a lookup.",
+    tips: {
+      domain: "Enter a domain or a full URL, then press Lookup or Enter. URLs, ports, trailing dots, full-width characters and international names are normalized to an ASCII hostname. Names need at least two labels; each label allows 1–63 letters, digits, hyphens or underscores, up to 253 characters in total.",
+      type: "ALL queries A, AAAA, CNAME, MX, TXT, NS, SOA and CAA together. Query PTR and SRV separately with the full reverse or service name; IP addresses are not converted to reverse names.",
+      resolver: "Queries go directly from your browser to the selected Cloudflare or Google resolver, which sees your IP address and the queried name. Each request times out after 5 seconds; try the other resolver if one is blocked.",
+      results: "The summary shows the response code, record count, DNSSEC status, resolver and elapsed time. Records hides RRSIG signatures; Raw shows a dig-style listing, and JSON shows the response. Copy JSON copies that response.",
+    },
+    domainLabel: 'Domain', try: 'Try:', lookup: 'Lookup', copyJson: 'Copy JSON', clear: 'Clear',
+    tabRecords: 'Records', tabRaw: 'Raw', tabJson: 'JSON',
+    pending: 'Querying…', pendingMulti: 'Querying {n} record types…',
+    empty: 'Enter a domain and click Lookup.',
+    invalidDomain: 'Invalid domain. Use a hostname like example.com.',
+    netError: 'Network error. Check your connection or try the other resolver.',
+    timeout: 'Request timed out after 5s.',
+    done: 'Found {n} record{s}.',
+    doneEmpty: 'No records found.',
+    copied: 'JSON copied to clipboard.', copyFailed: 'Copy failed.', lookupFirst: 'Run a lookup first.',
+    summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
+    summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
+    summaryCount: '{n} record{s}', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'no DNSSEC', summaryDnssecFailed: 'DNSSEC failed',
+    summaryTime: '{ms} ms', summaryTruncated: 'truncated ⚠',
+    recordsHeading: '{type} ({n})',
+    colType: 'TYPE', colTtl: 'TTL', colName: 'NAME', colData: 'DATA',
+    partialError: 'Lookup failed for {type}: {msg}',
+    notImplemented: 'Resolver returned {code}.',
+    resolverNote: 'Resolver note: {msg}',
+  },
+  zh: {
+    typeLabel: "记录类型",
+    resolverLabel: "解析器",
+    resultLabel: "查询结果",
+    resultEmpty: "查询后，这里显示 DNS 记录、解析器状态和响应 JSON。",
+    tips: {
+      domain: "输入域名或完整网址后点「查询」或按回车。网址、端口、末尾的点、全角字符和国际化域名会先规范化为 ASCII 主机名。域名至少有两段，每段为 1–63 个字母、数字、连字符或下划线，总长不超过 253 个字符。",
+      type: "ALL 同时查询 A、AAAA、CNAME、MX、TXT、NS、SOA、CAA 八种类型。PTR 和 SRV 需单独查询，并输入完整的反向名称或服务名称；工具不会将 IP 地址自动转成反向名称。",
+      resolver: "浏览器直接向所选的 Cloudflare 或 Google 解析器发起查询，解析器能看到你的 IP 地址和查询的域名。每次请求超过 5 秒即超时；一家被网络阻断时可换另一家。",
+      results: "摘要显示响应码、记录数、DNSSEC 状态、解析器和耗时。「记录」隐藏 RRSIG 签名，「原文」显示 dig 风格的列表，「JSON」显示响应内容。「复制 JSON」复制该响应。",
+    },
+    domainLabel: '域名', try: '试试：', lookup: '查询', copyJson: '复制 JSON', clear: '清除',
+    tabRecords: '记录', tabRaw: '原文', tabJson: 'JSON',
+    pending: '查询中…', pendingMulti: '正在查询 {n} 种记录类型…',
+    empty: '请输入域名后点击查询。',
+    invalidDomain: '域名无效。请输入类似 example.com 的主机名。',
+    netError: '网络错误。请检查连接或切换解析器。',
+    timeout: '请求超过 5 秒已超时。',
+    done: '找到 {n} 条记录。',
+    doneEmpty: '未找到任何记录。',
+    copied: 'JSON 已复制到剪贴板。', copyFailed: '复制失败。', lookupFirst: '请先查询。',
+    summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
+    summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
+    summaryCount: '{n} 条记录', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: '未启用 DNSSEC', summaryDnssecFailed: 'DNSSEC 验证失败',
+    summaryTime: '{ms} 毫秒', summaryTruncated: '响应被截断 ⚠',
+    recordsHeading: '{type}（{n} 条）',
+    colType: '类型', colTtl: 'TTL', colName: '名称', colData: '数据',
+    partialError: '{type} 查询失败：{msg}',
+    notImplemented: '解析器返回 {code}。',
+    resolverNote: '解析器备注：{msg}',
+  },
+  ja: {
+    typeLabel: "レコードの種類",
+    resolverLabel: "リゾルバー",
+    resultLabel: "照会結果",
+    resultEmpty: "照会すると、DNS レコード、リゾルバーの状態、応答 JSON がここに表示されます。",
+    tips: {
+      domain: "ドメイン名か URL を入力し、「照会」または Enter を押します。URL、ポート、末尾のドット、全角文字、国際化ドメイン名は ASCII のホスト名に直します。名前は 2 ラベル以上、各ラベルは英数字・ハイフン・アンダースコアの 1〜63 文字で、全体は 253 文字以内です。",
+      type: "ALL は A・AAAA・CNAME・MX・TXT・NS・SOA・CAA をまとめて照会します。PTR と SRV は完全な逆引き名やサービス名を入力して個別に照会します。IP アドレスから逆引き名への変換は行いません。",
+      resolver: "ブラウザーから選択した Cloudflare または Google に直接問い合わせます。リゾルバーには IP アドレスと照会名が見えます。各リクエストは 5 秒でタイムアウトします。接続がブロックされた場合は別のリゾルバーを試してください。",
+      results: "概要には応答コード、件数、DNSSEC の状態、リゾルバー、所要時間を表示します。「レコード」は RRSIG 署名を省き、「生データ」は dig 風の一覧、「JSON」は応答内容です。「JSON コピー」でその応答をコピーします。",
+    },
+    domainLabel: 'ドメイン', try: 'お試し：', lookup: '照会', copyJson: 'JSON コピー', clear: 'クリア',
+    tabRecords: 'レコード', tabRaw: '生データ', tabJson: 'JSON',
+    pending: '照会中…', pendingMulti: '{n} 種類のレコードを照会中…',
+    empty: 'ドメインを入力して照会をクリック。',
+    invalidDomain: 'ドメインが不正です。example.com のような形式を入力してください。',
+    netError: 'ネットワークエラー。接続を確認するか別のリゾルバに切り替えてください。',
+    timeout: '5 秒でタイムアウトしました。',
+    done: '{n} 件のレコードを取得しました。',
+    doneEmpty: 'レコードが見つかりません。',
+    copied: 'JSON をクリップボードにコピーしました。', copyFailed: 'コピーに失敗しました。', lookupFirst: '先に照会してください。',
+    summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
+    summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
+    summaryCount: '{n} 件', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC なし', summaryDnssecFailed: 'DNSSEC 検証失敗',
+    summaryTime: '{ms} ミリ秒', summaryTruncated: '応答が切り詰められました ⚠',
+    recordsHeading: '{type}（{n} 件）',
+    colType: 'タイプ', colTtl: 'TTL', colName: '名前', colData: 'データ',
+    partialError: '{type} の照会に失敗：{msg}',
+    notImplemented: 'リゾルバが {code} を返しました。',
+    resolverNote: 'リゾルバの注記：{msg}',
+  },
+  ko: {
+    typeLabel: "레코드 유형",
+    resolverLabel: "리졸버",
+    resultLabel: "조회 결과",
+    resultEmpty: "조회하면 DNS 레코드, 리졸버 상태와 응답 JSON이 여기에 표시됩니다.",
+    tips: {
+      domain: "도메인이나 URL을 입력한 뒤 조회 또는 Enter를 누르세요. URL, 포트, 끝의 점, 전각 문자와 국제화 도메인은 ASCII 호스트 이름으로 바꿉니다. 이름은 두 라벨 이상이며 라벨마다 영문, 숫자, 하이픈, 밑줄 1~63자, 전체 253자 이내입니다.",
+      type: "ALL은 A, AAAA, CNAME, MX, TXT, NS, SOA, CAA를 함께 조회합니다. PTR과 SRV는 전체 역방향 이름이나 서비스 이름을 입력해 따로 조회하세요. IP 주소를 역방향 이름으로 자동 변환하지 않습니다.",
+      resolver: "브라우저가 선택한 Cloudflare 또는 Google에 직접 조회합니다. 리졸버는 IP 주소와 조회한 이름을 볼 수 있습니다. 각 요청은 5초 뒤 시간 초과됩니다. 한 리졸버가 차단되면 다른 쪽을 선택하세요.",
+      results: "요약에는 응답 코드, 레코드 수, DNSSEC 상태, 리졸버와 소요 시간이 나옵니다. 레코드는 RRSIG 서명을 숨기고, 원본은 dig 형식 목록, JSON은 응답 내용을 보여 줍니다. JSON 복사로 그 응답을 복사합니다.",
+    },
+    domainLabel: '도메인', try: '예시:', lookup: '조회', copyJson: 'JSON 복사', clear: '지우기',
+    tabRecords: '레코드', tabRaw: '원본', tabJson: 'JSON',
+    pending: '조회 중…', pendingMulti: '{n}개 레코드 타입 조회 중…',
+    empty: '도메인을 입력하고 조회를 클릭하세요.',
+    invalidDomain: '잘못된 도메인입니다. example.com 같은 호스트명을 입력하세요.',
+    netError: '네트워크 오류. 연결을 확인하거나 다른 리졸버로 전환해보세요.',
+    timeout: '5초 후 타임아웃되었습니다.',
+    done: '{n}개 레코드를 찾았습니다.',
+    doneEmpty: '레코드를 찾을 수 없습니다.',
+    copied: 'JSON이 클립보드에 복사되었습니다.', copyFailed: '복사 실패.', lookupFirst: '먼저 조회하세요.',
+    summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
+    summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
+    summaryCount: '{n}개 레코드', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC 없음', summaryDnssecFailed: 'DNSSEC 검증 실패',
+    summaryTime: '{ms} ms', summaryTruncated: '응답이 잘림 ⚠',
+    recordsHeading: '{type} ({n}개)',
+    colType: '타입', colTtl: 'TTL', colName: '이름', colData: '데이터',
+    partialError: '{type} 조회 실패: {msg}',
+    notImplemented: '리졸버가 {code}를 반환했습니다.',
+    resolverNote: '리졸버 메모: {msg}',
+  },
+} as const;
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
 
-<div>
-  <div class="dnsl-wrap">
+<div class="dnsl-wrap">
+  <div class="dnsl-start">
     <div class="dnsl-input-section">
-      <label for="dnsl-domain" data-i18n="domainLabel">Domain</label>
       <div class="dnsl-input-row">
+        <div class="dnsl-field dnsl-domain-field">
+          <div class="dnsl-label-row"><label for="dnsl-domain">{T.domainLabel}</label><Toggletip id="dnsl-tip-domain" lang={lang} about={T.domainLabel} wide>{TIPS.domain}</Toggletip></div>
         <input
           id="dnsl-domain"
           class="tool-input dnsl-domain"
@@ -19,7 +151,10 @@
           spellcheck="false"
           placeholder="example.com"
         />
-        <select id="dnsl-type" class="tool-input dnsl-select" aria-label="Record type">
+        </div>
+        <div class="dnsl-field">
+          <div class="dnsl-label-row"><label for="dnsl-type">{T.typeLabel}</label><Toggletip id="dnsl-tip-type" lang={lang} about={T.typeLabel} wide>{TIPS.type}</Toggletip></div>
+        <select id="dnsl-type" class="tool-input dnsl-select">
           <option value="ALL">ALL</option>
           <option value="A" selected>A</option>
           <option value="AAAA">AAAA</option>
@@ -32,13 +167,17 @@
           <option value="PTR">PTR</option>
           <option value="SRV">SRV</option>
         </select>
-        <select id="dnsl-resolver" class="tool-input dnsl-select" aria-label="Resolver">
+        </div>
+        <div class="dnsl-field">
+          <div class="dnsl-label-row"><label for="dnsl-resolver">{T.resolverLabel}</label><Toggletip id="dnsl-tip-resolver" lang={lang} about={T.resolverLabel} wide>{TIPS.resolver}</Toggletip></div>
+        <select id="dnsl-resolver" class="tool-input dnsl-select">
           <option value="cloudflare" selected>Cloudflare (1.1.1.1)</option>
           <option value="google">Google (8.8.8.8)</option>
         </select>
+        </div>
       </div>
       <div class="dnsl-examples">
-        <span class="dnsl-examples-label" data-i18n="try">Try:</span>
+        <span class="dnsl-examples-label">{T.try}</span>
         <button class="dnsl-chip" type="button" data-example="zerotool.dev">zerotool.dev</button>
         <button class="dnsl-chip" type="button" data-example="cloudflare.com">cloudflare.com</button>
         <button class="dnsl-chip" type="button" data-example="github.com">github.com</button>
@@ -47,12 +186,15 @@
     </div>
 
     <div class="dnsl-actions">
-      <button id="dnsl-lookup" class="btn-primary" type="button" data-i18n="lookup">Lookup</button>
-      <button id="dnsl-copy-json" class="btn-secondary" type="button" data-i18n="copyJson" disabled>Copy JSON</button>
-      <button id="dnsl-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+      <button id="dnsl-lookup" class="btn-primary" type="button">{T.lookup}</button>
+      <button id="dnsl-copy-json" class="btn-secondary" type="button" disabled>{T.copyJson}</button>
+      <button id="dnsl-clear" class="btn-ghost" type="button">{T.clear}</button>
     </div>
 
-    <div id="dnsl-status" class="tool-status" aria-live="polite"></div>
+  </div>
+
+    <div class="dnsl-feedback"><div id="dnsl-status" class="tool-status" role="status" aria-live="polite"></div></div>
+    <p class="dnsl-result-empty">{T.resultEmpty}</p>
 
     <div id="dnsl-result" class="dnsl-result" hidden>
       <div class="dnsl-summary">
@@ -63,10 +205,14 @@
         <span class="dnsl-summary-pill" id="dnsl-summary-time"></span>
       </div>
 
-      <div class="dnsl-tabs" role="tablist">
-        <button class="dnsl-tab dnsl-tab-active" id="dnsl-tab-records" role="tab" aria-selected="true" aria-controls="dnsl-panel-records" type="button" data-i18n="tabRecords">Records</button>
-        <button class="dnsl-tab" id="dnsl-tab-raw" role="tab" aria-selected="false" aria-controls="dnsl-panel-raw" type="button" data-i18n="tabRaw">Raw</button>
-        <button class="dnsl-tab" id="dnsl-tab-json" role="tab" aria-selected="false" aria-controls="dnsl-panel-json" type="button" data-i18n="tabJson">JSON</button>
+      <div class="dnsl-result-head">
+      <div class="dnsl-tabs" role="tablist" aria-label={T.resultLabel}>
+        <button class="dnsl-tab dnsl-tab-active" id="dnsl-tab-records" role="tab" aria-selected="true" aria-controls="dnsl-panel-records" type="button">{T.tabRecords}</button>
+        <button class="dnsl-tab" id="dnsl-tab-raw" role="tab" aria-selected="false" aria-controls="dnsl-panel-raw" type="button">{T.tabRaw}</button>
+        <button class="dnsl-tab" id="dnsl-tab-json" role="tab" aria-selected="false" aria-controls="dnsl-panel-json" type="button">{T.tabJson}</button>
+      </div>
+
+        <Toggletip id="dnsl-tip-results" lang={lang} about={T.resultLabel} wide>{TIPS.results}</Toggletip>
       </div>
 
       <div id="dnsl-panel-records" class="dnsl-panel" role="tabpanel" aria-labelledby="dnsl-tab-records"></div>
@@ -75,94 +221,9 @@
     </div>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          domainLabel: 'Domain', try: 'Try:', lookup: 'Lookup', copyJson: 'Copy JSON', clear: 'Clear',
-          tabRecords: 'Records', tabRaw: 'Raw', tabJson: 'JSON',
-          pending: 'Querying…', pendingMulti: 'Querying {n} record types…',
-          empty: 'Enter a domain and click Lookup.',
-          invalidDomain: 'Invalid domain. Use a hostname like example.com.',
-          netError: 'Network error. Check your connection or try the other resolver.',
-          timeout: 'Request timed out after 5s.',
-          done: 'Found {n} record{s}.',
-          doneEmpty: 'No records found.',
-          copied: 'JSON copied to clipboard.', copyFailed: 'Copy failed.', lookupFirst: 'Run a lookup first.',
-          summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
-          summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
-          summaryCount: '{n} record{s}', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'no DNSSEC', summaryDnssecFailed: 'DNSSEC failed',
-          summaryTime: '{ms} ms', summaryTruncated: 'truncated ⚠',
-          recordsHeading: '{type} ({n})',
-          colType: 'TYPE', colTtl: 'TTL', colName: 'NAME', colData: 'DATA',
-          partialError: 'Lookup failed for {type}: {msg}',
-          notImplemented: 'Resolver returned {code}.',
-          resolverNote: 'Resolver note: {msg}',
-        },
-        zh: {
-          domainLabel: '域名', try: '试试：', lookup: '查询', copyJson: '复制 JSON', clear: '清除',
-          tabRecords: '记录', tabRaw: '原文', tabJson: 'JSON',
-          pending: '查询中…', pendingMulti: '正在查询 {n} 种记录类型…',
-          empty: '请输入域名后点击查询。',
-          invalidDomain: '域名无效。请输入类似 example.com 的主机名。',
-          netError: '网络错误。请检查连接或切换解析器。',
-          timeout: '请求超过 5 秒已超时。',
-          done: '找到 {n} 条记录。',
-          doneEmpty: '未找到任何记录。',
-          copied: 'JSON 已复制到剪贴板。', copyFailed: '复制失败。', lookupFirst: '请先查询。',
-          summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
-          summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
-          summaryCount: '{n} 条记录', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: '未启用 DNSSEC', summaryDnssecFailed: 'DNSSEC 验证失败',
-          summaryTime: '{ms} 毫秒', summaryTruncated: '响应被截断 ⚠',
-          recordsHeading: '{type}（{n} 条）',
-          colType: '类型', colTtl: 'TTL', colName: '名称', colData: '数据',
-          partialError: '{type} 查询失败：{msg}',
-          notImplemented: '解析器返回 {code}。',
-          resolverNote: '解析器备注：{msg}',
-        },
-        ja: {
-          domainLabel: 'ドメイン', try: 'お試し：', lookup: '照会', copyJson: 'JSON コピー', clear: 'クリア',
-          tabRecords: 'レコード', tabRaw: '生データ', tabJson: 'JSON',
-          pending: '照会中…', pendingMulti: '{n} 種類のレコードを照会中…',
-          empty: 'ドメインを入力して照会をクリック。',
-          invalidDomain: 'ドメインが不正です。example.com のような形式を入力してください。',
-          netError: 'ネットワークエラー。接続を確認するか別のリゾルバに切り替えてください。',
-          timeout: '5 秒でタイムアウトしました。',
-          done: '{n} 件のレコードを取得しました。',
-          doneEmpty: 'レコードが見つかりません。',
-          copied: 'JSON をクリップボードにコピーしました。', copyFailed: 'コピーに失敗しました。', lookupFirst: '先に照会してください。',
-          summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
-          summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
-          summaryCount: '{n} 件', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC なし', summaryDnssecFailed: 'DNSSEC 検証失敗',
-          summaryTime: '{ms} ミリ秒', summaryTruncated: '応答が切り詰められました ⚠',
-          recordsHeading: '{type}（{n} 件）',
-          colType: 'タイプ', colTtl: 'TTL', colName: '名前', colData: 'データ',
-          partialError: '{type} の照会に失敗：{msg}',
-          notImplemented: 'リゾルバが {code} を返しました。',
-          resolverNote: 'リゾルバの注記：{msg}',
-        },
-        ko: {
-          domainLabel: '도메인', try: '예시:', lookup: '조회', copyJson: 'JSON 복사', clear: '지우기',
-          tabRecords: '레코드', tabRaw: '원본', tabJson: 'JSON',
-          pending: '조회 중…', pendingMulti: '{n}개 레코드 타입 조회 중…',
-          empty: '도메인을 입력하고 조회를 클릭하세요.',
-          invalidDomain: '잘못된 도메인입니다. example.com 같은 호스트명을 입력하세요.',
-          netError: '네트워크 오류. 연결을 확인하거나 다른 리졸버로 전환해보세요.',
-          timeout: '5초 후 타임아웃되었습니다.',
-          done: '{n}개 레코드를 찾았습니다.',
-          doneEmpty: '레코드를 찾을 수 없습니다.',
-          copied: 'JSON이 클립보드에 복사되었습니다.', copyFailed: '복사 실패.', lookupFirst: '먼저 조회하세요.',
-          summaryNoerror: 'NOERROR', summaryNxdomain: 'NXDOMAIN',
-          summaryServfail: 'SERVFAIL', summaryRefused: 'REFUSED', summaryFormerr: 'FORMERR',
-          summaryCount: '{n}개 레코드', summaryDnssec: 'DNSSEC ✓', summaryNoDnssec: 'DNSSEC 없음', summaryDnssecFailed: 'DNSSEC 검증 실패',
-          summaryTime: '{ms} ms', summaryTruncated: '응답이 잘림 ⚠',
-          recordsHeading: '{type} ({n}개)',
-          colType: '타입', colTtl: 'TTL', colName: '이름', colData: '데이터',
-          partialError: '{type} 조회 실패: {msg}',
-          notImplemented: '리졸버가 {code}를 반환했습니다.',
-          resolverNote: '리졸버 메모: {msg}',
-        },
-      };
+
 
       /* ── engine:start ── */
       // DNS record type code ↔ name: the UI selector types plus the DNSSEC records that do=1 returns.
@@ -298,9 +359,6 @@
         3: 'summaryNxdomain', 4: 'notImplemented', 5: 'summaryRefused'
       };
 
-      var lang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[lang] || STRINGS.en;
-
       var domainEl = document.getElementById('dnsl-domain');
       var typeSel = document.getElementById('dnsl-type');
       var resolverSel = document.getElementById('dnsl-resolver');
@@ -322,13 +380,6 @@
       var panelJson = document.getElementById('dnsl-panel-json');
       var rawOut = document.getElementById('dnsl-raw-output');
       var jsonOut = document.getElementById('dnsl-json-output');
-
-      // Apply localized labels to declarative data-i18n nodes
-      var labeled = document.querySelectorAll('[data-i18n]');
-      for (var li = 0; li < labeled.length; li++) {
-        var key = labeled[li].getAttribute('data-i18n');
-        if (t[key] != null) labeled[li].textContent = t[key];
-      }
 
       var lastSnapshot = null; // last lookup result for Copy JSON
       var lookupGeneration = 0;
@@ -680,21 +731,24 @@
       tabJson.addEventListener('click', function () { setActiveTab(tabJson); });
     })();
   </script>
-</div>
 
 <style is:global>
-  .dnsl-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+  .dnsl-wrap { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; min-height: 0; }
+  .dnsl-start { display: flex; flex-direction: column; gap: 0.75rem; }
+  .dnsl-wrap:has(#dnsl-result[hidden]) .dnsl-start { flex: 1; justify-content: center; }
+  .dnsl-field { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+  .dnsl-label-row { display: flex; align-items: center; gap: 0.25rem; min-height: 28px; font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); }
+  .dnsl-feedback { min-height: 24px; }
+  .dnsl-result-empty { margin: 0; color: var(--color-text-muted); font-size: 0.9rem; }
+  .dnsl-wrap:has(#dnsl-result:not([hidden])) .dnsl-result-empty { display: none; }
+  .dnsl-result-head { display: flex; align-items: center; gap: 0.4rem; }
+  .dnsl-result-head .dnsl-tabs { flex: 1; }
 
   .dnsl-input-section { display: flex; flex-direction: column; gap: 0.45rem; }
-  .dnsl-input-section > label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
 
   .dnsl-input-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 8rem 13rem;
+    grid-template-columns: minmax(0, 1fr) 12rem 16rem;
     gap: 0.5rem;
     align-items: stretch;
   }
@@ -740,7 +794,7 @@
 
   .dnsl-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
-  .dnsl-result { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.25rem; }
+  .dnsl-result { display: flex; flex: 1 1 0; flex-direction: column; gap: 0.75rem; min-height: 300px; min-width: 0; margin-top: 0.25rem; }
   .dnsl-result[hidden] { display: none; }
 
   .dnsl-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
@@ -786,9 +840,9 @@
     transition: color var(--transition-fast), border-color var(--transition-fast);
   }
   .dnsl-tab:hover { color: var(--color-text); }
-  .dnsl-tab.dnsl-tab-active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+  .dnsl-tab.dnsl-tab-active { color: var(--color-primary); background: var(--color-primary-light); border-bottom-color: var(--color-primary); }
 
-  .dnsl-panel { display: flex; flex-direction: column; gap: 0.75rem; }
+  .dnsl-panel { display: flex; flex: 1 1 0; flex-direction: column; gap: 0.75rem; min-height: 220px; overflow: auto; }
   .dnsl-panel[hidden] { display: none; }
 
   .dnsl-section { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -891,12 +945,26 @@
     overflow-wrap: anywhere;
   }
 
+  @media (max-width: 860px) {
+    .dnsl-wrap:has(#dnsl-result[hidden]) .dnsl-start { flex: none; }
+    .dnsl-result-empty { display: none; }
+    .dnsl-input-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .dnsl-domain-field { grid-column: 1 / -1; }
+    .dnsl-result { flex: none; min-height: 0; }
+    .dnsl-panel { flex: none; height: 360px; min-height: 0; }
+  }
+
   @media (max-width: 640px) {
+    .dnsl-feedback { min-height: 48px; }
+    .dnsl-chip { min-width: 24px; min-height: 24px; }
+    .dnsl-actions .btn-primary, .dnsl-actions .btn-secondary, .dnsl-actions .btn-ghost { width: auto; }
+    .dnsl-actions .btn-primary { flex: 1; }
+    .dnsl-select { padding-inline: 0.5rem; }
+    .dnsl-panel { height: 300px; }
     .dnsl-input-row {
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 0.4rem;
     }
-    .dnsl-domain { grid-column: 1 / -1; }
     .dnsl-tab { padding: 0.5rem 0.75rem; font-size: 0.82rem; }
     .dnsl-section-title { font-size: 0.95rem; }
     .dnsl-card-row { grid-template-columns: 3.5rem minmax(0, 1fr); gap: 0.5rem; }
