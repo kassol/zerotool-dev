@@ -52,6 +52,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/PkceGeneratorTool.astro'), 'utf8');
@@ -323,6 +325,68 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
       eq(lang + ': Go createVerifier() is a valid 43-character verifier', [out[1].length, E.validateVerifier(out[1]).code], [43, 'ok']);
     }
   }
+}
+
+// ── Clearing while the actual page is waiting for SHA-256 ───────────────────
+{
+  const nodes = new Map(), events = {}, timers = [], digests = [];
+  const get = id => {
+    if (!nodes.has(id)) nodes.set(id, {
+      value: '', textContent: '', hidden: false, className: '', listeners: {},
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
+      dispatch(type) { for (const fn of this.listeners[type] || []) fn({ target: this }); },
+    });
+    return nodes.get(id);
+  };
+  const wrap = { contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [] };
+  const document = {
+    getElementById: get, querySelector: () => wrap, activeElement: null,
+    addEventListener(type, fn) { (events[type] ||= []).push(fn); },
+  };
+  get('pkce-length').value = '43';
+  get('pkce-endpoint').value = 'https://auth.example/authorize';
+  const context = {
+    document, S: STRINGS.en, navigator: {}, TextEncoder, Uint8Array, URL, URLSearchParams, btoa,
+    crypto: {
+      getRandomValues: bytes => crypto.getRandomValues(bytes),
+      subtle: { digest(algorithm, bytes) {
+        const output = createHash('sha256').update(bytes).digest();
+        return new Promise(resolve => digests.push(() => resolve(output.buffer.slice(output.byteOffset, output.byteOffset + output.length))));
+      } },
+    },
+    setTimeout: fn => timers.push(fn),
+  };
+  context.window = context;
+  const inline = source.match(/<script is:inline define:vars=[^>]*>([\s\S]*?)<\/script>/)[1];
+  vm.runInNewContext(inline, context);
+  const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  digests.shift()(); await drain();
+  for (const key of ['ctrlKey', 'metaKey']) {
+    get('pkce-verifier').value = RFC_VERIFIER;
+    get('pkce-verifier').dispatch('input');
+    check(key + ': SHA-256 is pending', digests.length === 1);
+    document.activeElement = get('pkce-verifier');
+    for (const fn of events.keydown) fn({ [key]: true, key: 'l' });
+    // ToolLayout clears these values without input events, after the component listener.
+    for (const node of nodes.values()) node.value = '';
+    digests.shift()(); await drain();
+    eq(key + ': late digest cannot restore outputs before the clear timer',
+      ['pkce-challenge', 'pkce-authurl', 'pkce-curl'].map(id => get(id).textContent), ['—', '—', '—']);
+    while (timers.length) timers.shift()();
+    eq(key + ': outputs stay empty after the clear timer',
+      ['pkce-challenge', 'pkce-authurl', 'pkce-curl'].map(id => get(id).textContent), ['—', '—', '—']);
+    get('pkce-endpoint').value = 'https://auth.example/authorize';
+    get('pkce-verifier').value = RFC_VERIFIER;
+    get('pkce-verifier').dispatch('input');
+    digests.shift()(); await drain();
+    eq(key + ': a new input still produces the RFC challenge', get('pkce-challenge').textContent, RFC_CHALLENGE);
+  }
+  get('pkce-verifier').dispatch('input');
+  document.activeElement = {};
+  for (const fn of events.keydown) fn({ ctrlKey: true, key: 'l' });
+  digests.shift()(); await drain();
+  eq('shortcut outside the tool keeps its pending result', get('pkce-challenge').textContent, RFC_CHALLENGE);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
