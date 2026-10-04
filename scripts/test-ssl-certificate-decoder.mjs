@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign as nodeSign, randomBytes } from 'node:crypto';
 import { domainToUnicode } from 'node:url';
+import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SslCertificateDecoderTool.astro'), 'utf8');
@@ -540,6 +541,141 @@ function makeCert({ version = 3, serial = [0x01], issuer, subject, nb = D.utc('2
       check(l + ' page shows ' + spec.expect, text.indexOf(spec.expect) >= 0 || spec.field === 'host');
     }
   }
+}
+
+// ── 9. Real page entry points (browser APIs only are replaced) ──
+function pageFixture(lang = 'en', options = {}) {
+  const elements = new Map(), listeners = new Map(), timers = new Map();
+  const saved = [], cleared = [], clipboard = [], scrolls = [];
+  const pendingCrypto = new Set();
+  const pageSubtle = new Proxy(globalThis.crypto.subtle, { get(target, key) {
+    const value = target[key];
+    if (typeof value !== 'function') return value;
+    return (...args) => {
+      const pending = value.apply(target, args);
+      pendingCrypto.add(pending);
+      pending.then(() => pendingCrypto.delete(pending), () => pendingCrypto.delete(pending));
+      return pending;
+    };
+  } });
+  let timerId = 0;
+  const get = (id) => {
+    if (elements.has(id)) return elements.get(id);
+    const events = new Map(), attrs = {};
+    const el = { id, value: '', textContent: '', innerHTML: '', className: '', hidden: false, style: {}, files: [],
+      addEventListener(type, fn) { if (!events.has(type)) events.set(type, []); events.get(type).push(fn); },
+      dispatch(type, init = {}) {
+        const event = { type, target: this, currentTarget: this, preventDefault() {}, stopPropagation() {}, ...init };
+        for (const fn of events.get(type) || []) fn.call(this, event);
+      },
+      click() { this.dispatch('click'); },
+      setAttribute(key, value) { attrs[key] = String(value); }, getAttribute(key) { return attrs[key] ?? null; },
+      focus() { document.activeElement = this; }, select() {}, appendChild(node) { return node; }, removeChild() {},
+      querySelectorAll() { return []; },
+      closest(selector) { return selector === '.scd-copy' && attrs['data-copy'] !== undefined ? this : null; },
+      contains(node) { return node?.id?.startsWith('scd-'); },
+      getBoundingClientRect() { return { top: options.resultTop ?? 100 }; },
+      scrollIntoView() { scrolls.push(this.id); },
+    };
+    el.classList = {
+      toggle(name, on) { const set = new Set(el.className.split(/\s+/).filter(Boolean)); if (on ?? !set.has(name)) set.add(name); else set.delete(name); el.className = [...set].join(' '); },
+      add(name) { this.toggle(name, true); }, remove(name) { this.toggle(name, false); },
+    };
+    elements.set(id, el);
+    return el;
+  };
+  const document = {
+    getElementById: get, querySelector() { return get('scd-wrap'); },
+    createElement: get, body: get('body'), activeElement: get('scd-input'),
+    addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(fn); },
+  };
+  get('scd-results').hidden = true;
+  const sandbox = { document, S: Object.fromEntries(Object.entries(STRINGS[lang]).filter(([key]) => key !== 'tips')), EX: EXAMPLES[lang],
+    console, TextDecoder, TextEncoder, URL, Uint8Array, ArrayBuffer, atob, btoa, crypto: { subtle: pageSubtle },
+    navigator: { clipboard: { writeText(text) { clipboard.push(text); return Promise.resolve(); } } },
+    innerHeight: 844,
+    ztPersist: { load() { return options.saved || null; }, save(slug, text) { saved.push([slug, text]); }, clear(slug) { cleared.push(slug); } },
+    setTimeout(fn, ms) { timers.set(++timerId, { fn, ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+  };
+  sandbox.window = sandbox;
+  vm.runInNewContext(source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1], sandbox, { filename: 'SslCertificateDecoderTool.astro' });
+  return {
+    get, saved, cleared, clipboard, scrolls,
+    async settle() {
+      for (let i = 0; i < 100; i++) {
+        await new Promise(setImmediate);
+        if (!pendingCrypto.size) return;
+        await Promise.allSettled([...pendingCrypto]);
+      }
+      throw new Error('Page did not finish Web Crypto operations');
+    },
+    flush(ms) { for (const [id, timer] of timers) if (timer.ms === ms) { timers.delete(id); timer.fn(); } },
+    type(text) { get('scd-input').value = text; get('scd-input').dispatch('input'); },
+    key(key, modifier = 'ctrlKey', flush = true) { for (const fn of listeners.get('keydown') || []) fn({ key, [modifier]: true }); if (flush) this.flush(0); },
+    file(bufferPromise, name = 'certificate.pem') {
+      get('scd-file').files = [{ name, size: 10000, arrayBuffer() { return bufferPromise; } }];
+      get('scd-file').dispatch('change');
+    },
+  };
+}
+async function settlePage(page) { await page.settle(); }
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+const pemBytes = new TextEncoder().encode(EXAMPLES.en.pem).buffer;
+for (const action of ['Clear', 'Ctrl+L', 'Example', 'typing']) {
+  const page = pageFixture();
+  const pending = deferred();
+  page.file(pending.promise);
+  if (action === 'Clear') page.get('scd-clear').click();
+  else if (action === 'Ctrl+L') page.key('L');
+  else if (action === 'Example') page.get('scd-example').click();
+  else page.type('newer input');
+  await settlePage(page);
+  const value = page.get('scd-input').value;
+  const status = page.get('scd-status').textContent;
+  const saves = page.saved.length;
+  pending.resolve(pemBytes);
+  await settlePage(page);
+  check(action + ': late file read preserves the current input', page.get('scd-input').value === value);
+  eq(action + ': late file read preserves the current status', page.get('scd-status').textContent, status);
+  eq(action + ': late file read cannot save old input', page.saved.length, saves);
+}
+{
+  const page = pageFixture();
+  const older = deferred(), newer = deferred();
+  page.file(older.promise, 'older.pem');
+  page.file(newer.promise, 'newer.pem');
+  newer.resolve(new TextEncoder().encode(EXAMPLES.zh.pem).buffer);
+  await settlePage(page);
+  older.resolve(pemBytes);
+  await settlePage(page);
+  check('newer file selection wins over a late older file', page.get('scd-input').value === EXAMPLES.zh.pem);
+}
+{
+  const page = pageFixture();
+  const pending = deferred();
+  page.file(pending.promise);
+  page.get('scd-clear').click();
+  pending.reject(new Error('Read failed'));
+  await settlePage(page);
+  eq('late file read failure keeps the cleared status empty', page.get('scd-status').textContent, '');
+}
+
+{
+  const page = pageFixture();
+  const pending = deferred();
+  page.file(pending.promise);
+  page.key('l', 'ctrlKey', false);
+  // File resolution is a microtask; the shortcut's deferred clear has not run yet.
+  pending.resolve(pemBytes);
+  await settlePage(page);
+  eq('Ctrl+L invalidates a file before its clear timer runs: input', page.get('scd-input').value.length, 0);
+  eq('Ctrl+L invalidates a file before its clear timer runs: storage', page.saved.length, 0);
+  eq('Ctrl+L invalidates a file before its clear timer runs: result', page.get('scd-results').hidden, true);
+  page.flush(0);
 }
 
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);

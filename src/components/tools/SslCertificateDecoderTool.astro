@@ -1820,6 +1820,7 @@ const EX = EXAMPLES[lang];
       var fileEl = document.getElementById('scd-file');
       var subtle = (window.crypto && window.crypto.subtle) || null;
       var state = { certs: [], chain: null, selected: 0, host: '', run: 0 };
+      var fileLoad = 0;
 
       function fmt(template, params) {
         return String(template).replace(/\{(\w+)\}/g, function (m, k) { return params && params[k] != null ? params[k] : m; });
@@ -2159,11 +2160,13 @@ const EX = EXAMPLES[lang];
 
       var inputTimer = null;
       inputEl.addEventListener('input', function () {
+        fileLoad++;
         clearTimeout(inputTimer);
         inputTimer = setTimeout(function () { runDecode({ quiet: true }); }, 350);
       });
       document.getElementById('scd-decode').addEventListener('click', function () { clearTimeout(inputTimer); runDecode({ reveal: true }); });
       document.getElementById('scd-example').addEventListener('click', function () {
+        fileLoad++;
         clearTimeout(inputTimer);
         inputEl.value = EX.pem;
         var hostEl = document.getElementById('scd-host');
@@ -2175,6 +2178,7 @@ const EX = EXAMPLES[lang];
       });
       document.getElementById('scd-clear').addEventListener('click', clearAll);
       function clearAll() {
+        fileLoad++;
         clearTimeout(inputTimer);
         state.run++;
         inputEl.value = '';
@@ -2193,8 +2197,10 @@ const EX = EXAMPLES[lang];
       });
 
       function loadFile(file) {
+        var load = ++fileLoad;
         if (file.size > 1048576) { setStatus(S.errFileTooLarge, 'error'); return; }
         file.arrayBuffer().then(function (buf) {
+          if (load !== fileLoad) return;
           var bytes = new Uint8Array(buf);
           var conv = fileToText(bytes);
           if (conv.error) { resultsEl.hidden = true; resultsEl.innerHTML = ''; setStatus(conv.error, 'error'); return; }
@@ -2202,7 +2208,7 @@ const EX = EXAMPLES[lang];
           var kindText = conv.kind === 'der' ? S.fileDer : conv.kind === 'pkcs7' ? fmt(S.filePkcs7, { n: conv.count }) : S.fileText;
           var lead = fmt(S.fileLoaded, { name: file.name, kind: kindText }) + (conv.removedKey ? ' ' + S.fileKeyRemoved : '');
           runDecode({ lead: lead, reveal: true });
-        }, function () { setStatus(S.errFileRead, 'error'); });
+        }, function () { if (load === fileLoad) setStatus(S.errFileRead, 'error'); });
       }
 
       // Converts a file to PEM text for the input box. Private keys and PKCS #12 never reach the box.
@@ -2229,7 +2235,10 @@ const EX = EXAMPLES[lang];
       // The site-wide Ctrl/⌘+L shortcut empties the text fields; reset the results with them.
       document.addEventListener('keydown', function (e) {
         var wrap = document.querySelector('.scd-wrap');
-        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap && wrap.contains(document.activeElement)) setTimeout(clearAll, 0);
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap && wrap.contains(document.activeElement)) {
+          fileLoad++;
+          setTimeout(clearAll, 0);
+        }
       });
 
       if (window.ztPersist) {
