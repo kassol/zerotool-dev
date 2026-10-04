@@ -11,9 +11,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/LineToolsTool.astro'), 'utf8');
+const strings = vm.runInNewContext(source.slice(source.indexOf('const STRINGS ='), source.indexOf('const T = STRINGS[lang]')).replace(/\bas const\b/g, '') + '\nSTRINGS;');
 const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw new Error('Missing shared shortcut');
@@ -95,7 +99,11 @@ function page(lang = 'en', shellFirst = false) {
   }
   const body = new Element('body'), widget = new Element();
   widget.className = 'tool-widget'; body.appendChild(widget);
-  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+  const escapeHTML = value => String(value).replaceAll('&', '&amp;').replaceAll('\"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0]
+    .replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '=\"' + escapeHTML(strings[lang][key]) + '\"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(strings[lang][key]));
   const stack = [widget], voids = new Set(['input', 'br', 'hr', 'img']);
   for (const token of markup.matchAll(/<!--[\s\S]*?-->|<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
     if (token[0].startsWith('<!--')) continue;
@@ -124,6 +132,7 @@ function page(lang = 'en', shellFirst = false) {
   });
   const context = {
     document: doc, console, _slug: SLUG,
+    t: JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(strings[lang]).filter(([key]) => key !== 'tips')))),
     Math: Object.assign(Object.create(Math), { random: () => 0 }),
     trackTool: (slug, action) => tracked.push({slug, action}),
     ztPersist: { clear: slug => clears.push(slug) },
@@ -511,5 +520,90 @@ for(const lang of languages) {
 }
 check('all clipboard promises handled',unhandled,[]);
 process.off('unhandledRejection',onUnhandled);
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+  const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const tipKeys = ['input','dedup','sortAsc','sortDesc','sortNum','reverse','shuffle','trim','removeEmpty','copy'];
+  const tipIDs = ['input','dedup','sort-asc','sort-desc','sort-num','reverse','shuffle','trim','empty','copy'].map(id=>'lt-tip-'+id);
+  check('all ten tips bind explicit controls', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m=>m[1]).sort(), tipIDs.slice().sort());
+  check('direct tool flex root with zero minimum height', /^\s*<div class="lt-wrap">/.test(markup) && /\.lt-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+  check('manual actions precede reserved status and panes', markup.indexOf('lt-actions') < markup.indexOf('id="lt-status"') && markup.indexOf('id="lt-status"') < markup.indexOf('lt-panels'));
+  check('one shared convert grid', (markup.match(/\bzt-io"/g)||[]).length, 1);
+  check('two shared panes', (markup.match(/\bzt-io-pane\b/g)||[]).length, 2);
+  check('two fill editors', (markup.match(/\bzt-io-fill\b/g)||[]).length, 2);
+  for(const [action] of actions) check(action+': original manual button remains', markup.includes('id="lt-'+action+'"'));
+  check('Clear and Copy remain', markup.includes('id="lt-clear"') && markup.includes('id="lt-copy"'));
+  check('no new primary/automatic action', !markup.includes('btn-primary'));
+  check('readonly output is preserved', /<textarea[^>]*id="lt-output"[^>]*readonly/.test(markup));
+  check('Copy and tips outside labels', [...markup.matchAll(/<label\b[\s\S]*?<\/label>/g)].every(m=>!/<button|<Toggletip/.test(m[0])));
+  check('status has fixed height and internal overflow', /\.lt-status\s*\{[^}]*height: 2\.8em;[^}]*overflow: auto/.test(css));
+  check('editors internally scroll', /\.lt-box\s*\{[^}]*overflow: auto/.test(css));
+  check('860 breakpoint hides empty output only', /@media \(max-width: 860px\)\s*\{\s*\.lt-output-pane\[data-empty="true"\]\s*\{\s*display: none/.test(css));
+  check('640 compact two-column controls have touch height', /@media \(max-width: 640px\)/.test(css) && css.includes('grid-template-columns: repeat(2, minmax(0, 1fr))') && /min-height: 44px/.test(css));
+  check('mobile status reserves three lines', /\.lt-status\s*\{\s*height: 4\.2em/.test(css));
+  check('mobile controls override shared actions flex', css.includes('.lt-wrap .lt-actions .btn-secondary') && css.includes('.lt-wrap .lt-action .btn-secondary'));
+  check('hidden wins display', /\.lt-wrap \[hidden\]\s*\{\s*display: none/.test(css));
+  check('static labels built without runtime language replacement', !/data-i18n|document\.documentElement\.lang|var STRINGS/.test(source));
+  check('script serializes client strings only', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  check('registered as convert', /'line-tools':\s*'convert'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
+  const ids=[...markup.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);check('all IDs unique',new Set(ids).size,ids.length);
+  const retained = {
+  "en": {
+    "frontmatter": "24bb9d4f9e788c71377359da3e0c0113338fc8285604550e02457b039196fe0f",
+    "bodyWithoutUsage": "1734e27cf29092335eed4d8fdfb68eb9ae12cc957afac8f92fc033ed503cefed"
+  },
+  "zh": {
+    "frontmatter": "8b152b1a4cfc6cc66598800ad4affa50ebc625eef219499bb72d56aedf1e5ad8",
+    "bodyWithoutUsage": "00cd400520610b68c051f9bad0f5a23e87d4cc072a75f956f550092bb0534d67"
+  },
+  "ja": {
+    "frontmatter": "0c6c9eb1ba15a82a267bbc2a657721abd52094bfbb68bdf9cf7645391426c183",
+    "bodyWithoutUsage": "efa63b0a09686250bafee842aafcdf6871d6671334b1d936e910b8e21ce08367"
+  },
+  "ko": {
+    "frontmatter": "2f6f410cd764d8a2076cb9a1b7d7d0867a6325a798a640ecf227906b5dcd1439",
+    "bodyWithoutUsage": "202808284047d07cebe658cee2107ae246a60fbc127b8df85050c4d8dd31e843"
+  }
+};
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  for(const lang of languages) {
+    const T=strings[lang],{tips,...client}=T;
+    check(lang+': all translation keys match',Object.keys(T).sort(),Object.keys(strings.en).sort());
+    check(lang+': all tip keys match actual controls',Object.keys(tips).sort(),tipKeys.slice().sort());
+    for(const key of tipKeys) check(lang+'/'+key+': nonempty plain tip',typeof tips[key]==='string' && tips[key].trim().length>0 && !/[\n<>]/.test(tips[key]));
+    check(lang+': client contains no tips',!('tips' in client) && Object.values(tips).every(tip=>!JSON.stringify(client).includes(JSON.stringify(tip))));
+    check(lang+': serializable count templates survive client JSON', JSON.parse(JSON.stringify(client)), JSON.parse(JSON.stringify(T, (key,value)=>key==='tips'?undefined:value)));
+    for(const [key,wants] of Object.entries(messages[lang])) for(const n of [0,1,2]) {
+      check(lang+'/'+key+'/'+n+': original count/plural text preserved',client[key][n===1?'one':'other'].replace('{n}',String(n)),wants[n]);
+    }
+    const mdx=readFileSync(join(root,'src/content/tools/line-tools',lang+'.mdx'),'utf8');
+    const at=mdx.indexOf('\n---\n',4),meta=mdx.slice(0,at),body=mdx.slice(at+5),{steps}=loadYaml(meta.slice(4));
+    check(lang+': six steps fit limits',steps.length===6 && steps.every(step=>typeof step==='string' && step.length<=280 && !/<[^>]*>/.test(step)) && steps.join('').length<=1200);
+    for(const key of ['inputLines','output','dedup','sortAsc','sortDesc','sortNum','reverse','shuffle','trim','removeEmpty','copy','clear']) check(lang+': steps name '+key,steps.some(step=>step.includes(T[key])));
+    check(lang+': original FAQ/SEO bytes retained',sha(meta.replace(/^steps:\n(?:  .*\n)*/m,'')),retained[lang].frontmatter);
+    check(lang+': non-Usage body bytes retained',sha(body),retained[lang].bodyWithoutUsage);
+    check(lang+': Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    const p=page(lang);check(lang+': empty output hidden flag',p.get('lt-output-pane').getAttribute('data-empty'),'true');
+    input(p,'z\na');check(lang+': editing keeps output empty',p.get('lt-output-pane').getAttribute('data-empty'),'true');
+    p.get('lt-dedup').click();check(lang+': manual output visible flag',p.get('lt-output-pane').getAttribute('data-empty'),'false');
+    input(p,'');p.get('lt-sort-asc').click();check(lang+': empty manual action hides output flag',p.get('lt-output-pane').getAttribute('data-empty'),'true');
+    run(p,'empty','\n');check(lang+': all-removed output empty flag',p.get('lt-output-pane').getAttribute('data-empty'),'true');
+    run(p);p.get('lt-clear').click();check(lang+': Clear restores empty output flag',p.get('lt-output-pane').getAttribute('data-empty'),'true');
+    run(p);p.key('lt-input');check(lang+': CtrlL restores empty output flag',p.get('lt-output-pane').getAttribute('data-empty'),'true');
+  }
+  const require=createRequire(import.meta.url);
+  const {transform}=await import(require.resolve('@astrojs/compiler',{paths:[dirname(require.resolve('astro'))]}));
+  const {transform:parseJs}=await import('esbuild');
+  const compiled=await transform(source,{filename:'LineToolsTool.astro'});
+  check('Astro compilation reports no errors',compiled.diagnostics.filter(d=>d.severity===1).length,0);
+  await parseJs(compiled.code,{loader:'ts',format:'esm'});
+  check('compiled JavaScript parses and uses CLIENT_T',compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  console.log('v2 page layout: '+(passes-beforePasses)+' passed, '+(failures-beforeFailures)+' failed');
+}
+
 console.log(`${passes} passed, ${failures} failed`);
 process.exitCode=failures?1:0;

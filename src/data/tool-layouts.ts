@@ -20,6 +20,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'css-unit-converter': 'compact',
   'base64': 'convert',
   'ascii-converter': 'convert',
+  'line-tools': 'convert',
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',
