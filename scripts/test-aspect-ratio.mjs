@@ -113,6 +113,20 @@ let p = makePage();
 eq('initial ratio', p.ratio(), '16:9');
 eq('initial decimal', p.decimal(), '1.7778');
 
+// Positive fractional dimensions keep finite results when the rounded GCD is zero.
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const [w, h, ratio, decimal, preview] of [
+  [0.1, 0.1, '0.1:0.1', '1.0000', '200px/200px'],
+  [0.1, 0.2, '0.1:0.2', '0.5000', '100px/200px'],
+  [1.5, 1, '1.5:1', '1.5000', '300px/200px'],
+  [1.5, 1.5, '0.75:0.75', '1.0000', '200px/200px'],
+]) {
+  const q = makePage({ lang }), name = `${lang} fractional ${w}x${h}`;
+  q.type('ar-width', w); q.type('ar-height', h);
+  eq(name + ' ratio', q.ratio(), ratio);
+  eq(name + ' decimal', q.decimal(), decimal);
+  eq(name + ' preview', q.els('ar-preview').style.width + '/' + q.els('ar-preview').style.height, preview);
+}
+
 for (const [w, h, r, d] of [
   [2560, 1080, '64:27', '2.3704'],
   [3440, 1440, '43:18', '2.3889'],
