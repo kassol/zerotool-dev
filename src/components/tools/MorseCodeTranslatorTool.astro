@@ -30,10 +30,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { textLabel: 'Text', morseLabel: 'Morse Code (· or ., − or -; spaces between letters, / between words)', toMorse: '→ Morse', toText: '← Text', clear: 'Clear', copy: 'Copy', copied: 'Copied!', textPlaceholder: 'Type text here…', skipped: 'No Morse code for these characters, left out: {list}', unknown: 'Not in the table, shown as [?]: {list}' },
-        zh: { textLabel: '文本', morseLabel: '摩斯码（· 或 .，− 或 -；字母间空格，单词间 /）', toMorse: '→ 摩斯码', toText: '← 文本', clear: '清除', copy: '复制', copied: '已复制！', textPlaceholder: '在此输入文本…', skipped: '以下字符没有摩斯码，已跳过：{list}', unknown: '以下电码不在对照表中，显示为 [?]：{list}' },
-        ja: { textLabel: 'テキスト', morseLabel: 'モールス符号（· か .、− か -。文字間はスペース、単語間は /）', toMorse: '→ モールス', toText: '← テキスト', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', textPlaceholder: 'テキストを入力…', skipped: 'モールス符号がない文字を省きました：{list}', unknown: '符号表にないため [?] と表示：{list}' },
-        ko: { textLabel: '텍스트', morseLabel: '모스 부호(· 또는 ., − 또는 -; 문자 사이 공백, 단어 사이 /)', toMorse: '→ 모스', toText: '← 텍스트', clear: '지우기', copy: '복사', copied: '복사됨!', textPlaceholder: '텍스트를 입력…', skipped: '모스 부호가 없는 문자를 건너뛰었습니다: {list}', unknown: '부호표에 없어 [?]로 표시: {list}' }
+        en: { textLabel: 'Text', morseLabel: 'Morse Code (· or ., − or -; spaces between letters, / between words)', toMorse: '→ Morse', toText: '← Text', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFail: 'Could not copy. Please select and copy the Morse code manually.', textPlaceholder: 'Type text here…', skipped: 'No Morse code for these characters, left out: {list}', unknown: 'Not in the table, shown as [?]: {list}' },
+        zh: { textLabel: '文本', morseLabel: '摩斯码（· 或 .，− 或 -；字母间空格，单词间 /）', toMorse: '→ 摩斯码', toText: '← 文本', clear: '清除', copy: '复制', copied: '已复制！', copyFail: '复制失败。请选中摩斯码后手动复制。', textPlaceholder: '在此输入文本…', skipped: '以下字符没有摩斯码，已跳过：{list}', unknown: '以下电码不在对照表中，显示为 [?]：{list}' },
+        ja: { textLabel: 'テキスト', morseLabel: 'モールス符号（· か .、− か -。文字間はスペース、単語間は /）', toMorse: '→ モールス', toText: '← テキスト', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFail: 'コピーできませんでした。モールス符号を選択して手動でコピーしてください。', textPlaceholder: 'テキストを入力…', skipped: 'モールス符号がない文字を省きました：{list}', unknown: '符号表にないため [?] と表示：{list}' },
+        ko: { textLabel: '텍스트', morseLabel: '모스 부호(· 또는 ., − 또는 -; 문자 사이 공백, 단어 사이 /)', toMorse: '→ 모스', toText: '← 텍스트', clear: '지우기', copy: '복사', copied: '복사됨!', copyFail: '복사하지 못했습니다. 모스 부호를 선택하여 직접 복사하세요.', textPlaceholder: '텍스트를 입력…', skipped: '모스 부호가 없는 문자를 건너뛰었습니다: {list}', unknown: '부호표에 없어 [?]로 표시: {list}' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -53,6 +53,9 @@
       var m2tBtn     = document.getElementById('mct-morse-to-text');
       var clearBtn   = document.getElementById('mct-clear-text');
       var copyBtn    = document.getElementById('mct-copy-morse');
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyError = false;
 
       /* ── engine:start ── */
       /* Codes from ITU-R M.1677-1 part I §1.1 (letters, accented e, figures,
@@ -152,6 +155,7 @@
       /* ── engine:end ── */
 
       function showNotice(msg) {
+        copyError = false;
         if (msg) {
           errorEl.textContent = msg;
           errorEl.hidden = false;
@@ -161,9 +165,17 @@
         }
       }
 
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError) showNotice('');
+      }
+
       t2mBtn.addEventListener('click', function () {
+        invalidateCopy();
         var text = textEl.value;
-        if (!text.trim()) return;
+        if (!text.trim()) { morseEl.value = ''; showNotice(''); return; }
         var r = textToMorse(text);
         morseEl.value = r.morse;
         showNotice(r.skipped.length ? t.skipped.replace('{list}', r.skipped.join(' ')) : '');
@@ -171,33 +183,63 @@
       });
 
       m2tBtn.addEventListener('click', function () {
+        invalidateCopy();
         var morse = morseEl.value;
-        if (!morse.trim()) return;
+        if (!morse.trim()) { textEl.value = ''; showNotice(''); return; }
         var r = morseToText(morse);
         textEl.value = r.text;
         showNotice(r.unknown.length ? t.unknown.replace('{list}', r.unknown.join('  ')) : '');
         window.trackTool && window.trackTool('morse-code-translator', 'morse-to-text');
       });
 
-      clearBtn.addEventListener('click', function () {
+      function clearAll() {
+        invalidateCopy();
         textEl.value = '';
         morseEl.value = '';
-        errorEl.hidden = true;
+        showNotice('');
+      }
+
+      clearBtn.addEventListener('click', function () {
+        clearAll();
         textEl.focus();
       });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var root = document.querySelector('.mct-wrap');
+        if (root && root.contains(document.activeElement)) clearAll();
+      });
+
+      textEl.addEventListener('input', invalidateCopy);
+      morseEl.addEventListener('input', invalidateCopy);
 
       copyBtn.addEventListener('click', function () {
         var text = morseEl.value;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        function done() {
+          if (revision !== copyRevision) return;
+          if (copyError) showNotice('');
           copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+          copyTimer = setTimeout(function () {
+            if (revision === copyRevision) copyBtn.textContent = t.copy;
+          }, 1500);
+        }
+        function failed() {
+          if (revision !== copyRevision) return;
+          showNotice(t.copyFail);
+          copyError = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(done, failed);
+        } catch (e) { failed(); }
       });
 
       // seed example
       textEl.value = 'Hello World';
-      morseEl.value = textToMorse('Hello World');
+      morseEl.value = textToMorse('Hello World').morse;
     })();
   </script>
 </div>
