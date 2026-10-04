@@ -156,10 +156,18 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 |---|---|
 | `.zt-io` | The two-column grid of a `convert` tool. Its parent is the tool root, a flex column, so the grid takes the height that is left. One column at 860px and below. |
 | `.zt-io-pane` | One side of the grid: a flex column with the label row on top and the editor under it. |
-| `.zt-io-fill` | The textarea, `<pre>` or list that fills its pane (`flex: 1`, at least 300px, no resize handle). At 860px and below it stops stretching, is at least 120px high and can be resized; the tool sets the height there. |
+| `.zt-io-fill` | The textarea, `<pre>` or list that fills its pane (`flex: 1 1 0`, at least 300px, no resize handle). The basis is 0 so that long output scrolls inside the pane and does not make the first screen taller; give a `<div>` or `<pre>` that holds results `overflow: auto`. At 860px and below it stops stretching, is at least 120px high and can be resized; the tool sets the height there. |
 | `.zt-tip`, `.zt-tip-btn`, `.zt-tip-pop` | Toggletip button and panel. `Toggletip.astro` has no `<style>` of its own. |
 
-`convert` tools use `.zt-io`, `.zt-io-pane` and `.zt-io-fill` for the panels and keep their own class next to each for tool-specific rules (tab size, colors, phone heights). A rail class for `generate` and an empty-state drop zone for `analyze` are not shared yet: each has one user, and they move to `tool-common.css` when a second tool needs them.
+`convert` tools use `.zt-io`, `.zt-io-pane` and `.zt-io-fill` for the panels and keep their own class next to each for tool-specific rules (tab size, colors, phone heights). Rules that the first batch (2026-10-04, 12 tools; `TextToBinaryTool` is the reference) settled:
+
+- The component's outermost element is the tool root (a flex column with `min-height: 0`); no wrapper `<div>` around it, because only direct children of the widget get the height.
+- Order: buttons and options in one or two rows, then the status line, then the panels; notes go under the output. The status line keeps its height when it is empty, so a first result does not move the panels.
+- The input is on the left and what the user reads (output, preview, result cards) on the right. Inputs that belong together (bytes and schema, message and key) share the left pane. A tool whose output is a list of cards may give the right pane more width from 861px (`UnicodeTextConverterTool`: 1fr 2fr).
+- A result pane with nothing in it shows one sentence that says what will appear (in all four languages); at 860px and below the empty pane is hidden.
+- The tool's own breakpoints are 860px (stack) and 640px (phone details).
+- A button whose action already ran when the input changed is removed, with its strings. If that button was also the only way to retry after a load failure, the failure message gets a Retry button (`SvgOptimizerTool`).
+- A consequence the user must see when choosing (an option that sends requests, a fixed IV) stays visible while the option is on; a toggletip holds the details only (`MarkdownToWordTool`). A rail class for `generate` and an empty-state drop zone for `analyze` are not shared yet: each has one user, and they move to `tool-common.css` when a second tool needs them.
 
 **Shell**
 
