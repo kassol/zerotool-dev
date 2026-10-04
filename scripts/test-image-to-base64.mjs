@@ -364,6 +364,8 @@ for (const api of ['localStorage', 'sessionStorage', 'ztPersist', 'indexedDB', '
     const steps = front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - ".*"$/gm) || [];
     eq(lang + ' mdx: 6 steps in the frontmatter', steps.length, 6);
     check(lang + ' mdx: steps fit the llms-full.txt limits', steps.every((s) => s.length - 6 <= 280) && steps.join('').length - 6 * steps.length <= 1200);
+    // llms.mjs plainText() removes anything that looks like a tag, so the HTML <img> button is written with entities.
+    check(lang + ' mdx: no raw tag in the steps', steps.every((s) => !/<[a-z!\/]/i.test(s)) && steps.some((s) => s.includes('HTML &lt;img&gt;')));
     check(lang + ' mdx: no usage section in the body', !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body));
     check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한)\s*$/m.test(body));
   }
