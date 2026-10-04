@@ -2102,6 +2102,7 @@ const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/bm
       }
 
       function addFromDrop(dt) {
+        var token = loadToken;
         var dtItems = dt.items ? Array.prototype.slice.call(dt.items) : [];
         var entries = dtItems.map(function (it) { return it.kind === 'file' && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null; });
         if (!entries.some(function (e) { return e && e.isDirectory; })) { addEntries(filesToEntries(dt.files)); return; }
@@ -2111,7 +2112,7 @@ const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/bm
           if (e && e.isDirectory) return readEntry(e, out);
           if (files[i]) out.push({ file: files[i], path: files[i].name || 'image.png', folder: false });
           return Promise.resolve();
-        })).then(function () { addEntries(out); });
+        })).then(function () { if (token === loadToken) addEntries(out); });
       }
 
       function removeItem(seqNo) {
@@ -2415,12 +2416,13 @@ const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/bm
         flushRebuild();
         if (!built) return;
         var img = imageInfo();
+        var name = sheetName() + '.' + img.ext;
         var label = img.ext === 'webp' ? 'WebP' : 'PNG';
         if (exportNoteList.some(function (n) { return n.kind === 'error'; })) { renderStatus(); return; }
         try {
           canvas.toBlob(function (blob) {
             if (!blob || blob.type !== img.mime) { showActionError(fmt(t.statusExportFailed, { ext: label })); return; }
-            downloadBlob(blob, sheetName() + '.' + img.ext);
+            downloadBlob(blob, name);
             if (window.trackTool) window.trackTool(SLUG, img.ext);
           }, img.mime, 1);
         } catch (e) {

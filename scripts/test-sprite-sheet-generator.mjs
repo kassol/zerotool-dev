@@ -4,6 +4,7 @@
 //        block between the `engine:start` / `engine:end` markers, so this test cannot
 //        drift from the shipped source), GifSplitterTool.astro and
 //        SvgToPngConverterTool.astro (declarations copied from them must stay identical),
+//        ToolLayout.astro and persistence.ts (actual global shortcut/storage contract),
 //        scripts/test-sprite-sheet-generator.fixtures.json (engine parser results),
 //        src/content/tools/sprite-sheet-generator/*.mdx (examples marked {/* ssg-check */})
 // Write: stdout (test results); with --regenerate <dir> the fixture file
@@ -31,6 +32,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import sharp from 'sharp';
+import vm from 'node:vm';
+import { parseFragment } from 'parse5';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -769,6 +772,165 @@ if (regenIndex > 0) await regenerate(process.argv[regenIndex + 1]);
   check('page examples: at least 8 checked', total >= 8, total + ' checked');
 }
 
+
+// ---------- actual page lifecycle: delayed canvas and directory APIs ----------
+// Only DOM/canvas/file-system APIs are doubled. The complete shipped IIFE runs unchanged.
+function loadSpritePage({ deferBitmap = [] } = {}) {
+  const ids = new Map(), timers = new Map(), urls = new Map(), downloads = [], blobs = [], decoded = [], pendingBitmaps = [];
+  const document = { activeElement: null, listeners: {} };
+  let serial = 0;
+  function matches(el, selector) {
+    return selector.split(',').some(part => {
+      const attrs = [...part.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+      const plain = part.trim().replace(/\[[^\]]+\]/g, ''), id = /#([\w-]+)/.exec(plain), tag = /^[\w-]+/.exec(plain);
+      return (!id || el.id === id[1]) && (!tag || el.tagName === tag[0].toUpperCase()) &&
+        [...plain.matchAll(/\.([\w-]+)/g)].every(c => el.classList.contains(c[1])) &&
+        attrs.every(a => a[2] === undefined ? el.getAttribute(a[1]) !== null : el.getAttribute(a[1]) === a[2]);
+    });
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), id: '', type: tag === 'input' ? 'text' : '', value: '', hidden: false, checked: false, disabled: false, attrs: {}, dataset: {}, style: {}, className: '', children: [], listeners: {}, parentElement: null, draws: [] }); }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className += ' ' + c; }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); }, toggle(c, value) { const on = value ?? !this.contains(c); on ? this.add(c) : this.remove(c); return on; } }; }
+    set width(v) { this._width = v; this.draws = []; }
+    get width() { return this._width || 0; }
+    set height(v) { this._height = v; this.draws = []; }
+    get height() { return this._height || 0; }
+    set textContent(v) { this.text = String(v); this.children.forEach(c => { c.parentElement = null; }); this.children = []; }
+    get textContent() { return (this.text || '') + this.children.map(c => c.textContent).join(''); }
+    set innerHTML(v) { this.textContent = v; }
+    setAttribute(k, v) { this.attrs[k] = String(v); if (['id', 'type', 'name', 'value'].includes(k)) this[k] = String(v); if (k === 'class') this.className = String(v); if (k === 'hidden') this.hidden = true; if (k === 'checked') this.checked = true; if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(v); }
+    getAttribute(k) { return this.attrs[k] ?? null; }
+    removeAttribute(k) { delete this.attrs[k]; if (k === 'hidden') this.hidden = false; }
+    appendChild(el) { if (el.tagName === '#FRAGMENT') { [...el.children].forEach(c => this.appendChild(c)); return el; } el.remove(); this.children.push(el); el.parentElement = this; return el; }
+    removeChild(el) { el.remove(); }
+    remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(c => c !== this); this.parentElement = null; }
+    contains(el) { return el === this || this.children.some(c => c.contains(el)); }
+    querySelectorAll(selector) { return this.children.flatMap(c => [...(matches(c, selector) ? [c] : []), ...c.querySelectorAll(selector)]); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+    closest(selector) { return matches(this, selector) ? this : this.parentElement?.closest(selector) || null; }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    dispatch(type, init = {}) { const event = { type, target: this, preventDefault() {}, stopPropagation() {}, ...init }; for (const fn of this.listeners[type] || []) fn.call(this, event); }
+    click() { if (this.disabled) return; if (this.tagName === 'A') downloads.push({ name: this.download, blob: urls.get(this.href) }); this.dispatch('click'); }
+    focus() { document.activeElement = this; }
+    select() {}
+    getBoundingClientRect() { return { top: 200, left: 0, width: 100, height: 100 }; }
+    getContext() {
+      const el = this;
+      return { clearRect() { el.draws = []; }, drawImage(source) { el.draws.push(source.fixture || source.draws?.join('|') || 'canvas'); el.pixel = source.pixel || 1; }, getImageData(x, y, w, h) { const data = new Uint8ClampedArray(w * h * 4); for (let i = 0; i < data.length; i += 4) { data[i] = el.pixel || 1; data[i + 3] = 255; } return { data }; } };
+    }
+    toDataURL(type) { return 'data:' + type + ';base64,fixture'; }
+    toBlob(callback, type) { const snapshot = new Blob([JSON.stringify({ width: this.width, height: this.height, pixels: [...this.draws] })], { type }); blobs.push({ callback, snapshot }); }
+  }
+  const body = new Element('body'); document.body = body;
+  function build(node, parent) {
+    if (node.nodeName === '#text') return;
+    const el = new Element(node.tagName || '#fragment');
+    for (const attr of node.attrs || []) el.setAttribute(attr.name, attr.value);
+    if (el.id) ids.set(el.id, el);
+    parent.appendChild(el);
+    for (const child of node.childNodes || []) build(child, el);
+  }
+  const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script is:inline'));
+  for (const node of parseFragment(markup).childNodes) build(node, body);
+  const wrap = ids.get('ssg-wrap'), get = id => { if (!ids.has(id)) throw new Error('Missing actual markup id: ' + id); return ids.get(id); };
+  Object.assign(document, { getElementById: get, querySelector: s => s === '.tool-widget' ? wrap : body.querySelector(s), createElement: tag => new Element(tag), createElementNS: (ns, tag) => new Element(tag), createDocumentFragment: () => new Element('#fragment'), createTextNode: text => { const el = new Element('#text'); el.textContent = text; return el; }, addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }, execCommand: () => true });
+  const fm = source.slice(0, source.indexOf('\n---', 4));
+  const STRINGS = new Function('return ' + fm.slice(fm.indexOf('const STRINGS = ') + 'const STRINGS = '.length, fm.indexOf('// strings:end')).replace(/;\s*$/, ''))();
+  const store = new Map(), localStorage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k), key: i => [...store.keys()][i] ?? null, get length() { return store.size; } };
+  const policy = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8').match(/export const toolPersistencePolicy = ([\s\S]*?) as const/)[1];
+  const sandbox = { document, t: STRINGS.en, langPrefix: '', localStorage, toolPersistencePolicy: vm.runInNewContext('(' + policy + ')'), _slug: 'sprite-sheet-generator', Blob, console, innerHeight: 900, scrollY: 0, scrollTo() {},
+    URL: { createObjectURL(blob) { const id = 'blob:fixture-' + ++serial; urls.set(id, blob); return id; }, revokeObjectURL: id => urls.delete(id) },
+    navigator: { clipboard: { writeText: () => Promise.resolve() } },
+    createImageBitmap(file) { const bmp = { width: 2, height: 2, fixture: file.name, pixel: [...file.name].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 250 + 1, closed: false, close() { this.closed = true; } }; decoded.push(bmp); if (deferBitmap.includes(file.name)) return new Promise(resolve => pendingBitmaps.push(() => resolve(bmp))); return Promise.resolve(bmp); },
+    setTimeout(fn, ms) { const id = ++serial; timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id) };
+  sandbox.window = sandbox;
+  const ctx = vm.createContext(sandbox), layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  vm.runInContext(layout.match(/<script is:inline define:vars=\{\{ toolPersistencePolicy \}\}>([\s\S]*?)<\/script>/)[1], ctx);
+  vm.runInContext(source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1], ctx);
+  const shortcutStart = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
+  vm.runInContext(layout.slice(shortcutStart, layout.indexOf('// ── Copy button visual feedback', shortcutStart)), ctx);
+  function flushZeroTimers() { for (const [id, timer] of [...timers]) if (timer.ms === 0) { timers.delete(id); timer.fn(); } }
+  return { get, wrap, ctx, downloads, blobs, decoded, pendingBitmaps, store,
+    change(id, value, event = 'change') { const el = get(id); el.value = value; el.dispatch(event); },
+    importFiles(files) { const el = get('ssg-file'); el.files = files; el.dispatch('change'); },
+    drop(dt) { wrap.dispatch('drop', { dataTransfer: dt }); },
+    clear(mode) { if (mode === 'clear') { get('ssg-clear').click(); return; } get('ssg-name').focus(); const e = { key: mode === 'meta' ? 'L' : 'l', [mode === 'meta' ? 'metaKey' : 'ctrlKey']: true, preventDefault() {} }; for (const fn of document.listeners.keydown) fn(e); flushZeroTimers(); },
+    finishBlob() { const job = blobs.shift(); job.callback(job.snapshot); return job.snapshot; },
+    names() { const data = get('ssg-data').value; return data ? Object.keys(JSON.parse(data).frames) : []; },
+    prefs() { return sandbox.ztPersist.load('sprite-sheet-generator'); }
+  };
+}
+const settleSprite = () => new Promise(resolve => setImmediate(resolve));
+const spriteFile = name => ({ name, type: 'image/png', size: 16 });
+function delayedFileEntry(name) {
+  let complete;
+  return { entry: { isFile: true, fullPath: '/folder/' + name, file(success) { complete = () => success(spriteFile(name)); } }, complete() { if (!complete) throw new Error('file callback not pending: ' + name); complete(); } };
+}
+function delayedDirectory(childrenName = '/folder') {
+  const pending = [];
+  return { entry: { isDirectory: true, fullPath: childrenName, createReader() { return { readEntries(success) { pending.push(success); } }; } }, batch(entries) { if (!pending.length) throw new Error('directory read not pending'); pending.shift()(entries); } };
+}
+function directoryDrop(directory, loose = []) {
+  return { files: [], items: [{ kind: 'file', webkitGetAsEntry: () => directory.entry, getAsFile: () => null }, ...loose.map(file => ({ kind: 'file', webkitGetAsEntry: () => null, getAsFile: () => file }))] };
+}
+for (const format of ['png', 'webp']) for (const action of ['rename', 'clear', 'ctrl', 'meta']) {
+  const page = loadSpritePage(), label = 'lifecycle download ' + format + '/' + action;
+  page.importFiles([spriteFile('clicked-pixels.png')]); await settleSprite();
+  page.change('ssg-name', 'click snapshot', 'input'); page.change('ssg-imgfmt', format);
+  check(label + ': real import built a sheet', !page.get('ssg-output').hidden && page.names().includes('clicked-pixels.png'));
+  page.get('ssg-dl-img').click();
+  equal(label + ': canvas encoding is pending', page.blobs.length, 1);
+  if (action !== 'rename') page.clear(action);
+  page.change('ssg-name', 'later name', 'input');
+  page.change('ssg-imgfmt', format === 'png' ? 'webp' : 'png');
+  const before = { hidden: page.get('ssg-output').hidden, data: page.get('ssg-data').value, status: page.get('ssg-status').textContent };
+  page.finishBlob();
+  equal(label + ': finishes the already requested download', page.downloads.length, 1);
+  equal(label + ': filename uses click snapshot', page.downloads[0]?.name, 'click-snapshot.' + format);
+  equal(label + ': encoding format uses click snapshot', page.downloads[0]?.blob.type, 'image/' + format);
+  deepEqual(label + ': exported pixels use click snapshot', JSON.parse(await page.downloads[0].blob.text()).pixels, ['clicked-pixels.png']);
+  deepEqual(label + ': callback does not restore or change page output', { hidden: page.get('ssg-output').hidden, data: page.get('ssg-data').value, status: page.get('ssg-status').textContent }, before);
+}
+for (const phase of ['first-batch', 'later-batch', 'file-callback', 'nested-directory']) for (const mode of ['clear', 'ctrl', 'meta']) {
+  const page = loadSpritePage(), label = 'lifecycle drop ' + phase + '/' + mode;
+  const dir = delayedDirectory(), nested = delayedDirectory('/folder/nested'), a = delayedFileEntry('old-a.png'), b = delayedFileEntry('old-b.png');
+  page.change('ssg-name', 'keep-pref', 'input'); page.change('ssg-spacing', '7', 'input');
+  page.drop(directoryDrop(dir, [spriteFile('old-loose.png')]));
+  if (phase === 'later-batch') dir.batch([a.entry]);
+  if (phase === 'file-callback') { dir.batch([a.entry, b.entry]); dir.batch([]); await settleSprite(); }
+  if (phase === 'nested-directory') { dir.batch([nested.entry]); dir.batch([]); await settleSprite(); }
+  page.clear(mode);
+  check(label + ': clear immediately hides result', page.get('ssg-output').hidden && page.get('ssg-data').value === '');
+  equal(label + ': clear keeps sheet-name preference', page.get('ssg-name').value, 'keep-pref');
+  equal(label + ': clear keeps option preference', page.prefs().spacing, 7);
+  page.importFiles([spriteFile('fresh.png')]); await settleSprite();
+  deepEqual(label + ': new import works while old directory waits', page.names(), ['fresh.png']);
+  if (phase === 'first-batch') { dir.batch([a.entry]); dir.batch([b.entry]); dir.batch([]); }
+  if (phase === 'later-batch') { dir.batch([b.entry]); dir.batch([]); }
+  if (phase === 'nested-directory') { nested.batch([a.entry, b.entry]); nested.batch([]); }
+  await settleSprite(); a.complete(); b.complete(); await settleSprite();
+  deepEqual(label + ': stale directory cannot join new import', page.names(), ['fresh.png']);
+  deepEqual(label + ': stale directory and mixed loose file never decode', page.decoded.map(bmp => bmp.fixture), ['fresh.png']);
+  equal(label + ': image list contains only new import', page.get('ssg-list').children.length, 1);
+}
+// Existing queued decoding remains serialized and its own token still releases cancelled bitmaps.
+for (const mode of ['clear', 'ctrl', 'meta']) {
+  const page = loadSpritePage({ deferBitmap: ['pending.png'] }), label = 'lifecycle existing queue/' + mode;
+  page.importFiles([spriteFile('pending.png')]); await settleSprite();
+  equal(label + ': old decode is pending', page.pendingBitmaps.length, 1);
+  page.clear(mode); page.importFiles([spriteFile('fresh.png')]); await settleSprite();
+  deepEqual(label + ': new import preserves queue order', page.decoded.map(bmp => bmp.fixture), ['pending.png']);
+  page.pendingBitmaps.shift()(); await settleSprite();
+  check(label + ': cancelled bitmap is released', page.decoded[0].closed);
+  deepEqual(label + ': queued new import finishes alone', page.names(), ['fresh.png']);
+}
+// A non-cancelled directory still reads every batch and enters the natural-sort queue.
+{
+  const page = loadSpritePage(), dir = delayedDirectory(), a = delayedFileEntry('frame10.png'), b = delayedFileEntry('frame2.png');
+  page.drop(directoryDrop(dir)); dir.batch([a.entry]); dir.batch([b.entry]); dir.batch([]); await settleSprite();
+  a.complete(); b.complete(); await settleSprite();
+  deepEqual('lifecycle drop without clear: both batches sorted naturally', page.names(), ['frame2.png', 'frame10.png']);
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
