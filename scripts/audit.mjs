@@ -606,8 +606,8 @@ function checkPersistencePolicy() {
 }
 
 // src/data/tool-layouts.ts lists the tools that render the v2 page and their layout kind.
-// A key that is not a tool slug never matches a page; a kind outside the three has no layout.
-const TOOL_PAGE_KINDS = ['convert', 'generate', 'analyze'];
+// A key that is not a tool slug never matches a page; an unknown kind has no layout.
+const TOOL_PAGE_KINDS = ['convert', 'generate', 'analyze', 'compact'];
 
 function checkToolLayouts(toolSlugs) {
   const src = read('src/data/tool-layouts.ts');

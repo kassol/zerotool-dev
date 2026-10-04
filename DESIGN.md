@@ -140,7 +140,7 @@ Every tool UI fills the `.tool-widget` width. Use inner grids to create local st
 
 ### Tool Pages v2
 
-Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page--v2`; the other tools keep the structure above until they are moved in batches. To move a tool: add its slug with a kind, make its component fill the height it gets, put explanations in toggletips, move the MDX "How to use" facts into the tool and the `steps` frontmatter (the "Limits" section stays in the MDX, see "Reference content"), and run its tests, `test-llms-txt.mjs`, audit and build.
+Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page--v2`; the other tools keep the structure above until they are moved in batches. To move a tool: add its slug with a kind, size its component for that kind, put explanations in toggletips, move the MDX "How to use" facts into the tool and the `steps` frontmatter (the "Limits" section stays in the MDX, see "Reference content"), and run its tests, `test-llms-txt.mjs`, audit and build.
 
 **Kinds** (pick by what the user mainly looks at):
 
@@ -149,6 +149,7 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 | `convert` | Input and output side by side, both as tall as the first screen allows; options in one row above them; notes under the output. Stacks below 860px with options after the panels. | 2400px | `JsonFormatterTool` |
 | `generate` | A 270–320px control rail (inputs, options, code export) on the left; the generated preview fills the rest (palettes: six cards in two rows of three, monochromatic full width). Rail stacks on top below 860px. | 1840px | `ColorPaletteGeneratorTool` |
 | `analyze` | The result uses the full width. Before input, the drop zone fills the first screen. From 1280px, details open beside the list; lists grow with the window height. | 2400px | `HarFileAnalyzerTool` |
+| `compact` | Short inputs followed directly by short results. The tool card is centered, at most 960px wide, and uses its content height at every viewport. Controls and a reserved status row precede results. Long values scroll inside their result rows; worked steps may use a bounded area below. | 1120px | `NumberBaseTool` (B5 representative) |
 
 **Shared classes** (`src/styles/tool-common.css`, loaded on every tool page)
 
@@ -177,6 +178,7 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 - Width `min(100% - 2 × clamp(0.5rem, 1.6vw, 1.75rem), max)`; the site nav widens to the same edge on these pages (`html:has(.tool-page--v2)` sets `--max-width`).
 - Header: 40px icon well, display-serif H1 `clamp(1.55rem, 1.05rem + 1.25vw, 2.35rem)`, description at 0.93rem, trust items as small muted text at the top right (below the title under 900px). No kicker label.
 - `.tool-first` (header + `.tool-widget--v2`) has `min-height: calc(100svh - var(--header-height))`; the widget is a flex column and the tool's root element gets `flex: 1`, so editors, previews and lists grow into the first screen. Below 760px the first screen does not fill; the tool stacks at its own height.
+- `compact` uses a 1120px shell and a centered tool card up to 960px. Its first screen has no viewport minimum height; neither the card nor its root stretches. Results follow the inputs without an empty preview area. The shared page order and folded reference content stay the same.
 - Page order: tool → share buttons / guide link → reference `<details id="reference">` (closed) → mid ad → related tools → bottom ad. Sensitive tools show no ads, as before.
 
 **Explanations in the tool**
