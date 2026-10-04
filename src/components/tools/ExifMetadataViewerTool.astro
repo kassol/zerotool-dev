@@ -442,6 +442,7 @@
       var currentBuffer = null;
       var currentName   = '';
       var currentExif   = null;
+      var loadGen = 0;
 
       function copyText(text, btn) {
         navigator.clipboard.writeText(text).then(function () {
@@ -501,6 +502,9 @@
 
       function processFile(file) {
         if (!file) return;
+        resetAll();
+        var gen = loadGen;
+        resultArea.style.display = '';
         var name = (file.name || '').toLowerCase();
         if (file.type !== 'image/jpeg' && !/\.jpe?g$/i.test(name)) {
           statusEl.textContent = t.errNotJpeg;
@@ -520,13 +524,21 @@
 
         var reader = new FileReader();
         reader.onload = function (e) {
+          if (gen !== loadGen) return;
           var buf = e.target.result;
+          var parsed = parseExif(buf);
+          if (parsed.error === 'not_jpeg') {
+            statusEl.textContent = t.errNotJpeg;
+            statusEl.className = 'tool-status error';
+            return;
+          }
           currentBuffer = buf;
           currentName = file.name || 'photo.jpg';
 
           var blob = new Blob([buf], { type: 'image/jpeg' });
           var dataUrl = URL.createObjectURL(blob);
           previewImg.src = dataUrl;
+          previewImg.style.display = '';
           previewImg.alt = currentName;
 
           filenameEl.textContent = currentName;
@@ -535,22 +547,13 @@
           // Probe dimensions via Image once it loads
           var probe = new Image();
           probe.onload = function () {
+            if (gen !== loadGen) return;
             dimsEl.textContent = probe.naturalWidth + ' × ' + probe.naturalHeight + ' px';
           };
           probe.src = dataUrl;
 
           dropzone.style.display = 'none';
           resultArea.style.display = '';
-
-          var parsed = parseExif(buf);
-          if (parsed.error === 'not_jpeg') {
-            statusEl.textContent = t.errNotJpeg;
-            statusEl.className = 'tool-status error';
-            metaBlock.style.display = 'none';
-            noMetaEl.style.display = 'none';
-            actionsEl.style.display = 'none';
-            return;
-          }
 
           currentExif = parsed.exif;
           var hasMeta = displayExif(parsed.exif);
@@ -570,6 +573,7 @@
           window.trackTool && window.trackTool('exif-metadata-viewer', hasMeta ? 'parsed_with_exif' : 'parsed_no_exif');
         };
         reader.onerror = function () {
+          if (gen !== loadGen) return;
           statusEl.textContent = t.errRead;
           statusEl.className = 'tool-status error';
         };
@@ -624,6 +628,7 @@
       });
 
       copyJsonBtn.addEventListener('click', function () {
+        if (!currentBuffer) return;
         if (!currentExif) {
           copyText('{}', copyJsonBtn);
           return;
@@ -632,10 +637,19 @@
         window.trackTool && window.trackTool('exif-metadata-viewer', 'copy_json');
       });
 
-      resetBtn.addEventListener('click', function () {
+      function resetAll() {
+        loadGen++;
         resultArea.style.display = 'none';
         dropzone.style.display = '';
+        if (previewImg.src) URL.revokeObjectURL(previewImg.src);
         previewImg.src = '';
+        previewImg.style.display = 'none';
+        previewImg.alt = '';
+        filenameEl.textContent = '';
+        filesizeEl.textContent = '';
+        dimsEl.textContent = '';
+        fileInput.value = '';
+        resetGroups();
         statusEl.textContent = '';
         statusEl.className = 'tool-status';
         metaBlock.style.display = 'none';
@@ -644,6 +658,12 @@
         currentBuffer = null;
         currentExif = null;
         currentName = '';
+      }
+      resetBtn.addEventListener('click', resetAll);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L') || !dropzone.closest('.emv-wrap').contains(document.activeElement)) return;
+        e.preventDefault();
+        resetAll();
       });
     })();
   </script>

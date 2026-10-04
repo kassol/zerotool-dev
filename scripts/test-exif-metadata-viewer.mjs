@@ -2,7 +2,7 @@
 //
 // Read:  src/components/tools/ExifMetadataViewerTool.astro (extracts the code from the EXIF tag
 //        tables to the DOM helpers), src/content/tools/exif-metadata-viewer/en.mdx,
-//        src/data/persistence.ts
+//        src/data/persistence.ts, ToolLayout.astro keyboard callback
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
+import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ExifMetadataViewerTool.astro'), 'utf8');
@@ -181,6 +182,131 @@ eq('drop-zone text says 100 MB', (source.match(/dropSub: '[^']*'/g) || []).every
 eq('no 25 MB limit text left', /JPEG · (up to|最大|최대) 25 MB/.test(source), false);
 eq('persistence disabled', /'exif-metadata-viewer': 'disabled'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')), true);
 eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source), false);
+
+// ---------- Real page file lifecycle ----------
+// Run the complete page script and shared shortcut. FileReader, image-dimension loading and
+// clipboard completion are controlled; JPEG parsing and exported bytes use the real fixture.
+{
+  const base = { passes, failures };
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+  const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  function ui(lang = 'en', shellFirst = false) {
+    const ids = new Map(), readers = [], images = [], downloads = [], copied = [], revoked = [], urls = new Map(), timers = [], clears = [];
+    let document, urlId = 0;
+    function matches(n, selector) {
+      return selector.split(',').some(s => {
+        s = s.trim();
+        const attrs = [...s.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
+        s = s.replace(/\[[^\]]+\]/g, '');
+        const id = /#([\w-]+)/.exec(s), classes = [...s.matchAll(/\.([\w-]+)/g)], tag = /^[\w-]+/.exec(s);
+        return (!id || n.id === id[1]) && classes.every(c => n.classList.contains(c[1])) && (!tag || n.tagName === tag[0].toUpperCase()) && attrs.every(a => a[2] === undefined ? n.getAttribute(a[1]) !== null : n.getAttribute(a[1]) === a[2]);
+      });
+    }
+    class Element {
+      constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], listeners: {}, attrs: {}, style: {}, className: '', id: '', value: '', src: '', files: [], hidden: false, disabled: false }); }
+      get classList() { const e = this; return { contains: c => e.className.split(/\s+/).includes(c), add(c) { if (!this.contains(c)) e.className += ' ' + c; }, remove(c) { e.className = e.className.split(/\s+/).filter(x => x !== c).join(' '); } }; }
+      setAttribute(k, v) { this.attrs[k] = String(v); if (['id', 'class', 'type', 'value', 'src', 'href'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); }
+      getAttribute(k) { return this.attrs[k] ?? null; }
+      removeAttribute(k) { delete this.attrs[k]; if (k === 'src' || k === 'href') this[k] = ''; }
+      appendChild(n) { this.children.push(n); n.parentElement = this; return n; }
+      removeChild(n) { this.children = this.children.filter(c => c !== n); n.parentElement = null; }
+      remove() { this.parentElement?.removeChild(this); }
+      set textContent(v) { this.text = String(v); this.children = []; }
+      get textContent() { return (this.text || '') + this.children.map(n => n.textContent).join(''); }
+      contains(n) { return this === n || this.children.some(c => c.contains(n)); }
+      closest(s) { for (let e = this; e; e = e.parentElement) if (matches(e, s)) return e; return null; }
+      querySelectorAll(s) { return this.children.flatMap(n => [...(matches(n, s) ? [n] : []), ...n.querySelectorAll(s)]); }
+      querySelector(s) { return this.querySelectorAll(s)[0] || null; }
+      addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+      dispatch(type, extra = {}) { const e = { target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() {}, ...extra }; for (const fn of this.listeners[type] || []) fn(e); return e; }
+      click() { if (this.disabled) return; if (this.tagName === 'A' && this.download) downloads.push({ name: this.download, blob: urls.get(this.href) }); this.dispatch('click'); }
+      focus() { document.activeElement = this; }
+    }
+    const body = new Element('body'), widget = new Element('div'); widget.className = 'tool-widget'; body.appendChild(widget);
+    const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+    const stack = [widget], voids = new Set(['input', 'img', 'br', 'hr', 'meta', 'link']);
+    for (const m of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>/g)) {
+      if (m[0].startsWith('</')) { if (stack.at(-1).tagName === m[1].toUpperCase()) stack.pop(); continue; }
+      const n = new Element(m[1]);
+      for (const a of m[2].matchAll(/([\w-]+)="([^"]*)"/g)) { n.setAttribute(a[1], a[2]); if (a[1] === 'style') for (const field of a[2].split(';')) { const [k, v] = field.split(':'); if (k) n.style[k.trim()] = v?.trim(); } }
+      n.hidden = /\bhidden(?:\s|\/|$)/.test(m[2]); n.disabled = /\bdisabled(?:\s|\/|$)/.test(m[2]);
+      stack.at(-1).appendChild(n); if (n.id) ids.set(n.id, n); if (!voids.has(m[1]) && !m[2].endsWith('/')) stack.push(n);
+    }
+    const get = id => { if (!ids.has(id)) throw new Error('Missing real element ' + id); return ids.get(id); };
+    document = new Element('document'); Object.assign(document, { body, documentElement: { lang }, activeElement: body, getElementById: get, createElement: tag => new Element(tag), querySelector: s => s === '.tool-widget' ? widget : widget.querySelector(s), querySelectorAll: s => widget.querySelectorAll(s) });
+    class Reader { constructor() { readers.push(this); } readAsArrayBuffer(file) { this.file = file; } }
+    class Image { constructor() { images.push(this); } }
+    const sandbox = { document, FileReader: Reader, Image, Blob, ArrayBuffer, DataView, Uint8Array, console, navigator: { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } }, URL: { createObjectURL(b) { const u = 'blob:test-' + ++urlId; urls.set(u, b); return u; }, revokeObjectURL(u) { revoked.push(u); } }, setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout() {}, _slug: 'exif-metadata-viewer', window: { ztPersist: { clear: slug => clears.push(slug) } } };
+    const context = vm.createContext(sandbox);
+    if (shellFirst) vm.runInContext(shortcut, context);
+    vm.runInContext(script, context, { filename: 'ExifMetadataViewerTool.astro' });
+    if (!shellFirst) vm.runInContext(shortcut, context);
+    function input(name = 'photo.jpg', type = 'image/jpeg', size = photo.length, method = 'change') {
+      const file = { name, type, size };
+      if (method === 'paste') document.dispatch('paste', { clipboardData: { items: [{ type, getAsFile: () => file }] } });
+      else if (method === 'drop') get('emv-dropzone').dispatch('drop', { dataTransfer: { files: [file] } });
+      else { get('emv-file').files = [file]; get('emv-file').value = name; get('emv-file').dispatch('change'); }
+      return readers.at(-1);
+    }
+    function complete(reader, bytes = photo) { reader.onload({ target: { result: ab(bytes) } }); }
+    function clear() { get('emv-reset').focus(); return document.dispatch('keydown', { ctrlKey: true, key: 'l' }); }
+    function state() { return { preview: get('emv-preview-img').src, name: get('emv-filename').textContent, dims: get('emv-dimensions').textContent, result: get('emv-result-area').style.display, actions: get('emv-actions').style.display, status: get('emv-status').textContent }; }
+    return { get, readers, images, downloads, copied, revoked, clears, complete, input, clear, state, document, timers };
+  }
+  function empty(name, p) {
+    eq(name + ' preview cleared', p.get('emv-preview-img').src, '');
+    eq(name + ' empty preview stays hidden', p.get('emv-preview-img').style.display, 'none');
+    eq(name + ' file details cleared', [p.get('emv-filename').textContent, p.get('emv-filesize').textContent, p.get('emv-dimensions').textContent], ['', '', '']);
+    eq(name + ' actions hidden', p.get('emv-actions').style.display, 'none');
+    p.get('emv-download').click(); p.get('emv-copy-json').click();
+    eq(name + ' cannot download old image', p.downloads.length, 0);
+    eq(name + ' cannot copy old metadata', p.copied.length, 0);
+  }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const first of [false, true]) {
+    const p = ui(lang, first); p.complete(p.input()); const event = p.clear();
+    eq(lang + ' CtrlL prevents default order ' + first, event.defaultPrevented, true);
+    eq(lang + ' shared clear executes order ' + first, p.clears, ['exif-metadata-viewer']);
+    eq(lang + ' clear hides result order ' + first, p.get('emv-result-area').style.display, 'none');
+    eq(lang + ' clear resets selected file order ' + first, p.get('emv-file').value, '');
+    empty(lang + ' CtrlL order ' + first, p);
+  }
+  for (const action of ['reset', 'shortcut', 'new file', 'invalid', 'oversize']) for (const fail of [false, true]) {
+    const p = ui(); p.complete(p.input('first.jpg')); const slow = p.input('slow.jpg', 'image/jpeg', photo.length, 'paste');
+    if (action === 'reset') p.get('emv-reset').click();
+    if (action === 'shortcut') p.clear();
+    if (action === 'new file') p.complete(p.input('new.jpg'));
+    if (action === 'invalid') p.input('bad.txt', 'text/plain', 100, 'drop');
+    if (action === 'oversize') p.input('large.jpg', 'image/jpeg', 100 * 1024 * 1024 + 1, 'drop');
+    const expected = p.state();
+    if (fail) slow.onerror(); else p.complete(slow);
+    eq('late read ' + action + ' error=' + fail + ' cannot change current UI', p.state(), expected);
+  }
+  for (const failure of ['read', 'signature', 'type', 'size']) {
+    const p = ui(); p.complete(p.input('old.jpg'));
+    if (failure === 'read') p.input('broken.jpg', 'image/jpeg', photo.length, 'paste').onerror();
+    if (failure === 'signature') p.complete(p.input('fake.jpg'), Buffer.from('not JPEG'));
+    if (failure === 'type') p.input('text.txt', 'text/plain', 4, 'drop');
+    if (failure === 'size') p.input('large.jpg', 'image/jpeg', 100 * 1024 * 1024 + 1, 'drop');
+    empty(failure, p);
+    eq(failure + ' reports a visible error container', p.get('emv-result-area').style.display !== 'none' && p.get('emv-status').className.includes('error') && !!p.get('emv-status').textContent, true);
+    p.complete(p.input('recovered.jpg'));
+    eq(failure + ' can load another image after error', [p.get('emv-filename').textContent, p.get('emv-actions').style.display], ['recovered.jpg', '']);
+  }
+  {
+    const p = ui(); p.complete(p.input('first.jpg')); const probe = p.images.at(-1); p.clear();
+    probe.naturalWidth = 999; probe.naturalHeight = 777; probe.onload();
+    eq('late dimension probe cannot refill cleared details', p.get('emv-dimensions').textContent, '');
+    p.complete(p.input('second.jpg')); const fresh = p.images.at(-1); fresh.naturalWidth = 64; fresh.naturalHeight = 48; fresh.onload();
+    eq('valid preview is shown again', p.get('emv-preview-img').style.display, '');
+    eq('current dimensions still render', p.get('emv-dimensions').textContent, '64 × 48 px');
+    p.get('emv-copy-json').click(); await settle(); eq('current metadata copy still works', JSON.parse(p.copied.at(-1)).ifd0.Make, 'Apple');
+    p.get('emv-download').click(); eq('current cleaned export keeps new name', p.downloads.at(-1).name, 'second-clean.jpg');
+    eq('current cleaned export retains exact expected bytes', Buffer.from(await p.downloads.at(-1).blob.arrayBuffer()).equals(cleaned), true);
+  }
+  console.log(`Page lifecycle: ${passes - base.passes} passed, ${failures - base.failures} failed`);
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
