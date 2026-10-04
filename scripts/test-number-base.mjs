@@ -4,7 +4,8 @@
 //        the `engine:start` / `engine:end` markers and the STRINGS table in the frontmatter,
 //        so this test cannot drift from the shipped source); the 4 tool pages in
 //        src/content/tools/number-base/ (examples marked `{/* nb: {...} */}` are recomputed)
-//        and the actual keyboard shortcut handler in src/layouts/ToolLayout.astro.
+//        src/layouts/ToolLayout.astro (actual keyboard shortcuts and compact CSS),
+//        src/data/tool-layouts.ts, scripts/audit.mjs (actual layout checker).
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -30,7 +31,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import { load as loadYaml } from 'js-yaml';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -588,6 +592,7 @@ print(json.dumps(res))
 {
   const beforePasses = passes, beforeFailures = failures;
   const strings = new Function('return ' + stringsMatch[1] + ';')();
+  const { CLIENT_T } = vm.runInNewContext(source.slice(source.indexOf('const T = STRINGS[lang];'), source.indexOf('const otherBases =')) + '\n({CLIENT_T});', { STRINGS: strings, lang: 'en' });
   const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
   const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
@@ -700,7 +705,7 @@ print(json.dumps(res))
       }
     });
     const context = {
-      document, t: strings.en, isSecureContext: true,
+      document, t: CLIENT_T, isSecureContext: true,
       navigator: { clipboard: { writeText(value) {
         let resolve, reject;
         const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -821,7 +826,130 @@ print(json.dumps(res))
     p.copy().resolve(); await settle(); p.get('nb-clear').click();
     eq('Clear removes feedback for the cleared value', p.button().textContent, strings.en.copy);
   }
+  {
+    const p = page();
+    p.get('nb-base').value = '2'; p.get('nb-base').dispatch('change');
+    const binary = '1'.repeat(2048), integer = BigInt('0b' + binary);
+    p.input(binary);
+    for (const [base, expected] of [[10, integer.toString(10)], [2, binary], [16, 'F'.repeat(512)], [8, integer.toString(8)], ['other', integer.toString(36).toUpperCase()]]) {
+      eq('2048-bit result retains every digit: ' + base, p.get('nb-out-' + base).textContent, expected);
+      const copy = p.copy(base);
+      eq('2048-bit copy is not clipped by the result row: ' + base, copy.value, expected);
+      copy.resolve(); await settle();
+    }
+    p.get('nb-base').value = '10'; p.get('nb-base').dispatch('change');
+    p.get('nb-width').value = '128'; p.get('nb-width').dispatch('change'); p.input('-1');
+    eq('128-bit binary pattern remains complete', p.get('nb-out-twos-bin').textContent, '1'.repeat(128));
+    eq('128-bit hex pattern remains complete', p.get('nb-out-twos-hex').textContent, 'F'.repeat(32));
+    const copy = p.copy('twos-bin'); eq('two\'s complement copy remains complete', copy.value, '1'.repeat(128));
+    copy.resolve(); await settle();
+    p.get('nb-group').value = 'underscore'; p.get('nb-group').dispatch('change');
+    p.get('nb-prefix').checked = true; p.get('nb-prefix').dispatch('change');
+    p.get('nb-lower').checked = true; p.get('nb-lower').dispatch('change'); p.input('1048575');
+    const formatted = p.copy(16); eq('copy retains grouping, prefix and letter case', formatted.value, '0xf_ffff');
+    formatted.resolve(); await settle();
+  }
   console.log('Page clipboard lifecycle: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script')).trim();
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css = source.slice(source.indexOf('<style>') + 7, source.indexOf('</style>'));
+  const rules = selector => [...css.matchAll(new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}', 'g'))].map(m => m[1]);
+  const prop = (rule, key, value) => new RegExp('(?:^|;)\\s*' + key + ':\\s*' + value + '\\s*(?:;|$)').test(rule);
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const strings = new Function('return ' + stringsMatch[1] + ';')();
+  const sha256 = text => createHash('sha256').update(text).digest('hex');
+  eq('number-base is registered as compact', /'number-base':\s*'([^']+)'/.exec(layouts)?.[1], 'compact');
+  check('tool root is nb-wrap without an outer wrapper', /^<div class="nb-wrap">/.test(template));
+  check('compact root is a shrinkable natural-height column', rules('.nb-wrap').some(r => prop(r, 'display', 'flex') && prop(r, 'flex-direction', 'column') && prop(r, 'min-height', '0') && prop(r, 'min-width', '0')) && !/\b(?:height|min-height):\s*[^;]*(?:vh|svh)/.test(css));
+  check('options and Clear precede reserved status, input and results', template.indexOf('id="nb-clear"') < template.indexOf('id="nb-status"') && template.indexOf('id="nb-status"') < template.indexOf('id="nb-input"') && template.indexOf('id="nb-input"') < template.indexOf('class="nb-results"'));
+  check('status height is fixed and long messages scroll', rules('.nb-wrap .nb-status').some(r => prop(r, 'height', '3em') && prop(r, 'overflow', 'auto')) && rules('.nb-wrap .nb-status').some(r => prop(r, 'height', '4.5em')));
+  check('all result rows have fixed height and a zero-minimum value track', rules('.nb-row').some(r => prop(r, 'height', '3.25rem') && prop(r, 'grid-template-columns', '8.5rem\\s+minmax\\(0, 1fr\\)\\s+auto')));
+  check('long values scroll horizontally without wrapping or ellipsis', rules('.nb-value').some(r => prop(r, 'min-width', '0') && prop(r, 'height', '2.75rem') && prop(r, 'overflow-x', 'auto') && prop(r, 'overflow-y', 'hidden') && prop(r, 'white-space', 'pre')) && !/text-overflow\s*:\s*ellipsis|word-break\s*:\s*break-all/.test(css));
+  check('phone result track also shrinks below its content width', rules('.nb-row').some(r => prop(r, 'grid-template-columns', '6.8rem\\s+minmax\\(0, 1fr\\)\\s+auto')));
+  check('two\'s complement note has a fixed scrolling height', rules('.nb-twos-info').some(r => prop(r, 'height', '3em') && prop(r, 'overflow', 'auto')));
+  const outputs = [...template.matchAll(/<output\b([^>]*)>/g)];
+  eq('four source output templates retain keyboard focus and accessible names', outputs.length, 4);
+  check('output values can receive Tab and native ArrowRight scrolling', outputs.every(m => /tabindex="0"/.test(m[1]) && /aria-label(?:ledby)?=/.test(m[1])));
+  check('hidden result rows keep display precedence', /\.nb-wrap \[hidden\]\s*\{\s*display:\s*none\s*!important/.test(css));
+  check('worked steps stay after results and start folded', /<details class="nb-steps" id="nb-steps">/.test(template) && template.indexOf('id="nb-steps"') > template.indexOf('class="nb-results"'));
+  check('worked steps have a bounded keyboard-scrollable area', rules('.nb-steps-out').some(r => prop(r, 'height', '18rem') && prop(r, 'overflow', 'auto')) && /id="nb-steps-out"[^>]*tabindex="0"/.test(template));
+  check('860 and 640 breakpoints are present', /@media\s*\(max-width:\s*860px\)/.test(css) && /@media\s*\(max-width:\s*640px\)/.test(css));
+  check('phone option rows and selectors keep 44px touch targets', /\.nb-other-select, \.nb-small-select, \.nb-opt, \.nb-opt-line > label\s*\{\s*min-height:\s*44px/.test(css));
+  check('input label rows remain visible with their separate tips', !/\.nb-field\s+\.tool-label\s*\{[^}]*clip:/.test(css));
+  check('steps tip is a sibling of details, outside summary', /<\/details>\s*<Toggletip id="nb-tip-steps"/.test(template));
+  check('tips are not nested in labels or summaries', !/<(?:label|summary)\b[^>]*>(?:(?!<\/(?:label|summary)>)[\s\S])*?<Toggletip/.test(template));
+  const buttons = [...template.matchAll(/<button\b([^>]*)>/g)].map(m => m[1]);
+  eq('original Clear and four copy templates are preserved', buttons.length, 5);
+  eq('Clear keeps its original ID and secondary action class', buttons.filter(b => /id="nb-clear"/.test(b)).length, 1);
+  check('automatic conversion has no invented primary button', !/btn-primary/.test(template) && script.includes("inputEl.addEventListener('input', convert)"));
+  const keys = ['base', 'number', 'format', 'width', 'signed', 'other', 'steps'].sort();
+  const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  eq('seven tips cover the existing controls', tips.map(m => /id="nb-tip-([^"]+)"/.exec(m[1])?.[1]).sort(), keys);
+  for (const tip of tips) {
+    const key = /id="nb-tip-([^"]+)"/.exec(tip[1])[1];
+    check(key + ' tip is built in the page language', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2] === '{TIPS.' + key + '}');
+  }
+  check('inline script receives only CLIENT_T', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/TIPS|STRINGS|data-i18n/.test(script));
+  eq('protected engine bytes remain unchanged', sha256(source.slice(startIndex, endIndex + END_MARK.length)), '138b3241cb25a1865df9d4f4feca006ef878ec4c8c1be036936fa8a7529d6604');
+  const retained = {
+    en: ['87cd0a0fffb6ae83', '9653e3be42f4a435d7e559572d6623bda74e9e3c5fe15a71b677014115401f77'],
+    zh: ['3e2cd69606278825', 'b9f8dbf7ae961efafc68ea66db76c2dcf4c7e5cb6ce1968577735c982d657edc'],
+    // The status row now precedes the input; only JA's FAQ location phrase changed.
+    ja: ['e564c53b3f16f3c3', 'b503fe02efa1982aef56ea019bbcb6c0ff33e59ec54131b5043a93ad3aa90a68'],
+    ko: ['a339783f70ef2830', 'c64327b82e3d922802eb6869183a95c7c66503dc5ea7da48ebb86e9c3b0b3607']
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const entry = strings[lang];
+    eq(lang + ' has the same seven tip keys', Object.keys(entry.tips).sort(), keys);
+    for (const key of keys) check(lang + '.' + key + ' tip is nonempty plain text', typeof entry.tips[key] === 'string' && entry.tips[key].trim().length > 0 && !/<[^>]*>|\n/.test(entry.tips[key]));
+    const client = vm.runInNewContext(source.slice(source.indexOf('const T = STRINGS[lang];'), source.indexOf('const otherBases =')) + '\n({TIPS, CLIENT_T});', { STRINGS: strings, lang });
+    eq(lang + ' client excludes only tips', Object.keys(client.CLIENT_T).sort(), Object.keys(entry).filter(key => key !== 'tips').sort());
+    check(lang + ' serialized client contains no tip text', Object.values(client.TIPS).every(tip => !JSON.stringify(client.CLIENT_T).includes(JSON.stringify(tip))));
+    const mdx = readFileSync(join(root, 'src/content/tools/number-base', lang + '.mdx'), 'utf8');
+    const [, meta, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx), { steps } = loadYaml(meta);
+    eq(lang + ' has seven usage steps', steps?.length, 7);
+    check(lang + ' steps meet plain-text limits', Array.isArray(steps) && steps.length <= 8 && steps.every(step => typeof step === 'string' && step.trim() && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['inputBase', 'number', 'outOther', 'optGroup', 'optPrefix', 'optLower', 'optWidth', 'optSigned', 'copy', 'stepsSummary']) check(lang + ' steps use current control name ' + key, steps.some(step => step.includes(entry[key])));
+    check(lang + ' Usage removed while Limits remains', !/^## (?:How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body) && /^## (?:Limits|限制|制限事項|제한 사항)\s*$/m.test(body));
+    eq(lang + ' FAQ and SEO retained', sha256(meta.replace(/^steps:\n(?:  .*\n)*/m, '').trim()).slice(0, 16), retained[lang][0]);
+    eq(lang + ' non-Usage body retained byte for byte', sha256(body), retained[lang][1]);
+  }
+
+  // Exercise the actual audit checker with small source fixtures, including compact.
+  const audit = readFileSync(join(root, 'scripts/audit.mjs'), 'utf8');
+  const kinds = audit.match(/const TOOL_PAGE_KINDS = \[[^\n]+;/)[0];
+  const checkerStart = audit.indexOf('function checkToolLayouts(');
+  const checker = audit.slice(checkerStart, audit.indexOf('\n}', checkerStart) + 2);
+  for (const [slug, kind, expected] of [['number-base', 'compact', true], ['number-base', 'convert', true], ['number-base', 'generate', true], ['number-base', 'analyze', true], ['number-base', 'unknown', false], ['missing', 'compact', false]]) {
+    let actual;
+    const context = { read: () => `export const toolPageKinds = { '${slug}': '${kind}' };`, pass: () => { actual = true; }, fail: () => { actual = false; } };
+    vm.runInNewContext(kinds + '\n' + checker + '\ncheckToolLayouts(new Set(["number-base"]));', context);
+    eq('actual layout audit: ' + slug + '/' + kind, actual, expected);
+  }
+  check('compact shell uses content height at all sizes', /\.tool-page--compact \.tool-first\s*\{\s*min-height:\s*0/.test(layout) && /\.tool-page--compact \.tool-widget--v2 > :global\(\*\)\s*\{\s*flex:\s*none/.test(layout));
+  check('compact shell bounds and centers the tool card', /\.tool-page--compact\s*\{\s*--v2-shell:\s*1120px/.test(layout) && /\.tool-page--compact \.tool-widget--v2\s*\{[^}]*width:\s*min\(100%, 960px\);[^}]*align-self:\s*center/.test(layout));
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: transformJs } = await import('esbuild');
+  for (const [filename, content] of [['NumberBaseTool.astro', source], ['ToolLayout.astro', layout]]) {
+    const compiled = await transform(content, { filename });
+    eq(filename + ' compiles without Astro errors', compiled.diagnostics.filter(diagnostic => diagnostic.severity === 1), []);
+    await transformJs(compiled.code, { loader: 'ts', format: 'esm' });
+    check(filename + ' compiled JavaScript parses', true);
+    if (filename === 'NumberBaseTool.astro') check('Astro serializes CLIENT_T into the inline script', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })') && !compiled.code.includes('$$defineScriptVars({ t: T })'));
+  }
+  const layoutModule = { exports: {} };
+  const compiledKinds = await transformJs(layouts, { loader: 'ts', format: 'cjs' });
+  vm.runInNewContext(compiledKinds.code, { module: layoutModule });
+  eq('actual toolPageKind resolves the compact route', layoutModule.exports.toolPageKind('number-base'), 'compact');
+  eq('actual toolPageKind preserves unregistered routes', layoutModule.exports.toolPageKind('not-a-tool'), undefined);
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
 }
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? ', ' + skips + ' skipped' : ''}`);
