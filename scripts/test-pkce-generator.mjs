@@ -249,7 +249,7 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
       eq('STRINGS.' + l + ' has the same keys as en', keys(STRINGS[l]), keys(STRINGS.en));
       eq('STRINGS.' + l + ' has the same placeholders as en', ph(STRINGS[l]), ph(STRINGS.en));
     }
-    const used = [...source.matchAll(/S\.(\w+)/g)].map((m) => m[1]).concat([...source.matchAll(/L\.(\w+)/g)].map((m) => m[1]));
+    const used = [...source.matchAll(/\bS\.(\w+)/g)].map((m) => m[1]).concat([...source.matchAll(/\bL\.(\w+)/g)].map((m) => m[1]));
     eq('every S.key / L.key exists in STRINGS.en', [...new Set(used)].filter((k) => !(k in STRINGS.en)), []);
   }
 }
@@ -387,6 +387,37 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
   for (const fn of events.keydown) fn({ ctrlKey: true, key: 'l' });
   digests.shift()(); await drain();
   eq('shortcut outside the tool keeps its pending result', get('pkce-challenge').textContent, RFC_CHALLENGE);
+}
+
+// ── v2 page layout ─────────────────────────────────────────────────────────
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  check('root receives the v2 height directly', /^\s*<div class="pkce-wrap">/.test(markup));
+  check('generate page has a shared control rail and a preview', markup.includes('class="pkce-rail zt-rail"') && markup.includes('class="pkce-preview"'));
+  check('rail is 270–320px beside the preview', source.includes('grid-template-columns: clamp(270px, 24vw, 320px) minmax(0, 1fr)'));
+  check('long request previews scroll inside flex children', source.includes('.pkce-out-text { align-self: stretch; overflow: auto; }') && source.includes('.pkce-results, .pkce-request { flex: 1 1 0; }'));
+  check('mobile puts the result before secondary settings', source.includes('@media (max-width: 860px)') && source.includes('.pkce-preview { order: 2; height: 34rem; flex: none; }') && source.includes('.pkce-advanced { order: 3; }'));
+  check('empty result has a localized sentence and hides on mobile', markup.includes('id="pkce-empty"') && source.includes('.pkce-preview:has(#pkce-empty:not([hidden])) { display: none; }'));
+  check('empty status rows reserve space', source.includes('#pkce-verifier-status[hidden] { display: block; visibility: hidden; }') && source.includes('#pkce-auth-status[hidden] { display: block; visibility: hidden; }'));
+  check('random generation remains the primary action', /id="pkce-generate" class="btn-primary"/.test(markup));
+  eq('all four copy actions remain', [...markup.matchAll(/id="pkce-copy-([^"]+)"/g)].map(m => m[1]).sort(), ['authurl', 'challenge', 'curl', 'verifier']);
+  check('the plain warning remains outside details', !/<details[^>]*>[\s\S]*?pkce-method-status[\s\S]*?<\/details>/.test(markup));
+  const tipKeys = ['generate', 'verifier', 'method', 'compare', 'auth', 'token'];
+  eq('six control tips', [...markup.matchAll(/<Toggletip id="pkce-tip-([^"]+)"/g)].map(m => m[1]).sort(), [...tipKeys].sort());
+  check('tips are not serialized to the page script', source.includes('const { tips: TIPS, ...CLIENT_L } = L;') && source.includes('define:vars={{ S: CLIENT_L }}'));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as generate', layouts.includes("'pkce-generator': 'generate'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ': tip keys match', Object.keys(STRINGS[lang].tips).sort(), [...tipKeys].sort());
+    check(lang + ': tips and empty sentence contain text', tipKeys.every(k => STRINGS[lang].tips[k].length > 20) && STRINGS[lang].empty.length > 10);
+    const mdx = readFileSync(join(root, 'src/content/tools/pkce-generator/' + lang + '.mdx'), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const steps = [...front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).matchAll(/^  - (".*")$/gm)].map(m => JSON.parse(m[1]));
+    eq(lang + ': five frontmatter steps', steps.length, 5);
+    check(lang + ': steps stay within limits', steps.every(v => v.length <= 280) && steps.join('').length <= 1200);
+    check(lang + ': no usage section remains', !/^## (How to Use|用法|使い方|사용법)\s*$/m.test(mdx));
+    check(lang + ': limits stay in the body', /^## (Limits|限制|制限|제한)/m.test(mdx));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
