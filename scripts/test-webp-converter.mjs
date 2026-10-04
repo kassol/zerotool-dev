@@ -50,14 +50,14 @@ for (const cls of generated) {
   check(`.${cls} rules are .wc-results :global(...)`, bare.length === 0, `${bare.length} scoped selector(s)`);
 }
 
-check('no "ZIP" in the component', !/ZIP/i.test(src.replace(/no ZIP/g, '')));
 check('rejects a blob whose type differs from the requested type', /blob\.type !== outMime/.test(script));
 check('error card shows the raw file name', /errEl\.textContent = r\.name/.test(script) && !/errEl\.textContent = esc\(/.test(script));
 
-const sm = script.match(/var STRINGS = (\{[\s\S]*?\n\s*\});/);
+const sm = src.match(/const STRINGS = (\{[\s\S]*?\n\});/);
 check('STRINGS found', !!sm);
 if (sm) {
   const S = new Function('return ' + sm[1])();
+  check('Download All labels do not promise a ZIP', Object.values(S).every((t) => !/ZIP/i.test(t.downloadAll)));
   const keys = Object.keys(S.en).sort().join(',');
   for (const l of ['zh', 'ja', 'ko']) check(`STRINGS ${l} keys match en`, Object.keys(S[l]).sort().join(',') === keys);
   for (const k of ['hintTo', 'hintFrom', 'dropText', 'dropAction', 'errFormat', 'errNotWebp', 'errFailed', 'errEncoder', 'errLoad', 'statusOk', 'statusFail']) check('STRINGS has ' + k, typeof S.en[k] === 'string');
@@ -66,7 +66,7 @@ if (sm) {
 check('no English error literals in the script', !/error: '[A-Z]/.test(script));
 check('no English hint literals', !/hintEl\.textContent = '/.test(script));
 check('status line from STRINGS', !/' file\(s\) converted'/.test(script));
-check('quality label from STRINGS', /data-i18n="qualityLabel"/.test(src));
+check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/.test(src));
 
 // ---------- guide examples (src/content/blog/webp-converter-guide/{en,ja}.mdx) ----------
 // {/* webp-check: {"tool":"cwebp"|"sharp", "args":[…] | "options":{…}, "bytes":N} */} annotations
@@ -202,6 +202,7 @@ check('quality label from STRINGS', /data-i18n="qualityLabel"/.test(src));
     const sandbox = { document, Blob, console, URL: { createObjectURL(blob) { const url = 'blob:test-' + ++serial; urls.set(url, blob); return url; }, revokeObjectURL(url) { revoked.add(url); } },
       Image: class { constructor() { this.naturalWidth = 64; this.naturalHeight = 48; images.push(this); } },
       setTimeout() {}, window: { ztPersist: { clear() { persistenceClears++; } } }, _slug: prefix === 'wc' ? 'webp-converter' : 'image-compressor' };
+    sandbox.t = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS.en;')();
     const context = createContext(sandbox);
     runInContext(inline[1], context);
     const keyStart = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
@@ -252,6 +253,79 @@ check('quality label from STRINGS', /data-i18n="qualityLabel"/.test(src));
     p.get(prefix + '-quality').value = '42'; p.get(prefix + '-quality').dispatch('input');
     check('batch lifecycle: quality changes label without recompressing', p.images.length === imageCount && p.get(prefix + '-quality-val').textContent === '42' && p.rows().length === 1);
   }
+}
+
+// ---------- v2 page layout ----------
+{
+  const { createHash } = await import('node:crypto');
+  const { createRequire } = await import('node:module');
+  const { load: loadYaml } = await import('js-yaml');
+  const pageSource = src, prefix = 'wc', slug = 'webp-converter';
+  const markup = pageSource.slice(pageSource.indexOf('\n---\n') + 5, pageSource.indexOf('<script is:inline')).trim();
+  const table = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS;')();
+  const css = pageSource.slice(pageSource.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/<\/?style\b[^>]*>/g, '');
+  const rules = (selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].split(',').some((s) => s.trim() === selector)).map((m) => m[2]);
+  const property = (body, name, value) => new RegExp('(?:^|;)\\s*' + name + '\\s*:\\s*' + value + '\\s*(?:;|$)').test(body);
+  const hash = (s) => createHash('sha256').update(s).digest('hex');
+  check('analyze layout registered', new RegExp("'" + slug + "':\\s*'analyze'").test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('tool root is the direct first element', markup.startsWith('<div class="' + prefix + '-wrap" id="' + prefix + '-wrap">'));
+  check('root can shrink with available height', rules('.' + prefix + '-wrap').some((r) => property(r, 'display', 'flex') && property(r, 'flex-direction', 'column') && property(r, 'min-height', '0')));
+  check('empty state uses shared drop fill', markup.includes('class="' + prefix + '-drop zt-empty-drop"'));
+  check('results have zero-basis flex and internal scrolling', rules('.' + prefix + '-results').some((r) => property(r, 'flex', '1\\s+1\\s+0') && property(r, 'overflow', 'auto') && property(r, 'min-width', '0')));
+  check('result cards keep their height inside the scroll area', rules('.' + prefix + '-results :global(.' + prefix + '-card)').some((r) => property(r, 'flex', 'none')));
+  check('mobile results have a bounded height', rules('.' + prefix + '-results').some((r) => property(r, 'flex', 'none') && property(r, 'height', '[1-9][\\d.]*rem') && property(r, 'min-height', '0')));
+  for (const selector of ['.' + prefix + '-actions[hidden]', '.' + prefix + '-results[hidden]', '#' + prefix + '-download-all[hidden]']) check(selector + ' honors hidden', rules(selector).some((r) => property(r, 'display', 'none')));
+  check('status reserves two lines and scrolls', rules(prefix === 'wc' ? '.wc-status' : '#ic-status').some((r) => property(r, 'height', '3em') && property(r, 'overflow', 'auto') && property(r, 'flex', 'none')));
+  check('completed import compacts the drop target', rules('.' + prefix + '-wrap:has(.' + prefix + '-results:not([hidden])) .' + prefix + '-drop').some((r) => property(r, 'flex', 'none') && property(r, 'min-height', '0')));
+  check('860px stacks controls and 640px adjusts phone layout', /@media\s*\(max-width:\s*860px\)/.test(css) && /@media\s*\(max-width:\s*640px\)/.test(css));
+  check('download and clear remain explicit actions before status', ['download-all', 'clear'].every((key) => markup.indexOf('id="' + prefix + '-' + key + '"') < markup.indexOf('id="' + prefix + '-status"')));
+  check('status precedes the drop target and results', markup.indexOf('id="' + prefix + '-status"') < markup.indexOf('id="' + prefix + '-drop"') && markup.indexOf('id="' + prefix + '-drop"') < markup.indexOf('id="' + prefix + '-results"'));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
+  check('template IDs are unique', ids.length === new Set(ids).size);
+  check('no runtime i18n rewrite remains', !pageSource.includes('data-i18n'));
+  check('tips excluded from serialized strings', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T/.test(pageSource) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(pageSource));
+  const keys = prefix === 'wc' ? ['mode', 'quality', 'files', 'download'] : ['format', 'quality', 'resize', 'files', 'download'];
+  check('each control tip appears once', JSON.stringify([...markup.matchAll(/<Toggletip id="[a-z]+-tip-([^"]+)"/g)].map((m) => m[1]).sort()) === JSON.stringify([...keys].sort()));
+  check('file tips are outside the file-input overlay', !/<div id="[a-z]+-drop"[\s\S]*?<Toggletip/.test(markup.slice(markup.indexOf('<div id="' + prefix + '-drop"'))));
+  const retained = {
+    "en": [
+        "33e3ad90f46ed2df85fc02d4c95750916f2cc4fefff64c33bcdf49758f96c08a",
+        "f20215fbec222bab485bfb117efcf964ac6b55b93490aae95d1267725e378b53"
+    ],
+    "zh": [
+        "f701082b074e9687191781b0fcbe97bddee154f204ff1dbfa1b59d13cf5569b6",
+        "ccfcac01c778ee815b15d227e6161ff99205b83469e7262af26846732faae328"
+    ],
+    "ja": [
+        "1797d898ffee1144897e1c25a56efe5bc3f5b5ca8149727df3cc64833aa15ed4",
+        "40762cd04d4a3b82cb22af2539964cf496cefa3197a5da78d5303fcb55fb7f61"
+    ],
+    "ko": [
+        "150aa07c946615398765acc0eba0fee69329af0a060d237bfac1bc1534971fcb",
+        "ac5d9787fbc95547095b239507e96c0a7c1b1f059e1da1fe52fcf5376a07a7cd"
+    ]
+};
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    check(lang + ' same string keys', JSON.stringify(Object.keys(table[lang]).sort()) === JSON.stringify(Object.keys(table.en).sort()));
+    check(lang + ' complete control tips', JSON.stringify(Object.keys(table[lang].tips).sort()) === JSON.stringify([...keys].sort()) && keys.every((key) => table[lang].tips[key].length > 20));
+    const { tips, ...client } = table[lang];
+    check(lang + ' tip text is absent from client payload', keys.every((key) => !JSON.stringify(client).includes(tips[key])));
+    const mdx = readFileSync(join(root, 'src/content/tools', slug, lang + '.mdx'), 'utf8');
+    const [, metadata, body] = mdx.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    const fm = loadYaml(metadata), steps = fm.steps || [];
+    check(lang + ' bounded plain-text steps', steps.length > 0 && steps.length <= 8 && steps.every((s) => typeof s === 'string' && s.length <= 280 && !/<[^>]+>|\*\*/.test(s)) && steps.join('').length <= 1200);
+    check(lang + ' steps name current download actions', steps.some((s) => s.includes(table[lang].downloadAll)) && steps.some((s) => s.includes(table[lang].download)));
+    check(lang + ' usage heading removed', !/<h2>(?:How to Use|使用方法|使用步骤|使い方|사용 방법)<\/h2>/.test(body));
+    check(lang + ' SEO and FAQ unchanged', hash(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')) === retained[lang][0]);
+    check(lang + ' all non-usage body content unchanged', hash(body) === retained[lang][1]);
+  }
+  const require = createRequire(import.meta.url);
+  const { transform: compileAstro } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: checkJs } = await import('esbuild');
+  let compileError = null;
+  try { const result = await compileAstro(pageSource, { filename: 'WebpConverterTool.astro' }); await checkJs(result.code, { loader: 'ts', format: 'esm' }); }
+  catch (error) { compileError = error.message; }
+  check('Astro generated JavaScript is valid', compileError === null, compileError);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

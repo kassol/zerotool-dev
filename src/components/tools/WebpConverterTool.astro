@@ -1,11 +1,133 @@
 ---
-// WebpConverterTool — converts images to/from WebP using Canvas API
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+/* ── strings:start ── */
+const STRINGS = {
+  "en": {
+    "imagesLabel": "Images",
+    "modeLabel": "Conversion direction",
+    "selectFiles": "Select image files",
+    "tips": {
+      "mode": "Choose PNG / JPG / GIF → WebP or WebP → PNG before selecting files. Changing direction does not change existing results; select the files again to use the new direction.",
+      "quality": "WebP quality ranges from 0 to 100; the default is 85. Higher values usually keep more detail and make larger files. Set quality before importing; select the files again to apply a change. PNG output does not use this slider.",
+      "files": "Select or drop multiple images to convert them automatically in this browser. Animation becomes a still image and EXIF / XMP metadata is not copied. There is no resize option; large images depend on browser memory and canvas limits.",
+      "download": "Download saves one result. Download All starts one download per successful file, without a ZIP; the browser may ask to allow multiple downloads. Compare the original and output sizes, since a converted image can be larger."
+    },
+    "clear": "Clear",
+    "downloadAll": "Download All",
+    "download": "Download",
+    "converting": "Converting…",
+    "qualityLabel": "Quality: ",
+    "hintTo": "Supports PNG, JPG, GIF",
+    "hintFrom": "Supports WebP",
+    "dropText": "Drop images here, or ",
+    "dropAction": "click to select",
+    "errFormat": "Not a supported format (PNG/JPG/GIF)",
+    "errNotWebp": "Not a WebP file",
+    "errFailed": "Conversion failed (canvas.toBlob returned null)",
+    "errEncoder": "This browser cannot encode {want} (it returned {got}). Try Chrome, Edge or Firefox.",
+    "errLoad": "Failed to load image",
+    "unknownType": "an unknown type",
+    "statusOk": "{n} file(s) converted",
+    "statusFail": ", {n} failed"
+  },
+  "zh": {
+    "imagesLabel": "图片",
+    "modeLabel": "转换方向",
+    "selectFiles": "选择图片文件",
+    "tips": {
+      "mode": "选择文件前，先选 PNG / JPG / GIF → WebP 或 WebP → PNG。切换方向不会改变已有结果；请重新选择文件来应用新方向。",
+      "quality": "WebP 质量范围是 0–100，默认 85。数值越高，通常保留更多细节，文件也更大。请先设置质量再导入；修改后需重新选择文件。PNG 输出不使用此滑块。",
+      "files": "选择或拖入多张图片后，会在当前浏览器中自动转换。动图变为静态图，EXIF / XMP 元数据不会保留。本工具不缩放尺寸；大图受浏览器内存和画布上限约束。",
+      "download": "「下载」保存单个结果。「全部下载」为每个成功文件各发起一次下载，不打包 ZIP；浏览器可能询问是否允许多个下载。转换后的图片可能更大，请比较原始与输出体积。"
+    },
+    "clear": "清除",
+    "downloadAll": "全部下载",
+    "download": "下载",
+    "converting": "转换中…",
+    "qualityLabel": "质量：",
+    "hintTo": "支持 PNG、JPG、GIF",
+    "hintFrom": "支持 WebP",
+    "dropText": "把图片拖到这里，或",
+    "dropAction": "点击选择",
+    "errFormat": "不支持的格式（仅 PNG/JPG/GIF）",
+    "errNotWebp": "不是 WebP 文件",
+    "errFailed": "转换失败（canvas.toBlob 返回 null）",
+    "errEncoder": "当前浏览器无法编码 {want}（返回的是 {got}）。请改用 Chrome、Edge 或 Firefox。",
+    "errLoad": "无法载入图片",
+    "unknownType": "未知类型",
+    "statusOk": "已转换 {n} 个文件",
+    "statusFail": "，{n} 个失败"
+  },
+  "ja": {
+    "imagesLabel": "画像",
+    "modeLabel": "変換方向",
+    "selectFiles": "画像ファイルを選択",
+    "tips": {
+      "mode": "ファイルを選ぶ前に PNG / JPG / GIF → WebP または WebP → PNG を選択します。方向を変えても既存の結果は変わりません。適用するにはファイルを再選択してください。",
+      "quality": "WebP の品質は 0〜100、既定値は 85 です。高い値ほど通常は細部が保たれ、ファイルが大きくなります。読み込み前に設定し、変更後はファイルを再選択してください。PNG 出力にはこの値を使いません。",
+      "files": "複数の画像を選択またはドロップすると、このブラウザ内で自動変換します。アニメーションは静止画になり、EXIF / XMP は引き継ぎません。リサイズ機能はありません。大きな画像はブラウザのメモリとキャンバス上限に左右されます。",
+      "download": "「ダウンロード」は結果を1つ保存します。「すべてダウンロード」は成功したファイルごとに保存を開始し、ZIP にはまとめません。ブラウザが複数ダウンロードの許可を求める場合があります。変換後に大きくなる場合もあるため、前後のサイズを比較してください。"
+    },
+    "clear": "クリア",
+    "downloadAll": "すべてダウンロード",
+    "download": "ダウンロード",
+    "converting": "変換中…",
+    "qualityLabel": "品質：",
+    "hintTo": "PNG、JPG、GIF に対応",
+    "hintFrom": "WebP に対応",
+    "dropText": "ここに画像をドロップ、または",
+    "dropAction": "クリックして選択",
+    "errFormat": "対応していない形式です（PNG/JPG/GIF のみ）",
+    "errNotWebp": "WebP ファイルではありません",
+    "errFailed": "変換に失敗しました（canvas.toBlob が null を返しました）",
+    "errEncoder": "このブラウザは {want} をエンコードできません（{got} が返されました）。Chrome、Edge、Firefox をお使いください。",
+    "errLoad": "画像を読み込めませんでした",
+    "unknownType": "不明な形式",
+    "statusOk": "{n} 件を変換しました",
+    "statusFail": "、{n} 件失敗"
+  },
+  "ko": {
+    "imagesLabel": "이미지",
+    "modeLabel": "변환 방향",
+    "selectFiles": "이미지 파일 선택",
+    "tips": {
+      "mode": "파일을 선택하기 전에 PNG / JPG / GIF → WebP 또는 WebP → PNG를 고르세요. 방향을 바꿔도 기존 결과는 그대로입니다. 새 방향을 적용하려면 파일을 다시 선택하세요.",
+      "quality": "WebP 품질 범위는 0~100이며 기본값은 85입니다. 값이 높을수록 보통 세부 묘사가 잘 보존되고 파일이 커집니다. 가져오기 전에 설정하고, 변경 후에는 파일을 다시 선택하세요. PNG 출력에는 이 값을 사용하지 않습니다.",
+      "files": "여러 이미지를 선택하거나 드롭하면 이 브라우저에서 자동 변환합니다. 애니메이션은 정지 이미지가 되고 EXIF / XMP 메타데이터는 복사하지 않습니다. 크기 조절 기능은 없으며 큰 이미지는 브라우저 메모리와 캔버스 한도의 영향을 받습니다.",
+      "download": "다운로드는 결과 하나를 저장합니다. 모두 다운로드는 성공한 파일마다 다운로드를 시작하며 ZIP으로 묶지 않습니다. 브라우저가 여러 다운로드 허용을 요청할 수 있습니다. 변환 후 더 커질 수도 있으므로 원본과 출력 크기를 비교하세요."
+    },
+    "clear": "지우기",
+    "downloadAll": "모두 다운로드",
+    "download": "다운로드",
+    "converting": "변환 중…",
+    "qualityLabel": "품질：",
+    "hintTo": "PNG, JPG, GIF 지원",
+    "hintFrom": "WebP 지원",
+    "dropText": "이미지를 여기에 끌어다 놓거나 ",
+    "dropAction": "클릭하여 선택",
+    "errFormat": "지원하지 않는 형식입니다(PNG/JPG/GIF만)",
+    "errNotWebp": "WebP 파일이 아닙니다",
+    "errFailed": "변환 실패(canvas.toBlob이 null을 반환)",
+    "errEncoder": "이 브라우저는 {want}을(를) 인코딩할 수 없습니다({got} 반환). Chrome, Edge, Firefox를 사용하세요.",
+    "errLoad": "이미지를 불러올 수 없습니다",
+    "unknownType": "알 수 없는 형식",
+    "statusOk": "{n}개 파일 변환 완료",
+    "statusFail": ", {n}개 실패"
+  }
+};
+/* ── strings:end ── */
+const T = STRINGS[lang] ?? STRINGS.en;
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
 
-<div>
-  <div class="wc-wrap">
+<div class="wc-wrap" id="wc-wrap">
+    <div class="wc-controls">
     {/* Mode selector */}
-    <div class="wc-mode-row">
+    <div class="wc-mode-row" role="group" aria-label={T.modeLabel}>
       <label class="wc-mode-label">
         <input type="radio" name="wc-mode" value="to-webp" id="wc-mode-to" checked />
         PNG / JPG / GIF → WebP
@@ -14,54 +136,48 @@
         <input type="radio" name="wc-mode" value="from-webp" id="wc-mode-from" />
         WebP → PNG
       </label>
+      <Toggletip id="wc-tip-mode" lang={lang} about={T.modeLabel}>{TIPS.mode}</Toggletip>
     </div>
 
     {/* Quality slider (to-webp only) */}
     <div class="wc-quality-row" id="wc-quality-row">
       <label for="wc-quality" class="wc-quality-label">
-        <span data-i18n="qualityLabel">Quality: </span><strong id="wc-quality-val">85</strong>
+        <span>{T.qualityLabel}</span><strong id="wc-quality-val">85</strong>
       </label>
-      <input type="range" id="wc-quality" min="0" max="100" value="85" step="1" />
+      <input type="range" id="wc-quality" min="0" max="100" value="85" step="1" aria-label={T.qualityLabel} />
+      <Toggletip id="wc-tip-quality" lang={lang} about={T.qualityLabel}>{TIPS.quality}</Toggletip>
     </div>
 
+    </div>
+    <div class="wc-toolbar">
+      <div class="wc-control"><span class="tool-label">{T.imagesLabel}</span><Toggletip id="wc-tip-files" lang={lang} about={T.selectFiles}>{TIPS.files}</Toggletip></div>
+      <div class="wc-control wc-export-help"><span>{T.download}</span><Toggletip id="wc-tip-download" lang={lang} about={T.download}>{TIPS.download}</Toggletip></div>
+      <div class="wc-actions" id="wc-actions" hidden>
+        <button id="wc-download-all" class="btn-primary" type="button">{T.downloadAll}</button>
+        <button id="wc-clear" class="btn-ghost" type="button">{T.clear}</button>
+      </div>
+    </div>
+    <div id="wc-status" class="wc-status" role="status" aria-live="polite"></div>
+
     {/* Drop zone */}
-    <div id="wc-drop" class="wc-drop" role="button" tabindex="0">
+    <div id="wc-drop" class="wc-drop zt-empty-drop" role="button" tabindex="0">
       <div class="wc-drop-inner">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
           <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
         </svg>
-        <p><span data-i18n="dropText">Drop images here, or </span><strong data-i18n="dropAction">click to select</strong></p>
-        <p class="wc-hint" id="wc-hint" data-i18n="hintTo">Supports PNG, JPG, GIF</p>
+        <p><span>{T.dropText}</span><strong>{T.dropAction}</strong></p>
+        <p class="wc-hint" id="wc-hint">{T.hintTo}</p>
       </div>
-      <input type="file" id="wc-file" accept="image/png,image/jpeg,image/gif,image/webp" multiple class="wc-file-input" aria-label="Select image files" />
+      <input type="file" id="wc-file" accept="image/png,image/jpeg,image/gif,image/webp" multiple class="wc-file-input" aria-label={T.selectFiles} />
     </div>
 
     {/* Results list */}
     <div id="wc-results" class="wc-results" hidden></div>
 
-    {/* Actions */}
-    <div class="wc-actions" id="wc-actions" hidden>
-      <button id="wc-download-all" class="btn-primary" type="button" data-i18n="downloadAll">Download All</button>
-      <button id="wc-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
-    </div>
+</div>
 
-    <div id="wc-status" class="wc-status" aria-live="polite"></div>
-  </div>
-
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: { clear: 'Clear', downloadAll: 'Download All', download: 'Download', converting: 'Converting…', qualityLabel: 'Quality: ', hintTo: 'Supports PNG, JPG, GIF', hintFrom: 'Supports WebP', dropText: 'Drop images here, or ', dropAction: 'click to select', errFormat: 'Not a supported format (PNG/JPG/GIF)', errNotWebp: 'Not a WebP file', errFailed: 'Conversion failed (canvas.toBlob returned null)', errEncoder: 'This browser cannot encode {want} (it returned {got}). Try Chrome, Edge or Firefox.', errLoad: 'Failed to load image', unknownType: 'an unknown type', statusOk: '{n} file(s) converted', statusFail: ', {n} failed' },
-        zh: { clear: '清除', downloadAll: '全部下载', download: '下载', converting: '转换中…', qualityLabel: '质量：', hintTo: '支持 PNG、JPG、GIF', hintFrom: '支持 WebP', dropText: '把图片拖到这里，或', dropAction: '点击选择', errFormat: '不支持的格式（仅 PNG/JPG/GIF）', errNotWebp: '不是 WebP 文件', errFailed: '转换失败（canvas.toBlob 返回 null）', errEncoder: '当前浏览器无法编码 {want}（返回的是 {got}）。请改用 Chrome、Edge 或 Firefox。', errLoad: '无法载入图片', unknownType: '未知类型', statusOk: '已转换 {n} 个文件', statusFail: '，{n} 个失败' },
-        ja: { clear: 'クリア', downloadAll: 'すべてダウンロード', download: 'ダウンロード', converting: '変換中…', qualityLabel: '品質：', hintTo: 'PNG、JPG、GIF に対応', hintFrom: 'WebP に対応', dropText: 'ここに画像をドロップ、または', dropAction: 'クリックして選択', errFormat: '対応していない形式です（PNG/JPG/GIF のみ）', errNotWebp: 'WebP ファイルではありません', errFailed: '変換に失敗しました（canvas.toBlob が null を返しました）', errEncoder: 'このブラウザは {want} をエンコードできません（{got} が返されました）。Chrome、Edge、Firefox をお使いください。', errLoad: '画像を読み込めませんでした', unknownType: '不明な形式', statusOk: '{n} 件を変換しました', statusFail: '、{n} 件失敗' },
-        ko: { clear: '지우기', downloadAll: '모두 다운로드', download: '다운로드', converting: '변환 중…', qualityLabel: '품질：', hintTo: 'PNG, JPG, GIF 지원', hintFrom: 'WebP 지원', dropText: '이미지를 여기에 끌어다 놓거나 ', dropAction: '클릭하여 선택', errFormat: '지원하지 않는 형식입니다(PNG/JPG/GIF만)', errNotWebp: 'WebP 파일이 아닙니다', errFailed: '변환 실패(canvas.toBlob이 null을 반환)', errEncoder: '이 브라우저는 {want}을(를) 인코딩할 수 없습니다({got} 반환). Chrome, Edge, Firefox를 사용하세요.', errLoad: '이미지를 불러올 수 없습니다', unknownType: '알 수 없는 형식', statusOk: '{n}개 파일 변환 완료', statusFail: ', {n}개 실패' },
-      };
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-
       var dropEl    = document.getElementById('wc-drop');
       var fileInput = document.getElementById('wc-file');
       var resultsEl = document.getElementById('wc-results');
@@ -346,16 +462,16 @@
       });
     })();
   </script>
-</div>
 
 <style>
-  .wc-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .wc-wrap { display: flex; flex-direction: column; gap: 0.65rem; min-width: 0; min-height: 0; }
 
   /* Mode selector */
   .wc-mode-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 1rem;
+    gap: 0.35rem 1rem;
+    align-items: center;
     font-size: 0.88rem;
   }
 
@@ -380,10 +496,12 @@
 
   .wc-quality-row[hidden] { display: none; }
 
-  .wc-quality-label { white-space: nowrap; min-width: 90px; }
+  .wc-quality-label { white-space: nowrap; }
 
   .wc-quality-row input[type="range"] {
     flex: 1;
+    min-width: 0;
+    min-height: 2rem;
     accent-color: var(--color-primary);
     cursor: pointer;
   }
@@ -394,8 +512,6 @@
     border: 2px dashed var(--color-border);
     border-radius: var(--radius-sm);
     padding: 2rem 1rem;
-    text-align: center;
-    cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
     background: var(--color-bg-secondary);
   }
@@ -429,12 +545,18 @@
 
   /* Results */
   .wc-results {
+    flex: 1 1 0;
+    min-height: 260px;
+    min-width: 0;
+    overflow: auto;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
   }
 
   .wc-results :global(.wc-card) {
+    flex: none;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -445,10 +567,10 @@
   }
 
   .wc-results :global(.wc-card-error) {
-    color: #c0392b;
+    color: var(--color-danger);
     font-size: 0.82rem;
-    border-color: #f5c6cb;
-    background: #fff5f5;
+    border-color: color-mix(in oklch, var(--color-danger) 35%, transparent);
+    background: color-mix(in oklch, var(--color-danger) 8%, var(--color-bg-secondary));
   }
 
   .wc-results :global(.wc-thumb) {
@@ -458,7 +580,7 @@
     border-radius: calc(var(--radius-sm) / 2);
     border: 1px solid var(--color-border);
     flex-shrink: 0;
-    background: repeating-conic-gradient(#ccc 0% 25%, transparent 0% 50%) 0 0 / 12px 12px;
+    background: repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 12px 12px;
   }
 
   .wc-results :global(.wc-card-info) {
@@ -483,8 +605,8 @@
     color: var(--color-text-secondary);
   }
 
-  .wc-results :global(.wc-saved) { color: #057a55; font-weight: 600; }
-  .wc-results :global(.wc-larger) { color: #b45309; font-weight: 600; }
+  .wc-results :global(.wc-saved) { color: var(--color-success); font-weight: 600; }
+  .wc-results :global(.wc-larger) { color: var(--color-danger); font-weight: 600; }
 
   .wc-results :global(.wc-dl) {
     flex-shrink: 0;
@@ -497,27 +619,39 @@
   .wc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
   /* Status */
-  .wc-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .wc-status.success { color: #057a55; }
-  .wc-status.error   { color: #c0392b; }
+  .wc-status { flex: none; height: 3em; overflow: auto; font-size: 0.85rem; line-height: 1.5; margin: 0; }
+  .wc-status.success { color: var(--color-success); }
+  .wc-status.error   { color: var(--color-danger); }
 
-  /* Dark mode */
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .wc-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .wc-status.error   { color: #f87171; }
-    :root:not([data-theme="light"]) .wc-results :global(.wc-saved)          { color: #34d399; }
-    :root:not([data-theme="light"]) .wc-results :global(.wc-larger)         { color: #fbbf24; }
-    :root:not([data-theme="light"]) .wc-results :global(.wc-card-error)     { background: #2d1515; border-color: #7f2020; color: #f87171; }
-    :root:not([data-theme="light"]) .wc-results :global(.wc-thumb) {
-      background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 12px 12px;
-    }
+
+  .wc-controls { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem; }
+  .wc-quality-row { flex: 1 1 240px; max-width: 28rem; min-width: 0; }
+  .wc-mode-label { min-height: 2rem; }
+  .wc-drop:focus-visible, .wc-drop:focus-within { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+  .wc-toolbar { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; min-height: 2.5rem; }
+  .wc-control { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+  .wc-control .tool-label { margin: 0; }
+  .wc-export-help { color: var(--color-text-secondary); font-size: 0.85rem; }
+  .wc-actions { margin-left: auto; align-items: center; }
+  .wc-wrap .wc-actions :is(.btn-primary, .btn-ghost) { flex: 0 0 auto; min-height: 2.25rem; }
+  .wc-actions[hidden], .wc-results[hidden], #wc-download-all[hidden] { display: none; }
+  .wc-wrap:has(.wc-results:not([hidden])) .wc-drop { flex: none; min-height: 0; padding: 0.6rem 1rem; }
+  .wc-wrap:has(.wc-results:not([hidden])) .wc-drop-inner { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 0.25rem 0.75rem; }
+  .wc-wrap:has(.wc-results:not([hidden])) .wc-drop-inner svg { display: none; }
+  .wc-results :global(.wc-card-error) { overflow-wrap: anywhere; }
+  .wc-results :global(.wc-dl) { min-height: 2.25rem; }
+  @media (max-width: 860px) {
+    .wc-controls { display: flex; flex-direction: column; align-items: stretch; }
+    .wc-quality-row { flex: none; max-width: none; }
+    .wc-results { flex: none; height: 26rem; min-height: 0; }
   }
-  [data-theme="dark"] .wc-status.success { color: #34d399; }
-  [data-theme="dark"] .wc-status.error   { color: #f87171; }
-  [data-theme="dark"] .wc-results :global(.wc-saved)          { color: #34d399; }
-  [data-theme="dark"] .wc-results :global(.wc-larger)         { color: #fbbf24; }
-  [data-theme="dark"] .wc-results :global(.wc-card-error)     { background: #2d1515; border-color: #7f2020; color: #f87171; }
-  [data-theme="dark"] .wc-results :global(.wc-thumb) {
-    background: repeating-conic-gradient(#444 0% 25%, #2a2a2a 0% 50%) 0 0 / 12px 12px;
+  @media (max-width: 640px) {
+    .wc-toolbar { display: grid; grid-template-columns: 1fr auto; grid-template-rows: 2rem 2.5rem; gap: 0.25rem 0.75rem; }
+    .wc-actions { grid-column: 1 / -1; margin-left: 0; }
+    .wc-drop { padding: 1rem; }
+    .wc-results :global(.wc-card) { gap: 0.5rem; padding: 0.6rem; }
+    .wc-results :global(.wc-thumb) { width: 40px; height: 40px; }
   }
+
 </style>
