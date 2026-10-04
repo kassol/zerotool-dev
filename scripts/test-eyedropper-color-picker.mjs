@@ -25,6 +25,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
 import Color from 'colorjs.io';
 import { parse as culoriParse, converter, colorsNamed, inGamut as culoriInGamut } from 'culori';
 
@@ -295,6 +296,117 @@ for (const f of readdirSync(pageDir)) {
   }
 }
 check('tool pages carry checked examples', examples >= 8, examples + ' found');
+
+// ── 11. Complete page lifecycle, with controlled Image and EyeDropper boundaries ──
+{
+  const pageScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+  const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a;reject=b;}); return {promise,resolve,reject}; };
+  const microtasks = async () => { for(let i=0;i<16;i++) await Promise.resolve(); };
+  function page(lang='en', shellFirst=false, initial={}) {
+    const ids=new Map(),timers=new Map(),images=[],picks=[],saved=[],cleared=[],revoked=[],urls=new Map(),copies=[];
+    let seq=0,prefs=structuredClone(initial);
+    const doc={listeners:{},activeElement:null};
+    function matches(n,s){return s.split(',').some(raw=>{let sel=raw.trim();const attrs=[...sel.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];sel=sel.replace(/\[[^\]]+\]/g,'');const id=/#([\w-]+)/.exec(sel),classes=[...sel.matchAll(/\.([\w-]+)/g)],tag=/^[\w-]+/.exec(sel);return(!id||n.id===id[1])&&classes.every(c=>n.classList.contains(c[1]))&&(!tag||n.tagName===tag[0].toUpperCase())&&attrs.every(a=>a[2]===undefined?n.getAttribute(a[1])!==null:n.getAttribute(a[1])===a[2]);});}
+    class Element {
+      constructor(tag='div'){Object.assign(this,{tagName:tag.toUpperCase(),id:'',className:'',attributes:{},style:{},children:[],parentNode:null,listeners:{},value:'',type:tag==='input'?'text':'',hidden:false,disabled:false,files:[],clientWidth:300,clientHeight:200});}
+      get classList(){const n=this;return{contains:c=>n.className.split(/\s+/).includes(c),add(c){if(!this.contains(c))n.className+=' '+c;},remove(c){n.className=n.className.split(/\s+/).filter(x=>x!==c).join(' ');},toggle(c,on){if(on??!this.contains(c))this.add(c);else this.remove(c);}};}
+      setAttribute(k,v){this.attributes[k]=String(v);if(['id','class','type','value'].includes(k))this[k==='class'?'className':k]=String(v);}
+      getAttribute(k){return k==='type'?this.type:this.attributes[k]??null;}
+      get textContent(){return(this.text||'')+this.children.map(c=>c.textContent).join('');}
+      set textContent(v){if(this.children.some(c=>c.contains(doc.activeElement)))doc.activeElement=doc.body;for(const c of this.children)c.parentNode=null;this.children=[];this.text=String(v);}
+      appendChild(n){n.parentNode=this;this.children.push(n);return n;}
+      contains(n){return n===this||this.children.some(c=>c.contains(n));}
+      querySelectorAll(s){return this.children.flatMap(c=>[...(matches(c,s)?[c]:[]),...c.querySelectorAll(s)]);}
+      querySelector(s){return this.querySelectorAll(s)[0]||null;}
+      closest(s){for(let p=this;p;p=p.parentNode)if(matches(p,s))return p;return null;}
+      addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);}
+      dispatch(type,extra={}){const e={type,target:this,defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.stopped=true;},...extra};for(let p=this;p&&!e.stopped;p=p.parentNode)for(const fn of p.listeners[type]||[])fn(e);return e;}
+      click(){if(!this.disabled)this.dispatch('click');}
+      focus(){doc.activeElement=this;}
+      select(){}
+      getBoundingClientRect(){return{left:0,top:0,width:300,height:200,bottom:200};}
+    }
+    class Canvas extends Element {
+      constructor(){super('canvas');this.width=300;this.height=150;this.pixel=[0,0,0,255];this.context={clearRect(){},drawImage:img=>{this.pixel=img.pixel||[0,0,0,255];},getContextAttributes:()=>({colorSpace:'srgb'}),getImageData:(x,y,w,h)=>{const data=new Uint8ClampedArray(w*h*4);for(let i=0;i<data.length;i+=4)data.set(this.pixel,i);return{data};},fillRect(){},strokeRect(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},arc(){},fill(){}};}
+      getContext(){return this.context;}
+    }
+    const body=new Element('body'),widget=new Element();widget.className='tool-widget';body.appendChild(widget);
+    let markup=source.slice(source.indexOf('\n---',4)+4,source.indexOf('<script'));
+    const fields=vm.runInNewContext(source.match(/const FIELDS = (.*?);/)[1]);
+    markup=markup.replace(/\{FIELDS\.slice\(1\)\.map\(\(f\) => \(([\s\S]*?)\)\)\}/g,(_,template)=>fields.slice(1).map(f=>template.replace(/\{`ecp-\$\{f\}`\}/g,'"ecp-'+f+'"').replace(/data-field=\{f\}/g,'data-field="'+f+'"').replace(/data-copy=\{f\}/g,'data-copy="'+f+'"')).join(''));
+    const stack=[widget],voids=new Set(['input','br','hr','img','meta','link']);
+    for(const m of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>/g)){const tag=m[1];if(m[0].startsWith('</')){if(stack.at(-1)?.tagName===tag.toUpperCase())stack.pop();continue;}const n=tag==='canvas'?new Canvas():new Element(tag);for(const a of m[2].matchAll(/([\w-]+)="([^"]*)"/g))n.setAttribute(a[1],a[2]);n.hidden=/\bhidden(?=\s|\/|$)/.test(m[2]);n.disabled=/\bdisabled(?=\s|\/|$)/.test(m[2]);stack.at(-1).appendChild(n);if(n.id)ids.set(n.id,n);if(!voids.has(tag)&&!m[2].endsWith('/'))stack.push(n);}
+    const get=id=>{if(!ids.has(id))throw new Error('Actual markup ID missing '+id);return ids.get(id);};
+    Object.assign(doc,{body,getElementById:get,createElement:tag=>tag==='canvas'?new Canvas():new Element(tag),querySelector:s=>s==='.tool-widget'?widget:s==='.tool-widget .btn-primary'?widget.querySelector('.btn-primary'):widget.querySelector(s),addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);},dispatch(type,extra={}){const e={type,target:this.activeElement,defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},...extra};for(const fn of this.listeners[type]||[])fn(e);return e;},execCommand:()=>false});
+    class ControlledImage{set src(url){this.url=url;images.push({image:this,file:urls.get(url)});}}
+    const context={document:doc,console,t:STRINGS[lang],Image:ControlledImage,AbortController,Uint8ClampedArray,Promise,innerHeight:900,innerWidth:1366,scrollBy(){},addEventListener(){},CSS:{supports:()=>true},
+      EyeDropper:class{open(options){const job=deferred();job.options=options;picks.push(job);return job.promise;}},
+      navigator:{clipboard:{writeText(text){copies.push(text);return Promise.resolve();}}},
+      URL:{createObjectURL(file){const url='blob:fixture-'+(++seq);urls.set(url,file);return url;},revokeObjectURL(url){revoked.push(url);}},
+      setTimeout(fn,ms=0){const id=++seq;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),
+      ztPersist:{load:()=>structuredClone(prefs),save:(slug,value)=>{prefs=structuredClone(value);saved.push({slug,value:structuredClone(value)});},clear:slug=>{prefs={};cleared.push(slug);}},_slug:'eyedropper-color-picker'};
+    context.window=context;vm.createContext(context);if(shellFirst)vm.runInContext(shortcut,context);vm.runInContext(pageScript,context);if(!shellFirst)vm.runInContext(shortcut,context);
+    function zeros(){for(const[id,t]of[...timers])if(t.ms===0){timers.delete(id);t.fn();}}
+    function startFile(name='sample.png'){get('ecp-file').files=[{name,type:'image/png'}];get('ecp-file').dispatch('change');return images.at(-1);}
+    function release(job,error=false){if(error)job.image.onerror();else{Object.assign(job.image,{naturalWidth:4,naturalHeight:2,pixel:[255,0,0,255]});job.image.onload();}}
+    function shortcutClear(inside=true){(inside?get('ecp-hex'):body).focus();return doc.dispatch('keydown',{ctrlKey:true,key:'l'});}
+    function snapshot(){return{fields:fields.map(f=>get('ecp-'+f).value),status:get('ecp-status').textContent,viewer:get('ecp-viewer').hidden,drop:get('ecp-drop').hidden,info:get('ecp-imginfo').textContent,pixel:[...get('ecp-canvas').pixel],size:[get('ecp-canvas').width,get('ecp-canvas').height],recent:get('ecp-recent-grid').children.length};}
+    return{get,doc,picks,images,saved,cleared,revoked,copies,zeros,startFile,release,shortcutClear,snapshot};
+  }
+  const compare=(label,actual,expected)=>eq(label,JSON.stringify(actual),JSON.stringify(expected));
+  {
+    const p=page();p.release(p.startFile('ready.png'));
+    check('image positive control opens the actual viewer',!p.get('ecp-viewer').hidden&&p.get('ecp-imginfo').textContent.includes('ready.png'));
+    p.get('ecp-pick').click();await microtasks();p.picks[0].resolve({sRGBHex:'#ff0000'});await microtasks();
+    eq('screen positive control formats actual result',p.get('ecp-hex').value,'#ff0000');
+    eq('screen positive control persists picked recent',p.saved.at(-1).value.recent[0],'#ff0000');
+    eq('screen positive control re-enables picker',p.get('ecp-pick').disabled,false);
+  }
+  for(const shellFirst of [false,true])for(const action of ['clear','shortcut','close','new'])for(const error of [false,true]){
+    const p=page('en',shellFirst),old=p.startFile('old.png');
+    if(action==='clear')p.get('ecp-clear').click();if(action==='shortcut'){p.shortcutClear();p.zeros();}if(action==='close')p.get('ecp-close').click();if(action==='new')p.release(p.startFile('new.png'));
+    const before=p.snapshot();p.release(old,error);
+    compare(`image late ${error?'error':'load'} after ${action}, shellFirst=${shellFirst}`,p.snapshot(),before);
+    check(`stale image URL revoked after ${action}, shellFirst=${shellFirst}, error=${error}`,p.revoked.includes(old.image.url));
+  }
+  for(const shellFirst of [false,true])for(const error of [false,true]){
+    const p=page('en',shellFirst),old=p.startFile('before-timer.png');p.shortcutClear();const before=p.snapshot();p.release(old,error);
+    compare(`shortcut cancels image before 0ms cleanup, shellFirst=${shellFirst}, error=${error}`,p.snapshot(),before);p.zeros();
+  }
+  {
+    const p=page();p.get('ecp-pick').click();p.get('ecp-clear').click();await microtasks();
+    eq('clear before picker microtask prevents opening system UI',p.picks.length,0);
+  }
+  for(const lang of ['en','zh','ja','ko'])for(const shellFirst of [false,true])for(const action of ['clear','shortcut'])for(const reject of [false,true]){
+    const p=page(lang,shellFirst,{sample:3,recent:['#00ff00']});p.get('ecp-pick').click();await microtasks();const job=p.picks[0];
+    if(action==='clear')p.get('ecp-clear').click();else p.shortcutClear();
+    if(reject)job.reject({name:'OperationError',message:'old'});else job.resolve({sRGBHex:'#ff0000'});await microtasks();
+    // A promise callback can run before the deferred shared-shortcut cleanup timer.
+    eq(`${lang} late screen cannot persist after ${action}, shellFirst=${shellFirst}, reject=${reject}`,p.saved.length,0);
+    check(`${lang} cleared pending screen is aborted after ${action}`,job.options?.signal?.aborted===true);
+    p.zeros();
+    compare(`${lang} late screen cannot refill fields after ${action}`,p.snapshot().fields,['','','','','']);
+    eq(`${lang} late screen cannot refill status after ${action}`,p.snapshot().status,'');
+    eq(`${lang} clear unlocks screen button`,p.get('ecp-pick').disabled,false);
+  }
+  for(const reject of [false,true]){
+    const p=page();p.get('ecp-pick').click();await microtasks();const old=p.picks[0];p.get('ecp-clear').click();p.get('ecp-pick').click();await microtasks();
+    eq('clear permits a new screen request',p.picks.length,2);
+    if(reject)old.reject({name:'AbortError'});else old.resolve({sRGBHex:'#ff0000'});await microtasks();
+    check('old screen completion cannot unlock new screen',p.get('ecp-pick').disabled);
+    if(p.picks[1]){p.picks[1].resolve({sRGBHex:'#0000ff'});await microtasks();eq('new screen request remains usable',p.get('ecp-hex').value,'#0000ff');}
+  }
+  {
+    const p=page(),old=p.startFile('still-valid.png');p.shortcutClear(false);p.zeros();p.release(old);
+    check('outside shortcut leaves pending image valid',!p.get('ecp-viewer').hidden);
+    eq('outside shortcut leaves persistence untouched',p.cleared.length,0);
+    p.get('ecp-pick').click();await microtasks();p.picks[0].reject({name:'AbortError'});await microtasks();
+    eq('active user-canceled picker reports localized status',p.get('ecp-status').textContent,STRINGS.en.canceled);
+    eq('active rejection unlocks the screen button',p.get('ecp-pick').disabled,false);
+  }
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

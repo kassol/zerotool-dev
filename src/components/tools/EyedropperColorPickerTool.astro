@@ -681,6 +681,7 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
     var zoom = 'fit';
     var touching = false;
     var dropperOpen = false;
+    var imageGeneration = 0, pickGeneration = 0, pickController = null;
     var hasEyeDropper = typeof window.EyeDropper === 'function';
 
     function setStatus(msg, kind) {
@@ -748,7 +749,16 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
     }
     function FIELDS_EACH(fn) { ['hex', 'rgb', 'hsl', 'oklch', 'p3'].forEach(fn); }
 
+    function cancelPicker() {
+      pickGeneration++;
+      if (pickController) pickController.abort();
+      pickController = null;
+      dropperOpen = false;
+      pickBtn.disabled = false;
+    }
+
     function clearAll() {
+      cancelPicker();
       FIELDS_EACH(function (k) { fieldEls[k].value = ''; });
       current = null;
       swatchFill.style.background = '';
@@ -781,18 +791,28 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
       if (!hasEyeDropper || dropperOpen) return;
       var dropper;
       try { dropper = new window.EyeDropper(); } catch (e) { setStatus(fill(t.errOperation, { msg: e.message || e.name }), 'error'); return; }
+      var generation = ++pickGeneration;
+      var controller = new AbortController();
+      pickController = controller;
       dropperOpen = true;
       pickBtn.disabled = true;
       setStatus(t.screenOpen, 'info');
-      Promise.resolve().then(function () { return dropper.open(); }).then(function (res) {
+      Promise.resolve().then(function () {
+        if (generation !== pickGeneration) return;
+        return dropper.open({ signal: controller.signal });
+      }).then(function (res) {
+        if (generation !== pickGeneration) return;
         var c = parseColor(res && res.sRGBHex);
         if (c.error) { setStatus(t.invalid, 'error'); return; }
         show(c, { record: true, status: t.fromScreen });
         track('screen_pick');
       }, function (err) {
+        if (generation !== pickGeneration) return;
         var key = eyeDropperErrorKey(err);
         setStatus(fill(t[key], { msg: (err && (err.message || err.name)) || '' }), key === 'canceled' ? 'info' : 'error');
       }).then(function () {
+        if (generation !== pickGeneration) return;
+        pickController = null;
         dropperOpen = false;
         pickBtn.disabled = false;
       });
@@ -822,6 +842,7 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
     }
     function openFile(file) {
       if (!file) return;
+      var generation = ++imageGeneration;
       var name = file.name || 'image';
       if (!isImageFile(file)) { setStatus(fill(t.notImage, { name: name }), 'error'); return; }
       setStatus(fill(t.loading, { name: name }), 'info');
@@ -829,6 +850,7 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
       var el = new Image();
       el.decoding = 'async';
       el.onload = function () {
+        if (generation !== imageGeneration) { URL.revokeObjectURL(url); return; }
         var w = el.naturalWidth, h = el.naturalHeight;
         if (!w || !h) { URL.revokeObjectURL(url); setStatus(fill(t.imgError, { name: name }), 'error'); return; }
         var fit = fitImageSize(w, h, MAX_CANVAS_AREA);
@@ -868,11 +890,13 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
       };
       el.onerror = function () {
         URL.revokeObjectURL(url);
+        if (generation !== imageGeneration) return;
         setStatus(fill(t.imgError, { name: name }), 'error');
       };
       el.src = url;
     }
     function closeImage() {
+      imageGeneration++;
       if (img) { canvas.width = 1; canvas.height = 1; }
       img = null;
       cursor = null;
@@ -1103,6 +1127,8 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
     // The site-wide Ctrl/⌘+L shortcut empties text inputs; reset the rest of the tool with them.
     document.addEventListener('keydown', function (e) {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+        imageGeneration++;
+        cancelPicker();
         setTimeout(clearAll, 0);
       }
     });
