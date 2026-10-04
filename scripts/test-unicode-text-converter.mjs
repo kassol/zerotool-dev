@@ -303,6 +303,32 @@ for (const [l, input, id, want] of PAGE_EXAMPLES) {
   check('page ' + l + ' prints ' + JSON.stringify(want), pages[l].includes(want));
 }
 
+// Card notes printed next to the examples: the wording and the letters come from the tool.
+for (const [l, input, id, open, close] of [
+  ['en', 'Café Müller · Est. 2026', 'script', '(', ')'],
+  ['en', 'CO2 and x2+1', 'subscript', '(', ')'],
+  ['en', 'CO2 and x2+1', 'superscript', '(', ')'],
+  ['ja', 'カフェ Tokyo 2026', 'boldItalicSans', '（', '）'],
+]) {
+  const r = E.convert(E.analyze(input).source, id);
+  const note = open + E.fill(STRINGS[l].missing, { style: STRINGS[l].styles[id], chars: r.missing.join(' ') }) + close;
+  check('page ' + l + ' prints the card note ' + note, pages[l].includes(note));
+}
+
+// The limits section names every style that leaves an accented letter as typed.
+{
+  const plainAccent = E.STYLE_IDS.filter((id) => JSON.stringify(E.convert('é', id)) === JSON.stringify({ text: 'é', missing: ['é'] }));
+  eq('styles that keep é as typed and list it', plainAccent,
+    ['smallCaps', 'superscript', 'subscript', 'fullwidth', 'circled', 'negativeCircled', 'squared', 'negativeSquared']);
+  const LIMIT = {
+    en: 'Circled, squared, fullwidth, small-caps, superscript and subscript letters',
+    zh: '圆圈、方框、全角、小型大写、上标、下标里的 é',
+    ja: '丸囲み・四角囲み・全角・スモールキャピタル・上付き・下付きでは',
+    ko: '동그라미, 네모, 전각, 작은 대문자, 위첨자, 아래첨자에서는',
+  };
+  for (const l of Object.keys(LIMIT)) check('page ' + l + ' limits list subscript with the other styles', pages[l].includes(LIMIT[l]));
+}
+
 // The JavaScript snippet on the English page runs and matches the tool.
 {
   const m = pages.en.match(/```js\n([\s\S]*?)```/);
@@ -352,6 +378,8 @@ check('page script writes card text with textContent', /c\.text\.textContent = r
     (markup.match(/class="utc-pane zt-io-pane"/g) || []).length === 2 &&
     /<textarea id="utc-input" class="tool-textarea utc-textarea zt-io-fill"/.test(markup) &&
     /<div class="utc-out zt-io-fill"[^>]*>\s*<div id="utc-plain"[\s\S]*<div id="utc-grid" class="utc-grid"><\/div>\s*<\/div>\s*<p class="utc-a11y">/.test(markup));
+  check('from 861px the card pane is twice as wide as the input pane',
+    /@media \(min-width: 861px\) \{\s*\.utc-panels \{ grid-template-columns: minmax\(0, 1fr\) minmax\(0, 2fr\); \}\s*\}/.test(style));
   check('the status line is above the panes', markup.indexOf('id="utc-status"') < markup.indexOf('class="utc-panels zt-io"'));
   check('the card list scrolls inside its pane (flex-basis 0, overflow auto) and stops below 860px',
     /\.utc-out \{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(style) &&
