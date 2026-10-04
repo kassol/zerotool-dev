@@ -23,10 +23,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { inputText: 'Input Text', inputPlaceholder: 'Enter your text here...', copy: 'Copy', copied: 'Copied!' },
-        zh: { inputText: '输入文本', inputPlaceholder: '在此输入文本...', copy: '复制', copied: '已复制！' },
-        ja: { inputText: '入力テキスト', inputPlaceholder: 'テキストを入力してください...', copy: 'コピー', copied: 'コピー済み！' },
-        ko: { inputText: '입력 텍스트', inputPlaceholder: '텍스트를 입력하세요...', copy: '복사', copied: '복사됨!' }
+        en: { inputText: 'Input Text', inputPlaceholder: 'Enter your text here...', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed' },
+        zh: { inputText: '输入文本', inputPlaceholder: '在此输入文本...', copy: '复制', copied: '已复制！', copyFailed: '复制失败' },
+        ja: { inputText: '入力テキスト', inputPlaceholder: 'テキストを入力してください...', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗' },
+        ko: { inputText: '입력 텍스트', inputPlaceholder: '텍스트를 입력하세요...', copy: '복사', copied: '복사됨!', copyFailed: '복사 실패' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -40,6 +40,7 @@
 
       var inputEl = document.getElementById('tcase-input');
       var casesEl = document.getElementById('tcase-cases');
+      var copyStates = [];
 
       /* ── engine:start ── */
       // Word splitting follows change-case v5 split() with separateNumbers: break at
@@ -128,6 +129,14 @@
       ];
       /* ── engine:end ── */
 
+      function invalidateCopy() {
+        copyStates.forEach(function (state) {
+          state.revision++;
+          clearTimeout(state.timer);
+          state.button.textContent = t.copy;
+        });
+      }
+
       // Build output rows
       converters.forEach(function (c) {
         var row = document.createElement('div');
@@ -147,12 +156,25 @@
         var btn = document.createElement('button');
         btn.className = 'btn-copy';
         btn.textContent = t.copy;
+        var copyState = { button: btn, revision: 0, timer: 0 };
+        copyStates.push(copyState);
         btn.addEventListener('click', function () {
           if (!out.value) return;
-          navigator.clipboard.writeText(out.value).then(function () {
-            btn.textContent = t.copied;
-            setTimeout(function () { btn.textContent = t.copy; }, 1500);
-          });
+          var revision = ++copyState.revision;
+          clearTimeout(copyState.timer);
+          btn.textContent = t.copy;
+          function failed() {
+            if (revision === copyState.revision) btn.textContent = t.copyFailed;
+          }
+          try {
+            navigator.clipboard.writeText(out.value).then(function () {
+              if (revision !== copyState.revision) return;
+              btn.textContent = t.copied;
+              copyState.timer = setTimeout(function () {
+                if (revision === copyState.revision) btn.textContent = t.copy;
+              }, 1500);
+            }, failed);
+          } catch (e) { failed(); }
           window.trackTool && window.trackTool('text_case', 'copy_' + c.id);
         });
 
@@ -169,7 +191,13 @@
       }
 
       inputEl.addEventListener('input', function () {
+        invalidateCopy();
         convert(inputEl.value);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var widget = document.querySelector('.tool-widget');
+        if (widget && document.activeElement && widget.contains(document.activeElement)) invalidateCopy();
       });
     })();
   </script>

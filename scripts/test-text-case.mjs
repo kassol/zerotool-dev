@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TextCaseTool.astro'), 'utf8');
@@ -171,5 +172,215 @@ let skips = 0;
   }
 }
 
+// ---------- complete page copy lifecycle and the actual shared shortcuts ----------
+// Only DOM, clipboard promises and time are controlled. The complete production IIFE
+// builds the nine rows and handles every input/click; no converter is replaced.
+console.log('existing engine and guide checks: ' + passes + ' passed, ' + failures + ' failed');
+const lifecycleStart = { passes, failures };
+const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes("widget.querySelectorAll('textarea")) throw Error('Missing real shared keyboard handler');
+const unhandled = [];
+const onUnhandled = error => unhandled.push(String(error));
+process.on('unhandledRejection', onUnhandled);
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+
+function page(lang = 'en', shellFirst = false) {
+  const copies = [], clears = [], timers = new Map(), events = {}, tracks = [];
+  let now = 0, timerId = 0;
+  const doc = { documentElement: { lang }, activeElement: null };
+  function matches(el, selector) {
+    return selector.split(',').some(s => {
+      const parts = s.trim().split(/\s+(?![^\[]*\])/);
+      const simple = (e, part) => {
+        const attrs = [...part.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
+        const bare = part.replace(/\[[^\]]+\]/g, '');
+        const tag = /^[\w-]+/.exec(bare), id = /#([\w-]+)/.exec(bare);
+        return (!tag || e.tagName === tag[0].toUpperCase()) && (!id || e.id === id[1])
+          && [...bare.matchAll(/\.([\w-]+)/g)].every(m => e.className.split(/\s+/).includes(m[1]))
+          && attrs.every(m => m[2] === undefined ? e.getAttribute(m[1]) !== null : e.getAttribute(m[1]) === m[2]);
+      };
+      if (!simple(el, parts.pop())) return false;
+      for (let parent = el.parentElement; parts.length;) {
+        while (parent && !simple(parent, parts.at(-1))) parent = parent.parentElement;
+        if (!parent) return false;
+        parts.pop(); parent = parent.parentElement;
+      }
+      return true;
+    });
+  }
+  class Element {
+    constructor(tag = 'div') {
+      Object.assign(this, { tagName: tag.toUpperCase(), id: '', type: tag === 'input' ? 'text' : '', className: '', value: '', textContent: '', placeholder: '', readOnly: false, disabled: false, children: [], parentElement: null, attributes: {}, listeners: {} });
+    }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (['id', 'type', 'class', 'value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); }
+    getAttribute(k) { return ['id', 'type', 'class'].includes(k) ? this[k === 'class' ? 'className' : k] || null : this.attributes[k] ?? null; }
+    appendChild(el) { el.parentElement = this; this.children.push(el); return el; }
+    contains(el) { return el === this || this.children.some(child => child.contains(el)); }
+    querySelectorAll(s) { return this.children.flatMap(child => [...(matches(child, s) ? [child] : []), ...child.querySelectorAll(s)]); }
+    querySelector(s) { return this.querySelectorAll(s)[0] || null; }
+    addEventListener(t, fn) { (this.listeners[t] ??= []).push(fn); }
+    dispatch(t) { const e = { type: t, target: this }; for (const fn of this.listeners[t] || []) fn.call(this, e); }
+    click() { if (!this.disabled) this.dispatch('click'); }
+    focus() { doc.activeElement = this; }
+  }
+  const body = new Element('body'), widget = new Element();
+  widget.className = 'tool-widget'; body.appendChild(widget);
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  const stack = [widget];
+  for (const token of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
+    if (token[3] !== undefined) { stack.at(-1).textContent += token[3].trim(); continue; }
+    if (token[0].startsWith('</')) {
+      if (stack.at(-1).tagName !== token[1].toUpperCase()) throw Error('Unexpected markup nesting');
+      stack.pop(); continue;
+    }
+    const el = new Element(token[1]);
+    for (const attr of token[2].matchAll(/([\w-]+)(?:\s*=\s*"([^"]*)")?/g)) el.setAttribute(attr[1], attr[2] ?? '');
+    stack.at(-1).appendChild(el);
+    if (!['input', 'br', 'hr'].includes(token[1])) stack.push(el);
+  }
+  const get = id => { const el = body.querySelector('#' + id); if (!el) throw Error('Missing actual ID ' + id); return el; };
+  Object.assign(doc, {
+    body, activeElement: body, getElementById: get, createElement: tag => new Element(tag),
+    querySelector: s => body.querySelector(s), querySelectorAll: s => body.querySelectorAll(s),
+    addEventListener(t, fn) { (events[t] ??= []).push(fn); },
+    execCommand() { throw Error('Unexpected native clipboard fallback'); },
+  });
+  const context = {
+    document: doc, console, _slug: 'text-case', ztPersist: { clear: slug => clears.push(slug) },
+    trackTool: (...args) => tracks.push(args),
+    navigator: { clipboard: { writeText(value) {
+      let resolve, reject;
+      const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+      copies.push({ value, resolve, reject }); return promise;
+    } } },
+    setTimeout(fn, ms = 0) { const id = ++timerId; timers.set(id, { fn, due: now + ms, delay: ms }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  };
+  context.window = context; vm.createContext(context);
+  if (shellFirst) vm.runInContext(shortcut, context);
+  vm.runInContext(source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1], context, { filename: 'TextCaseTool.astro' });
+  if (!shellFirst) vm.runInContext(shortcut, context);
+  return {
+    get, doc, body, copies, clears, timers, context, tracks,
+    button: id => get('tcase-out-' + id).parentElement.querySelector('button'),
+    input(value) { get('tcase-input').value = value; get('tcase-input').dispatch('input'); },
+    key(focus, extra = {}) {
+      (typeof focus === 'string' ? get(focus) : focus || body).focus();
+      const e = { key: 'l', ctrlKey: true, metaKey: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...extra };
+      for (const fn of events.keydown || []) fn.call(doc, e);
+      return e;
+    },
+    advance(ms) {
+      const until = now + ms;
+      for (;;) {
+        const next = [...timers].filter(([, job]) => job.due <= until).sort((a, b) => a[1].due - b[1].due)[0];
+        if (!next) break;
+        timers.delete(next[0]); now = next[1].due; next[1].fn();
+      }
+      now = until;
+    },
+  };
+}
+
+const labels = {
+  en: ['Copy', 'Copied!', 'Copy failed'], zh: ['复制', '已复制！', '复制失败'],
+  ja: ['コピー', 'コピー済み！', 'コピーに失敗'], ko: ['복사', '복사됨!', '복사 실패'],
+};
+const expected = { upper: 'HELLO WORLD', lower: 'hello world', title: 'Hello World', sentence: 'Hello world', camel: 'helloWorld', pascal: 'HelloWorld', kebab: 'hello-world', snake: 'hello_world', constant: 'HELLO_WORLD' };
+const blank = Object.fromEntries(Object.keys(expected).map(id => [id, '']));
+const values = p => Object.fromEntries(Object.keys(expected).map(id => [id, p.get('tcase-out-' + id).value]));
+const finish = async (copy, outcome) => { if (outcome === 'resolve') copy.resolve(); else copy.reject(Error('controlled copy refusal')); await settle(); };
+
+for (const [lang, [idle, copied, failed]] of Object.entries(labels)) {
+  const p = page(lang);
+  eq(lang + ' initial outputs empty', values(p), blank);
+  p.input('hello world');
+  eq(lang + ' real input generates all nine known values', values(p), expected);
+  for (const id of Object.keys(expected)) {
+    const btn = p.button(id), name = lang + '/' + id;
+    eq(name + ' readonly output', p.get('tcase-out-' + id).readOnly, true);
+    eq(name + ' localized idle button', btn.textContent, idle);
+    btn.click(); eq(name + ' exact clipboard bytes', p.copies.at(-1).value, expected[id]);
+    await finish(p.copies.at(-1), 'resolve'); eq(name + ' current copy success', btn.textContent, copied);
+    p.advance(1499); eq(name + ' success lasts 1500ms', btn.textContent, copied);
+    p.advance(1); eq(name + ' success returns to idle', btn.textContent, idle);
+    const rejectionCount = unhandled.length;
+    btn.click(); await finish(p.copies.at(-1), 'reject');
+    eq(name + ' current rejection handled', unhandled.length, rejectionCount);
+    eq(name + ' current rejection visible', btn.textContent, failed);
+    btn.click(); await finish(p.copies.at(-1), 'resolve');
+    eq(name + ' direct same-result retry recovers', btn.textContent, copied);
+    p.advance(1500); eq(name + ' retry finishes idle', btn.textContent, idle);
+  }
+  p.input(''); eq(lang + ' empty input clears all real conversions', values(p), blank);
+  const before = p.copies.length;
+  for (const id of Object.keys(expected)) p.button(id).click();
+  eq(lang + ' all empty copy buttons do nothing', p.copies.length, before);
+
+  for (const shellFirst of [false, true]) for (const id of Object.keys(expected)) {
+    for (const action of ['input', 'empty', 'ctrl-l', 'meta-L']) for (const outcome of ['resolve', 'reject']) {
+      const q = page(lang, shellFirst), btn = q.button(id), name = lang + '/' + id + '/' + shellFirst + '/' + action + '/' + outcome;
+      q.input('hello world'); btn.click(); const pending = q.copies.at(-1), rejected = unhandled.length;
+      if (action === 'input') q.input('new text');
+      else if (action === 'empty') q.input('');
+      else q.key(action === 'ctrl-l' ? 'tcase-input' : 'tcase-out-' + id, action === 'meta-L' ? { ctrlKey: false, metaKey: true, key: 'L' } : {});
+      const after = values(q);
+      if (action !== 'input') eq(name + ' cleared outputs remain normal', after, blank);
+      await finish(pending, outcome);
+      eq(name + ' stale completion leaves copy idle', btn.textContent, idle);
+      eq(name + ' stale completion preserves current output', values(q), after);
+      eq(name + ' stale rejection handled', unhandled.length, rejected);
+      q.advance(5000); eq(name + ' no stale timer feedback', btn.textContent, idle);
+    }
+    for (const order of [[0, 1], [1, 0]]) for (const oldOutcome of ['resolve', 'reject']) for (const newOutcome of ['resolve', 'reject']) {
+      const q = page(lang, shellFirst), btn = q.button(id), name = lang + '/' + id + '/overlap/' + shellFirst + '/' + order + '/' + oldOutcome + '/' + newOutcome;
+      q.input('hello world'); btn.click(); btn.click(); const rejected = unhandled.length;
+      for (const i of order) await finish(q.copies[i], i === 0 ? oldOutcome : newOutcome);
+      eq(name + ' only newest request owns feedback', btn.textContent, newOutcome === 'resolve' ? copied : failed);
+      eq(name + ' all copy rejections handled', unhandled.length, rejected);
+      eq(name + ' copies keep source bytes', q.copies.map(job => job.value), [expected[id], expected[id]]);
+    }
+    {
+      const q = page(lang, shellFirst), btn = q.button(id), name = lang + '/' + id + '/timer/' + shellFirst;
+      q.input('hello world'); btn.click(); await finish(q.copies[0], 'resolve');
+      const firstTimer = [...q.timers.values()].find(job => job.delay === 1500);
+      check(name + ' success schedules feedback expiry', !!firstTimer);
+      q.advance(500); btn.click(); await finish(q.copies[1], 'resolve');
+      q.advance(1000); eq(name + ' first deadline cannot clear newer success', btn.textContent, copied);
+      firstTimer?.fn(); eq(name + ' already queued old callback cannot clear newer success', btn.textContent, copied);
+      q.advance(500); eq(name + ' newest timer restores localized idle', btn.textContent, idle);
+      btn.click(); await finish(q.copies[2], 'resolve');
+      const staleTimer = [...q.timers.values()].find(job => job.delay === 1500);
+      q.input('new text'); btn.click(); await finish(q.copies[3], 'reject');
+      staleTimer?.fn(); eq(name + ' timer from prior input cannot erase new failure', btn.textContent, failed);
+    }
+  }
+  for (const shellFirst of [false, true]) {
+    const q = page(lang, shellFirst);
+    q.input('hello world'); q.button('upper').click(); q.button('lower').click();
+    await finish(q.copies[1], 'resolve'); await finish(q.copies[0], 'reject');
+    eq(lang + '/rows independent/' + shellFirst, [q.button('upper').textContent, q.button('lower').textContent], [failed, copied]);
+    const beforeValues = values(q);
+    q.key(q.body); eq(lang + ' shortcut outside tool preserves results/' + shellFirst, values(q), beforeValues);
+    q.key('tcase-input', { ctrlKey: false }); eq(lang + ' plain l preserves results/' + shellFirst, values(q), beforeValues);
+    q.key('tcase-input', { key: 'Enter' }); eq(lang + ' no primary CtrlEnter action/' + shellFirst, values(q), beforeValues);
+    q.key(q.button('lower'));
+    eq(lang + ' shortcut from copy clears fields/' + shellFirst, values(q), blank);
+    eq(lang + ' shortcut resets all copy feedback/' + shellFirst, Object.keys(expected).map(id => q.button(id).textContent), Object.keys(expected).map(() => idle));
+    eq(lang + ' shortcut preserves persistence clear/' + shellFirst, q.clears, ['text-case']);
+  }
+  for (const mode of ['throw', 'missing']) {
+    const q = page(lang); q.input('hello world');
+    if (mode === 'missing') q.context.navigator.clipboard = undefined;
+    else q.context.navigator.clipboard.writeText = () => { throw Error('controlled synchronous denial'); };
+    let thrown = false; try { q.button('upper').click(); } catch { thrown = true; }
+    eq(lang + '/' + mode + ' denial handled', thrown, false);
+    eq(lang + '/' + mode + ' denial visible', q.button('upper').textContent, failed);
+  }
+}
+await settle();
+process.off('unhandledRejection', onUnhandled);
+console.log('page lifecycle: ' + (passes - lifecycleStart.passes) + ' passed, ' + (failures - lifecycleStart.failures) + ' failed');
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);
