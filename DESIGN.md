@@ -160,6 +160,7 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 | `.zt-tip`, `.zt-tip-btn`, `.zt-tip-pop` | Toggletip button and panel. `Toggletip.astro` has no `<style>` of its own. |
 | `.zt-empty-drop` | An `analyze` tool's empty drop zone: a centered flex column that fills the available height, with a 220px minimum. Keep the tool class for its border, colors, spacing and compact or mobile state. Used by HAR File Analyzer and QR Code Decoder. |
 | `.zt-rail` | A `generate` tool's control rail: a flex column with a 0.9rem gap and zero minimum width and height. Keep the tool class for its panels, scrolling and mobile order. Used by Color Palette Generator and QR Code Generator. |
+| `.zt-segmented` | The container of a segmented control: flex row, pill radius and an inset border. Keep padding, background, button or radio semantics, and selected-state styling in the tool. Used by Color Palette Generator and Sprite Sheet Generator. |
 
 `convert` tools use `.zt-io`, `.zt-io-pane` and `.zt-io-fill` for the panels and keep their own class next to each for tool-specific rules (tab size, colors, phone heights). Rules that the first batch (2026-10-04, 12 tools; `TextToBinaryTool` is the reference) settled:
 
