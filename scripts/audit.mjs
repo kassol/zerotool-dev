@@ -605,6 +605,27 @@ function checkPersistencePolicy() {
   }
 }
 
+// src/data/tool-layouts.ts lists the tools that render the v2 page and their layout kind.
+// A key that is not a tool slug never matches a page; a kind outside the three has no layout.
+const TOOL_PAGE_KINDS = ['convert', 'generate', 'analyze'];
+
+function checkToolLayouts(toolSlugs) {
+  const src = read('src/data/tool-layouts.ts');
+  const m = src.match(/export const toolPageKinds[^=]*=\s*\{([\s\S]*?)\};/);
+  if (!m) {
+    fail('tool_layouts', 'tool page layouts', ['Cannot find toolPageKinds object in src/data/tool-layouts.ts']);
+    return;
+  }
+  const issues = [];
+  const entries = [...m[1].matchAll(/'([^']+)':\s*'([^']*)'/g)];
+  for (const [, slug, kind] of entries) {
+    if (!toolSlugs.has(slug)) issues.push(`${slug}: no matching slug in tools.ts`);
+    if (!TOOL_PAGE_KINDS.includes(kind)) issues.push(`${slug}: kind "${kind}" is not one of ${TOOL_PAGE_KINDS.join(' / ')}`);
+  }
+  if (issues.length === 0) pass('tool_layouts', `tool page layouts (${entries.length} v2 tools)`);
+  else fail('tool_layouts', 'tool page layouts', issues);
+}
+
 // About (4 languages) promises that pages for tools handling credentials, keys, tokens,
 // or private files and text load neither GA4 nor AdSense. That set is the `disabled`
 // policy in src/data/persistence.ts. A tool whose slug or component suggests such
@@ -752,6 +773,7 @@ try {
   checkLayoutShikiOverride();
   checkPersistencePolicy();
   checkSensitiveToolsDisabled();
+  checkToolLayouts(toolSlugs);
   checkRedirects();
   checkNoPublishedAgentsMd();
   checkAboutNetworkClaims();

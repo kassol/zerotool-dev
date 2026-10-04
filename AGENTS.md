@@ -148,7 +148,7 @@ node scripts/test-llms-txt.mjs   # 检查构建出的 dist/llms*.txt（先 build
 | 检查 | 触发 | 阻塞条件 |
 |------|------|----------|
 | `scripts/check-icon-coverage.mjs` | `npm run build` 第 1 步 | 任何 slug 缺图标 |
-| `scripts/audit.mjs` | `.github/workflows/ci.yml` audit job + 手动 | 任何 FAIL（发布目录含 AGENTS.md、schema 漂移、孤儿组件、路由缺失、i18n key 漂移、blog 命名违规、看起来处理凭据的工具没设 `disabled` 也不在豁免清单等） |
+| `scripts/audit.mjs` | `.github/workflows/ci.yml` audit job + 手动 | 任何 FAIL（发布目录含 AGENTS.md、schema 漂移、孤儿组件、路由缺失、i18n key 漂移、blog 命名违规、看起来处理凭据的工具没设 `disabled` 也不在豁免清单、`tool-layouts.ts` 的键不是 `tools.ts` 的 slug 或值不是 `convert` / `generate` / `analyze` 等） |
 | `scripts/check-tool-css-order.mjs` | `npm run build`（astro build 之后） | 任一工具页的共享工具 CSS（tool-common、ToolLayout、ShareButtons、AdUnit）没有排在本工具 CSS 之前，或 `<head>` 出现内联 `<style>` |
 | `npm run build` | `.github/workflows/ci.yml` build job + 手动 | 任何编译错误 |
 | `scripts/test-*.mjs` | `.github/workflows/ci.yml` build job（build 之后，部分测试读 `dist/`）+ 提交前手动 | 任一测试脚本退出码非 0 |
