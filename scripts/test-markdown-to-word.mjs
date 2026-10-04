@@ -468,7 +468,17 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
   const used = [...source.matchAll(/\bS\.(\w+)|\bT\.(\w+)|fmt\('(\w+)'/g)].map((m) => m[1] || m[2] || m[3]);
   check('every string key used by the component exists', used.length > 10 && used.every((k) => E.STRINGS.en[k] !== undefined), used.filter((k) => E.STRINGS.en[k] === undefined));
   const vars = (str) => (str.match(/\{\w+\}/g) || []).sort().join(',');
-  check('placeholders match across languages', Object.keys(E.STRINGS.en).every((k) => ['zh', 'ja', 'ko'].every((l) => vars(E.STRINGS[l][k]) === vars(E.STRINGS.en[k]))));
+  // tips is an object (toggletip text), checked below
+  const textKeys = Object.keys(E.STRINGS.en).filter((k) => typeof E.STRINGS.en[k] === 'string');
+  check('placeholders match across languages', textKeys.every((k) => ['zh', 'ja', 'ko'].every((l) => vars(E.STRINGS[l][k]) === vars(E.STRINGS.en[k]))));
+  // toggletip text: the same keys in every language, plain sentences (no placeholders, line breaks or links)
+  const tipKeys = Object.keys(E.STRINGS.en.tips).sort();
+  for (const l of ['en', 'zh', 'ja', 'ko']) {
+    check('STRINGS ' + l + ' tips keys', Object.keys(E.STRINGS[l].tips).sort().join(',') === tipKeys.join(','), Object.keys(E.STRINGS[l].tips));
+    check('STRINGS ' + l + ' tips are plain sentences', tipKeys.every((k) => typeof E.STRINGS[l].tips[k] === 'string' && E.STRINGS[l].tips[k].length > 20 && !/\{\w+\}|\n|https?:\/\//.test(E.STRINGS[l].tips[k])));
+    // the embed tip states what the export code does: off by default, 15 s, failures stay links
+    check('STRINGS ' + l + ' embed tip names the 15 second limit', /15/.test(E.STRINGS[l].tips.embed));
+  }
 }
 
 // ── large document ───────────────────────────────────────────────────────────
@@ -484,6 +494,49 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
   check('10,000-line document: all 2,000 headings exported', (r.document.match(/<w:pStyle w:val="Heading2"\/>/g) || []).length === 2000);
   check('10,000-line document converts in under 10 s (took ' + Math.round(ms) + ' ms)', ms < 10000 * PERF_SLACK, ms);
   console.log('info: 10,000-line document (' + md.length + ' chars) parsed, built and packed in ' + Math.round(ms) + ' ms');
+}
+
+// ── v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ────────────────
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script>\n  import'));
+  check('the tool root is .mw-wrap (it gets the height of the first screen)', /^\s*<div class="mw-wrap" /.test(markup) && markup.trimEnd().endsWith('</div>'));
+  check('editor and preview sit in the shared two-pane grid', markup.includes('class="mw-panes zt-io"') &&
+    markup.includes('<div class="mw-pane mw-pane-editor zt-io-pane">') && markup.includes('<div class="mw-pane mw-pane-preview zt-io-pane">'));
+  check('the editor and the preview fill their pane', (markup.match(/<[^>]*\bzt-io-fill\b[^>]*>/g) || []).map((m) => (m.match(/id="([\w-]+)"/) || [])[1]).join() === 'mw-editor,mw-preview');
+  check('buttons, options and status come before the panes', markup.indexOf('id="mw-convert"') < markup.indexOf('class="mw-options"') &&
+    markup.indexOf('class="mw-options"') < markup.indexOf('id="mw-status"') && markup.indexOf('id="mw-status"') < markup.indexOf('class="mw-panes zt-io"'));
+  check('the privacy note stays under the preview', markup.indexOf('id="mw-preview"') < markup.indexOf('class="mw-privacy"'));
+  const tipIds = (markup.match(/<Toggletip id="mw-tip-\w+"/g) || []).map((m) => m.slice(22, -1));
+  check('one toggletip per explained control', tipIds.join() === 'filename,open,paper,font,embed,editor,preview', tipIds);
+  check('every tip key has a toggletip', tipIds.slice().sort().join() === Object.keys(E.STRINGS.en.tips).sort().join());
+  check('each toggletip shows its own text', tipIds.every((id) => new RegExp('<Toggletip id="mw-tip-' + id + '"[^>]*>\\{TIPS\\.' + id + '\\}</Toggletip>').test(markup)));
+  check('no toggletip inside a label', !/<label[^>]*>(?:(?!<\/label>)[\s\S])*<Toggletip/.test(markup));
+  check('toggletip text stays out of data-strings', source.includes('const { tips: TIPS, ...CLIENT_S } = S;') &&
+    markup.includes('data-strings={JSON.stringify(CLIENT_S)}') && !/\bT\.tips\b/.test(source));
+  // "Embed web images": off in the markup, described by its toggletip, and the visible note is gone
+  check('the embed switch is unchecked in the markup and described by its toggletip',
+    markup.includes('<input type="checkbox" id="mw-embed-remote" aria-describedby="mw-tip-embed" />') && !/embedRemoteNote|mw-embed-note/.test(source));
+  check('the embed switch still starts from the saved value only', source.includes("embedRemoteBox.checked = ((window as any).ztPersist?.load(SLUG) || {}).embedRemoteImages === true;"));
+  // ToolLayout's Ctrl/Cmd+L empties the editor without an input event; the tool drops the preview, status and switch state.
+  check('Ctrl/Cmd+L refreshes the preview and clears the status and the switch',
+    /e\.key !== 'l' && e\.key !== 'L'\)\) return;\s*setTimeout\(\(\) => \{\s*if \(editor\.value\) return;\s*clearTimeout\(timer\);\s*embedRemoteBox\.checked = false;\s*setStatus\(''\);\s*refresh\(\);/.test(source));
+  const style = source.slice(source.lastIndexOf('\n<style>\n'));
+  check('stacking breakpoint is 860px, phone details at 640px', (style.match(/@media \((?:max|min)-width: \d+px\)/g) || []).join() === '@media (min-width: 861px),@media (max-width: 860px),@media (max-width: 640px)');
+  check('a long document scrolls inside the preview', /@media \(min-width: 861px\) \{\s*\.mw-preview \{ flex-basis: 0; \}/.test(style) && /\.mw-preview \{\s*overflow: auto;/.test(style) && !/max-height: 640px|min-height: 420px/.test(style));
+  check('stacked, both boxes get a height', /@media \(max-width: 860px\) \{[^}]*\}\s*\.mw-editor \{ height: \d+px; \}\s*\.mw-preview \{ height: \d+px; \}/.test(style));
+  check('preview content rules stay global (the script writes it with innerHTML)', (style.match(/^  \.mw-preview :global\(/gm) || []).length >= 20);
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'markdown-to-word': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/markdown-to-word', lang + '.mdx'), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    const steps = (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "(.*)"$/gm) || []).map((m) => m.slice(5, -1));
+    check(lang + ' mdx: 5 steps in the frontmatter, within the llms limits', front.includes('\nsteps:\n') && steps.length === 5 && steps.every((x) => x.length <= 280 && !/\*\*/.test(x)) && steps.join('').length <= 1200, steps.length);
+    check(lang + ' mdx: the steps use the current button names', [E.STRINGS[lang].openFile, E.STRINGS[lang].embedRemote, E.STRINGS[lang].download].every((name) => steps.join(' ').includes(name)));
+    check(lang + ' mdx: no usage section in the body', !/^## (How to convert Markdown to Word|使用方法|使い方|사용 방법)\s*$/m.test(body));
+    check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한 사항)\s*$/m.test(body));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

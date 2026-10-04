@@ -19,6 +19,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'jq-playground': 'convert',
   'svg-to-png-converter': 'convert',
   'image-to-base64': 'convert',
+  'markdown-to-word': 'convert',
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
 };

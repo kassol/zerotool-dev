@@ -1,6 +1,8 @@
 ---
 // MarkdownToWordTool — Markdown (CommonMark + GFM) to .docx in the browser.
 // Parser: mdast-util-from-markdown + GFM + CJK-friendly emphasis; writer: docx.js.
+import Toggletip from '../Toggletip.astro';
+
 interface Props {
   lang?: string;
 }
@@ -18,7 +20,6 @@ const STRINGS = {
     paperLetter: 'Letter',
     fontLabel: 'CJK font',
     embedRemote: 'Embed web images',
-    embedRemoteNote: 'When checked, export downloads http(s) images from their URLs, and the image host can see your IP address.',
     'font_zh-song': 'SimSun (Chinese)',
     'font_zh-yahei': 'Microsoft YaHei (Chinese)',
     'font_ja-mincho': 'Yu Mincho (Japanese)',
@@ -39,6 +40,17 @@ const STRINGS = {
     emptyError: 'Enter some Markdown first.',
     error: 'Could not create the file: {msg}',
     fileError: 'Could not read the file.',
+    // Toggletip text next to the control it explains (DESIGN.md "Tool Pages v2"). It is in
+    // the HTML, so it is left out of data-strings.
+    tips: {
+      filename: 'Leave it empty to name the file after the first heading, or document when the text has no heading. The characters \\ / : * ? " < > | are removed and the name is cut at 80 characters. The name is also stored as the document title.',
+      open: 'Pick a .md, .markdown, .mdown, .mkd or .txt file. It is read in this browser as UTF-8 text and replaces what is in the editor. If the file name box is empty, it takes the name of the file.',
+      paper: 'Page size of the .docx, portrait with 2.54 cm (1 inch) margins. This page preselects Letter when the browser region is the US, Canada, Mexico or another Letter country, and A4 otherwise.',
+      font: 'The font Word uses for Chinese, Japanese and Korean characters, and the proofing language set for them. Latin text is Calibri and code is Consolas whichever you pick, so the choice shows only when the text has such characters.',
+      embed: 'Off by default: export sends no network request and http(s) images become links. When it is on, export downloads each http(s) image from its URL, without cookies or a referrer, and the image host sees your IP address. An image that fails to load or takes longer than 15 seconds stays a link. data: images are embedded either way. The setting is remembered in this browser until you press Clear.',
+      editor: 'Read as CommonMark with the GitHub extensions: tables, task lists, strikethrough, autolinks and footnotes. YAML front matter at the top is left out. Raw HTML tags are removed and their text kept. The preview updates 0.2 seconds after you stop typing, or 0.8 seconds when the text is longer than 200,000 characters. Ctrl+Enter (\u2318+Enter on a Mac) downloads the file.',
+      preview: 'An HTML rendering of the parsed Markdown, for checking the structure before you download. It does not apply the paper size or the CJK font. http(s) images appear as a placeholder with their address and are not loaded; data: images are shown.',
+    },
   },
   zh: {
     download: '下载 .docx',
@@ -50,7 +62,6 @@ const STRINGS = {
     paperLetter: 'Letter',
     fontLabel: '中日韩字体',
     embedRemote: '嵌入网络图片',
-    embedRemoteNote: '勾选后，导出时会从图片 URL 下载 http(s) 图片，图床能看到你的 IP。',
     'font_zh-song': '宋体（中文）',
     'font_zh-yahei': '微软雅黑（中文）',
     'font_ja-mincho': '游明朝（日文）',
@@ -71,6 +82,15 @@ const STRINGS = {
     emptyError: '请先输入 Markdown。',
     error: '生成文件失败：{msg}',
     fileError: '无法读取该文件。',
+    tips: {
+      filename: '留空时用第一个标题作文件名，没有标题时用 document。\\ / : * ? " < > | 这些字符会被去掉，最长 80 个字符。这个名字同时写进文档的标题属性。',
+      open: '选择 .md、.markdown、.mdown、.mkd 或 .txt 文件。文件在本浏览器中按 UTF-8 文本读取，并替换编辑框里的内容。文件名框为空时，会填入该文件的名字。',
+      paper: '.docx 的页面大小，纵向，页边距 2.54 厘米。本页默认选 A4。',
+      font: 'Word 显示中文、日文、韩文字符所用的字体，以及为它们设置的校对语言。西文固定用 Calibri，代码固定用 Consolas，所以只有文本含中日韩文字时才看得出差别。',
+      embed: '默认不勾选：导出时不发出任何网络请求，http(s) 图片输出为链接。勾选后，导出时才从图片 URL 下载每张 http(s) 图片，不带 Cookie 和来源页，图床能看到你的 IP。加载失败或超过 15 秒的图片保留为链接。data: 图片无论是否勾选都会嵌入。这个设置保存在本浏览器里，点「清空」后恢复为不勾选。',
+      editor: '按 CommonMark 加 GitHub 扩展读取：表格、任务列表、删除线、自动链接和脚注。开头的 YAML 元数据不导出。原始 HTML 去掉标签、保留文字。停止输入 0.2 秒后刷新预览，文本超过 20 万字符时为 0.8 秒。按 Ctrl+Enter（Mac 为 \u2318+Enter）下载文件。',
+      preview: '解析后的 Markdown 的 HTML 渲染，用来在下载前检查结构。预览不套用纸张和中日韩字体。http(s) 图片显示为带地址的占位文字，不会加载；data: 图片正常显示。',
+    },
   },
   ja: {
     download: '.docx をダウンロード',
@@ -82,7 +102,6 @@ const STRINGS = {
     paperLetter: 'Letter',
     fontLabel: '和文フォント',
     embedRemote: 'ネット上の画像を埋め込む',
-    embedRemoteNote: 'オンにすると、書き出し時に http(s) の画像をその URL からダウンロードします。画像の配信元にはあなたの IP アドレスが伝わります。',
     'font_zh-song': 'SimSun（中国語）',
     'font_zh-yahei': 'Microsoft YaHei（中国語）',
     'font_ja-mincho': '游明朝（日本語）',
@@ -103,6 +122,15 @@ const STRINGS = {
     emptyError: '先に Markdown を入力してください。',
     error: 'ファイルを作成できませんでした：{msg}',
     fileError: 'ファイルを読み込めませんでした。',
+    tips: {
+      filename: '空欄のときは最初の見出しがファイル名になり、見出しがなければ document になります。\\ / : * ? " < > | は取り除き、80 文字までにします。この名前は文書のタイトルにも入ります。',
+      open: '.md、.markdown、.mdown、.mkd、.txt のファイルを選びます。ファイルはこのブラウザ内で UTF-8 のテキストとして読み込み、エディターの内容と置き換えます。ファイル名の欄が空のときは、そのファイルの名前が入ります。',
+      paper: '.docx のページサイズです。縦向きで、余白は上下左右 2.54 cm です。このページの初期値は A4 です。',
+      font: '日本語・中国語・韓国語の文字に Word が使うフォントと、その文字に設定する校正言語です。欧文は常に Calibri、コードは常に Consolas なので、こうした文字を含む文書でだけ違いが出ます。',
+      embed: '既定はオフです。オフの間は書き出しで通信せず、http(s) の画像はリンクになります。オンにすると、書き出し時に http(s) の画像をその URL からダウンロードします。Cookie とリファラーは送りませんが、画像の配信元にはあなたの IP アドレスが伝わります。読み込めなかった画像と 15 秒を超えた画像はリンクのまま残ります。data: の画像はどちらの場合も埋め込みます。この設定はこのブラウザに保存され、「クリア」を押すとオフに戻ります。',
+      editor: 'CommonMark と GitHub の拡張（表、タスクリスト、取り消し線、自動リンク、脚注）として読み込みます。先頭の YAML フロントマターは書き出しません。HTML タグは取り除き、文字だけ残します。入力を止めて 0.2 秒後にプレビューを更新します（20 万文字を超えるときは 0.8 秒後）。Ctrl+Enter（Mac は \u2318+Enter）でファイルをダウンロードします。',
+      preview: '解析した Markdown を HTML で表示したもので、ダウンロード前に構造を確かめるためのものです。用紙と和文フォントは反映しません。http(s) の画像は URL 付きの代替表示になり、読み込みません。data: の画像は表示します。',
+    },
   },
   ko: {
     download: '.docx 다운로드',
@@ -114,7 +142,6 @@ const STRINGS = {
     paperLetter: 'Letter',
     fontLabel: '한중일 글꼴',
     embedRemote: '웹 이미지 포함',
-    embedRemoteNote: '켜면 내보낼 때 http(s) 이미지를 해당 URL에서 내려받으며, 이미지 서버에 내 IP 주소가 전달됩니다.',
     'font_zh-song': 'SimSun (중국어)',
     'font_zh-yahei': 'Microsoft YaHei (중국어)',
     'font_ja-mincho': 'Yu Mincho (일본어)',
@@ -135,11 +162,22 @@ const STRINGS = {
     emptyError: '먼저 Markdown을 입력하세요.',
     error: '파일을 만들지 못했습니다: {msg}',
     fileError: '파일을 읽지 못했습니다.',
+    tips: {
+      filename: '비워 두면 첫 번째 제목이 파일 이름이 되고, 제목이 없으면 document가 됩니다. \\ / : * ? " < > | 문자는 지우고 80자까지만 씁니다. 이 이름은 문서 제목 속성에도 들어갑니다.',
+      open: '.md, .markdown, .mdown, .mkd, .txt 파일을 고릅니다. 파일은 이 브라우저에서 UTF-8 텍스트로 읽어 편집기 내용을 바꿉니다. 파일 이름 칸이 비어 있으면 그 파일의 이름을 넣습니다.',
+      paper: '.docx의 쪽 크기입니다. 세로 방향이고 여백은 사방 2.54cm입니다. 이 페이지의 기본값은 A4입니다.',
+      font: '한국어·중국어·일본어 글자에 Word가 쓰는 글꼴과, 그 글자에 지정하는 교정 언어입니다. 영문은 항상 Calibri, 코드는 항상 Consolas이므로 이런 글자가 있는 문서에서만 차이가 보입니다.',
+      embed: '기본값은 꺼짐입니다. 꺼져 있으면 내보낼 때 네트워크 요청을 보내지 않고 http(s) 이미지는 링크가 됩니다. 켜면 내보낼 때 http(s) 이미지를 해당 URL에서 내려받습니다. 쿠키와 리퍼러는 보내지 않지만 이미지 서버에 내 IP 주소가 전달됩니다. 불러오지 못했거나 15초를 넘긴 이미지는 링크로 남습니다. data: 이미지는 어느 쪽이든 포함됩니다. 이 설정은 이 브라우저에 저장되며 \'지우기\'를 누르면 꺼짐으로 돌아갑니다.',
+      editor: 'CommonMark와 GitHub 확장(표, 작업 목록, 취소선, 자동 링크, 각주)으로 읽습니다. 맨 앞의 YAML 프런트매터는 내보내지 않습니다. HTML 태그는 지우고 글자만 남깁니다. 입력을 멈추고 0.2초 뒤에 미리보기를 고칩니다(20만 자를 넘으면 0.8초 뒤). Ctrl+Enter(Mac은 \u2318+Enter)로 파일을 내려받습니다.',
+      preview: '파싱한 마크다운을 HTML로 보여 주며, 내려받기 전에 구조를 확인하는 용도입니다. 용지와 한중일 글꼴은 반영하지 않습니다. http(s) 이미지는 주소가 붙은 자리 표시로 나오고 불러오지 않습니다. data: 이미지는 표시합니다.',
+    },
   },
 };
 /* ── strings:end ── */
 
 const S = STRINGS[lang as keyof typeof STRINGS] || STRINGS.en;
+// The script gets every string except the toggletip text, which is in the HTML.
+const { tips: TIPS, ...CLIENT_S } = S;
 const FONT_KEYS = ['zh-song', 'zh-yahei', 'ja-mincho', 'ja-gothic', 'ko-malgun', 'ko-batang'] as const;
 const DEFAULT_FONT: Record<string, string> = { zh: 'zh-song', ja: 'ja-mincho', ko: 'ko-malgun' };
 const defaultFont = DEFAULT_FONT[lang] || 'zh-yahei';
@@ -265,59 +303,74 @@ const SAMPLES: Record<string, string> = {
 const sample = SAMPLES[lang] || SAMPLES.en;
 ---
 
-<div class="mw-wrap" data-lang={lang} data-strings={JSON.stringify(S)}>
+<div class="mw-wrap" data-lang={lang} data-strings={JSON.stringify(CLIENT_S)}>
   <div class="mw-bar">
     <button id="mw-convert" type="button" class="btn-primary mw-convert">{S.download}</button>
-    <label class="mw-filename-group">
-      <span class="mw-sr">{S.filenameLabel}</span>
-      <input type="text" id="mw-filename" class="mw-filename-input" maxlength="80" spellcheck="false" autocomplete="off" placeholder="document" />
-      <span class="mw-filename-ext" aria-hidden="true">.docx</span>
-    </label>
-    <div class="mw-fields">
-    <label class="mw-field">
-      <span class="mw-field-label">{S.paperLabel}</span>
-      <select id="mw-paper" class="tool-input mw-select">
-        <option value="a4">{S.paperA4}</option>
-        <option value="letter">{S.paperLetter}</option>
-      </select>
-    </label>
-    <label class="mw-field">
-      <span class="mw-field-label">{S.fontLabel}</span>
-      <select id="mw-font" class="tool-input mw-select">
-        {FONT_KEYS.map((k) => <option value={k} selected={k === defaultFont}>{S[`font_${k}` as keyof typeof S]}</option>)}
-      </select>
-    </label>
-    </div>
-    <label class="mw-embed">
-      <input type="checkbox" id="mw-embed-remote" aria-describedby="mw-embed-note" />
-      <span>{S.embedRemote}</span>
-    </label>
-    <p id="mw-embed-note" class="mw-embed-note">{S.embedRemoteNote}</p>
+    <span class="mw-opt mw-opt-name">
+      <label class="mw-filename-group">
+        <span class="mw-sr">{S.filenameLabel}</span>
+        <input type="text" id="mw-filename" class="mw-filename-input" maxlength="80" spellcheck="false" autocomplete="off" placeholder="document" />
+        <span class="mw-filename-ext" aria-hidden="true">.docx</span>
+      </label>
+      <Toggletip id="mw-tip-filename" lang={lang} about={S.filenameLabel} wide>{TIPS.filename}</Toggletip>
+    </span>
     <div class="mw-bar-end">
       <label class="btn-secondary mw-open">
         {S.openFile}
         <input type="file" id="mw-file" accept=".md,.markdown,.mdown,.mkd,.txt,text/markdown,text/plain" class="mw-sr" />
       </label>
+      <Toggletip id="mw-tip-open" lang={lang} about={S.openFile} wide>{TIPS.open}</Toggletip>
       <button id="mw-clear" type="button" class="btn-ghost">{S.clear}</button>
     </div>
   </div>
-  <p id="mw-status" class="mw-status" role="status" aria-live="polite"></p>
 
-  <div class="mw-panes">
-    <div class="mw-pane mw-pane-editor">
-      <label class="mw-pane-label" for="mw-editor">{S.inputLabel}</label>
-      <textarea id="mw-editor" class="tool-textarea mw-editor" spellcheck="false" placeholder={S.placeholder}>{sample}</textarea>
-    </div>
-    <div class="mw-pane mw-pane-preview">
-      <div class="mw-pane-label" id="mw-preview-label">{S.previewLabel}</div>
-      <div id="mw-preview" class="mw-preview" aria-labelledby="mw-preview-label" data-empty={S.previewEmpty}></div>
-    </div>
+  <div class="mw-options">
+    <span class="mw-opt">
+      <label class="mw-field-label" for="mw-paper">{S.paperLabel}</label>
+      <select id="mw-paper" class="tool-input mw-select">
+        <option value="a4">{S.paperA4}</option>
+        <option value="letter">{S.paperLetter}</option>
+      </select>
+      <Toggletip id="mw-tip-paper" lang={lang} about={S.paperLabel} wide>{TIPS.paper}</Toggletip>
+    </span>
+    <span class="mw-opt">
+      <label class="mw-field-label" for="mw-font">{S.fontLabel}</label>
+      <select id="mw-font" class="tool-input mw-select">
+        {FONT_KEYS.map((k) => <option value={k} selected={k === defaultFont}>{S[`font_${k}` as keyof typeof S]}</option>)}
+      </select>
+      <Toggletip id="mw-tip-font" lang={lang} about={S.fontLabel} wide>{TIPS.font}</Toggletip>
+    </span>
+    <span class="mw-opt">
+      <label class="mw-embed">
+        <input type="checkbox" id="mw-embed-remote" aria-describedby="mw-tip-embed" />
+        <span>{S.embedRemote}</span>
+      </label>
+      <Toggletip id="mw-tip-embed" lang={lang} about={S.embedRemote} wide>{TIPS.embed}</Toggletip>
+    </span>
   </div>
 
-  <p class="mw-privacy">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-    <span>{S.privacyNote}</span>
-  </p>
+  <p id="mw-status" class="mw-status" role="status" aria-live="polite"></p>
+
+  <div class="mw-panes zt-io">
+    <div class="mw-pane mw-pane-editor zt-io-pane">
+      <div class="mw-pane-head">
+        <label class="mw-pane-label" for="mw-editor">{S.inputLabel}</label>
+        <Toggletip id="mw-tip-editor" lang={lang} about={S.inputLabel} wide>{TIPS.editor}</Toggletip>
+      </div>
+      <textarea id="mw-editor" class="tool-textarea mw-editor zt-io-fill" spellcheck="false" placeholder={S.placeholder}>{sample}</textarea>
+    </div>
+    <div class="mw-pane mw-pane-preview zt-io-pane">
+      <div class="mw-pane-head">
+        <div class="mw-pane-label" id="mw-preview-label">{S.previewLabel}</div>
+        <Toggletip id="mw-tip-preview" lang={lang} about={S.previewLabel} wide>{TIPS.preview}</Toggletip>
+      </div>
+      <div id="mw-preview" class="mw-preview zt-io-fill" aria-labelledby="mw-preview-label" data-empty={S.previewEmpty}></div>
+      <p class="mw-privacy">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span>{S.privacyNote}</span>
+      </p>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -1306,6 +1359,19 @@ const sample = SAMPLES[lang] || SAMPLES.en;
     editor.focus();
   });
 
+  // ToolLayout's Ctrl/Cmd+L empties the editor and the file name without input events and
+  // clears the saved switch; drop the stale preview, status and switch state too.
+  document.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
+    setTimeout(() => {
+      if (editor.value) return;
+      clearTimeout(timer);
+      embedRemoteBox.checked = false;
+      setStatus('');
+      refresh();
+    }, 0);
+  });
+
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files && fileInput.files[0];
     if (!file) return;
@@ -1324,15 +1390,17 @@ const sample = SAMPLES[lang] || SAMPLES.en;
 </script>
 
 <style>
-  .mw-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+  /* v2 "convert" layout: the root is a flex column, so the editor and the preview
+     (.zt-io in tool-common.css) take the height that is left under the two rows of
+     controls and the status line. */
+  .mw-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; min-height: 0; }
 
-  .mw-bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 0.5rem 0.6rem;
-  }
-  .mw-bar-end { display: flex; gap: 0.5rem; margin-left: auto; }
+  .mw-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .mw-bar-end { display: inline-flex; align-items: center; gap: 0.4rem; margin-left: auto; }
+  .mw-options { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1.1rem; }
+  .mw-opt { display: inline-flex; align-items: center; gap: 0.3rem; min-width: 0; }
+  /* The toggletip button keeps its size in a row that shrinks (.zt-tip has no flex rule). */
+  .mw-wrap :global(.zt-tip) { flex: none; }
 
   .mw-sr {
     position: absolute;
@@ -1349,6 +1417,7 @@ const sample = SAMPLES[lang] || SAMPLES.en;
   .mw-filename-group {
     display: flex;
     align-items: center;
+    min-width: 0;
     min-height: 40px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
@@ -1365,7 +1434,7 @@ const sample = SAMPLES[lang] || SAMPLES.en;
     padding: 0.35rem 0.2rem 0.35rem 0.65rem;
     font-size: 0.9rem;
     color: var(--color-text);
-    width: 11rem;
+    width: 14rem;
     min-width: 0;
     outline: none;
   }
@@ -1376,48 +1445,31 @@ const sample = SAMPLES[lang] || SAMPLES.en;
     font-family: var(--font-mono);
   }
 
-  .mw-fields { display: flex; gap: 0.6rem; min-width: 0; }
-  .mw-field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
-  .mw-field-label {
-    font-size: 0.75rem;
-    font-weight: 650;
-    color: var(--color-text-muted);
-  }
-  .mw-select { width: auto; font-family: var(--font-sans); }
+  .mw-field-label { margin-right: 0.15rem; font-size: 0.86rem; font-weight: 600; color: var(--color-text-secondary); white-space: nowrap; }
+  .mw-select { width: auto; min-width: 0; min-height: 34px; padding-top: 0.25rem; padding-bottom: 0.25rem; font-family: var(--font-sans); }
 
   .mw-embed {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    min-height: 40px;
+    min-height: 34px;
     font-size: 0.86rem;
     font-weight: 600;
     color: var(--color-text-secondary);
     cursor: pointer;
   }
-  .mw-embed-note {
-    flex: 1 1 14rem;
-    align-self: center;
-    margin: 0;
-    font-size: 0.78rem;
-    line-height: 1.4;
-    color: var(--color-text-muted);
-  }
 
   .mw-open { position: relative; cursor: pointer; }
   .mw-open:focus-within { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
-  .mw-status { margin: 0; min-height: 1.2em; font-size: 0.84rem; font-weight: 550; color: var(--color-text-secondary); }
+  /* min-height equals one line, so the panes do not move when a message appears */
+  .mw-status { margin: 0; min-height: 1.4em; line-height: 1.4; font-size: 0.84rem; font-weight: 550; color: var(--color-text-secondary); overflow-wrap: anywhere; }
   .mw-status-ok { color: var(--color-success, oklch(50% 0.12 150)); }
   .mw-status-warn { color: var(--color-warning, oklch(50% 0.11 70)); }
   .mw-status-err { color: var(--color-error, oklch(52% 0.17 28)); }
 
-  .mw-panes {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 0.75rem;
-  }
-  .mw-pane { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+  /* Editor and preview side by side: .zt-io / .zt-io-pane / .zt-io-fill in tool-common.css. */
+  .mw-pane-head { display: flex; align-items: center; gap: 0.25rem; min-height: 28px; }
   .mw-pane-label {
     font-size: 0.78rem;
     font-weight: 650;
@@ -1425,11 +1477,8 @@ const sample = SAMPLES[lang] || SAMPLES.en;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .mw-editor { flex: 1; min-height: 420px; resize: vertical; tab-size: 2; }
+  .mw-editor { tab-size: 2; }
   .mw-preview {
-    flex: 1;
-    min-height: 420px;
-    max-height: 640px;
     overflow: auto;
     padding: 0.875rem 1rem;
     border: 1px solid var(--color-border);
@@ -1439,6 +1488,11 @@ const sample = SAMPLES[lang] || SAMPLES.en;
     line-height: 1.65;
     color: var(--color-text);
     overflow-wrap: anywhere;
+  }
+  /* Side by side, a long document scrolls inside the preview: with the shared
+     flex-basis (auto) the pane would grow to the content and lengthen the page. */
+  @media (min-width: 861px) {
+    .mw-preview { flex-basis: 0; }
   }
 
   .mw-preview :global(.mw-preview-empty) { color: var(--color-text-muted); margin: 0; }
@@ -1510,26 +1564,28 @@ const sample = SAMPLES[lang] || SAMPLES.en;
   }
   .mw-privacy svg { flex-shrink: 0; margin-top: 0.2em; }
 
-  /* Mobile: button, status and editor first; file name, paper, font, open and clear
-     below the editor; preview last. Tab order stays the DOM order. */
+  /* Stacked: editor, then preview, then the options. Both boxes get a fixed height
+     and scroll inside. Tab order stays the DOM order. */
+  @media (max-width: 860px) {
+    .mw-options { order: 5; }
+    .mw-editor { height: 240px; }
+    .mw-preview { height: 320px; }
+  }
+  /* Phones: Download, Open and Clear share the first row, the file name takes the
+     second; the editor and the top of the preview fit in the first screen. */
   @media (max-width: 640px) {
-    .mw-bar,
-    .mw-panes { display: contents; }
-    .mw-convert { order: 0; }
-    .mw-status { order: 1; }
-    .mw-pane-editor { order: 2; }
-    .mw-filename-group { order: 3; min-height: 44px; }
-    .mw-filename-input { width: 100%; }
-    .mw-fields { order: 4; display: flex; gap: 0.6rem; }
-    .mw-field { flex: 1 1 0; }
-    .mw-select { width: 100%; }
-    .mw-embed { order: 5; min-height: 44px; }
-    .mw-embed-note { order: 6; flex: none; }
-    .mw-bar-end { order: 7; margin-left: 0; }
-    .mw-bar-end > * { flex: 1 1 0; }
-    .mw-pane-preview { order: 8; }
-    .mw-privacy { order: 9; }
-    .mw-editor { min-height: 200px; }
-    .mw-preview { min-height: 200px; max-height: 420px; }
+    .mw-bar { gap: 0.4rem; }
+    .mw-convert { flex: 1 1 0; white-space: nowrap; }
+    .mw-bar-end { order: 1; margin-left: 0; }
+    .mw-bar-end > .btn-secondary, .mw-bar-end > .btn-ghost { padding-left: 0.6rem; padding-right: 0.6rem; white-space: nowrap; }
+    .mw-opt-name { order: 2; flex: 1 1 100%; }
+    .mw-filename-group { flex: 1; min-height: 44px; }
+    .mw-filename-input { flex: 1; width: auto; }
+    .mw-options { gap: 0.2rem 1rem; }
+    .mw-opt { flex-wrap: nowrap; }
+    .mw-select { min-height: 44px; }
+    .mw-embed { min-height: 44px; }
+    .mw-editor { min-height: 150px; height: 150px; }
+    .mw-preview { height: 300px; }
   }
 </style>
