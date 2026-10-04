@@ -23,6 +23,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'unicode-text-converter': 'convert',
   'aes-encrypt-decrypt': 'convert',
   'color-palette-generator': 'generate',
+  'qr-code-generator': 'generate',
   'har-file-analyzer': 'analyze',
   'dns-lookup': 'analyze',
   'url-parser': 'analyze',
