@@ -5,6 +5,7 @@
 //        public/vendor/zxing-reader.js + .wasm (an independent decoder, zxing-cpp); the engine block of
 //        src/components/tools/QrCodeDecoderTool.astro (the site's content parser, for the formats);
 //        src/content/tools/qr-code-generator/*.mdx (`{/* qrg-check: … */}` annotations)
+//        and ToolLayout.astro's keyboard handler; the real page script runs in a DOM stand-in
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -282,6 +283,118 @@ const saved = /ztPersist\.save\(SLUG, \{([\s\S]*?)\}\);/.exec(script);
 eq('only options are saved, never the content', saved && [...saved[1].matchAll(/(\w+):/g)].map((m) => m[1]), ['ecl', 'size', 'quiet', 'version', 'fg', 'bg', 'transparent', 'kanji', 'cformat']);
 check('the page does not write HTML from content', !/innerHTML|insertAdjacentHTML|outerHTML/.test(script));
 check('policy is preference', /'qr-code-generator': 'preference'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
+
+// ---------- PNG exports keep the image and filename from the click ----------
+// Only browser boundaries are replaced: canvas pixels, deferred toBlob, downloads and clipboard.
+// The full page script, QR encoder and shared Ctrl+L handler run unchanged. Exported PNG bytes
+// are decoded by ZXing, so changing the input after the click cannot pass with a new image.
+function exportPage() {
+  const nodes = new Map(), pendingBlobs = [], downloads = [], copied = [], urls = new Map(), timers = new Map(), frames = new Map();
+  let seq = 0;
+  const document = { activeElement: null, listeners: {} };
+  class Element {
+    constructor(id = '', tag = 'div') {
+      Object.assign(this, { id, tagName: tag.toUpperCase(), type: 'text', value: '', checked: false, hidden: false, disabled: false, style: {}, attributes: {}, listeners: {}, children: [], className: '', parentNode: { clientWidth: 300 } });
+    }
+    set textContent(value) { this.text = String(value); this.children = []; }
+    get textContent() { return (this.text || '') + this.children.map((c) => c.textContent).join(''); }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    dispatch(type, extra = {}) { for (const fn of this.listeners[type] || []) fn.call(this, { type, target: this, preventDefault() {}, ...extra }); }
+    click() { if (this.disabled) return; if (this.tagName === 'A') downloads.push({ name: this.download, blob: urls.get(this.href) }); this.dispatch('click'); }
+    appendChild(child) { this.children.push(child); return child; }
+    remove() {}
+    focus() { document.activeElement = this; }
+    closest() { return null; }
+    contains(el) { return [...nodes.values()].includes(el); }
+    querySelectorAll() { return [...nodes.values()].filter((el) => el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text')); }
+    setAttribute(key, value) { this.attributes[key] = String(value); }
+    getAttribute(key) { return this.attributes[key] ?? null; }
+    get classList() {
+      const el = this;
+      return { toggle(c, on) { const names = new Set(el.className.split(' ').filter(Boolean)); if (on) names.add(c); else names.delete(c); el.className = [...names].join(' '); } };
+    }
+  }
+  class Canvas extends Element {
+    constructor(id = '') {
+      super(id, 'canvas'); this.width = this.height = 0;
+      this.context = { fillStyle: '#000000', clearRect: (x, y, w, h) => this.rect(x, y, w, h, [0, 0, 0, 0]), fillRect: (x, y, w, h) => this.rect(x, y, w, h, [...this.context.fillStyle.slice(1).match(/../g).map((v) => parseInt(v, 16)), 255]) };
+    }
+    rect(x, y, w, h, color) {
+      if (this.pixels?.length !== this.width * this.height * 4) this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
+      for (let row = y; row < y + h; row++) for (let col = x; col < x + w; col++) this.pixels.set(color, (row * this.width + col) * 4);
+    }
+    getContext() { return this.context; }
+    toBlob(callback) { pendingBlobs.push({ callback, pixels: new Uint8ClampedArray(this.pixels), width: this.width, height: this.height }); }
+  }
+  const get = (id) => { if (!nodes.has(id)) nodes.set(id, id === 'qrg-canvas' ? new Canvas(id) : new Element(id)); return nodes.get(id); };
+  for (const m of source.matchAll(/<(input|textarea|select|button)[^>]*\bid="([^"]+)"[^>]*>/g)) {
+    const el = get(m[2]); el.tagName = m[1].toUpperCase(); el.type = /\btype="([^"]+)"/.exec(m[0])?.[1] || 'text';
+  }
+  const tabs = ['text', 'contact', 'email', 'phone', 'sms', 'geo', 'wifi'].map((key) => { const el = get('qrg-tab-' + key); el.setAttribute('data-tab', key); return el; });
+  Object.assign(document, {
+    body: new Element('body'), getElementById: get,
+    querySelector: (s) => s === '.tool-widget' ? get('widget') : s === '.tool-widget .btn-primary' ? get('qrg-png') : null,
+    querySelectorAll: (s) => s === '.qrg-tab' ? tabs : [], createElement: (tag) => tag === 'canvas' ? new Canvas() : new Element('', tag),
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
+    dispatch(type, extra) { for (const fn of this.listeners[type] || []) fn({ type, preventDefault() {}, ...extra }); },
+  });
+  for (const [key, value] of Object.entries({ text: 'https://alpha.example/old', ecl: 'M', size: '1024', quiet: '4', version: '0', fg: '#000000', bg: '#ffffff', cformat: 'vcard' })) get('qrg-' + key).value = value;
+  const sandbox = {
+    console, TextEncoder, TextDecoder, Uint8Array, Uint8ClampedArray, Blob, document, QRCode: Q, t: STRINGS.en, pageLang: 'en',
+    URL: { createObjectURL(blob) { const url = 'blob:export-' + (++seq); urls.set(url, blob); return url; }, revokeObjectURL(url) { urls.delete(url); } },
+    ClipboardItem: class { constructor(items) { this.items = items; } getType(type) { return Promise.resolve(this.items[type]); } },
+    navigator: { clipboard: { async write(items) { for (const item of items) copied.push(await item.getType('image/png')); } } },
+    setTimeout(fn, ms) { const id = ++seq; timers.set(id, { fn, ms }); return id; }, clearTimeout(id) { timers.delete(id); },
+    requestAnimationFrame(fn) { const id = ++seq; frames.set(id, fn); return id; },
+    addEventListener() {}, devicePixelRatio: 1, ztPersist: { load() { return {}; }, save() {}, clear() {} }, _slug: 'qr-code-generator',
+  };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const start = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
+  vm.runInContext(layout.slice(start, layout.indexOf('// ── Copy button visual feedback', start)), context);
+  const pageScript = /<script is:inline define:vars=[^>]*>([\s\S]*?)<\/script>/.exec(source);
+  vm.runInContext(pageScript[1], context, { filename: 'QrCodeGeneratorTool.astro', lineOffset: source.slice(0, pageScript.index).split('\n').length - 1 });
+  function flush() {
+    const scheduled = [...frames.values()]; frames.clear(); scheduled.forEach((fn) => fn());
+    for (const [id, timer] of [...timers]) if (timer.ms === 0) { timers.delete(id); timer.fn(); }
+  }
+  return {
+    get, downloads, copied, pendingBlobs,
+    edit() { get('qrg-text').value = 'https://beta.example/new'; get('qrg').dispatch('input', { target: get('qrg-text') }); flush(); },
+    clear() { get('qrg-text').focus(); document.dispatch('keydown', { ctrlKey: true, key: 'l' }); flush(); },
+    switchTab() { get('qrg-p-num').value = '+12025550100'; get('qrg-tab-phone').click(); },
+    async release() {
+      const job = pendingBlobs.shift();
+      const png = await sharp(Buffer.from(job.pixels), { raw: { width: job.width, height: job.height, channels: 4 } }).png().toBuffer();
+      job.callback(new Blob([png], { type: 'image/png' }));
+      await new Promise(setImmediate);
+    },
+  };
+}
+for (const action of ['edit', 'switchTab', 'clear']) {
+  for (const kind of ['download', 'copy']) {
+    const page = exportPage(), errors = [];
+    const reject = (error) => errors.push(String(error));
+    process.on('unhandledRejection', reject);
+    try {
+      page.get(kind === 'download' ? 'qrg-png' : 'qrg-copy').click();
+      eq('PNG ' + kind + ': encoding waits for the callback (' + action + ')', page.pendingBlobs.length, 1);
+      page[action]();
+      await page.release();
+      const blob = kind === 'download' ? page.downloads[0]?.blob : page.copied[0];
+      let text = null;
+      if (blob) {
+        const { data, info } = await sharp(Buffer.from(await blob.arrayBuffer())).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        text = (await decode(new Uint8ClampedArray(data), info.width, info.height))?.text;
+      }
+      eq('PNG ' + kind + ': image retains click-time input after ' + action, text, 'https://alpha.example/old');
+      if (kind === 'download') eq('PNG download: filename retains click-time input after ' + action, page.downloads[0]?.name, 'qrcode-alpha-example.png');
+      eq('PNG ' + kind + ': no late rejection after ' + action, errors, []);
+      if (action === 'clear') check('PNG ' + kind + ': completed export leaves cleared preview empty', page.get('qrg-canvas').hidden && page.get('qrg-png').disabled && page.get('qrg-text').value === '');
+    } finally { process.removeListener('unhandledRejection', reject); }
+  }
+}
 
 // ---------- tool page claims (`{/* qrg-check: {...} */}` in the mdx) ----------
 const mdxDir = join(root, 'src/content/tools/qr-code-generator');
