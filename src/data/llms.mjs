@@ -292,8 +292,9 @@ export function plainText(fragment) {
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/(\*\*|__)(.+?)\1/g, '$2')
     .replace(/(^|[\s(])\*(?!\s)([^*]+?)\*(?=[\s).,;:!?]|$)/g, '$1$2');
-  text = decodeEntities(text)
-    .replace(/\u0000(\d+)\u0000/g, (_, i) => kept[Number(i)])
+  // A kept piece can hold an earlier one (<code>{"'x'"}</code>), so put them back recursively.
+  const restore = (s) => s.replace(/\u0000(\d+)\u0000/g, (_, i) => restore(kept[Number(i)]));
+  text = restore(decodeEntities(text))
     .replace(/\s+/g, ' ')
     .trim();
   return text;

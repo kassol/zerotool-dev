@@ -58,6 +58,7 @@ equal('plainText decodes entities', plainText('a &#123; b &#125; &amp; c&nbsp;d 
 equal('plainText keeps link text', plainText('See [RFC 6068](https://www.rfc-editor.org/rfc/rfc6068) ![x](y.png)'), 'See RFC 6068');
 equal('plainText expands MDX string expressions', plainText("Type {'[x](url)'} here"), 'Type [x](url) here');
 equal('plainText collapses whitespace', plainText('  a\n   b\t c '), 'a b c');
+equal('plainText restores a string expression inside <code>', plainText(`click <code>+ nonce</code> to add <code>{"'nonce-{RANDOM}'"}</code>.`), "click `+ nonce` to add `'nonce-{RANDOM}'`.");
 
 // ── Unit: howToSteps ─────────────────────────────────────────────────────────
 const htmlBody = `
@@ -184,6 +185,9 @@ const missing = Object.values(files).filter((f) => !existsSync(f));
 if (missing.length) {
   check('built llms files exist (run npm run build first)', false, missing.join(', '));
 } else {
+  for (const [name, file] of Object.entries(files)) {
+    equal(`${name}: no NUL bytes (a kept piece that was not restored)`, readFileSync(file).indexOf(0), -1);
+  }
   const tools = parseToolsSource(readFileSync(join(root, 'src', 'data', 'tools.ts'), 'utf-8'));
   const slugs = new Set(tools.map((t) => t.slug));
   const listOf = (source, name) => {
