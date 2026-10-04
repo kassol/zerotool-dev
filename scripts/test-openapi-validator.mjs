@@ -301,6 +301,46 @@ eq('$ref inside an extension is checked', codes(run('openapi: 3.0.3\n' + INFO + 
   eq('pickRoot prefers the file with an openapi field', E.pickRoot({ 'a.yaml': 'type: object\n', 'api/openapi.yaml': 'openapi: 3.1.0\n', 'x/y/z.yaml': 'swagger: "2.0"\n' }), 'api/openapi.yaml');
 }
 
+// Root selection sees only the first 4 KiB; JSON keys must belong to the root object.
+{
+  const pick = (text) => E.pickRoot({ 'schemas/pet.json': '{"type":"object"}', 'root.json': text });
+  const compact = JSON.stringify({ info: { title: 'Root fixture', version: '1' }, openapi: '3.1.0', paths: {} });
+  eq('pickRoot compact JSON after an extra file', pick('{"openapi":"3.1.0","info":{"title":"Root fixture","version":"1"},"paths":{}}'), 'root.json');
+  eq('pickRoot JSON version need not be the first key', pick(compact), 'root.json');
+  eq('pickRoot compact Swagger JSON', pick('{"swagger":"2.0","info":{},"paths":{}}'), 'root.json');
+  eq('pickRoot escaped JSON key', pick('{"open\\u0061pi":"3.1.0"}'), 'root.json');
+  eq('pickRoot JSON whitespace and nested arrays before key', pick(' \n{ "info": {"values":[{},[1,2]]}, "openapi" \n : "3.1.0" }'), 'root.json');
+  eq('pickRoot nested JSON key is not a document version', pick('{\n  "info": {\n    "openapi": "3.1.0"\n  }\n}'), 'schemas/pet.json');
+  eq('pickRoot array of documents is not a root object', pick('[\n {\n  "openapi": "3.1.0"\n }\n]'), 'schemas/pet.json');
+  eq('pickRoot quoted JSON content is not a root key', pick(JSON.stringify({ description: '\n"openapi": "3.1.0"', example: '}, "swagger": "2.0", {' })), 'schemas/pet.json');
+  eq('pickRoot escaped quotes and brackets do not hide a later root key', pick(JSON.stringify({ description: '\\"}, ["openapi"] {', openapi: '3.1.0' })), 'root.json');
+  eq('pickRoot pretty JSON still works', pick(JSON.stringify({ openapi: '3.1.0', paths: {} }, null, 2)), 'root.json');
+  eq('pickRoot complete key at the prefix boundary', pick('{' + ' '.repeat(4085) + '"openapi": "3.1.0"}'), 'root.json');
+  eq('pickRoot colon beyond the prefix boundary is not inspected', pick('{' + ' '.repeat(4086) + '"openapi": "3.1.0"}'), 'schemas/pet.json');
+  eq('pickRoot truncated JSON string is not inspected beyond the prefix', pick('{"description":"' + 'x'.repeat(4096) + '","openapi":"3.1.0"}'), 'schemas/pet.json');
+  eq('pickRoot key after 4 KiB keeps first-file fallback', pick(' '.repeat(4096) + compact), 'schemas/pet.json');
+  eq('pickRoot unclosed quoted key has no root', pick('{"openapi'), 'schemas/pet.json');
+  eq('pickRoot YAML quoted version still works', pick('---\n"openapi": 3.1.0\npaths: {}\n'), 'root.json');
+  eq('pickRoot YAML Swagger still works', pick("swagger: '2.0'\npaths: {}\n"), 'root.json');
+  eq('pickRoot YAML flow mapping with an unquoted key still works', pick('{\n openapi: 3.1.0,\n paths: {}\n}'), 'root.json');
+  eq('pickRoot YAML flow mapping with a single-quoted key still works', pick("{\n 'swagger': '2.0',\n paths: {}\n}"), 'root.json');
+  eq('pickRoot empty files return null', E.pickRoot({}), null);
+  eq('pickRoot no version keeps insertion order', E.pickRoot({ 'z.yaml': 'type: object', 'a.yaml': 'type: string' }), 'z.yaml');
+  eq('pickRoot recognized filename takes priority', E.pickRoot({ 'x.json': compact, 'folder/openapi.json': compact }), 'folder/openapi.json');
+  eq('pickRoot fewer path segments takes priority', E.pickRoot({ 'dir/a.json': compact, 'longname.json': compact }), 'longname.json');
+  eq('pickRoot shorter filename takes priority', E.pickRoot({ 'longname.json': compact, 'a.json': compact }), 'a.json');
+  eq('pickRoot equal lengths sort lexically', E.pickRoot({ 'b.json': compact, 'a.json': compact }), 'a.json');
+  const files = { 'schemas/pet.json': '{"type":"object"}', 'root.json': compact };
+  const result = runFiles(files, E.pickRoot(files));
+  check('pickRoot selected compact document reaches actual validation', result.version === '3.1' && !result.problems.some((p) => p.level === 'error'), result.problems);
+  const originalParse = JSON.parse, parsedLengths = [];
+  try {
+    JSON.parse = (text) => { parsedLengths.push(text.length); return originalParse(text); };
+    eq('pickRoot does not parse the large document', pick('{"openapi":"3.1.0","description":"' + 'x'.repeat(2_097_152) + '"}'), 'root.json');
+  } finally { JSON.parse = originalParse; }
+  check('pickRoot parses bounded key strings only', parsedLengths.length > 0 && parsedLengths.every((n) => n <= 4096), parsedLengths);
+}
+
 // ---------- rules the schemas cannot express ----------
 const H31 = 'openapi: 3.1.0\n' + INFO;
 const H30 = 'openapi: 3.0.3\n' + INFO;

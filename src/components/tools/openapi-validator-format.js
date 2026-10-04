@@ -6,7 +6,41 @@
    with several, prefer a name like openapi.* / swagger.* / api.*, then the shortest path. */
 export function pickRoot(files) {
   var names = Object.keys(files);
-  var roots = names.filter(function (n) { return /^\s*["']?(openapi|swagger)["']?\s*:/m.test(files[n].slice(0, 4096)); });
+  var roots = names.filter(function (n) {
+    var text = files[n].slice(0, 4096).trimStart();
+    if (text[0] === '[') return false;
+    if (!/^\{\s*"/.test(text)) return /^\s*["']?(openapi|swagger)["']?\s*:/m.test(text);
+    // Scan the bounded JSON prefix without parsing the full document. Only root keys count.
+    var depth = 0, key = false;
+    for (var i = 0; i < text.length; i++) {
+      var c = text[i];
+      if (c === '"') {
+        var start = i++;
+        for (; i < text.length; i++) {
+          if (text[i] === '\\') i++;
+          else if (text[i] === '"') break;
+        }
+        if (i >= text.length) return false;
+        if (depth === 1 && key) {
+          var end = i + 1;
+          while (end < text.length && /\s/.test(text[end])) end++;
+          if (text[end] === ':') {
+            try {
+              var name = JSON.parse(text.slice(start, i + 1));
+              if (name === 'openapi' || name === 'swagger') return true;
+            } catch (_e) { return false; }
+          }
+          key = false;
+        }
+      } else if (c === '{' || c === '[') {
+        depth++;
+        if (depth === 1) key = true;
+      } else if (c === '}' || c === ']') {
+        if (--depth === 0) return false;
+      } else if (c === ',' && depth === 1) key = true;
+    }
+    return false;
+  });
   if (!roots.length) return names[0] || null;
   roots.sort(function (a, b) {
     var pa = /(^|\/)(openapi|swagger|api)\.[a-z]+$/i.test(a) ? 0 : 1;
