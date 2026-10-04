@@ -23,6 +23,7 @@ const labels = {
     formatTailwind: 'Tailwind',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: 'Copy failed. Select the output and copy it manually.',
     reset: 'Reset to ease-in-out',
     rangeWarn: 'P1.x / P2.x must be inside 0–1; clamped automatically.',
     presetLinear: 'Linear',
@@ -56,6 +57,7 @@ const labels = {
     formatTailwind: 'Tailwind',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: '复制失败，请选中输出内容后手动复制。',
     reset: '重置为 ease-in-out',
     rangeWarn: 'P1.x / P2.x 必须在 0-1 区间内，已自动夹紧。',
     presetLinear: '线性',
@@ -89,6 +91,7 @@ const labels = {
     formatTailwind: 'Tailwind',
     copy: 'コピー',
     copied: 'コピー済み！',
+    copyFailed: 'コピーに失敗しました。出力を選択して手動でコピーしてください。',
     reset: 'ease-in-out にリセット',
     rangeWarn: 'P1.x / P2.x は 0-1 の範囲内である必要があります。自動的にクランプしました。',
     presetLinear: 'Linear',
@@ -122,6 +125,7 @@ const labels = {
     formatTailwind: 'Tailwind',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: '복사하지 못했습니다. 출력을 선택하여 직접 복사하세요.',
     reset: 'ease-in-out으로 재설정',
     rangeWarn: 'P1.x / P2.x는 반드시 0-1 범위 안에 있어야 합니다. 자동으로 보정되었습니다.',
     presetLinear: 'Linear',
@@ -147,6 +151,7 @@ const L = labels[lang] ?? labels['en'];
   class="cbg-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-play={L.play}
   data-pause={L.pause}
   data-warn={L.rangeWarn}
@@ -284,6 +289,7 @@ const L = labels[lang] ?? labels['en'];
 
     var copyText = wrap.dataset.copy;
     var copiedText = wrap.dataset.copied;
+    var copyFailedText = wrap.dataset.copyFailed;
     var playText = wrap.dataset.play;
     var pauseText = wrap.dataset.pause;
     var warnText = wrap.dataset.warn;
@@ -538,6 +544,7 @@ const L = labels[lang] ?? labels['en'];
     copyBtn.addEventListener('click', function() {
       var text = outputText.textContent || '';
       var done = function() {
+        setStatus('none', '');
         copyBtn.classList.add('copied');
         copyBtn.textContent = copiedText;
         setTimeout(function() {
@@ -546,14 +553,20 @@ const L = labels[lang] ?? labels['en'];
         }, 1500);
         if (window.trackTool) window.trackTool(SLUG, 'copy_' + state.format);
       };
+      var failed = function() {
+        copyBtn.classList.remove('copied');
+        copyBtn.textContent = copyText;
+        setStatus('error', copyFailedText);
+      };
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, done);
+        navigator.clipboard.writeText(text).then(done, failed);
       } else {
         var ta = document.createElement('textarea');
         ta.value = text; document.body.appendChild(ta);
-        ta.select(); try { document.execCommand('copy'); } catch (e) {}
+        var copied = false;
+        ta.select(); try { copied = document.execCommand('copy'); } catch (e) {}
         document.body.removeChild(ta);
-        done();
+        if (copied) done(); else failed();
       }
     });
 
@@ -597,14 +610,22 @@ const L = labels[lang] ?? labels['en'];
     });
 
     // ── Reset button: restore defaults and clear persisted state ──────────
-    resetBtn.addEventListener('click', function() {
-      try { if (window.ztPersist) window.ztPersist.clear(SLUG); } catch (e) {}
+    function reset() {
       Object.assign(state, DEFAULT);
       stop();
       render();
+    }
+    resetBtn.addEventListener('click', function() {
+      try { if (window.ztPersist) window.ztPersist.clear(SLUG); } catch (e) {}
+      reset();
+    });
+    document.addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+        setTimeout(reset, 0);
+      }
     });
 
-    // ── Listen for global Ctrl+L clear → reset to defaults ─────────────────
+    // ── Another page cleared the persisted curve ─────────────────────────
     window.addEventListener('storage', function(e) {
       if (e.key === 'zt-input-' + SLUG && e.newValue === null) {
         Object.assign(state, DEFAULT);
