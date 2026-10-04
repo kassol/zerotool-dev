@@ -578,6 +578,17 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
     $('svgo-format').value = 'svg';
     $('svgo-format').dispatch('change');
     check('page: SVG format of the refused file is copyable', $('svgo-copy').disabled === false && refusedEl.hidden === true && $('svgo-code').textContent === optimized[0]);
+    // No Optimize button (v2 layout): typing in the code box runs SVGO after the 450 ms pause.
+    $('svgo-input').value = ok2;
+    $('svgo-input').dispatch('input');
+    const typed = await wait(() => /^SVG: /.test($('svgo-status').textContent));
+    check('page: typed code is optimized without a button', typed && $('svgo-result').hidden === false && $('svgo-batch').hidden === true && $('svgo-code').textContent === optimized[2], $('svgo-status').textContent);
+    // ToolLayout's Ctrl/Cmd+L empties the text fields without an input event; the page drops the result and the status.
+    wrapEl.contains = () => true;
+    $('svgo-input').value = '';
+    for (const f of doc.listeners.keydown || []) f({ ctrlKey: true, key: 'l' });
+    await new Promise((r) => setTimeout(r, 20));
+    check('page: Ctrl/Cmd+L hides the result and clears the status', $('svgo-result').hidden === true && $('svgo-status').textContent === '' && $('svgo-rows').children.length === 0);
   }
   await new Promise((r) => setTimeout(r, 50));
   process.off('unhandledRejection', onRejection);
@@ -675,6 +686,46 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
     }
   }
   check('page examples found', count > 0, String(count));
+}
+
+// ---------- 12. v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script>'));
+  const script = source.slice(source.indexOf('<script>'), source.indexOf('</script>'));
+  check('v2: the tool root is .svgo-wrap (it gets the height of the first screen)', /^\s*<div class="svgo-wrap" id="svgo-wrap"/.test(markup) && /\.svgo-wrap \{ display: flex; flex-direction: column; [^}]*min-height: 0; \}/.test(source));
+  check('v2: input and result use the shared two-pane classes', markup.includes('class="svgo-panels zt-io"') && (markup.match(/class="svgo-[\w -]+ zt-io-pane"/g) || []).length === 2 &&
+    /<textarea id="svgo-input" class="tool-textarea svgo-code-in zt-io-fill"/.test(markup) && markup.includes('class="svgo-out zt-io-fill"'));
+  const pane = (from, to) => markup.slice(markup.indexOf(from), markup.indexOf(to));
+  const left = pane('svgo-input svgo-pane zt-io-pane', 'svgo-pane svgo-pane--out');
+  const right = pane('svgo-pane svgo-pane--out', 'class="svgo-more"');
+  check('v2: drop zone, code box and file table are in the left pane', ['id="svgo-drop"', 'id="svgo-file"', 'id="svgo-input"', 'id="svgo-batch"', 'id="svgo-zip"'].every((x) => left.includes(x)));
+  check('v2: the result is in the right pane, previews before the notes', right.includes('id="svgo-result"') && right.indexOf('id="svgo-check"') < right.indexOf('class="svgo-compare"') && right.indexOf('class="svgo-compare"') < right.indexOf('id="svgo-notes"'));
+  check('v2: settings and the status line are above the panes', markup.indexOf('class="svgo-options"') < markup.indexOf('id="svgo-status"') && markup.indexOf('id="svgo-status"') < markup.indexOf('class="svgo-panels zt-io"'));
+  const tipIds = [...markup.matchAll(/<Toggletip id="svgo-tip-(\w+)"[^>]*>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+  eq('v2: one toggletip per explained control', tipIds.map((m) => m[1]), ['settings', 'precision', 'prefix', 'input', 'result', 'format']);
+  const sm = source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
+  const STRINGS = new Function(sm[1] + '\nreturn STRINGS;')();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq('v2: ' + lang + ' has text for every toggletip', tipIds.map((m) => m[2]).filter((k) => !STRINGS[lang].tips[k]), []);
+    eq('v2: ' + lang + ' toggletips are plain sentences (no markup, no links)', Object.values(STRINGS[lang].tips).filter((s) => /[<>]|https?:/.test(s)), []);
+  }
+  check('v2: toggletip text stays out of the script', source.includes('data-strings={JSON.stringify(CLIENT_T)}') && source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && !/T\.tips|TIPS/.test(script));
+  check('v2: the tips state the limits in the engine', ['var MAX_FILE_BYTES = 50 * 1024 * 1024;', 'var CHECK_MAX_BYTES = 10 * 1024 * 1024;', 'var SAME_RATIO = 0.001;', 'var MINOR_RATIO = 0.01;', 'var DEFAULT_PRECISION = 3;'].every((x) => block.includes(x)) &&
+    E.RENDER_SIDE === 400 && E.PRESET_PLUGINS.length === 34 && E.defaultSettings().multipass === true && E.cleanPrefix('9-a b' + 'x'.repeat(60)).length === 40 &&
+    ['50 MB', '400 px', '0.1%', '1%', '10 MB', '34', '40'].every((x) => Object.values(STRINGS.en.tips).join(' ').includes(x)));
+  check('v2: no Optimize button; input, Example, files, paste and settings run SVGO themselves', !markup.includes('svgo-run') && !/runBtn/.test(script) && ['en', 'zh', 'ja', 'ko'].every((l) => !('run' in STRINGS[l])) &&
+    !markup.includes('btn-primary') && (script.match(/^\s+run\(\);$/gm) || []).length === 4 && script.includes('if (rerun) scheduleRun(200);'));
+  check('v2: Ctrl/Cmd+L resets the view', /e\.key !== 'l' && e\.key !== 'L'[\s\S]{0,160}resetView\(\);/.test(script));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('v2: listed as a convert page', layouts.includes("'svg-optimizer': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/svg-optimizer/' + lang + '.mdx'), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    eq('v2: ' + lang + ' mdx has 6 steps in the frontmatter', (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "/gm) || []).length, 6);
+    check('v2: ' + lang + ' mdx has no usage section in the body', !/<h2>(How to use|用法|使い方|사용 방법)<\/h2>/.test(body));
+    check('v2: ' + lang + ' mdx keeps the limits section', /<h2>(Limits|限制|制限|제한)<\/h2>/.test(body));
+  }
 }
 
 console.log('\n' + passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));

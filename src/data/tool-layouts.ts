@@ -13,6 +13,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',
   'markdown-table-generator': 'convert',
+  'svg-optimizer': 'convert',
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
 };

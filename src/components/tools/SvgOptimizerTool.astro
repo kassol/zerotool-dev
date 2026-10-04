@@ -2,6 +2,8 @@
 // SvgOptimizerTool — optimizes SVG with SVGO 4 in a Web Worker, compares the rendering
 // before and after, and flags changes that can break the file where it is used.
 // Nothing is uploaded. SVGO loads on first use (worker bundle, about 195 KB gzip).
+import Toggletip from '../Toggletip.astro';
+
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -12,7 +14,7 @@ const STRINGS = {
     dropHint: 'Several files at once (.svg, .svgz). You can also paste code below or press Ctrl+V anywhere on the page.',
     codeLabel: 'SVG code',
     codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
-    run: 'Optimize', example: 'Example', clear: 'Clear',
+    example: 'Example', clear: 'Clear',
     working: 'Optimizing {done} of {total}…',
     loading: 'Loading SVGO…',
     doneOne: '{name}: {before} → {after} ({delta}).',
@@ -30,7 +32,7 @@ const STRINGS = {
       afterFailed: 'The optimized SVG does not render in this browser.',
       skipped: 'Larger than 10 MB, so the rendering was not compared.'
     },
-    before: 'Original', after: 'Optimized', diff: 'Difference (red = changed pixels)',
+    outLabel: 'Result', before: 'Original', after: 'Optimized', diff: 'Difference (red = changed pixels)',
     copyAs: 'Copy as', fmtSvg: 'SVG markup', fmtUri: 'Data URI (URL-encoded)', fmtBase64: 'Data URI (Base64)', fmtCss: 'CSS background-image', fmtJsx: 'React component (JSX)',
     copy: 'Copy', copied: 'Copied', copyFail: 'Copy failed. Select the code and copy it.',
     download: 'Download .svg', zip: 'Download all (.zip)',
@@ -42,7 +44,15 @@ const STRINGS = {
     rowSame: 'Same', rowMinor: 'Small differences', rowChanged: 'Different', rowFailed: 'Not compared', rowPending: '…', rowError: 'Error',
     settings: 'Settings', reset: 'Reset to defaults',
     precision: 'Decimal places', prefix: 'Prefix IDs', prefixPh: 'e.g. logo-',
-    prefixHint: 'Adds the prefix to every ID so several inlined SVGs on one page do not clash.',
+    // Toggletip text next to the control it explains (DESIGN.md "Tool Pages v2").
+    tips: {
+      input: 'Drop .svg or .svgz files anywhere on the tool, click the box above to choose them, type or paste SVG code here, or press Ctrl+V outside a text field. A file can be up to 50 MB. Optimization starts by itself and runs again when the code or a setting changes.',
+      result: 'The line under the buttons says whether the optimized file renders like the original: both are drawn with the long side at 400 px and compared pixel by pixel. Up to 0.1% of changed pixels counts as the same, up to 1% as small differences. Files over 10 MB are not compared. The notes under the previews list what was removed or changed that can break the file where it is used.',
+      format: 'Sets what Copy puts on the clipboard and what the Output section shows: SVG markup, a data URI, a CSS background-image line or a React component. Download always saves the optimized .svg. The React format refuses a style that a React style object cannot keep, such as !important; Copy is then disabled for that file and the reason appears under the buttons.',
+      settings: 'Every change optimizes the files again. The defaults are SVGO preset-default (34 plugins), multipass and 3 decimal places. Multipass repeats the plugins, up to 10 passes, until the result stops getting smaller. A switch marked ! changes how the SVG is sized or named where it is used. Only these settings are saved, in this browser.',
+      precision: 'Path coordinates and other numbers are rounded to this many decimal places (SVGO floatPrecision). Fewer places make the file smaller. At 0 or 1 points can move visibly, and a note reminds you to check the comparison.',
+      prefix: 'Adds the prefix to every ID so several inlined SVGs on one page do not clash. Class names are not prefixed. Letters, digits, hyphen, underscore and period only; it cannot start with a digit, hyphen or period, and is cut at 40 characters.'
+    },
     multipass: 'Multipass', pretty: 'Pretty print',
     p: {
       cleanupIds: 'Shorten and remove IDs', convertColors: 'Shorten colors', removeComments: 'Remove comments', mergePaths: 'Merge paths',
@@ -92,7 +102,7 @@ const STRINGS = {
     dropHint: '可一次选多个文件（.svg、.svgz）。也可以在下方粘贴代码，或在页面任意位置按 Ctrl+V。',
     codeLabel: 'SVG 代码',
     codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
-    run: '压缩', example: '示例', clear: '清空',
+    example: '示例', clear: '清空',
     working: '正在压缩第 {done} / {total} 个…',
     loading: '正在加载 SVGO…',
     doneOne: '{name}：{before} → {after}（{delta}）。',
@@ -110,7 +120,7 @@ const STRINGS = {
       afterFailed: '压缩后的 SVG 在当前浏览器中无法渲染。',
       skipped: '文件超过 10 MB，未比对渲染结果。'
     },
-    before: '原文件', after: '压缩后', diff: '差异（红色为有变化的像素）',
+    outLabel: '结果', before: '原文件', after: '压缩后', diff: '差异（红色为有变化的像素）',
     copyAs: '复制格式', fmtSvg: 'SVG 代码', fmtUri: 'Data URI（URL 编码）', fmtBase64: 'Data URI（Base64）', fmtCss: 'CSS background-image', fmtJsx: 'React 组件（JSX）',
     copy: '复制', copied: '已复制', copyFail: '复制失败，请选中代码手动复制。',
     download: '下载 .svg', zip: '全部下载（.zip）',
@@ -122,7 +132,14 @@ const STRINGS = {
     rowSame: '相同', rowMinor: '略有不同', rowChanged: '不同', rowFailed: '未比对', rowPending: '…', rowError: '出错',
     settings: '设置', reset: '恢复默认',
     precision: '小数位数', prefix: 'ID 前缀', prefixPh: '例如 logo-',
-    prefixHint: '给每个 ID 加前缀，同一页面内联多个 SVG 时 ID 不会冲突。',
+    tips: {
+      input: '把 .svg 或 .svgz 文件拖到工具区任意位置，或点击上方的框选择；也可以在这里输入或粘贴 SVG 代码，或在文本框之外按 Ctrl+V。单个文件最大 50 MB。载入后自动压缩，代码或设置变化时会重新压缩。',
+      result: '按钮下方那一行说明压缩后的渲染结果是否与原文件相同：两者都按长边 400 px 绘制，再逐像素比对。有变化的像素不超过 0.1% 算相同，不超过 1% 算略有不同。超过 10 MB 的文件不比对。预览下方的提示列出被删掉或改动、可能在使用处出问题的内容。',
+      format: '决定「复制」写入剪贴板的内容，也决定「输出」一栏显示什么：SVG 代码、Data URI、CSS background-image 或 React 组件。「下载 .svg」始终保存压缩后的 SVG。React 样式对象无法保留的 style（如 !important）会被 React 格式拒绝，此时该文件的复制按钮停用，原因显示在按钮下方。',
+      settings: '改动任何一项都会重新压缩。默认值是 SVGO 的 preset-default（34 个插件）、多轮优化和 3 位小数。多轮优化会重复运行插件，最多 10 轮，直到结果不再变小。带 ! 的开关会改变 SVG 在使用处的尺寸或名称。只有这些设置会保存在本机浏览器里。',
+      precision: '路径坐标等数字最多保留这么多位小数（SVGO 的 floatPrecision）。位数越少文件越小。设为 0 或 1 时图形上的点可能明显移动，届时会有提示提醒查看比对结果。',
+      prefix: '给每个 ID 加上前缀，同一页面内联多个 SVG 时 ID 不会冲突。class 名不加前缀。只能用字母、数字、连字符、下划线和点，不能以数字、连字符或点开头，最长 40 个字符。'
+    },
     multipass: '多轮优化', pretty: '格式化输出',
     p: {
       cleanupIds: '缩短并删除 ID', convertColors: '缩写颜色', removeComments: '删除注释', mergePaths: '合并路径',
@@ -172,7 +189,7 @@ const STRINGS = {
     dropHint: '複数ファイルをまとめて処理できます（.svg・.svgz）。下にコードを貼り付けるか、ページ上で Ctrl+V でも読み込めます。',
     codeLabel: 'SVG コード',
     codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
-    run: '圧縮', example: 'サンプル', clear: 'クリア',
+    example: 'サンプル', clear: 'クリア',
     working: '{total} 件中 {done} 件目を圧縮中…',
     loading: 'SVGO を読み込み中…',
     doneOne: '{name}：{before} → {after}（{delta}）。',
@@ -190,7 +207,7 @@ const STRINGS = {
       afterFailed: '最適化後の SVG がこのブラウザで描画できません。',
       skipped: '10 MB を超えるため、描画結果は比較していません。'
     },
-    before: '元のファイル', after: '最適化後', diff: '差分（赤 = 変化したピクセル）',
+    outLabel: '結果', before: '元のファイル', after: '最適化後', diff: '差分（赤 = 変化したピクセル）',
     copyAs: 'コピー形式', fmtSvg: 'SVG マークアップ', fmtUri: 'Data URI（URL エンコード）', fmtBase64: 'Data URI（Base64）', fmtCss: 'CSS background-image', fmtJsx: 'React コンポーネント（JSX）',
     copy: 'コピー', copied: 'コピーしました', copyFail: 'コピーできませんでした。コードを選択してコピーしてください。',
     download: '.svg をダウンロード', zip: 'すべてダウンロード（.zip）',
@@ -202,7 +219,14 @@ const STRINGS = {
     rowSame: '同じ', rowMinor: 'わずかな差', rowChanged: '差あり', rowFailed: '未比較', rowPending: '…', rowError: 'エラー',
     settings: '設定', reset: '初期設定に戻す',
     precision: '小数点以下の桁数', prefix: 'ID の接頭辞', prefixPh: '例：logo-',
-    prefixHint: 'すべての ID に接頭辞を付け、1 ページに複数の SVG をインラインで置いても ID が衝突しないようにします。',
+    tips: {
+      input: '.svg・.svgz ファイルをツール内のどこかにドロップするか、上の枠をクリックして選びます。ここに SVG コードを入力・貼り付けるか、テキスト欄の外で Ctrl+V を押しても読み込めます。1 ファイル 50 MB まで。読み込むと自動で最適化し、コードや設定を変えるたびに最適化し直します。',
+      result: 'ボタンの下の 1 行は、最適化後の描画が元と同じかどうかを示します。どちらも長辺 400 px で描画し、ピクセル単位で比較します。変化したピクセルが 0.1% 以下なら同じ、1% 以下ならわずかな差と判定します。10 MB を超えるファイルは比較しません。プレビューの下の注意には、削除・変更されて使う場所で問題になりうる内容が並びます。',
+      format: '「コピー」でクリップボードに入る内容と、「出力」欄に表示する内容を決めます。SVG マークアップ、Data URI、CSS の background-image、React コンポーネントから選べます。「.svg をダウンロード」は常に最適化した SVG を保存します。React 形式は、React のスタイルオブジェクトで保持できない style（!important など）を変換しません。その場合はそのファイルのコピーが無効になり、理由がボタンの下に出ます。',
+      settings: 'どれかを変えると最適化し直します。初期設定は SVGO の preset-default（34 プラグイン）、マルチパス、小数点以下 3 桁です。マルチパスは、結果が小さくならなくなるまでプラグインを最大 10 回繰り返します。! の付いたスイッチは、使う場所での SVG の大きさや名前を変えます。保存されるのはこの設定だけで、このブラウザに入ります。',
+      precision: 'パスの座標などの数値を、小数点以下この桁数までに丸めます（SVGO の floatPrecision）。桁数が少ないほどファイルは小さくなります。0 か 1 にすると点の位置が目に見えてずれることがあり、比較結果の確認を促す注意が出ます。',
+      prefix: 'すべての ID に接頭辞を付け、1 ページに複数の SVG をインラインで置いても ID が衝突しないようにします。class 名には付けません。使えるのは英数字・ハイフン・アンダースコア・ピリオドだけで、数字・ハイフン・ピリオドでは始められず、40 文字までです。'
+    },
     multipass: 'マルチパス', pretty: '整形して出力',
     p: {
       cleanupIds: 'ID を短縮・削除', convertColors: '色の表記を短縮', removeComments: 'コメントを削除', mergePaths: 'パスを結合',
@@ -252,7 +276,7 @@ const STRINGS = {
     dropHint: '여러 파일을 한 번에 처리합니다(.svg, .svgz). 아래에 코드를 붙여 넣거나 페이지 어디서든 Ctrl+V를 눌러도 됩니다.',
     codeLabel: 'SVG 코드',
     codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
-    run: '최적화', example: '예시', clear: '지우기',
+    example: '예시', clear: '지우기',
     working: '{total}개 중 {done}번째 최적화 중…',
     loading: 'SVGO 불러오는 중…',
     doneOne: '{name}: {before} → {after} ({delta}).',
@@ -270,7 +294,7 @@ const STRINGS = {
       afterFailed: '최적화한 SVG가 이 브라우저에서 렌더링되지 않습니다.',
       skipped: '10 MB가 넘어 렌더링 결과를 비교하지 않았습니다.'
     },
-    before: '원본', after: '최적화 후', diff: '차이(빨강 = 바뀐 픽셀)',
+    outLabel: '결과', before: '원본', after: '최적화 후', diff: '차이(빨강 = 바뀐 픽셀)',
     copyAs: '복사 형식', fmtSvg: 'SVG 마크업', fmtUri: 'Data URI(URL 인코딩)', fmtBase64: 'Data URI(Base64)', fmtCss: 'CSS background-image', fmtJsx: 'React 컴포넌트(JSX)',
     copy: '복사', copied: '복사됨', copyFail: '복사하지 못했습니다. 코드를 선택해서 복사하세요.',
     download: '.svg 다운로드', zip: '모두 다운로드(.zip)',
@@ -282,7 +306,14 @@ const STRINGS = {
     rowSame: '같음', rowMinor: '작은 차이', rowChanged: '다름', rowFailed: '비교 안 함', rowPending: '…', rowError: '오류',
     settings: '설정', reset: '기본값으로',
     precision: '소수 자릿수', prefix: 'ID 접두사', prefixPh: '예: logo-',
-    prefixHint: '모든 ID에 접두사를 붙여 한 페이지에 SVG 여러 개를 인라인으로 넣어도 ID가 겹치지 않게 합니다.',
+    tips: {
+      input: '.svg나 .svgz 파일을 도구 안 아무 곳에나 끌어 놓거나 위의 상자를 클릭해서 고릅니다. 여기에 SVG 코드를 입력하거나 붙여 넣어도 되고, 텍스트 칸 밖에서 Ctrl+V를 눌러도 됩니다. 파일 하나에 50 MB까지입니다. 불러오면 자동으로 최적화하고, 코드나 설정이 바뀌면 다시 최적화합니다.',
+      result: '버튼 아래 한 줄은 최적화 후 렌더링이 원본과 같은지 알려 줍니다. 둘 다 긴 변 400 px로 그려 픽셀 단위로 비교합니다. 바뀐 픽셀이 0.1% 이하면 같음, 1% 이하면 작은 차이로 판정합니다. 10 MB가 넘는 파일은 비교하지 않습니다. 미리보기 아래 안내에는 삭제되거나 바뀌어 쓰는 곳에서 문제가 될 수 있는 내용이 나옵니다.',
+      format: '「복사」가 클립보드에 넣는 내용과 「출력」 칸에 보이는 내용을 정합니다. SVG 마크업, Data URI, CSS background-image, React 컴포넌트 중에서 고릅니다. 「.svg 다운로드」는 항상 최적화한 SVG를 저장합니다. React 형식은 React 스타일 객체로 보존할 수 없는 style(!important 등)을 변환하지 않습니다. 이때 그 파일의 복사가 꺼지고 이유가 버튼 아래에 나옵니다.',
+      settings: '하나라도 바꾸면 다시 최적화합니다. 기본값은 SVGO의 preset-default(플러그인 34개), 여러 번 실행, 소수 3자리입니다. 여러 번 실행은 결과가 더 작아지지 않을 때까지 플러그인을 최대 10번 반복합니다. !가 붙은 스위치는 쓰는 곳에서 SVG의 크기나 이름을 바꿉니다. 이 설정만 이 브라우저에 저장됩니다.',
+      precision: '경로 좌표 같은 숫자를 소수 이 자릿수까지 반올림합니다(SVGO의 floatPrecision). 자릿수가 적을수록 파일이 작아집니다. 0이나 1로 하면 점의 위치가 눈에 띄게 바뀔 수 있고, 비교 결과를 확인하라는 안내가 나옵니다.',
+      prefix: '모든 ID에 접두사를 붙여 한 페이지에 SVG 여러 개를 인라인으로 넣어도 ID가 겹치지 않게 합니다. class 이름에는 붙이지 않습니다. 영문자, 숫자, 하이픈, 밑줄, 마침표만 쓸 수 있고 숫자, 하이픈, 마침표로 시작할 수 없으며 40자까지입니다.'
+    },
     multipass: '여러 번 실행', pretty: '보기 좋게 출력',
     p: {
       cleanupIds: 'ID 줄이기·삭제', convertColors: '색상 표기 줄이기', removeComments: '주석 삭제', mergePaths: '경로 합치기',
@@ -331,6 +362,8 @@ const STRINGS = {
 // strings:end
 
 const T = STRINGS[lang];
+// The script gets every string except the toggletip text, which is in the HTML.
+const { tips: TIPS, ...CLIENT_T } = T;
 const PRESET_PLUGINS = [
   'removeDoctype', 'removeXMLProcInst', 'removeComments', 'removeDeprecatedAttrs',
   'removeMetadata', 'removeEditorsNSData', 'cleanupAttrs', 'mergeStyles', 'inlineStyles',
@@ -352,107 +385,124 @@ const fill = (tpl: string, vars: Record<string, string | number>) => tpl.replace
 const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
 ---
 
-<div class="svgo-wrap" id="svgo-wrap" data-lang={lang} data-strings={JSON.stringify(T)}>
-  <div class="svgo-input">
-    <label class="svgo-drop" id="svgo-drop" for="svgo-file">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-      </svg>
-      <span class="svgo-drop-text">
-        <span class="svgo-drop-title">{T.dropTitle}</span>
-        <span class="svgo-drop-hint">{T.dropHint}</span>
-      </span>
-    </label>
-    <input id="svgo-file" class="svgo-sr" type="file" accept=".svg,.svgz,image/svg+xml" multiple />
-    <label for="svgo-input" class="tool-label">{T.codeLabel}</label>
-    <textarea id="svgo-input" class="tool-textarea svgo-code-in" rows="4" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder={T.codePh}></textarea>
-    <div class="svgo-actions">
-      <button id="svgo-run" class="btn-primary" type="button">{T.run}</button>
-      <button id="svgo-example" class="btn-ghost" type="button">{T.example}</button>
-      <button id="svgo-clear" class="btn-ghost" type="button">{T.clear}</button>
-    </div>
+<div class="svgo-wrap" id="svgo-wrap" data-lang={lang} data-strings={JSON.stringify(CLIENT_T)}>
+  <div class="svgo-toolbar">
+    <button id="svgo-example" class="btn-secondary" type="button">{T.example}</button>
+    <button id="svgo-clear" class="btn-ghost" type="button">{T.clear}</button>
+  </div>
+
+  <div class="svgo-options" role="group" aria-labelledby="svgo-settings-h">
+    <span class="svgo-opt">
+      <span id="svgo-settings-h" class="svgo-label">{T.settings}</span>
+      <Toggletip id="svgo-tip-settings" lang={lang} about={T.settings} wide>{TIPS.settings}</Toggletip>
+    </span>
+    {MAIN_PLUGINS.map((p) => (
+      <label class="svgo-toggle"><input type="checkbox" data-plugin={p} /><span>{T.p[p]}</span>{RISKY.has(p) && <span class="svgo-warn" aria-hidden="true">!</span>}</label>
+    ))}
+    <label class="svgo-toggle"><input type="checkbox" id="svgo-multipass" /><span>{T.multipass}</span></label>
+    <label class="svgo-toggle"><input type="checkbox" id="svgo-pretty" /><span>{T.pretty}</span></label>
+    <span class="svgo-opt">
+      <label for="svgo-precision" class="svgo-field">{T.precision} <output id="svgo-precision-val" class="svgo-num">3</output></label>
+      <input id="svgo-precision" class="svgo-range" type="range" min="0" max="8" step="1" value="3" />
+      <Toggletip id="svgo-tip-precision" lang={lang} about={T.precision} wide>{TIPS.precision}</Toggletip>
+    </span>
+    <span class="svgo-opt">
+      <label for="svgo-prefix" class="svgo-field">{T.prefix}</label>
+      <input id="svgo-prefix" class="tool-input svgo-prefix" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder={T.prefixPh} />
+      <Toggletip id="svgo-tip-prefix" lang={lang} about={T.prefix} wide>{TIPS.prefix}</Toggletip>
+    </span>
+    <button id="svgo-reset" class="btn-ghost svgo-reset" type="button">{T.reset}</button>
   </div>
 
   <div id="svgo-status" class="tool-status svgo-status" role="status" aria-live="polite"></div>
 
-  <section id="svgo-result" class="svgo-result" hidden>
-    <div class="svgo-summary">
-      <span id="svgo-sizes" class="svgo-sizes"></span>
-      <span id="svgo-saved" class="svgo-saved"></span>
-      <span id="svgo-gzip" class="svgo-gzip"></span>
-      <span id="svgo-engine" class="svgo-engine"></span>
-    </div>
-    <div class="svgo-out-actions">
-      <button id="svgo-download" class="btn-secondary" type="button">{T.download}</button>
-      <button id="svgo-copy" class="btn-copy" type="button">{T.copy}</button>
-      <label class="svgo-format">
-        <span>{T.copyAs}</span>
-        <select id="svgo-format" class="tool-input">
-          <option value="svg">{T.fmtSvg}</option>
-          <option value="uri">{T.fmtUri}</option>
-          <option value="base64">{T.fmtBase64}</option>
-          <option value="css">{T.fmtCss}</option>
-          <option value="jsx">{T.fmtJsx}</option>
-        </select>
+  <div class="svgo-panels zt-io">
+    <div class="svgo-input svgo-pane zt-io-pane">
+      <label class="svgo-drop" id="svgo-drop" for="svgo-file">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <span class="svgo-drop-text">
+          <span class="svgo-drop-title">{T.dropTitle}</span>
+          <span class="svgo-drop-hint">{T.dropHint}</span>
+        </span>
       </label>
-    </div>
-    <p id="svgo-jsx-refused" class="svgo-jsx-refused" hidden></p>
-    <p id="svgo-check" class="svgo-check" aria-live="polite"></p>
-    <ul id="svgo-notes" class="svgo-notes"></ul>
-    <div class="svgo-compare">
-      <figure class="svgo-fig">
-        <figcaption>{T.before}</figcaption>
-        <div class="svgo-preview"><img id="svgo-img-before" alt={T.before} /></div>
-      </figure>
-      <figure class="svgo-fig">
-        <figcaption>{T.after}</figcaption>
-        <div class="svgo-preview"><img id="svgo-img-after" alt={T.after} /></div>
-      </figure>
-      <figure id="svgo-fig-diff" class="svgo-fig" hidden>
-        <figcaption>{T.diff}</figcaption>
-        <div class="svgo-preview svgo-preview--plain"><canvas id="svgo-diff"></canvas></div>
-      </figure>
-    </div>
-    <details class="svgo-code" id="svgo-code-box">
-      <summary id="svgo-code-summary"></summary>
-      <p id="svgo-jsx-note" class="svgo-jsx-note" hidden>{T.jsxNote}</p>
-      <pre class="svgo-pre"><code id="svgo-code"></code></pre>
-    </details>
-  </section>
-
-  <section id="svgo-batch" class="svgo-batch" hidden>
-    <div class="svgo-table-wrap">
-      <table class="svgo-table">
-        <thead><tr><th scope="col">{T.thFile}</th><th scope="col">{T.thBefore}</th><th scope="col">{T.thAfter}</th><th scope="col">{T.thSaved}</th><th scope="col">{T.thCheck}</th><th scope="col"><span class="svgo-sr">{T.thSave}</span></th></tr></thead>
-        <tbody id="svgo-rows"></tbody>
-      </table>
-    </div>
-    <button id="svgo-zip" class="btn-secondary" type="button">{T.zip}</button>
-  </section>
-
-  <section class="svgo-settings" aria-labelledby="svgo-settings-h">
-    <div class="svgo-settings-head">
-      <h2 id="svgo-settings-h" class="svgo-settings-title">{T.settings}</h2>
-      <button id="svgo-reset" class="btn-ghost svgo-reset" type="button">{T.reset}</button>
-    </div>
-    <div class="svgo-toggles">
-      {MAIN_PLUGINS.map((p) => (
-        <label class="svgo-toggle"><input type="checkbox" data-plugin={p} /><span>{T.p[p]}</span>{RISKY.has(p) && <span class="svgo-warn" aria-hidden="true">!</span>}</label>
-      ))}
-      <label class="svgo-toggle"><input type="checkbox" id="svgo-multipass" /><span>{T.multipass}</span></label>
-      <label class="svgo-toggle"><input type="checkbox" id="svgo-pretty" /><span>{T.pretty}</span></label>
-    </div>
-    <div class="svgo-fields">
-      <div class="svgo-field">
-        <label for="svgo-precision" class="tool-label">{T.precision} <output id="svgo-precision-val" class="svgo-num">3</output></label>
-        <input id="svgo-precision" type="range" min="0" max="8" step="1" value="3" />
+      <input id="svgo-file" class="svgo-sr" type="file" accept=".svg,.svgz,image/svg+xml" multiple />
+      <div class="svgo-head">
+        <label for="svgo-input" class="svgo-label">{T.codeLabel}</label>
+        <Toggletip id="svgo-tip-input" lang={lang} about={T.codeLabel} wide>{TIPS.input}</Toggletip>
       </div>
-      <div class="svgo-field">
-        <label for="svgo-prefix" class="tool-label">{T.prefix}</label>
-        <input id="svgo-prefix" class="tool-input" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder={T.prefixPh} aria-describedby="svgo-prefix-hint" />
-        <p id="svgo-prefix-hint" class="svgo-hint">{T.prefixHint}</p>
+      <textarea id="svgo-input" class="tool-textarea svgo-code-in zt-io-fill" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder={T.codePh}></textarea>
+
+      <section id="svgo-batch" class="svgo-batch" hidden>
+        <div class="svgo-table-wrap">
+          <table class="svgo-table">
+            <thead><tr><th scope="col">{T.thFile}</th><th scope="col">{T.thBefore}</th><th scope="col">{T.thAfter}</th><th scope="col">{T.thSaved}</th><th scope="col">{T.thCheck}</th><th scope="col"><span class="svgo-sr">{T.thSave}</span></th></tr></thead>
+            <tbody id="svgo-rows"></tbody>
+          </table>
+        </div>
+        <button id="svgo-zip" class="btn-secondary" type="button">{T.zip}</button>
+      </section>
+    </div>
+
+    <div class="svgo-pane svgo-pane--out zt-io-pane">
+      <div class="svgo-head">
+        <span id="svgo-out-label" class="svgo-label">{T.outLabel}</span>
+        <Toggletip id="svgo-tip-result" lang={lang} about={T.outLabel} wide>{TIPS.result}</Toggletip>
+      </div>
+      <div class="svgo-out zt-io-fill" role="group" aria-labelledby="svgo-out-label">
+        <section id="svgo-result" class="svgo-result" hidden>
+          <div class="svgo-summary">
+            <span id="svgo-sizes" class="svgo-sizes"></span>
+            <span id="svgo-saved" class="svgo-saved"></span>
+            <span id="svgo-gzip" class="svgo-gzip"></span>
+            <span id="svgo-engine" class="svgo-engine"></span>
+          </div>
+          <div class="svgo-out-actions">
+            <button id="svgo-download" class="btn-secondary" type="button">{T.download}</button>
+            <button id="svgo-copy" class="btn-copy" type="button">{T.copy}</button>
+            <span class="svgo-opt svgo-format-opt">
+              <label class="svgo-format">
+                <span>{T.copyAs}</span>
+                <select id="svgo-format" class="tool-input">
+                  <option value="svg">{T.fmtSvg}</option>
+                  <option value="uri">{T.fmtUri}</option>
+                  <option value="base64">{T.fmtBase64}</option>
+                  <option value="css">{T.fmtCss}</option>
+                  <option value="jsx">{T.fmtJsx}</option>
+                </select>
+              </label>
+              <Toggletip id="svgo-tip-format" lang={lang} about={T.copyAs} wide>{TIPS.format}</Toggletip>
+            </span>
+          </div>
+          <p id="svgo-jsx-refused" class="svgo-jsx-refused" hidden></p>
+          <p id="svgo-check" class="svgo-check" aria-live="polite"></p>
+          <div class="svgo-compare">
+            <figure class="svgo-fig">
+              <figcaption>{T.before}</figcaption>
+              <div class="svgo-preview"><img id="svgo-img-before" alt={T.before} /></div>
+            </figure>
+            <figure class="svgo-fig">
+              <figcaption>{T.after}</figcaption>
+              <div class="svgo-preview"><img id="svgo-img-after" alt={T.after} /></div>
+            </figure>
+            <figure id="svgo-fig-diff" class="svgo-fig" hidden>
+              <figcaption>{T.diff}</figcaption>
+              <div class="svgo-preview svgo-preview--plain"><canvas id="svgo-diff"></canvas></div>
+            </figure>
+          </div>
+          <ul id="svgo-notes" class="svgo-notes"></ul>
+          <details class="svgo-code" id="svgo-code-box">
+            <summary id="svgo-code-summary"></summary>
+            <p id="svgo-jsx-note" class="svgo-jsx-note" hidden>{T.jsxNote}</p>
+            <pre class="svgo-pre"><code id="svgo-code"></code></pre>
+          </details>
+        </section>
       </div>
     </div>
+  </div>
+
+  <div class="svgo-more">
     <details class="svgo-all">
       <summary>{T.allPlugins}</summary>
       <h3 class="svgo-sub">{fill(T.presetHead, { n: PRESET_PLUGINS.length })}</h3>
@@ -474,7 +524,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
       <pre class="svgo-pre"><code id="svgo-config"></code></pre>
       <button id="svgo-copy-config" class="btn-copy" type="button">{T.copyConfig}</button>
     </details>
-  </section>
+  </div>
 </div>
 
 <script>
@@ -1518,7 +1568,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   var LANG = wrap.dataset.lang || 'en';
   function $(id) { return document.getElementById(id); }
   var inputEl = $('svgo-input'), fileEl = $('svgo-file'), dropEl = $('svgo-drop');
-  var runBtn = $('svgo-run'), exampleBtn = $('svgo-example'), clearBtn = $('svgo-clear');
+  var exampleBtn = $('svgo-example'), clearBtn = $('svgo-clear');
   var statusEl = $('svgo-status'), resultEl = $('svgo-result');
   var sizesEl = $('svgo-sizes'), savedEl = $('svgo-saved'), gzipEl = $('svgo-gzip'), engineEl = $('svgo-engine');
   var downloadBtn = $('svgo-download'), copyBtn = $('svgo-copy'), formatEl = $('svgo-format');
@@ -2034,11 +2084,6 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
       run();
     }, 450);
   });
-  runBtn.addEventListener('click', function () {
-    if (inputEl.value.trim() && !(items.length && items[0].fromFile)) itemsFromText(inputEl.value);
-    if (!items.length) { setStatus(T.err.empty, 'error'); inputEl.focus(); return; }
-    run();
-  });
   exampleBtn.addEventListener('click', function () {
     inputEl.value = EXAMPLE;
     itemsFromText(EXAMPLE);
@@ -2085,17 +2130,43 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
 </script>
 
 <style>
-  .svgo-wrap { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
+  /* v2 "convert" layout: the root is a flex column, so the two panes (.zt-io in
+     tool-common.css) take the height that is left under the toolbar, the settings and
+     the status line. Left: drop zone, code box and the file table. Right: the result. */
+  .svgo-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; min-height: 0; }
   .svgo-wrap [hidden] { display: none !important; }
   .svgo-sr {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
 
-  .svgo-input { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
+  .svgo-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .svgo-options { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 1.1rem; font-size: 0.86rem; }
+  .svgo-options > * { flex: none; }
+  .svgo-opt { display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0; }
+  .svgo-label { font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); }
+  .svgo-field { flex: none; font-size: 0.86rem; color: var(--color-text); white-space: nowrap; }
+  .svgo-toggle { display: inline-flex; align-items: center; gap: 0.4rem; min-height: 28px; font-size: 0.86rem; color: var(--color-text); cursor: pointer; }
+  .svgo-toggle input { flex: none; }
+  .svgo-warn {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--color-accent); color: var(--color-primary-contrast); font-size: 0.68rem; font-weight: 800;
+  }
+  .svgo-num { font-family: var(--font-mono); font-weight: 750; color: var(--color-primary); margin-left: 0.2rem; }
+  /* Two classes: the shared .tool-widget input rules set width: 100%. */
+  .svgo-opt .svgo-range { flex: none; width: 7rem; }
+  .svgo-opt .svgo-prefix { flex: none; width: 8.5rem; min-height: 34px; padding: 0.25rem 0.5rem; font-size: 0.82rem; }
+  .svgo-reset { margin-left: auto; font-size: 0.8rem; min-height: 32px; padding: 0.2rem 0.75rem; }
+  .svgo-status { overflow-wrap: anywhere; }
+  .svgo-status:empty { display: none; }
+
+  .svgo-head { display: flex; align-items: center; gap: 0.25rem; min-height: 32px; }
+
+  /* Left pane */
   .svgo-drop {
-    display: flex; align-items: center; gap: 0.8rem;
-    padding: 0.75rem 1rem;
+    display: flex; align-items: center; gap: 0.8rem; flex: none;
+    padding: 0.6rem 1rem;
     border: 2px dashed var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
@@ -2109,11 +2180,32 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   .svgo-drop-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
   .svgo-drop-title { font-weight: 700; color: var(--color-text); font-size: 0.95rem; }
   .svgo-drop-hint { font-size: 0.8rem; line-height: 1.4; }
-  .svgo-code-in { min-height: 96px; font-size: 0.82rem; }
-  .svgo-actions { display: flex; gap: 0.55rem; flex-wrap: wrap; align-items: center; }
-  .svgo-status:empty { display: none; }
+  .svgo-code-in { font-size: 0.82rem; }
 
-  .svgo-result { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+  /* Several files: the table takes the pane's height and scrolls; the code box (empty
+     after files are loaded) keeps a short strip for pasting. */
+  .svgo-batch { display: flex; flex: 1 1 0; flex-direction: column; gap: 0.5rem; align-items: flex-start; min-height: 150px; }
+  .svgo-input:has(.svgo-batch:not([hidden])) .svgo-code-in { flex: none; min-height: 0; height: 64px; }
+  .svgo-table-wrap { position: relative; flex: 1 1 0; width: 100%; min-height: 0; overflow: auto; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+  .svgo-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .svgo-table th, .svgo-table :global(td) { padding: 0.35rem 0.5rem; text-align: left; border-bottom: 1px solid var(--color-border-soft); white-space: nowrap; }
+  .svgo-table th { position: sticky; top: 0; z-index: 1; background: var(--color-surface-muted); font-size: 0.75rem; color: var(--color-text-secondary); font-weight: 700; }
+  .svgo-table :global(td:nth-child(2)), .svgo-table :global(td:nth-child(3)), .svgo-table :global(td:nth-child(4)) { font-family: var(--font-mono); }
+  .svgo-table :global(.svgo-row--active td) { background: var(--color-surface-muted); }
+  .svgo-table :global(.svgo-pick) {
+    background: none; border: 0; padding: 0; font: inherit; color: var(--color-primary); cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px; max-width: 14rem; overflow: hidden; text-overflow: ellipsis; text-align: left;
+  }
+
+  /* Right pane: one framed box that scrolls when the result is taller than the pane. */
+  /* flex-basis 0: the result never makes the pane taller than the first screen leaves it. */
+  .svgo-out {
+    display: flex; flex: 1 1 0; flex-direction: column; overflow: auto;
+    padding: 0.82rem; border-radius: var(--radius-md);
+    background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  .svgo-out:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+  .svgo-result { display: flex; flex: 1 0 auto; flex-direction: column; gap: 0.65rem; min-width: 0; }
   .svgo-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.9rem; }
   .svgo-sizes { font-family: var(--font-mono); font-weight: 700; font-size: 1.05rem; color: var(--color-text); }
   .svgo-saved { font-family: var(--font-mono); font-weight: 800; color: var(--color-success); }
@@ -2127,14 +2219,29 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   .svgo-check {
     margin: 0; padding: 0.55rem 0.75rem; border-radius: var(--radius-md);
     font-size: 0.88rem; font-weight: 650;
-    background: var(--color-bg-secondary); color: var(--color-text-secondary);
+    background: var(--color-surface); color: var(--color-text-secondary);
     box-shadow: inset 3px 0 0 var(--color-border);
   }
   .svgo-check--same { color: var(--color-success); box-shadow: inset 3px 0 0 var(--color-success); }
   .svgo-check--minor, .svgo-check--beforeFailed, .svgo-check--skipped { color: var(--color-text); box-shadow: inset 3px 0 0 var(--color-accent); }
   .svgo-check--changed, .svgo-check--afterFailed { color: var(--color-danger); box-shadow: inset 3px 0 0 var(--color-danger); }
 
-  .svgo-notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }
+  /* The previews take the height the pane has left; the notes follow them. */
+  .svgo-compare { display: grid; flex: 1 0 auto; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 0.75rem; }
+  .svgo-fig { margin: 0; display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+  .svgo-fig figcaption { font-size: 0.75rem; font-weight: 700; color: var(--color-primary); text-transform: uppercase; letter-spacing: 0.05em; }
+  .svgo-preview {
+    position: relative; flex: 1 1 auto; min-height: 150px; overflow: hidden;
+    border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--color-border-soft);
+    background:
+      repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px,
+      var(--color-surface);
+  }
+  .svgo-preview--plain { background: #fff; }
+  /* Drawn at the compared size (long side 400 px) or smaller, never enlarged. */
+  .svgo-preview img, .svgo-preview canvas { position: absolute; inset: 0.5rem; width: calc(100% - 1rem); height: calc(100% - 1rem); object-fit: scale-down; }
+
+  .svgo-notes { margin: 0; padding: 0; list-style: none; display: flex; flex: none; flex-direction: column; gap: 0.35rem; }
   .svgo-notes :global(.svgo-note) {
     font-size: 0.85rem; line-height: 1.5; color: var(--color-text);
     padding: 0.45rem 0.7rem; border-radius: var(--radius-md);
@@ -2142,20 +2249,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
     overflow-wrap: anywhere;
   }
 
-  .svgo-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 0.75rem; }
-  .svgo-fig { margin: 0; display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
-  .svgo-fig figcaption { font-size: 0.75rem; font-weight: 700; color: var(--color-primary); text-transform: uppercase; letter-spacing: 0.05em; }
-  .svgo-preview {
-    display: flex; align-items: center; justify-content: center;
-    min-height: 140px; max-height: 260px; padding: 0.5rem; overflow: hidden;
-    border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    background:
-      repeating-conic-gradient(color-mix(in oklch, var(--color-text-muted) 22%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px,
-      var(--color-surface);
-  }
-  .svgo-preview--plain { background: #fff; }
-  .svgo-preview img, .svgo-preview canvas { max-width: 100%; max-height: 240px; width: auto; height: auto; object-fit: contain; }
-
+  .svgo-code { flex: none; }
   .svgo-code summary, .svgo-all summary { cursor: pointer; font-size: 0.88rem; font-weight: 650; color: var(--color-text-secondary); padding: 0.35rem 0; }
   .svgo-code summary:hover, .svgo-all summary:hover { color: var(--color-primary); }
   .svgo-jsx-refused { margin: 0; font-size: 0.85rem; color: var(--color-danger); }
@@ -2165,53 +2259,49 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
     background: var(--color-bg-secondary); border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--color-border-soft);
     font-family: var(--font-mono); font-size: 0.78rem; color: var(--color-text);
   }
+  .svgo-code .svgo-pre { background: var(--color-surface); }
   .svgo-pre code { background: transparent; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-  .svgo-batch { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
-  .svgo-table-wrap { position: relative; width: 100%; overflow-x: auto; }
-  .svgo-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  .svgo-table th, .svgo-table :global(td) { padding: 0.35rem 0.5rem; text-align: left; border-bottom: 1px solid var(--color-border-soft); white-space: nowrap; }
-  .svgo-table th { font-size: 0.75rem; color: var(--color-text-secondary); font-weight: 700; }
-  .svgo-table :global(td:nth-child(2)), .svgo-table :global(td:nth-child(3)), .svgo-table :global(td:nth-child(4)) { font-family: var(--font-mono); }
-  .svgo-table :global(.svgo-row--active td) { background: var(--color-surface-muted); }
-  .svgo-table :global(.svgo-pick) {
-    background: none; border: 0; padding: 0; font: inherit; color: var(--color-primary); cursor: pointer;
-    text-decoration: underline; text-underline-offset: 2px; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; text-align: left;
-  }
-
-  .svgo-settings {
-    display: flex; flex-direction: column; gap: 0.7rem;
-    padding: 0.85rem 0.95rem 0.95rem; border-radius: var(--radius-md);
-    background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft);
-  }
-  .svgo-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
-  .svgo-settings-title { margin: 0; font-family: var(--font-sans); font-size: 0.95rem; font-weight: 750; color: var(--color-text); }
-  .svgo-reset { font-size: 0.8rem; min-height: 32px; padding: 0.2rem 0.75rem; }
-  .svgo-toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 0.25rem 0.9rem; }
-  .svgo-toggle { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; color: var(--color-text); cursor: pointer; padding: 0.2rem 0; }
-  .svgo-toggle input { flex: none; }
-  .svgo-warn {
-    display: inline-flex; align-items: center; justify-content: center; flex: none;
-    width: 16px; height: 16px; border-radius: 50%;
-    background: var(--color-accent); color: var(--color-primary-contrast); font-size: 0.68rem; font-weight: 800;
-  }
-  .svgo-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 0.7rem 1.2rem; }
-  .svgo-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
-  .svgo-num { font-family: var(--font-mono); font-weight: 750; color: var(--color-primary); margin-left: 0.3rem; }
-  .svgo-hint { margin: 0; font-size: 0.78rem; line-height: 1.45; color: var(--color-text-secondary); }
+  /* Under the panes: the full plugin list and the config export. */
+  .svgo-more { display: flex; flex: none; flex-wrap: wrap; align-items: flex-start; gap: 0 1.5rem; }
+  .svgo-all[open] { flex: 1 1 100%; }
+  .svgo-hint { margin: 0.4rem 0 0; font-size: 0.78rem; line-height: 1.45; color: var(--color-text-secondary); }
   .svgo-sub { margin: 0.6rem 0 0.35rem; font-family: var(--font-sans); font-size: 0.82rem; font-weight: 700; color: var(--color-text-secondary); }
   .svgo-plugin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 0.15rem 0.8rem; }
   .svgo-plugin { display: flex; align-items: center; gap: 0.45rem; cursor: pointer; min-width: 0; }
   .svgo-plugin code { font-family: var(--font-mono); font-size: 0.78rem; background: transparent; padding: 0; color: var(--color-text); overflow-wrap: anywhere; }
 
+  /* Stacked: input, then the result at its own height (hidden until there is one),
+     then the settings. */
+  @media (max-width: 860px) {
+    .svgo-code-in { height: 150px; }
+    .svgo-batch { flex: none; min-height: 0; }
+    .svgo-table-wrap { flex: none; max-height: 260px; }
+    .svgo-pane--out:has(.svgo-result[hidden]) { display: none; }
+    .svgo-out { flex: none; min-height: 0; overflow: visible; resize: none; }
+    .svgo-compare { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+    .svgo-preview { height: 200px; }
+    .svgo-options { order: 5; }
+    .svgo-more { order: 6; }
+  }
+
   @media (max-width: 640px) {
+    .svgo-toolbar .btn-secondary, .svgo-toolbar .btn-ghost { flex: 1 1 0; }
     .svgo-drop { padding: 0.6rem 0.75rem; }
     .svgo-drop-hint { display: none; }
-    .svgo-code-in { min-height: 96px; }
-    .svgo-format { width: 100%; }
+    .svgo-code-in { height: 110px; }
+    .svgo-out { padding: 0.65rem; }
+    .svgo-format-opt { width: 100%; }
+    .svgo-format { flex: 1; min-width: 0; }
     .svgo-format select { flex: 1; min-width: 0; }
     .svgo-engine { margin-left: 0; }
-    .svgo-reset { min-height: 44px; }
+    .svgo-options { gap: 0 1rem; }
+    .svgo-options > .svgo-toggle { min-height: 44px; flex: 1 1 45%; }
+    .svgo-options > .svgo-opt { flex: 1 1 100%; min-height: 44px; }
+    .svgo-opt .svgo-range { flex: 1; width: auto; }
+    .svgo-opt .svgo-prefix { flex: 1; width: auto; min-height: 44px; }
+    .svgo-reset { min-height: 44px; margin-left: 0; }
+    .svgo-code summary, .svgo-all summary { min-height: 44px; display: flex; align-items: center; }
     .svgo-table :global(.svgo-pick) { min-height: 24px; max-width: 9rem; }
   }
 </style>
