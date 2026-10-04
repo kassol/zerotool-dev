@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -563,6 +563,182 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     }
     check(`${lang} compatibility table covers 10 libraries`, checked >= 10, checked);
   }
+}
+
+// ── K. Complete page lifecycle, actual ToolLayout shortcuts and deferred browser APIs ──
+// DOM comes from this component. The worker boundary only gates timing; the real vendored
+// implementation computes responses. The existing worker protocol tests above remain intact.
+{
+  const pageScript = /<script\b[^>]*>([\s\S]*?)<\/script>/.exec(source)[1];
+  const layout = read('src/layouts/ToolLayout.astro');
+  const keyboard = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+  const BC = ref.dcodeIO.bcrypt;
+function deferred() { let resolve,reject; const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject}; }
+async function settle() { for(let i=0;i<16;i++) await Promise.resolve(); }
+async function waitFor(predicate) { const end=Date.now()+1000;while(!predicate()){if(Date.now()>end)throw Error('Harness awaited condition timed out');await new Promise(resolve=>setTimeout(resolve,1));}await settle(); }
+function makePage(lang='en', layoutFirst=false) {
+  const all=[], ids=new Map(), timers=[], requests=[], workers=[], digests=[], persist=[], failures=[];
+  let timerId=0, holdDigest=false, fallbackCalls=0;
+  const doc={listeners:new Map(),activeElement:null,documentElement:{lang}};
+  const matches=(node,selector)=>{
+    if(selector.includes(',')) return selector.split(',').some(x=>matches(node,x.trim()));
+    const parts=selector.trim().split(/\s+(?![^\[]*\])/);
+    if(parts.length>1) {const last=parts.pop();if(!matches(node,last))return false;let p=node.parentNode;while(p){if(matches(p,parts.join(' ')))return true;p=p.parentNode;}return false;}
+    if(selector.startsWith('#'))return node.id===selector.slice(1);
+    if(selector.startsWith('.'))return node.classList.contains(selector.slice(1));
+    const m=/^(\w+)?(?:\[([\w-]+)(?:="([^"]*)")?\])?$/.exec(selector);
+    return !!m&&(!m[1]||node.tagName===m[1].toUpperCase())&&(!m[2]||(m[3]===undefined?node.hasAttribute(m[2]):node.getAttribute(m[2])===m[3]));
+  };
+  class Element {
+    constructor(tag,attrs={}) {this.tagName=tag.toUpperCase();this.attrs={...attrs};this.id=attrs.id||'';this.className=attrs.class||'';this.type=attrs.type||'';this.value=attrs.value||'';this.hidden='hidden'in attrs;this.disabled='disabled'in attrs;this.style={};this.childNodes=[];this.parentNode=null;this.listeners=new Map();this._text='';all.push(this);if(this.id)ids.set(this.id,this);
+      this.classList={contains:k=>this.className.split(/\s+/).includes(k),add:k=>{if(!this.classList.contains(k))this.className=(this.className+' '+k).trim();},remove:k=>{this.className=this.className.split(/\s+/).filter(x=>x!==k).join(' ');},toggle:(k,on)=>{const yes=on===undefined?!this.classList.contains(k):on;this.classList[yes?'add':'remove'](k);return yes;}};
+    }
+    get textContent(){return this._text+this.childNodes.map(n=>n.textContent).join('');}
+    set textContent(v){this._text=String(v??'');for(const n of this.childNodes)n.parentNode=null;this.childNodes=[];}
+    get children(){return this.childNodes;}
+    appendChild(el){this.childNodes.push(el);el.parentNode=this;return el;}
+    removeChild(el){this.childNodes=this.childNodes.filter(n=>n!==el);el.parentNode=null;return el;}
+    getAttribute(k){if(k==='type')return this.type;if(k==='class')return this.className;return this.attrs[k]??null;}
+    hasAttribute(k){return k in this.attrs;}
+    setAttribute(k,v){this.attrs[k]=String(v);if(k==='class')this.className=String(v);if(k==='type')this.type=String(v);}
+    contains(n){for(let p=n;p;p=p.parentNode)if(p===this)return true;return false;}
+    querySelectorAll(s){return all.filter(n=>n!==this&&this.contains(n)&&matches(n,s));}
+    querySelector(s){return this.querySelectorAll(s)[0]||null;}
+    closest(s){for(let p=this;p;p=p.parentNode)if(matches(p,s))return p;return null;}
+    addEventListener(t,f){if(!this.listeners.has(t))this.listeners.set(t,[]);this.listeners.get(t).push(f);}
+    focus(){doc.activeElement=this;}
+    select(){this.focus();}
+    fire(type,extra={}){const e={type,target:this,key:'',ctrlKey:false,metaKey:false,isComposing:false,defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.stopped=true;},...extra};for(let p=this;p&&!e.stopped;p=p.parentNode)for(const f of p.listeners.get(type)||[]) invoke(f,p,e);if(!e.stopped)for(const f of doc.listeners.get(type)||[])invoke(f,doc,e);return e;}
+    click(){if(!this.disabled)this.fire('click');}
+  }
+  function invoke(f,receiver,e){try{const r=f.call(receiver,e);if(r?.catch)r.catch(error=>failures.push(String(error.stack||error)));}catch(error){failures.push(String(error.stack||error));}}
+  doc.body=new Element('body');const widget=doc.body.appendChild(new Element('section',{class:'tool-widget'}));
+  Object.assign(doc,{
+    getElementById(id){if(!ids.has(id))throw Error('Missing real markup id '+id);return ids.get(id);},
+    querySelector:s=>doc.body.querySelector(s),querySelectorAll:s=>doc.body.querySelectorAll(s),
+    createElement:t=>new Element(t),createTextNode:t=>{const n=new Element('#text');n.textContent=t;return n;},
+    addEventListener(t,f){if(!doc.listeners.has(t))doc.listeners.set(t,[]);doc.listeners.get(t).push(f);},
+    execCommand(){fallbackCalls++;throw Error('Native fallback copy is forbidden in this VM');},
+  });
+  let markup=source.slice(source.indexOf('---',3)+3,source.indexOf('<script'));
+  markup=markup.replace(/\{L\.(\w+)\}/g,(_,k)=>STRINGS[lang][k]??'');
+  const stack=[widget], tag=/<\/?([a-z][\w:-]*)\b[^>]*>/gi;let m,offset=0;
+  while((m=tag.exec(markup))){const before=markup.slice(offset,m.index);if(before.trim())stack.at(-1)._text+=before;offset=tag.lastIndex;const name=m[1].toLowerCase();if(m[0][1]==='/'){const i=stack.findLastIndex(x=>x.tagName===name.toUpperCase());if(i>0)stack.length=i;continue;}const attrs={};for(const a of m[0].matchAll(/\s([\w:-]+)(?:="([^"]*)")?/g))attrs[a[1]]=a[2]??'';const el=stack.at(-1).appendChild(new Element(name,attrs));if(!/^(input|br|hr|img|meta|link)$/.test(name)&&!m[0].endsWith('/>'))stack.push(el);}
+  const get=id=>doc.getElementById(id);
+  get('bcg-prefix').value='$2b$';get('bcg-cost').value='4';
+  const stubClipboard={write(){return Promise.resolve();},writeText(){return Promise.resolve();}};
+  class Worker {
+    constructor(url){this.url=url;this.terminated=false;workers.push(this);}
+    postMessage(m){const q={worker:this,msg:structuredClone(m),delivered:false};requests.push(q);if(m.type==='bench')queueMicrotask(()=>{if(!this.terminated)this.onmessage?.({data:{id:m.id,type:'result',ms:1}});});}
+    terminate(){this.terminated=true;}
+  }
+  const pageCrypto={getRandomValues:a=>webcrypto.getRandomValues(a),subtle:{digest(alg,bytes){if(!holdDigest)return webcrypto.subtle.digest(alg,bytes);const d=deferred();digests.push({d,alg,bytes:Uint8Array.from(bytes)});return d.promise;}}};
+  const timeout=(fn,ms=0)=>{const t={id:++timerId,fn,ms};timers.push(t);return t.id;};
+  const window={setTimeout:timeout,trackTool(){},ztPersist:{clear:s=>persist.push(s)}};
+  const context=vm.createContext({document:doc,window,navigator:{clipboard:stubClipboard},Worker,crypto:pageCrypto,TextEncoder,TextDecoder,Uint8Array,ArrayBuffer,atob,btoa,console,setTimeout:timeout,clearTimeout:id=>{const i=timers.findIndex(t=>t.id===id);if(i>=0)timers.splice(i,1);},S:STRINGS[lang],WORKER_URL:'/vendor/bcrypt-worker.js?probe',_slug:'bcrypt-generator'});
+  if(layoutFirst) vm.runInContext(keyboard,context);
+  vm.runInContext(pageScript,context,{filename:'BcryptGeneratorTool.astro',timeout:5000});
+  if(!layoutFirst) vm.runInContext(keyboard,context);
+  return {lang,get,widget,context,requests,workers,digests,persist,failures,
+    set(id,value){const el=get(id);el.value=value;el.fire('input');},click:id=>get(id).click(),
+    ctrlL(id,meta=false){const el=get(id);el.focus();return el.fire('keydown',{key:'l',ctrlKey:!meta,metaKey:meta});},
+    async timers(){const due=timers.filter(t=>t.ms===0);for(const t of due){timers.splice(timers.indexOf(t),1);t.fn();}await settle();},
+    hashRequests(){return requests.filter(r=>r.msg.type==='hash');},
+    async release(q){if(!q||q.delivered)throw Error('Bad worker release');q.delivered=true;if(!q.worker.terminated){const hash=BC.hashSync(q.msg.password,q.msg.salt);q.worker.onmessage({data:{id:q.msg.id,type:'result',hash,ms:1}});}await settle();},
+    holdDigest(){holdDigest=true;},async releaseDigest(){const q=digests.shift();if(!q)throw Error('No held digest');q.d.resolve(await webcrypto.subtle.digest(q.alg,q.bytes));await settle();},
+    summary(){return {scriptErrors:failures.length,fallbackCalls};},
+    progress(q){q.worker.onmessage?.({data:{id:q.msg.id,type:'progress',p:0.5}});},
+    fail(q){q.worker.onmessage?.({data:{id:q.msg.id,type:'error',message:'synthetic worker failure'}});},
+  };
+}
+
+  const PW='synthetic-original', NEW='synthetic-new', SALT='$2b$04$abcdefghijklmnopqrstuu';
+  const HASH=BC.hashSync(PW,SALT), SHA_HASH=BC.hashSync(createHash('sha256').update(PW).digest('hex'),SALT);
+  const pages=[];
+  async function page(lang,order){const p=makePage(lang,order);pages.push(p);await settle();return p;}
+  async function startGen(p){p.set('bcg-gen-pw',PW);p.click('bcg-gen-btn');await settle();return p.hashRequests().at(-1);}
+  async function startVer(p,hash=HASH,pw=PW){p.click('bcg-tab-ver');p.set('bcg-ver-hash',hash);p.set('bcg-ver-pw',pw);p.click('bcg-ver-btn');await settle();return p.hashRequests().at(-1);}
+  const emptyGen=p=>p.get('bcg-gen-out').hidden&&!p.get('bcg-gen-hash').textContent;
+  const emptyVer=p=>p.get('bcg-ver-result').hidden&&!p.get('bcg-ver-result').textContent&&p.get('bcg-ver-variants').hidden;
+  for(const lang of ['en','zh','ja','ko']) {
+    for(const order of [false,true]) {
+      const label=lang+' '+(order?'layout-first':'page-first')+' ';
+      for(const mode of ['gen','ver']) {
+        const p=await page(lang,order),q=mode==='gen'?await startGen(p):await startVer(p);
+        p.ctrlL('bcg-'+mode+'-pw',order);
+        const before=p.hashRequests().length;
+        // Deliver between keydown and the old deferred clear callback.
+        await p.release(q);await p.timers();
+        check(label+mode+' Ctrl/L cancels worker and clears late result',q.worker.terminated&&(mode==='gen'?emptyGen(p):emptyVer(p))&&!p.get('bcg-'+mode+'-btn').disabled);
+        check(label+mode+' Ctrl/L clears credentials and shared persistence',!p.get('bcg-'+mode+'-pw').value&&p.persist.length===1);
+        const next=mode==='gen'?await startGen(p):await startVer(p);
+        check(label+mode+' can restart after Ctrl/L',p.hashRequests().length===before+1);
+        if(next!==q){await p.release(next);check(label+mode+' restart publishes current result',mode==='gen'?BC.compareSync(PW,p.get('bcg-gen-hash').textContent):p.get('bcg-ver-result').className.includes('is-match'));}
+      }
+      for(const mode of ['gen','ver']) {
+        const p=await page(lang,order),q=mode==='gen'?await startGen(p):await startVer(p);
+        const hash=BC.hashSync(q.msg.password,q.msg.salt);
+        q.worker.onmessage({data:{id:q.msg.id,type:'result',hash,ms:1}});
+        p.ctrlL('bcg-'+mode+'-pw',order);await settle();
+        check(label+mode+' already-resolved reply cannot publish before deferred clear',mode==='gen'?emptyGen(p):emptyVer(p));
+        await p.timers();
+      }
+      for(const action of ['cancel','ctrlL']) {
+        const p=await page(lang,order);p.holdDigest();await startVer(p,'bcrypt_sha256$'+SHA_HASH);
+        check(label+action+' prehash positive control has no hash request',p.digests.length===1&&p.hashRequests().length===0);
+        if(action==='cancel')p.click('bcg-ver-cancel');else p.ctrlL('bcg-ver-pw',order);
+        await settle();await p.timers();const count=p.workers.length,status=p.get('bcg-ver-status').textContent;
+        await p.releaseDigest();
+        check(label+action+' prehash continuation creates no worker',p.hashRequests().length===0&&p.workers.length===count&&emptyVer(p)&&!p.get('bcg-ver-btn').disabled);
+        check(label+action+' prehash preserves cleared/cancelled status',p.get('bcg-ver-status').textContent===status);
+        p.set('bcg-ver-hash',HASH);p.click('bcg-ver-btn');await settle();const next=p.hashRequests().at(-1);
+        if(next){await p.release(next);check(label+action+' prehash cancellation recovers',!p.get('bcg-ver-result').hidden);}
+        else check(label+action+' prehash cancellation recovers',false);
+      }
+    }
+    {
+      const p=await page(lang,false);p.holdDigest();await startVer(p,'bcrypt_sha256$'+SHA_HASH);
+      p.click('bcg-ver-cancel');p.set('bcg-ver-hash',HASH);p.click('bcg-ver-btn');await settle();
+      const next=p.hashRequests().at(-1), count=p.workers.length;
+      await p.releaseDigest();
+      check(lang+' old prehash cannot launch work or unlock new verify',p.hashRequests().length===1&&p.workers.length===count&&p.get('bcg-ver-btn').disabled);
+      if(next){await p.release(next);check(lang+' new verify survives old prehash completion',p.get('bcg-ver-result').className.includes('is-match'));}
+      else check(lang+' new verify survives old prehash completion',false);
+    }
+    {
+      const p=await page(lang,false);p.holdDigest();await startVer(p,'bcrypt_sha256$'+SHA_HASH);
+      p.digests[0].d.reject(new Error('synthetic digest failure'));await settle();
+      check(lang+' current SHA256 rejection reports error and releases button',p.get('bcg-ver-status').className.includes('error')&&!p.get('bcg-ver-btn').disabled&&p.hashRequests().length===0);
+      p.set('bcg-ver-hash',HASH);p.click('bcg-ver-btn');await settle();await p.release(p.hashRequests().at(-1));
+      check(lang+' verify recovers after SHA256 rejection',p.get('bcg-ver-result').className.includes('is-match'));
+    }
+    for(const id of ['bcg-ver-pw','bcg-ver-hash']) {
+      const p=await page(lang,false),q=await startVer(p);p.set(id,id.endsWith('-pw')?NEW:'invalid');
+      check(lang+' editing '+id+' invalidates current verification immediately',q.worker.terminated&&emptyVer(p)&&!p.get('bcg-ver-btn').disabled);
+      await p.release(q);check(lang+' editing '+id+' suppresses late result',emptyVer(p));
+      p.set('bcg-ver-hash',HASH);p.set('bcg-ver-pw',NEW);p.click('bcg-ver-btn');await settle();const next=p.hashRequests().at(-1);
+      if(next!==q)await p.release(next);
+      check(lang+' edited verify uses new password',p.get('bcg-ver-result').className.includes('is-nomatch'));
+    }
+    for(const mode of ['gen','ver']) {
+      const p=await page(lang,false),q=mode==='gen'?await startGen(p):await startVer(p);
+      p.click('bcg-'+mode+'-cancel');p.click('bcg-'+mode+'-btn');await settle();const next=p.hashRequests().at(-1);
+      check(lang+' '+mode+' old cancellation cannot unlock fresh request',next!==q&&p.get('bcg-'+mode+'-btn').disabled&&!p.get('bcg-'+mode+'-cancel').hidden);
+      if(next!==q){p.progress(q);await p.release(q);check(lang+' '+mode+' terminated worker cannot update fresh progress',p.get('bcg-'+mode+'-btn').disabled);await p.release(next);}
+    }
+    {
+      const p=await page(lang,false),q=await startGen(p);p.set('bcg-gen-pw',NEW);await p.release(q);
+      check(lang+' generation retains clicked password snapshot on input edits',BC.compareSync(PW,p.get('bcg-gen-hash').textContent)&&!BC.compareSync(NEW,p.get('bcg-gen-hash').textContent));
+      const q2=await startGen(p);p.fail(q2);await settle();check(lang+' current worker failure is visible and releases controls',p.get('bcg-gen-status').className.includes('error')&&!p.get('bcg-gen-btn').disabled);
+    }
+    {
+      const p=await page(lang,false);await startVer(p,'bcrypt_sha256$'+SHA_HASH);await waitFor(()=>p.hashRequests().length===1);await p.release(p.hashRequests()[0]);
+      check(lang+' uncancelled real SHA256 prehash verifies',p.get('bcg-ver-result').className.includes('is-match'));
+      p.get('bcg-gen-pw').value=PW;p.context.document.body.focus();p.context.document.body.fire('keydown',{key:'l',ctrlKey:true});await p.timers();
+      check(lang+' Ctrl/L outside tool preserves input',p.get('bcg-gen-pw').value===PW&&p.persist.length===0);
+    }
+  }
+  for(const [i,p] of pages.entries())check('page lifecycle '+i+' has no script errors or native clipboard calls',p.failures.length===0&&p.summary().fallbackCalls===0,p.failures);
 }
 
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);

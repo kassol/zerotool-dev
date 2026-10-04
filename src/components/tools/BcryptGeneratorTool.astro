@@ -781,7 +781,12 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
     var genPw = $('bcg-gen-pw'), prefixSel = $('bcg-prefix'), costSel = $('bcg-cost');
     var genBtn = $('bcg-gen-btn'), genCancel = $('bcg-gen-cancel'), genStatus = $('bcg-gen-status');
     var genOut = $('bcg-gen-out'), genHash = $('bcg-gen-hash'), genParts = $('bcg-gen-parts');
-    var genBusy = false;
+    var genBusy = false, genRevision = 0;
+
+    function cancelGenerate() {
+      genRevision++; genClient.cancel();
+      genBusy = false; genBtn.disabled = false; genCancel.hidden = true;
+    }
 
     function updateGenPw() {
       var r = checkPassword(genPw.value);
@@ -800,13 +805,15 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
       if (genBusy) return;
       var pw = genPw.value;
       if (!pw) { setStatus(genStatus, S.needPassword, 'error'); genPw.focus(); return; }
-      var cost = Number(costSel.value), salt = makeSalt(prefixSel.value, cost, randomSaltBody());
+      var cost = Number(costSel.value), salt = makeSalt(prefixSel.value, cost, randomSaltBody()), revision = ++genRevision;
       genBusy = true; genBtn.disabled = true; genCancel.hidden = false;
       setStatus(genStatus, fill(S.working, { pct: 0 }), 'info');
       try {
         var r = await genClient.run({ type: 'hash', password: pw, salt: salt }, function (p) {
+          if (revision !== genRevision) return;
           setStatus(genStatus, fill(S.working, { pct: Math.round(p * 100) }), 'info');
         });
+        if (revision !== genRevision) return;
         bench = { cost: cost, ms: r.ms };
         var parsed = parseHash(r.hash);
         renderHash(genHash, parsed);
@@ -816,11 +823,12 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
         setStatus(genStatus, fill(S.done, { time: fmtTime(r.ms), cost: cost }), 'success');
         if (window.trackTool) window.trackTool('bcrypt-generator', 'generate');
       } catch (err) {
+        if (revision !== genRevision) return;
         genBusy = false;
         if (err && err.cancelled) setStatus(genStatus, S.cancelled, 'none');
         else setStatus(genStatus, fill(S.workerFail, { msg: (err && err.message) || String(err) }), 'error');
       } finally {
-        genBusy = false; genBtn.disabled = false; genCancel.hidden = true;
+        if (revision === genRevision) { genBusy = false; genBtn.disabled = false; genCancel.hidden = true; }
       }
     }
 
@@ -831,13 +839,18 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
     costSel.addEventListener('change', updateEstimate);
     prefixSel.addEventListener('change', updatePrefixNote);
     genBtn.addEventListener('click', generate);
-    genCancel.addEventListener('click', function () { genClient.cancel(); });
+    genCancel.addEventListener('click', function () { cancelGenerate(); setStatus(genStatus, S.cancelled, 'none'); });
     $('bcg-gen-copy').addEventListener('click', function () { copyText(genHash.textContent, $('bcg-gen-copy'), genStatus); });
 
     // ── verify ──
     var verHash = $('bcg-ver-hash'), verPw = $('bcg-ver-pw'), verBtn = $('bcg-ver-btn'), verCancel = $('bcg-ver-cancel');
     var verStatus = $('bcg-ver-status'), verResult = $('bcg-ver-result'), verVariants = $('bcg-ver-variants'), parseBox = $('bcg-ver-parse');
-    var verBusy = false;
+    var verBusy = false, verRevision = 0;
+
+    function cancelVerify() {
+      verRevision++; verClient.cancel();
+      verBusy = false; verBtn.disabled = false; verCancel.hidden = true;
+    }
 
     function renderParse() {
       var raw = verHash.value;
@@ -916,13 +929,17 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
       var pw = verPw.value;
       var plan = verifySalt(p, pw);
       if (plan.unsupported) { verResult.className = 'bcg-result is-unknown'; verResult.textContent = S.res_unsupported2x; verResult.hidden = false; return; }
+      var revision = ++verRevision;
       verBusy = true; verBtn.disabled = true; verCancel.hidden = false;
       setStatus(verStatus, fill(S.working, { pct: 0 }), 'info');
       try {
         var input = await passwordFor(p, pw);
+        if (revision !== verRevision) return;
         var r = await verClient.run({ type: 'hash', password: input, salt: plan.salt }, function (x) {
+          if (revision !== verRevision) return;
           setStatus(verStatus, fill(S.working, { pct: Math.round(x * 100) }), 'info');
         });
+        if (revision !== verRevision) return;
         if (!bench || p.cost >= bench.cost) bench = { cost: p.cost, ms: r.ms };
         var ok = judge(p, r.hash), nc = p.nonCanonicalSalt || p.nonCanonicalSum;
         var lines = [ok ? (nc ? S.res_matchNc : S.res_match) : S.res_noMatch];
@@ -935,24 +952,26 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
         setStatus(verStatus, fill(S.done, { time: fmtTime(r.ms), cost: p.cost }), 'none');
         if (window.trackTool) window.trackTool('bcrypt-generator', 'verify');
       } catch (err) {
+        if (revision !== verRevision) return;
         if (err && err.cancelled) setStatus(verStatus, S.cancelled, 'none');
         else setStatus(verStatus, fill(S.workerFail, { msg: (err && err.message) || String(err) }), 'error');
       } finally {
-        verBusy = false; verBtn.disabled = false; verCancel.hidden = true;
+        if (revision === verRevision) { verBusy = false; verBtn.disabled = false; verCancel.hidden = true; }
       }
     }
 
-    verHash.addEventListener('input', function () { clearVerResult(); setStatus(verStatus, ''); renderParse(); });
-    verPw.addEventListener('input', function () { clearVerResult(); updateVerPw(); });
+    verHash.addEventListener('input', function () { cancelVerify(); clearVerResult(); setStatus(verStatus, ''); renderParse(); });
+    verPw.addEventListener('input', function () { cancelVerify(); clearVerResult(); setStatus(verStatus, ''); updateVerPw(); });
     [verHash, verPw].forEach(function (el) {
       el.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.isComposing) { e.preventDefault(); verify(); }
       });
     });
     verBtn.addEventListener('click', verify);
-    verCancel.addEventListener('click', function () { verClient.cancel(); });
+    verCancel.addEventListener('click', function () { cancelVerify(); setStatus(verStatus, S.cancelled, 'none'); });
     $('bcg-ver-example').addEventListener('click', function () {
       // Spring Security reference, "Password Storage Format": the stored value for "password".
+      cancelVerify();
       verHash.value = '{bcrypt}$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG';
       verPw.value = 'password';
       clearVerResult(); renderParse(); updateVerPw();
@@ -964,6 +983,7 @@ const COSTS = Array.from({ length: 28 }, (_, i) => i + 4);
       if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
       var widget = document.querySelector('.tool-widget');
       if (!widget || !widget.contains(document.activeElement)) return;
+      cancelGenerate(); cancelVerify();
       setTimeout(function () {
         genOut.hidden = true; genHash.textContent = ''; updateGenPw(); updateEstimate();
         clearVerResult(); renderParse(); updateVerPw(); setStatus(verStatus, '');
