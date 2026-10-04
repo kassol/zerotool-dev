@@ -242,6 +242,8 @@ if (stringsMatch) {
   check('toggletip text stays out of the inline script', source.includes('define:vars={{ t: CLIENT_T }}') && source.includes('const { tips: TIPS, ...CLIENT_T } = T;'));
   check('Ctrl/Cmd+L clears the stale status', /key === 'l' \|\| e\.key === 'L'[\s\S]{0,200}if \(textEl\.value \|\| binEl\.value\) return;[\s\S]{0,80}setStatus\('', ''\);/.test(source));
   const layouts = readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8');
+  check('Text → Binary has no button: it runs while you type and when the separator changes', !markup.includes('tb-to-binary') && !/toBinary/.test(source) &&
+    source.includes('textTimer = setTimeout(doTextToBinary, 150);') && source.includes('if (textEl.value) doTextToBinary();'));
   check('listed as a convert page', layouts.includes("'text-to-binary': 'convert'"));
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const mdx = readFileSync(new URL(`../src/content/tools/text-to-binary/${lang}.mdx`, import.meta.url), 'utf8');
