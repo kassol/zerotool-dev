@@ -5,7 +5,8 @@
 //        public/figlet-fonts/*.flf (the fonts the page loads),
 //        scripts/test-text-to-ascii-art.fixtures.json (figlet 2.2.5 output hashes),
 //        src/content/tools/text-to-ascii-art/{en,zh,ja,ko}.mdx (annotated examples), package.json,
-//        src/layouts/ToolLayout.astro (real Ctrl/Cmd+L handler in PNG export regression)
+//        src/layouts/ToolLayout.astro (real Ctrl/Cmd+L handler in PNG export regression),
+//        src/data/tool-layouts.ts (v2 layout registration)
 // Write: stdout only (test results). With --regenerate only: the fixtures file, plus temporary
 //        files under os.tmpdir() that are removed afterwards.
 // Exit:  0 if all PASS, 1 if any FAIL
@@ -341,20 +342,29 @@ eq('fill', E.fill('{a} and {b}', { a: 1, b: 'x' }), '1 and x');
 // The PNG fixture is a valid opaque payload at this API boundary, not a substitute renderer.
 // Actual browser font rasterization is covered by the browser acceptance flow.
 function asciiExportPage() {
-  const nodes = new Map(), pendingBlobs = [], downloads = [], urls = new Map(), revoked = [], timers = new Map(), listeners = {};
-  const heldFonts = new Map();
+  const nodes = new Map(), pendingBlobs = [], downloads = [], copied = [], urls = new Map(), revoked = [], timers = new Map(), listeners = {};
+  const heldFonts = new Map(), failedFonts = new Set();
   let sequence = 0;
   const document = { activeElement: null };
   class Element {
     constructor(id = '', tag = 'div') {
       Object.assign(this, { id, tagName: tag.toUpperCase(), value: '', checked: false, hidden: false, disabled: false, textContent: '', className: '', children: [], listeners: {} });
     }
+    set textContent(value) { this.text = String(value); this.children = []; }
+    get textContent() { return (this.text || '') + this.children.map((child) => child.textContent || '').join(''); }
+    get firstChild() { return this.children[0] || null; }
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
     dispatch(type) { for (const fn of this.listeners[type] || []) fn.call(this, { target: this }); }
     click() { if (this.disabled) return; if (this.tagName === 'A') downloads.push({ name: this.download, blob: urls.get(this.href), url: this.href }); this.dispatch('click'); }
     appendChild(child) { this.children.push(child); return child; }
     remove() {}
-    setAttribute() {}
+    setAttribute(key, value) { (this.attributes ||= {})[key] = String(value); }
+    scrollIntoView() {}
+    querySelector(selector) {
+      const match = (el) => selector.startsWith('[data-font=') ? el.attributes?.['data-font'] === /"([^"]+)"/.exec(selector)[1] : el.tagName === selector.toUpperCase();
+      for (const child of this.children) { if (match(child)) return child; const found = child.querySelector?.(selector); if (found) return found; }
+      return null;
+    }
     contains(element) { return [...nodes.values()].includes(element); }
     querySelectorAll() { return [get('taa-input')]; }
   }
@@ -383,9 +393,10 @@ function asciiExportPage() {
   for (const [id, value] of Object.entries({ input: 'Hello World', font: 'Standard', layout: 'default', width: '0', format: 'plain' })) get('taa-' + id).value = value;
   get('taa-trim').checked = true; get('taa-gallery').hidden = true;
   const sandbox = {
-    console, Blob, document, S: STRINGS.en, FONT_NAMES,
+    console, Blob, document, S: { ...Object.fromEntries(Object.entries(STRINGS.en).filter(([key]) => key !== 'tips')), lang: 'en' }, FONT_NAMES,
     fetch(url) {
       const name = decodeURIComponent(url.slice('/figlet-fonts/'.length, -4));
+      if (failedFonts.delete(name)) return Promise.resolve({ ok: false, status: 503 });
       const response = () => ({ ok: true, text: () => Promise.resolve(readFileSync(join(fontDir, name + '.flf'), 'utf8')) });
       if (heldFonts.has(name)) return new Promise((resolve) => heldFonts.set(name, () => resolve(response())));
       return Promise.resolve(response());
@@ -393,7 +404,7 @@ function asciiExportPage() {
     URL: { createObjectURL(blob) { const url = 'blob:ascii-' + (++sequence); urls.set(url, blob); return url; }, revokeObjectURL(url) { revoked.push(url); urls.delete(url); } },
     getComputedStyle: () => ({ fontFamily: 'monospace', color: '#111111', backgroundColor: '#ffffff' }),
     setTimeout(fn, ms) { const id = ++sequence; timers.set(id, { fn, ms }); return id; }, clearTimeout(id) { timers.delete(id); },
-    navigator: { clipboard: { writeText: () => Promise.resolve() } }, ztPersist: { clear() {} }, _slug: 'text-to-ascii-art',
+    navigator: { clipboard: { writeText: (text) => { copied.push(text); return Promise.resolve(); } } }, ztPersist: { clear() {} }, _slug: 'text-to-ascii-art',
   };
   sandbox.window = sandbox;
   const ctx = vm.createContext(sandbox);
@@ -404,10 +415,11 @@ function asciiExportPage() {
   vm.runInContext(pageScript[1], ctx, { filename: 'TextToAsciiArtTool.astro', lineOffset: source.slice(0, pageScript.index).split('\n').length - 1 });
   function flush(ms) { for (const [id, timer] of [...timers]) if (timer.ms === ms) { timers.delete(id); timer.fn(); } }
   return {
-    get, pendingBlobs, downloads, revoked,
+    get, pendingBlobs, downloads, copied, revoked,
     text(value) { get('taa-input').value = value; get('taa-input').dispatch('input'); flush(120); },
     font(value) { get('taa-font').value = value; get('taa-font').dispatch('change'); },
     clearShortcut() { document.activeElement = get('taa-input'); for (const fn of listeners.keydown || []) fn({ ctrlKey: true, key: 'l', preventDefault() {} }); flush(0); },
+    failFont(name) { failedFonts.add(name); },
     holdFont(name) { heldFonts.set(name, null); }, releaseFont(name) { const done = heldFonts.get(name); heldFonts.delete(name); done(); },
     cleanup() { flush(1000); },
     release(job, blob) { try { job.callback(blob); return null; } catch (error) { return String(error); } },
@@ -482,6 +494,93 @@ for (const mutation of ['text', 'font', 'empty', 'shortcut', 'invalid']) {
   check('font race: newer cached font render completes', await asciiPageSettles(() => page.get('taa-output').textContent === latest));
   page.releaseFont('Big'); for (let i = 0; i < 20; i++) await Promise.resolve();
   eq('font race: late earlier font keeps generation guard', page.get('taa-output').textContent, latest);
+}
+
+// ---------- controls moved into the rail ----------
+{
+  const page = asciiExportPage();
+  await asciiPageSettles(() => page.get('taa-output').textContent === initialArt);
+  const lines = E.renderFiglet(fonts.Standard, 'Hello World', {});
+  for (const format of ['plain', 'markdown', 'hash', 'slash', 'heredoc']) {
+    page.get('taa-format').value = format;
+    page.get('taa-copy').click();
+    eq('rail copy format ' + format, page.copied.at(-1), E.formatOutput(lines, format, true));
+  }
+  page.get('taa-download-txt').click();
+  eq('TXT stays plain regardless of Copy as format', await page.downloads.at(-1).blob.text(), initialArt + '\n');
+  eq('TXT keeps the matching filename', page.downloads.at(-1).name, 'hello-world-standard.txt');
+  page.get('taa-trim').checked = false; page.get('taa-trim').dispatch('change');
+  eq('trim setting updates the preview', page.get('taa-output').textContent, E.formatOutput(lines, 'plain', false));
+  page.get('taa-trim').checked = true; page.get('taa-trim').dispatch('change');
+  page.get('taa-layout').value = 'full'; page.get('taa-layout').dispatch('change');
+  check('spacing updates automatically from its folded control', await asciiPageSettles(() => page.get('taa-output').textContent === E.formatOutput(E.renderFiglet(fonts.Standard, 'Hello World', { layout: 'full' }), 'plain', true)));
+  page.get('taa-width').value = '40'; page.get('taa-width').dispatch('change');
+  check('width updates automatically from its folded control', await asciiPageSettles(() => page.get('taa-output').textContent === E.formatOutput(E.renderFiglet(fonts.Standard, 'Hello World', { layout: 'full', width: 40 }), 'plain', true)));
+  page.get('taa-copy-command').click();
+  eq('command copy reads the current settings', page.copied.at(-1), "figlet -f standard -W -w 40 'Hello World'");
+
+  page.get('taa-preview-all').click();
+  check('preview action reveals the gallery', !page.get('taa-gallery').hidden);
+  eq('preview action exposes expanded state', page.get('taa-preview-all').attributes['aria-expanded'], 'true');
+  eq('gallery creates all twelve font choices', page.get('taa-gallery').children.length, 12);
+  check('all gallery previews use real loaded fonts', await asciiPageSettles(() => FONT_NAMES.every((name) => page.get('taa-gallery').querySelector('[data-font="' + name + '"]').querySelector('pre').textContent === E.formatOutput(E.renderFiglet(fonts[name], 'Hello World', { layout: 'full', width: 40 }), 'plain', true))));
+  const mini = page.get('taa-gallery').querySelector('[data-font="Mini"]');
+  mini.querySelector('button').click();
+  check('Use Mini updates the main output', await asciiPageSettles(() => page.get('taa-output').textContent === E.formatOutput(E.renderFiglet(fonts.Mini, 'Hello World', { layout: 'full', width: 40 }), 'plain', true)));
+  eq('Use Mini updates the font control', page.get('taa-font').value, 'Mini');
+  check('current gallery font becomes disabled', mini.querySelector('button').disabled);
+  page.get('taa-preview-all').click();
+  check('preview action closes the gallery', page.get('taa-gallery').hidden);
+  eq('closed gallery exposes collapsed state', page.get('taa-preview-all').attributes['aria-expanded'], 'false');
+  page.get('taa-preview-all').click();
+  eq('reopening the gallery reuses its twelve choices', page.get('taa-gallery').children.length, 12);
+}
+{
+  const page = asciiExportPage();
+  await asciiPageSettles(() => page.get('taa-output').textContent === initialArt);
+  page.failFont('Big'); page.font('Big');
+  check('font failure shows a retry action', await asciiPageSettles(() => page.get('taa-status').children.some((child) => child.tagName === 'BUTTON')));
+  check('font failure clears the output and disables exports', !page.get('taa-output').textContent && page.get('taa-copy').disabled && page.get('taa-download-txt').disabled && page.get('taa-download-png').disabled);
+  check('font failure retains its cause', page.get('taa-status').textContent.includes('HTTP 503'));
+  page.get('taa-status').children.find((child) => child.tagName === 'BUTTON').click();
+  check('retry loads the font and restores output', await asciiPageSettles(() => page.get('taa-output').textContent === E.formatOutput(E.renderFiglet(fonts.Big, 'Hello World', {}), 'plain', true)));
+  eq('successful retry clears the error', page.get('taa-status').textContent, '');
+  check('successful retry enables exports', !page.get('taa-download-png').disabled && !page.get('taa-copy').disabled);
+}
+
+// ---------- v2 page layout ----------
+{
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script is:inline'));
+  const css = source.slice(source.indexOf('<style>'));
+  check('generate layout registered', /'text-to-ascii-art':\s*'generate'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('tool root directly contains body and shared rail', /^<div class="taa-wrap">\s*<div class="taa-body">\s*<div class="taa-rail zt-rail">/.test(template));
+  check('root is a flex column with zero minimum height', /\.taa-wrap\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column[^}]*min-height:\s*0/.test(css));
+  check('desktop rail stays between 270 and 320px', /\.taa-body\s*\{[^}]*grid-template-columns:\s*clamp\(270px,\s*26vw,\s*320px\)\s*minmax\(0,\s*1fr\)/.test(css));
+  check('main input and all export actions precede folded options', ['taa-input', 'taa-copy', 'taa-download-txt', 'taa-download-png'].every((id) => template.indexOf('id="' + id + '"') < template.indexOf('<details')));
+  check('secondary options and command start collapsed', [...template.matchAll(/<details\b[^>]*>/g)].length === 2 && !/<details\b[^>]*\sopen(?:\s|>)/.test(template));
+  check('font comparison remains an explicit action', /id="taa-preview-all"[^>]*aria-controls="taa-gallery"/.test(template));
+  check('skipped characters stay directly below output', /<pre id="taa-output"[^>]*><\/pre>\s*<p id="taa-skipped"/.test(template));
+  check('output fills the available height and scrolls internally', /\.taa-output\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
+  check('gallery has bounded flex height and internal scrolling', /\.taa-gallery\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
+  check('empty status keeps its reserved height', /\.taa-status\s*\{[^}]*height:\s*5rem/.test(css) && !/\.taa-status:empty/.test(css));
+  check('860px stacks the layout and 640px adjusts phone details', /@media \(max-width: 860px\)/.test(css) && /@media \(max-width: 640px\)/.test(css));
+  check('mobile empty output hides only when no skipped-character warning exists', /\.taa-output-box:has\(\.taa-output:empty\):has\(\.taa-note\[hidden\]\)\s*\{\s*display:\s*none/.test(css));
+  check('tips do not enter serialized client strings', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T/.test(source) && /const L = \{ \.\.\.CLIENT_T, lang \}/.test(source) && /define:vars=\{\{ S: L, FONT_NAMES \}\}/.test(source));
+  check('no runtime i18n rewriting', !source.includes('data-i18n'));
+  const tips = ['input', 'font', 'layout', 'width', 'format', 'trim', 'export', 'command'];
+  eq('eight distinct control tips', [...template.matchAll(/<Toggletip id="taa-tip-([^" ]+)"/g)].map((m) => m[1]).sort(), [...tips].sort());
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' eight matching tip keys', Object.keys(STRINGS[lang].tips).sort(), [...tips].sort());
+    check(lang + ' each tip has text', tips.every((key) => typeof STRINGS[lang].tips[key] === 'string' && STRINGS[lang].tips[key].length > 20));
+    check(lang + ' output has localized empty text', !!STRINGS[lang].previewEmpty && template.includes('data-empty={T.previewEmpty}'));
+    const mdx = readFileSync(join(root, 'src/content/tools/text-to-ascii-art', lang + '.mdx'), 'utf8');
+    const steps = (/^steps:\n([\s\S]*?)(?=^\S)/m.exec(mdx)?.[1].match(/^  - .+$/gm) || []).map((line) => JSON.parse(line.slice(4)));
+    eq(lang + ' six usage steps', steps.length, 6);
+    check(lang + ' steps fit content limits', steps.every((step) => step.length <= 280) && steps.join('').length <= 1200);
+    check(lang + ' steps identify folded options and command', steps.some((step) => step.includes(STRINGS[lang].moreOptions)) && steps.some((step) => step.includes(STRINGS[lang].commandDetails)));
+    check(lang + ' HowTo removed', !/^## (?:How to use|使用步骤|使い方|사용 방법)$/m.test(mdx));
+    check(lang + ' Limits retained', /^## (?:Limits|限制|制限事項|제한 사항)$/m.test(mdx));
+  }
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
