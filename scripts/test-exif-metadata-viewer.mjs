@@ -23,9 +23,13 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { load as loadYaml } from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ExifMetadataViewerTool.astro'), 'utf8');
+const STRINGS = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?) as const;/)[1] + ')');
+const clientStrings = (lang) => new Function('STRINGS', 'lang', source.slice(source.indexOf('const T = STRINGS'), source.indexOf('\n---', 4)) + '\nreturn { TIPS, CLIENT_T };')(STRINGS, lang);
 const page = readFileSync(join(root, 'src/content/tools/exif-metadata-viewer/en.mdx'), 'utf8');
 const start = source.indexOf('      /* ── EXIF tag tables ── */');
 const end = source.indexOf('      /* ── DOM helpers ── */');
@@ -238,7 +242,7 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     document = new Element('document'); Object.assign(document, { body, documentElement: { lang }, activeElement: body, getElementById: get, createElement: tag => new Element(tag), querySelector: s => s === '.tool-widget' ? widget : widget.querySelector(s), querySelectorAll: s => widget.querySelectorAll(s) });
     class Reader { constructor() { readers.push(this); } readAsArrayBuffer(file) { this.file = file; } }
     class Image { constructor() { images.push(this); } }
-    const sandbox = { document, FileReader: Reader, Image, Blob, ArrayBuffer, DataView, Uint8Array, console, navigator: { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } }, URL: { createObjectURL(b) { const u = 'blob:test-' + ++urlId; urls.set(u, b); return u; }, revokeObjectURL(u) { revoked.push(u); } }, setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout() {}, _slug: 'exif-metadata-viewer', window: { ztPersist: { clear: slug => clears.push(slug) } } };
+    const sandbox = { t: clientStrings(lang).CLIENT_T, document, FileReader: Reader, Image, Blob, ArrayBuffer, DataView, Uint8Array, console, navigator: { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } }, URL: { createObjectURL(b) { const u = 'blob:test-' + ++urlId; urls.set(u, b); return u; }, revokeObjectURL(u) { revoked.push(u); } }, setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout() {}, _slug: 'exif-metadata-viewer', window: { ztPersist: { clear: slug => clears.push(slug) } } };
     const context = vm.createContext(sandbox);
     if (shellFirst) vm.runInContext(shortcut, context);
     vm.runInContext(script, context, { filename: 'ExifMetadataViewerTool.astro' });
@@ -254,6 +258,18 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     function clear() { get('emv-reset').focus(); return document.dispatch('keydown', { ctrlKey: true, key: 'l' }); }
     function state() { return { preview: get('emv-preview-img').src, name: get('emv-filename').textContent, dims: get('emv-dimensions').textContent, result: get('emv-result-area').style.display, actions: get('emv-actions').style.display, status: get('emv-status').textContent }; }
     return { get, readers, images, downloads, copied, revoked, clears, complete, input, clear, state, document, timers };
+  }
+  function visible(node) { for (; node; node = node.parentElement) if (node.hidden || node.style.display === 'none') return false; return true; }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const p = ui(lang);
+    eq(lang + ' empty state has visible import area', visible(p.get('emv-dropzone')), true);
+    eq(lang + ' reset hidden until an input attempt', visible(p.get('emv-reset')), false);
+    const pending = p.input();
+    eq(lang + ' pending read can be canceled from toolbar', visible(p.get('emv-reset')), true);
+    p.complete(pending);
+    eq(lang + ' loaded photo exposes all three actions', ['emv-reset', 'emv-download', 'emv-copy-json'].every(id => visible(p.get(id))), true);
+    p.get('emv-reset').click();
+    eq(lang + ' reset returns to input and hides all result actions', visible(p.get('emv-dropzone')) && ['emv-reset', 'emv-download', 'emv-copy-json'].every(id => !visible(p.get(id))), true);
   }
   function empty(name, p) {
     eq(name + ' preview cleared', p.get('emv-preview-img').src, '');
@@ -290,7 +306,8 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     if (failure === 'type') p.input('text.txt', 'text/plain', 4, 'drop');
     if (failure === 'size') p.input('large.jpg', 'image/jpeg', 100 * 1024 * 1024 + 1, 'drop');
     empty(failure, p);
-    eq(failure + ' reports a visible error container', p.get('emv-result-area').style.display !== 'none' && p.get('emv-status').className.includes('error') && !!p.get('emv-status').textContent, true);
+    let statusVisible = true; for (let node = p.get('emv-status'); node; node = node.parentElement) if (node.hidden || node.style.display === 'none') statusVisible = false;
+    eq(failure + ' reports a visible error container', statusVisible && p.get('emv-status').className.includes('error') && !!p.get('emv-status').textContent, true);
     p.complete(p.input('recovered.jpg'));
     eq(failure + ' can load another image after error', [p.get('emv-filename').textContent, p.get('emv-actions').style.display], ['recovered.jpg', '']);
   }
@@ -306,6 +323,62 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     eq('current cleaned export retains exact expected bytes', Buffer.from(await p.downloads.at(-1).blob.arrayBuffer()).equals(cleaned), true);
   }
   console.log(`Page lifecycle: ${passes - base.passes} passed, ${failures - base.failures} failed`);
+}
+
+
+// ---------- v2 page layout ----------
+{
+  const base = { passes, failures };
+  const template = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script')).trimStart();
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css = source.slice(source.indexOf('<style>') + 7).replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (selector, pattern) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].some(m => m[1].split(',').some(s => s.trim() === selector) && pattern.test(m[2]));
+  eq('analyze layout registered', /'exif-metadata-viewer':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')), true);
+  eq('tool is a direct flex-column root', /^<div class="emv-wrap">/.test(template) && rule('.emv-wrap', /display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*min-height:\s*0/), true);
+  eq('empty import area fills available space using shared class', /id="emv-dropzone" class="emv-dropzone zt-empty-drop"/.test(template), true);
+  eq('results have zero-basis flex and internal scroll', rule('.emv-result-area', /flex:\s*1 1 0;[\s\S]*min-height:\s*300px;[\s\S]*overflow:\s*auto/), true);
+  eq('mobile results have a fixed positive height', rule('.emv-result-area', /grid-template-columns:\s*1fr;\s*flex:\s*none;\s*height:\s*32rem;\s*min-height:\s*0/), true);
+  eq('tool uses stack and phone breakpoints', /max-width:\s*860px/.test(css) && /max-width:\s*640px/.test(css), true);
+  eq('status reserves space and remains outside hidden results', rule('#emv-status', /min-height:\s*1\.5rem/) && template.indexOf('id="emv-status"') < template.indexOf('id="emv-result-area"'), true);
+  eq('all original action buttons stay ahead of results', [...template.matchAll(/<button[^>]*id="([^"]+)"/g)].map(m => m[1]).sort(), ['emv-copy-json', 'emv-download', 'emv-reset']);
+  eq('all actions precede status and output', ['emv-reset', 'emv-download', 'emv-copy-json'].every(id => template.indexOf('id="' + id + '"') < template.indexOf('id="emv-status"')), true);
+  eq('privacy note follows output', template.indexOf('class="emv-privacy"') > template.indexOf('id="emv-no-meta"'), true);
+  eq('labels render at build time', !source.includes('data-i18n') && !script.includes('applyI18n'), true);
+  eq('only client strings enter script', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/\bTIPS\b|\bt\.tips\b|\bSTRINGS\b/.test(script), true);
+  const tipKeys = ['open', 'reset', 'results', 'download', 'copy', 'gps'].sort();
+  const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  eq('six control tips retain unique IDs', tips.map(m => /id="emv-tip-([^"]+)"/.exec(m[1])?.[1]).sort(), tipKeys);
+  for (const tip of tips) {
+    const key = /id="emv-tip-([^"]+)"/.exec(tip[1])[1];
+    eq(key + ' tip uses localized label and content', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2] === '{TIPS.' + key + '}', true);
+  }
+  const placeholders = text => (String(text).match(/\{\w+\}/g) || []).sort();
+  function strings(lang, value, reference, path = '') {
+    if (reference && typeof reference === 'object') {
+      eq(lang + path + ' keys match en', Object.keys(value || {}).sort(), Object.keys(reference).sort());
+      for (const key of Object.keys(reference)) strings(lang, value?.[key], reference[key], path + '.' + key);
+    } else {
+      eq(lang + path + ' nonempty text', typeof value === 'string' && value.trim().length > 0, true);
+      eq(lang + path + ' placeholders', placeholders(value), placeholders(reference));
+    }
+  }
+  // Snapshot from 2d4ce406: metadata unchanged, and body with only its usage section removed.
+  const retained = {"en": ["0902ca24ad27d31d", "3b1dcadcf1105255"], "zh": ["6f217aea293b700a", "dd841e9ac63f4baa"], "ja": ["81d5a09229d05c93", "a32ca5dd84912764"], "ko": ["af4cf2d10d3cc286", "0fe2c0058fe852f9"]};
+  const hash = text => createHash('sha256').update(text.trim()).digest('hex').slice(0, 16);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' string keys match en', Object.keys(STRINGS[lang]).sort(), Object.keys(STRINGS.en).sort());
+    strings(lang, STRINGS[lang].tips, STRINGS.en.tips, '.tips');
+    const { TIPS, CLIENT_T } = clientStrings(lang);
+    eq(lang + ' only tips excluded from client', Object.keys(CLIENT_T).sort(), Object.keys(STRINGS[lang]).filter(k => k !== 'tips').sort());
+    eq(lang + ' client contains no tip texts', !('tips' in CLIENT_T) && Object.values(TIPS).every(t => !JSON.stringify(CLIENT_T).includes(JSON.stringify(t))), true);
+    const mdx = readFileSync(join(root, 'src/content/tools/exif-metadata-viewer/' + lang + '.mdx'), 'utf8');
+    const [, fm, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx), { steps } = loadYaml(fm);
+    eq(lang + ' four concise plain-text steps', steps.length === 4 && steps.every(s => typeof s === 'string' && s.trim() && s.length <= 280 && !/<[^>]+>/.test(s)) && steps.join('').length <= 1200, true);
+    eq(lang + ' usage removed', !/<h2>(?:How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
+    eq(lang + ' SEO and FAQ preserved', hash(fm.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang][0]);
+    eq(lang + ' all other reference content preserved', hash(body), retained[lang][1]);
+  }
+  console.log(`v2 page layout: ${passes - base.passes} passed, ${failures - base.failures} failed`);
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');

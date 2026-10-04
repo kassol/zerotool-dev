@@ -36,6 +36,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'sprite-sheet-generator': 'generate',
   'har-file-analyzer': 'analyze',
   'color-blindness-simulator': 'analyze',
+  'exif-metadata-viewer': 'analyze',
   'file-hash-checker': 'analyze',
   'image-compressor': 'analyze',
   'webp-converter': 'analyze',

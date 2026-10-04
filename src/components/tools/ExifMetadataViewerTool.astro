@@ -1,15 +1,164 @@
 ---
-// ExifMetadataViewerTool — Pure client-side EXIF metadata reader and stripper for JPEG photos.
-// Hand-written EXIF parser — no npm dependencies. Strip mode removes APP1/APP13 marker
-// segments from the original byte stream so JPEG image data is byte-identical (no re-encoding).
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    upload: "JPEG photo",
+    results: "Metadata",
+    tips: {
+      open: "Drop or choose a JPEG up to 100 MB, or paste a JPEG with Ctrl+V / ⌘V. Reading starts automatically. Files above 25 MB may take longer. PNG, HEIC and TIFF are not supported.",
+      reset: "Return to the file picker and clear the current photo and metadata. Ctrl+L / ⌘L inside the tool also clears a pending file read.",
+      results: "The preview shows the photo. The fields show camera, lens, exposure, dates, GPS and software when present; other EXIF fields are not listed.",
+      download: "Save a copy with APP1 (EXIF / XMP) and APP13 (IPTC) removed. Orientation 2–8 is kept. Image data is not re-encoded; other marker segments remain.",
+      copy: "Copy the parsed original EXIF as JSON, including available camera and GPS data. This does not copy the cleaned JPEG.",
+      gps: "This link is built locally from the parsed coordinates. Clicking it opens Google Maps and sends those coordinates to Google.",
+    },
+    dropHint: 'Drop a JPEG photo, click to upload, or paste (Ctrl+V)',
+    dropSub: 'JPEG · up to 100 MB',
+    loadAnother: 'Load another photo',
+    groupCamera: 'Camera', groupDate: 'Date', groupExposure: 'Exposure', groupGps: 'GPS', groupSoftware: 'Software',
+    kMake: 'Make', kModel: 'Model', kLens: 'Lens',
+    kDateOriginal: 'Original', kDateModified: 'Modified',
+    kAperture: 'Aperture', kShutter: 'Shutter', kISO: 'ISO', kFocal: 'Focal length',
+    kLatitude: 'Latitude', kLongitude: 'Longitude', kAltitude: 'Altitude',
+    kSoftware: 'Software',
+    gpsMap: 'Open in Google Maps →',
+    downloadClean: 'Download cleaned JPEG',
+    copyJson: 'Copy EXIF JSON',
+    copied: 'Copied!',
+    noMeta: 'No EXIF metadata found in this photo. Downloading will still strip XMP / IPTC marker segments if present.',
+    privacy: '100% client-side — bytes never leave your browser',
+    decoding: 'Reading metadata…',
+    errNotJpeg: 'Only JPEG photos are supported. Try a .jpg or .jpeg file.',
+    errTooLarge: 'File is larger than 100 MB. Please pick a smaller photo.',
+    warnLarge: 'Large file — decoding may be slow.',
+    errRead: 'Could not read the file. Please try a different photo.',
+    errCorrupt: 'EXIF block looks malformed. Showing what could be parsed.',
+  },
+  zh: {
+    upload: "JPEG 照片",
+    results: "元数据",
+    tips: {
+      open: "拖入或选择不超过 100 MB 的 JPEG，也可用 Ctrl+V / ⌘V 粘贴 JPEG。选好后自动读取；超过 25 MB 可能较慢。不支持 PNG、HEIC 和 TIFF。",
+      reset: "返回文件选择区，并清除当前照片与元数据。在工具内按 Ctrl+L / ⌘L 也会清空，并作废尚未完成的读取。",
+      results: "预览显示照片；字段列出照片中存在的相机、镜头、曝光、时间、GPS 和软件信息。其他 EXIF 字段不在列表中显示。",
+      download: "保存移除 APP1（EXIF / XMP）和 APP13（IPTC）的副本，保留值为 2–8 的方向信息。图像数据不重新编码，其他标记段仍保留。",
+      copy: "将解析出的原始 EXIF 复制为 JSON，包含其中的相机和 GPS 数据。此操作不复制清理后的 JPEG。",
+      gps: "链接由解析出的坐标在本地生成。点击后打开 Google 地图，并将这些坐标发送给 Google。",
+    },
+    dropHint: '拖入 JPEG 照片、点击上传或粘贴 (Ctrl+V)',
+    dropSub: 'JPEG · 最大 100 MB',
+    loadAnother: '加载其他照片',
+    groupCamera: '相机', groupDate: '时间', groupExposure: '曝光', groupGps: 'GPS', groupSoftware: '软件',
+    kMake: '品牌', kModel: '型号', kLens: '镜头',
+    kDateOriginal: '原始拍摄', kDateModified: '修改时间',
+    kAperture: '光圈', kShutter: '快门', kISO: 'ISO', kFocal: '焦距',
+    kLatitude: '纬度', kLongitude: '经度', kAltitude: '海拔',
+    kSoftware: '软件',
+    gpsMap: '在 Google 地图打开 →',
+    downloadClean: '下载剥离元数据后的 JPEG',
+    copyJson: '复制 EXIF JSON',
+    copied: '已复制！',
+    noMeta: '该照片未包含 EXIF 元数据。下载按钮仍会移除可能存在的 XMP / IPTC 标记段。',
+    privacy: '纯浏览器端运行——字节不会离开你的设备',
+    decoding: '正在读取元数据…',
+    errNotJpeg: '当前仅支持 JPEG 照片，请使用 .jpg 或 .jpeg 文件。',
+    errTooLarge: '文件超过 100 MB，请选择更小的照片。',
+    warnLarge: '文件较大，解码可能较慢。',
+    errRead: '无法读取该文件，请尝试其他照片。',
+    errCorrupt: 'EXIF 块格式异常，仅展示可解析的字段。',
+  },
+  ja: {
+    upload: "JPEG 写真",
+    results: "メタデータ",
+    tips: {
+      open: "100 MB 以下の JPEG をドロップまたは選択するか、Ctrl+V / ⌘V で JPEG を貼り付けます。自動で読み込みます。25 MB を超えると時間がかかる場合があります。PNG、HEIC、TIFF は非対応です。",
+      reset: "ファイル選択に戻り、現在の写真とメタデータを消去します。ツール内の Ctrl+L / ⌘L でも消去でき、処理中の読み込みも無効になります。",
+      results: "写真をプレビューし、存在するカメラ、レンズ、露出、日時、GPS、ソフトウェアの情報を表示します。他の EXIF 項目は一覧に表示しません。",
+      download: "APP1（EXIF / XMP）と APP13（IPTC）を除去したコピーを保存します。値が 2〜8 の向き情報は保持します。画像データは再エンコードせず、他のマーカーは残ります。",
+      copy: "解析した元の EXIF を JSON としてコピーします。存在するカメラや GPS のデータを含みます。除去済み JPEG のコピーではありません。",
+      gps: "解析した座標からローカルでリンクを作ります。クリックすると Google マップが開き、その座標が Google に送られます。",
+    },
+    dropHint: 'JPEG 写真をドロップ、クリックでアップロード、またはペースト (Ctrl+V)',
+    dropSub: 'JPEG · 最大 100 MB',
+    loadAnother: '別の写真を読み込む',
+    groupCamera: 'カメラ', groupDate: '日時', groupExposure: '露出', groupGps: 'GPS', groupSoftware: 'ソフトウェア',
+    kMake: 'メーカー', kModel: 'モデル', kLens: 'レンズ',
+    kDateOriginal: '撮影日時', kDateModified: '更新日時',
+    kAperture: '絞り', kShutter: 'シャッター', kISO: 'ISO', kFocal: '焦点距離',
+    kLatitude: '緯度', kLongitude: '経度', kAltitude: '高度',
+    kSoftware: 'ソフトウェア',
+    gpsMap: 'Google マップで開く →',
+    downloadClean: 'メタデータ除去済み JPEG をダウンロード',
+    copyJson: 'EXIF JSON をコピー',
+    copied: 'コピーしました！',
+    noMeta: 'この写真に EXIF メタデータは見つかりませんでした。ダウンロードボタンは XMP / IPTC マーカーがある場合も除去します。',
+    privacy: '完全ブラウザ完結 — バイトはデバイス外へ送られません',
+    decoding: 'メタデータを読み込み中…',
+    errNotJpeg: 'JPEG 写真のみ対応しています。.jpg または .jpeg ファイルを使用してください。',
+    errTooLarge: 'ファイルサイズが 100 MB を超えています。',
+    warnLarge: 'ファイルが大きいため、解析に時間がかかる場合があります。',
+    errRead: 'ファイルを読み取れませんでした。別の写真をお試しください。',
+    errCorrupt: 'EXIF ブロックの形式が不正です。解析できた項目のみ表示します。',
+  },
+  ko: {
+    upload: "JPEG 사진",
+    results: "메타데이터",
+    tips: {
+      open: "100 MB 이하의 JPEG를 드롭하거나 선택하고, Ctrl+V / ⌘V로 JPEG를 붙여넣을 수도 있습니다. 자동으로 읽으며 25 MB를 넘으면 느릴 수 있습니다. PNG, HEIC, TIFF는 지원하지 않습니다.",
+      reset: "파일 선택 영역으로 돌아가 현재 사진과 메타데이터를 지웁니다. 도구 안에서 Ctrl+L / ⌘L을 눌러도 지워지며, 진행 중인 읽기도 무효화합니다.",
+      results: "사진을 미리 보고, 존재하는 카메라, 렌즈, 노출, 날짜, GPS, 소프트웨어 정보를 표시합니다. 다른 EXIF 필드는 목록에 표시하지 않습니다.",
+      download: "APP1(EXIF / XMP)과 APP13(IPTC)을 제거한 사본을 저장합니다. 값이 2–8인 방향 정보는 유지합니다. 이미지 데이터는 다시 인코딩하지 않으며 다른 마커는 남습니다.",
+      copy: "파싱한 원본 EXIF를 JSON으로 복사합니다. 존재하는 카메라와 GPS 데이터를 포함합니다. 정리된 JPEG를 복사하는 기능은 아닙니다.",
+      gps: "파싱한 좌표로 로컬에서 링크를 만듭니다. 클릭하면 Google 지도가 열리고 해당 좌표가 Google에 전송됩니다.",
+    },
+    dropHint: 'JPEG 사진을 드롭하거나 클릭해서 업로드, 또는 붙여넣기 (Ctrl+V)',
+    dropSub: 'JPEG · 최대 100 MB',
+    loadAnother: '다른 사진 불러오기',
+    groupCamera: '카메라', groupDate: '시간', groupExposure: '노출', groupGps: 'GPS', groupSoftware: '소프트웨어',
+    kMake: '제조사', kModel: '모델', kLens: '렌즈',
+    kDateOriginal: '원본 촬영', kDateModified: '수정 시간',
+    kAperture: '조리개', kShutter: '셔터', kISO: 'ISO', kFocal: '초점거리',
+    kLatitude: '위도', kLongitude: '경도', kAltitude: '고도',
+    kSoftware: '소프트웨어',
+    gpsMap: 'Google 지도에서 열기 →',
+    downloadClean: '메타데이터 제거된 JPEG 다운로드',
+    copyJson: 'EXIF JSON 복사',
+    copied: '복사됨!',
+    noMeta: '이 사진에 EXIF 메타데이터가 없습니다. 다운로드 버튼은 XMP / IPTC 마커가 있을 경우 함께 제거합니다.',
+    privacy: '100% 클라이언트 처리 — 바이트는 기기를 떠나지 않습니다',
+    decoding: '메타데이터 읽는 중…',
+    errNotJpeg: 'JPEG 사진만 지원합니다. .jpg 또는 .jpeg 파일을 사용하세요.',
+    errTooLarge: '파일 크기가 100 MB를 초과합니다.',
+    warnLarge: '파일이 큽니다 — 디코딩이 느릴 수 있습니다.',
+    errRead: '파일을 읽을 수 없습니다. 다른 사진을 시도하세요.',
+    errCorrupt: 'EXIF 블록 형식이 잘못되었습니다. 파싱 가능한 필드만 표시합니다.',
+  },
+} as const;
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
-<div>
-  <div class="emv-wrap">
+<div class="emv-wrap">
+  <div class="emv-toolbar">
+    <span class="emv-control"><span class="tool-label">{T.upload}</span><Toggletip id="emv-tip-open" lang={lang} about={T.upload}>{TIPS.open}</Toggletip></span>
+    <span id="emv-reset-control" class="emv-control" style="display:none">
+      <button id="emv-reset" class="btn-secondary emv-reset-btn">{T.loadAnother}</button>
+      <Toggletip id="emv-tip-reset" lang={lang} about={T.loadAnother}>{TIPS.reset}</Toggletip>
+    </span>
+    <div id="emv-actions" class="emv-actions" style="display:none">
+      <span class="emv-control"><button id="emv-download" class="btn-primary">{T.downloadClean}</button><Toggletip id="emv-tip-download" lang={lang} about={T.downloadClean}>{TIPS.download}</Toggletip></span>
+      <span class="emv-control"><button id="emv-copy-json" class="btn-secondary">{T.copyJson}</button><Toggletip id="emv-tip-copy" lang={lang} about={T.copyJson}>{TIPS.copy}</Toggletip></span>
+    </div>
+  </div>
+  <div id="emv-status" class="tool-status" aria-live="polite"></div>
     {/* Upload / drag zone */}
-    <div id="emv-dropzone" class="emv-dropzone" tabindex="0" role="button" aria-label="Upload JPEG photo">
+    <div id="emv-dropzone" class="emv-dropzone zt-empty-drop" tabindex="0" role="button" aria-label={T.upload}>
       <svg class="emv-dz-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="12" height="14" rx="2"/><circle cx="6" cy="9" r="1.2"/><path d="m14 13-3-3-5 5"/><line x1="17" y1="8" x2="22" y2="8"/><line x1="17" y1="12" x2="22" y2="12"/><line x1="17" y1="16" x2="22" y2="16"/></svg>
-      <p id="emv-dz-hint" class="emv-dz-hint" data-i18n="dropHint">Drop a JPEG photo, click to upload, or paste (Ctrl+V)</p>
-      <p class="emv-dz-sub" data-i18n="dropSub">JPEG · up to 100 MB</p>
+      <p id="emv-dz-hint" class="emv-dz-hint">{T.dropHint}</p>
+      <p class="emv-dz-sub">{T.dropSub}</p>
       <input type="file" id="emv-file" accept="image/jpeg,image/jpg,.jpg,.jpeg" hidden />
     </div>
 
@@ -22,183 +171,70 @@
           <p id="emv-filesize" class="emv-filesize"></p>
           <p id="emv-dimensions" class="emv-dimensions"></p>
         </div>
-        <button id="emv-reset" class="btn-secondary emv-reset-btn" data-i18n="loadAnother">Load another photo</button>
       </div>
 
       <div class="emv-output-col">
-        <div id="emv-status" class="tool-status" aria-live="polite"></div>
-
+        <div class="emv-control"><h2 class="emv-results-title">{T.results}</h2><Toggletip id="emv-tip-results" lang={lang} about={T.results}>{TIPS.results}</Toggletip></div>
         {/* Metadata groups */}
         <div id="emv-meta-block" class="emv-meta-block" style="display:none">
           <section id="emv-group-camera" class="emv-group" style="display:none">
-            <h3 class="emv-group-title" data-i18n="groupCamera">Camera</h3>
+            <h3 class="emv-group-title">{T.groupCamera}</h3>
             <dl class="emv-kv">
-              <div class="emv-kv-row" data-key="Make" style="display:none"><dt data-i18n="kMake">Make</dt><dd id="emv-Make"></dd></div>
-              <div class="emv-kv-row" data-key="Model" style="display:none"><dt data-i18n="kModel">Model</dt><dd id="emv-Model"></dd></div>
-              <div class="emv-kv-row" data-key="LensModel" style="display:none"><dt data-i18n="kLens">Lens</dt><dd id="emv-LensModel"></dd></div>
+              <div class="emv-kv-row" data-key="Make" style="display:none"><dt>{T.kMake}</dt><dd id="emv-Make"></dd></div>
+              <div class="emv-kv-row" data-key="Model" style="display:none"><dt>{T.kModel}</dt><dd id="emv-Model"></dd></div>
+              <div class="emv-kv-row" data-key="LensModel" style="display:none"><dt>{T.kLens}</dt><dd id="emv-LensModel"></dd></div>
             </dl>
           </section>
 
           <section id="emv-group-date" class="emv-group" style="display:none">
-            <h3 class="emv-group-title" data-i18n="groupDate">Date</h3>
+            <h3 class="emv-group-title">{T.groupDate}</h3>
             <dl class="emv-kv">
-              <div class="emv-kv-row" data-key="DateTimeOriginal" style="display:none"><dt data-i18n="kDateOriginal">Original</dt><dd id="emv-DateTimeOriginal"></dd></div>
-              <div class="emv-kv-row" data-key="DateTime" style="display:none"><dt data-i18n="kDateModified">Modified</dt><dd id="emv-DateTime"></dd></div>
+              <div class="emv-kv-row" data-key="DateTimeOriginal" style="display:none"><dt>{T.kDateOriginal}</dt><dd id="emv-DateTimeOriginal"></dd></div>
+              <div class="emv-kv-row" data-key="DateTime" style="display:none"><dt>{T.kDateModified}</dt><dd id="emv-DateTime"></dd></div>
             </dl>
           </section>
 
           <section id="emv-group-exposure" class="emv-group" style="display:none">
-            <h3 class="emv-group-title" data-i18n="groupExposure">Exposure</h3>
+            <h3 class="emv-group-title">{T.groupExposure}</h3>
             <dl class="emv-kv">
-              <div class="emv-kv-row" data-key="FNumber" style="display:none"><dt data-i18n="kAperture">Aperture</dt><dd id="emv-FNumber"></dd></div>
-              <div class="emv-kv-row" data-key="ExposureTime" style="display:none"><dt data-i18n="kShutter">Shutter</dt><dd id="emv-ExposureTime"></dd></div>
-              <div class="emv-kv-row" data-key="ISOSpeedRatings" style="display:none"><dt data-i18n="kISO">ISO</dt><dd id="emv-ISOSpeedRatings"></dd></div>
-              <div class="emv-kv-row" data-key="FocalLength" style="display:none"><dt data-i18n="kFocal">Focal length</dt><dd id="emv-FocalLength"></dd></div>
+              <div class="emv-kv-row" data-key="FNumber" style="display:none"><dt>{T.kAperture}</dt><dd id="emv-FNumber"></dd></div>
+              <div class="emv-kv-row" data-key="ExposureTime" style="display:none"><dt>{T.kShutter}</dt><dd id="emv-ExposureTime"></dd></div>
+              <div class="emv-kv-row" data-key="ISOSpeedRatings" style="display:none"><dt>{T.kISO}</dt><dd id="emv-ISOSpeedRatings"></dd></div>
+              <div class="emv-kv-row" data-key="FocalLength" style="display:none"><dt>{T.kFocal}</dt><dd id="emv-FocalLength"></dd></div>
             </dl>
           </section>
 
           <section id="emv-group-gps" class="emv-group" style="display:none">
-            <h3 class="emv-group-title" data-i18n="groupGps">GPS</h3>
+            <div class="emv-control"><h3 class="emv-group-title">{T.groupGps}</h3><Toggletip id="emv-tip-gps" lang={lang} about={T.gpsMap}>{TIPS.gps}</Toggletip></div>
             <dl class="emv-kv">
-              <div class="emv-kv-row" data-key="GPSLatitude" style="display:none"><dt data-i18n="kLatitude">Latitude</dt><dd id="emv-GPSLatitude"></dd></div>
-              <div class="emv-kv-row" data-key="GPSLongitude" style="display:none"><dt data-i18n="kLongitude">Longitude</dt><dd id="emv-GPSLongitude"></dd></div>
-              <div class="emv-kv-row" data-key="GPSAltitude" style="display:none"><dt data-i18n="kAltitude">Altitude</dt><dd id="emv-GPSAltitude"></dd></div>
+              <div class="emv-kv-row" data-key="GPSLatitude" style="display:none"><dt>{T.kLatitude}</dt><dd id="emv-GPSLatitude"></dd></div>
+              <div class="emv-kv-row" data-key="GPSLongitude" style="display:none"><dt>{T.kLongitude}</dt><dd id="emv-GPSLongitude"></dd></div>
+              <div class="emv-kv-row" data-key="GPSAltitude" style="display:none"><dt>{T.kAltitude}</dt><dd id="emv-GPSAltitude"></dd></div>
             </dl>
-            <a id="emv-gps-map" class="emv-gps-map" target="_blank" rel="noopener noreferrer" style="display:none" data-i18n="gpsMap">Open in Google Maps →</a>
+            <a id="emv-gps-map" class="emv-gps-map" target="_blank" rel="noopener noreferrer" style="display:none">{T.gpsMap}</a>
           </section>
 
           <section id="emv-group-software" class="emv-group" style="display:none">
-            <h3 class="emv-group-title" data-i18n="groupSoftware">Software</h3>
+            <h3 class="emv-group-title">{T.groupSoftware}</h3>
             <dl class="emv-kv">
-              <div class="emv-kv-row" data-key="Software" style="display:none"><dt data-i18n="kSoftware">Software</dt><dd id="emv-Software"></dd></div>
+              <div class="emv-kv-row" data-key="Software" style="display:none"><dt>{T.kSoftware}</dt><dd id="emv-Software"></dd></div>
             </dl>
           </section>
         </div>
 
-        <div id="emv-no-meta" class="emv-no-meta" style="display:none" data-i18n="noMeta">No EXIF metadata found in this photo. The download below will still strip XMP / IPTC marker segments if present.</div>
+        <div id="emv-no-meta" class="emv-no-meta" style="display:none">{T.noMeta}</div>
 
-        <div id="emv-actions" class="emv-actions" style="display:none">
-          <button id="emv-download" class="btn-primary" data-i18n="downloadClean">Download cleaned JPEG</button>
-          <button id="emv-copy-json" class="btn-secondary" data-i18n="copyJson">Copy EXIF JSON</button>
-        </div>
       </div>
     </div>
 
     {/* Privacy badge */}
     <p class="emv-privacy">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <span data-i18n="privacy">100% client-side — bytes never leave your browser</span>
+      <span>{T.privacy}</span>
     </p>
-  </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          dropHint: 'Drop a JPEG photo, click to upload, or paste (Ctrl+V)',
-          dropSub: 'JPEG · up to 100 MB',
-          loadAnother: 'Load another photo',
-          groupCamera: 'Camera', groupDate: 'Date', groupExposure: 'Exposure', groupGps: 'GPS', groupSoftware: 'Software',
-          kMake: 'Make', kModel: 'Model', kLens: 'Lens',
-          kDateOriginal: 'Original', kDateModified: 'Modified',
-          kAperture: 'Aperture', kShutter: 'Shutter', kISO: 'ISO', kFocal: 'Focal length',
-          kLatitude: 'Latitude', kLongitude: 'Longitude', kAltitude: 'Altitude',
-          kSoftware: 'Software',
-          gpsMap: 'Open in Google Maps →',
-          downloadClean: 'Download cleaned JPEG',
-          copyJson: 'Copy EXIF JSON',
-          copied: 'Copied!',
-          noMeta: 'No EXIF metadata found in this photo. The download below will still strip XMP / IPTC marker segments if present.',
-          privacy: '100% client-side — bytes never leave your browser',
-          decoding: 'Reading metadata…',
-          errNotJpeg: 'Only JPEG photos are supported. Try a .jpg or .jpeg file.',
-          errTooLarge: 'File is larger than 100 MB. Please pick a smaller photo.',
-          warnLarge: 'Large file — decoding may be slow.',
-          errRead: 'Could not read the file. Please try a different photo.',
-          errCorrupt: 'EXIF block looks malformed. Showing what could be parsed.',
-        },
-        zh: {
-          dropHint: '拖入 JPEG 照片、点击上传或粘贴 (Ctrl+V)',
-          dropSub: 'JPEG · 最大 100 MB',
-          loadAnother: '加载其他照片',
-          groupCamera: '相机', groupDate: '时间', groupExposure: '曝光', groupGps: 'GPS', groupSoftware: '软件',
-          kMake: '品牌', kModel: '型号', kLens: '镜头',
-          kDateOriginal: '原始拍摄', kDateModified: '修改时间',
-          kAperture: '光圈', kShutter: '快门', kISO: 'ISO', kFocal: '焦距',
-          kLatitude: '纬度', kLongitude: '经度', kAltitude: '海拔',
-          kSoftware: '软件',
-          gpsMap: '在 Google 地图打开 →',
-          downloadClean: '下载剥离元数据后的 JPEG',
-          copyJson: '复制 EXIF JSON',
-          copied: '已复制！',
-          noMeta: '该照片未包含 EXIF 元数据。下载按钮仍会移除可能存在的 XMP / IPTC 标记段。',
-          privacy: '纯浏览器端运行——字节不会离开你的设备',
-          decoding: '正在读取元数据…',
-          errNotJpeg: '当前仅支持 JPEG 照片，请使用 .jpg 或 .jpeg 文件。',
-          errTooLarge: '文件超过 100 MB，请选择更小的照片。',
-          warnLarge: '文件较大，解码可能较慢。',
-          errRead: '无法读取该文件，请尝试其他照片。',
-          errCorrupt: 'EXIF 块格式异常，仅展示可解析的字段。',
-        },
-        ja: {
-          dropHint: 'JPEG 写真をドロップ、クリックでアップロード、またはペースト (Ctrl+V)',
-          dropSub: 'JPEG · 最大 100 MB',
-          loadAnother: '別の写真を読み込む',
-          groupCamera: 'カメラ', groupDate: '日時', groupExposure: '露出', groupGps: 'GPS', groupSoftware: 'ソフトウェア',
-          kMake: 'メーカー', kModel: 'モデル', kLens: 'レンズ',
-          kDateOriginal: '撮影日時', kDateModified: '更新日時',
-          kAperture: '絞り', kShutter: 'シャッター', kISO: 'ISO', kFocal: '焦点距離',
-          kLatitude: '緯度', kLongitude: '経度', kAltitude: '高度',
-          kSoftware: 'ソフトウェア',
-          gpsMap: 'Google マップで開く →',
-          downloadClean: 'メタデータ除去済み JPEG をダウンロード',
-          copyJson: 'EXIF JSON をコピー',
-          copied: 'コピーしました！',
-          noMeta: 'この写真に EXIF メタデータは見つかりませんでした。ダウンロードボタンは XMP / IPTC マーカーがある場合も除去します。',
-          privacy: '完全ブラウザ完結 — バイトはデバイス外へ送られません',
-          decoding: 'メタデータを読み込み中…',
-          errNotJpeg: 'JPEG 写真のみ対応しています。.jpg または .jpeg ファイルを使用してください。',
-          errTooLarge: 'ファイルサイズが 100 MB を超えています。',
-          warnLarge: 'ファイルが大きいため、解析に時間がかかる場合があります。',
-          errRead: 'ファイルを読み取れませんでした。別の写真をお試しください。',
-          errCorrupt: 'EXIF ブロックの形式が不正です。解析できた項目のみ表示します。',
-        },
-        ko: {
-          dropHint: 'JPEG 사진을 드롭하거나 클릭해서 업로드, 또는 붙여넣기 (Ctrl+V)',
-          dropSub: 'JPEG · 최대 100 MB',
-          loadAnother: '다른 사진 불러오기',
-          groupCamera: '카메라', groupDate: '시간', groupExposure: '노출', groupGps: 'GPS', groupSoftware: '소프트웨어',
-          kMake: '제조사', kModel: '모델', kLens: '렌즈',
-          kDateOriginal: '원본 촬영', kDateModified: '수정 시간',
-          kAperture: '조리개', kShutter: '셔터', kISO: 'ISO', kFocal: '초점거리',
-          kLatitude: '위도', kLongitude: '경도', kAltitude: '고도',
-          kSoftware: '소프트웨어',
-          gpsMap: 'Google 지도에서 열기 →',
-          downloadClean: '메타데이터 제거된 JPEG 다운로드',
-          copyJson: 'EXIF JSON 복사',
-          copied: '복사됨!',
-          noMeta: '이 사진에 EXIF 메타데이터가 없습니다. 다운로드 버튼은 XMP / IPTC 마커가 있을 경우 함께 제거합니다.',
-          privacy: '100% 클라이언트 처리 — 바이트는 기기를 떠나지 않습니다',
-          decoding: '메타데이터 읽는 중…',
-          errNotJpeg: 'JPEG 사진만 지원합니다. .jpg 또는 .jpeg 파일을 사용하세요.',
-          errTooLarge: '파일 크기가 100 MB를 초과합니다.',
-          warnLarge: '파일이 큽니다 — 디코딩이 느릴 수 있습니다.',
-          errRead: '파일을 읽을 수 없습니다. 다른 사진을 시도하세요.',
-          errCorrupt: 'EXIF 블록 형식이 잘못되었습니다. 파싱 가능한 필드만 표시합니다.',
-        },
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      function applyI18n() {
-        document.querySelectorAll('[data-i18n]').forEach(function (el) {
-          var key = el.getAttribute('data-i18n');
-          if (t[key]) el.textContent = t[key];
-        });
-      }
-      applyI18n();
-
       /* ── EXIF tag tables ── */
       var TAG_NAMES = {
         0x010F: 'Make', 0x0110: 'Model', 0x0112: 'Orientation', 0x0131: 'Software', 0x0132: 'DateTime',
@@ -504,7 +540,7 @@
         if (!file) return;
         resetAll();
         var gen = loadGen;
-        resultArea.style.display = '';
+        resetBtn.parentElement.style.display = '';
         var name = (file.name || '').toLowerCase();
         if (file.type !== 'image/jpeg' && !/\.jpe?g$/i.test(name)) {
           statusEl.textContent = t.errNotJpeg;
@@ -640,6 +676,7 @@
       function resetAll() {
         loadGen++;
         resultArea.style.display = 'none';
+        resetBtn.parentElement.style.display = 'none';
         dropzone.style.display = '';
         if (previewImg.src) URL.revokeObjectURL(previewImg.src);
         previewImg.src = '';
@@ -670,20 +707,22 @@
 </div>
 
 <style>
-  .emv-wrap { display: flex; flex-direction: column; gap: 1rem; }
+  .emv-wrap { display: flex; flex-direction: column; min-height: 0; gap: 0.75rem; }
+  .emv-toolbar, .emv-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 0.85rem; }
+  .emv-control { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; }
+  .emv-toolbar { flex: none; }
+  #emv-status { flex: none; min-height: 1.5rem; margin: 0; }
+  .emv-results-title { margin: 0; font-size: 0.95rem; font-weight: 650; color: var(--color-text); }
 
   /* ── Drop zone ── */
   .emv-dropzone {
     border: 2px dashed var(--color-border);
     border-radius: var(--radius-md);
-    padding: 2.5rem 1.5rem;
+    padding: 1.5rem;
     text-align: center;
     cursor: pointer;
     transition: border-color var(--transition-fast), background var(--transition-fast);
     background: var(--color-bg-secondary);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
     gap: 0.5rem;
     outline: none;
   }
@@ -700,18 +739,22 @@
   /* ── Result area ── */
   .emv-result-area {
     display: grid;
-    grid-template-columns: minmax(160px, 240px) minmax(0, 1fr);
+    grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr);
+    flex: 1 1 0;
+    min-height: 300px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
     gap: 1.5rem;
     align-items: start;
-  }
-  @media (max-width: 720px) {
-    .emv-result-area { grid-template-columns: 1fr; }
+    align-content: start;
   }
 
   .emv-preview-col { display: flex; flex-direction: column; gap: 0.6rem; align-items: center; }
   .emv-preview-img {
-    max-width: 240px;
-    max-height: 240px;
+    max-height: 26rem;
     width: 100%;
     object-fit: contain;
     border-radius: var(--radius-md);
@@ -729,9 +772,8 @@
   }
   .emv-filename { font-size: 0.85rem; font-weight: 700; color: var(--color-text); margin: 0; }
   .emv-filesize, .emv-dimensions { font-size: 0.78rem; color: var(--color-text-muted); margin: 0; font-family: var(--font-mono); }
-  .emv-reset-btn { font-size: 0.82rem; padding: 0.32rem 0.75rem; min-height: 32px; }
 
-  .emv-output-col { display: flex; flex-direction: column; gap: 0.85rem; }
+  .emv-output-col { display: flex; flex-direction: column; min-width: 0; gap: 0.85rem; }
 
   /* ── Metadata block ── */
   .emv-meta-block { display: flex; flex-direction: column; gap: 1rem; }
@@ -774,9 +816,6 @@
     word-break: break-word;
     min-width: 0;
   }
-  @media (max-width: 480px) {
-    .emv-kv-row { grid-template-columns: 1fr; gap: 0.1rem; }
-  }
 
   .emv-gps-map {
     display: inline-block;
@@ -798,20 +837,28 @@
     line-height: 1.5;
   }
 
-  .emv-actions {
-    display: flex;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-    margin-top: 0.4rem;
-  }
 
   /* ── Privacy badge ── */
   .emv-privacy {
+    flex: none;
     font-size: 0.78rem;
     color: var(--color-text-muted);
     margin: 0;
     display: flex;
     align-items: center;
     gap: 0.35rem;
+  }
+  @media (max-width: 860px) {
+    .emv-result-area { grid-template-columns: 1fr; flex: none; height: 32rem; min-height: 0; }
+    .emv-preview-img { max-height: 16rem; }
+    #emv-status { height: 3rem; overflow: auto; }
+  }
+  @media (max-width: 640px) {
+    .emv-toolbar, .emv-actions { gap: 0.5rem; }
+    .emv-actions { width: 100%; }
+    .emv-control button { white-space: normal; text-align: left; }
+    .emv-dropzone { min-height: 220px; padding: 1rem; flex: none; }
+    .emv-result-area { padding: 0.65rem; gap: 1rem; }
+    .emv-kv-row { grid-template-columns: 1fr; gap: 0.1rem; }
   }
 </style>
