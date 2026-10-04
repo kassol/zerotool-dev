@@ -2,11 +2,26 @@
 // TotpGeneratorTool — RFC 6238 TOTP codes with the Web Crypto API (100% client-side).
 // The secret stays in memory: the page never writes it to storage or to the URL
 // (persistence policy `disabled` in src/data/persistence.ts).
+import Toggletip from '../Toggletip.astro';
+
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
 const STRINGS = {
   en: {
+    settings: "Code settings",
+    identity: "Authenticator details",
+    empty: "Your current code and authenticator QR code will appear here.",
+    qrWarning: "The URI and QR code contain your secret. Share them only with a trusted authenticator.",
+    tips: {
+      secret: "Paste a Base32 secret or a complete otpauth://totp/ URI. Lower case, spaces, hyphens, full-width characters and trailing = padding are accepted. Importing a URI fills its settings and leaves only the secret in this field. HOTP URIs are not supported.",
+      random: "Creates a new secret with crypto.getRandomValues: 20 bytes for SHA-1, 32 for SHA-256, or 64 for SHA-512. It replaces the secret in this field; no account is created or updated.",
+      settings: "Match the service’s algorithm, digits and period. Defaults are SHA-1, 6 digits and 30 seconds. Period must be a whole number from 1 to 86400 seconds. Changes recalculate the code automatically.",
+      time: "Leave Unix time empty for the current device time. A non-negative whole number of seconds fixes the time and stops the countdown. T shows floor(Unix time / period).",
+      identity: "Issuer and account name the authenticator entry. Both are optional; an empty account becomes Account. Neither field may contain a colon. These labels change the URI and QR code, while the code uses the secret and code settings.",
+      code: "The current code appears with the previous and next time-step codes. Copy copies the current code. The countdown uses the device clock; on the first live calculation, one HEAD request to this page checks its Date header without sending the secret.",
+      uri: "Copy the otpauth:// URI or scan the QR code with an authenticator. The URI contains the normalized secret without padding. Default SHA-1, 6 digits and 30 seconds are omitted from the URI; other settings are included.",
+    },
     secretLabel: 'Secret key (Base32) or otpauth:// URI',
     random: 'Random',
     algorithm: 'Algorithm',
@@ -49,6 +64,19 @@ const STRINGS = {
     clockAhead: 'Your device clock is about {s} s ahead of the server time. Codes may be rejected; sync the clock in system settings.',
   },
   zh: {
+    settings: "验证码设置",
+    identity: "验证器信息",
+    empty: "当前验证码和验证器二维码会显示在这里。",
+    qrWarning: "URI 和二维码包含密钥，请只交给可信的验证器。",
+    tips: {
+      secret: "粘贴 Base32 密钥或完整的 otpauth://totp/ URI。支持小写、空格、连字符、全角字符和末尾的 = 填充。导入 URI 会填好其中的设置，输入框只保留密钥。不支持 HOTP URI。",
+      random: "用 crypto.getRandomValues 生成新密钥：SHA-1 为 20 字节、SHA-256 为 32 字节、SHA-512 为 64 字节。新密钥会替换输入框内容，不会创建或更新服务账户。",
+      settings: "算法、位数和周期需与服务方一致，默认为 SHA-1、6 位、30 秒。周期须为 1 到 86400 的整数秒。修改后会自动重新计算验证码。",
+      time: "Unix 时间留空时使用本机当前时间。输入非负整数秒可固定时刻，倒计时随之停止。T 显示 floor(Unix 时间 / 周期)。",
+      identity: "发行方和账户用于命名验证器条目，均可留空；账户留空时使用 Account。两项都不能含冒号。这些名称改变 URI 和二维码，验证码由密钥与验证码设置决定。",
+      code: "同时显示当前、上一个和下一个时间步的验证码。「复制」复制当前验证码。倒计时使用本机时钟；首次按当前时间计算时会向本页发一次 HEAD 请求，读取 Date 头检查时钟，不发送密钥。",
+      uri: "复制 otpauth:// URI 或用验证器扫描二维码。URI 包含规范化且去掉填充的密钥。默认的 SHA-1、6 位和 30 秒参数会省略，其他设置会写入 URI。",
+    },
     secretLabel: '密钥（Base32）或 otpauth:// URI',
     random: '随机生成',
     algorithm: '算法',
@@ -91,6 +119,19 @@ const STRINGS = {
     clockAhead: '本机时钟比服务器快约 {s} 秒，验证码可能被拒绝。请在系统设置里同步时间。',
   },
   ja: {
+    settings: "コード設定",
+    identity: "認証アプリの登録情報",
+    empty: "現在のコードと認証アプリ用 QR コードがここに表示されます。",
+    qrWarning: "URI と QR コードにはキーが含まれます。信頼できる認証アプリだけに渡してください。",
+    tips: {
+      secret: "Base32 のキーか otpauth://totp/ URI 全体を貼り付けます。小文字、空白、ハイフン、全角文字、末尾の = パディングを読み取ります。URI の設定を各欄に反映し、この欄にはキーだけを残します。HOTP URI は非対応です。",
+      random: "crypto.getRandomValues で新しいキーを作ります。SHA-1 は 20 バイト、SHA-256 は 32 バイト、SHA-512 は 64 バイトです。入力欄のキーを置き換えますが、サービスのアカウントは作成・更新しません。",
+      settings: "アルゴリズム、桁数、周期をサービス側と合わせてください。既定値は SHA-1、6 桁、30 秒です。周期は 1〜86400 の整数秒です。変更するとコードを自動で再計算します。",
+      time: "Unix 時刻が空なら端末の現在時刻を使います。0 以上の整数秒を入力すると時刻が固定され、カウントダウンが止まります。T は floor(Unix 時刻 / 周期) を示します。",
+      identity: "発行者とアカウントは認証アプリの登録名です。どちらも省略でき、アカウントが空なら Account を使います。コロンは使えません。名前は URI と QR コードに反映され、認証コードはキーとコード設定で決まります。",
+      code: "現在と前後の時間ステップのコードを表示します。「コピー」は現在のコードをコピーします。カウントダウンは端末時計を使い、現在時刻での初回計算時にこのページへ HEAD リクエストを 1 回送り、Date ヘッダーを確認します。キーは送信しません。",
+      uri: "otpauth:// URI をコピーするか、認証アプリで QR コードを読み取ります。URI には表記を整え、パディングを除いたキーが入ります。既定の SHA-1、6 桁、30 秒は省略し、それ以外の設定は URI に含めます。",
+    },
     secretLabel: 'シークレットキー（Base32）または otpauth:// URI',
     random: 'ランダム生成',
     algorithm: 'アルゴリズム',
@@ -133,6 +174,19 @@ const STRINGS = {
     clockAhead: 'この端末の時計はサーバーより約 {s} 秒進んでいます。コードが拒否される可能性があるため、システム設定で時刻を同期してください。',
   },
   ko: {
+    settings: "코드 설정",
+    identity: "인증 앱 등록 정보",
+    empty: "현재 코드와 인증 앱용 QR 코드가 여기에 표시됩니다.",
+    qrWarning: "URI와 QR 코드에는 키가 포함됩니다. 신뢰할 수 있는 인증 앱에만 전달하세요.",
+    tips: {
+      secret: "Base32 키나 otpauth://totp/ URI 전체를 붙여 넣습니다. 소문자, 공백, 하이픈, 전각 문자, 끝의 = 패딩을 읽습니다. URI의 설정을 각 필드에 반영하고 이 칸에는 키만 남깁니다. HOTP URI는 지원하지 않습니다.",
+      random: "crypto.getRandomValues로 새 키를 만듭니다. SHA-1은 20바이트, SHA-256은 32바이트, SHA-512는 64바이트입니다. 입력칸의 키를 교체하며 서비스 계정을 만들거나 변경하지 않습니다.",
+      settings: "알고리즘, 자릿수, 주기를 서비스 설정과 맞추세요. 기본값은 SHA-1, 6자리, 30초입니다. 주기는 1~86400의 정수 초여야 합니다. 값을 바꾸면 코드가 자동으로 다시 계산됩니다.",
+      time: "Unix 시각이 비어 있으면 기기의 현재 시각을 씁니다. 0 이상의 정수 초를 입력하면 시각이 고정되고 카운트다운이 멈춥니다. T는 floor(Unix 시각 / 주기)를 나타냅니다.",
+      identity: "발급자와 계정은 인증 앱의 등록 이름입니다. 둘 다 생략할 수 있으며 계정이 비어 있으면 Account를 씁니다. 콜론은 쓸 수 없습니다. 이름은 URI와 QR 코드에 반영되고 인증 코드는 키와 코드 설정으로 결정됩니다.",
+      code: "현재와 이전·다음 시간 단계의 코드를 표시합니다. 「복사」는 현재 코드를 복사합니다. 카운트다운은 기기 시계를 쓰며, 현재 시각으로 처음 계산할 때 이 페이지에 HEAD 요청을 한 번 보내 Date 헤더를 확인합니다. 키는 보내지 않습니다.",
+      uri: "otpauth:// URI를 복사하거나 인증 앱으로 QR 코드를 스캔하세요. URI에는 표기를 정리하고 패딩을 뺀 키가 들어갑니다. 기본 SHA-1, 6자리, 30초는 생략하고 다른 설정은 URI에 포함합니다.",
+    },
     secretLabel: '시크릿 키(Base32) 또는 otpauth:// URI',
     random: '랜덤 생성',
     algorithm: '알고리즘',
@@ -177,96 +231,84 @@ const STRINGS = {
 };
 
 const L = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_L } = L;
 ---
 <div class="totp-wrap">
-  <div class="totp-field">
-    <label for="totp-secret">{L.secretLabel}</label>
-    <div class="totp-secret-row">
-      <input
-        type="text"
-        id="totp-secret"
-        class="tool-input"
-        placeholder="JBSWY3DPEHPK3PXP"
-        spellcheck="false"
-        autocomplete="off"
-        autocapitalize="off"
-        autocorrect="off"
-      />
-      <button id="totp-gen-secret" class="btn-secondary" type="button">{L.random}</button>
+  <div class="totp-body">
+    <div class="totp-rail zt-rail">
+      <div class="totp-field">
+        <div class="totp-label-row"><label for="totp-secret">{L.secretLabel}</label><Toggletip id="totp-tip-secret" lang={lang} about={L.secretLabel} wide>{TIPS.secret}</Toggletip></div>
+        <input type="text" id="totp-secret" class="tool-input" placeholder="JBSWY3DPEHPK3PXP" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" />
+      </div>
+      <div class="totp-actions"><button id="totp-gen-secret" class="btn-secondary" type="button">{L.random}</button><Toggletip id="totp-tip-random" lang={lang} about={L.random}>{TIPS.random}</Toggletip></div>
+      <div id="totp-status" class="tool-status" aria-live="polite"></div>
+      <details class="totp-details">
+        <summary>{L.settings}</summary>
+        <div class="totp-label-row totp-settings-label"><span class="tool-label">{L.settings}</span><Toggletip id="totp-tip-settings" lang={lang} about={L.settings}>{TIPS.settings}</Toggletip></div>
+        <div class="totp-options">
+          <div class="totp-opt">
+            <label for="totp-algo">{L.algorithm}</label>
+            <select id="totp-algo" class="tool-input"><option value="SHA-1">SHA-1</option><option value="SHA-256">SHA-256</option><option value="SHA-512">SHA-512</option></select>
+          </div>
+          <div class="totp-opt">
+            <label for="totp-digits">{L.digits}</label>
+            <select id="totp-digits" class="tool-input"><option value="6">6</option><option value="8">8</option></select>
+          </div>
+          <div class="totp-opt">
+            <label for="totp-period">{L.period}</label>
+            <input type="text" id="totp-period" class="tool-input" value="30" inputmode="numeric" autocomplete="off" />
+          </div>
+          <div class="totp-opt totp-wide">
+            <div class="totp-label-row"><label for="totp-time">{L.time} <span class="totp-optional">({L.optional})</span></label><Toggletip id="totp-tip-time" lang={lang} about={L.time}>{TIPS.time}</Toggletip></div>
+            <input type="text" id="totp-time" class="tool-input" placeholder={L.timePlaceholder} inputmode="numeric" autocomplete="off" />
+          </div>
+        </div>
+      </details>
+      <details class="totp-details">
+        <summary>{L.identity}</summary>
+        <div class="totp-label-row totp-settings-label"><span class="tool-label">{L.identity}</span><Toggletip id="totp-tip-identity" lang={lang} about={L.identity}>{TIPS.identity}</Toggletip></div>
+        <div class="totp-opt"><label for="totp-issuer">{L.issuer} <span class="totp-optional">({L.optional})</span></label><input type="text" id="totp-issuer" class="tool-input" placeholder="Example" autocomplete="off" /></div>
+        <div class="totp-opt"><label for="totp-account">{L.account} <span class="totp-optional">({L.optional})</span></label><input type="text" id="totp-account" class="tool-input" placeholder="alice@example.com" autocomplete="off" /></div>
+      </details>
+    </div>
+    <div class="totp-result">
+      <p class="totp-empty">{L.empty}</p>
+      <div id="totp-display" class="totp-display" hidden>
+        <div class="totp-label-row"><span class="tool-label">{L.codeLabel}</span><Toggletip id="totp-tip-code" lang={lang} about={L.codeLabel} wide>{TIPS.code}</Toggletip></div>
+        <div class="totp-code-wrap">
+          <span id="totp-code" class="totp-code" aria-label={L.codeLabel}>------</span>
+          <button id="totp-copy-code" class="btn-copy" type="button">{L.copy}</button>
+        </div>
+        <div class="totp-timer-wrap">
+          <div class="totp-bar-bg" aria-hidden="true"><div id="totp-bar" class="totp-bar"></div></div>
+          <span id="totp-countdown" class="totp-countdown"></span>
+        </div>
+        <div class="totp-meta">
+          <span>{L.previous} <code id="totp-prev">—</code></span>
+          <span>{L.next} <code id="totp-next">—</code></span>
+          <span id="totp-step"></span>
+        </div>
+        <p id="totp-clock" class="totp-clock" role="status" hidden></p>
+      </div>
+      <div id="totp-uri-block" class="totp-uri-block" hidden>
+        <div class="totp-uri-label">
+          <div class="totp-label-row"><label for="totp-uri">{L.uriLabel}</label><Toggletip id="totp-tip-uri" lang={lang} about={L.uriLabel}>{TIPS.uri}</Toggletip></div>
+          <button id="totp-copy-uri" class="btn-copy" type="button">{L.copy}</button>
+        </div>
+        <input type="text" id="totp-uri" class="tool-input totp-uri-input" readonly />
+        <p class="totp-note">{L.qrWarning}</p>
+      </div>
+      <div id="totp-qr-block" class="totp-qr-block" hidden>
+        <div class="totp-qr-label">{L.qrLabel}</div>
+        <div id="totp-qr-canvas-wrap"></div>
+        <p id="totp-ga-note" class="totp-note" hidden>{L.gaNote}</p>
+      </div>
     </div>
   </div>
-
-  <div id="totp-status" class="tool-status" aria-live="polite"></div>
-
-  <div id="totp-display" class="totp-display" hidden>
-    <div class="totp-code-wrap">
-      <span id="totp-code" class="totp-code" aria-label={L.codeLabel}>------</span>
-      <button id="totp-copy-code" class="btn-copy" type="button">{L.copy}</button>
-    </div>
-    <div class="totp-timer-wrap">
-      <div class="totp-bar-bg" aria-hidden="true"><div id="totp-bar" class="totp-bar"></div></div>
-      <span id="totp-countdown" class="totp-countdown"></span>
-    </div>
-    <div class="totp-meta">
-      <span>{L.previous} <code id="totp-prev">—</code></span>
-      <span>{L.next} <code id="totp-next">—</code></span>
-      <span id="totp-step"></span>
-    </div>
-    <p id="totp-clock" class="totp-clock" role="status" hidden></p>
-  </div>
-
-  <div class="totp-options">
-    <div class="totp-opt">
-      <label for="totp-algo">{L.algorithm}</label>
-      <select id="totp-algo" class="tool-input">
-        <option value="SHA-1" selected>SHA-1</option>
-        <option value="SHA-256">SHA-256</option>
-        <option value="SHA-512">SHA-512</option>
-      </select>
-    </div>
-    <div class="totp-opt">
-      <label for="totp-digits">{L.digits}</label>
-      <select id="totp-digits" class="tool-input">
-        <option value="6" selected>6</option>
-        <option value="8">8</option>
-      </select>
-    </div>
-    <div class="totp-opt">
-      <label for="totp-period">{L.period}</label>
-      <input type="text" id="totp-period" class="tool-input" value="30" inputmode="numeric" autocomplete="off" />
-    </div>
-    <div class="totp-opt">
-      <label for="totp-time">{L.time}</label>
-      <input type="text" id="totp-time" class="tool-input" placeholder={L.timePlaceholder} inputmode="numeric" autocomplete="off" />
-    </div>
-    <div class="totp-opt">
-      <label for="totp-issuer">{L.issuer} <span class="totp-optional">({L.optional})</span></label>
-      <input type="text" id="totp-issuer" class="tool-input" placeholder="Example" autocomplete="off" />
-    </div>
-    <div class="totp-opt">
-      <label for="totp-account">{L.account} <span class="totp-optional">({L.optional})</span></label>
-      <input type="text" id="totp-account" class="tool-input" placeholder="alice@example.com" autocomplete="off" />
-    </div>
-  </div>
-
-  <div id="totp-uri-block" class="totp-uri-block" hidden>
-    <div class="totp-uri-label">
-      <label for="totp-uri">{L.uriLabel}</label>
-      <button id="totp-copy-uri" class="btn-copy" type="button">{L.copy}</button>
-    </div>
-    <input type="text" id="totp-uri" class="tool-input totp-uri-input" readonly />
-  </div>
-
-  <div id="totp-qr-block" class="totp-qr-block" hidden>
-    <div class="totp-qr-label">{L.qrLabel}</div>
-    <div id="totp-qr-canvas-wrap"></div>
-    <p id="totp-ga-note" class="totp-note" hidden>{L.gaNote}</p>
-  </div>
-
   {/* qrcode.js (same vendor file as the QR code generator tool) */}
   <script src="/vendor/qrcode.min.js" is:inline></script>
 
-  <script is:inline define:vars={{ S: L }}>
+  <script is:inline define:vars={{ S: CLIENT_L }}>
     (function () {
       /* ── engine:start ── */
       var B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -625,7 +667,21 @@ const L = STRINGS[lang];
 </div>
 
 <style>
-  .totp-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .totp-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .totp-body { display: grid; grid-template-columns: clamp(270px, 26vw, 320px) minmax(0, 1fr); gap: 1.25rem; flex: 1 1 0; min-width: 0; min-height: 0; }
+  .totp-rail { overflow: auto; padding: 0.1rem 0.25rem 0.1rem 0; }
+  .totp-label-row, .totp-actions { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+  .totp-label-row label { min-width: 0; }
+  .totp-actions button { min-height: 44px; }
+  #totp-status { margin: 0; height: 7.5rem; flex: none; overflow: auto; font-size: 0.82rem; line-height: 1.5; overflow-wrap: anywhere; }
+  .totp-details { border-top: 1px solid var(--color-border); }
+  .totp-details summary { padding: 0.6rem 0; min-height: 44px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+  .totp-details > .totp-opt + .totp-opt { margin-top: 0.6rem; }
+  .totp-settings-label { margin: 0.25rem 0 0.6rem; }
+  .totp-result { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; min-height: 0; overflow: auto; padding: 1.25rem; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-secondary); }
+  .totp-result > * { flex: none; min-width: 0; width: 100%; max-width: 48rem; margin-inline: auto; }
+  .totp-empty { margin-block: auto; text-align: center; color: var(--color-text-muted); font-size: 0.9rem; }
+  .totp-result:has(.totp-display:not([hidden])) .totp-empty { display: none; }
 
   .totp-field,
   .totp-opt { display: flex; flex-direction: column; gap: 0.3rem; }
@@ -635,17 +691,15 @@ const L = STRINGS[lang];
   .totp-qr-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
   .totp-optional { font-weight: 400; }
 
-  .totp-secret-row { display: flex; gap: 0.5rem; }
-  .totp-secret-row .tool-input { flex: 1; width: 100%; }
+  .totp-field .tool-input { width: 100%; min-width: 0; min-height: 44px; }
 
   .totp-display {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding: 0.85rem 1rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
+    margin-top: auto;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--color-border);
   }
   .totp-display[hidden],
   .totp-uri-block[hidden],
@@ -654,7 +708,7 @@ const L = STRINGS[lang];
   .totp-code-wrap { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
   .totp-code {
     font-family: var(--font-mono);
-    font-size: 2rem;
+    font-size: clamp(2rem, 4vw, 3.5rem);
     font-weight: 700;
     letter-spacing: 0.2em;
     line-height: 1.2;
@@ -705,15 +759,17 @@ const L = STRINGS[lang];
 
   .totp-options {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.6rem 0.75rem;
   }
-  .totp-opt .tool-input { width: 100%; }
+  .totp-opt .tool-input { width: 100%; min-width: 0; min-height: 44px; }
+  .totp-wide { grid-column: 1 / -1; }
 
   .totp-uri-block,
   .totp-qr-block { display: flex; flex-direction: column; gap: 0.4rem; }
   .totp-uri-label { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
-  .totp-uri-input { width: 100%; font-size: 0.78rem; color: var(--color-text-secondary); }
+  .totp-uri-input { width: 100%; min-width: 0; font-size: 0.78rem; color: var(--color-text-secondary); }
+  .totp-qr-block { align-items: center; text-align: center; margin-bottom: auto; }
 
   #totp-qr-canvas-wrap :global(canvas) {
     border-radius: var(--radius-sm);
@@ -721,7 +777,22 @@ const L = STRINGS[lang];
     display: block;
   }
 
-  @media (max-width: 900px) {
-    .totp-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 860px) {
+    .totp-body { grid-template-columns: minmax(0, 1fr); flex: none; }
+    .totp-rail { overflow: visible; padding: 0; gap: 0.6rem; }
+    #totp-status { height: 5rem; }
+    .totp-result { max-height: 36rem; }
+    .totp-result:has(.totp-display[hidden]) { display: none; }
+    .totp-empty { display: none; }
+    .totp-display { margin-top: 0; }
+    .totp-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 640px) {
+    .totp-body { gap: 0.75rem; }
+    .totp-result { padding: 0.85rem; }
+    .totp-code { font-size: clamp(1.65rem, 7vw, 2.3rem); letter-spacing: 0.14em; }
+    .totp-code-wrap { gap: 0.5rem; }
+    .totp-uri-label { flex-wrap: wrap; }
+    .totp-uri-input { min-height: 44px; }
   }
 </style>

@@ -2,7 +2,9 @@
 //
 // Read:  src/components/tools/TotpGeneratorTool.astro (extracts the real engine block between
 //        the `engine:start` / `engine:end` markers and the frontmatter STRINGS table),
-//        public/vendor/qrcode.min.js and public/vendor/zxing-reader.js + .wasm (QR round trip)
+//        public/vendor/qrcode.min.js and public/vendor/zxing-reader.js + .wasm (QR round trip),
+//        src/layouts/ToolLayout.astro, src/data/tool-layouts.ts, persistence.ts and
+//        src/content/tools/totp-generator/*.mdx, src/content/blog/totp-generator-guide/zh.mdx
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -530,6 +532,41 @@ for (const modifier of ['ctrlKey', 'metaKey']) {
   p.clearShortcut(modifier, false);
   for (const release of p.pending.splice(0)) await release();
   check(modifier + ': outside focus keeps new work and recovery succeeds', await pageSettles(() => p.el('totp-code').textContent === '94287082'));
+}
+
+// ---------- v2 page layout ----------
+{
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script src='));
+  const css = source.slice(source.indexOf('<style>'));
+  check('generate layout registered', /'totp-generator':\s*'generate'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('root directly contains body and shared control rail', /^<div class="totp-wrap">\s*<div class="totp-body">\s*<div class="totp-rail zt-rail">/.test(template));
+  check('Random remains a real action before secondary options', template.indexOf('id="totp-gen-secret"') < template.indexOf('<details'));
+  check('secondary settings and identity start collapsed', [...template.matchAll(/<details\b[^>]*>/g)].length === 2 && !/<details\b[^>]*\sopen(?:\s|>)/.test(template));
+  check('output comes after the control rail', template.indexOf('class="totp-result"') > template.lastIndexOf('</details>'));
+  check('compatibility and secret-sharing notices are visible outside details', /id="totp-ga-note"/.test(template.slice(template.lastIndexOf('</details>'))) && /<p class="totp-note">\{L.qrWarning\}<\/p>/.test(template));
+  check('tips are excluded from serialized client strings', /const \{ tips: TIPS, \.\.\.CLIENT_L \} = L/.test(source) && /define:vars=\{\{ S: CLIENT_L \}\}/.test(source));
+  check('no runtime i18n rewriting', !source.includes('data-i18n'));
+  check('root uses a flex column with zero minimum height', /\.totp-wrap\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column[^}]*min-height:\s*0/.test(css));
+  check('desktop body gives the rail 270 to 320px', /\.totp-body\s*\{[^}]*grid-template-columns:\s*clamp\(270px,\s*26vw,\s*320px\)\s*minmax\(0,\s*1fr\)/.test(css));
+  check('result scrolls within the available height', /\.totp-result\s*\{[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
+  check('status keeps space while empty', /#totp-status\s*\{[^}]*height:\s*7\.5rem[^}]*overflow:\s*auto/.test(css));
+  check('tool stacks at 860px and has phone details at 640px', /@media \(max-width: 860px\)/.test(css) && /@media \(max-width: 640px\)/.test(css));
+  check('mobile empty output stays hidden', /\.totp-result:has\(\.totp-display\[hidden\]\)\s*\{\s*display:\s*none/.test(css));
+  const tips = ['secret', 'random', 'settings', 'time', 'identity', 'code', 'uri'];
+  eq('seven unique control tips', [...template.matchAll(/<Toggletip id="totp-tip-([^" ]+)"/g)].map((m) => m[1]).sort(), [...tips].sort());
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' tip keys', Object.keys(STRINGS[lang].tips).sort(), [...tips].sort());
+    check(lang + ' each tip has explanation text', tips.every((key) => typeof STRINGS[lang].tips[key] === 'string' && STRINGS[lang].tips[key].length > 20));
+    check(lang + ' empty result and secret-sharing notice exist', !!STRINGS[lang].empty && !!STRINGS[lang].qrWarning);
+    const mdx = readFileSync(join(root, 'src/content/tools/totp-generator', lang + '.mdx'), 'utf8');
+    const lines = /^steps:\n([\s\S]*?)(?=^\S)/m.exec(mdx)?.[1].match(/^  - .+$/gm) || [];
+    const steps = lines.map((line) => JSON.parse(line.slice(4)));
+    eq(lang + ' has five usage steps', steps.length, 5);
+    check(lang + ' steps fit content limits', steps.every((step) => step.length <= 280) && steps.join('').length <= 1200);
+    check(lang + ' steps describe the collapsed settings', steps.some((step) => step.includes(STRINGS[lang].settings)) && steps.some((step) => step.includes(STRINGS[lang].identity)));
+    check(lang + ' HowTo heading removed', !/^## (?:How to Use|使用方法|使い方|사용 방법)$/m.test(mdx));
+    check(lang + ' limitations retained', /^## (?:Limits|限制|制限事項|제한 사항)$/m.test(mdx));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
