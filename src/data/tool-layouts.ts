@@ -25,6 +25,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'color-palette-generator': 'generate',
   'qr-code-generator': 'generate',
   'glassmorphism-generator': 'generate',
+  'css-clip-path-generator': 'generate',
   'totp-generator': 'generate',
   'pkce-generator': 'generate',
   'har-file-analyzer': 'analyze',

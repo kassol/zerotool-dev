@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { parseFragment } from 'parse5';
+import yaml from 'js-yaml';
+import { createRequire } from 'node:module';
+const { transform } = createRequire(import.meta.resolve('astro/package.json'))('@astrojs/compiler');
 const source = fs.readFileSync(new URL('../src/components/tools/CssClipPathGeneratorTool.astro', import.meta.url), 'utf8');
 const script = source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
 function declaration(name) {
@@ -266,5 +269,32 @@ for (const modifier of ['ctrlKey', 'metaKey']) {
   page.get('cpg-reset').click();
   pageCheck(modifier + ' explicit Reset still restores raw triangle', page.get('cpg-raw').value === 'polygon(50% 0%, 100% 100%, 0% 100%)' && !page.get('cpg-copy').disabled);
 }
+// ---------- v2 page layout ----------
+const pageMarkup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+const layoutStyles = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const tipStrings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?);\nconst L =/)[1]);
+const tipIds = [...pageMarkup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]);
+pageCheck('v2 generate registry', /'css-clip-path-generator':\s*'generate'/.test(fs.readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8')));
+pageCheck('v2 direct root and shared rail', /^\s*<div\s+class="cpg-wrap"/.test(pageMarkup) && /class="cpg-rail zt-rail"/.test(pageMarkup));
+pageCheck('v2 controls precede preview', pageMarkup.indexOf('id="cpg-raw"') < pageMarkup.indexOf('id="cpg-preview-bg"'));
+pageCheck('v2 existing primary operations stay available', /id="cpg-copy"/.test(pageMarkup) && /id="cpg-reset"/.test(pageMarkup) && !/btn-primary/.test(pageMarkup));
+pageCheck('v2 fixed scrollable keyboard-accessible code', /<pre[^>]*id="cpg-pre"[^>]*tabindex="0"[^>]*role="region"/.test(pageMarkup) && /\.cpg-pre\s*\{[^}]*height:\s*11rem;[^}]*overflow:\s*auto/s.test(layoutStyles));
+pageCheck('v2 rail and preview have bounded flexible space', /grid-template-columns:\s*clamp\(270px, 26vw, 320px\) minmax\(0, 1fr\)/.test(layoutStyles) && /\.cpg-wrap\s*\{[^}]*min-height:\s*0/.test(layoutStyles));
+pageCheck('v2 preview adapts to both available dimensions', /container-type:\s*size/.test(layoutStyles) && /100cqw/.test(layoutStyles) && /100cqh/.test(layoutStyles) && /option\[value="2"\]:checked/.test(layoutStyles) && /option\[value="0.5"\]:checked/.test(layoutStyles));
+pageCheck('v2 860 stacking and 640 touch targets', /max-width:\s*860px/.test(layoutStyles) && /max-width:\s*640px/.test(layoutStyles) && /\.cpg-controls-col\s*\{[^}]*height:\s*10.5rem/.test(layoutStyles) && /\.cpg-tab\s*\{[^}]*min-height:\s*44px/.test(layoutStyles));
+pageCheck('v2 tips stay out of runtime strings', /define:vars=\{\{ L \}\}/.test(source) && !/TIPS|STRINGS/.test(script) && /const L = \{ \.\.\.labels\[lang\], \.\.\.extra\[lang\] \};/.test(source));
+pageCheck('v2 tip IDs are unique', tipIds.length === 10 && new Set(tipIds).size === tipIds.length);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const tips = tipStrings[lang].tips;
+  pageCheck(lang + ' v2 same eight nonempty tip facts', Object.keys(tips).join('|') === 'shape|vertices|geometry|raw|preview|reference|copy|reset' && Object.values(tips).every(t => typeof t === 'string' && t.trim().length > 0));
+  const mdx = fs.readFileSync(new URL(`../src/content/tools/css-clip-path-generator/${lang}.mdx`, import.meta.url), 'utf8');
+  const meta = yaml.load(mdx.match(/^---\n([\s\S]*?)\n---/)[1]);
+  pageCheck(lang + ' v2 five bounded steps', meta.steps.length === 5 && meta.steps.every(s => typeof s === 'string' && s.length <= 280) && meta.steps.join('').length <= 1200);
+  pageCheck(lang + ' v2 FAQ SEO limits and checked examples remain', meta.faqItems.length >= 4 && !!meta.seoTitle && !!meta.seoDescription && /cpg-check:/.test(mdx) && /^## (Limits|动画与限制|制限事項|애니메이션과 제한 사항)$/m.test(mdx));
+  pageCheck(lang + ' v2 HowTo removed and resize example conditional', !/^## (How to use|三步生成 clip-path|使い方|사용 방법)$/m.test(mdx) && !/300px desktop|桌面端 300px|デスクトップの 300px|데스크톱의 300px/.test(mdx));
+}
+const compiled = await transform(source, { filename: 'CssClipPathGeneratorTool.astro' });
+pageCheck('v2 Astro compiles and resolves CSS scoping', !compiled.diagnostics.some(d => d.severity === 1) && compiled.css.length > 0 && compiled.css.every(css => !css.includes(':global(')));
+
 console.log(`${pagePasses} page checks passed, ${pageFailures} failed`);
 process.exitCode = pageFailures ? 1 : 0;
