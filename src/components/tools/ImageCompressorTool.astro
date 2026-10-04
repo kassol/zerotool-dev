@@ -165,6 +165,7 @@
       var compressedItems = []; // [{name, blob, url}]
       var lastFiles = [];        // cached for re-compress on setting change
       var activeUrls = [];       // every URL.createObjectURL we own; revoked on clear / new batch
+      var batchGeneration = 0;
 
       function trackUrl(u) { activeUrls.push(u); return u; }
       function revokeAll() {
@@ -269,7 +270,7 @@
         });
       }
 
-      function compressOne(file) {
+      function compressOne(file, generation) {
         if (!SUPPORTED_INPUT[file.type]) {
           return Promise.resolve({ ok: false, name: file.name, error: t.unsupported });
         }
@@ -277,6 +278,7 @@
           return Promise.resolve({ ok: false, name: file.name, error: t.tooLarge });
         }
         return loadBitmap(file).then(function (bmp) {
+          if (generation !== batchGeneration) { if (bmp.close) bmp.close(); return { ok: false }; }
           var outMime = outputMimeFor(file.type);
           var quality = parseInt(qualityInput.value, 10) / 100;
           var maxLong = resizeToggle.checked ? parseInt(resizePx.value, 10) : 0;
@@ -304,6 +306,7 @@
 
           var qParam = outMime === 'image/png' ? undefined : quality;
           return canvasToBlobPromise(canvas, outMime, qParam).then(function (blob) {
+            if (generation !== batchGeneration) return { ok: false };
             if (!blob) return { ok: false, name: file.name, error: t.encodeFailed };
             // One URL per blob, tracked so we can revoke it on clear / next batch.
             // The same URL serves both the <img> thumbnail and the <a> download link.
@@ -360,15 +363,15 @@
         resultsEl.appendChild(card);
       }
 
-      function runWithConcurrency(files, limit) {
+      function runWithConcurrency(files, limit, generation) {
         // Bitmap decoding holds large buffers per file. Cap concurrent work so a 10×50 MB
         // batch does not OOM mobile Safari. 3 is a measured sweet spot for desktop too.
         var results = new Array(files.length);
         var nextIdx = 0;
         function worker() {
-          if (nextIdx >= files.length) return Promise.resolve();
+          if (generation !== batchGeneration || nextIdx >= files.length) return Promise.resolve();
           var idx = nextIdx++;
-          return Promise.resolve(compressOne(files[idx])).then(function (r) {
+          return Promise.resolve(compressOne(files[idx], generation)).then(function (r) {
             results[idx] = r;
             return worker();
           });
@@ -381,6 +384,7 @@
 
       function processFiles(files) {
         if (!files || files.length === 0) return;
+        var generation = ++batchGeneration;
         // Free URLs from the previous batch before we begin so a user who keeps
         // dropping new batches does not accumulate dead blobs in memory.
         revokeAll();
@@ -394,7 +398,8 @@
         actionsEl.hidden = true;
         setStatus(t.compressing, 'info');
 
-        runWithConcurrency(lastFiles, 3).then(function (results) {
+        runWithConcurrency(lastFiles, 3, generation).then(function (results) {
+          if (generation !== batchGeneration) return;
           var ok = 0, fail = 0;
           for (var j = 0; j < results.length; j++) {
             var r = results[j];
@@ -459,7 +464,9 @@
         }
       });
 
-      clearBtn.addEventListener('click', function () {
+      function clearResults() {
+        batchGeneration++;
+        if (resultsEl.contains(document.activeElement)) dropEl.focus();
         fileInput.value = '';
         lastFiles = [];
         compressedItems = [];
@@ -468,6 +475,10 @@
         resultsEl.hidden = true;
         actionsEl.hidden = true;
         setStatus('', 'info');
+      }
+      clearBtn.addEventListener('click', clearResults);
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && dropEl.closest('.ic-wrap').contains(document.activeElement)) clearResults();
       });
 
       // Initial UI sync
