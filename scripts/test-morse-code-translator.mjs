@@ -22,11 +22,14 @@
 
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/MorseCodeTranslatorTool.astro'), 'utf8');
+const stringsBlock = source.match(/const STRINGS = (\{[\s\S]*?\n\}) as const;/);
+const STRINGS = stringsBlock ? new Function('return ' + stringsBlock[1])() : null;
 
 const START_MARK = '/* ── engine:start ── */';
 const END_MARK = '/* ── engine:end ── */';
@@ -141,7 +144,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 // ---------- 4-language STRINGS ----------
 {
-  const m = source.match(/var STRINGS = (\{[\s\S]*?\n\s{6}\});/);
+  const m = stringsBlock;
   check('STRINGS block found', !!m);
   if (m) {
     const S = new Function('return ' + m[1])();
@@ -218,7 +221,11 @@ function pageVM(lang, shellFirst) {
   document = new Element('#document'); document.documentElement = { lang };
   document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
   const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
-  const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
+  const escapeHTML = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
+    .replace(/<Toggletip\b[^>]*>[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(STRINGS[lang][key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(STRINGS[lang][key]));
   const stack = [widget];
   for (const token of markup.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)) {
     const text = token[0];
@@ -236,6 +243,7 @@ function pageVM(lang, shellFirst) {
   const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing actual source ID ' + id); return e; };
   const context = {
     document, console, _slug: 'morse-code-translator',
+    t: Object.fromEntries(Object.entries(STRINGS[lang]).filter(([key]) => key !== 'tips')),
     navigator: { clipboard: { writeText(value) {
       if (copyThrows) throw Error('Controlled synchronous clipboard failure');
       let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -398,6 +406,63 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
   }
 }
 process.removeListener('unhandledRejection', onUnhandled);
+
+// ---------- v2 page layout ----------
+const v2Start = passes;
+const sha256 = text => createHash('sha256').update(text).digest('hex');
+// All pre-layout MDX except Usage; only notice-position phrases changed to status row.
+const MDX_HASHES = {
+  "en": "3927a65948f43a746619635560a1acb1cd3a192619216acbc24193690caea1b3",
+  "zh": "5a7efdaf764a7845b5eaa0d6167d3a430e7449a072e15fe2c8667287f2a31981",
+  "ja": "087aa70830410a3f2121bf9bd156d77bcb5b88f65e89b807d1324f681aa16e30",
+  "ko": "497067f4d093f36c5c48175cbf91d741d329a5023bfc29116e649fa965f3d968"
+};
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+const css = source.split('<style>')[1].split('</style>')[0];
+check('v2 directly exposes the flex root', /^<div class="mct-wrap">/.test(markup) && /\.mct-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0/.test(css));
+check('v2 registered as convert', /'morse-code-translator':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 operations precede reserved status and both panes', markup.indexOf('mct-toolbar') < markup.indexOf('mct-status') && markup.indexOf('mct-status') < markup.indexOf('mct-panes'));
+check('v2 notice does not resize the editors', /\.mct-status\s*\{[^}]*flex:\s*none;[^}]*height:\s*3rem;[^}]*overflow:\s*auto/.test(css));
+check('v2 notice can hide without hiding the reserved status row', /class="mct-status">\s*<div id="mct-error"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/.test(markup));
+eq('v2 two panes use shared layout', [...markup.matchAll(/class="mct-pane zt-io-pane"/g)].length, 2);
+check('v2 shared pane grid', markup.includes('class="mct-panes zt-io"'));
+for (const id of ['mct-text', 'mct-morse']) {
+  const input = markup.match(new RegExp('<textarea id="' + id + '"[^>]*>'))?.[0] || '';
+  check('v2 editable bounded input ' + id, /zt-io-fill/.test(input) && !/readonly|disabled|hidden/.test(input));
+  check('v2 associated label ' + id, markup.includes('for="' + id + '"'));
+}
+check('v2 both editors scroll internally', /\.mct-textarea\s*\{[^}]*overflow:\s*auto/.test(css));
+check('v2 860px stacks with bounded editors', /@media\s*\(max-width:\s*860px\)[\s\S]*\.mct-textarea\s*\{\s*height:\s*180px/.test(css));
+check('v2 640px keeps both editors reachable', /@media\s*\(max-width:\s*640px\)[\s\S]*\.mct-textarea\s*\{\s*height:\s*140px/.test(css) && !/display:\s*none/.test(css));
+check('v2 mobile main and copy controls have 44px height', /\.mct-toolbar \.btn-primary\s*\{[^}]*min-height:\s*44px/.test(css) && /\.mct-clear \.btn-ghost, \.mct-copy \.btn-copy\s*\{[^}]*min-height:\s*44px/.test(css));
+eq('v2 retains every manual action and its ID', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m => m[1]).sort(), ['mct-text-to-morse', 'mct-morse-to-text', 'mct-clear-text', 'mct-copy-morse'].sort());
+check('v2 no runtime text replacement', !/data-i18n|var STRINGS|pageLang/.test(source));
+check('v2 serializes only the selected client strings', source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && source.includes('define:vars={{ t: CLIENT_T }}') && !/TIPS|STRINGS/.test(clientScript));
+const tips = [...markup.matchAll(/<Toggletip id="(mct-tip-[^"]+)" lang=\{lang\} about=\{T\.(\w+)\}(?: wide)?>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 tips belong to actual controls', tips.map(m => [m[1], m[2], m[3]]).sort(), [
+  ['mct-tip-clear', 'clear', 'clear'], ['mct-tip-copy', 'copy', 'copy'], ['mct-tip-text', 'textLabel', 'text'], ['mct-tip-morse', 'morseLabel', 'morse'],
+].sort());
+function leaves(value, path = '') { return Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? leaves(item, path + key + '.') : [[path + key, item]]); }
+const enLeaves = Object.fromEntries(leaves(STRINGS.en));
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const local = Object.fromEntries(leaves(STRINGS[lang]));
+  eq(lang + ' v2 recursive string keys', Object.keys(local).sort(), Object.keys(enLeaves).sort());
+  for (const [key, value] of Object.entries(local)) {
+    check(lang + ' v2 nonempty ' + key, typeof value === 'string' && value.trim().length > 0);
+    eq(lang + ' v2 placeholders ' + key, [...value.matchAll(/\{[^}]+\}/g)].map(m => m[0]).sort(), [...enLeaves[key].matchAll(/\{[^}]+\}/g)].map(m => m[0]).sort());
+  }
+  const mdx = readFileSync(join(root, 'src/content/tools/morse-code-translator', lang + '.mdx'), 'utf8');
+  const stepBlock = mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1] || '';
+  const steps = stepBlock.trim().split('\n').filter(Boolean).map(line => JSON.parse(line.trim().slice(2)));
+  check(lang + ' v2 steps fit the count limit', steps.length === 4 && steps.length <= 8);
+  check(lang + ' v2 steps fit the per-step and total limits', steps.every(step => [...step].length <= 280) && steps.reduce((n, step) => n + [...step].length, 0) <= 1200);
+  check(lang + ' v2 steps are plain text', steps.every(step => !/[<>]|\]\(|\*\*|`/.test(step)));
+  check(lang + ' v2 steps use actual action labels', ['toMorse', 'toText', 'copy', 'clear'].every(key => steps.join(' ').includes(STRINGS[lang][key])));
+  check(lang + ' v2 usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
+  eq(lang + ' v2 protects all remaining MDX including FAQ, examples and charts', sha256(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), MDX_HASHES[lang]);
+}
+eq('v2 engine bytes unchanged', sha256(source.slice(startIndex, endIndex + END_MARK.length)), '94b0710579cac9cacf59c3d973a930b624b4e378fc929e20cd1551f0f9a1df29');
+console.log('v2 page layout: ' + (passes - v2Start) + ' passed');
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
