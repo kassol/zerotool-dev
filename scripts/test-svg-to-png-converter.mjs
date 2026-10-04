@@ -347,7 +347,7 @@ eq('blank: one visible pixel', E.isBlank(new Uint8ClampedArray([0, 0, 0, 0, 0, 0
   check('v2: the input stays visible after a conversion (no tabs, no Other SVG button)', !/s2p-tab\b|s2p-other|s2p-panel-/.test(source) && !/inputSec|activateTab|otherBtn/.test(script));
   // The code box has no input listener and the page-wide paste handler skips text fields, so Convert is not redundant.
   check('v2: Convert stays: code in the box is converted by the button or Ctrl/Cmd+Enter only', !/codeInput\.addEventListener\('input'/.test(script) &&
-    script.includes("$('s2p-convert-code').addEventListener('click', function () { load([{ name: '', text: codeInput.value }]); });") &&
+    script.includes("$('s2p-convert-code').addEventListener('click', convertCode);") &&
     script.includes("if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;"));
 
   const tipIds = [...markup.matchAll(/<Toggletip id="s2p-tip-(\w+)"[^>]*>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
@@ -415,6 +415,55 @@ eq('blank: one visible pixel', E.isBlank(new Uint8ClampedArray([0, 0, 0, 0, 0, 0
       eq('clear: ' + name + ' changes nothing', [env.state.items.length, env.state.gen, env.revoked, env.calls, env.resultEl.hidden, env.status], [3, 7, [], [], false, 'old']);
     }
   }
+}
+
+// ---------- 13. Convert and Ctrl/Cmd+Enter (the block between code:start and code:end, run with stubs) ----------
+{
+  const cs = source.indexOf('/* ── code:start ── */');
+  const ce = source.indexOf('/* ── code:end ── */');
+  check('code: markers found', cs >= 0 && ce > cs);
+  if (cs >= 0 && ce > cs) {
+    const make = (value, items) => {
+      const env = { loads: [], click: null, keydown: null, state: { items } };
+      const codeInput = { value, addEventListener: (type, fn) => { if (type === 'keydown') env.keydown = fn; } };
+      const button = { addEventListener: (type, fn) => { if (type === 'click') env.click = fn; } };
+      new Function('$', 'codeInput', 'state', 'load', source.slice(cs, ce))((id) => (id === 's2p-convert-code' ? button : null), codeInput, env.state, (list) => env.loads.push(list));
+      return env;
+    };
+    const files = [{ name: 'a.svg', result: {} }, { name: 'b.svg', result: {} }];
+    const svg = '<svg ' + NS + '/>';
+    for (const [name, value, items, expected] of [
+      ['an empty box keeps the converted files', '', files, []],
+      ['a box with only spaces keeps the converted files', ' \n\t', files, []],
+      ['an empty box with nothing loaded reports the empty SVG', '', [], [[{ name: '', text: '' }]]],
+      ['an empty box after converted code reports the empty SVG', '', [{ name: '', result: {} }], [[{ name: '', text: '' }]]],
+      ['code in the box replaces the files', svg, files, [[{ name: '', text: svg }]]],
+    ]) {
+      const env = make(value, items);
+      env.click();
+      eq('code: Convert, ' + name, env.loads, expected);
+    }
+    check('code: the empty text that reaches load() is the engine\'s "empty" error', E.analyzeSvg('').error.code === 'empty' && E.analyzeSvg(' \n\t').error.code === 'empty');
+    // Ctrl/Cmd+Enter in the box converts once: the event does not reach ToolLayout's page-wide
+    // shortcut, which clicks the first .btn-primary (Convert).
+    for (const mod of ['ctrlKey', 'metaKey']) {
+      const env = make(svg, []);
+      const seen = [];
+      env.keydown({ key: 'Enter', [mod]: true, preventDefault: () => seen.push('prevent'), stopPropagation: () => seen.push('stop') });
+      eq('code: ' + mod + '+Enter converts once and stops the event', [env.loads.length, seen], [1, ['prevent', 'stop']]);
+    }
+    const env = make(svg, []);
+    const seen = [];
+    env.keydown({ key: 'Enter', preventDefault: () => seen.push('prevent'), stopPropagation: () => seen.push('stop') });
+    env.keydown({ key: 'a', ctrlKey: true, preventDefault: () => seen.push('prevent'), stopPropagation: () => seen.push('stop') });
+    eq('code: Enter alone and other Ctrl keys are left to the box', [env.loads.length, seen], [0, []]);
+  }
+  // The hidden header of the download column: a plain word in every language (it used to
+  // print the button template "Download {format}").
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  const STRINGS = new Function(source.slice(source.indexOf('// strings:start'), source.indexOf('// strings:end')).replace(/const STRINGS\s*=/, 'return '))();
+  check('table: the hidden header uses listDownload, no template string is printed in the markup', markup.includes('<span class="s2p-sr">{T.listDownload}</span>') && !/\{T\.(download|result|listSizes|doneOne|doneMany)\}/.test(markup));
+  eq('table: listDownload in four languages, without a placeholder', ['en', 'zh', 'ja', 'ko'].map((l) => STRINGS[l].listDownload), ['Download', '下载', 'ダウンロード', '다운로드']);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
