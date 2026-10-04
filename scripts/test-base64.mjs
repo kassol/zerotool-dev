@@ -7,7 +7,7 @@
 // Exit:  0 if all PASS, 1 if any FAIL
 //
 // Covers: the first HTML a visitor receives already has the page language in the
-// input and output labels, their placeholders, the Encode button and the file drop
+// input and output labels, their placeholders, the Encode mode and the file drop
 // zone, so non-English pages do not show English text before the script runs; the lone-surrogate,
 // large-file and read-error messages and the Data URI label are in the page language (they were
 // English, and a lone surrogate showed "Invalid Base64 input" in Encode mode); switching Standard /
@@ -21,6 +21,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { isDeepStrictEqual } from 'node:util';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
+import { toolSteps } from '../src/data/llms.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -59,7 +63,7 @@ for (const [lang, want] of Object.entries(expected)) {
   equal(lang + ': input placeholder', pick(html, /<textarea[^>]*id="b64-input"[^>]*placeholder="([^"]*)"/), want.encodePh);
   equal(lang + ': output label', text((pick(html, /<label[^>]*id="b64-output-label"[^>]*>([\s\S]*?)<\/label>/) || '').replace(/<button[\s\S]*?<\/button>/, '')), 'Base64');
   equal(lang + ': output placeholder', pick(html, /<textarea[^>]*id="b64-output"[^>]*placeholder="([^"]*)"/), want.outPh);
-  equal(lang + ': Encode button', text(pick(html, /<button[^>]*id="b64-run"[^>]*>([\s\S]*?)<\/button>/) || ''), want.encode);
+  equal(lang + ': Encode mode', text(pick(html, /<label[^>]*>\s*<input[^>]*name="b64mode"[^>]*value="encode"[^>]*>([\s\S]*?)<\/label>/) || ''), want.encode);
   equal(lang + ': drop zone text', text(pick(html, /<div[^>]*class="b64-drop-inner[^"]*"[^>]*>([\s\S]*?)<\/div>/) || ''), want.drop);
   if (lang !== 'en') {
     const widget = pick(html, /(<div[^>]*class="b64-wrap[\s\S]*?<\/textarea>[\s\S]*?<\/textarea>)/) || '';
@@ -167,6 +171,7 @@ function pageVM(lang = 'en', shellFirst = false, savedInput = '') {
   const body = new Element('body'), widget = new Element(); widget.className = 'tool-widget'; body.appendChild(widget);
   const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'))
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '')
     .replace(/=\{T\.([\w]+)\}/g, (_, key) => '="' + escapeHTML(strings[lang][key]) + '"')
     .replace(/\{T\.([\w]+)\}/g, (_, key) => escapeHTML(strings[lang][key]));
   const stack = [widget], voids = new Set(['input', 'br', 'hr', 'img']);
@@ -201,7 +206,7 @@ function pageVM(lang = 'en', shellFirst = false, savedInput = '') {
     }
   }
   const context = {
-    document, console, FileReader, Uint8Array, TextEncoder, TextDecoder, atob, btoa, t: strings[lang], _slug: 'base64',
+    document, console, FileReader, Uint8Array, TextEncoder, TextDecoder, atob, btoa, t: Object.fromEntries(Object.entries(strings[lang]).filter(([key]) => key !== 'tips')), _slug: 'base64',
     navigator: { clipboard: { writeText(value) { const job = defer(); copies.push({ ...job, value }); return job.promise; } } },
     setTimeout(fn, ms = 0) { const id = ++timerId; timers.set(id, { fn, due: now + ms, delay: ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
@@ -238,7 +243,7 @@ function pageVM(lang = 'en', shellFirst = false, savedInput = '') {
     fileValue: get('b64-file').value, fileCount: get('b64-file').files.length,
     fileInfoHidden: get('b64-file-info').hidden, fileInfo: get('b64-file-info').innerHTML,
     uriHidden: get('b64-uri-row').hidden, uriChecked: get('b64-uri-toggle').checked,
-    dropHidden: get('b64-drop').hidden, copyLabel: get('b64-copy').textContent.trim(), runLabel: get('b64-run').textContent.trim(),
+    dropHidden: get('b64-drop').hidden, copyLabel: get('b64-copy').textContent.trim(), mode: document.querySelectorAll('input[name="b64mode"]').find(e => e.checked).value, outputEmpty: get('b64-output-pane').getAttribute('data-empty'),
   }; }
   return { context, timers, document, get, advance, input, choose, uri, file, ctrlL, copy, snapshot, copies, readers, saves, clears, tracked, shellFirst };
 }
@@ -262,16 +267,16 @@ for (const lang of Object.keys(expected)) {
     equal(lang + ': encoded status', p.snapshot().status, T.encodedOk);
     p.advance(199); equal(lang + ': save waits 500ms', p.saves.length, 0);
     p.advance(1); same(lang + ': original input persistence', JSON.parse(JSON.stringify(p.saves)), [{slug:'base64',value:{input:'Hello, 世界'}}]);
-    p.choose('b64mode', 'decode'); equal(lang + ': mode still clears instead of converting', p.snapshot().output, '');
+    p.input('SGVsbG8'); p.choose('b64mode', 'decode'); equal(lang + ': mode immediately converts current text', p.snapshot().output, 'Hello');
     rendered(p, 'SGVsbG8'); equal(lang + ': actual decode missing padding', p.snapshot().output, 'Hello');
-    p.input('%invalid'); p.get('b64-run').click();
+    rendered(p, '%invalid');
     same(lang + ': invalid decode clears output', [p.snapshot().output, p.snapshot().status], ['', T.invalidBase64]);
     p.choose('b64mode', 'encode'); rendered(p, 'a\uD800');
     equal(lang + ': actual surrogate error', p.snapshot().status, T.loneSurrogate.replace('{n}', '2'));
     rendered(p, 'restored'); equal(lang + ': valid input recovers', p.snapshot().output, 'cmVzdG9yZWQ=');
     rendered(p, ''); same(lang + ': empty input clears output and status', [p.snapshot().output,p.snapshot().status], ['','']);
-    p.get('b64-output').value = 'stale'; p.get('b64-run').click();
-    equal(lang + ': empty manual conversion clears old output', p.snapshot().output, '');
+    p.input('stale'); p.get('b64-swap').click(); p.choose('b64variant', 'urlsafe');
+    equal(lang + ': empty alphabet conversion clears exchanged output', p.snapshot().output, '');
   }
   {
     const p = pageVM(lang); p.file('bytes.bin', [0xfb,0xff], '', true).finish('load');
@@ -300,7 +305,7 @@ for (const lang of Object.keys(expected)) {
   }
   {
     const p=pageVM(lang); rendered(p,'A'); p.input('B'); p.get('b64-swap').click(); p.advance(500);
-    same(lang+': Swap cancels old live conversion and retains direction',[p.snapshot().input,p.snapshot().output,p.snapshot().runLabel],['QQ==','B',T.encode]);
+    same(lang+': Swap cancels old live conversion and retains direction',[p.snapshot().input,p.snapshot().output,p.snapshot().mode],['QQ==','B','encode']);
     const q=pageVM(lang); q.input('queued'); const r=q.file(); r.finish('load'); q.advance(500);
     same(lang+': file prevents queued text conversion/save',[q.snapshot().output,q.saves.length],['+/8=',0]);
     const x=pageVM(lang); rendered(x,'outside'); x.document.activeElement=x.document.body; const before=x.snapshot();
@@ -316,15 +321,16 @@ for (const lang of Object.keys(expected)) {
     const p=pageVM(lang); p.get('b64-drop').dispatch('keydown',{key:'Enter'}); p.get('b64-drop').dispatch('keydown',{key:' '});
     equal(lang+': ordinary Enter/Space keeps file activation',p.get('b64-file').clicks,2);
     p.input('manual'); p.document.dispatch('keydown',{ctrlKey:true,key:'Enter'});
-    equal(lang+': shared CtrlEnter still executes Run',p.snapshot().output,'bWFudWFs');
-    equal(lang+': shared CtrlEnter conversion tracked once',p.tracked.length,1);
+    equal(lang+': shared CtrlEnter has no primary action',p.snapshot().output,'');
+    equal(lang+': shared CtrlEnter does not track a manual conversion',p.tracked.length,0);
+    p.advance(300); equal(lang+': live conversion still follows the shortcut',p.snapshot().output,'bWFudWFs');
   }
 }
-// The retained Run button must preserve a successfully loaded file, including empty files.
+// Shared conversion shortcuts preserve loaded files after the duplicate Run button is removed.
 for(const lang of Object.keys(expected)) {
-  for(const bytes of [[0xfb,0xff],[]]) for(const trigger of ['run','ctrlEnter']) {
+  for(const bytes of [[0xfb,0xff],[]]) for(const trigger of ['metaEnter','ctrlEnter']) {
     const p=pageVM(lang); p.file('keep.bin',bytes).finish('load'); p.uri(true); const before=p.snapshot();
-    if(trigger==='run') p.get('b64-run').click(); else p.document.dispatch('keydown',{ctrlKey:true,key:'Enter'});
+    p.document.dispatch('keydown',{[trigger==='metaEnter'?'metaKey':'ctrlKey']:true,key:'Enter'});
     const after=p.snapshot();
     same(`${lang}: ${trigger} preserves loaded ${bytes.length}-byte file`,[after.output,after.fileInfo,after.fileInfoHidden,after.uriHidden,after.uriChecked,after.fileValue],[before.output,before.fileInfo,before.fileInfoHidden,before.uriHidden,before.uriChecked,before.fileValue]);
     p.uri(false); equal(lang+': retained file cache still supports URI toggle',p.snapshot().output,Buffer.from(bytes).toString('base64'));
@@ -349,11 +355,10 @@ for(const lang of Object.keys(expected)) {
   p.get('b64-clear').click(); p.uri(true); equal(lang+': cleared empty file cannot revive URI',p.snapshot().output,'');
 }
 // A selected file keeps ownership while reading, even if the old text remains visible.
-for(const lang of Object.keys(expected)) for(const action of ['alphabet','run','ctrlEnter']) {
+for(const lang of Object.keys(expected)) for(const action of ['alphabet','metaEnter','ctrlEnter']) {
   const p=pageVM(lang); rendered(p,'previous text'); const reader=p.file('pending.bin',[0xfb,0xff]);
   if(action==='alphabet') p.choose('b64variant','urlsafe');
-  else if(action==='run') p.get('b64-run').click();
-  else p.document.dispatch('keydown',{metaKey:true,key:'Enter'});
+  else p.document.dispatch('keydown',{[action==='metaEnter'?'metaKey':'ctrlKey']:true,key:'Enter'});
   same(`${lang}: pending file remains selected after ${action}`,[p.snapshot().fileValue,p.snapshot().fileCount],['C:\\fakepath\\pending.bin',1]);
   equal(`${lang}: ${action} does not restore preceding text output while reading`,p.snapshot().output,'');
   reader.finish('load'); equal(`${lang}: pending file completes with latest alphabet after ${action}`,p.snapshot().output,action==='alphabet'?'-_8':'+/8=');
@@ -369,7 +374,7 @@ function copyBoundary(p, action) {
   if (fileBoundaries.includes(action)) changeState(p, action);
   else if(action==='variant') p.choose('b64variant','urlsafe');
   else if(action==='uri') p.uri(true);
-  else if(action==='manual') { p.get('b64-input').value='manual replacement'; p.get('b64-run').click(); }
+  else if(action==='converted-text') { p.input('converted replacement'); p.choose('b64variant','urlsafe'); }
   else if(action==='error') { p.choose('b64mode','decode'); rendered(p,'%invalid'); }
 }
 for(const lang of Object.keys(expected)) {
@@ -393,7 +398,7 @@ for(const lang of Object.keys(expected)) {
     p.context.navigator.clipboard=original; const before=p.snapshot().output; const retry=p.copy(); retry.resolve(); await flush();
     same(lang+': '+kind+' same-output direct retry recovers',[retry.value,p.snapshot().output,p.snapshot().copyLabel,p.snapshot().status],[before,before,T.copied,'']);
   }
-  for(const action of [...fileBoundaries,'variant','uri','manual','error']) for(const shellFirst of action==='ctrlL'?[false,true]:[false]) for(const outcome of ['resolve','reject']) {
+  for(const action of [...fileBoundaries,'variant','uri','converted-text','error']) for(const shellFirst of action==='ctrlL'?[false,true]:[false]) for(const outcome of ['resolve','reject']) {
     const p=pageVM(lang,shellFirst); rendered(p,'old copy'); const job=p.copy(); copyBoundary(p,action);
     const before=p.snapshot(),start=unhandled.length;
     job[outcome](outcome==='reject'?new Error('late rejection'):undefined); await flush();
@@ -435,6 +440,105 @@ for(const lang of Object.keys(expected)) {
 same('all page copy promises handled',unhandled,[]);
 
 process.removeListener('unhandledRejection', onUnhandled);
+
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+  const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const keys = ['mode', 'variant', 'file', 'uri', 'swap', 'copy'];
+  const tipIDs = keys.map(key => 'b64-tip-' + key).sort();
+  same('six tips bind to explicit control IDs', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]).sort(), tipIDs);
+  check('tool has a direct flex root', /^\s*<div class="b64-wrap">/.test(markup) && /\.b64-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+  check('controls precede reserved status and both panes', markup.indexOf('b64-controls') < markup.indexOf('id="b64-status"') && markup.indexOf('id="b64-status"') < markup.indexOf('b64-panels'));
+  equal('one shared input/output grid', (markup.match(/\bzt-io"/g) || []).length, 1);
+  equal('two shared panes', (markup.match(/\bzt-io-pane\b/g) || []).length, 2);
+  equal('both text boxes fill panes', (markup.match(/\bzt-io-fill\b/g) || []).length, 2);
+  equal('native radio groups reuse shared segmented style', (markup.match(/\bzt-segmented\b/g) || []).length, 2);
+  check('Run and its references are removed', !/b64-run|runBtn/.test(source));
+  check('no primary button remains for shared CtrlEnter', !/class="[^"]*btn-primary/.test(markup));
+  check('output remains readonly', /<textarea[^>]*id="b64-output"[^>]*readonly/.test(markup));
+  check('Copy and tips remain outside labels', [...markup.matchAll(/<label\b[\s\S]*?<\/label>/g)].every(m => !/<button|<Toggletip/.test(m[0])));
+  check('file tip is outside the file input overlay', /id="b64-file"[^>]*\/?>\s*<\/div>\s*<Toggletip id="b64-tip-file"/.test(markup));
+  check('drop and associated tip disappear together in Decode', /\.b64-file-entry:has\(\.b64-drop\[hidden\]\)\s*\{\s*display: none/.test(css));
+  check('hidden state overrides layout display', /\.b64-wrap \[hidden\]\s*\{\s*display: none/.test(css));
+  check('status reserves height and scrolls long feedback', /\.b64-status\s*\{[^}]*height: 2\.8em;[^}]*overflow: auto/.test(css));
+  check('long filenames have bounded internal scrolling', /\.b64-file-info\s*\{[^}]*max-height: 2\.8em;[^}]*overflow: auto/.test(css));
+  check('text boxes keep internal scrolling', /\.b64-box\s*\{[^}]*overflow: auto/.test(css));
+  check('860px hides only empty output and bounds text box', /@media \(max-width: 860px\)\s*\{\s*\.b64-output-row\[data-empty="true"\]\s*\{\s*display: none;\s*\}\s*\.b64-box\s*\{\s*height: 160px/.test(css));
+  check('640px reserves longer translated status and touch labels', /@media \(max-width: 640px\)/.test(css) && /min-height: 44px/.test(css) && /\.b64-status\s*\{\s*height: 4\.2em/.test(css));
+  check('tips excluded before script serialization', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  check('page text is built without runtime i18n replacement', !/data-i18n|\[data-i18n/.test(source));
+  check('registered as convert', /'base64':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  equal('markup IDs are unique', new Set(ids).size, ids.length);
+  const retained = {
+  "en": {
+    "frontmatter": "1fe3e6396ec2fa7186529de64e1c609dc7a610b271ec2ff5cf6a917db17deca4",
+    "bodyWithoutUsage": "62cd5b8e6f277fdd6216f2de9d25c7be4b9894e646f37284fffc6519e1f51acf"
+  },
+  "zh": {
+    "frontmatter": "8540dc4c3264489959b4e50ca57bcc1cae7c967bc2ba7c5d18a5dcc3e94ddb37",
+    "bodyWithoutUsage": "e52ce8e13331215d654d67e7ce82ad112a69bb3c646938d6a0b31f3ed2a945d5"
+  },
+  "ja": {
+    "frontmatter": "4e8e820ca8f2345feb3147ddde2a7e9d4c8c3b555b9b2b68c5c6535b5e8905f1",
+    "bodyWithoutUsage": "084bbc0f0e26efecb3587c6805a76568ddc3e6a5530f0d8c1ef58af53b9efb4d"
+  },
+  "ko": {
+    "frontmatter": "95db0e4caa9183c31a0bfb604a27c2dbd2c897bef994cb88d92455580d33b3b3",
+    "bodyWithoutUsage": "134675de98b4f63d2c29ab6e3ddd20e508d0a1ab0aff37e0a6c291231e50c001"
+  }
+};
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  for (const lang of Object.keys(expected)) {
+    const entry = strings[lang], { tips, ...client } = entry;
+    same(lang + ': translation keys match', Object.keys(entry).sort(), Object.keys(strings.en).sort());
+    same(lang + ': tip keys match controls', Object.keys(tips).sort(), keys.slice().sort());
+    for (const key of keys) check(lang + '/' + key + ': tip is nonempty text', typeof tips[key] === 'string' && tips[key].trim().length > 0 && !tips[key].includes('\n'));
+    check(lang + ': client has no tips or tip text', !('tips' in client) && Object.values(tips).every(tip => !JSON.stringify(client).includes(JSON.stringify(tip))));
+    const mdx = readFileSync(join(root, 'src/content/tools/base64', lang + '.mdx'), 'utf8');
+    const split = mdx.indexOf('\n---\n', 4), metadata = mdx.slice(0, split), body = mdx.slice(split + 5);
+    const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
+    check(lang + ': six plain steps fit limits', steps.length === 6 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['encode', 'decode', 'dataUri', 'copy', 'swap', 'clear']) check(lang + ': steps use actual ' + key + ' control label', steps.some(step => step.includes(entry[key])));
+    equal(lang + ': original FAQ and SEO remain byte-identical', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
+    equal(lang + ': non-Usage body remains byte-identical', sha(body), retained[lang].bodyWithoutUsage);
+    check(lang + ': old Usage removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    equal(lang + ': llms retains all six steps', toolSteps(parsed).length, 6);
+    check(lang + ': llms retains MIME placeholder', toolSteps(parsed).some(step => step.includes('data:<mime>;base64,')));
+    const p = pageVM(lang);
+    equal(lang + ': output initially empty', p.snapshot().outputEmpty, 'true');
+    rendered(p, 'Hello'); equal(lang + ': valid result exposes output pane', p.snapshot().outputEmpty, 'false');
+    p.input('SGVsbG8'); p.choose('b64mode', 'decode');
+    same(lang + ': mode directly converts and hides file input', [p.snapshot().output, p.snapshot().dropHidden], ['Hello', true]);
+    p.input('c3ViamVjdHM_X2Q'); p.choose('b64variant', 'urlsafe');
+    equal(lang + ': Decode alphabet directly converts current text', p.snapshot().output, 'subjects?_d');
+    p.choose('b64variant', 'standard');
+    same(lang + ': invalid alphabet conversion empties pane and reports error', [p.snapshot().output, p.snapshot().outputEmpty, p.snapshot().status], ['', 'true', entry.invalidBase64]);
+    p.choose('b64variant', 'urlsafe'); equal(lang + ': alphabet change recovers valid output', p.snapshot().outputEmpty, 'false');
+    p.get('b64-clear').click(); equal(lang + ': Clear empties output pane', p.snapshot().outputEmpty, 'true');
+    const q = pageVM(lang); q.file('empty.txt', [], 'text/plain').finish('load');
+    equal(lang + ': zero-byte file has empty output without URI', q.snapshot().outputEmpty, 'true');
+    q.uri(true); equal(lang + ': zero-byte URI exposes output pane', q.snapshot().outputEmpty, 'false');
+    const copied = q.copy(); equal(lang + ': zero-byte URI copies full prefix', copied.value, 'data:text/plain;base64,'); copied.resolve(); await flush();
+    q.uri(false); equal(lang + ': turning off empty-file URI hides empty pane', q.snapshot().outputEmpty, 'true');
+    const copyCount = q.copies.length; q.copy(); equal(lang + ': empty-file raw output has no clipboard write', q.copies.length, copyCount);
+    const r = pageVM(lang, false, 'Hello, 世界');
+    same(lang + ': restored input converts immediately without save or tracking', [r.snapshot().input, r.snapshot().output, r.saves.length, r.tracked.length], ['Hello, 世界', 'SGVsbG8sIOS4lueVjA==', 0, 0]);
+    const invalid = pageVM(lang, false, 'a\uD800');
+    same(lang + ': invalid restored input reports the real surrogate position', [invalid.snapshot().output, invalid.snapshot().status], ['', entry.loneSurrogate.replace('{n}', '2')]);
+  }
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'Base64Tool.astro' });
+  check('Astro reports no compilation error', compiled.diagnostics.filter(d => d.severity === 1).length === 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('generated JavaScript parses and serializes client strings only', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
 
 console.log(`${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

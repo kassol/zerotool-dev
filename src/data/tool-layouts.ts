@@ -18,6 +18,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'basic-auth-header-generator': 'compact',
   'chmod-calculator': 'compact',
   'css-unit-converter': 'compact',
+  'base64': 'convert',
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',
