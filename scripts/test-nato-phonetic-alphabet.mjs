@@ -17,6 +17,7 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -110,13 +111,13 @@ eq('ja example: e-mail', words('sato.k@example.jp'),
 }
 
 // ---------- 4-language STRINGS ----------
-const stringsMatch = source.match(/var STRINGS = \{([\s\S]*?)\n      \};/);
+const stringsMatch = source.match(/const STRINGS = \{([\s\S]*?)\n\} as const;/);
+const STRINGS = stringsMatch ? new Function('return {' + stringsMatch[1] + '};')() : null;
 check('STRINGS block found', !!stringsMatch);
 if (stringsMatch) {
-  const STRINGS = new Function('return {' + stringsMatch[1] + '};')();
   const keys = Object.keys(STRINGS.en).sort().join(',');
   ['zh', 'ja', 'ko'].forEach((lang) => eq('STRINGS ' + lang + ' keys', Object.keys(STRINGS[lang]).sort().join(','), keys));
-  const i18nKeys = [...source.matchAll(/data-i18n(?:-ph)?="([^"]+)"/g)].map((m) => m[1]);
+  const i18nKeys = ['labelInput', 'clear', 'placeholder', 'labelOutput', 'copy', 'outputPlaceholder', 'modeLabel', 'modeWord', 'modeTable', 'thChar', 'thCode'];
   i18nKeys.forEach((k) => check('STRINGS.en has ' + k, k in STRINGS.en));
   eq('space label per language', ['en', 'zh', 'ja', 'ko'].map((l) => STRINGS[l].space), ['(space)', '（空格）', '（スペース）', '(공백)']);
   check('render passes the localized space label', source.includes('convert(text, t.unknown, t.space)'));
@@ -192,7 +193,11 @@ function pageVM(lang, shellFirst) {
   document = new Element('#document'); document.documentElement = { lang };
   document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
   const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
-  const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
+  const escapeHTML = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
+    .replace(/<Toggletip\b[^>]*>[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(STRINGS[lang][key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(STRINGS[lang][key]));
   const stack = [widget];
   for (const token of markup.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)) {
     const text = token[0];
@@ -211,6 +216,7 @@ function pageVM(lang, shellFirst) {
   const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing actual source ID ' + id); return e; };
   const context = {
     document, console, _slug: 'nato-phonetic-alphabet',
+    t: Object.fromEntries(Object.entries(STRINGS[lang]).filter(([key]) => key !== 'tips')),
     navigator: { clipboard: { writeText(value) {
       if (copyThrows) throw Error('Controlled synchronous clipboard failure');
       let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -384,6 +390,74 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 }
 
 process.removeListener('unhandledRejection', onUnhandled);
+
+// ---------- v2 page layout ----------
+const v2Start = passes;
+const sha256 = value => createHash('sha256').update(value).digest('hex');
+const PROTECTED = {
+  "en": "64020ae9359e9a0c6d4ad2d415f464dbb112f5718af10eb521acedd90edbb0bd",
+  "zh": "013b61c85a45b0a437c1b8ac166cf44e7b23c3294ae0a822eae3a2d6decc4de3",
+  "ja": "372c87e3087259e3fc4a8628ce050dd5f1f558891346d3511c80cd6b889c13ab",
+  "ko": "bfe1da91faab12691d45d8606fc7a902381c9e4ab5942088d276780d08ea4ee7",
+  "png": "b944281f5bb9dcfcb363c49b3e73b06ba69bbf7d5a24a9df231e8b3186c4df31"
+};
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+const css = source.split('<style>')[1].split('</style>')[0];
+check('v2 root is a direct flex column', /^<div class="nato-wrap">/.test(markup) && /\.nato-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0/.test(css));
+check('v2 registry uses convert', /'nato-phonetic-alphabet':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 options then reserved status then panels', markup.indexOf('nato-options') < markup.indexOf('id="nato-status"') && markup.indexOf('id="nato-status"') < markup.indexOf('nato-panels'));
+check('v2 status has stable height and internal scroll', /\.nato-status\s*\{[^}]*flex:\s*none;[^}]*height:\s*3rem;[^}]*overflow:\s*auto/.test(css));
+check('v2 shared bounded pane grid', markup.includes('class="nato-panels zt-io"') && [...markup.matchAll(/zt-io-pane/g)].length === 2);
+for (const id of ['nato-input', 'nato-output', 'nato-table-wrap']) check('v2 shared fill for ' + id, new RegExp('id="' + id + '"[^>]*zt-io-fill').test(markup));
+check('v2 input remains editable and output readonly', !/<textarea id="nato-input"[^>]*readonly/.test(markup) && /<textarea id="nato-output"[^>]*readonly/.test(markup));
+check('v2 table is a keyboard-focusable scroll region', /id="nato-table-wrap"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-labelledby="nato-result-label"/.test(markup));
+check('v2 both result formats scroll internally', /\.nato-box\s*\{[^}]*overflow:\s*auto/.test(css) && /\.nato-table-wrap\s*\{[^}]*overflow:\s*auto/.test(css));
+check('v2 mobile stacked results have fixed dimensions', /@media\s*\(max-width:\s*860px\)[\s\S]*\.nato-box, \.nato-table-wrap\s*\{\s*height:\s*180px/.test(css) && /@media\s*\(max-width:\s*640px\)[\s\S]*\.nato-box\s*\{\s*height:\s*140px/.test(css));
+check('v2 empty result hides only at stacked width', /@media\s*\(max-width:\s*860px\)[\s\S]*\.nato-result-pane\[data-empty="true"\]\s*\{\s*display:\s*none/.test(css));
+check('v2 mobile controls are 44px targets', /\.nato-mode-btn, \.nato-clear \.btn-ghost, \.nato-copy \.btn-copy\s*\{\s*min-height:\s*44px/.test(css));
+check('v2 runtime-created cells have reachable CSS', /\.nato-table :global\(td\)/.test(css) && /\.nato-table :global\(\.nato-char\)/.test(css));
+check('v2 compiled cells do not require a scoped attribute', compiled.css.some(text => /\.nato-table[^{}]*\s+td\s*\{[^}]*padding:/.test(text)));
+check('v2 client receives only selected strings without tips', source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && source.includes('define:vars={{ t: CLIENT_T }}') && !/STRINGS|TIPS|data-i18n|pageLang/.test(clientScript));
+check('v2 rendered markup has no runtime localization attributes', !/data-i18n/.test(markup));
+eq('v2 retains all four existing buttons', [...markup.matchAll(/<button\b/g)].length, 4);
+check('v2 automatic conversion adds no primary Run button', !/btn-primary/.test(markup));
+eq('v2 source-backed tip mappings', [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}(?: wide)?>\{TIPS\.(\w+)\}<\/Toggletip>/g)].map(m => m.slice(1)).sort(), [
+  ['nato-tip-mode', 'modeLabel', 'mode'], ['nato-tip-clear', 'clear', 'clear'], ['nato-tip-input', 'labelInput', 'input'], ['nato-tip-copy', 'copy', 'copy'],
+].sort());
+function leaves(value, path = '') { return Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? leaves(item, path + key + '.') : [[path + key, item]]); }
+const enLeaves = Object.fromEntries(leaves(STRINGS.en));
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const local = Object.fromEntries(leaves(STRINGS[lang]));
+  eq(lang + ' v2 recursive keys match', Object.keys(local).sort(), Object.keys(enLeaves).sort());
+  for (const [key, value] of Object.entries(local)) {
+    check(lang + ' v2 nonempty ' + key, typeof value === 'string' && value.trim().length > 0);
+    // {s} is the existing English-only plural suffix in the converted summary.
+    const placeholders = text => [...text.matchAll(/\{[^}]+\}/g)].map(m => m[0]).filter(p => key !== 'converted' || p !== '{s}').sort();
+    eq(lang + ' v2 placeholders ' + key, placeholders(value), placeholders(enLeaves[key]));
+  }
+  const mdx = readFileSync(join(root, 'src/content/tools/nato-phonetic-alphabet', lang + '.mdx'), 'utf8');
+  const steps = (mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1] || '').trim().split('\n').filter(Boolean).map(line => JSON.parse(line.trim().slice(2)));
+  check(lang + ' v2 has four bounded steps', steps.length === 4 && steps.every(step => [...step].length <= 280) && steps.reduce((n, step) => n + [...step].length, 0) <= 1200);
+  check(lang + ' v2 steps are plain text', steps.every(step => !/[<>]|\]\(|\*\*|`/.test(step)));
+  check(lang + ' v2 steps name current controls', ['labelInput', 'labelOutput', 'modeWord', 'modeTable', 'clear', 'copy'].every(key => steps.join(' ').includes(STRINGS[lang][key])));
+  check(lang + ' v2 removes only Usage section', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
+  eq(lang + ' v2 protects all other MDX metadata, FAQ, limitations and examples', sha256(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), PROTECTED[lang]);
+  const p = pageVM(lang, false), result = p.get('nato-result-pane');
+  eq(lang + ' v2 initial result has empty state', result.getAttribute('data-empty'), 'true');
+  check(lang + ' v2 both bodies and Copy share one result pane', ['nato-output', 'nato-table-wrap', 'nato-copy'].every(id => result.contains(p.get(id))));
+  p.input('nato-input', 'AB'); p.advance(200);
+  eq(lang + ' v2 converted result exits empty state', result.getAttribute('data-empty'), 'false');
+  p.mode('table'); p.input('nato-input', 'A9'.repeat(300)); p.advance(200);
+  eq(lang + ' v2 full long table remains available', p.rows().length, 600);
+  eq(lang + ' v2 full long table copy is untruncated', p.copy().value, Array(300).fill('A = Alfa\n9 = Niner').join('\n'));
+  p.get('nato-clear').click();
+  eq(lang + ' v2 clear restores empty state in Table mode', result.getAttribute('data-empty'), 'true');
+  p.input('nato-input', 'C'); p.advance(200);
+  eq(lang + ' v2 clear preserves selected mode on recovery', [p.get('nato-output').hidden, p.get('nato-table-wrap').hidden, p.rows()], [true, false, [['C', 'Charlie']]]);
+}
+eq('v2 preserves static Japanese chart PNG', sha256(readFileSync(join(root, 'public/images/nato-phonetic-alphabet-ja.png'))), PROTECTED.png);
+eq('v2 preserves engine marker bytes', sha256(source.slice(startIndex, endIndex + END_MARK.length)), 'e3abbb1afe24cc37d3c9721184761f8fdb75e6267495ef5402ff4c53a6625bc6');
+console.log('v2 page layout: ' + (passes - v2Start) + ' passed');
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

@@ -24,6 +24,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'morse-code-translator': 'convert',
   'hash-generator': 'convert',
   'url-encode': 'convert',
+  'nato-phonetic-alphabet': 'convert',
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',
