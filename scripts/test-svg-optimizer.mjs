@@ -521,9 +521,10 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
   const onRejection = (e) => rejections.push(String(e && e.message || e));
   process.on('unhandledRejection', onRejection);
   let pageError = null;
+  let importFail = 0;
   try {
     new Function('document', 'window', 'navigator', 'Image', 'URL', 'SvgoWorker', 'runSvgo', '__importSvgo', script)(
-      doc, win, nav, FakeImage, FakeURL, FailingWorker, runSvgo, () => Promise.resolve(svgo));
+      doc, win, nav, FakeImage, FakeURL, FailingWorker, runSvgo, () => (importFail-- > 0 ? Promise.reject(new Error('offline')) : Promise.resolve(svgo)));
   } catch (e) { pageError = e.message; }
   check('page: script runs with the fake DOM', pageError === null, pageError);
   const $ = (id) => doc.getElementById(id);
@@ -534,6 +535,20 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
   const optimized = [bad, ok1, ok2].map((s) => svgo.optimize(s, E.buildConfig(D)).data);
   check('page: the refused file keeps an unrepresentable style after SVGO', /!important/.test(optimized[0]), optimized[0]);
   if (pageError === null) {
+    // SVGO fails to load once (no worker in this test and the import rejects): the error and
+    // the Retry button appear; Retry runs the same input again.
+    importFail = 1;
+    $('svgo-input').value = ok1;
+    $('svgo-input').dispatch('input');
+    const failedLoad = await wait(() => $('svgo-status').textContent.includes('offline'));
+    check('page: a failed SVGO load shows the error and the Retry button', failedLoad && $('svgo-status').textContent === T.err.load.replace('{message}', 'offline') && $('svgo-retry').hidden === false && $('svgo-result').hidden === true, $('svgo-status').textContent);
+    $('svgo-retry').click();
+    const retried = await wait(() => /^SVG: /.test($('svgo-status').textContent));
+    check('page: Retry optimizes the same input and hides itself', retried && $('svgo-retry').hidden === true && $('svgo-result').hidden === false && $('svgo-code').textContent === optimized[1], $('svgo-status').textContent);
+    $('svgo-input').value = '<svg xmlns="http://www.w3.org/2000/svg"><g></svg>';
+    $('svgo-input').dispatch('input');
+    await wait(() => /^Not valid XML/.test($('svgo-status').textContent));
+    check('page: an error in the SVG itself offers no Retry', /^Not valid XML/.test($('svgo-status').textContent) && $('svgo-retry').hidden === true, $('svgo-status').textContent);
     $('svgo-format').value = 'jsx';
     $('svgo-format').dispatch('change');
     // The refused file is first, so it is the active one while the batch runs.
@@ -715,6 +730,10 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
     ['50 MB', '400 px', '0.1%', '1%', '10 MB', '34', '40'].every((x) => Object.values(STRINGS.en.tips).join(' ').includes(x)));
   check('v2: no Optimize button; input, Example, files, paste and settings run SVGO themselves', !markup.includes('svgo-run') && !/runBtn/.test(script) && ['en', 'zh', 'ja', 'ko'].every((l) => !('run' in STRINGS[l])) &&
     !markup.includes('btn-primary') && (script.match(/^\s+run\(\);$/gm) || []).length === 4 && script.includes('if (rerun) scheduleRun(200);'));
+  check('v2: the Retry button is hidden in the markup, [hidden] is display: none, and a retry starts the worker again', /<button id="svgo-retry" class="btn-secondary svgo-retry" type="button" hidden>\{T\.retry\}<\/button>/.test(markup) &&
+    source.includes('.svgo-wrap [hidden] { display: none !important; }') && script.includes("retryBtn.addEventListener('click', function () { workerBroken = false; run(); });") && script.includes("retryBtn.hidden = !items.some(function (x) { return x.error && x.error.code === 'load'; });"));
+  check('v2: the empty hint is in the result box and hides when there is a result', right.includes('<p class="svgo-empty">{T.outEmpty}</p>') && source.includes('.svgo-out:has(.svgo-result:not([hidden])) .svgo-empty { display: none; }') &&
+    source.includes('.svgo-pane--out:has(.svgo-result[hidden]) { display: none; }'));
   check('v2: Ctrl/Cmd+L resets the view', /e\.key !== 'l' && e\.key !== 'L'[\s\S]{0,160}resetView\(\);/.test(script));
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
   check('v2: listed as a convert page', layouts.includes("'svg-optimizer': 'convert'"));
