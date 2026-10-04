@@ -426,6 +426,7 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
   const results: Record<string, TokenResult | null> = { o200k: null, cl100k: null, deepseek: null };
   let lastStats = { chars: 0, bytes: 0, words: 0, lines: 0 };
   let generation = 0;
+  let fileGeneration = 0;
 
   function persist() {
     // ztPersist drops entries whose JSON is over 50 KB; skip building that JSON for long text.
@@ -641,6 +642,7 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
   }
 
   input.addEventListener('input', () => {
+    fileGeneration++;
     schedule(input.value.length > 200000 ? 400 : 120);
     if (window.trackTool) window.trackTool(SLUG, 'count');
   });
@@ -664,12 +666,14 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
   });
 
   (document.getElementById('atc-sample') as HTMLButtonElement).addEventListener('click', () => {
+    fileGeneration++;
     input.value = wrap.dataset.sample || '';
     schedule(0);
     if (window.trackTool) window.trackTool(SLUG, 'sample');
   });
 
   (document.getElementById('atc-clear') as HTMLButtonElement).addEventListener('click', () => {
+    fileGeneration++;
     input.value = '';
     window.ztPersist?.clear?.(SLUG);
     schedule(0);
@@ -678,10 +682,14 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
 
   // The page-wide Ctrl/Cmd+L shortcut empties the textarea without an input event.
   document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) window.setTimeout(() => schedule(0), 0);
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
+      fileGeneration++;
+      window.setTimeout(() => schedule(0), 0);
+    }
   });
 
   fileInput.addEventListener('change', async () => {
+    const fileGen = ++fileGeneration;
     const file = fileInput.files && fileInput.files[0];
     fileInput.value = '';
     if (!file) return;
@@ -691,10 +699,12 @@ const sample = (SAMPLES as Record<string, string>)[lang] || SAMPLES.en;
     }
     try {
       const buf = await file.arrayBuffer();
+      if (fileGen !== fileGeneration) return;
       input.value = new TextDecoder('utf-8', { fatal: true }).decode(buf);
       schedule(0);
       if (window.trackTool) window.trackTool(SLUG, 'file');
     } catch (_) {
+      if (fileGen !== fileGeneration) return;
       setStatus(S.fileNotText, 'error');
     }
   });

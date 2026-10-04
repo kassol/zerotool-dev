@@ -46,6 +46,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { loadPage } from './astro-page-harness.mjs';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -467,6 +468,71 @@ const URL_HOOK = 'data:text/javascript,' + encodeURIComponent(`export async func
     check('real worker entry preserves request ids and returns progress', messages.every(m => m.id === 7) && messages.some(m => m.type === 'progress'));
     check('real worker entry counts all three tokenizers', ['o200k', 'cl100k', 'deepseek'].every(k => result.results[k].count === E.encodeAll(enc[k], 'Hello 世界 🦜').length));
   } finally { await worker.terminate(); }
+}
+
+// ── File input: a late read must not replace a newer input or clear ──────────────
+{
+  const open = () => {
+    const writes = [];
+    const p = loadPage('src/components/tools/AiTokenCounterTool.astro', {
+      dataset: { '.atc-wrap': { lang: 'en', strings: JSON.stringify(STRINGS.en), sample: 'sample text' } },
+      globals: {
+        TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, URL,
+        requestIdleCallback: () => 0, addEventListener() {},
+        ztPersist: { load: () => ({}), save: (_slug, value) => writes.push(value), clear() {} },
+      },
+    });
+    // The harness ignores document-level events. Register the real shortcut handler in it.
+    const start = source.indexOf("  document.addEventListener('keydown', (e) => {");
+    const end = source.indexOf('\n  });', start) + '\n  });'.length;
+    p.run("document.addEventListener = (type, handler) => { window.shortcut = handler; };\n" + source.slice(start, end));
+    return { p, writes };
+  };
+  const begin = (p) => {
+    let resolve, reject;
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    p.el('atc-file').files = [{ size: 12, arrayBuffer: () => promise }];
+    p.el('atc-file').dispatch('change');
+    return { resolve: (text) => resolve(new TextEncoder().encode(text).buffer), reject };
+  };
+  const settle = async (p) => { await new Promise(resolve => setImmediate(resolve)); p.flush(); await new Promise(resolve => setImmediate(resolve)); };
+  for (const action of ['clear', 'shortcut', 'typing', 'sample']) {
+    const { p, writes } = open();
+    const pending = begin(p);
+    if (action === 'clear') p.el('atc-clear').click();
+    if (action === 'shortcut') {
+      p.el('atc-input').value = ''; // ToolLayout clears the input in the same key event.
+      p.run("shortcut({ ctrlKey: true, key: 'l' })");
+    }
+    if (action === 'typing') { p.el('atc-input').value = 'new text'; p.el('atc-input').dispatch('input'); }
+    if (action === 'sample') p.el('atc-sample').click();
+    const expected = action === 'typing' ? 'new text' : action === 'sample' ? 'sample text' : '';
+    pending.resolve('stale file');
+    await settle(p);
+    check(`late file read cannot replace ${action}`, p.el('atc-input').value === expected, p.el('atc-input').value);
+    check(`late file read cannot save stale text after ${action}`, writes.every(value => value.text !== 'stale file'));
+  }
+  {
+    const { p } = open(); const old = begin(p); const fresh = begin(p);
+    fresh.resolve('fresh file'); await settle(p); old.resolve('stale file'); await settle(p);
+    check('latest selected file wins when reads finish out of order', p.el('atc-input').value === 'fresh file');
+  }
+  {
+    const { p } = open(); const pending = begin(p);
+    p.el('atc-clear').click(); p.flush(); pending.reject(new Error('old read failed')); await settle(p);
+    check('late read failure cannot replace clear status', p.el('atc-status').textContent === STRINGS.en.idle, p.el('atc-status').textContent);
+  }
+  {
+    const { p, writes } = open(); const pending = begin(p);
+    pending.resolve('current file'); await settle(p);
+    check('current file still populates the input and is saved', p.el('atc-input').value === 'current file' && writes.some(value => value.text === 'current file'));
+    p.el('atc-file').files = [{ size: 2, arrayBuffer: async () => new Uint8Array([0xc3, 0x28]).buffer }];
+    p.el('atc-file').dispatch('change'); await settle(p);
+    check('current invalid UTF-8 file reports the existing error', p.el('atc-status').textContent === STRINGS.en.fileNotText);
+    p.el('atc-file').files = [{ size: 21 * 1024 * 1024, arrayBuffer: () => { throw new Error('oversized file was read'); } }];
+    p.el('atc-file').dispatch('change'); await settle(p);
+    check('oversized file is rejected before reading', p.el('atc-input').value === 'current file' && p.el('atc-status').textContent.includes('20 MB'));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
