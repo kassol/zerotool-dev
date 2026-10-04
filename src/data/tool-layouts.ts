@@ -21,6 +21,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'image-to-base64': 'convert',
   'markdown-to-word': 'convert',
   'unicode-text-converter': 'convert',
+  'aes-encrypt-decrypt': 'convert',
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
 };

@@ -3,6 +3,8 @@
 // Password (PBKDF2-HMAC-SHA256) or raw key, text or files. Passwords, keys and plaintext stay in
 // memory: the page never writes them to storage or to the URL (persistence policy `disabled`
 // in src/data/persistence.ts, which also keeps Google Analytics and AdSense off this page).
+import Toggletip from '../Toggletip.astro';
+
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
@@ -28,10 +30,8 @@ const STRINGS = {
     plaintextPlaceholder: 'Text to encrypt. Decrypted text appears here.',
     ciphertext: 'Ciphertext',
     ciphertextPlaceholder: 'Ciphertext (v2:…) to decrypt. Encrypted text appears here.',
-    encrypt: 'Encrypt ↓',
-    decrypt: 'Decrypt ↑',
-    encryptWide: 'Encrypt →',
-    decryptWide: '← Decrypt',
+    encrypt: 'Encrypt',
+    decrypt: 'Decrypt',
     copy: 'Copy',
     copied: 'Copied!',
     file: 'File…',
@@ -70,6 +70,15 @@ const STRINGS = {
     err_keyHexLength: 'A hex key needs an even number of digits. This one has {digits}.',
     err_keyLength: 'The key is {bytes} bytes. AES keys are 16, 24 or 32 bytes (128, 192 or 256 bits).',
     err_keyBase64Length: 'The Base64 key has {chars} characters, which cannot be complete.',
+    // Toggletip text next to the control it explains (DESIGN.md "Tool Pages v2"). It is in the
+    // HTML and does not go to the inline script.
+    tips: {
+      key: 'Password: the password, exactly as typed and encoded as UTF-8, goes through PBKDF2-HMAC-SHA256 with 600,000 iterations and a new 16-byte salt to make a 256-bit key; the ciphertext starts with v2:. Raw key: 16, 24 or 32 bytes entered as hex, Base64 or text (its UTF-8 bytes) and used as the AES key as they are; the ciphertext has no prefix. Generate fills in a random 256-bit key as hex, or as Base64 when that key format is selected. Show reveals the password you typed.',
+      iv: 'Optional, raw key only. Empty: each encryption uses a new random 12-byte IV and writes it in front of the ciphertext, and decryption reads it from there. Filled: exactly 24 hex digits are read as 12 bytes, anything else is used as text (its UTF-8 bytes); the output is then only the ciphertext and the tag, and decryption takes the IV from this field. Do not encrypt two messages with the same key and the same IV: that breaks GCM.',
+      aad: 'Optional, raw key only. Additional authenticated data, entered as text and used as its UTF-8 bytes. It is authenticated but not encrypted, and it is not written to the output. Decryption needs exactly the same text here; otherwise authentication fails. Password mode has no AAD.',
+      plain: 'Text is encrypted as UTF-8. Click File…, or drop a file on the box, to encrypt a file instead: up to 256 MB, read into memory, and the result is a download button named after the file with .enc added. Nothing runs while you type: click Encrypt, or press Ctrl+Enter (⌘+Enter on a Mac). Decrypted text also appears in this box. Ctrl+L (⌘+L) empties both boxes, the password, key, IV, AAD and the chosen files while the focus is in the tool.',
+      cipher: 'Paste a ciphertext with or without the v2: prefix, as Base64 (standard or URL-safe alphabet, padding optional) or hex; spaces and line breaks are ignored. Without a prefix, password mode tries 200,000 PBKDF2 iterations, then 600,000. Click Decrypt, or press Ctrl+Enter (⌘+Enter) in this box, and the text appears in the Plaintext box; bytes that are not UTF-8 are offered as a download. File…, or a dropped file, decrypts an encrypted file of up to 256 MB. Output sets Base64 or hex for newly encrypted text. Copy copies this box.',
+    },
   },
   zh: {
     keyMode: '密钥类型',
@@ -92,10 +101,8 @@ const STRINGS = {
     plaintextPlaceholder: '输入要加密的文本；解密结果也显示在这里。',
     ciphertext: '密文',
     ciphertextPlaceholder: '粘贴要解密的密文（v2:…）；加密结果也显示在这里。',
-    encrypt: '加密 ↓',
-    decrypt: '解密 ↑',
-    encryptWide: '加密 →',
-    decryptWide: '← 解密',
+    encrypt: '加密',
+    decrypt: '解密',
     copy: '复制',
     copied: '已复制！',
     file: '文件…',
@@ -134,6 +141,13 @@ const STRINGS = {
     err_keyHexLength: '十六进制密钥的位数必须是偶数，当前为 {digits} 位。',
     err_keyLength: '密钥为 {bytes} 字节。AES 密钥须为 16、24 或 32 字节（128、192 或 256 位）。',
     err_keyBase64Length: 'Base64 密钥有 {chars} 个字符，不可能完整。',
+    tips: {
+      key: '「密码」：密码按输入的原样以 UTF-8 编码，加上每次新生成的 16 字节盐，经 PBKDF2-HMAC-SHA256 迭代 600,000 次得到 256 位密钥，密文以 v2: 开头。「原始密钥」：16、24 或 32 字节，可填十六进制、Base64 或文本（取其 UTF-8 字节），原样用作 AES 密钥，密文没有前缀。「随机生成」填入一个随机的 256 位密钥，写成十六进制；密钥格式选了 Base64 时写成 Base64。「显示」可查看输入的密码。',
+      iv: '可选，只用于原始密钥。留空时，每次加密使用新的随机 12 字节 IV，写在密文最前面，解密时从那里读取。填写时，正好 24 位十六进制按 12 字节读取，其他内容按文本的 UTF-8 字节使用；这时输出只有密文和认证标签，解密也使用这里填的 IV。同一密钥下不要用同一个 IV 加密两条消息，那样会破坏 GCM 的安全性。',
+      aad: '可选，只用于原始密钥。附加认证数据，按文本填写，取其 UTF-8 字节。它参与认证，但不加密，也不写进输出。解密时这里要填完全相同的文本，否则认证失败。密码模式没有 AAD。',
+      plain: '文本按 UTF-8 加密。点「文件…」或把文件拖到框里，可以改为加密文件：上限 256 MB，读入内存处理，结果是一个下载按钮，文件名为原名加 .enc。输入时不会自动加密：点「加密」，或按 Ctrl+Enter（Mac 为 ⌘+Enter）。解密出的文本也显示在这个框里。焦点在工具内时按 Ctrl+L（⌘+L），清空两个文本框、密码、密钥、IV、AAD 和已选的文件。',
+      cipher: '粘贴密文，带不带 v2: 前缀都可以，写法可以是 Base64（标准或 URL 安全字母表，填充可省略）或十六进制，其中的空格和换行会被忽略。没有前缀时，密码模式先按 PBKDF2 200,000 次尝试，再按 600,000 次。点「解密」，或在这个框里按 Ctrl+Enter（⌘+Enter），文本显示在明文框；不是 UTF-8 的字节改为提供下载。点「文件…」或拖入文件，可解密不超过 256 MB 的加密文件。「输出」决定新加密的文本写成 Base64 还是十六进制。「复制」复制这个框的内容。',
+    },
   },
   ja: {
     keyMode: '鍵の種類',
@@ -156,10 +170,8 @@ const STRINGS = {
     plaintextPlaceholder: '暗号化するテキスト。復号結果もここに出ます。',
     ciphertext: '暗号文',
     ciphertextPlaceholder: '復号する暗号文（v2:…）。暗号化結果もここに出ます。',
-    encrypt: '暗号化 ↓',
-    decrypt: '復号 ↑',
-    encryptWide: '暗号化 →',
-    decryptWide: '← 復号',
+    encrypt: '暗号化',
+    decrypt: '復号',
     copy: 'コピー',
     copied: 'コピーしました',
     file: 'ファイル…',
@@ -198,6 +210,13 @@ const STRINGS = {
     err_keyHexLength: '16進数の鍵は偶数桁が必要です。現在 {digits} 桁です。',
     err_keyLength: '鍵が {bytes} バイトです。AES の鍵は 16・24・32 バイト（128・192・256 ビット）です。',
     err_keyBase64Length: 'Base64 の鍵が {chars} 文字で、完全な値になりません。',
+    tips: {
+      key: '「パスワード」：入力したままの文字列を UTF-8 にし、毎回新しく作る 16 バイトのソルトとともに PBKDF2-HMAC-SHA256 を 600,000 回かけて 256 ビットの鍵にします。暗号文は v2: で始まります。「鍵を直接入力」：16・24・32 バイトの鍵を 16進数・Base64・テキスト（UTF-8 のバイト列）で入力し、そのまま AES の鍵に使います。暗号文に接頭辞は付きません。「生成」はランダムな 256 ビットの鍵を 16進数で入れます。鍵の形式が Base64 のときは Base64 で入れます。「表示」を押すと、入力したパスワードを確認できます。',
+      iv: '任意。鍵を直接入力するときだけ使います。空のときは、暗号化のたびに新しいランダムな 12 バイトの IV を使って暗号文の先頭に書き、復号ではそこから読みます。入力したときは、ちょうど 24 桁の 16進数なら 12 バイトとして読み、それ以外はテキストの UTF-8 バイト列として使います。このとき出力は暗号文とタグだけになり、復号でもこの欄の IV を使います。同じ鍵と同じ IV で 2 つのメッセージを暗号化しないでください。GCM の安全性が失われます。',
+      aad: '任意。鍵を直接入力するときだけ使います。追加認証データで、テキストとして入力し、UTF-8 のバイト列として使います。認証の対象になりますが、暗号化はされず、出力にも書かれません。復号ではここにまったく同じテキストが必要で、違うと認証に失敗します。パスワードモードに AAD はありません。',
+      plain: 'テキストは UTF-8 として暗号化します。「ファイル…」を押すか、ファイルを欄にドロップすると、ファイルを暗号化できます。上限は 256 MB で、メモリに読み込んで処理し、結果は元の名前に .enc を付けたダウンロードボタンになります。入力中は暗号化しません。「暗号化」を押すか、Ctrl+Enter（Mac は ⌘+Enter）を押します。復号したテキストもこの欄に出ます。ツール内にフォーカスがあるときに Ctrl+L（⌘+L）を押すと、2 つの欄、パスワード、鍵、IV、AAD、選んだファイルを空にします。',
+      cipher: '暗号文を貼り付けます。v2: の接頭辞はあってもなくても読めます。Base64（標準と URL セーフのどちらの文字でも、パディングなしでも可）か 16進数で、空白と改行は無視します。接頭辞がないとき、パスワードモードは PBKDF2 200,000 回、次に 600,000 回の順で試します。「復号」を押すか、この欄で Ctrl+Enter（⌘+Enter）を押すと、テキストが平文欄に出ます。UTF-8 でないバイト列はダウンロードで渡します。「ファイル…」かドロップで、256 MB までの暗号化ファイルを復号できます。「出力」は、新しく暗号化するテキストを Base64 と 16進数のどちらで書くかを決めます。「コピー」はこの欄の内容をコピーします。',
+    },
   },
   ko: {
     keyMode: '키 종류',
@@ -220,10 +239,8 @@ const STRINGS = {
     plaintextPlaceholder: '암호화할 텍스트. 복호화 결과도 여기에 나옵니다.',
     ciphertext: '암호문',
     ciphertextPlaceholder: '복호화할 암호문(v2:…). 암호화 결과도 여기에 나옵니다.',
-    encrypt: '암호화 ↓',
-    decrypt: '복호화 ↑',
-    encryptWide: '암호화 →',
-    decryptWide: '← 복호화',
+    encrypt: '암호화',
+    decrypt: '복호화',
     copy: '복사',
     copied: '복사됨!',
     file: '파일…',
@@ -262,10 +279,19 @@ const STRINGS = {
     err_keyHexLength: '16진수 키는 자릿수가 짝수여야 합니다. 지금은 {digits}자리입니다.',
     err_keyLength: '키가 {bytes}바이트입니다. AES 키는 16·24·32바이트(128·192·256비트)입니다.',
     err_keyBase64Length: 'Base64 키가 {chars}자라서 온전할 수 없습니다.',
+    tips: {
+      key: "'비밀번호': 입력한 그대로의 문자열을 UTF-8로 바꾸고, 매번 새로 만드는 16바이트 솔트와 함께 PBKDF2-HMAC-SHA256을 600,000회 돌려 256비트 키를 만듭니다. 암호문은 v2:로 시작합니다. '키 직접 입력': 16·24·32바이트 키를 16진수, Base64, 텍스트(UTF-8 바이트)로 넣으며, 그대로 AES 키로 씁니다. 암호문에 접두사가 없습니다. '생성'은 무작위 256비트 키를 16진수로 채웁니다. 키 형식이 Base64이면 Base64로 채웁니다. '표시'를 누르면 입력한 비밀번호를 볼 수 있습니다.",
+      iv: '선택 사항이며 키 직접 입력에서만 씁니다. 비워 두면 암호화할 때마다 새 무작위 12바이트 IV를 써서 암호문 맨 앞에 적고, 복호화할 때는 거기서 읽습니다. 값을 넣으면, 정확히 24자리 16진수는 12바이트로 읽고 그 밖의 값은 텍스트의 UTF-8 바이트로 씁니다. 이때 출력은 암호문과 태그뿐이고, 복호화에도 이 칸의 IV를 씁니다. 같은 키와 같은 IV로 메시지 두 개를 암호화하지 마세요. GCM의 안전성이 깨집니다.',
+      aad: '선택 사항이며 키 직접 입력에서만 씁니다. 추가 인증 데이터로, 텍스트로 넣으면 UTF-8 바이트로 씁니다. 인증에는 포함되지만 암호화되지 않고 출력에도 들어가지 않습니다. 복호화할 때 여기에 똑같은 텍스트가 있어야 하며, 다르면 인증에 실패합니다. 비밀번호 모드에는 AAD가 없습니다.',
+      plain: "텍스트는 UTF-8로 암호화합니다. '파일…'을 누르거나 파일을 칸에 끌어다 놓으면 파일을 암호화합니다. 한도는 256MB이고 메모리에 읽어 처리하며, 결과는 원래 이름에 .enc를 붙인 다운로드 버튼으로 나옵니다. 입력하는 동안에는 암호화하지 않습니다. '암호화'를 누르거나 Ctrl+Enter(Mac은 ⌘+Enter)를 누르세요. 복호화한 텍스트도 이 칸에 나옵니다. 도구 안에 포커스가 있을 때 Ctrl+L(⌘+L)을 누르면 두 칸, 비밀번호, 키, IV, AAD, 고른 파일을 비웁니다.",
+      cipher: "암호문을 붙여 넣습니다. v2: 접두사는 있어도 없어도 됩니다. Base64(표준 문자와 URL 안전 문자 모두, 패딩 생략 가능)나 16진수로 넣으며, 공백과 줄바꿈은 무시합니다. 접두사가 없으면 비밀번호 모드는 PBKDF2 200,000회, 그다음 600,000회 순으로 시도합니다. '복호화'를 누르거나 이 칸에서 Ctrl+Enter(⌘+Enter)를 누르면 텍스트가 평문 칸에 나옵니다. UTF-8이 아닌 바이트는 다운로드로 제공합니다. '파일…'이나 끌어다 놓기로 256MB까지의 암호화 파일을 복호화합니다. '출력'은 새로 암호화하는 텍스트를 Base64와 16진수 중 무엇으로 쓸지 정합니다. '복사'는 이 칸의 내용을 복사합니다.",
+    },
   },
 };
 
 const L = STRINGS[lang];
+// The script gets every string except the toggletip text, which is in the HTML.
+const { tips: TIPS, ...CLIENT_S } = L;
 ---
 <div class="aes-wrap">
   <div class="aes-keybar">
@@ -273,6 +299,7 @@ const L = STRINGS[lang];
       <option value="password">{L.modePassword}</option>
       <option value="raw">{L.modeRaw}</option>
     </select>
+    <Toggletip id="aes-tip-key" lang={lang} about={L.keyMode} wide>{TIPS.key}</Toggletip>
     <input type="password" id="aes-password" class="tool-input aes-key-input" placeholder={L.passwordPlaceholder} aria-label={L.modePassword} autocomplete="off" spellcheck="false" autocapitalize="off" />
     <input type="text" id="aes-rawkey" class="tool-input aes-key-input" placeholder={L.rawKeyPlaceholder} aria-label={L.modeRaw} autocomplete="off" spellcheck="false" autocapitalize="off" hidden />
     <button id="aes-toggle-pw" class="btn-ghost aes-btn" type="button" aria-pressed="false">{L.show}</button>
@@ -282,59 +309,77 @@ const L = STRINGS[lang];
       <option value="text">{L.keyFmtText}</option>
     </select>
     <button id="aes-genkey" class="btn-secondary aes-btn" type="button" hidden>{L.generate}</button>
+    <span class="aes-actions">
+      <button id="aes-encrypt" class="btn-primary aes-go" type="button">{L.encrypt}</button>
+      <button id="aes-decrypt" class="btn-primary aes-go" type="button">{L.decrypt}</button>
+    </span>
   </div>
 
   <div id="aes-advanced" class="aes-advanced" hidden>
-    <input type="text" id="aes-iv" class="tool-input" placeholder={L.ivPlaceholder} aria-label={L.ivPlaceholder} autocomplete="off" spellcheck="false" autocapitalize="off" />
-    <input type="text" id="aes-aad" class="tool-input" placeholder={L.aadPlaceholder} aria-label={L.aadPlaceholder} autocomplete="off" spellcheck="false" autocapitalize="off" />
+    <span class="aes-adv-field">
+      <input type="text" id="aes-iv" class="tool-input" placeholder={L.ivPlaceholder} aria-label={L.ivPlaceholder} autocomplete="off" spellcheck="false" autocapitalize="off" />
+      <Toggletip id="aes-tip-iv" lang={lang} about="IV" wide>{TIPS.iv}</Toggletip>
+    </span>
+    <span class="aes-adv-field">
+      <input type="text" id="aes-aad" class="tool-input" placeholder={L.aadPlaceholder} aria-label={L.aadPlaceholder} autocomplete="off" spellcheck="false" autocapitalize="off" />
+      <Toggletip id="aes-tip-aad" lang={lang} about="AAD" wide>{TIPS.aad}</Toggletip>
+    </span>
   </div>
 
-  <div class="aes-grid">
-    <div class="aes-head aes-head-plain">
-      <label class="aes-label" for="aes-plaintext">{L.plaintext}</label>
-      <button id="aes-plain-file-btn" class="btn-ghost aes-btn aes-file-btn" type="button" title={L.fileEncTitle} aria-label={L.fileEncTitle}>{L.file}</button>
-      <input type="file" id="aes-plain-file-input" hidden />
-    </div>
-    <div class="aes-box aes-box-plain">
-      <textarea id="aes-plaintext" class="tool-textarea aes-textarea" spellcheck="false" placeholder={L.plaintextPlaceholder}></textarea>
-      <div id="aes-plain-file" class="aes-file" hidden>
-        <span class="aes-file-name"></span>
-        <button type="button" class="aes-file-clear" aria-label={L.removeFile}>×</button>
+  <div class="aes-feedback">
+    <p id="aes-status" class="tool-status aes-status" role="status" aria-live="polite" hidden></p>
+    <button id="aes-download" class="btn-secondary aes-download" type="button" hidden></button>
+  </div>
+
+  <div class="aes-io zt-io">
+    <div class="aes-pane zt-io-pane">
+      <div class="aes-head">
+        <label class="aes-label" for="aes-plaintext">{L.plaintext}</label>
+        <Toggletip id="aes-tip-plain" lang={lang} about={L.plaintext} wide>{TIPS.plain}</Toggletip>
+        <span class="aes-head-end">
+          <button id="aes-plain-file-btn" class="btn-ghost aes-btn aes-file-btn" type="button" title={L.fileEncTitle} aria-label={L.fileEncTitle}>{L.file}</button>
+        </span>
+        <input type="file" id="aes-plain-file-input" hidden />
+      </div>
+      <div class="aes-box">
+        <textarea id="aes-plaintext" class="tool-textarea aes-textarea zt-io-fill" spellcheck="false" placeholder={L.plaintextPlaceholder}></textarea>
+        <div id="aes-plain-file" class="aes-file zt-io-fill" hidden>
+          <span class="aes-file-name"></span>
+          <button type="button" class="aes-file-clear" aria-label={L.removeFile}>×</button>
+        </div>
       </div>
     </div>
-    <button id="aes-encrypt" class="btn-primary aes-go aes-go-enc" type="button" data-narrow={L.encrypt} data-wide={L.encryptWide}>{L.encryptWide}</button>
 
-    <div class="aes-head aes-head-cipher">
-      <label class="aes-label" for="aes-ciphertext">{L.ciphertext}</label>
-      <button id="aes-cipher-file-btn" class="btn-ghost aes-btn aes-file-btn" type="button" title={L.fileDecTitle} aria-label={L.fileDecTitle}>{L.file}</button>
-      <input type="file" id="aes-cipher-file-input" hidden />
-      <label class="aes-enc-label">
-        <span>{L.outputEncoding}</span>
-        <select id="aes-encoding" class="tool-input aes-select">
-          <option value="base64">Base64</option>
-          <option value="hex">Hex</option>
-        </select>
-      </label>
-    </div>
-    <div class="aes-box aes-box-cipher">
-      <textarea id="aes-ciphertext" class="tool-textarea aes-textarea" spellcheck="false" placeholder={L.ciphertextPlaceholder}></textarea>
-      <div id="aes-cipher-file" class="aes-file" hidden>
-        <span class="aes-file-name"></span>
-        <button type="button" class="aes-file-clear" aria-label={L.removeFile}>×</button>
+    <div class="aes-pane zt-io-pane">
+      <div class="aes-head">
+        <label class="aes-label" for="aes-ciphertext">{L.ciphertext}</label>
+        <Toggletip id="aes-tip-cipher" lang={lang} about={L.ciphertext} wide>{TIPS.cipher}</Toggletip>
+        <span class="aes-head-end">
+          <button id="aes-cipher-file-btn" class="btn-ghost aes-btn aes-file-btn" type="button" title={L.fileDecTitle} aria-label={L.fileDecTitle}>{L.file}</button>
+          <label class="aes-enc-label">
+            <span>{L.outputEncoding}</span>
+            <select id="aes-encoding" class="tool-input aes-select">
+              <option value="base64">Base64</option>
+              <option value="hex">Hex</option>
+            </select>
+          </label>
+          <button id="aes-copy" class="btn-copy aes-copy" type="button">{L.copy}</button>
+        </span>
+        <input type="file" id="aes-cipher-file-input" hidden />
       </div>
-    </div>
-    <button id="aes-decrypt" class="btn-primary aes-go aes-go-dec" type="button" data-narrow={L.decrypt} data-wide={L.decryptWide}>{L.decryptWide}</button>
-    <button id="aes-copy" class="btn-copy aes-copy" type="button">{L.copy}</button>
-
-    <div class="aes-feedback">
-      <p id="aes-status" class="tool-status aes-status" role="status" aria-live="polite" hidden></p>
-      <button id="aes-download" class="btn-secondary aes-download" type="button" hidden></button>
+      <div class="aes-box">
+        <textarea id="aes-ciphertext" class="tool-textarea aes-textarea zt-io-fill" spellcheck="false" placeholder={L.ciphertextPlaceholder}></textarea>
+        <div id="aes-cipher-file" class="aes-file zt-io-fill" hidden>
+          <span class="aes-file-name"></span>
+          <button type="button" class="aes-file-clear" aria-label={L.removeFile}>×</button>
+        </div>
+      </div>
     </div>
   </div>
 
   <p class="aes-note">{L.note}</p>
 
-  <script is:inline define:vars={{ S: STRINGS[lang] }}>
+  <script is:inline define:vars={{ S: CLIENT_S }}>
     (function () {
       /* ── engine:start ── */
       // Password ciphertext: "v2:" + Base64 or hex of [salt 16][iv 12][ciphertext][tag 16], key from
@@ -816,58 +861,46 @@ const L = STRINGS[lang];
         });
       });
 
-      // Arrow direction follows the layout: side by side on wide screens, stacked on narrow ones.
-      var narrow = window.matchMedia('(max-width: 640px)');
-      function applyArrows() {
-        [encBtn, decBtn].forEach(function (b) { b.textContent = narrow.matches ? b.dataset.narrow : b.dataset.wide; });
-      }
-      applyArrows();
-      if (narrow.addEventListener) narrow.addEventListener('change', applyArrows);
       applyMode();
     })();
   </script>
 </div>
 
 <style>
-  .aes-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  /* v2 "convert" layout: the root is a flex column, so the two boxes (.zt-io in
+     tool-common.css) take the height that is left under the key bar and the status line. */
+  .aes-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-height: 0; }
+  /* The toggletip root has no flex rule of its own; keep the "?" button from being squeezed. */
+  .aes-wrap :global(.zt-tip) { flex: none; }
 
   .aes-keybar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
   .aes-select { font-family: var(--font-sans); cursor: pointer; }
   .aes-mode { flex: 0 0 auto; }
   .aes-key-input { flex: 1 1 14rem; min-width: 0; }
   .aes-key-input[hidden], .aes-keybar [hidden] { display: none; }
+  .aes-actions { display: inline-flex; gap: 0.5rem; }
 
   .aes-advanced { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.5rem; }
   .aes-advanced[hidden] { display: none; }
+  .aes-adv-field { display: flex; align-items: center; gap: 0.25rem; min-width: 0; }
+  .aes-adv-field .tool-input { flex: 1 1 auto; min-width: 0; }
 
-  .aes-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "hp enc hc dec cp"
-      "bp bp  bc bc  bc"
-      "fb fb  fb fb  fb";
-    gap: 0.5rem 0.6rem;
-    align-items: center;
-  }
-  .aes-head-plain { grid-area: hp; }
-  .aes-box-plain { grid-area: bp; }
-  .aes-go-enc { grid-area: enc; }
-  .aes-head-cipher { grid-area: hc; }
-  .aes-box-cipher { grid-area: bc; }
-  .aes-go-dec { grid-area: dec; }
-  .aes-copy { grid-area: cp; }
-  .aes-feedback { grid-area: fb; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  /* The download button takes its own row under the message ("Download them below"). */
+  .aes-feedback { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
   .aes-feedback:not(:has(> :not([hidden]))) { display: none; }
+  .aes-status { flex: 1 1 100%; margin: 0; overflow-wrap: anywhere; }
+  .aes-status[hidden], .aes-download[hidden] { display: none; }
 
-  .aes-head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; min-height: 40px; }
+  .aes-head { display: flex; align-items: center; gap: 0.25rem 0.4rem; flex-wrap: wrap; min-height: 32px; }
+  .aes-head-end { display: inline-flex; align-items: center; gap: 0.4rem; margin-left: auto; }
   .aes-label { font-size: 0.85rem; font-weight: 650; color: var(--color-text-secondary); }
   .aes-file-btn { font-size: 0.8rem; min-height: 32px; padding: 0.25rem 0.6rem; }
-  .aes-enc-label { display: inline-flex; align-items: center; gap: 0.35rem; margin-left: auto; font-size: 0.8rem; color: var(--color-text-secondary); }
+  .aes-enc-label { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: var(--color-text-secondary); }
   .aes-enc-label .aes-select { min-height: 32px; padding: 0.2rem 0.5rem; font-size: 0.8rem; }
 
-  .aes-box { position: relative; min-width: 0; align-self: stretch; }
-  .aes-textarea { display: block; min-height: 180px; }
+  /* The box is the drop target; the text box or the chosen file fills it (.zt-io-fill). */
+  .aes-box { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
+  .aes-textarea { display: block; }
   .aes-textarea[hidden] { display: none; }
   .aes-box.aes-drop .aes-textarea, .aes-box.aes-drop .aes-file { box-shadow: inset 0 0 0 2px var(--color-primary); }
 
@@ -876,7 +909,6 @@ const L = STRINGS[lang];
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    min-height: 180px;
     padding: 0.82rem;
     border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
@@ -902,8 +934,6 @@ const L = STRINGS[lang];
   .aes-file-clear:focus-visible, .aes-file-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
   .aes-go:disabled { opacity: 0.6; cursor: progress; }
-  .aes-status { margin: 0; overflow-wrap: anywhere; }
-  .aes-status[hidden], .aes-download[hidden] { display: none; }
 
   .aes-note {
     margin: 0;
@@ -915,26 +945,24 @@ const L = STRINGS[lang];
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
   }
 
+  /* Stacked: plaintext above ciphertext, each box at a fixed height. */
+  @media (max-width: 860px) {
+    .aes-textarea, .aes-file { height: 160px; }
+  }
+
+  /* Phones: the key type takes the first row, the password and Show the second (a raw key
+     takes a full row, its format and Generate the next), then Encrypt and Decrypt; both boxes
+     start inside the first screen. */
   @media (max-width: 640px) {
-    .aes-mode { flex: 0 1 8.5rem; }
-    .aes-key-input { flex: 1 1 8rem; }
-    .aes-grid {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-      grid-template-areas:
-        "bp  bp  bp"
-        "enc dec cp"
-        "bc  bc  bc"
-        "fb  fb  fb"
-        "hp  hc  hc";
-    }
     .aes-wrap { gap: 0.5rem; }
+    .aes-mode { flex: 1 1 8.5rem; }
+    .aes-key-input { flex: 1 1 60%; }
+    #aes-rawkey { flex-basis: 100%; }
+    .aes-actions { flex: 1 1 100%; }
+    .aes-go { flex: 1 1 0; }
     .aes-advanced { grid-template-columns: minmax(0, 1fr); }
-    .aes-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-    .aes-head { min-height: 0; }
     .aes-file-btn, .aes-enc-label .aes-select { min-height: 44px; }
-    .aes-go { padding-left: 0.6rem; padding-right: 0.6rem; }
-    .aes-textarea { min-height: 80px; height: 80px; }
-    .aes-file { min-height: 80px; }
+    .aes-textarea, .aes-file { height: 100px; min-height: 100px; }
     .aes-file-clear { min-width: 44px; min-height: 44px; }
   }
 </style>
