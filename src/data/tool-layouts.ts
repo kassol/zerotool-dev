@@ -15,6 +15,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'markdown-table-generator': 'convert',
   'svg-optimizer': 'convert',
   'protobuf-to-json': 'convert',
+  'string-escape': 'convert',
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
 };

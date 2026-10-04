@@ -615,6 +615,45 @@ const utf8hex = (s) => [...Buffer.from(s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDF
   }
 }
 
+// ── v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ───────────────────
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  check('the tool root is .se-wrap, a flex column that can shrink', /^\s*<div class="se-wrap">/.test(markup) && /\.se-wrap \{[^}]*flex-direction: column;[^}]*min-height: 0;/.test(source));
+  check('input and output use the shared two-pane classes', (markup.match(/class="se-io zt-io"/g) || []).length === 1 &&
+    (markup.match(/class="se-col zt-io-pane"/g) || []).length === 2 &&
+    (markup.match(/<textarea [^>]*class="tool-textarea se-textarea zt-io-fill"/g) || []).length === 2);
+  check('input is the left pane, the read-only output the right one', markup.indexOf('id="se-input"') < markup.indexOf('id="se-output"') && /<textarea id="se-output"[^>]* readonly>/.test(markup));
+  const bar = markup.slice(markup.indexOf('class="se-bar"'), markup.indexOf('id="se-options"'));
+  check('format, direction and the three buttons share the toolbar', ['id="se-mode"', 'class="se-dir"', 'id="se-swap"', 'id="se-example"', 'id="se-clear"'].every((x) => bar.includes(x)) && !markup.includes('se-actions'));
+  check('status line sits between the options and the boxes', markup.indexOf('id="se-options"') < markup.indexOf('id="se-status"') && markup.indexOf('id="se-status"') < markup.indexOf('se-io zt-io'));
+  const tipIds = ['format', 'dir', 'json-ascii', 'js-non-ascii', 'c-non-ascii', 'csv-formula', 'sql-dialect', 'input', 'output'];
+  eq('one toggletip per explained control', (markup.match(/<Toggletip id="se-tip-[\w-]+"/g) || []).map((m) => m.slice(22, -1)), tipIds);
+  check('no toggletip button inside a <label>', !/<label[^>]*>(?:(?!<\/label>)[\s\S])*<Toggletip/.test(markup));
+  const optWraps = markup.match(/<(?:span|label) class="se-opt" data-mode="\w+" data-dir="\w+">/g) || [];
+  eq('every option keeps the wrapper the script shows and hides', optWraps.length, (markup.match(/data-opt="/g) || []).length);
+  const tipKeys = ['cNonAscii', 'csvFormula', 'dir', 'format', 'input', 'jsNonAscii', 'jsonAscii', 'output', 'sqlDialect'];
+  for (const l of ['en', 'zh', 'ja', 'ko']) {
+    eq('STRINGS.' + l + '.tips: one text per toggletip', Object.keys(STRINGS[l].tips).sort(), tipKeys);
+    check('STRINGS.' + l + '.tips: plain sentences', Object.values(STRINGS[l].tips).every((v) => typeof v === 'string' && v.length > 40 && !/[<>\n]/.test(v)));
+    for (const k of tipKeys) check(l + ': tip "' + k + '" is rendered', markup.includes('{TIPS.' + k + '}'));
+  }
+  check('toggletip text stays out of the inline script', source.includes('define:vars={{ t: CLIENT_L }}') && source.includes('const { tips: TIPS, tipNames: TIP_NAMES, ...CLIENT_L } = L;'));
+  check('Ctrl/Cmd+L clears the stale output and status', /key === 'l' \|\| e\.key === 'L'\)\) \{\s*setTimeout\(function \(\) \{ if \(!inputEl\.value\) \{ outputEl\.value = ''; setStatus\('', ''\); \} \}, 0\);/.test(source));
+  eq('stacks at 860px, phone details at 640px', source.match(/@media \(max-width: \d+px\)/g), ['@media (max-width: 860px)', '@media (max-width: 640px)']);
+  check('the "?" buttons are not squeezed in flex rows', source.includes('.se-wrap :global(.zt-tip) { flex: none; }'));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'string-escape': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, `src/content/tools/string-escape/${lang}.mdx`), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    const steps = (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "(.*)"$/gm) || []).map((x) => x.slice(5, -1));
+    check(lang + ' mdx: 6 steps in the frontmatter, within the llms-full.txt limits', steps.length === 6 && steps.every((x) => x.length <= 280) && steps.join('').length <= 1200, steps.length);
+    check(lang + ' mdx: no usage section in the body', !/^## (How to Use|用法|使い方|사용 방법)\s*$/m.test(body));
+    check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限事項|제한 사항)\s*$/m.test(body));
+  }
+}
+
 rmSync(work, { recursive: true, force: true });
 for (const s of skips) console.log('SKIP: ' + s + ' not available');
 console.log(`\n${passes} passed, ${failures} failed${skips.length ? ', ' + skips.length + ' skipped' : ''}`);
