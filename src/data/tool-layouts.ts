@@ -32,6 +32,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'totp-generator': 'generate',
   'text-to-ascii-art': 'generate',
   'pkce-generator': 'generate',
+  'htpasswd-generator': 'generate',
   'har-file-analyzer': 'analyze',
   'dns-lookup': 'analyze',
   'url-parser': 'analyze',

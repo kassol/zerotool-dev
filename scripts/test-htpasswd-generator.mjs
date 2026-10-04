@@ -4,7 +4,7 @@
 //        `engine:start` / `engine:end` markers and the frontmatter STRINGS table, so this test
 //        cannot drift from the shipped source); public/vendor/bcryptjs.min.js (run in a vm
 //        context the way the page loads it); src/data/persistence.ts;
-//        src/layouts/ToolLayout.astro (real clear shortcut);
+//        src/layouts/ToolLayout.astro (real clear shortcut); src/data/tool-layouts.ts;
 //        scripts/test-htpasswd-generator.fixtures.json (hashes made by passlib 1.7.4 with fixed
 //        salts, an independent implementation); src/content/tools/htpasswd-generator/{lang}.mdx
 //        (examples marked with `{/* htpw-check: {...} */}` are re-checked by the engine)
@@ -403,15 +403,16 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 // ── M. Pending page actions must not publish after their inputs change ──────
 {
-  function page() {
-    const nodes = new Map(), events = {}, timers = [], pending = [], comparisons = [], readErrors = [];
+  function page(lang = 'en') {
+    const nodes = new Map(), events = {}, timers = [], pending = [], comparisons = [], readErrors = [], copied = [], downloads = [], blobs = new Map();
     const document = { activeElement: null };
     class Element {
       constructor(id = '', tag = 'DIV') { Object.assign(this, { id, tagName: tag, value: '', textContent: '', hidden: false, disabled: false, className: '', listeners: {}, children: [], style: {} }); }
       addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
       dispatch(type, extra = {}) { for (const fn of this.listeners[type] || []) fn.call(this, { target: this, ...extra }); }
-      click() { if (!this.disabled) this.dispatch('click'); }
+      click() { if (this.tagName === 'A') downloads.push({ name: this.download, blob: blobs.get(this.href) }); else if (!this.disabled) this.dispatch('click'); }
       appendChild(child) { this.children.push(child); }
+      removeChild(child) { this.children = this.children.filter(el => el !== child); }
       getBoundingClientRect() { return { top: 100, bottom: 200 }; }
       scrollIntoView() {}
     }
@@ -420,13 +421,15 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
       get(m[2]).tagName = m[1].toUpperCase(); get(m[2]).type = /\btype="([^"]+)"/.exec(m[0])?.[1] || 'text';
     }
     const widget = { contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [...nodes.values()].filter(el => el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' && el.type === 'text') };
-    Object.assign(document, { getElementById: get, querySelector: () => widget,
+    Object.assign(document, { getElementById: get, querySelector: () => widget, body: new Element('body', 'BODY'),
       createElement: tag => new Element('', tag.toUpperCase()),
       addEventListener(type, fn) { (events[type] ||= []).push(fn); } });
     const bc = { ...BC, hash(password, salt, callback, progress) { pending.push({ password, salt, callback, progress }); },
       compare(password, hash, callback) { comparisons.push(() => callback(null, BC.compareSync(password, hash))); } };
     get('htpw-format').value = 'bcrypt-2y'; get('htpw-cost').value = '4'; get('htpw-rounds').value = '5000';
-    const context = { document, S: STRINGS.en, navigator: {}, crypto, TextEncoder, TextDecoder, Uint8Array, atob, btoa,
+    const { tips, ...clientStrings } = STRINGS[lang];
+    const context = { document, S: clientStrings, navigator: { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } }, crypto, TextEncoder, TextDecoder, Uint8Array, atob, btoa, Blob,
+      URL: { createObjectURL(blob) { const id = 'blob:' + blobs.size; blobs.set(id, blob); return id; }, revokeObjectURL(id) { blobs.delete(id); } },
       setTimeout(fn, delay) { const id = timers.length; timers.push({ fn, delay }); return id; }, clearTimeout() {},
       dcodeIO: { bcrypt: bc }, innerHeight: 900, ztPersist: { clear() {} }, _slug: 'htpasswd-generator' };
     context.window = context;
@@ -434,7 +437,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const keyStart = shell.indexOf("document.addEventListener('keydown'", shell.indexOf('// ── Keyboard shortcuts:'));
     vm.runInNewContext(shell.slice(keyStart, shell.indexOf('// ── Copy button visual feedback', keyStart)), context);
     vm.runInNewContext(source.match(/<script is:inline define:vars=[^>]*>([\s\S]*?)<\/script>/)[1], context);
-    return { get, pending, comparisons, readErrors,
+    return { get, pending, comparisons, readErrors, copied, downloads,
       type(id, value, type = 'input') { get(id).value = value; get(id).dispatch(type); },
       clear(flush = true) {
         document.activeElement = get('htpw-user');
@@ -590,6 +593,114 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     }
   }
 
+  // ── O. Controls keep their real behavior after moving into the rail/workspace ──
+  const shaPassword = '{SHA}W6ph5Mm5Pz8GgiULbPgzG37mj9g='; // SHA-1("password"), a published htpasswd format.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const p = page(lang);
+    p.type('htpw-user', 'alice'); p.type('htpw-pass', 'password'); p.type('htpw-format', 'sha1', 'change');
+    check(lang + ' input alone does not generate a line', !p.get('htpw-line').textContent && p.pending.length === 0);
+    check(lang + ' format changes the visible compatibility note', p.get('htpw-compat').textContent === STRINGS[lang].compat_sha1);
+    p.get('htpw-generate').click(); await settleRead();
+    check(lang + ' Generate line publishes the expected SHA-1 line', p.get('htpw-line').textContent === 'alice:' + shaPassword && !p.get('htpw-out').hidden);
+    check(lang + ' generated command uses matching inputs', p.get('htpw-cmd').textContent === 'htpasswd -ns alice');
+    p.get('htpw-copy').click(); await settleRead();
+    check(lang + ' Copy reads the complete generated line', p.copied.at(-1) === 'alice:' + shaPassword);
+    check(lang + ' Copy feedback remains localized', p.get('htpw-copy').textContent === STRINGS[lang].copied);
+    p.get('htpw-random').click();
+    check(lang + ' Random produces twenty allowed characters', /^[ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789]{20}$/.test(p.get('htpw-pass').value));
+    check(lang + ' Random requires generation again', p.get('htpw-out').hidden && p.get('htpw-line').textContent === '');
+    p.type('htpw-user', 'bad:name'); p.get('htpw-generate').click(); await settleRead();
+    check(lang + ' invalid username shows a localized error and no result', p.get('htpw-status').textContent === STRINGS[lang].statusFix && p.get('htpw-out').hidden);
+    p.clear();
+    check(lang + ' shortcut clears inputs and all generated UI', !p.get('htpw-user').value && !p.get('htpw-pass').value && !p.get('htpw-status').textContent && p.get('htpw-out').hidden);
+  }
+  {
+    const p = page();
+    for (const [format, cost, rounds] of [['sha512', false, true], ['apr1', false, false], ['bcrypt-2y', true, false]]) {
+      p.type('htpw-format', format, 'change');
+      check(format + ' reveals only its applicable hash settings', p.get('htpw-cost-wrap').hidden === !cost && p.get('htpw-rounds-wrap').hidden === !rounds);
+    }
+    p.type('htpw-format', 'sha1', 'change');
+    p.type('htpw-batch', '# comment\nalice:password\nbob:password\nalice:duplicate\n');
+    p.get('htpw-batch-run').click(); await settleRead();
+    const result = 'alice:' + shaPassword + '\nbob:' + shaPassword + '\n';
+    check('batch details publish valid users once', p.get('htpw-batch-result').value === result && !p.get('htpw-batch-out').hidden);
+    check('batch status reports the skipped duplicate', p.get('htpw-batch-status').textContent === 'Lines generated: 2. Lines skipped: 1.');
+    p.get('htpw-batch-copy').click(); await settleRead();
+    check('batch Copy reads the whole file', p.copied.at(-1) === result);
+    p.get('htpw-batch-download').click();
+    check('batch Download preserves name and contents', p.downloads.at(-1)?.name === 'htpasswd' && await p.downloads.at(-1).blob.text() === result);
+    p.type('htpw-batch', Array.from({ length: 100 }, (_, i) => 'user' + i + ':password').join('\n'));
+    p.get('htpw-batch-run').click();
+    for (let i = 0; i < 1000 && p.get('htpw-batch-run').disabled; i++) await Promise.resolve();
+    const longResult = Array.from({ length: 100 }, (_, i) => 'user' + i + ':' + shaPassword + '\n').join('');
+    check('long batch keeps every generated line for the bounded textarea', p.get('htpw-batch-result').value === longResult && !p.get('htpw-batch-run').disabled);
+    p.get('htpw-batch-copy').click(); await settleRead();
+    check('long batch copy is not limited to the visible rows', p.copied.at(-1) === longResult);
+    p.get('htpw-batch-download').click();
+    check('long batch download is not limited to the visible rows', await p.downloads.at(-1).blob.text() === longResult);
+    p.clear();
+    check('long batch clears through the real shortcut', p.get('htpw-batch-result').value === '' && p.get('htpw-batch-out').hidden);
+  }
+  {
+    const p = page(); p.type('htpw-user', 'alice'); p.type('htpw-pass', 'password'); p.type('htpw-format', 'sha1', 'change');
+    const original = '# keep\r\nalice:' + shaPassword + '\r\nbob:' + shaPassword + '\r\n';
+    p.openFile().resolve(original); await settleRead();
+    p.get('htpw-check').click(); await settleRead();
+    check('file check verifies the first matching entry', p.get('htpw-file-status').textContent === 'Line 2: the password matches alice (SHA-1 {SHA}).' && p.get('htpw-file-status').className.includes('success'));
+    p.type('htpw-user', 'carol'); p.get('htpw-upsert').click(); await settleRead();
+    const appended = original + 'carol:' + shaPassword + '\r\n';
+    check('file update retains comments and CRLF while appending the new user', p.get('htpw-file').value === appended && !p.get('htpw-file-table').hidden);
+    p.get('htpw-file-copy').click(); await settleRead();
+    check('file Copy reads the edited contents', p.copied.at(-1) === appended);
+    p.get('htpw-file-download').click();
+    check('file Download reads the edited contents', p.downloads.at(-1)?.name === 'htpasswd' && await p.downloads.at(-1).blob.text() === appended);
+    p.get('htpw-remove').click();
+    check('file Remove preserves the other lines', p.get('htpw-file').value === original);
+    p.clear();
+    check('file shortcut clears the editor, table and status', !p.get('htpw-file').value && p.get('htpw-file-table').hidden && !p.get('htpw-file-status').textContent);
+  }
+
+}
+
+// ── P. v2 page layout ──────────────────────────────────────────────────────
+{
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script src='));
+  const css = source.slice(source.indexOf('<style>'));
+  check('generate layout registered', /'htpasswd-generator':\s*'generate'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('root directly owns the body and shared control rail', /^<div class="htpw-wrap">\s*<div class="htpw-body">\s*<div class="htpw-rail zt-rail">/.test(template));
+  check('root is a flex column with zero minimum height', /\.htpw-wrap\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column[^}]*min-height:\s*0/.test(css));
+  check('rail stays between 270 and 320px beside flexible results', /\.htpw-body\s*\{[^}]*grid-template-columns:\s*clamp\(270px,\s*26vw,\s*320px\)\s*minmax\(0,\s*1fr\)/.test(css));
+  const workspace = template.indexOf('class="htpw-workspace"');
+  check('credentials, format and main action precede results', ['htpw-user', 'htpw-pass', 'htpw-format', 'htpw-generate', 'htpw-status'].every(id => template.indexOf('id="' + id + '"') < workspace));
+  check('secondary hash settings, batch and file sections start collapsed', [...template.matchAll(/<details\b[^>]*>/g)].length === 3 && !/<details\b[^>]*\sopen(?:\s|>)/.test(template));
+  check('workspace has zero flex basis and scrolls within its height', /\.htpw-workspace\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
+  check('long file/batch textareas keep bounded height and scroll', /#htpw-batch, #htpw-batch-result, #htpw-file\s*\{[^}]*height:\s*10rem[^}]*max-height:\s*10rem[^}]*resize:\s*none[^}]*overflow:\s*auto/.test(css));
+  check('file table is bounded and keyboard scrollable', /\.htpw-table-wrap\s*\{[^}]*max-height:\s*16rem[^}]*overflow:\s*auto/.test(css) && /id="htpw-file-table"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-label=/.test(template));
+  check('long issue lists are bounded', /\.htpw-issues\s*\{[^}]*max-height:\s*10rem[^}]*overflow:\s*auto/.test(css));
+  check('empty primary status keeps its reserved height', /#htpw-status\s*\{[^}]*height:\s*4rem[^}]*overflow:\s*auto/.test(css) && !/\.tool-status:empty/.test(css));
+  check('file and batch status reserve space before long content', /#htpw-batch-status, #htpw-file-status\s*\{[^}]*min-height:\s*3rem/.test(css));
+  check('format warnings remain directly visible', /<p id="htpw-compat" class="htpw-compat"><\/p>/.test(template) && template.indexOf('id="htpw-compat"') < template.indexOf('id="htpw-batch-section"'));
+  check('phone stacks at 860px with 640px detail rules', /@media \(max-width: 860px\)/.test(css) && /@media \(max-width: 640px\)/.test(css));
+  check('phone hides the empty preview but retains warnings', /\.htpw-preview:has\(\.htpw-out\[hidden\]\)\s*\{\s*display:\s*none/.test(css) && !/\.htpw-compat[^}]*display:\s*none/.test(css));
+  check('tips are removed from serialized client strings', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = L/.test(source) && /define:vars=\{\{ S: CLIENT_T \}\}/.test(source));
+  check('copy is rendered at build time without data-i18n rewriting', !source.includes('data-i18n'));
+  const actions = ['random', 'generate', 'copy', 'batch-run', 'batch-copy', 'batch-download', 'open', 'check', 'upsert', 'remove', 'file-copy', 'file-download'];
+  check('all twelve original actions remain exactly once', actions.every(id => [...template.matchAll(new RegExp('<button id="htpw-' + id + '"', 'g'))].length === 1));
+  const tips = ['user', 'pass', 'format', 'cost', 'rounds', 'result', 'command', 'batch', 'file', 'check'];
+  check('ten distinct control tips', [...template.matchAll(/<Toggletip id="htpw-tip-([^" ]+)"/g)].map(m => m[1]).sort().join() === [...tips].sort().join());
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    check(lang + ' matching tip keys', Object.keys(STRINGS[lang].tips).sort().join() === [...tips].sort().join());
+    check(lang + ' every tip has text', tips.every(key => typeof STRINGS[lang].tips[key] === 'string' && STRINGS[lang].tips[key].length > 20));
+    check(lang + ' batch tip uses the actual action name', STRINGS[lang].tips.batch.includes(STRINGS[lang].batchRun));
+    check(lang + ' localized result label and empty state', !!STRINGS[lang].resultTitle && !!STRINGS[lang].resultEmpty && template.includes('data-empty={L.resultEmpty}'));
+    const mdx = readFileSync(join(root, 'src/content/tools/htpasswd-generator', lang + '.mdx'), 'utf8');
+    const steps = (/^steps:\n([\s\S]*?)(?=^\S)/m.exec(mdx)?.[1].match(/^  - .+$/gm) || []).map(line => JSON.parse(line.slice(4)));
+    check(lang + ' six steps fit content limits', steps.length === 6 && steps.every(step => step.length <= 280) && steps.join('').length <= 1200);
+    check(lang + ' steps identify settings and the real main action', steps.some(step => step.includes(STRINGS[lang].moreOptions)) && steps.some(step => step.includes(STRINGS[lang].generate)));
+    check(lang + ' HowTo moved out of reference content', !/^## (?:How to Use|怎么用|使い方|사용 방법)$/m.test(mdx));
+    check(lang + ' Limits retained', /^## (?:Limits|限制|制限|제한 사항)$/m.test(mdx));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);
