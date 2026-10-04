@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import initSqlJs from 'sql.js';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { load as loadYaml } from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SqliteViewerTool.astro'), 'utf8');
@@ -136,11 +138,11 @@ equal('garbage body rejected by SQLite', err, 'file is not a database');
   const pageScript=source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
   const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
   const shortcut=layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
-  const strings=new Function(source.slice(source.indexOf('var STRINGS = '),source.indexOf('\n      var pageLang'))+';return STRINGS;')();
+  const strings=new Function(source.slice(source.indexOf('const STRINGS = '),source.indexOf('\nconst T = STRINGS[lang]'))+';return STRINGS;')();
   const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};};
   const settle=async()=>{for(let i=0;i<24;i++)await Promise.resolve();};
-  function page(lang='en',shellFirst=false){
-    const ids=new Map(),scripts=[],downloads=[],urls=new Map(),databases=[],cleared=[];
+  function page(lang='en',shellFirst=false,width=1366){
+    const ids=new Map(),scripts=[],downloads=[],urls=new Map(),databases=[],cleared=[],reveals=[];
     const doc={listeners:{},activeElement:null,documentElement:{lang}};
     function matches(node,selector){return selector.split(',').some(s=>{const parts=s.trim().split(/\s+/),last=parts.pop(),attrs=[...last.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)],bare=last.replace(/\[[^\]]*\]/g,''),id=/#([\w-]+)/.exec(bare),classes=[...bare.matchAll(/\.([\w-]+)/g)],tag=/^[\w-]+/.exec(bare);const own=(!id||node.id===id[1])&&(!tag||node.tagName===tag[0].toUpperCase())&&classes.every(c=>node.classList.contains(c[1]))&&attrs.every(a=>a[2]===undefined?node.getAttribute(a[1])!==null:node.getAttribute(a[1])===a[2]);if(!own)return false;let p=node.parentNode;while(parts.length&&p&&p!==doc){if(matches(p,parts.at(-1)))parts.pop();p=p.parentNode;}return!parts.length;});}
     class Element{
@@ -162,19 +164,21 @@ equal('garbage body rejected by SQLite', err, 'file is not a database');
       dispatch(type,extra={}){const e={type,target:this,preventDefault(){this.defaultPrevented=true;},...extra};for(let p=this;p;p=p.parentNode)for(const fn of p.listeners[type]||[])fn(e);return e;}
       click(){if(this.disabled)return;if(this.tagName==='A')downloads.push({name:this.download,blob:urls.get(this.href)});this.dispatch('click');}
       focus(){doc.activeElement=this;}
+      scrollIntoView(options){reveals.push({id:this.id,options});}
     }
     function parseMarkup(markup,parent){const stack=[parent],voids=new Set(['input','br','hr','img','meta','link']);for(const m of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>/g)){const tag=m[1];if(m[0].startsWith('</')){if(stack.at(-1)?.tagName===tag.toUpperCase())stack.pop();continue;}const n=new Element(tag);for(const a of m[2].matchAll(/([\w-]+)="([^"]*)"/g))n.setAttribute(a[1],a[2]);n.hidden=/\bhidden(?=\s|\/|$)/.test(m[2]);n.disabled=/\bdisabled(?=\s|\/|$)/.test(m[2]);stack.at(-1).appendChild(n);if(n.id)ids.set(n.id,n);if(!voids.has(tag)&&!m[2].endsWith('/'))stack.push(n);}}
     const body=new Element('body'),widget=new Element();widget.className='tool-widget';body.appendChild(widget);parseMarkup(source.slice(source.indexOf('\n---',4)+4,source.indexOf('<script')),widget);
     const get=id=>{if(!ids.has(id))throw new Error('Actual markup ID missing '+id);return ids.get(id);};
     Object.assign(doc,{body,head:new Element('head'),getElementById:get,createElement:tag=>new Element(tag),querySelector:s=>s==='.tool-widget'?widget:widget.querySelector(s),querySelectorAll:s=>widget.querySelectorAll(s),addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);},dispatch(type,extra={}){const e={type,target:this.activeElement,preventDefault(){this.defaultPrevented=true;},...extra};for(const fn of this.listeners[type]||[])fn(e);return e;}});
     const trackedSQL={Database:function(data){const db=new SQL.Database(data),close=db.close.bind(db);db.closeCount=0;db.close=()=>{db.closeCount++;close();};databases.push(db);return db;}};
-    const engine=deferred();const context={document:doc,console,Uint8Array,Promise,Blob,setTimeout(){},URL:{createObjectURL(blob){const url='blob:fixture-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(){}},initSqlJs:()=>engine.promise,ztPersist:{clear:slug=>cleared.push(slug)},_slug:'sqlite-viewer'};context.window=context;
+    const engine=deferred();const { tips, ...clientStrings } = strings[lang];
+    const context={document:doc,console,t:clientStrings,pageLang:lang,innerWidth:width,Uint8Array,Promise,Blob,setTimeout(){},URL:{createObjectURL(blob){const url='blob:fixture-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(){}},initSqlJs:()=>engine.promise,ztPersist:{clear:slug=>cleared.push(slug)},_slug:'sqlite-viewer'};context.window=context;
     vm.createContext(context);if(shellFirst)vm.runInContext(shortcut,context);vm.runInContext(pageScript,context);if(!shellFirst)vm.runInContext(shortcut,context);
     function load(name='data.sqlite',data=bytes,size=data.byteLength){const head=deferred(),body=deferred();let reads=0;const file={name,size,slice:()=>({arrayBuffer:()=>head.promise}),arrayBuffer:()=>{reads++;return body.promise;}};get('sqv-file-input').files=[file];get('sqv-file-input').dispatch('change');return{head,body,file,readyHead(){head.resolve(data.slice(0,100).buffer);},readyBody(){body.resolve(data.slice().buffer);},get reads(){return reads;}};}
     async function ready(job){job.readyHead();await settle();if(scripts.at(-1))scripts.at(-1).onload();engine.resolve(trackedSQL);job.readyBody();await settle();}
     function key(focus='sqv-sql'){(focus==='outside'?body:get(focus)).focus();return doc.dispatch('keydown',{key:'l',ctrlKey:true});}
     function snapshot(){return{layout:get('sqv-layout').hidden,meta:get('sqv-meta').hidden,drop:get('sqv-dropzone').hidden,name:get('sqv-meta-name').textContent,status:get('sqv-status').textContent,sql:get('sqv-sql').value,rows:get('sqv-rows').innerHTML,result:get('sqv-result').innerHTML,resultHidden:get('sqv-result-wrap').hidden};}
-    return{get,doc,scripts,engine,trackedSQL,databases,downloads,cleared,load,ready,key,snapshot,dispose(){for(const db of databases)if(!db.closeCount)db.close();}};
+    return{get,doc,scripts,engine,trackedSQL,databases,downloads,cleared,reveals,load,ready,key,snapshot,dispose(){for(const db of databases)if(!db.closeCount)db.close();}};
   }
   {
     const p=page();await p.ready(p.load('positive.sqlite'));
@@ -231,8 +235,67 @@ equal('garbage body rejected by SQLite', err, 'file is not a database');
     p.get('sqv-sql').value='SELECT COUNT(*) AS total FROM users';p.get('sqv-run').click();equal('loaded database remains queryable after invalid selection',p.get('sqv-result').innerHTML.includes('250'),true);p.dispose();
   }
   {
+    const p=page('en',false,390);await p.ready(p.load());equal('phone open reveals bounded results',p.reveals.at(-1).id,'sqv-results');
+    p.get('sqv-results').scrollTop=300;p.get('sqv-sql').value='SELECT 42 AS value';p.get('sqv-run').click();
+    equal('new query resets inner result scroll',p.get('sqv-results').scrollTop,0);equal('phone query reveals current result',p.reveals.at(-1).id,'sqv-result-wrap');p.dispose();
+  }
+  {
+    const p=page(),bad=p.load('bad.sqlite',new Uint8Array(100));bad.readyHead();await settle();equal('invalid header never loads SQLite engine',p.scripts.length,0);equal('invalid header never reads full file',bad.reads,0);p.dispose();
+  }
+  {
     const p=page();await p.ready(p.load());const before=p.snapshot();p.key('outside');equal('outside CtrlL leaves database loaded',p.snapshot(),before);equal('outside CtrlL does not close database',p.databases[0].closeCount,0);p.dispose();
   }
+}
+
+// ---------- v2 page layout ----------
+{
+  const before={passes,failures},check=(name,condition)=>equal(name,!!condition,true);
+  const template=source.slice(source.indexOf('\n---\n')+5,source.indexOf('<script')).trim();
+  const script=source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css=source.slice(source.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g,'').replace(/<\/?style\b[^>]*>/g,'');
+  const rules=selector=>[...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(m=>m[1].split(',').some(s=>s.trim()===selector)).map(m=>m[2]);
+  const prop=(body,key,value)=>new RegExp('(?:^|;)\\s*'+key+'\\s*:\\s*'+value+'\\s*(?:;|$)').test(body);
+  check('analyze layout registered',/'sqlite-viewer':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
+  check('shell is direct root',/^<div class="sqv-shell">/.test(template));
+  check('root flex column can shrink',rules('.sqv-shell').some(r=>prop(r,'display','flex')&&prop(r,'flex-direction','column')&&prop(r,'min-height','0')));
+  check('drop uses shared empty state',/class="sqv-dropzone zt-empty-drop"/.test(template));
+  check('loaded layout keeps flex chain',rules('.sqv-layout:not([hidden])').some(r=>prop(r,'flex','1\\s+1\\s+0')&&prop(r,'min-height','0')));
+  check('full-width results have positive internal scroll area',rules('.sqv-results').some(r=>prop(r,'flex','1\\s+1\\s+0')&&prop(r,'min-width','0')&&prop(r,'min-height','280px')&&prop(r,'overflow','auto')));
+  check('results have fixed mobile height',rules('.sqv-results').some(r=>prop(r,'flex','none')&&prop(r,'height','28rem')&&prop(r,'min-height','0')));
+  check('query and table rows have fixed internal heights',rules('.sqv-results > #sqv-result-wrap').some(r=>prop(r,'height','18rem'))&&rules('.sqv-rows-wrap').some(r=>prop(r,'height','18rem')));
+  check('query editor keeps bounded height',rules('.sqv-sql').some(r=>prop(r,'height','6rem')&&prop(r,'resize','none')));
+  check('status stays visible and has reserved height',rules('.sqv-shell .tool-status').some(r=>prop(r,'height','3em')&&prop(r,'overflow','auto'))&&rules('.sqv-shell .tool-status.none').some(r=>prop(r,'display','block')));
+  check('results accessible by keyboard',/id="sqv-results" tabindex="0" role="region" aria-label=\{T.results\}/.test(template));
+  check('controls and SQL precede full-width results',template.indexOf('id="sqv-sql"')<template.indexOf('id="sqv-results"')&&template.indexOf('id="sqv-run"')<template.indexOf('id="sqv-results"'));
+  check('860 stacks browser and 640 adjusts phone controls',/@media\s*\(max-width:\s*860px\)/.test(css)&&/@media\s*\(max-width:\s*640px\)/.test(css));
+  check('hidden attributes retain precedence',/\.sqv-shell \[hidden\]\s*\{\s*display:\s*none\s*!important/.test(css));
+  check('dynamic grids keep global styles',/<style is:global>/.test(source)&&css.includes('.tool-page .sqv-grid td')&&css.includes('.sqv-object'));
+  check('structure keeps original open default',/<details class="sqv-structure" id="sqv-structure" open>/.test(template));
+  check('network/privacy note stays directly visible',/<p class="sqv-hint sqv-engine-note">\{T.engineNote\}<\/p>/.test(template));
+  check('in-memory mutation consequence stays directly visible',/<p class="sqv-hint">\{T.sqlHint\}<\/p>/.test(template));
+  check('runtime i18n is replaced by build-time output',!source.includes('data-i18n')&&!script.includes('STRINGS')&&/define:vars=\{\{ t: CLIENT_T, pageLang: lang \}\}/.test(source));
+  check('no persistence APIs introduced',!/localStorage|sessionStorage|indexedDB|document\.cookie|ztPersist\.save/.test(script));
+  check('same-site lazy engine paths preserved',script.includes("s.src = '/sql-js/sql-wasm.js'")&&script.includes("return '/sql-js/' + f"));
+  const buttons=[...template.matchAll(/<button\b([^>]*)>/g)].map(m=>m[1]);
+  equal('all existing button identities retained',buttons.map(a=>/\bid="([^"]+)"/.exec(a)?.[1]).sort(),['sqv-reset','sqv-prev','sqv-next','sqv-export-table','sqv-run','sqv-export-query'].sort());
+  const keys=['open','reset','objects','structure','paging','sql','export','values'].sort();
+  const tips=[...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  equal('eight control tips',tips.map(m=>/id="sqv-tip-([^"]+)"/.exec(m[1])?.[1]).sort(),keys);
+  for(const tip of tips){const key=/id="sqv-tip-([^"]+)"/.exec(tip[1])[1];check(key+' tip is localized',/lang=\{lang\}/.test(tip[1])&&/(?:about|text)=\{T\.\w+\}/.test(tip[1])&&tip[2]==='{TIPS.'+key+'}');}
+  const STRINGS=new Function(source.slice(source.indexOf('const STRINGS = '),source.indexOf('\nconst T = STRINGS[lang]'))+';return STRINGS;')();
+  const retained={"en": ["fd52ac0fce237d81", "e6cb329321e42f5f"], "zh": ["1b17ba4b9d79ea8e", "7dac4fd81e3eb1fd"], "ja": ["bf64a1e4068be4c1", "bc0a2abff0b1940b"], "ko": ["9cfe97d117cc7b55", "9c5d0178b1ed5b6a"]};
+  const hash=text=>createHash('sha256').update(text.trim()).digest('hex').slice(0,16);
+  for(const lang of ['en','zh','ja','ko']){
+    const strings=STRINGS[lang];equal(lang+' STRINGS keys match en',Object.keys(strings).sort(),Object.keys(STRINGS.en).sort());equal(lang+' tip keys match',Object.keys(strings.tips).sort(),keys);
+    for(const key of keys)check(lang+'.'+key+' tip is nonempty plain text',typeof strings.tips[key]==='string'&&strings.tips[key].length>0&&!/<[^>]*>|\n/.test(strings.tips[key]));
+    const client=vm.runInNewContext(source.slice(source.indexOf('const T = STRINGS[lang];'),source.indexOf('\n---',source.indexOf('const T = STRINGS[lang];')))+';({TIPS,CLIENT_T})',{STRINGS,lang});
+    equal(lang+' client excludes only tips',Object.keys(client.CLIENT_T).sort(),Object.keys(strings).filter(k=>k!=='tips').sort());check(lang+' tip text absent from serialized client',Object.values(client.TIPS).every(tip=>!JSON.stringify(client.CLIENT_T).includes(JSON.stringify(tip))));
+    const mdx=readFileSync(join(root,'src/content/tools/sqlite-viewer',lang+'.mdx'),'utf8'),[,meta,body]=/^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx),{steps}=loadYaml(meta);
+    check(lang+' steps within plain-text limits',Array.isArray(steps)&&steps.length>0&&steps.length<=8&&steps.every(s=>typeof s==='string'&&s.trim()&&s.length<=280&&!/<[^>]*>/.test(s))&&steps.join('').length<=1200);
+    check(lang+' usage removed and scope retained',!/<h2>(How to inspect a SQLite file|使用步骤|使い方|사용 방법)<\/h2>/.test(body)&&/<h2>(Scope|范围|対応範囲|지원 범위)<\/h2>/.test(body));
+    equal(lang+' FAQ and SEO unchanged',hash(meta.replace(/^steps:\n(?:  .*\n)*/m,'')),retained[lang][0]);equal(lang+' other body unchanged',hash(body),retained[lang][1]);
+  }
+  console.log(`v2 page layout: ${passes-before.passes} passed, ${failures-before.failures} failed`);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

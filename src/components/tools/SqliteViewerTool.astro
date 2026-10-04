@@ -4,15 +4,188 @@
 // the in-memory copy, and exports results as CSV. The engine (/sql-js/, synced
 // from node_modules by scripts/sync-sql-js.mjs) is fetched only after a file
 // passes the header check. No upload, no persistence.
+import Toggletip from '../Toggletip.astro';
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+const STRINGS = {
+  en: {
+    tips: {
+      open: "Open one SQLite 3 file up to 100 MB (100 × 1024 × 1024 bytes). Only the main file is read: encrypted databases and -wal or -journal sidecars are not opened. The first 100 bytes are checked before the engine loads.",
+      reset: "Open another file closes the in-memory database and clears its queries and results. Ctrl+L / ⌘L does the same while focus is in this tool. Pending file reads cannot restore a cleared database.",
+      objects: "Choose a table or view to inspect its structure and rows. Internal sqlite_ objects are hidden. Table counts show all rows; a count that SQLite cannot read appears as a dash.",
+      structure: "Shows column names, types, primary keys, defaults, indexes and the stored CREATE statement. Open or close Structure to change how much detail you see.",
+      paging: "Previous and Next browse 100 rows at a time. Export CSV for a table or view includes all rows, beyond the current page.",
+      sql: "Run SQL or Ctrl+Enter / ⌘Enter executes the statements against the in-memory copy. The last statement that returns columns supplies the result; only the first 1,000 rows are displayed.",
+      'export': "Table export includes the whole selected table or view. Query export includes every row in the last query result. NULL becomes an empty CSV field; BLOBs become full uppercase hexadecimal values.",
+      values: "NULL is labeled in the grid. BLOBs show their byte length and first 16 bytes as hexadecimal. Long text is clipped in cells; its hover text includes up to 2,000 characters.",
+    },
+    fileHelp: "File formats and limits",
+    results: "Results",
+    engineNote: "The SQLite engine loads from this site after the file header check. Database files stay on your device.",
+    dropTitle: 'Drop a SQLite file here',
+    dropHint: '.db · .sqlite · .sqlite3 — up to 100 MB · or click to choose · never uploaded',
+    openAnother: 'Open another file',
+    tables: 'Tables', views: 'Views', noObjects: 'No tables or views in this database.',
+    typeTable: 'table', typeView: 'view',
+    nTables: '{n} table(s)', nViews: '{n} view(s)', nRows: '{n} row(s)', countUnknown: 'rows: —',
+    structure: 'Structure', indexes: 'Indexes', createSql: 'CREATE statement', noIndexes: 'No indexes.',
+    colName: 'Column', colType: 'Type', colNotNull: 'Not null', colDefault: 'Default', colPk: 'PK',
+    idxName: 'Index', idxUnique: 'Unique', idxColumns: 'Columns', idxOrigin: 'Origin', yes: 'yes',
+    prev: 'Previous', next: 'Next', exportCsv: 'Export CSV',
+    rowsRange: 'Rows {a}–{b} of {n}', noRows: 'No rows.', pageUnknown: 'Page {p}',
+    sqlLabel: 'SQL',
+    sqlHint: 'Runs against an in-memory copy. The file on your disk is never modified; changes vanish on reload.',
+    run: 'Run SQL',
+    reading: 'Reading {name}…', loadingEngine: 'Loading the SQLite engine (about 340 KB, first file only)…',
+    opened: 'Opened {name} — {t} table(s), {v} view(s).',
+    notSqlite: 'Not a SQLite 3 database: the file does not start with the "SQLite format 3" header. Encrypted databases (SQLCipher, SEE) look like this too — decrypt them with sqlcipher or open them in DB Browser for SQLite.',
+    tooBig: 'File is {size}. The limit is 100 MB because the whole database is held in memory — use the sqlite3 CLI or DB Browser for SQLite for larger files.',
+    engineFailed: 'Could not load the SQLite engine. Check your connection and try again.',
+    openFailed: 'SQLite could not open this file: {msg}',
+    emptySql: 'Type a SQL statement first.',
+    queryDone: 'Done. {n} row(s) changed in the in-memory copy.',
+    queryRows: '{n} row(s).',
+    queryCapped: 'Showing the first {cap} of {n} rows. Export CSV includes all rows.',
+    sqlError: 'SQL error: {msg}',
+    exported: 'Exported {n} row(s) to {file}.',
+  },
+  zh: {
+    tips: {
+      open: "打开单个不超过 100 MB（100 × 1024 × 1024 字节）的 SQLite 3 文件。只读取主文件，不打开加密库和 -wal、-journal 附属文件。先检查文件前 100 字节，再加载引擎。",
+      reset: "打开其他文件会关闭内存数据库并清空查询和结果。焦点在工具内时，Ctrl+L / ⌘L 执行相同清理。未完成的旧文件读取不会恢复已清空的数据库。",
+      objects: "选择表或视图查看结构和数据行。隐藏内部 sqlite_ 对象。表行数统计覆盖全部行；SQLite 无法读取行数时显示横线。",
+      structure: "显示列名、类型、主键、默认值、索引及保存的 CREATE 语句。展开或收起结构可调整可见细节。",
+      paging: "上一页和下一页按每页 100 行浏览。表或视图的导出 CSV 包含全部行，超出当前页的行也会导出。",
+      sql: "点执行 SQL 或按 Ctrl+Enter / ⌘Enter，在内存副本上执行语句。结果采用最后一条返回列的语句，只显示前 1,000 行。",
+      'export': "表导出包含当前表或视图的全部行；查询导出包含上次查询结果的全部行。NULL 导出为空字段，BLOB 导出为完整的大写十六进制值。",
+      values: "表格用 NULL 标记空值。BLOB 显示字节数和前 16 字节的十六进制。长文本在单元格内截断，悬停文字最多显示 2,000 个字符。",
+    },
+    fileHelp: "文件格式与限制",
+    results: "结果",
+    engineNote: "文件头检查通过后，从本站加载 SQLite 引擎。数据库文件保留在本机。",
+    dropTitle: '将 SQLite 文件拖到这里',
+    dropHint: '.db · .sqlite · .sqlite3，最大 100 MB · 或点击选择 · 文件不上传',
+    openAnother: '打开其他文件',
+    tables: '表', views: '视图', noObjects: '该数据库没有表或视图。',
+    typeTable: '表', typeView: '视图',
+    nTables: '{n} 张表', nViews: '{n} 个视图', nRows: '{n} 行', countUnknown: '行数：—',
+    structure: '结构', indexes: '索引', createSql: 'CREATE 语句', noIndexes: '没有索引。',
+    colName: '列名', colType: '类型', colNotNull: '非空', colDefault: '默认值', colPk: '主键',
+    idxName: '索引', idxUnique: '唯一', idxColumns: '列', idxOrigin: '来源', yes: '是',
+    prev: '上一页', next: '下一页', exportCsv: '导出 CSV',
+    rowsRange: '第 {a}–{b} 行，共 {n} 行', noRows: '没有数据行。', pageUnknown: '第 {p} 页',
+    sqlLabel: 'SQL',
+    sqlHint: '在内存副本上执行。磁盘上的原文件永远不会被修改，刷新页面后改动消失。',
+    run: '执行 SQL',
+    reading: '正在读取 {name}…', loadingEngine: '正在加载 SQLite 引擎（约 340 KB，仅首次）…',
+    opened: '已打开 {name}：{t} 张表，{v} 个视图。',
+    notSqlite: '不是 SQLite 3 数据库：文件开头没有 "SQLite format 3" 文件头。加密数据库（SQLCipher、SEE）也会这样——请先用 sqlcipher 解密，或用 DB Browser for SQLite 打开。',
+    tooBig: '文件大小 {size}。上限为 100 MB，因为整个数据库要载入内存——更大的文件请用 sqlite3 命令行或 DB Browser for SQLite。',
+    engineFailed: 'SQLite 引擎加载失败，请检查网络后重试。',
+    openFailed: 'SQLite 无法打开此文件：{msg}',
+    emptySql: '请先输入 SQL 语句。',
+    queryDone: '执行完成。内存副本中 {n} 行被修改。',
+    queryRows: '{n} 行。',
+    queryCapped: '仅显示前 {cap} 行，共 {n} 行。导出 CSV 包含全部行。',
+    sqlError: 'SQL 错误：{msg}',
+    exported: '已导出 {n} 行到 {file}。',
+  },
+  ja: {
+    tips: {
+      open: "100 MB（100 × 1024 × 1024 バイト）までの SQLite 3 ファイルを 1 つ開きます。メインファイルだけを読み、暗号化 DB や -wal・-journal ファイルは開きません。先頭 100 バイトを確認してからエンジンを読み込みます。",
+      reset: "別のファイルを開くは、メモリ上の DB を閉じて SQL と結果を消します。ツール内にフォーカスがあるときの Ctrl+L / ⌘L も同じです。古い読み込みが完了しても消した DB は復元されません。",
+      objects: "テーブルかビューを選んで構造と行を確認します。内部の sqlite_ オブジェクトは非表示です。テーブルの件数は全行を数え、SQLite が件数を読めない場合は横線を表示します。",
+      structure: "列名・型・主キー・デフォルト・インデックス・保存された CREATE 文を表示します。構造を開閉して詳細の表示を調整できます。",
+      paging: "前へ・次へで 100 行ずつ閲覧します。テーブルやビューの CSV エクスポートには、現在のページ以外も含む全行が入ります。",
+      sql: "SQL 実行か Ctrl+Enter / ⌘Enter でメモリ上のコピーに文を実行します。列を返す最後の文を結果として使い、先頭 1,000 行だけを表示します。",
+      'export': "テーブルのエクスポートは選択したテーブルやビューの全行、クエリのエクスポートは直前の結果の全行を含みます。NULL は空フィールド、BLOB は全内容の大文字 16 進表記になります。",
+      values: "表の NULL は明示します。BLOB はバイト数と先頭 16 バイトの 16 進表記を表示。長文はセル内で省略し、ホバーのテキストは最大 2,000 文字です。",
+    },
+    fileHelp: "ファイル形式と上限",
+    results: "結果",
+    engineNote: "ファイルのヘッダー確認後、このサイトから SQLite エンジンを読み込みます。DB ファイルは端末内に留まります。",
+    dropTitle: 'SQLite ファイルをここにドロップ',
+    dropHint: '.db · .sqlite · .sqlite3、最大 100 MB · クリックで選択 · アップロードなし',
+    openAnother: '別のファイルを開く',
+    tables: 'テーブル', views: 'ビュー', noObjects: 'このデータベースにはテーブルもビューもありません。',
+    typeTable: 'テーブル', typeView: 'ビュー',
+    nTables: 'テーブル {n}', nViews: 'ビュー {n}', nRows: '{n} 行', countUnknown: '行数：—',
+    structure: '構造', indexes: 'インデックス', createSql: 'CREATE 文', noIndexes: 'インデックスはありません。',
+    colName: '列名', colType: '型', colNotNull: 'NOT NULL', colDefault: 'デフォルト', colPk: 'PK',
+    idxName: 'インデックス', idxUnique: '一意', idxColumns: '列', idxOrigin: '由来', yes: 'はい',
+    prev: '前へ', next: '次へ', exportCsv: 'CSV エクスポート',
+    rowsRange: '{n} 行中 {a}–{b} 行目', noRows: '行がありません。', pageUnknown: '{p} ページ',
+    sqlLabel: 'SQL',
+    sqlHint: 'メモリ上のコピーに対して実行します。ディスク上の元ファイルは変更されず、再読み込みで変更は消えます。',
+    run: 'SQL 実行',
+    reading: '{name} を読み込み中…', loadingEngine: 'SQLite エンジンを読み込み中（約 340 KB、初回のみ）…',
+    opened: '{name} を開きました：テーブル {t}、ビュー {v}。',
+    notSqlite: 'SQLite 3 データベースではありません：ファイル先頭に "SQLite format 3" ヘッダーがありません。暗号化 DB（SQLCipher、SEE）も同様です。sqlcipher で復号するか、DB Browser for SQLite で開いてください。',
+    tooBig: 'ファイルサイズ {size}。データベース全体をメモリに載せるため上限は 100 MB です。大きなファイルは sqlite3 CLI か DB Browser for SQLite を使ってください。',
+    engineFailed: 'SQLite エンジンを読み込めませんでした。接続を確認して再試行してください。',
+    openFailed: 'SQLite がこのファイルを開けません：{msg}',
+    emptySql: 'SQL 文を入力してください。',
+    queryDone: '完了。メモリ上のコピーで {n} 行が変更されました。',
+    queryRows: '{n} 行。',
+    queryCapped: '{n} 行中、先頭 {cap} 行を表示。CSV エクスポートには全行が含まれます。',
+    sqlError: 'SQL エラー：{msg}',
+    exported: '{n} 行を {file} にエクスポートしました。',
+  },
+  ko: {
+    tips: {
+      open: "100 MB(100 × 1024 × 1024바이트) 이하의 SQLite 3 파일 하나를 여세요. 주 파일만 읽으며 암호화 DB와 -wal, -journal 부속 파일은 열지 않습니다. 처음 100바이트를 검사한 뒤 엔진을 불러옵니다.",
+      reset: "다른 파일 열기는 메모리 DB를 닫고 SQL과 결과를 지웁니다. 도구 안에 포커스가 있을 때 Ctrl+L / ⌘L도 같은 작업을 합니다. 이전 읽기가 끝나도 지운 DB가 복원되지 않습니다.",
+      objects: "테이블이나 뷰를 선택해 구조와 행을 확인하세요. 내부 sqlite_ 객체는 숨깁니다. 테이블의 행 수는 전체 행을 세며 SQLite가 수를 읽지 못하면 대시로 표시합니다.",
+      structure: "컬럼 이름, 타입, 기본 키, 기본값, 인덱스, 저장된 CREATE 문을 보여 줍니다. 구조를 열거나 닫아 상세 표시를 조절하세요.",
+      paging: "이전과 다음으로 100행씩 봅니다. 테이블이나 뷰의 CSV 내보내기는 현재 페이지 밖의 행까지 모두 포함합니다.",
+      sql: "SQL 실행 또는 Ctrl+Enter / ⌘Enter로 메모리 복사본에서 문장을 실행합니다. 열을 반환하는 마지막 문장이 결과를 제공하며 처음 1,000행만 표시합니다.",
+      'export': "테이블 내보내기는 선택한 테이블이나 뷰의 모든 행을, 쿼리 내보내기는 마지막 결과의 모든 행을 포함합니다. NULL은 빈 필드, BLOB은 전체 내용의 대문자 16진수로 내보냅니다.",
+      values: "표에서 NULL은 표시됩니다. BLOB은 바이트 수와 앞 16바이트를 16진수로 보여 줍니다. 긴 텍스트는 셀 안에서 잘리며 마우스를 올리면 최대 2,000자를 표시합니다.",
+    },
+    fileHelp: "파일 형식과 제한",
+    results: "결과",
+    engineNote: "파일 헤더 검사 후 이 사이트에서 SQLite 엔진을 불러옵니다. DB 파일은 기기 안에 남습니다.",
+    dropTitle: 'SQLite 파일을 여기에 드롭',
+    dropHint: '.db · .sqlite · .sqlite3, 최대 100 MB · 클릭해서 선택 · 업로드 없음',
+    openAnother: '다른 파일 열기',
+    tables: '테이블', views: '뷰', noObjects: '이 데이터베이스에는 테이블이나 뷰가 없습니다.',
+    typeTable: '테이블', typeView: '뷰',
+    nTables: '테이블 {n}개', nViews: '뷰 {n}개', nRows: '{n}행', countUnknown: '행 수: —',
+    structure: '구조', indexes: '인덱스', createSql: 'CREATE 문', noIndexes: '인덱스가 없습니다.',
+    colName: '컬럼', colType: '타입', colNotNull: 'NOT NULL', colDefault: '기본값', colPk: 'PK',
+    idxName: '인덱스', idxUnique: '고유', idxColumns: '컬럼', idxOrigin: '출처', yes: '예',
+    prev: '이전', next: '다음', exportCsv: 'CSV 내보내기',
+    rowsRange: '전체 {n}행 중 {a}–{b}행', noRows: '행이 없습니다.', pageUnknown: '{p} 페이지',
+    sqlLabel: 'SQL',
+    sqlHint: '메모리 복사본에서 실행됩니다. 디스크의 원본 파일은 변경되지 않으며, 새로고침하면 변경 내용이 사라집니다.',
+    run: 'SQL 실행',
+    reading: '{name} 읽는 중…', loadingEngine: 'SQLite 엔진 로딩 중 (약 340 KB, 최초 1회)…',
+    opened: '{name} 열림 — 테이블 {t}개, 뷰 {v}개.',
+    notSqlite: 'SQLite 3 데이터베이스가 아닙니다. 파일이 "SQLite format 3" 헤더로 시작하지 않습니다. 암호화된 DB(SQLCipher, SEE)도 이렇게 보입니다. sqlcipher로 복호화하거나 DB Browser for SQLite로 여세요.',
+    tooBig: '파일 크기 {size}. 데이터베이스 전체를 메모리에 올리므로 최대 100 MB입니다. 더 큰 파일은 sqlite3 CLI나 DB Browser for SQLite를 사용하세요.',
+    engineFailed: 'SQLite 엔진을 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.',
+    openFailed: 'SQLite가 이 파일을 열 수 없습니다: {msg}',
+    emptySql: '먼저 SQL 문을 입력하세요.',
+    queryDone: '완료. 메모리 복사본에서 {n}행이 변경되었습니다.',
+    queryRows: '{n}행.',
+    queryCapped: '전체 {n}행 중 처음 {cap}행만 표시합니다. CSV 내보내기에는 모든 행이 포함됩니다.',
+    sqlError: 'SQL 오류: {msg}',
+    exported: '{n}행을 {file}(으)로 내보냈습니다.',
+  },
+};
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
+
 ---
 
-<div>
-  <div class="sqv-shell">
-    <div class="sqv-dropzone" id="sqv-dropzone" tabindex="0" role="button" aria-label="Choose SQLite file">
+<div class="sqv-shell">
+    <div class="sqv-control sqv-file-help"><Toggletip id="sqv-tip-open" lang={lang} text={T.fileHelp}>{TIPS.open}</Toggletip></div>
+    <p class="sqv-hint sqv-engine-note">{T.engineNote}</p>
+    <div class="sqv-dropzone zt-empty-drop" id="sqv-dropzone" tabindex="0" role="button" aria-label={T.dropTitle}>
       <input type="file" id="sqv-file-input" accept=".db,.sqlite,.sqlite3,.db3,application/vnd.sqlite3,application/x-sqlite3" hidden />
       <svg class="sqv-dropzone-icon" xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
-      <p class="sqv-dropzone-title" data-i18n="dropTitle">Drop a SQLite file here</p>
-      <p class="sqv-dropzone-hint" data-i18n="dropHint">.db · .sqlite · .sqlite3 — up to 100 MB · or click to choose · never uploaded</p>
+      <p class="sqv-dropzone-title">{T.dropTitle}</p>
+      <p class="sqv-dropzone-hint">{T.dropHint}</p>
     </div>
 
     <div class="sqv-meta" id="sqv-meta" hidden>
@@ -20,54 +193,58 @@
       <span class="sqv-pill" id="sqv-meta-size">—</span>
       <span class="sqv-pill" id="sqv-meta-tables">—</span>
       <span class="sqv-pill" id="sqv-meta-views">—</span>
-      <button class="btn-ghost sqv-reset" id="sqv-reset" type="button" data-i18n="openAnother">Open another file</button>
+      <span class="sqv-control sqv-reset"><button class="btn-ghost" id="sqv-reset" type="button">{T.openAnother}</button><Toggletip id="sqv-tip-reset" lang={lang} about={T.openAnother}>{TIPS.reset}</Toggletip></span>
     </div>
 
     <div class="tool-status none" id="sqv-status" aria-live="polite"></div>
 
     <div class="sqv-layout" id="sqv-layout" hidden>
-      <nav class="sqv-objects" id="sqv-objects" aria-label="Tables and views"></nav>
+      <section class="sqv-card sqv-query">
+        <div class="sqv-control"><label class="tool-label" for="sqv-sql">{T.sqlLabel}</label><Toggletip id="sqv-tip-sql" lang={lang} about={T.sqlLabel}>{TIPS.sql}</Toggletip></div>
+        <p class="sqv-hint">{T.sqlHint}</p>
+        <textarea id="sqv-sql" class="tool-textarea sqv-sql" rows="5" spellcheck="false" autocomplete="off"></textarea>
+        <div class="sqv-query-actions">
+          <button class="btn-primary" id="sqv-run" type="button">{T.run}</button>
+          <button class="btn-ghost" id="sqv-export-query" type="button" disabled>{T.exportCsv}</button><Toggletip id="sqv-tip-export" lang={lang} about={T.exportCsv}>{TIPS.export}</Toggletip>
+        </div>
+        <div class="tool-status none" id="sqv-query-status" aria-live="polite"></div>
+      </section>
+      <div class="sqv-results" id="sqv-results" tabindex="0" role="region" aria-label={T.results}>
+        <div class="sqv-grid-wrap" id="sqv-result-wrap" hidden><table class="sqv-grid" id="sqv-result"></table></div>
+      <div class="sqv-browser">
+      <div class="sqv-object-pane"><div class="sqv-control"><span class="tool-label">{T.tables} / {T.views}</span><Toggletip id="sqv-tip-objects" lang={lang} about={T.tables}>{TIPS.objects}</Toggletip></div><nav class="sqv-objects" id="sqv-objects" aria-label={`${T.tables} / ${T.views}`}></nav></div>
 
       <section class="sqv-card sqv-browse">
         <div class="sqv-browse-head">
           <h3 class="sqv-object-title" id="sqv-object-title">—</h3>
-          <span class="sqv-object-sub" id="sqv-object-sub"></span>
+          <span class="sqv-object-sub" id="sqv-object-sub"></span><Toggletip id="sqv-tip-structure" lang={lang} about={T.structure}>{TIPS.structure}</Toggletip>
         </div>
 
         <details class="sqv-structure" id="sqv-structure" open>
-          <summary data-i18n="structure">Structure</summary>
+          <summary>{T.structure}</summary>
           <div class="sqv-grid-wrap sqv-grid-wrap-sm"><table class="sqv-grid" id="sqv-columns"></table></div>
-          <p class="sqv-subhead" data-i18n="indexes">Indexes</p>
+          <p class="sqv-subhead">{T.indexes}</p>
           <div id="sqv-indexes"></div>
-          <p class="sqv-subhead" data-i18n="createSql">CREATE statement</p>
+          <p class="sqv-subhead">{T.createSql}</p>
           <pre class="sqv-create"><code id="sqv-create"></code></pre>
         </details>
 
         <div class="sqv-pager-actions">
-          <button class="btn-secondary" id="sqv-prev" type="button" data-i18n="prev">Previous</button>
-          <span class="sqv-range" id="sqv-range" aria-live="polite"></span>
-          <button class="btn-secondary" id="sqv-next" type="button" data-i18n="next">Next</button>
-          <button class="btn-ghost" id="sqv-export-table" type="button" data-i18n="exportCsv">Export CSV</button>
+          <button class="btn-secondary" id="sqv-prev" type="button">{T.prev}</button>
+          <span class="sqv-range" id="sqv-range" aria-live="polite"></span><Toggletip id="sqv-tip-paging" lang={lang} about={T.next}>{TIPS.paging}</Toggletip>
+          <button class="btn-secondary" id="sqv-next" type="button">{T.next}</button>
+          <button class="btn-ghost" id="sqv-export-table" type="button">{T.exportCsv}</button>
         </div>
         <div class="tool-status none" id="sqv-browse-status" aria-live="polite"></div>
-        <div class="sqv-grid-wrap"><table class="sqv-grid" id="sqv-rows"></table></div>
+        <div class="sqv-control"><span class="tool-label">{T.results}</span><Toggletip id="sqv-tip-values" lang={lang} about={T.results}>{TIPS.values}</Toggletip></div>
+        <div class="sqv-grid-wrap sqv-rows-wrap"><table class="sqv-grid" id="sqv-rows"></table></div>
       </section>
 
-      <section class="sqv-card sqv-query">
-        <label class="tool-label" for="sqv-sql" data-i18n="sqlLabel">SQL</label>
-        <p class="sqv-hint" data-i18n="sqlHint">Runs against an in-memory copy. The file on your disk is never modified; changes vanish on reload.</p>
-        <textarea id="sqv-sql" class="tool-textarea sqv-sql" rows="5" spellcheck="false" autocomplete="off"></textarea>
-        <div class="sqv-query-actions">
-          <button class="btn-primary" id="sqv-run" type="button" data-i18n="run">Run SQL</button>
-          <button class="btn-ghost" id="sqv-export-query" type="button" data-i18n="exportCsv" disabled>Export CSV</button>
-        </div>
-        <div class="tool-status none" id="sqv-query-status" aria-live="polite"></div>
-        <div class="sqv-grid-wrap" id="sqv-result-wrap" hidden><table class="sqv-grid" id="sqv-result"></table></div>
-      </section>
+      </div>
+      </div>
     </div>
-  </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T, pageLang: lang }}>
     (function () {
       /* ── engine:start ── */
       var MAX_BYTES = 100 * 1024 * 1024;
@@ -167,132 +344,12 @@
       }
       /* ── engine:end ── */
 
-      var STRINGS = {
-        en: {
-          dropTitle: 'Drop a SQLite file here',
-          dropHint: '.db · .sqlite · .sqlite3 — up to 100 MB · or click to choose · never uploaded',
-          openAnother: 'Open another file',
-          tables: 'Tables', views: 'Views', noObjects: 'No tables or views in this database.',
-          typeTable: 'table', typeView: 'view',
-          nTables: '{n} table(s)', nViews: '{n} view(s)', nRows: '{n} row(s)', countUnknown: 'rows: —',
-          structure: 'Structure', indexes: 'Indexes', createSql: 'CREATE statement', noIndexes: 'No indexes.',
-          colName: 'Column', colType: 'Type', colNotNull: 'Not null', colDefault: 'Default', colPk: 'PK',
-          idxName: 'Index', idxUnique: 'Unique', idxColumns: 'Columns', idxOrigin: 'Origin', yes: 'yes',
-          prev: 'Previous', next: 'Next', exportCsv: 'Export CSV',
-          rowsRange: 'Rows {a}–{b} of {n}', noRows: 'No rows.', pageUnknown: 'Page {p}',
-          sqlLabel: 'SQL',
-          sqlHint: 'Runs against an in-memory copy. The file on your disk is never modified; changes vanish on reload.',
-          run: 'Run SQL',
-          reading: 'Reading {name}…', loadingEngine: 'Loading the SQLite engine (about 340 KB, first file only)…',
-          opened: 'Opened {name} — {t} table(s), {v} view(s).',
-          notSqlite: 'Not a SQLite 3 database: the file does not start with the "SQLite format 3" header. Encrypted databases (SQLCipher, SEE) look like this too — decrypt them with sqlcipher or open them in DB Browser for SQLite.',
-          tooBig: 'File is {size}. The limit is 100 MB because the whole database is held in memory — use the sqlite3 CLI or DB Browser for SQLite for larger files.',
-          engineFailed: 'Could not load the SQLite engine. Check your connection and try again.',
-          openFailed: 'SQLite could not open this file: {msg}',
-          emptySql: 'Type a SQL statement first.',
-          queryDone: 'Done. {n} row(s) changed in the in-memory copy.',
-          queryRows: '{n} row(s).',
-          queryCapped: 'Showing the first {cap} of {n} rows. Export CSV includes all rows.',
-          sqlError: 'SQL error: {msg}',
-          exported: 'Exported {n} row(s) to {file}.',
-        },
-        zh: {
-          dropTitle: '将 SQLite 文件拖到这里',
-          dropHint: '.db · .sqlite · .sqlite3，最大 100 MB · 或点击选择 · 文件不上传',
-          openAnother: '打开其他文件',
-          tables: '表', views: '视图', noObjects: '该数据库没有表或视图。',
-          typeTable: '表', typeView: '视图',
-          nTables: '{n} 张表', nViews: '{n} 个视图', nRows: '{n} 行', countUnknown: '行数：—',
-          structure: '结构', indexes: '索引', createSql: 'CREATE 语句', noIndexes: '没有索引。',
-          colName: '列名', colType: '类型', colNotNull: '非空', colDefault: '默认值', colPk: '主键',
-          idxName: '索引', idxUnique: '唯一', idxColumns: '列', idxOrigin: '来源', yes: '是',
-          prev: '上一页', next: '下一页', exportCsv: '导出 CSV',
-          rowsRange: '第 {a}–{b} 行，共 {n} 行', noRows: '没有数据行。', pageUnknown: '第 {p} 页',
-          sqlLabel: 'SQL',
-          sqlHint: '在内存副本上执行。磁盘上的原文件永远不会被修改，刷新页面后改动消失。',
-          run: '执行 SQL',
-          reading: '正在读取 {name}…', loadingEngine: '正在加载 SQLite 引擎（约 340 KB，仅首次）…',
-          opened: '已打开 {name}：{t} 张表，{v} 个视图。',
-          notSqlite: '不是 SQLite 3 数据库：文件开头没有 "SQLite format 3" 文件头。加密数据库（SQLCipher、SEE）也会这样——请先用 sqlcipher 解密，或用 DB Browser for SQLite 打开。',
-          tooBig: '文件大小 {size}。上限为 100 MB，因为整个数据库要载入内存——更大的文件请用 sqlite3 命令行或 DB Browser for SQLite。',
-          engineFailed: 'SQLite 引擎加载失败，请检查网络后重试。',
-          openFailed: 'SQLite 无法打开此文件：{msg}',
-          emptySql: '请先输入 SQL 语句。',
-          queryDone: '执行完成。内存副本中 {n} 行被修改。',
-          queryRows: '{n} 行。',
-          queryCapped: '仅显示前 {cap} 行，共 {n} 行。导出 CSV 包含全部行。',
-          sqlError: 'SQL 错误：{msg}',
-          exported: '已导出 {n} 行到 {file}。',
-        },
-        ja: {
-          dropTitle: 'SQLite ファイルをここにドロップ',
-          dropHint: '.db · .sqlite · .sqlite3、最大 100 MB · クリックで選択 · アップロードなし',
-          openAnother: '別のファイルを開く',
-          tables: 'テーブル', views: 'ビュー', noObjects: 'このデータベースにはテーブルもビューもありません。',
-          typeTable: 'テーブル', typeView: 'ビュー',
-          nTables: 'テーブル {n}', nViews: 'ビュー {n}', nRows: '{n} 行', countUnknown: '行数：—',
-          structure: '構造', indexes: 'インデックス', createSql: 'CREATE 文', noIndexes: 'インデックスはありません。',
-          colName: '列名', colType: '型', colNotNull: 'NOT NULL', colDefault: 'デフォルト', colPk: 'PK',
-          idxName: 'インデックス', idxUnique: '一意', idxColumns: '列', idxOrigin: '由来', yes: 'はい',
-          prev: '前へ', next: '次へ', exportCsv: 'CSV エクスポート',
-          rowsRange: '{n} 行中 {a}–{b} 行目', noRows: '行がありません。', pageUnknown: '{p} ページ',
-          sqlLabel: 'SQL',
-          sqlHint: 'メモリ上のコピーに対して実行します。ディスク上の元ファイルは変更されず、再読み込みで変更は消えます。',
-          run: 'SQL 実行',
-          reading: '{name} を読み込み中…', loadingEngine: 'SQLite エンジンを読み込み中（約 340 KB、初回のみ）…',
-          opened: '{name} を開きました：テーブル {t}、ビュー {v}。',
-          notSqlite: 'SQLite 3 データベースではありません：ファイル先頭に "SQLite format 3" ヘッダーがありません。暗号化 DB（SQLCipher、SEE）も同様です。sqlcipher で復号するか、DB Browser for SQLite で開いてください。',
-          tooBig: 'ファイルサイズ {size}。データベース全体をメモリに載せるため上限は 100 MB です。大きなファイルは sqlite3 CLI か DB Browser for SQLite を使ってください。',
-          engineFailed: 'SQLite エンジンを読み込めませんでした。接続を確認して再試行してください。',
-          openFailed: 'SQLite がこのファイルを開けません：{msg}',
-          emptySql: 'SQL 文を入力してください。',
-          queryDone: '完了。メモリ上のコピーで {n} 行が変更されました。',
-          queryRows: '{n} 行。',
-          queryCapped: '{n} 行中、先頭 {cap} 行を表示。CSV エクスポートには全行が含まれます。',
-          sqlError: 'SQL エラー：{msg}',
-          exported: '{n} 行を {file} にエクスポートしました。',
-        },
-        ko: {
-          dropTitle: 'SQLite 파일을 여기에 드롭',
-          dropHint: '.db · .sqlite · .sqlite3, 최대 100 MB · 클릭해서 선택 · 업로드 없음',
-          openAnother: '다른 파일 열기',
-          tables: '테이블', views: '뷰', noObjects: '이 데이터베이스에는 테이블이나 뷰가 없습니다.',
-          typeTable: '테이블', typeView: '뷰',
-          nTables: '테이블 {n}개', nViews: '뷰 {n}개', nRows: '{n}행', countUnknown: '행 수: —',
-          structure: '구조', indexes: '인덱스', createSql: 'CREATE 문', noIndexes: '인덱스가 없습니다.',
-          colName: '컬럼', colType: '타입', colNotNull: 'NOT NULL', colDefault: '기본값', colPk: 'PK',
-          idxName: '인덱스', idxUnique: '고유', idxColumns: '컬럼', idxOrigin: '출처', yes: '예',
-          prev: '이전', next: '다음', exportCsv: 'CSV 내보내기',
-          rowsRange: '전체 {n}행 중 {a}–{b}행', noRows: '행이 없습니다.', pageUnknown: '{p} 페이지',
-          sqlLabel: 'SQL',
-          sqlHint: '메모리 복사본에서 실행됩니다. 디스크의 원본 파일은 변경되지 않으며, 새로고침하면 변경 내용이 사라집니다.',
-          run: 'SQL 실행',
-          reading: '{name} 읽는 중…', loadingEngine: 'SQLite 엔진 로딩 중 (약 340 KB, 최초 1회)…',
-          opened: '{name} 열림 — 테이블 {t}개, 뷰 {v}개.',
-          notSqlite: 'SQLite 3 데이터베이스가 아닙니다. 파일이 "SQLite format 3" 헤더로 시작하지 않습니다. 암호화된 DB(SQLCipher, SEE)도 이렇게 보입니다. sqlcipher로 복호화하거나 DB Browser for SQLite로 여세요.',
-          tooBig: '파일 크기 {size}. 데이터베이스 전체를 메모리에 올리므로 최대 100 MB입니다. 더 큰 파일은 sqlite3 CLI나 DB Browser for SQLite를 사용하세요.',
-          engineFailed: 'SQLite 엔진을 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요.',
-          openFailed: 'SQLite가 이 파일을 열 수 없습니다: {msg}',
-          emptySql: '먼저 SQL 문을 입력하세요.',
-          queryDone: '완료. 메모리 복사본에서 {n}행이 변경되었습니다.',
-          queryRows: '{n}행.',
-          queryCapped: '전체 {n}행 중 처음 {cap}행만 표시합니다. CSV 내보내기에는 모든 행이 포함됩니다.',
-          sqlError: 'SQL 오류: {msg}',
-          exported: '{n}행을 {file}(으)로 내보냈습니다.',
-        },
-      };
 
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
       function fmt(key, vars) {
         return t[key].replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? vars[k] : m; });
       }
       function num(n) { return Number(n).toLocaleString(pageLang); }
 
-      document.querySelectorAll('.sqv-shell [data-i18n]').forEach(function (el) {
-        var k = el.getAttribute('data-i18n');
-        if (t[k]) el.textContent = t[k];
-      });
 
       var dropzone = document.getElementById('sqv-dropzone');
       var fileInput = document.getElementById('sqv-file-input');
@@ -526,6 +583,7 @@
         layout.hidden = false;
         var tables = objects.filter(function (o) { return o.type === 'table'; }).length;
         setStatus(statusEl, fmt('opened', { name: file.name, t: tables, v: objects.length - tables }), 'success');
+        if (window.innerWidth <= 860) document.getElementById('sqv-results').scrollIntoView({ block: 'nearest', behavior: 'auto' });
         if (window.trackTool) window.trackTool('sqlite-viewer', 'open');
       }
 
@@ -550,6 +608,8 @@
           var n = out.result.values.length;
           renderGrid(resultEl, out.result.columns, out.result.values, RESULT_RENDER_CAP);
           resultWrap.hidden = false;
+          document.getElementById('sqv-results').scrollTop = 0;
+          if (window.innerWidth <= 860) resultWrap.scrollIntoView({ block: 'nearest', behavior: 'auto' });
           exportQueryBtn.disabled = false;
           setStatus(queryStatusEl, n > RESULT_RENDER_CAP ? fmt('queryCapped', { cap: num(RESULT_RENDER_CAP), n: num(n) }) : fmt('queryRows', { n: num(n) }), 'success');
         } else {
@@ -655,11 +715,15 @@
 </div>
 
 <style is:global>
-  .sqv-shell { display: flex; flex-direction: column; gap: 0.85rem; }
+  .sqv-shell { display: flex; flex-direction: column; gap: 0.65rem; min-width: 0; min-height: 0; }
+  .sqv-control { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; }
+  .sqv-shell [hidden] { display: none !important; }
+  .sqv-shell .tool-status { height: 3em; min-height: 0; flex: none; margin: 0; overflow: auto; overflow-wrap: anywhere; }
+  .sqv-shell .tool-status.none { display: block; }
 
   .sqv-dropzone {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 0.4rem; min-height: 200px; padding: 2.5rem 1rem; text-align: center;
+    gap: 0.4rem; min-height: 220px; padding: 2.5rem 1rem; text-align: center;
     border-radius: var(--radius-lg);
     background: var(--color-surface-muted);
     outline: 1px dashed var(--color-border);
@@ -696,17 +760,18 @@
   .sqv-pill-name { max-width: 28ch; overflow: hidden; text-overflow: ellipsis; }
   .sqv-reset { margin-left: auto; }
 
-  .sqv-layout:not([hidden]) {
-    display: grid;
-    grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
-    gap: 0.85rem;
-    align-items: start;
-  }
-  .sqv-query { grid-column: 1 / -1; }
+  .sqv-layout:not([hidden]) { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; gap: 0.65rem; }
+  .sqv-results { flex: 1 1 0; min-width: 0; min-height: 280px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .sqv-browser { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 0.85rem; align-items: start; min-width: 0; }
+  .sqv-object-pane { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+  .sqv-query { flex: none; }
+  .sqv-results > #sqv-result-wrap { height: 18rem; max-height: none; margin-bottom: 0.85rem; }
+  .sqv-rows-wrap { height: 18rem; }
 
   .sqv-card {
     display: flex; flex-direction: column; gap: 0.6rem;
-    padding: 0.9rem;
+    min-width: 0;
+    padding: 0.75rem;
     border-radius: var(--radius-lg);
     background: var(--color-surface);
     box-shadow: var(--shadow-card);
@@ -762,7 +827,7 @@
   .sqv-structure[open] summary { margin-bottom: 0.5rem; }
   .sqv-subhead { margin: 0.7rem 0 0.35rem; font-size: 0.8rem; font-weight: 700; color: var(--color-text-secondary); }
   .sqv-create {
-    margin: 0; padding: 0.75rem 0.9rem; max-height: 220px;
+    margin: 0; padding: 0.75rem 0.9rem; max-height: 220px; overflow: auto;
     border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
@@ -805,11 +870,20 @@
   .tool-page .sqv-grid td.sqv-blob { color: var(--color-accent); }
 
   .sqv-hint { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
-  .sqv-sql { min-height: 120px; }
+  .sqv-sql { height: 6rem; min-height: 6rem; resize: none; }
   .sqv-empty { margin: 0.3rem 0.4rem; font-size: 0.85rem; color: var(--color-text-muted); }
 
-  @media (max-width: 720px) {
-    .sqv-layout:not([hidden]) { grid-template-columns: minmax(0, 1fr); }
+  @media (max-width: 860px) {
+    .sqv-layout:not([hidden]) { flex: none; }
+    .sqv-results { flex: none; height: 28rem; min-height: 0; }
+    .sqv-browser { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 640px) {
+    .sqv-shell .tool-status { height: 4.5em; }
+    .sqv-card { padding: 0.6rem; }
+    .sqv-dropzone { padding: 1.25rem 0.8rem; }
+    .sqv-shell .sqv-query-actions .btn-primary, .sqv-shell .sqv-query-actions .btn-ghost,
+    .sqv-shell .sqv-pager-actions .btn-secondary, .sqv-shell .sqv-pager-actions .btn-ghost { flex: 0 1 auto; padding-inline: 0.65rem; }
     .sqv-objects { max-height: 220px; }
     .sqv-object { min-height: 44px; }
     .sqv-reset { margin-left: 0; }
