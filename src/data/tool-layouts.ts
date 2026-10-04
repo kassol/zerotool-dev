@@ -17,6 +17,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'protobuf-to-json': 'convert',
   'string-escape': 'convert',
   'jq-playground': 'convert',
+  'svg-to-png-converter': 'convert',
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
 };

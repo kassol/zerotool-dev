@@ -324,5 +324,98 @@ eq('blank: one visible pixel', E.isBlank(new Uint8ClampedArray([0, 0, 0, 0, 0, 0
   }
 }
 
+// ---------- 11. v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  const script = source.slice(source.indexOf('<script'), source.indexOf('</script>'));
+  check('v2: the tool root is .s2p-wrap (it gets the height of the first screen)', /^\s*<div class="s2p-wrap" id="s2p-wrap">/.test(markup) &&
+    /\.s2p-wrap \{ display: flex; flex-direction: column; [^}]*min-height: 0; \}/.test(source) && source.includes('.s2p-wrap [hidden] { display: none !important; }'));
+  check('v2: input and result use the shared two-pane classes', markup.includes('class="s2p-panels zt-io"') && (markup.match(/class="s2p-pane s2p-pane--(in|out) zt-io-pane"/g) || []).length === 2 &&
+    /<textarea id="s2p-code" class="tool-textarea s2p-code zt-io-fill"/.test(markup) && markup.includes('class="s2p-out zt-io-fill"'));
+  const left = markup.slice(markup.indexOf('s2p-pane--in'), markup.indexOf('s2p-pane--out'));
+  const right = markup.slice(markup.indexOf('s2p-pane--out'));
+  check('v2: drop zone, code box, Convert and the file table are in the left pane', ['id="s2p-drop"', 'id="s2p-file"', 'id="s2p-code"', 'id="s2p-convert-code"', 'id="s2p-batch"', 'id="s2p-zip"'].every((x) => left.includes(x)));
+  check('v2: the result is in the right pane, the preview before the notes', right.includes('id="s2p-result"') && right.indexOf('id="s2p-download"') < right.indexOf('id="s2p-preview"') && right.indexOf('id="s2p-preview"') < right.indexOf('id="s2p-notes"'));
+  check('v2: options and the status line are above the panes', markup.indexOf('class="s2p-options"') < markup.indexOf('id="s2p-status"') && markup.indexOf('id="s2p-status"') < markup.indexOf('class="s2p-panels zt-io"'));
+  // ToolLayout's Ctrl/Cmd+Enter clicks the first .btn-primary: it must stay Convert, not Download.
+  eq('v2: Convert is the first primary button, Download the second', (markup.match(/<button id="([\w-]+)" class="btn-primary/g) || []).map((m) => m.slice(12, m.indexOf('"', 12))), ['s2p-convert-code', 's2p-download']);
+  // The result and a tall preview scroll inside the pane (flex-basis 0), the file table too.
+  check('v2: the result box and the file table scroll inside their pane', /\.s2p-out \{[^}]*flex: 1 1 0;[^}]*overflow: auto;/.test(source) && /\.s2p-table-wrap \{[^}]*flex: 1 1 0;[^}]*overflow: auto;/.test(source) &&
+    /\.s2p-preview-box \{[^}]*flex: 1 1 0;/.test(source) && /\.s2p-preview-img \{ position: absolute;[^}]*object-fit: scale-down; \}/.test(source));
+  check('v2: the empty hint is in the result box and hides when there is a result', right.includes('<p class="s2p-empty">{T.outEmpty}</p>') && source.includes('.s2p-out:has(.s2p-result:not([hidden])) .s2p-empty,') &&
+    source.includes('.s2p-pane--out:has(.s2p-result[hidden]):has(.s2p-notes[hidden]) { display: none; }'));
+  check('v2: the input stays visible after a conversion (no tabs, no Other SVG button)', !/s2p-tab\b|s2p-other|s2p-panel-/.test(source) && !/inputSec|activateTab|otherBtn/.test(script));
+  // The code box has no input listener and the page-wide paste handler skips text fields, so Convert is not redundant.
+  check('v2: Convert stays: code in the box is converted by the button or Ctrl/Cmd+Enter only', !/codeInput\.addEventListener\('input'/.test(script) &&
+    script.includes("$('s2p-convert-code').addEventListener('click', function () { load([{ name: '', text: codeInput.value }]); });") &&
+    script.includes("if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;"));
+
+  const tipIds = [...markup.matchAll(/<Toggletip id="s2p-tip-(\w+)"[^>]*>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+  eq('v2: one toggletip per explained control', tipIds.map((m) => m[1]), ['size', 'format', 'bg', 'input', 'result']);
+  const STRINGS = new Function(source.slice(source.indexOf('// strings:start'), source.indexOf('// strings:end')).replace(/const STRINGS\s*=/, 'return '))();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq('v2: ' + lang + ' has text for every toggletip', tipIds.map((m) => m[2]).filter((k) => !STRINGS[lang].tips[k]), []);
+    eq('v2: ' + lang + ' toggletips are plain sentences (no markup, no links)', Object.values(STRINGS[lang].tips).filter((x) => /[<>]|https?:/.test(x)), []);
+    check('v2: ' + lang + ' has the empty hint and no tab or Other SVG strings', typeof STRINGS[lang].outEmpty === 'string' && typeof STRINGS[lang].outLabel === 'string' &&
+      !('uploadTab' in STRINGS[lang]) && !('pasteTab' in STRINGS[lang]) && !('other' in STRINGS[lang]));
+  }
+  check('v2: toggletip text stays out of the inline script', source.includes('define:vars={{ t: CLIENT_T }}') && source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && !/t\.tips|TIPS/.test(script));
+  // The numbers in the toggletips are the ones the code uses.
+  const tipsEn = Object.values(STRINGS.en.tips).join(' ');
+  check('v2: the tips state the limits in the code', E.MAX_SIDE === 65535 && script.includes('quality: q >= 1 && q <= 100 ? q / 100 : 0.92,') && script.includes('w * h <= 4194304') &&
+    script.includes("save(url, 'svg-to-png.zip');") && E.outputName('a.svg', { mode: 'scale', scale: 2 }, { width: 2, height: 2 }, 'png') === 'a@2x.png' &&
+    E.outputName('', { mode: 'width' }, { width: 20, height: 10 }, 'png') === 'image-20x10.png' && eqSize(E.analyzeSvg('<svg ' + NS + '/>'), 300, 150) &&
+    ['65,535', '92', '4,194,304', 'svg-to-png.zip', '@2x', '300 × 150', '.svgz'].every((x) => tipsEn.includes(x)));
+  function eqSize(a, w, h) { return a.size.width === w && a.size.height === h; }
+
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('v2: listed as a convert page', layouts.includes("'svg-to-png-converter': 'convert'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/svg-to-png-converter/' + lang + '.mdx'), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    eq('v2: ' + lang + ' mdx has 6 steps in the frontmatter', (front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - "/gm) || []).length, 6);
+    check('v2: ' + lang + ' mdx has no usage section in the body', !/<h2>(How to convert SVG to PNG|怎么用|使い方|사용 방법)<\/h2>/.test(body));
+    check('v2: ' + lang + ' mdx keeps the limits section', /<h2>(Limits|限制|制限|제한 사항)<\/h2>/.test(body));
+    check('v2: ' + lang + ' mdx names no removed control', !/Paste SVG code|Other SVG|粘贴 SVG 代码|换一个 SVG|SVG コードを貼り付け|別の SVG|SVG 코드 붙여넣기|다른 SVG/.test(mdx));
+  }
+}
+
+// ---------- 12. Ctrl/Cmd+L (the handler between clear:start and clear:end, run with stubs) ----------
+{
+  const cs = source.indexOf('/* ── clear:start ── */');
+  const ce = source.indexOf('/* ── clear:end ── */');
+  check('clear: markers found', cs >= 0 && ce > cs);
+  if (cs >= 0 && ce > cs) {
+    const make = () => {
+      const env = {
+        listeners: [], revoked: [], cleared: [], calls: [], status: 'old', focusInside: true,
+        state: { items: [{ result: { url: 'blob:a' } }, { result: { error: { code: 'render' } } }, { result: null }], active: 1, gen: 7, skipped: ['a.txt'] },
+        resultEl: { hidden: false }
+      };
+      const doc = { activeElement: {}, addEventListener: (type, fn) => { if (type === 'keydown') env.listeners.push(fn); } };
+      new Function('document', 'wrap', 'state', 'timer', 'clearTimeout', 'URL', 'renderActive', 'renderList', 'resultEl', 'setStatus', source.slice(cs, ce))(
+        doc, { contains: () => env.focusInside }, env.state, 42, (id) => env.cleared.push(id), { revokeObjectURL: (u) => env.revoked.push(u) },
+        () => env.calls.push('active:' + env.state.items.length), () => env.calls.push('list:' + env.state.items.length), env.resultEl, (msg) => { env.status = msg; });
+      return env;
+    };
+    let env = make();
+    eq('clear: one keydown listener', env.listeners.length, 1);
+    env.listeners[0]({ ctrlKey: true, key: 'l' });
+    eq('clear: Ctrl+L drops the files, revokes the result URLs and cancels a running conversion',
+      [env.state.items.length, env.state.skipped.length, env.state.active, env.state.gen, env.revoked, env.cleared], [0, 0, 0, 8, ['blob:a'], [42]]);
+    eq('clear: Ctrl+L redraws the empty result, hides it and clears the status', [env.calls, env.resultEl.hidden, env.status], [['active:0', 'list:0'], true, '']);
+    env = make();
+    env.listeners[0]({ metaKey: true, key: 'L' });
+    eq('clear: ⌘+L does the same', [env.state.items.length, env.resultEl.hidden, env.status], [0, true, '']);
+    for (const [name, ev, inside] of [['L without Ctrl/⌘', { key: 'l' }, true], ['Ctrl+K', { ctrlKey: true, key: 'k' }, true], ['Ctrl+L with the focus outside the tool', { ctrlKey: true, key: 'l' }, false]]) {
+      env = make();
+      env.focusInside = inside;
+      env.listeners[0](ev);
+      eq('clear: ' + name + ' changes nothing', [env.state.items.length, env.state.gen, env.revoked, env.calls, env.resultEl.hidden, env.status], [3, 7, [], [], false, 'old']);
+    }
+  }
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

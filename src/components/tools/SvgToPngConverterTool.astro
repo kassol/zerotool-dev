@@ -1,17 +1,27 @@
 ---
 // SvgToPngConverterTool — renders SVG with the browser (as an <img>) onto a canvas and
 // exports PNG, JPEG or WebP. Nothing is uploaded.
+import Toggletip from '../Toggletip.astro';
+
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
 // strings:start
 const STRINGS = {
   en: {
-    uploadTab: 'Upload files', pasteTab: 'Paste SVG code',
     dropTitle: 'Drop SVG files here, or click to choose',
     dropHint: 'Several files are converted with the same settings. Files stay in your browser.',
     codeLabel: 'SVG code', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
-    convertCode: 'Convert', other: 'Other SVG',
+    convertCode: 'Convert',
+    outLabel: 'Result', outEmpty: 'Drop an SVG, or paste code and press Convert. The image size, the preview and the download button appear here.',
+    // Toggletip text next to the control it explains (DESIGN.md "Tool Pages v2").
+    tips: {
+      size: 'At 1x the image has the size written on the root element of the SVG; with only a viewBox, the viewBox size; with neither, 300 × 150. Scale takes any number above 0. Width and Height take a whole number of pixels from 1 to 65,535 and work out the other side from the aspect ratio. Width × height sets both sides; when the ratio differs from the SVG, the drawing is placed as its preserveAspectRatio says. A side can be at most 65,535 px, within the canvas limit of the browser.',
+      format: 'JPEG and WebP show a Quality box: a whole number from 1 to 100, and 92 when it is empty or out of range. JPEG has no transparency, so with a transparent background the transparent areas are filled with white. When the browser cannot encode the chosen format, the file is saved in the format the browser returns and a note under the preview says so.',
+      bg: 'Transparent keeps the transparent areas of the SVG in PNG and WebP. White and Color paint the background first and draw the SVG on it. With JPEG, Transparent becomes white. With a transparent background, a result of up to 4,194,304 pixels is checked and a fully transparent one gets a note.',
+      input: 'Drop .svg files anywhere on the tool, or click the box above to choose them. Several files are converted with the same settings; files that are not SVG are skipped and listed. Type or paste SVG code here, then press Convert or Ctrl/⌘+Enter. Outside a text field, Ctrl/⌘+V converts SVG code or an SVG file from the clipboard right away. Compressed .svgz files cannot be read.',
+      result: 'Shows the pixel size, the file size, a preview and the download button. The file keeps the name of the SVG: a scale other than 1 adds a suffix such as @2x, the other size modes add -WIDTHxHEIGHT, and pasted code is saved as image. The notes under the preview list what was added and which references were not loaded. With several files, click a name in the file table to preview that file; each row has its own download, and Download all (.zip) saves svg-to-png.zip.'
+    },
     sizeLabel: 'Size', modeScale: 'Scale', modeWidth: 'Width', modeHeight: 'Height', modeExact: 'Width × height',
     scaleLabel: 'Scale', widthLabel: 'Width (px)', heightLabel: 'Height (px)',
     formatLabel: 'Format', qualityLabel: 'Quality',
@@ -53,11 +63,18 @@ const STRINGS = {
     }
   },
   zh: {
-    uploadTab: '上传文件', pasteTab: '粘贴 SVG 代码',
     dropTitle: '把 SVG 文件拖到这里，或点击选择',
     dropHint: '可一次选多个文件，按同一设置转换。文件不离开浏览器。',
     codeLabel: 'SVG 代码', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
-    convertCode: '转换', other: '换一个 SVG',
+    convertCode: '转换',
+    outLabel: '结果', outEmpty: '放入 SVG，或粘贴代码后点「转换」，这里显示图像尺寸、预览和下载按钮。',
+    tips: {
+      size: '1 倍时按 SVG 根元素上写的尺寸输出；只有 viewBox 时按 viewBox 尺寸，两者都没有时为 300 × 150。倍数可填任何大于 0 的数。「宽度」「高度」填 1 到 65,535 的整数像素，另一边按宽高比计算。「宽 × 高」同时指定两边，比例与 SVG 不同时图形按其 preserveAspectRatio 放置。单边最大 65,535 px，同时受浏览器 canvas 上限约束。',
+      format: '选 JPEG 或 WebP 时出现「质量」，填 1 到 100 的整数，留空或超出范围时按 92。JPEG 不支持透明，背景为「透明」时透明区域填成白色。浏览器不能编码所选格式时，按浏览器实际给出的格式保存，并在预览下方提示。',
+      bg: '「透明」在 PNG 和 WebP 中保留 SVG 的透明区域。「白色」「指定颜色」先铺底色，再在上面绘制 SVG。JPEG 选「透明」时底色为白色。背景透明且结果不超过 4,194,304 像素时会检查图像，完全透明就给出提示。',
+      input: '把 .svg 文件拖到工具区任意位置，或点击上方的框选择。多个文件按同一设置转换，不是 SVG 的文件会被跳过并列出。也可以在这里输入或粘贴 SVG 代码，再点「转换」或按 Ctrl/⌘+Enter。在文本框之外按 Ctrl/⌘+V，剪贴板里的 SVG 代码或 SVG 文件会直接转换。压缩的 .svgz 文件无法读取。',
+      result: '显示像素尺寸、文件大小、预览和下载按钮。文件名沿用 SVG 的名字：倍数不是 1 时加 @2x 这样的后缀，其他尺寸模式加「-宽x高」，粘贴的代码保存为 image。预览下方的提示列出补上了什么、哪些引用没有加载。多个文件时，点文件表里的名字查看该文件，每一行可单独下载，「全部下载（.zip）」保存为 svg-to-png.zip。'
+    },
     sizeLabel: '尺寸', modeScale: '倍数', modeWidth: '宽度', modeHeight: '高度', modeExact: '宽 × 高',
     scaleLabel: '倍数', widthLabel: '宽度（px）', heightLabel: '高度（px）',
     formatLabel: '格式', qualityLabel: '质量',
@@ -99,11 +116,18 @@ const STRINGS = {
     }
   },
   ja: {
-    uploadTab: 'ファイルを選択', pasteTab: 'SVG コードを貼り付け',
     dropTitle: 'SVG ファイルをここにドロップ、またはクリックして選択',
     dropHint: '複数ファイルを同じ設定で一括変換できます。ファイルはブラウザの外に出ません。',
     codeLabel: 'SVG コード', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
-    convertCode: '変換', other: '別の SVG',
+    convertCode: '変換',
+    outLabel: '結果', outEmpty: 'SVG をドロップするか、コードを貼り付けて「変換」を押すと、ここに画像サイズ・プレビュー・ダウンロードボタンが表示されます。',
+    tips: {
+      size: '1 倍では SVG のルート要素に書かれたサイズで出力します。viewBox だけなら viewBox のサイズ、どちらもなければ 300 × 150 です。倍率には 0 より大きい数を入力できます。「幅」「高さ」は 1〜65,535 の整数ピクセルで、もう一辺は縦横比から計算します。「幅 × 高さ」は両辺を指定し、比率が SVG と違うときは preserveAspectRatio の指定どおりに配置します。一辺は 65,535 px まで、かつブラウザの canvas 上限の範囲内です。',
+      format: 'JPEG か WebP を選ぶと「画質」が表示されます。1〜100 の整数で、空欄や範囲外のときは 92 になります。JPEG は透過を扱えないため、背景が「透過」のとき透明部分は白で塗られます。選んだ形式をブラウザが書き出せないときは、ブラウザが返した形式で保存し、プレビューの下に表示します。',
+      bg: '「透過」は PNG と WebP で SVG の透明部分をそのまま残します。「白」「色を指定」は先に背景を塗り、その上に SVG を描きます。JPEG で「透過」を選ぶと背景は白になります。背景が透過で結果が 4,194,304 ピクセル以下のときは画像を調べ、すべて透明なら注記を表示します。',
+      input: '.svg ファイルをツール内のどこかにドロップするか、上の枠をクリックして選びます。複数ファイルは同じ設定で変換し、SVG でないファイルはスキップして一覧に示します。SVG コードはここに入力または貼り付けて、「変換」か Ctrl/⌘+Enter を押します。テキスト欄の外で Ctrl/⌘+V を押すと、クリップボードの SVG コードや SVG ファイルをそのまま変換します。圧縮された .svgz ファイルは読み込めません。',
+      result: 'ピクセルサイズ、ファイルサイズ、プレビュー、ダウンロードボタンを表示します。ファイル名は SVG の名前を引き継ぎ、倍率が 1 以外なら @2x のような接尾辞、ほかのサイズ指定では「-幅x高さ」が付きます。貼り付けたコードは image という名前で保存します。プレビューの下の注記は、補った内容と読み込まれなかった参照を示します。複数ファイルのときは、ファイル表の名前を押すとそのファイルを表示し、行ごとにダウンロードできます。「すべてダウンロード（.zip）」は svg-to-png.zip を保存します。'
+    },
     sizeLabel: 'サイズ', modeScale: '倍率', modeWidth: '幅', modeHeight: '高さ', modeExact: '幅 × 高さ',
     scaleLabel: '倍率', widthLabel: '幅（px）', heightLabel: '高さ（px）',
     formatLabel: '形式', qualityLabel: '画質',
@@ -145,11 +169,18 @@ const STRINGS = {
     }
   },
   ko: {
-    uploadTab: '파일 선택', pasteTab: 'SVG 코드 붙여넣기',
     dropTitle: 'SVG 파일을 여기에 끌어 놓거나 클릭해서 선택',
     dropHint: '여러 파일을 같은 설정으로 한 번에 변환합니다. 파일은 브라우저 밖으로 나가지 않습니다.',
     codeLabel: 'SVG 코드', codePh: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">…</svg>',
-    convertCode: '변환', other: '다른 SVG',
+    convertCode: '변환',
+    outLabel: '결과', outEmpty: 'SVG를 끌어 놓거나 코드를 붙여 넣고 「변환」을 누르면 여기에 이미지 크기, 미리보기, 다운로드 버튼이 표시됩니다.',
+    tips: {
+      size: '1배에서는 SVG 루트 요소에 적힌 크기로 출력합니다. viewBox만 있으면 viewBox 크기, 둘 다 없으면 300 × 150입니다. 배율에는 0보다 큰 수를 넣을 수 있습니다. 「너비」「높이」는 1부터 65,535까지의 정수 픽셀이며 다른 한 변은 가로세로 비율로 계산합니다. 「너비 × 높이」는 두 변을 모두 정하고, 비율이 SVG와 다르면 preserveAspectRatio 설정대로 배치합니다. 한 변은 65,535 px까지이며 브라우저의 canvas 한도 안이어야 합니다.',
+      format: 'JPEG나 WebP를 고르면 「품질」이 나타납니다. 1부터 100까지의 정수이며, 비워 두거나 범위를 벗어나면 92로 처리합니다. JPEG는 투명을 지원하지 않아 배경이 「투명」이면 투명한 부분을 흰색으로 채웁니다. 고른 형식을 브라우저가 인코딩하지 못하면 브라우저가 돌려준 형식으로 저장하고 미리보기 아래에 알려 줍니다.',
+      bg: '「투명」은 PNG와 WebP에서 SVG의 투명한 부분을 그대로 둡니다. 「흰색」「색 지정」은 배경을 먼저 칠하고 그 위에 SVG를 그립니다. JPEG에서 「투명」을 고르면 배경은 흰색이 됩니다. 배경이 투명하고 결과가 4,194,304픽셀 이하이면 이미지를 검사해, 완전히 투명하면 알려 줍니다.',
+      input: '.svg 파일을 도구 안 아무 곳에나 끌어 놓거나 위의 상자를 클릭해 고릅니다. 여러 파일은 같은 설정으로 변환하며, SVG가 아닌 파일은 건너뛰고 목록으로 알려 줍니다. SVG 코드는 여기에 입력하거나 붙여 넣은 뒤 「변환」이나 Ctrl/⌘+Enter를 누릅니다. 텍스트 입력란 밖에서 Ctrl/⌘+V를 누르면 클립보드의 SVG 코드나 SVG 파일을 바로 변환합니다. 압축된 .svgz 파일은 읽지 못합니다.',
+      result: '픽셀 크기, 파일 크기, 미리보기, 다운로드 버튼을 보여 줍니다. 파일 이름은 SVG 이름을 따르며, 배율이 1이 아니면 @2x 같은 접미사가, 다른 크기 방식에서는 「-너비x높이」가 붙습니다. 붙여 넣은 코드는 image라는 이름으로 저장합니다. 미리보기 아래 안내는 추가한 내용과 불러오지 못한 참조를 알려 줍니다. 파일이 여러 개면 파일 표에서 이름을 눌러 그 파일을 보고 줄마다 따로 받을 수 있습니다. 「모두 다운로드(.zip)」는 svg-to-png.zip을 저장합니다.'
+    },
     sizeLabel: '크기', modeScale: '배율', modeWidth: '너비', modeHeight: '높이', modeExact: '너비 × 높이',
     scaleLabel: '배율', widthLabel: '너비(px)', heightLabel: '높이(px)',
     formatLabel: '형식', qualityLabel: '품질',
@@ -194,114 +225,131 @@ const STRINGS = {
 // strings:end
 
 const T = STRINGS[lang];
+// The script gets every string except the toggletip text, which is in the HTML.
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
 
-<div>
-  <div class="s2p-wrap" id="s2p-wrap">
-    <div id="s2p-input" class="s2p-input">
-      <div class="s2p-tabs" role="tablist">
-        <button id="s2p-tab-file" class="s2p-tab s2p-tab--active" type="button" role="tab" aria-selected="true" aria-controls="s2p-panel-file">{T.uploadTab}</button>
-        <button id="s2p-tab-code" class="s2p-tab" type="button" role="tab" aria-selected="false" aria-controls="s2p-panel-code">{T.pasteTab}</button>
-      </div>
-
-      <div id="s2p-panel-file" class="s2p-panel" role="tabpanel" aria-labelledby="s2p-tab-file">
-        <label id="s2p-drop" class="s2p-drop" for="s2p-file">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-            <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-          </svg>
-          <span class="s2p-drop-title">{T.dropTitle}</span>
-          <span class="s2p-drop-hint">{T.dropHint}</span>
-        </label>
-        <input type="file" id="s2p-file" class="s2p-file-input" accept=".svg,image/svg+xml" multiple />
-      </div>
-
-      <div id="s2p-panel-code" class="s2p-panel" hidden role="tabpanel" aria-labelledby="s2p-tab-code">
-        <label for="s2p-code" class="tool-label">{T.codeLabel}</label>
-        <textarea id="s2p-code" class="tool-textarea s2p-code" rows="7" spellcheck="false" placeholder={T.codePh}></textarea>
-        <button id="s2p-convert-code" class="btn-primary" type="button">{T.convertCode}</button>
-      </div>
-    </div>
-
-    <div id="s2p-result" class="s2p-result" hidden>
-      <div class="s2p-bar">
-        <span id="s2p-dims" class="s2p-dims"></span>
-        <button id="s2p-other" class="btn-ghost s2p-other" type="button">{T.other}</button>
-        <button id="s2p-download" class="btn-primary" type="button"></button>
-      </div>
-      <div class="s2p-preview-box">
-        <img id="s2p-preview" class="s2p-preview-img" alt={T.previewAlt} />
-      </div>
-    </div>
-
-    <div id="s2p-status" class="tool-status s2p-status" aria-live="polite"></div>
-    <ul id="s2p-notes" class="s2p-notes" hidden></ul>
-
-    <div id="s2p-batch" class="s2p-batch" hidden>
-      <table class="s2p-table">
-        <thead><tr><th scope="col">{T.listFile}</th><th scope="col">{T.listSize}</th><th scope="col"><span class="s2p-sr">{T.download}</span></th></tr></thead>
-        <tbody id="s2p-rows"></tbody>
-      </table>
-      <button id="s2p-zip" class="btn-secondary" type="button">{T.downloadAll}</button>
-    </div>
-
-    <div class="s2p-options">
-      <div class="s2p-opt">
+<div class="s2p-wrap" id="s2p-wrap">
+  <div class="s2p-options">
+    <div class="s2p-opt">
+      <span class="s2p-opt-head">
         <label for="s2p-mode" class="tool-label">{T.sizeLabel}</label>
-        <select id="s2p-mode" class="tool-input">
-          <option value="scale">{T.modeScale}</option>
-          <option value="width">{T.modeWidth}</option>
-          <option value="height">{T.modeHeight}</option>
-          <option value="exact">{T.modeExact}</option>
-        </select>
-      </div>
-      <div class="s2p-opt" id="s2p-scale-wrap">
-        <label for="s2p-scale" class="tool-label">{T.scaleLabel}</label>
-        <div class="s2p-scale-row">
-          <input id="s2p-scale" class="tool-input s2p-num" type="number" min="0.1" max="64" step="any" value="1" inputmode="decimal" />
-          <div class="s2p-chips" role="group" aria-label={T.scaleLabel}>
-            <button type="button" class="s2p-chip" data-scale="1" aria-pressed="true">1x</button>
-            <button type="button" class="s2p-chip" data-scale="2" aria-pressed="false">2x</button>
-            <button type="button" class="s2p-chip" data-scale="3" aria-pressed="false">3x</button>
-            <button type="button" class="s2p-chip" data-scale="4" aria-pressed="false">4x</button>
-          </div>
+        <Toggletip id="s2p-tip-size" lang={lang} about={T.sizeLabel} wide>{TIPS.size}</Toggletip>
+      </span>
+      <select id="s2p-mode" class="tool-input">
+        <option value="scale">{T.modeScale}</option>
+        <option value="width">{T.modeWidth}</option>
+        <option value="height">{T.modeHeight}</option>
+        <option value="exact">{T.modeExact}</option>
+      </select>
+    </div>
+    <div class="s2p-opt" id="s2p-scale-wrap">
+      <label for="s2p-scale" class="tool-label">{T.scaleLabel}</label>
+      <div class="s2p-scale-row">
+        <input id="s2p-scale" class="tool-input s2p-num" type="number" min="0.1" max="64" step="any" value="1" inputmode="decimal" />
+        <div class="s2p-chips" role="group" aria-label={T.scaleLabel}>
+          <button type="button" class="s2p-chip" data-scale="1" aria-pressed="true">1x</button>
+          <button type="button" class="s2p-chip" data-scale="2" aria-pressed="false">2x</button>
+          <button type="button" class="s2p-chip" data-scale="3" aria-pressed="false">3x</button>
+          <button type="button" class="s2p-chip" data-scale="4" aria-pressed="false">4x</button>
         </div>
       </div>
-      <div class="s2p-opt" id="s2p-w-wrap" hidden>
-        <label for="s2p-width" class="tool-label">{T.widthLabel}</label>
-        <input id="s2p-width" class="tool-input s2p-num" type="number" min="1" max="65535" step="1" inputmode="numeric" />
-      </div>
-      <div class="s2p-opt" id="s2p-h-wrap" hidden>
-        <label for="s2p-height" class="tool-label">{T.heightLabel}</label>
-        <input id="s2p-height" class="tool-input s2p-num" type="number" min="1" max="65535" step="1" inputmode="numeric" />
-      </div>
-      <div class="s2p-opt">
+    </div>
+    <div class="s2p-opt" id="s2p-w-wrap" hidden>
+      <label for="s2p-width" class="tool-label">{T.widthLabel}</label>
+      <input id="s2p-width" class="tool-input s2p-num" type="number" min="1" max="65535" step="1" inputmode="numeric" />
+    </div>
+    <div class="s2p-opt" id="s2p-h-wrap" hidden>
+      <label for="s2p-height" class="tool-label">{T.heightLabel}</label>
+      <input id="s2p-height" class="tool-input s2p-num" type="number" min="1" max="65535" step="1" inputmode="numeric" />
+    </div>
+    <div class="s2p-opt">
+      <span class="s2p-opt-head">
         <label for="s2p-format" class="tool-label">{T.formatLabel}</label>
-        <select id="s2p-format" class="tool-input">
-          <option value="image/png">PNG</option>
-          <option value="image/jpeg">JPEG</option>
-          <option value="image/webp">WebP</option>
-        </select>
-      </div>
-      <div class="s2p-opt" id="s2p-quality-wrap" hidden>
-        <label for="s2p-quality" class="tool-label">{T.qualityLabel}</label>
-        <input id="s2p-quality" class="tool-input s2p-num" type="number" min="1" max="100" step="1" value="92" inputmode="numeric" />
-      </div>
-      <div class="s2p-opt">
+        <Toggletip id="s2p-tip-format" lang={lang} about={T.formatLabel} wide>{TIPS.format}</Toggletip>
+      </span>
+      <select id="s2p-format" class="tool-input">
+        <option value="image/png">PNG</option>
+        <option value="image/jpeg">JPEG</option>
+        <option value="image/webp">WebP</option>
+      </select>
+    </div>
+    <div class="s2p-opt" id="s2p-quality-wrap" hidden>
+      <label for="s2p-quality" class="tool-label">{T.qualityLabel}</label>
+      <input id="s2p-quality" class="tool-input s2p-num" type="number" min="1" max="100" step="1" value="92" inputmode="numeric" />
+    </div>
+    <div class="s2p-opt">
+      <span class="s2p-opt-head">
         <label for="s2p-bg" class="tool-label">{T.bgLabel}</label>
-        <select id="s2p-bg" class="tool-input">
-          <option value="transparent">{T.bgTransparent}</option>
-          <option value="white">{T.bgWhite}</option>
-          <option value="custom">{T.bgCustom}</option>
-        </select>
-      </div>
-      <div class="s2p-opt" id="s2p-color-wrap" hidden>
-        <label for="s2p-color" class="tool-label">{T.colorLabel}</label>
-        <input id="s2p-color" class="s2p-color" type="color" value="#ffffff" />
-      </div>
+        <Toggletip id="s2p-tip-bg" lang={lang} about={T.bgLabel} wide>{TIPS.bg}</Toggletip>
+      </span>
+      <select id="s2p-bg" class="tool-input">
+        <option value="transparent">{T.bgTransparent}</option>
+        <option value="white">{T.bgWhite}</option>
+        <option value="custom">{T.bgCustom}</option>
+      </select>
+    </div>
+    <div class="s2p-opt" id="s2p-color-wrap" hidden>
+      <label for="s2p-color" class="tool-label">{T.colorLabel}</label>
+      <input id="s2p-color" class="s2p-color" type="color" value="#ffffff" />
     </div>
   </div>
 
-  <script is:inline define:vars={{ t: T }}>
+  <div id="s2p-status" class="tool-status s2p-status" aria-live="polite"></div>
+
+  <div class="s2p-panels zt-io">
+    <div class="s2p-pane s2p-pane--in zt-io-pane">
+      <label id="s2p-drop" class="s2p-drop" for="s2p-file">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <span class="s2p-drop-text">
+          <span class="s2p-drop-title">{T.dropTitle}</span>
+          <span class="s2p-drop-hint">{T.dropHint}</span>
+        </span>
+      </label>
+      <input type="file" id="s2p-file" class="s2p-file-input" accept=".svg,image/svg+xml" multiple />
+      <div class="s2p-head">
+        <label for="s2p-code" class="tool-label">{T.codeLabel}</label>
+        <Toggletip id="s2p-tip-input" lang={lang} about={T.codeLabel} wide>{TIPS.input}</Toggletip>
+        <button id="s2p-convert-code" class="btn-primary s2p-convert" type="button">{T.convertCode}</button>
+      </div>
+      <textarea id="s2p-code" class="tool-textarea s2p-code zt-io-fill" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder={T.codePh}></textarea>
+
+      <div id="s2p-batch" class="s2p-batch" hidden>
+        <div class="s2p-table-wrap">
+          <table class="s2p-table">
+            <thead><tr><th scope="col">{T.listFile}</th><th scope="col">{T.listSize}</th><th scope="col"><span class="s2p-sr">{T.download}</span></th></tr></thead>
+            <tbody id="s2p-rows"></tbody>
+          </table>
+        </div>
+        <button id="s2p-zip" class="btn-secondary" type="button">{T.downloadAll}</button>
+      </div>
+    </div>
+
+    <div class="s2p-pane s2p-pane--out zt-io-pane">
+      <div class="s2p-head">
+        <span id="s2p-out-label" class="tool-label">{T.outLabel}</span>
+        <Toggletip id="s2p-tip-result" lang={lang} about={T.outLabel} wide>{TIPS.result}</Toggletip>
+      </div>
+      <div class="s2p-out zt-io-fill" role="group" aria-labelledby="s2p-out-label">
+        <p class="s2p-empty">{T.outEmpty}</p>
+        <div id="s2p-result" class="s2p-result" hidden>
+          <div class="s2p-bar">
+            <span id="s2p-dims" class="s2p-dims"></span>
+            <button id="s2p-download" class="btn-primary" type="button"></button>
+          </div>
+          <div class="s2p-preview-box">
+            <img id="s2p-preview" class="s2p-preview-img" alt={T.previewAlt} />
+          </div>
+        </div>
+        <ul id="s2p-notes" class="s2p-notes" hidden></ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
       /* ── engine:start ── */
       var SVG_NS = 'http://www.w3.org/2000/svg';
@@ -746,18 +794,12 @@ const T = STRINGS[lang];
 
       var $ = function (id) { return document.getElementById(id); };
       var wrap = $('s2p-wrap');
-      var inputSec = $('s2p-input');
-      var tabFile = $('s2p-tab-file');
-      var tabCode = $('s2p-tab-code');
-      var panelFile = $('s2p-panel-file');
-      var panelCode = $('s2p-panel-code');
       var fileInput = $('s2p-file');
       var codeInput = $('s2p-code');
       var resultEl = $('s2p-result');
       var dimsEl = $('s2p-dims');
       var previewImg = $('s2p-preview');
       var downloadBtn = $('s2p-download');
-      var otherBtn = $('s2p-other');
       var statusEl = $('s2p-status');
       var notesEl = $('s2p-notes');
       var batchEl = $('s2p-batch');
@@ -982,7 +1024,6 @@ const T = STRINGS[lang];
         if (state.items.length > 1) setStatus(fill(t.doneMany, { ok: ok.length, n: state.items.length }), ok.length ? 'success' : 'error');
         else if (item.result.error) setStatus(errorText(item.result.error), 'error');
         else setStatus(fill(t.doneOne, { name: item.name || 'SVG', file: item.result.fileName }), 'success');
-        inputSec.hidden = ok.length > 0;
         if (ok.length) {
           window.trackTool && window.trackTool('svg-to-png-converter', 'convert');
         }
@@ -1119,18 +1160,6 @@ const T = STRINGS[lang];
         });
       }
 
-      function activateTab(tab) {
-        var isFile = tab === 'file';
-        tabFile.classList.toggle('s2p-tab--active', isFile);
-        tabCode.classList.toggle('s2p-tab--active', !isFile);
-        tabFile.setAttribute('aria-selected', String(isFile));
-        tabCode.setAttribute('aria-selected', String(!isFile));
-        panelFile.hidden = !isFile;
-        panelCode.hidden = isFile;
-      }
-      tabFile.addEventListener('click', function () { activateTab('file'); });
-      tabCode.addEventListener('click', function () { activateTab('code'); codeInput.focus(); });
-
       fileInput.addEventListener('change', function () {
         loadFiles(fileInput.files);
         fileInput.value = '';
@@ -1138,10 +1167,6 @@ const T = STRINGS[lang];
       $('s2p-convert-code').addEventListener('click', function () { load([{ name: '', text: codeInput.value }]); });
       codeInput.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); load([{ name: '', text: codeInput.value }]); }
-      });
-      otherBtn.addEventListener('click', function () {
-        inputSec.hidden = false;
-        (panelFile.hidden ? codeInput : $('s2p-drop')).focus();
       });
 
       // The whole tool accepts dropped files, so a drop next to the box does not open the file.
@@ -1170,125 +1195,47 @@ const T = STRINGS[lang];
         if (text && /<svg[\s>]/i.test(text)) {
           e.preventDefault();
           codeInput.value = text;
-          activateTab('code');
           load([{ name: '', text: text }]);
         }
       });
 
+      // ToolLayout's Ctrl/Cmd+L empties the code box without an input event (only while the
+      // focus is inside the tool); drop the files, the result and the status with it.
+      /* ── clear:start ── */
+      document.addEventListener('keydown', function (e) {
+        if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        if (!wrap.contains(document.activeElement)) return;
+        state.gen++;
+        clearTimeout(timer);
+        state.items.forEach(function (x) { if (x.result && x.result.url) URL.revokeObjectURL(x.result.url); });
+        state.items = [];
+        state.skipped = [];
+        state.active = 0;
+        renderActive();
+        renderList();
+        resultEl.hidden = true;
+        setStatus('');
+      });
+      /* ── clear:end ── */
+
       syncOptionUi();
     })();
   </script>
-</div>
 
 <style>
-  .s2p-wrap { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
-  .s2p-input { display: flex; flex-direction: column; gap: 0.6rem; }
-  .s2p-input[hidden] { display: none; }
-
-  .s2p-tabs { display: flex; border-bottom: 2px solid var(--color-border); }
-  .s2p-tab {
-    padding: 0.45rem 1rem;
-    font-size: 0.88rem;
-    font-weight: 600;
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -2px;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-  }
-  .s2p-tab:hover { color: var(--color-text); }
-  .s2p-tab--active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
-
-  .s2p-panel { display: flex; flex-direction: column; gap: 0.5rem; }
-  .s2p-panel[hidden] { display: none; }
-
-  .s2p-drop {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 1.25rem 1rem;
-    border: 2px dashed var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-bg-secondary);
-    color: var(--color-text-secondary);
-    text-align: center;
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-  }
-  .s2p-drop:hover,
-  .s2p-drag .s2p-drop { border-color: var(--color-primary); background: var(--color-bg); }
-  .s2p-drop-title { font-size: 0.95rem; font-weight: 600; color: var(--color-text); }
-  .s2p-drop-hint { font-size: 0.8rem; }
-  .s2p-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-  .s2p-panel:focus-within .s2p-drop { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-
-  .s2p-code { min-height: 9rem; }
-
-  .s2p-result { display: flex; flex-direction: column; gap: 0.5rem; }
-  .s2p-result[hidden] { display: none; }
-  .s2p-bar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-  .s2p-dims { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); font-size: 0.85rem; color: var(--color-text-secondary); }
-  .s2p-preview-box {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 80px;
-    padding: 0.5rem;
-    border-radius: var(--radius-md);
-    outline: 1px solid var(--color-border-soft);
-    outline-offset: -1px;
-    background: repeating-conic-gradient(var(--color-bg-secondary) 0% 25%, var(--color-surface) 0% 50%) 0 0 / 16px 16px;
-    overflow: hidden;
-  }
-  .s2p-preview-img[hidden] { display: none; }
-  .s2p-preview-img { display: block; max-width: 100%; max-height: min(45vh, 360px); object-fit: contain; }
-
-  .s2p-status { min-height: 0; }
-  .s2p-status:empty { display: none; }
-  .s2p-notes {
-    margin: 0;
-    padding-left: 1.1rem;
-    font-size: 0.82rem;
-    color: var(--color-text-secondary);
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    overflow-wrap: anywhere;
-  }
-  .s2p-notes[hidden] { display: none; }
-
-  .s2p-batch { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; min-width: 0; }
-  .s2p-batch[hidden] { display: none; }
-  .s2p-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; display: block; overflow-x: auto; }
-  .s2p-table th { text-align: left; font-weight: 600; color: var(--color-text-secondary); padding: 0.3rem 0.5rem; }
+  /* v2 "convert" layout: the root is a flex column, so the two panes (.zt-io in
+     tool-common.css) take the height that is left under the options and the status line.
+     Left: drop zone, code box and the file table. Right: the result and its notes. */
+  .s2p-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; min-height: 0; }
+  .s2p-wrap [hidden] { display: none !important; }
+  /* The shared .zt-tip has no flex: none; keep the button round in a flex row. */
+  .s2p-wrap :global(.zt-tip) { flex: none; }
   .s2p-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .s2p-table :global(td) { padding: 0.3rem 0.5rem; border-top: 1px solid var(--color-border-soft); vertical-align: middle; }
-  .s2p-table :global(.s2p-row-active td) { background: var(--color-surface-muted); }
-  .s2p-table :global(.s2p-pick) {
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    color: var(--color-primary);
-    text-decoration: underline;
-    cursor: pointer;
-    text-align: left;
-    overflow-wrap: anywhere;
-  }
-  .s2p-table :global(.s2p-row-error) { color: var(--color-danger); }
 
-  .s2p-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    align-items: flex-end;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--color-border-soft);
-  }
+  .s2p-options { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: flex-end; }
   .s2p-opt { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
-  .s2p-opt[hidden] { display: none; }
+  /* Every label row is as high as a toggletip button, so labels with and without one line up. */
+  .s2p-opt-head, .s2p-opt > .tool-label { display: flex; align-items: center; gap: 0.25rem; min-height: 24px; }
   .s2p-opt select.tool-input { min-width: 9rem; }
   .s2p-num { width: 7rem; }
   .s2p-scale-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
@@ -1316,9 +1263,128 @@ const T = STRINGS[lang];
     cursor: pointer;
   }
 
+  .s2p-status { min-height: 0; overflow-wrap: anywhere; }
+  .s2p-status:empty { display: none; }
+
+  .s2p-head { display: flex; align-items: center; gap: 0.25rem; min-height: 36px; }
+  .s2p-convert { flex: none; margin-left: auto; min-height: 34px; padding-top: 0.3rem; padding-bottom: 0.3rem; }
+
+  /* Left pane */
+  .s2p-drop {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.6rem 1rem;
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .s2p-drop:hover,
+  .s2p-drag .s2p-drop { border-color: var(--color-primary); background: var(--color-bg); }
+  .s2p-drop svg { flex: none; color: var(--color-primary); }
+  .s2p-drop-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+  .s2p-drop-title { font-size: 0.95rem; font-weight: 600; color: var(--color-text); }
+  .s2p-drop-hint { font-size: 0.8rem; line-height: 1.4; }
+  .s2p-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .s2p-pane--in:has(.s2p-file-input:focus-visible) .s2p-drop { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .s2p-code { font-size: 0.82rem; }
+
+  /* Several files: the table takes the pane's height and scrolls inside it; the code box
+     keeps a short strip for pasting. */
+  .s2p-batch { display: flex; flex: 1 1 0; flex-direction: column; gap: 0.5rem; align-items: flex-start; min-width: 0; min-height: 150px; }
+  .s2p-pane--in:has(.s2p-batch:not([hidden])) .s2p-code { flex: none; min-height: 0; height: 64px; }
+  .s2p-table-wrap { position: relative; flex: 1 1 0; width: 100%; min-height: 0; overflow: auto; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+  .s2p-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  .s2p-table th { position: sticky; top: 0; z-index: 1; text-align: left; font-weight: 600; color: var(--color-text-secondary); padding: 0.3rem 0.5rem; background: var(--color-surface-muted); }
+  /* A long error text in the last column must not squeeze the name and the size. */
+  .s2p-table th:first-child { width: 40%; }
+  .s2p-table :global(td) { padding: 0.3rem 0.5rem; border-top: 1px solid var(--color-border-soft); vertical-align: middle; }
+  .s2p-table :global(td:nth-child(2)) { white-space: nowrap; }
+  .s2p-table :global(.s2p-row-active td) { background: var(--color-surface-muted); }
+  .s2p-table :global(.s2p-pick) {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--color-primary);
+    text-decoration: underline;
+    cursor: pointer;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  .s2p-table :global(.s2p-row-error) { color: var(--color-danger); }
+
+  /* Right pane: one framed box. flex-basis 0 and overflow: a tall preview or a long list
+     of notes scrolls inside the box and never makes the page taller. */
+  .s2p-out {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 0.5rem;
+    overflow: auto;
+    padding: 0.82rem;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    box-shadow: inset 0 0 0 1px var(--color-border-soft);
+  }
+  /* Shown until there is a result or a note (at 860px and below the pane is hidden instead). */
+  .s2p-empty { max-width: 36ch; margin: auto; text-align: center; font-size: 0.88rem; line-height: 1.55; color: var(--color-text-muted); }
+  .s2p-out:has(.s2p-result:not([hidden])) .s2p-empty,
+  .s2p-out:has(.s2p-notes:not([hidden])) .s2p-empty { display: none; }
+  .s2p-result { display: flex; flex: 1 0 auto; flex-direction: column; gap: 0.5rem; min-width: 0; }
+  .s2p-bar { display: flex; flex: none; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .s2p-dims { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); font-size: 0.85rem; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+  /* The preview takes the height the pane has left. */
+  .s2p-preview-box {
+    position: relative;
+    flex: 1 1 0;
+    min-height: 160px;
+    border-radius: var(--radius-md);
+    outline: 1px solid var(--color-border-soft);
+    outline-offset: -1px;
+    background: repeating-conic-gradient(var(--color-bg-secondary) 0% 25%, var(--color-surface) 0% 50%) 0 0 / 16px 16px;
+    overflow: hidden;
+  }
+  /* Drawn at its own size or smaller, never enlarged. */
+  .s2p-preview-img { position: absolute; inset: 0.5rem; width: calc(100% - 1rem); height: calc(100% - 1rem); object-fit: scale-down; }
+
+  .s2p-notes {
+    flex: none;
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.82rem;
+    color: var(--color-text-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    overflow-wrap: anywhere;
+  }
+
+  /* Stacked: input, then the result at its own height (hidden until there is one), then
+     the options. */
+  @media (max-width: 860px) {
+    .s2p-code { height: 130px; }
+    .s2p-batch { flex: none; min-height: 0; }
+    .s2p-table-wrap { flex: none; max-height: 260px; }
+    .s2p-pane--out:has(.s2p-result[hidden]):has(.s2p-notes[hidden]) { display: none; }
+    .s2p-out { flex: none; min-height: 0; overflow: visible; resize: none; }
+    .s2p-preview-box { display: flex; flex: none; align-items: center; justify-content: center; min-height: 80px; padding: 0.5rem; }
+    .s2p-preview-img { position: static; width: auto; height: auto; max-width: 100%; max-height: min(45vh, 360px); object-fit: contain; }
+    .s2p-options { order: 5; }
+  }
+
   @media (max-width: 640px) {
-    .s2p-drop { padding: 0.9rem 0.75rem; }
-    .s2p-drop-hint { font-size: 0.78rem; }
+    .s2p-drop { padding: 0.6rem 0.75rem; }
+    .s2p-drop-hint { display: none; }
+    .s2p-code { height: 120px; }
+    .s2p-head { min-height: 44px; }
+    .s2p-opt-head, .s2p-opt > .tool-label { min-height: 28px; }
+    .s2p-convert { min-height: 44px; }
+    .s2p-out { padding: 0.65rem; }
     .s2p-preview-img { max-height: 170px; }
     .s2p-chip { height: 2.75rem; min-width: 2.75rem; }
     .s2p-color { height: 2.75rem; }
