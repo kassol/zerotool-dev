@@ -644,17 +644,19 @@ for (const lang of ['zh', 'ja', 'ko']) {
   const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script>'));
   const css = source.slice(source.indexOf('<style>'));
   const ids = ['mode', 'decode', 'split', 'json', 'redact', 'input', 'results', 'simulation', 'builder'];
-  const chooseStrings = new Function('STRINGS', 'lang', source.slice(source.indexOf('const T = STRINGS'), source.indexOf('\n---\n', 4)) + '\nreturn { CLIENT_T, TIPS };');
+  const chooseStrings = new Function('STRINGS', 'lang', source.slice(source.indexOf('const T = STRINGS'), source.indexOf('\n---\n', 4)) + '\nreturn { CLIENT_T, TIPS, COPY_NOTE };');
   check('v2: root directly receives the widget height', /^\s*<div class="ck-wrap"/.test(markup));
   check('v2: controls, reserved status, input, results and secondary tools follow reading order', ['class="ck-top"', 'class="ck-box ck-options"', 'id="ck-status"', 'class="ck-input-pane"', 'class="ck-results"', 'class="ck-secondary"'].map((v) => markup.indexOf(v)).every((v, i, a) => v >= 0 && (!i || v > a[i - 1])));
   eq('v2: distinct tip IDs', [...markup.matchAll(/<Toggletip id="ck-tip-(\w+)"/g)].map((m) => m[1]), ids);
   check('v2: all tips use localized control names', (markup.match(/<Toggletip [^>]*lang=\{lang\} about=\{T\.\w+\}/g) || []).length === ids.length);
   check('v2: serialized strings omit tips', source.includes('define:vars={{ S: CLIENT_T, pageLang: lang }}'));
+  check('v2: redacted-copy privacy note is visible beside results without opening options', markup.includes('<p id="ck-copy-note" class="ck-muted">{COPY_NOTE}</p>') && markup.indexOf('id="ck-copy-note"') > markup.indexOf('id="ck-copy-redacted"') && markup.indexOf('id="ck-copy-note"') < markup.indexOf('class="ck-result-scroll"'));
   check('v2: input label is visible', markup.includes('<label class="tool-label" for="ck-input">') && !css.includes('clip: rect('));
   check('v2: reserved status height contains long messages', /\.ck-wrap \.tool-status \{[^}]*height: 2\.8em;[^}]*overflow: auto;/.test(css));
   check('v2: long results scroll within a named keyboard-accessible region', markup.includes('class="ck-result-scroll" tabindex="0" role="region" aria-label={T.resultLabel}') && /\.ck-result-scroll \{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(css));
   check('v2: empty results give the first-screen space to input', /\.ck-wrap:has\(\.ck-out:empty\) \.ck-input-pane \{ flex: 1 1 0;/.test(css) && /\.ck-results:has\(\.ck-out:empty\) \{ display: none;/.test(css));
   check('v2: secondary tools stack at 860px', /@media \(max-width: 860px\)[\s\S]*?\.ck-secondary \{ grid-template-columns: minmax\(0, 1fr\);/.test(css));
+  check('v2: mobile output keeps its height as results grow', /@media \(max-width: 860px\)[\s\S]*?\.ck-result-scroll \{ flex: none; height: 55svh; max-height: none; \}/.test(css));
   check('v2: redundant Parse button, binding and translation key are removed', !source.includes('ck-parse') && Object.values(STRINGS).every((v) => !('parse' in v)));
   check('v2: input still parses without a button', source.includes("inputEl.addEventListener('input', function () { render(false); });"));
   check('v2: listed as an analyze page', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'cookie-parser': 'analyze'"));
@@ -720,8 +722,9 @@ for (const lang of ['zh', 'ja', 'ko']) {
   }
   const settle = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
-    const { CLIENT_T, TIPS } = chooseStrings(STRINGS, lang);
+    const { CLIENT_T, TIPS, COPY_NOTE } = chooseStrings(STRINGS, lang);
     check(`v2 ${lang}: all tips are complete and kept out of client strings`, Object.keys(TIPS).length === ids.length && Object.values(TIPS).every((v) => v.length > 20 && !JSON.stringify(CLIENT_T).includes(v)) && !('tips' in CLIENT_T));
+    check(`v2 ${lang}: copy privacy note is translated and stays outside client strings`, COPY_NOTE === STRINGS[lang].copyNote && COPY_NOTE.length > 20 && !('copyNote' in CLIENT_T) && !JSON.stringify(CLIENT_T).includes(COPY_NOTE));
     const mdx = readFileSync(join(root, 'src/content/tools/cookie-parser/' + lang + '.mdx'), 'utf8');
     const end = mdx.indexOf('\n---\n', 4), front = yaml.load(mdx.slice(4, end)), body = mdx.slice(end + 5);
     check(`v2 ${lang}: five bounded plain-text steps precede FAQ`, Array.isArray(front.steps) && front.steps.length === 5 && front.steps.every((v) => typeof v === 'string' && v.length <= 280 && !/[<>]/.test(v)) && front.steps.join('').length <= 1200 && mdx.indexOf('\nsteps:') < mdx.indexOf('\nfaqItems:'));
