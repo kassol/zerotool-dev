@@ -706,7 +706,7 @@ function makePage(lang) {
     URL: { createObjectURL: (blob) => { const url = 'blob:' + blobs.size; blobs.set(url, blob); return url; }, revokeObjectURL() {} },
     setTimeout: (fn) => { timers.push(fn); }
   });
-  vm.runInContext(source.match(/<script is:inline define:vars=\{\{ S: L \}\}>([\s\S]*?)<\/script>/)[1], context);
+  vm.runInContext(source.match(/<script is:inline define:vars=\{\{ S: CLIENT_L \}\}>([\s\S]*?)<\/script>/)[1], context);
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const ux = layout.slice(layout.indexOf('{/* Tool UX enhancements:'));
   vm.runInContext(ux.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], context);
@@ -770,6 +770,32 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     page.change('csg-picker', '#16a34a');
     await validOutputs('picker recovery', [22, 163, 74]);
   }
+}
+
+// ---------- v2 page layout ----------
+{
+  const { default: yaml } = await import('js-yaml');
+  const { createRequire } = await import('node:module');
+  const { transform } = createRequire(import.meta.resolve('astro/package.json'))('@astrojs/compiler');
+  const markup = source.split('---')[2].split('<script')[0];
+  check('v2 registered as generate', /'color-shades-generator': 'generate'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('v2 direct root and shared control rail', /^\s*<div class="csg-wrap">/.test(markup) && /class="csg-rail zt-rail"/.test(markup));
+  check('v2 preview follows control rail', markup.indexOf('class="csg-rail') < markup.indexOf('class="csg-preview'));
+  check('v2 retains immediate input and two export actions', !markup.includes('btn-primary') && ['csg-copy','csg-download','csg-input','csg-picker','csg-anchor'].every(id => markup.includes(`id="${id}"`)));
+  check('v2 keeps secondary settings closed initially', [...markup.matchAll(/<details\b([^>]*)>/g)].length === 3 && !/<details\b[^>]*\bopen\b/.test(markup));
+  check('v2 tooltips stay in server HTML', /tips: TIPS[\s\S]*\.\.\.CLIENT_L/.test(source) && /define:vars=\{\{ S: CLIENT_L \}\}/.test(source) && !markup.includes('data-i18n'));
+  check('v2 eight tips with localized labels', [...markup.matchAll(/<Toggletip /g)].length === 8 && [...markup.matchAll(/<Toggletip ([^>]+)>/g)].every(m => m[1].includes('lang={lang}') && m[1].includes('about={L.')));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, `src/content/tools/color-shades-generator/${lang}.mdx`), 'utf8');
+    const meta = yaml.load(mdx.match(/^---\n([\s\S]*?)\n---/)[1]);
+    check(lang + ' v2 four usage steps', meta.steps.length === 4 && meta.steps.every(step => typeof step === 'string' && step.length <= 300));
+    check(lang + ' v2 usage facts and empty state localized', Object.keys(STRINGS[lang].tips).length === 8 && Object.values(STRINGS[lang].tips).every(tip => tip.length > 10) && !!STRINGS[lang].empty);
+    check(lang + ' v2 keeps reference and removes HowTo', !/^## (How to use|使用方法|使い方|사용 방법)$/m.test(mdx) && /^## (Limits|限制|制限|제한 사항)$/m.test(mdx) && meta.faqItems.length >= 4 && /csg:/.test(mdx));
+  }
+  check('v2 scale and code scroll within bounded regions', /\.csg-scale \{[^}]*min-height: 0;[^}]*overflow: auto;/s.test(source) && /\.csg-code \{[^}]*height: 12rem;[^}]*overflow: auto;/s.test(source));
+  check('v2 stack at shared breakpoint and hide empty mobile preview', /@media \(max-width: 860px\)/.test(source) && /\.csg-preview:has\(\.csg-scale:empty\) \{ display: none; \}/.test(source));
+  const compiled = await transform(source, { filename: 'ColorShadesGeneratorTool.astro' });
+  check('v2 Astro compiles', !compiled.diagnostics.some(d => d.severity === 1));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
