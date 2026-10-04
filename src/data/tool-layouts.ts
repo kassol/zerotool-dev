@@ -29,6 +29,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'json-schema-validator': 'analyze',
   'openapi-validator': 'analyze',
   'zero-width-character-detector': 'analyze',
+  'csr-decoder': 'analyze',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {

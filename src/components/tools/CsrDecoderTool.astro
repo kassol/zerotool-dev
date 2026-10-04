@@ -5,225 +5,237 @@
 // X.509 and PKCS#10, and asnRead here additionally records each node's start offset so
 // the exact CertificationRequestInfo and SubjectPublicKeyInfo byte ranges can be sliced
 // for crypto.subtle.verify.
+import Toggletip from '../Toggletip.astro';
+
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    resultLabel: "Results",
+    resultEmpty: "Paste a PEM request or load the example, then press Decode to inspect it.",
+    tips: {
+      input: "Include the BEGIN and END lines of a PEM certificate signing request. The first request is shown when several are pasted. DER binary, certificates and private keys are rejected.",
+      decode: "Press Decode or Ctrl/⌘+Enter to parse the request and verify its self-signature. Loading the example fills the input; press Decode afterwards. Typing alone does not decode.",
+      results: "Start with the pre-submission checks, then inspect the Subject and requested SANs. Copy buttons export individual values. challengePassword is reported as present without showing its value; unsupported signature algorithms are reported separately from invalid signatures.",
+    },
+    pasteLabel: 'Paste CSR (PEM)', decode: 'Decode', loadExample: 'Load Example', clear: 'Clear',
+    placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
+    copy: 'Copy', copied: 'Copied!',
+    decoded: 'Decoded successfully.',
+    bundleNotice: 'Found {n} requests — showing request #1.',
+    errEmpty: 'Please paste a PEM certificate signing request.',
+    errNoMarkers: 'No -----BEGIN CERTIFICATE REQUEST----- marker found. DER binary input is not supported — convert with: openssl req -inform DER -in req.der -out req.pem',
+    errIsCertificate: 'This is an X.509 certificate, not a signing request. Use the SSL Certificate Decoder for it.',
+    errIsPrivateKey: 'This is a private key. Never paste a private key into a web page — decode the matching CSR instead.',
+    errBase64: 'Unable to Base64-decode the request body.',
+    errAsn1: 'Unable to parse ASN.1 structure: ',
+    errUnexpected: 'Decoder error: ',
+    sectionChecks: 'Pre-submission Checks', sectionSubject: 'Subject', sectionPublicKey: 'Public Key',
+    sectionSan: 'Requested Subject Alternative Names', sectionExtensions: 'Requested Extensions',
+    sectionAttributes: 'Attributes', sectionSignature: 'Signature', sectionFingerprints: 'Fingerprints',
+    labelAlgorithm: 'Algorithm', labelKeySize: 'Key Size', labelExponent: 'Exponent', labelCurve: 'Curve',
+    labelSignatureAlgo: 'Signature Algorithm', labelVersion: 'Version', labelSpkiPin: 'SPKI SHA-256 Pin',
+    labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
+    labelCa: 'Certificate Authority', labelPathLen: 'Path Length',
+    statusYes: 'Yes', statusNo: 'No', present: 'present', notShown: 'value not displayed',
+    checkSig: 'Self-signature', checkKey: 'Key strength', checkHash: 'Signature hash',
+    checkSan: 'Subject alternative names', checkCn: 'Common Name coverage',
+    checkWildcard: 'Wildcard names', checkPublic: 'Publicly resolvable names',
+    sigOk: 'Verified with {algo} — the request was signed by the matching private key',
+    sigBad: 'Does not match the public key in this request. The CSR is corrupt or was tampered with.',
+    sigUnsupported: '{algo} cannot be verified by this browser. Check locally with: openssl req -in req.pem -verify -noout',
+    keyOk: '{algo} {bits} bits',
+    keyWeak: '{algo} {bits} bits — below the 2048-bit RSA / 256-bit EC minimum public CAs accept',
+    hashOk: '{hash}',
+    hashWeak: '{hash} — public CAs stopped accepting SHA-1 signatures in 2016',
+    sanOk: '{n} name(s) requested',
+    sanMissing: 'No subjectAltName requested. A public CA will reject this — browsers match on SAN, not Common Name.',
+    cnOk: 'CN {cn} is also a SAN entry',
+    cnMissingFromSan: 'CN {cn} is not in the SAN list. Browsers ignore Common Name, so the issued certificate will not cover it.',
+    cnAbsent: 'No Common Name set. Valid — browsers match on SAN only.',
+    wildcardNone: 'No wildcard names',
+    wildcardOk: '{name} — well-formed leftmost wildcard',
+    wildcardBad: '{name} — a wildcard is only allowed as the entire leftmost label',
+    wildcardBroad: '{name} spans a two-label domain; a CA refuses wildcards at registry level',
+    publicOk: 'All names are publicly resolvable in form',
+    publicBad: '{name} — internal names and private IPs cannot appear in a publicly trusted certificate',
+  },
+  zh: {
+    resultLabel: "解码结果",
+    resultEmpty: "粘贴 PEM 请求或加载示例，再点「解码」查看结果。",
+    tips: {
+      input: "粘贴含 BEGIN 和 END 行的 PEM 证书签名请求。有多个请求时只显示第一个。工具拒绝 DER 二进制、证书和私钥。",
+      decode: "点「解码」或按 Ctrl/⌘+Enter，解析请求并验证自签名。加载示例只填入文本，之后仍需点「解码」。输入变化不会自动解码。",
+      results: "先读提交前检查，再核对主题与申请的 SAN。复制按钮复制对应字段。challengePassword 只标明是否存在，不显示值；不支持的签名算法与验签失败分别提示。",
+    },
+    pasteLabel: '粘贴 CSR（PEM）', decode: '解码', loadExample: '加载示例', clear: '清除',
+    placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
+    copy: '复制', copied: '已复制！',
+    decoded: '解码成功。',
+    bundleNotice: '检测到 {n} 个请求 — 展示第 1 个。',
+    errEmpty: '请粘贴 PEM 格式的证书签名请求。',
+    errNoMarkers: '未找到 -----BEGIN CERTIFICATE REQUEST----- 标记。本工具不直接支持 DER 二进制，请先用 openssl req -inform DER -in req.der -out req.pem 转换。',
+    errIsCertificate: '这是 X.509 证书，不是签名请求。请改用 SSL 证书解码器。',
+    errIsPrivateKey: '这是私钥。任何网页都不该收到私钥——请改为粘贴对应的 CSR。',
+    errBase64: '无法对请求正文进行 Base64 解码。',
+    errAsn1: '无法解析 ASN.1 结构：',
+    errUnexpected: '解码异常：',
+    sectionChecks: '提交前检查', sectionSubject: '主题（Subject）', sectionPublicKey: '公钥',
+    sectionSan: '申请的 Subject Alternative Names', sectionExtensions: '申请的扩展',
+    sectionAttributes: '属性', sectionSignature: '签名', sectionFingerprints: '指纹',
+    labelAlgorithm: '算法', labelKeySize: '密钥长度', labelExponent: '公钥指数', labelCurve: '曲线',
+    labelSignatureAlgo: '签名算法', labelVersion: '版本', labelSpkiPin: 'SPKI SHA-256 Pin',
+    labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
+    labelCa: '是否 CA', labelPathLen: 'Path Length',
+    statusYes: '是', statusNo: '否', present: '存在', notShown: '不显示内容',
+    checkSig: '自签名', checkKey: '密钥强度', checkHash: '签名摘要算法',
+    checkSan: 'Subject Alternative Names', checkCn: 'Common Name 覆盖',
+    checkWildcard: '通配符域名', checkPublic: '可公网解析的域名',
+    sigOk: '已用 {algo} 验证通过——该请求由配对的私钥签名',
+    sigBad: '与请求中的公钥不匹配。CSR 已损坏或被篡改。',
+    sigUnsupported: '当前浏览器无法验证 {algo}。请在本地执行 openssl req -in req.pem -verify -noout 检查。',
+    keyOk: '{algo} {bits} 位',
+    keyWeak: '{algo} {bits} 位——低于公共 CA 接受的 RSA 2048 位 / EC 256 位下限',
+    hashOk: '{hash}',
+    hashWeak: '{hash}——公共 CA 自 2016 年起不再接受 SHA-1 签名',
+    sanOk: '共申请 {n} 个域名',
+    sanMissing: '未申请 subjectAltName。公共 CA 会拒签——浏览器只匹配 SAN，不看 Common Name。',
+    cnOk: 'CN {cn} 同时也是 SAN 条目',
+    cnMissingFromSan: 'CN {cn} 不在 SAN 列表中。浏览器忽略 Common Name，签发的证书不会覆盖它。',
+    cnAbsent: '未设置 Common Name。这是合法的——浏览器只匹配 SAN。',
+    wildcardNone: '无通配符域名',
+    wildcardOk: '{name}——最左标签通配符，格式正确',
+    wildcardBad: '{name}——通配符只能作为完整的最左标签',
+    wildcardBroad: '{name} 覆盖二级域，CA 拒绝注册局层级的通配符',
+    publicOk: '所有域名在形式上均可公网解析',
+    publicBad: '{name}——内部域名与私有 IP 不能出现在公共信任证书中',
+  },
+  ja: {
+    resultLabel: "デコード結果",
+    resultEmpty: "PEM リクエストを貼り付けるかサンプルを読み込み、「デコード」で結果を表示します。",
+    tips: {
+      input: "BEGIN と END 行を含む PEM 形式の証明書署名要求を貼り付けます。複数ある場合は最初の要求を表示します。DER バイナリ、証明書、秘密鍵は受け付けません。",
+      decode: "「デコード」または Ctrl/⌘+Enter で解析し、自己署名を検証します。サンプルの読み込みは入力欄を埋めるだけなので、その後に「デコード」を押します。入力だけでは解析しません。",
+      results: "提出前チェックを読み、Subject と要求された SAN を確認します。コピーボタンは各値をコピーします。challengePassword は存在のみ示し、値は表示しません。未対応の署名方式と検証失敗は別々に表示します。",
+    },
+    pasteLabel: 'CSR（PEM）を貼り付け', decode: 'デコード', loadExample: 'サンプル読込', clear: 'クリア',
+    placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
+    copy: 'コピー', copied: 'コピー済み！',
+    decoded: 'デコードしました。',
+    bundleNotice: '{n} 件のリクエストを検出 — 1 番目を表示します。',
+    errEmpty: 'PEM 形式の証明書署名要求を貼り付けてください。',
+    errNoMarkers: '-----BEGIN CERTIFICATE REQUEST----- マーカーが見つかりません。DER バイナリは直接対応していません。openssl req -inform DER -in req.der -out req.pem で変換してください。',
+    errIsCertificate: 'これは X.509 証明書であり署名要求ではありません。SSL 証明書デコーダーをご利用ください。',
+    errIsPrivateKey: 'これは秘密鍵です。秘密鍵を Web ページに貼り付けないでください。対応する CSR を貼り付けてください。',
+    errBase64: 'リクエスト本体を Base64 デコードできませんでした。',
+    errAsn1: 'ASN.1 構造を解析できません：',
+    errUnexpected: 'デコードエラー：',
+    sectionChecks: '提出前チェック', sectionSubject: 'Subject', sectionPublicKey: '公開鍵',
+    sectionSan: '要求された Subject Alternative Names', sectionExtensions: '要求された拡張',
+    sectionAttributes: '属性', sectionSignature: '署名', sectionFingerprints: 'フィンガープリント',
+    labelAlgorithm: 'アルゴリズム', labelKeySize: '鍵長', labelExponent: 'Exponent', labelCurve: '曲線',
+    labelSignatureAlgo: '署名アルゴリズム', labelVersion: 'バージョン', labelSpkiPin: 'SPKI SHA-256 Pin',
+    labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
+    labelCa: 'CA 証明書', labelPathLen: 'Path Length',
+    statusYes: 'はい', statusNo: 'いいえ', present: 'あり', notShown: '値は表示しません',
+    checkSig: '自己署名', checkKey: '鍵強度', checkHash: '署名ハッシュ',
+    checkSan: 'Subject Alternative Names', checkCn: 'Common Name の網羅',
+    checkWildcard: 'ワイルドカード名', checkPublic: '公開解決可能な名前',
+    sigOk: '{algo} で検証に成功 — 対応する秘密鍵で署名されています',
+    sigBad: 'このリクエスト内の公開鍵と一致しません。CSR が破損しているか改ざんされています。',
+    sigUnsupported: 'このブラウザでは {algo} を検証できません。ローカルで openssl req -in req.pem -verify -noout を実行してください。',
+    keyOk: '{algo} {bits} ビット',
+    keyWeak: '{algo} {bits} ビット — 公的 CA が受け付ける RSA 2048 ビット / EC 256 ビットの下限を下回ります',
+    hashOk: '{hash}',
+    hashWeak: '{hash} — 公的 CA は 2016 年に SHA-1 署名の受付を終了しました',
+    sanOk: '{n} 件の名前を要求',
+    sanMissing: 'subjectAltName が要求されていません。ブラウザは SAN のみを照合するため、公的 CA は却下します。',
+    cnOk: 'CN {cn} は SAN にも含まれています',
+    cnMissingFromSan: 'CN {cn} が SAN に含まれていません。ブラウザは Common Name を無視するため、発行された証明書はこの名前を保護しません。',
+    cnAbsent: 'Common Name が未設定です。ブラウザは SAN のみを照合するため問題ありません。',
+    wildcardNone: 'ワイルドカード名なし',
+    wildcardOk: '{name} — 最左ラベルのワイルドカードとして正しい形式です',
+    wildcardBad: '{name} — ワイルドカードは最左ラベル全体としてのみ使用できます',
+    wildcardBroad: '{name} は 2 ラベルのドメインを覆います。CA はレジストリ階層のワイルドカードを拒否します',
+    publicOk: 'すべての名前が形式上、公開解決可能です',
+    publicBad: '{name} — 内部名やプライベート IP は公的に信頼される証明書に記載できません',
+  },
+  ko: {
+    resultLabel: "디코드 결과",
+    resultEmpty: "PEM 요청을 붙여 넣거나 예제를 불러온 뒤 디코드을 눌러 결과를 확인하세요.",
+    tips: {
+      input: "BEGIN과 END 행을 포함한 PEM 인증서 서명 요청을 붙여 넣으세요. 여러 요청이 있으면 첫 번째만 표시합니다. DER 바이너리, 인증서와 개인 키는 거부합니다.",
+      decode: "디코드 또는 Ctrl/⌘+Enter로 요청을 분석하고 자체 서명을 검증합니다. 예제 불러오기는 입력란만 채우므로 이후 디코드을 눌러야 합니다. 입력만으로 자동 디코드하지 않습니다.",
+      results: "제출 전 검사를 읽고 Subject와 요청된 SAN을 확인하세요. 복사 버튼은 해당 값을 복사합니다. challengePassword는 존재 여부만 표시하고 값은 숨깁니다. 지원하지 않는 서명 알고리즘과 검증 실패는 따로 표시합니다.",
+    },
+    pasteLabel: 'CSR(PEM) 붙여넣기', decode: '디코드', loadExample: '예시 불러오기', clear: '지우기',
+    placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
+    copy: '복사', copied: '복사됨!',
+    decoded: '디코딩 완료.',
+    bundleNotice: '{n}개의 요청이 감지됨 — 첫 번째 요청 표시.',
+    errEmpty: 'PEM 형식의 인증서 서명 요청을 붙여넣어 주세요.',
+    errNoMarkers: '-----BEGIN CERTIFICATE REQUEST----- 마커를 찾을 수 없습니다. DER 바이너리는 직접 지원하지 않습니다. openssl req -inform DER -in req.der -out req.pem 로 변환해 주세요.',
+    errIsCertificate: 'X.509 인증서이며 서명 요청이 아닙니다. SSL 인증서 디코더를 사용해 주세요.',
+    errIsPrivateKey: '개인 키입니다. 개인 키를 웹 페이지에 붙여넣지 마세요. 해당하는 CSR을 붙여넣어 주세요.',
+    errBase64: '요청 본문을 Base64 디코딩할 수 없습니다.',
+    errAsn1: 'ASN.1 구조를 파싱할 수 없습니다: ',
+    errUnexpected: '디코딩 오류: ',
+    sectionChecks: '제출 전 점검', sectionSubject: 'Subject', sectionPublicKey: '공개 키',
+    sectionSan: '요청된 Subject Alternative Names', sectionExtensions: '요청된 확장',
+    sectionAttributes: '속성', sectionSignature: '서명', sectionFingerprints: '지문',
+    labelAlgorithm: '알고리즘', labelKeySize: '키 길이', labelExponent: 'Exponent', labelCurve: '곡선',
+    labelSignatureAlgo: '서명 알고리즘', labelVersion: '버전', labelSpkiPin: 'SPKI SHA-256 핀',
+    labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
+    labelCa: 'CA 인증서 여부', labelPathLen: 'Path Length',
+    statusYes: '예', statusNo: '아니오', present: '있음', notShown: '값은 표시하지 않음',
+    checkSig: '자체 서명', checkKey: '키 강도', checkHash: '서명 해시',
+    checkSan: 'Subject Alternative Names', checkCn: 'Common Name 포함 여부',
+    checkWildcard: '와일드카드 이름', checkPublic: '공개 확인 가능한 이름',
+    sigOk: '{algo}(으)로 검증 완료 — 짝이 되는 개인 키로 서명되었습니다',
+    sigBad: '이 요청의 공개 키와 일치하지 않습니다. CSR이 손상되었거나 변조되었습니다.',
+    sigUnsupported: '이 브라우저에서는 {algo}를 검증할 수 없습니다. 로컬에서 openssl req -in req.pem -verify -noout 로 확인하세요.',
+    keyOk: '{algo} {bits}비트',
+    keyWeak: '{algo} {bits}비트 — 공인 CA가 허용하는 RSA 2048비트 / EC 256비트 하한 미만',
+    hashOk: '{hash}',
+    hashWeak: '{hash} — 공인 CA는 2016년부터 SHA-1 서명을 받지 않습니다',
+    sanOk: '{n}개의 이름 요청됨',
+    sanMissing: 'subjectAltName이 요청되지 않았습니다. 브라우저는 SAN만 대조하므로 공인 CA가 거부합니다.',
+    cnOk: 'CN {cn}이(가) SAN 항목에도 포함되어 있습니다',
+    cnMissingFromSan: 'CN {cn}이(가) SAN 목록에 없습니다. 브라우저는 Common Name을 무시하므로 발급된 인증서가 이 이름을 보호하지 않습니다.',
+    cnAbsent: 'Common Name이 없습니다. 브라우저는 SAN만 대조하므로 유효합니다.',
+    wildcardNone: '와일드카드 이름 없음',
+    wildcardOk: '{name} — 최좌측 레이블 와일드카드로 형식이 올바릅니다',
+    wildcardBad: '{name} — 와일드카드는 최좌측 레이블 전체로만 사용할 수 있습니다',
+    wildcardBroad: '{name}은(는) 2레이블 도메인을 포괄합니다. CA는 레지스트리 수준 와일드카드를 거부합니다',
+    publicOk: '모든 이름이 형식상 공개 확인 가능합니다',
+    publicBad: '{name} — 내부 이름과 사설 IP는 공개 신뢰 인증서에 넣을 수 없습니다',
+  }
+} as const;
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
 
-<div>
-  <div class="csrd-wrap">
-    <div class="csrd-input-section">
-      <label for="csrd-input" class="tool-label">
-        <span data-i18n="pasteLabel">Paste CSR (PEM)</span>
-      </label>
-      <textarea
-        id="csrd-input"
-        class="tool-textarea csrd-input"
-        rows="9"
-        placeholder="-----BEGIN CERTIFICATE REQUEST-----&#10;MIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...&#10;-----END CERTIFICATE REQUEST-----"
-        data-i18n-placeholder="placeholder"
-        spellcheck="false"
-        autocomplete="off"
-      ></textarea>
-    </div>
-
+<div class="csrd-wrap">
+  <div class="csrd-input-section">
+    <div class="csrd-label-row"><label for="csrd-input" class="tool-label">{T.pasteLabel}</label><Toggletip id="csrd-tip-input" lang={lang} about={T.pasteLabel} wide>{TIPS.input}</Toggletip></div>
     <div class="csrd-actions">
-      <button id="csrd-decode" class="btn-primary" type="button" data-i18n="decode">Decode</button>
-      <button id="csrd-example" class="btn-ghost" type="button" data-i18n="loadExample">Load Example</button>
-      <button id="csrd-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+      <div class="csrd-decode-action"><button id="csrd-decode" class="btn-primary" type="button">{T.decode}</button><Toggletip id="csrd-tip-decode" lang={lang} about={T.decode} wide>{TIPS.decode}</Toggletip></div>
+      <button id="csrd-example" class="btn-ghost" type="button">{T.loadExample}</button>
+      <button id="csrd-clear" class="btn-ghost" type="button">{T.clear}</button>
     </div>
-
-    <div id="csrd-status" class="tool-status none" aria-live="polite"></div>
-
-    <div id="csrd-results" class="csrd-results" hidden></div>
+    <div class="csrd-status-row"><div id="csrd-status" class="tool-status none" aria-live="polite"></div></div>
+    <textarea id="csrd-input" class="tool-textarea csrd-input" rows="6" placeholder={T.placeholder} spellcheck="false" autocomplete="off"></textarea>
   </div>
+  <section class="csrd-result-section">
+    <div class="csrd-label-row"><span class="tool-label">{T.resultLabel}</span><Toggletip id="csrd-tip-results" lang={lang} about={T.resultLabel} wide>{TIPS.results}</Toggletip></div>
+    <div id="csrd-results" class="csrd-results" hidden></div>
+  </section>
+  <p class="csrd-result-empty">{T.resultEmpty}</p>
+</div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          pasteLabel: 'Paste CSR (PEM)', decode: 'Decode', loadExample: 'Load Example', clear: 'Clear',
-          placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
-          copy: 'Copy', copied: 'Copied!',
-          decoded: 'Decoded successfully.',
-          bundleNotice: 'Found {n} requests — showing request #1.',
-          errEmpty: 'Please paste a PEM certificate signing request.',
-          errNoMarkers: 'No -----BEGIN CERTIFICATE REQUEST----- marker found. DER binary input is not supported — convert with: openssl req -inform DER -in req.der -out req.pem',
-          errIsCertificate: 'This is an X.509 certificate, not a signing request. Use the SSL Certificate Decoder for it.',
-          errIsPrivateKey: 'This is a private key. Never paste a private key into a web page — decode the matching CSR instead.',
-          errBase64: 'Unable to Base64-decode the request body.',
-          errAsn1: 'Unable to parse ASN.1 structure: ',
-          errUnexpected: 'Decoder error: ',
-          sectionChecks: 'Pre-submission Checks', sectionSubject: 'Subject', sectionPublicKey: 'Public Key',
-          sectionSan: 'Requested Subject Alternative Names', sectionExtensions: 'Requested Extensions',
-          sectionAttributes: 'Attributes', sectionSignature: 'Signature', sectionFingerprints: 'Fingerprints',
-          labelAlgorithm: 'Algorithm', labelKeySize: 'Key Size', labelExponent: 'Exponent', labelCurve: 'Curve',
-          labelSignatureAlgo: 'Signature Algorithm', labelVersion: 'Version', labelSpkiPin: 'SPKI SHA-256 Pin',
-          labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
-          labelCa: 'Certificate Authority', labelPathLen: 'Path Length',
-          statusYes: 'Yes', statusNo: 'No', present: 'present', notShown: 'value not displayed',
-          checkSig: 'Self-signature', checkKey: 'Key strength', checkHash: 'Signature hash',
-          checkSan: 'Subject alternative names', checkCn: 'Common Name coverage',
-          checkWildcard: 'Wildcard names', checkPublic: 'Publicly resolvable names',
-          sigOk: 'Verified with {algo} — the request was signed by the matching private key',
-          sigBad: 'Does not match the public key in this request. The CSR is corrupt or was tampered with.',
-          sigUnsupported: '{algo} cannot be verified by this browser. Check locally with: openssl req -in req.pem -verify -noout',
-          keyOk: '{algo} {bits} bits',
-          keyWeak: '{algo} {bits} bits — below the 2048-bit RSA / 256-bit EC minimum public CAs accept',
-          hashOk: '{hash}',
-          hashWeak: '{hash} — public CAs stopped accepting SHA-1 signatures in 2016',
-          sanOk: '{n} name(s) requested',
-          sanMissing: 'No subjectAltName requested. A public CA will reject this — browsers match on SAN, not Common Name.',
-          cnOk: 'CN {cn} is also a SAN entry',
-          cnMissingFromSan: 'CN {cn} is not in the SAN list. Browsers ignore Common Name, so the issued certificate will not cover it.',
-          cnAbsent: 'No Common Name set. Valid — browsers match on SAN only.',
-          wildcardNone: 'No wildcard names',
-          wildcardOk: '{name} — well-formed leftmost wildcard',
-          wildcardBad: '{name} — a wildcard is only allowed as the entire leftmost label',
-          wildcardBroad: '{name} spans a two-label domain; a CA refuses wildcards at registry level',
-          publicOk: 'All names are publicly resolvable in form',
-          publicBad: '{name} — internal names and private IPs cannot appear in a publicly trusted certificate',
-        },
-        zh: {
-          pasteLabel: '粘贴 CSR（PEM）', decode: '解码', loadExample: '加载示例', clear: '清除',
-          placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
-          copy: '复制', copied: '已复制！',
-          decoded: '解码成功。',
-          bundleNotice: '检测到 {n} 个请求 — 展示第 1 个。',
-          errEmpty: '请粘贴 PEM 格式的证书签名请求。',
-          errNoMarkers: '未找到 -----BEGIN CERTIFICATE REQUEST----- 标记。本工具不直接支持 DER 二进制，请先用 openssl req -inform DER -in req.der -out req.pem 转换。',
-          errIsCertificate: '这是 X.509 证书，不是签名请求。请改用 SSL 证书解码器。',
-          errIsPrivateKey: '这是私钥。任何网页都不该收到私钥——请改为粘贴对应的 CSR。',
-          errBase64: '无法对请求正文进行 Base64 解码。',
-          errAsn1: '无法解析 ASN.1 结构：',
-          errUnexpected: '解码异常：',
-          sectionChecks: '提交前检查', sectionSubject: '主题（Subject）', sectionPublicKey: '公钥',
-          sectionSan: '申请的 Subject Alternative Names', sectionExtensions: '申请的扩展',
-          sectionAttributes: '属性', sectionSignature: '签名', sectionFingerprints: '指纹',
-          labelAlgorithm: '算法', labelKeySize: '密钥长度', labelExponent: '公钥指数', labelCurve: '曲线',
-          labelSignatureAlgo: '签名算法', labelVersion: '版本', labelSpkiPin: 'SPKI SHA-256 Pin',
-          labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
-          labelCa: '是否 CA', labelPathLen: 'Path Length',
-          statusYes: '是', statusNo: '否', present: '存在', notShown: '不显示内容',
-          checkSig: '自签名', checkKey: '密钥强度', checkHash: '签名摘要算法',
-          checkSan: 'Subject Alternative Names', checkCn: 'Common Name 覆盖',
-          checkWildcard: '通配符域名', checkPublic: '可公网解析的域名',
-          sigOk: '已用 {algo} 验证通过——该请求由配对的私钥签名',
-          sigBad: '与请求中的公钥不匹配。CSR 已损坏或被篡改。',
-          sigUnsupported: '当前浏览器无法验证 {algo}。请在本地执行 openssl req -in req.pem -verify -noout 检查。',
-          keyOk: '{algo} {bits} 位',
-          keyWeak: '{algo} {bits} 位——低于公共 CA 接受的 RSA 2048 位 / EC 256 位下限',
-          hashOk: '{hash}',
-          hashWeak: '{hash}——公共 CA 自 2016 年起不再接受 SHA-1 签名',
-          sanOk: '共申请 {n} 个域名',
-          sanMissing: '未申请 subjectAltName。公共 CA 会拒签——浏览器只匹配 SAN，不看 Common Name。',
-          cnOk: 'CN {cn} 同时也是 SAN 条目',
-          cnMissingFromSan: 'CN {cn} 不在 SAN 列表中。浏览器忽略 Common Name，签发的证书不会覆盖它。',
-          cnAbsent: '未设置 Common Name。这是合法的——浏览器只匹配 SAN。',
-          wildcardNone: '无通配符域名',
-          wildcardOk: '{name}——最左标签通配符，格式正确',
-          wildcardBad: '{name}——通配符只能作为完整的最左标签',
-          wildcardBroad: '{name} 覆盖二级域，CA 拒绝注册局层级的通配符',
-          publicOk: '所有域名在形式上均可公网解析',
-          publicBad: '{name}——内部域名与私有 IP 不能出现在公共信任证书中',
-        },
-        ja: {
-          pasteLabel: 'CSR（PEM）を貼り付け', decode: 'デコード', loadExample: 'サンプル読込', clear: 'クリア',
-          placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
-          copy: 'コピー', copied: 'コピー済み！',
-          decoded: 'デコードしました。',
-          bundleNotice: '{n} 件のリクエストを検出 — 1 番目を表示します。',
-          errEmpty: 'PEM 形式の証明書署名要求を貼り付けてください。',
-          errNoMarkers: '-----BEGIN CERTIFICATE REQUEST----- マーカーが見つかりません。DER バイナリは直接対応していません。openssl req -inform DER -in req.der -out req.pem で変換してください。',
-          errIsCertificate: 'これは X.509 証明書であり署名要求ではありません。SSL 証明書デコーダーをご利用ください。',
-          errIsPrivateKey: 'これは秘密鍵です。秘密鍵を Web ページに貼り付けないでください。対応する CSR を貼り付けてください。',
-          errBase64: 'リクエスト本体を Base64 デコードできませんでした。',
-          errAsn1: 'ASN.1 構造を解析できません：',
-          errUnexpected: 'デコードエラー：',
-          sectionChecks: '提出前チェック', sectionSubject: 'Subject', sectionPublicKey: '公開鍵',
-          sectionSan: '要求された Subject Alternative Names', sectionExtensions: '要求された拡張',
-          sectionAttributes: '属性', sectionSignature: '署名', sectionFingerprints: 'フィンガープリント',
-          labelAlgorithm: 'アルゴリズム', labelKeySize: '鍵長', labelExponent: 'Exponent', labelCurve: '曲線',
-          labelSignatureAlgo: '署名アルゴリズム', labelVersion: 'バージョン', labelSpkiPin: 'SPKI SHA-256 Pin',
-          labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
-          labelCa: 'CA 証明書', labelPathLen: 'Path Length',
-          statusYes: 'はい', statusNo: 'いいえ', present: 'あり', notShown: '値は表示しません',
-          checkSig: '自己署名', checkKey: '鍵強度', checkHash: '署名ハッシュ',
-          checkSan: 'Subject Alternative Names', checkCn: 'Common Name の網羅',
-          checkWildcard: 'ワイルドカード名', checkPublic: '公開解決可能な名前',
-          sigOk: '{algo} で検証に成功 — 対応する秘密鍵で署名されています',
-          sigBad: 'このリクエスト内の公開鍵と一致しません。CSR が破損しているか改ざんされています。',
-          sigUnsupported: 'このブラウザでは {algo} を検証できません。ローカルで openssl req -in req.pem -verify -noout を実行してください。',
-          keyOk: '{algo} {bits} ビット',
-          keyWeak: '{algo} {bits} ビット — 公的 CA が受け付ける RSA 2048 ビット / EC 256 ビットの下限を下回ります',
-          hashOk: '{hash}',
-          hashWeak: '{hash} — 公的 CA は 2016 年に SHA-1 署名の受付を終了しました',
-          sanOk: '{n} 件の名前を要求',
-          sanMissing: 'subjectAltName が要求されていません。ブラウザは SAN のみを照合するため、公的 CA は却下します。',
-          cnOk: 'CN {cn} は SAN にも含まれています',
-          cnMissingFromSan: 'CN {cn} が SAN に含まれていません。ブラウザは Common Name を無視するため、発行された証明書はこの名前を保護しません。',
-          cnAbsent: 'Common Name が未設定です。ブラウザは SAN のみを照合するため問題ありません。',
-          wildcardNone: 'ワイルドカード名なし',
-          wildcardOk: '{name} — 最左ラベルのワイルドカードとして正しい形式です',
-          wildcardBad: '{name} — ワイルドカードは最左ラベル全体としてのみ使用できます',
-          wildcardBroad: '{name} は 2 ラベルのドメインを覆います。CA はレジストリ階層のワイルドカードを拒否します',
-          publicOk: 'すべての名前が形式上、公開解決可能です',
-          publicBad: '{name} — 内部名やプライベート IP は公的に信頼される証明書に記載できません',
-        },
-        ko: {
-          pasteLabel: 'CSR(PEM) 붙여넣기', decode: '디코드', loadExample: '예시 불러오기', clear: '지우기',
-          placeholder: '-----BEGIN CERTIFICATE REQUEST-----\nMIIDQzCCAisCAQAwgYYxCzAJBgNVBAYTAlVT...\n-----END CERTIFICATE REQUEST-----',
-          copy: '복사', copied: '복사됨!',
-          decoded: '디코딩 완료.',
-          bundleNotice: '{n}개의 요청이 감지됨 — 첫 번째 요청 표시.',
-          errEmpty: 'PEM 형식의 인증서 서명 요청을 붙여넣어 주세요.',
-          errNoMarkers: '-----BEGIN CERTIFICATE REQUEST----- 마커를 찾을 수 없습니다. DER 바이너리는 직접 지원하지 않습니다. openssl req -inform DER -in req.der -out req.pem 로 변환해 주세요.',
-          errIsCertificate: 'X.509 인증서이며 서명 요청이 아닙니다. SSL 인증서 디코더를 사용해 주세요.',
-          errIsPrivateKey: '개인 키입니다. 개인 키를 웹 페이지에 붙여넣지 마세요. 해당하는 CSR을 붙여넣어 주세요.',
-          errBase64: '요청 본문을 Base64 디코딩할 수 없습니다.',
-          errAsn1: 'ASN.1 구조를 파싱할 수 없습니다: ',
-          errUnexpected: '디코딩 오류: ',
-          sectionChecks: '제출 전 점검', sectionSubject: 'Subject', sectionPublicKey: '공개 키',
-          sectionSan: '요청된 Subject Alternative Names', sectionExtensions: '요청된 확장',
-          sectionAttributes: '속성', sectionSignature: '서명', sectionFingerprints: '지문',
-          labelAlgorithm: '알고리즘', labelKeySize: '키 길이', labelExponent: 'Exponent', labelCurve: '곡선',
-          labelSignatureAlgo: '서명 알고리즘', labelVersion: '버전', labelSpkiPin: 'SPKI SHA-256 핀',
-          labelKeyUsage: 'Key Usage', labelEku: 'Extended Key Usage', labelBasicConstraints: 'Basic Constraints',
-          labelCa: 'CA 인증서 여부', labelPathLen: 'Path Length',
-          statusYes: '예', statusNo: '아니오', present: '있음', notShown: '값은 표시하지 않음',
-          checkSig: '자체 서명', checkKey: '키 강도', checkHash: '서명 해시',
-          checkSan: 'Subject Alternative Names', checkCn: 'Common Name 포함 여부',
-          checkWildcard: '와일드카드 이름', checkPublic: '공개 확인 가능한 이름',
-          sigOk: '{algo}(으)로 검증 완료 — 짝이 되는 개인 키로 서명되었습니다',
-          sigBad: '이 요청의 공개 키와 일치하지 않습니다. CSR이 손상되었거나 변조되었습니다.',
-          sigUnsupported: '이 브라우저에서는 {algo}를 검증할 수 없습니다. 로컬에서 openssl req -in req.pem -verify -noout 로 확인하세요.',
-          keyOk: '{algo} {bits}비트',
-          keyWeak: '{algo} {bits}비트 — 공인 CA가 허용하는 RSA 2048비트 / EC 256비트 하한 미만',
-          hashOk: '{hash}',
-          hashWeak: '{hash} — 공인 CA는 2016년부터 SHA-1 서명을 받지 않습니다',
-          sanOk: '{n}개의 이름 요청됨',
-          sanMissing: 'subjectAltName이 요청되지 않았습니다. 브라우저는 SAN만 대조하므로 공인 CA가 거부합니다.',
-          cnOk: 'CN {cn}이(가) SAN 항목에도 포함되어 있습니다',
-          cnMissingFromSan: 'CN {cn}이(가) SAN 목록에 없습니다. 브라우저는 Common Name을 무시하므로 발급된 인증서가 이 이름을 보호하지 않습니다.',
-          cnAbsent: 'Common Name이 없습니다. 브라우저는 SAN만 대조하므로 유효합니다.',
-          wildcardNone: '와일드카드 이름 없음',
-          wildcardOk: '{name} — 최좌측 레이블 와일드카드로 형식이 올바릅니다',
-          wildcardBad: '{name} — 와일드카드는 최좌측 레이블 전체로만 사용할 수 있습니다',
-          wildcardBroad: '{name}은(는) 2레이블 도메인을 포괄합니다. CA는 레지스트리 수준 와일드카드를 거부합니다',
-          publicOk: '모든 이름이 형식상 공개 확인 가능합니다',
-          publicBad: '{name} — 내부 이름과 사설 IP는 공개 신뢰 인증서에 넣을 수 없습니다',
-        }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.csrd-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('.csrd-wrap [data-i18n-placeholder]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-placeholder'); if (t[key]) el.setAttribute('placeholder', t[key]);
-      });
-
       // Sample CSR generated with `openssl req -new -newkey rsa:2048`; the private key was
       // written to /dev/null and never existed on disk. RSA 2048 / SHA-256 with SAN,
       // keyUsage and extendedKeyUsage so every result card has content to show.
@@ -1120,15 +1132,31 @@ const { lang = 'en' } = Astro.props;
     .csrd-wrap {
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      gap: 0.75rem;
+      min-width: 0;
+      min-height: 0;
     }
+    .csrd-wrap [hidden] { display: none !important; }
+    .csrd-label-row, .csrd-decode-action { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+    .csrd-label-row .tool-label { margin: 0; }
+    .csrd-status-row { min-height: 44px; display: flex; align-items: center; }
+    .csrd-status-row .tool-status { margin: 0; overflow-wrap: anywhere; }
+    .csrd-wrap:has(#csrd-results[hidden]) .csrd-input-section { flex: 1; }
+    .csrd-wrap:has(#csrd-results[hidden]) .csrd-input { flex: 1 1 0; }
+    .csrd-result-section { display: flex; flex-direction: column; gap: 0.4rem; flex: 1 1 0; min-height: 240px; min-width: 0; }
+    .csrd-result-section:has(#csrd-results[hidden]) { display: none; }
+    .csrd-result-empty { margin: 0; color: var(--color-text-muted); font-size: 0.88rem; }
+    .csrd-wrap:has(#csrd-results:not([hidden])) .csrd-result-empty { display: none; }
     .csrd-input-section {
       display: flex;
       flex-direction: column;
       gap: 0.4rem;
+      min-height: 0;
     }
     .csrd-input {
-      min-height: 200px;
+      min-height: 140px;
+      height: 140px;
+      resize: none;
     }
     .csrd-actions {
       display: flex;
@@ -1137,6 +1165,10 @@ const { lang = 'en' } = Astro.props;
     }
     .csrd-results {
       display: grid;
+      align-content: start;
+      flex: 1 1 0;
+      min-height: 0;
+      overflow: auto;
       gap: 0.75rem;
     }
     .csrd-grid-2 {
@@ -1144,7 +1176,7 @@ const { lang = 'en' } = Astro.props;
       grid-template-columns: 1fr;
       gap: 0.75rem;
     }
-    @media (min-width: 720px) {
+    @media (min-width: 861px) {
       .csrd-grid-2 {
         grid-template-columns: 1fr 1fr;
       }
@@ -1270,11 +1302,22 @@ const { lang = 'en' } = Astro.props;
     .csrd-check--pass .csrd-check-mark { color: var(--color-success); }
     .csrd-check--warn .csrd-check-mark { color: var(--color-accent); }
     .csrd-check--fail .csrd-check-mark { color: var(--color-danger); }
+    @media (max-width: 860px) {
+      .csrd-wrap:has(#csrd-results[hidden]) .csrd-input-section { flex: none; }
+      .csrd-wrap:has(#csrd-results[hidden]) .csrd-input { flex: none; }
+      .csrd-result-section { flex: none; height: 420px; }
+      .csrd-result-empty { display: none; }
+    }
     @media (max-width: 640px) {
+      .csrd-input { min-height: 120px; height: 120px; }
+      .csrd-status-row { min-height: 66px; }
+      .csrd-wrap .csrd-actions > .btn-ghost { width: auto; flex: 1 1 0; }
+      .csrd-decode-action { flex: 1 1 100%; }
+      .csrd-wrap .csrd-decode-action > .btn-primary { flex: 1 1 0; width: auto; }
+
       .csrd-row-label {
         min-width: 0;
         flex: 0 0 100%;
       }
     }
   </style>
-</div>
