@@ -559,6 +559,8 @@ const resultBases = [10, 2, 16, 8] as const;
       var twosInfo = $('nb-twos-info');
       var outs = { 10: $('nb-out-10'), 2: $('nb-out-2'), 16: $('nb-out-16'), 8: $('nb-out-8') };
       var last = null;
+      var resultRevision = 0;
+      var copyButtons = document.querySelectorAll('.nb-wrap .btn-copy[data-copy]');
 
       function baseName(b) { return t.baseNames[b] || fill(t.baseN, { n: b }); }
 
@@ -663,6 +665,8 @@ const resultBases = [10, 2, 16, 8] as const;
       }
 
       function convert() {
+        resultRevision++;
+        copyButtons.forEach(function (btn) { btn.textContent = t.copy; });
         var base = Number(baseEl.value);
         var width = Number(widthEl.value);
         signedEl.disabled = !width;
@@ -751,15 +755,25 @@ const resultBases = [10, 2, 16, 8] as const;
         });
       }
 
-      document.querySelectorAll('.nb-wrap .btn-copy[data-copy]').forEach(function (btn) {
+      copyButtons.forEach(function (btn) {
+        var requestId = 0, feedbackTimer = null;
         btn.addEventListener('click', function () {
           var val = $(btn.getAttribute('data-copy')).textContent;
           if (!val) return;
+          var revision = resultRevision, input = inputEl.value, request = ++requestId;
+          clearTimeout(feedbackTimer);
+          btn.textContent = t.copy;
+          function isCurrent() {
+            // Ctrl/Cmd+L clears the input before the deferred convert runs.
+            return revision === resultRevision && input === inputEl.value && request === requestId;
+          }
           copyText(val).then(function () {
-            btn.textContent = t.copied;
-            setTimeout(function () { btn.textContent = t.copy; }, 1500);
+            if (isCurrent()) {
+              btn.textContent = t.copied;
+              feedbackTimer = setTimeout(function () { if (isCurrent()) btn.textContent = t.copy; }, 1500);
+            }
             window.trackTool && window.trackTool('number_base', 'copy');
-          }, function () { setStatus(t.copyFail, 'error'); });
+          }, function () { if (isCurrent()) setStatus(t.copyFail, 'error'); });
         });
       });
 
