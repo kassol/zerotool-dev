@@ -25,6 +25,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
   'dns-lookup': 'analyze',
+  'url-parser': 'analyze',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
