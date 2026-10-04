@@ -311,6 +311,37 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     p.complete(p.input('recovered.jpg'));
     eq(failure + ' can load another image after error', [p.get('emv-filename').textContent, p.get('emv-actions').style.display], ['recovered.jpg', '']);
   }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const length of [0, 1, 2, 3]) {
+    const label = lang + ' ' + length + '-byte JPEG';
+    const p = ui(lang); p.complete(p.input('old.jpg'));
+    const oldPreview = p.get('emv-preview-img').src, oldProbe = p.images.at(-1);
+    oldProbe.naturalWidth = 64; oldProbe.naturalHeight = 48; oldProbe.onload();
+    const bytes = Buffer.from([0xff, 0xd8, 0xff]).subarray(0, length);
+    p.complete(p.input('short.jpg', 'image/jpeg', bytes.length), bytes);
+    eq(label + ' shows localized JPEG error', p.get('emv-status').textContent, clientStrings(lang).CLIENT_T.errNotJpeg);
+    eq(label + ' error is visible', visible(p.get('emv-status')) && p.get('emv-status').className.includes('error'), true);
+    eq(label + ' import remains available', visible(p.get('emv-dropzone')), true);
+    eq(label + ' result stays hidden', visible(p.get('emv-result-area')), false);
+    eq(label + ' clears and hides old preview', [p.get('emv-preview-img').src, p.get('emv-preview-img').style.display], ['', 'none']);
+    eq(label + ' revokes old preview URL', p.revoked.includes(oldPreview), true);
+    eq(label + ' clears old file details', [p.get('emv-filename').textContent, p.get('emv-filesize').textContent, p.get('emv-dimensions').textContent], ['', '', '']);
+    eq(label + ' hides export actions', visible(p.get('emv-actions')), false);
+    oldProbe.naturalWidth = 999; oldProbe.naturalHeight = 777; oldProbe.onload();
+    eq(label + ' old dimension callback stays canceled', p.get('emv-dimensions').textContent, '');
+    let downloadError = null;
+    try { p.get('emv-download').click(); } catch (error) { downloadError = error.name; }
+    eq(label + ' download guard does not throw', downloadError, null);
+    eq(label + ' cannot download rejected or old image', p.downloads.length, 0);
+    p.get('emv-copy-json').click(); await settle();
+    eq(label + ' cannot copy rejected or old metadata', p.copied.length, 0);
+    p.complete(p.input('recovered.jpg'));
+    eq(label + ' valid JPEG restores result and actions', [p.get('emv-filename').textContent, visible(p.get('emv-result-area')), visible(p.get('emv-actions')), p.get('emv-status').textContent], ['recovered.jpg', true, true, '']);
+    p.get('emv-copy-json').click(); await settle();
+    eq(label + ' recovered metadata is copyable', JSON.parse(p.copied.at(-1)).ifd0.Make, 'Apple');
+    p.get('emv-download').click();
+    eq(label + ' recovered download has new name', p.downloads.at(-1).name, 'recovered-clean.jpg');
+    eq(label + ' recovered download has exact cleaned bytes', Buffer.from(await p.downloads.at(-1).blob.arrayBuffer()).equals(cleaned), true);
+  }
   {
     const p = ui(); p.complete(p.input('first.jpg')); const probe = p.images.at(-1); p.clear();
     probe.naturalWidth = 999; probe.naturalHeight = 777; probe.onload();
