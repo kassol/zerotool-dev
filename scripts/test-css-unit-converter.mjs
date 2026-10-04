@@ -6,6 +6,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import yaml from 'js-yaml';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssUnitConverterTool.astro'), 'utf8');
 const SLUG = 'css-unit-converter';
@@ -24,6 +26,8 @@ const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), she
 if (!shortcut.includes("document.addEventListener('keydown'")) throw new Error('Missing shared shortcut');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 function page({ lang = 'en', shellFirst = false } = {}) {
+  const allStrings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
+  const { tips, ...t } = allStrings[lang];
   const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map();
   let now = 0, timerId = 0;
   const doc = { documentElement: { lang }, activeElement: null };
@@ -86,7 +90,10 @@ function page({ lang = 'en', shellFirst = false } = {}) {
   }
   const body = new Element('body'), widget = new Element();
   widget.className = 'tool-widget'; body.appendChild(widget);
-  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0]
+    .replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + t[key] + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => t[key]);
   const stack = [widget], voids = new Set(['input', 'br', 'hr', 'img']);
   for (const token of markup.matchAll(/<!--[\s\S]*?-->|<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
     if (token[0].startsWith('<!--')) continue;
@@ -118,7 +125,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
     },
   });
   const context = {
-    document: doc, console, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) },
+    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) },
     navigator: { clipboard: { writeText(value) {
       let resolve, reject;
       const promise = new Promise((a, b) => { resolve = a; reject = b; });
@@ -246,5 +253,62 @@ try {
   }
   await settle(); eq('all current and stale clipboard rejections are handled', unhandled.length, 0);
 } finally { process.off('unhandledRejection', onUnhandled); }
+console.log('\nv2 page layout');
+{
+  const preserved = {
+  "en": {
+    "body": "0dce96cb37e20e84f2f7faee0862a1a872e9b9fa08c91559f4c0402f235df171",
+    "front": "fea4183dc835f3eb738042e5f7fea4b762d3fe9e314a82db0038e706097de8f9"
+  },
+  "zh": {
+    "body": "646522953672f4745dd844d40c1b2cb64f7e88a8c98abb4c6e05d7f218121506",
+    "front": "c0be0eab81fddc39dbd63038384abd8c3a42311eadcab308c8fb2821df337799"
+  },
+  "ja": {
+    "body": "728e4e3ee2d3a8b49078081afec9c9f6a379c46bc7f779e5bd5bf91383b8b4f3",
+    "front": "87127ff5452891194878cc61a59481714ce2405b37105d7ee648ad8228f93a85"
+  },
+  "ko": {
+    "body": "0ce30006896227c75c9476a532110d6fbb3bc2837b6e476f4233527881421a33",
+    "front": "56ca96b00161a1f1ec45b281e33683a48a3950ca03201df9171305bf03afcad0"
+  }
+};
+  const strings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
+  const leaves = (value, prefix = '') => Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? leaves(item, prefix + key + '.') : [[prefix + key, item]]);
+  const en = leaves(strings.en);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const rows = leaves(strings[lang]);
+    same(lang + ' recursive string keys match en', rows.map(([key]) => key), en.map(([key]) => key));
+    for (const [key, value] of rows) {
+      eq(lang + ' ' + key + ' is nonempty localized text', typeof value === 'string' && value.trim().length > 0, true);
+      same(lang + ' ' + key + ' placeholders match', [...value.matchAll(/\{\w+\}/g)].map(m => m[0]).sort(), [...en.find(([k]) => k === key)[1].matchAll(/\{\w+\}/g)].map(m => m[0]).sort());
+    }
+    const doc = readFileSync(join(root, `src/content/tools/css-unit-converter/${lang}.mdx`), 'utf8');
+    const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)/.exec(doc), meta = yaml.load(match[1]);
+    eq(lang + ' steps are present and bounded', Array.isArray(meta.steps) && meta.steps.length > 0 && meta.steps.length <= 8 && meta.steps.every(s => typeof s === 'string' && s.length <= 280) && meta.steps.join('').length <= 1200, true);
+    eq(lang + ' steps precede FAQ', match[1].indexOf('steps:') < match[1].indexOf('faqItems:'), true);
+    eq(lang + ' How to Use removed', /<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(match[2]), false);
+    const hash = value => createHash('sha256').update(value).digest('hex');
+    eq(lang + ' all remaining body sections unchanged', hash(match[2]), preserved[lang].body);
+    eq(lang + ' SEO and FAQ frontmatter unchanged', hash(match[1].replace(/\nsteps:\n(?:  - .*\n)+/, '\n')), preserved[lang].front);
+  }
+  const markup = source.split('---')[2].split('<script')[0];
+  eq('direct component root uses cu-wrap', /^\s*<div class="cu-wrap">/.test(markup), true);
+  eq('six distinct tips cover controls', new Set([...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1])).size, 6);
+  eq('frontmatter removes tips from client strings', source.includes('const { tips: TIPS, ...CLIENT_T } = T;'), true);
+  eq('script receives only selected client language', source.includes('define:vars={{ t: CLIENT_T }}'), true);
+  eq('runtime i18n removed', /data-i18n|var STRINGS|document\.documentElement\.lang/.test(source), false);
+  eq('four copy actions and the existing Clear retained', (markup.match(/class="btn-copy"/g) || []).length === 4 && (markup.match(/id="cu-clear"/g) || []).length === 1, true);
+  eq('no redundant convert action', !markup.includes('btn-primary'), true);
+  eq('optional numeric settings start folded', /<details class="cu-settings">/.test(markup), true);
+  eq('component root stays natural height', /\.cu-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0;/.test(source), true);
+  eq('status has reserved scrollable space', /\.cu-status\s*\{[^}]*height:\s*3em;[^}]*overflow:\s*auto;/.test(source), true);
+  eq('numeric results have fixed height and horizontal scrolling', /\.cu-output\s*\{[^}]*height:\s*2\.75rem;[^}]*overflow-x:\s*auto;[^}]*white-space:\s*nowrap;/.test(source), true);
+  eq('settings and Clear precede status then primary input and results', markup.indexOf('class="cu-toolbar"') < markup.indexOf('id="cu-status"') && markup.indexOf('class="cu-settings"') < markup.indexOf('id="cu-status"') && markup.indexOf('id="cu-status"') < markup.indexOf('id="cu-value"') && markup.indexOf('id="cu-value"') < markup.indexOf('class="cu-results"'), true);
+  eq('stack and phone breakpoints exist', source.includes('@media (max-width: 860px)') && source.includes('@media (max-width: 640px)'), true);
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  eq('registered as compact', /['"]css-unit-converter['"]\s*:\s*['"]compact['"]/.test(layouts), true);
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exitCode = failures ? 1 : 0;

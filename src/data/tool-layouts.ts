@@ -15,6 +15,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'aspect-ratio': 'compact',
   'basic-auth-header-generator': 'compact',
   'chmod-calculator': 'compact',
+  'css-unit-converter': 'compact',
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',
