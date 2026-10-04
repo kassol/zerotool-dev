@@ -271,6 +271,7 @@
       var decodeOutputEl = byId('bahg-decode-output');
       var decodedUsernameEl = byId('bahg-decoded-username');
       var decodedPasswordEl = byId('bahg-decoded-password');
+      var generateRevision = 0, decodeRevision = 0;
 
       function setStatus(el, message, type) {
         el.textContent = message || '';
@@ -341,7 +342,15 @@
       }
       /* ── engine:end ── */
 
+      function resetCopyButtons(output) {
+        output.querySelectorAll('[data-copy-target]').forEach(function (button) {
+          button.classList.remove('copied');
+          button.textContent = t.copy;
+        });
+      }
+
       function generateHeader() {
+        generateRevision++; resetCopyButtons(generateOutputEl);
         var username = usernameEl.value;
         var password = passwordEl.value;
         var token;
@@ -367,6 +376,7 @@
       }
 
       function decodeHeader() {
+        decodeRevision++; resetCopyButtons(decodeOutputEl);
         var result;
         try {
           result = decodeCredentials(decodeInputEl.value);
@@ -381,24 +391,31 @@
         }
       }
 
-      function resetCopyButton(button) {
+      function resetCopyButton(button, isCurrent) {
         window.setTimeout(function () {
+          if (!isCurrent()) return;
           button.classList.remove('copied');
           button.textContent = t.copy;
         }, 1200);
       }
 
-      function copyText(button, statusEl) {
+      async function copyText(button, statusEl, isCurrent) {
         var target = byId(button.getAttribute('data-copy-target'));
         var text = target ? target.textContent : '';
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        try {
+          await navigator.clipboard.writeText(text);
+          if (!isCurrent()) return;
           button.classList.add('copied');
           button.textContent = t.copied;
-          resetCopyButton(button);
-        }).catch(function () {
-          setStatus(statusEl, t.copyFailed, 'error');
-        });
+          resetCopyButton(button, isCurrent);
+        } catch (err) {
+          if (isCurrent()) {
+            button.classList.remove('copied');
+            button.textContent = t.copy;
+            setStatus(statusEl, t.copyFailed, 'error');
+          }
+        }
       }
 
       togglePasswordBtn.addEventListener('click', function () {
@@ -413,7 +430,8 @@
         passwordEl.value = 'open sesame';
         generateHeader();
       });
-      clearGenerateBtn.addEventListener('click', function () {
+      function clearGenerate() {
+        generateRevision++; resetCopyButtons(generateOutputEl);
         usernameEl.value = '';
         passwordEl.value = '';
         fullHeaderEl.textContent = '';
@@ -422,26 +440,42 @@
         fetchEl.textContent = '';
         generateOutputEl.hidden = true;
         setStatus(generateStatusEl, '', 'none');
-      });
+      }
+      clearGenerateBtn.addEventListener('click', clearGenerate);
 
       decodeBtn.addEventListener('click', decodeHeader);
       loadDecodeExampleBtn.addEventListener('click', function () {
         decodeInputEl.value = 'Basic dXNlcjpwOmE6c3M=';
         decodeHeader();
       });
-      clearDecodeBtn.addEventListener('click', function () {
+      function clearDecode() {
+        decodeRevision++; resetCopyButtons(decodeOutputEl);
         decodeInputEl.value = '';
         decodedUsernameEl.textContent = '';
         decodedPasswordEl.textContent = '';
         decodeOutputEl.hidden = true;
         setStatus(decodeStatusEl, '', 'none');
-      });
+      }
+      clearDecodeBtn.addEventListener('click', clearDecode);
 
       document.querySelectorAll('.bahg-wrap [data-copy-target]').forEach(function (button) {
+        var request = 0;
         button.addEventListener('click', function () {
-          var statusEl = button.closest('#bahg-decode-output') ? decodeStatusEl : generateStatusEl;
-          copyText(button, statusEl);
+          var decoding = !!button.closest('#bahg-decode-output');
+          var statusEl = decoding ? decodeStatusEl : generateStatusEl;
+          var revision = decoding ? decodeRevision : generateRevision, current = ++request;
+          copyText(button, statusEl, function () {
+            return current === request && revision === (decoding ? decodeRevision : generateRevision);
+          });
         });
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var widget = document.querySelector('.bahg-wrap');
+        if (!widget || !widget.contains(document.activeElement)) return;
+        e.preventDefault();
+        clearGenerate(); clearDecode();
       });
     })();
   </script>
