@@ -341,6 +341,53 @@ eq('$ref inside an extension is checked', codes(run('openapi: 3.0.3\n' + INFO + 
   check('pickRoot parses bounded key strings only', parsedLengths.length > 0 && parsedLengths.every((n) => n <= 4096), parsedLengths);
 }
 
+// YAML root detection uses the parser's node boundaries, including a truncated prefix.
+{
+  const rootDoc = 'openapi: 3.1.0\ninfo: {title: Real, version: "1"}\npaths: {}\n';
+  for (const [name, text] of [
+    ['nested field', 'type: object\nexample:\n  openapi: 3.1.0\n'],
+    ['literal block', 'description: |\n  openapi: 3.1.0\n'],
+    ['folded block', 'description: >-\n  swagger: 2.0\n'],
+    ['nested multiline quoted value', 'info:\n  description: "a\nopenapi: 3.1.0\nb"\n'],
+    ['nested anchor and alias', 'nested: &ref {openapi: 3.1.0}\ncopy: *ref\n'],
+    ['anchored flow sequence', '&ref [openapi: 3.1.0]\n'],
+    ['tagged flow sequence', '!!seq [openapi: 3.1.0]\n'],
+    ['block sequence', '- openapi: 3.1.0\n'],
+    ['root scalar', '|\n  openapi: 3.1.0\n'],
+    ['later document', 'type: object\n---\nopenapi: 3.1.0\n'],
+    ['complex mapping key', '{openapi: 3.1.0}: value\n'],
+  ]) {
+    eq('pickRoot YAML ignores ' + name, E.pickRoot({ 'pet.yaml': text, 'root.yaml': rootDoc }), 'root.yaml');
+  }
+  const pick = (text) => E.pickRoot({ 'pet.yaml': 'type: object\n', 'root.yaml': text });
+  for (const [name, text] of [
+    ['whole-document indentation', '  info: {title: Root}\n  openapi: 3.1.0\n  paths: {}\n'],
+    ['comments and document start', '# openapi: fake\n---\n# note\nopenapi: 3.1.0\n'],
+    ['directive and same-line document start', '%YAML 1.2\n--- openapi: 3.1.0\n'],
+    ['single-quoted key', "'openapi': 3.1.0\n"],
+    ['mixed flow mapping', '{"info": {title: Root}, openapi: 3.1.0}\n'],
+    ['anchored mapping', '&ref {openapi: 3.1.0}\n'],
+    ['tagged mapping', '!!map {openapi: 3.1.0}\n'],
+    ['explicit key', '? openapi\n: 3.1.0\n'],
+    ['alias key', 'key: &ver openapi\n*ver : 3.1.0\n'],
+    ['merged root fields', 'base: &ver {openapi: 3.1.0}\n<<: *ver\n'],
+    ['first document before another document', 'openapi: 3.1.0\n---\ntype: object\n'],
+    ['truncated block value after version', 'openapi: 3.1.0\npaths: [' + ' '.repeat(4096)],
+    ['truncated flow value after version', '{info: {title: Root}, openapi: 3.1.0, paths: [' + ' '.repeat(4096)],
+    ['truncated quoted value after version', "'openapi': 3.1.0\ndescription: \"" + 'x'.repeat(4096)],
+  ]) eq('pickRoot YAML accepts ' + name, pick(text), 'root.yaml');
+  eq('pickRoot YAML version beyond prefix keeps fallback', pick('#' + 'x'.repeat(4095) + '\n' + rootDoc), 'pet.yaml');
+  eq('pickRoot YAML colon at prefix boundary is complete', pick('#' + 'x'.repeat(4086) + '\nopenapi:'), 'root.yaml');
+  eq('pickRoot YAML colon beyond prefix is incomplete', pick('#' + 'x'.repeat(4087) + '\nopenapi:'), 'pet.yaml');
+  eq('pickRoot YAML truncated nested value cannot select a false root', E.pickRoot({ 'pet.yaml': 'info: {openapi: 3.1.0, description: "' + 'x'.repeat(4096), 'root.yaml': rootDoc }), 'root.yaml');
+  const originalLoad = jsyaml.load, lengths = [];
+  try {
+    jsyaml.load = (text, options) => { lengths.push(text.length); return originalLoad(text, options); };
+    eq('pickRoot large YAML still finds the bounded root key', pick('{info: {title: Root}, openapi: 3.1.0, paths: [' + ' '.repeat(2_097_152)), 'root.yaml');
+  } finally { jsyaml.load = originalLoad; }
+  check('pickRoot YAML parses at most three bounded prefixes per file', lengths.length <= 4 && lengths.every((n) => n <= 4096 + ' null}'.length), lengths);
+}
+
 // ---------- rules the schemas cannot express ----------
 const H31 = 'openapi: 3.1.0\n' + INFO;
 const H30 = 'openapi: 3.0.3\n' + INFO;
