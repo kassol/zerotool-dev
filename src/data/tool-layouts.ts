@@ -18,6 +18,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'string-escape': 'convert',
   'jq-playground': 'convert',
   'svg-to-png-converter': 'convert',
+  'image-to-base64': 'convert',
   'color-palette-generator': 'generate',
   'har-file-analyzer': 'analyze',
 };

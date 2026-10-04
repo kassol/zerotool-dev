@@ -22,7 +22,10 @@
 // padding, percent-encoded SVG, error positions for bad characters, = in the middle,
 // impossible lengths and bad %-escapes; declared vs detected type; non-image bytes.
 // Also: the 4-language STRINGS tables match, and the component never touches storage,
-// cookies or the network.
+// cookies or the network. v2 page layout (DESIGN.md "Tool Pages v2"): the root element,
+// the two-pane grid of each direction, the toggletips and their four-language text, the
+// elements the script looks up, the CSS that follows the hidden attributes, the layout
+// registration, and the steps / limits of the four mdx files.
 //
 // Run: node scripts/test-image-to-base64.mjs
 
@@ -307,6 +310,63 @@ eq('plural ja', E.plural(STRINGS.ja.chars, 1068, 'ja'), '1,068 文字');
 const script = source.slice(source.indexOf('<script'), source.indexOf('</script>'));
 for (const api of ['localStorage', 'sessionStorage', 'ztPersist', 'indexedDB', 'document.cookie', 'fetch(', 'XMLHttpRequest', 'sendBeacon', 'WebSocket']) {
   check('component script does not use ' + api, !script.includes(api));
+}
+
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: convert) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  const style = source.slice(source.indexOf('<style>'));
+  check('the tool root is .i2b-wrap (it gets the height of the first screen)', /^\s*<div class="i2b-wrap" id="i2b-wrap">/.test(markup) && /<\/section>\n<\/div>\s*$/.test(markup) && !source.includes('</script>\n</div>'));
+  eq('each direction is a two-pane grid', (markup.match(/<section id="i2b-(?:enc|dec)" class="i2b-panel zt-io"/g) || []).length, 2);
+  eq('four panes, two of them for the result', [(markup.match(/class="i2b-pane(?: i2b-pane--out)? zt-io-pane"/g) || []).length, (markup.match(/class="i2b-pane i2b-pane--out zt-io-pane"/g) || []).length], [4, 2]);
+  eq('what fills each pane', (markup.match(/class="[^"]*zt-io-fill"/g) || []).map((m) => m.split(' ')[0].slice(7)),
+    ['i2b-drop', 'i2b-fileline', 'i2b-result', 'i2b-empty', 'tool-textarea', 'i2b-dec-result', 'i2b-empty']);
+  eq('one toggletip per explained control', (markup.match(/<Toggletip id="(i2b-tip-\w+)"/g) || []).map((m) => m.slice(15, -1)),
+    ['i2b-tip-image', 'i2b-tip-output', 'i2b-tip-svg', 'i2b-tip-decin', 'i2b-tip-decout']);
+  check('toggletip text stays out of the inline script', source.includes('define:vars={{ t: CLIENT_T, pageLang: lang }}') && source.includes('const { tips: TIPS, ...CLIENT_T } = T;'));
+  const tipKeys = Object.keys(STRINGS.en.tips);
+  eq('five toggletip texts', tipKeys, ['image', 'output', 'svg', 'decIn', 'decOut']);
+  for (const l of langs) {
+    eq(l + ': same toggletip keys as en', Object.keys(STRINGS[l].tips), tipKeys);
+    check(l + ': toggletip and empty-pane texts are plain sentences', [...Object.values(STRINGS[l].tips), STRINGS[l].outEmpty, STRINGS[l].decOutEmpty, STRINGS[l].imgLabel]
+      .every((s) => typeof s === 'string' && s.length > 1 && !/\{\w+\}|\n|https?:/.test(s)));
+  }
+  for (const key of tipKeys) check('TIPS.' + key + ' is rendered', markup.includes('{TIPS.' + key + '}'));
+  check('both result panes have an empty hint', markup.includes('<p class="i2b-empty zt-io-fill"><span>{T.outEmpty}</span></p>') && markup.includes('<p class="i2b-empty zt-io-fill"><span>{T.decOutEmpty}</span></p>'));
+
+  // The script was not changed for the new layout: every element it looks up is still
+  // there once, and CSS derives the rest from the hidden attributes the script sets.
+  const ids = [...new Set((script.match(/\$\('(i2b-[\w-]+)'\)/g) || []).map((m) => m.slice(3, -2)))].concat('i2b-wrap');
+  check('the script looks up ' + ids.length + ' elements', ids.length === 29, ids.join(' '));
+  for (const id of ids) eq('#' + id + ' is in the markup once', markup.split('id="' + id + '"').length - 1, 1);
+  for (const cls of ['i2b-mode', 'i2b-fmt', 'i2b-enc']) check('.' + cls + ' buttons are kept', markup.includes('class="' + cls + '"') || markup.includes('class="' + cls + ' active"'));
+  check('hidden panels and results are not displayed', style.includes('.i2b-panel[hidden], .i2b-result[hidden], .i2b-drop[hidden], .i2b-dec-result[hidden] { display: none; }'));
+  for (const rule of ['.i2b-wrap:has(> #i2b-enc[hidden]) .i2b-for-enc', '.i2b-wrap:has(> #i2b-dec[hidden]) .i2b-for-dec', '.i2b-wrap:has(#i2b-result[hidden]) .i2b-loaded',
+    '.i2b-wrap:has(#i2b-dec-result[hidden]) .i2b-dec-loaded', '.i2b-result:not([hidden]) ~ .i2b-empty', '.i2b-dec-result:not([hidden]) ~ .i2b-empty']) {
+    check('visibility follows the script: ' + rule, style.includes(rule));
+  }
+  check('Download .txt stays hidden until the output is too long to show', markup.includes('<button id="i2b-download-txt" class="btn-secondary btn-sm" type="button" hidden>') &&
+    style.includes('.i2b-head-end [hidden] { display: none; }') && script.includes('dlTxt.hidden = !tooLong;'));
+  check('toolbar buttons of the other direction are marked', /id="i2b-decode" class="btn-primary i2b-for-dec"/.test(markup) && /id="i2b-dec-clear" class="btn-ghost i2b-for-dec"/.test(markup) &&
+    /id="i2b-another" class="btn-secondary i2b-for-enc i2b-loaded"/.test(markup) && /id="i2b-clear" class="btn-ghost i2b-for-enc i2b-loaded"/.test(markup));
+  // Ctrl/Cmd+Enter (ToolLayout) clicks the first .btn-primary of the tool, so Decode must stay the only one;
+  // decoding does not run on input, so the button is needed.
+  eq('Decode is the only primary button', (markup.match(/class="[^"]*btn-primary[^"]*"/g) || []).length, 1);
+  check('decoding runs on the button only', !/decIn\.addEventListener\('input'/.test(script) && script.includes("$('i2b-decode').addEventListener('click'"));
+  check('Ctrl/Cmd+L drops the file, the output and the decoded image', /key === 'l' \|\| e\.key === 'L'\) && wrap\.contains\(document\.activeElement\)\) \{\s*resetEncode\(\);\s*resetDecode\(false\);/.test(script));
+
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as a convert page', layouts.includes("'image-to-base64': 'convert'"));
+  for (const lang of langs) {
+    const mdx = readFileSync(join(root, `src/content/tools/image-to-base64/${lang}.mdx`), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const body = mdx.slice(front.length + 5);
+    const steps = front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).match(/^  - ".*"$/gm) || [];
+    eq(lang + ' mdx: 6 steps in the frontmatter', steps.length, 6);
+    check(lang + ' mdx: steps fit the llms-full.txt limits', steps.every((s) => s.length - 6 <= 280) && steps.join('').length - 6 * steps.length <= 1200);
+    check(lang + ' mdx: no usage section in the body', !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body));
+    check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한)\s*$/m.test(body));
+  }
 }
 
 console.log(`${passes} passed, ${failures} failed`);
