@@ -4,6 +4,7 @@
 //        `engine:start` / `engine:end` markers and the frontmatter STRINGS table, so this test
 //        cannot drift from the shipped source); public/vendor/bcryptjs.min.js (run in a vm
 //        context the way the page loads it); src/data/persistence.ts;
+//        src/layouts/ToolLayout.astro (real clear shortcut);
 //        scripts/test-htpasswd-generator.fixtures.json (hashes made by passlib 1.7.4 with fixed
 //        salts, an independent implementation); src/content/tools/htpasswd-generator/{lang}.mdx
 //        (examples marked with `{/* htpw-check: {...} */}` are re-checked by the engine)
@@ -403,7 +404,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 // ── M. Pending page actions must not publish after their inputs change ──────
 {
   function page() {
-    const nodes = new Map(), events = {}, timers = [], pending = [], comparisons = [];
+    const nodes = new Map(), events = {}, timers = [], pending = [], comparisons = [], readErrors = [];
     const document = { activeElement: null };
     class Element {
       constructor(id = '', tag = 'DIV') { Object.assign(this, { id, tagName: tag, value: '', textContent: '', hidden: false, disabled: false, className: '', listeners: {}, children: [], style: {} }); }
@@ -418,7 +419,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     for (const m of source.matchAll(/<(input|textarea|select|button)[^>]*\bid="([^"]+)"[^>]*>/g)) {
       get(m[2]).tagName = m[1].toUpperCase(); get(m[2]).type = /\btype="([^"]+)"/.exec(m[0])?.[1] || 'text';
     }
-    const widget = { contains: el => [...nodes.values()].includes(el) };
+    const widget = { contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [...nodes.values()].filter(el => el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' && el.type === 'text') };
     Object.assign(document, { getElementById: get, querySelector: () => widget,
       createElement: tag => new Element('', tag.toUpperCase()),
       addEventListener(type, fn) { (events[type] ||= []).push(fn); } });
@@ -427,16 +428,30 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     get('htpw-format').value = 'bcrypt-2y'; get('htpw-cost').value = '4'; get('htpw-rounds').value = '5000';
     const context = { document, S: STRINGS.en, navigator: {}, crypto, TextEncoder, TextDecoder, Uint8Array, atob, btoa,
       setTimeout(fn, delay) { const id = timers.length; timers.push({ fn, delay }); return id; }, clearTimeout() {},
-      dcodeIO: { bcrypt: bc }, innerHeight: 900 };
+      dcodeIO: { bcrypt: bc }, innerHeight: 900, ztPersist: { clear() {} }, _slug: 'htpasswd-generator' };
     context.window = context;
+    const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+    const keyStart = shell.indexOf("document.addEventListener('keydown'", shell.indexOf('// ── Keyboard shortcuts:'));
+    vm.runInNewContext(shell.slice(keyStart, shell.indexOf('// ── Copy button visual feedback', keyStart)), context);
     vm.runInNewContext(source.match(/<script is:inline define:vars=[^>]*>([\s\S]*?)<\/script>/)[1], context);
-    return { get, pending, comparisons,
+    return { get, pending, comparisons, readErrors,
       type(id, value, type = 'input') { get(id).value = value; get(id).dispatch(type); },
-      clear() {
+      clear(flush = true) {
         document.activeElement = get('htpw-user');
-        for (const fn of events.keydown || []) fn({ ctrlKey: true, key: 'l' });
-        for (const el of nodes.values()) if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' && el.type === 'text') el.value = '';
-        for (const job of timers.splice(0)) if (job.delay === 0) job.fn();
+        for (const fn of events.keydown || []) fn({ ctrlKey: true, key: 'l', preventDefault() {} });
+        if (flush) this.flushClear();
+      },
+      flushClear() { for (const job of timers.splice(0)) if (job.delay === 0) job.fn(); },
+      openFile(size = 64) {
+        let resolve, reject, reads = 0;
+        const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+        const then = promise.then.bind(promise);
+        // Observe an unhandled rejection from the actual handler without terminating the
+        // test runner before the other red/green cases can report their own result.
+        promise.then = (yes, no) => { const result = then(yes, no); result.catch(error => readErrors.push(String(error))); return result; };
+        get('htpw-file-input').files = [{ size, text() { reads++; return promise; } }];
+        get('htpw-file-input').dispatch('change');
+        return { resolve, reject, get reads() { return reads; } };
       },
       async release() {
         const job = pending.shift();
@@ -498,6 +513,83 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     check(action + ': old verification cannot publish a result', p.get('htpw-file-status').textContent === '');
     check(action + ': verification controls recover', !p.get('htpw-check').disabled);
   }
+  // ── N. File.text settlement follows the same input revision as hash actions ──
+  const oldFile = 'alice:{SHA}2jmj7l5rSw0yVb/vlWAYkK/YBwk=\n';
+  const newerFile = 'bob:{SHA}2jmj7l5rSw0yVb/vlWAYkK/YBwk=\n';
+  async function settleRead() { for (let i = 0; i < 20; i++) await Promise.resolve(); }
+  for (const action of ['clear', 'clear before timer', 'file edit', 'credentials edit', 'new file', 'oversized file']) {
+    const p = page(), old = p.openFile();
+    check(action + ': File.text starts exactly once', old.reads === 1);
+    if (action === 'clear') p.clear();
+    if (action === 'clear before timer') p.clear(false);
+    if (action === 'file edit') p.type('htpw-file', '# manually replaced\n');
+    if (action === 'credentials edit') p.type('htpw-user', 'new-user');
+    if (action === 'new file') { p.openFile().resolve(newerFile); await settleRead(); }
+    if (action === 'oversized file') {
+      const large = p.openFile(1048577);
+      check('oversized file: rejected before reading', large.reads === 0);
+      check('oversized file: reports the limit', p.get('htpw-file-status').textContent === STRINGS.en.fileTooBig);
+    }
+    const before = p.get('htpw-file').value, status = p.get('htpw-file-status').textContent;
+    old.resolve(oldFile); await settleRead();
+    check(action + ': stale file cannot replace current text', p.get('htpw-file').value === before);
+    check(action + ': stale file cannot clear current status', p.get('htpw-file-status').textContent === status);
+    if (action === 'clear before timer') {
+      check('Ctrl+L cancels file read before the zero-delay reset runs', p.get('htpw-file').value === '');
+      p.flushClear();
+      check('delayed reset leaves the file table empty', p.get('htpw-file-table').hidden);
+    }
+    p.openFile().resolve(newerFile); await settleRead();
+    check(action + ': a later valid read still recovers', p.get('htpw-file').value === newerFile && !p.get('htpw-file-table').hidden && p.get('htpw-file-status').textContent === '');
+    check(action + ': successful reads have no unhandled rejection', p.readErrors.length === 0);
+  }
+  for (const action of ['clear', 'file edit', 'new file']) {
+    const p = page(), old = p.openFile();
+    if (action === 'clear') p.clear();
+    if (action === 'file edit') p.type('htpw-file', '# newer edit\n');
+    if (action === 'new file') { p.openFile().resolve(newerFile); await settleRead(); }
+    const before = p.get('htpw-file').value, status = p.get('htpw-file-status').textContent;
+    old.reject(new Error('old read failed')); await settleRead();
+    check(action + ': stale read rejection is handled', p.readErrors.length === 0);
+    check(action + ': stale read error cannot overwrite current file/status', p.get('htpw-file').value === before && p.get('htpw-file-status').textContent === status);
+  }
+  {
+    const p = page(); p.type('htpw-file', '# retained file\n');
+    const failed = p.openFile(); failed.reject(new Error('cannot read fixture')); await settleRead();
+    check('current read failure: error is handled', p.readErrors.length === 0);
+    check('current read failure: user sees the cause', p.get('htpw-file-status').textContent === 'cannot read fixture' && p.get('htpw-file-status').className.includes('error'));
+    check('current read failure: previous text is retained', p.get('htpw-file').value === '# retained file\n');
+    p.openFile().resolve(newerFile); await settleRead();
+    check('current read failure: next file recovers and clears error', p.get('htpw-file').value === newerFile && p.get('htpw-file-status').textContent === '');
+  }
+  for (const action of ['generate', 'batch', 'upsert', 'check']) {
+    const p = page(); p.type('htpw-user', 'alice'); p.type('htpw-pass', 'old-password');
+    p.type('htpw-file', 'alice:' + BC.hashSync('old-password', 4) + '\n');
+    p.type('htpw-batch', 'alice:old-password\nbob:second-password');
+    p.get('htpw-' + (action === 'batch' ? 'batch-run' : action)).click();
+    check('file during ' + action + ': actual bcrypt operation is pending', action === 'check' ? p.comparisons.length === 1 : p.pending.length === 1);
+    p.openFile().resolve(newerFile); await settleRead();
+    check('file during ' + action + ': new file loads without releasing busy early', p.get('htpw-file').value === newerFile && p.get('htpw-generate').disabled);
+    if (action === 'check') { p.comparisons.shift()(); await settleRead(); } else await p.release();
+    check('file during ' + action + ': old operation cannot replace new file', p.get('htpw-file').value === newerFile);
+    check('file during ' + action + ': old operation cannot publish stale progress/result', !p.get('htpw-status').textContent && !p.get('htpw-batch-status').textContent && !p.get('htpw-file-status').textContent && !p.get('htpw-line').textContent);
+    check('file during ' + action + ': busy controls recover after settlement', !p.get('htpw-generate').disabled && !p.get('htpw-check').disabled);
+    if (action === 'batch') check('file during batch: stale batch does not start the next hash', p.pending.length === 0);
+  }
+  for (const action of ['remove', 'upsert', 'check']) {
+    const p = page(); p.type('htpw-user', 'alice'); p.type('htpw-pass', 'old-password');
+    p.type('htpw-file', 'alice:' + BC.hashSync('old-password', 4) + '\n' + newerFile);
+    const old = p.openFile(); p.get('htpw-' + action).click();
+    if (action === 'upsert') await p.release();
+    const before = p.get('htpw-file').value;
+    old.resolve('# obsolete imported file\n'); await settleRead();
+    check(action + ' after file request: earlier read cannot override the later file action', p.get('htpw-file').value === before);
+    if (action === 'check') {
+      p.comparisons.shift()(); await settleRead();
+      check('check after file request: verification reports the retained file', p.get('htpw-file-status').className.includes('success') && p.get('htpw-file').value === before);
+    }
+  }
+
 }
 
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);
