@@ -30,17 +30,25 @@ if (!scriptMatch) {
   process.exit(1);
 }
 
-function makePage() {
-  const els = {};
+function makePage({ lang = 'en', shellFirst = false } = {}) {
+  const els = {}, documentHandlers = {}, cleared = [];
+  const inputTypes = Object.fromEntries([...source.matchAll(/<input\b[^>]*id="([^"]+)"[^>]*type="([^"]+)"/g)].map(m => [m[1], m[2]]));
   function el(id) {
     if (!els[id]) {
       const handlers = {};
       els[id] = {
-        id, value: '', checked: false, textContent: '', className: '', style: {},
+        id, type: inputTypes[id], value: '', checked: false, textContent: '', className: '', style: {},
         addEventListener(type, fn) { (handlers[type] ||= []).push(fn); },
         fire(type) { (handlers[type] || []).forEach((fn) => fn.call(els[id], { target: els[id] })); },
         getAttribute(name) { return this.attrs ? this.attrs[name] : null; },
-        classList: { add() {}, remove() {} },
+        get classList() {
+          const e = this;
+          return {
+            add(name) { e.className = [...new Set([...e.className.split(/\s+/).filter(Boolean), name])].join(' '); },
+            remove(name) { e.className = e.className.split(/\s+/).filter(c => c !== name).join(' '); },
+            contains(name) { return e.className.split(/\s+/).includes(name); },
+          };
+        },
       };
     }
     return els[id];
@@ -50,19 +58,44 @@ function makePage() {
     c.attrs = { 'data-w': String(w), 'data-h': String(h) };
     return c;
   });
+  const outside = { id: 'outside' };
+  const widget = {
+    contains(node) { return Object.values(els).includes(node); },
+    querySelectorAll(sel) { return sel === 'textarea, input[type="text"]' ? Object.values(els).filter(e => e.type === 'text') : []; },
+  };
   const document = {
-    documentElement: { lang: 'en' },
+    documentElement: { lang }, activeElement: outside,
     getElementById: el,
     querySelectorAll(sel) { return sel === '.ar-chip' ? chips : []; },
+    querySelector(sel) { return ['.tool-widget', '.ar-wrap'].includes(sel) ? widget : null; },
+    addEventListener(type, fn) { (documentHandlers[type] ||= []).push(fn); },
   };
-  new Function('document', 'window', scriptMatch[1])(document, {});
+  const window = { ztPersist: { clear(slug) { cleared.push(slug); } } };
+  const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
+  if (!shortcut.includes("document.addEventListener('keydown'")) throw new Error('Shared shortcut not found');
+  const installShortcut = () => new Function('document', 'window', '_slug', shortcut)(document, window, 'aspect-ratio');
+  if (shellFirst) installShortcut();
+  new Function('document', 'window', scriptMatch[1])(document, window);
+  if (!shellFirst) installShortcut();
   return {
-    els: el,
+    els: el, cleared,
     type(id, v) { el(id).value = String(v); el(id).fire('input'); },
     lock(on) { el('ar-lock').checked = on; el('ar-lock').fire('change'); },
     preset(w, h) { el('chip-' + w + 'x' + h).fire('click'); },
     ratio() { return el('ar-ratio').textContent; },
     decimal() { return el('ar-decimal').textContent; },
+    key({ key = 'l', meta = false, focus = 'ar-width', modifier = true } = {}) {
+      document.activeElement = focus ? el(focus) : outside;
+      const event = { key, metaKey: meta && modifier, ctrlKey: !meta && modifier, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+      for (const fn of documentHandlers.keydown || []) fn(event);
+      return event;
+    },
+    state() {
+      return JSON.stringify({ inputs: ['ar-width', 'ar-height', 'ar-new-width', 'ar-new-height'].map(id => el(id).value), locked: el('ar-lock').checked,
+        ratio: el('ar-ratio').textContent, decimal: el('ar-decimal').textContent, preview: el('ar-preview').style,
+        status: el('ar-status').textContent, chips: chips.map(c => c.className) });
+    },
   };
 }
 
@@ -213,6 +246,34 @@ eq('resize 2160 high', p.els('ar-new-width').value, 3840);
     }
   }
   eq('guide has 2 runnable blocks', runs, 2);
+}
+
+// The shared shortcut clears text fields only. Numeric dimensions need a page reset.
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, true]) for (const meta of [false, true]) {
+  const q = makePage({ lang, shellFirst }), name = `${lang} ${shellFirst ? 'shell first' : 'page first'} ${meta ? 'Meta' : 'Ctrl'}`;
+  q.preset(21, 9); q.lock(true); q.type('ar-new-width', 1000);
+  eq(name + ': original dimensions are numeric controls', q.els('ar-width').type + '/' + q.els('ar-height').type, 'number/number');
+  const before = q.state();
+  eq(name + ': outside shortcut is not intercepted', q.key({ meta, focus: null }).defaultPrevented, false);
+  eq(name + ': outside shortcut keeps inputs and result', q.state(), before);
+  eq(name + ': plain L is not intercepted', q.key({ modifier: false }).defaultPrevented, false);
+  eq(name + ': plain L keeps inputs and result', q.state(), before);
+  eq(name + ': shortcut is intercepted inside the tool', q.key({ key: meta ? 'L' : 'l', meta, focus: 'ar-new-height' }).defaultPrevented, true);
+  eq(name + ': all dimensions and resize values clear', ['ar-width', 'ar-height', 'ar-new-width', 'ar-new-height'].every(id => q.els(id).value === ''), true);
+  eq(name + ': cleared input has no locked ratio', q.els('ar-lock').checked, false);
+  eq(name + ': ratio and decimal clear', q.ratio() + '/' + q.decimal(), '—/—');
+  eq(name + ': preview clears', q.els('ar-preview').style.width + '/' + q.els('ar-preview').style.height, '0/0');
+  eq(name + ': status clears', q.els('ar-status').textContent, '');
+  eq(name + ': active preset clears', q.els('chip-21x9').classList.contains('ar-chip-active'), false);
+  eq(name + ': shared persistence clear runs once', q.cleared.join(','), 'aspect-ratio');
+  q.type('ar-width', 16);
+  eq(name + ': new width does not restore the old locked height', q.els('ar-height').value, '');
+  q.type('ar-height', 9);
+  eq(name + ': fresh dimensions restore the correct result', q.ratio(), '16:9');
+  q.type('ar-width', ''); q.type('ar-new-width', 320);
+  eq(name + ': missing original size reports an error', q.els('ar-status').className.includes('error'), true);
+  q.key({ meta });
+  eq(name + ': shortcut clears prior errors too', q.els('ar-status').textContent, '');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
