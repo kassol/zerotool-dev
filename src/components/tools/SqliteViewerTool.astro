@@ -319,6 +319,7 @@
       var resultEl = document.getElementById('sqv-result');
 
       var db = null;
+      var fileGeneration = 0;
       var objects = [];
       var current = null;   // { type, name, sql, count }
       var page = 0;
@@ -467,18 +468,25 @@
       /* ── file open ── */
       function openFile(file) {
         if (!file) return;
+        var generation = ++fileGeneration;
         if (file.size > MAX_BYTES) {
           setStatus(statusEl, fmt('tooBig', { size: fmtBytes(file.size) }), 'error');
           return;
         }
         setStatus(statusEl, fmt('reading', { name: file.name }), 'info');
         file.slice(0, 100).arrayBuffer().then(function (head) {
+          if (generation !== fileGeneration) return;
           if (!isSqliteHeader(new Uint8Array(head))) {
             setStatus(statusEl, t.notSqlite, 'error');
             return;
           }
           if (!enginePromise) setStatus(statusEl, t.loadingEngine, 'info');
-          return Promise.all([ensureEngine(), file.arrayBuffer()]).then(function (res) {
+          var contents = file.arrayBuffer().then(function (buffer) { return buffer; }, function (e) {
+            if (generation === fileGeneration) setStatus(statusEl, fmt('openFailed', { msg: e.message || String(e) }), 'error');
+            return null;
+          });
+          return Promise.all([ensureEngine(), contents]).then(function (res) {
+            if (generation !== fileGeneration || !res[1]) return;
             var next;
             try {
               next = new res[0].Database(new Uint8Array(res[1]));
@@ -492,8 +500,12 @@
             db = next;
             showDatabase(file);
           }, function () {
+            if (generation !== fileGeneration) return;
             setStatus(statusEl, t.engineFailed, 'error');
           });
+        }, function (e) {
+          if (generation !== fileGeneration) return;
+          setStatus(statusEl, fmt('openFailed', { msg: e.message || String(e) }), 'error');
         });
       }
 
@@ -521,11 +533,11 @@
       function runQuery() {
         if (!db) return;
         var sql = sqlEl.value.trim();
-        if (!sql) { setStatus(queryStatusEl, t.emptySql, 'error'); return; }
         lastResult = null;
         exportQueryBtn.disabled = true;
         resultWrap.hidden = true;
         resultEl.innerHTML = '';
+        if (!sql) { setStatus(queryStatusEl, t.emptySql, 'error'); return; }
         var out;
         try {
           out = runSql(db, sql);
@@ -616,7 +628,8 @@
         if (f) openFile(f);
       });
 
-      document.getElementById('sqv-reset').addEventListener('click', function () {
+      function resetAll() {
+        fileGeneration++;
         if (db) db.close();
         db = null; objects = []; current = null; lastResult = null;
         sqlEl.value = '';
@@ -629,6 +642,13 @@
         meta.hidden = true;
         dropzone.hidden = false;
         dropzone.focus();
+      }
+      document.getElementById('sqv-reset').addEventListener('click', resetAll);
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && dropzone.closest('.sqv-shell').contains(document.activeElement)) {
+          e.preventDefault();
+          resetAll();
+        }
       });
     })();
   </script>
