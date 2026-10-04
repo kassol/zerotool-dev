@@ -43,7 +43,7 @@
     (function () {
       var STRINGS = {
         en: {
-          inputLines: 'Input Lines', output: 'Output', copy: 'Copy', copied: 'Copied!', clear: 'Clear',
+          inputLines: 'Input Lines', output: 'Output', copy: 'Copy', copied: 'Copied!', copyFail: 'Could not copy. Please select and copy the output manually.', clear: 'Clear',
           dedup: 'Remove Duplicates', sortAsc: 'Sort A→Z', sortDesc: 'Sort Z→A', sortNum: 'Sort Numeric',
           reverse: 'Reverse', shuffle: 'Shuffle', trim: 'Trim Lines', removeEmpty: 'Remove Empty',
           line: 'line', lines: 'lines',
@@ -60,7 +60,7 @@
           lineCount: function(n) { return n + ' ' + (n === 1 ? 'line' : 'lines'); }
         },
         zh: {
-          inputLines: '输入行', output: '输出', copy: '复制', copied: '已复制！', clear: '清除',
+          inputLines: '输入行', output: '输出', copy: '复制', copied: '已复制！', copyFail: '复制失败。请选中输出内容后手动复制。', clear: '清除',
           dedup: '去除重复', sortAsc: 'A→Z 排序', sortDesc: 'Z→A 排序', sortNum: '数值排序',
           reverse: '反转', shuffle: '随机排序', trim: '去除首尾空格', removeEmpty: '删除空行',
           removedDup: function(n) { return '已删除 ' + n + ' 个重复行。'; },
@@ -76,7 +76,7 @@
           lineCount: function(n) { return n + ' 行'; }
         },
         ja: {
-          inputLines: '入力行', output: '出力', copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
+          inputLines: '入力行', output: '出力', copy: 'コピー', copied: 'コピー済み！', copyFail: 'コピーできませんでした。出力を選択して手動でコピーしてください。', clear: 'クリア',
           dedup: '重複削除', sortAsc: 'A→Z 並び替え', sortDesc: 'Z→A 並び替え', sortNum: '数値順',
           reverse: '逆順', shuffle: 'シャッフル', trim: '行トリム', removeEmpty: '空行削除',
           removedDup: function(n) { return '重複 ' + n + ' 行を削除しました。'; },
@@ -92,7 +92,7 @@
           lineCount: function(n) { return n + ' 行'; }
         },
         ko: {
-          inputLines: '입력 줄', output: '출력', copy: '복사', copied: '복사됨!', clear: '지우기',
+          inputLines: '입력 줄', output: '출력', copy: '복사', copied: '복사됨!', copyFail: '복사하지 못했습니다. 출력을 선택하여 직접 복사하세요.', clear: '지우기',
           dedup: '중복 제거', sortAsc: 'A→Z 정렬', sortDesc: 'Z→A 정렬', sortNum: '숫자 정렬',
           reverse: '역순', shuffle: '섞기', trim: '공백 제거', removeEmpty: '빈 줄 제거',
           removedDup: function(n) { return '중복 ' + n + '개를 제거했습니다.'; },
@@ -123,15 +123,27 @@
       var statusEl = document.getElementById('lt-status');
       var countEl = document.getElementById('lt-count');
       var copyBtn = document.getElementById('lt-copy');
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyError = false;
 
       function setStatus(msg, isError) {
+        copyError = false;
         statusEl.textContent = msg;
         statusEl.className = 'lt-status ' + (isError ? 'error' : 'success');
       }
 
       function clearStatus() {
+        copyError = false;
         statusEl.textContent = '';
         statusEl.className = 'lt-status';
+      }
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError) clearStatus();
       }
 
       function getLines() {
@@ -147,20 +159,21 @@
         countEl.textContent = t.lineCount(lines.length);
       }
 
-      inputEl.addEventListener('input', updateCount);
+      inputEl.addEventListener('input', function () { invalidateCopy(); updateCount(); });
       updateCount();
 
       /* ── Remove Duplicates ── */
       document.getElementById('lt-dedup').addEventListener('click', function () {
+        invalidateCopy();
         var lines = getLines();
         if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
 
-        var seen = {};
+        var seen = new Set();
         var result = [];
         var removed = 0;
         for (var i = 0; i < lines.length; i++) {
-          if (!seen.hasOwnProperty(lines[i])) {
-            seen[lines[i]] = true;
+          if (!seen.has(lines[i])) {
+            seen.add(lines[i]);
             result.push(lines[i]);
           } else {
             removed++;
@@ -173,6 +186,7 @@
 
       /* ── Sort A→Z ── */
       document.getElementById('lt-sort-asc').addEventListener('click', function () {
+        invalidateCopy();
         var lines = getLines();
         if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
 
@@ -186,6 +200,7 @@
 
       /* ── Sort Z→A ── */
       document.getElementById('lt-sort-desc').addEventListener('click', function () {
+        invalidateCopy();
         var lines = getLines();
         if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
 
@@ -199,6 +214,7 @@
 
       /* ── Sort Numeric ── */
       document.getElementById('lt-sort-num').addEventListener('click', function () {
+        invalidateCopy();
         var lines = getLines();
         if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
 
@@ -217,6 +233,7 @@
 
       /* ── Reverse ── */
       document.getElementById('lt-reverse').addEventListener('click', function () {
+        invalidateCopy();
         var lines = getLines();
         if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
 
@@ -227,6 +244,7 @@
 
       /* ── Shuffle ── */
       document.getElementById('lt-shuffle').addEventListener('click', function () {
+        invalidateCopy();
         var lines = getLines();
         if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
 
@@ -244,6 +262,7 @@
 
       /* ── Trim Lines ── */
       document.getElementById('lt-trim').addEventListener('click', function () {
+        invalidateCopy();
         var lines = getLines();
         if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
 
@@ -255,6 +274,7 @@
 
       /* ── Remove Empty ── */
       document.getElementById('lt-empty').addEventListener('click', function () {
+        invalidateCopy();
         var lines = getLines();
         if (!lines.length) { clearStatus(); outputEl.value = ''; return; }
 
@@ -266,20 +286,44 @@
       });
 
       /* ── Clear ── */
-      document.getElementById('lt-clear').addEventListener('click', function () {
+      function clearTool() {
+        invalidateCopy();
         inputEl.value = '';
         outputEl.value = '';
         countEl.textContent = '';
         clearStatus();
+      }
+
+      document.getElementById('lt-clear').addEventListener('click', clearTool);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var widget = document.querySelector('.lt-wrap');
+        if (!widget || !widget.contains(document.activeElement)) return;
+        clearTool();
       });
 
       /* ── Copy ── */
       copyBtn.addEventListener('click', function () {
         if (!outputEl.value) return;
-        navigator.clipboard.writeText(outputEl.value).then(function () {
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        function done() {
+          if (revision !== copyRevision) return;
+          if (copyError) clearStatus();
           copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+          copyTimer = setTimeout(function () {
+            if (revision === copyRevision) copyBtn.textContent = t.copy;
+          }, 1500);
+        }
+        function failed() {
+          if (revision !== copyRevision) return;
+          setStatus(t.copyFail, true);
+          copyError = true;
+        }
+        try {
+          navigator.clipboard.writeText(outputEl.value).then(done, failed);
+        } catch (e) { failed(); }
       });
     })();
   </script>
