@@ -23,6 +23,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'line-tools': 'convert',
   'morse-code-translator': 'convert',
   'hash-generator': 'convert',
+  'url-encode': 'convert',
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',

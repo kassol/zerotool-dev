@@ -5,9 +5,8 @@
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Covers: encode / decode through the action button; Swap moves the result into the input box
-// and switches the mode (it used to keep the mode, so pressing the button again encoded the
-// result a second time); a decode error clears the old result instead of leaving it next to the
+// Covers: encode / decode through the debounced input handler; Swap moves the result into the input box
+// and switches the mode (it used to keep the mode and encode the result a second time); a decode error clears the old result instead of leaving it next to the
 // error; errors give the position and cause in the page language (they used to be the browser's
 // English "URI malformed"): a bad %, a byte run that is not UTF-8, a lone surrogate; decoding
 // agrees with decodeURIComponent on 3,000 random inputs (same result or both fail); the Space as +
@@ -19,13 +18,15 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/UrlEncodeTool.astro'), 'utf8');
 const page = readFileSync(join(root, 'src/content/tools/url-encode/en.mdx'), 'utf8');
-const scriptMatch = /<script is:inline>([\s\S]*?)<\/script>/.exec(source);
+const scriptMatch = /<script\b[^>]*>([\s\S]*?)<\/script>/.exec(source);
+const STR = new Function('return ' + source.match(/const STRINGS = (\{[\s\S]*?\n\}) as const;/)[1])();
 if (!scriptMatch) {
   console.error('FAIL: could not locate the page script in UrlEncodeTool.astro');
   process.exit(1);
@@ -68,11 +69,13 @@ function makePage() {
       return m ? radios.find((r) => r.value === m[1]) : null;
     },
   };
-  new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', scriptMatch[1])(
-    document, {}, {}, () => 0, () => {});
+  const timers = new Map(); let timerID = 0;
+  const client = Object.fromEntries(Object.entries(STR.en).filter(([key]) => key !== 'tips'));
+  new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', 't', scriptMatch[1])(
+    document, {}, {}, (fn, ms) => { const id=++timerID;timers.set(id,{fn,ms});return id; }, id => timers.delete(id), client);
   return {
     el,
-    run(text) { el('url-input').value = text; el('url-run').fire('click'); return el('url-output').value; },
+    run(text) { el('url-input').value = text; el('url-input').fire('input'); for (const [id,timer] of timers) if (timer.ms===300) { timers.delete(id);timer.fn(); } return el('url-output').value; },
     setMode(m) { radios.forEach((r) => { r.checked = r.value === m; }); radios.find((r) => r.value === m).fire('change'); },
     mode() { return radios.find((r) => r.checked).value; },
   };
@@ -86,7 +89,7 @@ function eq(name, actual, expected) {
   console.log('FAIL: ' + name + '\n  expected ' + JSON.stringify(expected) + '\n  actual   ' + JSON.stringify(actual));
 }
 
-// encode and decode through the button
+// encode and decode through the actual input handler
 let p = makePage();
 eq('encode café', p.run('café & tea'), 'caf%C3%A9%20%26%20tea');
 p.setMode('decode');
@@ -99,8 +102,8 @@ const encoded = p.run('東京 2026');
 p.el('url-swap').fire('click');
 eq('swap: mode switches to decode', p.mode(), 'decode');
 eq('swap: input holds the result', p.el('url-input').value, encoded);
-eq('swap: run label follows the mode', p.el('url-run').textContent, 'Decode');
-p.el('url-run').fire('click');
+eq('swap: output label follows the mode', p.el('url-output-label-text').textContent, 'Decoded URL');
+p.run(p.el('url-input').value);
 eq('swap then run decodes back', p.el('url-output').value, '東京 2026');
 p.el('url-swap').fire('click');
 eq('swap again: mode back to encode', p.mode(), 'encode');
@@ -153,7 +156,6 @@ eq('form decode', p.run('a+b%20c%2B'), 'a b c+');
 p.el('url-plus').checked = false;
 p.el('url-plus').fire('change');
 eq('plus kept when the option is off', p.run('a+b'), 'a+b');
-const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
 for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' keys', JSON.stringify(Object.keys(STR[lang]).sort()), JSON.stringify(Object.keys(STR.en).sort()));
 eq('page no longer says there is no + option', page.includes('There is no option for + as space'), false);
 
@@ -184,7 +186,7 @@ const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), she
 if (!shortcut.includes('window.ztPersist.clear(_slug)')) throw Error('Missing actual shared keyboard handler');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const same = (name, actual, expected) => eq(name, JSON.stringify(actual), JSON.stringify(expected));
-function pageVM(lang = 'en', shellFirst = false, savedInput = '') {
+function pageVM(lang = 'en', shellFirst = false, savedInput = '', restoredMode = 'encode') {
   const SLUG = 'url-encode';
   const ids = new Map(), copies = [], clears = [], saves = [], docEvents = {}, timers = new Map();
   let now = 0, timerId = 0;
@@ -251,7 +253,11 @@ function pageVM(lang = 'en', shellFirst = false, savedInput = '') {
   }
   const body = new Element('body'), widget = new Element();
   widget.className = 'tool-widget'; body.appendChild(widget);
-  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+  const escapeHTML = text => String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0]
+    .replace(/<Toggletip\b[^>]*>[\s\S]*?<\/Toggletip>/g,'')
+    .replace(/=\{T\.(\w+)\}/g,(_,key)=>'="'+escapeHTML(STR[lang][key])+'"')
+    .replace(/\{T\.(\w+)\}/g,(_,key)=>escapeHTML(STR[lang][key]));
   const stack = [widget], voids = new Set(['input', 'br', 'hr', 'img']);
   for (const token of markup.matchAll(/<!--[\s\S]*?-->|<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
     if (token[0].startsWith('<!--')) continue;
@@ -284,6 +290,7 @@ function pageVM(lang = 'en', shellFirst = false, savedInput = '') {
   });
   const context = {
     document: doc, console, TextDecoder, TextEncoder, URLSearchParams, _slug: SLUG,
+    t: Object.fromEntries(Object.entries(STR[lang]).filter(([key])=>key!=='tips')),
     ztPersist: { load: () => ({input: savedInput}), save: (slug, value) => saves.push({slug, value: JSON.parse(JSON.stringify(value))}), clear: slug => clears.push(slug) },
     navigator: { clipboard: { writeText(value) {
       let resolve, reject;
@@ -293,6 +300,7 @@ function pageVM(lang = 'en', shellFirst = false, savedInput = '') {
     setTimeout(fn, ms = 0) { const id = ++timerId; timers.set(id, { fn, due: now + ms, ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
   };
+  for (const radio of body.querySelectorAll('input[name="urlmode"]')) radio.checked = radio.value === restoredMode;
   context.window = context; vm.createContext(context);
   if (shellFirst) vm.runInContext(shortcut, context);
   vm.runInContext(source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1], context, { filename: SLUG + '.astro' });
@@ -384,5 +392,52 @@ for (const [lang,labels] of Object.entries(textLabels)) {
 }
 eq('engine bytes preserved',createHash('sha256').update(source.slice(source.indexOf('/* ── engine:start ── */'),source.indexOf('/* ── engine:end ── */')+'/* ── engine:end ── */'.length)).digest('hex'),'81b60383d4b792e452c5fb6af02c47b21c95dbdd83c9ba0171abfa2fd23e1bbf');
 same('all clipboard rejections handled',unhandled,[]);process.off('unhandledRejection',onUnhandled);
+// ---------- v2 page layout ----------
+const v2Start=passes;
+const require=createRequire(import.meta.url),astroRequire=createRequire(require.resolve('astro'));
+const {transform}=astroRequire('@astrojs/compiler');
+const compiled=await transform(source,{filename:'UrlEncodeTool.astro'});
+await require('esbuild').transform(compiled.code,{loader:'ts'});
+eq('v2 Astro compiled JS parses',true,true);
+const markup=source.replace(/^---[\s\S]*?---\s*/,'').split('<script')[0],css=source.match(/<style>([\s\S]*?)<\/style>/)[1];
+eq('v2 root direct flex column',/^<div class="url-wrap">/.test(markup)&&/\.url-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css),true);
+eq('v2 shared two panes',(markup.match(/zt-io-pane/g)||[]).length,2);
+eq('v2 shared fill editors',(markup.match(/zt-io-fill/g)||[]).length,2);
+eq('v2 controls, fixed status, panels order',markup.indexOf('url-controls')<markup.indexOf('id="url-status"')&&markup.indexOf('id="url-status"')<markup.indexOf('url-panels'),true);
+eq('v2 fixed status scrolls',/\.url-status\s*\{[^}]*height: 2\.8em;[^}]*overflow: auto/.test(css),true);
+eq('v2 bounded mobile boxes and empty output hidden',/@media \(max-width: 860px\)[\s\S]*?\.url-output-row\[data-empty="true"\] \{ display: none; \}/.test(css)&&/\.url-box \{ height: 120px;/.test(css),true);
+eq('v2 no manual execution button',!/url-run|runBtn|btn-primary/.test(source),true);
+eq('v2 no runtime label table',!/data-i18n|var STRINGS|pageLang/.test(source),true);
+eq('v2 labels have no interactive descendants',[...markup.matchAll(/<label\b[\s\S]*?<\/label>/g)].every(m=>!/<Toggletip|<button/.test(m[0])),true);
+eq('v2 excludes tips from client',source.includes('const { tips: TIPS, ...CLIENT_T } = T;')&&source.includes('define:vars={{ t: CLIENT_T }}'),true);
+eq('v2 registered convert',/'url-encode':\s*'convert'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
+const tips=['mode','input','plus','swap','clear','copy'];same('v2 six tips on real controls',[...markup.matchAll(/<Toggletip id="url-tip-([^"]+)"/g)].map(m=>m[1]).sort(),tips.toSorted());
+const protection={
+  "en": "d59713ac4b021467020e012553322dd1ef2d26bab65e273cfc720a6d8e85454e",
+  "zh": "871e2f4695f4714d457fa8ee6b087ed68f163429e2ed6ca0b8824e9d215aa6ad",
+  "ja": "5b7a6ad01e4839a0bd12428c883aa9bdc2c953a24bbf093ff671b5196988384e",
+  "ko": "194d19e2e9ed20423389882aa87922e84e73c2a9a4cc69cbde9a1245fd2f7f3b"
+};
+const hash=text=>createHash('sha256').update(text).digest('hex');
+for(const lang of Object.keys(textLabels)){
+ same(lang+': v2 tips same keys',Object.keys(STR[lang].tips).sort(),tips.toSorted());
+ for(const tip of tips)eq(lang+': v2 '+tip+' tip plain nonempty',typeof STR[lang].tips[tip]==='string'&&STR[lang].tips[tip].length>20&&!/[<>]|https?:/.test(STR[lang].tips[tip]),true);
+ const doc=readFileSync(join(root,'src/content/tools/url-encode/'+lang+'.mdx'),'utf8'),fm=doc.match(/^---\n([\s\S]*?)\n---/)[1];
+ const steps=require('js-yaml').load(fm).steps;
+ eq(lang+': v2 six bounded steps',steps.length===6&&steps.every(s=>s.length<=280&&!/[<>]/.test(s))&&steps.join('').length<=1200,true);
+ eq(lang+': v2 preserves non-Usage MDX',hash(doc.replace(/^steps:\n(?:  .*\n)*/m,'')),protection[lang]);
+ await (await import('@mdx-js/mdx')).compile(doc.replace(/^---[\s\S]*?---\s*/,''));eq(lang+': v2 MDX compiles',true,true);
+ const q=pageVM(lang);
+ eq(lang+': v2 input label rendered before scripts',q.get('url-input-label').textContent,STR[lang].plainUrlLabel);
+ eq(lang+': v2 initial empty state',q.get('url-output-row').getAttribute('data-empty'),'true');
+ q.input('url-input','a%20b');q.advance(300);modeRadio(q,'decode').click();eq(lang+': v2 direction immediately converts',q.get('url-output').value,'a b');eq(lang+': v2 nonempty state',q.get('url-output-row').getAttribute('data-empty'),'false');
+ q.input('url-input','pending%20new');modeRadio(q,'encode').click();const before=snapshot(q);q.advance(300);same(lang+': v2 mode cancels queued conversion',snapshot(q),before);
+ const noPrimary=snapshot(q);q.key('url-input',{key:'Enter'});same(lang+': v2 CtrlEnter has no duplicate action',snapshot(q),noPrimary);
+ q.input('url-input','');q.advance(300);eq(lang+': v2 cleared output hides',q.get('url-output-row').getAttribute('data-empty'),'true');modeRadio(q,'decode').click();q.input('url-input','%zz');q.advance(300);eq(lang+': v2 error hides empty output',q.get('url-output-row').getAttribute('data-empty'),'true');
+ q.input('url-input','a+b');q.advance(300);q.get('url-plus').click();eq(lang+': v2 plus immediately converts',q.get('url-output').value,'a b');
+ const restored=pageVM(lang,false,'a%20b','decode');eq(lang+': v2 restored mode and input calculate',restored.get('url-output').value,'a b');eq(lang+': v2 restoration adds no writes',restored.saves.length,0);
+}
+console.log('v2 page layout: '+(passes-v2Start)+' passed');
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
