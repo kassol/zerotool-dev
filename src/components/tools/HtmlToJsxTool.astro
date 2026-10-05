@@ -40,6 +40,7 @@
           outputLabel: 'JSX Output',
           copy: 'Copy',
           copied: 'Copied!',
+          copyFailed: 'Copy failed. Please try again.',
           placeholder: '<!-- paste your HTML here -->',
           refused: 'Cannot convert style at position {position}: {reason}. Output cleared.',
           reasons: { syntax: 'invalid declaration or unclosed CSS syntax', property: 'unsupported or escaped property name', duplicate: 'repeated property cannot preserve CSS fallback order', priority: '!important cannot be preserved in a React style object', comment: 'CSS comments require manual conversion' },
@@ -49,6 +50,7 @@
           outputLabel: 'JSX 输出',
           copy: '复制',
           copied: '已复制！',
+          copyFailed: '复制失败，请重试。',
           placeholder: '<!-- 粘贴 HTML 到这里 -->',
           refused: '样式第 {position} 个字符无法转换：{reason}。已清空输出。',
           reasons: { syntax: '声明无效或 CSS 语法未闭合', property: '属性名不支持或含转义', duplicate: '重复属性无法保留 CSS 回退顺序', priority: 'React 样式对象无法保留 !important', comment: 'CSS 注释需要手动转换' },
@@ -58,6 +60,7 @@
           outputLabel: 'JSX 出力',
           copy: 'コピー',
           copied: 'コピー済み！',
+          copyFailed: 'コピーに失敗しました。再試行してください。',
           placeholder: '<!-- HTMLをここに貼り付け -->',
           refused: 'スタイルの {position} 文字目を変換できません：{reason}。出力を消去しました。',
           reasons: { syntax: '宣言が無効、または CSS 構文が閉じていません', property: '未対応またはエスケープされたプロパティ名', duplicate: '重複プロパティの CSS フォールバック順序を保持できません', priority: 'React のスタイルオブジェクトでは !important を保持できません', comment: 'CSS コメントは手動で変換してください' },
@@ -67,6 +70,7 @@
           outputLabel: 'JSX 출력',
           copy: '복사',
           copied: '복사됨!',
+          copyFailed: '복사하지 못했습니다. 다시 시도하세요.',
           placeholder: '<!-- HTML을 여기에 붙여넣기 -->',
           refused: '스타일 {position}번째 문자를 변환할 수 없습니다: {reason}. 출력을 지웠습니다.',
           reasons: { syntax: '잘못된 선언 또는 닫히지 않은 CSS 구문', property: '지원하지 않거나 이스케이프된 속성 이름', duplicate: '중복 속성의 CSS 대체 순서를 보존할 수 없습니다', priority: 'React 스타일 객체는 !important를 보존할 수 없습니다', comment: 'CSS 주석은 직접 변환해야 합니다' },
@@ -326,7 +330,21 @@
       }
       /* ── engine:end ── */
 
+      var copyRevision = 0;
+      var copyTimer;
+      var copyError = false;
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError && statusEl.textContent === t.copyFailed) statusEl.textContent = '';
+        copyError = false;
+      }
+
       function convert() {
+        invalidateCopy();
+        clearTimeout(_debounce);
         var html = inputEl.value;
         statusEl.textContent = '';
         try {
@@ -342,17 +360,43 @@
 
       var _debounce;
       inputEl.addEventListener('input', function () {
+        invalidateCopy();
         clearTimeout(_debounce);
         _debounce = setTimeout(convert, 200);
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var widget = document.querySelector('.tool-widget');
+        if (!widget || !widget.contains(document.activeElement)) return;
+        e.preventDefault();
+        invalidateCopy();
+        clearTimeout(_debounce);
+        inputEl.value = '';
+        outputEl.value = '';
+        statusEl.textContent = '';
+        copyBtn.disabled = true;
+        inputEl.focus();
       });
 
       copyBtn.addEventListener('click', function () {
         var text = outputEl.value;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+        invalidateCopy();
+        var revision = copyRevision;
+        function current() { return revision === copyRevision && outputEl.value === text; }
+        function failed() {
+          if (!current()) return;
+          statusEl.textContent = t.copyFailed;
+          copyError = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (!current()) return;
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () { if (current()) copyBtn.textContent = t.copy; }, 1500);
+          }, failed);
+        } catch (error) { failed(); }
       });
     })();
   </script>
