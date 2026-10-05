@@ -24,10 +24,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { inputJson: 'JSON Input', clear: 'Clear', copy: 'Copy', copied: 'Copied!', invalidJson: 'Invalid JSON' },
-        zh: { inputJson: '输入 JSON', clear: '清除', copy: '复制', copied: '已复制！', invalidJson: '无效 JSON' },
-        ja: { inputJson: 'JSON 入力', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', invalidJson: '無効な JSON' },
-        ko: { inputJson: 'JSON 입력', clear: '지우기', copy: '복사', copied: '복사됨!', invalidJson: '유효하지 않은 JSON' }
+        en: { inputJson: 'JSON Input', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please copy the output manually.', invalidJson: 'Invalid JSON' },
+        zh: { inputJson: '输入 JSON', clear: '清除', copy: '复制', copied: '已复制！', copyFailed: '复制失败，请手动复制输出。', invalidJson: '无效 JSON' },
+        ja: { inputJson: 'JSON 入力', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。', invalidJson: '無効な JSON' },
+        ko: { inputJson: 'JSON 입력', clear: '지우기', copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.', invalidJson: '유효하지 않은 JSON' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -42,6 +42,24 @@
       var errorEl  = document.getElementById('jjs-error');
       var clearBtn = document.getElementById('jjs-clear');
       var copyBtn  = document.getElementById('jjs-copy');
+      var wrap = document.querySelector('.jjs-wrap');
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyFailure = false;
+
+      function clearError() {
+        copyFailure = false;
+        errorEl.textContent = '';
+        errorEl.hidden = true;
+      }
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        if (copyFailure) clearError();
+      }
 
       /* ── engine:start ── */
       function kindOf(value) {
@@ -117,10 +135,11 @@
       /* ── engine:end ── */
 
       function convert() {
+        invalidateCopy();
+        clearError();
         var raw = inputEl.value.trim();
         if (!raw) {
           outputEl.value = '';
-          errorEl.hidden = true;
           return;
         }
         try {
@@ -130,7 +149,6 @@
             inferSchema(parsed)
           );
           outputEl.value = JSON.stringify(schema, null, 2);
-          errorEl.hidden = true;
         } catch (e) {
           outputEl.value = '';
           errorEl.textContent = t.invalidJson + ': ' + e.message;
@@ -142,20 +160,44 @@
       inputEl.addEventListener('input', convert);
 
       clearBtn.addEventListener('click', function () {
+        invalidateCopy();
+        inputEl.focus();
         inputEl.value = '';
         outputEl.value = '';
-        errorEl.hidden = true;
-        inputEl.focus();
+        clearError();
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          clearBtn.click();
+        }
       });
 
       copyBtn.addEventListener('click', function () {
         var text = outputEl.value;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-          window.trackTool && window.trackTool('json-to-json-schema', 'copy');
-        });
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        function failed() {
+          if (revision !== copyRevision) return;
+          errorEl.textContent = t.copyFailed;
+          errorEl.hidden = false;
+          copyFailure = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== copyRevision) return;
+            if (copyFailure) clearError();
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () {
+              if (revision === copyRevision) copyBtn.textContent = t.copy;
+            }, 1500);
+            window.trackTool && window.trackTool('json-to-json-schema', 'copy');
+          }, failed);
+        } catch (e) { failed(); }
       });
 
       // seed example
