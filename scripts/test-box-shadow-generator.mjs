@@ -18,6 +18,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/BoxShadowGeneratorTool.astro'), 'utf8');
@@ -46,6 +48,7 @@ function el(id) {
       id, value: '', textContent: '', checked: false, disabled: false, style: {}, dataset: {},
       get innerHTML() { return html; },
       set innerHTML(v) { html = v; this.textContent = v.replace(/<[^>]+>/g, ''); },
+      classList: { remove() {} },
       addEventListener(type, fn) { (handlers[type] ||= []).push(fn); },
       fire(type) { (handlers[type] || []).forEach((fn) => fn.call(els[id], {})); },
     };
@@ -55,8 +58,8 @@ function el(id) {
 const defaults = { 'bsg-h': '5', 'bsg-v': '5', 'bsg-blur': '10', 'bsg-spread': '0', 'bsg-opacity': '30', 'bsg-color': '#000000', 'bsg-color-hex': '#000000' };
 for (const [id, v] of Object.entries(defaults)) el(id).value = v;
 const wrap = { dataset: { copy: 'Copy', copied: 'Copied!' } };
-const document = { currentScript: null, querySelector: () => wrap, getElementById: el };
-new Function('document', 'window', 'navigator', 'setTimeout', scriptMatch[1])(document, {}, {}, () => {});
+const document = { currentScript: null, querySelector: () => wrap, getElementById: el, addEventListener() {} };
+new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', scriptMatch[1])(document, {}, {}, () => {}, () => {});
 
 eq('output on load', el('bsg-code').textContent, 'box-shadow: 5px 5px 10px 0px rgba(0, 0, 0, 0.30);');
 eq('preview uses the same shadow', el('bsg-preview-box').style.boxShadow, '5px 5px 10px 0px rgba(0, 0, 0, 0.30)');
@@ -137,6 +140,182 @@ for (const lang of ['en', 'ja']) {
   const block = guide.match(/\{\/\* bsg-tailwind \*\/\}\s*```css\n([\s\S]*?)```/)[1];
   for (const line of block.trim().split('\n')) check('Tailwind token ' + line.split(':')[0], theme.includes(line.trim()), line);
 }
+
+// ---------- copy lifecycle and shared shortcuts ----------
+const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
+check('actual shared shortcut found', shortcut.includes("document.addEventListener('keydown'"));
+const allLabels = vm.runInNewContext('(' + source.match(/const labels = ([\s\S]*?);\n\nconst L =/)[1] + ')');
+const algorithm = ['hexToRgb\\(hex\\)', 'generate\\(\\)'].map(name => source.match(new RegExp('      function ' + name + ' \\{[\\s\\S]*?\\n      \\}'))[0]).join('\n\n');
+eq('generation algorithm bytes unchanged', createHash('sha256').update(algorithm).digest('hex'), '11fa791496bac41c5ddfad2bd6b860dd8527e6ae54716717a528441240c85990');
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+let currentPage;
+const unhandled = error => { if (currentPage) currentPage.unhandled.push(String(error)); };
+process.on('unhandledRejection', unhandled);
+function page(lang = 'en', shellFirst = false) {
+  const ids = {}, events = {}, requests = [], timers = [], tracks = [], clears = [];
+  const labels = allLabels[lang];
+  let clock = 0, timerId = 0;
+  const doc = { currentScript: null, activeElement: null };
+  function element(id, type = '') {
+    const handlers = {}; let html = '', classes = new Set();
+    const e = {
+      id, type, value: '', checked: false, disabled: false, textContent: '', style: {}, dataset: {},
+      get innerHTML() { return html; },
+      set innerHTML(v) { html = v; this.textContent = v.replace(/<[^>]+>/g, ''); },
+      classList: { add(c) { classes.add(c); }, remove(c) { classes.delete(c); }, contains(c) { return classes.has(c); } },
+      addEventListener(type, fn) { (handlers[type] ||= []).push(fn); },
+      fire(type) { for (const fn of handlers[type] || []) fn.call(e, {}); },
+      focus() { doc.activeElement = e; },
+    };
+    return e;
+  }
+  // Preserve the actual INPUT type/value/checked defaults and require all used IDs to exist.
+  const markup = source.replace(/^---\n[\s\S]*?\n---/, '').replace(/<script\b[\s\S]*?<\/script>/g, '').replace(/<style\b[\s\S]*?<\/style>/g, '');
+  for (const m of markup.matchAll(/<(?:input|span|code|button|div)\b([^>]*)>/g)) {
+    const attrs = Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(a => [a[1], a[2]]));
+    if (!attrs.id) continue;
+    const e = ids[attrs.id] = element(attrs.id, attrs.type || '');
+    e.value = attrs.value || ''; e.checked = /\bchecked\b/.test(m[1]);
+  }
+  ids['bsg-copy'].textContent = labels.copy;
+  const get = id => { if (!ids[id]) throw new Error('Missing actual markup ID ' + id); return ids[id]; };
+  const wrap = { dataset: { copy: labels.copy, copied: labels.copied, copyFailed: labels.copyFailed }, contains: e => Object.values(ids).includes(e), querySelectorAll: () => Object.values(ids).filter(e => e.type === 'text') };
+  Object.assign(doc, {
+    getElementById: get,
+    querySelector: sel => sel === '.bsg-wrap' || sel === '.tool-widget' ? wrap : null,
+    addEventListener(type, fn) { (events[type] ||= []).push(fn); },
+  });
+  const h = {
+    labels, doc, get, requests, timers, tracks, clears, unhandled: [], syncErrors: [],
+    input(id, value, type = 'input') { get(id).value = String(value); get(id).fire(type); },
+    click() { try { get('bsg-copy').fire('click'); } catch (error) { this.syncErrors.push(String(error)); } },
+    key({ key = 'l', ctrlKey = true, metaKey = false, focus = 'bsg-color-hex' } = {}) {
+      doc.activeElement = typeof focus === 'string' ? get(focus) : focus;
+      const e = { key, ctrlKey, metaKey, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+      for (const fn of events.keydown || []) fn.call(doc, e);
+      return e;
+    },
+    advance(ms) {
+      const until = clock + ms;
+      for (;;) {
+        const next = timers.filter(t => !t.cancelled && !t.ran && t.due <= until).sort((a, b) => a.due - b.due || a.id - b.id)[0];
+        if (!next) break;
+        clock = next.due; next.ran = true; next.fn();
+      }
+      clock = until;
+    },
+    state() { return { hex: get('bsg-color-hex').value, swatch: get('bsg-color').value, code: get('bsg-code').textContent, preview: get('bsg-preview-box').style.boxShadow, label: get('bsg-copy').textContent }; },
+  };
+  const context = {
+    document: doc, _slug: 'box-shadow-generator',
+    navigator: { clipboard: { writeText(text) { return new Promise((resolve, reject) => requests.push({ text, resolve, reject })); } } },
+    setTimeout(fn, ms = 0) { const id = ++timerId; timers.push({ id, fn, ms, due: clock + ms }); return id; },
+    clearTimeout(id) { const timer = timers.find(t => t.id === id); if (timer) timer.cancelled = true; },
+    trackTool(slug, action) { tracks.push({ slug, action }); },
+    ztPersist: { clear(slug) { clears.push(slug); } },
+  };
+  context.window = context; vm.createContext(context); h.context = context; currentPage = h;
+  if (shellFirst) vm.runInContext(shortcut, context);
+  vm.runInContext(scriptMatch[1], context);
+  if (!shellFirst) vm.runInContext(shortcut, context);
+  return h;
+}
+function configure(h) {
+  for (const [id, value] of Object.entries({ 'bsg-h': 12, 'bsg-v': -9, 'bsg-blur': 42, 'bsg-spread': -6, 'bsg-opacity': 73, 'bsg-color-hex': '#123456' })) h.input(id, value);
+  h.get('bsg-inset').checked = true; h.get('bsg-inset').fire('change');
+}
+const configuredCode = 'box-shadow: inset 12px -9px 42px -6px rgba(18, 52, 86, 0.73);';
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  check(lang + ' copy failure label exists', typeof allLabels[lang].copyFailed === 'string' && !!allLabels[lang].copyFailed);
+  for (const shellFirst of [false, true]) {
+    const prefix = lang + ' shared first=' + shellFirst;
+    let h = page(lang, shellFirst); configure(h);
+    eq(prefix + ' configured output', h.get('bsg-code').textContent, configuredCode);
+    const generated = () => h.tracks.filter(t => t.action === 'generate').length;
+    const count = generated();
+    h.click(); eq(prefix + ' complete copy bytes', h.requests[0].text, configuredCode);
+    h.requests[0].resolve(); await settle();
+    eq(prefix + ' copied feedback', h.get('bsg-copy').textContent, h.labels.copied);
+    eq(prefix + ' single successful tracking', h.tracks.filter(t => t.action === 'copy').length, 1);
+    h.advance(1500); eq(prefix + ' original label restored', h.get('bsg-copy').textContent, h.labels.copy);
+    eq(prefix + ' copy does not generate', generated(), count);
+    for (const key of [{ key: 'l' }, { key: 'L', ctrlKey: false, metaKey: true }]) {
+      for (const focus of ['bsg-color-hex', 'bsg-h', 'bsg-color', 'bsg-inset', 'bsg-copy']) {
+        h = page(lang, shellFirst); configure(h); const prefs = ['bsg-h', 'bsg-v', 'bsg-blur', 'bsg-spread', 'bsg-opacity', 'bsg-color'].map(id => h.get(id).value);
+        h.click(); const n = generated(); const e = h.key({ ...key, focus });
+        eq(prefix + ' shortcut consumed from ' + focus, e.defaultPrevented, true);
+        eq(prefix + ' feedback cleared synchronously', h.get('bsg-copy').textContent, h.labels.copy);
+        h.requests[0].resolve(); await settle();
+        eq(prefix + ' old copy after shortcut ignored before timer', h.get('bsg-copy').textContent, h.labels.copy);
+        h.advance(0);
+        eq(prefix + ' HEX remains cleared after shared handler', h.get('bsg-color-hex').value, '');
+        eq(prefix + ' parameters preserved', ['bsg-h', 'bsg-v', 'bsg-blur', 'bsg-spread', 'bsg-opacity', 'bsg-color'].map(id => h.get(id).value), prefs);
+        eq(prefix + ' inset preserved', h.get('bsg-inset').checked, true);
+        eq(prefix + ' old output cleared', h.get('bsg-code').textContent, '');
+        eq(prefix + ' old preview cleared', h.get('bsg-preview-box').style.boxShadow, '');
+        eq(prefix + ' empty copy disabled', h.get('bsg-copy').disabled, true);
+        eq(prefix + ' shared persistence clear retained', h.clears, ['box-shadow-generator']);
+        eq(prefix + ' shortcut does not generate', generated(), n);
+        eq(prefix + ' invalidated copy is not tracked', h.tracks.filter(t => t.action === 'copy').length, 0);
+        h.input('bsg-h', 19);
+        eq(prefix + ' next actual input regenerates same saved parameters', h.get('bsg-code').textContent, configuredCode.replace('12px', '19px'));
+        eq(prefix + ' next actual input restores preview', h.get('bsg-preview-box').style.boxShadow, configuredCode.replace('12px', '19px').slice(12, -1));
+        eq(prefix + ' next actual input enables copy', h.get('bsg-copy').disabled, false);
+      }
+    }
+    h = page(lang, shellFirst); configure(h);
+    const before = h.state(); const n = generated();
+    for (const input of [{ focus: {} }, { key: 'l', ctrlKey: false }, { key: 'Enter' }]) {
+      h.key(input); h.advance(0); eq(prefix + ' out of scope shortcut preserves state', h.state(), before);
+    }
+    eq(prefix + ' out of scope generates nothing', generated(), n);
+  }
+  let h = page(lang); configure(h); const before = h.state();
+  h.click(); h.requests[0].reject(new Error('controlled denial')); await settle();
+  eq(lang + ' current failure visible', h.get('bsg-copy').textContent, h.labels.copyFailed);
+  eq(lang + ' rejected copy handled', [h.syncErrors.length, h.unhandled.length], [0, 0]);
+  eq(lang + ' rejected copy not tracked', h.tracks.filter(t => t.action === 'copy').length, 0);
+  h.click(); h.requests[1].resolve(); await settle();
+  eq(lang + ' direct retry succeeds', h.get('bsg-copy').textContent, h.labels.copied);
+  eq(lang + ' retry preserves exact output', h.get('bsg-code').textContent, before.code);
+  for (const missing of [true, false]) {
+    h = page(lang); configure(h);
+    h.context.navigator.clipboard = missing ? undefined : { writeText() { throw new Error('synchronous boundary failure'); } };
+    h.click(); await settle();
+    eq(lang + ' unavailable/throwing API handled', [h.syncErrors.length, h.unhandled.length, h.get('bsg-copy').textContent], [0, 0, h.labels.copyFailed]);
+  }
+  const updates = [h => h.input('bsg-h', 19), h => h.input('bsg-v', 13), h => h.input('bsg-blur', 17), h => h.input('bsg-spread', 7), h => h.input('bsg-opacity', 50), h => h.input('bsg-color-hex', '#abcdef'), h => h.input('bsg-color-hex', '#abc'), h => h.input('bsg-color', '#ff0000'), h => { h.get('bsg-inset').checked = false; h.get('bsg-inset').fire('change'); }, h => h.key()];
+  for (const [index, update] of updates.entries()) for (const outcome of ['resolve', 'reject']) {
+    h = page(lang); configure(h); h.click(); update(h); h.advance(0); const current = h.state();
+    h.requests[0][outcome](outcome === 'reject' ? new Error('late denial') : undefined); await settle();
+    eq(lang + ' late ' + outcome + ' after update ' + index, h.state(), current);
+    eq(lang + ' late rejection handled ' + index, h.unhandled.length, 0);
+    eq(lang + ' stale success not tracked ' + index, h.tracks.filter(t => t.action === 'copy').length, 0);
+  }
+  for (const outcome of ['resolve', 'reject']) {
+    h = page(lang); configure(h); h.click(); h.click(); h.requests[1].resolve(); await settle(); const current = h.state();
+    h.requests[0][outcome](outcome === 'reject' ? new Error('older copy denied') : undefined); await settle();
+    eq(lang + ' older request cannot overwrite newer ' + outcome, h.state(), current);
+    eq(lang + ' older request handled ' + outcome, h.unhandled.length, 0);
+    eq(lang + ' only latest copy tracked ' + outcome, h.tracks.filter(t => t.action === 'copy').length, 1);
+  }
+  h = page(lang); configure(h); h.click(); h.requests[0].resolve(); await settle();
+  const oldTimer = h.timers.find(t => t.ms === 1500);
+  h.advance(1499); h.click(); h.requests[1].resolve(); await settle(); h.advance(1);
+  eq(lang + ' old deadline does not clear new copied', h.get('bsg-copy').textContent, h.labels.copied);
+  oldTimer.fn(); eq(lang + ' cancelled timer forced delivery harmless', h.get('bsg-copy').textContent, h.labels.copied);
+  h.advance(1500); eq(lang + ' latest timer restores base label', h.get('bsg-copy').textContent, h.labels.copy);
+  h = page(lang); configure(h); h.click(); h.requests[0].resolve(); await settle();
+  const timer = h.timers.find(t => t.ms === 1500); h.get('bsg-copy').classList.add('copied'); h.input('bsg-h', 19);
+  eq(lang + ' new result clears feedback class', h.get('bsg-copy').classList.contains('copied'), false);
+  const fresh = h.state(); timer.fn(); eq(lang + ' old timer cannot alter new result feedback', h.state(), fresh);
+  h.click(); h.requests[1].reject(new Error('current copy failure')); await settle(); timer.fn();
+  eq(lang + ' old timer cannot clear current failure', h.get('bsg-copy').textContent, h.labels.copyFailed);
+  h = page(lang); h.get('bsg-code').textContent = ''; h.click(); eq(lang + ' empty output is not copied', h.requests.length, 0);
+}
+currentPage = null;
+process.removeListener('unhandledRejection', unhandled);
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
