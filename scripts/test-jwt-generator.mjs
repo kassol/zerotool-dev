@@ -19,7 +19,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createHmac, webcrypto } from 'node:crypto';
+import { createHmac, createHash, webcrypto } from 'node:crypto';
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -84,7 +85,7 @@ eq('utf8 secret bytes', Array.from(E.decodeSecret('é', 'utf8')), [0xc3, 0xa9]);
 
 // ---------- 4-language STRINGS ----------
 {
-  const m = source.match(/var STRINGS = (\{[\s\S]*?\n\s{6}\});/);
+  const m = source.match(/const STRINGS = (\{[\s\S]*?\n\}) as const;/);
   check('STRINGS block found', !!m);
   if (m) {
     const S = new Function('return ' + m[1])();
@@ -133,14 +134,14 @@ function pageVM(lang, shellFirst) {
     });
   }
   class Element {
-    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', text: '', _value: '', hidden: false, disabled: false, style: {}, checked: false }); }
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', text: '', _value: '', hidden: false, disabled: false, style: {}, checked: false, open: false }); }
     get classList() { const e = this; return { add(c) { if (!e.className.split(/\s+/).includes(c)) e.className = (e.className + ' ' + c).trim(); }, remove(c) { e.className = e.className.split(/\s+/).filter(x => x !== c).join(' '); } }; }
     get value() { return this._value; }
     set value(v) { this._value = String(v); }
     setAttribute(key, value) {
       this.attributes[key] = String(value);
       if (['id', 'class', 'type', 'value'].includes(key)) this[key === 'class' ? 'className' : key] = String(value);
-      if (['hidden', 'checked', 'disabled'].includes(key)) this[key] = true;
+      if (['hidden', 'checked', 'disabled', 'open'].includes(key)) this[key] = true;
       if (key === 'style') for (const part of String(value).split(';')) { const [name, value] = part.split(':'); if (name && value) this.style[name.trim()] = value.trim(); }
     }
     getAttribute(key) { return key === 'hidden' ? (this.hidden ? '' : null) : this.attributes[key] ?? null; }
@@ -156,13 +157,17 @@ function pageVM(lang, shellFirst) {
       for (let e = this; e; e = e.parentNode) { event.currentTarget = e; for (const fn of e.listeners[type] || []) fn.call(e, event); if (event.stopped) break; }
       return event;
     }
-    click() { if (!this.disabled) return this.dispatch('click'); }
+    click() { if (!this.disabled) { if (this.tagName === 'SUMMARY') this.parentNode.open = !this.parentNode.open; return this.dispatch('click'); } }
     focus() { document.activeElement = this; }
   }
   document = new Element('#document'); document.documentElement = { lang };
   document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
   const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
-  const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  const escapeHTML = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/<Toggletip\b[^>]*>[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(PAGE_STRINGS[lang][key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(PAGE_STRINGS[lang][key]));
   const stack = [widget];
   for (const token of markup.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)) {
     const text = token[0];
@@ -170,7 +175,7 @@ function pageVM(lang, shellFirst) {
     else if (text.startsWith('<')) {
       const tag = /^<([\w-]+)/.exec(text)[1], e = new Element(tag);
       for (const attr of text.matchAll(/([\w-]+)="([^"]*)"/g)) e.setAttribute(attr[1], attr[2]);
-      for (const attr of ['hidden', 'disabled', 'readonly', 'checked']) if (new RegExp('\\s' + attr + '(?=\\s|/?>)').test(text)) e.setAttribute(attr, '');
+      for (const attr of ['hidden', 'disabled', 'readonly', 'checked', 'open']) if (new RegExp('\\s' + attr + '(?=\\s|/?>)').test(text)) e.setAttribute(attr, '');
       stack.at(-1).appendChild(e);
       if (!/\/>$/.test(text) && !['input', 'br', 'hr', 'img'].includes(tag)) stack.push(e);
     } else { const e = new Element('#text'); e.text = text; stack.at(-1).appendChild(e); }
@@ -180,6 +185,7 @@ function pageVM(lang, shellFirst) {
   const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing actual source ID ' + id); return e; };
   const context = {
     document, console, TextEncoder, TextDecoder, atob, btoa, _slug: 'jwt-generator',
+    t: Object.fromEntries(Object.entries(PAGE_STRINGS[lang]).filter(([key]) => key !== 'tips')),
     crypto: { subtle: {
       importKey(...args) { return webcrypto.subtle.importKey(...args); },
       sign(...args) {
@@ -213,7 +219,7 @@ function pageVM(lang, shellFirst) {
   return {
     get, document, copies, clears, tracks, timers, jobs, advance,
     input(id, value) { get(id).value = value; get(id).dispatch('input'); },
-    key(key = 'l', modifier = 'ctrlKey', target = 'jg-header') { (target ? get(target) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
+    key(key = 'l', modifier = 'ctrlKey', target = 'jg-header') { if (target === 'jg-header') get('jg-header-details').open = true; (target ? get(target) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
     copy() { const before = copies.length; get('jg-copy').click(); return copies.length > before ? copies.at(-1) : null; },
     setCopyThrows(value) { copyThrows = value; },
     algo(algo) { document.querySelector('[data-algo="' + algo + '"]').click(); },
@@ -224,7 +230,7 @@ function pageVM(lang, shellFirst) {
   };
 }
 
-const PAGE_STRINGS = new Function('return ' + source.match(/var STRINGS = (\{[\s\S]*?\n\s{6}\});/)[1])();
+const PAGE_STRINGS = new Function('return ' + source.match(/const STRINGS = (\{[\s\S]*?\n\}) as const;/)[1])();
 const COPY_FAILURE = {
   en: 'Could not copy. Try again or copy the token manually.',
   zh: '复制失败。请重试，或选中 Token 后手动复制。',
@@ -290,7 +296,7 @@ for (const lang of ['en','zh','ja','ko']) for (const shellFirst of [false, true]
       check(tag + ' shortcut clears result/warning/status ' + modifier + '/' + id, empty(p));
       eq(tag + ' shared shortcut empties all input and persists clear', [p.snapshot().inputs,p.clears,event.defaultPrevented], [['','',''],['jwt-generator'],true]);
       eq(tag + ' cleared result cannot be copied', p.copy(), null);
-      eq(tag + ' shortcut keeps focus in visible input ' + id, p.document.activeElement.id, id === 'jg-copy' ? 'jg-header' : id);
+      eq(tag + ' shortcut keeps focus in visible input ' + id, p.document.activeElement.id, id === 'jg-copy' ? 'jg-payload' : id);
     }
   }
   const changes = {
@@ -360,6 +366,88 @@ await settle(); eq('all page Promise rejections handled',unhandled,[]);
 process.removeListener('unhandledRejection',onUnhandled);
 console.log('real page lifecycle: ' + (passes - pageStart) + ' passed');
 
+
+// ---------- v2 page layout ----------
+const v2Start = passes;
+const sha256 = value => createHash('sha256').update(value).digest('hex');
+const PROTECTED = {
+  en: 'a9b9afab705ce897ca058b9d1f250051163710edb5fcf2b1d041aec7c98c9f5a',
+  zh: 'ba9a38f22a801d2d052a6177f0d0d46fa2e2feffcf0de30ac846b560c35d0072',
+  ja: 'bccf9f4a1351b1fb29d09acb30ee38c229c13b77b41ec7b3ce2b90b86e9002da',
+  ko: 'ba251d4d27e483dc66b6d3bf46c0d0da4f6078eee7eeb5b80abf6f1f7feb2afb',
+};
+const addedExample = {
+  en: '<p>Editing Header alg to HS512 while HS256 remains selected shows an error and clears the previous token.</p>',
+  zh: '<p>例如，所选算法仍为 HS256 时，把 Header 的 alg 改为 HS512，会显示错误并清除旧 Token。</p>',
+  ja: '<p>例えば、選択を HS256 のままヘッダーの alg を HS512 に変えると、エラーを表示して以前のトークンを消します。</p>',
+  ko: '<p>예를 들어 HS256을 선택한 상태에서 헤더의 alg를 HS512로 바꾸면 오류를 표시하고 이전 토큰을 지웁니다.</p>',
+};
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+const css = source.split('<style>')[1].split('</style>')[0];
+check('v2 direct root is a flex column with zero minimum height', /^<div class="jg-wrap">/.test(markup) && /\.jg-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0/.test(css));
+check('v2 registry is convert', /'jwt-generator':\s*'convert'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
+check('v2 toolbar precedes reserved status and two panes', markup.indexOf('jg-toolbar') < markup.indexOf('id="jg-status"') && markup.indexOf('id="jg-status"') < markup.indexOf('jg-panels zt-io'));
+check('v2 shared two panes', [...markup.matchAll(/zt-io-pane/g)].length === 2 && markup.includes('class="jg-panels zt-io"'));
+check('v2 Payload and Token use shared zero-basis fill', /id="jg-payload"[^>]*zt-io-fill/.test(markup) && /id="jg-result-wrap"[^>]*zt-io-fill/.test(markup));
+check('v2 Token is an accessible internal scroll region', /id="jg-result-wrap"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-labelledby="jg-result-label"/.test(markup) && /\.jg-result-wrap\s*\{[^}]*overflow:\s*auto/.test(css));
+check('v2 long Header or Payload cannot expand desktop input pane', /\.jg-input-pane\s*\{[^}]*overflow:\s*auto/.test(css) && /\.jg-payload\s*\{[^}]*overflow:\s*auto/.test(css));
+check('v2 status reserves bounded space', /\.jg-status\s*\{[^}]*height:\s*2\.5rem;[^}]*overflow:\s*auto/.test(css));
+check('v2 direct security warning reserves space and scrolls', /\.jg-secret-warn\s*\{[^}]*height:\s*3\.5rem;[^}]*overflow:\s*auto/.test(css));
+check('v2 mobile stacks with bounded Token and hides empty pane', /@media\s*\(max-width:\s*860px\)[\s\S]*\.jg-result-wrap\s*\{\s*height:\s*180px/.test(css) && /\.jg-output-pane\[data-empty="true"\]\s*\{\s*display:\s*none/.test(css));
+check('v2 phone input is compact, radio and summary targets stay usable', /@media\s*\(max-width:\s*640px\)[\s\S]*\.jg-payload\s*\{\s*min-height:\s*96px;\s*height:\s*96px/.test(css) && /\.jg-radio\s*\{\s*min-height:\s*44px/.test(css) && /\.jg-header-details summary\s*\{\s*min-height:\s*44px/.test(css));
+check('v2 Header starts folded and remains a labelled editor', /<details id="jg-header-details"[^>]*>/.test(markup) && !/<details id="jg-header-details"[^>]*\bopen\b/.test(markup) && /<label for="jg-header"/.test(markup));
+eq('v2 retains three algorithm buttons and Copy', [...markup.matchAll(/<button\b/g)].length, 4);
+check('v2 automatic signing has no Generate or Clear button', !/btn-primary|id="jg-(?:generate|clear)"/.test(markup));
+check('v2 secret keeps autocomplete off and current format values', /id="jg-secret"[^>]*autocomplete="off"/.test(markup) && /name="jg-fmt" value="utf8" checked/.test(markup) && /name="jg-fmt" value="base64"/.test(markup));
+check('v2 privacy notice follows output', markup.indexOf('class="jg-privacy"') > markup.indexOf('id="jg-result"'));
+check('v2 tips are excluded from client and runtime localization is removed', source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && source.includes('define:vars={{ t: CLIENT_T }}') && !/data-i18n|pageLang|STRINGS|TIPS/.test(clientScript) && !/data-i18n/.test(markup));
+eq('v2 six actual control/tip bindings', [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\} wide>\{TIPS\.(\w+)\}<\/Toggletip>/g)].map(m=>m.slice(1)).sort(), [
+  ['jg-tip-algorithm','algorithm','algorithm'], ['jg-tip-header','headerLabel','header'], ['jg-tip-payload','payloadLabel','payload'], ['jg-tip-secret','secretLabel','secret'], ['jg-tip-format','secretFormat','format'], ['jg-tip-copy','copy','copy'],
+].sort());
+const require = createRequire(import.meta.url);
+const astroRequire = createRequire(require.resolve('astro/package.json'));
+const { transform } = await import(astroRequire.resolve('@astrojs/compiler'));
+const compiled = await transform(source,{filename:'JwtGeneratorTool.astro'});
+check('v2 Astro compiles with no errors', !compiled.diagnostics.some(d=>d.severity===1));
+function leaves(value,path='') { return Object.entries(value).flatMap(([key,item])=>typeof item==='object'?leaves(item,path+key+'.'):[[path+key,item]]); }
+const english = Object.fromEntries(leaves(PAGE_STRINGS.en));
+for (const lang of ['en','zh','ja','ko']) {
+  const local=Object.fromEntries(leaves(PAGE_STRINGS[lang]));
+  eq(lang+' v2 recursive i18n key parity',Object.keys(local).sort(),Object.keys(english).sort());
+  for (const [key,value] of Object.entries(local)) {
+    check(lang+' v2 nonempty '+key,typeof value==='string'&&value.trim().length>0);
+    const placeholders=text=>[...text.matchAll(/\{[^}]+\}/g)].map(m=>m[0]).sort();
+    eq(lang+' v2 placeholder parity '+key,placeholders(value),placeholders(english[key]));
+  }
+  const mdx=readFileSync(join(root,'src/content/tools/jwt-generator',lang+'.mdx'),'utf8');
+  const steps=(mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1]||'').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line.trim().slice(2)));
+  check(lang+' v2 has five bounded steps',steps.length===5&&steps.every(step=>[...step].length<=280)&&steps.reduce((n,step)=>n+[...step].length,0)<=1200);
+  check(lang+' v2 steps are plain text with current labels',steps.every(step=>!/[<>]|\]\(|\*\*|`/.test(step))&&['algorithm','headerLabel','payloadLabel','secretLabel','copy'].every(key=>steps.join(' ').includes(PAGE_STRINGS[lang][key])));
+  check(lang+' v2 usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
+  check(lang+' v2 new example is present',mdx.includes(addedExample[lang]));
+  const protectedMDX=mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m,'').replace(addedExample[lang]+'\n\n','').replace('Select <strong>Base64</strong> beside the Secret label','Select <strong>Base64</strong> under the secret field');
+  eq(lang+' v2 protects all other body, Limits, FAQ and metadata',sha256(protectedMDX),PROTECTED[lang]);
+  const p=pageVM(lang,false),details=p.get('jg-header-details'),pane=p.get('jg-result-pane');
+  eq(lang+' v2 Header initially closed and pending token empty',[details.open,pane.getAttribute('data-empty')],[false,'true']);
+  await p.waitJobs(1); await p.finish(0);
+  eq(lang+' v2 signed token replaces empty state',pane.getAttribute('data-empty'),'false');
+  check(lang+' v2 warning stays outside folded Header',!details.contains(p.get('jg-secret-warn'))&&p.get('jg-secret-warn').textContent.includes('19'));
+  const before=p.snapshot(),count=p.jobs.length;
+  details.querySelector('summary').click();check(lang+' v2 Header summary opens editor',details.open);
+  details.querySelector('summary').click();eq(lang+' v2 closing Header leaves data and signing state unchanged',[details.open,p.snapshot(),p.jobs.length],[false,before,count]);
+  p.input('jg-header','{"alg":"HS512","typ":"JWT"}');p.advance(500);await settle();
+  eq(lang+' v2 mismatch example automatically reveals Header error',[details.open,p.get('jg-header-err').textContent,p.snapshot().token],[true,ALGO_FAILURE[lang].replace('{algo}','HS256'),'']);
+  details.querySelector('summary').click();p.input('jg-header','{');p.advance(500);
+  eq(lang+' v2 JSON error automatically reveals Header',[details.open,p.get('jg-header-err').textContent],[true,PAGE_STRINGS[lang].errHeaderJson]);
+  p.algo('HS512');p.input('jg-header','{"alg":"HS512","typ":"JWT"}');p.input('jg-payload',JSON.stringify({text:'long-λ-'.repeat(5000)}));p.advance(500);await p.waitJobs(2);await p.finish(1);
+  const long=p.snapshot();check(lang+' v2 long complete token verifies',verifies(long.token,'HS512',Buffer.from('your-256-bit-secret'),long.inputs[0],long.inputs[1]));
+  eq(lang+' v2 copy keeps long token complete',p.copy().value,long.token);p.copies.at(-1).resolve();await settle();
+  p.key('l','ctrlKey','jg-copy');eq(lang+' v2 clear from result focuses visible Payload and restores empty pane',[p.document.activeElement.id,pane.getAttribute('data-empty'),p.snapshot().token],['jg-payload','true','']);
+}
+eq('v2 engine marker bytes unchanged',sha256(source.slice(startIndex,endIndex+END_MARK.length)),'add9a68290c5f7cb2a3dd74868f0819a041658931cdb96e22f62fea953b08cc7');
+check('v2 sensitive policy remains disabled',/'jwt-generator':\s*'disabled'/.test(readFileSync(join(root,'src/data/persistence.ts'),'utf8')));
+check('v2 client adds no network or persistence',!/\bfetch\s*\(|XMLHttpRequest|localStorage|sessionStorage/.test(clientScript));
+console.log('v2 page layout: '+(passes-v2Start)+' passed');
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

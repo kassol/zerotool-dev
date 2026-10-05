@@ -28,6 +28,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'html-entity': 'convert',
   'text-case': 'convert',
   'slugify': 'convert',
+  'jwt-generator': 'convert',
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',

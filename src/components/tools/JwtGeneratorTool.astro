@@ -1,117 +1,171 @@
 ---
 // JwtGeneratorTool — client-side JWT signing via Web Crypto API (HS256/HS384/HS512)
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+const STRINGS = {
+  en: {
+    algorithm: 'Algorithm', headerLabel: 'Header', payloadLabel: 'Payload',
+    secretLabel: 'Secret', secretPlaceholder: 'your-256-bit-secret',
+    generatedToken: 'Generated Token', copy: 'Copy', copied: 'Copied!',
+    generating: 'Generating token...', generated: 'Token generated.',
+    errHeaderAlgo: 'Header alg must match the selected algorithm ({algo}).',
+    copyFail: 'Could not copy. Try again or copy the token manually.',
+    errHeaderJson: 'Header is not valid JSON.', errPayloadJson: 'Payload is not valid JSON.',
+    errBase64Secret: 'Secret is not valid Base64.',
+    errEmptySecret: 'Secret is required to sign the token.',
+    warnShortKey: 'The key is {bytes} bytes; RFC 7518 requires at least {min} bytes for {algo}. The token is signed, but the key is too short to rely on.',
+    privacyNote: 'All processing is done locally in your browser.',
+    secretFormat: 'Secret format',
+    empty: 'Enter valid Header and Payload JSON and a secret to see a signed token.',
+    tips: {
+      algorithm: 'Choose HS256, HS384 or HS512. Selecting an algorithm updates alg in a JSON object Header. A manually edited alg must match the selection. Changes trigger signing after 0.5 seconds.',
+      header: 'Expand Header to edit its JSON. Its alg must match the selected algorithm. Outer whitespace is trimmed before signing; line breaks and indentation inside the Header and Payload are preserved.',
+      payload: 'Enter valid JSON. Claims such as iat, exp and nbf stay as written; this tool does not add or check timestamps. Editing a field signs a new token after 0.5 seconds.',
+      secret: 'Use a test secret. Key length is measured after UTF-8 encoding or Base64 decoding. HS256, HS384 and HS512 require at least 32, 48 and 64 bytes respectively. Shorter keys still sign and show a warning.',
+      format: 'UTF-8 uses the entered text as key bytes. Base64 decodes the key first; standard and URL-safe alphabets are accepted, whitespace is ignored and padding is optional.',
+      copy: 'Copy copies the entire current token. Empty or invalid input clears the previous token. Ctrl+L (⌘+L on Mac) inside the tool clears all three fields and results, keeping the algorithm and secret format.',
+    },
+  },
+  zh: {
+    algorithm: '算法', headerLabel: 'Header', payloadLabel: 'Payload',
+    secretLabel: '密钥', secretPlaceholder: '你的 256 位密钥',
+    generatedToken: '生成的 Token', copy: '复制', copied: '已复制！',
+    generating: '正在生成...', generated: 'Token 已生成。',
+    errHeaderAlgo: 'Header 的 alg 必须与所选算法（{algo}）一致。',
+    copyFail: '复制失败。请重试，或选中 Token 后手动复制。',
+    errHeaderJson: 'Header 不是有效的 JSON。', errPayloadJson: 'Payload 不是有效的 JSON。',
+    errBase64Secret: '密钥不是有效的 Base64。',
+    errEmptySecret: '请输入密钥以生成签名 Token。',
+    warnShortKey: '密钥只有 {bytes} 字节；RFC 7518 要求 {algo} 至少 {min} 字节。Token 照常签名，但这个密钥太短，不宜使用。',
+    privacyNote: '所有处理均在浏览器本地完成。',
+    secretFormat: '密钥格式',
+    empty: '输入有效的 Header、Payload JSON 和密钥后，这里会显示签名后的 Token。',
+    tips: {
+      algorithm: '选择 HS256、HS384 或 HS512 后，会更新 JSON 对象 Header 中的 alg。手动修改的 alg 必须与所选算法一致。停止修改 0.5 秒后自动签名。',
+      header: '展开 Header 可编辑 JSON。alg 必须与所选算法一致。签名前去掉 Header 和 Payload 首尾的空白，内部换行与缩进保留。',
+      payload: '输入有效的 JSON。iat、exp、nbf 等声明按原样保留，工具不会添加或检查时间戳。停止修改字段 0.5 秒后生成新签名。',
+      secret: '请使用测试密钥。字节数按 UTF-8 编码或 Base64 解码后计算。HS256、HS384、HS512 分别要求至少 32、48、64 字节；更短的密钥仍会签名，并直接显示警告。',
+      format: 'UTF-8 把输入文本编码为密钥字节。Base64 会先解码，支持标准和 URL 安全字母表，忽略空白，填充符可省略。',
+      copy: '复制当前完整 Token。空输入或无效输入会清除旧 Token。焦点在工具内时，Ctrl+L（Mac 为 ⌘+L）清空三个字段和结果，保留所选算法与密钥格式。',
+    },
+  },
+  ja: {
+    algorithm: 'アルゴリズム', headerLabel: 'ヘッダー', payloadLabel: 'ペイロード',
+    secretLabel: '秘密鍵', secretPlaceholder: '256ビットの秘密鍵',
+    generatedToken: '生成されたトークン', copy: 'コピー', copied: 'コピー済み！',
+    generating: '生成中...', generated: 'トークンが生成されました。',
+    errHeaderAlgo: 'ヘッダーの alg は選択したアルゴリズム（{algo}）と一致する必要があります。',
+    copyFail: 'コピーできませんでした。再試行するか、トークンを選択して手動でコピーしてください。',
+    errHeaderJson: 'ヘッダーが有効なJSONではありません。', errPayloadJson: 'ペイロードが有効なJSONではありません。',
+    errBase64Secret: '秘密鍵が有効なBase64ではありません。',
+    errEmptySecret: 'トークンに署名するには秘密鍵を入力してください。',
+    warnShortKey: '鍵は {bytes} バイトです。RFC 7518 は {algo} に {min} バイト以上を求めています。署名はしますが、この鍵は短すぎます。',
+    privacyNote: 'すべての処理はブラウザ内でローカルに行われます。',
+    secretFormat: '秘密鍵の形式',
+    empty: '有効なヘッダーとペイロードの JSON、秘密鍵を入力すると署名済みトークンを表示します。',
+    tips: {
+      algorithm: 'HS256、HS384、HS512を選ぶと、JSON オブジェクトのヘッダー内の alg が更新されます。手動で編集した alg は選択と一致させてください。変更を止めてから 0.5 秒後に署名します。',
+      header: 'ヘッダーを開くと JSON を編集できます。alg は選択したアルゴリズムと一致させます。署名前にヘッダーとペイロードの前後の空白を除き、内部の改行とインデントは保持します。',
+      payload: '有効な JSON を入力します。iat、exp、nbf などはそのまま使い、タイムスタンプを追加・検証しません。フィールドの変更を止めてから 0.5 秒後に新しい署名を作ります。',
+      secret: 'テスト用の秘密鍵を使ってください。長さは UTF-8 エンコードまたは Base64 デコード後のバイト数です。HS256、HS384、HS512にはそれぞれ32、48、64バイト以上が必要です。短くても署名し、警告を表示します。',
+      format: 'UTF-8 は入力文字列を鍵のバイト列にします。Base64 は先にデコードし、標準・URLセーフの両形式に対応します。空白は無視し、パディングは省略できます。',
+      copy: '現在のトークン全体をコピーします。空または無効な入力では以前のトークンを消します。ツール内で Ctrl+L（Macは⌘+L）を押すと、3つの欄と結果を消し、アルゴリズムと秘密鍵の形式は保持します。',
+    },
+  },
+  ko: {
+    algorithm: '알고리즘', headerLabel: '헤더', payloadLabel: '페이로드',
+    secretLabel: '비밀 키', secretPlaceholder: '256비트 비밀 키',
+    generatedToken: '생성된 토큰', copy: '복사', copied: '복사됨!',
+    generating: '생성 중...', generated: '토큰이 생성되었습니다.',
+    errHeaderAlgo: '헤더의 alg는 선택한 알고리즘({algo})과 일치해야 합니다.',
+    copyFail: '복사하지 못했습니다. 다시 시도하거나 토큰을 선택하여 직접 복사하세요.',
+    errHeaderJson: '헤더가 유효한 JSON이 아닙니다.', errPayloadJson: '페이로드가 유효한 JSON이 아닙니다.',
+    errBase64Secret: '비밀 키가 유효한 Base64가 아닙니다.',
+    errEmptySecret: '토큰에 서명하려면 비밀 키를 입력해야 합니다.',
+    warnShortKey: '키가 {bytes}바이트입니다. RFC 7518은 {algo}에 {min}바이트 이상을 요구합니다. 서명은 하지만 이 키는 너무 짧습니다.',
+    privacyNote: '모든 처리는 브라우저에서 로컬로 수행됩니다.',
+    secretFormat: '비밀 키 형식',
+    empty: '유효한 헤더와 페이로드 JSON, 비밀 키를 입력하면 서명된 토큰이 표시됩니다.',
+    tips: {
+      algorithm: 'HS256, HS384 또는 HS512를 선택하면 JSON 객체 헤더의 alg가 갱신됩니다. 직접 편집한 alg는 선택한 알고리즘과 같아야 합니다. 수정을 멈춘 뒤 0.5초 후에 서명합니다.',
+      header: '헤더를 펼쳐 JSON을 편집하세요. alg는 선택한 알고리즘과 같아야 합니다. 서명 전에 헤더와 페이로드 양끝의 공백을 제거하며 내부 줄바꿈과 들여쓰기는 유지합니다.',
+      payload: '유효한 JSON을 입력하세요. iat, exp, nbf 등은 입력한 그대로 유지하며 타임스탬프를 추가하거나 검사하지 않습니다. 필드 수정을 멈춘 뒤 0.5초 후 새 서명을 생성합니다.',
+      secret: '테스트용 비밀 키를 사용하세요. 길이는 UTF-8 인코딩 또는 Base64 디코딩 후 바이트 수입니다. HS256, HS384, HS512는 각각 최소 32, 48, 64바이트가 필요합니다. 더 짧아도 서명하며 경고를 표시합니다.',
+      format: 'UTF-8은 입력 텍스트를 키 바이트로 인코딩합니다. Base64는 먼저 디코딩하며 표준 및 URL 안전 알파벳을 지원합니다. 공백은 무시하고 패딩은 생략할 수 있습니다.',
+      copy: '현재 토큰 전체를 복사합니다. 입력이 비었거나 유효하지 않으면 이전 토큰을 지웁니다. 도구 안에서 Ctrl+L(Mac은 ⌘+L)을 누르면 세 필드와 결과가 지워지고 알고리즘과 비밀 키 형식은 유지됩니다.',
+    },
+  }
+} as const;
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
-<div>
-  <div class="jg-wrap">
-    {/* Algorithm row */}
-    <div class="jg-row jg-algo-row">
-      <span class="jg-label" data-i18n="algorithm">Algorithm</span>
-      <div class="jg-algo-btns">
-        <button class="jg-algo-btn active" data-algo="HS256">HS256</button>
-        <button class="jg-algo-btn" data-algo="HS384">HS384</button>
-        <button class="jg-algo-btn" data-algo="HS512">HS512</button>
-      </div>
-    </div>
 
-    {/* Header + Payload */}
-    <div class="jg-editors">
-      <div class="jg-field">
-        <label for="jg-header" data-i18n="headerLabel">Header</label>
-        <textarea id="jg-header" spellcheck="false" rows="4"></textarea>
-        <div id="jg-header-err" class="jg-field-err" aria-live="polite"></div>
-      </div>
-      <div class="jg-field">
-        <label for="jg-payload" data-i18n="payloadLabel">Payload</label>
-        <textarea id="jg-payload" spellcheck="false" rows="6"></textarea>
-        <div id="jg-payload-err" class="jg-field-err" aria-live="polite"></div>
-      </div>
+<div class="jg-wrap">
+  <div class="jg-toolbar">
+    <span id="jg-algo-label" class="jg-label">{T.algorithm}</span>
+    <div class="jg-algo-btns zt-segmented" role="group" aria-labelledby="jg-algo-label">
+      <button class="jg-algo-btn active" data-algo="HS256" type="button">HS256</button>
+      <button class="jg-algo-btn" data-algo="HS384" type="button">HS384</button>
+      <button class="jg-algo-btn" data-algo="HS512" type="button">HS512</button>
     </div>
-
-    {/* Secret */}
-    <div class="jg-field">
-      <div class="jg-secret-hdr">
-        <label for="jg-secret" data-i18n="secretLabel">Secret</label>
-        <div class="jg-secret-fmt">
-          <label class="jg-radio"><input type="radio" name="jg-fmt" value="utf8" checked /> UTF-8</label>
-          <label class="jg-radio"><input type="radio" name="jg-fmt" value="base64" /> Base64</label>
+    <Toggletip id="jg-tip-algorithm" lang={lang} about={T.algorithm} wide>{TIPS.algorithm}</Toggletip>
+  </div>
+  <div id="jg-status" class="jg-status" role="status" aria-live="polite"></div>
+  <div class="jg-panels zt-io">
+    <div class="jg-input-pane zt-io-pane">
+      <div class="jg-pane-head">
+        <label for="jg-payload" class="jg-label">{T.payloadLabel}</label>
+        <Toggletip id="jg-tip-payload" lang={lang} about={T.payloadLabel} wide>{TIPS.payload}</Toggletip>
+      </div>
+      <textarea id="jg-payload" class="tool-textarea jg-payload zt-io-fill" spellcheck="false" aria-describedby="jg-payload-err"></textarea>
+      <div id="jg-payload-err" class="jg-field-err" aria-live="polite"></div>
+      <div class="jg-secret-field">
+        <div class="jg-secret-hdr">
+          <span class="jg-field-label">
+            <label for="jg-secret" class="jg-label">{T.secretLabel}</label>
+            <Toggletip id="jg-tip-secret" lang={lang} about={T.secretLabel} wide>{TIPS.secret}</Toggletip>
+          </span>
+          <span class="jg-secret-fmt" role="radiogroup" aria-label={T.secretFormat}>
+            <label class="jg-radio"><input type="radio" name="jg-fmt" value="utf8" checked /> UTF-8</label>
+            <label class="jg-radio"><input type="radio" name="jg-fmt" value="base64" /> Base64</label>
+            <Toggletip id="jg-tip-format" lang={lang} about={T.secretFormat} wide>{TIPS.format}</Toggletip>
+          </span>
         </div>
+        <input id="jg-secret" class="tool-input" type="text" placeholder={T.secretPlaceholder} spellcheck="false" autocomplete="off" aria-describedby="jg-secret-warn" />
+        <div id="jg-secret-warn" class="jg-secret-warn" aria-live="polite"></div>
       </div>
-      <input id="jg-secret" type="text" placeholder="your-256-bit-secret" data-i18n-ph="secretPlaceholder" spellcheck="false" autocomplete="off" />
-      <div id="jg-secret-warn" class="jg-secret-warn" aria-live="polite"></div>
+      <details id="jg-header-details" class="jg-header-details">
+        <summary>{T.headerLabel}</summary>
+        <div class="jg-header-body">
+          <div class="jg-pane-head">
+            <label for="jg-header" class="jg-label">{T.headerLabel}</label>
+            <Toggletip id="jg-tip-header" lang={lang} about={T.headerLabel} wide>{TIPS.header}</Toggletip>
+          </div>
+          <textarea id="jg-header" class="tool-textarea jg-header" spellcheck="false" aria-describedby="jg-header-err"></textarea>
+          <div id="jg-header-err" class="jg-header-err jg-field-err" aria-live="polite"></div>
+        </div>
+      </details>
     </div>
-
-    <div id="jg-status" class="jg-status" aria-live="polite"></div>
-
-    {/* Result */}
-    <div id="jg-result-wrap" class="jg-result-wrap" style="display:none">
-      <div class="jg-result-hdr">
-        <span class="jg-result-label" data-i18n="generatedToken">Generated Token</span>
-        <button id="jg-copy" class="btn-copy" data-i18n="copy">Copy</button>
+    <div id="jg-result-pane" class="jg-output-pane zt-io-pane" data-empty="true">
+      <div class="jg-pane-head">
+        <span id="jg-result-label" class="jg-label">{T.generatedToken}</span>
+        <span class="jg-copy">
+          <button id="jg-copy" class="btn-copy" type="button">{T.copy}</button>
+          <Toggletip id="jg-tip-copy" lang={lang} about={T.copy} wide>{TIPS.copy}</Toggletip>
+        </span>
       </div>
-      <code id="jg-result" class="jg-result"></code>
+      <p class="jg-empty zt-io-fill">{T.empty}</p>
+      <div id="jg-result-wrap" class="jg-result-wrap zt-io-fill" style="display:none" tabindex="0" role="region" aria-labelledby="jg-result-label">
+        <code id="jg-result" class="jg-result"></code>
+      </div>
+      <p class="jg-privacy">{T.privacyNote}</p>
     </div>
-
-    {/* Privacy notice */}
-    <p class="jg-privacy" data-i18n="privacyNote">All processing is done locally in your browser.</p>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          algorithm: 'Algorithm', headerLabel: 'Header', payloadLabel: 'Payload',
-          secretLabel: 'Secret', secretPlaceholder: 'your-256-bit-secret',
-          generatedToken: 'Generated Token', copy: 'Copy', copied: 'Copied!',
-          generating: 'Generating token...', generated: 'Token generated.',
-          errHeaderAlgo: 'Header alg must match the selected algorithm ({algo}).',
-          copyFail: 'Could not copy. Try again or copy the token manually.',
-          errHeaderJson: 'Header is not valid JSON.', errPayloadJson: 'Payload is not valid JSON.',
-          errBase64Secret: 'Secret is not valid Base64.',
-          errEmptySecret: 'Secret is required to sign the token.',
-          warnShortKey: 'The key is {bytes} bytes; RFC 7518 requires at least {min} bytes for {algo}. The token is signed, but the key is too short to rely on.',
-          privacyNote: 'All processing is done locally in your browser.'
-        },
-        zh: {
-          algorithm: '算法', headerLabel: 'Header', payloadLabel: 'Payload',
-          secretLabel: '密钥', secretPlaceholder: '你的 256 位密钥',
-          generatedToken: '生成的 Token', copy: '复制', copied: '已复制！',
-          generating: '正在生成...', generated: 'Token 已生成。',
-          errHeaderAlgo: 'Header 的 alg 必须与所选算法（{algo}）一致。',
-          copyFail: '复制失败。请重试，或选中 Token 后手动复制。',
-          errHeaderJson: 'Header 不是有效的 JSON。', errPayloadJson: 'Payload 不是有效的 JSON。',
-          errBase64Secret: '密钥不是有效的 Base64。',
-          errEmptySecret: '请输入密钥以生成签名 Token。',
-          warnShortKey: '密钥只有 {bytes} 字节；RFC 7518 要求 {algo} 至少 {min} 字节。Token 照常签名，但这个密钥太短，不宜使用。',
-          privacyNote: '所有处理均在浏览器本地完成。'
-        },
-        ja: {
-          algorithm: 'アルゴリズム', headerLabel: 'ヘッダー', payloadLabel: 'ペイロード',
-          secretLabel: '秘密鍵', secretPlaceholder: '256ビットの秘密鍵',
-          generatedToken: '生成されたトークン', copy: 'コピー', copied: 'コピー済み！',
-          generating: '生成中...', generated: 'トークンが生成されました。',
-          errHeaderAlgo: 'ヘッダーの alg は選択したアルゴリズム（{algo}）と一致する必要があります。',
-          copyFail: 'コピーできませんでした。再試行するか、トークンを選択して手動でコピーしてください。',
-          errHeaderJson: 'ヘッダーが有効なJSONではありません。', errPayloadJson: 'ペイロードが有効なJSONではありません。',
-          errBase64Secret: '秘密鍵が有効なBase64ではありません。',
-          errEmptySecret: 'トークンに署名するには秘密鍵を入力してください。',
-          warnShortKey: '鍵は {bytes} バイトです。RFC 7518 は {algo} に {min} バイト以上を求めています。署名はしますが、この鍵は短すぎます。',
-          privacyNote: 'すべての処理はブラウザ内でローカルに行われます。'
-        },
-        ko: {
-          algorithm: '알고리즘', headerLabel: '헤더', payloadLabel: '페이로드',
-          secretLabel: '비밀 키', secretPlaceholder: '256비트 비밀 키',
-          generatedToken: '생성된 토큰', copy: '복사', copied: '복사됨!',
-          generating: '생성 중...', generated: '토큰이 생성되었습니다.',
-          errHeaderAlgo: '헤더의 alg는 선택한 알고리즘({algo})과 일치해야 합니다.',
-          copyFail: '복사하지 못했습니다. 다시 시도하거나 토큰을 선택하여 직접 복사하세요.',
-          errHeaderJson: '헤더가 유효한 JSON이 아닙니다.', errPayloadJson: '페이로드가 유효한 JSON이 아닙니다.',
-          errBase64Secret: '비밀 키가 유효한 Base64가 아닙니다.',
-          errEmptySecret: '토큰에 서명하려면 비밀 키를 입력해야 합니다.',
-          warnShortKey: '키가 {bytes}바이트입니다. RFC 7518은 {algo}에 {min}바이트 이상을 요구합니다. 서명은 하지만 이 키는 너무 짧습니다.',
-          privacyNote: '모든 처리는 브라우저에서 로컬로 수행됩니다.'
-        }
-      };
-
       var DEFAULT_HEADER = JSON.stringify({ alg: 'HS256', typ: 'JWT' }, null, 2);
       var DEFAULT_PAYLOAD = JSON.stringify({
         sub: '1234567890',
@@ -119,21 +173,13 @@
         iat: 1516239022
       }, null, 2);
 
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.jg-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('.jg-wrap [data-i18n-ph]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-      });
-
       var headerEl = document.getElementById('jg-header');
       var payloadEl = document.getElementById('jg-payload');
       var secretEl = document.getElementById('jg-secret');
       var statusEl = document.getElementById('jg-status');
       var resultWrap = document.getElementById('jg-result-wrap');
+      var resultPane = document.getElementById('jg-result-pane');
+      var headerDetails = document.getElementById('jg-header-details');
       var resultEl = document.getElementById('jg-result');
       var copyBtn = document.getElementById('jg-copy');
       var headerErrEl = document.getElementById('jg-header-err');
@@ -239,6 +285,7 @@
         invalidateCopy();
         resultEl.textContent = '';
         resultWrap.style.display = 'none';
+        resultPane.setAttribute('data-empty', 'true');
         headerErrEl.textContent = '';
         payloadErrEl.textContent = '';
         secretWarnEl.textContent = '';
@@ -270,6 +317,7 @@
         }
         try { JSON.parse(payloadStr); } catch (e) { payloadErrEl.textContent = t.errPayloadJson; payloadOk = false; }
         if (!headerOk || !payloadOk) {
+          if (!headerOk) headerDetails.open = true;
           resultWrap.style.display = 'none';
           return;
         }
@@ -302,6 +350,7 @@
           if (current !== generation) return;
           resultEl.textContent = token;
           resultWrap.style.display = '';
+          resultPane.setAttribute('data-empty', 'false');
           statusEl.textContent = t.generated;
           statusEl.className = 'jg-status success';
           window.trackTool && window.trackTool('jwt-generator', 'generate');
@@ -322,7 +371,7 @@
         var root = document.querySelector('.jg-wrap');
         if (!root || !root.contains(document.activeElement)) return;
         e.preventDefault();
-        if (resultWrap.contains(document.activeElement)) headerEl.focus();
+        if (resultPane.contains(document.activeElement)) payloadEl.focus();
         generation++;
         clearTimeout(debounceTimer);
         headerEl.value = payloadEl.value = secretEl.value = '';
@@ -359,159 +408,52 @@
 </div>
 
 <style>
-  .jg-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .jg-algo-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+  .jg-wrap { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; min-width: 0; }
+  .jg-toolbar, .jg-pane-head, .jg-field-label { display: flex; align-items: center; gap: 0.3rem; }
+  .jg-toolbar { flex-wrap: wrap; gap: 0.5rem; }
+  .jg-label { font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); }
+  .jg-algo-btns { padding: 3px; background: var(--color-bg-secondary); }
+  .jg-algo-btn { min-height: 32px; padding: 0.25rem 0.65rem; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+  .jg-algo-btn.active { background: var(--color-surface); color: var(--color-primary); box-shadow: var(--shadow-subtle); }
+  .jg-algo-btn:hover { color: var(--color-primary); }
+  .jg-algo-btn:focus-visible, .jg-header-details summary:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+  .jg-status { flex: none; height: 2.5rem; font-size: 0.85rem; overflow: auto; overflow-wrap: anywhere; }
+  .jg-status.success { color: var(--color-success); }
+  .jg-status.error, .jg-field-err { color: var(--color-danger); }
+  .jg-input-pane { overflow: auto; }
+  .jg-pane-head { flex: none; min-height: 32px; }
+  .jg-payload { min-height: 120px; overflow: auto; }
+  .jg-field-err { flex: none; height: 1.25rem; font-size: 0.8rem; line-height: 1.25rem; overflow: auto; }
+  .jg-secret-field, .jg-header-body { display: flex; flex-direction: column; gap: 0.3rem; flex: none; }
+  .jg-secret-hdr { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem; }
+  .jg-secret-fmt { display: inline-flex; align-items: center; gap: 0.5rem; }
+  .jg-radio { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; cursor: pointer; color: var(--color-text-secondary); }
+  .jg-secret-field .tool-input { width: 100%; min-width: 0; font-family: var(--font-mono); }
+  .jg-secret-warn { height: 3.5rem; overflow: auto; font-size: 0.8rem; line-height: 1.4; color: var(--color-primary); }
+  .jg-header-details { flex: none; }
+  .jg-header-details summary { padding: 0.25rem 0; min-height: 32px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+  .jg-header-body { margin-top: 0.3rem; }
+  .jg-header { height: 104px; min-height: 104px; resize: vertical; overflow: auto; }
+  .jg-header-err { height: 2.5rem; }
+  .jg-copy { display: inline-flex; align-items: center; gap: 0.25rem; margin-left: auto; }
+  .jg-empty { display: grid; place-items: center; margin: 0; padding: 1rem; text-align: center; color: var(--color-text-muted); border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
+  .jg-output-pane[data-empty="false"] .jg-empty { display: none; }
+  .jg-result-wrap { overflow: auto; padding: 0.65rem 0.75rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg-secondary); }
+  .jg-result { display: block; font-family: var(--font-mono); font-size: 0.85rem; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; line-height: 1.55; }
+  .jg-privacy { flex: none; font-size: 0.78rem; color: var(--color-text-muted); margin: 0; }
+  @media (max-width: 860px) {
+    .jg-input-pane { overflow: visible; }
+    .jg-payload { height: 140px; }
+    .jg-result-wrap { height: 180px; }
+    .jg-output-pane[data-empty="true"] { display: none; }
   }
-
-  .jg-label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
+  @media (max-width: 640px) {
+    .jg-toolbar { gap: 0.25rem; }
+    .jg-algo-btn { min-height: 40px; padding-inline: 0.55rem; }
+    .jg-pane-head { min-height: 28px; }
+    .jg-payload { min-height: 96px; height: 96px; }
+    .jg-radio { min-height: 44px; }
+    .jg-header-details summary { min-height: 44px; }
+    .jg-secret-warn { height: 4.75rem; }
   }
-
-  .jg-algo-btns { display: flex; gap: 0.25rem; }
-
-  .jg-algo-btn {
-    font-size: 0.8rem;
-    padding: 0.25rem 0.6rem;
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-    cursor: pointer;
-    background: var(--color-bg-secondary);
-    color: var(--color-text-secondary);
-    transition: background 0.15s, color 0.15s;
-  }
-
-  .jg-algo-btn.active {
-    background: var(--color-primary);
-    color: #fff;
-    border-color: var(--color-primary);
-  }
-
-  .jg-editors { display: flex; flex-direction: column; gap: 0.6rem; }
-
-  .jg-field { display: flex; flex-direction: column; gap: 0.3rem; }
-
-  .jg-field label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .jg-field textarea,
-  .jg-field input[type="text"] {
-    width: 100%;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    padding: 0.65rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    box-sizing: border-box;
-  }
-
-  .jg-field textarea {
-    resize: vertical;
-    min-height: 90px;
-  }
-
-  .jg-field textarea:focus,
-  .jg-field input[type="text"]:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    background: var(--color-bg);
-  }
-
-  .jg-field-err {
-    font-size: 0.8rem;
-    color: #c0392b;
-    min-height: 1rem;
-  }
-
-  .jg-secret-hdr {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .jg-secret-fmt { display: flex; gap: 0.75rem; }
-
-  .jg-radio {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.8rem;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    font-weight: 500;
-  }
-
-  .jg-secret-warn {
-    font-size: 0.8rem;
-    color: #b7791f;
-    min-height: 1rem;
-  }
-
-  .jg-status { font-size: 0.85rem; min-height: 1.2rem; }
-  .jg-status.success { color: #057a55; }
-  .jg-status.error { color: #c0392b; }
-
-  .jg-result-wrap {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-  }
-
-  .jg-result-hdr {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-  }
-
-  .jg-result-label {
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: var(--color-primary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .jg-result {
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    color: var(--color-text);
-    word-break: break-all;
-    line-height: 1.55;
-  }
-
-  .jg-privacy {
-    font-size: 0.78rem;
-    color: var(--color-text-muted);
-    margin: 0;
-    text-align: center;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .jg-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .jg-status.error { color: #f87171; }
-    :root:not([data-theme="light"]) .jg-field-err { color: #f87171; }
-    :root:not([data-theme="light"]) .jg-secret-warn { color: #f6ad55; }
-  }
-  [data-theme="dark"] .jg-status.success { color: #34d399; }
-  [data-theme="dark"] .jg-status.error { color: #f87171; }
-  [data-theme="dark"] .jg-field-err { color: #f87171; }
-  [data-theme="dark"] .jg-secret-warn { color: #f6ad55; }
 </style>
