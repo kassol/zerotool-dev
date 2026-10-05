@@ -90,6 +90,9 @@ eq('first cell prefix', md('<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><t
 eq('table without header row stays HTML', md('<table><tr><td>A</td></tr></table>'),
   '<table><tbody><tr><td>A</td></tr></tbody></table>');
 
+eq('later TH row alone keeps the table as HTML', md('<table><tr><td>First</td></tr><tr><th>Later</th></tr></table>'),
+  '<table><tbody><tr><td>First</td></tr><tr><th>Later</th></tr></tbody></table>');
+
 // ---------- page example ----------
 eq('page example: release notes table',
   md('<table><thead><tr><th>Option</th><th>Values</th></tr></thead><tbody><tr><td><code>--format</code></td><td>json | yaml<br>default: json</td></tr></tbody></table>'),
