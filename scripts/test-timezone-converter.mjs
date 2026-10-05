@@ -129,7 +129,8 @@ const must = (ok, message) => { if (!ok) throw Error(message); };
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
 const escape=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-function tzLabels(lang){const a=source.indexOf('const labels ='),z=source.indexOf('\n---',a);return vm.runInNewContext(source.slice(a,z)+';L',{lang},{timeout:1000});}
+function tzStrings(lang){return vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS[lang]',{lang},{timeout:1000});}
+function tzLabels(lang){const {tips,emptyResult,...labels}=tzStrings(lang);return labels;}
 function pageVM(lang='en',order='shared-after',noClipboard=false){
   const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[];
   let timerId=0,clock=0,doc,execResult=false;
@@ -215,7 +216,9 @@ function pageVM(lang='en',order='shared-after',noClipboard=false){
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
   let markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
   const L=tzLabels(lang);
-  if(L)markup=markup.replace(/=\{L\.(\w+)\}/g,(_,k)=>'="'+escape(L[k])+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escape(L[k]));
+  const T=tzStrings(lang);
+  markup=markup.replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g,(_,id,label,key)=>'<span class="zt-tip"><button id="'+id+'-trigger" type="button" data-zt-tip="'+id+'">'+escape(L[label])+'</button><span id="'+id+'" hidden>'+escape(T.tips[key])+'</span></span>');
+  markup=markup.replace(/=\{L\.(\w+)\}/g,(_,k)=>'="'+escape(L[k])+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escape(L[k])).replace(/\{emptyResult\}/g,escape(T.emptyResult));
   widget.innerHTML=markup;
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
@@ -320,5 +323,60 @@ for(const lang of ['en','zh','ja','ko']){
 // No marked engine exists here; protect the existing real Intl conversion functions verbatim.
 eq('unmarked Intl core byte length',Buffer.byteLength(source.slice(start,end)),4876);
 eq('unmarked Intl core SHA',createHash('sha256').update(source.slice(start,end)).digest('hex'),'2f5fb452eb9901fbf8b2c08d4f4c067ce6e8ac0dc5fc4a282b420fd90448c813');
+
+// ---------- v2 page layout ----------
+const hash=value=>createHash('sha256').update(value).digest('hex');
+const astroRequire=createRequire(require.resolve('astro/package.json'));
+const compiled=await astroRequire('@astrojs/compiler').transform(source,{filename:join(root,'src/components/tools/TimezoneConverterTool.astro')});
+eq('v2 Astro diagnostics',compiled.diagnostics.filter(d=>d.severity===1),[]);
+let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(error){moduleError=String(error);}
+eq('v2 compiled module parses',moduleError,'');
+const style=compiled.css.join('\n');
+const mainScript=source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
+eq('v2 complete FIX script exact',hash(mainScript),'437bf5664182068212ed2e15fb7cc1f758a12b2092be1fdacd947e6722994089');
+eq('v2 analyze registry',/['"]timezone-converter['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
+eq('v2 outermost root',/^<div class="tzc-wrap">/.test(source.split('\n---\n')[1].trim()),true);
+eq('v2 no runtime i18n',source.includes('data-i18n'),false);
+eq('v2 status follows all controls',source.indexOf('id="tzc-status"')>source.indexOf('id="tzc-share"'),true);
+eq('v2 status precedes results',source.indexOf('id="tzc-status"')<source.indexOf('class="tzc-result-section"'),true);
+for(const [name,re] of [
+ ['root minimum',/\.tzc-wrap\s*\{[^}]*min-height:\s*0/],
+ ['results fill bounded space',/\.tzc-results\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/],
+ ['rows do not shrink',/\.tzc-result\s*\{[^}]*flex:\s*none/],
+ ['fixed status',/#tzc-status\s*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/],
+ ['860 empty pane hidden',/@media\s*\(max-width:\s*860px\)[\s\S]*?\.tzc-result-section:has\(\.tzc-results:empty\)\s*\{\s*display:\s*none/],
+ ['640 compact height',/@media\s*\(max-width:\s*640px\)[\s\S]*?\.tzc-result-section\s*\{\s*height:\s*22rem/],
+ ['44px primary controls',/\.tzc-actions \.btn-secondary\s*\{\s*min-height:\s*44px/],
+])eq('v2 '+name,re.test(style),true);
+const expectedTipKeys=['base','now','source','add','copy','share','results'];
+const tipBindings={base:'baseTime',now:'now',source:'sourceZone',add:'addZone',copy:'copySummary',share:'shareLink',results:'targets'};
+const protectedContent={"en": "238952fd63f10a178a51b17c0260798307f54517abec9da9cdc0fcd3230b0e36", "zh": "0d516ba2d27945018546c3ad9169a286b2bb35c27feab550ff2aa5ef046f6ba8", "ja": "d73b0084c2952c34410c7d582a41c13ad5b541ccd88933c2b9842d5d16e4f516", "ko": "9435e5615fcea4e2acdf0dcb7e26cecdc57641624e0fb05d208ee22bb3a824e5"};
+const originalLabelHashes={"en":"b520294f233fa5ed9d1ee9758f84ddd38d39b5eb58778530d873bc16327b2eb2","zh":"0cdc1955d6dca986420b982a078c2c32ca860e51422574d23e91923feac8b9b4","ja":"492f3bfad83cbcee1470aac434759a66057482bb6255d0f360daa5916d62ad45","ko":"be90df0197fd0f874914f349a071831fe1b46544222061b3d15c4c99e66ba2e5"};
+for(const lang of ['en','zh','ja','ko']){
+ const T=tzStrings(lang),L=tzLabels(lang),p=pageVM(lang);
+ eq('v2 '+lang+' same seven fact groups',Object.keys(T.tips),expectedTipKeys);
+ eq('v2 '+lang+' all original labels retained',hash(JSON.stringify(L)),originalLabelHashes[lang]);
+ eq('v2 '+lang+' client excludes tips/empty',Object.keys(L).some(k=>k==='tips'||k==='emptyResult'),false);
+ eq('v2 '+lang+' translated empty hint',p.get('tzc-empty-result').textContent,T.emptyResult);
+ eq('v2 '+lang+' result keyboard focus',p.get('tzc-results').getAttribute('tabindex'),'0');
+ eq('v2 '+lang+' results named',p.get('tzc-results').getAttribute('aria-label'),L.targets);
+ for(const [key,label]of Object.entries(tipBindings)){
+  eq('v2 '+lang+' '+key+' visible text',p.get('tzc-tip-'+key).textContent,T.tips[key]);
+  eq('v2 '+lang+' '+key+' actual label',p.get('tzc-tip-'+key+'-trigger').textContent,L[label]);
+ }
+ for(const id of ['tzc-now','tzc-add-btn','tzc-copy-all','tzc-share'])eq('v2 '+lang+' retains '+id,p.get(id).tagName,'BUTTON');
+ const content=readFileSync(join(root,'src/content/tools/timezone-converter/'+lang+'.mdx'),'utf8');
+ const match=content.match(/^steps:\n((?:  - .*\n)+)/m);const steps=match?[...match[1].matchAll(/^  - (.*)$/gm)].map(m=>JSON.parse(m[1])):[];
+ eq('v2 '+lang+' six bounded steps',steps.length===6&&steps.every(t=>t.length<=280)&&steps.join('').length<=1200,true);
+ eq('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'),true);
+ eq('v2 '+lang+' all non-Usage content exact',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang]);
+ for(const order of ['shared-before','shared-after']){
+  const q=pageVM(lang,order);q.ctrlL('tzc-tip-results-trigger');await settle();
+  eq('v2 '+lang+'/'+order+' result tip CtrlL clears values',[q.get('tzc-base').value,q.get('tzc-add').value,q.get('tzc-results').textContent],['','','']);
+  eq('v2 '+lang+'/'+order+' result tip focus survives empty pane',q.doc.activeElement.id,'tzc-base');
+  eq('v2 '+lang+'/'+order+' result tip shared storage clears',q.persistCalls.filter(c=>c[0]==='clear').length,1);
+ }
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

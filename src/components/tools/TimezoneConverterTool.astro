@@ -1,9 +1,12 @@
 ---
+import Toggletip from '../Toggletip.astro';
+
 // TimezoneConverterTool — convert one moment across many IANA zones with DST awareness.
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
-const labels = {
+// strings:start
+const STRINGS = {
   en: {
     baseTime: 'Base time', now: 'Now',
     sourceZone: 'Source timezone', localBrowser: 'Local (browser)',
@@ -16,6 +19,16 @@ const labels = {
     summaryHeader: 'Timezone comparison for {time}',
     dstShiftFuture: 'DST shift in {n} day(s)', dstShiftPast: 'DST shifted {n} day(s) ago',
     noDst: 'No DST',
+    emptyResult: "Set a base time to compare your target timezones.",
+    tips: {
+      base: "Choose a date and time in the source timezone. Changes update all target rows. Seconds are kept when supplied. Ctrl/⌘+L clears the time and results while keeping your timezone choices.",
+      now: "Fill Base time with the current wall-clock time in Source timezone.",
+      source: "Enter an IANA zone, UTC, or a supported city name. The initial source is your browser zone or the source last saved in this browser; changing it applies the same entered wall-clock time in that zone.",
+      add: "Type a city such as tokyo or mumbai, UTC, or an IANA name such as Asia/Kolkata, then press Enter or Add. Existing targets are not added twice.",
+      copy: "Copy summary copies the base time, source zone and all target rows. Copy on a row copies only that row.",
+      share: "Share link copies a URL whose # fragment contains the base time, source and targets. Opening it rebuilds the comparison locally. The browser remembers source and targets separately, but not the base time.",
+      results: "Each row shows local time, UTC offset and available abbreviations. DST badges show offset changes within seven days before or after the base time, or No DST. Remove deletes that target.",
+    },
   },
   zh: {
     baseTime: '基准时间', now: '现在',
@@ -29,6 +42,16 @@ const labels = {
     summaryHeader: '{time} 的时区对照',
     dstShiftFuture: '{n} 天后切换夏令时', dstShiftPast: '{n} 天前已切换夏令时',
     noDst: '无夏令时',
+    emptyResult: "设置基准时间后，在此对比目标时区。",
+    tips: {
+      base: "选择源时区中的日期和时间，确认更改后会更新全部目标行；输入的秒数会保留。Ctrl/⌘+L 清空时间和结果，保留时区选择。",
+      now: "用「源时区」当前的本地时间填写「基准时间」。",
+      source: "输入 IANA 时区、UTC 或支持的城市名。初始值为浏览器时区或上次保存的源时区；更改后会将同一输入时间按新时区解释。",
+      add: "输入 tokyo、mumbai 等城市名、UTC 或 Asia/Kolkata 等 IANA 名称，按 Enter 或点击「添加」。已存在的目标不会重复添加。",
+      copy: "「复制摘要」复制基准时间、源时区和全部目标行；行内「复制」只复制该行。",
+      share: "「分享链接」复制的 URL 在 # 后包含基准时间、源时区和目标时区，打开后在本地重建对照。浏览器另行记住源时区和目标列表，不保存基准时间。",
+      results: "每行显示本地时间、UTC 偏移及可用缩写。DST 徽章提示基准时间前后七天内的偏移变化，或显示「无夏令时」；「删除」移除该目标。",
+    },
   },
   ja: {
     baseTime: '基準時刻', now: '現在',
@@ -42,6 +65,16 @@ const labels = {
     summaryHeader: '{time} のタイムゾーン対照',
     dstShiftFuture: '{n}日後にサマータイム切替', dstShiftPast: '{n}日前にサマータイム切替済み',
     noDst: 'サマータイムなし',
+    emptyResult: "基準時刻を設定すると、対象タイムゾーンを比較できます。",
+    tips: {
+      base: "ソースタイムゾーンの日時を選びます。変更を確定すると全対象行が更新され、入力した秒も保持します。Ctrl/⌘+L は時刻と結果を消去し、タイムゾーンの選択を残します。",
+      now: "「ソースタイムゾーン」の現在の現地時刻を「基準時刻」に入力します。",
+      source: "IANA 名、UTC、対応する都市名を入力します。初期値はブラウザのゾーンまたは前回保存したソースです。変更後は、入力済みの同じ日時を新しいゾーンの時刻として扱います。",
+      add: "tokyo、mumbai などの都市名、UTC、Asia/Kolkata などの IANA 名を入力し、Enter または「追加」を押します。既存の対象は重複追加しません。",
+      copy: "「サマリーをコピー」は基準時刻、ソース、全対象行をコピーします。行内の「コピー」はその行だけをコピーします。",
+      share: "「リンクを共有」は、# 以降に基準時刻とソース、対象を含む URL をコピーします。開くとローカルで比較を再現します。ブラウザはソースと対象を別途記憶しますが、基準時刻は保存しません。",
+      results: "各行に現地時刻、UTC オフセット、利用可能な略称を表示します。DST バッジは基準時刻の前後七日以内のオフセット変化、または「サマータイムなし」を示します。「削除」で対象を外します。",
+    },
   },
   ko: {
     baseTime: '기준 시간', now: '현재',
@@ -55,49 +88,57 @@ const labels = {
     summaryHeader: '{time} 시간대 비교',
     dstShiftFuture: '{n}일 후 서머타임 전환', dstShiftPast: '{n}일 전 서머타임 전환됨',
     noDst: '서머타임 없음',
+    emptyResult: "기준 시간을 설정하면 대상 시간대를 비교할 수 있습니다.",
+    tips: {
+      base: "소스 시간대의 날짜와 시간을 선택합니다. 변경을 확정하면 모든 대상 행이 갱신되며 입력한 초도 유지됩니다. Ctrl/⌘+L은 시간과 결과를 지우고 시간대 선택은 유지합니다.",
+      now: "「소스 시간대」의 현재 현지 시간을 「기준 시간」에 입력합니다.",
+      source: "IANA 이름, UTC 또는 지원되는 도시 이름을 입력합니다. 초기 소스는 브라우저 시간대 또는 마지막으로 저장한 소스입니다. 변경하면 같은 입력 날짜와 시간을 새 시간대의 시각으로 해석합니다.",
+      add: "tokyo, mumbai 같은 도시 이름, UTC 또는 Asia/Kolkata 같은 IANA 이름을 입력한 뒤 Enter나 「추가」를 누릅니다. 기존 대상은 중복 추가하지 않습니다.",
+      copy: "「요약 복사」는 기준 시간, 소스 시간대와 모든 대상 행을 복사합니다. 행의 「복사」는 해당 행만 복사합니다.",
+      share: "「링크 공유」는 # 뒤에 기준 시간, 소스와 대상을 포함한 URL을 복사합니다. 열면 로컬에서 비교를 재현합니다. 브라우저는 소스와 대상 목록을 따로 기억하지만 기준 시간은 저장하지 않습니다.",
+      results: "각 행은 현지 시간, UTC 오프셋과 사용 가능한 약어를 표시합니다. DST 배지는 기준 시간 전후 7일 내 오프셋 변화 또는 「서머타임 없음」을 표시합니다. 「삭제」는 해당 대상을 제거합니다.",
+    },
   },
 };
-const L = labels[lang] ?? labels.en;
+// strings:end
+const T = STRINGS[lang] ?? STRINGS.en;
+const { tips: TIPS, emptyResult, ...L } = T;
 ---
 
 <div class="tzc-wrap">
   <div class="tzc-controls">
     <div class="tzc-field">
-      <label class="tool-label" for="tzc-base">{L.baseTime}</label>
+      <div class="tzc-label"><label class="tool-label" for="tzc-base">{L.baseTime}</label><Toggletip id="tzc-tip-base" lang={lang} about={L.baseTime}>{TIPS.base}</Toggletip></div>
       <div class="tzc-row">
         <input id="tzc-base" type="datetime-local" class="tool-input" step="1" />
-        <button id="tzc-now" class="btn-secondary" type="button">{L.now}</button>
+        <span class="tzc-action"><button id="tzc-now" class="btn-secondary" type="button">{L.now}</button><Toggletip id="tzc-tip-now" lang={lang} about={L.now}>{TIPS.now}</Toggletip></span>
       </div>
     </div>
-
     <div class="tzc-field">
-      <label class="tool-label" for="tzc-source">{L.sourceZone}</label>
+      <div class="tzc-label"><label class="tool-label" for="tzc-source">{L.sourceZone}</label><Toggletip id="tzc-tip-source" lang={lang} about={L.sourceZone}>{TIPS.source}</Toggletip></div>
+      <input id="tzc-source" type="text" class="tool-input" list="tzc-zone-list" autocomplete="off" spellcheck="false" />
+      <datalist id="tzc-zone-list"></datalist>
+    </div>
+  </div>
+  <div class="tzc-secondary">
+    <div class="tzc-field">
+      <div class="tzc-label"><label class="tool-label" for="tzc-add">{L.addZone}</label><Toggletip id="tzc-tip-add" lang={lang} about={L.addZone}>{TIPS.add}</Toggletip></div>
       <div class="tzc-row">
-        <input id="tzc-source" type="text" class="tool-input" list="tzc-zone-list" autocomplete="off" spellcheck="false" />
-        <datalist id="tzc-zone-list"></datalist>
+        <input id="tzc-add" type="text" class="tool-input" list="tzc-zone-list" placeholder={L.addZonePlaceholder} autocomplete="off" spellcheck="false" />
+        <button id="tzc-add-btn" class="btn-primary" type="button">{L.addBtn}</button>
       </div>
     </div>
-  </div>
-
-  <div id="tzc-status" class="tool-status" aria-live="polite"></div>
-
-  <div class="tzc-field">
-    <label class="tool-label" for="tzc-add">{L.addZone}</label>
-    <div class="tzc-row">
-      <input id="tzc-add" type="text" class="tool-input" list="tzc-zone-list" placeholder={L.addZonePlaceholder} autocomplete="off" spellcheck="false" />
-      <button id="tzc-add-btn" class="btn-primary" type="button">{L.addBtn}</button>
-    </div>
-  </div>
-
-  <div class="tzc-targets-header">
-    <span class="tool-label">{L.targets}</span>
     <div class="tzc-actions">
-      <button id="tzc-copy-all" class="btn-secondary" type="button">{L.copySummary}</button>
-      <button id="tzc-share" class="btn-secondary" type="button">{L.shareLink}</button>
+      <span class="tzc-action"><button id="tzc-copy-all" class="btn-secondary" type="button">{L.copySummary}</button><Toggletip id="tzc-tip-copy" lang={lang} about={L.copySummary}>{TIPS.copy}</Toggletip></span>
+      <span class="tzc-action"><button id="tzc-share" class="btn-secondary" type="button">{L.shareLink}</button><Toggletip id="tzc-tip-share" lang={lang} about={L.shareLink}>{TIPS.share}</Toggletip></span>
     </div>
   </div>
-
-  <div id="tzc-results" class="tzc-results"></div>
+  <div id="tzc-status" class="tool-status" aria-live="polite"></div>
+  <section class="tzc-result-section" aria-labelledby="tzc-result-label">
+    <div class="tzc-targets-header"><span id="tzc-result-label" class="tool-label">{L.targets}</span><Toggletip id="tzc-tip-results" lang={lang} about={L.targets}>{TIPS.results}</Toggletip></div>
+    <p id="tzc-empty-result" class="tzc-empty-result">{emptyResult}</p>
+    <div id="tzc-results" class="tzc-results" tabindex="0" aria-label={L.targets}></div>
+  </section>
 </div>
 
 <script is:inline define:vars={{ lang, L }}>
@@ -608,19 +649,32 @@ const L = labels[lang] ?? labels.en;
   .tzc-wrap {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.65rem;
+    min-width: 0;
+    min-height: 0;
   }
 
-  .tzc-controls {
+  .tzc-controls,
+  .tzc-secondary {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 1rem;
+    gap: 0.75rem;
+    flex: none;
   }
 
   .tzc-field {
     display: flex;
     flex-direction: column;
-    gap: 0.45rem;
+    gap: 0.3rem;
+    min-width: 0;
+  }
+
+  .tzc-label,
+  .tzc-action,
+  .tzc-targets-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
     min-width: 0;
   }
 
@@ -628,38 +682,81 @@ const L = labels[lang] ?? labels.en;
     display: flex;
     gap: 0.5rem;
     align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .tzc-row .tool-input {
-    flex: 1 1 200px;
     min-width: 0;
   }
 
-  .tzc-row .btn-secondary,
-  .tzc-row .btn-primary {
-    flex-shrink: 0;
+  .tzc-row .tool-input {
+    flex: 1 1 0;
+    min-width: 0;
+    width: 0;
   }
 
-  .tzc-targets-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    margin-top: 0.5rem;
+  .tzc-action,
+  .tzc-row > .btn-primary {
+    flex: none;
+  }
+
+  .tzc-controls .tool-input,
+  .tzc-secondary .tool-input,
+  .tzc-row .btn-secondary,
+  .tzc-row .btn-primary,
+  .tzc-actions .btn-secondary {
+    min-height: 44px;
   }
 
   .tzc-actions {
     display: flex;
-    gap: 0.5rem;
+    align-items: flex-end;
+    gap: 0.5rem 0.75rem;
     flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  #tzc-status {
+    flex: none;
+    height: 2.8em;
+    min-height: 2.8em;
+    line-height: 1.4;
+    overflow: auto;
+  }
+
+  .tzc-result-section {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    gap: 0.5rem;
+  }
+
+  .tzc-targets-header {
+    flex: none;
   }
 
   .tzc-results {
     display: flex;
     flex-direction: column;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
     gap: 0.55rem;
+  }
+
+  .tzc-empty-result {
+    display: none;
+    color: var(--color-text-muted);
+    margin: auto;
+    text-align: center;
+  }
+
+  .tzc-result-section:has(.tzc-results:empty) .tzc-empty-result {
+    display: block;
+  }
+
+  .tzc-results:empty {
+    display: none;
   }
 
   .tzc-empty {
@@ -672,6 +769,7 @@ const L = labels[lang] ?? labels.en;
 
   .tzc-result {
     display: flex;
+    flex: none;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
@@ -766,10 +864,31 @@ const L = labels[lang] ?? labels.en;
     flex-shrink: 0;
   }
 
-  @media (max-width: 640px) {
-    .tzc-controls {
+  @media (max-width: 860px) {
+    .tzc-controls,
+    .tzc-secondary {
       grid-template-columns: minmax(0, 1fr);
     }
+
+    .tzc-result-section {
+      flex: none;
+      height: 24rem;
+    }
+
+    .tzc-result-section:has(.tzc-results:empty) {
+      display: none;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .tzc-wrap { gap: 0.5rem; }
+    .tzc-controls,
+    .tzc-secondary { gap: 0.5rem; }
+    .tzc-actions { gap: 0.4rem; }
+    .tzc-actions .btn-secondary { padding-inline: 0.65rem; }
+    .tzc-result-section { height: 22rem; }
+    .tzc-result-main { flex: 0 1 auto; }
+    .tzc-result-side button { min-height: 44px; min-width: 44px; }
 
     .tzc-result {
       flex-direction: column;
