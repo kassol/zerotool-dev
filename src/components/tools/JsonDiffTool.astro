@@ -12,6 +12,7 @@ const labels = {
     swap: 'Swap',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: 'Copy failed. Try again.',
     patchTitle: 'JSON Patch (RFC 6902)',
     visualTitle: 'Visual Diff',
     msgBothRequired: 'Both panels must contain valid JSON.',
@@ -28,6 +29,7 @@ const labels = {
     swap: '交换',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: '复制失败，请重试。',
     patchTitle: 'JSON Patch (RFC 6902)',
     visualTitle: '可视差异',
     msgBothRequired: '两个面板都需要有效的 JSON 内容。',
@@ -44,6 +46,7 @@ const labels = {
     swap: '入れ替え',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピーに失敗しました。再試行してください。',
     patchTitle: 'JSON Patch (RFC 6902)',
     visualTitle: 'ビジュアル差分',
     msgBothRequired: '両方のパネルに有効な JSON を入力してください。',
@@ -60,6 +63,7 @@ const labels = {
     swap: '교체',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: '복사에 실패했습니다. 다시 시도해 주세요.',
     patchTitle: 'JSON Patch (RFC 6902)',
     visualTitle: '시각적 차이',
     msgBothRequired: '두 패널에 유효한 JSON을 입력해야 합니다.',
@@ -81,6 +85,7 @@ const L = labels[lang];
   data-msg-changes={L.msgChanges}
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
 >
   <div class="jd-wrap-inner">
     {/* Input panels */}
@@ -236,6 +241,7 @@ const L = labels[lang];
         changes: wrap.dataset.msgChanges,
         copy: wrap.dataset.copy,
         copied: wrap.dataset.copied,
+        copyFailed: wrap.dataset.copyFailed,
       };
 
       var statusEl = document.getElementById('jd-status');
@@ -243,6 +249,21 @@ const L = labels[lang];
       var visualBlock = document.getElementById('jd-visual-block');
       var patchOut = document.getElementById('jd-patch-out');
       var visualEl = document.getElementById('jd-visual');
+      var copyButton = document.getElementById('jd-copy-patch');
+      var copySequence = 0;
+      var copyTimer;
+
+      function resetResult() {
+        copySequence++;
+        clearTimeout(copyTimer);
+        copyButton.textContent = i18n.copy;
+        patchOut.value = '';
+        visualEl.innerHTML = '';
+        patchBlock.style.display = 'none';
+        visualBlock.style.display = 'none';
+        statusEl.textContent = '';
+        statusEl.className = 'jd-status';
+      }
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -252,6 +273,7 @@ const L = labels[lang];
       document.getElementById('jd-run').addEventListener('click', function () {
         var leftVal = document.getElementById('jd-left').value.trim();
         var rightVal = document.getElementById('jd-right').value.trim();
+        resetResult();
 
         if (!leftVal || !rightVal) {
           setStatus(i18n.bothRequired, true);
@@ -294,22 +316,36 @@ const L = labels[lang];
         window.trackTool && window.trackTool('json-diff', 'diff');
       });
 
-      document.getElementById('jd-copy-patch').addEventListener('click', function () {
+      document.getElementById('jd-copy-patch').addEventListener('click', async function () {
+        if (!patchOut.value) return;
         var btn = this;
-        navigator.clipboard.writeText(patchOut.value).then(function () {
-          var prev = btn.textContent;
+        var active = ++copySequence;
+        clearTimeout(copyTimer);
+        btn.textContent = i18n.copy;
+        try {
+          await navigator.clipboard.writeText(patchOut.value);
+          if (active !== copySequence) return;
           btn.textContent = i18n.copied;
-          setTimeout(function () { btn.textContent = prev; }, 1500);
-        });
+          copyTimer = setTimeout(function () { if (active === copySequence) btn.textContent = i18n.copy; }, 1500);
+        } catch (e) {
+          if (active === copySequence) btn.textContent = i18n.copyFailed;
+        }
       });
 
-      document.getElementById('jd-clear').addEventListener('click', function () {
+      function clearAll() {
         document.getElementById('jd-left').value = '';
         document.getElementById('jd-right').value = '';
-        patchBlock.style.display = 'none';
-        visualBlock.style.display = 'none';
-        statusEl.textContent = '';
-        statusEl.className = 'jd-status';
+        resetResult();
+      }
+      document.getElementById('jd-clear').addEventListener('click', clearAll);
+      ['jd-left', 'jd-right'].forEach(function (id) {
+        document.getElementById(id).addEventListener('input', resetResult);
+      });
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
+        }
       });
 
       document.getElementById('jd-swap').addEventListener('click', function () {
@@ -318,6 +354,7 @@ const L = labels[lang];
         var tmp = l.value;
         l.value = r.value;
         r.value = tmp;
+        resetResult();
       });
     })();
   </script>
