@@ -284,7 +284,7 @@ if (!kotlinc || cpJars.length < 2) {
 
 // Complete page lifecycle plus actual ToolLayout keyboard handler; DOM/clipboard/timers are boundary doubles.
 const pageScript = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
-const pageLabels = vm.runInNewContext('(' + source.match(/const labels = (\{[\s\S]*?\n\});/)[1] + ')');
+const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -336,6 +336,8 @@ function lifecyclePage(lang, shellFirst = false) {
   }
   const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
   const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -431,6 +433,117 @@ try {
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
+
+
+// ---------- v2 page layout ----------
+const V2 = {
+  "slug": "json-to-kotlin",
+  "prefix": "jkt",
+  "manual": true,
+  "tips": [
+    [
+      "root-name",
+      "rootName",
+      "rootName"
+    ],
+    [
+      "input",
+      "jsonInput",
+      "input"
+    ],
+    [
+      "example",
+      "example",
+      "example"
+    ],
+    [
+      "clear",
+      "clear",
+      "clear"
+    ],
+    [
+      "copy",
+      "copy",
+      "copy"
+    ],
+    [
+      "generate",
+      "generate",
+      "generate"
+    ]
+  ],
+  "scriptSHA": "24a9c630058e507d8ec5ddfbcdd1c0db09bc0406c251a56ec2e3ee1fea44076d",
+  "protectedContent": {
+    "en": [
+      "4e8c307da248db62e5eb554a5322f539017cf4bf2cfdd671328bd9f682b0f260",
+      "bf0210418cdeb30183c6b5271dc55494c1a5ec9d1a62959dd792c72ddc77a708"
+    ],
+    "zh": [
+      "88c6990457228628bf4971204ddd16240d56574334cad672e25a6e8f2eb34a54",
+      "6c5f76b463d233f365bfb5621ab551d1d538e61342368c301a89ef67ef971614"
+    ],
+    "ja": [
+      "0d4201914c73c703de73652f07029ab6bd0f8d0fa755976ba5f04e7ea8fee187",
+      "9178315bfc7b6a8256346669e1b2bdf12185d450562770d181829862d236aa51"
+    ],
+    "ko": [
+      "f654d4220e04bcfe30cf108b265d6faba4ed7dd84815223cc79a6d08abfff9c5",
+      "61a97283886113456437a44177b9bae0d636d0ac0dc2ad9e32efe4afabe64d39"
+    ]
+  }
+};
+const hash = value => createHash('sha256').update(value).digest('hex');
+const layoutMarkup = source.split('\n---')[1].split('<script')[0];
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+const prefix = V2.prefix;
+eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
+eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
+eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
+eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
+eq('v2 two shared IO panes', (layoutMarkup.match(/\bzt-io-pane\b/g) || []).length, 2);
+eq('v2 both editors fill panes', layoutMarkup.includes('id="' + prefix + '-input" class="zt-io-fill"') && layoutMarkup.includes('id="' + prefix + '-output" class="' + prefix + '-output zt-io-fill"'), true);
+eq('v2 fixed status with internal overflow', css.includes('height: 2.8rem; flex: none; overflow: auto; overflow-wrap: anywhere;'), true);
+eq('v2 bounded keyboard accessible output', layoutMarkup.includes('tabindex="0" aria-labelledby="' + prefix + '-output-label"') && css.includes('.' + prefix + '-output { margin: 0; overflow: auto; white-space: pre; }'), true);
+eq('v2 actual output controls desktop empty hint', css.includes('.' + prefix + '-output-pane:has(#' + prefix + '-output-code:empty) .' + prefix + '-empty { display: flex; }'), true);
+eq('v2 stacked empty pane hidden and result bounded', css.includes('@media (max-width: 860px)') && css.includes('.' + prefix + '-output-pane:has(#' + prefix + '-output-code:empty) { display: none; }') && css.includes('height: 22rem; min-height: 160px; resize: none;'), true);
+eq('v2 phone input 144px and name inline', css.includes('height: 144px; min-height: 144px;') && css.includes('width: 100%; flex-direction: row; align-items: center;') && css.includes('@media (max-width: 640px)'), true);
+eq('v2 44px actions', css.includes('.' + prefix + '-actions button, .' + prefix + '-panel-header button { min-height: 44px; }'), true);
+eq('v2 dark ancestry global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'), true);
+eq('v2 tips remain build-time only', !/data-i18n|define:vars/.test(source) && !/STRINGS|L\.tips|\.tips\b/.test(pageScript), true);
+eq('v2 exact actual tip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, V2.tips.length);
+for (const [id, about, key] of V2.tips) eq('v2 exact tip binding ' + id, layoutMarkup.includes('<Toggletip id="' + prefix + '-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'), true);
+const actualButtons = [...layoutMarkup.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(m => m[1]).sort();
+eq('v2 explicit buttons retained', actualButtons.join(','), ['clear','copy','example', ...(V2.manual ? ['convert'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].map(id => prefix + '-' + id).sort().join(','));
+if (!V2.manual) {
+  eq('v2 no residual Generate label/action', !/generate:/.test(source) && !source.includes(prefix + '-convert') && !layoutMarkup.includes('btn-primary'), true);
+  eq('v2 existing tab container shares segmented layout', layoutMarkup.includes(prefix + '-tabs zt-segmented'), true);
+  eq('v2 selected segment contrasts in either theme', css.includes('.' + prefix + '-tab.active { background: var(--color-text); color: var(--color-bg); }'), true);
+}
+for (const lang of ['en','zh','ja','ko']) {
+  const L = pageLabels[lang];
+  eq(lang + ': v2 exact translated tip keys', Object.keys(L.tips).sort().join(','), V2.tips.map(t => t[2]).sort().join(','));
+  for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
+  eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
+  const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
+  const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+  const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
+  eq(lang + ': v2 steps correspond to controls', steps.length, V2.tips.length);
+  eq(lang + ': v2 step limits and order', fm.indexOf('steps:') < fm.indexOf('faqItems:') && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n,x) => n+[...x].length,0) <= 1200, true);
+  for (const [, about] of V2.tips) eq(lang + ': v2 steps actual label ' + about, steps.join('\n').includes(L[about]), true);
+  eq(lang + ': v2 SEO and FAQ unchanged', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')), V2.protectedContent[lang][0]);
+  eq(lang + ': v2 non-Usage content unchanged', hash(body.replace(/\n\{\/\* b6-sample-coverage:start \*\/\}[\s\S]*?\{\/\* b6-sample-coverage:end \*\/\}\n/,'')), V2.protectedContent[lang][1]);
+  eq(lang + ': v2 no duplicate usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
+  for (const shellFirst of [false,true]) for (const focus of ['output','tip']) {
+    const q = lifecyclePage(lang,shellFirst);golden(q);q.key(focus === 'output' ? q.get(prefix + '-output') : q.doc.querySelector('[data-zt-tip="' + prefix + '-tip-copy"]'));
+    eq(lang + ': v2 output focus survives CtrlL ' + shellFirst + focus, q.doc.activeElement === q.get(prefix+'-input') && !q.get(prefix+'-input').value && !q.get(prefix+'-root-name').value && !q.get(prefix+'-output-code').textContent && !q.get(prefix+'-status').textContent && q.clears.length === 1, true);
+  }
+  const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
+  q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
+}
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? ', ' + skips + ' skipped' : ''}`);
 process.exit(failures ? 1 : 0);
