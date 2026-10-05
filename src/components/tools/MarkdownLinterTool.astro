@@ -1,31 +1,112 @@
 ---
-// MarkdownLinterTool — browser-side Markdown lint checker using markdownlint
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+const STRINGS = {
+  en: {
+    tips: {
+      input: "Edit one Markdown document. Checks run after 300 ms with markdownlint defaults; the initial sample contains intentional issues. Inline markdownlint-disable and markdownlint-enable comments can suppress rules. There is no configuration-file upload or automatic fix.",
+      clear: "Clear or Ctrl/⌘+L while focus is in the tool removes the input, results and summary. Queued checks are cancelled, and earlier results and copy feedback cannot return.",
+      copy: "Copy Results copies one text line per visible issue: line number, rule ID in brackets, description, details and context. Rule aliases are omitted. With no issues, the button does not copy anything.",
+      results: "Each issue shows its rule ID, line number, description, details, context and alias when present. Click an issue to select its line in the editor. Descriptions and details come from markdownlint in English; checking reports issues without changing your document.",
+    },
+    clear: 'Clear',
+    copyResults: 'Copy Results',
+    inputLabel: 'Markdown Input',
+    resultsLabel: 'Lint Results',
+    resultsPlaceholder: 'Results will appear here as you type.',
+    placeholder: '# Hello World\n\nPaste your Markdown here to lint it...',
+    copied: 'Copied!',
+    copyFailed: 'Copy failed',
+    noIssues: 'No issues found',
+    issueCount: { one: '{n} issue found', other: '{n} issues found' },
+    loading: 'Linting...',
+    libPending: 'Loading linter...',
+    line: 'L',
+  },
+  zh: {
+    tips: {
+      input: "一次编辑一份 Markdown，输入后 300 毫秒按 markdownlint 默认规则检查；初始示例故意含有问题。文内 markdownlint-disable 和 markdownlint-enable 注释可以停用规则。页面不提供配置文件上传或自动修复。",
+      clear: "点「清除」，或焦点在工具内时按 Ctrl/⌘+L，清除输入、结果和摘要。排队的检查会取消，较早的结果与复制反馈不会回填。",
+      copy: "「复制结果」将每个可见问题复制成一行文本：行号、方括号中的规则 ID、描述、详情和上下文。不包含规则别名。没有问题时，按钮不复制任何内容。",
+      results: "每个问题显示规则 ID、行号、描述，以及存在的详情、上下文和别名。点问题可在编辑器中选中对应行。描述和详情由 markdownlint 提供，使用英语；检查只报告问题，不修改文档。",
+    },
+    clear: '清除',
+    copyResults: '复制结果',
+    inputLabel: 'Markdown 输入',
+    resultsLabel: '检查结果',
+    resultsPlaceholder: '输入内容后结果将显示在此处。',
+    placeholder: '# 你好\n\n在此处粘贴 Markdown 内容进行检查...',
+    copied: '已复制！',
+    copyFailed: '复制失败',
+    noIssues: '未发现问题',
+    issueCount: { one: '发现 {n} 个问题', other: '发现 {n} 个问题' },
+    loading: '检查中...',
+    libPending: '加载检查器...',
+    line: '行',
+  },
+  ja: {
+    tips: {
+      input: "Markdown 文書を 1 件編集します。入力の 300 ミリ秒後に markdownlint の既定ルールで検査し、最初のサンプルには意図的な問題があります。文書内の markdownlint-disable・markdownlint-enable コメントでルールを停止できます。設定ファイルのアップロードや自動修正はありません。",
+      clear: "「クリア」、またはツール内にフォーカスがある状態の Ctrl/⌘+L で、入力・結果・概要を消去します。待機中のチェックを取り消し、以前の結果やコピー表示が戻ることを防ぎます。",
+      copy: "「結果をコピー」は表示中の問題ごとに、行番号、角括弧内のルール ID、説明、詳細、文脈を 1 行のテキストとしてコピーします。ルールの別名は含めません。問題がない場合はコピーしません。",
+      results: "各問題にルール ID・行番号・説明と、存在する詳細・文脈・別名を表示します。問題をクリックするとエディタで対象行を選択します。説明と詳細は markdownlint の英語です。検査は問題を報告し、文書は変更しません。",
+    },
+    clear: 'クリア',
+    copyResults: '結果をコピー',
+    inputLabel: 'Markdown 入力',
+    resultsLabel: 'Lint 結果',
+    resultsPlaceholder: '入力すると結果が表示されます。',
+    placeholder: '# こんにちは\n\nMarkdownをここに貼り付けてLintします...',
+    copied: 'コピー済み！',
+    copyFailed: 'コピーに失敗',
+    noIssues: '問題なし',
+    issueCount: { one: '{n} 件の問題', other: '{n} 件の問題' },
+    loading: 'チェック中...',
+    libPending: '読み込み中...',
+    line: '行',
+  },
+  ko: {
+    tips: {
+      input: "Markdown 문서 한 개를 편집합니다. 입력 후 300밀리초가 지나면 markdownlint 기본 규칙으로 검사하며, 처음 예시에는 의도적인 문제가 있습니다. 문서 안의 markdownlint-disable 및 markdownlint-enable 주석으로 규칙을 끌 수 있습니다. 설정 파일 업로드나 자동 수정 기능은 없습니다.",
+      clear: "「지우기」 또는 도구 안에 포커스가 있을 때 Ctrl/⌘+L로 입력, 결과, 요약을 지웁니다. 대기 중인 검사를 취소하며 이전 결과나 복사 상태가 다시 나타나지 않습니다.",
+      copy: "「결과 복사」는 표시된 문제마다 줄 번호, 대괄호 안의 규칙 ID, 설명, 세부 정보, 문맥을 한 줄의 텍스트로 복사합니다. 규칙 별칭은 제외합니다. 문제가 없으면 아무것도 복사하지 않습니다.",
+      results: "각 문제에 규칙 ID, 줄 번호, 설명과 있는 경우 세부 정보, 문맥, 별칭을 표시합니다. 문제를 클릭하면 에디터에서 해당 줄을 선택합니다. 설명과 세부 정보는 markdownlint가 제공하는 영어이며, 검사는 문서를 바꾸지 않고 문제만 보고합니다.",
+    },
+    clear: '지우기',
+    copyResults: '결과 복사',
+    inputLabel: 'Markdown 입력',
+    resultsLabel: 'Lint 결과',
+    resultsPlaceholder: '입력하면 결과가 여기에 표시됩니다.',
+    placeholder: '# 안녕하세요\n\nMarkdown을 여기에 붙여넣어 검사하세요...',
+    copied: '복사됨!',
+    copyFailed: '복사 실패',
+    noIssues: '문제 없음',
+    issueCount: { one: '{n}개 문제 발견', other: '{n}개 문제 발견' },
+    loading: '검사 중...',
+    libPending: '로드 중...',
+    line: '줄',
+  }
+};
+const T = STRINGS[lang];
+const { tips, ...CLIENT_T } = T;
 ---
-<div>
-  <div class="ml-wrap">
-    <div class="ml-toolbar">
-      <button id="ml-clear" class="btn-ghost" data-i18n="clear">Clear</button>
-      <button id="ml-copy" class="btn-secondary" data-i18n="copyResults">Copy Results</button>
-      <span id="ml-summary" class="ml-summary" aria-live="polite"></span>
-    </div>
-    <div class="ml-panes">
-      <div class="ml-pane ml-editor-pane">
-        <div class="ml-pane-label" data-i18n="inputLabel">Markdown Input</div>
-        <textarea
-          id="ml-editor"
-          spellcheck="false"
-          data-i18n-ph="placeholder"
-          placeholder="# Hello World&#10;&#10;Paste your Markdown here to lint it..."
-        ></textarea>
-      </div>
-      <div class="ml-pane ml-results-pane">
-        <div class="ml-pane-label" data-i18n="resultsLabel">Lint Results</div>
-        <div id="ml-results" class="ml-results">
-          <div class="ml-placeholder" data-i18n="resultsPlaceholder">Results will appear here as you type.</div>
-        </div>
-      </div>
-    </div>
+<div class="ml-wrap">
+  <div class="ml-toolbar">
+    <div class="ml-control"><button id="ml-clear" class="btn-ghost">{T.clear}</button><Toggletip id="ml-tip-clear" lang={lang} about={T.clear}>{T.tips.clear}</Toggletip></div>
+    <div class="ml-control"><button id="ml-copy" class="btn-secondary">{T.copyResults}</button><Toggletip id="ml-tip-copy" lang={lang} about={T.copyResults}>{T.tips.copy}</Toggletip></div>
   </div>
+  <div id="ml-summary" class="ml-summary" aria-live="polite"></div>
+  <div class="ml-pane ml-editor-pane zt-empty-drop">
+    <div class="ml-heading"><label for="ml-editor" class="ml-pane-label">{T.inputLabel}</label><Toggletip id="ml-tip-input" lang={lang} about={T.inputLabel}>{T.tips.input}</Toggletip></div>
+    <textarea id="ml-editor" spellcheck="false" placeholder={T.placeholder}></textarea>
+  </div>
+  <div class="ml-pane ml-results-pane">
+    <div class="ml-heading"><span id="ml-results-label" class="ml-pane-label">{T.resultsLabel}</span><Toggletip id="ml-tip-results" lang={lang} about={T.resultsLabel}>{T.tips.results}</Toggletip></div>
+    <div id="ml-results" class="ml-results" data-empty="true" tabindex="0" role="region" aria-labelledby="ml-results-label"><div class="ml-placeholder">{T.resultsPlaceholder}</div></div>
+  </div>
+</div>
 
   {/* Load markdownlint via Astro module bundling; attach to window for inline script */}
   <script>
@@ -35,83 +116,10 @@
     window.dispatchEvent(new CustomEvent('ml-ready'));
   </script>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          clear: 'Clear',
-          copyResults: 'Copy Results',
-          inputLabel: 'Markdown Input',
-          resultsLabel: 'Lint Results',
-          resultsPlaceholder: 'Results will appear here as you type.',
-          placeholder: '# Hello World\n\nPaste your Markdown here to lint it...',
-          copied: 'Copied!',
-          copyFailed: 'Copy failed',
-          noIssues: 'No issues found',
-          issueCount: function(n) { return n + ' issue' + (n === 1 ? '' : 's') + ' found'; },
-          loading: 'Linting...',
-          libPending: 'Loading linter...',
-          line: 'L',
-        },
-        zh: {
-          clear: '清除',
-          copyResults: '复制结果',
-          inputLabel: 'Markdown 输入',
-          resultsLabel: '检查结果',
-          resultsPlaceholder: '输入内容后结果将显示在此处。',
-          placeholder: '# 你好\n\n在此处粘贴 Markdown 内容进行检查...',
-          copied: '已复制！',
-          copyFailed: '复制失败',
-          noIssues: '未发现问题',
-          issueCount: function(n) { return '发现 ' + n + ' 个问题'; },
-          loading: '检查中...',
-          libPending: '加载检查器...',
-          line: '行',
-        },
-        ja: {
-          clear: 'クリア',
-          copyResults: '結果をコピー',
-          inputLabel: 'Markdown 入力',
-          resultsLabel: 'Lint 結果',
-          resultsPlaceholder: '入力すると結果が表示されます。',
-          placeholder: '# こんにちは\n\nMarkdownをここに貼り付けてLintします...',
-          copied: 'コピー済み！',
-          copyFailed: 'コピーに失敗',
-          noIssues: '問題なし',
-          issueCount: function(n) { return n + ' 件の問題'; },
-          loading: 'チェック中...',
-          libPending: '読み込み中...',
-          line: '行',
-        },
-        ko: {
-          clear: '지우기',
-          copyResults: '결과 복사',
-          inputLabel: 'Markdown 입력',
-          resultsLabel: 'Lint 결과',
-          resultsPlaceholder: '입력하면 결과가 여기에 표시됩니다.',
-          placeholder: '# 안녕하세요\n\nMarkdown을 여기에 붙여넣어 검사하세요...',
-          copied: '복사됨!',
-          copyFailed: '복사 실패',
-          noIssues: '문제 없음',
-          issueCount: function(n) { return n + '개 문제 발견'; },
-          loading: '검사 중...',
-          libPending: '로드 중...',
-          line: '줄',
-        }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      // Apply i18n
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key] && typeof t[key] === 'string') el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph');
-        if (t[key] && typeof t[key] === 'string') el.placeholder = t[key];
-      });
+      var issueCountTemplates = t.issueCount;
+      t.issueCount = function(n) { return issueCountTemplates[n === 1 ? 'one' : 'other'].replace('{n}', String(n)); };
 
       var editor    = document.getElementById('ml-editor');
       var results   = document.getElementById('ml-results');
@@ -206,6 +214,7 @@
         if (!content.trim()) {
           summary.textContent = '';
           summary.className = 'ml-summary';
+          results.setAttribute('data-empty', 'true');
           results.innerHTML = '<div class="ml-placeholder">' + escHtml(t.resultsPlaceholder) + '</div>';
           return;
         }
@@ -227,10 +236,12 @@
           if (revision !== _revision) return;
           var issues = res && res.content ? res.content : [];
           invalidateCopy();
+          results.setAttribute('data-empty', 'false');
           renderResults(issues);
         }).catch(function(err) {
           if (revision !== _revision) return;
           invalidateCopy();
+          results.setAttribute('data-empty', 'false');
           results.innerHTML = '<div class="ml-placeholder">Error: ' + escHtml(String(err)) + '</div>';
           summary.textContent = '';
           summary.className = 'ml-summary';
@@ -254,6 +265,7 @@
         editor.value = '';
         summary.textContent = '';
         summary.className = 'ml-summary';
+        results.setAttribute('data-empty', 'true');
         results.innerHTML = '<div class="ml-placeholder">' + escHtml(t.resultsPlaceholder) + '</div>';
       }
 
@@ -317,148 +329,60 @@
       runLint();
     })();
   </script>
-</div>
 
 <style>
-  .ml-wrap { display: flex; flex-direction: column; gap: 0.5rem; }
-
-  .ml-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .ml-summary {
-    margin-left: auto;
-    font-size: 0.82rem;
-    font-weight: 500;
-  }
-  .ml-summary.ml-ok   { color: var(--color-success, #22c55e); }
+  .ml-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 0.65rem; }
+  .ml-toolbar { display: flex; align-items: center; flex-wrap: wrap; flex: none; gap: 0.5rem 0.9rem; }
+  .ml-control, .ml-heading { display: flex; align-items: center; min-width: 0; gap: 0.4rem; }
+  .ml-control button { min-height: 44px; }
+  .ml-heading { flex: none; }
+  .ml-summary { flex: none; height: 2.4rem; overflow: auto; overflow-wrap: anywhere; font-size: 0.82rem; line-height: 1.4; font-weight: 500; }
+  .ml-summary.ml-ok { color: var(--color-success, #22c55e); }
   .ml-summary.ml-issues { color: var(--color-danger); }
-
-  .ml-panes {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-    min-height: 340px;
-  }
-
-  @media (max-width: 640px) {
-    .ml-panes { grid-template-columns: 1fr; }
-  }
-
-  .ml-pane { display: flex; flex-direction: column; gap: 0.3rem; }
-
-  .ml-pane-label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
+  .ml-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 0.4rem; }
+  .ml-editor-pane { flex: none; align-items: stretch; justify-content: flex-start; text-align: left; cursor: auto; }
+  .ml-pane-label { font-size: 0.78rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
   .ml-editor-pane textarea {
-    flex: 1;
-    width: 100%;
-    min-height: 320px;
-    font-family: var(--font-mono);
-    font-size: 0.86rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.6;
-    box-sizing: border-box;
-    tab-size: 4;
+    width: 100%; height: 180px; min-height: 0; overflow: auto;
+    font-family: var(--font-mono); font-size: 0.86rem; padding: 0.75rem;
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm); resize: none;
+    background: var(--color-bg-secondary); color: var(--color-text); line-height: 1.6; box-sizing: border-box; tab-size: 4;
   }
-
-  .ml-editor-pane textarea:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    background: var(--color-bg);
+  .ml-editor-pane textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .ml-wrap:has(#ml-results[data-empty="true"]) .ml-editor-pane { flex: 1 1 0; }
+  .ml-wrap:has(#ml-results[data-empty="true"]) #ml-editor { flex: 1 1 0; min-height: 220px; }
+  .ml-results-pane { flex: 1 1 0; overflow: hidden; }
+  .ml-results-pane:has(#ml-results[data-empty="true"]) { flex: none; }
+  .ml-results-pane:has(#ml-results[data-empty="true"]) .ml-heading { display: none; }
+  .ml-results { flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); }
+  .ml-results[data-empty="true"] { flex: none; border: 0; }
+  .ml-results:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+  .ml-wrap :global(.ml-placeholder) { padding: 0.6rem 0; color: var(--color-text-muted); font-size: 0.88rem; overflow-wrap: anywhere; }
+  .ml-wrap .ml-results[data-empty="false"] :global(.ml-placeholder) { padding: 1.25rem; }
+  .ml-wrap :global(.ml-empty-ok) { padding: 1.25rem; color: var(--color-success, #22c55e); font-size: 0.92rem; font-weight: 500; }
+  .ml-wrap :global(.ml-issue) {
+    display: grid; grid-template-columns: auto auto minmax(0, 1fr); grid-template-rows: auto auto;
+    min-width: 0; gap: 0.2rem 0.5rem; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--color-border-light, var(--color-border));
+    cursor: pointer; transition: background 0.12s; align-items: start;
   }
-
-  .ml-results-pane { overflow: hidden; }
-
-  .ml-results {
-    flex: 1;
-    min-height: 320px;
-    max-height: 480px;
-    overflow-y: auto;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg);
+  .ml-wrap :global(.ml-issue:last-child) { border-bottom: none; }
+  .ml-wrap :global(.ml-issue:hover) { background: var(--color-bg-secondary); }
+  .ml-wrap :global(.ml-issue.ml-err) { border-left: 3px solid #ef4444; }
+  .ml-wrap :global(.ml-issue.ml-warn) { border-left: 3px solid #f59e0b; }
+  .ml-wrap :global(.ml-rule) { font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; padding: 0.1rem 0.35rem; border-radius: 3px; background: var(--color-bg-icon, var(--color-bg-secondary)); color: var(--color-text-muted); white-space: nowrap; align-self: center; }
+  .ml-wrap :global(.ml-linenum) { font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-text-muted); white-space: nowrap; align-self: center; }
+  .ml-wrap :global(.ml-desc) { min-width: 0; overflow-wrap: anywhere; font-size: 0.84rem; color: var(--color-text); line-height: 1.4; grid-column: 3; align-self: center; }
+  .ml-wrap :global(.ml-alias) { min-width: 0; overflow-wrap: anywhere; font-size: 0.72rem; color: var(--color-text-muted); grid-column: 1 / -1; font-family: var(--font-mono); margin-top: -0.1rem; padding-left: 0.15rem; }
+  @media (max-width: 860px) {
+    .ml-wrap:has(#ml-results[data-empty="true"]) .ml-editor-pane { flex: none; }
+    .ml-wrap:has(#ml-results[data-empty="true"]) #ml-editor { flex: none; min-height: 0; height: 180px; }
+    .ml-results-pane { flex: none; height: 24rem; }
+    .ml-results-pane:has(#ml-results[data-empty="true"]) { display: none; }
   }
-
-  .ml-placeholder {
-    padding: 1.25rem;
-    color: var(--color-text-muted);
-    font-size: 0.88rem;
-  }
-
-  .ml-empty-ok {
-    padding: 1.25rem;
-    color: var(--color-success, #22c55e);
-    font-size: 0.92rem;
-    font-weight: 500;
-  }
-
-  .ml-issue {
-    display: grid;
-    grid-template-columns: auto auto 1fr;
-    grid-template-rows: auto auto;
-    gap: 0.2rem 0.5rem;
-    padding: 0.55rem 0.75rem;
-    border-bottom: 1px solid var(--color-border-light, var(--color-border));
-    cursor: pointer;
-    transition: background 0.12s;
-    align-items: start;
-  }
-
-  .ml-issue:last-child { border-bottom: none; }
-
-  .ml-issue:hover { background: var(--color-bg-secondary); }
-
-  .ml-issue.ml-err  { border-left: 3px solid #ef4444; }
-  .ml-issue.ml-warn { border-left: 3px solid #f59e0b; }
-
-  .ml-rule {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    font-weight: 700;
-    padding: 0.1rem 0.35rem;
-    border-radius: 3px;
-    background: var(--color-bg-icon, var(--color-bg-secondary));
-    color: var(--color-text-muted);
-    white-space: nowrap;
-    align-self: center;
-  }
-
-  .ml-linenum {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--color-text-muted);
-    white-space: nowrap;
-    align-self: center;
-  }
-
-  .ml-desc {
-    font-size: 0.84rem;
-    color: var(--color-text);
-    line-height: 1.4;
-    grid-column: 3;
-    align-self: center;
-  }
-
-  .ml-alias {
-    font-size: 0.72rem;
-    color: var(--color-text-muted);
-    grid-column: 1 / -1;
-    font-family: var(--font-mono);
-    margin-top: -0.1rem;
-    padding-left: 0.15rem;
+  @media (max-width: 640px) {
+    .ml-toolbar { gap: 0.4rem 0.65rem; }
+    .ml-control button { padding: 0.55rem 0.7rem; }
+    .ml-results-pane { height: 22rem; }
+    .ml-wrap :global(.ml-issue) { padding: 0.55rem; gap: 0.2rem 0.4rem; }
   }
 </style>
