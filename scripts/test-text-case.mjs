@@ -421,6 +421,9 @@ console.log('page lifecycle: ' + (passes - lifecycleStart.passes) + ' passed, ' 
   check('v2 copy width reserved for all feedback states', /grid-template-columns: minmax\(0, 1fr\) 7\.5rem/.test(css) && /\.tcase-output-row \.btn-copy \{[^}]*width: 7\.5rem;/.test(css));
   check('v2 mobile copy touch target at least 44px', /@media \(max-width: 640px\)[\s\S]*?\.tcase-output-row \.btn-copy \{ min-height: 44px;/.test(css));
   check('v2 format labels can wrap without shrinking tips', /\.tcase-case-label \{[^}]*overflow-wrap: anywhere;/.test(css) && /\.tcase-case-heading \{[^}]*min-width: 0;/.test(css));
+  const guideCss = readFileSync(new URL('../src/layouts/ToolLayout.astro', import.meta.url), 'utf8').match(/\.tool-guide-link--inline\s*\{([^}]+)\}/)[1];
+  check('v2 guide label and title wrap onto separate lines', /flex-wrap:\s*wrap/.test(guideCss));
+  check('v2 Korean guide title can break its long case-name sequence', /overflow-wrap:\s*anywhere/.test(guideCss));
   check('v2 dynamic output and Copy styles remain global', source.includes('<style is:global>'));
   check('v2 converted build-time i18n', !source.includes('data-i18n') && !script.includes('STRINGS') && !script.includes('document.documentElement.lang'));
   check('v2 only CLIENT_T reaches script', source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && source.includes('define:vars={{ t: CLIENT_T }}'));
