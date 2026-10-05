@@ -471,6 +471,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq('v2 long valid expression remains complete', p.get('cron-results').querySelector('.cron-field-expr').textContent, expr.split(' ')[0]);
   eq('v2 real field values still first twelve', p.get('cron-results').querySelector('.cron-field-vals').textContent, '0, 15, 30, 45');
   eq('v2 long expression still returns ten runs', p.get('cron-results').querySelectorAll('.cron-next-list li').length, 10);
+  p.input('0 0 * * 7'); p.get('cron-parse').click();
+  eq('v2 weekday seven remains numeric in the real breakdown', p.get('cron-results').querySelectorAll('.cron-field-vals')[4].textContent, '7');
 }
 eq('v2 full engine, rendering and FIX event tail unchanged', hash(source.slice(source.indexOf('      /* ── engine:start'), source.indexOf('  </script>'))), '4c72a60dddd96e6897b0474d3529f3bcbc3bdc09df9706006ed955a759288538');
 let moduleError = '';
