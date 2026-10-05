@@ -148,7 +148,7 @@ node scripts/test-llms-txt.mjs   # 检查构建出的 dist/llms*.txt（先 build
 | 检查 | 触发 | 阻塞条件 |
 |------|------|----------|
 | `scripts/check-icon-coverage.mjs` | `npm run build` 第 1 步 | 任何 slug 缺图标 |
-| `scripts/audit.mjs` | `.github/workflows/ci.yml` audit job + 手动 | 任何 FAIL（发布目录含 AGENTS.md、schema 漂移、孤儿组件、路由缺失、i18n key 漂移、blog 命名违规、看起来处理凭据的工具没设 `disabled` 也不在豁免清单、`tool-layouts.ts` 的键不是 `tools.ts` 的 slug 或值不是 `convert` / `generate` / `analyze` / `compact` 等） |
+| `scripts/audit.mjs` | `.github/workflows/ci.yml` audit job + 手动 | 任何 FAIL（发布目录含 AGENTS.md、schema 漂移、孤儿组件、路由缺失、i18n key 漂移、blog 命名违规、看起来处理凭据的工具没设 `disabled` 也不在豁免清单、`tool-layouts.ts` 的键不是 `tools.ts` 的 slug 或值不是 `convert` / `generate` / `analyze` / `compact` / `compare` 五种类型之一） |
 | `scripts/check-tool-css-order.mjs` | `npm run build`（astro build 之后） | 任一工具页的共享工具 CSS（tool-common、ToolLayout、ShareButtons、AdUnit）没有排在本工具 CSS 之前，或 `<head>` 出现内联 `<style>` |
 | `npm run build` | `.github/workflows/ci.yml` build job + 手动 | 任何编译错误 |
 | `scripts/test-*.mjs` | `.github/workflows/ci.yml` build job（build 之后，部分测试读 `dist/`）+ 提交前手动 | 任一测试脚本退出码非 0 |
@@ -172,6 +172,8 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 11. **工具样式隔离**：每个工具页只加载共享 CSS + 本工具 CSS。组件不得依赖其他工具组件的样式；类名用本工具独有的前缀（新前缀先 grep `src/components/tools/` 确认没有被占用）；多个工具共用的规则放 `src/styles/tool-common.css`。脚本里用 `innerHTML` / `createElement` 生成的元素没有 scoped 属性，给它们的规则要写成 `:global(...)`
 
 ## 变更日志
+
+- 2026-10-05 — 工具页 v2 推广 B10：diff-checker、json-diff 使用新 `compare` 类型；jwt-decoder、markdown-linter、regex-tester、word-counter、env-file-parser、yaml-validator、jsonpath-tester、http-header-analyzer 使用 `analyze`。compare 规格先写入 DESIGN.md：桌面双输入在上、全宽结果填余高，手动收展保留输入；860px 以下使用内容高度、输入堆叠，结果内部滚动。两页共用新增 `.zt-compare-inputs/results`，不匹配其他工具。其余八页空输入填满首屏、已有输入后结果占满宽度；按钮与选项、预留状态、主输入与结果顺序统一，分别有 7/8/6/4/8/8/5/5/5/6 个构建期气泡，四语 Usage 转为 steps，Limits 保留；未删业务按钮，JWT Decode 仍处理未满足自动匹配格式的输入。修复：Diff/Regex 的 Ctrl/⌘+L 取消旧 Worker；JSON Diff 空输入或错误清旧结果；Markdown 迟到 lint、多页迟到复制/旧计时器与复制失败重试；Word Counter 清空统计、Env 工具外快捷键范围；JWT 高亮后的时间注记与负数/小数时间显示。JWT/YAML 暗色祖先改为 global 后状态对比度由约3.49/3.44升至9.72/6.76；Regex 两条暗色匹配文字改为深色，实测3.25→5.80。四语正文/FAQ/SEO保护；JWT EN Limits 的时间精度说明随时间注记校正。质量门：npm ci、audit 22/22、build（564页CSS顺序）通过，153个测试脚本退出0（21个含既有SKIP），最终本批15221 PASS；110个引擎块逐字未变，薄页80/80、精品40/40。相对固定初始基线320页相同、244页不同（累计59个新迁移工具×4，另HAR与ColorPalette的既有共享改造8页），无额外差异。浏览器：10页×17矩阵与20完整流程，共4884检查通过；另YAML/Regex各16暗色复验通过。完整门后仅Regex两条配色修改，重建、专测379与跨读447通过，差异页面集合不变。Env 验收脚本修正相邻键盘滚动动画的等待，产品代码无额外变化。仅记录：JWT exp×1000恰等于now仍沿用严格小于判断。累计完成59/126；本批分支叠在B8上，未合并、打tag或部署。
 
 - 2026-10-05 — v2 推广 B8：base64、ascii-converter、hash-generator、html-entity、line-tools、text-case、url-encode、slugify、morse-code-translator、nato-phonetic-alphabet、jwt-generator、secret-redactor 共 12 个工具登记为 `convert`，四语用法移入 `steps` 与 74 个控件气泡。Base64 / URL 删除已自动执行的 Run；HTML 方向按钮改为单选；双向转换和手动摘要按钮保留；Text Case 桌面为 1:2，JWT Header、Secret 检测选项默认折叠。各工具独立修复空输入 / Ctrl+L 后的旧结果、过期任务或复制反馈；另修 Line Tools 特殊键去重、Morse 示例显示对象、NATO hidden 失效及 JWT Header 算法与签名不一致。110 个 engine 块逐字不变，联网与存储策略不变。共享 `.tool-guide-link--inline` 增加换行与长词断行：Text Case 韩语手机页横溢出 19px → 0；当前 26 个工具的 104 个指南页面在两尺寸及 Text Case 补充视口共 210 组通过，工具区全部可见元素位置变化为 0。Node 22.23.3：audit 22 PASS、build 通过、153 个测试脚本全部退出 0（21 个含可选 SKIP），本批专用检查合计 20,427 PASS；compare-dist 相对原始基线 360 页相同、204 页不同（累计迁移 49 个工具，加 B2/B4 共享类涉及的 HAR / Color Palette，各四语），薄页 80/80、精品化 40/40。Ego 本地构建：204 组四语 / 两主题 / 两尺寸及 1920 页面、24 组操作流程共 4,930 检查通过；输入、操作、结果的 24 对改前改后坐标已归档。指南修复前后所有 564 页仅共享 CSS 地址变化、内联脚本及其余资源不变。浏览器复制使用页内替身，未读写系统剪贴板。分支叠在 B5 上；不合并、不打 tag、不部署。
 

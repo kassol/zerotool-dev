@@ -2,7 +2,8 @@
 //
 // Read:  src/components/tools/JsonDiffTool.astro (extracts the real engine block between the
 //        `engine:start` / `engine:end` markers, so this test cannot drift from the shipped
-//        source); src/content/tools/json-diff/{en,zh,ja,ko}.mdx (the example patches)
+//        source); src/content/tools/json-diff/{en,zh,ja,ko}.mdx (the example patches);
+//        src/layouts/ToolLayout.astro, src/styles/tool-common.css, src/data/tool-layouts.ts
 // Write: stdout; one temporary JSON file under os.tmpdir() for the Python check (removed)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
