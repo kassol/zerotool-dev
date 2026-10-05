@@ -52,10 +52,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', convert: 'CSV \u2192 Markdown', alignment: 'Column Alignment', alignLeft: 'Left', alignCenter: 'Center', alignRight: 'Right', converted: 'Converted {n} row{s} to Markdown table.', errorPrefix: 'Error: ', addedColumns: 'Some rows have more fields than the header, so these columns were added: {cols}.' },
-        zh: { copy: '复制', copied: '已复制！', clear: '清除', convert: 'CSV \u2192 Markdown', alignment: '列对齐', alignLeft: '左对齐', alignCenter: '居中', alignRight: '右对齐', converted: '已将 {n} 行转换为 Markdown 表格。', errorPrefix: '错误：', addedColumns: '部分行的字段比表头多，已补上这些列：{cols}。' },
-        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', convert: 'CSV \u2192 Markdown', alignment: '列の配置', alignLeft: '左揃え', alignCenter: '中央揃え', alignRight: '右揃え', converted: '{n} 行を Markdown テーブルに変換しました。', errorPrefix: 'エラー：', addedColumns: 'ヘッダーより項目が多い行があるため、次の列を追加しました：{cols}。' },
-        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', convert: 'CSV \u2192 Markdown', alignment: '열 정렬', alignLeft: '왼쪽', alignCenter: '가운데', alignRight: '오른쪽', converted: '{n}행을 Markdown 표로 변환했습니다.', errorPrefix: '오류: ', addedColumns: '헤더보다 필드가 많은 행이 있어 다음 열을 추가했습니다: {cols}.' }
+        en: { copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed', clear: 'Clear', convert: 'CSV \u2192 Markdown', alignment: 'Column Alignment', alignLeft: 'Left', alignCenter: 'Center', alignRight: 'Right', converted: 'Converted {n} row{s} to Markdown table.', errorPrefix: 'Error: ', addedColumns: 'Some rows have more fields than the header, so these columns were added: {cols}.' },
+        zh: { copy: '复制', copied: '已复制！', copyFailed: '复制失败', clear: '清除', convert: 'CSV \u2192 Markdown', alignment: '列对齐', alignLeft: '左对齐', alignCenter: '居中', alignRight: '右对齐', converted: '已将 {n} 行转换为 Markdown 表格。', errorPrefix: '错误：', addedColumns: '部分行的字段比表头多，已补上这些列：{cols}。' },
+        ja: { copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピー失敗', clear: 'クリア', convert: 'CSV \u2192 Markdown', alignment: '列の配置', alignLeft: '左揃え', alignCenter: '中央揃え', alignRight: '右揃え', converted: '{n} 行を Markdown テーブルに変換しました。', errorPrefix: 'エラー：', addedColumns: 'ヘッダーより項目が多い行があるため、次の列を追加しました：{cols}。' },
+        ko: { copy: '복사', copied: '복사됨!', copyFailed: '복사 실패', clear: '지우기', convert: 'CSV \u2192 Markdown', alignment: '열 정렬', alignLeft: '왼쪽', alignCenter: '가운데', alignRight: '오른쪽', converted: '{n}행을 Markdown 표로 변환했습니다.', errorPrefix: '오류: ', addedColumns: '헤더보다 필드가 많은 행이 있어 다음 열을 추가했습니다: {cols}.' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -71,6 +71,10 @@
       var copyCsvBtn = document.getElementById('cm-copy-csv');
       var copyMdBtn = document.getElementById('cm-copy-md');
       var currentAlign = 'left';
+      var copyStates = [
+        { button: copyCsvBtn, revision: 0, timer: null },
+        { button: copyMdBtn, revision: 0, timer: null }
+      ];
 
       /* ── Alignment buttons ── */
       document.querySelectorAll('.cm-align-btn').forEach(function (btn) {
@@ -191,8 +195,10 @@
       /* ── engine:end ── */
 
       function doConvert() {
+        clearTimeout(_liveTimer);
+        resetCopies();
         var raw = csvEl.value.trim();
-        if (!raw) { clearStatus(); return; }
+        if (!raw) { mdEl.value = ''; clearStatus(); return; }
         try {
           var result = csvToMarkdown(raw, currentAlign);
           mdEl.value = result.markdown;
@@ -201,6 +207,7 @@
           setStatus(msg, false);
           window.trackTool && window.trackTool('csv_to_markdown', 'convert');
         } catch (e) {
+          mdEl.value = '';
           setStatus(t.errorPrefix + e.message, true);
         }
       }
@@ -208,6 +215,7 @@
       /* ── Real-time conversion (debounced 300ms) ── */
       var _liveTimer = null;
       csvEl.addEventListener('input', function () {
+        resetCopies();
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(doConvert, 300);
       });
@@ -216,27 +224,56 @@
       document.getElementById('cm-convert').addEventListener('click', doConvert);
 
       /* ── Clear ── */
-      document.getElementById('cm-clear').addEventListener('click', function () {
+      function clearAll() {
+        clearTimeout(_liveTimer);
+        resetCopies();
+        csvEl.focus();
         csvEl.value = '';
         mdEl.value = '';
         clearStatus();
+      }
+      document.getElementById('cm-clear').addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var widget = document.querySelector('.cm-wrap');
+        if (!widget || !widget.contains(document.activeElement)) return;
+        e.preventDefault();
+        clearAll();
       });
 
       /* ── Copy buttons ── */
-      copyCsvBtn.addEventListener('click', function () {
-        if (!csvEl.value) return;
-        navigator.clipboard.writeText(csvEl.value).then(function () {
-          copyCsvBtn.textContent = t.copied;
-          setTimeout(function () { copyCsvBtn.textContent = t.copy; }, 1500);
+      function resetCopies() {
+        copyStates.forEach(function (state) {
+          state.revision++;
+          clearTimeout(state.timer);
+          state.button.textContent = t.copy;
         });
+      }
+
+      function copyText(state, text) {
+        if (!text) return;
+        var revision = ++state.revision;
+        clearTimeout(state.timer);
+        function failed() {
+          if (revision === state.revision) state.button.textContent = t.copyFailed;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== state.revision) return;
+            state.button.textContent = t.copied;
+            state.timer = setTimeout(function () {
+              if (revision === state.revision) state.button.textContent = t.copy;
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
+      }
+
+      copyCsvBtn.addEventListener('click', function () {
+        copyText(copyStates[0], csvEl.value);
       });
 
       copyMdBtn.addEventListener('click', function () {
-        if (!mdEl.value) return;
-        navigator.clipboard.writeText(mdEl.value).then(function () {
-          copyMdBtn.textContent = t.copied;
-          setTimeout(function () { copyMdBtn.textContent = t.copy; }, 1500);
-        });
+        copyText(copyStates[1], mdEl.value);
       });
     })();
   </script>
