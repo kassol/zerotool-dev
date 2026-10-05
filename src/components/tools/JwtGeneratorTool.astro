@@ -63,6 +63,8 @@
           secretLabel: 'Secret', secretPlaceholder: 'your-256-bit-secret',
           generatedToken: 'Generated Token', copy: 'Copy', copied: 'Copied!',
           generating: 'Generating token...', generated: 'Token generated.',
+          errHeaderAlgo: 'Header alg must match the selected algorithm ({algo}).',
+          copyFail: 'Could not copy. Try again or copy the token manually.',
           errHeaderJson: 'Header is not valid JSON.', errPayloadJson: 'Payload is not valid JSON.',
           errBase64Secret: 'Secret is not valid Base64.',
           errEmptySecret: 'Secret is required to sign the token.',
@@ -74,6 +76,8 @@
           secretLabel: '密钥', secretPlaceholder: '你的 256 位密钥',
           generatedToken: '生成的 Token', copy: '复制', copied: '已复制！',
           generating: '正在生成...', generated: 'Token 已生成。',
+          errHeaderAlgo: 'Header 的 alg 必须与所选算法（{algo}）一致。',
+          copyFail: '复制失败。请重试，或选中 Token 后手动复制。',
           errHeaderJson: 'Header 不是有效的 JSON。', errPayloadJson: 'Payload 不是有效的 JSON。',
           errBase64Secret: '密钥不是有效的 Base64。',
           errEmptySecret: '请输入密钥以生成签名 Token。',
@@ -85,6 +89,8 @@
           secretLabel: '秘密鍵', secretPlaceholder: '256ビットの秘密鍵',
           generatedToken: '生成されたトークン', copy: 'コピー', copied: 'コピー済み！',
           generating: '生成中...', generated: 'トークンが生成されました。',
+          errHeaderAlgo: 'ヘッダーの alg は選択したアルゴリズム（{algo}）と一致する必要があります。',
+          copyFail: 'コピーできませんでした。再試行するか、トークンを選択して手動でコピーしてください。',
           errHeaderJson: 'ヘッダーが有効なJSONではありません。', errPayloadJson: 'ペイロードが有効なJSONではありません。',
           errBase64Secret: '秘密鍵が有効なBase64ではありません。',
           errEmptySecret: 'トークンに署名するには秘密鍵を入力してください。',
@@ -96,6 +102,8 @@
           secretLabel: '비밀 키', secretPlaceholder: '256비트 비밀 키',
           generatedToken: '생성된 토큰', copy: '복사', copied: '복사됨!',
           generating: '생성 중...', generated: '토큰이 생성되었습니다.',
+          errHeaderAlgo: '헤더의 alg는 선택한 알고리즘({algo})과 일치해야 합니다.',
+          copyFail: '복사하지 못했습니다. 다시 시도하거나 토큰을 선택하여 직접 복사하세요.',
           errHeaderJson: '헤더가 유효한 JSON이 아닙니다.', errPayloadJson: '페이로드가 유효한 JSON이 아닙니다.',
           errBase64Secret: '비밀 키가 유효한 Base64가 아닙니다.',
           errEmptySecret: '토큰에 서명하려면 비밀 키를 입력해야 합니다.',
@@ -211,25 +219,55 @@
       /* ── engine:end ── */
 
       var debounceTimer = null;
+      var generation = 0;
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyError = false;
 
-      function scheduleGenerate() {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(generate, 500);
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError) {
+          statusEl.textContent = t.generated;
+          statusEl.className = 'jg-status success';
+        }
+        copyError = false;
       }
 
-      async function generate() {
+      function clearOutput() {
+        invalidateCopy();
+        resultEl.textContent = '';
+        resultWrap.style.display = 'none';
         headerErrEl.textContent = '';
         payloadErrEl.textContent = '';
         secretWarnEl.textContent = '';
         statusEl.textContent = '';
         statusEl.className = 'jg-status';
+      }
+
+      function scheduleGenerate() {
+        generation++;
+        clearTimeout(debounceTimer);
+        clearOutput();
+        debounceTimer = setTimeout(generate, 500);
+      }
+
+      async function generate() {
+        var current = ++generation;
+        clearOutput();
 
         var headerStr = headerEl.value.trim();
         var payloadStr = payloadEl.value.trim();
         var secretStr = secretEl.value;
 
-        var headerOk = true, payloadOk = true;
-        try { JSON.parse(headerStr); } catch (e) { headerErrEl.textContent = t.errHeaderJson; headerOk = false; }
+        if (!headerStr && !payloadStr && !secretStr) return;
+        var headerOk = true, payloadOk = true, header;
+        try { header = JSON.parse(headerStr); } catch (e) { headerErrEl.textContent = t.errHeaderJson; headerOk = false; }
+        if (headerOk && (!header || header.alg !== currentAlgo)) {
+          headerErrEl.textContent = t.errHeaderAlgo.replace('{algo}', currentAlgo);
+          headerOk = false;
+        }
         try { JSON.parse(payloadStr); } catch (e) { payloadErrEl.textContent = t.errPayloadJson; payloadOk = false; }
         if (!headerOk || !payloadOk) {
           resultWrap.style.display = 'none';
@@ -261,12 +299,14 @@
 
         try {
           var token = await signJwt(headerStr, payloadStr, keyBytes, currentAlgo, crypto.subtle);
+          if (current !== generation) return;
           resultEl.textContent = token;
           resultWrap.style.display = '';
           statusEl.textContent = t.generated;
           statusEl.className = 'jg-status success';
           window.trackTool && window.trackTool('jwt-generator', 'generate');
         } catch (e) {
+          if (current !== generation) return;
           statusEl.textContent = 'Error: ' + e.message;
           statusEl.className = 'jg-status error';
           resultWrap.style.display = 'none';
@@ -277,14 +317,39 @@
       payloadEl.addEventListener('input', scheduleGenerate);
       secretEl.addEventListener('input', scheduleGenerate);
 
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var root = document.querySelector('.jg-wrap');
+        if (!root || !root.contains(document.activeElement)) return;
+        e.preventDefault();
+        if (resultWrap.contains(document.activeElement)) headerEl.focus();
+        generation++;
+        clearTimeout(debounceTimer);
+        headerEl.value = payloadEl.value = secretEl.value = '';
+        clearOutput();
+      });
+
       copyBtn.addEventListener('click', function () {
         var val = resultEl.textContent;
         if (!val) return;
-        navigator.clipboard.writeText(val).then(function () {
-          var prev = copyBtn.textContent;
+        invalidateCopy();
+        var revision = copyRevision;
+        function done() {
+          if (revision !== copyRevision) return;
           copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
-        });
+          copyTimer = setTimeout(function () {
+            if (revision === copyRevision) copyBtn.textContent = t.copy;
+          }, 1500);
+        }
+        function failed() {
+          if (revision !== copyRevision) return;
+          statusEl.textContent = t.copyFail;
+          statusEl.className = 'jg-status error';
+          copyError = true;
+        }
+        try {
+          navigator.clipboard.writeText(val).then(done, failed);
+        } catch (e) { failed(); }
       });
 
       // Auto-generate on load
