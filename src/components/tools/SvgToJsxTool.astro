@@ -61,6 +61,7 @@
           outputLabel: 'JSX Output',
           copy: 'Copy',
           copied: 'Copied!',
+          copyFailed: 'Copy failed. Please try again.',
           placeholder: '<!-- paste your SVG here -->',
           componentName: 'Component name',
           typescript: 'TypeScript (React.FC)',
@@ -74,6 +75,7 @@
           outputLabel: 'JSX 输出',
           copy: '复制',
           copied: '已复制！',
+          copyFailed: '复制失败，请重试。',
           placeholder: '<!-- 粘贴 SVG 到这里 -->',
           componentName: '组件名称',
           typescript: 'TypeScript (React.FC)',
@@ -87,6 +89,7 @@
           outputLabel: 'JSX 出力',
           copy: 'コピー',
           copied: 'コピー済み！',
+          copyFailed: 'コピーに失敗しました。再試行してください。',
           placeholder: '<!-- SVGをここに貼り付け -->',
           componentName: 'コンポーネント名',
           typescript: 'TypeScript (React.FC)',
@@ -100,6 +103,7 @@
           outputLabel: 'JSX 출력',
           copy: '복사',
           copied: '복사됨!',
+          copyFailed: '복사하지 못했습니다. 다시 시도하세요.',
           placeholder: '<!-- SVG를 여기에 붙여넣기 -->',
           componentName: '컴포넌트 이름',
           typescript: 'TypeScript (React.FC)',
@@ -414,7 +418,21 @@
       }
       /* ── engine:end ── */
 
+      var copyRevision = 0;
+      var copyTimer;
+      var copyError = false;
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError && statusEl.textContent === t.copyFailed) statusEl.textContent = '';
+        copyError = false;
+      }
+
       function convert() {
+        invalidateCopy();
+        clearTimeout(_debounce);
         var svg   = inputEl.value;
         var name  = (nameEl.value.trim() || 'MyIcon').replace(/[^a-zA-Z0-9_$]/g, '');
         // Ensure component name starts with uppercase
@@ -436,6 +454,7 @@
 
       var _debounce;
       function debounced() {
+        invalidateCopy();
         clearTimeout(_debounce);
         _debounce = setTimeout(convert, 200);
       }
@@ -446,13 +465,38 @@
       frEl.addEventListener('change', convert);
       memoEl.addEventListener('change', convert);
 
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var widget = document.querySelector('.tool-widget');
+        if (!widget || !widget.contains(document.activeElement)) return;
+        e.preventDefault();
+        invalidateCopy();
+        clearTimeout(_debounce);
+        inputEl.value = '';
+        outputEl.value = '';
+        statusEl.textContent = '';
+        copyBtn.disabled = true;
+        inputEl.focus();
+      });
+
       copyBtn.addEventListener('click', function () {
         var text = outputEl.value;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+        invalidateCopy();
+        var revision = copyRevision;
+        function current() { return revision === copyRevision && outputEl.value === text; }
+        function failed() {
+          if (!current()) return;
+          statusEl.textContent = t.copyFailed;
+          copyError = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (!current()) return;
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () { if (current()) copyBtn.textContent = t.copy; }, 1500);
+          }, failed);
+        } catch (error) { failed(); }
       });
     })();
   </script>

@@ -19,6 +19,8 @@
 //
 // Run: node scripts/test-svg-to-jsx.mjs
 
+import { loadPage } from './astro-page-harness.mjs';
+import { parseFragment } from 'parse5';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -208,7 +210,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   try {
     const nodes = {};
     const node = (id) => nodes[id] ||= { value: id === 'stj-name' ? 'Icon' : '', checked: false, disabled: false, textContent: '', listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } };
-    runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], { document: { documentElement: { lang }, querySelectorAll: () => [], getElementById: node }, window: {}, navigator: {}, setTimeout: (fn) => fn(), clearTimeout() {} });
+    runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], { document: { addEventListener() {}, documentElement: { lang }, querySelectorAll: () => [], getElementById: node }, window: {}, navigator: {}, setTimeout: (fn) => fn(), clearTimeout() {} });
     node('stj-input').value = '<svg><text>{x}</text></svg>';
     node('stj-input').listeners.input();
     check('SVG page valid output ' + lang, !!node('stj-output').value && !node('stj-copy').disabled);
@@ -220,6 +222,167 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     check('SVG page recovers ' + lang, !!node('stj-output').value && !node('stj-copy').disabled && node('stj-status').textContent === '');
   } catch (e) { check('SVG page refusal ' + lang, false, e.message); }
 }
+
+
+// ---------- complete page lifecycle + real ToolLayout keyboard handler ----------
+// Only DOM, clipboard completion and timer delivery are controlled; the whole page script runs.
+const lifecycleSpec = {"slug": "svg-to-jsx", "component": "SvgToJsxTool", "prefix": "stj", "input": "stj-input", "source": "<svg viewBox=\"0 0 1 1\"><path stroke-width=\"2\" /></svg>", "next": "<svg width=\"2\"/>", "expected": "import React from 'react';\n\nfunction MyIcon(props) {\n  return (\n    <svg viewBox=\"0 0 1 1\" {...props}><path strokeWidth=\"2\" /></svg>\n  );\n}\n\nexport default MyIcon;", "invalid": "<svg style=\"fill:red;fill:blue\"/>", "file": "src/components/tools/SvgToJsxTool.astro"};
+lifecycleSpec.src = source;
+const sourceLayout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = sourceLayout.slice(sourceLayout.indexOf("      document.addEventListener('keydown'", sourceLayout.indexOf('// ── Keyboard shortcuts')), sourceLayout.indexOf('      // ── Copy button visual feedback'));
+check('actual shared shortcut extracted', shortcut.includes('window.ztPersist.clear(_slug)'));
+const unhandled = [];
+const onUnhandled = error => unhandled.push(String(error?.message || error));
+process.on('unhandledRejection', onUnhandled);
+const settle = () => new Promise(resolve => setImmediate(resolve));
+const copied = { en:'Copied!', zh:'已复制！', ja:'コピー済み！', ko:'복사됨!' };
+const normal = { en:'Copy', zh:'复制', ja:'コピー', ko:'복사' };
+const copyFailure = { en:'Copy failed. Please try again.', zh:'复制失败，请重试。', ja:'コピーに失敗しました。再試行してください。', ko:'복사하지 못했습니다. 다시 시도하세요.' };
+function same(name, actual, expected) { check(name, JSON.stringify(actual) === JSON.stringify(expected), 'got ' + JSON.stringify(actual) + ', expected ' + JSON.stringify(expected)); }
+function lifecyclePage(lang='en',order='before') {
+  const s = lifecycleSpec;
+  const nodes=[],byId=new Map(),docHandlers={};
+  const markup=s.src.slice(s.src.indexOf('---',3)+3,s.src.indexOf('<script'));
+  let document;
+  function text(n){return n.nodeName==='#text'?n.value:(n.childNodes||[]).map(text).join('');}
+  function visit(n){
+    if(n.tagName){
+      const attrs=Object.fromEntries((n.attrs||[]).map(a=>[a.name,a.value]));
+      const handlers={};
+      const el={tagName:n.tagName.toUpperCase(),id:attrs.id||'',type:attrs.type||'text',attributes:attrs,value:attrs.value||'',textContent:text(n),className:attrs.class||'',disabled:'disabled'in attrs,checked:'checked'in attrs,placeholder:attrs.placeholder||'',
+        getAttribute(k){return Object.hasOwn(this.attributes,k)?this.attributes[k]:null;},
+        setAttribute(k,v){this.attributes[k]=String(v);if(k==='disabled')this.disabled=true;},
+        addEventListener(k,fn){(handlers[k]||=[]).push(fn);},
+        focus(){document.activeElement=this;},
+        dispatch(k,init={}){const e={type:k,target:this,currentTarget:this,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(const f of handlers[k]||[])f.call(this,e);if(!e.cancelBubble)for(const f of docHandlers[k]||[])f.call(document,e);return e;},
+        click(){if(!this.disabled)this.dispatch('click');},
+      };
+      nodes.push(el);if(el.id)byId.set(el.id,el);
+    }
+    for(const c of n.childNodes||[])visit(c);
+  }
+  visit(parseFragment(markup));
+  const selectAll=(selector)=>{
+    if(selector==='textarea, input[type="text"]')return nodes.filter(e=>e.tagName==='TEXTAREA'||e.tagName==='INPUT'&&e.type==='text');
+    const m=selector.match(/\[(data-i18n(?:-ph)?)\]$/);if(m)return nodes.filter(e=>Object.hasOwn(e.attributes,m[1]));
+    throw Error('unexpected selector '+selector);
+  };
+  const widget={contains:(e)=>nodes.includes(e),querySelectorAll:selectAll};
+  document={documentElement:{lang},activeElement:null,getElementById(id){if(!byId.has(id))throw Error('missing actual DOM id '+id);return byId.get(id);},querySelectorAll:selectAll,
+    querySelector(selector){if(selector==='.tool-widget')return widget;if(selector==='.tool-widget .btn-primary')return nodes.find(e=>e.className.split(/\s+/).includes('btn-primary'))||null;throw Error('unexpected selector '+selector);},
+    addEventListener(k,fn){(docHandlers[k]||=[]).push(fn);},execCommand(){throw Error('OS clipboard blocked');},
+  };
+  let now=0,seq=0;const timers=new Map(),requests=[],tracks=[],clears=[];
+  const globals={document, navigator:{clipboard:{writeText(text){return new Promise((resolve,reject)=>requests.push({text,resolve,reject}));},write(){throw Error('unexpected clipboard.write');}}},
+    setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout(id){timers.delete(id);},trackTool:(...a)=>tracks.push(a),ztPersist:{clear:slug=>clears.push(slug)}};
+  const before={...globals,_slug:s.slug};before.window=before;
+  if(order==='before')runInNewContext(shortcut,before);
+  const loaded=loadPage(s.file,{lang,globals});
+  if(order==='after')loaded.run('var _slug='+JSON.stringify(s.slug)+';\n'+shortcut);
+  const $=(id)=>document.getElementById(id);
+  const out=$(s.prefix+'-output'),copy=$(s.prefix+'-copy'),status=$(s.prefix+'-status'),input=$(s.input);
+  return {s,lang,order,document,$,out,copy,status,input,requests,tracks,clears,timers,loaded,
+    advance(ms){const end=now+ms;let guard=0;while(true){const next=[...timers].filter(([,t])=>t.due<=end).sort((a,b)=>a[1].due-b[1].due)[0];if(!next)break;if(++guard>100)throw Error('clock runaway');now=next[1].due;timers.delete(next[0]);next[1].fn();}now=end;},
+    type(v){input.focus();input.value=v;input.dispatch('input');},
+    convert(v=s.source){this.type(v);this.advance(200);},
+    clearKey(){input.focus();input.dispatch('keydown',{key:'l',ctrlKey:true});},
+  };
+}
+
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  let p = lifecyclePage(lang);
+  p.type(lifecycleSpec.source); p.advance(199);
+  same(lang + ' input timing boundary', p.out.value, '');
+  p.advance(1);
+  same(lang + ' exact normal conversion', p.out.value, lifecycleSpec.expected);
+  p.copy.click(); same(lang + ' copied full bytes', p.requests[0].text, lifecycleSpec.expected);
+  p.requests[0].resolve(); await settle(); same(lang + ' normal copied', p.copy.textContent, copied[lang]);
+  p.advance(1500); same(lang + ' normal reset timer', p.copy.textContent, normal[lang]);
+  const n = unhandled.length;
+  p.copy.click(); p.requests[1].reject(Error('controlled clipboard rejection')); await settle();
+  same(lang + ' rejection handled', unhandled.length, n);
+  same(lang + ' localized failure visible', p.status.textContent, copyFailure[lang]);
+  same(lang + ' failed copy is not success', p.copy.textContent, normal[lang]);
+  p.copy.click(); p.requests[2].resolve(); await settle();
+  same(lang + ' same-output retry copies', p.copy.textContent, copied[lang]);
+  same(lang + ' retry clears owned failure', p.status.textContent, '');
+  same(lang + ' retry preserves output', p.out.value, lifecycleSpec.expected);
+  p = lifecyclePage(lang); p.convert(); p.loaded.ctx.navigator.clipboard = undefined;
+  let thrown; try { p.copy.click(); } catch (error) { thrown = error.message; }
+  await settle(); same(lang + ' missing API does not throw', thrown, undefined);
+  same(lang + ' missing API shows failure', p.status.textContent, copyFailure[lang]);
+  for (const order of ['before', 'after']) {
+    p = lifecyclePage(lang, order); p.convert(); p.out.focus(); p.out.dispatch('keydown', { key:'l', ctrlKey:true });
+    same(lang + order + ' CtrlL values/status', [p.input.value, p.out.value, p.status.textContent], ['', '', '']);
+    same(lang + order + ' CtrlL preserves shared clear', p.clears, [lifecycleSpec.slug]);
+    same(lang + order + ' CtrlL focuses primary input', p.document.activeElement.id, lifecycleSpec.input);
+    same(lang + order + ' CtrlL copy label', p.copy.textContent, normal[lang]);
+    same(lang + order + ' empty copy disabled', p.copy.disabled, true);
+    p.type(lifecycleSpec.invalid); p.advance(200); check(lang + order + ' refusal visible', !!p.status.textContent);
+    p.clearKey(); same(lang + order + ' CtrlL clears refusal', p.status.textContent, '');
+    p.type(lifecycleSpec.source); same(lang + order + ' debounce pending', [...p.timers.values()].filter(t => t.delay === 200).length, 1);
+    p.clearKey(); same(lang + order + ' CtrlL cancels debounce', [...p.timers.values()].filter(t => t.delay === 200).length, 0);
+    p.advance(200); same(lang + order + ' no late output', [p.out.value, p.status.textContent, p.copy.disabled], ['', '', true]);
+    p = lifecyclePage(lang, order); p.convert();
+    p.document.activeElement = {};
+    const before = [p.input.value, p.out.value, p.status.textContent];
+    // Dispatch from an outside node through the document listener path without assigning widget focus.
+    p.out.dispatch('keydown', { key:'l', ctrlKey:true });
+    same(lang + order + ' outside focus unchanged', [p.input.value, p.out.value, p.status.textContent], before);
+  }
+}
+{ const p = lifecyclePage(); p.convert(); const before = [p.out.value, p.tracks.length]; p.input.dispatch('keydown', { key:'Enter', ctrlKey:true }); same('CtrlEnter has no primary action', [p.out.value, p.tracks.length], before); }
+
+for (const boundary of ["CtrlL", "input", "new-output", "same-output", "invalid", "name", "option"]) {
+  for (const finish of ['resolve', 'reject']) {
+    const p = lifecyclePage(); p.convert(); p.copy.click();
+    if (boundary === 'CtrlL') p.clearKey();
+
+    else if (boundary === 'input') p.type(lifecycleSpec.next);
+    else if (boundary === 'same-output') p.convert();
+    else if (boundary === 'invalid') p.convert(lifecycleSpec.invalid);
+    else if (boundary === 'name') { p.$('stj-name').value = 'NewIcon'; p.$('stj-name').dispatch('input'); }
+    else if (boundary === 'option') { p.$('stj-typescript').checked = true; p.$('stj-typescript').dispatch('change'); }
+    else p.convert(lifecycleSpec.next);
+    const state = [p.out.value, p.status.textContent, p.copy.textContent], n = unhandled.length;
+    p.requests[0][finish](finish === 'reject' ? Error('controlled stale rejection') : undefined); await settle();
+    same(boundary + ' late ' + finish + ' cannot mutate page', [p.out.value, p.status.textContent, p.copy.textContent], state);
+    same(boundary + ' late ' + finish + ' handled', unhandled.length, n);
+  }
+}
+for (const oldOutcome of ['resolve', 'reject']) {
+  const p = lifecyclePage(); p.convert(); p.copy.click(); p.copy.click();
+  p.requests[1].reject(Error('new request fails')); await settle();
+  same('new request owns error', p.status.textContent, copyFailure.en);
+  const n = unhandled.length;
+  p.requests[0][oldOutcome](oldOutcome === 'reject' ? Error('old request fails') : undefined); await settle();
+  same('older ' + oldOutcome + ' preserves newer error', [p.status.textContent, p.copy.textContent], [copyFailure.en, normal.en]);
+  same('older ' + oldOutcome + ' handled', unhandled.length, n);
+  p.copy.click(); p.requests[2].resolve(); await settle(); same('retry after reordered copies', [p.status.textContent, p.copy.textContent], ['', copied.en]);
+}
+{
+  const p = lifecyclePage(); p.convert(); p.copy.click(); p.requests[0].resolve(); await settle();
+  const oldTimer = [...p.timers.values()].find(t => t.delay === 1500).fn;
+  p.advance(100); p.copy.click(); p.requests[1].resolve(); await settle(); p.advance(1400);
+  same('old timer cannot clear newer feedback', p.copy.textContent, copied.en);
+  oldTimer(); same('already-dispatched old timer is guarded', p.copy.textContent, copied.en);
+  p.advance(100); same('current timer restores after own interval', p.copy.textContent, normal.en);
+  p.copy.click(); p.requests[2].resolve(); await settle();
+  const clearedTimer = [...p.timers.values()].find(t => t.delay === 1500).fn;
+  p.clearKey(); clearedTimer(); same('timer after CtrlL stays clean', [p.status.textContent, p.copy.textContent], ['', normal.en]);
+}
+{
+  const p = lifecyclePage(); p.convert(); p.$('stj-name').value = 'plus-icon'; p.$('stj-name').dispatch('input');
+  p.advance(199); check('name stays pending for 200ms', p.out.value.includes('function MyIcon(props)'));
+  p.advance(1); check('name applies filter and capitalization', p.out.value.includes('function Plusicon(props)'));
+  for (const [id, part] of [['stj-typescript', 'React.FC<React.SVGProps<SVGSVGElement>>'], ['stj-forwardref', 'forwardRef<SVGSVGElement, React.SVGProps<SVGSVGElement>>'], ['stj-memo', 'export default memo(Plusicon);']]) {
+    p.$(id).checked = true; p.$(id).dispatch('change'); check(id + ' applies synchronously', p.out.value.includes(part));
+  }
+  p.clearKey(); same('CtrlL shared clears name while retaining option preferences', [p.$('stj-name').value, p.$('stj-typescript').checked, p.$('stj-forwardref').checked, p.$('stj-memo').checked], ['', true, true, true]);
+  p.type(lifecycleSpec.source); p.$('stj-memo').dispatch('change');
+  const count = p.tracks.length; p.advance(200); same('immediate option conversion cancels pending duplicate', p.tracks.length, count);
+}
+await settle(); process.removeListener('unhandledRejection', onUnhandled);
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
