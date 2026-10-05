@@ -10,6 +10,7 @@ const labels = {
     clear: 'Clear',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: 'Copy failed. Try again.',
     download: 'Download .csv',
     convert: 'Convert to CSV',
     delimiter: 'Delimiter',
@@ -40,6 +41,7 @@ const labels = {
     clear: '清空',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: '复制失败，请重试。',
     download: '下载 .csv',
     convert: '转换为 CSV',
     delimiter: '分隔符',
@@ -70,6 +72,7 @@ const labels = {
     clear: 'クリア',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピーに失敗しました。再試行してください。',
     download: '.csv をダウンロード',
     convert: 'CSV に変換',
     delimiter: '区切り文字',
@@ -100,6 +103,7 @@ const labels = {
     clear: '지우기',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: '복사에 실패했습니다. 다시 시도하세요.',
     download: '.csv 다운로드',
     convert: 'CSV로 변환',
     delimiter: '구분자',
@@ -132,6 +136,7 @@ const L = labels[lang];
   class="jtc-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-msg-rows={L.msgRows}
   data-msg-one-row={L.msgOneRow}
   data-msg-empty-array={L.msgEmptyArray}
@@ -217,6 +222,7 @@ const L = labels[lang];
 
       var COPY = wrap.dataset.copy || 'Copy';
       var COPIED = wrap.dataset.copied || 'Copied!';
+      var COPY_FAILED = wrap.dataset.copyFailed || 'Copy failed. Try again.';
       var MSG_ROWS = wrap.dataset.msgRows || '{n} rows converted';
       var MSG_ONE_ROW = wrap.dataset.msgOneRow || '1 row converted';
       var MSG_EMPTY = wrap.dataset.msgEmptyArray || 'Empty array — nothing to convert';
@@ -228,6 +234,15 @@ const L = labels[lang];
       var inputEl = document.getElementById('jtc-input') as HTMLTextAreaElement;
       var outputEl = document.getElementById('jtc-output') as HTMLTextAreaElement;
       var statusEl = document.getElementById('jtc-status');
+      var copyBtn = document.getElementById('jtc-copy')!;
+      var copyRevision = 0;
+      var copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+      function resetCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer!);
+        copyBtn.textContent = COPY;
+      }
 
       var delimiter = ',';
       var flatten = true;
@@ -345,6 +360,9 @@ const L = labels[lang];
       /* ── engine:end ── */
 
       function convert() {
+        clearTimeout(_liveTimer!);
+        resetCopy();
+        inputEl.classList.remove('error');
         var raw = inputEl.value.trim();
         if (!raw) {
           outputEl.value = '';
@@ -392,6 +410,7 @@ const L = labels[lang];
 
       var _liveTimer: ReturnType<typeof setTimeout> | null = null;
       inputEl.addEventListener('input', function () {
+        resetCopy();
         clearTimeout(_liveTimer!);
         _liveTimer = setTimeout(convert, 300);
       });
@@ -404,22 +423,41 @@ const L = labels[lang];
         convert();
       });
 
-      document.getElementById('jtc-clear')!.addEventListener('click', function () {
+      function clearAll() {
+        clearTimeout(_liveTimer!);
+        resetCopy();
         inputEl.value = '';
         outputEl.value = '';
         inputEl.classList.remove('error');
         statusEl!.textContent = '';
         statusEl!.className = 'jtc-status';
+        inputEl.focus();
+      }
+      document.getElementById('jtc-clear')!.addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
+        }
       });
 
-      document.getElementById('jtc-copy')!.addEventListener('click', function () {
+      copyBtn.addEventListener('click', function () {
         var text = outputEl.value;
         if (!text) return;
-        var btn = document.getElementById('jtc-copy')!;
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = COPIED;
-          setTimeout(function () { btn.textContent = COPY; }, 1500);
-        });
+        resetCopy();
+        var revision = copyRevision;
+        function failed() {
+          if (revision === copyRevision) copyBtn.textContent = COPY_FAILED;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== copyRevision) return;
+            copyBtn.textContent = COPIED;
+            copyTimer = setTimeout(function () {
+              if (revision === copyRevision) copyBtn.textContent = COPY;
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
       });
 
       document.getElementById('jtc-download')!.addEventListener('click', function () {
