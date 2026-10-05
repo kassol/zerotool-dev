@@ -121,6 +121,7 @@ const pageSource = readFileSync(join(root, pageFile), 'utf8');
 const pageScript = pageSource.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
 const labels = pageSource.match(/(?:const|var) STRINGS = (\{[\s\S]*?\n\s*\});/);
 const pageStrings = vm.runInNewContext('(' + labels[1] + ')');
+const clientStrings = lang => vm.runInNewContext('(' + pageSource.match(/const CLIENT_T = ([\s\S]*?);\n/)[1] + ')', { T: pageStrings[lang] });
 const pageJS = ts.transpileModule(pageScript, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
@@ -205,7 +206,7 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
   const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
   const esc = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
-    .replace(/data-strings=\{JSON\.stringify\(T\)\}/g, 'data-strings="' + esc(JSON.stringify(pageStrings[lang])) + '"')
+    .replace(/data-strings=\{JSON\.stringify\(CLIENT_T\)\}/g, 'data-strings="' + esc(JSON.stringify(clientStrings(lang))) + '"')
     .replace(/data-lang=\{lang\}/g, 'data-lang="' + lang + '"').replace(/\{T\.(\w+)\}/g, (_, k) => esc(pageStrings[lang][k]));
   function append(ast, parent) { for (const node of ast.childNodes || []) { if (!node.tagName) { if (node.nodeName === '#text') parent.textContent += node.value; continue; } const e = parent.appendChild(new Element(node.tagName)); for (const a of node.attrs) e.setAttribute(a.name, a.value); append(node, e); if (e.tagName === 'TEXTAREA') e.value = e.textContent; if (e.tagName === 'SELECT') e.value = (e.children.find(c => c.getAttribute('selected') !== null) || e.children[0]).value; } }
   append(parseFragment(markup), widget);
@@ -289,6 +290,98 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
     same(tag+' buttons have independent requests and error ownership',[p.get(a).textContent,p.get(cfg.status).textContent],[S.copied,failureText[lang]]);p.copy(b).resolve();await settle();same(tag+' error owner retries successfully',[p.get(a).textContent,p.get(b).textContent,p.get(cfg.status).textContent],[S.copied,S.copied,'']);
   }
 }
+// ---------- v2 page layout ----------
+same('all FIX checks retained', [passes, failures], [923, 0]);
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var inputEl = document.getElementById('xf-input');"))), 'c33049a8c448c3f537c19ccf15de7979df300024176c9fff04d69387ebbcf0bd');
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "385b0699b747acccce4a18bbc2afd3e74a1b175ec87eff2087e131d5540e3f3d",
+    "body": "6fac1ab4c0a89820c95acf2f17c2103ecc43b4027ca3695e56df81876cc19f39",
+    "examples": "4f5e9c17e674c931fcb5e7f96d0575f98d0dd52ef50467a23ebaec24b162819b"
+  },
+  "zh": {
+    "front": "9e172da81cf2a1a4172168406fdfbe1402d0efe592210b869bc76e4e3afc1494",
+    "body": "f633e87bb0cde8202eb8a20dedf3b715c8c860e125c726850f53e98c6844dcc9",
+    "examples": "7f97ed11b6e218cade84b880385329a596a57ed0200ea4d57ab8c98faed538ad"
+  },
+  "ja": {
+    "front": "cfb0a2db2e62aeefbac1216eb7ef5b8b5b1646b348128e961c1c2cd1386037ed",
+    "body": "2edff6bcba7026a690577ea4e00a8c10d0a23384eec1b744bbe8baf7a4d48836",
+    "examples": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  "ko": {
+    "front": "9a4df5b316f64641eb527c4fd2fd135af5766748711099dba6f053e87445d1ab",
+    "body": "699f68035ef29bd3479a5998cd168e8f02d2af81828621a731efb2afbe0450d2",
+    "examples": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  }
+};
+const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
+same('direct tool root carries client-only strings', /^<div class="xf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
+same('options and actions precede stable status then shared panes', /xf-options[\s\S]*xf-toolbar[\s\S]*id="xf-status"[\s\S]*xf-panels zt-io/.test(markup), true);
+same('shared pane and fill count', [(markup.match(/zt-io-pane/g)||[]).length,(markup.match(/zt-io-fill/g)||[]).length], [2,2]);
+same('all original functional buttons remain', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m=>m[1]), ['xf-format','xf-minify','xf-clear','xf-copy-input','xf-copy-output']);
+same('format remains the only primary action', (markup.match(/class="btn-primary"/g)||[]).length, 1);
+same('seven adjacent tip IDs', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m=>m[1]), ['xf-tip-indent','xf-tip-format','xf-tip-minify','xf-tip-clear','xf-tip-input','xf-tip-copy-input','xf-tip-copy-output']);
+same('no tips are inside labels or buttons', /<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup), false);
+same('input editable and output remains readonly', [/<textarea id="xf-input"[^>]*\breadonly/.test(markup),/<textarea id="xf-output"[^>]*\breadonly/.test(markup)], [false,true]);
+same('root zero minima and flex column', /\.xf-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css), true);
+same('status fixed and internally scrollable', /\.xf-status\s*\{[^}]*height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css), true);
+same('long textarea content scrolls inside pane', /\.xf-box\s*\{[^}]*overflow: auto;/.test(css), true);
+same('empty desktop output has a localized sentence', /<p class="xf-empty">\{T.formattedXmlPh\}<\/p>/.test(markup), true);
+same('empty state follows actual textarea value via placeholder state', /\.xf-result:has\(#xf-output:placeholder-shown\) \.xf-empty \{ display: flex; \}/.test(css), true);
+same('860 stacked empty result hidden and bounded editors', /@media \(max-width: 860px\)[\s\S]*\.xf-box \{ height: 180px; \}[\s\S]*\.xf-result:has\(#xf-output:placeholder-shown\) \{ display: none; \}/.test(css), true);
+same('640 bounded editors and 44px heads', /@media \(max-width: 640px\)[\s\S]*min-height: 44px;[\s\S]*height: 120px;/.test(css), true);
+same('select remains at least 44px high', /\.xf-options select \{ min-height: 44px;/.test(css), true);
+same('theme feedback uses semantic tokens', /var\(--color-success\)/.test(css)&&/var\(--color-danger\)/.test(css), true);
+same('runtime i18n mutation removed', /data-i18n|var STRINGS/.test(pageSource), false);
+same('script stays inline inside root without relocation or reindent', /  <script is:inline>[\s\S]*  <\/script>\s*<\/div>\s*<style>/.test(pageSource), true);
+const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'),'utf8');
+same('xml-formatter registered convert', /['"]xml-formatter['"]\s*:\s*['"]convert['"]/.test(registry), true);
+const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
+same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
+const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
+for(const lang of ['en','zh','ja','ko']) {
+  const S=pageStrings[lang], payload=clientStrings(lang), expected=PROTECTED_CONTENT[lang];
+  same(lang+' tip keys',Object.keys(S.tips),['input','indent','format','minify','clear','copyInput','copyOutput']);
+  same(lang+' short complete tips',Object.values(S.tips).every(x=>typeof x==='string'&&x.length>0&&x.length<=280),true);
+  same(lang+' client has only runtime strings',Object.keys(payload),['copy','copied','copyFailed']);
+  same(lang+' tips excluded from payload and script',Object.values(S.tips).some(x=>JSON.stringify(payload).includes(x)||pageScript.includes(x)),false);
+  same(lang+' localized empty hint exists',typeof S.formattedXmlPh==='string'&&S.formattedXmlPh.length>0,true);
+  const text=readFileSync(join(root,'src/content/tools/xml-formatter',lang+'.mdx'),'utf8');
+  const parts=text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/),front=requireRoot('js-yaml').load(parts[1]),body=parts[2];
+  const preservedBody=lang==='en'?body.replace(/\{\/\* xml-whitespace-quotes:start \*\/\}\n[\s\S]*?\{\/\* xml-whitespace-quotes:end \*\/\}\n\n/,'').replace('**During formatting, empty elements are self-closed.**','**Empty elements are self-closed.**'):body;
+  same(lang+' six bounded plain steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
+  same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
+  same(lang+' all other frontmatter bytes unchanged',hash(parts[1].replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),expected.front);
+  same(lang+' all nonUsage body bytes unchanged',hash(preservedBody),expected.body);
+  same(lang+' worked example blocks unchanged',hash(JSON.stringify([...preservedBody.matchAll(/```[^\n]*\n[\s\S]*?```/g)].map(m=>m[0]))),expected.examples);
+  same(lang+' Usage removed',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body),false);
+  let mdxError='';try{await mdxCompiler.compile(body);}catch(e){mdxError=String(e);}same(lang+' MDX compiles',mdxError,'');
+}
+
+// Actual protected serializers and the two thin-page examples; native DOMParser is browser QA.
+const thinFixtures = [
+  { input: '<root><value>  x  </value><blank> </blank><empty/></root>', dom: doc(el('root', {}, el('value', {}, text('  x  ')), el('blank', {}, text(' ')), el('empty', {}))), pretty: '<root>\n  <value>x</value>\n  <blank/>\n  <empty/>\n</root>', minified: '<root><value>x</value><blank></blank><empty/></root>' },
+  { input: "<item name='A &amp; B'>1 &lt; 2</item>", dom: doc(el('item', { name: 'A & B' }, text('1 < 2'))), pretty: '<item name="A &amp; B">1 &lt; 2</item>', minified: '<item name="A &amp; B">1 &lt; 2</item>' }
+];
+const enBody=readFileSync(join(root,'src/content/tools/xml-formatter/en.mdx'),'utf8');
+for(const fixture of thinFixtures) {
+  const prolog=E.scanProlog(fixture.input);
+  same('thin Format exact '+fixture.input,E.prettyPrint(fixture.dom,'  ',prolog),fixture.pretty);
+  same('thin Minify exact '+fixture.input,E.minify(fixture.dom,prolog),fixture.minified);
+  same('thin examples have no invented prolog '+fixture.input,prolog,{declaration:'',doctype:''});
+  same('thin actual input and both outputs present in EN',[fixture.input,fixture.pretty,fixture.minified].every(value=>enBody.includes('```xml\n'+value+'\n```')),true);
+}
+
+const {transform}=await import(requireRoot.resolve('@astrojs/compiler',{paths:[requireRoot.resolve('astro')]}));
+const compiled=await transform(pageSource,{filename:join(root,pageFile)});
+same('Astro diagnostics have no errors',compiled.diagnostics.filter(d=>d.severity===1),[]);
+same('compiled CSS contains no unresolved global selectors',compiled.css.some(c=>c.includes(':global')),false);
+let compileError='';try{await requireRoot('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){compileError=String(e);}same('generated Astro module parses',compileError,'');
+same('source unchanged during test',hash(readFileSync(join(root,pageFile),'utf8')),hash(pageSource));
+
+
 process.removeListener('unhandledRejection',onUnhandled);
 
 console.log((failures ? 'FAILED' : 'PASSED') + ': ' + passes + ' passed, ' + failures + ' failed');
