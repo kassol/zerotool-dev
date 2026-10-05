@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
-import { loadPage } from './astro-page-harness.mjs';
+import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(join(root, 'package.json'));
@@ -121,7 +121,8 @@ eq('engine bytes unchanged', createHash('sha256').update(source.slice(startIndex
 // Complete page events + actual shared shortcut. Parsing uses the same parse5 boundary above.
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const sharedShortcut = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
-const STRINGS = vm.runInNewContext(source.slice(source.indexOf('var STRINGS ='), source.indexOf('var pageLang =')) + ';STRINGS');
+const frontmatter = /^---\n([\s\S]*?)\n---/.exec(source)[1];
+const STRINGS = frontmatterStrings(frontmatter);
 const copyFailure = { en: 'Copy failed. Try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。再試行してください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
 const settle = async () => { await Promise.resolve(); await new Promise(resolve => setImmediate(resolve)); };
 const unhandled = [];
@@ -129,10 +130,11 @@ process.on('unhandledRejection', error => unhandled.push(String(error)));
 function page(lang, sharedFirst = false) {
   const elements = new Map(), keys = [], timers = [], copies = [], saved = [], tracked = [];
   let seq = 0;
-  const markup = source.slice(0, source.indexOf('<script'));
+  const t = STRINGS[lang];
+  const markup = source.slice(source.indexOf('\n---') + 4, source.indexOf('<script')).replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + t[key] + '"').replace(/\{T\.(\w+)\}/g, (_, key) => t[key]);
   for (const m of markup.matchAll(/<([a-z]+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
     const listeners = {};
-    const el = { id: m[3], value: '', textContent: '', className: '', disabled: false, hidden: false,
+    const el = { id: m[3], value: '', textContent: (markup.slice(m.index + m[0].length).match(/^([^<]*)</)?.[1] || '').trim(), className: '', disabled: false, hidden: false, dataset: { empty: /data-empty="([^"]+)"/.exec(m[2])?.[1] },
       getAttribute(name) { return new RegExp('\\b' + name + '="([^"]+)"').exec(m[2])?.[1] ?? null; },
       addEventListener(type, fn) { (listeners[type] ??= []).push(fn); },
       dispatch(type, init = {}) { const event = { type, target: el, defaultPrevented: false, cancelBubble: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.cancelBubble = true; }, ...init }; for (const fn of listeners[type] || []) fn.call(el, event); if (type === 'keydown' && !event.cancelBubble) for (const fn of keys) fn(event); return event; },
@@ -149,7 +151,8 @@ function page(lang, sharedFirst = false) {
     addEventListener: (type, fn) => { if (type === 'keydown') keys.push(fn); },
   };
   get('hm-indent').value = '2';
-  const globals = { document: doc, Blob, DOMParser: class { parseFromString(raw) { return toDom(parse5.parse(raw)); } },
+  const { tips, ...clientT } = t;
+  const globals = { document: doc, t: clientT, Blob, DOMParser: class { parseFromString(raw) { return toDom(parse5.parse(raw)); } },
     _slug: 'html-minifier', ztPersist: { clear(slug) { saved.push(slug); } }, trackTool(...args) { tracked.push(args); },
     navigator: { clipboard: { writeText(text) { return new Promise((resolve, reject) => copies.push({ text, resolve, reject })); } } },
     setTimeout(fn, ms) { timers.push({ id: ++seq, fn, ms, cancelled: false }); return seq; }, clearTimeout(id) { const timer = timers.find(t => t.id === id); if (timer) timer.cancelled = true; },
@@ -218,6 +221,58 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
 }
 eq('no unhandled clipboard rejection', unhandled.length, 0);
+
+// ── v2 page layout ──
+const MDX_PROTECTED = {
+  "en": "3f994d83a0962cf36465e7f3460383f25bb723609e31b1d458bf2c8e36d5a86f",
+  "zh": "ada0add21e20cd8580bc2d35af3ba3c8b26fcf6fe26506b642c7b31d3637a7ce",
+  "ja": "c7984aea3cbab9f49b215a982a588052101d950979871b9f54c5d0f9001e2527",
+  "ko": "1591d15c1c8f6ac422fc30576b117d23231f79f79fb5d018cfc15af82e3d168e"
+};
+const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+check('v2 page layout: convert registry', /['"]html-minifier['"]\s*:\s*['"]convert['"]/.test(registry));
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+check('v2 page layout: direct tool root', markup.trimStart().startsWith('<div class="hm-wrap">'));
+check('v2 page layout: shared input-output grid', markup.includes('hm-panels zt-io') && (markup.match(/zt-io-pane/g) || []).length === 2 && (markup.match(/zt-io-fill/g) || []).length === 2);
+check('v2 page layout: controls then reserved status then panes', markup.indexOf('hm-actions') < markup.indexOf('id="hm-status"') && markup.indexOf('id="hm-status"') < markup.indexOf('hm-panels'));
+for (const id of ['hm-minify', 'hm-beautify', 'hm-clear', 'hm-copy-input', 'hm-copy-output']) check('v2 page layout: retained actual operation ' + id, markup.includes('id="' + id + '"'));
+check('v2 page layout: output stays readonly', /<textarea\b[^>]*id="hm-output"[^>]*\breadonly/.test(markup));
+check('v2 page layout: only input editable', /<textarea\b[^>]*id="hm-input"[^>]*>/.test(markup) && !/<textarea\b[^>]*id="hm-input"[^>]*\breadonly/.test(markup));
+check('v2 page layout: runtime i18n removed', !source.includes('data-i18n') && !source.includes('var STRINGS'));
+check('v2 page layout: client payload excludes tips', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T/.test(frontmatter) && source.includes('define:vars={{ t: CLIENT_T }}'));
+const tips = [...markup.matchAll(/<Toggletip id="(hm-tip-[^"]+)" lang=\{lang\} about=\{([^}]+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 page layout: six bound tips', tips.length, 6);
+eq('v2 page layout: tip IDs', tips.map(m => m[1]).sort().join(','), ['hm-tip-mode','hm-tip-clear','hm-tip-indent','hm-tip-input','hm-tip-output','hm-tip-copy'].sort().join(','));
+const keys = object => Object.keys(object).sort().map(key => typeof object[key] === 'object' ? key + '(' + keys(object[key]).join(',') + ')' : key);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq('v2 page layout: ' + lang + ' recursive keys', JSON.stringify(keys(STRINGS[lang])), JSON.stringify(keys(STRINGS.en)));
+  for (const [key, value] of Object.entries(STRINGS[lang])) if (typeof value === 'string') {
+    check('v2 page layout: ' + lang + '/' + key + ' nonempty', value.trim().length > 0);
+    eq('v2 page layout: ' + lang + '/' + key + ' placeholders', JSON.stringify((value.match(/\{\w+\}/g) || []).sort()), JSON.stringify((STRINGS.en[key].match(/\{\w+\}/g) || []).sort()));
+  }
+  for (const tip of tips) {
+    const value = STRINGS[lang].tips[tip[3]];
+    check('v2 page layout: ' + lang + '/' + tip[3] + ' plain tip', typeof value === 'string' && value.length > 0 && !/[<>\n]/.test(value));
+  }
+  const text = readFileSync(join(root, 'src/content/tools/html-minifier', lang + '.mdx'), 'utf8');
+  const data = require('js-yaml').load(/^---\n([\s\S]*?)\n---/.exec(text)[1]);
+  check('v2 page layout: ' + lang + ' bounded steps', Array.isArray(data.steps) && data.steps.length > 0 && data.steps.length <= 8 && data.steps.every(s => typeof s === 'string' && s.length <= 280) && data.steps.join('').length <= 1200);
+  check('v2 page layout: ' + lang + ' steps before FAQ', text.indexOf('steps:') < text.indexOf('faqItems:'));
+  check('v2 page layout: ' + lang + ' usage removed', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(text));
+  eq('v2 page layout: ' + lang + ' all other MDX bytes protected', createHash('sha256').update(text.replace(/^steps:\n(?:  - .*\n)+/m, '')).digest('hex'), MDX_PROTECTED[lang]);
+}
+const css = source.slice(source.indexOf('<style>'));
+check('v2 page layout: root flex and zero minimum', /\.hm-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+check('v2 page layout: fixed scrollable status', /#hm-status\s*\{[^}]*height: 2.5rem;[^}]*flex: none;[^}]*overflow: auto/.test(css));
+check('v2 page layout: stable copy header height', /\.hm-panel-head\s*\{[^}]*height: 44px;[^}]*min-height: 44px/.test(css) && /\.hm-panel-head \.btn-copy\s*\{[^}]*height: 44px;[^}]*white-space: normal/.test(css));
+check('v2 page layout: text scrolls internally', /\.hm-textarea\s*\{[^}]*overflow: auto/.test(css));
+check('v2 page layout: 860 stack and fixed 144px editors', css.includes('@media (max-width: 860px)') && /height: 144px; min-height: 144px; max-height: 144px; resize: none/.test(css));
+check('v2 page layout: mobile empty result hidden', css.includes('.hm-output-pane:has(#hm-output:placeholder-shown) { display: none; }'));
+check('v2 page layout: 640 action touch size', /@media \(max-width: 640px\)[\s\S]*min-height: 44px/.test(css));
+
+const astroRequire = createRequire(require.resolve('astro/package.json'));
+const compiled = await astroRequire('@astrojs/compiler').transform(source, { filename: join(root, 'src/components/tools/HtmlMinifierTool.astro') });
+check('v2 page layout: compiled mobile placeholder selector', compiled.css.some(s => /@media\s*\(max-width:\s*860px\)/.test(s) && /\.hm-output-pane[^{}]*:has\(#hm-output[^{}]*:placeholder-shown\)[^{]*\{[^}]*display:\s*none/.test(s)));
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
