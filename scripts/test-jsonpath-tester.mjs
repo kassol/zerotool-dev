@@ -422,7 +422,7 @@ function page(lang, sharedFirst = false) {
     constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attrs: {}, className: '', id: '', text: '', disabled: false, events: {}, _value: null }); }
     get value() { return this._value ?? (this.tagName === 'TEXTAREA' ? this.textContent : this.attrs.value || ''); }
     set value(value) { this._value = String(value); }
-    get dataset() { return Object.fromEntries(Object.entries(this.attrs).filter(([k]) => k.startsWith('data-')).map(([k,v]) => [k.slice(5).replace(/-([a-z])/g, (_,c) => c.toUpperCase()),v])); }
+    get dataset() { const el = this; return new Proxy({}, { get(_, key) { return el.attrs['data-'+String(key).replace(/[A-Z]/g,c=>'-'+c.toLowerCase())]; }, set(_, key, value) { el.attrs['data-'+String(key).replace(/[A-Z]/g,c=>'-'+c.toLowerCase())] = String(value); return true; } }); }
     get firstChild() { return this.children[0] || null; }
     get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
     set textContent(value) { this.children.forEach(c => { c.parentNode = null; }); this.children = []; this.text = String(value); }
@@ -530,6 +530,55 @@ for (const lang of ['en','zh','ja','ko']) {
 await settle();eq('no unhandled copy rejections',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
 eq('protected engine byte-exact',[Buffer.byteLength(source.slice(startIndex,endIndex+END_MARK.length)),createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex')],[23622,'b43418c33b1a8b84b34daf2956c4197e6ffe1b35cd0d19c1365dd90c8340d153']);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
+
+// ---------- v2 page layout ----------
+const v2Start = passes;
+const markup = source.replace(/^---\n[\s\S]*?\n---\s*/, '').split('<script')[0];
+const css = source.split('<style>')[1].split('</style>')[0];
+check('v2 direct flex root', /^<div\s+class="jpt-wrap"/.test(markup) && /\.jpt-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+check('v2 registered analyze', /'jsonpath-tester':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
+check('v2 expression/options then stable status/input/full-width results', ['class="jpt-controls"','id="jpt-count"','class="jpt-input-section"','id="jpt-results"'].map(x=>markup.indexOf(x)).every((n,i,a)=>n>=0&&(!i||n>a[i-1])));
+eq('v2 nine example queries and only original Copy action', [...markup.matchAll(/<button\b/g)].length,10);
+check('v2 examples remain a native closed disclosure', /<details id="jpt-examples" class="jpt-examples">\s*<summary>\{L.examples\}<\/summary>/.test(markup));
+check('v2 examples stay bounded when open', /\.jpt-pills\s*\{[^}]*max-height: 8rem;[^}]*overflow: auto/.test(css));
+check('v2 inputs still editable and labeled', ['jpt-json','jpt-expr'].every(id=>new RegExp('<label[^>]*for="'+id+'"').test(markup))&&!/<(?:textarea|input)[^>]*(?:readonly|disabled)/.test(markup));
+check('v2 status has reserved height and scrolls long errors', /id="jpt-count"[^>]*role="status"[^>]*aria-live="polite"/.test(markup)&&/\.jpt-count\s*\{[^}]*flex: none;[^}]*height: 3rem;[^}]*overflow: auto/.test(css));
+check('v2 populated input is 180px and internally scrolls', /\.jpt-textarea\s*\{[^}]*resize: none;[^}]*height: 180px;[^}]*min-height: 0;[^}]*overflow: auto/.test(css));
+check('v2 desktop empty input fills available height', /@media \(min-width: 861px\)[\s\S]*\.jpt-wrap\[data-empty="true"\] \.jpt-input-section\s*\{ flex: 1 1 0; \}/.test(css)&&/\.jpt-wrap\[data-empty="true"\] \.jpt-textarea\s*\{ flex: 1 1 0; height: 0; \}/.test(css));
+check('v2 empty hint is content-height', /\.jpt-wrap\[data-empty="true"\] \.jpt-results\s*\{ flex: none; \}/.test(css)&&markup.includes('{L.emptyResult}'));
+for(const selector of ['.jpt-results','.jpt-pre']) {
+  const rule=css.match(new RegExp('^  '+selector.replaceAll('.','\\.')+'\\s*\\{([^}]+)\\}', 'm'))?.[1]||'';
+  check('v2 zero-basis bounded '+selector,/flex: 1 1 0/.test(rule)&&/min-width: 0/.test(rule)&&/min-height: 0/.test(rule));
+}
+check('v2 result keyboard scrolling and accessible name', /id="jpt-pre"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-label=\{L.results\}/.test(markup)&&/\.jpt-pre\s*\{[^}]*overflow: auto/.test(css));
+check('v2 <=860 input/result sizes and empty hiding', /@media \(max-width: 860px\)[\s\S]*\.jpt-textarea\s*\{ height: 140px; \}/.test(css)&&/\.jpt-results\s*\{ flex: none; height: 24rem; \}/.test(css)&&/\.jpt-wrap\[data-empty="true"\] \.jpt-results\s*\{ display: none; \}/.test(css));
+check('v2 <=640 controls and results stay bounded', /@media \(max-width: 640px\)[\s\S]*min-height: 44px/.test(css)&&/\.jpt-results\s*\{ height: 22rem; \}/.test(css));
+const tips=[...markup.matchAll(/<Toggletip id="(jpt-tip-[^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)].map(m=>[m[1],m[2],m[3]]);
+eq('v2 five tips tied to their controls',tips.sort(),[['jpt-tip-input','jsonInput','input'],['jpt-tip-expression','expression','expression'],['jpt-tip-examples','examples','examples'],['jpt-tip-results','results','results'],['jpt-tip-copy','copy','copy']].sort());
+check('v2 tips stay in build-time HTML and out of client dataset',source.includes('const { tips: TIPS } = L;')&&!/TIPS|labels|\.tips/.test(inline)&&!/data-[\w-]+=\{[^}]*tips/i.test(markup));
+const MDX_HASHES = {"en": "43921b62db2ce7b48dcc57727ab5d0ab1c69c57654e1ec1fde5b96344bd038a1", "zh": "101a9e601584fbe078bd9cfa7d0f6e8d411a3abb7e183d28e25732f800e3e5bb", "ja": "3027cc69ce0fd662627f5ce70f521e36b078d79c47b75f08ea6aa9e44fc03d24", "ko": "1b4b34019f9017d9842c995e6b4dad39d7e7c61a4f6af7257b8fb1b8cb424b5e"};
+function leaves(value,path=''){return Object.entries(value).flatMap(([key,item])=>typeof item==='object'?leaves(item,path+key+'.'):[[path+key,item]]);}
+const enLeaves=Object.fromEntries(leaves(labels.en));
+for(const lang of ['en','zh','ja','ko']) {
+  const local=Object.fromEntries(leaves(labels[lang]));eq(lang+' v2 recursive locale keys',Object.keys(local).sort(),Object.keys(enLeaves).sort());
+  for(const [key,value]of Object.entries(local)) {check(lang+' v2 nonempty '+key,typeof value==='string'&&!!value.trim());eq(lang+' v2 placeholders '+key,[...value.matchAll(/\{[^}]+\}/g)].map(m=>m[0]).sort(),[...enLeaves[key].matchAll(/\{[^}]+\}/g)].map(m=>m[0]).sort());}
+  const mdx=readFileSync(join(root,'src/content/tools/jsonpath-tester',lang+'.mdx'),'utf8');
+  const steps=(mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1]||'').trim().split('\n').filter(Boolean).map(x=>JSON.parse(x.trim().slice(2)));
+  eq(lang+' v2 five steps',steps.length,5);check(lang+' v2 step lengths and plain text',steps.every(x=>[...x].length<=280&&!/[<>]|\]\(|\*\*|`/.test(x))&&steps.reduce((n,x)=>n+[...x].length,0)<=1200);
+  check(lang+' v2 steps match actual controls',['jsonInput','expression','examples','results','copy'].every(key=>steps.join(' ').includes(labels[lang][key])));
+  check(lang+' v2 usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
+  eq(lang+' v2 preserves all nonusage SEO/FAQ/limits/examples',createHash('sha256').update(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m,'')).digest('hex'),MDX_HASHES[lang]);
+  const h=page(lang);eq(lang+' v2 initial example produces results',h.wrap.dataset.empty,'false');
+  h.key('L','metaKey','jpt-pre');eq(lang+' v2 keyboard clear restores empty/focus',[h.wrap.dataset.empty,h.document.activeElement===h.get('jpt-json')],['true',true]);
+  h.query(1,'');eq(lang+' v2 empty expression hides empty result',h.wrap.dataset.empty,'true');
+  h.input('jpt-json','{');eq(lang+' v2 JSON error visible in status and results',[h.wrap.dataset.empty,h.get('jpt-count').textContent],[ 'false',h.get('jpt-code').textContent]);
+  h.query(1,'$.');eq(lang+' v2 query error visible in fixed status',h.get('jpt-count').textContent,h.get('jpt-code').textContent);
+  h.query('kept');h.wrap.querySelectorAll('.jpt-pill')[0].click();eq(lang+' v2 example changes expression only',[h.get('jpt-json').value,h.get('jpt-expr').value],['{"value":"kept"}','$']);
+  const long=Array.from({length:600},(_,i)=>({id:i,text:'value '+i}));h.input('jpt-json',JSON.stringify(long));h.input('jpt-expr','$[*]');
+  eq(lang+' v2 long result retains every byte',h.get('jpt-code').textContent,JSON.stringify(long,null,2));h.get('jpt-copy').click();eq(lang+' v2 long copy retains every byte',h.copies.at(-1).text,JSON.stringify(long,null,2));h.copies.at(-1).resolve();await settle();
+  h.key();eq(lang+' v2 clear keeps empty state',h.wrap.dataset.empty,'true');
+}
+console.log('v2 page layout: '+(passes-v2Start)+' passed, '+failures+' total failures');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
