@@ -10,10 +10,10 @@ const { lang = 'en' } = Astro.props;
 
 // strings:start
 const STRINGS = {
-  en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: 'Converted TOML to JSON.', msgJsonToToml: 'Converted JSON to TOML.', msgInvalidToml: 'Invalid TOML', msgInvalidJson: 'Invalid JSON', msgError: 'Error' },
-  zh: { copy: '复制', copied: '已复制！', clear: '清除', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: '已将 TOML 转换为 JSON。', msgJsonToToml: '已将 JSON 转换为 TOML。', msgInvalidToml: '无效 TOML', msgInvalidJson: '无效 JSON', msgError: '错误' },
-  ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: 'TOML を JSON に変換しました。', msgJsonToToml: 'JSON を TOML に変換しました。', msgInvalidToml: '無効な TOML', msgInvalidJson: '無効な JSON', msgError: 'エラー' },
-  ko: { copy: '복사', copied: '복사됨!', clear: '지우기', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: 'TOML을 JSON으로 변환했습니다.', msgJsonToToml: 'JSON을 TOML로 변환했습니다.', msgInvalidToml: '유효하지 않은 TOML', msgInvalidJson: '유효하지 않은 JSON', msgError: '오류' },
+  en: { copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Try again.', clear: 'Clear', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: 'Converted TOML to JSON.', msgJsonToToml: 'Converted JSON to TOML.', msgInvalidToml: 'Invalid TOML', msgInvalidJson: 'Invalid JSON', msgError: 'Error' },
+  zh: { copy: '复制', copied: '已复制！', copyFailed: '复制失败，请重试。', clear: '清除', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: '已将 TOML 转换为 JSON。', msgJsonToToml: '已将 JSON 转换为 TOML。', msgInvalidToml: '无效 TOML', msgInvalidJson: '无效 JSON', msgError: '错误' },
+  ja: { copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーできませんでした。もう一度お試しください。', clear: 'クリア', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: 'TOML を JSON に変換しました。', msgJsonToToml: 'JSON を TOML に変換しました。', msgInvalidToml: '無効な TOML', msgInvalidJson: '無効な JSON', msgError: 'エラー' },
+  ko: { copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 다시 시도하세요.', clear: '지우기', tomlToJson: 'TOML \u2192 JSON', jsonToToml: 'JSON \u2192 TOML', msgTomlToJson: 'TOML을 JSON으로 변환했습니다.', msgJsonToToml: 'JSON을 TOML로 변환했습니다.', msgInvalidToml: '유효하지 않은 TOML', msgInvalidJson: '유효하지 않은 JSON', msgError: '오류' },
 };
 // strings:end
 const T = STRINGS[lang] || STRINGS.en;
@@ -95,19 +95,43 @@ const T = STRINGS[lang] || STRINGS.en;
     }
 
     function setStatus(msg: string, isError: boolean) {
+      copyErrorOwner = null;
       statusEl.textContent = msg;
       statusEl.className = 'tj-status ' + (isError ? 'error' : 'success');
     }
 
     function clearStatus() {
+      copyErrorOwner = null;
       statusEl.textContent = '';
       statusEl.className = 'tj-status';
     }
 
+    let copyRevision = 0;
+    let copyErrorOwner: HTMLButtonElement | null = null;
+    const copyStates = [copyTomlBtn, copyJsonBtn].map(btn => ({ btn, request: 0, timer: null as ReturnType<typeof setTimeout> | null }));
+
+    function invalidateCopies() {
+      copyRevision++;
+      copyErrorOwner = null;
+      copyStates.forEach(state => {
+        if (state.timer) clearTimeout(state.timer);
+        state.timer = null;
+        state.btn.textContent = S.copy;
+      });
+    }
+
+    function cancelQueued() {
+      if (_tjTomlTimer) clearTimeout(_tjTomlTimer);
+      if (_tjJsonTimer) clearTimeout(_tjJsonTimer);
+      _tjTomlTimer = _tjJsonTimer = null;
+    }
+
     /* Runs one direction; a failed conversion clears the output so a stale result cannot be copied. */
     function run(fromEl: HTMLTextAreaElement, toEl: HTMLTextAreaElement, convert: (raw: string) => Result, okMsg: string): boolean {
+      cancelQueued();
+      invalidateCopies();
       const raw = fromEl.value.trim();
-      if (!raw) { clearStatus(); syncCopy(); return false; }
+      if (!raw) { toEl.value = ''; clearStatus(); syncCopy(); return false; }
       const r = convert(raw);
       if (r.ok) { toEl.value = r.text; setStatus(okMsg, false); }
       else { toEl.value = ''; setStatus(r.message, true); }
@@ -120,15 +144,17 @@ const T = STRINGS[lang] || STRINGS.en;
     /* ── Real-time conversion (debounced 300ms) ── */
     let _tjTomlTimer: ReturnType<typeof setTimeout> | null = null;
     tomlEl.addEventListener('input', () => {
+      cancelQueued();
+      invalidateCopies();
       syncCopy();
-      if (_tjTomlTimer) clearTimeout(_tjTomlTimer);
       _tjTomlTimer = setTimeout(runToml, 300);
     });
 
     let _tjJsonTimer: ReturnType<typeof setTimeout> | null = null;
     jsonEl.addEventListener('input', () => {
+      cancelQueued();
+      invalidateCopies();
       syncCopy();
-      if (_tjJsonTimer) clearTimeout(_tjJsonTimer);
       _tjJsonTimer = setTimeout(runJson, 300);
     });
 
@@ -140,31 +166,70 @@ const T = STRINGS[lang] || STRINGS.en;
       if (runJson()) (window as any).trackTool && (window as any).trackTool('toml_json', 'json_to_toml');
     });
 
-    document.getElementById('tj-clear')!.addEventListener('click', () => {
+    function clearAll() {
+      cancelQueued();
+      invalidateCopies();
       tomlEl.value = '';
       jsonEl.value = '';
       clearStatus();
       syncCopy();
-    });
+      tomlEl.focus();
+    }
+    document.getElementById('tj-clear')!.addEventListener('click', clearAll);
 
     /* ── Copy buttons ── */
     function copyFrom(el: HTMLTextAreaElement, btn: HTMLButtonElement) {
       if (!el.value || btn.disabled) return;
-      navigator.clipboard.writeText(el.value).then(() => {
+      const state = copyStates[btn === copyTomlBtn ? 0 : 1];
+      const request = ++state.request;
+      const revision = copyRevision;
+      const text = el.value;
+      if (state.timer) clearTimeout(state.timer);
+      state.timer = null;
+      btn.textContent = S.copy;
+      const current = () => revision === copyRevision && request === state.request && el.value === text && !btn.disabled;
+      const failed = () => {
+        if (!current()) return;
+        setStatus(S.copyFailed, true);
+        copyErrorOwner = btn;
+      };
+      const done = () => {
+        if (!current()) return;
+        if (copyErrorOwner === btn && statusEl.textContent === S.copyFailed) clearStatus();
         btn.textContent = S.copied;
-        setTimeout(() => { btn.textContent = S.copy; }, 1500);
-      });
+        state.timer = setTimeout(() => { if (current()) btn.textContent = S.copy; }, 1500);
+      };
+      try {
+        if (!navigator.clipboard?.writeText) { failed(); return; }
+        navigator.clipboard.writeText(text).then(done, failed);
+      } catch { failed(); }
     }
     copyTomlBtn.addEventListener('click', () => copyFrom(tomlEl, copyTomlBtn));
     copyJsonBtn.addEventListener('click', () => copyFrom(jsonEl, copyJsonBtn));
 
     /* ── Keyboard shortcut: Ctrl/Cmd+Enter ── */
     tomlEl.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) document.getElementById('tj-to-json')!.click();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        document.getElementById('tj-to-json')!.click();
+      }
     });
     jsonEl.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) document.getElementById('tj-to-toml')!.click();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        document.getElementById('tj-to-toml')!.click();
+      }
     });
+
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && tjWrap.contains(document.activeElement)) {
+        e.preventDefault();
+        clearAll();
+      }
+    });
+
     /* ── Page load ── Astro bundles this script as a module, which runs only after the page is
        parsed. Text typed (or restored by the browser) before then had no input listener, so
        convert it once now: the focused panel first, else the TOML panel, else the JSON panel. */

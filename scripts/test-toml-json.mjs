@@ -61,5 +61,210 @@ for (const [lang, text] of Object.entries(pages)) {
   eq(lang + ' page example has no inf → null', /"ratio": null/.test(text), false);
 }
 
+
+/* ── real page lifecycle and shared shortcuts ── */
+{
+  const { createRequire } = await import('node:module');
+  const { createHash } = await import('node:crypto');
+  const { default: vm } = await import('node:vm');
+  const ROOT = root, FILE = 'src/components/tools/TomlJsonTool.astro', SOURCE_FILE = join(ROOT, FILE);
+const requireRoot = createRequire(join(ROOT, 'package.json'));
+const requirePage = createRequire(join(ROOT, FILE));
+const ts = requireRoot('typescript');
+const { parseFragment } = requireRoot('parse5');
+const source = comp;
+const layout = readFileSync(join(ROOT, 'src/layouts/ToolLayout.astro'), 'utf8');
+const labelsBlock = source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
+if (!labelsBlock) throw Error('Production STRINGS block missing');
+const STRINGS = vm.runInNewContext(labelsBlock[1] + '\n;STRINGS');
+const modules = [...source.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
+if (modules.length !== 1) throw Error('Expected exactly one complete production module');
+const script = modules[0][1];
+const js = ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Real shared keyboard listener missing');
+const hash = value => createHash('sha256').update(value).digest('hex');
+const checks = [];
+function check(name, actual, expected, regression = false) {
+  const passed = JSON.stringify(actual) === JSON.stringify(expected);
+  checks.push({ name, passed, regression, actual, expected });
+  console.log((passed ? 'PASS ' : 'FAIL ') + name + (passed ? '' : '\n actual: ' + JSON.stringify(actual) + '\n expected: ' + JSON.stringify(expected)));
+}
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const unhandled = [];
+const onUnhandled = error => unhandled.push(String(error));
+process.on('unhandledRejection', onUnhandled);
+const descendants = e => e.children.flatMap(c => [c, ...descendants(c)]);
+function page(lang = 'en', shellFirst = false, preset = {}, active = null) {
+  let document, now = 0, nextTimer = 0;
+  const timers = new Map(), copies = [], clears = [], tracks = [];
+  function simple(e, selector) {
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const rest = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[\w-]+/.exec(rest)?.[0], id = /#([\w-]+)/.exec(rest)?.[1];
+    return (!tag || e.tagName === tag.toUpperCase()) && (!id || e.id === id)
+      && [...rest.matchAll(/\.([\w-]+)/g)].every(m => e.classList.contains(m[1]))
+      && attrs.every(a => a[2] === undefined ? e.getAttribute(a[1]) !== null : e.getAttribute(a[1]) === a[2]);
+  }
+  function matches(e, selector) {
+    return selector.split(',').some(part => {
+      const pieces = part.trim().split(/\s+(?![^\[]*\])/);
+      if (!simple(e, pieces.pop())) return false;
+      let parent = e.parentNode;
+      while (pieces.length) { while (parent && !simple(parent, pieces.at(-1))) parent = parent.parentNode; if (!parent) return false; pieces.pop(); parent = parent.parentNode; }
+      return true;
+    });
+  }
+  class Element {
+    constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.parentNode = null; this.attributes = {}; this.dataset = {}; this.listeners = {}; this.value = ''; this.textContent = ''; this.className = ''; this.id = ''; this.disabled = false; this.hidden = false; }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(...cs) { el.className = [...new Set([...el.className.split(/\s+/).filter(Boolean), ...cs])].join(' '); }, remove(...cs) { el.className = el.className.split(/\s+/).filter(c => !cs.includes(c)).join(' '); } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'class') this.className = String(v); if (k === 'id') this.id = String(v); if (k === 'disabled') this.disabled = true; if (k === 'hidden') this.hidden = true; if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(v); }
+    getAttribute(k) { return Object.hasOwn(this.attributes, k) ? this.attributes[k] : null; }
+    removeAttribute(k) { delete this.attributes[k]; if (k === 'disabled') this.disabled = false; if (k === 'hidden') this.hidden = false; }
+    appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+    contains(c) { return c === this || descendants(this).includes(c); }
+    querySelectorAll(s) { return descendants(this).filter(e => matches(e, s)); }
+    querySelector(s) { return this.querySelectorAll(s)[0] || null; }
+    closest(s) { for (let e = this; e; e = e.parentNode) if (matches(e, s)) return e; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    focus() { document.activeElement = this; }
+    dispatch(type, init = {}) {
+      const e = { type, target: this, currentTarget: this, key: '', ctrlKey: false, metaKey: false, defaultPrevented: false, stopped: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...init };
+      for (let node = this; node; node = node.parentNode) { e.currentTarget = node; for (const fn of node.listeners[type] || []) fn.call(node, e); if (e.stopped) break; }
+      return e;
+    }
+    click() { if (!this.disabled) { this.focus(); return this.dispatch('click'); } }
+  }
+  document = new Element('#document'); document.documentElement = { lang };
+  document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
+  const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
+  const esc = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
+    .replace(/data-strings=\{JSON\.stringify\(T\)\}/g, 'data-strings="' + esc(JSON.stringify(STRINGS[lang])) + '"')
+    .replace(/data-lang=\{lang\}/g, 'data-lang="' + lang + '"').replace(/\{T\.(\w+)\}/g, (_, k) => esc(STRINGS[lang][k]));
+  function append(ast, parent) { for (const node of ast.childNodes || []) { if (!node.tagName) { if (node.nodeName === '#text') parent.textContent += node.value; continue; } const e = parent.appendChild(new Element(node.tagName)); for (const a of node.attrs) e.setAttribute(a.name, a.value); append(node, e); if (e.tagName === 'TEXTAREA') e.value = e.textContent; } }
+  append(parseFragment(markup), widget);
+  document.getElementById = id => descendants(document).find(e => e.id === id) || null;
+  const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing production ID ' + id); return e; };
+  for (const [id, value] of Object.entries(preset)) get(id).value = value;
+  if (active) get(active).focus();
+  const context = { document, console, exports: {}, module: { exports: {} },
+    require: name => requirePage(name), _slug: 'toml-json',
+    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); copies.push({ value, resolve, reject }); return promise; } } },
+    setTimeout(fn, ms = 0) { const id = ++nextTimer; timers.set(id, { fn, ms, due: now + ms }); return id; }, clearTimeout(id) { timers.delete(id); },
+    ztPersist: { clear(slug) { clears.push(slug); } }, trackTool(...args) { tracks.push(args); } };
+  context.window = context; vm.createContext(context);
+  const installShared = () => vm.runInContext(shortcut, context, { filename: 'ToolLayout.shortcuts.js' });
+  if (shellFirst) installShared(); vm.runInContext(js, context, { filename: FILE }); if (!shellFirst) installShared();
+  function advance(ms) { const end = now + ms; let executions = 0; for (;;) { const next = [...timers].filter(([, t]) => t.due <= end).sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0]; if (!next) break; if (++executions > 1000) throw Error('Timer runaway'); now = next[1].due; timers.delete(next[0]); next[1].fn(); } now = end; }
+  return { get, document, context, copies, clears, tracks, timers, advance,
+    input(id, value) { get(id).focus(); get(id).value = value; get(id).dispatch('input'); },
+    key(id, key = 'l', modifier = 'ctrlKey') { (id ? get(id) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
+    copy(id) { get(id).click(); return copies.at(-1); },
+    snapshot() { return { toml: get('tj-toml').value, json: get('tj-json').value, status: get('tj-status').textContent, statusClass: get('tj-status').className, copyToml: get('tj-copy-toml').textContent, copyJson: get('tj-copy-json').textContent, disabledToml: get('tj-copy-toml').disabled, disabledJson: get('tj-copy-json').disabled }; } };
+}
+const TOML = 'name = "demo"\nport = 8080';
+const JSON_TEXT = '{"name":"demo","port":8080}';
+const JSON_PRETTY = '{\n  "name": "demo",\n  "port": 8080\n}';
+const TOML_OUT = TOML + '\n';
+const golden = p => { p.input('tj-toml', TOML); p.advance(300); };
+const algorithm = script.slice(script.indexOf('    type Result'), script.indexOf('    function syncCopy'));
+check('real smol-toml dependency version', JSON.parse(readFileSync(join(ROOT, 'node_modules/smol-toml/package.json'), 'utf8')).version, '1.7.1');
+check('protected conversion functions SHA256', hash(algorithm), '806960badfe15aae41c2fc3b11c2e4d062e575a4273700c51b001880b0d0a98f');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = STRINGS[lang];
+  const p = page(lang); check(lang + ' empty mount has both Copy disabled', [p.get('tj-copy-toml').disabled, p.get('tj-copy-json').disabled], [true, true]);
+  golden(p); check(lang + ' actual input TOML→JSON literal', p.get('tj-json').value, JSON_PRETTY);
+  p.input('tj-json', JSON_TEXT); p.advance(300); check(lang + ' actual input JSON→TOML literal', p.get('tj-toml').value, TOML_OUT);
+  p.get('tj-toml').value = 'a = 1'; p.get('tj-to-json').click(); check(lang + ' retained TOML button', p.get('tj-json').value, '{\n  "a": 1\n}');
+  p.get('tj-json').value = '{"b":2}'; p.get('tj-to-toml').click(); check(lang + ' retained JSON button', p.get('tj-toml').value, 'b = 2\n');
+  for (const shellFirst of [false, true]) for (const side of ['toml', 'json']) {
+    const k = page(lang, shellFirst), tag = lang + '/' + shellFirst + '/' + side;
+    golden(k); k.tracks.length = 0;
+    k.get('tj-' + side).value = side === 'toml' ? 'c = 3' : '{"d":4}';
+    k.key('tj-' + side, 'Enter', side === 'toml' ? 'ctrlKey' : 'metaKey');
+    check(tag + ' bubbling Enter runs only requested direction', k.tracks, [['toml_json', side === 'toml' ? 'toml_to_json' : 'json_to_toml']], true);
+    check(tag + ' bubbling Enter preserves source and requested output/status', [k.get('tj-toml').value, k.get('tj-json').value, k.get('tj-status').textContent], side === 'toml' ? ['c = 3', '{\n  "c": 3\n}', S.msgTomlToJson] : ['d = 4\n', '{"d":4}', S.msgJsonToToml], side === 'json');
+  }
+  const restored = page(lang, false, { 'tj-toml': 'a = 1', 'tj-json': '{"b":2}' }, 'tj-json');
+  check(lang + ' early input uses focused JSON and leaves no timer', [restored.get('tj-toml').value, restored.get('tj-json').value, restored.timers.size], ['b = 2\n', '{"b":2}', 0]);
+  p.input('tj-toml', 'x = inf'); p.advance(300); check(lang + ' real fidelity rejects infinity and drops result', [p.get('tj-json').value, p.get('tj-copy-json').disabled, p.get('tj-status').textContent.includes('/x'), p.get('tj-status').classList.contains('error')], ['', true, true, true]);
+  p.input('tj-toml', 'big = 9223372036854775807'); p.advance(300); check(lang + ' real TOML integer precision rejection remains', [p.get('tj-json').value, p.get('tj-copy-json').disabled, p.get('tj-status').textContent.includes('losslessly')], ['', true, true]);
+  golden(p); check(lang + ' valid recovery after limits', p.get('tj-json').value, JSON_PRETTY);
+  for (const side of ['toml', 'json']) {
+    const empty = page(lang); golden(empty);
+    check(lang + '/' + side + ' empty-input case starts with valid result', empty.get('tj-json').value, JSON_PRETTY);
+    empty.input('tj-' + side, ''); empty.advance(300);
+    check(lang + '/' + side + ' empty input drops peer result and Copy state', [empty.get('tj-toml').value, empty.get('tj-json').value, empty.get('tj-status').textContent, empty.get('tj-copy-toml').disabled, empty.get('tj-copy-json').disabled], ['', '', '', true, true], true);
+    empty.input('tj-' + side, side === 'toml' ? TOML : JSON_TEXT); empty.advance(300);
+    check(lang + '/' + side + ' valid input recovers after empty', empty.get(side === 'toml' ? 'tj-json' : 'tj-toml').value, side === 'toml' ? JSON_PRETTY : TOML_OUT);
+  }
+  for (const last of ['json', 'toml']) {
+    const q = page(lang), firstID = last === 'json' ? 'tj-toml' : 'tj-json', lastID = 'tj-' + last;
+    q.input(firstID, last === 'json' ? 'first = 1' : '{"first":1}'); q.advance(50); q.input(lastID, last === 'json' ? '{"last":2}' : 'last = 2'); q.advance(300);
+    check(lang + ' last edit wins ' + last, [q.get('tj-toml').value, q.get('tj-json').value], last === 'json' ? ['last = 2\n', '{"last":2}'] : ['last = 2', '{\n  "last": 2\n}'], true);
+  }
+  const clear = page(lang); golden(clear); clear.input('tj-json', '{"queued":1}'); clear.get('tj-clear').click();
+  check(lang + ' Clear immediately clears fields/status/buttons', [clear.get('tj-toml').value, clear.get('tj-json').value, clear.get('tj-status').textContent, clear.get('tj-copy-toml').disabled, clear.get('tj-copy-json').disabled], ['', '', '', true, true]);
+  check(lang + ' Clear cancels queued conversion', [...clear.timers.values()].filter(t => t.ms === 300).length, 0, true);
+  const cleared = clear.snapshot(); clear.advance(2000); check(lang + ' Clear remains clear after clock', clear.snapshot(), cleared);
+  for (const shellFirst of [false, true]) for (const [focus, modifier] of [['tj-toml', 'ctrlKey'], ['tj-copy-json', 'metaKey']]) {
+    const q = page(lang, shellFirst); golden(q); q.input('tj-json', '{"queued":1}'); q.key(focus, modifier === 'metaKey' ? 'L' : 'l', modifier);
+    const tag = lang + '/' + shellFirst + '/' + focus;
+    check(tag + ' real shared key clears both textareas once', [q.get('tj-toml').value, q.get('tj-json').value, q.clears], ['', '', ['toml-json']]);
+    check(tag + ' CtrlL clears current status and Copy state immediately', [q.get('tj-status').textContent, q.get('tj-status').className, q.get('tj-copy-toml').disabled, q.get('tj-copy-json').disabled], ['', 'tj-status', true, true], true);
+    check(tag + ' CtrlL cancels queued conversion', [...q.timers.values()].filter(t => t.ms === 300).length, 0, true);
+    q.advance(2000); check(tag + ' no delayed conversion restores content', [q.get('tj-toml').value, q.get('tj-json').value], ['', '']);
+    golden(q); const beforeOutside = q.snapshot(); q.key(null); check(tag + ' outside shortcut unchanged', q.snapshot(), beforeOutside);
+  }
+  for (const side of ['toml', 'json']) {
+    const id = 'tj-copy-' + side, field = 'tj-' + side, q = page(lang); golden(q);
+    const missing = page(lang); golden(missing); const savedClipboard = missing.context.navigator.clipboard;
+    delete missing.context.navigator.clipboard; let thrown = '';
+    try { missing.copy(id); } catch (e) { thrown = String(e.message || e); }
+    check(lang + '/' + side + ' unavailable Clipboard API is handled with localized failure', { thrown, localizedError: missing.get('tj-status').classList.contains('error') && typeof S.copyFailed === 'string' && missing.get('tj-status').textContent === S.copyFailed }, { thrown: '', localizedError: true }, true);
+    check(lang + '/' + side + ' unavailable Clipboard API preserves result bytes', [missing.get('tj-toml').value, missing.get('tj-json').value], [TOML, JSON_PRETTY]);
+    missing.context.navigator.clipboard = savedClipboard; const apiRetry = missing.copy(id);
+    check(lang + '/' + side + ' retry after API restoration copies same bytes', apiRetry.value, missing.get(field).value);
+    apiRetry.resolve(); await settle(); check(lang + '/' + side + ' retry after API restoration succeeds', missing.get(id).textContent, S.copied);
+    const good = q.copy(id); check(lang + '/' + side + ' copy preserves complete bytes', good.value, q.get(field).value); good.resolve(); await settle(); check(lang + '/' + side + ' current copy success', q.get(id).textContent, S.copied); q.advance(1500); check(lang + '/' + side + ' success timer expires normally', q.get(id).textContent, S.copy);
+    const beforeStatus = q.get('tj-status').textContent, rejectedBefore = unhandled.length, bad = q.copy(id); bad.reject(Error('controlled current clipboard rejection')); await settle();
+    check(lang + '/' + side + ' current rejection handled', unhandled.length - rejectedBefore, 0, true);
+    check(lang + '/' + side + ' current rejection visible in page language', q.get('tj-status').classList.contains('error') && q.get('tj-status').textContent !== beforeStatus && typeof S.copyFailed === 'string' && q.get('tj-status').textContent === S.copyFailed, true, true);
+    const retry = q.copy(id); check(lang + '/' + side + ' same-result retry retains bytes', retry.value, good.value); retry.resolve(); await settle(); check(lang + '/' + side + ' same-result retry succeeds', q.get(id).textContent, S.copied); check(lang + '/' + side + ' retry clears owned copy error', q.get('tj-status').classList.contains('error'), false, true);
+    for (const action of ['input', 'result', 'clear', 'shortcut']) for (const outcome of ['resolve', 'reject']) {
+      const r = page(lang); golden(r); const job = r.copy(id), beforeUnhandled = unhandled.length;
+      if (action === 'clear') r.get('tj-clear').click(); else if (action === 'shortcut') r.key(id); else { r.input(field, side === 'toml' ? 'new = 3' : '{"new":3}'); if (action === 'result') r.advance(300); }
+      const current = r.snapshot(); job[outcome](outcome === 'reject' ? Error('controlled stale clipboard rejection') : undefined); await settle();
+      check(lang + '/' + side + ' stale feedback after ' + action + '/' + outcome, r.snapshot(), current, true);
+      check(lang + '/' + side + ' stale rejection handled after ' + action + '/' + outcome, unhandled.length - beforeUnhandled, 0, true);
+    }
+    const t = page(lang); golden(t); t.copy(id).resolve(); await settle(); t.advance(1000); t.copy(id).resolve(); await settle(); t.advance(500);
+    check(lang + '/' + side + ' old timer cannot reset newer success', t.get(id).textContent, S.copied, true); t.advance(1000); check(lang + '/' + side + ' latest timer still expires', t.get(id).textContent, S.copy);
+    for (const shellFirst of [false, true]) for (const outcome of ['reject', 'resolve']) {
+      const overlap = page(lang, shellFirst), tag = lang + '/' + side + '/' + shellFirst + '/same-value/' + outcome;
+      golden(overlap);
+      const before = overlap.snapshot(), copied = { ...before, [side === 'toml' ? 'copyToml' : 'copyJson']: S.copied };
+      const first = overlap.copy(id), latest = overlap.copy(id), rejectedBefore = unhandled.length;
+      check(tag + ' two pending requests capture the complete same value', { count: overlap.copies.length, independent: first !== latest, bytes: [first.value, latest.value] }, { count: 2, independent: true, bytes: [overlap.get(field).value, overlap.get(field).value] });
+      latest.resolve(); await settle();
+      check(tag + ' latest completion preserves content and status', overlap.snapshot(), copied);
+      overlap.advance(500); first[outcome](outcome === 'reject' ? Error('controlled older same-value clipboard rejection') : undefined); await settle();
+      check(tag + ' older completion cannot overwrite latest feedback or content', overlap.snapshot(), copied, true);
+      check(tag + ' older completion leaves no unhandled rejection', unhandled.length - rejectedBefore, 0, true);
+      overlap.advance(500); overlap.copy(id).resolve(); await settle();
+      check(tag + ' next same-value copy succeeds', overlap.snapshot(), copied, true);
+      overlap.advance(500);
+      check(tag + ' superseded completion timer cannot reset next success', overlap.snapshot(), copied, true);
+      overlap.advance(1000);
+      check(tag + ' next success expires on its own deadline', overlap.snapshot(), before, true);
+    }
+  }
+}
+await settle(); process.removeListener('unhandledRejection', onUnhandled);
+check('component source unchanged during test', hash(readFileSync(SOURCE_FILE, 'utf8')), hash(source));
+  passes += checks.filter(c => c.passed).length; failures += checks.filter(c => !c.passed).length;
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
