@@ -23,6 +23,10 @@ import { z } from 'zod';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 
+import { createRequire } from 'node:module';
+import { transform as esbuildTransform } from 'esbuild';
+import { compile as compileMdx } from '@mdx-js/mdx';
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToZodTool.astro'), 'utf8');
 
@@ -97,7 +101,7 @@ parsesOwnSample('nested mixed array in merged objects', [{ v: [{ a: 1 }, 'x'] },
 
 // ---------- real complete page lifecycle; controlled DOM, clipboard and clock boundaries ----------
 const pageScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
-const pageLabels = vm.runInNewContext('(' + source.match(/const labels = (\{[\s\S]*?\n\});/)[1] + ')');
+const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -152,7 +156,11 @@ function page(lang, shellFirst = false) {
     focus() { doc.activeElement = this; }
   }
   const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
+  const tipAbout = JSON.parse(readFileSync(join(root, 'src/i18n/' + lang + '.json'), 'utf8'))['tool.tipAbout'];
+  // Render the shared component's actual button/panel boundary; browser QA checks popover geometry.
   const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '" aria-label="' + escape(tipAbout.replace('{name}', pageLabels[lang][about])) + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -267,6 +275,81 @@ try {
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
+
+
+// ---------- v2 page layout ----------
+const layoutMarkup = source.split('\n---')[1].split('<script')[0];
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const hash = value => createHash('sha256').update(value).digest('hex');
+check('v2 registered as convert', /'json-to-zod':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 direct flex root with zero minimum size', /^\s*<div\s+class="jtz-wrap"/.test(layoutMarkup) && /\.jtz-wrap\s*\{[^}]*display:\s*flex;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(css));
+check('v2 controls/status precede panels', layoutMarkup.indexOf('class="jtz-actions"') < layoutMarkup.indexOf('id="jtz-status"') && layoutMarkup.indexOf('id="jtz-status"') < layoutMarkup.indexOf('zt-io"'));
+eq('v2 two shared panels', (layoutMarkup.match(/\bzt-io-pane\b/g) || []).length, 2);
+check('v2 input uses shared fill', /id="jtz-input"\s+class="zt-io-fill"/.test(layoutMarkup));
+check('v2 output is a labelled keyboard scroller', /id="jtz-output"[^>]*tabindex="0"[^>]*aria-labelledby="jtz-output-label"/.test(layoutMarkup) && /\.jtz-output\s*\{[^}]*overflow:\s*auto;/.test(css) && /\.jtz-output:focus-visible\s*\{[^}]*outline:/.test(css));
+check('v2 status space is reserved', /\.jtz-status\s*\{[^}]*min-height:\s*2\.4rem;/.test(css));
+check('v2 long status cannot grow the panels', /\.jtz-status\s*\{[^}]*height:\s*2\.4rem;[^}]*overflow:\s*auto;/.test(css));
+check('v2 mobile input is bounded', /@media \(max-width: 860px\)/.test(css) && /height:\s*144px;\s*min-height:\s*144px;/.test(css));
+check('v2 mobile output has fixed height', /\.jtz-output\s*\{[^}]*height:\s*22rem;/.test(css));
+check('v2 phone controls remain reachable', /@media \(max-width: 640px\)/.test(css) && /min-height:\s*44px/.test(css));
+check('v2 empty state tracks actual code', css.includes('.jtz-output-pane:has(#jtz-output-code:empty) .jtz-output { display: none; }') && css.includes('.jtz-output-pane:has(#jtz-output-code:empty) .jtz-empty { display: flex; }') && css.includes('.jtz-output-pane:has(#jtz-output-code:empty) { display: none; }'));
+check('v2 four-language build-time text, tips excluded from script', !/data-i18n/.test(source) && !/STRINGS|L\.tips|\.tips\b/.test(pageScript));
+eq('v2 original action buttons retained', [...layoutMarkup.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(m => m[1]).sort().join(','), "jtz-clear,jtz-convert,jtz-copy,jtz-example");
+const tipMap = [["root-name", "rootName", "rootName"], ["strict", "strictMode", "strict"], ["generate", "generate", "generate"], ["example", "example", "example"], ["clear", "clear", "clear"], ["input", "jsonInput", "input"], ["copy", "copy", "copy"]];
+eq('v2 actual Toggletip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, tipMap.length);
+for (const [id, about, key] of tipMap) check('v2 tip binding ' + id, layoutMarkup.includes('<Toggletip id="jtz-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'));
+// Hashes captured before migrating Usage; all other frontmatter and body are protected.
+const protectedContent = {
+  "en": [
+    "8647329816a8cba59efb0b3e2958b76f71afb08ab5eed4d6116045688a34b2e9",
+    "61cac543b12318a2600b98ce027af6c3f6209740a39418cf91a6d344eac5ee15"
+  ],
+  "zh": [
+    "52e6e97153ea23419249a79e2af7bcdb03f9986a41d814c0237a7e8526a9b08c",
+    "2aaac0bea6fbf114796f25862489bc367cc75717e096dcb0343182e6df4a401a"
+  ],
+  "ja": [
+    "166836303b0e046df3ce062af6d34157ac25ed4107fac3cb4d187ddda33f6efd",
+    "ca2c52ac5ae0ff2afa68ec29fcfebeb6dca459382f47c5e9527298eb4843fd04"
+  ],
+  "ko": [
+    "c88c68ec8ea91e8f3eb4679e68847d6887c8b025603eb032e8fe4fe5901df935",
+    "e274bc43e7ad950f5c1637844175434310996235e886c345f0a7bdfc07ce588e"
+  ]
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const L = pageLabels[lang], p = page(lang);
+  eq(lang + ': v2 same tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
+  for (const [id, about, key] of tipMap) {
+    check(lang + ': v2 plain localized tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]));
+    eq(lang + ': v2 rendered tip ' + id, p.get('jtz-tip-' + id).textContent, L.tips[key]);
+  }
+  check(lang + ': v2 localized empty state', !!L.empty && layoutMarkup.includes('{L.empty}'));
+  eq(lang + ': v2 runtime dataset excludes tips', Object.keys(p.doc.querySelector('.jtz-wrap').dataset).sort().join(','), 'copied,copy,copyFailed,msgGenerated,msgInvalidJson');
+  const mdx = readFileSync(join(root, 'src/content/tools/json-to-zod/' + lang + '.mdx'), 'utf8');
+  const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+  const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
+  const steps = stepsText.trimEnd().split('\n').map(line => JSON.parse(line.slice(4)));
+  check(lang + ': v2 steps bounds/order', steps.length > 0 && steps.length <= 8 && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n, x) => n + [...x].length, 0) <= 1200 && fm.indexOf('steps:') < fm.indexOf('faqItems:'));
+  for (const key of ["jsonInput", "rootName", "strictMode", "generate", "example", "clear", "copy"]) check(lang + ': v2 steps use actual ' + key, steps.join('\n').includes(L[key]));
+  eq(lang + ': v2 original SEO/FAQ exact', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m, '')), protectedContent[lang][0]);
+  eq(lang + ': v2 non-Usage body/limits/examples exact', hash(body), protectedContent[lang][1]);
+  check(lang + ': v2 no duplicate Usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>|^## How to/m.test(body));
+  try { await compileMdx(body); check(lang + ': v2 MDX compiles', true); } catch (e) { check(lang + ': v2 MDX compiles', false, e.message); }
+  for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {
+    const q = page(lang, shellFirst); run(q);
+    q.key(focus === 'output' ? q.get('jtz-output') : q.doc.querySelector('[data-zt-tip="jtz-tip-copy"]'));
+    check(lang + ': v2 result CtrlL focus ' + shellFirst + '/' + focus, q.doc.activeElement === q.get('jtz-input') && !q.get('jtz-input').value && !output(q) && !status(q).textContent && q.clears.length === 1);
+  }
+}
+try {
+  const require = createRequire(import.meta.url);
+  const { transform: astroTransform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const compiled = await astroTransform(source, { filename: 'JsonToZodTool.astro' });
+  check('v2 Astro compiler has no error diagnostics', !compiled.diagnostics.some(d => d.severity === 1), JSON.stringify(compiled.diagnostics));
+  await esbuildTransform(compiled.code, { loader: 'ts' }); check('v2 generated Astro module parses', true);
+} catch (e) { check('v2 Astro compilation', false, e.message); }
+check('v2 dark status ancestors are global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'));
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'json-to-zod': 'convert',
   'json-to-python-dataclass': 'convert',
   'json-to-java-pojo': 'convert',
   'json-to-go-struct': 'convert',
