@@ -200,6 +200,7 @@ const pageSource = readFileSync(join(root, pageFile), 'utf8');
 const pageScript = pageSource.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
 const labels = pageSource.match(/(?:const|var) STRINGS = (\{[\s\S]*?\n\s*\});/);
 const pageStrings = vm.runInNewContext('(' + labels[1] + ')');
+const clientStrings = lang => vm.runInNewContext('(' + pageSource.match(/const CLIENT_T = ([\s\S]*?);\n/)[1] + ')', { T: pageStrings[lang] });
 const pageJS = ts.transpileModule(pageScript, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
@@ -263,7 +264,7 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
   const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
   const esc = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
-    .replace(/data-strings=\{JSON\.stringify\(T\)\}/g, 'data-strings="' + esc(JSON.stringify(pageStrings[lang])) + '"')
+    .replace(/data-strings=\{JSON\.stringify\(CLIENT_T\)\}/g, 'data-strings="' + esc(JSON.stringify(clientStrings(lang))) + '"')
     .replace(/data-lang=\{lang\}/g, 'data-lang="' + lang + '"').replace(/\{T\.(\w+)\}/g, (_, k) => esc(pageStrings[lang][k]));
   function append(ast, parent) { for (const node of ast.childNodes || []) { if (!node.tagName) { if (node.nodeName === '#text') parent.textContent += node.value; continue; } const e = parent.appendChild(new Element(node.tagName)); for (const a of node.attrs) e.setAttribute(a.name, a.value); append(node, e); if (e.tagName === 'TEXTAREA') e.value = e.textContent; if (e.tagName === 'SELECT') e.value = (e.children.find(c => c.getAttribute('selected') !== null) || e.children[0]).value; } }
   append(parseFragment(markup), widget);
@@ -344,6 +345,83 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
   }
 
 }
+
+// ---------- v2 page layout ----------
+same('all FIX checks retained', [passes, failures], [598, 0]);
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), 'ed078958c5a0dc563f8486915db1f37f29b69b01d84f2da75d0e3b82594c39e8');
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "ce321fad0c0dbd0abe871bf5abedf19832f18b22f6c3e0a2f4322e306a8bf852",
+    "body": "a0dbaf7aa7f03dd60d7e83b7dd71fe8551ac26e6d1155584ae28290b233da7b4",
+    "examples": "7cacf1db76cc3dfce8e3bdb6889466b96bb4fcf312b751887b343b9bc847cb67"
+  },
+  "zh": {
+    "front": "4bed20156cc6ae5822de8d7e05b386608ed73e9264f176de3f12c9eee6dc4fd0",
+    "body": "70a255da3da0d69ac200e4260ca52da1559f26cde3f76fdae2358c35b8b9e37c",
+    "examples": "c33af7cccf71bfbf0914c6030f89b6cba267ef10354f65e1d99b864f7f4c46c2"
+  },
+  "ja": {
+    "front": "19f80c3635c59b1df7561f1647ac71bf735aa8de1848a32ba360d15aa8e8dd8f",
+    "body": "87c34ad6bdd4eeb1b59d2981c26b300100f2a803daf39e865c8561171277c071",
+    "examples": "c33af7cccf71bfbf0914c6030f89b6cba267ef10354f65e1d99b864f7f4c46c2"
+  },
+  "ko": {
+    "front": "a0354f251788d0f15ffcff57effe030da8cee112db7c3b4b1d6c2a318ef56298",
+    "body": "998c01499b877f0bb78c671e77c9a68de51cde98bf24fd6e0c91ee2640277ca9",
+    "examples": "c33af7cccf71bfbf0914c6030f89b6cba267ef10354f65e1d99b864f7f4c46c2"
+  }
+};
+const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
+same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
+same('options and actions precede stable status then shared panes', /sf-options[\s\S]*sf-toolbar[\s\S]*id="sf-status"[\s\S]*sf-panels zt-io/.test(markup), true);
+same('shared pane and fill count', [(markup.match(/zt-io-pane/g)||[]).length,(markup.match(/zt-io-fill/g)||[]).length], [2,2]);
+same('all original functional buttons remain', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m=>m[1]), ['sf-format','sf-minify','sf-clear','sf-copy']);
+same('format remains the only primary action', (markup.match(/class="btn-primary"/g)||[]).length, 1);
+same('seven adjacent tip IDs', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m=>m[1]), ['sf-tip-indent','sf-tip-uppercase','sf-tip-format','sf-tip-minify','sf-tip-clear','sf-tip-input','sf-tip-copy']);
+same('no tips are inside labels or buttons', /<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup), false);
+same('input editable and output remains readonly', [/<textarea id="sf-input"[^>]*\breadonly/.test(markup),/<textarea id="sf-output"[^>]*\breadonly/.test(markup)], [false,true]);
+same('default uppercase checked', /id="sf-uppercase" checked/.test(markup), true);
+same('root zero minima and flex column', /\.sf-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css), true);
+same('status fixed and internally scrollable', /\.sf-status\s*\{[^}]*height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css), true);
+same('long textarea content scrolls inside pane', /\.sf-box\s*\{[^}]*overflow: auto;/.test(css), true);
+same('empty desktop output has a localized sentence', /<p class="sf-empty">\{T.outputPlaceholder\}<\/p>/.test(markup), true);
+same('empty state follows actual textarea value via placeholder state', /\.sf-result:has\(#sf-output:placeholder-shown\) \.sf-empty \{ display: flex; \}/.test(css), true);
+same('860 stacked empty result hidden and bounded editors', /@media \(max-width: 860px\)[\s\S]*\.sf-box \{ height: 180px; \}[\s\S]*\.sf-result:has\(#sf-output:placeholder-shown\) \{ display: none; \}/.test(css), true);
+same('640 bounded editors and 44px heads', /@media \(max-width: 640px\)[\s\S]*min-height: 44px;[\s\S]*height: 120px;/.test(css), true);
+same('select remains at least 44px high', /\.sf-options select \{ min-height: 44px;/.test(css), true);
+same('theme feedback uses semantic tokens', /var\(--color-success\)/.test(css)&&/var\(--color-danger\)/.test(css), true);
+same('runtime i18n mutation removed', /data-i18n|var STRINGS/.test(pageSource), false);
+same('script stays inline inside root without relocation or reindent', /  <script is:inline>[\s\S]*  <\/script>\s*<\/div>\s*<style>/.test(pageSource), true);
+const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'),'utf8');
+same('sql-formatter registered convert', /['"]sql-formatter['"]\s*:\s*['"]convert['"]/.test(registry), true);
+const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
+same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
+const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
+for(const lang of ['en','zh','ja','ko']) {
+  const S=pageStrings[lang], payload=clientStrings(lang), expected=PROTECTED_CONTENT[lang];
+  same(lang+' tip keys',Object.keys(S.tips),['input','indent','uppercase','format','minify','clear','copy']);
+  same(lang+' short complete tips',Object.values(S.tips).every(x=>typeof x==='string'&&x.length>0&&x.length<=280),true);
+  same(lang+' client has only runtime strings',Object.keys(payload),['copy','copied','copyFailed','formatted','minified']);
+  same(lang+' tips excluded from payload and script',Object.values(S.tips).some(x=>JSON.stringify(payload).includes(x)||pageScript.includes(x)),false);
+  same(lang+' localized empty hint exists',typeof S.outputPlaceholder==='string'&&S.outputPlaceholder.length>0,true);
+  const text=readFileSync(join(root,'src/content/tools/sql-formatter',lang+'.mdx'),'utf8');
+  const parts=text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/),front=requireRoot('js-yaml').load(parts[1]),body=parts[2];
+  same(lang+' six bounded plain steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
+  same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
+  same(lang+' all other frontmatter bytes unchanged',hash(parts[1].replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),expected.front);
+  same(lang+' all nonUsage body bytes unchanged',hash(body),expected.body);
+  same(lang+' worked example blocks unchanged',hash(JSON.stringify([...body.matchAll(/```[^\n]*\n[\s\S]*?```/g)].map(m=>m[0]))),expected.examples);
+  same(lang+' Usage removed',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body),false);
+  let mdxError='';try{await mdxCompiler.compile(body);}catch(e){mdxError=String(e);}same(lang+' MDX compiles',mdxError,'');
+}
+const {transform}=await import(requireRoot.resolve('@astrojs/compiler',{paths:[requireRoot.resolve('astro')]}));
+const compiled=await transform(pageSource,{filename:join(root,pageFile)});
+same('Astro diagnostics have no errors',compiled.diagnostics.filter(d=>d.severity===1),[]);
+same('compiled CSS contains no unresolved global selectors',compiled.css.some(c=>c.includes(':global')),false);
+let compileError='';try{await requireRoot('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){compileError=String(e);}same('generated Astro module parses',compileError,'');
+same('source unchanged during test',hash(readFileSync(join(root,pageFile),'utf8')),hash(pageSource));
+
 process.removeListener('unhandledRejection',onUnhandled);
 
 console.log((failures ? 'FAILED' : 'PASSED') + ': ' + passes + ' passed, ' + failures + ' failed');
