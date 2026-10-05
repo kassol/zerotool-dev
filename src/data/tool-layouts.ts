@@ -16,6 +16,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'yaml-validator': 'analyze',
   'word-counter': 'analyze',
   'jwt-decoder': 'analyze',
+  'http-header-analyzer': 'analyze',
   'jsonpath-tester': 'analyze',
   'number-base': 'compact',
   'bcrypt-generator': 'compact',

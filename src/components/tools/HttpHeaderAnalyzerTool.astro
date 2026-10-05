@@ -1,121 +1,179 @@
 ---
-// HTTP Header Analyzer — paste raw HTTP request/response headers, inspect by category.
-// Language-independent widget; strings localized at runtime via document.documentElement.lang.
+import Toggletip from '../Toggletip.astro';
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+const STRINGS = {
+  en: {
+    views: "Views",
+    emptyResult: "Header categories, hints and JSON will appear here.",
+    privacyNote: "Results and copied JSON keep Authorization and Cookie values. Review them before sharing.",
+    tips: {
+      input: "Paste request or response headers, optionally starting with a method or status line. HTTP/2 and HTTP/3 pseudo-headers are supported; no URL is fetched.",
+      example: "Choose a sample response, authenticated request or CORS preflight. It replaces the input and runs Analyze immediately.",
+      analyze: "Analyze detects the message type, groups headers and shows configuration hints. After editing, click Analyze again to refresh the result.",
+      clear: "Clear removes the input, result and status. Ctrl or Command + L does the same while focus is inside this tool.",
+      views: "Categorized shows descriptions and warning or note hints. Raw shows normalized lines; JSON uses lowercase names, duplicate-value arrays and a _status field.",
+      copy: "Copy JSON exports the complete last analyzed result, whichever view is selected. Editing input alone does not update that result.",
+    },
+    rawHeaders: 'Raw HTTP Headers', exampleLabel: 'Examples…', exResponseSecure: 'Response · secure', exResponseBasic: 'Response · basic',
+    exRequestAuth: 'Request · auth', exCorsPreflight: 'CORS preflight', clear: 'Clear', analyze: 'Analyze', copyJson: 'Copy JSON',
+    tabCategorized: 'Categorized', tabRaw: 'Raw', tabJson: 'JSON',
+    summaryRequest: 'Request', summaryResponse: 'Response', summaryUnknown: 'Headers',
+    summaryCount: '{n} header{s}', summarySecurity: '{n} security ✓', summarySecurityNone: 'no security ⚠',
+    pastePrompt: 'Paste HTTP headers and click Analyze.',
+    analyzed: 'Parsed {n} header{s}.', empty: 'No headers found.',
+    copied: 'JSON copied to clipboard.', copyFailed: 'Copy failed.', analyzeFirst: 'Analyze first.',
+    catStatus: 'Status', catPseudo: 'HTTP/2 · HTTP/3 pseudo-headers', catGeneral: 'General', catSecurity: 'Security', catCaching: 'Caching',
+    catContent: 'Content', catCors: 'CORS', catAuth: 'Auth', catCookie: 'Cookie',
+    catRange: 'Range', catTransport: 'Transport', catProxy: 'Proxy', catCustom: 'Custom / Other',
+    hintWarn: 'Warning', hintInfo: 'Note', hintOk: 'OK',
+  },
+  zh: {
+    views: "视图",
+    emptyResult: "标头分类、提示和 JSON 将显示在这里。",
+    privacyNote: "结果和复制的 JSON 会保留 Authorization 与 Cookie 的值。分享前请检查敏感信息。",
+    tips: {
+      input: "粘贴请求或响应头部，可在首行包含方法行或状态行。支持 HTTP/2 和 HTTP/3 伪首部；工具不会从网址获取头部。",
+      example: "选择响应、鉴权请求或 CORS 预检示例。示例会替换输入并立即执行分析。",
+      analyze: "分析会识别消息类型、分类标头并显示配置提示。编辑输入后，请再次点击分析以更新结果。",
+      clear: "清除会移除输入、结果和状态。焦点在本工具内时，Ctrl 或 Command + L 执行相同操作。",
+      views: "分类视图显示说明以及警告或提示。原文视图显示规范化的行；JSON 使用小写名称、重复值数组和 _status 字段。",
+      copy: "复制 JSON 会导出上次分析的完整结果，与当前视图无关。仅编辑输入不会更新该结果。",
+    },
+    rawHeaders: '原始 HTTP 头部', exampleLabel: '示例…', exResponseSecure: '响应 · 安全', exResponseBasic: '响应 · 基础',
+    exRequestAuth: '请求 · 鉴权', exCorsPreflight: 'CORS 预检', clear: '清除', analyze: '分析', copyJson: '复制 JSON',
+    tabCategorized: '分类', tabRaw: '原文', tabJson: 'JSON',
+    summaryRequest: '请求', summaryResponse: '响应', summaryUnknown: '头部',
+    summaryCount: '{n} 个标头', summarySecurity: '{n} 个安全标头 ✓', summarySecurityNone: '缺少安全标头 ⚠',
+    pastePrompt: '请粘贴 HTTP 头部后点击分析。',
+    analyzed: '已解析 {n} 个标头。', empty: '未找到标头。',
+    copied: 'JSON 已复制到剪贴板。', copyFailed: '复制失败。', analyzeFirst: '请先分析。',
+    catStatus: '状态行', catPseudo: 'HTTP/2 · HTTP/3 伪首部', catGeneral: '通用', catSecurity: '安全', catCaching: '缓存',
+    catContent: '内容', catCors: 'CORS', catAuth: '鉴权', catCookie: 'Cookie',
+    catRange: '范围', catTransport: '传输', catProxy: '代理', catCustom: '自定义 / 其他',
+    hintWarn: '警告', hintInfo: '提示', hintOk: '正常',
+  },
+  ja: {
+    views: "表示",
+    emptyResult: "ヘッダーのカテゴリ、ヒント、JSON がここに表示されます。",
+    privacyNote: "結果とコピーした JSON には Authorization と Cookie の値が残ります。共有前に機密情報を確認してください。",
+    tips: {
+      input: "リクエストまたはレスポンスのヘッダーを貼り付けます。先頭にメソッド行やステータス行を含められます。HTTP/2 と HTTP/3 の疑似ヘッダーに対応し、URL からは取得しません。",
+      example: "レスポンス、認証付きリクエスト、CORS プリフライトのサンプルを選択します。入力を置き換え、すぐに分析します。",
+      analyze: "分析はメッセージの種類を判別し、ヘッダーを分類して設定のヒントを表示します。入力を編集したら、再度分析して結果を更新してください。",
+      clear: "クリアは入力、結果、状態を消去します。ツール内にフォーカスがある場合、Ctrl または Command + L でも同じ操作ができます。",
+      views: "カテゴリ別には説明と警告・注意を表示します。生データには正規化した行、JSON には小文字の名前、重複値の配列、_status フィールドを表示します。",
+      copy: "JSON コピーは表示中のタブに関係なく、最後に分析した結果全体をコピーします。入力の編集だけでは結果は更新されません。",
+    },
+    rawHeaders: '生 HTTP ヘッダー', exampleLabel: 'サンプル…', exResponseSecure: 'レスポンス · セキュア', exResponseBasic: 'レスポンス · 基本',
+    exRequestAuth: 'リクエスト · 認証', exCorsPreflight: 'CORS プリフライト', clear: 'クリア', analyze: '分析', copyJson: 'JSON コピー',
+    tabCategorized: 'カテゴリ別', tabRaw: '生データ', tabJson: 'JSON',
+    summaryRequest: 'リクエスト', summaryResponse: 'レスポンス', summaryUnknown: 'ヘッダー',
+    summaryCount: '{n} 件', summarySecurity: 'セキュリティ {n} 件 ✓', summarySecurityNone: 'セキュリティ未設定 ⚠',
+    pastePrompt: 'HTTP ヘッダーを貼り付けて分析をクリック。',
+    analyzed: '{n} 件のヘッダーを解析しました。', empty: 'ヘッダーが見つかりません。',
+    copied: 'JSON をクリップボードにコピーしました。', copyFailed: 'コピー失敗。', analyzeFirst: 'まず分析してください。',
+    catStatus: 'ステータス', catPseudo: 'HTTP/2 · HTTP/3 疑似ヘッダー', catGeneral: '一般', catSecurity: 'セキュリティ', catCaching: 'キャッシュ',
+    catContent: 'コンテンツ', catCors: 'CORS', catAuth: '認証', catCookie: 'Cookie',
+    catRange: 'レンジ', catTransport: '転送', catProxy: 'プロキシ', catCustom: 'カスタム / その他',
+    hintWarn: '警告', hintInfo: '注意', hintOk: 'OK',
+  },
+  ko: {
+    views: "보기",
+    emptyResult: "헤더 분류, 힌트, JSON이 여기에 표시됩니다.",
+    privacyNote: "결과와 복사한 JSON에는 Authorization 및 Cookie 값이 남습니다. 공유하기 전에 민감한 정보를 확인하세요.",
+    tips: {
+      input: "요청 또는 응답 헤더를 붙여넣으세요. 첫 줄에 메서드 또는 상태 줄을 포함할 수 있습니다. HTTP/2 및 HTTP/3 의사 헤더를 지원하며 URL에서 가져오지 않습니다.",
+      example: "응답, 인증 요청 또는 CORS 프리플라이트 예시를 선택하세요. 입력을 바꾸고 즉시 분석합니다.",
+      analyze: "분석은 메시지 유형을 감지하고 헤더를 분류해 구성 힌트를 표시합니다. 입력을 편집한 뒤에는 분석을 다시 클릭해 결과를 갱신하세요.",
+      clear: "지우기는 입력, 결과, 상태를 비웁니다. 도구 안에 포커스가 있을 때 Ctrl 또는 Command + L도 같은 동작을 수행합니다.",
+      views: "분류별 보기에는 설명과 경고·참고 힌트가 표시됩니다. 원본은 정규화한 줄을, JSON은 소문자 이름, 중복 값 배열, _status 필드를 표시합니다.",
+      copy: "JSON 복사는 선택한 보기와 관계없이 마지막으로 분석한 전체 결과를 복사합니다. 입력 편집만으로는 결과가 갱신되지 않습니다.",
+    },
+    rawHeaders: '원시 HTTP 헤더', exampleLabel: '예시…', exResponseSecure: '응답 · 보안', exResponseBasic: '응답 · 기본',
+    exRequestAuth: '요청 · 인증', exCorsPreflight: 'CORS 프리플라이트', clear: '지우기', analyze: '분석', copyJson: 'JSON 복사',
+    tabCategorized: '분류별', tabRaw: '원본', tabJson: 'JSON',
+    summaryRequest: '요청', summaryResponse: '응답', summaryUnknown: '헤더',
+    summaryCount: '{n} 개 헤더', summarySecurity: '보안 헤더 {n} 개 ✓', summarySecurityNone: '보안 헤더 없음 ⚠',
+    pastePrompt: 'HTTP 헤더를 붙여넣고 분석을 클릭하세요.',
+    analyzed: '{n} 개의 헤더를 분석했습니다.', empty: '헤더를 찾을 수 없습니다.',
+    copied: 'JSON이 클립보드에 복사되었습니다.', copyFailed: '복사 실패.', analyzeFirst: '먼저 분석하세요.',
+    catStatus: '상태', catPseudo: 'HTTP/2 · HTTP/3 의사 헤더', catGeneral: '일반', catSecurity: '보안', catCaching: '캐싱',
+    catContent: '콘텐츠', catCors: 'CORS', catAuth: '인증', catCookie: '쿠키',
+    catRange: '범위', catTransport: '전송', catProxy: '프록시', catCustom: '사용자 정의 / 기타',
+    hintWarn: '경고', hintInfo: '참고', hintOk: 'OK',
+  },
+} as const;
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
 
-<div>
-  <div class="hha-wrap">
-    <div class="hha-input-section">
-      <label for="hha-input">
-        <span data-i18n="rawHeaders">Raw HTTP Headers</span>
-        <span class="hha-input-meta">
-          <select id="hha-example" class="hha-example-select" aria-label="Load example">
-            <option value="" data-i18n="exampleLabel">Examples…</option>
-            <option value="response-secure" data-i18n="exResponseSecure">Response · secure</option>
-            <option value="response-basic" data-i18n="exResponseBasic">Response · basic</option>
-            <option value="request-auth" data-i18n="exRequestAuth">Request · auth</option>
-            <option value="cors-preflight" data-i18n="exCorsPreflight">CORS preflight</option>
-          </select>
-          <button id="hha-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
-        </span>
-      </label>
-      <textarea
-        id="hha-input"
-        class="tool-textarea"
-        rows="8"
-        spellcheck="false"
-        placeholder={"HTTP/1.1 200 OK\nContent-Type: application/json\nStrict-Transport-Security: max-age=63072000; includeSubDomains\nCache-Control: no-store"}
-      ></textarea>
-    </div>
-
-    <div class="hha-actions">
-      <button id="hha-analyze" class="btn-primary" type="button" data-i18n="analyze">Analyze</button>
-      <button id="hha-copy-json" class="btn-secondary" type="button" data-i18n="copyJson">Copy JSON</button>
-    </div>
-
-    <div id="hha-status" class="tool-status" aria-live="polite"></div>
-
-    <div id="hha-result" class="hha-result" hidden>
-      <div class="hha-summary">
-        <span class="hha-summary-pill" id="hha-summary-type"></span>
-        <span class="hha-summary-pill" id="hha-summary-status"></span>
-        <span class="hha-summary-pill" id="hha-summary-count"></span>
-        <span class="hha-summary-pill" id="hha-summary-security"></span>
-      </div>
-
-      <div class="hha-tabs" role="tablist">
-        <button class="hha-tab hha-tab-active" id="hha-tab-cat" role="tab" data-i18n="tabCategorized">Categorized</button>
-        <button class="hha-tab" id="hha-tab-raw" role="tab" data-i18n="tabRaw">Raw</button>
-        <button class="hha-tab" id="hha-tab-json" role="tab" data-i18n="tabJson">JSON</button>
-      </div>
-
-      <div id="hha-panel-cat" class="hha-panel"></div>
-      <div id="hha-panel-raw" class="hha-panel" hidden><pre id="hha-raw-output" class="hha-pre"></pre></div>
-      <div id="hha-panel-json" class="hha-panel" hidden><pre id="hha-json-output" class="hha-pre"></pre></div>
-    </div>
+<div class="hha-wrap">
+  <div class="hha-actions">
+    <span class="hha-control">
+      <button id="hha-analyze" class="btn-primary" type="button">{T.analyze}</button>
+      <Toggletip id="hha-tip-analyze" lang={lang} about={T.analyze}>{TIPS.analyze}</Toggletip>
+    </span>
+    <span class="hha-control">
+      <select id="hha-example" class="hha-example-select" aria-label={T.exampleLabel}>
+        <option value="">{T.exampleLabel}</option>
+        <option value="response-secure">{T.exResponseSecure}</option>
+        <option value="response-basic">{T.exResponseBasic}</option>
+        <option value="request-auth">{T.exRequestAuth}</option>
+        <option value="cors-preflight">{T.exCorsPreflight}</option>
+      </select>
+      <Toggletip id="hha-tip-example" lang={lang} about={T.exampleLabel}>{TIPS.example}</Toggletip>
+    </span>
+    <span class="hha-control">
+      <button id="hha-clear" class="btn-ghost" type="button">{T.clear}</button>
+      <Toggletip id="hha-tip-clear" lang={lang} about={T.clear}>{TIPS.clear}</Toggletip>
+    </span>
+    <span class="hha-control">
+      <button id="hha-copy-json" class="btn-secondary" type="button">{T.copyJson}</button>
+      <Toggletip id="hha-tip-copy" lang={lang} about={T.copyJson}>{TIPS.copy}</Toggletip>
+    </span>
   </div>
+  <div id="hha-status" class="tool-status" aria-live="polite"></div>
+  <div class="hha-input-section">
+    <div class="hha-label-row">
+      <label for="hha-input" class="tool-label">{T.rawHeaders}</label>
+      <Toggletip id="hha-tip-input" lang={lang} about={T.rawHeaders}>{TIPS.input}</Toggletip>
+    </div>
+    <textarea
+      id="hha-input"
+      class="tool-textarea"
+      rows="8"
+      spellcheck="false"
+      placeholder={"HTTP/1.1 200 OK\nContent-Type: application/json\nStrict-Transport-Security: max-age=63072000; includeSubDomains\nCache-Control: no-store"}
+    ></textarea>
+  </div>
+  <p class="hha-empty">{T.emptyResult}</p>
+  <div id="hha-result" class="hha-result" hidden>
+    <div class="hha-summary">
+      <span class="hha-summary-pill" id="hha-summary-type"></span>
+      <span class="hha-summary-pill" id="hha-summary-status"></span>
+      <span class="hha-summary-pill" id="hha-summary-count"></span>
+      <span class="hha-summary-pill" id="hha-summary-security"></span>
+    </div>
+    <div class="hha-view-row">
+      <span class="hha-control">
+        <span class="tool-label">{T.views}</span>
+        <Toggletip id="hha-tip-views" lang={lang} about={T.views}>{TIPS.views}</Toggletip>
+      </span>
+      <div class="hha-tabs" role="tablist" aria-label={T.views}>
+        <button class="hha-tab hha-tab-active" id="hha-tab-cat" role="tab">{T.tabCategorized}</button>
+        <button class="hha-tab" id="hha-tab-raw" role="tab">{T.tabRaw}</button>
+        <button class="hha-tab" id="hha-tab-json" role="tab">{T.tabJson}</button>
+      </div>
+    </div>
+    <div id="hha-panel-cat" class="hha-panel" tabindex="0" aria-label={T.tabCategorized}></div>
+    <div id="hha-panel-raw" class="hha-panel" tabindex="0" aria-label={T.tabRaw} hidden><pre id="hha-raw-output" class="hha-pre"></pre></div>
+    <div id="hha-panel-json" class="hha-panel" tabindex="0" aria-label={T.tabJson} hidden><pre id="hha-json-output" class="hha-pre"></pre></div>
+  </div>
+  <p class="hha-privacy">{T.privacyNote}</p>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          rawHeaders: 'Raw HTTP Headers', exampleLabel: 'Examples…', exResponseSecure: 'Response · secure', exResponseBasic: 'Response · basic',
-          exRequestAuth: 'Request · auth', exCorsPreflight: 'CORS preflight', clear: 'Clear', analyze: 'Analyze', copyJson: 'Copy JSON',
-          tabCategorized: 'Categorized', tabRaw: 'Raw', tabJson: 'JSON',
-          summaryRequest: 'Request', summaryResponse: 'Response', summaryUnknown: 'Headers',
-          summaryCount: '{n} header{s}', summarySecurity: '{n} security ✓', summarySecurityNone: 'no security ⚠',
-          pastePrompt: 'Paste HTTP headers above and click Analyze.',
-          analyzed: 'Parsed {n} header{s}.', empty: 'No headers found.',
-          copied: 'JSON copied to clipboard.', copyFailed: 'Copy failed.', analyzeFirst: 'Analyze first.',
-          catStatus: 'Status', catPseudo: 'HTTP/2 · HTTP/3 pseudo-headers', catGeneral: 'General', catSecurity: 'Security', catCaching: 'Caching',
-          catContent: 'Content', catCors: 'CORS', catAuth: 'Auth', catCookie: 'Cookie',
-          catRange: 'Range', catTransport: 'Transport', catProxy: 'Proxy', catCustom: 'Custom / Other',
-          hintWarn: 'Warning', hintInfo: 'Note', hintOk: 'OK',
-        },
-        zh: {
-          rawHeaders: '原始 HTTP 头部', exampleLabel: '示例…', exResponseSecure: '响应 · 安全', exResponseBasic: '响应 · 基础',
-          exRequestAuth: '请求 · 鉴权', exCorsPreflight: 'CORS 预检', clear: '清除', analyze: '分析', copyJson: '复制 JSON',
-          tabCategorized: '分类', tabRaw: '原文', tabJson: 'JSON',
-          summaryRequest: '请求', summaryResponse: '响应', summaryUnknown: '头部',
-          summaryCount: '{n} 个标头', summarySecurity: '{n} 个安全标头 ✓', summarySecurityNone: '缺少安全标头 ⚠',
-          pastePrompt: '请粘贴 HTTP 头部后点击分析。',
-          analyzed: '已解析 {n} 个标头。', empty: '未找到标头。',
-          copied: 'JSON 已复制到剪贴板。', copyFailed: '复制失败。', analyzeFirst: '请先分析。',
-          catStatus: '状态行', catPseudo: 'HTTP/2 · HTTP/3 伪首部', catGeneral: '通用', catSecurity: '安全', catCaching: '缓存',
-          catContent: '内容', catCors: 'CORS', catAuth: '鉴权', catCookie: 'Cookie',
-          catRange: '范围', catTransport: '传输', catProxy: '代理', catCustom: '自定义 / 其他',
-          hintWarn: '警告', hintInfo: '提示', hintOk: '正常',
-        },
-        ja: {
-          rawHeaders: '生 HTTP ヘッダー', exampleLabel: 'サンプル…', exResponseSecure: 'レスポンス · セキュア', exResponseBasic: 'レスポンス · 基本',
-          exRequestAuth: 'リクエスト · 認証', exCorsPreflight: 'CORS プリフライト', clear: 'クリア', analyze: '分析', copyJson: 'JSON コピー',
-          tabCategorized: 'カテゴリ別', tabRaw: '生データ', tabJson: 'JSON',
-          summaryRequest: 'リクエスト', summaryResponse: 'レスポンス', summaryUnknown: 'ヘッダー',
-          summaryCount: '{n} 件', summarySecurity: 'セキュリティ {n} 件 ✓', summarySecurityNone: 'セキュリティ未設定 ⚠',
-          pastePrompt: 'HTTP ヘッダーを貼り付けて分析をクリック。',
-          analyzed: '{n} 件のヘッダーを解析しました。', empty: 'ヘッダーが見つかりません。',
-          copied: 'JSON をクリップボードにコピーしました。', copyFailed: 'コピー失敗。', analyzeFirst: 'まず分析してください。',
-          catStatus: 'ステータス', catPseudo: 'HTTP/2 · HTTP/3 疑似ヘッダー', catGeneral: '一般', catSecurity: 'セキュリティ', catCaching: 'キャッシュ',
-          catContent: 'コンテンツ', catCors: 'CORS', catAuth: '認証', catCookie: 'Cookie',
-          catRange: 'レンジ', catTransport: '転送', catProxy: 'プロキシ', catCustom: 'カスタム / その他',
-          hintWarn: '警告', hintInfo: '注意', hintOk: 'OK',
-        },
-        ko: {
-          rawHeaders: '원시 HTTP 헤더', exampleLabel: '예시…', exResponseSecure: '응답 · 보안', exResponseBasic: '응답 · 기본',
-          exRequestAuth: '요청 · 인증', exCorsPreflight: 'CORS 프리플라이트', clear: '지우기', analyze: '분석', copyJson: 'JSON 복사',
-          tabCategorized: '분류별', tabRaw: '원본', tabJson: 'JSON',
-          summaryRequest: '요청', summaryResponse: '응답', summaryUnknown: '헤더',
-          summaryCount: '{n} 개 헤더', summarySecurity: '보안 헤더 {n} 개 ✓', summarySecurityNone: '보안 헤더 없음 ⚠',
-          pastePrompt: 'HTTP 헤더를 붙여넣고 분석을 클릭하세요.',
-          analyzed: '{n} 개의 헤더를 분석했습니다.', empty: '헤더를 찾을 수 없습니다.',
-          copied: 'JSON이 클립보드에 복사되었습니다.', copyFailed: '복사 실패.', analyzeFirst: '먼저 분석하세요.',
-          catStatus: '상태', catPseudo: 'HTTP/2 · HTTP/3 의사 헤더', catGeneral: '일반', catSecurity: '보안', catCaching: '캐싱',
-          catContent: '콘텐츠', catCors: 'CORS', catAuth: '인증', catCookie: '쿠키',
-          catRange: '범위', catTransport: '전송', catProxy: '프록시', catCustom: '사용자 정의 / 기타',
-          hintWarn: '경고', hintInfo: '참고', hintOk: 'OK',
-        },
-      };
-
       // Header dictionary — 88 entries. category mapped to localized labels.
       var HEADER_DB = {
         // Security
@@ -220,16 +278,6 @@
       };
 
       var CATEGORY_ORDER = ['status', 'pseudo', 'security', 'caching', 'content', 'cors', 'auth', 'cookie', 'general', 'range', 'transport', 'proxy', 'custom'];
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key] != null) {
-          if (el.tagName === 'OPTION') el.textContent = t[key];
-          else el.textContent = t[key];
-        }
-      });
 
       var EXAMPLES = {
         'response-secure':
@@ -655,19 +703,21 @@
 </div>
 
 <style is:global>
-  .hha-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+  .hha-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 0.65rem; }
 
-  .hha-input-section { display: flex; flex-direction: column; gap: 0.45rem; }
-
-  .hha-input-section > label {
-    font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary);
-    display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;
-  }
-
-  .hha-input-meta { display: inline-flex; align-items: center; gap: 0.5rem; }
+  .hha-input-section { display: flex; flex-direction: column; flex: none; min-width: 0; min-height: 0; gap: 0.45rem; }
+  .hha-control, .hha-label-row { display: inline-flex; align-items: center; min-width: 0; gap: 0.4rem; }
+  .hha-label-row { flex: none; }
+  .hha-label-row .tool-label, .hha-control .tool-label { margin: 0; }
+  #hha-status { flex: none; height: 3rem; min-height: 3rem; margin: 0; overflow: auto; }
+  .hha-empty, .hha-privacy { flex: none; margin: 0; font-size: 0.82rem; line-height: 1.5; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+  .hha-empty { display: none; }
+  .hha-wrap:has(.hha-result[hidden]) .hha-empty { display: block; }
+  .hha-wrap:has(.hha-result[hidden]) .hha-input-section { flex: 1 1 0; }
+  .hha-wrap:has(.hha-result[hidden]) #hha-input { flex: 1 1 0; height: auto; min-height: 180px; }
 
   .hha-example-select {
-    min-height: 32px;
+    min-height: 40px; max-width: 100%;
     padding: 0.25rem 0.6rem;
     font-size: 0.82rem;
     font-family: var(--font-sans);
@@ -682,17 +732,17 @@
   .hha-example-select:hover { color: var(--color-primary); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent); }
   .hha-example-select:focus { outline: none; box-shadow: inset 0 0 0 1px var(--color-primary), 0 0 0 4px var(--color-primary-light); }
 
-  #hha-input { min-height: 180px; }
+  #hha-input { flex: none; height: 180px; min-height: 0; resize: none; overflow: auto; }
 
-  .hha-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .hha-actions { flex: none; display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
-  .hha-result { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.25rem; }
+  .hha-result { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; gap: 0.75rem; }
 
   .hha-summary {
-    display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+    flex: none; min-width: 0; max-height: 4rem; overflow: auto; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
   }
   .hha-summary-pill {
-    display: inline-flex; align-items: center; gap: 0.35rem;
+    display: inline-flex; align-items: center; max-width: 100%; min-width: 0; overflow: auto; white-space: nowrap; gap: 0.35rem;
     padding: 0.22rem 0.7rem; border-radius: var(--radius-pill);
     background: var(--color-surface-muted);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
@@ -716,6 +766,7 @@
     background: color-mix(in oklch, var(--color-danger) 14%, var(--color-bg-secondary));
   }
 
+  .hha-view-row { flex: none; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
   .hha-tabs {
     display: flex; gap: 0; border-bottom: 1px solid var(--color-border-soft);
   }
@@ -728,11 +779,11 @@
   .hha-tab:hover { color: var(--color-text); }
   .hha-tab.hha-tab-active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
 
-  .hha-panel { display: flex; flex-direction: column; gap: 0.75rem; }
+  .hha-panel { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; gap: 0.75rem; }
   .hha-panel[hidden] { display: none; }
   .hha-result[hidden] { display: none; }
 
-  .hha-cat-section { display: flex; flex-direction: column; gap: 0.5rem; }
+  .hha-cat-section { flex: none; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
   .hha-cat-title {
     font-family: var(--font-display);
     font-size: 1rem; font-weight: 700; color: var(--color-text);
@@ -746,7 +797,7 @@
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
   }
 
-  .hha-status-line { padding: 0.5rem 0.75rem; border-radius: var(--radius-md);
+  .hha-status-line { flex: none; overflow-wrap: anywhere; padding: 0.5rem 0.75rem; border-radius: var(--radius-md);
     background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
   .hha-status-line code { font-family: var(--font-mono); font-size: 0.86rem; color: var(--color-text); }
 
@@ -792,6 +843,7 @@
   }
 
   .hha-pre {
+    flex: none; min-width: 0;
     margin: 0;
     padding: 0.85rem 1rem;
     border-radius: var(--radius-md);
@@ -806,10 +858,17 @@
     overflow-wrap: anywhere;
   }
 
+  @media (max-width: 860px) {
+    .hha-input-section, .hha-wrap:has(.hha-result[hidden]) .hha-input-section { flex: none; }
+    #hha-input, .hha-wrap:has(.hha-result[hidden]) #hha-input { flex: none; height: 140px; min-height: 0; }
+    .hha-result { flex: none; height: 24rem; }
+    .hha-wrap:has(.hha-result[hidden]) .hha-empty { display: none; }
+  }
   @media (max-width: 640px) {
-    .hha-input-section > label { align-items: flex-start; flex-direction: column; }
-    .hha-input-meta { width: 100%; justify-content: space-between; }
-    .hha-tab { padding: 0.5rem 0.75rem; font-size: 0.82rem; }
+    .hha-example-select { min-height: 44px; }
+    .hha-result { height: 22rem; }
+    .hha-view-row { gap: 0.4rem; }
+    .hha-tab { min-height: 44px; padding: 0.5rem 0.65rem; font-size: 0.82rem; }
     .hha-cat-title { font-size: 0.95rem; }
   }
 </style>
