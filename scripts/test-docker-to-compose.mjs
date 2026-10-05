@@ -27,6 +27,10 @@ import yaml from 'js-yaml';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 
+import { createRequire } from 'node:module';
+import { transform as esbuildTransform } from 'esbuild';
+import { compile as compileMdx } from '@mdx-js/mdx';
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/DockerToComposeTool.astro'), 'utf8');
 
@@ -211,7 +215,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 // ---------- status messages ----------
 {
-  const m = source.match(/var STRINGS = (\{[\s\S]*?\n      \});/);
+  const m = source.match(/const STRINGS = (\{[\s\S]*?\n\});/);
   check('STRINGS block found', !!m);
   if (m) {
     const S = new Function('return ' + m[1])();
@@ -227,7 +231,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 // ---------- real complete page lifecycle; controlled DOM, clipboard and clock boundaries ----------
 const pageScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
-const pageLabels = vm.runInNewContext('(' + source.match(/var STRINGS = (\{[\s\S]*?\n\s*\});/)[1] + ')');
+const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
+const runtimeLabels = lang => vm.runInNewContext('(' + source.match(/const CLIENT_T = (\{[\s\S]*?\n\});/)[1] + ')', { L: pageLabels[lang] });
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -282,7 +287,14 @@ function page(lang, shellFirst = false) {
     focus() { doc.activeElement = this; }
   }
   const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
-  const markup = source.split('\n---')[1].split('<script')[0];
+  const tipAbout = JSON.parse(readFileSync(join(root, 'src/i18n/' + lang + '.json'), 'utf8'))['tool.tipAbout'];
+  // Render the shared component's actual button/panel boundary; browser QA checks popover geometry.
+  const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '" aria-label="' + escape(tipAbout.replace('{name}', pageLabels[lang][about])) + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{JSON\.stringify\(CLIENT_T\)\}/g, () => '="' + escape(JSON.stringify(runtimeLabels(lang))) + '"')
+    .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
+    .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
   for (const token of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
     if (token[3] !== undefined) { stack.at(-1).textContent += decode(token[3]).trim(); continue; }
@@ -392,6 +404,81 @@ try {
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
+
+
+// ---------- v2 page layout ----------
+const layoutMarkup = source.split('\n---')[1].split('<script')[0];
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const hash = value => createHash('sha256').update(value).digest('hex');
+check('v2 registered as convert', /'docker-to-compose':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 direct flex root with zero minimum size', /^\s*<div\s+class="dtc-wrap"/.test(layoutMarkup) && /\.dtc-wrap\s*\{[^}]*display:\s*flex;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(css));
+check('v2 controls/status precede panels', layoutMarkup.indexOf('class="dtc-actions"') < layoutMarkup.indexOf('id="dtc-status"') && layoutMarkup.indexOf('id="dtc-status"') < layoutMarkup.indexOf('zt-io"'));
+eq('v2 two shared panels', (layoutMarkup.match(/\bzt-io-pane\b/g) || []).length, 2);
+check('v2 input uses shared fill', /id="dtc-input"\s+class="zt-io-fill"/.test(layoutMarkup));
+check('v2 output is a labelled keyboard scroller', /id="dtc-output"[^>]*tabindex="0"[^>]*aria-labelledby="dtc-output-label"/.test(layoutMarkup) && /\.dtc-output\s*\{[^}]*overflow:\s*auto;/.test(css) && /\.dtc-output:focus-visible\s*\{[^}]*outline:/.test(css));
+check('v2 status space is reserved', /\.dtc-status\s*\{[^}]*min-height:\s*2\.4rem;/.test(css));
+check('v2 long status cannot grow the panels', /\.dtc-status\s*\{[^}]*height:\s*2\.4rem;[^}]*overflow:\s*auto;/.test(css));
+check('v2 mobile input is bounded', /@media \(max-width: 860px\)/.test(css) && /height:\s*144px;\s*min-height:\s*144px;/.test(css));
+check('v2 mobile output has fixed height', /\.dtc-output\s*\{[^}]*height:\s*22rem;/.test(css));
+check('v2 phone controls remain reachable', /@media \(max-width: 640px\)/.test(css) && /min-height:\s*44px/.test(css));
+check('v2 empty state tracks actual code', css.includes('.dtc-output-pane:has(#dtc-output-code:empty) .dtc-output { display: none; }') && css.includes('.dtc-output-pane:has(#dtc-output-code:empty) .dtc-empty { display: flex; }') && css.includes('.dtc-output-pane:has(#dtc-output-code:empty) { display: none; }'));
+check('v2 four-language build-time text, tips excluded from script', !/data-i18n/.test(source) && !/STRINGS|L\.tips|\.tips\b/.test(pageScript));
+eq('v2 original action buttons retained', [...layoutMarkup.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(m => m[1]).sort().join(','), "dtc-clear,dtc-convert,dtc-copy,dtc-example");
+const tipMap = [["convert", "convert", "convert"], ["example", "example", "example"], ["clear", "clear", "clear"], ["input", "inputLabel", "input"], ["copy", "copy", "copy"]];
+eq('v2 actual Toggletip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, tipMap.length);
+for (const [id, about, key] of tipMap) check('v2 tip binding ' + id, layoutMarkup.includes('<Toggletip id="dtc-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'));
+// Hashes captured before migrating Usage; all other frontmatter and body are protected.
+const protectedContent = {
+  "en": [
+    "78e92cbc69a1c86d542d318080bf560f06d82bc18448c30fc6b36d830e4507c9",
+    "e29dd9f19af785ee19aeb271e05cab6a769766e02cf8f3713afc396158df8bd0"
+  ],
+  "zh": [
+    "aa0683e274a3be3e5a883c531def3bd839f709e1de06b1e84873d514d9171814",
+    "ab9b602996dc20cdaa523f517d60fc1fdeb95a48a2c6f0519a5dac72bebdcac9"
+  ],
+  "ja": [
+    "a003e834214235d74f345a2fccdcc6f90eaac9b4ce9fada3a208970052a70e06",
+    "ac6285f76d6b6a33a834bdf251e15c697737fa1ad19e65138c88cf2894d859cc"
+  ],
+  "ko": [
+    "f2265a1a6cc45645ab73587a0560f69521e28e79f98fba2d62af61fd197bf9b1",
+    "3e3a835c1baab5bb147781854bedae3dce0fc925240403cb5ee359cff17e12a5"
+  ]
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const L = pageLabels[lang], p = page(lang);
+  eq(lang + ': v2 same tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
+  for (const [id, about, key] of tipMap) {
+    check(lang + ': v2 plain localized tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]));
+    eq(lang + ': v2 rendered tip ' + id, p.get('dtc-tip-' + id).textContent, L.tips[key]);
+  }
+  check(lang + ': v2 localized empty state', !!L.empty && layoutMarkup.includes('{L.empty}'));
+  check(lang + ': v2 serialized data excludes all tips', !('tips' in runtimeLabels(lang)) && !('empty' in runtimeLabels(lang)) && Object.values(L.tips).every(tip => !p.doc.querySelector('.dtc-wrap').dataset.strings.includes(tip)));
+  const mdx = readFileSync(join(root, 'src/content/tools/docker-to-compose/' + lang + '.mdx'), 'utf8');
+  const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+  const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
+  const steps = stepsText.trimEnd().split('\n').map(line => JSON.parse(line.slice(4)));
+  check(lang + ': v2 steps bounds/order', steps.length > 0 && steps.length <= 8 && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n, x) => n + [...x].length, 0) <= 1200 && fm.indexOf('steps:') < fm.indexOf('faqItems:'));
+  for (const key of ["inputLabel", "convert", "example", "clear", "copy"]) check(lang + ': v2 steps use actual ' + key, steps.join('\n').includes(L[key]));
+  eq(lang + ': v2 original SEO/FAQ exact', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m, '')), protectedContent[lang][0]);
+  eq(lang + ': v2 non-Usage body/limits/examples exact', hash(body), protectedContent[lang][1]);
+  check(lang + ': v2 no duplicate Usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>|^## How to/m.test(body));
+  try { await compileMdx(body); check(lang + ': v2 MDX compiles', true); } catch (e) { check(lang + ': v2 MDX compiles', false, e.message); }
+  for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {
+    const q = page(lang, shellFirst); run(q);
+    q.key(focus === 'output' ? q.get('dtc-output') : q.doc.querySelector('[data-zt-tip="dtc-tip-copy"]'));
+    check(lang + ': v2 result CtrlL focus ' + shellFirst + '/' + focus, q.doc.activeElement === q.get('dtc-input') && !q.get('dtc-input').value && !output(q) && !status(q).textContent && q.clears.length === 1);
+  }
+}
+try {
+  const require = createRequire(import.meta.url);
+  const { transform: astroTransform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const compiled = await astroTransform(source, { filename: 'DockerToComposeTool.astro' });
+  check('v2 Astro compiler has no error diagnostics', !compiled.diagnostics.some(d => d.severity === 1), JSON.stringify(compiled.diagnostics));
+  await esbuildTransform(compiled.code, { loader: 'ts' }); check('v2 generated Astro module parses', true);
+} catch (e) { check('v2 Astro compilation', false, e.message); }
+check('v2 dark status ancestors are global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'));
 
 rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${passes} passed, ${failures} failed` + (skips ? `, ${skips} skipped` : ''));

@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'docker-to-compose': 'convert',
   'json-to-mongoose': 'convert',
   'typescript-to-zod': 'convert',
   'json-to-zod': 'convert',
