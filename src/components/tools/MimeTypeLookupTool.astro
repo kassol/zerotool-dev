@@ -1,161 +1,220 @@
 ---
 // MimeTypeLookupTool — search MIME types by extension/Content-Type and sniff files by magic bytes.
 // CSS prefix: mtl-
+import Toggletip from '../Toggletip.astro';
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+// strings:start
+const STRINGS = {
+  en: {
+    searchLabel: "Extension or MIME type",
+    resultsLabel: "MIME results",
+    fileLabel: "Local file",
+    tips: {
+      search: "Type an extension, MIME type or keyword. Results update as you type. A leading dot searches extension prefixes; a slash searches MIME strings.",
+      group: "Limit the current search to one of the nine listed groups. All restores every group; clearing the search keeps your selected group.",
+      copy: "Each catalog Copy button copies only the MIME string. In file results, Copy copies the complete value of that row.",
+      file: "Choose or drop one local file. Detection starts immediately and reads only its first 64 bytes; the file is not uploaded.",
+      detected: "The first matching signature determines the MIME type. Likely extensions come from that type in the catalog. ZIP containers keep a visible note.",
+      bytes: "Shows up to the first 16 bytes in uppercase hexadecimal, separated by spaces. Copy preserves the displayed bytes.",
+      browser: "Shows the file’s browser-reported File.type. If no signature matches, detection uses this value or application/octet-stream and displays a fallback note.",
+    },
+    tabSearch: 'Search', tabSniff: 'Sniff file',
+    searchPh: '.pdf, application/json, image…',
+    empty: 'No matching MIME types.',
+    all: 'All', application: 'Application', image: 'Image', audio: 'Audio',
+    video: 'Video', text: 'Text', font: 'Font', multipart: 'Multipart',
+    message: 'Message', model: 'Model',
+    extensions: 'Extensions', group: 'Group', copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Please try again.',
+    dropTitle: 'Drop file here or click to choose',
+    dropHint: 'Files stay in your browser — only the first 64 bytes are read',
+    detectedMime: 'Detected MIME', likelyExt: 'Likely extensions',
+    magicBytes: 'Magic bytes (hex)', browserType: 'Browser File.type',
+    note: 'Note',
+    noMatchSig: 'No magic-bytes signature matched. Falling back to the browser-reported type.',
+    containerNote: 'ZIP container detected — may also be a docx / xlsx / pptx / EPUB / JAR file.',
+    folderError: 'Only single files are supported.',
+    unsupported: 'Your browser does not expose file reading APIs.',
+    none: '(none)'
+  },
+  zh: {
+    searchLabel: "扩展名或 MIME 类型",
+    resultsLabel: "MIME 查询结果",
+    fileLabel: "本地文件",
+    tips: {
+      search: "输入扩展名、MIME 类型或关键词，结果随输入更新。以点开头时匹配扩展名前缀，含斜杠时搜索 MIME 字符串。",
+      group: "将当前搜索限定到九个分组之一。「全部」恢复所有分组；清空搜索仍保留已选分组。",
+      copy: "目录中的「复制」只复制 MIME 字符串。文件结果中的「复制」会复制该行的完整值。",
+      file: "选择或拖入一个本地文件后立即检测，仅读取前 64 字节，文件不会上传。",
+      detected: "第一个匹配的签名决定 MIME 类型，可能的扩展名来自目录中该类型的记录。ZIP 容器会直接显示说明。",
+      bytes: "以空格分隔的大写十六进制显示最多前 16 字节，复制保留显示的字节内容。",
+      browser: "显示浏览器报告的 File.type。无签名匹配时使用此值或 application/octet-stream，并显示回退说明。",
+    },
+    tabSearch: '搜索', tabSniff: '文件嗅探',
+    searchPh: '.pdf、application/json、image…',
+    empty: '未找到匹配的 MIME 类型。',
+    all: '全部', application: '应用', image: '图像', audio: '音频',
+    video: '视频', text: '文本', font: '字体', multipart: '多部分',
+    message: '消息', model: '模型',
+    extensions: '扩展名', group: '分组', copy: '复制', copied: '已复制', copyFailed: '复制失败，请重试。',
+    dropTitle: '拖入文件或点击选择',
+    dropHint: '文件不出本地浏览器，仅读取前 64 字节',
+    detectedMime: '检测到的 MIME', likelyExt: '可能的扩展名',
+    magicBytes: '魔数字节（hex）', browserType: '浏览器 File.type',
+    note: '提示',
+    noMatchSig: '未匹配到 magic bytes 签名，回退到浏览器声明的类型。',
+    containerNote: '检测到 ZIP 容器 — 也可能是 docx / xlsx / pptx / EPUB / JAR。',
+    folderError: '仅支持单个文件。',
+    unsupported: '当前浏览器不支持文件读取 API。',
+    none: '（无）'
+  },
+  ja: {
+    searchLabel: "拡張子または MIME タイプ",
+    resultsLabel: "MIME 検索結果",
+    fileLabel: "ローカルファイル",
+    tips: {
+      search: "拡張子、MIME タイプ、キーワードを入力すると結果が更新されます。先頭がドットなら拡張子の前方一致、スラッシュを含む場合は MIME 文字列を検索します。",
+      group: "現在の検索を 9 グループのいずれかに絞ります。「すべて」で全グループに戻ります。検索欄を空にしても選択したグループは保持されます。",
+      copy: "一覧のコピーボタンは MIME 文字列だけをコピーします。ファイル結果では、その行の値全体をコピーします。",
+      file: "ローカルファイルを 1 つ選択またはドロップすると、すぐに判定します。先頭 64 バイトのみを読み、アップロードしません。",
+      detected: "最初に一致した署名で MIME タイプを決めます。推定拡張子はそのタイプの一覧データから取得します。ZIP コンテナには備考を表示します。",
+      bytes: "先頭から最大 16 バイトを、空白区切りの大文字の 16 進数で表示します。コピーでは表示されたバイト列を保持します。",
+      browser: "ブラウザが報告する File.type を表示します。署名が一致しない場合は、この値または application/octet-stream を使い、フォールバックの備考を表示します。",
+    },
+    tabSearch: '検索', tabSniff: 'ファイル判定',
+    searchPh: '.pdf、application/json、image…',
+    empty: '一致する MIME タイプはありません。',
+    all: 'すべて', application: 'アプリ', image: '画像', audio: '音声',
+    video: '動画', text: 'テキスト', font: 'フォント', multipart: 'マルチパート',
+    message: 'メッセージ', model: 'モデル',
+    extensions: '拡張子', group: 'グループ', copy: 'コピー', copied: 'コピー済み', copyFailed: 'コピーに失敗しました。再試行してください。',
+    dropTitle: 'ファイルをドロップまたはクリックして選択',
+    dropHint: 'ファイルはブラウザ外に出ません — 先頭 64 バイトのみ読みます',
+    detectedMime: '検出 MIME', likelyExt: '推定拡張子',
+    magicBytes: 'マジックバイト（hex）', browserType: 'ブラウザ File.type',
+    note: '備考',
+    noMatchSig: 'マジックバイト署名と一致しませんでした。ブラウザ提供の型にフォールバックします。',
+    containerNote: 'ZIP コンテナを検出 — docx / xlsx / pptx / EPUB / JAR の可能性もあります。',
+    folderError: '単一ファイルのみ対応です。',
+    unsupported: 'お使いのブラウザではファイル読み取り API が利用できません。',
+    none: '（なし）'
+  },
+  ko: {
+    searchLabel: "확장자 또는 MIME 타입",
+    resultsLabel: "MIME 검색 결과",
+    fileLabel: "로컬 파일",
+    tips: {
+      search: "확장자, MIME 타입 또는 키워드를 입력하면 결과가 갱신됩니다. 점으로 시작하면 확장자 접두사를, 슬래시가 있으면 MIME 문자열을 검색합니다.",
+      group: "현재 검색을 9개 그룹 중 하나로 좁힙니다. 전체를 선택하면 모든 그룹으로 돌아갑니다. 검색을 비워도 선택한 그룹은 유지됩니다.",
+      copy: "목록의 복사 버튼은 MIME 문자열만 복사합니다. 파일 결과의 복사 버튼은 해당 행의 전체 값을 복사합니다.",
+      file: "로컬 파일 하나를 선택하거나 끌어 놓으면 바로 감지합니다. 앞 64바이트만 읽으며 파일을 업로드하지 않습니다.",
+      detected: "처음 일치한 시그니처로 MIME 타입을 정합니다. 추정 확장자는 해당 타입의 목록에서 가져옵니다. ZIP 컨테이너에는 참고 내용을 표시합니다.",
+      bytes: "앞부분의 최대 16바이트를 공백으로 구분한 대문자 16진수로 표시합니다. 복사하면 표시된 바이트가 그대로 유지됩니다.",
+      browser: "브라우저가 보고하는 File.type을 표시합니다. 일치하는 시그니처가 없으면 이 값 또는 application/octet-stream을 사용하고 대체 안내를 표시합니다.",
+    },
+    tabSearch: '검색', tabSniff: '파일 감지',
+    searchPh: '.pdf, application/json, image…',
+    empty: '일치하는 MIME 타입이 없습니다.',
+    all: '전체', application: '애플리케이션', image: '이미지', audio: '오디오',
+    video: '비디오', text: '텍스트', font: '폰트', multipart: '멀티파트',
+    message: '메시지', model: '모델',
+    extensions: '확장자', group: '그룹', copy: '복사', copied: '복사됨', copyFailed: '복사에 실패했습니다. 다시 시도해 주세요.',
+    dropTitle: '파일을 끌어다 놓거나 클릭하여 선택',
+    dropHint: '파일은 브라우저를 벗어나지 않으며 앞 64 바이트만 읽습니다',
+    detectedMime: '감지된 MIME', likelyExt: '추정 확장자',
+    magicBytes: 'magic bytes (hex)', browserType: '브라우저 File.type',
+    note: '참고',
+    noMatchSig: 'magic bytes 시그니처와 일치하지 않습니다. 브라우저가 알려준 타입으로 대체합니다.',
+    containerNote: 'ZIP 컨테이너 감지 — docx / xlsx / pptx / EPUB / JAR 일 수도 있습니다.',
+    folderError: '단일 파일만 지원합니다.',
+    unsupported: '현재 브라우저는 파일 읽기 API를 제공하지 않습니다.',
+    none: '(없음)'
+  }
+};
+// strings:end
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
 <div class="mtl-wrap">
-  <div class="mtl-tabs" role="tablist">
-    <button id="mtl-tab-search" class="mtl-tab is-active" role="tab" aria-selected="true" data-i18n="tabSearch">Search</button>
-    <button id="mtl-tab-sniff" class="mtl-tab" role="tab" aria-selected="false" data-i18n="tabSniff">Sniff file</button>
+  <div class="mtl-tabs zt-segmented" role="tablist">
+    <button id="mtl-tab-search" class="mtl-tab is-active" role="tab" aria-selected="true" aria-controls="mtl-panel-search">{T.tabSearch}</button>
+    <button id="mtl-tab-sniff" class="mtl-tab" role="tab" aria-selected="false" aria-controls="mtl-panel-sniff">{T.tabSniff}</button>
   </div>
 
-  <section id="mtl-panel-search" class="mtl-panel" role="tabpanel">
-    <div class="mtl-search-row">
-      <input
-        id="mtl-search"
-        type="search"
-        class="tool-input mtl-input"
-        data-i18n-ph="searchPh"
-        placeholder=".pdf, application/json, image…"
-        autocomplete="off"
-        spellcheck="false"
-      />
+  <section id="mtl-panel-search" class="mtl-panel" role="tabpanel" aria-labelledby="mtl-tab-search">
+    <div class="mtl-field-head">
+      <label for="mtl-search">{T.searchLabel}</label>
+      <Toggletip id="mtl-tip-search" lang={lang} about={T.searchLabel}>{TIPS.search}</Toggletip>
     </div>
-
-    <div id="mtl-chips" class="mtl-chips" role="tablist"></div>
-
-    <div id="mtl-results" class="mtl-results"></div>
-    <div id="mtl-empty" class="mtl-empty" style="display:none" data-i18n="empty">No matching MIME types.</div>
+    <input id="mtl-search" type="search" class="tool-input mtl-input" placeholder={T.searchPh} autocomplete="off" spellcheck="false" />
+    <div class="mtl-group-control">
+      <div class="mtl-field-head">
+        <span id="mtl-group-label">{T.group}</span>
+        <Toggletip id="mtl-tip-group" lang={lang} about={T.group}>{TIPS.group}</Toggletip>
+      </div>
+      <div id="mtl-chips" class="mtl-chips" role="tablist" aria-labelledby="mtl-group-label"></div>
+    </div>
+    <div class="mtl-search-status" aria-live="polite">
+      <div id="mtl-empty" class="mtl-empty" style="display:none">{T.empty}</div>
+    </div>
+    <div class="mtl-output-head">
+      <span>{T.resultsLabel}</span>
+      <Toggletip id="mtl-tip-copy" lang={lang} about={T.copy}>{TIPS.copy}</Toggletip>
+    </div>
+    <div id="mtl-results" class="mtl-results" tabindex="0" role="region" aria-label={T.resultsLabel}></div>
   </section>
 
-  <section id="mtl-panel-sniff" class="mtl-panel" role="tabpanel" hidden>
-    <label class="mtl-drop" id="mtl-drop">
-      <input type="file" id="mtl-file" class="mtl-file" />
+  <section id="mtl-panel-sniff" class="mtl-panel" role="tabpanel" aria-labelledby="mtl-tab-sniff" hidden>
+    <div class="mtl-field-head">
+      <span>{T.fileLabel}</span>
+      <Toggletip id="mtl-tip-file" lang={lang} about={T.fileLabel}>{TIPS.file}</Toggletip>
+    </div>
+    <div id="mtl-sniff-status" class="tool-status none" aria-live="polite"></div>
+    <label class="mtl-drop zt-empty-drop" id="mtl-drop">
+      <input type="file" id="mtl-file" class="mtl-file" aria-label={T.fileLabel} />
       <div class="mtl-drop-body">
-        <strong data-i18n="dropTitle">Drop file here or click to choose</strong>
-        <span data-i18n="dropHint">Files stay in your browser — only the first 64 bytes are read</span>
+        <strong>{T.dropTitle}</strong>
+        <span>{T.dropHint}</span>
       </div>
     </label>
-    <div id="mtl-sniff-status" class="tool-status none" aria-live="polite"></div>
-    <div id="mtl-sniff-result" class="mtl-sniff-result" hidden>
+    <div id="mtl-sniff-result" class="mtl-sniff-result" tabindex="0" role="region" aria-label={T.tabSniff} hidden>
       <div class="tool-result-row">
-        <span class="tool-result-label" data-i18n="detectedMime">Detected MIME</span>
+        <div class="mtl-field-head tool-result-label">
+          <span>{T.detectedMime}</span>
+          <Toggletip id="mtl-tip-detected" lang={lang} about={T.detectedMime}>{TIPS.detected}</Toggletip>
+        </div>
         <span class="tool-result-value" id="mtl-sniff-mime"></span>
-        <button class="btn-copy mtl-copy" data-target="mtl-sniff-mime" data-i18n="copy">Copy</button>
+        <button class="btn-copy mtl-copy" data-target="mtl-sniff-mime">{T.copy}</button>
       </div>
       <div class="tool-result-row">
-        <span class="tool-result-label" data-i18n="likelyExt">Likely extensions</span>
+        <span class="tool-result-label">{T.likelyExt}</span>
         <span class="tool-result-value" id="mtl-sniff-ext"></span>
-        <button class="btn-copy mtl-copy" data-target="mtl-sniff-ext" data-i18n="copy">Copy</button>
+        <button class="btn-copy mtl-copy" data-target="mtl-sniff-ext">{T.copy}</button>
       </div>
       <div class="tool-result-row">
-        <span class="tool-result-label" data-i18n="magicBytes">Magic bytes</span>
+        <div class="mtl-field-head tool-result-label">
+          <span>{T.magicBytes}</span>
+          <Toggletip id="mtl-tip-bytes" lang={lang} about={T.magicBytes}>{TIPS.bytes}</Toggletip>
+        </div>
         <span class="tool-result-value" id="mtl-sniff-bytes"></span>
-        <button class="btn-copy mtl-copy" data-target="mtl-sniff-bytes" data-i18n="copy">Copy</button>
+        <button class="btn-copy mtl-copy" data-target="mtl-sniff-bytes">{T.copy}</button>
       </div>
       <div class="tool-result-row">
-        <span class="tool-result-label" data-i18n="browserType">Browser File.type</span>
+        <div class="mtl-field-head tool-result-label">
+          <span>{T.browserType}</span>
+          <Toggletip id="mtl-tip-browser" lang={lang} about={T.browserType}>{TIPS.browser}</Toggletip>
+        </div>
         <span class="tool-result-value" id="mtl-sniff-browser"></span>
       </div>
       <div class="tool-result-row mtl-note-row" id="mtl-sniff-note-row" hidden>
-        <span class="tool-result-label" data-i18n="note">Note</span>
+        <span class="tool-result-label">{T.note}</span>
         <span class="tool-result-value" id="mtl-sniff-note"></span>
       </div>
     </div>
   </section>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          tabSearch: 'Search', tabSniff: 'Sniff file',
-          searchPh: '.pdf, application/json, image…',
-          empty: 'No matching MIME types.',
-          all: 'All', application: 'Application', image: 'Image', audio: 'Audio',
-          video: 'Video', text: 'Text', font: 'Font', multipart: 'Multipart',
-          message: 'Message', model: 'Model',
-          extensions: 'Extensions', group: 'Group', copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Please try again.',
-          dropTitle: 'Drop file here or click to choose',
-          dropHint: 'Files stay in your browser — only the first 64 bytes are read',
-          detectedMime: 'Detected MIME', likelyExt: 'Likely extensions',
-          magicBytes: 'Magic bytes (hex)', browserType: 'Browser File.type',
-          note: 'Note',
-          noMatchSig: 'No magic-bytes signature matched. Falling back to the browser-reported type.',
-          containerNote: 'ZIP container detected — may also be a docx / xlsx / pptx / EPUB / JAR file.',
-          folderError: 'Only single files are supported.',
-          unsupported: 'Your browser does not expose file reading APIs.',
-          none: '(none)'
-        },
-        zh: {
-          tabSearch: '搜索', tabSniff: '文件嗅探',
-          searchPh: '.pdf、application/json、image…',
-          empty: '未找到匹配的 MIME 类型。',
-          all: '全部', application: '应用', image: '图像', audio: '音频',
-          video: '视频', text: '文本', font: '字体', multipart: '多部分',
-          message: '消息', model: '模型',
-          extensions: '扩展名', group: '分组', copy: '复制', copied: '已复制', copyFailed: '复制失败，请重试。',
-          dropTitle: '拖入文件或点击选择',
-          dropHint: '文件不出本地浏览器，仅读取前 64 字节',
-          detectedMime: '检测到的 MIME', likelyExt: '可能的扩展名',
-          magicBytes: '魔数字节（hex）', browserType: '浏览器 File.type',
-          note: '提示',
-          noMatchSig: '未匹配到 magic bytes 签名，回退到浏览器声明的类型。',
-          containerNote: '检测到 ZIP 容器 — 也可能是 docx / xlsx / pptx / EPUB / JAR。',
-          folderError: '仅支持单个文件。',
-          unsupported: '当前浏览器不支持文件读取 API。',
-          none: '（无）'
-        },
-        ja: {
-          tabSearch: '検索', tabSniff: 'ファイル判定',
-          searchPh: '.pdf、application/json、image…',
-          empty: '一致する MIME タイプはありません。',
-          all: 'すべて', application: 'アプリ', image: '画像', audio: '音声',
-          video: '動画', text: 'テキスト', font: 'フォント', multipart: 'マルチパート',
-          message: 'メッセージ', model: 'モデル',
-          extensions: '拡張子', group: 'グループ', copy: 'コピー', copied: 'コピー済み', copyFailed: 'コピーに失敗しました。再試行してください。',
-          dropTitle: 'ファイルをドロップまたはクリックして選択',
-          dropHint: 'ファイルはブラウザ外に出ません — 先頭 64 バイトのみ読みます',
-          detectedMime: '検出 MIME', likelyExt: '推定拡張子',
-          magicBytes: 'マジックバイト（hex）', browserType: 'ブラウザ File.type',
-          note: '備考',
-          noMatchSig: 'マジックバイト署名と一致しませんでした。ブラウザ提供の型にフォールバックします。',
-          containerNote: 'ZIP コンテナを検出 — docx / xlsx / pptx / EPUB / JAR の可能性もあります。',
-          folderError: '単一ファイルのみ対応です。',
-          unsupported: 'お使いのブラウザではファイル読み取り API が利用できません。',
-          none: '（なし）'
-        },
-        ko: {
-          tabSearch: '검색', tabSniff: '파일 감지',
-          searchPh: '.pdf, application/json, image…',
-          empty: '일치하는 MIME 타입이 없습니다.',
-          all: '전체', application: '애플리케이션', image: '이미지', audio: '오디오',
-          video: '비디오', text: '텍스트', font: '폰트', multipart: '멀티파트',
-          message: '메시지', model: '모델',
-          extensions: '확장자', group: '그룹', copy: '복사', copied: '복사됨', copyFailed: '복사에 실패했습니다. 다시 시도해 주세요.',
-          dropTitle: '파일을 끌어다 놓거나 클릭하여 선택',
-          dropHint: '파일은 브라우저를 벗어나지 않으며 앞 64 바이트만 읽습니다',
-          detectedMime: '감지된 MIME', likelyExt: '추정 확장자',
-          magicBytes: 'magic bytes (hex)', browserType: '브라우저 File.type',
-          note: '참고',
-          noMatchSig: 'magic bytes 시그니처와 일치하지 않습니다. 브라우저가 알려준 타입으로 대체합니다.',
-          containerNote: 'ZIP 컨테이너 감지 — docx / xlsx / pptx / EPUB / JAR 일 수도 있습니다.',
-          folderError: '단일 파일만 지원합니다.',
-          unsupported: '현재 브라우저는 파일 읽기 API를 제공하지 않습니다.',
-          none: '(없음)'
-        }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      function applyI18n() {
-        document.querySelectorAll('[data-i18n]').forEach(function (el) {
-          var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-        });
-        document.querySelectorAll('[data-i18n-ph]').forEach(function (el) {
-          var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-        });
-      }
-      applyI18n();
-
       // Curated MIME database (~240 entries spanning IANA top-level types).
       // Format: [mime, [extensions], group]. Source: IANA registry highlights + RFC 6838.
       var DB = [
@@ -694,7 +753,7 @@
 </div>
 
 <style is:global>
-  .mtl-wrap { display: flex; flex-direction: column; gap: 1rem; }
+  .mtl-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; gap: 0.75rem; }
 
   .mtl-tabs {
     display: inline-flex;
@@ -718,19 +777,26 @@
     transition: background-color var(--transition-fast), color var(--transition-fast);
   }
   .mtl-tab.is-active {
-    background: var(--color-surface);
-    color: var(--color-primary);
+    background: var(--color-text);
+    color: var(--color-bg);
     box-shadow: var(--shadow-subtle);
   }
   @media (hover: hover) {
     .mtl-tab:not(.is-active):hover { color: var(--color-primary); }
   }
 
-  .mtl-panel { display: flex; flex-direction: column; gap: 0.85rem; }
+  .mtl-panel { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; gap: 0.65rem; }
   .mtl-panel[hidden] { display: none; }
 
-  .mtl-search-row { display: flex; }
-  .mtl-input { flex: 1; }
+  .mtl-field-head, .mtl-output-head { display: flex; align-items: center; gap: 0.4rem; flex: none; font-weight: 600; font-size: 0.85rem; }
+  .mtl-input { flex: none; width: 100%; min-height: 44px; }
+  .mtl-group-control { display: flex; align-items: center; gap: 0.65rem; flex: none; min-width: 0; }
+  .mtl-search-status, #mtl-sniff-status { flex: none; height: 2.8em; min-height: 0; overflow: auto; overflow-wrap: anywhere; font-size: 0.85rem; line-height: 1.4; }
+  #mtl-sniff-status { margin: 0; padding: 0.25rem 0.5rem; }
+  .mtl-copy { flex: 0 0 7.5rem; width: 7.5rem; max-width: 42%; min-height: 44px; white-space: normal; overflow-wrap: anywhere; line-height: 1.2; }
+  .mtl-tab, .mtl-chip { min-height: 44px; }
+  .mtl-tab:focus-visible, .mtl-chip:focus-visible, .mtl-drop:focus-within { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
 
   .mtl-chips {
     display: flex;
@@ -751,8 +817,8 @@
     transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
   }
   .mtl-chip.is-active {
-    background: var(--color-primary-light);
-    color: var(--color-primary);
+    background: var(--color-text);
+    color: var(--color-bg);
     box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-primary) 45%, transparent);
   }
   @media (hover: hover) {
@@ -760,6 +826,11 @@
   }
 
   .mtl-results {
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+    align-content: start;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
     gap: 0.7rem;
@@ -822,7 +893,7 @@
   .mtl-empty {
     font-size: 0.88rem;
     color: var(--color-text-secondary);
-    padding: 1rem 0;
+    padding: 0.25rem 0;
     text-align: center;
   }
 
@@ -831,8 +902,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 160px;
-    padding: 1.5rem;
+    flex: none;
+    min-height: 120px;
+    padding: 1rem;
     border-radius: var(--radius-lg);
     background: var(--color-bg-secondary);
     box-shadow: inset 0 0 0 1px var(--color-border-soft);
@@ -849,7 +921,12 @@
   .mtl-drop-body span { font-size: 0.82rem; color: var(--color-text-secondary); }
   .mtl-file { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
 
+  #mtl-panel-sniff:has(#mtl-sniff-result[hidden]) .mtl-drop { flex: 1 1 0; }
   .mtl-sniff-result {
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -857,7 +934,25 @@
   .mtl-sniff-result[hidden],
   .mtl-note-row[hidden] { display: none; }
 
+  .mtl-sniff-result .tool-result-row { flex: none; }
+  .mtl-sniff-result .tool-result-value { min-width: 0; overflow-wrap: anywhere; }
+  @media (max-width: 860px) {
+    .mtl-panel { flex: none; }
+    #mtl-results:empty, #mtl-panel-search:has(#mtl-results:empty) .mtl-output-head { display: none; }
+    .mtl-results, .mtl-sniff-result { flex: none; height: 27rem; }
+    #mtl-panel-sniff:has(#mtl-sniff-result[hidden]) .mtl-drop { flex: none; }
+  }
   @media (max-width: 640px) {
+    .mtl-wrap, .mtl-panel { gap: 0.5rem; }
+    .mtl-group-control { align-items: center; }
+    .mtl-group-control .mtl-field-head { max-width: 6rem; }
+    .mtl-chips { min-width: 0; }
+    .mtl-chip { flex: none; }
+    .mtl-results, .mtl-sniff-result { height: 24rem; }
+    .mtl-sniff-result .tool-result-row { flex-wrap: wrap; gap: 0.4rem; }
+    .mtl-sniff-result .tool-result-label { flex: 1 0 100%; }
+    .mtl-sniff-result .tool-result-value { flex: 1 1 0; }
+    .mtl-drop { min-height: 120px; padding: 0.75rem; }
     .mtl-tabs { width: 100%; }
     .mtl-tab { flex: 1; text-align: center; }
     .mtl-chips { overflow-x: auto; flex-wrap: nowrap; }

@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'mime-type-lookup': 'analyze',
   'css-specificity-calculator': 'analyze',
   'keycode-explorer': 'analyze',
   'timezone-converter': 'analyze',

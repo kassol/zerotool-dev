@@ -19,6 +19,8 @@
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import yaml from 'js-yaml';
 import { parseFragment, defaultTreeAdapter } from 'parse5';
 import { loadPage } from './astro-page-harness.mjs';
 import { tmpdir } from 'node:os';
@@ -151,6 +153,17 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' tool page FAQ gives the registered split', p.includes(String(registered)) && p.includes(String(unregistered)) && !/snapshot of the IANA|精选快照|選定スナップショット|큐레이션 스냅샷/.test(p));
 }
 
+const frontmatter=src.match(/^---\n([\s\S]*?)\n---/)[1];
+const LOCALES=vm.runInNewContext(frontmatter.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+const markupTemplate=src.replace(/^---[\s\S]*?---\s*/,'').split('<script')[0];
+const tipBindings=[...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+const escape=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function renderMarkup(lang){
+  const T=LOCALES[lang],about=JSON.parse(readFileSync(join(root,'src/i18n/'+lang+'.json'),'utf8'))['tool.tipAbout'];
+  return markupTemplate.replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g,(_,id,key,tip)=>'<span class="zt-tip"><button type="button" data-zt-tip="'+id+'" aria-label="'+escape(about.replace('{name}',T[key]))+'">?</button><span id="'+id+'" popover="auto">'+escape(T.tips[tip])+'</span></span>')
+    .replace(/=\{T\.(\w+)\}/g,(_,key)=>'="'+escape(T[key])+'"').replace(/\{T\.(\w+)\}/g,(_,key)=>escape(T[key]));
+}
+
 // Complete page lifecycle: actual IIFE, real shared shortcut, real File/Blob bytes.
 // parse5 models generated DOM. Clipboard promises, FileReader delivery and timers are controlled;
 // this does not claim browser layout, native picker or MutationObserver coverage.
@@ -246,7 +259,7 @@ function page(lang='en',order='shared-after',clipboardMode='normal',savedMode=nu
   doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
   doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
-  widget.innerHTML=src.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+  widget.innerHTML=renderMarkup(lang);
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
@@ -259,7 +272,7 @@ function page(lang='en',order='shared-after',clipboardMode='normal',savedMode=nu
     abort(){this.aborted=true;}
   }
   const globals={document:doc,File,FileReader:Reader,Uint8Array,ArrayBuffer,TextEncoder,TextDecoder,Blob,
-    _slug:slugs[key],ztPersist:persist,trackTool(){},
+    _slug:slugs[key],ztPersist:persist,trackTool(){},t:Object.fromEntries(Object.entries(LOCALES[lang]).filter(([key])=>key!=='tips')),
     navigator:clipboardMode==='absent'?{}:{clipboard:{writeText(value){if(clipboardMode==='throw')throw Error('Controlled clipboard throw');const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
   };
@@ -343,5 +356,116 @@ for(const [name,begin,end,expected] of [
   ['real sniff detection/body','          var bytes = new Uint8Array(reader.result);','        reader.onerror =','fe6209537a8c72b3007de0f2bc68ad4953805962bf3f9249d9225f9e7d204992'],
   ['real search filter/render','        var q = (searchInput.value','      searchInput.addEventListener','e40c6c46d800264939dc2fef2e4c4cee2df02a35c2e1fdeeaba474bd5f58b1d8'],
 ])eq(name+' byte protection',createHash('sha256').update(src.slice(src.indexOf(begin),src.indexOf(end))).digest('hex'),expected);
+
+// v2 page layout — compiled CSS, real SSR text and page controls; browser geometry is separate.
+const v2Pass=passes,v2Fail=failures;
+const frozen={
+  "contentHashes": {
+    "en": "01644ec3717b79108baa8350e6397beab8f2484711f52fb868cca16c70aa9abd",
+    "zh": "1480858fbb95e362639978fe04beae693a58e4268b7e7e7112fd85923677afe4",
+    "ja": "304177644e75356eb702634bca0e105ca019f63ffe28f561afda669645e325be",
+    "ko": "cafea9ac7aa244a2f02b03971ee1fc4ace070a0d4e5d4876193cbdfabe328574"
+  },
+  "scriptHash": "e41610c910b4d235cbb3b5bd343c3d665f8906860fd889d2531c40a0d9dfb97a",
+  "oldKeys": [
+    "tabSearch",
+    "tabSniff",
+    "searchPh",
+    "empty",
+    "all",
+    "application",
+    "image",
+    "audio",
+    "video",
+    "text",
+    "font",
+    "multipart",
+    "message",
+    "model",
+    "extensions",
+    "group",
+    "copy",
+    "copied",
+    "copyFailed",
+    "dropTitle",
+    "dropHint",
+    "detectedMime",
+    "likelyExt",
+    "magicBytes",
+    "browserType",
+    "note",
+    "noMatchSig",
+    "containerNote",
+    "folderError",
+    "unsupported",
+    "none"
+  ],
+  "oldStringHashes": {
+    "en": "bdf05f256f3b4b037cb264ed5f808ea19ac90f7c8d5216ffb98e25187957151c",
+    "zh": "35afae64d25ddf4e19b0e0682a5eea90273e0d8a6412c56d6477a8f53335dd77",
+    "ja": "4af7ff135a6385b9cfc7cc2b95c7c4a776250b8a6a111d14ec51996a2f0450db",
+    "ko": "980122e0e8328ed4440990f3c3047a0d76a0b4f75104dc118d73698f6f03230f"
+  }
+};
+const hash=value=>createHash('sha256').update(value).digest('hex');
+const require=createRequire(join(root,'package.json'));
+const astroRequire=createRequire(require.resolve('astro/package.json'));
+const compiled=await astroRequire('@astrojs/compiler').transform(src,{filename:join(root,'src/components/tools/MimeTypeLookupTool.astro')});
+check('v2 Astro compiles',!compiled.diagnostics.some(d=>d.severity===1));
+let compileError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){compileError=String(e);}
+eq('v2 compiled module parses',compileError,'');
+const css=compiled.css.join('\n'),pageScript=src.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
+const {compile:compileMdx}=await import('@mdx-js/mdx');
+check('v2 direct flex root bounded panels',/^<div class="mtl-wrap">/.test(markupTemplate)&&/\.mtl-wrap\s*\{[^}]*display:\s*flex[^}]*min-height:\s*0/.test(css)&&/\.mtl-panel\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0/.test(css));
+check('v2 no runtime i18n',!/data-i18n|document\.documentElement\.lang/.test(src));
+check('v2 tips excluded client',/define:vars=\{\{ t: CLIENT_T \}\}/.test(src)&&!/STRINGS|TIPS|tips/.test(pageScript));
+check('v2 shared segmented and empty drop',markupTemplate.includes('mtl-tabs zt-segmented')&&markupTemplate.includes('mtl-drop zt-empty-drop'));
+check('v2 status fixed not content sized',/\.mtl-search-status,\s*#mtl-sniff-status\s*\{[^}]*flex:\s*none[^}]*height:\s*2.8em[^}]*overflow:\s*auto/.test(css));
+check('v2 search and sniff results internally scroll',/\.mtl-results\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css)&&/\.mtl-sniff-result\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
+check('v2 desktop empty drop fills available height',/#mtl-panel-sniff:has\(#mtl-sniff-result\[hidden\]\) \.mtl-drop\s*\{\s*flex:\s*1 1 0/.test(css));
+check('v2 hidden panels and empty sniff stay hidden',/\.mtl-panel\[hidden\]\s*\{\s*display:\s*none/.test(css)&&/\.mtl-sniff-result\[hidden\],\s*\.mtl-note-row\[hidden\]\s*\{\s*display:\s*none/.test(css));
+check('v2 stacked breakpoint bounds results',/@media\s*\(max-width:\s*860px\)/.test(css)&&/\.mtl-results,\s*\.mtl-sniff-result\s*\{\s*flex:\s*none;\s*height:\s*27rem/.test(css));
+check('v2 mobile no-match result and heading hidden',/#mtl-results:empty,\s*#mtl-panel-search:has\(#mtl-results:empty\) \.mtl-output-head\s*\{\s*display:\s*none/.test(css));
+check('v2 phone result size and chip rail',/@media\s*\(max-width:\s*640px\)/.test(css)&&/\.mtl-results,\s*\.mtl-sniff-result\s*\{\s*height:\s*24rem/.test(css)&&/\.mtl-chips\s*\{\s*overflow-x:\s*auto;\s*flex-wrap:\s*nowrap/.test(css));
+check('v2 buttons44 and copy failures bounded',/\.mtl-tab,\s*\.mtl-chip\s*\{\s*min-height:\s*44px/.test(css)&&/\.mtl-copy\s*\{[^}]*max-width:\s*42%[^}]*min-height:\s*44px[^}]*white-space:\s*normal/.test(css));
+check('v2 both segmented active states contrast in themes',/\.mtl-tab\.is-active\s*\{[^}]*background:\s*var\(--color-text\)[^}]*color:\s*var\(--color-bg\)/.test(css)&&/\.mtl-chip\.is-active\s*\{[^}]*background:\s*var\(--color-text\)[^}]*color:\s*var\(--color-bg\)/.test(css));
+eq('v2 seven actual tips',tipBindings.map(m=>m[1]),['mtl-tip-search','mtl-tip-group','mtl-tip-copy','mtl-tip-file','mtl-tip-detected','mtl-tip-bytes','mtl-tip-browser']);
+const placeholders=value=>(String(value).match(/\{\w+\}/g)||[]).sort();
+for(const lang of ['en','zh','ja','ko']){
+  const T=LOCALES[lang],{tips,...client}=T,p=page(lang),about=JSON.parse(readFileSync(join(root,'src/i18n/'+lang+'.json'),'utf8'))['tool.tipAbout'];
+  eq('v2 '+lang+' same locale keys',Object.keys(T).sort(),Object.keys(LOCALES.en).sort());
+  eq('v2 '+lang+' prior strings exact',hash(JSON.stringify(Object.fromEntries(frozen.oldKeys.map(k=>[k,T[k]])))),frozen.oldStringHashes[lang]);
+  eq('v2 '+lang+' same tip keys',Object.keys(tips),Object.keys(LOCALES.en.tips));
+  for(const key of Object.keys(tips)){
+    check('v2 '+lang+' plain nonempty tip '+key,typeof tips[key]==='string'&&tips[key].trim()&&!/[<>\n]|https?:/.test(tips[key]));
+    eq('v2 '+lang+' tip placeholder '+key,placeholders(tips[key]),placeholders(LOCALES.en.tips[key]));
+  }
+  check('v2 '+lang+' no serialized tips',!('tips' in client)&&Object.values(tips).every(text=>!JSON.stringify(client).includes(text)));
+  eq('v2 '+lang+' SSR tab labels',[p.get('mtl-tab-search').textContent,p.get('mtl-tab-sniff').textContent],[T.tabSearch,T.tabSniff]);
+  eq('v2 '+lang+' SSR search label/placeholder',[p.doc.querySelector('label[for="mtl-search"]').textContent,p.get('mtl-search').getAttribute('placeholder')],[T.searchLabel,T.searchPh]);
+  eq('v2 '+lang+' visible local64bytes privacy',p.doc.querySelector('.mtl-drop-body span').textContent,T.dropHint);
+  for(const [,id,aboutKey,key] of tipBindings){eq('v2 '+lang+' tip body '+key,p.get(id).textContent,tips[key]);eq('v2 '+lang+' tip about '+key,p.doc.querySelector('[data-zt-tip="'+id+'"]').getAttribute('aria-label'),about.replace('{name}',T[aboutKey]));}
+  for(const [id,label] of [['mtl-results',T.resultsLabel],['mtl-sniff-result',T.tabSniff]])eq('v2 '+lang+' keyboard result '+id,[p.get(id).getAttribute('tabindex'),p.get(id).getAttribute('role'),p.get(id).getAttribute('aria-label')],['0','region',label]);
+  p.input('mtl-search','no-match-xyz');
+  eq('v2 '+lang+' real no-match empty DOM and visible notice',[p.get('mtl-results').children.length,p.get('mtl-results').textContent,p.get('mtl-empty').style.display,p.get('mtl-empty').textContent],[0,'','',T.empty]);
+  eq('v2 '+lang+' all10 real group controls',p.get('mtl-chips').querySelectorAll('.mtl-chip').length,10);
+  eq('v2 '+lang+' three sniff copy controls',p.get('mtl-sniff-result').querySelectorAll('.mtl-copy').map(x=>x.getAttribute('data-target')),['mtl-sniff-mime','mtl-sniff-ext','mtl-sniff-bytes']);
+  for(const order of ['shared-before','shared-after']){
+    const q=await prepared(lang,order);const e=q.ctrlL(q.doc.querySelector('[data-zt-tip="mtl-tip-detected"]'));
+    eq('v2 '+lang+'/'+order+' result tip CtrlL focus/results',[q.doc.activeElement.id,q.get('mtl-sniff-result').hidden,q.get('mtl-sniff-status').textContent],['mtl-tab-sniff',true,'']);
+    check('v2 '+lang+'/'+order+' result tip CtrlL prevents',e.defaultPrevented);
+    eq('v2 '+lang+'/'+order+' real shared clear',q.persistCalls.filter(x=>x[0]==='clear'),[['clear','mime-type-lookup']]);
+  }
+  const content=readFileSync(join(root,'src/content/tools/mime-type-lookup/'+lang+'.mdx'),'utf8'),meta=yaml.load(content.match(/^---\n([\s\S]*?)\n---/)[1]);
+  eq('v2 '+lang+' four original Usage steps',meta.steps.length,4);
+  check('v2 '+lang+' bounded plain steps',meta.steps.every(x=>typeof x==='string'&&x.length<=280&&!/[<>\n]/.test(x))&&meta.steps.join('').length<=1200);
+  check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
+  eq('v2 '+lang+' every nonUsage byte retained',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),frozen.contentHashes[lang]);
+  let error='';try{await compileMdx(content.replace(/^---[\s\S]*?---\s*/,''));}catch(e){error=String(e);}eq('v2 '+lang+' MDX compiles',error,'');
+}
+eq('v2 entire client script after old i18n exact',hash(src.slice(src.indexOf('      // Curated MIME database'),src.indexOf('<style is:global>'))),frozen.scriptHash);
+check('v2 registry analyze',/'mime-type-lookup':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
+console.log(`v2 page layout: ${passes-v2Pass} passed, ${failures-v2Fail} failed`);
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
