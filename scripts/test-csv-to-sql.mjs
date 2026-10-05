@@ -192,10 +192,10 @@ eq('no CREATE TABLE by default', conv(SAMPLE).sql.startsWith('INSERT'), true);
 
 // ---------- 4-language STRINGS ----------
 {
-  const m = source.match(/var STRINGS = (\{[\s\S]*?\n\s{6}\});/);
+  const m = frontmatterStrings(readComponent('src/components/tools/CsvToSqlTool.astro').frontmatter);
   check('STRINGS block found', !!m);
   if (m) {
-    const S = new Function('return ' + m[1])();
+    const S = m;
     const keys = Object.keys(S.en).sort();
     for (const l of ['zh', 'ja', 'ko']) eq('STRINGS keys ' + l, Object.keys(S[l]).sort(), keys);
     check('addedColumns message has {cols}', S.en.addedColumns && S.en.addedColumns.includes('{cols}'));
@@ -256,7 +256,7 @@ function page(lang='en', order='shared-after') {
   function queryAll(sel){if(sel==='textarea, input[type="text"]')return nodes.filter(e=>e.tagName==='TEXTAREA'||e.tagName==='INPUT'&&e.attributes.type==='text');if(sel.includes('[data-i18n]'))return nodes.filter(e=>'data-i18n'in e.attributes);if(sel.startsWith('.'))return nodes.filter(e=>e.classList.contains(sel.slice(1)));throw Error('unsupported selector '+sel);}
   const get=id=>{if(!byId.has(id))throw Error('missing actual markup id '+id);return byId.get(id);};
   const widget=el();doc={documentElement:{lang},body:el('body'),activeElement:null,getElementById:get,querySelector(sel){if(sel==='.tool-widget')return widget;if(sel==='.tool-widget .btn-primary')return nodes.find(e=>e.classList.contains('btn-primary'))||null;return queryAll(sel)[0]||null;},querySelectorAll:queryAll,createElement:el,addEventListener(k,fn){(docs[k]??=[]).push(fn);},execCommand(){throw Error('native clipboard forbidden');}};doc.activeElement=doc.body;
-  if(strings){const root=doc.querySelector('.cts-wrap');root.dataset={strings:JSON.stringify(strings),lang};}
+  if(strings){const root=doc.querySelector('.cts-wrap');const {tips,...client}=strings;root.dataset={strings:JSON.stringify(client),lang};}
   const setTimeout=(fn,ms=0)=>{const id=++seq;jobs.set(id,{id,fn,ms,due:now+ms});return id;};
   const globals={document:doc,Event:class{constructor(type){this.type=type;}},setTimeout,clearTimeout:id=>jobs.delete(id),trackTool:(...a)=>tracks.push(a),ztPersist:{clear:slug=>cleared.push(slug)},
     navigator:{clipboard:{writeText(text){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});copies.push({text,resolve,reject});return promise;}}},
@@ -368,6 +368,147 @@ try {
     eq(lang+' CtrlL clears CSV, SQL, table and file selection',[p.get(s.left).value,p.get(s.right).value,p.get('cts-table').value,p.get('cts-file-input').value],['','','','']);
   }
 } finally { rmSync(fixtureDir,{recursive:true,force:true}); }
+
+
+/* ── v2 page layout ── */
+const hash = text => createHash('sha256').update(text).digest('hex');
+const requireRoot = createRequire(join(root, 'package.json'));
+const allStrings = frontmatterStrings(readComponent('src/components/tools/CsvToSqlTool.astro').frontmatter);
+const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
+eq('reviewed FIX script preserves all bytes except i18n and removed buttons', hash(script), '6685c5ec81f47133fe62776e902af72fa590512536deb8d4abcd349e48ae880f');
+check('direct zero-minimum flex column root', /^\s*<div class="cts-wrap"/.test(markupSource) && /\.cts-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
+check('controls then reserved status then panels', /class="cts-(?:toolbar|controls)"[\s\S]*id="cts-status"[\s\S]*class="cts-panels zt-io"/.test(markupSource));
+eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
+check('both editors use zero-basis shared filling', (markupSource.match(/zt-io-fill/g)||[]).length >= 2 && /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(readFileSync(join(root,'src/styles/tool-common.css'),'utf8')));
+check('reserved status has fixed height and overflow', /\.cts-status\s*\{[^}]*height: 2\.6rem;[^}]*min-height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css));
+check('editors scroll inside bounded layout', /\.cts-box\s*\{[^}]*min-width: 0;[^}]*overflow: auto;/.test(css));
+check('860 stacking and 640 touch targets', /@media \(max-width: 860px\)/.test(css) && /@media \(max-width: 640px\)[\s\S]*44px/.test(css));
+check('copy failure width remains reserved', /\.cts-head \.btn-copy\s*\{[^}]*min-width: 6\.75rem;/.test(css));
+check('tips stay outside labels and buttons', !/<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markupSource));
+eq('exact bound tip IDs', [...markupSource.matchAll(/<Toggletip id="([^"]+)"/g)].map(m=>m[1]), ["cts-tip-dialect", "cts-tip-table", "cts-tip-mode", "cts-tip-create", "cts-tip-file", "cts-tip-csv", "cts-tip-copy"]);
+check('build-time labels replace runtime i18n', !/data-i18n|var STRINGS|document.documentElement.lang/.test(source));
+check('only selected client strings are serialized', /const \{ tips: TIPS, \.\.\.CLIENT \} = T;/.test(source) && /data-strings=\{JSON.stringify\(CLIENT\)\}/.test(markupSource));
+eq('registered convert kind', readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8').match(/['"]csv-to-sql['"]\s*:\s*['"]([^'"]+)['"]/)?.[1], 'convert');
+const ORIGINAL_CLIENT_STRINGS = {
+  "en": {
+    "csvLabel": "CSV Input",
+    "sqlLabel": "SQL Output",
+    "uploadBtn": "Upload CSV",
+    "tableNameLabel": "Table Name",
+    "dialectLabel": "SQL Dialect",
+    "insertModeLabel": "Insert Mode",
+    "batchMode": "Batch INSERT",
+    "individualMode": "Individual INSERT",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "copyFailed": "Copy failed",
+    "placeholder": "name,age,city\nAlice,30,New York\nBob,25,London",
+    "errNoData": "No valid data found. Please check your CSV input.",
+    "errNoHeader": "CSV must have a header row.",
+    "createTable": "Add CREATE TABLE",
+    "addedColumns": "Some rows have more cells than the header; added columns: {cols}."
+  },
+  "zh": {
+    "csvLabel": "CSV 输入",
+    "sqlLabel": "SQL 输出",
+    "uploadBtn": "上传 CSV",
+    "tableNameLabel": "表名",
+    "dialectLabel": "SQL 方言",
+    "insertModeLabel": "插入模式",
+    "batchMode": "批量 INSERT",
+    "individualMode": "逐行 INSERT",
+    "copy": "复制",
+    "copied": "已复制！",
+    "copyFailed": "复制失败",
+    "placeholder": "name,age,city\nAlice,30,New York\nBob,25,London",
+    "errNoData": "未找到有效数据，请检查 CSV 输入。",
+    "errNoHeader": "CSV 必须包含表头行。",
+    "createTable": "添加 CREATE TABLE",
+    "addedColumns": "部分行的单元格比表头多，已补充列：{cols}。"
+  },
+  "ja": {
+    "csvLabel": "CSV 入力",
+    "sqlLabel": "SQL 出力",
+    "uploadBtn": "CSV アップロード",
+    "tableNameLabel": "テーブル名",
+    "dialectLabel": "SQL 方言",
+    "insertModeLabel": "挿入モード",
+    "batchMode": "バッチ INSERT",
+    "individualMode": "個別 INSERT",
+    "copy": "コピー",
+    "copied": "コピー済み！",
+    "copyFailed": "コピー失敗",
+    "placeholder": "name,age,city\nAlice,30,New York\nBob,25,London",
+    "errNoData": "データが見つかりません。CSVを確認してください。",
+    "errNoHeader": "CSVにはヘッダー行が必要です。",
+    "createTable": "CREATE TABLE を追加",
+    "addedColumns": "ヘッダーより多いセルがある行のため、列を追加しました：{cols}。"
+  },
+  "ko": {
+    "csvLabel": "CSV 입력",
+    "sqlLabel": "SQL 출력",
+    "uploadBtn": "CSV 업로드",
+    "tableNameLabel": "테이블명",
+    "dialectLabel": "SQL 방언",
+    "insertModeLabel": "삽입 모드",
+    "batchMode": "배치 INSERT",
+    "individualMode": "개별 INSERT",
+    "copy": "복사",
+    "copied": "복사됨!",
+    "copyFailed": "복사 실패",
+    "placeholder": "name,age,city\nAlice,30,New York\nBob,25,London",
+    "errNoData": "유효한 데이터를 찾을 수 없습니다. CSV를 확인하세요.",
+    "errNoHeader": "CSV에는 헤더 행이 필요합니다.",
+    "createTable": "CREATE TABLE 추가",
+    "addedColumns": "헤더보다 셀이 많은 행이 있어 열을 추가했습니다: {cols}."
+  }
+};
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "abef3533f874855a961dc612174dfab4d348481e29fbc9272193399d4cf205b9",
+    "body": "ff057f1a7865636ce112c214ba4f05b53b095b2a3ac5fe0ded9d834f7b42b5fa"
+  },
+  "zh": {
+    "front": "f8726da693f88b77fde9b9c2cc527b3182d9799b7537151c75758844939bdb98",
+    "body": "e9597a443a530b895aeb24feef4578af830d88329dc3eed9d5c3c6b4e6b98b87"
+  },
+  "ja": {
+    "front": "7e7ccde867ffb61e27e9136b9da76929b9d851a7039ab20a0a28c4344247a57b",
+    "body": "57ca09cec2ff6f61ba5276b20011863fca321202c82931bf7cf0fba2884606cd"
+  },
+  "ko": {
+    "front": "3f1d96ebc59ec145d02aa0ab177e84e54d0ec71958e68be346031987286368c6",
+    "body": "8f34369db11904d5637f265e216fa2755388618be12aec257f4248e858a23cbc"
+  }
+};
+const yaml = requireRoot('js-yaml');
+const mdxCompiler = await import(requireRoot.resolve('@mdx-js/mdx'));
+for (const lang of ['en','zh','ja','ko']) {
+  const S = allStrings[lang], p = page(lang), client = JSON.parse(p.doc.querySelector('.cts-wrap').dataset.strings);
+  eq(lang+' original FIX messages and labels unchanged', Object.fromEntries(Object.keys(ORIGINAL_CLIENT_STRINGS[lang]).map(k=>[k,client[k]])), ORIGINAL_CLIENT_STRINGS[lang]);
+  eq(lang+' tip key parity', Object.keys(S.tips), ["dialect", "table", "mode", "create", "file", "csv", "copy"]);
+  check(lang+' tips are bounded plain text', Object.values(S.tips).every(t=>typeof t==='string'&&t.length>0&&[...t].length<=280&&!/[<>]/.test(t)));
+  check(lang+' client payload excludes tips', !Object.hasOwn(client,'tips') && Object.values(S.tips).every(t=>!JSON.stringify(client).includes(t)));
+  const text = readFileSync(join(root,'src/content/tools/csv-to-sql',lang+'.mdx'),'utf8');
+  const [,front,body] = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), data = yaml.load(front);
+  eq(lang+' step count', data.steps.length, 6);
+  check(lang+' steps within 8/280/1200 before FAQ', data.steps.length<=8&&data.steps.every(s=>typeof s==='string'&&[...s].length<=280)&&data.steps.reduce((n,s)=>n+[...s].length,0)<=1200&&front.indexOf('steps:')<front.indexOf('faqItems:'));
+  eq(lang+' FAQ and SEO byte protection', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')), PROTECTED_CONTENT[lang].front);
+  eq(lang+' protected remaining body with explicit removed-button exceptions', hash(body), PROTECTED_CONTENT[lang].body);
+  check(lang+' Usage removed', !/<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  let error='';try{await mdxCompiler.compile(body);}catch(e){error=String(e);}eq(lang+' MDX compiles',error,'');
+}
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const compiled = await transform(source, { filename: join(root, 'src/components/tools/CsvToSqlTool.astro') });
+eq('Astro no error diagnostics', compiled.diagnostics.filter(d=>d.severity===1), []);
+let compileError='';try{await requireRoot('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){compileError=String(e);}eq('Astro generated JavaScript parses',compileError,'');
+check('client script excludes all tip bodies', Object.values(allStrings).every(S=>Object.values(S.tips).every(t=>!script.includes(t))));
+
+check('readonly output has placeholder-based empty state', /readonly/.test(markupSource) && /placeholder=" "/.test(markupSource) && /:has\([^)]*:placeholder-shown\)/.test(css));
+check('empty output hidden only at stacked width', /@media \(max-width: 860px\)[\s\S]*:has\([^)]*:placeholder-shown\)\s*\{ display: none;/.test(css));
+check('no invented Clear or Convert button', !/cts-clear|btn-primary/.test(markupSource));
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

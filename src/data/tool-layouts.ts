@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'csv-to-sql': 'convert',
   'csv-to-markdown': 'convert',
   'xml-formatter': 'convert',
   'csv-json': 'convert',
