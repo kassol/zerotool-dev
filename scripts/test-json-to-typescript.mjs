@@ -5,6 +5,7 @@
 //        from the shipped source); node_modules/typescript (the compiler);
 //        src/content/tools/json-to-typescript/{en,zh,ja,ko}.mdx (the examples)
 //        src/layouts/ToolLayout.astro (the real shared keyboard listener)
+//        src/data/tool-layouts.ts (v2 registration); src/i18n/*.json (tip names)
 // Write: stdout only (the compiler runs on in-memory files)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -120,7 +121,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 // ---------- complete page lifecycle: real script/shortcuts, controlled DOM/clipboard/time ----------
 const pageScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
-const pageLabels = vm.runInNewContext('(' + source.match(/const labels = (\{[\s\S]*?\n\});/)[1] + ')');
+const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -170,7 +171,11 @@ function page(lang, shellFirst = false) {
     focus() { doc.activeElement = this; }
   }
   const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
+  const tipAbout = JSON.parse(readFileSync(join(root, 'src/i18n/' + lang + '.json'), 'utf8'))['tool.tipAbout'];
+  // Render the shared component's button/panel boundary for focus tests. Popover geometry belongs to browser QA.
   const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '" aria-label="' + escape(tipAbout.replace('{name}', pageLabels[lang][about])) + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -195,7 +200,7 @@ function page(lang, shellFirst = false) {
   if (!shellFirst) vm.runInContext(shortcut, context);
   return { get, context, copies, tracks, clears, timers, doc,
     input(value) { get('jtt-input').value = value; get('jtt-input').dispatch('input'); },
-    key(id = 'jtt-input', key = 'l', modifier = 'ctrlKey') { (id ? get(id) : body).focus(); const e = { key, [modifier]: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } }; for (const fn of docEvents.keydown || []) fn(e); return e; },
+    key(id = 'jtt-input', key = 'l', modifier = 'ctrlKey') { (typeof id === 'string' ? get(id) : id || body).focus(); const e = { key, [modifier]: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } }; for (const fn of docEvents.keydown || []) fn(e); return e; },
     advance(ms) { const end = now + ms; for (;;) { const next = [...timers].filter(([, t]) => t.due <= end).sort((a, b) => a[1].due - b[1].due)[0]; if (!next) break; timers.delete(next[0]); now = next[1].due; next[1].fn(); } now = end; },
   };
 }
@@ -270,6 +275,63 @@ try {
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
+
+// ---------- v2 page layout ----------
+const layoutMarkup = source.split('\n---')[1].split('<script')[0];
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const hash = value => createHash('sha256').update(value).digest('hex');
+const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+check('v2 registered as convert', /'json-to-typescript':\s*'convert'/.test(registration));
+check('v2 direct flex root has zero minimum height', /^\s*<div\s+class="jtt-wrap"/.test(layoutMarkup) && /\.jtt-wrap\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;/.test(css));
+check('v2 controls/status precede shared panels', layoutMarkup.indexOf('class="jtt-config"') < layoutMarkup.indexOf('class="jtt-actions"') && layoutMarkup.indexOf('class="jtt-actions"') < layoutMarkup.indexOf('id="jtt-status"') && layoutMarkup.indexOf('id="jtt-status"') < layoutMarkup.indexOf('class="jtt-panels zt-io"'));
+eq('v2 two shared IO panes', (layoutMarkup.match(/\bzt-io-pane\b/g) || []).length, 2);
+check('v2 primary input and result use shared fill', /id="jtt-input"\s+class="zt-io-fill"/.test(layoutMarkup) && /id="jtt-output" class="jtt-output zt-io-fill"/.test(layoutMarkup));
+check('v2 status reserves empty space', /\.jtt-status\s*\{[^}]*min-height:\s*2\.4rem;/.test(css));
+check('v2 output remains a keyboard-accessible scroller', /id="jtt-output"[^>]*tabindex="0"[^>]*aria-labelledby="jtt-output-label"/.test(layoutMarkup) && /\.jtt-output\s*\{[^}]*overflow:\s*auto;/.test(css) && /\.jtt-output:focus-visible\s*\{[^}]*outline:/.test(css));
+check('v2 desktop empty state depends on actual output', /\.jtt-output-pane:has\(#jtt-output-code:empty\) \.jtt-output\s*\{\s*display:\s*none;/.test(css) && /\.jtt-output-pane:has\(#jtt-output-code:empty\) \.jtt-empty\s*\{\s*display:\s*flex;/.test(css));
+const stacked = css.slice(css.indexOf('@media (max-width: 860px)'), css.indexOf('@media (prefers-color-scheme: dark)'));
+check('v2 stacked empty pane is hidden and output height bounded', /\.jtt-output-pane:has\(#jtt-output-code:empty\)\s*\{\s*display:\s*none;/.test(stacked) && /\.jtt-output\s*\{[^}]*height:\s*22rem;/.test(stacked));
+check('v2 phone controls keep touch height', /\.jtt-actions button, \.jtt-panel-header button\s*\{\s*min-height:\s*44px;/.test(stacked) && /\.jtt-options label\s*\{\s*min-height:\s*44px;/.test(css));
+check('v2 dark ancestors use global selectors', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'));
+check('v2 labels stay build-time and tips never enter page script', !/data-i18n|define:vars/.test(source) && !/STRINGS|L\.tips|\.tips\b/.test(pageScript));
+eq('v2 original manual buttons retained', [...layoutMarkup.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(m => m[1]).sort().join(','), 'jtt-clear,jtt-convert,jtt-copy,jtt-example');
+const tipMap = [
+  ['root-name', 'rootName', 'rootName'], ['optional', 'makeOptional', 'optional'], ['use-type', 'useTypeAbout', 'useType'],
+  ['generate', 'generate', 'generate'], ['example', 'example', 'example'], ['clear', 'clear', 'clear'], ['input', 'jsonInput', 'input'], ['copy', 'copy', 'copy'],
+];
+eq('v2 eight actual Toggletip bindings', (layoutMarkup.match(/<Toggletip\b/g) || []).length, tipMap.length);
+for (const [id, about, key] of tipMap) check('v2 control-bound tip ' + id, layoutMarkup.includes('<Toggletip id="jtt-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'));
+// Pre-migration hashes from b6-json-to-typescript-copy.md; only Usage became steps.
+// frontmatter excludes delimiter lines and includes its final LF; body starts just after the closing delimiter LF.
+const protectedContent = {
+  en: ['33f065bb48a85210c08068f16b5f67d3731f2adcf8e11bf8102240b1e12f760e', '355632c69f03febe913c35eb53def30ef7f7ffe1749f1d972293703e14d3666f'],
+  zh: ['7780dbf80da4c955fd59cb0d4023dfee471b9ff987391d5e3cdd32d78ee40220', 'd2be61f91451c0f7c591dfa9ee383580556ad4de4b43b17ff862c14e8a95608f'],
+  ja: ['4cbafb9c681c5bd680f6f8fb7e20d16e522a9f698092b87830a2603d7a4fa16c', '6e1f57024bba9b14603dd369125e79784b8d5cf83a0e72d4d65f454d3d509870'],
+  ko: ['d4f80ef461dc0bbab31937b5a0dc6d06be224a6cd4111954d932a3de59cf6dda', '92fcb11d13155416ad1bd12b0372c35e955a24b360ef51f0608d36711a0696c5'],
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const L = pageLabels[lang], p = page(lang), rootEl = p.doc.querySelector('.jtt-wrap');
+  eq(lang + ': v2 same eight tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
+  for (const [id, about, key] of tipMap) check(lang + ': v2 plain localized tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]));
+  check(lang + ': v2 localized empty hint', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'));
+  eq(lang + ': v2 only runtime feedback data is forwarded', Object.keys(rootEl.dataset).sort().join(','), 'copied,copy,copyFailed,msgGenMany,msgGenOne,msgGenerated,msgInvalidJson');
+  const mdx = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
+  const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+  const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
+  const steps = stepsText.trimEnd().split('\n').map(line => JSON.parse(line.slice(4)));
+  eq(lang + ': v2 eight steps before FAQ', steps.length, 8);
+  check(lang + ': v2 step limits and order', fm.indexOf('steps:') < fm.indexOf('faqItems:') && steps.every(s => [...s].length <= 280 && !/[<>]/.test(s)) && steps.reduce((n, s) => n + [...s].length, 0) <= 1200);
+  for (const key of ['jsonInput', 'example', 'rootName', 'makeOptional', 'useTypeAbout', 'generate', 'copy', 'clear']) check(lang + ': v2 steps name actual ' + key, steps.join('\n').includes(L[key]));
+  eq(lang + ': v2 unchanged SEO/FAQ frontmatter', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m, '')), protectedContent[lang][0]);
+  eq(lang + ': v2 all non-Usage body and examples unchanged', hash(body), protectedContent[lang][1]);
+  check(lang + ': v2 no duplicate Usage heading', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {
+    const q = page(lang, shellFirst); golden(q);
+    const el = focus === 'output' ? q.get('jtt-output') : q.doc.querySelector('[data-zt-tip="jtt-tip-copy"]');
+    q.key(el);
+    check(lang + ': v2 output-area CtrlL remains focused ' + shellFirst + '/' + focus, q.doc.activeElement === q.get('jtt-input') && !q.get('jtt-input').value && !q.get('jtt-root-name').value && !q.get('jtt-output-code').textContent && !q.get('jtt-status').textContent && q.clears.length === 1);
+  }
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
