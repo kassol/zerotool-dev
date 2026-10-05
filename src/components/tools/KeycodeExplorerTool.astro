@@ -241,7 +241,21 @@
       var capturedCount = 0;
       var history = [];
 
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyError = false;
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.classList.remove('copied');
+        copyBtn.textContent = t.copy;
+        if (copyError && statusEl.textContent === t.copyFailed) setStatus('', '');
+        copyError = false;
+      }
+
       function setStatus(msg, type) {
+        copyError = false;
         statusEl.textContent = msg || '';
         statusEl.className = 'tool-status ' + (type || '');
       }
@@ -383,7 +397,10 @@
         mobileFallback.hidden = false;
       }
 
-      pad.addEventListener('keydown', captureFromKeyboardEvent);
+      pad.addEventListener('keydown', function (e) {
+        invalidateCopy();
+        captureFromKeyboardEvent(e);
+      });
       pad.addEventListener('focus', function () {
         pad.classList.add('kce-pad-active');
         setStatus(t.padFocused, 'info');
@@ -393,43 +410,54 @@
         setStatus(t.padBlurred, 'none');
       });
 
-      mobileInput.addEventListener('input', captureFromMobileInput);
+      mobileInput.addEventListener('input', function (e) {
+        invalidateCopy();
+        captureFromMobileInput(e);
+      });
 
       copyBtn.addEventListener('click', function () {
         var text = snippetEl.textContent || '';
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(text).then(function () {
-            copyBtn.classList.add('copied');
-            copyBtn.textContent = t.copied;
-            setTimeout(function () {
-              copyBtn.classList.remove('copied');
-              copyBtn.textContent = t.copy;
-            }, 1500);
-          }).catch(function () {
-            setStatus(t.copyFailed, 'error');
-          });
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        function done() {
+          if (revision !== copyRevision) return;
+          copyBtn.classList.add('copied');
+          copyBtn.textContent = t.copied;
+          if (copyError && statusEl.textContent === t.copyFailed) setStatus('', '');
+          copyTimer = setTimeout(function () {
+            if (revision !== copyRevision) return;
+            copyBtn.classList.remove('copied');
+            copyBtn.textContent = t.copy;
+          }, 1500);
+        }
+        function failed() {
+          if (revision !== copyRevision) return;
+          copyBtn.classList.remove('copied');
+          copyBtn.textContent = t.copy;
+          setStatus(t.copyFailed, 'error');
+          copyError = true;
+        }
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          try { navigator.clipboard.writeText(text).then(done, failed); }
+          catch (err) { failed(); }
         } else {
           var ta = document.createElement('textarea');
           ta.value = text;
           document.body.appendChild(ta);
           ta.select();
           try {
-            document.execCommand('copy');
-            copyBtn.classList.add('copied');
-            copyBtn.textContent = t.copied;
-            setTimeout(function () {
-              copyBtn.classList.remove('copied');
-              copyBtn.textContent = t.copy;
-            }, 1500);
+            if (document.execCommand('copy')) done();
+            else failed();
           } catch (err) {
-            setStatus(t.copyFailed, 'error');
+            failed();
           }
           document.body.removeChild(ta);
         }
         window.trackTool && window.trackTool('keycode-explorer', 'copy_snippet');
       });
 
-      clearBtn.addEventListener('click', function () {
+      function clearAll() {
+        invalidateCopy();
         history = [];
         renderHistory();
         capturedCount = 0;
@@ -439,6 +467,14 @@
         setMods({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false });
         buildSnippet(null);
         setStatus('', '');
+      }
+      clearBtn.addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        if (!document.querySelector('.kce-wrap').contains(document.activeElement) || pad.contains(document.activeElement)) return;
+        e.preventDefault();
+        pad.focus();
+        clearAll();
       });
 
       buildSnippet(null);
