@@ -17,6 +17,10 @@
 // Run: node scripts/test-mime-type-lookup.mjs
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import vm from 'node:vm';
+import { parseFragment, defaultTreeAdapter } from 'parse5';
+import { loadPage } from './astro-page-harness.mjs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -147,5 +151,197 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' tool page FAQ gives the registered split', p.includes(String(registered)) && p.includes(String(unregistered)) && !/snapshot of the IANA|精选快照|選定スナップショット|큐레이션 스냅샷/.test(p));
 }
 
+// Complete page lifecycle: actual IIFE, real shared shortcut, real File/Blob bytes.
+// parse5 models generated DOM. Clipboard promises, FileReader delivery and timers are controlled;
+// this does not claim browser layout, native picker or MutationObserver coverage.
+const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
+const shortcut=layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
+if(!shortcut.includes("widget.querySelectorAll('textarea"))throw Error('Shared shortcut missing');
+const must=(value,message)=>{if(!value)throw Error(message);};
+function eq(name,actual,expected){check(name,JSON.stringify(actual)===JSON.stringify(expected),'got '+JSON.stringify(actual)+', expected '+JSON.stringify(expected));}
+const settle=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
+function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+const unhandled=[];process.on('unhandledRejection',error=>unhandled.push(String(error)));
+function page(lang='en',order='shared-after',clipboardMode='normal',savedMode=null){
+  const key='mime',slugs={mime:'mime-type-lookup'},paths={mime:'src/components/tools/MimeTypeLookupTool.astro'};
+  const clipboard=[],timers=new Map(),readers=[],persistCalls=[],execCalls=[];
+  let timerId=0,clock=0,doc;
+  const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
+  const matchOne = (el, selector) => {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    if (parts.length > 1) {
+      if (!matchOne(el, parts.pop())) return false;
+      for (let parent = el.parentNode; parent; parent = parent.parentNode) if (matchOne(parent, parts.join(' '))) return true;
+      return false;
+    }
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+    return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+      && [...plain.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))
+      && attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+  };
+  const matches = (el, selector) => selector.split(',').some(part => matchOne(el, part.trim()));
+  class EventStub {
+    constructor(type, extra = {}) { Object.assign(this, { type, bubbles: false, defaultPrevented: false }, extra); }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() { this.stopped = true; }
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', type: tag === 'input' ? 'text' : '', style: {}, text: '', _value: '', dirtyValue: false, disabled: false, hidden: false }); }
+    get value() {
+      if (!this.dirtyValue && this.tagName === 'TEXTAREA') return this.textContent;
+      if (!this.dirtyValue && this.tagName === 'SELECT') return this.querySelector('option')?.value ?? '';
+      return this._value;
+    }
+    set value(v) { this._value = String(v); this.dirtyValue = true;if(this.type==='file'&&this._value==='')this.files=[]; }
+    get firstChild() { return this.children[0]??null; }
+    get dataset() { const el=this;return new Proxy({}, {get(_,key){return el.getAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()));},set(_,key,value){el.setAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()),value);return true;}}); }
+    get parentElement() { return this.parentNode; }
+    get isConnected() { return doc.contains(this); }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); }, toggle(c,force) { const yes=force??!this.contains(c);yes?this.add(c):this.remove(c);return yes; } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (['id', 'class', 'type', 'value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); if (['hidden', 'disabled', 'checked'].includes(k)) this[k] = true; }
+    getAttribute(k) { if (['id', 'class', 'type'].includes(k)) return this[k === 'class' ? 'className' : k] || null; return this.attributes[k] ?? null; }
+    removeAttribute(k) { delete this.attributes[k]; if (['hidden','disabled','checked'].includes(k)) this[k]=false; }
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+    set textContent(v) { if(doc?.activeElement&&doc.activeElement!==this&&this.contains(doc.activeElement))doc.activeElement=doc.body; for (const child of this.children) child.parentNode = null; this.children = []; this.text = String(v); }
+    set innerHTML(v) {
+      this.textContent = '';
+      // parse5 supplies the real HTML tokenizer/entity table in the actual element context.
+      // In particular, textarea uses RCDATA. No homemade entity decoder is used.
+      const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
+      for (const node of parseFragment(context, String(v)).childNodes) this.appendChild(fromParse5(node));
+    }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { const i=this.children.indexOf(child);if(i>=0)this.children.splice(i,1);child.parentNode=null;return child; }
+    querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    contains(el) { return el === this || descendants(this).includes(el); }
+    closest(selector) { for (let el = this; el; el = el.parentNode) if (matches(el, selector)) return el; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatchEvent(event) {
+      event.target = this;
+      for (let el = this; el; el = el.parentNode) {
+        event.currentTarget = el;
+        for (const fn of el.listeners[event.type] || []) fn.call(el, event);
+        if (!event.bubbles || event.stopped) break;
+      }
+      return !event.defaultPrevented;
+    }
+    dispatch(type, extra = {}) { return this.dispatchEvent(new EventStub(type, { bubbles: true, ...extra })); }
+    click() { if(!this.disabled)this.dispatch('click'); }
+    select() { doc.selectedElement=this; }
+    focus() { doc.activeElement = this; }
+    setSelectionRange(start,end) { this.selectionStart=start;this.selectionEnd=end; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const attr of node.attrs || []) el.setAttribute(attr.name, attr.value);
+    for (const child of node.childNodes || []) if (child.nodeName !== '#comment') el.appendChild(fromParse5(child));
+    return el;
+  }
+
+  doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
+  doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
+  const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
+  widget.innerHTML=src.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+  doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
+  doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
+  doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
+  const persist={clear(slug){persistCalls.push(['clear',slug]);},save(...args){persistCalls.push(['save',...args]);},load(){return savedMode?{mode:savedMode}:null;}};
+  class Reader {
+    constructor(){this.result=null;this.error=null;readers.push(this);}
+    readAsArrayBuffer(blob){this.blob=blob;}
+    async finish(){this.result=await this.blob.arrayBuffer();if(this.onload)this.onload({target:this});}
+    fail(message='controlled read failure'){this.error=new Error(message);if(this.onerror)this.onerror({target:this});}
+    abort(){this.aborted=true;}
+  }
+  const globals={document:doc,File,FileReader:Reader,Uint8Array,ArrayBuffer,TextEncoder,TextDecoder,Blob,
+    _slug:slugs[key],ztPersist:persist,trackTool(){},
+    navigator:clipboardMode==='absent'?{}:{clipboard:{writeText(value){if(clipboardMode==='throw')throw Error('Controlled clipboard throw');const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
+    setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
+  };
+  if(order==='shared-before')vm.runInNewContext(shortcut,{document:doc,window:{ztPersist:persist},_slug:slugs[key]},{filename:'ToolLayout.astro:actual-shortcut'});
+  const actual=loadPage(paths[key],{lang,globals});
+  if(order==='shared-after')actual.run(shortcut);
+  const get=id=>{const el=doc.getElementById(id);must(el,key+' ID '+id);return el;};
+  return{doc,get,widget,clipboard,readers,timers,persistCalls,execCalls,
+    input(id,value){get(id).value=value;get(id).dispatch('input');},
+    ctrlL(el=get('mtl-search'),key='l',mod='ctrlKey'){el.focus();const e=new EventStub('keydown',{bubbles:true,key,[mod]:true});el.dispatchEvent(e);return e;},
+    choose(files){get('mtl-file').value=files.length?'fakepath/'+files[0].name:'';get('mtl-file').files=files;get('mtl-file').dispatch('change');},
+    drop(files){get('mtl-drop').dispatch('drop',{dataTransfer:{files}});},
+    tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
+  };
+}
+const PNG=new File([Uint8Array.from([137,80,78,71,13,10,26,10]),new Uint8Array(72)],'old.png',{type:'image/png'});
+const JPEG=new File([Uint8Array.from([255,216,255,224]),new Uint8Array(72)],'new.jpg',{type:'image/jpeg'});
+const INVALID=new File([],'empty',{type:''});
+const COPY={en:'Copy',zh:'复制',ja:'コピー',ko:'복사'},COPIED={en:'Copied',zh:'已复制',ja:'コピー済み',ko:'복사됨'};
+const FAILED={en:'Copy failed. Please try again.',zh:'复制失败，请重试。',ja:'コピーに失敗しました。再試行してください。',ko:'복사에 실패했습니다. 다시 시도해 주세요.'};
+const snap=p=>({search:p.get('mtl-search').value,catalog:p.get('mtl-results').textContent,status:p.get('mtl-sniff-status').textContent,statusClass:p.get('mtl-sniff-status').className,file:p.get('mtl-file').value,hidden:p.get('mtl-sniff-result').hidden,fields:['mime','ext','bytes','browser','note'].map(k=>p.get('mtl-sniff-'+k).textContent),noteHidden:p.get('mtl-sniff-note-row').hidden,copies:p.get('mtl-sniff-result').querySelectorAll('.mtl-copy').map(b=>b.textContent)});
+const sniffButton=p=>p.doc.querySelector('.mtl-copy[data-target="mtl-sniff-mime"]');
+async function prepared(lang,order,mode='sniff',api='normal'){
+  const p=page(lang,order,api);if(mode==='search')p.input('mtl-search','.png');else{p.get('mtl-tab-sniff').click();p.choose([PNG]);await p.readers.at(-1).finish();}return p;
+}
+const button=(p,mode)=>mode==='search'?p.get('mtl-results').querySelector('.mtl-copy'):sniffButton(p);
+const pagePass=passes,pageFail=failures;
+for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
+  const name=lang+'/'+order;let p=page(lang,order);
+  eq(name+' initial complete catalog',p.get('mtl-results').querySelectorAll('.mtl-card').length,155);
+  eq(name+' no invented Clear button',p.doc.querySelectorAll('#mtl-clear').length,0);
+  p.input('mtl-search','.png');eq(name+' extension search',p.get('mtl-results').querySelector('.mtl-mime').textContent,'image/png');
+  p.doc.querySelector('.mtl-chip[data-group="text"]').click();eq(name+' group narrows current search',p.get('mtl-results').querySelectorAll('.mtl-card').length,0);
+  p.input('mtl-search','');check(name+' group remains when search emptied',p.get('mtl-results').querySelectorAll('.mtl-mime').every(el=>el.textContent.startsWith('text/')));
+  p=await prepared(lang,order);eq(name+' real File.slice reads64bytes',p.readers[0].blob.size,64);
+  eq(name+' real PNG sniff and16hex',[p.get('mtl-sniff-mime').textContent,p.get('mtl-sniff-ext').textContent,p.get('mtl-sniff-bytes').textContent],['image/png','.png','89 50 4E 47 0D 0A 1A 0A 00 00 00 00 00 00 00 00']);
+  for(const b of p.get('mtl-sniff-result').querySelectorAll('.mtl-copy')){
+    b.click();eq(name+' sniff full copy '+b.getAttribute('data-target'),p.clipboard.at(-1).value,p.get(b.getAttribute('data-target')).textContent);p.clipboard.at(-1).resolve();await settle();p.tick(1100);eq(name+' sniff normal label restored',b.textContent,COPY[lang]);
+  }
+  for(const [key,mod,focus] of [['l','ctrlKey','search'],['L','metaKey','copy']]){
+    p=await prepared(lang,order);p.input('mtl-search','.png');const savedCalls=p.persistCalls.filter(x=>x[0]==='save').length;
+    const e=p.ctrlL(focus==='copy'?sniffButton(p):p.get('mtl-search'),key,mod);
+    eq(name+' shortcut clears all sniff fields',[p.get('mtl-search').value,p.get('mtl-file').value,p.get('mtl-file').files?.length,p.get('mtl-sniff-status').textContent,p.get('mtl-sniff-result').hidden,...snap(p).fields],['','',0,'',true,'','','','','']);
+    eq(name+' shortcut recomputes empty search catalog',p.get('mtl-results').querySelectorAll('.mtl-card').length,155);
+    check(name+' shortcut default prevented',e.defaultPrevented);eq(name+' actual shared clear called',p.persistCalls.filter(x=>x[0]==='clear'),[['clear','mime-type-lookup']]);
+    eq(name+' shortcut preserves active mode',p.get('mtl-panel-search').hidden,true);eq(name+' shortcut does not write new preference',p.persistCalls.filter(x=>x[0]==='save').length,savedCalls);
+  }
+  p=await prepared(lang,order);const untouched=snap(p);const out=p.ctrlL(p.doc.body);eq(name+' outside shortcut no effect',snap(p),untouched);check(name+' outside default remains',!out.defaultPrevented);
+  p=page(lang,order,'normal','sniff');eq(name+' restores actual mode preference',[p.get('mtl-panel-search').hidden,p.get('mtl-panel-sniff').hidden],[true,false]);
+  for(const kind of ['new-valid','multiple','empty-file','no-selection','read-error','shortcut'])for(const late of ['load','error']){
+    p=page(lang,order);p.get('mtl-tab-sniff').click();p.choose([PNG]);const old=p.readers[0];
+    if(kind==='new-valid'||kind==='read-error'){p.choose([JPEG]);if(kind==='new-valid')await p.readers[1].finish();else p.readers[1].fail();}
+    else if(kind==='multiple')p.drop([PNG,JPEG]);else if(kind==='empty-file')p.choose([INVALID]);else if(kind==='no-selection')p.choose([]);else p.ctrlL(p.get('mtl-file'));
+    const current=snap(p);if(late==='load')await old.finish();else old.fail('late read error');eq(name+' old file '+late+' after '+kind,snap(p),current);
+    if(kind==='new-valid')eq(name+' newest JPEG retained',p.get('mtl-sniff-mime').textContent,'image/jpeg');else check(name+' '+kind+' has no old sniff result',p.get('mtl-sniff-result').hidden);
+  }
+  p=await prepared(lang,order);p.choose([JPEG]);check(name+' new pending file immediately hides old result',p.get('mtl-sniff-result').hidden);p.readers.at(-1).fail();eq(name+' current error clears old fields',snap(p).fields,['','','','','']);check(name+' current read error visible',p.get('mtl-sniff-status').className.includes('error'));p.choose([PNG]);await p.readers.at(-1).finish();eq(name+' new read recovers',p.get('mtl-sniff-mime').textContent,'image/png');
+  for(const mode of ['search','sniff']){
+    for(const api of ['normal','absent','throw']){
+      p=await prepared(lang,order,mode,api);const b=button(p,mode);let error=null;try{b.click();if(api==='normal')p.clipboard.at(-1).reject(Error('denied'));}catch(e){error=e.message;}await settle();eq(name+'/'+mode+'/'+api+' handled current failure',error,null);eq(name+'/'+mode+'/'+api+' visible error',b.textContent,FAILED[lang]);
+      if(api==='normal'){b.click();p.clipboard.at(-1).resolve();await settle();eq(name+'/'+mode+' retry succeeds',b.textContent,COPIED[lang]);p.tick(1100);eq(name+'/'+mode+' retry returns Copy',b.textContent,COPY[lang]);}
+    }
+    for(const outcome of ['resolve','reject'])for(const action of ['shortcut',mode==='search'?'new-search':'new-file']){
+      p=await prepared(lang,order,mode);button(p,mode).click();const job=p.clipboard.at(-1);
+      if(action==='shortcut')p.ctrlL(button(p,mode));else if(action==='new-search')p.input('mtl-search','.pdf');else{p.choose([JPEG]);await p.readers.at(-1).finish();}
+      const current=snap(p);job[outcome](outcome==='reject'?Error('late'):undefined);await settle();p.tick(2000);eq(name+'/'+mode+' late '+outcome+' after '+action,snap(p),current);
+    }
+    for(const outcome of ['resolve','reject']){
+      p=await prepared(lang,order,mode);const b=button(p,mode);b.click();const old=p.clipboard.at(-1);b.click();p.clipboard.at(-1).resolve();await settle();const current=snap(p);old[outcome](outcome==='reject'?Error('late same'):undefined);await settle();eq(name+'/'+mode+' same-value old '+outcome,snap(p),current);p.tick(1100);eq(name+'/'+mode+' same-value settles fixed label',b.textContent,COPY[lang]);
+    }
+    p=await prepared(lang,order,mode);const b=button(p,mode);b.click();p.clipboard.at(-1).resolve();await settle();const oldTimers=[...p.timers.values()].filter(x=>x.ms===1100);check(name+'/'+mode+' captures real feedback timer',oldTimers.length>0);p.tick(100);b.click();p.clipboard.at(-1).resolve();await settle();const current=snap(p);p.tick(1000);oldTimers.forEach(x=>x.fn());eq(name+'/'+mode+' old timer preserves new success',snap(p),current);p.tick(100);eq(name+'/'+mode+' new timer restores original',b.textContent,COPY[lang]);
+    check(name+'/'+mode+' never native clipboard',p.execCalls.length===0);
+  }
+}
+await settle();eq('no unhandled clipboard rejection',unhandled,[]);
+console.log(`page lifecycle: ${passes-pagePass} passed, ${failures-pageFail} failed`);
+// The database/signatures and unmarked search/sniff algorithms are immutable.
+for(const [name,begin,end,expected] of [
+  ['database/signatures','      var DB = [','      // ── Search panel','7658506ed21f0eb823a8d410e85ce87e9100bcd0ced0f7ad66c7a4ca88a5b36b'],
+  ['hex/extension helpers','      function bytesToHex','      function sniff(file)','562f88108dd27e810e00baf0460ffcfdbb0162e86a3af6a6dad31fd7bcf93b69'],
+  ['real sniff detection/body','          var bytes = new Uint8Array(reader.result);','        reader.onerror =','fe6209537a8c72b3007de0f2bc68ad4953805962bf3f9249d9225f9e7d204992'],
+  ['real search filter/render','        var q = (searchInput.value','      searchInput.addEventListener','e40c6c46d800264939dc2fef2e4c4cee2df02a35c2e1fdeeaba474bd5f58b1d8'],
+])eq(name+' byte protection',createHash('sha256').update(src.slice(src.indexOf(begin),src.indexOf(end))).digest('hex'),expected);
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

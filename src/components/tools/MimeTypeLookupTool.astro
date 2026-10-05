@@ -73,7 +73,7 @@
           all: 'All', application: 'Application', image: 'Image', audio: 'Audio',
           video: 'Video', text: 'Text', font: 'Font', multipart: 'Multipart',
           message: 'Message', model: 'Model',
-          extensions: 'Extensions', group: 'Group', copy: 'Copy', copied: 'Copied',
+          extensions: 'Extensions', group: 'Group', copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Please try again.',
           dropTitle: 'Drop file here or click to choose',
           dropHint: 'Files stay in your browser — only the first 64 bytes are read',
           detectedMime: 'Detected MIME', likelyExt: 'Likely extensions',
@@ -92,7 +92,7 @@
           all: '全部', application: '应用', image: '图像', audio: '音频',
           video: '视频', text: '文本', font: '字体', multipart: '多部分',
           message: '消息', model: '模型',
-          extensions: '扩展名', group: '分组', copy: '复制', copied: '已复制',
+          extensions: '扩展名', group: '分组', copy: '复制', copied: '已复制', copyFailed: '复制失败，请重试。',
           dropTitle: '拖入文件或点击选择',
           dropHint: '文件不出本地浏览器，仅读取前 64 字节',
           detectedMime: '检测到的 MIME', likelyExt: '可能的扩展名',
@@ -111,7 +111,7 @@
           all: 'すべて', application: 'アプリ', image: '画像', audio: '音声',
           video: '動画', text: 'テキスト', font: 'フォント', multipart: 'マルチパート',
           message: 'メッセージ', model: 'モデル',
-          extensions: '拡張子', group: 'グループ', copy: 'コピー', copied: 'コピー済み',
+          extensions: '拡張子', group: 'グループ', copy: 'コピー', copied: 'コピー済み', copyFailed: 'コピーに失敗しました。再試行してください。',
           dropTitle: 'ファイルをドロップまたはクリックして選択',
           dropHint: 'ファイルはブラウザ外に出ません — 先頭 64 バイトのみ読みます',
           detectedMime: '検出 MIME', likelyExt: '推定拡張子',
@@ -130,7 +130,7 @@
           all: '전체', application: '애플리케이션', image: '이미지', audio: '오디오',
           video: '비디오', text: '텍스트', font: '폰트', multipart: '멀티파트',
           message: '메시지', model: '모델',
-          extensions: '확장자', group: '그룹', copy: '복사', copied: '복사됨',
+          extensions: '확장자', group: '그룹', copy: '복사', copied: '복사됨', copyFailed: '복사에 실패했습니다. 다시 시도해 주세요.',
           dropTitle: '파일을 끌어다 놓거나 클릭하여 선택',
           dropHint: '파일은 브라우저를 벗어나지 않으며 앞 64 바이트만 읽습니다',
           detectedMime: '감지된 MIME', likelyExt: '추정 확장자',
@@ -401,6 +401,18 @@
       var emptyEl = document.getElementById('mtl-empty');
       var chipsEl = document.getElementById('mtl-chips');
       var activeGroup = 'all';
+      var copyGeneration = 0;
+      var copyStates = new WeakMap();
+
+      function resetCopies() {
+        copyGeneration++;
+        document.querySelectorAll('.mtl-copy').forEach(function (btn) {
+          var state = copyStates.get(btn);
+          if (state) clearTimeout(state.timer);
+          btn.textContent = t.copy;
+          btn.classList.remove('copied');
+        });
+      }
 
       function makeChip(group, labelKey) {
         var btn = document.createElement('button');
@@ -428,6 +440,7 @@
       }
 
       function render() {
+        resetCopies();
         var q = (searchInput.value || '').trim().toLowerCase();
         var items = DB.filter(function (row) {
           if (activeGroup !== 'all' && row[2] !== activeGroup) return false;
@@ -487,15 +500,28 @@
           }
         }
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
-          var orig = target.textContent;
+        var state = copyStates.get(target);
+        if (!state) { state = { request: 0, timer: null }; copyStates.set(target, state); }
+        var request = ++state.request, generation = copyGeneration;
+        clearTimeout(state.timer);
+        target.textContent = t.copy;
+        target.classList.remove('copied');
+        function fresh() { return generation === copyGeneration && request === state.request; }
+        function failed() { if (fresh()) target.textContent = t.copyFailed; }
+        function done() {
+          if (!fresh()) return;
           target.textContent = t.copied;
           target.classList.add('copied');
-          setTimeout(function () {
-            target.textContent = orig;
+          state.timer = setTimeout(function () {
+            if (!fresh()) return;
+            target.textContent = t.copy;
             target.classList.remove('copied');
           }, 1100);
-        });
+        }
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.writeText) { failed(); return; }
+          navigator.clipboard.writeText(text).then(done, failed);
+        } catch (e) { failed(); }
       });
 
       // ── Tabs ──
@@ -537,6 +563,37 @@
       var browserEl = document.getElementById('mtl-sniff-browser');
       var noteRow = document.getElementById('mtl-sniff-note-row');
       var noteEl = document.getElementById('mtl-sniff-note');
+      var readGeneration = 0;
+
+      function resetSniff() {
+        readGeneration++;
+        resetCopies();
+        resultEl.hidden = true;
+        mimeEl.textContent = '';
+        extEl.textContent = '';
+        bytesEl.textContent = '';
+        browserEl.textContent = '';
+        noteEl.textContent = '';
+        noteRow.hidden = true;
+        statusEl.className = 'tool-status none';
+        statusEl.textContent = '';
+      }
+
+      function clearAll() {
+        if (panelSniff.hidden) searchInput.focus(); else tabSniff.focus();
+        searchInput.value = '';
+        fileEl.value = '';
+        resetSniff();
+        dropEl.classList.remove('is-drag');
+        render();
+      }
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        if (!document.querySelector('.mtl-wrap').contains(document.activeElement)) return;
+        e.preventDefault();
+        clearAll();
+      });
 
       if (!('FileReader' in window) || !('File' in window)) {
         dropEl.style.display = 'none';
@@ -561,7 +618,9 @@
         statusEl.textContent = '';
         var slice = file.slice(0, 64);
         var reader = new FileReader();
+        var generation = readGeneration;
         reader.onload = function () {
+          if (generation !== readGeneration) return;
           var bytes = new Uint8Array(reader.result);
           var matched = null;
           for (var i = 0; i < SIGNATURES.length; i++) {
@@ -590,6 +649,8 @@
           if (window.trackTool) window.trackTool('mime-type-lookup', 'sniff');
         };
         reader.onerror = function () {
+          if (generation !== readGeneration) return;
+          resetSniff();
           statusEl.className = 'tool-status error';
           statusEl.textContent = String(reader.error || 'read error');
         };
@@ -597,6 +658,7 @@
       }
 
       function handleFiles(list) {
+        resetSniff();
         if (!list || !list.length) return;
         if (list.length > 1) {
           statusEl.className = 'tool-status error';
