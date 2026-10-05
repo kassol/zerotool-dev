@@ -34,6 +34,7 @@ const dotenv = require('dotenv');
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/EnvFileParserTool.astro'), 'utf8');
+const pageStrings=vm.runInNewContext(source.slice(source.indexOf('const STRINGS ='),source.indexOf('const T = STRINGS[lang]')).replace(/ as const;/,';')+';STRINGS;');
 
 const START_MARK = '/* ── engine:start ── */';
 const END_MARK = '/* ── engine:end ── */';
@@ -76,11 +77,12 @@ function entry(text, key) {
 // ---------- P3 dotenv dialect: exercise the complete Parse / Export JSON handlers ----------
 async function pageExport(text, lang = 'en') {
   const elements = new Map(), downloads = [], docEvents = {}, timers = [];
-  function element() { const events = {}; return { value: '', disabled: false, textContent: '', innerHTML: '', style: {}, children: [],
+  function element() { const events = {}; return { value: '', hidden: false, disabled: false, textContent: '', innerHTML: '', style: {}, children: [],
     addEventListener(k, fn) { events[k] = fn; }, click() { if (this.disabled) return; if (this.download) downloads.push(this.href); events.click?.(); },
-    fire(k) { events[k]?.(); }, appendChild(child) { this.children.push(child); } }; }
+    focus() {}, fire(k) { events[k]?.(); }, appendChild(child) { this.children.push(child); } }; }
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
-  vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
+  vm.runInNewContext(source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1], {
+    t: Object.fromEntries(Object.entries(pageStrings[lang]).filter(([key]) => key !== 'tips')),
     document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element,
       get activeElement() { return get('efp-input'); }, querySelector: () => ({ contains: el => [...elements.values()].includes(el) }),
       addEventListener(k, fn) { docEvents[k] = fn; } },
@@ -114,7 +116,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     check(lang + ' ' + action + ' disables export', p.get('efp-export-json').disabled);
     p.get('efp-export-json').click();
     eq(lang + ' ' + action + ' cannot export old data', p.downloads.length, 1);
-    if (action === 'page-clear') eq(lang + ' page clear hides the old table', [p.get('efp-result').style.display, p.get('efp-status').textContent], ['none', '']);
+    if (action === 'page-clear') eq(lang + ' page clear hides the old table', [p.get('efp-result').hidden, p.get('efp-status').textContent], [true, '']);
   }
 }
 eq('dotenv drops __proto__; tool intentionally keeps this key', Object.keys(dotenv.parse('__proto__=value')), []);
@@ -302,7 +304,7 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
 // (checked when Node has util.parseEnv).
 {
   const util = await import('node:util');
-  const STRS = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
+  const STRS = pageStrings;
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const rel = 'src/content/tools/env-file-parser/' + lang + '.mdx';
     const mdx = readFileSync(join(root, rel), 'utf8');
@@ -335,7 +337,7 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
 // ---------- notes and status line in the page language ----------
 // The notes, errors and the status line were English on every language version of the page
 {
-  const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
+  const STR = pageStrings;
   const enKeys = Object.keys(STR.en.notes || {}).sort();
   eq('en notes keys', enKeys, ['afterQuote', 'colonForm', 'duplicate', 'emptyKey', 'emptyValue', 'hashComment', 'missingEq', 'multiline', 'nonStandard', 'unclosed']);
   for (const lang of ['zh', 'ja', 'ko']) {
@@ -360,8 +362,8 @@ const {parseFragment,defaultTreeAdapter}=require('parse5');
 const sharedSource=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
 const sharedShortcut=sharedSource.slice(sharedSource.indexOf('// ── Keyboard shortcuts:'),sharedSource.indexOf('// ── Copy button visual feedback'));
 if(!sharedShortcut.includes('window.ztPersist.clear(_slug)'))throw Error('Missing actual shared shortcut');
-const pageStrings=vm.runInNewContext(source.slice(source.indexOf('var STRINGS ='),source.indexOf('var pageLang ='))+';STRINGS;');
-function fullPage(lang,order){
+
+function fullPage(lang,order,preset=''){
   const timers=[],downloads=[],urls=new Map(),clears=[];let doc;
   const descendants=e=>e.children.flatMap(c=>[c,...descendants(c)]);
   function matches(el,selector){return selector.split(',').some(part=>{
@@ -371,10 +373,11 @@ function fullPage(lang,order){
   });}
   class Element{
     constructor(tag){Object.assign(this,{tagName:tag.toUpperCase(),children:[],parentNode:null,attributes:{},listeners:{},style:{},className:'',id:'',disabled:false,text:'',_value:null});}
+    get hidden(){return !!this._hidden;}set hidden(v){this._hidden=!!v;if(v&&doc?.activeElement&&this.contains(doc.activeElement))doc.activeElement=doc.body;}
     get value(){return this._value??(this.tagName==='TEXTAREA'?this.textContent:'');}set value(v){this._value=String(v);}
     get textContent(){return this.text+this.children.map(c=>c.textContent).join('');}set textContent(v){this.children.forEach(c=>{c.parentNode=null;});this.children=[];this.text=String(v);}
     set innerHTML(v){this.textContent='';const context=defaultTreeAdapter.createElement(this.tagName.toLowerCase(),'http://www.w3.org/1999/xhtml',[]);for(const n of parseFragment(context,String(v)).childNodes)this.appendChild(convert(n));}
-    setAttribute(k,v){this.attributes[k]=String(v);if(k==='id')this.id=String(v);if(k==='class')this.className=String(v);if(k==='disabled')this.disabled=true;if(k==='style')for(const d of String(v).split(';')){const i=d.indexOf(':');if(i>=0)this.style[d.slice(0,i).trim()]=d.slice(i+1).trim();}}
+    setAttribute(k,v){this.attributes[k]=String(v);if(k==='id')this.id=String(v);if(k==='class')this.className=String(v);if(k==='disabled')this.disabled=true;if(k==='hidden')this.hidden=true;if(k==='style')for(const d of String(v).split(';')){const i=d.indexOf(':');if(i>=0)this.style[d.slice(0,i).trim()]=d.slice(i+1).trim();}}
     getAttribute(k){return this.attributes[k]??null;}
     appendChild(c){this.children.push(c);c.parentNode=this;return c;}
     contains(e){return e===this||descendants(this).includes(e);}
@@ -389,18 +392,22 @@ function fullPage(lang,order){
   doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
   const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  widget.innerHTML=source.replace(/^---\n[\s\S]*?\n---\s*/,'').split('<script')[0].replace(/placeholder=\{("(?:[^"\\]|\\.)*")\}/g,(_,v)=>'placeholder="'+esc(JSON.parse(v))+'"');
+  const {tips,...client}=pageStrings[lang];
+  widget.innerHTML=source.replace(/^---\n[\s\S]*?\n---\s*/,'').split('<script')[0].replace(/placeholder=\{("(?:[^"\\]|\\.)*")\}/g,(_,v)=>'placeholder="'+esc(JSON.parse(v))+'"')
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g,(_,id,about,key)=>'<span class="zt-tip"><button type="button" data-zt-tip="'+id+'" aria-label="'+esc(client[about])+'"></button><span id="'+id+'" role="note">'+esc(tips[key])+'</span></span>')
+    .replace(/=\{T\.(\w+)\}/g,(_,key)=>'="'+esc(client[key])+'"').replace(/\{T\.(\w+)\}/g,(_,key)=>esc(client[key]));
   doc.getElementById=id=>descendants(doc).find(e=>e.id===id)??null;doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
   const get=id=>{const e=doc.getElementById(id);if(!e)throw Error('Missing real markup ID '+id);return e;};
-  const sandbox={document:doc,Blob,console,_slug:'env-file-parser',ztPersist:{clear(slug){clears.push(slug);}},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},URL:{createObjectURL(blob){const key='blob:'+urls.size;urls.set(key,blob);return key;},revokeObjectURL(key){urls.delete(key);}},navigator:{clipboard:{writeText(){throw Error('Unexpected clipboard request');},write(){throw Error('Unexpected clipboard request');}}}};
+  get('efp-input').value=preset;
+  const sandbox={t:client,document:doc,Blob,console,_slug:'env-file-parser',ztPersist:{clear(slug){clears.push(slug);}},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},URL:{createObjectURL(blob){const key='blob:'+urls.size;urls.set(key,blob);return key;},revokeObjectURL(key){urls.delete(key);}},navigator:{clipboard:{writeText(){throw Error('Unexpected clipboard request');},write(){throw Error('Unexpected clipboard request');}}}};
   sandbox.window=sandbox;const ctx=vm.createContext(sandbox);
   if(order==='shared-before')vm.runInContext(sharedShortcut,ctx);
-  vm.runInContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1],ctx,{filename:'EnvFileParserTool.astro:complete-page',timeout:1000});
+  vm.runInContext(source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1],ctx,{filename:'EnvFileParserTool.astro:complete-page',timeout:1000});
   if(order==='shared-after')vm.runInContext(sharedShortcut,ctx);
-  return{doc,get,timers,downloads,clears,input(v){get('efp-input').value=v;get('efp-input').dispatch('input');},flush(){for(const t of timers.splice(0))t.fn();},key(target,key='l',mod='ctrlKey'){const el=target==='outside'?doc.body:get(target);el.focus();return el.dispatch('keydown',{key,[mod]:true});}};
+  return{doc,get,timers,downloads,clears,input(v){get('efp-input').value=v;get('efp-input').dispatch('input');},flush(){for(const t of timers.splice(0))t.fn();},key(target,key='l',mod='ctrlKey'){const el=target==='outside'?doc.body:target.startsWith('tip:')?doc.querySelector('[data-zt-tip="'+target.slice(4)+'"]'):get(target);el.focus();return el.dispatch('keydown',{key,[mod]:true});}};
 }
-function envSnapshot(h){return{input:h.get('efp-input').value,status:h.get('efp-status').textContent,statusClass:h.get('efp-status').className,display:h.get('efp-result').style.display,rows:h.get('efp-tbody').children.length,disabled:h.get('efp-export-json').disabled};}
-const clearState={input:'',status:'',statusClass:'efp-status ',display:'none',rows:0,disabled:true};
+function envSnapshot(h){return{input:h.get('efp-input').value,status:h.get('efp-status').textContent,statusClass:h.get('efp-status').className,hidden:h.get('efp-result').hidden,rows:h.get('efp-tbody').children.length,disabled:h.get('efp-export-json').disabled};}
+const clearState={input:'',status:'',statusClass:'efp-status ',hidden:true,rows:0,disabled:true};
 for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
   const h=fullPage(lang,order),prefix=lang+' '+order+' ';
   h.input('A=one\nA=two\nB=3\n__proto__=kept\nBROKEN');h.get('efp-parse').click();h.get('efp-export-json').click();
@@ -419,15 +426,90 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
     eq(prefix+'inside clears cache/table/status',envSnapshot(h),clearState);eq(prefix+'shared clear called once',h.clears.length,before+1);
     h.get('efp-export-json').click();eq(prefix+'cleared data cannot export',h.downloads.length,downloads);
   }
-  h.input('A=old');h.get('efp-parse').click();h.input('A=new');eq(prefix+'input invalidates shown result',[h.get('efp-result').style.display,h.get('efp-export-json').disabled,h.get('efp-tbody').children.length],['none',true,0]);
+  h.input('A=old');h.get('efp-parse').click();h.input('A=new');eq(prefix+'input invalidates shown result',[h.get('efp-result').hidden,h.get('efp-export-json').disabled,h.get('efp-tbody').children.length],[true,true,0]);
   h.key('efp-input','Enter');h.get('efp-export-json').click();eq(prefix+'CtrlEnter parses fresh value',await h.downloads.at(-1).blob.text(),'{\n  "A": "new"\n}');
   h.get('efp-clear').click();eq(prefix+'explicit Clear',envSnapshot(h),clearState);
-  h.input('BROKEN');h.get('efp-parse').click();eq(prefix+'error rows disable export',[h.get('efp-result').style.display,h.get('efp-export-json').disabled,h.get('efp-tbody').children.length],['',true,1]);
+  h.input('BROKEN');h.get('efp-parse').click();eq(prefix+'error rows disable export',[h.get('efp-result').hidden,h.get('efp-export-json').disabled,h.get('efp-tbody').children.length],[false,true,1]);
   h.input('C=recovered');h.get('efp-parse').click();h.get('efp-export-json').click();eq(prefix+'valid recovery exports no old keys',await h.downloads.at(-1).blob.text(),'{\n  "C": "recovered"\n}');
 }
 const fullEngine=source.slice(startIndex,endIndex+END_MARK.length);
 eq('engine byte-exact',[Buffer.byteLength(fullEngine),createHash('sha256').update(fullEngine).digest('hex')],[5008, "3531606be715b93b36c21593441c8ef399bd9248c0e99d598532b1f28f4bd4d7"]);
 console.log('Page lifecycle: '+(passes-lifecycleStart)+' passed, '+failures+' total failures');
+
+// ---------- v2 page layout ----------
+const v2Start=passes;
+const markup=source.replace(/^---\n[\s\S]*?\n---\s*/,'').split('<script')[0],css=source.split('<style>')[1].split('</style>')[0];
+eq('analyze registry',/'env-file-parser':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
+eq('direct root',markup.trim().startsWith('<div class="efp-wrap">'),true);
+eq('zero-minimum flex root',/\.efp-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-width:\s*0;[^}]*min-height:\s*0/.test(css),true);
+eq('controls/status/input/results order',markup.indexOf('class="efp-actions"')<markup.indexOf('id="efp-status"')&&markup.indexOf('id="efp-status"')<markup.indexOf('class="efp-input-section"')&&markup.indexOf('id="efp-input"')<markup.indexOf('id="efp-result"'),true);
+eq('desktop empty input pane fills remaining space',/\.efp-wrap:has\(\.efp-result\[hidden\]\) \.efp-input-section\s*\{[^}]*flex:\s*1 1 0/.test(css),true);
+eq('desktop empty textarea fills remaining space',/\.efp-wrap:has\(\.efp-result\[hidden\]\) #efp-input\s*\{[^}]*flex:\s*1 1 0;[^}]*height:\s*auto/.test(css),true);
+eq('parsed input short and internally scrollable',/#efp-input\s*\{[^}]*height:\s*180px;[^}]*min-height:\s*0;[^}]*resize:\s*none;\s*overflow:\s*auto/.test(css),true);
+eq('reserved scrollable status',/\.efp-status\s*\{[^}]*height:\s*3rem;[^}]*min-height:\s*3rem;[^}]*overflow:\s*auto/.test(css),true);
+eq('result bounded by flex zero basis',/\.efp-result\s*\{[^}]*flex:\s*1 1 0;[^}]*min-width:\s*0;[^}]*min-height:\s*0/.test(css),true);
+eq('result hidden wins flex',/\.efp-result\[hidden\]\s*\{\s*display:\s*none/.test(css),true);
+eq('table viewport scrolls both axes',/\.efp-table-wrap\s*\{[^}]*flex:\s*1 1 0;[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*overflow:\s*auto/.test(css),true);
+const stacked=css.split('@media (max-width: 860px)')[1]?.split('@media')[0]||'',phone=css.split('@media (max-width: 640px)')[1]||'';
+eq('stacked textarea 140px including empty state',stacked.includes('.efp-wrap:has(.efp-result[hidden]) #efp-input')&&stacked.includes('height: 140px'),true);
+eq('stacked result 24rem',/\.efp-result\s*\{[^}]*height:\s*24rem/.test(stacked),true);
+eq('phone result 22rem',/\.efp-result\s*\{[^}]*height:\s*22rem/.test(phone),true);
+eq('stacked empty message hidden',stacked.includes('.efp-empty { display: none; }'),true);
+eq('runtime localization removed',!/data-i18n|var pageLang|document\.documentElement\.lang/.test(source),true);
+eq('client excludes tips',source.includes('const { tips: TIPS, ...CLIENT_T } = T;')&&source.includes('define:vars={{ t: CLIENT_T }}'),true);
+eq('privacy notice directly after output',markup.includes('<p class="efp-privacy">{T.privacyNote}</p>')&&markup.indexOf('class="efp-privacy"')>markup.indexOf('id="efp-tbody"'),true);
+const tipMap={input:['envContent','input'],parse:['parse','parse'],clear:['clear','clear'],export:['exportJson','download'],results:['results','results']};
+eq('five tips only',[...markup.matchAll(/<Toggletip\b/g)].length,5);
+for(const[id,[about,key]]of Object.entries(tipMap))eq('tip binding '+id,markup.includes('id="efp-tip-'+id+'" lang={lang} about={T.'+about+'}>{TIPS.'+key+'}</Toggletip>'),true);
+const protectedContent={"en": "09ebde0f4d37ad0fcc6984377da8b3eb04c4ec0f44d5d8cee782c71eaf7d7c6c", "zh": "2891443b2ce83c0aa91e8ffeb44ad8bd73899bcb6a4dad946cb967982a46ea9a", "ja": "cbaf410c6e9d129f0d275629de666c9afc684dc4aa855fef7e672815ccac51b0", "ko": "713bcbd3e448d02968c39c13919bfd7b41d0fc705e5e3e414fcfb21c062961f7"};
+for(const lang of ['en','zh','ja','ko']){
+  const T=pageStrings[lang],h=fullPage(lang,'shared-after');
+  eq(lang+' tips keys',Object.keys(T.tips).sort(),['input','parse','clear','results','download'].sort());
+  for(const[key,value]of Object.entries(T.tips)){
+    eq(lang+' '+key+' plain nonempty tip',typeof value==='string'&&value.trim().length>0&&!/<\/?[a-z]/i.test(value),true);
+    eq(lang+' '+key+' placeholders',(value.match(/\{\w+\}/g)||[]).sort(),(pageStrings.en.tips[key].match(/\{\w+\}/g)||[]).sort());
+  }
+  for(const[id,key]of [['efp-parse','parse'],['efp-clear','clear'],['efp-export-json','exportJson'],['efp-results-label','results']])eq(lang+' built label '+id,h.get(id).textContent,T[key]);
+  eq(lang+' input label',h.doc.querySelector('label[for="efp-input"]').textContent,T.envContent);
+  eq(lang+' localized table headers',h.get('efp-table').querySelectorAll('th').map(x=>x.textContent),['#',T.colKey,T.colValue,T.colNotes]);
+  eq(lang+' default empty result and disabled export',[h.get('efp-result').hidden,h.get('efp-export-json').disabled],[true,true]);
+  eq(lang+' keyboard scrollable table',h.get('efp-scroll').getAttribute('tabindex'),'0');
+  eq(lang+' direct privacy note text',h.doc.querySelector('.efp-privacy').textContent,T.privacyNote);
+  eq(lang+' privacy note outside hidden results',h.doc.querySelector('.efp-privacy').closest('.efp-result'),null);
+  const x=fullPage(lang,'shared-after','RESTORED=local-value');
+  eq(lang+' prefilled input still auto-parses',[x.get('efp-result').hidden,x.get('efp-export-json').disabled,x.get('efp-tbody').children.length],[false,false,1]);
+  x.get('efp-export-json').click();eq(lang+' prefilled export full bytes',await x.downloads[0].blob.text(),'{\n  "RESTORED": "local-value"\n}');
+  for(const order of ['shared-before','shared-after'])for(const focus of ['efp-scroll','tip:efp-tip-results']){
+    const z=fullPage(lang,order);z.input('SECRET=local-fixture');z.get('efp-parse').click();
+    eq(lang+' '+order+' result focus shortcut intercepted '+focus,z.key(focus).defaultPrevented,true);z.flush();
+    eq(lang+' '+order+' result focus returns to input '+focus,z.doc.activeElement.id,'efp-input');
+    eq(lang+' '+order+' shared clear completes '+focus,z.clears,['env-file-parser']);
+    eq(lang+' '+order+' clear visible state '+focus,envSnapshot(z),clearState);
+    z.input('FRESH=1');z.get('efp-parse').click();eq(lang+' '+order+' valid recovery '+focus,z.get('efp-result').hidden,false);
+    z.key('efp-input');z.input('NEWER=2');z.get('efp-parse').click();const newest=envSnapshot(z);z.flush();eq(lang+' '+order+' delayed clear preserves newly parsed input '+focus,envSnapshot(z),newest);
+  }
+  h.input('API_KEY="unmasked-fixture"\nMULTILINE="line1\nline2"\nBROKEN');h.get('efp-parse').click();
+  eq(lang+' actual table retains plain secret',h.get('efp-tbody').querySelector('.efp-val').textContent,'unmasked-fixture');
+  eq(lang+' multiline value retains newline',h.get('efp-tbody').querySelectorAll('.efp-val')[1].textContent,'line1\nline2');
+  h.get('efp-export-json').click();eq(lang+' exported plain data excludes error row',JSON.parse(await h.downloads[0].blob.text()),{API_KEY:'unmasked-fixture',MULTILINE:'line1\nline2'});
+  const mdx=readFileSync(join(root,'src/content/tools/env-file-parser/'+lang+'.mdx'),'utf8');
+  const steps=mdx.match(/^steps:\n((?:  - .+\n)+)/m)?.[1].trim().split('\n').map(x=>JSON.parse(x.trim().slice(2)))||[];
+  eq(lang+' five steps',steps.length,5);eq(lang+' steps plain and bounded',steps.every(x=>x.length>0&&x.length<=280&&!/<\/?[a-z]/i.test(x))&&steps.join('').length<=1200,true);
+  eq(lang+' Usage removed',/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),false);
+  eq(lang+' all nonusage MDX bytes protected',createHash('sha256').update(mdx.replace(/^steps:\n(?:  - .+\n)+/m,'')).digest('hex'),protectedContent[lang]);
+}
+const big=fullPage('en','shared-after'),entries=Array.from({length:1000},(_,i)=>['KEY_'+i,'value'+i+'x'.repeat(160)]);
+big.input(entries.map(([k,v])=>k+'='+v).join('\n'));big.get('efp-parse').click();eq('long result all rows rendered',big.get('efp-tbody').children.length,1000);big.get('efp-export-json').click();eq('long export full bytes',await big.downloads[0].blob.text(),JSON.stringify(Object.fromEntries(entries),null,2));
+const astroRequire=createRequire(require.resolve('astro/package.json'));
+const compiled=await astroRequire('@astrojs/compiler').transform(source,{filename:join(root,'src/components/tools/EnvFileParserTool.astro'),scopedStyleStrategy:'attribute'});
+eq('Astro compile has no errors',compiled.diagnostics.filter(d=>d.severity===1),[]);
+const compiledCSS=compiled.css.join('\n');
+eq('compiled dynamic cells do not require scope attribute',/\.efp-table\[data-astro-cid-[^\]]+\]\s+td\s*\{/.test(compiledCSS),true);
+for(const name of ['success','warn','error'])eq('compiled manual dark '+name+' ancestor unscoped',new RegExp('\\[data-theme="dark"\\] \\.efp-status\\[data-astro-cid-[^\\]]+\\]\\.'+name).test(compiledCSS),true);
+eq('compiled dynamic note global',/\.efp-note\.error\s*\{/.test(compiledCSS),true);
+eq('compiled dynamic error row global',/\.efp-row-error td\s*\{/.test(compiledCSS),true);
+eq('compiled system dark ancestor global',/:root:not\(\[data-theme="light"\]\) \.efp-status/.test(compiledCSS),true);
+console.log('v2 page layout: '+(passes-v2Start)+' passed, '+failures+' total failures');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
