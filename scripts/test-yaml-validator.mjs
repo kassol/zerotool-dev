@@ -257,5 +257,65 @@ process.removeListener('unhandledRejection', onUnhandled);
 eq('protected YAML engine bytes unchanged', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), createHash('sha256').update(source.slice(startIndex, endIndex + END_MARK.length)).digest('hex')], [3000, 'bd985c6c5584fcb337eef79182a2b25a079136fdf649451580a77801b6e4c76b']);
 console.log('Page lifecycle: ' + (passes - pageStart) + ' passed, ' + failures + ' total failures');
 
+// ---------- v2 page layout ----------
+const v2Start = passes;
+const markup = source.replace(/^---\n[\s\S]*?\n---\s*/, '').split('<script>')[0];
+const css = source.split('<style>')[1].split('</style>')[0];
+const script = source.match(/<script>([\s\S]*?)<\/script>/)[1];
+check('v2 direct flex root', /^<div class="yv-wrap"/.test(markup) && /\.yv-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+check('v2 registered analyze', /'yaml-validator':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 controls precede reserved status, short input and full-width result', ['class="yv-actions"','id="yv-status"','class="yv-input-section"','id="yv-results"'].map(x=>markup.indexOf(x)).every((n,i,a)=>n>=0&&(!i||n>a[i-1])));
+eq('v2 all three existing actions retained', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m=>m[1]).sort(), ['yv-validate','yv-clear','yv-copy-preview'].sort());
+check('v2 status reserves bounded height', /\.yv-status\s*\{[^}]*flex: none;[^}]*height: 3rem;[^}]*overflow: auto/.test(css));
+check('v2 result-state input scrolls at 180px', /#yv-input\s*\{[^}]*height: 180px;[^}]*min-height: 0;[^}]*resize: none;[^}]*overflow: auto/.test(css));
+check('v2 desktop empty state gives available height to the input', /@media \(min-width: 861px\)[\s\S]*\.yv-wrap:has\(\.yv-results\[data-empty="true"\]\) \.yv-input-section\s*\{ flex: 1 1 0; min-height: 0; \}/.test(css) && /\.yv-wrap:has\(\.yv-results\[data-empty="true"\]\) #yv-input\s*\{ flex: 1 1 0; height: 0; \}/.test(css));
+check('v2 empty hint takes only its content height', /@media \(min-width: 861px\)[\s\S]*\.yv-results\[data-empty="true"\]\s*\{ flex: none; \}/.test(css));
+check('v2 input still editable and labeled', /<label for="yv-input">\{L.inputLabel\}<\/label>/.test(markup) && !/<textarea[^>]*(?:readonly|disabled)/.test(markup));
+for (const selector of ['.yv-results', '.yv-preview', '.yv-error-box', '.yv-preview-content']) {
+  const rule = css.match(new RegExp(selector.replaceAll('.', '\\.') + '\\s*\\{([^}]+)\\}'))?.[1] || '';
+  check('v2 bounded flex region ' + selector, /flex: 1 1 0/.test(rule) && /min-width: 0/.test(rule) && /min-height: 0/.test(rule));
+}
+check('v2 error and JSON content scroll internally', /\.yv-error-box\s*\{[^}]*overflow: auto/.test(css) && /\.yv-preview-content\s*\{[^}]*overflow: auto/.test(css));
+for (const id of ['yv-error-box', 'yv-preview-content']) check('v2 keyboard scrollable ' + id, new RegExp('id="'+id+'"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-label=').test(markup));
+check('v2 precision note remains directly above JSON content', /id="yv-preview-note"[^>]*role="note"[^>]*hidden><\/p>\s*<pre id="yv-preview-content"/.test(markup) && !markup.includes('<details'));
+check('v2 long precision notes remain bounded and scrollable', /\.yv-preview-note\s*\{[^}]*flex: none;[^}]*max-height: 6rem;[^}]*overflow: auto/.test(css));
+check('v2 empty result is localized and hidden at <=860', markup.includes('{L.emptyResult}') && /@media \(max-width: 860px\)[\s\S]*\.yv-results\[data-empty="true"\]\s*\{ display: none; \}/.test(css));
+check('v2 <=860 short input and result sizes', /#yv-input\s*\{ height: 140px; \}/.test(css) && /\.yv-results\s*\{ flex: none; height: 24rem; \}/.test(css));
+check('v2 <=640 actionable controls and bounded output', /@media \(max-width: 640px\)[\s\S]*min-height: 44px/.test(css) && /\.yv-results\s*\{ height: 22rem; \}/.test(css));
+for (const name of ['yv-err-title','yv-err-reason','yv-err-location','yv-err-snippet','yv-doc','yv-doc-title','yv-doc-ok']) check('v2 injected error class receives global CSS ' + name, css.includes(':global(.' + name + ')'));
+const tips = [...markup.matchAll(/<Toggletip id="(yv-tip-[^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 five tips map to visible controls', tips.map(m=>[m[1],m[2],m[3]]).sort(), [['yv-tip-input','inputLabel','input'],['yv-tip-validate','validate','validate'],['yv-tip-clear','clear','clear'],['yv-tip-preview','parsedStructure','preview'],['yv-tip-copy','copyJson','copy']].sort());
+check('v2 existing build-time labels/data interface excludes tips from client payload', source.includes('const { tips: TIPS } = L;') && !/TIPS|labels|\.tips/.test(script) && !/data-[\w-]+=\{[^}]*tips/i.test(markup));
+const MDX_HASHES={en:'631de9ba531aeae2131c00b9564980e70f644ff0ef212d90ab2e4b1be22fea47',zh:'2383aea49676ae9c86843fd72dd6507dc1d76968dbe54ee8801ddc58c650bb77',ja:'90edeceda73422e2965f2d2651849866c309dddf2a74b3df28a7040086660191',ko:'70426f62b6bcc525c81faa4188feeefa66c03fc9fa60552fa48211e752f9a72e'};
+function leaves(value,path=''){return Object.entries(value).flatMap(([key,item])=>typeof item==='object'?leaves(item,path+key+'.'):[[path+key,item]]);}
+const enLeaves=Object.fromEntries(leaves(labels.en));
+for(const lang of Object.keys(labels)) {
+  const local=Object.fromEntries(leaves(labels[lang]));
+  eq(lang+' v2 recursive locale keys',Object.keys(local).sort(),Object.keys(enLeaves).sort());
+  for(const [key,value] of Object.entries(local)) {
+    check(lang+' v2 nonempty '+key,typeof value==='string'&&value.trim().length>0);
+    eq(lang+' v2 placeholders '+key,[...value.matchAll(/\{[^}]+\}/g)].map(m=>m[0]).sort(),[...enLeaves[key].matchAll(/\{[^}]+\}/g)].map(m=>m[0]).sort());
+  }
+  const mdx=readFileSync(join(root,'src/content/tools/yaml-validator',lang+'.mdx'),'utf8');
+  const steps=(mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1]||'').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line.trim().slice(2)));
+  eq(lang+' v2 steps count',steps.length,5);
+  check(lang+' v2 steps limits/plain text',steps.every(x=>[...x].length<=280&&!/[<>]|\]\(|\*\*|`/.test(x))&&steps.reduce((n,x)=>n+[...x].length,0)<=1200);
+  check(lang+' v2 steps use current buttons', ['validate','clear','copyJson'].every(key=>steps.join(' ').includes(labels[lang][key])));
+  check(lang+' v2 removes only Usage',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
+  eq(lang+' v2 keeps SEO/FAQ/examples/Limits byte-exact',createHash('sha256').update(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m,'')).digest('hex'),MDX_HASHES[lang]);
+  const h=page(lang); h.validate('number: .inf');
+  eq(lang+' v2 valid result expands region',h.get('yv-results').dataset.empty,'false');
+  check(lang+' v2 precision note stays exposed before JSON',!h.get('yv-preview-note').hidden&&h.get('yv-preview-note').textContent.includes('/number'));
+  h.validate('a: 1\n---\na: [');
+  eq(lang+' v2 error result replaces preview', [h.get('yv-results').dataset.empty,h.get('yv-preview').style.display,h.get('yv-error-box').style.display],['false','none','']);
+  check(lang+' v2 valid and invalid documents shown together',h.get('yv-error-box').innerHTML.includes(labels[lang].docTitle.replace('{k}','1'))&&h.get('yv-error-box').innerHTML.includes(labels[lang].docTitle.replace('{k}','2')));
+  h.key('L','metaKey','yv-error-box');
+  eq(lang+' v2 clearing focusable errors restores input and empty result',[h.get('yv-results').dataset.empty,h.document.activeElement===h.get('yv-input')],['true',true]);
+  const long='rows:\n'+Array.from({length:600},(_,i)=>'  - '+i).join('\n');h.validate(long);
+  eq(lang+' v2 long JSON retains all output bytes',h.get('yv-preview-content').textContent,JSON.stringify({rows:Array.from({length:600},(_,i)=>i)},null,2));
+  h.get('yv-clear').click();eq(lang+' v2 clear restores empty result',h.get('yv-results').dataset.empty,'true');
+}
+console.log('v2 page layout: '+(passes-v2Start)+' passed, '+failures+' total failures');
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
