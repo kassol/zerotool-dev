@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 const dotenv = require('dotenv');
@@ -81,6 +82,7 @@ async function pageExport(text, lang = 'en') {
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
     document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element,
+      get activeElement() { return get('efp-input'); }, querySelector: () => ({ contains: el => [...elements.values()].includes(el) }),
       addEventListener(k, fn) { docEvents[k] = fn; } },
     window: {}, Blob, URL: { createObjectURL: blob => blob, revokeObjectURL() {} }, setTimeout: fn => timers.push(fn)
   });
@@ -349,6 +351,83 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
   check('status line built from STRINGS', /t\.stValid/.test(source) && !/' valid'/.test(source));
   check('page no longer says messages are English', !readFileSync(join(root, 'src/content/tools/env-file-parser/en.mdx'), 'utf8').includes('Messages are in English'));
 }
+
+// ---------- complete page and real shared Ctrl/Command+L ----------
+// DOM, timer delivery and download capture are controlled; parser/render/export handlers are real.
+console.log('Existing checks: '+passes+' passed, '+failures+' failed');
+const lifecycleStart=passes;
+const {parseFragment,defaultTreeAdapter}=require('parse5');
+const sharedSource=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
+const sharedShortcut=sharedSource.slice(sharedSource.indexOf('// ── Keyboard shortcuts:'),sharedSource.indexOf('// ── Copy button visual feedback'));
+if(!sharedShortcut.includes('window.ztPersist.clear(_slug)'))throw Error('Missing actual shared shortcut');
+const pageStrings=vm.runInNewContext(source.slice(source.indexOf('var STRINGS ='),source.indexOf('var pageLang ='))+';STRINGS;');
+function fullPage(lang,order){
+  const timers=[],downloads=[],urls=new Map(),clears=[];let doc;
+  const descendants=e=>e.children.flatMap(c=>[c,...descendants(c)]);
+  function matches(el,selector){return selector.split(',').some(part=>{
+    const s=part.trim(),space=s.lastIndexOf(' ');if(space>=0)return matches(el,s.slice(space+1))&&!!el.parentNode?.closest(s.slice(0,space));
+    const tag=/^[a-z][\w-]*/i.exec(s)?.[0],id=/#([\w-]+)/.exec(s)?.[1];
+    return(!tag||el.tagName===tag.toUpperCase())&&(!id||el.id===id)&&[...s.matchAll(/\.([\w-]+)/g)].every(m=>el.className.split(/\s+/).includes(m[1]))&&[...s.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)].every(m=>m[2]===undefined?el.getAttribute(m[1])!==null:el.getAttribute(m[1])===m[2]);
+  });}
+  class Element{
+    constructor(tag){Object.assign(this,{tagName:tag.toUpperCase(),children:[],parentNode:null,attributes:{},listeners:{},style:{},className:'',id:'',disabled:false,text:'',_value:null});}
+    get value(){return this._value??(this.tagName==='TEXTAREA'?this.textContent:'');}set value(v){this._value=String(v);}
+    get textContent(){return this.text+this.children.map(c=>c.textContent).join('');}set textContent(v){this.children.forEach(c=>{c.parentNode=null;});this.children=[];this.text=String(v);}
+    set innerHTML(v){this.textContent='';const context=defaultTreeAdapter.createElement(this.tagName.toLowerCase(),'http://www.w3.org/1999/xhtml',[]);for(const n of parseFragment(context,String(v)).childNodes)this.appendChild(convert(n));}
+    setAttribute(k,v){this.attributes[k]=String(v);if(k==='id')this.id=String(v);if(k==='class')this.className=String(v);if(k==='disabled')this.disabled=true;if(k==='style')for(const d of String(v).split(';')){const i=d.indexOf(':');if(i>=0)this.style[d.slice(0,i).trim()]=d.slice(i+1).trim();}}
+    getAttribute(k){return this.attributes[k]??null;}
+    appendChild(c){this.children.push(c);c.parentNode=this;return c;}
+    contains(e){return e===this||descendants(this).includes(e);}
+    closest(sel){for(let e=this;e;e=e.parentNode)if(matches(e,sel))return e;return null;}
+    querySelectorAll(sel){return descendants(this).filter(e=>matches(e,sel));}querySelector(sel){return this.querySelectorAll(sel)[0]??null;}
+    addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);}
+    dispatch(type,extra={}){const e={type,target:this,bubbles:true,defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},...extra};for(let n=this;n;n=n.parentNode){e.currentTarget=n;for(const fn of n.listeners[type]||[])fn.call(n,e);}return e;}
+    focus(){doc.activeElement=this;}
+    click(){if(this.disabled)return;if(this.tagName==='A'&&this.download)downloads.push({name:this.download,blob:urls.get(this.href)});this.dispatch('click');}
+  }
+  function convert(n){const el=new Element(n.tagName||n.nodeName);if(n.nodeName==='#text')el.text=n.value;for(const a of n.attrs||[])el.setAttribute(a.name,a.value);for(const c of n.childNodes||[])if(c.nodeName!=='#comment')el.appendChild(convert(c));return el;}
+  doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
+  const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
+  const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  widget.innerHTML=source.replace(/^---\n[\s\S]*?\n---\s*/,'').split('<script')[0].replace(/placeholder=\{("(?:[^"\\]|\\.)*")\}/g,(_,v)=>'placeholder="'+esc(JSON.parse(v))+'"');
+  doc.getElementById=id=>descendants(doc).find(e=>e.id===id)??null;doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
+  const get=id=>{const e=doc.getElementById(id);if(!e)throw Error('Missing real markup ID '+id);return e;};
+  const sandbox={document:doc,Blob,console,_slug:'env-file-parser',ztPersist:{clear(slug){clears.push(slug);}},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},URL:{createObjectURL(blob){const key='blob:'+urls.size;urls.set(key,blob);return key;},revokeObjectURL(key){urls.delete(key);}},navigator:{clipboard:{writeText(){throw Error('Unexpected clipboard request');},write(){throw Error('Unexpected clipboard request');}}}};
+  sandbox.window=sandbox;const ctx=vm.createContext(sandbox);
+  if(order==='shared-before')vm.runInContext(sharedShortcut,ctx);
+  vm.runInContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1],ctx,{filename:'EnvFileParserTool.astro:complete-page',timeout:1000});
+  if(order==='shared-after')vm.runInContext(sharedShortcut,ctx);
+  return{doc,get,timers,downloads,clears,input(v){get('efp-input').value=v;get('efp-input').dispatch('input');},flush(){for(const t of timers.splice(0))t.fn();},key(target,key='l',mod='ctrlKey'){const el=target==='outside'?doc.body:get(target);el.focus();return el.dispatch('keydown',{key,[mod]:true});}};
+}
+function envSnapshot(h){return{input:h.get('efp-input').value,status:h.get('efp-status').textContent,statusClass:h.get('efp-status').className,display:h.get('efp-result').style.display,rows:h.get('efp-tbody').children.length,disabled:h.get('efp-export-json').disabled};}
+const clearState={input:'',status:'',statusClass:'efp-status ',display:'none',rows:0,disabled:true};
+for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
+  const h=fullPage(lang,order),prefix=lang+' '+order+' ';
+  h.input('A=one\nA=two\nB=3\n__proto__=kept\nBROKEN');h.get('efp-parse').click();h.get('efp-export-json').click();
+  eq(prefix+'real export name',h.downloads[0].name,'env.json');
+  eq(prefix+'real export complete bytes',await h.downloads[0].blob.text(),'{\n  "A": "two",\n  "B": "3",\n  "__proto__": "kept"\n}');
+  eq(prefix+'real table rows',h.get('efp-tbody').children.length,5);
+  const valid=envSnapshot(h);eq(prefix+'outside valid CtrlL not intercepted',h.key('outside').defaultPrevented,false);h.flush();eq(prefix+'outside valid CtrlL retains state',envSnapshot(h),valid);
+  for(const mod of ['ctrlKey','metaKey'])for(const key of ['l','L']){
+    h.input('');h.get('efp-parse').click();eq(prefix+'empty Parse gives actual prompt',h.get('efp-status').textContent,pageStrings[lang].pastePrompt);
+    const prompt=envSnapshot(h),before=h.clears.length;
+    eq(prefix+'outside empty '+mod+'/'+key+' not intercepted',h.key('outside',key,mod).defaultPrevented,false);h.flush();
+    eq(prefix+'outside empty '+mod+'/'+key+' keeps prompt',envSnapshot(h),prompt);
+    eq(prefix+'outside empty never persists clear',h.clears.length,before);
+    h.input('A=old');h.get('efp-parse').click();const downloads=h.downloads.length;
+    eq(prefix+'inside '+mod+'/'+key+' clears through shared handler',h.key('efp-input',key,mod).defaultPrevented,true);h.flush();
+    eq(prefix+'inside clears cache/table/status',envSnapshot(h),clearState);eq(prefix+'shared clear called once',h.clears.length,before+1);
+    h.get('efp-export-json').click();eq(prefix+'cleared data cannot export',h.downloads.length,downloads);
+  }
+  h.input('A=old');h.get('efp-parse').click();h.input('A=new');eq(prefix+'input invalidates shown result',[h.get('efp-result').style.display,h.get('efp-export-json').disabled,h.get('efp-tbody').children.length],['none',true,0]);
+  h.key('efp-input','Enter');h.get('efp-export-json').click();eq(prefix+'CtrlEnter parses fresh value',await h.downloads.at(-1).blob.text(),'{\n  "A": "new"\n}');
+  h.get('efp-clear').click();eq(prefix+'explicit Clear',envSnapshot(h),clearState);
+  h.input('BROKEN');h.get('efp-parse').click();eq(prefix+'error rows disable export',[h.get('efp-result').style.display,h.get('efp-export-json').disabled,h.get('efp-tbody').children.length],['',true,1]);
+  h.input('C=recovered');h.get('efp-parse').click();h.get('efp-export-json').click();eq(prefix+'valid recovery exports no old keys',await h.downloads.at(-1).blob.text(),'{\n  "C": "recovered"\n}');
+}
+const fullEngine=source.slice(startIndex,endIndex+END_MARK.length);
+eq('engine byte-exact',[Buffer.byteLength(fullEngine),createHash('sha256').update(fullEngine).digest('hex')],[5008, "3531606be715b93b36c21593441c8ef399bd9248c0e99d598532b1f28f4bd4d7"]);
+console.log('Page lifecycle: '+(passes-lifecycleStart)+' passed, '+failures+' total failures');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
