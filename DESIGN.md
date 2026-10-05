@@ -163,6 +163,8 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 | `.zt-empty-drop` | An `analyze` tool's empty drop zone: a centered flex column that fills the available height, with a 220px minimum. Keep the tool class for its border, colors, spacing and compact or mobile state. Used by HAR File Analyzer and QR Code Decoder. |
 | `.zt-rail` | A `generate` tool's control rail: a flex column with a 0.9rem gap and zero minimum width and height. Keep the tool class for its panels, scrolling and mobile order. Used by Color Palette Generator and QR Code Generator. |
 | `.zt-segmented` | The container of a segmented control: flex row, pill radius and an inset border. Keep padding, background, button or radio semantics, and selected-state styling in the tool. Used by Color Palette Generator and Sprite Sheet Generator. |
+| `.zt-compare-inputs` | Two bounded editors above a comparison: equal columns with a 0.75rem gap, 180px textareas, and internal scrolling. At 860px they stack with 120px textareas. Used by Diff Checker and JSON Diff. |
+| `.zt-compare-results` | A comparison result fills the remaining height with zero minimum width and height. At 860px it is 24rem high, at 640px 22rem; `data-empty="true"` hides it on stacked screens. Keep result headers, scrollers and disclosure controls in the tool. |
 
 `convert` tools use `.zt-io`, `.zt-io-pane` and `.zt-io-fill` for the panels and keep their own class next to each for tool-specific rules (tab size, colors, phone heights). Rules that the first batch (2026-10-04, 12 tools; `TextToBinaryTool` is the reference) settled:
 

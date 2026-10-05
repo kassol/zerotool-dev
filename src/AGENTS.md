@@ -38,6 +38,7 @@ src/
 - 每个工具页的 CSS = 全站 CSS + 共享工具 CSS（`tool-common.css`、`ToolLayout`、`ShareButtons`、`AdUnit`）+ 本工具组件 CSS。组件不能依赖其他工具组件的样式（根 AGENTS.md 全局规范第 11 条）
 - `components/Toggletip.astro`（v2 工具页的说明气泡）→ `i18n/utils.t()` 取 `tool.tipAbout` 拼按钮的 aria-label（调用方传 `lang` 与 `about`）；组件没有 `<style>`，样式是 `styles/tool-common.css` 的 `.zt-tip*`
 - `styles/tool-common.css` 另含 convert 类工具的双栏布局类 `.zt-io` / `.zt-io-pane` / `.zt-io-fill`（用法见 DESIGN.md「Tool Pages v2」）
+- compare 类的双输入与结果容器用共享 `.zt-compare-inputs` / `.zt-compare-results`（Diff Checker、JSON Diff）：桌面输入 180px，860px 以下堆叠为 120px；结果桌面填满剩余高度，手机保持有界，滚动与收起交互留在组件。
 - analyze 类工具的空状态拖放区用共享 `.zt-empty-drop` 填满可用高度；边框、配色、间距与紧凑状态留在各工具组件（HAR、QR Decoder）。
 - generate 类工具的控件栏用共享 `.zt-rail`（flex 列、0.9rem 间距、最小宽高为 0）；面板、滚动与手机顺序留在各工具组件（Color Palette、QR Generator）。
 - 分段控件的容器用 `.zt-segmented`（flex 行、胶囊圆角与内描边）；内边距、背景、按钮或单选语义与选中态留在组件（Color Palette、Sprite Sheet）。
