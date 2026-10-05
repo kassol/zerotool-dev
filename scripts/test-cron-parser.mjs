@@ -24,6 +24,9 @@ process.env.TZ = 'America/New_York'; // fixed zone: run times are local, and one
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
+import vm from 'node:vm';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -237,6 +240,146 @@ if (stringsMatch) {
 
 function range(a, b) { const out = []; for (let i = a; i <= b; i++) out.push(i); return out; }
 function pad(n) { return String(n).padStart(2, '0'); }
+
+
+// ---------- actual page + actual shared shortcuts ----------
+// Only DOM/event boundaries are adapted. The complete shipped IIFE and parser run unchanged.
+const require = createRequire(join(root, 'package.json'));
+const { parseFragment } = require('parse5');
+const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+check('actual shared shortcut found', shortcut.includes("widget.querySelectorAll('textarea"));
+const pageScript = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
+const astroRequire = createRequire(require.resolve('astro/package.json'));
+const compiled = await astroRequire('@astrojs/compiler').transform(source, {
+  filename: join(root, 'src/components/tools/CronParserTool.astro'), scopedStyleStrategy: 'attribute',
+});
+check('component compiles without errors', !compiled.diagnostics.some(d => d.severity === 1));
+const css = compiled.css.join('\n');
+const scopeAttribute = css.match(/data-astro-cid-[\w-]+/)[0];
+function page(lang, order) {
+  const tracks = [], persistCalls = [];
+  let document;
+  const all = el => el.children.flatMap(child => [child, ...all(child)]);
+  function match(el, selector) {
+    if (el.tagName.startsWith('#')) return false;
+    if (selector.includes(',')) return selector.split(',').some(s => match(el, s.trim()));
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    if (parts.length > 1) {
+      if (!match(el, parts.pop())) return false;
+      for (let p = el.parentNode; p; p = p.parentNode) if (match(p, parts.join(' '))) return true;
+      return false;
+    }
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const simple = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(simple)?.[0], id = /#([\w-]+)/.exec(simple)?.[1];
+    return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+      && [...simple.matchAll(/\.([\w-]+)/g)].every(m => el.className.split(/\s+/).includes(m[1]))
+      && attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', value: '', text: '' }); }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (['id', 'class', 'value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); }
+    getAttribute(k) { return this.attributes[k] ?? null; }
+    get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
+    set textContent(v) { this.children.forEach(c => c.parentNode = null); this.children = []; this.text = String(v); }
+    set innerHTML(v) { this.textContent = ''; for (const n of parseFragment(String(v)).childNodes) this.appendChild(fromNode(n)); }
+    appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+    querySelectorAll(s) { return all(this).filter(el => match(el, s)); }
+    querySelector(s) { return this.querySelectorAll(s)[0] ?? null; }
+    contains(el) { return this === el || all(this).includes(el); }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatch(type, extra = {}) {
+      const event = { type, target: this, defaultPrevented: false, stopped: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...extra };
+      for (let el = this; el; el = el.parentNode) {
+        for (const fn of el.listeners[type] || []) fn.call(el, event);
+        if (event.stopped) break;
+      }
+      return event;
+    }
+    focus() { document.activeElement = this; }
+    click() { this.focus(); this.dispatch('click'); }
+  }
+  function fromNode(n) {
+    const el = new Element(n.tagName || n.nodeName);
+    if (n.nodeName === '#text') el.text = n.value;
+    for (const a of n.attrs || []) el.setAttribute(a.name, a.value);
+    for (const c of n.childNodes || []) if (c.nodeName !== '#comment') el.appendChild(fromNode(c));
+    return el;
+  }
+  document = new Element('#document');
+  document.documentElement = document.appendChild(new Element('html'));
+  document.documentElement.lang = lang;
+  document.body = document.documentElement.appendChild(new Element('body'));
+  document.activeElement = document.body;
+  const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget'; widget.innerHTML = markup;
+  // Astro scopes static elements only; later innerHTML children receive no attribute.
+  for (const el of all(widget)) if (!el.tagName.startsWith('#')) el.setAttribute(scopeAttribute, '');
+  document.getElementById = id => all(document).find(el => el.id === id) ?? null;
+  const globals = { document, _slug: 'cron-parser', ztPersist: { clear(slug) { persistCalls.push(slug); } }, trackTool(...args) { tracks.push(args); } };
+  globals.window = globals;
+  const context = vm.createContext(globals);
+  if (order === 'shared-before') vm.runInContext(shortcut, context, { filename: 'ToolLayout.astro:keyboard' });
+  vm.runInContext(pageScript, context, { filename: 'CronParserTool.astro:actual-IIFE' });
+  if (order === 'shared-after') vm.runInContext(shortcut, context, { filename: 'ToolLayout.astro:keyboard' });
+  const get = id => document.getElementById(id);
+  return { document, tracks, persistCalls, get,
+    input(value) { get('cron-input').value = value; get('cron-input').dispatch('input'); },
+    key(id, key, mod) { const el = get(id); el.focus(); return el.dispatch('keydown', { key, ...(mod ? { [mod]: true } : {}) }); },
+  };
+}
+const S = new Function('return ' + stringsMatch[1])();
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before', 'shared-after']) {
+  const p = page(lang, order), tag = lang + '/' + order;
+  const input = p.get('cron-input'), result = p.get('cron-results'), status = p.get('cron-status');
+  eq(tag + '/default input', input.value, '0 9 * * 1-5');
+  eq(tag + '/initial result', [result.querySelectorAll('.cron-field-row').length, result.querySelectorAll('.cron-next-list li').length, status.textContent], [5, 10, S[lang].valid]);
+  const old = result.textContent;
+  p.input('* * * * *'); eq(tag + '/input remains manual', result.textContent, old);
+  let n = p.tracks.length; p.get('cron-parse').click();
+  eq(tag + '/Parse once', p.tracks.length - n, 1);
+  eq(tag + '/real minute result', result.querySelector('.cron-field-expr').textContent, '*');
+  for (const mod of [null, 'ctrlKey', 'metaKey']) {
+    n = p.tracks.length; p.key('cron-input', 'Enter', mod);
+    eq(tag + '/' + (mod || 'plain') + ' Enter once', p.tracks.length - n, 1);
+  }
+  for (const [key, mod, focus, value] of [['l', 'ctrlKey', 'cron-parse', '* * * * *'], ['L', 'metaKey', 'cron-input', 'invalid']]) {
+    p.input(value); p.get('cron-parse').click();
+    eq(tag + '/' + key + '/pre-clear state', status.textContent, value === 'invalid' ? S[lang].errFields.replace('{n}', '1') : S[lang].valid);
+    n = p.persistCalls.length; const event = p.key(focus, key, mod);
+    eq(tag + '/' + key + '/clears input, results and status', [input.value, result.textContent, status.textContent, status.className], ['', '', '', 'cron-status']);
+    eq(tag + '/' + key + '/stable input focus', p.document.activeElement.id, 'cron-input');
+    eq(tag + '/' + key + '/shared persistence still executes once', p.persistCalls.slice(n), ['cron-parser']);
+    check(tag + '/' + key + '/default prevented', event.defaultPrevented);
+  }
+  p.input('0 9 * * 1-5'); p.get('cron-parse').click();
+  eq(tag + '/recovery', [status.textContent, result.querySelectorAll('.cron-next-list li').length], [S[lang].valid, 10]);
+  const snapshot = [input.value, result.textContent, status.textContent, p.persistCalls.length];
+  p.document.body.focus(); p.document.body.dispatch('keydown', { key: 'l', ctrlKey: true });
+  eq(tag + '/outside focus untouched', [input.value, result.textContent, status.textContent, p.persistCalls.length], snapshot);
+}
+{
+  const p = page('en', 'shared-after');
+  const presets = p.document.querySelectorAll('.btn-preset');
+  eq('eight unchanged preset expressions', presets.map(el => el.getAttribute('data-expr')), ['* * * * *', '0 * * * *', '0 0 * * *', '0 9 * * 1-5', '0 0 * * 0', '0 0 1 * *', '*/5 * * * *', '0 0 1 1 *']);
+  for (const preset of presets) {
+    const n = p.tracks.length; preset.click();
+    eq('preset applies and parses once ' + preset.getAttribute('data-expr'), [p.get('cron-input').value, p.tracks.length - n, p.get('cron-results').querySelectorAll('.cron-next-list li').length], [preset.getAttribute('data-expr'), 1, 10]);
+  }
+  // Use the actual compiled base selector against real generated nodes, including static scope.
+  for (const name of ['cron-human', 'cron-breakdown', 'cron-field-row', 'cron-field-name', 'cron-field-expr', 'cron-field-vals', 'cron-next-label', 'cron-next-list']) {
+    const selector = css.match(new RegExp('(?:\\.cron-results\\[data-astro-cid-[^\\]]+\\]\\s+)?\\.' + name + '(?:\\[data-astro-cid-[^\\]]+\\])?\\s*\\{'))?.[0].replace(/\s*\{$/, '');
+    const result = p.get('cron-results'), nodes = result.querySelectorAll('.' + name);
+    check('actual dynamic nodes exist ' + name, nodes.length > 0);
+    check('compiled CSS matches every actual ' + name, !!selector && result.querySelectorAll(selector).length === nodes.length, selector);
+  }
+  check('system-dark human rule leaves root global', /:root:not\(\[data-theme="light"\]\)\s+\.cron-results\[data-astro-cid-[^\]]+\]\s+\.cron-human\s*\{border-color:#4b5e8a/.test(css));
+  check('explicit-dark human rule leaves theme ancestor global', /\[data-theme="dark"\]\s+\.cron-results\[data-astro-cid-[^\]]+\]\s+\.cron-human\s*\{border-color:#4b5e8a/.test(css));
+}
+const protectedEngine = source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)?.[0];
+eq('engine protected bytes including indentation', Buffer.byteLength(protectedEngine || ''), 8802);
+eq('engine protected SHA-256', createHash('sha256').update(protectedEngine || '').digest('hex'), 'd0c0eaca9f016e86b2737818d45781d96ecd3a7fd97f461f207152ad7710b9c8');
 
 console.log((failures ? 'FAILED' : 'PASSED') + ': ' + passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
