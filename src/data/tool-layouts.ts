@@ -105,6 +105,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'pkce-generator': 'generate',
   'htpasswd-generator': 'generate',
   'sprite-sheet-generator': 'generate',
+  'box-shadow-generator': 'generate',
   'har-file-analyzer': 'analyze',
   'color-blindness-simulator': 'analyze',
   'sqlite-viewer': 'analyze',

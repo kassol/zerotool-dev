@@ -145,7 +145,7 @@ for (const lang of ['en', 'ja']) {
 const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
 check('actual shared shortcut found', shortcut.includes("document.addEventListener('keydown'"));
-const allLabels = vm.runInNewContext('(' + source.match(/const labels = ([\s\S]*?);\n\nconst L =/)[1] + ')');
+const allLabels = vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1] + '\n;STRINGS');
 const algorithm = ['hexToRgb\\(hex\\)', 'generate\\(\\)'].map(name => source.match(new RegExp('      function ' + name + ' \\{[\\s\\S]*?\\n      \\}'))[0]).join('\n\n');
 eq('generation algorithm bytes unchanged', createHash('sha256').update(algorithm).digest('hex'), '11fa791496bac41c5ddfad2bd6b860dd8527e6ae54716717a528441240c85990');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
@@ -160,7 +160,7 @@ function page(lang = 'en', shellFirst = false) {
   function element(id, type = '') {
     const handlers = {}; let html = '', classes = new Set();
     const e = {
-      id, type, value: '', checked: false, disabled: false, textContent: '', style: {}, dataset: {},
+      id, type, value: '', checked: false, disabled: false, hidden: false, textContent: '', className: '', style: {}, dataset: {},
       get innerHTML() { return html; },
       set innerHTML(v) { html = v; this.textContent = v.replace(/<[^>]+>/g, ''); },
       classList: { add(c) { classes.add(c); }, remove(c) { classes.delete(c); }, contains(c) { return classes.has(c); } },
@@ -172,11 +172,11 @@ function page(lang = 'en', shellFirst = false) {
   }
   // Preserve the actual INPUT type/value/checked defaults and require all used IDs to exist.
   const markup = source.replace(/^---\n[\s\S]*?\n---/, '').replace(/<script\b[\s\S]*?<\/script>/g, '').replace(/<style\b[\s\S]*?<\/style>/g, '');
-  for (const m of markup.matchAll(/<(?:input|span|code|button|div)\b([^>]*)>/g)) {
+  for (const m of markup.matchAll(/<(?:input|span|code|button|div|p)\b([^>]*)>/g)) {
     const attrs = Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(a => [a[1], a[2]]));
     if (!attrs.id) continue;
     const e = ids[attrs.id] = element(attrs.id, attrs.type || '');
-    e.value = attrs.value || ''; e.checked = /\bchecked\b/.test(m[1]);
+    e.value = attrs.value || ''; e.checked = /\bchecked\b/.test(m[1]); e.hidden = /\bhidden\b/.test(m[1]);
   }
   ids['bsg-copy'].textContent = labels.copy;
   const get = id => { if (!ids[id]) throw new Error('Missing actual markup ID ' + id); return ids[id]; };
@@ -205,7 +205,7 @@ function page(lang = 'en', shellFirst = false) {
       }
       clock = until;
     },
-    state() { return { hex: get('bsg-color-hex').value, swatch: get('bsg-color').value, code: get('bsg-code').textContent, preview: get('bsg-preview-box').style.boxShadow, label: get('bsg-copy').textContent }; },
+    state() { return { hex: get('bsg-color-hex').value, swatch: get('bsg-color').value, code: get('bsg-code').textContent, preview: get('bsg-preview-box').style.boxShadow, label: get('bsg-copy').textContent, status: get('bsg-status').textContent, statusClass: get('bsg-status').className, previewHidden: get('bsg-preview-box').hidden, emptyHidden: get('bsg-empty').hidden, empty: get('bsg-preview-section').dataset.empty }; },
   };
   const context = {
     document: doc, _slug: 'box-shadow-generator',
@@ -232,6 +232,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const prefix = lang + ' shared first=' + shellFirst;
     let h = page(lang, shellFirst); configure(h);
     eq(prefix + ' configured output', h.get('bsg-code').textContent, configuredCode);
+    eq(prefix + ' populated preview state', [h.get('bsg-preview-box').hidden, h.get('bsg-empty').hidden, h.get('bsg-preview-section').dataset.empty], [false, true, 'false']);
     const generated = () => h.tracks.filter(t => t.action === 'generate').length;
     const count = generated();
     h.click(); eq(prefix + ' complete copy bytes', h.requests[0].text, configuredCode);
@@ -255,6 +256,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
         eq(prefix + ' old output cleared', h.get('bsg-code').textContent, '');
         eq(prefix + ' old preview cleared', h.get('bsg-preview-box').style.boxShadow, '');
         eq(prefix + ' empty copy disabled', h.get('bsg-copy').disabled, true);
+        eq(prefix + ' empty preview state', [h.get('bsg-preview-box').hidden, h.get('bsg-empty').hidden, h.get('bsg-preview-section').dataset.empty], [true, false, 'true']);
+        eq(prefix + ' clear removes status', [h.get('bsg-status').textContent, h.get('bsg-status').className], ['', 'tool-status']);
         eq(prefix + ' shared persistence clear retained', h.clears, ['box-shadow-generator']);
         eq(prefix + ' shortcut does not generate', generated(), n);
         eq(prefix + ' invalidated copy is not tracked', h.tracks.filter(t => t.action === 'copy').length, 0);
@@ -262,6 +265,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
         eq(prefix + ' next actual input regenerates same saved parameters', h.get('bsg-code').textContent, configuredCode.replace('12px', '19px'));
         eq(prefix + ' next actual input restores preview', h.get('bsg-preview-box').style.boxShadow, configuredCode.replace('12px', '19px').slice(12, -1));
         eq(prefix + ' next actual input enables copy', h.get('bsg-copy').disabled, false);
+        eq(prefix + ' new input restores populated preview state', [h.get('bsg-preview-box').hidden, h.get('bsg-empty').hidden, h.get('bsg-preview-section').dataset.empty], [false, true, 'false']);
       }
     }
     h = page(lang, shellFirst); configure(h);
@@ -274,10 +278,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   let h = page(lang); configure(h); const before = h.state();
   h.click(); h.requests[0].reject(new Error('controlled denial')); await settle();
   eq(lang + ' current failure visible', h.get('bsg-copy').textContent, h.labels.copyFailed);
+  eq(lang + ' failure shown in status', [h.get('bsg-status').textContent, h.get('bsg-status').className], [h.labels.copyFailed, 'tool-status error']);
   eq(lang + ' rejected copy handled', [h.syncErrors.length, h.unhandled.length], [0, 0]);
   eq(lang + ' rejected copy not tracked', h.tracks.filter(t => t.action === 'copy').length, 0);
   h.click(); h.requests[1].resolve(); await settle();
   eq(lang + ' direct retry succeeds', h.get('bsg-copy').textContent, h.labels.copied);
+  eq(lang + ' retry clears only current error status', [h.get('bsg-status').textContent, h.get('bsg-status').className], ['', 'tool-status']);
   eq(lang + ' retry preserves exact output', h.get('bsg-code').textContent, before.code);
   for (const missing of [true, false]) {
     h = page(lang); configure(h);
@@ -316,6 +322,107 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 currentPage = null;
 process.removeListener('unhandledRejection', unhandled);
+
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: generate) ----------
+{
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('generate layout registration', layouts.includes("'box-shadow-generator': 'generate'"));
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  const css = source.slice(source.indexOf('<style>'));
+  check('the outermost component is the height-bearing tool root', /^\s*<div\s+class="bsg-wrap"/.test(markup));
+  check('shared control rail and full-width preview share one body', markup.includes('class="bsg-body"') && markup.includes('class="bsg-rail zt-rail"') && markup.indexOf('class="bsg-rail zt-rail"') < markup.indexOf('id="bsg-preview-section"'));
+  check('the control rail contains code export before the preview', markup.indexOf('id="bsg-code"') < markup.indexOf('id="bsg-preview-section"'));
+  check('270–320px rail and remaining preview width', css.includes('grid-template-columns: clamp(270px, 24vw, 320px) minmax(0, 1fr)'));
+  check('the desktop body fills available height', css.includes('flex: 1 1 0; min-height: 0;'));
+  check('the component owns 860px and 640px breakpoints', css.includes('@media (max-width: 860px)') && css.includes('@media (max-width: 640px)'));
+  check('stacked screens use a two-column control grid', /@media \(max-width: 860px\)[\s\S]*?\.bsg-controls \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/.test(css));
+  check('long code stays in a bounded internal scroller', /\.bsg-pre \{[^}]*max-height: 8rem;[^}]*overflow: auto;/.test(css));
+  check('the code region accepts keyboard focus', /<pre class="bsg-pre" tabindex="0" role="region" aria-label=\{L.outputLabel\}/.test(markup));
+  check('the reserved status row precedes code', markup.indexOf('id="bsg-status"') < markup.indexOf('id="bsg-code"') && css.includes('#bsg-status { height: 2.8em; flex: none; margin: 0; overflow: auto; }'));
+  check('Copy has a stable 44px height', css.includes('#bsg-copy { min-width: 0; height: 44px;'));
+  check('phone HEX and swatch keep 44px touch targets', css.includes('.bsg-hex-input { min-height: 44px; }') && css.includes('.bsg-swatch { width: 44px; height: 44px; }'));
+  check('range controls keep 24px targets', /\.bsg-slider \{[^}]*height: 24px;/.test(css));
+  check('the inset label is a 44px phone target', css.includes('.bsg-toggle { min-height: 44px; }'));
+  check('empty preview hides on stacked screens', /@media \(max-width: 860px\)[\s\S]*?\.bsg-preview-section\[data-empty="true"\] \{ display: none; \}/.test(css));
+  check('hidden preview elements cannot be shown by grid layout', css.includes('.bsg-preview-box[hidden], .bsg-empty[hidden] { display: none; }'));
+  check('dark syntax colors use the actual global theme ancestor', css.includes(':global([data-theme="dark"]) .bsg-wrap') && css.includes(':global(:root:not([data-theme="light"])) .bsg-wrap'));
+  check('dynamic syntax spans use global selectors', ['prop','colon','semi','kw','num','color'].every(key => css.includes(':global(.bsg-hl-' + key + ')')));
+  const tipKeys = ['h', 'v', 'blur', 'spread', 'opacity', 'inset', 'color', 'copy'];
+  eq('exactly eight actual control tips', [...markup.matchAll(/<Toggletip id="bsg-tip-(\w+)"/g)].map(m => m[1]), tipKeys);
+  check('every tip has localized about and native language metadata', [...markup.matchAll(/<Toggletip[^>]+>/g)].every(m => /lang=\{lang\} about=\{L\.\w+\}/.test(m[0])));
+  check('tooltip prose stays in HTML and out of the page script', !scriptMatch[1].includes('.tips') && !source.includes('define:vars') && !source.includes('data-strings') && ['copy', 'copied', 'copy-failed'].every(key => markup.includes('data-' + key + '={L.')));
+  check('automatic generator has no redundant Generate button', !markup.includes('btn-primary') && (markup.match(/<button /g) || []).length === 1 && markup.includes('id="bsg-copy"'));
+  const protectedContent = {
+  "en": {
+    "nonUsageBodySha256": "cdf1ffeb01d87710ba79930048ae4ff96167005944ef914fcaf212cbc63354e6",
+    "frontmatterWithoutStepsSha256": "8402622717cc675c9c536d3cd7a2d24cd97cc573e621049dae9e6670dc520eb5",
+    "mdxSha256": "aef4b6ff2ce6577bfbb7ae6db7d83b82409affd80844c0d9305e49269e0699af",
+    "wordsBefore": 607,
+    "wordsAfter": 505,
+    "stepCount": 8,
+    "maxStepChars": 151,
+    "totalStepChars": 642
+  },
+  "zh": {
+    "nonUsageBodySha256": "f4f4a6851150acf884557086e96cbd5ed37afe9a1b631ddd710041921b14709d",
+    "frontmatterWithoutStepsSha256": "8c5beaf34c02ef3b4f72807454b7b0497a7376a912e84a229b6f7714fed46495",
+    "mdxSha256": "6fe68095b75a640bf81144ee5f39a5ee19e3827c7cf72d67b4cb4dee5f76a9a3",
+    "wordsBefore": 36,
+    "wordsAfter": 32,
+    "stepCount": 8,
+    "maxStepChars": 64,
+    "totalStepChars": 208
+  },
+  "ja": {
+    "nonUsageBodySha256": "2ef2d0272ffbbadb18e97df28d0353de5c2827853d840bf5c9975d52518b192c",
+    "frontmatterWithoutStepsSha256": "951308bdc8e137b1d755932c1506087dc19cfaff3c465f5bf431e53de02eaf9d",
+    "mdxSha256": "94733de54cf6c653bcb855b0f33bb8710797884fec90e182a3d08e691894557f",
+    "wordsBefore": 35,
+    "wordsAfter": 31,
+    "stepCount": 8,
+    "maxStepChars": 91,
+    "totalStepChars": 321
+  },
+  "ko": {
+    "nonUsageBodySha256": "5e3855ba847482466ee145c19387c789cb07499cdbdf837c50054701471488ae",
+    "frontmatterWithoutStepsSha256": "098c3c9ac97c1b0f4f30bf4a13ab19fe7299c78de70f9dbc8accccf65e9f07e9",
+    "mdxSha256": "d73107ea155b14aa2982ec0dbdb741d9ec1f6959976ae192e0a06e83ffa55c24",
+    "wordsBefore": 35,
+    "wordsAfter": 31,
+    "stepCount": 8,
+    "maxStepChars": 89,
+    "totalStepChars": 332
+  }
+};
+  const oldLabels = {
+  "en": "608e579b7b2af5a021c33ffc3f56680abf60049660f8e8a24e99f1aa6a67a69a",
+  "zh": "af75a67c12759fce886816742f84ab20a2c4b8b1d99e0c0ef6adc2373514e006",
+  "ja": "cb29d9c1c2ee421fe3c114bdc32b60cdef9584cf3d9d4cb892c57958b43bb694",
+  "ko": "cb012701042537a7c3d8e7d8bba9cfb7ce9199b2b6dbf875dd2911f6b4c9926c"
+};
+  const digest = text => createHash('sha256').update(text).digest('hex');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const strings = allLabels[lang];
+    eq(lang + ' STRINGS keys match English', Object.keys(strings).sort(), Object.keys(allLabels.en).sort());
+    eq(lang + ' tip keys match English', Object.keys(strings.tips).sort(), Object.keys(allLabels.en.tips).sort());
+    check(lang + ' empty preview copy exists', typeof strings.empty === 'string' && strings.empty.length > 0);
+    check(lang + ' every tip is factual plain prose', Object.values(strings.tips).every(text => typeof text === 'string' && text.length > 0 && !/[<>]\s*|https?:|\n[-*]/.test(text)));
+    const old = Object.fromEntries(Object.entries(strings).filter(([key]) => !['empty','tips'].includes(key)).sort(([a],[b]) => a.localeCompare(b)));
+    eq(lang + ' old fourteen localized values stay exact', digest(JSON.stringify(old)), oldLabels[lang]);
+    const mdx = readFileSync(join(root, 'src/content/tools/box-shadow-generator/' + lang + '.mdx'), 'utf8');
+    const fm = mdx.match(/^---\n([\s\S]*?)\n---/);
+    const front = fm[1]; const body = mdx.slice(fm[0].length);
+    const stepSection = front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:'));
+    const steps = [...stepSection.matchAll(/^  - (".*")$/gm)].map(m => JSON.parse(m[1]));
+    eq(lang + ' eight usage steps', steps.length, 8);
+    check(lang + ' step character limits', steps.every(step => [...step].length <= 280) && steps.reduce((n, step) => n + [...step].length, 0) <= 1200);
+    check(lang + ' steps contain the actual Copy label', steps[7].includes(strings.copy));
+    check(lang + ' steps name the clear shortcut', steps[7].includes('Ctrl/⌘+L'));
+    check(lang + ' Usage section removed', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    eq(lang + ' other body including limits stays exact', digest(body), protectedContent[lang].nonUsageBodySha256);
+    eq(lang + ' FAQ and SEO stay exact', digest(front.replace(/\nsteps:\n(?:  - .*\n)*/,'\n')), protectedContent[lang].frontmatterWithoutStepsSha256);
+  }
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
