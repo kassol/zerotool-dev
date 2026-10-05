@@ -32,10 +32,21 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
+import { toolSteps } from '../src/data/llms.mjs';
 import { parseFragment, defaultTreeAdapter } from 'parse5';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HtmlEntityTool.astro'), 'utf8');
+const strings = vm.runInNewContext(source.slice(source.indexOf('const STRINGS ='), source.indexOf('const T = STRINGS[lang]')).replace(/\bas const\b/g, '') + '\nSTRINGS;');
+const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+const escapeHTML = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+function pageMarkup(lang) {
+  return markup.replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(strings[lang][key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(strings[lang][key]));
+}
 const startIndex = source.indexOf('/* ── engine:start ── */');
 const endIndex = source.indexOf('/* ── engine:end ── */');
 if (startIndex < 0 || endIndex <= startIndex) {
@@ -199,10 +210,10 @@ function pageVM(lang = 'en', shellFirst = false) {
     preventDefault() { this.defaultPrevented = true; }
   }
   class Element {
-    constructor(tag = 'div') { Object.assign(this, { tagName: tag.toUpperCase(), id: '', className: '', attributes: {}, children: [], parentElement: null, listeners: {}, text: '', _value: undefined, disabled: false }); }
+    constructor(tag = 'div') { Object.assign(this, { tagName: tag.toUpperCase(), id: '', className: '', attributes: {}, children: [], parentElement: null, listeners: {}, text: '', _value: undefined, disabled: false, checked: false }); }
     get value() { return this._value ?? (this.tagName === 'TEXTAREA' ? this.textContent : ''); }
     set value(value) { this._value = String(value); }
-    setAttribute(key, value) { this.attributes[key] = String(value); if (['id', 'class', 'value'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); }
+    setAttribute(key, value) { this.attributes[key] = String(value); if (['id', 'class', 'value', 'type'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); if (key === 'checked') this.checked = true; }
     getAttribute(key) { return this.attributes[key] ?? null; }
     get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
     set textContent(value) { this.text = String(value); this.children = []; }
@@ -225,7 +236,15 @@ function pageVM(lang = 'en', shellFirst = false) {
       return !event.defaultPrevented;
     }
     dispatch(type, options = {}) { return this.dispatchEvent(new PageEvent(type, { bubbles: true, ...options })); }
-    click() { if (!this.disabled) this.dispatch('click'); }
+    click() {
+      if (this.disabled) return;
+      const changed = this.type === 'radio' && !this.checked;
+      if (changed) {
+        document.querySelectorAll('input[name="' + this.getAttribute('name') + '"]').forEach(el => { el.checked = el === this; });
+      }
+      this.dispatch('click');
+      if (changed) { this.dispatch('input'); this.dispatch('change'); }
+    }
     focus() { document.activeElement = this; }
   }
   function fromParse5(node) {
@@ -238,10 +257,11 @@ function pageVM(lang = 'en', shellFirst = false) {
   document = new Element('#document'); document.documentElement = { lang };
   document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
   const widget = document.body.appendChild(new Element()); widget.className = 'tool-widget';
-  widget.innerHTML = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+  widget.innerHTML = pageMarkup(lang);
   document.getElementById = id => descendants(document).find(el => el.id === id) || null;
   document.createElement = tag => new Element(tag);
-  const context = { document, console, Event: PageEvent, _slug: 'html-entity',
+  const { tips, ...client } = strings[lang];
+  const context = { document, console, Event: PageEvent, t: client, _slug: 'html-entity',
     ztPersist: { clear: slug => cleared.push(slug) }, trackTool: (...args) => tracked.push(args),
     setTimeout(fn, delay = 0) { const id = ++timerID; timers.set(id, { fn, due: now + delay, delay }); return id; },
     clearTimeout(id) { timers.delete(id); },
@@ -266,29 +286,30 @@ const localized = {
   ja: { copy: 'コピー', copied: 'コピー済み！', copyFail: 'コピーできませんでした。出力を選択して手動でコピーしてください。' },
   ko: { copy: '복사', copied: '복사됨!', copyFail: '복사하지 못했습니다. 출력을 선택하여 직접 복사하세요.' }
 };
-function manual(p, direction, value) { p.get('he-input').value = value; p.get('he-' + direction).click(); }
+function selectAndType(p, direction, value) { p.input(value); p.get('he-' + direction).click(); p.advance(300); }
 for (const lang of Object.keys(localized)) {
   const p = pageVM(lang);
   p.input('<a>😀&'); p.advance(299); eq(lang + ': live conversion waits 300ms',p.get('he-output').value,'');
   p.advance(1); samePage(lang + ': real live encode and count',[p.get('he-output').value,p.get('he-status').textContent],['&lt;a&gt;&#128512;&amp;','Encoded — 4 characters converted.']);
   p.input('&lt;a&gt;&#128512;&amp;'); p.get('he-decode').click();
-  samePage(lang + ': manual decode uses textarea RCDATA',[p.get('he-output').value,p.get('he-status').textContent],['<a>😀&','Decoded — 4 entities converted.']);
+  samePage(lang + ': direction change immediately decodes with textarea RCDATA',[p.get('he-output').value,p.get('he-status').textContent],['<a>😀&','Decoded — 4 entities converted.']);
   p.input('<b>&amp;</b>'); p.advance(300);
   samePage(lang + ': live decoder preserves literal tags',[p.get('he-output').value,p.get('he-status').textContent],['<b>&</b>','Decoded — 1 entity converted.']);
   for (const [input,expected] of [['&copy 2024 &#128; &#0; &#xD800; &notARealEntity;','© 2024 € � � ¬ARealEntity;'],['&madeUp; &#xZZ; &amp;lt;','&madeUp; &#xZZ; &lt;']]) {
-    manual(p,'decode',input); eq(lang + ': real tolerant RCDATA ' + input,p.get('he-output').value,expected);
+    selectAndType(p,'decode',input); eq(lang + ': real tolerant RCDATA ' + input,p.get('he-output').value,expected);
   }
+  const beforeEnter = p.snapshot(), tracksBeforeEnter = p.tracked.length;
   p.get('he-input').focus(); p.key('Enter');
-  eq(lang + ': shared CtrlEnter chooses Encode once',p.tracked.filter(x=>x[1]==='encode').length,1);
-  eq(lang + ': shared CtrlEnter keeps current Encode semantics',p.get('he-output').value,'&amp;madeUp; &amp;#xZZ; &amp;amp;lt;');
+  eq(lang + ': shared CtrlEnter has no primary action',p.tracked.length,tracksBeforeEnter);
+  samePage(lang + ': shared CtrlEnter preserves direction and result',p.snapshot(),beforeEnter);
   for (const action of ['live','encode','decode']) {
-    manual(p,'encode','&');
-    if(action==='live'){p.input('');p.advance(300);}else manual(p,action,'');
+    selectAndType(p,'encode','&');
+    if(action==='live'){p.input('');p.advance(300);}else selectAndType(p,action,'');
     samePage(lang + ': empty '+action+' clears output and status',[p.get('he-output').value,p.get('he-status').textContent],['','']);
     const count=p.copies.length;p.get('he-copy').click();eq(lang+': empty '+action+' cannot copy old output',p.copies.length,count);
   }
   for (const shellFirst of [false,true]) for (const modifiers of [{ctrlKey:true},{metaKey:true}]) {
-    const q=pageVM(lang,shellFirst);manual(q,'decode','&lt;');const before=q.snapshot();q.key();samePage(lang+': outside CtrlL preserves page',q.snapshot(),before);
+    const q=pageVM(lang,shellFirst);selectAndType(q,'decode','&lt;');const before=q.snapshot();q.key();samePage(lang+': outside CtrlL preserves page',q.snapshot(),before);
     q.get('he-output').focus();q.key('L',modifiers);
     samePage(`${lang}: CtrlL clears fields/status and persistence, sharedFirst=${shellFirst}`,[...q.snapshot().slice(0,4),q.cleared],['','','','he-status',['html-entity']]);
     q.input('&amp;');q.advance(300);eq(lang+': CtrlL retains last Decode direction',q.get('he-output').value,'&');
@@ -302,7 +323,7 @@ const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
 process.on('unhandledRejection', onUnhandled);
 function withResult(lang, shellFirst = false) {
-  const p=pageVM(lang,shellFirst);manual(p,'encode','<a>😀&');return p;
+  const p=pageVM(lang,shellFirst);selectAndType(p,'encode','<a>😀&');return p;
 }
 for (const lang of Object.keys(localized)) {
   const t=localized[lang],expected='&lt;a&gt;&#128512;&amp;';
@@ -333,11 +354,11 @@ function changeCopyContext(p, action) {
   else if(action==='ctrlL'){p.get('he-input').focus();p.key();}
   else if(action==='input')p.input('new <text>');
   else if(action==='live-result'){p.input('new <text>');p.advance(300);}
-  else if(action==='encode')manual(p,'encode','new &');
-  else if(action==='decode')manual(p,'decode','new &amp;');
+  else if(action==='encode')selectAndType(p,'encode','new &');
+  else if(action==='decode')selectAndType(p,'decode','new &amp;');
   else if(action==='empty-live'){p.input('');p.advance(300);}
-  else if(action==='empty-encode')manual(p,'encode','');
-  else if(action==='empty-decode')manual(p,'decode','');
+  else if(action==='empty-encode')selectAndType(p,'encode','');
+  else if(action==='empty-decode')selectAndType(p,'decode','');
 }
 for(const lang of Object.keys(localized)) {
   const t=localized[lang];
@@ -375,7 +396,7 @@ for(const lang of Object.keys(localized)) {
   }
   {
     const p=withResult(lang);p.get('he-copy').click();p.copies.at(-1).reject(new Error('current failed'));await flushCopies();
-    p.get('he-copy').click();const retry=p.copies.at(-1);manual(p,'decode','&amp;');const before=p.snapshot();retry.resolve();await flushCopies();
+    p.get('he-copy').click();const retry=p.copies.at(-1);selectAndType(p,'decode','&amp;');const before=p.snapshot();retry.resolve();await flushCopies();
     samePage(lang+': retry success cannot erase later conversion status',p.snapshot(),before);
     p.input('later &');p.get('he-clear').click();eq(lang+': Clear cancels scheduled conversion', [...p.timers.values()].filter(t=>t.delay===300).length,0);
     p.input('new &');p.get('he-input').focus();p.key();eq(lang+': CtrlL cancels scheduled conversion', [...p.timers.values()].filter(t=>t.delay===300).length,0);
@@ -388,6 +409,128 @@ eq('native textarea decode declaration preserved',createHash('sha256').update(pr
 
 samePage('all page copy rejections handled',unhandled,[]);
 process.removeListener('unhandledRejection',onUnhandled);
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const check = (name, value) => eq(name, !!value, true);
+  const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const tipKeys = ['mode','input','output','copy','reference'];
+  samePage('five tips bind to direction, input, output, copy and reference', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]).sort(), tipKeys.map(key => 'he-tip-' + key).sort());
+  check('direct flex root has zero minimum height', /^\s*<div class="he-wrap">/.test(markup) && /\.he-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+  check('controls precede fixed status and panels', markup.indexOf('he-controls') < markup.indexOf('id="he-status"') && markup.indexOf('id="he-status"') < markup.indexOf('he-panels'));
+  eq('one shared grid', (markup.match(/\bzt-io"/g) || []).length, 1);
+  eq('two shared panes', (markup.match(/\bzt-io-pane\b/g) || []).length, 2);
+  eq('two filling editors', (markup.match(/\bzt-io-fill\b/g) || []).length, 2);
+  check('input stays editable and output readonly', /<textarea id="he-input"[^>]*>/.test(markup) && !/<textarea id="he-input"[^>]*(?:readonly|disabled|hidden)/.test(markup) && /<textarea id="he-output"[^>]*readonly/.test(markup));
+  samePage('Clear and Copy remain actual buttons', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m => m[1]).sort(), ['he-clear','he-copy']);
+  check('automatic conversion has no primary execution button', !/btn-primary/.test(markup));
+  check('direction uses shared segmented native radios', /class="he-modes zt-segmented" role="group"/.test(markup) && /id="he-encode" type="radio" name="hemode" value="encode" checked/.test(markup) && /id="he-decode" type="radio" name="hemode" value="decode"/.test(markup));
+  check('labels and summary contain no buttons or tips', [...markup.matchAll(/<(?:label|summary)\b[\s\S]*?<\/(?:label|summary)>/g)].every(m => !/<button|<Toggletip/.test(m[0])));
+  check('reference is closed and keyboard-scrollable', /<details class="he-ref">/.test(markup) && /class="he-ref-table-wrap" tabindex="0" role="region" aria-label=\{T.refTable\}/.test(markup));
+  check('safety statement remains visible outside reference and tips', /<p class="he-safety">\{T.safety\}<\/p>\s*<div class="he-reference">/.test(markup) && !/\.he-safety[^}]*display:\s*none/.test(css));
+  check('status reserves height and scrolls internally', /\.he-status\s*\{[^}]*height: 2\.8em;[^}]*overflow: auto;[^}]*overflow-wrap: anywhere/.test(css));
+  check('editors scroll internally', /\.he-box\s*\{[^}]*overflow: auto/.test(css));
+  check('only the empty result is hidden at 860px', /@media \(max-width: 860px\)\s*\{\s*#he-output-pane\[data-empty="true"\]\s*\{ display: none; \}\s*\.he-box\s*\{ height: 160px/.test(css));
+  check('phone radio labels are 44px with fixed editor/status heights', /@media \(max-width: 640px\)/.test(css) && /\.he-modes label\s*\{[^}]*min-height: 44px/.test(css) && /\.he-box\s*\{ height: 120px/.test(css) && /\.he-status\s*\{ height: 4\.2em/.test(css));
+  check('reference scroll region is bounded', /\.he-ref-table-wrap\s*\{[^}]*max-height: 320px;[^}]*overflow: auto/.test(css));
+  check('client strings exclude tips', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  check('no runtime language DOM replacement', !/data-i18n|document\.documentElement\.lang/.test(source));
+  check('registered as convert', /'html-entity':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  eq('markup IDs are unique', new Set(ids).size, ids.length);
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  const retained = {
+  "en": {
+    "frontmatter": "caa68c5e679ca4dbcc72608337ddb13b7946aa8e858d5edb90d2262db6fe5888",
+    "bodyWithoutUsage": "e9fc42d4ef3ef47ce276de7a4e48e9ad0f46a2cbfa4cb1d55d70d3126b070e12"
+  },
+  "zh": {
+    "frontmatter": "bf7533ce227f6d226413ef72d4fab3b8e50f03a338adb94ff533945a978835ac",
+    "bodyWithoutUsage": "b92642ebe5d8d19a19b0707b3f3cb2eeee33792ebfbd5dd28dc50cbd25551d68"
+  },
+  "ja": {
+    "frontmatter": "c81b9a02f38c1a518ef1e10ff392b1a1c41b99227646a5409ba53195d10138f1",
+    "bodyWithoutUsage": "64b39dad714eecc62a1b92586d21c508dc8e5b197905c9f1cdcb11561348abbd"
+  },
+  "ko": {
+    "frontmatter": "5f16c29513d07d184d28b79062223b6318d1d68352d63404f3fec0f638458e06",
+    "bodyWithoutUsage": "12fa2b6eca1b4f688f2a58efda882663a55f855504f2f145dc68b32697ae2498"
+  }
+};
+  const require = createRequire(import.meta.url);
+  const { compile } = await import(require.resolve('@mdx-js/mdx'));
+  for (const lang of Object.keys(localized)) {
+    const entry = strings[lang], { tips, ...client } = entry;
+    samePage(lang + ': translation keys match', Object.keys(entry).sort(), Object.keys(strings.en).sort());
+    samePage(lang + ': five tip facts match', Object.keys(tips).sort(), tipKeys.slice().sort());
+    for (const key of tipKeys) check(lang + '/' + key + ': tip is nonempty text', typeof tips[key] === 'string' && tips[key].trim().length > 0 && !tips[key].includes('\n'));
+    check(lang + ': serialized client excludes tips and their text', !('tips' in client) && Object.values(tips).every(tip => !JSON.stringify(client).includes(JSON.stringify(tip))));
+    const mdx = readFileSync(join(root, 'src/content/tools/html-entity', lang + '.mdx'), 'utf8');
+    const split = mdx.indexOf('\n---\n', 4), metadata = mdx.slice(0, split), body = mdx.slice(split + 5);
+    const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
+    check(lang + ': five plain steps fit limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['encode','decode','copy','clear','refTable']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
+    eq(lang + ': FAQ and SEO bytes preserved', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
+    // Only removed-button instructions and the now translated copy error need wording changes.
+    let protectedBody = body;
+    if (lang === 'en') {
+      eq('en: two Encode examples select the direction', (body.match(/select <strong>Encode<\/strong>/g) || []).length, 2);
+      eq('en: Decode example selects the direction', (body.match(/select <strong>Decode<\/strong>/g) || []).length, 1);
+      check('en: limits identify conversion status as English', body.includes('The conversion status messages are in English'));
+      check('en: repeat decode uses output as the new input', body.includes('For double-encoded text, put the output back into Input while Decode is selected.'));
+      protectedBody = body.replaceAll('select <strong>Encode</strong>', 'click <strong>Encode</strong>').replaceAll('select <strong>Decode</strong>', 'click <strong>Decode</strong>')
+        .replace('The conversion status messages are in English', 'The status messages are in English')
+        .replace('For double-encoded text, put the output back into Input while Decode is selected.', 'Run Decode again for double-encoded text.');
+    }
+    if (lang === 'zh') {
+      eq('zh: two Encode examples select the direction', (body.match(/选择<strong>编码<\/strong>/g) || []).length, 2);
+      eq('zh: Decode example selects the direction', (body.match(/选择<strong>解码<\/strong>/g) || []).length, 1);
+      protectedBody = body.replaceAll('选择<strong>编码</strong>', '点击<strong>编码</strong>').replaceAll('选择<strong>解码</strong>', '点击<strong>解码</strong>');
+    }
+    eq(lang + ': non-Usage body preserves exact bytes except named UI corrections', sha(protectedBody), retained[lang].bodyWithoutUsage);
+    check(lang + ': Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    eq(lang + ': llms receives five steps', toolSteps(parsed).length, 5);
+    await compile(body); check(lang + ': preserved MDX body compiles', true);
+    const p = pageVM(lang);
+    for (const [id,key] of [['he-copy','copy'],['he-clear','clear']]) eq(lang + ': built label for ' + id, p.get(id).textContent, entry[key]);
+    for (const mode of ['encode','decode']) eq(lang + ': built direction label ' + mode, p.get('he-' + mode).parentElement.querySelector('span').textContent, entry[mode]);
+    eq(lang + ': all 13 reference rows preserved', p.document.querySelectorAll('.he-ref-table tbody tr').length, 13);
+    eq(lang + ': reference initially closed', p.document.querySelector('.he-ref').getAttribute('open'), null);
+    eq(lang + ': empty desktop output has localized placeholder', p.get('he-output').getAttribute('placeholder'), entry.outputPlaceholder);
+    eq(lang + ': initial output is empty', p.get('he-output-pane').getAttribute('data-empty'), 'true');
+    samePage(lang + ': initial selected mode is Encode', [p.get('he-encode').checked,p.get('he-decode').checked], [true,false]);
+    p.input('&amp;'); p.advance(200); p.get('he-decode').click();
+    samePage(lang + ': direction change converts immediately and selects one radio', [p.get('he-output').value,p.get('he-encode').checked,p.get('he-decode').checked,p.get('he-output-pane').getAttribute('data-empty')], ['&',false,true,'false']);
+    eq(lang + ': direction change cancels pending live callback', [...p.timers.values()].filter(t => t.delay === 300).length, 0);
+    const changed = p.snapshot(); p.advance(100); samePage(lang + ': original debounce deadline has no effect', p.snapshot(), changed);
+    const tracks = p.tracked.length; p.get('he-decode').click();
+    eq(lang + ': selecting current radio does not act as an execution button', p.tracked.length, tracks);
+    p.get('he-encode').dispatch('change');samePage(lang + ': unchecked radio change does not convert', p.snapshot(), changed);
+    for (const focus of ['he-input','he-output','he-decode']) for (const modifiers of [{ctrlKey:true},{metaKey:true}]) {
+      p.get(focus).focus();p.key('Enter',modifiers);samePage(lang + ': CtrlEnter leaves output unchanged from ' + focus, p.snapshot(), changed);
+    }
+    p.input('&lt;');p.get('he-input').focus();p.key('Enter');p.advance(299);
+    eq(lang + ': CtrlEnter does not rush automatic conversion', p.get('he-output').value, '&');
+    p.advance(1);eq(lang + ': scheduled conversion still runs after CtrlEnter', p.get('he-output').value, '<');
+    p.get('he-clear').click();samePage(lang + ': Clear retains direction while hiding empty output', [p.get('he-decode').checked,p.get('he-output-pane').getAttribute('data-empty')], [true,'true']);
+    p.input('&copy 2024');p.advance(300);
+    samePage(lang + ': legacy semicolonless decode and English count are retained', [p.get('he-output').value,p.get('he-status').textContent], ['© 2024','Decoded — 0 entities converted.']);
+    p.input('');p.advance(300);eq(lang + ': empty automatic input hides result', p.get('he-output-pane').getAttribute('data-empty'),'true');
+    p.input('&');p.get('he-encode').click();eq(lang + ': English singular encode status retained', p.get('he-status').textContent,'Encoded — 1 character converted.');
+    p.input('&amp;');p.get('he-decode').click();eq(lang + ': English singular decode status retained', p.get('he-status').textContent,'Decoded — 1 entity converted.');
+    p.get('he-decode').focus();p.key();eq(lang + ': CtrlL hides output after direction-control focus', p.get('he-output-pane').getAttribute('data-empty'),'true');
+    samePage(lang + ': CtrlL clears persistence while keeping selected direction', [p.cleared,p.get('he-decode').checked], [['html-entity'],true]);
+  }
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'HtmlEntityTool.astro' });
+  check('Astro compilation has no errors', compiled.diagnostics.filter(d => d.severity === 1).length === 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('generated JS serializes client strings only', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  check('compiled CSS resolves all global selectors', !compiled.css.join('\n').includes(':global('));
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
