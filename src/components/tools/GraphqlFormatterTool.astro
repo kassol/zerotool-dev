@@ -66,6 +66,7 @@
     (function () {
       var STRINGS = {
         en: {
+          copyFailed: 'Copy failed. Try again.',
           inputLabel: 'GraphQL Input', sample: 'Load sample',
           indent: 'Indent:', indent2: '2 spaces', indent4: '4 spaces',
           format: 'Format', minify: 'Minify', validate: 'Validate', clear: 'Clear',
@@ -79,6 +80,7 @@
           line: 'line', column: 'column'
         },
         zh: {
+          copyFailed: '复制失败，请重试。',
           inputLabel: 'GraphQL 输入', sample: '载入示例',
           indent: '缩进：', indent2: '2 个空格', indent4: '4 个空格',
           format: '格式化', minify: '压缩', validate: '校验', clear: '清除',
@@ -92,6 +94,7 @@
           line: '行', column: '列'
         },
         ja: {
+          copyFailed: 'コピーに失敗しました。再試行してください。',
           inputLabel: 'GraphQL 入力', sample: 'サンプルを読み込む',
           indent: 'インデント：', indent2: '2 スペース', indent4: '4 スペース',
           format: '整形', minify: '圧縮', validate: '検証', clear: 'クリア',
@@ -105,6 +108,7 @@
           line: '行', column: '列'
         },
         ko: {
+          copyFailed: '복사하지 못했습니다. 다시 시도하세요.',
           inputLabel: 'GraphQL 입력', sample: '샘플 불러오기',
           indent: '들여쓰기:', indent2: '공백 2개', indent4: '공백 4개',
           format: '형식화', minify: '압축', validate: '검증', clear: '지우기',
@@ -156,6 +160,18 @@
       var statusEl = document.getElementById('gqlf-status');
       var copyBtn = document.getElementById('gqlf-copy');
       var indentSel = document.getElementById('gqlf-indent');
+      var revision = 0, copyRequest = 0, copyTimer = null;
+
+      function resetCopy() {
+        copyRequest++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+      }
+      function cancelPending() {
+        revision++;
+        resetCopy();
+        if (!getLib()) clearStatus();
+      }
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg;
@@ -166,10 +182,12 @@
       function getLib() { return window.__gqlfLib; }
 
       function whenLibReady(cb) {
+        var request = revision;
         if (getLib()) { cb(); return; }
         setStatus(t.libLoading, '');
         window.addEventListener('gqlf-lib-ready', function once() {
           window.removeEventListener('gqlf-lib-ready', once);
+          if (request !== revision) return;
           clearStatus();
           cb();
         });
@@ -250,6 +268,7 @@
       /* ── engine:end ── */
 
       function doFormat() {
+        cancelPending();
         var raw = readInput().trim();
         if (!raw) { setStatus(t.emptyInput, ''); output.value = ''; return; }
         if (raw.length > MAX_BYTES) { setStatus(t.tooLarge, 'error'); output.value = ''; return; }
@@ -266,6 +285,7 @@
       }
 
       function doMinify() {
+        cancelPending();
         var raw = readInput().trim();
         if (!raw) { setStatus(t.emptyInput, ''); output.value = ''; return; }
         if (raw.length > MAX_BYTES) { setStatus(t.tooLarge, 'error'); output.value = ''; return; }
@@ -282,6 +302,7 @@
       }
 
       function doValidate() {
+        cancelPending();
         var raw = readInput().trim();
         if (!raw) { setStatus(t.emptyInput, ''); output.value = ''; return; }
         if (raw.length > MAX_BYTES) { setStatus(t.tooLarge, 'error'); output.value = ''; return; }
@@ -298,8 +319,20 @@
       document.getElementById('gqlf-format').addEventListener('click', doFormat);
       document.getElementById('gqlf-minify').addEventListener('click', doMinify);
       document.getElementById('gqlf-validate').addEventListener('click', doValidate);
-      document.getElementById('gqlf-clear').addEventListener('click', function () {
+      function clearAll() {
+        cancelPending();
         input.value = ''; output.value = ''; clearStatus();
+      }
+      document.getElementById('gqlf-clear').addEventListener('click', clearAll);
+      input.addEventListener('input', cancelPending);
+      indentSel.addEventListener('change', resetCopy);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var wrap = document.querySelector('.gqlf-wrap');
+        if (!wrap || !wrap.contains(document.activeElement)) return;
+        e.preventDefault();
+        input.focus();
+        clearAll();
       });
       document.getElementById('gqlf-sample').addEventListener('click', function () {
         input.value = SAMPLE;
@@ -309,11 +342,24 @@
       copyBtn.addEventListener('click', function () {
         var text = output.value;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
-          var prev = copyBtn.textContent;
+        var request = ++copyRequest;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        function failed() {
+          if (request !== copyRequest || output.value !== text) return;
+          copyBtn.textContent = t.copyFailed;
+        }
+        function done() {
+          if (request !== copyRequest || output.value !== text) return;
           copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
-        });
+          copyTimer = setTimeout(function () {
+            if (request === copyRequest && output.value === text) copyBtn.textContent = t.copy;
+          }, 1500);
+        }
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.writeText) { failed(); return; }
+          navigator.clipboard.writeText(text).then(done, failed);
+        } catch (e) { failed(); }
       });
 
       document.getElementById('gqlf-download').addEventListener('click', function () {
@@ -333,6 +379,7 @@
       input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
+          e.stopPropagation();
           doFormat();
         }
       });
