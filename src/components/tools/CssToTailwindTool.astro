@@ -46,10 +46,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { cssInput: 'CSS Input', tailwindClasses: 'Tailwind Classes', copy: 'Copy', copied: 'Copied!', convert: 'Convert to Tailwind', clear: 'Clear', coverageNotes: 'Coverage notes', coverageDesc: 'Unmapped properties are listed as /* keep: property: value */ comments in the output so you can handle them manually.', tailwindPlaceholder: 'Tailwind classes appear here...', converted: 'Converted.', noProps: '/* No mappable properties found */' },
-        zh: { cssInput: 'CSS 输入', tailwindClasses: 'Tailwind 类名', copy: '复制', copied: '已复制！', convert: '转换为 Tailwind', clear: '清除', coverageNotes: '覆盖说明', coverageDesc: '未映射的属性以 /* keep: property: value */ 注释形式输出，供手动处理。', tailwindPlaceholder: 'Tailwind 类名显示在此...', converted: '已转换。', noProps: '/* 未找到可映射的属性 */' },
-        ja: { cssInput: 'CSS 入力', tailwindClasses: 'Tailwind クラス', copy: 'コピー', copied: 'コピー済み！', convert: 'Tailwind に変換', clear: 'クリア', coverageNotes: 'カバレッジ説明', coverageDesc: 'マッピングできないプロパティは /* keep: property: value */ コメントとして出力されます。', tailwindPlaceholder: 'Tailwind クラスがここに表示されます...', converted: '変換済み。', noProps: '/* マッピング可能なプロパティが見つかりません */' },
-        ko: { cssInput: 'CSS 입력', tailwindClasses: 'Tailwind 클래스', copy: '복사', copied: '복사됨!', convert: 'Tailwind로 변환', clear: '지우기', coverageNotes: '커버리지 안내', coverageDesc: '매핑되지 않은 속성은 /* keep: property: value */ 주석으로 출력됩니다.', tailwindPlaceholder: 'Tailwind 클래스가 여기에 표시됩니다...', converted: '변환 완료.', noProps: '/* 매핑 가능한 속성을 찾을 수 없습니다 */' }
+        en: { cssInput: 'CSS Input', tailwindClasses: 'Tailwind Classes', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please try again.', convert: 'Convert to Tailwind', clear: 'Clear', coverageNotes: 'Coverage notes', coverageDesc: 'Unmapped properties are listed as /* keep: property: value */ comments in the output so you can handle them manually.', tailwindPlaceholder: 'Tailwind classes appear here...', converted: 'Converted.', noProps: '/* No mappable properties found */' },
+        zh: { cssInput: 'CSS 输入', tailwindClasses: 'Tailwind 类名', copy: '复制', copied: '已复制！', copyFailed: '复制失败，请重试。', convert: '转换为 Tailwind', clear: '清除', coverageNotes: '覆盖说明', coverageDesc: '未映射的属性以 /* keep: property: value */ 注释形式输出，供手动处理。', tailwindPlaceholder: 'Tailwind 类名显示在此...', converted: '已转换。', noProps: '/* 未找到可映射的属性 */' },
+        ja: { cssInput: 'CSS 入力', tailwindClasses: 'Tailwind クラス', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。再試行してください。', convert: 'Tailwind に変換', clear: 'クリア', coverageNotes: 'カバレッジ説明', coverageDesc: 'マッピングできないプロパティは /* keep: property: value */ コメントとして出力されます。', tailwindPlaceholder: 'Tailwind クラスがここに表示されます...', converted: '変換済み。', noProps: '/* マッピング可能なプロパティが見つかりません */' },
+        ko: { cssInput: 'CSS 입력', tailwindClasses: 'Tailwind 클래스', copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 다시 시도하세요.', convert: 'Tailwind로 변환', clear: '지우기', coverageNotes: '커버리지 안내', coverageDesc: '매핑되지 않은 속성은 /* keep: property: value */ 주석으로 출력됩니다.', tailwindPlaceholder: 'Tailwind 클래스가 여기에 표시됩니다...', converted: '변환 완료.', noProps: '/* 매핑 가능한 속성을 찾을 수 없습니다 */' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -807,12 +807,28 @@
       var statusEl = document.getElementById('c2t-status');
       var copyBtn = document.getElementById('c2t-copy');
 
+      var copyRevision = 0;
+      var copyTimer;
+      var copyError = false;
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError && statusEl.textContent === t.copyFailed) {
+          statusEl.textContent = '';
+          statusEl.className = 'c2t-status';
+        }
+        copyError = false;
+      }
+
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
         statusEl.className = 'c2t-status ' + (isError ? 'error' : 'success');
       }
 
       document.getElementById('c2t-convert').addEventListener('click', function () {
+        invalidateCopy();
         var raw = cssEl.value.trim();
         if (!raw) { outEl.value = ''; statusEl.textContent = ''; statusEl.className = 'c2t-status'; return; }
         try {
@@ -826,24 +842,50 @@
         }
       });
 
-      document.getElementById('c2t-clear').addEventListener('click', function () {
+      function clearAll() {
+        invalidateCopy();
         cssEl.value = '';
         outEl.value = '';
         statusEl.textContent = '';
         statusEl.className = 'c2t-status';
+        cssEl.focus();
+      }
+
+      document.getElementById('c2t-clear').addEventListener('click', clearAll);
+      cssEl.addEventListener('input', invalidateCopy);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var widget = document.querySelector('.tool-widget');
+        if (!widget || !widget.contains(document.activeElement)) return;
+        e.preventDefault();
+        clearAll();
       });
 
       copyBtn.addEventListener('click', function () {
-        if (!outEl.value) return;
-        navigator.clipboard.writeText(outEl.value).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+        var text = outEl.value;
+        if (!text) return;
+        invalidateCopy();
+        var revision = copyRevision;
+        function current() { return revision === copyRevision && outEl.value === text; }
+        function failed() {
+          if (!current()) return;
+          setStatus(t.copyFailed, true);
+          copyError = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (!current()) return;
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () { if (current()) copyBtn.textContent = t.copy; }, 1500);
+          }, failed);
+        } catch (error) { failed(); }
       });
 
       /* Ctrl/Cmd+Enter shortcut */
       cssEl.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          e.stopPropagation();
           document.getElementById('c2t-convert').click();
         }
       });
