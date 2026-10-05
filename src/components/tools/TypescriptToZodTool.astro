@@ -10,6 +10,7 @@ const labels = {
     clear: 'Clear',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: 'Copy failed. Try again.',
     generate: 'Generate Zod Schema',
     msgNoDecl: 'No interface or type declarations found.',
     msgGenOne: 'Generated 1 schema.',
@@ -23,6 +24,7 @@ const labels = {
     clear: '清空',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: '复制失败，请重试。',
     generate: '生成 Zod Schema',
     msgNoDecl: '未找到 interface 或 type 声明。',
     msgGenOne: '已生成 1 个 schema。',
@@ -36,6 +38,7 @@ const labels = {
     clear: 'クリア',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピーに失敗しました。再試行してください。',
     generate: 'Zod スキーマを生成',
     msgNoDecl: 'interface または type 宣言が見つかりません。',
     msgGenOne: '1 個のスキーマを生成しました。',
@@ -49,6 +52,7 @@ const labels = {
     clear: '지우기',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: '복사에 실패했습니다. 다시 시도하세요.',
     generate: 'Zod 스키마 생성',
     msgNoDecl: 'interface 또는 type 선언을 찾을 수 없습니다.',
     msgGenOne: '스키마 1개를 생성했습니다.',
@@ -64,6 +68,7 @@ const L = labels[lang];
   class="ttz-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-msg-no-decl={L.msgNoDecl}
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
@@ -113,6 +118,7 @@ const L = labels[lang];
 
       var COPY = wrap ? wrap.dataset.copy : 'Copy';
       var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var COPY_FAILED = wrap ? wrap.dataset.copyFailed : 'Copy failed. Try again.';
       var MSG_NO_DECL = wrap ? wrap.dataset.msgNoDecl : 'No declarations found.';
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 schema.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} schemas.';
@@ -122,6 +128,15 @@ const L = labels[lang];
       var hlInputCodeEl = document.getElementById('ttz-input-hl-code');
       var outputCodeEl = document.getElementById('ttz-output-code');
       var statusEl = document.getElementById('ttz-status');
+      var copyBtn = document.getElementById('ttz-copy');
+      var copyRevision = 0;
+      var copyTimer = null;
+
+      function resetCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = COPY;
+      }
 
       var _hlInputTimer = null;
       function syncInputHL() {
@@ -829,6 +844,9 @@ const L = labels[lang];
       /* ── MAIN CONVERT ── */
 
       function convert() {
+        clearTimeout(_liveTimer);
+        resetCopy();
+        inputEl.classList.remove('error');
         var raw = inputEl.value.trim();
         if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
 
@@ -842,6 +860,7 @@ const L = labels[lang];
           result = { code: code, count: ast.decls.length };
         } catch (e) {
           inputEl.classList.add('error');
+          outputCodeEl.textContent = '';
           setStatus(MSG_ERROR + e.message, true);
           return;
         }
@@ -861,6 +880,7 @@ const L = labels[lang];
 
       var _liveTimer = null;
       inputEl.addEventListener('input', function () {
+        resetCopy();
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(convert, 300);
         clearTimeout(_hlInputTimer);
@@ -876,6 +896,7 @@ const L = labels[lang];
       document.getElementById('ttz-convert').addEventListener('click', convert);
 
       document.getElementById('ttz-example').addEventListener('click', function () {
+        clearTimeout(_hlInputTimer);
         inputEl.value = EXAMPLE;
         inputEl.classList.remove('error');
         clearStatus();
@@ -883,22 +904,42 @@ const L = labels[lang];
         convert();
       });
 
-      document.getElementById('ttz-clear').addEventListener('click', function () {
+      function clearAll() {
+        clearTimeout(_liveTimer);
+        clearTimeout(_hlInputTimer);
+        resetCopy();
         inputEl.value = '';
         outputCodeEl.textContent = '';
         hlInputCodeEl.textContent = '';
         inputEl.classList.remove('error');
         clearStatus();
+        inputEl.focus();
+      }
+      document.getElementById('ttz-clear').addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
+        }
       });
 
-      document.getElementById('ttz-copy').addEventListener('click', function () {
+      copyBtn.addEventListener('click', function () {
         var text = outputCodeEl.textContent;
         if (!text) return;
-        var btn = document.getElementById('ttz-copy');
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = COPIED;
-          setTimeout(function () { btn.textContent = COPY; }, 1500);
-        });
+        resetCopy();
+        var revision = copyRevision;
+        function failed() {
+          if (revision === copyRevision) copyBtn.textContent = COPY_FAILED;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== copyRevision) return;
+            copyBtn.textContent = COPIED;
+            copyTimer = setTimeout(function () {
+              if (revision === copyRevision) copyBtn.textContent = COPY;
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
       });
     })();
   </script>
