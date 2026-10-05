@@ -1,93 +1,144 @@
 ---
-// HtmlToJsxTool — HTML to JSX converter, pure JS, zero deps
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+// strings:start
+const STRINGS = {
+  "en": {
+    "inputLabel": "HTML Input",
+    "outputLabel": "JSX Output",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "copyFailed": "Copy failed. Please try again.",
+    "placeholder": "<!-- paste your HTML here -->",
+    "refused": "Cannot convert style at position {position}: {reason}. Output cleared.",
+    "reasons": {
+      "syntax": "invalid declaration or unclosed CSS syntax",
+      "property": "unsupported or escaped property name",
+      "duplicate": "repeated property cannot preserve CSS fallback order",
+      "priority": "!important cannot be preserved in a React style object",
+      "comment": "CSS comments require manual conversion"
+    },
+    "empty": "Converted JSX will appear here.",
+    "tips": {
+      "input": "Paste HTML. Conversion runs 200 ms after you stop typing. With focus in this tool, Ctrl/⌘+L clears both panels and the status.",
+      "output": "The output is JSX markup without a component wrapper. Styles that cannot be preserved stop conversion, clear the output and disable Copy; the status gives the position and reason.",
+      "copy": "Copy the complete displayed JSX. Empty output is not copied."
+    }
+  },
+  "zh": {
+    "inputLabel": "HTML 输入",
+    "outputLabel": "JSX 输出",
+    "copy": "复制",
+    "copied": "已复制！",
+    "copyFailed": "复制失败，请重试。",
+    "placeholder": "<!-- 粘贴 HTML 到这里 -->",
+    "refused": "样式第 {position} 个字符无法转换：{reason}。已清空输出。",
+    "reasons": {
+      "syntax": "声明无效或 CSS 语法未闭合",
+      "property": "属性名不支持或含转义",
+      "duplicate": "重复属性无法保留 CSS 回退顺序",
+      "priority": "React 样式对象无法保留 !important",
+      "comment": "CSS 注释需要手动转换"
+    },
+    "empty": "转换后的 JSX 会显示在这里。",
+    "tips": {
+      "input": "粘贴 HTML，停止输入 200 毫秒后自动转换。焦点在工具内时，Ctrl/⌘+L 清空两栏与状态。",
+      "output": "输出是 JSX 标记，不包含组件外壳。无法保留的样式会停止转换、清空输出并停用复制；状态栏给出位置与原因。",
+      "copy": "复制完整显示的 JSX。输出为空时不复制。"
+    }
+  },
+  "ja": {
+    "inputLabel": "HTML 入力",
+    "outputLabel": "JSX 出力",
+    "copy": "コピー",
+    "copied": "コピー済み！",
+    "copyFailed": "コピーに失敗しました。再試行してください。",
+    "placeholder": "<!-- HTMLをここに貼り付け -->",
+    "refused": "スタイルの {position} 文字目を変換できません：{reason}。出力を消去しました。",
+    "reasons": {
+      "syntax": "宣言が無効、または CSS 構文が閉じていません",
+      "property": "未対応またはエスケープされたプロパティ名",
+      "duplicate": "重複プロパティの CSS フォールバック順序を保持できません",
+      "priority": "React のスタイルオブジェクトでは !important を保持できません",
+      "comment": "CSS コメントは手動で変換してください"
+    },
+    "empty": "変換された JSX がここに表示されます。",
+    "tips": {
+      "input": "HTML を貼り付けます。入力が止まってから 200 ミリ秒後に変換します。ツール内で Ctrl/⌘+L を押すと両欄と状態を消去します。",
+      "output": "出力はコンポーネントの外枠を含まない JSX マークアップです。保持できないスタイルがあると変換を止め、出力を消去してコピーを無効にします。位置と理由はステータス欄に表示します。",
+      "copy": "表示中の JSX 全体をコピーします。空の出力はコピーしません。"
+    }
+  },
+  "ko": {
+    "inputLabel": "HTML 입력",
+    "outputLabel": "JSX 출력",
+    "copy": "복사",
+    "copied": "복사됨!",
+    "copyFailed": "복사하지 못했습니다. 다시 시도하세요.",
+    "placeholder": "<!-- HTML을 여기에 붙여넣기 -->",
+    "refused": "스타일 {position}번째 문자를 변환할 수 없습니다: {reason}. 출력을 지웠습니다.",
+    "reasons": {
+      "syntax": "잘못된 선언 또는 닫히지 않은 CSS 구문",
+      "property": "지원하지 않거나 이스케이프된 속성 이름",
+      "duplicate": "중복 속성의 CSS 대체 순서를 보존할 수 없습니다",
+      "priority": "React 스타일 객체는 !important를 보존할 수 없습니다",
+      "comment": "CSS 주석은 직접 변환해야 합니다"
+    },
+    "empty": "변환된 JSX가 여기에 표시됩니다.",
+    "tips": {
+      "input": "HTML을 붙여 넣으세요. 입력을 멈춘 뒤 200밀리초 후에 변환합니다. 도구 안에서 Ctrl/⌘+L을 누르면 두 패널과 상태를 지웁니다.",
+      "output": "출력은 컴포넌트 틀을 포함하지 않는 JSX 마크업입니다. 보존할 수 없는 스타일은 변환을 멈추고 출력을 지우며 복사를 끕니다. 상태 줄에 위치와 이유를 표시합니다.",
+      "copy": "표시된 JSX 전체를 복사합니다. 빈 출력은 복사하지 않습니다."
+    }
+  }
+};
+// strings:end
+const T = STRINGS[lang as keyof typeof STRINGS] || STRINGS.en;
+const TIPS = T.tips;
+const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, refused: T.refused, reasons: T.reasons };
 ---
-<div class="htj-wrap">
-  <div class="htj-panes">
-    <div class="htj-pane">
-      <label class="htj-label" for="htj-input" data-i18n="inputLabel">HTML Input</label>
+<div class="htj-wrap" data-strings={JSON.stringify(CLIENT_T)}>
+  <div class="htj-toolbar">
+    <button id="htj-copy" class="htj-copy-btn btn-secondary" type="button">{T.copy}</button>
+    <Toggletip id="htj-tip-copy" lang={lang} about={T.copy}>{TIPS.copy}</Toggletip>
+  </div>
+  <p id="htj-status" role="status" aria-live="polite"></p>
+  <div class="htj-panes zt-io">
+    <div class="htj-pane zt-io-pane">
+      <div class="htj-pane-header">
+        <label class="htj-label" for="htj-input">{T.inputLabel}</label>
+        <Toggletip id="htj-tip-input" lang={lang} about={T.inputLabel}>{TIPS.input}</Toggletip>
+      </div>
       <textarea
         id="htj-input"
-        class="htj-textarea"
+        class="htj-textarea zt-io-fill"
         spellcheck="false"
         autocomplete="off"
         autocorrect="off"
         autocapitalize="off"
-        data-i18n-ph="placeholder"
-        placeholder="<!-- paste your HTML here -->"
+        placeholder={T.placeholder}
       ></textarea>
     </div>
-    <div class="htj-pane">
+    <div class="htj-pane htj-result-pane zt-io-pane">
       <div class="htj-pane-header">
-        <label class="htj-label" for="htj-output" data-i18n="outputLabel">JSX Output</label>
-        <button id="htj-copy" class="htj-copy-btn" data-i18n="copy">Copy</button>
+        <label class="htj-label" for="htj-output">{T.outputLabel}</label>
+        <Toggletip id="htj-tip-output" lang={lang} about={T.outputLabel}>{TIPS.output}</Toggletip>
       </div>
       <textarea
         id="htj-output"
-        class="htj-textarea htj-textarea--output"
+        class="htj-textarea htj-textarea--output zt-io-fill"
         spellcheck="false"
+        placeholder={T.empty}
         readonly
       ></textarea>
     </div>
   </div>
 
-  <p id="htj-status" role="status" aria-live="polite"></p>
-
   <script is:inline>
     (function () {
-      var STRINGS = {
-        en: {
-          inputLabel: 'HTML Input',
-          outputLabel: 'JSX Output',
-          copy: 'Copy',
-          copied: 'Copied!',
-          copyFailed: 'Copy failed. Please try again.',
-          placeholder: '<!-- paste your HTML here -->',
-          refused: 'Cannot convert style at position {position}: {reason}. Output cleared.',
-          reasons: { syntax: 'invalid declaration or unclosed CSS syntax', property: 'unsupported or escaped property name', duplicate: 'repeated property cannot preserve CSS fallback order', priority: '!important cannot be preserved in a React style object', comment: 'CSS comments require manual conversion' },
-        },
-        zh: {
-          inputLabel: 'HTML 输入',
-          outputLabel: 'JSX 输出',
-          copy: '复制',
-          copied: '已复制！',
-          copyFailed: '复制失败，请重试。',
-          placeholder: '<!-- 粘贴 HTML 到这里 -->',
-          refused: '样式第 {position} 个字符无法转换：{reason}。已清空输出。',
-          reasons: { syntax: '声明无效或 CSS 语法未闭合', property: '属性名不支持或含转义', duplicate: '重复属性无法保留 CSS 回退顺序', priority: 'React 样式对象无法保留 !important', comment: 'CSS 注释需要手动转换' },
-        },
-        ja: {
-          inputLabel: 'HTML 入力',
-          outputLabel: 'JSX 出力',
-          copy: 'コピー',
-          copied: 'コピー済み！',
-          copyFailed: 'コピーに失敗しました。再試行してください。',
-          placeholder: '<!-- HTMLをここに貼り付け -->',
-          refused: 'スタイルの {position} 文字目を変換できません：{reason}。出力を消去しました。',
-          reasons: { syntax: '宣言が無効、または CSS 構文が閉じていません', property: '未対応またはエスケープされたプロパティ名', duplicate: '重複プロパティの CSS フォールバック順序を保持できません', priority: 'React のスタイルオブジェクトでは !important を保持できません', comment: 'CSS コメントは手動で変換してください' },
-        },
-        ko: {
-          inputLabel: 'HTML 입력',
-          outputLabel: 'JSX 출력',
-          copy: '복사',
-          copied: '복사됨!',
-          copyFailed: '복사하지 못했습니다. 다시 시도하세요.',
-          placeholder: '<!-- HTML을 여기에 붙여넣기 -->',
-          refused: '스타일 {position}번째 문자를 변환할 수 없습니다: {reason}. 출력을 지웠습니다.',
-          reasons: { syntax: '잘못된 선언 또는 닫히지 않은 CSS 구문', property: '지원하지 않거나 이스케이프된 속성 이름', duplicate: '중복 속성의 CSS 대체 순서를 보존할 수 없습니다', priority: 'React 스타일 객체는 !important를 보존할 수 없습니다', comment: 'CSS 주석은 직접 변환해야 합니다' },
-        },
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.htj-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('.htj-wrap [data-i18n-ph]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-ph');
-        if (t[key]) el.placeholder = t[key];
-      });
+      var t = JSON.parse(document.querySelector('.htj-wrap').dataset.strings);
 
       var inputEl  = document.getElementById('htj-input');
       var outputEl = document.getElementById('htj-output');
@@ -403,84 +454,22 @@
 </div>
 
 <style>
-  .htj-wrap {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+  .htj-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 0.5rem; }
+  .htj-toolbar, .htj-pane-header { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+  .htj-copy-btn { min-height: 44px; min-width: 6rem; }
+  .htj-pane-header { min-height: 28px; flex: none; }
+  .htj-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  #htj-status { margin: 0; height: 1.5rem; min-height: 1.5rem; flex: none; overflow: auto; font-size: 0.85rem; line-height: 1.5; }
+  .htj-textarea { width: 100%; min-width: 0; overflow: auto; font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.55; padding: 0.65rem 0.75rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg-secondary); color: var(--color-text); box-sizing: border-box; tab-size: 2; }
+  .htj-textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .htj-textarea--output { color: var(--color-text-secondary); cursor: default; }
+  @media (max-width: 860px) {
+    .htj-textarea { height: 180px; }
+    .htj-result-pane:has(#htj-output:placeholder-shown) { display: none; }
+    #htj-status { height: 2.5rem; min-height: 2.5rem; }
   }
-
-  .htj-panes {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-  }
-
   @media (max-width: 640px) {
-    .htj-panes {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .htj-pane {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-  }
-
-  .htj-pane-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .htj-label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .htj-textarea {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    line-height: 1.55;
-    padding: 0.65rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    resize: vertical;
-    min-height: 320px;
-    width: 100%;
-    box-sizing: border-box;
-    tab-size: 2;
-  }
-
-  .htj-textarea:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    background: var(--color-bg);
-  }
-
-  .htj-textarea--output {
-    color: var(--color-text-secondary);
-    cursor: default;
-  }
-
-  .htj-copy-btn {
-    font-size: 0.78rem;
-    font-weight: 600;
-    padding: 0.25rem 0.65rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg);
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-
-  .htj-copy-btn:hover {
-    background: var(--color-primary);
-    color: #fff;
-    border-color: var(--color-primary);
+    .htj-textarea { height: 144px; }
+    .htj-result-pane textarea { height: 240px; }
   }
 </style>
