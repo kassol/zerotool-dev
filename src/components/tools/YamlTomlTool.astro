@@ -11,10 +11,10 @@ const { lang = 'en' } = Astro.props;
 
 // strings:start
 const STRINGS = {
-  en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', swap: 'Swap', yamlToToml: 'Converted YAML to TOML.', tomlToYaml: 'Converted TOML to YAML.', invalidYaml: 'Invalid YAML', invalidToml: 'Invalid TOML', rootMapping: 'YAML root must be a mapping (object), not a scalar or sequence.' },
-  zh: { copy: '复制', copied: '已复制！', clear: '清除', swap: '交换', yamlToToml: '已将 YAML 转换为 TOML。', tomlToYaml: '已将 TOML 转换为 YAML。', invalidYaml: '无效 YAML', invalidToml: '无效 TOML', rootMapping: 'YAML 的根必须是映射（对象），不能是标量或序列。' },
-  ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', swap: '入れ替え', yamlToToml: 'YAML を TOML に変換しました。', tomlToYaml: 'TOML を YAML に変換しました。', invalidYaml: '無効な YAML', invalidToml: '無効な TOML', rootMapping: 'YAML のルートはマッピング（オブジェクト）である必要があります。スカラーやシーケンスは変換できません。' },
-  ko: { copy: '복사', copied: '복사됨!', clear: '지우기', swap: '바꾸기', yamlToToml: 'YAML을 TOML로 변환했습니다.', tomlToYaml: 'TOML을 YAML로 변환했습니다.', invalidYaml: '유효하지 않은 YAML', invalidToml: '유효하지 않은 TOML', rootMapping: 'YAML 루트는 매핑(객체)이어야 합니다. 스칼라나 시퀀스는 변환할 수 없습니다.' },
+  en: { copyFailed: 'Copy failed. Please try again.', copy: 'Copy', copied: 'Copied!', clear: 'Clear', swap: 'Swap', yamlToToml: 'Converted YAML to TOML.', tomlToYaml: 'Converted TOML to YAML.', invalidYaml: 'Invalid YAML', invalidToml: 'Invalid TOML', rootMapping: 'YAML root must be a mapping (object), not a scalar or sequence.' },
+  zh: { copyFailed: '复制失败，请重试。', copy: '复制', copied: '已复制！', clear: '清除', swap: '交换', yamlToToml: '已将 YAML 转换为 TOML。', tomlToYaml: '已将 TOML 转换为 YAML。', invalidYaml: '无效 YAML', invalidToml: '无效 TOML', rootMapping: 'YAML 的根必须是映射（对象），不能是标量或序列。' },
+  ja: { copyFailed: 'コピーに失敗しました。もう一度お試しください。', copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', swap: '入れ替え', yamlToToml: 'YAML を TOML に変換しました。', tomlToYaml: 'TOML を YAML に変換しました。', invalidYaml: '無効な YAML', invalidToml: '無効な TOML', rootMapping: 'YAML のルートはマッピング（オブジェクト）である必要があります。スカラーやシーケンスは変換できません。' },
+  ko: { copyFailed: '복사하지 못했습니다. 다시 시도하세요.', copy: '복사', copied: '복사됨!', clear: '지우기', swap: '바꾸기', yamlToToml: 'YAML을 TOML로 변환했습니다.', tomlToYaml: 'TOML을 YAML로 변환했습니다.', invalidYaml: '유효하지 않은 YAML', invalidToml: '유효하지 않은 TOML', rootMapping: 'YAML 루트는 매핑(객체)이어야 합니다. 스칼라나 시퀀스는 변환할 수 없습니다.' },
 };
 // strings:end
 const T = STRINGS[lang] || STRINGS.en;
@@ -100,20 +100,44 @@ const T = STRINGS[lang] || STRINGS.en;
       copyTomlBtn.disabled = !tomlEl.value;
     }
 
+    let copyRevision = 0;
+    let copyErrorOwner: HTMLButtonElement | null = null;
+    const copyStates = [copyYamlBtn, copyTomlBtn].map(btn => ({ btn, request: 0, timer: null as ReturnType<typeof setTimeout> | null }));
+
+    function invalidateCopies() {
+      copyRevision++;
+      copyErrorOwner = null;
+      copyStates.forEach(state => {
+        if (state.timer) clearTimeout(state.timer);
+        state.timer = null;
+        state.btn.textContent = S.copy;
+      });
+    }
+
+    function cancelQueued() {
+      if (_ytYamlTimer) clearTimeout(_ytYamlTimer);
+      if (_ytTomlTimer) clearTimeout(_ytTomlTimer);
+      _ytYamlTimer = _ytTomlTimer = null;
+    }
+
     function setStatus(msg: string, isError: boolean) {
+      copyErrorOwner = null;
       statusEl.textContent = msg;
       statusEl.className = 'yt-status ' + (isError ? 'error' : 'success');
     }
 
     function clearStatus() {
+      copyErrorOwner = null;
       statusEl.textContent = '';
       statusEl.className = 'yt-status';
     }
 
     /* Runs one direction; a failed conversion clears the output so a stale result cannot be copied. */
     function run(fromEl: HTMLTextAreaElement, toEl: HTMLTextAreaElement, convert: (raw: string) => Result, okMsg: string): boolean {
+      cancelQueued();
+      invalidateCopies();
       const raw = fromEl.value.trim();
-      if (!raw) { clearStatus(); syncCopy(); return false; }
+      if (!raw) { toEl.value = ''; clearStatus(); syncCopy(); return false; }
       const r = convert(raw);
       if (r.ok) { toEl.value = r.text; setStatus(okMsg, false); }
       else { toEl.value = ''; setStatus(r.message, true); }
@@ -126,51 +150,90 @@ const T = STRINGS[lang] || STRINGS.en;
     /* ── Real-time conversion (debounced 300ms) ── */
     let _ytYamlTimer: ReturnType<typeof setTimeout> | null = null;
     yamlEl.addEventListener('input', () => {
+      cancelQueued();
+      invalidateCopies();
       syncCopy();
-      if (_ytYamlTimer) clearTimeout(_ytYamlTimer);
       _ytYamlTimer = setTimeout(runYaml, 300);
     });
 
     let _ytTomlTimer: ReturnType<typeof setTimeout> | null = null;
     tomlEl.addEventListener('input', () => {
+      cancelQueued();
+      invalidateCopies();
       syncCopy();
-      if (_ytTomlTimer) clearTimeout(_ytTomlTimer);
       _ytTomlTimer = setTimeout(runToml, 300);
     });
 
     /* ── Swap button ── */
     document.getElementById('yt-swap')!.addEventListener('click', () => {
-      const tmp = yamlEl.value;
-      yamlEl.value = tomlEl.value;
-      tomlEl.value = tmp;
-      if (runYaml()) (window as any).trackTool && (window as any).trackTool('yaml_toml', 'swap');
+      cancelQueued();
+      if (copyErrorOwner && statusEl.textContent === S.copyFailed) clearStatus();
+      invalidateCopies();
+      const panels = ytWrap.querySelector('.yt-panels')!;
+      panels.appendChild(panels.firstElementChild!);
+      (panels.firstElementChild!.querySelector('textarea') as HTMLTextAreaElement).focus();
+      (window as any).trackTool && (window as any).trackTool('yaml_toml', 'swap');
     });
 
     /* ── Clear ── */
     document.getElementById('yt-clear')!.addEventListener('click', () => {
+      cancelQueued();
+      invalidateCopies();
       yamlEl.value = '';
       tomlEl.value = '';
       clearStatus();
       syncCopy();
+      yamlEl.focus();
     });
 
     /* ── Copy buttons ── */
     function copyFrom(el: HTMLTextAreaElement, btn: HTMLButtonElement) {
       if (!el.value || btn.disabled) return;
-      navigator.clipboard.writeText(el.value).then(() => {
-        btn.textContent = S.copied;
-        setTimeout(() => { btn.textContent = S.copy; }, 1500);
-      });
+      const text = el.value;
+      const state = copyStates.find(state => state.btn === btn)!;
+      const revision = copyRevision, request = ++state.request;
+      if (state.timer) clearTimeout(state.timer);
+      state.timer = null;
+      btn.textContent = S.copy;
+      const current = () => revision === copyRevision && request === state.request && el.value === text && !btn.disabled;
+      const failed = () => {
+        if (!current()) return;
+        setStatus(S.copyFailed, true);
+        copyErrorOwner = btn;
+      };
+      try {
+        navigator.clipboard.writeText(text).then(() => {
+          if (!current()) return;
+          if (copyErrorOwner === btn && statusEl.textContent === S.copyFailed) clearStatus();
+          btn.textContent = S.copied;
+          state.timer = setTimeout(() => { if (current()) btn.textContent = S.copy; }, 1500);
+        }, failed);
+      } catch (_) { failed(); }
     }
     copyYamlBtn.addEventListener('click', () => copyFrom(yamlEl, copyYamlBtn));
     copyTomlBtn.addEventListener('click', () => copyFrom(tomlEl, copyTomlBtn));
 
     /* ── Keyboard shortcut: Ctrl/Cmd+Enter ── */
     yamlEl.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runYaml();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        runYaml();
+      }
     });
     tomlEl.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runToml();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        runToml();
+      }
+    });
+
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && ytWrap.contains(document.activeElement)) {
+        e.preventDefault();
+        document.getElementById('yt-clear')!.click();
+      }
     });
 
     /* ── Page load ── Astro bundles this script as a module, which runs only after the page is

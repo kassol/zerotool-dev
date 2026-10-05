@@ -74,5 +74,180 @@ for (const [lang, text] of Object.entries(pages)) {
 }
 eq('en page names the parser versions', pages.en.includes('1.7.1 for TOML') && pages.en.includes('js-yaml</a> 4.3.2'), true);
 
+
+// ---------- complete production page + real shared shortcuts; controlled DOM/clock/clipboard ----------
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+const requireRoot = createRequire(join(root, 'package.json'));
+const { parseFragment } = requireRoot('parse5');
+const ts = requireRoot('typescript');
+const pageFile = 'src/components/tools/YamlTomlTool.astro';
+const requirePage = createRequire(join(root, pageFile));
+const pageSource = readFileSync(join(root, pageFile), 'utf8');
+const pageScript = pageSource.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+const labels = pageSource.match(/(?:const|var) STRINGS = (\{[\s\S]*?\n\s*\});/);
+const pageStrings = vm.runInNewContext('(' + labels[1] + ')');
+const pageJS = ts.transpileModule(pageScript, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Missing actual shared shortcut');
+const hash = value => createHash('sha256').update(value).digest('hex');
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const unhandled = [];
+const onUnhandled = reason => unhandled.push(String(reason));
+process.on('unhandledRejection', onUnhandled);
+function same(name, actual, expected) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  if (a === e) passes++;
+  else { failures++; console.log('FAIL: lifecycle ' + name + '\n actual=' + a + '\n expected=' + e); }
+}
+
+const cfg = {"input": "yt-yaml", "output": "yt-toml", "clear": "yt-clear", "status": "yt-status", "copies": ["yt-copy-yaml", "yt-copy-toml"], "copyFields": {"yt-copy-yaml": "yt-yaml", "yt-copy-toml": "yt-toml"}, "raw": "name: demo", "golden": "name = \"demo\"\n", "next": "name: newer", "extraActions": ["swap"], "slug": "yaml-toml", "prefix": "yt"};
+const descendants = e => e.children.flatMap(c => [c, ...descendants(c)]);
+function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = null) {
+  let document, now = 0, nextTimer = 0;
+  const timers = new Map(), copies = [], clears = [], tracks = [];
+  function simple(e, selector) {
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const rest = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[\w-]+/.exec(rest)?.[0], id = /#([\w-]+)/.exec(rest)?.[1];
+    return (!tag || e.tagName === tag.toUpperCase()) && (!id || e.id === id)
+      && [...rest.matchAll(/\.([\w-]+)/g)].every(m => e.classList.contains(m[1]))
+      && attrs.every(a => a[2] === undefined ? e.getAttribute(a[1]) !== null : e.getAttribute(a[1]) === a[2]);
+  }
+  function matches(e, selector) {
+    return selector.split(',').some(part => {
+      const pieces = part.trim().split(/\s+(?![^\[]*\])/);
+      if (!simple(e, pieces.pop())) return false;
+      let parent = e.parentNode;
+      while (pieces.length) { while (parent && !simple(parent, pieces.at(-1))) parent = parent.parentNode; if (!parent) return false; pieces.pop(); parent = parent.parentNode; }
+      return true;
+    });
+  }
+  class Element {
+    constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.parentNode = null; this.attributes = {}; this.dataset = {}; this.listeners = {}; this.value = ''; this.textContent = ''; this.className = ''; this.id = ''; this.disabled = false; this.hidden = false; }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(...cs) { el.className = [...new Set([...el.className.split(/\s+/).filter(Boolean), ...cs])].join(' '); }, remove(...cs) { el.className = el.className.split(/\s+/).filter(c => !cs.includes(c)).join(' '); } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'class') this.className = String(v); if (k === 'id') this.id = String(v); if (k === 'disabled') this.disabled = true; if (k === 'checked') this.checked = true; if (k === 'value') this.value = String(v); if (k === 'hidden') this.hidden = true; if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(v); }
+    getAttribute(k) { return Object.hasOwn(this.attributes, k) ? this.attributes[k] : null; }
+    removeAttribute(k) { delete this.attributes[k]; if (k === 'disabled') this.disabled = false; if (k === 'hidden') this.hidden = false; }
+    appendChild(c) { if (c.parentNode) c.parentNode.children.splice(c.parentNode.children.indexOf(c), 1); c.parentNode = this; this.children.push(c); return c; }
+    get firstElementChild() { return this.children[0] || null; }
+    contains(c) { return c === this || descendants(this).includes(c); }
+    querySelectorAll(s) { return descendants(this).filter(e => matches(e, s)); }
+    querySelector(s) { return this.querySelectorAll(s)[0] || null; }
+    closest(s) { for (let e = this; e; e = e.parentNode) if (matches(e, s)) return e; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    focus() { document.activeElement = this; }
+    dispatch(type, init = {}) {
+      const e = { type, target: this, currentTarget: this, key: '', ctrlKey: false, metaKey: false, defaultPrevented: false, stopped: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...init };
+      for (let node = this; node; node = node.parentNode) { e.currentTarget = node; for (const fn of node.listeners[type] || []) fn.call(node, e); if (e.stopped) break; }
+      return e;
+    }
+    click() { if (!this.disabled) { this.focus(); return this.dispatch('click'); } }
+  }
+  document = new Element('#document'); document.documentElement = { lang };
+  document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
+  const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
+  const esc = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
+    .replace(/data-strings=\{JSON\.stringify\(T\)\}/g, 'data-strings="' + esc(JSON.stringify(pageStrings[lang])) + '"')
+    .replace(/data-lang=\{lang\}/g, 'data-lang="' + lang + '"').replace(/\{T\.(\w+)\}/g, (_, k) => esc(pageStrings[lang][k]));
+  function append(ast, parent) { for (const node of ast.childNodes || []) { if (!node.tagName) { if (node.nodeName === '#text') parent.textContent += node.value; continue; } const e = parent.appendChild(new Element(node.tagName)); for (const a of node.attrs) e.setAttribute(a.name, a.value); append(node, e); if (e.tagName === 'TEXTAREA') e.value = e.textContent; if (e.tagName === 'SELECT') e.value = (e.children.find(c => c.getAttribute('selected') !== null) || e.children[0]).value; } }
+  append(parseFragment(markup), widget);
+  document.getElementById = id => descendants(document).find(e => e.id === id) || null;
+  const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing production ID ' + id); return e; };
+  for (const [id, value] of Object.entries(preset)) get(id).value = value;
+  if (active) get(active).focus();
+  const context = { document, console, exports: {}, module: { exports: {} },
+    require: name => requirePage(name), _slug: cfg.slug,
+    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); copies.push({ value, resolve, reject }); return promise; } } },
+    setTimeout(fn, ms = 0) { const id = ++nextTimer; timers.set(id, { fn, ms, due: now + ms }); return id; }, clearTimeout(id) { timers.delete(id); },
+    ztPersist: { clear(slug) { clears.push(slug); } }, trackTool(...args) { tracks.push(args); } };
+  context.window = context; vm.createContext(context);
+  const installShared = () => vm.runInContext(shortcut, context, { filename: 'ToolLayout.shortcuts.js' });
+  if (shellFirst) installShared(); vm.runInContext(pageJS, context, { filename: pageFile }); if (!shellFirst) installShared();
+  function advance(ms) { const end = now + ms; let executions = 0; for (;;) { const next = [...timers].filter(([, t]) => t.due <= end).sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0]; if (!next) break; if (++executions > 1000) throw Error('Timer runaway'); now = next[1].due; timers.delete(next[0]); next[1].fn(); } now = end; }
+  return { get, document, context, copies, clears, tracks, timers, advance,
+    input(id, value) { get(id).focus(); get(id).value = value; get(id).dispatch('input'); },
+    key(id, key = 'l', modifier = 'ctrlKey') { (id ? get(id) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
+    copy(id) { get(id).click(); return copies.at(-1); },
+    snapshot() { return { values: [get(cfg.input).value, get(cfg.output).value], status: get(cfg.status).textContent, statusClass: get(cfg.status).className, copies: cfg.copies.map(id => [get(id).textContent, get(id).disabled]) }; } };
+}
+
+const protectedCore = pageScript.slice(pageScript.indexOf('    const YAML_SCHEMA'),pageScript.indexOf('    function syncCopy'));
+same('protected conversion bytes',Buffer.byteLength(protectedCore),1442);
+same('protected conversion SHA256',hash(protectedCore),'725ec0e5017b11f990d01026472a95a5c3485e833a2cee62fe513e09120c3df2');
+
+const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
+const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, true]) {
+  const S = pageStrings[lang], tag = lang + '/' + shellFirst;
+  let p = lifecyclePage(lang, shellFirst); golden(p);
+  same(tag + ' genuine golden output', p.get(cfg.output).value, cfg.golden);
+  p.input(cfg.input, ''); p.advance(300);
+  same(tag + ' blank input clears previous output and status', [p.get(cfg.output).value,p.get(cfg.status).textContent],['','']);
+  for (const action of ['clear','shortcut']) for (const focus of [cfg.input, cfg.copies.at(-1)]) {
+    p = lifecyclePage(lang, shellFirst); golden(p); p.input(cfg.input,cfg.next); p.advance(100);
+    if (action === 'clear') p.get(cfg.clear).click(); else p.key(focus);
+    same(tag + '/' + action + '/' + focus + ' clears synchronously', [p.get(cfg.input).value,p.get(cfg.output).value,p.get(cfg.status).textContent],['','','']);
+    same(tag + '/' + action + '/' + focus + ' cancels queued work',p.timers.size,0);
+    same(tag + '/' + action + '/' + focus + ' focuses source input',p.document.activeElement.id,cfg.input);
+    if (action === 'shortcut') same(tag + '/' + focus + ' shared persistence still clears exactly once',p.clears,[cfg.slug]);
+    p.advance(2000);same(tag + '/' + action + '/' + focus + ' no late content', [p.get(cfg.input).value,p.get(cfg.output).value,p.get(cfg.status).textContent],['','','']);
+    golden(p);const before=p.snapshot();p.key(null);same(tag+' outside CtrlL preserves widget',p.snapshot(),before);
+  }
+
+  p=lifecyclePage(lang,shellFirst);golden(p);p.input('yt-toml','name = "reverse"');p.advance(300);same(tag+' real reverse conversion',p.get('yt-yaml').value,'name: reverse\n');
+  for(const side of ['yaml','toml']){p=lifecyclePage(lang,shellFirst);golden(p);p.get('yt-'+side).value=side==='yaml'?'x: 2':'x = 2';p.key('yt-'+side,'Enter');same(tag+'/'+side+' Enter preserves labeled formats',[p.get('yt-yaml').value,p.get('yt-toml').value],side==='yaml'?['x: 2','x = 2\n']:['x: 2\n','x = 2']);same(tag+'/'+side+' Enter does not click Swap',p.tracks.filter(t=>t[1]==='swap').length,0);}
+  p=lifecyclePage(lang,shellFirst);p.input('yt-yaml','name: earlier');p.advance(100);p.input('yt-toml','name = "latest"');p.advance(300);same(tag+' latest edited pane wins',[p.get('yt-yaml').value,p.get('yt-toml').value],['name: latest\n','name = "latest"']);
+  p=lifecyclePage(lang,shellFirst);golden(p);p.input('yt-toml','');p.advance(300);same(tag+' clearing reverse input clears both',[p.get('yt-yaml').value,p.get('yt-toml').value],['','']);
+  p=lifecyclePage(lang,shellFirst);golden(p);p.input('yt-yaml','x: ~');p.advance(300);same(tag+' real fidelity failure drops old output',[p.get('yt-toml').value,p.get('yt-copy-toml').disabled,p.get(cfg.status).textContent.includes('/x')],['',true,true]);
+  p=lifecyclePage(lang,shellFirst);golden(p);const panels=p.document.querySelector('.yt-panels'), original=[...panels.children], values=p.snapshot().values, status=p.get(cfg.status).textContent;
+  p.get('yt-swap').click();same(tag+' Swap moves whole real panels',panels.children.map(e=>e.querySelector('textarea').id),['yt-toml','yt-yaml']);same(tag+' Swap retains identities',panels.children[0]===original[1]&&panels.children[1]===original[0],true);same(tag+' Swap retains labels and copy association',panels.children.map(e=>[e.querySelector('label').getAttribute('for'),e.querySelector('button').id]),[['yt-toml','yt-copy-toml'],['yt-yaml','yt-copy-yaml']]);same(tag+' Swap leaves exact bytes/status',[p.snapshot().values,p.get(cfg.status).textContent],[values,status]);same(tag+' Swap focuses new left pane',p.document.activeElement.id,'yt-toml');
+  p.get('yt-swap').click();same(tag+' second Swap restores original order and focus',[panels.children.map(e=>e.querySelector('textarea').id),p.document.activeElement.id],[['yt-yaml','yt-toml'],'yt-yaml']);
+  p.input('yt-toml','new = 4');p.advance(100);const pending=p.snapshot().values;p.get('yt-swap').click();same(tag+' Swap cancels pending conversion',p.timers.size,0);p.advance(1000);same(tag+' queued Swap preserves both current texts',p.snapshot().values,pending);p.input('yt-toml','after = 9');p.advance(300);same(tag+' moved pane retains actual listener',p.get('yt-yaml').value,'after: 9\n');
+  p=lifecyclePage(lang,shellFirst,{'yt-yaml':'a: 1','yt-toml':'b = 2'},'yt-toml');same(tag+' initial focused TOML recovery unchanged',[p.get('yt-yaml').value,p.get('yt-toml').value],['b: 2\n','b = 2']);
+
+  for (const id of cfg.copies) {
+    p=lifecyclePage(lang,shellFirst);golden(p);const values=p.snapshot().values;p.copy(id).reject(Error('before swap'));await settle();
+    same(tag+'/'+id+' copy failure before Swap is visible',p.get(cfg.status).textContent,failureText[lang]);
+    p.get('yt-swap').click();same(tag+'/'+id+' Swap clears owned copy failure without changing text',[p.get(cfg.status).textContent,p.snapshot().values],['',values]);
+    p.copy(id).resolve();await settle();same(tag+'/'+id+' direct copy after Swap recovers',[p.get(id).textContent,p.get(cfg.status).textContent,p.snapshot().values],[S.copied,'',values]);
+  }
+
+  for (const id of cfg.copies) {
+    const field = cfg.copyFields[id], label = tag+'/'+id;
+    p=lifecyclePage(lang,shellFirst);golden(p);const initial=p.snapshot(), job=p.copy(id);
+    same(label+' exact copied bytes',job.value,p.get(field).value);job.resolve();await settle();
+    same(label+' current copy success',p.get(id).textContent,S.copied);p.advance(1500);same(label+' normal timer restores label',p.get(id).textContent,S.copy);
+    const rejected=p.copy(id), n=unhandled.length;rejected.reject(Error('controlled current rejection'));await settle();
+    same(label+' rejection handled',unhandled.length-n,0);same(label+' localized visible current failure',[p.get(cfg.status).textContent,p.get(cfg.status).className],[failureText[lang],cfg.prefix+'-status error']);
+    const retry=p.copy(id);same(label+' direct retry retains bytes',retry.value,job.value);retry.resolve();await settle();
+    same(label+' direct retry succeeds and clears its error',[p.get(id).textContent,p.get(cfg.status).textContent,p.snapshot().values],[S.copied,'',initial.values]);
+    p=lifecyclePage(lang,shellFirst);golden(p);const clipboard=p.context.navigator.clipboard;delete p.context.navigator.clipboard;let threw='';try{p.copy(id);}catch(e){threw=String(e);}
+    same(label+' unavailable API handled',[threw,p.get(cfg.status).textContent],['',failureText[lang]]);p.context.navigator.clipboard=clipboard;p.copy(id).resolve();await settle();same(label+' API recovery same result',[p.get(id).textContent,p.get(cfg.status).textContent],[S.copied,'']);
+    for(const action of ['input','result','clear','shortcut',...cfg.extraActions]) for(const outcome of ['resolve','reject']) {
+      p=lifecyclePage(lang,shellFirst);golden(p);const pending=p.copy(id), count=unhandled.length;
+      if(action==='clear')p.get(cfg.clear).click();else if(action==='shortcut')p.key(id);else if(action==='swap')p.get('yt-swap').click();else{p.input(cfg.input,cfg.next);if(action==='result')p.advance(300);}
+      const current=p.snapshot();pending[outcome](outcome==='reject'?Error('controlled stale rejection'):undefined);await settle();
+      same(label+' stale '+action+'/'+outcome,p.snapshot(),current);same(label+' no stale unhandled '+action+'/'+outcome,unhandled.length-count,0);
+    }
+    for(const outcome of ['resolve','reject']) {
+      p=lifecyclePage(lang,shellFirst);golden(p);const first=p.copy(id),last=p.copy(id);same(label+' same text separate requests', [first!==last,first.value,last.value],[true,p.get(field).value,p.get(field).value]);
+      last.resolve();await settle();const current=p.snapshot();const n=unhandled.length;first[outcome](outcome==='reject'?Error('older same text'):undefined);await settle();
+      same(label+' same text older '+outcome+' ignored',p.snapshot(),current);same(label+' same text handled '+outcome,unhandled.length-n,0);
+    }
+    p=lifecyclePage(lang,shellFirst);golden(p);p.copy(id).resolve();await settle();const oldTimer=[...p.timers.values()].find(t=>t.ms===1500);p.advance(1000);p.copy(id).resolve();await settle();p.advance(500);
+    same(label+' old timer does not reset new success',p.get(id).textContent,S.copied);oldTimer.fn();same(label+' already queued old callback cannot reset new success',p.get(id).textContent,S.copied);p.advance(1000);same(label+' new timer resets normally',p.get(id).textContent,S.copy);
+    p=lifecyclePage(lang,shellFirst);golden(p);p.copy(id).resolve();await settle();const timer=[...p.timers.values()].find(t=>t.ms===1500);p.get(cfg.clear).click();const cleared=p.snapshot();timer.fn();same(label+' already queued feedback after Clear is ignored',p.snapshot(),cleared);
+  }
+  {
+    p=lifecyclePage(lang,shellFirst);golden(p);const [a,b]=cfg.copies,first=p.copy(a),second=p.copy(b);second.reject(Error('other button'));await settle();first.resolve();await settle();
+    same(tag+' buttons have independent requests and error ownership',[p.get(a).textContent,p.get(cfg.status).textContent],[S.copied,failureText[lang]]);p.copy(b).resolve();await settle();same(tag+' error owner retries successfully',[p.get(a).textContent,p.get(b).textContent,p.get(cfg.status).textContent],[S.copied,S.copied,'']);
+  }
+}
+process.removeListener('unhandledRejection',onUnhandled);
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
