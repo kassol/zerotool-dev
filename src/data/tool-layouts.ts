@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'json-to-go-struct': 'convert',
   'json-to-kotlin': 'convert',
   'json-to-typescript': 'convert',
   'diff-checker': 'compare',
