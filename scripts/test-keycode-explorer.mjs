@@ -254,6 +254,7 @@ for(const [name,re]of [
  ['bounded snippet',/\.kce-snippet\s*\{[^}]*overflow:\s*auto[^}]*max-height:\s*12rem/],
  ['bounded history',/\.kce-history\s*\{[^}]*max-height:\s*5rem[^}]*overflow:\s*auto/],
  ['fixed status',/#kce-status\s*\{[^}]*height:\s*4\.2em[^}]*overflow:\s*auto/],
+ ['stable empty and captured key alignment',/\.kce-pad-display\s*\{[^}]*align-items:\s*center/],
  ['44px fixed copy feedback',/\.kce-toolbar[^}]*> button\s*\{[^}]*min-height:\s*44px;\s*height:\s*44px/],
  ['860 result height',/@media\s*\(max-width:\s*860px\)[\s\S]*?\.kce-results\s*\{[^}]*height:\s*28rem/],
  ['640 result height',/@media\s*\(max-width:\s*640px\)[\s\S]*?\.kce-results\s*\{[^}]*height:\s*26rem/],
