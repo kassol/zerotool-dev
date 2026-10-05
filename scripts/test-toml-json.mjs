@@ -77,6 +77,7 @@ const layout = readFileSync(join(ROOT, 'src/layouts/ToolLayout.astro'), 'utf8');
 const labelsBlock = source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
 if (!labelsBlock) throw Error('Production STRINGS block missing');
 const STRINGS = vm.runInNewContext(labelsBlock[1] + '\n;STRINGS');
+const clientStrings = lang => vm.runInNewContext(source.slice(source.indexOf('// strings:end') + '// strings:end'.length, source.indexOf('\n---', source.indexOf('// strings:end'))) + '\n;CLIENT_T', { STRINGS, lang });
 const modules = [...source.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
 if (modules.length !== 1) throw Error('Expected exactly one complete production module');
 const script = modules[0][1];
@@ -140,7 +141,7 @@ function page(lang = 'en', shellFirst = false, preset = {}, active = null) {
   const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
   const esc = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
-    .replace(/data-strings=\{JSON\.stringify\(T\)\}/g, 'data-strings="' + esc(JSON.stringify(STRINGS[lang])) + '"')
+    .replace(/data-strings=\{JSON\.stringify\(CLIENT_T\)\}/g, 'data-strings="' + esc(JSON.stringify(clientStrings(lang))) + '"')
     .replace(/data-lang=\{lang\}/g, 'data-lang="' + lang + '"').replace(/\{T\.(\w+)\}/g, (_, k) => esc(STRINGS[lang][k]));
   function append(ast, parent) { for (const node of ast.childNodes || []) { if (!node.tagName) { if (node.nodeName === '#text') parent.textContent += node.value; continue; } const e = parent.appendChild(new Element(node.tagName)); for (const a of node.attrs) e.setAttribute(a.name, a.value); append(node, e); if (e.tagName === 'TEXTAREA') e.value = e.textContent; } }
   append(parseFragment(markup), widget);
@@ -176,15 +177,15 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const p = page(lang); check(lang + ' empty mount has both Copy disabled', [p.get('tj-copy-toml').disabled, p.get('tj-copy-json').disabled], [true, true]);
   golden(p); check(lang + ' actual input TOML→JSON literal', p.get('tj-json').value, JSON_PRETTY);
   p.input('tj-json', JSON_TEXT); p.advance(300); check(lang + ' actual input JSON→TOML literal', p.get('tj-toml').value, TOML_OUT);
-  p.get('tj-toml').value = 'a = 1'; p.get('tj-to-json').click(); check(lang + ' retained TOML button', p.get('tj-json').value, '{\n  "a": 1\n}');
-  p.get('tj-json').value = '{"b":2}'; p.get('tj-to-toml').click(); check(lang + ' retained JSON button', p.get('tj-toml').value, 'b = 2\n');
+  p.input('tj-toml', 'a = 1'); p.advance(300); check(lang + ' automatic TOML input', p.get('tj-json').value, '{\n  "a": 1\n}');
+  p.input('tj-json', '{"b":2}'); p.advance(300); check(lang + ' automatic JSON input', p.get('tj-toml').value, 'b = 2\n');
   for (const shellFirst of [false, true]) for (const side of ['toml', 'json']) {
     const k = page(lang, shellFirst), tag = lang + '/' + shellFirst + '/' + side;
     golden(k); k.tracks.length = 0;
-    k.get('tj-' + side).value = side === 'toml' ? 'c = 3' : '{"d":4}';
+    k.input('tj-' + side, side === 'toml' ? 'c = 3' : '{"d":4}'); k.advance(300);
     k.key('tj-' + side, 'Enter', side === 'toml' ? 'ctrlKey' : 'metaKey');
-    check(tag + ' bubbling Enter runs only requested direction', k.tracks, [['toml_json', side === 'toml' ? 'toml_to_json' : 'json_to_toml']], true);
-    check(tag + ' bubbling Enter preserves source and requested output/status', [k.get('tj-toml').value, k.get('tj-json').value, k.get('tj-status').textContent], side === 'toml' ? ['c = 3', '{\n  "c": 3\n}', S.msgTomlToJson] : ['d = 4\n', '{"d":4}', S.msgJsonToToml], side === 'json');
+    check(tag + ' shared Enter has no primary action', k.tracks, [], true);
+    check(tag + ' Enter preserves automatic output/status', [k.get('tj-toml').value, k.get('tj-json').value, k.get('tj-status').textContent], side === 'toml' ? ['c = 3', '{\n  "c": 3\n}', S.msgTomlToJson] : ['d = 4\n', '{"d":4}', S.msgJsonToToml], side === 'json');
   }
   const restored = page(lang, false, { 'tj-toml': 'a = 1', 'tj-json': '{"b":2}' }, 'tj-json');
   check(lang + ' early input uses focused JSON and leaves no timer', [restored.get('tj-toml').value, restored.get('tj-json').value, restored.timers.size], ['b = 2\n', '{"b":2}', 0]);
@@ -261,6 +262,80 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     }
   }
 }
+/* ── v2 page layout ── */
+check('all FIX behavior checks retained before source guard', checks.length, 658);
+check('script changes only remove automatic direction buttons and local Enter', hash(script), 'd34debf090093b6f24274ae9c0fd9d991742b1b74379483df8e6faa6f5f220c1');
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "71968bfa683356d15f79ca91cd6919fd3c1286c93f905c1ea2a0b12a63100cd4",
+    "body": "1c7e3aa0d748e0c65ff0f0838f50f001815f32042ef183893443eb7ed0af5ba1",
+    "client": "0147e7fae3155f923662d9b19fab221412ee45c377ea4b1a333cf74cb6761dd6"
+  },
+  "zh": {
+    "front": "fad9924d93e5fc120a3dfb7afa904c924f23209f4c57cfe221c94cb1f6350238",
+    "body": "e5fb1e647d7287a49d7a1e4878f2d26a4a1bb7425ea78178b86cb900bca0f15e",
+    "client": "ce84157589a4cecc855e453a6ef11286ea0e9ac16655a79b6e73c12b3809977c"
+  },
+  "ja": {
+    "front": "5f2abd3729768fd1152e0b63918c01186c9c4ea5f7c71d61f8cab77d83838343",
+    "body": "ac77e6344f4e494fc6e6b153a2f6a271558bb90ea9ea878fb0c31a5374c12eb9",
+    "client": "b598c715df15b556f5c5f9e654c502440b2e841ec2806085b3bc2d32e76f1c97"
+  },
+  "ko": {
+    "front": "f08dd142e67ef55fd5c6f4a2b27248c318f8919b55b34fb5a133f88aa7986ea2",
+    "body": "1e9f9df733be1ca94940ef2a77c98c3df03818862dbd7d584b9765b93e44c70f",
+    "client": "9b11e6abc94f5f81ba963d54d6d79d1cdb186b282d3240a2473ab99fae667b39"
+  }
+};
+const markup = source.slice(source.indexOf('\n---', source.indexOf('// strings:end')) + 4, source.indexOf('  <script>'));
+check('direct flex tool root', /^\s*<div class="tj-wrap"/.test(markup), true);
+check('Clear then reserved status then two panes', /class="tj-toolbar"[\s\S]*id="tj-clear"[\s\S]*id="tj-status"[\s\S]*class="tj-panels zt-io"/.test(markup), true);
+check('two shared panes and editor fills', [(markup.match(/class="tj-panel zt-io-pane"/g) || []).length, (markup.match(/class="tool-textarea tj-box zt-io-fill"/g) || []).length], [2, 2]);
+check('two editable panes always visible', /readonly|hidden|data-empty/.test(markup), false);
+check('only Clear and the two Copy buttons remain', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m => m[1]), ['tj-clear', 'tj-copy-toml', 'tj-copy-json']);
+check('five unique actual tips', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]), ['tj-tip-clear', 'tj-tip-toml', 'tj-tip-copy-toml', 'tj-tip-json', 'tj-tip-copy-json']);
+check('tips stay outside interactive labels/buttons', /<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup), false);
+check('obsolete direction buttons and localized labels removed', /tj-to-json|tj-to-toml|tomlToJson:\s*'|jsonToToml:\s*'|btn-primary/.test(markup + labelsBlock[1]), false);
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+check('root has zero minimum width and height', /\.tj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css), true);
+check('status fixed and scrollable', /\.tj-status\s*\{[^}]*height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css), true);
+check('editor content scrolls internally', /\.tj-box\s*\{[^}]*overflow: auto;/.test(css), true);
+check('860/640 and phone120px editor/44px controls', /@media \(max-width: 860px\)[\s\S]*height: 180px;[\s\S]*@media \(max-width: 640px\)[\s\S]*min-height: 44px;[\s\S]*height: 120px;/.test(css), true);
+check('semantic status theme tokens', /var\(--color-success\)/.test(css) && /var\(--color-danger\)/.test(css), true);
+check('no hidden mobile editor', /display:\s*none|visibility:\s*hidden/.test(css), false);
+check('convert registry', readFileSync(join(ROOT, 'src/data/tool-layouts.ts'), 'utf8').match(/['"]toml-json['"]\s*:\s*['"]([^'"]+)['"]/)?.[1], 'convert');
+const mdxCompiler = await import(requireRoot.resolve('@mdx-js/mdx'));
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = STRINGS[lang], payload = clientStrings(lang), expected = PROTECTED_CONTENT[lang];
+  check(lang + ' five same tip keys', Object.keys(S.tips), ['toml', 'json', 'copyToml', 'copyJson', 'clear']);
+  check(lang + ' tips nonempty plain text within 280 chars', Object.values(S.tips).every(v => typeof v === 'string' && v.length && [...v].length <= 280 && !/[<>]/.test(v)), true);
+  check(lang + ' tip placeholders match EN', Object.values(S.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()), Object.values(STRINGS.en.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()));
+  check(lang + ' tips excluded from actual client payload', Object.hasOwn(payload, 'tips') || Object.values(S.tips).some(v => JSON.stringify(payload).includes(v)), false);
+  check(lang + ' previous client strings retained except direction labels', hash(JSON.stringify(payload)), expected.client);
+  for (const shellFirst of [false, true]) for (const side of ['toml', 'json']) {
+    const p = page(lang, shellFirst), field = 'tj-' + side, peer = side === 'toml' ? 'tj-json' : 'tj-toml';
+    p.input(field, side === 'toml' ? TOML : JSON_TEXT); p.advance(100); p.key(field, 'Enter');
+    check(lang + '/' + shellFirst + '/' + side + ' Enter does not rush debounce', p.get(peer).value, '');
+    p.advance(200); check(lang + '/' + shellFirst + '/' + side + ' automatic conversion after Enter', p.get(peer).value, side === 'toml' ? JSON_PRETTY : TOML_OUT);
+  }
+  const content = readFileSync(join(ROOT, 'src/content/tools/toml-json', lang + '.mdx'), 'utf8');
+  const [, front, body] = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  const fm = requireRoot('js-yaml').load(front);
+  check(lang + ' five steps before FAQ', fm.steps.length === 5 && front.indexOf('steps:') < front.indexOf('faqItems:'), true);
+  check(lang + ' steps8/280/1200 limits', fm.steps.length <= 8 && fm.steps.every(v => typeof v === 'string' && [...v].length <= 280) && fm.steps.reduce((n, v) => n + [...v].length, 0) <= 1200, true);
+  check(lang + ' original metadata and FAQ byte exact', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.front);
+  check(lang + ' body only removes Usage, preserving all examples and limits', hash(body), expected.body);
+  let error = ''; try { await mdxCompiler.compile(body); } catch (e) { error = String(e); }
+  check(lang + ' actual MDX compiles', error, '');
+}
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const compiled = await transform(source, { filename: SOURCE_FILE });
+check('Astro has no error diagnostics', compiled.diagnostics.filter(d => d.severity === 1), []);
+check('one client module retained', compiled.scripts.length, 1);
+check('client module has no tips', Object.values(STRINGS).some(S => Object.values(S.tips).some(v => compiled.scripts.some(s => s.code.includes(v)))), false);
+let compileError = ''; try { await requireRoot('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' }); } catch (e) { compileError = String(e); }
+check('Astro generated module parses', compileError, '');
+
 await settle(); process.removeListener('unhandledRejection', onUnhandled);
 check('component source unchanged during test', hash(readFileSync(SOURCE_FILE, 'utf8')), hash(source));
   passes += checks.filter(c => c.passed).length; failures += checks.filter(c => !c.passed).length;

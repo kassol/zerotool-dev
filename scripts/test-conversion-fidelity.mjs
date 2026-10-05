@@ -5,8 +5,8 @@
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Each case types into the real textarea (input event, then the 300 ms debounce timer), clicks
-// the real button or presses Ctrl+Enter, and reads the other textarea, the status line and
+// Each case types into the real textarea (input event, then the 300 ms debounce timer), or
+// presses Ctrl+Enter where supported, and reads the other textarea, the status line and
 // the copy button. When a value cannot be written to the target format without changing it, the
 // page must name the field (JSON Pointer) and the value, clear the earlier output and disable
 // the copy button for that output; the next convertible input enables it again. Values that the
@@ -37,8 +37,8 @@ const TOOLS = {
   'toml-json': {
     file: 'src/components/tools/TomlJsonTool.astro', wrap: '.tj-wrap', status: 'tj-status',
     dirs: {
-      t2j: { input: 'tj-toml', output: 'tj-json', copy: 'tj-copy-json', button: 'tj-to-json', vias: ['input', 'button', 'key'] },
-      j2t: { input: 'tj-json', output: 'tj-toml', copy: 'tj-copy-toml', button: 'tj-to-toml', vias: ['input', 'button', 'key'] },
+      t2j: { input: 'tj-toml', output: 'tj-json', copy: 'tj-copy-json', vias: ['input'] },
+      j2t: { input: 'tj-json', output: 'tj-toml', copy: 'tj-copy-toml', vias: ['input'] },
     },
   },
   'yaml-json': {
@@ -58,7 +58,6 @@ function open(tool, lang = 'en') {
 function convert(page, tool, dir, text, via) {
   const d = TOOLS[tool].dirs[dir];
   if (via === 'input') page.type(d.input, text);
-  else if (via === 'button') { page.el(d.input).value = text; page.el(d.button).click(); page.flush(); }
   else if (via === 'key') { page.el(d.input).value = text; page.key(d.input, { key: 'Enter', ctrlKey: true }); }
   return { out: page.el(d.output), copy: page.el(d.copy), status: page.el(TOOLS[tool].status) };
 }

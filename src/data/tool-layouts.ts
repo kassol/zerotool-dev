@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'toml-json': 'convert',
   'sql-formatter': 'convert',
   'yaml-json': 'convert',
   'curl-to-code': 'convert',
