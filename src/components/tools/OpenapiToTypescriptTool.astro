@@ -14,6 +14,7 @@ const labels = {
     clear: 'Clear',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: 'Copy failed. Try again.',
     generate: 'Generate TypeScript',
     msgParseError: 'YAML/JSON parse error: ',
     msgNotOpenApi: 'Document is not an OpenAPI 3.x object.',
@@ -34,6 +35,7 @@ const labels = {
     clear: '清空',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: '复制失败，请重试。',
     generate: '生成 TypeScript',
     msgParseError: 'YAML/JSON 解析错误：',
     msgNotOpenApi: '文档不是 OpenAPI 3.x 对象。',
@@ -54,6 +56,7 @@ const labels = {
     clear: 'クリア',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピーに失敗しました。再試行してください。',
     generate: 'TypeScript を生成',
     msgParseError: 'YAML/JSON パースエラー：',
     msgNotOpenApi: 'ドキュメントが OpenAPI 3.x オブジェクトではありません。',
@@ -74,6 +77,7 @@ const labels = {
     clear: '지우기',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: '복사에 실패했습니다. 다시 시도하세요.',
     generate: 'TypeScript 생성',
     msgParseError: 'YAML/JSON 파싱 오류: ',
     msgNotOpenApi: '문서가 OpenAPI 3.x 객체가 아닙니다.',
@@ -92,6 +96,7 @@ const L = labels[lang];
   data-lang={lang}
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-msg-parse-error={L.msgParseError}
   data-msg-not-openapi={L.msgNotOpenApi}
   data-msg-unsupported-version={L.msgUnsupportedVersion}
@@ -175,6 +180,7 @@ components:
 
   const COPY = wrap.dataset.copy || 'Copy';
   const COPIED = wrap.dataset.copied || 'Copied!';
+  const COPY_FAILED = wrap.dataset.copyFailed || 'Copy failed. Try again.';
   const MSG_PARSE_ERROR = wrap.dataset.msgParseError || 'Parse error: ';
   const MSG_NOT_OPENAPI = wrap.dataset.msgNotOpenapi || 'Not an OpenAPI 3.x object.';
   const MSG_UNSUPPORTED = wrap.dataset.msgUnsupportedVersion || 'Unsupported version: ';
@@ -194,6 +200,15 @@ components:
   const exampleBtn = document.getElementById('opts-example')!;
   const clearBtn = document.getElementById('opts-clear')!;
   const copyBtn = document.getElementById('opts-copy')!;
+  let copyRevision = 0;
+  let copyTimer: number | null = null;
+
+  function resetCopy(): void {
+    copyRevision++;
+    if (copyTimer !== null) window.clearTimeout(copyTimer);
+    copyBtn.textContent = COPY;
+    copyBtn.classList.remove('copied');
+  }
 
   const EXAMPLE = `openapi: 3.0.3
 info:
@@ -791,6 +806,8 @@ components:
 
   // ── Main generate ──
   function generate(): void {
+    if (liveTimer !== null) window.clearTimeout(liveTimer);
+    resetCopy();
     const raw = inputEl.value.trim();
     if (!raw) {
       outputCodeEl.textContent = '';
@@ -852,6 +869,7 @@ components:
   // Debounced live preview
   let liveTimer: number | null = null;
   function scheduleGenerate(): void {
+    resetCopy();
     if (liveTimer !== null) window.clearTimeout(liveTimer);
     liveTimer = window.setTimeout(generate, 300);
   }
@@ -871,28 +889,48 @@ components:
     (window as any).trackTool?.('openapi-to-typescript', 'example_load');
   });
 
-  clearBtn.addEventListener('click', () => {
+  function clearAll(): void {
+    if (liveTimer !== null) window.clearTimeout(liveTimer);
+    resetCopy();
     inputEl.value = '';
     outputCodeEl.textContent = '';
     setStatus('', 'none');
+    inputEl.focus();
+  }
+  clearBtn.addEventListener('click', clearAll);
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+      e.preventDefault();
+      clearAll();
+    }
   });
 
   copyBtn.addEventListener('click', () => {
     const text = outputCodeEl.textContent || '';
     if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      copyBtn.classList.add('copied');
-      copyBtn.textContent = COPIED;
-      window.setTimeout(() => {
-        copyBtn.classList.remove('copied');
-        copyBtn.textContent = COPY;
-      }, 1500);
-    });
+    resetCopy();
+    const revision = copyRevision;
+    function failed(): void {
+      if (revision === copyRevision) copyBtn.textContent = COPY_FAILED;
+    }
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        if (revision !== copyRevision) return;
+        copyBtn.classList.add('copied');
+        copyBtn.textContent = COPIED;
+        copyTimer = window.setTimeout(() => {
+          if (revision !== copyRevision) return;
+          copyBtn.classList.remove('copied');
+          copyBtn.textContent = COPY;
+        }, 1500);
+      }, failed);
+    } catch { failed(); }
   });
 
   inputEl.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
+      e.stopPropagation();
       generate();
     }
   });
