@@ -16,6 +16,10 @@
 // Run: node scripts/test-iban-validator-parser.mjs
 
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import vm from 'node:vm';
+import { parseFragment, defaultTreeAdapter } from 'parse5';
+import { loadPage } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -71,5 +75,187 @@ for (const [iban, fields] of CASES) {
 // a letter where Mauritius has digits is reported
 check('MU: letter in the account is a type error', !!E.splitBban('BOMM0101X01030300200000MUR', E.REG.MU.fields).error);
 
+// Frozen protected source, including the unmarked validation and rendering code.
+for(const [name,begin,end,hash] of [
+  ['marked engine','/* ── engine:start ── */','/* ── engine:end ── */','c928cecae75fde60e474378a7954e5075fc619df9d8b8b6d5b737605ce2d2ff8'],
+  ['validation','      function printFormat(s) {','      // ── Rendering','643e040de940f5cf6a8cd997cb15d2c8a7e891e467b7c7bcbc3ddee3fbd2ade1'],
+  ['rendering','      function escapeHtml(s) {','      // ── State & wiring','4a981a8943c84663ac745160553e890c69dd49600fc78c59dc991d0775cf7004'],
+]){
+  const a=source.indexOf(begin),b=source.indexOf(end,a);
+  eq(name+' byte protection',createHash('sha256').update(source.slice(a,b+(end.startsWith('/*')?end.length:0))).digest('hex'),hash);
+}
+
+// Complete page regression. The DOM adapter tokenizes real generated HTML with parse5;
+// only clipboard settlement and timers are controlled. The real shared shortcut runs
+// before and after the complete component script. No browser or native clipboard access.
+const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
+const shortcut=layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
+if(!shortcut.includes("widget.querySelectorAll('textarea"))throw Error('Shared shortcut not found');
+const must=(value,message)=>{if(!value)throw Error(message);};
+const settle=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
+function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+const unhandled=[];
+process.on('unhandledRejection',error=>unhandled.push(String(error)));
+function page(lang='en',order='shared-after',clipboardMode='normal'){
+  const key='iban',slugs={iban:'iban-validator-parser'},paths={iban:'src/components/tools/IbanValidatorParserTool.astro'};
+  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[];
+  let timerId=0,clock=0,doc;
+  const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
+  const matchOne = (el, selector) => {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    if (parts.length > 1) {
+      if (!matchOne(el, parts.pop())) return false;
+      for (let parent = el.parentNode; parent; parent = parent.parentNode) if (matchOne(parent, parts.join(' '))) return true;
+      return false;
+    }
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+    return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+      && [...plain.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))
+      && attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+  };
+  const matches = (el, selector) => selector.split(',').some(part => matchOne(el, part.trim()));
+  class EventStub {
+    constructor(type, extra = {}) { Object.assign(this, { type, bubbles: false, defaultPrevented: false }, extra); }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() { this.stopped = true; }
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', type: tag === 'input' ? 'text' : '', style: {}, text: '', _value: '', dirtyValue: false, disabled: false, hidden: false }); }
+    get value() {
+      if (!this.dirtyValue && this.tagName === 'TEXTAREA') return this.textContent;
+      if (!this.dirtyValue && this.tagName === 'SELECT') return this.querySelector('option')?.value ?? '';
+      return this._value;
+    }
+    set value(v) { this._value = String(v); this.dirtyValue = true; }
+    get firstChild() { return this.children[0]??null; }
+    get dataset() { const el=this;return new Proxy({}, {get(_,key){return el.getAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()));},set(_,key,value){el.setAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()),value);return true;}}); }
+    get parentElement() { return this.parentNode; }
+    get isConnected() { return doc.contains(this); }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); }, toggle(c,force) { const yes=force??!this.contains(c);yes?this.add(c):this.remove(c);return yes; } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (['id', 'class', 'type', 'value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); if (['hidden', 'disabled', 'checked'].includes(k)) this[k] = true; }
+    getAttribute(k) { if (['id', 'class', 'type'].includes(k)) return this[k === 'class' ? 'className' : k] || null; return this.attributes[k] ?? null; }
+    removeAttribute(k) { delete this.attributes[k]; if (['hidden','disabled','checked'].includes(k)) this[k]=false; }
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+    set textContent(v) { if (doc?.activeElement && doc.activeElement !== this && this.contains(doc.activeElement)) doc.activeElement=doc.body; for (const child of this.children) child.parentNode = null; this.children = []; this.text = String(v); }
+    set innerHTML(v) {
+      this.textContent = '';
+      // parse5 supplies the real HTML tokenizer/entity table in the actual element context.
+      // In particular, textarea uses RCDATA. No homemade entity decoder is used.
+      const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
+      for (const node of parseFragment(context, String(v)).childNodes) this.appendChild(fromParse5(node));
+    }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { const i=this.children.indexOf(child);if(i>=0)this.children.splice(i,1);child.parentNode=null;return child; }
+    querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    contains(el) { return el === this || descendants(this).includes(el); }
+    closest(selector) { for (let el = this; el; el = el.parentNode) if (matches(el, selector)) return el; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatchEvent(event) {
+      event.target = this;
+      for (let el = this; el; el = el.parentNode) {
+        event.currentTarget = el;
+        for (const fn of el.listeners[event.type] || []) fn.call(el, event);
+        if (!event.bubbles || event.stopped) break;
+      }
+      return !event.defaultPrevented;
+    }
+    dispatch(type, extra = {}) { return this.dispatchEvent(new EventStub(type, { bubbles: true, ...extra })); }
+    click() { if(!this.disabled)this.dispatch('click'); }
+    select() { doc.selectedElement=this; }
+    focus() { doc.activeElement = this; }
+    setSelectionRange(start,end) { this.selectionStart=start;this.selectionEnd=end; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const attr of node.attrs || []) el.setAttribute(attr.name, attr.value);
+    for (const child of node.childNodes || []) if (child.nodeName !== '#comment') el.appendChild(fromParse5(child));
+    return el;
+  }
+
+  doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
+  doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
+  const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
+  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+  doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
+  doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
+  doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
+  const persist={clear(slug){persistCalls.push(['clear',slug]);},save(...args){persistCalls.push(['save',...args]);},load(){return null;}};
+  const globals={document:doc,
+    _slug:slugs[key],ztPersist:persist,trackTool(){},
+    navigator:clipboardMode==='absent'?{}:{clipboard:{writeText(value){if(clipboardMode==='throw')throw Error('Controlled clipboard throw');const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
+    setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
+  };
+  if(order==='shared-before')vm.runInNewContext(shortcut,{document:doc,window:{ztPersist:persist},_slug:slugs[key]},{filename:'ToolLayout.astro:actual-shortcut'});
+  const actual=loadPage(paths[key],{lang,globals});
+  if(order==='shared-after')actual.run(shortcut);
+  const get=id=>{const el=doc.getElementById(id);must(el,key+' ID '+id);return el;};
+  return{doc,get,widget,clipboard,timers,persistCalls,execCalls,
+    input(id,value){get(id).value=value;get(id).dispatch('input');},
+    ctrlL(el=get('ivp-input'),key='l',mod='ctrlKey'){el.focus();const event=new EventStub('keydown',{bubbles:true,key,[mod]:true});el.dispatchEvent(event);return event;},
+    tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
+  };
+}
+const GB='GB82 WEST 1234 5698 7654 32', DE='DE89 3704 0044 0532 0130 00';
+const COPY={en:'Copy',zh:'复制',ja:'コピー',ko:'복사'};
+const COPIED={en:'Copied!',zh:'已复制！',ja:'コピー済み！',ko:'복사됨!'};
+const COPY_FAILED={en:'Copy failed. Please try again.',zh:'复制失败，请重试。',ja:'コピーに失敗しました。再試行してください。',ko:'복사에 실패했습니다. 다시 시도해 주세요.'};
+const snapshot=p=>({input:p.get('ivp-input').value,status:p.get('ivp-status').textContent,statusClass:p.get('ivp-status').className,hidden:p.get('ivp-results').hidden,result:p.get('ivp-results').textContent,copies:p.get('ivp-results').querySelectorAll('.ivp-copy').map(b=>[b.getAttribute('data-copy'),b.textContent])});
+const copy=p=>p.get('ivp-results').querySelector('.ivp-copy');
+function prepared(lang,order,mode){const p=page(lang,order,mode);p.input('ivp-input',GB);return p;}
+const beforePagePasses=passes,beforePageFailures=failures;
+for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
+  const label=lang+'/'+order;
+  let p=prepared(lang,order);
+  eq(label+' live GB fields and formats',snapshot(p).copies.map(x=>x[0]),['WEST','123456','98765432',GB,'GB82WEST12345698765432','WEST12345698765432']);
+  const original=snapshot(p);p.get('ivp-validate').click();eq(label+' manual Validate preserves result',snapshot(p),original);
+  for(const btn of p.get('ivp-results').querySelectorAll('.ivp-copy')){
+    btn.click();eq(label+' copies complete field',p.clipboard.at(-1).value,btn.getAttribute('data-copy'));
+    p.clipboard.at(-1).resolve();await settle();eq(label+' current success',btn.textContent,COPIED[lang]);
+    p.tick(1400);eq(label+' feedback returns to Copy',btn.textContent,COPY[lang]);
+  }
+  let exampleError=null;try{p.doc.querySelector('.ivp-example-item').click();}catch(e){exampleError=e.message;}
+  eq(label+' example has no runtime exception',exampleError,null);
+  eq(label+' example yields machine format',snapshot(p).copies[4]?.[0],'GB82WEST12345698765432');
+  check(label+' example never saves sensitive input',p.persistCalls.every(x=>x[0]!=='save'));
+  p.input('ivp-input','GB83 WEST 1234 5698 7654 32');
+  check(label+' checksum error visible',p.get('ivp-status').className.includes('error'));
+  eq(label+' invalid input has no old copy values',snapshot(p).copies,[]);
+  p.input('ivp-input','');eq(label+' empty clears result',[p.get('ivp-results').hidden,p.get('ivp-status').textContent,p.get('ivp-results').textContent],[true,'','']);
+  for(const [key,mod,focus] of [['l','ctrlKey','input'],['L','metaKey','copy']]){
+    p=prepared(lang,order);const ev=p.ctrlL(focus==='copy'?copy(p):p.get('ivp-input'),key,mod);
+    eq(label+' '+mod+key+' clears synchronously',[p.get('ivp-input').value,p.get('ivp-status').textContent,p.get('ivp-results').hidden,p.get('ivp-results').textContent],['','',true,'']);
+    check(label+' shortcut prevents browser default',ev.defaultPrevented);
+    eq(label+' shared clear survives removed focus',p.persistCalls,[['clear','iban-validator-parser']]);
+  }
+  p=prepared(lang,order);const outside=snapshot(p),ev=p.ctrlL(p.doc.body);eq(label+' outside shortcut no change',snapshot(p),outside);check(label+' outside default untouched',!ev.defaultPrevented);
+  for(const mode of ['normal','absent','throw']){
+    p=prepared(lang,order,mode);const b=copy(p);let error=null;try{b.click();if(mode==='normal')p.clipboard.at(-1).reject(Error('denied'));}catch(e){error=e.message;}await settle();
+    eq(label+' '+mode+' failure handled',error,null);eq(label+' '+mode+' failure visible',b.textContent,COPY_FAILED[lang]);
+    if(mode==='normal'){b.click();p.clipboard.at(-1).resolve();await settle();eq(label+' failure direct retry succeeds',b.textContent,COPIED[lang]);p.tick(1400);eq(label+' retry resets original label',b.textContent,COPY[lang]);}
+  }
+  for(const action of ['clear','shortcut','new-valid','invalid','empty'])for(const outcome of ['resolve','reject']){
+    p=prepared(lang,order);copy(p).click();const job=p.clipboard.at(-1);
+    if(action==='clear')p.get('ivp-clear').click();else if(action==='shortcut')p.ctrlL(copy(p));else p.input('ivp-input',action==='new-valid'?DE:action==='invalid'?'bad':'');
+    const after=snapshot(p);job[outcome](outcome==='reject'?Error('late'):undefined);await settle();p.tick(2000);eq(label+' late '+outcome+' after '+action,snapshot(p),after);
+  }
+  for(const outcome of ['resolve','reject']){
+    p=prepared(lang,order);const b=copy(p);b.click();const old=p.clipboard.at(-1);b.click();p.clipboard.at(-1).resolve();await settle();
+    const current=snapshot(p);old[outcome](outcome==='reject'?Error('late same value'):undefined);await settle();eq(label+' same-value old '+outcome+' cannot replace latest success',snapshot(p),current);
+    p.tick(1400);eq(label+' same-value latest feedback settles',b.textContent,COPY[lang]);
+  }
+  p=prepared(lang,order);const b=copy(p);b.click();p.clipboard.at(-1).resolve();await settle();p.tick(100);
+  const oldTimers=[...p.timers.values()].filter(t=>t.ms===1400);check(label+' captured actual feedback timer',oldTimers.length>0);
+  b.click();p.clipboard.at(-1).resolve();await settle();const fresh=snapshot(p);p.tick(1300);
+  for(const timer of oldTimers)timer.fn();eq(label+' old delivered timer cannot reset new success',snapshot(p),fresh);
+  p.tick(100);eq(label+' new timer restores fixed original label',b.textContent,COPY[lang]);
+  check(label+' no native clipboard fallback',p.execCalls.length===0);
+}
+await settle();eq('no unhandled clipboard rejections',unhandled,[]);
+console.log(`page lifecycle: ${passes-beforePagePasses} passed, ${failures-beforePageFailures} failed`);
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

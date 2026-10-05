@@ -46,7 +46,7 @@ const { lang = 'en' } = Astro.props;
           inputLabel: 'Enter an IBAN',
           placeholder: 'GB82 WEST 1234 5698 7654 32',
           validate: 'Validate', loadExample: 'Load Example', clear: 'Clear',
-          copy: 'Copy', copied: 'Copied!',
+          copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please try again.',
           statusEmpty: '',
           okValid: 'Valid IBAN.',
           okBbanUnavailable: 'Checksum valid. BBAN field breakdown not provided for this country.',
@@ -72,7 +72,7 @@ const { lang = 'en' } = Astro.props;
           inputLabel: '输入 IBAN',
           placeholder: 'GB82 WEST 1234 5698 7654 32',
           validate: '校验', loadExample: '加载示例', clear: '清空',
-          copy: '复制', copied: '已复制！',
+          copy: '复制', copied: '已复制！', copyFailed: '复制失败，请重试。',
           statusEmpty: '',
           okValid: 'IBAN 有效。',
           okBbanUnavailable: '校验通过，但该国家暂未提供 BBAN 字段拆分。',
@@ -98,7 +98,7 @@ const { lang = 'en' } = Astro.props;
           inputLabel: 'IBAN を入力',
           placeholder: 'GB82 WEST 1234 5698 7654 32',
           validate: '検証', loadExample: 'サンプル読込', clear: 'クリア',
-          copy: 'コピー', copied: 'コピー済み！',
+          copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。再試行してください。',
           statusEmpty: '',
           okValid: 'IBAN は有効です。',
           okBbanUnavailable: 'チェックサム有効。当該国の BBAN フィールド分解は未対応です。',
@@ -124,7 +124,7 @@ const { lang = 'en' } = Astro.props;
           inputLabel: 'IBAN 입력',
           placeholder: 'GB82 WEST 1234 5698 7654 32',
           validate: '검증', loadExample: '예시 불러오기', clear: '지우기',
-          copy: '복사', copied: '복사됨!',
+          copy: '복사', copied: '복사됨!', copyFailed: '복사에 실패했습니다. 다시 시도해 주세요.',
           statusEmpty: '',
           okValid: '유효한 IBAN입니다.',
           okBbanUnavailable: '체크섬은 유효합니다. 해당 국가의 BBAN 필드 분해는 지원되지 않습니다.',
@@ -479,6 +479,7 @@ const { lang = 'en' } = Astro.props;
       var btnClear = document.getElementById('ivp-clear');
       var exampleWrap = document.querySelector('.ivp-example-wrap');
       var exampleList = document.querySelector('.ivp-example-list');
+      var copyGeneration = 0;
 
       function setStatus(msg, type) {
         statusEl.textContent = msg || '';
@@ -486,6 +487,7 @@ const { lang = 'en' } = Astro.props;
       }
 
       function show(result) {
+        copyGeneration++;
         if (result.empty) {
           resultsEl.hidden = true;
           resultsEl.innerHTML = '';
@@ -516,16 +518,32 @@ const { lang = 'en' } = Astro.props;
       }
 
       function wireCopyButtons() {
+        var generation = copyGeneration;
         resultsEl.querySelectorAll('.ivp-copy').forEach(function (btn) {
+          var request = 0, timer = null;
           btn.addEventListener('click', function () {
             var v = btn.getAttribute('data-copy') || '';
-            if (!v || !navigator.clipboard) return;
-            navigator.clipboard.writeText(v).then(function () {
-              var original = btn.textContent;
+            if (!v) return;
+            var current = ++request;
+            clearTimeout(timer);
+            btn.classList.remove('copied');
+            btn.textContent = t.copy;
+            function fresh() { return generation === copyGeneration && current === request; }
+            function failed() { if (fresh()) btn.textContent = t.copyFailed; }
+            function done() {
+              if (!fresh()) return;
               btn.classList.add('copied');
               btn.textContent = t.copied;
-              setTimeout(function () { btn.classList.remove('copied'); btn.textContent = original; }, 1400);
-            }).catch(function () {});
+              timer = setTimeout(function () {
+                if (!fresh()) return;
+                btn.classList.remove('copied');
+                btn.textContent = t.copy;
+              }, 1400);
+            }
+            try {
+              if (!navigator.clipboard || !navigator.clipboard.writeText) { failed(); return; }
+              navigator.clipboard.writeText(v).then(done, failed);
+            } catch (e) { failed(); }
           });
         });
       }
@@ -543,18 +561,28 @@ const { lang = 'en' } = Astro.props;
             inputEl.value = ex.iban;
             if (exampleWrap) exampleWrap.removeAttribute('open');
             runValidate();
-            persist();
           });
           exampleList.appendChild(btn);
         });
       }
 
-      btnValidate.addEventListener('click', runValidate);
-      btnClear.addEventListener('click', function () {
+      function clearAll() {
+        copyGeneration++;
+        if (resultsEl.contains(document.activeElement)) inputEl.focus();
         inputEl.value = '';
         resultsEl.hidden = true;
         resultsEl.innerHTML = '';
         setStatus('', 'none');
+      }
+
+      btnValidate.addEventListener('click', runValidate);
+      btnClear.addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var wrap = document.querySelector('.ivp-wrap');
+        if (!wrap.contains(document.activeElement)) return;
+        e.preventDefault();
+        clearAll();
       });
 
       inputEl.addEventListener('input', function () {
