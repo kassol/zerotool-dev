@@ -23,6 +23,10 @@ import Ajv from 'ajv';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 
+import { createRequire } from 'node:module';
+import { transform as esbuildTransform } from 'esbuild';
+import { compile as compileMdx } from '@mdx-js/mdx';
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToJsonSchemaTool.astro'), 'utf8');
 
@@ -156,7 +160,8 @@ eq('null value not required', E.inferSchema({ a: null }), { type: 'object', prop
 
 // ---------- real complete page lifecycle; controlled DOM, clipboard and clock boundaries ----------
 const pageScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
-const pageLabels = vm.runInNewContext('(' + source.match(/var STRINGS = (\{[\s\S]*?\n\s*\});/)[1] + ')');
+const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
+const runtimeLabels = lang => vm.runInNewContext('(' + source.match(/const CLIENT_T = (\{[\s\S]*?\n\});/)[1] + ')', { L: pageLabels[lang] });
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -211,7 +216,14 @@ function page(lang, shellFirst = false) {
     focus() { doc.activeElement = this; }
   }
   const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
-  const markup = source.split('\n---')[1].split('<script')[0];
+  const tipAbout = JSON.parse(readFileSync(join(root, 'src/i18n/' + lang + '.json'), 'utf8'))['tool.tipAbout'];
+  // Render the shared component's actual button/panel boundary; browser QA checks popover geometry.
+  const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '" aria-label="' + escape(tipAbout.replace('{name}', pageLabels[lang][about])) + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{JSON\.stringify\(CLIENT_T\)\}/g, () => '="' + escape(JSON.stringify(runtimeLabels(lang))) + '"')
+    .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
+    .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
   for (const token of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
     if (token[3] !== undefined) { stack.at(-1).textContent += decode(token[3]).trim(); continue; }
@@ -321,6 +333,92 @@ try {
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
+
+
+// ---------- v2 page layout ----------
+const layoutMarkup = source.split('\n---')[1].split('<script')[0];
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const hash = value => createHash('sha256').update(value).digest('hex');
+check('v2 registered as convert', /'json-to-json-schema':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 direct flex root with zero minimum size', /^\s*<div\s+class="jjs-wrap"/.test(layoutMarkup) && /\.jjs-wrap\s*\{[^}]*display:\s*flex;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(css));
+check('v2 controls/status precede panels', layoutMarkup.indexOf('class="jjs-actions"') < layoutMarkup.indexOf('id="jjs-error"') && layoutMarkup.indexOf('id="jjs-error"') < layoutMarkup.indexOf('zt-io"'));
+eq('v2 two shared panels', (layoutMarkup.match(/\bzt-io-pane\b/g) || []).length, 2);
+check('v2 input uses shared fill', /id="jjs-input"\s+class="zt-io-fill"/.test(layoutMarkup));
+check('v2 output is a labelled keyboard scroller', /id="jjs-output"[^>]*tabindex="0"[^>]*aria-labelledby="jjs-output-label"/.test(layoutMarkup) && /\.jjs-output\s*\{[^}]*overflow:\s*auto;/.test(css) && /\.jjs-output:focus-visible\s*\{[^}]*outline:/.test(css));
+check('v2 status space is reserved', /\.jjs-status\s*\{[^}]*min-height:\s*2\.4rem;/.test(css));
+check('v2 long status cannot grow the panels', /\.jjs-status\s*\{[^}]*height:\s*2\.4rem;[^}]*overflow:\s*auto;/.test(css));
+check('v2 mobile input is bounded', /@media \(max-width: 860px\)/.test(css) && /height:\s*144px;\s*min-height:\s*144px;/.test(css));
+check('v2 mobile output has fixed height', /\.jjs-output\s*\{[^}]*height:\s*22rem;/.test(css));
+check('v2 phone controls remain reachable', /@media \(max-width: 640px\)/.test(css) && /min-height:\s*44px/.test(css));
+check('v2 empty state follows current output value', /data-empty="true"/.test(layoutMarkup) && /\.jjs-wrap\[data-empty="true"\] \.jjs-output-pane/.test(css) && /wrap\.dataset\.empty/.test(pageScript));
+check('v2 four-language build-time text, tips excluded from script', !/data-i18n/.test(source) && !/STRINGS|L\.tips|\.tips\b/.test(pageScript));
+eq('v2 original action buttons retained', [...layoutMarkup.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(m => m[1]).sort().join(','), "jjs-clear,jjs-copy");
+const tipMap = [["clear", "clear", "clear"], ["input", "inputJson", "input"], ["copy", "copy", "copy"]];
+eq('v2 actual Toggletip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, tipMap.length);
+for (const [id, about, key] of tipMap) check('v2 tip binding ' + id, layoutMarkup.includes('<Toggletip id="jjs-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'));
+// Hashes captured before migrating Usage; all other frontmatter and body are protected.
+const protectedContent = {
+  "en": [
+    "e7dc68fcd6d6bb7560bf939dc1becba5102501ecff5a246babd3323fff8ea60a",
+    "1aabafae7644ba3a485aef93d5653ff515c4639718cdd013046342f8a1af7c9a"
+  ],
+  "zh": [
+    "3e0387f5310861b4f39bea09b2006e1ef9bcad5cd6215a722948257adfd642cb",
+    "3adb59819a02b8d298d23e9ad3e253a5a50497dd7aa006cc72bda67d1a22849b"
+  ],
+  "ja": [
+    "dd08508741724d2d85241e94c46dac25fe21b01c35bc40485cf4eda036a2abed",
+    "a8f32f67dce1d6134dcb864d4011c7ddc8e3027a3ba81761299ee3e00982134b"
+  ],
+  "ko": [
+    "159a3b080365c8daa93f9ce6700b55a3906655cc5e0a069d5c28b5d5d1b07b6c",
+    "d97d2223b039956ea68804e471e8f236191f7aaa0aa5f5459340921194f96b77"
+  ]
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const L = pageLabels[lang], p = page(lang);
+  const emptyState = () => p.doc.querySelector('.jjs-wrap').dataset.empty;
+  eq(lang + ': v2 initial seed reveals output', emptyState(), 'false');
+  p.input(''); eq(lang + ': v2 empty input hides output', emptyState(), 'true');
+  run(p); eq(lang + ': v2 valid input reveals output', emptyState(), 'false');
+  run(p, invalidInput); eq(lang + ': v2 invalid input hides output', emptyState(), 'true');
+  run(p); p.get('jjs-clear').click(); eq(lang + ': v2 Clear hides output', emptyState(), 'true');
+  run(p); p.key('jjs-output'); eq(lang + ': v2 CtrlL hides output', emptyState(), 'true');
+  run(p); copy(p).reject(Error('controlled failure')); await settle();
+  eq(lang + ': v2 copy failure keeps output visible', emptyState(), 'false');
+  copy(p).resolve(); await settle(); eq(lang + ': v2 same-result copy retry keeps output visible', emptyState(), 'false');
+  eq(lang + ': v2 same tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
+  for (const [id, about, key] of tipMap) {
+    check(lang + ': v2 plain localized tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]));
+    eq(lang + ': v2 rendered tip ' + id, p.get('jjs-tip-' + id).textContent, L.tips[key]);
+  }
+  check(lang + ': v2 localized empty state', !!L.empty && layoutMarkup.includes('{L.empty}'));
+  check(lang + ': v2 serialized data excludes all tips', !('tips' in runtimeLabels(lang)) && !('empty' in runtimeLabels(lang)) && Object.values(L.tips).every(tip => !p.doc.querySelector('.jjs-wrap').dataset.strings.includes(tip)));
+  const mdx = readFileSync(join(root, 'src/content/tools/json-to-json-schema/' + lang + '.mdx'), 'utf8');
+  const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+  const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
+  const steps = stepsText.trimEnd().split('\n').map(line => JSON.parse(line.slice(4)));
+  check(lang + ': v2 steps bounds/order', steps.length > 0 && steps.length <= 8 && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n, x) => n + [...x].length, 0) <= 1200 && fm.indexOf('steps:') < fm.indexOf('faqItems:'));
+  for (const key of ["inputJson", "clear", "copy"]) check(lang + ': v2 steps use actual ' + key, steps.join('\n').includes(L[key]));
+  eq(lang + ': v2 original SEO/FAQ exact', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m, '')), protectedContent[lang][0]);
+  eq(lang + ': v2 non-Usage body/limits/examples exact', hash(body), protectedContent[lang][1]);
+  check(lang + ': v2 no duplicate Usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>|^## How to/m.test(body));
+  try { await compileMdx(body); check(lang + ': v2 MDX compiles', true); } catch (e) { check(lang + ': v2 MDX compiles', false, e.message); }
+  for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {
+    const q = page(lang, shellFirst); run(q);
+    q.key(focus === 'output' ? q.get('jjs-output') : q.doc.querySelector('[data-zt-tip="jjs-tip-copy"]'));
+    check(lang + ': v2 result CtrlL focus ' + shellFirst + '/' + focus, q.doc.activeElement === q.get('jjs-input') && !q.get('jjs-input').value && !output(q) && !status(q).textContent && q.clears.length === 1);
+  }
+}
+try {
+  const require = createRequire(import.meta.url);
+  const { transform: astroTransform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const compiled = await astroTransform(source, { filename: 'JsonToJsonSchemaTool.astro' });
+  check('v2 Astro compiler has no error diagnostics', !compiled.diagnostics.some(d => d.severity === 1), JSON.stringify(compiled.diagnostics));
+  await esbuildTransform(compiled.code, { loader: 'ts' }); check('v2 generated Astro module parses', true);
+} catch (e) { check('v2 Astro compilation', false, e.message); }
+check('v2 dark error ancestors are global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'));
+
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

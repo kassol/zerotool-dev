@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'json-to-json-schema': 'convert',
   'openapi-to-typescript': 'convert',
   'json-to-csv': 'convert',
   'docker-to-compose': 'convert',
