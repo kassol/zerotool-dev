@@ -52,10 +52,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: 'Converted {n} row{s} to JSON.', convertedToCsv: 'Converted {n} row{s} to CSV.', errorPrefix: 'Error: ', parseTypes: 'Parse numbers & booleans', emptyNull: 'Empty \u2192 null' },
-        zh: { copy: '复制', copied: '已复制！', clear: '清除', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '已将 {n} 行转换为 JSON。', convertedToCsv: '已将 {n} 行转换为 CSV。', errorPrefix: '错误：', parseTypes: '推断数字和布尔值', emptyNull: '空字段 \u2192 null' },
-        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '{n} 行を JSON に変換しました。', convertedToCsv: '{n} 行を CSV に変換しました。', errorPrefix: 'エラー：', parseTypes: '数値・真偽値を自動変換', emptyNull: '空フィールド \u2192 null' },
-        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '{n}행을 JSON으로 변환했습니다.', convertedToCsv: '{n}행을 CSV로 변환했습니다.', errorPrefix: '오류: ', parseTypes: '숫자 및 불리언 추론', emptyNull: '빈 필드 \u2192 null' }
+        en: { copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed', clear: 'Clear', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: 'Converted {n} row{s} to JSON.', convertedToCsv: 'Converted {n} row{s} to CSV.', errorPrefix: 'Error: ', parseTypes: 'Parse numbers & booleans', emptyNull: 'Empty \u2192 null' },
+        zh: { copy: '复制', copied: '已复制！', copyFailed: '复制失败', clear: '清除', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '已将 {n} 行转换为 JSON。', convertedToCsv: '已将 {n} 行转换为 CSV。', errorPrefix: '错误：', parseTypes: '推断数字和布尔值', emptyNull: '空字段 \u2192 null' },
+        ja: { copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピー失敗', clear: 'クリア', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '{n} 行を JSON に変換しました。', convertedToCsv: '{n} 行を CSV に変換しました。', errorPrefix: 'エラー：', parseTypes: '数値・真偽値を自動変換', emptyNull: '空フィールド \u2192 null' },
+        ko: { copy: '복사', copied: '복사됨!', copyFailed: '복사 실패', clear: '지우기', csvToJson: 'CSV \u2192 JSON', jsonToCsv: 'JSON \u2192 CSV', convertedToJson: '{n}행을 JSON으로 변환했습니다.', convertedToCsv: '{n}행을 CSV로 변환했습니다.', errorPrefix: '오류: ', parseTypes: '숫자 및 불리언 추론', emptyNull: '빈 필드 \u2192 null' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -78,6 +78,10 @@
       var emptyNullEl = document.getElementById('cj-empty-null');
       var lastValidJsonOutput = '';
       var lastValidCsvOutput = '';
+      var copyStates = [
+        { button: copyCsvBtn, revision: 0, timer: null },
+        { button: copyJsonBtn, revision: 0, timer: null }
+      ];
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -273,16 +277,20 @@
       /* ── Real-time CSV → JSON (debounced 300ms) ── */
       var _csvLiveTimer = null;
       csvEl.addEventListener('input', function () {
-        clearTimeout(_csvLiveTimer);
+        cancelConversions();
+        resetCopies();
         _csvLiveTimer = setTimeout(function () {
+          resetCopies();
           var raw = csvEl.value.trim();
-          if (!raw) { clearStatus(); return; }
+          if (!raw) { jsonEl.value = ''; lastValidJsonOutput = ''; clearStatus(); return; }
           try {
             var result = buildJsonFromCsv(raw);
             jsonEl.value = JSON.stringify(result, null, 2);
             lastValidJsonOutput = jsonEl.value;
             setStatus(rowMsg(t.convertedToJson, result.length), false);
           } catch (e) {
+            jsonEl.value = '';
+            lastValidJsonOutput = '';
             setStatus(t.errorPrefix + e.message, true);
           }
         }, 300);
@@ -299,16 +307,20 @@
       /* ── Real-time JSON → CSV (debounced 300ms) ── */
       var _jsonLiveTimer = null;
       jsonEl.addEventListener('input', function () {
-        clearTimeout(_jsonLiveTimer);
+        cancelConversions();
+        resetCopies();
         _jsonLiveTimer = setTimeout(function () {
+          resetCopies();
           var raw = jsonEl.value.trim();
-          if (!raw) { clearStatus(); return; }
+          if (!raw) { csvEl.value = ''; lastValidCsvOutput = ''; clearStatus(); return; }
           try {
             var data = JSON.parse(raw);
             csvEl.value = jsonToCsv(data);
             lastValidCsvOutput = csvEl.value;
             setStatus(rowMsg(t.convertedToCsv, data.length), false);
           } catch (e) {
+            csvEl.value = '';
+            lastValidCsvOutput = '';
             setStatus(t.errorPrefix + e.message, true);
           }
         }, 300);
@@ -316,8 +328,10 @@
 
       /* ── CSV → JSON button ── */
       document.getElementById('cj-to-json').addEventListener('click', function () {
+        cancelConversions();
+        resetCopies();
         var raw = csvEl.value.trim();
-        if (!raw) { clearStatus(); return; }
+        if (!raw) { jsonEl.value = ''; lastValidJsonOutput = ''; clearStatus(); return; }
         try {
           var result = buildJsonFromCsv(raw);
           jsonEl.value = JSON.stringify(result, null, 2);
@@ -325,14 +339,18 @@
           setStatus(rowMsg(t.convertedToJson, result.length), false);
           window.trackTool && window.trackTool('csv_json', 'csv_to_json');
         } catch (e) {
+          jsonEl.value = '';
+          lastValidJsonOutput = '';
           setStatus(t.errorPrefix + e.message, true);
         }
       });
 
       /* ── JSON → CSV button ── */
       document.getElementById('cj-to-csv').addEventListener('click', function () {
+        cancelConversions();
+        resetCopies();
         var raw = jsonEl.value.trim();
-        if (!raw) { clearStatus(); return; }
+        if (!raw) { csvEl.value = ''; lastValidCsvOutput = ''; clearStatus(); return; }
 
         try {
           var data = JSON.parse(raw);
@@ -341,32 +359,70 @@
           setStatus(rowMsg(t.convertedToCsv, data.length), false);
           window.trackTool && window.trackTool('csv_json', 'json_to_csv');
         } catch (e) {
+          csvEl.value = '';
+          lastValidCsvOutput = '';
           setStatus(t.errorPrefix + e.message, true);
         }
       });
 
       /* ── Clear ── */
-      document.getElementById('cj-clear').addEventListener('click', function () {
+      function cancelConversions() {
+        clearTimeout(_csvLiveTimer);
+        clearTimeout(_jsonLiveTimer);
+      }
+
+      function clearAll() {
+        cancelConversions();
+        resetCopies();
+        csvEl.focus();
         csvEl.value = '';
         jsonEl.value = '';
+        lastValidJsonOutput = '';
+        lastValidCsvOutput = '';
         clearStatus();
+      }
+      document.getElementById('cj-clear').addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var widget = document.querySelector('.cj-wrap');
+        if (!widget || !widget.contains(document.activeElement)) return;
+        e.preventDefault();
+        clearAll();
       });
 
       /* ── Copy buttons ── */
-      copyCsvBtn.addEventListener('click', function () {
-        if (!csvEl.value) return;
-        navigator.clipboard.writeText(csvEl.value).then(function () {
-          copyCsvBtn.textContent = t.copied;
-          setTimeout(function () { copyCsvBtn.textContent = t.copy; }, 1500);
+      function resetCopies() {
+        copyStates.forEach(function (state) {
+          state.revision++;
+          clearTimeout(state.timer);
+          state.button.textContent = t.copy;
         });
+      }
+
+      function copyText(state, text) {
+        if (!text) return;
+        var revision = ++state.revision;
+        clearTimeout(state.timer);
+        function failed() {
+          if (revision === state.revision) state.button.textContent = t.copyFailed;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== state.revision) return;
+            state.button.textContent = t.copied;
+            state.timer = setTimeout(function () {
+              if (revision === state.revision) state.button.textContent = t.copy;
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
+      }
+
+      copyCsvBtn.addEventListener('click', function () {
+        copyText(copyStates[0], csvEl.value);
       });
 
       copyJsonBtn.addEventListener('click', function () {
-        if (!jsonEl.value) return;
-        navigator.clipboard.writeText(jsonEl.value).then(function () {
-          copyJsonBtn.textContent = t.copied;
-          setTimeout(function () { copyJsonBtn.textContent = t.copy; }, 1500);
-        });
+        copyText(copyStates[1], jsonEl.value);
       });
     })();
   </script>
