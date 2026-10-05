@@ -55,6 +55,7 @@
     (function () {
       var STRINGS = {
         en: {
+          copyFailed: 'Copy failed. Try again.',
           copy: 'Copy', copied: 'Copied!', clear: 'Clear',
           minify: 'Minify', beautify: 'Beautify',
           htmlInput: 'HTML Input', output: 'Output',
@@ -67,6 +68,7 @@
           bytes: 'B', kbytes: 'KB',
         },
         zh: {
+          copyFailed: '复制失败，请重试。',
           copy: '复制', copied: '已复制！', clear: '清除',
           minify: '压缩', beautify: '美化',
           htmlInput: 'HTML 输入', output: '输出',
@@ -79,6 +81,7 @@
           bytes: 'B', kbytes: 'KB',
         },
         ja: {
+          copyFailed: 'コピーに失敗しました。再試行してください。',
           copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
           minify: '圧縮', beautify: '整形',
           htmlInput: 'HTML 入力', output: '出力',
@@ -91,6 +94,7 @@
           bytes: 'B', kbytes: 'KB',
         },
         ko: {
+          copyFailed: '복사하지 못했습니다. 다시 시도하세요.',
           copy: '복사', copied: '복사됨!', clear: '지우기',
           minify: '압축', beautify: '정렬',
           htmlInput: 'HTML 입력', output: '출력',
@@ -119,6 +123,16 @@
       var copyOutputBtn = document.getElementById('hm-copy-output');
       var indentEl = document.getElementById('hm-indent');
       var lastMode = 'minify';
+      var copyStates = [];
+
+      function resetCopies() {
+        copyStates.forEach(function (state) {
+          state.request++;
+          clearTimeout(state.timer);
+          state.btn.textContent = t.copy;
+          state.btn.classList.remove('copied');
+        });
+      }
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg;
@@ -329,6 +343,8 @@
       }
 
       function run(mode) {
+        clearTimeout(liveTimer);
+        resetCopies();
         var raw = inputEl.value;
         if (!raw.trim()) { outputEl.value = ''; clearStatus(); return; }
         try {
@@ -360,6 +376,7 @@
 
       var liveTimer = null;
       inputEl.addEventListener('input', function () {
+        resetCopies();
         clearTimeout(liveTimer);
         liveTimer = setTimeout(function () { run(lastMode); }, 300);
       });
@@ -374,22 +391,49 @@
       });
       indentEl.addEventListener('change', function () { run(lastMode); });
 
-      document.getElementById('hm-clear').addEventListener('click', function () {
+      function clearAll() {
+        clearTimeout(liveTimer);
+        resetCopies();
         inputEl.value = ''; outputEl.value = ''; clearStatus();
+      }
+      document.getElementById('hm-clear').addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var wrap = document.querySelector('.hm-wrap');
+        if (!wrap || !wrap.contains(document.activeElement)) return;
+        e.preventDefault();
+        inputEl.focus();
+        clearAll();
       });
 
       function wireCopy(btn, source) {
+        var state = { btn: btn, request: 0, timer: null };
+        copyStates.push(state);
         btn.addEventListener('click', function () {
-          if (!source.value) return;
-          navigator.clipboard.writeText(source.value).then(function () {
-            var prev = btn.textContent;
+          var text = source.value;
+          if (!text) return;
+          var request = ++state.request;
+          clearTimeout(state.timer);
+          btn.textContent = t.copy;
+          btn.classList.remove('copied');
+          function failed() {
+            if (request !== state.request || source.value !== text) return;
+            btn.textContent = t.copyFailed;
+          }
+          function done() {
+            if (request !== state.request || source.value !== text) return;
             btn.textContent = t.copied;
             btn.classList.add('copied');
-            setTimeout(function () {
-              btn.textContent = prev || t.copy;
+            state.timer = setTimeout(function () {
+              if (request !== state.request || source.value !== text) return;
+              btn.textContent = t.copy;
               btn.classList.remove('copied');
             }, 1500);
-          });
+          }
+          try {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) { failed(); return; }
+            navigator.clipboard.writeText(text).then(done, failed);
+          } catch (e) { failed(); }
         });
       }
       wireCopy(copyInputBtn, inputEl);
