@@ -103,6 +103,7 @@
           openFile: 'Open',
           copy: 'Copy',
           copied: 'Copied!',
+          copyFailed: 'Copy failed. Try again.',
           jsonArray: 'JSON array',
           jsonlToJson: 'JSONL \u2192 JSON',
           jsonToJsonl: 'JSON \u2192 JSONL',
@@ -138,6 +139,7 @@
           openFile: '打开',
           copy: '复制',
           copied: '已复制！',
+          copyFailed: '复制失败，请重试。',
           jsonArray: 'JSON 数组',
           jsonlToJson: 'JSONL \u2192 JSON',
           jsonToJsonl: 'JSON \u2192 JSONL',
@@ -173,6 +175,7 @@
           openFile: '開く',
           copy: 'コピー',
           copied: 'コピー済み！',
+          copyFailed: 'コピーできませんでした。もう一度お試しください。',
           jsonArray: 'JSON 配列',
           jsonlToJson: 'JSONL \u2192 JSON',
           jsonToJsonl: 'JSON \u2192 JSONL',
@@ -208,6 +211,7 @@
           openFile: '열기',
           copy: '복사',
           copied: '복사됨!',
+          copyFailed: '복사하지 못했습니다. 다시 시도하세요.',
           jsonArray: 'JSON 배열',
           jsonlToJson: 'JSONL \u2192 JSON',
           jsonToJsonl: 'JSON \u2192 JSONL',
@@ -276,7 +280,21 @@
         });
       }
 
+      var copyRevision = 0;
+      var copyErrorOwner = null;
+      var copyStates = [{ btn: copyJsonlBtn, request: 0, timer: null }, { btn: copyJsonBtn, request: 0, timer: null }];
+      function invalidateCopies() {
+        copyRevision++;
+        copyStates.forEach(function (state) {
+          clearTimeout(state.timer);
+          state.timer = null;
+          state.btn.textContent = t.copy;
+        });
+        copyErrorOwner = null;
+      }
+
       function setStatus(message, type) {
+        copyErrorOwner = null;
         statusEl.textContent = message;
         statusEl.className = 'tool-status ' + (type || 'none');
       }
@@ -500,6 +518,7 @@
         invalidateOutput('jsonl');
         var raw = jsonEl.value.trim();
         if (!raw) {
+          setInputError(jsonEl, false);
           setStatus(t.emptyInput, 'none');
           return;
         }
@@ -531,11 +550,32 @@
       }
 
       function copyText(text, button) {
-        if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        if (!text || button.disabled) return;
+        var state = copyStates[button === copyJsonlBtn ? 0 : 1];
+        var revision = copyRevision;
+        var request = ++state.request;
+        clearTimeout(state.timer);
+        state.timer = null;
+        button.textContent = t.copy;
+        function current() {
+          return revision === copyRevision && request === state.request && !button.disabled &&
+            text === (button === copyJsonlBtn ? lastJsonlOutput : lastJsonOutput);
+        }
+        function failed() {
+          if (!current()) return;
+          setStatus(t.copyFailed, 'error');
+          copyErrorOwner = button;
+        }
+        function done() {
+          if (!current()) return;
+          if (copyErrorOwner === button && statusEl.textContent === t.copyFailed) clearStatus();
           button.textContent = t.copied;
-          setTimeout(function () { button.textContent = t.copy; }, 1500);
-        });
+          state.timer = setTimeout(function () { if (current()) button.textContent = t.copy; }, 1500);
+        }
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.writeText) { failed(); return; }
+          navigator.clipboard.writeText(text).then(done, failed);
+        } catch (e) { failed(); }
       }
 
       function downloadText(filename, type, text) {
@@ -556,6 +596,7 @@
       }
 
       function openFile(target) {
+        if (copyErrorOwner && statusEl.textContent === t.copyFailed) clearStatus();
         cancelPending();
         pendingFileTarget = target;
         fileEl.value = '';
@@ -581,6 +622,7 @@
         cancelPending();
         jsonlEl.value = '';
         jsonEl.value = '';
+        fileEl.value = '';
         invalidateOutput();
         clearTimeout(jsonlTimer);
         updateStats({ total: 0, valid: 0, empty: 0, errors: [] });
@@ -588,12 +630,14 @@
         setInputError(jsonlEl, false);
         setInputError(jsonEl, false);
         clearStatus();
+        jsonlEl.focus();
       }
       document.getElementById('jlc-clear').addEventListener('click', clearAll);
       // ToolLayout's Ctrl/Cmd+L empties both panels without input events; drop the cached output too.
       document.addEventListener('keydown', function (e) {
-        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
-          setTimeout(function () { if (!jsonlEl.value && !jsonEl.value) clearAll(); }, 0);
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && document.querySelector('.jlc-wrap').contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
         }
       });
       document.getElementById('jlc-load-sample').addEventListener('click', loadSample);
@@ -643,6 +687,7 @@
       var jsonlTimer = null;
       var fileGeneration = 0;
       function cancelPending() {
+        invalidateCopies();
         clearTimeout(jsonlTimer);
         fileGeneration++;
       }
@@ -656,6 +701,7 @@
       jsonEl.addEventListener('input', function () {
         cancelPending();
         invalidateOutput('jsonl');
+        if (!jsonEl.value.trim()) setInputError(jsonEl, false);
         clearStatus();
       });
       ignoreEmptyEl.addEventListener('change', function () { invalidateOutput('json'); validateJsonl(); });
