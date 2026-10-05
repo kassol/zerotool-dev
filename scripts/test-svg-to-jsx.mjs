@@ -19,7 +19,7 @@
 //
 // Run: node scripts/test-svg-to-jsx.mjs
 
-import { loadPage } from './astro-page-harness.mjs';
+import { loadPage, readComponent, frontmatterStrings } from './astro-page-harness.mjs';
 import { parseFragment } from 'parse5';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +30,8 @@ import { runInNewContext } from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SvgToJsxTool.astro'), 'utf8');
+const pageStrings = frontmatterStrings(readComponent('src/components/tools/SvgToJsxTool.astro').frontmatter);
+const clientStrings = lang => runInNewContext(source.match(/const CLIENT_T = \{[^;]+;/)[0] + ';CLIENT_T', { T: pageStrings[lang] });
 
 const START_MARK = '/* ── engine:start ── */';
 const END_MARK = '/* ── engine:end ── */';
@@ -210,7 +212,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   try {
     const nodes = {};
     const node = (id) => nodes[id] ||= { value: id === 'stj-name' ? 'Icon' : '', checked: false, disabled: false, textContent: '', listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } };
-    runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], { document: { addEventListener() {}, documentElement: { lang }, querySelectorAll: () => [], getElementById: node }, window: {}, navigator: {}, setTimeout: (fn) => fn(), clearTimeout() {} });
+    runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], { document: { addEventListener() {}, documentElement: { lang }, querySelectorAll: () => [], querySelector: () => ({dataset:{strings:JSON.stringify(clientStrings(lang))}}), getElementById: node }, window: {}, navigator: {}, setTimeout: (fn) => fn(), clearTimeout() {} });
     node('stj-input').value = '<svg><text>{x}</text></svg>';
     node('stj-input').listeners.input();
     check('SVG page valid output ' + lang, !!node('stj-output').value && !node('stj-copy').disabled);
@@ -242,7 +244,8 @@ function same(name, actual, expected) { check(name, JSON.stringify(actual) === J
 function lifecyclePage(lang='en',order='before') {
   const s = lifecycleSpec;
   const nodes=[],byId=new Map(),docHandlers={};
-  const markup=s.src.slice(s.src.indexOf('---',3)+3,s.src.indexOf('<script'));
+  const escape = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const markup=s.src.slice(s.src.indexOf('---',3)+3,s.src.indexOf('<script')).replace(/placeholder=\{T\.(\w+)\}/g, (_,key) => 'placeholder="' + escape(pageStrings[lang][key]) + '"').replace(/\{T\.(\w+)\}/g, (_,key) => escape(pageStrings[lang][key]));
   let document;
   function text(n){return n.nodeName==='#text'?n.value:(n.childNodes||[]).map(text).join('');}
   function visit(n){
@@ -267,9 +270,9 @@ function lifecyclePage(lang='en',order='before') {
     const m=selector.match(/\[(data-i18n(?:-ph)?)\]$/);if(m)return nodes.filter(e=>Object.hasOwn(e.attributes,m[1]));
     throw Error('unexpected selector '+selector);
   };
-  const widget={contains:(e)=>nodes.includes(e),querySelectorAll:selectAll};
+  const widget={dataset:{strings:JSON.stringify(clientStrings(lang))},contains:(e)=>nodes.includes(e),querySelectorAll:selectAll};
   document={documentElement:{lang},activeElement:null,getElementById(id){if(!byId.has(id))throw Error('missing actual DOM id '+id);return byId.get(id);},querySelectorAll:selectAll,
-    querySelector(selector){if(selector==='.tool-widget')return widget;if(selector==='.tool-widget .btn-primary')return nodes.find(e=>e.className.split(/\s+/).includes('btn-primary'))||null;throw Error('unexpected selector '+selector);},
+    querySelector(selector){if(selector==='.tool-widget'||selector==='.stj-wrap')return widget;if(selector==='.tool-widget .btn-primary')return nodes.find(e=>e.className.split(/\s+/).includes('btn-primary'))||null;throw Error('unexpected selector '+selector);},
     addEventListener(k,fn){(docHandlers[k]||=[]).push(fn);},execCommand(){throw Error('OS clipboard blocked');},
   };
   let now=0,seq=0;const timers=new Map(),requests=[],tracks=[],clears=[];
@@ -383,6 +386,170 @@ for (const oldOutcome of ['resolve', 'reject']) {
   const count = p.tracks.length; p.advance(200); same('immediate option conversion cancels pending duplicate', p.tracks.length, count);
 }
 await settle(); process.removeListener('unhandledRejection', onUnhandled);
+
+// ---------- v2 page layout ----------
+{
+const { createHash } = await import('node:crypto');
+const requireRoot = createRequire(join(root, 'package.json'));
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const { transform: parseJs } = await import('esbuild');
+const { compile: compileMdx } = await import('@mdx-js/mdx');
+const { default: yaml } = await import('js-yaml');
+const sha = text => createHash('sha256').update(text).digest('hex');
+const fullEngine = source.match(/^ *\/\* ── engine:start ── \*\/[\s\S]*?^ *\/\* ── engine:end ── \*\//m)[0];
+same('v2 exact engine bytes', sha(fullEngine), '68244686047cd62518c2988b28514c4177a99be7c41e3d015a6edeb770801418');
+const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const script = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+check('v2 direct root', /^\s*<div class="stj-wrap"/.test(markup));
+check('v2 controls/status/panels order', /class="stj-options"[\s\S]*id="stj-status"[\s\S]*class="stj-panes zt-io"/.test(markup));
+same('v2 shared panes', (markup.match(/zt-io-pane/g) || []).length, 2);
+same('v2 shared fills', (markup.match(/zt-io-fill/g) || []).length, 2);
+same('v2 retains the only real action button', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m => m[1]), ['stj-copy']);
+check('v2 labels remain associated', markup.includes('for="stj-input"') && markup.includes('for="stj-output"'));
+check('v2 output remains focusable readonly textarea', /<textarea\s+id="stj-output"[^>]*readonly/.test(markup));
+check('v2 tips never nest in labels/buttons', !/<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup));
+same('v2 seven actual tip bindings', [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}/g)].map(m => m.slice(1)), [
+ ['stj-tip-name','componentName','name'], ['stj-tip-typescript','typescript','typescript'], ['stj-tip-forwardref','forwardRef','forwardRef'], ['stj-tip-memo','memo','memo'], ['stj-tip-copy','copy','copy'], ['stj-tip-input','inputLabel','input'], ['stj-tip-output','outputLabel','output'],
+]);
+check('v2 name remains editable with original default', /<input id="stj-name"[^>]*type="text"[^>]*value="MyIcon"/.test(markup));
+same('v2 checkbox defaults remain unchecked', [...markup.matchAll(/<input type="checkbox" id="([^"]+)"([^>]*)>/g)].map(m => [m[1], /checked/.test(m[2])]), [['stj-typescript',false],['stj-forwardref',false],['stj-memo',false]]);
+check('v2 name and checkbox touch targets', /\.stj-name-input\s*\{[^}]*min-height:\s*44px/.test(css) && /\.stj-checkbox-label\s*\{[^}]*min-height:\s*44px/.test(css));
+check('v2 mobile controls use bounded two columns', /@media \(max-width: 640px\)[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/.test(css));
+check('v2 no runtime translation', !/data-i18n|var STRINGS|pageLang/.test(script + markup));
+check('v2 script remains inside root after controls', source.indexOf('<script') > source.indexOf('id="stj-output"') && /<\/script>\s*<\/div>\s*<style>/.test(source));
+check('v2 zero-minimum flex root', /\.stj-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(css));
+check('v2 reserved scrolling status', /#stj-status\s*\{[^}]*height:\s*1\.5rem;[^}]*min-height:\s*1\.5rem;[^}]*flex:\s*none;[^}]*overflow:\s*auto;/.test(css));
+check('v2 textarea internal scroll', /\.stj-textarea\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*auto;/.test(css));
+check('v2 toolbar touch height', /\.stj-copy-btn\s*\{\s*min-height:\s*44px;/.test(css));
+check('v2 mobile input and output bounds', /@media \(max-width: 860px\)[\s\S]*height: 180px;[\s\S]*@media \(max-width: 640px\)[\s\S]*height: 120px;[\s\S]*height: 240px;/.test(css));
+check('v2 mobile empty output follows actual textarea value', /@media \(max-width: 860px\)[\s\S]*\.stj-result-pane:has\(#stj-output:placeholder-shown\)\s*\{\s*display: none;/.test(css));
+check('v2 output placeholder is localized desktop empty hint', markup.includes('placeholder={T.empty}'));
+check('v2 registry convert', /['"]svg-to-jsx['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+const MDX_PROTECTION = {
+  "en": {
+    "frontSHA": "e930931a50b9d6b2ccc904bace080dcc644b863f0f7246e97e8baae7d8fec527",
+    "bodySHA": "eec5f462c19d7d78cb38bd40bddeefcad395cc696bac6c0dd692ab584e3fdf5c"
+  },
+  "zh": {
+    "frontSHA": "c63344f701c68e8099f7940a9a9b2f4a49cb7d765338bf4f3e295debf1b16874",
+    "bodySHA": "c3761171c3ccc71325e4302bd14422c0a44b0c7947a24e021bd33bd1d3b517b6"
+  },
+  "ja": {
+    "frontSHA": "ef7fba79d8d478c350cbeb2007e22eb2b80dfdd99e35f8bd94cc70331e6bc8d7",
+    "bodySHA": "0809b74378ce0f5a5694378db760ac6e88f251884bd0a485e40389192b2102db"
+  },
+  "ko": {
+    "frontSHA": "c822346223c3158fed09eb60b088c98d81069d96acc4f3b9cbd1cb3e083c60ec",
+    "bodySHA": "79980f29509e79a9da5f9552d6f211b849a1174987a78e73f0e716c755479d67"
+  }
+};
+const LEGACY_STRINGS = {
+  "en": {
+    "inputLabel": "SVG Input",
+    "outputLabel": "JSX Output",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "copyFailed": "Copy failed. Please try again.",
+    "placeholder": "<!-- paste your SVG here -->",
+    "componentName": "Component name",
+    "typescript": "TypeScript (React.FC)",
+    "forwardRef": "forwardRef",
+    "memo": "memo",
+    "refused": "Cannot convert style at position {position}: {reason}. Output cleared.",
+    "reasons": {
+      "syntax": "invalid declaration or unclosed CSS syntax",
+      "property": "unsupported or escaped property name",
+      "duplicate": "repeated property cannot preserve CSS fallback order",
+      "priority": "!important cannot be preserved in a React style object",
+      "comment": "CSS comments require manual conversion"
+    }
+  },
+  "zh": {
+    "inputLabel": "SVG 输入",
+    "outputLabel": "JSX 输出",
+    "copy": "复制",
+    "copied": "已复制！",
+    "copyFailed": "复制失败，请重试。",
+    "placeholder": "<!-- 粘贴 SVG 到这里 -->",
+    "componentName": "组件名称",
+    "typescript": "TypeScript (React.FC)",
+    "forwardRef": "forwardRef 包裹",
+    "memo": "memo 包裹",
+    "refused": "样式第 {position} 个字符无法转换：{reason}。已清空输出。",
+    "reasons": {
+      "syntax": "声明无效或 CSS 语法未闭合",
+      "property": "属性名不支持或含转义",
+      "duplicate": "重复属性无法保留 CSS 回退顺序",
+      "priority": "React 样式对象无法保留 !important",
+      "comment": "CSS 注释需要手动转换"
+    }
+  },
+  "ja": {
+    "inputLabel": "SVG 入力",
+    "outputLabel": "JSX 出力",
+    "copy": "コピー",
+    "copied": "コピー済み！",
+    "copyFailed": "コピーに失敗しました。再試行してください。",
+    "placeholder": "<!-- SVGをここに貼り付け -->",
+    "componentName": "コンポーネント名",
+    "typescript": "TypeScript (React.FC)",
+    "forwardRef": "forwardRef ラップ",
+    "memo": "memo ラップ",
+    "refused": "スタイルの {position} 文字目を変換できません：{reason}。出力を消去しました。",
+    "reasons": {
+      "syntax": "宣言が無効、または CSS 構文が閉じていません",
+      "property": "未対応またはエスケープされたプロパティ名",
+      "duplicate": "重複プロパティの CSS フォールバック順序を保持できません",
+      "priority": "React のスタイルオブジェクトでは !important を保持できません",
+      "comment": "CSS コメントは手動で変換してください"
+    }
+  },
+  "ko": {
+    "inputLabel": "SVG 입력",
+    "outputLabel": "JSX 출력",
+    "copy": "복사",
+    "copied": "복사됨!",
+    "copyFailed": "복사하지 못했습니다. 다시 시도하세요.",
+    "placeholder": "<!-- SVG를 여기에 붙여넣기 -->",
+    "componentName": "컴포넌트 이름",
+    "typescript": "TypeScript (React.FC)",
+    "forwardRef": "forwardRef 래핑",
+    "memo": "memo 래핑",
+    "refused": "스타일 {position}번째 문자를 변환할 수 없습니다: {reason}. 출력을 지웠습니다.",
+    "reasons": {
+      "syntax": "잘못된 선언 또는 닫히지 않은 CSS 구문",
+      "property": "지원하지 않거나 이스케이프된 속성 이름",
+      "duplicate": "중복 속성의 CSS 대체 순서를 보존할 수 없습니다",
+      "priority": "React 스타일 객체는 !important를 보존할 수 없습니다",
+      "comment": "CSS 주석은 직접 변환해야 합니다"
+    }
+  }
+};
+for (const lang of ['en','zh','ja','ko']) {
+  same(lang + ' legacy strings unchanged', Object.fromEntries(Object.keys(LEGACY_STRINGS[lang]).map(k => [k, pageStrings[lang][k]])), LEGACY_STRINGS[lang]);
+  same(lang + ' tip keys', Object.keys(pageStrings[lang].tips).sort(), ['copy','forwardRef','input','memo','name','output','typescript']);
+  same(lang + ' client keys exclude tips and UI-only copy', Object.keys(clientStrings(lang)).sort(), ['copied','copy','copyFailed','reasons','refused']);
+  for (const text of Object.values(pageStrings[lang].tips)) check(lang + ' tip is built-only factual text', typeof text === 'string' && text.length > 15 && !JSON.stringify(clientStrings(lang)).includes(text));
+  const mdx = readFileSync(join(root, 'src/content/tools/svg-to-jsx/' + lang + '.mdx'), 'utf8');
+  const [,front,body] = mdx.match(/^---([\s\S]*?)---([\s\S]*)$/); const parsed = yaml.load(front);
+  same(lang + ' six steps', parsed.steps.length, 6);
+  check(lang + ' steps precede FAQ', front.indexOf('steps:') < front.indexOf('faqItems:'));
+  check(lang + ' bounded plain steps', parsed.steps.every(x => typeof x === 'string' && x.length <= 280 && !/[<>]/.test(x)) && parsed.steps.join('').length <= 1200);
+  same(lang + ' protected FAQ/SEO frontmatter', sha(front.replace(/steps:\n(?:  - .*\n)+/, '')), MDX_PROTECTION[lang].frontSHA);
+  same(lang + ' non-Usage body exact', sha(body), MDX_PROTECTION[lang].bodySHA);
+  check(lang + ' no Usage section', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  let error = ''; try { await compileMdx(body); } catch (e) { error = String(e); } same(lang + ' actual MDX compile', error, '');
+}
+const compiledAstro = await transform(source, { filename:'src/components/tools/SvgToJsxTool.astro' });
+same('v2 Astro diagnostics', compiledAstro.diagnostics.filter(d => d.severity === 1), []);
+let compiledError = ''; try { await parseJs(compiledAstro.code, {loader:'ts',format:'esm'}); } catch (e) { compiledError = String(e); } same('v2 generated Astro module parses', compiledError, '');
+const compiledCss = compiledAstro.css.join('\n');
+check('v2 compiled CSS resolves all global selectors', !compiledCss.includes(':global('));
+check('v2 compiled mobile empty selector retained', compiledCss.includes(':placeholder-shown') && /max-width:\s*860px/.test(compiledCss));
+new Function(script); check('v2 real client script parses without tips', !script.includes('TIPS'));
+
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

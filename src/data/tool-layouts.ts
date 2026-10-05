@@ -18,6 +18,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'html-to-jsx': 'convert',
   'graphql-formatter': 'convert',
   'markdown-toc-generator': 'convert',
+  'svg-to-jsx': 'convert',
   'jsonl-converter': 'convert',
   'json-xml-converter': 'convert',
   'yaml-toml': 'convert',
