@@ -317,5 +317,13 @@ for(const lang of Object.keys(labels)) {
 }
 console.log('v2 page layout: '+(passes-v2Start)+' passed, '+failures+' total failures');
 
+// Verify emitted selectors, where a scoped theme ancestor cannot match the document root.
+const astroRequire = createRequire(createRequire(import.meta.url).resolve('astro/package.json'));
+const { transform: compileAstro } = astroRequire('@astrojs/compiler');
+const emitted = (await compileAstro(source, { filename: 'YamlValidatorTool.astro' })).css.join('\n');
+const manualDark = [...emitted.matchAll(/([^{}]+)\{/g)].map(m => m[1].trim()).filter(s => /\[data-theme=(?:"dark"|dark)\]/.test(s));
+check('compiled manual dark theme covers status and error surface', manualDark.length >= 3);
+for (const selector of manualDark) check('manual dark ancestor matches unscoped html: ' + selector, !/(?:data-astro-cid|\.astro-)/.test(selector.slice(0, selector.indexOf(' .yv-'))));
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
