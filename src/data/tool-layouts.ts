@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'diff-checker': 'compare',
   'number-base': 'compact',
   'bcrypt-generator': 'compact',
   'color-converter': 'compact',
