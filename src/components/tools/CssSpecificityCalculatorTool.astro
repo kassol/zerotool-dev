@@ -28,7 +28,7 @@
           hint: 'Comma-separate multiple selectors to compare',
           id: 'ID', cls: 'Class / Attr / Pseudo-class', elem: 'Element / Pseudo-element',
           specificity: 'Specificity', noInput: 'Enter a CSS selector above.',
-          copyBtn: 'Copy', copied: 'Copied!',
+          copyBtn: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed',
           note: 'Compare left to right: the first column that differs decides. :where() counts 0; :is(), :not(), :has() count as their most specific argument.',
           invalid: 'Not a valid selector: {msg}'
         },
@@ -38,7 +38,7 @@
           hint: '用逗号分隔多个选择器以对比优先级',
           id: 'ID', cls: '类 / 属性 / 伪类', elem: '元素 / 伪元素',
           specificity: '优先级', noInput: '请在上方输入 CSS 选择器。',
-          copyBtn: '复制', copied: '已复制!',
+          copyBtn: '复制', copied: '已复制!', copyFailed: '复制失败',
           note: '从左往右比较，第一个不同的列决定胜负。:where() 计 0；:is()、:not()、:has() 取参数中优先级最高的一项。',
           invalid: '不是有效的选择器：{msg}'
         },
@@ -48,7 +48,7 @@
           hint: 'カンマ区切りで複数のセレクターを比較',
           id: 'ID', cls: 'クラス / 属性 / 疑似クラス', elem: '要素 / 疑似要素',
           specificity: '詳細度', noInput: '上にCSSセレクターを入力してください。',
-          copyBtn: 'コピー', copied: 'コピー済み!',
+          copyBtn: 'コピー', copied: 'コピー済み!', copyFailed: 'コピー失敗',
           note: '左の列から比較し、最初に異なる列で決まります。:where() は 0、:is()・:not()・:has() は引数のうち最も詳細度が高いものを使います。',
           invalid: '有効なセレクターではありません：{msg}'
         },
@@ -58,7 +58,7 @@
           hint: '쉼표로 구분하여 여러 선택자 비교',
           id: 'ID', cls: '클래스 / 속성 / 가상 클래스', elem: '요소 / 가상 요소',
           specificity: '명시도', noInput: '위에 CSS 선택자를 입력하세요.',
-          copyBtn: '복사', copied: '복사됨!',
+          copyBtn: '복사', copied: '복사됨!', copyFailed: '복사 실패',
           note: '왼쪽 열부터 비교하며 처음 달라지는 열이 결정합니다. :where()는 0, :is()·:not()·:has()는 인수 중 명시도가 가장 높은 것을 씁니다.',
           invalid: '올바른 선택자가 아닙니다: {msg}'
         }
@@ -270,7 +270,17 @@
         return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       }
 
+      var copyRevision = 0;
+      function invalidateCopies() {
+        copyRevision++;
+        resultsEl.querySelectorAll('.csc-copy-btn').forEach(function (btn) {
+          clearTimeout(btn._copyTimer);
+          btn.textContent = t.copyBtn;
+        });
+      }
+
       function renderResults(selectors) {
+        invalidateCopies();
         if (!selectors.length) {
           resultsEl.innerHTML = '<p class="csc-empty">' + t.noInput + '</p>';
           return;
@@ -344,10 +354,29 @@
         resultsEl.querySelectorAll('.csc-copy-btn').forEach(function (btn) {
           btn.addEventListener('click', function () {
             var val = btn.getAttribute('data-val');
-            navigator.clipboard.writeText(val).then(function () {
+            var revision = copyRevision;
+            var request = (btn._copyRequest || 0) + 1;
+            btn._copyRequest = request;
+            clearTimeout(btn._copyTimer);
+            btn.textContent = t.copyBtn;
+            function current() {
+              return revision === copyRevision && request === btn._copyRequest && resultsEl.contains(btn);
+            }
+            function copied() {
+              if (!current()) return;
               btn.textContent = t.copied;
-              setTimeout(function () { btn.textContent = t.copyBtn; }, 1500);
-            });
+              btn._copyTimer = setTimeout(function () {
+                if (current()) btn.textContent = t.copyBtn;
+              }, 1500);
+            }
+            function failed() {
+              if (current()) btn.textContent = t.copyFailed;
+            }
+            try {
+              Promise.resolve(navigator.clipboard.writeText(val)).then(copied, failed);
+            } catch (e) {
+              failed();
+            }
             window.trackTool && window.trackTool('css-specificity-calculator', 'copy');
           });
         });
@@ -355,6 +384,7 @@
 
       var _timer = null;
       function onInput() {
+        invalidateCopies();
         clearTimeout(_timer);
         _timer = setTimeout(function () {
           var raw = inputEl.value;
@@ -365,6 +395,15 @@
       }
 
       inputEl.addEventListener('input', onInput);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        if (!document.querySelector('.csc-wrap').contains(document.activeElement)) return;
+        e.preventDefault();
+        inputEl.focus();
+        clearTimeout(_timer);
+        inputEl.value = '';
+        renderResults([]);
+      });
 
       // Initial render
       renderResults([]);
