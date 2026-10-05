@@ -17,6 +17,7 @@
 
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { loadPage, readComponent, frontmatterStrings } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
@@ -100,7 +101,7 @@ eq('round trip values', parsed.rows[1], ['7', 'Bob, Jr.', '["a"]', '']);
 eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), 'e87896cdb21292ad09516b68bb49503cf2f8bcbeaf541ff70eae2056298d7b32');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
-// DOM, clipboard promises, FileReader and time are controlled boundaries; conversion code is real.
+// DOM, clipboard promises and time are controlled boundaries; conversion code is real.
 const sharedSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shared = sharedSource.slice(sharedSource.indexOf("document.addEventListener('keydown'", sharedSource.indexOf('// ── Keyboard shortcuts')), sharedSource.indexOf('// ── Copy button visual feedback'));
 const unhandled = [];
@@ -108,7 +109,7 @@ const onUnhandled = e => unhandled.push(String(e));
 process.on('unhandledRejection', onUnhandled);
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const copyFailures = { en: 'Copy failed', zh: '复制失败', ja: 'コピー失敗', ko: '복사 실패' };
-const s = {"slug": "csv-json", "file": "CsvJsonTool", "p": "cj", "left": "cj-csv", "right": "cj-json", "input": "n\n1", "manual": "cj-to-json", "expected": "[\n  {\n    \"n\": 1\n  }\n]", "copy": ["cj-copy-csv", "cj-copy-json"], "delay": 300};
+const s = {"slug": "csv-json", "file": "CsvJsonTool", "p": "cj", "left": "cj-csv", "right": "cj-json", "input": "n\n1", "expected": "[\n  {\n    \"n\": 1\n  }\n]", "copy": ["cj-copy-csv", "cj-copy-json"], "delay": 300};
 function page(lang='en', order='shared-after') {
   const rel='src/components/tools/'+s.file+'.astro', comp=readComponent(rel), source=comp.src;
   const strings=frontmatterStrings(comp.frontmatter)?.[lang];
@@ -138,7 +139,7 @@ function page(lang='en', order='shared-after') {
   function queryAll(sel){if(sel==='textarea, input[type="text"]')return nodes.filter(e=>e.tagName==='TEXTAREA'||e.tagName==='INPUT'&&e.attributes.type==='text');if(sel.includes('[data-i18n]'))return nodes.filter(e=>'data-i18n'in e.attributes);if(sel.startsWith('.'))return nodes.filter(e=>e.classList.contains(sel.slice(1)));throw Error('unsupported selector '+sel);}
   const get=id=>{if(!byId.has(id))throw Error('missing actual markup id '+id);return byId.get(id);};
   const widget=el();doc={documentElement:{lang},body:el('body'),activeElement:null,getElementById:get,querySelector(sel){if(sel==='.tool-widget')return widget;if(sel==='.tool-widget .btn-primary')return nodes.find(e=>e.classList.contains('btn-primary'))||null;return queryAll(sel)[0]||null;},querySelectorAll:queryAll,createElement:el,addEventListener(k,fn){(docs[k]??=[]).push(fn);},execCommand(){throw Error('native clipboard forbidden');}};doc.activeElement=doc.body;
-  if(strings){const root=doc.querySelector('.cj-wrap');root.dataset={strings:JSON.stringify(strings),lang};}
+  if(strings){const root=doc.querySelector('.cj-wrap');const {tips,...client}=strings;root.dataset={strings:JSON.stringify(client),lang};}
   const setTimeout=(fn,ms=0)=>{const id=++seq;jobs.set(id,{id,fn,ms,due:now+ms});return id;};
   const globals={document:doc,Event:class{constructor(type){this.type=type;}},setTimeout,clearTimeout:id=>jobs.delete(id),trackTool:(...a)=>tracks.push(a),ztPersist:{clear:slug=>cleared.push(slug)},
     navigator:{clipboard:{writeText(text){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});copies.push({text,resolve,reject});return promise;}}}};
@@ -187,7 +188,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
       else if (action === 'CtrlL') p.key(s.right);
       else if (action === 'same-input') p.type(s.left, s.input);
       else if (action === 'new-input') p.type(s.left, 'n\n2');
-      else p.get(s.manual).click();
+      else { p.get('cj-parse-types').fire('change'); p.advance(300); }
       const snapshot = p.state(), errors = unhandled.length;
       old[outcome](outcome === 'reject' ? Error('stale clipboard failure') : undefined); await settle();
       eq(lang + id + action + outcome + ' stale completion leaves current UI', p.state(), snapshot);
@@ -217,9 +218,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 await settle(); process.removeListener('unhandledRejection', onUnhandled);
 
 for (const lang of ['en','zh','ja','ko']) {
-  for (const direction of ['left','right']) for (const mode of ['live','manual']) for (const value of ['', '{']) {
+  for (const direction of ['left','right']) for (const mode of ['live','superseded-queue']) for (const value of ['', '{']) {
     const p=page(lang);p.golden();const input=direction==='left'?s.left:s.right,output=direction==='left'?s.right:s.left;
-    if(mode==='live'){p.type(input,value);p.advance(300);}else{p.get(input).value=value;p.get(direction==='left'?'cj-to-json':'cj-to-csv').click();}
+    if(mode==='superseded-queue')p.type(output,direction==='left'?'[{"n":2}]':'n\n2');p.type(input,value);p.advance(300);
     eq(lang+direction+mode+value+' empty/error removes derived output',p.get(output).value,'');
     if(!value)eq(lang+direction+mode+' empty clears status',p.get('cj-status').textContent,'');
     else check(lang+direction+mode+' invalid shows error',p.get('cj-status').classList.contains('error'));
@@ -232,7 +233,123 @@ for (const lang of ['en','zh','ja','ko']) {
   }
   const p=page(lang);p.golden();p.get('cj-parse-types').checked=false;p.get('cj-parse-types').fire('change');p.advance(300);eq(lang+' parse type option preserved',JSON.parse(p.get(s.right).value),[{n:'1'}]);
   p.type(s.left,'n,z\n,x');p.get('cj-empty-null').checked=true;p.get('cj-empty-null').fire('change');p.advance(300);eq(lang+' empty null option preserved',JSON.parse(p.get(s.right).value),[{n:null,z:'x'}]);p.clear();eq(lang+' Clear preserves settings',[p.get('cj-parse-types').checked,p.get('cj-empty-null').checked],[false,true]);
-  p.type(s.left,s.input);p.get('cj-to-json').click();check(lang+' manual cancels queued conversion',![...p.jobs.values()].some(j=>j.ms===300));
+  p.type(s.left,s.input);p.key(s.left,'Enter');eq(lang+' CtrlEnter leaves pending automatic output empty',p.get(s.right).value,'');p.advance(300);eq(lang+' queued conversion still uses preserved settings',JSON.parse(p.get(s.right).value),[{n:'1'}]);
+}
+
+
+/* ── v2 page layout ── */
+const hash = text => createHash('sha256').update(text).digest('hex');
+const requireRoot = createRequire(join(root, 'package.json'));
+const allStrings = frontmatterStrings(readComponent('src/components/tools/CsvJsonTool.astro').frontmatter);
+const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
+eq('reviewed FIX script preserves all bytes except i18n and removed buttons', hash(script), 'ccd9c3d1b1ceff5c8be3690b26ef920c98877ede09057e505418d17d4aaf8d81');
+check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
+check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
+eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
+check('both editors use zero-basis shared filling', (markupSource.match(/zt-io-fill/g)||[]).length >= 2 && /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(readFileSync(join(root,'src/styles/tool-common.css'),'utf8')));
+check('reserved status has fixed height and overflow', /\.cj-status\s*\{[^}]*height: 2\.6rem;[^}]*min-height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css));
+check('editors scroll inside bounded layout', /\.cj-box\s*\{[^}]*min-width: 0;[^}]*overflow: auto;/.test(css));
+check('860 stacking and 640 touch targets', /@media \(max-width: 860px\)/.test(css) && /@media \(max-width: 640px\)[\s\S]*44px/.test(css));
+check('copy failure width remains reserved', /\.cj-head \.btn-copy\s*\{[^}]*min-width: 6\.75rem;/.test(css));
+check('tips stay outside labels and buttons', !/<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markupSource));
+eq('exact bound tip IDs', [...markupSource.matchAll(/<Toggletip id="([^"]+)"/g)].map(m=>m[1]), ["cj-tip-parse-types", "cj-tip-empty-null", "cj-tip-clear", "cj-tip-csv", "cj-tip-copy-csv", "cj-tip-json", "cj-tip-copy-json"]);
+check('build-time labels replace runtime i18n', !/data-i18n|var STRINGS|document.documentElement.lang/.test(source));
+check('only selected client strings are serialized', /const \{ tips: TIPS, \.\.\.CLIENT \} = T;/.test(source) && /data-strings=\{JSON.stringify\(CLIENT\)\}/.test(markupSource));
+eq('registered convert kind', readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8').match(/['"]csv-json['"]\s*:\s*['"]([^'"]+)['"]/)?.[1], 'convert');
+const ORIGINAL_CLIENT_STRINGS = {
+  "en": {
+    "copy": "Copy",
+    "copied": "Copied!",
+    "copyFailed": "Copy failed",
+    "clear": "Clear",
+    "convertedToJson": "Converted {n} row{s} to JSON.",
+    "convertedToCsv": "Converted {n} row{s} to CSV.",
+    "errorPrefix": "Error: ",
+    "parseTypes": "Parse numbers & booleans",
+    "emptyNull": "Empty → null"
+  },
+  "zh": {
+    "copy": "复制",
+    "copied": "已复制！",
+    "copyFailed": "复制失败",
+    "clear": "清除",
+    "convertedToJson": "已将 {n} 行转换为 JSON。",
+    "convertedToCsv": "已将 {n} 行转换为 CSV。",
+    "errorPrefix": "错误：",
+    "parseTypes": "推断数字和布尔值",
+    "emptyNull": "空字段 → null"
+  },
+  "ja": {
+    "copy": "コピー",
+    "copied": "コピー済み！",
+    "copyFailed": "コピー失敗",
+    "clear": "クリア",
+    "convertedToJson": "{n} 行を JSON に変換しました。",
+    "convertedToCsv": "{n} 行を CSV に変換しました。",
+    "errorPrefix": "エラー：",
+    "parseTypes": "数値・真偽値を自動変換",
+    "emptyNull": "空フィールド → null"
+  },
+  "ko": {
+    "copy": "복사",
+    "copied": "복사됨!",
+    "copyFailed": "복사 실패",
+    "clear": "지우기",
+    "convertedToJson": "{n}행을 JSON으로 변환했습니다.",
+    "convertedToCsv": "{n}행을 CSV로 변환했습니다.",
+    "errorPrefix": "오류: ",
+    "parseTypes": "숫자 및 불리언 추론",
+    "emptyNull": "빈 필드 → null"
+  }
+};
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "3910fb8417a40efc6fa4eef7c3fed47f516b027530e55d0efb0d25aa72031ef3",
+    "body": "0e45b434f9f82277ce1698820f749180e01fc8fc71799263b103f2920aa0f146"
+  },
+  "zh": {
+    "front": "41e6c023aee2487682e47ff48bb71d339aafb01f8d4237aaf3961a1a2eaa8be9",
+    "body": "5f15a4792b9cae1fa12b708b40786ceedaa731812d8d46091bfaeb995906cf69"
+  },
+  "ja": {
+    "front": "90f918a7f23be3f46e2eb9996057cc9541ec8dde8c9a95dae12bd8ca4e345b2a",
+    "body": "2a67a06843448e370a49d80369c59e6352e7548e7f63965e96f9600b9eaa5f8c"
+  },
+  "ko": {
+    "front": "d6d08d3dff5737d30fd730f5af66736571308de08783ebd373134cd880742be4",
+    "body": "12a930d77ec1895959b39ae28f045857973ffb0dcd6782248549975b0c7735ca"
+  }
+};
+const yaml = requireRoot('js-yaml');
+const mdxCompiler = await import(requireRoot.resolve('@mdx-js/mdx'));
+for (const lang of ['en','zh','ja','ko']) {
+  const S = allStrings[lang], p = page(lang), client = JSON.parse(p.doc.querySelector('.cj-wrap').dataset.strings);
+  eq(lang+' original FIX messages and labels unchanged', Object.fromEntries(Object.keys(ORIGINAL_CLIENT_STRINGS[lang]).map(k=>[k,client[k]])), ORIGINAL_CLIENT_STRINGS[lang]);
+  eq(lang+' tip key parity', Object.keys(S.tips), ["csv", "json", "parseTypes", "emptyNull", "clear", "copyCsv", "copyJson"]);
+  check(lang+' tips are bounded plain text', Object.values(S.tips).every(t=>typeof t==='string'&&t.length>0&&[...t].length<=280&&!/[<>]/.test(t)));
+  check(lang+' client payload excludes tips', !Object.hasOwn(client,'tips') && Object.values(S.tips).every(t=>!JSON.stringify(client).includes(t)));
+  const text = readFileSync(join(root,'src/content/tools/csv-json',lang+'.mdx'),'utf8');
+  const [,front,body] = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), data = yaml.load(front);
+  eq(lang+' step count', data.steps.length, 5);
+  check(lang+' steps within 8/280/1200 before FAQ', data.steps.length<=8&&data.steps.every(s=>typeof s==='string'&&[...s].length<=280)&&data.steps.reduce((n,s)=>n+[...s].length,0)<=1200&&front.indexOf('steps:')<front.indexOf('faqItems:'));
+  eq(lang+' FAQ and SEO byte protection', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')), PROTECTED_CONTENT[lang].front);
+  eq(lang+' protected remaining body with explicit removed-button exceptions', hash(body), PROTECTED_CONTENT[lang].body);
+  check(lang+' Usage removed', !/<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  let error='';try{await mdxCompiler.compile(body);}catch(e){error=String(e);}eq(lang+' MDX compiles',error,'');
+}
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const compiled = await transform(source, { filename: join(root, 'src/components/tools/CsvJsonTool.astro') });
+eq('Astro no error diagnostics', compiled.diagnostics.filter(d=>d.severity===1), []);
+let compileError='';try{await requireRoot('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){compileError=String(e);}eq('Astro generated JavaScript parses',compileError,'');
+check('client script excludes all tip bodies', Object.values(allStrings).every(S=>Object.values(S.tips).every(t=>!script.includes(t))));
+
+check('both directions are editable and never hidden', !/readonly|hidden|data-empty/.test(markupSource) && !/display: none/.test(css));
+check('both automatic conversion buttons and labels removed', !/cj-to-(json|csv)|csvToJson["']:|jsonToCsv["']:|btn-primary/.test(markupSource+JSON.stringify(allStrings)));
+for(const lang of ['en','zh','ja','ko'])for(const side of ['left','right']) {
+ const p=page(lang);p.type(s[side],side==='left'?s.input:'[{"n":2}]');p.advance(100);p.key(s[side],'Enter','metaKey');
+ eq(lang+side+' MetaEnter does not rush conversion',p.get(s[side==='left'?'right':'left']).value,'');p.advance(199);eq(lang+side+' debounce still waits 300ms',p.get(s[side==='left'?'right':'left']).value,'');p.advance(1);check(lang+side+' conversion runs after 300ms',p.get(s[side==='left'?'right':'left']).value.length>0);
 }
 
 console.log((failures ? 'FAILED' : 'PASSED') + ': ' + passes + ' passed, ' + failures + ' failed');
