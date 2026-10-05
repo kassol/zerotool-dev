@@ -53,7 +53,7 @@
     (function () {
       var STRINGS = {
         en: {
-          copy: 'Copy', copied: 'Copied!', clear: 'Clear',
+          copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Try again.', clear: 'Clear',
           jsonToXml: 'JSON \u2192 XML', xmlToJson: 'XML \u2192 JSON',
           rootElement: 'Root element', prettyPrint: 'Pretty print',
           convertedToXml: 'Converted JSON to XML.',
@@ -69,7 +69,7 @@
           mixedLoss: '{path}: mixed text and child elements cannot be represented by this JSON mapping.'
         },
         zh: {
-          copy: '复制', copied: '已复制！', clear: '清除',
+          copy: '复制', copied: '已复制！', copyFailed: '复制失败，请重试。', clear: '清除',
           jsonToXml: 'JSON \u2192 XML', xmlToJson: 'XML \u2192 JSON',
           rootElement: '根元素名', prettyPrint: '格式化输出',
           convertedToXml: '已将 JSON 转换为 XML。',
@@ -85,7 +85,7 @@
           mixedLoss: '{path}：当前 JSON 映射无法表示文本与子元素混排。'
         },
         ja: {
-          copy: 'コピー', copied: 'コピー済み！', clear: 'クリア',
+          copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーできませんでした。もう一度お試しください。', clear: 'クリア',
           jsonToXml: 'JSON \u2192 XML', xmlToJson: 'XML \u2192 JSON',
           rootElement: 'ルート要素', prettyPrint: '整形出力',
           convertedToXml: 'JSONをXMLに変換しました。',
@@ -101,7 +101,7 @@
           mixedLoss: '{path}：このJSON変換規則ではテキストと子要素の混在を表現できません。'
         },
         ko: {
-          copy: '복사', copied: '복사됨!', clear: '지우기',
+          copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 다시 시도하세요.', clear: '지우기',
           jsonToXml: 'JSON \u2192 XML', xmlToJson: 'XML \u2192 JSON',
           rootElement: '루트 요소', prettyPrint: '보기 좋게 출력',
           convertedToXml: 'JSON을 XML로 변환했습니다.',
@@ -135,11 +135,26 @@
       var copyXmlBtn = document.getElementById('jx-copy-xml');
       copyJsonBtn.disabled = copyXmlBtn.disabled = true;
 
+      var copyRevision = 0;
+      var copyErrorOwner = null;
+      var copyStates = [{ btn: copyJsonBtn, request: 0, timer: null }, { btn: copyXmlBtn, request: 0, timer: null }];
+      function invalidateCopies() {
+        copyRevision++;
+        copyStates.forEach(function (state) {
+          clearTimeout(state.timer);
+          state.timer = null;
+          state.btn.textContent = t.copy;
+        });
+        copyErrorOwner = null;
+      }
+
       function setStatus(msg, isError) {
+        copyErrorOwner = null;
         statusEl.textContent = msg;
         statusEl.className = 'jx-status ' + (isError ? 'error' : 'success');
       }
       function clearStatus() {
+        copyErrorOwner = null;
         statusEl.textContent = '';
         statusEl.className = 'jx-status';
       }
@@ -292,6 +307,7 @@
       var _jxJsonTimer = null;
       var _jxXmlTimer = null;
       function cancelPending() {
+        invalidateCopies();
         clearTimeout(_jxJsonTimer);
         clearTimeout(_jxXmlTimer);
       }
@@ -324,30 +340,44 @@
         window.trackTool && window.trackTool('json-xml-converter', 'xml_to_json');
       });
 
-      document.getElementById('jx-clear').addEventListener('click', function () {
+      function clearAll() {
         cancelPending();
         jsonEl.value = '';
         xmlEl.value = '';
         copyJsonBtn.disabled = true;
         copyXmlBtn.disabled = true;
         clearStatus();
-      });
+        jsonEl.focus();
+      }
+      document.getElementById('jx-clear').addEventListener('click', clearAll);
 
-      copyJsonBtn.addEventListener('click', function () {
-        if (copyJsonBtn.disabled || !jsonEl.value) return;
-        navigator.clipboard.writeText(jsonEl.value).then(function () {
-          copyJsonBtn.textContent = t.copied;
-          setTimeout(function () { copyJsonBtn.textContent = t.copy; }, 1500);
-        });
-      });
-
-      copyXmlBtn.addEventListener('click', function () {
-        if (copyXmlBtn.disabled || !xmlEl.value) return;
-        navigator.clipboard.writeText(xmlEl.value).then(function () {
-          copyXmlBtn.textContent = t.copied;
-          setTimeout(function () { copyXmlBtn.textContent = t.copy; }, 1500);
-        });
-      });
+      function copyFrom(el, btn, state) {
+        if (btn.disabled || !el.value) return;
+        var revision = copyRevision;
+        var request = ++state.request;
+        var text = el.value;
+        clearTimeout(state.timer);
+        state.timer = null;
+        btn.textContent = t.copy;
+        function current() { return revision === copyRevision && request === state.request && el.value === text && !btn.disabled; }
+        function failed() {
+          if (!current()) return;
+          setStatus(t.copyFailed, true);
+          copyErrorOwner = btn;
+        }
+        function done() {
+          if (!current()) return;
+          if (copyErrorOwner === btn && statusEl.textContent === t.copyFailed) clearStatus();
+          btn.textContent = t.copied;
+          state.timer = setTimeout(function () { if (current()) btn.textContent = t.copy; }, 1500);
+        }
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.writeText) { failed(); return; }
+          navigator.clipboard.writeText(text).then(done, failed);
+        } catch (e) { failed(); }
+      }
+      copyJsonBtn.addEventListener('click', function () { copyFrom(jsonEl, copyJsonBtn, copyStates[0]); });
+      copyXmlBtn.addEventListener('click', function () { copyFrom(xmlEl, copyXmlBtn, copyStates[1]); });
 
       /* ── Keyboard shortcuts ── */
       // stopPropagation: ToolLayout's page-wide Ctrl/Cmd+Enter would also click the first
@@ -366,14 +396,9 @@
       });
       // ToolLayout's Ctrl/Cmd+L empties the text fields without input events.
       document.addEventListener('keydown', function (e) {
-        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
-          setTimeout(function () {
-            if (jsonEl.value || xmlEl.value) return;
-            cancelPending();
-            copyJsonBtn.disabled = true;
-            copyXmlBtn.disabled = true;
-            clearStatus();
-          }, 0);
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && document.querySelector('.jx-wrap').contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
         }
       });
     })();
