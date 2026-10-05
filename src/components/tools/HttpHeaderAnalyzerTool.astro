@@ -287,6 +287,7 @@
       var tabJson = document.getElementById('hha-tab-json');
 
       var lastParsed = null;
+      var copyRevision = 0;
 
       function setStatus(msg, type) {
         statusEl.textContent = msg;
@@ -548,6 +549,7 @@
       }
 
       function analyze() {
+        copyRevision++;
         var text = inputEl.value;
         if (!text.trim()) {
           setStatus(t.pastePrompt, '');
@@ -579,11 +581,21 @@
 
       analyzeBtn.addEventListener('click', analyze);
 
-      clearBtn.addEventListener('click', function () {
+      function clearAll() {
+        copyRevision++;
         inputEl.value = '';
         resultEl.hidden = true;
         lastParsed = null;
         setStatus('', '');
+      }
+
+      clearBtn.addEventListener('click', clearAll);
+      inputEl.addEventListener('input', function () { copyRevision++; });
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L') || !document.querySelector('.hha-wrap').contains(document.activeElement)) return;
+        e.preventDefault();
+        inputEl.focus();
+        clearAll();
       });
 
       exampleSel.addEventListener('change', function () {
@@ -597,14 +609,19 @@
       });
 
       copyJsonBtn.addEventListener('click', function () {
+        var revision = ++copyRevision;
         if (!lastParsed) { setStatus(t.analyzeFirst, 'error'); return; }
         var json = jsonOut.textContent;
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(json).then(
-            function () { setStatus(t.copied, 'success'); },
-            function () { fallbackCopy(json); }
-          );
-        } else {
+        try {
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(json).then(
+              function () { if (revision === copyRevision) setStatus(t.copied, 'success'); },
+              function () { if (revision === copyRevision) fallbackCopy(json); }
+            );
+          } else {
+            fallbackCopy(json);
+          }
+        } catch (e) {
           fallbackCopy(json);
         }
         window.trackTool && window.trackTool('http-header-analyzer', 'copy_json');
@@ -614,7 +631,10 @@
         var ta = document.createElement('textarea');
         ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
         document.body.appendChild(ta); ta.select();
-        try { document.execCommand('copy'); setStatus(t.copied, 'success'); }
+        try {
+          var copied = document.execCommand('copy');
+          setStatus(copied ? t.copied : t.copyFailed, copied ? 'success' : 'error');
+        }
         catch (e) { setStatus(t.copyFailed, 'error'); }
         document.body.removeChild(ta);
       }

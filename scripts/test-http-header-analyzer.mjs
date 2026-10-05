@@ -20,6 +20,9 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HttpHeaderAnalyzerTool.astro'), 'utf8');
@@ -115,6 +118,188 @@ for (const [lang, text] of Object.entries(pages)) {
 }
 eq('persistence disabled', /'http-header-analyzer': 'disabled'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')), true);
 eq('script stores nothing', /localStorage|sessionStorage|ztPersist|fetch\(/.test(source), false);
+
+// ---------- real page controls and shared shortcuts ----------
+// Execute the complete inline IIFE with actual markup, localized strings and shared keydown.
+// Only DOM/clipboard delivery are controlled; parse5 decodes the real rendered output.
+console.log('Existing checks: '+passes+' passed, '+failures+' failed');
+const pageStart=passes, requireFromRoot=createRequire(join(root,'package.json'));
+const {parseFragment,defaultTreeAdapter}=requireFromRoot('parse5');
+const inline=source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const strings=vm.runInNewContext(source.slice(source.indexOf('var STRINGS ='),source.indexOf('// Header dictionary'))+';STRINGS;');
+const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
+const shortcut=layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
+const must=(ok,message)=>{if(!ok)throw Error('Harness prerequisite: '+message);};
+must(shortcut.includes('window.ztPersist.clear(_slug)'),'actual shared shortcut');
+const settle=()=>new Promise(setImmediate);
+function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+const escapeHtml=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const unhandled=[],onUnhandled=error=>unhandled.push(String(error));process.on('unhandledRejection',onUnhandled);
+function page(lang='en',order='shared-after',options={}){
+  const clipboard=[],downloads=[],timers=new Map(),tracks=[],blobs=new Map(),execCalls=[],clears=[];
+  let timerId=0,doc,copyMode='pending',execMode=options.execMode??'false';
+  const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
+  const matchOne = (el, selector) => {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    if (parts.length > 1) {
+      if (!matchOne(el, parts.pop())) return false;
+      for (let parent = el.parentNode; parent; parent = parent.parentNode) if (matchOne(parent, parts.join(' '))) return true;
+      return false;
+    }
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+    return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+      && [...plain.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))
+      && attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+  };
+  const matches = (el, selector) => selector.split(',').some(part => matchOne(el, part.trim()));
+  class EventStub {
+    constructor(type, extra = {}) { Object.assign(this, { type, bubbles: false, defaultPrevented: false }, extra); }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() { this.stopped = true; }
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', type: tag === 'input' ? 'text' : '', style: {}, text: '', _value: '', dirtyValue: false, disabled: false, hidden: false }); }
+    get hidden() { return this._hidden || false; }
+    set hidden(value) { this._hidden=!!value;if(value&&doc?.activeElement&&this.contains(doc.activeElement))doc.activeElement=doc.body; }
+    get value() {
+      if (!this.dirtyValue && this.tagName === 'TEXTAREA') return this.textContent;
+      if (!this.dirtyValue && this.tagName === 'SELECT') return this.querySelector('option')?.value ?? '';
+      return this._value;
+    }
+    set value(v) { this._value = String(v); this.dirtyValue = true; }
+    get firstChild() { return this.children[0]??null; }
+    get dataset() { const el=this;return new Proxy({}, {get(_,key){return el.getAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()));},set(_,key,value){el.setAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()),value);return true;}}); }
+    get parentElement() { return this.parentNode; }
+    get isConnected() { return doc.contains(this); }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); }, toggle(c,force) { const yes=force??!this.contains(c);yes?this.add(c):this.remove(c);return yes; } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (['id', 'class', 'type', 'value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); if (['hidden', 'disabled', 'checked'].includes(k)) this[k] = true; }
+    getAttribute(k) { if (['id', 'class', 'type'].includes(k)) return this[k === 'class' ? 'className' : k] || null; return this.attributes[k] ?? null; }
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+    set textContent(v) { for (const child of this.children) child.parentNode = null; this.children = []; this.text = String(v); }
+    set innerHTML(v) {
+      this.textContent = '';
+      // parse5 supplies the real HTML tokenizer/entity table in the actual element context.
+      // In particular, textarea uses RCDATA. No homemade entity decoder is used.
+      const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
+      for (const node of parseFragment(context, String(v)).childNodes) this.appendChild(fromParse5(node));
+    }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { const i=this.children.indexOf(child);if(i>=0)this.children.splice(i,1);child.parentNode=null;return child; }
+    querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    contains(el) { return el === this || descendants(this).includes(el); }
+    closest(selector) { for (let el = this; el; el = el.parentNode) if (matches(el, selector)) return el; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatchEvent(event) {
+      event.target = this;
+      for (let el = this; el; el = el.parentNode) {
+        event.currentTarget = el;
+        for (const fn of el.listeners[event.type] || []) fn.call(el, event);
+        if (!event.bubbles || event.stopped) break;
+      }
+      return !event.defaultPrevented;
+    }
+    dispatch(type, extra = {}) { return this.dispatchEvent(new EventStub(type, { bubbles: true, ...extra })); }
+    click() { if(this.disabled)return;if(this.tagName==='A'&&this.download)downloads.push({name:this.download,blob:blobs.get(this.href)});this.dispatch('click'); }
+    select() { doc.selectedElement=this; }
+    focus() { doc.activeElement = this; }
+    setSelectionRange(start,end) { this.selectionStart=start;this.selectionEnd=end; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const attr of node.attrs || []) el.setAttribute(attr.name, attr.value);
+    for (const child of node.childNodes || []) if (child.nodeName !== '#comment') el.appendChild(fromParse5(child));
+    return el;
+  }
+  doc = new Element('#document'); doc.documentElement = new Element('html'); doc.documentElement.lang = lang; doc.appendChild(doc.documentElement);
+  doc.body = new Element('body'); doc.documentElement.appendChild(doc.body);
+  const widget = new Element('section'); widget.className = 'tool-widget'; doc.body.appendChild(widget);
+  const markup = source.replace(/^---\n[\s\S]*?\n---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/placeholder=\{("(?:[^"\\]|\\.)*")\}/g,(_,json)=>'placeholder="'+escapeHtml(JSON.parse(json))+'"');
+  widget.innerHTML = markup;
+  doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
+  doc.createElement = tag => new Element(tag);
+  doc.activeElement = doc.body;
+  doc.execCommand = command => { execCalls.push({command,text:doc.selectedElement?.value??null});if(execMode==='throw')throw Error('probe blocked execCommand');return execMode==='true'; };
+  const scriptNode=new Element('script');widget.appendChild(scriptNode);doc.currentScript=scriptNode;
+
+  const sandbox={document:doc,console,TextEncoder,TextDecoder,Event:EventStub,Blob,
+    _slug:'http-header-analyzer',ztPersist:{clear(slug){clears.push(slug);}},trackTool(...args){tracks.push(args);},
+    setTimeout(fn,ms){timers.set(++timerId,{fn,ms});return timerId;},clearTimeout(id){timers.delete(id);},
+    navigator:options.noClipboard?{}:{clipboard:{writeText(value){if(copyMode==='throw')throw Error('Synchronous copy denial');const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
+    URL:{createObjectURL(blob){const url='blob:probe-'+blobs.size;blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},
+  };
+  sandbox.window=sandbox;const context=vm.createContext(sandbox);
+  if(order==='shared-before')vm.runInContext(shortcut,context,{filename:'ToolLayout.astro:keydown'});
+  vm.runInContext(inline,context,{filename:'HttpHeaderAnalyzerTool.astro:complete-inline',timeout:1000});
+  if(order==='shared-after')vm.runInContext(shortcut,context,{filename:'ToolLayout.astro:keydown'});
+  doc.currentScript=null;
+  const get=id=>{const el=doc.getElementById(id);must(el,'source ID '+id);return el;};
+  const nativeClipboard=sandbox.navigator.clipboard;
+  return{order,doc,widget,get,clipboard,downloads,execCalls,timers,tracks,clears,
+    copyMode(mode){copyMode=mode;sandbox.navigator.clipboard=mode==='missing'?undefined:nativeClipboard;},
+    execMode(mode){execMode=mode;},
+    input(id,text){get(id).value=text;get(id).dispatch('input');},
+    key(id='hha-input',key='l',mod='ctrlKey'){const el=id==='outside'?doc.body:get(id);el.focus();const event=new EventStub('keydown',{bubbles:true,key,[mod]:true});el.dispatchEvent(event);return event;},
+    flush(ms){for(const[id,t]of[...timers])if(t.ms===ms){timers.delete(id);t.fn();}},
+    fire(id){const t=timers.get(id);must(t,'captured actual timer');timers.delete(id);t.fn();},
+  };
+}
+
+const fixture='HTTP/1.1 200 OK\nX-Probe: old\nX-Probe: second\nContent-Type: text/plain';
+const expected={_status:'HTTP/1.1 200 OK','x-probe':['old','second'],'content-type':'text/plain'};
+function analyze(h,text=fixture){h.input('hha-input',text);h.get('hha-analyze').click();}
+function snapshot(h){return{input:h.get('hha-input').value,status:h.get('hha-status').textContent,statusClass:h.get('hha-status').className,hidden:h.get('hha-result').hidden,json:h.get('hha-json-output').textContent,raw:h.get('hha-raw-output').textContent};}
+for(const lang of ['en','zh','ja','ko']){
+  const T=strings[lang],parsed=T.analyzed.replace('{n}','3').replace('{s}','s');
+  for(const order of ['shared-before','shared-after']){
+    const h=page(lang,order);analyze(h);
+    eq(lang+' '+order+' real JSON full bytes',h.get('hha-json-output').textContent,JSON.stringify(expected,null,2));
+    eq(lang+' '+order+' golden parsed status',h.get('hha-status').textContent,parsed);
+    h.get('hha-tab-json').click();eq(lang+' JSON tab visible',[h.get('hha-panel-cat').hidden,h.get('hha-panel-raw').hidden,h.get('hha-panel-json').hidden],[true,true,false]);
+    const old=snapshot(h);eq(lang+' outside CtrlL untouched',h.key('outside').defaultPrevented,false);eq(lang+' outside state kept',snapshot(h),old);
+    eq(lang+' unmodified L untouched',h.key('hha-input','L','shiftKey').defaultPrevented,false);eq(lang+' unmodified state kept',snapshot(h),old);
+    for(const mod of ['ctrlKey','metaKey'])for(const key of ['l','L']){
+      analyze(h);h.get('hha-copy-json').click();const pending=h.clipboard.at(-1);
+      eq(lang+' scoped shortcut prevents default',h.key('hha-tab-json',key,mod).defaultPrevented,true);
+      eq(lang+' clear fields/status/result',[h.get('hha-input').value,h.get('hha-status').textContent,h.get('hha-result').hidden],['','',true]);
+      eq(lang+' shared persistence called after focused result hides',h.clears.at(-1),'http-header-analyzer');
+      const cleared=snapshot(h);pending.resolve();await settle();eq(lang+' pending copy cannot restore cleared state',snapshot(h),cleared);
+      const count=h.clipboard.length;h.get('hha-copy-json').click();eq(lang+' cleared cache cannot copy',h.clipboard.length,count);eq(lang+' current empty copy says analyze first',h.get('hha-status').textContent,T.analyzeFirst);
+    }
+    analyze(h);h.get('hha-clear').click();eq(lang+' explicit clear same state',[h.get('hha-input').value,h.get('hha-status').textContent,h.get('hha-result').hidden],['','',true]);
+    h.input('hha-input','HTTP/1.1 204 No Content\nX-Probe: new');h.key('hha-input','Enter');eq(lang+' CtrlEnter real Analyze',JSON.parse(h.get('hha-json-output').textContent),{_status:'HTTP/1.1 204 No Content','x-probe':'new'});
+  }
+  for(const mode of ['reject','throw','missing'])for(const fallback of ['true','false','throw']){
+    const h=page(lang);analyze(h);h.copyMode(mode);h.execMode(fallback);let thrown=false;try{h.get('hha-copy-json').click();}catch{thrown=true;}
+    if(mode==='reject')h.clipboard[0].reject(Error('Denied'));await settle();
+    eq(lang+' '+mode+'/'+fallback+' no sync throw',thrown,false);eq(lang+' '+mode+'/'+fallback+' truthful status',h.get('hha-status').textContent,fallback==='true'?T.copied:T.copyFailed);
+    eq(lang+' '+mode+'/'+fallback+' fallback exact bytes',h.execCalls.map(c=>[c.command,c.text]),[['copy',JSON.stringify(expected,null,2)]]);
+    eq(lang+' fallback textarea removed',h.doc.body.querySelectorAll('textarea').length,1);
+    h.copyMode('pending');h.get('hha-copy-json').click();eq(lang+' retry actual copy bytes',h.clipboard.at(-1).value,JSON.stringify(expected,null,2));h.clipboard.at(-1).resolve();await settle();eq(lang+' direct retry succeeds',h.get('hha-status').textContent,T.copied);
+  }
+  const edits={clear:h=>h.get('hha-clear').click(),ctrlL:h=>h.key(),input:h=>h.input('hha-input','X-Other: pending'),analyze:h=>analyze(h,'HTTP/1.1 204 No Content\nX-Probe: new'),invalid:h=>analyze(h,'unparseable'),empty:h=>analyze(h,''),example:h=>{h.get('hha-example').value='response-basic';h.get('hha-example').dispatch('change');}};
+  for(const[name,edit]of Object.entries(edits))for(const outcome of ['resolve','reject']){
+    const h=page(lang);analyze(h);h.get('hha-copy-json').click();const pending=h.clipboard[0];edit(h);const current=snapshot(h);
+    pending[outcome](outcome==='reject'?Error('Old denial'):undefined);await settle();eq(lang+' late '+outcome+' after '+name+' leaves state',snapshot(h),current);eq(lang+' late '+outcome+' after '+name+' never invokes stale fallback',h.execCalls.length,0);
+  }
+  for(const outcome of ['resolve','reject'])for(const oldFirst of [true,false]){
+    const h=page(lang);analyze(h);h.get('hha-copy-json').click();h.get('hha-copy-json').click();const pending=h.clipboard[0],newest=h.clipboard[1];
+    if(!oldFirst){newest.resolve();await settle();}
+    const current=snapshot(h);pending[outcome](Error('Old denial'));await settle();eq(lang+' overlapping '+outcome+' oldFirst='+oldFirst+' leaves newest state',snapshot(h),current);eq(lang+' overlapping stale failure cannot fallback',h.execCalls.length,0);
+    if(oldFirst){newest.resolve();await settle();}eq(lang+' latest request succeeds',h.get('hha-status').textContent,T.copied);
+  }
+  const h=page(lang);analyze(h);h.input('hha-input','X-New: pending');eq(lang+' manual editing preserves displayed results',h.get('hha-json-output').textContent,JSON.stringify(expected,null,2));h.get('hha-copy-json').click();eq(lang+' new Copy exports displayed last analyzed result',h.clipboard.at(-1).value,JSON.stringify(expected,null,2));h.clipboard.at(-1).resolve();await settle();
+  analyze(h,'');eq(lang+' empty Analyze prompt and no result',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.pastePrompt,true]);
+  analyze(h,'unparseable');eq(lang+' invalid Analyze prompt and no result',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty,true]);
+}
+await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
+const protectedBytes={"dictionary": {"bytes": 10097, "sha256": "fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"}, "parser": {"bytes": 7383, "sha256": "1dbae91a9c7eacf41981e2a339522352fe9f1306b7b27661d3f744a235902f86"}};
+for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
+console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
