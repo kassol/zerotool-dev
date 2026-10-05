@@ -58,25 +58,25 @@
           sqlInput: 'SQL Input', indent: 'Indent:', indent2: '2 spaces', indent4: '4 spaces', indentTab: 'Tab',
           uppercaseKeywords: 'Uppercase keywords', format: 'Format', minify: 'Minify', clear: 'Clear',
           output: 'Output', copy: 'Copy', copied: 'Copied!', outputPlaceholder: 'Formatted SQL appears here...',
-          formatted: 'Formatted.', minified: 'Minified.'
+          copyFailed: 'Copy failed. Please try again.', formatted: 'Formatted.', minified: 'Minified.'
         },
         zh: {
           sqlInput: 'SQL 输入', indent: '缩进：', indent2: '2 个空格', indent4: '4 个空格', indentTab: 'Tab',
           uppercaseKeywords: '关键字大写', format: '格式化', minify: '压缩', clear: '清除',
           output: '输出', copy: '复制', copied: '已复制！', outputPlaceholder: '格式化后的 SQL 显示在此处...',
-          formatted: '已格式化。', minified: '已压缩。'
+          copyFailed: '复制失败，请重试。', formatted: '已格式化。', minified: '已压缩。'
         },
         ja: {
           sqlInput: 'SQL 入力', indent: 'インデント：', indent2: '2スペース', indent4: '4スペース', indentTab: 'タブ',
           uppercaseKeywords: 'キーワードを大文字', format: '整形', minify: '圧縮', clear: 'クリア',
           output: '出力', copy: 'コピー', copied: 'コピー済み！', outputPlaceholder: '整形された SQL がここに表示されます...',
-          formatted: '整形しました。', minified: '圧縮しました。'
+          copyFailed: 'コピーに失敗しました。もう一度お試しください。', formatted: '整形しました。', minified: '圧縮しました。'
         },
         ko: {
           sqlInput: 'SQL 입력', indent: '들여쓰기:', indent2: '공백 2개', indent4: '공백 4개', indentTab: '탭',
           uppercaseKeywords: '키워드 대문자', format: '서식 지정', minify: '최소화', clear: '지우기',
           output: '출력', copy: '복사', copied: '복사됨!', outputPlaceholder: '서식이 지정된 SQL이 여기에 표시됩니다...',
-          formatted: '서식 지정 완료.', minified: '최소화 완료.'
+          copyFailed: '복사하지 못했습니다. 다시 시도하세요.', formatted: '서식 지정 완료.', minified: '최소화 완료.'
         }
       };
 
@@ -96,12 +96,24 @@
       var indentSel = document.getElementById('sf-indent');
       var uppercaseCb = document.getElementById('sf-uppercase');
 
+      var copyRevision = 0, copyTimer = null, copyFailure = false;
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        copyFailure = false;
+      }
+
       function setStatus(msg, isError) {
+        copyFailure = false;
         statusEl.textContent = msg;
         statusEl.className = 'sf-status ' + (isError ? 'error' : 'success');
       }
 
       function clearStatus() {
+        copyFailure = false;
         statusEl.textContent = '';
         statusEl.className = 'sf-status';
       }
@@ -512,15 +524,20 @@
       var _sfLiveTimer = null;
       input.addEventListener('input', function () {
         clearTimeout(_sfLiveTimer);
+        invalidateCopy();
         _sfLiveTimer = setTimeout(function () {
+          _sfLiveTimer = null;
+          invalidateCopy();
           var raw = input.value.trim();
-          if (!raw) { clearStatus(); return; }
+          if (!raw) { output.value = ''; lastValidSqlOutput = ''; clearStatus(); return; }
           try {
             var result = formatSQL(raw, getIndent(), uppercaseCb.checked);
             output.value = result;
             lastValidSqlOutput = result;
             setStatus(t.formatted, false);
           } catch (e) {
+            output.value = '';
+            lastValidSqlOutput = '';
             setStatus('Error: ' + e.message, true);
           }
         }, 300);
@@ -528,50 +545,89 @@
 
       /* ── Button handlers ── */
       document.getElementById('sf-format').addEventListener('click', function () {
+        clearTimeout(_sfLiveTimer);
+        _sfLiveTimer = null;
+        invalidateCopy();
         var raw = input.value.trim();
-        if (!raw) { clearStatus(); return; }
+        if (!raw) { output.value = ''; lastValidSqlOutput = ''; clearStatus(); return; }
         try {
           output.value = formatSQL(raw, getIndent(), uppercaseCb.checked);
           lastValidSqlOutput = output.value;
           setStatus(t.formatted, false);
           window.trackTool && window.trackTool('sql_formatter', 'format');
         } catch (e) {
+          output.value = '';
+          lastValidSqlOutput = '';
           setStatus('Error: ' + e.message, true);
         }
       });
 
       document.getElementById('sf-minify').addEventListener('click', function () {
+        clearTimeout(_sfLiveTimer);
+        _sfLiveTimer = null;
+        invalidateCopy();
         var raw = input.value.trim();
-        if (!raw) { clearStatus(); return; }
+        if (!raw) { output.value = ''; lastValidSqlOutput = ''; clearStatus(); return; }
         try {
           output.value = minifySQL(raw);
           lastValidSqlOutput = output.value;
           setStatus(t.minified, false);
           window.trackTool && window.trackTool('sql_formatter', 'minify');
         } catch (e) {
+          output.value = '';
+          lastValidSqlOutput = '';
           setStatus('Error: ' + e.message, true);
         }
       });
 
       document.getElementById('sf-clear').addEventListener('click', function () {
+        clearTimeout(_sfLiveTimer);
+        _sfLiveTimer = null;
+        invalidateCopy();
         input.value = '';
         output.value = '';
+        lastValidSqlOutput = '';
         clearStatus();
+        input.focus();
       });
 
       copyBtn.addEventListener('click', function () {
         var text = output.value;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        function current() { return revision === copyRevision && output.value === text; }
+        function failed() {
+          if (!current()) return;
+          setStatus(t.copyFailed, true);
+          copyFailure = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (!current()) return;
+            if (copyFailure && statusEl.textContent === t.copyFailed) clearStatus();
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () {
+              if (current()) copyBtn.textContent = t.copy;
+            }, 1500);
+          }, failed);
+        } catch (_) { failed(); }
       });
 
       /* ── Keyboard shortcut: Ctrl/Cmd+Enter ── */
       input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          e.stopPropagation();
           document.getElementById('sf-format').click();
+        }
+      });
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && document.querySelector('.sf-wrap').contains(document.activeElement)) {
+          e.preventDefault();
+          document.getElementById('sf-clear').click();
         }
       });
     })();
