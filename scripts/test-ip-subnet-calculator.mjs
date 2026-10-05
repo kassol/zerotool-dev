@@ -25,12 +25,16 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { isIPv4 } from 'node:net';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import domino from '@mixmark-io/domino';
-import { loadPage } from './astro-page-harness.mjs';
+import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/IpSubnetCalculatorTool.astro'), 'utf8');
+const frontmatter=source.split('---')[1];
+const pageStrings=frontmatterStrings(frontmatter);
+const locale=new Function('lang',frontmatter.slice(frontmatter.indexOf('const STRINGS'))+'\nreturn {T,TIPS,CLIENT_T};');
 
 const START_MARK = '/* ── engine:start ── */';
 const END_MARK = '/* ── engine:end ── */';
@@ -126,7 +130,7 @@ eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast
 // render() takes the prefix after the slash over the dropdown, so the dropdown used to do
 // nothing while the input had a slash (including the 192.168.1.0/24 shown on load).
 {
-  const scriptMatch = /<script is:inline>([\s\S]*?)<\/script>/.exec(source);
+  const scriptMatch = /<script\b[^>]*>([\s\S]*?)<\/script>/.exec(source);
   const els = {};
   const el = (id) => {
     if (!els[id]) {
@@ -147,8 +151,8 @@ eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast
     addEventListener() {},
     createElement() { return {}; },
   };
-  new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', scriptMatch[1])(
-    document, {}, {}, (fn) => fn(), () => {});
+  new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', 't', scriptMatch[1])(
+    document, {}, {}, (fn) => fn(), () => {}, locale('en').CLIENT_T);
   eq('on load', [el('isc-input').value, el('isc-prefix').value, el('isc-hosts').textContent], ['192.168.1.0/24', '24', '254']);
   el('isc-prefix').value = '26';
   el('isc-prefix').fire('change');
@@ -172,8 +176,7 @@ eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast
   el('isc-input').fire('input');
   eq('/30 broadcast cell is an address', el('isc-broadcast').textContent, '203.0.113.11');
   for (const lang of ['zh', 'ja', 'ko']) {
-    const block = new RegExp('\\n        ' + lang + ': \\{([\\s\\S]*?)\\n        \\}').exec(source);
-    check(lang + ' has the no-broadcast strings', !!block && /noBroadcast31: '/.test(block[1]) && /noBroadcast32: '/.test(block[1]));
+    check(lang + ' has the no-broadcast strings', !!pageStrings[lang].noBroadcast31 && !!pageStrings[lang].noBroadcast32);
   }
 }
 
@@ -299,9 +302,13 @@ eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast
 
 // ---------- complete page lifecycle and real shared shortcuts ----------
 // Execute the original renderer/listeners; control only the DOM, clipboard delivery and clock.
-const pageScript=source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
-const pageStrings=new Function(pageScript.slice(pageScript.indexOf('var STRINGS'),pageScript.indexOf('var pageLang'))+'\nreturn STRINGS;')();
-const markup=source.replace(/^---\n[\s\S]*?\n---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+const markupTemplate=source.replace(/^---\n[\s\S]*?\n---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+const escapeMarkup=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function renderMarkup(lang){
+ const T=pageStrings[lang],about=JSON.parse(readFileSync(join(root,'src/i18n',lang+'.json'),'utf8'))['tool.tipAbout'];
+ return markupTemplate.replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g,(_all,id,label,key)=>'<span class="zt-tip"><button type="button" data-zt-tip="'+id+'" aria-label="'+escapeMarkup(about.replace('{name}',T[label]))+'"></button><span id="'+id+'" class="zt-tip-pop" hidden>'+escapeMarkup(T.tips[key])+'</span></span>')
+  .replace(/=\{T\.(\w+)\}/g,(_all,key)=>'="'+escapeMarkup(T[key])+'"').replace(/\{T\.(\w+)\}/g,(_all,key)=>escapeMarkup(T[key]));
+}
 const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
 const shortcut=layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
 const unhandled=[];
@@ -309,7 +316,7 @@ const onUnhandled=error=>unhandled.push(String(error));
 process.on('unhandledRejection',onUnhandled);
 const settle=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
 function page(lang,order){
- const document=domino.createDocument('<html lang="'+lang+'"><body><main class="tool-widget">'+markup+'</main><input id="outside" type="text"></body></html>');
+ const document=domino.createDocument('<html lang="'+lang+'"><body><main class="tool-widget">'+renderMarkup(lang)+'</main><input id="outside" type="text"></body></html>');
  Object.defineProperty(document,'activeElement',{value:document.body,writable:true,configurable:true});
  const timers=new Map(),clipboard=[],clears=[],tracks=[],errors=[],effects=[];
  let clock=0,seq=0;
@@ -319,7 +326,7 @@ function page(lang,order){
  function focus(el){if(!Object.hasOwn(el,'focus'))Object.defineProperty(el,'focus',{value:()=>{document.activeElement=el;}});el.focus();}
  focus(input);
  const navigator={clipboard:{writeText(value){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});clipboard.push({value,promise,resolve,reject});return promise;}}};
- const globals={document,navigator,_slug:'ip-subnet-calculator',ztPersist:{clear:slug=>clears.push(slug)},trackTool:(...args)=>tracks.push(args),fetch(){effects.push('network');throw Error('Unexpected network');},setTimeout(fn,ms){timers.set(++seq,{fn,ms,due:clock+ms});return seq;},clearTimeout(id){timers.delete(id);}};
+ const globals={document,navigator,t:locale(lang).CLIENT_T,_slug:'ip-subnet-calculator',ztPersist:{clear:slug=>clears.push(slug)},trackTool:(...args)=>tracks.push(args),fetch(){effects.push('network');throw Error('Unexpected network');},setTimeout(fn,ms){timers.set(++seq,{fn,ms,due:clock+ms});return seq;},clearTimeout(id){timers.delete(id);}};
  document.execCommand=()=>{effects.push('fallback');throw Error('Unexpected fallback');};
  if(order==='shared-before'){const ctx=vm.createContext(globals);ctx.window=ctx;vm.runInContext(shortcut,ctx);}
  const real=loadPage('src/components/tools/IpSubnetCalculatorTool.astro',{lang,globals});
@@ -403,6 +410,76 @@ process.removeListener('unhandledRejection',onUnhandled);
 const protectedEngine=source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
 eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),2859);
 eq('engine exact original SHA256',createHash('sha256').update(protectedEngine).digest('hex'),'9a6bf50d51da3dc435dfb60b187b15236bae2e9e68d855f18880081c655c11ee');
+
+// ---------- v2 page layout ----------
+const require=createRequire(join(root,'package.json'));
+const astroRequire=createRequire(require.resolve('astro/package.json'));
+const compiled=await astroRequire('@astrojs/compiler').transform(source,{filename:join(root,'src/components/tools/IpSubnetCalculatorTool.astro'),scopedStyleStrategy:'attribute'});
+check('v2 Astro compilation diagnostics',!compiled.diagnostics.some(d=>d.severity===1));
+let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){moduleError=String(e);}eq('v2 generated module parses',moduleError,'');
+const css=compiled.css.join('\n'),hash=v=>createHash('sha256').update(v).digest('hex');
+eq('v2 whole client core retained after build-time localization',hash(source.slice(source.indexOf('      var inputEl    ='),source.indexOf('  </script>'))),'2e5e3700cc84a92770e1a43c33f82b141010a1a799e6ad9d31d374f1fa487850');
+check('v2 direct flex root',/^<div class="isc-wrap">/.test(markupTemplate)&&/\.isc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
+check('v2 controls then stable status then full-width result',markupTemplate.indexOf('isc-inputs')<markupTemplate.indexOf('isc-status')&&markupTemplate.indexOf('isc-status')<markupTemplate.indexOf('isc-result-section'));
+check('v2 fixed status and long error scroll',/\.isc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css)&&/@media\s*\(max-width:\s*860px\)[\s\S]*?height:\s*4\.2em/.test(css));
+for(const cls of ['isc-result-section','isc-results','isc-table-scroll'])check('v2 zero basis and minimum sizes '+cls,new RegExp('\\.'+cls+'[^{}]*\\{[^}]*flex:\\s*1 1 0[^}]*min-width:\\s*0[^}]*min-height:\\s*0').test(css));
+check('v2 actual table scrollbar bounded',/\.isc-table-scroll[^{}]*\{[^}]*overflow:\s*auto/.test(css));
+check('v2 hidden result wins flex',/\.isc-results[^{}]*\[hidden\][^{}]*\{\s*display:\s*none/.test(css));
+check('v2 stable stacked result heights',/@media\s*\(max-width:\s*860px\)[\s\S]*?height:\s*26rem/.test(css)&&/@media\s*\(max-width:\s*640px\)[\s\S]*?height:\s*24rem/.test(css));
+check('v2 phone input/select/copy 44px',/@media\s*\(max-width:\s*640px\)[\s\S]*?input[^{}]*select[^{}]*\.btn-copy[^{}]*\{\s*min-height:\s*44px/.test(css));
+check('v2 table content wraps inside fixed columns',/\.isc-table[^{}]*\{[^}]*table-layout:\s*fixed/.test(css)&&/\.isc-table[^{}]*td[^{}]*\{[^}]*overflow-wrap:\s*anywhere/.test(css));
+check('v2 empty result has a desktop sentence and hides on stacked screens',markupTemplate.includes('id="isc-empty"')&&/@media\s*\(max-width:\s*860px\)[\s\S]*?:has\(#isc-results[^)]*\[hidden\][^)]*\)[^{}]*\{\s*display:\s*none/.test(css));
+check('v2 full result hides empty prompt',/:has\(#isc-results[^)]*:not\(\[hidden\]\)[^)]*\)[^{}]*\.isc-empty[^{}]*\{\s*display:\s*none/.test(css));
+check('v2 compiled styles contain no unresolved global',!css.includes(':global('));
+check('v2 automatic dark ancestor is global',/:root:not\(\[data-theme="light"\]\)\s+\.isc-error\[data-astro-cid-/.test(css));
+check('v2 selected dark ancestor is global',/\[data-theme="dark"\]\s+\.isc-error\[data-astro-cid-/.test(css));
+check('v2 no runtime localization or duplicate source tables',!/data-i18n|document\.documentElement\.lang|var STRINGS/.test(source));
+const pageScript=source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+check('v2 tips excluded from script',/define:vars=\{\{ t: CLIENT_T \}\}/.test(source)&&!/TIPS|tips|STRINGS/.test(pageScript));
+const bindings=[...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 tip IDs',bindings.map(m=>m[1]),['isc-tip-input','isc-tip-prefix','isc-tip-results','isc-tip-copy']);
+check('v2 tips outside labels and buttons',!/<(?:label|button)\b[^>]*>(?:(?!<\/(?:label|button)>)[\s\S])*?<Toggletip/.test(markupTemplate));
+const contentHashes={
+  "en": "4c0183233d07ae080596e0a0ab947c6f1776c6cd6ba47ca57ddc8d057d3ae766",
+  "zh": "7d538535cb8d6d6db25719e283dbc8ff8170356a577d7a635ffc00b37010e92c",
+  "ja": "4e2204376284eddc2e9a7ab20ab9111ec6c515dfa75eac31ce012b361e206c4e",
+  "ko": "7f7927e43e91a49333d53a8fa9ff7dde0a0aab055a6652d0291be7a8b8d6a660"
+};
+const originalStringsHashes={
+  "en": "4d5f514b6aa8b815cfeaba10cd92b17a8772ea75d0045e532f7e2b9c673b3e61",
+  "zh": "9785685de1b68fcf399d9f8059efe5b8d31ff5fd77a6bf561426d7c924884264",
+  "ja": "28e61f24280471f287d5c4286e0c1a30d9d9c78862014629845160761409152f",
+  "ko": "661bd1b195106a5dbe7527b7cf1b4cd7bf8b2fc8c41248be1c63f4d8dbdc69c3"
+};
+const {compile}=await import('@mdx-js/mdx');
+for(const lang of ['en','zh','ja','ko']){
+ const {T,TIPS,CLIENT_T}=locale(lang),p=page(lang,'shared-after');
+ eq('v2 '+lang+' four tip keys',Object.keys(TIPS),['input','prefix','results','copy']);
+ check('v2 '+lang+' plain short tips',Object.values(TIPS).every(t=>typeof t==='string'&&t.length>0&&t.length<=280&&!/[<>\n]|https?:/.test(t)));
+ eq('v2 '+lang+' fifteen runtime keys',Object.keys(CLIENT_T),['copy','copied','copyFailed','networkAddress','broadcastAddress','noBroadcast31','noBroadcast32','subnetMask','wildcardMask','firstHost','lastHost','usableHosts','cidr','errInvalidIp','errInvalidCidr']);
+ check('v2 '+lang+' serialized strings omit tips',Object.values(TIPS).every(text=>!JSON.stringify(CLIENT_T).includes(text)));
+ eq('v2 '+lang+' existing localized strings unchanged',hash(JSON.stringify(Object.fromEntries(Object.entries(T).filter(([k])=>!['tips','empty'].includes(k))))),originalStringsHashes[lang]);
+ eq('v2 '+lang+' SSR input label',p.document.querySelector('label[for="isc-input"]').textContent,T.inputLabel);eq('v2 '+lang+' SSR prefix label',p.document.querySelector('label[for="isc-prefix"]').textContent,T.prefixLabel);
+ eq('v2 '+lang+' SSR placeholder',p.input.placeholder,T.placeholder);eq('v2 '+lang+' SSR eight labels',Array.from(p.result.querySelectorAll('th')).map(e=>e.textContent),rowKeys.map(k=>T[k]));
+ eq('v2 '+lang+' initial default retained',p.cells(),defaultValues);eq('v2 '+lang+' single real Copy button',Array.from(p.document.querySelectorAll('button:not([data-zt-tip])')).map(e=>e.id),['isc-copy']);
+ const scroll=p.document.querySelector('.isc-table-scroll');eq('v2 '+lang+' keyboard-readable result region',[scroll.getAttribute('tabindex'),scroll.getAttribute('role'),scroll.getAttribute('aria-label')],['0','region',T.resultsLabel]);
+ eq('v2 '+lang+' localized empty sentence',p.document.getElementById('isc-empty').textContent,T.empty);
+ for(const [,id,label,key]of bindings){eq('v2 '+lang+' real tip '+id,p.document.getElementById(id).textContent,TIPS[key]);check('v2 '+lang+' localized tip aria '+id,p.document.querySelector('[data-zt-tip="'+id+'"]').getAttribute('aria-label').includes(T[label]));}
+ const content=readFileSync(join(root,'src/content/tools/ip-subnet-calculator',lang+'.mdx'),'utf8'),data=require('js-yaml').load(content.match(/^---\n([\s\S]*?)\n---/)[1]);
+ eq('v2 '+lang+' five steps',data.steps.length,5);check('v2 '+lang+' plain bounded steps',data.steps.every(t=>t.length<=280&&!/[<>\n]/.test(t))&&data.steps.join('').length<=1200);check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
+ eq('v2 '+lang+' non-Usage content exact',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),contentHashes[lang]);
+ let error='';try{await compile(content.replace(/^---\n[\s\S]*?\n---/,''));}catch(e){error=String(e);}eq('v2 '+lang+' MDX compiles',error,'');
+ for(const order of ['shared-before','shared-after'])for(const selector of ['[data-zt-tip="isc-tip-results"]','[data-zt-tip="isc-tip-copy"]','.isc-table-scroll']){
+  const q=page(lang,order);q.key(q.document.querySelector(selector),{key:'l',ctrlKey:true});
+  eq('v2 '+lang+'/'+order+'/'+selector+' clear focuses before hiding result',[q.input.value,q.result.hidden,q.error.hidden,q.document.activeElement.id,q.clears],['',true,true,'isc-input',['ip-subnet-calculator']]);
+ }
+}
+{
+ const p=page('en','shared-after');p.type('8.8.8.8/0');p.tick(250);eq('v2 largest subnet keeps eight complete values',p.cells(),['0.0.0.0','255.255.255.255','0.0.0.0','255.255.255.255','0.0.0.1','255.255.255.254',(4294967294).toLocaleString(),'0.0.0.0/0']);
+ p.click();eq('v2 largest subnet copy remains complete',p.clipboard[0].value,rowKeys.map((k,i)=>pageStrings.en[k]+': '+p.cells()[i]).join('\n'));p.clipboard[0].resolve();await settle();
+ p.type('1'.repeat(100000));p.tick(250);eq('v2 long invalid input bounded to original localized error',[p.result.hidden,p.error.textContent],[true,pageStrings.en.errInvalidIp]);
+}
+check('v2 registered as analyze',/'ip-subnet-calculator':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
