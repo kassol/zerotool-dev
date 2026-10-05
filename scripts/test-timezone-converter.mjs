@@ -18,6 +18,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
+import { loadPage } from './astro-page-harness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TimezoneConverterTool.astro'), 'utf8');
@@ -116,5 +120,205 @@ eq('now in Tokyo', E.nowInZone('Asia/Tokyo', instant), '2026-10-01T09:00:05');
 eq('now in Los Angeles', E.nowInZone('America/Los_Angeles', instant), '2026-09-30T17:00:05');
 eq('Now button uses the source zone', /state\.base = nowInZone\(state\.source\);/.test(source), true);
 
+// ---------- actual full page + shared shortcut lifecycle ----------
+const require = createRequire(join(root, 'package.json'));
+const { parseFragment, defaultTreeAdapter } = require('parse5');
+const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+const must = (ok, message) => { if (!ok) throw Error(message); };
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+const escape=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function tzLabels(lang){const a=source.indexOf('const labels ='),z=source.indexOf('\n---',a);return vm.runInNewContext(source.slice(a,z)+';L',{lang},{timeout:1000});}
+function pageVM(lang='en',order='shared-after',noClipboard=false){
+  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[];
+  let timerId=0,clock=0,doc,execResult=false;
+  const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
+  const matchOne = (el, selector) => {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    if (parts.length > 1) {
+      if (!matchOne(el, parts.pop())) return false;
+      for (let parent = el.parentNode; parent; parent = parent.parentNode) if (matchOne(parent, parts.join(' '))) return true;
+      return false;
+    }
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+    return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+      && [...plain.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))
+      && attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+  };
+  const matches = (el, selector) => selector.split(',').some(part => matchOne(el, part.trim()));
+  class EventStub {
+    constructor(type, extra = {}) { Object.assign(this, { type, bubbles: false, defaultPrevented: false, isTrusted: false }, extra); }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() { this.stopped = true; }
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', type: tag === 'input' ? 'text' : '', style: {}, text: '', _value: '', dirtyValue: false, disabled: false, hidden: false }); }
+    get value() {
+      if (!this.dirtyValue && this.tagName === 'TEXTAREA') return this.textContent;
+      if (!this.dirtyValue && this.tagName === 'SELECT') return (this.querySelectorAll('option').find(o=>o.selected)||this.querySelector('option'))?.value ?? '';
+      return this._value;
+    }
+    set value(v) { this._value = String(v); this.dirtyValue = true; }
+    get firstChild() { return this.children[0]??null; }
+    get dataset() { const el=this;return new Proxy({}, {get(_,key){return el.getAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()));},set(_,key,value){el.setAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()),value);return true;}}); }
+    get parentElement() { return this.parentNode; }
+    get isConnected() { return doc.contains(this); }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); }, toggle(c,force) { const yes=force??!this.contains(c);yes?this.add(c):this.remove(c);return yes; } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (['id', 'class', 'type', 'value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); if (['hidden', 'disabled', 'checked'].includes(k)) this[k] = true; }
+    getAttribute(k) { if (['id', 'class', 'type'].includes(k)) return this[k === 'class' ? 'className' : k] || null; return this.attributes[k] ?? null; }
+    removeAttribute(k) { delete this.attributes[k]; if (['hidden','disabled','checked'].includes(k)) this[k]=false; }
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+    set textContent(v) { for (const child of this.children) child.parentNode = null; this.children = []; this.text = String(v); }
+    set innerHTML(v) {
+      this.textContent = '';
+      // parse5 supplies the real HTML tokenizer/entity table in the actual element context.
+      // In particular, textarea uses RCDATA. No homemade entity decoder is used.
+      const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
+      for (const node of parseFragment(context, String(v)).childNodes) this.appendChild(fromParse5(node));
+    }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { const i=this.children.indexOf(child);if(i>=0)this.children.splice(i,1);child.parentNode=null;return child; }
+    querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    contains(el) { return el === this || descendants(this).includes(el); }
+    closest(selector) { for (let el = this; el; el = el.parentNode) if (matches(el, selector)) return el; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatchEvent(event) {
+      event.target = this;
+      for (let el = this; el; el = el.parentNode) {
+        event.currentTarget = el;
+        for (const fn of el.listeners[event.type] || []) fn.call(el, event);
+        if (!event.bubbles || event.stopped) break;
+      }
+      return !event.defaultPrevented;
+    }
+    dispatch(type, extra = {}) { return this.dispatchEvent(new EventStub(type, { bubbles: true, ...extra })); }
+    click() { if(!this.disabled){this.focus();this.dispatch('click');} }
+    select() { doc.selectedElement=this; }
+    focus() { if(doc.activeElement===this)return;const old=doc.activeElement;doc.activeElement=this;if(old)old.dispatchEvent(new EventStub('blur'));this.dispatchEvent(new EventStub('focus')); }
+    setSelectionRange(start,end) { this.selectionStart=start;this.selectionEnd=end; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const attr of node.attrs || []) el.setAttribute(attr.name, attr.value);
+    for (const child of node.childNodes || []) if (child.nodeName !== '#comment') el.appendChild(fromParse5(child));
+    return el;
+  }
+
+  doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
+  doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
+  const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
+  let markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
+  const L=tzLabels(lang);
+  if(L)markup=markup.replace(/=\{L\.(\w+)\}/g,(_,k)=>'="'+escape(L[k])+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escape(L[k]));
+  widget.innerHTML=markup;
+  doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
+  doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
+  doc.execCommand=command=>{execCalls.push({command,text:doc.selectedElement?.value??null});return execResult;}; // Pure memory boundary, no native clipboard.
+  let saved={};
+  const persist={clear(slug){persistCalls.push(['clear',slug]);},save(slug,data){saved=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,saved]);},load(){return saved;}};
+  const location=new URL('https://zerotool.dev/tools/'+'timezone-converter'+'/');
+  location.hash='t=2026-10-01T12%3A00%3A00&s=UTC&z=UTC%2CAsia%2FTokyo';
+  const windowListeners={};
+  const globals={document:doc,lang,L,URL,URLSearchParams,location,history:{replaceState(_s,_title,url){location.href=new URL(url,location.href).href;}},addEventListener(type,fn){(windowListeners[type]??=[]).push(fn);},matchMedia(){return{matches:true};},
+    _slug:'timezone-converter',ztPersist:persist,trackTool(...args){tracks.push(args);},
+    navigator:noClipboard?{}:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
+    setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
+  };
+  if(order==='shared-before')vm.runInNewContext(shortcut,{document:doc,window:{ztPersist:persist},_slug:'timezone-converter'},{filename:'ToolLayout.astro:actual-shortcut'});
+  const actual=loadPage('src/components/tools/TimezoneConverterTool.astro',{lang,globals});
+  if(order==='shared-after')actual.run(shortcut);
+  const get=id=>{const el=doc.getElementById(id);must(el,'ID '+id);return el;};
+  return{doc,get,widget,clipboard,timers,persistCalls,execCalls,tracks,location,
+    fallback(value){execResult=value;},preferences(){return saved;},
+    input(id,value){get(id).value=value;get(id).dispatch('input');},
+    ctrlL(id,key='l',mod='ctrlKey'){const el=get(id);el.focus();el.dispatch('keydown',{key,[mod]:true});},
+    change(id,value){get(id).value=value;get(id).dispatch('change');},
+    key(id,extra){const el=get(id);el.focus();el.dispatch('keydown',{key:'a',code:'KeyA',keyCode:65,which:65,charCode:0,location:0,repeat:false,isComposing:false,ctrlKey:false,shiftKey:false,altKey:false,metaKey:false,...extra});},
+    tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
+  };
+}
+
+const rows = p => p.get('tzc-results').querySelectorAll('.tzc-result').map(r => [r.dataset.zone, r.querySelector('.tzc-time').textContent, r.querySelector('.tzc-offset').textContent]);
+const snapshot = p => ({base:p.get('tzc-base').value,source:p.get('tzc-source').value,add:p.get('tzc-add').value,status:p.get('tzc-status').textContent,rows:rows(p),copy:p.get('tzc-copy-all').textContent,share:p.get('tzc-share').textContent});
+for (const lang of ['en','zh','ja','ko']) for (const order of ['shared-before','shared-after']) {
+  const tag = lang+'/'+order, p=pageVM(lang,order), L=tzLabels(lang);
+  eq(tag+' real Intl initial golden',rows(p),[['UTC','2026-10-01 12:00:00','UTC+00:00'],['Asia/Tokyo','2026-10-01 21:00:00','UTC+09:00']]);
+  p.change('tzc-base','');
+  eq(tag+' empty base clears rendered values',rows(p),[]);
+  eq(tag+' empty base clears status',p.get('tzc-status').textContent,'');
+  p.get('tzc-copy-all').click();eq(tag+' empty base cannot copy old summary',p.clipboard.length,0);
+  p.change('tzc-base','2026-10-01T12:00:00');
+  eq(tag+' valid time recovers both rows',rows(p).length,2);
+  p.input('tzc-add','singapore');p.key('tzc-add',{key:'Enter',ctrlKey:true});
+  eq(tag+' modified Enter adds once without error',p.get('tzc-status').textContent,'');
+  eq(tag+' modified Enter preserves selected targets',rows(p).map(r=>r[0]),['UTC','Asia/Tokyo','Asia/Singapore']);
+  const prefs=p.preferences();p.ctrlL('tzc-copy-all');await settle();
+  eq(tag+' CtrlL clears base/add/results/status',[p.get('tzc-base').value,p.get('tzc-add').value,p.get('tzc-results').textContent,p.get('tzc-status').textContent],['','','','']);
+  eq(tag+' CtrlL retains source and target preferences',[p.get('tzc-source').value,p.preferences()],['UTC',prefs]);
+  eq(tag+' CtrlL focus survives result removal',p.doc.activeElement.id,'tzc-base');
+  eq(tag+' shared clear still executes once',p.persistCalls.filter(c=>c[0]==='clear').length,1);
+  p.get('tzc-copy-all').click();eq(tag+' CtrlL cannot copy stale summary',p.clipboard.length,0);
+  p.change('tzc-base','2026-10-01T13:00:00');eq(tag+' settings recover after CtrlL',rows(p).map(r=>r[0]),['UTC','Asia/Tokyo','Asia/Singapore']);
+  const q=pageVM(lang,order);q.input('tzc-add','mumbai');q.key('tzc-add',{key:'Enter'});eq(tag+' plain Enter still adds alias',rows(q).at(-1),['Asia/Kolkata','2026-10-01 17:30:00','UTC+05:30']);
+  q.ctrlL('tzc-share','L','metaKey');await settle();eq(tag+' MetaL shares same clear behavior',[q.get('tzc-base').value,rows(q).length,q.get('tzc-status').textContent],['',0,'']);
+}
+
+// Copy uses complete real page output; only the clipboard Promise and timer delivery are controlled.
+const failureLabels={en:'Copy failed.',zh:'复制失败。',ja:'コピーに失敗しました。',ko:'복사 실패.'};
+const button=(p,id)=>id==='row'?p.get('tzc-results').querySelector('.tzc-copy'):p.get(id);
+const feedback=p=>({status:p.get('tzc-status').textContent,className:p.get('tzc-status').className,copy:p.get('tzc-copy-all').textContent,share:p.get('tzc-share').textContent,rows:rows(p)});
+for(const lang of ['en','zh','ja','ko']){
+ const L=tzLabels(lang),tag=lang+'/copy';
+ for(const id of ['tzc-copy-all','tzc-share','row']){
+  const p=pageVM(lang),b=button(p,id),initial=b.textContent;b.click();const text=p.clipboard[0].value;
+  eq(tag+'/'+id+' nonempty actual payload',text.length>0,true);
+  if(id==='tzc-copy-all')eq(tag+' summary includes fixed real values',text.includes('2026-10-01T12:00:00 (UTC)')&&text.includes('Asia/Tokyo): 2026-10-01 21:00:00 · UTC+09:00'),true);
+  if(id==='tzc-share')eq(tag+' share URL matches actual location',text,p.location.href);
+  if(id==='row')eq(tag+' row payload matches complete row copy text',text,b.getAttribute('data-text'));
+  p.clipboard[0].reject(Error('denied'));await settle();
+  eq(tag+'/'+id+' current fallback false is visible failure',p.get('tzc-status').textContent,failureLabels[lang]);
+  eq(tag+'/'+id+' failed fallback never marks Copied',b.textContent,initial);
+  b.click();eq(tag+'/'+id+' direct retry uses unchanged bytes',p.clipboard[1].value,text);p.clipboard[1].resolve();await settle();
+  eq(tag+'/'+id+' direct retry marks success',b.textContent,L.copied);
+  eq(tag+'/'+id+' direct retry clears owned failure',p.get('tzc-status').textContent,'');
+  p.tick(1500);eq(tag+'/'+id+' original button label restored',b.textContent,initial);
+ }
+ for(const success of [false,true]){
+  const p=pageVM(lang,'shared-after',true),b=p.get('tzc-copy-all'),initial=b.textContent;p.fallback(success);b.click();
+  eq(tag+'/API unavailable fallback '+success,p.get('tzc-status').textContent,success?'':failureLabels[lang]);
+  eq(tag+'/API unavailable label '+success,b.textContent,success?L.copied:initial);
+ }
+ const boundaries={baseInput:p=>p.input('tzc-base','2026-10-01T13:00:00'),sourceInput:p=>p.input('tzc-source','Asia/Tokyo'),addInput:p=>p.input('tzc-add','mumbai'),newResult:p=>p.change('tzc-base','2026-10-01T13:00:00'),empty:p=>p.change('tzc-base',''),CtrlL:p=>p.ctrlL('tzc-copy-all')};
+ for(const [name,invalidate]of Object.entries(boundaries))for(const completion of ['resolve','reject']){
+  const p=pageVM(lang),b=p.get('tzc-copy-all');b.click();invalidate(p);await settle();const before=feedback(p),fallback=p.execCalls.length;
+  p.clipboard[0][completion](completion==='reject'?Error('late denial'):undefined);await settle();
+  eq(tag+'/'+name+'/'+completion+' late completion preserves current UI',feedback(p),before);
+  eq(tag+'/'+name+'/'+completion+' no stale fallback',p.execCalls.length,fallback);
+  p.tick(1500);eq(tag+'/'+name+'/'+completion+' late timer preserves current UI',feedback(p),before);
+ }
+ for(const completion of ['resolve','reject']){
+  const p=pageVM(lang),old=button(p,'row');old.click();p.change('tzc-base','2026-10-01T13:00:00');const after=feedback(p),label=old.textContent;
+  p.clipboard[0][completion](completion==='reject'?Error('detached'):undefined);await settle();eq(tag+'/detached row '+completion,feedback(p),after);eq(tag+'/detached label '+completion,old.textContent,label);eq(tag+'/detached no fallback '+completion,p.execCalls.length,0);
+ }
+ {
+  const p=pageVM(lang),b=p.get('tzc-copy-all'),original=b.textContent;b.click();p.clipboard[0].resolve();await settle();p.tick(100);b.click();p.clipboard[1].resolve();await settle();p.tick(1400);eq(tag+'/old timer retains newest success',b.textContent,L.copied);p.tick(100);eq(tag+'/current timer restores original text',b.textContent,original);
+ }
+ for(const oldCompletion of ['resolve','reject']){
+  const p=pageVM(lang),b=p.get('tzc-copy-all');b.click();b.click();p.clipboard[1].resolve();await settle();const latest=feedback(p);p.clipboard[0][oldCompletion](Error('old'));await settle();eq(tag+'/same output stale '+oldCompletion,feedback(p),latest);eq(tag+'/same output stale fallback '+oldCompletion,p.execCalls.length,0);
+ }
+ {
+  const p=pageVM(lang),copy=p.get('tzc-copy-all');copy.click();p.clipboard[0].reject(Error('denied'));await settle();p.get('tzc-share').click();p.clipboard[1].resolve();await settle();eq(tag+'/other button success preserves owning error',p.get('tzc-status').textContent,failureLabels[lang]);copy.click();p.clipboard[2].resolve();await settle();eq(tag+'/own direct retry clears error',p.get('tzc-status').textContent,'');
+  copy.click();p.input('tzc-source','Mars/Olympus');p.change('tzc-source','Mars/Olympus');p.clipboard[3].resolve();await settle();eq(tag+'/late success preserves true validation error',p.get('tzc-status').textContent,L.invalidZone);
+ }
+}
+// No marked engine exists here; protect the existing real Intl conversion functions verbatim.
+eq('unmarked Intl core byte length',Buffer.byteLength(source.slice(start,end)),4876);
+eq('unmarked Intl core SHA',createHash('sha256').update(source.slice(start,end)).digest('hex'),'2f5fb452eb9901fbf8b2c08d4f4c067ce6e8ac0dc5fc4a282b420fd90448c813');
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

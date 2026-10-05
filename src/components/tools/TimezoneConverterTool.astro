@@ -10,7 +10,7 @@ const labels = {
     addZone: 'Add timezone', addZonePlaceholder: 'Search city or zone…',
     addBtn: 'Add', copySummary: 'Copy summary', shareLink: 'Share link',
     targets: 'Target timezones',
-    copy: 'Copy', copied: 'Copied!',
+    copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed.',
     remove: 'Remove', empty: 'No target zones — add one to start comparing.',
     invalidTime: 'Invalid base time.', invalidZone: 'Unknown timezone.',
     summaryHeader: 'Timezone comparison for {time}',
@@ -23,7 +23,7 @@ const labels = {
     addZone: '添加时区', addZonePlaceholder: '搜索城市或时区…',
     addBtn: '添加', copySummary: '复制摘要', shareLink: '分享链接',
     targets: '目标时区',
-    copy: '复制', copied: '已复制！',
+    copy: '复制', copied: '已复制！', copyFailed: '复制失败。',
     remove: '删除', empty: '尚无目标时区 — 添加一个开始对比。',
     invalidTime: '基准时间无效。', invalidZone: '未知时区。',
     summaryHeader: '{time} 的时区对照',
@@ -36,7 +36,7 @@ const labels = {
     addZone: 'タイムゾーンを追加', addZonePlaceholder: '都市またはゾーン名で検索…',
     addBtn: '追加', copySummary: 'サマリーをコピー', shareLink: 'リンクを共有',
     targets: 'ターゲットタイムゾーン',
-    copy: 'コピー', copied: 'コピー済み！',
+    copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。',
     remove: '削除', empty: '対象タイムゾーンがありません — 追加して比較を始めましょう。',
     invalidTime: '基準時刻が無効です。', invalidZone: '未知のタイムゾーンです。',
     summaryHeader: '{time} のタイムゾーン対照',
@@ -49,7 +49,7 @@ const labels = {
     addZone: '시간대 추가', addZonePlaceholder: '도시 또는 시간대 검색…',
     addBtn: '추가', copySummary: '요약 복사', shareLink: '링크 공유',
     targets: '대상 시간대',
-    copy: '복사', copied: '복사됨!',
+    copy: '복사', copied: '복사됨!', copyFailed: '복사 실패.',
     remove: '삭제', empty: '대상 시간대가 없습니다 — 추가하여 비교를 시작하세요.',
     invalidTime: '기준 시간이 잘못되었습니다.', invalidZone: '알 수 없는 시간대.',
     summaryHeader: '{time} 시간대 비교',
@@ -271,7 +271,23 @@ const L = labels[lang] ?? labels.en;
     return seg[seg.length - 1].replace(/_/g, ' ');
   }
 
+  let copyRevision = 0;
+  const copyJobs = new Map();
+  let copyError = null;
+
+  function invalidateCopies() {
+    copyRevision++;
+    for (const [btn, job] of copyJobs) {
+      clearTimeout(job.timer);
+      btn.textContent = job.label;
+    }
+    copyJobs.clear();
+    if (copyError && statusEl.textContent === L.copyFailed) setStatus('', null);
+    copyError = null;
+  }
+
   function setStatus(msg, kind) {
+    copyError = null;
     statusEl.textContent = msg || '';
     statusEl.className = 'tool-status' + (kind ? ' ' + kind : '');
   }
@@ -336,10 +352,15 @@ const L = labels[lang] ?? labels.en;
 
   // ── Render ──────────────────────────────────────────────────────────────
   function render() {
+    invalidateCopies();
     baseInput.value = state.base;
     sourceInput.value = state.source;
     setStatus('', null);
 
+    if (!state.base) {
+      resultsEl.innerHTML = '';
+      return;
+    }
     const utc = wallClockToUtc(state.base, state.source);
     if (!utc) {
       setStatus(L.invalidTime, 'error');
@@ -416,19 +437,34 @@ const L = labels[lang] ?? labels.en;
 
   function copyText(btn, text) {
     if (!text) return;
+    const previous = copyJobs.get(btn);
+    clearTimeout(previous && previous.timer);
+    const job = { revision: copyRevision, label: previous ? previous.label : btn.textContent, timer: 0 };
+    copyJobs.set(btn, job);
+    const current = () => job.revision === copyRevision && copyJobs.get(btn) === job && btn.isConnected;
     const finalize = () => {
-      const prev = btn.textContent;
+      if (!current()) return;
       btn.textContent = L.copied;
-      setTimeout(() => { btn.textContent = prev; }, 1500);
+      if (copyError && copyError.btn === btn && copyError.revision === copyRevision && statusEl.textContent === L.copyFailed) setStatus('', null);
+      job.timer = setTimeout(() => { if (current()) btn.textContent = job.label; }, 1500);
+    };
+    const fallback = () => {
+      if (!current()) return;
+      if (fallbackCopy(text)) finalize();
+      else {
+        btn.textContent = job.label;
+        setStatus(L.copyFailed, 'error');
+        copyError = { btn, revision: copyRevision };
+      }
     };
     try {
-      navigator.clipboard.writeText(text).then(finalize, () => fallbackCopy(text, finalize));
+      navigator.clipboard.writeText(text).then(finalize, fallback);
     } catch (e) {
-      fallbackCopy(text, finalize);
+      fallback();
     }
   }
 
-  function fallbackCopy(text, cb) {
+  function fallbackCopy(text) {
     // Fires only when navigator.clipboard.writeText is missing or rejects —
     // typically non-secure contexts, sandboxed iframes, or older browsers.
     // execCommand('copy') is "no longer recommended" but remains broadly
@@ -442,10 +478,10 @@ const L = labels[lang] ?? labels.en;
       ta.style.left = '-9999px';
       document.body.appendChild(ta);
       ta.select();
-      document.execCommand('copy');
+      const copied = document.execCommand('copy');
       document.body.removeChild(ta);
-      cb && cb();
-    } catch (e) {}
+      return copied;
+    } catch (e) { return false; }
   }
 
   function buildSummary() {
@@ -484,8 +520,9 @@ const L = labels[lang] ?? labels.en;
   function escapeAttr(s) { return escapeHtml(s).replace(/'/g, '&#39;'); }
 
   // ── Events ───────────────────────────────────────────────────────────────
+  [baseInput, sourceInput, addInput].forEach((input) => input.addEventListener('input', invalidateCopies));
+
   baseInput.addEventListener('change', () => {
-    if (!baseInput.value) return;
     state.base = baseInput.value;
     writeHash();
     render();
@@ -527,7 +564,7 @@ const L = labels[lang] ?? labels.en;
     window.trackTool && window.trackTool(SLUG, 'add_zone');
   }
   addBtn.addEventListener('click', handleAdd);
-  addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); handleAdd(); } });
+  addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); handleAdd(); } });
 
   copyAllBtn.addEventListener('click', () => {
     const summary = buildSummary();
@@ -545,6 +582,19 @@ const L = labels[lang] ?? labels.en;
   window.addEventListener('hashchange', () => {
     parseHash();
     render();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+    if (!document.querySelector('.tzc-wrap').contains(document.activeElement)) return;
+    e.preventDefault();
+    baseInput.focus();
+    state.base = '';
+    addInput.value = '';
+    writeHash();
+    render();
+    // Restore the selected zone after the shared shortcut clears text fields.
+    Promise.resolve().then(() => { sourceInput.value = state.source; });
   });
 
   loadState();
