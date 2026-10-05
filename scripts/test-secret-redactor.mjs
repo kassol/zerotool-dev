@@ -21,6 +21,9 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { parseFragment } from 'parse5';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -303,6 +306,223 @@ for (const [name, text] of localNegatives) {
   console.log('1 MB detect: ' + (t1 - t0).toFixed(1) + ' ms (' + r.hits.length + ' hits, ' + r.entries.length + ' placeholders); restore: ' + (t2 - t1).toFixed(1) + ' ms');
   check('1 MB detect under 1000 ms in Node', t1 - t0 < 1000 * PERF_SLACK, (t1 - t0).toFixed(1) + ' ms');
 }
+
+// ---------- real page copy/clear lifecycle and actual shared shortcuts ----------
+const pageScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+const labelTable = vm.runInNewContext('(' + source.match(/const labels = ([\s\S]*?) as const;/)[1] + ')');
+const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes('window.ztPersist.clear(_slug)')) throw Error('Shared keyboard handler extraction failed');
+function pageVM(lang = 'en', shellFirst = false) {
+  const timers = new Map(), copies = [], fallbackCalls = [], cleared = [], tracked = [], windowListeners = {};
+  let now = 0, nextTimer = 0, selected, document;
+  const childrenOf = el => el.children.flatMap(child => [child, ...childrenOf(child)]);
+  const matches = (el, selector) => selector.split(',').some(part => {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = part.trim().split(/\s+(?![^\[]*\])/), last = parts.pop();
+    const attrs = [...last.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)], plain = last.replace(/\[[^\]]*\]/g, '');
+    const tag = /^[\w-]+/.exec(plain), id = /#([\w-]+)/.exec(plain);
+    if ((tag && el.tagName !== tag[0].toUpperCase()) || (id && el.id !== id[1])) return false;
+    if (![...plain.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))) return false;
+    if (!attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2])) return false;
+    if (!parts.length) return true;
+    for (let p = el.parentElement; p; p = p.parentElement) if (matches(p, parts.join(' '))) return true;
+    return false;
+  });
+  class Element {
+    constructor(tag = 'div') { Object.assign(this, { tagName: tag.toUpperCase(), children: [], attributes: {}, listeners: {}, id: '', className: '', text: '', value: '', style: {}, disabled: false, checked: false, hidden: false, open: false, parentElement: null }); }
+    setAttribute(k,v) { this.attributes[k] = String(v); if (['id','class','type','value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); if (['disabled','checked','hidden','open'].includes(k)) this[k] = true; }
+    getAttribute(k) { return this.attributes[k] ?? null; }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); } }; }
+    get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
+    set textContent(value) { for (const c of this.children) c.parentElement = null; this.children = []; this.text = String(value); }
+    set innerHTML(value) { this.textContent = ''; for (const node of parseFragment(String(value)).childNodes) this.appendChild(fromParse5(node)); }
+    appendChild(el) { el.parentElement = this; this.children.push(el); return el; }
+    append(...els) { els.forEach(el => this.appendChild(el)); }
+    removeChild(el) { const i = this.children.indexOf(el); if (i < 0) throw Error('Cannot remove detached node'); this.children.splice(i,1); el.parentElement = null; return el; }
+    contains(el) { return this === el || childrenOf(this).includes(el); }
+    querySelectorAll(selector) { return childrenOf(this).filter(el => matches(el,selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    addEventListener(type,fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatch(type, options = {}) {
+      const event = { type, target: this, bubbles: true, defaultPrevented: false, ...options, preventDefault() { this.defaultPrevented = true; } };
+      for (let el = this; el; el = el.parentElement) { for (const fn of el.listeners[type] || []) fn.call(el,event); if (!event.bubbles) break; }
+      return event;
+    }
+    click() { if (!this.disabled) this.dispatch('click'); }
+    focus() { document.activeElement = this; }
+    select() { selected = this; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const a of node.attrs || []) el.setAttribute(a.name,a.value);
+    for (const c of node.childNodes || []) if (c.nodeName !== '#comment') el.appendChild(fromParse5(c));
+    return el;
+  }
+  const escape = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+  const T = labelTable[lang];
+  const categories = vm.runInNewContext('(' + source.match(/const categories = ([\s\S]*?);/)[1] + ')', { L: T });
+  let markup = source.slice(source.indexOf('\n---',4)+4,source.indexOf('<script'));
+  markup = markup.replace(/\{categories\.map\(\(c\) => \(([\s\S]*?)\)\)\}/, (_,template) => categories.map(c => template
+    .replace(/class=\{`([^`]+)`\}/g, (_,value) => 'class="'+value.replace('${c.id}',c.id)+'"')
+    .replace(/=\{c\.id\}/g,'="'+c.id+'"').replace(/\{c\.name\}/g,escape(c.name))).join(''))
+    .replace(/=\{L\.(\w+)\}/g,(_,key) => '="'+escape(T[key])+'"').replace(/\{L\.(\w+)\}/g,(_,key) => escape(T[key]));
+  document = new Element('#document'); document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
+  const widget = document.body.appendChild(new Element()); widget.className = 'tool-widget'; widget.innerHTML = markup;
+  document.getElementById = id => childrenOf(document).find(el => el.id === id) ?? null;
+  document.createElement = tag => new Element(tag);
+  const options = { fallback: false };
+  document.execCommand = command => { fallbackCalls.push({ command, value: selected?.value }); if (options.fallback instanceof Error) throw options.fallback; return options.fallback; };
+  const context = { document, console, T, atob, btoa, _slug: 'secret-redactor',
+    navigator: { clipboard: { writeText(value) { let resolve,reject; const promise = new Promise((yes,no) => { resolve=yes; reject=no; }); copies.push({value,resolve,reject}); return promise; } } },
+    ztPersist: { clear(slug) { cleared.push(slug); } }, trackTool(...args) { tracked.push(args); },
+    addEventListener(type,fn) { (windowListeners[type] ??= []).push(fn); },
+    setTimeout(fn,delay=0) { const id = ++nextTimer; timers.set(id,{fn,delay,due:now+delay}); return id; }, clearTimeout(id) { timers.delete(id); }
+  };
+  context.window=context; vm.createContext(context);
+  if (shellFirst) vm.runInContext(shortcut,context);
+  vm.runInContext(pageScript,context);
+  if (!shellFirst) vm.runInContext(shortcut,context);
+  const get = id => { const el=document.getElementById(id); if (!el) throw Error('Missing actual ID '+id); return el; };
+  return { get, context, document, copies, fallbackCalls, options, cleared, tracked, timers,
+    input(id,value) { get(id).value=value;get(id).dispatch('input'); },
+    key(key='l',modifiers={ctrlKey:true}) { return document.activeElement.dispatch('keydown',{key,...modifiers}); },
+    pagehide() { for (const fn of windowListeners.pagehide || []) fn(); },
+    advance(ms) { const until=now+ms;for (;;) { const item=[...timers].filter(([,t])=>t.due<=until).sort((a,b)=>a[1].due-b[1].due||a[0]-b[0])[0];if (!item)break;now=item[1].due;timers.delete(item[0]);item[1].fn(); }now=until; },
+    snapshot() { return ['scr-input','scr-reply','scr-output','scr-restored','scr-status','scr-restore-status','scr-unknown','scr-findings-count','scr-copy','scr-copy-restored'].map(id => { const e=get(id); return [id,e.tagName==='TEXTAREA'?e.value:e.textContent,e.className,e.hidden,e.disabled]; }); }
+  };
+}
+const samePage = (name,actual,expected) => equal(name,JSON.stringify(actual),JSON.stringify(expected));
+const flushCopy = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const copyMessages = {
+  en: 'Could not copy. Select and copy the text manually.',
+  zh: '复制失败。请选中文本后手动复制。',
+  ja: 'コピーできませんでした。テキストを選択して手動でコピーしてください。',
+  ko: '복사하지 못했습니다. 텍스트를 선택하여 직접 복사하세요.'
+};
+const copyCases = [
+  { button:'scr-copy', status:'scr-status', output:'scr-output', expected:'password=[SECRET_1]', action:'redact_copy' },
+  { button:'scr-copy-restored', status:'scr-restore-status', output:'scr-restored', expected:'Use sampleSecret42', action:'restore_copy' }
+];
+function readyPage(lang='en',shellFirst=false) {
+  const p=pageVM(lang,shellFirst);
+  p.input('scr-input','password=sampleSecret42');p.advance(250);
+  p.input('scr-reply','Use [SECRET_1]');p.advance(150);return p;
+}
+const unhandled=[];const onUnhandled=error=>unhandled.push(String(error));process.on('unhandledRejection',onUnhandled);
+for (const lang of Object.keys(copyMessages)) for (const c of copyCases) {
+  const name=lang+'/'+c.button,T=labelTable[lang];
+  const p=readyPage(lang);samePage(name+': actual detection and restore', [p.get('scr-output').textContent,p.get('scr-restored').textContent], ['password=[SECRET_1]','Use sampleSecret42']);
+  p.get(c.button).click();equal(name+': copies full current result',p.copies.at(-1).value,c.expected);
+  const beforeStatus=p.get(c.status).textContent;p.copies.at(-1).resolve();await flushCopy();
+  samePage(name+': current success preserves scan/restore status',[p.get(c.button).textContent,p.get(c.status).textContent],[T.copied,beforeStatus]);
+  p.advance(1399);equal(name+': feedback remains for 1400ms',p.get(c.button).textContent,T.copied);
+  p.advance(1);equal(name+': current feedback expires',p.get(c.button).textContent,T.copy);
+  for (const api of ['reject','missing','throw']) for (const fallback of [false,new Error('stub copy denied'),true]) {
+    const q=readyPage(lang),clipboard=q.context.navigator.clipboard;let thrown;
+    q.options.fallback=fallback;
+    if (api==='missing')q.context.navigator.clipboard=undefined;
+    if (api==='throw')q.context.navigator.clipboard={writeText(){throw Error('API throws synchronously');}};
+    try { q.get(c.button).click();if(api==='reject')q.copies.at(-1).reject(Error('API rejected')); } catch(error) { thrown=error.message; }
+    await flushCopy();equal(name+'/'+api+': failure boundary does not throw',thrown,undefined);
+    samePage(name+'/'+api+': fallback copies only clicked value',q.fallbackCalls,[{command:'copy',value:c.expected}]);
+    equal(name+'/'+api+': fallback removes temporary textarea',q.document.querySelectorAll('textarea').length,2);
+    if (fallback===true) {
+      equal(name+'/'+api+': truthful fallback success',q.get(c.button).textContent,T.copied);
+    } else {
+      samePage(name+'/'+api+': false/throw fallback is visibly failed',[q.get(c.button).textContent,q.get(c.status).textContent,q.get(c.status).className],[T.copy,copyMessages[lang],'tool-status error']);
+      q.context.navigator.clipboard=clipboard;q.get(c.button).click();q.copies.at(-1).resolve();await flushCopy();
+      samePage(name+'/'+api+': same-output direct retry clears own error',[q.get(c.button).textContent,q.get(c.status).textContent,q.get(c.output).textContent],[T.copied,'',c.expected]);
+    }
+  }
+}
+const lifecyclePasses=passes,lifecycleFailures=failures;
+function boundary(p,action) {
+  if(action==='clear')p.get('scr-clear').click();
+  else if(action==='ctrlL'){p.get('scr-input').focus();p.key();p.advance(0);}
+  else if(action==='pagehide')p.pagehide();
+  else if(action==='example')p.get('scr-example').click();
+  else if(action==='input')p.input('scr-input','password=nextValue73');
+  else if(action==='new-redaction'){p.input('scr-input','password=nextValue73');p.advance(250);}
+  else if(action==='reply')p.input('scr-reply','Next [SECRET_1]');
+  else if(action==='new-reply'){p.input('scr-reply','Next [SECRET_1]');p.advance(150);}
+  else if(action==='category'){const toggle=p.document.querySelector('input[data-cat="password"]');toggle.checked=false;toggle.dispatch('change');}
+  else if(action==='too-long'){p.input('scr-input','x'.repeat(1000001));p.advance(250);}
+  else if(action==='empty'){p.input('scr-input','');p.advance(250);}
+  else throw Error('Unknown test boundary '+action);
+}
+for(const lang of Object.keys(copyMessages))for(const c of copyCases){
+  const T=labelTable[lang],name=lang+'/'+c.button;
+  const actions=['clear','ctrlL','pagehide','example','input','new-redaction','category','too-long','empty',...(c.button==='scr-copy-restored'?['reply','new-reply']:[])];
+  for(const action of actions)for(const shellFirst of action==='ctrlL'?[false,true]:[false])for(const result of ['resolve','reject']){
+    const p=readyPage(lang,shellFirst);p.get(c.button).click();const old=p.copies.at(-1);boundary(p,action);
+    const before=p.snapshot(),track=p.tracked.length,fallback=p.fallbackCalls.length;
+    old[result](result==='reject'?Error('old request rejected'):undefined);await flushCopy();
+    samePage(`${name}: late ${result} after ${action}, sharedFirst=${shellFirst}`,p.snapshot(),before);
+    equal(name+': old '+result+' never invokes fallback after '+action,p.fallbackCalls.length,fallback);
+    equal(name+': old '+result+' never reports copied after '+action,p.tracked.length,track);
+  }
+  for(const action of actions)for(const shellFirst of action==='ctrlL'?[false,true]:[false]){
+    const p=readyPage(lang,shellFirst);p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();
+    const timer=[...p.timers.values()].find(t=>t.delay===1400);if(!timer)throw Error('Actual copy feedback timer missing');
+    boundary(p,action);equal(name+': '+action+' removes previous feedback immediately',p.get(c.button).textContent,T.copy);
+    const before=p.snapshot();timer.fn();samePage(name+': already queued old timer after '+action+' has no effect',p.snapshot(),before);
+  }
+  for(const shellFirst of [false,true])for(const modifiers of [{ctrlKey:true},{metaKey:true}])for(const outcome of ['resolve','reject']){
+    const p=readyPage(lang,shellFirst);p.get(c.button).click();const old=p.copies.at(-1);p.get('scr-reply').focus();p.key('L',modifiers);
+    const before=p.snapshot();old[outcome](outcome==='reject'?Error('between keydown and timer'):undefined);await flushCopy();
+    samePage(name+': CtrlL synchronously invalidates copy before zero timer',p.snapshot(),before);
+    equal(name+': CtrlL blocks fallback before zero timer',p.fallbackCalls.length,0);
+    p.advance(0);samePage(name+': shared CtrlL clears inputs and both outputs', ['scr-input','scr-reply'].map(id=>p.get(id).value).concat(['scr-output','scr-restored'].map(id=>p.get(id).textContent)),['','','','']);
+    samePage(name+': shared CtrlL preserves disabled persistence contract',p.cleared,['secret-redactor']);
+  }
+  {
+    const p=readyPage(lang);p.get(c.button).click();const old=p.copies.at(-1);p.get(c.button).click();const newer=p.copies.at(-1);
+    newer.resolve();await flushCopy();const state=p.snapshot();old.reject(Error('older failed'));await flushCopy();
+    samePage(name+': older reject cannot replace newer success',p.snapshot(),state);equal(name+': older reject cannot call fallback',p.fallbackCalls.length,0);
+    p.get(c.button).click();const first=p.copies.at(-1);p.get(c.button).click();p.copies.at(-1).reject(Error('newest fails'));await flushCopy();const failed=p.snapshot();first.resolve();await flushCopy();
+    samePage(name+': older success cannot clear newer error',p.snapshot(),failed);
+    p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();equal(name+': latest direct retry recovers',p.get(c.status).textContent,'');
+  }
+  {
+    const p=readyPage(lang);p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();
+    const oldTimer=[...p.timers.values()].find(t=>t.delay===1400);p.advance(500);p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();
+    oldTimer.fn();equal(name+': old timer cannot reset newest copied label',p.get(c.button).textContent,T.copied);
+    p.advance(900);equal(name+': first deadline retains new copied label',p.get(c.button).textContent,T.copied);
+    p.advance(500);equal(name+': newest deadline resets copied label',p.get(c.button).textContent,T.copy);
+  }
+  {
+    const p=readyPage(lang);p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();p.get(c.button).click();p.copies.at(-1).reject(Error('retry failed'));await flushCopy();
+    samePage(name+': false fallback after earlier success cannot leave Copied',[p.get(c.button).textContent,p.get(c.status).textContent],[T.copy,copyMessages[lang]]);
+    p.document.body.focus();const before=p.snapshot();p.key();p.advance(0);samePage(name+': CtrlL outside tool leaves current status and data unchanged',p.snapshot(),before);
+  }
+  {
+    const p=readyPage(lang);p.get(c.button).click();p.copies.at(-1).reject(Error('current failure'));await flushCopy();p.get(c.button).click();const retry=p.copies.at(-1);
+    boundary(p,'too-long');const before=p.snapshot();retry.resolve();await flushCopy();samePage(name+': retry success cannot erase later validation state',p.snapshot(),before);
+  }
+}
+for(const lang of Object.keys(copyMessages)){
+  const p=readyPage(lang),T=labelTable[lang];
+  p.get('scr-copy').click();const redacted=p.copies.at(-1);p.input('scr-reply','Next [SECRET_1]');p.advance(150);
+  redacted.resolve();await flushCopy();equal(lang+': editing reply keeps unrelated redacted copy current',p.get('scr-copy').textContent,T.copied);
+  p.get('scr-copy-restored').click();p.copies.at(-1).reject(Error('restore copy failed'));await flushCopy();const restoreError=p.get('scr-restore-status').textContent;
+  p.get('scr-copy').click();p.copies.at(-1).resolve();await flushCopy();equal(lang+': redacted success preserves other copy error',p.get('scr-restore-status').textContent,restoreError);
+  p.get('scr-copy').click();p.copies.at(-1).reject(Error('redacted failed'));await flushCopy();const redactError=p.get('scr-status').textContent;
+  p.get('scr-copy-restored').click();p.copies.at(-1).resolve();await flushCopy();equal(lang+': restored success preserves other copy error',p.get('scr-status').textContent,redactError);
+  const q=pageVM(lang);q.input('scr-input','password=sampleSecret42');q.advance(249);equal(lang+': actual scan waits 250ms',q.get('scr-output').textContent,'');q.advance(1);
+  q.input('scr-reply','Use [SECRET_1] and [UNKNOWN_9]');q.advance(149);equal(lang+': actual restore waits 150ms',q.get('scr-restored').textContent,'');q.advance(1);
+  samePage(lang+': real mapping/unknown/count state', [q.get('scr-output').textContent,q.get('scr-restored').textContent,q.get('scr-findings-count').textContent,q.get('scr-unknown').hidden,q.get('scr-unknown').textContent.includes('[UNKNOWN_9]')], ['password=[SECRET_1]','Use sampleSecret42 and [UNKNOWN_9]','1',false,true]);
+  q.input('scr-input','password=willNeverReturn');q.get('scr-clear').click();q.advance(250);samePage(lang+': queued scan after Clear reads only current empty data',[q.get('scr-input').value,q.get('scr-output').textContent,q.get('scr-restored').textContent,q.get('scr-copy').disabled,q.get('scr-copy-restored').disabled],['','','',true,true]);
+  const toggles=q.document.querySelectorAll('input[data-cat]');samePage(lang+': Clear keeps category settings',toggles.map(t=>t.checked),[true,true,true,true,true,true]);
+  q.input('scr-input','password=nextValue73');q.advance(250);toggles.forEach(t=>{t.checked=false;t.dispatch('change');});
+  samePage(lang+': all detectors off keeps original text and empty mapping',[q.get('scr-output').textContent,q.get('scr-findings-count').textContent,q.get('scr-status').textContent],['password=nextValue73','0',T.statusAllOff]);
+}
+console.log('Page lifecycle: '+(passes-lifecyclePasses)+' passed, '+(failures-lifecycleFailures)+' failed');
+
+samePage('all rejected copy promises handled',unhandled,[]);
+process.removeListener('unhandledRejection',onUnhandled);
+equal('protected engine bytes remain exact',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'cac8d2eecee8cf79150ea3d92f261a0513e98f1a75e761bfa93ce745d42ce7df');
 
 console.log('PASS ' + passes + '  FAIL ' + failures);
 process.exit(failures ? 1 : 0);
