@@ -67,9 +67,8 @@ for (const ch of ['a', 'Q', 'é', '😀', '中']) {
 }
 
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
-  const block = source.slice(source.indexOf('\n        ' + lang + ': {'));
-  const note = /mobileNote:\s*'([^']*)'/.exec(block);
-  check(lang + ': mobile note says code is not available', note && /code/.test(note[1]) && /keyCode/.test(note[1]), note && note[1]);
+  const note = keyStrings(lang).mobileNote;
+  check(lang + ': mobile note says code is not available', /code/.test(note) && /keyCode/.test(note), note);
   const mdx = readFileSync(join(root, 'src/content/tools/keycode-explorer', lang + '.mdx'), 'utf8');
   check(lang + ': page explains code on non-QWERTY layouts (KeyQ on AZERTY)', mdx.includes('KeyQ'), lang);
 }
@@ -82,9 +81,11 @@ const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), l
 const must = (ok, message) => { if (!ok) throw Error(message); };
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
-function keyLabels(lang){return vm.runInNewContext('('+source.match(/var STRINGS = (\{[\s\S]*?\n      \});/)[1]+')',{}, {timeout:1000})[lang];}
+function keyStrings(lang){return vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS[lang]',{lang},{timeout:1000});}
+function keyLabels(lang){const {tips,capturePad,mobileNote,...labels}=keyStrings(lang);return labels;}
+const escape=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 function eq(name,actual,expected){check(name,JSON.stringify(actual)===JSON.stringify(expected),JSON.stringify({actual,expected}));}
-function pageVM(lang='en',order='shared-after',noClipboard=false){
+function pageVM(lang='en',order='shared-after',noClipboard=false,coarse=true){
   const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[];
   let timerId=0,clock=0,doc,execResult=false;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
@@ -168,6 +169,9 @@ function pageVM(lang='en',order='shared-after',noClipboard=false){
   doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
   let markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
+  const T=keyStrings(lang),CLIENT_T=keyLabels(lang);
+  markup=markup.replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g,(_,id,label,key)=>'<span class="zt-tip"><button type="button" id="'+id+'-trigger" data-zt-tip="'+id+'">'+escape(T[label])+'</button><span id="'+id+'" hidden>'+escape(T.tips[key])+'</span></span>');
+  markup=markup.replace(/=\{T\.(\w+)\}/g,(_,k)=>'="'+escape(T[k])+'"').replace(/\{T\.(\w+)\}/g,(_,k)=>escape(T[k]));
   widget.innerHTML=markup;
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
@@ -176,7 +180,7 @@ function pageVM(lang='en',order='shared-after',noClipboard=false){
   const location=new URL('https://zerotool.dev/tools/'+'keycode-explorer'+'/');
 
   const windowListeners={};
-  const globals={document:doc,lang,URL,URLSearchParams,location,history:{replaceState(_s,_title,url){location.href=new URL(url,location.href).href;}},addEventListener(type,fn){(windowListeners[type]??=[]).push(fn);},matchMedia(){return{matches:true};},
+  const globals={document:doc,lang,CLIENT_T,URL,URLSearchParams,location,history:{replaceState(_s,_title,url){location.href=new URL(url,location.href).href;}},addEventListener(type,fn){(windowListeners[type]??=[]).push(fn);},matchMedia(){return{matches:coarse};},
     _slug:'keycode-explorer',ztPersist:persist,trackTool(...args){tracks.push(args);},
     navigator:noClipboard?{}:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
@@ -228,5 +232,63 @@ for(const [name,startMark,endMark,bytes,hash,includeEnd] of [
  ['physical key capture','      function captureFromKeyboardEvent','      /* ── engine:start ── */',990,'03e25ebdd2b5e5e0b4b0e5c49f8e5d52e404bb3e82006f38aa5cbc1248f5da94',false],
  ['snippet/modifiers/history','      function setText','      function captureFromKeyboardEvent',2234,'36ac5072cbfee1018f281161c90ac1f06d13392b4056176c443c2f34b5bb345d',false],
 ]){const block=source.slice(source.indexOf(startMark),source.indexOf(endMark)+(includeEnd?endMark.length:0));eq(name+' protected bytes',Buffer.byteLength(block),bytes);eq(name+' protected SHA',createHash('sha256').update(block).digest('hex'),hash);}
+
+// ---------- v2 page layout ----------
+const hash=value=>createHash('sha256').update(value).digest('hex');
+const astroRequire=createRequire(require.resolve('astro/package.json'));
+const compiled=await astroRequire('@astrojs/compiler').transform(source,{filename:join(root,'src/components/tools/KeycodeExplorerTool.astro')});
+eq('v2 Astro diagnostics',compiled.diagnostics.filter(d=>d.severity===1),[]);
+let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(error){moduleError=String(error);}
+eq('v2 compiled module parses',moduleError,'');
+const style=compiled.css.join('\n');
+eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'e09bf3d1c327e6e8f1c65d8b36afbd684d829a51ea84cf75befbcf7024ecad8f');
+eq('v2 analyze registry',/['"]keycode-explorer['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
+eq('v2 outermost tool root',/^<div class="kce-wrap">/.test(source.split('\n---\n')[1].trim()),true);
+eq('v2 no runtime i18n',source.includes('data-i18n'),false);
+eq('v2 localize before script',source.indexOf('// strings:end')<source.indexOf('<script'),true);
+eq('v2 status before pad',source.indexOf('id="kce-status"')<source.indexOf('id="kce-pad"'),true);
+eq('v2 all controls before status',Math.max(source.indexOf('id="kce-clear"'),source.indexOf('id="kce-copy"'))<source.indexOf('id="kce-status"'),true);
+for(const [name,re]of [
+ ['root minimum',/\.kce-wrap\s*\{[^}]*min-height:\s*0/],
+ ['bounded result',/\.kce-results\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/],
+ ['bounded snippet',/\.kce-snippet\s*\{[^}]*overflow:\s*auto[^}]*max-height:\s*12rem/],
+ ['bounded history',/\.kce-history\s*\{[^}]*max-height:\s*5rem[^}]*overflow:\s*auto/],
+ ['fixed status',/#kce-status\s*\{[^}]*height:\s*4\.2em[^}]*overflow:\s*auto/],
+ ['44px fixed copy feedback',/\.kce-toolbar[^}]*> button\s*\{[^}]*min-height:\s*44px;\s*height:\s*44px/],
+ ['860 result height',/@media\s*\(max-width:\s*860px\)[\s\S]*?\.kce-results\s*\{[^}]*height:\s*28rem/],
+ ['640 result height',/@media\s*\(max-width:\s*640px\)[\s\S]*?\.kce-results\s*\{[^}]*height:\s*26rem/],
+ ['coarse fallback honors hidden',/\.kce-mobile-fallback\[hidden\]\s*\{\s*display:\s*none/],
+])eq('v2 '+name,re.test(style),true);
+const bindings={pad:'capturePad',mobile:'mobileInputLabel',properties:'eventProps',modifiers:'modifiers',snippet:'snippet',copy:'copy',history:'recentKeys',clear:'clear'};
+const protectedContent={"en": "5df19ef7b9354d7aa1d24b8e70549e095a9ede113a18a120be0645460146bed6", "zh": "6f5a05b7743beb4a3b7b9a03c6c70cc515f191dbe9de55bf9d0c82969ab6d87d", "ja": "83ee93aa81f7e65b51ac615a51702800f8c993957158e5812535c13effa70612", "ko": "3e51cbb7b2ecc3f71188939e3240db5022b1e74c6cc59fa4a3e29521eaec5656"},originalLabelHashes={"en": "ecfb232b89ccb99b9a025ef8d06b9d8859fa32d73ae51f09008765b9aeda30d2", "zh": "77f4888f79fea060a1f687082fb957d91966b5ab40c853013850f9483693741a", "ja": "2137be2f49ae36466829cd8876db93161eb528e609e52cf979924754b21f5af2", "ko": "cf7398b9b2b8109639f1381b9597f99228192489f134c0183de3fff4b2ed8bd8"};
+for(const lang of ['en','zh','ja','ko']){
+ const T=keyStrings(lang),L=keyLabels(lang),p=pageVM(lang);
+ eq('v2 '+lang+' eight translated fact groups',Object.keys(T.tips).sort(),Object.keys(bindings).sort());
+ const {tips,capturePad,...originalLabels}=T;
+ eq('v2 '+lang+' all original label values',hash(JSON.stringify(originalLabels)),originalLabelHashes[lang]);
+ eq('v2 '+lang+' client excludes facts',Object.keys(L).some(k=>k==='tips'||k==='capturePad'||k==='mobileNote'),false);
+ eq('v2 '+lang+' original mobile warning preserved',T.tips.mobile,T.mobileNote);
+ eq('v2 '+lang+' coarse pointer enables fallback',p.get('kce-mobile-fallback').hidden,false);
+ eq('v2 '+lang+' fine pointer keeps fallback hidden',pageVM(lang,'shared-after',false,false).get('kce-mobile-fallback').hidden,true);
+ eq('v2 '+lang+' pad named in locale',p.get('kce-pad').getAttribute('aria-label'),T.capturePad);
+ for(const [key,label]of Object.entries(bindings)){
+  eq('v2 '+lang+' '+key+' visible text',p.get('kce-tip-'+key).textContent,T.tips[key]);
+  eq('v2 '+lang+' '+key+' actual control',p.get('kce-tip-'+key+'-trigger').textContent,T[label]);
+ }
+ for(const sel of ['#kce-results','.kce-snippet','#kce-history'])eq('v2 '+lang+' '+sel+' keyboard scroll entry',p.widget.querySelector(sel).getAttribute('tabindex'),'0');
+ for(const id of ['kce-clear','kce-copy'])eq('v2 '+lang+' keeps '+id,p.get(id).tagName,'BUTTON');
+ const content=readFileSync(join(root,'src/content/tools/keycode-explorer/'+lang+'.mdx'),'utf8');
+ const match=content.match(/^steps:\n((?:  - .*\n)+)/m);const steps=match?[...match[1].matchAll(/^  - (.*)$/gm)].map(m=>JSON.parse(m[1])):[];
+ eq('v2 '+lang+' five bounded steps',steps.length===5&&steps.every(t=>t.length<=280)&&steps.join('').length<=1200,true);
+ eq('v2 '+lang+' steps precede FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'),true);
+ eq('v2 '+lang+' all non-Usage content exact',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang]);
+ for(const order of ['shared-before','shared-after']){
+  const q=ready(lang,order);q.ctrlL('kce-tip-properties-trigger');await settle();
+  eq('v2 '+lang+'/'+order+' result tip CtrlL clears',getState(q).fields,Array(8).fill('—'));
+  eq('v2 '+lang+'/'+order+' result tip focus reaches surviving pad',q.doc.activeElement.id,'kce-pad');
+  eq('v2 '+lang+'/'+order+' result tip shared persistence clears',q.persistCalls.filter(c=>c[0]==='clear').length,1);
+ }
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

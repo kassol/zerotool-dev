@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'keycode-explorer': 'analyze',
   'timezone-converter': 'analyze',
   'http-status-codes': 'analyze',
   'iban-validator-parser': 'analyze',
