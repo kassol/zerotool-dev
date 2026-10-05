@@ -24,6 +24,9 @@ import { Worker as ThreadWorker } from 'node:worker_threads';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/DiffCheckerTool.astro'), 'utf8');
+const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layout.slice(layout.indexOf('      // ── Keyboard shortcuts:'), layout.indexOf('      // ── Copy button visual feedback'));
+if (!shortcut.includes('window.ztPersist.clear(_slug)')) throw new Error('Shared shortcut block missing');
 const START = '/* ── engine:start ── */';
 const END = '/* ── engine:end ── */';
 const s = source.indexOf(START);
@@ -134,30 +137,55 @@ eq('page no longer says CR LF marks every line', page.includes('marks **every** 
 
 // The real Compare click must return before the O(n*m) work and expose cancellation.
 function pageHarness(lang = 'en', options = {}) {
-  const nodes = new Map(), blobs = new Map(), workers = [], events = {}, timers = new Map();
+  const nodes = new Map(), blobs = new Map(), workers = [], events = {}, timers = new Map(), keydowns = [], persisted = [];
+  const markup = source.slice(0, source.indexOf('<script'));
+  const textareas = [...markup.matchAll(/<textarea[^>]*id="([^"]+)"/g)].map(m => m[1]);
+  const primary = markup.match(/<button[^>]*id="([^"]+)"[^>]*class="[^"]*\bbtn-primary\b/)?.[1];
   let serial = 0;
   function element() { return { value: '', textContent: '', innerHTML: '', className: '', hidden: false, disabled: false,
     style: {}, scrollHeight: 160, listeners: {}, classList: { add() {}, remove() {} },
-    addEventListener(k, f) { this.listeners[k] = f; }, setAttribute() {} }; }
+    addEventListener(k, f) { this.listeners[k] = f; }, setAttribute() {},
+    click() { if (!this.disabled) this.listeners.click?.(); } }; }
   class BrowserWorker {
     constructor(url) {
       if (options.throwWorker) throw new Error('Worker blocked');
       this.thread = new ThreadWorker(`const {parentPort}=require('node:worker_threads'); const self={postMessage:v=>parentPort.postMessage(v)}; ${blobs.get(url)}; parentPort.on('message',data=>self.onmessage({data}));`, { eval: true });
-      this.thread.on('message', data => { this.result = data; this.responses = (this.responses || 0) + 1; this.onmessage?.({ data }); });
+      this.thread.on('message', data => { this.result = data; this.responses = (this.responses || 0) + 1; if (!options.holdResponses) this.onmessage?.({ data }); });
       this.thread.on('error', error => this.onerror?.(error)); workers.push(this);
     }
     postMessage(data) { this.sent = data; this.thread.postMessage(data); }
     terminate() { this.terminated = true; return this.thread.terminate(); }
   }
-  const context = vm.createContext({ document: { documentElement: { lang }, querySelectorAll: () => [],
-    getElementById(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); }, addEventListener() {} },
-    window: { addEventListener(k, f) { events[k] = f; } }, Worker: options.noWorker ? undefined : BrowserWorker,
+  const widget = { contains: el => [...nodes.values()].includes(el),
+    querySelectorAll(selector) {
+      if (selector !== 'textarea, input[type="text"]') throw new Error('Unexpected clear selector ' + selector);
+      return textareas.map(id => document.getElementById(id));
+    } };
+  const document = { documentElement: { lang }, activeElement: null, querySelectorAll: () => [],
+    getElementById(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
+    querySelector(selector) {
+      if (selector === '.tool-widget' || selector === '.diff-wrap') return widget;
+      if (selector === '.tool-widget .btn-primary') return primary ? this.getElementById(primary) : null;
+      throw new Error('Unexpected selector ' + selector);
+    },
+    addEventListener(k, f) { if (k === 'keydown') keydowns.push(f); } };
+  const context = vm.createContext({ document, _slug: 'diff-checker',
+    window: { addEventListener(k, f) { events[k] = f; }, ztPersist: { clear(slug) { persisted.push(slug); } } }, Worker: options.noWorker ? undefined : BrowserWorker,
     Blob: class { constructor(parts) { this.source = parts.join(''); } },
     URL: { createObjectURL(b) { const id = 'blob:' + blobs.size; blobs.set(id, b.source); return id; }, revokeObjectURL() {} },
     setTimeout(f, ms) { const id = ++serial; timers.set(id, { f, ms }); return id; }, clearTimeout(id) { timers.delete(id); }, console });
+  if (options.shortcut && options.sharedFirst) vm.runInContext(shortcut, context);
   vm.runInContext(source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1], context);
+  if (options.shortcut && !options.sharedFirst) vm.runInContext(shortcut, context);
   function click(id, timeout = 100) { context.callback = nodes.get(id)?.listeners.click; vm.runInContext('callback()', context, { timeout }); }
-  return { nodes, workers, events, click, input(id, value) { nodes.get(id).value = value; nodes.get(id).listeners.input(); },
+  return { nodes, workers, events, persisted, click,
+    key(key, modifier = 'ctrlKey', focus = 'diff-original') {
+      document.activeElement = focus ? nodes.get(focus) : { outside: true };
+      const event = { key, ctrlKey: false, metaKey: false, prevented: false, preventDefault() { this.prevented = true; } };
+      if (modifier) event[modifier] = true;
+      for (const handler of keydowns) handler(event);
+      return event.prevented;
+    }, input(id, value) { nodes.get(id).value = value; nodes.get(id).listeners.input(); },
     async compare(a, b) {
       nodes.get('diff-original').value = a; nodes.get('diff-modified').value = b; click('diff-compare');
       const w = workers.at(-1);
@@ -263,6 +291,59 @@ await fail.close();
   eq('clamped page label', [h.nodes.get('diff-page').textContent, h.nodes.get('diff-next').disabled], ['201–300 / 300', true]);
   eq('clamped page is not an empty result', h.nodes.get('diff-output').innerHTML.includes('No differences found'), false);
   await h.close();
+}
+
+// ---------- complete page + shared clear shortcut ----------
+console.log('Existing checks: ' + passes + ' passed, ' + failures + ' failed');
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, true]) {
+  const h = pageHarness(lang, { shortcut: true, sharedFirst, holdResponses: true });
+  const prefix = lang + ' sharedFirst=' + sharedFirst;
+  const snapshot = () => ({
+    inputs: ['diff-original', 'diff-modified'].map(id => h.nodes.get(id).value),
+    output: h.nodes.get('diff-output').innerHTML, status: h.nodes.get('diff-status').textContent,
+    statusClass: h.nodes.get('diff-status').className, page: h.nodes.get('diff-page').textContent,
+    pagesHidden: h.nodes.get('diff-pages').hidden, cancelHidden: h.nodes.get('diff-cancel').hidden,
+    busy: h.nodes.get('diff-compare').disabled
+  });
+  const empty = { inputs: ['', ''], output: '', status: '', statusClass: 'diff-status', page: '', pagesHidden: true, cancelHidden: true, busy: false };
+  try {
+    h.input('diff-original', 'keep\nOLD'); h.input('diff-modified', 'keep\nNEW');
+    eq(prefix + ' typing remains manual', h.workers.length, 0);
+    eq(prefix + ' shared CtrlEnter starts comparison', [h.key('Enter'), h.workers.length], [true, 1]);
+    let worker = h.workers.at(-1); await waitFor(() => worker.result);
+    eq(prefix + ' actual Worker independent diff', worker.result.rows.map(r => [r.type, r.val]), [['equal','keep'],['del','OLD'],['add','NEW']]);
+    worker.onmessage({ data: worker.result });
+    const rows = Array.from({ length: 105 }, (_, i) => 'row-' + i).join('\n');
+    for (const modifier of ['ctrlKey', 'metaKey']) for (const key of ['l', 'L']) {
+      const name = prefix + ' ' + modifier + '+' + key;
+      h.input('diff-original', rows); h.input('diff-modified', rows); h.click('diff-compare');
+      worker = h.workers.at(-1); await waitFor(() => worker.result); worker.onmessage({ data: worker.result });
+      eq(name + ' positive paginated result', [worker.result.total, h.nodes.get('diff-pages').hidden, h.nodes.get('diff-page').textContent], [105, false, '1–100 / 105']);
+      const before = snapshot(), saved = h.persisted.length;
+      eq(name + ' outside focus leaves state and persistence alone', [h.key(key, modifier, null), snapshot(), h.persisted.length, !!worker.terminated], [false, before, saved, false]);
+      eq(name + ' unmodified letter leaves state alone', [h.key(key, null), snapshot(), h.persisted.length], [false, before, saved]);
+      eq(name + ' tool shortcut clears visible result and shared persistence', [h.key(key, modifier, 'diff-modified'), snapshot(), !!worker.terminated, h.persisted.slice(saved)], [true, empty, true, ['diff-checker']]);
+      worker.onmessage({ data: worker.result });
+      eq(name + ' old rendered page cannot return after clear', snapshot(), empty);
+
+      h.input('diff-original', 'old-left'); h.input('diff-modified', 'old-right'); h.click('diff-compare');
+      worker = h.workers.at(-1); await waitFor(() => worker.result);
+      eq(name + ' real completed message held at delivery boundary', [h.nodes.get('diff-compare').disabled, h.nodes.get('diff-cancel').hidden, h.nodes.get('diff-output').innerHTML], [true, false, '']);
+      const pendingSaved = h.persisted.length;
+      eq(name + ' tool-button focus cancels pending work synchronously', [h.key(key, modifier, 'diff-clear'), snapshot(), !!worker.terminated, h.persisted.slice(pendingSaved)], [true, empty, true, ['diff-checker']]);
+      worker.onmessage({ data: worker.result }); worker.onerror(new Error('Late obsolete Worker error'));
+      eq(name + ' late actual response and error cannot revive cleared state', snapshot(), empty);
+    }
+    const obsolete = worker;
+    h.input('diff-original', 'new-left'); h.input('diff-modified', 'new-right'); h.click('diff-view-side'); h.click('diff-compare');
+    worker = h.workers.at(-1); await waitFor(() => worker.result); worker.onmessage({ data: worker.result });
+    eq(prefix + ' comparison recovers with selected view', [worker.result.view, worker.result.rows.map(r => [r.left.val, r.right.val]), h.nodes.get('diff-status').textContent], ['side', [['new-left', 'new-right']], '+1 / -1']);
+    const fresh = snapshot(); obsolete.onmessage({ data: obsolete.result });
+    eq(prefix + ' cleared task cannot overwrite newer comparison', snapshot(), fresh);
+    h.click('diff-clear'); eq(prefix + ' explicit Clear retains its behavior', snapshot(), empty);
+    h.click('diff-compare'); eq(prefix + ' empty Compare still reports an error', h.nodes.get('diff-status').className, 'diff-status error');
+    h.key('L', 'metaKey'); eq(prefix + ' shortcut also clears current error class', snapshot(), empty);
+  } finally { await h.close(); }
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
