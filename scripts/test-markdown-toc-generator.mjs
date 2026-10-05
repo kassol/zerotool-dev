@@ -26,9 +26,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import ts from 'typescript';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { parseFragment } from 'parse5';
-import { loadPage } from './astro-page-harness.mjs';
+import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
 import GithubSlugger, { slug as githubSlug } from 'github-slugger';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -148,18 +149,19 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const sharedShortcut = layoutSource.slice(layoutSource.indexOf('      // ── Keyboard shortcuts:'), layoutSource.indexOf('      // ── Copy button visual feedback'));
 check('real shared shortcut extracted', sharedShortcut.includes('window.ztPersist.clear(_slug)'));
-const allLabels = vm.runInNewContext(ts.transpileModule('const labels = ' + source.match(/const labels = ([\s\S]*?);\n\nconst L/)[1] + ';', { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + '\nlabels');
+const allLabels = frontmatterStrings(source.match(/^---\n([\s\S]*?)\n---/)[1]);
 function page({ lang = 'en', order = 'before', preset = '' } = {}) {
   const L = allLabels[lang], keys = [], requests = [], clears = [], fallback = [];
   const timers = new Map(); let seq = 0, clock = 0, document, selection = null;
   const escape = v => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'))
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g, (_,id,about,key) => '<span><button id="'+id+'-trigger">'+escape(L[about])+'</button><span id="'+id+'">'+escape(L.tips[key])+'</span></span>')
     .replace(/=\{([^{}]+)\}/g, (_, expr) => '="' + escape(vm.runInNewContext(expr,{L,lang})) + '"').replace(/\{L\.(\w+)\}/g, (_, k) => escape(L[k]));
   const walk = n => n.children.flatMap(c => [c, ...walk(c)]);
   function wrap(n, parentNode = null) {
     if (!n.tagName) return { value: n.value || '', parentNode };
     const attrs = Object.fromEntries((n.attrs || []).map(a => [a.name, a.value])), listeners = {};
-    const el = { tagName: n.tagName.toUpperCase(), parentNode, childNodes: [], attributes: attrs, value: attrs.value || '', disabled: 'disabled' in attrs, checked: 'checked' in attrs, hidden: 'hidden' in attrs,
+    const el = { tagName: n.tagName.toUpperCase(), parentNode, childNodes: [], attributes: attrs, value: attrs.value || '', disabled: 'disabled' in attrs, checked: 'checked' in attrs, hidden: 'hidden' in attrs, open: 'open' in attrs,
       dataset: Object.fromEntries(Object.entries(attrs).filter(([k]) => k.startsWith('data-')).map(([k,v]) => [k.slice(5).replace(/-([a-z])/g, (_,x) => x.toUpperCase()),v])),
       get id() { return attrs.id || ''; }, get children() { return this.childNodes.filter(x => x.tagName); },
       get className() { return attrs.class || ''; }, set className(v) { attrs.class = v; },
@@ -235,6 +237,83 @@ for(const lang of ['en','zh','ja','ko']){
   const q=markerPage({lang});q.$('mtoc-copy-toc').click();q.$('mtoc-copy-md').click();q.requests[1].resolve();q.requests[0].resolve();await settle();eq(lang+' independent buttons both complete',[q.copy.textContent,q.$('mtoc-copy-md').textContent],[L.copied,L.copied]);
 }
 await settle();eq('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',recordUnhandled);
+
+
+// ---------- v2 page layout ----------
+const require = createRequire(import.meta.url);
+const sha = text => createHash('sha256').update(text).digest('hex');
+const script = source.match(/<script\b[^>]*>[\s\S]*?<\/script>/)[0];
+eq('v2 complete FIX script byte-exact',sha(script),'168a8478dffe0eeb98e8eb9bea8e4eab4865b64d13d92d6ad9a3a84f2653c5df');
+const protectedStart=source.indexOf('  /* ── engine:start ── */'),protectedEnd=source.indexOf('  /* ── engine:end ── */')+'  /* ── engine:end ── */'.length;
+eq('v2 immutable engine exact hash',sha(source.slice(protectedStart,protectedEnd)),'f757d8f2ce9b0bbb19369d75e4ce8483ad8700d5312e32f10a6f45770077e00e');
+check('v2 registered convert',/['"]markdown-toc-generator['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
+check('v2 direct flex tool root',/\n---\s*<div\s+class="mtoc-wrap"/.test(source) && /\.mtoc-wrap\s*\{[^}]*display: flex;[^}]*min-height: 0/.test(source));
+check('v2 controls then reserved status then shared IO',source.indexOf('id="mtoc-options"')<source.indexOf('id="mtoc-copy-toc"') && source.indexOf('id="mtoc-copy-toc"')<source.indexOf('class="mtoc-status-row"') && source.indexOf('class="mtoc-status-row"')<source.indexOf('class="mtoc-grid zt-io"'));
+check('v2 shared input and dual result panes',source.includes('class="mtoc-grid zt-io"') && source.includes('class="mtoc-input-col zt-io-pane"') && source.includes('class="mtoc-results zt-io-pane"') && (source.match(/class="tool-textarea [^"]*zt-io-fill"/g)||[]).length===3);
+check('v2 both states use reserved bounded row',/\.mtoc-status-row\s*\{[^}]*height: 2\.6em/.test(source) && /\.mtoc-status\s*\{[^}]*overflow: auto/.test(source));
+check('v2 results bounded and honor hidden',/\.mtoc-output\s*\{[^}]*flex: 1 1 0;[^}]*min-height: 0/.test(source) && /\.mtoc-output\[hidden\]\s*\{ display: none; \}/.test(source) && /\.mtoc-textarea, \.mtoc-textarea-out\s*\{[^}]*min-height: 0;[^}]*overflow: auto/.test(source));
+check('v2 mobile empty panel and conditional MD controls',source.includes('.mtoc-results:has(#mtoc-toc:placeholder-shown):has(#mtoc-md-block[hidden]) { display: none; }') && source.includes('.mtoc-wrap:not(:has(#mtoc-marker-mode:checked)) .mtoc-md-control { display: none; }'));
+check('v2 860 stacking and 640 bounded phone editors',source.includes('(max-width: 860px)') && source.includes('(max-width: 640px)') && /\.mtoc-textarea\s*\{ height: 120px; \}/.test(source) && /\.mtoc-textarea-out\s*\{ height: 240px; \}/.test(source));
+check('v2 copy touch area and dense range targets',/\.mtoc-copy-control \.btn-copy\s*\{ min-height: 44px/.test(source) && /\.mtoc-range input\s*\{[^}]*min-height: 24px/.test(source));
+const tipMap={input:'inputLabel',anchor:'anchorLabel',bullet:'bulletLabel',indent:'indentLabel',min:'minLevelLabel',max:'maxLevelLabel',h1:'includeH1',marker:'markerMode',copyToc:'copyToc',copyMd:'copyMd'};
+for(const [key,about] of Object.entries(tipMap))check('v2 tip bound '+key,source.includes('<Toggletip id="mtoc-tip-'+key+'" lang={lang} about={L.'+about+'}>{TIPS.'+key+'}</Toggletip>'));
+const protectedLabels={
+  "en": "748a978631a5bc1de53da96748a5d1c59651559dc3d0d4618a27cb7db2b7b78e",
+  "zh": "6966b66d1c49ab09558bbb9a2f939c222be7ea9b9b84d9e288b241089bbd5467",
+  "ja": "6b76c76075ab61fee5b60d9686d0b0359bff9b1527a6398f3be5e3a3729d049a",
+  "ko": "e97515d12f3f4b0444da3709435dacbd19b735e697ec12a346183b73f81fd412"
+};
+const protectedMdx={
+  "en": {
+    "withoutUsageSHA256": "fd4720d218a7babfabef36305dfe24dd1ee38ab27ab4cd0c32e6bcc8f5df4efd",
+    "frontSHA256": "8f4f59c688342f648306dd38ee7c6a54e881cc6a7ef0a7d640b844af218086ea"
+  },
+  "zh": {
+    "withoutUsageSHA256": "25f5f0ef242aa1617c856f134a15620a10ccf98c925d377480f1df193880bfb1",
+    "frontSHA256": "a18dd5aaf7856bc196b0c8accf6d56df705809a5f0cd92e370fe45a5af60742d"
+  },
+  "ja": {
+    "withoutUsageSHA256": "b0602c1030470e618160532de759f08515c4f21f5687959fdcdd9d8c18e72e99",
+    "frontSHA256": "c5bfd352ecc2ce81f4d0ee9c845dab249c04d707a38e42297b410328586896c1"
+  },
+  "ko": {
+    "withoutUsageSHA256": "b336f37d45dcb8c7d2e995dc1a691bd73713f0dcd59139b5b0df6c1252752c9f",
+    "frontSHA256": "df21d49335707b557b93c393c6f328f049061cea02897be5d939bf9f850f7329"
+  }
+};
+const countGoldens={en:['0 headings','1 heading','2 headings'],zh:['共 0 个标题','共 1 个标题','共 2 个标题'],ja:['見出し 0 件','見出し 1 件','見出し 2 件'],ko:['제목 0개','제목 1개','제목 2개']};
+for(const lang of ['en','zh','ja','ko']){
+  const L=allLabels[lang],p=page({lang});eq(lang+' v2 ten matching tip keys',Object.keys(L.tips),Object.keys(tipMap));
+  check(lang+' v2 concise tip strings',Object.values(L.tips).every(x=>typeof x==='string' && x.length>0 && [...x].length<=280));
+  const old=Object.fromEntries(Object.entries(L).filter(([k,v])=>typeof v!=='function' && !['formatOptions','emptyToc','emptyMarkdown','tips'].includes(k)));
+  eq(lang+' v2 all legacy scalar labels unchanged',sha(JSON.stringify(old)),protectedLabels[lang]);
+  eq(lang+' v2 heading formatter 0/1/2 unchanged',[0,1,2].map(n=>L.headings(n)),countGoldens[lang]);
+  const actualDataset=p.document.querySelector('.mtoc-wrap').dataset;
+  check(lang+' v2 no tips in client dataset',!Object.hasOwn(actualDataset,'tips') && !Object.values(L.tips).some(x=>JSON.stringify(actualDataset).includes(x)));
+  eq(lang+' v2 localized desktop empty hints',[p.$('mtoc-empty-toc').textContent,p.$('mtoc-empty-md').textContent],[L.emptyToc,L.emptyMarkdown]);
+  for(const key of Object.keys(tipMap))eq(lang+' v2 rendered tip '+key,p.$('mtoc-tip-'+key).textContent,L.tips[key]);
+  const options=p.$('mtoc-options');check(lang+' v2 native settings initially closed',options.tagName==='DETAILS' && !options.open);
+  check(lang+' v2 formatting controls are reachable inside settings',['bullet','indent','min','max','include-h1'].every(x=>options.contains(p.$('mtoc-'+x))));
+  eq(lang+' v2 actual defaults retained',['anchor','bullet','indent','min','max'].map(x=>p.$('mtoc-'+x).value),['github','-','2','1','6']);
+  eq(lang+' v2 initial marker visibility and Copy disabled',[p.$('mtoc-marker-mode').checked,p.$('mtoc-md-block').hidden,p.copy.disabled,p.$('mtoc-copy-md').disabled],[false,true,true,true]);
+  p.render('# Title\n## Part\n### Detail');eq(lang+' v2 literal complete TOC',p.output.value,'- [Title](#title)\n  - [Part](#part)\n    - [Detail](#detail)');
+  p.$('mtoc-min').value='2';p.$('mtoc-max').value='3';p.$('mtoc-indent').value='4';p.$('mtoc-indent').dispatch('change');eq(lang+' v2 folded formatting preserves automatic handler',p.output.value,'- [Part](#part)\n    - [Detail](#detail)');
+  p.$('mtoc-marker-mode').checked=true;p.$('mtoc-marker-mode').dispatch('change');eq(lang+' v2 marker result becomes visible',p.$('mtoc-md-block').hidden,false);
+  p.render('<!-- toc -->\nold\n<!-- /toc -->\n\n## Keep');eq(lang+' v2 complete marker replacement',p.$('mtoc-md').value,'<!-- toc -->\n- [Keep](#keep)\n<!-- /toc -->\n\n## Keep');
+  p.render('<!-- toc -->\nold\n\n## Keep');eq(lang+' v2 unclosed marker disables MD copy',p.$('mtoc-copy-md').disabled,true);
+  for(const order of ['before','after']){const q=markerPage({lang,order});q.key(false,'mtoc-tip-copyMd-trigger');eq(lang+' v2 '+order+' result tip CtrlL keeps stable focus',q.document.activeElement.id,'mtoc-input');eq(lang+' v2 '+order+' result tip CtrlL clears all visible and cached output',[q.input.value,q.output.value,q.$('mtoc-md').value,q.status.textContent,q.$('mtoc-md-status').textContent],['','','','','']);eq(lang+' v2 '+order+' result tip CtrlL preserves shared clear',q.clears,['markdown-toc-generator']);}
+  const content=readFileSync(join(root,'src/content/tools/markdown-toc-generator',lang+'.mdx'),'utf8');const front=content.match(/^---\n([\s\S]*?)\n---/)[1],data=require('js-yaml').load(front);
+  check(lang+' v2 five steps before FAQ',data.steps.length===5 && front.indexOf('steps:')<front.indexOf('faqItems:'));
+  check(lang+' v2 step bounds',data.steps.every(x=>[...x].length<=280) && data.steps.reduce((n,x)=>n+[...x].length,0)<=1200);
+  eq(lang+' v2 only Usage moved',sha(content.replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),protectedMdx[lang].withoutUsageSHA256);
+  check(lang+' v2 actual new summary named by steps',data.steps.some(x=>x.includes(L.formatOptions)));
+  check(lang+' v2 Usage removed',!/<h2>(?:How to Use|使用步骤|使い方|사용 방법)<\/h2>/.test(content));
+}
+const {transform}=await import(require.resolve('@astrojs/compiler',{paths:[require.resolve('astro')]}));
+const compiled=await transform(source,{filename:join(root,'src/components/tools/MarkdownTocGeneratorTool.astro')});
+eq('v2 Astro error diagnostics',compiled.diagnostics.filter(x=>x.severity===1),[]);
+check('v2 compiled empty and marker selectors retained',compiled.css.some(x=>x.includes(':placeholder-shown') && x.includes('#mtoc-marker-mode:checked')));
+let compileError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){compileError=String(e);}eq('v2 generated module parses',compileError,'');
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
