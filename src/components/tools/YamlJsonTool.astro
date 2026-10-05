@@ -12,10 +12,10 @@ const { lang = 'en' } = Astro.props;
 
 // strings:start
 const STRINGS = {
-  en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', yamlToJson: 'YAML \u2192 JSON', jsonToYaml: 'JSON \u2192 YAML', convertedYamlToJson: 'Converted YAML to JSON.', convertedJsonToYaml: 'Converted JSON to YAML.', invalidYaml: 'Invalid YAML', invalidJson: 'Invalid JSON' },
-  zh: { copy: '复制', copied: '已复制！', clear: '清除', yamlToJson: 'YAML \u2192 JSON', jsonToYaml: 'JSON \u2192 YAML', convertedYamlToJson: '已将 YAML 转换为 JSON。', convertedJsonToYaml: '已将 JSON 转换为 YAML。', invalidYaml: '无效 YAML', invalidJson: '无效 JSON' },
-  ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', yamlToJson: 'YAML \u2192 JSON', jsonToYaml: 'JSON \u2192 YAML', convertedYamlToJson: 'YAML を JSON に変換しました。', convertedJsonToYaml: 'JSON を YAML に変換しました。', invalidYaml: '無効な YAML', invalidJson: '無効な JSON' },
-  ko: { copy: '복사', copied: '복사됨!', clear: '지우기', yamlToJson: 'YAML \u2192 JSON', jsonToYaml: 'JSON \u2192 YAML', convertedYamlToJson: 'YAML을 JSON으로 변환했습니다.', convertedJsonToYaml: 'JSON을 YAML로 변환했습니다.', invalidYaml: '유효하지 않은 YAML', invalidJson: '유효하지 않은 JSON' },
+  en: { copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Try again.', clear: 'Clear', yamlToJson: 'YAML \u2192 JSON', jsonToYaml: 'JSON \u2192 YAML', convertedYamlToJson: 'Converted YAML to JSON.', convertedJsonToYaml: 'Converted JSON to YAML.', invalidYaml: 'Invalid YAML', invalidJson: 'Invalid JSON' },
+  zh: { copy: '复制', copied: '已复制！', copyFailed: '复制失败，请重试。', clear: '清除', yamlToJson: 'YAML \u2192 JSON', jsonToYaml: 'JSON \u2192 YAML', convertedYamlToJson: '已将 YAML 转换为 JSON。', convertedJsonToYaml: '已将 JSON 转换为 YAML。', invalidYaml: '无效 YAML', invalidJson: '无效 JSON' },
+  ja: { copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーできませんでした。もう一度お試しください。', clear: 'クリア', yamlToJson: 'YAML \u2192 JSON', jsonToYaml: 'JSON \u2192 YAML', convertedYamlToJson: 'YAML を JSON に変換しました。', convertedJsonToYaml: 'JSON を YAML に変換しました。', invalidYaml: '無効な YAML', invalidJson: '無効な JSON' },
+  ko: { copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 다시 시도하세요.', clear: '지우기', yamlToJson: 'YAML \u2192 JSON', jsonToYaml: 'JSON \u2192 YAML', convertedYamlToJson: 'YAML을 JSON으로 변환했습니다.', convertedJsonToYaml: 'JSON을 YAML로 변환했습니다.', invalidYaml: '유효하지 않은 YAML', invalidJson: '유효하지 않은 JSON' },
 };
 // strings:end
 const T = STRINGS[lang] || STRINGS.en;
@@ -98,19 +98,43 @@ const T = STRINGS[lang] || STRINGS.en;
     }
 
     function setStatus(msg: string, isError: boolean) {
+      copyErrorOwner = null;
       statusEl.textContent = msg;
       statusEl.className = 'yj-status ' + (isError ? 'error' : 'success');
     }
 
     function clearStatus() {
+      copyErrorOwner = null;
       statusEl.textContent = '';
       statusEl.className = 'yj-status';
     }
 
+    let copyRevision = 0;
+    let copyErrorOwner: HTMLButtonElement | null = null;
+    const copyStates = [copyYamlBtn, copyJsonBtn].map(btn => ({ btn, request: 0, timer: null as ReturnType<typeof setTimeout> | null }));
+
+    function invalidateCopies() {
+      copyRevision++;
+      copyErrorOwner = null;
+      copyStates.forEach(state => {
+        if (state.timer) clearTimeout(state.timer);
+        state.timer = null;
+        state.btn.textContent = S.copy;
+      });
+    }
+
+    function cancelQueued() {
+      if (_yjYamlTimer) clearTimeout(_yjYamlTimer);
+      if (_yjJsonTimer) clearTimeout(_yjJsonTimer);
+      _yjYamlTimer = _yjJsonTimer = null;
+    }
+
     /* Runs one direction; a failed conversion clears the output so a stale result cannot be copied. */
     function run(fromEl: HTMLTextAreaElement, toEl: HTMLTextAreaElement, convert: (raw: string) => Result, okMsg: string): boolean {
+      cancelQueued();
+      invalidateCopies();
       const raw = fromEl.value.trim();
-      if (!raw) { clearStatus(); syncCopy(); return false; }
+      if (!raw) { toEl.value = ''; clearStatus(); syncCopy(); return false; }
       const r = convert(raw);
       if (r.ok) { toEl.value = r.text; setStatus(okMsg, false); }
       else { toEl.value = ''; setStatus(r.message, true); }
@@ -123,15 +147,17 @@ const T = STRINGS[lang] || STRINGS.en;
     /* ── Real-time conversion (debounced 300ms) ── */
     let _yjYamlTimer: ReturnType<typeof setTimeout> | null = null;
     yamlEl.addEventListener('input', () => {
+      cancelQueued();
+      invalidateCopies();
       syncCopy();
-      if (_yjYamlTimer) clearTimeout(_yjYamlTimer);
       _yjYamlTimer = setTimeout(runYaml, 300);
     });
 
     let _yjJsonTimer: ReturnType<typeof setTimeout> | null = null;
     jsonEl.addEventListener('input', () => {
+      cancelQueued();
+      invalidateCopies();
       syncCopy();
-      if (_yjJsonTimer) clearTimeout(_yjJsonTimer);
       _yjJsonTimer = setTimeout(runJson, 300);
     });
 
@@ -143,30 +169,68 @@ const T = STRINGS[lang] || STRINGS.en;
       if (runJson()) (window as any).trackTool && (window as any).trackTool('yaml_json', 'json_to_yaml');
     });
 
-    document.getElementById('yj-clear')!.addEventListener('click', () => {
+    function clearAll() {
+      cancelQueued();
+      invalidateCopies();
       yamlEl.value = '';
       jsonEl.value = '';
       clearStatus();
       syncCopy();
-    });
+      yamlEl.focus();
+    }
+    document.getElementById('yj-clear')!.addEventListener('click', clearAll);
 
     /* ── Copy buttons ── */
     function copyFrom(el: HTMLTextAreaElement, btn: HTMLButtonElement) {
       if (!el.value || btn.disabled) return;
-      navigator.clipboard.writeText(el.value).then(() => {
+      const state = copyStates[btn === copyYamlBtn ? 0 : 1];
+      const request = ++state.request;
+      const revision = copyRevision;
+      const text = el.value;
+      if (state.timer) clearTimeout(state.timer);
+      state.timer = null;
+      btn.textContent = S.copy;
+      const current = () => revision === copyRevision && request === state.request && el.value === text && !btn.disabled;
+      const failed = () => {
+        if (!current()) return;
+        setStatus(S.copyFailed, true);
+        copyErrorOwner = btn;
+      };
+      const done = () => {
+        if (!current()) return;
+        if (copyErrorOwner === btn && statusEl.textContent === S.copyFailed) clearStatus();
         btn.textContent = S.copied;
-        setTimeout(() => { btn.textContent = S.copy; }, 1500);
-      });
+        state.timer = setTimeout(() => { if (current()) btn.textContent = S.copy; }, 1500);
+      };
+      try {
+        if (!navigator.clipboard?.writeText) { failed(); return; }
+        navigator.clipboard.writeText(text).then(done, failed);
+      } catch { failed(); }
     }
     copyYamlBtn.addEventListener('click', () => copyFrom(yamlEl, copyYamlBtn));
     copyJsonBtn.addEventListener('click', () => copyFrom(jsonEl, copyJsonBtn));
 
     /* ── Keyboard shortcut: Ctrl/Cmd+Enter ── */
     yamlEl.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) document.getElementById('yj-to-json')!.click();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        document.getElementById('yj-to-json')!.click();
+      }
     });
     jsonEl.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) document.getElementById('yj-to-yaml')!.click();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        document.getElementById('yj-to-yaml')!.click();
+      }
+    });
+
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && yjWrap.contains(document.activeElement)) {
+        e.preventDefault();
+        clearAll();
+      }
     });
 
     /* ── Page load ── Astro bundles this script as a module, which runs only after the page is
