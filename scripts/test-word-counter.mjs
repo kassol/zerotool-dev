@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/WordCounterTool.astro'), 'utf8');
@@ -104,18 +105,19 @@ function page(lang, sharedFirst) {
   for (const [, id] of source.matchAll(/id="(wc-[^"]+)"/g)) {
     let text = id.includes('time') ? '0 min' : '0';
     nodes.set(id, { id, value: '', handlers: {}, get textContent() { return text; }, set textContent(v) { text = String(v); },
-      addEventListener(type, fn) { this.handlers[type] = fn; } });
+      addEventListener(type, fn) { this.handlers[type] = fn; }, focus() { document.activeElement = this; } });
   }
-  const widget = { contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [nodes.get('wc-input')] };
+  let empty = 'true';
+  const widget = { dataset: { get empty() { return empty; }, set empty(value) { empty = value; if (value === 'true' && document.activeElement?.id === 'wc-tip-chars') document.activeElement = {}; } }, contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [nodes.get('wc-input')] };
   const document = { documentElement: { lang }, activeElement: nodes.get('wc-input'), getElementById: id => nodes.get(id),
     querySelector: s => ['.tool-widget', '.wc-wrap'].includes(s) ? widget : null, querySelectorAll: () => [], addEventListener: (type, fn) => { if (type === 'keydown') listeners.push(fn); } };
   const context = vm.createContext({ document, Intl, _slug: 'word-counter', window: { trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) } } });
   if (sharedFirst) vm.runInContext(shortcut, context);
   vm.runInContext(source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1], context);
   if (!sharedFirst) vm.runInContext(shortcut, context);
-  return { nodes, clears, tracks,
+  return { nodes, clears, tracks, widget,
     input(text) { const el = nodes.get('wc-input'); el.value = text; el.handlers.input.call(el); },
-    key(key, meta = false, inside = true, modifier = true) { document.activeElement = inside ? nodes.get('wc-input') : {}; let prevented = false; const e = { key, ctrlKey: modifier && !meta, metaKey: modifier && meta, preventDefault() { prevented = true; } }; for (const fn of listeners) fn(e); return prevented; },
+    key(key, meta = false, inside = true, modifier = true, focusId = 'wc-input') { document.activeElement = inside ? nodes.get(focusId) : {}; let prevented = false; const e = { key, ctrlKey: modifier && !meta, metaKey: modifier && meta, preventDefault() { prevented = true; } }; for (const fn of listeners) fn(e); return prevented; },
     stats() { return ['chars', 'chars-no-spaces', 'words', 'sentences', 'paragraphs', 'read-time', 'speak-time'].map(id => nodes.get('wc-' + id).textContent); }
   };
 }
@@ -132,8 +134,53 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
     eq(prefix + 'shared persistence clear runs once', h.clears.slice(n), ['word-counter']);
     h.input('One two.'); eq(prefix + 'new input recovers', h.stats(), ['8', '7', '2', '1', '1', '< 1 min', '< 1 min']);
   }
+  const beforeTipClear = h.clears.length;
+  h.key('l', false, true, true, 'wc-tip-chars');
+  eq(prefix + 'clearing from a statistic tip preserves shared persistence cleanup', h.clears.slice(beforeTipClear), ['word-counter']);
   h.input(''); eq(prefix + 'ordinary empty input resets statistics', h.stats(), ['0', '0', '0', '0', '0', '0 min', '0 min']);
 }
 
+// ---------- v2 page layout ----------
+const v2Start = passes;
+const sha = text => createHash('sha256').update(text).digest('hex');
+const strings = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?);\nconst T/)[1] + ')');
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+const css = source.split('<style>')[1].split('</style>')[0];
+const script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [1683, 'ceed0fc51136f9b4b92c36f42207404f9f0554369f3d15712413735d4b1335f1']);
+check('v2 direct flex root', /^<div class="wc-wrap" data-empty="true">/.test(markup) && /\.wc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+check('v2 registered analyze', /'word-counter':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 only actual automatic counting controls', !/<button|btn-primary|btn-copy|download/.test(markup));
+check('v2 runtime language replacement removed', !/data-i18n/.test(source) && !/STRINGS|tips|pageLang/.test(script));
+check('v2 labeled editable input grows and scrolls internally', /<label for="wc-input">\{T.inputText\}/.test(markup) && /#wc-input\s*\{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*resize: none;[^}]*overflow: auto/.test(css));
+check('v2 input panel receives available height', /\.wc-row\s*\{[^}]*flex: 1 1 0;[^}]*min-width: 0;[^}]*min-height: 0/.test(css));
+check('v2 result is bounded, full-width and keyboard scrollable', /\.wc-results\s*\{[^}]*flex: none;[^}]*max-height: 18rem;[^}]*overflow: auto/.test(css) && /id="wc-results"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-label=\{T.results\}/.test(markup));
+check('v2 all seven live metrics preserve original IDs', ['chars','chars-no-spaces','words','sentences','paragraphs','read-time','speak-time'].every(id => markup.includes('id="wc-' + id + '"')) && /id="wc-stats"[^>]*role="status"[^>]*aria-live="polite"/.test(markup));
+check('v2 desktop empty result explains counts and keeps zeros hidden', markup.includes('{T.emptyResult}') && /\.wc-wrap\[data-empty="true"\] \.wc-stats, \.wc-wrap\[data-empty="false"\] \.wc-empty\s*\{ display: none; \}/.test(css));
+check('v2 stacked input stays 160px and hides empty results', /@media \(max-width: 860px\)[\s\S]*#wc-input\s*\{ flex: none; height: 160px; \}/.test(css) && /\.wc-wrap\[data-empty="true"\] \.wc-results\s*\{ display: none; \}/.test(css));
+check('v2 phone results use two bounded columns', /@media \(max-width: 640px\)[\s\S]*repeat\(2, minmax\(0, 1fr\)\)/.test(css));
+const tips = [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{T.tips\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 eight tips cover input and every metric', tips.map(x => x[3]).sort(), ['input','characters','charsNoSpaces','words','sentences','paragraphs','readingTime','speakingTime'].sort());
+const hashes = { en: 'fc2fbfca80fe4a6265b54312ea75aef6f0c19d90fda94377f97f834bd2d9b27d', zh: '173d7e875ead40e6e3f980b47960feee0dbff60a1a018f40f1c61fd92b0f88c6', ja: 'e927289f7866c4576432f048caaad97175f29df937dbca463064e39cbb5e7bfb', ko: '732a4d98aaeb29da690cecf23ffe479da65d5ffb537893d52216901b07b9392c' };
+for (const lang of ['en','zh','ja','ko']) {
+  const t = strings[lang];
+  eq(lang + ' v2 locale keys', Object.keys(t).sort(), Object.keys(strings.en).sort());
+  eq(lang + ' v2 tip keys', Object.keys(t.tips).sort(), Object.keys(strings.en.tips).sort());
+  for (const tip of tips) check(lang + ' v2 actual label and plain fact ' + tip[1], typeof t[tip[2]] === 'string' && t[tip[2]].trim().length > 0 && typeof t.tips[tip[3]] === 'string' && t.tips[tip[3]].trim().length > 0);
+  const mdx = readFileSync(join(root, 'src/content/tools/word-counter', lang + '.mdx'), 'utf8');
+  const steps = (mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1] || '').trim().split('\n').filter(Boolean).map(line => JSON.parse(line.trim().slice(2)));
+  eq(lang + ' v2 four plain steps', steps.length, 4);
+  check(lang + ' v2 step limits and actual labels', steps.every(x => [...x].length <= 280 && !/[<>]|\]\(|\*\*|`/.test(x)) && steps.reduce((n,x) => n + [...x].length, 0) <= 1200 && ['inputText','characters','words','readingTime','speakingTime'].every(key => steps.join(' ').includes(t[key])));
+  eq(lang + ' v2 preserves all non-Usage content', sha(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), hashes[lang]);
+  const h = page(lang, false);
+  eq(lang + ' v2 initial state is empty', h.widget.dataset.empty, 'true');
+  h.input(' \t\n'); eq(lang + ' v2 whitespace has meaningful character counts', [h.widget.dataset.empty, h.stats()], ['false', ['3','0','0','0','0','0 min','0 min']]);
+  h.input('👍 a'); eq(lang + ' v2 unicode uses the actual engine', h.stats(), ['4','3','2','1','1','< 1 min','< 1 min']);
+  const text = Array.from({ length: 1200 }, () => 'Hello world.').join('\n');
+  h.input(text); eq(lang + ' v2 long content keeps every count and minute', h.stats(), ['15599','13200','2400','1200','1','12 min','19 min']);
+  eq(lang + ' v2 long input is preserved', h.nodes.get('wc-input').value, text);
+  h.key('l'); eq(lang + ' v2 keyboard clear restores empty layout', h.widget.dataset.empty, 'true');
+}
+console.log('v2 page layout: ' + (passes - v2Start) + ' passed, ' + failures + ' total failures');
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

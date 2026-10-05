@@ -14,6 +14,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'diff-checker': 'compare',
   'json-diff': 'compare',
   'yaml-validator': 'analyze',
+  'word-counter': 'analyze',
   'number-base': 'compact',
   'bcrypt-generator': 'compact',
   'color-converter': 'compact',
