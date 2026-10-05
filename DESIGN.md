@@ -150,6 +150,7 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 | `generate` | A 270–320px control rail (inputs, options, code export) on the left; the generated preview fills the rest (palettes: six cards in two rows of three, monochromatic full width). Rail stacks on top below 860px. | 1840px | `ColorPaletteGeneratorTool` |
 | `analyze` | The result uses the full width. Before input, the drop zone fills the first screen. From 1280px, details open beside the list; lists grow with the window height. | 2400px | `HarFileAnalyzerTool` |
 | `compact` | Short inputs followed directly by short results. The tool card is centered, at most 960px wide, and uses its content height at every viewport. Controls and a reserved status row precede results. Long values scroll inside their result rows; worked steps may use a bounded area below. | 1120px | `NumberBaseTool` (B5 representative) |
+| `compare` | Two bounded input editors above a full-width result that fills the remaining first screen and scrolls internally. Controls and a reserved status row come first; pagination stays outside the result. Users may collapse inputs after a result; clearing, invalidating or failing a comparison reopens them. | 2400px | `DiffCheckerTool` (B10 representative) |
 
 **Shared classes** (`src/styles/tool-common.css`, loaded on every tool page)
 
@@ -179,6 +180,7 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 - Header: 40px icon well, display-serif H1 `clamp(1.55rem, 1.05rem + 1.25vw, 2.35rem)`, description at 0.93rem, trust items as small muted text at the top right (below the title under 900px). No kicker label.
 - `.tool-first` (header + `.tool-widget--v2`) has `min-height: calc(100svh - var(--header-height))`; the widget is a flex column and the tool's root element gets `flex: 1`, so editors, previews and lists grow into the first screen. Below 760px the first screen does not fill; the tool stacks at its own height.
 - `compact` uses a 1120px shell and a centered tool card up to 960px. Its first screen has no viewport minimum height; neither the card nor its root stretches. Results follow the inputs without an empty preview area. The shared page order and folded reference content stay the same.
+- `compare` uses the 2400px shell. Input editors are 180px high on desktop and stack at 860px with 120px height. The first screen uses content height at 860px and below; empty output is hidden there and a populated result remains bounded. Keep input values when users collapse the input section; make the result start visible after comparison on phones.
 - Page order: tool → share buttons / guide link → reference `<details id="reference">` (closed) → mid ad → related tools → bottom ad. Sensitive tools show no ads, as before.
 
 **Explanations in the tool**
