@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { Worker as ThreadWorker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const src = readFileSync(join(root, 'src/components/tools/RegexTesterTool.astro'), 'utf8');
@@ -26,6 +27,13 @@ const style = src.slice(src.indexOf('<style>'), src.indexOf('</style>'));
 const script = src.slice(src.indexOf('<script'), src.indexOf('</script>'));
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+const markup = src.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+const strings = vm.runInNewContext('(' + src.match(/const STRINGS = ([\s\S]*?);\nconst T/)[1] + ')');
+function clientStrings(lang) {
+  const context = vm.createContext({ STRINGS: strings, lang });
+  vm.runInContext(src.match(/const T = [\s\S]*?(?=\n---)/)[0] + '\nglobalThis.client = CLIENT;', context);
+  return JSON.parse(JSON.stringify(context.client));
+}
 
 let passes = 0, failures = 0;
 function eq(name, got, want) {
@@ -87,12 +95,21 @@ function pageHarness(lang = 'en', noWorker = false, order = 'shared-after') {
   const flags = ['g', 'i', 'm', 's'].map(value => Object.assign(element(), { value, checked: value === 'g' }));
   const blobs = new Map(), workers = [], timers = new Map(), events = {};
   const persistedClears = [], delivery = { hold: false };
-  const widget = { contains(el) { return [...nodes.values(), ...flags].includes(el); },
+  const widget = { dataset: { empty: markup.match(/class="rgx-wrap" data-empty="([^"]+)"/)[1] },
+    contains(el) { return [...nodes.values(), ...flags].includes(el); },
     querySelectorAll(s) { return s === 'textarea, input[type="text"]' ? [nodes.get('rgx-pattern'), nodes.get('rgx-test')] : []; } };
   Object.assign(document, {
     querySelectorAll: s => s.includes('rgx-flags') ? flags : [],
     querySelector: s => ['.tool-widget', '.rgx-wrap'].includes(s) ? widget : null,
-    getElementById: id => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
+    getElementById: id => {
+      if (!nodes.has(id)) {
+        const node = element(), tag = markup.match(new RegExp('<[^>]+\\bid="' + id + '"[^>]*>'))?.[0] || '';
+        node.className = tag.match(/class="([^"]*)"/)?.[1] || '';
+        node.hidden = /\shidden(?:\s|>)/.test(tag);
+        nodes.set(id, node);
+      }
+      return nodes.get(id);
+    },
     createElement: element
   });
   let timerId = 0;
@@ -107,7 +124,7 @@ function pageHarness(lang = 'en', noWorker = false, order = 'shared-after') {
     postMessage(data) { this.thread.postMessage(data); }
     terminate() { this.terminated = true; return this.thread.terminate(); }
   }
-  const context = vm.createContext({ document, _slug: 'regex-tester',
+  const context = vm.createContext({ document, S: clientStrings(lang), _slug: 'regex-tester',
     window: { addEventListener(k, f) { events[k] = f; }, ztPersist: { clear(slug) { persistedClears.push(slug); } } }, Worker: noWorker ? undefined : BrowserWorker,
     Blob: class { constructor(parts) { this.source = parts.join(''); } },
     URL: { createObjectURL(b) { const key = 'blob:' + blobs.size; blobs.set(key, b.source); return key; }, revokeObjectURL() {} },
@@ -144,7 +161,7 @@ function pageHarness(lang = 'en', noWorker = false, order = 'shared-after') {
     try { return await Promise.race([worker.ready, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Worker result did not arrive')), 5000); })]); }
     finally { clearTimeout(timer); }
   }
-  return { nodes, workers, flags, events, fire, tick, match, key, ready, document, persistedClears, delivery, timers,
+  return { nodes, workers, flags, events, fire, tick, match, key, ready, document, widget, persistedClears, delivery, timers,
     async close() { await Promise.all(workers.map(w => w.terminate())); } };
 }
 const page = pageHarness();
@@ -259,5 +276,94 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before
   } finally { await p.close(); }
 }
 
+// ---------- v2 page layout ----------
+const v2Start = passes;
+const sha = text => createHash('sha256').update(text).digest('hex');
+eq('v2 direct flex root with zero minimum sizes', /^<div class="rgx-wrap" data-empty="true">/.test(markup)
+  && /\.rgx-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0/.test(style), true);
+eq('v2 registered analyze', /'regex-tester':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')), true);
+eq('v2 controls then reserved status then input then full-width results', ['class="rgx-controls"','id="rgx-status"','class="rgx-field rgx-input-section"','id="rgx-results"'].map(x => markup.indexOf(x)).every((x,i,a) => x >= 0 && (i === 0 || x > a[i - 1])), true);
+eq('v2 only existing Cancel action, no artificial primary or copy', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m => m[1]), ['rgx-cancel']);
+eq('v2 Cancel hidden semantics with reserved control space', /id="rgx-cancel"[^>]*hidden/.test(markup) && /#rgx-cancel\[hidden\]\s*\{ display: none; \}/.test(style) && /\.rgx-cancel-slot\s*\{[^}]*min-height: 44px/.test(style), true);
+eq('v2 input and Cancel 44px targets', /\.rgx-pattern-row > input\[type="text"\]\s*\{[^}]*min-height: 44px/.test(style) && /#rgx-cancel\s*\{[^}]*min-height: 44px/.test(style), true);
+eq('v2 static labels and placeholders use build-time locale', !/data-i18n|pageLang/.test(src) && /for="rgx-pattern">\{T.pattern\}/.test(markup) && /for="rgx-test">\{T.testString\}/.test(markup) && markup.includes('placeholder={T.testPlaceholder}'), true);
+eq('v2 only current-language strings enter script, no tip bodies', /define:vars=\{\{ S: CLIENT \}\}/.test(script) && !/STRINGS|tips|TIPS/.test(script), true);
+eq('v2 status has fixed height and keyboard scrolling', /\.rgx-status\s*\{[^}]*height: 3\.9em;[^}]*overflow: auto/.test(style) && /id="rgx-status"[^>]*role="status"[^>]*aria-live="polite"[^>]*tabindex="0"/.test(markup), true);
+eq('v2 empty input receives available height', /\.rgx-input-section\s*\{ flex: 1 1 0; min-height: 160px; \}/.test(style) && /\.rgx-field textarea\s*\{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;[^}]*resize: none/.test(style), true);
+eq('v2 populated desktop input is compact', /\.rgx-wrap\[data-empty="false"\] #rgx-test\s*\{ flex: none; height: 120px; \}/.test(style), true);
+eq('v2 results follow available height without content basis', /\.rgx-results\s*\{[^}]*flex: 1 1 0;[^}]*min-width: 0;[^}]*min-height: 0/.test(style) && /\.rgx-result-body\s*\{[^}]*flex: 1 1 0;[^}]*min-height: 0/.test(style), true);
+for (const [id,label] of [['rgx-highlight','highlightedMatches'],['rgx-matches','matches']]) {
+  eq('v2 bounded keyboard-scrollable output ' + id, new RegExp('\\.' + id + '\\s*\\{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto').test(style)
+    && new RegExp('id="' + id + '"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-label=\\{T\\.' + label + '\\}').test(markup), true);
+}
+eq('v2 result sections use a full-width column', /\.rgx-result-body\s*\{ display: flex; flex-direction: column;/.test(style) && !/grid-template-columns/.test(style), true);
+eq('v2 desktop empty hint and content are mutually exclusive', markup.includes('{T.emptyResult}') && /\.rgx-wrap\[data-empty="true"\] \.rgx-result-body, \.rgx-wrap\[data-empty="false"\] \.rgx-empty\s*\{ display: none; \}/.test(style), true);
+eq('v2 860 stack bounds input/results and hides empty output', /@media \(max-width: 860px\)[\s\S]*height: 160px;[\s\S]*\.rgx-results\s*\{ flex: none; height: 26rem; \}[\s\S]*\.rgx-wrap\[data-empty="true"\] \.rgx-results\s*\{ display: none; \}/.test(style), true);
+eq('v2 640 controls and results remain bounded', /@media \(max-width: 640px\)[\s\S]*\.rgx-flags label\s*\{ min-height: 44px; \}[\s\S]*\.rgx-results\s*\{ height: 24rem; \}/.test(style), true);
+eq('v2 theme ancestor selectors are global', [...style.matchAll(/^\s*([^\n{]*(?:data-theme)[^\n{]*)\{/gm)].every(m => m[1].includes(':global(')), true);
+eq('v2 original plural branch remains n greater than one', script.includes("count > 1 ? t.matchMany : t.matchOne") && script.includes("t.andMore.replace('{n}', count - 100)"), true);
+const tipKeys = ['pattern','g','i','m','s','input','highlight','matches'];
+const tips = [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=(?:\{T\.(\w+)\}|"([gims])")>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 exact eight control-bound tip IDs', tips.map(m => [m[1],m[4]]), tipKeys.map(k => ['rgx-tip-' + k,k]));
+const contentHashes = {
+  en: '8b202f911ad16d3a479bfdaea5cb1d593a347e9912d7a7c26827281f3449a492',
+  zh: '48953aa5ba640b5c2a821b75550680a6a6a8f3b95ed01840dbc7680d5b838983',
+  ja: '858c4453437415fe41b8cb5bbf0e26d408641456ba3cdf2b6ae0a49e5bb4d7bc',
+  ko: '837422ee708f9e75e31d339875625104c9c387be7b78c15674efe34534cc3eb5'
+};
+const statusLiterals = {
+  en: ['No matches.', '1 match found.', '2 matches found.', '... and 2 more matches.', '0 match found.'],
+  zh: ['无匹配项。', '找到 1 个匹配项。', '找到 2 个匹配项。', '... 还有 2 个匹配项。', '找到 0 个匹配项。'],
+  ja: ['マッチなし。', '1 件マッチしました。', '2 件マッチしました。', '... 他 2 件のマッチ。', '0 件マッチしました。'],
+  ko: ['일치하는 항목이 없습니다.', '1개 일치 항목을 찾았습니다.', '2개 일치 항목을 찾았습니다.', '... 외 2개 일치 항목.', '0개 일치 항목을 찾았습니다.']
+};
+for (const lang of ['en','zh','ja','ko']) {
+  const t = strings[lang], client = clientStrings(lang);
+  eq(lang + ' v2 locale keys match', Object.keys(t).sort(), Object.keys(strings.en).sort());
+  eq(lang + ' v2 all tip keys match', Object.keys(t.tips).sort(), [...tipKeys].sort());
+  eq(lang + ' v2 client excludes tips and functions', !('tips' in client) && Object.values(client).every(v => typeof v === 'string'), true);
+  for (const tip of tips) eq(lang + ' v2 visible label and fact ' + tip[1], typeof (tip[2] ? t[tip[2]] : tip[3]) === 'string' && typeof t.tips[tip[4]] === 'string' && t.tips[tip[4]].trim().length > 0 && !/<\/?[a-z]|https?:\/\//.test(t.tips[tip[4]]), true);
+  const mdx = readFileSync(join(root, 'src/content/tools/regex-tester', lang + '.mdx'), 'utf8');
+  const steps = (mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1] || '').trim().split('\n').filter(Boolean).map(line => JSON.parse(line.trim().slice(2)));
+  eq(lang + ' v2 six plain steps', steps.length, 6);
+  eq(lang + ' v2 bounded steps use actual localized controls', steps.every(s => [...s].length <= 280 && !/[<>]|\]\(|\*\*|`/.test(s)) && steps.reduce((n,s) => n + [...s].length, 0) <= 1200 && ['pattern','testString','highlightedMatches','matches','cancel'].every(k => steps.join(' ').includes(t[k])), true);
+  eq(lang + ' v2 Usage-only body change preserves FAQ SEO examples and limits', sha(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), contentHashes[lang]);
+  eq(lang + ' v2 zero retains original singular template', client.matchOne.replace('{n}', 0), statusLiterals[lang][4]);
+  const p = pageHarness(lang);
+  try {
+    eq(lang + ' v2 initial empty state and hidden Cancel', [p.widget.dataset.empty, p.nodes.get('rgx-cancel').hidden], ['true',true]);
+    for (const [text,count] of [['x',0],['a',1],['aa',2]]) {
+      await p.match('a',text);
+      eq(lang + ' v2 literal count message ' + count, p.nodes.get('rgx-status').textContent, statusLiterals[lang][count]);
+      eq(lang + ' v2 actual result expands correct layout ' + count, p.widget.dataset.empty, 'false');
+    }
+    p.flags[0].checked = false; p.flags[0].listeners.change(); p.tick(300);
+    eq(lang + ' v2 actual flag change still runs automatically', (await p.ready(p.workers.at(-1))).count, 1);
+    await p.match('a','a'.repeat(102));
+    eq(lang + ' v2 list overflow template preserves plural text', p.nodes.get('rgx-matches').children[0].children.at(-1).textContent, statusLiterals[lang][3]);
+    p.fire('rgx-pattern',''); p.fire('rgx-test','plain <&>'); p.tick(300);
+    eq(lang + ' v2 pattern-free text preview retains exact bytes', [p.nodes.get('rgx-highlight').textContent,p.widget.dataset.empty], ['plain <&>','false']);
+    for (const order of ['shared-before','shared-after']) {
+      const q = pageHarness(lang, false, order);
+      try {
+        await q.match('a','a'); q.document.getElementById('rgx-tip-matches').focus(); q.key();
+        eq(lang + ' v2 result-tip CtrlL preserves shared cleanup ' + order, [q.widget.dataset.empty, q.document.activeElement === q.nodes.get('rgx-test'), q.persistedClears], ['true',true,['regex-tester']]);
+      } finally { await q.close(); }
+    }
+    p.fire('rgx-pattern',''); p.fire('rgx-test','');
+    eq(lang + ' v2 empty layout returns during debounce', p.widget.dataset.empty, 'true');
+    p.tick(300);
+    eq(lang + ' v2 empty input starts no Worker and has no status', p.nodes.get('rgx-status').textContent, '');
+  } finally { await p.close(); }
+}
+try {
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const compiled = await transform(src, { filename: 'RegexTesterTool.astro' });
+  eq('v2 actual Astro compiler has no error diagnostics', compiled.diagnostics.filter(d => d.severity === 1), []);
+  await require('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' });
+  eq('v2 generated Astro JavaScript compiles', true, true);
+} catch (error) { eq('v2 actual Astro and generated JavaScript compilation', error.message, 'no error'); }
+console.log('v2 page layout: ' + (passes - v2Start) + ' passed, ' + failures + ' total failures');
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

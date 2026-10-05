@@ -17,6 +17,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'word-counter': 'analyze',
   'jwt-decoder': 'analyze',
   'http-header-analyzer': 'analyze',
+  'regex-tester': 'analyze',
   'env-file-parser': 'analyze',
   'markdown-linter': 'analyze',
   'jsonpath-tester': 'analyze',

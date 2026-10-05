@@ -1,80 +1,128 @@
 ---
-// RegexTesterTool — reusable widget, no props needed
+// RegexTesterTool — native JavaScript matching in a cancellable Worker
+import Toggletip from '../Toggletip.astro';
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+const STRINGS = {
+  en: {
+    pattern: "Pattern",
+    matches: "Match details",
+    emptyResult: "Enter a pattern and test text to see highlights and capture groups.",
+    tips: {
+      "pattern": "Enter a JavaScript regular expression without surrounding slashes. Input and flag changes run after 300 ms. Matching uses a browser Worker with a two-second limit; Cancel stops the current run. A timeout or cancellation gives no complete result.",
+      "g": "Find all matches when g is on. Turn it off to return only the first match. Changing this flag starts a new run after 300 ms.",
+      "i": "Ignore case when matching. Accents remain significant: cafe with i matches CAFE but not Café.",
+      "m": "Let ^ and $ match the start and end of each line. With m off, these anchors refer to the whole text.",
+      "s": "Let the dot match line breaks as well as other characters. This does not change the meaning of ^ and $.",
+      "input": "Type or paste the text to test. Changes stop the previous run and wait 300 ms before matching again. Ctrl+L (⌘+L on Mac) inside this tool clears both inputs and results while keeping the flags.",
+      "highlight": "The preview shows the first 100,000 UTF-16 units and at most 1,000 highlights. Long text scrolls inside this panel. An invalid pattern shows the text without highlights.",
+      "matches": "Completed runs count every match. This list shows the first 100 matches and 20 groups per match, numbered even for named groups. Values are limited to 1,000 UTF-16 units each and 100,000 in total; … marks shortening. Indexes also use UTF-16 units."
+    },
+    testString: 'Test String', testPlaceholder: 'Paste your text here...', highlightedMatches: 'Highlighted Matches',
+    noMatches: 'No matches.', matchOne: '{n} match found.', matchMany: '{n} matches found.',
+    invalidRegex: 'Invalid regex: ', matchLabel: 'Match', groupLabel: 'Group', andMore: '... and {n} more matches.',
+    cancel: 'Cancel', running: 'Matching… (2 s limit)', timeout: 'Stopped after 2 s. No complete result; simplify the pattern or shorten the text.', cancelled: 'Cancelled. No complete result.', workerError: 'Could not run the matching worker.', limited: ' Preview: first 100,000 UTF-16 units and 1,000 highlights; list: first 100 matches, first 20 groups, 1,000 units per value and 100,000 units in total. … marks shortened values.'
+  },
+  zh: {
+    pattern: "正则表达式",
+    matches: "匹配详情",
+    emptyResult: "输入表达式和测试文本后，这里显示高亮及捕获组。",
+    tips: {
+      "pattern": "输入 JavaScript 正则表达式，不加两侧斜杠。输入或标志位变化后等待 300 毫秒再匹配。浏览器 Worker 限时两秒；「取消」停止当前运行，超时或取消都没有完整结果。",
+      "g": "勾选 g 查找所有匹配，取消勾选只返回第一项。修改此标志位后等待 300 毫秒重新匹配。",
+      "i": "匹配时忽略大小写，但不忽略重音：cafe 配合 i 可匹配 CAFE，不能匹配 Café。",
+      "m": "让 ^ 和 $ 匹配每一行的开头和结尾。关闭 m 时，这两个锚点针对整段文本。",
+      "s": "让点号也能匹配换行符，不改变 ^ 和 $ 的含义。",
+      "input": "输入或粘贴待测试文本。修改会停止旧运行，等待 300 毫秒后重新匹配。焦点在本工具内时，Ctrl+L（Mac 为 ⌘+L）清空两项输入及结果，保留标志位。",
+      "highlight": "预览显示前 100,000 个 UTF-16 码元及最多 1,000 处高亮。长文本在栏内滚动；表达式无效时显示未高亮的文本。",
+      "matches": "运行完成后计数包含全部匹配。列表展示前 100 项及每项的前 20 个组，命名组也按编号显示。每个值最多 1,000 个 UTF-16 码元、合计 100,000 个，缩短处以 … 标记。索引同样按 UTF-16 码元计算。"
+    },
+    testString: '测试字符串', testPlaceholder: '在此粘贴文本...', highlightedMatches: '高亮匹配',
+    noMatches: '无匹配项。', matchOne: '找到 {n} 个匹配项。', matchMany: '找到 {n} 个匹配项。',
+    invalidRegex: '无效的正则表达式：', matchLabel: '匹配', groupLabel: '组', andMore: '... 还有 {n} 个匹配项。',
+    cancel: '取消', running: '正在匹配…（限时 2 秒）', timeout: '已在 2 秒后停止。没有完整结果，请简化表达式或缩短文本。', cancelled: '已取消，没有完整结果。', workerError: '无法运行匹配 Worker。', limited: ' 预览只显示前 100,000 个 UTF-16 码元及 1,000 处高亮；列表显示前 100 个匹配及前 20 个组，每个值最多 1,000 码元、合计最多 100,000 码元。缩短的值以 … 标记。'
+  },
+  ja: {
+    pattern: "パターン",
+    matches: "マッチの詳細",
+    emptyResult: "パターンとテスト文字列を入力すると、ハイライトとキャプチャグループを表示します。",
+    tips: {
+      "pattern": "両端のスラッシュを除いて JavaScript の正規表現を入力します。入力やフラグの変更後、300 ミリ秒待って実行します。ブラウザーの Worker は上限 2 秒で、「キャンセル」で停止できます。時間切れやキャンセルでは完全な結果はありません。",
+      "g": "g をオンにすると全マッチを検索し、オフでは最初の 1 件だけ返します。変更後 300 ミリ秒で再実行します。",
+      "i": "大文字と小文字を区別しません。アクセントは区別するため、cafe と i は CAFE に一致しますが Café には一致しません。",
+      "m": "^ と $ を各行の先頭と末尾に一致させます。m がオフなら、テキスト全体の先頭と末尾を指します。",
+      "s": "ドットを改行にも一致させます。^ と $ の意味は変わりません。",
+      "input": "テストするテキストを入力または貼り付けます。変更すると前の実行を停止し、300 ミリ秒後に再実行します。ツール内で Ctrl+L（Mac は ⌘+L）を押すと両入力と結果を消し、フラグは保持します。",
+      "highlight": "先頭 100,000 UTF-16 単位と最大 1,000 件のハイライトを表示します。長いテキストは欄内でスクロールできます。無効なパターンでは、強調せずテキストを表示します。",
+      "matches": "完了した実行は全マッチを数えます。一覧は先頭 100 件と各 20 グループまでで、名前付きグループも番号で表示します。値は各 1,000 UTF-16 単位、合計 100,000 単位までで、省略を … で示します。位置も UTF-16 単位です。"
+    },
+    testString: 'テスト文字列', testPlaceholder: 'テキストを貼り付け...', highlightedMatches: 'マッチのハイライト',
+    noMatches: 'マッチなし。', matchOne: '{n} 件マッチしました。', matchMany: '{n} 件マッチしました。',
+    invalidRegex: '無効な正規表現：', matchLabel: 'マッチ', groupLabel: 'グループ', andMore: '... 他 {n} 件のマッチ。',
+    cancel: 'キャンセル', running: 'マッチ処理中…（上限 2 秒）', timeout: '2 秒で停止しました。完全な結果はありません。パターンかテキストを短くしてください。', cancelled: 'キャンセルしました。完全な結果はありません。', workerError: 'マッチ用 Worker を実行できません。', limited: ' プレビューは先頭 100,000 UTF-16 単位と 1,000 件、一覧は先頭 100 件と 20 グループまでです。各値は 1,000 単位、合計 100,000 単位まで表示し、省略を … で示します。'
+  },
+  ko: {
+    pattern: "패턴",
+    matches: "일치 상세",
+    emptyResult: "패턴과 테스트 문자열을 입력하면 강조 표시와 캡처 그룹을 보여 줍니다.",
+    tips: {
+      "pattern": "양쪽 슬래시 없이 JavaScript 정규식을 입력하세요. 입력이나 플래그를 바꾸면 300밀리초 후 실행합니다. 브라우저 Worker는 최대 2초 동안 실행하며 「취소」로 중지합니다. 시간 초과나 취소에는 완전한 결과가 없습니다.",
+      "g": "g를 켜면 모든 일치를 찾고, 끄면 첫 일치만 반환합니다. 바꾼 뒤 300밀리초 후 다시 실행합니다.",
+      "i": "대소문자를 구분하지 않습니다. 악센트는 구분하므로 cafe와 i는 CAFE에 일치하지만 Café에는 일치하지 않습니다.",
+      "m": "^와 $가 각 줄의 시작과 끝에 일치하게 합니다. m을 끄면 전체 텍스트의 시작과 끝을 뜻합니다.",
+      "s": "점이 줄바꿈에도 일치하게 합니다. ^와 $의 의미는 바뀌지 않습니다.",
+      "input": "테스트할 텍스트를 입력하거나 붙여 넣으세요. 변경하면 이전 실행을 멈추고 300밀리초 후 다시 실행합니다. 도구 안에서 Ctrl+L(Mac은 ⌘+L)을 누르면 두 입력과 결과를 지우며 플래그는 유지합니다.",
+      "highlight": "처음 100,000 UTF-16 단위와 최대 1,000개 강조 표시를 보여 줍니다. 긴 텍스트는 영역 안에서 스크롤됩니다. 잘못된 패턴은 강조 없이 텍스트를 표시합니다.",
+      "matches": "완료된 실행은 모든 일치를 셉니다. 목록은 처음 100개와 각각 20개 그룹까지이며 이름 있는 그룹도 번호로 표시합니다. 값마다 1,000 UTF-16 단위, 합계 100,000단위까지 표시하고 줄인 부분은 …로 나타냅니다. 인덱스도 UTF-16 단위입니다."
+    },
+    testString: '테스트 문자열', testPlaceholder: '텍스트를 붙여넣으세요...', highlightedMatches: '일치 항목 강조',
+    noMatches: '일치하는 항목이 없습니다.', matchOne: '{n}개 일치 항목을 찾았습니다.', matchMany: '{n}개 일치 항목을 찾았습니다.',
+    invalidRegex: '유효하지 않은 정규식: ', matchLabel: '일치', groupLabel: '그룹', andMore: '... 외 {n}개 일치 항목.',
+    cancel: '취소', running: '일치 확인 중… (2초 제한)', timeout: '2초 후 중지했습니다. 완전한 결과가 없습니다. 패턴이나 텍스트를 줄이세요.', cancelled: '취소했습니다. 완전한 결과가 없습니다.', workerError: '일치 확인 Worker를 실행할 수 없습니다.', limited: ' 미리 보기는 처음 100,000 UTF-16 단위와 1,000개, 목록은 처음 100개와 20개 그룹까지입니다. 값마다 1,000단위, 합계 100,000단위까지 표시하며 줄인 값에는 …를 붙입니다.'
+  }
+};
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT } = T;
 ---
-<div>
-  <div class="rgx-wrap">
+<div class="rgx-wrap" data-empty="true">
+  <div class="rgx-controls">
+    <div class="rgx-heading"><label for="rgx-pattern">{T.pattern}</label><Toggletip id="rgx-tip-pattern" lang={lang} about={T.pattern}>{TIPS.pattern}</Toggletip></div>
     <div class="rgx-pattern-row">
-      <span class="rgx-slash">/</span>
+      <span class="rgx-slash" aria-hidden="true">/</span>
       <input id="rgx-pattern" type="text" placeholder="(\\w+)@(\\w+\\.\\w+)" spellcheck="false" autocomplete="off" />
-      <span class="rgx-slash">/</span>
-      <div class="rgx-flags">
-        <label title="global"><input type="checkbox" value="g" checked /> g</label>
-        <label title="case-insensitive"><input type="checkbox" value="i" /> i</label>
-        <label title="multiline"><input type="checkbox" value="m" /> m</label>
-        <label title="dotAll"><input type="checkbox" value="s" /> s</label>
+      <span class="rgx-slash" aria-hidden="true">/</span>
+      <div class="rgx-cancel-slot"><button id="rgx-cancel" type="button" class="btn-secondary" hidden>{T.cancel}</button></div>
+    </div>
+    <div class="rgx-flags">
+      <div class="rgx-flag"><label><input type="checkbox" value="g" checked /> g</label><Toggletip id="rgx-tip-g" lang={lang} about="g">{TIPS.g}</Toggletip></div>
+      <div class="rgx-flag"><label><input type="checkbox" value="i" /> i</label><Toggletip id="rgx-tip-i" lang={lang} about="i">{TIPS.i}</Toggletip></div>
+      <div class="rgx-flag"><label><input type="checkbox" value="m" /> m</label><Toggletip id="rgx-tip-m" lang={lang} about="m">{TIPS.m}</Toggletip></div>
+      <div class="rgx-flag"><label><input type="checkbox" value="s" /> s</label><Toggletip id="rgx-tip-s" lang={lang} about="s">{TIPS.s}</Toggletip></div>
+    </div>
+  </div>
+  <div id="rgx-status" class="rgx-status" role="status" aria-live="polite" tabindex="0"></div>
+  <div class="rgx-field rgx-input-section">
+    <div class="rgx-heading"><label for="rgx-test">{T.testString}</label><Toggletip id="rgx-tip-input" lang={lang} about={T.testString}>{TIPS.input}</Toggletip></div>
+    <textarea id="rgx-test" placeholder={T.testPlaceholder} spellcheck="false"></textarea>
+  </div>
+  <div id="rgx-results" class="rgx-results">
+    <p class="rgx-empty">{T.emptyResult}</p>
+    <div class="rgx-result-body">
+      <div class="rgx-field rgx-preview-section">
+        <div class="rgx-heading"><span>{T.highlightedMatches}</span><Toggletip id="rgx-tip-highlight" lang={lang} about={T.highlightedMatches}>{TIPS.highlight}</Toggletip></div>
+        <div id="rgx-highlight" class="rgx-highlight" tabindex="0" role="region" aria-label={T.highlightedMatches}></div>
+      </div>
+      <div class="rgx-field rgx-list-section">
+        <div class="rgx-heading"><span>{T.matches}</span><Toggletip id="rgx-tip-matches" lang={lang} about={T.matches}>{TIPS.matches}</Toggletip></div>
+        <div id="rgx-matches" class="rgx-matches" tabindex="0" role="region" aria-label={T.matches}></div>
       </div>
     </div>
-
-    <div class="rgx-field">
-      <label for="rgx-test" data-i18n="testString">Test String</label>
-      <textarea
-        id="rgx-test"
-        data-i18n-ph="testPlaceholder"
-        placeholder="Paste your text here..."
-        spellcheck="false"
-      ></textarea>
-    </div>
-
-    <div class="rgx-pattern-row">
-      <div id="rgx-status" class="rgx-status" aria-live="polite"></div>
-      <button id="rgx-cancel" type="button" class="btn-secondary" data-i18n="cancel" hidden>Cancel</button>
-    </div>
-
-    <div class="rgx-field">
-      <label data-i18n="highlightedMatches">Highlighted Matches</label>
-      <div id="rgx-highlight" class="rgx-highlight"></div>
-    </div>
-
-    <div id="rgx-matches" class="rgx-matches"></div>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ S: CLIENT }}>
     (function () {
-      var STRINGS = {
-        en: {
-          testString: 'Test String', testPlaceholder: 'Paste your text here...', highlightedMatches: 'Highlighted Matches',
-          noMatches: 'No matches.', matchFound: function(n) { return n + ' match' + (n > 1 ? 'es' : '') + ' found.'; },
-          invalidRegex: 'Invalid regex: ', matchLabel: 'Match', groupLabel: 'Group', andMore: function(n) { return '... and ' + n + ' more matches.'; },
-          cancel: 'Cancel', running: 'Matching… (2 s limit)', timeout: 'Stopped after 2 s. No complete result; simplify the pattern or shorten the text.', cancelled: 'Cancelled. No complete result.', workerError: 'Could not run the matching worker.', limited: ' Preview: first 100,000 UTF-16 units and 1,000 highlights; list: first 100 matches, first 20 groups, 1,000 units per value and 100,000 units in total. … marks shortened values.'
-        },
-        zh: {
-          testString: '测试字符串', testPlaceholder: '在此粘贴文本...', highlightedMatches: '高亮匹配',
-          noMatches: '无匹配项。', matchFound: function(n) { return '找到 ' + n + ' 个匹配项。'; },
-          invalidRegex: '无效的正则表达式：', matchLabel: '匹配', groupLabel: '组', andMore: function(n) { return '... 还有 ' + n + ' 个匹配项。'; },
-          cancel: '取消', running: '正在匹配…（限时 2 秒）', timeout: '已在 2 秒后停止。没有完整结果，请简化表达式或缩短文本。', cancelled: '已取消，没有完整结果。', workerError: '无法运行匹配 Worker。', limited: ' 预览只显示前 100,000 个 UTF-16 码元及 1,000 处高亮；列表显示前 100 个匹配及前 20 个组，每个值最多 1,000 码元、合计最多 100,000 码元。缩短的值以 … 标记。'
-        },
-        ja: {
-          testString: 'テスト文字列', testPlaceholder: 'テキストを貼り付け...', highlightedMatches: 'マッチのハイライト',
-          noMatches: 'マッチなし。', matchFound: function(n) { return n + ' 件マッチしました。'; },
-          invalidRegex: '無効な正規表現：', matchLabel: 'マッチ', groupLabel: 'グループ', andMore: function(n) { return '... 他 ' + n + ' 件のマッチ。'; },
-          cancel: 'キャンセル', running: 'マッチ処理中…（上限 2 秒）', timeout: '2 秒で停止しました。完全な結果はありません。パターンかテキストを短くしてください。', cancelled: 'キャンセルしました。完全な結果はありません。', workerError: 'マッチ用 Worker を実行できません。', limited: ' プレビューは先頭 100,000 UTF-16 単位と 1,000 件、一覧は先頭 100 件と 20 グループまでです。各値は 1,000 単位、合計 100,000 単位まで表示し、省略を … で示します。'
-        },
-        ko: {
-          testString: '테스트 문자열', testPlaceholder: '텍스트를 붙여넣으세요...', highlightedMatches: '일치 항목 강조',
-          noMatches: '일치하는 항목이 없습니다.', matchFound: function(n) { return n + '개 일치 항목을 찾았습니다.'; },
-          invalidRegex: '유효하지 않은 정규식: ', matchLabel: '일치', groupLabel: '그룹', andMore: function(n) { return '... 외 ' + n + '개 일치 항목.'; },
-          cancel: '취소', running: '일치 확인 중… (2초 제한)', timeout: '2초 후 중지했습니다. 완전한 결과가 없습니다. 패턴이나 텍스트를 줄이세요.', cancelled: '취소했습니다. 완전한 결과가 없습니다.', workerError: '일치 확인 Worker를 실행할 수 없습니다.', limited: ' 미리 보기는 처음 100,000 UTF-16 단위와 1,000개, 목록은 처음 100개와 20개 그룹까지입니다. 값마다 1,000단위, 합계 100,000단위까지 표시하며 줄인 값에는 …를 붙입니다.'
-        }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-      });
+      var t = S;
+      var rootEl = document.querySelector('.rgx-wrap');
 
       var patternEl = document.getElementById('rgx-pattern');
       var testEl = document.getElementById('rgx-test');
@@ -144,6 +192,7 @@
 
       function run() {
         stop();
+        rootEl.dataset.empty = patternEl.value || testEl.value ? 'false' : 'true';
         var pattern = patternEl.value;
         var text = testEl.value;
         highlightEl.innerHTML = '';
@@ -203,7 +252,7 @@
         var limited = count > 100 || text.length > 100000 || result.clipped;
         text = text.slice(0, 100000);
         allMatches = allMatches.filter(function (m) { return m.end <= text.length; });
-        statusEl.textContent = (count === 0 ? t.noMatches : t.matchFound(count)) + (limited ? t.limited : '');
+        statusEl.textContent = (count === 0 ? t.noMatches : (count > 1 ? t.matchMany : t.matchOne).replace('{n}', count)) + (limited ? t.limited : '');
         statusEl.className = 'rgx-status ' + (count > 0 ? 'success' : 'none');
         if (count > 0 && !rtTracked) { rtTracked = true; window.trackTool && window.trackTool('regex_tester', 'match'); }
 
@@ -235,7 +284,7 @@
           });
           if (count > 100) {
             var more = document.createElement('li');
-            more.textContent = t.andMore(count - 100);
+            more.textContent = t.andMore.replace('{n}', count - 100);
             ul.appendChild(more);
           }
           matchesEl.appendChild(ul);
@@ -245,6 +294,7 @@
       var _rtTimer = null;
       function debouncedRun() {
         stop();
+        rootEl.dataset.empty = patternEl.value || testEl.value ? 'false' : 'true';
         highlightEl.innerHTML = '';
         matchesEl.innerHTML = '';
         statusEl.textContent = '';
@@ -276,7 +326,11 @@
 </div>
 
 <style>
-  .rgx-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .rgx-wrap { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; min-height: 0; }
+  .rgx-controls { flex: none; display: flex; flex-direction: column; gap: 0.35rem; }
+  .rgx-heading { display: flex; align-items: center; gap: 0.4rem; min-height: 28px; font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .rgx-cancel-slot { flex: 0 0 7.5rem; min-height: 44px; }
+  #rgx-cancel { width: 100%; min-height: 44px; }
   #rgx-cancel[hidden] { display: none; }
 
   .rgx-pattern-row {
@@ -297,7 +351,9 @@
 
   .rgx-pattern-row > input[type="text"] {
     flex: 1;
-    min-width: 120px;
+    min-width: 0;
+    width: 0;
+    min-height: 44px;
     padding: 0.5rem 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
@@ -325,23 +381,31 @@
     color: var(--color-text-secondary);
   }
 
-  .rgx-field { display: flex; flex-direction: column; gap: 0.3rem; }
-
-  .rgx-field > label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
+  .rgx-flag { display: flex; align-items: center; gap: 0.2rem; }
+  .rgx-flags label { min-height: 32px; }
+  .rgx-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; min-height: 0; }
+  .rgx-input-section { flex: 1 1 0; min-height: 160px; }
+  .rgx-wrap[data-empty="false"] .rgx-input-section { flex: none; min-height: 0; }
+  .rgx-wrap[data-empty="false"] #rgx-test { flex: none; height: 120px; }
+  .rgx-results { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; }
+  .rgx-result-body { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; gap: 0.75rem; }
+  .rgx-preview-section, .rgx-list-section { flex: 1 1 0; min-height: 0; }
+  .rgx-matches { flex: 1 1 0; min-height: 0; overflow: auto; overflow-wrap: anywhere; }
+  .rgx-empty { margin: 0; color: var(--color-text-muted); font-size: 0.88rem; }
+  .rgx-wrap[data-empty="true"] .rgx-results { flex: none; }
+  .rgx-wrap[data-empty="true"] .rgx-result-body, .rgx-wrap[data-empty="false"] .rgx-empty { display: none; }
 
   .rgx-field textarea {
     width: 100%;
-    min-height: 100px;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
     font-family: var(--font-mono);
     font-size: 0.88rem;
     padding: 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    resize: vertical;
+    resize: none;
     background: var(--color-bg-secondary);
     color: var(--color-text);
   }
@@ -349,7 +413,9 @@
   .rgx-field textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
 
   .rgx-highlight {
-    min-height: 60px;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
     padding: 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
@@ -369,7 +435,7 @@
     padding: 0 1px;
   }
 
-  .rgx-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .rgx-status { flex: none; height: 3.9em; line-height: 1.3; overflow: auto; overflow-wrap: anywhere; font-size: 0.85rem; }
   /* Unscoped on purpose: keeps the lower specificity of the base status color */
   :global(.rgx-status) { color: var(--color-text-secondary); }
   .rgx-status.success { color: #057a55; }
@@ -412,11 +478,23 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .rgx-highlight :global(mark) { background: #b8860b; color: #fff; }
-    :root:not([data-theme="light"]) .rgx-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .rgx-status.error { color: #f87171; }
+    :global(:root:not([data-theme="light"])) .rgx-highlight :global(mark) { background: #b8860b; color: #fff; }
+    :global(:root:not([data-theme="light"])) .rgx-status.success { color: #34d399; }
+    :global(:root:not([data-theme="light"])) .rgx-status.error { color: #f87171; }
   }
-  [data-theme="dark"] .rgx-highlight :global(mark) { background: #b8860b; color: #fff; }
-  [data-theme="dark"] .rgx-status.success { color: #34d399; }
-  [data-theme="dark"] .rgx-status.error { color: #f87171; }
+  :global([data-theme="dark"]) .rgx-highlight :global(mark) { background: #b8860b; color: #fff; }
+  :global([data-theme="dark"]) .rgx-status.success { color: #34d399; }
+  :global([data-theme="dark"]) .rgx-status.error { color: #f87171; }
+  @media (max-width: 860px) {
+    .rgx-input-section { flex: none; min-height: 0; }
+    #rgx-test, .rgx-wrap[data-empty="false"] #rgx-test { flex: none; height: 160px; }
+    .rgx-results { flex: none; height: 26rem; }
+    .rgx-wrap[data-empty="true"] .rgx-results { display: none; }
+  }
+  @media (max-width: 640px) {
+    .rgx-flags { justify-content: space-between; gap: 0.35rem; }
+    .rgx-flags label { min-height: 44px; }
+    .rgx-cancel-slot { flex-basis: 7rem; }
+    .rgx-results { height: 24rem; }
+  }
 </style>
