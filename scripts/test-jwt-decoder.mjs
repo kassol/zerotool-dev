@@ -23,6 +23,10 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
+import { compile } from '@mdx-js/mdx';
+import { toolSteps } from '../src/data/llms.mjs';
 import vm from 'node:vm';
 import { parseFragment, defaultTreeAdapter } from 'parse5';
 
@@ -169,10 +173,21 @@ eq('highlight spans kept', E.syntaxHighlight({ a: 1, b: true, c: null, d: 'x' })
 }
 
 // Complete real page IIFE and actual shared shortcuts. Only DOM, timer and clipboard APIs are controlled.
-const pageScript = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const pageScript = source.match(/<script is:inline define:vars=\{\{ t: CLIENT_T \}\}>([\s\S]*?)<\/script>/)[1];
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcutScript = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
-const pageStrings = vm.runInNewContext('(' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(pageScript)[1] + ')');
+const pageStrings = vm.runInNewContext('(' + /const STRINGS = (\{[\s\S]*?\n\});/.exec(source)[1] + ')');
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
+const escapeHTML = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+const tipMarkup = readFileSync(join(root, 'src/components/Toggletip.astro'), 'utf8').replace(/^---[\s\S]*?---\s*/, '').split('<script>')[0];
+function renderTip(id, about, content) {
+  return tipMarkup.replace("class:list={['zt-tip-btn', { 'zt-tip-btn--text': text }]}", 'class="zt-tip-btn"')
+    .replace("class:list={['zt-tip-pop', { 'zt-tip-pop--wide': wide }]}", 'class="zt-tip-pop"')
+    .replace(/\{text && <span[\s\S]*?<\/span>\}/, '')
+    .replace(/=\{id\}/g, '="' + escapeHTML(id) + '"')
+    .replace('aria-label={text ? undefined : name}', 'aria-label="' + escapeHTML(about) + '"')
+    .replace('<slot />', escapeHTML(content));
+}
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 function page(lang = 'en', order = 'shared-after') {
   const clipboard = [], timers = new Map(), tracks = [], clears = [];
@@ -201,7 +216,14 @@ function page(lang = 'en', order = 'shared-after') {
     setAttribute(key, value) { this.attrs[key] = String(value); if (['id', 'class', 'type'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); }
     getAttribute(key) { return key === 'class' ? this.className || null : this.attrs[key] ?? null; }
     get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
-    set textContent(value) { if (doc?.activeElement !== this && this.contains(doc?.activeElement)) doc.activeElement = doc.body; for (const child of this.children) child.parentNode = null; this.children = []; this.text = String(value); }
+    set textContent(value) {
+      if (doc?.activeElement !== this && this.contains(doc?.activeElement)) doc.activeElement = doc.body;
+      for (const child of this.children) child.parentNode = null;
+      this.children = []; this.text = String(value);
+      // DOM boundary: the real :has(#jwt-results:empty) rule hides this focused ancestor.
+      // Browsers then return activeElement to body; no application clear logic is mirrored.
+      if (this.id === 'jwt-results' && !this.text && source.includes('.jwt-result-section:has(#jwt-results:empty) .jwt-result-heading { display: none; }') && doc.querySelector('.jwt-result-heading')?.contains(doc.activeElement)) doc.activeElement = doc.body;
+    }
     set innerHTML(value) {
       this.textContent = '';
       const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
@@ -232,11 +254,14 @@ function page(lang = 'en', order = 'shared-after') {
   doc = new Element('#document'); doc.documentElement = new Element('html'); doc.documentElement.lang = lang; doc.appendChild(doc.documentElement);
   doc.body = new Element('body'); doc.documentElement.appendChild(doc.body); doc.activeElement = doc.body;
   const widget = new Element('section'); widget.className = 'tool-widget'; doc.body.appendChild(widget);
-  widget.innerHTML = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
+  widget.innerHTML = markup.replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{T\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, key) => renderTip(id, pageStrings[lang][about], pageStrings[lang].tips[key]))
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(pageStrings[lang][key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(pageStrings[lang][key]));
   doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
   doc.createElement = tag => new Element(tag);
   doc.execCommand = () => { throw Error('Unexpected system clipboard fallback'); };
-  const sandbox = { document: doc, console, TextDecoder, atob, Date: class extends Date { static now() { return 1791158400250; } }, _slug: 'jwt-decoder', ztPersist: { clear(slug) { clears.push(slug); } },
+  const { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...clientStrings } = pageStrings[lang];
+  const sandbox = { t: clientStrings, document: doc, console, TextDecoder, atob, Date: class extends Date { static now() { return 1791158400250; } }, _slug: 'jwt-decoder', ztPersist: { clear(slug) { clears.push(slug); } },
     trackTool(...args) { tracks.push(args); },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value: String(value), resolve, reject }); return promise; } } },
@@ -399,6 +424,126 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
 }
 console.log('Page timestamp checks: ' + (passes - timestampStart) + ' passed');
+
+// New analyze result-heading tips disappear with the empty result; preserve shared CtrlL cleanup.
+const tipFocusStart = passes;
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before', 'shared-after']) for (const tip of ['results', 'time']) {
+  const p = page(lang, order), name = 'tip focus ' + lang + '/' + order + '/' + tip + ': ';
+  p.get('jwt-example').click();
+  const button = p.doc.querySelector('[data-zt-tip="jwt-tip-' + tip + '"]');
+  button.focus(); p.get('jwt-results').innerHTML = '';
+  eq(name + 'positive control hiding the actual focused heading loses focus', p.doc.activeElement === p.doc.body, true);
+  p.get('jwt-example').click(); const clearsBefore = p.clears.length;
+  p.key('l', {}, button);
+  eq(name + 'actual CtrlL empties editor/results/status', clearState(p), true);
+  eq(name + 'actual CtrlL focuses input before hiding header', p.doc.activeElement === p.get('jwt-input'), true);
+  eq(name + 'actual shared handler still clears persistence once', p.clears.length - clearsBefore, 1);
+}
+console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' passed');
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const check = (name, value) => eq(name, !!value, true);
+  const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  const tipKeys = ['input', 'decode', 'example', 'clear', 'results', 'time'];
+  eq('six real control/result tips', JSON.stringify([...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]).sort()), JSON.stringify(tipKeys.map(key => 'jwt-tip-' + key).sort()));
+  check('direct flex root with zero minimum sizes', /^\s*<div class="jwt-wrap">/.test(markup) && /\.jwt-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0/.test(css));
+  check('manual actions precede reserved status and actual editor', markup.indexOf('jwt-actions') < markup.indexOf('id="jwt-status"') && markup.indexOf('id="jwt-status"') < markup.indexOf('jwt-input-section'));
+  eq('Decode, Example and Clear remain the three explicit actions', JSON.stringify([...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m => m[1]).sort()), JSON.stringify(['jwt-decode', 'jwt-example', 'jwt-clear'].sort()));
+  check('Decode remains the primary action for invalid input diagnosis', /id="jwt-decode" class="btn-primary"/.test(markup));
+  check('input uses the shared analyze empty space', /class="jwt-input-section zt-empty-drop"/.test(markup));
+  check('empty desktop input actually fills remaining height', /\.jwt-wrap:has\(#jwt-results:empty\) \.jwt-input-section\s*\{ flex: 1 1 0;/.test(css) && /\.jwt-wrap:has\(#jwt-results:empty\) #jwt-input\s*\{ flex: 1 1 0; min-height: 220px;/.test(css));
+  check('populated desktop input is bounded and nonresizable', /\.jwt-input-section textarea\s*\{[^}]*height: 140px;[^}]*overflow: auto;[^}]*resize: none;/.test(css));
+  check('status reserves two lines and scrolls internally', /\.jwt-status\s*\{[^}]*height: 2\.4rem;[^}]*overflow: auto;[^}]*overflow-wrap: anywhere;/.test(css));
+  check('visible signature consequence stays outside result scroller', /<p class="jwt-verify-note">\{T.verifyNotice\}<\/p>/.test(markup) && markup.indexOf('jwt-verify-note') < markup.indexOf('jwt-result-section'));
+  check('one full-width result region can receive keyboard focus', /id="jwt-results" class="jwt-results" tabindex="0" role="region" aria-labelledby="jwt-result-label"/.test(markup));
+  check('result flex space cannot expand with result text', /\.jwt-result-section\s*\{[^}]*flex: 1 1 0;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css) && /\.jwt-results\s*\{[^}]*flex: 1 1 0;[^}]*min-width: 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(css));
+  check('empty result consumes content height only and hides unused heading', /\.jwt-result-section:has\(#jwt-results:empty\)\s*\{ flex: none;/.test(css) && /\.jwt-result-section:has\(#jwt-results:empty\) \.jwt-result-heading\s*\{ display: none;/.test(css));
+  check('populated result hides the localized empty hint', /\.jwt-result-section:has\(#jwt-results:not\(:empty\)\) \.jwt-empty\s*\{ display: none;/.test(css));
+  check('860px empty result hidden, input180 and result384 are fixed', /@media \(max-width: 860px\)[\s\S]*?#jwt-input\s*\{[^}]*height: 180px;[^}]*\}[\s\S]*?\.jwt-result-section\s*\{[^}]*height: 24rem;[^}]*\}[\s\S]*?\.jwt-result-section:has\(#jwt-results:empty\)\s*\{ display: none;/.test(css));
+  check('640px result keeps fixed height352 instead of only a max-height', /@media \(max-width: 640px\)[\s\S]*?\.jwt-result-section\s*\{ height: 22rem;/.test(css));
+  check('mobile action buttons override shared160px flex basis', /\.jwt-wrap \.jwt-actions \.jwt-control > button\s*\{ flex: 0 1 auto;/.test(css));
+  check('real buttons and output copy buttons keep44px minimum', /\.jwt-control button\s*\{ min-height: 44px;/.test(css) && /\.jwt-wrap :global\(\.btn-copy\)\s*\{ min-height: 44px;/.test(css));
+  check('long JSON lines scroll and preserve formatting', /\.jwt-wrap :global\(\.jwt-json\)\s*\{[^}]*overflow-x: auto;[^}]*white-space: pre;/.test(css));
+  check('all dynamic section rules are unscoped', ['jwt-section','jwt-section-header','jwt-section-dot','jwt-sig-note','jwt-json','jwt-sig','jwt-time-hint','jwt-expired','jwt-valid'].every(key => css.includes('.jwt-wrap :global(.' + key + ')')));
+  check('no nested interactive label', [...markup.matchAll(/<label\b[\s\S]*?<\/label>/g)].every(m => !/<button|<Toggletip/.test(m[0])));
+  check('tips and static-only labels excluded before client serialization', /const \{ tips, resultLabel, timeLabel, resultEmpty, verifyNotice, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  check('no runtime language replacement remains', !/data-i18n|document\.documentElement\.lang/.test(source));
+  check('registered analyze', /'jwt-decoder':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('sensitive persistence remains disabled', /'jwt-decoder':\s*'disabled'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
+  check('no new network or persistence path', !/fetch\(|XMLHttpRequest|localStorage|sessionStorage|ztPersist\.(?:save|load)/.test(pageScript));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  eq('static IDs are unique', new Set(ids).size, ids.length);
+  const retained = {
+    "en": {
+        "frontmatter": "81a166b05a24a4043e95465fe50e5cdc19233c4f7b18b55041dffd41218e7f72",
+        "bodyWithoutUsage": "4dfdba6ec5c190bad96bbc259810c313997ee334f25f3c7f0e401184a9fe4c38"
+    },
+    "zh": {
+        "frontmatter": "f60998bd69cf487266b6c7a9b5b922d095ad30cc05120ecee4d74ad474b69f85",
+        "bodyWithoutUsage": "0595cae3db58032f22edc2f3f246e52bbc6d9a97380596a5970bd139380ebea5"
+    },
+    "ja": {
+        "frontmatter": "98e9c55c0b6141e3696a7da941764ae28b114418a7ed20926d0a393103decf0a",
+        "bodyWithoutUsage": "39a61ec9ad495fe89b7317d0384896dac9a872da66ac430f7e225a71d202699c"
+    },
+    "ko": {
+        "frontmatter": "7ad2ab9ee4848f6809eba977bcd1e625d5af277e6137c5a26c069afd0ed97b66",
+        "bodyWithoutUsage": "e4af6307f057d5ee77b53071e6c68126bbd0baeee4b4b3fba7763ceb2209d19e"
+    }
+};
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const entry = pageStrings[lang], { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...client } = entry;
+    eq(lang + ': localized keys match', JSON.stringify(Object.keys(entry).sort()), JSON.stringify(Object.keys(pageStrings.en).sort()));
+    eq(lang + ': six tip keys match', JSON.stringify(Object.keys(tips).sort()), JSON.stringify(tipKeys.slice().sort()));
+    for (const key of tipKeys) check(lang + '/' + key + ': one nonempty explanatory text', typeof tips[key] === 'string' && tips[key].trim().length > 0 && !/[\n<>]/.test(tips[key]));
+    check(lang + ': client serialized data excludes every tip and static note', !('tips' in client) && [...Object.values(tips), resultLabel, timeLabel, resultEmpty, verifyNotice].every(value => !JSON.stringify(client).includes(JSON.stringify(value))));
+    const mdx = readFileSync(join(root, 'src/content/tools/jwt-decoder', lang + '.mdx'), 'utf8');
+    const split = mdx.indexOf('\n---\n', 4), metadata = mdx.slice(0, split), body = mdx.slice(split + 5);
+    const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
+    check(lang + ': six plain steps within8/280/1200 limits', steps.length === 6 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['decode','loadExample','clear','copy']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
+    eq(lang + ': FAQ and SEO bytes preserved', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
+    let protectedBody = body;
+    if (lang === 'en') {
+      check('English Limits specifies numeric seconds and preserves source precision', body.includes('with numeric values in seconds get a readable UTC date. The original numeric precision is retained; the date note displays whole seconds.'));
+      protectedBody = body.replace('with numeric values in seconds get a readable UTC date. The original numeric precision is retained; the date note displays whole seconds.', 'with whole-second integer values get a readable date.');
+    }
+    eq(lang + ': non-Usage body unchanged except numeric-date Limits correction', sha(protectedBody), retained[lang].bodyWithoutUsage);
+    check(lang + ': old Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    eq(lang + ': llms receives six full steps', JSON.stringify(toolSteps(parsed)), JSON.stringify(steps));
+    await compile(body); check(lang + ': MDX body compiles', true);
+    const p = page(lang);
+    for (const [id,key] of [['jwt-decode','decode'],['jwt-example','loadExample'],['jwt-clear','clear']]) eq(lang + ': static localized ' + id, p.get(id).textContent, entry[key]);
+    eq(lang + ': static localized input placeholder', p.get('jwt-input').getAttribute('placeholder'), entry.pastePlaceholder);
+    eq(lang + ': visible signature warning exists outside results', p.doc.querySelector('.jwt-verify-note').textContent, entry.verifyNotice);
+    eq(lang + ': localized empty hint', p.doc.querySelector('.jwt-empty').textContent, entry.resultEmpty);
+    const payload = { nested: { exp: 0 }, note: 'A'.repeat(100000), rows: Array.from({ length: 200 }, (_, i) => 'row ' + i) };
+    p.input(seg({ alg: 'none' }) + '.' + seg(payload) + '.'); p.advance(300);
+    eq(lang + ': long real token renders all3 sections', p.get('jwt-results').children.length, 3);
+    eq(lang + ': dynamic JSON regions are keyboard-focusable', JSON.stringify(p.get('jwt-results').querySelectorAll('.jwt-json').map(pre => pre.tabIndex)), '[0,0]');
+    eq(lang + ': nested numeric date tip matches actual formatting', p.get('jwt-results').querySelector('.jwt-time-hint').textContent, '(Thu, 01 Jan 1970 00:00:00 GMT — EXPIRED)');
+    p.get('jwt-results').querySelectorAll('.btn-copy')[1].click();
+    eq(lang + ': long payload copy preserves all original bytes', p.clipboard.at(-1).value, JSON.stringify(payload, null, 2));
+    p.clipboard.at(-1).resolve(); await settle();
+    p.key('l', {}, p.get('jwt-results').querySelectorAll('.jwt-json')[1]);
+    eq(lang + ': new keyboard-scroll region keeps CtrlL clear semantics', clearState(p), true);
+    eq(lang + ': cleared result focus returns to input', p.doc.activeElement, p.get('jwt-input'));
+  }
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'JwtDecoderTool.astro' });
+  eq('Astro compilation has no errors', compiled.diagnostics.filter(d => d.severity === 1).length, 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('compiled client receives CLIENT_T only', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  const compiledCSS = compiled.css.join('\n');
+  check('compiled dynamic selectors resolve global syntax', !compiledCSS.includes(':global(') && /\.jwt-wrap[^{}]* \.jwt-json\s*\{/.test(compiledCSS));
+  check('compiled empty-state selector keeps real empty-result target', /\.jwt-wrap[^{}]*:has\(#jwt-results[^)]*:empty\)[^{}]* \.jwt-input-section/.test(compiledCSS));
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
 
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);
