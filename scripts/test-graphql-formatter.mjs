@@ -281,6 +281,7 @@ check('v2 page layout: text scrolls internally', /\.gqlf-textarea\s*\{[^}]*overf
 check('v2 page layout: 860 stack and fixed 144px editors', css.includes('@media (max-width: 860px)') && /height: 144px; min-height: 144px; max-height: 144px; resize: none/.test(css));
 check('v2 page layout: mobile empty result hidden', css.includes('.gqlf-output-pane:has(#gqlf-output:placeholder-shown) { display: none; }'));
 check('v2 page layout: 640 action touch size', /@media \(max-width: 640px\)[\s\S]*min-height: 44px/.test(css));
+check('v2 page layout: phone primary actions use content width', /@media \(max-width: 640px\)[\s\S]*\.gqlf-primary-actions button\s*\{[^}]*flex: none/.test(css));
 
 const astroRequire = createRequire(require.resolve('astro/package.json'));
 const compiled = await astroRequire('@astrojs/compiler').transform(source, { filename: join(root, 'src/components/tools/GraphqlFormatterTool.astro') });
