@@ -5,8 +5,8 @@
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Each case types into the real textarea (input event, then the 300 ms debounce timer), or
-// presses Ctrl+Enter where supported, and reads the other textarea, the status line and
+// Each case types into the real textarea (input event, then the 300 ms debounce timer)
+// and reads the other textarea, the status line and
 // the copy button. When a value cannot be written to the target format without changing it, the
 // page must name the field (JSON Pointer) and the value, clear the earlier output and disable
 // the copy button for that output; the next convertible input enables it again. Values that the
@@ -30,8 +30,8 @@ const TOOLS = {
   'yaml-toml': {
     file: 'src/components/tools/YamlTomlTool.astro', wrap: '.yt-wrap', status: 'yt-status',
     dirs: {
-      y2t: { input: 'yt-yaml', output: 'yt-toml', copy: 'yt-copy-toml', vias: ['input', 'key'] },
-      t2y: { input: 'yt-toml', output: 'yt-yaml', copy: 'yt-copy-yaml', vias: ['input', 'key'] },
+      y2t: { input: 'yt-yaml', output: 'yt-toml', copy: 'yt-copy-toml', vias: ['input'] },
+      t2y: { input: 'yt-toml', output: 'yt-yaml', copy: 'yt-copy-yaml', vias: ['input'] },
     },
   },
   'toml-json': {
@@ -58,7 +58,6 @@ function open(tool, lang = 'en') {
 function convert(page, tool, dir, text, via) {
   const d = TOOLS[tool].dirs[dir];
   if (via === 'input') page.type(d.input, text);
-  else if (via === 'key') { page.el(d.input).value = text; page.key(d.input, { key: 'Enter', ctrlKey: true }); }
   return { out: page.el(d.output), copy: page.el(d.copy), status: page.el(TOOLS[tool].status) };
 }
 

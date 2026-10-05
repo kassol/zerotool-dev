@@ -88,6 +88,7 @@ const pageSource = readFileSync(join(root, pageFile), 'utf8');
 const pageScript = pageSource.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
 const labels = pageSource.match(/(?:const|var) STRINGS = (\{[\s\S]*?\n\s*\});/);
 const pageStrings = vm.runInNewContext('(' + labels[1] + ')');
+const clientStrings = lang => vm.runInNewContext(pageSource.slice(pageSource.indexOf('const T = STRINGS'), pageSource.indexOf('\n---',pageSource.indexOf('const T = STRINGS'))) + '\n;CLIENT_T', { STRINGS: pageStrings, lang });
 const pageJS = ts.transpileModule(pageScript, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
@@ -151,7 +152,7 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
   const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
   const esc = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
-    .replace(/data-strings=\{JSON\.stringify\(T\)\}/g, 'data-strings="' + esc(JSON.stringify(pageStrings[lang])) + '"')
+    .replace(/data-strings=\{JSON\.stringify\(CLIENT_T\)\}/g, 'data-strings="' + esc(JSON.stringify(clientStrings(lang))) + '"')
     .replace(/data-lang=\{lang\}/g, 'data-lang="' + lang + '"').replace(/\{T\.(\w+)\}/g, (_, k) => esc(pageStrings[lang][k]));
   function append(ast, parent) { for (const node of ast.childNodes || []) { if (!node.tagName) { if (node.nodeName === '#text') parent.textContent += node.value; continue; } const e = parent.appendChild(new Element(node.tagName)); for (const a of node.attrs) e.setAttribute(a.name, a.value); append(node, e); if (e.tagName === 'TEXTAREA') e.value = e.textContent; if (e.tagName === 'SELECT') e.value = (e.children.find(c => c.getAttribute('selected') !== null) || e.children[0]).value; } }
   append(parseFragment(markup), widget);
@@ -199,7 +200,11 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
   }
 
   p=lifecyclePage(lang,shellFirst);golden(p);p.input('yt-toml','name = "reverse"');p.advance(300);same(tag+' real reverse conversion',p.get('yt-yaml').value,'name: reverse\n');
-  for(const side of ['yaml','toml']){p=lifecyclePage(lang,shellFirst);golden(p);p.get('yt-'+side).value=side==='yaml'?'x: 2':'x = 2';p.key('yt-'+side,'Enter');same(tag+'/'+side+' Enter preserves labeled formats',[p.get('yt-yaml').value,p.get('yt-toml').value],side==='yaml'?['x: 2','x = 2\n']:['x: 2\n','x = 2']);same(tag+'/'+side+' Enter does not click Swap',p.tracks.filter(t=>t[1]==='swap').length,0);}
+  for(const side of ['yaml','toml']) {
+    p=lifecyclePage(lang,shellFirst);golden(p);p.input('yt-'+side,side==='yaml'?'x: 2':'x = 2');const before=p.snapshot();p.key('yt-'+side,'Enter');
+    same(tag+'/'+side+' CtrlEnter has no action or Swap',[p.snapshot(),p.tracks.filter(t=>t[1]==='swap').length],[before,0]);
+    p.advance(300);same(tag+'/'+side+' automatic conversion preserves labeled formats',[p.get('yt-yaml').value,p.get('yt-toml').value],side==='yaml'?['x: 2','x = 2\n']:['x: 2\n','x = 2']);
+  }
   p=lifecyclePage(lang,shellFirst);p.input('yt-yaml','name: earlier');p.advance(100);p.input('yt-toml','name = "latest"');p.advance(300);same(tag+' latest edited pane wins',[p.get('yt-yaml').value,p.get('yt-toml').value],['name: latest\n','name = "latest"']);
   p=lifecyclePage(lang,shellFirst);golden(p);p.input('yt-toml','');p.advance(300);same(tag+' clearing reverse input clears both',[p.get('yt-yaml').value,p.get('yt-toml').value],['','']);
   p=lifecyclePage(lang,shellFirst);golden(p);p.input('yt-yaml','x: ~');p.advance(300);same(tag+' real fidelity failure drops old output',[p.get('yt-toml').value,p.get('yt-copy-toml').disabled,p.get(cfg.status).textContent.includes('/x')],['',true,true]);
@@ -247,6 +252,80 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
     same(tag+' buttons have independent requests and error ownership',[p.get(a).textContent,p.get(cfg.status).textContent],[S.copied,failureText[lang]]);p.copy(b).resolve();await settle();same(tag+' error owner retries successfully',[p.get(a).textContent,p.get(b).textContent,p.get(cfg.status).textContent],[S.copied,S.copied,'']);
   }
 }
+
+// ---------- v2 page layout ----------
+same('all FIX checks retained with automatic direction coverage', [passes,failures], [1070,0]);
+same('only redundant local Enter block removed from FIX script',hash(pageScript),'4c85341f760d75a229ffca8b4e5aaf66e1580908f16f062eb1cb748db34f9b1a');
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "a87775d492b6de4bfdad04d66c93c6b1862240e528f492aa780903aadf152047",
+    "body": "d015aadcee73319cb29348aba66834652336ab4a8da58792cf01670c223b7107",
+    "examples": "fe538d9b63e8c19f07318c4275dfddb9d34b08c6a4d2c23ca65d3462eb7eb79a",
+    "client": "979df8ff9b2911ea43d9fca232a1dc57774226d2b9ed23a4706487f045b346bf"
+  },
+  "zh": {
+    "front": "586e60af7aa38464964116168acbfaa06d699ed300f2b78345f29b78ad0505da",
+    "body": "a63ac2aba5e1fcd718f3a3dd9696db922aeb6f945f78da92090b36138389ce8a",
+    "examples": "c22647bf37a6761a3bfd7f37e8c7ba8b5cb49dbe5213f5e8c078bc32d7953d4d",
+    "client": "ced8bb1aa005f4317db32d9cfe09ecc00f5b50258d89be5e61c1bce69c94a329"
+  },
+  "ja": {
+    "front": "53cdec8a77e73be28dfb4fb7c398d0fd8619cd5bb30bb37af495c64695616afd",
+    "body": "3deea18d26c144346a27ba12633e1de3dfa1da8eb9c166fcb43e54c36d2fd593",
+    "examples": "c22647bf37a6761a3bfd7f37e8c7ba8b5cb49dbe5213f5e8c078bc32d7953d4d",
+    "client": "2ea3c60d0d0c219f360d02d78f9a5581a108ed33d8f604681ed6abf8cd727536"
+  },
+  "ko": {
+    "front": "a25da09f01728f949fa00812fcfb9e54037047bb44d2b7230523defc68556f40",
+    "body": "700f168351edb8bfe3cecfa1350ba4867a4eedaf3ab879958796015136f4f158",
+    "examples": "c22647bf37a6761a3bfd7f37e8c7ba8b5cb49dbe5213f5e8c078bc32d7953d4d",
+    "client": "a2cb7ff39720d80e9f9541299cd97407d95e6dac2dd8cc0a2ee99badcff91ae9"
+  }
+};
+const markup=pageSource.replace(/^---[\s\S]*?---\s*/,'').split('<script')[0], css=pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
+same('root is direct and contains filtered client strings',/^<div class="yt-wrap" data-lang=\{lang\} data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup),true);
+same('toolbar then status then both shared panes',/yt-toolbar[\s\S]*id="yt-status"[\s\S]*yt-panels zt-io/.test(markup),true);
+same('both shared panes and fills',[(markup.match(/zt-io-pane/g)||[]).length,(markup.match(/zt-io-fill/g)||[]).length],[2,2]);
+same('both editors always present editable',/readonly|hidden|data-empty/.test(markup),false);
+same('no empty editor CSS hiding',/display: none|visibility: hidden/.test(css),false);
+same('Swap is secondary and no global primary action remains',/id="yt-swap" class="btn-secondary"/.test(markup)&&!markup.includes('btn-primary'),true);
+same('four functional buttons retained',[...markup.matchAll(/<button id="([^"]+)"/g)].map(m=>m[1]),['yt-swap','yt-clear','yt-copy-yaml','yt-copy-toml']);
+same('six control-adjacent tips',[...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m=>m[1]),['yt-tip-swap','yt-tip-clear','yt-tip-yaml','yt-tip-copy-yaml','yt-tip-toml','yt-tip-copy-toml']);
+same('tips outside labels and buttons',/<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup),false);
+same('root has flex column and zero minima',/\.yt-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css),true);
+same('status reserves bounded scrolling space',/\.yt-status\s*\{[^}]*height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css),true);
+same('long text scrolls inside both editors',/\.yt-box\s*\{[^}]*min-width: 0;[^}]*overflow: auto;/.test(css),true);
+same('860 and640 bounded editors with phone44px header',/@media \(max-width: 860px\)[\s\S]*height: 180px;[\s\S]*@media \(max-width: 640px\)[\s\S]*min-height: 44px;[\s\S]*height: 120px;/.test(css),true);
+same('feedback themes use semantic tokens',css.includes('var(--color-success)')&&css.includes('var(--color-danger)'),true);
+same('script remains at original indent inside root',/  <script>[\s\S]*  <\/script>\s*<\/div>\s*<style>/.test(pageSource),true);
+same('local Enter is absent',/key === 'Enter'/.test(pageScript),false);
+same('yaml-toml registered convert',/['"]yaml-toml['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
+same('shared long filling has zero basis',/\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(readFileSync(join(root,'src/styles/tool-common.css'),'utf8')),true);
+const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
+for(const lang of ['en','zh','ja','ko']) {
+  const S=pageStrings[lang],payload=clientStrings(lang),expected=PROTECTED_CONTENT[lang];
+  same(lang+' exact six tip keys',Object.keys(S.tips),['yaml','toml','copyYaml','copyToml','swap','clear']);
+  same(lang+' short complete tips',Object.values(S.tips).every(x=>typeof x==='string'&&x.length>0&&x.length<=280),true);
+  same(lang+' original client messages byte exact',hash(JSON.stringify(payload)),expected.client);
+  same(lang+' tip payload excluded',Object.hasOwn(payload,'tips')||Object.values(S.tips).some(x=>JSON.stringify(payload).includes(x)||pageScript.includes(x)),false);
+  const parts=readFileSync(join(root,'src/content/tools/yaml-toml',lang+'.mdx'),'utf8').match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/),front=requireRoot('js-yaml').load(parts[1]),body=parts[2];
+  same(lang+' six bounded steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
+  same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
+  same(lang+' other frontmatter bytes unchanged',hash(parts[1].replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),expected.front);
+  same(lang+' nonUsage body bytes unchanged',hash(body),expected.body);
+  same(lang+' worked example bytes unchanged',hash(JSON.stringify([...body.matchAll(/```[^\n]*\n[\s\S]*?```/g)].map(m=>m[0]))),expected.examples);
+  same(lang+' removed Usage and Enter instructions absent',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>|Ctrl.{0,5}Enter|Cmd.{0,5}Enter/.test(body),false);
+  let mdxError='';try{await mdxCompiler.compile(body);}catch(e){mdxError=String(e);}same(lang+' MDX compiles',mdxError,'');
+}
+const {transform}=await import(requireRoot.resolve('@astrojs/compiler',{paths:[requireRoot.resolve('astro')]}));
+const compiled=await transform(pageSource,{filename:join(root,pageFile)});
+same('Astro compiles without errors',compiled.diagnostics.filter(d=>d.severity===1),[]);
+same('one compiled client module',compiled.scripts.length,1);
+same('all tip text excluded from compiled client',Object.values(pageStrings).some(s=>Object.values(s.tips).some(t=>compiled.scripts.some(script=>script.code.includes(t)))),false);
+same('CSS contains no unresolved globals',compiled.css.some(c=>c.includes(':global')),false);
+let compileError='';try{await requireRoot('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){compileError=String(e);}same('generated Astro module parses',compileError,'');
+same('source unchanged during test',hash(readFileSync(join(root,pageFile),'utf8')),hash(pageSource));
+
 process.removeListener('unhandledRejection',onUnhandled);
 
 console.log(`\n${passes} passed, ${failures} failed`);
