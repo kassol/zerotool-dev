@@ -540,6 +540,10 @@ console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' pass
   await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
   check('compiled client receives CLIENT_T only', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
   const compiledCSS = compiled.css.join('\n');
+  const statusDark = [...compiledCSS.matchAll(/([^{}]+)\{/g)].map(m => m[1].trim()).filter(s => /\[data-theme=(?:"dark"|dark)\]/.test(s) && s.includes('.jwt-status'));
+  eq('manual dark theme includes both status variants', statusDark.length, 2);
+  for (const selector of statusDark) check('manual dark status ancestor matches html: ' + selector, !/(?:data-astro-cid|\.astro-)/.test(selector.slice(0, selector.indexOf(' .jwt-status'))));
+
   check('compiled dynamic selectors resolve global syntax', !compiledCSS.includes(':global(') && /\.jwt-wrap[^{}]* \.jwt-json\s*\{/.test(compiledCSS));
   check('compiled empty-state selector keeps real empty-result target', /\.jwt-wrap[^{}]*:has\(#jwt-results[^)]*:empty\)[^{}]* \.jwt-input-section/.test(compiledCSS));
   console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
