@@ -53,7 +53,7 @@ function field(c, cls, name) { return (c[cls] || []).find((f) => f.fieldName ===
 function page(json, mode = 'none', rootName = 'RootObject') {
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {},
-      classList: { add() {}, remove() {} }, removeAttribute() {}, focus() {}, click() { this.handlers.click?.(); },
+      classList: { add() {}, remove() {} }, removeAttribute() {}, setAttribute() {}, focus() {}, click() { this.handlers.click?.(); },
       addEventListener(event, fn) { this.handlers[event] = fn; } };
   }
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'root-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jjp-' + id, element()]));
@@ -65,7 +65,6 @@ function page(json, mode = 'none', rootName = 'RootObject') {
     { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
   elements['jjp-input'].value = json;
   tabs.find((tab) => tab.dataset.ann === mode).handlers.click();
-  elements['jjp-convert'].handlers.click();
   return { code: elements['jjp-output-code'].textContent, status: elements['jjp-status'].textContent };
 }
 
@@ -74,7 +73,7 @@ function session() {
   const docHandlers = {};
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {}, disabled: false,
-      classList: { add() {}, remove() {} }, removeAttribute() {}, focus() {}, click() { this.handlers.click?.(); },
+      classList: { add() {}, remove() {} }, removeAttribute() {}, setAttribute() {}, focus() {}, click() { this.handlers.click?.(); },
       addEventListener(event, fn) { this.handlers[event] = fn; } };
   }
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'root-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jjp-' + id, element()]));
@@ -111,7 +110,7 @@ function session() {
   eq('stale output: Example enables Copy', s.state().copyDisabled, false);
   s.type('   ');
   eq('stale output: empty input disables Copy', s.state().code === '' && s.state().copyDisabled, true);
-  const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + '\nreturn labels;')();
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + '\nreturn STRINGS;')();
   eq('stale output: the error prefix exists in 4 languages', ['en', 'zh', 'ja', 'ko'].every((l) => labels[l] && labels[l].msgInvalidJson && labels[l].msgInvalidJson.trim()), true);
 }
 {
@@ -294,7 +293,7 @@ if (!hasJavac) {
 
 // Complete page lifecycle plus actual ToolLayout keyboard handler; DOM/clipboard/timers are boundary doubles.
 const pageScript = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
-const pageLabels = vm.runInNewContext('(' + source.match(/const labels = (\{[\s\S]*?\n\});/)[1] + ')');
+const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -334,6 +333,7 @@ function lifecyclePage(lang, shellFirst = false) {
       if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
     }
     removeAttribute(key) { delete this.attributes[key]; }
+    getAttribute(key) { return this.attributes[key] ?? null; }
     get classList() { const e = this; return { contains(c) { return e.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) e.className += ' ' + c; }, remove(c) { e.className = e.className.split(/\s+/).filter(v => v !== c).join(' '); } }; }
     appendChild(e) { this.children.push(e); e.parentElement = this; }
     querySelectorAll(s) { return descendants(this).filter(e => matches(e, s)); }
@@ -346,6 +346,8 @@ function lifecyclePage(lang, shellFirst = false) {
   }
   const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
   const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -388,8 +390,8 @@ try {
     eq(lang + ': localized current result', p.get('jjp-status').textContent, L.msgGenOne);
     p.get('jjp-root-name').value = 'Api'; p.get('jjp-root-name').dispatch('input'); p.advance(300);
     eq(lang + ': root changes automatically convert', p.get('jjp-output-code').textContent.includes('Api'), true);
-    p.get('jjp-convert').click();
-    eq(lang + ': Generate applies root name', p.get('jjp-output-code').textContent.includes('Api'), true);
+    p.advance(300);
+    eq(lang + ': automatic root change applies name', p.get('jjp-output-code').textContent.includes('Api'), true);
     p.get('jjp-clear').click();
     eq(lang + ': Clear preserves root name', p.get('jjp-root-name').value, 'Api');
     eq(lang + ': Clear removes derived state', !p.get('jjp-input').value && !p.get('jjp-output-code').textContent && !p.get('jjp-status').textContent, true);
@@ -426,8 +428,8 @@ try {
       if (action === 'tab') r.doc.querySelector("[data-ann=\"lombok\"]").click();
       if (action === 'clear') r.get('jjp-clear').click();
       if (action === 'shortcut') r.key();
-      if (action === 'result') { r.input('{"next":true}'); r.get('jjp-convert').click(); }
-      if (action === 'error') { r.input('{'); r.get('jjp-convert').click(); }
+      if (action === 'result') { r.input('{"next":true}'); r.advance(300); }
+      if (action === 'error') { r.input('{'); r.advance(300); }
       if (action === 'example') r.get('jjp-example').click();
       const before = snapshot(r), rejectedBefore = unhandled.length;
       if (outcome === 'timer') r.advance(1500); else { old[outcome](Error('late')); await settle(); }
@@ -441,6 +443,122 @@ try {
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
+
+
+// ---------- v2 page layout ----------
+const V2 = {
+  "slug": "json-to-java-pojo",
+  "prefix": "jjp",
+  "manual": false,
+  "tips": [
+    [
+      "root-name",
+      "rootName",
+      "rootName"
+    ],
+    [
+      "input",
+      "jsonInput",
+      "input"
+    ],
+    [
+      "example",
+      "example",
+      "example"
+    ],
+    [
+      "clear",
+      "clear",
+      "clear"
+    ],
+    [
+      "copy",
+      "copy",
+      "copy"
+    ],
+    [
+      "annotation",
+      "annotation",
+      "annotation"
+    ]
+  ],
+  "scriptSHA": "0150698efcde58a2bc320d507a80547494523144424c4f9a09da36cc398a17ed",
+  "protectedContent": {
+    "en": [
+      "2482f1801b46f92b96e6e556319136b9caa0989875e28d8fb420a5825fab0c35",
+      "e5111fc7c74941946c04d43cfbb317fb0da790f0e6397392f5f73689356869e8"
+    ],
+    "zh": [
+      "a47bdf26460743e8f69c0d026d51fcbe04c10dddce38ad6deb21b1606930956e",
+      "09db91aba9d3fd3e8a7d64d2904e13f3cd6fa9c37b00954ed20d0a218bed9027"
+    ],
+    "ja": [
+      "23a563868b82460e6cc2d72a4825028638bf8e6e821ed23a4ca65e1e5e1172ab",
+      "8cdd5cabe3971e470b3be0925615d5b187d3c5f88123cf75055207f937321441"
+    ],
+    "ko": [
+      "bcb8c2e7166827a671a0684ac75b2a72317497fe0930f7b68372b5dbeeda15e0",
+      "71ff9db8e8627072932329127a779c9194114f073b1ac916295884a3ac40a674"
+    ]
+  }
+};
+const hash = value => createHash('sha256').update(value).digest('hex');
+const layoutMarkup = source.split('\n---')[1].split('<script')[0];
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+const prefix = V2.prefix;
+eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
+eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
+eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
+eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
+eq('v2 two shared IO panes', (layoutMarkup.match(/\bzt-io-pane\b/g) || []).length, 2);
+eq('v2 both editors fill panes', layoutMarkup.includes('id="' + prefix + '-input" class="zt-io-fill"') && layoutMarkup.includes('id="' + prefix + '-output" class="' + prefix + '-output zt-io-fill"'), true);
+eq('v2 fixed status with internal overflow', css.includes('height: 2.8rem; flex: none; overflow: auto; overflow-wrap: anywhere;'), true);
+eq('v2 bounded keyboard accessible output', layoutMarkup.includes('tabindex="0" aria-labelledby="' + prefix + '-output-label"') && css.includes('.' + prefix + '-output { margin: 0; overflow: auto; white-space: pre; }'), true);
+eq('v2 actual output controls desktop empty hint', css.includes('.' + prefix + '-output-pane:has(#' + prefix + '-output-code:empty) .' + prefix + '-empty { display: flex; }'), true);
+eq('v2 stacked empty pane hidden and result bounded', css.includes('@media (max-width: 860px)') && css.includes('.' + prefix + '-output-pane:has(#' + prefix + '-output-code:empty) { display: none; }') && css.includes('height: 22rem; min-height: 160px; resize: none;'), true);
+eq('v2 phone input 144px and name inline', css.includes('height: 144px; min-height: 144px;') && css.includes('width: 100%; flex-direction: row; align-items: center;') && css.includes('@media (max-width: 640px)'), true);
+eq('v2 44px actions', css.includes('.' + prefix + '-actions button, .' + prefix + '-panel-header button { min-height: 44px; }'), true);
+eq('v2 dark ancestry global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'), true);
+eq('v2 tips remain build-time only', !/data-i18n|define:vars/.test(source) && !/STRINGS|L\.tips|\.tips\b/.test(pageScript), true);
+eq('v2 exact actual tip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, V2.tips.length);
+for (const [id, about, key] of V2.tips) eq('v2 exact tip binding ' + id, layoutMarkup.includes('<Toggletip id="' + prefix + '-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'), true);
+const actualButtons = [...layoutMarkup.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(m => m[1]).sort();
+eq('v2 explicit buttons retained', actualButtons.join(','), ['clear','copy','example', ...(V2.manual ? ['convert'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].map(id => prefix + '-' + id).sort().join(','));
+if (!V2.manual) {
+  eq('v2 no residual Generate label/action', !/generate:/.test(source) && !source.includes(prefix + '-convert') && !layoutMarkup.includes('btn-primary'), true);
+  eq('v2 existing tab container shares segmented layout', layoutMarkup.includes(prefix + '-tabs zt-segmented'), true);
+  eq('v2 selected segment contrasts in either theme', css.includes('.' + prefix + '-tab.active { background: var(--color-text); color: var(--color-bg); }'), true);
+}
+for (const lang of ['en','zh','ja','ko']) {
+  const L = pageLabels[lang];
+  eq(lang + ': v2 exact translated tip keys', Object.keys(L.tips).sort().join(','), V2.tips.map(t => t[2]).sort().join(','));
+  for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
+  eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
+  const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
+  const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+  const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
+  eq(lang + ': v2 steps correspond to controls', steps.length, V2.tips.length);
+  eq(lang + ': v2 step limits and order', fm.indexOf('steps:') < fm.indexOf('faqItems:') && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n,x) => n+[...x].length,0) <= 1200, true);
+  for (const [, about] of V2.tips) eq(lang + ': v2 steps actual label ' + about, steps.join('\n').includes(L[about]), true);
+  eq(lang + ': v2 SEO and FAQ unchanged', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')), V2.protectedContent[lang][0]);
+  eq(lang + ': v2 non-Usage content unchanged', hash(body.replace(/\n\{\/\* b6-sample-coverage:start \*\/\}[\s\S]*?\{\/\* b6-sample-coverage:end \*\/\}\n/,'')), V2.protectedContent[lang][1]);
+  eq(lang + ': v2 no duplicate usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
+  for (const shellFirst of [false,true]) for (const focus of ['output','tip']) {
+    const q = lifecyclePage(lang,shellFirst);golden(q);q.key(focus === 'output' ? q.get(prefix + '-output') : q.doc.querySelector('[data-zt-tip="' + prefix + '-tip-copy"]'));
+    eq(lang + ': v2 output focus survives CtrlL ' + shellFirst + focus, q.doc.activeElement === q.get(prefix+'-input') && !q.get(prefix+'-input').value && !q.get(prefix+'-root-name').value && !q.get(prefix+'-output-code').textContent && !q.get(prefix+'-status').textContent && q.clears.length === 1, true);
+  }
+  const selected=lifecyclePage(lang);
+  for (const value of ["none", "jackson", "gson", "lombok"]) {
+    selected.doc.querySelector('[data-ann="'+value+'"]').click();
+    for (const tab of selected.doc.querySelector('.jjp-wrap').querySelectorAll('.jjp-tab')) eq(lang + ': v2 pressed state ' + value + '/' + tab.dataset.ann, tab.getAttribute('aria-pressed'), String(tab.dataset.ann === value));
+  }
+  const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
+  q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
