@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -237,33 +238,44 @@ const unhandled = [];
 const onUnhandled = e => unhandled.push(String(e));
 process.on('unhandledRejection', onUnhandled);
 const tick = () => new Promise(resolve => setImmediate(resolve));
-function pageHarness(lang, sharedFirst) {
-  const labels = vm.runInNewContext('(' + source.match(/const labels = ([\s\S]*?);\n\nconst L/)[1] + ')')[lang];
-  const nodes = new Map(), events = {}, timers = new Map(), copies = [], tracked = [], persisted = [];
+function pageHarness(lang, sharedFirst, viewport = { width: 1366, height: 900, resultTop: 500 }) {
+  const labels = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?);\n\nconst L/)[1] + ')')[lang];
+  const nodes = new Map(), events = {}, timers = new Map(), copies = [], tracked = [], persisted = [], scrolled = [];
   let now = 0, timerId = 0;
   const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
-  for (const m of markup.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
-    const attrs = Object.fromEntries([...m[2].matchAll(/([\w-]+)="([^"]*)"/g)].map(x => [x[1], x[2]]));
-    const el = { id: m[3], tagName: m[1].toUpperCase(), value: '', textContent: '', innerHTML: '', className: attrs.class || '', style: { display: attrs.style?.includes('display:none') ? 'none' : '' }, handlers: {},
+  const stack = [], all = [], camel = key => key.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  for (const m of markup.matchAll(/<(\/?)([\w-]+)\b([^>]*)>/g)) {
+    if (m[1]) { stack.pop(); continue; }
+    const attrs = Object.fromEntries([...m[3].matchAll(/([\w-]+)="([^"]*)"/g)].map(x => [x[1], x[2]]));
+    for (const a of m[3].matchAll(/([\w-]+)=\{L\.(\w+)\}/g)) attrs[a[1]] = labels[a[2]];
+    const el = { id: attrs.id || '', tagName: m[2].toUpperCase(), parentElement: stack.at(-1) || null, value: '', textContent: '', innerHTML: '', className: attrs.class || '', style: { display: attrs.style?.includes('display:none') ? 'none' : '' }, handlers: {}, dataset: {},
+      hidden: /\bhidden(?:\s|$)/.test(m[3]), disabled: /\bdisabled(?:\s|$)/.test(m[3]),
+      setAttribute(key, value) { attrs[key] = String(value); if (key.startsWith('data-')) this.dataset[camel(key.slice(5))] = String(value); },
+      getAttribute(key) { return attrs[key] ?? null; },
+      contains(node) { for (; node; node = node.parentElement) if (node === this) return true; return false; },
+      getBoundingClientRect() { return { top: viewport.resultTop }; },
+      scrollIntoView(options) { scrolled.push({ id: this.id, options }); },
       addEventListener(type, fn) { (this.handlers[type] ||= []).push(fn); },
       dispatch(type) { for (const fn of this.handlers[type] || []) fn.call(this, { target: this }); },
-      click() { this.dispatch('click'); }, focus() { document.activeElement = this; } };
-    nodes.set(el.id, el);
+      click() { if (!this.disabled) this.dispatch('click'); }, focus() { document.activeElement = this; } };
+    for (const [key, value] of Object.entries(attrs)) if (key.startsWith('data-')) el.dataset[camel(key.slice(5))] = value;
+    all.push(el); if (el.id) nodes.set(el.id, el);
+    if (!/\/$/.test(m[3]) && !/^(input|br|hr|img|meta|link)$/i.test(m[2])) stack.push(el);
   }
   nodes.get('jd-copy-patch').textContent = labels.copy;
-  const wrap = { dataset: {}, contains: el => [...nodes.values()].includes(el) };
-  for (const m of markup.matchAll(/data-([\w-]+)=\{L\.(\w+)\}/g)) wrap.dataset[m[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = labels[m[2]];
-  const widget = { contains: wrap.contains, querySelector: s => s === '.btn-primary' ? nodes.get('jd-run') : null,
+  nodes.get('jd-toggle-inputs').textContent = labels.hideInputs;
+  const wrap = all.find(el => el.className === 'jd-wrap');
+  const widget = { contains: el => wrap.contains(el), querySelector: s => s === '.btn-primary' ? nodes.get('jd-run') : null,
     querySelectorAll: () => [...nodes.values()].filter(el => el.tagName === 'TEXTAREA') };
   const document = { activeElement: null, getElementById: id => nodes.get(id), querySelector: s => s === '.jd-wrap' ? wrap : s === '.tool-widget' ? widget : s === '.tool-widget .btn-primary' ? nodes.get('jd-run') : null,
     addEventListener(type, fn) { (events[type] ||= []).push(fn); } };
-  const context = vm.createContext({ document, _slug: 'json-diff', window: { trackTool: (...args) => tracked.push(args), ztPersist: { clear: slug => persisted.push(slug) } },
+  const context = vm.createContext({ document, _slug: 'json-diff', window: { innerHeight: viewport.height, matchMedia: query => ({ matches: query === '(max-width: 640px)' && viewport.width <= 640 }), trackTool: (...args) => tracked.push(args), ztPersist: { clear: slug => persisted.push(slug) } },
     navigator: { clipboard: { writeText(text) { return new Promise((resolve, reject) => copies.push({ text, resolve, reject })); } } },
     setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, due: now + ms }); return id; }, clearTimeout(id) { timers.delete(id); } });
   if (sharedFirst) vm.runInContext(shortcut, context);
   vm.runInContext(source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1], context);
   if (!sharedFirst) vm.runInContext(shortcut, context);
-  return { nodes, copies, tracked, persisted, labels,
+  return { nodes, copies, tracked, persisted, labels, scrolled, document,
     input(id, value) { const e = nodes.get(id); e.value = value; e.dispatch('input'); },
     run(n = 2) { this.input('jd-left', '{"x":1}'); this.input('jd-right', JSON.stringify({ x: n })); nodes.get('jd-run').click(); },
     key(key, focus = 'jd-left', meta = false) { document.activeElement = nodes.get(focus) || {}; let prevented = false; const e = { key, ctrlKey: !meta, metaKey: meta, preventDefault() { prevented = true; } }; for (const fn of events.keydown || []) fn(e); return prevented; },
@@ -325,6 +337,91 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
   const before = h.copies.length; click('jd-copy-patch'); check(name + 'empty result never calls clipboard', h.copies.length === before);
 }
 process.removeListener('unhandledRejection', onUnhandled);
+
+// ---------- v2 page layout ----------
+const v2Start = passes;
+const sha256 = value => createHash('sha256').update(value).digest('hex');
+const strings = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?);\n\nconst L/)[1] + ')');
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+const css = source.split('<style>')[1].split('</style>')[0];
+const sharedCss = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
+const clientScript = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+eq('v2 immutable engine including marker bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha256(source.slice(startIndex, endIndex + END_MARK.length))], [3844, '0a1ef8599569b4b9f4a16f47d204a73e43857e924b632185e09d4b092dcd67fd']);
+check('v2 direct bounded flex root', /^<div\s+class="jd-wrap"/.test(markup) && /\.jd-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0/.test(css));
+check('v2 registered compare', /'json-diff':\s*'compare'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 controls/status/inputs/results reading order', ['class="jd-actions"', 'id="jd-status"', 'id="jd-inputs"', 'id="jd-results"'].map(x => markup.indexOf(x)).every((n, i, all) => n >= 0 && (!i || n > all[i - 1])));
+check('v2 stable live status with bounded error text', /id="jd-status"[^>]*role="status"[^>]*aria-live="polite"/.test(markup) && /\.jd-status\s*\{[^}]*height:\s*3rem;[^}]*overflow:\s*auto/.test(css));
+check('v2 adopts shared compare inputs and results', /id="jd-inputs"[^>]*class="jd-inputs zt-compare-inputs"/.test(markup) && /id="jd-results"[^>]*class="jd-results zt-compare-results"/.test(markup));
+check('v2 shared desktop inputs are two bounded 180px editors', /\.zt-compare-inputs\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/.test(sharedCss) && /\.zt-compare-inputs textarea\s*\{[^}]*height:\s*180px;[^}]*min-height:\s*0;[^}]*overflow:\s*auto/.test(sharedCss));
+check('v2 shared results fill remaining desktop space', /\.zt-compare-results\s*\{[^}]*flex:\s*1 1 0;[^}]*min-width:\s*0;[^}]*min-height:\s*0/.test(sharedCss));
+check('v2 860 stack has 120px inputs and 24rem result', /@media \(max-width: 860px\)[\s\S]*\.zt-compare-inputs\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/.test(sharedCss) && /\.zt-compare-inputs textarea\s*\{ height: 120px; \}/.test(sharedCss) && /\.zt-compare-results\s*\{ flex: none; height: 24rem; \}/.test(sharedCss));
+check('v2 640 phone has 22rem result and 44px actions', /@media \(max-width: 640px\)\s*\{\s*\.zt-compare-results\s*\{ height: 22rem; \}/.test(sharedCss) && /@media \(max-width: 640px\)[\s\S]*\.jd-actions button, #jd-toggle-inputs, #jd-copy-patch\s*\{ min-height: 44px; \}/.test(css));
+check('v2 mobile empty result hides while desktop has explanation', /data-empty="true"/.test(markup) && /<p id="jd-empty"[^>]*>\{L\.emptyResult\}<\/p>/.test(markup) && /@media \(max-width: 860px\)[\s\S]*\.zt-compare-results\[data-empty="true"\]\s*\{ display: none; \}/.test(sharedCss));
+check('v2 hidden overrides shared input grid', /\.jd-wrap \[hidden\]\s*\{ display: none; \}/.test(css));
+eq('v2 original manual controls plus input disclosure', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m => m[1]).sort(), ['jd-run', 'jd-clear', 'jd-swap', 'jd-copy-patch', 'jd-toggle-inputs'].sort());
+check('v2 disclosure starts disabled and controls real inputs', /id="jd-toggle-inputs"[^>]*aria-controls="jd-inputs"[^>]*aria-expanded="true"[^>]*disabled/.test(markup));
+for (const id of ['jd-left', 'jd-right']) check('v2 label and editable input ' + id, markup.includes('for="' + id + '"') && !/readonly|disabled/.test(markup.match(new RegExp('<textarea id="' + id + '"[^>]*>'))?.[0] || 'disabled'));
+check('v2 patch is labelled readonly keyboard-focusable textarea', /<label for="jd-patch-out">\{L.patchTitle\}<\/label>/.test(markup) && /<textarea id="jd-patch-out"[^>]*readonly/.test(markup) && !/tabindex="-1"|disabled/.test(markup.match(/<textarea id="jd-patch-out"[^>]*>/)?.[0] || 'disabled'));
+check('v2 visual region can receive keyboard scrolling', /id="jd-visual"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-labelledby="jd-visual-label"/.test(markup) && /\.jd-visual:focus-visible/.test(css));
+for (const cls of ['jd-out-area', 'jd-visual']) check('v2 independent bounded scroller ' + cls, new RegExp('\\.' + cls + '\\s*\\{[^}]*flex:\\s*1 1 0;[^}]*min-height:\\s*0;[^}]*overflow:\\s*auto').test(css));
+check('v2 scroll blocks are bounded and runtime rows use global styles', /\.jd-output-block\s*\{[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0/.test(css) && /\.jd-visual :global\(\.jd-line\)/.test(css) && /:global\(\.jd-add\)/.test(css));
+check('v2 tips and all languages stay outside inline client', source.includes('const TIPS = L.tips;') && !/STRINGS|TIPS|L\.tips|define:vars|data-i18n/.test(clientScript) && !/data-tips=/.test(markup));
+const tipMap = { compare: 'compare', clear: 'clear', swap: 'swap', before: 'labelBefore', after: 'labelAfter', patch: 'patchTitle', visual: 'visualTitle', results: 'result' };
+const tips = [...markup.matchAll(/<Toggletip id="(jd-tip-[^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 exactly eight source-backed tip bindings', tips.map(m => [m[1], m[2], m[3]]).sort(), Object.entries(tipMap).map(([key, about]) => ['jd-tip-' + key, about, key]).sort());
+const MDX_HASHES = {
+  en: 'd44e7d2cf3ee1abb9ef839f29b10f28b0b59f31b9ad252a817c64d0f40e045e8',
+  zh: 'b30d9f07f684b5e1d6791d22198ed51fb424127ff7456916543a133beb77fb81',
+  ja: '471d54bc18d5ddb3ae6a5b9198cd72462eb2333e5963b469f209597a8276cc23',
+  ko: '8bfe1394d61ad850108fb15b099e5440058cfacfe2354cc18767457be37a5375',
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq(lang + ' v2 root string keys', Object.keys(strings[lang]).sort(), Object.keys(strings.en).sort());
+  eq(lang + ' v2 same eight tip keys', Object.keys(strings[lang].tips).sort(), Object.keys(tipMap).sort());
+  for (const [key, about] of Object.entries(tipMap)) check(lang + ' v2 nonempty fact and actual control label ' + key, typeof strings[lang].tips[key] === 'string' && strings[lang].tips[key].trim().length > 0 && typeof strings[lang][about] === 'string' && strings[lang][about].trim().length > 0);
+  const mdx = readFileSync(join(root, 'src/content/tools/json-diff', lang + '.mdx'), 'utf8');
+  const steps = (mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1] || '').trim().split('\n').filter(Boolean).map(line => JSON.parse(line.trim().slice(2)));
+  eq(lang + ' v2 six steps before FAQ', steps.length, 6);
+  check(lang + ' v2 plain steps meet 280/1200 limits', steps.every(step => [...step].length <= 280 && !/[<>]|\]\(|\*\*|`/.test(step)) && steps.reduce((n, step) => n + [...step].length, 0) <= 1200);
+  check(lang + ' v2 steps use actual manual controls', ['compare', 'clear', 'swap', 'copy', 'hideInputs', 'showInputs'].every(key => steps.join(' ').includes(strings[lang][key])));
+  check(lang + ' v2 Usage is removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
+  eq(lang + ' v2 all non-Usage MDX bytes preserved', sha256(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), MDX_HASHES[lang]);
+  for (const sharedFirst of [false, true]) {
+    const h = pageHarness(lang, sharedFirst, { width: 390, height: 844, resultTop: 900 });
+    const prefix = lang + '/v2/sharedFirst=' + sharedFirst + ': ', n = id => h.nodes.get(id), click = id => n(id).click();
+    const fold = () => [n('jd-inputs').hidden, n('jd-toggle-inputs').disabled, n('jd-toggle-inputs').getAttribute('aria-expanded'), n('jd-results').dataset.empty, n('jd-empty').hidden];
+    eq(prefix + 'initial empty inputs expanded and disclosure disabled', fold(), [false, true, 'true', 'true', false]);
+    click('jd-toggle-inputs'); check(prefix + 'disabled disclosure cannot hide input', !n('jd-inputs').hidden);
+    h.run(); eq(prefix + 'real result enables disclosure and hides empty copy', fold(), [false, false, 'true', 'false', true]);
+    eq(prefix + 'offscreen phone result scrolls into view once', h.scrolled, [{ id: 'jd-results', options: { block: 'start', behavior: 'auto' } }]);
+    const before = h.snap(), count = h.tracked.length;
+    click('jd-toggle-inputs'); eq(prefix + 'collapse changes disclosure only', [fold(), n('jd-toggle-inputs').textContent, h.snap(), h.tracked.length], [[true, false, 'false', 'false', true], h.labels.showInputs, before, count]);
+    click('jd-toggle-inputs'); eq(prefix + 'show restores original values without comparison', [fold(), n('jd-toggle-inputs').textContent, h.snap(), h.tracked.length], [[false, false, 'true', 'false', true], h.labels.hideInputs, before, count]);
+    for (const action of ['input', 'swap', 'error', 'equal', 'clear']) {
+      h.run(); click('jd-toggle-inputs');
+      if (action === 'input') h.input('jd-right', '{"changed":true}');
+      else if (action === 'swap') click('jd-swap');
+      else if (action === 'error') { n('jd-right').value = '{'; click('jd-run'); }
+      else if (action === 'equal') { n('jd-right').value = n('jd-left').value; click('jd-run'); }
+      else click('jd-clear');
+      eq(prefix + action + ' reopens inputs and removes both results', fold(), [false, true, 'true', 'true', false]);
+      check(prefix + action + ' removes actual patch/visual bytes', noResult(h.snap()));
+      if (action === 'input') eq(prefix + 'edit remains unconverted and keeps exact text', h.snap().inputs, ['{"x":1}', '{"changed":true}']);
+      if (action === 'swap') eq(prefix + 'swap keeps exact exchanged text', h.snap().inputs, ['{"x":2}', '{"x":1}']);
+      if (action === 'error') check(prefix + 'error preserves invalid text and visible status', n('jd-right').value === '{' && h.snap().status.startsWith(h.labels.msgParseErrorAfter));
+    }
+    for (const target of ['jd-patch-out', 'jd-visual', 'jd-copy-patch', 'jd-toggle-inputs']) {
+      h.run(); click('jd-toggle-inputs'); const beforePersist = h.persisted.length;
+      h.key('l', target, target === 'jd-visual');
+      check(prefix + 'CtrlL from ' + target + ' clears data and focuses reopened original', noResult(h.snap()) && h.snap().inputs.every(value => !value) && !h.snap().status && !n('jd-inputs').hidden && h.document.activeElement === n('jd-left') && h.persisted.length === beforePersist + 1);
+    }
+  }
+}
+for (const [width, top, expected] of [[1366, 900, 0], [641, 900, 0], [640, 749, 1], [390, 748, 0], [390, 747, 0]]) {
+  const h = pageHarness('en', false, { width, height: 844, resultTop: top }); h.run();
+  eq('v2 actual phone scroll boundary width=' + width + '/top=' + top, h.scrolled.length, expected);
+}
+console.log('v2 page layout: ' + (passes - v2Start) + ' passed, ' + failures + ' total failures');
 
 console.log(`\n${passes} passed, ${failures} failed` + (skips ? `, ${skips} skipped` : ''));
 process.exit(failures ? 1 : 0);
