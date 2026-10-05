@@ -424,5 +424,17 @@ process.removeListener('unhandledRejection', unhandled);
   }
 }
 
+
+// ---------- phone first-screen repair: scoped spacing only ----------
+{
+  const phone = source.slice(source.indexOf('  @media (max-width: 640px) {'));
+  check('phone inset header and 44px toggle share one row', /\.bsg-field-inset \{[^}]*flex-direction: row;[^}]*align-items: center;/.test(phone) && /\.bsg-field-inset \.bsg-field-header \{[^}]*flex: 1;/.test(phone));
+  check('phone color label and 44px inputs share one row', /\.bsg-field-color \{[^}]*flex-direction: row;[^}]*align-items: center;/.test(phone) && /\.bsg-field-color \.bsg-field-header \{[^}]*flex: none;/.test(phone) && /\.bsg-color-input-wrap \{[^}]*flex: 1;[^}]*min-width: 0;/.test(phone));
+  check('phone range rows remove default input margins', phone.includes('.bsg-slider { margin: 0; }') && phone.includes('.bsg-field { gap: 0; }'));
+  check('phone preview gaps use compact spacing', /\.bsg-body \{ gap: 0\.[0-4]rem; \}/.test(phone) && /\.bsg-preview-section \{ gap: 0\.[0-4]rem; \}/.test(phone));
+  const canvasHeight = Number(/\.bsg-preview-canvas \{ height: (\d+)px; \}/.exec(phone)?.[1]);
+  check('phone preview retains the full 80px box and padding in a compact canvas', canvasHeight >= 130 && canvasHeight <= 140, canvasHeight);
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
