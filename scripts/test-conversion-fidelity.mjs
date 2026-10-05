@@ -44,8 +44,8 @@ const TOOLS = {
   'yaml-json': {
     file: 'src/components/tools/YamlJsonTool.astro', wrap: '.yj-wrap', status: 'yj-status',
     dirs: {
-      y2j: { input: 'yj-yaml', output: 'yj-json', copy: 'yj-copy-json', button: 'yj-to-json', vias: ['input', 'button', 'key'] },
-      j2y: { input: 'yj-json', output: 'yj-yaml', copy: 'yj-copy-yaml', button: 'yj-to-yaml', vias: ['input', 'button', 'key'] },
+      y2j: { input: 'yj-yaml', output: 'yj-json', copy: 'yj-copy-json', vias: ['input'] },
+      j2y: { input: 'yj-json', output: 'yj-yaml', copy: 'yj-copy-yaml', vias: ['input'] },
     },
   },
 };

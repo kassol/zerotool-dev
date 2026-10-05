@@ -2,6 +2,8 @@
 //
 // Read:  src/components/tools/YamlJsonTool.astro; its real js-yaml, conversion-fidelity.js
 //        and yaml-limits.js dependencies; src/layouts/ToolLayout.astro keyboard listener.
+//        src/content/tools/yaml-json/{en,zh,ja,ko}.mdx; src/data/tool-layouts.ts;
+//        src/styles/tool-common.css. Astro/MDX compilation stays in memory.
 // Write: stdout only. DOM, clock and clipboard boundaries run in memory.
 // Exit:  0 if all PASS, 1 if any FAIL. No browser, network or system clipboard.
 // Run:   node scripts/test-yaml-json.mjs
@@ -24,6 +26,9 @@ const layout = readFileSync(join(ROOT, 'src/layouts/ToolLayout.astro'), 'utf8');
 const labelsBlock = source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
 if (!labelsBlock) throw Error('Production STRINGS block missing');
 const STRINGS = vm.runInNewContext(labelsBlock[1] + '\n;STRINGS');
+const stringsEnd = source.indexOf('// strings:end') + '// strings:end'.length;
+const selectStrings = source.slice(stringsEnd, source.indexOf('\n---', stringsEnd));
+const clientStrings = lang => vm.runInNewContext(selectStrings + '\n;CLIENT_T', { STRINGS, lang });
 const modules = [...source.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
 if (modules.length !== 1) throw Error('Expected exactly one complete production module');
 const script = modules[0][1];
@@ -87,7 +92,7 @@ function page(lang = 'en', shellFirst = false, preset = {}, active = null) {
   const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
   const esc = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
-    .replace(/data-strings=\{JSON\.stringify\(T\)\}/g, 'data-strings="' + esc(JSON.stringify(STRINGS[lang])) + '"')
+    .replace(/data-strings=\{JSON\.stringify\(CLIENT_T\)\}/g, 'data-strings="' + esc(JSON.stringify(clientStrings(lang))) + '"')
     .replace(/data-lang=\{lang\}/g, 'data-lang="' + lang + '"').replace(/\{T\.(\w+)\}/g, (_, k) => esc(STRINGS[lang][k]));
   function append(ast, parent) { for (const node of ast.childNodes || []) { if (!node.tagName) { if (node.nodeName === '#text') parent.textContent += node.value; continue; } const e = parent.appendChild(new Element(node.tagName)); for (const a of node.attrs) e.setAttribute(a.name, a.value); append(node, e); if (e.tagName === 'TEXTAREA') e.value = e.textContent; } }
   append(parseFragment(markup), widget);
@@ -123,15 +128,16 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const p = page(lang); check(lang + ' empty mount has both Copy disabled', [p.get('yj-copy-yaml').disabled, p.get('yj-copy-json').disabled], [true, true]);
   golden(p); check(lang + ' actual input YAML→JSON literal', p.get('yj-json').value, JSON_PRETTY);
   p.input('yj-json', JSON_TEXT); p.advance(300); check(lang + ' actual input JSON→YAML literal', p.get('yj-yaml').value, YAML_OUT);
-  p.get('yj-yaml').value = 'a: 1'; p.get('yj-to-json').click(); check(lang + ' retained YAML button', p.get('yj-json').value, '{\n  "a": 1\n}');
-  p.get('yj-json').value = '{"b":2}'; p.get('yj-to-yaml').click(); check(lang + ' retained JSON button', p.get('yj-yaml').value, 'b: 2\n');
+  p.input('yj-yaml', 'a: 1'); p.advance(300); check(lang + ' YAML input automatically converts without direction button', p.get('yj-json').value, '{\n  "a": 1\n}');
+  p.input('yj-json', '{"b":2}'); p.advance(300); check(lang + ' JSON input automatically converts without direction button', p.get('yj-yaml').value, 'b: 2\n');
   for (const shellFirst of [false, true]) for (const side of ['yaml', 'json']) {
     const k = page(lang, shellFirst), tag = lang + '/' + shellFirst + '/' + side;
     golden(k); k.tracks.length = 0;
     k.get('yj-' + side).value = side === 'yaml' ? 'c: 3' : '{"d":4}';
+    const beforeEnter = k.snapshot();
     k.key('yj-' + side, 'Enter', side === 'yaml' ? 'ctrlKey' : 'metaKey');
-    check(tag + ' bubbling Enter runs only requested direction', k.tracks, [['yaml_json', side === 'yaml' ? 'yaml_to_json' : 'json_to_yaml']], true);
-    check(tag + ' bubbling Enter preserves source and requested output/status', [k.get('yj-yaml').value, k.get('yj-json').value, k.get('yj-status').textContent], side === 'yaml' ? ['c: 3', '{\n  "c": 3\n}', S.convertedYamlToJson] : ['d: 4\n', '{"d":4}', S.convertedJsonToYaml], side === 'json');
+    check(tag + ' shared Enter has no primary operation', k.tracks, []);
+    check(tag + ' shared Enter preserves both editable inputs and current state', k.snapshot(), beforeEnter);
   }
   const restored = page(lang, false, { 'yj-yaml': 'a: 1', 'yj-json': '{"b":2}' }, 'yj-json');
   check(lang + ' early input uses focused JSON and leaves no timer', [restored.get('yj-yaml').value, restored.get('yj-json').value, restored.timers.size], ['b: 2\n', '{"b":2}', 0]);
@@ -208,9 +214,110 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     }
   }
 }
+
+/* ── v2 page layout ── */
+check('all 658 behavioral and core checks retained before final source guard', checks.length, 658);
+// Frozen from the reviewed FIX script after removing exactly its direction-click block
+// and local Ctrl/Enter block. Whitespace and every remaining script byte are protected.
+check('only direction click handlers and local Enter handlers removed from FIX script', hash(script), 'c288516d303bef0e03f92db59a4741a35a08e9ea44e74f523db1868d8e39be30');
+check('client imports and element bindings remain byte exact', hash(script.slice(0, script.indexOf('    const YAML_SCHEMA'))), '712fd59188732d3744143185056bbbc93ba9e94a5ab6aec59e9f17ad002e9150');
+check('protected conversion core byte count', Buffer.byteLength(algorithm), 1053);
+check('early-input recovery remains byte exact', hash(script.slice(script.indexOf('    /* ── Page load ──'))), '0c9b713aae6626572bb9c231584d998724c617f57ff733a63505bc73cd2ba2c1');
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "8bdc7260919bb258d7a4904e817fa3d387878680f4cfda2f883887fe84ea655f",
+    "body": "b6618f780b59af4f313339d99da9b708e9012c8abb02232b0005dd4d71e03d9e",
+    "examples": "dc8a3749daa5a54472b4bbf1b5816465711814aa00e110bc5d275f4780470f6a",
+    "exampleCount": 9,
+    "client": "f7bfed8034cf52c218ad2f9a09ae46a7de752832da535249f9dd4359ab903a5e"
+  },
+  "zh": {
+    "front": "3df129434aac0304bed0270c531594dffcba4631229ac6247be369fa66f8f8ba",
+    "body": "983d1dd8b8c241d7a9d1437b97fd138ad1c101e8a33aefa71d11012c599ede77",
+    "examples": "9cbb33aebc8f22764b3e8892e1ae0fecfc528017ea6858c3ee8ce73b38e3eacd",
+    "exampleCount": 4,
+    "client": "f7e6852272fc75dd30701f9e5a2d799772cdf3624fd7eb55072e34260e7f90cf"
+  },
+  "ja": {
+    "front": "4709dcd5c7240439326d3f4bfcac64c8c49d67bdb0291919494a2bfc54798168",
+    "body": "ab960bee3913332d9efdb9e8c259abd87a43ceaef2255c5aab55e30721acd8e1",
+    "examples": "6fbfda14c8e7768fa2ea525522c315173aef9752c0b35c0f64f6bc676df2d034",
+    "exampleCount": 2,
+    "client": "14f5001dc9ac82918950e493c93514306bbdb0eb32f0e4a4b5bfc28437cf0391"
+  },
+  "ko": {
+    "front": "047f595bb6ca6c995474ba1345f30b593e4853d3f177157b228632cefe3accbc",
+    "body": "2ebcf8e7fc8ed5fb1811f8e54530b634be0f3886d950db83c3ac5aad8cfddb1d",
+    "examples": "6fbfda14c8e7768fa2ea525522c315173aef9752c0b35c0f64f6bc676df2d034",
+    "exampleCount": 2,
+    "client": "952bbeca3eeb9d8ad488e3440f968593fdd1c09ad718dd63f34511804cdc8e60"
+  }
+};
+const markupSource = source.slice(source.indexOf('\n---', stringsEnd) + 4, source.indexOf('  <script>'));
+check('tool root is the outer element', /^\s*<div class="yj-wrap"/.test(markupSource), true);
+check('toolbar then reserved status then paired editors', /class="yj-toolbar"[\s\S]*id="yj-clear"[\s\S]*id="yj-status"[\s\S]*class="yj-panels zt-io"/.test(markupSource), true);
+check('both panes and both fills use shared classes', [(markupSource.match(/class="yj-panel zt-io-pane"/g) || []).length, (markupSource.match(/class="tool-textarea yj-box zt-io-fill"/g) || []).length], [2, 2]);
+check('two direction actions and old string keys fully removed', /yj-to-(json|yaml)|yamlToJson:\s*'|jsonToYaml:\s*'|btn-primary/.test(markupSource + labelsBlock[1]), false);
+check('Copy and Clear are the three remaining functional buttons', [...markupSource.matchAll(/<button id="([^"]+)"/g)].map(m => m[1]), ['yj-clear', 'yj-copy-yaml', 'yj-copy-json']);
+check('five unique control-adjacent toggletips', [...markupSource.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]), ['yj-tip-clear', 'yj-tip-yaml', 'yj-tip-copy-yaml', 'yj-tip-json', 'yj-tip-copy-json']);
+check('tips are not nested inside a label or button', /<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markupSource), false);
+check('both textareas remain editable and visible with empty input', /\breadonly\b|\bhidden\b|data-empty/.test(markupSource), false);
+check('original textarea placeholder bytes remain', [...markupSource.matchAll(/placeholder=("[^"]*"|'[^']*')/g)].map(m => m[1]), ["\"name: Alice&#10;age: 30&#10;hobbies:&#10;  - reading&#10;  - hiking\"", "'{\"name\":\"Alice\",\"age\":30,\"hobbies\":[\"reading\",\"hiking\"]}'"]);
+check('script remains inside root after both editors', /<\/textarea>[\s\S]*<\/textarea>[\s\S]*<script>[\s\S]*<\/script>\s*<\/div>\s*<style>/.test(source), true);
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+check('root is a zero-minimum flex column', /\.yj-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(css), true);
+check('status has fixed height and scrolls instead of pushing inputs', /\.yj-status\s*\{[^}]*height:\s*2\.6rem;[^}]*min-height:\s*2\.6rem;[^}]*flex:\s*none;[^}]*overflow:\s*auto;/.test(css), true);
+check('textarea long content is internally scrollable', /\.yj-box\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*auto;/.test(css), true);
+check('860 and 640 breakpoints retain bounded 180/120 editors and 44px phone header', /@media \(max-width: 860px\)[\s\S]*\.yj-box\s*\{\s*height:\s*180px;[\s\S]*@media \(max-width: 640px\)[\s\S]*\.yj-head\s*\{\s*min-height:\s*44px;[\s\S]*\.yj-box\s*\{\s*height:\s*120px;/.test(css), true);
+check('no empty editor or mobile direction is hidden', /display:\s*none|visibility:\s*hidden/.test(css), false);
+check('status theme colors use existing semantic tokens', /\.yj-status.success\s*\{\s*color: var\(--color-success\);/.test(css) && /\.yj-status.error\s*\{\s*color: var\(--color-danger\);/.test(css), true);
+const sharedCss = readFileSync(join(ROOT, 'src/styles/tool-common.css'), 'utf8');
+check('shared panes supply zero-basis filling for long content', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
+const registry = readFileSync(join(ROOT, 'src/data/tool-layouts.ts'), 'utf8');
+const registryKind = registry.match(/['"]yaml-json['"]\s*:\s*['"]([^'"]+)['"]/)?.[1];
+check('yaml-json is registered as convert', registryKind, 'convert');
+const contentProtection = [];
+const splitMdx = text => { const match = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/); if (!match) throw Error('MDX frontmatter not found'); return { front: match[1], body: match[2] }; };
+const yaml = requireRoot('js-yaml');
+const mdxCompiler = await import(requireRoot.resolve('@mdx-js/mdx'));
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const payload = clientStrings(lang), S = STRINGS[lang];
+  check(lang + ' five complete tip keys', Object.keys(S.tips), ['yaml', 'json', 'copyYaml', 'copyJson', 'clear']);
+  check(lang + ' tips are short nonempty plain text', Object.values(S.tips).every(t => typeof t === 'string' && t.length > 0 && t.length <= 280 && !/[<>]/.test(t)), true);
+  check(lang + ' actual selected client payload excludes every tip', Object.hasOwn(payload, 'tips') || Object.values(S.tips).some(t => JSON.stringify(payload).includes(t)), false);
+  check(lang + ' runtime strings remain equal to FIX excluding removed button keys', hash(JSON.stringify(payload)), PROTECTED_CONTENT[lang].client);
+  for (const shellFirst of [false, true]) for (const side of ['yaml', 'json']) {
+    const p = page(lang, shellFirst), field = 'yj-' + side, peer = side === 'yaml' ? 'yj-json' : 'yj-yaml';
+    p.input(field, side === 'yaml' ? YAML : JSON_TEXT); p.advance(100); p.key(field, 'Enter');
+    check(lang + '/' + shellFirst + '/' + side + ' Enter does not rush pending automatic conversion', p.get(peer).value, '');
+    p.advance(199); check(lang + '/' + shellFirst + '/' + side + ' actual debounce remains 300ms', p.get(peer).value, '');
+    p.advance(1); check(lang + '/' + shellFirst + '/' + side + ' automatic direction still completes after Enter', p.get(peer).value, side === 'yaml' ? JSON_PRETTY : YAML_OUT);
+  }
+  const content = readFileSync(join(ROOT, 'src/content/tools/yaml-json', lang + '.mdx'), 'utf8');
+  const after = splitMdx(content), front = yaml.load(after.front), expected = PROTECTED_CONTENT[lang];
+  check(lang + ' has five steps before faqItems', Array.isArray(front.steps) && front.steps.length === 5 && after.front.indexOf('steps:') < after.front.indexOf('faqItems:'), true);
+  check(lang + ' steps obey 8/280/1200 limits', front.steps.length <= 8 && front.steps.every(s => typeof s === 'string' && [...s].length <= 280) && front.steps.reduce((n, s) => n + [...s].length, 0) <= 1200, true);
+  check(lang + ' all original frontmatter including SEO/FAQ remains byte exact', hash(after.front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.front);
+  check(lang + ' remaining body exact except documented removed-button sentence', hash(after.body), expected.body);
+  const fences = body => [...body.matchAll(/```[^\n]*\n[\s\S]*?```/g)].map(m => m[0]);
+  check(lang + ' every worked-example code block is byte exact', { count: fences(after.body).length, hash: hash(JSON.stringify(fences(after.body))) }, { count: expected.exampleCount, hash: expected.examples });
+  check(lang + ' removed Usage heading absent', /<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(after.body), false);
+  let mdxError = ''; try { await mdxCompiler.compile(after.body); } catch (e) { mdxError = String(e); }
+  check(lang + ' remaining body compiles as actual MDX', mdxError, '');
+  contentProtection.push({ lang, steps: front.steps.length, totalStepChars: front.steps.reduce((n, s) => n + [...s].length, 0), frozenFrontSHA256: expected.front, preservedFrontSHA256: hash(after.front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), frozenBodySHA256: expected.body, bodySHA256: hash(after.body), examples: fences(after.body).length, frozenExampleSHA256: expected.examples, exampleSHA256: hash(JSON.stringify(fences(after.body))) });
+}
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const compiled = await transform(source, { filename: join(ROOT, FILE) });
+check('Astro component compiles without error diagnostics', compiled.diagnostics.filter(d => d.severity === 1), []);
+check('Astro compiler preserves one client module', compiled.scripts.length, 1);
+check('Astro client script excludes all tip strings', Object.values(STRINGS).some(s => Object.values(s.tips).some(t => compiled.scripts.some(script => script.code.includes(t)))), false);
+check('compiled CSS contains no unresolved global selectors', compiled.css.some(c => c.includes(':global')), false);
+let moduleError = ''; try { await requireRoot('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' }); } catch (e) { moduleError = String(e); }
+check('Astro generated module parses with esbuild', moduleError, '');
+
 await settle(); process.removeListener('unhandledRejection', onUnhandled);
 check('component source unchanged during test', hash(readFileSync(SOURCE_FILE, 'utf8')), hash(source));
 const counts = { passed: checks.filter(c => c.passed).length, failed: checks.filter(c => !c.passed).length, total: checks.length };
-const report = { node: process.version, component: FILE, sourceSHA256: hash(source), protectedAlgorithmSHA256: hash(algorithm), actualSharedKeyboard: true, browserVerified: false, counts };
+const report = { node: process.version, component: FILE, sourceSHA256: hash(source), protectedAlgorithmSHA256: hash(algorithm), actualSharedKeyboard: true, browserVerified: false, registryKind, contentProtection, counts };
 console.log('\n' + JSON.stringify(report));
 process.exitCode = counts.failed ? 1 : 0;
