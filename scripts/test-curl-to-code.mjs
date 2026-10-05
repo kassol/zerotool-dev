@@ -41,6 +41,10 @@ import python from 'highlight.js/lib/languages/python';
 import go from 'highlight.js/lib/languages/go';
 import php from 'highlight.js/lib/languages/php';
 
+import { createRequire } from 'node:module';
+import { transform as esbuildTransform } from 'esbuild';
+import { compile as compileMdx } from '@mdx-js/mdx';
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CurlToCodeTool.astro'), 'utf8');
 
@@ -309,7 +313,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 // ---------- STRINGS ----------
 {
-  const m = source.match(/var STRINGS = (\{[\s\S]*?\n    \});/);
+  const m = source.match(/const STRINGS = (\{[\s\S]*?\n\});/);
   check('STRINGS block found', !!m);
   if (m) {
     const S = new Function('return ' + m[1])();
@@ -321,7 +325,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 // ---------- real complete page lifecycle; controlled DOM, clipboard and clock boundaries ----------
 const pageScript = transformSync(source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1].replace(/^\s*import .* from .*;$/gm, ''), { loader: 'ts' }).code;
-const pageLabels = vm.runInNewContext('(' + source.match(/var STRINGS = (\{[\s\S]*?\n\s*\});/)[1] + ')');
+const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
+const runtimeLabels = lang => vm.runInNewContext('(' + source.match(/const CLIENT_T = (\{[\s\S]*?\n\});/)[1] + ')', { L: pageLabels[lang] });
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -376,7 +381,14 @@ function page(lang, shellFirst = false) {
     focus() { doc.activeElement = this; }
   }
   const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
-  const markup = source.split('\n---')[1].split('<script')[0];
+  const tipAbout = JSON.parse(readFileSync(join(root, 'src/i18n/' + lang + '.json'), 'utf8'))['tool.tipAbout'];
+  // Render the shared component's actual button/panel boundary; browser QA checks popover geometry.
+  const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '" aria-label="' + escape(tipAbout.replace('{name}', pageLabels[lang][about])) + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{JSON\.stringify\(CLIENT_T\)\}/g, () => '="' + escape(JSON.stringify(runtimeLabels(lang))) + '"')
+    .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
+    .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
   for (const token of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
     if (token[3] !== undefined) { stack.at(-1).textContent += decode(token[3]).trim(); continue; }
@@ -487,6 +499,86 @@ try {
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
+
+
+// ---------- v2 page layout ----------
+const layoutMarkup = source.split('\n---')[1].split('<script')[0];
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const hash = value => createHash('sha256').update(value).digest('hex');
+check('v2 registered as convert', /'curl-to-code':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+check('v2 direct flex root with zero minimum size', /^\s*<div\s+class="ctc-wrap"/.test(layoutMarkup) && /\.ctc-wrap\s*\{[^}]*display:\s*flex;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(css));
+check('v2 controls/status precede panels', layoutMarkup.indexOf('class="ctc-actions"') < layoutMarkup.indexOf('id="ctc-status"') && layoutMarkup.indexOf('id="ctc-status"') < layoutMarkup.indexOf('zt-io"'));
+eq('v2 two shared panels', (layoutMarkup.match(/\bzt-io-pane\b/g) || []).length, 2);
+check('v2 input uses shared fill', /id="ctc-input"\s+class="zt-io-fill"/.test(layoutMarkup));
+check('v2 output is a labelled keyboard scroller', /id="ctc-output"[^>]*tabindex="0"[^>]*aria-labelledby="ctc-output-label"/.test(layoutMarkup) && /\.ctc-output\s*\{[^}]*overflow:\s*auto;/.test(css) && /\.ctc-output:focus-visible\s*\{[^}]*outline:/.test(css));
+check('v2 status space is reserved', /\.ctc-status\s*\{[^}]*min-height:\s*2\.4rem;/.test(css));
+check('v2 long status cannot grow the panels', /\.ctc-status\s*\{[^}]*height:\s*2\.4rem;[^}]*overflow:\s*auto;/.test(css));
+check('v2 mobile input is bounded', /@media \(max-width: 860px\)/.test(css) && /height:\s*144px;\s*min-height:\s*144px;/.test(css));
+check('v2 mobile output has fixed height', /\.ctc-output\s*\{[^}]*height:\s*22rem;/.test(css));
+check('v2 phone controls remain reachable', /@media \(max-width: 640px\)/.test(css) && /min-height:\s*44px/.test(css));
+check('v2 empty state tracks actual code', css.includes('.ctc-output-pane:has(#ctc-output-code:empty) .ctc-output { display: none; }') && css.includes('.ctc-output-pane:has(#ctc-output-code:empty) .ctc-empty { display: flex; }') && css.includes('.ctc-output-pane:has(#ctc-output-code:empty) { display: none; }'));
+check('v2 four-language build-time text, tips excluded from script', !/data-i18n/.test(source) && !/STRINGS|L\.tips|\.tips\b/.test(pageScript));
+eq('v2 original action buttons retained', [...layoutMarkup.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(m => m[1]).sort().join(','), "ctc-clear,ctc-convert,ctc-copy,ctc-example");
+const tipMap = [["convert", "convert", "convert"], ["example", "example", "example"], ["clear", "clear", "clear"], ["input", "curlInput", "input"], ["language", "language", "language"], ["copy", "copy", "copy"]];
+eq('v2 actual Toggletip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, tipMap.length);
+for (const [id, about, key] of tipMap) check('v2 tip binding ' + id, layoutMarkup.includes('<Toggletip id="ctc-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'));
+// Hashes captured before migrating Usage; all other frontmatter and body are protected.
+const protectedContent = {
+  "en": [
+    "f5017df115257fd615d8908c473e71efb4bf9bb5f362eaa02137da674e5609be",
+    "e9c15cf4eb4ba3833c6375bd32ab06cf9bbb804f7f0a50ccd49aeac809a111b6"
+  ],
+  "zh": [
+    "17d9b5ed5d850e15787d836d274f87021cb914df156fb17fe64108cba1914151",
+    "7fbac32daeccbe2484c421c9fcb4b836698a54433b6a8389682d102135d056d2"
+  ],
+  "ja": [
+    "0556841c0a972b593a4cd3cdaae98a9edfeefc454f1aba79151b596e81609bf2",
+    "602f0f9a337df550209e74641298bdcff1f5b076513f93acd09580f695012365"
+  ],
+  "ko": [
+    "9b9fa4f69e057611fe3239ec0472c4965ac05123aff54c7ff0b05108f59e9d50",
+    "e26f5f9fa0bf2b0e4bf8ead9f315710c27a034fa9d6adab77cd366c270b618be"
+  ]
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const L = pageLabels[lang], p = page(lang);
+  eq(lang + ': v2 same tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
+  for (const [id, about, key] of tipMap) {
+    check(lang + ': v2 plain localized tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]));
+    eq(lang + ': v2 rendered tip ' + id, p.get('ctc-tip-' + id).textContent, L.tips[key]);
+  }
+  check(lang + ': v2 localized empty state', !!L.empty && layoutMarkup.includes('{L.empty}'));
+  check(lang + ': v2 serialized data excludes all tips', !('tips' in runtimeLabels(lang)) && !('empty' in runtimeLabels(lang)) && Object.values(L.tips).every(tip => !p.doc.querySelector('.ctc-wrap').dataset.strings.includes(tip)));
+  const mdx = readFileSync(join(root, 'src/content/tools/curl-to-code/' + lang + '.mdx'), 'utf8');
+  const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+  const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
+  const steps = stepsText.trimEnd().split('\n').map(line => JSON.parse(line.slice(4)));
+  check(lang + ': v2 steps bounds/order', steps.length > 0 && steps.length <= 8 && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n, x) => n + [...x].length, 0) <= 1200 && fm.indexOf('steps:') < fm.indexOf('faqItems:'));
+  for (const key of ["curlInput", "convert", "example", "clear", "copy"]) check(lang + ': v2 steps use actual ' + key, steps.join('\n').includes(L[key]));
+  eq(lang + ': v2 original SEO/FAQ exact', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m, '')), protectedContent[lang][0]);
+  eq(lang + ': v2 non-Usage body/limits/examples exact', hash(body), protectedContent[lang][1]);
+  check(lang + ': v2 no duplicate Usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>|^## How to/m.test(body));
+  try { await compileMdx(body); check(lang + ': v2 MDX compiles', true); } catch (e) { check(lang + ': v2 MDX compiles', false, e.message); }
+  for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {
+    const q = page(lang, shellFirst); runPage(q);
+    q.key(focus === 'output' ? q.get('ctc-output') : q.doc.querySelector('[data-zt-tip="ctc-tip-copy"]'));
+    check(lang + ': v2 result CtrlL focus ' + shellFirst + '/' + focus, q.doc.activeElement === q.get('ctc-input') && !q.get('ctc-input').value && !output(q) && !status(q).textContent && q.clears.length === 1);
+  }
+}
+try {
+  const require = createRequire(import.meta.url);
+  const { transform: astroTransform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const compiled = await astroTransform(source, { filename: 'CurlToCodeTool.astro', renderScript: true });
+  check('v2 Astro compiler has no error diagnostics', !compiled.diagnostics.some(d => d.severity === 1), JSON.stringify(compiled.diagnostics));
+  // The standalone compiler's legacy hoisted metadata cannot quote this engine's
+  // existing backslash/backtick comment. The pre-layout source fails identically;
+  // validate diagnostics and the real extracted client module here, then build in CI.
+  for (const script of compiled.scripts) await esbuildTransform(script.code, { loader: 'ts' });
+  check('v2 actual extracted client script parses', compiled.scripts.length === 1);
+} catch (e) { check('v2 Astro compilation', false, e.message); }
+check('v2 dark status ancestors are global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'));
+check('v2 tabs share segmented structure and visible selected fill', /class="ctc-tabs zt-segmented"/.test(layoutMarkup) && /\.ctc-tab-active[^}]*background:\s*var\(--color-surface\)/.test(css));
 
 rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${passes} passed, ${failures} failed` + (skips ? `, ${skips} skipped` : ''));

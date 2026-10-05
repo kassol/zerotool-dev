@@ -1,45 +1,125 @@
 ---
-// CurlToCodeTool — convert curl commands to code in multiple languages
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    language: "Output language",
+    empty: "Enter a cURL command or load the example, then convert it to code.",
+    tips: {
+      "input": "Enter a cURL command, including backslash line continuations or DevTools Copy as cURL (bash) quoting. This tool generates code without sending the request.",
+      "convert": "Convert the current command. Review options listed as not converted at the top of the code. Ctrl/⌘+Enter also converts; editing the command alone does not.",
+      "example": "Replace the input with a JSON POST example containing Content-Type and Authorization headers, then convert it in the selected language.",
+      "clear": "Clear the command, generated code and status while keeping the selected language. Ctrl/⌘+L within the tool also clears them.",
+      "language": "Choose Python, JavaScript, Go, PHP or Node.js. Tabs regenerate the last converted command. After editing the command, click Convert to apply the changes.",
+      "copy": "Copy all the displayed code for the selected language. Empty output is not copied. Review the generated request before running it in your project."
+    },
+    curlInput: 'cURL Command', output: 'Generated Code', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please copy the output manually.', convert: 'Convert', msgInvalidCurl: 'Invalid cURL command', msgConverted: 'Converted.', msgUnknownOption: 'Unknown option {option}. Check the spelling; this converter knows the options of curl 8.7.', msgMissingValue: 'Option {option} needs a value.', msgMixedFileData: 'Reading request data from a file (@file) together with other data options is not supported. Merge the data into one file or one string.', msgNotes: 'Converted. Not converted (listed at the top of the code): {notes}', msgDataAndForm: 'curl does not accept -d / --json together with -F in one request. Keep one of them.' },
+  zh: {
+    language: "输出语言",
+    empty: "输入 cURL 命令或载入示例，然后转换为代码。",
+    tips: {
+      "input": "输入 cURL 命令，支持反斜杠续行和开发者工具 Copy as cURL (bash) 的引号形式。工具只生成代码，不发送请求。",
+      "convert": "转换当前命令。请检查代码顶部列出的未转换选项。Ctrl/⌘+Enter 也可转换；仅编辑命令不会转换。",
+      "example": "用带 Content-Type 和 Authorization 请求头的 JSON POST 示例替换输入，并按当前语言转换。",
+      "clear": "清空命令、生成代码和状态，保留所选语言。在工具内按 Ctrl/⌘+L 也可清空。",
+      "language": "选择 Python、JavaScript、Go、PHP 或 Node.js。标签页为上次转换的命令重新生成代码；编辑命令后需点击转换来应用修改。",
+      "copy": "复制所选语言的完整显示代码。输出为空时不复制。在项目中运行前，请检查生成的请求。"
+    },
+    curlInput: 'cURL 命令', output: '生成代码', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', copyFailed: '复制失败，请手动复制输出。', convert: '转换', msgInvalidCurl: '无效的 cURL 命令', msgConverted: '已转换。', msgUnknownOption: '未知选项 {option}。请检查拼写；本转换器认识 curl 8.7 的选项。', msgMissingValue: '选项 {option} 缺少值。', msgMixedFileData: '不支持把从文件读取的数据（@file）与其他数据选项一起使用。请把数据合并到一个文件或一个字符串。', msgNotes: '已转换。未转换的选项（列在代码顶部）：{notes}', msgDataAndForm: 'curl 不接受在同一请求里同时用 -d / --json 和 -F，请只保留一种。' },
+  ja: {
+    language: "出力言語",
+    empty: "cURL コマンドを入力するかサンプルを読み込み、コードに変換します。",
+    tips: {
+      "input": "cURL コマンドを入力します。バックスラッシュによる行継続と DevTools の Copy as cURL (bash) の引用符に対応します。リクエストを送信せず、コードだけを生成します。",
+      "convert": "現在のコマンドを変換します。コード先頭の未変換オプションを確認してください。Ctrl/⌘+Enter でも変換できます。コマンドの編集だけでは変換しません。",
+      "example": "Content-Type と Authorization ヘッダーを含む JSON POST のサンプルで入力を置き換え、選択中の言語に変換します。",
+      "clear": "コマンド、生成コード、ステータスを消去し、選択中の言語は保持します。ツール内の Ctrl/⌘+L でも消去できます。",
+      "language": "Python、JavaScript、Go、PHP、Node.js を選択します。タブは直前に変換したコマンドのコードを生成します。コマンドの編集後は変換をクリックして反映します。",
+      "copy": "選択中の言語で表示されているコード全文をコピーします。空の出力はコピーしません。プロジェクトで実行する前に、生成されたリクエストを確認してください。"
+    },
+    curlInput: 'cURL コマンド', output: '生成コード', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。', convert: '変換', msgInvalidCurl: '無効なcURLコマンド', msgConverted: '変換しました。', msgUnknownOption: '不明なオプション {option}。綴りを確認してください（curl 8.7 のオプションに対応）。', msgMissingValue: 'オプション {option} に値がありません。', msgMixedFileData: 'ファイルから読むデータ（@file）と他のデータオプションの併用には対応していません。データを 1 つのファイルか 1 つの文字列にまとめてください。', msgNotes: '変換しました。変換していないオプション（コードの先頭に記載）：{notes}', msgDataAndForm: 'curl は 1 つのリクエストで -d / --json と -F を同時に使えません。どちらかにしてください。' },
+  ko: {
+    language: "출력 언어",
+    empty: "cURL 명령어를 입력하거나 예시를 불러온 뒤 코드로 변환하세요.",
+    tips: {
+      "input": "cURL 명령어를 입력하세요. 백슬래시 줄 연결과 DevTools의 Copy as cURL (bash) 따옴표를 지원합니다. 요청을 전송하지 않고 코드만 생성합니다.",
+      "convert": "현재 명령어를 변환하세요. 코드 맨 위에 나오는 미변환 옵션을 확인하세요. Ctrl/⌘+Enter로도 변환할 수 있습니다. 명령어를 수정하는 것만으로는 변환하지 않습니다.",
+      "example": "Content-Type과 Authorization 헤더가 있는 JSON POST 예시로 입력을 바꾸고 선택한 언어로 변환합니다.",
+      "clear": "명령어, 생성 코드, 상태를 지우고 선택한 언어는 유지합니다. 도구 안에서 Ctrl/⌘+L로도 지울 수 있습니다.",
+      "language": "Python, JavaScript, Go, PHP, Node.js 중 선택하세요. 탭은 마지막으로 변환한 명령의 코드를 생성합니다. 명령을 수정한 뒤에는 변환을 눌러 적용하세요.",
+      "copy": "선택한 언어의 표시된 코드 전체를 복사합니다. 빈 출력은 복사하지 않습니다. 프로젝트에서 실행하기 전에 생성된 요청을 검토하세요."
+    },
+    curlInput: 'cURL 명령어', output: '생성 코드', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.', convert: '변환', msgInvalidCurl: '잘못된 cURL 명령어', msgConverted: '변환 완료.', msgUnknownOption: '알 수 없는 옵션 {option}. 철자를 확인하세요(curl 8.7 옵션 지원).', msgMissingValue: '옵션 {option}에 값이 없습니다.', msgMixedFileData: '파일에서 읽는 데이터(@file)와 다른 데이터 옵션을 함께 쓰는 것은 지원하지 않습니다. 데이터를 파일 하나나 문자열 하나로 합치세요.', msgNotes: '변환 완료. 변환하지 않은 옵션(코드 맨 위에 표시): {notes}', msgDataAndForm: 'curl은 한 요청에서 -d / --json과 -F를 함께 받지 않습니다. 하나만 남기세요.' }
+};
+const L = STRINGS[lang];
+const CLIENT_T = {
+  copy: L.copy,
+  copied: L.copied,
+  copyFailed: L.copyFailed,
+  msgInvalidCurl: L.msgInvalidCurl,
+  msgConverted: L.msgConverted,
+  msgUnknownOption: L.msgUnknownOption,
+  msgMissingValue: L.msgMissingValue,
+  msgMixedFileData: L.msgMixedFileData,
+  msgNotes: L.msgNotes,
+  msgDataAndForm: L.msgDataAndForm,
+};
 ---
 
-<div class="ctc-wrap">
-  <div class="ctc-panels">
-    <div class="ctc-panel">
+<div class="ctc-wrap" data-strings={JSON.stringify(CLIENT_T)}>
+  <div class="ctc-actions">
+    <div class="ctc-control-label">
+      <button id="ctc-convert" class="btn-primary" type="button">{L.convert}</button>
+      <Toggletip id="ctc-tip-convert" lang={lang} about={L.convert}>{L.tips.convert}</Toggletip>
+    </div>
+    <div class="ctc-control-label">
+      <button id="ctc-example" class="btn-ghost" type="button">{L.example}</button>
+      <Toggletip id="ctc-tip-example" lang={lang} about={L.example}>{L.tips.example}</Toggletip>
+    </div>
+    <div class="ctc-control-label">
+      <button id="ctc-clear" class="btn-ghost" type="button">{L.clear}</button>
+      <Toggletip id="ctc-tip-clear" lang={lang} about={L.clear}>{L.tips.clear}</Toggletip>
+    </div>
+  </div>
+  <div class="ctc-options">
+    <div class="ctc-control-label">
+      <span id="ctc-language-label">{L.language}</span>
+      <Toggletip id="ctc-tip-language" lang={lang} about={L.language}>{L.tips.language}</Toggletip>
+    </div>
+    <div class="ctc-tabs zt-segmented" role="tablist" aria-labelledby="ctc-language-label">
+      <button class="ctc-tab ctc-tab-active" role="tab" aria-selected="true" data-lang="python" type="button">Python</button>
+      <button class="ctc-tab" role="tab" aria-selected="false" data-lang="javascript" type="button">JavaScript</button>
+      <button class="ctc-tab" role="tab" aria-selected="false" data-lang="go" type="button">Go</button>
+      <button class="ctc-tab" role="tab" aria-selected="false" data-lang="php" type="button">PHP</button>
+      <button class="ctc-tab" role="tab" aria-selected="false" data-lang="nodejs" type="button">Node.js</button>
+    </div>
+  </div>
+  <div id="ctc-status" class="ctc-status" aria-live="polite"></div>
+  <div class="ctc-panels zt-io">
+    <div class="ctc-panel zt-io-pane">
       <div class="ctc-panel-header">
-        <span data-i18n="curlInput">cURL Command</span>
-        <div class="ctc-panel-actions">
-          <button id="ctc-example" class="btn-ghost btn-sm" type="button" data-i18n="example">Example</button>
-          <button id="ctc-clear" class="btn-ghost btn-sm" type="button" data-i18n="clear">Clear</button>
+        <div class="ctc-control-label">
+          <label for="ctc-input">{L.curlInput}</label>
+          <Toggletip id="ctc-tip-input" lang={lang} about={L.curlInput}>{L.tips.input}</Toggletip>
         </div>
       </div>
-      <textarea
-        id="ctc-input"
-        placeholder="curl -X POST https://api.example.com/data -H &quot;Content-Type: application/json&quot; -d '{&quot;key&quot;: &quot;value&quot;}'"
-        spellcheck="false"
-      ></textarea>
+      <textarea id="ctc-input" class="zt-io-fill" placeholder="curl -X POST https://api.example.com/data -H &quot;Content-Type: application/json&quot; -d '{&quot;key&quot;: &quot;value&quot;}'" spellcheck="false"></textarea>
     </div>
-
-    <div class="ctc-panel">
+    <div class="ctc-panel ctc-output-pane zt-io-pane">
       <div class="ctc-panel-header">
-        <span data-i18n="output">Generated Code</span>
-        <button id="ctc-copy" class="btn-ghost btn-sm" type="button" data-i18n="copy">Copy</button>
+        <span id="ctc-output-label">{L.output}</span>
+        <div class="ctc-control-label">
+          <button id="ctc-copy" class="btn-ghost" type="button">{L.copy}</button>
+          <Toggletip id="ctc-tip-copy" lang={lang} about={L.copy}>{L.tips.copy}</Toggletip>
+        </div>
       </div>
-      <div class="ctc-tabs" role="tablist">
-        <button class="ctc-tab ctc-tab-active" role="tab" aria-selected="true" data-lang="python" type="button">Python</button>
-        <button class="ctc-tab" role="tab" aria-selected="false" data-lang="javascript" type="button">JavaScript</button>
-        <button class="ctc-tab" role="tab" aria-selected="false" data-lang="go" type="button">Go</button>
-        <button class="ctc-tab" role="tab" aria-selected="false" data-lang="php" type="button">PHP</button>
-        <button class="ctc-tab" role="tab" aria-selected="false" data-lang="nodejs" type="button">Node.js</button>
-      </div>
-      <pre id="ctc-output" class="ctc-output"><code id="ctc-output-code"></code></pre>
+      <p class="ctc-empty zt-io-fill">{L.empty}</p>
+      <pre id="ctc-output" class="ctc-output zt-io-fill" tabindex="0" aria-labelledby="ctc-output-label"><code id="ctc-output-code"></code></pre>
     </div>
   </div>
-
-  <div class="ctc-actions">
-    <button id="ctc-convert" class="btn-primary" type="button" data-i18n="convert">Convert</button>
-  </div>
-
-  <div id="ctc-status" class="ctc-status" aria-live="polite"></div>
 
   <script>
     import hljs from 'highlight.js/lib/core';
@@ -53,21 +133,7 @@
     hljs.registerLanguage('go', go);
     hljs.registerLanguage('php', php);
 
-    var STRINGS = {
-      en: { curlInput: 'cURL Command', output: 'Generated Code', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please copy the output manually.', convert: 'Convert', msgInvalidCurl: 'Invalid cURL command', msgConverted: 'Converted.', msgUnknownOption: 'Unknown option {option}. Check the spelling; this converter knows the options of curl 8.7.', msgMissingValue: 'Option {option} needs a value.', msgMixedFileData: 'Reading request data from a file (@file) together with other data options is not supported. Merge the data into one file or one string.', msgNotes: 'Converted. Not converted (listed at the top of the code): {notes}', msgDataAndForm: 'curl does not accept -d / --json together with -F in one request. Keep one of them.' },
-      zh: { curlInput: 'cURL 命令', output: '生成代码', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', copyFailed: '复制失败，请手动复制输出。', convert: '转换', msgInvalidCurl: '无效的 cURL 命令', msgConverted: '已转换。', msgUnknownOption: '未知选项 {option}。请检查拼写；本转换器认识 curl 8.7 的选项。', msgMissingValue: '选项 {option} 缺少值。', msgMixedFileData: '不支持把从文件读取的数据（@file）与其他数据选项一起使用。请把数据合并到一个文件或一个字符串。', msgNotes: '已转换。未转换的选项（列在代码顶部）：{notes}', msgDataAndForm: 'curl 不接受在同一请求里同时用 -d / --json 和 -F，请只保留一种。' },
-      ja: { curlInput: 'cURL コマンド', output: '生成コード', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。', convert: '変換', msgInvalidCurl: '無効なcURLコマンド', msgConverted: '変換しました。', msgUnknownOption: '不明なオプション {option}。綴りを確認してください（curl 8.7 のオプションに対応）。', msgMissingValue: 'オプション {option} に値がありません。', msgMixedFileData: 'ファイルから読むデータ（@file）と他のデータオプションの併用には対応していません。データを 1 つのファイルか 1 つの文字列にまとめてください。', msgNotes: '変換しました。変換していないオプション（コードの先頭に記載）：{notes}', msgDataAndForm: 'curl は 1 つのリクエストで -d / --json と -F を同時に使えません。どちらかにしてください。' },
-      ko: { curlInput: 'cURL 명령어', output: '생성 코드', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.', convert: '변환', msgInvalidCurl: '잘못된 cURL 명령어', msgConverted: '변환 완료.', msgUnknownOption: '알 수 없는 옵션 {option}. 철자를 확인하세요(curl 8.7 옵션 지원).', msgMissingValue: '옵션 {option}에 값이 없습니다.', msgMixedFileData: '파일에서 읽는 데이터(@file)와 다른 데이터 옵션을 함께 쓰는 것은 지원하지 않습니다. 데이터를 파일 하나나 문자열 하나로 합치세요.', msgNotes: '변환 완료. 변환하지 않은 옵션(코드 맨 위에 표시): {notes}', msgDataAndForm: 'curl은 한 요청에서 -d / --json과 -F를 함께 받지 않습니다. 하나만 남기세요.' }
-    };
-
-    var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-    var t = STRINGS[pageLang] || STRINGS.en;
-    document.querySelectorAll('[data-i18n]').forEach(function(el) {
-      var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-    });
-    document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
-      var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-    });
+    var t = JSON.parse(document.querySelector('.ctc-wrap')!.getAttribute('data-strings') || '{}');
 
     var inputEl = document.getElementById('ctc-input') as HTMLTextAreaElement;
     var outputCodeEl = document.getElementById('ctc-output-code') as HTMLElement;
@@ -921,111 +987,45 @@
 </div>
 
 <style>
-  .ctc-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .ctc-panels {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
+  .ctc-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: 0.75rem; }
+  .ctc-control-label { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+  .ctc-panel-header { display: flex; justify-content: space-between; align-items: center; min-height: 44px; gap: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); }
+  .ctc-panel textarea, .ctc-output {
+    width: 100%; min-width: 0; font-family: var(--font-mono); font-size: 0.82rem; padding: 0.75rem;
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary); color: var(--color-text); line-height: 1.5;
   }
-
-  @media (max-width: 640px) {
-    .ctc-panels { grid-template-columns: 1fr; }
-  }
-
-  .ctc-panel { display: flex; flex-direction: column; gap: 0.4rem; }
-
-  .ctc-panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .ctc-panel-actions { display: flex; gap: 0.3rem; }
-
-  .ctc-panel textarea {
-    width: 100%;
-    min-height: 260px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.5;
-    transition: border-color 0.15s;
-  }
-
   .ctc-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
-
-  .ctc-tabs {
-    display: flex;
-    gap: 0.2rem;
-    flex-wrap: wrap;
-  }
-
-  .ctc-tab {
-    padding: 0.25rem 0.65rem;
-    font-size: 0.78rem;
-    font-family: var(--font-mono);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-
-  .ctc-tab:hover { background: var(--color-bg); color: var(--color-text); }
-
-  .ctc-tab-active {
-    background: var(--color-primary) !important;
-    color: #fff !important;
-    border-color: var(--color-primary);
-  }
-
-  .ctc-output {
-    min-height: 260px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    margin: 0;
-    overflow: auto;
-    flex: 1;
-    padding: 0;
-  }
-
-  .ctc-output code.hljs {
-    min-height: 260px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    line-height: 1.5;
-    border-radius: var(--radius-sm);
-    box-sizing: border-box;
-  }
-
-  .btn-sm {
-    padding: 0.2rem 0.5rem;
-    font-size: 0.78rem;
-  }
-
-  .ctc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-
-  .ctc-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .ctc-output { margin: 0; overflow: auto; white-space: pre; }
+  .ctc-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .ctc-empty { display: none; margin: 0; padding: 2rem; align-items: center; justify-content: center; text-align: center; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+  .ctc-output-pane:has(#ctc-output-code:empty) .ctc-output { display: none; }
+  .ctc-output-pane:has(#ctc-output-code:empty) .ctc-empty { display: flex; }
+  .ctc-actions { display: flex; gap: 0.5rem 1rem; flex-wrap: wrap; }
+  .ctc-options { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 1rem; font-size: 0.85rem; }
+  .ctc-tabs { flex-wrap: wrap; gap: 0.2rem; padding: 0.25rem; background: var(--color-bg-secondary); }
+  .ctc-tab { min-height: 36px; padding: 0.3rem 0.65rem; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--color-text-secondary); font-size: 0.78rem; font-family: var(--font-mono); cursor: pointer; }
+  .ctc-tab:hover { color: var(--color-text); }
+  .ctc-tab-active { background: var(--color-surface); color: var(--color-text); box-shadow: inset 0 0 0 1px var(--color-border); }
+  .ctc-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .ctc-output :global(code.hljs) { width: max-content; min-width: 100%; overflow: visible; padding: 0; font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.5; }
+  .ctc-status { font-size: 0.85rem; line-height: 1.4; height: 2.4rem; min-height: 2.4rem; flex: none; overflow: auto; overflow-wrap: anywhere; }
   .ctc-status.success { color: #057a55; }
   .ctc-status.error { color: #c0392b; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .ctc-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .ctc-status.error { color: #f87171; }
+  @media (max-width: 860px) {
+    .ctc-wrap { gap: 0.5rem; }
+    .ctc-actions button, .ctc-panel-header button { min-height: 44px; }
+    .ctc-panel textarea { height: 144px; min-height: 144px; }
+    .ctc-output { height: 22rem; min-height: 160px; resize: none; }
+    .ctc-output-pane:has(#ctc-output-code:empty) { display: none; }
   }
-  [data-theme="dark"] .ctc-status.success { color: #34d399; }
-  [data-theme="dark"] .ctc-status.error { color: #f87171; }
+  @media (max-width: 640px) {
+    .ctc-panel-header { flex-wrap: wrap; }
+  }
+  @media (prefers-color-scheme: dark) {
+    :global(:root:not([data-theme="light"])) .ctc-status.success { color: #34d399; }
+    :global(:root:not([data-theme="light"])) .ctc-status.error { color: #f87171; }
+  }
+  :global([data-theme="dark"]) .ctc-status.success { color: #34d399; }
+  :global([data-theme="dark"]) .ctc-status.error { color: #f87171; }
 </style>
