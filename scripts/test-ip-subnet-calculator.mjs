@@ -24,6 +24,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { isIPv4 } from 'node:net';
+import { createHash } from 'node:crypto';
+import vm from 'node:vm';
+import domino from '@mixmark-io/domino';
+import { loadPage } from './astro-page-harness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/IpSubnetCalculatorTool.astro'), 'utf8');
@@ -140,6 +144,7 @@ eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast
     documentElement: { lang: 'en' },
     getElementById: el,
     querySelectorAll() { return []; },
+    addEventListener() {},
     createElement() { return {}; },
   };
   new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', scriptMatch[1])(
@@ -291,6 +296,113 @@ eq('/0', [E.calculate('8.8.8.8', 0).network, E.calculate('8.8.8.8', 0).broadcast
     } else console.log('SKIP: en guide Python block — python3 not installed');
   }
 }
+
+// ---------- complete page lifecycle and real shared shortcuts ----------
+// Execute the original renderer/listeners; control only the DOM, clipboard delivery and clock.
+const pageScript=source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const pageStrings=new Function(pageScript.slice(pageScript.indexOf('var STRINGS'),pageScript.indexOf('var pageLang'))+'\nreturn STRINGS;')();
+const markup=source.replace(/^---\n[\s\S]*?\n---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
+const shortcut=layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
+const unhandled=[];
+const onUnhandled=error=>unhandled.push(String(error));
+process.on('unhandledRejection',onUnhandled);
+const settle=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
+function page(lang,order){
+ const document=domino.createDocument('<html lang="'+lang+'"><body><main class="tool-widget">'+markup+'</main><input id="outside" type="text"></body></html>');
+ Object.defineProperty(document,'activeElement',{value:document.body,writable:true,configurable:true});
+ const timers=new Map(),clipboard=[],clears=[],tracks=[],errors=[],effects=[];
+ let clock=0,seq=0;
+ const input=document.getElementById('isc-input'),prefix=document.getElementById('isc-prefix'),result=document.getElementById('isc-results'),error=document.getElementById('isc-error'),btn=document.getElementById('isc-copy');
+ // Domino has no select.value implementation; preserve native option nodes and selected flags.
+ Object.defineProperty(prefix,'value',{get(){return Array.from(prefix.options).find(o=>o.selected)?.value??'';},set(value){for(const option of Array.from(prefix.options))option.selected=option.value===String(value);}});
+ function focus(el){if(!Object.hasOwn(el,'focus'))Object.defineProperty(el,'focus',{value:()=>{document.activeElement=el;}});el.focus();}
+ focus(input);
+ const navigator={clipboard:{writeText(value){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});clipboard.push({value,promise,resolve,reject});return promise;}}};
+ const globals={document,navigator,_slug:'ip-subnet-calculator',ztPersist:{clear:slug=>clears.push(slug)},trackTool:(...args)=>tracks.push(args),fetch(){effects.push('network');throw Error('Unexpected network');},setTimeout(fn,ms){timers.set(++seq,{fn,ms,due:clock+ms});return seq;},clearTimeout(id){timers.delete(id);}};
+ document.execCommand=()=>{effects.push('fallback');throw Error('Unexpected fallback');};
+ if(order==='shared-before'){const ctx=vm.createContext(globals);ctx.window=ctx;vm.runInContext(shortcut,ctx);}
+ const real=loadPage('src/components/tools/IpSubnetCalculatorTool.astro',{lang,globals});
+ if(order==='shared-after')real.run(shortcut);
+ function event(el,type,values={}){const e=document.createEvent('Event');e.initEvent(type,true,true);Object.assign(e,values);try{el.dispatchEvent(e);}catch(error){errors.push(String(error));}return e;}
+ return{document,input,prefix,result,error,btn,clipboard,clears,tracks,errors,effects,timers,navigator,
+  type(value){input.value=value;event(input,'input');},
+  select(value){prefix.value=String(value);event(prefix,'change');},
+  tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
+  key(el,values){focus(el);return event(el,'keydown',{ctrlKey:false,metaKey:false,...values});},
+  click(){focus(btn);event(btn,'click');},
+  cells(){return Array.from(result.querySelectorAll('td')).map(e=>e.textContent);},
+  snapshot(){return[input.value,prefix.value,error.hidden,error.textContent,result.hidden,result.innerHTML];},
+ };
+}
+const copyFailed={en:'Copy failed',zh:'复制失败',ja:'コピー失敗',ko:'복사 실패'};
+const defaultValues=['192.168.1.0','192.168.1.255','255.255.255.0','0.0.0.255','192.168.1.1','192.168.1.254','254','192.168.1.0/24'];
+const rowKeys=['networkAddress','broadcastAddress','subnetMask','wildcardMask','firstHost','lastHost','usableHosts','cidr'];
+check('actual shared keyboard handler loaded',shortcut.includes('window.ztPersist.clear(_slug)'));
+for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
+ const t=pageStrings[lang],tag=lang+'/'+order;
+ {
+  const p=page(lang,order);
+  eq(tag+' actual default eight rows',p.cells(),defaultValues);eq(tag+' default CIDR/prefix/result',[p.input.value,p.prefix.value,p.result.hidden],['192.168.1.0/24','24',false]);eq(tag+' all 33 prefix choices',Array.from(p.prefix.options).map(o=>o.value),Array.from({length:33},(_,i)=>String(i)));
+  p.type('203.0.113.9/31');p.tick(249);eq(tag+' 250ms boundary preserved',p.cells(),defaultValues);p.tick(1);eq(tag+' actual /31 output',[p.cells()[0],p.cells()[1],p.cells()[6],p.prefix.value],['203.0.113.8',t.noBroadcast31,'2','31']);
+  p.select(32);eq(tag+' prefix rewrites CIDR immediately',[p.input.value,p.cells()[1],p.cells()[7]],['203.0.113.9/32',t.noBroadcast32,'203.0.113.9/32']);
+  p.type('10.1.2.3');p.tick(250);p.select(30);eq(tag+' prefix preserves address without slash',[p.input.value,p.cells()[7]],['10.1.2.3','10.1.2.0/30']);
+  p.type('10.0.0.01');p.tick(250);eq(tag+' real invalid error hides prior result',[p.error.hidden,p.error.textContent,p.result.hidden],[false,t.errInvalidIp,true]);
+  p.type('');p.tick(250);eq(tag+' empty input hides result and clears error',[p.error.hidden,p.error.textContent,p.result.hidden],[true,'',true]);
+  p.type('10.0.0.0/24');p.input.value='198.51.100.7/32';p.tick(250);eq(tag+' queued callback reads current input rather than captured address',p.cells()[7],'198.51.100.7/32');
+ }
+ for(const state of ['valid','invalid','pending'])for(const mod of ['ctrlKey','metaKey']){
+  const p=page(lang,order);p.select(26);if(state==='invalid'){p.type('1.2.3.999');p.tick(250);}if(state==='pending')p.type('203.0.113.9/31');
+  const ev=p.key(state==='valid'?p.btn:p.input,{key:mod==='ctrlKey'?'l':'L',[mod]:true});
+  eq(tag+'/'+state+'/'+mod+' clears results and error',[p.input.value,p.result.hidden,p.error.hidden,p.error.textContent,p.btn.textContent],['',true,true,'',t.copy]);
+  eq(tag+'/'+state+'/'+mod+' preserves menu prefix',p.prefix.value,'26');eq(tag+'/'+state+'/'+mod+' focuses input',p.document.activeElement.id,'isc-input');eq(tag+'/'+state+'/'+mod+' shared persistence exactly once',p.clears,['ip-subnet-calculator']);check(tag+'/'+state+'/'+mod+' default suppressed',ev.defaultPrevented);
+  eq(tag+'/'+state+'/'+mod+' no queued timer',p.timers.size,0);p.tick(1000);eq(tag+'/'+state+'/'+mod+' stays clear',[p.input.value,p.result.hidden,p.error.hidden],['',true,true]);
+  p.type('198.51.100.7/32');p.tick(250);eq(tag+'/'+state+'/'+mod+' recovers normally',[p.cells()[7],p.result.hidden],['198.51.100.7/32',false]);
+ }
+ {
+  const p=page(lang,order),before=p.snapshot(),tracks=p.tracks.length;
+  for(const values of [{key:'l'},{key:'Enter',ctrlKey:true},{key:'Enter',metaKey:true}]){const ev=p.key(p.input,values);eq(tag+' ordinary/unbound key preserves page',p.snapshot(),before);check(tag+' ordinary/unbound key not suppressed',!ev.defaultPrevented);}
+  eq(tag+' no primary action on modified Enter',p.tracks.length,tracks);p.key(p.document.getElementById('outside'),{key:'l',ctrlKey:true});eq(tag+' outside shortcut preserves tool',p.snapshot(),before);eq(tag+' outside shortcut preserves persistence',p.clears,[]);
+ }
+ {
+  const p=page(lang,order),u=unhandled.length;p.click();
+  eq(tag+' exact eight-line copy',p.clipboard[0].value,rowKeys.map((key,i)=>t[key]+': '+defaultValues[i]).join('\n'));p.clipboard[0].reject(Error('controlled denial'));await settle();
+  eq(tag+' current rejection handled',unhandled.length,u);eq(tag+' current rejection visible',p.btn.textContent,copyFailed[lang]);
+  p.click();eq(tag+' retry keeps original copied bytes',p.clipboard[1].value,p.clipboard[0].value);p.clipboard[1].resolve();await settle();eq(tag+' same output direct success retry',p.btn.textContent,t.copied);p.tick(1500);eq(tag+' current timer resets success',p.btn.textContent,t.copy);eq(tag+' no synchronous error',p.errors,[]);
+ }
+ for(const unavailable of ['absent','throw']){
+  const p=page(lang,order),clipboard=p.navigator.clipboard;
+  if(unavailable==='absent')delete p.navigator.clipboard;else p.navigator.clipboard={writeText(){throw Error('controlled synchronous failure');}};
+  p.click();await settle();eq(tag+'/'+unavailable+' failure handled',p.errors,[]);eq(tag+'/'+unavailable+' failure visible',p.btn.textContent,copyFailed[lang]);eq(tag+'/'+unavailable+' no fallback invented',p.effects,[]);
+  p.navigator.clipboard=clipboard;p.click();p.clipboard[0].resolve();await settle();eq(tag+'/'+unavailable+' API recovery on same output',p.btn.textContent,t.copied);
+ }
+ for(const transition of ['clear','new-valid','new-invalid','input-only','same-input','prefix','empty'])for(const completion of ['resolve','reject']){
+  const p=page(lang,order),u=unhandled.length;p.click();
+  if(transition==='clear')p.key(p.btn,{key:'l',ctrlKey:true});else if(transition==='prefix')p.select(31);else{p.type(transition==='new-invalid'?'bad':transition==='same-input'?'192.168.1.0/24':transition==='empty'?'':'203.0.113.9/31');if(transition.startsWith('new-')||transition==='empty')p.tick(250);}
+  const before=p.snapshot();p.clipboard[0][completion](completion==='reject'?Error('controlled late denial'):undefined);await settle();
+  eq(tag+'/'+transition+'/'+completion+' old callback leaves current state intact',p.snapshot(),before);eq(tag+'/'+transition+'/'+completion+' no unhandled rejection',unhandled.length,u);
+ }
+ for(const first of ['resolve','reject'])for(const second of ['resolve','reject']){
+  const p=page(lang,order),u=unhandled.length;p.click();p.click();p.clipboard[1][second](second==='reject'?Error('new denial'):undefined);await settle();const text=p.btn.textContent;p.clipboard[0][first](first==='reject'?Error('old denial'):undefined);await settle();
+  eq(tag+'/request-order/'+first+'/'+second+' newest result retained',p.btn.textContent,text);eq(tag+'/request-order/'+first+'/'+second+' newest visible result',text,second==='resolve'?t.copied:copyFailed[lang]);eq(tag+'/request-order/'+first+'/'+second+' handled',unhandled.length,u);
+ }
+ {
+  const p=page(lang,order);p.click();p.clipboard[0].resolve();await settle();const oldTimer=[...p.timers.values()].find(x=>x.ms===1500);check(tag+' real success timer captured',!!oldTimer);
+  p.tick(100);p.click();p.clipboard[1].resolve();await settle();p.tick(1400);eq(tag+' old deadline preserves second success',p.btn.textContent,t.copied);oldTimer.fn();eq(tag+' forced old timer delivery stays stale',p.btn.textContent,t.copied);p.tick(100);eq(tag+' new deadline restores label',p.btn.textContent,t.copy);
+ }
+ for(const transition of ['clear','input','prefix']){
+  const p=page(lang,order);p.click();p.clipboard[0].resolve();await settle();const timer=[...p.timers.values()].find(x=>x.ms===1500);
+  if(transition==='clear')p.key(p.btn,{key:'l',ctrlKey:true});else if(transition==='input')p.type('10.0.0.1');else p.select(31);
+  eq(tag+'/'+transition+' synchronously clears copied feedback',p.btn.textContent,t.copy);const before=p.snapshot();timer.fn();eq(tag+'/'+transition+' old timer cannot change state',p.snapshot(),before);
+ }
+ {
+  const p=page(lang,order);p.type('');p.tick(250);p.click();eq(tag+' hidden old result cannot be copied',p.clipboard.length,0);eq(tag+' no network or fallback effects',p.effects,[]);
+ }
+}
+process.removeListener('unhandledRejection',onUnhandled);
+const protectedEngine=source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
+eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),2859);
+eq('engine exact original SHA256',createHash('sha256').update(protectedEngine).digest('hex'),'9a6bf50d51da3dc435dfb60b187b15236bae2e9e68d855f18880081c655c11ee');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

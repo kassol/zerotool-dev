@@ -53,6 +53,7 @@
           resultsLabel: 'Results',
           copy: 'Copy',
           copied: 'Copied!',
+          copyFailed: 'Copy failed',
           networkAddress: 'Network Address',
           broadcastAddress: 'Broadcast Address',
           noBroadcast31: 'None (/31 point-to-point link, RFC 3021)',
@@ -74,6 +75,7 @@
           resultsLabel: '结果',
           copy: '复制',
           copied: '已复制！',
+          copyFailed: '复制失败',
           networkAddress: '网络地址',
           broadcastAddress: '广播地址',
           noBroadcast31: '无（/31 点对点链路，RFC 3021）',
@@ -95,6 +97,7 @@
           resultsLabel: '結果',
           copy: 'コピー',
           copied: 'コピー済み！',
+          copyFailed: 'コピー失敗',
           networkAddress: 'ネットワークアドレス',
           broadcastAddress: 'ブロードキャストアドレス',
           noBroadcast31: 'なし（/31 はポイントツーポイントリンク、RFC 3021）',
@@ -116,6 +119,7 @@
           resultsLabel: '결과',
           copy: '복사',
           copied: '복사됨!',
+          copyFailed: '복사 실패',
           networkAddress: '네트워크 주소',
           broadcastAddress: '브로드캐스트 주소',
           noBroadcast31: '없음 (/31 점대점 링크, RFC 3021)',
@@ -260,7 +264,17 @@
         errorEl.textContent = '';
       }
 
+      var copyRevision = 0;
+      var copyRequest = 0;
+      var copyTimer;
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+      }
+
       function render() {
+        invalidateCopy();
         var raw = inputEl.value.trim();
         if (!raw) { clearError(); resultsEl.hidden = true; return; }
 
@@ -290,6 +304,7 @@
 
       var _debounce;
       inputEl.addEventListener('input', function () {
+        invalidateCopy();
         clearTimeout(_debounce);
         _debounce = setTimeout(render, 250);
       });
@@ -300,7 +315,25 @@
         render();
       });
 
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var scope = document.querySelector('.isc-wrap');
+        if (!scope || !scope.contains(document.activeElement)) return;
+        e.preventDefault();
+        inputEl.focus();
+        clearTimeout(_debounce);
+        inputEl.value = '';
+        render();
+      });
+
       copyBtn.addEventListener('click', function () {
+        if (resultsEl.hidden) return;
+        var revision = copyRevision;
+        var request = ++copyRequest;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        function current() { return revision === copyRevision && request === copyRequest && !resultsEl.hidden; }
+        function failed() { if (current()) copyBtn.textContent = t.copyFailed; }
         var rows = [
           t.networkAddress + ': ' + cellNetwork.textContent,
           t.broadcastAddress + ': ' + cellBroadcast.textContent,
@@ -311,10 +344,13 @@
           t.usableHosts + ': ' + cellHosts.textContent,
           t.cidr + ': ' + cellCidr.textContent,
         ];
-        navigator.clipboard.writeText(rows.join('\n')).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+        try {
+          Promise.resolve(navigator.clipboard.writeText(rows.join('\n'))).then(function () {
+            if (!current()) return;
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () { if (current()) copyBtn.textContent = t.copy; }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
       });
 
       // Boot with default
