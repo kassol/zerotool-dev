@@ -14,6 +14,7 @@ const labels = {
     clear: 'Clear',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: 'Copy failed. Try again.',
     generate: 'Generate Schema',
     msgInvalidJson: 'Invalid JSON: ',
     msgGenOne: 'Generated 1 schema.',
@@ -34,6 +35,7 @@ const labels = {
     clear: '清空',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: '复制失败，请重试。',
     generate: '生成 Schema',
     msgInvalidJson: 'JSON 格式错误：',
     msgGenOne: '已生成 1 个 Schema。',
@@ -54,6 +56,7 @@ const labels = {
     clear: 'クリア',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピーに失敗しました。再試行してください。',
     generate: 'スキーマを生成',
     msgInvalidJson: '無効なJSON：',
     msgGenOne: '1 個のスキーマを生成しました。',
@@ -74,6 +77,7 @@ const labels = {
     clear: '지우기',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: '복사에 실패했습니다. 다시 시도하세요.',
     generate: '스키마 생성',
     msgInvalidJson: '잘못된 JSON: ',
     msgGenOne: '스키마 1개를 생성했습니다.',
@@ -92,6 +96,7 @@ const L = labels[lang];
   class="jtm-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-msg-invalid-json={L.msgInvalidJson}
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
@@ -165,6 +170,7 @@ const L = labels[lang];
 
       var COPY = wrap ? wrap.dataset.copy : 'Copy';
       var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var COPY_FAILED = wrap ? wrap.dataset.copyFailed : 'Copy failed. Try again.';
       var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 schema.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} schemas.';
@@ -174,6 +180,14 @@ const L = labels[lang];
       var statusEl = document.getElementById('jtm-status');
       var modelNameEl = document.getElementById('jtm-model-name');
       var copyBtn = document.getElementById('jtm-copy');
+      var copyRevision = 0;
+      var copyTimer = null;
+
+      function resetCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = COPY;
+      }
 
       var currentLang = 'javascript';
       var currentTimestamps = true;
@@ -500,6 +514,9 @@ const L = labels[lang];
       }
 
       function convert() {
+        clearTimeout(_liveTimer);
+        resetCopy();
+        inputEl.classList.remove('error');
         var raw = inputEl.value.trim();
         if (!raw) { clearStatus(); clearOutput(); return; }
         inputEl.classList.remove('error');
@@ -549,10 +566,12 @@ const L = labels[lang];
 
       var _liveTimer = null;
       inputEl.addEventListener('input', function () {
+        resetCopy();
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(convert, 300);
       });
       modelNameEl.addEventListener('input', function () {
+        resetCopy();
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(convert, 300);
       });
@@ -566,32 +585,41 @@ const L = labels[lang];
         convert();
       });
 
-      document.getElementById('jtm-clear').addEventListener('click', function () {
+      function clearAll() {
+        clearTimeout(_liveTimer);
+        resetCopy();
         inputEl.value = '';
         clearOutput();
         inputEl.classList.remove('error');
         clearStatus();
-      });
-      // ToolLayout's Ctrl/Cmd+L empties the fields without input events; drop the stale output too.
+        inputEl.focus();
+      }
+      document.getElementById('jtm-clear').addEventListener('click', clearAll);
+      // ToolLayout clears text fields without input events; clear the result synchronously.
       document.addEventListener('keydown', function (e) {
-        if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
-          setTimeout(function () {
-            if (inputEl.value) return;
-            clearTimeout(_liveTimer);
-            clearOutput();
-            inputEl.classList.remove('error');
-            clearStatus();
-          }, 0);
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
         }
       });
 
       copyBtn.addEventListener('click', function () {
         var text = outputCodeEl.textContent;
         if (!text || copyBtn.disabled) return;
-        navigator.clipboard.writeText(text).then(function () {
-          copyBtn.textContent = COPIED;
-          setTimeout(function () { copyBtn.textContent = COPY; }, 1500);
-        });
+        resetCopy();
+        var revision = copyRevision;
+        function failed() {
+          if (revision === copyRevision) copyBtn.textContent = COPY_FAILED;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== copyRevision) return;
+            copyBtn.textContent = COPIED;
+            copyTimer = setTimeout(function () {
+              if (revision === copyRevision) copyBtn.textContent = COPY;
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
       });
 
       inputEl.value = EXAMPLE;
