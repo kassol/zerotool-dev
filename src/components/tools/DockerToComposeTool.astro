@@ -37,10 +37,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { inputLabel: 'docker run Command', outputLabel: 'docker-compose.yml', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', convert: 'Convert', msgInvalidCmd: 'Not a valid docker run command', msgConverted: 'Converted.', msgUnknownFlag: 'Unknown option {flag}. docker run would reject it too.', msgMissingValue: 'Option {flag} needs a value.', msgNotConverted: 'Converted. Not converted (listed in the first line of the file): {flags}' },
-        zh: { inputLabel: 'docker run 命令', outputLabel: 'docker-compose.yml', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', convert: '转换', msgInvalidCmd: '无效的 docker run 命令', msgConverted: '已转换。', msgUnknownFlag: '未知选项 {flag}，docker run 也会拒绝它。', msgMissingValue: '选项 {flag} 缺少值。', msgNotConverted: '已转换。未转换的选项（列在文件第一行）：{flags}' },
-        ja: { inputLabel: 'docker run コマンド', outputLabel: 'docker-compose.yml', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', convert: '変換', msgInvalidCmd: '無効なdocker runコマンド', msgConverted: '変換しました。', msgUnknownFlag: '不明なオプション {flag}。docker run でもエラーになります。', msgMissingValue: 'オプション {flag} に値がありません。', msgNotConverted: '変換しました。変換していないオプション（ファイルの 1 行目に記載）：{flags}' },
-        ko: { inputLabel: 'docker run 명령어', outputLabel: 'docker-compose.yml', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', convert: '변환', msgInvalidCmd: '잘못된 docker run 명령어', msgConverted: '변환 완료.', msgUnknownFlag: '알 수 없는 옵션 {flag}. docker run에서도 오류가 납니다.', msgMissingValue: '옵션 {flag}에 값이 없습니다.', msgNotConverted: '변환 완료. 변환하지 않은 옵션(파일 첫 줄에 표시): {flags}' }
+        en: { inputLabel: 'docker run Command', outputLabel: 'docker-compose.yml', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please copy the output manually.', convert: 'Convert', msgInvalidCmd: 'Not a valid docker run command', msgConverted: 'Converted.', msgUnknownFlag: 'Unknown option {flag}. docker run would reject it too.', msgMissingValue: 'Option {flag} needs a value.', msgNotConverted: 'Converted. Not converted (listed in the first line of the file): {flags}' },
+        zh: { inputLabel: 'docker run 命令', outputLabel: 'docker-compose.yml', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', copyFailed: '复制失败，请手动复制输出。', convert: '转换', msgInvalidCmd: '无效的 docker run 命令', msgConverted: '已转换。', msgUnknownFlag: '未知选项 {flag}，docker run 也会拒绝它。', msgMissingValue: '选项 {flag} 缺少值。', msgNotConverted: '已转换。未转换的选项（列在文件第一行）：{flags}' },
+        ja: { inputLabel: 'docker run コマンド', outputLabel: 'docker-compose.yml', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。', convert: '変換', msgInvalidCmd: '無効なdocker runコマンド', msgConverted: '変換しました。', msgUnknownFlag: '不明なオプション {flag}。docker run でもエラーになります。', msgMissingValue: 'オプション {flag} に値がありません。', msgNotConverted: '変換しました。変換していないオプション（ファイルの 1 行目に記載）：{flags}' },
+        ko: { inputLabel: 'docker run 명령어', outputLabel: 'docker-compose.yml', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.', convert: '변환', msgInvalidCmd: '잘못된 docker run 명령어', msgConverted: '변환 완료.', msgUnknownFlag: '알 수 없는 옵션 {flag}. docker run에서도 오류가 납니다.', msgMissingValue: '옵션 {flag}에 값이 없습니다.', msgNotConverted: '변환 완료. 변환하지 않은 옵션(파일 첫 줄에 표시): {flags}' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -55,6 +55,11 @@
       var inputEl = document.getElementById('dtc-input');
       var outputCodeEl = document.getElementById('dtc-output-code');
       var statusEl = document.getElementById('dtc-status');
+      var wrap = document.querySelector('.dtc-wrap');
+      var copyBtn = document.getElementById('dtc-copy');
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyFailure = false;
 
       var EXAMPLE = 'docker run -d \\\n' +
         '  --name myapp \\\n' +
@@ -65,12 +70,22 @@
         '  nginx:latest';
 
       function setStatus(msg, isError) {
+        copyFailure = false;
         statusEl.textContent = msg;
         statusEl.className = 'dtc-status ' + (isError ? 'error' : 'success');
       }
       function clearStatus() {
+        copyFailure = false;
         statusEl.textContent = '';
         statusEl.className = 'dtc-status';
+      }
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        if (copyFailure) clearStatus();
       }
 
       /* ── engine:start ── */
@@ -429,6 +444,7 @@
 
       /* ── Main convert ── */
       function convert() {
+        invalidateCopy();
         var raw = inputEl.value.trim();
         if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
 
@@ -455,6 +471,7 @@
       /* Prevent textarea blur before click fires (eliminates first-click race) */
       document.getElementById('dtc-convert').addEventListener('mousedown', function(e) { e.preventDefault(); });
       document.getElementById('dtc-convert').addEventListener('click', convert);
+      inputEl.addEventListener('input', invalidateCopy);
 
       document.getElementById('dtc-example').addEventListener('click', function () {
         inputEl.value = EXAMPLE;
@@ -463,19 +480,42 @@
       });
 
       document.getElementById('dtc-clear').addEventListener('click', function () {
+        invalidateCopy();
+        inputEl.focus();
         inputEl.value = '';
         outputCodeEl.textContent = '';
         clearStatus();
       });
 
-      document.getElementById('dtc-copy').addEventListener('click', function () {
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          document.getElementById('dtc-clear').click();
+        }
+      });
+
+      copyBtn.addEventListener('click', function () {
         var text = outputCodeEl.textContent;
         if (!text) return;
-        var btn = document.getElementById('dtc-copy');
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t.copy; }, 1500);
-        });
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        function failed() {
+          if (revision !== copyRevision) return;
+          setStatus(t.copyFailed, true);
+          copyFailure = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== copyRevision) return;
+            if (copyFailure) clearStatus();
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () {
+              if (revision === copyRevision) copyBtn.textContent = t.copy;
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
       });
     })();
   </script>
