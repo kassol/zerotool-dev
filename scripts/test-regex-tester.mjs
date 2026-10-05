@@ -18,11 +18,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { Worker as ThreadWorker } from 'node:worker_threads';
+import { createHash } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const src = readFileSync(join(root, 'src/components/tools/RegexTesterTool.astro'), 'utf8');
 const style = src.slice(src.indexOf('<style>'), src.indexOf('</style>'));
 const script = src.slice(src.indexOf('<script'), src.indexOf('</script>'));
+const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 
 let passes = 0, failures = 0;
 function eq(name, got, want) {
@@ -69,37 +72,50 @@ const mdx = readFileSync(join(root, 'src/content/tools/regex-tester/en.mdx'), 'u
 eq('page states index 29', mdx.includes('the second at index 29'), true);
 
 // Drive the real input listener and its timer, not a mirror of the match loop.
-function pageHarness(lang = 'en', noWorker = false) {
+function pageHarness(lang = 'en', noWorker = false, order = 'shared-after') {
   const nodes = new Map();
+  const document = { documentElement: { lang }, activeElement: null, body: {}, listeners: {},
+    addEventListener(k, f) { (this.listeners[k] ||= []).push(f); } };
   function element() {
-    return { value: '', textContent: '', _html: '', className: '', hidden: false,
-      get innerHTML() { return this._html; }, set innerHTML(v) { this._html = v; this.children = []; },
+    return { value: '', _text: '', _html: '', className: '', _hidden: false,
+      get textContent() { return this._text; }, set textContent(v) { this._text = v; this._html = ''; this.children = []; },
+      get innerHTML() { return this._html; }, set innerHTML(v) { this._html = v; this._text = ''; this.children = []; },
+      get hidden() { return this._hidden; }, set hidden(v) { this._hidden = v; if (v && document.activeElement === this) document.activeElement = document.body; },
       listeners: {}, children: [], addEventListener(k, f) { this.listeners[k] = f; },
-      appendChild(n) { this.children.push(n); }, setAttribute() {} };
+      appendChild(n) { this.children.push(n); }, setAttribute() {}, focus() { document.activeElement = this; } };
   }
-  const flags = ['g', 'i', 'm', 's'].map(value => ({ value, checked: value === 'g', addEventListener() {} }));
+  const flags = ['g', 'i', 'm', 's'].map(value => Object.assign(element(), { value, checked: value === 'g' }));
   const blobs = new Map(), workers = [], timers = new Map(), events = {};
+  const persistedClears = [], delivery = { hold: false };
+  const widget = { contains(el) { return [...nodes.values(), ...flags].includes(el); },
+    querySelectorAll(s) { return s === 'textarea, input[type="text"]' ? [nodes.get('rgx-pattern'), nodes.get('rgx-test')] : []; } };
+  Object.assign(document, {
+    querySelectorAll: s => s.includes('rgx-flags') ? flags : [],
+    querySelector: s => ['.tool-widget', '.rgx-wrap'].includes(s) ? widget : null,
+    getElementById: id => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
+    createElement: element
+  });
   let timerId = 0;
   class BrowserWorker {
     constructor(url) {
+      this.ready = new Promise(resolve => { this.resolve = resolve; });
       this.thread = new ThreadWorker(`const {parentPort}=require('node:worker_threads'); const self={postMessage:v=>parentPort.postMessage(v)}; ${blobs.get(url)}; parentPort.on('message',data=>self.onmessage({data}));`, { eval: true });
-      this.thread.on('message', data => { this.result = data; this.onmessage?.({ data }); });
+      this.thread.on('message', data => { this.result = data; this.resolve(data); if (!delivery.hold) this.onmessage?.({ data }); });
       this.thread.on('error', error => this.onerror?.(error));
       workers.push(this);
     }
     postMessage(data) { this.thread.postMessage(data); }
     terminate() { this.terminated = true; return this.thread.terminate(); }
   }
-  const context = vm.createContext({ document: {
-    documentElement: { lang }, querySelectorAll: s => s.includes('rgx-flags') ? flags : [],
-    getElementById: id => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
-    createElement: element, addEventListener() {}
-  }, window: { addEventListener(k, f) { events[k] = f; } }, Worker: noWorker ? undefined : BrowserWorker,
+  const context = vm.createContext({ document, _slug: 'regex-tester',
+    window: { addEventListener(k, f) { events[k] = f; }, ztPersist: { clear(slug) { persistedClears.push(slug); } } }, Worker: noWorker ? undefined : BrowserWorker,
     Blob: class { constructor(parts) { this.source = parts.join(''); } },
     URL: { createObjectURL(b) { const key = 'blob:' + blobs.size; blobs.set(key, b.source); return key; }, revokeObjectURL() {} },
     setTimeout(f, ms) { const id = ++timerId; timers.set(id, { f, ms }); return id; },
     clearTimeout(id) { timers.delete(id); }, performance, console });
+  if (order === 'shared-before') vm.runInContext(shortcut, context);
   vm.runInContext(src.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1], context);
+  if (order === 'shared-after') vm.runInContext(shortcut, context);
   const fire = (id, value) => { nodes.get(id).value = value; nodes.get(id).listeners.input(); };
   function tick(ms) {
     for (const [id, timer] of [...timers]) if (timer.ms === ms) {
@@ -118,7 +134,18 @@ function pageHarness(lang = 'en', noWorker = false) {
     });
     return w.result;
   }
-  return { nodes, workers, flags, events, fire, tick, match, async close() { await Promise.all(workers.map(w => w.terminate())); } };
+  function key(key = 'l', modifier = 'ctrlKey') {
+    const event = { key, [modifier]: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    for (const handler of document.listeners.keydown || []) handler(event);
+    return event;
+  }
+  async function ready(worker) {
+    let timer;
+    try { return await Promise.race([worker.ready, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Worker result did not arrive')), 5000); })]); }
+    finally { clearTimeout(timer); }
+  }
+  return { nodes, workers, flags, events, fire, tick, match, key, ready, document, persistedClears, delivery, timers,
+    async close() { await Promise.all(workers.map(w => w.terminate())); } };
 }
 const page = pageHarness();
 page.fire('rgx-pattern', '^(a+)+$');
@@ -180,6 +207,57 @@ const unavailable = pageHarness('en', true);
 unavailable.fire('rgx-pattern', 'a'); unavailable.tick(300);
 eq('no Worker reports failure without synchronous fallback', unavailable.nodes.get('rgx-status').textContent.includes('worker'), true);
 await unavailable.close();
+
+// Actual full page IIFE + actual ToolLayout keydown in both registration orders.
+const workerSource = src.slice(src.indexOf('      function matchWorker() {'), src.indexOf('      function stop() {'));
+eq('native matchWorker bytes unchanged', [Buffer.byteLength(workerSource), createHash('sha256').update(workerSource).digest('hex')],
+  [1429, '349958c8b545e3e82bdbc4d5600b7fd2bf1e7f21da98e2c5f6c4e6dc37752a79']);
+eq('shared shortcut extracted', shortcut.includes("widget.querySelectorAll('textarea, input[type=\"text\"]')"), true);
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before', 'shared-after']) {
+  const p = pageHarness(lang, false, order), prefix = `${lang} ${order}`;
+  const state = () => [p.nodes.get('rgx-pattern').value, p.nodes.get('rgx-test').value,
+    p.nodes.get('rgx-status').textContent, p.nodes.get('rgx-status').className,
+    p.nodes.get('rgx-highlight').innerHTML, p.nodes.get('rgx-highlight').textContent,
+    p.nodes.get('rgx-matches').children.length, p.nodes.get('rgx-cancel').hidden];
+  const empty = ['', '', '', 'rgx-status', '', '', 0, true];
+  try {
+    const result = await p.match('(?<digit>\\d)', '😀 7 8', 'im');
+    eq(`${prefix} positive real Worker fixture`, result.matches.map(m => [m.match, m.index, ...m.groups]), [['7', 3, '7']]);
+    p.nodes.get('rgx-test').focus();
+    const before = state(); p.key('l', 'altKey');
+    eq(`${prefix} unmodified shortcut keeps current result`, state(), before);
+    p.document.activeElement = p.document.body; p.key();
+    eq(`${prefix} outside shortcut keeps current result`, state(), before);
+    p.nodes.get('rgx-pattern').focus(); p.key();
+    eq(`${prefix} CtrlL clears completed result and status`, state(), empty);
+    eq(`${prefix} CtrlL keeps stable input focus`, p.document.activeElement === p.nodes.get('rgx-test'), true);
+    eq(`${prefix} CtrlL preserves flags`, p.flags.filter(f => f.checked).map(f => f.value), ['i', 'm']);
+    eq(`${prefix} shared clear still runs once`, p.persistedClears, ['regex-tester']);
+
+    await p.match('[', 'broken'); p.nodes.get('rgx-test').focus(); p.key('L', 'metaKey');
+    eq(`${prefix} MetaL clears invalid-pattern state`, state(), empty);
+    p.fire('rgx-pattern', 'a'); p.fire('rgx-test', 'a');
+    const count = p.workers.length;
+    p.nodes.get('rgx-pattern').focus(); p.key();
+    eq(`${prefix} CtrlL removes pending debounce timer`, [...p.timers.values()].some(timer => timer.ms === 300), false);
+    p.tick(300);
+    eq(`${prefix} CtrlL cancels queued debounce`, p.workers.length, count);
+    eq(`${prefix} debounce cannot refill empty UI`, state(), empty);
+
+    p.delivery.hold = true;
+    p.fire('rgx-pattern', '(\\d)'); p.fire('rgx-test', 'x7'); p.tick(300);
+    const pending = p.workers.at(-1), reply = await p.ready(pending);
+    eq(`${prefix} delayed result uses actual Worker output`, reply.matches.map(m => [m.match, m.index, ...m.groups]), [['7', 1, '7']]);
+    p.nodes.get('rgx-cancel').focus(); p.key('L', 'metaKey');
+    eq(`${prefix} CtrlL terminates pending Worker`, pending.terminated, true);
+    eq(`${prefix} Cancel focus transfers before hidden`, p.document.activeElement === p.nodes.get('rgx-test'), true);
+    eq(`${prefix} both keydown listeners retain widget focus`, p.persistedClears.length, 4);
+    pending.onmessage({ data: reply }); pending.onerror(new Error('late Worker failure')); p.tick(2000);
+    eq(`${prefix} late Worker result/error/deadline cannot refill`, state(), empty);
+    p.delivery.hold = false;
+    eq(`${prefix} fresh match works after CtrlL`, (await p.match('b', 'aba')).matches.map(m => [m.match, m.index]), [['b', 1]]);
+  } finally { await p.close(); }
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
