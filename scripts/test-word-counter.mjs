@@ -19,6 +19,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/WordCounterTool.astro'), 'utf8');
@@ -93,6 +94,46 @@ eq('119.5 minutes', E.formatTime(119.5), '2 hr 0 min');
 eq('60 minutes', E.formatTime(60), '1 hr 0 min');
 eq('90.2 minutes', E.formatTime(90.2), '1 hr 31 min');
 eq('59 minutes', E.formatTime(59), '59 min');
+
+// Actual page and shared keyboard handlers; DOM is the only simulated boundary.
+const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layout.slice(layout.indexOf('      // ── Keyboard shortcuts:'), layout.indexOf('      // ── Copy button visual feedback'));
+check('real shared shortcut block is available', shortcut.includes('window.ztPersist.clear(_slug)'));
+function page(lang, sharedFirst) {
+  const nodes = new Map(), listeners = [], clears = [], tracks = [];
+  for (const [, id] of source.matchAll(/id="(wc-[^"]+)"/g)) {
+    let text = id.includes('time') ? '0 min' : '0';
+    nodes.set(id, { id, value: '', handlers: {}, get textContent() { return text; }, set textContent(v) { text = String(v); },
+      addEventListener(type, fn) { this.handlers[type] = fn; } });
+  }
+  const widget = { contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [nodes.get('wc-input')] };
+  const document = { documentElement: { lang }, activeElement: nodes.get('wc-input'), getElementById: id => nodes.get(id),
+    querySelector: s => ['.tool-widget', '.wc-wrap'].includes(s) ? widget : null, querySelectorAll: () => [], addEventListener: (type, fn) => { if (type === 'keydown') listeners.push(fn); } };
+  const context = vm.createContext({ document, Intl, _slug: 'word-counter', window: { trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) } } });
+  if (sharedFirst) vm.runInContext(shortcut, context);
+  vm.runInContext(source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1], context);
+  if (!sharedFirst) vm.runInContext(shortcut, context);
+  return { nodes, clears, tracks,
+    input(text) { const el = nodes.get('wc-input'); el.value = text; el.handlers.input.call(el); },
+    key(key, meta = false, inside = true, modifier = true) { document.activeElement = inside ? nodes.get('wc-input') : {}; let prevented = false; const e = { key, ctrlKey: modifier && !meta, metaKey: modifier && meta, preventDefault() { prevented = true; } }; for (const fn of listeners) fn(e); return prevented; },
+    stats() { return ['chars', 'chars-no-spaces', 'words', 'sentences', 'paragraphs', 'read-time', 'speak-time'].map(id => nodes.get('wc-' + id).textContent); }
+  };
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, true]) {
+  const h = page(lang, sharedFirst), prefix = lang + '/sharedFirst=' + sharedFirst + ': ';
+  h.input('One two.'); eq(prefix + 'real full-page statistics', h.stats(), ['8', '7', '2', '1', '1', '< 1 min', '< 1 min']);
+  for (const meta of [false, true]) for (const key of ['l', 'L']) {
+    const before = h.stats();
+    check(prefix + 'outside shortcut is inert', !h.key(key, meta, false)); eq(prefix + 'outside retains statistics', h.stats(), before);
+    check(prefix + 'unmodified key is inert', !h.key(key, meta, true, false)); eq(prefix + 'unmodified retains statistics', h.stats(), before);
+    const n = h.clears.length;
+    check(prefix + key + '/' + meta + ' clears the tool', h.key(key, meta));
+    eq(prefix + 'all seven statistics reset with input', [h.nodes.get('wc-input').value, h.stats()], ['', ['0', '0', '0', '0', '0', '0 min', '0 min']]);
+    eq(prefix + 'shared persistence clear runs once', h.clears.slice(n), ['word-counter']);
+    h.input('One two.'); eq(prefix + 'new input recovers', h.stats(), ['8', '7', '2', '1', '1', '< 1 min', '< 1 min']);
+  }
+  h.input(''); eq(prefix + 'ordinary empty input resets statistics', h.stats(), ['0', '0', '0', '0', '0', '0 min', '0 min']);
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
