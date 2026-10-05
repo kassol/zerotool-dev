@@ -91,7 +91,7 @@ if (py.status !== 0 || py.stdout.trim() !== 'True') {
 
 // Complete page lifecycle plus actual ToolLayout keyboard handler; DOM/clipboard/timers are boundary doubles.
 const pageScript = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
-const pageLabels = vm.runInNewContext('(' + source.match(/const labels = (\{[\s\S]*?\n\});/)[1] + ')');
+const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -131,6 +131,7 @@ function lifecyclePage(lang, shellFirst = false) {
       if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
     }
     removeAttribute(key) { delete this.attributes[key]; }
+    getAttribute(key) { return this.attributes[key] ?? null; }
     get classList() { const e = this; return { contains(c) { return e.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) e.className += ' ' + c; }, remove(c) { e.className = e.className.split(/\s+/).filter(v => v !== c).join(' '); } }; }
     appendChild(e) { this.children.push(e); e.parentElement = this; }
     querySelectorAll(s) { return descendants(this).filter(e => matches(e, s)); }
@@ -143,6 +144,8 @@ function lifecyclePage(lang, shellFirst = false) {
   }
   const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
   const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -185,8 +188,8 @@ try {
     eq(lang + ': localized current result', p.get('jpdc-status').textContent, L.msgGenOne);
     p.get('jpdc-root-name').value = 'Api'; p.get('jpdc-root-name').dispatch('input'); p.advance(300);
     eq(lang + ': root changes automatically convert', p.get('jpdc-output-code').textContent.includes('Api'), true);
-    p.get('jpdc-convert').click();
-    eq(lang + ': Generate applies root name', p.get('jpdc-output-code').textContent.includes('Api'), true);
+    p.advance(300);
+    eq(lang + ': automatic root change applies name', p.get('jpdc-output-code').textContent.includes('Api'), true);
     p.get('jpdc-clear').click();
     eq(lang + ': Clear preserves root name', p.get('jpdc-root-name').value, 'Api');
     eq(lang + ': Clear removes derived state', !p.get('jpdc-input').value && !p.get('jpdc-output-code').textContent && !p.get('jpdc-status').textContent, true);
@@ -223,8 +226,8 @@ try {
       if (action === 'tab') r.doc.querySelector("[data-mode=\"typeddict\"]").click();
       if (action === 'clear') r.get('jpdc-clear').click();
       if (action === 'shortcut') r.key();
-      if (action === 'result') { r.input('{"next":true}'); r.get('jpdc-convert').click(); }
-      if (action === 'error') { r.input('{'); r.get('jpdc-convert').click(); }
+      if (action === 'result') { r.input('{"next":true}'); r.advance(300); }
+      if (action === 'error') { r.input('{'); r.advance(300); }
       if (action === 'example') r.get('jpdc-example').click();
       const before = snapshot(r), rejectedBefore = unhandled.length;
       if (outcome === 'timer') r.advance(1500); else { old[outcome](Error('late')); await settle(); }
@@ -238,6 +241,166 @@ try {
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
+
+
+// ---------- v2 page layout ----------
+const V2 = {
+  "slug": "json-to-python-dataclass",
+  "prefix": "jpdc",
+  "manual": false,
+  "tips": [
+    [
+      "root-name",
+      "rootName",
+      "rootName"
+    ],
+    [
+      "input",
+      "jsonInput",
+      "input"
+    ],
+    [
+      "example",
+      "example",
+      "example"
+    ],
+    [
+      "clear",
+      "clear",
+      "clear"
+    ],
+    [
+      "copy",
+      "copy",
+      "copy"
+    ],
+    [
+      "mode",
+      "mode",
+      "mode"
+    ],
+    [
+      "download",
+      "download",
+      "download"
+    ]
+  ],
+  "scriptSHA": "eb49012a1c4549f826e2e0d59e0c718793a29be856b9fd5186f91fc911144bab",
+  "protectedContent": {
+    "en": [
+      "c9f9414c96481b8ad08f0075879a140d67f553386a426d955f2a59bc4cf8fcdd",
+      "4829ba52d3c043d746bdeca4e4aab760fe5cc1d9fd3ebd8dfa1f2bc0debd3090"
+    ],
+    "zh": [
+      "e01a7813285b8de9f81f3ef8ed582ebf05a7f8f216c0f38f41889323c7123ab8",
+      "7b8402e640463aee12a0b3f07e7d09d553dac3f6325f707ab870a8144b2af28f"
+    ],
+    "ja": [
+      "85c33774c2208c2137eda9a48d25641c9937ce46b78724ad761754005433e836",
+      "51d2702a4ee2e1e78cd2779a11b92df05f4f365639a488ba3940cad29413f3d3"
+    ],
+    "ko": [
+      "0733360ad500ac983f1eae79fd7cd7a0dc136e2661999d7449a64e6a80be981c",
+      "1ee40f771d3d14904500cb4d3e159f7da6a9c5f451ae584330440aabff0aa7e2"
+    ]
+  }
+};
+const hash = value => createHash('sha256').update(value).digest('hex');
+const layoutMarkup = source.split('\n---')[1].split('<script')[0];
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+const prefix = V2.prefix;
+eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
+eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
+eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
+eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
+eq('v2 two shared IO panes', (layoutMarkup.match(/\bzt-io-pane\b/g) || []).length, 2);
+eq('v2 both editors fill panes', layoutMarkup.includes('id="' + prefix + '-input" class="zt-io-fill"') && layoutMarkup.includes('id="' + prefix + '-output" class="' + prefix + '-output zt-io-fill"'), true);
+eq('v2 fixed status with internal overflow', css.includes('height: 2.8rem; flex: none; overflow: auto; overflow-wrap: anywhere;'), true);
+eq('v2 bounded keyboard accessible output', layoutMarkup.includes('tabindex="0" aria-labelledby="' + prefix + '-output-label"') && css.includes('.' + prefix + '-output { margin: 0; overflow: auto; white-space: pre; }'), true);
+eq('v2 actual output controls desktop empty hint', css.includes('.' + prefix + '-output-pane:has(#' + prefix + '-output-code:empty) .' + prefix + '-empty { display: flex; }'), true);
+eq('v2 stacked empty pane hidden and result bounded', css.includes('@media (max-width: 860px)') && css.includes('.' + prefix + '-output-pane:has(#' + prefix + '-output-code:empty) { display: none; }') && css.includes('height: 22rem; min-height: 160px; resize: none;'), true);
+eq('v2 phone input 144px and name inline', css.includes('height: 144px; min-height: 144px;') && css.includes('width: 100%; flex-direction: row; align-items: center;') && css.includes('@media (max-width: 640px)'), true);
+eq('v2 44px actions', css.includes('.' + prefix + '-actions button, .' + prefix + '-panel-header button { min-height: 44px; }'), true);
+eq('v2 dark ancestry global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'), true);
+eq('v2 tips remain build-time only', !/data-i18n|define:vars/.test(source) && !/STRINGS|L\.tips|\.tips\b/.test(pageScript), true);
+eq('v2 exact actual tip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, V2.tips.length);
+for (const [id, about, key] of V2.tips) eq('v2 exact tip binding ' + id, layoutMarkup.includes('<Toggletip id="' + prefix + '-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'), true);
+const actualButtons = [...layoutMarkup.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(m => m[1]).sort();
+eq('v2 explicit buttons retained', actualButtons.join(','), ['clear','copy','example', ...(V2.manual ? ['convert'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].map(id => prefix + '-' + id).sort().join(','));
+if (!V2.manual) {
+  eq('v2 no residual Generate label/action', !/generate:/.test(source) && !source.includes(prefix + '-convert') && !layoutMarkup.includes('btn-primary'), true);
+  eq('v2 existing tab container shares segmented layout', layoutMarkup.includes(prefix + '-tabs zt-segmented'), true);
+  eq('v2 selected segment contrasts in either theme', css.includes('.' + prefix + '-tab.active { background: var(--color-text); color: var(--color-bg); }'), true);
+}
+for (const lang of ['en','zh','ja','ko']) {
+  const L = pageLabels[lang];
+  eq(lang + ': v2 exact translated tip keys', Object.keys(L.tips).sort().join(','), V2.tips.map(t => t[2]).sort().join(','));
+  for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
+  eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
+  const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
+  const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+  const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
+  eq(lang + ': v2 steps correspond to controls', steps.length, V2.tips.length);
+  eq(lang + ': v2 step limits and order', fm.indexOf('steps:') < fm.indexOf('faqItems:') && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n,x) => n+[...x].length,0) <= 1200, true);
+  for (const [, about] of V2.tips) eq(lang + ': v2 steps actual label ' + about, steps.join('\n').includes(L[about]), true);
+  eq(lang + ': v2 SEO and FAQ unchanged', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')), V2.protectedContent[lang][0]);
+  eq(lang + ': v2 non-Usage content unchanged', hash(body.replace(/\n\{\/\* b6-sample-coverage:start \*\/\}[\s\S]*?\{\/\* b6-sample-coverage:end \*\/\}\n/,'')), V2.protectedContent[lang][1]);
+  eq(lang + ': v2 no duplicate usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
+  for (const shellFirst of [false,true]) for (const focus of ['output','tip']) {
+    const q = lifecyclePage(lang,shellFirst);golden(q);q.key(focus === 'output' ? q.get(prefix + '-output') : q.doc.querySelector('[data-zt-tip="' + prefix + '-tip-copy"]'));
+    eq(lang + ': v2 output focus survives CtrlL ' + shellFirst + focus, q.doc.activeElement === q.get(prefix+'-input') && !q.get(prefix+'-input').value && !q.get(prefix+'-root-name').value && !q.get(prefix+'-output-code').textContent && !q.get(prefix+'-status').textContent && q.clears.length === 1, true);
+  }
+  const selected=lifecyclePage(lang);
+  for (const value of ["dataclass", "pydantic", "typeddict"]) {
+    selected.doc.querySelector('[data-mode="'+value+'"]').click();
+    for (const tab of selected.doc.querySelector('.jpdc-wrap').querySelectorAll('.jpdc-tab')) eq(lang + ': v2 pressed state ' + value + '/' + tab.dataset.mode, tab.getAttribute('aria-pressed'), String(tab.dataset.mode === value));
+  }
+  const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
+  q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
+}
+
+// Sample-coverage supplement uses independently recorded complete outputs.
+const coverageFixtures = [
+  {
+    "input": {
+      "tags": []
+    },
+    "output": "from dataclasses import dataclass\nfrom typing import Any, List\n\n@dataclass\nclass Root:\n    tags: List[Any]",
+    "expectedLine": "tags: List[Any]"
+  },
+  {
+    "input": [
+      {
+        "tags": []
+      },
+      {
+        "tags": [
+          "admin"
+        ]
+      }
+    ],
+    "output": "from dataclasses import dataclass\nfrom typing import List\n\n@dataclass\nclass Root:\n    tags: List[str]",
+    "expectedLine": "tags: List[str]"
+  },
+  {
+    "input": [
+      {
+        "id": 1
+      },
+      {
+        "id": 2,
+        "note": null
+      }
+    ],
+    "output": "from dataclasses import dataclass\nfrom typing import Any, Optional\n\n@dataclass\nclass Root:\n    id: int\n    note: Optional[Any] = None",
+    "expectedLine": "note: Optional[Any] = None"
+  }
+];
+for (const [i, f] of coverageFixtures.entries()) eq("sample coverage full output " + i, E.generatePython(f.input, "Root", "dataclass").code, f.output);
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? ', ' + skips + ' skipped' : ''}`);
 process.exit(failures ? 1 : 0);
