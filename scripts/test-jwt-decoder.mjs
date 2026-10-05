@@ -1,7 +1,7 @@
 // JWT Decoder — Base64URL decoding to UTF-8 and escaped highlighting
 //
-// Read:  src/components/tools/JwtDecoderTool.astro (the engine block between the
-//        `engine:start` / `engine:end` markers)
+// Read:  src/components/tools/JwtDecoderTool.astro (engine and complete inline script),
+//        src/layouts/ToolLayout.astro (actual shared shortcuts), and existing guide fixtures
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -18,11 +18,13 @@
 // Run: node scripts/test-jwt-decoder.mjs
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { createHmac, generateKeyPairSync, sign as cryptoSign, constants } from 'node:crypto';
+import { createHash, createHmac, generateKeyPairSync, sign as cryptoSign, constants } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { parseFragment, defaultTreeAdapter } from 'parse5';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JwtDecoderTool.astro'), 'utf8');
@@ -45,6 +47,9 @@ function eq(name, actual, expected) {
 }
 const seg = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
 const decode = (token) => token.split('.').slice(0, 2).map((p) => E.parseJSON(E.b64urlDecode(p)));
+const protectedEngine = source.slice(startIndex, endIndex + '/* ── engine:end ── */'.length);
+eq('protected engine bytes', Buffer.byteLength(protectedEngine), 1613);
+eq('protected engine SHA256', createHash('sha256').update(protectedEngine).digest('hex'), 'fa9473b8818ef1d5bc86e16b3b88aa972307e93dc01f75fc14f229c7af31aa82');
 
 // example token in the component
 const example = /var EXAMPLE_JWT = '([^']+)'/.exec(source)[1];
@@ -162,6 +167,211 @@ eq('highlight spans kept', E.syntaxHighlight({ a: 1, b: true, c: null, d: 'x' })
   }
   eq('guide has 3 runnable blocks', runs, 3);
 }
+
+// Complete real page IIFE and actual shared shortcuts. Only DOM, timer and clipboard APIs are controlled.
+const pageScript = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcutScript = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
+const pageStrings = vm.runInNewContext('(' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(pageScript)[1] + ')');
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+function page(lang = 'en', order = 'shared-after') {
+  const clipboard = [], timers = new Map(), tracks = [], clears = [];
+  let timerId = 0, now = 0, doc;
+  const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
+  function matchesOne(el, selector) {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    if (parts.length > 1) {
+      if (!matchesOne(el, parts.pop())) return false;
+      for (let parent = el.parentNode; parent; parent = parent.parentNode) if (matchesOne(parent, parts.join(' '))) return true;
+      return false;
+    }
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+    return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+      && [...plain.matchAll(/\.([\w-]+)/g)].every(m => el.className.split(/\s+/).includes(m[1]))
+      && attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+  }
+  const matches = (el, selector) => selector.split(',').some(part => matchesOne(el, part));
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attrs: {}, listeners: {}, id: '', className: '', text: '', value: '', disabled: false, hidden: false }); }
+    get parentElement() { return this.parentNode; }
+    get isConnected() { return doc.contains(this); }
+    setAttribute(key, value) { this.attrs[key] = String(value); if (['id', 'class', 'type'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); }
+    getAttribute(key) { return key === 'class' ? this.className || null : this.attrs[key] ?? null; }
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+    set textContent(value) { if (doc?.activeElement !== this && this.contains(doc?.activeElement)) doc.activeElement = doc.body; for (const child of this.children) child.parentNode = null; this.children = []; this.text = String(value); }
+    set innerHTML(value) {
+      this.textContent = '';
+      const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
+      for (const node of parseFragment(context, String(value)).childNodes) this.appendChild(fromParse5(node));
+    }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    contains(el) { return el === this || descendants(this).includes(el); }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatch(type, extra = {}) {
+      const event = { type, target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...extra };
+      // Event propagation path is captured before a listener removes the focused result button.
+      const path = []; for (let el = this; el; el = el.parentNode) path.push(el);
+      for (const el of path) { for (const fn of el.listeners[type] || []) fn.call(el, event); if (event.stopped) break; }
+      return event;
+    }
+    click() { if (!this.disabled) this.dispatch('click'); }
+    focus() { doc.activeElement = this; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const attr of node.attrs || []) el.setAttribute(attr.name, attr.value);
+    for (const child of node.childNodes || []) if (child.nodeName !== '#comment') el.appendChild(fromParse5(child));
+    return el;
+  }
+  doc = new Element('#document'); doc.documentElement = new Element('html'); doc.documentElement.lang = lang; doc.appendChild(doc.documentElement);
+  doc.body = new Element('body'); doc.documentElement.appendChild(doc.body); doc.activeElement = doc.body;
+  const widget = new Element('section'); widget.className = 'tool-widget'; doc.body.appendChild(widget);
+  widget.innerHTML = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
+  doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
+  doc.createElement = tag => new Element(tag);
+  doc.execCommand = () => { throw Error('Unexpected system clipboard fallback'); };
+  const sandbox = { document: doc, console, TextDecoder, atob, _slug: 'jwt-decoder', ztPersist: { clear(slug) { clears.push(slug); } },
+    trackTool(...args) { tracks.push(args); },
+    setTimeout(fn, ms) { timers.set(++timerId, { fn, ms, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value: String(value), resolve, reject }); return promise; } } },
+  };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  if (order === 'shared-before') vm.runInContext(shortcutScript, context);
+  vm.runInContext(pageScript, context, { filename: 'JwtDecoderTool.astro:complete-inline', timeout: 1000 });
+  if (order === 'shared-after') vm.runInContext(shortcutScript, context);
+  const get = id => { const el = doc.getElementById(id); if (!el) throw Error('Missing real ID ' + id); return el; };
+  return { get, doc, clipboard, timers, tracks, clears, sandbox,
+    input(value) { get('jwt-input').value = value; get('jwt-input').dispatch('input'); },
+    key(key, extra = {}, target = get('jwt-input')) { target.focus(); return target.dispatch('keydown', { key, ctrlKey: true, ...extra }); },
+    advance(ms) { now += ms; for (const [id, job] of [...timers]) if (job.due <= now && timers.has(id)) { timers.delete(id); job.fn(); } },
+    takeTimer(ms) { const entry = [...timers].find(([, job]) => job.ms === ms); if (!entry) throw Error('Missing actual ' + ms + ' ms timer'); now = Math.max(now, entry[1].due); timers.delete(entry[0]); return entry[1].fn; },
+    snapshot() { return JSON.stringify({ value: get('jwt-input').value, status: get('jwt-status').textContent, className: get('jwt-status').className, result: get('jwt-results').textContent }); },
+  };
+}
+const clearState = page => page.get('jwt-input').value === '' && page.get('jwt-results').children.length === 0 && page.get('jwt-status').textContent === '' && page.get('jwt-status').className === 'jwt-status';
+const differentToken = seg({ alg: 'none' }) + '.' + seg({ name: 'José 東京', count: 2 }) + '.';
+const lifecycleStart = passes;
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before', 'shared-after']) {
+  const name = 'page ' + lang + '/' + order + ': ', p = page(lang, order), t = pageStrings[lang];
+  p.get('jwt-example').click();
+  eq(name + 'actual example yields 3 sections', p.get('jwt-results').querySelectorAll('.jwt-section').length, 3);
+  eq(name + 'current success localized', p.get('jwt-status').textContent, t.decodedOk);
+  eq(name + 'raw signature remains visibly unverified', p.get('jwt-results').querySelector('.jwt-sig-note').textContent, '(raw Base64URL — not verified)');
+  for (const key of [{ ctrlKey: true, metaKey: false }, { ctrlKey: false, metaKey: true }]) {
+    p.get('jwt-example').click(); const tracks = p.tracks.length;
+    p.key('Enter', key); eq(name + JSON.stringify(key) + ' Enter exactly one decode', p.tracks.length - tracks, 1);
+    const before = p.snapshot(), beforeTracks = p.tracks.length;
+    p.key('Enter', { ctrlKey: false }); eq(name + 'plain Enter preserves result', p.snapshot(), before);
+    eq(name + 'plain Enter never decodes', p.tracks.length, beforeTracks);
+    p.key('L', key); eq(name + 'modified L clears all', clearState(p), true);
+    p.input(example); p.key('l', key); p.advance(300); eq(name + 'modified L cancels pending decode', clearState(p), true);
+    p.get('jwt-example').click(); const copy = p.get('jwt-results').querySelector('.btn-copy'), beforeClear = p.clears.length;
+    p.key('l', key, copy); eq(name + 'result-focused L clears all', clearState(p), true);
+    eq(name + 'shared persistence clear still runs from result focus', p.clears.length - beforeClear, 1);
+  }
+  p.get('jwt-clear').click(); p.input(example); p.advance(299); eq(name + 'automatic decode waits 300ms', p.get('jwt-results').children.length, 0);
+  p.advance(1); eq(name + 'automatic decode computes real header', p.get('jwt-results').querySelector('.jwt-json').textContent, '{\n  "alg": "HS256",\n  "typ": "JWT"\n}');
+  p.input(differentToken); const tracks = p.tracks.length;
+  p.get('jwt-decode').click(); p.advance(300); eq(name + 'manual decode consumes pending auto decode', p.tracks.length - tracks, 1);
+  eq(name + 'different UTF8 payload decoded', p.get('jwt-results').querySelectorAll('.jwt-json')[1].textContent, '{\n  "name": "José 東京",\n  "count": 2\n}');
+  p.input('not-a-token'); p.advance(300); eq(name + 'invalid typing clears without automatic error', p.get('jwt-status').textContent, '');
+  p.get('jwt-decode').click(); eq(name + 'manual invalid shows actual parts error', p.get('jwt-status').textContent, t.errInvalid + '1.');
+  p.get('jwt-clear').click(); eq(name + 'Clear removes error state', clearState(p), true);
+  p.input(example); p.get('jwt-clear').click(); p.advance(300); eq(name + 'Clear cancels pending auto decode', clearState(p), true);
+  p.get('jwt-example').click(); const untouched = p.snapshot(); p.doc.body.focus(); p.doc.body.dispatch('keydown', { key: 'l', ctrlKey: true });
+  eq(name + 'outside focus preserves tool', p.snapshot(), untouched);
+  p.key('l', { ctrlKey: false }); eq(name + 'unmodified L preserves tool', p.snapshot(), untouched);
+  p.input(''); p.advance(300); eq(name + 'empty input stays empty', clearState(p), true);
+}
+console.log('Page control checks: ' + (passes - lifecycleStart) + ' passed');
+
+// Real copy listeners: deferred clipboard Promises and real captured timeout callbacks.
+const copyStart = passes, unhandled = [];
+const copyFailures = { en: 'Copy failed', zh: '复制失败', ja: 'コピーに失敗', ko: '복사 실패' };
+const rejected = reason => unhandled.push(String(reason));
+process.on('unhandledRejection', rejected);
+try {
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before', 'shared-after']) for (const index of [0, 1]) {
+    const name = 'copy ' + lang + '/' + order + '/' + (index ? 'payload' : 'header') + ': ', t = pageStrings[lang];
+    const fresh = () => { const p = page(lang, order); p.get('jwt-example').click(); return p; };
+    const button = p => p.get('jwt-results').querySelectorAll('.btn-copy')[index];
+    let p = fresh(), btn = button(p), beforeUnhandled = unhandled.length;
+    btn.click();
+    eq(name + 'actual JSON copied in full', p.clipboard.at(-1).value, JSON.stringify(index ? { sub: '1234567890', name: 'John Doe', iat: 1516239022, exp: 1893456000 } : { alg: 'HS256', typ: 'JWT' }, null, 2));
+    p.clipboard.at(-1).reject(Error('controlled current clipboard denial')); await settle();
+    eq(name + 'current rejection is handled', unhandled.length - beforeUnhandled, 0);
+    eq(name + 'current rejection is visible in the clicked button', btn.textContent, copyFailures[lang]);
+    eq(name + 'copy denial keeps conversion success status', p.get('jwt-status').textContent, t.decodedOk);
+    const output = p.get('jwt-results').querySelectorAll('.jwt-json').map(el => el.textContent).join('|');
+    btn.click(); p.clipboard.at(-1).resolve(); await settle();
+    eq(name + 'same output direct retry succeeds', btn.textContent, t.copied);
+    eq(name + 'retry preserves all output', p.get('jwt-results').querySelectorAll('.jwt-json').map(el => el.textContent).join('|'), output);
+    p.advance(1500); eq(name + 'current copy timer restores label', btn.textContent, t.copy);
+
+    for (const action of ['Clear', 'CtrlL', 'CmdL', 'new valid input', 'invalid input', 'new decoded result', 'Example', 'manual decode error']) for (const completion of ['resolve', 'reject']) {
+      p = fresh(); btn = button(p); btn.click(); const job = p.clipboard.at(-1); beforeUnhandled = unhandled.length;
+      if (action === 'Clear') p.get('jwt-clear').click();
+      else if (action === 'CtrlL') p.key('l', {}, btn);
+      else if (action === 'CmdL') p.key('L', { ctrlKey: false, metaKey: true }, btn);
+      else if (action === 'new valid input') p.input(differentToken);
+      else if (action === 'invalid input') p.input('editing-invalid');
+      else if (action === 'new decoded result') { p.input(differentToken); p.get('jwt-decode').click(); }
+      else if (action === 'Example') p.get('jwt-example').click();
+      else { p.input('one.part'); p.get('jwt-decode').click(); }
+      const before = p.snapshot(), label = btn.textContent;
+      completion === 'resolve' ? job.resolve() : job.reject(Error('controlled old clipboard denial'));
+      await settle();
+      eq(name + completion + ' after ' + action + ' preserves page', p.snapshot(), before);
+      eq(name + completion + ' after ' + action + ' does not mutate old button', btn.textContent, label);
+      eq(name + completion + ' after ' + action + ' is handled', unhandled.length - beforeUnhandled, 0);
+    }
+
+    p = fresh(); btn = button(p); btn.click(); const old = p.clipboard.at(-1); btn.click(); const newer = p.clipboard.at(-1);
+    old.resolve(); await settle(); eq(name + 'older same-button success cannot signal newer pending copy', btn.textContent, t.copy);
+    newer.reject(Error('controlled newer denial')); await settle(); eq(name + 'newest same-button rejection remains visible', btn.textContent, copyFailures[lang]);
+    p = fresh(); btn = button(p); btn.click(); const oldReject = p.clipboard.at(-1); btn.click(); p.clipboard.at(-1).resolve(); await settle();
+    beforeUnhandled = unhandled.length; oldReject.reject(Error('controlled older denial')); await settle();
+    eq(name + 'older rejection cannot overwrite newer success', btn.textContent, t.copied);
+    eq(name + 'older rejection is handled after newer success', unhandled.length - beforeUnhandled, 0);
+
+    p = fresh(); btn = button(p); btn.click(); p.clipboard.at(-1).resolve(); await settle(); p.advance(1000);
+    btn.click(); p.clipboard.at(-1).resolve(); await settle(); p.advance(500);
+    eq(name + 'first timer deadline retains second Copied feedback', btn.textContent, t.copied);
+    p.advance(999); eq(name + 'second feedback lasts its own 1500ms', btn.textContent, t.copied);
+    p.advance(1); eq(name + 'second timer restores its own label', btn.textContent, t.copy);
+    for (const action of ['new copy success', 'new copy failure', 'Clear', 'CtrlL', 'new input', 'new result']) {
+      p = fresh(); btn = button(p); btn.click(); p.clipboard.at(-1).resolve(); await settle();
+      const queued = p.takeTimer(1500); // Its real deadline has passed; delay only callback delivery.
+      if (action === 'Clear') p.get('jwt-clear').click();
+      else if (action === 'CtrlL') p.key('l', {}, btn);
+      else if (action === 'new input') p.input(differentToken);
+      else if (action === 'new result') { p.input(differentToken); p.get('jwt-decode').click(); }
+      else { btn.click(); action === 'new copy success' ? p.clipboard.at(-1).resolve() : p.clipboard.at(-1).reject(Error('controlled second failure')); await settle(); }
+      const before = p.snapshot(), label = btn.textContent; queued();
+      eq(name + 'queued old timer after ' + action + ' preserves page', p.snapshot(), before);
+      eq(name + 'queued old timer after ' + action + ' preserves old button', btn.textContent, label);
+    }
+    for (const boundary of ['missing API', 'sync throw']) {
+      p = fresh(); btn = button(p);
+      p.sandbox.navigator.clipboard = boundary === 'missing API' ? undefined : { writeText() { throw Error('controlled synchronous denial'); } };
+      let thrown = ''; try { btn.click(); } catch (error) { thrown = String(error); }
+      eq(name + boundary + ' does not escape event handler', thrown, '');
+      eq(name + boundary + ' is visibly reported', btn.textContent, copyFailures[lang]);
+    }
+    p = fresh(); btn = button(p); btn.click(); p.clipboard.at(-1).reject(Error('controlled first button denial')); await settle();
+    const other = p.get('jwt-results').querySelectorAll('.btn-copy')[1 - index]; other.click(); p.clipboard.at(-1).resolve(); await settle();
+    eq(name + 'other button success keeps this button error', btn.textContent, copyFailures[lang]);
+    eq(name + 'other button independently shows success', other.textContent, t.copied);
+  }
+} finally { process.removeListener('unhandledRejection', rejected); }
+console.log('Page copy checks: ' + (passes - copyStart) + ' passed');
 
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);
