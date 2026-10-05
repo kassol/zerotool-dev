@@ -46,6 +46,7 @@
           resultsPlaceholder: 'Results will appear here as you type.',
           placeholder: '# Hello World\n\nPaste your Markdown here to lint it...',
           copied: 'Copied!',
+          copyFailed: 'Copy failed',
           noIssues: 'No issues found',
           issueCount: function(n) { return n + ' issue' + (n === 1 ? '' : 's') + ' found'; },
           loading: 'Linting...',
@@ -60,6 +61,7 @@
           resultsPlaceholder: '输入内容后结果将显示在此处。',
           placeholder: '# 你好\n\n在此处粘贴 Markdown 内容进行检查...',
           copied: '已复制！',
+          copyFailed: '复制失败',
           noIssues: '未发现问题',
           issueCount: function(n) { return '发现 ' + n + ' 个问题'; },
           loading: '检查中...',
@@ -74,6 +76,7 @@
           resultsPlaceholder: '入力すると結果が表示されます。',
           placeholder: '# こんにちは\n\nMarkdownをここに貼り付けてLintします...',
           copied: 'コピー済み！',
+          copyFailed: 'コピーに失敗',
           noIssues: '問題なし',
           issueCount: function(n) { return n + ' 件の問題'; },
           loading: 'チェック中...',
@@ -88,6 +91,7 @@
           resultsPlaceholder: '입력하면 결과가 여기에 표시됩니다.',
           placeholder: '# 안녕하세요\n\nMarkdown을 여기에 붙여넣어 검사하세요...',
           copied: '복사됨!',
+          copyFailed: '복사 실패',
           noIssues: '문제 없음',
           issueCount: function(n) { return n + '개 문제 발견'; },
           loading: '검사 중...',
@@ -116,6 +120,21 @@
       var copyBtn   = document.getElementById('ml-copy');
       var _timer    = null;
       var _pending  = false;
+      var _revision = 0;
+      var _copyRequest = 0, _copyTimer = null;
+
+      function invalidateCopy() {
+        _copyRequest++;
+        clearTimeout(_copyTimer);
+        copyBtn.textContent = t.copyResults;
+      }
+
+      function invalidateLint() {
+        _revision++;
+        clearTimeout(_timer);
+        _pending = false;
+        invalidateCopy();
+      }
 
       // Severity color map
       var severityClass = { error: 'ml-err', warning: 'ml-warn' };
@@ -181,6 +200,8 @@
       }
 
       function runLint() {
+        invalidateLint();
+        var revision = _revision;
         var content = editor.value;
         if (!content.trim()) {
           summary.textContent = '';
@@ -203,9 +224,13 @@
         summary.className = 'ml-summary';
 
         lintFn({ strings: { content: content } }).then(function(res) {
+          if (revision !== _revision) return;
           var issues = res && res.content ? res.content : [];
+          invalidateCopy();
           renderResults(issues);
         }).catch(function(err) {
+          if (revision !== _revision) return;
+          invalidateCopy();
           results.innerHTML = '<div class="ml-placeholder">Error: ' + escHtml(String(err)) + '</div>';
           summary.textContent = '';
           summary.className = 'ml-summary';
@@ -214,7 +239,7 @@
 
       // Debounced input handler
       editor.addEventListener('input', function() {
-        clearTimeout(_timer);
+        invalidateLint();
         _timer = setTimeout(runLint, 300);
       });
 
@@ -223,17 +248,30 @@
         if (_pending) runLint();
       });
 
-      clearBtn.addEventListener('click', function() {
+      function clearAll() {
+        invalidateLint();
+        editor.focus();
         editor.value = '';
         summary.textContent = '';
         summary.className = 'ml-summary';
         results.innerHTML = '<div class="ml-placeholder">' + escHtml(t.resultsPlaceholder) + '</div>';
-        editor.focus();
+      }
+
+      clearBtn.addEventListener('click', clearAll);
+      document.addEventListener('keydown', function(e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        if (document.querySelector('.ml-wrap').contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
+        }
       });
 
       copyBtn.addEventListener('click', function() {
         var issues = results.querySelectorAll('.ml-issue');
         if (!issues.length) return;
+        var request = ++_copyRequest;
+        clearTimeout(_copyTimer);
+        copyBtn.textContent = t.copyResults;
         var lines = [];
         issues.forEach(function(el) {
           var rule = el.querySelector('.ml-rule').textContent;
@@ -241,10 +279,16 @@
           var desc = el.querySelector('.ml-desc').textContent;
           lines.push(line + ' [' + rule + '] ' + desc);
         });
-        navigator.clipboard.writeText(lines.join('\n')).then(function() {
+        function current() { return request === _copyRequest; }
+        function copied() {
+          if (!current()) return;
           copyBtn.textContent = t.copied;
-          setTimeout(function() { copyBtn.textContent = t.copyResults; }, 1500);
-        });
+          _copyTimer = setTimeout(function() { if (current()) copyBtn.textContent = t.copyResults; }, 1500);
+        }
+        function failed() { if (current()) copyBtn.textContent = t.copyFailed; }
+        try {
+          Promise.resolve(navigator.clipboard.writeText(lines.join('\n'))).then(copied, failed);
+        } catch (error) { failed(); }
         window.trackTool && window.trackTool('markdown_linter', 'copy_results');
       });
 
