@@ -3,6 +3,8 @@
 // Read:  src/components/tools/CronParserTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers, so this test cannot drift
 //        from the shipped source)
+//        src/layouts/ToolLayout.astro, src/data/tool-layouts.ts and the four cron-parser MDX files
+//        (real shortcut, v2 registration and protected content).
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -163,7 +165,7 @@ eq('5-59/10 works', values('5-59/10 * * * *')[0], [5, 15, 25, 35, 45, 55]);
 eq('*/10 works', values('*/10 * * * *')[0], [0, 10, 20, 30, 40, 50]);
 
 // ---------- 4-language STRINGS have the same keys ----------
-const stringsMatch = source.match(/var STRINGS = (\{[\s\S]*?\n {6}\});/);
+const stringsMatch = source.match(/const STRINGS = (\{[\s\S]*?\n\});\n\/\/ strings:end/);
 check('STRINGS block found', !!stringsMatch);
 if (stringsMatch) {
   const S = new Function('return ' + stringsMatch[1])();
@@ -200,7 +202,7 @@ if (stringsMatch) {
 // ---------- en guide ----------
 {
   const guide = readFileSync(join(root, 'src/content/blog/cron-parser-guide/en.mdx'), 'utf8');
-  const S = new Function('return ' + source.match(/var STRINGS = (\{[\s\S]*?\n {6}\});/)[1])().en;
+  const S = new Function('return ' + source.match(/const STRINGS = (\{[\s\S]*?\n\});\n\/\/ strings:end/)[1])().en;
   const from = new Date(2026, 9, 1, 8, 0);
   const table = guide.slice(guide.indexOf('{/* cron-check: examples */}'));
   const rows = [...table.split('\n\n')[0].matchAll(/^\| `([^`]+)` \| (.+?) \| (.+?) \|$/gm)];
@@ -249,8 +251,8 @@ const { parseFragment } = require('parse5');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 check('actual shared shortcut found', shortcut.includes("widget.querySelectorAll('textarea"));
-const pageScript = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
-const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
+const pageScript = source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
+const markupTemplate = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
 const astroRequire = createRequire(require.resolve('astro/package.json'));
 const compiled = await astroRequire('@astrojs/compiler').transform(source, {
   filename: join(root, 'src/components/tools/CronParserTool.astro'), scopedStyleStrategy: 'attribute',
@@ -258,6 +260,15 @@ const compiled = await astroRequire('@astrojs/compiler').transform(source, {
 check('component compiles without errors', !compiled.diagnostics.some(d => d.severity === 1));
 const css = compiled.css.join('\n');
 const scopeAttribute = css.match(/data-astro-cid-[\w-]+/)[0];
+const escapeMarkup = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function renderMarkup(lang) {
+  const T = new Function('return ' + stringsMatch[1])()[lang];
+  return markupTemplate
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g, (_all, id, label, key) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '">' + escapeMarkup(T[label]) + '</button><span id="' + id + '" class="zt-tip-pop" hidden>' + escapeMarkup(T.tips[key]) + '</span></span>')
+    .replace(/=\{T\.(\w+)\}/g, (_all, key) => '="' + escapeMarkup(T[key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_all, key) => escapeMarkup(T[key]));
+}
 function page(lang, order) {
   const tracks = [], persistCalls = [];
   let document;
@@ -299,7 +310,7 @@ function page(lang, order) {
       return event;
     }
     focus() { document.activeElement = this; }
-    click() { this.focus(); this.dispatch('click'); }
+    click() { this.focus(); this.dispatch('click'); if (this.tagName === 'SUMMARY') this.parentNode.open = !this.parentNode.open; }
   }
   function fromNode(n) {
     const el = new Element(n.tagName || n.nodeName);
@@ -313,11 +324,12 @@ function page(lang, order) {
   document.documentElement.lang = lang;
   document.body = document.documentElement.appendChild(new Element('body'));
   document.activeElement = document.body;
-  const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget'; widget.innerHTML = markup;
+  const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget'; widget.innerHTML = renderMarkup(lang);
   // Astro scopes static elements only; later innerHTML children receive no attribute.
   for (const el of all(widget)) if (!el.tagName.startsWith('#')) el.setAttribute(scopeAttribute, '');
   document.getElementById = id => all(document).find(el => el.id === id) ?? null;
-  const globals = { document, _slug: 'cron-parser', ztPersist: { clear(slug) { persistCalls.push(slug); } }, trackTool(...args) { tracks.push(args); } };
+  const { tips: _tips, ...client } = new Function('return ' + stringsMatch[1])()[lang];
+  const globals = { document, S: client, _slug: 'cron-parser', ztPersist: { clear(slug) { persistCalls.push(slug); } }, trackTool(...args) { tracks.push(args); } };
   globals.window = globals;
   const context = vm.createContext(globals);
   if (order === 'shared-before') vm.runInContext(shortcut, context, { filename: 'ToolLayout.astro:keyboard' });
@@ -363,6 +375,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before
   const p = page('en', 'shared-after');
   const presets = p.document.querySelectorAll('.btn-preset');
   eq('eight unchanged preset expressions', presets.map(el => el.getAttribute('data-expr')), ['* * * * *', '0 * * * *', '0 0 * * *', '0 9 * * 1-5', '0 0 * * 0', '0 0 1 * *', '*/5 * * * *', '0 0 1 1 *']);
+  p.document.querySelector('#cron-preset-details summary').click();
   for (const preset of presets) {
     const n = p.tracks.length; preset.click();
     eq('preset applies and parses once ' + preset.getAttribute('data-expr'), [p.get('cron-input').value, p.tracks.length - n, p.get('cron-results').querySelectorAll('.cron-next-list li').length], [preset.getAttribute('data-expr'), 1, 10]);
@@ -380,6 +393,90 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before
 const protectedEngine = source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)?.[0];
 eq('engine protected bytes including indentation', Buffer.byteLength(protectedEngine || ''), 8802);
 eq('engine protected SHA-256', createHash('sha256').update(protectedEngine || '').digest('hex'), 'd0c0eaca9f016e86b2737818d45781d96ecd3a7fd97f461f207152ad7710b9c8');
+
+
+// ---------- v2 page layout ----------
+const hash = value => createHash('sha256').update(value).digest('hex');
+const oldKeys = ["cronExpr", "parse", "fMinute", "fHour", "fDay", "fMonth", "fWeekday", "presets", "pEveryMinute", "pEveryHour", "pDailyMidnight", "pWeekdays9am", "pWeeklySunday", "pMonthly1st", "pEvery5min", "pYearlyJan1", "errEmpty", "errFields", "errInvalid", "errStep", "errUnsupported", "valid", "nextRuns", "noRuns"];
+const oldStringHashes = {
+  "en": "4089aee86c5f8f9f2a8516ad6966d7ff38fc3c50e7ce09af6f021b116ac5c22a",
+  "zh": "d87d65c1e6e0abede36e44dfb2e84b12e9db64823a5e388f3abcf5deb11ff971",
+  "ja": "6d68c536f1b01f71160a57d71eecf42b272a3817b0303669a61f1067952f7fb3",
+  "ko": "4db98115d82ba54b470bf10bde2d6254117c94afbd891947cc261f2cc42b1888"
+};
+const unchangedContent = {
+  "en": "22a7f67557ff9a3d8691fa2a5c7c097450faaa1b2164cb959831210cfbce5fe5",
+  "zh": "4b2f0d27f28f391fba5e8e9aea56c30cbcdcab94422a7100e2d8c785642613bd",
+  "ja": "f2d7146c607846c2d63271c422620b494616c8adb271c42569eaf5ec082b64bf",
+  "ko": "94a5cd882eff4aea9bb2d84c43ad9accfb8141019ef4e34f151cf8f9ef01eabb"
+};
+const tipKeys = ['input', 'parse', 'presets', 'explanation', 'fields', 'runs'];
+const bindings = [...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 six unique literal tip IDs', bindings.map(m => m[1]), tipKeys.map(k => 'cron-tip-' + k));
+eq('v2 tip bindings follow reading order', bindings.map(m => m[3]), tipKeys);
+check('v2 direct analyze root', /^<div class="cron-wrap">/.test(markupTemplate));
+check('v2 no runtime i18n attributes or lookup', !/data-i18n|document\.documentElement\.lang/.test(source));
+check('v2 client vars exclude tips', /define:vars=\{\{ S: CLIENT_T \}\}/.test(source) && !/TIPS|tips|STRINGS/.test(pageScript));
+check('v2 control/status/result order', markupTemplate.indexOf('cron-preset-details') < markupTemplate.indexOf('id="cron-status"') && markupTemplate.indexOf('id="cron-status"') < markupTemplate.indexOf('class="cron-result-section"'));
+check('v2 root has zero min-height', /\.cron-wrap\s*\{[^}]*min-height:\s*0/.test(source));
+check('v2 result section grows with viewport', /\.cron-result-section\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0/.test(source));
+check('v2 result scroll has zero flex basis', /\.cron-results\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(source));
+check('v2 status reserves height with internal overflow', /\.cron-status\s*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(source));
+check('v2 stacked result is bounded and empty section hidden', /@media \(max-width: 860px\)\s*\{\s*\.cron-result-section\s*\{[^}]*height:\s*26rem/.test(source) && /\.cron-result-section:has\(#cron-results:empty\)\s*\{\s*display:\s*none/.test(source));
+check('v2 phone input and main action at least 44px', /\.cron-input-group input, #cron-parse\s*\{\s*min-height:\s*44px/.test(source));
+check('v2 dense preset and summary targets at least 24px', /\.btn-preset\s*\{\s*min-height:\s*28px/.test(source) && /\.cron-preset-details summary\s*\{[^}]*min-height:\s*28px/.test(source));
+check('v2 presets have bounded scrolling', /\.cron-presets\s*\{[^}]*max-height:\s*8rem[^}]*overflow:\s*auto/.test(source));
+for (const name of ['cron-status', 'btn-preset']) {
+  check('v2 system dark ancestor matches html for ' + name, new RegExp(':root:not\\(\\[data-theme="light"\\]\\)\\s+\\.' + name).test(css));
+  check('v2 explicit dark ancestor matches html for ' + name, new RegExp('\\[data-theme="dark"\\]\\s+\\.' + name).test(css));
+}
+const frontmatter = source.split('---')[1];
+const getLocale = new Function('lang', frontmatter.slice(frontmatter.indexOf('const STRINGS')) + '\nreturn { T, TIPS, CLIENT_T };');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const { T, TIPS, CLIENT_T } = getLocale(lang);
+  eq('v2 ' + lang + ' old labels unchanged', hash(JSON.stringify(Object.fromEntries(oldKeys.map(key => [key, T[key]])))), oldStringHashes[lang]);
+  eq('v2 ' + lang + ' tip keys', Object.keys(TIPS), tipKeys);
+  check('v2 ' + lang + ' serialized client has no tip text', !('tips' in CLIENT_T) && Object.values(TIPS).every(text => !JSON.stringify(CLIENT_T).includes(text)));
+  check('v2 ' + lang + ' tips are plain sentences', Object.values(TIPS).every(text => typeof text === 'string' && text.trim() && !/[<>\n]|https?:/.test(text)));
+  const p = page(lang, 'shared-after'), doc = p.document;
+  eq('v2 ' + lang + ' native presets initially closed', doc.querySelector('#cron-preset-details').getAttribute('open'), null);
+  doc.querySelector('#cron-preset-details summary').click();
+  check('v2 ' + lang + ' summary opens presets', doc.querySelector('#cron-preset-details').open);
+  eq('v2 ' + lang + ' localized main action', p.get('cron-parse').textContent, T.parse);
+  eq('v2 ' + lang + ' localized empty hint', p.get('cron-empty').textContent, T.emptyResult);
+  eq('v2 ' + lang + ' results have accessible region name', [p.get('cron-results').getAttribute('tabindex'), p.get('cron-results').getAttribute('role'), p.get('cron-results').getAttribute('aria-label')], ['0', 'region', T.results]);
+  eq('v2 ' + lang + ' only existing actions', doc.querySelectorAll('button').filter(el => el.getAttribute('data-zt-tip') === null).length, 9);
+  for (const [, id, aboutKey, textKey] of bindings) {
+    eq('v2 ' + lang + ' literal body ' + id, p.get(id).textContent, TIPS[textKey]);
+    check('v2 ' + lang + ' localized about ' + id, typeof T[aboutKey] === 'string' && T[aboutKey].length > 0);
+  }
+  const content = readFileSync(join(root, 'src/content/tools/cron-parser', lang + '.mdx'), 'utf8');
+  const data = require('js-yaml').load(content.match(/^---\n([\s\S]*?)\n---/)[1]);
+  eq('v2 ' + lang + ' six steps', data.steps.length, 6);
+  check('v2 ' + lang + ' steps bounded', data.steps.every(text => text.length <= 280 && !/[<>\n]/.test(text)) && data.steps.join('').length <= 1200);
+  check('v2 ' + lang + ' steps before FAQ', content.indexOf('steps:') < content.indexOf('faqItems:'));
+  check('v2 ' + lang + ' steps use current Parse label and actual first-12 limit', data.steps.some(text => text.includes(T.parse)) && data.steps.some(text => text.includes('12')));
+  eq('v2 ' + lang + ' all non-Usage MDX bytes retained', hash(content.replace(/^steps:\n(?:  - .*\n)+/m, '')), unchangedContent[lang]);
+  for (const order of ['shared-before', 'shared-after']) {
+    const q = page(lang, order), tip = q.document.querySelector('[data-zt-tip="cron-tip-fields"]');
+    tip.focus(); tip.dispatch('keydown', { key: 'l', ctrlKey: true });
+    eq('v2 ' + lang + '/' + order + ' result-tip clear keeps shared focus', [q.document.activeElement.id, q.get('cron-results').textContent, q.get('cron-status').textContent, q.persistCalls], ['cron-input', '', '', ['cron-parser']]);
+  }
+}
+// Bound the pane, not the result algorithm: run a long real expression and verify unchanged output.
+{
+  const p = page('en', 'shared-after');
+  const expr = Array.from({ length: 300 }, () => '0,15,30,45').join(',') + ' * * * *';
+  p.input(expr); p.get('cron-parse').click();
+  eq('v2 long valid expression remains complete', p.get('cron-results').querySelector('.cron-field-expr').textContent, expr.split(' ')[0]);
+  eq('v2 real field values still first twelve', p.get('cron-results').querySelector('.cron-field-vals').textContent, '0, 15, 30, 45');
+  eq('v2 long expression still returns ten runs', p.get('cron-results').querySelectorAll('.cron-next-list li').length, 10);
+}
+eq('v2 full engine, rendering and FIX event tail unchanged', hash(source.slice(source.indexOf('      /* ── engine:start'), source.indexOf('  </script>'))), '4c72a60dddd96e6897b0474d3529f3bcbc3bdc09df9706006ed955a759288538');
+let moduleError = '';
+try { await require('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' }); } catch (error) { moduleError = String(error); }
+eq('v2 Astro generated module parses', moduleError, '');
+check('v2 registered as analyze', /'cron-parser':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 
 console.log((failures ? 'FAILED' : 'PASSED') + ': ' + passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

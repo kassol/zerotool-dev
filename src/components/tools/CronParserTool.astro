@@ -1,60 +1,115 @@
 ---
 // CronParserTool — cron expression parser and scheduler widget
+import Toggletip from '../Toggletip.astro';
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+// strings:start
+const STRINGS = {
+  en: { cronExpr: 'Cron Expression', parse: 'Parse', fMinute: 'minute', fHour: 'hour', fDay: 'day', fMonth: 'month', fWeekday: 'weekday', presets: 'Presets:', pEveryMinute: 'Every minute', pEveryHour: 'Every hour', pDailyMidnight: 'Daily midnight', pWeekdays9am: 'Weekdays 9am', pWeeklySunday: 'Weekly Sunday', pMonthly1st: 'Monthly 1st', pEvery5min: 'Every 5 min', pYearlyJan1: 'Yearly Jan 1st', errEmpty: 'Please enter a cron expression.', errFields: 'Invalid: expected 5 fields, got {n}.', errInvalid: 'Invalid expression — check each field range.', errStep: 'Not valid: "{token}" in the {field} field. A step must follow * or a range, for example */10 or 5-59/10.', errUnsupported: 'Not supported: "{token}" in the {field} field. This tool checks standard 5-field cron only; #, L, W and ? are extensions from Quartz and similar schedulers.', valid: 'Valid expression.', nextRuns: 'Next 10 scheduled runs (local time):', noRuns: 'No run time found: no real date matches these fields (for example, February 30).',
+    results: "Schedule details",
+    explanation: "Explanation",
+    fields: "Field values",
+    runs: "Run times",
+    emptyResult: "Parse a cron expression to see its explanation, field values and next run times.",
+    tips: {
+      input: "Enter five fields in order: minute, hour, day of month, month and weekday. Seconds and @ shortcuts are not supported. The page opens with 0 9 * * 1-5 already parsed.",
+      parse: "Click Parse or press Enter in the input to apply the expression. Ctrl+Enter (⌘+Enter on Mac) also parses it. Editing alone does not update the result. Ctrl+L (⌘+L) inside this tool clears the input, result and status.",
+      presets: "Open Presets and choose one of eight schedules. Each preset replaces the expression and parses it immediately.",
+      explanation: "The explanation is generated in English on every language version. Month and weekday names in the field values also remain in English.",
+      fields: "The breakdown shows each field expression and its first 12 matching values. An ellipsis marks additional values. Month and weekday numbers are displayed as names.",
+      runs: "The list shows the next 10 runs in your browser’s local time zone, starting after the current minute. Compare that zone with the scheduler’s zone. There is no time zone selector or show-more option.",
+    },
+  },
+  zh: { cronExpr: 'Cron 表达式', parse: '解析', fMinute: '分钟', fHour: '小时', fDay: '日', fMonth: '月', fWeekday: '星期', presets: '预设：', pEveryMinute: '每分钟', pEveryHour: '每小时', pDailyMidnight: '每天午夜', pWeekdays9am: '工作日 9 点', pWeeklySunday: '每周日', pMonthly1st: '每月 1 日', pEvery5min: '每 5 分钟', pYearlyJan1: '每年 1 月 1 日', errEmpty: '请输入 cron 表达式。', errFields: '无效：需要 5 个字段，当前 {n} 个。', errInvalid: '表达式无效 — 请检查各字段范围。', errStep: '无效：{field}字段中的「{token}」。步长只能跟在 * 或范围后面，例如 */10 或 5-59/10。', errUnsupported: '不支持：{field}字段中的「{token}」。本工具只解析标准 5 字段 cron；#、L、W、? 是 Quartz 等调度器的扩展语法。', valid: '表达式有效。', nextRuns: '接下来 10 次执行时间（本地时间）：', noRuns: '找不到执行时间：没有真实日期符合这些字段（例如 2 月 30 日）。',
+    results: "计划详情",
+    explanation: "英文说明",
+    fields: "字段值",
+    runs: "执行时间",
+    emptyResult: "解析 Cron 表达式后，这里显示英文说明、字段值和下次执行时间。",
+    tips: {
+      input: "按顺序输入五个字段：分钟、小时、日、月、星期。不支持秒字段和 @ 快捷写法。页面打开时已解析 0 9 * * 1-5。",
+      parse: "点击「解析」或在输入框按 Enter 应用表达式，Ctrl+Enter（Mac 为 ⌘+Enter）也可解析。只编辑输入不会更新结果。焦点在工具内时，Ctrl+L（⌘+L）清空输入、结果和状态。",
+      presets: "展开「预设」并选择八种计划之一。每个预设都会替换表达式并立即解析。",
+      explanation: "所有语言版本都生成英文说明句；字段值中的月份和星期名称也保留英文。",
+      fields: "逐字段显示表达式及前 12 个匹配值，更多值以省略号表示。月份和星期数字显示为名称。",
+      runs: "列表从当前分钟之后开始，按浏览器本地时区显示接下来 10 次执行时间。请与实际调度器的时区核对。没有时区选择器或查看更多选项。",
+    },
+  },
+  ja: { cronExpr: 'cron 式', parse: '解析', fMinute: '分', fHour: '時', fDay: '日', fMonth: '月', fWeekday: '曜日', presets: 'プリセット：', pEveryMinute: '毎分', pEveryHour: '毎時', pDailyMidnight: '毎日 0 時', pWeekdays9am: '平日 9 時', pWeeklySunday: '毎週日曜', pMonthly1st: '毎月 1 日', pEvery5min: '5 分ごと', pYearlyJan1: '毎年 1 月 1 日', errEmpty: 'cron 式を入力してください。', errFields: '無効：5 フィールドが必要です（現在 {n} 個）。', errInvalid: '無効な式 — 各フィールドの範囲を確認してください。', errStep: '無効：{field}フィールドの「{token}」。ステップは * か範囲の後にだけ書けます（例：*/10、5-59/10）。', errUnsupported: '未対応：{field}フィールドの「{token}」。このツールは標準の 5 フィールド cron のみ解析します。#・L・W・? は Quartz などのスケジューラの拡張構文です。', valid: '有効な式です。', nextRuns: '次の 10 回の実行時刻（ローカル時間）：', noRuns: '実行時刻が見つかりません：この条件に合う実在の日付がありません（例：2 月 30 日）。',
+    results: "スケジュールの詳細",
+    explanation: "英語の説明",
+    fields: "フィールド値",
+    runs: "実行時刻",
+    emptyResult: "cron 式を解析すると、説明、フィールド値、次の実行時刻を表示します。",
+    tips: {
+      input: "分、時、日、月、曜日の順に 5 フィールドを入力します。秒フィールドや @ 短縮表記には対応しません。ページを開くと 0 9 * * 1-5 が解析済みです。",
+      parse: "「解析」を押すか、入力欄で Enter を押して式を適用します。Ctrl+Enter（Mac は ⌘+Enter）でも解析できます。編集だけでは結果は更新されません。ツール内で Ctrl+L（⌘+L）を押すと入力、結果、状態を消去します。",
+      presets: "「プリセット」を開いて 8 種類の予定から選びます。選ぶと式を置き換え、すぐに解析します。",
+      explanation: "説明文はどの言語版でも英語です。フィールド値の月名と曜日名も英語で表示します。",
+      fields: "各フィールドの式と、一致する値の先頭 12 件を表示します。残りは省略記号で示します。月と曜日の数値は名前で表示します。",
+      runs: "現在の分より後の実行時刻を、ブラウザーのローカルタイムゾーンで 10 回分表示します。実際のスケジューラのタイムゾーンと照合してください。タイムゾーン選択や追加表示はありません。",
+    },
+  },
+  ko: { cronExpr: 'Cron 표현식', parse: '파싱', fMinute: '분', fHour: '시', fDay: '일', fMonth: '월', fWeekday: '요일', presets: '프리셋:', pEveryMinute: '매분', pEveryHour: '매시', pDailyMidnight: '매일 자정', pWeekdays9am: '평일 오전 9시', pWeeklySunday: '매주 일요일', pMonthly1st: '매월 1일', pEvery5min: '5분마다', pYearlyJan1: '매년 1월 1일', errEmpty: 'cron 표현식을 입력하세요.', errFields: '유효하지 않음: 5개 필드가 필요합니다 (현재 {n}개).', errInvalid: '잘못된 표현식 — 각 필드 범위를 확인하세요.', errStep: '유효하지 않음: {field} 필드의 "{token}". 스텝은 * 또는 범위 뒤에만 쓸 수 있습니다(예: */10, 5-59/10).', errUnsupported: '지원하지 않음: {field} 필드의 "{token}". 이 도구는 표준 5필드 cron만 해석합니다. #, L, W, ?는 Quartz 등 스케줄러의 확장 문법입니다.', valid: '유효한 표현식입니다.', nextRuns: '다음 10번 실행 시간 (현지 시간):', noRuns: '실행 시간을 찾을 수 없습니다: 이 조건에 맞는 실제 날짜가 없습니다(예: 2월 30일).',
+    results: "일정 상세",
+    explanation: "영어 설명",
+    fields: "필드 값",
+    runs: "실행 시각",
+    emptyResult: "Cron 표현식을 파싱하면 설명, 필드 값과 다음 실행 시각을 표시합니다.",
+    tips: {
+      input: "분, 시, 일, 월, 요일 순서로 5개 필드를 입력하세요. 초 필드와 @ 단축 표기는 지원하지 않습니다. 페이지를 열면 0 9 * * 1-5가 이미 파싱되어 있습니다.",
+      parse: "「파싱」을 클릭하거나 입력창에서 Enter를 눌러 표현식을 적용하세요. Ctrl+Enter(Mac은 ⌘+Enter)로도 파싱합니다. 입력만 바꾸면 결과는 그대로입니다. 도구 안에서 Ctrl+L(⌘+L)을 누르면 입력, 결과와 상태를 지웁니다.",
+      presets: "「프리셋」을 열고 8가지 일정 중 하나를 선택하세요. 선택하면 표현식을 바꾸고 즉시 파싱합니다.",
+      explanation: "모든 언어 버전에서 설명문은 영어로 생성됩니다. 필드 값의 월 이름과 요일 이름도 영어로 표시합니다.",
+      fields: "각 필드의 표현식과 일치하는 처음 12개 값을 표시합니다. 나머지는 줄임표로 나타내며 월과 요일 숫자는 이름으로 표시합니다.",
+      runs: "현재 분 이후의 실행 시각 10개를 브라우저의 현지 시간대로 표시합니다. 실제 스케줄러의 시간대와 비교하세요. 시간대 선택이나 더 보기 옵션은 없습니다.",
+    },
+  },
+};
+// strings:end
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
-<div>
-  <div class="cron-wrap">
-    <div class="cron-input-row">
-      <label for="cron-input" data-i18n="cronExpr">Cron Expression</label>
-      <div class="cron-input-group">
-        <input
-          type="text"
-          id="cron-input"
-          placeholder="* * * * *"
-          spellcheck="false"
-          autocomplete="off"
-          value="0 9 * * 1-5"
-        />
-        <button id="cron-parse" class="btn-primary" data-i18n="parse">Parse</button>
-      </div>
-      <div class="cron-field-labels">
-        <span data-i18n="fMinute">minute</span><span data-i18n="fHour">hour</span><span data-i18n="fDay">day</span><span data-i18n="fMonth">month</span><span data-i18n="fWeekday">weekday</span>
-      </div>
+<div class="cron-wrap">
+  <div class="cron-input-row">
+    <div class="cron-heading"><label for="cron-input">{T.cronExpr}</label><Toggletip id="cron-tip-input" lang={lang} about={T.cronExpr}>{TIPS.input}</Toggletip></div>
+    <div class="cron-input-group">
+      <input type="text" id="cron-input" class="tool-input" placeholder="* * * * *" spellcheck="false" autocomplete="off" value="0 9 * * 1-5" />
+      <button id="cron-parse" type="button" class="btn-primary">{T.parse}</button>
+      <Toggletip id="cron-tip-parse" lang={lang} about={T.parse}>{TIPS.parse}</Toggletip>
     </div>
-
-    <div class="cron-presets">
-      <span class="cron-preset-label" data-i18n="presets">Presets:</span>
-      <button class="btn-preset" data-expr="* * * * *" data-i18n="pEveryMinute">Every minute</button>
-      <button class="btn-preset" data-expr="0 * * * *" data-i18n="pEveryHour">Every hour</button>
-      <button class="btn-preset" data-expr="0 0 * * *" data-i18n="pDailyMidnight">Daily midnight</button>
-      <button class="btn-preset" data-expr="0 9 * * 1-5" data-i18n="pWeekdays9am">Weekdays 9am</button>
-      <button class="btn-preset" data-expr="0 0 * * 0" data-i18n="pWeeklySunday">Weekly Sunday</button>
-      <button class="btn-preset" data-expr="0 0 1 * *" data-i18n="pMonthly1st">Monthly 1st</button>
-      <button class="btn-preset" data-expr="*/5 * * * *" data-i18n="pEvery5min">Every 5 min</button>
-      <button class="btn-preset" data-expr="0 0 1 1 *" data-i18n="pYearlyJan1">Yearly Jan 1st</button>
+    <div class="cron-field-labels"><span>{T.fMinute}</span><span>{T.fHour}</span><span>{T.fDay}</span><span>{T.fMonth}</span><span>{T.fWeekday}</span></div>
+  </div>
+  <div class="cron-preset-row">
+    <details class="cron-preset-details" id="cron-preset-details">
+      <summary>{T.presets}</summary>
+      <div class="cron-presets">
+        <button type="button" class="btn-preset" data-expr="* * * * *">{T.pEveryMinute}</button>
+        <button type="button" class="btn-preset" data-expr="0 * * * *">{T.pEveryHour}</button>
+        <button type="button" class="btn-preset" data-expr="0 0 * * *">{T.pDailyMidnight}</button>
+        <button type="button" class="btn-preset" data-expr="0 9 * * 1-5">{T.pWeekdays9am}</button>
+        <button type="button" class="btn-preset" data-expr="0 0 * * 0">{T.pWeeklySunday}</button>
+        <button type="button" class="btn-preset" data-expr="0 0 1 * *">{T.pMonthly1st}</button>
+        <button type="button" class="btn-preset" data-expr="*/5 * * * *">{T.pEvery5min}</button>
+        <button type="button" class="btn-preset" data-expr="0 0 1 1 *">{T.pYearlyJan1}</button>
+      </div>
+    </details>
+    <Toggletip id="cron-tip-presets" lang={lang} about={T.presets}>{TIPS.presets}</Toggletip>
+  </div>
+  <div id="cron-status" class="cron-status" role="status" aria-live="polite" tabindex="0"></div>
+  <div class="cron-result-section">
+    <p class="cron-empty" id="cron-empty">{T.emptyResult}</p>
+    <div class="cron-result-head">
+      <div class="cron-heading"><span>{T.explanation}</span><Toggletip id="cron-tip-explanation" lang={lang} about={T.explanation}>{TIPS.explanation}</Toggletip></div>
+      <div class="cron-heading"><span>{T.fields}</span><Toggletip id="cron-tip-fields" lang={lang} about={T.fields}>{TIPS.fields}</Toggletip></div>
+      <div class="cron-heading"><span>{T.runs}</span><Toggletip id="cron-tip-runs" lang={lang} about={T.runs}>{TIPS.runs}</Toggletip></div>
     </div>
-
-    <div id="cron-status" class="cron-status" aria-live="polite"></div>
-
-    <div id="cron-results" class="cron-results"></div>
+    <div id="cron-results" class="cron-results" tabindex="0" role="region" aria-label={T.results}></div>
   </div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ S: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: { cronExpr: 'Cron Expression', parse: 'Parse', fMinute: 'minute', fHour: 'hour', fDay: 'day', fMonth: 'month', fWeekday: 'weekday', presets: 'Presets:', pEveryMinute: 'Every minute', pEveryHour: 'Every hour', pDailyMidnight: 'Daily midnight', pWeekdays9am: 'Weekdays 9am', pWeeklySunday: 'Weekly Sunday', pMonthly1st: 'Monthly 1st', pEvery5min: 'Every 5 min', pYearlyJan1: 'Yearly Jan 1st', errEmpty: 'Please enter a cron expression.', errFields: 'Invalid: expected 5 fields, got {n}.', errInvalid: 'Invalid expression — check each field range.', errStep: 'Not valid: "{token}" in the {field} field. A step must follow * or a range, for example */10 or 5-59/10.', errUnsupported: 'Not supported: "{token}" in the {field} field. This tool checks standard 5-field cron only; #, L, W and ? are extensions from Quartz and similar schedulers.', valid: 'Valid expression.', nextRuns: 'Next 10 scheduled runs (local time):', noRuns: 'No run time found: no real date matches these fields (for example, February 30).' },
-        zh: { cronExpr: 'Cron 表达式', parse: '解析', fMinute: '分钟', fHour: '小时', fDay: '日', fMonth: '月', fWeekday: '星期', presets: '预设：', pEveryMinute: '每分钟', pEveryHour: '每小时', pDailyMidnight: '每天午夜', pWeekdays9am: '工作日 9 点', pWeeklySunday: '每周日', pMonthly1st: '每月 1 日', pEvery5min: '每 5 分钟', pYearlyJan1: '每年 1 月 1 日', errEmpty: '请输入 cron 表达式。', errFields: '无效：需要 5 个字段，当前 {n} 个。', errInvalid: '表达式无效 — 请检查各字段范围。', errStep: '无效：{field}字段中的「{token}」。步长只能跟在 * 或范围后面，例如 */10 或 5-59/10。', errUnsupported: '不支持：{field}字段中的「{token}」。本工具只解析标准 5 字段 cron；#、L、W、? 是 Quartz 等调度器的扩展语法。', valid: '表达式有效。', nextRuns: '接下来 10 次执行时间（本地时间）：', noRuns: '找不到执行时间：没有真实日期符合这些字段（例如 2 月 30 日）。' },
-        ja: { cronExpr: 'cron 式', parse: '解析', fMinute: '分', fHour: '時', fDay: '日', fMonth: '月', fWeekday: '曜日', presets: 'プリセット：', pEveryMinute: '毎分', pEveryHour: '毎時', pDailyMidnight: '毎日 0 時', pWeekdays9am: '平日 9 時', pWeeklySunday: '毎週日曜', pMonthly1st: '毎月 1 日', pEvery5min: '5 分ごと', pYearlyJan1: '毎年 1 月 1 日', errEmpty: 'cron 式を入力してください。', errFields: '無効：5 フィールドが必要です（現在 {n} 個）。', errInvalid: '無効な式 — 各フィールドの範囲を確認してください。', errStep: '無効：{field}フィールドの「{token}」。ステップは * か範囲の後にだけ書けます（例：*/10、5-59/10）。', errUnsupported: '未対応：{field}フィールドの「{token}」。このツールは標準の 5 フィールド cron のみ解析します。#・L・W・? は Quartz などのスケジューラの拡張構文です。', valid: '有効な式です。', nextRuns: '次の 10 回の実行時刻（ローカル時間）：', noRuns: '実行時刻が見つかりません：この条件に合う実在の日付がありません（例：2 月 30 日）。' },
-        ko: { cronExpr: 'Cron 표현식', parse: '파싱', fMinute: '분', fHour: '시', fDay: '일', fMonth: '월', fWeekday: '요일', presets: '프리셋:', pEveryMinute: '매분', pEveryHour: '매시', pDailyMidnight: '매일 자정', pWeekdays9am: '평일 오전 9시', pWeeklySunday: '매주 일요일', pMonthly1st: '매월 1일', pEvery5min: '5분마다', pYearlyJan1: '매년 1월 1일', errEmpty: 'cron 표현식을 입력하세요.', errFields: '유효하지 않음: 5개 필드가 필요합니다 (현재 {n}개).', errInvalid: '잘못된 표현식 — 각 필드 범위를 확인하세요.', errStep: '유효하지 않음: {field} 필드의 "{token}". 스텝은 * 또는 범위 뒤에만 쓸 수 있습니다(예: */10, 5-59/10).', errUnsupported: '지원하지 않음: {field} 필드의 "{token}". 이 도구는 표준 5필드 cron만 해석합니다. #, L, W, ?는 Quartz 등 스케줄러의 확장 문법입니다.', valid: '유효한 표현식입니다.', nextRuns: '다음 10번 실행 시간 (현지 시간):', noRuns: '실행 시간을 찾을 수 없습니다: 이 조건에 맞는 실제 날짜가 없습니다(예: 2월 30일).' }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-      });
+      var t = S;
 
       /* ── engine:start ── */
       var MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -348,131 +403,62 @@
 </div>
 
 <style>
-  .cron-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .cron-input-row { display: flex; flex-direction: column; gap: 0.3rem; }
-
-  .cron-input-row > label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .cron-input-group { display: flex; gap: 0.5rem; }
-
-  .cron-input-group input {
-    flex: 1;
-    font-family: var(--font-mono);
-    font-size: 1rem;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    letter-spacing: 0.08em;
-  }
-  .cron-input-group input:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
-
-  .cron-field-labels {
-    display: flex;
-    gap: 0;
-    font-size: 0.7rem;
-    color: var(--color-text-muted);
-    padding-left: 1px;
-  }
-  .cron-field-labels span { flex: 1; text-align: center; }
-
-  .cron-presets { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
-
-  .cron-preset-label { font-size: 0.78rem; color: var(--color-text-muted); font-weight: 600; }
-
-  .btn-preset {
-    padding: 0.2rem 0.65rem;
-    font-size: 0.78rem;
-    background: var(--color-bg-icon);
-    color: var(--color-primary);
-    border: 1px solid #c7d7ff;
-    border-radius: 4px;
-    cursor: pointer;
-  }
+  .cron-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: 0.75rem; }
+  .cron-input-row { display: flex; flex-direction: column; flex: none; min-width: 0; gap: 0.25rem; }
+  .cron-heading { display: flex; align-items: center; gap: 0.35rem; min-width: 0; font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .cron-input-group { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+  .cron-input-group input { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 1rem; letter-spacing: 0.08em; }
+  #cron-parse { flex: none; white-space: nowrap; }
+  .cron-field-labels { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; font-size: 0.7rem; color: var(--color-text-muted); }
+  .cron-preset-row { display: flex; align-items: flex-start; gap: 0.35rem; flex: none; }
+  .cron-preset-details { flex: 1; min-width: 0; }
+  .cron-preset-details summary { width: fit-content; min-height: 28px; line-height: 28px; cursor: pointer; font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .cron-presets { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; max-height: 8rem; overflow: auto; padding: 0.5rem 0; }
+  .btn-preset { min-height: 28px; padding: 0.2rem 0.65rem; font-size: 0.78rem; background: var(--color-bg-icon); color: var(--color-primary); border: 1px solid #c7d7ff; border-radius: 4px; cursor: pointer; }
   .btn-preset:hover { background: #dbe6ff; }
-
-  .cron-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .btn-preset:focus-visible, .cron-preset-details summary:focus-visible, .cron-results:focus-visible, .cron-status:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .cron-status { flex: none; height: 2.8em; overflow: auto; font-size: 0.85rem; line-height: 1.4; overflow-wrap: anywhere; }
   .cron-status.success { color: #057a55; }
   .cron-status.error { color: #c0392b; }
-
-  .cron-results { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .cron-results :global(.cron-human) {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: var(--color-text);
-    padding: 0.75rem 1rem;
-    background: var(--color-bg-icon);
-    border: 1px solid #c7d7ff;
-    border-radius: var(--radius-md);
-    line-height: 1.4;
-  }
-
-  .cron-results :global(.cron-breakdown) {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-  }
-
-  .cron-results :global(.cron-field-row) {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.45rem 0.75rem;
-    font-size: 0.85rem;
-    border-bottom: 1px solid var(--color-bg-secondary);
-  }
+  .cron-result-section { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; gap: 0.5rem; }
+  .cron-result-head { display: flex; flex-wrap: wrap; align-items: center; flex: none; gap: 0.35rem 1rem; }
+  .cron-empty { display: none; margin: 0; color: var(--color-text-muted); text-align: center; }
+  .cron-result-section:has(#cron-results:empty) .cron-empty { display: flex; align-items: center; justify-content: center; flex: 1; min-height: 220px; }
+  .cron-result-section:has(#cron-results:empty) .cron-result-head, #cron-results:empty { display: none; }
+  .cron-results { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; gap: 0.75rem; padding: 0.125rem; scrollbar-gutter: stable; }
+  .cron-results :global(.cron-human) { flex: none; min-width: 0; font-size: 1.1rem; font-weight: 600; color: var(--color-text); padding: 0.75rem 1rem; background: var(--color-bg-icon); border: 1px solid #c7d7ff; border-radius: var(--radius-md); line-height: 1.4; overflow-wrap: anywhere; }
+  .cron-results :global(.cron-breakdown) { flex: none; min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
+  .cron-results :global(.cron-field-row) { display: grid; grid-template-columns: minmax(70px, 0.7fr) minmax(60px, 1fr) minmax(0, 3fr); align-items: start; gap: 0.75rem; padding: 0.45rem 0.75rem; font-size: 0.85rem; border-bottom: 1px solid var(--color-bg-secondary); }
   .cron-results :global(.cron-field-row:last-child) { border-bottom: none; }
-
-  .cron-results :global(.cron-field-name) {
-    min-width: 70px;
-    font-weight: 700;
-    color: var(--color-text-secondary);
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+  .cron-results :global(.cron-field-name) { min-width: 0; font-weight: 700; color: var(--color-text-secondary); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; overflow-wrap: anywhere; }
+  .cron-results :global(.cron-field-expr) { min-width: 0; font-family: var(--font-mono); background: var(--color-bg-secondary); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.85rem; color: var(--color-primary); text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cron-results :global(.cron-field-vals) { min-width: 0; color: var(--color-text-secondary); font-size: 0.82rem; overflow-wrap: anywhere; }
+  .cron-results :global(.cron-next-label) { flex: none; font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .cron-results :global(.cron-next-list) { flex: none; margin: 0; padding: 0 0 0 1.5rem; font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.8; color: var(--color-text); overflow-wrap: anywhere; }
+  @media (max-width: 860px) {
+    .cron-result-section { flex: none; height: 26rem; }
+    .cron-result-section:has(#cron-results:empty) { display: none; }
+    .cron-status { height: 4.2em; }
   }
-
-  .cron-results :global(.cron-field-expr) {
-    font-family: var(--font-mono);
-    background: var(--color-bg-secondary);
-    padding: 0.15rem 0.4rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    color: var(--color-primary);
-    min-width: 60px;
-    text-align: center;
+  @media (max-width: 640px) {
+    .cron-wrap { gap: 0.5rem; }
+    .cron-input-group input, #cron-parse { min-height: 44px; }
+    .cron-result-section { height: 24rem; }
+    .cron-result-head { column-gap: 0.75rem; }
+    .cron-result-head .cron-heading { font-size: 0.75rem; }
+    .cron-results :global(.cron-field-row) { grid-template-columns: 4rem minmax(0, 1fr); gap: 0.25rem 0.5rem; padding: 0.5rem; }
+    .cron-results :global(.cron-field-vals) { grid-column: 1 / -1; }
   }
-
-  .cron-results :global(.cron-field-vals) { color: var(--color-text-secondary); flex: 1; font-size: 0.82rem; }
-
-  .cron-results :global(.cron-next-label) { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
-
-  .cron-results :global(.cron-next-list) {
-    margin: 0;
-    padding: 0 0 0 1.5rem;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    line-height: 1.8;
-    color: var(--color-text);
-  }
-
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .cron-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .cron-status.error { color: #f87171; }
-    :root:not([data-theme="light"]) .btn-preset { border-color: #4b5e8a; }
-    :root:not([data-theme="light"]) .btn-preset:hover { background: rgba(99, 102, 241, 0.15); }
+    :global(:root:not([data-theme="light"])) .cron-status.success { color: #34d399; }
+    :global(:root:not([data-theme="light"])) .cron-status.error { color: #f87171; }
+    :global(:root:not([data-theme="light"])) .btn-preset { border-color: #4b5e8a; }
+    :global(:root:not([data-theme="light"])) .btn-preset:hover { background: rgba(99, 102, 241, 0.15); }
     :global(:root:not([data-theme="light"])) .cron-results :global(.cron-human) { border-color: #4b5e8a; }
   }
-  [data-theme="dark"] .cron-status.success { color: #34d399; }
-  [data-theme="dark"] .cron-status.error { color: #f87171; }
-  [data-theme="dark"] .btn-preset { border-color: #4b5e8a; }
-  [data-theme="dark"] .btn-preset:hover { background: rgba(99, 102, 241, 0.15); }
+  :global([data-theme="dark"]) .cron-status.success { color: #34d399; }
+  :global([data-theme="dark"]) .cron-status.error { color: #f87171; }
+  :global([data-theme="dark"]) .btn-preset { border-color: #4b5e8a; }
+  :global([data-theme="dark"]) .btn-preset:hover { background: rgba(99, 102, 241, 0.15); }
   :global([data-theme="dark"]) .cron-results :global(.cron-human) { border-color: #4b5e8a; }
 </style>
