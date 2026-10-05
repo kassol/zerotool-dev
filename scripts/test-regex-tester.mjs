@@ -301,6 +301,25 @@ eq('v2 desktop empty hint and content are mutually exclusive', markup.includes('
 eq('v2 860 stack bounds input/results and hides empty output', /@media \(max-width: 860px\)[\s\S]*height: 160px;[\s\S]*\.rgx-results\s*\{ flex: none; height: 26rem; \}[\s\S]*\.rgx-wrap\[data-empty="true"\] \.rgx-results\s*\{ display: none; \}/.test(style), true);
 eq('v2 640 controls and results remain bounded', /@media \(max-width: 640px\)[\s\S]*\.rgx-flags label\s*\{ min-height: 44px; \}[\s\S]*\.rgx-results\s*\{ height: 24rem; \}/.test(style), true);
 eq('v2 theme ancestor selectors are global', [...style.matchAll(/^\s*([^\n{]*(?:data-theme)[^\n{]*)\{/gm)].every(m => m[1].includes(':global(')), true);
+for (const [theme, selector] of [
+  ['light', '.rgx-highlight :global(mark)'],
+  ['system dark', ':global(:root:not([data-theme="light"])) .rgx-highlight :global(mark)'],
+  ['explicit dark', ':global([data-theme="dark"]) .rgx-highlight :global(mark)']
+]) {
+  const rule = style.split('\n').map(line => line.trim()).join('\n').match(new RegExp('(?:^|\\n)' + selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]+)\\}'))?.[1] || '';
+  const colors = ['color', 'background'].map(property => rule.match(new RegExp('(?:^|;)\\s*' + property + ':\\s*(#[a-f\\d]{3}(?:[a-f\\d]{3})?)\\s*;', 'i'))?.[1]);
+  const luminances = colors.map(hex => {
+    if (!hex) return NaN;
+    const digits = hex.slice(1).length === 3 ? [...hex.slice(1)].map(c => c + c).join('') : hex.slice(1);
+    return digits.match(/../g).map(channel => {
+      const value = parseInt(channel, 16) / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, channel, i) => sum + channel * [0.2126, 0.7152, 0.0722][i], 0);
+  });
+  const ratio = (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
+  console.log('INFO mark contrast ' + theme + ': ' + colors.join(' on ') + ' = ' + ratio);
+  eq('v2 ' + theme + ' mark text contrast is at least 4.5:1', ratio >= 4.5, true);
+}
 eq('v2 original plural branch remains n greater than one', script.includes("count > 1 ? t.matchMany : t.matchOne") && script.includes("t.andMore.replace('{n}', count - 100)"), true);
 const tipKeys = ['pattern','g','i','m','s','input','highlight','matches'];
 const tips = [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=(?:\{T\.(\w+)\}|"([gims])")>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
