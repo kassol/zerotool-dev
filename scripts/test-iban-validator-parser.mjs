@@ -17,6 +17,8 @@
 
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import yaml from 'js-yaml';
 import vm from 'node:vm';
 import { parseFragment, defaultTreeAdapter } from 'parse5';
 import { loadPage } from './astro-page-harness.mjs';
@@ -85,6 +87,17 @@ for(const [name,begin,end,hash] of [
   eq(name+' byte protection',createHash('sha256').update(source.slice(a,b+(end.startsWith('/*')?end.length:0))).digest('hex'),hash);
 }
 
+const frontmatter=source.match(/^---\n([\s\S]*?)\n---/)[1];
+const LOCALES=vm.runInNewContext(frontmatter.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+const markupTemplate=source.replace(/^---[\s\S]*?---\s*/,'').split('<script')[0];
+const tipBindings=[...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+const escape=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function renderMarkup(lang){
+  const T=LOCALES[lang],about=JSON.parse(readFileSync(join(root,'src/i18n/'+lang+'.json'),'utf8'))['tool.tipAbout'];
+  return markupTemplate.replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g,(_,id,key,tip)=>'<span class="zt-tip"><button type="button" data-zt-tip="'+id+'" aria-label="'+escape(about.replace('{name}',T[key]))+'">?</button><span id="'+id+'" popover="auto">'+escape(T.tips[tip])+'</span></span>')
+    .replace(/=\{T\.(\w+)\}/g,(_,key)=>'="'+escape(T[key])+'"').replace(/\{T\.(\w+)\}/g,(_,key)=>escape(T[key]));
+}
+
 // Complete page regression. The DOM adapter tokenizes real generated HTML with parse5;
 // only clipboard settlement and timers are controlled. The real shared shortcut runs
 // before and after the complete component script. No browser or native clipboard access.
@@ -98,7 +111,7 @@ const unhandled=[];
 process.on('unhandledRejection',error=>unhandled.push(String(error)));
 function page(lang='en',order='shared-after',clipboardMode='normal'){
   const key='iban',slugs={iban:'iban-validator-parser'},paths={iban:'src/components/tools/IbanValidatorParserTool.astro'};
-  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[];
+  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[];
   let timerId=0,clock=0,doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
   const matchOne = (el, selector) => {
@@ -180,13 +193,13 @@ function page(lang='en',order='shared-after',clipboardMode='normal'){
   doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
   doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
-  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+  widget.innerHTML=renderMarkup(lang);
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
   const persist={clear(slug){persistCalls.push(['clear',slug]);},save(...args){persistCalls.push(['save',...args]);},load(){return null;}};
   const globals={document:doc,
-    _slug:slugs[key],ztPersist:persist,trackTool(){},
+    _slug:slugs[key],ztPersist:persist,trackTool(...args){tracks.push(args);},t:Object.fromEntries(Object.entries(LOCALES[lang]).filter(([key])=>key!=='tips')),
     navigator:clipboardMode==='absent'?{}:{clipboard:{writeText(value){if(clipboardMode==='throw')throw Error('Controlled clipboard throw');const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
   };
@@ -194,7 +207,7 @@ function page(lang='en',order='shared-after',clipboardMode='normal'){
   const actual=loadPage(paths[key],{lang,globals});
   if(order==='shared-after')actual.run(shortcut);
   const get=id=>{const el=doc.getElementById(id);must(el,key+' ID '+id);return el;};
-  return{doc,get,widget,clipboard,timers,persistCalls,execCalls,
+  return{doc,get,widget,clipboard,timers,persistCalls,execCalls,tracks,
     input(id,value){get(id).value=value;get(id).dispatch('input');},
     ctrlL(el=get('ivp-input'),key='l',mod='ctrlKey'){el.focus();const event=new EventStub('keydown',{bubbles:true,key,[mod]:true});el.dispatchEvent(event);return event;},
     tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
@@ -212,7 +225,7 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
   const label=lang+'/'+order;
   let p=prepared(lang,order);
   eq(label+' live GB fields and formats',snapshot(p).copies.map(x=>x[0]),['WEST','123456','98765432',GB,'GB82WEST12345698765432','WEST12345698765432']);
-  const original=snapshot(p);p.get('ivp-validate').click();eq(label+' manual Validate preserves result',snapshot(p),original);
+  const original=snapshot(p),trackCount=p.tracks.length;p.get('ivp-input').dispatch('keydown',{key:'Enter',ctrlKey:true});eq(label+' no primary action on Ctrl+Enter preserves result',snapshot(p),original);eq(label+' no duplicate automatic validation on Ctrl+Enter',p.tracks.length,trackCount);
   for(const btn of p.get('ivp-results').querySelectorAll('.ivp-copy')){
     btn.click();eq(label+' copies complete field',p.clipboard.at(-1).value,btn.getAttribute('data-copy'));
     p.clipboard.at(-1).resolve();await settle();eq(label+' current success',btn.textContent,COPIED[lang]);
@@ -257,5 +270,135 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
 }
 await settle();eq('no unhandled clipboard rejections',unhandled,[]);
 console.log(`page lifecycle: ${passes-beforePagePasses} passed, ${failures-beforePageFailures} failed`);
+
+// ---------- v2 page layout ----------
+const beforeV2Passes=passes,beforeV2Failures=failures;
+const frozen={
+  "oldKeys": [
+    "inputLabel",
+    "placeholder",
+    "loadExample",
+    "clear",
+    "copy",
+    "copied",
+    "copyFailed",
+    "statusEmpty",
+    "okValid",
+    "okBbanUnavailable",
+    "errFormat",
+    "errCountry",
+    "errLength",
+    "errBbanType",
+    "errChecksum",
+    "errLong",
+    "sectionStatus",
+    "sectionBban",
+    "sectionFormats",
+    "rowResult",
+    "rowCountry",
+    "rowCheckDigits",
+    "rowLength",
+    "rowPrint",
+    "rowMachine",
+    "rowBbanOnly",
+    "tagValid",
+    "tagInvalid",
+    "fieldBank",
+    "fieldBranch",
+    "fieldAccount",
+    "fieldCheck",
+    "fieldCheck2",
+    "fieldType",
+    "fieldHolder",
+    "fieldCurrency",
+    "fieldId",
+    "fieldKennitala",
+    "fieldReserved",
+    "fieldOwner",
+    "lengthExpected",
+    "typeN",
+    "typeA",
+    "typeC"
+  ],
+  "oldStringHashes": {
+    "en": "24d3da2a9e6ea19e68f27995efa80e467c6161715742f9ead6d270f08bee3c5d",
+    "zh": "bdb652488731d7a7d27dc85bd4b9434e5621be35b051cfd38565fb780fd0b3b9",
+    "ja": "7794ca90878f1cd607053bd3c224b5c91115e5ff75337a4f12c0d9f1c088a9bf",
+    "ko": "cac1b8b023b9f8adc5bc59616f04bef9c5d3d0713a464ebb9c7f33a89798c351"
+  },
+  "contentHashes": {
+    "en": "271a6ca9e3b9b0a4f0a2e48ab5d0485e7f8723fc265f2d8a74f0fe5db9742d42",
+    "zh": "e3953f0e0c4a2046811b92adb576f733fc371e95c78f36f994526faebd1034b5",
+    "ja": "713c5d169e5c0edb15e08a3e4b55053c90b8ee6933e4e8006286fa8f8998da1e",
+    "ko": "d6b6867f6fc9d85098a27d55122b3a66c125f76396952abded6cb70357503d21"
+  },
+  "scriptHash": "9940a157c7a4c0e874de4a244e1c6fb2aea904f818e6ba5a37ffeb32f5191417"
+};
+
+const hash=value=>createHash('sha256').update(value).digest('hex');
+const require=createRequire(join(root,'package.json'));
+const astroRequire=createRequire(require.resolve('astro/package.json'));
+const compiled=await astroRequire('@astrojs/compiler').transform(source,{filename:join(root,'src/components/tools/IbanValidatorParserTool.astro')});
+check('v2 Astro compiles',!compiled.diagnostics.some(d=>d.severity===1));
+const css=compiled.css.join('\n');
+let compiledError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){compiledError=String(e);}
+eq('v2 compiled module parses',compiledError,'');
+const {compile:compileMdx}=await import('@mdx-js/mdx');
+const pageScript=source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
+check('v2 tool root is direct flex column',/^<div class="ivp-wrap">/.test(markupTemplate)&&/\.ivp-wrap\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column[^}]*min-height:\s*0/.test(css));
+check('v2 no runtime i18n',!/data-i18n|document\.documentElement\.lang/.test(source));
+check('v2 client receives only locale minus tips',/define:vars=\{\{ t: CLIENT_T \}\}/.test(source)&&!/STRINGS|TIPS|tips/.test(pageScript));
+check('v2 removed redundant Validate and local Enter',!source.includes('ivp-validate')&&!/validate:\s*'/.test(frontmatter)&&!pageScript.includes("e.key === 'Enter'"));
+check('v2 actions/status/input/result order',markupTemplate.indexOf('class="ivp-actions"')<markupTemplate.indexOf('id="ivp-status"')&&markupTemplate.indexOf('id="ivp-status"')<markupTemplate.indexOf('id="ivp-input"')&&markupTemplate.indexOf('id="ivp-input"')<markupTemplate.indexOf('class="ivp-output"'));
+check('v2 status has fixed height and internal overflow',/#ivp-status\s*\{[^}]*flex:\s*none[^}]*height:\s*2.8em[^}]*overflow:\s*auto/.test(css));
+check('v2 desktop empty input region fills first screen',/\.ivp-wrap:has\(#ivp-results\[hidden\]\) \.ivp-input-section\s*\{[^}]*flex:\s*1 1 0/.test(css));
+check('v2 result zero basis and internal scroll',/\.ivp-output\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0/.test(css)&&/\.ivp-results\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
+check('v2 compiled hidden results override display grid',/\.ivp-results\[hidden\]\s*\{\s*display:\s*none/.test(css));
+check('v2 mobile empty result hidden and bounded populated output',/@media\s*\(max-width:\s*860px\)/.test(css)&&/\.ivp-output\s*\{\s*flex:\s*none;\s*height:\s*27rem/.test(css)&&/\.ivp-output:has\(#ivp-results\[hidden\]\)\s*\{\s*display:\s*none/.test(css)&&/@media\s*\(max-width:\s*640px\)/.test(css)&&/\.ivp-output\s*\{\s*height:\s*24rem/.test(css));
+check('v2 main input and actions minimum44px',/#ivp-clear,\s*\.ivp-input,\s*\.ivp-example-summary\s*\{\s*min-height:\s*44px/.test(css));
+check('v2 copy feedback wraps inside bounded results',/\.ivp-copy\s*\{[^}]*max-width:\s*42%[^}]*min-height:\s*44px[^}]*white-space:\s*normal/.test(css));
+eq('v2 exact five tips',tipBindings.map(m=>m[1]),['ivp-tip-examples','ivp-tip-input','ivp-tip-status','ivp-tip-bban','ivp-tip-formats']);
+const localeKeys=Object.keys(LOCALES.en).sort();
+const placeholders=value=>(String(value).match(/\{\w+\}/g)||[]).sort();
+for(const lang of ['en','zh','ja','ko']){
+  const T=LOCALES[lang],{tips,...client}=T;
+  eq('v2 '+lang+' same locale keys',Object.keys(T).sort(),localeKeys);
+  eq('v2 '+lang+' original retained strings unchanged',hash(JSON.stringify(Object.fromEntries(frozen.oldKeys.map(k=>[k,T[k]])))),frozen.oldStringHashes[lang]);
+  eq('v2 '+lang+' five tip keys',Object.keys(tips),['input','examples','status','bban','formats']);
+  for(const key of Object.keys(tips)){
+    check('v2 '+lang+' nonempty plain tip '+key,typeof tips[key]==='string'&&tips[key].trim()&&!/[<>\n]|https?:/.test(tips[key]));
+    eq('v2 '+lang+' tip placeholders '+key,placeholders(tips[key]),placeholders(LOCALES.en.tips[key]));
+  }
+  check('v2 '+lang+' tips absent serialized client',!('tips' in client)&&Object.values(tips).every(text=>!JSON.stringify(client).includes(text)));
+  const p=page(lang),localAbout=JSON.parse(readFileSync(join(root,'src/i18n/'+lang+'.json'),'utf8'))['tool.tipAbout'];
+  eq('v2 '+lang+' SSR input label',p.doc.querySelector('label').textContent,T.inputLabel);
+  eq('v2 '+lang+' SSR Clear',p.get('ivp-clear').textContent,T.clear);
+  eq('v2 '+lang+' result named keyboard region',[p.get('ivp-results').getAttribute('tabindex'),p.get('ivp-results').getAttribute('role'),p.get('ivp-results').getAttribute('aria-label')],['0','region',T.resultsLabel]);
+  eq('v2 '+lang+' privacy directly visible',p.doc.querySelector('.ivp-privacy').textContent,T.privacy);
+  for(const [,id,aboutKey,key] of tipBindings){
+    eq('v2 '+lang+' tip body '+key,p.get(id).textContent,tips[key]);
+    eq('v2 '+lang+' tip about '+key,p.doc.querySelector('[data-zt-tip="'+id+'"]').getAttribute('aria-label'),localAbout.replace('{name}',T[aboutKey]));
+  }
+  eq('v2 '+lang+' retained eight actual examples',p.doc.querySelectorAll('.ivp-example-item').length,8);
+  for(const example of p.doc.querySelectorAll('.ivp-example-item')){example.click();check('v2 '+lang+' published sample valid',p.get('ivp-status').className.includes('success'));}
+  for(const order of ['shared-before','shared-after']){
+    const q=prepared(lang,order);q.ctrlL(q.doc.querySelector('[data-zt-tip="ivp-tip-bban"]'));
+    eq('v2 '+lang+'/'+order+' result tip CtrlL retains shared focus',[q.doc.activeElement.id,q.get('ivp-results').hidden,q.get('ivp-status').textContent,q.persistCalls],['ivp-input',true,'',[['clear','iban-validator-parser']]]);
+  }
+  const content=readFileSync(join(root,'src/content/tools/iban-validator-parser/'+lang+'.mdx'),'utf8');
+  const meta=yaml.load(content.match(/^---\n([\s\S]*?)\n---/)[1]);
+  eq('v2 '+lang+' exact five usage steps',meta.steps.length,5);
+  check('v2 '+lang+' bounded plain steps',meta.steps.every(x=>typeof x==='string'&&x.length<=280&&!/[<>\n]/.test(x))&&meta.steps.join('').length<=1200);
+  check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
+  check('v2 '+lang+' steps retain current example/formats labels',meta.steps.some(x=>x.includes(T.loadExample))&&meta.steps.some(x=>x.includes(T.sectionFormats)));
+  eq('v2 '+lang+' all non-Usage content exact',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),frozen.contentHashes[lang]);
+  let error='';try{await compileMdx(content.replace(/^---[\s\S]*?---\s*/,''));}catch(e){error=String(e);}
+  eq('v2 '+lang+' MDX compiles',error,'');
+}
+const protectedTail=source.slice(source.indexOf('      // ── SWIFT IBAN Registry'),source.indexOf('  </script>')).replace("if (document.querySelector('.ivp-output').contains(document.activeElement)) inputEl.focus();","if (resultsEl.contains(document.activeElement)) inputEl.focus();");
+eq('v2 script exact except deleted automatic button/Enter and output-focus adaptation',hash(protectedTail),frozen.scriptHash);
+check('v2 registered analyze',/'iban-validator-parser':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
+console.log(`v2 page layout: ${passes-beforeV2Passes} passed, ${failures-beforeV2Failures} failed`);
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

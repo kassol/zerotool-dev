@@ -1,163 +1,193 @@
 ---
 // IbanValidatorParserTool — IBAN (ISO 13616) validator + BBAN parser.
 // 100% client-side: mod-97 over BigInt + an inlined SWIFT IBAN Registry snapshot.
+import Toggletip from '../Toggletip.astro';
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
+// strings:start
+const STRINGS = {
+  en: {
+    resultsLabel: "IBAN details",
+    emptyResult: "Country, BBAN fields and copyable formats will appear here.",
+    privacy: "Your IBAN stays in this browser. A valid format and checksum do not confirm that an account exists.",
+    tips: {
+      input: "Paste one IBAN. Validation runs as you type. Letters are uppercased; characters outside A–Z and 0–9, including spaces and hyphens, are removed.",
+      examples: "Load Example fills the input with one of eight published sample IBANs and validates it immediately.",
+      status: "Checks the supported country, country-specific length and mod-97 checksum. The result shows the country, check digits and expected length.",
+      bban: "BBAN Components splits bank, branch, account and other fields using the country layout. National check digits are displayed without separate national-checksum validation.",
+      formats: "Copy print format with spaces every four characters, machine format without spaces, or the BBAN alone. Individual BBAN fields can also be copied.",
+    },
+    inputLabel: 'Enter an IBAN',
+    placeholder: 'GB82 WEST 1234 5698 7654 32',
+    loadExample: 'Load Example', clear: 'Clear',
+    copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please try again.',
+    statusEmpty: '',
+    okValid: 'Valid IBAN.',
+    okBbanUnavailable: 'Checksum valid. BBAN field breakdown not provided for this country.',
+    errFormat: 'IBAN must start with 2 letters, 2 digits, then alphanumerics only.',
+    errCountry: 'Unknown country code "{cc}". ZeroTool covers the SWIFT IBAN Registry entries only.',
+    errLength: 'Wrong length for {country}: expected {exp}, got {got}.',
+    errBbanType: 'BBAN character type mismatch at position {pos} (expected {type}).',
+    errChecksum: 'Checksum failed (mod 97 ≠ 1). Check digits or account body are wrong.',
+    errLong: 'Input too long — paste a single IBAN.',
+    sectionStatus: 'Status', sectionBban: 'BBAN Components', sectionFormats: 'Formats',
+    rowResult: 'Result', rowCountry: 'Country', rowCheckDigits: 'Check Digits',
+    rowLength: 'Length', rowPrint: 'Print format', rowMachine: 'Machine format', rowBbanOnly: 'BBAN only',
+    tagValid: 'Valid', tagInvalid: 'Invalid',
+    fieldBank: 'Bank Code', fieldBranch: 'Branch Code', fieldAccount: 'Account Number',
+    fieldCheck: 'National Check Digit', fieldCheck2: 'Second Check Digit',
+    fieldType: 'Account Type', fieldHolder: 'Holder Indicator',
+    fieldCurrency: 'Currency Code', fieldId: 'Identifier', fieldKennitala: 'Kennitala',
+    fieldReserved: 'Reserved', fieldOwner: 'Owner Identifier',
+    lengthExpected: '{got} ({exp} for {country})',
+    typeN: 'digits 0-9', typeA: 'letters A-Z', typeC: 'alphanumeric A-Z 0-9',
+  },
+  zh: {
+    resultsLabel: "IBAN 详情",
+    emptyResult: "这里将显示国家、BBAN 字段及可复制的格式。",
+    privacy: "IBAN 仅在当前浏览器处理。格式和校验和有效不代表账户真实存在。",
+    tips: {
+      input: "粘贴一个 IBAN，输入时自动校验。字母转为大写；A–Z 和 0–9 以外的字符会被移除，包括空格和连字符。",
+      examples: "加载示例可填入八个公开 IBAN 示例之一，并立即校验。",
+      status: "检查支持的国家、该国家的长度与 mod-97 校验和。结果显示国家、校验位与期望长度。",
+      bban: "BBAN 字段按国家结构拆出银行、分行、账号等字段。国家级校验位仅展示，不单独校验国内校验和。",
+      formats: "可复制每四位空格分组的打印格式、无空格的机读格式，或仅 BBAN。BBAN 中的单个字段也可复制。",
+    },
+    inputLabel: '输入 IBAN',
+    placeholder: 'GB82 WEST 1234 5698 7654 32',
+    loadExample: '加载示例', clear: '清空',
+    copy: '复制', copied: '已复制！', copyFailed: '复制失败，请重试。',
+    statusEmpty: '',
+    okValid: 'IBAN 有效。',
+    okBbanUnavailable: '校验通过，但该国家暂未提供 BBAN 字段拆分。',
+    errFormat: 'IBAN 必须以 2 个字母 + 2 个数字开头，其余位仅允许字母数字。',
+    errCountry: '未识别的国家代码 "{cc}"。本工具仅覆盖 SWIFT IBAN Registry 收录的国家。',
+    errLength: '{country} 的 IBAN 长度不正确：期望 {exp}，实际 {got}。',
+    errBbanType: '第 {pos} 位的 BBAN 字符类型不符（应为 {type}）。',
+    errChecksum: '校验失败（mod 97 ≠ 1），可能是校验位或账号正文有误。',
+    errLong: '输入过长，请粘贴单个 IBAN。',
+    sectionStatus: '校验结果', sectionBban: 'BBAN 字段', sectionFormats: '常用格式',
+    rowResult: '结果', rowCountry: '国家', rowCheckDigits: '校验位',
+    rowLength: '长度', rowPrint: '打印格式', rowMachine: '机读格式', rowBbanOnly: '仅 BBAN',
+    tagValid: '有效', tagInvalid: '无效',
+    fieldBank: '银行代码', fieldBranch: '分行代码', fieldAccount: '账号',
+    fieldCheck: '国家级校验位', fieldCheck2: '附加校验位',
+    fieldType: '账户类型', fieldHolder: '持有人标识',
+    fieldCurrency: '币种代码', fieldId: '标识符', fieldKennitala: 'Kennitala 标识',
+    fieldReserved: '保留位', fieldOwner: '所有者标识',
+    lengthExpected: '{got}（{country} 标准长度 {exp}）',
+    typeN: '数字 0-9', typeA: '字母 A-Z', typeC: '字母与数字 A-Z 0-9',
+  },
+  ja: {
+    resultsLabel: "IBAN の詳細",
+    emptyResult: "国、BBAN フィールド、コピー用の形式がここに表示されます。",
+    privacy: "IBAN はこのブラウザ内で処理されます。形式とチェックサムが有効でも、口座の実在は確認できません。",
+    tips: {
+      input: "IBAN を1件貼り付けると、入力中に自動検証します。英字を大文字にし、空白やハイフンを含む A–Z と 0–9 以外の文字を除去します。",
+      examples: "サンプル読込で8件の公開 IBAN サンプルから1件を入力し、すぐに検証します。",
+      status: "対応する国、国別の長さ、mod-97 チェックサムを検証します。国、チェックデジット、期待する長さが表示されます。",
+      bban: "国別の構造に従って銀行、支店、口座などの BBAN フィールドを分解します。国内チェックデジットは表示のみで、国内の検証アルゴリズムは実行しません。",
+      formats: "4文字ごとに空白を入れた印刷形式、空白なしの機械可読形式、BBAN のみをコピーできます。個々の BBAN フィールドもコピーできます。",
+    },
+    inputLabel: 'IBAN を入力',
+    placeholder: 'GB82 WEST 1234 5698 7654 32',
+    loadExample: 'サンプル読込', clear: 'クリア',
+    copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。再試行してください。',
+    statusEmpty: '',
+    okValid: 'IBAN は有効です。',
+    okBbanUnavailable: 'チェックサム有効。当該国の BBAN フィールド分解は未対応です。',
+    errFormat: 'IBAN は 2 文字のアルファベット + 2 桁の数字で始まり、以降は英数字のみ許可されます。',
+    errCountry: '未対応の国コードです: "{cc}"。本ツールは SWIFT IBAN Registry 掲載国のみ対応。',
+    errLength: '{country} の IBAN 長さが正しくありません: 期待 {exp}, 実際 {got}。',
+    errBbanType: '位置 {pos} の BBAN 文字種が不一致 (必要: {type})。',
+    errChecksum: 'チェックサム失敗 (mod 97 ≠ 1)。チェックデジットまたは口座本文に誤りがあります。',
+    errLong: '入力が長すぎます。IBAN を 1 件のみ貼り付けてください。',
+    sectionStatus: '検証結果', sectionBban: 'BBAN フィールド', sectionFormats: 'フォーマット',
+    rowResult: '結果', rowCountry: '国', rowCheckDigits: 'チェックデジット',
+    rowLength: '長さ', rowPrint: '印刷形式', rowMachine: '機械可読形式', rowBbanOnly: 'BBAN のみ',
+    tagValid: '有効', tagInvalid: '無効',
+    fieldBank: '銀行コード', fieldBranch: '支店コード', fieldAccount: '口座番号',
+    fieldCheck: '国内チェックデジット', fieldCheck2: '副チェックデジット',
+    fieldType: '口座種別', fieldHolder: '保有者識別',
+    fieldCurrency: '通貨コード', fieldId: '識別子', fieldKennitala: 'Kennitala',
+    fieldReserved: '予約', fieldOwner: '所有者識別',
+    lengthExpected: '{got}（{country} 標準: {exp}）',
+    typeN: '数字 0-9', typeA: '英字 A-Z', typeC: '英数字 A-Z 0-9',
+  },
+  ko: {
+    resultsLabel: "IBAN 상세",
+    emptyResult: "국가, BBAN 필드와 복사할 수 있는 형식이 여기에 표시됩니다.",
+    privacy: "IBAN은 이 브라우저 안에서 처리됩니다. 형식과 체크섬이 유효해도 계좌의 존재를 확인할 수는 없습니다.",
+    tips: {
+      input: "IBAN 하나를 붙여 넣으면 입력 중 자동 검증합니다. 영문자를 대문자로 바꾸고 공백과 하이픈을 포함해 A–Z와 0–9 이외의 문자를 제거합니다.",
+      examples: "예시 불러오기는 공개된 IBAN 예시 8개 중 하나를 입력하고 즉시 검증합니다.",
+      status: "지원 국가, 국가별 길이와 mod-97 체크섬을 검사합니다. 결과에 국가, 체크 디지트와 기대 길이를 표시합니다.",
+      bban: "국가별 구조에 따라 은행, 지점, 계좌 등의 BBAN 필드를 나눕니다. 국가 체크 디지트는 표시하며 별도의 국내 체크섬 검증은 하지 않습니다.",
+      formats: "네 글자마다 공백이 있는 인쇄 형식, 공백 없는 기계 판독 형식 또는 BBAN만 복사합니다. 개별 BBAN 필드도 복사할 수 있습니다.",
+    },
+    inputLabel: 'IBAN 입력',
+    placeholder: 'GB82 WEST 1234 5698 7654 32',
+    loadExample: '예시 불러오기', clear: '지우기',
+    copy: '복사', copied: '복사됨!', copyFailed: '복사에 실패했습니다. 다시 시도해 주세요.',
+    statusEmpty: '',
+    okValid: '유효한 IBAN입니다.',
+    okBbanUnavailable: '체크섬은 유효합니다. 해당 국가의 BBAN 필드 분해는 지원되지 않습니다.',
+    errFormat: 'IBAN은 2자 알파벳 + 2자리 숫자로 시작해야 하며 이후는 영숫자만 허용됩니다.',
+    errCountry: '알 수 없는 국가 코드 "{cc}". 본 도구는 SWIFT IBAN Registry 등재 국가만 다룹니다.',
+    errLength: '{country} IBAN 길이 오류: 기대 {exp}, 실제 {got}.',
+    errBbanType: '위치 {pos}의 BBAN 문자 형식 불일치(필요: {type}).',
+    errChecksum: '체크섬 실패 (mod 97 ≠ 1). 체크 디지트 또는 계좌 본문이 잘못되었을 수 있습니다.',
+    errLong: '입력이 너무 깁니다. 단일 IBAN을 붙여넣어 주세요.',
+    sectionStatus: '검증 결과', sectionBban: 'BBAN 필드', sectionFormats: '형식',
+    rowResult: '결과', rowCountry: '국가', rowCheckDigits: '체크 디지트',
+    rowLength: '길이', rowPrint: '인쇄 형식', rowMachine: '기계 판독 형식', rowBbanOnly: 'BBAN만',
+    tagValid: '유효', tagInvalid: '무효',
+    fieldBank: '은행 코드', fieldBranch: '지점 코드', fieldAccount: '계좌 번호',
+    fieldCheck: '국가 체크 디지트', fieldCheck2: '보조 체크 디지트',
+    fieldType: '계좌 유형', fieldHolder: '보유자 표시',
+    fieldCurrency: '통화 코드', fieldId: '식별자', fieldKennitala: 'Kennitala',
+    fieldReserved: '예약', fieldOwner: '소유자 식별',
+    lengthExpected: '{got} ({country} 표준 {exp})',
+    typeN: '숫자 0-9', typeA: '문자 A-Z', typeC: '영숫자 A-Z 0-9',
+  }
+};
+// strings:end
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
 
-<div>
-  <div class="ivp-wrap">
-    <div class="ivp-input-section">
-      <label for="ivp-input" class="tool-label">
-        <span data-i18n="inputLabel">Enter an IBAN</span>
-      </label>
-      <input
-        id="ivp-input"
-        class="tool-input ivp-input"
-        type="text"
-        placeholder="GB82 WEST 1234 5698 7654 32"
-        data-i18n-placeholder="placeholder"
-        spellcheck="false"
-        autocomplete="off"
-        autocapitalize="characters"
-        autocorrect="off"
-        maxlength="60"
-      />
-    </div>
-
-    <div class="ivp-actions">
-      <button id="ivp-validate" class="btn-primary" type="button" data-i18n="validate">Validate</button>
+<div class="ivp-wrap">
+  <div class="ivp-actions">
+    <div class="ivp-heading">
       <details class="ivp-example-wrap">
-        <summary class="btn-ghost ivp-example-summary" data-i18n="loadExample">Load Example</summary>
+        <summary class="btn-ghost ivp-example-summary">{T.loadExample}</summary>
         <div class="ivp-example-list" role="listbox"></div>
       </details>
-      <button id="ivp-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+      <Toggletip id="ivp-tip-examples" lang={lang} about={T.loadExample}>{TIPS.examples}</Toggletip>
     </div>
-
-    <div id="ivp-status" class="tool-status none" aria-live="polite"></div>
-
-    <div id="ivp-results" class="ivp-results" hidden></div>
+    <button id="ivp-clear" class="btn-ghost" type="button">{T.clear}</button>
   </div>
+  <div id="ivp-status" class="tool-status none" role="status" aria-live="polite" tabindex="0"></div>
+  <div class="ivp-input-section">
+    <div class="ivp-heading">
+      <label for="ivp-input" class="tool-label">{T.inputLabel}</label>
+      <Toggletip id="ivp-tip-input" lang={lang} about={T.inputLabel}>{TIPS.input}</Toggletip>
+    </div>
+    <input id="ivp-input" class="tool-input ivp-input" type="text" placeholder={T.placeholder} spellcheck="false" autocomplete="off" autocapitalize="characters" autocorrect="off" maxlength="60" />
+  </div>
+  <div class="ivp-output">
+    <p class="ivp-empty">{T.emptyResult}</p>
+    <div class="ivp-result-head">
+      <div class="ivp-heading"><span>{T.sectionStatus}</span><Toggletip id="ivp-tip-status" lang={lang} about={T.sectionStatus}>{TIPS.status}</Toggletip></div>
+      <div class="ivp-heading"><span>{T.sectionBban}</span><Toggletip id="ivp-tip-bban" lang={lang} about={T.sectionBban}>{TIPS.bban}</Toggletip></div>
+      <div class="ivp-heading"><span>{T.sectionFormats}</span><Toggletip id="ivp-tip-formats" lang={lang} about={T.sectionFormats}>{TIPS.formats}</Toggletip></div>
+    </div>
+    <div id="ivp-results" class="ivp-results" hidden tabindex="0" role="region" aria-label={T.resultsLabel}></div>
+  </div>
+  <p class="ivp-privacy">{T.privacy}</p>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          inputLabel: 'Enter an IBAN',
-          placeholder: 'GB82 WEST 1234 5698 7654 32',
-          validate: 'Validate', loadExample: 'Load Example', clear: 'Clear',
-          copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please try again.',
-          statusEmpty: '',
-          okValid: 'Valid IBAN.',
-          okBbanUnavailable: 'Checksum valid. BBAN field breakdown not provided for this country.',
-          errFormat: 'IBAN must start with 2 letters, 2 digits, then alphanumerics only.',
-          errCountry: 'Unknown country code "{cc}". ZeroTool covers the SWIFT IBAN Registry entries only.',
-          errLength: 'Wrong length for {country}: expected {exp}, got {got}.',
-          errBbanType: 'BBAN character type mismatch at position {pos} (expected {type}).',
-          errChecksum: 'Checksum failed (mod 97 ≠ 1). Check digits or account body are wrong.',
-          errLong: 'Input too long — paste a single IBAN.',
-          sectionStatus: 'Status', sectionBban: 'BBAN Components', sectionFormats: 'Formats',
-          rowResult: 'Result', rowCountry: 'Country', rowCheckDigits: 'Check Digits',
-          rowLength: 'Length', rowPrint: 'Print format', rowMachine: 'Machine format', rowBbanOnly: 'BBAN only',
-          tagValid: 'Valid', tagInvalid: 'Invalid',
-          fieldBank: 'Bank Code', fieldBranch: 'Branch Code', fieldAccount: 'Account Number',
-          fieldCheck: 'National Check Digit', fieldCheck2: 'Second Check Digit',
-          fieldType: 'Account Type', fieldHolder: 'Holder Indicator',
-          fieldCurrency: 'Currency Code', fieldId: 'Identifier', fieldKennitala: 'Kennitala',
-          fieldReserved: 'Reserved', fieldOwner: 'Owner Identifier',
-          lengthExpected: '{got} ({exp} for {country})',
-          typeN: 'digits 0-9', typeA: 'letters A-Z', typeC: 'alphanumeric A-Z 0-9',
-        },
-        zh: {
-          inputLabel: '输入 IBAN',
-          placeholder: 'GB82 WEST 1234 5698 7654 32',
-          validate: '校验', loadExample: '加载示例', clear: '清空',
-          copy: '复制', copied: '已复制！', copyFailed: '复制失败，请重试。',
-          statusEmpty: '',
-          okValid: 'IBAN 有效。',
-          okBbanUnavailable: '校验通过，但该国家暂未提供 BBAN 字段拆分。',
-          errFormat: 'IBAN 必须以 2 个字母 + 2 个数字开头，其余位仅允许字母数字。',
-          errCountry: '未识别的国家代码 "{cc}"。本工具仅覆盖 SWIFT IBAN Registry 收录的国家。',
-          errLength: '{country} 的 IBAN 长度不正确：期望 {exp}，实际 {got}。',
-          errBbanType: '第 {pos} 位的 BBAN 字符类型不符（应为 {type}）。',
-          errChecksum: '校验失败（mod 97 ≠ 1），可能是校验位或账号正文有误。',
-          errLong: '输入过长，请粘贴单个 IBAN。',
-          sectionStatus: '校验结果', sectionBban: 'BBAN 字段', sectionFormats: '常用格式',
-          rowResult: '结果', rowCountry: '国家', rowCheckDigits: '校验位',
-          rowLength: '长度', rowPrint: '打印格式', rowMachine: '机读格式', rowBbanOnly: '仅 BBAN',
-          tagValid: '有效', tagInvalid: '无效',
-          fieldBank: '银行代码', fieldBranch: '分行代码', fieldAccount: '账号',
-          fieldCheck: '国家级校验位', fieldCheck2: '附加校验位',
-          fieldType: '账户类型', fieldHolder: '持有人标识',
-          fieldCurrency: '币种代码', fieldId: '标识符', fieldKennitala: 'Kennitala 标识',
-          fieldReserved: '保留位', fieldOwner: '所有者标识',
-          lengthExpected: '{got}（{country} 标准长度 {exp}）',
-          typeN: '数字 0-9', typeA: '字母 A-Z', typeC: '字母与数字 A-Z 0-9',
-        },
-        ja: {
-          inputLabel: 'IBAN を入力',
-          placeholder: 'GB82 WEST 1234 5698 7654 32',
-          validate: '検証', loadExample: 'サンプル読込', clear: 'クリア',
-          copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。再試行してください。',
-          statusEmpty: '',
-          okValid: 'IBAN は有効です。',
-          okBbanUnavailable: 'チェックサム有効。当該国の BBAN フィールド分解は未対応です。',
-          errFormat: 'IBAN は 2 文字のアルファベット + 2 桁の数字で始まり、以降は英数字のみ許可されます。',
-          errCountry: '未対応の国コードです: "{cc}"。本ツールは SWIFT IBAN Registry 掲載国のみ対応。',
-          errLength: '{country} の IBAN 長さが正しくありません: 期待 {exp}, 実際 {got}。',
-          errBbanType: '位置 {pos} の BBAN 文字種が不一致 (必要: {type})。',
-          errChecksum: 'チェックサム失敗 (mod 97 ≠ 1)。チェックデジットまたは口座本文に誤りがあります。',
-          errLong: '入力が長すぎます。IBAN を 1 件のみ貼り付けてください。',
-          sectionStatus: '検証結果', sectionBban: 'BBAN フィールド', sectionFormats: 'フォーマット',
-          rowResult: '結果', rowCountry: '国', rowCheckDigits: 'チェックデジット',
-          rowLength: '長さ', rowPrint: '印刷形式', rowMachine: '機械可読形式', rowBbanOnly: 'BBAN のみ',
-          tagValid: '有効', tagInvalid: '無効',
-          fieldBank: '銀行コード', fieldBranch: '支店コード', fieldAccount: '口座番号',
-          fieldCheck: '国内チェックデジット', fieldCheck2: '副チェックデジット',
-          fieldType: '口座種別', fieldHolder: '保有者識別',
-          fieldCurrency: '通貨コード', fieldId: '識別子', fieldKennitala: 'Kennitala',
-          fieldReserved: '予約', fieldOwner: '所有者識別',
-          lengthExpected: '{got}（{country} 標準: {exp}）',
-          typeN: '数字 0-9', typeA: '英字 A-Z', typeC: '英数字 A-Z 0-9',
-        },
-        ko: {
-          inputLabel: 'IBAN 입력',
-          placeholder: 'GB82 WEST 1234 5698 7654 32',
-          validate: '검증', loadExample: '예시 불러오기', clear: '지우기',
-          copy: '복사', copied: '복사됨!', copyFailed: '복사에 실패했습니다. 다시 시도해 주세요.',
-          statusEmpty: '',
-          okValid: '유효한 IBAN입니다.',
-          okBbanUnavailable: '체크섬은 유효합니다. 해당 국가의 BBAN 필드 분해는 지원되지 않습니다.',
-          errFormat: 'IBAN은 2자 알파벳 + 2자리 숫자로 시작해야 하며 이후는 영숫자만 허용됩니다.',
-          errCountry: '알 수 없는 국가 코드 "{cc}". 본 도구는 SWIFT IBAN Registry 등재 국가만 다룹니다.',
-          errLength: '{country} IBAN 길이 오류: 기대 {exp}, 실제 {got}.',
-          errBbanType: '위치 {pos}의 BBAN 문자 형식 불일치(필요: {type}).',
-          errChecksum: '체크섬 실패 (mod 97 ≠ 1). 체크 디지트 또는 계좌 본문이 잘못되었을 수 있습니다.',
-          errLong: '입력이 너무 깁니다. 단일 IBAN을 붙여넣어 주세요.',
-          sectionStatus: '검증 결과', sectionBban: 'BBAN 필드', sectionFormats: '형식',
-          rowResult: '결과', rowCountry: '국가', rowCheckDigits: '체크 디지트',
-          rowLength: '길이', rowPrint: '인쇄 형식', rowMachine: '기계 판독 형식', rowBbanOnly: 'BBAN만',
-          tagValid: '유효', tagInvalid: '무효',
-          fieldBank: '은행 코드', fieldBranch: '지점 코드', fieldAccount: '계좌 번호',
-          fieldCheck: '국가 체크 디지트', fieldCheck2: '보조 체크 디지트',
-          fieldType: '계좌 유형', fieldHolder: '보유자 표시',
-          fieldCurrency: '통화 코드', fieldId: '식별자', fieldKennitala: 'Kennitala',
-          fieldReserved: '예약', fieldOwner: '소유자 식별',
-          lengthExpected: '{got} ({country} 표준 {exp})',
-          typeN: '숫자 0-9', typeA: '문자 A-Z', typeC: '영숫자 A-Z 0-9',
-        }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.ivp-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('.ivp-wrap [data-i18n-placeholder]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-placeholder'); if (t[key]) el.setAttribute('placeholder', t[key]);
-      });
-
       // ── SWIFT IBAN Registry snapshot (March 2024). Length is authoritative for
       //    checksum validation; field breakdown follows the published BBAN structure.
       //    Field roles: bank, branch, account, check (national), check2, type,
@@ -475,7 +505,6 @@ const { lang = 'en' } = Astro.props;
       var inputEl = document.getElementById('ivp-input');
       var statusEl = document.getElementById('ivp-status');
       var resultsEl = document.getElementById('ivp-results');
-      var btnValidate = document.getElementById('ivp-validate');
       var btnClear = document.getElementById('ivp-clear');
       var exampleWrap = document.querySelector('.ivp-example-wrap');
       var exampleList = document.querySelector('.ivp-example-list');
@@ -568,14 +597,13 @@ const { lang = 'en' } = Astro.props;
 
       function clearAll() {
         copyGeneration++;
-        if (resultsEl.contains(document.activeElement)) inputEl.focus();
+        if (document.querySelector('.ivp-output').contains(document.activeElement)) inputEl.focus();
         inputEl.value = '';
         resultsEl.hidden = true;
         resultsEl.innerHTML = '';
         setStatus('', 'none');
       }
 
-      btnValidate.addEventListener('click', runValidate);
       btnClear.addEventListener('click', clearAll);
       document.addEventListener('keydown', function (e) {
         if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
@@ -589,9 +617,6 @@ const { lang = 'en' } = Astro.props;
         // Live validate on input (cheap; mod 97 is sub-millisecond).
         runValidate();
       });
-      inputEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); runValidate(); }
-      });
 
       buildExampleList();
     })();
@@ -601,12 +626,27 @@ const { lang = 'en' } = Astro.props;
     .ivp-wrap {
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      gap: 0.65rem;
+      min-height: 0;
+      min-width: 0;
     }
+    .ivp-heading { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; }
+    .ivp-heading .tool-label { margin: 0; }
+    #ivp-status { flex: none; height: 2.8em; min-height: 2.8em; margin: 0; overflow: auto; overflow-wrap: anywhere; }
+    .ivp-output { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; gap: 0.6rem; }
+    .ivp-result-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 1rem; flex: none; font-size: 0.8rem; color: var(--color-text-secondary); }
+    .ivp-empty { display: none; margin: 0; color: var(--color-text-muted); font-size: 0.9rem; }
+    .ivp-output:has(#ivp-results[hidden]) { flex: none; }
+    .ivp-output:has(#ivp-results[hidden]) .ivp-empty { display: block; }
+    .ivp-output:has(#ivp-results[hidden]) .ivp-result-head { display: none; }
+    .ivp-wrap:has(#ivp-results[hidden]) .ivp-input-section { flex: 1 1 0; justify-content: center; }
+    .ivp-privacy { flex: none; margin: 0; font-size: 0.8rem; color: var(--color-text-secondary); overflow-wrap: anywhere; }
     .ivp-input-section {
       display: flex;
       flex-direction: column;
       gap: 0.4rem;
+      flex: none;
+      min-width: 0;
     }
     .ivp-input {
       letter-spacing: 0.04em;
@@ -617,7 +657,10 @@ const { lang = 'en' } = Astro.props;
       gap: 0.5rem;
       flex-wrap: wrap;
       align-items: center;
+      flex: none;
     }
+    #ivp-clear, .ivp-input, .ivp-example-summary { min-height: 44px; }
+    .ivp-example-summary { display: inline-flex; align-items: center; }
     .ivp-example-wrap {
       position: relative;
     }
@@ -689,12 +732,19 @@ const { lang = 'en' } = Astro.props;
       word-break: break-all;
     }
 
+    .ivp-results[hidden] { display: none; }
     .ivp-results {
       display: grid;
+      flex: 1 1 0;
+      min-height: 0;
+      min-width: 0;
+      overflow: auto;
+      overscroll-behavior: contain;
+      align-content: start;
       grid-template-columns: 1fr;
       gap: 0.75rem;
     }
-    @media (min-width: 780px) {
+    @media (min-width: 1280px) {
       .ivp-results {
         grid-template-columns: 1fr 1fr;
       }
@@ -774,9 +824,22 @@ const { lang = 'en' } = Astro.props;
     .ivp-tag-invalid { color: var(--color-danger); }
     .ivp-copy {
       flex: 0 0 auto;
+      width: 7.5rem;
+      max-width: 42%;
+      min-height: 44px;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
+    .ivp-results:focus-visible, #ivp-status:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
+    @media (max-width: 860px) {
+      .ivp-wrap:has(#ivp-results[hidden]) .ivp-input-section { flex: none; }
+      .ivp-output { flex: none; height: 27rem; }
+      .ivp-output:has(#ivp-results[hidden]) { display: none; }
+    }
     @media (max-width: 640px) {
+      .ivp-output { height: 24rem; }
+      .ivp-card { padding: 0.75rem; }
       .ivp-row-label {
         min-width: 0;
         flex: 0 0 100%;

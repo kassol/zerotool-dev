@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'iban-validator-parser': 'analyze',
   'cron-parser': 'analyze',
   'markdown-preview': 'convert',
   'css-to-tailwind': 'convert',
