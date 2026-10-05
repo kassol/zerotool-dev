@@ -46,7 +46,7 @@ function eq(name, got, want) {
 function gen(json, model, mode, timestamps, required) {
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {},
-      classList: { add() {}, remove() {} }, removeAttribute() {},
+      classList: { add() {}, remove() {} }, setAttribute() {}, removeAttribute() {},
       addEventListener(event, fn) { this.handlers[event] = fn; } };
   }
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'model-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jtm-' + id, element()]));
@@ -64,7 +64,6 @@ function gen(json, model, mode, timestamps, required) {
   groups['#jtm-lang-tabs .jtm-tab'].find((tab) => tab.dataset.lang === mode).handlers.click();
   groups['#jtm-ts-tabs .jtm-tab'].find((tab) => tab.dataset.ts === String(timestamps)).handlers.click();
   groups['#jtm-req-tabs .jtm-tab'].find((tab) => tab.dataset.req === String(required)).handlers.click();
-  elements['jtm-convert'].handlers.click();
   return elements['jtm-output-code'].textContent;
 }
 // A page session: the real client script with stubs, driven by input events and buttons.
@@ -73,7 +72,7 @@ function session() {
   let activeInside = true;
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {}, disabled: false,
-      classList: { add() {}, remove() {} }, removeAttribute() {}, focus() {},
+      classList: { add() {}, remove() {} }, setAttribute() {}, removeAttribute() {}, focus() {},
       addEventListener(event, fn) { this.handlers[event] = fn; } };
   }
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'model-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jtm-' + id, element()]));
@@ -114,7 +113,7 @@ function session() {
   eq('stale output: Example enables Copy', s.state().copyDisabled, false);
   s.type('   ');
   eq('stale output: empty input disables Copy', s.state().code === '' && s.state().copyDisabled, true);
-  const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + '\nreturn labels;')();
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + '\nreturn STRINGS;')();
   eq('stale output: the error prefix exists in 4 languages', ['en', 'zh', 'ja', 'ko'].every((l) => labels[l] && labels[l].msgInvalidJson && labels[l].msgInvalidJson.trim()), true);
 }
 {
@@ -324,7 +323,7 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
   const tsPage = (await import('typescript')).default;
   const { createRequire: pageRequire } = await import('node:module');
   const requirePage = pageRequire(join(root, 'src/components/tools/' + cfg.file));
-  const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + ';return labels;')();
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
   if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -380,6 +379,7 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     const esc=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const decode=value=>value.replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
     const markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0]
+      .replace(/<Toggletip id="([^"]+)"[^>]*>[\s\S]*?<\/Toggletip>/g,(_,id)=>'<span class="zt-tip"><button type="button" class="zt-tip-btn" data-zt-tip="'+id+'">?</button></span>')
       .replace(/<!--[\s\S]*?-->/g,'').replace(/placeholder=\{`[\s\S]*?`\}/g,'').replace(/placeholder='[^']*'/g,'')
       .replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+esc(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>esc(labels[lang][key])).replace(/=\{lang\}/g,'="'+lang+'"');
     const stack=[widget];
@@ -428,10 +428,50 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     const q=page(lang,shellFirst);q.example();q.copy().resolve();await settle();const old=[...q.timers.values()].filter(t=>t.ms===1500).map(t=>t.fn);same(tag+' real success timer exists',old.length>0,true);q.advance(400);q.copy().resolve();await settle();old.forEach(fn=>fn());same(tag+' old timer cannot reset new Copied',q.get(cfg.copy).textContent,labels[lang].copied);q.advance(1500);same(tag+' latest timer settles',q.get(cfg.copy).textContent,labels[lang].copy);
     const r=page(lang,shellFirst);r.example();const one=r.copy(),two=r.copy();two.resolve();await settle();one.reject(Error('older request'));await settle();same(tag+' older rejection cannot replace new success',r.get(cfg.copy).textContent,labels[lang].copied);
     const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const generated=queued.tracks.length;queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',queued.tracks.length,generated);
-    queued.input(cfg.sample);queued.get('jtm-convert').click();const manual=queued.tracks.length;queued.advance(300);same(tag+' manual Generate cancels queued conversion',queued.tracks.length,manual);
-    p.input('Renamed','jtm-model-name');p.advance(300);same(tag+' model name re-generates',p.out().includes("mongoose.model('Renamed'"),true);p.get(cfg.clear).click();same(tag+' explicit Clear retains model option',p.get('jtm-model-name').value,'Renamed');
+    queued.input(cfg.sample);const beforeShortcut=queued.tracks.length;queued.key('Enter');same(tag+' no primary means CtrlEnter does not generate',queued.tracks.length,beforeShortcut);queued.advance(300);same(tag+' CtrlEnter preserves the real input debounce',queued.tracks.length,beforeShortcut+1);
+    for(const [id,key]of [['jtm-lang-tabs','lang'],['jtm-ts-tabs','ts'],['jtm-req-tabs','req']]){const tabs=p.get(id).querySelectorAll('.jtm-tab');for(const selected of tabs){const before=p.tracks.length;selected.click();same(tag+' option generates immediately '+id,p.tracks.length,before+1);same(tag+' aria-pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
+    for(const focus of [p.get('jtm-output'),p.document.querySelector('[data-zt-tip="jtm-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output CtrlL returns to input',[p.document.activeElement.id,p.out(),p.get(cfg.input).value],[cfg.input,'','']);}
+    p.get('jtm-lang-tabs').querySelector('[data-lang="javascript"]').click();p.example();p.input('Renamed','jtm-model-name');p.advance(300);same(tag+' model name re-generates',p.out().includes("mongoose.model('Renamed'"),true);p.get(cfg.clear).click();same(tag+' explicit Clear retains model option',p.get('jtm-model-name').value,'Renamed');
   }
   await settle();same('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
+}
+
+// ---------- v2 page layout ----------
+{
+  const { createHash } = await import('node:crypto');
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const equalLayout = (name, got, want) => eq(name, JSON.stringify(got), JSON.stringify(want));
+  const check = (name, passed) => equalLayout('v2 ' + name, !!passed, true);
+  const strings = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
+  const markup = source.split('\n---')[1].split('<script')[0], css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  check('registered convert', /'json-to-mongoose':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('direct flex root', /^\s*<div\s+class="jtm-wrap"/.test(markup) && /\.jtm-wrap\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;/.test(css));
+  check('actions then reserved status then panels', markup.indexOf('class="jtm-actions"') < markup.indexOf('id="jtm-status"') && markup.indexOf('id="jtm-status"') < markup.indexOf('class="jtm-panels zt-io"') && /\.jtm-status\s*\{[^}]*height:\s*2\.4rem/.test(css));
+  equalLayout('v2 two shared panes', (markup.match(/\bzt-io-pane\b/g)||[]).length, 2);
+  check('input and output fill panes', markup.includes('id="jtm-input" class="zt-io-fill"') && markup.includes('class="jtm-output zt-io-fill"'));
+  check('accessible output scroller', /id="jtm-output"[^>]*tabindex="0"[^>]*aria-labelledby="jtm-output-label"/.test(markup) && /\.jtm-output\s*\{[^}]*overflow:\s*auto/.test(css));
+  check('segmented option groups', (markup.match(/zt-segmented/g)||[]).length===3 && (markup.match(/role="group"/g)||[]).length===3 && (markup.match(/aria-pressed="(?:true|false)"/g)||[]).length===6);
+  const mobile=css.slice(css.indexOf('@media (max-width: 860px)'));
+  check('mobile input144 and output22rem', /\.jtm-panel textarea\s*\{[^}]*height:\s*144px/.test(mobile) && /\.jtm-output\s*\{[^}]*height:\s*22rem/.test(mobile));
+  check('empty output follows actual text and hides on mobile', css.includes('.jtm-output-pane:has(#jtm-output-code:empty) .jtm-empty { display: flex; }') && mobile.includes('.jtm-output-pane:has(#jtm-output-code:empty) { display: none; }'));
+  check('phone touch sizing and global dark ancestors', css.includes('@media (max-width: 640px)') && css.includes('min-height: 44px') && css.includes(':global([data-theme="dark"])') && css.includes(':global(:root:not([data-theme="light"]))'));
+  check('no automatic Generate control, binding or label', !source.includes('jtm-convert') && !Object.values(strings).some(v=>'generate' in v));
+  equalLayout('v2 retained actual operation IDs', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m=>m[1]).sort(), ['jtm-clear','jtm-copy','jtm-example']);
+  check('build-time strings and tips excluded from script data', source.includes("import Toggletip from '../Toggletip.astro'") && !/data-i18n|define:vars|JSON\.stringify\(STRINGS/.test(source) && !/STRINGS|L\.tips/.test(script));
+  const map=[['input','jsonInput'],['model','modelName'],['language','language'],['timestamps','timestamps'],['required','required'],['example','example'],['clear','clear'],['copy','copy']];
+  equalLayout('v2 eight tips', (markup.match(/<Toggletip\b/g)||[]).length, map.length);
+  const protectedContent={"en": ["9f453e9f83fd937b4343fbab508c00961aab911495ba2f164d9a2c63a47843a0", "05120497f674dcc72834176d0e747ed859039fa284cd74cd1e4aedb97d5b1fe4"], "zh": ["4f9a9c62e510f5cfce8c37b16383d87ed916ab86632f99126f9491d3a5781880", "7a1a1eccc4e62b2dee3002852201f1f7b8550c7ddbba0456f7bfed2a6a670c5f"], "ja": ["8914c42973a2b4e78ec48e73d70b756360c151cd4234699259c99099ff3182f7", "76081e0ec44f849f42cae060fe9e1a576845a6f2114c0ad0b857836f7608e285"], "ko": ["539ab8e3b8b6899c25b5336ab4969b1af5e5b150fdf27d4729c275c5f6848cb6", "04b1064a8801979aa8cc92eaa53f07dae34ef69e5d20f191ca72e470cec1423e"]};
+  for(const lang of ['en','zh','ja','ko']){
+    const L=strings[lang];equalLayout(lang+' v2 same tip keys',Object.keys(L.tips).sort(),map.map(x=>x[0]).sort());
+    check(lang+' localized empty text',typeof L.empty==='string'&&!!L.empty.trim());
+    for(const [key,about]of map){check(lang+' localized '+key,typeof L.tips[key]==='string'&&!!L.tips[key].trim()&&typeof L[about]==='string'&&!!L[about].trim());equalLayout(lang+' placeholder parity '+key,[...L.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]),[...strings.en.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]));check(lang+' binding '+key,markup.includes('<Toggletip id="jtm-tip-'+key+'" lang={lang} about={L.'+about+'}>{L.tips.'+key+'}</Toggletip>'));}
+    const mdx=readFileSync(join(root,'src/content/tools/json-to-mongoose/'+lang+'.mdx'),'utf8'),[,fm,body]=mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+    const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
+    check(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
+    equalLayout(lang+' protected SEO and FAQ',hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang][0]);equalLayout(lang+' all non-Usage content protected',hash(body),protectedContent[lang][1]);
+    check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
