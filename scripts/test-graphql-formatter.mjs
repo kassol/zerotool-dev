@@ -23,7 +23,8 @@ import { dirname, join } from 'node:path';
 import { parse, print } from 'graphql';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
-import { loadPage } from './astro-page-harness.mjs';
+import { createRequire } from 'node:module';
+import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/GraphqlFormatterTool.astro'), 'utf8');
@@ -123,7 +124,9 @@ check('engine bytes unchanged', createHash('sha256').update(source.slice(startIn
 
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const sharedShortcut = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
-const STRINGS = vm.runInNewContext(source.slice(source.indexOf('var STRINGS ='), source.indexOf('var SAMPLE =')) + ';STRINGS');
+const require = createRequire(import.meta.url);
+const frontmatter = /^---\n([\s\S]*?)\n---/.exec(source)[1];
+const STRINGS = frontmatterStrings(frontmatter);
 const copyFailure = { en: 'Copy failed. Try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。再試行してください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
 const settle = async () => { await Promise.resolve(); await new Promise(resolve => setImmediate(resolve)); };
 const unhandled = [];
@@ -131,10 +134,11 @@ process.on('unhandledRejection', error => unhandled.push(String(error)));
 function page(lang, sharedFirst = false) {
   const elements = new Map(), keys = [], timers = [], copies = [], saved = [], tracked = [], events = new Map(), downloads = [], blobs = new Map();
   let seq = 0;
-  const markup = source.slice(0, source.indexOf('<script'));
+  const t = STRINGS[lang];
+  const markup = source.slice(source.indexOf('\n---') + 4, source.indexOf('<script')).replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + t[key] + '"').replace(/\{T\.(\w+)\}/g, (_, key) => t[key]);
   for (const m of markup.matchAll(/<([a-z]+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
     const listeners = {};
-    const el = { id: m[3], value: '', textContent: '', className: '', disabled: false, hidden: false,
+    const el = { id: m[3], value: '', textContent: (markup.slice(m.index + m[0].length).match(/^([^<]*)</)?.[1] || '').trim(), className: '', disabled: false, hidden: false,
       getAttribute(name) { return new RegExp('\\b' + name + '="([^"]+)"').exec(m[2])?.[1] ?? null; },
       addEventListener(type, fn) { (listeners[type] ??= []).push(fn); },
       dispatch(type, init = {}) { const event = { type, target: el, defaultPrevented: false, cancelBubble: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.cancelBubble = true; }, ...init }; for (const fn of listeners[type] || []) fn.call(el, event); if (type === 'keydown' && !event.cancelBubble) for (const fn of keys) fn(event); return event; },
@@ -153,7 +157,8 @@ function page(lang, sharedFirst = false) {
   get('gqlf-indent').value = '2';
   doc.body = { appendChild() {}, removeChild() {} };
   doc.createElement = tag => { if (tag !== 'a') throw new Error('Unexpected element ' + tag); return { click() { downloads.push({ name: this.download, blob: blobs.get(this.href) }); } }; };
-  const globals = { document: doc, Blob,
+  const { tips, ...clientT } = t;
+  const globals = { document: doc, Blob, t: clientT,
     Event: class { constructor(type) { this.type = type; } },
     addEventListener(type, fn) { if (!events.has(type)) events.set(type, []); events.get(type).push(fn); },
     removeEventListener(type, fn) { events.set(type, (events.get(type) || []).filter(x => x !== fn)); },
@@ -226,6 +231,85 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   b.click(); q.copies[1].resolve(); await settle(); for (const timer of oldTimers) timer.fn(); eq(prefix + 'old timer cannot erase new Copied', b.textContent, t.copied); q.flush(1500); eq(prefix + 'latest timer restores Copy', b.textContent, t.copy);
 }
 eq('no unhandled clipboard rejection', unhandled.length, 0);
+
+// ── v2 page layout ──
+const MDX_PROTECTED = {
+  "en": "0f1974f95ef763b5d4e40c12fcf75736d138b637ff65261ad15c29411039a5a1",
+  "zh": "3ae298e34934aa043a1e8890573196570a3b61fa56b9e5d0814fe53cff44792e",
+  "ja": "63bd40ac62b4103840b793eb00ef03b6dcdbbc8d969a6d2a81503e5480a8f493",
+  "ko": "ce597bd59def4e30f102e31f6120972e1373accf958c1f8d09585e05a4f8cb11"
+};
+const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+check('v2 page layout: convert registry', /['"]graphql-formatter['"]\s*:\s*['"]convert['"]/.test(registry));
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+check('v2 page layout: direct tool root', markup.trimStart().startsWith('<div class="gqlf-wrap">'));
+check('v2 page layout: shared input-output grid', markup.includes('gqlf-panels zt-io') && (markup.match(/zt-io-pane/g) || []).length === 2 && (markup.match(/zt-io-fill/g) || []).length === 2);
+check('v2 page layout: controls then reserved status then panes', markup.indexOf('gqlf-actions') < markup.indexOf('id="gqlf-status"') && markup.indexOf('id="gqlf-status"') < markup.indexOf('gqlf-panels'));
+for (const id of ['gqlf-format', 'gqlf-minify', 'gqlf-validate', 'gqlf-clear', 'gqlf-copy', 'gqlf-download', 'gqlf-sample']) check('v2 page layout: retained actual operation ' + id, markup.includes('id="' + id + '"'));
+check('v2 page layout: all export controls before output text', ['gqlf-copy', 'gqlf-download', 'gqlf-tip-export'].every(id => markup.indexOf('id="' + id + '"') < markup.indexOf('<textarea id="gqlf-output"')));
+check('v2 page layout: output stays readonly', /<textarea\b[^>]*id="gqlf-output"[^>]*\breadonly/.test(markup));
+check('v2 page layout: only input editable', /<textarea\b[^>]*id="gqlf-input"[^>]*>/.test(markup) && !/<textarea\b[^>]*id="gqlf-input"[^>]*\breadonly/.test(markup));
+check('v2 page layout: runtime i18n removed', !source.includes('data-i18n') && !source.includes('var STRINGS'));
+check('v2 page layout: client payload excludes tips', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T/.test(frontmatter) && source.includes('define:vars={{ t: CLIENT_T }}'));
+const tips = [...markup.matchAll(/<Toggletip id="(gqlf-tip-[^"]+)" lang=\{lang\} about=\{([^}]+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 page layout: six bound tips', tips.length, 6);
+eq('v2 page layout: tip IDs', tips.map(m => m[1]).sort().join(','), ['gqlf-tip-actions','gqlf-tip-clear','gqlf-tip-indent','gqlf-tip-input','gqlf-tip-output','gqlf-tip-export'].sort().join(','));
+const keys = object => Object.keys(object).sort().map(key => typeof object[key] === 'object' ? key + '(' + keys(object[key]).join(',') + ')' : key);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq('v2 page layout: ' + lang + ' recursive keys', JSON.stringify(keys(STRINGS[lang])), JSON.stringify(keys(STRINGS.en)));
+  for (const [key, value] of Object.entries(STRINGS[lang])) if (typeof value === 'string') {
+    check('v2 page layout: ' + lang + '/' + key + ' nonempty', value.trim().length > 0);
+    eq('v2 page layout: ' + lang + '/' + key + ' placeholders', JSON.stringify((value.match(/\{\w+\}/g) || []).sort()), JSON.stringify((STRINGS.en[key].match(/\{\w+\}/g) || []).sort()));
+  }
+  for (const tip of tips) {
+    const value = STRINGS[lang].tips[tip[3]];
+    check('v2 page layout: ' + lang + '/' + tip[3] + ' plain tip', typeof value === 'string' && value.length > 0 && !/[<>\n]/.test(value));
+  }
+  const text = readFileSync(join(root, 'src/content/tools/graphql-formatter', lang + '.mdx'), 'utf8');
+  const data = require('js-yaml').load(/^---\n([\s\S]*?)\n---/.exec(text)[1]);
+  check('v2 page layout: ' + lang + ' bounded steps', Array.isArray(data.steps) && data.steps.length > 0 && data.steps.length <= 8 && data.steps.every(s => typeof s === 'string' && s.length <= 280) && data.steps.join('').length <= 1200);
+  check('v2 page layout: ' + lang + ' steps before FAQ', text.indexOf('steps:') < text.indexOf('faqItems:'));
+  check('v2 page layout: ' + lang + ' usage removed', !/<h2>(How to Use|使用步骤|使い方|사용 방법)<\/h2>/.test(text));
+  eq('v2 page layout: ' + lang + ' all other MDX bytes protected', createHash('sha256').update(text.replace(/^steps:\n(?:  - .*\n)+/m, '').replace(/\{\/\* gqlf-examples:start \*\/\}[\s\S]*?\{\/\* gqlf-examples:end \*\/\}\n\n/, '')).digest('hex'), MDX_PROTECTED[lang]);
+}
+const css = source.slice(source.indexOf('<style>'));
+check('v2 page layout: root flex and zero minimum', /\.gqlf-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+check('v2 page layout: fixed scrollable status', /#gqlf-status\s*\{[^}]*height: 2.5rem;[^}]*flex: none;[^}]*overflow: auto/.test(css));
+check('v2 page layout: stable copy header height', /\.gqlf-panel-head\s*\{[^}]*height: 44px;[^}]*min-height: 44px/.test(css) && /\.gqlf-panel-head button\s*\{[^}]*height: 44px;[^}]*white-space: normal/.test(css));
+check('v2 page layout: stable two-row output header', /\.gqlf-output-head\s*\{[^}]*height: 76px;[^}]*min-height: 76px;[^}]*flex-direction: column/.test(css) && /\.gqlf-out-actions\s*\{[^}]*height: 44px/.test(css));
+check('v2 page layout: text scrolls internally', /\.gqlf-textarea\s*\{[^}]*overflow: auto/.test(css));
+check('v2 page layout: 860 stack and fixed 144px editors', css.includes('@media (max-width: 860px)') && /height: 144px; min-height: 144px; max-height: 144px; resize: none/.test(css));
+check('v2 page layout: mobile empty result hidden', css.includes('.gqlf-output-pane:has(#gqlf-output:placeholder-shown) { display: none; }'));
+check('v2 page layout: 640 action touch size', /@media \(max-width: 640px\)[\s\S]*min-height: 44px/.test(css));
+
+const astroRequire = createRequire(require.resolve('astro/package.json'));
+const compiled = await astroRequire('@astrojs/compiler').transform(source, { filename: join(root, 'src/components/tools/GraphqlFormatterTool.astro') });
+check('v2 page layout: compiled mobile placeholder selector', compiled.css.some(s => /@media\s*\(max-width:\s*860px\)/.test(s) && /\.gqlf-output-pane[^{}]*:has\(#gqlf-output[^{}]*:placeholder-shown\)[^{]*\{[^}]*display:\s*none/.test(s)));
+
+const loader = source.split('  <script>')[1].split('  </script>')[0];
+eq('v2 page layout: GraphQL loader bytes unchanged', createHash('sha256').update(loader).digest('hex'), 'ad579a6a03090a4e5bea8ea56fb702ee733dbd5b0d8457917df7053e287a29de');
+const oldStats = {
+  en: (ops, chars) => ops + ' definition(s), ' + chars + ' chars',
+  zh: (ops, chars) => ops + ' 个定义，' + chars + ' 字符',
+  ja: (ops, chars) => ops + ' 定義、' + chars + ' 文字',
+  ko: (ops, chars) => ops + '개 정의, ' + chars + '자',
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const t = STRINGS[lang];
+  for (const [ops, chars] of [[0, 0], [1, 17], [12, 10485760]]) eq('v2 stats: ' + lang + ' original string ' + ops + '/' + chars, t.stats.replace('{ops}', ops).replace('{chars}', chars), oldStats[lang](ops, chars));
+  const p = page(lang); p.format('{alpha}'); eq('v2 stats: ' + lang + ' actual Format status', p.get('gqlf-status').textContent, t.formatted + ' ' + oldStats[lang](1, 11));
+  p.get('gqlf-minify').click(); eq('v2 stats: ' + lang + ' actual Minify status', p.get('gqlf-status').textContent, t.minified + ' ' + oldStats[lang](0, 7));
+  p.get('gqlf-validate').click(); eq('v2 stats: ' + lang + ' actual Validate status', p.get('gqlf-status').textContent, t.valid + ' ' + oldStats[lang](1, 7));
+  const mdx = readFileSync(join(root, 'src/content/tools/graphql-formatter', lang + '.mdx'), 'utf8');
+  const examples = mdx.match(/\{\/\* gqlf-examples:start \*\/\}([\s\S]*?)\{\/\* gqlf-examples:end \*\/\}/)[1];
+  const blocks = [...examples.matchAll(/```graphql\n([\s\S]*?)\n```/g)].map(m => m[1]);
+  eq('v2 examples: ' + lang + ' two inputs plus three outputs', blocks.length, 5);
+  p.get('gqlf-indent').value = '4'; p.get('gqlf-indent').dispatch('change'); p.format(blocks[0]);
+  eq('v2 examples: ' + lang + ' aliases Format complete output', p.get('gqlf-output').value, blocks[1]);
+  p.get('gqlf-minify').click(); eq('v2 examples: ' + lang + ' aliases Minify complete output', p.get('gqlf-output').value, blocks[2]);
+  p.format(blocks[3]); eq('v2 examples: ' + lang + ' description Format complete output', p.get('gqlf-output').value, blocks[4]);
+  eq('v2 examples: ' + lang + ' description text preserved', parse(p.get('gqlf-output').value).definitions[0].fields[0].description.value, 'Returns a label.\n  Keep this note indented.');
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
