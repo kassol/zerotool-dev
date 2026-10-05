@@ -51,10 +51,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { copy: 'Copy', copied: 'Copied!', clear: 'Clear', format: 'Format', minify: 'Minify', xmlInput: 'XML Input', formattedXml: 'Formatted XML', formattedXmlPh: 'Formatted XML will appear here…', indent: 'Indent:' },
-        zh: { copy: '复制', copied: '已复制！', clear: '清除', format: '格式化', minify: '压缩', xmlInput: 'XML 输入', formattedXml: '格式化 XML', formattedXmlPh: '格式化后的 XML 显示在这里…', indent: '缩进：' },
-        ja: { copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', format: 'フォーマット', minify: '圧縮', xmlInput: 'XML 入力', formattedXml: 'フォーマット済み XML', formattedXmlPh: 'フォーマット済み XML がここに表示されます…', indent: 'インデント：' },
-        ko: { copy: '복사', copied: '복사됨!', clear: '지우기', format: '포맷', minify: '압축', xmlInput: 'XML 입력', formattedXml: '포맷된 XML', formattedXmlPh: '포맷된 XML이 여기에 표시됩니다…', indent: '들여쓰기：' },
+        en: { copyFailed: 'Copy failed. Please try again.', copy: 'Copy', copied: 'Copied!', clear: 'Clear', format: 'Format', minify: 'Minify', xmlInput: 'XML Input', formattedXml: 'Formatted XML', formattedXmlPh: 'Formatted XML will appear here…', indent: 'Indent:' },
+        zh: { copyFailed: '复制失败，请重试。', copy: '复制', copied: '已复制！', clear: '清除', format: '格式化', minify: '压缩', xmlInput: 'XML 输入', formattedXml: '格式化 XML', formattedXmlPh: '格式化后的 XML 显示在这里…', indent: '缩进：' },
+        ja: { copyFailed: 'コピーに失敗しました。もう一度お試しください。', copy: 'コピー', copied: 'コピー済み！', clear: 'クリア', format: 'フォーマット', minify: '圧縮', xmlInput: 'XML 入力', formattedXml: 'フォーマット済み XML', formattedXmlPh: 'フォーマット済み XML がここに表示されます…', indent: 'インデント：' },
+        ko: { copyFailed: '복사하지 못했습니다. 다시 시도하세요.', copy: '복사', copied: '복사됨!', clear: '지우기', format: '포맷', minify: '압축', xmlInput: 'XML 입력', formattedXml: '포맷된 XML', formattedXmlPh: '포맷된 XML이 여기에 표시됩니다…', indent: '들여쓰기：' },
       };
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
       var t = STRINGS[pageLang] || STRINGS.en;
@@ -73,12 +73,30 @@
       var indentEl = document.getElementById('xf-indent');
       var lastValidXmlOutput = '';
 
+      var copyRevision = 0, copyErrorOwner = null;
+      var copyStates = [
+        { btn: copyInputBtn, request: 0, timer: null },
+        { btn: copyOutputBtn, request: 0, timer: null }
+      ];
+
+      function invalidateCopies() {
+        copyRevision++;
+        copyErrorOwner = null;
+        copyStates.forEach(function (state) {
+          clearTimeout(state.timer);
+          state.timer = null;
+          state.btn.textContent = t.copy;
+        });
+      }
+
       function setStatus(msg, isError) {
+        copyErrorOwner = null;
         statusEl.textContent = msg;
         statusEl.className = 'xf-status ' + (isError ? 'error' : 'success');
       }
 
       function clearStatus() {
+        copyErrorOwner = null;
         statusEl.textContent = '';
         statusEl.className = 'xf-status';
       }
@@ -308,9 +326,12 @@
       var _xfLiveTimer = null;
       inputEl.addEventListener('input', function () {
         clearTimeout(_xfLiveTimer);
+        invalidateCopies();
         _xfLiveTimer = setTimeout(function () {
+          _xfLiveTimer = null;
+          invalidateCopies();
           var raw = inputEl.value.trim();
-          if (!raw) { clearStatus(); return; }
+          if (!raw) { outputEl.value = ''; lastValidXmlOutput = ''; clearStatus(); return; }
           try {
             var doc = parseXml(raw);
             var indent = getIndent();
@@ -320,6 +341,7 @@
             setStatus('Formatted.', false);
           } catch (e) {
             outputEl.value = '';
+            lastValidXmlOutput = '';
             setStatus('Error: ' + e.message, true);
           }
         }, 300);
@@ -327,8 +349,11 @@
 
       /* ── Format button ── */
       document.getElementById('xf-format').addEventListener('click', function () {
+        clearTimeout(_xfLiveTimer);
+        _xfLiveTimer = null;
+        invalidateCopies();
         var raw = inputEl.value.trim();
-        if (!raw) { clearStatus(); return; }
+        if (!raw) { outputEl.value = ''; lastValidXmlOutput = ''; clearStatus(); return; }
 
         try {
           var doc = parseXml(raw);
@@ -339,14 +364,18 @@
           window.trackTool && window.trackTool('xml_formatter', 'format');
         } catch (e) {
           outputEl.value = '';
+          lastValidXmlOutput = '';
           setStatus('Error: ' + e.message, true);
         }
       });
 
       /* ── Minify button ── */
       document.getElementById('xf-minify').addEventListener('click', function () {
+        clearTimeout(_xfLiveTimer);
+        _xfLiveTimer = null;
+        invalidateCopies();
         var raw = inputEl.value.trim();
-        if (!raw) { clearStatus(); return; }
+        if (!raw) { outputEl.value = ''; lastValidXmlOutput = ''; clearStatus(); return; }
 
         try {
           var doc = parseXml(raw);
@@ -356,32 +385,60 @@
           window.trackTool && window.trackTool('xml_formatter', 'minify');
         } catch (e) {
           outputEl.value = '';
+          lastValidXmlOutput = '';
           setStatus('Error: ' + e.message, true);
         }
       });
 
       /* ── Clear ── */
       document.getElementById('xf-clear').addEventListener('click', function () {
+        clearTimeout(_xfLiveTimer);
+        _xfLiveTimer = null;
+        invalidateCopies();
         inputEl.value = '';
         outputEl.value = '';
+        lastValidXmlOutput = '';
         clearStatus();
+        inputEl.focus();
       });
 
       /* ── Copy buttons ── */
+      function copyFrom(field, state) {
+        var text = field.value;
+        if (!text) return;
+        var revision = copyRevision, request = ++state.request;
+        clearTimeout(state.timer);
+        state.timer = null;
+        state.btn.textContent = t.copy;
+        function current() { return revision === copyRevision && request === state.request && field.value === text; }
+        function failed() {
+          if (!current()) return;
+          setStatus(t.copyFailed, true);
+          copyErrorOwner = state.btn;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (!current()) return;
+            if (copyErrorOwner === state.btn && statusEl.textContent === t.copyFailed) clearStatus();
+            state.btn.textContent = t.copied;
+            state.timer = setTimeout(function () {
+              if (current()) state.btn.textContent = t.copy;
+            }, 1500);
+          }, failed);
+        } catch (_) { failed(); }
+      }
       copyInputBtn.addEventListener('click', function () {
-        if (!inputEl.value) return;
-        navigator.clipboard.writeText(inputEl.value).then(function () {
-          copyInputBtn.textContent = t.copied;
-          setTimeout(function () { copyInputBtn.textContent = t.copy; }, 1500);
-        });
+        copyFrom(inputEl, copyStates[0]);
       });
 
       copyOutputBtn.addEventListener('click', function () {
-        if (!outputEl.value) return;
-        navigator.clipboard.writeText(outputEl.value).then(function () {
-          copyOutputBtn.textContent = t.copied;
-          setTimeout(function () { copyOutputBtn.textContent = t.copy; }, 1500);
-        });
+        copyFrom(outputEl, copyStates[1]);
+      });
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && document.querySelector('.xf-wrap').contains(document.activeElement)) {
+          e.preventDefault();
+          document.getElementById('xf-clear').click();
+        }
       });
     })();
   </script>
