@@ -246,7 +246,7 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
   const tsPage = (await import('typescript')).default;
   const { createRequire: pageRequire } = await import('node:module');
   const requirePage = pageRequire(join(root, 'src/components/tools/' + cfg.file));
-  const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + ';return labels;')();
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
   if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -302,6 +302,7 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
     const esc=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const decode=value=>value.replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
     const markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0]
+      .replace(/<Toggletip id="([^"]+)"[^>]*>[\s\S]*?<\/Toggletip>/g,(_,id)=>'<span class="zt-tip"><button type="button" class="zt-tip-btn" data-zt-tip="'+id+'">?</button></span>')
       .replace(/<!--[\s\S]*?-->/g,'').replace(/placeholder=\{`[\s\S]*?`\}/g,'').replace(/placeholder='[^']*'/g,'')
       .replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+esc(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>esc(labels[lang][key])).replace(/=\{lang\}/g,'="'+lang+'"');
     const stack=[widget];
@@ -350,10 +351,48 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
     const q=page(lang,shellFirst);q.example();q.copy().resolve();await settle();const old=[...q.timers.values()].filter(t=>t.ms===1500).map(t=>t.fn);same(tag+' real success timer exists',old.length>0,true);q.advance(400);q.copy().resolve();await settle();old.forEach(fn=>fn());same(tag+' old timer cannot reset new Copied',q.get(cfg.copy).textContent,labels[lang].copied);q.advance(1500);same(tag+' latest timer settles',q.get(cfg.copy).textContent,labels[lang].copy);
     const r=page(lang,shellFirst);r.example();const one=r.copy(),two=r.copy();two.resolve();await settle();one.reject(Error('older request'));await settle();same(tag+' older rejection cannot replace new success',r.get(cfg.copy).textContent,labels[lang].copied);
     const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const highlighted=queued.highlights.filter(id=>id==='ttz-input-hl-code').length,generated=queued.tracks.length;queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',queued.tracks.length,generated);same(tag+' Example cancels obsolete highlighting',queued.highlights.filter(id=>id==='ttz-input-hl-code').length,highlighted);
-    queued.input(cfg.sample);queued.get('ttz-convert').click();const manual=queued.tracks.length;queued.advance(300);same(tag+' manual Generate cancels queued conversion',queued.tracks.length,manual);same(tag+' manual Generate keeps pending input highlighting',queued.get('ttz-input-hl-code').textContent,cfg.sample+'\n');
+    queued.input(cfg.sample);const beforeShortcut=queued.tracks.length;queued.key('Enter');same(tag+' no primary button means CtrlEnter does not generate',queued.tracks.length,beforeShortcut);queued.advance(300);same(tag+' CtrlEnter leaves the real debounce intact',queued.tracks.length,beforeShortcut+1);same(tag+' input highlighting remains queued',queued.get('ttz-input-hl-code').textContent,cfg.sample+'\n');
+    for(const focus of [p.get('ttz-output'),p.document.querySelector('[data-zt-tip="ttz-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output area CtrlL returns to editable input',[p.document.activeElement.id,p.out(),p.get(cfg.input).value,p.get(cfg.status).textContent],[cfg.input,'','','']);}
     p.input('interface T { x: string; }');p.advance(79);const beforeHL=p.get('ttz-input-hl-code').textContent;p.advance(1);same(tag+' 80ms highlighting reads current input',p.get('ttz-input-hl-code').textContent,'interface T { x: string; }\n');p.get(cfg.input).scrollTop=21;p.get(cfg.input).scrollLeft=17;p.get(cfg.input).dispatch('scroll');same(tag+' input scroll is mirrored',[p.get('ttz-input-hl-code').parentElement.scrollTop,p.get('ttz-input-hl-code').parentElement.scrollLeft],[21,17]);p.get(cfg.clear).click();p.advance(300);same(tag+' Clear also clears input highlighting',p.get('ttz-input-hl-code').textContent,'');
   }
   await settle();same('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
+}
+
+// ---------- v2 page layout ----------
+{
+  const { createHash } = await import('node:crypto');
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const check = (name, passed) => eq('v2 ' + name, !!passed, true);
+  const strings = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
+  const markup = source.split('\n---')[1].split('<script')[0], css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  check('registered convert', /'typescript-to-zod':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('direct flex root', /^\s*<div\s+class="ttz-wrap"/.test(markup) && /\.ttz-wrap\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;/.test(css));
+  check('actions then reserved status then panels', markup.indexOf('class="ttz-actions"') < markup.indexOf('id="ttz-status"') && markup.indexOf('id="ttz-status"') < markup.indexOf('class="ttz-panels zt-io"') && /\.ttz-status\s*\{[^}]*height:\s*2\.4rem/.test(css));
+  eq('v2 two shared panes', (markup.match(/\bzt-io-pane\b/g)||[]).length, 2);
+  check('overlay and output fill panes', markup.includes('class="ttz-input-wrap zt-io-fill"') && markup.includes('class="ttz-output zt-io-fill"'));
+  check('accessible output scroller', /id="ttz-output"[^>]*tabindex="0"[^>]*aria-labelledby="ttz-output-label"/.test(markup) && /\.ttz-output\s*\{[^}]*overflow:\s*auto/.test(css));
+  check('overlay still shares text metrics and scroll is mirrored', css.includes('white-space: pre-wrap') && css.includes('pointer-events: none') && script.includes('pre.scrollTop = inputEl.scrollTop') && script.includes('pre.scrollLeft = inputEl.scrollLeft'));
+  const mobile=css.slice(css.indexOf('@media (max-width: 860px)'));
+  check('mobile input144 and output22rem', /\.ttz-input-wrap\s*\{[^}]*height:\s*144px/.test(mobile) && /\.ttz-output\s*\{[^}]*height:\s*22rem/.test(mobile));
+  check('empty output follows actual text and hides on mobile', css.includes('.ttz-output-pane:has(#ttz-output-code:empty) .ttz-empty { display: flex; }') && mobile.includes('.ttz-output-pane:has(#ttz-output-code:empty) { display: none; }'));
+  check('phone touch sizing and global dark ancestors', css.includes('@media (max-width: 640px)') && css.includes('min-height: 44px') && css.includes(':global([data-theme="dark"])') && css.includes(':global(:root:not([data-theme="light"]))'));
+  check('no automatic Generate control, binding or label', !source.includes('ttz-convert') && !Object.values(strings).some(v=>'generate' in v));
+  eq('v2 retained actual operation IDs', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m=>m[1]).sort(), ['ttz-clear','ttz-copy','ttz-example']);
+  check('build-time strings and tips excluded from script data', source.includes("import Toggletip from '../Toggletip.astro'") && !/data-i18n|define:vars|JSON\.stringify\(STRINGS/.test(source) && !/STRINGS|L\.tips/.test(script));
+  const map=[['input','tsInput'],['example','example'],['clear','clear'],['copy','copy']];
+  eq('v2 four tips', (markup.match(/<Toggletip\b/g)||[]).length, map.length);
+  const protectedContent={"en": ["c13d6d38efa1423c9cf2cad98bfa2d79202f303ec2be56cc0e5d3556e4fb69cb", "bbc6b96d355ad8d232a68c933716fb4599d005d2733f24267417989b7b39088a"], "zh": ["6eac19bc6d1941970a40636a9a30542e2db16621a0f4bf693c7022712576de4a", "dca0cc603c3b6a16f71c9c0deec101699b4b499bbe95c9244faeb1d36f4952c1"], "ja": ["949638ca585cb5021e35c15714ee00787e7f783ec6bfbdd85e245d29652a1c6a", "0ce16f0b2f86b4ae1a031a1bda2ac156716cb6764c1359eb06d3c64f643e1e6b"], "ko": ["6287648c05f9e30912eb83555afa265b7edaa501d67bed1f8836fdd1bb0b2aa9", "efa6af9c764c55a820a810cc936fbf5e2f53aacd47631d6331a2c0f31d6e75a9"]};
+  for(const lang of ['en','zh','ja','ko']){
+    const L=strings[lang];eq(lang+' v2 same tip keys',Object.keys(L.tips).sort(),map.map(x=>x[0]).sort());
+    check(lang+' localized empty text',typeof L.empty==='string'&&!!L.empty.trim());
+    for(const [key,about]of map){check(lang+' localized '+key,typeof L.tips[key]==='string'&&!!L.tips[key].trim()&&typeof L[about]==='string'&&!!L[about].trim());eq(lang+' placeholder parity '+key,[...L.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]),[...strings.en.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]));check(lang+' binding '+key,markup.includes('<Toggletip id="ttz-tip-'+key+'" lang={lang} about={L.'+about+'}>{L.tips.'+key+'}</Toggletip>'));}
+    const mdx=readFileSync(join(root,'src/content/tools/typescript-to-zod/'+lang+'.mdx'),'utf8'),[,fm,body]=mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+    const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
+    check(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
+    eq(lang+' protected SEO and FAQ',hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang][0]);eq(lang+' all non-Usage content protected',hash(body),protectedContent[lang][1]);
+    check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  }
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
