@@ -257,7 +257,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const tsPage = (await import('typescript')).default;
   const { createRequire: pageRequire } = await import('node:module');
   const requirePage = pageRequire(join(root, 'src/components/tools/' + cfg.file));
-  const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + ';return labels;')();
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
   if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -313,6 +313,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const esc=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const decode=value=>value.replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
     const markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0]
+      .replace(/<Toggletip id="([^"]+)"[^>]*>[\s\S]*?<\/Toggletip>/g,(_,id)=>'<span class="zt-tip"><button type="button" class="zt-tip-btn" data-zt-tip="'+id+'">?</button></span>')
       .replace(/<!--[\s\S]*?-->/g,'').replace(/placeholder=\{`[\s\S]*?`\}/g,'').replace(/placeholder='[^']*'/g,'')
       .replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+esc(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>esc(labels[lang][key])).replace(/=\{lang\}/g,'="'+lang+'"');
     const stack=[widget];
@@ -361,10 +362,49 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const q=page(lang,shellFirst);q.example();q.copy().resolve();await settle();const old=[...q.timers.values()].filter(t=>t.ms===1500).map(t=>t.fn);same(tag+' real success timer exists',old.length>0,true);q.advance(400);q.copy().resolve();await settle();old.forEach(fn=>fn());same(tag+' old timer cannot reset new Copied',q.get(cfg.copy).textContent,labels[lang].copied);q.advance(1500);same(tag+' latest timer settles',q.get(cfg.copy).textContent,labels[lang].copy);
     const r=page(lang,shellFirst);r.example();const one=r.copy(),two=r.copy();two.resolve();await settle();one.reject(Error('older request'));await settle();same(tag+' older rejection cannot replace new success',r.get(cfg.copy).textContent,labels[lang].copied);
     const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const generated=queued.tracks.length;queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',queued.tracks.length,generated);
-    queued.input(cfg.sample);queued.get(cfg.operation).click();const manual=queued.tracks.length;queued.advance(300);same(tag+' manual operation cancels queued conversion',queued.tracks.length,manual);
-    const keyboard=page(lang,shellFirst);keyboard.example();keyboard.input(cfg.sample);const before=keyboard.tracks.filter(t=>t[1]==='generate').length;const event=keyboard.key('Enter','ctrlKey');same(tag+' CtrlEnter is prevented',event.defaultPrevented,true);same(tag+' CtrlEnter converts once through combined listeners',keyboard.tracks.filter(t=>t[1]==='generate').length-before,1);keyboard.advance(300);same(tag+' CtrlEnter cancels pending debounce',keyboard.tracks.filter(t=>t[1]==='generate').length-before,1);keyboard.input('Different','opts-root');keyboard.advance(300);keyboard.get('opts-optional').checked=true;keyboard.get('opts-optional').dispatch('change');same(tag+' real optional option reaches generated code',keyboard.out().includes('active?: boolean'),true);keyboard.get(cfg.clear).click();same(tag+' explicit Clear retains root/options',[keyboard.get('opts-root').value,keyboard.get('opts-optional').checked],['Different',true]);keyboard.example();keyboard.key('L','metaKey',cfg.copy);same(tag+' shared shortcut clears extra text input and keeps checkbox',[keyboard.get('opts-root').value,keyboard.get('opts-optional').checked],['',true]);
+    queued.input(cfg.sample);queued.get('opts-paths').dispatch('change');const manual=queued.tracks.length;queued.advance(300);same(tag+' immediate option update cancels queued conversion',queued.tracks.length,manual);
+    for(const focus of [p.get('opts-output'),p.document.querySelector('[data-zt-tip="opts-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output CtrlL moves focus to input',[p.document.activeElement.id,p.out(),p.get(cfg.status).textContent],[cfg.input,'','']);}
+    const keyboard=page(lang,shellFirst);keyboard.example();keyboard.input(cfg.sample);const before=keyboard.tracks.filter(t=>t[1]==='generate').length;const event=keyboard.key('Enter','ctrlKey');same(tag+' no primary means CtrlEnter is not intercepted',event.defaultPrevented,false);same(tag+' removed local/shared action means zero immediate generation',keyboard.tracks.filter(t=>t[1]==='generate').length-before,0);keyboard.advance(300);same(tag+' normal input debounce still generates once',keyboard.tracks.filter(t=>t[1]==='generate').length-before,1);keyboard.input('Different','opts-root');keyboard.advance(300);keyboard.get('opts-optional').checked=true;keyboard.get('opts-optional').dispatch('change');same(tag+' real optional option reaches generated code',keyboard.out().includes('active?: boolean'),true);keyboard.get(cfg.clear).click();same(tag+' explicit Clear retains root/options',[keyboard.get('opts-root').value,keyboard.get('opts-optional').checked],['Different',true]);keyboard.example();keyboard.key('L','metaKey',cfg.copy);same(tag+' shared shortcut clears extra text input and keeps checkbox',[keyboard.get('opts-root').value,keyboard.get('opts-optional').checked],['',true]);
   }
   await settle();same('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
+}
+
+// ---------- v2 page layout ----------
+{
+  const { createHash } = await import('node:crypto');
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const layoutCheck = (name, passed) => check('v2 ' + name, !!passed);
+  const equalLayout = (name, got, want) => layoutCheck(name, JSON.stringify(got)===JSON.stringify(want));
+  const strings = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
+  const markup = source.split('\n---')[1].split('<script')[0], css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  layoutCheck('registered convert', /'openapi-to-typescript':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  layoutCheck('direct flex root', /^\s*<div\s+class="opts-wrap"/.test(markup) && /\.opts-wrap\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;/.test(css));
+  layoutCheck('actions then reserved status then panels', markup.indexOf('class="opts-actions"') < markup.indexOf('id="opts-status"') && markup.indexOf('id="opts-status"') < markup.indexOf('class="opts-panels zt-io"') && /#opts-status\s*\{[^}]*height:\s*2\.4rem/.test(css));
+  equalLayout('v2 two shared panes', (markup.match(/\bzt-io-pane\b/g)||[]).length, 2);
+  layoutCheck('input and output fill panes', markup.includes('class="opts-input zt-io-fill"') && markup.includes('class="opts-output zt-io-fill"'));
+  layoutCheck('accessible output scroller', /id="opts-output"[^>]*tabindex="0"[^>]*aria-labelledby="opts-output-label"/.test(markup) && /\.opts-output\s*\{[^}]*overflow:\s*auto/.test(css));
+  equalLayout('three native options',(markup.match(/type="checkbox"/g)||[]).length,3);
+  const mobile=css.slice(css.indexOf('@media (max-width: 860px)'));
+  layoutCheck('mobile input144 and output22rem', /\.opts-input\s*\{[^}]*height:\s*144px/.test(mobile) && /\.opts-output\s*\{[^}]*height:\s*22rem/.test(mobile));
+  layoutCheck('empty output follows actual text and hides on mobile', css.includes('.opts-output-pane:has(#opts-output-code:empty) .opts-empty { display: flex; }') && mobile.includes('.opts-output-pane:has(#opts-output-code:empty) { display: none; }'));
+  layoutCheck('phone touch sizing and theme token surfaces', css.includes('@media (max-width: 640px)') && css.includes('min-height: 44px') && css.includes('var(--color-text)') && css.includes('var(--color-bg-secondary)'));
+  layoutCheck('no automatic Generate control, binding or label', !source.includes('opts-generate') && !script.includes('generateBtn') && !script.includes("inputEl.addEventListener('keydown'") && !Object.values(strings).some(v=>'generate' in v));
+  equalLayout('v2 retained actual operation IDs', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m=>m[1]).sort(), ['opts-clear','opts-copy','opts-example']);
+  layoutCheck('build-time strings and tips excluded from script data', source.includes("import Toggletip from '../Toggletip.astro'") && !/data-i18n|define:vars|JSON\.stringify\(STRINGS/.test(source) && !/STRINGS|L\.tips/.test(script));
+  const map=[['input','inputLabel'],['root','rootName'],['optional','makeOptional'],['paths','includePaths'],['zod','includeZod'],['example','example'],['clear','clear'],['copy','copy']];
+  equalLayout('v2 eight tips', (markup.match(/<Toggletip\b/g)||[]).length, map.length);
+  const protectedContent={"en": ["ecbaf771161b35ae1321204d591a7024a682188cca89c0373dd86c36108f034c", "e75fd66cef488c645c8f26684900cc6fd6dd4f45544f5132b135990bdc53fa44"], "zh": ["eab2555bd7bfb407c80fa3864c23f0bfbfbf3f6215edf7e296ece427ed541cd2", "8c7672d0a260bbe329002ccaf23d443dc804726ff4f3b55d6bed425b8c02abc1"], "ja": ["d038cf3a0e0eea579ff5b337055d3faabd1fed15f07336d114d2964ba5feba31", "a23bc73f6eb226ce9837d7c580a2a0db14de617fbf7e51305eef4c2d7fb7e9a4"], "ko": ["64f423c180a3d5731b8657918ff270b8511c0ae5451dfc3cdfecad2e03323c68", "0debaf3244ed2b0d01ceed3c5c0e672582b59e71d212b4ba72dad12cfa80467d"]};
+  for(const lang of ['en','zh','ja','ko']){
+    const L=strings[lang];equalLayout(lang+' v2 same tip keys',Object.keys(L.tips).sort(),map.map(x=>x[0]).sort());
+    layoutCheck(lang+' localized empty text',typeof L.empty==='string'&&!!L.empty.trim());
+    for(const [key,about]of map){layoutCheck(lang+' localized '+key,typeof L.tips[key]==='string'&&!!L.tips[key].trim()&&typeof L[about]==='string'&&!!L[about].trim());equalLayout(lang+' placeholder parity '+key,[...L.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]),[...strings.en.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]));layoutCheck(lang+' binding '+key,markup.includes('<Toggletip id="opts-tip-'+key+'" lang={lang} about={L.'+about+'}>{L.tips.'+key+'}</Toggletip>'));}
+    const mdx=readFileSync(join(root,'src/content/tools/openapi-to-typescript/'+lang+'.mdx'),'utf8'),[,fm,body]=mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+    const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
+    layoutCheck(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
+    equalLayout(lang+' protected SEO and FAQ',hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang][0]);equalLayout(lang+' all non-Usage content protected',hash(body),protectedContent[lang][1]);
+    layoutCheck(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);
