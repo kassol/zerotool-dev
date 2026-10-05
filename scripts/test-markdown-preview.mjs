@@ -20,7 +20,9 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
+import vm from 'node:vm';
+import { loadPage } from './astro-page-harness.mjs';
 import { micromark } from 'micromark';
 import { gfm, gfmHtml } from 'micromark-extension-gfm';
 import { parseFragment } from 'parse5';
@@ -28,7 +30,8 @@ import { parseFragment } from 'parse5';
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const source = readFileSync(join(root, 'src/components/tools/MarkdownPreviewTool.astro'), 'utf8');
+const componentPath = join(root, 'src/components/tools/MarkdownPreviewTool.astro');
+const source = readFileSync(componentPath, 'utf8');
 
 const START_MARK = '/* ── engine:start ── */';
 const END_MARK = '/* ── engine:end ── */';
@@ -238,6 +241,220 @@ check('engine does not allow dangerous HTML or protocols',
   const ms = performance.now() - t0;
   check('2,000 sections render in under 1.5 s', ms < 1500 * PERF_SLACK, ms.toFixed(0) + ' ms');
 }
+
+// ---------- actual page lifecycle + actual ToolLayout keyboard listener ----------
+// The real module, micromark/GFM and highlight.js run unchanged. Only DOM, clock and
+// clipboard completion are controlled; the DOM tree comes from the shipped markup.
+const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcutStart = layoutSource.indexOf("      document.addEventListener('keydown'", layoutSource.indexOf('// ── Keyboard shortcuts'));
+const shortcutEnd = layoutSource.indexOf('      // ── Copy button visual feedback', shortcutStart);
+const sharedShortcut = layoutSource.slice(shortcutStart, shortcutEnd);
+check('actual shared shortcut found', shortcutStart >= 0 && sharedShortcut.includes('window.ztPersist.clear(_slug)'));
+function page({ lang = 'en', order = 'before', preset = '' } = {}) {
+  const docHandlers = {}, requests = [], tracks = [], clears = [];
+  let document, clock = 0, sequence = 0;
+  const timers = new Map();
+  function text(n) { return n.tagName ? n.childNodes.map(text).join('') : n.value || ''; }
+  function wrap(n, parentNode = null) {
+    if (!n.tagName) return { value: n.value || '', parentNode };
+    const attributes = Object.fromEntries((n.attrs || []).map(a => [a.name, a.value]));
+    const handlers = {};
+    const el = { tagName: n.tagName.toUpperCase(), attributes, parentNode, childNodes: [], dataset: {}, value: attributes.value || '', disabled: 'disabled' in attributes,
+      get id() { return this.attributes.id || ''; },
+      get className() { return this.attributes.class || ''; }, set className(v) { this.attributes.class = String(v); },
+      get children() { return this.childNodes.filter(n => n.tagName); },
+      get textContent() { return text(this); }, set textContent(v) { this.childNodes = [{ value: String(v), parentNode: this }]; },
+      get innerHTML() { return this._html || ''; }, set innerHTML(v) { this._html = String(v); this.childNodes = parseFragment(this._html).childNodes.map(n => wrap(n, this)); },
+      getAttribute(k) { return Object.hasOwn(this.attributes, k) ? this.attributes[k] : null; },
+      setAttribute(k, v) { this.attributes[k] = String(v); if (k.startsWith('data-')) this.dataset[k.slice(5)] = String(v); },
+      removeAttribute(k) { delete this.attributes[k]; if (k.startsWith('data-')) delete this.dataset[k.slice(5)]; },
+      contains(other) { for (let n = other; n; n = n.parentNode) if (n === this) return true; return false; },
+      querySelectorAll(selector) { return descendants(this).filter(n => matches(n, selector)); },
+      addEventListener(type, fn) { (handlers[type] ||= []).push(fn); },
+      focus() { document.activeElement = this; },
+      dispatch(type, init = {}) {
+        const e = { type, target: this, currentTarget: this, defaultPrevented: false, cancelBubble: false,
+          preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.cancelBubble = true; }, ...init };
+        for (const fn of handlers[type] || []) fn.call(this, e);
+        if (!e.cancelBubble) for (const fn of docHandlers[type] || []) fn.call(document, e);
+        return e;
+      },
+      click() { if (!this.disabled) this.dispatch('click'); },
+    };
+    el.classList = {
+      add(...items) { el.className = [...new Set([...el.className.split(/\s+/).filter(Boolean), ...items])].join(' '); },
+      remove(...items) { el.className = el.className.split(/\s+/).filter(x => !items.includes(x)).join(' '); },
+      contains(item) { return el.className.split(/\s+/).includes(item); },
+    };
+    el.childNodes = (n.childNodes || []).map(child => wrap(child, el));
+    if (el.tagName === 'TEXTAREA') el.value = el.textContent;
+    return el;
+  }
+  function descendants(n) { return n.childNodes.flatMap(c => c.tagName ? [c, ...descendants(c)] : []); }
+  function matches(n, selector) {
+    if (selector === 'textarea, input[type="text"]') return n.tagName === 'TEXTAREA' || n.tagName === 'INPUT' && n.attributes.type === 'text';
+    if (selector === 'pre code') return n.tagName === 'CODE' && n.parentNode?.tagName === 'PRE';
+    if (selector === 'a[href]') return n.tagName === 'A' && Object.hasOwn(n.attributes, 'href');
+    const attr = selector.match(/^\[([^\]]+)\]$/); if (attr) return Object.hasOwn(n.attributes, attr[1]);
+    if (selector.startsWith('.')) return n.classList.contains(selector.slice(1));
+    throw Error('unhandled page selector ' + selector);
+  }
+  const body = wrap({ tagName: 'body', attrs: [], childNodes: [] });
+  const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
+  const widget = wrap({ tagName: 'section', attrs: [{ name: 'class', value: 'tool-widget' }], childNodes: parseFragment(markup).childNodes }, body);
+  body.childNodes.push(widget);
+  document = { documentElement: { lang }, body, activeElement: body,
+    getElementById(id) { const e = descendants(body).find(n => n.id === id); if (!e) throw Error('missing actual DOM #' + id); return e; },
+    querySelectorAll(selector) { return descendants(body).filter(n => matches(n, selector)); },
+    querySelector(selector) { return selector === '.tool-widget .btn-primary' ? descendants(widget).find(n => n.classList.contains('btn-primary')) || null : this.querySelectorAll(selector)[0] || null; },
+    addEventListener(type, fn) { (docHandlers[type] ||= []).push(fn); },
+    execCommand() { throw Error('OS clipboard prohibited in page test'); },
+  };
+  const $ = id => document.getElementById(id), editor = $('mp-editor');
+  editor.value = preset;
+  const globals = { document,
+    navigator: { clipboard: { writeText(value) { return new Promise((resolve, reject) => requests.push({ value, resolve, reject })); }, write() { throw Error('unexpected clipboard.write'); } } },
+    setTimeout(fn, delay) { const id = ++sequence; timers.set(id, { fn, due: clock + delay, delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    trackTool(...args) { tracks.push(args); }, ztPersist: { clear(slug) { clears.push(slug); } },
+  };
+  if (order === 'before') { const context = { ...globals, _slug: 'markdown-preview' }; context.window = context; vm.runInNewContext(sharedShortcut, context); }
+  const loaded = loadPage(relative(root, componentPath), { lang, globals });
+  if (order === 'after') loaded.run('var _slug="markdown-preview";\n' + sharedShortcut);
+  return { $, editor, preview: $('mp-preview'), copy: $('mp-copy-html'), status: $('mp-status'), count: $('mp-word-count'), document, requests, tracks, clears, globals, loaded, timers,
+    advance(ms) {
+      const end = clock + ms; let guard = 0;
+      while (true) {
+        const next = [...timers].filter(([,t]) => t.due <= end).sort((a,b) => a[1].due - b[1].due)[0];
+        if (!next) break; if (++guard > 100) throw Error('page timer runaway');
+        clock = next[1].due; timers.delete(next[0]); next[1].fn();
+      }
+      clock = end;
+    },
+    type(value) { editor.focus(); editor.value = value; editor.dispatch('input'); },
+    render(value) { this.type(value); this.advance(300); },
+    clearKey(meta = false, focus = 'mp-editor') { $(focus).focus(); return $(focus).dispatch('keydown', { key: 'l', ctrlKey: !meta, metaKey: meta }); },
+    snapshot() { return [editor.value, this.preview.innerHTML, this.count.textContent, this.copy.textContent, this.status.textContent]; },
+  };
+}
+const pageLabels = {
+  en: { copy: 'Copy HTML', copied: 'Copied!', failure: 'Copy failed', zero: '0 words · 0 chars' },
+  zh: { copy: '复制 HTML', copied: '已复制！', failure: '复制失败', zero: '0 词 · 0 字符' },
+  ja: { copy: 'HTML コピー', copied: 'コピー済み！', failure: 'コピー失敗', zero: '0 語 · 0 文字' },
+  ko: { copy: 'HTML 복사', copied: '복사됨!', failure: '복사 실패', zero: '0 단어 · 0 문자' },
+};
+const settlePage = () => new Promise(resolve => setImmediate(resolve));
+const unhandledCopies = [];
+function recordUnhandled(error) { unhandledCopies.push(String(error?.message || error)); }
+process.on('unhandledRejection', recordUnhandled);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const early = page({ lang, preset: '# Typed early' });
+  eq(lang + ' early input remains', early.editor.value, '# Typed early');
+  eq(lang + ' early input renders immediately', early.preview.innerHTML, '<h1>Typed early</h1>');
+  const p = page({ lang });
+  check(lang + ' empty startup keeps default sample', p.editor.value.startsWith('# Welcome to Markdown Preview\n'));
+  check(lang + ' real default sample renders', p.preview.innerHTML.startsWith('<h1>Welcome to Markdown Preview</h1>'));
+  check(lang + ' real highlight.js ran on default sample', p.preview.querySelectorAll('pre code').some(e => e.classList.contains('hljs') && e.innerHTML.includes('hljs-keyword')));
+  p.type('# Fresh'); p.advance(299);
+  check(lang + ' input waits original 300 ms', p.preview.innerHTML.startsWith('<h1>Welcome'));
+  p.advance(1); eq(lang + ' 300 ms emits actual Markdown', p.preview.innerHTML, '<h1>Fresh</h1>');
+  p.type('# Cancelled'); p.$('mp-clear').click();
+  eq(lang + ' Clear clears editor/result/count/status', JSON.stringify([p.editor.value,p.preview.innerHTML,p.count.textContent,p.status.textContent]), JSON.stringify(['','','','']));
+  const cleared = p.snapshot(); p.advance(300);
+  eq(lang + ' Clear cancels old count rewrite', JSON.stringify(p.snapshot()), JSON.stringify(cleared));
+  p.copy.click(); eq(lang + ' cleared rendered HTML cannot be copied', p.requests.length, 0);
+  p.type(''); p.advance(300); eq(lang + ' actual empty input still shows original zero count', p.count.textContent, pageLabels[lang].zero);
+  for (const order of ['before', 'after']) {
+    const q = page({ lang, order }); q.render('# Shortcut'); q.type('# Queued');
+    q.status.textContent = 'old feedback'; const event = q.clearKey(order === 'after', 'mp-copy-html');
+    check(lang + ' ' + order + ' CtrlL handled in tool', event.defaultPrevented);
+    eq(lang + ' ' + order + ' CtrlL clears editor/result/count/status', JSON.stringify([q.editor.value,q.preview.innerHTML,q.count.textContent,q.status.textContent]), JSON.stringify(['','','','']));
+    eq(lang + ' ' + order + ' CtrlL keeps focus on editor', q.document.activeElement?.id, 'mp-editor');
+    eq(lang + ' ' + order + ' shared storage clear still runs', JSON.stringify(q.clears), JSON.stringify(['markdown-preview']));
+    q.copy.click(); eq(lang + ' ' + order + ' CtrlL immediately invalidates copied HTML cache', q.requests.length, 0);
+    if (q.requests[0]) { q.requests[0].resolve(); await settlePage(); }
+    const empty = q.snapshot(); q.advance(300);
+    eq(lang + ' ' + order + ' CtrlL cancels queued rewrite', JSON.stringify(q.snapshot()), JSON.stringify(empty));
+    q.copy.click(); eq(lang + ' ' + order + ' CtrlL invalidates copied HTML cache', q.requests.length, 0);
+  }
+}
+// Current feedback and retry use all locales; races assert the observed DOM and
+// complete clipboard bytes, never private lastHtml/revision/timer variables.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const labels = pageLabels[lang], p = page({ lang });
+  const md = '**Copy** [site](https://example.com)\n\n```js\nconst n = 1;\n```';
+  const html = '<p><strong>Copy</strong> <a href="https://example.com">site</a></p>\n<pre><code class="language-js">const n = 1;\n</code></pre>';
+  p.render(md);
+  eq(lang + ' preview link opens new tab', p.preview.querySelectorAll('a[href]')[0]?.getAttribute('target'), '_blank');
+  eq(lang + ' preview link keeps opener/referrer protection', p.preview.querySelectorAll('a[href]')[0]?.getAttribute('rel'), 'noopener noreferrer');
+  check(lang + ' real highlighter decorates preview code', p.preview.querySelectorAll('pre code')[0]?.innerHTML.includes('hljs-keyword'));
+  p.copy.click(); eq(lang + ' Copy uses full raw renderer HTML', p.requests[0]?.value, html);
+  p.requests[0].resolve(); await settlePage();
+  eq(lang + ' current success label', p.copy.textContent, labels.copied);
+  p.advance(1499); eq(lang + ' feedback lasts 1500 ms', p.copy.textContent, labels.copied);
+  p.advance(1); eq(lang + ' current success restores Copy', p.copy.textContent, labels.copy);
+  const before = unhandledCopies.length;
+  p.copy.click(); p.requests[1].reject(Error('controlled current rejection')); await settlePage();
+  eq(lang + ' current rejection is handled', unhandledCopies.length - before, 0);
+  eq(lang + ' current rejection has localized feedback', p.status.textContent, labels.failure);
+  p.copy.click(); eq(lang + ' same-result retry keeps full bytes', p.requests[2]?.value, html);
+  p.requests[2].resolve(); await settlePage();
+  eq(lang + ' same-result retry succeeds', p.copy.textContent, labels.copied);
+  eq(lang + ' same-result retry removes old failure', p.status.textContent, '');
+  eq(lang + ' copying never changes editor', p.editor.value, md);
+  p.globals.navigator.clipboard = undefined;
+  let thrown; try { p.copy.click(); } catch (e) { thrown = e.message; }
+  eq(lang + ' absent clipboard API does not throw', thrown, undefined);
+  eq(lang + ' absent clipboard API has localized feedback', p.status.textContent, labels.failure);
+  p.$('mp-clear').click(); eq(lang + ' Clear removes copy feedback', p.status.textContent, '');
+  for (const boundary of ['Clear', 'CtrlL', 'input', 'new-result']) {
+    for (const finish of ['resolve', 'reject']) {
+      const q = page({ lang }); q.render('**Old**'); q.copy.click();
+      eq(lang + ' ' + boundary + '/' + finish + ' starts from actual HTML', q.requests[0]?.value, '<p><strong>Old</strong></p>');
+      if (boundary === 'Clear') q.$('mp-clear').click();
+      else if (boundary === 'CtrlL') q.clearKey(false, 'mp-copy-html');
+      else if (boundary === 'input') q.type('**New**');
+      else q.render('**New**');
+      const snapshot = q.snapshot(), errors = unhandledCopies.length;
+      q.requests[0][finish](finish === 'reject' ? Error('controlled stale rejection') : undefined); await settlePage();
+      eq(lang + ' ' + boundary + '/' + finish + ' stale completion leaves current DOM', JSON.stringify(q.snapshot()), JSON.stringify(snapshot));
+      eq(lang + ' ' + boundary + '/' + finish + ' stale rejection is handled', unhandledCopies.length - errors, 0);
+    }
+  }
+  {
+    const q = page({ lang }); q.render('**Same**');
+    q.copy.click(); q.requests[0].resolve(); await settlePage(); q.advance(100);
+    q.copy.click(); q.requests[1].resolve(); await settlePage(); q.advance(1400);
+    eq(lang + ' older timer does not erase newer success', q.copy.textContent, labels.copied);
+    q.advance(100); eq(lang + ' newer timer restores at its own deadline', q.copy.textContent, labels.copy);
+  }
+}
+// Same HTML copied twice must still have separate completion ownership.
+for (const completionOrder of ['old-first', 'new-first']) {
+  for (const finish of ['resolve', 'reject']) {
+    const p = page(); p.render('**Same**'); p.copy.click(); p.copy.click();
+    eq(completionOrder + '/' + finish + ' both requests keep identical full HTML', JSON.stringify(p.requests.map(r => r.value)), JSON.stringify(['<p><strong>Same</strong></p>','<p><strong>Same</strong></p>']));
+    const errors = unhandledCopies.length;
+    if (completionOrder === 'new-first') { p.requests[1].resolve(); await settlePage(); }
+    const snapshot = p.snapshot();
+    p.requests[0][finish](finish === 'reject' ? Error('superseded same-output rejection') : undefined); await settlePage();
+    eq(completionOrder + '/' + finish + ' superseded request cannot change feedback', JSON.stringify(p.snapshot()), JSON.stringify(snapshot));
+    eq(completionOrder + '/' + finish + ' superseded rejection is handled', unhandledCopies.length - errors, 0);
+    if (completionOrder === 'old-first') { p.requests[1].resolve(); await settlePage(); }
+    eq(completionOrder + '/' + finish + ' current request alone owns success', p.copy.textContent, pageLabels.en.copied);
+  }
+}
+{
+  const p = page(); p.render('[jump](#here) ![image](https://example.com/image.png)');
+  eq('fragment link does not gain new-tab attributes', p.preview.querySelectorAll('a[href]')[0]?.getAttribute('target'), null);
+  p.copy.click(); eq('image network URL and fragment renderer bytes unchanged', p.requests[0]?.value, '<p><a href="#here">jump</a> <img src="https://example.com/image.png" alt="image" /></p>');
+  p.requests[0].resolve(); await settlePage();
+  p.document.activeElement = p.document.body; const before = p.snapshot();
+  // Dispatch from an element outside the tool: the shared and local shortcuts both ignore it.
+  p.document.body.dispatch('keydown', { key: 'l', ctrlKey: true });
+  eq('CtrlL outside tool does not clear tool', JSON.stringify(p.snapshot()), JSON.stringify(before));
+}
+process.removeListener('unhandledRejection', recordUnhandled);
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

@@ -64,10 +64,10 @@
     hljs.registerLanguage('md', markdown);
 
     var STRINGS = {
-      en: { copyHtml: 'Copy HTML', clear: 'Clear', copied: 'Copied!', markdownLabel: 'Markdown', previewLabel: 'Preview', wordsSep: 'words', charsSep: 'chars' },
-      zh: { copyHtml: '复制 HTML', clear: '清除', copied: '已复制！', markdownLabel: 'Markdown', previewLabel: '预览', wordsSep: '词', charsSep: '字符' },
-      ja: { copyHtml: 'HTML コピー', clear: 'クリア', copied: 'コピー済み！', markdownLabel: 'Markdown', previewLabel: 'プレビュー', wordsSep: '語', charsSep: '文字' },
-      ko: { copyHtml: 'HTML 복사', clear: '지우기', copied: '복사됨!', markdownLabel: 'Markdown', previewLabel: '미리보기', wordsSep: '단어', charsSep: '문자' }
+      en: { copyHtml: 'Copy HTML', clear: 'Clear', copied: 'Copied!', copyFailed: 'Copy failed', markdownLabel: 'Markdown', previewLabel: 'Preview', wordsSep: 'words', charsSep: 'chars' },
+      zh: { copyHtml: '复制 HTML', clear: '清除', copied: '已复制！', copyFailed: '复制失败', markdownLabel: 'Markdown', previewLabel: '预览', wordsSep: '词', charsSep: '字符' },
+      ja: { copyHtml: 'HTML コピー', clear: 'クリア', copied: 'コピー済み！', copyFailed: 'コピー失敗', markdownLabel: 'Markdown', previewLabel: 'プレビュー', wordsSep: '語', charsSep: '文字' },
+      ko: { copyHtml: 'HTML 복사', clear: '지우기', copied: '복사됨!', copyFailed: '복사 실패', markdownLabel: 'Markdown', previewLabel: '미리보기', wordsSep: '단어', charsSep: '문자' }
     };
 
     var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -98,11 +98,24 @@
     var editor = document.getElementById('mp-editor') as HTMLTextAreaElement;
     var preview = document.getElementById('mp-preview') as HTMLElement;
     var wordCount = document.getElementById('mp-word-count') as HTMLElement;
+    var copyBtn = document.getElementById('mp-copy-html') as HTMLElement;
+    var statusEl = document.getElementById('mp-status') as HTMLElement;
 
     var mdLib = { micromark: micromark, gfm: gfm, gfmHtml: gfmHtml };
     var lastHtml = '';
+    var copyRevision = 0;
+    var copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function invalidateCopy() {
+      copyRevision++;
+      clearTimeout(copyTimer!);
+      copyTimer = null;
+      copyBtn.textContent = t.copyHtml;
+      statusEl.textContent = '';
+    }
 
     function update() {
+      invalidateCopy();
       var src = editor.value;
       lastHtml = renderMarkdown(src, mdLib);
       preview.innerHTML = lastHtml;
@@ -124,6 +137,7 @@
 
     var _mpTimer: ReturnType<typeof setTimeout> | null = null;
     editor.addEventListener('input', function () {
+      invalidateCopy();
       clearTimeout(_mpTimer!);
       _mpTimer = setTimeout(update, 300);
     });
@@ -132,23 +146,43 @@
       // The renderer's own HTML: no highlight.js spans and no target attributes added for the preview.
       var html = lastHtml;
       if (!html) return;
-      navigator.clipboard.writeText(html).then(function () {
-        var btn = document.getElementById('mp-copy-html') as HTMLElement;
-        btn.textContent = t.copied;
-        setTimeout(function () { btn.textContent = t.copyHtml; }, 1500);
-      });
+      invalidateCopy();
+      var revision = copyRevision;
+      function failed() {
+        if (revision === copyRevision) statusEl.textContent = t.copyFailed;
+      }
+      try {
+        navigator.clipboard.writeText(html).then(function () {
+          if (revision !== copyRevision) return;
+          copyBtn.textContent = t.copied;
+          copyTimer = setTimeout(function () {
+            if (revision === copyRevision) copyBtn.textContent = t.copyHtml;
+          }, 1500);
+        }, failed);
+      } catch (_) { failed(); }
       (window as any).trackTool && (window as any).trackTool('markdown_preview', 'copy_html');
     });
 
-    document.getElementById('mp-clear')!.addEventListener('click', function () {
+    function clearAll() {
+      clearTimeout(_mpTimer!);
+      _mpTimer = null;
+      invalidateCopy();
       editor.value = '';
       lastHtml = '';
       preview.innerHTML = '';
       wordCount.textContent = '';
+    }
+    document.getElementById('mp-clear')!.addEventListener('click', clearAll);
+    document.addEventListener('keydown', function (e) {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+      if (!document.querySelector('.mp-wrap')!.contains(document.activeElement)) return;
+      e.preventDefault();
+      editor.focus();
+      clearAll();
     });
 
     // Default content
-    editor.value = [
+    if (!editor.value) editor.value = [
       '# Welcome to Markdown Preview',
       '',
       'This is a **live** Markdown editor. Changes render _instantly_ to the right.',
