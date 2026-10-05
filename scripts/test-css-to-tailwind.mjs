@@ -19,7 +19,7 @@
 //
 // Run: node scripts/test-css-to-tailwind.mjs
 
-import { loadPage } from './astro-page-harness.mjs';
+import { loadPage, readComponent, frontmatterStrings } from './astro-page-harness.mjs';
 import { parseFragment } from 'parse5';
 import { runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
@@ -102,6 +102,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 // Only DOM, clipboard completion and timer delivery are controlled; the whole page script runs.
 const lifecycleSpec = {"slug": "css-to-tailwind", "component": "CssToTailwindTool", "prefix": "c2t", "input": "c2t-css", "source": "display: flex; padding: 1rem;", "next": "display: grid;", "expected": "flex p-4", "file": "src/components/tools/CssToTailwindTool.astro"};
 lifecycleSpec.src = source;
+const pageStrings = frontmatterStrings(readComponent(lifecycleSpec.file).frontmatter);
+const clientStrings = lang => runInNewContext(source.match(/const CLIENT_T = \{[^;]+;/)[0] + ';CLIENT_T', { T: pageStrings[lang] });
 const sourceLayout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = sourceLayout.slice(sourceLayout.indexOf("      document.addEventListener('keydown'", sourceLayout.indexOf('// ── Keyboard shortcuts')), sourceLayout.indexOf('      // ── Copy button visual feedback'));
 check('actual shared shortcut extracted', shortcut.includes('window.ztPersist.clear(_slug)'));
@@ -116,7 +118,8 @@ function same(name, actual, expected) { check(name, JSON.stringify(actual) === J
 function lifecyclePage(lang='en',order='before') {
   const s = lifecycleSpec;
   const nodes=[],byId=new Map(),docHandlers={};
-  const markup=s.src.slice(s.src.indexOf('---',3)+3,s.src.indexOf('<script'));
+  const escape = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const markup=s.src.slice(s.src.indexOf('---',3)+3,s.src.indexOf('<script')).replace(/placeholder=\{T\.(\w+)\}/g, (_,key) => 'placeholder="' + escape(pageStrings[lang][key]) + '"').replace(/\{T\.(\w+)\}/g, (_,key) => escape(pageStrings[lang][key]));
   let document;
   function text(n){return n.nodeName==='#text'?n.value:(n.childNodes||[]).map(text).join('');}
   function visit(n){
@@ -141,9 +144,9 @@ function lifecyclePage(lang='en',order='before') {
     const m=selector.match(/\[(data-i18n(?:-ph)?)\]$/);if(m)return nodes.filter(e=>Object.hasOwn(e.attributes,m[1]));
     throw Error('unexpected selector '+selector);
   };
-  const widget={contains:(e)=>nodes.includes(e),querySelectorAll:selectAll};
+  const widget={dataset:{strings:JSON.stringify(clientStrings(lang))},contains:(e)=>nodes.includes(e),querySelectorAll:selectAll};
   document={documentElement:{lang},activeElement:null,getElementById(id){if(!byId.has(id))throw Error('missing actual DOM id '+id);return byId.get(id);},querySelectorAll:selectAll,
-    querySelector(selector){if(selector==='.tool-widget')return widget;if(selector==='.tool-widget .btn-primary')return nodes.find(e=>e.className.split(/\s+/).includes('btn-primary'))||null;throw Error('unexpected selector '+selector);},
+    querySelector(selector){if(selector==='.tool-widget'||selector==='.c2t-wrap')return widget;if(selector==='.tool-widget .btn-primary')return nodes.find(e=>e.className.split(/\s+/).includes('btn-primary'))||null;throw Error('unexpected selector '+selector);},
     addEventListener(k,fn){(docHandlers[k]||=[]).push(fn);},execCommand(){throw Error('OS clipboard blocked');},
   };
   let now=0,seq=0;const timers=new Map(),requests=[],tracks=[],clears=[];
@@ -246,6 +249,144 @@ for (const oldOutcome of ['resolve', 'reject']) {
   p.clearKey(); clearedTimer(); same('timer after CtrlL stays clean', [p.status.textContent, p.copy.textContent], ['', normal.en]);
 }
 await settle(); process.removeListener('unhandledRejection', onUnhandled);
+
+
+// ---------- v2 page layout ----------
+const { createHash } = await import('node:crypto');
+const { createRequire } = await import('node:module');
+const requireRoot = createRequire(join(root, 'package.json'));
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const { transform: parseJs } = await import('esbuild');
+const { compile: compileMdx } = await import('@mdx-js/mdx');
+const { default: yaml } = await import('js-yaml');
+const sha = text => createHash('sha256').update(text).digest('hex');
+const fullEngine = source.match(/^ *\/\* ── engine:start ── \*\/[\s\S]*?^ *\/\* ── engine:end ── \*\//m)[0];
+same('v2 exact engine bytes', sha(fullEngine), '376008778596974ac85ede4f14824d2d2fffd7766a28f29ecdb888bdffb5a7fa');
+const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const script = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+check('v2 direct root', /^\s*<div class="c2t-wrap"/.test(markup));
+check('v2 controls/status/panels order', /class="c2t-toolbar"[\s\S]*id="c2t-status"[\s\S]*class="c2t-panels zt-io"/.test(markup));
+same('v2 shared panes', (markup.match(/zt-io-pane/g) || []).length, 2);
+same('v2 shared fills', (markup.match(/zt-io-fill/g) || []).length, 2);
+same('v2 keeps three real buttons', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m => m[1]), ['c2t-convert', 'c2t-clear', 'c2t-copy']);
+check('v2 labels remain associated', markup.includes('for="c2t-css"') && markup.includes('for="c2t-output"'));
+check('v2 output remains focusable readonly textarea', /<textarea id="c2t-output"[^>]*readonly/.test(markup));
+check('v2 tips never nest in labels/buttons', !/<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup));
+same('v2 five actual tip bindings', [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}/g)].map(m => m.slice(1)), [
+ ['c2t-tip-convert','convert','convert'], ['c2t-tip-clear','clear','clear'], ['c2t-tip-copy','copy','copy'], ['c2t-tip-input','cssInput','input'], ['c2t-tip-output','tailwindClasses','output'],
+]);
+check('v2 no runtime translation', !/data-i18n|var STRINGS|pageLang/.test(script + markup));
+check('v2 script remains inside root after controls', source.indexOf('<script') > source.indexOf('<details') && /<\/script>\s*<\/div>\s*<style>/.test(source));
+check('v2 zero-minimum flex root', /\.c2t-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(css));
+check('v2 reserved scrolling status', /\.c2t-status\s*\{[^}]*height:\s*1\.5rem;[^}]*min-height:\s*1\.5rem;[^}]*flex:\s*none;[^}]*overflow:\s*auto;/.test(css));
+check('v2 textarea internal scroll', /\.c2t-panel textarea\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*auto;/.test(css));
+check('v2 toolbar touch height', /\.c2t-toolbar button\s*\{\s*min-height:\s*44px;/.test(css));
+check('v2 mobile input and output bounds', /@media \(max-width: 860px\)[\s\S]*height: 180px;[\s\S]*@media \(max-width: 640px\)[\s\S]*height: 144px;[\s\S]*height: 240px;/.test(css));
+check('v2 mobile empty output follows actual textarea value', /@media \(max-width: 860px\)[\s\S]*\.c2t-result-pane:has\(#c2t-output:placeholder-shown\)\s*\{\s*display: none;/.test(css));
+check('v2 output placeholder is localized desktop empty hint', markup.includes('placeholder={T.tailwindPlaceholder}'));
+check('v2 coverage remains accessible outside hidden result', /<\/div>\s*<details class="c2t-coverage">[\s\S]*T.coverageDesc/.test(markup));
+check('v2 registry convert', /['"]css-to-tailwind['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+const MDX_PROTECTION = {
+  "en": {
+    "frontSHA": "d174f8a60e799af54a421898227aa823ce77da5e5305a65769470fa521931612",
+    "bodySHA": "4b313d491a921092a5c90dd689bfe6006c65087719210d6c51056de0349c21af"
+  },
+  "zh": {
+    "frontSHA": "b8695778e62411856e9b7482ca31fcabb6e59e726d185c293c36d34564bb47b8",
+    "bodySHA": "2bfb49aef77d631d7966cfc92984ef4dbe95914f0fb4320b6a471602ed9323aa"
+  },
+  "ja": {
+    "frontSHA": "97b6e77e3a16a8f2122bd2fdec00d1f50bec2c2a0a65c2b642e2e70453b61559",
+    "bodySHA": "7733d5c53927001f9211deeef45cda44d3cc3f26d88e069adba309e437f4b21c"
+  },
+  "ko": {
+    "frontSHA": "a0da5bff12d7373bd42284e8586f634ee59657df21795b3e39f52dbb9103b534",
+    "bodySHA": "7a21173b129d273d53daaf342e62f698ed6da7bfd1a8a9501ecd434e3d088383"
+  }
+};
+const LEGACY_STRINGS = {
+  "en": {
+    "cssInput": "CSS Input",
+    "tailwindClasses": "Tailwind Classes",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "copyFailed": "Copy failed. Please try again.",
+    "convert": "Convert to Tailwind",
+    "clear": "Clear",
+    "coverageNotes": "Coverage notes",
+    "coverageDesc": "Unmapped properties are listed as /* keep: property: value */ comments in the output so you can handle them manually.",
+    "tailwindPlaceholder": "Tailwind classes appear here...",
+    "converted": "Converted.",
+    "noProps": "/* No mappable properties found */"
+  },
+  "zh": {
+    "cssInput": "CSS 输入",
+    "tailwindClasses": "Tailwind 类名",
+    "copy": "复制",
+    "copied": "已复制！",
+    "copyFailed": "复制失败，请重试。",
+    "convert": "转换为 Tailwind",
+    "clear": "清除",
+    "coverageNotes": "覆盖说明",
+    "coverageDesc": "未映射的属性以 /* keep: property: value */ 注释形式输出，供手动处理。",
+    "tailwindPlaceholder": "Tailwind 类名显示在此...",
+    "converted": "已转换。",
+    "noProps": "/* 未找到可映射的属性 */"
+  },
+  "ja": {
+    "cssInput": "CSS 入力",
+    "tailwindClasses": "Tailwind クラス",
+    "copy": "コピー",
+    "copied": "コピー済み！",
+    "copyFailed": "コピーに失敗しました。再試行してください。",
+    "convert": "Tailwind に変換",
+    "clear": "クリア",
+    "coverageNotes": "カバレッジ説明",
+    "coverageDesc": "マッピングできないプロパティは /* keep: property: value */ コメントとして出力されます。",
+    "tailwindPlaceholder": "Tailwind クラスがここに表示されます...",
+    "converted": "変換済み。",
+    "noProps": "/* マッピング可能なプロパティが見つかりません */"
+  },
+  "ko": {
+    "cssInput": "CSS 입력",
+    "tailwindClasses": "Tailwind 클래스",
+    "copy": "복사",
+    "copied": "복사됨!",
+    "copyFailed": "복사하지 못했습니다. 다시 시도하세요.",
+    "convert": "Tailwind로 변환",
+    "clear": "지우기",
+    "coverageNotes": "커버리지 안내",
+    "coverageDesc": "매핑되지 않은 속성은 /* keep: property: value */ 주석으로 출력됩니다.",
+    "tailwindPlaceholder": "Tailwind 클래스가 여기에 표시됩니다...",
+    "converted": "변환 완료.",
+    "noProps": "/* 매핑 가능한 속성을 찾을 수 없습니다 */"
+  }
+};
+for (const lang of ['en','zh','ja','ko']) {
+  same(lang + ' legacy strings unchanged', Object.fromEntries(Object.keys(LEGACY_STRINGS[lang]).map(k => [k, pageStrings[lang][k]])), LEGACY_STRINGS[lang]);
+  same(lang + ' tip keys', Object.keys(pageStrings[lang].tips).sort(), ['clear','convert','copy','input','output']);
+  same(lang + ' client keys exclude tips and UI-only copy', Object.keys(clientStrings(lang)).sort(), ['converted','copied','copy','copyFailed','noProps']);
+  for (const text of Object.values(pageStrings[lang].tips)) check(lang + ' tip is built-only factual text', typeof text === 'string' && text.length > 15 && !JSON.stringify(clientStrings(lang)).includes(text));
+  const mdx = readFileSync(join(root, 'src/content/tools/css-to-tailwind/' + lang + '.mdx'), 'utf8');
+  const [,front,body] = mdx.split('---'); const parsed = yaml.load(front);
+  same(lang + ' five steps', parsed.steps.length, 5);
+  check(lang + ' steps precede FAQ', front.indexOf('steps:') < front.indexOf('faqItems:'));
+  check(lang + ' bounded plain steps', parsed.steps.every(x => typeof x === 'string' && x.length <= 280 && !/[<>]/.test(x)) && parsed.steps.join('').length <= 1200);
+  same(lang + ' protected FAQ/SEO frontmatter', sha(front.replace(/steps:\n(?:  - .*\n)+/, '')), MDX_PROTECTION[lang].frontSHA);
+  same(lang + ' non-Usage body exact', sha(body), MDX_PROTECTION[lang].bodySHA);
+  check(lang + ' no Usage section', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  let error = ''; try { await compileMdx(body); } catch (e) { error = String(e); } same(lang + ' actual MDX compile', error, '');
+}
+const compiled = await transform(source, { filename:'src/components/tools/CssToTailwindTool.astro' });
+same('v2 Astro diagnostics', compiled.diagnostics.filter(d => d.severity === 1), []);
+let compiledError = ''; try { await parseJs(compiled.code, {loader:'ts',format:'esm'}); } catch (e) { compiledError = String(e); } same('v2 generated Astro module parses', compiledError, '');
+const compiledCss = compiled.css.join('\n');
+check('v2 compiled CSS resolves all global selectors', !compiledCss.includes(':global('));
+check('v2 compiled theme ancestor stays unscoped', /\[data-theme=dark\] \.c2t-status/.test(compiledCss) || /\[data-theme="dark"\] \.c2t-status/.test(compiledCss));
+check('v2 compiled mobile empty selector retained', compiledCss.includes(':placeholder-shown') && /max-width:\s*860px/.test(compiledCss));
+new Function(script); check('v2 real client script parses without tips', !script.includes('TIPS'));
+
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
