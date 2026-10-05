@@ -21,9 +21,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TextCaseTool.astro'), 'utf8');
+const { STRINGS: strings, FORMATS: formats } = vm.runInNewContext(source.slice(source.indexOf('const STRINGS ='), source.indexOf('const T = STRINGS[lang')).replace(/\bas const\b/g, '') + '\n({STRINGS, FORMATS});');
 
 const START_MARK = '/* ── engine:start ── */';
 const END_MARK = '/* ── engine:end ── */';
@@ -226,7 +230,12 @@ function page(lang = 'en', shellFirst = false) {
   }
   const body = new Element('body'), widget = new Element();
   widget.className = 'tool-widget'; body.appendChild(widget);
-  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  const escapeHTML = value => String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0]
+    .replace(/\{FORMATS.map\(\(\{ id, label \}\) => \(\n([\s\S]*?)\n        \)\)\}/, (_, template) => formats.map(({ id, label }) => template.replace(/\{`tcase-(row|out)-\$\{id\}`\}/g, (_, part) => '"tcase-' + part + '-' + id + '"').replace(/\{label\}/g, escapeHTML(label))).join('\n'))
+    .replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(strings[lang][key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(strings[lang][key]));
   const stack = [widget];
   for (const token of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
     if (token[3] !== undefined) { stack.at(-1).textContent += token[3].trim(); continue; }
@@ -248,6 +257,7 @@ function page(lang = 'en', shellFirst = false) {
   });
   const context = {
     document: doc, console, _slug: 'text-case', ztPersist: { clear: slug => clears.push(slug) },
+    t: JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(strings[lang]).filter(([key]) => key !== 'tips')))),
     trackTool: (...args) => tracks.push(args),
     navigator: { clipboard: { writeText(value) {
       let resolve, reject;
@@ -382,5 +392,80 @@ for (const [lang, [idle, copied, failed]] of Object.entries(labels)) {
 await settle();
 process.off('unhandledRejection', onUnhandled);
 console.log('page lifecycle: ' + (passes - lifecycleStart.passes) + ' passed, ' + (failures - lifecycleStart.failures) + ' failed');
+
+// ---------- v2 page layout ----------
+{
+  const before = { passes, failures };
+  const markup = source.split('\n---\n')[1].split('<script')[0];
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css = source.split('<style is:global>')[1];
+  const sha = value => createHash('sha256').update(value).digest('hex');
+  const retained = {
+    en: { frontmatter: 'c90620f136e73bf8cd55e41b98f986ba5c9715735f606174089db0cbd15f643f', bodyWithoutUsage: '0496eb63d3207212cd03443c218856230f4d463841bc70cffe6fd1e7e65da4d9' },
+    zh: { frontmatter: '030271095a13b47ac4b598314bf0bcbb48d76f037f9fceee29ece7c86d62624b', bodyWithoutUsage: 'c1139df342fd88a57bc11f632d08b278ebabd4b9ebd6d1f6b02e01cceb7d846a' },
+    ja: { frontmatter: '2cfd6ee43924b737ded3d5b46b9abae0af5002b6c83442172ae2b98b172061ca', bodyWithoutUsage: '90c91aaef436500e0f6ceb2496e2acb4a1f48761d2ddf36f8ec8c740353968f6' },
+    ko: { frontmatter: 'd09bfcdea9c353c3ead54d7678817d8d6c34801f044b80c739b1d1a28ad5e486', bodyWithoutUsage: '2aff1500ed2eeb7caa0aa26edf4d25ee132a1765442a9cc873ccc948a7e96f9b' },
+  };
+  check('v2 outermost element is tool root', /^\s*<div class="tcase-wrap">/.test(markup));
+  check('v2 root flex column can shrink', /\.tcase-wrap \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
+  for (const cls of ['zt-io', 'zt-io-pane', 'zt-io-fill']) check('v2 shared ' + cls, markup.includes(cls));
+  check('v2 input precedes output', markup.indexOf('id="tcase-input"') < markup.indexOf('id="tcase-results"'));
+  check('v2 1:2 desktop columns', css.includes('grid-template-columns: minmax(0, 1fr) minmax(0, 2fr)'));
+  check('v2 output list scrolls within a bounded flex fill', markup.includes('class="tcase-cases zt-io-fill"') && /\.tcase-cases \{ overflow: auto;/.test(css));
+  check('v2 result inputs retain horizontal scrolling', script.includes("out.type = 'text'") && script.includes('out.readOnly = true') && /\.tcase-case-output \{[^}]*min-width: 0;/.test(css));
+  check('v2 no new Generate, Clear or status operation', !/btn-primary|tcase-clear|tcase-generate|tcase-status/.test(source));
+  check('v2 hidden contract', /\.tcase-wrap \[hidden\] \{ display: none !important;/.test(css));
+  check('v2 stack and phone breakpoints', css.includes('(max-width: 860px)') && css.includes('(max-width: 640px)'));
+  check('v2 empty output hidden when stacked', /@media \(max-width: 860px\)[\s\S]*?\.tcase-results\[data-empty="true"\] \{ display: none;/.test(css));
+  check('v2 mobile input and list have explicit bounded heights', /\.tcase-input \{ height: 120px;/.test(css) && /\.tcase-cases \{ height: 360px;/.test(css));
+  check('v2 copy width reserved for all feedback states', /grid-template-columns: minmax\(0, 1fr\) 7\.5rem/.test(css) && /\.tcase-output-row \.btn-copy \{[^}]*width: 7\.5rem;/.test(css));
+  check('v2 mobile copy touch target at least 44px', /@media \(max-width: 640px\)[\s\S]*?\.tcase-output-row \.btn-copy \{ min-height: 44px;/.test(css));
+  check('v2 format labels can wrap without shrinking tips', /\.tcase-case-label \{[^}]*overflow-wrap: anywhere;/.test(css) && /\.tcase-case-heading \{[^}]*min-width: 0;/.test(css));
+  check('v2 dynamic output and Copy styles remain global', source.includes('<style is:global>'));
+  check('v2 converted build-time i18n', !source.includes('data-i18n') && !script.includes('STRINGS') && !script.includes('document.documentElement.lang'));
+  check('v2 only CLIENT_T reaches script', source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && source.includes('define:vars={{ t: CLIENT_T }}'));
+  eq('v2 static row order/IDs/labels match actual engine converters', formats.map(({ id, label }) => ({ id, label })), E.converters.map(({ id, label }) => ({ id, label })));
+  check('v2 per-format labels bind actual output IDs', markup.includes('for={`tcase-out-${id}`}'));
+  check('v2 exactly ten tip instances', markup.includes('id="tcase-tip-input"') && markup.includes('id={`tcase-tip-${id}`}') && formats.length === 9 && (markup.match(/<Toggletip\b/g) || []).length === 2);
+  check('v2 format tips include their own rules and row copy fact', markup.includes('<p>{TIPS[id]}</p><p>{TIPS.copy}</p>'));
+  check('v2 registered convert kind', /'text-case':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  for (const lang of Object.keys(labels)) {
+    const T = strings[lang], { tips, ...client } = T;
+    eq(lang + ' complete localized keys', Object.keys(T).sort(), Object.keys(strings.en).sort());
+    eq(lang + ' complete localized tip keys', Object.keys(tips).sort(), ['input', 'copy', ...Object.keys(expected)].sort());
+    for (const [key, text] of Object.entries(tips)) {
+      check(lang + ' nonempty plain-text tip ' + key, typeof text === 'string' && text.trim().length > 0 && !/<[^>]*>/.test(text));
+      check(lang + ' tip excluded from client ' + key, !JSON.stringify(client).includes(text));
+    }
+    const mdx = readFileSync(join(root, 'src/content/tools/text-case/' + lang + '.mdx'), 'utf8');
+    const at = mdx.indexOf('\n---\n'), meta = mdx.slice(0, at), body = mdx.slice(at + 5), { steps } = loadYaml(meta.slice(4));
+    eq(lang + ' four steps', steps.length, 4);
+    check(lang + ' step size and plain text', steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['inputText', 'output', 'copy', 'copyFailed']) check(lang + ' steps use actual ' + key, steps.some(step => step.includes(T[key])));
+    eq(lang + ' original SEO/FAQ unchanged', sha(meta.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
+    eq(lang + ' non-Usage body unchanged', sha(body), retained[lang].bodyWithoutUsage);
+    check(lang + ' Usage removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    check(lang + ' Limits retained', /<h2>(?:Limitations|限制|制限事項|제한 사항)<\/h2>/.test(body));
+    for (const shellFirst of [false, true]) {
+      const p = page(lang, shellFirst), pane = p.get('tcase-results');
+      eq(lang + '/' + shellFirst + ' initial result empty flag', pane.getAttribute('data-empty'), 'true');
+      p.input('hello world'); eq(lang + '/' + shellFirst + ' input shows results immediately', pane.getAttribute('data-empty'), 'false');
+      for (const { id, label } of formats) {
+        eq(lang + '/' + shellFirst + ' row label ' + id, p.doc.querySelector('[for="tcase-out-' + id + '"]').textContent, label);
+        eq(lang + '/' + shellFirst + ' static row owns its dynamic output ' + id, p.get('tcase-out-' + id).parentElement.id, 'tcase-row-' + id);
+      }
+      p.input(''); eq(lang + '/' + shellFirst + ' empty input restores empty flag', pane.getAttribute('data-empty'), 'true');
+      p.input('hello world'); p.key('tcase-out-upper'); eq(lang + '/' + shellFirst + ' real CtrlL restores empty flag', pane.getAttribute('data-empty'), 'true');
+    }
+  }
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'TextCaseTool.astro' });
+  eq('v2 Astro compiler reports no errors', compiled.diagnostics.filter(d => d.severity === 1).length, 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('v2 generated JS parses and serializes CLIENT_T', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  console.log('v2 page layout: ' + (passes - before.passes) + ' passed, ' + (failures - before.failures) + ' failed');
+}
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);

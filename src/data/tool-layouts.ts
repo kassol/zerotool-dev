@@ -26,6 +26,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'url-encode': 'convert',
   'nato-phonetic-alphabet': 'convert',
   'html-entity': 'convert',
+  'text-case': 'convert',
   'json-formatter': 'convert',
   'text-to-binary': 'convert',
   'hmac-generator': 'convert',
