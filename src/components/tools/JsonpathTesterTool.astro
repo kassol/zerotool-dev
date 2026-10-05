@@ -13,6 +13,7 @@ const labels = {
     matchMany: '{n} matches',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: 'Copy failed — retry',
     invalidJson: 'Invalid JSON',
     noMatch: 'No matches found',
     errorLabel: 'Error',
@@ -27,6 +28,7 @@ const labels = {
     matchMany: '{n} 条匹配',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: '复制失败，请重试',
     invalidJson: 'JSON 格式无效',
     noMatch: '未找到匹配项',
     errorLabel: '错误',
@@ -41,6 +43,7 @@ const labels = {
     matchMany: '{n} 件マッチ',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピー失敗・再試行',
     invalidJson: '無効な JSON',
     noMatch: 'マッチなし',
     errorLabel: 'エラー',
@@ -55,6 +58,7 @@ const labels = {
     matchMany: '{n}개 매칭',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: '복사 실패 — 다시 시도',
     invalidJson: '유효하지 않은 JSON',
     noMatch: '매칭 없음',
     errorLabel: '오류',
@@ -81,6 +85,7 @@ const SAMPLE_JSON = `{
   class="jpt-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-invalid-json={L.invalidJson}
   data-no-match={L.noMatch}
   data-error-label={L.errorLabel}
@@ -133,6 +138,7 @@ const SAMPLE_JSON = `{
 
       var COPY_LABEL     = wrap.dataset.copy;
       var COPIED_LABEL   = wrap.dataset.copied;
+      var COPY_FAILED    = wrap.dataset.copyFailed;
       var INVALID_JSON   = wrap.dataset.invalidJson;
       var NO_MATCH       = wrap.dataset.noMatch;
       var ERROR_LABEL    = wrap.dataset.errorLabel;
@@ -145,6 +151,8 @@ const SAMPLE_JSON = `{
       var codeEl   = document.getElementById('jpt-code');
       var countEl  = document.getElementById('jpt-count');
       var copyBtn  = document.getElementById('jpt-copy');
+      var copyRevision = 0;
+      var copyTimer;
 
       /* ── engine:start ── */
       // JSONPath per RFC 9535: root $, child and descendant segments, name / wildcard / index /
@@ -727,7 +735,24 @@ const SAMPLE_JSON = `{
           });
       }
 
+      function resetCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = undefined;
+        copyBtn.textContent = COPY_LABEL;
+      }
+
+      function clearAll() {
+        resetCopy();
+        jsonEl.value = '';
+        exprEl.value = '';
+        codeEl.textContent = '';
+        countEl.textContent = '';
+        copyBtn.disabled = true;
+      }
+
       function run() {
+        resetCopy();
         var jsonText = jsonEl.value.trim();
         var expr     = exprEl.value.trim();
 
@@ -788,14 +813,27 @@ const SAMPLE_JSON = `{
         });
       });
 
-      copyBtn.addEventListener('click', function () {
+      copyBtn.addEventListener('click', async function () {
         var text = codeEl.textContent;
-        if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        if (copyBtn.disabled || !text) return;
+        resetCopy();
+        var revision = copyRevision;
+        try {
+          await navigator.clipboard.writeText(text);
+          if (revision !== copyRevision) return;
           copyBtn.textContent = COPIED_LABEL;
-          setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1500);
+          copyTimer = setTimeout(function () { if (revision === copyRevision) copyBtn.textContent = COPY_LABEL; }, 1500);
           window.trackTool && window.trackTool('jsonpath-tester', 'copy');
-        });
+        } catch (e) {
+          if (revision === copyRevision) copyBtn.textContent = COPY_FAILED;
+        }
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L') || !wrap.contains(document.activeElement)) return;
+        e.preventDefault();
+        jsonEl.focus();
+        clearAll();
       });
 
       run();

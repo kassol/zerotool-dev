@@ -22,6 +22,9 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonpathTesterTool.astro'), 'utf8');
@@ -385,6 +388,148 @@ err(store, '$.store.*~');
   const tpl = [/^## What (is|are) /mi, /^## .*Online/mi, /^## .* in Code$/mi, /^## (Summary|Conclusion)/mi].filter((re) => re.test(text));
   check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
 }
+
+// ---------- real page controls and shared shortcuts ----------
+// Run the complete inline IIFE and actual shared keydown in both registration orders.
+// parse5 reads the real markup/highlighted HTML; clipboard and timers are local boundaries.
+console.log('Existing checks: ' + passes + ' passed, ' + failures + ' failed');
+const pageStart = passes;
+const requireFromRoot = createRequire(join(root, 'package.json'));
+const { parseFragment, defaultTreeAdapter } = requireFromRoot('parse5');
+const labels = vm.runInNewContext(source.slice(source.indexOf('const labels ='), source.indexOf('const L =')) + ';labels;');
+const sampleJson = source.match(/const SAMPLE_JSON = `([\s\S]*?)`;/)[1];
+const inline = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes('window.ztPersist.clear(_slug)')) throw Error('Actual shared shortcut not found');
+const eq = (name, a, b) => check(name, JSON.stringify(a) === JSON.stringify(b), JSON.stringify(a) + ' expected ' + JSON.stringify(b));
+const settle = () => new Promise(setImmediate);
+const copyErrors = { en: 'Copy failed — retry', zh: '复制失败，请重试', ja: 'コピー失敗・再試行', ko: '복사 실패 — 다시 시도' };
+const unhandled = [], onUnhandled = error => unhandled.push(String(error));
+process.on('unhandledRejection', onUnhandled);
+function page(lang, sharedFirst = false) {
+  const copies = [], timers = [], tracks = [], clears = [], events = {};
+  let copyMode = 'pending';
+  const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
+  const match = (el, selector) => selector.split(',').some(s => {
+    const token = s.trim(), attrs = [...token.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = token.replace(/\[[^\]]+\]/g, '');
+    return (!/^[a-z]/i.test(plain) || el.tagName === plain.match(/^[a-z]+/i)[0].toUpperCase())
+      && (!plain.includes('.') || el.className.split(/\s+/).includes(plain.split('.')[1]))
+      && attrs.every(m => el.attrs[m[1]] === m[2]);
+  });
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attrs: {}, className: '', id: '', text: '', disabled: false, events: {}, _value: null }); }
+    get value() { return this._value ?? (this.tagName === 'TEXTAREA' ? this.textContent : this.attrs.value || ''); }
+    set value(value) { this._value = String(value); }
+    get dataset() { return Object.fromEntries(Object.entries(this.attrs).filter(([k]) => k.startsWith('data-')).map(([k,v]) => [k.slice(5).replace(/-([a-z])/g, (_,c) => c.toUpperCase()),v])); }
+    get firstChild() { return this.children[0] || null; }
+    get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
+    set textContent(value) { this.children.forEach(c => { c.parentNode = null; }); this.children = []; this.text = String(value); }
+    set innerHTML(value) {
+      this.textContent = '';
+      const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
+      for (const node of parseFragment(context, String(value)).childNodes) this.appendChild(from(node));
+    }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    contains(node) { return node === this || descendants(this).includes(node); }
+    closest(selector) { for (let el = this; el; el = el.parentNode) if (match(el, selector)) return el; return null; }
+    querySelectorAll(selector) { return descendants(this).filter(el => match(el, selector)); }
+    addEventListener(type, fn) { (this.events[type] ??= []).push(fn); }
+    dispatch(type, extra = {}) {
+      const e = { type, target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...extra };
+      for (let el = this; el; el = el.parentNode) for (const fn of el.events[type] || []) fn.call(el, e);
+      for (const fn of events[type] || []) fn(e);
+      return e;
+    }
+    click() { if (!this.disabled) this.dispatch('click'); }
+    focus() { document.activeElement = this; }
+  }
+  function from(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const a of node.attrs || []) { el.attrs[a.name] = a.value; if (a.name === 'class') el.className = a.value; if (a.name === 'id') el.id = a.value; if (a.name === 'disabled') el.disabled = true; }
+    for (const child of node.childNodes || []) if (child.nodeName !== '#comment') el.appendChild(from(child));
+    return el;
+  }
+  const escape = value => String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const markup = source.replace(/^---\n[\s\S]*?\n---\s*/, '').split('<script')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/=\{L\.(\w+)\}/g, (_,key) => '="'+escape(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g, (_,key) => escape(labels[lang][key])).replace('{SAMPLE_JSON}',escape(sampleJson));
+  const body = new Element('body'), widget = body.appendChild(new Element('section')); widget.className = 'tool-widget'; widget.innerHTML = markup;
+  const wrap = widget.querySelectorAll('.jpt-wrap')[0], script = wrap.appendChild(new Element('script'));
+  const document = { body, activeElement: body, currentScript: script,
+    getElementById(id) { return descendants(body).find(el => el.id === id) || null; },
+    querySelectorAll(selector) { return descendants(body).filter(el => match(el, selector)); },
+    querySelector(selector) { return selector === '.tool-widget .btn-primary' ? null : this.querySelectorAll(selector)[0] || null; },
+    addEventListener(type, fn) { (events[type] ??= []).push(fn); }
+  };
+  const clipboard = { writeText(text) { if (copyMode === 'throw') throw Error('Synchronous denial'); return new Promise((resolve,reject) => copies.push({ text: String(text), resolve, reject })); } };
+  const context = vm.createContext({ document, console, navigator: { clipboard }, _slug: 'jsonpath-tester',
+    setTimeout(fn, ms) { timers.push({ fn, ms, cancelled: false }); return timers.length; }, clearTimeout(id) { if (timers[id-1]) timers[id-1].cancelled = true; },
+    trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) }
+  }); context.window = context;
+  if (sharedFirst) vm.runInContext(shortcut, context);
+  vm.runInContext(inline, context, { filename: 'JsonpathTesterTool.astro:complete-inline', timeout: 1000 });
+  if (!sharedFirst) vm.runInContext(shortcut, context);
+  document.currentScript = null;
+  const get = id => { const el = document.getElementById(id); if (!el) throw Error('Missing real element '+id); return el; };
+  return { get, document, copies, timers, tracks, clears, wrap,
+    input(id, value) { get(id).value = value; get(id).dispatch('input'); },
+    query(value=1, expr='$.value') { this.input('jpt-json',JSON.stringify({value})); this.input('jpt-expr',expr); },
+    key(key='l', mod='ctrlKey', id='jpt-json') { const el = id === 'outside' ? body : get(id); el.focus(); return el.dispatch('keydown',{key,[mod]:true}); },
+    copyMode(mode) { copyMode = mode; context.navigator.clipboard = mode === 'missing' ? undefined : clipboard; },
+    snapshot() { return [get('jpt-json').value,get('jpt-expr').value,get('jpt-code').textContent,get('jpt-count').textContent,get('jpt-copy').disabled,get('jpt-copy').textContent]; }
+  };
+}
+for (const lang of ['en','zh','ja','ko']) {
+  const L = labels[lang];
+  eq(lang+' copy failure text',L.copyFailed,copyErrors[lang]);
+  for (const sharedFirst of [false,true]) {
+    const h = page(lang,sharedFirst);
+    eq(lang+' initial actual sample authors',JSON.parse(h.get('jpt-code').textContent),authors);
+    h.query(); eq(lang+' query golden',[h.get('jpt-code').textContent,h.get('jpt-count').textContent,h.get('jpt-copy').disabled],['1',L.matchOne.replace('{n}','1'),false]);
+    const before = h.snapshot();
+    eq(lang+' outside shortcut not prevented',h.key('l','ctrlKey','outside').defaultPrevented,false);eq(lang+' outside shortcut unchanged',h.snapshot(),before);
+    eq(lang+' unmodified l unchanged',h.key('l','shiftKey').defaultPrevented,false);eq(lang+' plain shortcut unchanged',h.snapshot(),before);
+    h.key('Enter');eq(lang+' no primary CtrlEnter is inert',h.snapshot(),before);
+    for (const mod of ['ctrlKey','metaKey']) for (const key of ['l','L']) {
+      h.query(); h.get('jpt-copy').click();const pending=h.copies.at(-1);
+      check(lang+' inside clear prevents browser default',h.key(key,mod,'jpt-copy').defaultPrevented);
+      const empty=['','','','',true,L.copy];eq(lang+' shortcut synchronously clears input/output/count/copy',h.snapshot(),empty);
+      eq(lang+' shared persistence clear retained',h.clears.at(-1),'jsonpath-tester');
+      pending.resolve();await settle();eq(lang+' old copy after shortcut is inert',h.snapshot(),empty);
+      const count=h.copies.length;h.get('jpt-copy').click();h.get('jpt-copy').dispatch('click');eq(lang+' empty export cannot copy',h.copies.length,count);
+    }
+    h.query(2);eq(lang+' query recovers after clear',h.get('jpt-code').textContent,'2');
+    h.input('jpt-json','{"bad":"<img src=x>"');check(lang+' invalid JSON is text and copy disabled',h.get('jpt-copy').disabled&&h.get('jpt-code').textContent.startsWith(L.invalidJson+':'));
+    h.query(1,'$.absent');eq(lang+' no match original message',[h.get('jpt-code').textContent,h.get('jpt-copy').disabled],[L.noMatch,true]);
+    h.query(1,'');eq(lang+' empty query original semantics',[h.get('jpt-code').textContent,h.get('jpt-count').textContent,h.get('jpt-copy').disabled],['','',true]);
+    h.query(1,'$.');check(lang+' unsupported syntax remains visible',h.get('jpt-copy').disabled&&h.get('jpt-code').textContent.startsWith(L.unsupported+':'));
+  }
+  for (const mode of ['reject','throw','missing']) {
+    const h=page(lang);h.query();h.copyMode(mode);let threw=false;try{h.get('jpt-copy').click();}catch{threw=true;}
+    if(mode==='reject')h.copies[0].reject(Error('Denied'));await settle();
+    check(lang+' '+mode+' copy does not throw',!threw);eq(lang+' '+mode+' current copy failure is localized',h.get('jpt-copy').textContent,copyErrors[lang]);
+    h.copyMode('pending');h.get('jpt-copy').click();eq(lang+' '+mode+' retry restores label',h.get('jpt-copy').textContent,L.copy);eq(lang+' '+mode+' copies full result',h.copies.at(-1).text,'1');
+    h.copies.at(-1).resolve();await settle();eq(lang+' '+mode+' direct retry succeeds',h.get('jpt-copy').textContent,L.copied);
+  }
+  const edits={ clear:h=>h.key(), json:h=>h.input('jpt-json','{"value":2}'), expr:h=>h.input('jpt-expr','$'), invalid:h=>h.input('jpt-json','{'), noMatch:h=>h.input('jpt-expr','$.missing'), emptyExpr:h=>h.input('jpt-expr',''), example:h=>h.wrap.querySelectorAll('.jpt-pill')[0].click() };
+  for(const [name,edit]of Object.entries(edits))for(const outcome of ['resolve','reject']){
+    const h=page(lang);h.query();h.get('jpt-copy').click();const pending=h.copies[0];edit(h);const current=h.snapshot();
+    pending[outcome](outcome==='reject'?Error('Old denial'):undefined);await settle();eq(lang+' late '+outcome+' after '+name+' leaves current state',h.snapshot(),current);
+  }
+  const h=page(lang);h.query([1,2]);h.get('jpt-copy').click();eq(lang+' array copy complete JSON',h.copies[0].text,'[\n  1,\n  2\n]');h.copies[0].resolve();await settle();const oldTimer=h.timers.at(-1);
+  h.get('jpt-copy').click();h.copies[1].resolve();await settle();const newTimer=h.timers.at(-1);
+  oldTimer.fn();eq(lang+' old real 1500ms timer preserves new feedback',h.get('jpt-copy').textContent,L.copied);
+  eq(lang+' timer deadline unchanged',newTimer.ms,1500);newTimer.fn();eq(lang+' new timer restores Copy',h.get('jpt-copy').textContent,L.copy);
+  h.get('jpt-copy').click();h.copies.at(-1).resolve();await settle();const stale=h.timers.at(-1);h.input('jpt-expr','$.missing');stale.fn();eq(lang+' timer after new no-match cannot revive copied',h.get('jpt-copy').textContent,L.copy);
+  for(const oldOutcome of ['resolve','reject']){
+    const p=page(lang);p.query();p.get('jpt-copy').click();p.get('jpt-copy').click();p.copies[1].resolve();await settle();p.copies[0][oldOutcome](Error('Old denial'));await settle();eq(lang+' newest copy wins old '+oldOutcome,p.get('jpt-copy').textContent,L.copied);
+  }
+}
+await settle();eq('no unhandled copy rejections',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
+eq('protected engine byte-exact',[Buffer.byteLength(source.slice(startIndex,endIndex+END_MARK.length)),createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex')],[23622,'b43418c33b1a8b84b34daf2956c4197e6ffe1b35cd0d19c1365dd90c8340d153']);
+console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
