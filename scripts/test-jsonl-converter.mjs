@@ -3,8 +3,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
 
 const source = readFileSync(new URL('../src/components/tools/JsonlConverterTool.astro', import.meta.url), 'utf8');
+const STR = vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1].replace(/ as const;/, ';') + ';STRINGS');
+const clientStrings = lang => vm.runInNewContext(source.slice(source.indexOf('// strings:end') + '// strings:end'.length, source.indexOf('\n---', source.indexOf('// strings:end'))) + ';CLIENT_T', { STRINGS: STR, lang });
 let passed = 0, failed = 0;
 async function test(name, run) {
   try { await run(); passed++; }
@@ -23,8 +26,8 @@ function page(lang = 'en') {
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   get('jlc-ignore-empty').checked = get('jlc-pretty-json').checked = true;
   document = { documentElement: { lang }, activeElement: get('jlc-jsonl'), getElementById: get, querySelectorAll: () => [], querySelector: () => ({ contains: el => [...elements.values()].includes(el) }), createElement: element, body: element(), addEventListener(k, fn) { docEvents[k] = fn; } };
-  vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
-    document,
+  vm.runInNewContext(source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1], {
+    document, t: clientStrings(lang),
     window: {}, navigator: { clipboard: { writeText: async text => copied.push(text) } }, Blob,
     URL: { createObjectURL: blob => blob, revokeObjectURL() {} },
     FileReader: class { constructor() { readers.push(this); } readAsText(file) { this.file = file; }
@@ -128,7 +131,7 @@ await test('panel Ctrl+Enter stops the page-wide shortcut', () => {
 });
 await test('emptying the JSONL panel also resets its counters and issues', () => {
   for (const action of ['non-array', 'invalid', 'edit']) {
-    const p = page(); p.get('jlc-jsonl').value = '1\n{bad}'; p.get('jlc-validate').click();
+    const p = page(); p.get('jlc-jsonl').value = '1\n{bad}'; p.get('jlc-jsonl').fire('input'); p.flush();
     assert.equal(p.get('jlc-error-lines').textContent, '1');
     if (action === 'edit') { p.get('jlc-json').value = '[1]'; p.get('jlc-json').fire('input'); }
     else { p.get('jlc-json').value = action === 'invalid' ? '[1,' : '{}'; p.get('jlc-to-jsonl').click(); }
@@ -153,7 +156,7 @@ await test('Ctrl+L drops cached copy/download output', async () => {
 // the dir panel ("jsonl" / "json"); after the conversion, out ("json" / "jsonl" panel, or
 // "download-json" / "download-jsonl" / "copy-jsonl" / "copy-json") must equal the following block,
 // and status (optional) must be the status line. {/* jlc-validate: {"counts","line","message"} */} →
-// Validate on the next block gives these counters (lines, valid, errors, empty) and this message
+// Automatic validation after input on the next block gives these counters (lines, valid, errors, empty) and this message
 // for that line (V8 wording, the same engine as Chrome).
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const rel = `src/content/tools/jsonl-converter/${lang}.mdx`;
@@ -179,7 +182,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     n++;
     await test(rel + ' validate example ' + n, () => {
       const spec = JSON.parse(m[1]), [input] = fences(m.index), p = page(lang);
-      p.get('jlc-jsonl').value = input; p.get('jlc-validate').click();
+      p.get('jlc-jsonl').value = input; p.get('jlc-jsonl').fire('input'); p.flush();
       assert.deepEqual(['total', 'valid', 'error', 'empty'].map(k => Number(p.get('jlc-' + k + '-lines').textContent)), spec.counts);
       const row = p.get('jlc-issues-list').children.find(r => r.children?.[0]?.textContent.endsWith(' ' + spec.line));
       assert.equal(row?.children[1].textContent, spec.message);
@@ -202,8 +205,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 {
   const { parseFragment } = await import('parse5');
   const { createHash } = await import('node:crypto');
-  const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
-  const js = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+  const js = source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1];
   const layout = readFileSync(new URL('../src/layouts/ToolLayout.astro', import.meta.url), 'utf8');
   const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
   assert.ok(shortcut.includes("document.addEventListener('keydown'"));
@@ -278,7 +280,7 @@ function page(lang = 'en', shellFirst = false, preset = {}, active = null) {
   const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing production ID ' + id); return e; };
   for (const [id, value] of Object.entries(preset)) get(id).value = value;
   if (active) get(active).focus();
-  const context = { document, console, exports: {}, module: { exports: {} },
+  const context = { document, t: clientStrings(lang), console, exports: {}, module: { exports: {} },
     Blob, URL: { createObjectURL: blob => blob, revokeObjectURL() {} },
     FileReader: class { constructor() { readers.push(this); } readAsText(file) { this.file = file; } finish(text) { this.result = text; this.onload(); } fail() { this.onerror(); } }, _slug: 'jsonl-converter',
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); copies.push({ value, resolve, reject }); return promise; } } },
@@ -391,6 +393,91 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     }
   }
 }
+
+/* ── v2 page layout ── */
+check('all FIX behavior checks retained', checks.length, 884);
+check('client script only loses runtime localization and redundant Validate listener', hash(js), 'a771d59cb884172a48557c36fcbe77441cf36654f4b54b16752d0aa53ae24e90');
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "c88aa7d972886ee53e45c57496fbf900ca65619f28cddebfc2f1b330f8175bc1",
+    "body": "581e20a3eac6b3b4ab74dd0f10b2eded210ef7f1fe7375a44aef94bf250ddf92"
+  },
+  "zh": {
+    "front": "84240ec3322efd643b6237ff734b97f708232aed5b5d833050fbb056e5859627",
+    "body": "c29acccdf7dc8a373f677c67122a0e0279cc0d863908737953b15c241a832a47"
+  },
+  "ja": {
+    "front": "efe9c22d17f2d993ea7d3cb2f8471e38d04427eb151e36f487fc4200d6b9bd06",
+    "body": "2ad1d8db37f2dedba18e320c8cb8d463d514e2d2983d0654635850ff95bd4297"
+  },
+  "ko": {
+    "front": "5f6fea9cd1a532707ccb511cfbe6e0e95f80200cc62dc19eefb42e86020aa058",
+    "body": "530a9a670d3d7b48f1851c0785a51a413b9c4ef8e850fe0403325d0bb18665e7"
+  }
+};
+const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
+const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
+check('direct tool root', /^\s*<div class="jlc-wrap"/.test(markup), true);
+check('controls status paired editors in order', /class="jlc-actions"[\s\S]*id="jlc-status"[\s\S]*class="jlc-panels zt-io"/.test(markup), true);
+check('both shared panes and fills', [(markup.match(/class="jlc-panel zt-io-pane"/g) || []).length, (markup.match(/class="tool-textarea jlc-box zt-io-fill"/g) || []).length], [2, 2]);
+check('ten functional buttons retained and only redundant Validate removed', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m => m[1]), ['jlc-to-json','jlc-to-jsonl','jlc-load-sample','jlc-clear','jlc-download-json','jlc-download-jsonl','jlc-open-jsonl','jlc-copy-jsonl','jlc-open-json','jlc-copy-json']);
+check('twelve source-bound tips', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]), ['jlc-tip-to-json','jlc-tip-to-jsonl','jlc-tip-load-sample','jlc-tip-clear','jlc-tip-ignore-empty','jlc-tip-valid-only','jlc-tip-pretty-json','jlc-tip-jsonl','jlc-tip-copy-jsonl','jlc-tip-json','jlc-tip-copy-json','jlc-tip-issues']);
+check('all tip bodies use the Toggletip slot API', [...markup.matchAll(/<Toggletip\b[^>]*>\{TIPS\.(\w+)\}<\/Toggletip>/g)].length, 12);
+check('tip explanations never become button text', /<Toggletip\b[^>]*\btext=/.test(markup), false);
+check('secondary options and downloads default closed', /<details class="jlc-options">[\s\S]*id="jlc-ignore-empty"[\s\S]*id="jlc-download-json"[\s\S]*<\/details>/.test(markup), true);
+check('both textareas remain editable and visible', /<textarea[^>]*(?:readonly|hidden)/.test(markup), false);
+check('all labels use build-time strings', /data-i18n|var STRINGS|document.documentElement.lang/.test(source), false);
+check('client receives selected strings without tips', /<script is:inline define:vars=\{\{ t: CLIENT_T \}\}>/.test(source), true);
+check('removed validation control has no orphan binding', /jlc-validate|\bvalidate:/.test(source), false);
+check('tips outside labels and buttons', /<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup), false);
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+check('root flexible with zero minimum', /\.jlc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css), true);
+check('reserved scrollable status', /#jlc-status\s*\{[^}]*height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css), true);
+check('bounded editors at both breakpoints and touch controls', /\.jlc-box\s*\{[^}]*overflow: auto;/.test(css) && /@media \(max-width: 860px\)[\s\S]*height: 180px;[\s\S]*@media \(max-width: 640px\)[\s\S]*min-height: 44px;[\s\S]*height: 120px;/.test(css), true);
+check('fixed issues region scrolls rather than growing', /\.jlc-issues-list\s*\{[^}]*height: 4\.5rem;[^}]*overflow: auto;/.test(css), true);
+check('issues region keyboard accessible and named', /id="jlc-issues-list"[^>]*role="region"[^>]*tabindex="0"[^>]*aria-label=\{T.lineIssues\}/.test(markup), true);
+check('dynamic issue rows use global selectors', /\.jlc-issues-list :global\(\.jlc-issue-row\)/.test(css) && /\.jlc-issues-list :global\(\.jlc-issue-message\)/.test(css), true);
+check('convert registry', readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8').match(/['"]jsonl-converter['"]\s*:\s*['"]([^'"]+)['"]/)?.[1], 'convert');
+const requireRoot = createRequire(import.meta.url), mdxCompiler = await import('@mdx-js/mdx');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = STR[lang], payload = clientStrings(lang), expected = PROTECTED_CONTENT[lang];
+  check(lang + ' recursive localization key parity', [Object.keys(S), Object.keys(S.tips)], [Object.keys(STR.en), Object.keys(STR.en.tips)]);
+  check(lang + ' twelve same tip keys', Object.keys(S.tips), ['jsonl','json','toJson','toJsonl','sample','ignoreEmpty','validOnly','pretty','copyJsonl','copyJson','clear','issues']);
+  check(lang + ' tip plain text bounds', Object.values(S.tips).every(v => typeof v === 'string' && v.length && [...v].length <= 280 && !/[<>]/.test(v)), true);
+  check(lang + ' tip placeholders match', Object.values(S.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()), Object.values(STR.en.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()));
+  check(lang + ' tips excluded client payload', Object.hasOwn(payload, 'tips') || Object.values(S.tips).some(v => JSON.stringify(payload).includes(v)), false);
+  const q = page(lang); q.input('jlc-jsonl', '1\n{bad}\n2');
+  q.advance(349); check(lang + ' validation does not run early', q.get('jlc-error-lines').textContent, '0');
+  q.advance(1); check(lang + ' automatic validation replaces removed button', [q.get('jlc-error-lines').textContent, q.get('jlc-json').value, q.get('jlc-copy-json').disabled], ['1','',true]);
+  q.get('jlc-valid-only').checked = true; q.get('jlc-valid-only').dispatch('change');
+  check(lang + ' valid-only change validates without converting', [q.get('jlc-json').value, q.get('jlc-copy-json').disabled], ['',true]);
+  q.get('jlc-to-json').click(); check(lang + ' manual direction applies valid-only', q.get('jlc-json').value, '[\n  1,\n  2\n]');
+  q.get('jlc-pretty-json').checked = false; q.get('jlc-pretty-json').dispatch('change');
+  check(lang + ' pretty option still converts when JSONL has input', q.get('jlc-json').value, '[1,2]');
+  q.get('jlc-load-sample').click(); check(lang + ' sample converts three records', [q.get('jlc-total-lines').textContent, q.get('jlc-copy-json').disabled, JSON.parse(q.get('jlc-json').value).length], ['3',false,3]);
+  const file = q.open('jsonl'); file.finish('9007199254740993\n1e400');
+  check(lang + ' JSONL file validates without enabling export', [q.get('jlc-json').value,q.get('jlc-valid-lines').textContent,q.get('jlc-copy-jsonl').disabled], ['', '2', true]);
+  const arrayFile = q.open('json'); arrayFile.finish('[9007199254740993,1e400]');
+  check(lang + ' JSON array file converts and enables exact export', [q.get('jlc-jsonl').value,q.get('jlc-copy-jsonl').disabled], ['9007199254740993\n1e400',false]);
+  q.get('jlc-download-json').click(); q.get('jlc-download-jsonl').click();
+  check(lang + ' downloads retain cache and numeric bytes', await Promise.all(q.downloads.map(async d => [d.filename,await d.blob.text()])), [['jsonl-converted.json','[9007199254740993,1e400]'],['jsonl-converted.jsonl','9007199254740993\n1e400']]);
+  q.input('jlc-jsonl', Array(80).fill('{bad}').join('\n')); q.advance(350);
+  check(lang + ' long issues retain full count and display first40', [q.get('jlc-error-lines').textContent,q.get('jlc-issues-count').textContent,q.get('jlc-issues-list').children.length], ['80','80',40]);
+  for (const shellFirst of [false,true]) { const r = page(lang,shellFirst); golden(r); const ev = r.key('jlc-issues-list'); check(lang + '/' + shellFirst + ' keyboard result clear keeps shared shortcut', [ev.defaultPrevented,r.document.activeElement.id,r.clears,r.get('jlc-json').value], [true,'jlc-jsonl',['jsonl-converter'],'']); }
+  const content = readFileSync(new URL('../src/content/tools/jsonl-converter/' + lang + '.mdx', import.meta.url), 'utf8');
+  const [,front,body] = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), fm = requireRoot('js-yaml').load(front);
+  check(lang + ' six steps before FAQ', fm.steps.length === 6 && front.indexOf('steps:') < front.indexOf('faqItems:'), true);
+  check(lang + ' step8/280/1200 limits', fm.steps.length <= 8 && fm.steps.every(v => typeof v === 'string' && [...v].length <= 280) && fm.steps.reduce((n,v) => n + [...v].length,0) <= 1200, true);
+  check(lang + ' metadata FAQ only correct redundant Validate wording', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.front);
+  check(lang + ' body protects cases limits and only removes Usage/corrects Validate wording', hash(body), expected.body);
+  let error = ''; try { await mdxCompiler.compile(body); } catch (e) { error = String(e); } check(lang + ' MDX compiles', error, '');
+}
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const compiled = await transform(source, { filename: new URL('../src/components/tools/JsonlConverterTool.astro', import.meta.url).pathname });
+check('Astro no errors', compiled.diagnostics.filter(d => d.severity === 1), []);
+let compileError = ''; try { await requireRoot('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' }); } catch (e) { compileError = String(e); }
+check('Astro generated module parses', compileError, '');
+
 await settle(); process.removeListener('unhandledRejection', onUnhandled);
 passed += checks.filter(Boolean).length; failed += checks.filter(v => !v).length;
 }
