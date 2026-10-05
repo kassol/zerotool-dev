@@ -22,7 +22,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import vm from 'node:vm';
-import { loadPage } from './astro-page-harness.mjs';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
 import { micromark } from 'micromark';
 import { gfm, gfmHtml } from 'micromark-extension-gfm';
 import { parseFragment } from 'parse5';
@@ -32,6 +34,19 @@ const PERF_SLACK = process.env.CI ? 4 : 1;
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const componentPath = join(root, 'src/components/tools/MarkdownPreviewTool.astro');
 const source = readFileSync(componentPath, 'utf8');
+const requireRoot = createRequire(join(root, 'package.json'));
+const STRINGS = frontmatterStrings(source.match(/^---\n([\s\S]*?)\n---/)[1]);
+const clientStrings = lang => vm.runInNewContext(source.match(/const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/)[0] + '\nCLIENT_T', { T: STRINGS[lang] });
+const escapeHtml = text => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// Resolve the component's build-time labels and tip slots into the same DOM shell.
+// The Astro compiler is checked below; this VM controls DOM APIs, not browser layout.
+function pageMarkup(lang) {
+  const T = STRINGS[lang];
+  return source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'))
+    .replace(/data-strings=\{JSON\.stringify\(CLIENT_T\)\}/, 'data-strings="' + escapeHtml(JSON.stringify(clientStrings(lang))) + '"')
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g, (_, id, about, key) => '<span class="zt-tip"><button id="' + id + '-trigger" data-zt-tip="' + id + '">' + escapeHtml(T[about]) + '</button><span id="' + id + '">' + escapeHtml(T.tips[key]) + '</span></span>')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHtml(T[key]));
+}
 
 const START_MARK = '/* ── engine:start ── */';
 const END_MARK = '/* ── engine:end ── */';
@@ -259,7 +274,7 @@ function page({ lang = 'en', order = 'before', preset = '' } = {}) {
     if (!n.tagName) return { value: n.value || '', parentNode };
     const attributes = Object.fromEntries((n.attrs || []).map(a => [a.name, a.value]));
     const handlers = {};
-    const el = { tagName: n.tagName.toUpperCase(), attributes, parentNode, childNodes: [], dataset: {}, value: attributes.value || '', disabled: 'disabled' in attributes,
+    const el = { tagName: n.tagName.toUpperCase(), attributes, parentNode, childNodes: [], dataset: Object.fromEntries(Object.entries(attributes).filter(([key]) => key.startsWith('data-')).map(([key, value]) => [key.slice(5), value])), value: attributes.value || '', disabled: 'disabled' in attributes,
       get id() { return this.attributes.id || ''; },
       get className() { return this.attributes.class || ''; }, set className(v) { this.attributes.class = String(v); },
       get children() { return this.childNodes.filter(n => n.tagName); },
@@ -300,7 +315,7 @@ function page({ lang = 'en', order = 'before', preset = '' } = {}) {
     throw Error('unhandled page selector ' + selector);
   }
   const body = wrap({ tagName: 'body', attrs: [], childNodes: [] });
-  const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
+  const markup = pageMarkup(lang);
   const widget = wrap({ tagName: 'section', attrs: [{ name: 'class', value: 'tool-widget' }], childNodes: parseFragment(markup).childNodes }, body);
   body.childNodes.push(widget);
   document = { documentElement: { lang }, body, activeElement: body,
@@ -455,6 +470,148 @@ for (const completionOrder of ['old-first', 'new-first']) {
   eq('CtrlL outside tool does not clear tool', JSON.stringify(p.snapshot()), JSON.stringify(before));
 }
 process.removeListener('unhandledRejection', recordUnhandled);
+
+// ---------- v2 page layout ----------
+const sha = text => createHash('sha256').update(text).digest('hex');
+const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+const clientScript = source.match(/<script>([\s\S]*?)<\/script>/)[1];
+const cssSource = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const engineExact = source.match(/^    \/\* ── engine:start ── \*\/[\s\S]*?^    \/\* ── engine:end ── \*\//m)[0];
+eq('v2 engine inclusive bytes unchanged', Buffer.byteLength(engineExact), 309);
+eq('v2 engine exact SHA256 unchanged', sha(engineExact), '62ccfe2402400e7dbaa4f62674ee75e1929b9a516c49ad4e88f483f72efb43a8');
+eq('v2 runtime excluding i18n migration remains byte exact', sha(clientScript.replace("    var t = JSON.parse(document.querySelector('.mp-wrap').dataset.strings);\n\n", '')), '37c944c7e32b4f195f36ef703228cc7847d4491f9a5177fd96dbe416a56b98b3');
+eq('v2 original English sample remains byte exact', sha(source.match(/editor.value = \[([\s\S]*?)\]\.join/)[1]), 'ed859ff4a01b5ac0dd535eb650b3f4c3257594b1bce5c6051a66fd4828ab8fde');
+eq('v2 original prose content styling remains byte exact', sha(source.slice(source.indexOf('  /* Prose styles'), source.indexOf('  @media (prefers-color-scheme: dark)'))), '14cdada07a24993afdfbc7a998593516f318c71dce8c8e88b176bc3b55c44924');
+check('v2 direct tool root', /^\s*<div class="mp-wrap"/.test(markup));
+check('v2 toolbar then reserved status then panes', /class="mp-toolbar"[\s\S]*id="mp-status"[\s\S]*class="mp-panes zt-io"/.test(markup));
+eq('v2 two shared panes', (markup.match(/zt-io-pane/g) || []).length, 2);
+eq('v2 two shared fills', (markup.match(/zt-io-fill/g) || []).length, 2);
+eq('v2 functional buttons unchanged', JSON.stringify([...markup.matchAll(/<button id="([^"]+)"/g)].map(m => m[1])), JSON.stringify(['mp-copy-html', 'mp-clear']));
+check('v2 preview keyboard scroll region has a real heading', /id="mp-preview"[^>]*tabindex="0"[^>]*role="region"[^>]*aria-labelledby="mp-preview-label"/.test(markup) && markup.includes('id="mp-preview-label"'));
+check('v2 editor label is associated', /<label[^>]*for="mp-editor"/.test(markup));
+check('v2 tips are outside labels and buttons', !/<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup));
+eq('v2 actual tip control bindings', JSON.stringify([...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}/g)].map(m => m.slice(1))), JSON.stringify([
+  ['mp-tip-copy', 'copyHtml', 'copy'], ['mp-tip-clear', 'clear', 'clear'], ['mp-tip-count', 'countLabel', 'count'], ['mp-tip-editor', 'markdownLabel', 'editor'], ['mp-tip-preview', 'previewLabel', 'preview'],
+]));
+check('v2 no runtime i18n replacement', !/data-i18n|var STRINGS|pageLang/.test(clientScript + markup));
+check('v2 root flex column has zero minima', /\.mp-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(cssSource));
+check('v2 fixed status internally scrolls', /\.mp-status\s*\{[^}]*height:\s*1\.5rem;[^}]*min-height:\s*1\.5rem;[^}]*flex:\s*none;[^}]*overflow:\s*auto;/.test(cssSource));
+check('v2 input and preview both bound long content', /\.mp-editor-pane textarea\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*auto;/.test(cssSource) && /\.mp-preview\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*auto;/.test(cssSource));
+check('v2 shared fill keeps zero basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8')));
+check('v2 mobile sizes remain bounded', /@media \(max-width: 860px\)[\s\S]*height: 180px;[\s\S]*height: 320px;[\s\S]*@media \(max-width: 640px\)[\s\S]*height: 144px;[\s\S]*height: 280px;/.test(cssSource));
+check('v2 primary operations retain 44px touch target', /\.mp-toolbar button\s*\{\s*min-height:\s*44px;/.test(cssSource));
+check('v2 phone count keeps its row when empty', /@media \(max-width: 640px\)\s*\{\s*\.mp-count\s*\{\s*flex-basis:\s*100%;\s*justify-content:\s*flex-end;\s*min-height:\s*28px;/.test(cssSource));
+check('v2 empty desktop hint follows actual empty preview', /\.mp-preview-pane:has\(\.mp-preview:empty\) \.mp-empty-preview\s*\{\s*display:\s*block;/.test(cssSource));
+check('v2 empty preview hides only at stacked width', /@media \(max-width: 860px\)\s*\{[\s\S]*?\.mp-preview-pane:has\(\.mp-preview:empty\)\s*\{\s*display:\s*none;/.test(cssSource));
+check('v2 image notice follows actual nonempty dynamic image source', cssSource.includes(':global(.mp-preview-pane:has(img[src]:not([src=""]))) .mp-image-notice { display: block; }'));
+check('v2 notice is outside copied/highlighted preview', /id="mp-preview"[^>]*><\/div>[\s\S]*id="mp-image-notice"/.test(markup));
+check('v2 selected kind is convert', /['"]markdown-preview['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+const PROTECTED_MDX = {
+  "en": {
+    "beforeSHA256": "1d87ac51524f74a452f023e34f6e0bbacce7f38d2d2eceffa3f9543bdcc1de71",
+    "frontSHA256": "e11be4ccb18a7155fd723ac95d66159fc950bfb00e934ed5f1b6637d20e65846",
+    "bodyWithoutUsageSHA256": "d6238557d74c19ea79e254f72a98ed2f78117cbb6124b2677559230f76351ddc"
+  },
+  "zh": {
+    "beforeSHA256": "f34b51b8248acd93e3908c21058b46d5f15ca3c10097ea7c6be48128911d9169",
+    "frontSHA256": "1fa3e1e14d0a9c9607764a497be7f10e703008863d8c38a4caf35ee290cfbada",
+    "bodyWithoutUsageSHA256": "84b3229158d2321c2481aed8f0585fce9d54a37dbf85f4382a5889913429c9c2"
+  },
+  "ja": {
+    "beforeSHA256": "1431c81247e41eb72925fd03b14ca0e007bf8443ea6f46fe3fa1ef4bc8afadea",
+    "frontSHA256": "14ad6560c8dba353f539615ed89193535e5d15d8e59a65ceb9416b90d19fd88c",
+    "bodyWithoutUsageSHA256": "3d36f747981b1afa5f40bddc97c3cbdd579465df3760bc747bdcf1c3fdbb78ed"
+  },
+  "ko": {
+    "beforeSHA256": "7f8c5ec3ad05306a48113037f1213980dd0574fb381bf1e3c9bd0b891557f15a",
+    "frontSHA256": "7dda2ff91129122a1590356aa583006472d5b4746f45bfe7f041eb94ec37e1f0",
+    "bodyWithoutUsageSHA256": "5371d548dc22582b372de927beae8ce3ef7b0d0d64fcff2807bb431e1c3dcd32"
+  }
+};
+const legacyKeys = ['copyHtml','clear','copied','copyFailed','markdownLabel','previewLabel','wordsSep','charsSep'];
+const LEGACY_STRINGS = {
+  "en": {
+    "copyHtml": "Copy HTML",
+    "clear": "Clear",
+    "copied": "Copied!",
+    "copyFailed": "Copy failed",
+    "markdownLabel": "Markdown",
+    "previewLabel": "Preview",
+    "wordsSep": "words",
+    "charsSep": "chars"
+  },
+  "zh": {
+    "copyHtml": "复制 HTML",
+    "clear": "清除",
+    "copied": "已复制！",
+    "copyFailed": "复制失败",
+    "markdownLabel": "Markdown",
+    "previewLabel": "预览",
+    "wordsSep": "词",
+    "charsSep": "字符"
+  },
+  "ja": {
+    "copyHtml": "HTML コピー",
+    "clear": "クリア",
+    "copied": "コピー済み！",
+    "copyFailed": "コピー失敗",
+    "markdownLabel": "Markdown",
+    "previewLabel": "プレビュー",
+    "wordsSep": "語",
+    "charsSep": "文字"
+  },
+  "ko": {
+    "copyHtml": "HTML 복사",
+    "clear": "지우기",
+    "copied": "복사됨!",
+    "copyFailed": "복사 실패",
+    "markdownLabel": "Markdown",
+    "previewLabel": "미리보기",
+    "wordsSep": "단어",
+    "charsSep": "문자"
+  }
+};
+const yaml = requireRoot('js-yaml');
+const mdx = await import(requireRoot.resolve('@mdx-js/mdx'));
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const T = STRINGS[lang], payload = clientStrings(lang), p = page({ lang });
+  eq(lang + ' v2 five complete tip keys', JSON.stringify(Object.keys(T.tips)), JSON.stringify(['editor','preview','copy','clear','count']));
+  check(lang + ' v2 tips are short plain text', Object.values(T.tips).every(t => typeof t === 'string' && t.length > 0 && [...t].length <= 280 && !/[<>]/.test(t)));
+  check(lang + ' v2 actual client payload excludes all tips', !Object.hasOwn(payload, 'tips') && !Object.values(T.tips).some(t => JSON.stringify(payload).includes(t)));
+  eq(lang + ' v2 original eight strings are exact', JSON.stringify(Object.fromEntries(legacyKeys.map(k => [k, payload[k]]))), JSON.stringify(LEGACY_STRINGS[lang]));
+  eq(lang + ' v2 initial button is build-time localized', p.copy.textContent, pageLabels[lang].copy);
+  eq(lang + ' v2 empty message is built in current locale', p.$('mp-empty-preview').textContent, T.emptyPreview);
+  eq(lang + ' v2 image notice is built in current locale', p.$('mp-image-notice').textContent, T.imageNotice);
+  check(lang + ' v2 image notice lies outside preview', !p.preview.contains(p.$('mp-image-notice')));
+  p.render('![image](https://example.com/image.png)');
+  p.copy.click(); eq(lang + ' v2 visible image never adds privacy message to copied HTML', p.requests[0].value, '<p><img src="https://example.com/image.png" alt="image" /></p>');
+  p.requests[0].resolve(); await settlePage();
+  p.render('![image](data:image/png;base64,AAAA)');
+  eq(lang + ' v2 rejected protocol still gives an empty image source', p.preview.innerHTML, '<p><img src="" alt="image" /></p>');
+  for (const order of ['before', 'after']) {
+    const q = page({ lang, order }); q.type('# queued'); q.clearKey(false, 'mp-tip-preview-trigger');
+    eq(lang + '/' + order + ' v2 tip focus CtrlL returns to visible editor', q.document.activeElement?.id, 'mp-editor');
+    eq(lang + '/' + order + ' v2 tip focus CtrlL clears shared storage', JSON.stringify(q.clears), '["markdown-preview"]');
+    q.advance(300); eq(lang + '/' + order + ' v2 tip focus CtrlL cancels queued preview', q.preview.innerHTML, '');
+  }
+  const content = readFileSync(join(root, 'src/content/tools/markdown-preview', lang + '.mdx'), 'utf8');
+  const [, front, body] = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), data = yaml.load(front), expected = PROTECTED_MDX[lang];
+  check(lang + ' v2 four steps precede FAQ', Array.isArray(data.steps) && data.steps.length === 4 && front.indexOf('steps:') < front.indexOf('faqItems:'));
+  check(lang + ' v2 step limits 8/280/1200', data.steps.length <= 8 && data.steps.every(s => [...s].length <= 280) && data.steps.reduce((n,s) => n + [...s].length, 0) <= 1200);
+  eq(lang + ' v2 SEO/FAQ/frontmatter unchanged', sha(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.frontSHA256);
+  eq(lang + ' v2 only Usage removed from body', sha(body), expected.bodyWithoutUsageSHA256);
+  check(lang + ' v2 Usage absent', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  let mdxError = ''; try { await mdx.compile(body); } catch (e) { mdxError = String(e); }
+  eq(lang + ' v2 remaining body compiles', mdxError, '');
+}
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const compiled = await transform(source, { filename: componentPath });
+eq('v2 Astro has no error diagnostics', JSON.stringify(compiled.diagnostics.filter(d => d.severity === 1)), '[]');
+eq('v2 Astro preserves one client module', compiled.scripts.length, 1);
+check('v2 Astro client module excludes tip text', !Object.values(STRINGS).some(s => Object.values(s.tips).some(t => compiled.scripts.some(script => script.code.includes(t)))));
+check('v2 compiled dynamic image selector has no scoped attribute on img', compiled.css.some(css => /:has\(img\[src\]:not\(\[src=""\]\)\)/.test(css)));
+let compileError = ''; try { await requireRoot('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' }); } catch (e) { compileError = String(e); }
+eq('v2 generated Astro module parses', compileError, '');
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

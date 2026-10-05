@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'markdown-preview': 'convert',
   'jsonl-converter': 'convert',
   'json-xml-converter': 'convert',
   'yaml-toml': 'convert',
