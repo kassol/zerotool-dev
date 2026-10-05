@@ -10,6 +10,8 @@ import vm from 'node:vm';
 
 const sax = createRequire(import.meta.url)('sax');
 const source = readFileSync(new URL('../src/components/tools/JsonXmlConverterTool.astro', import.meta.url), 'utf8');
+const STR = vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1] + ';STRINGS');
+const clientStrings = lang => vm.runInNewContext(source.slice(source.indexOf('// strings:end') + '// strings:end'.length, source.indexOf('\n---', source.indexOf('// strings:end'))) + ';CLIENT_T', { STRINGS: STR, lang });
 let passed = 0, failed = 0;
 async function test(name, fn) { try { await fn(); passed++; } catch (e) { failed++; console.log('FAIL ' + name + ': ' + e.message); } }
 function text(value, type = 3) { return { nodeType: type, nodeValue: value, textContent: value }; }
@@ -41,8 +43,8 @@ function page(lang = 'en', root = node('root')) {
   };
   get('jx-root').value = 'root'; get('jx-pretty').checked = true;
   document = { documentElement: { lang }, activeElement: get('jx-json'), getElementById: get, querySelectorAll: () => [], querySelector: () => ({ contains: el => [...elements.values()].includes(el) }), addEventListener(k, fn) { docEvents[k] = fn; } };
-  vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
-    document, window: {},
+  vm.runInNewContext(source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1], {
+    document, window: {}, t: clientStrings(lang),
     navigator: { clipboard: { writeText: async v => copied.push(v) } },
     DOMParser: class { parseFromString(raw) { return root === 'sax' ? saxDoc(raw) : { documentElement: root, querySelector: () => null }; } },
     setTimeout(fn) { timers.set(++id, fn); return id; }, clearTimeout(i) { timers.delete(i); }
@@ -152,7 +154,6 @@ await test('copy buttons start disabled', () => {
 });
 
 // Valid input that the mapping rejects was labelled "Invalid JSON" / "Invalid XML".
-const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n      \});/.exec(source)[1])();
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   await test(lang + ' status prefix separates syntax errors from mapping limits', () => {
     for (const k of Object.keys(STR.en)) assert.ok(STR[lang][k], lang + ' ' + k);
@@ -220,7 +221,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 {
   const { parseFragment } = await import('parse5');
   const { createHash } = await import('node:crypto');
-  const js = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+  const js = source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1];
   const layout = readFileSync(new URL('../src/layouts/ToolLayout.astro', import.meta.url), 'utf8');
   const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
   assert.ok(shortcut.includes("document.addEventListener('keydown'"));
@@ -289,7 +290,7 @@ function page(lang = 'en', shellFirst = false, preset = {}, active = null) {
   const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing production ID ' + id); return e; };
   for (const [id, value] of Object.entries(preset)) get(id).value = value;
   if (active) get(active).focus();
-  const context = { document, console, exports: {}, module: { exports: {} },
+  const context = { document, console, t: clientStrings(lang), exports: {}, module: { exports: {} },
     DOMParser: class { parseFromString(raw) { const doc = saxDoc(raw); const err = doc.querySelector('parsererror'); if (err) err.querySelector = () => null; return doc; } }, _slug: 'json-xml-converter',
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); copies.push({ value, resolve, reject }); return promise; } } },
     setTimeout(fn, ms = 0) { const id = ++nextTimer; timers.set(id, { fn, ms, due: now + ms }); return id; }, clearTimeout(id) { timers.delete(id); },
@@ -371,6 +372,71 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     }
   }
 }
+/* ── v2 page layout ── */
+check('all FIX behavior checks retained', checks.length, 642);
+check('client script only removes runtime STRINGS and localization', hash(js), '95b8c2313ea150e4a38772d3c6ffd5a30090611cc2d7bccd4720f219a3a74a70');
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "4975332b8753caea19489380d5af2e55b7f96bea8c7c2e7efe97a553db5299e3",
+    "body": "1c81c8682dcf007a368d170596d715cfaefac042f580bea62c513672b1204854"
+  },
+  "zh": {
+    "front": "22f844d769d598e8af87289ed35f602c7f977d7c17ba46f2248e490b131b9aae",
+    "body": "2ce62dd700bd773cbe3212f688eb59b185f8341161533c98c1c913a7f4a6c4a0"
+  },
+  "ja": {
+    "front": "5d4f10a93c0c205f0e23cf8467879990a89dfef8cd4fd4506306d924a995a905",
+    "body": "f291246c6a0a04c70f8b68625c3c854f9dd842eee8ec4ecffb461ff37cdc8589"
+  },
+  "ko": {
+    "front": "0c9f7a9a543de59e3e0f42df61bf50ea6e8400fa2cdddba00cec507a84d5c4c1",
+    "body": "9c383793b6748988595a591175868a909aaed212a5b5f9520c9b1c37696666dc"
+  }
+};
+const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
+const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
+check('direct tool root', /^\s*<div class="jx-wrap"/.test(markup), true);
+check('toolbar status paired editors in order', /class="jx-toolbar"[\s\S]*id="jx-status"[\s\S]*class="jx-panels zt-io"/.test(markup), true);
+check('both shared panes and fills', [(markup.match(/class="jx-panel zt-io-pane"/g) || []).length, (markup.match(/class="tool-textarea jx-box zt-io-fill"/g) || []).length], [2, 2]);
+check('five original functional buttons retained', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m => m[1]), ['jx-to-xml', 'jx-to-json', 'jx-clear', 'jx-copy-json', 'jx-copy-xml']);
+check('nine actual tip bindings', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]), ['jx-tip-to-xml','jx-tip-to-json','jx-tip-clear','jx-tip-root','jx-tip-pretty','jx-tip-json','jx-tip-copy-json','jx-tip-xml','jx-tip-copy-xml']);
+check('options default closed', /<details class="jx-options">/.test(markup), true);
+check('both editors visible and editable', /readonly|hidden|data-empty/.test(markup), false);
+check('all labels rendered at build time', /data-i18n|var STRINGS|document.documentElement.lang/.test(source), false);
+check('inline client receives selected strings without tips', /<script is:inline define:vars=\{\{ t: CLIENT_T \}\}>/.test(source), true);
+check('tips outside interactive labels/buttons', /<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup), false);
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+check('zero minimum flex root', /\.jx-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css), true);
+check('fixed scrollable status', /\.jx-status\s*\{[^}]*height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css), true);
+check('bounded scrollable editors', /\.jx-box\s*\{[^}]*overflow: auto;/.test(css) && /@media \(max-width: 860px\)[\s\S]*height: 180px;[\s\S]*@media \(max-width: 640px\)[\s\S]*min-height: 44px;[\s\S]*height: 120px;/.test(css), true);
+check('semantic light/dark status tokens', /var\(--color-success\)/.test(css) && /var\(--color-danger\)/.test(css), true);
+check('convert registry', readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8').match(/['"]json-xml-converter['"]\s*:\s*['"]([^'"]+)['"]/)?.[1], 'convert');
+const requireRoot = createRequire(import.meta.url), mdxCompiler = await import('@mdx-js/mdx');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = STR[lang], payload = clientStrings(lang), expected = PROTECTED_CONTENT[lang];
+  check(lang + ' nine same tip keys', Object.keys(S.tips), ['json','xml','toXml','toJson','root','pretty','copyJson','copyXml','clear']);
+  check(lang + ' tips are short nonempty plain text', Object.values(S.tips).every(v => typeof v === 'string' && v.length && [...v].length <= 280 && !/[<>]/.test(v)), true);
+  check(lang + ' every tip placeholder matches EN', Object.values(S.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()), Object.values(STR.en.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()));
+  check(lang + ' selected payload excludes tip values', Object.hasOwn(payload, 'tips') || Object.values(S.tips).some(v => JSON.stringify(payload).includes(v)), false);
+  const q = page(lang); golden(q); const before = q.snapshot();
+  q.get('jx-root').value = 'catalog'; q.get('jx-root').dispatch('input'); q.get('jx-pretty').checked = false; q.get('jx-pretty').dispatch('change'); q.advance(400);
+  check(lang + ' option edits retain existing manual contract', q.snapshot(), before);
+  q.get('jx-to-xml').click(); check(lang + ' JSON direction applies root and compact formatting', q.get('jx-xml').value, '<?xml version="1.0" encoding="UTF-8"?><catalog><name>demo</name><port>8080</port></catalog>');
+  q.get('jx-to-json').click(); check(lang + ' XML direction uses actual root and string leaves', q.get('jx-json').value, '{"catalog":{"name":"demo","port":"8080"}}');
+  const content = readFileSync(new URL('../src/content/tools/json-xml-converter/' + lang + '.mdx', import.meta.url), 'utf8');
+  const [, front, body] = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), fm = requireRoot('js-yaml').load(front);
+  check(lang + ' six steps before FAQ', fm.steps.length === 6 && front.indexOf('steps:') < front.indexOf('faqItems:'), true);
+  check(lang + ' steps8/280/1200 limits', fm.steps.length <= 8 && fm.steps.every(v => typeof v === 'string' && [...v].length <= 280) && fm.steps.reduce((n, v) => n + [...v].length, 0) <= 1200, true);
+  check(lang + ' metadata and FAQ byte exact', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.front);
+  check(lang + ' body only loses Usage and retains all limits/examples', hash(body), expected.body);
+  let error = ''; try { await mdxCompiler.compile(body); } catch (e) { error = String(e); } check(lang + ' MDX compiles', error, '');
+}
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const compiled = await transform(source, { filename: new URL('../src/components/tools/JsonXmlConverterTool.astro', import.meta.url).pathname });
+check('Astro no errors', compiled.diagnostics.filter(d => d.severity === 1), []);
+let compileError = ''; try { await requireRoot('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' }); } catch (e) { compileError = String(e); }
+check('Astro generated module parses', compileError, '');
+
 await settle(); process.removeListener('unhandledRejection', onUnhandled);
 passed += checks.filter(Boolean).length; failed += checks.filter(v => !v).length;
 }
