@@ -1,6 +1,7 @@
 // JSON to Kotlin — generated kotlinx.serialization classes compile and decode the sample
 //
 // Read:  src/components/tools/JsonToKotlinTool.astro (extracts the real engine block between the
+//        src/layouts/ToolLayout.astro (the real shared keyboard listener in the page VM);
 //        `engine:start` / `engine:end` markers, so this test cannot drift from the shipped source);
 //        src/content/tools/json-to-kotlin/*.mdx (the input / output <pre> pair after each {/* kt: … */} marker)
 // Write: a temporary directory under os.tmpdir() (Kotlin sources, sample JSON, compiled classes;
@@ -24,6 +25,9 @@
 // Kotlin toolchain).
 //
 // Run: node scripts/test-json-to-kotlin.mjs
+
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -277,6 +281,156 @@ if (!kotlinc || cpJars.length < 2) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+// Complete page lifecycle plus actual ToolLayout keyboard handler; DOM/clipboard/timers are boundary doubles.
+const pageScript = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
+const pageLabels = vm.runInNewContext('(' + source.match(/const labels = (\{[\s\S]*?\n\});/)[1] + ')');
+const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
+const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12253);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'c9f8a7e4a45531a3206bc69e9bcbce3c5bfc87a2be08db5093a1fe35e4d34106');
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const unhandled = [];
+const onUnhandled = reason => unhandled.push(String(reason));
+process.on('unhandledRejection', onUnhandled);
+function lifecyclePage(lang, shellFirst = false) {
+  const copies = [], tracks = [], clears = [], downloads = [], blobs = new Map(), timers = new Map(), docEvents = {};
+  let now = 0, timerId = 0, doc;
+  const decode = s => s.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
+  const escape = s => String(s).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  const descendants = el => el.children.flatMap(c => [c, ...descendants(c)]);
+  function matches(el, selector) {
+    return selector.split(',').some(part => {
+      const words = part.trim().split(/\s+/);
+      if (words.length > 1) {
+        if (!matches(el, words.pop())) return false;
+        for (let p = el.parentElement; p; p = p.parentElement) if (matches(p, words.join(' '))) return true;
+        return false;
+      }
+      const tag = /^[a-z][\w-]*/i.exec(part)?.[0], id = /#([\w-]+)/.exec(part)?.[1];
+      return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+        && [...part.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))
+        && [...part.matchAll(/\[([\w-]+)="([^"]*)"\]/g)].every(m => el.attributes[m[1]] === m[2]);
+    });
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), attributes: {}, dataset: {}, listeners: {}, children: [], parentElement: null, className: '', value: '', textContent: '', checked: false }); }
+    setAttribute(key, value) {
+      this.attributes[key] = value;
+      if (['id', 'type', 'value'].includes(key)) this[key] = value;
+      if (key === 'class') this.className = value;
+      if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
+    }
+    removeAttribute(key) { delete this.attributes[key]; }
+    get classList() { const e = this; return { contains(c) { return e.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) e.className += ' ' + c; }, remove(c) { e.className = e.className.split(/\s+/).filter(v => v !== c).join(' '); } }; }
+    appendChild(e) { this.children.push(e); e.parentElement = this; }
+    querySelectorAll(s) { return descendants(this).filter(e => matches(e, s)); }
+    querySelector(s) { return this.querySelectorAll(s)[0] || null; }
+    contains(e) { return this === e || descendants(this).includes(e); }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    dispatch(type) { for (const fn of this.listeners[type] || []) fn.call(this, { target: this, type }); }
+    click() { if (this.tagName === 'A') { downloads.push({ name: this.download, blob: blobs.get(this.href) }); return; } if (!this.disabled) this.dispatch('click'); }
+    focus() { doc.activeElement = this; }
+  }
+  const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
+  const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
+    .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
+  const stack = [widget];
+  for (const token of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
+    if (token[3] !== undefined) { stack.at(-1).textContent += decode(token[3]).trim(); continue; }
+    if (token[0].startsWith('</')) { if (stack.at(-1).tagName !== token[1].toUpperCase()) throw Error('Unbalanced real markup'); stack.pop(); continue; }
+    const el = new Element(token[1]);
+    for (const a of token[2].matchAll(/([\w-]+)=(?:"([^"]*)"|'([^']*)')/g)) el.setAttribute(a[1], decode(a[2] ?? a[3]));
+    stack.at(-1).appendChild(el);
+    if (!['input', 'br', 'hr'].includes(token[1]) && !token[2].endsWith('/')) stack.push(el);
+  }
+  const get = id => { const el = descendants(body).find(e => e.id === id); if (!el) throw Error('Missing real ID ' + id); return el; };
+  doc = { createElement: tag => new Element(tag), body, activeElement: body, getElementById: get, querySelector: s => body.querySelector(s), addEventListener(type, fn) { (docEvents[type] ||= []).push(fn); } };
+  const context = { document: doc, _slug: 'json-to-kotlin', console, Blob, hljs: { highlightElement() {} },
+    URL: { createObjectURL(blob) { const id = 'blob:' + blobs.size; blobs.set(id, blob); return id; }, revokeObjectURL() {} },
+    trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) },
+    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); copies.push({ value, resolve, reject }); return promise; } } },
+    setTimeout(fn, ms) { timers.set(++timerId, { fn, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+  };
+  context.window = context; vm.createContext(context);
+  if (shellFirst) vm.runInContext(shortcut, context);
+  vm.runInContext(pageScript, context, { filename: 'JsonToKotlinTool.astro' });
+  if (!shellFirst) vm.runInContext(shortcut, context);
+  return { get, context, copies, tracks, clears, downloads, timers, doc,
+    input(value) { get('jkt-input').value = value; get('jkt-input').dispatch('input'); },
+    key(id = 'jkt-input', key = 'l', modifier = 'ctrlKey') { (typeof id === 'string' ? get(id) : id || body).focus(); const e = { key, [modifier]: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } }; for (const fn of docEvents.keydown || []) fn(e); return e; },
+    advance(ms) { const end = now + ms; for (;;) { const next = [...timers].filter(([, t]) => t.due <= end).sort((a, b) => a[1].due - b[1].due)[0]; if (!next) break; timers.delete(next[0]); now = next[1].due; next[1].fn(); } now = end; },
+  };
+}
+
+const snapshot = p => JSON.stringify(['jkt-input', 'jkt-root-name', 'jkt-output-code', 'jkt-status', 'jkt-copy'].map(id => { const e = p.get(id); return [e.value, e.textContent, e.className, !!e.disabled]; }));
+const golden = p => { p.input('{}'); p.advance(300); };
+const goldenCode = "import kotlinx.serialization.Serializable\n\n@Serializable\nclass RootObject";
+const copy = p => { p.get('jkt-copy').click(); return p.copies.at(-1); };
+const copyFailure = { en: 'Copy failed. Please copy the output manually.', zh: '复制失败，请手动复制输出。', ja: 'コピーに失敗しました。出力を手動でコピーしてください。', ko: '복사하지 못했습니다. 출력을 직접 복사하세요.' };
+try {
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang], p = lifecyclePage(lang); golden(p);
+    eq(lang + ': page golden complete bytes', p.get('jkt-output-code').textContent, goldenCode);
+    eq(lang + ': localized current result', p.get('jkt-status').textContent, L.msgGenOne);
+    p.get('jkt-root-name').value = 'Api'; p.get('jkt-root-name').dispatch('input'); p.advance(300);
+    eq(lang + ': root still awaits Generate', p.get('jkt-output-code').textContent, goldenCode);
+    p.get('jkt-convert').click();
+    eq(lang + ': Generate applies root name', p.get('jkt-output-code').textContent.includes('Api'), true);
+    p.get('jkt-clear').click();
+    eq(lang + ': Clear preserves root name', p.get('jkt-root-name').value, 'Api');
+    eq(lang + ': Clear removes derived state', !p.get('jkt-input').value && !p.get('jkt-output-code').textContent && !p.get('jkt-status').textContent, true);
+    for (const shellFirst of [false, true]) for (const modifier of ['ctrlKey', 'metaKey']) {
+      const q = lifecyclePage(lang, shellFirst); golden(q); q.input('{');
+      q.key('jkt-copy', 'L', modifier);
+      eq(lang + ': shared clear immediate ' + shellFirst + modifier, !q.get('jkt-input').value && !q.get('jkt-root-name').value && !q.get('jkt-output-code').textContent && !q.get('jkt-status').textContent, true);
+      eq(lang + ': clear focuses input ' + shellFirst + modifier, q.doc.activeElement === q.get('jkt-input'), true);
+      eq(lang + ': queued work cancelled ' + shellFirst + modifier, q.timers.size, 0);
+      eq(lang + ': shared storage clear ' + shellFirst + modifier, q.clears.join(','), 'json-to-kotlin');
+      q.advance(1);
+      eq(lang + ': shared clear remains empty after deferred callbacks ' + shellFirst + modifier, !q.get('jkt-output-code').textContent && !q.get('jkt-status').textContent, true);
+    }
+    const outside = lifecyclePage(lang); golden(outside); const beforeOutside = snapshot(outside); outside.key(null); outside.advance(1); eq(lang + ': outside shortcut unchanged', snapshot(outside), beforeOutside);
+    const invalid = lifecyclePage(lang); golden(invalid); invalid.input('{'); invalid.advance(300);
+    eq(lang + ': error removes old result', invalid.get('jkt-output-code').textContent, '');
+    eq(lang + ': invalid input is visibly marked', invalid.get('jkt-input').classList.contains('error'), true);
+
+    invalid.input(''); invalid.advance(300);
+    eq(lang + ': empty input removes error and status', !invalid.get('jkt-input').classList.contains('error') && !invalid.get('jkt-status').textContent && !invalid.get('jkt-output-code').textContent, true);
+    const q = lifecyclePage(lang); golden(q);
+    const good = copy(q); eq(lang + ': clipboard complete output bytes', good.value, goldenCode); good.resolve(); await settle(); eq(lang + ': copy success', q.get('jkt-copy').textContent, L.copied); q.advance(1500); eq(lang + ': current timer restores Copy', q.get('jkt-copy').textContent, L.copy);
+    for (const failure of ['reject', 'missing']) {
+      const beforeUnhandled = unhandled.length, clipboard = q.context.navigator.clipboard; let thrown = null;
+      try { if (failure === 'missing') { q.context.navigator.clipboard = undefined; copy(q); } else copy(q).reject(Error('denied')); } catch (e) { thrown = e; }
+      await settle(); eq(lang + ': copy ' + failure + ' does not throw', thrown, null); eq(lang + ': copy ' + failure + ' has translated failure', q.get('jkt-status').textContent, copyFailure[lang]); eq(lang + ': copy ' + failure + ' handled', unhandled.length, beforeUnhandled);
+      q.context.navigator.clipboard = clipboard; const retry = copy(q); eq(lang + ': retry preserves bytes ' + failure, retry.value, goldenCode); retry.resolve(); await settle(); eq(lang + ': retry succeeds ' + failure, q.get('jkt-copy').textContent, L.copied); eq(lang + ': retry clears owned error ' + failure, q.get('jkt-status').textContent === copyFailure[lang], false);
+    }
+    for (const action of ["input", "clear", "shortcut", "result", "error", "example"]) for (const outcome of ['resolve', 'reject', 'timer']) {
+      const r = lifecyclePage(lang); golden(r); const old = copy(r);
+      if (outcome === 'timer') { old.resolve(); await settle(); }
+      if (action === 'input') r.input('{"next":true}');
+      if (action === 'root') { r.get('jkt-root-name').value = 'NewRoot'; r.get('jkt-root-name').dispatch('input'); }
+      if (action === 'tab') r.doc.querySelector("[data-mode=\"typeddict\"]").click();
+      if (action === 'clear') r.get('jkt-clear').click();
+      if (action === 'shortcut') r.key();
+      if (action === 'result') { r.input('{"next":true}'); r.get('jkt-convert').click(); }
+      if (action === 'error') { r.input('{'); r.get('jkt-convert').click(); }
+      if (action === 'example') r.get('jkt-example').click();
+      const before = snapshot(r), rejectedBefore = unhandled.length;
+      if (outcome === 'timer') r.advance(1500); else { old[outcome](Error('late')); await settle(); }
+      if (outcome !== 'timer' || !['input', 'root'].includes(action)) eq(lang + ': stale ' + action + '/' + outcome, snapshot(r), before);
+      else eq(lang + ': expired feedback after edit ' + action, r.get('jkt-copy').textContent, L.copy);
+      eq(lang + ': stale rejection handled ' + action + '/' + outcome, unhandled.length, rejectedBefore);
+    }
+    const t = lifecyclePage(lang); golden(t); copy(t).resolve(); await settle(); t.advance(1000); copy(t).resolve(); await settle(); t.advance(500); eq(lang + ': old timer leaves newer feedback', t.get('jkt-copy').textContent, L.copied); t.advance(1000); eq(lang + ': new timer expires', t.get('jkt-copy').textContent, L.copy);
+    const order = lifecyclePage(lang); golden(order); const first = copy(order), second = copy(order); second.reject(Error('current')); await settle(); first.resolve(); await settle(); eq(lang + ': older success keeps current copy failure', order.get('jkt-status').textContent, copyFailure[lang]); eq(lang + ': older success cannot claim copied', order.get('jkt-copy').textContent, L.copy);
+
+  }
+} finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
+eq('no unhandled clipboard rejections', unhandled.length, 0);
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? ', ' + skips + ' skipped' : ''}`);
 process.exit(failures ? 1 : 0);
