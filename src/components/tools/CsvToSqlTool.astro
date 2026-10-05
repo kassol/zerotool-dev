@@ -68,6 +68,7 @@
           individualMode: 'Individual INSERT',
           copy: 'Copy',
           copied: 'Copied!',
+          copyFailed: 'Copy failed',
           placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
           errNoData: 'No valid data found. Please check your CSV input.',
           errNoHeader: 'CSV must have a header row.',
@@ -85,6 +86,7 @@
           individualMode: '\u9010\u884c INSERT',
           copy: '\u590d\u5236',
           copied: '\u5df2\u590d\u5236\uff01',
+          copyFailed: '复制失败',
           placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
           errNoData: '\u672a\u627e\u5230\u6709\u6548\u6570\u636e\uff0c\u8bf7\u68c0\u67e5 CSV \u8f93\u5165\u3002',
           errNoHeader: 'CSV \u5fc5\u987b\u5305\u542b\u8868\u5934\u884c\u3002',
@@ -102,6 +104,7 @@
           individualMode: '\u500b\u5225 INSERT',
           copy: '\u30b3\u30d4\u30fc',
           copied: '\u30b3\u30d4\u30fc\u6e08\u307f\uff01',
+          copyFailed: 'コピー失敗',
           placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
           errNoData: '\u30c7\u30fc\u30bf\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002CSV\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
           errNoHeader: 'CSV\u306b\u306f\u30d8\u30c3\u30c0\u30fc\u884c\u304c\u5fc5\u8981\u3067\u3059\u3002',
@@ -119,6 +122,7 @@
           individualMode: '\uac1c\ubcc4 INSERT',
           copy: '\ubcf5\uc0ac',
           copied: '\ubcf5\uc0ac\ub428!',
+          copyFailed: '복사 실패',
           placeholder: 'name,age,city\nAlice,30,New York\nBob,25,London',
           errNoData: '\uc720\ud6a8\ud55c \ub370\uc774\ud130\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4. CSV\ub97c \ud655\uc778\ud558\uc138\uc694.',
           errNoHeader: 'CSV\uc5d0\ub294 \ud5e4\ub354 \ud589\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.',
@@ -145,6 +149,9 @@
       var fileInput  = document.getElementById('cts-file-input');
       var statusEl   = document.getElementById('cts-status');
       var createEl   = document.getElementById('cts-create');
+      var fileRevision = 0;
+      var copyRevision = 0;
+      var copyTimer = null;
 
       csvEl.placeholder = t.placeholder;
 
@@ -317,6 +324,8 @@
       /* ── engine:end ── */
 
       function convert() {
+        clearTimeout(_timer);
+        resetCopy();
         if (!csvEl.value.trim()) {
           sqlEl.value = '';
           clearStatus();
@@ -342,11 +351,15 @@
       /* ── Debounced live convert ── */
       var _timer = null;
       function scheduleConvert() {
+        resetCopy();
         clearTimeout(_timer);
         _timer = setTimeout(convert, 300);
       }
 
-      csvEl.addEventListener('input', scheduleConvert);
+      csvEl.addEventListener('input', function () {
+        fileRevision++;
+        scheduleConvert();
+      });
       dialectEl.addEventListener('change', convert);
       tableEl.addEventListener('input', scheduleConvert);
       modeEl.addEventListener('change', convert);
@@ -356,8 +369,12 @@
       fileInput.addEventListener('change', function () {
         var file = fileInput.files && fileInput.files[0];
         if (!file) return;
+        var revision = ++fileRevision;
+        clearTimeout(_timer);
+        resetCopy();
         var reader = new FileReader();
         reader.onload = function (e) {
+          if (revision !== fileRevision) return;
           csvEl.value = e.target.result;
           convert();
         };
@@ -365,13 +382,44 @@
         fileInput.value = '';
       });
 
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var widget = document.querySelector('.cts-wrap');
+        if (!widget || !widget.contains(document.activeElement)) return;
+        e.preventDefault();
+        fileRevision++;
+        clearTimeout(_timer);
+        resetCopy();
+        csvEl.focus();
+        csvEl.value = '';
+        sqlEl.value = '';
+        fileInput.value = '';
+        clearStatus();
+      });
+
       /* ── Copy ── */
+      function resetCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+      }
+
       copyBtn.addEventListener('click', function () {
         if (!sqlEl.value) return;
-        navigator.clipboard.writeText(sqlEl.value).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        function failed() {
+          if (revision === copyRevision) copyBtn.textContent = t.copyFailed;
+        }
+        try {
+          navigator.clipboard.writeText(sqlEl.value).then(function () {
+            if (revision !== copyRevision) return;
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () {
+              if (revision === copyRevision) copyBtn.textContent = t.copy;
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
       });
 
       // seed sample data on mount
