@@ -22,9 +22,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import domino from '@mixmark-io/domino';
-import { loadPage } from './astro-page-harness.mjs';
+import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssSpecificityCalculatorTool.astro'), 'utf8');
@@ -147,7 +148,7 @@ for (const bad of ['a(', ':is(.a', '[x', '#', 'a)b', '.', ':', '[x="a]']) {
 
 // ---------- 4-language STRINGS ----------
 {
-  const m = source.match(/var STRINGS = (\{[\s\S]*?\n\s{6}\});/);
+  const m = source.match(/const STRINGS = (\{[\s\S]*?\n\});/);
   check('STRINGS block found', !!m);
   if (m) {
     const S = new Function('return ' + m[1])();
@@ -174,7 +175,16 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 // ---------- complete page lifecycle and real shared shortcuts ----------
 // Only DOM, clipboard delivery and the timer clock are controlled. The actual engine,
 // renderer and event listeners run together; detached buttons stay observable.
-const pageStrings=new Function('return '+source.match(/var STRINGS = (\{[\s\S]*?\n\s{6}\});/)[1])();
+const frontmatter=source.split('---')[1];
+const pageStrings=frontmatterStrings(frontmatter);
+const locale=new Function('lang',frontmatter.slice(frontmatter.indexOf('const STRINGS'))+'\nreturn {T,TIPS,CLIENT_T};');
+const markupTemplate=source.replace(/^---\n[\s\S]*?\n---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+const escapeMarkup=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function renderMarkup(lang){
+ const T=pageStrings[lang],about=JSON.parse(readFileSync(join(root,'src/i18n',lang+'.json'),'utf8'))['tool.tipAbout'];
+ return markupTemplate.replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g,(_all,id,label,key)=>'<span class="zt-tip"><button type="button" data-zt-tip="'+id+'" aria-label="'+escapeMarkup(about.replace('{name}',T[label]))+'"></button><span id="'+id+'" class="zt-tip-pop" hidden>'+escapeMarkup(T.tips[key])+'</span></span>')
+  .replace(/=\{T\.(\w+)\}/g,(_all,key)=>'="'+escapeMarkup(T[key])+'"').replace(/\{T\.(\w+)\}/g,(_all,key)=>escapeMarkup(T[key]));
+}
 const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
 const shortcut=layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
 const unhandled=[];
@@ -182,7 +192,7 @@ const onUnhandled=error=>unhandled.push(String(error));
 process.on('unhandledRejection',onUnhandled);
 const settle=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
 function page(lang,order){
- const markup=source.replace(/^---\n[\s\S]*?\n---/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+ const markup=renderMarkup(lang);
  const document=domino.createDocument('<html lang="'+lang+'"><body><main class="tool-widget">'+markup+'</main><input id="outside" type="text"></body></html>');
  Object.defineProperty(document,'activeElement',{value:document.body,writable:true,configurable:true});
  const timers=new Map(),clipboard=[],clears=[],tracks=[],errors=[],effects=[];
@@ -191,7 +201,7 @@ function page(lang,order){
  function focus(el){if(!Object.hasOwn(el,'focus'))Object.defineProperty(el,'focus',{value:()=>{document.activeElement=el;}});el.focus();}
  focus(input);
  const navigator={clipboard:{writeText(value){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});clipboard.push({value,promise,resolve,reject});return promise;}}};
- const globals={document,navigator,_slug:'css-specificity-calculator',ztPersist:{clear:slug=>clears.push(slug)},trackTool:(...args)=>tracks.push(args),fetch(){effects.push('network');throw Error('Unexpected network');},setTimeout(fn,ms){timers.set(++seq,{fn,ms,due:clock+ms});return seq;},clearTimeout(id){timers.delete(id);}};
+ const globals={document,navigator,t:locale(lang).CLIENT_T,_slug:'css-specificity-calculator',ztPersist:{clear:slug=>clears.push(slug)},trackTool:(...args)=>tracks.push(args),fetch(){effects.push('network');throw Error('Unexpected network');},setTimeout(fn,ms){timers.set(++seq,{fn,ms,due:clock+ms});return seq;},clearTimeout(id){timers.delete(id);}};
  document.execCommand=()=>{effects.push('fallback');throw Error('Unexpected fallback');};
  if(order==='shared-before'){const ctx=vm.createContext(globals);ctx.window=ctx;vm.runInContext(shortcut,ctx);}
  const real=loadPage('src/components/tools/CssSpecificityCalculatorTool.astro',{lang,globals});
@@ -274,6 +284,73 @@ process.removeListener('unhandledRejection',onUnhandled);
 const protectedEngine=source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
 eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),7645);
 eq('engine exact original SHA256',createHash('sha256').update(protectedEngine).digest('hex'),'3a9f29257895fc733bcdb1ee7bde7820985760a4a23c74f8c82a6ebb85609843');
+
+
+// ---------- v2 page layout ----------
+const require=createRequire(join(root,'package.json'));
+const astroRequire=createRequire(require.resolve('astro/package.json'));
+const compiled=await astroRequire('@astrojs/compiler').transform(source,{filename:join(root,'src/components/tools/CssSpecificityCalculatorTool.astro'),scopedStyleStrategy:'attribute'});
+check('v2 Astro compilation diagnostics',!compiled.diagnostics.some(d=>d.severity===1));
+let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){moduleError=String(e);}eq('v2 generated module parses',moduleError,'');
+const css=compiled.css.join('\n'),scope=css.match(/data-astro-cid-[\w-]+/)[0];
+const hash=v=>createHash('sha256').update(v).digest('hex');
+eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'debacaebf3a0e3e27e724551beee6ec9df7cd0d05b291fdb3c5011079f0181c1');
+check('v2 direct flex root',/^<div class="csc-wrap">/.test(markupTemplate)&&/\.csc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
+check('v2 input before reserved hint/status before results',markupTemplate.indexOf('id="csc-input"')<markupTemplate.indexOf('csc-hint csc-status')&&markupTemplate.indexOf('csc-hint csc-status')<markupTemplate.indexOf('class="csc-result-section"'));
+check('v2 fixed hint/status height',/\.csc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css));
+check('v2 bounded result fills available height',/\.csc-result-section[^{}]*\{[^}]*flex:\s*1 1 0[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
+check('v2 list has internal scroll and zero basis',/\.csc-results[^{}]*\{[^}]*flex:\s*1 1 0[^}]*min-width:\s*0[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
+check('v2 dynamic card cannot shrink',/\.csc-result-card[^{}]*,[^{]*\.csc-note[^{}]*,[^{]*\.csc-empty[^{}]*\{\s*flex:\s*none/.test(css));
+check('v2 mobile fixed result heights',/@media\s*\(max-width:\s*860px\)[\s\S]*?height:\s*28rem/.test(css)&&/@media\s*\(max-width:\s*640px\)[\s\S]*?height:\s*26rem/.test(css));
+check('v2 mobile search and copy 44px',/@media\s*\(max-width:\s*640px\)[\s\S]*?\.csc-field[^{}]*input[^{}]*\{\s*min-height:\s*44px[\s\S]*?\.csc-copy-btn[^{}]*\{\s*min-height:\s*44px/.test(css));
+check('v2 compiled mobile empty selector has no unresolved global',!css.includes(':global(')&&/@media\s*\(max-width:\s*860px\)[\s\S]*?\.csc-result-section:has\(\.csc-empty\)\s*\{\s*display:\s*none/.test(css));
+check('v2 no runtime i18n',!/data-i18n|document\.documentElement\.lang/.test(source));
+const pageScript=source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+check('v2 tips not sent to client',/define:vars=\{\{ t: CLIENT_T \}\}/.test(source)&&!/TIPS|tips|STRINGS/.test(pageScript));
+const bindings=[...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
+eq('v2 literal tip IDs',bindings.map(m=>m[1]),['csc-tip-input','csc-tip-parsing','csc-tip-results','csc-tip-copy']);
+check('v2 tips outside input label',!/<label\b[^>]*>[\s\S]*?<Toggletip[\s\S]*?<\/label>/.test(markupTemplate));
+const contentHashes={
+  "en": "736d4a1a887f8546b0d90b7ded0e2783a0f001846a4d7105948892f4a10aa579",
+  "zh": "f43086564db62647b64ad1724cbcd0c8e173014ae395f2c1c4327ea396362802",
+  "ja": "05881fa3c61733a7fb55819878d54fc70d6e3b99c8bb0196cd6c6bd018cc0844",
+  "ko": "f81937a299479f5e914057e4d305588182e4bd98979cb6dbd3a42f590e3bac80"
+};
+const {compile}=await import('@mdx-js/mdx');
+for(const lang of ['en','zh','ja','ko']){
+ const {T,TIPS,CLIENT_T}=locale(lang),p=page(lang,'shared-after');
+ eq('v2 '+lang+' four tip keys',Object.keys(TIPS),['input','parsing','results','copy']);
+ check('v2 '+lang+' plain bounded tips',Object.values(TIPS).every(t=>typeof t==='string'&&t.length>0&&t.length<=280&&!/[<>\n]|https?:/.test(t)));
+ eq('v2 '+lang+' only nine client keys',Object.keys(CLIENT_T),['id','cls','elem','noInput','copyBtn','copied','copyFailed','note','invalid']);
+ check('v2 '+lang+' serialized strings omit tips',Object.values(TIPS).every(text=>!JSON.stringify(CLIENT_T).includes(text)));
+ eq('v2 '+lang+' SSR label',p.document.querySelector('label[for="csc-input"]').textContent,T.inputLabel);
+ eq('v2 '+lang+' SSR placeholder',p.input.placeholder,T.inputPlaceholder);
+ eq('v2 '+lang+' original hint retained',p.document.querySelector('.csc-hint').textContent,T.hint);
+ eq('v2 '+lang+' accessible scroll region',[p.result.getAttribute('tabindex'),p.result.getAttribute('role'),p.result.getAttribute('aria-label')],['0','region',T.specificity]);
+ eq('v2 '+lang+' default real empty prompt',p.result.textContent,T.noInput);
+ eq('v2 '+lang+' no invented static actions',p.document.querySelectorAll('button:not([data-zt-tip])').length,0);
+ for(const [,id,label,key]of bindings){eq('v2 '+lang+' literal tip '+id,p.document.getElementById(id).textContent,TIPS[key]);check('v2 '+lang+' localized aria '+id,p.document.querySelector('[data-zt-tip="'+id+'"]').getAttribute('aria-label').includes(T[label]));}
+ const content=readFileSync(join(root,'src/content/tools/css-specificity-calculator',lang+'.mdx'),'utf8'),data=require('js-yaml').load(content.match(/^---\n([\s\S]*?)\n---/)[1]);
+ eq('v2 '+lang+' five steps',data.steps.length,5);check('v2 '+lang+' bounded plain steps',data.steps.every(t=>t.length<=280&&!/[<>\n]/.test(t))&&data.steps.join('').length<=1200);check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
+ eq('v2 '+lang+' non-Usage bytes preserved',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),contentHashes[lang]);
+ let error='';try{await compile(content.replace(/^---\n[\s\S]*?\n---/,''));}catch(e){error=String(e);}eq('v2 '+lang+' MDX compiles',error,'');
+ for(const order of ['shared-before','shared-after'])for(const id of ['csc-tip-results','csc-tip-copy']){
+  const q=prepared(lang,order);q.key(q.document.querySelector('[data-zt-tip="'+id+'"]'),{ctrlKey:true,key:'l'});
+  eq('v2 '+lang+'/'+order+'/'+id+' real CtrlL preserves shared focus',[q.input.value,q.result.textContent,q.document.activeElement.id,q.clears],['',T.noInput,'csc-input',['css-specificity-calculator']]);
+ }
+}
+{
+ const p=prepared('en','shared-after');p.result.setAttribute(scope,'');
+ for(const name of ['csc-empty','csc-result-card','csc-result-header','csc-selector','csc-tuple','csc-badges','csc-badge','csc-badge-label','csc-badge-val','csc-bar-wrap','csc-bar-track','csc-bar-seg','csc-copy-btn','csc-note','csc-error-msg']){
+  if(name==='csc-empty'){p.type('');p.tick(200);}else if(name==='csc-error-msg'){p.type(':is(');p.tick(200);}else{p.type('#nav .item:hover, h1.title');p.tick(200);}
+  const selector=css.match(new RegExp('\\.csc-results\\[data-astro-cid-[^\\]]+\\]\\s+\\.'+name+'\\s*\\{'))?.[0].replace(/\s*\{$/,'');
+  check('v2 compiled selector reaches real dynamic '+name,!!selector&&p.document.querySelectorAll(selector).length>0,selector);
+ }
+ const long=Array.from({length:240},(_,i)=>'#id'+i+' .item:hover').join(', ');p.type(long);p.tick(200);
+ eq('v2 long result retains every selector',Array.from(p.result.querySelectorAll('.csc-selector')).map(e=>e.textContent),long.split(', '));eq('v2 long result preserves every tuple',p.tuples(),Array.from({length:240},()=>'(1, 2, 0)'));
+ const last=p.buttons().at(-1);p.click(last);eq('v2 last long result copies complete tuple',p.clipboard.at(-1).value,'(1, 2, 0)');p.clipboard.at(-1).resolve();await settle();eq('v2 long result copy success',last.textContent,pageStrings.en.copied);
+}
+check('v2 registered as analyze',/'css-specificity-calculator':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

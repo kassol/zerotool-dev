@@ -1,81 +1,117 @@
 ---
 // CssSpecificityCalculatorTool — pure client-side CSS specificity calculator
+import Toggletip from '../Toggletip.astro';
+const { lang = 'en' } = Astro.props;
+// strings:start
+const STRINGS = {
+  en: {
+    parsingLabel: "Parsing limits", copyLabel: "Copy a result",
+    tips: {
+      "input": "Type selectors to calculate after a 200 ms pause. Separate selectors with commas; commas inside brackets or quoted strings stay within a selector. Ctrl/⌘+L clears the input and results.",
+      "parsing": "Unclosed brackets or strings produce an error card with a position. Unknown pseudo-class names still count. The nesting selector & counts as zero because no parent rule is supplied.",
+      "results": "Read (a, b, c) as IDs, classes/attributes/pseudo-classes, then elements/pseudo-elements. Compare from the left. :where() counts zero; :is(), :not() and :has() use their most specific argument. This covers specificity, not every step of the cascade.",
+      "copy": "Each Copy button copies only that card’s tuple, such as (1, 2, 0). After a copy failure, click the same button to retry."
+    },
+    inputLabel: 'CSS Selector(s)',
+    inputPlaceholder: '#nav .item:hover, h1.title',
+    hint: 'Comma-separate multiple selectors to compare',
+    id: 'ID', cls: 'Class / Attr / Pseudo-class', elem: 'Element / Pseudo-element',
+    specificity: 'Specificity', noInput: 'Enter a CSS selector above.',
+    copyBtn: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed',
+    note: 'Compare left to right: the first column that differs decides. :where() counts 0; :is(), :not(), :has() count as their most specific argument.',
+    invalid: 'Not a valid selector: {msg}'
+  },
+  zh: {
+    parsingLabel: "解析限制", copyLabel: "复制结果",
+    tips: {
+      "input": "输入选择器，停顿 200 毫秒后自动计算。用逗号分隔多个选择器；括号或引号内的逗号不拆分。Ctrl/⌘+L 清空输入和结果。",
+      "parsing": "括号或引号未闭合时，错误卡片会指出位置。未知的伪类名称仍会计数。未提供父规则，因此嵌套选择器 & 在这里计为零。",
+      "results": "(a, b, c) 依次为 ID、类/属性/伪类、元素/伪元素。从左侧开始比较。:where() 计零；:is()、:not()、:has() 取参数中优先级最高的一项。这里只计算优先级，不涵盖层叠的所有步骤。",
+      "copy": "每个复制按钮只复制所在卡片的元组，例如 (1, 2, 0)。复制失败后，可直接再次点击同一按钮。"
+    },
+    inputLabel: 'CSS 选择器',
+    inputPlaceholder: '#nav .item:hover, h1.title',
+    hint: '用逗号分隔多个选择器以对比优先级',
+    id: 'ID', cls: '类 / 属性 / 伪类', elem: '元素 / 伪元素',
+    specificity: '优先级', noInput: '请在上方输入 CSS 选择器。',
+    copyBtn: '复制', copied: '已复制!', copyFailed: '复制失败',
+    note: '从左往右比较，第一个不同的列决定胜负。:where() 计 0；:is()、:not()、:has() 取参数中优先级最高的一项。',
+    invalid: '不是有效的选择器：{msg}'
+  },
+  ja: {
+    parsingLabel: "解析の制限", copyLabel: "結果のコピー",
+    tips: {
+      "input": "セレクターを入力し、200 ミリ秒待つと自動計算します。複数はカンマで区切ります。括弧や引用符の中のカンマでは分割しません。Ctrl/⌘+L で入力と結果を消去します。",
+      "parsing": "閉じていない括弧や引用符は、位置付きのエラーカードになります。未知の疑似クラス名も数えます。親ルールがないため、ネストセレクター & はここではゼロです。",
+      "results": "(a, b, c) は ID、クラス・属性・疑似クラス、要素・疑似要素の順です。左から比較します。:where() はゼロ、:is()・:not()・:has() は最も詳細度が高い引数を使います。カスケード全体ではなく、詳細度を計算します。",
+      "copy": "各コピーボタンは、そのカードのタプルだけをコピーします。例は (1, 2, 0) です。失敗したら同じボタンで再試行できます。"
+    },
+    inputLabel: 'CSS セレクター',
+    inputPlaceholder: '#nav .item:hover, h1.title',
+    hint: 'カンマ区切りで複数のセレクターを比較',
+    id: 'ID', cls: 'クラス / 属性 / 疑似クラス', elem: '要素 / 疑似要素',
+    specificity: '詳細度', noInput: '上にCSSセレクターを入力してください。',
+    copyBtn: 'コピー', copied: 'コピー済み!', copyFailed: 'コピー失敗',
+    note: '左の列から比較し、最初に異なる列で決まります。:where() は 0、:is()・:not()・:has() は引数のうち最も詳細度が高いものを使います。',
+    invalid: '有効なセレクターではありません：{msg}'
+  },
+  ko: {
+    parsingLabel: "해석 제한", copyLabel: "결과 복사",
+    tips: {
+      "input": "선택자를 입력하고 200밀리초 멈추면 자동 계산합니다. 여러 선택자는 쉼표로 구분합니다. 괄호나 따옴표 안의 쉼표로는 나누지 않습니다. Ctrl/⌘+L로 입력과 결과를 지웁니다.",
+      "parsing": "닫히지 않은 괄호나 따옴표는 위치가 표시된 오류 카드로 나타납니다. 알 수 없는 가상 클래스 이름도 셉니다. 부모 규칙이 없으므로 중첩 선택자 &는 여기서 0입니다.",
+      "results": "(a, b, c)는 ID, 클래스·속성·가상 클래스, 요소·가상 요소 순입니다. 왼쪽부터 비교합니다. :where()는 0, :is()·:not()·:has()는 명시도가 가장 높은 인수를 씁니다. 캐스케이드의 모든 단계가 아닌 명시도를 계산합니다.",
+      "copy": "각 복사 버튼은 해당 카드의 튜플만 복사합니다. 예: (1, 2, 0). 복사에 실패하면 같은 버튼을 다시 눌러 재시도하세요."
+    },
+    inputLabel: 'CSS 선택자',
+    inputPlaceholder: '#nav .item:hover, h1.title',
+    hint: '쉼표로 구분하여 여러 선택자 비교',
+    id: 'ID', cls: '클래스 / 속성 / 가상 클래스', elem: '요소 / 가상 요소',
+    specificity: '명시도', noInput: '위에 CSS 선택자를 입력하세요.',
+    copyBtn: '복사', copied: '복사됨!', copyFailed: '복사 실패',
+    note: '왼쪽 열부터 비교하며 처음 달라지는 열이 결정합니다. :where()는 0, :is()·:not()·:has()는 인수 중 명시도가 가장 높은 것을 씁니다.',
+    invalid: '올바른 선택자가 아닙니다: {msg}'
+  }
+};
+// strings:end
+const T = STRINGS[lang] || STRINGS.en;
+const TIPS = T.tips;
+const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyBtn: T.copyBtn, copied: T.copied, copyFailed: T.copyFailed, note: T.note, invalid: T.invalid };
 ---
-<div>
-  <div class="csc-wrap">
-    <div class="csc-field">
-      <label for="csc-input" data-i18n="inputLabel">CSS Selector(s)</label>
-      <input
-        id="csc-input"
-        type="text"
-        data-i18n-ph="inputPlaceholder"
-        placeholder="#nav .item:hover, h1.title"
-        spellcheck="false"
-        autocomplete="off"
-      />
-      <span class="csc-hint" data-i18n="hint">Comma-separate multiple selectors to compare</span>
+<div class="csc-wrap">
+  <div class="csc-field">
+    <div class="csc-label-row">
+      <label for="csc-input">{T.inputLabel}</label>
+      <Toggletip id="csc-tip-input" lang={lang} about={T.inputLabel}>{TIPS.input}</Toggletip>
+      <span class="csc-help-label">{T.parsingLabel}</span>
+      <Toggletip id="csc-tip-parsing" lang={lang} about={T.parsingLabel}>{TIPS.parsing}</Toggletip>
     </div>
-
-    <div id="csc-results" class="csc-results" aria-live="polite"></div>
+    <input
+      id="csc-input"
+      class="tool-input"
+      type="text"
+      placeholder={T.inputPlaceholder}
+      spellcheck="false"
+      autocomplete="off"
+    />
   </div>
+  <div class="csc-hint csc-status">{T.hint}</div>
+  <section class="csc-result-section" aria-labelledby="csc-result-label">
+    <div class="csc-result-head">
+      <div class="csc-label-row">
+        <h2 id="csc-result-label">{T.specificity}</h2>
+        <Toggletip id="csc-tip-results" lang={lang} about={T.specificity}>{TIPS.results}</Toggletip>
+      </div>
+      <div class="csc-label-row">
+        <span class="csc-help-label">{T.copyLabel}</span>
+        <Toggletip id="csc-tip-copy" lang={lang} about={T.copyLabel}>{TIPS.copy}</Toggletip>
+      </div>
+    </div>
+    <div id="csc-results" class="csc-results" tabindex="0" role="region" aria-label={T.specificity} aria-live="polite"></div>
+  </section>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          inputLabel: 'CSS Selector(s)',
-          inputPlaceholder: '#nav .item:hover, h1.title',
-          hint: 'Comma-separate multiple selectors to compare',
-          id: 'ID', cls: 'Class / Attr / Pseudo-class', elem: 'Element / Pseudo-element',
-          specificity: 'Specificity', noInput: 'Enter a CSS selector above.',
-          copyBtn: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed',
-          note: 'Compare left to right: the first column that differs decides. :where() counts 0; :is(), :not(), :has() count as their most specific argument.',
-          invalid: 'Not a valid selector: {msg}'
-        },
-        zh: {
-          inputLabel: 'CSS 选择器',
-          inputPlaceholder: '#nav .item:hover, h1.title',
-          hint: '用逗号分隔多个选择器以对比优先级',
-          id: 'ID', cls: '类 / 属性 / 伪类', elem: '元素 / 伪元素',
-          specificity: '优先级', noInput: '请在上方输入 CSS 选择器。',
-          copyBtn: '复制', copied: '已复制!', copyFailed: '复制失败',
-          note: '从左往右比较，第一个不同的列决定胜负。:where() 计 0；:is()、:not()、:has() 取参数中优先级最高的一项。',
-          invalid: '不是有效的选择器：{msg}'
-        },
-        ja: {
-          inputLabel: 'CSS セレクター',
-          inputPlaceholder: '#nav .item:hover, h1.title',
-          hint: 'カンマ区切りで複数のセレクターを比較',
-          id: 'ID', cls: 'クラス / 属性 / 疑似クラス', elem: '要素 / 疑似要素',
-          specificity: '詳細度', noInput: '上にCSSセレクターを入力してください。',
-          copyBtn: 'コピー', copied: 'コピー済み!', copyFailed: 'コピー失敗',
-          note: '左の列から比較し、最初に異なる列で決まります。:where() は 0、:is()・:not()・:has() は引数のうち最も詳細度が高いものを使います。',
-          invalid: '有効なセレクターではありません：{msg}'
-        },
-        ko: {
-          inputLabel: 'CSS 선택자',
-          inputPlaceholder: '#nav .item:hover, h1.title',
-          hint: '쉼표로 구분하여 여러 선택자 비교',
-          id: 'ID', cls: '클래스 / 속성 / 가상 클래스', elem: '요소 / 가상 요소',
-          specificity: '명시도', noInput: '위에 CSS 선택자를 입력하세요.',
-          copyBtn: '복사', copied: '복사됨!', copyFailed: '복사 실패',
-          note: '왼쪽 열부터 비교하며 처음 달라지는 열이 결정합니다. :where()는 0, :is()·:not()·:has()는 인수 중 명시도가 가장 높은 것을 씁니다.',
-          invalid: '올바른 선택자가 아닙니다: {msg}'
-        }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.csc-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('.csc-wrap [data-i18n-ph]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-ph');
-        if (t[key]) el.placeholder = t[key];
-      });
-
       var inputEl = document.getElementById('csc-input');
       var resultsEl = document.getElementById('csc-results');
 
@@ -340,7 +376,7 @@
           html += '</div>';
 
           // Copy button
-          html += '<button class="csc-copy-btn" type="button" data-val="' + escHtml(tupleStr) + '">' + t.copyBtn + '</button>';
+          html += '<button class="csc-copy-btn btn-copy" type="button" data-val="' + escHtml(tupleStr) + '">' + t.copyBtn + '</button>';
           html += '</div>';
         });
 
@@ -412,16 +448,21 @@
 </div>
 
 <style>
-  .csc-wrap { display: flex; flex-direction: column; gap: 1rem; }
+  .csc-wrap { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; min-height: 0; }
+  .csc-label-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+  .csc-label-row h2 { margin: 0; font-size: 0.85rem; font-weight: 600; }
+  .csc-help-label { font-size: 0.8rem; color: var(--color-text-secondary); }
+  .csc-status { flex: none; height: 2.8em; line-height: 1.4; overflow: auto; }
+  .csc-result-section { display: flex; flex-direction: column; gap: 0.5rem; flex: 1 1 0; min-width: 0; min-height: 0; }
+  .csc-result-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; flex: none; }
+  .csc-wrap :global(.csc-result-section:has(.csc-empty)) .csc-result-head { display: none; }
 
-  .csc-field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .csc-field { display: flex; flex-direction: column; gap: 0.4rem; flex: none; min-width: 0; }
 
   .csc-field label {
     font-size: 0.82rem;
     font-weight: 600;
     color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
 
   .csc-field input {
@@ -443,13 +484,15 @@
 
   .csc-hint {
     font-size: 0.78rem;
-    color: var(--color-text-muted);
+    color: var(--color-text-secondary);
   }
 
-  .csc-results { display: flex; flex-direction: column; gap: 0.75rem; }
+  .csc-results { display: flex; flex-direction: column; gap: 0.75rem; flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+  .csc-results :global(.csc-result-card), .csc-results :global(.csc-note), .csc-results :global(.csc-empty) { flex: none; }
+  .csc-results:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
   .csc-results :global(.csc-empty) {
-    color: var(--color-text-muted);
+    color: var(--color-text-secondary);
     font-size: 0.9rem;
     margin: 0;
   }
@@ -553,14 +596,26 @@
     color: var(--color-text-secondary);
     cursor: pointer;
     transition: border-color 0.15s;
+    min-width: 8.5rem;
   }
 
   .csc-results :global(.csc-copy-btn:hover) { border-color: var(--color-primary); color: var(--color-primary); }
 
   .csc-results :global(.csc-note) {
     font-size: 0.78rem;
-    color: var(--color-text-muted);
+    color: var(--color-text-secondary);
     margin: 0;
+  }
+
+  @media (max-width: 860px) {
+    .csc-wrap { gap: 0.5rem; }
+    .csc-result-section { flex: none; height: 28rem; }
+    .csc-wrap :global(.csc-result-section:has(.csc-empty)) { display: none; }
+  }
+  @media (max-width: 640px) {
+    .csc-result-section { height: 26rem; }
+    .csc-field input { min-height: 44px; }
+    .csc-results :global(.csc-copy-btn) { min-height: 44px; }
   }
 
   @media (prefers-color-scheme: dark) {
