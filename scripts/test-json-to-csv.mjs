@@ -133,7 +133,7 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
   const tsPage = (await import('typescript')).default;
   const { createRequire: pageRequire } = await import('node:module');
   const requirePage = pageRequire(join(root, 'src/components/tools/' + cfg.file));
-  const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + ';return labels;')();
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
   if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -189,6 +189,8 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
     const esc=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const decode=value=>value.replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
     const markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0]
+      .replace(/<Toggletip id="([^"]+)"[^>]*>[\s\S]*?<\/Toggletip>/g,(_,id)=>'<span class="zt-tip"><button type="button" class="zt-tip-btn" data-zt-tip="'+id+'">?</button></span>')
+      .replace("data-del={'\\t'}", 'data-del="\t"')
       .replace(/<!--[\s\S]*?-->/g,'').replace(/placeholder=\{`[\s\S]*?`\}/g,'').replace(/placeholder='[^']*'/g,'')
       .replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+esc(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>esc(labels[lang][key])).replace(/=\{lang\}/g,'="'+lang+'"');
     const stack=[widget];
@@ -237,10 +239,54 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
     const q=page(lang,shellFirst);q.example();q.copy().resolve();await settle();const old=[...q.timers.values()].filter(t=>t.ms===1500).map(t=>t.fn);same(tag+' real success timer exists',old.length>0,true);q.advance(400);q.copy().resolve();await settle();old.forEach(fn=>fn());same(tag+' old timer cannot reset new Copied',q.get(cfg.copy).textContent,labels[lang].copied);q.advance(1500);same(tag+' latest timer settles',q.get(cfg.copy).textContent,labels[lang].copy);
     const r=page(lang,shellFirst);r.example();const one=r.copy(),two=r.copy();two.resolve();await settle();one.reject(Error('older request'));await settle();same(tag+' older rejection cannot replace new success',r.get(cfg.copy).textContent,labels[lang].copied);
     const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const generated=queued.tracks.length;queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',queued.tracks.length,generated);
-    queued.input(cfg.sample);queued.get(cfg.operation).click();const manual=queued.tracks.length;queued.advance(300);same(tag+' manual operation cancels queued conversion',queued.tracks.length,manual);
+    queued.input(cfg.sample);queued.get('jtc-header-tabs').querySelector('[data-header="true"]').click();const manual=queued.tracks.length;queued.advance(300);same(tag+' immediate option update cancels queued conversion',queued.tracks.length,manual);
+    const layout=page(lang,shellFirst);layout.example();same(tag+' actual nonempty output has visible state',layout.get(cfg.output).dataset.empty,'false');layout.input(cfg.invalid);layout.advance(300);same(tag+' invalid hides output pane',layout.get(cfg.output).dataset.empty,'true');layout.example();layout.get(cfg.clear).click();same(tag+' Clear hides output pane',layout.get(cfg.output).dataset.empty,'true');
+    for(const focus of [layout.get(cfg.output),layout.document.querySelector('[data-zt-tip="jtc-tip-copy"]')]){layout.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output shortcut focuses input before hiding',[layout.document.activeElement.id,layout.out(),layout.get(cfg.output).dataset.empty],[cfg.input,'','true']);}
+    layout.example();for(const id of ['jtc-del-tabs','jtc-flatten-tabs','jtc-header-tabs','jtc-guard-tabs','jtc-bom-tabs']){const tabs=layout.get(id).querySelectorAll('.jtc-tab');for(const selected of tabs){const before=layout.tracks.length;selected.click();same(tag+' option converts immediately '+id,layout.tracks.length,before+1);same(tag+' aria pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
+    layout.input(cfg.sample);const beforeEnter=layout.tracks.length;layout.key('Enter');same(tag+' no Generate means CtrlEnter has no primary action',layout.tracks.length,beforeEnter);layout.advance(300);same(tag+' CtrlEnter retains normal debounce',layout.tracks.length,beforeEnter+1);
     const csv=page(lang,shellFirst);csv.input('[{"v":"=1+1"}]');csv.advance(300);same(tag+' formula warning remains directly visible',csv.get(cfg.status).classList.contains('warn')&&csv.get(cfg.status).textContent.includes(labels[lang].msgFormulaRisk.replace('{n}','1')),true);csv.copy().resolve();same(tag+' Copy excludes BOM',csv.copies.at(-1).value,'v\n=1+1');csv.get('jtc-download').click();same(tag+' real Blob download includes BOM by default',Buffer.from(await csv.blobs.at(-1).arrayBuffer()).toString('hex'),Buffer.from('\uFEFFv\n=1+1').toString('hex'));csv.get('jtc-bom-tabs').querySelector('[data-bom="false"]').click();csv.get('jtc-download').click();same(tag+' real Blob download excludes BOM when off',Buffer.from(await csv.blobs.at(-1).arrayBuffer()).toString('utf8'),'v\n=1+1');csv.get('jtc-guard-tabs').querySelector('[data-guard="quote"]').click();same(tag+' formula guard changes actual output',csv.out(),"v\n\"'=1+1\"");await settle();
   }
   await settle();same('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
+}
+
+// ---------- v2 page layout ----------
+{
+  const { createHash } = await import('node:crypto');
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const equalLayout = (name, got, want) => eq(name, JSON.stringify(got), JSON.stringify(want));
+  const check = (name, passed) => equalLayout('v2 ' + name, !!passed, true);
+  const strings = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
+  const markup = source.split('\n---')[1].split('<script')[0], css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  check('registered convert', /'json-to-csv':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('direct flex root', /^\s*<div\s+class="jtc-wrap"/.test(markup) && /\.jtc-wrap\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;/.test(css));
+  check('actions then reserved status then panels', markup.indexOf('class="jtc-actions"') < markup.indexOf('id="jtc-status"') && markup.indexOf('id="jtc-status"') < markup.indexOf('class="jtc-panels zt-io"') && /\.jtc-status\s*\{[^}]*height:\s*2\.4rem/.test(css));
+  equalLayout('v2 two shared panes', (markup.match(/\bzt-io-pane\b/g)||[]).length, 2);
+  check('input and output fill panes', markup.includes('id="jtc-input" class="zt-io-fill"') && markup.includes('class="jtc-output zt-io-fill"'));
+  check('accessible output scroller', /id="jtc-output"[^>]*tabindex="0"[^>]*aria-labelledby="jtc-output-label"/.test(markup) && /\.jtc-output\s*\{[^}]*overflow:\s*auto/.test(css));
+  check('segmented option groups', (markup.match(/zt-segmented/g)||[]).length===5 && (markup.match(/role="group"/g)||[]).length===5 && (markup.match(/aria-pressed="(?:true|false)"/g)||[]).length===12);
+  check('secondary options default closed and warning stays outside', /<details id="jtc-options" class="jtc-options">/.test(markup) && markup.indexOf('id="jtc-status"')>markup.indexOf('</details>'));
+  check('CSV wrapping disabled for horizontal scrolling', /id="jtc-output"[^>]*readonly wrap="off"/.test(markup));
+  const mobile=css.slice(css.indexOf('@media (max-width: 860px)'));
+  check('mobile input144 and output22rem', /#jtc-input\s*\{[^}]*height:\s*144px/.test(mobile) && /\.jtc-output\s*\{[^}]*height:\s*22rem/.test(mobile));
+  check('empty output follows actual text and hides on mobile', css.includes('.jtc-output-pane:has(#jtc-output[data-empty="true"]) .jtc-empty { display: flex; }') && mobile.includes('.jtc-output-pane:has(#jtc-output[data-empty="true"]) { display: none; }'));
+  check('phone touch sizing and global dark ancestors', css.includes('@media (max-width: 640px)') && css.includes('min-height: 44px') && css.includes(':global([data-theme="dark"])') && css.includes(':global(:root:not([data-theme="light"]))'));
+  check('no automatic Generate control, binding or label', !source.includes('jtc-convert') && !Object.values(strings).some(v=>'convert' in v));
+  equalLayout('v2 retained actual operation IDs', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m=>m[1]).sort(), ['jtc-clear','jtc-copy','jtc-download','jtc-example']);
+  check('build-time strings and tips excluded from script data', source.includes("import Toggletip from '../Toggletip.astro'") && !/data-i18n|define:vars|JSON\.stringify\(STRINGS/.test(source) && !/STRINGS|L\.tips/.test(script));
+  const map=[['input','jsonInput'],['delimiter','delimiter'],['flatten','flatten'],['header','header'],['formula','formula'],['bom','bom'],['example','example'],['clear','clear'],['copy','copy'],['download','download']];
+  equalLayout('v2 ten tips', (markup.match(/<Toggletip\b/g)||[]).length, map.length);
+  const protectedContent={"en": ["632f76aae3985a87e5604a92c61c6ae3b9b5a20f4e03a3d4a88b88f8dcd52df2", "0003a258bd31aa72449f5b3fece0ae4b8d73d6d32751350e2d6a590181870158"], "zh": ["3054250f429cafc0d513f128f39bef45269e3a7df8c21b52506dce489d3577d6", "97222d551e83bb6a27a3a053718e959bf38dac8a3806759847fc1166c0fa8a93"], "ja": ["d63e8269b108c4cecf65404d585c5ed9a868cfd9a8b7cd3b7228dac76ab94dcb", "b91b84fd6040326e47f34900044b5a6c1b72c378836e8f88e5135dd7185a24e6"], "ko": ["38f6e552ce52ff26bc1653522d8ca1396941886b8d0e5596589d30fa2fa70a98", "106b217c8b3e1e9139587dc0dbe256542d76c2ca246ce03de04aed8d8e66bbe8"]};
+  for(const lang of ['en','zh','ja','ko']){
+    const L=strings[lang];equalLayout(lang+' v2 same tip keys',Object.keys(L.tips).sort(),map.map(x=>x[0]).sort());
+    check(lang+' localized empty text',typeof L.empty==='string'&&!!L.empty.trim());
+    for(const [key,about]of map){check(lang+' localized '+key,typeof L.tips[key]==='string'&&!!L.tips[key].trim()&&typeof L[about]==='string'&&!!L[about].trim());equalLayout(lang+' placeholder parity '+key,[...L.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]),[...strings.en.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]));check(lang+' binding '+key,markup.includes('<Toggletip id="jtc-tip-'+key+'" lang={lang} about={L.'+about+'}>{L.tips.'+key+'}</Toggletip>'));}
+    const mdx=readFileSync(join(root,'src/content/tools/json-to-csv/'+lang+'.mdx'),'utf8'),[,fm,body]=mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+    const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
+    check(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
+    equalLayout(lang+' protected SEO and FAQ',hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang][0]);equalLayout(lang+' all non-Usage content protected',hash(body),protectedContent[lang][1]);
+    check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  }
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
