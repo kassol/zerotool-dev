@@ -138,6 +138,8 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 
 ## 变更日志
 
+- 2026-10-05 — B10 新增 compare 类型：`audit.mjs` 的合法枚举与 `test-llms-txt.mjs` 的 v2 登记正则同步接受 compare；工具 slug 随对应组件提交登记。规格见 DESIGN.md：双输入在上、满宽有界结果在下，外壳 2400px，860px 及以下使用内容高度。
+
 - 2026-10-05 — B8 convert 回归：base64、ascii-converter、hash-generator、html-entity、line-tools、text-case、url-encode、slugify、morse-code-translator、nato-phonetic-alphabet、jwt-generator、secret-redactor 共 12 个工具保留引擎与示例检查，补完整页面事件、真实共享快捷键及末尾 `v2 page layout` 组；新增 `test-line-tools.mjs`。生命周期回归覆盖 FileReader / Web Crypto 迟到结果、输入防抖与保存任务取消、空输入 / Ctrl/⌘+L 清理、复制失败后原地重试、迟到回调与旧定时器；另核对特殊键去重、Morse 初始示例和 JWT Header 算法一致性。版式组核对 convert 登记、双栏与有界结果、构建期气泡不进入客户端、四语 steps 及非用法正文保护。共享指南链接补 `flex-wrap: wrap` 与 `overflow-wrap: anywhere` 后，TextCase 新增两项断言，为 5,795 项；本批 12 个脚本合计 20,427 项。Node 22.23.3 最终完整门为 audit 22 PASS、build 与 564 页 CSS 顺序检查通过、153 个脚本全部退出 0（21 个含既有可选 SKIP）；110 个 engine 块逐字一致。浏览器证据经精确键替换已确认失败项与完整重跑流程后，204 组矩阵、24 组流程共 4,930 项检查通过；共享指南涉及 26 工具、104 页，另有 210 组、1,892 项检查通过。原始失败报告保留，聚合记录替换原因与来源；24 对主输入 / 操作 / 结果位置另存批次几何记录。页面替身和静态样式断言的覆盖范围与浏览器证据分别记录。
 
 - 2026-10-05 — B5 compact 回归：8 个工具保留原引擎、示例与跨读检查，补完整页面事件、共享快捷键和末尾 `v2 page layout` 组。当前通过数：number-base 496、bcrypt-generator 1695（另 1 个既有 Python bcrypt SKIP）、color-converter 1425、timestamp-converter 1937、aspect-ratio 518、basic-auth-header-generator 894、chmod-calculator 820、css-unit-converter 510，共 8295。覆盖复制请求与结果代次、拒绝和重试、清空后的旧回调；Bcrypt 新增444项复制生命周期断言，覆盖迟到完成/拒绝、后备、结果替换、旧定时器及直接重试；取消生成/校验及等待 SHA-256 的请求，生成保留点击时密码，校验输入变化取消旧请求；Timestamp 两方向逐行复制、时间戳输入框内 Enter 单次转换；Aspect Ratio 正小数的 GCD 为零时保持有限结果。v2 组核对 compact 登记、自然高度和有界结果、气泡不序列化、四语 steps 与非用法正文保护。CSS Unit 新增测试，CI 脚本总数为152；本批完整构建后全量脚本均退出0，21个脚本含既有可选SKIP。浏览器交互独立验收，DOM替身的通过不代表视觉检查通过。

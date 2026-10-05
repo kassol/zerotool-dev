@@ -7,7 +7,8 @@
 //   generate — the generated preview leads; controls sit in a narrow rail
 //   analyze  — the result (overview, request list, details) uses the full width
 //   compact  — short inputs and results use a centered card at its content height
-export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact';
+//   compare  — two inputs above a full-width result that fills the remaining height
+export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
   'number-base': 'compact',

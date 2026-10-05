@@ -274,7 +274,7 @@ if (missing.length) {
   // Frontmatter `steps`: only the pages listed in src/data/tool-layouts.ts use it (their usage
   // section moved into the tool). Every language has it; llms-full.txt shows the English steps.
   const layoutSrc = readFileSync(join(root, 'src', 'data', 'tool-layouts.ts'), 'utf8');
-  const v2 = [...layoutSrc.matchAll(/^\s*'([a-z0-9-]+)': '(?:convert|generate|analyze|compact)',$/gm)].map((m) => m[1]);
+  const v2 = [...layoutSrc.matchAll(/^\s*'([a-z0-9-]+)': '(?:convert|generate|analyze|compact|compare)',$/gm)].map((m) => m[1]);
   check('steps: tool-layouts.ts lists pages', v2.length > 0, layoutSrc.slice(0, 200));
   const toolsDir = join(root, 'src', 'content', 'tools');
   const withSteps = [];
