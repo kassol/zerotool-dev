@@ -236,7 +236,7 @@ function page(lang = 'en', order = 'shared-after') {
   doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
   doc.createElement = tag => new Element(tag);
   doc.execCommand = () => { throw Error('Unexpected system clipboard fallback'); };
-  const sandbox = { document: doc, console, TextDecoder, atob, _slug: 'jwt-decoder', ztPersist: { clear(slug) { clears.push(slug); } },
+  const sandbox = { document: doc, console, TextDecoder, atob, Date: class extends Date { static now() { return 1791158400250; } }, _slug: 'jwt-decoder', ztPersist: { clear(slug) { clears.push(slug); } },
     trackTool(...args) { tracks.push(args); },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value: String(value), resolve, reject }); return promise; } } },
@@ -372,6 +372,33 @@ try {
   }
 } finally { process.removeListener('unhandledRejection', rejected); }
 console.log('Page copy checks: ' + (passes - copyStart) + ' passed');
+
+// NumericDate decorations use the real highlighter, rendered DOM and fixed 2026-10-05T00:00:00.250Z clock.
+const timestampStart = passes;
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(lang), name = 'timestamp ' + lang + ': ';
+  p.get('jwt-example').click();
+  eq(name + 'example dates are actually rendered', JSON.stringify(p.get('jwt-results').querySelectorAll('.jwt-time-hint').map(el => el.textContent)), JSON.stringify(['(Thu, 18 Jan 2018 01:30:22 GMT)', '(Tue, 01 Jan 2030 00:00:00 GMT — valid)']));
+  eq(name + 'example marks expiration only', p.get('jwt-results').querySelectorAll('.jwt-valid').length, 1);
+  for (const fixture of [
+    { payload: { iat: -1, nbf: 0.5, exp: 0 }, hints: ['(Wed, 31 Dec 1969 23:59:59 GMT)', '(Thu, 01 Jan 1970 00:00:00 GMT)', '(Thu, 01 Jan 1970 00:00:00 GMT — EXPIRED)'], status: 'EXPIRED' },
+    { payload: { exp: 1791158400.5 }, hints: ['(Mon, 05 Oct 2026 00:00:00 GMT — valid)'], status: 'valid' },
+    { payload: { exp: 1791158400.125 }, hints: ['(Mon, 05 Oct 2026 00:00:00 GMT — EXPIRED)'], status: 'EXPIRED' },
+    { payload: { exp: 1e-7 }, hints: ['(Thu, 01 Jan 1970 00:00:00 GMT — EXPIRED)'], status: 'EXPIRED' },
+    { payload: { exp: '1893456000', iat: null, nbf: false }, hints: [], status: null },
+  ]) {
+    p.input(seg({ alg: 'none' }) + '.' + seg(fixture.payload) + '.'); p.get('jwt-decode').click();
+    eq(name + JSON.stringify(fixture.payload) + ' exact displayed dates', JSON.stringify(p.get('jwt-results').querySelectorAll('.jwt-time-hint').map(el => el.textContent)), JSON.stringify(fixture.hints));
+    const mark = p.get('jwt-results').querySelector('.jwt-valid,.jwt-expired');
+    eq(name + JSON.stringify(fixture.payload) + ' expiry compares unrounded seconds', mark?.textContent ?? null, fixture.status);
+    for (const [key, value] of Object.entries(fixture.payload)) eq(name + key + ' original numeric/string precision is visible', p.get('jwt-results').querySelectorAll('.jwt-json')[1].textContent.includes('"' + key + '": ' + JSON.stringify(value)), true);
+    p.get('jwt-results').querySelectorAll('.btn-copy')[1].click();
+    eq(name + 'copy excludes time decorations and preserves JSON precision', p.clipboard.at(-1).value, JSON.stringify(fixture.payload, null, 2));
+    p.clipboard.at(-1).resolve(); await settle();
+    eq(name + 'signature remains explicitly unverified', p.get('jwt-results').querySelector('.jwt-sig-note').textContent, '(raw Base64URL — not verified)');
+  }
+}
+console.log('Page timestamp checks: ' + (passes - timestampStart) + ' passed');
 
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);
