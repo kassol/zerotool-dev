@@ -12,6 +12,7 @@ const labels = {
     clear: 'Clear',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: 'Copy failed. Please copy the output manually.',
     generate: 'Generate Zod Schema',
     msgInvalidJson: 'Invalid JSON: ',
     msgGenerated: 'Generated.',
@@ -25,6 +26,7 @@ const labels = {
     clear: '清空',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: '复制失败，请手动复制输出。',
     generate: '生成 Zod Schema',
     msgInvalidJson: 'JSON 格式错误：',
     msgGenerated: '已生成。',
@@ -38,6 +40,7 @@ const labels = {
     clear: 'クリア',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。',
     generate: 'Zod スキーマを生成',
     msgInvalidJson: '無効なJSON：',
     msgGenerated: '生成しました。',
@@ -51,6 +54,7 @@ const labels = {
     clear: '지우기',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.',
     generate: 'Zod 스키마 생성',
     msgInvalidJson: '잘못된 JSON: ',
     msgGenerated: '생성 완료.',
@@ -64,6 +68,7 @@ const L = labels[lang];
   class="jtz-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-msg-invalid-json={L.msgInvalidJson}
   data-msg-generated={L.msgGenerated}
 >
@@ -119,6 +124,7 @@ const L = labels[lang];
 
       var COPY = wrap ? wrap.dataset.copy : 'Copy';
       var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var COPY_FAILED = wrap ? wrap.dataset.copyFailed : 'Copy failed. Please copy the output manually.';
       var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
       var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
 
@@ -127,6 +133,10 @@ const L = labels[lang];
       var statusEl = document.getElementById('jtz-status');
       var rootNameEl = document.getElementById('jtz-root-name');
       var strictEl = document.getElementById('jtz-strict');
+      var copyBtn = document.getElementById('jtz-copy');
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyFailure = false;
 
       var EXAMPLE = JSON.stringify({
         id: 1,
@@ -146,12 +156,22 @@ const L = labels[lang];
       }, null, 2);
 
       function setStatus(msg, isError) {
+        copyFailure = false;
         statusEl.textContent = msg;
         statusEl.className = 'jtz-status ' + (isError ? 'error' : 'success');
       }
       function clearStatus() {
+        copyFailure = false;
         statusEl.textContent = '';
         statusEl.className = 'jtz-status';
+      }
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = COPY;
+        if (copyFailure) clearStatus();
       }
 
       /* ── engine:start ── */
@@ -270,8 +290,11 @@ const L = labels[lang];
 
       /* ── Main generate ── */
       function generate() {
+        invalidateCopy();
+        clearTimeout(_jtzLiveTimer);
+        _jtzLiveTimer = null;
         var raw = inputEl.value.trim();
-        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
+        if (!raw) { inputEl.classList.remove('error'); clearStatus(); outputCodeEl.textContent = ''; return; }
 
         inputEl.classList.remove('error');
 
@@ -279,6 +302,7 @@ const L = labels[lang];
         try {
           parsed = JSON.parse(raw);
         } catch (e) {
+          outputCodeEl.textContent = '';
           inputEl.classList.add('error');
           setStatus(MSG_INVALID + e.message, true);
           return;
@@ -308,6 +332,7 @@ const L = labels[lang];
       /* ── Real-time generate (debounced 300ms) ── */
       var _jtzLiveTimer = null;
       inputEl.addEventListener('input', function () {
+        invalidateCopy();
         clearTimeout(_jtzLiveTimer);
         _jtzLiveTimer = setTimeout(generate, 300);
       });
@@ -322,20 +347,45 @@ const L = labels[lang];
       });
 
       document.getElementById('jtz-clear').addEventListener('click', function () {
+        invalidateCopy();
+        clearTimeout(_jtzLiveTimer);
+        _jtzLiveTimer = null;
+        inputEl.focus();
         inputEl.value = '';
         outputCodeEl.textContent = '';
         inputEl.classList.remove('error');
         clearStatus();
       });
 
-      document.getElementById('jtz-copy').addEventListener('click', function () {
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          document.getElementById('jtz-clear').click();
+        }
+      });
+
+      copyBtn.addEventListener('click', function () {
         var text = outputCodeEl.textContent;
         if (!text) return;
-        var btn = document.getElementById('jtz-copy');
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = COPIED;
-          setTimeout(function () { btn.textContent = COPY; }, 1500);
-        });
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = COPY;
+        function failed() {
+          if (revision !== copyRevision) return;
+          setStatus(COPY_FAILED, true);
+          copyFailure = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== copyRevision) return;
+            if (copyFailure) clearStatus();
+            copyBtn.textContent = COPIED;
+            copyTimer = setTimeout(function () {
+              if (revision === copyRevision) copyBtn.textContent = COPY;
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
       });
     })();
   </script>
