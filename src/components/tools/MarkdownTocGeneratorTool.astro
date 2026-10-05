@@ -28,6 +28,7 @@ const labels = {
     copyToc: 'Copy TOC',
     copyMd: 'Copy MD',
     copied: 'Copied!',
+    copyFailed: 'Copy failed',
     empty: 'No headings found.',
     markerMissing: 'No <!-- toc --> markers found. TOC will be inserted before the first heading.',
     markerUpdated: 'TOC inserted between markers.',
@@ -57,6 +58,7 @@ const labels = {
     copyToc: '复制 TOC',
     copyMd: '复制 Markdown',
     copied: '已复制！',
+    copyFailed: '复制失败',
     empty: '未找到任何标题。',
     markerMissing: '未找到 <!-- toc --> 标记。TOC 将插入到第一个标题之前。',
     markerUpdated: '已在标记之间插入 TOC。',
@@ -86,6 +88,7 @@ const labels = {
     copyToc: 'TOC をコピー',
     copyMd: 'Markdown をコピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピー失敗',
     empty: '見出しが見つかりません。',
     markerMissing: '<!-- toc --> マーカーが見つかりません。TOC は最初の見出しの前に挿入されます。',
     markerUpdated: 'マーカー間に TOC を挿入しました。',
@@ -115,6 +118,7 @@ const labels = {
     copyToc: 'TOC 복사',
     copyMd: 'Markdown 복사',
     copied: '복사됨!',
+    copyFailed: '복사 실패',
     empty: '제목을 찾을 수 없습니다.',
     markerMissing: '<!-- toc --> 마커를 찾을 수 없습니다. TOC가 첫 제목 앞에 삽입됩니다.',
     markerUpdated: '마커 사이에 TOC를 삽입했습니다.',
@@ -133,6 +137,7 @@ const L = labels[lang] ?? labels.en;
   data-copy={L.copyToc}
   data-copy-md={L.copyMd}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-empty={L.empty}
   data-marker-missing={L.markerMissing}
   data-marker-updated={L.markerUpdated}
@@ -250,6 +255,7 @@ const L = labels[lang] ?? labels.en;
   var COPY_LABEL = wrap.getAttribute('data-copy') || 'Copy';
   var COPY_MD_LABEL = wrap.getAttribute('data-copy-md') || 'Copy';
   var COPIED_LABEL = wrap.getAttribute('data-copied') || 'Copied!';
+  var COPY_FAILED = wrap.getAttribute('data-copy-failed') || 'Copy failed';
   var EMPTY_LABEL = wrap.getAttribute('data-empty') || 'No headings found.';
   var MARKER_MISSING = wrap.getAttribute('data-marker-missing') || '';
   var MARKER_UPDATED = wrap.getAttribute('data-marker-updated') || '';
@@ -468,7 +474,21 @@ const L = labels[lang] ?? labels.en;
     return HEAD_PRE + n + HEAD_POST;
   }
 
+  var copyStates = [
+    { button: copyTocBtn, label: COPY_LABEL, revision: 0, timer: null },
+    { button: copyMdBtn, label: COPY_MD_LABEL, revision: 0, timer: null },
+  ];
+  function invalidateCopies() {
+    copyStates.forEach(function (state) {
+      state.revision++;
+      clearTimeout(state.timer);
+      state.button.classList.remove('copied');
+      state.button.textContent = state.label;
+    });
+  }
+
   function update() {
+    invalidateCopies();
     var md = inputEl.value;
     var minL = parseInt(minEl.value, 10);
     var maxL = parseInt(maxEl.value, 10);
@@ -537,23 +557,38 @@ const L = labels[lang] ?? labels.en;
 
   function copyValue(textarea, btn, baseLabel) {
     if (!textarea.value) return;
+    var state = copyStates[btn === copyTocBtn ? 0 : 1];
+    var request = ++state.revision;
+    clearTimeout(state.timer);
     var done = function () {
+      if (request !== state.revision) return;
       btn.classList.add('copied');
       btn.textContent = COPIED_LABEL;
-      setTimeout(function () {
+      state.timer = setTimeout(function () {
+        if (request !== state.revision) return;
         btn.classList.remove('copied');
         btn.textContent = baseLabel;
       }, 1200);
     };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(textarea.value).then(done).catch(function () {
+    function fallback() {
+      if (request !== state.revision) return;
+      var copied = false;
+      try {
         textarea.select();
-        try { document.execCommand('copy'); done(); } catch (_e) {}
-      });
-    } else {
-      textarea.select();
-      try { document.execCommand('copy'); done(); } catch (_e) {}
+        copied = document.execCommand('copy');
+      } catch (_e) {}
+      if (request !== state.revision) return;
+      if (copied) done();
+      else {
+        btn.classList.remove('copied');
+        btn.textContent = COPY_FAILED;
+      }
     }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(textarea.value).then(done, fallback);
+      } else fallback();
+    } catch (_e) { fallback(); }
   }
 
   copyTocBtn.addEventListener('click', function () { copyValue(tocEl, copyTocBtn, COPY_LABEL); });
@@ -563,6 +598,18 @@ const L = labels[lang] ?? labels.en;
     [inputEl, anchorEl, bulletEl, indentEl, minEl, maxEl, h1El, markerEl].forEach(function (el) {
       el.addEventListener(evt, update);
     });
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+      e.preventDefault();
+      inputEl.focus();
+      inputEl.value = '';
+      update();
+      mdEl.value = '';
+      mdStatusEl.textContent = '';
+      copyMdBtn.disabled = true;
+    }
   });
 
   update();

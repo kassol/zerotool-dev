@@ -25,6 +25,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import ts from 'typescript';
+import { parseFragment } from 'parse5';
+import { loadPage } from './astro-page-harness.mjs';
 import GithubSlugger, { slug as githubSlug } from 'github-slugger';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -139,6 +143,98 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ': example ' + (spec.opts && spec.opts.style || 'github'), m[2].trim(), toc);
   }
 }
+
+// ---------- real complete page lifecycle + actual shared shortcut ----------
+const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const sharedShortcut = layoutSource.slice(layoutSource.indexOf('      // ── Keyboard shortcuts:'), layoutSource.indexOf('      // ── Copy button visual feedback'));
+check('real shared shortcut extracted', sharedShortcut.includes('window.ztPersist.clear(_slug)'));
+const allLabels = vm.runInNewContext(ts.transpileModule('const labels = ' + source.match(/const labels = ([\s\S]*?);\n\nconst L/)[1] + ';', { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + '\nlabels');
+function page({ lang = 'en', order = 'before', preset = '' } = {}) {
+  const L = allLabels[lang], keys = [], requests = [], clears = [], fallback = [];
+  const timers = new Map(); let seq = 0, clock = 0, document, selection = null;
+  const escape = v => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'))
+    .replace(/=\{([^{}]+)\}/g, (_, expr) => '="' + escape(vm.runInNewContext(expr,{L,lang})) + '"').replace(/\{L\.(\w+)\}/g, (_, k) => escape(L[k]));
+  const walk = n => n.children.flatMap(c => [c, ...walk(c)]);
+  function wrap(n, parentNode = null) {
+    if (!n.tagName) return { value: n.value || '', parentNode };
+    const attrs = Object.fromEntries((n.attrs || []).map(a => [a.name, a.value])), listeners = {};
+    const el = { tagName: n.tagName.toUpperCase(), parentNode, childNodes: [], attributes: attrs, value: attrs.value || '', disabled: 'disabled' in attrs, checked: 'checked' in attrs, hidden: 'hidden' in attrs,
+      dataset: Object.fromEntries(Object.entries(attrs).filter(([k]) => k.startsWith('data-')).map(([k,v]) => [k.slice(5).replace(/-([a-z])/g, (_,x) => x.toUpperCase()),v])),
+      get id() { return attrs.id || ''; }, get children() { return this.childNodes.filter(x => x.tagName); },
+      get className() { return attrs.class || ''; }, set className(v) { attrs.class = v; },
+      get textContent() { return this.childNodes.map(x => x.tagName ? x.textContent : x.value).join(''); }, set textContent(v) { this.childNodes = [{ value: String(v), parentNode: this }]; },
+      getAttribute(k) { return attrs[k] ?? null; }, setAttribute(k,v) { attrs[k] = String(v); },
+      contains(n) { for (; n; n = n.parentNode) if (n === this) return true; return false; },
+      querySelectorAll(sel) { if (sel === 'textarea, input[type="text"]') return walk(this).filter(x => x.tagName === 'TEXTAREA' || x.tagName === 'INPUT' && x.attributes.type === 'text'); throw Error('Unhandled selector ' + sel); },
+      addEventListener(k, fn) { (listeners[k] ||= []).push(fn); }, focus() { document.activeElement = this; }, select() { selection = this; },
+      dispatch(k, init = {}) { const e = { type:k, target:this, currentTarget:this, defaultPrevented:false, cancelBubble:false, preventDefault(){this.defaultPrevented=true;}, stopPropagation(){this.cancelBubble=true;}, ...init }; for (const fn of listeners[k] || []) fn.call(this,e); if (k === 'keydown' && !e.cancelBubble) for (const fn of keys) fn(e); return e; },
+      click() { if (!this.disabled) this.dispatch('click'); },
+    };
+    el.classList = { contains:c => el.className.split(/\s+/).includes(c), add(c){ if (!this.contains(c)) el.className += ' ' + c; }, remove(c){ el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); } };
+    el.childNodes = (n.childNodes || []).map(x => wrap(x,el)); if (el.tagName === 'TEXTAREA') el.value = el.textContent; if (el.tagName === 'SELECT') el.value = el.children.find(x => 'selected' in x.attributes)?.attributes.value || el.children[0]?.attributes.value || ''; return el;
+  }
+  const body = wrap({tagName:'body'}), widget = wrap({tagName:'section',attrs:[{name:'class',value:'tool-widget'}],childNodes:parseFragment(markup).childNodes},body); body.childNodes.push(widget);
+  document = { body, documentElement:{lang}, activeElement:body,
+    getElementById(id) { const e = walk(body).find(x => x.id === id); if (!e) throw Error('Missing actual DOM ' + id); return e; },
+    querySelector(sel) { if (sel === '.tool-widget .btn-primary') return walk(widget).find(x => x.classList.contains('btn-primary')) || null; return walk(body).find(x => x.classList.contains(sel.slice(1))) || null; },
+    addEventListener(k,fn) { if (k === 'keydown') keys.push(fn); }, createElement:tag => wrap({tagName:tag}), execCommand(command){fallback.push({command,text:selection?.value});if(options.fallbackThrows)throw Error('fallback refusal');return options.fallbackSuccess;},
+  };
+  const $ = id => document.getElementById(id), input = $('mtoc-input'); input.value = preset;
+  const options={fallbackSuccess:false,fallbackThrows:false};
+  const globals = { document,
+    navigator:{ clipboard:{writeText(text){return new Promise((resolve,reject)=>requests.push({text,resolve,reject}));}} },
+    setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,delay,due:clock+delay});return id;}, clearTimeout(id){timers.delete(id);},
+    ztPersist:{clear(slug){clears.push(slug);}},
+  };
+  if (order === 'before') { const ctx={...globals,_slug:'markdown-toc-generator'};ctx.window=ctx;vm.runInNewContext(sharedShortcut,ctx); }
+  const loaded=loadPage('src/components/tools/MarkdownTocGeneratorTool.astro',{lang,globals});
+  if (order === 'after') loaded.run('var _slug="markdown-toc-generator";\n'+sharedShortcut);
+  return {$,input,output:$('mtoc-toc'),status:$('mtoc-status'),copy:$('mtoc-copy-toc'),requests,clears,fallback,options,globals,document,timers,
+    advance(ms){const end=clock+ms;for(let guard=0;;guard++){const next=[...timers].filter(([,t])=>t.due<=end).sort((a,b)=>a[1].due-b[1].due)[0];if(!next)break;if(guard>100)throw Error('Timer runaway');clock=next[1].due;timers.delete(next[0]);next[1].fn();}clock=end;},
+    type(v){input.focus();input.value=v;input.dispatch('input');}, render(v){this.type(v);},
+    key(meta=false,focus='mtoc-copy-toc'){ $(focus).focus();return $(focus).dispatch('keydown',{key:'l',ctrlKey:!meta,metaKey:meta}); },
+    snapshot(){return JSON.stringify([input.value,this.output.value,this.status.textContent,this.copy.textContent]);},
+  };
+}
+
+const settle = () => new Promise(resolve => setImmediate(resolve));
+const copyFailures={en:'Copy failed',zh:'复制失败',ja:'コピー失敗',ko:'복사 실패'};
+const unhandled=[];const recordUnhandled=e=>unhandled.push(String(e));process.on('unhandledRejection',recordUnhandled);
+const tocGolden='- [Alpha](#alpha)',mdGolden='<!-- toc -->\n- [Alpha](#alpha)\n<!-- /toc -->\n\n## Alpha';
+function markerPage(options={}){const p=page(options);p.$('mtoc-marker-mode').checked=true;p.$('mtoc-marker-mode').dispatch('change');p.render('## Alpha');return p;}
+for(const lang of ['en','zh','ja','ko']){
+  const L=allLabels[lang],p=markerPage({lang,preset:'## Early'});
+  eq(lang+' immediate actual heading render',p.output.value,tocGolden);eq(lang+' actual inserted Markdown',p.$('mtoc-md').value,mdGolden);eq(lang+' heading count',p.status.textContent,L.headings(1));eq(lang+' marker status',p.$('mtoc-md-status').textContent,L.markerInserted);
+  p.$('mtoc-anchor').value='bitbucket';p.$('mtoc-anchor').dispatch('change');eq(lang+' option updates without Generate',p.output.value,'- [Alpha](#markdown-header-alpha)');
+  p.$('mtoc-bullet').value='1.';p.$('mtoc-bullet').dispatch('input');eq(lang+' option input remains immediate',p.output.value,'1. [Alpha](#markdown-header-alpha)');
+  const early=page({lang,preset:'## Early'});eq(lang+' early input remains rendered',early.output.value,'- [Early](#early)');
+  for(const [button,field,label,golden] of [['mtoc-copy-toc','mtoc-toc',L.copyToc,tocGolden],['mtoc-copy-md','mtoc-md',L.copyMd,mdGolden]]){
+    const q=markerPage({lang}),copy=q.$(button);copy.click();eq(lang+' '+button+' exact full bytes',q.requests[0].text,golden);q.requests[0].resolve();await settle();eq(lang+' '+button+' normal success',copy.textContent,L.copied);q.advance(1200);eq(lang+' '+button+' original 1200ms feedback',copy.textContent,label);
+    for(const mode of ['reject','missing','throw']){
+      const r=markerPage({lang}),btn=r.$(button);if(mode==='missing')r.globals.navigator.clipboard=undefined;if(mode==='throw')r.globals.navigator.clipboard.writeText=()=>{throw Error('denied');};
+      let thrown=false;try{btn.click();}catch{thrown=true;}if(mode==='reject')r.requests[0].reject(Error('denied'));await settle();check(lang+' '+button+' '+mode+' does not throw',!thrown);eq(lang+' '+button+' '+mode+' fallback attempts exact output',r.fallback.at(-1),{command:'copy',text:golden});eq(lang+' '+button+' '+mode+' false fallback reports failure',btn.textContent,copyFailures[lang]);
+      r.globals.navigator.clipboard={writeText(text){return new Promise((resolve,reject)=>r.requests.push({text,resolve,reject}));}};btn.click();r.requests.at(-1).resolve();await settle();eq(lang+' '+button+' '+mode+' identical output retry',btn.textContent,L.copied);eq(lang+' '+button+' '+mode+' unchanged output',r.$(field).value,golden);
+    }
+    for(const fallbackSuccess of [true,false]){
+      const r=markerPage({lang});r.options.fallbackSuccess=fallbackSuccess;r.options.fallbackThrows=!fallbackSuccess;r.$(button).click();r.requests[0].reject(Error('denied'));await settle();eq(lang+' '+button+' fallback '+(fallbackSuccess?'success':'throw'),r.$(button).textContent,fallbackSuccess?L.copied:copyFailures[lang]);
+    }
+    for(const boundary of ['input','empty','CtrlL','option','marker'])for(const outcome of ['resolve','reject']){
+      const r=markerPage({lang});r.$(button).click();if(boundary==='input')r.type('## Beta');else if(boundary==='empty')r.type('');else if(boundary==='CtrlL')r.key();else if(boundary==='option'){r.$('mtoc-bullet').value='*';r.$('mtoc-bullet').dispatch('change');}else{r.$('mtoc-marker-mode').checked=false;r.$('mtoc-marker-mode').dispatch('change');}
+      const before=JSON.stringify([r.$(button).textContent,r.output.value,r.$('mtoc-md').value,r.status.textContent,r.$('mtoc-md-status').textContent,r.fallback]);r.requests[0][outcome](Error('old'));await settle();eq(lang+' '+button+' stale '+outcome+' after '+boundary,JSON.stringify([r.$(button).textContent,r.output.value,r.$('mtoc-md').value,r.status.textContent,r.$('mtoc-md-status').textContent,r.fallback]),before);
+    }
+    for(const outcome of ['resolve','reject']){
+      const r=markerPage({lang});r.$(button).click();r.$(button).click();r.requests[1].resolve();await settle();r.requests[0][outcome](Error('older'));await settle();eq(lang+' '+button+' old '+outcome+' cannot replace current copied state',r.$(button).textContent,L.copied);eq(lang+' '+button+' stale reject never falls back',r.fallback.length,0);
+    }
+    const r=markerPage({lang});r.$(button).click();r.requests[0].resolve();await settle();const timer=[...r.timers.values()].find(t=>t.delay===1200);r.advance(100);r.$(button).click();r.requests[1].resolve();await settle();timer.fn();eq(lang+' '+button+' old timer leaves newer feedback',r.$(button).textContent,L.copied);r.advance(1200);eq(lang+' '+button+' latest timer returns original label',r.$(button).textContent,label);
+  }
+  for(const order of ['before','after']){
+    const q=markerPage({lang,order});q.$('mtoc-anchor').value='gitlab';q.$('mtoc-anchor').dispatch('change');q.key(order==='after','mtoc-copy-md');eq(lang+' '+order+' CtrlL clears outputs/status and disables both copies',[q.input.value,q.output.value,q.$('mtoc-md').value,q.status.textContent,q.$('mtoc-md-status').textContent,q.copy.disabled,q.$('mtoc-copy-md').disabled],['','','','','',true,true]);eq(lang+' '+order+' focus remains in stable input',q.document.activeElement.id,'mtoc-input');eq(lang+' '+order+' shared persistence clear',q.clears,['markdown-toc-generator']);eq(lang+' '+order+' settings survive',[q.$('mtoc-anchor').value,q.$('mtoc-marker-mode').checked],['gitlab',true]);
+    q.type('## Restored');eq(lang+' '+order+' input recovers immediately',q.output.value,'- [Restored](#restored)');
+  }
+  const q=markerPage({lang});q.$('mtoc-copy-toc').click();q.$('mtoc-copy-md').click();q.requests[1].resolve();q.requests[0].resolve();await settle();eq(lang+' independent buttons both complete',[q.copy.textContent,q.$('mtoc-copy-md').textContent],[L.copied,L.copied]);
+}
+await settle();eq('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',recordUnhandled);
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
