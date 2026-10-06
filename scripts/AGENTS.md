@@ -21,6 +21,8 @@
 | `audit-slug-aliases.mjs` | 巡检 | 审计 `_redirects` 与 slug 的对应关系，发现孤儿规则 | 手动按需 |
 | `test-har-invariant.mjs` | 回归 | spec-driven 不变式测试：3 层（spec sum / 新算法 mirror / 旧错算法 regression guard）× 10 fixture；守住 HAR `connect + ssl` 双计 bug 不复发 | 手动按需 / 修改 `HarFileAnalyzerTool.astro` phase 逻辑前后 |
 | `test-barcode-symbology.mjs` | 回归 | spec-driven 条码编码测试：从 `BarcodeGeneratorTool.astro` 抽取真实编码块（不 mirror，杜绝漂移），3 层（表结构不变式 / 已知校验位向量 / 独立解码器 round-trip）共 497 项 | 手动按需 / 修改 `BarcodeGeneratorTool.astro` 编码表或子集切换逻辑前后 |
+| `test-fake-data-generator.mjs` | 回归 | 执行真实页面、随机字段与共享快捷键，覆盖清空、复制失败/重试和迟到复制/下载回调；独立FIX组492项，只写stdout，不联网或访问系统剪贴板 | CI / 修改 `FakeDataGeneratorTool.astro` 前后 |
+| `test-gitignore-generator.mjs` | 回归 | 执行真实本地模板与完整页面，覆盖选择、自定义内容、清空、复制失败/重试与旧导出回调；独立FIX组487项，只写stdout，不联网或访问系统剪贴板 | CI / 修改 `GitignoreGeneratorTool.astro` 或本地模板前后 |
 | `test-secret-redactor.mjs` | 回归 | 从 `SecretRedactorTool.astro` 抽取真实引擎，核对规则正反例、重叠优先级、占位符复用与跳号、脱敏 / 还原及 1 MB 输入；执行完整页面脚本与共享快捷键，覆盖自动处理、示例 / 清空、复制失败与后备、直接重试、迟到回调与旧定时器。v2 组核对双阶段双栏、8 个气泡、敏感页边界及四语正文保护，共 1,796 项；只写 stdout，不访问系统剪贴板 | CI / 修改组件、规则或工具页正文前后 |
 | `test-sqlite-viewer.mjs` | 回归 | 真实 sql.js 建库，覆盖文件头、标识符、表/视图/索引、分页、CSV 与内存副本 SQL；完整页面覆盖清空关库、迟到文件头/正文/引擎加载、读取拒绝与重试、空 SQL 失效旧导出、手机结果滚入，保留无效新文件不替换已加载数据库的行为；v2 结果双层滚动、8 个气泡与四语正文保护。B3 日志 234 通过 | 手动按需 / 修改 `SqliteViewerTool.astro` 前后 |
 | `test-color-blindness-simulator.mjs` | 回归 | 真实引擎核对 Machado 线性 RGB、像素、配色与复制声明；完整页面覆盖 Ctrl/⌘+L 恢复初始示例、清配色、迟到文件/屏幕捕获、停止媒体轨道、`play()` 拒绝、PNG 点击时像素/文件名及复制状态；v2 有界结果、9 个气泡与四语正文保护。B3 日志 1,119 通过（生命周期 316、v2 158） | 手动按需 / 修改 `ColorBlindnessSimulatorTool.astro` 或其复制声明的来源前后 |
