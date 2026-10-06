@@ -561,6 +561,70 @@ for (const lang of ['en', 'zh', 'ja', 'ko'])
             lifeCheck('no native clipboard ever', p.execCalls.length === 0);
         });
 
+
+// v2: generated rows and the independent decoder share one bounded result pane.
+const v2Check = (name, ok) => { console.log(`${ok ? 'PASS' : 'FAIL'} v2 ${name}`); if (ok) passes++; else failures++; };
+const v2Region = source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
+const v2Strings = v2Region ? vm.runInNewContext(v2Region[1] + ';STRINGS') : {};
+const v2TipKeys = ['generate', 'count', 'copy', 'clear', 'decode'];
+const v2Scripts = [...source.matchAll(/<script\b[^>]*>[\s\S]*?<\/script>/g)].map(m => m[0]).join('\n');
+v2Check('outer tool root remains a flex column with zero minimum height', /\.ulid-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0/.test(source));
+v2Check('inner grid has a 300px rail and zero flex basis', /\.ulid-main\s*\{[^}]*grid-template-columns:\s*300px minmax\(0,\s*1fr\);[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0/.test(source));
+v2Check('controls and decoder input are in the shared rail', /<aside class="ulid-rail zt-rail">[\s\S]*id="ulid-count"[\s\S]*id="ulid-decode-input"[\s\S]*<\/aside>/.test(source));
+v2Check('both real results are in the bounded output pane', /class="ulid-result-pane"[\s\S]*id="ulid-results"[\s\S]*id="ulid-decode-result"/.test(source) && /\.ulid-result-pane\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden/.test(source));
+v2Check('long generated list scrolls with zero flex basis', /\.ulid-results\s*\{[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0;[^}]*overflow:\s*auto/.test(source));
+v2Check('decoder result has its own bound and scrolling', /\.ulid-decode-result\s*\{[^}]*max-height:\s*10rem;[^}]*overflow:\s*auto/.test(source));
+v2Check('status is reserved while the actual alert is hidden', /class="ulid-status" aria-live="polite"><p id="ulid-gen-error"[^>]*hidden/.test(source) && /\.ulid-status\s*\{[^}]*min-height:\s*2\.8em;[^}]*line-height:\s*1\.4/.test(source));
+v2Check('empty sentence depends on both generated and decoded results', /\.ulid-result-pane:has\(#ulid-results\[style\*="none"\]\):has\(#ulid-decode-result\[style\*="none"\]\) > \.ulid-empty/.test(source));
+v2Check('stacked empty pane depends on both results', /@media \(max-width: 860px\)[\s\S]*\.ulid-main\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(source) && /\.ulid-result-pane:has\(#ulid-results\[style\*="none"\]\):has\(#ulid-decode-result\[style\*="none"\]\)\s*\{\s*display:\s*none/.test(source));
+v2Check('phone inputs and primary actions have 44px minimums', /@media \(max-width: 640px\)[\s\S]*\.ulid-count-input, \.ulid-decode-input, \.ulid-btn-row button\s*\{\s*min-height:\s*44px/.test(source));
+v2Check('dynamic row copy and tips have real global 24px targets', /:global\(\.ulid-copy-btn\)\s*\{\s*min-width:\s*24px;\s*min-height:\s*24px/.test(source) && /:global\(\.zt-tip-btn\)\s*\{\s*min-width:\s*24px;\s*min-height:\s*24px/.test(source));
+v2Check('all three static and the dynamic Copy action remain', ['ulid-generate','ulid-copy-all','ulid-clear'].every(id => source.includes(`id="${id}"`)) && v2Scripts.includes("copyBtn.addEventListener('click'"));
+v2Check('five unique tips render their content in slots', v2TipKeys.every(k => source.includes(`id="ulid-tip-${k}"`) && source.includes(`>{U.tips.${k}}</Toggletip>`)) && (source.match(/<Toggletip\b/g) || []).length === 5);
+v2Check('UI tips are absent from all complete client scripts', !/\b(?:U|STRINGS)\b|ulid-tip-/.test(v2Scripts) && !source.includes('data-strings='));
+for (const lang of ['en','zh','ja','ko']) {
+    const strings = v2Strings[lang], labels = lifecycleLabels(lang), p = lifecyclePage(lang);
+    v2Check(lang + ' has a nonempty empty sentence and all five tips', !!strings?.empty && v2TipKeys.every(k => typeof strings?.tips?.[k] === 'string' && !!strings.tips[k].trim()) && Object.keys(strings?.tips || {}).length === 5);
+    v2Check(lang + ' actual controls keep the existing server-rendered labels', p.get('ulid-generate').textContent === labels.generate && p.get('ulid-copy-all').textContent === labels.copyAll && p.get('ulid-decode-input').getAttribute('placeholder') === labels.decoderPlaceholder);
+    p.input('ulid-decode-input', '01ARZ3NDEKTSV4RRFFQ69G5FAV');
+    const decoded = p.get('ulid-decode-result').textContent;
+    p.get('ulid-generate').click();
+    p.get('ulid-clear').click();
+    v2Check(lang + ' Clear removes only the list and keeps the decoded result', !p.get('ulid-tbody').children.length && p.get('ulid-results').style.display === 'none' && p.get('ulid-decode-input').value === '01ARZ3NDEKTSV4RRFFQ69G5FAV' && p.get('ulid-decode-result').style.display === '' && p.get('ulid-decode-result').textContent === decoded && decoded.includes('1469922850259'));
+    p.ctrlL('ulid-decode-input');
+    v2Check(lang + ' shortcut clears both outputs without changing count', !p.get('ulid-decode-input').value && p.get('ulid-decode-result').style.display === 'none' && !p.get('ulid-decode-result').textContent && p.get('ulid-count').value === '1');
+    const mdx = readFileSync(join(root, 'src/content/tools/ulid-generator', lang + '.mdx'), 'utf8');
+    const region = mdx.match(/\nsteps:\n([\s\S]*?)\nfaqItems:/);
+    const steps = region ? [...region[1].matchAll(/^  - (.+)$/gm)].map(m => JSON.parse(m[1])) : [];
+    v2Check(lang + ' five steps meet limits and precede FAQ', steps.length === 5 && steps.every(s => s.trim().length > 0 && s.length <= 280) && steps.join('').length <= 1200);
+    v2Check(lang + ' Usage moved out of body and the structure section remains', !/<h2>(?:How to Use|使用方法|使用说明|使い方|사용 방법)<\/h2>/.test(mdx) && mdx.includes('01ARZ3NDEKTSV4RRFFQ69G5FAV') && mdx.includes('Crockford'));
+    // Copy scopes in the steps follow the real row and complete-list handlers.
+    const copySteps = {
+        en: 'Use a row Copy button to copy that ULID; use Copy All to copy the complete list.',
+        zh: '单行复制按钮复制该 ULID；复制全部按钮复制完整列表。',
+        ja: '各行のコピーはその ULID をコピーし、すべてコピーはリスト全体をコピーします。',
+        ko: '각 행의 복사는 해당 ULID를 복사하고, 모두 복사는 전체 목록을 복사합니다.',
+    };
+    v2Check(lang + ' copy step distinguishes one ULID from the complete list', steps[2] === copySteps[lang]);
+    p.get('ulid-count').value = '3';
+    p.get('ulid-generate').click();
+    const copyLines = p.get('ulid-tbody').children.map(row => row.children[0].textContent);
+    p.doc.querySelector('.ulid-copy-btn').click();
+    p.get('ulid-copy-all').click();
+    v2Check(lang + ' real row Copy writes one ULID and Copy All writes all three', p.clipboard.length === 2 && p.clipboard[0].value === copyLines[0] && p.clipboard[1].value === copyLines.join('\n') && copyLines.length === 3);
+}
+const v2Compiler = await import(createRequire(lifecycleRequire.resolve('astro/package.json')).resolve('@astrojs/compiler'));
+const v2Parsed = await v2Compiler.parse(source);
+v2Check('Astro parser reports no diagnostics', v2Parsed.diagnostics.length === 0);
+console.log('ASTRO diagnostics ' + JSON.stringify(v2Parsed.diagnostics));
+const v2Compiled = await v2Compiler.transform(source, {filename: 'UlidGeneratorTool.astro'});
+v2Check('Astro compiles valid slots and scoped CSS', v2Compiled.diagnostics.every(d => d.severity !== 1) && v2Compiled.css.length > 0 && v2Compiled.css.every(css => !css.includes(':global(')));
+const {transform: v2ParseJs} = await import('esbuild');
+await v2ParseJs(v2Compiled.code, {loader:'ts',format:'esm'});
+v2Check('compiled module contains the HTML tip slots', v2TipKeys.every(k => v2Compiled.code.includes('U.tips.' + k)));
+if (process.env.ZT_B14_REGISTRATION_PENDING === '1') console.log('PENDING_ROOT v2 generate registration');
+else v2Check('generate kind is registered', /['"]ulid-generator['"]\s*:\s*['"]generate['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+
 process.removeListener('unhandledRejection', onUnhandled);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
 console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);

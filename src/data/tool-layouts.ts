@@ -150,6 +150,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'nano-id-generator': 'generate',
   'uuid-generator': 'generate',
   'gif-compressor': 'generate',
+  'ulid-generator': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
