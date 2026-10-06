@@ -380,6 +380,7 @@ for(const lang of ['en','zh','ja','ko']){
  assert(lang+' steps limits and position',y.steps.length<=8&&y.steps.every(x=>x.length<=280)&&y.steps.join('').length<=1200&&mdx.indexOf('steps:')<mdx.indexOf('faqItems:'),true);
  assert(lang+' Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);
 }
+assert('desktop grid uses a definite zero flex basis to bound long output', /\.hta-main\s*\{[^}]*\bflex:\s*1 1 0;/.test(source), true);
 assert('generate rail/result bounded structure',source.includes('hta-controls zt-rail')&&source.includes('grid-template-columns: 300px minmax(0, 1fr)')&&source.includes('overflow: auto'),true);
 assert('SSR replaces runtime labels',!source.includes('data-i18n')&&!source.includes('var STRINGS'),true);
 assert('seven static localized tips',[...source.matchAll(/<Toggletip id="hta-tip-/g)].length,7);
