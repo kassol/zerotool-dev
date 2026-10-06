@@ -35,10 +35,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { addBlock: '+ Add User-agent Block', sitemapUrl: 'Sitemap URL', optional: '(optional)', copy: 'Copy', copied: 'Copied!', blockTitle: 'User-agent Block', userAgent: 'User-agent', customBot: 'Custom...', addAllow: '+ Allow', addDisallow: '+ Disallow' },
-        zh: { addBlock: '+ 添加 User-agent 块', sitemapUrl: 'Sitemap URL', optional: '（可选）', copy: '复制', copied: '已复制！', blockTitle: 'User-agent 块', userAgent: 'User-agent', customBot: '自定义...', addAllow: '+ 允许', addDisallow: '+ 禁止' },
-        ja: { addBlock: '+ User-agent ブロックを追加', sitemapUrl: 'Sitemap URL', optional: '（任意）', copy: 'コピー', copied: 'コピー済み！', blockTitle: 'User-agent ブロック', userAgent: 'User-agent', customBot: 'カスタム...', addAllow: '+ 許可', addDisallow: '+ 拒否' },
-        ko: { addBlock: '+ User-agent 블록 추가', sitemapUrl: 'Sitemap URL', optional: '(선택)', copy: '복사', copied: '복사됨!', blockTitle: 'User-agent 블록', userAgent: 'User-agent', customBot: '직접 입력...', addAllow: '+ 허용', addDisallow: '+ 차단' }
+        en: { addBlock: '+ Add User-agent Block', sitemapUrl: 'Sitemap URL', optional: '(optional)', copy: 'Copy', copied: 'Copied!', blockTitle: 'User-agent Block', userAgent: 'User-agent', customBot: 'Custom...', addAllow: '+ Allow', addDisallow: '+ Disallow', copyFailed: 'Copy failed. Try again.' },
+        zh: { addBlock: '+ 添加 User-agent 块', sitemapUrl: 'Sitemap URL', optional: '（可选）', copy: '复制', copied: '已复制！', blockTitle: 'User-agent 块', userAgent: 'User-agent', customBot: '自定义...', addAllow: '+ 允许', addDisallow: '+ 禁止', copyFailed: '复制失败，请重试。' },
+        ja: { addBlock: '+ User-agent ブロックを追加', sitemapUrl: 'Sitemap URL', optional: '（任意）', copy: 'コピー', copied: 'コピー済み！', blockTitle: 'User-agent ブロック', userAgent: 'User-agent', customBot: 'カスタム...', addAllow: '+ 許可', addDisallow: '+ 拒否', copyFailed: 'コピーに失敗しました。もう一度お試しください。' },
+        ko: { addBlock: '+ User-agent 블록 추가', sitemapUrl: 'Sitemap URL', optional: '(선택)', copy: '복사', copied: '복사됨!', blockTitle: 'User-agent 블록', userAgent: 'User-agent', customBot: '직접 입력...', addAllow: '+ 허용', addDisallow: '+ 차단', copyFailed: '복사에 실패했습니다. 다시 시도하세요.' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -58,6 +58,11 @@
       var statusEl = document.getElementById('rt-status');
 
       var blockCount = 0;
+
+      function refresh() {
+        resetCopy();
+        generate();
+      }
 
       function createBlock() {
         blockCount++;
@@ -101,22 +106,22 @@
 
         removeBtn.addEventListener('click', function () {
           wrap.remove();
-          generate();
+          refresh();
         });
 
         uaSelect.addEventListener('change', function () {
           var isCustom = uaSelect.value === '__custom__';
           uaCustom.style.display = isCustom ? 'block' : 'none';
-          generate();
+          refresh();
         });
 
-        uaCustom.addEventListener('input', generate);
+        uaCustom.addEventListener('input', refresh);
 
         addAllowBtn.addEventListener('click', function () { addRule(rulesList, 'Allow'); });
         addDisallowBtn.addEventListener('click', function () { addRule(rulesList, 'Disallow'); });
 
         blocksEl.appendChild(wrap);
-        generate();
+        refresh();
         return wrap;
       }
 
@@ -134,14 +139,14 @@
 
         removeBtn.addEventListener('click', function () {
           row.remove();
-          generate();
+          refresh();
         });
 
-        pathInput.addEventListener('input', generate);
+        pathInput.addEventListener('input', refresh);
 
         rulesList.appendChild(row);
         pathInput.focus();
-        generate();
+        refresh();
       }
 
       function getBlockData(blockEl) {
@@ -196,20 +201,60 @@
       }
 
       addBlockBtn.addEventListener('click', function () { createBlock(); });
-      sitemapEl.addEventListener('input', generate);
+      sitemapEl.addEventListener('input', refresh);
+
+      var copyRequest = 0;
+      var copyTimer = 0;
+
+      function resetCopy() {
+        copyRequest++;
+        clearTimeout(copyTimer);
+        copyTimer = 0;
+        copyBtn.textContent = t.copy;
+        copyBtn.classList.remove('copied');
+        statusEl.textContent = '';
+      }
 
       copyBtn.addEventListener('click', function () {
         var val = outputEl.textContent;
-        if (!val) return;
+        if (!val || copyBtn.disabled) return;
+        resetCopy();
+        var request = copyRequest;
+        function showFailed() {
+          if (request !== copyRequest) return;
+          statusEl.textContent = t.copyFailed;
+        }
         function showCopied() {
+          if (request !== copyRequest) return;
           copyBtn.textContent = t.copied;
           copyBtn.classList.add('copied');
-          setTimeout(function () {
+          copyTimer = setTimeout(function () {
+            if (request !== copyRequest) return;
+            copyTimer = 0;
             copyBtn.textContent = t.copy;
             copyBtn.classList.remove('copied');
           }, 1500);
         }
-        navigator.clipboard.writeText(val).then(showCopied).catch(showCopied);
+        try {
+          if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+            showFailed();
+            return;
+          }
+          navigator.clipboard.writeText(val).then(showCopied, showFailed);
+        } catch (e) {
+          showFailed();
+        }
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var root = blocksEl.closest('.rt-wrap');
+        if (!root || !document.activeElement || !root.contains(document.activeElement)) return;
+        e.preventDefault();
+        root.querySelectorAll('input[type="text"], input[type="url"]').forEach(function (el) { el.value = ''; });
+        resetCopy();
+        outputEl.textContent = '';
+        copyBtn.disabled = true;
       });
 
       // Initialize with one default block (all bots, one Disallow: /)
@@ -218,7 +263,7 @@
       addRule(firstRulesList, 'Disallow');
       var firstPathInput = firstRulesList.querySelector('.rt-rule-path');
       firstPathInput.value = '/';
-      generate();
+      refresh();
     })();
   </script>
 </div>
