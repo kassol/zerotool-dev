@@ -106,6 +106,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'htpasswd-generator': 'generate',
   'sprite-sheet-generator': 'generate',
   'box-shadow-generator': 'generate',
+  'css-flexbox-generator': 'generate',
   'css-grid-generator': 'generate',
   'css-variables-generator': 'generate',
   'css-triangle-generator': 'generate',

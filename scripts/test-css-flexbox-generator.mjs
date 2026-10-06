@@ -17,6 +17,7 @@
 // Run: node scripts/test-css-flexbox-generator.mjs
 
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -91,7 +92,7 @@ check('items field default', /id="cfg-items"[^>]*min="1" max="8" value="4"/.test
 const pageScript = /<script is:inline>([\s\S]*?)<\/script>/.exec(source)[1];
 const wrap = { dataset: { copy: 'Copy', copied: 'Copied!' } };
 const doc = { currentScript: null, querySelector: () => wrap, getElementById: el, createElement: () => makeEl(''), addEventListener() {} };
-new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', pageScript)(doc, {}, {}, () => {}, () => {});
+new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', pageScript)(doc, { matchMedia: () => ({ matches: false }) }, {}, () => {}, () => {});
 
 const onLoad = el('cfg-code').textContent;
 check('output on load', onLoad === '.container {\n  display: flex;\n  flex-direction: row;\n  flex-wrap: nowrap;\n  justify-content: normal;\n  align-items: normal;\n  align-content: normal;\n  gap: 1rem;\n}', JSON.stringify(onLoad));
@@ -242,5 +243,48 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','s
   h=open(spec,lang,order);h.key('l');h.click();assertEq(name+'empty result is never copied',h.requests.length,0);
 }
 active=null;process.removeListener('unhandledRejection',unhandled);
+
+// ---------- generate layout and four-language reference protection ----------
+{
+  const markup=source.slice(source.indexOf('\n---\n',4)+5,source.indexOf('<script'));
+  const css=source.slice(source.indexOf('<style'));
+  const P='cfg';
+  check('v2 root takes available height',css.includes('.'+P+'-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; }'));
+  check('270–320px shared rail and remaining result',markup.includes('class="'+P+'-rail zt-rail"')&&css.includes('grid-template-columns: clamp(270px, 24vw, 320px) minmax(0, 1fr)'));
+  check('860px stack and 640px phone rules',css.includes('@media (max-width: 860px)')&&css.includes('@media (max-width: 640px)'));
+  check('native details preserve all secondary controls',markup.includes('<details')&&!/<details[^>]*\sopen/.test(markup));
+  check('Copy keeps a stable 44px target',new RegExp('#'+P+'-copy \\{[^}]*height: 44px').test(css));
+  check('phone main inputs keep 44px targets',css.includes('.cfg-num-input, .cfg-text-input, .cfg-select { min-height: 44px; }'));
+  check('runtime-created rows and syntax have global styles',css.includes(':global(.cfg-cell)')&&css.includes(':global(.cfg-hl-val)'));
+  check('status space stays reserved',css.includes('#'+P+'-status { height: 2.8em; flex: none; margin: 0; overflow: auto; }'));
+  check('result can scroll inside a bounded region',css.includes('overflow: auto;')&&(css.includes('height: 15rem;')||css.includes('max-height: 3.8rem;')));
+  check('code accepts keyboard focus',/tabindex="0" role="region" aria-label=\{L.outputLabel\}/.test(markup));
+  check('empty results hide on stacked screens',css.includes('[data-empty="true"] { display: none; }'));
+  check('localized SSR prose stays out of client data',source.includes('// strings:start')&&source.includes('// strings:end')&&!source.includes('define:vars')&&!source.includes('data-strings')&&!source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1].includes('.tips'));
+  assertEq('each actual control has its SSR tip', [...markup.matchAll(/<Toggletip id=/g)].length,8);
+  const hashes={"en": "92ff9e64c488c2028f61e99d37299cb129c9bde46c3297a6216234e8324e73c0", "zh": "42cd799f787f2aaa343b8e22ad77e64dde6ac940f0ea67899961462b2d25c47b", "ja": "60a07281a34314d536be44bb67ba5dbb2b80f47acb5c2b64dce117f54ab3783f", "ko": "631abfeefc57f3a296fa7b5817fa89686af1190fcfb96ec5f0690e0dc4643265"},reference={"en": {"frontmatterWithoutSteps": "a58bf46fb209a544b779c417e80703b6a1a86fc8a2618b26614abeeb6fe52062", "nonUsageBody": "acf1c24b6b6ff9270e6bad62e81ba31b861ae9619216552ee710c3bc0ff63a31", "steps": 8, "maxStepChars": 107, "totalStepChars": 603, "mdxSHA": "f1eb1c3d2edd9c6e000fd8e84f5cc2c6eee4626a461525161a5e26b59199ca6c"}, "zh": {"frontmatterWithoutSteps": "27c5ebd78ee294f0fd9379db44574f773ba2657787dc0dacc17d48b6d44be39a", "nonUsageBody": "02dc993c9cc28c9dad66fe181db639280fda720b7fec19f63b5f0c53e80e673e", "steps": 8, "maxStepChars": 52, "totalStepChars": 236, "mdxSHA": "3f5a4f11d5a3c69ad0a6dc76c42cd991c1ad84870b27fc3fca4457ca27fa028c"}, "ja": {"frontmatterWithoutSteps": "4e28f8d7b7830b48b46117e50ba1844c33b200c67b130ec0393cc65c58d3d2eb", "nonUsageBody": "8eb93a3645bebf5b0e4545ffdebe71b88e1d901a4622c823ab195bbc2c54e0fb", "steps": 8, "maxStepChars": 73, "totalStepChars": 308, "mdxSHA": "03b8410ad4328da6fc98f06f0d1711b4ddab5c5b03487b9277a545403699652d"}, "ko": {"frontmatterWithoutSteps": "082dc9d32b3f89265ac35f92d41ea9c1697b1acf6f15de3c63cd3aac4e8e11bb", "nonUsageBody": "38138b1712d0d92e7acf2a971893784d5187fa8a617304e049c9ae26bce4448e", "steps": 8, "maxStepChars": 71, "totalStepChars": 326, "mdxSHA": "85ad09e94b8dfbb73239815e3402cf83414d06425befdf0842605d7aecf375a5"}};
+  const digest=text=>createHash('sha256').update(text).digest('hex');
+  for(const lang of ['en','zh','ja','ko']){
+    const h=open(spec,lang);const old=Object.fromEntries(Object.entries(h.L).filter(([key])=>!['editor','removeLabel','options','empty','tips'].includes(key)).sort(([a],[b])=>a.localeCompare(b)));
+    assertEq(lang+' old localized values stay exact',digest(JSON.stringify(old)),hashes[lang]);
+    const mdx=readFileSync(join(root,'src/content/tools/css-flexbox-generator/'+lang+'.mdx'),'utf8'),fm=mdx.match(/^---\n([\s\S]*?)\n---/),front=fm[1],body=mdx.slice(fm[0].length);
+    const section=front.slice(front.indexOf('\nsteps:\n'),front.indexOf('\nfaqItems:'));
+    const steps=[...section.matchAll(/^  - (".*")$/gm)].map(m=>JSON.parse(m[1]));
+    assertEq(lang+' Usage moved into plain steps',steps.length,reference[lang].steps);
+    check(lang+' step limits',steps.every(step=>[...step].length<=280)&&steps.reduce((n,step)=>n+[...step].length,0)<=1200);
+    check(lang+' Copy and clear instructions are concrete',steps.at(-1).includes(h.L.copy)&&steps.at(-1).includes('Ctrl/⌘+L'));
+    assertEq(lang+' all nonUsage body including Limits stays exact',digest(body),reference[lang].nonUsageBody);
+    assertEq(lang+' FAQ and SEO stay exact',digest(front.replace(/\nsteps:\n(?:  - .*\n)*/,'\n')),reference[lang].frontmatterWithoutSteps);
+    check(lang+' tips are factual plain localized prose',Object.keys(h.L.tips).length===8&&Object.values(h.L.tips).every(text=>typeof text==='string'&&text.length>0&&!/[<>]|https?:/.test(text)));
+    assertEq(lang+' initial rendering does not scroll',h.scrolls,0);
+    h.key('l');assertEq(lang+' clear hides real result and shows empty hint',[h.el(P+'-result').dataset.empty,h.el(P+'-empty').hidden],['true',false]);
+    h.page.ctx.matchMedia=()=>({matches:true});changePage(h);assertEq(lang+' real phone input restores result',[h.el(P+'-result').dataset.empty,h.el(P+'-empty').hidden],['false',true]);
+    assertEq(lang+' phone real input scrolls result into view',h.scrolls,1);
+    const c=open(spec,lang);c.click();c.requests[0].reject(new Error('current clipboard denial'));await settle();assertEq(lang+' current failure also appears in reserved status',c.el(P+'-status').textContent,c.L.copyFailed);
+    c.click();assertEq(lang+' retry clears only current copy status',c.el(P+'-status').textContent,'');c.requests[1].resolve();await settle();
+  }
+}
+
+check('registered generate layout',readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8').includes("  'css-flexbox-generator': 'generate',"));
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
