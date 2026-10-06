@@ -331,6 +331,22 @@ const L = labels[lang] ?? labels.en;
     var meterFill = $('clamp-meter-fill');
     var sampleBody = $('clamp-sample-body');
     var lastResult = null;
+    var copyStatusRequest = 0;
+    var copyStates = [
+      { button: $('clamp-copy-css'), label: text('copyCss'), request: 0, timer: 0 },
+      { button: $('clamp-copy-value'), label: text('copyValue'), request: 0, timer: 0 }
+    ];
+
+    function resetCopyFeedback() {
+      copyStatusRequest++;
+      copyStates.forEach(function(state) {
+        state.request++;
+        clearTimeout(state.timer);
+        state.timer = 0;
+        state.button.textContent = state.label;
+        state.button.classList.remove('copied');
+      });
+    }
 
     function text(name) { return wrap.dataset[name] || ''; }
 
@@ -504,7 +520,8 @@ const L = labels[lang] ?? labels.en;
       }
     }
 
-    function render() {
+    function render(saveState) {
+      resetCopyFeedback();
       var config = readConfig();
       var error = validate(config);
       if (error) {
@@ -527,7 +544,7 @@ const L = labels[lang] ?? labels.en;
       updateSamples(lastResult);
       updateLive();
       updateNotice(lastResult);
-      save(config);
+      if (saveState !== false) save(config);
     }
 
     function applyState(state) {
@@ -541,7 +558,16 @@ const L = labels[lang] ?? labels.en;
     }
 
     function copyText(value, button, originalText) {
+      var state = copyStates[button === copyStates[0].button ? 0 : 1];
+      var request = ++state.request;
+      var statusRequest = ++copyStatusRequest;
+      clearTimeout(state.timer);
+      state.timer = 0;
+      button.textContent = originalText;
+      button.classList.remove('copied');
+      if (lastResult) updateNotice(lastResult);
       var task;
+      try {
       if (navigator.clipboard && window.isSecureContext) {
         task = navigator.clipboard.writeText(value);
       } else {
@@ -563,25 +589,36 @@ const L = labels[lang] ?? labels.en;
         });
       }
 
+      } catch (error) {
+        task = Promise.reject(error);
+      }
+
       task.then(function() {
+        if (request !== state.request) return;
         button.textContent = text('copied');
         button.classList.add('copied');
-        setStatus('success', text('copied'));
-        setTimeout(function() {
+        if (statusRequest === copyStatusRequest) setStatus('success', text('copied'));
+        state.timer = setTimeout(function() {
+          if (request !== state.request) return;
+          state.timer = 0;
           button.textContent = originalText;
           button.classList.remove('copied');
-          if (lastResult) updateNotice(lastResult);
+          if (statusRequest === copyStatusRequest && lastResult) updateNotice(lastResult);
         }, 1400);
         if (window.trackTool) window.trackTool(SLUG, 'copy');
       }).catch(function() {
-        setStatus('error', text('copyFailed'));
+        if (request === state.request && statusRequest === copyStatusRequest) setStatus('error', text('copyFailed'));
       });
     }
 
     [propertyEl, unitEl, rootEl, minViewportEl, maxViewportEl, startValueEl, endValueEl].forEach(function(element) {
       element.addEventListener(element.tagName === 'SELECT' ? 'change' : 'input', render);
     });
-    previewWidthEl.addEventListener('input', updateLive);
+    previewWidthEl.addEventListener('input', function() {
+      resetCopyFeedback();
+      if (lastResult) updateNotice(lastResult);
+      updateLive();
+    });
 
     $('clamp-copy-css').addEventListener('click', function() {
       if (lastResult) copyText(lastResult.declaration, this, text('copyCss'));
@@ -589,13 +626,21 @@ const L = labels[lang] ?? labels.en;
     $('clamp-copy-value').addEventListener('click', function() {
       if (lastResult) copyText(lastResult.raw, this, text('copyValue'));
     });
-    $('clamp-reset').addEventListener('click', function() {
+    function resetTool(clearSaved) {
       applyState(DEFAULTS);
       previewWidthEl.value = String((DEFAULTS.minViewport + DEFAULTS.maxViewport) / 2);
-      render();
-      if (window.ztPersist) window.ztPersist.clear(SLUG);
+      render(clearSaved ? undefined : false);
+      if (clearSaved && window.ztPersist) window.ztPersist.clear(SLUG);
       minViewportEl.focus();
       if (window.trackTool) window.trackTool(SLUG, 'reset');
+    }
+
+    $('clamp-reset').addEventListener('click', function() { resetTool(true); });
+    document.addEventListener('keydown', function(event) {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'l') return;
+      if (!document.activeElement || !wrap.contains(document.activeElement)) return;
+      event.preventDefault();
+      resetTool(false);
     });
 
     window.addEventListener('storage', function(event) {
