@@ -765,6 +765,7 @@ const { lang = 'en' } = Astro.props;
       var fx = 0.5, fy = 0.5;
       var plan = null, shown = [], ready = false, genToken = 0, regenTimer = 0, busy = false, noticeMsg = null, tracked = false;
       var scratch = null, sctx = null, probe = null, probeCtx = null;
+      var regenRevision = 0;
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg;
@@ -1124,8 +1125,10 @@ const { lang = 'en' } = Astro.props;
 
       function regenerate() {
         clearTimeout(regenTimer);
+        regenRevision++;
         if (!bitmap) return;
         genToken++;
+        setBusy(false);
         var token = genToken;
         computePlan();
         shown = [];
@@ -1149,7 +1152,10 @@ const { lang = 'en' } = Astro.props;
 
       function scheduleRegen(delay) {
         clearTimeout(regenTimer);
-        regenTimer = setTimeout(regenerate, delay === undefined ? 250 : delay);
+        var token = loadToken, request = ++regenRevision;
+        regenTimer = setTimeout(function () {
+          if (token === loadToken && request === regenRevision) regenerate();
+        }, delay === undefined ? 250 : delay);
       }
 
       /* ── Load / clear ── */
@@ -1161,7 +1167,14 @@ const { lang = 'en' } = Astro.props;
       function resetState() {
         loadToken++;
         genToken++;
+        regenRevision++;
         clearTimeout(regenTimer);
+        cancelAnimationFrame(dragFrame);
+        dragFrame = 0;
+        drag = null;
+        cropEl.classList.remove('is-dragging');
+        fileInput.value = '';
+        nameEl.textContent = ''; dimsEl.textContent = ''; sizeEl.textContent = '';
         releaseBitmap();
         W = 0; H = 0; base = 'image';
         plan = null; shown = []; ready = false; noticeMsg = null;
@@ -1181,6 +1194,14 @@ const { lang = 'en' } = Astro.props;
       async function loadFile(file, pasted) {
         if (!file) return;
         var token = ++loadToken;
+        genToken++;
+        regenRevision++;
+        clearTimeout(regenTimer);
+        cancelAnimationFrame(dragFrame);
+        dragFrame = 0;
+        drag = null;
+        cropEl.classList.remove('is-dragging');
+        setBusy(false);
         if (file.type && file.type.indexOf('image/') !== 0) { setStatus(t.statusNotImage, 'error'); return; }
         if (!file.size) { setStatus(t.statusEmpty, 'error'); return; }
         setStatus('', 'none');
@@ -1227,48 +1248,50 @@ const { lang = 'en' } = Astro.props;
         return 'image/png';
       }
 
-      function encodeTile(tile, p) {
+      function encodeTile(tile, p, options) {
         if (!scratch) {
           scratch = document.createElement('canvas');
           sctx = scratch.getContext('2d');
         }
         scratch.width = tile.w;
         scratch.height = tile.h;
-        paintTile(sctx, tile, 1, prefs.format === 'jpg' ? prefs.jpgBg : null, p);
-        var mime = mimeFor(prefs.format);
-        return canvasToBlob(scratch, mime, mime === 'image/png' ? undefined : prefs.quality / 100);
+        paintTile(sctx, tile, 1, options.format === 'jpg' ? options.jpgBg : null, p);
+        var mime = mimeFor(options.format);
+        return canvasToBlob(scratch, mime, mime === 'image/png' ? undefined : options.quality / 100);
       }
 
       async function downloadTile(i) {
         if (busy || !ready || !shown[i]) return;
-        var p = plan, tile = shown[i], token = loadToken;
+        var p = plan, tile = shown[i], token = loadToken, generation = genToken;
+        var options = { format: prefs.format, quality: prefs.quality, jpgBg: prefs.jpgBg };
         setBusy(true);
-        var blob = await encodeTile(tile, p);
-        if (token !== loadToken) return;
+        var blob = await encodeTile(tile, p, options);
+        if (token !== loadToken || generation !== genToken) return;
         setBusy(false);
         if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
         var ext = extFromMime(blob.type);
         var name = tileFileName(base, tile, p, ext);
         downloadBlob(blob, name);
-        setStatus(fmt(t.statusTileDone, { name: name }) + (prefs.format === 'webp' && ext !== 'webp' ? ' ' + t.statusWebpFallback : ''), 'success');
+        setStatus(fmt(t.statusTileDone, { name: name }) + (options.format === 'webp' && ext !== 'webp' ? ' ' + t.statusWebpFallback : ''), 'success');
         if (window.trackTool) window.trackTool(SLUG, 'tile');
       }
 
       async function downloadZip() {
         if (busy || !ready || !shown.length) return;
-        var p = plan, token = loadToken, fallback = false;
+        var p = plan, token = loadToken, generation = genToken, fallback = false;
+        var options = { format: prefs.format, quality: prefs.quality, jpgBg: prefs.jpgBg };
         var list = shown.slice().sort(function (a, b) { return a.order - b.order; });
         setBusy(true);
         var files = [];
         for (var k = 0; k < list.length; k++) {
           setStatus(fmt(t.statusEncoding, { i: k + 1, n: list.length }), 'info');
-          var blob = await encodeTile(list[k], p);
-          if (token !== loadToken) return;
+          var blob = await encodeTile(list[k], p, options);
+          if (token !== loadToken || generation !== genToken) return;
           if (!blob) { setBusy(false); setStatus(t.statusExportFailed, 'error'); return; }
           var ext = extFromMime(blob.type);
-          if (prefs.format === 'webp' && ext !== 'webp') fallback = true;
+          if (options.format === 'webp' && ext !== 'webp') fallback = true;
           files.push({ name: tileFileName(base, list[k], p, ext), data: new Uint8Array(await blob.arrayBuffer()) });
-          if (token !== loadToken) return;
+          if (token !== loadToken || generation !== genToken) return;
         }
         var zip = zipStore(files);
         setBusy(false);
@@ -1408,7 +1431,12 @@ const { lang = 'en' } = Astro.props;
         computePlan();
         updateCropBox();
         if (!dragFrame) {
-          dragFrame = requestAnimationFrame(function () { dragFrame = 0; drawPreview(); });
+          var token = loadToken;
+          dragFrame = requestAnimationFrame(function () {
+            if (token !== loadToken) return;
+            dragFrame = 0;
+            drawPreview();
+          });
         }
       }
       cropEl.addEventListener('pointerdown', function (e) {
@@ -1462,6 +1490,13 @@ const { lang = 'en' } = Astro.props;
           resizeFrame = requestAnimationFrame(function () { resizeFrame = 0; if (bitmap && plan) drawPreview(); });
         }).observe(stageArea);
       }
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l' || !wrapEl.contains(document.activeElement)) return;
+        e.preventDefault();
+        resetState();
+        setStatus('', 'none');
+      });
 
       loadPrefs();
       applyPrefsToUI();
