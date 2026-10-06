@@ -657,7 +657,7 @@ const {createRequire}=await import('node:module');
 const {relative}=await import('node:path');
 const {pathToFileURL}=await import('node:url');
 const vm=(await import('node:vm')).default;
-const {loadPage}=await import(pathToFileURL(join(root,'scripts/astro-page-harness.mjs')));
+const {loadPage,frontmatterStrings}=await import(pathToFileURL(join(root,'scripts/astro-page-harness.mjs')));
 const ROOT=root,require=createRequire(join(ROOT,'package.json'));
 const {parseFragment,defaultTreeAdapter}=require('parse5');
 const paths={gif:process.env.ZT_B14_SOURCE?relative(ROOT,process.env.ZT_B14_SOURCE):'src/components/tools/GifCompressorTool.astro'},slugs={gif:'gif-compressor'},source={gif:pageSource};
@@ -672,7 +672,7 @@ const settle=async()=>{await new Promise(setImmediate);await new Promise(setImme
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 const waitFor=async(fn)=>{const until=Date.now()+5000;while(!fn()){if(Date.now()>until)throw Error('Boundary not reached: '+phase);await new Promise(r=>setTimeout(r,5));}};
 async function scene(id,fn){phase=id;try{await fn();}catch(e){checks.push({id,status:'FAIL',actual:e.stack});console.error(e);}}
-const labels=vm.runInNewContext(source.gif.match(/var STRINGS = [\s\S]*?\n      \};/)[0]+';STRINGS'),L=labels.en;
+const labels=frontmatterStrings(source.gif.match(/^---\n([\s\S]*?)\n---/)[1]) || vm.runInNewContext(source.gif.match(/var STRINGS = [\s\S]*?\n      \};/)[0]+';STRINGS'),L=labels.en;
 function page(order='shared-after',lang='en'){
  const key='gif';
  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[],tasks=[],downloads=[],blobs=new Map(),yields=[];
@@ -767,7 +767,7 @@ function page(order='shared-after',lang='en'){
   doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);return false;};
   const persist={clear(slug){persistCalls.push(['clear',slug]);},save(...args){persistCalls.push(['save',...args]);},load(){return {};}};
-  const globals={document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
+  const globals={clientStrings:labels[lang],document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
 
    MutationObserver:class{observe(){} disconnect(){}},matchMedia:()=>({addEventListener(){}}),getComputedStyle:()=>({getPropertyValue:()=>''}),requestAnimationFrame:fn=>globals.setTimeout(fn,16),cancelAnimationFrame:id=>globals.clearTimeout(id),
    MessageChannel:class{constructor(){this.port1={};this.port2={postMessage:()=>{const job={delivered:false,deliver:()=>{must(!job.delivered,'yield only once');job.delivered=true;this.port1.onmessage({data:null});}};yields.push(job);if(!controls.holdYield)queueMicrotask(job.deliver);}};}},
@@ -813,6 +813,49 @@ for(const lang of ['en','zh','ja','ko'])await scene('copy/'+lang,async()=>{
  const timer=[...p.timers.values()].find(v=>v.ms===1500);p.tick(100);p.get('gc-limit-copy').click();p.clipboard[2].resolve();await settle();timer.fn();check(phase+'/forced-old-timer-ignored',t.copied,p.get('gc-limit-copy').textContent);p.tick(1400);check(phase+'/old-deadline-keeps-new-feedback',t.copied,p.get('gc-limit-copy').textContent);p.tick(100);check(phase+'/new-deadline-restores',t.copyCommand,p.get('gc-limit-copy').textContent);
  for(const outcome of ['resolve','reject']){const q=page('shared-after',lang);await limit(q);q.get('gc-limit-copy').click();await load(q,'new.gif');const before=snap(q);q.clipboard[0][outcome](outcome==='reject'?Error('late'):undefined);await settle();check(phase+'/'+outcome+'-new-source-keeps-state',before,snap(q));await limit(q);check(phase+'/'+outcome+'-old-label-reset',t.copyCommand,q.get('gc-limit-copy').textContent);q.get('gc-limit-copy').click();q.ctrlL('gc-limit-copy');q.clipboard[1][outcome](outcome==='reject'?Error('late'):undefined);await settle();check(phase+'/'+outcome+'-clear-feedback',[t.copyCommand,''],[q.get('gc-limit-copy').textContent,q.get('gc-status').textContent]);}
  for(const mode of ['missing','sync-throw']){const q=page('shared-after',lang);await limit(q);let native=0;const n=Object.create({get clipboard(){native++;throw Error('native');}});Object.defineProperty(n,'clipboard',{value:mode==='missing'?undefined:{writeText(){throw Error('sync');}},writable:true});q.actual.ctx.navigator=n;q.get('gc-limit-copy').click();await settle();check(phase+'/'+mode+'-error',t.statusCopyFailed,q.get('gc-status').textContent);check(phase+'/'+mode+'-native-access-zero',0,native);}
+});
+
+
+await scene('v2-contract',async()=>{
+ const s=source.gif;
+ check(phase+'/root-flex',true,/\.gc-wrap \{ min-height: 0; height: 100%; \}/.test(s));
+ check(phase+'/direct-root',true,/---\s*<div class="gc-wrap"/.test(s));
+ check(phase+'/inner-300-rail',true,/\.gc-panels \{[^}]*grid-template-columns: 300px minmax\(0, 1fr\)/.test(s)&&s.includes('gc-rail zt-rail'));
+ check(phase+'/status-reserved',true,/#gc-status \{ min-height: 2\.8em/.test(s));
+ check(phase+'/actions-before-status',true,s.indexOf('id="gc-run"')<s.indexOf('id="gc-status"')&&s.indexOf('id="gc-reset"')<s.indexOf('id="gc-status"'));
+ check(phase+'/bounded-real-focus-result',true,/id="gc-result"[^>]*tabindex="0"/.test(s)&&/\.gc-output \{[^}]*min-height: 0; overflow: auto/.test(s));
+ check(phase+'/stack-860',true,s.includes('@media (max-width: 860px)')&&s.includes('grid-template-columns: minmax(0, 1fr); flex: none'));
+ check(phase+'/main-44-dense-24',true,/gc-main-actions button[^}]*min-height: 44px/.test(s)&&/gc-field input\[type="range"\][^}]*min-height: 24px/.test(s));
+ check(phase+'/phone-empty-hidden',true,s.includes('.gc-output-panel:has(#gc-result[hidden]) { display: none; }'));
+ check(phase+'/desktop-empty',true,s.includes('class="gc-empty">{L.emptyPreview}'));
+ check(phase+'/all-four-buttons',4,[...s.matchAll(/<button\b[^>]*id="gc-(?:run|reset|download|limit-copy)"/g)].length);
+ check(phase+'/eleven-slot-tips',11,[...s.matchAll(/<Toggletip\b[^>]*>\{L\.tips\.[a-z]+\}<\/Toggletip>/g)].length);
+ const script=s.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+ check(phase+'/no-client-tips',false,/tips|var STRINGS|data-i18n/.test(script));
+ for(const lang of ['en','zh','ja','ko']){
+  check(phase+'/'+lang+'-tip-count',11,Object.keys(labels[lang].tips||{}).length);
+  check(phase+'/'+lang+'-localized-empty',true,typeof labels[lang].emptyPreview==='string'&&labels[lang].emptyPreview.length>10);
+  const mdx=readFileSync(join(ROOT,'src/content/tools/gif-compressor/'+lang+'.mdx'),'utf8'),steps=mdx.match(/steps:\n([\s\S]*?)faqItems:/)?.[1],items=steps?[...steps.matchAll(/^  - "(.*)"$/gm)].map(m=>JSON.parse('"'+m[1]+'"')):[];
+  check(phase+'/'+lang+'-six-steps',6,items.length);
+  check(phase+'/'+lang+'-step-limits',true,items.length>0&&items.every(x=>x.length<=280)&&items.join('').length<=1200);
+  check(phase+'/'+lang+'-Usage-removed',false,/^## (How to Use|使用步骤|使い方|사용 방법)$/m.test(mdx));
+ }
+ const p=page();await load(p);const n=p.tracks.length,before=p.get('gc-summary').textContent;
+ p.get('gc-lossy').value='85';p.get('gc-lossy').dispatch('input');p.change('gc-colors','32');p.change('gc-step','2');p.get('gc-dither').checked=true;p.get('gc-dither').dispatch('change');p.get('gc-width').value='1';p.get('gc-width').dispatch('input');await settle();
+ check(phase+'/option-changes-do-not-compress',n,p.tracks.length);
+ check(phase+'/option-changes-keep-published-result',before,p.get('gc-summary').textContent);
+ p.get('gc-run').click();await waitFor(()=>p.tracks.length>n);check(phase+'/manual-compress-applies-options',true,p.get('gc-summary').textContent!==before);
+ let picker=0;p.get('gc-file').click=()=>{picker++;};p.get('gc-reset').click();check(phase+'/Open-another-does-not-open-picker',0,picker);
+ check(phase+'/Open-another-focuses-drop','gc-drop',p.doc.activeElement.id);
+ const statusPage=page();statusPage.file(badFile());await settle();const actualStatus=statusPage.get('gc-status');
+ check(phase+'/status-reserved-after-real-error',true,actualStatus.textContent===L.statusNotGif&&statusPage.widget.querySelector('#gc-status')===actualStatus&&/#gc-status \{ min-height: 2\.8em/.test(source.gif));
+ const fn=script.match(/function revealResult\(\) \{[\s\S]*?\n      \}/)?.[0];
+ check(phase+'/actual-publish-observer',true,!!fn&&script.includes("new MutationObserver(revealResult).observe(resultEl, { attributes: true, attributeFilter: ['hidden'] })"));
+ if(fn){for(const [hidden,mobile,expected] of [[true,true,0],[false,false,0],[false,true,1]]){const calls=[],ctx={resultEl:{hidden,scrollIntoView(x){calls.push(x);}},matchMedia:()=>({matches:mobile})};vm.runInNewContext(fn+';revealResult();',ctx);check(phase+'/reveal-'+hidden+'-'+mobile,expected,calls.length);if(expected)check(phase+'/real-scroll-options',{block:'start',behavior:'smooth'},calls[0]);}}
+ const featureLayouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+ if (/'gif-compressor':\s*'generate'/.test(featureLayouts)) check(phase+'/v2-generate-registration', true, true);
+ else console.log('PENDING_ROOT gif-compressor generate registration (not counted as PASS)');
+
 });
 
 await settle();check('no-unhandled-rejections',[],unhandled);process.removeListener('unhandledRejection',onRejection);

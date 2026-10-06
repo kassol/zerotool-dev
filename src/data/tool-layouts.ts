@@ -149,6 +149,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'pixelate-image': 'generate',
   'nano-id-generator': 'generate',
   'uuid-generator': 'generate',
+  'gif-compressor': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
