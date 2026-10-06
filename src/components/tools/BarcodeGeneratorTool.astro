@@ -639,6 +639,21 @@ const L = labels[lang] ?? labels.en;
     var moduleLabel = $('bcode-module-label');
     var heightLabel = $('bcode-height-label');
     var lastSvg = '';
+    var resultRevision = 0;
+    var copyRequest = 0;
+    var copyTimer = 0;
+    var copyError = false;
+    var resultStatusKind = 'none';
+    var resultStatusMessage = '';
+
+    function resetCopy() {
+      copyRequest++;
+      clearTimeout(copyTimer);
+      copyTimer = 0;
+      copyError = false;
+      $('bcode-copy').textContent = text('copySvg');
+      $('bcode-copy').classList.remove('copied');
+    }
 
     function setStatus(kind, message) {
       statusEl.className = 'tool-status ' + (kind || 'none');
@@ -650,6 +665,8 @@ const L = labels[lang] ?? labels.en;
     }
 
     function render() {
+      resultRevision++;
+      resetCopy();
       var kind = symbologyEl.value;
       var mw = Number(moduleEl.value);
       var height = Number(heightEl.value);
@@ -665,7 +682,9 @@ const L = labels[lang] ?? labels.en;
         lastSvg = '';
         canvasEl.innerHTML = '';
         metaEl.textContent = '';
-        setStatus('error', result.error);
+        resultStatusKind = 'error';
+        resultStatusMessage = result.error;
+        setStatus(resultStatusKind, resultStatusMessage);
         setButtonsEnabled(false);
         return;
       }
@@ -673,7 +692,9 @@ const L = labels[lang] ?? labels.en;
       lastSvg = renderSvg(result, mw, height, showText);
       canvasEl.innerHTML = lastSvg;
       metaEl.textContent = fill(text('modules'), { n: result.modules.length });
-      setStatus(result.notice ? result.status : 'none', result.notice);
+      resultStatusKind = result.notice ? result.status : 'none';
+      resultStatusMessage = result.notice || '';
+      setStatus(resultStatusKind, resultStatusMessage);
       setButtonsEnabled(true);
 
       window.ztPersist && window.ztPersist.save(SLUG, {
@@ -727,6 +748,7 @@ const L = labels[lang] ?? labels.en;
       if (!lastSvg) return;
       // Render at 4x so 1px modules stay crisp when printed or scaled.
       var scale = 4;
+      var filename = fileBase() + '.png';
       var svgEl = canvasEl.querySelector('svg');
       var width = Number(svgEl.getAttribute('width'));
       var height = Number(svgEl.getAttribute('height'));
@@ -742,7 +764,7 @@ const L = labels[lang] ?? labels.en;
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         URL.revokeObjectURL(blobUrl);
         canvas.toBlob(function(blob) {
-          if (blob) downloadBlob(blob, fileBase() + '.png');
+          if (blob) downloadBlob(blob, filename);
         }, 'image/png');
         window.trackTool && window.trackTool(SLUG, 'download_png');
       };
@@ -754,20 +776,44 @@ const L = labels[lang] ?? labels.en;
       if (!lastSvg) return;
       var button = this;
       var original = text('copySvg');
-      var task = navigator.clipboard && window.isSecureContext
-        ? navigator.clipboard.writeText(lastSvg)
-        : Promise.reject(new Error('clipboard unavailable'));
-      task.then(function() {
+      var revision = resultRevision;
+      var request = ++copyRequest;
+      clearTimeout(copyTimer);
+      button.textContent = original;
+      button.classList.remove('copied');
+      var task;
+      try {
+        task = navigator.clipboard && window.isSecureContext
+          ? navigator.clipboard.writeText(lastSvg)
+          : Promise.reject(new Error('clipboard unavailable'));
+      } catch (err) {
+        task = Promise.reject(err);
+      }
+      Promise.resolve(task).then(function() {
+        if (revision !== resultRevision || request !== copyRequest) return;
+        if (copyError) { setStatus(resultStatusKind, resultStatusMessage); copyError = false; }
         button.textContent = text('copied');
         button.classList.add('copied');
-        setTimeout(function() {
+        copyTimer = setTimeout(function() {
+          if (revision !== resultRevision || request !== copyRequest) return;
           button.textContent = original;
           button.classList.remove('copied');
         }, 1400);
         window.trackTool && window.trackTool(SLUG, 'copy_svg');
       }).catch(function() {
+        if (revision !== resultRevision || request !== copyRequest) return;
+        copyError = true;
         setStatus('error', text('copyFailed'));
       });
+    });
+
+    document.addEventListener('keydown', function(e) {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+      if (!document.activeElement || !wrap.contains(document.activeElement)) return;
+      e.preventDefault();
+      dataEl.value = '';
+      render();
+      setStatus('none', '');
     });
 
     $('bcode-reset').addEventListener('click', function() {
