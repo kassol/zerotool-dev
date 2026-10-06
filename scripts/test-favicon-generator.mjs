@@ -241,13 +241,16 @@ function page(s,lang='en',order='before'){
  }
  function wrap(n,parent){if(!n.tagName)return{value:n.value||'',parentNode:parent};const e=element(n.tagName,Object.fromEntries((n.attrs||[]).map(a=>[a.name,a.value])));e.parentNode=parent;e.childNodes=(n.childNodes||[]).map(n=>wrap(n,e));if(e.tagName==='TEXTAREA')e.value=e.textContent;return e;}
  const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);
- let markup=s.source.slice(s.source.indexOf('---',3)+3,s.source.indexOf('<script is:inline>')).replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
+ const ssrStrings=Function(s.source.split('// strings:start')[1].split('// strings:end')[0]+';return STRINGS;')();
+ const escapeText=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+ let markup=s.source.slice(s.source.indexOf('---',3)+3,s.source.indexOf('<script is:inline')).replace(/\{\/\*[\s\S]*?\*\/\}/g,'').replace(/\{L\.tips\.(\w+)\}/g,(_,k)=>escapeText(ssrStrings[lang].tips[k])).replace(/\{L\.(\w+)\}/g,(_,k)=>escapeText(ssrStrings[lang][k]));
 
  widget.childNodes=parseFragment(markup).childNodes.map(n=>wrap(n,widget));
  document={body,documentElement:{lang},activeElement:body,createElement:tag=>element(tag),getElementById(id){const e=walk(body).find(e=>e.id===id);if(!e)throw Error('Missing real DOM '+id);return e;},querySelectorAll:q=>body.querySelectorAll(q),querySelector:q=>body.querySelector(q),addEventListener(k,f){(docHandlers[k]||=[]).push(f);},execCommand(command){exec.push({command,text:selection?.value});return false;}};
  class Reader{constructor(){readers.push(this);}readAsText(file){this.file=file;this.mode='text';}readAsDataURL(file){this.file=file;this.mode='dataURL';}deliver(){this.result=this.mode==='text'?this.file.content:'data:image/png;base64,cHJvYmU=';this.onload?.({target:this});}fail(){this.onerror?.(new Error('controlled read failure'));}}
  class Img{constructor(){images.push(this);this.width=this.naturalWidth=32;this.height=this.naturalHeight=32;}deliver(){this.onload?.();}fail(){this.onerror?.(new Error('controlled image failure'));}}
- const globals={document,Blob,TextEncoder,Uint8Array,Uint32Array,DataView,ArrayBuffer,structuredClone,FileReader:Reader,Image:Img,isSecureContext:true,URL:{createObjectURL(blob){const url='blob:probe/'+(++urlSeq);urls.set(url,blob);return url;},revokeObjectURL:url=>revoked.push(url)},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return null;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),addEventListener(k,f){(winHandlers[k]||=[]).push(f);},fetch(){throw Error('network forbidden');}};
+ const clientKeys=JSON.parse(/const CLIENT_T = Object.fromEntries\((\[[^\]]+\])/.exec(s.source)[1]);
+ const globals={CLIENT_T:Object.fromEntries(clientKeys.map(k=>[k,ssrStrings[lang][k]])),document,Blob,TextEncoder,Uint8Array,Uint32Array,DataView,ArrayBuffer,structuredClone,FileReader:Reader,Image:Img,isSecureContext:true,URL:{createObjectURL(blob){const url='blob:probe/'+(++urlSeq);urls.set(url,blob);return url;},revokeObjectURL:url=>revoked.push(url)},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return null;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),addEventListener(k,f){(winHandlers[k]||=[]).push(f);},fetch(){throw Error('network forbidden');}};
  let nativeClipboardReads=0;Object.setPrototypeOf(globals.navigator,{get clipboard(){nativeClipboardReads++;throw Error('native clipboard prototype exposed');}});
  const context={...globals,_slug:s.slug};context.window=context;if(order==='before')vm.runInNewContext(shortcut,context);const loaded=loadPage(s.file,{lang,globals});if(order==='after')loaded.run('var _slug='+JSON.stringify(s.slug)+';\n'+shortcut);
  const $=id=>document.getElementById(id);return{$,document,globals,get nativeClipboardReads(){return nativeClipboardReads;},copies,exec,saved,cleared,tracks,readers,images,blobs,downloads,urls,revoked,timers,input(id,value,ev='input'){$(id).focus();$(id).value=value;$(id).dispatch(ev);},click(selector){const e=selector.startsWith('#')?$(selector.slice(1)):document.querySelector(selector);if(!e)throw Error('No real selector '+selector);e.click();},key(id,meta=false){$(id).focus();$(id).dispatch('keydown',{key:'l',ctrlKey:!meta,metaKey:meta});},file(file){$('fg-file').files=[file];$('fg-file').dispatch('change');},advance(ms){const end=now+ms;for(let g=0;;g++){if(g>100)throw Error('timer runaway');const next=[...timers].filter(([,t])=>t.due<=end).sort((a,b)=>a[1].due-b[1].due)[0];if(!next)break;now=next[1].due;timers.delete(next[0]);next[1].fn();}now=end;},async drain(){for(let i=0;i<50;i++){await flush();const pending=blobs.filter(b=>!b.done);if(!pending.length)return;pending.forEach(b=>b.deliver());}throw Error('blob queue did not settle');}};
@@ -325,6 +328,36 @@ for(const sourceType of ['image','svg'])for(const phase of ['pending','completed
  checkPage(favicon,sourceType+'/'+phase+'/'+outcome+' preserves active package/result',[p.$('fg-result').hidden,p.$('fg-snippet-code').textContent,packageBlob(p)===before.url],[before.hidden,before.snippet,true]);
  if(phase==='pending'){await p.drain();checkPage(favicon,sourceType+'/'+outcome+' cannot cancel other source generation',p.$('fg-result').hidden,false);const blob=packageBlob(p),entries=blob?await zipEntries(blob):null;checkPage(favicon,sourceType+'/'+outcome+' active generated image stays T',entries?JSON.parse(entries['favicon-16.png']).ops.find(o=>o.name==='fillText').text:null,'T');}
  if(outcome==='deliver'){p.click('#fg-tab-'+sourceType);checkPage(favicon,sourceType+' completed inactive source remains available as cache',p.$('fg-generate').disabled,false);checkPage(favicon,sourceType+' cache renders only after selecting that source',signature(p),[oldImage.src]);}
+}
+
+// v2 generate contract: all original legacy/package and lifecycle assertions remain above.
+const SSR=Function(source.split('// strings:start')[1].split('// strings:end')[0]+';return STRINGS;')();
+const markupV2=source.split('<script is:inline')[0],styleV2=source.split('<style')[1]||'';
+check('v2 shared rail',/class="fg-rail zt-rail"/.test(markupV2));
+check('v2 300px rail and bounded result',/grid-template-columns: 300px minmax\(0, 1fr\)/.test(styleV2));
+check('v2 860 stack and 640 phone',/max-width: 860px/.test(styleV2)&&/max-width: 640px/.test(styleV2));
+check('v2 actions and reserved status precede source/options',markupV2.indexOf('id="fg-generate"')<markupV2.indexOf('id="fg-copy-snippet"')&&markupV2.indexOf('id="fg-copy-snippet"')<markupV2.indexOf('class="fg-status-slot"')&&markupV2.indexOf('class="fg-status-slot"')<markupV2.indexOf('class="fg-tabs"')&&markupV2.indexOf('class="fg-status-slot"')<markupV2.indexOf('<details class="fg-options">'));
+check('v2 reserved status',/\.fg-status-slot \{ min-height: 2\.8em/.test(styleV2));
+check('v2 touch main44 and dense24',/min-height: 44px/.test(styleV2)&&/min-height: 24px/.test(styleV2));
+check('v2 package scroll stays bounded',/\.fg-package-body \{[^}]*min-height: 0[^}]*overflow: auto/.test(styleV2));
+check('v2 code uses internal scroll',/\.fg-snippet-code \{[^}]*max-height: 14rem[^}]*overflow: auto[^}]*white-space: pre/.test(styleV2));
+check('v2 empty phone preview hidden',/\.fg-preview-section\[data-empty="true"\] \{ display: none/.test(styleV2));
+check('v2 runtime translation loop removed',!source.includes("querySelectorAll('[data-i18n]')"));
+check('v2 tips use SSR slots',(markupV2.match(/<Toggletip /g)||[]).length===13&&!/<Toggletip[^>]*text=/.test(markupV2));
+check('v2 client excludes tips',!/const CLIENT_T[^\n]*tips/.test(source));
+check('v2 Generate, ZIP and Copy each remain unique',['fg-generate','fg-download-zip','fg-copy-snippet'].every(id=>(markupV2.match(new RegExp('id="'+id+'"','g'))||[]).length===1));
+check('v2 secondary emoji/options default closed',(markupV2.match(/<details class="fg-options">/g)||[]).length===2);
+for(const lang of ['en','zh','ja','ko']){
+ check(lang+' thirteen localized SSR tips',Object.keys(SSR[lang].tips).length===13&&Object.values(SSR[lang].tips).every(v=>typeof v==='string'&&v.length>0));
+ const p=page(favicon,lang);checkPage(favicon,lang+' live preview distinct from package',[p.$('fg-live-preview').getAttribute('data-empty'),p.$('fg-result').hidden,p.$('fg-copy-snippet').disabled,p.$('fg-download-zip').disabled],['false',true,true,true]);
+ await generate(p);checkPage(favicon,lang+' generated rail exports enabled',[p.$('fg-copy-snippet').disabled,p.$('fg-download-zip').disabled],[false,false]);
+ p.input('fg-emoji-input','B');checkPage(favicon,lang+' edits invalidate exports but keep live preview',[p.$('fg-result').hidden,p.$('fg-copy-snippet').disabled,p.$('fg-download-zip').disabled,p.$('fg-live-preview').getAttribute('data-empty')],[true,true,true,'false']);
+ for(const order of ['before','after']){const q=page(favicon,lang,order);await generate(q);q.key('fg-emoji-input');checkPage(favicon,lang+'/'+order+' clear empty preview/export state',[q.$('fg-live-preview').getAttribute('data-empty'),q.$('fg-preview-grid').hidden,q.$('fg-empty').hidden,q.$('fg-copy-snippet').disabled,q.$('fg-download-zip').disabled],['true',true,false,true,true]);}
+ const md=read('src/content/tools/favicon-generator/'+lang+'.mdx');const block=/^steps:\n([\s\S]*?)(?=^faqItems:)/m.exec(md)?.[1]||'';
+ const steps=block.split('\n').filter(v=>v.startsWith('  - ')).map(v=>JSON.parse(v.slice(4)));
+ check(lang+' five steps before FAQ',steps.length===5);check(lang+' step limits',steps.every(v=>v.length<=280)&&steps.join('').length<=1200);
+ check(lang+' old Usage removed',!/<h2>(How to use|使用方法|使い方|사용 방법)<\/h2>/.test(md));
+ if(lang==='en')check('EN at least400 words',md.replace(/^---[\s\S]*?---/,'').replace(/<[^>]*>/g,' ').split(/\s+/).filter(Boolean).length>=400);
 }
 
 await flush();
