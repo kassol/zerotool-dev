@@ -15,6 +15,7 @@ const labels = {
     outputLabel: 'Generated CSS',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: "Copy failed",
   },
   zh: {
     columns: '列数',
@@ -27,6 +28,7 @@ const labels = {
     outputLabel: '生成的 CSS',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: "复制失败",
   },
   ja: {
     columns: '列数',
@@ -39,6 +41,7 @@ const labels = {
     outputLabel: '生成された CSS',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: "コピーに失敗しました",
   },
   ko: {
     columns: '열 수',
@@ -51,6 +54,7 @@ const labels = {
     outputLabel: '생성된 CSS',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: "복사 실패",
   },
 };
 
@@ -61,6 +65,7 @@ const L = labels[lang] ?? labels['en'];
   class="cgg-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-label-preview={L.preview}
 >
   {/* Controls */}
@@ -119,6 +124,7 @@ const L = labels[lang] ?? labels['en'];
         : document.querySelector('.cgg-wrap');
 
       var COPY_LABEL   = wrap.dataset.copy;
+      var COPY_FAILED_LABEL = wrap.dataset.copyFailed;
       var COPIED_LABEL = wrap.dataset.copied;
 
       var colsEl     = document.getElementById('cgg-cols');
@@ -197,36 +203,76 @@ const L = labels[lang] ?? labels['en'];
         window.trackTool && window.trackTool('css-grid-generator', 'generate');
       }
 
+      var copyRequest = 0;
+      var copyTimer = 0;
+      function resetCopyFeedback() {
+        copyRequest++;
+        if (copyTimer) clearTimeout(copyTimer);
+        copyTimer = 0;
+        copyBtn.textContent = COPY_LABEL;
+        copyBtn.classList.remove('copied');
+      }
+      function refresh() {
+        resetCopyFeedback();
+        update();
+        copyBtn.disabled = !codeEl.textContent;
+      }
+      document.addEventListener('keydown', function (event) {
+        if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'l' || !wrap.contains(document.activeElement)) return;
+        event.preventDefault();
+        resetCopyFeedback();
+        wrap.querySelectorAll('input[type="text"]').forEach(function (el) { el.value = ''; });
+        codeEl.innerHTML = '';
+        copyBtn.disabled = true;
+        previewEl.innerHTML = '';
+        previewEl.style.display = '';
+        previewEl.style.gridTemplateColumns = '';
+        previewEl.style.gridTemplateRows = '';
+        previewEl.style.gap = '';
+      });
+
+
       colsEl.addEventListener('input', function () {
         tmplColsEl.dataset.manual = '';
-        update();
+        refresh();
       });
       rowsEl.addEventListener('input', function () {
         tmplRowsEl.dataset.manual = '';
-        update();
+        refresh();
       });
-      colGapEl.addEventListener('input', update);
-      rowGapEl.addEventListener('input', update);
+      colGapEl.addEventListener('input', refresh);
+      rowGapEl.addEventListener('input', refresh);
       tmplColsEl.addEventListener('input', function () {
         tmplColsEl.dataset.manual = '1';
-        update();
+        refresh();
       });
       tmplRowsEl.addEventListener('input', function () {
         tmplRowsEl.dataset.manual = '1';
-        update();
+        refresh();
       });
 
-      copyBtn.addEventListener('click', function () {
+      copyBtn.addEventListener('click', async function () {
         var text = codeEl.textContent;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        resetCopyFeedback();
+        var request = copyRequest;
+        try {
+          await navigator.clipboard.writeText(text);
+          if (request !== copyRequest) return;
           copyBtn.textContent = COPIED_LABEL;
-          setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1500);
+          copyTimer = setTimeout(function () {
+            if (request !== copyRequest) return;
+            copyTimer = 0;
+            copyBtn.textContent = COPY_LABEL;
+          }, 1500);
           window.trackTool && window.trackTool('css-grid-generator', 'copy');
-        });
+        } catch (_) {
+          if (request !== copyRequest) return;
+          copyBtn.textContent = COPY_FAILED_LABEL;
+        }
       });
 
-      update();
+      refresh();
     })();
   </script>
 </div>
