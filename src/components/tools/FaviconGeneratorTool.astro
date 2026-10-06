@@ -208,7 +208,7 @@
           livePreview: 'Live preview', previewHint: '16 / 32 / 64 / 180 px',
           generatePackage: 'Generate package',
           resultLabel: 'Package ready', snippetLabel: 'HTML snippet',
-          copy: 'Copy', copied: 'Copied', downloadZip: 'Download ZIP',
+          copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Try again.', downloadZip: 'Download ZIP',
           provideSource: 'Provide a source first.',
           fileTooLarge: 'File too large (max 10 MB).',
           invalidFile: 'Please select a PNG, JPG, or SVG file.',
@@ -237,7 +237,7 @@
           livePreview: '实时预览', previewHint: '16 / 32 / 64 / 180 px',
           generatePackage: '生成图标包',
           resultLabel: '图标包已就绪', snippetLabel: 'HTML 代码片段',
-          copy: '复制', copied: '已复制', downloadZip: '下载 ZIP',
+          copy: '复制', copied: '已复制', copyFailed: '复制失败，请重试。', downloadZip: '下载 ZIP',
           provideSource: '请先提供素材。',
           fileTooLarge: '文件过大（最大 10 MB）。',
           invalidFile: '请选择 PNG、JPG 或 SVG 文件。',
@@ -266,7 +266,7 @@
           livePreview: 'ライブプレビュー', previewHint: '16 / 32 / 64 / 180 px',
           generatePackage: 'パッケージ生成',
           resultLabel: 'パッケージ完成', snippetLabel: 'HTML スニペット',
-          copy: 'コピー', copied: 'コピー済み', downloadZip: 'ZIP をダウンロード',
+          copy: 'コピー', copied: 'コピー済み', copyFailed: 'コピーできませんでした。もう一度お試しください。', downloadZip: 'ZIP をダウンロード',
           provideSource: '先に素材を指定してください。',
           fileTooLarge: 'ファイルが大きすぎます（最大 10 MB）。',
           invalidFile: 'PNG・JPG・SVG ファイルを選択してください。',
@@ -295,7 +295,7 @@
           livePreview: '실시간 미리보기', previewHint: '16 / 32 / 64 / 180 px',
           generatePackage: '패키지 생성',
           resultLabel: '패키지 준비 완료', snippetLabel: 'HTML 스니펫',
-          copy: '복사', copied: '복사됨', downloadZip: 'ZIP 다운로드',
+          copy: '복사', copied: '복사됨', copyFailed: '복사하지 못했습니다. 다시 시도하세요.', downloadZip: 'ZIP 다운로드',
           provideSource: '먼저 소스를 제공하세요.',
           fileTooLarge: '파일이 너무 큽니다 (최대 10 MB).',
           invalidFile: 'PNG, JPG, SVG 파일을 선택하세요.',
@@ -342,6 +342,15 @@
       var TARGET_SIZES = [16, 32, 48, 64, 96, 128, 180, 192, 512];
       var ICO_SIZES = [16, 32, 48];
       var lastZipUrl = '';
+      var fileRevision = 0;
+      var svgRevision = 0;
+      var generateRevision = 0;
+      var generating = false;
+      var copyRequest = 0;
+      var copyTimer = 0;
+      var copyError = false;
+      var resultStatusMessage = '';
+      var resultStatusLevel = 'none';
 
       /* ── DOM refs ── */
       var $ = function (id) { return document.getElementById(id); };
@@ -421,37 +430,52 @@
       });
 
       function handleFile(file) {
+        var revision = ++fileRevision;
+        state.image = null;
+        imageInfo.textContent = '';
+        imageInfo.hidden = true;
+        updateAll();
         if (file.size > 10 * 1024 * 1024) { setStatus(t.fileTooLarge, 'error'); return; }
         var ok = /\.(png|jpe?g|svg)$/i.test(file.name) || /^image\/(png|jpeg|svg\+xml)$/.test(file.type);
         if (!ok) { setStatus(t.invalidFile, 'error'); return; }
         var reader = new FileReader();
         var isSvg = /svg/i.test(file.type) || /\.svg$/i.test(file.name);
         reader.onload = function (ev) {
+          if (revision !== fileRevision) return;
           if (isSvg) {
             loadSvgFromString(ev.target.result, function (img) {
-              if (!img) return;
+              if (revision !== fileRevision || !img) return;
               state.image = img;
               showImageInfo(file, img);
-              setStatus(t.imageLoaded, 'success');
-              updateAll();
-            });
+              if (state.sourceType === 'image') {
+                setStatus(t.imageLoaded, 'success');
+                updateAll();
+              }
+            }, function () { return revision === fileRevision; }, 'image');
           } else {
             var url = URL.createObjectURL(file);
             var im = new Image();
             im.onload = function () {
+              URL.revokeObjectURL(url);
+              if (revision !== fileRevision) return;
               state.image = im;
               showImageInfo(file, im);
-              setStatus(t.imageLoaded, 'success');
-              updateAll();
+              if (state.sourceType === 'image') {
+                setStatus(t.imageLoaded, 'success');
+                updateAll();
+              }
             };
             im.onerror = function () {
               URL.revokeObjectURL(url);
+              if (revision !== fileRevision || state.sourceType !== 'image') return;
               setStatus(t.invalidFile, 'error');
             };
             im.src = url;
           }
         };
-        reader.onerror = function () { setStatus(t.invalidFile, 'error'); };
+        reader.onerror = function () {
+          if (revision === fileRevision && state.sourceType === 'image') setStatus(t.invalidFile, 'error');
+        };
         if (isSvg) reader.readAsText(file);
         else reader.readAsDataURL(file);
       }
@@ -469,42 +493,53 @@
       var svgDebounce;
       svgInput.addEventListener('input', function () {
         clearTimeout(svgDebounce);
+        var revision = ++svgRevision;
         var v = svgInput.value;
+        state.svgImg = null;
+        updateAll();
         svgDebounce = setTimeout(function () {
-          if (!v.trim()) { state.svgImg = null; updateAll(); return; }
-          if (!/<svg[\s>]/i.test(v)) { setStatus(t.invalidSvg, 'error'); return; }
+          if (revision !== svgRevision || !v.trim()) return;
+          if (!/<svg[\s>]/i.test(v)) {
+            if (state.sourceType === 'svg') setStatus(t.invalidSvg, 'error');
+            return;
+          }
           loadSvgFromString(v, function (img) {
-            if (!img) return;
+            if (revision !== svgRevision || !img) return;
             state.svgImg = img;
-            setStatus(t.svgLoaded, 'success');
-            updateAll();
-          });
+            if (state.sourceType === 'svg') {
+              setStatus(t.svgLoaded, 'success');
+              updateAll();
+            }
+          }, function () { return revision === svgRevision; }, 'svg');
         }, 300);
       });
 
-      function loadSvgFromString(svgText, cb) {
+      function loadSvgFromString(svgText, cb, isCurrent, sourceType) {
         try {
           var blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
           var url = URL.createObjectURL(blob);
           var im = new Image();
           im.onload = function () {
+            URL.revokeObjectURL(url);
+            if (!isCurrent()) return;
             // Stamp dims fallback if natural sizes are zero (some SVGs without explicit width/height)
             if (!im.width || !im.height) {
               var dims = parseSvgDimensions(svgText);
               im._fallbackW = dims.w;
               im._fallbackH = dims.h;
             }
-            URL.revokeObjectURL(url);
             cb(im);
           };
           im.onerror = function () {
             URL.revokeObjectURL(url);
-            setStatus(t.invalidSvg, 'error');
+            if (!isCurrent()) return;
+            if (state.sourceType === sourceType) setStatus(t.invalidSvg, 'error');
             cb(null);
           };
           im.src = url;
         } catch (err) {
-          setStatus(t.invalidSvg, 'error');
+          if (!isCurrent()) return;
+          if (state.sourceType === sourceType) setStatus(t.invalidSvg, 'error');
           cb(null);
         }
       }
@@ -640,14 +675,27 @@
         });
       }
 
+      function resetCopy() {
+        copyRequest++;
+        clearTimeout(copyTimer);
+        copyTimer = 0;
+        copyError = false;
+        $('fg-copy-snippet').classList.remove('copied');
+        $('fg-copy-snippet').textContent = t.copy;
+      }
+
       function updateAll() {
+        generateRevision++;
+        if (generating || copyError) setStatus('', 'none');
+        generating = false;
+        resetCopy();
         refreshPreview();
         generateBtn.disabled = !hasSource();
-        if (resultEl && !resultEl.hidden) {
-          // invalidate prior result on any change
-          resultEl.hidden = true;
-          if (lastZipUrl) { URL.revokeObjectURL(lastZipUrl); lastZipUrl = ''; }
-        }
+        resultEl.hidden = true;
+        fileListEl.innerHTML = '';
+        snippetCodeEl.textContent = '';
+        resultStatsEl.textContent = '';
+        if (lastZipUrl) { URL.revokeObjectURL(lastZipUrl); lastZipUrl = ''; }
       }
 
       /* ── CRC32 + ZIP writer (STORED method, UTF-8 names) ── */
@@ -771,13 +819,19 @@
       /* ── Generate package ── */
       generateBtn.addEventListener('click', function () {
         if (!hasSource()) { setStatus(t.provideSource, 'error'); return; }
+        var revision = ++generateRevision;
+        generating = true;
+        resetCopy();
         setStatus(t.generating, 'info');
         generateBtn.disabled = true;
-        runGenerate().catch(function (err) {
+        runGenerate(revision).catch(function (err) {
+          if (revision !== generateRevision) return;
           console.error(err);
           var msg = (err && err.tainted) ? t.svgTainted : (err && err.message) || 'Generation failed.';
           setStatus(msg, 'error');
         }).then(function () {
+          if (revision !== generateRevision) return;
+          generating = false;
           generateBtn.disabled = !hasSource();
         });
       });
@@ -798,20 +852,22 @@
         });
       }
 
-      function runGenerate() {
+      function runGenerate(revision) {
         var pngBuffers = {};
         var p = Promise.resolve();
         TARGET_SIZES.forEach(function (sz) {
           p = p.then(function () {
+            if (revision !== generateRevision) return;
             var canvas = document.createElement('canvas');
             canvas.width = canvas.height = sz;
             renderToCanvas(canvas, sz);
             return canvasToArrayBuffer(canvas).then(function (buf) {
-              pngBuffers[sz] = buf;
+              if (revision === generateRevision) pngBuffers[sz] = buf;
             });
           });
         });
         return p.then(function () {
+          if (revision !== generateRevision) return;
           var icoBuffers = {};
           ICO_SIZES.forEach(function (sz) { icoBuffers[sz] = pngBuffers[sz]; });
           var icoBytes = icoPack(icoBuffers);
@@ -855,8 +911,9 @@
           snippetCodeEl.textContent = buildHtmlSnippet();
           resultEl.hidden = false;
           var done = t.generatedPrefix + ' ' + files.length + ' ' + t.filesWord;
-          if (state.appName.trim()) setStatus(done, 'success');
-          else setStatus(done + ' ' + t.nameMissing, 'info');
+          resultStatusMessage = state.appName.trim() ? done : done + ' ' + t.nameMissing;
+          resultStatusLevel = state.appName.trim() ? 'success' : 'info';
+          setStatus(resultStatusMessage, resultStatusLevel);
           if (window.trackTool) window.trackTool('favicon-generator', 'generate');
         });
       }
@@ -909,16 +966,58 @@
       var copyBtn = $('fg-copy-snippet');
       copyBtn.addEventListener('click', function () {
         var text = snippetCodeEl.textContent || '';
-        if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        if (!text || resultEl.hidden) return;
+        var revision = generateRevision;
+        var request = ++copyRequest;
+        clearTimeout(copyTimer);
+        copyBtn.classList.remove('copied');
+        copyBtn.textContent = t.copy;
+        var task;
+        try {
+          task = navigator.clipboard && window.isSecureContext
+            ? navigator.clipboard.writeText(text)
+            : Promise.reject(new Error('clipboard unavailable'));
+        } catch (err) {
+          task = Promise.reject(err);
+        }
+        Promise.resolve(task).then(function () {
+          if (revision !== generateRevision || request !== copyRequest) return;
+          if (copyError) { setStatus(resultStatusMessage, resultStatusLevel); copyError = false; }
           copyBtn.classList.add('copied');
-          var prev = copyBtn.textContent;
           copyBtn.textContent = t.copied;
-          setTimeout(function () {
+          copyTimer = setTimeout(function () {
+            if (revision !== generateRevision || request !== copyRequest) return;
             copyBtn.classList.remove('copied');
-            copyBtn.textContent = prev;
+            copyBtn.textContent = t.copy;
           }, 1500);
+        }).catch(function () {
+          if (revision !== generateRevision || request !== copyRequest) return;
+          copyError = true;
+          setStatus(t.copyFailed, 'error');
         });
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var wrap = document.querySelector('.fg-wrap');
+        if (!document.activeElement || !wrap.contains(document.activeElement)) return;
+        e.preventDefault();
+        wrap.querySelectorAll('textarea, input[type="text"]').forEach(function (el) { el.value = ''; });
+        fileInput.value = '';
+        fileRevision++;
+        svgRevision++;
+        clearTimeout(svgDebounce);
+        state.emoji = '';
+        state.text = '';
+        state.image = null;
+        state.svgImg = null;
+        state.appName = '';
+        state.shortName = '';
+        imageInfo.textContent = '';
+        imageInfo.hidden = true;
+        document.querySelectorAll('.fg-emoji-btn').forEach(function (btn) { btn.classList.remove('fg-emoji-btn--active'); });
+        updateAll();
+        setStatus('', 'none');
       });
 
       /* ── Init ── */
