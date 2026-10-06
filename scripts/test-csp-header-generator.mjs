@@ -289,9 +289,21 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 // ---------- complete page copy lifecycle ----------
 const layout=readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');const a=layout.indexOf("      document.addEventListener('keydown'",layout.indexOf('// ── Keyboard shortcuts'));const shortcut=layout.slice(a,layout.indexOf('      // ── Copy button visual feedback',a));if(!shortcut.includes('window.ztPersist.clear(_slug)'))throw Error('shortcut drift');
 const flushPage = async () => { await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r)); };
+function ssrStrings(src) {
+ const front=/^---\n([\s\S]*?)\n---/.exec(src)?.[1]||'';
+ const table=/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/.exec(front)?.[1];
+ return table?vm.runInNewContext(table+';STRINGS'):null;
+}
+function renderMarkup(src,lang='en') {
+ const data=ssrStrings(src),L=data&&(data[lang]||data.en),escape=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+ let markup=src.slice(src.indexOf('---',3)+3,src.indexOf('<script is:inline>')).replace(/<style[\s\S]*?<\/style>/g,'').replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
+ if(!L)return markup;
+ markup=markup.replace(/([\w-]+)=\{L\.(\w+)\}/g,(_,key,value)=>key+'="'+escape(L[value])+'"');
+ return markup.replace(/\{L\.(?:tips\.)?(\w+)\}/g,(m,key)=>escape(m.includes('.tips.')?L.tips[key]:L[key]));
+}
 function page(s,lang='en',order='before'){
  const docHandlers={},copies=[],digests=[],exec=[],saved=[],cleared=[],tracks=[];let document,now=0,seq=0,selection=null;const timers=new Map();
- const walk=n=>n.children.flatMap(c=>[c,...walk(c)]);
+ const scrollCalls=[];const walk=n=>n.children.flatMap(c=>[c,...walk(c)]);
  function simple(e,selector){let rest=selector;const tag=rest.match(/^[a-z][a-z0-9-]*/i);if(tag){if(e.tagName!==tag[0].toUpperCase())return false;rest=rest.slice(tag[0].length);}for(const m of rest.matchAll(/([.#])([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]/g)){if(m[1]==='#'&&e.id!==m[2]||m[1]==='.'&&!e.classList.contains(m[2]))return false;if(m[3]&&(e.getAttribute(m[3])===null||m[4]!==undefined&&e.getAttribute(m[3])!==m[4]))return false;}return true;}
  function matches(e,selector){if(selector.includes(','))return selector.split(/,\s*/).some(x=>matches(e,x));const parts=selector.split(/\s+(?![^\[]*\])/);if(!simple(e,parts.pop()))return false;for(const part of parts.reverse()){let p=e.parentNode;while(p&&!simple(p,part))p=p.parentNode;if(!p)return false;e=p;}return true;}
  function element(tag,attrs={}){
@@ -303,16 +315,16 @@ function page(s,lang='en',order='before'){
    getAttribute(k){return Object.hasOwn(this.attributes,k)?this.attributes[k]:null;},setAttribute(k,v){this.attributes[k]=String(v);if(k==='disabled')this.disabled=true;},removeAttribute(k){delete this.attributes[k];if(k==='disabled')this.disabled=false;},
    appendChild(n){n.parentNode=this;this.childNodes.push(n);return n;},removeChild(n){this.childNodes=this.childNodes.filter(x=>x!==n);n.parentNode=null;},remove(){this.parentNode?.removeChild(this);},contains(n){for(;n;n=n.parentNode)if(n===this)return true;return false;},closest(q){for(let n=this;n;n=n.parentNode)if(matches(n,q))return n;return null;},
    querySelectorAll(q){return walk(this).filter(e=>matches(e,q));},querySelector(q){return this.querySelectorAll(q)[0]||null;},
-   addEventListener(k,f){(listeners[k]||=[]).push(f);},focus(){document.activeElement=this;},select(){selection=this;},dispatch(k,init={}){const e={type:k,target:this,currentTarget:this,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(const f of listeners[k]||[])f.call(this,e);if(!e.cancelBubble)for(const f of docHandlers[k]||[])f.call(document,e);return e;},click(){if(!this.disabled)this.dispatch('click');},
+   addEventListener(k,f){(listeners[k]||=[]).push(f);},scrollIntoView(options){scrollCalls.push({id:this.id,options});},focus(){document.activeElement=this;},select(){selection=this;},dispatch(k,init={}){const e={type:k,target:this,currentTarget:this,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(const f of listeners[k]||[])f.call(this,e);if(!e.cancelBubble)for(const f of docHandlers[k]||[])f.call(document,e);return e;},click(){if(!this.disabled)this.dispatch('click');},
   };el.classList={contains:c=>el.className.split(/\s+/).includes(c),add(...c){el.className=[...new Set([...el.className.split(/\s+/).filter(Boolean),...c])].join(' ');},remove(...c){el.className=el.className.split(/\s+/).filter(x=>!c.includes(x)).join(' ');},toggle(c,on){const add=on===undefined?!this.contains(c):on;this[add?'add':'remove'](c);return add;}};return el;
  }
  function wrap(n,parent){if(!n.tagName)return{value:n.value||'',parentNode:parent};const e=element(n.tagName,Object.fromEntries((n.attrs||[]).map(a=>[a.name,a.value])));e.parentNode=parent;e.childNodes=(n.childNodes||[]).map(n=>wrap(n,e));if(e.tagName==='TEXTAREA')e.value=e.textContent;return e;}
- const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);const markup=s.source.slice(s.source.indexOf('---',3)+3,s.source.indexOf('<script is:inline>')).replace(/<style[\s\S]*?<\/style>/g,'').replace(/\{\/\*[\s\S]*?\*\/\}/g,'');widget.childNodes=parseFragment(markup).childNodes.map(n=>wrap(n,widget));
+ const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);const markup=renderMarkup(s.source,lang);widget.childNodes=parseFragment(markup).childNodes.map(n=>wrap(n,widget));
  document={body,documentElement:{lang},activeElement:body,createElement:tag=>element(tag),getElementById(id){const e=walk(body).find(e=>e.id===id);if(!e)throw Error('Missing real DOM '+id);return e;},querySelectorAll:q=>body.querySelectorAll(q),querySelector:q=>body.querySelector(q),addEventListener(k,f){(docHandlers[k]||=[]).push(f);},execCommand(command){exec.push({command,text:selection?.value});return options.fallbackSuccess;}};
- const options={holdDigest:false,fallbackSuccess:false};
- const globals={document,TextEncoder,Uint8Array,URL,isSecureContext:true,btoa:bin=>Buffer.from(bin,'binary').toString('base64'),crypto:{subtle:{digest(algo,bytes){const real=webcrypto.subtle.digest(algo,bytes);const job={algo,input:Buffer.from(bytes).toString('utf8'),ready:false};digests.push(job);if(!options.holdDigest)return real;return new Promise((resolve,reject)=>{job.resolve=()=>resolve(job.value);job.reject=()=>reject(Error('controlled digest rejection'));real.then(value=>{job.value=value;job.ready=true;},reject);});}}},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return null;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),fetch(){throw Error('network forbidden');}};
+ const options={holdDigest:false,fallbackSuccess:false,phone:false};
+ const globals={document,TextEncoder,Uint8Array,URL,isSecureContext:true,matchMedia(){return {matches:options.phone};},btoa:bin=>Buffer.from(bin,'binary').toString('base64'),crypto:{subtle:{digest(algo,bytes){const real=webcrypto.subtle.digest(algo,bytes);const job={algo,input:Buffer.from(bytes).toString('utf8'),ready:false};digests.push(job);if(!options.holdDigest)return real;return new Promise((resolve,reject)=>{job.resolve=()=>resolve(job.value);job.reject=()=>reject(Error('controlled digest rejection'));real.then(value=>{job.value=value;job.ready=true;},reject);});}}},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return null;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),fetch(){throw Error('network forbidden');}};
  const context={...globals,_slug:s.slug};context.window=context;const ctx=vm.createContext(context);if(order==='before')vm.runInContext(shortcut,ctx);vm.runInContext(s.source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1],ctx,{filename:s.file});if(order==='after')vm.runInContext(shortcut,ctx);
- const $=id=>document.getElementById(id);return{$,document,globals,options,copies,digests,exec,saved,cleared,tracks,timers,input(id,value,ev='input'){$(id).focus();$(id).value=value;$(id).dispatch(ev);},click:selector=>{const e=selector.startsWith('#')?$(selector.slice(1)):document.querySelector(selector);if(!e)throw Error('No real selector '+selector);e.click();},key(id){$(id).focus();$(id).dispatch('keydown',{key:'l',ctrlKey:true});},advance(ms){const end=now+ms;for(let g=0;;g++){if(g>100)throw Error('timer runaway');const next=[...timers].filter(([,t])=>t.due<=end).sort((a,b)=>a[1].due-b[1].due)[0];if(!next)break;now=next[1].due;timers.delete(next[0]);next[1].fn();}now=end;},async deliver(n){for(let i=0;!digests[n].ready&&i<30;i++)await flushPage();if(!digests[n].ready)throw Error('real digest not ready');digests[n].resolve();await flushPage();}};
+ const $=id=>document.getElementById(id);return{$,document,globals,options,copies,digests,exec,saved,cleared,tracks,timers,scrollCalls,input(id,value,ev='input'){$(id).focus();$(id).value=value;$(id).dispatch(ev);},click:selector=>{const e=selector.startsWith('#')?$(selector.slice(1)):document.querySelector(selector);if(!e)throw Error('No real selector '+selector);e.click();},key(id){$(id).focus();$(id).dispatch('keydown',{key:'l',ctrlKey:true});},advance(ms){const end=now+ms;for(let g=0;;g++){if(g>100)throw Error('timer runaway');const next=[...timers].filter(([,t])=>t.due<=end).sort((a,b)=>a[1].due-b[1].due)[0];if(!next)break;now=next[1].due;timers.delete(next[0]);next[1].fn();}now=end;},async deliver(n){for(let i=0;!digests[n].ready&&i<30;i++)await flushPage();if(!digests[n].ready)throw Error('real digest not ready');digests[n].resolve();await flushPage();}};
 }
 
 const spec = { slug: 'csp-header-generator', file: 'src/components/tools/CspHeaderGeneratorTool.astro', source };
@@ -418,6 +430,49 @@ for (const kind of ['missing', 'throw']) {
   Object.defineProperty(p.globals.navigator, 'clipboard', { configurable: true, value: kind === 'missing' ? undefined : { writeText() { throw Error('sync failure'); } } });
   p.click('#csp-copy'); await flushPage();
   check(kind + ': copy failure is visible without native/fallback access', !native && p.exec.length === 0 && p.$('csp-status').textContent === 'Copy failed.' && !p.$('csp-copy').disabled);
+}
+// ---------- v2 page layout (DESIGN.md, kind: generate) ----------
+{
+ const markupStart=source.indexOf('\n---\n',4)+5,markup=source.slice(markupStart,source.indexOf('<style',markupStart));
+ const script=source.match(/<script is:inline>([\s\S]*?)<\/script>/)?.[1]||'';
+ const data=ssrStrings(source);
+ check('v2: tool root and shared generate rail are direct',/^\s*<div class="csp-wrap">/.test(markup)&&markup.includes('class="csp-rail zt-rail"')&&source.includes('grid-template-columns: 300px minmax(0, 1fr)'));
+ check('v2: actions and reserved status precede controls',markup.indexOf('id="csp-reset"')<markup.indexOf('id="csp-status"')&&markup.indexOf('id="csp-copy"')<markup.indexOf('id="csp-status"')&&markup.indexOf('id="csp-status"')<markup.indexOf('class="csp-body"')&&source.includes('min-height: 2.8em'));
+ check('v2: output, validation and actual editor area have scroll bounds',/\.csp-output-pre \{[^}]*overflow: auto;[^}]*flex: 1 1 0;/.test(source)&&/\.csp-validation \{[^}]*max-height: 12rem;[^}]*overflow: auto;/.test(source)&&source.includes('.csp-editor-area { flex: 1 1 0; min-height: 120px; overflow: auto;'));
+ check('v2: stack, empty result hide and mobile target declarations',source.includes('@media (max-width: 860px)')&&source.includes('.csp-result[data-empty="true"] { display: none; }')&&source.includes('@media (max-width: 640px)')&&source.includes('.csp-actions button, .csp-select, .csp-source-input, #csp-hash-input, #csp-hash-add, #csp-hash-copy { min-height: 44px; }')&&source.includes('.csp-mode-btn, .csp-tab, .csp-directive-remove, .csp-source-add-btn, .csp-keyword-chip, .csp-section-summary, .csp-flag { min-height: 24px; min-width: 24px; }'));
+ check('v2: no runtime static DOM translation and tips stay outside client',!script.includes('data-i18n')&&!script.includes('.tips')&&!source.includes('define:vars')&&!source.includes('data-strings'));
+ const tipIds=[...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(x=>x[1]);
+ check('v2: eight unique SSR explanations',tipIds.length===8&&new Set(tipIds).size===8);
+ check('v2: only manual hash action initiates compute',script.includes('var value = await computeHash();')&&script.match(/computeHash\(\)/g).length===2);
+ check('v2: original four mode/format controls and both copies retained',(markup.match(/data-format=/g)||[]).length===4&&(markup.match(/data-mode=/g)||[]).length===2&&['csp-reset','csp-add-btn','csp-hash-add','csp-copy','csp-hash-copy'].every(id=>markup.includes('id="'+id+'"')));
+ if(data)for(const lang of ['en','zh','ja','ko']){
+  const L=data[lang],p=page(spec,lang),html=renderMarkup(source,lang);
+  eq(lang+' v2: UI and explanation key sets agree',Object.keys(L).sort(),Object.keys(data.en).sort());
+  check(lang+' v2: eight plaintext localized facts',Object.keys(L.tips).sort().join('|')==='copy|directives|flags|format|hash|mode|preset|reset'&&Object.values(L.tips).every(x=>typeof x==='string'&&x.length>20&&!/<\/?[a-z]|https?:\/\//i.test(x)));
+  for(const key of Object.keys(L).filter(key=>key in E.STRINGS[lang]))eq(lang+' v2: SSR '+key+' equals protected client wording',L[key],E.STRINGS[lang][key]);
+  check(lang+' v2: localized labels exist before client boot',html.includes('>'+L.resetBtn+'</button>')&&html.includes('>'+L.hashAddBtn.replace('&','&amp;')+'</button>')&&html.includes('>'+L.presetLabel+'</label>'));
+  eq(lang+' v2: bootstrap preserves empty-saved-preference transport flags',p.$('csp-output').textContent,E.buildOutput(stateFor('strict',{upgrade:false}),'header',E.STRINGS[lang]));
+  p.input('csp-preset','strict','change');eq(lang+' v2: selecting Strict uses its actual transport flag',p.$('csp-output').textContent,E.buildOutput(stateFor('strict'),'header',E.STRINGS[lang]));
+  check(lang+' v2: nonce consequence stays directly visible',p.$('csp-validation').textContent.includes(E.STRINGS[lang].warnNoncePlaceholder));
+  p.options.phone=true;p.input('csp-preset','empty','change');
+  eq(lang+' v2: empty policy marks result empty',[p.$('csp-result').dataset.empty,p.$('csp-copy').disabled,p.$('csp-output').textContent],['true',true,E.STRINGS[lang].warnEmpty]);
+  const before=p.scrollCalls.length;p.input('csp-preset','basic','change');
+  eq(lang+' v2: real policy change requests mobile reveal',p.scrollCalls.at(-1),{id:'csp-result',options:{block:'start',behavior:'auto'}});
+  eq(lang+' v2: boot does not force a result scroll',before,0);
+  p.input('csp-hash-input','  exact π  ');eq(lang+' v2: hash editing alone never computes',p.digests.length,0);
+  p.click('#csp-hash-add');for(let i=0;p.$('csp-hash-copy').disabled&&i<30;i++)await flushPage();
+  eq(lang+' v2: manual hash uses full whitespace UTF8 bytes',p.$('csp-hash-value').textContent,hashOf('SHA-256','  exact π  '));
+  const out=p.$('csp-output').textContent;p.key('csp-hash-input');
+  eq(lang+' v2: shortcut keeps policy and populated result',[p.$('csp-output').textContent,p.$('csp-result').dataset.empty],[out,'false']);
+  check(lang+' v2: shortcut clears derived hash only',p.$('csp-hash-value').textContent===L.hashEmpty&&p.$('csp-hash-copy').disabled&&p.$('csp-hash-add').disabled);
+  const mdx=readFileSync(join(root,'src/content/tools/csp-header-generator',lang+'.mdx'),'utf8'),fm=/^---\n([\s\S]*?)\n---/.exec(mdx)?.[1]||'';
+  const steps=[...fm.slice(fm.indexOf('steps:\n'),fm.indexOf('faqItems:')).matchAll(/^  - (".*")$/gm)].map(x=>JSON.parse(x[1]));
+  check(lang+' v2: seven bounded steps replace Usage',steps.length===7&&steps.every(x=>x.length<=280&&!/<\/?[a-z]/i.test(x))&&steps.join('').length<=1200&&!/<h2>(How to use|使用步骤|使い方|사용 방법)<\/h2>/.test(mdx));
+  check(lang+' v2: steps name current manual hash and Copy',steps.join('').includes(L.hashAddBtn)&&steps.join('').includes(L.copy));
+ }
+ const layouts=readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8');
+ if(process.env.ZT_B13_REGISTRATION_PENDING==='1')console.log('PENDING: generate registration is reserved for root adoption; not counted as PASS');
+ else check('v2: registered with the implemented generate page',layouts.includes("'csp-header-generator': 'generate'"));
 }
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
