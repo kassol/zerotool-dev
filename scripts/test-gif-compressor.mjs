@@ -34,8 +34,8 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const source = readFileSync(join(root, 'src/components/tools/GifCompressorTool.astro'), 'utf8');
+const root = process.env.ZT_B14_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
+const source = readFileSync(process.env.ZT_B14_SOURCE || join(root, 'src/components/tools/GifCompressorTool.astro'), 'utf8');
 const splitterSource = readFileSync(join(root, 'src/components/tools/GifSplitterTool.astro'), 'utf8');
 
 const START_MARK = '/* ── engine:start ── */';
@@ -646,5 +646,180 @@ const gradientGif = (() => {
 }
 
 // ---------- summary ----------
+
+// Actual full page and shared-shortcut regressions. GIF bytes use the independent
+// existing fixture builder and the unchanged production engine; DOM and clipboard are controlled.
+const pageSource=source;
+const legacyCounts={PASS:passes,FAIL:failures};
+{
+const {createHash}=await import('node:crypto');
+const {createRequire}=await import('node:module');
+const {relative}=await import('node:path');
+const {pathToFileURL}=await import('node:url');
+const vm=(await import('node:vm')).default;
+const {loadPage}=await import(pathToFileURL(join(root,'scripts/astro-page-harness.mjs')));
+const ROOT=root,require=createRequire(join(ROOT,'package.json'));
+const {parseFragment,defaultTreeAdapter}=require('parse5');
+const paths={gif:process.env.ZT_B14_SOURCE?relative(ROOT,process.env.ZT_B14_SOURCE):'src/components/tools/GifCompressorTool.astro'},slugs={gif:'gif-compressor'},source={gif:pageSource};
+const sha=s=>createHash('sha256').update(s).digest('hex');
+const layout=readFileSync(join(ROOT,'src/layouts/ToolLayout.astro'),'utf8');
+const shortcut=layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
+const must=(b,m)=>{if(!b)throw Error('Regression prerequisite: '+m);};
+const checks=[],unhandled=[],observations=[];let phase='init';
+const onRejection=e=>unhandled.push({phase,message:e?.message||String(e)});process.on('unhandledRejection',onRejection);
+function check(id,expected,actual){const status=JSON.stringify(expected)===JSON.stringify(actual)?'PASS':'FAIL';checks.push({id,status,expected,actual});console.log(status+' '+id);}
+const settle=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
+function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
+const waitFor=async(fn)=>{const until=Date.now()+5000;while(!fn()){if(Date.now()>until)throw Error('Boundary not reached: '+phase);await new Promise(r=>setTimeout(r,5));}};
+async function scene(id,fn){phase=id;try{await fn();}catch(e){checks.push({id,status:'FAIL',actual:e.stack});console.error(e);}}
+const labels=vm.runInNewContext(source.gif.match(/var STRINGS = [\s\S]*?\n      \};/)[0]+';STRINGS'),L=labels.en;
+function page(order='shared-after',lang='en'){
+ const key='gif';
+ const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[],tasks=[],downloads=[],blobs=new Map(),yields=[];
+ const controls={holdYield:false};
+ let timerId=0,clock=0,doc,urlId=0;
+  const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
+  const matchOne = (el, selector) => {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    if (parts.length > 1) {
+      if (!matchOne(el, parts.pop())) return false;
+      for (let parent = el.parentNode; parent; parent = parent.parentNode) if (matchOne(parent, parts.join(' '))) return true;
+      return false;
+    }
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+    return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+      && [...plain.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))
+      && attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+  };
+  const matches = (el, selector) => selector.split(',').some(part => matchOne(el, part.trim()));
+  class EventStub {
+    constructor(type, extra = {}) { Object.assign(this, { type, bubbles: false, defaultPrevented: false, isTrusted: false }, extra); }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() { this.stopped = true; }
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', type: tag === 'input' ? 'text' : '', style: {}, text: '', _value: '', dirtyValue: false, disabled: false, hidden: false }); }
+    get value() {
+      if (!this.dirtyValue && this.tagName === 'TEXTAREA') return this.textContent;
+      if (!this.dirtyValue && this.tagName === 'SELECT') return (this.querySelectorAll('option').find(o=>o.selected)||this.querySelector('option'))?.value ?? '';
+      return this._value;
+    }
+    set value(v) { let x=String(v);if(this.tagName==='SELECT'&&!this.querySelectorAll('option').some(o=>o.value===x))x='';if(this.tagName==='INPUT'&&this.type==='number'&&x!==''&&!Number.isFinite(Number(x)))x='';this._value=x;this.dirtyValue=true; }
+    get firstChild() { return this.children[0]??null; }
+    get dataset() { const el=this;return new Proxy({}, {get(_,key){return el.getAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()));},set(_,key,value){el.setAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()),value);return true;}}); }
+    get parentElement() { return this.parentNode; }
+    get isConnected() { return doc.contains(this); }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); }, toggle(c,force) { const yes=force??!this.contains(c);yes?this.add(c):this.remove(c);return yes; } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (['id', 'class', 'type', 'value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); if (['hidden', 'disabled', 'checked', 'selected'].includes(k)) this[k] = true; }
+    getAttribute(k) { if (['id', 'class', 'type'].includes(k)) return this[k === 'class' ? 'className' : k] || null; return this.attributes[k] ?? null; }
+    removeAttribute(k) { delete this.attributes[k]; if (['hidden','disabled','checked'].includes(k)) this[k]=false; }
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+    set textContent(v) { for (const child of this.children) child.parentNode = null; this.children = []; this.text = String(v); }
+    set innerHTML(v) {
+      this.textContent = '';
+      // parse5 supplies the real HTML tokenizer/entity table in the actual element context.
+      // In particular, textarea uses RCDATA. No homemade entity decoder is used.
+      const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
+      for (const node of parseFragment(context, String(v)).childNodes) this.appendChild(fromParse5(node));
+    }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { const i=this.children.indexOf(child);if(i>=0)this.children.splice(i,1);child.parentNode=null;return child; }
+    querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    contains(el) { return el === this || descendants(this).includes(el); }
+    closest(selector) { for (let el = this; el; el = el.parentNode) if (matches(el, selector)) return el; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatchEvent(event) {
+      event.target = this;
+      for (let el = this; el; el = el.parentNode) {
+        event.currentTarget = el;
+        for (const fn of el.listeners[event.type] || []) {const result=fn.call(el,event);if(result&&typeof result.then==='function')tasks.push(result);}
+        if (!event.bubbles || event.stopped) break;
+      }
+      return !event.defaultPrevented;
+    }
+    dispatch(type, extra = {}) { return this.dispatchEvent(new EventStub(type, { bubbles: true, ...extra })); }
+    click() { if(this.disabled||this.closest('fieldset[disabled]'))return;if(this.tagName==='A'&&this.download){downloads.push({name:this.download,blob:blobs.get(this.href)});return;}this.focus();this.dispatch('click'); }
+    select() { doc.selectedElement=this; }
+    focus() { if(doc.activeElement===this)return;const old=doc.activeElement;doc.activeElement=this;if(old)old.dispatchEvent(new EventStub('blur'));this.dispatchEvent(new EventStub('focus')); }
+    getBoundingClientRect() { return {left:0,top:0,width:this.width||0,height:this.height||0}; }
+    setSelectionRange(start,end) { this.selectionStart=start;this.selectionEnd=end; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const attr of node.attrs || []) el.setAttribute(attr.name, attr.value);
+    for (const child of node.childNodes || []) if (child.nodeName !== '#comment') el.appendChild(fromParse5(child));
+    return el;
+  }
+
+
+  doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
+  doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
+  const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
+  widget.innerHTML=source[key].replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
+  const actualWrap=widget.querySelector('#gc-wrap');actualWrap.setAttribute('data-lang',lang);
+  doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
+  doc.getElementsByName=name=>descendants(doc).filter(el=>el.getAttribute('name')===name);
+  doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
+  doc.execCommand=command=>{execCalls.push(command);return false;};
+  const persist={clear(slug){persistCalls.push(['clear',slug]);},save(...args){persistCalls.push(['save',...args]);},load(){return {};}};
+  const globals={document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
+
+   MutationObserver:class{observe(){} disconnect(){}},matchMedia:()=>({addEventListener(){}}),getComputedStyle:()=>({getPropertyValue:()=>''}),requestAnimationFrame:fn=>globals.setTimeout(fn,16),cancelAnimationFrame:id=>globals.clearTimeout(id),
+   MessageChannel:class{constructor(){this.port1={};this.port2={postMessage:()=>{const job={delivered:false,deliver:()=>{must(!job.delivered,'yield only once');job.delivered=true;this.port1.onmessage({data:null});}};yields.push(job);if(!controls.holdYield)queueMicrotask(job.deliver);}};}},
+   _slug:slugs[key],ztPersist:persist,trackTool(...a){tracks.push(a);},innerHeight:900,devicePixelRatio:1,performance:{now:()=>controls.stepClock?(controls.time=(controls.time||0)+30):performance.now()},
+   ClipboardItem:class{constructor(data){this.data=data;}},navigator:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value});return d.promise;},write(value){const d=deferred();clipboard.push({...d,value});return d.promise;}}},
+   setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
+  };
+  if(order==='shared-before')vm.runInNewContext(shortcut,{document:doc,window:{ztPersist:persist},_slug:slugs[key]},{filename:'ToolLayout.astro:actual-shortcut'});
+  const actual=loadPage(paths[key],{lang,globals});
+  if(order==='shared-after')actual.run(shortcut);
+  const get=id=>{const el=doc.getElementById(id);must(el,key+' ID '+id);return el;};
+  return{get,doc,widget,globals,clipboard,timers,persistCalls,execCalls,tracks,downloads,yields,controls,actual,
+   file(file){const input=get('gc-file');input.files=[file];input.value='C:\\fakepath\\'+file.name;input.dispatch('change');},
+   drop(file){get('gc-wrap').dispatch('drop',{dataTransfer:{files:[file]}});},
+   ctrlL(id,key='l',meta=false){get(id).focus();return get(id).dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta});},
+   change(id,value){get(id).value=value;get(id).dispatch('change');},
+   tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
+  };
+}
+const gifBytes=buildGif({width:2,height:2,gct:[255,0,0,0,255,0],frames:[{width:2,height:2,indices:[0,0,0,0],delayCs:10},{width:2,height:2,indices:[1,1,1,1],delayCs:20}]});
+const gifFile=(name='old.gif')=>new File([gifBytes],name,{type:'image/gif'});
+const limitBytes=new Uint8Array(gifBytes);limitBytes[6]=0xff;limitBytes[7]=0x7f;
+const limitFile=()=>new File([limitBytes],'limit.gif',{type:'image/gif'});
+const badFile=()=>new File(['not image'],'bad.txt',{type:'text/plain'});
+function heldFile(file){const read=file.arrayBuffer.bind(file),d=deferred();let ready=false;Object.defineProperty(file,'arrayBuffer',{value:async()=>{const bytes=await read();ready=true;await d.promise;return bytes;}});return{file,release:d.resolve,ready:()=>ready};}
+const snap=p=>({workspace:p.get('gc-workspace').hidden,result:p.get('gc-result').hidden,progress:p.get('gc-progress').hidden,status:p.get('gc-status').textContent,summary:p.get('gc-summary').textContent});
+async function load(p,name='old.gif'){const n=p.tracks.length;p.file(gifFile(name));await waitFor(()=>p.tracks.length>n&&!p.get('gc-result').hidden);await settle();}
+async function limit(p){p.file(limitFile());await waitFor(()=>!p.get('gc-limit').hidden);}
+await scene('golden',async()=>{
+ const p=page();await load(p);check(phase+'/frame-info',['2','0.30 s'],[p.get('gc-info-frames').textContent,p.get('gc-info-duration').textContent]);p.get('gc-download').click();const bytes=new Uint8Array(await p.downloads[0].blob.arrayBuffer()),expected=E.compressGif(gifBytes,{lossy:40,colors:256,width:2,step:1,dither:false,chunk:32768});check(phase+'/complete-compressed-bytes',sha(expected.bytes),sha(bytes));check(phase+'/name','old-compressed.gif',p.downloads[0].name);const parsed=E.parseGif(bytes);check(phase+'/parse-output',[2,2,2],[parsed.width,parsed.height,parsed.frames.length]);p.get('gc-reset').click();check(phase+'/reset',[true,true,true,'',''],Object.values(snap(p)));check(phase+'/download-blob-snapshot',sha(bytes),sha(new Uint8Array(await p.downloads[0].blob.arrayBuffer())));
+});
+for(const order of ['shared-before','shared-after'])for(const meta of [false,true])await scene('clear/'+order+'/'+meta,async()=>{
+ const p=page(order);await load(p);p.get('gc-lossy').value='65';p.get('gc-lossy').dispatch('input');p.change('gc-colors','32');p.get('gc-file').value='C:\\fakepath\\old.gif';p.ctrlL('gc-run','L',meta);await settle();check(phase+'/all-derived-cleared',[true,true,true,'',''],Object.values(snap(p)));check(phase+'/file-cleared','',p.get('gc-file').value);check(phase+'/preferences-kept',['65','32'],[p.get('gc-lossy').value,p.get('gc-colors').value]);check(phase+'/shared-clear-once',1,p.persistCalls.filter(v=>v[0]==='clear').length);
+ const q=page(order),slow=heldFile(gifFile('late.gif'));q.file(slow.file);await waitFor(slow.ready);q.ctrlL('gc-drop','l',meta);slow.release();await settle();check(phase+'/late-read-does-not-restore',[true,true,true,'',''],Object.values(snap(q)));
+ const r=page(order);await load(r);r.controls.holdYield=true;r.get('gc-run').click();await settle();const held=r.yields.find(j=>!j.delivered);must(held,'actual compression yield held');r.ctrlL('gc-run','l',meta);const before=snap(r);held.deliver();await settle();check(phase+'/late-compression-does-not-restore',before,snap(r));
+});
+await scene('existing-source-and-run-guards',async()=>{
+ for(const action of ['new-source','invalid']){const p=page();await load(p);const slow=heldFile(gifFile('late.gif'));p.file(slow.file);await waitFor(slow.ready);if(action==='new-source')await load(p,'new.gif');else{p.file(badFile());await settle();}const before=snap(p);slow.release();await settle();check(phase+'/'+action+'-old-read-ignored',before,snap(p));}
+ const q=page();await load(q);q.controls.holdYield=true;q.get('gc-run').click();await settle();const old=q.yields.find(j=>!j.delivered);q.controls.holdYield=false;q.file(gifFile('new.gif'));old.deliver();await waitFor(()=>!q.get('gc-result').hidden);q.get('gc-download').click();check(phase+'/new-compressed-source-name','new-compressed.gif',q.downloads[0].name);
+});
+for(const lang of ['en','zh','ja','ko'])await scene('copy/'+lang,async()=>{
+ const t=labels[lang],p=page('shared-after',lang);await limit(p);p.get('gc-limit-copy').click();check(phase+'/complete-command','gifsicle -O3 --lossy=80 --colors 128 input.gif -o output.gif',p.clipboard[0].value);p.clipboard[0].reject(Error('denied'));await settle();check(phase+'/current-error',t.statusCopyFailed,p.get('gc-status').textContent);p.get('gc-limit-copy').click();p.clipboard[1].resolve();await settle();check(phase+'/retry-success',t.copied,p.get('gc-limit-copy').textContent);check(phase+'/retry-clears-owned-error','',p.get('gc-status').textContent);
+ const timer=[...p.timers.values()].find(v=>v.ms===1500);p.tick(100);p.get('gc-limit-copy').click();p.clipboard[2].resolve();await settle();timer.fn();check(phase+'/forced-old-timer-ignored',t.copied,p.get('gc-limit-copy').textContent);p.tick(1400);check(phase+'/old-deadline-keeps-new-feedback',t.copied,p.get('gc-limit-copy').textContent);p.tick(100);check(phase+'/new-deadline-restores',t.copyCommand,p.get('gc-limit-copy').textContent);
+ for(const outcome of ['resolve','reject']){const q=page('shared-after',lang);await limit(q);q.get('gc-limit-copy').click();await load(q,'new.gif');const before=snap(q);q.clipboard[0][outcome](outcome==='reject'?Error('late'):undefined);await settle();check(phase+'/'+outcome+'-new-source-keeps-state',before,snap(q));await limit(q);check(phase+'/'+outcome+'-old-label-reset',t.copyCommand,q.get('gc-limit-copy').textContent);q.get('gc-limit-copy').click();q.ctrlL('gc-limit-copy');q.clipboard[1][outcome](outcome==='reject'?Error('late'):undefined);await settle();check(phase+'/'+outcome+'-clear-feedback',[t.copyCommand,''],[q.get('gc-limit-copy').textContent,q.get('gc-status').textContent]);}
+ for(const mode of ['missing','sync-throw']){const q=page('shared-after',lang);await limit(q);let native=0;const n=Object.create({get clipboard(){native++;throw Error('native');}});Object.defineProperty(n,'clipboard',{value:mode==='missing'?undefined:{writeText(){throw Error('sync');}},writable:true});q.actual.ctx.navigator=n;q.get('gc-limit-copy').click();await settle();check(phase+'/'+mode+'-error',t.statusCopyFailed,q.get('gc-status').textContent);check(phase+'/'+mode+'-native-access-zero',0,native);}
+});
+
+await settle();check('no-unhandled-rejections',[],unhandled);process.removeListener('unhandledRejection',onRejection);
+const pageCounts={PASS:checks.filter(c=>c.status==='PASS').length,FAIL:checks.filter(c=>c.status==='FAIL').length};
+passes+=pageCounts.PASS;failures+=pageCounts.FAIL;
+const report={node:process.version,source:process.env.ZT_B14_SOURCE||paths[Object.keys(paths)[0]],sourceSHA:sha(pageSource),legacyCounts,pageCounts,counts:{PASS:passes,FAIL:failures},checks,observations};
+if(process.env.ZT_B14_REPORT){const {writeFileSync}=await import('node:fs');writeFileSync(process.env.ZT_B14_REPORT,JSON.stringify(report,null,2)+'\n');}
+}
 console.log(`\n${passes} passed, ${failures} failed`);
-process.exit(failures > 0 ? 1 : 0);
+process.exitCode=failures?1:0;

@@ -1264,6 +1264,7 @@
       var gif = null, fileSize = 0, base = 'animation';
       var originalUrl = null, resultUrl = null, resultBytes = null;
       var runToken = 0;
+      var copyRevision = 0, copyTimer = 0, copyButton = null, copyRestoreKey = null;
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg;
@@ -1333,6 +1334,7 @@
 
       function clearResult() {
         resultEl.hidden = true;
+        summaryEl.textContent = '';
         if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
         resultBytes = null;
         imgCompressed.removeAttribute('src');
@@ -1340,6 +1342,8 @@
 
       function resetState() {
         runToken++;
+        resetCopy();
+        fileInput.value = '';
         gif = null;
         clearResult();
         if (originalUrl) { URL.revokeObjectURL(originalUrl); originalUrl = null; }
@@ -1450,16 +1454,38 @@
         if (window.trackTool) window.trackTool(SLUG, 'compress');
       }
 
+      function resetCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = 0;
+        if (copyButton) copyButton.textContent = t[copyRestoreKey];
+        copyButton = null;
+      }
+
       function copyText(text, btn, restoreKey) {
+        resetCopy();
+        var request = copyRevision, token = runToken;
+        copyButton = btn;
+        copyRestoreKey = restoreKey;
+        function current() { return request === copyRevision && token === runToken; }
+        function failed() { if (current()) setStatus(t.statusCopyFailed, 'error'); }
         function done() {
+          if (!current()) return;
           btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t[restoreKey]; }, 1500);
+          if (statusEl.textContent === t.statusCopyFailed) setStatus('', 'none');
+          copyTimer = setTimeout(function () {
+            if (!current()) return;
+            btn.textContent = t[restoreKey];
+            copyTimer = 0;
+          }, 1500);
         }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(done, function () { setStatus(t.statusCopyFailed, 'error'); });
-        } else {
-          setStatus(t.statusCopyFailed, 'error');
-        }
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            Promise.resolve(navigator.clipboard.writeText(text)).then(done, failed);
+          } else {
+            failed();
+          }
+        } catch (e) { failed(); }
       }
 
       /* ── Input: drop zone click / keyboard / drag / paste ── */
@@ -1526,6 +1552,13 @@
         resetState();
         setStatus('', 'none');
         dropEl.focus();
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l' || !wrapEl.contains(document.activeElement)) return;
+        e.preventDefault();
+        resetState();
+        setStatus('', 'none');
       });
 
       loadPrefs();
