@@ -929,6 +929,7 @@
       }
 
       function applyPreset(name) {
+        invalidateHash();
         state.preset = name;
         state.directives = cloneDirectives(PRESETS[name] || {});
         state.upgrade = !!(PRESET_FLAGS[name] && PRESET_FLAGS[name].upgrade);
@@ -1139,6 +1140,7 @@
             input.addEventListener('keydown', function (ev) {
               if (ev.key === 'Enter') {
                 ev.preventDefault();
+                ev.stopPropagation();
                 addHostBtn.click();
               }
             });
@@ -1189,6 +1191,7 @@
       }
 
       function renderOutput() {
+        resetCopies();
         var text = buildOutput(state, state.format, T);
         outputEl.textContent = text;
         copyBtn.disabled = !text || text === T.warnEmpty;
@@ -1225,26 +1228,54 @@
         if (window.trackTool) window.trackTool('csp-header-generator', 'generate');
       }
 
-      function showStatus(msg, level) {
+      var statusTimer = 0;
+      var statusRequest = 0;
+      var copyStatus = false;
+      function showStatus(msg, level, fromCopy) {
         var el = document.getElementById('csp-status');
         if (!el) return;
+        window.clearTimeout(statusTimer);
+        var request = ++statusRequest;
+        copyStatus = !!fromCopy;
         el.textContent = msg || '';
         el.className = 'tool-status ' + (level || 'none');
         if (msg) {
-          window.setTimeout(function () { el.textContent = ''; el.className = 'tool-status none'; }, 3000);
+          statusTimer = window.setTimeout(function () {
+            if (request !== statusRequest) return;
+            el.textContent = '';
+            el.className = 'tool-status none';
+            copyStatus = false;
+          }, 3000);
         }
+      }
+
+      var copyRequest = 0;
+      var copyTimers = [];
+      function resetCopies() {
+        copyRequest++;
+        copyTimers.forEach(function (timer) { window.clearTimeout(timer); });
+        copyTimers = [];
+        [copyBtn, hashCopyBtn].forEach(function (btn) {
+          btn.textContent = T.copy;
+          btn.classList.remove('copied');
+        });
+        if (copyStatus) showStatus('', 'none');
       }
 
       // ── Hash calculator ──────────────────────────────────────────────
       var lastHash = '';
-      hashInput.addEventListener('input', function () {
-        if (lastHash) {
-          lastHash = '';
-          hashValueEl.textContent = T.hashEmpty;
-          hashCopyBtn.disabled = true;
-        }
+      var hashRequest = 0;
+      function invalidateHash() {
+        hashRequest++;
+        lastHash = '';
+        hashValueEl.textContent = T.hashEmpty;
+        hashCopyBtn.disabled = true;
         hashAddBtn.disabled = !hashInput.value;
-      });
+        resetCopies();
+      }
+      hashInput.addEventListener('input', invalidateHash);
+      hashAlgo.addEventListener('change', invalidateHash);
+      hashTarget.addEventListener('change', invalidateHash);
 
       async function computeHash() {
         var algo = hashAlgo.value;
@@ -1262,16 +1293,19 @@
       }
 
       hashAddBtn.addEventListener('click', async function () {
+        invalidateHash();
+        var request = hashRequest;
+        var target = hashTarget.value;
         try {
           var value = await computeHash();
-          if (!value) return;
+          if (request !== hashRequest || !value) return;
           lastHash = value;
           hashValueEl.textContent = value;
           hashCopyBtn.disabled = false;
-          var target = hashTarget.value;
           if (!state.directives[target]) state.directives[target] = ["'self'"];
           addSource(target, value);
         } catch (e) {
+          if (request !== hashRequest) return;
           showStatus('Hash failed: ' + e.message, 'error');
         }
       });
@@ -1279,18 +1313,22 @@
       function attachCopy(btn, getter) {
         btn.addEventListener('click', async function () {
           var value = getter();
-          if (!value) return;
+          if (btn.disabled || !value) return;
+          resetCopies();
+          var request = copyRequest;
           try {
             await navigator.clipboard.writeText(value);
-            var original = btn.textContent;
+            if (request !== copyRequest) return;
             btn.classList.add('copied');
             btn.textContent = T.copied;
-            window.setTimeout(function () {
+            copyTimers.push(window.setTimeout(function () {
+              if (request !== copyRequest) return;
               btn.classList.remove('copied');
-              btn.textContent = original;
-            }, 1500);
+              btn.textContent = T.copy;
+            }, 1500));
           } catch (e) {
-            showStatus('Copy failed.', 'error');
+            if (request !== copyRequest) return;
+            showStatus('Copy failed.', 'error', true);
           }
         });
       }
@@ -1349,6 +1387,15 @@
           renderOutput();
           renderValidation();
         });
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var wrap = document.querySelector('.csp-wrap');
+        if (!wrap || !document.activeElement || !wrap.contains(document.activeElement)) return;
+        wrap.querySelectorAll('textarea, input[type="text"]').forEach(function (el) { el.value = ''; });
+        invalidateHash();
+        showStatus('', 'none');
       });
 
       // ── Boot ─────────────────────────────────────────────────────────
