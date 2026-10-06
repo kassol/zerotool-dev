@@ -21,6 +21,7 @@ const labels = {
     outputLabel: 'Generated CSS',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: 'Copy failed',
     pxUnit: 'px',
     pctUnit: '%',
     degUnit: 'deg',
@@ -43,6 +44,7 @@ const labels = {
     outputLabel: '生成的 CSS',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: '复制失败',
     pxUnit: 'px',
     pctUnit: '%',
     degUnit: 'deg',
@@ -65,6 +67,7 @@ const labels = {
     outputLabel: '生成された CSS',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピーに失敗しました',
     pxUnit: 'px',
     pctUnit: '%',
     degUnit: 'deg',
@@ -87,6 +90,7 @@ const labels = {
     outputLabel: '생성된 CSS',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: '복사 실패',
     pxUnit: 'px',
     pctUnit: '%',
     degUnit: 'deg',
@@ -101,6 +105,7 @@ const L = labels[lang] ?? labels['en'];
   class="cfg-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-upload-hint={L.uploadHint}
   data-reset={L.reset}
 >
@@ -252,6 +257,7 @@ const L = labels[lang] ?? labels['en'];
       <span class="cfg-section-label">{L.outputLabel}</span>
       <button id="cfg-copy" class="btn-copy" type="button" aria-label={L.copy}>{L.copy}</button>
     </div>
+    <p id="cfg-status" class="tool-status" role="status"></p>
     <pre id="cfg-pre" class="cfg-pre"><code id="cfg-code" class="cfg-code"></code></pre>
   </div>
 
@@ -265,6 +271,7 @@ const L = labels[lang] ?? labels['en'];
 
       var COPY_LABEL   = wrap.dataset.copy;
       var COPIED_LABEL = wrap.dataset.copied;
+      var COPY_FAILED_LABEL = wrap.dataset.copyFailed;
 
       /* ── engine:start ── */
       /* ── Default values ── */
@@ -328,7 +335,11 @@ const L = labels[lang] ?? labels['en'];
 
       /* ── File upload ── */
       var fileInput = wrap.querySelector('#cfg-file-input');
+      var fileRevision = 0;
       fileInput.addEventListener('change', function () {
+        var selection = ++fileRevision;
+        invalidateFrame();
+        invalidateCopy();
         var file = fileInput.files && fileInput.files[0];
         if (!file) return;
         if (file.size > 5 * 1024 * 1024) {
@@ -336,22 +347,48 @@ const L = labels[lang] ?? labels['en'];
           return;
         }
         var reader = new FileReader();
-        reader.onload = function (e) { previewImg.src = e.target.result; };
+        reader.onload = function (e) {
+          if (selection !== fileRevision) return;
+          previewImg.src = e.target.result;
+          renderResult();
+        };
         reader.readAsDataURL(file);
       });
 
       /* ── rAF-gated update ── */
       var rafPending = false;
+      var frameRevision = 0;
+      var frameId = 0;
+
+      function invalidateFrame() {
+        frameRevision++;
+        cancelAnimationFrame(frameId);
+        frameId = 0;
+        rafPending = false;
+      }
 
       function scheduleUpdate() {
+        invalidateCopy();
         if (rafPending) return;
         rafPending = true;
-        requestAnimationFrame(function () {
+        var revision = frameRevision;
+        frameId = requestAnimationFrame(function () {
+          if (revision !== frameRevision) return;
           rafPending = false;
-          applyFilter();
-          renderOutput();
+          frameId = 0;
+          renderResult();
           saveState();
         });
+      }
+
+      function renderResult() {
+        invalidateCopy();
+        if (!previewImg.getAttribute('src')) previewImg.src = DEFAULT_SRC;
+        previewImg.hidden = false;
+        copyBtn.disabled = false;
+        wrap.dataset.empty = 'false';
+        applyFilter();
+        renderOutput();
       }
 
       function applyFilter() {
@@ -413,18 +450,62 @@ const L = labels[lang] ?? labels['en'];
       });
 
       /* ── Copy ── */
-      wrap.querySelector('#cfg-copy').addEventListener('click', function () {
+      var copyBtn = wrap.querySelector('#cfg-copy');
+      var copyRevision = 0;
+      var copyTimer = 0;
+      var statusEl = wrap.querySelector('#cfg-status');
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = 0;
+        copyBtn.textContent = COPY_LABEL;
+        copyBtn.setAttribute('aria-label', COPY_LABEL);
+        if (statusEl) statusEl.textContent = '';
+      }
+
+      copyBtn.addEventListener('click', function () {
         var text = wrap.querySelector('#cfg-code').textContent;
         if (!text) return;
-        var btn = wrap.querySelector('#cfg-copy');
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = COPIED_LABEL;
-          btn.setAttribute('aria-label', COPIED_LABEL);
-          setTimeout(function () {
-            btn.textContent = COPY_LABEL;
-            btn.setAttribute('aria-label', COPY_LABEL);
-          }, 1500);
-        });
+        invalidateCopy();
+        var request = copyRevision;
+        function failed() {
+          if (request !== copyRevision) return;
+          copyBtn.textContent = COPY_FAILED_LABEL;
+          copyBtn.setAttribute('aria-label', COPY_FAILED_LABEL);
+          if (statusEl) statusEl.textContent = COPY_FAILED_LABEL;
+        }
+        if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+          failed();
+          return;
+        }
+        try {
+          Promise.resolve(navigator.clipboard.writeText(text)).then(function () {
+            if (request !== copyRevision) return;
+            copyBtn.textContent = COPIED_LABEL;
+            copyBtn.setAttribute('aria-label', COPIED_LABEL);
+            copyTimer = setTimeout(function () {
+              if (request !== copyRevision) return;
+              copyBtn.textContent = COPY_LABEL;
+              copyBtn.setAttribute('aria-label', COPY_LABEL);
+              copyTimer = 0;
+            }, 1500);
+          }, failed);
+        } catch (_) { failed(); }
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l' || !wrap.contains(document.activeElement)) return;
+        fileRevision++;
+        invalidateFrame();
+        invalidateCopy();
+        fileInput.value = '';
+        wrap.querySelector('#cfg-code').textContent = '';
+        previewImg.removeAttribute('src');
+        previewImg.hidden = true;
+        previewImg.style.filter = '';
+        copyBtn.disabled = true;
+        wrap.dataset.empty = 'true';
       });
 
       /* ── Init ── */
@@ -433,8 +514,7 @@ const L = labels[lang] ?? labels['en'];
         wrap.querySelector('#cfg-' + k + '-range').value = state[k];
         wrap.querySelector('#cfg-' + k).value = state[k];
       });
-      applyFilter();
-      renderOutput();
+      renderResult();
     })();
   </script>
 </div>
