@@ -24,11 +24,11 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync, mkdirSync, rmSync
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join, relative } from 'node:path';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const source = readFileSync(join(root, 'src/components/tools/HtaccessGeneratorTool.astro'), 'utf8');
+const root = process.env.ZT_B13_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
+const source = readFileSync(process.env.ZT_B13_SOURCE || join(root, 'src/components/tools/HtaccessGeneratorTool.astro'), 'utf8');
 const START_MARK = '/* ── engine:start ── */';
 const END_MARK = '/* ── engine:end ── */';
 const startIndex = source.indexOf(START_MARK);
@@ -209,7 +209,7 @@ process.exitCode = failures ? 1 : 0;
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { webcrypto } from 'node:crypto';
-import { loadPage } from './astro-page-harness.mjs';
+const { loadPage } = await import(pathToFileURL(join(root, 'scripts/astro-page-harness.mjs')).href);
 const requireFromRoot = createRequire(join(root, 'package.json'));
 const { parseFragment, defaultTreeAdapter } = requireFromRoot('parse5');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
@@ -219,7 +219,7 @@ const must=(ok,message)=>{if(!ok)throw Error(message);};
 const assert=(name,actual,expected)=>{if(same(actual,expected)){passes++;return;}failures++;console.log('FAIL: '+name+' expected '+JSON.stringify(expected)+' actual '+JSON.stringify(actual));};
 const settle=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
 let activePage;const onUnhandled=e=>activePage?.errors.push(String(e));process.on('unhandledRejection',onUnhandled);
-const SLUG='htaccess-generator',component='src/components/tools/HtaccessGeneratorTool.astro';
+const SLUG='htaccess-generator',component=process.env.ZT_B13_SOURCE?relative(root,process.env.ZT_B13_SOURCE):'src/components/tools/HtaccessGeneratorTool.astro';
 const templates={};
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}){
@@ -310,10 +310,9 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
   doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
-  const fm=/^---\n([\s\S]*?)\n---/.exec(source)?.[1]||'';
-  const labels=fm.includes('const labels =')?vm.runInNewContext(fm.slice(fm.indexOf('const labels ='),fm.indexOf('const L ='))+';labels'):null;
+  const labels=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
   const escaped=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
+  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace('data-strings={JSON.stringify(CLIENT_T)}','data-strings="'+escaped(JSON.stringify({copy:labels[lang].copy,copied:labels[lang].copied,copyFailed:labels[lang].copyFailed}))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
@@ -367,5 +366,27 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  p=ready(lang,order);p.get(COPY).click();p.clipboard.at(-1)?.resolve();await settle();const stale=[...p.timers.values()].find(t=>t.ms===DELAY)?.fn;p.tick(100);p.get(COPY).click();p.clipboard.at(-1)?.resolve();await settle();stale?.();assert(id+' forced old timer inert',p.get(COPY).textContent,LABELS[lang].copied);p.tick(DELAY-100);assert(id+' old deadline inert',p.get(COPY).textContent,LABELS[lang].copied);p.tick(100);assert(id+' newest timer restores',p.get(COPY).textContent,LABELS[lang].copy);
  p=ready(lang,order);p.ctrlL(INPUT);restoreResult(p);assert(id+' real input recovers result',recover(p),true);assert(id+' recovery copy enabled',p.get(COPY).disabled,false);
 }
+// ---------- v2 page layout ----------
+const ssr=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+for(const lang of ['en','zh','ja','ko']){
+ const q=lifecyclePage(lang),L=ssr[lang];
+ assert(lang+' default output marker',q.doc.querySelector('.hta-wrap').dataset.empty,'false');
+ q.ctrlL(INPUT);assert(lang+' CtrlL empty marker',q.doc.querySelector('.hta-wrap').dataset.empty,'true');
+ q.input(INPUT,'home.html');assert(lang+' real input restores preview',q.doc.querySelector('.hta-wrap').dataset.empty,'false');
+ assert(lang+' SSR labels before runtime replacement',q.doc.querySelector('label.hta-toggle').textContent.includes(L.forceHttps),true);
+ assert(lang+' seven SSR tip keys',Object.keys(L.tips).sort(),['cache','copy','https','index','redirect','security','www']);
+ assert(lang+' client only original copy feedback',Object.keys(JSON.parse(q.doc.querySelector('.hta-wrap').dataset.strings)).sort(),['copied','copy','copyFailed']);
+ const prefix=process.env.ZT_B13_MDX_PREFIX,mdx=readFileSync(prefix?prefix+'-'+lang+'.mdx':join(root,'src/content/tools/htaccess-generator',lang+'.mdx'),'utf8');const y=requireFromRoot('js-yaml').load(mdx.split('---')[1]);
+ assert(lang+' steps limits and position',y.steps.length<=8&&y.steps.every(x=>x.length<=280)&&y.steps.join('').length<=1200&&mdx.indexOf('steps:')<mdx.indexOf('faqItems:'),true);
+ assert(lang+' Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);
+}
+assert('generate rail/result bounded structure',source.includes('hta-controls zt-rail')&&source.includes('grid-template-columns: 300px minmax(0, 1fr)')&&source.includes('overflow: auto'),true);
+assert('SSR replaces runtime labels',!source.includes('data-i18n')&&!source.includes('var STRINGS'),true);
+assert('seven static localized tips',[...source.matchAll(/<Toggletip id="hta-tip-/g)].length,7);
+assert('only original Copy business action',[...source.matchAll(/<button[^>]*id="([^"]+)"/g)].map(x=>x[1]),['hta-copy']);
+assert('status before settings and minimum 2.8em',source.indexOf('id="hta-status"')<source.indexOf('id="hta-https"')&&source.includes('min-height: 2.8em'),true);
+assert('native Options closed by default',/<details class="hta-options">/.test(source)&&!/<details class="hta-options"[^>]*\bopen\b/.test(source),true);
+assert('stacked empty result hidden/phone targets',source.includes('@media (max-width: 860px)')&&source.includes('@media (max-width: 640px)')&&source.includes('min-height: 44px')&&source.includes('min-height: 24px')&&source.includes('.hta-wrap[data-empty="true"] .hta-result { display: none; }'),true);
+if(!/['"]htaccess-generator['"]\s*:\s*['"]generate['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')))console.log('PENDING: root generate registration, compile and native layout acceptance');
 process.removeListener('unhandledRejection',onUnhandled);
 console.log(passes+' passed, '+failures+' failed');process.exitCode=failures?1:0;
