@@ -17,6 +17,7 @@
 // Run: node scripts/test-css-variables-generator.mjs
 
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -192,5 +193,48 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','s
   h=open(spec,lang,order);h.key('l');h.click();assertEq(name+'empty result is never copied',h.requests.length,0);
 }
 active=null;process.removeListener('unhandledRejection',unhandled);
+
+// ---------- generate layout and four-language reference protection ----------
+{
+  const markup=source.slice(source.indexOf('\n---\n',4)+5,source.indexOf('<script'));
+  const css=source.slice(source.indexOf('<style'));
+  const P='cvg';
+  check('v2 root takes available height',css.includes('.'+P+'-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; }'));
+  check('270–320px shared rail and remaining result',markup.includes('class="'+P+'-rail zt-rail"')&&css.includes('grid-template-columns: clamp(270px, 24vw, 320px) minmax(0, 1fr)'));
+  check('860px stack and 640px phone rules',css.includes('@media (max-width: 860px)')&&css.includes('@media (max-width: 640px)'));
+  check('native details preserve all secondary controls',markup.includes('<details')&&!/<details[^>]*\sopen/.test(markup));
+  check('Copy keeps a stable 44px target',new RegExp('#'+P+'-copy \\{[^}]*height: 44px').test(css));
+  check('phone main inputs keep 44px targets',css.includes('.cvg-prefix-input { min-height: 44px; }'));
+  check('runtime-created rows and syntax have global styles',source.includes('<style is:global>'));
+  check('status space stays reserved',css.includes('#'+P+'-status { height: 2.8em; flex: none; margin: 0; overflow: auto; }'));
+  check('result can scroll inside a bounded region',css.includes('overflow: auto;')&&(css.includes('height: 15rem;')||css.includes('max-height: 3.8rem;')));
+  check('code accepts keyboard focus',/tabindex="0" role="region" aria-label=\{L.outputLabel\}/.test(markup));
+  check('empty results hide on stacked screens',css.includes('[data-empty="true"] { display: none; }'));
+  check('localized SSR prose stays out of client data',source.includes('// strings:start')&&source.includes('// strings:end')&&!source.includes('define:vars')&&!source.includes('data-strings')&&!source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1].includes('.tips'));
+  assertEq('each actual control has its SSR tip', [...markup.matchAll(/<Toggletip id=/g)].length,7);
+  const hashes={"en":"5b8e0d090358a6136085a9d9341e1bfed3c5d8b347da2c8e10c6ea351514e65a","zh":"93e00cd53127df3a41538c00ccff0a0698dda362a13adf19fc7d76007281b8bc","ja":"c44a38c74eff8bde1febb7d312e4c2e1ef82f76d46e04906625a2b5b6060e2f7","ko":"0841eab1748e5795b25f74d073e127a8cbe67425f9a6445657bf10942e5be073"},reference={"en": {"frontmatterWithoutSteps": "469d1fc7075a6529471d4192f88161116bcb9bd7c58b24dadbb4c8dc97865bd0", "nonUsageBody": "971b77cfca8c9cfd35842031ed161e64442b4238a3162b1e92c54f88d5b235f2", "steps": 5, "maxStepChars": 108, "totalStepChars": 388, "mdxSHA": "88c561f97fd2913e210f2f64927e735eb559498f0004da9a515d4b02f82c0d4d"}, "zh": {"frontmatterWithoutSteps": "4770cc9fe08b164c3c234aa4386ca2820afedf4a5f79767577d5a2ec6b43af8e", "nonUsageBody": "4fdaecd2b92eafb8b70c703d83aee51693205d59ad20a8bdbd9d0c925522f9f3", "steps": 5, "maxStepChars": 132, "totalStepChars": 273, "mdxSHA": "d586a67967fea20520404eece5d4140fc99c62edcaee0303b396b33e7cb922ef"}, "ja": {"frontmatterWithoutSteps": "cb76ab83a27acad890519b8aad6d4d2207dd8e560ff65846267f2f33980837a9", "nonUsageBody": "7f9c1772e25bef1b9fead1a5495066cddac438348ea087d1749c48cb23f2a062", "steps": 5, "maxStepChars": 169, "totalStepChars": 355, "mdxSHA": "2d9c547d7a5977e568526f8d9d65b6cb9ef31d6817ab0e43b77fbc23b0f52a14"}, "ko": {"frontmatterWithoutSteps": "10d150e8aa43a332fce1fee55019e3200b2846c07f6f28c541000278b85d211d", "nonUsageBody": "8d4c3c28cc232e2714d0bb73e07e61100050660c129df4bf0cde68a7c9488d99", "steps": 5, "maxStepChars": 180, "totalStepChars": 365, "mdxSHA": "849febcfb7cd201bc499e4be626c8006a76f73a1f053a22363d8b198b2b3a11d"}};
+  const digest=text=>createHash('sha256').update(text).digest('hex');
+  for(const lang of ['en','zh','ja','ko']){
+    const h=open(spec,lang);const old=Object.fromEntries(Object.entries(h.L).filter(([key])=>!['editor','removeLabel','options','empty','tips'].includes(key)).sort(([a],[b])=>a.localeCompare(b)));
+    assertEq(lang+' old localized values stay exact',digest(JSON.stringify(old)),hashes[lang]);
+    const mdx=readFileSync(join(root,'src/content/tools/css-variables-generator/'+lang+'.mdx'),'utf8'),fm=mdx.match(/^---\n([\s\S]*?)\n---/),front=fm[1],body=mdx.slice(fm[0].length);
+    const section=front.slice(front.indexOf('\nsteps:\n'),front.indexOf('\nfaqItems:'));
+    const steps=[...section.matchAll(/^  - (".*")$/gm)].map(m=>JSON.parse(m[1]));
+    assertEq(lang+' Usage moved into plain steps',steps.length,reference[lang].steps);
+    check(lang+' step limits',steps.every(step=>[...step].length<=280)&&steps.reduce((n,step)=>n+[...step].length,0)<=1200);
+    check(lang+' Copy and clear instructions are concrete',steps.at(-1).includes(h.L.copy)&&steps.at(-1).includes('Ctrl/⌘+L'));
+    assertEq(lang+' all nonUsage body including Limits stays exact',digest(body),reference[lang].nonUsageBody);
+    assertEq(lang+' FAQ and SEO stay exact',digest(front.replace(/\nsteps:\n(?:  - .*\n)*/,'\n')),reference[lang].frontmatterWithoutSteps);
+    check(lang+' tips are factual plain localized prose',Object.keys(h.L.tips).length===7&&Object.values(h.L.tips).every(text=>typeof text==='string'&&text.length>0&&!/[<>]|https?:/.test(text)));
+    assertEq(lang+' initial rendering does not scroll',h.scrolls,0);
+    h.key('l');assertEq(lang+' clear hides real result and shows empty hint',[h.el(P+'-result').dataset.empty,h.el(P+'-empty').hidden],['true',false]);
+    h.page.ctx.matchMedia=()=>({matches:true});changePage(h);assertEq(lang+' real phone input restores result',[h.el(P+'-result').dataset.empty,h.el(P+'-empty').hidden],['false',true]);
+    assertEq(lang+' phone real input scrolls result into view',h.scrolls,1);
+    const c=open(spec,lang);c.click();c.requests[0].reject(new Error('current clipboard denial'));await settle();assertEq(lang+' current failure also appears in reserved status',c.el(P+'-status').textContent,c.L.copyFailed);
+    c.click();assertEq(lang+' retry clears only current copy status',c.el(P+'-status').textContent,'');c.requests[1].resolve();await settle();
+  }
+}
+
+check('registered generate layout',readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8').includes("  'css-variables-generator': 'generate',"));
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
