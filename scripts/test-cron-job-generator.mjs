@@ -118,7 +118,10 @@ eq('four fields', E.checkExpression('* * * *'), { error: 'len' });
 eq('extra spaces', E.checkExpression('  0  9 * * 1 ').parts, ['0', '9', '*', '*', '1']);
 eq('7 and 0 run on the same days', E.nextRuns('0 9 * * 7'.split(' '), 3, true, Date.UTC(2026, 9, 1)).map((d) => d.toISOString()), E.nextRuns('0 9 * * 0'.split(' '), 3, true, Date.UTC(2026, 9, 1)).map((d) => d.toISOString()));
 eq('5-7 means Friday to Sunday', E.nextRuns('0 9 * * 5-7'.split(' '), 3, true, Date.UTC(2026, 9, 1)).map((d) => d.getUTCDay()), [5, 6, 0]);
-const STR = new Function('return ' + /var STRINGS = (\{[\s\S]*?\n  \});/.exec(source)[1])();
+const stringsRegion = source.split('// strings:start')[1]?.split('// strings:end')[0];
+if (!stringsRegion) throw Error('Missing SSR strings boundary');
+const STR = new Function(stringsRegion + ';return STRINGS;')();
+const SSR_STRINGS=STR;
 for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ' has exprErrorField with placeholders', /\{field\}/.test(STR[lang].exprErrorField || '') && /\{value\}/.test(STR[lang].exprErrorField || ''), true);
 eq('page no longer says 7 is rejected', page.includes('it rejects 7'), false);
 eq('page no longer says the Minute box is copied as is', page.includes('without an error message'), false);
@@ -244,15 +247,16 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
   doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
-  const fm=/^---\n([\s\S]*?)\n---/.exec(source)?.[1]||'';
-  const labels=fm.includes('const labels =')?vm.runInNewContext(fm.slice(fm.indexOf('const labels ='),fm.indexOf('const L ='))+';labels'):null;
+  const labels=SSR_STRINGS;
+  const chipSource=/const chipHtml = ([\s\S]*?)\n---/.exec(source)[1];
+  const chips=Function('const chipHtml = '+chipSource+';return CHIP_HTML;')();
   const escaped=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
+  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/(<div[^>]*?) set:html=\{CHIP_HTML\.(\w+)\}(><\/div>)/g,(_,open,key)=>open+'>'+chips[key]+'</div>').replace(/\{L\.tips\.(\w+)\}/g,(_,k)=>escaped(labels[lang]?.tips?.[k]??'')).replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
   const persist={clear(slug){if(slug!=='cron-job-generator')stored={};persistCalls.push(['clear',slug]);},save(slug,data){stored=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,stored]);},load(){return structuredClone(stored);}};
-  const globals={document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
+  const globals={CLIENT_T:Object.fromEntries(['copy','copied','copyFailed','nextLabelUtc','nextLabelLocal','exprErrorLen','exprErrorVal','exprErrorField','fieldMinute','fieldHour','fieldDay','fieldMonth','fieldWeekday'].map(k=>[k,SSR_STRINGS[lang][k]])),document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
     _slug:SLUG,ztPersist:persist,trackTool(){},
     navigator:noClipboard?{}:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
@@ -303,3 +307,39 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
 }
 process.removeListener('unhandledRejection',onUnhandled);
 console.log(passes+' passed, '+failures+' failed');process.exitCode=failures?1:0;
+
+const checkV2=(ok,name)=>assert(name,ok,true);
+const equalV2=(actual,expected,name)=>assert(name,actual,expected);
+// v2 SSR and generate layout contract. The original 72 assertions and all FIX lifecycle cases above remain active.
+const markup=source.split(/<script\b/)[0],style=source.split('<style')[1]||'';
+checkV2(/class="cjg-rail zt-rail"/.test(markup),'v2 shared generate rail');
+checkV2(/grid-template-columns: 300px minmax\(0, 1fr\)/.test(style),'v2 rail width and bounded result column');
+checkV2(/min-height: 2\.8em/.test(style),'v2 status space reserved');
+checkV2(/max-width: 860px/.test(style)&&/max-width: 640px/.test(style),'v2 stack and phone breakpoints');
+checkV2(/min-height: 44px/.test(style)&&/min-height: 24px; min-width: 24px/.test(style),'v2 main and dense touch sizes');
+checkV2(/\.cjg-next-list \{[^}]*overflow: auto/.test(style),'v2 result list scrolls internally');
+checkV2(/\.cjg-output\[data-empty="true"\] \{ display: none/.test(style),'v2 phone empty result hidden');
+checkV2(!/\[data-i18n\]/.test(source),'v2 labels no runtime translation loop');
+equalV2((markup.match(/<Toggletip /g)||[]).length,9,'v2 nine SSR tips');
+equalV2((markup.match(/<details class="cjg-options">/g)||[]).length,2,'v2 two options disclosures default closed');
+equalV2((markup.match(/data-expr=/g)||[]).length,8,'v2 all eight preset actions retained');
+checkV2(!/Generate/.test(markup),'v2 automatic Cron keeps no Generate action');
+const clientKeys=/const CLIENT_T = Object.fromEntries\(\[([^\]]+)\]/.exec(source)?.[1]||'';
+checkV2(!clientKeys.includes('tips'),'v2 tips excluded from client data');
+for(const lang of ['en','zh','ja','ko']){
+ equalV2(Object.keys(SSR_STRINGS[lang].tips).length,9,lang+' nine localized tips');
+ checkV2(Object.values(SSR_STRINGS[lang].tips).every(v=>typeof v==='string'&&v.length>0),lang+' tip text complete');
+ const p=ready(lang);equalV2(p.get('cjg-result').getAttribute('data-empty'),'false',lang+' initial real result visible');
+ equalV2(p.get('cjg-result-content').hidden,false,lang+' initial real content shown');equalV2(p.get('cjg-empty').hidden,true,lang+' initial empty hint hidden');
+ equalV2(p.doc.querySelectorAll('.cjg-chip').length,74,lang+' 74 SSR chips bound to actual delegates');
+ p.input(INPUT,'75 9 * * 1-5');equalV2(p.get('cjg-result').getAttribute('data-empty'),'true',lang+' invalid hides derived container');
+ p.input(INPUT,'0 9 * * 1-5');equalV2(p.get('cjg-result').getAttribute('data-empty'),'false',lang+' valid restores derived container');
+ for(const order of ['shared-before','shared-after']){const q=ready(lang,order);q.ctrlL(INPUT);equalV2(q.get('cjg-result').getAttribute('data-empty'),'true',lang+' '+order+' clear hides derived container');equalV2(q.get('cjg-result-content').hidden,true,lang+' '+order+' clear hides content');equalV2(q.get('cjg-empty').hidden,false,lang+' '+order+' desktop localized hint ready');}
+ const md=readFileSync(join(root,'src/content/tools/cron-job-generator/'+lang+'.mdx'),'utf8');
+ const block=/^steps:\n([\s\S]*?)(?=^faqItems:)/m.exec(md)?.[1]||'';
+ const steps=block.split('\n').filter(x=>x.startsWith('  - ')).map(x=>JSON.parse(x.slice(4)));
+ equalV2(steps.length,4,lang+' four usage steps before FAQ');checkV2(steps.every(v=>v.length<=280)&&steps.join('').length<=1200,lang+' usage limits');
+ checkV2(!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(md),lang+' Usage removed from prose');
+ if(lang==='en'){const words=md.replace(/^---[\s\S]*?---/, '').replace(/<[^>]*>/g,' ').replace(/[^\p{L}\p{N}'’]+/gu,' ').trim().split(/\s+/).length;checkV2(words>=400,'English prose retains 400 words');}
+}
+console.log(`v2 total: ${passes} PASS, ${failures} FAIL`);process.exitCode=failures?1:0;
