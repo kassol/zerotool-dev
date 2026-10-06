@@ -862,6 +862,7 @@
       var workCanvas = null, workCtx = null, flatCanvas = null, flatCtx = null;
       var loadToken = 0, busy = false;
       var spriteBlob = null, spriteUrl = null;
+      var copyRevision = 0, copyTimer = 0, copyButton = null, copyRestoreKey = null;
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg;
@@ -961,6 +962,7 @@
       }
 
       function hideSprite() {
+        resetCopy();
         spriteOutEl.hidden = true;
         if (spriteUrl) { URL.revokeObjectURL(spriteUrl); spriteUrl = null; }
         spriteBlob = null;
@@ -1030,6 +1032,7 @@
 
       function resetState() {
         loadToken++;
+        fileInput.value = '';
         frames = [];
         selected = [];
         W = 0; H = 0; base = 'animation';
@@ -1127,32 +1130,35 @@
         if (window.trackTool) window.trackTool(SLUG, 'decode');
       }
 
-      function frameBlob(i) {
+      function frameBlob(i, options) {
         workCtx.putImageData(new ImageData(frames[i].rgba, W, H), 0, 0);
-        if (prefs.format === 'jpg') {
+        if (options.format === 'jpg') {
           if (!flatCanvas) {
             flatCanvas = document.createElement('canvas');
             flatCanvas.width = W; flatCanvas.height = H;
             flatCtx = flatCanvas.getContext('2d');
           }
-          flatCtx.fillStyle = prefs.bg;
+          flatCtx.fillStyle = options.bg;
           flatCtx.fillRect(0, 0, W, H);
           flatCtx.drawImage(workCanvas, 0, 0);
-          return canvasToBlob(flatCanvas, 'image/jpeg', prefs.quality / 100);
+          return canvasToBlob(flatCanvas, 'image/jpeg', options.quality / 100);
         }
         return canvasToBlob(workCanvas, 'image/png');
       }
 
-      function extName() { return prefs.format === 'jpg' ? 'jpg' : 'png'; }
+      function extName(format) { return format === 'jpg' ? 'jpg' : 'png'; }
 
       async function downloadFrame(i) {
         if (busy || !frames[i]) return;
+        var token = loadToken;
+        var options = { format: prefs.format, quality: prefs.quality, bg: prefs.bg };
+        var name = frameFileName(base, i + 1, frames.length, extName(options.format));
         setBusy(true);
-        var blob = await frameBlob(i);
-        setBusy(false);
-        if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
-        downloadBlob(blob, frameFileName(base, i + 1, frames.length, extName()));
-        setStatus(fmt(t.statusFrameDone, { n: i + 1 }), 'success');
+        var blob = await frameBlob(i, options);
+        if (token === loadToken) setBusy(false);
+        if (!blob) { if (token === loadToken) setStatus(t.statusExportFailed, 'error'); return; }
+        downloadBlob(blob, name);
+        if (token === loadToken) setStatus(fmt(t.statusFrameDone, { n: i + 1 }), 'success');
         if (window.trackTool) window.trackTool(SLUG, 'frame');
       }
 
@@ -1161,14 +1167,15 @@
         var idxs = selectedIndices();
         if (!idxs.length) { setStatus(t.statusNoSelection, 'error'); return; }
         var token = loadToken;
+        var options = { format: prefs.format, quality: prefs.quality, bg: prefs.bg };
         setBusy(true);
         var files = [];
         for (var k = 0; k < idxs.length; k++) {
           setStatus(fmt(t.statusEncoding, { i: k + 1, n: idxs.length }), 'info');
-          var blob = await frameBlob(idxs[k]);
+          var blob = await frameBlob(idxs[k], options);
           if (token !== loadToken) return;
           if (!blob) { setBusy(false); setStatus(t.statusExportFailed, 'error'); return; }
-          files.push({ name: frameFileName(base, idxs[k] + 1, frames.length, extName()), data: new Uint8Array(await blob.arrayBuffer()) });
+          files.push({ name: frameFileName(base, idxs[k] + 1, frames.length, extName(options.format)), data: new Uint8Array(await blob.arrayBuffer()) });
           if (token !== loadToken) return;
         }
         var zip = zipStore(files);
@@ -1198,8 +1205,8 @@
         }
         var blob = await canvasToBlob(sheet, 'image/png');
         sheet.width = 0; sheet.height = 0;
-        setBusy(false);
         if (token !== loadToken) return;
+        setBusy(false);
         if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
         spriteBlob = blob;
         spriteUrl = URL.createObjectURL(blob);
@@ -1214,16 +1221,38 @@
         if (window.trackTool) window.trackTool(SLUG, 'sprite');
       }
 
+      function resetCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = 0;
+        if (copyButton) copyButton.textContent = t[copyRestoreKey];
+        copyButton = null;
+      }
+
       function copyText(text, btn, restoreKey) {
+        resetCopy();
+        var request = copyRevision, token = loadToken;
+        copyButton = btn;
+        copyRestoreKey = restoreKey;
+        function current() { return request === copyRevision && token === loadToken; }
+        function failed() { if (current()) setStatus(t.statusCopyFailed, 'error'); }
         function done() {
+          if (!current()) return;
           btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t[restoreKey]; }, 1500);
+          if (statusEl.textContent === t.statusCopyFailed) setStatus('', 'none');
+          copyTimer = setTimeout(function () {
+            if (!current()) return;
+            btn.textContent = t[restoreKey];
+            copyTimer = 0;
+          }, 1500);
         }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(done, function () { setStatus(t.statusCopyFailed, 'error'); });
-        } else {
-          setStatus(t.statusCopyFailed, 'error');
-        }
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            Promise.resolve(navigator.clipboard.writeText(text)).then(done, failed);
+          } else {
+            failed();
+          }
+        } catch (e) { failed(); }
       }
 
       /* ── Input: drop zone click / keyboard / drag / paste ── */
@@ -1329,6 +1358,13 @@
         resetState();
         setStatus('', 'none');
         dropEl.focus();
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l' || !wrapEl.contains(document.activeElement)) return;
+        e.preventDefault();
+        resetState();
+        setStatus('', 'none');
       });
 
       loadPrefs();
