@@ -242,6 +242,42 @@ for(const lang of ['en','zh','ja','ko']){
 for(const order of ['before','after']){
  const p=page(spec,'en',order);p.$('mtg-canonical').value='';p.$('mtg-og-image').value='';p.$('mtg-tw-image').value='';p.key('mtg-title');eq(order+' v2 empty platform state follows exact render conditions',p.document.querySelector('.mtg-platform-view').getAttribute('data-empty'),'true');check(order+' v2 retained settings keep robots output',p.$('mtg-output').textContent.includes('name="robots"')&&!p.$('mtg-copy').disabled);p.input('mtg-title','Back');eq(order+' v2 input restores platform state',p.document.querySelector('.mtg-platform-view').getAttribute('data-empty'),'false');p.input('mtg-title','');p.input('mtg-description','');p.input('mtg-tw-image','https://example.com/twitter-only.png');eq(order+' v2 Twitter image alone preserves old empty strategy',p.document.querySelector('.mtg-platform-view').getAttribute('data-empty'),'true');
 }
+// A fixed-size budget protects the phone result opening without changing editable targets.
+const cssTree = createRequire(join(root, 'package.json'))('postcss').parse(cssV2.replace(/^<style[^>]*>/, '').replace(/<\/style>[\s\S]*$/, ''));
+function phoneDeclarations(selector) {
+  const values = {};
+  cssTree.walkRules(rule => {
+    if (!rule.selectors.includes(selector)) return;
+    for (let parent = rule.parent; parent; parent = parent.parent) {
+      if (parent.type !== 'atrule' || parent.name !== 'media') continue;
+      const max = parent.params.match(/max-width:\s*([\d.]+)px/);
+      const min = parent.params.match(/min-width:\s*([\d.]+)px/);
+      if (max && 390 > Number(max[1]) || min && 390 < Number(min[1])) return;
+    }
+    rule.walkDecls(decl => { values[decl.prop] = decl.value; });
+  });
+  return values;
+}
+function phonePixels(value) {
+  const match = String(value).match(/^([\d.]+)(px|rem|em)?$/);
+  return match ? Number(match[1]) * (match[2] === 'rem' || match[2] === 'em' ? 16 : 1) : NaN;
+}
+const phoneRail = phoneDeclarations('.mtg-rail');
+const phoneStatus = phoneDeclarations('.mtg-status-slot');
+const phoneDescription = phoneDeclarations('.mtg-rail > .mtg-field .tool-textarea');
+const phoneNotice = phoneDeclarations('.mtg-network-notice');
+const phonePrimary = phoneDeclarations('.mtg-rail > .mtg-field .tool-input');
+const phoneCopy = phoneDeclarations('.mtg-actions .btn-copy');
+const phonePlatform = phoneDeclarations('.mtg-platform-view');
+const phoneBudget = phonePixels(phoneStatus['min-height']) + phonePixels(phoneDescription.height) +
+  4 * phonePixels(phoneRail.gap) + 3 * phonePixels(phoneNotice['font-size']) * Number(phoneNotice['line-height']);
+check('phone initial rail and notice budget keeps result opening space and 44px edit/actions',
+  Number.isFinite(phoneBudget) && phoneBudget <= 135 && phonePixels(phoneStatus['min-height']) >= 16 &&
+  phonePixels(phoneDescription.height) >= 44 && phonePixels(phoneDescription['min-height']) >= 44 &&
+  phonePixels(phonePrimary['min-height']) >= 44 && phonePixels(phoneCopy['min-height']) >= 44 &&
+  phonePixels(phonePlatform['flex-basis']) >= 256,
+  { fixedSizeBudget: phoneBudget, requiredMaximum: 135, platformArea: phonePixels(phonePlatform['flex-basis']) });
+
 const report={slug:'meta-tag-generator',counts:{PASS:passes,FAIL:failures},baselineRetained,featureChecks:passes-baselineRetained,defaultLiveDistDetectionRetained:true};
 if(process.env.ZT_FEATURE_REPORT)writeFileSync(process.env.ZT_FEATURE_REPORT,JSON.stringify(report,null,2)+'\n');
 
