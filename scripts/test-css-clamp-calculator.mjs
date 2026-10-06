@@ -32,7 +32,7 @@ const asyncErrors = [];
 process.on('unhandledRejection', error => asyncErrors.push(String(error)));
 function open(lang = 'en', order = 'after', saved = null) {
   const L = labels[lang], esc = v => String(v).replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;');
-  let html = source.replace(/^---\n[\s\S]*?\n---/, '').replace(/<script(?:\s[^>]*)?>[\s\S]*?<\/script>/g,'').replace(/<style(?:\s[^>]*)?>[\s\S]*?<\/style>/g,'').replace(/<Toggletip\s[^>]*\/>/g,'');
+  let html = source.replace(/^---\n[\s\S]*?\n---/, '').replace(/<script(?:\s[^>]*)?>[\s\S]*?<\/script>/g,'').replace(/<style(?:\s[^>]*)?>[\s\S]*?<\/style>/g,'').replace(/<Toggletip\s[^>]*>[\s\S]*?<\/Toggletip>/g,'').replace(/<Toggletip\s[^>]*\/>/g,'');
   html = html.replace(/=\{L\.([\w]+)\}/g,(_,key)=>'="'+esc(L[key])+'"').replace(/\{L\.([\w]+)\}/g,(_,key)=>esc(L[key]));
   const win = domino.createWindow('<html lang="'+lang+'"><body><div class="tool-widget">'+html+'</div><input id="outside" type="text"></body></html>');
   const doc = win.document;
@@ -119,4 +119,45 @@ check('client self assertions',open().assertions.every(a=>a.ok));
 check('no unhandled promises',asyncErrors.length===0,asyncErrors.join(';'));
 
 
-console.log(`${passes} passed, ${failures} failed`);process.exit(failures?1:0);
+
+check('registered generate layout',readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8').includes("  'css-clamp-calculator': 'generate',"));
+
+// v2 layout and SSR text: the runtime checks above still drive the actual candidate.
+const tipKeys=["property", "unit", "root", "min", "max", "start", "end", "preview", "copyCss", "copyValue", "reset"];
+
+const { parse } = createRequire(createRequire(join(root,'package.json')).resolve('astro/package.json'))('@astrojs/compiler');
+try { const ast=await parse(source);check('Astro candidate syntax',Boolean(ast.ast)); } catch(error){check('Astro candidate syntax',false,String(error));}
+check('SSR strings region',source.includes('// strings:start\nconst STRINGS =')&&source.includes('// strings:end'));
+check('no stale labels identifier',! /\blabels\b/.test(source.split('\n---')[0]));
+const actualFrontmatter=/^---\n([\s\S]*?)\n---/.exec(source)[1];
+const actualStrings=/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/.exec(actualFrontmatter)[1];
+const actualFallback=/const L = [^\n]+/.exec(actualFrontmatter)[0];
+const fallback=vm.runInNewContext(actualStrings+'\nconst lang="unrecognized";'+actualFallback+'\n;L');
+eq('actual frontmatter fallback resolves English',fallback,labels.en);
+check('Toggletip import',source.includes("import Toggletip from '../Toggletip.astro'"));
+const bindings=[...source.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.\w+\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g)];
+eq('one real binding per tip',bindings.map(m=>m[2]).sort(),tipKeys.slice().sort());check('unique tip IDs',new Set(bindings.map(m=>m[1])).size===bindings.length);
+for(const lang of langKeys){
+  const L=labels[lang];for(const key of tipKeys)check(lang+' SSR tip '+key,typeof L.tips[key]==='string'&&L.tips[key].trim().length>0);
+  check(lang+' empty explanation',typeof L.empty==='string'&&L.empty.trim().length>0);
+  const dir=process.env.ZEROTOOL_QA_MDX_DIR;
+  const mdxPath=dir?join(dir,`b12-${SLUG}-feature-${lang}.mdx`):join(root,'src/content/tools',SLUG,lang+'.mdx');
+  const mdx=readFileSync(mdxPath,'utf8'),fm=/^---\n([\s\S]*?)\n---/.exec(mdx)[1];
+  const region=/steps:\n([\s\S]*?)(?=^\w|$)/m.exec(fm);
+  const steps=region?[...region[1].matchAll(/^  - (.+)$/gm)].map(m=>JSON.parse(m[1])):[];
+  check(lang+' steps present and <=8',steps.length>0&&steps.length<=8);check(lang+' each step <=280',steps.every(step=>step.length<=280));check(lang+' total steps <=1200',steps.join('').length<=1200);check(lang+' plain steps',steps.every(step=>!/<[^>]+>|\*\*|`/.test(step)));check(lang+' steps before FAQ',fm.indexOf('steps:')>=0&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
+}
+const client=source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];check('tips stay out of client data',!client.includes('tips')&&!/data-[\w-]*tip/.test(source.split('<script')[0]));
+check('270-320px desktop rail',/grid-template-columns:\s*clamp\(270px,\s*24vw,\s*320px\)\s*minmax\(0,\s*1fr\)/.test(source));
+check('860px stack breakpoint',/@media \(max-width: 860px\)/.test(source));check('640px phone breakpoint',/@media \(max-width: 640px\)/.test(source));
+check('root flex column and min-height0',/clamp-wrap[^{]*\{[\s\S]*?display: flex;[\s\S]*?flex-direction: column;/.test(source)&&source.includes('.clamp-wrap { flex: 1; min-height: 0; }'));
+check('result bounded desktop',source.includes('.clamp-result { min-width: 0; min-height: 0; overflow: auto; }'));
+check('empty hidden on mobile',source.includes('.clamp-result[data-empty="true"] { display: none; }'));
+check('rail uses shared zt-rail',source.includes('class="clamp-rail zt-rail"'));
+
+check('main controls 44px phone',source.includes('.clamp-field .tool-input, .clamp-action button { min-height: 44px; }'));check('dense range24',source.includes('.clamp-preview-control input { min-height: 24px; }'));check('status reserved',source.includes('#clamp-status { min-height: 2.8em;'));
+check('code length bounded',source.includes('.clamp-output-pre { height: 4.6rem;'));check('raw value internally scrolls',source.includes('.clamp-raw-row .tool-result-value { min-width: 0; overflow: auto; white-space: nowrap; }'));
+const p=open();check('main live preview before exports and curve',source.indexOf('aria-labelledby="clamp-live-title"')<source.indexOf('aria-labelledby="clamp-output-title"')&&source.indexOf('aria-labelledby="clamp-output-title"')<source.indexOf('<details class="clamp-details">'));
+eq('three independent buttons retained',p.doc.querySelectorAll('#clamp-copy-css,#clamp-copy-value,#clamp-reset').length,3);check('secondary curve/sample folded',!p.doc.querySelector('.clamp-details').hasAttribute('open'));p.input('clamp-root',0);eq('invalid empty signal',p.el('clamp-result').dataset.empty,'true');check('invalid explanation visible',!p.el('clamp-empty').hidden);p.input('clamp-root',16);eq('real input restores preview',p.el('clamp-result').dataset.empty,'false');check('real result content restored',!p.el('clamp-result-content').hidden);
+for(const lang of langKeys){const mdx=readFileSync(process.env.ZEROTOOL_QA_MDX_DIR?join(process.env.ZEROTOOL_QA_MDX_DIR,`b12-${SLUG}-feature-${lang}.mdx`):join(root,'src/content/tools',SLUG,lang+'.mdx'),'utf8');check(lang+' default formula retained',mdx.includes('<pre><code>'+open(lang).text('clamp-declaration')+'</code></pre>'));}
+console.log(`\n${passes} passed, ${failures} failed`);process.exit(failures?1:0);
