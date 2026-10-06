@@ -468,7 +468,16 @@ checkPage(barcode,'v2 tips remain outside client',!source.slice(source.indexOf('
 checkPage(barcode,'v2 keeps four business buttons', ['bcode-copy','bcode-png','bcode-svg','bcode-reset'].every(id=>source.includes('id="'+id+'"')),true);
 checkPage(barcode,'v2 Appearance native disclosure is closed',/<details class="bcode-appearance">/.test(source),true);
 checkPage(barcode,'v2 phone empty preview hides and targets 44/24',source.includes('@media (max-width: 860px)')&&source.includes('@media (max-width: 640px)')&&source.includes('min-height: 44px')&&source.includes('min-height: 24px')&&source.includes('.bcode-wrap[data-empty="true"] .bcode-preview-card { display: none; }'),true);
-checkPage(barcode,'v2 reserved status 2.8em',source.includes('min-height: 2.8em'),true);
+const phoneRules=source.match(/@media \(max-width: 640px\) \{([\s\S]*?)\n  \}/)?.[1]||'';
+const phoneStatus=phoneRules.match(/#bcode-status \{([^}]+)\}/)?.[1]||'';
+checkPage(barcode,'v2 reserved status stays 2.8em with complete phone wording internally scrollable',source.includes('min-height: 2.8em')&&/(?:^|;)\s*height:\s*2\.8em/.test(phoneStatus)&&/overflow:\s*auto/.test(phoneStatus),true);
+const phoneCanvas=phoneRules.match(/\.bcode-canvas \{([^}]+)\}/)?.[1]||'',phoneSvg=phoneRules.match(/\.bcode-canvas svg \{([^}]+)\}/)?.[1]||'';
+checkPage(barcode,'phone short and long SVG share one 120px preview and fit completely',/(?:^|;)\s*height:\s*120px/.test(phoneCanvas)&&/min-height:\s*120px/.test(phoneCanvas)&&/max-height:\s*100%/.test(phoneSvg)&&/flex-shrink:\s*0/.test(phoneSvg),true);
+for(const lang of ['en','zh','ja','ko']){
+ const p=page(barcode,lang),long='QA'.repeat(500);p.input('bcode-symbology','code128','change');p.input('bcode-data',long);
+ checkPage(barcode,lang+' phone long notice remains complete',p.$('bcode-status').textContent,ssr[lang].tooLong.replace('{n}','1000').replace('{max}','48'));
+ const full=svg(p);p.click('#bcode-copy');checkPage(barcode,lang+' phone long preview retains complete SVG and copies every byte',p.$('bcode-canvas').querySelector('svg').getAttribute('aria-label')===long&&p.copies[0].text===full,true);p.copies[0].resolve();await flush();
+}
 if(!/['"]barcode-generator['"]\s*:\s*['"]generate['"]/.test(read('src/data/tool-layouts.ts')))console.log('PENDING: root generate registration, compile and native layout acceptance');
 
 await flush();
