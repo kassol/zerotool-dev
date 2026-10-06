@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'barcode-generator': 'generate',
   'ip-subnet-calculator': 'analyze',
   'mime-type-lookup': 'analyze',
   'css-specificity-calculator': 'analyze',

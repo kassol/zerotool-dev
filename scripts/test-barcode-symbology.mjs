@@ -404,7 +404,7 @@ function page(s,lang='en',order='before'){
  function wrap(n,parent){if(!n.tagName)return{value:n.value||'',parentNode:parent};const e=element(n.tagName,Object.fromEntries((n.attrs||[]).map(a=>[a.name,a.value])));e.parentNode=parent;e.childNodes=(n.childNodes||[]).map(n=>wrap(n,e));if(e.tagName==='TEXTAREA')e.value=e.textContent;return e;}
  const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);
  let markup=s.source.slice(s.source.indexOf('---',3)+3,s.source.indexOf('<script is:inline>')).replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
- {const part=s.source.slice(s.source.indexOf('const labels = '),s.source.indexOf('const L ='));const labels=vm.runInNewContext(part+';labels');const L=labels[lang];markup=markup.replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+L[key].replaceAll('&','&amp;').replaceAll('"','&quot;')+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>L[key]);}
+ {const part=s.source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1];const STRINGS=vm.runInNewContext(part+';STRINGS');const L=STRINGS[lang];markup=markup.replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+L[key].replaceAll('&','&amp;').replaceAll('"','&quot;')+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>L[key]);}
  widget.childNodes=parseFragment(markup).childNodes.map(n=>wrap(n,widget));
  document={body,documentElement:{lang},activeElement:body,createElement:tag=>element(tag),getElementById(id){const e=walk(body).find(e=>e.id===id);if(!e)throw Error('Missing real DOM '+id);return e;},querySelectorAll:q=>body.querySelectorAll(q),querySelector:q=>body.querySelector(q),addEventListener(k,f){(docHandlers[k]||=[]).push(f);},execCommand(command){exec.push({command,text:selection?.value});return false;}};
  class Img{constructor(){images.push(this);this.width=this.naturalWidth=32;this.height=this.naturalHeight=32;}deliver(){this.onload?.();}fail(){this.onerror?.(new Error('controlled image failure'));}}
@@ -447,6 +447,29 @@ for(const outcome of ['resolve','reject']){const p=page(barcode);p.click('#bcode
 {const p=page(barcode);p.globals.navigator.clipboard.writeText=()=>{throw Error('sync copy refusal');};let thrown='';try{p.click('#bcode-copy');}catch(e){thrown=e.message;}await flush();checkPage(barcode,'sync clipboard failure handled',thrown,'');checkPage(barcode,'sync failure visible',p.$('bcode-status').textContent,bFailure.en);}
 {const p=page(barcode);Object.defineProperty(p.globals.navigator,'clipboard',{value:undefined,configurable:true});p.click('#bcode-copy');await flush();checkPage(barcode,'own undefined never reads native clipboard getter',p.nativeClipboardReads,0);}
 {const p=page(barcode);p.click('#bcode-copy');p.copies[0].resolve();await flush();const timer=[...p.timers.values()].find(t=>t.delay===1400);p.input('bcode-data','400638133393');p.click('#bcode-copy');p.copies[1].resolve();await flush();timer.fn();checkPage(barcode,'forced cancelled timer cannot remove current feedback',[p.$('bcode-copy').textContent,p.$('bcode-copy').classList.contains('copied')],[bCopied.en,true]);}
+
+// ---------- v2 page layout ----------
+const ssr=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+for(const lang of ['en','zh','ja','ko']){
+ const L=ssr[lang],p=page(barcode,lang);
+ checkPage(barcode,lang+' v2 initial preview is nonempty',p.document.querySelector('.bcode-wrap').dataset.empty,'false');
+ p.input('bcode-data','');checkPage(barcode,lang+' v2 empty result marker',p.document.querySelector('.bcode-wrap').dataset.empty,'true');
+ p.click('#bcode-reset');checkPage(barcode,lang+' v2 reset restores preview marker',p.document.querySelector('.bcode-wrap').dataset.empty,'false');
+ checkPage(barcode,lang+' v2 eight SSR tip keys',Object.keys(L.tips).sort(),['check','data','export','height','module','reset','symbology','text']);
+ checkPage(barcode,lang+' v2 localized empty sentence',typeof L.empty==='string'&&L.empty.length>0,true);
+ const prefix=process.env.ZT_B13_MDX_PREFIX,mdx=readFileSync(prefix?prefix+'-'+lang+'.mdx':join(root,'src/content/tools/barcode-generator',lang+'.mdx'),'utf8');
+ const y=req('js-yaml').load(mdx.split('---')[1]);checkPage(barcode,lang+' v2 valid steps before FAQ',Array.isArray(y.steps)&&y.steps.length<=8&&y.steps.every(x=>x.length<=280)&&y.steps.join('').length<=1200&&mdx.indexOf('steps:')<mdx.indexOf('faqItems:'),true);
+ checkPage(barcode,lang+' v2 Usage removed',!/<h2>(?:How to generate a barcode|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);
+}
+checkPage(barcode,'v2 shared rail and bounded columns',source.includes('bcode-rail zt-rail')&&source.includes('grid-template-columns: 300px minmax(0, 1fr)')&&source.includes('overflow: auto'),true);
+checkPage(barcode,'v2 state before main input',source.indexOf('id="bcode-status"')<source.indexOf('id="bcode-data"'),true);
+checkPage(barcode,'v2 eight static tip instances',[...source.matchAll(/<Toggletip id="bcode-tip-/g)].length,8);
+checkPage(barcode,'v2 tips remain outside client',!source.slice(source.indexOf('<script is:inline>'),source.indexOf('</script>',source.indexOf('<script is:inline>'))).includes('tips'),true);
+checkPage(barcode,'v2 keeps four business buttons', ['bcode-copy','bcode-png','bcode-svg','bcode-reset'].every(id=>source.includes('id="'+id+'"')),true);
+checkPage(barcode,'v2 Appearance native disclosure is closed',/<details class="bcode-appearance">/.test(source),true);
+checkPage(barcode,'v2 phone empty preview hides and targets 44/24',source.includes('@media (max-width: 860px)')&&source.includes('@media (max-width: 640px)')&&source.includes('min-height: 44px')&&source.includes('min-height: 24px')&&source.includes('.bcode-wrap[data-empty="true"] .bcode-preview-card { display: none; }'),true);
+checkPage(barcode,'v2 reserved status 2.8em',source.includes('min-height: 2.8em'),true);
+if(!/['"]barcode-generator['"]\s*:\s*['"]generate['"]/.test(read('src/data/tool-layouts.ts')))console.log('PENDING: root generate registration, compile and native layout acceptance');
 
 await flush();
 checkPage(specs[0],'all page async failures handled',unhandled,[]);
