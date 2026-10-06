@@ -151,6 +151,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'uuid-generator': 'generate',
   'gif-compressor': 'generate',
   'ulid-generator': 'generate',
+  'image-splitter': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {

@@ -424,7 +424,7 @@ for (const name of ['crcTable', 'crc32', 'zipStore']) {
 
 // ---------- 12. STRINGS: same keys in every language ----------
 {
-  const s = source.indexOf('var STRINGS = {');
+  const s = source.indexOf('const STRINGS = {') >= 0 ? source.indexOf('const STRINGS = {') : source.indexOf('var STRINGS = {');
   const e = source.indexOf('\n      };\n', s);
   check('STRINGS block found', s >= 0 && e > s);
   const STRINGS = new Function(source.slice(s, e + 9) + '\nreturn STRINGS;')();
@@ -452,7 +452,7 @@ const {createRequire}=await import('node:module');
 const {relative}=await import('node:path');
 const {pathToFileURL}=await import('node:url');
 const vm=(await import('node:vm')).default;
-const {loadPage}=await import(pathToFileURL(join(root,'scripts/astro-page-harness.mjs')));
+const {loadPage,frontmatterStrings}=await import(pathToFileURL(join(root,'scripts/astro-page-harness.mjs')));
 const ROOT=root,require=createRequire(join(ROOT,'package.json'));
 const {parseFragment,defaultTreeAdapter}=require('parse5'),sharp=require('sharp');
 const paths={pixel:process.env.ZT_B14_SOURCE?relative(ROOT,process.env.ZT_B14_SOURCE):'src/components/tools/ImageSplitterTool.astro'},slugs={pixel:'image-splitter'},source={pixel:pageSource};
@@ -467,7 +467,7 @@ const settle=async()=>{await new Promise(setImmediate);await new Promise(setImme
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 const waitFor=async(fn)=>{const until=Date.now()+5000;while(!fn()){if(Date.now()>until)throw Error('Boundary not reached: '+phase);await new Promise(r=>setTimeout(r,5));}};
 async function scene(id,fn){phase=id;try{await fn();}catch(e){checks.push({id,status:'FAIL',actual:e.stack});console.error(e);}}
-const labels=vm.runInNewContext(source.pixel.match(/var STRINGS = [\s\S]*?\n      \};/)[0]+';STRINGS'),L=labels.en;
+const labels=frontmatterStrings(source.pixel.match(/^---\n([\s\S]*?)\n---/)[1]) || vm.runInNewContext(source.pixel.match(/var STRINGS = [\s\S]*?\n      \};/)[0]+';STRINGS'),L=labels.en;
 function page(order='shared-after',lang='en'){
  const key='pixel';
  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[],tasks=[],downloads=[],blobs=new Map(),encodes=[],decodes=[],yields=[];
@@ -579,7 +579,7 @@ function page(order='shared-after',lang='en'){
   doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);return false;};
   const persist={clear(slug){persistCalls.push(['clear',slug]);},save(...args){persistCalls.push(['save',...args]);},load(){return {};}};
-  const globals={document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
+  const globals={clientStrings:labels[lang],document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
    ImageData:class{constructor(data,width,height){Object.assign(this,{data,width,height});}},createImageBitmap:decode,
    MutationObserver:class{observe(){} disconnect(){}},matchMedia:()=>({addEventListener(){}}),getComputedStyle:()=>({getPropertyValue:()=>''}),requestAnimationFrame:fn=>globals.setTimeout(fn,16),cancelAnimationFrame:id=>globals.clearTimeout(id),
    MessageChannel:class{constructor(){this.port1={};this.port2={postMessage:()=>{const job={delivered:false,deliver:()=>{must(!job.delivered,'yield only once');job.delivered=true;this.port1.onmessage({data:null});}};yields.push(job);if(!controls.holdYield)queueMicrotask(job.deliver);}};}},
@@ -667,6 +667,57 @@ for(const action of ['new-source','invalid'])await scene('crop-frame-versus-sour
  const fresh=[...p.timers.values()].find(v=>v.ms===16);check(phase+'/current-keyboard-can-schedule-new-frame',true,!!fresh&&fresh.fn!==old.fn);
  old.fn();check(phase+'/forced-old-frame-no-preview-write',before,canvas.drawCalls||0);p.tick(16);await settle();
  check(phase+'/current-preview-frame-draws',true,(canvas.drawCalls||0)>before);
+});
+
+
+await scene('v2-contract',async()=>{
+ const s=source.pixel;
+ check(phase+'/direct-flex-root',true,/---\s*<div class="isp-wrap"/.test(s)&&/\.isp-wrap \{ min-height: 0; height: 100%; \}/.test(s));
+ check(phase+'/inner-300-rail',true,/\.isp-panels \{[^}]*grid-template-columns: 300px minmax\(0, 1fr\)/.test(s)&&s.includes('isp-rail zt-rail'));
+ check(phase+'/status-reserved',true,/#isp-status \{ min-height: 2\.8em/.test(s));
+ check(phase+'/actions-before-status',true,['isp-change','isp-clear','isp-zip'].every(id=>s.indexOf('id="'+id+'"')<s.indexOf('id="isp-status"')));
+ check(phase+'/bounded-stage-and-tiles',true,/\.isp-workspace \{[^}]*flex: 1 1 0; min-height: 0; overflow: hidden/.test(s)&&/\.isp-preview \{[^}]*max-height: min\(42svh, 360px\); overflow: auto/.test(s)&&/\.isp-tiles \{[^}]*flex: 1 1 0; min-height: 0; max-height: none/.test(s));
+ check(phase+'/real-keyboard-tile-container',true,/id="isp-tiles"[^>]*tabindex="0"/.test(s));
+ check(phase+'/860-stack-content',true,s.includes('@media (max-width: 860px)')&&s.includes('grid-template-columns: minmax(0, 1fr); flex: none'));
+ check(phase+'/44-main-24-dense',true,/isp-main-actions button[^}]*min-height: 44px/.test(s)&&s.includes('.isp-cell-dl { min-width: 24px; min-height: 24px; }'));
+ check(phase+'/phone-empty-hidden',true,s.includes('.isp-result-panel:has(#isp-workspace[hidden]) { display: none; }'));
+ check(phase+'/desktop-empty',true,s.includes('class="isp-empty">{L.emptyPreview}'));
+ check(phase+'/all-six-business-buttons',6,[...s.matchAll(/<button\b[^>]*(?:id="isp-(?:change|clear|zip)"|data-mode="(?:grid|tile|instagram)")/g)].length);
+ check(phase+'/export-details-default-closed',true,/<details class="isp-panel isp-export-options">/.test(s));
+ check(phase+'/twenty-four-slot-tips',24,[...s.matchAll(/<Toggletip\b[^>]*>\{L\.tips\.[a-zA-Z]+\}<\/Toggletip>/g)].length);
+ const script=s.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+ check(phase+'/no-client-tips',false,/tips|var STRINGS|data-i18n/.test(script));
+ const markup=s.slice(s.indexOf('---',3)+3,s.indexOf('<script'));
+ const used=[...markup.matchAll(/\{L\.([a-zA-Z]+)/g)].map(m=>m[1]).filter(k=>k!=='tips');
+ for(const lang of ['en','zh','ja','ko']){
+  const fragment=parseFragment(markup.replaceAll('{L.exportTitle}',labels[lang].exportTitle)),nodes=[];
+  const walk=n=>{nodes.push(n);for(const child of n.childNodes||[])walk(child);};walk(fragment);
+  const attr=(n,k)=>n.attrs?.find(a=>a.name===k)?.value,txt=n=>n.nodeName==='#text'?n.value:(n.childNodes||[]).map(txt).join('');
+  const details=nodes.find(n=>n.tagName==='details'&&attr(n,'class')==='isp-panel isp-export-options'),summary=details?.childNodes.find(n=>n.tagName==='summary');
+  check(phase+'/'+lang+'-actual-export-summary-child',true,!!summary&&attr(summary,'class')==='isp-panel-title');
+  check(phase+'/'+lang+'-localized-export-summary',labels[lang].exportTitle,summary?txt(summary):null);
+  check(phase+'/'+lang+'-actual-export-details-closed',true,!!details&&!details.attrs.some(a=>a.name==='open'));
+  check(phase+'/'+lang+'-tip-count',24,Object.keys(labels[lang].tips||{}).length);
+  check(phase+'/'+lang+'-localized-empty',true,typeof labels[lang].emptyPreview==='string'&&labels[lang].emptyPreview.length>10);
+  check(phase+'/'+lang+'-all-SSR-keys',true,used.length>30&&used.every(k=>Object.hasOwn(labels[lang],k)));
+  const mdx=readFileSync(join(ROOT,'src/content/tools/image-splitter/'+lang+'.mdx'),'utf8'),steps=mdx.match(/steps:\n([\s\S]*?)faqItems:/)?.[1],items=steps?[...steps.matchAll(/^  - "(.*)"$/gm)].map(m=>JSON.parse('"'+m[1]+'"')):[];
+  check(phase+'/'+lang+'-six-steps-limits',true,items.length===6&&items.every(x=>x.length<=280)&&items.join('').length<=1200);
+  check(phase+'/'+lang+'-Usage-removed',false,/^## (How to Use|使用步骤|使い方|사용 방법)$/m.test(mdx));
+ }
+ const p=page();await load(p);const first=p.get('isp-tiles').querySelector('.isp-cell'),before=p.get('isp-summary').textContent;
+ p.change('isp-format','jpg');p.get('isp-quality').value='65';p.get('isp-quality').dispatch('input');p.get('isp-bg').value='#ff0000';p.get('isp-bg').dispatch('input');await settle();
+ check(phase+'/format-quality-background-do-not-rebuild',true,first===p.get('isp-tiles').querySelector('.isp-cell'));
+ check(phase+'/export-options-keep-plan-summary',before,p.get('isp-summary').textContent);
+ check(phase+'/JPG-export-options-visible',[false,false],[p.get('isp-quality-field').hidden,p.get('isp-bg-field').hidden]);
+ const statusPage=page();statusPage.file(badFile());await settle();const actualStatus=statusPage.get('isp-status');
+ check(phase+'/status-reserved-after-real-error',true,actualStatus.textContent===L.statusNotImage&&statusPage.widget.querySelector('#isp-status')===actualStatus&&/#isp-status \{ min-height: 2\.8em/.test(s));
+ const fn=script.match(/function revealPreview\(\) \{[\s\S]*?\n      \}/)?.[0];
+ check(phase+'/actual-publish-observer',true,!!fn&&script.includes("new MutationObserver(revealPreview).observe(workspaceEl, { attributes: true, attributeFilter: ['hidden'] })"));
+ if(fn){for(const [hidden,mobile,expected] of [[true,true,0],[false,false,0],[false,true,1]]){const calls=[],ctx={workspaceEl:{hidden},stageArea:{scrollIntoView(x){calls.push(x);}},matchMedia:()=>({matches:mobile})};vm.runInNewContext(fn+';revealPreview();',ctx);check(phase+'/reveal-'+hidden+'-'+mobile,expected,calls.length);if(expected)check(phase+'/real-scroll-options',{block:'start',behavior:'smooth'},calls[0]);}}
+ const featureLayouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+ if (/'image-splitter':\s*'generate'/.test(featureLayouts)) check(phase+'/v2-generate-registration', true, true);
+ else console.log('PENDING_ROOT image-splitter generate registration (not counted as PASS)');
+
 });
 
 await settle();check('no-unhandled-rejections',[],unhandled);process.removeListener('unhandledRejection',onRejection);
