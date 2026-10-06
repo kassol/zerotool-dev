@@ -258,6 +258,7 @@
       var isPasted = false;
       var dragging = false, dragStart = null, dragCurrent = null, rafScheduled = false;
       var state = { blockSize: 16, blurRadius: 12, fillColor: '#000000' };
+      var imageRevision = 0, feedbackRevision = 0, draftFrame = 0;
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg;
@@ -359,7 +360,10 @@
       function scheduleDraftRender() {
         if (rafScheduled) return;
         rafScheduled = true;
-        requestAnimationFrame(function () {
+        var token = imageRevision;
+        draftFrame = requestAnimationFrame(function () {
+          if (token !== imageRevision) return;
+          draftFrame = 0;
           rafScheduled = false;
           if (!dragging) return;
           render(ctx, true);
@@ -439,11 +443,17 @@
       }
 
       function processImage(file, pasted) {
+        var token = ++imageRevision;
+        feedbackRevision++;
+        cancelDraft();
         if (!file || file.type.indexOf('image/') !== 0) {
           setStatus(t.statusNotImage, 'error');
           return;
         }
         loadBitmap(file).then(function (bmp) {
+          if (token !== imageRevision) { if (bmp && bmp.close) bmp.close(); return; }
+          imageRevision++;
+          feedbackRevision++;
           if (bitmap && bitmap.close) bitmap.close();
           bitmap = bmp;
           imgSource = bmp._img || bmp;
@@ -461,7 +471,7 @@
           updateDimStatus();
           setStatus('', 'info');
         }).catch(function () {
-          setStatus(t.statusDecodeFailed, 'error');
+          if (token === imageRevision) setStatus(t.statusDecodeFailed, 'error');
         });
       }
 
@@ -547,36 +557,43 @@
       downloadBtn.addEventListener('click', function () {
         if (!imgSource) return;
         var mime = formatSelect.value;
+        var token = imageRevision, request = ++feedbackRevision;
+        var names = { 'image/png': outputFileName('image/png'), 'image/jpeg': outputFileName('image/jpeg'), 'image/webp': outputFileName('image/webp') };
         exportBlob(mime).then(function (blob) {
-          if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
+          if (!blob) { if (token === imageRevision && request === feedbackRevision) setStatus(t.statusExportFailed, 'error'); return; }
           var url = URL.createObjectURL(blob);
           var a = document.createElement('a');
           a.href = url;
-          a.download = outputFileName(blob.type); // Safari encodes unsupported WebP as PNG
+          a.download = names[blob.type] || names['image/png']; // Safari encodes unsupported WebP as PNG
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-          setStatus(t.statusDownloaded, 'success');
+          if (token === imageRevision && request === feedbackRevision) setStatus(t.statusDownloaded, 'success');
           if (window.trackTool) window.trackTool('pixelate-image', 'download');
         });
       });
 
       copyBtn.addEventListener('click', function () {
         if (!imgSource) return;
-        if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
-          setStatus(t.statusCopyUnsupported, 'error');
-          return;
-        }
+        var token = imageRevision, request = ++feedbackRevision;
+        function current() { return token === imageRevision && request === feedbackRevision; }
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === 'undefined') {
+            setStatus(t.statusCopyUnsupported, 'error');
+            return;
+          }
+        } catch (e) { setStatus(t.statusCopyFailed, 'error'); return; }
         exportBlob('image/png').then(function (blob) {
-          if (!blob) { setStatus(t.statusExportFailed, 'error'); return Promise.reject(new Error('handled')); }
-          return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        }).then(function () {
-          setStatus(t.statusCopied, 'success');
-          if (window.trackTool) window.trackTool('pixelate-image', 'copy');
-        }).catch(function (err) {
-          if (err && err.message === 'handled') return;
-          setStatus(t.statusCopyFailed, 'error');
+          if (!current()) return;
+          if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
+          return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(function () {
+            if (!current()) return;
+            setStatus(t.statusCopied, 'success');
+            if (window.trackTool) window.trackTool('pixelate-image', 'copy');
+          });
+        }).catch(function () {
+          if (current()) setStatus(t.statusCopyFailed, 'error');
         });
       });
 
@@ -587,7 +604,19 @@
         fullRender();
       });
 
-      clearBtn.addEventListener('click', function () {
+      function cancelDraft() {
+        cancelAnimationFrame(draftFrame);
+        draftFrame = 0;
+        rafScheduled = false;
+        dragging = false;
+        dragStart = null;
+        dragCurrent = null;
+      }
+
+      function clearImage() {
+        imageRevision++;
+        feedbackRevision++;
+        cancelDraft();
         if (bitmap && bitmap.close) bitmap.close();
         bitmap = null; imgSource = null; W = 0; H = 0; areas = [];
         origName = null; isPasted = false;
@@ -598,7 +627,15 @@
         actionsEl.hidden = true;
         ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
         canvasEl.width = 0; canvasEl.height = 0;
+        dimStatusEl.textContent = '';
         setStatus('', 'info');
+      }
+      clearBtn.addEventListener('click', clearImage);
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l' || !wrapEl.contains(document.activeElement)) return;
+        e.preventDefault();
+        clearImage();
       });
 
       /* Dashed outlines read --color-primary at draw time; redraw on theme change. */
