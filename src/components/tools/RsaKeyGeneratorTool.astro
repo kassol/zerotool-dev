@@ -5,6 +5,7 @@ const { lang = 'en' } = Astro.props;
 
 const labels = {
   en: {
+    copyFailed: 'Copy failed. Try again.',
     badge: 'Your keys never leave this browser',
     keySize: 'Key Size',
     algorithm: 'Algorithm',
@@ -22,6 +23,7 @@ const labels = {
     msgError: 'Error: ',
   },
   zh: {
+    copyFailed: '复制失败，请重试。',
     badge: '密钥不会离开浏览器',
     keySize: '密钥长度',
     algorithm: '算法',
@@ -39,6 +41,7 @@ const labels = {
     msgError: '错误：',
   },
   ja: {
+    copyFailed: 'コピーに失敗しました。再試行してください。',
     badge: '鍵はこのブラウザ外に出ません',
     keySize: '鍵のサイズ',
     algorithm: 'アルゴリズム',
@@ -56,6 +59,7 @@ const labels = {
     msgError: 'エラー：',
   },
   ko: {
+    copyFailed: '복사하지 못했습니다. 다시 시도하세요.',
     badge: '키는 이 브라우저를 벗어나지 않습니다',
     keySize: '키 크기',
     algorithm: '알고리즘',
@@ -81,6 +85,7 @@ const L = labels[lang];
   data-generate={L.generate}
   data-generating={L.generating}
   data-copy={L.copy}
+  data-copy-failed={L.copyFailed}
   data-copied={L.copied}
   data-msg-generating={L.msgGenerating}
   data-msg-success={L.msgSuccess}
@@ -157,6 +162,7 @@ const L = labels[lang];
       var GENERATING = wrap ? wrap.dataset.generating : 'Generating…';
       var COPY = wrap ? wrap.dataset.copy : 'Copy';
       var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
+      var COPY_FAILED = wrap.dataset.copyFailed;
       var MSG_GENERATING = wrap ? wrap.dataset.msgGenerating : 'Generating {bits}-bit key pair…';
       var MSG_SUCCESS = wrap ? wrap.dataset.msgSuccess : 'Key pair generated successfully.';
       var MSG_ERROR = wrap ? wrap.dataset.msgError : 'Error: ';
@@ -197,15 +203,49 @@ const L = labels[lang];
         setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
       }
 
-      function copyBtn(btn, text) {
-        navigator.clipboard.writeText(text).then(function () {
-          var prev = btn.textContent;
-          btn.textContent = COPIED;
-          setTimeout(function () { btn.textContent = prev; }, 1500);
-        });
+      var copyStates = new Map();
+      function resetCopy(btn, label) {
+        var previous = copyStates.get(btn);
+        if (previous) clearTimeout(previous.timer);
+        var state = { timer: null };
+        copyStates.set(btn, state);
+        btn.textContent = label;
+        return state;
       }
-
+      function copyText(btn, text, label, copied, delay) {
+        if (!text || btn.disabled) return;
+        var state = resetCopy(btn, label);
+        function current() { return copyStates.get(btn) === state; }
+        function failed() { if (current()) btn.textContent = COPY_FAILED; }
+        try {
+          if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') { failed(); return; }
+          Promise.resolve(navigator.clipboard.writeText(text)).then(function () {
+            if (!current()) return;
+            btn.textContent = copied;
+            state.timer = setTimeout(function () { if (current()) btn.textContent = label; }, delay);
+          }, failed);
+        } catch (e) { failed(); }
+      }
+      var generationVersion = 0;
+      var generatedFormat = null;
+      var pubCopy = document.getElementById('rkg-pub-copy');
+      var privCopy = document.getElementById('rkg-priv-copy');
+      var pubDownload = document.getElementById('rkg-pub-dl');
+      var privDownload = document.getElementById('rkg-priv-dl');
+      function clearResults() {
+        pubOut.value = '';
+        privOut.value = '';
+        pubBlock.style.display = 'none';
+        privBlock.style.display = 'none';
+        generatedFormat = null;
+        resetCopy(pubCopy, COPY);
+        resetCopy(privCopy, COPY);
+        pubCopy.disabled = privCopy.disabled = pubDownload.disabled = privDownload.disabled = true;
+      }
+      clearResults();
       document.getElementById('rkg-generate').addEventListener('click', async function () {
+        var version = ++generationVersion;
+        clearResults();
         var keysize = parseInt(document.getElementById('rkg-keysize').value);
         var algo = document.getElementById('rkg-algo').value;
         var format = document.getElementById('rkg-format').value;
@@ -232,21 +272,28 @@ const L = labels[lang];
             true,
             usages
           );
+          if (version !== generationVersion) return;
 
           var pubText, privText;
 
           if (format === 'pem') {
             var pubDer = await crypto.subtle.exportKey('spki', keyPair.publicKey);
+            if (version !== generationVersion) return;
             var privDer = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
+            if (version !== generationVersion) return;
             pubText = wrapPem(ab2b64(pubDer), 'PUBLIC KEY');
             privText = wrapPem(ab2b64(privDer), 'PRIVATE KEY');
           } else {
             var pubJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+            if (version !== generationVersion) return;
             var privJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+            if (version !== generationVersion) return;
             pubText = JSON.stringify(pubJwk, null, 2);
             privText = JSON.stringify(privJwk, null, 2);
           }
 
+          generatedFormat = format;
+          pubCopy.disabled = privCopy.disabled = pubDownload.disabled = privDownload.disabled = false;
           pubOut.value = pubText;
           privOut.value = privText;
           pubBlock.style.display = '';
@@ -255,29 +302,45 @@ const L = labels[lang];
 
           window.trackTool && window.trackTool('rsa-key-generator', 'generate');
         } catch (e) {
+          if (version !== generationVersion) return;
           setStatus(MSG_ERROR + e.message, true);
         } finally {
+          if (version !== generationVersion) return;
           btn.disabled = false;
           btn.textContent = GENERATE;
         }
       });
 
       document.getElementById('rkg-pub-copy').addEventListener('click', function () {
-        copyBtn(this, pubOut.value);
+        copyText(this, pubOut.value, COPY, COPIED, 1500);
       });
 
       document.getElementById('rkg-priv-copy').addEventListener('click', function () {
-        copyBtn(this, privOut.value);
+        copyText(this, privOut.value, COPY, COPIED, 1500);
       });
 
       document.getElementById('rkg-pub-dl').addEventListener('click', function () {
-        var fmt = document.getElementById('rkg-format').value;
+        var fmt = generatedFormat;
+        if (!fmt) return;
         download('public-key.' + (fmt === 'pem' ? 'pem' : 'json'), pubOut.value);
       });
 
       document.getElementById('rkg-priv-dl').addEventListener('click', function () {
-        var fmt = document.getElementById('rkg-format').value;
+        var fmt = generatedFormat;
+        if (!fmt) return;
         download('private-key.' + (fmt === 'pem' ? 'pem' : 'json'), privOut.value);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var tool = document.querySelector('.rkg-wrap');
+        if (!tool || !tool.contains(document.activeElement)) return;
+        generationVersion++;
+        clearResults();
+        statusEl.textContent = '';
+        statusEl.className = 'rkg-status';
+        var btn = document.getElementById('rkg-generate');
+        btn.disabled = false;
+        btn.textContent = GENERATE;
       });
     })();
   </script>
