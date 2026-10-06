@@ -60,6 +60,8 @@ interface ToolInfo {
 
 ## 变更日志
 
+- 2026-10-06 — B13在tool-layouts.ts新增九个generate登记（清单见根AGENTS.md同日条目），此批后v2登记131/141。tools.ts、icons.ts及联网、存储、敏感策略保持；audit22与564页构建通过，剩余十页及旧版式清理由B14继续。
+
 - 2026-10-02 — 发版收尾复核：实际执行 `HttpHeaderAnalyzerTool.astro` 的 `HEADER_DB` 声明确认 88 项，`tools.ts` 四语言 description 的 100+ 改为 88。
 
 - 2026-04-26 — 初版
