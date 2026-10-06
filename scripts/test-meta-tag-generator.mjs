@@ -15,7 +15,7 @@
 //
 // Run: node scripts/test-meta-tag-generator.mjs
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -25,6 +25,8 @@ import vm from 'node:vm';
 const root = process.env.ZT_TEST_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const { parse, parseFragment } = createRequire(join(root, 'package.json'))('parse5');
 const source = readFileSync(process.env.ZT_FIX_SOURCE || join(root, 'src/components/tools/MetaTagGeneratorTool.astro'), 'utf8');
+const STRINGS = Function(source.split('// strings:start')[1].split('// strings:end')[0] + ';return STRINGS;')();
+const clientKeys = ['copy', 'copied', 'copyFailed', 'fillToPreview'];
 const s = source.indexOf('/* ── engine:start ── */');
 const e = source.indexOf('/* ── engine:end ── */');
 if (s < 0 || e <= s) { console.error('FAIL: engine block not found'); process.exit(1); }
@@ -143,11 +145,11 @@ function page(s,lang='en',order='before'){
   };el.classList={contains:c=>el.className.split(/\s+/).includes(c),add(...c){el.className=[...new Set([...el.className.split(/\s+/).filter(Boolean),...c])].join(' ');},remove(...c){el.className=el.className.split(/\s+/).filter(x=>!c.includes(x)).join(' ');},toggle(c,on){const add=on===undefined?!this.contains(c):on;this[add?'add':'remove'](c);return add;}};return el;
  }
  function wrap(n,parent){if(!n.tagName)return{value:n.value||'',parentNode:parent};const e=element(n.tagName,Object.fromEntries((n.attrs||[]).map(a=>[a.name,a.value])));e.parentNode=parent;e.childNodes=(n.childNodes||[]).map(n=>wrap(n,e));if(e.tagName==='TEXTAREA')e.value=e.textContent;return e;}
- const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);const markup=s.source.slice(s.source.indexOf('---',3)+3,s.source.indexOf('<script is:inline>')).replace(/<style[\s\S]*?<\/style>/g,'').replace(/\{\/\*[\s\S]*?\*\/\}/g,'');widget.childNodes=parseFragment(markup).childNodes.map(n=>wrap(n,widget));
+ const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);const markup=s.source.slice(s.source.indexOf('---',3)+3,s.source.indexOf('<script is:inline')).replace(/<Toggletip[\s\S]*?<\/Toggletip>/g,'').replace(/placeholder=\{L\.([A-Za-z]+)\}/g,(_,key)=>'placeholder="'+String(STRINGS[lang][key]).replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'"').replace(/\{L\.([A-Za-z]+)\}/g,(_,key)=>String(STRINGS[lang][key]).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')).replace(/<style[\s\S]*?<\/style>/g,'').replace(/\{\/\*[\s\S]*?\*\/\}/g,'');widget.childNodes=parseFragment(markup).childNodes.map(n=>wrap(n,widget));
  document={body,documentElement:{lang},activeElement:body,createElement:tag=>element(tag),getElementById(id){const e=walk(body).find(e=>e.id===id);if(!e)throw Error('Missing real DOM '+id);return e;},querySelectorAll:q=>body.querySelectorAll(q),querySelector:q=>body.querySelector(q),addEventListener(k,f){(docHandlers[k]||=[]).push(f);},execCommand(command){exec.push({command,text:selection?.value});return options.fallbackSuccess;}};
  const options={holdDigest:false,fallbackSuccess:false};
  const globals={document,TextEncoder,Uint8Array,URL,isSecureContext:true,btoa:bin=>Buffer.from(bin,'binary').toString('base64'),crypto:{subtle:{digest(algo,bytes){const real=webcrypto.subtle.digest(algo,bytes);const job={algo,input:Buffer.from(bytes).toString('utf8'),ready:false};digests.push(job);if(!options.holdDigest)return real;return new Promise((resolve,reject)=>{job.resolve=()=>resolve(job.value);job.reject=()=>reject(Error('controlled digest rejection'));real.then(value=>{job.value=value;job.ready=true;},reject);});}}},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return null;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),fetch(){throw Error('network forbidden');}};
- const context={...globals,_slug:s.slug};context.window=context;const ctx=vm.createContext(context);if(order==='before')vm.runInContext(shortcut,ctx);vm.runInContext(s.source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1],ctx,{filename:s.file});if(order==='after')vm.runInContext(shortcut,ctx);
+ const context={...globals,_slug:s.slug,CLIENT_T:Object.fromEntries(clientKeys.map(key=>[key,STRINGS[lang][key]]))};context.window=context;const ctx=vm.createContext(context);if(order==='before')vm.runInContext(shortcut,ctx);vm.runInContext(s.source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1],ctx,{filename:s.file});if(order==='after')vm.runInContext(shortcut,ctx);
  const $=id=>document.getElementById(id);return{$,document,window:context,globals,options,copies,digests,exec,saved,cleared,tracks,timers,input(id,value,ev='input'){$(id).focus();$(id).value=value;$(id).dispatch(ev);},click:selector=>{const e=selector.startsWith('#')?$(selector.slice(1)):document.querySelector(selector);if(!e)throw Error('No real selector '+selector);e.click();},key(id){$(id).focus();$(id).dispatch('keydown',{key:'l',ctrlKey:true});},advance(ms){const end=now+ms;for(let g=0;;g++){if(g>100)throw Error('timer runaway');const next=[...timers].filter(([,t])=>t.due<=end).sort((a,b)=>a[1].due-b[1].due)[0];if(!next)break;now=next[1].due;timers.delete(next[0]);next[1].fn();}now=end;},async deliver(n){for(let i=0;!digests[n].ready&&i<30;i++)await flushPage();if(!digests[n].ready)throw Error('real digest not ready');digests[n].resolve();await flushPage();}};
 }
 
@@ -210,5 +212,38 @@ for (const platform of ['facebook', 'twitter', 'discord']) {
   const p = page(spec); p.input('mtg-og-image', 'https://example.com/og.png'); p.input('mtg-tw-image', 'https://example.com/tw.png'); p.click('[data-platform="' + platform + '"]');
   check(platform + ': existing inert img source and lazy network boundary retained', p.$('mtg-preview').innerHTML.includes('src="https://example.com/' + (platform === 'twitter' ? 'tw' : 'og') + '.png"') && p.$('mtg-preview').innerHTML.includes('loading="lazy"'));
 }
+
+// v2 presentation checks; all original engine/blog/live-dist and FIX lifecycle groups remain above.
+const baselineRetained = passes;
+const markupV2=source.slice(source.indexOf('---',3)+3,source.indexOf('<script is:inline'));
+const cssV2=source.slice(source.indexOf('<style'));
+check('v2 generate shared rail',markupV2.includes('class="mtg-rail zt-rail"'));
+check('v2 300px rail and bounded results',cssV2.includes('grid-template-columns: 300px minmax(0, 1fr)')&&cssV2.includes('flex: 1 1 0; min-height: 0;'));
+check('v2 860 stack and 640 phone',cssV2.includes('max-width: 860px')&&cssV2.includes('max-width: 640px'));
+check('v2 main44/dense24',cssV2.includes('min-height: 44px')&&cssV2.includes('min-height: 24px'));
+check('v2 reserved status',cssV2.includes('.mtg-status-slot { min-height: 2.8em'));
+check('v2 Copy/status before fields/options',markupV2.indexOf('id="mtg-copy"')<markupV2.indexOf('class="mtg-status-slot"')&&markupV2.indexOf('class="mtg-status-slot"')<markupV2.indexOf('id="mtg-title"')&&markupV2.indexOf('id="mtg-title"')<markupV2.indexOf('<details class="mtg-options">'));
+check('v2 secondary metadata defaults closed',markupV2.includes('<details class="mtg-options">'));
+check('v2 all 23 actual inputs preserved unique',['title','description','canonical','site-name','author','keywords','language','theme-color','theme-color-text','robots-index','robots-follow','viewport','og-type','og-locale','og-image','og-image-width','og-image-height','og-image-alt','tw-card','tw-site','tw-creator','tw-image','schema-type'].every(id=>(markupV2.match(new RegExp('id="mtg-'+id+'"','g'))||[]).length===1));
+check('v2 only Copy plus four platform buttons',(markupV2.match(/<button /g)||[]).length===5);
+check('v2 four old platform actions retained',['google','facebook','twitter','discord'].every(k=>markupV2.includes('data-platform="'+k+'"')));
+check('v2 all tips use slots',(markupV2.match(/<Toggletip /g)||[]).length===16&&!/<Toggletip[^>]*text=/.test(markupV2));
+check('v2 runtime translation loops absent',!source.includes("querySelectorAll('[data-i18n]')"));
+check('v2 client only four actual dynamic keys',source.includes("const CLIENT_T = Object.fromEntries(['copy', 'copied', 'copyFailed', 'fillToPreview']"));
+check('v2 head output internal scroll',cssV2.includes('.mtg-output { min-height: 0; flex: 1 1 0; overflow: auto; white-space: pre; }'));
+check('v2 empty platform section hidden below 860',cssV2.includes('.mtg-platform-view[data-empty="true"] { display: none; }'));
+for(const lang of ['en','zh','ja','ko']){
+ const p=page(spec,lang);eq(lang+' v2 SSR Copy',p.$('mtg-copy').textContent,STRINGS[lang].copy);eq(lang+' v2 SSR title label',p.document.querySelector('[for="mtg-title"]').textContent.replace(/\s+/g,' ').trim(),STRINGS[lang].title+' '+p.$('mtg-title-counter').textContent);eq(lang+' v2 SSR placeholder',p.$('mtg-title').getAttribute('placeholder'),STRINGS[lang].titlePh);
+ eq(lang+' v2 visible image request notice',p.document.querySelector('.mtg-network-notice').textContent,STRINGS[lang].networkNotice);
+ check(lang+' v2 sixteen nonempty localized tips',Object.keys(STRINGS[lang].tips).length===16&&Object.values(STRINGS[lang].tips).every(v=>typeof v==='string'&&v.length>10));
+ eq(lang+' v2 initial seeded preview retained',p.document.querySelector('.mtg-platform-view').getAttribute('data-empty'),'false');
+ const mdx=readFileSync(join(root,'src/content/tools/meta-tag-generator',lang+'.mdx'),'utf8'),block=mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1];check(lang+' v2 steps before FAQ',!!block);const steps=block?.trim().split('\n').map(x=>JSON.parse(x.trim().slice(2)))||[];check(lang+' v2 step count/length constraints',steps.length===5&&steps.every(x=>x.length<=280)&&steps.join('').length<=1200);check(lang+' v2 Usage section removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));if(lang==='en')check('v2 EN remains at least400 words',mdx.replace(/^---[\s\S]*?---/,'').replace(/<[^>]*>/g,' ').split(/\s+/).filter(Boolean).length>=400);
+}
+for(const order of ['before','after']){
+ const p=page(spec,'en',order);p.$('mtg-canonical').value='';p.$('mtg-og-image').value='';p.$('mtg-tw-image').value='';p.key('mtg-title');eq(order+' v2 empty platform state follows exact render conditions',p.document.querySelector('.mtg-platform-view').getAttribute('data-empty'),'true');check(order+' v2 retained settings keep robots output',p.$('mtg-output').textContent.includes('name="robots"')&&!p.$('mtg-copy').disabled);p.input('mtg-title','Back');eq(order+' v2 input restores platform state',p.document.querySelector('.mtg-platform-view').getAttribute('data-empty'),'false');p.input('mtg-title','');p.input('mtg-description','');p.input('mtg-tw-image','https://example.com/twitter-only.png');eq(order+' v2 Twitter image alone preserves old empty strategy',p.document.querySelector('.mtg-platform-view').getAttribute('data-empty'),'true');
+}
+const report={slug:'meta-tag-generator',counts:{PASS:passes,FAIL:failures},baselineRetained,featureChecks:passes-baselineRetained,defaultLiveDistDetectionRetained:true};
+if(process.env.ZT_FEATURE_REPORT)writeFileSync(process.env.ZT_FEATURE_REPORT,JSON.stringify(report,null,2)+'\n');
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

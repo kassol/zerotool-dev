@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'meta-tag-generator': 'generate',
   'favicon-generator': 'generate',
   'csp-header-generator': 'generate',
   'gitignore-generator': 'generate',
