@@ -144,6 +144,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'qr-code-decoder': 'analyze',
   'gif-splitter': 'generate',
   'lorem-ipsum': 'generate',
+  'password-generator': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
