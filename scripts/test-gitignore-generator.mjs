@@ -200,6 +200,8 @@ process.removeListener('unhandledRejection',onUnhandled);
  assert('v2: template rail and result use internal scroll bounds',/\.gig-groups[^}]*flex: 1 1 0;[^}]*overflow: auto;/.test(source)&&/\.gig-output \{[^}]*overflow: auto;[^}]*flex: 1 1 0;/.test(source),true);
  assert('v2: actual filtering overrides flex for hidden items',source.includes('.gig-item[hidden] { display: none; }'),true);
  assert('v2: stacking, mobile empty hide and targets',source.includes('@media (max-width: 860px)')&&source.includes('.gig-output-wrap[data-empty="true"] { display: none; }')&&source.includes('@media (max-width: 640px)')&&source.includes('.gig-actions button, .gig-search, .gig-custom { min-height: 44px; }')&&source.includes('.gig-item { min-height: 24px; }'),true);
+ const phoneStyles=source.match(/@media\s*\(max-width:\s*640px\)\s*\{([\s\S]*?)\n\s*\}/)?.[1]||'';
+ assert('v2: mobile result reveal reserves sticky header clearance',/\.gig-output-wrap\s*\{[^}]*scroll-margin-top:\s*calc\(var\(--header-height\)\s*\+\s*1rem\)\s*;/.test(phoneStyles),true);
  assert('v2: no runtime static translation or duplicate template render',!/data-i18n|const STRINGS|renderGrids/.test(scripts)&&!!data&&Object.keys(data.CLIENT_T).sort().join('|')==='copied|copy|copyFailed',true);
  const tipIds=[...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(x=>x[1]);
  assert('v2: six unique SSR explanations',tipIds.length===6&&new Set(tipIds).size===6,true);
