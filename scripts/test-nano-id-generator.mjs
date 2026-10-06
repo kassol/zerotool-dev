@@ -471,6 +471,60 @@ for (const lang of ['en', 'zh', 'ja', 'ko'])
             lifeCheck('no native clipboard ever', p.execCalls.length === 0);
         });
 
+
+// v2: bounded generated IDs, server-rendered explanations and actual Unicode controls.
+const v2Check = (name, ok) => { console.log(`${ok ? 'PASS' : 'FAIL'} v2 ${name}`); if (ok) passes++; else failures++; };
+const v2Region = source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
+const v2Strings = v2Region ? vm.runInNewContext(v2Region[1] + ';STRINGS') : {};
+const v2TipKeys = ['generate', 'count', 'size', 'alphabet', 'custom', 'copy', 'clear'];
+const v2Scripts = [...source.matchAll(/<script\b[^>]*>[\s\S]*?<\/script>/g)].map(m => m[0]).join('\n');
+v2Check('outer tool root stays a flex column with zero minimum height', /\.nanoid-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0/.test(source));
+v2Check('300px rail belongs to the bounded inner grid', /\.nanoid-main\s*\{[^}]*grid-template-columns:\s*300px minmax\(0,\s*1fr\);[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0/.test(source));
+v2Check('all option controls are in the shared rail', /<aside class="nanoid-rail zt-rail">[\s\S]*id="nanoid-count"[\s\S]*id="nanoid-size"[\s\S]*id="nanoid-alphabet"[\s\S]*id="nanoid-custom-alphabet"[\s\S]*<\/aside>/.test(source));
+v2Check('result pane has a zero minimum and contains the existing table', /class="nanoid-result-pane"[\s\S]*id="nanoid-results"/.test(source) && /\.nanoid-result-pane\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden/.test(source));
+v2Check('long generated lists scroll with zero flex basis', /\.nanoid-results\s*\{[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0;[^}]*overflow:\s*auto/.test(source));
+v2Check('dynamic ID cells have global long-value wrapping', /\.nanoid-wrap :global\(\.nanoid-td-id\)\s*\{[^}]*word-break:\s*break-all/.test(source));
+v2Check('status reserves two lines while the actual error is hidden', /class="nanoid-status" aria-live="polite"><div class="nanoid-err" id="nanoid-err" style="display:none;"/.test(source) && /\.nanoid-status\s*\{[^}]*min-height:\s*2\.8em;[^}]*line-height:\s*1\.4/.test(source));
+v2Check('desktop empty sentence follows actual result visibility', /\.nanoid-result-pane:has\(#nanoid-results\[style\*="none"\]\) > \.nanoid-empty/.test(source));
+v2Check('860 stacked layout hides only the empty result pane', /@media \(max-width: 860px\)[\s\S]*\.nanoid-main\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(source) && /\.nanoid-result-pane:has\(#nanoid-results\[style\*="none"\]\)\s*\{\s*display:\s*none/.test(source));
+v2Check('phone main inputs and actions have 44px minimums', /@media \(max-width: 640px\)[\s\S]*\.nanoid-num-input, \.nanoid-select, \.nanoid-text-input, \.nanoid-btn-row button\s*\{\s*min-height:\s*44px/.test(source));
+v2Check('dynamic Copy and tips have global 24px minimums', /:global\(\.nanoid-copy-btn\)\s*\{\s*min-width:\s*24px;\s*min-height:\s*24px/.test(source) && /:global\(\.zt-tip-btn\)\s*\{\s*min-width:\s*24px;\s*min-height:\s*24px/.test(source));
+v2Check('all static business actions and dynamic row Copy remain', ['nanoid-generate','nanoid-copy-all','nanoid-clear'].every(id => source.includes(`id="${id}"`)) && v2Scripts.includes("copyBtn.addEventListener('click'"));
+v2Check('seven unique tips pass their explanation through HTML slots', v2TipKeys.every(k => source.includes(`id="nanoid-tip-${k}"`) && source.includes(`>{U.tips.${k}}</Toggletip>`)) && (source.match(/<Toggletip\b/g) || []).length === 7);
+v2Check('the local vendor script remains the actual generation dependency', source.includes('<script src="/vendor/nanoid.min.js" is:inline></script>') && v2Scripts.includes('window.__nanoid.customAlphabet(alpha, size)'));
+v2Check('no new UI table or tips reach the complete client scripts', !/\b(?:U|STRINGS)\b|nanoid-tip-/.test(v2Scripts) && !source.includes('data-strings='));
+for (const lang of ['en','zh','ja','ko']) {
+    const strings = v2Strings[lang], labels = lifecycleLabels(lang), p = lifecyclePage(lang);
+    v2Check(lang + ' has an empty sentence and seven nonempty tips', !!strings?.empty && v2TipKeys.every(k => typeof strings?.tips?.[k] === 'string' && !!strings.tips[k].trim()) && Object.keys(strings?.tips || {}).length === 7);
+    v2Check(lang + ' actual controls keep their original SSR labels', p.get('nanoid-generate').textContent === labels.generate && p.get('nanoid-copy-all').textContent === labels.copyAll && p.get('nanoid-custom-alphabet').getAttribute('placeholder') === labels.customAlphabetPlaceholder);
+    const n = p.tracks.length;
+    p.change('nanoid-alphabet', 'custom'); p.input('nanoid-custom-alphabet', '😀😀😃'); p.input('nanoid-size', '3'); p.input('nanoid-count', '2');
+    v2Check(lang + ' changing options does not generate results', p.tracks.length === n && !p.get('nanoid-tbody').children.length);
+    p.get('nanoid-generate').click();
+    const ids = fullOutput(p).split('\n');
+    v2Check(lang + ' actual custom path returns whole Unicode symbols at the selected count and size', ids.length === 2 && ids.every(id => Array.from(id).length === 3 && Array.from(id).every(c => c === '😀' || c === '😃') && id.isWellFormed()));
+    p.get('nanoid-clear').click();
+    v2Check(lang + ' Clear removes the list and keeps custom text and settings', !p.get('nanoid-tbody').children.length && p.get('nanoid-results').style.display === 'none' && p.get('nanoid-custom-alphabet').value === '😀😀😃' && p.get('nanoid-count').value === '2' && p.get('nanoid-size').value === '3' && p.get('nanoid-alphabet').value === 'custom');
+    p.ctrlL('nanoid-custom-alphabet');
+    v2Check(lang + ' shortcut additionally clears custom text and retains numeric/preset choices', !p.get('nanoid-custom-alphabet').value && p.get('nanoid-count').value === '2' && p.get('nanoid-size').value === '3' && p.get('nanoid-alphabet').value === 'custom');
+    const mdx = readFileSync(join(root, 'src/content/tools/nano-id-generator', lang + '.mdx'), 'utf8');
+    const region = mdx.match(/\nsteps:\n([\s\S]*?)\nfaqItems:/);
+    const steps = region ? [...region[1].matchAll(/^  - (.+)$/gm)].map(m => JSON.parse(m[1])) : [];
+    v2Check(lang + ' six steps meet all limits and precede FAQ', steps.length === 6 && steps.every(s => s.trim().length > 0 && s.length <= 280) && steps.join('').length <= 1200);
+    v2Check(lang + ' Usage moved out of body and existing alphabet reference remains', !/<h2>(?:How to Use|使用方法|使用说明|使い方|사용 방법)<\/h2>/.test(mdx) && mdx.includes('A-Za-z0-9_-') && mdx.includes('UUID'));
+}
+const v2Compiler = await import(createRequire(lifecycleRequire.resolve('astro/package.json')).resolve('@astrojs/compiler'));
+const v2Parsed = await v2Compiler.parse(source);
+v2Check('Astro parser reports no diagnostics', v2Parsed.diagnostics.length === 0);
+console.log('ASTRO diagnostics ' + JSON.stringify(v2Parsed.diagnostics));
+const v2Compiled = await v2Compiler.transform(source, {filename: 'NanoIdGeneratorTool.astro'});
+v2Check('Astro compiles the markup and resolves global dynamic CSS selectors', v2Compiled.diagnostics.every(d => d.severity !== 1) && v2Compiled.css.length > 0 && v2Compiled.css.every(css => !css.includes(':global(')));
+const {transform: v2ParseJs} = await import('esbuild');
+await v2ParseJs(v2Compiled.code, {loader:'ts',format:'esm'});
+v2Check('compiled module retains all HTML tip slots', v2TipKeys.every(k => v2Compiled.code.includes('U.tips.' + k)));
+if (process.env.ZT_B14_REGISTRATION_PENDING === '1') console.log('PENDING_ROOT v2 generate registration');
+else v2Check('generate kind is registered', /['"]nano-id-generator['"]\s*:\s*['"]generate['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+
 process.removeListener('unhandledRejection', onUnhandled);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
 console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);

@@ -147,6 +147,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'password-generator': 'generate',
   'rsa-key-generator': 'generate',
   'pixelate-image': 'generate',
+  'nano-id-generator': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
