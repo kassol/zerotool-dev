@@ -145,6 +145,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'gif-splitter': 'generate',
   'lorem-ipsum': 'generate',
   'password-generator': 'generate',
+  'rsa-key-generator': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {

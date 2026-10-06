@@ -489,6 +489,63 @@ for (const deny of [false, true])
             await p.done();
             lifeCheck('current crypto failure restores Generate', p.get('rkg-status').classList.contains('error') && !p.get('rkg-generate').disabled && !p.get('rkg-pub-out').value && !p.get('rkg-priv-out').value);
         });
+
+// v2: the server-rendered rail, both key panes and reference-content steps.
+const v2Check = (name, ok) => { console.log(`${ok ? 'PASS' : 'FAIL'} v2 ${name}`); if (ok) passes++; else failures++; };
+const v2Region = source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
+const v2Strings = v2Region ? vm.runInNewContext(v2Region[1] + ';STRINGS') : {};
+const v2TipKeys = ['generate', 'size', 'algorithm', 'format', 'public', 'private'];
+const v2Scripts = [...source.matchAll(/<script\b[^>]*>[\s\S]*?<\/script>/g)].map(m => m[0]).join('\n');
+v2Check('tool root stays a flex column with zero minimum height', /\.rkg-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0/.test(source));
+v2Check('300px rail is in the inner grid with a zero flex basis', /\.rkg-main\s*\{[^}]*grid-template-columns:\s*300px minmax\(0,\s*1fr\);[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0/.test(source));
+v2Check('control rail uses the shared class', /<aside class="rkg-rail zt-rail">/.test(source));
+v2Check('public/private outputs stay inside the bounded result pane', /class="rkg-results"[\s\S]*id="rkg-pub-out"[\s\S]*id="rkg-priv-out"/.test(source) && /\.rkg-results\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden/.test(source));
+v2Check('key textareas scroll internally with zero flex basis', /\.rkg-output\s*\{[^}]*flex:\s*1 1 0;[^}]*min-height:\s*0;[^}]*overflow:\s*auto/.test(source));
+v2Check('status has a stable two-line reservation', /\.rkg-status\s*\{[^}]*min-height:\s*2\.8em;[^}]*line-height:\s*1\.4/.test(source));
+v2Check('desktop empty sentence is driven by actual output visibility', /\.rkg-results:has\(#rkg-pub-block\[style\*="none"\]\) > \.rkg-empty/.test(source));
+v2Check('stacked empty pane is hidden and the grid stacks at 860', /@media \(max-width: 860px\)[\s\S]*\.rkg-main\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(source) && /\.rkg-results:has\(#rkg-pub-block\[style\*="none"\]\)\s*\{\s*display:\s*none/.test(source));
+v2Check('phone main controls have 44px targets and tips have 24px targets', /@media \(max-width: 640px\)[\s\S]*min-height:\s*44px[\s\S]*min-width:\s*24px;\s*min-height:\s*24px/.test(source));
+v2Check('all five business buttons are retained', ['rkg-generate','rkg-pub-copy','rkg-pub-dl','rkg-priv-copy','rkg-priv-dl'].every(id => source.includes(`id="${id}"`)));
+v2Check('tips are HTML slots with unique stable IDs', v2TipKeys.every(k => source.includes(`id="rkg-tip-${k}"`) && source.includes(`>{U.tips.${k}}</Toggletip>`)) && (source.match(/<Toggletip\b/g) || []).length === 6);
+v2Check('new UI strings are absent from the complete client scripts', !/\b(?:U|STRINGS)\b|rkg-tip-/.test(v2Scripts) && !source.includes('data-strings='));
+for (const lang of ['en','zh','ja','ko']) {
+    const labels = lifecycleLabels(lang), strings = v2Strings[lang];
+    v2Check(lang + ' has a nonempty server-rendered empty sentence and six tips', !!strings?.empty && v2TipKeys.every(k => typeof strings?.tips?.[k] === 'string' && strings.tips[k].length > 0) && Object.keys(strings?.tips || {}).length === 6);
+    const p = lifecyclePage(lang);
+    v2Check(lang + ' actual Generate label binds through the unchanged data interface', p.get('rkg-generate').textContent === labels.generate && p.doc.querySelector('.rkg-wrap').dataset.generate === labels.generate);
+    const mdx = readFileSync(join(root, 'src/content/tools/rsa-key-generator', lang + '.mdx'), 'utf8');
+    const region = mdx.match(/\nsteps:\n([\s\S]*?)\nfaqItems:/);
+    const steps = region ? [...region[1].matchAll(/^  - (.+)$/gm)].map(m => JSON.parse(m[1])) : [];
+    v2Check(lang + ' five steps precede the unchanged FAQ', steps.length === 5 && steps.every(s => s.trim().length > 0 && s.length <= 280) && steps.join('').length <= 1200);
+    v2Check(lang + ' Usage moved out of the body', !/<h2>(?:How to Use|使用方法|使用说明|使い方|사용 방법)<\/h2>/.test(mdx));
+    v2Check(lang + ' privacy, security notes and limits stay visible in content', mdx.includes('PRIVATE KEY') && mdx.includes('AQAB') && mdx.includes('4096'));
+}
+const v2Compiler = await import(createRequire(lifecycleRequire.resolve('astro/package.json')).resolve('@astrojs/compiler'));
+const v2Parsed = await v2Compiler.parse(source);
+v2Check('Astro parser reports no diagnostics', v2Parsed.diagnostics.length === 0);
+console.log('ASTRO diagnostics ' + JSON.stringify(v2Parsed.diagnostics));
+if (process.env.ZT_B14_REGISTRATION_PENDING === '1') console.log('PENDING_ROOT v2 generate registration');
+else v2Check('generate kind is registered', /['"]rsa-key-generator['"]\s*:\s*['"]generate['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+await attempt('v2 real 2048 export reference example', async () => {
+    const p = lifecyclePage('en');
+    p.change('rkg-algo', 'RSASSA-PKCS1-v1_5');
+    await generateReady(p);
+    const publicPem = p.get('rkg-pub-out').value, privatePem = p.get('rkg-priv-out').value;
+    const der = text => Buffer.from(text.split('\n').slice(1, -1).join(''), 'base64');
+    const algorithm = {name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256'};
+    const publicKey = await nativeWebCrypto.subtle.importKey('spki', der(publicPem), algorithm, true, ['verify']);
+    const privateKey = await nativeWebCrypto.subtle.importKey('pkcs8', der(privatePem), algorithm, true, ['sign']);
+    const publicJwk = await nativeWebCrypto.subtle.exportKey('jwk', publicKey), privateJwk = await nativeWebCrypto.subtle.exportKey('jwk', privateKey);
+    v2Check('reference PEM headers and real modulus', publicPem.startsWith('-----BEGIN PUBLIC KEY-----') && privatePem.startsWith('-----BEGIN PRIVATE KEY-----') && privateKey.algorithm.modulusLength === 2048);
+    v2Check('reference JWK corresponding modulus, exponent and private field', publicJwk.n === privateJwk.n && publicJwk.e === 'AQAB' && privateJwk.e === 'AQAB' && !('d' in publicJwk) && typeof privateJwk.d === 'string');
+    const message = new TextEncoder().encode('ZeroTool RSA export example');
+    const signature = await nativeWebCrypto.subtle.sign(algorithm, privateKey, message);
+    v2Check('reference signature verifies the original message', await nativeWebCrypto.subtle.verify(algorithm, publicKey, signature, message));
+    v2Check('reference signature rejects the changed message', !(await nativeWebCrypto.subtle.verify(algorithm, publicKey, signature, new TextEncoder().encode('ZeroTool RSA export changed'))));
+    const english = readFileSync(join(root, 'src/content/tools/rsa-key-generator/en.mdx'), 'utf8');
+    v2Check('the verified example is documented', english.includes('## Check a Generated Export Pair') && english.includes('ZeroTool RSA export example') && english.includes('ZeroTool RSA export changed'));
+});
+
 process.removeListener('unhandledRejection', onUnhandled);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
 console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
