@@ -1,4 +1,5 @@
 // String Escape / Unescape — regression test against reference implementations
+// Also reads src/styles/tool-common.css for the shared fill and toggletip rules.
 //
 // Read:  src/components/tools/StringEscapeTool.astro (extracts the real engine block between
 //        the `engine:start` / `engine:end` markers and the frontmatter STRINGS table, so this
@@ -45,6 +46,7 @@ import { decodeHTML } from 'entities';
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const commonStyle = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
 const source = readFileSync(join(root, 'src/components/tools/StringEscapeTool.astro'), 'utf8');
 
 const START_MARK = '/* ── engine:start ── */';
@@ -640,7 +642,7 @@ const utf8hex = (s) => [...Buffer.from(s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDF
   check('toggletip text stays out of the inline script', source.includes('define:vars={{ t: CLIENT_L }}') && source.includes('const { tips: TIPS, tipNames: TIP_NAMES, ...CLIENT_L } = L;'));
   check('Ctrl/Cmd+L clears the stale output and status', /key === 'l' \|\| e\.key === 'L'\)\) \{\s*setTimeout\(function \(\) \{ if \(!inputEl\.value\) \{ outputEl\.value = ''; setStatus\('', ''\); \} \}, 0\);/.test(source));
   eq('stacks at 860px, phone details at 640px', source.match(/@media \(max-width: \d+px\)/g), ['@media (max-width: 860px)', '@media (max-width: 640px)']);
-  check('the "?" buttons are not squeezed in flex rows', source.includes('.se-wrap :global(.zt-tip) { flex: none; }'));
+  check('the "?" buttons are not squeezed in flex rows', source.includes('<Toggletip id="se-tip-dir"') && /\.zt-tip\s*\{[^}]*flex:\s*none;/.test(commonStyle));
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
   check('listed as a convert page', layouts.includes("'string-escape': 'convert'"));
   for (const lang of ['en', 'zh', 'ja', 'ko']) {

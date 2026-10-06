@@ -93,7 +93,7 @@ src/content/tools/{slug}/
 ---
 seoTitle: "..."          # 必填，工具页 <title>
 seoDescription: "..."    # 必填，工具页 <meta description>
-steps:                   # 可选，用法步骤（纯文本），v2 版式工具页必填
+steps:                   # 必填，所有工具四语的用法步骤（纯文本）
   - "..."
 faqItems:                # 可选，结构化 FAQ
   - question: "..."
@@ -101,12 +101,12 @@ faqItems:                # 可选，结构化 FAQ
 ---
 ```
 
-正文部分作为工具页底部的长尾内容（教程、用例、原理说明），SEO 关键。v2 版式的工具页（`src/data/tool-layouts.ts` 中的 slug）正文收在默认关闭的「示例、说明与常见问题」区，不再写「How to Use / 使用方法」一节：用法放进工具内的说明气泡与 `steps`。「Limits / 限制」一节留在正文里；只有与单个控件绑定的限制另写进该控件旁的说明气泡（决策人 2026-10-04 的决定）。json-formatter、color-palette-generator、har-file-analyzer 三个样板在这项决定之前完成，限制已全部写在气泡里，正文没有「限制」节，不回填。
+正文部分作为工具页底部的长尾内容（教程、用例、原理说明），SEO 关键。所有工具页正文收在默认关闭的「示例、说明与常见问题」区，不再写「How to Use / 使用方法」一节：用法放进工具内的说明气泡与 `steps`。「Limits / 限制」一节留在正文里；只有与单个控件绑定的限制另写进该控件旁的说明气泡（决策人 2026-10-04 的决定）。json-formatter、color-palette-generator、har-file-analyzer 三个样板在这项决定之前完成，限制已全部写在气泡里，正文没有「限制」节，不回填。
 
 `steps` 字段：
-- 用途：给 `/llms-full.txt` 提供「How to use」步骤（`src/data/llms.mjs` 的 `toolSteps()`：有 `steps` 用它，没有时仍从正文第一个以「How to」开头的 H2 下的有序列表抓取）。页面本身不渲染 `steps`。
+- 用途：给 `/llms-full.txt` 提供「How to use」步骤（`src/data/llms.mjs` 的 `toolSteps()` 只读取 frontmatter steps）。页面本身不渲染 `steps`。
 - 写法：每步一个字符串，纯文本（不写 Markdown，`plainText()` 只做兜底清理），按当前界面的按钮与选项名称措辞，与工具内说明气泡一致；每步 ≤ 280 字符、合计 ≤ 1200 字符、最多 8 步（`MAX_STEP_CHARS` / `MAX_HOWTO_CHARS` / `MAX_STEPS`，超出会被截断）。
-- 范围：v2 版式工具页的 4 个语言都写（llms-full.txt 只用 en），其他工具不写；`scripts/test-llms-txt.mjs` 检查只有 `tool-layouts.ts` 中的 slug 有 `steps`、且 4 语言齐全。改界面文字时同步改 `steps`。
+- 范围：所有工具的 4 个语言都写（llms-full.txt 只用 en）；`scripts/test-llms-txt.mjs` 从 tools.ts 核对全部四语 steps 的非空值、8/280/1200 上限与英文构建步骤。改界面文字时同步改 steps。
 
 ### tools 模块规范
 
