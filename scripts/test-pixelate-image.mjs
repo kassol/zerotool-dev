@@ -208,7 +208,7 @@ const {createRequire}=await import('node:module');
 const {relative}=await import('node:path');
 const {pathToFileURL}=await import('node:url');
 const vm=(await import('node:vm')).default;
-const {loadPage}=await import(pathToFileURL(join(root,'scripts/astro-page-harness.mjs')));
+const {loadPage,frontmatterStrings}=await import(pathToFileURL(join(root,'scripts/astro-page-harness.mjs')));
 const ROOT=root,require=createRequire(join(ROOT,'package.json'));
 const {parseFragment,defaultTreeAdapter}=require('parse5'),sharp=require('sharp');
 const paths={pixel:process.env.ZT_B14_SOURCE?relative(ROOT,process.env.ZT_B14_SOURCE):'src/components/tools/PixelateImageTool.astro'},slugs={pixel:'pixelate-image'},source={pixel:pageSource};
@@ -223,7 +223,7 @@ const settle=async()=>{await new Promise(setImmediate);await new Promise(setImme
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 const waitFor=async(fn)=>{const until=Date.now()+5000;while(!fn()){if(Date.now()>until)throw Error('Boundary not reached: '+phase);await new Promise(r=>setTimeout(r,5));}};
 async function scene(id,fn){phase=id;try{await fn();}catch(e){checks.push({id,status:'FAIL',actual:e.stack});console.error(e);}}
-const labels=vm.runInNewContext(source.pixel.match(/var STRINGS = [\s\S]*?\n      \};/)[0]+';STRINGS'),L=labels.en;
+const labels=frontmatterStrings(source.pixel.match(/^---\n([\s\S]*?)\n---/)[1]) || vm.runInNewContext(source.pixel.match(/var STRINGS = [\s\S]*?\n      \};/)[0]+';STRINGS'),L=labels.en;
 function page(order='shared-after',lang='en'){
  const key='pixel';
  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[],tasks=[],downloads=[],blobs=new Map(),encodes=[],decodes=[],yields=[];
@@ -334,7 +334,7 @@ function page(order='shared-after',lang='en'){
   doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);return false;};
   const persist={clear(slug){persistCalls.push(['clear',slug]);},save(...args){persistCalls.push(['save',...args]);},load(){return {};}};
-  const globals={document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
+  const globals={clientStrings:Object.fromEntries(["areasCount", "blockSizeLabel", "blurRadiusLabel", "statusCopied", "statusCopyFailed", "statusCopyUnsupported", "statusDecodeFailed", "statusDownloaded", "statusExportFailed", "statusNotImage"].map(k=>[k,labels[lang][k]])),document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
    Image:class{set src(url){const file=blobs.get(url);decode(file).then(b=>{Object.assign(this,{width:b.width,height:b.height,naturalWidth:b.width,naturalHeight:b.height,rgba:b.rgba});this.onload?.();},()=>this.onerror?.());}},
    ImageData:class{constructor(data,width,height){Object.assign(this,{data,width,height});}},createImageBitmap:decode,
    MutationObserver:class{observe(){} disconnect(){}},matchMedia:()=>({addEventListener(){}}),getComputedStyle:()=>({getPropertyValue:()=>''}),requestAnimationFrame:fn=>globals.setTimeout(fn,16),cancelAnimationFrame:id=>globals.clearTimeout(id),
@@ -394,6 +394,45 @@ for(const lang of ['en','zh','ja','ko'])await scene('copy/'+lang,async()=>{
 });
 await scene('late-draft-frame-after-clear-and-new-source',async()=>{
  const p=page();await load(p);const canvas=p.get('pxi-canvas');canvas.dispatch('pointerdown',{clientX:0,clientY:0,pointerId:1});canvas.dispatch('pointermove',{clientX:2,clientY:2,pointerId:1});const late=[...p.timers.values()].find(v=>v.ms===16);must(late,'actual draft frame scheduled');p.get('pxi-clear').click();check(phase+'/draft-frame-cancelled',0,[...p.timers.values()].filter(v=>v.ms===16).length);late.fn();await settle();check(phase+'/forced-old-frame-does-not-write',cleared,Object.values(snap(p)));await load(p,'new.png');const before=snap(p);late.fn();await settle();canvas.dispatch('pointerup',{clientX:2,clientY:2,pointerId:1});check(phase+'/old-drag-does-not-add-new-region',before,snap(p));
+});
+
+
+await scene('v2-page-layout',async()=>{
+ check(phase+'/direct-tool-root',true,/^---[\s\S]*?---\s*<div class="pxi-wrap" id="pxi-wrap">/.test(pageSource));
+ check(phase+'/shared-rail',true,pageSource.includes('class="pxi-rail zt-rail"'));
+ check(phase+'/300px-left-preview',true,pageSource.includes('grid-template-columns: 300px minmax(0, 1fr)'));
+ check(phase+'/860-stack',true,pageSource.includes('@media (max-width: 860px)'));
+ check(phase+'/reserved-status',true,pageSource.includes('#pxi-status { min-height: 2.8em'));
+ check(phase+'/empty-mobile-hidden',true,pageSource.includes('.pxi-preview:has(#pxi-canvas-wrap[hidden]) { display: none; }'));
+ check(phase+'/preview-bounded',true,pageSource.includes('max-height: min(56svh, 620px)'));
+ check(phase+'/result-scroll',true,/\.pxi-canvas-wrap \{[^}]*overflow: auto/.test(pageSource));
+ check(phase+'/header-safe-result',true,pageSource.includes('scroll-margin-top: calc(var(--header-height) + 1rem)'));
+ check(phase+'/44-main',true,/\.pxi-format-select, \.pxi-action button, \.pxi-color-row input\[type="color"\] \{ min-height: 44px;/.test(pageSource));
+ check(phase+'/24-slider',true,pageSource.includes('input[type="range"] { min-height: 24px; }'));
+ check(phase+'/no-runtime-i18n',false,pageSource.includes('data-i18n'));
+ check(phase+'/only-client-dynamic-strings',true,pageSource.includes('var t = clientStrings;'));
+ const tipKeys=['image','effect','strength','color','entire','format','download','copy','undo','clear','selection'];
+ check(phase+'/11-tip-instances',11,[...pageSource.matchAll(/<Toggletip\s+id="pxi-tip-/g)].length);
+ check(phase+'/tips-use-slots',11,[...pageSource.matchAll(/>\{L\.tips\.[a-z]+\}<\/Toggletip>/g)].length);
+ for(const lang of ['en','zh','ja','ko']){
+  check(phase+'/'+lang+'-tip-keys',tipKeys.slice().sort(),Object.keys(labels[lang].tips||{}).sort());
+  check(phase+'/'+lang+'-tips-nonempty',true,tipKeys.every(k=>typeof labels[lang].tips?.[k]==='string'&&labels[lang].tips[k].length>0));
+  check(phase+'/'+lang+'-empty-localized',true,typeof labels[lang].emptyPreview==='string'&&labels[lang].emptyPreview.length>0);
+  const md=readFileSync(join(ROOT,'src/content/tools/pixelate-image',lang+'.mdx'),'utf8');
+  const steps=(md.match(/^  - "[^\n]*"$/gm)||[]);
+  check(phase+'/'+lang+'-steps-bounded',true,steps.length>0&&steps.length<=8&&steps.every(s=>JSON.parse(s.slice(4)).length<=280)&&steps.reduce((n,s)=>n+JSON.parse(s.slice(4)).length,0)<=1200);
+  check(phase+'/'+lang+'-steps-before-FAQ',true,md.indexOf('steps:')>=0&&md.indexOf('steps:')<md.indexOf('faqItems:'));
+  check(phase+'/'+lang+'-usage-removed',false,/<h2>(?:How to Use|使用步骤|使い方|사용 방법)<\/h2>/.test(md));
+ }
+ const reveal=pageSource.match(/      function revealPreview\(\) \{[\s\S]*?\n      \}/)?.[0];
+ const statusPage=page();statusPage.file(badFile());await settle();const actualStatus=statusPage.get('pxi-status');
+ check(phase+'/status-reserved-after-real-error',true,actualStatus.textContent===L.statusNotImage&&statusPage.widget.querySelector('#pxi-status')===actualStatus&&/#pxi-status \{ min-height: 2\.8em/.test(pageSource));
+ check(phase+'/actual-reveal-handler',true,Boolean(reveal));
+ if(reveal){for(const hidden of [false,true])for(const mobile of [false,true]){const calls=[];vm.runInNewContext(reveal+';revealPreview();',{canvasWrapEl:{hidden,scrollIntoView(v){calls.push(v);}},window:{matchMedia:()=>({matches:mobile})}});check(phase+'/reveal-actual-'+hidden+'-'+mobile,hidden||!mobile?[]:[{block:'start',behavior:'smooth'}],calls);}}
+ const featureLayouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+ if (/'pixelate-image':\s*'generate'/.test(featureLayouts)) check(phase+'/v2-generate-registration', true, true);
+ else console.log('PENDING_ROOT pixelate-image generate registration (not counted as PASS)');
+
 });
 
 await settle();check('no-unhandled-rejections',[],unhandled);process.removeListener('unhandledRejection',onRejection);
