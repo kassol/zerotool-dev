@@ -16,6 +16,7 @@
 // Run: node scripts/test-css-grid-generator.mjs
 
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -74,7 +75,7 @@ for (const [id, v] of Object.entries(fieldDefaults)) el(id).value = v;
 const pageScript = /<script is:inline>([\s\S]*?)<\/script>/.exec(source)[1];
 const wrap = { dataset: { copy: 'Copy', copied: 'Copied!' } };
 const doc = { currentScript: null, querySelector: () => wrap, getElementById: el, createElement: () => makeEl(''), addEventListener() {} };
-new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', pageScript)(doc, {}, {}, () => {}, () => {});
+new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', pageScript)(doc, { matchMedia: () => ({ matches: false }) }, {}, () => {}, () => {});
 
 const onLoad = el('cgg-code').textContent;
 check('output on load', onLoad === '.container {\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  grid-template-rows: repeat(2, 1fr);\n  column-gap: 1rem;\n  row-gap: 1rem;\n}', JSON.stringify(onLoad));
@@ -222,5 +223,48 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','s
   h=open(spec,lang,order);h.key('l');h.click();assertEq(name+'empty result is never copied',h.requests.length,0);
 }
 active=null;process.removeListener('unhandledRejection',unhandled);
+
+// ---------- generate layout and four-language reference protection ----------
+{
+  const markup=source.slice(source.indexOf('\n---\n',4)+5,source.indexOf('<script'));
+  const css=source.slice(source.indexOf('<style'));
+  const P='cgg';
+  check('v2 root takes available height',css.includes('.'+P+'-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; }'));
+  check('270–320px shared rail and remaining result',markup.includes('class="'+P+'-rail zt-rail"')&&css.includes('grid-template-columns: clamp(270px, 24vw, 320px) minmax(0, 1fr)'));
+  check('860px stack and 640px phone rules',css.includes('@media (max-width: 860px)')&&css.includes('@media (max-width: 640px)'));
+  check('native details preserve all secondary controls',markup.includes('<details')&&!/<details[^>]*\sopen/.test(markup));
+  check('Copy keeps a stable 44px target',new RegExp('#'+P+'-copy \\{[^}]*height: 44px').test(css));
+  check('phone main inputs keep 44px targets',css.includes('.cgg-num-input, .cgg-text-input { min-height: 44px; }'));
+  check('runtime-created rows and syntax have global styles',css.includes(':global(.cgg-cell)')&&css.includes(':global(.cgg-hl-val)'));
+  check('status space stays reserved',css.includes('#'+P+'-status { height: 2.8em; flex: none; margin: 0; overflow: auto; }'));
+  check('result can scroll inside a bounded region',css.includes('overflow: auto;')&&(css.includes('height: 15rem;')||css.includes('max-height: 3.8rem;')));
+  check('code accepts keyboard focus',/tabindex="0" role="region" aria-label=\{L.outputLabel\}/.test(markup));
+  check('empty results hide on stacked screens',css.includes('[data-empty="true"] { display: none; }'));
+  check('localized SSR prose stays out of client data',source.includes('// strings:start')&&source.includes('// strings:end')&&!source.includes('define:vars')&&!source.includes('data-strings')&&!source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1].includes('.tips'));
+  assertEq('each actual control has its SSR tip', [...markup.matchAll(/<Toggletip id=/g)].length,7);
+  const hashes={"en": "db3a72f37e0fcefbbf3de32bd9105bb06e6090a98e59f9e3f42efa81acf2a128", "zh": "cf11ec23e811c505f491f70a5ef8321dc5638b5220b4d665af3f68f78e16a765", "ja": "5193fca37fecb3abb25e87d7e51d11397ac9debf59f091cd4bed5ab48b19da2c", "ko": "111dac126e9c7490d84e66cf78894c42e85ad135d325176b6c22acf5bd47c9d8"},reference={"en": {"frontmatterWithoutSteps": "99926b40ebd04e75eaa69bb56d27b833c1bc0b7d451834e3ea59abeef032f75e", "nonUsageBody": "9130310b7030b91c65837119ae4ba6507d4c894349ca32e346aa35e54bcf9742", "steps": 5, "maxStepChars": 245, "totalStepChars": 619, "mdxSHA": "3eddd81bad609149eefa59f2de5d854a76eb8dd3f17215623ac04c5adc4b5ce0"}, "zh": {"frontmatterWithoutSteps": "2c57657fb705d1a6190c475199475ff8311c947c89a2e511bfe08e6c02470dcc", "nonUsageBody": "bc7fa1964117fb6474c577ec2c9376c0176dfcbc0febf4b74f230a4e04a15674", "steps": 5, "maxStepChars": 95, "totalStepChars": 211, "mdxSHA": "1dbe27908e6651cf5ff39481a8406b38278afc54673c9ca432064b6fbc7361c4"}, "ja": {"frontmatterWithoutSteps": "5d561250f25f4ab7065f2372d37bd22c964bb01fd2948798d1d765e31395d523", "nonUsageBody": "2d8b9ba98802eb958b9cd3b6a58749b953f58a3194c72905ec78239b9344c393", "steps": 5, "maxStepChars": 125, "totalStepChars": 296, "mdxSHA": "963aec1f5ba05a1bae580e33df1ca990d63b520f491320ad7bbadf1ef56eb201"}, "ko": {"frontmatterWithoutSteps": "5dbef7227248052fa77cc5c02f8db94ae05fd607b042051bc0a8086cfab40ceb", "nonUsageBody": "cacd2ad65c2839d7e60800e0e3bbc23f9577ffb9be44ffd48502b821ed05b99e", "steps": 5, "maxStepChars": 133, "totalStepChars": 317, "mdxSHA": "0c46f5b2d4f81d7f0a2ec0535512d62686838bcf5d598d8238965f9dc505cb0b"}};
+  const digest=text=>createHash('sha256').update(text).digest('hex');
+  for(const lang of ['en','zh','ja','ko']){
+    const h=open(spec,lang);const old=Object.fromEntries(Object.entries(h.L).filter(([key])=>!['editor','removeLabel','options','empty','tips'].includes(key)).sort(([a],[b])=>a.localeCompare(b)));
+    assertEq(lang+' old localized values stay exact',digest(JSON.stringify(old)),hashes[lang]);
+    const mdx=readFileSync(join(root,'src/content/tools/css-grid-generator/'+lang+'.mdx'),'utf8'),fm=mdx.match(/^---\n([\s\S]*?)\n---/),front=fm[1],body=mdx.slice(fm[0].length);
+    const section=front.slice(front.indexOf('\nsteps:\n'),front.indexOf('\nfaqItems:'));
+    const steps=[...section.matchAll(/^  - (".*")$/gm)].map(m=>JSON.parse(m[1]));
+    assertEq(lang+' Usage moved into plain steps',steps.length,reference[lang].steps);
+    check(lang+' step limits',steps.every(step=>[...step].length<=280)&&steps.reduce((n,step)=>n+[...step].length,0)<=1200);
+    check(lang+' Copy and clear instructions are concrete',steps.at(-1).includes(h.L.copy)&&steps.at(-1).includes('Ctrl/⌘+L'));
+    assertEq(lang+' all nonUsage body including Limits stays exact',digest(body),reference[lang].nonUsageBody);
+    assertEq(lang+' FAQ and SEO stay exact',digest(front.replace(/\nsteps:\n(?:  - .*\n)*/,'\n')),reference[lang].frontmatterWithoutSteps);
+    check(lang+' tips are factual plain localized prose',Object.keys(h.L.tips).length===7&&Object.values(h.L.tips).every(text=>typeof text==='string'&&text.length>0&&!/[<>]|https?:/.test(text)));
+    assertEq(lang+' initial rendering does not scroll',h.scrolls,0);
+    h.key('l');assertEq(lang+' clear hides real result and shows empty hint',[h.el(P+'-result').dataset.empty,h.el(P+'-empty').hidden],['true',false]);
+    h.page.ctx.matchMedia=()=>({matches:true});changePage(h);assertEq(lang+' real phone input restores result',[h.el(P+'-result').dataset.empty,h.el(P+'-empty').hidden],['false',true]);
+    assertEq(lang+' phone real input scrolls result into view',h.scrolls,1);
+    const c=open(spec,lang);c.click();c.requests[0].reject(new Error('current clipboard denial'));await settle();assertEq(lang+' current failure also appears in reserved status',c.el(P+'-status').textContent,c.L.copyFailed);
+    c.click();assertEq(lang+' retry clears only current copy status',c.el(P+'-status').textContent,'');c.requests[1].resolve();await settle();
+  }
+}
+
+check('registered generate layout',readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8').includes("  'css-grid-generator': 'generate',"));
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
