@@ -243,7 +243,7 @@
           twCard: 'Card Type', twSite: 'Site (@user)', twCreator: 'Creator (@user)', twImage: 'Twitter Image (defaults to og:image)',
           schemaType: '@type', schemaHint: 'Outputs a minimal JSON-LD with name / description / url / image fields.',
           tabGoogle: 'Google', tabFacebook: 'Facebook', tabTwitter: 'Twitter', tabDiscord: 'Discord',
-          generatedHead: 'Generated <head> meta', copy: 'Copy', copied: 'Copied!',
+          generatedHead: 'Generated <head> meta', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed.',
           titlePh: 'My Page Title', descriptionPh: 'Concise summary, ideally 120–160 chars.',
           fillToPreview: 'Fill in fields above to see the preview.',
         },
@@ -259,7 +259,7 @@
           twCard: '卡片类型', twSite: '站点 (@user)', twCreator: '作者 (@user)', twImage: 'Twitter 图（默认沿用 og:image）',
           schemaType: '@type', schemaHint: '输出仅含 name / description / url / image 的最小 JSON-LD。',
           tabGoogle: 'Google', tabFacebook: 'Facebook', tabTwitter: 'Twitter', tabDiscord: 'Discord',
-          generatedHead: '生成的 <head> meta', copy: '复制', copied: '已复制！',
+          generatedHead: '生成的 <head> meta', copy: '复制', copied: '已复制！', copyFailed: '操作失败。',
           titlePh: '我的页面标题', descriptionPh: '简洁摘要，建议 120–160 字符。',
           fillToPreview: '填入上方字段查看预览。',
         },
@@ -275,7 +275,7 @@
           twCard: 'カード形式', twSite: 'サイト (@user)', twCreator: '作成者 (@user)', twImage: 'Twitter 画像（既定は og:image）',
           schemaType: '@type', schemaHint: 'name / description / url / image を含む最小 JSON-LD を出力します。',
           tabGoogle: 'Google', tabFacebook: 'Facebook', tabTwitter: 'Twitter', tabDiscord: 'Discord',
-          generatedHead: '生成された <head> メタ', copy: 'コピー', copied: 'コピー済み！',
+          generatedHead: '生成された <head> メタ', copy: 'コピー', copied: 'コピー済み！', copyFailed: '操作失敗。',
           titlePh: 'ページタイトル', descriptionPh: '簡潔な要約。120〜160 文字推奨。',
           fillToPreview: '上のフィールドに入力するとプレビューが表示されます。',
         },
@@ -291,7 +291,7 @@
           twCard: '카드 유형', twSite: '사이트 (@user)', twCreator: '작성자 (@user)', twImage: 'Twitter 이미지(기본값 og:image)',
           schemaType: '@type', schemaHint: 'name / description / url / image 만 포함한 최소 JSON-LD를 출력합니다.',
           tabGoogle: 'Google', tabFacebook: 'Facebook', tabTwitter: 'Twitter', tabDiscord: 'Discord',
-          generatedHead: '생성된 <head> 메타', copy: '복사', copied: '복사됨!',
+          generatedHead: '생성된 <head> 메타', copy: '복사', copied: '복사됨!', copyFailed: '작업 실패.',
           titlePh: '페이지 제목', descriptionPh: '간결한 요약. 120–160자 권장.',
           fillToPreview: '위 입력란을 채우면 미리보기가 표시됩니다.',
         },
@@ -557,7 +557,17 @@
         previewEl.innerHTML = html;
       }
 
+      var copyRequest = 0;
+      var copyTimer = 0;
+      function resetCopy() {
+        copyRequest++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        copyBtn.classList.remove('copied');
+      }
+
       function update() {
+        resetCopy();
         var v = getValues();
         // counters
         if (titleCounter) titleCounter.textContent = (v.title.length) + ' / 60';
@@ -616,17 +626,21 @@
       // Copy
       copyBtn.addEventListener('click', function () {
         var val = outputEl.textContent;
-        if (!val) return;
+        if (copyBtn.disabled || !val) return;
+        resetCopy();
+        var request = copyRequest;
         var done = function () {
-          var orig = t.copy;
+          if (request !== copyRequest) return;
           copyBtn.textContent = t.copied;
           copyBtn.classList.add('copied');
-          setTimeout(function () {
-            copyBtn.textContent = orig;
+          copyTimer = setTimeout(function () {
+            if (request !== copyRequest) return;
+            copyBtn.textContent = t.copy;
             copyBtn.classList.remove('copied');
           }, 1500);
         };
         function fallbackCopy() {
+          if (request !== copyRequest) return;
           var ta = document.createElement('textarea');
           ta.value = val;
           ta.style.position = 'fixed';
@@ -638,12 +652,22 @@
           try { ok = document.execCommand('copy'); } catch (e) {}
           document.body.removeChild(ta);
           if (ok) done();
+          else copyBtn.textContent = t.copyFailed;
         }
-        if (navigator.clipboard && window.isSecureContext) {
-          navigator.clipboard.writeText(val).then(done, fallbackCopy);
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function' && window.isSecureContext) {
+          try { navigator.clipboard.writeText(val).then(done, fallbackCopy); }
+          catch (e) { fallbackCopy(); }
         } else {
           fallbackCopy();
         }
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var wrap = document.querySelector('.mtg-wrap');
+        if (!wrap || !document.activeElement || !wrap.contains(document.activeElement)) return;
+        wrap.querySelectorAll('textarea, input[type="text"]').forEach(function (el) { el.value = ''; });
+        update();
       });
 
       // Seed defaults so the preview is visible on first load.
