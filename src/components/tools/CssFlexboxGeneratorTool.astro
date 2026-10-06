@@ -16,6 +16,7 @@ const labels = {
     outputLabel: 'Generated CSS',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: "Copy failed",
   },
   zh: {
     direction: 'flex-direction',
@@ -29,6 +30,7 @@ const labels = {
     outputLabel: '生成的 CSS',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: "复制失败",
   },
   ja: {
     direction: 'flex-direction',
@@ -42,6 +44,7 @@ const labels = {
     outputLabel: '生成された CSS',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: "コピーに失敗しました",
   },
   ko: {
     direction: 'flex-direction',
@@ -55,6 +58,7 @@ const labels = {
     outputLabel: '생성된 CSS',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: "복사 실패",
   },
 };
 
@@ -65,6 +69,7 @@ const L = labels[lang] ?? labels['en'];
   class="cfg-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
 >
   {/* Controls */}
   <div class="cfg-controls">
@@ -161,6 +166,7 @@ const L = labels[lang] ?? labels['en'];
         : document.querySelector('.cfg-wrap');
 
       var COPY_LABEL   = wrap.dataset.copy;
+      var COPY_FAILED_LABEL = wrap.dataset.copyFailed;
       var COPIED_LABEL = wrap.dataset.copied;
 
       var dirEl     = document.getElementById('cfg-direction');
@@ -242,23 +248,66 @@ const L = labels[lang] ?? labels['en'];
         window.trackTool && window.trackTool('css-flexbox-generator', 'generate');
       }
 
-      [dirEl, wrapEl, justEl, aItemsEl, aContEl].forEach(function (el) {
-        el.addEventListener('change', update);
+      var copyRequest = 0;
+      var copyTimer = 0;
+      function resetCopyFeedback() {
+        copyRequest++;
+        if (copyTimer) clearTimeout(copyTimer);
+        copyTimer = 0;
+        copyBtn.textContent = COPY_LABEL;
+        copyBtn.classList.remove('copied');
+      }
+      function refresh() {
+        resetCopyFeedback();
+        update();
+        copyBtn.disabled = !codeEl.textContent;
+      }
+      document.addEventListener('keydown', function (event) {
+        if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'l' || !wrap.contains(document.activeElement)) return;
+        event.preventDefault();
+        resetCopyFeedback();
+        wrap.querySelectorAll('input[type="text"]').forEach(function (el) { el.value = ''; });
+        codeEl.innerHTML = '';
+        copyBtn.disabled = true;
+        previewEl.innerHTML = '';
+        previewEl.style.display = '';
+        previewEl.style.flexDirection = '';
+        previewEl.style.flexWrap = '';
+        previewEl.style.justifyContent = '';
+        previewEl.style.alignItems = '';
+        previewEl.style.alignContent = '';
+        previewEl.style.gap = '';
       });
-      gapEl.addEventListener('input', update);
-      itemsEl.addEventListener('input', update);
 
-      copyBtn.addEventListener('click', function () {
+
+      [dirEl, wrapEl, justEl, aItemsEl, aContEl].forEach(function (el) {
+        el.addEventListener('change', refresh);
+      });
+      gapEl.addEventListener('input', refresh);
+      itemsEl.addEventListener('input', refresh);
+
+      copyBtn.addEventListener('click', async function () {
         var text = codeEl.textContent;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        resetCopyFeedback();
+        var request = copyRequest;
+        try {
+          await navigator.clipboard.writeText(text);
+          if (request !== copyRequest) return;
           copyBtn.textContent = COPIED_LABEL;
-          setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1500);
+          copyTimer = setTimeout(function () {
+            if (request !== copyRequest) return;
+            copyTimer = 0;
+            copyBtn.textContent = COPY_LABEL;
+          }, 1500);
           window.trackTool && window.trackTool('css-flexbox-generator', 'copy');
-        });
+        } catch (_) {
+          if (request !== copyRequest) return;
+          copyBtn.textContent = COPY_FAILED_LABEL;
+        }
       });
 
-      update();
+      refresh();
     })();
   </script>
 </div>
