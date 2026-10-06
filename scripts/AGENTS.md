@@ -95,6 +95,7 @@
 | `test-jwt-generator.mjs` | 回归 | 用真实 Web Crypto 与 Node crypto 核对 `JwtGeneratorTool.astro` 的 HS256 / HS384 / HS512、RFC 样例、UTF-8 与 Base64URL；完整页面脚本和共享快捷键覆盖签名乱序、编辑 / 清空失效、Header 算法与菜单一致性、短密钥警告、复制失败 / 重试及过期反馈。v2 组核对双栏、6 个气泡、敏感页边界和四语正文保护，共 1,893 项；只写 stdout，不访问系统剪贴板 | CI / 修改组件或工具页正文前后 |
 | `test-line-tools.mjs` | 回归 | 从 `LineToolsTool.astro` 的实际标记创建 DOM 替身，执行完整页面脚本与真实 `ToolLayout` 快捷键；核对八个手动操作、特殊键去重、四语单复数、清空后的计数与状态、复制失败及直接重试、输入或结果变化后的迟到回调与旧计时器，以及 v2 双栏、10 个气泡、计数模板和四语正文保护，共 1,616 项；只写 stdout，不访问网络或系统剪贴板 | 手动按需 / 修改 `LineToolsTool.astro` 前后；CI 随全部 `test-*.mjs` 运行 |
 | `test-css-unit-converter.mjs` | 回归 | 从 `CssUnitConverterTool.astro` 的实际标记创建 DOM 替身，执行完整页面脚本与真实 `ToolLayout` 快捷键；核对 px / rem / em / vw、默认与自定义字号和视口、负数与零、空值、Ctrl/⌘+L 保留设置并清空结果、四语复制与迟到回调、失败后重试，以及 compact 结构、6 个气泡与四语正文保护，共 510 项；只写 stdout，不访问网络或系统剪贴板 | 手动按需 / 修改 `CssUnitConverterTool.astro` 前后；CI 随全部 `test-*.mjs` 运行 |
+| `test-css-clamp-calculator.mjs` | 回归 | 执行 `CssClampCalculatorTool.astro` 完整页面脚本与真实共享快捷键，核对默认公式、负值、非法输入、清空与持久化、复制拒绝/重试及迟到回调；检查 generate 结构、11 个四语气泡与 steps。只写 stdout，不访问系统剪贴板 | CI / 修改组件、工具页正文或共享快捷键前后 |
 | `test-aspect-ratio.mjs` | 回归 | 用替身元素运行 `AspectRatioTool.astro` 的整段页面脚本：最简比与 4 位小数、锁定比例后连续改宽度不漂移（此前每次按取整后的高度重算比例：1920×1080 → 宽 1000 → 563 → 宽 1920 → 1081）、解锁后不再联动、预设为比例数字 × 120（21:9 显示 7:3）、缩放字段四舍五入，Ctrl/⌘+L 完整清空、小尺寸小数除零回归、compact 结构、5 个气泡与四语正文保护，共 518 项；只写 stdout | 手动按需 / 修改 `AspectRatioTool.astro` 脚本前后 |
 | `test-diff-checker.mjs` | 回归 | 抽取 `splitLines` / `lcs` / `pairRows`，核对换行规范化、按位置配对、2,000 组随机行表及 1–5 行 a/b 全组合与旧回溯结果一致。完整页面 IIFE、真实 Blob Worker（worker_threads）和共享快捷键覆盖四语计数、每页 100 行、视图切换/快速翻页/页码夹取、Cancel/Swap/Clear/pagehide/改输入/Ctrl/⌘+L 取消旧回包。v2 检查 compare 双输入、七气泡、手动收展保值、折叠中分页/换视图、清空或错误重新展开与焦点、手机首次结果滚入、steps/正文/引擎字节保护，共 6,826 PASS；只写 stdout | CI / 修改组件、工具页正文、共享 compare 样式或快捷键前后 |
 | `test-json-diff.mjs` | 回归 | 抽取 `diff` / `buildVisual`，用严格 RFC 6902 applier 将 patch 应用到 Before 并核对 After；覆盖根路径、数组倒序删除、嵌套数组、原型键、RFC 6901 转义、3,000 组随机文档与四语标记示例。完整页面 IIFE + 共享快捷键覆盖手动比较/交换、空或非法输入移除旧结果、Ctrl/⌘+L、Ctrl/⌘+Enter 单次执行、完整 patch 复制、拒绝直接重试及迟到回调/计时器；v2 检查 compare 收展保值、八气泡、长结果/焦点、steps/正文/引擎保护，共 808 PASS、1 项既有 SKIP（缺 Python jsonpatch）。Python 对照在系统临时目录写 JSON 并清理 | CI / 修改组件、工具页正文、共享 compare 样式或快捷键前后 |
@@ -155,6 +156,8 @@ build job  →  npm run build            # 完整构建烟囱测试，依赖 aud
 - 不引入新依赖前先看 `package.json` 是否已有可复用工具（如 sharp、figlet、js-yaml、ajv）
 
 ## 变更日志
+
+- 2026-10-06 — B12九页永久测试覆盖v2控件栏、有界结果、四语气泡/steps及清空、复制拒绝/重试、迟到回调与旧计时器。Box1992、Contrast499、Filter404、Gradient318、Flex471、Grid461、Variables427、Triangle301、Clamp409，合计5282 PASS（初始233），无本批可选SKIP；新增Clamp脚本已登记。Node22.23.3完整156脚本退出0，21个含既有可选SKIP；原算法、指南复算、engine与敏感边界保持。浏览器153矩阵/18完整流程/13564检查通过；最终复制只用页内替身，保留原失败与QA颜色过渡等待、取消后远端迟结束的协调记录。
 
 - 2026-10-06 — B11八个工具测试补v2页面、四语构建期文案/steps/气泡与客户端生命周期回归；HTTP新增脚本已登记，Cron/IP索引更新。最终Cron450、HTTP910、CSS1184、IP1662、Timezone636、IBAN789、MIME1095、Keycode439，合计7165 PASS（初始972）。Node22.23.3完整155脚本退出0，21个含既有可选SKIP；完整门后仅Keycode CSS与一条断言，439专测及重建/compare/浏览器补验通过。原算法/engine、指南复算与敏感边界保留；两种共享快捷键监听顺序、复制拒绝/缺API/迟到回调与强制旧timer交付使用页内或VM替身。浏览器136矩阵/16流程/5404检查通过，QA失败记录与原生剪贴板模拟事故另存仓库外报告。
 
