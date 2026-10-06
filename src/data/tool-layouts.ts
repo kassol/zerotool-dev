@@ -11,6 +11,7 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'gitignore-generator': 'generate',
   'cron-job-generator': 'generate',
   'htaccess-generator': 'generate',
   'fake-data-generator': 'generate',

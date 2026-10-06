@@ -25,9 +25,24 @@ const settle=async()=>{await new Promise(setImmediate);await new Promise(setImme
 let activePage;const onUnhandled=e=>activePage?.errors.push(String(e));process.on('unhandledRejection',onUnhandled);
 const SLUG='gitignore-generator',component='src/components/tools/GitignoreGeneratorTool.astro';
 const ts=requireFromRoot('typescript'), templateModule={exports:{}};vm.runInNewContext(ts.transpileModule(readFileSync(join(root,'src/data/gitignore-templates.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:templateModule.exports,module:templateModule});const templates=templateModule.exports;
+function serverData(lang='en') {
+  const fm=/^---\n([\s\S]*?)\n---/.exec(source)?.[1]||'';
+  if(!fm.includes('// strings:start'))return null;
+  const code=ts.transpileModule(fm.replace(/^import .*;$/gm,''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+  return vm.runInNewContext(code+';({STRINGS,L,CLIENT_T,templateHtml,counts})',{Astro:{props:{lang}},gitignoreTemplates:templates.gitignoreTemplates});
+}
+function renderMarkup(lang='en') {
+  const data=serverData(lang),escaped=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  let markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+  if(!data)return markup;
+  markup=markup.replace(/set:html=\{templateHtml\('([a-z]+)'\)\}><\/div>/g,(_,group)=>'>'+data.templateHtml(group)+'</div>');
+  markup=markup.replace('data-strings={JSON.stringify(CLIENT_T)}','data-strings="'+escaped(JSON.stringify(data.CLIENT_T))+'"');
+  markup=markup.replace(/([\w-]+)=\{L\.(\w+)\}/g,(_,attr,key)=>attr+'="'+escaped(data.L[key])+'"');
+  return markup.replace(/\{L\.(?:tips\.)?(\w+)\}/g,(m,key)=>escaped(m.includes('.tips.')?data.L.tips[key]:data.L[key])).replace(/\{counts\.(\w+)\}/g,(_,key)=>data.counts[key]);
+}
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}){
-  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map();let stored=structuredClone(saved);
+  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map(),scrollCalls=[];let stored=structuredClone(saved);
   let timerId=0,clock=0,doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
   const matchOne = (el, selector) => {
@@ -99,6 +114,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
     }
     dispatch(type, extra = {}) { return this.dispatchEvent(new EventStub(type, { bubbles: true, ...extra })); }
     click() { if(this.disabled)return;if(this.tagName==='A'){must(urls.has(this.href),'download Blob exists');downloads.push({name:this.download,url:this.href,blob:urls.get(this.href)});return;}this.dispatch('click'); }
+    scrollIntoView(options) { scrollCalls.push({id:this.id,options}); }
     select() { doc.selectedElement=this; }
     focus() { doc.activeElement = this; }
     setSelectionRange(start,end) { this.selectionStart=start;this.selectionEnd=end; }
@@ -114,16 +130,13 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
   doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
-  const fm=/^---\n([\s\S]*?)\n---/.exec(source)?.[1]||'';
-  const labels=fm.includes('const labels =')?vm.runInNewContext(fm.slice(fm.indexOf('const labels ='),fm.indexOf('const L ='))+';labels'):null;
-  const escaped=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
+  widget.innerHTML=renderMarkup(lang);
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
   const persist={clear(slug){if(slug!=='cron-job-generator')stored={};persistCalls.push(['clear',slug]);},save(slug,data){stored=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,stored]);},load(){return structuredClone(stored);}};
   const globals={document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
-    _slug:SLUG,ztPersist:persist,trackTool(){},
+    _slug:SLUG,ztPersist:persist,trackTool(){},matchMedia(){return {matches:false};},
     navigator:noClipboard?{}:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
   };
@@ -132,7 +145,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   if(order==='shared-after')actual.run(shortcut);
   const get=id=>{const el=doc.getElementById(id);must(el,SLUG+' ID '+id);return el;};
   const errors=[];activePage={errors};
-  return{errors,doc,get,widget,clipboard,timers,persistCalls,execCalls,downloads,stored:()=>structuredClone(stored),actual,
+  return{errors,doc,get,widget,clipboard,timers,persistCalls,execCalls,downloads,scrollCalls,stored:()=>structuredClone(stored),actual,
     input(id,value,event='input'){get(id).value=value;get(id).dispatch(event);},
     ctrlL(id,key='l',mod='ctrlKey'){const el=get(id);el.focus();el.dispatch('keydown',{key,[mod]:true});},
     choose(id,checked){get(id).checked=checked;get(id).dispatch('change');},
@@ -177,4 +190,43 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  p=ready(lang,order);p.ctrlL(INPUT);restoreResult(p);assert(id+' real input recovers result',recover(p),true);assert(id+' recovery copy enabled',p.get(COPY).disabled,false);
 }
 process.removeListener('unhandledRejection',onUnhandled);
+// ---------- v2 page layout (DESIGN.md, kind: generate) ----------
+{
+ const markup=source.slice(source.indexOf('\n---\n',4)+5,source.indexOf('<script'));
+ const scripts=source.match(/<script>([\s\S]*?)<\/script>/)?.[1]||'';
+ const data=serverData();
+ assert('v2: direct tool root and shared generate rail',/^\s*<div class="gig-wrap"/.test(markup)&&markup.includes('class="gig-rail zt-rail"')&&source.includes('grid-template-columns: 300px minmax(0, 1fr)'),true);
+ assert('v2: business actions and reserved status precede the panels',markup.indexOf('id="gig-copy"')<markup.indexOf('id="gig-status"')&&markup.indexOf('id="gig-download"')<markup.indexOf('id="gig-status"')&&markup.indexOf('id="gig-clear-all"')<markup.indexOf('id="gig-status"')&&markup.indexOf('id="gig-status"')<markup.indexOf('class="gig-body"')&&source.includes('min-height: 2.8em'),true);
+ assert('v2: template rail and result use internal scroll bounds',/\.gig-groups[^}]*flex: 1 1 0;[^}]*overflow: auto;/.test(source)&&/\.gig-output \{[^}]*overflow: auto;[^}]*flex: 1 1 0;/.test(source),true);
+ assert('v2: actual filtering overrides flex for hidden items',source.includes('.gig-item[hidden] { display: none; }'),true);
+ assert('v2: stacking, mobile empty hide and targets',source.includes('@media (max-width: 860px)')&&source.includes('.gig-output-wrap[data-empty="true"] { display: none; }')&&source.includes('@media (max-width: 640px)')&&source.includes('.gig-actions button, .gig-search, .gig-custom { min-height: 44px; }')&&source.includes('.gig-item { min-height: 24px; }'),true);
+ assert('v2: no runtime static translation or duplicate template render',!/data-i18n|const STRINGS|renderGrids/.test(scripts)&&!!data&&Object.keys(data.CLIENT_T).sort().join('|')==='copied|copy|copyFailed',true);
+ const tipIds=[...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(x=>x[1]);
+ assert('v2: six unique SSR explanations',tipIds.length===6&&new Set(tipIds).size===6,true);
+ if(data)for(const lang of ['en','zh','ja','ko']) {
+  const local=serverData(lang),p=ready(lang),html=renderMarkup(lang);
+  assert(lang+' v2: matching localized key sets',Object.keys(local.L).sort(),Object.keys(data.L).sort());
+  assert(lang+' v2: six plaintext localized facts',Object.keys(local.L.tips).sort().join('|')==='clear|copy|custom|download|search|templates'&&Object.values(local.L.tips).every(x=>typeof x==='string'&&x.length>20&&!/<\/?[a-z]|https?:\/\//i.test(x)),true);
+  assert(lang+' v2: templates exist before client boot',(html.match(/class="gig-item-cb"/g)||[]).length,templates.gitignoreTemplates.length);
+  assert(lang+' v2: localized initial buttons and fields',[p.get(COPY).textContent,p.get('gig-download').textContent,p.get('gig-clear-all').textContent],[local.L.copy,local.L.download,local.L.clearAll]);
+  assert(lang+' v2: real SSR checkbox IDs remain unique',new Set(p.doc.querySelectorAll('.gig-item-cb').map(x=>x.id)).size,templates.gitignoreTemplates.length);
+  assert(lang+' v2: chip accessible name uses SSR wording',p.doc.querySelector('.gig-chip').getAttribute('aria-label'),local.L.removeTemplate.replace('{name}','Ada'));
+  const outputBefore=output(p);p.input('gig-search','no-such-template');
+  assert(lang+' v2: search hides templates without regenerating',output(p)===outputBefore&&p.doc.querySelectorAll('.gig-item').every(x=>x.hidden)&&!p.get('gig-no-results').hidden,true);
+  p.ctrlL(INPUT);
+  assert(lang+' v2: clear marks result empty with localized sentence',[p.get('gig-result').dataset.empty,output(p)],['true',local.L.emptyOutput]);
+  p.actual.ctx.matchMedia=()=>({matches:true});p.choose('gig-cb-l-ada',true);
+  assert(lang+' v2: real selection requests mobile result reveal',p.scrollCalls.at(-1),{id:'gig-result',options:{block:'start',behavior:'auto'}});
+  assert(lang+' v2: real result restores populated state',p.get('gig-result').dataset.empty,'false');
+  const count=p.scrollCalls.length;p.input('gig-search','ada');assert(lang+' v2: search never requests result scroll',p.scrollCalls.length,count);
+  p.ctrlL(INPUT);p.input(INPUT,'local/');assert(lang+' v2: first custom output requests mobile reveal',p.scrollCalls.length,count+1);
+  const mdx=readFileSync(join(root,'src/content/tools/gitignore-generator',lang+'.mdx'),'utf8');
+  const fm=/^---\n([\s\S]*?)\n---/.exec(mdx)?.[1]||'',steps=[...fm.slice(fm.indexOf('steps:\n'),fm.indexOf('faqItems:')).matchAll(/^  - (".*")$/gm)].map(x=>JSON.parse(x[1]));
+  assert(lang+' v2: six bounded steps replace Usage',steps.length===6&&steps.every(x=>x.length<=280&&!/<\/?[a-z]/i.test(x))&&steps.join('').length<=1200&&!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);
+  assert(lang+' v2: steps use Copy, Download and Clear all',steps.join('').includes(local.L.copy)&&steps.join('').includes(local.L.download)&&steps.join('').includes(local.L.clearAll),true);
+ }
+ const layouts=readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8');
+ if(process.env.ZT_B13_REGISTRATION_PENDING==='1')console.log('PENDING: generate registration is reserved for root adoption; not counted as PASS');
+ else assert('v2: registered with the implemented generate page',layouts.includes("'gitignore-generator': 'generate'"),true);
+}
 console.log(passes+' passed, '+failures+' failed');process.exitCode=failures?1:0;
