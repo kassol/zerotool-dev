@@ -142,6 +142,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'ai-token-counter': 'analyze',
   'ssl-certificate-decoder': 'analyze',
   'qr-code-decoder': 'analyze',
+  'gif-splitter': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {

@@ -929,11 +929,27 @@ const settle=async()=>{await new Promise(setImmediate);await new Promise(setImme
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 const waitFor=async(fn)=>{const until=Date.now()+5000;while(!fn()){if(Date.now()>until)throw Error('Boundary not reached: '+phase);await new Promise(r=>setTimeout(r,5));}};
 async function scene(id,fn){phase=id;try{await fn();}catch(e){checks.push({id,status:'FAIL',actual:e.stack});console.error(e);}}
-const labels=vm.runInNewContext(source.gif.match(/var STRINGS = [\s\S]*?\n      \};/)[0]+';STRINGS'),L=labels.en;
+const table=source.gif.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
+must(table,'build-time STRINGS marker');
+const labels=vm.runInNewContext(table[1]+';STRINGS'),L=labels.en;
+const htmlEscape=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');
+// A fixture renderer for the static label bindings, not compiled Astro/browser evidence.
+function fixtureMarkup(lang){
+ const L=labels[lang]||labels.en;
+ let html=source.gif.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0];
+ html=html.replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.([\w]+)\}(?: wide)?>(\{L\.tips\.([\w]+)\})<\/Toggletip>/g,(_,id,about,body,key)=>'<span class="zt-tip"><button type="button" data-zt-tip="'+id+'" aria-controls="'+id+'" aria-expanded="false" aria-label="'+htmlEscape(L[about])+'"></button><span id="'+id+'" class="zt-tip-pop" popover="auto" role="note">'+htmlEscape(L.tips[key])+'</span></span>');
+ html=html.replace('<p set:html={L.dropHint}></p>','<p>'+L.dropHint+'</p>');
+ html=html.replace("{L.downloadZip.replace('{n}', '0')}",htmlEscape(L.downloadZip.replace('{n}','0')));
+ html=html.replace(/([\w-]+)=\{L\.([\w]+)\}/g,(_,attr,key)=>attr+'="'+htmlEscape(L[key])+'"');
+ html=html.replace(/\{L\.([\w]+)\}/g,(_,key)=>htmlEscape(L[key]));
+ must(!/Toggletip|\{L\./.test(html),'fixture covers actual static bindings');
+ return html;
+}
 function page(order='shared-after',lang='en'){
  const key='gif';
  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[],tasks=[],downloads=[],blobs=new Map(),encodes=[],yields=[];
  const controls={holdEncode:false,holdYield:false};
+ const nativeClipboard={getter:0,write:0};
  let timerId=0,clock=0,doc,urlId=0;
  // RGBA/2D boundary: enough for this probe's opaque 2x2 fixtures; not a Canvas rendering conformance test.
  function pixels(c){const n=(c.width||0)*(c.height||0)*4;if(!c.rgba||c.rgba.length!==n)c.rgba=new Uint8ClampedArray(n);return c.rgba;}
@@ -1031,13 +1047,14 @@ function page(order='shared-after',lang='en'){
   doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
   doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
-  widget.innerHTML=source[key].replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
+  widget.innerHTML=fixtureMarkup(lang);
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.getElementsByName=name=>descendants(doc).filter(el=>el.getAttribute('name')===name);
   doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);return false;};
   const persist={clear(slug){persistCalls.push(['clear',slug]);},save(...args){persistCalls.push(['save',...args]);},load(){return {};}};
-  const globals={document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
+  const {tips,empty,rangeOptions,...clientT}=labels[lang]||labels.en;
+ const globals={t:clientT,document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
    ImageData:class{constructor(data,width,height){Object.assign(this,{data,width,height});}},
    MutationObserver:class{observe(){} disconnect(){}},matchMedia:()=>({addEventListener(){}}),getComputedStyle:()=>({getPropertyValue:()=>''}),requestAnimationFrame:fn=>globals.setTimeout(fn,16),cancelAnimationFrame:id=>globals.clearTimeout(id),
    MessageChannel:class{constructor(){this.port1={};this.port2={postMessage:()=>{const job={delivered:false,deliver:()=>{must(!job.delivered,'yield only once');job.delivered=true;this.port1.onmessage({data:null});}};yields.push(job);if(!controls.holdYield)queueMicrotask(job.deliver);}};}},
@@ -1045,11 +1062,14 @@ function page(order='shared-after',lang='en'){
    ClipboardItem:class{constructor(data){this.data=data;}},navigator:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value});return d.promise;},write(value){const d=deferred();clipboard.push({...d,value});return d.promise;}}},
    setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
   };
+  const stub=globals.navigator.clipboard;
+  globals.navigator=Object.create({get clipboard(){nativeClipboard.getter++;return {writeText(){nativeClipboard.write++;throw Error('Native clipboard forbidden');}};}});
+  Object.defineProperty(globals.navigator,'clipboard',{configurable:true,writable:true,value:stub});
   if(order==='shared-before')vm.runInNewContext(shortcut,{document:doc,window:{ztPersist:persist},_slug:slugs[key]},{filename:'ToolLayout.astro:actual-shortcut'});
   const actual=loadPage(paths[key],{lang,globals});
   if(order==='shared-after')actual.run(shortcut);
   const get=id=>{const el=doc.getElementById(id);must(el,key+' ID '+id);return el;};
-  return{get,doc,widget,globals,clipboard,timers,persistCalls,execCalls,tracks,downloads,encodes,yields,controls,actual,
+  return{get,doc,widget,globals,nativeClipboard,clipboard,timers,persistCalls,execCalls,tracks,downloads,encodes,yields,controls,actual,
    file(file){const input=get('gs-file');input.files=[file];input.value='C:\\fakepath\\'+file.name;input.dispatch('change');},
    drop(file){get('gs-wrap').dispatch('drop',{dataTransfer:{files:[file]}});},
    ctrlL(id,key='l',meta=false){get(id).focus();return get(id).dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta});},
@@ -1100,6 +1120,60 @@ for(const lang of ['en','zh','ja','ko'])await scene('copy/'+lang,async()=>{
  const timer=[...p.timers.values()].find(v=>v.ms===1500);p.tick(100);p.get('gs-limit-copy').click();p.clipboard[2].resolve();await settle();timer.fn();check(phase+'/forced-old-timer-ignored',t.copied,p.get('gs-limit-copy').textContent);p.tick(1400);check(phase+'/old-deadline-keeps-new-feedback',t.copied,p.get('gs-limit-copy').textContent);p.tick(100);check(phase+'/new-deadline-restores',t.copyCommand,p.get('gs-limit-copy').textContent);
  for(const outcome of ['resolve','reject']){const q=page('shared-after',lang);await limit(q);q.get('gs-limit-copy').click();await load(q,'new.gif');await sprite(q);q.get('gs-sprite-copy').click();const value=q.get('gs-sprite-json').value;check(phase+'/'+outcome+'-JSON-complete',value,q.clipboard[1].value);q.clipboard[1].resolve();await settle();const before=snap(q);q.clipboard[0][outcome](outcome==='reject'?Error('late'):undefined);await settle();check(phase+'/'+outcome+'-cross-button-new-state-kept',before,snap(q));check(phase+'/'+outcome+'-old-label-reset',t.copyCommand,q.get('gs-limit-copy').textContent);q.get('gs-select-none').click();check(phase+'/'+outcome+'-hidden-sprite-label-reset',t.copyJson,q.get('gs-sprite-copy').textContent);}
  for(const mode of ['missing','sync-throw']){const q=page('shared-after',lang);await limit(q);let native=0;const n=Object.create({get clipboard(){native++;throw Error('native accessed');}});Object.defineProperty(n,'clipboard',{value:mode==='missing'?undefined:{writeText(){throw Error('sync');}},writable:true});q.actual.ctx.navigator=n;q.get('gs-limit-copy').click();await settle();check(phase+'/'+mode+'-error',t.statusCopyFailed,q.get('gs-status').textContent);check(phase+'/'+mode+'-native-access-zero',0,native);}
+});
+
+
+// V2 page checks are local to GIF Splitter. Geometry and compiled HTML belong to browser QA.
+for(const lang of ['en','zh','ja','ko'])await scene('v2-SSR/'+lang,async()=>{
+ const p=page('shared-after',lang),t=labels[lang];
+ check(phase+'/initial-aria',t.dropAria,p.get('gs-file').getAttribute('aria-label'));
+ check(phase+'/initial-button',t.reset,p.get('gs-reset').textContent);
+ check(phase+'/initial-copy',t.copyJson,p.get('gs-sprite-copy').textContent);
+ check(phase+'/empty-copy',t.empty,p.widget.querySelector('.gs-empty').textContent);
+ check(phase+'/11-localized-tip-panels',['file','zip','format','selection','range','quality','background','columns','spacing','sprite','json'].map(k=>t.tips[k]),p.widget.querySelectorAll('.zt-tip-pop').map(v=>v.textContent));
+ check(phase+'/tips-excluded-from-client',false,Object.hasOwn(p.actual.ctx.t,'tips'));
+ check(phase+'/root-is-direct-flex-target','gs-wrap',p.widget.children[0].id);
+ check(phase+'/two-secondary-details',2,p.widget.querySelectorAll('details').length);
+ check(phase+'/secondary-details-closed',true,p.widget.querySelectorAll('details').every(v=>v.getAttribute('open')===null));
+ check(phase+'/grid-keyboard-focus','0',p.get('gs-grid').getAttribute('tabindex'));
+ check(phase+'/native-clipboard-zero',{getter:0,write:0},p.nativeClipboard);
+ await load(p);check(phase+'/decoded-label',t.statusDecoded.replace('{n}','2'),p.get('gs-status').textContent);
+ p.get('gs-from').value='2';p.get('gs-to').value='1';p.get('gs-step').value='2';p.get('gs-range-apply').click();
+ check(phase+'/range-still-applied',[true,false],p.get('gs-grid').querySelectorAll('.gs-thumb').map(v=>v.getAttribute('aria-pressed')==='true'));
+ p.get('gs-from').value='2';p.get('gs-to').value='';p.get('gs-step').value='';p.get('gs-range-apply').click();
+ check(phase+'/range-blank-end-and-step-defaults',[false,true],p.get('gs-grid').querySelectorAll('.gs-thumb').map(v=>v.getAttribute('aria-pressed')==='true'));
+ p.get('gs-select-all').click();p.change('gs-columns','1');p.change('gs-spacing','3');await sprite(p);
+ check(phase+'/sprite-JSON-real-values',[2,7,1,3],['width','height','columns','spacing'].map(k=>JSON.parse(p.get('gs-sprite-json').value)[k]));
+ p.get('gs-reset').click();check(phase+'/reset-empty-results',[true,0,'',false,true,''],Object.values(snap(p)));
+ check(phase+'/native-clipboard-stays-zero',{getter:0,write:0},p.nativeClipboard);
+});
+await scene('v2-source-contract',async()=>{
+ const css=source.gif.split('<style is:global>')[1];
+ check(phase+'/root-min-height-zero',true,/\.gs-wrap \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0;/.test(css));
+ check(phase+'/shared-rail',true,source.gif.includes('class="gs-rail zt-rail"'));
+ check(phase+'/270-300-rail',true,css.includes('grid-template-columns: minmax(270px, 300px) minmax(0, 1fr)'));
+ check(phase+'/bounded-frame-result',true,/\.gs-grid \{[^}]*flex: 1 1 0;[^}]*overflow: auto;/.test(css));
+ check(phase+'/reserved-status',true,/#gs-status \{[^}]*min-height: 4\.2em;/.test(css));
+ check(phase+'/mobile-stack-and-hide-empty',true,/@media \(max-width: 860px\) \{[\s\S]*?\.gs-result:has\(#gs-workspace\[hidden\]\) \{ display: none; \}/.test(css));
+ check(phase+'/phone-dense-controls',true,/\.gs-select-row \.btn-ghost \{ min-height: 24px;/.test(css)&&/\.gs-range-row \.gs-num \{ min-height: 24px;/.test(css));
+ check(phase+'/primary44-shared',true,/\.btn-copy,\s*\.tool-input \{\s*min-height: 44px;/.test(readFileSync(join(ROOT,'src/styles/tool-common.css'),'utf8')));
+ check(phase+'/status-before-secondary-and-result',true,source.gif.indexOf('id="gs-status"')<source.gif.indexOf('id="gs-selected-count"')&&source.gif.indexOf('id="gs-status"')<source.gif.indexOf('id="gs-workspace"'));
+ check(phase+'/no-runtime-translation',false,/data-i18n|var STRINGS|document\.documentElement\.lang/.test(source.gif));
+ const keys=Object.keys(labels.en),tipKeys=Object.keys(labels.en.tips);
+ for(const lang of ['zh','ja','ko']){check(phase+'/'+lang+'-same-keys',keys,Object.keys(labels[lang]));check(phase+'/'+lang+'-same-tip-keys',tipKeys,Object.keys(labels[lang].tips));}
+ const yaml=require('js-yaml');
+ for(const lang of ['en','zh','ja','ko']){
+  const path=process.env.ZT_B14_CONTENT_PREFIX?process.env.ZT_B14_CONTENT_PREFIX+lang+'.mdx':join(ROOT,'src/content/tools/gif-splitter',lang+'.mdx');
+  const mdx=readFileSync(path,'utf8'),meta=yaml.load(mdx.match(/^---\n([\s\S]*?)\n---/)[1]);
+  check(phase+'/'+lang+'-6-steps',6,meta.steps?.length);
+  check(phase+'/'+lang+'-step-bounds',true,meta.steps.every(v=>v.length<=280)&&meta.steps.join('').length<=1200);
+  check(phase+'/'+lang+'-FAQ-kept',5,meta.faqItems.length);
+  check(phase+'/'+lang+'-Usage-removed',false,/^## (How to Use|使用步骤|使い方|사용 방법)$/m.test(mdx));
+ }
+ const registry=readFileSync(join(ROOT,'src/data/tool-layouts.ts'),'utf8');
+ if(/['"]gif-splitter['"]\s*:\s*['"]generate['"]/.test(registry))check(phase+'/generate-registration',true,true);
+ else if(process.env.ZT_B14_SOURCE)console.log('PENDING gif-splitter generate registry adoption (excluded from PASS)');
+ else check(phase+'/generate-registration',true,false);
 });
 
 await settle();check('no-unhandled-rejections',[],unhandled);process.removeListener('unhandledRejection',onRejection);
