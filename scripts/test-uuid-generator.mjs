@@ -47,7 +47,8 @@ function makePage() {
     }
     return els[id];
   }
-  const document = { documentElement: { lang: 'en' }, getElementById: el, querySelectorAll() { return []; }, querySelector() { return { contains() { return true; } }; }, addEventListener() {} };
+  const client = source.includes('const clientStrings =') ? vm.runInNewContext('(' + source.match(/const clientStrings = (\{[^\n]*\});/)[1] + ')', { L: lifecycleLabels('en') }) : {};
+  const document = { documentElement: { lang: 'en' }, getElementById: el, querySelectorAll() { return []; }, querySelector() { return { dataset: { strings: JSON.stringify(client) }, contains() { return true; } }; }, addEventListener() {} };
   new Function('document', 'window', 'crypto', 'navigator', scriptMatch[1])(document, {}, webcrypto, {});
   return el;
 }
@@ -174,7 +175,7 @@ process.exitCode=failures ? 1 : 0;
 // clipboard, timers and anchor download destinations are controlled in memory. No system clipboard.
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
-import { loadPage } from './astro-page-harness.mjs';
+import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
 const lifecycleRequire = createRequire(join(root, 'package.json'));
 const { parseFragment, defaultTreeAdapter } = lifecycleRequire('parse5');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
@@ -189,10 +190,9 @@ const must = (ok, msg) => { if (!ok)
     throw Error(msg); };
 const escape = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 function lifecycleLabels(lang) {
-    if (!source.includes('const labels ='))
-        return null;
-    const a = source.indexOf('const labels ='), z = source.indexOf('\n---', a);
-    return vm.runInNewContext(source.slice(a, z) + ';L', { lang }, { timeout: 1000 });
+    const fm = /^---\n([\s\S]*?)\n---/.exec(source)?.[1] || '';
+    const all = frontmatterStrings(fm) || vm.runInNewContext('(' + source.match(/var STRINGS = (\{[\s\S]*?\n\s*\});/)[1] + ')');
+    return all[lang] || all.en;
 }
 const lifecycleSlug = "uuid-generator", lifecyclePath = "src/components/tools/UuidGeneratorTool.astro", lifecyclePrefix = "uuid";
 function lifecyclePage(lang = 'en', order = 'shared-after') {
@@ -320,6 +320,11 @@ function lifecyclePage(lang = 'en', order = 'shared-after') {
     const L = lifecycleLabels(lang);
     if (L)
         markup = markup.replace(/=\{L\.(\w+)\}/g, (_, k) => '="' + escape(L[k]) + '"').replace(/\{L\.(\w+)\}/g, (_, k) => escape(L[k]));
+    if (source.includes('const clientStrings =')) {
+        const clientStrings = vm.runInNewContext('(' + source.match(/const clientStrings = (\{[^\n]*\});/)[1] + ')', { L });
+        markup = markup.replace(/=\{JSON.stringify\(clientStrings\)\}/g, '="' + escape(JSON.stringify(clientStrings)) + '"')
+            .replace(/<Toggletip\b[^>]*>[\s\S]*?<\/Toggletip>/g, '');
+    }
     widget.innerHTML = markup;
     doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
     doc.createElement = tag => new Element(tag);
@@ -376,8 +381,7 @@ catch (e) {
     lifeCheck(name + ' (unexpected ' + e.message + ')', false);
     return null;
 } }
-function labelsFor(p) { if (p.ctx.document.querySelector('.' + lifecyclePrefix + '-wrap').dataset.copy)
-    return lifecycleLabels(p.doc.documentElement.lang); return vm.runInNewContext('(' + source.match(/var STRINGS = (\{[\s\S]*?\n\s*\});/)[1] + ')')[p.doc.documentElement.lang]; }
+function labelsFor(p) { return lifecycleLabels(p.doc.documentElement.lang); }
 function fullOutput(p) {   return p.get('uuid-output').textContent; }
 function targets(p) {   return [{ b: p.get('uuid-copy-single'), text: () => fullOutput(p), success: labelsFor(p).copied, restore: labelsFor(p).copy, delay: 1500 }, { b: p.get('uuid-batch-copy'), text: () => p.get('uuid-batch-output').value, success: labelsFor(p).copied, restore: labelsFor(p).copyAll, delay: 1500 }]; }
 const expectedCopyFailure = { en: 'Copy failed. Try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。再試行してください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
@@ -548,4 +552,46 @@ for (const lang of ['en', 'zh', 'ja', 'ko'])
 process.removeListener('unhandledRejection', onUnhandled);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
 console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
+process.exitCode = failures + lifecycleFail ? 1 : 0;
+
+// v2 page layout: source bindings, real four-language controls and structured usage.
+const featureTips = { generate: 'generate', copy: 'copy', count: 'count', batch: 'batch', 'copy-all': 'copyAll', clear: 'clear' };
+const featureFM = /^---\n([\s\S]*?)\n---/.exec(source)?.[1] || '';
+const featureStrings = frontmatterStrings(featureFM);
+lifeCheck('v2 direct tool root', /^<div class="uuid-wrap"/.test(source.replace(/^---[\s\S]*?---\s*/, '')));
+lifeCheck('v2 shared generate rail', /<aside class="uuid-rail zt-rail">/.test(source));
+const featureStructure = lifecyclePage('en');
+lifeCheck('v2 grid lives inside direct flex root', featureStructure.doc.querySelector('.uuid-main')?.parentNode.classList.contains('uuid-wrap') && featureStructure.doc.querySelector('.uuid-rail')?.parentNode.classList.contains('uuid-main') && featureStructure.doc.querySelector('.uuid-results')?.parentNode.classList.contains('uuid-main'));
+lifeCheck('v2 result separated from controls', source.indexOf('<section class="uuid-results"') > source.indexOf('</aside>'));
+lifeCheck('v2 no runtime UI translation', !source.includes('data-i18n') && !source.match(/<script[\s\S]*var STRINGS/));
+const { load: featureYAML } = lifecycleRequire('js-yaml');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const p = lifecyclePage(lang);
+    const L = featureStrings?.[lang];
+    for (const [id, key] of [['uuid-generate', 'generate'], ['uuid-copy-single', 'copy'], ['uuid-batch-gen', 'generateBatch'], ['uuid-batch-copy', 'copyAll'], ['uuid-batch-clear', 'clear']]) lifeCheck(lang + '/SSR action ' + id, p.get(id).textContent === L?.[key]);
+    lifeCheck(lang + '/SSR batch label', p.doc.querySelector('.batch-label span').textContent === L?.batch);
+    lifeCheck(lang + '/SSR batch placeholder', p.get('uuid-batch-output').getAttribute('placeholder') === L?.batchPlaceholder);
+    lifeCheck(lang + '/four-language empty sentence', typeof L?.empty === 'string' && L.empty.length > 0 && source.includes('{L.empty}'));
+    lifeCheck(lang + '/copy feedback precedes result', p.get('uuid-copy-single').closest('.uuid-status')?.getAttribute('role') === 'status' && p.get('uuid-batch-copy').closest('.uuid-status')?.getAttribute('role') === 'status' && p.get('uuid-batch-copy').closest('.uuid-rail') !== null);
+    const client = JSON.parse(p.doc.querySelector('.uuid-wrap').dataset.strings);
+    lifeCheck(lang + '/only required dynamic strings sent', Object.keys(client).sort().join(',') === 'clickGenerate,copied,copy,copyAll,copyFailed' && !Object.hasOwn(client, 'tips'));
+    for (const [id, key] of Object.entries(featureTips)) lifeCheck(lang + '/tip ' + key + ' is SSR-bound', typeof L?.tips?.[key] === 'string' && L.tips[key].length > 0 && source.includes('id="uuid-tip-' + id + '"') && source.includes('{L.tips.' + key + '}</Toggletip>'));
+    const mdx = readFileSync(join(root, 'src/content/tools/uuid-generator/' + lang + '.mdx'), 'utf8');
+    const meta = featureYAML(/^---\n([\s\S]*?)\n---/.exec(mdx)[1]);
+    lifeCheck(lang + '/steps bounded', Array.isArray(meta.steps) && meta.steps.length > 0 && meta.steps.length <= 8 && meta.steps.every(x => typeof x === 'string' && x.length <= 280) && meta.steps.join('').length <= 1200);
+    lifeCheck(lang + '/Usage moved and FAQ retained', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx) && Array.isArray(meta.faqItems) && meta.faqItems.length > 0);
+}
+// Recompute the added English batch-format explanation with the real page's Web Crypto path.
+const featureBatch = makePage();
+featureBatch('uuid-count').value = '3';
+featureBatch('uuid-batch-gen').fire('click');
+const featureBatchValues = featureBatch('uuid-batch-output').value.split('\n');
+lifeCheck('EN batch explanation has three actual values', featureBatchValues.length === 3);
+lifeCheck('EN batch explanation version digit recomputed', featureBatchValues.every(x => x.replace(/-/g, '')[12] === '4'));
+lifeCheck('EN batch explanation variant digit recomputed', featureBatchValues.every(x => /^[89ab]$/.test(x.replace(/-/g, '')[16])));
+lifeCheck('EN batch explanation present', page.includes('Every generated batch line follows the same v4 version and RFC variant pattern as the single value above.'));
+const featureLayouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+if (/'uuid-generator':\s*'generate'/.test(featureLayouts)) lifeCheck('v2 generate registration', true);
+else console.log('PENDING_ROOT uuid-generator generate registration (not counted as PASS)');
+console.log(`FEATURE FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
 process.exitCode = failures + lifecycleFail ? 1 : 0;
