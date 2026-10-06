@@ -114,6 +114,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'css-variables-generator': 'generate',
   'css-triangle-generator': 'generate',
   'css-clamp-calculator': 'generate',
+  'robots-txt-generator': 'generate',
   'har-file-analyzer': 'analyze',
   'color-blindness-simulator': 'analyze',
   'sqlite-viewer': 'analyze',

@@ -1,101 +1,218 @@
 ---
+import Toggletip from '../Toggletip.astro';
 // RobotsTxtGeneratorTool — generates robots.txt from form inputs
----
-<div>
-  <div class="rt-wrap">
-
-    {/* User-agent block controls */}
-    <div id="rt-blocks"></div>
-
-    <button id="rt-add-block" class="rt-add-btn" data-i18n="addBlock">+ Add User-agent Block</button>
-
-    {/* Sitemap */}
-    <div class="rt-field">
-      <label for="rt-sitemap"><span data-i18n="sitemapUrl">Sitemap URL</span> <span class="rt-optional" data-i18n="optional">(optional)</span></label>
-      <input
-        id="rt-sitemap"
-        type="url"
-        placeholder="https://example.com/sitemap.xml"
-        spellcheck="false"
-      />
-    </div>
-
-    {/* Output */}
-    <div class="rt-output-wrap">
-      <div class="rt-output-header">
-        <span class="rt-output-label">robots.txt</span>
-        <button id="rt-copy" class="btn-copy" disabled data-i18n="copy">Copy</button>
-      </div>
-      <pre id="rt-output" class="rt-output"></pre>
-    </div>
-
-    <div id="rt-status" class="rt-status" aria-live="polite"></div>
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+// strings:start
+const STRINGS = {
+  "en": {
+    "addBlock": "+ Add User-agent Block",
+    "sitemapUrl": "Sitemap URL",
+    "optional": "(optional)",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "blockTitle": "User-agent Block",
+    "userAgent": "User-agent",
+    "customBot": "Custom...",
+    "addAllow": "+ Allow",
+    "addDisallow": "+ Disallow",
+    "copyFailed": "Copy failed. Try again.",
+    "empty": "Configure a User-agent block to generate robots.txt.",
+    "initialNotice": "The starting rule Disallow: / blocks the whole site. Change or remove it before publishing.",
+    "rulesLabel": "Path rules",
+    "tips": {
+      "block": "Add a separate User-agent block. Each block has its own bot selection and Allow or Disallow rules; deleting a block removes it from the output.",
+      "ua": "Choose * (all bots), Googlebot or Bingbot, or select Custom... and type a bot name. A blank custom name writes *; bot names are trimmed.",
+      "rules": "Add Allow or Disallow and type the path. Paths are trimmed and written without validation; empty paths remain empty rules. A block with no rules writes Disallow:.",
+      "sitemap": "Enter one Sitemap URL. It is trimmed and appended after the blocks without URL validation. The tool does not fetch the URL.",
+      "copy": "Copy the complete generated file. Input changes update it immediately. Ctrl/⌘+L clears text, the Sitemap URL and the result while keeping blocks, rule types and User-agent selections. Retry Copy if it fails."
+    }
+  },
+  "zh": {
+    "addBlock": "+ 添加 User-agent 块",
+    "sitemapUrl": "Sitemap URL",
+    "optional": "（可选）",
+    "copy": "复制",
+    "copied": "已复制！",
+    "blockTitle": "User-agent 块",
+    "userAgent": "User-agent",
+    "customBot": "自定义...",
+    "addAllow": "+ 允许",
+    "addDisallow": "+ 禁止",
+    "copyFailed": "复制失败，请重试。",
+    "empty": "配置 User-agent 块后，这里会显示 robots.txt。",
+    "initialNotice": "初始规则 Disallow: / 会禁止抓取整个站点，发布前请修改或删除该规则。",
+    "rulesLabel": "路径规则",
+    "tips": {
+      "block": "添加独立的 User-agent 块。每个块有自己的爬虫选择及允许或禁止规则；删除块会将其从输出中移除。",
+      "ua": "选择 *（所有爬虫）、Googlebot 或 Bingbot，也可选择“自定义...”并输入名称。空自定义名称会写为 *，名称两端的空白会被删除。",
+      "rules": "添加允许或禁止规则并输入路径。工具删除路径两端的空白后直接输出，不做校验；空路径保留为空规则。没有规则的块会写出 Disallow:。",
+      "sitemap": "输入一个 Sitemap URL。工具删除两端的空白后追加到所有块的末尾，不校验 URL，也不请求该地址。",
+      "copy": "复制完整生成文件，修改输入会立即更新。Ctrl/⌘+L 清空文本、Sitemap URL 和结果，保留块、规则类型和 User-agent 选择。复制失败后可直接重试。"
+    }
+  },
+  "ja": {
+    "addBlock": "+ User-agent ブロックを追加",
+    "sitemapUrl": "Sitemap URL",
+    "optional": "（任意）",
+    "copy": "コピー",
+    "copied": "コピー済み！",
+    "blockTitle": "User-agent ブロック",
+    "userAgent": "User-agent",
+    "customBot": "カスタム...",
+    "addAllow": "+ 許可",
+    "addDisallow": "+ 拒否",
+    "copyFailed": "コピーに失敗しました。もう一度お試しください。",
+    "empty": "User-agent ブロックを設定すると robots.txt が表示されます。",
+    "initialNotice": "初期ルール Disallow: / はサイト全体のクロールを拒否します。公開前に変更または削除してください。",
+    "rulesLabel": "パスルール",
+    "tips": {
+      "block": "独立した User-agent ブロックを追加します。各ブロックでボットと許可・拒否ルールを設定でき、削除したブロックは出力から除かれます。",
+      "ua": "*（すべてのボット）、Googlebot、Bingbot を選ぶか、「カスタム...」で名前を入力します。空のカスタム名は * となり、名前の前後の空白は除去されます。",
+      "rules": "許可または拒否ルールを追加してパスを入力します。前後の空白を除いて検証せず出力し、空のパスは空のルールとして残ります。ルールのないブロックは Disallow: を出力します。",
+      "sitemap": "Sitemap URL を1つ入力します。前後の空白を除いて全ブロックの後に追加し、URL の検証やアクセスは行いません。",
+      "copy": "生成されたファイル全体をコピーします。入力変更で即時更新されます。Ctrl/⌘+L はテキスト、Sitemap URL、結果を消去し、ブロック、ルール種別、User-agent の選択を保持します。失敗したら再試行できます。"
+    }
+  },
+  "ko": {
+    "addBlock": "+ User-agent 블록 추가",
+    "sitemapUrl": "Sitemap URL",
+    "optional": "(선택)",
+    "copy": "복사",
+    "copied": "복사됨!",
+    "blockTitle": "User-agent 블록",
+    "userAgent": "User-agent",
+    "customBot": "직접 입력...",
+    "addAllow": "+ 허용",
+    "addDisallow": "+ 차단",
+    "copyFailed": "복사에 실패했습니다. 다시 시도하세요.",
+    "empty": "User-agent 블록을 설정하면 robots.txt가 표시됩니다.",
+    "initialNotice": "초기 규칙 Disallow: /는 사이트 전체 크롤링을 차단합니다. 게시 전에 변경하거나 삭제하세요.",
+    "rulesLabel": "경로 규칙",
+    "tips": {
+      "block": "별도의 User-agent 블록을 추가합니다. 각 블록에 봇 선택과 허용·차단 규칙을 설정하며, 삭제한 블록은 출력에서 제거됩니다.",
+      "ua": "* (모든 봇), Googlebot, Bingbot을 선택하거나 “직접 입력...”으로 이름을 입력합니다. 빈 직접 입력 이름은 *가 되며, 이름 앞뒤 공백은 제거됩니다.",
+      "rules": "허용 또는 차단 규칙을 추가하고 경로를 입력합니다. 앞뒤 공백을 제거한 뒤 검증 없이 출력하며 빈 경로도 빈 규칙으로 유지합니다. 규칙이 없는 블록은 Disallow:를 출력합니다.",
+      "sitemap": "Sitemap URL 하나를 입력합니다. 앞뒤 공백을 제거하여 모든 블록 뒤에 추가하며 URL을 검증하거나 요청하지 않습니다.",
+      "copy": "생성한 파일 전체를 복사합니다. 입력 변경 시 즉시 갱신됩니다. Ctrl/⌘+L은 텍스트, Sitemap URL, 결과를 지우고 블록, 규칙 유형, User-agent 선택을 유지합니다. 실패 후 바로 재시도할 수 있습니다."
+    }
+  }
+};
+// strings:end
+const L = STRINGS[lang] || STRINGS.en;
+const CLIENT_T = { copy: L.copy, copied: L.copied, copyFailed: L.copyFailed };
+const RULE_HTML = `<div class="rt-rule-row">
+  <span class="rt-rule-type rt-rule-type-disallow">Disallow</span>
+  <input class="rt-rule-path" type="text" value="/" placeholder="/private/" spellcheck="false" />
+  <button class="rt-remove-rule" aria-label="Remove rule">&#x2715;</button>
+</div>`;
+function blockHtml(id: string, initial = false) {
+  return `<div class="rt-block" data-block-id="${id}">
+  <div class="rt-block-header">
+    <span class="rt-block-title">${L.blockTitle}</span>
+    <button class="rt-remove-block" aria-label="Remove block">&#x2715;</button>
   </div>
-
-  <script is:inline>
+  <div class="rt-block-body">
+    <div class="rt-inline-field">
+      <label for="${id}-ua">${L.userAgent}</label>
+      <select id="${id}-ua" class="rt-ua-select">
+        <option value="*">* (all bots)</option>
+        <option value="Googlebot">Googlebot</option>
+        <option value="Bingbot">Bingbot</option>
+        <option value="__custom__">${L.customBot}</option>
+      </select>
+      <input class="rt-ua-custom" type="text" placeholder="MyBot" style="display:none" spellcheck="false" />
+    </div>
+    <div class="rt-rules">
+      <div class="rt-rules-actions">
+        <button class="rt-add-rule rt-add-allow">${L.addAllow}</button>
+        <button class="rt-add-rule rt-add-disallow">${L.addDisallow}</button>
+      </div>
+      <div class="rt-rules-list">${initial ? RULE_HTML : ''}</div>
+    </div>
+  </div>
+</div>`;
+}
+const BLOCK_HTML = blockHtml('rt-new').replace(/^<div[^>]*>/, '').replace(/<\/div>$/, '');
+const RULE_BODY_HTML = RULE_HTML.replace(/^<div[^>]*>/, '').replace(/<\/div>$/, '');
+---
+<div class="rt-wrap">
+  <div class="rt-main">
+    <div class="rt-rail zt-rail">
+      <div class="rt-actions">
+        <div class="rt-action-group">
+          <button id="rt-add-block" class="rt-add-btn">{L.addBlock}</button>
+          <Toggletip id="rt-tip-block" lang={lang} about={L.addBlock}>{L.tips.block}</Toggletip>
+        </div>
+        <div class="rt-action-group">
+          <button id="rt-copy" class="btn-copy" disabled>{L.copy}</button>
+          <Toggletip id="rt-tip-copy" lang={lang} about={L.copy}>{L.tips.copy}</Toggletip>
+        </div>
+      </div>
+      <div id="rt-status" class="rt-status" aria-live="polite"></div>
+      <div class="rt-field">
+        <div class="rt-label-row">
+          <label for="rt-sitemap">{L.sitemapUrl} <span class="rt-optional">{L.optional}</span></label>
+          <Toggletip id="rt-tip-sitemap" lang={lang} about={L.sitemapUrl}>{L.tips.sitemap}</Toggletip>
+        </div>
+        <input id="rt-sitemap" type="url" placeholder="https://example.com/sitemap.xml" spellcheck="false" />
+      </div>
+      <div class="rt-label-row">
+        <span class="rt-control-label">{L.userAgent}</span>
+        <Toggletip id="rt-tip-ua" lang={lang} about={L.userAgent}>{L.tips.ua}</Toggletip>
+        <span class="rt-control-label">{L.rulesLabel}</span>
+        <Toggletip id="rt-tip-rules" lang={lang} about={L.rulesLabel}>{L.tips.rules}</Toggletip>
+      </div>
+      <div id="rt-blocks" class="rt-blocks" set:html={blockHtml('rt-block-1', true)}></div>
+    </div>
+    <div id="rt-result" class="rt-result" data-empty="false">
+      <div class="rt-output-wrap">
+        <div class="rt-output-header"><span class="rt-output-label">robots.txt</span></div>
+        <p id="rt-empty" class="rt-empty" hidden>{L.empty}</p>
+        <pre id="rt-output" class="rt-output">User-agent: *
+Disallow: /</pre>
+      </div>
+      <p class="rt-start-note">{L.initialNotice}</p>
+    </div>
+  </div>
+  <template id="rt-block-template" set:html={BLOCK_HTML}></template>
+  <template id="rt-rule-template" set:html={RULE_BODY_HTML}></template>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: { addBlock: '+ Add User-agent Block', sitemapUrl: 'Sitemap URL', optional: '(optional)', copy: 'Copy', copied: 'Copied!', blockTitle: 'User-agent Block', userAgent: 'User-agent', customBot: 'Custom...', addAllow: '+ Allow', addDisallow: '+ Disallow', copyFailed: 'Copy failed. Try again.' },
-        zh: { addBlock: '+ 添加 User-agent 块', sitemapUrl: 'Sitemap URL', optional: '（可选）', copy: '复制', copied: '已复制！', blockTitle: 'User-agent 块', userAgent: 'User-agent', customBot: '自定义...', addAllow: '+ 允许', addDisallow: '+ 禁止', copyFailed: '复制失败，请重试。' },
-        ja: { addBlock: '+ User-agent ブロックを追加', sitemapUrl: 'Sitemap URL', optional: '（任意）', copy: 'コピー', copied: 'コピー済み！', blockTitle: 'User-agent ブロック', userAgent: 'User-agent', customBot: 'カスタム...', addAllow: '+ 許可', addDisallow: '+ 拒否', copyFailed: 'コピーに失敗しました。もう一度お試しください。' },
-        ko: { addBlock: '+ User-agent 블록 추가', sitemapUrl: 'Sitemap URL', optional: '(선택)', copy: '복사', copied: '복사됨!', blockTitle: 'User-agent 블록', userAgent: 'User-agent', customBot: '직접 입력...', addAllow: '+ 허용', addDisallow: '+ 차단', copyFailed: '복사에 실패했습니다. 다시 시도하세요.' }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-      });
-
       var blocksEl = document.getElementById('rt-blocks');
       var addBlockBtn = document.getElementById('rt-add-block');
       var sitemapEl = document.getElementById('rt-sitemap');
       var outputEl = document.getElementById('rt-output');
       var copyBtn = document.getElementById('rt-copy');
       var statusEl = document.getElementById('rt-status');
+      var resultEl = document.getElementById('rt-result');
+      var emptyEl = document.getElementById('rt-empty');
+      var blockTemplate = document.getElementById('rt-block-template');
+      var ruleTemplate = document.getElementById('rt-rule-template');
 
       var blockCount = 0;
 
       function refresh() {
         resetCopy();
         generate();
+        syncEmpty();
       }
 
-      function createBlock() {
+      function syncEmpty() {
+        var empty = !outputEl.textContent;
+        resultEl.dataset.empty = empty ? 'true' : 'false';
+        emptyEl.hidden = !empty;
+        outputEl.hidden = empty;
+      }
+
+      function createBlock(existing) {
         blockCount++;
         var id = 'rt-block-' + blockCount;
-        var wrap = document.createElement('div');
+        var wrap = existing || document.createElement('div');
         wrap.className = 'rt-block';
         wrap.dataset.blockId = id;
 
-        wrap.innerHTML = [
-          '<div class="rt-block-header">',
-          '  <span class="rt-block-title">' + t.blockTitle + '</span>',
-          '  <button class="rt-remove-block" aria-label="Remove block">&#x2715;</button>',
-          '</div>',
-          '<div class="rt-block-body">',
-          '  <div class="rt-inline-field">',
-          '    <label for="' + id + '-ua">' + t.userAgent + '</label>',
-          '    <select id="' + id + '-ua" class="rt-ua-select">',
-          '      <option value="*">* (all bots)</option>',
-          '      <option value="Googlebot">Googlebot</option>',
-          '      <option value="Bingbot">Bingbot</option>',
-          '      <option value="__custom__">' + t.customBot + '</option>',
-          '    </select>',
-          '    <input class="rt-ua-custom" type="text" placeholder="MyBot" style="display:none" spellcheck="false" />',
-          '  </div>',
-          '  <div class="rt-rules">',
-          '    <div class="rt-rules-list"></div>',
-          '    <div class="rt-rules-actions">',
-          '      <button class="rt-add-rule rt-add-allow">' + t.addAllow + '</button>',
-          '      <button class="rt-add-rule rt-add-disallow">' + t.addDisallow + '</button>',
-          '    </div>',
-          '  </div>',
-          '</div>',
-        ].join('');
+        if (!existing) wrap.innerHTML = blockTemplate.innerHTML.replace(/rt-new/g, id);
 
         var removeBtn = wrap.querySelector('.rt-remove-block');
         var uaSelect = wrap.querySelector('.rt-ua-select');
@@ -120,22 +237,23 @@
         addAllowBtn.addEventListener('click', function () { addRule(rulesList, 'Allow'); });
         addDisallowBtn.addEventListener('click', function () { addRule(rulesList, 'Disallow'); });
 
-        blocksEl.appendChild(wrap);
+        if (!existing) blocksEl.appendChild(wrap);
         refresh();
         return wrap;
       }
 
-      function addRule(rulesList, type) {
-        var row = document.createElement('div');
+      function addRule(rulesList, type, existing) {
+        var row = existing || document.createElement('div');
         row.className = 'rt-rule-row';
-        row.innerHTML = [
-          '<span class="rt-rule-type rt-rule-type-' + type.toLowerCase() + '">' + type + '</span>',
-          '<input class="rt-rule-path" type="text" placeholder="/' + (type === 'Disallow' ? 'private/' : 'public/') + '" spellcheck="false" />',
-          '<button class="rt-remove-rule" aria-label="Remove rule">&#x2715;</button>',
-        ].join('');
+        if (!existing) row.innerHTML = ruleTemplate.innerHTML;
+        var typeEl = row.querySelector('.rt-rule-type');
+        typeEl.textContent = type;
+        typeEl.className = 'rt-rule-type rt-rule-type-' + type.toLowerCase();
 
         var removeBtn = row.querySelector('.rt-remove-rule');
         var pathInput = row.querySelector('.rt-rule-path');
+        if (!existing) pathInput.value = '';
+        pathInput.placeholder = '/' + (type === 'Disallow' ? 'private/' : 'public/');
 
         removeBtn.addEventListener('click', function () {
           row.remove();
@@ -144,7 +262,7 @@
 
         pathInput.addEventListener('input', refresh);
 
-        rulesList.appendChild(row);
+        if (!existing) rulesList.appendChild(row);
         pathInput.focus();
         refresh();
       }
@@ -255,12 +373,13 @@
         resetCopy();
         outputEl.textContent = '';
         copyBtn.disabled = true;
+        syncEmpty();
       });
 
       // Initialize with one default block (all bots, one Disallow: /)
-      var firstBlock = createBlock();
+      var firstBlock = createBlock(blocksEl.querySelector('.rt-block'));
       var firstRulesList = firstBlock.querySelector('.rt-rules-list');
-      addRule(firstRulesList, 'Disallow');
+      addRule(firstRulesList, 'Disallow', firstRulesList.querySelector('.rt-rule-row'));
       var firstPathInput = firstRulesList.querySelector('.rt-rule-path');
       firstPathInput.value = '/';
       refresh();
@@ -269,7 +388,19 @@
 </div>
 
 <style is:global>
-  .rt-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+  .rt-wrap { display: flex; flex-direction: column; gap: 0.85rem; min-width: 0; min-height: 0; }
+  .rt-main { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 1rem; flex: 1 1 0; min-width: 0; min-height: 0; }
+  .rt-rail { gap: 0.65rem; }
+  .rt-actions, .rt-action-group, .rt-label-row { display: flex; align-items: center; gap: 0.4rem; }
+  .rt-actions, .rt-label-row { flex-wrap: wrap; }
+  .rt-field, .rt-actions, .rt-status, .rt-label-row { flex: none; }
+  .rt-control-label { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .rt-blocks { flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 0.65rem; }
+  .rt-block { flex: none; }
+  .rt-result { display: flex; flex-direction: column; gap: 0.65rem; min-width: 0; min-height: 0; }
+  .rt-empty { margin: 0; padding: 1.25rem; color: var(--color-text-secondary); font-size: 0.9rem; }
+  .rt-empty[hidden], .rt-output[hidden] { display: none; }
+  .rt-start-note { margin: 0; font-size: 0.82rem; line-height: 1.5; color: var(--color-text-secondary); }
 
   /* Block */
   .rt-block {
@@ -333,7 +464,7 @@
     color: var(--color-text);
   }
 
-  .rt-ua-custom { flex: 1; min-width: 120px; }
+  .rt-ua-custom { flex: 1; min-width: 120px; max-width: 100%; }
   .rt-ua-custom:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
 
   /* Rules */
@@ -369,6 +500,7 @@
 
   .rt-rule-path {
     flex: 1;
+    min-width: 0;
     font-size: 0.85rem;
     font-family: var(--font-mono);
     padding: 0.3rem 0.5rem;
@@ -461,6 +593,11 @@
 
   /* Output */
   .rt-output-wrap {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     overflow: hidden;
@@ -491,10 +628,32 @@
     line-height: 1.6;
     color: var(--color-text);
     white-space: pre;
-    overflow-x: auto;
-    min-height: 80px;
+    overflow: auto;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
     background: var(--color-bg);
   }
 
-  .rt-status { font-size: 0.85rem; min-height: 1.2rem; color: var(--color-text-secondary); }
+  .rt-status { font-size: 0.85rem; line-height: 1.4; min-height: 2.8em; color: var(--color-text-secondary); }
+
+  @media (max-width: 860px) {
+    .rt-main { grid-template-columns: minmax(0, 1fr); flex: none; }
+    .rt-blocks { flex: none; max-height: 22rem; }
+    .rt-output-wrap { flex: none; }
+    .rt-output { flex: none; min-height: 120px; max-height: 18rem; }
+    .rt-result[data-empty="true"] { display: none; }
+  }
+
+  @media (max-width: 640px) {
+    .rt-main { gap: 0.65rem; }
+    .rt-rail { gap: 0.45rem; }
+    .rt-add-btn, #rt-copy, .rt-field input, .rt-ua-select, .rt-ua-custom, .rt-rule-path { min-height: 44px; }
+    .rt-add-rule { min-height: 24px; }
+    .rt-block-body { padding: 0.55rem; gap: 0.45rem; }
+    .rt-inline-field label { min-width: 68px; }
+    .rt-rule-type { min-width: 62px; }
+    .rt-rule-row { gap: 0.35rem; }
+    .rt-output { max-height: 14rem; }
+  }
 </style>
