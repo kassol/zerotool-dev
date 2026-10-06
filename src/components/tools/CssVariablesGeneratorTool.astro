@@ -18,6 +18,7 @@ const labels = {
     outputLabel: 'Generated CSS',
     copy: 'Copy',
     copied: 'Copied!',
+    copyFailed: "Copy failed",
     remove: '×',
   },
   zh: {
@@ -34,6 +35,7 @@ const labels = {
     outputLabel: '生成的 CSS',
     copy: '复制',
     copied: '已复制！',
+    copyFailed: "复制失败",
     remove: '×',
   },
   ja: {
@@ -50,6 +52,7 @@ const labels = {
     outputLabel: '生成された CSS',
     copy: 'コピー',
     copied: 'コピーしました！',
+    copyFailed: "コピーに失敗しました",
     remove: '×',
   },
   ko: {
@@ -66,6 +69,7 @@ const labels = {
     outputLabel: '생성된 CSS',
     copy: '복사',
     copied: '복사됨!',
+    copyFailed: "복사 실패",
     remove: '×',
   },
 };
@@ -77,6 +81,7 @@ const L = labels[lang] ?? labels['en'];
   class="cvg-wrap"
   data-copy={L.copy}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-label-colors={L.colors}
   data-label-typography={L.typography}
   data-label-spacing={L.spacing}
@@ -120,6 +125,7 @@ const L = labels[lang] ?? labels['en'];
 
       /* ── Labels from data attributes ── */
       var COPY_LABEL    = wrap.dataset.copy;
+      var COPY_FAILED_LABEL = wrap.dataset.copyFailed;
       var COPIED_LABEL  = wrap.dataset.copied;
       var ADD_LABEL     = wrap.dataset.labelAdd;
       var REMOVE_LABEL  = wrap.dataset.labelRemove;
@@ -227,22 +233,22 @@ const L = labels[lang] ?? labels['en'];
         if (type === 'color') {
           swatch.addEventListener('input', function () {
             valueInput.value = swatch.value;
-            generate();
+            refresh();
           });
           valueInput.addEventListener('input', function () {
             var v = valueInput.value.trim();
             if (/^#[0-9a-fA-F]{6}$/.test(v)) swatch.value = v;
             else if (/^#[0-9a-fA-F]{3}$/.test(v)) swatch.value = '#' + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
-            generate();
+            refresh();
           });
         } else {
-          valueInput.addEventListener('input', generate);
+          valueInput.addEventListener('input', refresh);
         }
 
-        nameInput.addEventListener('input', generate);
+        nameInput.addEventListener('input', refresh);
         removeBtn.addEventListener('click', function () {
           row.parentNode.removeChild(row);
-          generate();
+          refresh();
         });
 
         groupEl.querySelector('.cvg-token-list').appendChild(row);
@@ -281,7 +287,7 @@ const L = labels[lang] ?? labels['en'];
 
         addBtn.addEventListener('click', function () {
           buildRow(section, g.type, '', '');
-          generate();
+          refresh();
           window.trackTool && window.trackTool('css-variables-generator', 'add_token');
         });
 
@@ -346,21 +352,55 @@ const L = labels[lang] ?? labels['en'];
         window.trackTool && window.trackTool('css-variables-generator', 'generate');
       }
 
-      prefixEl.addEventListener('input', generate);
+      var copyRequest = 0;
+      var copyTimer = 0;
+      function resetCopyFeedback() {
+        copyRequest++;
+        if (copyTimer) clearTimeout(copyTimer);
+        copyTimer = 0;
+        copyBtn.textContent = COPY_LABEL;
+        copyBtn.classList.remove('copied');
+      }
+      function refresh() {
+        resetCopyFeedback();
+        generate();
+      }
+      document.addEventListener('keydown', function (event) {
+        if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'l' || !wrap.contains(document.activeElement)) return;
+        event.preventDefault();
+        resetCopyFeedback();
+        wrap.querySelectorAll('input[type="text"]').forEach(function (el) { el.value = ''; });
+        codeEl.innerHTML = '';
+        copyBtn.disabled = true;
+      });
+
+
+      prefixEl.addEventListener('input', refresh);
 
       /* ── Copy ── */
-      copyBtn.addEventListener('click', function () {
+      copyBtn.addEventListener('click', async function () {
         var text = codeEl.textContent;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        resetCopyFeedback();
+        var request = copyRequest;
+        try {
+          await navigator.clipboard.writeText(text);
+          if (request !== copyRequest) return;
           copyBtn.textContent = COPIED_LABEL;
-          setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1500);
+          copyTimer = setTimeout(function () {
+            if (request !== copyRequest) return;
+            copyTimer = 0;
+            copyBtn.textContent = COPY_LABEL;
+          }, 1500);
           window.trackTool && window.trackTool('css-variables-generator', 'copy');
-        });
+        } catch (_) {
+          if (request !== copyRequest) return;
+          copyBtn.textContent = COPY_FAILED_LABEL;
+        }
       });
 
       /* ── Initial render ── */
-      generate();
+      refresh();
     })();
   </script>
 </div>
