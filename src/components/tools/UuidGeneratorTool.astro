@@ -32,10 +32,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { clickGenerate: 'Click Generate', generate: 'Generate', copy: 'Copy', copied: 'Copied!', batch: 'Batch:', uuids: 'UUIDs', generateBatch: 'Generate Batch', copyAll: 'Copy All', clear: 'Clear', batchPlaceholder: 'Batch UUIDs appear here...' },
-        zh: { clickGenerate: '点击生成', generate: '生成', copy: '复制', copied: '已复制！', batch: '批量：', uuids: '个 UUID', generateBatch: '批量生成', copyAll: '全部复制', clear: '清除', batchPlaceholder: '批量 UUID 显示在此...' },
-        ja: { clickGenerate: '生成をクリック', generate: '生成', copy: 'コピー', copied: 'コピー済み！', batch: 'バッチ：', uuids: '件の UUID', generateBatch: 'バッチ生成', copyAll: 'すべてコピー', clear: 'クリア', batchPlaceholder: 'バッチ UUID がここに表示されます...' },
-        ko: { clickGenerate: '생성 클릭', generate: '생성', copy: '복사', copied: '복사됨!', batch: '배치:', uuids: '개 UUID', generateBatch: '배치 생성', copyAll: '모두 복사', clear: '지우기', batchPlaceholder: '배치 UUID가 여기에 표시됩니다...' }
+        en: { copyFailed: 'Copy failed. Try again.', clickGenerate: 'Click Generate', generate: 'Generate', copy: 'Copy', copied: 'Copied!', batch: 'Batch:', uuids: 'UUIDs', generateBatch: 'Generate Batch', copyAll: 'Copy All', clear: 'Clear', batchPlaceholder: 'Batch UUIDs appear here...' },
+        zh: { copyFailed: '复制失败，请重试。', clickGenerate: '点击生成', generate: '生成', copy: '复制', copied: '已复制！', batch: '批量：', uuids: '个 UUID', generateBatch: '批量生成', copyAll: '全部复制', clear: '清除', batchPlaceholder: '批量 UUID 显示在此...' },
+        ja: { copyFailed: 'コピーに失敗しました。再試行してください。', clickGenerate: '生成をクリック', generate: '生成', copy: 'コピー', copied: 'コピー済み！', batch: 'バッチ：', uuids: '件の UUID', generateBatch: 'バッチ生成', copyAll: 'すべてコピー', clear: 'クリア', batchPlaceholder: 'バッチ UUID がここに表示されます...' },
+        ko: { copyFailed: '복사하지 못했습니다. 다시 시도하세요.', clickGenerate: '생성 클릭', generate: '생성', copy: '복사', copied: '복사됨!', batch: '배치:', uuids: '개 UUID', generateBatch: '배치 생성', copyAll: '모두 복사', clear: '지우기', batchPlaceholder: '배치 UUID가 여기에 표시됩니다...' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -51,24 +51,49 @@
       var batchOut = document.getElementById('uuid-batch-output');
       var countInput = document.getElementById('uuid-count');
 
+      var copyStates = new Map();
+      function resetCopy(btn, label) {
+        var previous = copyStates.get(btn);
+        if (previous) clearTimeout(previous.timer);
+        var state = { timer: null };
+        copyStates.set(btn, state);
+        btn.textContent = label;
+        return state;
+      }
+      function copyText(btn, text, label, copied, delay) {
+        if (!text || btn.disabled) return;
+        var state = resetCopy(btn, label);
+        function current() { return copyStates.get(btn) === state; }
+        function failed() { if (current()) btn.textContent = t.copyFailed; }
+        try {
+          if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') { failed(); return; }
+          Promise.resolve(navigator.clipboard.writeText(text)).then(function () {
+            if (!current()) return;
+            btn.textContent = copied;
+            state.timer = setTimeout(function () { if (current()) btn.textContent = label; }, delay);
+          }, failed);
+        } catch (e) { failed(); }
+      }
+      var singleCopy = document.getElementById('uuid-copy-single');
+      var batchCopy = document.getElementById('uuid-batch-copy');
+      batchCopy.disabled = true;
+
       function genUUID() {
         return crypto.randomUUID();
       }
 
       document.getElementById('uuid-generate').addEventListener('click', function () {
+        resetCopy(singleCopy, t.copy);
+        singleCopy.disabled = false;
         singleOut.textContent = genUUID();
         singleOut.classList.add('has-value');
         window.trackTool && window.trackTool('uuid_generator', 'generate');
       });
 
-      document.getElementById('uuid-copy-single').addEventListener('click', function () {
+      singleCopy.addEventListener('click', function () {
         var val = singleOut.textContent;
         if (val === t.clickGenerate) return;
-        navigator.clipboard.writeText(val).then(function () {
-          var btn = document.getElementById('uuid-copy-single');
-          btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t.copy; }, 1500);
-        });
+        copyText(singleCopy, val, t.copy, t.copied, 1500);
       });
 
       document.getElementById('uuid-batch-gen').addEventListener('click', function () {
@@ -76,21 +101,32 @@
         var count = Math.min(100, Math.max(1, isNaN(parsed) ? 5 : parsed));
         var uuids = [];
         for (var i = 0; i < count; i++) uuids.push(genUUID());
+        resetCopy(batchCopy, t.copyAll);
         batchOut.value = uuids.join('\n');
+        batchCopy.disabled = false;
         window.trackTool && window.trackTool('uuid_generator', 'generate_batch');
       });
 
-      document.getElementById('uuid-batch-copy').addEventListener('click', function () {
-        if (!batchOut.value) return;
-        navigator.clipboard.writeText(batchOut.value).then(function () {
-          var btn = document.getElementById('uuid-batch-copy');
-          btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t.copyAll; }, 1500);
-        });
+      batchCopy.addEventListener('click', function () {
+        copyText(batchCopy, batchOut.value, t.copyAll, t.copied, 1500);
       });
 
       document.getElementById('uuid-batch-clear').addEventListener('click', function () {
         batchOut.value = '';
+        resetCopy(batchCopy, t.copyAll);
+        batchCopy.disabled = true;
+      });
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var tool = document.querySelector('.uuid-wrap');
+        if (!tool || !tool.contains(document.activeElement)) return;
+        singleOut.textContent = '';
+        singleOut.classList.remove('has-value');
+        batchOut.value = '';
+        resetCopy(singleCopy, t.copy);
+        resetCopy(batchCopy, t.copyAll);
+        singleCopy.disabled = true;
+        batchCopy.disabled = true;
       });
 
       // Restore saved count preference
