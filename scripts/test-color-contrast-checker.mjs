@@ -256,8 +256,9 @@ for(const lang of langKeys){
   const dir=process.env.ZEROTOOL_QA_MDX_DIR;
   const mdxPath=dir?join(dir,`b12-${SLUG}-feature-${lang}.mdx`):join(root,'src/content/tools',SLUG,lang+'.mdx');
   const mdx=readFileSync(mdxPath,'utf8'),fm=/^---\n([\s\S]*?)\n---/.exec(mdx)[1];
-  const region=/steps:\n([\s\S]*?)(?=^\w|$)/m.exec(fm);
+  const region=/^steps:\n((?:  - .+\n)*)/m.exec(fm);
   const steps=region?[...region[1].matchAll(/^  - (.+)$/gm)].map(m=>JSON.parse(m[1])):[];
+  check(lang+' suggestion step names the actual Apply button',steps.some(step=>step.includes(L.apply)));
   check(lang+' steps present and <=8',steps.length>0&&steps.length<=8);check(lang+' each step <=280',steps.every(step=>step.length<=280));check(lang+' total steps <=1200',steps.join('').length<=1200);check(lang+' plain steps',steps.every(step=>!/<[^>]+>|\*\*|`/.test(step)));check(lang+' steps before FAQ',fm.indexOf('steps:')>=0&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
 }
 const client=source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];check('tips stay out of client data',!client.includes('tips')&&!/data-[\w-]*tip/.test(source.split('<script')[0]));
