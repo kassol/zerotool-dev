@@ -143,6 +143,7 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'ssl-certificate-decoder': 'analyze',
   'qr-code-decoder': 'analyze',
   'gif-splitter': 'generate',
+  'lorem-ipsum': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
