@@ -102,6 +102,7 @@ const counts = {
           customPlaceholder: '# Project-specific paths\nbuild/local-cache/\n.env.production',
           copy: 'Copy',
           copied: 'Copied!',
+          copyFailed: 'Copy failed',
           download: 'Download',
           emptyOutput: 'Pick one or more templates above. The merged .gitignore appears here.',
           noResults: 'No templates match your search.',
@@ -116,6 +117,7 @@ const counts = {
           customPlaceholder: '# 项目特有的路径\nbuild/local-cache/\n.env.production',
           copy: '复制',
           copied: '已复制！',
+          copyFailed: '复制失败',
           download: '下载',
           emptyOutput: '在上方选择一个或多个模板，合并后的 .gitignore 将显示在这里。',
           noResults: '没有匹配的模板。',
@@ -130,6 +132,7 @@ const counts = {
           customPlaceholder: '# プロジェクト固有のパス\nbuild/local-cache/\n.env.production',
           copy: 'コピー',
           copied: 'コピー済み！',
+          copyFailed: 'コピーに失敗しました',
           download: 'ダウンロード',
           emptyOutput: '上のテンプレートを 1 つ以上選択すると、ここに統合された .gitignore が表示されます。',
           noResults: '一致するテンプレートはありません。',
@@ -144,6 +147,7 @@ const counts = {
           customPlaceholder: '# 프로젝트 고유 경로\nbuild/local-cache/\n.env.production',
           copy: '복사',
           copied: '복사됨!',
+          copyFailed: '복사 실패',
           download: '다운로드',
           emptyOutput: '위에서 하나 이상의 템플릿을 선택하면 병합된 .gitignore가 여기 표시됩니다.',
           noResults: '일치하는 템플릿이 없습니다.',
@@ -324,7 +328,18 @@ const counts = {
         return `${header}\n\n${sections.join('\n\n')}\n`;
       }
 
+      let copyVersion = 0;
+      let copyTimer: ReturnType<typeof setTimeout> | null = null;
+      function resetCopy() {
+        copyVersion++;
+        if (copyTimer) clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        copyBtn.classList.remove('copied');
+      }
+
       function refreshOutput() {
+        resetCopy();
         const text = generate();
         if (text) {
           outputEl.textContent = text;
@@ -352,9 +367,12 @@ const counts = {
       }
 
       let saveTimer: ReturnType<typeof setTimeout> | null = null;
+      let saveVersion = 0;
       function persist() {
+        const request = ++saveVersion;
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = setTimeout(() => {
+          if (request !== saveVersion) return;
           if (window.ztPersist) {
             window.ztPersist.save(SLUG, {
               selected: Array.from(selected),
@@ -403,7 +421,8 @@ const counts = {
         update();
       }
 
-      function onClearAll() {
+      function onClearAll(skipStorageClear = false) {
+        saveVersion++;
         if (saveTimer) {
           clearTimeout(saveTimer);
           saveTimer = null;
@@ -415,22 +434,29 @@ const counts = {
         renderChips();
         syncCheckboxes();
         refreshOutput();
-        if (window.ztPersist) window.ztPersist.clear(SLUG);
+        if (!skipStorageClear && window.ztPersist) window.ztPersist.clear(SLUG);
       }
 
       function onCopy() {
         const text = outputEl.textContent || '';
         if (!text || copyBtn.disabled) return;
-        const original = t.copy;
-        const showDone = () => {
-          copyBtn.textContent = t.copied;
-          copyBtn.classList.add('copied');
-          setTimeout(() => {
-            copyBtn.textContent = original;
-            copyBtn.classList.remove('copied');
-          }, 1500);
-        };
-        navigator.clipboard.writeText(text).then(showDone).catch(showDone);
+        resetCopy();
+        const request = copyVersion;
+        const current = () => request === copyVersion && outputEl.textContent === text;
+        const failed = () => { if (current()) copyBtn.textContent = t.copyFailed; };
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.writeText) failed();
+          else navigator.clipboard.writeText(text).then(() => {
+            if (!current()) return;
+            copyBtn.textContent = t.copied;
+            copyBtn.classList.add('copied');
+            copyTimer = setTimeout(() => {
+              if (!current()) return;
+              copyBtn.textContent = t.copy;
+              copyBtn.classList.remove('copied');
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
         window.trackTool && window.trackTool(SLUG, 'copy');
       }
 
@@ -462,9 +488,15 @@ const counts = {
         refreshOutput();
         persist();
       });
-      clearAllBtn.addEventListener('click', onClearAll);
+      clearAllBtn.addEventListener('click', () => onClearAll());
       copyBtn.addEventListener('click', onCopy);
       downloadBtn.addEventListener('click', onDownload);
+      document.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        const root = document.querySelector('.gig-wrap');
+        if (!root || !root.contains(document.activeElement)) return;
+        onClearAll(true);
+      });
     })();
   </script>
 
