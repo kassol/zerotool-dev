@@ -26,6 +26,7 @@ const labels = {
     invalidHex: 'Invalid hex color',
     sampleText: 'The quick brown fox jumps over the lazy dog — 0123456789',
     copied: 'Copied!',
+    copyFailed: 'Copy failed. Try again or copy the suggested HEX manually.',
   },
   zh: {
     foreground: '前景色',
@@ -50,6 +51,7 @@ const labels = {
     invalidHex: '无效的 HEX 颜色',
     sampleText: '永和九年岁在癸丑 The quick brown fox 0123456789',
     copied: '已复制！',
+    copyFailed: '复制失败，请重试或手动复制建议 HEX。',
   },
   ja: {
     foreground: '前景色',
@@ -74,6 +76,7 @@ const labels = {
     invalidHex: '不正な HEX カラー',
     sampleText: 'いろはにほへと The quick brown fox 0123456789',
     copied: 'コピーしました！',
+    copyFailed: 'コピーに失敗しました。再試行するか、修正案の HEX を手動でコピーしてください。',
   },
   ko: {
     foreground: '전경색',
@@ -98,6 +101,7 @@ const labels = {
     invalidHex: '잘못된 HEX 색상',
     sampleText: '동해 물과 백두산이 The quick brown fox 0123456789',
     copied: '복사됨!',
+    copyFailed: '복사에 실패했습니다. 다시 시도하거나 제안 HEX를 직접 복사하세요.',
   },
 };
 
@@ -107,6 +111,7 @@ const L = labels[lang] ?? labels['en'];
 <div
   class="ccc-wrap"
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-invalid-hex={L.invalidHex}
   data-pass={L.pass}
   data-fail={L.fail}
@@ -161,6 +166,8 @@ const L = labels[lang] ?? labels['en'];
       </div>
     </div>
   </div>
+
+  <p id="ccc-copy-status" class="tool-status none" role="status" aria-live="polite"></p>
 
   <div id="ccc-preview" class="ccc-preview" aria-live="polite">
     <span class="ccc-preview-large">{L.sampleText}</span>
@@ -239,6 +246,7 @@ const L = labels[lang] ?? labels['en'];
       : document.querySelector('.ccc-wrap');
 
     var COPIED  = wrap.dataset.copied;
+    var COPY_FAILED = wrap.dataset.copyFailed;
     var INVALID = wrap.dataset.invalidHex;
     var PASS    = wrap.dataset.pass;
     var FAIL    = wrap.dataset.fail;
@@ -264,6 +272,64 @@ const L = labels[lang] ?? labels['en'];
     var sugRatio = document.getElementById('ccc-suggestion-ratio');
     var applyBtn = document.getElementById('ccc-apply-btn');
     var copyFix  = document.getElementById('ccc-copy-fixed');
+    var copyStatus = document.getElementById('ccc-copy-status');
+    var COPY_LABEL = copyFix.textContent;
+    var copyRequest = 0;
+    var copyTimer = 0;
+
+    function resetCopyFeedback() {
+      copyRequest++;
+      clearTimeout(copyTimer);
+      copyTimer = 0;
+      copyFix.textContent = COPY_LABEL;
+      copyFix.classList.remove('copied');
+      copyStatus.textContent = '';
+      copyStatus.className = 'tool-status none';
+    }
+
+    function clearSuggestion() {
+      sugWrap.hidden = true;
+      applyBtn.dataset.hex = '';
+      copyFix.dataset.hex = '';
+      sugSw.style.background = '';
+      sugHex.textContent = '';
+      sugRatio.textContent = '';
+      applyBtn.disabled = true;
+      copyFix.disabled = true;
+    }
+
+    function suggestionHex(button) {
+      var hex = button.dataset.hex;
+      if (sugWrap.hidden || !isValidHex(hex)
+        || !isValidHex(normalizeHex(fgInput.value)) || !isValidHex(normalizeHex(bgInput.value))) return '';
+      return hex;
+    }
+
+    function refreshSuggestionActions() {
+      applyBtn.disabled = !suggestionHex(applyBtn);
+      copyFix.disabled = !suggestionHex(copyFix);
+    }
+
+    function clearTool() {
+      resetCopyFeedback();
+      fg = ''; bg = '';
+      fgInput.value = ''; bgInput.value = '';
+      fgInput.classList.remove('ccc-error');
+      bgInput.classList.remove('ccc-error');
+      fgErr.textContent = ''; bgErr.textContent = '';
+      preview.style.backgroundColor = '';
+      preview.style.color = '';
+      preview.hidden = true;
+      ratioVal.textContent = '';
+      ratioHL.textContent = '';
+      ratioHL.className = 'ccc-ratio-headline';
+      [bodyAA, bodyAAA, largeAA, largeAAA, uiAA].forEach(function(el) {
+        el.textContent = '';
+        el.className = 'ccc-status-result';
+      });
+      clearSuggestion();
+      swapBtn.disabled = true;
+    }
 
     var fg = '#1f2937';
     var bg = '#f9fafb';
@@ -469,6 +535,9 @@ const L = labels[lang] ?? labels['en'];
       setStatus(largeAAA, ratio, 4.5);
       setStatus(uiAA,     ratio, 3);
 
+      preview.hidden = false;
+      swapBtn.disabled = false;
+
       if (ratio < 4.5) {
         var fix = suggestFix(fgRgb, bgRgb, 4.5);
         var hex = rgbToHex(fix.rgb.r, fix.rgb.g, fix.rgb.b);
@@ -479,14 +548,16 @@ const L = labels[lang] ?? labels['en'];
         applyBtn.dataset.hex = hex;
         copyFix.dataset.hex = hex;
       } else {
-        sugWrap.hidden = true;
+        clearSuggestion();
       }
+      refreshSuggestionActions();
 
       window.trackTool && window.trackTool('color-contrast-checker', 'check');
     }
 
     /* ── Wiring ── */
     function setSide(side, value, source) {
+      resetCopyFeedback();
       var v = normalizeHex(value);
       var picker = side === 'fg' ? fgPicker : bgPicker;
       var input  = side === 'fg' ? fgInput  : bgInput;
@@ -506,6 +577,7 @@ const L = labels[lang] ?? labels['en'];
         input.classList.remove('ccc-error');
         errEl.textContent = '';
       }
+      refreshSuggestionActions();
     }
 
     fgPicker.addEventListener('input', function () { setSide('fg', fgPicker.value, 'picker'); });
@@ -514,6 +586,8 @@ const L = labels[lang] ?? labels['en'];
     bgInput.addEventListener('input',  function () { setSide('bg', bgInput.value,  'input');  });
 
     swapBtn.addEventListener('click', function () {
+      if (!isValidHex(fg) || !isValidHex(bg)) return;
+      resetCopyFeedback();
       var oldFg = fg, oldBg = bg;
       fg = oldBg; bg = oldFg;
       fgPicker.value = fg; bgPicker.value = bg;
@@ -528,8 +602,9 @@ const L = labels[lang] ?? labels['en'];
     });
 
     applyBtn.addEventListener('click', function () {
-      var hex = applyBtn.dataset.hex;
+      var hex = suggestionHex(applyBtn);
       if (!hex) return;
+      resetCopyFeedback();
       fg = hex.toLowerCase();
       fgPicker.value = fg;
       fgInput.value  = fg.toUpperCase();
@@ -540,18 +615,41 @@ const L = labels[lang] ?? labels['en'];
     });
 
     copyFix.addEventListener('click', function () {
-      var hex = copyFix.dataset.hex;
+      var hex = suggestionHex(copyFix);
       if (!hex) return;
-      navigator.clipboard.writeText(hex.toUpperCase()).then(function () {
-        var orig = copyFix.textContent;
+      resetCopyFeedback();
+      var request = copyRequest;
+      var task;
+      try {
+        task = navigator.clipboard
+          ? navigator.clipboard.writeText(hex.toUpperCase())
+          : Promise.reject(new Error('clipboard unavailable'));
+      } catch (error) {
+        task = Promise.reject(error);
+      }
+      task.then(function () {
+        if (request !== copyRequest) return;
         copyFix.textContent = COPIED;
         copyFix.classList.add('copied');
-        setTimeout(function () {
-          copyFix.textContent = orig;
+        copyTimer = setTimeout(function () {
+          if (request !== copyRequest) return;
+          copyTimer = 0;
+          copyFix.textContent = COPY_LABEL;
           copyFix.classList.remove('copied');
         }, 1400);
         window.trackTool && window.trackTool('color-contrast-checker', 'copy_fix');
+      }).catch(function () {
+        if (request !== copyRequest) return;
+        copyStatus.textContent = COPY_FAILED;
+        copyStatus.className = 'tool-status error';
       });
+    });
+
+    document.addEventListener('keydown', function(event) {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'l') return;
+      if (!document.activeElement || !wrap.contains(document.activeElement)) return;
+      event.preventDefault();
+      clearTool();
     });
 
     fgInput.value = fg.toUpperCase();
@@ -562,6 +660,7 @@ const L = labels[lang] ?? labels['en'];
 </div>
 
 <style is:global>
+  #ccc-copy-status { min-height: 2.8em; margin: 0; }
   .ccc-wrap {
     display: flex;
     flex-direction: column;
