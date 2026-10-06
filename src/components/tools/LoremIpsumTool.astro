@@ -27,10 +27,10 @@
   <script is:inline>
     (function () {
       var STRINGS = {
-        en: { paragraphs: 'Paragraphs:', generate: 'Generate', copyAll: 'Copy All', copied: 'Copied!', startClassic: 'Start with "Lorem ipsum dolor sit amet..."', placeholder: 'Click Generate to create placeholder text.' },
-        zh: { paragraphs: '段落数：', generate: '生成', copyAll: '全部复制', copied: '已复制！', startClassic: '以 "Lorem ipsum dolor sit amet..." 开头', placeholder: '点击生成以创建占位文本。' },
-        ja: { paragraphs: '段落数：', generate: '生成', copyAll: '全てコピー', copied: 'コピー済み！', startClassic: '「Lorem ipsum dolor sit amet...」で始める', placeholder: '「生成」をクリックしてプレースホルダーテキストを作成します。' },
-        ko: { paragraphs: '단락 수:', generate: '생성', copyAll: '전체 복사', copied: '복사됨!', startClassic: '"Lorem ipsum dolor sit amet..."으로 시작', placeholder: '생성 버튼을 클릭하여 자리 표시자 텍스트를 만드세요.' }
+        en: { copyFailed: 'Copy failed. Try again.', paragraphs: 'Paragraphs:', generate: 'Generate', copyAll: 'Copy All', copied: 'Copied!', startClassic: 'Start with "Lorem ipsum dolor sit amet..."', placeholder: 'Click Generate to create placeholder text.' },
+        zh: { copyFailed: '复制失败，请重试。', paragraphs: '段落数：', generate: '生成', copyAll: '全部复制', copied: '已复制！', startClassic: '以 "Lorem ipsum dolor sit amet..." 开头', placeholder: '点击生成以创建占位文本。' },
+        ja: { copyFailed: 'コピーに失敗しました。再試行してください。', paragraphs: '段落数：', generate: '生成', copyAll: '全てコピー', copied: 'コピー済み！', startClassic: '「Lorem ipsum dolor sit amet...」で始める', placeholder: '「生成」をクリックしてプレースホルダーテキストを作成します。' },
+        ko: { copyFailed: '복사하지 못했습니다. 다시 시도하세요.', paragraphs: '단락 수:', generate: '생성', copyAll: '전체 복사', copied: '복사됨!', startClassic: '"Lorem ipsum dolor sit amet..."으로 시작', placeholder: '생성 버튼을 클릭하여 자리 표시자 텍스트를 만드세요.' }
       };
 
       var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -106,22 +106,53 @@
         window.trackTool && window.trackTool('lorem_ipsum', 'generate');
       }
 
-      document.getElementById('li-generate').addEventListener('click', generate);
-
-      document.getElementById('li-copy').addEventListener('click', function () {
-        var output = document.getElementById('li-output');
-        var text = output.dataset.text;
-        if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
-          var btn = document.getElementById('li-copy');
-          btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t.copyAll; }, 1500);
-        });
-        window.trackTool && window.trackTool('lorem_ipsum', 'copy');
+      var copyStates = new Map();
+      function resetCopy(btn, label) {
+        var previous = copyStates.get(btn);
+        if (previous) clearTimeout(previous.timer);
+        var state = { timer: null };
+        copyStates.set(btn, state);
+        btn.textContent = label;
+        return state;
+      }
+      function copyText(btn, text, label, copied, delay) {
+        if (!text || btn.disabled) return;
+        var state = resetCopy(btn, label);
+        function current() { return copyStates.get(btn) === state; }
+        function failed() { if (current()) btn.textContent = t.copyFailed; }
+        try {
+          if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') { failed(); return; }
+          Promise.resolve(navigator.clipboard.writeText(text)).then(function () {
+            if (!current()) return;
+            btn.textContent = copied;
+            state.timer = setTimeout(function () { if (current()) btn.textContent = label; }, delay);
+          }, failed);
+        } catch (e) { failed(); }
+      }
+      var copyBtn = document.getElementById('li-copy');
+      function refresh() {
+        resetCopy(copyBtn, t.copyAll);
+        generate();
+        copyBtn.disabled = false;
+      }
+      document.getElementById('li-generate').addEventListener('click', refresh);
+      copyBtn.addEventListener('click', function () {
+        var text = document.getElementById('li-output').dataset.text;
+        copyText(copyBtn, text, t.copyAll, t.copied, 1500);
+        if (text) window.trackTool && window.trackTool('lorem_ipsum', 'copy');
       });
-
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var tool = document.querySelector('.li-wrap');
+        if (!tool || !tool.contains(document.activeElement)) return;
+        var output = document.getElementById('li-output');
+        output.innerHTML = '';
+        output.dataset.text = '';
+        resetCopy(copyBtn, t.copyAll);
+        copyBtn.disabled = true;
+      });
       // Auto-generate on load
-      generate();
+      refresh();
     })();
   </script>
 </div>
