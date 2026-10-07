@@ -862,7 +862,8 @@ const SAMPLE_PIXELS = 575 * 455;   // fitImageSize(6000, 4752, SAMPLE_AREA)
     }
   }
   // f2621cc7 snapshots: preserve all metadata and all reference content outside How to Use.
-  const retained = {"en": ["042764347a1f4699", "09e875886904ab93"], "zh": ["ad45cf322c33f2ff", "d8daa78c3d7bcf44"], "ja": ["50ffe1e069d2f4a3", "6aa968131aad19d5"], "ko": ["87950050c2f0bc40", "1442b6ac377ebb1d"]};
+  // Updated 2026-10-07: only the color-group wording changed (8 → 32 levels per channel, checked below).
+  const retained = {"en": ["b20741f2f6f47cc3", "a7761b0937582421"], "zh": ["1c2e2754e1bab0bf", "d35be8940538d513"], "ja": ["80f01bf12d373309", "9ee15f736ef46cf2"], "ko": ["ee5b6c025b1d1311", "b9893c2b520e1326"]};
   const hash = text => createHash('sha256').update(text.trim()).digest('hex').slice(0, 16);
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     tipTree(lang, STRINGS[lang].tips, STRINGS.en.tips);
@@ -878,6 +879,38 @@ const SAMPLE_PIXELS = 575 * 455;   // fitImageSize(6000, 4752, SAMPLE_AREA)
     eq(lang + ' worked examples and all other body content preserved', hash(body), retained[lang][1]);
   }
   console.log(`v2 page layout: ${passes - base.passes} passed, ${failures - base.failures} failed`);
+}
+
+// The page text about the color groups must match the histogram (W6). Before 2026-10-07 the FAQ,
+// the method list and the Swatch tip said "8 levels per channel" while BIN_BITS = 5 gives 32
+// levels per channel (each level covers 8 of the 256 values) and 32,768 groups.
+{
+  const base = { passes, failures };
+  const levels = 2 ** E.BIN_BITS, groups = levels ** 3, width = 256 / levels;
+  eq('histogram: 32 levels per channel, 8 values per level, 32,768 groups', [levels, width, groups], [32, 8, 32768]);
+  const wording = {
+    en: { levels: /(\d+) levels per channel/g, width: /(\d+) of the 256 values/g, old: /8 levels per channel|8-level/ },
+    zh: { levels: /每通道 (\d+) 级/g, width: /256 个取值中的 (\d+) 个/g, old: /8 级一组|每通道 8 级|8 级颜色组/ },
+    ja: { levels: /各チャンネル (\d+) 段階/g, width: /256 値のうち (\d+) 値/g, old: /8 段階ずつ|8 段階の色グループ/ },
+    ko: { levels: /채널마다 (\d+)단계/g, width: /256개 값 중 (\d+)개/g, old: /8단계씩|8단계 색 그룹/ },
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = read('src/content/tools/image-color-palette/' + lang + '.mdx');
+    const [, fm, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx);
+    const faq = loadYaml(fm).faqItems.map((f) => f.answer).join('\n');
+    const places = { faq, body, tip: STRINGS[lang].tips.pick };
+    for (const [where, text] of Object.entries(places)) {
+      const w = wording[lang];
+      check(`${lang} ${where}: old "8 levels" wording removed`, !w.old.test(text));
+      const lv = [...text.matchAll(w.levels)].map((m) => +m[1]);
+      const wd = [...text.matchAll(w.width)].map((m) => +m[1]);
+      check(`${lang} ${where}: states the levels per channel`, lv.length > 0);
+      check(`${lang} ${where}: levels per channel = ${levels}`, lv.every((n) => n === levels), JSON.stringify(lv));
+      check(`${lang} ${where}: values per level = ${width}`, wd.length > 0 && wd.every((n) => n === width), JSON.stringify(wd));
+      if (where !== 'tip') check(`${lang} ${where}: group count ${groups.toLocaleString('en')}`, text.includes(groups.toLocaleString('en')));
+    }
+  }
+  console.log(`group wording: ${passes - base.passes} passed, ${failures - base.failures} failed`);
 }
 
 console.log((failures ? 'FAIL' : 'PASS') + ': image-color-palette — ' + passes + ' passed, ' + failures + ' failed');
