@@ -1,4 +1,5 @@
 // Unicode Text Converter (fancy text) — style tables and reverse conversion regression test
+// Also reads src/styles/tool-common.css for the shared fill and toggletip rules.
 //
 // Read:  src/components/tools/UnicodeTextConverterTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers and the STRINGS table between
@@ -26,6 +27,7 @@ import { dirname, join } from 'node:path';
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const commonStyle = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
 const source = readFileSync(join(root, 'src/components/tools/UnicodeTextConverterTool.astro'), 'utf8');
 
 function between(text, a, b, what) {
@@ -382,7 +384,7 @@ check('page script writes card text with textContent', /c\.text\.textContent = r
     /@media \(min-width: 861px\) \{\s*\.utc-panels \{ grid-template-columns: minmax\(0, 1fr\) minmax\(0, 2fr\); \}\s*\}/.test(style));
   check('the status line is above the panes', markup.indexOf('id="utc-status"') < markup.indexOf('class="utc-panels zt-io"'));
   check('the card list scrolls inside its pane (flex-basis 0, overflow auto) and stops below 860px',
-    /\.utc-out \{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(style) &&
+    source.includes('class="utc-out zt-io-fill"') && /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(commonStyle) && /\.utc-out \{[^}]*min-height: 0;[^}]*overflow: auto;/.test(style) &&
     /@media \(max-width: 860px\) \{[^@]*\.utc-out \{ flex: none; [^}]*overflow: visible; resize: none;/.test(style));
   eq('one toggletip per explained control', (markup.match(/<Toggletip id="(utc-tip-\w+)"/g) || []).map((m) => m.slice(15, -1)),
     ['utc-tip-input', 'utc-tip-cards', 'utc-tip-plain']);

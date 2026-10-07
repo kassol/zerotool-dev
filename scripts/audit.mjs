@@ -605,9 +605,9 @@ function checkPersistencePolicy() {
   }
 }
 
-// src/data/tool-layouts.ts lists the tools that render the v2 page and their layout kind.
+// Every tool slug must have one of the five layout kinds in src/data/tool-layouts.ts.
 // A key that is not a tool slug never matches a page; an unknown kind has no layout.
-const TOOL_PAGE_KINDS = ['convert', 'generate', 'analyze', 'compact'];
+const TOOL_PAGE_KINDS = ['convert', 'generate', 'analyze', 'compact', 'compare'];
 
 function checkToolLayouts(toolSlugs) {
   const src = read('src/data/tool-layouts.ts');
@@ -618,6 +618,10 @@ function checkToolLayouts(toolSlugs) {
   }
   const issues = [];
   const entries = [...m[1].matchAll(/'([^']+)':\s*'([^']*)'/g)];
+  const registered = new Set(entries.map(([, slug]) => slug));
+  for (const slug of toolSlugs) {
+    if (!registered.has(slug)) issues.push(`${slug}: missing in toolPageKinds`);
+  }
   for (const [, slug, kind] of entries) {
     if (!toolSlugs.has(slug)) issues.push(`${slug}: no matching slug in tools.ts`);
     if (!TOOL_PAGE_KINDS.includes(kind)) issues.push(`${slug}: kind "${kind}" is not one of ${TOOL_PAGE_KINDS.join(' / ')}`);

@@ -2,10 +2,13 @@
 // MarkdownTocGeneratorTool — Generate clickable TOC from Markdown headings.
 // Supports GitHub / GitLab / Jekyll / Bitbucket anchor styles, heading-level
 // filtering, and in-place TOC updates via <!-- toc --> ... <!-- /toc --> markers.
+import Toggletip from '../Toggletip.astro';
+
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
-const labels = {
+// strings:start
+const STRINGS = {
   en: {
     inputLabel: 'Markdown input',
     inputPh: 'Paste your Markdown here…\n\n# Document Title\n\n## Section 1\n\n## Section 2\n\n### Subsection',
@@ -28,12 +31,28 @@ const labels = {
     copyToc: 'Copy TOC',
     copyMd: 'Copy MD',
     copied: 'Copied!',
+    copyFailed: 'Copy failed',
     empty: 'No headings found.',
     markerMissing: 'No <!-- toc --> markers found. TOC will be inserted before the first heading.',
     markerUpdated: 'TOC inserted between markers.',
     markerInserted: 'TOC inserted before first heading.',
     markerUnclosed: '<!-- toc --> marker not closed — TOC unchanged. Add <!-- /toc --> to enable replacement.',
-    headings: (n: number) => `${n} heading${n === 1 ? '' : 's'}`,
+    formatOptions: "Formatting and heading levels",
+    emptyToc: "Your generated TOC will appear here.",
+    emptyMarkdown: "Your Markdown with the TOC will appear here.",
+    tips: {
+      input: "Paste or type Markdown; headings and settings update the TOC immediately. ATX (#) and setext headings are read; fenced code and existing TOC marker blocks are skipped.",
+      anchor: "Choose the anchor rules used by your target: GitHub / Hugo, GitLab, Jekyll (GFM), kramdown or Bitbucket Cloud. Check a generated link in that renderer.",
+      bullet: "Choose hyphens, asterisks or numbered Markdown items. Each numbered item starts with 1.; your Markdown renderer displays the list numbers.",
+      indent: "Indent each heading level by 2 spaces, 4 spaces or a tab. The shallowest included heading starts without indentation.",
+      min: "Include headings from this level, between 1 and 6. If the minimum is higher than the maximum, the two values are read in ascending order.",
+      max: "Include headings up to this level, between 1 and 6. Excluded headings still count when duplicate anchor IDs are assigned.",
+      h1: "Turn off Include H1 when your template already displays the document title. Remaining headings keep their anchor IDs.",
+      marker: "Show the full Markdown with the TOC replaced between <!-- toc --> and <!-- /toc -->. Without markers, insert before the first # heading; an unclosed marker leaves the document unchanged.",
+      copyToc: "Copy the complete generated Markdown TOC. This button is unavailable when the selected range contains no headings.",
+      copyMd: "Copy the complete Markdown produced by Marker mode. An empty TOC or an unclosed opening marker disables this copy.",
+    },
+    headings: (n) => `${n} heading${n === 1 ? '' : 's'}`,
   },
   zh: {
     inputLabel: 'Markdown 输入',
@@ -57,12 +76,28 @@ const labels = {
     copyToc: '复制 TOC',
     copyMd: '复制 Markdown',
     copied: '已复制！',
+    copyFailed: '复制失败',
     empty: '未找到任何标题。',
     markerMissing: '未找到 <!-- toc --> 标记。TOC 将插入到第一个标题之前。',
     markerUpdated: '已在标记之间插入 TOC。',
     markerInserted: '已在第一个标题之前插入 TOC。',
     markerUnclosed: '<!-- toc --> 标记未闭合 — Markdown 未改动。请添加 <!-- /toc --> 以启用替换。',
-    headings: (n: number) => `共 ${n} 个标题`,
+    formatOptions: "格式与标题级别",
+    emptyToc: "生成的目录将在此显示。",
+    emptyMarkdown: "插入目录后的 Markdown 将在此显示。",
+    tips: {
+      input: "输入或粘贴 Markdown，标题和选项变化后立即更新目录。识别 ATX（#）和 setext 标题，跳过围栏代码块及已有目录标记块。",
+      anchor: "按目标平台选择 GitHub / Hugo、GitLab、Jekyll（GFM）、kramdown 或 Bitbucket Cloud 的锚点规则。请在目标渲染器中检查一条生成的链接。",
+      bullet: "选择连字符、星号或有序列表。每个有序条目都以 1. 开头，显示序号由 Markdown 渲染器生成。",
+      indent: "每级标题缩进 2 空格、4 空格或一个 Tab。所选范围内最浅一级标题不缩进。",
+      min: "包含从该级别开始的标题，范围为 1–6。如果最小值大于最大值，工具按由小到大的顺序读取两值。",
+      max: "包含截至该级别的标题，范围为 1–6。分配重复锚点 ID 时，范围外的标题仍参与计数。",
+      h1: "如果模板已显示文档标题，可关闭「包含 H1」。其余标题保留原锚点 ID。",
+      marker: "显示完整 Markdown，并替换 <!-- toc --> 与 <!-- /toc --> 之间的目录。没有标记时插入到第一个 # 标题前；标记未闭合时保留原文。",
+      copyToc: "复制完整的 Markdown 目录。所选范围没有标题时，此按钮不可用。",
+      copyMd: "复制标记模式生成的完整 Markdown。目录为空或起始标记未闭合时，此复制按钮不可用。",
+    },
+    headings: (n) => `共 ${n} 个标题`,
   },
   ja: {
     inputLabel: 'Markdown 入力',
@@ -86,12 +121,28 @@ const labels = {
     copyToc: 'TOC をコピー',
     copyMd: 'Markdown をコピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピー失敗',
     empty: '見出しが見つかりません。',
     markerMissing: '<!-- toc --> マーカーが見つかりません。TOC は最初の見出しの前に挿入されます。',
     markerUpdated: 'マーカー間に TOC を挿入しました。',
     markerInserted: '最初の見出しの前に TOC を挿入しました。',
     markerUnclosed: '<!-- toc --> マーカーが閉じていません — Markdown は変更されていません。<!-- /toc --> を追加して置換を有効にしてください。',
-    headings: (n: number) => `見出し ${n} 件`,
+    formatOptions: "書式と見出しレベル",
+    emptyToc: "生成した目次がここに表示されます。",
+    emptyMarkdown: "目次を挿入した Markdown がここに表示されます。",
+    tips: {
+      input: "Markdown を入力または貼り付けると、見出しや設定の変更が即座に目次へ反映されます。ATX（#）と setext 見出しを読み、フェンスドコードと既存の目次マーカーブロックは除外します。",
+      anchor: "対象の GitHub / Hugo、GitLab、Jekyll（GFM）、kramdown、Bitbucket Cloud に合うアンカー規則を選びます。生成リンクを対象のレンダラーで確認してください。",
+      bullet: "ハイフン、アスタリスク、番号付きリストを選べます。番号付きの各項目は 1. で始まり、表示番号は Markdown レンダラーが付けます。",
+      indent: "見出しの階層ごとに半角スペース 2 個、4 個、またはタブで字下げします。含まれる最も浅い階層は字下げしません。",
+      min: "このレベル以上の見出しを含めます。範囲は 1〜6 です。最小値が最大値を超える場合、両値を小さい順に読み取ります。",
+      max: "このレベル以下の見出しを含めます。範囲は 1〜6 です。重複アンカー ID の割り当てには範囲外の見出しも数えます。",
+      h1: "テンプレートが文書タイトルを表示する場合は「H1 を含む」をオフにできます。残りの見出しのアンカー ID は変わりません。",
+      marker: "完全な Markdown を表示し、<!-- toc --> と <!-- /toc --> の間の目次を置換します。マーカーがなければ最初の # 見出しの前に挿入し、閉じていなければ原文を保ちます。",
+      copyToc: "生成した Markdown 目次を全文コピーします。選択範囲に見出しがない場合、このボタンは無効です。",
+      copyMd: "マーカーモードが生成した Markdown を全文コピーします。目次が空、または開始マーカーが閉じていない場合はコピーできません。",
+    },
+    headings: (n) => `見出し ${n} 件`,
   },
   ko: {
     inputLabel: 'Markdown 입력',
@@ -115,16 +166,34 @@ const labels = {
     copyToc: 'TOC 복사',
     copyMd: 'Markdown 복사',
     copied: '복사됨!',
+    copyFailed: '복사 실패',
     empty: '제목을 찾을 수 없습니다.',
     markerMissing: '<!-- toc --> 마커를 찾을 수 없습니다. TOC가 첫 제목 앞에 삽입됩니다.',
     markerUpdated: '마커 사이에 TOC를 삽입했습니다.',
     markerInserted: '첫 제목 앞에 TOC를 삽입했습니다.',
     markerUnclosed: '<!-- toc --> 마커가 닫혀 있지 않음 — Markdown 변경 없음. 교체를 활성화하려면 <!-- /toc --> 를 추가하세요.',
-    headings: (n: number) => `제목 ${n}개`,
+    formatOptions: "서식 및 제목 단계",
+    emptyToc: "생성된 목차가 여기에 표시됩니다.",
+    emptyMarkdown: "목차를 삽입한 Markdown이 여기에 표시됩니다.",
+    tips: {
+      input: "Markdown을 입력하거나 붙여넣으면 제목과 설정 변경이 목차에 즉시 반영됩니다. ATX(#)와 setext 제목을 읽고, 펜스 코드와 기존 목차 마커 블록은 제외합니다.",
+      anchor: "대상 GitHub / Hugo, GitLab, Jekyll(GFM), kramdown 또는 Bitbucket Cloud에 맞는 앵커 규칙을 고르세요. 대상 렌더러에서 생성된 링크 하나를 확인하세요.",
+      bullet: "하이픈, 별표 또는 번호 목록을 선택합니다. 번호 목록의 각 항목은 1.로 시작하며, 표시 번호는 Markdown 렌더러가 정합니다.",
+      indent: "제목 단계마다 공백 2칸, 4칸 또는 탭으로 들여씁니다. 포함된 제목 중 가장 얕은 단계는 들여쓰지 않습니다.",
+      min: "이 단계부터 제목을 포함합니다. 범위는 1–6입니다. 최솟값이 최댓값보다 크면 두 값을 작은 순서로 읽습니다.",
+      max: "이 단계까지 제목을 포함합니다. 범위는 1–6입니다. 중복 앵커 ID를 정할 때는 범위 밖 제목도 셉니다.",
+      h1: "템플릿에서 문서 제목을 이미 표시한다면 H1 포함을 끄세요. 나머지 제목의 앵커 ID는 유지됩니다.",
+      marker: "전체 Markdown을 표시하고 <!-- toc -->와 <!-- /toc --> 사이의 목차를 교체합니다. 마커가 없으면 첫 # 제목 앞에 넣고, 닫히지 않은 마커가 있으면 원문을 유지합니다.",
+      copyToc: "생성된 Markdown 목차 전체를 복사합니다. 선택 범위에 제목이 없으면 이 버튼은 비활성화됩니다.",
+      copyMd: "마커 모드가 생성한 Markdown 전체를 복사합니다. 목차가 비었거나 시작 마커가 닫히지 않았다면 복사할 수 없습니다.",
+    },
+    headings: (n) => `제목 ${n}개`,
   },
 };
+// strings:end
 
-const L = labels[lang] ?? labels.en;
+const L = STRINGS[lang] ?? STRINGS.en;
+const TIPS = L.tips;
 ---
 
 <div
@@ -133,6 +202,7 @@ const L = labels[lang] ?? labels.en;
   data-copy={L.copyToc}
   data-copy-md={L.copyMd}
   data-copied={L.copied}
+  data-copy-failed={L.copyFailed}
   data-empty={L.empty}
   data-marker-missing={L.markerMissing}
   data-marker-updated={L.markerUpdated}
@@ -142,86 +212,80 @@ const L = labels[lang] ?? labels.en;
   data-headings-plural-pre={lang === 'en' ? '' : (lang === 'zh' ? '共 ' : (lang === 'ja' ? '見出し ' : '제목 '))}
   data-headings-plural-post={lang === 'en' ? ' headings' : (lang === 'zh' ? ' 个标题' : (lang === 'ja' ? ' 件' : '개'))}
 >
-  <div class="mtoc-grid">
-    <div class="mtoc-input-col">
-      <label class="tool-label" for="mtoc-input">{L.inputLabel}</label>
-      <textarea
-        id="mtoc-input"
-        class="tool-textarea mtoc-textarea"
-        placeholder={L.inputPh}
-        spellcheck="false"
-      ></textarea>
-    </div>
-
-    <div class="mtoc-controls-col">
-      <div class="mtoc-control">
-        <label class="tool-label" for="mtoc-anchor">{L.anchorLabel}</label>
-        <select id="mtoc-anchor" class="tool-input mtoc-select">
+  <div class="mtoc-top-controls">
+    <div class="mtoc-control mtoc-anchor-control">
+      <label class="tool-label" for="mtoc-anchor">{L.anchorLabel}</label>
+      <select id="mtoc-anchor" class="tool-input mtoc-select">
           <option value="github">GitHub / Hugo</option>
           <option value="gitlab">GitLab</option>
           <option value="jekyll">Jekyll (kramdown GFM)</option>
           <option value="kramdown">kramdown (input: kramdown)</option>
           <option value="bitbucket">Bitbucket Cloud</option>
         </select>
-      </div>
-
+      <Toggletip id="mtoc-tip-anchor" lang={lang} about={L.anchorLabel}>{TIPS.anchor}</Toggletip>
+    </div>
+    <div class="mtoc-toggle-control">
+      <label class="mtoc-toggle" for="mtoc-marker-mode"><input id="mtoc-marker-mode" type="checkbox" /><span>{L.markerMode}</span></label>
+      <Toggletip id="mtoc-tip-marker" lang={lang} about={L.markerMode}>{TIPS.marker}</Toggletip>
+    </div>
+  </div>
+  <details class="mtoc-options" id="mtoc-options">
+    <summary>{L.formatOptions}</summary>
+    <div class="mtoc-controls-col">
       <div class="mtoc-control">
-        <label class="tool-label" for="mtoc-bullet">{L.bulletLabel}</label>
+        <div class="mtoc-label-row"><label class="tool-label" for="mtoc-bullet">{L.bulletLabel}</label><Toggletip id="mtoc-tip-bullet" lang={lang} about={L.bulletLabel}>{TIPS.bullet}</Toggletip></div>
         <select id="mtoc-bullet" class="tool-input mtoc-select">
           <option value="-">{L.bulletDash}</option>
           <option value="*">{L.bulletAsterisk}</option>
           <option value="1.">{L.bulletNumber}</option>
         </select>
       </div>
-
       <div class="mtoc-control">
-        <label class="tool-label" for="mtoc-indent">{L.indentLabel}</label>
+        <div class="mtoc-label-row"><label class="tool-label" for="mtoc-indent">{L.indentLabel}</label><Toggletip id="mtoc-tip-indent" lang={lang} about={L.indentLabel}>{TIPS.indent}</Toggletip></div>
         <select id="mtoc-indent" class="tool-input mtoc-select">
           <option value="2">{L.indent2}</option>
           <option value="4">{L.indent4}</option>
           <option value="tab">{L.indentTab}</option>
         </select>
       </div>
-
       <div class="mtoc-range">
-        <label class="tool-label" for="mtoc-min">{L.minLevelLabel} <span class="mtoc-range-value" id="mtoc-min-value">1</span></label>
+        <div class="mtoc-label-row"><label class="tool-label" for="mtoc-min">{L.minLevelLabel} <span class="mtoc-range-value" id="mtoc-min-value">1</span></label><Toggletip id="mtoc-tip-min" lang={lang} about={L.minLevelLabel}>{TIPS.min}</Toggletip></div>
         <input id="mtoc-min" type="range" min="1" max="6" value="1" />
       </div>
-
       <div class="mtoc-range">
-        <label class="tool-label" for="mtoc-max">{L.maxLevelLabel} <span class="mtoc-range-value" id="mtoc-max-value">6</span></label>
+        <div class="mtoc-label-row"><label class="tool-label" for="mtoc-max">{L.maxLevelLabel} <span class="mtoc-range-value" id="mtoc-max-value">6</span></label><Toggletip id="mtoc-tip-max" lang={lang} about={L.maxLevelLabel}>{TIPS.max}</Toggletip></div>
         <input id="mtoc-max" type="range" min="1" max="6" value="6" />
       </div>
-
-      <label class="mtoc-toggle">
-        <input id="mtoc-include-h1" type="checkbox" checked />
-        <span>{L.includeH1}</span>
-      </label>
-
-      <label class="mtoc-toggle">
-        <input id="mtoc-marker-mode" type="checkbox" />
-        <span>{L.markerMode}</span>
-      </label>
-      <p class="mtoc-hint">{L.markerHint}</p>
+      <div class="mtoc-toggle-control">
+        <label class="mtoc-toggle" for="mtoc-include-h1"><input id="mtoc-include-h1" type="checkbox" checked /><span>{L.includeH1}</span></label><Toggletip id="mtoc-tip-h1" lang={lang} about={L.includeH1}>{TIPS.h1}</Toggletip>
+      </div>
     </div>
+  </details>
+  <div class="mtoc-toolbar">
+    <div class="mtoc-copy-control"><button id="mtoc-copy-toc" class="btn-copy" type="button" disabled>{L.copyToc}</button><Toggletip id="mtoc-tip-copyToc" lang={lang} about={L.copyToc}>{TIPS.copyToc}</Toggletip></div>
+    <div class="mtoc-copy-control mtoc-md-control"><button id="mtoc-copy-md" class="btn-copy" type="button" disabled>{L.copyMd}</button><Toggletip id="mtoc-tip-copyMd" lang={lang} about={L.copyMd}>{TIPS.copyMd}</Toggletip></div>
   </div>
-
-  <div class="mtoc-output">
-    <div class="mtoc-output-head">
-      <span class="tool-label">{L.tocOutput}</span>
-      <span class="mtoc-status" id="mtoc-status" aria-live="polite"></span>
-      <button id="mtoc-copy-toc" class="btn-copy" type="button" disabled>{L.copyToc}</button>
-    </div>
-    <textarea id="mtoc-toc" class="tool-textarea mtoc-textarea-out" readonly spellcheck="false"></textarea>
+  <div class="mtoc-status-row">
+    <span class="mtoc-status" id="mtoc-status" aria-live="polite"></span>
+    <span class="mtoc-status mtoc-md-control" id="mtoc-md-status" aria-live="polite"></span>
   </div>
-
-  <div class="mtoc-output mtoc-md-output" id="mtoc-md-block" hidden>
-    <div class="mtoc-output-head">
-      <span class="tool-label" id="mtoc-md-label">{L.mdOutput}</span>
-      <span class="mtoc-status" id="mtoc-md-status" aria-live="polite"></span>
-      <button id="mtoc-copy-md" class="btn-copy" type="button" disabled>{L.copyMd}</button>
+  <div class="mtoc-grid zt-io">
+    <div class="mtoc-input-col zt-io-pane">
+      <div class="mtoc-label-row"><label class="tool-label" for="mtoc-input">{L.inputLabel}</label><Toggletip id="mtoc-tip-input" lang={lang} about={L.inputLabel}>{TIPS.input}</Toggletip></div>
+      <textarea id="mtoc-input" class="tool-textarea mtoc-textarea zt-io-fill" placeholder={L.inputPh} spellcheck="false"></textarea>
     </div>
-    <textarea id="mtoc-md" class="tool-textarea mtoc-textarea-out" aria-labelledby="mtoc-md-label" readonly spellcheck="false"></textarea>
+    <div class="mtoc-results zt-io-pane" id="mtoc-results">
+      <div class="mtoc-output mtoc-toc-output zt-io-pane">
+        <label class="tool-label" for="mtoc-toc">{L.tocOutput}</label>
+        <textarea id="mtoc-toc" class="tool-textarea mtoc-textarea-out zt-io-fill" placeholder=" " readonly spellcheck="false"></textarea>
+        <p class="mtoc-empty" id="mtoc-empty-toc">{L.emptyToc}</p>
+      </div>
+      <div class="mtoc-output mtoc-md-output zt-io-pane" id="mtoc-md-block" hidden>
+        <label class="tool-label" id="mtoc-md-label" for="mtoc-md">{L.mdOutput}</label>
+        <textarea id="mtoc-md" class="tool-textarea mtoc-textarea-out zt-io-fill" placeholder=" " aria-labelledby="mtoc-md-label" readonly spellcheck="false"></textarea>
+        <p class="mtoc-empty" id="mtoc-empty-md">{L.emptyMarkdown}</p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -250,6 +314,7 @@ const L = labels[lang] ?? labels.en;
   var COPY_LABEL = wrap.getAttribute('data-copy') || 'Copy';
   var COPY_MD_LABEL = wrap.getAttribute('data-copy-md') || 'Copy';
   var COPIED_LABEL = wrap.getAttribute('data-copied') || 'Copied!';
+  var COPY_FAILED = wrap.getAttribute('data-copy-failed') || 'Copy failed';
   var EMPTY_LABEL = wrap.getAttribute('data-empty') || 'No headings found.';
   var MARKER_MISSING = wrap.getAttribute('data-marker-missing') || '';
   var MARKER_UPDATED = wrap.getAttribute('data-marker-updated') || '';
@@ -468,7 +533,21 @@ const L = labels[lang] ?? labels.en;
     return HEAD_PRE + n + HEAD_POST;
   }
 
+  var copyStates = [
+    { button: copyTocBtn, label: COPY_LABEL, revision: 0, timer: null },
+    { button: copyMdBtn, label: COPY_MD_LABEL, revision: 0, timer: null },
+  ];
+  function invalidateCopies() {
+    copyStates.forEach(function (state) {
+      state.revision++;
+      clearTimeout(state.timer);
+      state.button.classList.remove('copied');
+      state.button.textContent = state.label;
+    });
+  }
+
   function update() {
+    invalidateCopies();
     var md = inputEl.value;
     var minL = parseInt(minEl.value, 10);
     var maxL = parseInt(maxEl.value, 10);
@@ -537,23 +616,38 @@ const L = labels[lang] ?? labels.en;
 
   function copyValue(textarea, btn, baseLabel) {
     if (!textarea.value) return;
+    var state = copyStates[btn === copyTocBtn ? 0 : 1];
+    var request = ++state.revision;
+    clearTimeout(state.timer);
     var done = function () {
+      if (request !== state.revision) return;
       btn.classList.add('copied');
       btn.textContent = COPIED_LABEL;
-      setTimeout(function () {
+      state.timer = setTimeout(function () {
+        if (request !== state.revision) return;
         btn.classList.remove('copied');
         btn.textContent = baseLabel;
       }, 1200);
     };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(textarea.value).then(done).catch(function () {
+    function fallback() {
+      if (request !== state.revision) return;
+      var copied = false;
+      try {
         textarea.select();
-        try { document.execCommand('copy'); done(); } catch (_e) {}
-      });
-    } else {
-      textarea.select();
-      try { document.execCommand('copy'); done(); } catch (_e) {}
+        copied = document.execCommand('copy');
+      } catch (_e) {}
+      if (request !== state.revision) return;
+      if (copied) done();
+      else {
+        btn.classList.remove('copied');
+        btn.textContent = COPY_FAILED;
+      }
     }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(textarea.value).then(done, fallback);
+      } else fallback();
+    } catch (_e) { fallback(); }
   }
 
   copyTocBtn.addEventListener('click', function () { copyValue(tocEl, copyTocBtn, COPY_LABEL); });
@@ -565,106 +659,77 @@ const L = labels[lang] ?? labels.en;
     });
   });
 
+  document.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+      e.preventDefault();
+      inputEl.focus();
+      inputEl.value = '';
+      update();
+      mdEl.value = '';
+      mdStatusEl.textContent = '';
+      copyMdBtn.disabled = true;
+    }
+  });
+
   update();
 })();
 </script>
 
 <style is:global>
-.mtoc-wrap {
-  display: grid;
-  gap: 1.25rem;
+.mtoc-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: 0.65rem; }
+.mtoc-top-controls, .mtoc-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 1rem; }
+.mtoc-control, .mtoc-range { display: grid; gap: 0.35rem; min-width: 0; }
+.mtoc-anchor-control { display: flex; align-items: center; gap: 0.5rem; flex: 1; }
+.mtoc-anchor-control .tool-label { flex: none; }
+.mtoc-anchor-control select { max-width: 22rem; }
+.mtoc-select { min-width: 0; min-height: 44px; font-family: var(--font-sans); }
+.mtoc-options { flex: none; min-width: 0; }
+.mtoc-options summary { cursor: pointer; width: fit-content; min-height: 44px; align-content: center; font-size: 0.85rem; color: var(--color-text-secondary); }
+.mtoc-options summary:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.mtoc-controls-col { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; padding: 0.5rem 0; align-items: start; }
+.mtoc-label-row { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.mtoc-range input { width: 100%; min-width: 0; min-height: 24px; accent-color: var(--color-primary); }
+.mtoc-range-value { display: inline-block; min-width: 1.2rem; text-align: right; font-family: var(--font-mono); font-weight: 700; color: var(--color-primary); }
+.mtoc-toggle-control, .mtoc-copy-control { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.mtoc-toggle { display: inline-flex; align-items: center; min-height: 44px; gap: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); cursor: pointer; }
+.mtoc-toggle input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--color-primary); }
+.mtoc-copy-control .btn-copy { min-height: 44px; min-width: 10.5rem; white-space: normal; }
+.mtoc-wrap:not(:has(#mtoc-marker-mode:checked)) .mtoc-md-control { display: none; }
+.mtoc-status-row { display: flex; gap: 0.75rem; flex: none; height: 2.6em; font-size: 0.8rem; line-height: 1.3; }
+.mtoc-status { flex: 1; min-width: 0; color: var(--color-text-muted); overflow: auto; overflow-wrap: anywhere; }
+.mtoc-grid { min-height: 0; }
+.mtoc-results { gap: 0.75rem; }
+.mtoc-output { position: relative; flex: 1 1 0; min-height: 0; }
+.mtoc-output[hidden] { display: none; }
+.mtoc-textarea, .mtoc-textarea-out { min-height: 0; overflow: auto; resize: none; font-size: 0.88rem; }
+.mtoc-textarea-out { font-size: 0.85rem; }
+.mtoc-textarea-out::placeholder { color: transparent; }
+.mtoc-textarea-out:focus { background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+.mtoc-empty { display: none; position: absolute; inset: 2rem 0 0; margin: 0; padding: 1rem; place-content: center; text-align: center; color: var(--color-text-muted); font-size: 0.85rem; pointer-events: none; }
+.mtoc-toc-output:has(#mtoc-toc:placeholder-shown) #mtoc-empty-toc,
+.mtoc-md-output:has(#mtoc-md:placeholder-shown) #mtoc-empty-md { display: grid; }
+@media (max-width: 860px) {
+  .mtoc-controls-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mtoc-textarea { flex: none; height: 220px; }
+  .mtoc-textarea-out { flex: none; height: 240px; }
+  .mtoc-output { flex: none; }
+  .mtoc-results:has(#mtoc-toc:placeholder-shown):has(#mtoc-md:placeholder-shown),
+  .mtoc-results:has(#mtoc-toc:placeholder-shown):has(#mtoc-md-block[hidden]) { display: none; }
 }
-
-.mtoc-grid {
-  display: grid;
-  gap: 1.25rem;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-}
-@media (max-width: 760px) {
-  .mtoc-grid { grid-template-columns: minmax(0, 1fr); }
-}
-
-.mtoc-input-col,
-.mtoc-controls-col {
-  display: grid;
-  gap: 0.75rem;
-  align-content: start;
-}
-
-.mtoc-textarea {
-  min-height: 280px;
-  font-size: 0.88rem;
-}
-@media (max-width: 760px) {
-  .mtoc-textarea { min-height: 200px; }
-}
-
-.mtoc-control,
-.mtoc-range {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.mtoc-select {
-  font-family: var(--font-sans);
-}
-
-.mtoc-range-value {
-  display: inline-block;
-  min-width: 1.2rem;
-  text-align: right;
-  font-family: var(--font-mono);
-  font-weight: 700;
-  color: var(--color-primary);
-}
-
-.mtoc-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-.mtoc-toggle input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-}
-
-.mtoc-hint {
-  font-size: 0.78rem;
-  color: var(--color-text-muted);
-  margin: -0.2rem 0 0 1.6rem;
-  line-height: 1.4;
-}
-
-.mtoc-output {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.mtoc-output-head {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.mtoc-status {
-  flex: 1;
-  font-size: 0.8rem;
-  color: var(--color-text-muted);
-  min-width: 0;
-}
-
-.mtoc-textarea-out {
-  min-height: 180px;
-  font-size: 0.85rem;
-}
-
-.mtoc-textarea-out:focus {
-  background: var(--color-bg-secondary);
-  box-shadow: inset 0 0 0 1px var(--color-border-soft);
+@media (max-width: 640px) {
+  .mtoc-wrap { gap: 0.4rem; }
+  .mtoc-top-controls { gap: 0.25rem 0.75rem; }
+  .mtoc-anchor-control { flex-basis: 100%; }
+  .mtoc-anchor-control .tool-label { font-size: 0.78rem; }
+  .mtoc-toggle { min-height: 32px; }
+  .mtoc-options summary { min-height: 32px; }
+  .mtoc-controls-col { gap: 0.5rem; }
+  .mtoc-controls-col .tool-label { font-size: 0.75rem; }
+  .mtoc-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+  .mtoc-copy-control .btn-copy { flex: 1; min-width: 0; padding: 0.35rem 0.4rem; font-size: 0.78rem; }
+  .mtoc-status-row { gap: 0.5rem; }
+  #mtoc-status { flex: 0 0 5.5rem; }
+  .mtoc-textarea { height: 120px; }
+  .mtoc-textarea-out { height: 240px; }
 }
 </style>

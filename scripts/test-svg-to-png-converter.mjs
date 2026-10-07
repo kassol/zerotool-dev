@@ -1,4 +1,5 @@
 // SVG to PNG Converter — size, SVG preparation and naming regression test
+// Also reads src/styles/tool-common.css for the shared fill and toggletip rules.
 //
 // Read:  src/components/tools/SvgToPngConverterTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers and the STRINGS table between
@@ -26,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const commonStyle = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
 const source = readFileSync(join(root, 'src/components/tools/SvgToPngConverterTool.astro'), 'utf8');
 
 let failures = 0;
@@ -340,7 +342,7 @@ eq('blank: one visible pixel', E.isBlank(new Uint8ClampedArray([0, 0, 0, 0, 0, 0
   // ToolLayout's Ctrl/Cmd+Enter clicks the first .btn-primary: it must stay Convert, not Download.
   eq('v2: Convert is the first primary button, Download the second', (markup.match(/<button id="([\w-]+)" class="btn-primary/g) || []).map((m) => m.slice(12, m.indexOf('"', 12))), ['s2p-convert-code', 's2p-download']);
   // The result and a tall preview scroll inside the pane (flex-basis 0), the file table too.
-  check('v2: the result box and the file table scroll inside their pane', /\.s2p-out \{[^}]*flex: 1 1 0;[^}]*overflow: auto;/.test(source) && /\.s2p-table-wrap \{[^}]*flex: 1 1 0;[^}]*overflow: auto;/.test(source) &&
+  check('v2: the result box and the file table scroll inside their pane', source.includes('class="s2p-out zt-io-fill"') && /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(commonStyle) && /\.s2p-out \{[^}]*overflow: auto;/.test(source) && /\.s2p-table-wrap \{[^}]*flex: 1 1 0;[^}]*overflow: auto;/.test(source) &&
     /\.s2p-preview-box \{[^}]*flex: 1 1 0;/.test(source) && /\.s2p-preview-img \{ position: absolute;[^}]*object-fit: scale-down; \}/.test(source));
   check('v2: the empty hint is in the result box and hides when there is a result', right.includes('<p class="s2p-empty">{T.outEmpty}</p>') && source.includes('.s2p-out:has(.s2p-result:not([hidden])) .s2p-empty,') &&
     source.includes('.s2p-pane--out:has(.s2p-result[hidden]):has(.s2p-notes[hidden]) { display: none; }'));

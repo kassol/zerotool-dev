@@ -1,51 +1,101 @@
 ---
-// JwtDecoderTool — JWT token decoder widget
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+const STRINGS = {
+  en: {
+    pasteLabel: 'Paste JWT Token', decode: 'Decode', loadExample: 'Load Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed', decodedOk: 'Decoded successfully.', errPaste: 'Please paste a JWT token.', errInvalid: 'Invalid JWT: expected 3 dot-separated parts, got ', errDecode: 'Failed to Base64URL-decode token parts.', pastePlaceholder: 'Paste your JWT here...',
+    resultLabel: "Decoded token",
+    timeLabel: "Time claims",
+    resultEmpty: "Header, Payload and the raw Signature appear here after decoding.",
+    verifyNotice: "Decoding does not verify the signature. “valid” only checks the expiration time against this device’s clock.",
+    tips: {
+      input: "Paste three dot-separated Base64URL parts. The header and payload are decoded as UTF-8; missing padding is accepted. A token with an empty signature can be inspected. Tokens are not saved or uploaded.",
+      decode: "Decode runs now; Ctrl/⌘+Enter does the same while focus is in the tool. Input matching the three-part Base64URL pattern also decodes after 300 ms. Use Decode to see an error for other input.",
+      example: "Load Example replaces the input and immediately decodes an HS256 token with John Doe, iat 1516239022 and exp 1893456000.",
+      clear: "Clear or Ctrl/⌘+L while focus is in the tool removes the token, results and status, and cancels a pending automatic decode.",
+      results: "Header and Payload display highlighted JSON. Their Copy buttons copy JSON with two-space indentation, without date notes. Signature displays the raw Base64URL string and is not verified.",
+      time: "Numeric exp, iat and nbf values in the payload receive UTC date notes, including matching nested fields. Values use seconds. Only exp gets valid or EXPIRED, based on the device clock; this does not verify the signature.",
+    },
+  },
+  zh: {
+    pasteLabel: '粘贴 JWT Token', decode: '解码', loadExample: '加载示例', clear: '清除', copy: '复制', copied: '已复制！', copyFailed: '复制失败', decodedOk: '解码成功。', errPaste: '请粘贴 JWT Token。', errInvalid: 'JWT 无效：应有 3 段，实际为 ', errDecode: 'Base64URL 解码失败。', pastePlaceholder: '在此粘贴 JWT Token...',
+    resultLabel: "解码结果",
+    timeLabel: "时间声明",
+    resultEmpty: "解码后，这里显示 Header、Payload 和原始 Signature。",
+    verifyNotice: "解码不验证签名。“valid”仅表示按本机时钟判断过期时间尚未过去。",
+    tips: {
+      input: "粘贴以点号分隔的三段 Base64URL。Header 和 Payload 按 UTF-8 解码，允许省略填充符。签名为空的令牌也可查看。令牌不会保存或上传。",
+      decode: "点「解码」立即运行；焦点在工具内时 Ctrl/⌘+Enter 执行相同操作。输入符合三段 Base64URL 格式时也会在 300 毫秒后自动解码。其他输入可点「解码」查看错误。",
+      example: "「加载示例」替换输入并立即解码一个 HS256 令牌，内容含 John Doe、iat 1516239022 和 exp 1893456000。",
+      clear: "点「清除」，或焦点在工具内时按 Ctrl/⌘+L，会清除令牌、结果和状态，并取消等待中的自动解码。",
+      results: "Header 和 Payload 显示高亮 JSON，各自的「复制」按钮复制缩进为两个空格的 JSON，不含日期注记。Signature 显示原始 Base64URL 字符串，不验证签名。",
+      time: "Payload 中数值类型的 exp、iat、nbf 会附 UTC 日期，匹配的嵌套字段也适用。数值单位是秒。仅 exp 按本机时钟显示 valid 或 EXPIRED；这不代表签名验证。",
+    },
+  },
+  ja: {
+    pasteLabel: 'JWT トークンを貼り付け', decode: 'デコード', loadExample: 'サンプルを読み込む', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗', decodedOk: 'デコードしました。', errPaste: 'JWT トークンを貼り付けてください。', errInvalid: '無効な JWT：3 つのパートが必要です。実際: ', errDecode: 'Base64URL デコードに失敗しました。', pastePlaceholder: 'ここに JWT トークンを貼り付け...',
+    resultLabel: "デコード結果",
+    timeLabel: "時刻クレーム",
+    resultEmpty: "デコードすると Header、Payload、生の Signature がここに表示されます。",
+    verifyNotice: "デコードでは署名を検証しません。「valid」は、この端末の時計で有効期限を過ぎていないことだけを示します。",
+    tips: {
+      input: "ドットで区切られた 3 つの Base64URL パートを貼り付けます。Header と Payload は UTF-8 として読み取り、パディングの省略を受け付けます。署名が空のトークンも表示できます。トークンは保存・送信されません。",
+      decode: "「デコード」で直ちに実行します。ツール内にフォーカスがある場合は Ctrl/⌘+Enter も同じ動作です。3 パートの Base64URL 形式に合う入力は 300 ミリ秒後にも自動処理します。その他の入力のエラーは「デコード」で確認できます。",
+      example: "「サンプルを読み込む」は入力を置き換え、John Doe、iat 1516239022、exp 1893456000 を含む HS256 トークンを直ちにデコードします。",
+      clear: "「クリア」、またはツール内にフォーカスがある状態の Ctrl/⌘+L で、トークン・結果・状態を消去し、待機中の自動デコードを取り消します。",
+      results: "Header と Payload は強調表示した JSON です。それぞれの「コピー」は日付注記を含めず、空白 2 個のインデントで JSON をコピーします。Signature は生の Base64URL 文字列で、署名検証は行いません。",
+      time: "Payload の数値の exp・iat・nbf に UTC の日付を付記します。同名のネストしたフィールドも対象です。値の単位は秒です。exp だけに端末の時計に基づく valid または EXPIRED を付けます。署名検証ではありません。",
+    },
+  },
+  ko: {
+    pasteLabel: 'JWT 토큰 붙여넣기', decode: '디코드', loadExample: '예시 불러오기', clear: '지우기', copy: '복사', copied: '복사됨!', copyFailed: '복사 실패', decodedOk: '디코딩 완료.', errPaste: 'JWT 토큰을 붙여넣어 주세요.', errInvalid: '유효하지 않은 JWT: 3개 파트가 필요합니다. 실제: ', errDecode: 'Base64URL 디코드에 실패했습니다.', pastePlaceholder: '여기에 JWT 토큰을 붙여넣기...',
+    resultLabel: "디코딩 결과",
+    timeLabel: "시간 클레임",
+    resultEmpty: "디코딩하면 Header, Payload와 원본 Signature가 여기에 표시됩니다.",
+    verifyNotice: "디코딩은 서명을 검증하지 않습니다. “valid”는 이 기기의 시계를 기준으로 만료 시각이 지나지 않았다는 뜻입니다.",
+    tips: {
+      input: "점으로 구분된 Base64URL 3개 파트를 붙여넣습니다. Header와 Payload는 UTF-8로 읽으며 패딩 생략을 허용합니다. 서명이 비어 있는 토큰도 볼 수 있습니다. 토큰을 저장하거나 업로드하지 않습니다.",
+      decode: "「디코드」는 즉시 실행합니다. 도구 안에 포커스가 있을 때 Ctrl/⌘+Enter도 같습니다. Base64URL 3개 파트 형식에 맞는 입력은 300밀리초 후 자동으로 디코딩합니다. 다른 입력의 오류는 「디코드」로 확인합니다.",
+      example: "「예시 불러오기」는 입력을 바꾸고 John Doe, iat 1516239022, exp 1893456000이 포함된 HS256 토큰을 즉시 디코딩합니다.",
+      clear: "「지우기」 또는 도구 안에 포커스가 있을 때 Ctrl/⌘+L을 누르면 토큰, 결과, 상태를 지우고 대기 중인 자동 디코딩을 취소합니다.",
+      results: "Header와 Payload는 강조된 JSON으로 표시합니다. 각 「복사」 버튼은 날짜 주석을 제외하고 공백 두 칸으로 들여쓴 JSON을 복사합니다. Signature는 원본 Base64URL 문자열이며 서명을 검증하지 않습니다.",
+      time: "Payload의 숫자형 exp, iat, nbf에 UTC 날짜를 붙입니다. 이름이 같은 중첩 필드에도 적용됩니다. 단위는 초입니다. exp만 기기 시계에 따라 valid 또는 EXPIRED를 표시하며, 서명 검증을 뜻하지 않습니다.",
+    },
+  },
+};
+const T = STRINGS[lang];
+const { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...CLIENT_T } = T;
 ---
-<div>
-  <div class="jwt-wrap">
-    <div class="jwt-input-section">
-      <label for="jwt-input" data-i18n="pasteLabel">Paste JWT Token</label>
-      <textarea
-        id="jwt-input"
-        placeholder="Paste your JWT here..."
-        data-i18n-placeholder="pastePlaceholder"
-        spellcheck="false"
-        autocomplete="off"
-      ></textarea>
-      <div class="jwt-actions">
-        <button id="jwt-decode" class="btn-primary" data-i18n="decode">Decode</button>
-        <button id="jwt-example" class="btn-ghost" data-i18n="loadExample">Load Example</button>
-        <button id="jwt-clear" class="btn-ghost" data-i18n="clear">Clear</button>
-      </div>
-    </div>
-
-    <div id="jwt-status" class="jwt-status" aria-live="polite"></div>
-
-    <div id="jwt-results" class="jwt-results"></div>
+<div class="jwt-wrap">
+  <div class="jwt-actions">
+    <div class="jwt-control"><button id="jwt-decode" class="btn-primary">{T.decode}</button><Toggletip id="jwt-tip-decode" lang={lang} about={T.decode}>{T.tips.decode}</Toggletip></div>
+    <div class="jwt-control"><button id="jwt-example" class="btn-ghost">{T.loadExample}</button><Toggletip id="jwt-tip-example" lang={lang} about={T.loadExample}>{T.tips.example}</Toggletip></div>
+    <div class="jwt-control"><button id="jwt-clear" class="btn-ghost">{T.clear}</button><Toggletip id="jwt-tip-clear" lang={lang} about={T.clear}>{T.tips.clear}</Toggletip></div>
   </div>
+  <div id="jwt-status" class="jwt-status" aria-live="polite"></div>
+  <div class="jwt-input-section zt-empty-drop">
+    <div class="jwt-heading"><label for="jwt-input">{T.pasteLabel}</label><Toggletip id="jwt-tip-input" lang={lang} about={T.pasteLabel}>{T.tips.input}</Toggletip></div>
+    <textarea id="jwt-input" placeholder={T.pastePlaceholder} spellcheck="false" autocomplete="off"></textarea>
+  </div>
+  <p class="jwt-verify-note">{T.verifyNotice}</p>
+  <div class="jwt-result-section">
+    <div class="jwt-result-heading">
+      <div class="jwt-heading"><span id="jwt-result-label">{T.resultLabel}</span><Toggletip id="jwt-tip-results" lang={lang} about={T.resultLabel}>{T.tips.results}</Toggletip></div>
+      <div class="jwt-heading"><span>{T.timeLabel}</span><Toggletip id="jwt-tip-time" lang={lang} about={T.timeLabel}>{T.tips.time}</Toggletip></div>
+    </div>
+    <p class="jwt-empty">{T.resultEmpty}</p>
+    <div id="jwt-results" class="jwt-results" tabindex="0" role="region" aria-labelledby="jwt-result-label"></div>
+  </div>
+</div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: { pasteLabel: 'Paste JWT Token', decode: 'Decode', loadExample: 'Load Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', decodedOk: 'Decoded successfully.', errPaste: 'Please paste a JWT token.', errInvalid: 'Invalid JWT: expected 3 dot-separated parts, got ', errDecode: 'Failed to Base64URL-decode token parts.', pastePlaceholder: 'Paste your JWT here...' },
-        zh: { pasteLabel: '粘贴 JWT Token', decode: '解码', loadExample: '加载示例', clear: '清除', copy: '复制', copied: '已复制！', decodedOk: '解码成功。', errPaste: '请粘贴 JWT Token。', errInvalid: 'JWT 无效：应有 3 段，实际为 ', errDecode: 'Base64URL 解码失败。', pastePlaceholder: '在此粘贴 JWT Token...' },
-        ja: { pasteLabel: 'JWT トークンを貼り付け', decode: 'デコード', loadExample: 'サンプルを読み込む', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', decodedOk: 'デコードしました。', errPaste: 'JWT トークンを貼り付けてください。', errInvalid: '無効な JWT：3 つのパートが必要です。実際: ', errDecode: 'Base64URL デコードに失敗しました。', pastePlaceholder: 'ここに JWT トークンを貼り付け...' },
-        ko: { pasteLabel: 'JWT 토큰 붙여넣기', decode: '디코드', loadExample: '예시 불러오기', clear: '지우기', copy: '복사', copied: '복사됨!', decodedOk: '디코딩 완료.', errPaste: 'JWT 토큰을 붙여넣어 주세요.', errInvalid: '유효하지 않은 JWT: 3개 파트가 필요합니다. 실제: ', errDecode: 'Base64URL 디코드에 실패했습니다.', pastePlaceholder: '여기에 JWT 토큰을 붙여넣기...' }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.jwt-wrap [data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('.jwt-wrap [data-i18n-placeholder]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-placeholder'); if (t[key]) el.setAttribute('placeholder', t[key]);
-      });
-
       var JWT_REGEX = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
       var EXAMPLE_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyLCJleHAiOjE4OTM0NTYwMDB9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
       var debounceTimer = null;
+      var outputRevision = 0;
 
       /* ── engine:start ── */
       // Base64URL → bytes → UTF-8 text (atob alone returns one character per byte,
@@ -91,6 +141,12 @@
 
       /* ── engine:end ── */
 
+      function invalidateOutput() {
+        outputRevision++;
+        clearTimeout(debounceTimer);
+        document.querySelectorAll('#jwt-results .btn-copy').forEach(function (button) { button.textContent = t.copy; });
+      }
+
       function formatTimeClaim(key, val) {
         if (['exp', 'iat', 'nbf'].indexOf(key) !== -1 && typeof val === 'number') {
           var d = new Date(val * 1000);
@@ -116,11 +172,12 @@
 
         var pre = document.createElement('pre');
         pre.className = 'jwt-json';
+        pre.tabIndex = 0;
         if (label === 'Payload' && obj) {
           var json = JSON.stringify(obj, null, 2);
           var highlighted = syntaxHighlight(obj);
-          highlighted = highlighted.replace(/"(exp|iat|nbf)": (<span[^>]*>(\d+)<\/span>)/g, function(match, key, spanHtml, val) {
-            return '"' + key + '": ' + spanHtml + formatTimeClaim(key, parseInt(val));
+          highlighted = highlighted.replace(/(<span class="jv-key">"(exp|iat|nbf)":<\/span>) (<span class="jv-num">(-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)<\/span>)/g, function(match, keyHtml, key, spanHtml, val) {
+            return keyHtml + ' ' + spanHtml + formatTimeClaim(key, Number(val));
           });
           pre.innerHTML = highlighted;
         } else if (obj) {
@@ -133,11 +190,23 @@
         var copyBtn = document.createElement('button');
         copyBtn.className = 'btn-copy';
         copyBtn.textContent = t.copy;
+        var copyRequest = 0, copyTimer = null;
         copyBtn.addEventListener('click', function () {
-          navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).then(function () {
+          var revision = outputRevision, request = ++copyRequest;
+          clearTimeout(copyTimer);
+          copyBtn.textContent = t.copy;
+          function current() {
+            return revision === outputRevision && request === copyRequest && document.getElementById('jwt-results').contains(copyBtn);
+          }
+          function copied() {
+            if (!current()) return;
             copyBtn.textContent = t.copied;
-            setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-          });
+            copyTimer = setTimeout(function () { if (current()) copyBtn.textContent = t.copy; }, 1500);
+          }
+          function failed() { if (current()) copyBtn.textContent = t.copyFailed; }
+          try {
+            Promise.resolve(navigator.clipboard.writeText(JSON.stringify(obj, null, 2))).then(copied, failed);
+          } catch (error) { failed(); }
         });
         div.appendChild(copyBtn);
 
@@ -159,6 +228,7 @@
       }
 
       function decode() {
+        invalidateOutput();
         var raw = document.getElementById('jwt-input').value.trim();
         var statusEl = document.getElementById('jwt-status');
         var resultsEl = document.getElementById('jwt-results');
@@ -199,6 +269,7 @@
       }
 
       function clearOutput() {
+        invalidateOutput();
         document.getElementById('jwt-results').innerHTML = '';
         document.getElementById('jwt-status').textContent = '';
         document.getElementById('jwt-status').className = 'jwt-status';
@@ -209,12 +280,8 @@
 
       document.getElementById('jwt-decode').addEventListener('click', decode);
 
-      document.getElementById('jwt-input').addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) decode();
-      });
-
       document.getElementById('jwt-input').addEventListener('input', function () {
-        clearTimeout(debounceTimer);
+        invalidateOutput();
         var val = this.value.trim();
         if (!val || !JWT_REGEX.test(val)) {
           clearOutput();
@@ -229,19 +296,41 @@
         decode();
       });
 
-      document.getElementById('jwt-clear').addEventListener('click', function () {
-        clearTimeout(debounceTimer);
-        document.getElementById('jwt-input').value = '';
+      function clearAll() {
+        var input = document.getElementById('jwt-input');
+        input.focus();
+        input.value = '';
         clearOutput();
+      }
+
+      document.getElementById('jwt-clear').addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        if (document.querySelector('.jwt-wrap').contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
+        }
       });
     })();
   </script>
-</div>
 
 <style>
-  .jwt-wrap { display: flex; flex-direction: column; gap: 1rem; }
+  .jwt-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 0.65rem; }
+  .jwt-control, .jwt-heading { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+  .jwt-control { flex: 0 1 auto; }
+  .jwt-control button { min-height: 44px; }
+  .jwt-heading { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  .jwt-result-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 1rem; flex: none; }
+  .jwt-verify-note { margin: 0; flex: none; font-size: 0.78rem; line-height: 1.5; color: var(--color-text-secondary); }
+  .jwt-result-section { display: flex; flex: 1 1 0; flex-direction: column; gap: 0.5rem; min-width: 0; min-height: 0; }
+  .jwt-empty { margin: 0; padding: 0.5rem 0; color: var(--color-text-muted); font-size: 0.85rem; }
+  .jwt-result-section:has(#jwt-results:empty) { flex: none; }
+  .jwt-result-section:has(#jwt-results:empty) .jwt-result-heading { display: none; }
+  .jwt-result-section:has(#jwt-results:not(:empty)) .jwt-empty { display: none; }
+  .jwt-wrap:has(#jwt-results:empty) .jwt-input-section { flex: 1 1 0; }
+  .jwt-wrap:has(#jwt-results:empty) #jwt-input { flex: 1 1 0; min-height: 220px; }
 
-  .jwt-input-section { display: flex; flex-direction: column; gap: 0.4rem; }
+  .jwt-input-section { flex: none; align-items: stretch; justify-content: flex-start; min-width: 0; min-height: 0; gap: 0.4rem; text-align: left; cursor: auto; }
 
   .jwt-input-section label {
     font-size: 0.82rem;
@@ -251,35 +340,42 @@
 
   .jwt-input-section textarea {
     width: 100%;
-    min-height: 90px;
+    height: 140px;
+    min-height: 0;
+    overflow: auto;
     font-family: var(--font-mono);
     font-size: 0.82rem;
     padding: 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    resize: vertical;
+    resize: none;
     background: var(--color-bg-secondary);
     color: var(--color-text);
     word-break: break-all;
   }
   .jwt-input-section textarea:focus { outline: none; border-color: #6366f1; background: var(--color-bg); }
 
-  .jwt-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
+  .jwt-actions { display: flex; flex-wrap: wrap; flex: none; gap: 0.5rem 0.9rem; }
 
-  .jwt-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .jwt-status { flex: none; font-size: 0.85rem; line-height: 1.4; height: 2.4rem; overflow: auto; overflow-wrap: anywhere; }
   .jwt-status.success { color: #057a55; }
   .jwt-status.error { color: #c0392b; }
 
-  .jwt-results { display: flex; flex-direction: column; gap: 1rem; }
+  .jwt-results { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; min-height: 0; gap: 0.75rem; overflow: auto; }
+  .jwt-results:empty { display: none; }
+  .jwt-results:focus-visible, .jwt-wrap :global(.jwt-json:focus-visible) { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 
-  .jwt-section {
+  .jwt-wrap :global(.jwt-section) {
+    flex: none;
+    min-width: 0;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     overflow: hidden;
   }
 
-  .jwt-section-header {
+  .jwt-wrap :global(.jwt-section-header) {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 0.75rem;
@@ -288,20 +384,20 @@
     font-size: 0.88rem;
   }
 
-  .jwt-section-dot {
+  .jwt-wrap :global(.jwt-section-dot) {
     width: 10px;
     height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
   }
 
-  .jwt-sig-note {
+  .jwt-wrap :global(.jwt-sig-note) {
     font-size: 0.78rem;
     color: var(--color-text-muted);
     font-weight: 400;
   }
 
-  .jwt-json {
+  .jwt-wrap :global(.jwt-json) {
     margin: 0;
     padding: 0.75rem 1rem;
     font-family: var(--font-mono);
@@ -313,7 +409,7 @@
     white-space: pre;
   }
 
-  .jwt-sig {
+  .jwt-wrap :global(.jwt-sig) {
     display: block;
     padding: 0.75rem 1rem;
     font-family: var(--font-mono);
@@ -323,6 +419,8 @@
     background: var(--color-bg);
   }
 
+  .jwt-wrap :global(.btn-copy) { min-height: 44px; margin: 0.4rem 0.75rem; }
+
   /* :global because the highlight spans are injected via innerHTML */
   :global(.jv-key) { color: #6366f1; }
   :global(.jv-str) { color: #e67e22; }
@@ -330,9 +428,9 @@
   :global(.jv-bool) { color: #8e44ad; }
   :global(.jv-null) { color: #95a5a6; }
 
-  .jwt-time-hint { font-size: 0.78rem; color: var(--color-text-muted); }
-  .jwt-expired { color: #e00; font-weight: 700; }
-  .jwt-valid { color: #057a55; font-weight: 700; }
+  .jwt-wrap :global(.jwt-time-hint) { font-size: 0.78rem; color: var(--color-text-muted); }
+  .jwt-wrap :global(.jwt-expired) { color: #e00; font-weight: 700; }
+  .jwt-wrap :global(.jwt-valid) { color: #057a55; font-weight: 700; }
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .jwt-status.success { color: #34d399; }
@@ -342,16 +440,28 @@
     :global(:root:not([data-theme="light"]) .jv-num) { color: #4ade80; }
     :global(:root:not([data-theme="light"]) .jv-bool) { color: #c084fc; }
     :global(:root:not([data-theme="light"]) .jv-null) { color: #94a3b8; }
-    :root:not([data-theme="light"]) .jwt-expired { color: #f87171; }
-    :root:not([data-theme="light"]) .jwt-valid { color: #34d399; }
+    :global(:root:not([data-theme="light"]) .jwt-expired) { color: #f87171; }
+    :global(:root:not([data-theme="light"]) .jwt-valid) { color: #34d399; }
   }
-  [data-theme="dark"] .jwt-status.success { color: #34d399; }
-  [data-theme="dark"] .jwt-status.error { color: #f87171; }
+  :global([data-theme="dark"]) .jwt-status.success { color: #34d399; }
+  :global([data-theme="dark"]) .jwt-status.error { color: #f87171; }
   :global([data-theme="dark"] .jv-key) { color: #818cf8; }
   :global([data-theme="dark"] .jv-str) { color: #fb923c; }
   :global([data-theme="dark"] .jv-num) { color: #4ade80; }
   :global([data-theme="dark"] .jv-bool) { color: #c084fc; }
   :global([data-theme="dark"] .jv-null) { color: #94a3b8; }
-  [data-theme="dark"] .jwt-expired { color: #f87171; }
-  [data-theme="dark"] .jwt-valid { color: #34d399; }
+  :global([data-theme="dark"] .jwt-expired) { color: #f87171; }
+  :global([data-theme="dark"] .jwt-valid) { color: #34d399; }
+  @media (max-width: 860px) {
+    .jwt-wrap:has(#jwt-results:empty) .jwt-input-section { flex: none; }
+    .jwt-wrap:has(#jwt-results:empty) #jwt-input { flex: none; min-height: 0; height: 180px; }
+    .jwt-result-section { flex: none; height: 24rem; }
+    .jwt-result-section:has(#jwt-results:empty) { display: none; }
+  }
+  @media (max-width: 640px) {
+    .jwt-actions { gap: 0.4rem 0.65rem; }
+    .jwt-wrap .jwt-actions .jwt-control > button { flex: 0 1 auto; padding: 0.55rem 0.7rem; }
+    .jwt-result-section { height: 22rem; }
+    .jwt-wrap :global(.jwt-json), .jwt-wrap :global(.jwt-sig) { padding: 0.65rem; }
+  }
 </style>

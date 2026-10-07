@@ -1,89 +1,9 @@
 ---
 // PixelateImageTool — pixelates, blurs, or solid-fills selected areas (or the
 // whole image) of a local image/screenshot via Canvas 2D. No upload.
----
-
-<div>
-  <div class="pxi-wrap" id="pxi-wrap">
-    {/* Drop zone — visible until an image is loaded */}
-    <div id="pxi-drop" class="pxi-drop" role="button" tabindex="0">
-      <div class="pxi-drop-inner">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-        </svg>
-        <p data-i18n="dropHint">Drop an image here, or <strong>click to select</strong></p>
-        <p class="pxi-hint" data-i18n="pasteHint">You can also paste a screenshot with Ctrl/Cmd+V</p>
-        <p class="pxi-hint" data-i18n="formatsHint">PNG / JPEG / WebP / GIF / BMP / AVIF · first GIF frame only</p>
-      </div>
-      <input type="file" id="pxi-file" accept="image/*" class="pxi-file-input" aria-label="Select an image file" data-i18n-aria="fileAria" />
-    </div>
-
-    {/* Controls — hidden until an image is loaded */}
-    <div id="pxi-controls" class="pxi-controls" hidden>
-      <div class="pxi-effect-row" role="radiogroup" aria-label="Effect" data-i18n-aria="effectAria">
-        <label class="pxi-radio-label">
-          <input type="radio" name="pxi-effect" value="pixelate" checked />
-          <span data-i18n="effectPixelate">Pixelate</span>
-        </label>
-        <label class="pxi-radio-label">
-          <input type="radio" name="pxi-effect" value="blur" />
-          <span data-i18n="effectBlur">Blur</span>
-        </label>
-        <label class="pxi-radio-label">
-          <input type="radio" name="pxi-effect" value="solid" />
-          <span data-i18n="effectSolid">Solid fill</span>
-        </label>
-      </div>
-
-      <div class="pxi-strength-row" id="pxi-strength-row">
-        <label for="pxi-strength" class="pxi-strength-label">
-          <span id="pxi-strength-label-text" data-i18n="blockSizeLabel">Block size:</span>
-          <strong id="pxi-strength-val">16</strong> px
-        </label>
-        <input type="range" id="pxi-strength" min="4" max="64" value="16" step="1" />
-      </div>
-
-      <div class="pxi-color-row" id="pxi-color-row" hidden>
-        <label for="pxi-color" class="tool-label" data-i18n="colorLabel">Fill color:</label>
-        <input type="color" id="pxi-color" value="#000000" />
-      </div>
-
-      <label class="pxi-entire-label">
-        <input type="checkbox" id="pxi-entire" />
-        <span data-i18n="entireImageLabel">Apply to entire image</span>
-      </label>
-
-      <p class="pxi-tip" data-i18n="tip">Pixelate and blur can sometimes be reversed — use solid fill for passwords and API keys.</p>
-    </div>
-
-    {/* Canvas preview — hidden until an image is loaded */}
-    <div id="pxi-canvas-wrap" class="pxi-canvas-wrap" hidden>
-      <canvas id="pxi-canvas" class="pxi-canvas"></canvas>
-      <div id="pxi-dim-status" class="pxi-dim-status"></div>
-    </div>
-
-    {/* Actions — hidden until an image is loaded */}
-    <div id="pxi-actions" class="pxi-actions" hidden>
-      <label class="pxi-format-label">
-        <span data-i18n="formatLabel">Format:</span>
-        <select id="pxi-format" class="tool-input pxi-format-select">
-          <option value="image/png" selected>PNG</option>
-          <option value="image/jpeg">JPEG</option>
-          <option value="image/webp">WebP</option>
-        </select>
-      </label>
-      <button id="pxi-download" class="btn-primary" type="button" data-i18n="download">Download</button>
-      <button id="pxi-copy" class="btn-secondary" type="button" data-i18n="copyImage">Copy image</button>
-      <button id="pxi-undo" class="btn-ghost" type="button" data-i18n="undo">Undo</button>
-      <button id="pxi-clear" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
-    </div>
-
-    <div id="pxi-status" class="tool-status" aria-live="polite"></div>
-  </div>
-
-  <script is:inline>
-    (function () {
-      var STRINGS = {
+import Toggletip from "../Toggletip.astro";
+// strings:start
+const STRINGS = {
         en: {
           fileAria: 'Select an image file', effectAria: 'Effect',
           dropHint: 'Drop an image here, or <strong>click to select</strong>',
@@ -100,6 +20,8 @@
           statusCopyUnsupported: 'Copy is not supported in this browser — use Download instead',
           statusCopyFailed: 'Copy was blocked — use Download instead',
           statusCopied: 'Image copied to clipboard', statusDownloaded: 'Downloaded',
+          previewLabel: "Image preview", emptyPreview: "Load a local image to preview the effect and select areas.",
+          tips: {"image": "Choose, drop, or paste a local image. GIF input uses its first frame.", "effect": "Choose Pixelate, Blur, or Solid fill. Changes redraw all selected areas from the original image.", "strength": "Pixelate uses blocks from 4 to 64 pixels; Blur uses radius values from 2 to 40. Changes update the preview.", "color": "Solid fill replaces the selected pixels with this opaque color.", "entire": "Apply the effect to the whole image while keeping your drawn areas for later.", "format": "Download uses this format. Copy image always exports PNG. JPEG places transparent pixels on white.", "download": "Save a newly encoded image without dashed selection outlines or the original metadata.", "copy": "Copy a PNG without selection outlines. Use Download when this browser blocks image copying.", "undo": "Remove the most recently drawn area and redraw the remaining areas.", "clear": "Release the loaded image and cancel pending feedback while keeping the effect settings.", "selection": "Drag rectangles over the preview. Coordinates map to the original image; areas smaller than two pixels in either dimension are ignored."},
         },
         zh: {
           fileAria: '选择图片文件', effectAria: '效果',
@@ -117,6 +39,8 @@
           statusCopyUnsupported: '当前浏览器不支持复制图片，请改用下载',
           statusCopyFailed: '复制被拒绝，请改用下载',
           statusCopied: '图片已复制到剪贴板', statusDownloaded: '已下载',
+          previewLabel: "图片预览", emptyPreview: "载入本地图片后，可在这里预览效果并选择区域。",
+          tips: {"image": "选择、拖入或粘贴本地图片。GIF 只读取第一帧。", "effect": "选择像素化、模糊或纯色涂黑。更改效果会从原图重新绘制全部已选区域。", "strength": "像素化块大小为 4–64 像素，模糊半径为 2–40。更改后实时更新预览。", "color": "纯色涂黑用这个不透明颜色覆盖选中的像素。", "entire": "把效果应用到整张图片，并保留已画区域供取消整图选项后使用。", "format": "下载使用所选格式；复制图片始终导出 PNG。JPEG 把透明像素合成到白底。", "download": "保存重新编码的图片，不含选择虚线与原图元数据。", "copy": "复制不含选择虚线的 PNG。浏览器拒绝复制图片时可使用下载。", "undo": "移除最后画出的区域，再重绘剩余区域。", "clear": "释放已载入图片并取消待处理反馈，保留效果设置。", "selection": "在预览上拖出矩形。坐标映射到原图；宽或高小于两像素的区域不会提交。"},
         },
         ja: {
           fileAria: '画像ファイルを選択', effectAria: 'エフェクト',
@@ -134,6 +58,8 @@
           statusCopyUnsupported: 'このブラウザは画像コピーに対応していません — ダウンロードをご利用ください',
           statusCopyFailed: 'コピーがブロックされました — ダウンロードをご利用ください',
           statusCopied: '画像をクリップボードにコピーしました', statusDownloaded: 'ダウンロードしました',
+          previewLabel: "画像プレビュー", emptyPreview: "ローカル画像を読み込むと、ここで効果を確認して範囲を選べます。",
+          tips: {"image": "ローカル画像を選択、ドロップ、または貼り付けます。GIF は先頭フレームを読み込みます。", "effect": "モザイク、ぼかし、塗りつぶしを選びます。変更すると元画像からすべての選択範囲を描き直します。", "strength": "モザイクのブロックは4〜64ピクセル、ぼかしの半径は2〜40です。変更はプレビューに反映されます。", "color": "塗りつぶしでは選択したピクセルをこの不透明色で置き換えます。", "entire": "描いた範囲を保持したまま、画像全体に効果を適用します。", "format": "ダウンロードに使う形式です。画像コピーは常にPNGです。JPEGの透明部分は白になります。", "download": "選択範囲の破線と元のメタデータを含まない、新しくエンコードした画像を保存します。", "copy": "破線を含まないPNGをコピーします。ブラウザが画像コピーを拒否する場合はダウンロードを使います。", "undo": "最後に描いた範囲を削除し、残りの範囲を描き直します。", "clear": "画像を解放し、保留中の通知を取り消します。効果の設定は保持します。", "selection": "プレビュー上で矩形をドラッグします。座標は元画像に対応し、幅または高さが2ピクセル未満の範囲は確定しません。"},
         },
         ko: {
           fileAria: '이미지 파일 선택', effectAria: '효과',
@@ -151,18 +77,100 @@
           statusCopyUnsupported: '이 브라우저는 이미지 복사를 지원하지 않습니다 — 다운로드를 이용하세요',
           statusCopyFailed: '복사가 차단되었습니다 — 다운로드를 이용하세요',
           statusCopied: '이미지를 클립보드에 복사했습니다', statusDownloaded: '다운로드했습니다',
+          previewLabel: "이미지 미리보기", emptyPreview: "로컬 이미지를 불러오면 여기서 효과를 보고 영역을 선택할 수 있습니다.",
+          tips: {"image": "로컬 이미지를 선택하거나 드롭하거나 붙여넣습니다. GIF는 첫 프레임을 읽습니다.", "effect": "모자이크, 블러, 단색 채우기를 선택합니다. 변경하면 원본에서 모든 선택 영역을 다시 그립니다.", "strength": "모자이크 블록은 4–64픽셀, 블러 반경은 2–40입니다. 변경하면 미리보기가 갱신됩니다.", "color": "단색 채우기는 선택한 픽셀을 이 불투명 색으로 바꿉니다.", "entire": "그린 영역을 유지하면서 이미지 전체에 효과를 적용합니다.", "format": "다운로드 형식입니다. 이미지 복사는 항상 PNG를 내보냅니다. JPEG는 투명 픽셀을 흰 배경에 합성합니다.", "download": "선택 점선과 원본 메타데이터가 없는 새로 인코딩한 이미지를 저장합니다.", "copy": "점선 없는 PNG를 복사합니다. 브라우저가 이미지 복사를 차단하면 다운로드를 사용하세요.", "undo": "마지막으로 그린 영역을 제거하고 나머지 영역을 다시 그립니다.", "clear": "이미지를 해제하고 대기 중인 피드백을 취소하며 효과 설정을 유지합니다.", "selection": "미리보기에서 사각형을 드래그합니다. 좌표는 원본 이미지에 대응하며 너비나 높이가 2픽셀 미만인 영역은 적용하지 않습니다."},
         },
       };
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('[data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.innerHTML = t[key];
-      });
-      document.querySelectorAll('[data-i18n-aria]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-aria');
-        if (t[key]) el.setAttribute('aria-label', t[key]);
-      });
+// strings:end
+const { lang = "en" } = Astro.props;
+const L = STRINGS[lang as keyof typeof STRINGS] || STRINGS.en;
+const clientStrings = Object.fromEntries(["areasCount", "blockSizeLabel", "blurRadiusLabel", "statusCopied", "statusCopyFailed", "statusCopyUnsupported", "statusDecodeFailed", "statusDownloaded", "statusExportFailed", "statusNotImage"].map(key => [key, L[key as keyof typeof L]]));
+---
+
+<div class="pxi-wrap" id="pxi-wrap">
+  <div class="pxi-panels">
+    <div class="pxi-rail zt-rail">
+    <div id="pxi-actions" class="pxi-actions" hidden>
+      <label class="pxi-format-label">
+        <span>{L.formatLabel}</span>
+        <select id="pxi-format" class="tool-input pxi-format-select">
+          <option value="image/png" selected>PNG</option>
+          <option value="image/jpeg">JPEG</option>
+          <option value="image/webp">WebP</option>
+        </select>
+      </label><Toggletip id="pxi-tip-format" lang={lang} about={L.formatLabel}>{L.tips.format}</Toggletip>
+      <div class="pxi-action"><button id="pxi-download" class="btn-primary" type="button">{L.download}</button><Toggletip id="pxi-tip-download" lang={lang} about={L.download}>{L.tips.download}</Toggletip></div>
+      <div class="pxi-action"><button id="pxi-copy" class="btn-secondary" type="button">{L.copyImage}</button><Toggletip id="pxi-tip-copy" lang={lang} about={L.copyImage}>{L.tips.copy}</Toggletip></div>
+      <div class="pxi-action"><button id="pxi-undo" class="btn-ghost" type="button">{L.undo}</button><Toggletip id="pxi-tip-undo" lang={lang} about={L.undo}>{L.tips.undo}</Toggletip></div>
+      <div class="pxi-action"><button id="pxi-clear" class="btn-ghost" type="button">{L.clear}</button><Toggletip id="pxi-tip-clear" lang={lang} about={L.clear}>{L.tips.clear}</Toggletip></div>
+    </div>
+    <div id="pxi-status" class="tool-status pxi-status" aria-live="polite"></div>
+    <div class="pxi-heading"><span>{L.fileAria}</span><Toggletip id="pxi-tip-image" lang={lang} about={L.fileAria}>{L.tips.image}</Toggletip></div>
+    <div id="pxi-drop" class="pxi-drop" role="button" tabindex="0">
+      <div class="pxi-drop-inner">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <p set:html={L.dropHint}></p>
+        <p class="pxi-hint">{L.pasteHint}</p>
+        <p class="pxi-hint">{L.formatsHint}</p>
+      </div>
+      <input type="file" id="pxi-file" accept="image/*" class="pxi-file-input" aria-label={L.fileAria} />
+    </div>
+    <div id="pxi-controls" class="pxi-controls" hidden>
+      <div class="pxi-heading"><span>{L.effectAria}</span><Toggletip id="pxi-tip-effect" lang={lang} about={L.effectAria}>{L.tips.effect}</Toggletip></div>
+      <div class="pxi-effect-row" role="radiogroup" aria-label={L.effectAria}>
+        <label class="pxi-radio-label">
+          <input type="radio" name="pxi-effect" value="pixelate" checked />
+          <span>{L.effectPixelate}</span>
+        </label>
+        <label class="pxi-radio-label">
+          <input type="radio" name="pxi-effect" value="blur" />
+          <span>{L.effectBlur}</span>
+        </label>
+        <label class="pxi-radio-label">
+          <input type="radio" name="pxi-effect" value="solid" />
+          <span>{L.effectSolid}</span>
+        </label>
+      </div>
+
+      <div class="pxi-strength-row" id="pxi-strength-row">
+        <label for="pxi-strength" class="pxi-strength-label">
+          <span id="pxi-strength-label-text">{L.blockSizeLabel}</span>
+          <strong id="pxi-strength-val">16</strong> px
+        </label>
+        <Toggletip id="pxi-tip-strength" lang={lang} about={L.blockSizeLabel}>{L.tips.strength}</Toggletip>
+        <input type="range" id="pxi-strength" min="4" max="64" value="16" step="1" />
+      </div>
+
+      <div class="pxi-color-row" id="pxi-color-row" hidden>
+        <label for="pxi-color" class="tool-label">{L.colorLabel}</label><Toggletip id="pxi-tip-color" lang={lang} about={L.colorLabel}>{L.tips.color}</Toggletip>
+        <input type="color" id="pxi-color" value="#000000" />
+      </div>
+
+      <label class="pxi-entire-label">
+        <input type="checkbox" id="pxi-entire" />
+        <span>{L.entireImageLabel}</span>
+      </label><Toggletip id="pxi-tip-entire" lang={lang} about={L.entireImageLabel}>{L.tips.entire}</Toggletip>
+
+      <p class="pxi-tip">{L.tip}</p>
+    </div>
+    </div>
+    <section class="pxi-preview" aria-label={L.previewLabel}>
+      <div class="pxi-heading"><span>{L.previewLabel}</span><Toggletip id="pxi-tip-selection" lang={lang} about={L.previewLabel}>{L.tips.selection}</Toggletip></div>
+      <p class="pxi-empty">{L.emptyPreview}</p>
+    <div id="pxi-canvas-wrap" class="pxi-canvas-wrap" hidden>
+      <canvas id="pxi-canvas" class="pxi-canvas"></canvas>
+      <div id="pxi-dim-status" class="pxi-dim-status"></div>
+    </div>
+    </section>
+  </div>
+</div>
+
+  <script is:inline define:vars={{ clientStrings }}>
+    (function () {
+
+      var t = clientStrings;
 
       /* ── engine:start ── */
       // Pure, canvas-independent helpers — extracted verbatim by
@@ -258,6 +266,7 @@
       var isPasted = false;
       var dragging = false, dragStart = null, dragCurrent = null, rafScheduled = false;
       var state = { blockSize: 16, blurRadius: 12, fillColor: '#000000' };
+      var imageRevision = 0, feedbackRevision = 0, draftFrame = 0;
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg;
@@ -359,7 +368,10 @@
       function scheduleDraftRender() {
         if (rafScheduled) return;
         rafScheduled = true;
-        requestAnimationFrame(function () {
+        var token = imageRevision;
+        draftFrame = requestAnimationFrame(function () {
+          if (token !== imageRevision) return;
+          draftFrame = 0;
           rafScheduled = false;
           if (!dragging) return;
           render(ctx, true);
@@ -439,11 +451,17 @@
       }
 
       function processImage(file, pasted) {
+        var token = ++imageRevision;
+        feedbackRevision++;
+        cancelDraft();
         if (!file || file.type.indexOf('image/') !== 0) {
           setStatus(t.statusNotImage, 'error');
           return;
         }
         loadBitmap(file).then(function (bmp) {
+          if (token !== imageRevision) { if (bmp && bmp.close) bmp.close(); return; }
+          imageRevision++;
+          feedbackRevision++;
           if (bitmap && bitmap.close) bitmap.close();
           bitmap = bmp;
           imgSource = bmp._img || bmp;
@@ -461,7 +479,7 @@
           updateDimStatus();
           setStatus('', 'info');
         }).catch(function () {
-          setStatus(t.statusDecodeFailed, 'error');
+          if (token === imageRevision) setStatus(t.statusDecodeFailed, 'error');
         });
       }
 
@@ -547,36 +565,43 @@
       downloadBtn.addEventListener('click', function () {
         if (!imgSource) return;
         var mime = formatSelect.value;
+        var token = imageRevision, request = ++feedbackRevision;
+        var names = { 'image/png': outputFileName('image/png'), 'image/jpeg': outputFileName('image/jpeg'), 'image/webp': outputFileName('image/webp') };
         exportBlob(mime).then(function (blob) {
-          if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
+          if (!blob) { if (token === imageRevision && request === feedbackRevision) setStatus(t.statusExportFailed, 'error'); return; }
           var url = URL.createObjectURL(blob);
           var a = document.createElement('a');
           a.href = url;
-          a.download = outputFileName(blob.type); // Safari encodes unsupported WebP as PNG
+          a.download = names[blob.type] || names['image/png']; // Safari encodes unsupported WebP as PNG
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-          setStatus(t.statusDownloaded, 'success');
+          if (token === imageRevision && request === feedbackRevision) setStatus(t.statusDownloaded, 'success');
           if (window.trackTool) window.trackTool('pixelate-image', 'download');
         });
       });
 
       copyBtn.addEventListener('click', function () {
         if (!imgSource) return;
-        if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
-          setStatus(t.statusCopyUnsupported, 'error');
-          return;
-        }
+        var token = imageRevision, request = ++feedbackRevision;
+        function current() { return token === imageRevision && request === feedbackRevision; }
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === 'undefined') {
+            setStatus(t.statusCopyUnsupported, 'error');
+            return;
+          }
+        } catch (e) { setStatus(t.statusCopyFailed, 'error'); return; }
         exportBlob('image/png').then(function (blob) {
-          if (!blob) { setStatus(t.statusExportFailed, 'error'); return Promise.reject(new Error('handled')); }
-          return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        }).then(function () {
-          setStatus(t.statusCopied, 'success');
-          if (window.trackTool) window.trackTool('pixelate-image', 'copy');
-        }).catch(function (err) {
-          if (err && err.message === 'handled') return;
-          setStatus(t.statusCopyFailed, 'error');
+          if (!current()) return;
+          if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
+          return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(function () {
+            if (!current()) return;
+            setStatus(t.statusCopied, 'success');
+            if (window.trackTool) window.trackTool('pixelate-image', 'copy');
+          });
+        }).catch(function () {
+          if (current()) setStatus(t.statusCopyFailed, 'error');
         });
       });
 
@@ -587,7 +612,19 @@
         fullRender();
       });
 
-      clearBtn.addEventListener('click', function () {
+      function cancelDraft() {
+        cancelAnimationFrame(draftFrame);
+        draftFrame = 0;
+        rafScheduled = false;
+        dragging = false;
+        dragStart = null;
+        dragCurrent = null;
+      }
+
+      function clearImage() {
+        imageRevision++;
+        feedbackRevision++;
+        cancelDraft();
         if (bitmap && bitmap.close) bitmap.close();
         bitmap = null; imgSource = null; W = 0; H = 0; areas = [];
         origName = null; isPasted = false;
@@ -598,8 +635,22 @@
         actionsEl.hidden = true;
         ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
         canvasEl.width = 0; canvasEl.height = 0;
+        dimStatusEl.textContent = '';
         setStatus('', 'info');
+      }
+      clearBtn.addEventListener('click', clearImage);
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l' || !wrapEl.contains(document.activeElement)) return;
+        e.preventDefault();
+        clearImage();
       });
+
+      function revealPreview() {
+        if (canvasWrapEl.hidden || !window.matchMedia || !window.matchMedia('(max-width: 860px)').matches) return;
+        canvasWrapEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+      new MutationObserver(revealPreview).observe(canvasWrapEl, { attributes: true, attributeFilter: ['hidden'] });
 
       /* Dashed outlines read --color-primary at draw time; redraw on theme change. */
       new MutationObserver(fullRender).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -758,5 +809,35 @@
       .pxi-actions .btn-secondary,
       .pxi-actions .btn-ghost { flex: 1 1 45%; }
     }
+    .pxi-wrap { min-width: 0; min-height: 0; }
+    .pxi-panels { display: grid; grid-template-columns: 300px minmax(0, 1fr); flex: 1 1 0; min-width: 0; min-height: 0; gap: 1rem; }
+    .pxi-rail { overflow: auto; padding: 0.15rem; }
+    .pxi-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; color: var(--color-text-secondary); font-weight: 650; }
+    #pxi-status { min-height: 2.8em; margin: 0; flex: none; }
+    .pxi-actions { gap: 0.4rem; }
+    .pxi-action { display: flex; align-items: center; gap: 0.25rem; flex: 1 1 45%; min-width: 0; }
+    .pxi-action button { flex: 1; min-width: 0; }
+    .pxi-controls { gap: 0.55rem; }
+    .pxi-strength-row { flex-wrap: wrap; gap: 0.35rem; }
+    .pxi-strength-row input[type="range"] { flex-basis: 100%; min-height: 24px; }
+    .pxi-preview { display: flex; flex-direction: column; gap: 0.65rem; min-width: 0; min-height: 0; overflow: hidden; }
+    .pxi-empty { display: grid; place-content: center; flex: 1 1 0; min-height: 180px; margin: 0; color: var(--color-text-muted); text-align: center; }
+    .pxi-preview:has(#pxi-canvas-wrap:not([hidden])) .pxi-empty { display: none; }
+    .pxi-canvas-wrap { flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; scroll-margin-top: calc(var(--header-height) + 1rem); }
+    .pxi-canvas { width: auto; height: auto; max-height: min(56svh, 620px); object-fit: contain; }
+    @media (max-width: 860px) {
+      .pxi-panels { grid-template-columns: minmax(0, 1fr); flex: none; }
+      .pxi-rail { overflow: visible; }
+      .pxi-preview:has(#pxi-canvas-wrap[hidden]) { display: none; }
+      .pxi-canvas-wrap { flex: none; height: 60svh; max-height: 60svh; }
+    }
+    @media (max-width: 640px) {
+      .pxi-format-select, .pxi-action button, .pxi-color-row input[type="color"] { min-height: 44px; }
+      .pxi-radio-label, .pxi-entire-label { min-height: 44px; }
+      .pxi-radio-label { min-width: 24px; }
+      .pxi-strength-row input[type="range"] { min-height: 24px; }
+      .pxi-drop { padding: 1rem 0.6rem; min-height: 44px; }
+      .pxi-canvas { max-height: 52svh; }
+      .pxi-rail { gap: 0.55rem; }
+    }
   </style>
-</div>
