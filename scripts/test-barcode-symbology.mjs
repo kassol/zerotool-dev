@@ -2,7 +2,7 @@
 //
 // Read:  src/components/tools/BarcodeGeneratorTool.astro (extracts the real
 //        encoder block, so this test cannot drift from the shipped source)
-// Write: stdout only (test results)
+// Write: stdout; optional ZT_B13_REPORT JSON.
 // Exit:  0 if all PASS, 1 if any FAIL
 //
 // SPEC ANCHORS (accessed 2026-08-01):
@@ -23,12 +23,15 @@
 //
 // Run: node scripts/test-barcode-symbology.mjs
 
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join, relative } from 'node:path';
+import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
+import vm from 'node:vm';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const componentPath = join(root, 'src/components/tools/BarcodeGeneratorTool.astro');
+const root = process.env.ZT_B13_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
+const componentPath = process.env.ZT_B13_SOURCE || join(root, 'src/components/tools/BarcodeGeneratorTool.astro');
 const source = readFileSync(componentPath, 'utf8');
 
 // ---------- extract the shipped encoder block ----------
@@ -363,7 +366,126 @@ Object.keys(M.SPECS).forEach((kind) => {
   }
 });
 
-console.log(failures === 0
-  ? 'PASS: ' + passes + ' checks, 0 failures'
-  : 'FAIL: ' + failures + ' of ' + (passes + failures) + ' checks failed');
-process.exit(failures === 0 ? 0 : 1);
+
+// ---------- Whole-page interaction and asynchronous lifetime regression ----------
+// Read: the complete component IIFE, actual markup, shared ToolLayout shortcut and parse5.
+// Write: stdout; optional ZT_B13_REPORT JSON chosen by the caller. No network or system clipboard.
+// Canvas rasterization / image decoding are controlled async boundaries; canvas blobs
+// contain JSON operation receipts, NOT PNG pixels. The real SVG encoder and render run.
+const ROOT=root;
+const {loadPage}=await import(pathToFileURL(ROOT+'/scripts/astro-page-harness.mjs')); 
+const req=createRequire(ROOT+'/package.json'),{parseFragment}=req('parse5');
+const read=p=>readFileSync(ROOT+'/'+p,'utf8'),sha=s=>createHash('sha256').update(s).digest('hex');
+const specs=[{slug:'barcode-generator',file:'src/components/tools/BarcodeGeneratorTool.astro'}];
+for(const s of specs){if(process.env.ZT_B13_SOURCE)s.file=relative(ROOT,process.env.ZT_B13_SOURCE);s.source=read(s.file);}
+const layout=read('src/layouts/ToolLayout.astro'),start=layout.indexOf("      document.addEventListener('keydown'",layout.indexOf('// ── Keyboard shortcuts'));
+const shortcut=layout.slice(start,layout.indexOf('      // ── Copy button visual feedback',start));
+if(!shortcut.includes('window.ztPersist.clear(_slug)'))throw Error('shortcut drift');
+const rows=[],unhandled=[];const onUnhandled=e=>unhandled.push(String(e?.message||e));process.on('unhandledRejection',onUnhandled);
+const flush=async()=>{await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));};
+function checkPage(s,name,actual,expected){const same=JSON.stringify(actual)===JSON.stringify(expected);rows.push({slug:s.slug,name,result:same?'PASS':'FAIL',actual,expected});}
+function page(s,lang='en',order='before'){
+ const docHandlers={},copies=[],exec=[],saved=[],cleared=[],tracks=[],images=[],blobs=[],downloads=[],revoked=[],urls=new Map(),winHandlers={};let document,now=0,seq=0,urlSeq=0,selection=null;const timers=new Map();
+ const walk=n=>n.children.flatMap(c=>[c,...walk(c)]);
+ function simple(e,selector){let rest=selector;const tag=rest.match(/^[a-z][a-z0-9-]*/i);if(tag){if(e.tagName!==tag[0].toUpperCase())return false;rest=rest.slice(tag[0].length);}for(const m of rest.matchAll(/([.#])([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]/g)){if(m[1]==='#'&&e.id!==m[2]||m[1]==='.'&&!e.classList.contains(m[2]))return false;if(m[3]&&(e.getAttribute(m[3])===null||m[4]!==undefined&&e.getAttribute(m[3])!==m[4]))return false;}return true;}
+ function matches(e,selector){if(selector.includes(','))return selector.split(/,\s*/).some(x=>matches(e,x));const parts=selector.split(/\s+(?![^\[]*\])/);if(!simple(e,parts.pop()))return false;for(const part of parts.reverse()){let p=e.parentNode;while(p&&!simple(p,part))p=p.parentNode;if(!p)return false;e=p;}return true;}
+ function element(tag,attrs={}){
+  const listeners={};const el={tagName:tag.toUpperCase(),attributes:{...attrs},parentNode:null,childNodes:[],dataset:Object.fromEntries(Object.entries(attrs).filter(([k])=>k.startsWith('data-')).map(([k,v])=>[k.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase()),v])),style:{},hidden:'hidden'in attrs,disabled:'disabled'in attrs,checked:'checked'in attrs,_value:attrs.value,
+   get children(){return this.childNodes.filter(n=>n.tagName);},get id(){return this.attributes.id||'';},set id(v){this.attributes.id=v;},get type(){return this.attributes.type||(this.tagName==='INPUT'?'text':'');},set type(v){this.attributes.type=v;},get className(){return this.attributes.class||'';},set className(v){this.attributes.class=String(v);},
+   get options(){return walk(this).filter(e=>e.tagName==='OPTION');},get value(){if(this._value!==undefined)return this._value;if(this.tagName==='SELECT'){const x=this.options.find(e=>e.attributes.selected!==undefined)||this.options[0];return x?x.value:'';}return '';},set value(v){this._value=String(v);},
+   get textContent(){return this.childNodes.map(n=>n.tagName?n.textContent:n.value).join('');},set textContent(v){this.childNodes=[{value:String(v),parentNode:this}];},
+   get innerHTML(){return this._html||'';},set innerHTML(v){this._html=String(v);this.childNodes=parseFragment(this._html).childNodes.map(n=>wrap(n,this));},
+   getAttribute(k){return Object.hasOwn(this.attributes,k)?this.attributes[k]:null;},setAttribute(k,v){this.attributes[k]=String(v);if(k==='disabled')this.disabled=true;if(k==='hidden')this.hidden=true;},removeAttribute(k){delete this.attributes[k];if(k==='disabled')this.disabled=false;if(k==='hidden')this.hidden=false;},
+   appendChild(n){n.parentNode=this;this.childNodes.push(n);return n;},removeChild(n){this.childNodes=this.childNodes.filter(x=>x!==n);n.parentNode=null;},remove(){this.parentNode?.removeChild(this);},contains(n){for(;n;n=n.parentNode)if(n===this)return true;return false;},
+   querySelectorAll(q){return walk(this).filter(e=>matches(e,q));},querySelector(q){return this.querySelectorAll(q)[0]||null;},
+   addEventListener(k,f){(listeners[k]||=[]).push(f);},focus(){document.activeElement=this;},select(){selection=this;},dispatch(k,init={}){const e={type:k,target:this,currentTarget:this,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(const f of listeners[k]||[])f.call(this,e);if(!e.cancelBubble)for(const f of docHandlers[k]||[])f.call(document,e);return e;},click(){if(this.tagName==='A'){downloads.push({name:this.download,url:this.href,blob:urls.get(this.href)});return;}if(!this.disabled)this.dispatch('click');},
+  };el.classList={contains:c=>el.className.split(/\s+/).includes(c),add(...c){el.className=[...new Set([...el.className.split(/\s+/).filter(Boolean),...c])].join(' ');},remove(...c){el.className=el.className.split(/\s+/).filter(x=>!c.includes(x)).join(' ');},toggle(c,on){const add=on===undefined?!this.contains(c):on;this[add?'add':'remove'](c);return add;}};if(tag.toLowerCase()==='canvas'){el.width=Number(attrs.width||300);el.height=Number(attrs.height||150);el.ops=[];const ctx={};for(const name of ['save','restore','beginPath','arc','moveTo','lineTo','quadraticCurveTo','closePath','rect','clip'])ctx[name]=(...args)=>el.ops.push({name,args});ctx.clearRect=()=>{el.ops=[];};ctx.fillText=(text,...args)=>el.ops.push({name:'fillText',text,args,font:ctx.font,color:ctx.fillStyle});ctx.fillRect=(...args)=>el.ops.push({name:'fillRect',args,color:ctx.fillStyle});ctx.drawImage=(image,...args)=>el.ops.push({name:'drawImage',image:image.src,args});el.getContext=()=>ctx;el.toBlob=(cb,type)=>{const snapshot={width:el.width,height:el.height,ops:structuredClone(el.ops)};const job={snapshot,type,done:false,deliver(blob){if(this.done)throw Error('duplicate blob delivery');this.done=true;cb(blob===undefined?new Blob([JSON.stringify(snapshot)],{type:type||'image/png'}):blob);}};blobs.push(job);};}return el;
+ }
+ function wrap(n,parent){if(!n.tagName)return{value:n.value||'',parentNode:parent};const e=element(n.tagName,Object.fromEntries((n.attrs||[]).map(a=>[a.name,a.value])));e.parentNode=parent;e.childNodes=(n.childNodes||[]).map(n=>wrap(n,e));if(e.tagName==='TEXTAREA')e.value=e.textContent;return e;}
+ const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);
+ let markup=s.source.slice(s.source.indexOf('---',3)+3,s.source.indexOf('<script is:inline>')).replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
+ {const part=s.source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1];const STRINGS=vm.runInNewContext(part+';STRINGS');const L=STRINGS[lang];markup=markup.replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+L[key].replaceAll('&','&amp;').replaceAll('"','&quot;')+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>L[key]);}
+ widget.childNodes=parseFragment(markup).childNodes.map(n=>wrap(n,widget));
+ document={body,documentElement:{lang},activeElement:body,createElement:tag=>element(tag),getElementById(id){const e=walk(body).find(e=>e.id===id);if(!e)throw Error('Missing real DOM '+id);return e;},querySelectorAll:q=>body.querySelectorAll(q),querySelector:q=>body.querySelector(q),addEventListener(k,f){(docHandlers[k]||=[]).push(f);},execCommand(command){exec.push({command,text:selection?.value});return false;}};
+ class Img{constructor(){images.push(this);this.width=this.naturalWidth=32;this.height=this.naturalHeight=32;}deliver(){this.onload?.();}fail(){this.onerror?.(new Error('controlled image failure'));}}
+ const globals={document,Blob,structuredClone,Image:Img,isSecureContext:true,URL:{createObjectURL(blob){const url='blob:probe/'+(++urlSeq);urls.set(url,blob);return url;},revokeObjectURL:url=>revoked.push(url)},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return null;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),addEventListener(k,f){(winHandlers[k]||=[]).push(f);},fetch(){throw Error('network forbidden');}};
+ let nativeClipboardReads=0;Object.setPrototypeOf(globals.navigator,{get clipboard(){nativeClipboardReads++;throw Error('native clipboard prototype exposed');}});
+ const context={...globals,_slug:s.slug};context.window=context;if(order==='before')vm.runInNewContext(shortcut,context);const loaded=loadPage(s.file,{lang,globals});if(order==='after')loaded.run('var _slug='+JSON.stringify(s.slug)+';\n'+shortcut);
+ const $=id=>document.getElementById(id);return{$,document,globals,get nativeClipboardReads(){return nativeClipboardReads;},copies,exec,saved,cleared,tracks,images,blobs,downloads,urls,revoked,timers,input(id,value,ev='input'){$(id).focus();$(id).value=value;$(id).dispatch(ev);},click(selector){const e=selector.startsWith('#')?$(selector.slice(1)):document.querySelector(selector);if(!e)throw Error('No real selector '+selector);e.click();},key(id,meta=false){$(id).focus();$(id).dispatch('keydown',{key:'l',ctrlKey:!meta,metaKey:meta});},advance(ms){const end=now+ms;for(let g=0;;g++){if(g>100)throw Error('timer runaway');const next=[...timers].filter(([,t])=>t.due<=end).sort((a,b)=>a[1].due-b[1].due)[0];if(!next)break;now=next[1].due;timers.delete(next[0]);next[1].fn();}now=end;}};
+}
+const barcode=specs[0];
+const bCopy={en:'Copy SVG',zh:'复制 SVG',ja:'SVG をコピー',ko:'SVG 복사'},bCopied={en:'Copied!',zh:'已复制！',ja:'コピーしました！',ko:'복사됨!'};
+const bFailure={en:'Copy failed. Download the SVG instead.',zh:'复制失败，请改用下载 SVG。',ja:'コピーできませんでした。SVG をダウンロードしてください。',ko:'복사하지 못했습니다. SVG를 다운로드하세요.'};
+const svg=p=>p.$('bcode-canvas').innerHTML;
+for(const lang of ['en','zh','ja','ko']){
+ const p=page(barcode,lang);checkPage(barcode,lang+' initial real EAN output checked digits',p.$('bcode-canvas').querySelector('svg').getAttribute('aria-label'),'5901234123457');
+ p.input('bcode-symbology','code128','change');p.input('bcode-data','PROBE-A');const out=svg(p);checkPage(barcode,lang+' real code128 current data',p.$('bcode-canvas').querySelector('svg').getAttribute('aria-label'),'PROBE-A');
+ p.click('#bcode-copy');checkPage(barcode,lang+' copy full current SVG bytes',p.copies[0].text,out);p.copies[0].resolve();await flush();checkPage(barcode,lang+' normal copy feedback',p.$('bcode-copy').textContent,bCopied[lang]);p.advance(1400);checkPage(barcode,lang+' normal copy timer',p.$('bcode-copy').textContent,bCopy[lang]);
+ p.click('#bcode-copy');p.copies[1].reject(Error('current refusal'));await flush();checkPage(barcode,lang+' current copy rejection visible',p.$('bcode-status').textContent,bFailure[lang]);
+ p.click('#bcode-copy');p.copies[2].resolve();await flush();checkPage(barcode,lang+' same output direct retry copies full bytes',p.copies[2].text,out);checkPage(barcode,lang+' same output retry clears own failure',p.$('bcode-status').textContent,'');
+}
+for(const order of ['before','after'])for(const meta of [false,true]){
+ const p=page(barcode,'en',order);p.key('bcode-data',meta);checkPage(barcode,order+'/'+meta+' shared clears input',p.$('bcode-data').value,'');checkPage(barcode,order+'/'+meta+' actual shared persist clear',p.cleared,['barcode-generator']);checkPage(barcode,order+'/'+meta+' CtrlL preserves appearance',[p.$('bcode-symbology').value,p.$('bcode-module').value,p.$('bcode-height').value,p.$('bcode-showtext').checked],['ean13','2','80',true]);checkPage(barcode,order+'/'+meta+' CtrlL clears derived SVG',svg(p),'');checkPage(barcode,order+'/'+meta+' CtrlL disables export/copy',[p.$('bcode-png').disabled,p.$('bcode-svg').disabled,p.$('bcode-copy').disabled],[true,true,true]);
+}
+{
+ const p=page(barcode);p.input('bcode-data','');checkPage(barcode,'real empty input clears SVG immediately',svg(p),'');checkPage(barcode,'real empty input disables buttons',p.$('bcode-copy').disabled,true);p.click('#bcode-reset');checkPage(barcode,'Reset deliberately restores sample',p.$('bcode-data').value,'590123412345');checkPage(barcode,'Reset valid preview',p.$('bcode-copy').disabled,false);
+ p.input('bcode-module','4');checkPage(barcode,'option input recomputes actual SVG width',p.$('bcode-canvas').querySelector('svg').getAttribute('width'),'452');
+ p.click('#bcode-svg');checkPage(barcode,'SVG download captures full bytes immediately',await p.downloads[0].blob.text(),svg(p));checkPage(barcode,'SVG download filename',p.downloads[0].name,'ean13-590123412345.svg');
+ Object.defineProperty(p.globals.navigator,'clipboard',{value:undefined,configurable:true});p.click('#bcode-copy');await flush();checkPage(barcode,'missing clipboard has visible failure',p.$('bcode-status').textContent,bFailure.en);
+}
+for(const boundary of ['input','option','reset','CtrlL'])for(const outcome of ['resolve','reject']){
+ const p=page(barcode);p.click('#bcode-copy');if(boundary==='input')p.input('bcode-data','400638133393');if(boundary==='option')p.input('bcode-module','3');if(boundary==='reset')p.click('#bcode-reset');if(boundary==='CtrlL')p.key('bcode-data');const before=[p.$('bcode-copy').textContent,p.$('bcode-status').textContent];p.copies[0][outcome](Error('late refusal'));await flush();checkPage(barcode,boundary+'/'+outcome+' old copy preserves current feedback',[p.$('bcode-copy').textContent,p.$('bcode-status').textContent],before);
+}
+{
+ const p=page(barcode);p.click('#bcode-copy');p.copies[0].resolve();await flush();p.advance(100);p.click('#bcode-copy');p.copies[1].resolve();await flush();p.advance(1300);checkPage(barcode,'old 1400ms timer preserves second Copied',p.$('bcode-copy').textContent,bCopied.en);p.advance(100);checkPage(barcode,'latest barcode timer restores actual label',p.$('bcode-copy').textContent,bCopy.en);
+}
+for(const boundary of ['input','reset','CtrlL']){
+ const p=page(barcode);p.input('bcode-symbology','code128','change');p.input('bcode-data','PROBE-A');const original=svg(p);p.click('#bcode-png');const image=p.images[0],encoded=await p.urls.get(image.src).text();checkPage(barcode,boundary+' PNG input SVG snapshot is original',encoded,original);image.deliver();if(boundary==='input')p.input('bcode-data','PROBE-B');if(boundary==='reset')p.click('#bcode-reset');if(boundary==='CtrlL')p.key('bcode-data');p.blobs[0].deliver();checkPage(barcode,boundary+' PNG callback filename belongs to original content',p.downloads[0].name,'code128-PROBE-A.png');checkPage(barcode,boundary+' PNG canvas draw uses original image source',p.blobs[0].snapshot.ops.find(o=>o.name==='drawImage').image,image.src);
+}
+
+for(const outcome of ['resolve','reject']){const p=page(barcode);p.click('#bcode-copy');p.click('#bcode-copy');p.copies[1].resolve();await flush();const before=[p.$('bcode-copy').textContent,p.$('bcode-status').textContent];p.copies[0][outcome](Error('older request'));await flush();checkPage(barcode,'same-result older '+outcome+' cannot change newer success',[p.$('bcode-copy').textContent,p.$('bcode-status').textContent],before);}
+{const p=page(barcode);p.globals.navigator.clipboard.writeText=()=>{throw Error('sync copy refusal');};let thrown='';try{p.click('#bcode-copy');}catch(e){thrown=e.message;}await flush();checkPage(barcode,'sync clipboard failure handled',thrown,'');checkPage(barcode,'sync failure visible',p.$('bcode-status').textContent,bFailure.en);}
+{const p=page(barcode);Object.defineProperty(p.globals.navigator,'clipboard',{value:undefined,configurable:true});p.click('#bcode-copy');await flush();checkPage(barcode,'own undefined never reads native clipboard getter',p.nativeClipboardReads,0);}
+{const p=page(barcode);p.click('#bcode-copy');p.copies[0].resolve();await flush();const timer=[...p.timers.values()].find(t=>t.delay===1400);p.input('bcode-data','400638133393');p.click('#bcode-copy');p.copies[1].resolve();await flush();timer.fn();checkPage(barcode,'forced cancelled timer cannot remove current feedback',[p.$('bcode-copy').textContent,p.$('bcode-copy').classList.contains('copied')],[bCopied.en,true]);}
+
+// ---------- v2 page layout ----------
+const ssr=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+for(const lang of ['en','zh','ja','ko']){
+ const L=ssr[lang],p=page(barcode,lang);
+ checkPage(barcode,lang+' v2 initial preview is nonempty',p.document.querySelector('.bcode-wrap').dataset.empty,'false');
+ p.input('bcode-data','');checkPage(barcode,lang+' v2 empty result marker',p.document.querySelector('.bcode-wrap').dataset.empty,'true');
+ p.click('#bcode-reset');checkPage(barcode,lang+' v2 reset restores preview marker',p.document.querySelector('.bcode-wrap').dataset.empty,'false');
+ checkPage(barcode,lang+' v2 eight SSR tip keys',Object.keys(L.tips).sort(),['check','data','export','height','module','reset','symbology','text']);
+ checkPage(barcode,lang+' v2 localized empty sentence',typeof L.empty==='string'&&L.empty.length>0,true);
+ const prefix=process.env.ZT_B13_MDX_PREFIX,mdx=readFileSync(prefix?prefix+'-'+lang+'.mdx':join(root,'src/content/tools/barcode-generator',lang+'.mdx'),'utf8');
+ const y=req('js-yaml').load(mdx.split('---')[1]);checkPage(barcode,lang+' v2 valid steps before FAQ',Array.isArray(y.steps)&&y.steps.length<=8&&y.steps.every(x=>x.length<=280)&&y.steps.join('').length<=1200&&mdx.indexOf('steps:')<mdx.indexOf('faqItems:'),true);
+ checkPage(barcode,lang+' v2 Usage removed',!/<h2>(?:How to generate a barcode|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);
+}
+checkPage(barcode,'v2 shared rail and bounded columns',source.includes('bcode-rail zt-rail')&&source.includes('grid-template-columns: 300px minmax(0, 1fr)')&&source.includes('overflow: auto'),true);
+checkPage(barcode,'v2 state before main input',source.indexOf('id="bcode-status"')<source.indexOf('id="bcode-data"'),true);
+checkPage(barcode,'v2 eight static tip instances',[...source.matchAll(/<Toggletip id="bcode-tip-/g)].length,8);
+checkPage(barcode,'v2 tips remain outside client',!source.slice(source.indexOf('<script is:inline>'),source.indexOf('</script>',source.indexOf('<script is:inline>'))).includes('tips'),true);
+checkPage(barcode,'v2 keeps four business buttons', ['bcode-copy','bcode-png','bcode-svg','bcode-reset'].every(id=>source.includes('id="'+id+'"')),true);
+checkPage(barcode,'v2 Appearance native disclosure is closed',/<details class="bcode-appearance">/.test(source),true);
+checkPage(barcode,'v2 phone empty preview hides and targets 44/24',source.includes('@media (max-width: 860px)')&&source.includes('@media (max-width: 640px)')&&source.includes('min-height: 44px')&&source.includes('min-height: 24px')&&source.includes('.bcode-wrap[data-empty="true"] .bcode-preview-card { display: none; }'),true);
+const phoneRules=source.match(/@media \(max-width: 640px\) \{([\s\S]*?)\n  \}/)?.[1]||'';
+const phoneStatus=phoneRules.match(/#bcode-status \{([^}]+)\}/)?.[1]||'';
+checkPage(barcode,'v2 reserved status stays 2.8em with complete phone wording internally scrollable',source.includes('min-height: 2.8em')&&/(?:^|;)\s*height:\s*2\.8em/.test(phoneStatus)&&/overflow:\s*auto/.test(phoneStatus),true);
+const phoneCanvas=phoneRules.match(/\.bcode-canvas \{([^}]+)\}/)?.[1]||'',phoneSvg=phoneRules.match(/\.bcode-canvas svg \{([^}]+)\}/)?.[1]||'';
+checkPage(barcode,'phone short and long SVG share one 120px preview and fit completely',/(?:^|;)\s*height:\s*120px/.test(phoneCanvas)&&/min-height:\s*120px/.test(phoneCanvas)&&/max-height:\s*100%/.test(phoneSvg)&&/flex-shrink:\s*0/.test(phoneSvg),true);
+for(const lang of ['en','zh','ja','ko']){
+ const p=page(barcode,lang),long='QA'.repeat(500);p.input('bcode-symbology','code128','change');p.input('bcode-data',long);
+ checkPage(barcode,lang+' phone long notice remains complete',p.$('bcode-status').textContent,ssr[lang].tooLong.replace('{n}','1000').replace('{max}','48'));
+ const full=svg(p);p.click('#bcode-copy');checkPage(barcode,lang+' phone long preview retains complete SVG and copies every byte',p.$('bcode-canvas').querySelector('svg').getAttribute('aria-label')===long&&p.copies[0].text===full,true);p.copies[0].resolve();await flush();
+}
+if(!/['"]barcode-generator['"]\s*:\s*['"]generate['"]/.test(read('src/data/tool-layouts.ts')))console.log('PENDING: root generate registration, compile and native layout acceptance');
+
+await flush();
+checkPage(specs[0],'all page async failures handled',unhandled,[]);
+process.removeListener('unhandledRejection',onUnhandled);
+const pageCounts={PASS:rows.filter(r=>r.result==='PASS').length,FAIL:rows.filter(r=>r.result==='FAIL').length};
+const counts={PASS:passes+pageCounts.PASS,FAIL:failures+pageCounts.FAIL};
+const report={node:process.version,tool:specs[0].slug,sourceSHA256:sha(specs[0].source),systemClipboard:false,rasterization:'canvas operation receipts; no browser pixels claimed',counts,legacyCounts:{PASS:passes,FAIL:failures},pageCounts,rows};
+if(process.env.ZT_B13_REPORT)writeFileSync(process.env.ZT_B13_REPORT,JSON.stringify(report,null,2)+'\n');
+for(const r of rows)if(r.result==='FAIL')console.log('FAIL '+r.name+' actual='+JSON.stringify(r.actual)+' expected='+JSON.stringify(r.expected));
+console.log(JSON.stringify({slug:specs[0].slug,counts,legacyCounts:report.legacyCounts,pageCounts,sourceSHA256:report.sourceSHA256}));process.exitCode=counts.FAIL?1:0;
