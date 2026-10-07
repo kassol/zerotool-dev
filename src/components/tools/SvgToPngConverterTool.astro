@@ -34,8 +34,36 @@ const STRINGS = {
       empty: 'The SVG is empty.',
       notSvg: 'No <svg> element found.',
       rootNotSvg: 'The root element is <{name}>, not <svg>. Paste only the <svg>…</svg> part.',
-      xml: 'The SVG is not valid XML (line {line}): {detail}',
-      xmlEntity: 'The SVG is not valid XML (line {line}): &{entity}; is an HTML entity, which XML does not define. Write it as a number, for example &#160; instead of &nbsp;.',
+      xml: 'The SVG is not valid XML (line {line}, column {column}): {reason}',
+      xmlNoPos: 'The SVG is not valid XML: {reason}',
+      xmlEntityReason: '&{entity}; is an HTML entity, which XML does not define. Write it as a number, for example &#160; instead of &nbsp;.',
+      xmlReason: {
+        entityAny: 'an entity is used that XML does not define. HTML entities such as &nbsp; must be written as numbers (&#160;).',
+        ltInAttr: 'an attribute value contains a raw "<". Usually the quote before it is not closed.',
+        attrQuote: 'an attribute value is not in quotes. Write it as name="value".',
+        tagMismatch: '<{open}> (line {openLine}) is closed by </{close}>. Each element needs its own end tag.',
+        tagExpected: 'the end tag does not match; </{open}> is expected here.',
+        unclosedTag: '<{tag}> (line {tagLine}) is never closed; the text ends first.',
+        unexpectedEnd: 'the text ends before all elements are closed.',
+        dupAttr: 'the attribute {name} appears twice on one element.',
+        dupAttrAny: 'an attribute appears twice on one element.',
+        bareAmp: 'a "&" is not escaped. Write it as &amp;.',
+        prefix: 'the prefix {prefix}: is used but not declared. Add xmlns:{prefix}="…" to the <svg> element.',
+        prefixAny: 'a namespace prefix is used but not declared.',
+        extra: 'there is more content after the closing </svg>. An SVG has one root element.',
+        noValue: 'the attribute {name} has no value. XML needs {name}="…".',
+        badName: 'a "<" is not followed by a valid name. In text, write "<" as &lt;.',
+        attrSyntax: 'the attributes are not written correctly: a space is missing between two attributes, or a quote is missing.',
+        startTagEnd: 'the start tag <{tag}> is not closed with ">".',
+        comment: 'a comment is not closed with "-->".',
+        cdata: 'a CDATA section is not closed with "]]>".',
+        badChar: 'the text contains {char}, a character that XML does not allow.',
+        charRef: 'a numeric character reference is not valid, for example &#160 without the closing ";".',
+        startTag: 'the text does not start with a tag. Remove what comes before <svg>.',
+        xmlDecl: 'the <?xml …?> declaration must come first, with nothing before it (not even a space or a line break).',
+        encoding: 'the file is not valid UTF-8 text.',
+        other: 'the XML syntax is broken at this point.'
+      },
       render: 'The browser could not draw this SVG.',
       tainted: 'The browser blocked reading the image ({detail}).',
       taintedForeign: 'The SVG contains <foreignObject> (HTML inside SVG). Chrome and Edge block exporting such an image from a canvas. Replace the HTML with SVG <text> or shapes.',
@@ -87,8 +115,36 @@ const STRINGS = {
       empty: 'SVG 内容为空。',
       notSvg: '没有找到 <svg> 元素。',
       rootNotSvg: '根元素是 <{name}>，不是 <svg>。请只粘贴 <svg>…</svg> 部分。',
-      xml: 'SVG 不是合法的 XML（第 {line} 行）：{detail}',
-      xmlEntity: 'SVG 不是合法的 XML（第 {line} 行）：&{entity}; 是 HTML 实体，XML 没有定义。请改写成数字形式，例如用 &#160; 代替 &nbsp;。',
+      xml: 'SVG 不是合法的 XML（第 {line} 行第 {column} 列）：{reason}',
+      xmlNoPos: 'SVG 不是合法的 XML：{reason}',
+      xmlEntityReason: '&{entity}; 是 HTML 实体，XML 没有定义。请改写成数字形式，例如用 &#160; 代替 &nbsp;。',
+      xmlReason: {
+        entityAny: '用到了 XML 没有定义的实体。&nbsp; 这类 HTML 实体要写成数字形式（&#160;）。',
+        ltInAttr: '属性值里出现了未转义的「<」，通常是它前面的引号没有闭合。',
+        attrQuote: '属性值没有加引号，请写成 名称="值"。',
+        tagMismatch: '<{open}>（第 {openLine} 行）被 </{close}> 关闭了，每个元素要用自己的结束标签关闭。',
+        tagExpected: '结束标签不匹配，这里应为 </{open}>。',
+        unclosedTag: '<{tag}>（第 {tagLine} 行）没有关闭，文本就结束了。',
+        unexpectedEnd: '还有元素没有关闭，文本就结束了。',
+        dupAttr: '同一个元素上写了两次属性 {name}。',
+        dupAttrAny: '同一个元素上有重复的属性。',
+        bareAmp: '「&」没有转义，请写成 &amp;。',
+        prefix: '用了前缀 {prefix}: 但没有声明，请在 <svg> 上加 xmlns:{prefix}="…"。',
+        prefixAny: '用了没有声明的命名空间前缀。',
+        extra: '</svg> 结束之后还有内容，一个 SVG 只能有一个根元素。',
+        noValue: '属性 {name} 没有值，XML 中要写成 {name}="…"。',
+        badName: '「<」后面不是合法的名称；文本里的「<」要写成 &lt;。',
+        attrSyntax: '属性写法有误：两个属性之间缺少空格，或者少了引号。',
+        startTagEnd: '开始标签 <{tag}> 没有用「>」结束。',
+        comment: '注释没有用「-->」结束。',
+        cdata: 'CDATA 段没有用「]]>」结束。',
+        badChar: '文本里有 XML 不允许的字符 {char}。',
+        charRef: '数字字符引用写法有误，例如 &#160 少了结尾的「;」。',
+        startTag: '文本开头不是标签，请删掉 <svg> 前面的内容。',
+        xmlDecl: '<?xml …?> 声明必须放在最前面，前面不能有任何内容（包括空格和换行）。',
+        encoding: '文件不是有效的 UTF-8 文本。',
+        other: '这里的 XML 语法有误。'
+      },
       render: '浏览器无法绘制这个 SVG。',
       tainted: '浏览器阻止读取图像（{detail}）。',
       taintedForeign: 'SVG 中含有 <foreignObject>（SVG 里嵌入的 HTML）。Chrome 和 Edge 不允许从 canvas 导出这类图像。请把其中的 HTML 改成 SVG 的 <text> 或图形。',
@@ -140,8 +196,36 @@ const STRINGS = {
       empty: 'SVG が空です。',
       notSvg: '<svg> 要素が見つかりません。',
       rootNotSvg: 'ルート要素が <svg> ではなく <{name}> です。<svg>…</svg> の部分だけを貼り付けてください。',
-      xml: 'SVG が XML として正しくありません（{line} 行目）：{detail}',
-      xmlEntity: 'SVG が XML として正しくありません（{line} 行目）：&{entity}; は HTML の文字参照で、XML では定義されていません。&nbsp; なら &#160; のように数値で書いてください。',
+      xml: 'SVG が XML として正しくありません（{line} 行目 {column} 列）：{reason}',
+      xmlNoPos: 'SVG が XML として正しくありません：{reason}',
+      xmlEntityReason: '&{entity}; は HTML の文字参照で、XML では定義されていません。&nbsp; なら &#160; のように数値で書いてください。',
+      xmlReason: {
+        entityAny: 'XML で定義されていない文字参照が使われています。&nbsp; などの HTML の文字参照は数値（&#160;）で書いてください。',
+        ltInAttr: '属性値にエスケープされていない「<」があります。多くはその前の引用符が閉じていません。',
+        attrQuote: '属性値が引用符で囲まれていません。名前="値" の形で書いてください。',
+        tagMismatch: '<{open}>（{openLine} 行目）が </{close}> で閉じられています。要素はそれぞれ自分の終了タグで閉じてください。',
+        tagExpected: '終了タグが対応していません。ここには </{open}> が必要です。',
+        unclosedTag: '<{tag}>（{tagLine} 行目）が閉じられないまま、テキストが終わっています。',
+        unexpectedEnd: 'すべての要素が閉じられる前に、テキストが終わっています。',
+        dupAttr: '1 つの要素に属性 {name} が 2 回書かれています。',
+        dupAttrAny: '1 つの要素に同じ属性が 2 回書かれています。',
+        bareAmp: '「&」がエスケープされていません。&amp; と書いてください。',
+        prefix: '接頭辞 {prefix}: が宣言されていません。<svg> 要素に xmlns:{prefix}="…" を追加してください。',
+        prefixAny: '宣言されていない名前空間の接頭辞が使われています。',
+        extra: '</svg> の後にも内容があります。SVG のルート要素は 1 つだけです。',
+        noValue: '属性 {name} に値がありません。XML では {name}="…" と書きます。',
+        badName: '「<」の後が正しい名前になっていません。テキスト中の「<」は &lt; と書いてください。',
+        attrSyntax: '属性の書き方が正しくありません。属性と属性の間の空白、または引用符が抜けています。',
+        startTagEnd: '開始タグ <{tag}> が「>」で閉じられていません。',
+        comment: 'コメントが「-->」で閉じられていません。',
+        cdata: 'CDATA セクションが「]]>」で閉じられていません。',
+        badChar: 'XML で使えない文字 {char} が含まれています。',
+        charRef: '数値文字参照の書き方が正しくありません（例：&#160 の末尾の「;」がない）。',
+        startTag: 'テキストがタグで始まっていません。<svg> より前の部分を削除してください。',
+        xmlDecl: '<?xml …?> 宣言は先頭に置き、前には何も（空白や改行も）入れないでください。',
+        encoding: 'ファイルが正しい UTF-8 テキストではありません。',
+        other: 'この位置で XML の構文が崩れています。'
+      },
       render: 'ブラウザがこの SVG を描画できませんでした。',
       tainted: 'ブラウザが画像の読み取りをブロックしました（{detail}）。',
       taintedForeign: 'SVG に <foreignObject>（SVG 内の HTML）が含まれています。Chrome と Edge はこの種の画像を canvas から書き出すことを禁止しています。HTML の部分を SVG の <text> や図形に置き換えてください。',
@@ -193,8 +277,36 @@ const STRINGS = {
       empty: 'SVG가 비어 있습니다.',
       notSvg: '<svg> 요소를 찾을 수 없습니다.',
       rootNotSvg: '루트 요소가 <svg>가 아니라 <{name}>입니다. <svg>…</svg> 부분만 붙여 넣으세요.',
-      xml: 'SVG가 올바른 XML이 아닙니다({line}번째 줄): {detail}',
-      xmlEntity: 'SVG가 올바른 XML이 아닙니다({line}번째 줄): &{entity};는 HTML 엔티티이며 XML에는 정의되어 있지 않습니다. &nbsp; 대신 &#160;처럼 숫자로 쓰세요.',
+      xml: 'SVG가 올바른 XML이 아닙니다({line}번째 줄 {column}번째 열): {reason}',
+      xmlNoPos: 'SVG가 올바른 XML이 아닙니다: {reason}',
+      xmlEntityReason: '&{entity};는 HTML 엔티티이며 XML에는 정의되어 있지 않습니다. &nbsp; 대신 &#160;처럼 숫자로 쓰세요.',
+      xmlReason: {
+        entityAny: 'XML에 정의되지 않은 엔티티가 쓰였습니다. &nbsp; 같은 HTML 엔티티는 숫자(&#160;)로 쓰세요.',
+        ltInAttr: '속성 값에 이스케이프하지 않은 "<"가 있습니다. 대개 그 앞의 따옴표가 닫히지 않은 경우입니다.',
+        attrQuote: '속성 값이 따옴표로 묶여 있지 않습니다. 이름="값" 형태로 쓰세요.',
+        tagMismatch: '<{open}>({openLine}번째 줄)이 </{close}>로 닫혔습니다. 요소마다 자기 종료 태그로 닫아야 합니다.',
+        tagExpected: '종료 태그가 맞지 않습니다. 여기에는 </{open}>가 와야 합니다.',
+        unclosedTag: '<{tag}>({tagLine}번째 줄)가 닫히지 않은 채 텍스트가 끝났습니다.',
+        unexpectedEnd: '모든 요소가 닫히기 전에 텍스트가 끝났습니다.',
+        dupAttr: '한 요소에 {name} 속성이 두 번 있습니다.',
+        dupAttrAny: '한 요소에 같은 속성이 두 번 있습니다.',
+        bareAmp: '"&"가 이스케이프되지 않았습니다. &amp;로 쓰세요.',
+        prefix: '접두사 {prefix}:가 선언되지 않았습니다. <svg> 요소에 xmlns:{prefix}="…"를 추가하세요.',
+        prefixAny: '선언되지 않은 네임스페이스 접두사가 쓰였습니다.',
+        extra: '</svg> 뒤에도 내용이 있습니다. SVG의 루트 요소는 하나여야 합니다.',
+        noValue: '{name} 속성에 값이 없습니다. XML에서는 {name}="…"로 써야 합니다.',
+        badName: '"<" 뒤가 올바른 이름이 아닙니다. 텍스트 안의 "<"는 &lt;로 쓰세요.',
+        attrSyntax: '속성 작성 방식이 잘못되었습니다. 두 속성 사이의 공백이나 따옴표가 빠졌습니다.',
+        startTagEnd: '시작 태그 <{tag}>가 ">"로 닫히지 않았습니다.',
+        comment: '주석이 "-->"로 닫히지 않았습니다.',
+        cdata: 'CDATA 구역이 "]]>"로 닫히지 않았습니다.',
+        badChar: 'XML에서 쓸 수 없는 문자 {char}가 들어 있습니다.',
+        charRef: '숫자 문자 참조가 올바르지 않습니다(예: &#160 끝의 ";"가 없음).',
+        startTag: '텍스트가 태그로 시작하지 않습니다. <svg> 앞의 내용을 지우세요.',
+        xmlDecl: '<?xml …?> 선언은 맨 앞에 와야 하며 앞에 공백이나 줄바꿈도 있으면 안 됩니다.',
+        encoding: '파일이 올바른 UTF-8 텍스트가 아닙니다.',
+        other: '이 위치에서 XML 구문이 잘못되었습니다.'
+      },
       render: '브라우저가 이 SVG를 그리지 못했습니다.',
       tainted: '브라우저가 이미지 읽기를 막았습니다({detail}).',
       taintedForeign: 'SVG에 <foreignObject>(SVG 안의 HTML)가 있습니다. Chrome과 Edge는 이런 이미지를 canvas에서 내보내지 못하게 막습니다. HTML 부분을 SVG의 <text>나 도형으로 바꾸세요.',
@@ -839,10 +951,76 @@ const { tips: TIPS, ...CLIENT_T } = T;
       function errorText(e) {
         if (!e) return '';
         if (e.code === 'tooLarge' || e.code === 'canvas') return fill(t.err[e.code], { w: e.width.toLocaleString('en-US'), h: e.height.toLocaleString('en-US') });
-        if (e.code === 'xml' && e.entity) return fill(t.err.xmlEntity, { line: e.line, entity: e.entity });
-        if (e.code === 'xml') return fill(t.err.xml, { line: e.line == null ? '?' : e.line, detail: e.detail });
+        if (e.code === 'xml') return xmlErrorText(e, t, fill);
         return fill(t.err[e.code] || t.err.render, e);
       }
+
+      /* ── xml-reason:start ── */
+      // The browser's XML parser explains errors in English (Chrome and Safari: libxml2;
+      // Firefox: expat). Map the known messages to a reason in the page language and keep
+      // only the line and column from the parser text.
+      var XML_REASONS = [
+        [/Entity '([^']+)' not defined/, 'entity', ['entity']],
+        [/undefined entity/, 'entityAny', []],
+        [/Unescaped '<' not allowed in attributes values/, 'ltInAttr', []],
+        [/AttValue: " or ' expected/, 'attrQuote', []],
+        [/Opening and ending tag mismatch: (\S+) line (\d+) and (\S+)/, 'tagMismatch', ['open', 'openLine', 'close']],
+        [/mismatched tag\. Expected: <\/([^>\s]+)>/, 'tagExpected', ['open']],
+        [/Premature end of data in tag (\S+) line (\d+)/, 'unclosedTag', ['tag', 'tagLine']],
+        [/no root element found|unclosed token/, 'unexpectedEnd', []],
+        [/Attribute (\S+) redefined/, 'dupAttr', ['name']],
+        [/duplicate attribute/, 'dupAttrAny', []],
+        [/xmlParseEntityRef: no name|EntityRef: expecting ';'/, 'bareAmp', []],
+        [/Namespace prefix (\S+) (?:for|on) \S+ (?:on \S+ )?is not defined/, 'prefix', ['prefix']],
+        [/unbound prefix/, 'prefixAny', []],
+        [/Extra content at the end of the document|junk after document element/, 'extra', []],
+        [/Specification mandates value for attribute (\S+)/, 'noValue', ['name']],
+        [/StartTag: invalid element name|error parsing attribute name/, 'badName', []],
+        [/attributes construct error/, 'attrSyntax', []],
+        [/Couldn't find end of Start Tag (\S+)/, 'startTagEnd', ['tag']],
+        [/Comment not terminated/, 'comment', []],
+        [/CData section not finished/, 'cdata', []],
+        [/(?:PCDATA invalid Char value|invalid xmlChar value) (\d+)/, 'badChar', ['char']],
+        [/CharRef: invalid|xmlParseCharRef/, 'charRef', []],
+        [/Start tag expected, '<' not found/, 'startTag', []],
+        [/XML declaration allowed only at the start|XML or text declaration not at start/, 'xmlDecl', []],
+        [/not proper UTF-8|Document labelled UTF-16 but has UTF-8 content/, 'encoding', []]
+      ];
+      function xmlReason(detail) {
+        var text = String(detail || '');
+        for (var i = 0; i < XML_REASONS.length; i++) {
+          var m = XML_REASONS[i][0].exec(text);
+          if (!m) continue;
+          var values = {};
+          XML_REASONS[i][2].forEach(function (name, j) { values[name] = m[j + 1]; });
+          if (values.char != null) values.char = 'U+' + Number(values.char).toString(16).toUpperCase().padStart(4, '0');
+          return { code: XML_REASONS[i][1], values: values };
+        }
+        return { code: 'other', values: {} };
+      }
+      function checkXml(svg) {
+        var doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+        var perr = doc.getElementsByTagName('parsererror')[0];
+        if (!perr) return null;
+        var info = parseXmlError(perr.textContent);
+        return { code: 'xml', line: info.line, column: info.column, entity: info.entity, reason: xmlReason(perr.textContent) };
+      }
+      // buildSvg adds attributes to the root tag, so a position in the built SVG can be off.
+      // Report the error found in what the user wrote; errors that buildSvg fixes (an
+      // undeclared xlink: prefix) do not stop the conversion.
+      function xmlProblem(original, built) {
+        var err = checkXml(built);
+        if (!err) return null;
+        return checkXml(original) || err;
+      }
+      function xmlErrorText(e, t, fill) {
+        var reason = e.entity
+          ? fill(t.err.xmlEntityReason, { entity: e.entity })
+          : fill(t.err.xmlReason[e.reason && e.reason.code] || t.err.xmlReason.other, (e.reason && e.reason.values) || {});
+        if (e.line == null) return fill(t.err.xmlNoPos, { reason: reason });
+        return fill(t.err.xml, { line: e.line, column: e.column == null ? '?' : e.column, reason: reason });
+      }
+      /* ── xml-reason:end ── */
 
       function noteText(n) {
         var vars = {};
@@ -901,14 +1079,6 @@ const { tips: TIPS, ...CLIENT_T } = T;
       });
 
       /* ── conversion ── */
-      function checkXml(svg) {
-        var doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
-        var perr = doc.getElementsByTagName('parsererror')[0];
-        if (!perr) return null;
-        var info = parseXmlError(perr.textContent);
-        return { code: 'xml', line: info.line, detail: info.detail, entity: info.entity };
-      }
-
       function loadImage(svg) {
         return new Promise(function (resolve, reject) {
           var url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
@@ -963,7 +1133,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var plan = planOutput(a.size, opts);
         if (plan.error) return Promise.resolve({ error: { code: plan.error, width: plan.width, height: plan.height } });
         var svg = buildSvg(item.text, a, plan);
-        var xmlError = checkXml(svg);
+        var xmlError = xmlProblem(item.text, svg);
         if (xmlError) return Promise.resolve({ error: xmlError });
         var notes = collectNotes(a, plan);
         var w = plan.width, h = plan.height;

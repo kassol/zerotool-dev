@@ -500,8 +500,12 @@ export function hintsFor(result, ctx = {}) {
   for (const m of msgs) {
     if (m.kind === 'parse') {
       if (/^\s*$/.test(input)) continue;
+      // Look for keys and comments outside JSON strings only.
+      const bare = input.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
       if (/'[^'\n]*'\s*:/.test(input)) add('inputSingleQuotes');
+      else if (/[{,]\s*[A-Za-z_$][\w$]*\s*:/.test(bare)) add('inputUnquotedKeys');
       else if (/[:\[,]\s*(True|False|None)\b/.test(input)) add('inputPython');
+      else if (/\/\/|\/\*/.test(bare)) add('inputComments');
       else if (/,\s*[}\]]/.test(input)) add('inputTrailingComma');
       else if (/^[^\[{"\d\-tfn\s]/.test(input.trimStart()) && !opts.R) add('inputNotJson');
     } else if (m.kind === 'compile') {
