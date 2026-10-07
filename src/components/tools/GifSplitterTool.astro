@@ -1,272 +1,312 @@
 ---
-// GifSplitterTool — decodes an animated GIF in the browser (hand-written
-// GIF87a/89a parser + LZW decoder), composites every frame by its disposal
-// method, and exports frames as PNG/JPG, a STORED ZIP, or a sprite sheet + JSON.
-// No upload. Only export preferences are persisted (policy: preference).
+// GifSplitterTool — browser-local GIF decode and export; only export preferences persist.
+import Toggletip from '../Toggletip.astro';
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+// strings:start
+const STRINGS = {
+  en: {
+    empty: "Open a GIF to preview its full frames.",
+    rangeOptions: "Frame range",
+    tips: {
+      file: "Open a GIF87a or GIF89a file, or paste a copied GIF file. Decoding is limited to 50 million pixels (width × height × frames), 1,000 frames, 16,777,216 pixels per frame and 16,384 px per side.",
+      selection: "Every decoded frame starts selected. Click a thumbnail to toggle it, or use Select all / Select none. The download icon saves that individual frame.",
+      range: "Select these applies a 1-based inclusive range. Blank start defaults to 1, blank end to the total frame count, and blank step to 1. Reversed endpoints swap; endpoints clamp to the frame count, and a step below 1 becomes 1.",
+      format: "PNG keeps transparency. JPG replaces transparent areas with the chosen background color. ZIP and individual frame downloads use this format; sprite sheets always use PNG.",
+      quality: "JPG quality ranges from 50 to 100 and starts at 92. It affects JPG frame exports only.",
+      background: "JPG exports fill transparent areas with this color. PNG frames and sprite sheets keep transparency.",
+      zip: "Download ZIP packs the selected full frames without ZIP compression. Select at least one frame. Names keep the original file name and a padded frame number.",
+      columns: "Columns are clamped to 1–1,000 and then to the selected frame count. Build sprite sheet arranges selected frames left to right, then top to bottom.",
+      spacing: "Spacing is 0–256 px and stays transparent between sprite cells. Changing spacing clears the existing sheet; build it again to apply the setting.",
+      sprite: "Build sprite sheet uses the selected full frames. The sheet must fit 16,777,216 pixels and 16,384 px per side. Download its PNG and JSON after building it.",
+      json: "The JSON records the image name, sheet and frame sizes, columns, spacing, original frame numbers, coordinates and durations in milliseconds. Copy JSON copies all of it.",
+    },
+    dropAria: 'Select a GIF file', gridAria: 'Frames',
+    dropHint: 'Drop a GIF here, or <strong>click to select</strong>',
+    pasteHint: 'You can also paste a copied GIF file with Ctrl/Cmd+V',
+    formatsHint: 'Animated or static GIF (GIF87a / GIF89a)',
+    infoSize: 'Size', infoFrames: 'Frames', infoDuration: 'Duration', infoLoop: 'Repeats after first play', infoFile: 'File size',
+    loopInfinite: 'Infinite',
+    selectedCount: '{n} / {total} selected', selectAll: 'Select all', selectNone: 'Select none',
+    rangeFrom: 'Frames', rangeTo: 'to', rangeStep: 'every', rangeApply: 'Select these',
+    frameAria: 'Frame {n}, {ms} ms', downloadFrameAria: 'Download frame {n}',
+    exportTitle: 'Export frames', formatLabel: 'Format', qualityLabel: 'JPG quality',
+    bgLabel: 'Background for transparent areas', downloadZip: 'Download ZIP ({n})', reset: 'Open another GIF',
+    spriteTitle: 'Sprite sheet', columnsLabel: 'Columns', spacingLabel: 'Spacing (px)', buildSprite: 'Build sprite sheet',
+    spriteMeta: '{w}×{h} px · frames: {n} · columns: {c}', spriteAlt: 'Sprite sheet preview',
+    downloadPng: 'Download PNG', downloadJson: 'Download JSON', copyJson: 'Copy JSON', copied: 'Copied',
+    jsonAria: 'Sprite sheet JSON', copyCommand: 'Copy command',
+    statusNotGif: 'Not a GIF file — the file must start with GIF87a or GIF89a. For PNG, JPG or WebP use the WebP Converter.',
+    statusReadFailed: 'Could not read this file',
+    statusNoFrames: 'This GIF contains no image frames',
+    statusDecoding: 'Decoding frame {i} / {n}…',
+    statusDecoded: 'Frames decoded: {n}',
+    statusTruncated: 'Frames decoded: {n}. The file ends early or is damaged, so the last frames may be incomplete.',
+    statusNoSelection: 'Select at least one frame first',
+    statusEncoding: 'Encoding frame {i} / {n}…',
+    statusZipDone: 'ZIP downloaded (frames: {n})',
+    statusFrameDone: 'Frame {n} downloaded',
+    statusExportFailed: 'Export failed — the browser could not encode this image',
+    statusSpriteTooBig: 'The sprite sheet would be {w}×{h} px, above the canvas limit of mobile browsers (16,777,216 px, max 16,384 px per side). Select fewer frames or change the column count.',
+    statusSpriteDone: 'Sprite sheet ready',
+    statusCopyFailed: 'Copy was blocked — select the text and copy it manually',
+    limitPixels: 'This GIF is {w}×{h} with {n} frames: {mp} million pixels to decode. The limit is 50 million pixels (width × height × frames) so the page stays within phone memory. Split it locally with ffmpeg:',
+    limitFrames: 'This GIF has {n} frames. The limit is 1,000 frames. Split it locally with ffmpeg:',
+    limitFrameSize: 'Frames in this GIF are too large ({w}×{h}). The limit is 16,777,216 pixels per frame and 16,384 px per side, the canvas limit of mobile browsers. Split it locally with ffmpeg:',
+  },
+  zh: {
+    empty: "打开 GIF 后可预览合成后的完整帧。",
+    rangeOptions: "帧范围",
+    tips: {
+      file: "打开 GIF87a 或 GIF89a 文件，也可粘贴已复制的 GIF 文件。解码上限为 5000 万像素（宽 × 高 × 帧数）、1000 帧，单帧 16,777,216 像素、单边 16,384 px。",
+      selection: "解码后的帧默认全部选中。点缩略图切换单帧选择，或用全选 / 全不选。下载图标保存对应的单帧。",
+      range: "按此选择使用从 1 开始、包含两端的帧范围。开始帧留空默认 1，结束帧留空默认总帧数，间隔留空默认 1。倒序端点会交换，端点夹取到总帧数，间隔小于 1 时按 1 处理。",
+      format: "PNG 保留透明；JPG 用所选背景色填充透明区域。ZIP 与单帧下载使用此格式，雪碧图始终为 PNG。",
+      quality: "JPG 质量范围为 50–100，默认 92。只影响 JPG 帧导出。",
+      background: "JPG 导出用此颜色填充透明区域；PNG 帧和雪碧图保留透明。",
+      zip: "下载 ZIP 把所选完整帧打包，不进行 ZIP 压缩。请至少选一帧；文件名保留原名并带补零的帧号。",
+      columns: "列数限制为 1–1000，再夹取到所选帧数。生成雪碧图按从左到右、从上到下排列所选帧。",
+      spacing: "间距为 0–256 px，帧格之间保持透明。修改间距会清除已有雪碧图，请重新生成。",
+      sprite: "生成雪碧图使用所选完整帧，最大 16,777,216 像素、单边 16,384 px。生成后可下载 PNG 与 JSON。",
+      json: "JSON 包含图片名、雪碧图与单帧尺寸、列数、间距、原始帧号、坐标及毫秒时长。复制 JSON 会复制全部内容。",
+    },
+    dropAria: '选择 GIF 文件', gridAria: '帧列表',
+    dropHint: '把 GIF 拖到这里，或<strong>点击选择</strong>',
+    pasteHint: '也可以用 Ctrl/Cmd+V 粘贴已复制的 GIF 文件',
+    formatsHint: '支持动态或静态 GIF（GIF87a / GIF89a）',
+    infoSize: '尺寸', infoFrames: '帧数', infoDuration: '总时长', infoLoop: '首遍后重复次数', infoFile: '文件大小',
+    loopInfinite: '无限循环',
+    selectedCount: '已选 {n} / {total} 帧', selectAll: '全选', selectNone: '全不选',
+    rangeFrom: '第', rangeTo: '到', rangeStep: '帧，每隔', rangeApply: '按此选择',
+    frameAria: '第 {n} 帧，{ms} 毫秒', downloadFrameAria: '下载第 {n} 帧',
+    exportTitle: '导出帧', formatLabel: '格式', qualityLabel: 'JPG 质量',
+    bgLabel: '透明区域背景色', downloadZip: '下载 ZIP（{n} 帧）', reset: '换一个 GIF',
+    spriteTitle: '雪碧图', columnsLabel: '列数', spacingLabel: '间距（px）', buildSprite: '生成雪碧图',
+    spriteMeta: '{w}×{h} px · {n} 帧 · {c} 列', spriteAlt: '雪碧图预览',
+    downloadPng: '下载 PNG', downloadJson: '下载 JSON', copyJson: '复制 JSON', copied: '已复制',
+    jsonAria: '雪碧图 JSON', copyCommand: '复制命令',
+    statusNotGif: '不是 GIF 文件：文件头必须是 GIF87a 或 GIF89a。PNG、JPG、WebP 请用 WebP 转换器。',
+    statusReadFailed: '无法读取此文件',
+    statusNoFrames: '这个 GIF 里没有图像帧',
+    statusDecoding: '正在解码第 {i} / {n} 帧…',
+    statusDecoded: '已解码 {n} 帧',
+    statusTruncated: '已解码 {n} 帧。文件提前结束或已损坏，最后几帧可能不完整。',
+    statusNoSelection: '请先选择至少一帧',
+    statusEncoding: '正在编码第 {i} / {n} 帧…',
+    statusZipDone: 'ZIP 已下载（{n} 帧）',
+    statusFrameDone: '第 {n} 帧已下载',
+    statusExportFailed: '导出失败：浏览器无法编码这张图片',
+    statusSpriteTooBig: '雪碧图将达到 {w}×{h} px，超出移动端浏览器的 canvas 上限（16,777,216 像素、单边 16,384 px）。请减少所选帧或调整列数。',
+    statusSpriteDone: '雪碧图已生成',
+    statusCopyFailed: '复制被拦截，请手动选中文本复制',
+    limitPixels: '这个 GIF 尺寸 {w}×{h}、共 {n} 帧，需解码 {mp} 百万像素。为保证手机内存够用，上限为 5000 万像素（宽 × 高 × 帧数）。请用 ffmpeg 在本地拆帧：',
+    limitFrames: '这个 GIF 有 {n} 帧，上限为 1000 帧。请用 ffmpeg 在本地拆帧：',
+    limitFrameSize: '这个 GIF 的帧尺寸过大（{w}×{h}）。移动端浏览器的 canvas 上限为单帧 16,777,216 像素、单边 16,384 px。请用 ffmpeg 在本地拆帧：',
+  },
+  ja: {
+    empty: "GIF を開くと、合成済みの完全なフレームを確認できます。",
+    rangeOptions: "フレーム範囲",
+    tips: {
+      file: "GIF87a または GIF89a を開くか、コピーした GIF ファイルを貼り付けます。上限は幅 × 高さ × フレーム数で 5,000 万ピクセル、1,000 フレーム、1 フレーム 16,777,216 ピクセル、一辺 16,384 px です。",
+      selection: "デコードした全フレームが初期選択されます。サムネイルで個別に切り替えるか、すべて選択 / 選択解除を使います。ダウンロードアイコンはその 1 コマを保存します。",
+      range: "この条件で選択は、1 から数えて両端を含む範囲です。開始が空欄なら 1、終了が空欄なら総フレーム数、間隔が空欄なら 1 になります。逆順の端点は入れ替え、総フレーム数の範囲内に収めます。1 未満の間隔は 1 です。",
+      format: "PNG は透明を保持し、JPG は選んだ背景色で透明部分を塗ります。ZIP と個別保存にこの形式を使い、スプライトシートは常に PNG です。",
+      quality: "JPG 品質は 50〜100、初期値は 92 です。JPG のフレーム保存だけに適用します。",
+      background: "JPG の透明部分にこの色を使います。PNG フレームとスプライトシートは透明を保持します。",
+      zip: "ZIP をダウンロードは選択した完全なコマを ZIP 圧縮なしでまとめます。1 コマ以上選んでください。元のファイル名とゼロ埋めしたコマ番号を使います。",
+      columns: "列数は 1〜1,000、さらに選択コマ数までに制限します。スプライトシートを作成で左から右、上から下に並べます。",
+      spacing: "間隔は 0〜256 px で、セル間は透明です。変更すると現在のシートを消すので、もう一度作成してください。",
+      sprite: "スプライトシートを作成は選択した完全なコマを使います。16,777,216 ピクセル、一辺 16,384 px までです。作成後に PNG と JSON を保存できます。",
+      json: "JSON は画像名、シートとコマのサイズ、列数、間隔、元のコマ番号、座標、ミリ秒の表示時間を含みます。JSON をコピーは全内容をコピーします。",
+    },
+    dropAria: 'GIF ファイルを選択', gridAria: 'フレーム一覧',
+    dropHint: 'GIF をここにドロップ、または<strong>クリックして選択</strong>',
+    pasteHint: 'コピーした GIF ファイルを Ctrl/Cmd+V で貼り付けることもできます',
+    formatsHint: 'アニメーション GIF・静止 GIF（GIF87a / GIF89a）',
+    infoSize: 'サイズ', infoFrames: 'フレーム数', infoDuration: '再生時間', infoLoop: '初回後の繰り返し回数', infoFile: 'ファイルサイズ',
+    loopInfinite: '無限ループ',
+    selectedCount: '{total} 中 {n} フレームを選択', selectAll: 'すべて選択', selectNone: '選択解除',
+    rangeFrom: 'フレーム', rangeTo: '〜', rangeStep: '、間隔', rangeApply: 'この条件で選択',
+    frameAria: 'フレーム {n}、{ms} ミリ秒', downloadFrameAria: 'フレーム {n} をダウンロード',
+    exportTitle: 'フレームを書き出す', formatLabel: '形式', qualityLabel: 'JPG 品質',
+    bgLabel: '透明部分の背景色', downloadZip: 'ZIP をダウンロード（{n} 枚）', reset: '別の GIF を開く',
+    spriteTitle: 'スプライトシート', columnsLabel: '列数', spacingLabel: '間隔（px）', buildSprite: 'スプライトシートを作成',
+    spriteMeta: '{w}×{h} px · {n} フレーム · {c} 列', spriteAlt: 'スプライトシートのプレビュー',
+    downloadPng: 'PNG をダウンロード', downloadJson: 'JSON をダウンロード', copyJson: 'JSON をコピー', copied: 'コピーしました',
+    jsonAria: 'スプライトシート JSON', copyCommand: 'コマンドをコピー',
+    statusNotGif: 'GIF ファイルではありません。ファイル先頭は GIF87a または GIF89a である必要があります。PNG・JPG・WebP は WebP 変換器をご利用ください。',
+    statusReadFailed: 'このファイルを読み込めません',
+    statusNoFrames: 'この GIF には画像フレームがありません',
+    statusDecoding: 'フレーム {i} / {n} をデコード中…',
+    statusDecoded: '{n} フレームをデコードしました',
+    statusTruncated: '{n} フレームをデコードしました。ファイルが途中で終わっているか破損しているため、最後のフレームが欠けている可能性があります。',
+    statusNoSelection: '先にフレームを 1 つ以上選択してください',
+    statusEncoding: 'フレーム {i} / {n} をエンコード中…',
+    statusZipDone: 'ZIP をダウンロードしました（{n} フレーム）',
+    statusFrameDone: 'フレーム {n} をダウンロードしました',
+    statusExportFailed: '書き出しに失敗しました。ブラウザがこの画像をエンコードできません',
+    statusSpriteTooBig: 'スプライトシートが {w}×{h} px になり、モバイルブラウザの canvas 上限（16,777,216 ピクセル、一辺 16,384 px）を超えます。選択フレームを減らすか列数を変更してください。',
+    statusSpriteDone: 'スプライトシートを作成しました',
+    statusCopyFailed: 'コピーがブロックされました。テキストを選択して手動でコピーしてください',
+    limitPixels: 'この GIF は {w}×{h}、{n} フレームで、デコードに {mp} 百万ピクセルが必要です。スマートフォンのメモリに収めるため上限は 5,000 万ピクセル（幅 × 高さ × フレーム数）です。ffmpeg を使ってローカルで分解してください：',
+    limitFrames: 'この GIF は {n} フレームあります。上限は 1,000 フレームです。ffmpeg を使ってローカルで分解してください：',
+    limitFrameSize: 'この GIF のフレームは大きすぎます（{w}×{h}）。モバイルブラウザの canvas 上限は 1 フレーム 16,777,216 ピクセル、一辺 16,384 px です。ffmpeg を使ってローカルで分解してください：',
+  },
+  ko: {
+    empty: "GIF를 열면 합성한 완전한 프레임을 미리 볼 수 있습니다.",
+    rangeOptions: "프레임 범위",
+    tips: {
+      file: "GIF87a 또는 GIF89a 파일을 열거나 복사한 GIF 파일을 붙여넣으세요. 한도는 가로 × 세로 × 프레임 수 기준 5,000만 픽셀, 1,000프레임, 프레임당 16,777,216픽셀, 한 변 16,384px입니다.",
+      selection: "디코딩한 모든 프레임이 처음에 선택됩니다. 썸네일로 하나씩 바꾸거나 전체 선택 / 선택 해제를 쓰세요. 다운로드 아이콘은 해당 프레임 한 장을 저장합니다.",
+      range: "이 조건으로 선택은 1부터 세고 양 끝을 포함합니다. 시작이 비면 1, 끝이 비면 전체 프레임 수, 간격이 비면 1을 씁니다. 역순 끝값은 바꾸고 전체 프레임 범위로 제한하며 1 미만 간격은 1로 처리합니다.",
+      format: "PNG는 투명을 유지하고 JPG는 선택한 배경색으로 투명 영역을 채웁니다. ZIP과 개별 프레임에 이 형식을 쓰며 스프라이트 시트는 항상 PNG입니다.",
+      quality: "JPG 품질은 50–100이고 기본값은 92입니다. JPG 프레임 내보내기에만 적용합니다.",
+      background: "JPG 내보내기는 투명 영역을 이 색으로 채웁니다. PNG 프레임과 스프라이트 시트는 투명을 유지합니다.",
+      zip: "ZIP 다운로드는 선택한 완전한 프레임을 ZIP 압축 없이 묶습니다. 하나 이상 선택하세요. 원래 파일명과 0을 채운 프레임 번호를 씁니다.",
+      columns: "열 수는 1–1,000이며 선택한 프레임 수까지로 제한합니다. 스프라이트 시트 만들기는 왼쪽에서 오른쪽, 위에서 아래로 배치합니다.",
+      spacing: "간격은 0–256px이며 셀 사이는 투명합니다. 바꾸면 기존 시트가 지워지므로 다시 만드세요.",
+      sprite: "스프라이트 시트 만들기는 선택한 완전한 프레임을 씁니다. 최대 16,777,216픽셀, 한 변 16,384px입니다. 만든 뒤 PNG와 JSON을 받으세요.",
+      json: "JSON에는 이미지명, 시트와 프레임 크기, 열 수, 간격, 원래 프레임 번호, 좌표, 밀리초 표시 시간이 들어 있습니다. JSON 복사는 전부 복사합니다.",
+    },
+    dropAria: 'GIF 파일 선택', gridAria: '프레임 목록',
+    dropHint: 'GIF를 여기로 드롭하거나 <strong>클릭해서 선택</strong>',
+    pasteHint: '복사한 GIF 파일을 Ctrl/Cmd+V로 붙여넣을 수도 있습니다',
+    formatsHint: '움직이는 GIF·정지 GIF (GIF87a / GIF89a)',
+    infoSize: '크기', infoFrames: '프레임 수', infoDuration: '재생 시간', infoLoop: '첫 재생 후 반복 횟수', infoFile: '파일 크기',
+    loopInfinite: '무한 반복',
+    selectedCount: '{total}개 중 {n}개 선택', selectAll: '전체 선택', selectNone: '선택 해제',
+    rangeFrom: '프레임', rangeTo: '~', rangeStep: ', 간격', rangeApply: '이 조건으로 선택',
+    frameAria: '프레임 {n}, {ms}ms', downloadFrameAria: '프레임 {n} 다운로드',
+    exportTitle: '프레임 내보내기', formatLabel: '형식', qualityLabel: 'JPG 품질',
+    bgLabel: '투명 영역 배경색', downloadZip: 'ZIP 다운로드 ({n}개)', reset: '다른 GIF 열기',
+    spriteTitle: '스프라이트 시트', columnsLabel: '열 수', spacingLabel: '간격 (px)', buildSprite: '스프라이트 시트 만들기',
+    spriteMeta: '{w}×{h} px · 프레임 {n}개 · {c}열', spriteAlt: '스프라이트 시트 미리보기',
+    downloadPng: 'PNG 다운로드', downloadJson: 'JSON 다운로드', copyJson: 'JSON 복사', copied: '복사됨',
+    jsonAria: '스프라이트 시트 JSON', copyCommand: '명령어 복사',
+    statusNotGif: 'GIF 파일이 아닙니다. 파일 헤더가 GIF87a 또는 GIF89a로 시작해야 합니다. PNG·JPG·WebP는 WebP 변환기를 이용하세요.',
+    statusReadFailed: '이 파일을 읽을 수 없습니다',
+    statusNoFrames: '이 GIF에는 이미지 프레임이 없습니다',
+    statusDecoding: '프레임 {i} / {n} 디코딩 중…',
+    statusDecoded: '프레임 {n}개 디코딩 완료',
+    statusTruncated: '프레임 {n}개 디코딩 완료. 파일이 중간에 끝났거나 손상되어 마지막 프레임이 불완전할 수 있습니다.',
+    statusNoSelection: '먼저 프레임을 하나 이상 선택하세요',
+    statusEncoding: '프레임 {i} / {n} 인코딩 중…',
+    statusZipDone: 'ZIP 다운로드 완료 (프레임 {n}개)',
+    statusFrameDone: '프레임 {n} 다운로드 완료',
+    statusExportFailed: '내보내기 실패 — 브라우저가 이 이미지를 인코딩하지 못했습니다',
+    statusSpriteTooBig: '스프라이트 시트가 {w}×{h} px가 되어 모바일 브라우저의 canvas 한도(16,777,216픽셀, 한 변 16,384px)를 넘습니다. 선택한 프레임을 줄이거나 열 수를 바꾸세요.',
+    statusSpriteDone: '스프라이트 시트 생성 완료',
+    statusCopyFailed: '복사가 차단되었습니다 — 텍스트를 선택해 직접 복사하세요',
+    limitPixels: '이 GIF는 {w}×{h}, 프레임 {n}개로 {mp}백만 픽셀을 디코딩해야 합니다. 휴대폰 메모리 안에서 동작하도록 한도는 5,000만 픽셀(가로 × 세로 × 프레임 수)입니다. ffmpeg로 로컬에서 분할하세요:',
+    limitFrames: '이 GIF는 프레임이 {n}개입니다. 한도는 1,000개입니다. ffmpeg로 로컬에서 분할하세요:',
+    limitFrameSize: '이 GIF의 프레임이 너무 큽니다({w}×{h}). 모바일 브라우저의 canvas 한도는 프레임당 16,777,216픽셀, 한 변 16,384px입니다. ffmpeg로 로컬에서 분할하세요:',
+  },
+};
+// strings:end
+const L = STRINGS[lang] || STRINGS.en;
+const { tips, empty, rangeOptions, ...CLIENT_T } = L;
 ---
 
-<div>
-  <div class="gs-wrap" id="gs-wrap">
-    <div id="gs-drop" class="gs-drop" role="button" tabindex="0">
-      <div class="gs-drop-inner">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-        </svg>
-        <p data-i18n="dropHint">Drop a GIF here, or <strong>click to select</strong></p>
-        <p class="gs-hint" data-i18n="pasteHint">You can also paste a copied GIF file with Ctrl/Cmd+V</p>
-        <p class="gs-hint" data-i18n="formatsHint">Animated or static GIF (GIF87a / GIF89a)</p>
-      </div>
-      <input type="file" id="gs-file" accept="image/gif,.gif" class="gs-file-input" tabindex="-1" aria-label="Select a GIF file" data-i18n-aria="dropAria" />
-    </div>
-
-    <progress id="gs-progress" class="gs-progress" max="1" value="0" hidden></progress>
-
-    <div id="gs-limit" class="gs-limit" hidden>
-      <p id="gs-limit-msg" class="gs-limit-msg"></p>
-      <div class="gs-limit-cmd-row">
-        <code id="gs-limit-cmd" class="gs-limit-cmd">ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png</code>
-        <button type="button" id="gs-limit-copy" class="btn-copy" data-i18n="copyCommand">Copy command</button>
-      </div>
-    </div>
-
-    <div id="gs-workspace" class="gs-workspace" hidden>
-      <dl class="gs-info" id="gs-info">
-        <div class="gs-info-item"><dt data-i18n="infoSize">Size</dt><dd id="gs-info-size"></dd></div>
-        <div class="gs-info-item"><dt data-i18n="infoFrames">Frames</dt><dd id="gs-info-frames"></dd></div>
-        <div class="gs-info-item"><dt data-i18n="infoDuration">Duration</dt><dd id="gs-info-duration"></dd></div>
-        <div class="gs-info-item"><dt data-i18n="infoLoop">Repeats after first play</dt><dd id="gs-info-loop"></dd></div>
-        <div class="gs-info-item"><dt data-i18n="infoFile">File size</dt><dd id="gs-info-file"></dd></div>
-      </dl>
-
-      <div class="gs-select">
-        <div class="gs-select-row">
-          <span id="gs-selected-count" class="gs-selected-count" aria-live="polite"></span>
-          <button type="button" id="gs-select-all" class="btn-ghost" data-i18n="selectAll">Select all</button>
-          <button type="button" id="gs-select-none" class="btn-ghost" data-i18n="selectNone">Select none</button>
-        </div>
-        <div class="gs-range-row">
-          <label for="gs-from" data-i18n="rangeFrom">Frames</label>
-          <input type="number" id="gs-from" class="tool-input gs-num" min="1" value="1" inputmode="numeric" />
-          <label for="gs-to" data-i18n="rangeTo">to</label>
-          <input type="number" id="gs-to" class="tool-input gs-num" min="1" value="1" inputmode="numeric" />
-          <label for="gs-step" data-i18n="rangeStep">every</label>
-          <input type="number" id="gs-step" class="tool-input gs-num" min="1" value="1" inputmode="numeric" />
-          <button type="button" id="gs-range-apply" class="btn-secondary" data-i18n="rangeApply">Select these</button>
-        </div>
-      </div>
-
-      <div id="gs-grid" class="gs-grid" role="list" aria-label="Frames" data-i18n-aria="gridAria"></div>
-
-      <section class="gs-panel">
-        <h2 class="gs-panel-title" data-i18n="exportTitle">Export frames</h2>
-        <div class="gs-export-row">
-          <label class="gs-field">
-            <span class="tool-label" data-i18n="formatLabel">Format</span>
-            <select id="gs-format" class="tool-input gs-select-input">
-              <option value="png">PNG</option>
-              <option value="jpg">JPG</option>
-            </select>
-          </label>
-          <div id="gs-jpg-opts" class="gs-jpg-opts" hidden>
-            <label for="gs-quality" class="gs-quality-label">
-              <span data-i18n="qualityLabel">JPG quality</span> <strong id="gs-quality-val">92</strong>
-            </label>
-            <input type="range" id="gs-quality" min="50" max="100" step="1" value="92" />
-            <label class="gs-field gs-bg-field">
-              <span class="tool-label" data-i18n="bgLabel">Background for transparent areas</span>
-              <input type="color" id="gs-bg" value="#ffffff" />
-            </label>
+<div class="gs-wrap" id="gs-wrap">
+  <div class="gs-main">
+    <div class="gs-rail zt-rail">
+      <div class="gs-start">
+        <div id="gs-drop" class="gs-drop" role="button" tabindex="0" aria-label={L.dropAria}>
+          <div class="gs-drop-inner">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+            <p set:html={L.dropHint}></p>
+            <p class="gs-hint">{L.pasteHint}</p>
+            <p class="gs-hint">{L.formatsHint}</p>
           </div>
+          <input type="file" id="gs-file" accept="image/gif,.gif" class="gs-file-input" tabindex="-1" aria-label={L.dropAria} />
         </div>
-        <div class="gs-actions">
-          <button type="button" id="gs-zip" class="btn-primary">Download ZIP</button>
-          <button type="button" id="gs-reset" class="btn-ghost" data-i18n="reset">Open another GIF</button>
+        <div class="gs-file-help"><Toggletip id="gs-tip-file" lang={lang} about={L.dropAria} wide>{L.tips.file}</Toggletip></div>
+      </div>
+      <div class="gs-controls gs-primary">
+        <div class="gs-action-row">
+          <button type="button" id="gs-zip" class="btn-primary">{L.downloadZip.replace('{n}', '0')}</button>
+          <Toggletip id="gs-tip-zip" lang={lang} about={L.exportTitle}>{L.tips.zip}</Toggletip>
         </div>
-      </section>
-
-      <section class="gs-panel">
-        <h2 class="gs-panel-title" data-i18n="spriteTitle">Sprite sheet</h2>
-        <div class="gs-sprite-row">
-          <label class="gs-field">
-            <span class="tool-label" data-i18n="columnsLabel">Columns</span>
-            <input type="number" id="gs-columns" class="tool-input gs-num" min="1" value="8" inputmode="numeric" />
-          </label>
-          <label class="gs-field">
-            <span class="tool-label" data-i18n="spacingLabel">Spacing (px)</span>
-            <input type="number" id="gs-spacing" class="tool-input gs-num" min="0" value="0" inputmode="numeric" />
-          </label>
-          <button type="button" id="gs-sprite-build" class="btn-secondary" data-i18n="buildSprite">Build sprite sheet</button>
+        <button type="button" id="gs-reset" class="btn-ghost">{L.reset}</button>
+        <div class="gs-format-row">
+          <label class="tool-label" for="gs-format">{L.formatLabel}</label>
+          <select id="gs-format" class="tool-input gs-select-input"><option value="png">PNG</option><option value="jpg">JPG</option></select>
+          <Toggletip id="gs-tip-format" lang={lang} about={L.formatLabel}>{L.tips.format}</Toggletip>
         </div>
+      </div>
+      <div class="gs-status-row">
+        <div id="gs-status" class="tool-status" aria-live="polite"></div>
+        <progress id="gs-progress" class="gs-progress" max="1" value="0" hidden></progress>
+      </div>
+      <div id="gs-limit" class="gs-limit" hidden>
+        <p id="gs-limit-msg" class="gs-limit-msg"></p>
+        <div class="gs-limit-cmd-row">
+          <code id="gs-limit-cmd" class="gs-limit-cmd" tabindex="0">ffmpeg -i input.gif -fps_mode passthrough frame-%03d.png</code>
+          <button type="button" id="gs-limit-copy" class="btn-copy">{L.copyCommand}</button>
+        </div>
+      </div>
+      <div class="gs-controls gs-select">
+        <div class="gs-label-row"><span id="gs-selected-count" class="gs-selected-count" aria-live="polite"></span><Toggletip id="gs-tip-selection" lang={lang} about={L.gridAria}>{L.tips.selection}</Toggletip></div>
+        <div class="gs-select-row">
+          <button type="button" id="gs-select-all" class="btn-ghost">{L.selectAll}</button>
+          <button type="button" id="gs-select-none" class="btn-ghost">{L.selectNone}</button>
+        </div>
+        <details class="gs-options">
+          <summary>{L.rangeOptions}</summary>
+          <div class="gs-option-body">
+            <div class="gs-label-row"><span class="tool-label">{L.rangeOptions}</span><Toggletip id="gs-tip-range" lang={lang} about={L.rangeOptions}>{L.tips.range}</Toggletip></div>
+            <div class="gs-range-row">
+              <label for="gs-from">{L.rangeFrom}</label><input type="number" id="gs-from" class="tool-input gs-num" min="1" value="1" inputmode="numeric" />
+              <label for="gs-to">{L.rangeTo}</label><input type="number" id="gs-to" class="tool-input gs-num" min="1" value="1" inputmode="numeric" />
+              <label for="gs-step">{L.rangeStep}</label><input type="number" id="gs-step" class="tool-input gs-num" min="1" value="1" inputmode="numeric" />
+              <button type="button" id="gs-range-apply" class="btn-secondary">{L.rangeApply}</button>
+            </div>
+          </div>
+        </details>
+      </div>
+      <div id="gs-jpg-opts" class="gs-controls gs-jpg-opts" hidden>
+        <div class="gs-label-row"><label for="gs-quality" class="gs-quality-label">{L.qualityLabel} <strong id="gs-quality-val">92</strong></label><Toggletip id="gs-tip-quality" lang={lang} about={L.qualityLabel}>{L.tips.quality}</Toggletip></div>
+        <input type="range" id="gs-quality" min="50" max="100" step="1" value="92" />
+        <div class="gs-label-row"><label class="tool-label" for="gs-bg">{L.bgLabel}</label><input type="color" id="gs-bg" value="#ffffff" /><Toggletip id="gs-tip-background" lang={lang} about={L.bgLabel}>{L.tips.background}</Toggletip></div>
+      </div>
+      <details class="gs-controls gs-options gs-sprite-options">
+        <summary>{L.spriteTitle}</summary>
+        <div class="gs-option-body">
+          <div class="gs-label-row"><label class="tool-label" for="gs-columns">{L.columnsLabel}</label><Toggletip id="gs-tip-columns" lang={lang} about={L.columnsLabel}>{L.tips.columns}</Toggletip></div>
+          <input type="number" id="gs-columns" class="tool-input gs-num" min="1" value="8" inputmode="numeric" />
+          <div class="gs-label-row"><label class="tool-label" for="gs-spacing">{L.spacingLabel}</label><Toggletip id="gs-tip-spacing" lang={lang} about={L.spacingLabel}>{L.tips.spacing}</Toggletip></div>
+          <input type="number" id="gs-spacing" class="tool-input gs-num" min="0" value="0" inputmode="numeric" />
+          <div class="gs-action-row"><button type="button" id="gs-sprite-build" class="btn-secondary">{L.buildSprite}</button><Toggletip id="gs-tip-sprite" lang={lang} about={L.buildSprite}>{L.tips.sprite}</Toggletip></div>
+        </div>
+      </details>
+    </div>
+    <div class="gs-result">
+      <p class="gs-empty">{L.empty}</p>
+      <div id="gs-workspace" class="gs-workspace" hidden>
+        <dl class="gs-info" id="gs-info">
+          <div class="gs-info-item"><dt>{L.infoSize}</dt><dd id="gs-info-size"></dd></div>
+          <div class="gs-info-item"><dt>{L.infoFrames}</dt><dd id="gs-info-frames"></dd></div>
+          <div class="gs-info-item"><dt>{L.infoDuration}</dt><dd id="gs-info-duration"></dd></div>
+          <div class="gs-info-item"><dt>{L.infoLoop}</dt><dd id="gs-info-loop"></dd></div>
+          <div class="gs-info-item"><dt>{L.infoFile}</dt><dd id="gs-info-file"></dd></div>
+        </dl>
+        <div id="gs-grid" class="gs-grid" role="list" tabindex="0" aria-label={L.gridAria}></div>
         <div id="gs-sprite-out" class="gs-sprite-out" hidden>
           <p id="gs-sprite-meta" class="gs-sprite-meta"></p>
-          <div class="gs-sprite-preview"><img id="gs-sprite-img" alt="Sprite sheet preview" data-i18n-alt="spriteAlt" /></div>
           <div class="gs-actions">
-            <button type="button" id="gs-sprite-png" class="btn-secondary" data-i18n="downloadPng">Download PNG</button>
-            <button type="button" id="gs-sprite-json-dl" class="btn-secondary" data-i18n="downloadJson">Download JSON</button>
-            <button type="button" id="gs-sprite-copy" class="btn-copy" data-i18n="copyJson">Copy JSON</button>
+            <button type="button" id="gs-sprite-png" class="btn-secondary">{L.downloadPng}</button>
+            <button type="button" id="gs-sprite-json-dl" class="btn-secondary">{L.downloadJson}</button>
+            <button type="button" id="gs-sprite-copy" class="btn-copy">{L.copyJson}</button>
+            <Toggletip id="gs-tip-json" lang={lang} about={L.copyJson}>{L.tips.json}</Toggletip>
           </div>
-          <textarea id="gs-sprite-json" class="tool-textarea gs-json" rows="8" readonly aria-label="Sprite sheet JSON" data-i18n-aria="jsonAria"></textarea>
+          <div class="gs-sprite-preview"><img id="gs-sprite-img" alt={L.spriteAlt} /></div>
+          <textarea id="gs-sprite-json" class="tool-textarea gs-json" rows="8" readonly aria-label={L.jsonAria}></textarea>
         </div>
-      </section>
+      </div>
     </div>
-
-    <div id="gs-status" class="tool-status" aria-live="polite"></div>
   </div>
-
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          dropAria: 'Select a GIF file', gridAria: 'Frames',
-          dropHint: 'Drop a GIF here, or <strong>click to select</strong>',
-          pasteHint: 'You can also paste a copied GIF file with Ctrl/Cmd+V',
-          formatsHint: 'Animated or static GIF (GIF87a / GIF89a)',
-          infoSize: 'Size', infoFrames: 'Frames', infoDuration: 'Duration', infoLoop: 'Repeats after first play', infoFile: 'File size',
-          loopInfinite: 'Infinite',
-          selectedCount: '{n} / {total} selected', selectAll: 'Select all', selectNone: 'Select none',
-          rangeFrom: 'Frames', rangeTo: 'to', rangeStep: 'every', rangeApply: 'Select these',
-          frameAria: 'Frame {n}, {ms} ms', downloadFrameAria: 'Download frame {n}',
-          exportTitle: 'Export frames', formatLabel: 'Format', qualityLabel: 'JPG quality',
-          bgLabel: 'Background for transparent areas', downloadZip: 'Download ZIP ({n})', reset: 'Open another GIF',
-          spriteTitle: 'Sprite sheet', columnsLabel: 'Columns', spacingLabel: 'Spacing (px)', buildSprite: 'Build sprite sheet',
-          spriteMeta: '{w}×{h} px · frames: {n} · columns: {c}', spriteAlt: 'Sprite sheet preview',
-          downloadPng: 'Download PNG', downloadJson: 'Download JSON', copyJson: 'Copy JSON', copied: 'Copied',
-          jsonAria: 'Sprite sheet JSON', copyCommand: 'Copy command',
-          statusNotGif: 'Not a GIF file — the file must start with GIF87a or GIF89a. For PNG, JPG or WebP use the WebP Converter.',
-          statusReadFailed: 'Could not read this file',
-          statusNoFrames: 'This GIF contains no image frames',
-          statusDecoding: 'Decoding frame {i} / {n}…',
-          statusDecoded: 'Frames decoded: {n}',
-          statusTruncated: 'Frames decoded: {n}. The file ends early or is damaged, so the last frames may be incomplete.',
-          statusNoSelection: 'Select at least one frame first',
-          statusEncoding: 'Encoding frame {i} / {n}…',
-          statusZipDone: 'ZIP downloaded (frames: {n})',
-          statusFrameDone: 'Frame {n} downloaded',
-          statusExportFailed: 'Export failed — the browser could not encode this image',
-          statusSpriteTooBig: 'The sprite sheet would be {w}×{h} px, above the canvas limit of mobile browsers (16,777,216 px, max 16,384 px per side). Select fewer frames or change the column count.',
-          statusSpriteDone: 'Sprite sheet ready',
-          statusCopyFailed: 'Copy was blocked — select the text and copy it manually',
-          limitPixels: 'This GIF is {w}×{h} with {n} frames: {mp} million pixels to decode. The limit is 50 million pixels (width × height × frames) so the page stays within phone memory. Split it locally with ffmpeg:',
-          limitFrames: 'This GIF has {n} frames. The limit is 1,000 frames. Split it locally with ffmpeg:',
-          limitFrameSize: 'Frames in this GIF are too large ({w}×{h}). The limit is 16,777,216 pixels per frame and 16,384 px per side, the canvas limit of mobile browsers. Split it locally with ffmpeg:',
-        },
-        zh: {
-          dropAria: '选择 GIF 文件', gridAria: '帧列表',
-          dropHint: '把 GIF 拖到这里，或<strong>点击选择</strong>',
-          pasteHint: '也可以用 Ctrl/Cmd+V 粘贴已复制的 GIF 文件',
-          formatsHint: '支持动态或静态 GIF（GIF87a / GIF89a）',
-          infoSize: '尺寸', infoFrames: '帧数', infoDuration: '总时长', infoLoop: '首遍后重复次数', infoFile: '文件大小',
-          loopInfinite: '无限循环',
-          selectedCount: '已选 {n} / {total} 帧', selectAll: '全选', selectNone: '全不选',
-          rangeFrom: '第', rangeTo: '到', rangeStep: '帧，每隔', rangeApply: '按此选择',
-          frameAria: '第 {n} 帧，{ms} 毫秒', downloadFrameAria: '下载第 {n} 帧',
-          exportTitle: '导出帧', formatLabel: '格式', qualityLabel: 'JPG 质量',
-          bgLabel: '透明区域背景色', downloadZip: '下载 ZIP（{n} 帧）', reset: '换一个 GIF',
-          spriteTitle: '雪碧图', columnsLabel: '列数', spacingLabel: '间距（px）', buildSprite: '生成雪碧图',
-          spriteMeta: '{w}×{h} px · {n} 帧 · {c} 列', spriteAlt: '雪碧图预览',
-          downloadPng: '下载 PNG', downloadJson: '下载 JSON', copyJson: '复制 JSON', copied: '已复制',
-          jsonAria: '雪碧图 JSON', copyCommand: '复制命令',
-          statusNotGif: '不是 GIF 文件：文件头必须是 GIF87a 或 GIF89a。PNG、JPG、WebP 请用 WebP 转换器。',
-          statusReadFailed: '无法读取此文件',
-          statusNoFrames: '这个 GIF 里没有图像帧',
-          statusDecoding: '正在解码第 {i} / {n} 帧…',
-          statusDecoded: '已解码 {n} 帧',
-          statusTruncated: '已解码 {n} 帧。文件提前结束或已损坏，最后几帧可能不完整。',
-          statusNoSelection: '请先选择至少一帧',
-          statusEncoding: '正在编码第 {i} / {n} 帧…',
-          statusZipDone: 'ZIP 已下载（{n} 帧）',
-          statusFrameDone: '第 {n} 帧已下载',
-          statusExportFailed: '导出失败：浏览器无法编码这张图片',
-          statusSpriteTooBig: '雪碧图将达到 {w}×{h} px，超出移动端浏览器的 canvas 上限（16,777,216 像素、单边 16,384 px）。请减少所选帧或调整列数。',
-          statusSpriteDone: '雪碧图已生成',
-          statusCopyFailed: '复制被拦截，请手动选中文本复制',
-          limitPixels: '这个 GIF 尺寸 {w}×{h}、共 {n} 帧，需解码 {mp} 百万像素。为保证手机内存够用，上限为 5000 万像素（宽 × 高 × 帧数）。请用 ffmpeg 在本地拆帧：',
-          limitFrames: '这个 GIF 有 {n} 帧，上限为 1000 帧。请用 ffmpeg 在本地拆帧：',
-          limitFrameSize: '这个 GIF 的帧尺寸过大（{w}×{h}）。移动端浏览器的 canvas 上限为单帧 16,777,216 像素、单边 16,384 px。请用 ffmpeg 在本地拆帧：',
-        },
-        ja: {
-          dropAria: 'GIF ファイルを選択', gridAria: 'フレーム一覧',
-          dropHint: 'GIF をここにドロップ、または<strong>クリックして選択</strong>',
-          pasteHint: 'コピーした GIF ファイルを Ctrl/Cmd+V で貼り付けることもできます',
-          formatsHint: 'アニメーション GIF・静止 GIF（GIF87a / GIF89a）',
-          infoSize: 'サイズ', infoFrames: 'フレーム数', infoDuration: '再生時間', infoLoop: '初回後の繰り返し回数', infoFile: 'ファイルサイズ',
-          loopInfinite: '無限ループ',
-          selectedCount: '{total} 中 {n} フレームを選択', selectAll: 'すべて選択', selectNone: '選択解除',
-          rangeFrom: 'フレーム', rangeTo: '〜', rangeStep: '、間隔', rangeApply: 'この条件で選択',
-          frameAria: 'フレーム {n}、{ms} ミリ秒', downloadFrameAria: 'フレーム {n} をダウンロード',
-          exportTitle: 'フレームを書き出す', formatLabel: '形式', qualityLabel: 'JPG 品質',
-          bgLabel: '透明部分の背景色', downloadZip: 'ZIP をダウンロード（{n} 枚）', reset: '別の GIF を開く',
-          spriteTitle: 'スプライトシート', columnsLabel: '列数', spacingLabel: '間隔（px）', buildSprite: 'スプライトシートを作成',
-          spriteMeta: '{w}×{h} px · {n} フレーム · {c} 列', spriteAlt: 'スプライトシートのプレビュー',
-          downloadPng: 'PNG をダウンロード', downloadJson: 'JSON をダウンロード', copyJson: 'JSON をコピー', copied: 'コピーしました',
-          jsonAria: 'スプライトシート JSON', copyCommand: 'コマンドをコピー',
-          statusNotGif: 'GIF ファイルではありません。ファイル先頭は GIF87a または GIF89a である必要があります。PNG・JPG・WebP は WebP 変換器をご利用ください。',
-          statusReadFailed: 'このファイルを読み込めません',
-          statusNoFrames: 'この GIF には画像フレームがありません',
-          statusDecoding: 'フレーム {i} / {n} をデコード中…',
-          statusDecoded: '{n} フレームをデコードしました',
-          statusTruncated: '{n} フレームをデコードしました。ファイルが途中で終わっているか破損しているため、最後のフレームが欠けている可能性があります。',
-          statusNoSelection: '先にフレームを 1 つ以上選択してください',
-          statusEncoding: 'フレーム {i} / {n} をエンコード中…',
-          statusZipDone: 'ZIP をダウンロードしました（{n} フレーム）',
-          statusFrameDone: 'フレーム {n} をダウンロードしました',
-          statusExportFailed: '書き出しに失敗しました。ブラウザがこの画像をエンコードできません',
-          statusSpriteTooBig: 'スプライトシートが {w}×{h} px になり、モバイルブラウザの canvas 上限（16,777,216 ピクセル、一辺 16,384 px）を超えます。選択フレームを減らすか列数を変更してください。',
-          statusSpriteDone: 'スプライトシートを作成しました',
-          statusCopyFailed: 'コピーがブロックされました。テキストを選択して手動でコピーしてください',
-          limitPixels: 'この GIF は {w}×{h}、{n} フレームで、デコードに {mp} 百万ピクセルが必要です。スマートフォンのメモリに収めるため上限は 5,000 万ピクセル（幅 × 高さ × フレーム数）です。ffmpeg を使ってローカルで分解してください：',
-          limitFrames: 'この GIF は {n} フレームあります。上限は 1,000 フレームです。ffmpeg を使ってローカルで分解してください：',
-          limitFrameSize: 'この GIF のフレームは大きすぎます（{w}×{h}）。モバイルブラウザの canvas 上限は 1 フレーム 16,777,216 ピクセル、一辺 16,384 px です。ffmpeg を使ってローカルで分解してください：',
-        },
-        ko: {
-          dropAria: 'GIF 파일 선택', gridAria: '프레임 목록',
-          dropHint: 'GIF를 여기로 드롭하거나 <strong>클릭해서 선택</strong>',
-          pasteHint: '복사한 GIF 파일을 Ctrl/Cmd+V로 붙여넣을 수도 있습니다',
-          formatsHint: '움직이는 GIF·정지 GIF (GIF87a / GIF89a)',
-          infoSize: '크기', infoFrames: '프레임 수', infoDuration: '재생 시간', infoLoop: '첫 재생 후 반복 횟수', infoFile: '파일 크기',
-          loopInfinite: '무한 반복',
-          selectedCount: '{total}개 중 {n}개 선택', selectAll: '전체 선택', selectNone: '선택 해제',
-          rangeFrom: '프레임', rangeTo: '~', rangeStep: ', 간격', rangeApply: '이 조건으로 선택',
-          frameAria: '프레임 {n}, {ms}ms', downloadFrameAria: '프레임 {n} 다운로드',
-          exportTitle: '프레임 내보내기', formatLabel: '형식', qualityLabel: 'JPG 품질',
-          bgLabel: '투명 영역 배경색', downloadZip: 'ZIP 다운로드 ({n}개)', reset: '다른 GIF 열기',
-          spriteTitle: '스프라이트 시트', columnsLabel: '열 수', spacingLabel: '간격 (px)', buildSprite: '스프라이트 시트 만들기',
-          spriteMeta: '{w}×{h} px · 프레임 {n}개 · {c}열', spriteAlt: '스프라이트 시트 미리보기',
-          downloadPng: 'PNG 다운로드', downloadJson: 'JSON 다운로드', copyJson: 'JSON 복사', copied: '복사됨',
-          jsonAria: '스프라이트 시트 JSON', copyCommand: '명령어 복사',
-          statusNotGif: 'GIF 파일이 아닙니다. 파일 헤더가 GIF87a 또는 GIF89a로 시작해야 합니다. PNG·JPG·WebP는 WebP 변환기를 이용하세요.',
-          statusReadFailed: '이 파일을 읽을 수 없습니다',
-          statusNoFrames: '이 GIF에는 이미지 프레임이 없습니다',
-          statusDecoding: '프레임 {i} / {n} 디코딩 중…',
-          statusDecoded: '프레임 {n}개 디코딩 완료',
-          statusTruncated: '프레임 {n}개 디코딩 완료. 파일이 중간에 끝났거나 손상되어 마지막 프레임이 불완전할 수 있습니다.',
-          statusNoSelection: '먼저 프레임을 하나 이상 선택하세요',
-          statusEncoding: '프레임 {i} / {n} 인코딩 중…',
-          statusZipDone: 'ZIP 다운로드 완료 (프레임 {n}개)',
-          statusFrameDone: '프레임 {n} 다운로드 완료',
-          statusExportFailed: '내보내기 실패 — 브라우저가 이 이미지를 인코딩하지 못했습니다',
-          statusSpriteTooBig: '스프라이트 시트가 {w}×{h} px가 되어 모바일 브라우저의 canvas 한도(16,777,216픽셀, 한 변 16,384px)를 넘습니다. 선택한 프레임을 줄이거나 열 수를 바꾸세요.',
-          statusSpriteDone: '스프라이트 시트 생성 완료',
-          statusCopyFailed: '복사가 차단되었습니다 — 텍스트를 선택해 직접 복사하세요',
-          limitPixels: '이 GIF는 {w}×{h}, 프레임 {n}개로 {mp}백만 픽셀을 디코딩해야 합니다. 휴대폰 메모리 안에서 동작하도록 한도는 5,000만 픽셀(가로 × 세로 × 프레임 수)입니다. ffmpeg로 로컬에서 분할하세요:',
-          limitFrames: '이 GIF는 프레임이 {n}개입니다. 한도는 1,000개입니다. ffmpeg로 로컬에서 분할하세요:',
-          limitFrameSize: '이 GIF의 프레임이 너무 큽니다({w}×{h}). 모바일 브라우저의 canvas 한도는 프레임당 16,777,216픽셀, 한 변 16,384px입니다. ffmpeg로 로컬에서 분할하세요:',
-        },
-      };
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('.gs-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.innerHTML = t[key];
-      });
-      document.querySelectorAll('.gs-wrap [data-i18n-aria]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-aria');
-        if (t[key]) el.setAttribute('aria-label', t[key]);
-      });
-      document.querySelectorAll('.gs-wrap [data-i18n-alt]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-alt');
-        if (t[key]) el.setAttribute('alt', t[key]);
-      });
       function fmt(str, vars) {
         return str.replace(/\{(\w+)\}/g, function (m, k) { return vars[k] !== undefined ? String(vars[k]) : m; });
       }
@@ -862,6 +902,7 @@
       var workCanvas = null, workCtx = null, flatCanvas = null, flatCtx = null;
       var loadToken = 0, busy = false;
       var spriteBlob = null, spriteUrl = null;
+      var copyRevision = 0, copyTimer = 0, copyButton = null, copyRestoreKey = null;
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg;
@@ -961,6 +1002,7 @@
       }
 
       function hideSprite() {
+        resetCopy();
         spriteOutEl.hidden = true;
         if (spriteUrl) { URL.revokeObjectURL(spriteUrl); spriteUrl = null; }
         spriteBlob = null;
@@ -1030,6 +1072,7 @@
 
       function resetState() {
         loadToken++;
+        fileInput.value = '';
         frames = [];
         selected = [];
         W = 0; H = 0; base = 'animation';
@@ -1127,32 +1170,35 @@
         if (window.trackTool) window.trackTool(SLUG, 'decode');
       }
 
-      function frameBlob(i) {
+      function frameBlob(i, options) {
         workCtx.putImageData(new ImageData(frames[i].rgba, W, H), 0, 0);
-        if (prefs.format === 'jpg') {
+        if (options.format === 'jpg') {
           if (!flatCanvas) {
             flatCanvas = document.createElement('canvas');
             flatCanvas.width = W; flatCanvas.height = H;
             flatCtx = flatCanvas.getContext('2d');
           }
-          flatCtx.fillStyle = prefs.bg;
+          flatCtx.fillStyle = options.bg;
           flatCtx.fillRect(0, 0, W, H);
           flatCtx.drawImage(workCanvas, 0, 0);
-          return canvasToBlob(flatCanvas, 'image/jpeg', prefs.quality / 100);
+          return canvasToBlob(flatCanvas, 'image/jpeg', options.quality / 100);
         }
         return canvasToBlob(workCanvas, 'image/png');
       }
 
-      function extName() { return prefs.format === 'jpg' ? 'jpg' : 'png'; }
+      function extName(format) { return format === 'jpg' ? 'jpg' : 'png'; }
 
       async function downloadFrame(i) {
         if (busy || !frames[i]) return;
+        var token = loadToken;
+        var options = { format: prefs.format, quality: prefs.quality, bg: prefs.bg };
+        var name = frameFileName(base, i + 1, frames.length, extName(options.format));
         setBusy(true);
-        var blob = await frameBlob(i);
-        setBusy(false);
-        if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
-        downloadBlob(blob, frameFileName(base, i + 1, frames.length, extName()));
-        setStatus(fmt(t.statusFrameDone, { n: i + 1 }), 'success');
+        var blob = await frameBlob(i, options);
+        if (token === loadToken) setBusy(false);
+        if (!blob) { if (token === loadToken) setStatus(t.statusExportFailed, 'error'); return; }
+        downloadBlob(blob, name);
+        if (token === loadToken) setStatus(fmt(t.statusFrameDone, { n: i + 1 }), 'success');
         if (window.trackTool) window.trackTool(SLUG, 'frame');
       }
 
@@ -1161,14 +1207,15 @@
         var idxs = selectedIndices();
         if (!idxs.length) { setStatus(t.statusNoSelection, 'error'); return; }
         var token = loadToken;
+        var options = { format: prefs.format, quality: prefs.quality, bg: prefs.bg };
         setBusy(true);
         var files = [];
         for (var k = 0; k < idxs.length; k++) {
           setStatus(fmt(t.statusEncoding, { i: k + 1, n: idxs.length }), 'info');
-          var blob = await frameBlob(idxs[k]);
+          var blob = await frameBlob(idxs[k], options);
           if (token !== loadToken) return;
           if (!blob) { setBusy(false); setStatus(t.statusExportFailed, 'error'); return; }
-          files.push({ name: frameFileName(base, idxs[k] + 1, frames.length, extName()), data: new Uint8Array(await blob.arrayBuffer()) });
+          files.push({ name: frameFileName(base, idxs[k] + 1, frames.length, extName(options.format)), data: new Uint8Array(await blob.arrayBuffer()) });
           if (token !== loadToken) return;
         }
         var zip = zipStore(files);
@@ -1198,8 +1245,8 @@
         }
         var blob = await canvasToBlob(sheet, 'image/png');
         sheet.width = 0; sheet.height = 0;
-        setBusy(false);
         if (token !== loadToken) return;
+        setBusy(false);
         if (!blob) { setStatus(t.statusExportFailed, 'error'); return; }
         spriteBlob = blob;
         spriteUrl = URL.createObjectURL(blob);
@@ -1214,16 +1261,38 @@
         if (window.trackTool) window.trackTool(SLUG, 'sprite');
       }
 
+      function resetCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = 0;
+        if (copyButton) copyButton.textContent = t[copyRestoreKey];
+        copyButton = null;
+      }
+
       function copyText(text, btn, restoreKey) {
+        resetCopy();
+        var request = copyRevision, token = loadToken;
+        copyButton = btn;
+        copyRestoreKey = restoreKey;
+        function current() { return request === copyRevision && token === loadToken; }
+        function failed() { if (current()) setStatus(t.statusCopyFailed, 'error'); }
         function done() {
+          if (!current()) return;
           btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t[restoreKey]; }, 1500);
+          if (statusEl.textContent === t.statusCopyFailed) setStatus('', 'none');
+          copyTimer = setTimeout(function () {
+            if (!current()) return;
+            btn.textContent = t[restoreKey];
+            copyTimer = 0;
+          }, 1500);
         }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(done, function () { setStatus(t.statusCopyFailed, 'error'); });
-        } else {
-          setStatus(t.statusCopyFailed, 'error');
-        }
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            Promise.resolve(navigator.clipboard.writeText(text)).then(done, failed);
+          } else {
+            failed();
+          }
+        } catch (e) { failed(); }
       }
 
       /* ── Input: drop zone click / keyboard / drag / paste ── */
@@ -1331,6 +1400,13 @@
         dropEl.focus();
       });
 
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l' || !wrapEl.contains(document.activeElement)) return;
+        e.preventDefault();
+        resetState();
+        setStatus('', 'none');
+      });
+
       loadPrefs();
       applyPrefsToUI();
       zipBtn.textContent = fmt(t.downloadZip, { n: 0 });
@@ -1338,7 +1414,7 @@
   </script>
 
   <style is:global>
-    .gs-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+    .gs-wrap { display: flex; flex-direction: column; gap: 0.85rem; min-width: 0; min-height: 0; }
     /* Author display rules beat the UA [hidden] rule; restore it. */
     .gs-wrap [hidden] { display: none; }
 
@@ -1346,7 +1422,7 @@
       position: relative;
       border: 2px dashed var(--color-border);
       border-radius: var(--radius-md);
-      padding: 2rem 1rem;
+      padding: 1rem 0.7rem;
       text-align: center;
       cursor: pointer;
       transition: border-color var(--transition-fast), background var(--transition-fast);
@@ -1409,7 +1485,7 @@
       overflow-wrap: anywhere;
     }
 
-    .gs-workspace { display: flex; flex-direction: column; gap: 0.85rem; }
+    .gs-workspace { display: flex; flex: 1 1 0; flex-direction: column; gap: 0.6rem; min-width: 0; min-height: 0; overflow: auto; }
 
     .gs-info {
       display: flex;
@@ -1418,8 +1494,8 @@
       margin: 0;
     }
     .gs-info-item {
-      flex: 1 1 120px;
-      padding: 0.5rem 0.75rem;
+      flex: 1 1 90px;
+      padding: 0.35rem 0.5rem;
       border-radius: var(--radius-md);
       background: var(--color-bg-secondary);
       box-shadow: inset 0 0 0 1px var(--color-border-soft);
@@ -1459,7 +1535,9 @@
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
       gap: 0.6rem;
-      max-height: 560px;
+      flex: 1 1 0;
+      min-height: 140px;
+      align-content: start;
       overflow: auto;
       padding: 0.3rem;
       border-radius: var(--radius-md);
@@ -1542,41 +1620,15 @@
     .gs-cell-no { font-weight: 700; color: var(--color-text); }
     .gs-cell-dl:disabled { opacity: 0.5; cursor: default; }
 
-    .gs-panel {
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-      padding: 0.9rem 1rem;
-      border-radius: var(--radius-md);
-      background: var(--color-bg-secondary);
-      box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    }
-    .gs-panel-title {
-      margin: 0;
-      font-family: var(--font-sans);
-      font-size: 0.95rem;
-      font-weight: 760;
-      color: var(--color-text);
-    }
-    .gs-export-row,
-    .gs-sprite-row {
-      display: flex;
-      align-items: flex-end;
-      flex-wrap: wrap;
-      gap: 0.6rem 1rem;
-    }
-    .gs-field {
-      display: flex;
-      flex-direction: column;
-      gap: 0.3rem;
-    }
     .gs-select-input { width: auto; min-width: 6rem; }
     .gs-jpg-opts {
       display: flex;
       align-items: flex-end;
       flex-wrap: wrap;
       gap: 0.6rem 1rem;
-      flex: 1 1 280px;
+      flex: none;
+      flex-direction: column;
+      align-items: stretch;
     }
     .gs-quality-label {
       display: flex;
@@ -1588,8 +1640,8 @@
       color: var(--color-text-secondary);
     }
     .gs-quality-label strong { font-family: var(--font-mono); color: var(--color-text); }
-    .gs-jpg-opts input[type="range"] { flex: 1 1 160px; }
-    .gs-bg-field input[type="color"] {
+    .gs-jpg-opts input[type="range"] { width: 100%; }
+    .gs-jpg-opts input[type="color"] {
       width: 2.6rem;
       height: 2.3rem;
       padding: 0.15rem;
@@ -1620,20 +1672,65 @@
       box-shadow: inset 0 0 0 1px var(--color-border-soft);
     }
     .gs-sprite-preview img { display: block; max-width: 100%; height: auto; }
-    .gs-json { min-height: 160px; }
+    .gs-json { min-height: 0; height: 140px; resize: none; overflow: auto; flex: none; }
 
+    .gs-main { display: grid; flex: 1 1 0; grid-template-columns: minmax(270px, 300px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 0.9rem; min-width: 0; min-height: 0; }
+    .gs-rail { overflow: auto; padding: 0.1rem; }
+    .gs-result { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .gs-empty { display: flex; align-items: center; justify-content: center; flex: 1 1 0; margin: 0; padding: 1rem; color: var(--color-text-muted); border-radius: var(--radius-md); background: var(--color-bg-secondary); text-align: center; }
+    .gs-main:not(:has(#gs-workspace[hidden])) .gs-empty { display: none; }
+    .gs-main:has(#gs-workspace[hidden]) .gs-controls { display: none; }
+    .gs-main:not(:has(#gs-workspace[hidden])) .gs-start { display: none; }
+    .gs-primary { display: flex; flex-direction: column; gap: 0.45rem; }
+    .gs-label-row, .gs-action-row, .gs-format-row { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+    .gs-label-row .tool-label { margin: 0; }
+    .gs-action-row > button { flex: 1 1 auto; min-width: 0; }
+    .gs-format-row select { flex: 1 1 auto; min-width: 0; }
+    .gs-file-help { display: flex; justify-content: flex-end; margin-top: 0.3rem; }
+    .gs-status-row { position: relative; flex: none; min-height: 4.2em; font-size: 0.85rem; line-height: 1.4; }
+    #gs-status { min-height: 4.2em; line-height: 1.4; overflow-wrap: anywhere; }
+    .gs-progress { position: absolute; bottom: 0; left: 0; }
+    .gs-options { flex: none; min-width: 0; border-top: 1px solid var(--color-border-soft); }
+    .gs-options > summary { padding: 0.35rem 0; min-height: 24px; cursor: pointer; color: var(--color-text-secondary); font-size: 0.85rem; }
+    .gs-option-body { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.5rem 0 0.1rem; }
+    .gs-quality-label { flex-direction: row; }
+    .gs-sprite-out { flex: none; }
+    .gs-sprite-preview { height: 180px; }
+    .gs-limit-cmd { min-width: 0; max-width: 100%; white-space: pre; overflow: auto; overflow-wrap: normal; }
+
+    @media (max-width: 860px) {
+      .gs-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; flex: none; }
+      .gs-rail { overflow: visible; }
+      .gs-result:has(#gs-workspace[hidden]) { display: none; }
+      .gs-workspace { flex: none; overflow: visible; }
+      .gs-grid { flex: none; height: 320px; min-height: 0; }
+      .gs-primary { flex-direction: row; flex-wrap: wrap; align-items: center; }
+      .gs-primary .gs-action-row { flex: 1 1 auto; }
+      .gs-format-row { flex: 1 1 100%; }
+      .gs-status-row, #gs-status { min-height: 2.8em; }
+    }
     @media (max-width: 640px) {
-      .gs-grid {
-        grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-        max-height: 60vh;
-      }
-      .gs-info-item { flex-basis: calc(50% - 0.25rem); }
-      .gs-actions .btn-primary,
-      .gs-actions .btn-secondary,
-      .gs-actions .btn-ghost { flex: 1 1 45%; }
-      .gs-sprite-row .btn-secondary,
-      .gs-range-row .btn-secondary { flex: 1 1 100%; }
+      .gs-wrap, .gs-main { gap: 0.55rem; }
+      .gs-rail { gap: 0.4rem; }
+      .gs-drop { min-height: 44px; padding: 0.85rem 0.6rem; }
+      .gs-drop-inner p { font-size: 0.85rem; }
+      .gs-drop-inner .gs-hint { font-size: 0.75rem; }
+      .gs-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); height: 280px; }
+      .gs-thumb-box { aspect-ratio: auto; height: 72px; }
+      .gs-info { gap: 0.3rem; }
+      .gs-info-item { flex-basis: calc(33.333% - 0.3rem); padding: 0.25rem 0.4rem; }
+      .gs-info-item dt { font-size: 0.65rem; letter-spacing: 0; }
+      .gs-info-item dd { font-size: 0.78rem; margin-top: 0.1rem; }
+      .gs-select { gap: 0.3rem; }
+      .gs-select-row .btn-ghost { min-height: 24px; padding: 0.2rem 0.55rem; }
+      .gs-range-row .gs-num { min-height: 24px; height: 28px; padding: 0.1rem 0.35rem; }
+      .gs-range-row .btn-secondary { min-height: 24px; padding: 0.2rem 0.55rem; }
       .gs-num { width: 4.5rem; }
+      #gs-quality { min-height: 24px; }
+      #gs-bg { min-height: 24px; }
+      .gs-actions .btn-secondary { flex: 1 1 auto; }
+      .gs-actions { gap: 0.35rem; }
+      .gs-sprite-preview { height: 160px; }
     }
   </style>
 </div>
