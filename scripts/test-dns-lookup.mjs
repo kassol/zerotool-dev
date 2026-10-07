@@ -2,7 +2,8 @@
 //
 // Read:  src/components/tools/DnsLookupTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers, so this test cannot drift
-//        from the shipped source)
+//        from the shipped source), ToolLayout.astro (real keyboard shortcuts),
+//        src/data/tool-layouts.ts and src/content/tools/dns-lookup/*.mdx.
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -15,11 +16,15 @@
 // other SERVFAIL → unknown; real dnssec-failed.org responses of 2026-09-30); mergeAllResults (NOERROR when any type
 // answers, NXDOMAIN / SERVFAIL kept when every type returns it, all-failed becomes SERVFAIL,
 // AD only when every type validated, TC, partial errors, comments merged); 4-language STRINGS
-// have the same keys.
+// have the same keys. The page suite executes the actual client scripts with a DOM and
+// deferred fetch stubs: result copying, tab changes, failures, cancellation, request order,
+// ALL, keyboard bubbling, and v2 localization/content contracts. It never sends a request.
 //
 // Run: node scripts/test-dns-lookup.mjs
 
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import yaml from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -195,8 +200,8 @@ m = E.mergeAllResults([ok('TXT', { Status: 0, TC: true, AD: false, Answer: [] })
 eq('merge: TC propagates', m.TC, true);
 
 // ---------- STRINGS keys ----------
-const stringsMatch = source.match(/var STRINGS = (\{[\s\S]*?\n {6}\});/);
-check('STRINGS block found', !!stringsMatch);
+const stringsMatch = source.match(/const STRINGS = (\{[\s\S]*?\n\}) as const;/);
+check('frontmatter STRINGS block found', !!stringsMatch);
 if (stringsMatch) {
   const STRINGS = new Function('return ' + stringsMatch[1])();
   const enKeys = Object.keys(STRINGS.en).sort().join(',');
@@ -204,8 +209,337 @@ if (stringsMatch) {
     eq('STRINGS keys ' + lang, Object.keys(STRINGS[lang]).sort().join(','), enKeys);
   }
   check('STRINGS.en has summaryDnssecFailed', 'summaryDnssecFailed' in STRINGS.en);
-  const i18nKeys = [...source.matchAll(/data-i18n="([^"]+)"/g)].map((x) => x[1]);
-  for (const k of i18nKeys) check('data-i18n key ' + k + ' in STRINGS.en', k in STRINGS.en);
+}
+
+// ---------- real page entry points (no network) ----------
+// The shared harness does not bubble key events or execute ToolLayout's shortcuts.
+// Run both real scripts together here; only browser APIs and the DNS transport are stubs.
+const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcutScript = [...layoutSource.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)]
+  .map((match) => match[1]).find((code) => code.includes('// ── Keyboard shortcuts:'));
+check('actual ToolLayout keyboard script found', !!shortcutScript);
+const ALL_STRINGS = stringsMatch ? new Function('return ' + stringsMatch[1])() : null;
+function pageFixture(lang = 'en', options = {}) {
+  const elements = new Map();
+  const documentListeners = new Map();
+  const requests = [];
+  const clipboard = [];
+  const clipboardRequests = [];
+  const timers = new Map();
+  let timerId = 0;
+  let document;
+  const widget = element('widget');
+  function element(id) {
+    const listeners = new Map();
+    const el = { id, value: '', textContent: '', innerHTML: '', className: '', hidden: false,
+      disabled: false, dataset: {}, style: {}, attributes: {},
+      addEventListener(type, callback) {
+        if (!listeners.has(type)) listeners.set(type, []);
+        listeners.get(type).push(callback);
+      },
+      setAttribute(key, value) { this.attributes[key] = String(value); },
+      getAttribute(key) { return this.attributes[key] ?? null; },
+      removeAttribute(key) { delete this.attributes[key]; },
+      focus() { document.activeElement = this; },
+      contains(node) { return node === this || (this === widget && node?.id?.startsWith('dnsl-')); },
+      closest(selector) { return selector === '.tool-widget' || selector === '.dnsl-wrap' ? widget : null; },
+      querySelectorAll(selector) { return selector.includes('input') ? [get('dnsl-domain')] : []; },
+      select() {}, appendChild(child) { return child; }, removeChild() {},
+      dispatch(type, values = {}) {
+        const event = { type, target: this, currentTarget: this, defaultPrevented: false,
+          propagationStopped: false, preventDefault() { this.defaultPrevented = true; },
+          stopPropagation() { this.propagationStopped = true; }, ...values };
+        for (const callback of listeners.get(type) || []) callback(event);
+        if (!event.propagationStopped) {
+          event.currentTarget = document;
+          for (const callback of documentListeners.get(type) || []) callback(event);
+        }
+        return event;
+      },
+      click() { if (!this.disabled) this.dispatch('click'); },
+    };
+    el.classList = {
+      toggle(name, force) {
+        const set = new Set(el.className.split(/\s+/).filter(Boolean));
+        if (force ?? !set.has(name)) set.add(name); else set.delete(name);
+        el.className = [...set].join(' ');
+      },
+      add(name) { this.toggle(name, true); }, remove(name) { this.toggle(name, false); },
+      contains(name) { return el.className.split(/\s+/).includes(name); },
+    };
+    return el;
+  }
+  const get = (id) => {
+    if (!elements.has(id)) elements.set(id, element(id));
+    return elements.get(id);
+  };
+  for (const match of source.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {
+    const el = get(match[1]);
+    el.hidden = /\bhidden(?:\s|>|=)/.test(match[0]);
+    el.disabled = /\bdisabled(?:\s|>|=)/.test(match[0]);
+    el.className = match[0].match(/class="([^"]*)"/)?.[1] || '';
+  }
+  get('dnsl-type').value = 'A';
+  get('dnsl-resolver').value = 'cloudflare';
+  document = {
+    documentElement: { lang }, activeElement: get('dnsl-domain'), body: element('body'),
+    getElementById: get,
+    querySelector(selector) {
+      if (selector === '.tool-widget .btn-primary') return get('dnsl-lookup');
+      if (selector === '.tool-widget' || selector === '.dnsl-wrap') return widget;
+      return null;
+    },
+    querySelectorAll() { return []; },
+    createElement: element,
+    execCommand() { if (options.copyFallbackFails) throw new Error('Copy failed'); return true; },
+    addEventListener(type, callback) {
+      if (!documentListeners.has(type)) documentListeners.set(type, []);
+      documentListeners.get(type).push(callback);
+    },
+  };
+  const sandbox = { document, URL, AbortController, console,
+    t: ALL_STRINGS ? Object.fromEntries(Object.entries(ALL_STRINGS[lang]).filter(([key]) => key !== 'tips')) : null,
+    location: { pathname: '/tools/dns-lookup/' },
+    localStorage: { getItem() { return null; }, setItem() {} },
+    ztPersist: { clear() {} },
+    MutationObserver: class { observe() {} disconnect() {} },
+    navigator: { clipboard: { writeText(text) {
+      clipboard.push(text);
+      if (options.deferClipboard) return new Promise((resolve, reject) => clipboardRequests.push({ resolve, reject }));
+      return Promise.resolve();
+    } } },
+    setTimeout(callback, ms) { timers.set(++timerId, { callback, ms }); return timerId; },
+    clearTimeout(id) { timers.delete(id); },
+    fetch(url, options) {
+      return new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
+    },
+  };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  for (const match of source.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) {
+    vm.runInContext(match[1], context, { filename: 'DnsLookupTool.astro' });
+  }
+  vm.runInContext(shortcutScript, context, { filename: 'ToolLayout.astro' });
+  return {
+    get, requests, clipboard, clipboardRequests, strings: ALL_STRINGS[lang], document,
+    lookup(value = 'example.com') { get('dnsl-domain').value = value; get('dnsl-lookup').click(); },
+    async success(index = requests.length - 1, response = signedA) {
+      requests[index].resolve({ ok: true, json: async () => structuredClone(response) });
+      await new Promise(setImmediate);
+    },
+    async failure(index = requests.length - 1, error = new Error('Failed to fetch')) {
+      requests[index].reject(error);
+      await new Promise(setImmediate);
+    },
+    timeout() {
+      for (const [id, timer] of timers) {
+        if (timer.ms === 5000) { timers.delete(id); timer.callback(); }
+      }
+    },
+    key(key, modifier = 'ctrlKey', focused = 'dnsl-domain') {
+      document.activeElement = get(focused);
+      return get(focused).dispatch('keydown', { key, [modifier]: true });
+    },
+  };
+}
+
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const page = pageFixture(lang);
+  page.lookup();
+  eq(lang + ': one click sends one query', page.requests.length, 1);
+  await page.success();
+  eq(lang + ': successful result visible', page.get('dnsl-result').hidden, false);
+  page.get('dnsl-copy-json').click();
+  await new Promise(setImmediate);
+  eq(lang + ': copied JSON matches displayed response', JSON.parse(page.clipboard[0]), JSON.parse(page.get('dnsl-json-output').textContent));
+  eq(lang + ': successful copy is localized', page.get('dnsl-status').textContent, page.strings.copied);
+  for (const [button, panel] of [['dnsl-tab-raw', 'dnsl-panel-raw'], ['dnsl-tab-json', 'dnsl-panel-json'], ['dnsl-tab-records', 'dnsl-panel-records']]) {
+    page.get(button).click();
+    eq(lang + ': selected tab visible ' + panel, page.get(panel).hidden, false);
+    eq(lang + ': selected tab aria state ' + panel, page.get(button).getAttribute('aria-selected'), 'true');
+  }
+  page.lookup('bad domain');
+  eq(lang + ': invalid input does not query', page.requests.length, 1);
+  eq(lang + ': invalid input reports localized error', page.get('dnsl-status').textContent, page.strings.invalidDomain);
+  page.get('dnsl-copy-json').click();
+  await new Promise(setImmediate);
+  eq(lang + ': invalid input cannot copy previous JSON', page.clipboard.length, 1);
+  page.lookup();
+  await page.success();
+  page.lookup('other.example');
+  await page.failure();
+  check(lang + ': failed request reports localized network error', page.get('dnsl-status').textContent.startsWith(page.strings.netError));
+  page.get('dnsl-copy-json').click();
+  await new Promise(setImmediate);
+  eq(lang + ': failed request cannot copy previous JSON', page.clipboard.length, 1);
+}
+
+for (const action of ['Clear', 'Ctrl+L', 'Cmd+L']) {
+  for (const outcome of ['success', 'failure']) {
+    const page = pageFixture();
+    page.lookup();
+    if (action === 'Clear') page.get('dnsl-clear').click();
+    else page.key('L', action === 'Cmd+L' ? 'metaKey' : 'ctrlKey');
+    eq(action + ': input cleared while waiting', page.get('dnsl-domain').value, '');
+    // Deliberately deliver a response even after abort: the page must reject stale completions.
+    await page[outcome]();
+    eq(action + ': late ' + outcome + ' keeps result hidden', page.get('dnsl-result').hidden, true);
+    eq(action + ': late ' + outcome + ' keeps status empty', page.get('dnsl-status').textContent, '');
+    page.get('dnsl-copy-json').click();
+    await new Promise(setImmediate);
+    eq(action + ': late ' + outcome + ' cannot be copied', page.clipboard.length, 0);
+  }
+}
+
+for (const modifier of ['ctrlKey', 'metaKey']) {
+  const page = pageFixture();
+  page.get('dnsl-domain').value = 'example.com';
+  page.key('Enter', modifier);
+  eq(modifier + '+Enter in domain sends one query', page.requests.length, 1);
+}
+
+{
+  const page = pageFixture();
+  page.lookup('older.example');
+  page.lookup('newer.example');
+  await page.success(1, { Status: 0, Answer: [{ name: 'newer.example', type: 1, TTL: 60, data: '192.0.2.2' }] });
+  await page.success(0, { Status: 0, Answer: [{ name: 'older.example', type: 1, TTL: 60, data: '192.0.2.1' }] });
+  check('late old request cannot replace newer result', page.get('dnsl-json-output').textContent.includes('newer.example'));
+}
+
+{
+  const page = pageFixture();
+  page.get('dnsl-domain').value = 'example.com';
+  page.get('dnsl-domain').dispatch('keydown', { key: 'Enter' });
+  eq('plain Enter sends one request', page.requests.length, 1);
+  await page.success();
+  page.key('L', 'ctrlKey', 'outside-tool');
+  eq('Ctrl+L outside the tool preserves domain', page.get('dnsl-domain').value, 'example.com');
+  eq('Ctrl+L outside the tool preserves result', page.get('dnsl-result').hidden, false);
+  page.key('l', 'ctrlKey');
+  eq('Ctrl+L after success clears result', page.get('dnsl-result').hidden, true);
+  eq('Ctrl+L after success clears status', page.get('dnsl-status').textContent, '');
+  page.get('dnsl-copy-json').click();
+  await new Promise(setImmediate);
+  eq('Ctrl+L after success leaves nothing copyable', page.clipboard.length, 0);
+}
+
+{
+  const page = pageFixture();
+  page.lookup();
+  await page.success();
+  page.lookup('');
+  page.get('dnsl-copy-json').click();
+  await new Promise(setImmediate);
+  eq('empty lookup leaves nothing copyable', page.clipboard.length, 0);
+  page.lookup();
+  await page.success();
+  page.lookup('pending.example');
+  page.get('dnsl-copy-json').click();
+  await new Promise(setImmediate);
+  eq('pending lookup cannot copy the previous response', page.clipboard.length, 0);
+}
+
+{
+  const page = pageFixture();
+  page.lookup();
+  page.timeout();
+  eq('single query aborts after five seconds', page.requests[0].options.signal.aborted, true);
+  const error = new Error('Aborted');
+  error.name = 'AbortError';
+  await page.failure(0, error);
+  eq('timed out lookup reports the timeout message', page.get('dnsl-status').textContent, page.strings.timeout);
+  page.get('dnsl-copy-json').click();
+  await new Promise(setImmediate);
+  eq('timed out lookup cannot be copied', page.clipboard.length, 0);
+}
+
+{
+  const page = pageFixture();
+  page.get('dnsl-type').value = 'ALL';
+  page.get('dnsl-resolver').value = 'google';
+  page.lookup();
+  eq('ALL page entry sends exactly eight record types', page.requests.map((request) => new URL(request.url).searchParams.get('type')),
+    ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA', 'CAA']);
+  check('selected resolver is used for every ALL request', page.requests.every((request) => new URL(request.url).hostname === 'dns.google'));
+  await page.success(0);
+  for (let i = 1; i < page.requests.length; i++) await page.failure(i);
+  eq('ALL partial success shows results', page.get('dnsl-result').hidden, false);
+  page.get('dnsl-copy-json').click();
+  await new Promise(setImmediate);
+  const response = JSON.parse(page.clipboard[0]);
+  eq('ALL copies the successful DNS answers', response.Answer, signedA.Answer);
+  eq('ALL copies the seven failed types', response._partialErrors.length, 7);
+  eq('ALL record count excludes RRSIG', page.get('dnsl-summary-count').textContent, '2 records');
+  check('ALL record view includes partial error notes', page.get('dnsl-panel-records').innerHTML.includes('Failed to fetch'));
+  check('raw view preserves RRSIG records', page.get('dnsl-raw-output').textContent.includes('RRSIG'));
+}
+
+for (const action of ['Clear', 'Ctrl+L']) {
+  const page = pageFixture();
+  page.get('dnsl-type').value = 'ALL';
+  page.lookup();
+  if (action === 'Clear') page.get('dnsl-clear').click(); else page.key('l');
+  for (let i = 0; i < page.requests.length; i++) await page.success(i);
+  eq(action + ': late ALL result remains hidden', page.get('dnsl-result').hidden, true);
+  eq(action + ': late ALL result leaves status empty', page.get('dnsl-status').textContent, '');
+  page.get('dnsl-copy-json').click();
+  await new Promise(setImmediate);
+  eq(action + ': late ALL result cannot be copied', page.clipboard.length, 0);
+}
+
+// Clipboard permission prompts may settle after Clear or the shared shortcut.
+for (const action of ['Clear', 'Ctrl+L']) {
+  for (const outcome of ['success', 'fallback success', 'fallback failure']) {
+    const page = pageFixture('en', { deferClipboard: true, copyFallbackFails: outcome === 'fallback failure' });
+    page.lookup();
+    await page.success();
+    page.get('dnsl-copy-json').click();
+    if (action === 'Clear') page.get('dnsl-clear').click(); else page.key('l');
+    if (outcome === 'success') page.clipboardRequests[0].resolve();
+    else page.clipboardRequests[0].reject(new Error('Clipboard permission denied'));
+    await new Promise(setImmediate);
+    eq(action + ': late copy ' + outcome + ' keeps status empty', page.get('dnsl-status').textContent, '');
+  }
+}
+
+// ---------- v2 page layout ----------
+{
+  const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1] || '';
+  const markup = source.replace(/^---\n[\s\S]*?\n---/, '').split('<script')[0].trim();
+  check('tool root owns the layout', /^<div class="dnsl-wrap"[^>]*>/.test(markup));
+  eq('four controls have contextual help', [...markup.matchAll(/<Toggletip\s+id="([^"]+)"/g)].map((match) => match[1]),
+    ['dnsl-tip-domain', 'dnsl-tip-type', 'dnsl-tip-resolver', 'dnsl-tip-results']);
+  check('labels render at build time', !source.includes('data-i18n'));
+  for (const id of new Set([...source.matchAll(/document\.getElementById\('([^']+)'\)/g)].map((match) => match[1]))) {
+    eq('client element appears once: ' + id, [...markup.matchAll(/\bid="([^"]+)"/g)].filter((match) => match[1] === id).length, 1);
+  }
+  check('strings are in the frontmatter', /const STRINGS = \{[\s\S]*\} as const;/.test(frontmatter));
+  check('one language is selected before rendering', /const T = STRINGS\[lang\];/.test(frontmatter));
+  check('help text stays out of the inline payload', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/.test(frontmatter)
+    && /<script[^>]*define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  if (ALL_STRINGS) {
+    const tips = ['domain', 'type', 'resolver', 'results'];
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      eq(lang + ': every control has translated help', Object.keys(ALL_STRINGS[lang].tips || {}), tips);
+      check(lang + ': help text is nonempty plain text', tips.every((key) => typeof ALL_STRINGS[lang].tips?.[key] === 'string'
+        && ALL_STRINGS[lang].tips[key].trim().length > 0 && !/<\/?[a-z]/i.test(ALL_STRINGS[lang].tips[key])));
+    }
+    for (const key of tips) check('help text is rendered for ' + key, markup.includes('{TIPS.' + key + '}'));
+  }
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('DNS lookup uses analyze layout', /'dns-lookup':\s*'analyze'/.test(layouts));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/dns-lookup/' + lang + '.mdx'), 'utf8');
+    const front = mdx.match(/^---\n([\s\S]*?)\n---/)?.[1] || '';
+    const data = yaml.load(front);
+    const body = mdx.slice(front.length + 8);
+    eq(lang + ': five user steps in frontmatter', data.steps?.length, 5);
+    check(lang + ': steps fit llms-full text limits', Array.isArray(data.steps) && data.steps.every((step) => typeof step === 'string' && step.length <= 280)
+      && data.steps.reduce((sum, step) => sum + step.length, 0) <= 1200);
+    check(lang + ': no duplicate how-to section', !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/mi.test(body));
+    check(lang + ': limitations remain in the article', /^## (Limits|限制|制限事項|제한 사항)\s*$/m.test(body));
+  }
 }
 
 console.log(`${passes} passed, ${failures} failed`);

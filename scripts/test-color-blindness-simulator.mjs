@@ -4,7 +4,8 @@
 //        `engine:start` / `engine:end` markers, the STRINGS table between `strings:start` /
 //        `strings:end`, the page script), ColorPaletteGeneratorTool.astro and
 //        EyedropperColorPickerTool.astro (engine blocks, to compare the copied declarations),
-//        src/data/persistence.ts, the 4 tool page mdx files
+//        src/data/persistence.ts, tool-layouts.ts, ToolLayout.astro keyboard handler,
+//        the 4 tool page mdx files
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -38,14 +39,21 @@
 //      linear light within ±2, and differ from this tool (sRGB linear light) by up to 32 levels.
 //  11. Tool pages: every `{/* cbs-check: … */}` annotation is recomputed by the engine and the
 //      expected values appear in the page text.
+//  12. Full page lifecycle: actual script + shared shortcut, controlled file/media/PNG/clipboard
+//      completion, synchronous clear to the initial sample, stale work and preference preservation.
+//  13. v2 page layout: analyze registration, bounded result panels, preserved controls,
+//      translated tips excluded from client strings, steps and retained non-usage MDX content.
 //
 // Run: node scripts/test-color-blindness-simulator.mjs
 
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { converter, filterDeficiencyProt, filterDeficiencyDeuter, filterDeficiencyTrit, differenceEuclidean, wcagContrast } from 'culori';
 import Color from 'colorjs.io';
+import { load as loadYaml } from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -338,12 +346,13 @@ eq('downloadName fallback', E.downloadName('', 'achromatopsia', 0.6), 'image-ach
 // ── 8. STRINGS ──
 const sStart = source.indexOf('/* ── strings:start ── */'), sEnd = source.indexOf('/* ── strings:end ── */');
 const STRINGS = new Function(source.slice(sStart, sEnd).replace('const STRINGS =', 'return') )();
+const clientStrings = new Function('STRINGS', 'lang', source.slice(source.indexOf('const T = STRINGS', sEnd), source.indexOf('const TYPES =', sEnd)) + '\nreturn { TIPS, CLIENT_T };');
 {
   const langs = ['en', 'zh', 'ja', 'ko'];
   const keys = Object.keys(STRINGS.en).sort();
   for (const l of langs) eq(l + ' has the same keys as en', Object.keys(STRINGS[l]).sort(), keys);
   const ph = (s) => (String(s).match(/\{\w+\}/g) || []).sort().join(',');
-  for (const l of langs) for (const k of keys) check(l + '.' + k + ' placeholders', ph(STRINGS[l][k]) === ph(STRINGS.en[k]), STRINGS[l][k]);
+  for (const l of langs) for (const k of keys.filter(k => k !== 'tips')) check(l + '.' + k + ' placeholders', typeof STRINGS[l][k] === 'string' && ph(STRINGS[l][k]) === ph(STRINGS.en[k]), STRINGS[l][k]);
   const script = source.slice(source.indexOf('<script is:inline'), source.indexOf('</script>'));
   const used = new Set([...script.matchAll(/\bt\.([A-Za-z_]+)/g)].map((m) => m[1]));
   for (const k of used) check('script key t.' + k + ' exists', k in STRINGS.en);
@@ -431,6 +440,379 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
       }
     }
   }
+}
+
+// ── 12. Real page lifecycle ──
+// Canvas boundary retains fixture RGBA; sample vectors are no-ops, so only sample identity,
+// dimensions and removal of private pixels are checked here. Real rendering uses browser QA.
+{
+const lifecycleStart = { passes, failures };
+const src = source, component = 'ColorBlindnessSimulatorTool.astro', layoutFile = 'src/layouts/ToolLayout.astro';
+const script = src.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+const types = vm.runInNewContext(src.match(/const TYPES = (.*?) as const;/)[1]);
+const layoutSource = read(layoutFile);
+const shortcutStart = layoutSource.indexOf('// ── Keyboard shortcuts:');
+const shortcutEnd = layoutSource.indexOf('// ── Copy button visual feedback', shortcutStart);
+if (shortcutStart < 0 || shortcutEnd < shortcutStart) throw new Error('Actual shortcut block missing');
+const shortcut = layoutSource.slice(shortcutStart, shortcutEnd);
+const microtasks = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+function deferred() { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return {promise,resolve,reject}; }
+function page(lang = 'en', prefs = null, shellFirst = false) {
+  const strings = clientStrings(STRINGS, lang).CLIENT_T;
+  const defaults = vm.runInNewContext("const lang=" + JSON.stringify(lang) + ";\n" + src.slice(src.indexOf('const DEFAULT_COLORS = '), src.indexOf('\n---', src.indexOf('const DEFAULT_COLORS = '))) + '\nDEFAULT_COLORS');
+  const clipboardJobs = [], faults = {};
+  const nodes = [], ids = new Map(), timers = new Map(), imageJobs = [], mediaJobs = [], videos = [], blobs = [], downloads = [], revoked = [], urls = new Map(), tracks = [], savedPrefs = [], clearCalls = [];
+  let timerId = 0, urlId = 0;
+  const doc = { listeners: {}, activeElement: null };
+  function matches(n,s) {
+    return s.split(',').some(raw => {
+      let selector=raw.trim();
+      const attrs=[...selector.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
+      selector=selector.replace(/\[[^\]]+\]/g,'');
+      const id=/#([\w-]+)/.exec(selector), classes=[...selector.matchAll(/\.([\w-]+)/g)], tag=/^[\w-]+/.exec(selector);
+      return (!id||n.id===id[1])&&classes.every(c=>n.classList.contains(c[1]))&&(!tag||n.tagName===tag[0].toUpperCase())&&attrs.every(a=>a[2]===undefined?n.getAttribute(a[1])!==null:n.getAttribute(a[1])===a[2]);
+    });
+  }
+  class Element {
+    constructor(tag='div') { Object.assign(this,{tagName:tag.toUpperCase(),id:'',className:'',attributes:{},style:{},children:[],parentNode:null,listeners:{},value:'',type:tag==='input'?'text':'',hidden:false,disabled:false,files:[]}); }
+    get classList(){const self=this;return{contains:c=>self.className.split(/\s+/).includes(c),add(c){if(!this.contains(c))self.className+=' '+c;},remove(c){self.className=self.className.split(/\s+/).filter(v=>v!==c).join(' ');}};}
+    setAttribute(k,v){v=String(v);this.attributes[k]=v;if(['id','class','type','value'].includes(k))this[k==='class'?'className':k]=v;}
+    getAttribute(k){if(k==='type')return this.type;return this.attributes[k]??null;}
+    get textContent(){return(this.text||'')+this.children.map(c=>c.textContent).join('');}
+    set textContent(v){if(this.children.some(c=>c.contains(doc.activeElement)))doc.activeElement=doc.body;for(const c of this.children)c.parentNode=null;this.text=String(v);this.children=[];}
+    get firstChild(){return this.children[0]||null;}
+    appendChild(n){n.parentNode=this;this.children.push(n);return n;}
+    remove(){if(this.contains(doc.activeElement))doc.activeElement=doc.body;if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(n=>n!==this);this.parentNode=null;}
+    contains(n){return n===this||this.children.some(c=>c.contains(n));}
+    querySelectorAll(s){return this.children.flatMap(n=>[...(matches(n,s)?[n]:[]),...n.querySelectorAll(s)]);}
+    querySelector(s){return this.querySelectorAll(s)[0]||null;}
+    closest(s){for(let n=this;n;n=n.parentNode)if(matches(n,s))return n;return null;}
+    addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);}
+    dispatch(type,extra={}){const e={type,target:this,defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.stopped=true;},...extra};for(let n=this;n&&!e.stopped;n=n.parentNode)for(const fn of n.listeners[type]||[])fn(e);return e;}
+    click(){if(this.disabled)return;if(this.tagName==='A')downloads.push({name:this.download,blob:urls.get(this.href)});this.dispatch('click');}
+    focus(){doc.activeElement=this;}
+    select(){}
+    getBoundingClientRect(){return{left:0,top:0,width:300,height:200,bottom:200};}
+  }
+  class Canvas extends Element {
+    constructor(){super('canvas');this.width=1;this.height=1;this.pixel=[0,0,0,255];this.pixels=null;this.context={
+      drawImage:source=>{if(faults.draw){faults.draw=false;throw new Error('fixture draw');}this.pixel=source.pixel||[0,0,0,255];this.pixels=source.pixels&&new Uint8ClampedArray(source.pixels);},
+      getImageData:(x,y,w,h)=>{const a=new Uint8ClampedArray(w*h*4);if(this.pixels?.length===a.length)a.set(this.pixels);else for(let i=0;i<a.length;i+=4)a.set(this.pixel,i);return{data:a,width:w,height:h};},
+      putImageData:data=>{this.pixels=new Uint8ClampedArray(data.data);},
+      getContextAttributes:()=>({colorSpace:'srgb'}),
+      fillRect(){},beginPath(){},roundRect(){},rect(){},fill(){},moveTo(){},lineTo(){},stroke(){},arc(){},
+      createLinearGradient:()=>({addColorStop(){}}),
+    };}
+    getContext(){return this.context;}
+    toBlob(callback,type){if(faults.blob){faults.blob=false;throw new Error('fixture toBlob');}const data=this.context.getImageData(0,0,this.width,this.height).data;blobs.push({callback,blob:{type,width:this.width,height:this.height,data:new Uint8ClampedArray(data)}});}
+  }
+  const body = new Element('body'), widget = new Element('div');widget.className='tool-widget';body.appendChild(widget);
+  let markup=src.slice(src.indexOf('\n---',4)+4,src.indexOf('<script'));
+  markup=markup.replace(/\{TYPES\.map\(\(t\) => \(([\s\S]*?)\)\)\}/g,(_,template)=>types.map(type=>template.replace(/data-type=\{t\}/g,'data-type="'+type+'"').replace(/id=\{`cbs-canvas-\$\{t\}`\}/g,'id="cbs-canvas-'+type+'"')).join(''));
+  const stack=[widget], voidTags=new Set(['input','br','hr','img','meta','link']);
+  for(const match of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>/g)){
+    const tag=match[1];if(match[0].startsWith('</')){if(stack.at(-1)?.tagName===tag.toUpperCase())stack.pop();continue;}
+    const attrs=match[2],n=tag==='canvas'?new Canvas():new Element(tag);
+    for(const a of attrs.matchAll(/([\w-]+)="([^"]*)"/g))n.setAttribute(a[1],a[2]);
+    n.hidden=/\bhidden(?=\s|\/|$)/.test(attrs);n.disabled=/\bdisabled(?=\s|\/|$)/.test(attrs);
+    stack.at(-1).appendChild(n);nodes.push(n);if(n.id)ids.set(n.id,n);if(!voidTags.has(tag)&&!attrs.endsWith('/'))stack.push(n);
+  }
+  const get=id=>{if(!ids.has(id))throw new Error('Unknown actual element '+id);return ids.get(id);};
+  get('cbs-colors').value=defaults;
+  function newElement(tag){if(tag==='canvas')return new Canvas();const n=new Element(tag);if(tag==='video'){n.videoWidth=4;n.videoHeight=2;n.pixel=[180,180,180,255];n.play=()=>{if(faults.play){faults.play=false;return Promise.reject(new Error('fixture play rejected'));}return Promise.resolve();};videos.push(n);}return n;}
+  Object.assign(doc,{body,getElementById:get,createElement:newElement,
+    querySelector:s=>s==='.tool-widget'?widget:s==='.tool-widget .btn-primary'?widget.querySelector('.btn-primary'):widget.querySelector(s),
+    addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);},
+    dispatch(type,extra={}){const e={type,target:doc.activeElement,defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},...extra};for(const fn of this.listeners[type]||[])fn(e);return e;},execCommand:()=>false});
+  class ControlledImage {set src(url){this.url=url;imageJobs.push({image:this,file:urls.get(url)});}}
+  const sandbox={document:doc,console,t:strings,Image:ControlledImage,ImageData:class{constructor(data,width,height){Object.assign(this,{data,width,height});}},Uint8ClampedArray,Uint8Array,ArrayBuffer,Blob,
+    navigator:{mediaDevices:{getDisplayMedia(options){const job=deferred();job.options=options;mediaJobs.push(job);return job.promise;}},clipboard:{writeText(text){const job=deferred();job.text=text;clipboardJobs.push(job);return job.promise;}}},
+    URL:{createObjectURL(value){const url='blob:fixture-'+(++urlId);urls.set(url,value);return url;},revokeObjectURL(url){revoked.push(url);}},
+    setTimeout(fn,ms=0){const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),
+    requestAnimationFrame(fn){const id=++timerId;timers.set(id,{fn,ms:0});return id;},cancelAnimationFrame:id=>timers.delete(id),
+    innerHeight:900,scrollBy(){},trackTool(...args){tracks.push(args);},ztPersist:{load:()=>prefs,save:(slug,value)=>savedPrefs.push({slug,value}),clear:slug=>clearCalls.push(slug)},_slug:'color-blindness-simulator',
+  };sandbox.window=sandbox;
+  const context=vm.createContext(sandbox);
+  if(shellFirst)vm.runInContext(shortcut,context,{filename:layoutFile});
+  vm.runInContext(script,context,{filename:component,timeout:10000});
+  if(!shellFirst)vm.runInContext(shortcut,context,{filename:layoutFile});
+  function flushZeros(){let count=0;while([...timers.values()].some(t=>t.ms===0)){if(++count>30)throw new Error('Unexpected timer loop');for(const[id,t]of[...timers])if(t.ms===0){timers.delete(id);t.fn();}}}
+  function startFile(name){get('cbs-file').files=[{name,type:'image/png'}];get('cbs-file').dispatch('change');return imageJobs.at(-1);}
+  function releaseFile(job,{width=3,height=2,pixel=[72,72,72,255],error=false}={}){if(error){job.image.onerror();return;}Object.assign(job.image,{naturalWidth:width,naturalHeight:height,pixel});job.image.onload();}
+  function clear(focus='cbs-colors',mod='ctrlKey'){get(focus).focus();return doc.dispatch('keydown',{[mod]:true,key:'l'});}
+  function flushAll(){for(const[id,t]of[...timers]){timers.delete(id);t.fn();}flushZeros();}
+  function colors(value='#FF0000\n#00FF00'){get('cbs-tab-colors').click();get('cbs-colors').value=value;get('cbs-colors').dispatch('input');}
+  function snapshot(){return{status:get('cbs-status').textContent,info:get('cbs-imginfo').textContent,infoHidden:get('cbs-imginfo').hidden,imagePanelHidden:get('cbs-image-panel').hidden,colorsPanelHidden:get('cbs-colors-panel').hidden,colors:get('cbs-colors').value,tableHidden:get('cbs-table-wrap').hidden,tableChildren:get('cbs-table').children.length,gridHidden:get('cbs-grid').hidden,canvasWidth:get('cbs-canvas-original').width,canvasPixel:[...(get('cbs-canvas-original').pixels?.slice(0,4)||[])]};}
+  function download(type='achromatopsia'){const b=get('cbs-wrap').querySelectorAll('.cbs-dl').find(b=>b.getAttribute('data-type')===type);if(!b)throw new Error('Actual download button absent');b.click();}
+  function releaseBlob(ok=true){const job=blobs.shift();if(!job)throw new Error('No pending toBlob');job.callback(ok?job.blob:null);return job.blob;}
+  return{get,doc,widget,context,clipboardJobs,faults,flushAll,mediaJobs,videos,imageJobs,blobs,downloads,revoked,tracks,savedPrefs,clearCalls,flushZeros,startFile,releaseFile,clear,colors,snapshot,download,releaseBlob};
+}
+async function scenario(name, fn) {
+  try { await fn(); } catch (error) { check(name + ' completes without harness error', false, String(error.stack || error)); }
+}
+function checkSnapshot(name, p, expected) { eq(name, p.snapshot(), expected); }
+function buttonsReady(p) { return p.get('cbs-wrap').querySelectorAll('.cbs-dl').every(b => !b.disabled); }
+function prefsOf(p) { return { severity: p.get('cbs-severity').value, compareType: p.get('cbs-compare-type').value, modes: p.get('cbs-wrap').querySelectorAll('.cbs-tab').map(b => b.getAttribute('aria-pressed')), views: p.get('cbs-wrap').querySelectorAll('.cbs-seg-btn').map(b => b.getAttribute('aria-pressed')) }; }
+function streamFixture() { const tracks = [{ stopped: 0, stop() { this.stopped++; } }, { stopped: 0, stop() { this.stopped++; } }]; return { stream: { getTracks: () => tracks }, tracks }; }
+async function startCapture(p) { const n = p.mediaJobs.length; p.get('cbs-capture').click(); await microtasks(); return p.mediaJobs[n]; }
+async function releaseStream(p, job, fixture) { const n = p.videos.length; job.resolve(fixture.stream); await microtasks(); return p.videos[n]; }
+function clearImage(p) { p.clear('cbs-open'); }
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, true]) await scenario(lang + ' synchronous clear order ' + shellFirst, async () => {
+  const p = page(lang, null, shellFirst), initial = p.snapshot();
+  check(lang + ' startup sample visible', initial.canvasWidth === 640 && initial.infoHidden && initial.status === '' && !initial.gridHidden);
+  const first = p.startFile('private.png'); p.releaseFile(first, { pixel: [72,72,72,255] });
+  const preferences = prefsOf(p), event = p.clear('cbs-open', shellFirst ? 'metaKey' : 'ctrlKey');
+  const cleared = p.snapshot();
+  check(lang + ' shortcut prevented at shared handler', event.defaultPrevented);
+  check(lang + ' user image synchronously replaced with initial sample', cleared.canvasWidth === initial.canvasWidth && JSON.stringify(cleared.canvasPixel) === JSON.stringify(initial.canvasPixel) && cleared.info === initial.info && cleared.infoHidden && cleared.status === '');
+  eq(lang + ' preferences unchanged by clear', prefsOf(p), preferences);
+  eq(lang + ' selected file input cleared', p.get('cbs-file').value, '');
+  check(lang + ' previous image object URL released', p.revoked.includes(first.image.url));
+  eq(lang + ' shared persistence clear preserved', p.clearCalls, ['color-blindness-simulator']);
+  p.download(); p.flushZeros(); p.releaseBlob();
+  eq(lang + ' clear permits only new sample download name', p.downloads.at(-1).name, STRINGS[lang].sampleName + '-achromatopsia.png');
+  eq(lang + ' sample download dimensions', [p.downloads.at(-1).blob.width, p.downloads.at(-1).blob.height], [960,600]);
+  check(lang + ' sample export excludes private pixels', p.downloads.at(-1).blob.data[0] !== 72);
+  p.releaseFile(p.startFile('private-again.png')); p.colors();
+  check(lang + ' real palette engine creates table', !p.snapshot().tableHidden && p.snapshot().tableChildren === 2);
+  p.clear('cbs-colors');
+  check(lang + ' palette clears synchronously before timers', p.snapshot().colors === '' && p.snapshot().tableHidden && p.snapshot().tableChildren === 0 && p.snapshot().status === STRINGS[lang].colorsEmpty);
+  p.get('cbs-tab-image').click();
+  check(lang + ' returning from cleared colors shows sample', p.snapshot().infoHidden && p.snapshot().info === initial.info && p.snapshot().canvasWidth === initial.canvasWidth);
+});
+await scenario('stored preferences and outside focus', async () => {
+  const p = page('en', { mode:'image', view:'compare', compareType:'tritanomaly', severity:0.3 });
+  p.releaseFile(p.startFile('private.png')); const preferences = prefsOf(p);
+  p.clear('cbs-open'); eq('stored preference values survive clear', prefsOf(p), preferences);
+  eq('only existing preference fields are saved', p.savedPrefs, []);
+  p.colors(); const before = p.snapshot(); p.doc.activeElement = p.doc.body;
+  p.doc.dispatch('keydown', { ctrlKey:true, key:'l' }); p.flushZeros(); checkSnapshot('outside focus leaves palette/status unchanged', p, before);
+});
+for (const action of ['file', 'sample', 'clear', 'invalid', 'colors']) for (const error of [false, true]) await scenario('old file ' + action + ' ' + error, async () => {
+  const p = page(), old = p.startFile('old.png');
+  if(action === 'file') p.releaseFile(p.startFile('new.png'), { pixel:[110,110,110,255] });
+  if(action === 'sample') p.get('cbs-sample').click();
+  if(action === 'clear') clearImage(p);
+  if(action === 'invalid') { p.get('cbs-file').files = [{name:'bad.txt',type:'text/plain'}]; p.get('cbs-file').dispatch('change'); }
+  if(action === 'colors') { p.colors(); p.clear(); }
+  const before = p.snapshot(); p.releaseFile(old, { error, pixel:[30,30,30,255] });
+  checkSnapshot('old file completion cannot overwrite ' + action + ' error=' + error, p, before);
+  check('obsolete object URL released ' + action + ' error=' + error, p.revoked.includes(old.image.url));
+  p.get('cbs-tab-image').click(); p.releaseFile(p.startFile('recovery.png'));
+  check('file recovery after ' + action + ' error=' + error, p.snapshot().info.startsWith('recovery.png'));
+});
+for (const phase of ['permission', 'loadeddata']) for (const action of ['clear', 'sample', 'file', 'colors']) await scenario('capture cancel ' + phase + ' ' + action, async () => {
+  const p = page(), job = await startCapture(p), fixture = streamFixture();
+  let video, lateFrame;
+  if(phase === 'loadeddata') { video = await releaseStream(p, job, fixture); lateFrame = video.onloadeddata; }
+  if(action === 'clear') clearImage(p);
+  if(action === 'sample') p.get('cbs-sample').click();
+  if(action === 'file') p.releaseFile(p.startFile('new.png'));
+  if(action === 'colors') { p.colors(); p.clear(); }
+  const before = p.snapshot();
+  check('cancelled capture button immediately restored ' + phase + ' ' + action, !p.get('cbs-capture').disabled);
+  if(phase === 'loadeddata') eq('existing tracks stop before frame event ' + action, fixture.tracks.map(t=>t.stopped), [1,1]);
+  if(phase === 'permission') { video = await releaseStream(p, job, fixture); if(video?.onloadeddata) video.onloadeddata(); }
+  else lateFrame();
+  await microtasks();
+  checkSnapshot('late capture preserves newer state ' + phase + ' ' + action, p, before);
+  eq('every stale capture track stopped once ' + phase + ' ' + action, fixture.tracks.map(t=>t.stopped), [1,1]);
+  check('capture button restored after settlement ' + phase + ' ' + action, !p.get('cbs-capture').disabled);
+});
+for (const reject of [false, true]) await scenario('old capture cannot unlock newer capture ' + reject, async () => {
+  const p = page(), old = await startCapture(p); clearImage(p);
+  const fresh = await startCapture(p);
+  check('new capture can start after cancel', !!fresh);
+  if(!fresh) return;
+  const before = p.snapshot(), stale = streamFixture();
+  if(reject) old.reject(Object.assign(new Error('old denied'), {name:'NotAllowedError'}));
+  else { const v = await releaseStream(p, old, stale); if(v?.onloadeddata) v.onloadeddata(); }
+  await microtasks(); check('old settlement leaves new button disabled', p.get('cbs-capture').disabled); checkSnapshot('old settlement leaves new status intact', p, before);
+  const current = streamFixture(), video = await releaseStream(p, fresh, current); video.onloadeddata(); await microtasks();
+  check('new capture supplies its frame', p.snapshot().info.startsWith(STRINGS.en.captureName) && p.snapshot().canvasWidth === 4);
+  eq('new capture stops all tracks', current.tracks.map(t=>t.stopped), [1,1]);
+  check('new capture releases own button', !p.get('cbs-capture').disabled);
+});
+for (const phase of ['permission', 'video']) await scenario('current capture error and recovery ' + phase, async () => {
+  const p = page(), job = await startCapture(p), f = streamFixture();
+  if(phase === 'permission') job.reject(Object.assign(new Error('denied'), {name:'NotAllowedError'}));
+  else { const video = await releaseStream(p, job, f); video.onerror(); }
+  await microtasks(); check('current capture error visible ' + phase, !!p.snapshot().status); check('capture error releases button ' + phase, !p.get('cbs-capture').disabled);
+  if(phase === 'video') eq('failed video stops tracks', f.tracks.map(t=>t.stopped), [1,1]);
+  const next = await startCapture(p), ok = streamFixture(), video = await releaseStream(p,next,ok); video.onloadeddata(); await microtasks();
+  check('capture recovers after ' + phase, p.snapshot().canvasWidth === 4 && !p.get('cbs-capture').disabled);
+});
+for (const large of [false,true]) for (const action of ['file','sample','clear','colors']) await scenario('PNG snapshot ' + large + ' ' + action, async () => {
+  const p = page(), width = large ? 600 : 3, height = large ? 500 : 2;
+  p.releaseFile(p.startFile('old.png'), {width,height,pixel:[72,72,72,255]}); p.download();
+  check('PNG starts with buttons disabled ' + large + ' ' + action, !buttonsReady(p));
+  check('PNG async boundary reached ' + large + ' ' + action, large ? p.blobs.length === 0 : p.blobs.length === 1);
+  if(action === 'file') p.releaseFile(p.startFile('new.png'), {pixel:[150,150,150,255]});
+  if(action === 'sample') p.get('cbs-sample').click();
+  if(action === 'clear') clearImage(p);
+  if(action === 'colors') { p.colors(); p.clear(); }
+  const before = p.snapshot(); p.flushZeros(); checkSnapshot('late slice progress suppressed ' + large + ' ' + action, p, before); p.releaseBlob();
+  const result = p.downloads.at(-1);
+  eq('click-time PNG name and dimensions ' + large + ' ' + action, [result.name,result.blob.width,result.blob.height], ['old-achromatopsia.png',width,height]);
+  check('click-time PNG pixels ' + large + ' ' + action, [...result.blob.data].every((v,i)=>v===(i%4===3?255:72)));
+  checkSnapshot('late PNG success leaves newer state ' + large + ' ' + action, p, before);
+  check('PNG completion releases buttons ' + large + ' ' + action, buttonsReady(p));
+  p.get('cbs-tab-image').click(); p.download(); p.flushZeros(); p.releaseBlob(); eq('PNG busy released for next request ' + large + ' ' + action, p.downloads.length, 2);
+});
+for (const stale of [false,true]) await scenario('null PNG and recovery ' + stale, async () => {
+  const p = page(); p.releaseFile(p.startFile('tiny.png')); p.download(); if(stale) clearImage(p); const before = p.snapshot(); p.releaseBlob(false);
+  eq('null blob does not download ' + stale, p.downloads.length, 0); check('null blob releases buttons ' + stale, buttonsReady(p));
+  if(stale) checkSnapshot('old PNG error is silent',p,before); else check('current PNG error is visible', p.get('cbs-status').className.includes('is-error'));
+  p.download(); p.flushZeros(); p.releaseBlob(); eq('download recovers from null blob ' + stale,p.downloads.length,1);
+});
+for (const fault of ['draw','blob']) await scenario('PNG synchronous exception ' + fault, async () => {
+  const p = page(); p.releaseFile(p.startFile('tiny.png')); p.faults[fault] = true; p.download();
+  check('PNG exception reports error ' + fault,p.get('cbs-status').className.includes('is-error')); check('PNG exception releases buttons ' + fault,buttonsReady(p));
+  p.download();p.releaseBlob();eq('PNG exception recovery ' + fault,p.downloads.length,1);
+});
+for (const reject of [false,true]) for (const action of ['clear','edit']) await scenario('late copy ' + reject + ' ' + action,async()=>{
+  const p=page();p.colors();p.get('cbs-table').querySelector('.cbs-swatch').click();const job=p.clipboardJobs[0];
+  if(action==='clear')p.clear();else p.colors('#000000\n#FFFFFF');const before=p.snapshot();
+  if(reject)job.reject(new Error('clipboard denied'));else job.resolve();await microtasks();
+  checkSnapshot('copy settlement preserves newer palette '+reject+' '+action,p,before);
+});
+for (const reject of [false,true]) await scenario('current copy and recovery '+reject,async()=>{
+  const p=page();p.colors();const swatch=p.get('cbs-table').querySelector('.cbs-swatch');swatch.click();
+  eq('current copy sends displayed color '+reject,p.clipboardJobs[0].text,'#FF0000');
+  if(reject)p.clipboardJobs[0].reject(new Error('clipboard denied'));else p.clipboardJobs[0].resolve();await microtasks();
+  eq('current copy reports its own result '+reject,p.snapshot().status,reject?STRINGS.en.copyFailed:STRINGS.en.copied.replace('{value}','#FF0000'));
+  swatch.click();p.clipboardJobs[1].resolve();await microtasks();
+  eq('copy recovers after settlement '+reject,p.snapshot().status,STRINGS.en.copied.replace('{value}','#FF0000'));
+});
+await scenario('queued severity and palette work cleared',async()=>{
+  const p=page();p.colors();p.get('cbs-severity').value='3';p.get('cbs-severity').dispatch('input');p.clear();const before=p.snapshot();p.flushAll();await microtasks();
+  checkSnapshot('queued jobs do not restore cleared palette',p,before);check('cancelled palette analytics do not run',!p.tracks.some(t=>t[1]==='palette'));
+});
+
+// Review regressions: reject play without video events, preserve newer severity status,
+// and keep shared shortcut focus after removing a dynamically focused swatch.
+await scenario('play rejection without loadeddata or error',async()=>{
+  const p=page();p.faults.play=true;const job=await startCapture(p),f=streamFixture();await releaseStream(p,job,f);await microtasks();
+  check('play rejection reports capture failure',p.snapshot().status.includes('fixture play rejected'));
+  eq('play rejection stops every track without a video event',f.tracks.map(t=>t.stopped),[1,1]);
+  check('play rejection restores capture button without a video event',!p.get('cbs-capture').disabled);
+});
+for(const reject of [false,true]) await scenario('severity supersedes pending copy '+reject,async()=>{
+  const p=page();p.colors();p.get('cbs-table').querySelector('.cbs-swatch').click();const job=p.clipboardJobs[0];
+  p.get('cbs-severity').value='3';p.get('cbs-severity').dispatch('input');p.flushZeros();const before=p.snapshot();
+  if(reject)job.reject(new Error('late copy'));else job.resolve();await microtasks();
+  checkSnapshot('old copy cannot overwrite severity summary '+reject,p,before);
+});
+for(const large of [false,true]) for(const ok of [false,true]) await scenario('severity supersedes PNG status '+large+' '+ok,async()=>{
+  const p=page(),rgb=[120,70,200];p.releaseFile(p.startFile('color.png'),{width:large?600:3,height:large?500:2,pixel:[...rgb,255]});p.download('protanomaly');
+  p.get('cbs-severity').value='3';p.get('cbs-severity').dispatch('input');const before=p.snapshot();p.flushZeros();
+  checkSnapshot('old PNG progress does not replace severity status '+large+' '+ok,p,before);p.releaseBlob(ok);
+  checkSnapshot('old PNG settlement does not replace severity status '+large+' '+ok,p,before);
+  check('severity change still lets PNG settle buttons '+large+' '+ok,buttonsReady(p));
+  if(ok){const result=p.downloads.at(-1);eq('PNG filename retains click-time severity '+large,result.name,'color-protanomaly-0.6.png');eq('PNG pixels retain click-time severity '+large,[...result.blob.data.slice(0,4)],[...E.simulateRgb(rgb,E.cvdMatrix('protanomaly',0.6)),255]);}
+  else eq('failed PNG still emits no file '+large,p.downloads.length,0);
+});
+for(const kind of ['file','capture']) await scenario('severity keeps pending input '+kind,async()=>{
+  const p=page(),job=kind==='file'?p.startFile('pending.png'):await startCapture(p);
+  p.get('cbs-severity').value='3';p.get('cbs-severity').dispatch('input');p.flushZeros();
+  if(kind==='file')p.releaseFile(job);else{const f=streamFixture(),video=await releaseStream(p,job,f);check('severity keeps capture frame request',!!video);if(video?.onloadeddata)video.onloadeddata();await microtasks();}
+  check('severity does not discard current '+kind,p.snapshot().info.startsWith(kind==='file'?'pending.png':STRINGS.en.captureName)&&!p.snapshot().infoHidden);
+});
+for(const shellFirst of [false,true]) await scenario('CtrlL focused swatch order '+shellFirst,async()=>{
+  const p=page('en',null,shellFirst);p.colors();const swatch=p.get('cbs-table').querySelector('.cbs-swatch');swatch.focus();
+  const event=p.doc.dispatch('keydown',{ctrlKey:true,key:'l'});
+  check('focused swatch CtrlL prevents browser location shortcut '+shellFirst,event.defaultPrevented);
+  eq('focused swatch still reaches shared clear '+shellFirst,p.clearCalls,['color-blindness-simulator']);
+  check('focused swatch moves focus to color input '+shellFirst,p.doc.activeElement===p.get('cbs-colors'));
+  check('focused swatch clears table synchronously '+shellFirst,p.snapshot().tableHidden&&p.snapshot().tableChildren===0&&p.snapshot().colors==='');
+});
+
+console.log(`Page lifecycle: ${passes-lifecycleStart.passes} passed, ${failures-lifecycleStart.failures} failed`);
+}
+
+// ── v2 page layout ──
+{
+  const layoutStart = { passes, failures };
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script is:inline')).trimStart();
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css = source.slice(source.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/<\/?style\b[^>]*>/g, '');
+  const rules = (selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(m => m[1].split(',').some(s => s.trim() === selector)).map(m => m[2]);
+  const property = (body, name, value) => new RegExp('(?:^|;)\\s*' + name + '\\s*:\\s*' + value + '\\s*(?:;|$)').test(body);
+  check('analyze layout registered', /'color-blindness-simulator':\s*'analyze'/.test(read('src/data/tool-layouts.ts')));
+  check('tool root is the direct first element', /^<div class="cbs-wrap" id="cbs-wrap">/.test(template));
+  check('root flex column can shrink with its available height', rules('.cbs-wrap').some(r => property(r, 'display', 'flex') && property(r, 'flex-direction', 'column') && property(r, 'min-height', '0')));
+  for (const selector of ['.cbs-grid', '.cbs-compare', '.cbs-table-wrap']) {
+    check(selector + ' has zero-basis flex and internal scrolling', rules(selector).some(r => property(r, 'flex', '1\\s+1\\s+0') && property(r, 'overflow', 'auto') && property(r, 'min-width', '0')));
+    check(selector + ' has a bounded mobile height', rules(selector).some(r => property(r, 'flex', 'none') && property(r, 'height', '[1-9][\\d.]*(?:rem|px)') && property(r, 'min-height', '0')));
+    check(selector + ' honors hidden mode', rules(selector + '[hidden]').some(r => property(r, 'display', 'none')));
+  }
+  check('860px stacks results and 640px adjusts phone controls', /@media\s*\(max-width:\s*860px\)/.test(css) && /@media\s*\(max-width:\s*640px\)/.test(css));
+  check('phone comparison stacks original and simulation', /@media\s*\(max-width:\s*640px\)[\s\S]*?\.cbs-compare\s*\{[^}]*grid-template-columns:\s*1fr/.test(css));
+  check('status reserves height even when empty', rules('.cbs-status').some(r => property(r, 'height', '[1-9][\\d.]*(?:em|rem|px)') && property(r, 'flex', 'none') && property(r, 'overflow', 'auto')) && !/\.cbs-status:empty/.test(css));
+  check('color input stays short independently of its contents', rules('.cbs-colors').some(r => property(r, 'height', '[1-9][\\d.]*(?:rem|px)') && property(r, 'resize', 'none')));
+  check('empty desktop colors mode gives its input the available height', rules('.cbs-wrap:has(#cbs-table-wrap[hidden]) #cbs-colors-panel').some(r => property(r, 'flex', '1')) && rules('.cbs-wrap:has(#cbs-table-wrap[hidden]) .cbs-colors').some(r => property(r, 'flex', '1') && property(r, 'height', 'auto')));
+  check('controls and status precede full-width results', ['cbs-image-panel', 'cbs-colors-panel', 'cbs-viewctl', 'cbs-status'].every(id => template.indexOf('id="' + id + '"') >= 0 && template.indexOf('id="' + id + '"') < template.indexOf('id="cbs-grid"')));
+  check('image notes stay after results and scroll within reserved space', template.indexOf('id="cbs-imginfo"') > template.indexOf('id="cbs-table-wrap"') && rules('.cbs-image-note').some(r => property(r, 'height', '[1-9][\\d.]*(?:em|rem|px)') && property(r, 'overflow', 'auto')));
+  check('image note is hidden in colors mode', /\.cbs-wrap:has\(#cbs-image-panel\[hidden\]\)\s*>\s*\.cbs-image-note\s*\{\s*display:\s*none/.test(css));
+  check('both mode and result-view switches use shared segmented controls', /class="cbs-tabs zt-segmented"/.test(template) && /class="cbs-seg zt-segmented"/.test(template));
+  // Button identities read from e6748489, before the layout migration. The mapped PNG button
+  // still expands once for each of the eight engine types; no render button is added or removed.
+  const buttons = [...template.matchAll(/<button\b([^>]*)>/g)].map(m => m[1]);
+  const buttonIdentity = a => /\bid="([^"]+)"/.exec(a)?.[1] || /\bdata-view="([^"]+)"/.exec(a)?.[1] || (/\bdata-type=\{t\}/.test(a) ? 'PNG per type' : 'unknown');
+  eq('all previous action buttons remain', buttons.map(buttonIdentity).sort(), ['cbs-tab-image', 'cbs-tab-colors', 'cbs-open', 'cbs-capture', 'cbs-sample', 'all', 'compare', 'PNG per type', 'cbs-compare-dl'].sort());
+  check('all action buttons retain explicit button type', buttons.every(a => /\btype="button"/.test(a)));
+  eq('PNG card mapping retains eight types', vm.runInNewContext(source.match(/const TYPES = (.*?) as const;/)[1]), E.CVD_TYPES);
+  check('PNG controls still expand inside mapped result cards', /\{TYPES\.map\(\(t\) => \([\s\S]*?<button[^>]*data-type=\{t\}[\s\S]*?\)\)\}/.test(template));
+  check('file import remains available', /<input id="cbs-file" type="file" accept="image\/\*,\.svg,\.avif,\.webp"/.test(template));
+
+  const tipKeys = ['mode', 'open', 'capture', 'sample', 'severity', 'view', 'compare', 'download', 'colors'].sort();
+  const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  eq('nine distinct control tips', tips.map(m => /id="cbs-tip-([^"]+)"/.exec(m[1])?.[1]).sort(), tipKeys);
+  for (const tip of tips) {
+    const key = /id="cbs-tip-([^"]+)"/.exec(tip[1])?.[1];
+    check(key + ' tip has localized label and content', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2].includes('{TIPS.' + key + '}'));
+  }
+  check('only client strings enter inline script', /<script is:inline define:vars=\{\{ t: CLIENT_T \}\}>/.test(source) && !/\bt\.tips\b|\bTIPS\b/.test(script));
+  check('labels render at build time without runtime i18n rewriting', !source.includes('data-i18n'));
+  const placeholders = text => (text.match(/\{\w+\}/g) || []).sort();
+  function checkTipTree(lang, value, reference, path = 'tips') {
+    if (reference && typeof reference === 'object') {
+      check(lang + '.' + path + ' is an object', value !== null && typeof value === 'object' && !Array.isArray(value));
+      eq(lang + '.' + path + ' keys match en', Object.keys(value || {}).sort(), Object.keys(reference).sort());
+      for (const key of Object.keys(reference)) checkTipTree(lang, value?.[key], reference[key], path + '.' + key);
+    } else {
+      check(lang + '.' + path + ' is nonempty text', typeof value === 'string' && value.trim().length > 0);
+      eq(lang + '.' + path + ' placeholders match en', placeholders(String(value)), placeholders(reference));
+    }
+  }
+  // e6748489 snapshots: frontmatter without steps, and the complete body after removing only
+  // its localized How to Use section. Keep FAQ, SEO, Limits, examples and cbs-check annotations.
+  const retained = {
+    en: ['f335d0678d73e840', 'e64ed6939c7a26ce'],
+    zh: ['43f9b055b2143731', '3acc74e07943eb31'],
+    ja: ['b62c8a214b840ecb', 'aea1e91bd77d49e2'],
+    ko: ['76f7e8dd15702e06', 'e8b6f000b0091c1b'],
+  };
+  const hash = text => createHash('sha256').update(text.trim()).digest('hex').slice(0, 16);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' tip keys cover all controls', Object.keys(STRINGS[lang].tips).sort(), tipKeys);
+    checkTipTree(lang, STRINGS[lang].tips, STRINGS.en.tips);
+    const { TIPS, CLIENT_T } = clientStrings(STRINGS, lang);
+    eq(lang + ' frontmatter keeps tips for HTML', TIPS, STRINGS[lang].tips);
+    eq(lang + ' client keys exclude tips only', Object.keys(CLIENT_T).sort(), Object.keys(STRINGS[lang]).filter(k => k !== 'tips').sort());
+    check(lang + ' serialized client has no tip text', !('tips' in CLIENT_T) && Object.values(TIPS).every(tip => !JSON.stringify(CLIENT_T).includes(JSON.stringify(tip))));
+    const mdx = read('src/content/tools/color-blindness-simulator/' + lang + '.mdx');
+    const [, metadata, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx);
+    const { steps } = loadYaml(metadata);
+    check(lang + ' has one to eight plain-text steps', Array.isArray(steps) && steps.length > 0 && steps.length <= 8 && steps.every(s => typeof s === 'string' && s.trim() && !/<[^>]+>/.test(s)));
+    check(lang + ' steps fit per-step and total limits', Array.isArray(steps) && steps.every(s => s.length <= 280) && steps.join('').length <= 1200);
+    check(lang + ' usage heading removed', !/<h2>(?:How to Use|操作步骤|使い方|사용 방법)<\/h2>/.test(body));
+    check(lang + ' Limits retained', /<h2>(?:Limits|限制|制限|제한 사항)<\/h2>/.test(body));
+    eq(lang + ' SEO and FAQ unchanged from before layout', hash(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang][0]);
+    eq(lang + ' all non-usage body content unchanged', hash(body), retained[lang][1]);
+  }
+  console.log(`v2 page layout: ${passes-layoutStart.passes} passed, ${failures-layoutStart.failures} failed`);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

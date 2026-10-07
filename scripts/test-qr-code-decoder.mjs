@@ -36,6 +36,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import yaml from 'js-yaml';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -329,6 +330,224 @@ eq('safety: <script> text stays text', c('<script>alert(1)</script>').type, 'tex
   eq('safety: href only from parseUrl() or the map link', hrefs, ['.href = cls.url.href;', '.href = cls.map;']);
   check('safety: result links open with noopener', /rel = 'noopener noreferrer nofollow'/.test(script));
   check('safety: nothing opened automatically', !/window\.open|location\.(href|assign|replace)\s*[=(]/.test(script));
+}
+
+// ---------- page lifecycle: real handlers with controlled async boundaries ----------
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+  return { promise, resolve, reject };
+}
+function pageFixture(options = {}) {
+  const nodes = new Map(), requests = [], permissions = [], images = [], revoked = [], copied = [], timers = new Map();
+  let timerId = 0, objectId = 0, decodeCalls = 0;
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  function element(tag = 'div') {
+    const listeners = new Map(); let text = '';
+    const n = { tagName: tag.toUpperCase(), children: [], style: {}, attrs: {}, value: '', disabled: false, hidden: false, className: '', readyState: 2, videoWidth: 64, videoHeight: 64,
+      get textContent() { return text + this.children.map((c) => c.textContent).join(''); },
+      set textContent(v) { text = String(v); this.children = []; },
+      get firstElementChild() { return this.children[0] || null; },
+      appendChild(c) { this.children.push(c); return c; },
+      setAttribute(k, v) { this.attrs[k] = String(v); },
+      getAttribute(k) { return this.attrs[k] ?? null; },
+      addEventListener(k, fn) { if (!listeners.has(k)) listeners.set(k, []); listeners.get(k).push(fn); },
+      dispatch(k, init = {}) {
+        const event = { type: k, target: this, defaultPrevented: false, stopped: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...init };
+        for (const fn of listeners.get(k) || []) fn(event);
+        if (k === 'keydown' && this !== document && !event.stopped) document.dispatch(k, event);
+        return event;
+      },
+      click() { if (!this.disabled) this.dispatch('click'); },
+      focus() { document.activeElement = this; },
+      contains(other) { return nodes.has(other?.id); },
+      querySelectorAll() { return [...nodes.values()].filter((v) => v.tagName === 'TEXTAREA' || v.attrs.type === 'text'); },
+      getBoundingClientRect() { return { top: 10, bottom: 50 }; }, scrollIntoView() {},
+      play() { return options.play?.promise || Promise.resolve(); },
+      getContext() { return { drawImage() {}, getImageData() { return { data: new Uint8ClampedArray(64 * 64 * 4), width: 64, height: 64 }; } }; }
+    };
+    n.classList = {
+      add(c) { if (!this.contains(c)) n.className += ' ' + c; },
+      remove(c) { n.className = n.className.split(/\s+/).filter((x) => x !== c).join(' '); },
+      contains(c) { return n.className.split(/\s+/).includes(c); }
+    };
+    return n;
+  }
+  for (const m of markup.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
+    const n = element(m[1]); n.id = m[3]; n.hidden = /\bhidden\b/.test(m[2]);
+    n.attrs.type = /\btype="([^"]+)"/.exec(m[2])?.[1]; nodes.set(n.id, n);
+  }
+  const document = Object.assign(element('document'), {
+    hidden: false, documentElement: element('html'), head: element('head'),
+    getElementById(id) { if (!nodes.has(id)) throw new Error('Missing id: ' + id); return nodes.get(id); },
+    querySelector(sel) { return sel === '.tool-widget .btn-primary' ? nodes.get('qrd-url-decode') : sel === '.tool-widget' ? nodes.get('qrd-wrap') : null; },
+    createElement: element
+  });
+  document.activeElement = nodes.get('qrd-url-input');
+  class BrowserURL extends URL {
+    static createObjectURL() { return 'blob:fixture-' + (++objectId); }
+    static revokeObjectURL(v) { revoked.push(v); }
+  }
+  class BrowserImage {
+    naturalWidth = 64; naturalHeight = 64;
+    set src(value) { images.push(value); Promise.resolve().then(() => options.imageFails ? this.onerror() : this.onload()); }
+  }
+  const decoder = { prepareZXingModule() { return options.reader?.promise || Promise.resolve(); }, readBarcodes() { decodeCalls++; return options.decode?.promise || Promise.resolve(options.results || []); } };
+  const ctx = { t: options.strings || STRINGS.en, pageLang: options.lang || 'en', document, URL: BrowserURL, Blob, Image: BrowserImage, TextEncoder, TextDecoder, Uint8Array, Uint8ClampedArray,
+    console, innerHeight: 844, ZXingWASM: decoder,
+    navigator: { clipboard: { writeText(value) { copied.push(value); return Promise.resolve(); } }, mediaDevices: { getUserMedia() { const d = deferred(); permissions.push(d); return d.promise; } } },
+    fetch(url, opts) { const d = deferred(); requests.push({ url, opts, ...d }); return d.promise; },
+    setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay }); return id; }, clearTimeout(id) { timers.delete(id); },
+    getComputedStyle() { return { getPropertyValue() { return '#b45309'; } }; },
+    ztPersist: { clear() {} }, _slug: 'qr-code-decoder'
+  };
+  ctx.window = ctx;
+  const context = vm.createContext(ctx);
+  vm.runInContext(source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1], context, { filename: 'QrCodeDecoderTool.astro' });
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const start = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
+  vm.runInContext(layout.slice(start, layout.indexOf('// ── Copy button visual feedback', start)), context, { filename: 'ToolLayout.shortcuts' });
+  return { nodes, requests, permissions, images, revoked, copied, timers, document, get decodeCalls() { return decodeCalls; },
+    url(v = 'https://example.com/qr.png') { nodes.get('qrd-url-input').value = v; },
+    respond(i = 0) { requests[i].resolve({ ok: true, blob() { return Promise.resolve(new Blob(['fixture'], { type: 'image/png' })); } }); },
+    shortcut(key = 'l') { nodes.get('qrd-url-input').dispatch('keydown', { key, ctrlKey: true }); }
+  };
+}
+async function settlePage() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
+function cameraStream() { const track = { stopped: 0, stop() { this.stopped++; } }; return { track, getTracks() { return [track]; } }; }
+{
+  for (const mod of [false, true]) {
+    const page = pageFixture(); page.url();
+    page.nodes.get('qrd-url-input').dispatch('keydown', { key: 'Enter', ctrlKey: mod });
+    eq('lifecycle: one ' + (mod ? 'Ctrl+Enter' : 'Enter') + ' starts one URL fetch', page.requests.length, 1);
+    page.nodes.get('qrd-url-input').dispatch('keydown', { key: 'Enter', ctrlKey: mod });
+    eq('lifecycle: repeated Enter while URL fetch is pending stays one request', page.requests.length, 1);
+  }
+  for (const action of ['clear', 'shortcut']) {
+    const page = pageFixture(); page.url(); page.nodes.get('qrd-url-decode').click();
+    if (action === 'clear') page.nodes.get('qrd-clear').click(); else page.shortcut();
+    page.respond(); await settlePage();
+    check('lifecycle: ' + action + ' cancels pending URL and prevents an old preview', page.images.length === 0 && page.nodes.get('qrd-result-area').hidden && page.nodes.get('qrd-status').textContent === '' && page.nodes.get('qrd-url-input').value === '' && !page.nodes.get('qrd-url-decode').disabled);
+  }
+  {
+    const page = pageFixture(); page.url(); page.nodes.get('qrd-url-decode').click(); page.nodes.get('qrd-clear').click();
+    page.requests[0].reject(new Error('offline')); await settlePage();
+    eq('lifecycle: failed obsolete URL request does not restore an error after Clear', page.nodes.get('qrd-status').textContent, '');
+  }
+  for (const action of ['clear', 'shortcut', 'hidden']) {
+    const page = pageFixture(), stream = cameraStream(); page.nodes.get('qrd-camera').click();
+    if (action === 'clear') page.nodes.get('qrd-clear').click();
+    else if (action === 'shortcut') page.shortcut();
+    else { page.document.hidden = true; page.document.dispatch('visibilitychange'); }
+    page.permissions[0].resolve(stream); await settlePage();
+    check('lifecycle: late camera permission after ' + action + ' stops its track', stream.track.stopped === 1 && page.nodes.get('qrd-camera-view').hidden && page.nodes.get('qrd-video').srcObject === null && page.decodeCalls === 0);
+  }
+  {
+    const page = pageFixture(), stream = cameraStream(); page.nodes.get('qrd-camera').click(); page.permissions[0].resolve(stream); await settlePage();
+    page.nodes.get('qrd-clear').click();
+    check('lifecycle: Clear stops an active camera and its scan timer', stream.track.stopped === 1 && page.nodes.get('qrd-camera-view').hidden && page.timers.size === 0);
+  }
+  for (const waitAt of ['reader', 'play']) {
+    const waiting = deferred(), page = pageFixture({ [waitAt]: waiting }), stream = cameraStream();
+    page.nodes.get('qrd-camera').click(); page.permissions[0].resolve(stream); await settlePage();
+    page.nodes.get('qrd-clear').click(); waiting.resolve(); await settlePage();
+    check('lifecycle: Clear during camera ' + waitAt + ' startup prevents scanning', stream.track.stopped === 1 && page.nodes.get('qrd-camera-view').hidden && page.decodeCalls === 0);
+  }
+  {
+    const decode = deferred(), page = pageFixture({ decode }), stream = cameraStream();
+    page.nodes.get('qrd-camera').click(); page.permissions[0].resolve(stream); await settlePage();
+    page.nodes.get('qrd-clear').click(); decode.reject(new Error('decode failed')); await settlePage();
+    check('lifecycle: old camera failure does not schedule another frame after Clear', stream.track.stopped === 1 && page.timers.size === 0 && page.nodes.get('qrd-status').textContent === '');
+  }
+  {
+    const page = pageFixture(); page.nodes.get('qrd-camera').click(); page.nodes.get('qrd-camera').click();
+    eq('lifecycle: only one pending camera permission request', page.permissions.length, 1);
+  }
+  {
+    const reader = deferred(), page = pageFixture({ reader }); page.nodes.get('qrd-file').files = [new Blob(['fixture'], { type: 'image/png' })]; page.nodes.get('qrd-file').dispatch('change');
+    await settlePage(); page.nodes.get('qrd-clear').click(); reader.resolve(); await settlePage();
+    check('lifecycle: cancelled image load releases its object URL', page.revoked.length === 1 && page.decodeCalls === 0);
+  }
+}
+
+// A fresh input owns the visible result even when reading it fails.
+for (const failure of ['not-image', 'bad-image', 'decode-error', 'url-fetch', 'url-scheme', 'camera-denied']) {
+  const opts = { results: [{ isValid: true, format: 'QRCode', bytes: new TextEncoder().encode('previous result') }] };
+  const page = pageFixture(opts), file = page.nodes.get('qrd-file');
+  file.files = [new Blob(['fixture'], { type: 'image/png' })]; file.dispatch('change'); await settlePage();
+  check('lifecycle: ' + failure + ' fixture first renders a successful result', !page.nodes.get('qrd-result-area').hidden && page.nodes.get('qrd-results').textContent.includes('previous result'));
+  if (failure === 'camera-denied') {
+    page.nodes.get('qrd-camera').click(); page.permissions[0].reject({ name: 'NotAllowedError' });
+  } else if (failure === 'url-scheme') {
+    page.url('data:image/png,abc'); page.nodes.get('qrd-url-decode').click();
+  } else if (failure === 'url-fetch') {
+    page.url(); page.nodes.get('qrd-url-decode').click(); page.requests[0].reject(new Error('offline'));
+  } else {
+    if (failure === 'bad-image') opts.imageFails = true;
+    if (failure === 'decode-error') { opts.decode = deferred(); opts.decode.reject(new Error('decode failed')); }
+    file.files = [new Blob(['fixture'], { type: failure === 'not-image' ? 'text/plain' : 'image/png' })]; file.dispatch('change');
+  }
+  await settlePage();
+  check('lifecycle: ' + failure + ' removes the previous result and its copy buttons', page.nodes.get('qrd-result-area').hidden && page.nodes.get('qrd-results').children.length === 0 && /error/.test(page.nodes.get('qrd-status').className));
+}
+
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: analyze) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  const css = source.slice(source.indexOf('<style>'));
+  const selectClient = new Function('STRINGS', 'lang', source.slice(source.indexOf('const T = STRINGS'), source.indexOf('\n---\n', 4)) + '\nreturn { CLIENT_T, TIPS };');
+  const tipIds = ['url', 'camera', 'image', 'results', 'encoding'];
+  check('v2: root directly receives first-screen height', /^\s*<div class="qrd-wrap"/.test(markup) && /\.qrd-wrap \{[^}]*min-height: 0;/.test(css));
+  check('v2: toolbar, status, input and results follow reading order', ['class="qrd-toolbar"', 'id="qrd-status"', 'id="qrd-inputs"', 'id="qrd-result-area"'].map((v) => markup.indexOf(v)).every((v, i, a) => v >= 0 && (!i || v > a[i - 1])));
+  check('v2: shared empty drop zone fills remaining input height', markup.includes('class="zt-empty-drop qrd-dropzone"') && /\.qrd-inputs \{[^}]*flex: 1 1 0;[^}]*min-height: 0;/.test(css));
+  check('v2: tool drop-zone rules keep appearance only', !/display:|flex-direction:|align-items:|justify-content:|cursor:|text-align:/.test(css.match(/\.qrd-dropzone \{([^}]+)\}/)[1]));
+  check('v2: status reserves height even before the first action', /\.qrd-status \{[^}]*height: 2\.8em;[^}]*overflow: auto;/.test(css) && !css.includes('.qrd-status:empty'));
+  check('v2: results grow within a bounded, keyboard-scrollable region', markup.includes('id="qrd-results" class="qrd-results" tabindex="0" role="region" aria-label={T.resultLabel}') && /\.qrd-results \{[^}]*min-height: 0;[^}]*overflow: auto;[^}]*max-height: 60svh;/.test(css));
+  check('v2: generated cards keep their height inside the scrolling list', /\.qrd-results :global\(\.qrd-card\) \{[^}]*flex: none;/.test(css));
+  check('v2: preview moves beside the list from 1280px', /@media \(min-width: 1280px\)[\s\S]*?\.qrd-result-grid \{ grid-template-columns: minmax\(0, 1fr\) minmax\(200px, 320px\);/.test(css));
+  check('v2: toolbar stacks at 860px and phone drop zone stays compact', /@media \(max-width: 860px\)[\s\S]*?\.qrd-toolbar \{ flex-direction: column;/.test(css) && /@media \(max-width: 640px\)[\s\S]*?\.qrd-dropzone \{ min-height: 150px;/.test(css));
+  check('v2: clear is accessible while waiting or using the camera', markup.indexOf('id="qrd-clear"') < markup.indexOf('id="qrd-status"') && (markup.match(/id="qrd-clear"/g) || []).length === 1);
+  check('v2: toolbar buttons avoid the shared -actions flex override', markup.includes('class="qrd-buttons"') && !markup.includes('class="qrd-actions"'));
+  check('v2: URL network consequence stays next to the input', markup.includes('aria-describedby="qrd-url-notice"') && markup.includes('<p id="qrd-url-notice" class="qrd-url-notice">{T.urlNotice}</p>') && !css.includes('.qrd-compact .qrd-url-row'));
+  eq('v2: five distinct tip IDs', [...markup.matchAll(/<Toggletip id="qrd-tip-(\w+)"/g)].map((m) => m[1]), tipIds);
+  check('v2: localized tips never enter the inline script data', source.includes('define:vars={{ t: CLIENT_T, pageLang: lang }}') && (markup.match(/<Toggletip [^>]*lang=\{lang\} about=\{T\.\w+\}/g) || []).length === tipIds.length);
+  check('v2: URL and camera keep their explicit primary actions', markup.includes('id="qrd-url-decode" class="btn-primary"') && markup.includes('id="qrd-camera"'));
+  check('v2: network policy and no storage stay intact', source.includes("{ mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' }") && !/localStorage|sessionStorage|ztPersist|document\.cookie/.test(source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1]));
+  check('v2: listed as an analyze page', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'qr-code-decoder': 'analyze'"));
+  const walk = (n) => [n, ...n.children.flatMap(walk)];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const { CLIENT_T, TIPS } = selectClient(STRINGS, lang);
+    check(`v2 ${lang}: all five tips are complete and absent from client strings`, Object.keys(TIPS).length === tipIds.length && !('tips' in CLIENT_T) && Object.values(TIPS).every((v) => v.length > 20 && !JSON.stringify(CLIENT_T).includes(v)));
+    const mdx = readFileSync(join(root, 'src/content/tools/qr-code-decoder/' + lang + '.mdx'), 'utf8');
+    const end = mdx.indexOf('\n---\n', 4), front = yaml.load(mdx.slice(4, end)), body = mdx.slice(end + 5);
+    check(`v2 ${lang}: five bounded plain-text steps precede FAQ`, front.steps?.length === 5 && front.steps.every((v) => typeof v === 'string' && v.length <= 280 && !/[<>]/.test(v)) && front.steps.join('').length <= 1200 && mdx.indexOf('\nsteps:') < mdx.indexOf('\nfaqItems:'));
+    check(`v2 ${lang}: usage removed while limits and reference remain`, !/^## (How to Read a QR Code|使用方法|使い方|사용 방법)\s*$/m.test(body) && /^## (Limits|限制|制限事項|제한)\s*$/m.test(body) && body.includes('https://'));
+    const payload = 'decoded content ' + lang;
+    const options = { lang, strings: CLIENT_T, results: [{ isValid: true, format: 'QRCode', bytes: new TextEncoder().encode(payload) }] };
+    const page = pageFixture(options), file = page.nodes.get('qrd-file');
+    file.files = [new Blob(['fixture'], { type: 'image/png' })]; file.dispatch('change'); await settlePage();
+    check(`v2 ${lang}: file input still automatically renders localized results`, !page.nodes.get('qrd-result-area').hidden && page.nodes.get('qrd-results').textContent.includes(payload) && page.nodes.get('qrd-status').textContent === CLIENT_T.found.replace('{n}', '1'));
+    walk(page.nodes.get('qrd-results')).find((n) => n.className === 'btn-copy').click(); await settlePage();
+    eq(`v2 ${lang}: result copy works without serialized tips`, page.copied.at(-1), payload);
+    page.nodes.get('qrd-clear').click();
+    check(`v2 ${lang}: Clear restores empty input and removes compact results`, page.nodes.get('qrd-result-area').hidden && !page.nodes.get('qrd-inputs').classList.contains('qrd-compact') && page.nodes.get('qrd-results').children.length === 0);
+    page.url(); page.nodes.get('qrd-url-decode').click(); page.respond(); await settlePage();
+    check(`v2 ${lang}: URL Decode still downloads and renders`, page.requests.length === 1 && page.decodeCalls === 2 && !page.nodes.get('qrd-result-area').hidden);
+    eq(`v2 ${lang}: URL request uses CORS without credentials or referrer`, page.requests[0].opts, { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' });
+  }
+  for (const sourceType of ['drop', 'paste']) {
+    const blob = new Blob(['fixture'], { type: 'image/png' }), page = pageFixture();
+    if (sourceType === 'drop') page.nodes.get('qrd-wrap').dispatch('drop', { dataTransfer: { files: [blob] } });
+    else page.document.dispatch('paste', { clipboardData: { items: [{ kind: 'file', type: blob.type, getAsFile() { return blob; } }] } });
+    await settlePage();
+    check('v2: ' + sourceType + ' still automatically decodes an image', page.decodeCalls === 1 && page.nodes.get('qrd-status').textContent === STRINGS.en.errNoQr);
+  }
+  const longText = 'long decoded text\n'.repeat(200);
+  const page = pageFixture({ results: Array.from({ length: 3 }, () => ({ isValid: true, format: 'QRCode', bytes: new TextEncoder().encode(longText) })) });
+  page.nodes.get('qrd-file').files = [new Blob(['fixture'], { type: 'image/png' })]; page.nodes.get('qrd-file').dispatch('change'); await settlePage();
+  check('v2: long multi-code results keep every card', page.nodes.get('qrd-results').children.length === 3);
+  walk(page.nodes.get('qrd-results')).find((n) => n.className === 'btn-copy').click(); await settlePage();
+  eq('v2: long result copy keeps all text', page.copied.at(-1), longText);
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');

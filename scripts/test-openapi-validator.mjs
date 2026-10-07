@@ -8,7 +8,8 @@
 //        src/data/openapi-schemas/*.json (official schemas the page loads);
 //        scripts/test-openapi-validator.fixtures.json (OAI learn.openapis.org examples, CC BY 4.0;
 //        Swagger Petstore v2 / v3, Apache 2.0); node_modules/js-yaml/lib/loader.js (parser
-//        error texts); src/content/tools/openapi-validator/*.mdx (examples marked {/* ov … */})
+//        error texts); src/content/tools/openapi-validator/*.mdx (examples marked {/* ov … */}),
+//        src/data/tool-layouts.ts (v2 page registration)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -300,6 +301,93 @@ eq('$ref inside an extension is checked', codes(run('openapi: 3.0.3\n' + INFO + 
   eq('pickRoot prefers the file with an openapi field', E.pickRoot({ 'a.yaml': 'type: object\n', 'api/openapi.yaml': 'openapi: 3.1.0\n', 'x/y/z.yaml': 'swagger: "2.0"\n' }), 'api/openapi.yaml');
 }
 
+// Root selection sees only the first 4 KiB; JSON keys must belong to the root object.
+{
+  const pick = (text) => E.pickRoot({ 'schemas/pet.json': '{"type":"object"}', 'root.json': text });
+  const compact = JSON.stringify({ info: { title: 'Root fixture', version: '1' }, openapi: '3.1.0', paths: {} });
+  eq('pickRoot compact JSON after an extra file', pick('{"openapi":"3.1.0","info":{"title":"Root fixture","version":"1"},"paths":{}}'), 'root.json');
+  eq('pickRoot JSON version need not be the first key', pick(compact), 'root.json');
+  eq('pickRoot compact Swagger JSON', pick('{"swagger":"2.0","info":{},"paths":{}}'), 'root.json');
+  eq('pickRoot escaped JSON key', pick('{"open\\u0061pi":"3.1.0"}'), 'root.json');
+  eq('pickRoot JSON whitespace and nested arrays before key', pick(' \n{ "info": {"values":[{},[1,2]]}, "openapi" \n : "3.1.0" }'), 'root.json');
+  eq('pickRoot nested JSON key is not a document version', pick('{\n  "info": {\n    "openapi": "3.1.0"\n  }\n}'), 'schemas/pet.json');
+  eq('pickRoot array of documents is not a root object', pick('[\n {\n  "openapi": "3.1.0"\n }\n]'), 'schemas/pet.json');
+  eq('pickRoot quoted JSON content is not a root key', pick(JSON.stringify({ description: '\n"openapi": "3.1.0"', example: '}, "swagger": "2.0", {' })), 'schemas/pet.json');
+  eq('pickRoot escaped quotes and brackets do not hide a later root key', pick(JSON.stringify({ description: '\\"}, ["openapi"] {', openapi: '3.1.0' })), 'root.json');
+  eq('pickRoot pretty JSON still works', pick(JSON.stringify({ openapi: '3.1.0', paths: {} }, null, 2)), 'root.json');
+  eq('pickRoot complete key at the prefix boundary', pick('{' + ' '.repeat(4085) + '"openapi": "3.1.0"}'), 'root.json');
+  eq('pickRoot colon beyond the prefix boundary is not inspected', pick('{' + ' '.repeat(4086) + '"openapi": "3.1.0"}'), 'schemas/pet.json');
+  eq('pickRoot truncated JSON string is not inspected beyond the prefix', pick('{"description":"' + 'x'.repeat(4096) + '","openapi":"3.1.0"}'), 'schemas/pet.json');
+  eq('pickRoot key after 4 KiB keeps first-file fallback', pick(' '.repeat(4096) + compact), 'schemas/pet.json');
+  eq('pickRoot unclosed quoted key has no root', pick('{"openapi'), 'schemas/pet.json');
+  eq('pickRoot YAML quoted version still works', pick('---\n"openapi": 3.1.0\npaths: {}\n'), 'root.json');
+  eq('pickRoot YAML Swagger still works', pick("swagger: '2.0'\npaths: {}\n"), 'root.json');
+  eq('pickRoot YAML flow mapping with an unquoted key still works', pick('{\n openapi: 3.1.0,\n paths: {}\n}'), 'root.json');
+  eq('pickRoot YAML flow mapping with a single-quoted key still works', pick("{\n 'swagger': '2.0',\n paths: {}\n}"), 'root.json');
+  eq('pickRoot empty files return null', E.pickRoot({}), null);
+  eq('pickRoot no version keeps insertion order', E.pickRoot({ 'z.yaml': 'type: object', 'a.yaml': 'type: string' }), 'z.yaml');
+  eq('pickRoot recognized filename takes priority', E.pickRoot({ 'x.json': compact, 'folder/openapi.json': compact }), 'folder/openapi.json');
+  eq('pickRoot fewer path segments takes priority', E.pickRoot({ 'dir/a.json': compact, 'longname.json': compact }), 'longname.json');
+  eq('pickRoot shorter filename takes priority', E.pickRoot({ 'longname.json': compact, 'a.json': compact }), 'a.json');
+  eq('pickRoot equal lengths sort lexically', E.pickRoot({ 'b.json': compact, 'a.json': compact }), 'a.json');
+  const files = { 'schemas/pet.json': '{"type":"object"}', 'root.json': compact };
+  const result = runFiles(files, E.pickRoot(files));
+  check('pickRoot selected compact document reaches actual validation', result.version === '3.1' && !result.problems.some((p) => p.level === 'error'), result.problems);
+  const originalParse = JSON.parse, parsedLengths = [];
+  try {
+    JSON.parse = (text) => { parsedLengths.push(text.length); return originalParse(text); };
+    eq('pickRoot does not parse the large document', pick('{"openapi":"3.1.0","description":"' + 'x'.repeat(2_097_152) + '"}'), 'root.json');
+  } finally { JSON.parse = originalParse; }
+  check('pickRoot parses bounded key strings only', parsedLengths.length > 0 && parsedLengths.every((n) => n <= 4096), parsedLengths);
+}
+
+// YAML root detection uses the parser's node boundaries, including a truncated prefix.
+{
+  const rootDoc = 'openapi: 3.1.0\ninfo: {title: Real, version: "1"}\npaths: {}\n';
+  for (const [name, text] of [
+    ['nested field', 'type: object\nexample:\n  openapi: 3.1.0\n'],
+    ['literal block', 'description: |\n  openapi: 3.1.0\n'],
+    ['folded block', 'description: >-\n  swagger: 2.0\n'],
+    ['nested multiline quoted value', 'info:\n  description: "a\nopenapi: 3.1.0\nb"\n'],
+    ['nested anchor and alias', 'nested: &ref {openapi: 3.1.0}\ncopy: *ref\n'],
+    ['anchored flow sequence', '&ref [openapi: 3.1.0]\n'],
+    ['tagged flow sequence', '!!seq [openapi: 3.1.0]\n'],
+    ['block sequence', '- openapi: 3.1.0\n'],
+    ['root scalar', '|\n  openapi: 3.1.0\n'],
+    ['later document', 'type: object\n---\nopenapi: 3.1.0\n'],
+    ['complex mapping key', '{openapi: 3.1.0}: value\n'],
+  ]) {
+    eq('pickRoot YAML ignores ' + name, E.pickRoot({ 'pet.yaml': text, 'root.yaml': rootDoc }), 'root.yaml');
+  }
+  const pick = (text) => E.pickRoot({ 'pet.yaml': 'type: object\n', 'root.yaml': text });
+  for (const [name, text] of [
+    ['whole-document indentation', '  info: {title: Root}\n  openapi: 3.1.0\n  paths: {}\n'],
+    ['comments and document start', '# openapi: fake\n---\n# note\nopenapi: 3.1.0\n'],
+    ['directive and same-line document start', '%YAML 1.2\n--- openapi: 3.1.0\n'],
+    ['single-quoted key', "'openapi': 3.1.0\n"],
+    ['mixed flow mapping', '{"info": {title: Root}, openapi: 3.1.0}\n'],
+    ['anchored mapping', '&ref {openapi: 3.1.0}\n'],
+    ['tagged mapping', '!!map {openapi: 3.1.0}\n'],
+    ['explicit key', '? openapi\n: 3.1.0\n'],
+    ['alias key', 'key: &ver openapi\n*ver : 3.1.0\n'],
+    ['merged root fields', 'base: &ver {openapi: 3.1.0}\n<<: *ver\n'],
+    ['first document before another document', 'openapi: 3.1.0\n---\ntype: object\n'],
+    ['truncated block value after version', 'openapi: 3.1.0\npaths: [' + ' '.repeat(4096)],
+    ['truncated flow value after version', '{info: {title: Root}, openapi: 3.1.0, paths: [' + ' '.repeat(4096)],
+    ['truncated quoted value after version', "'openapi': 3.1.0\ndescription: \"" + 'x'.repeat(4096)],
+  ]) eq('pickRoot YAML accepts ' + name, pick(text), 'root.yaml');
+  eq('pickRoot YAML version beyond prefix keeps fallback', pick('#' + 'x'.repeat(4095) + '\n' + rootDoc), 'pet.yaml');
+  eq('pickRoot YAML colon at prefix boundary is complete', pick('#' + 'x'.repeat(4086) + '\nopenapi:'), 'root.yaml');
+  eq('pickRoot YAML colon beyond prefix is incomplete', pick('#' + 'x'.repeat(4087) + '\nopenapi:'), 'pet.yaml');
+  eq('pickRoot YAML truncated nested value cannot select a false root', E.pickRoot({ 'pet.yaml': 'info: {openapi: 3.1.0, description: "' + 'x'.repeat(4096), 'root.yaml': rootDoc }), 'root.yaml');
+  const originalLoad = jsyaml.load, lengths = [];
+  try {
+    jsyaml.load = (text, options) => { lengths.push(text.length); return originalLoad(text, options); };
+    eq('pickRoot large YAML still finds the bounded root key', pick('{info: {title: Root}, openapi: 3.1.0, paths: [' + ' '.repeat(2_097_152)), 'root.yaml');
+  } finally { jsyaml.load = originalLoad; }
+  check('pickRoot YAML parses at most three bounded prefixes per file', lengths.length <= 4 && lengths.every((n) => n <= 4096 + ' null}'.length), lengths);
+}
+
 // ---------- rules the schemas cannot express ----------
 const H31 = 'openapi: 3.1.0\n' + INFO;
 const H30 = 'openapi: 3.0.3\n' + INFO;
@@ -539,6 +627,58 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
   check(lang + ' page has at least 3 checked examples', n >= 3, n);
   check(lang + ' page links to an official source', /spec\.openapis\.org/.test(mdx));
+}
+
+// ---------- v2 page layout ----------
+{
+  const markup = component.slice(component.indexOf('\n---\n', 4) + 5, component.indexOf('<script>'));
+  const style = component.slice(component.indexOf('<style>'));
+  check('tool root receives the first-screen height', /^\s*<div class="oav-wrap" id="oav-wrap"/.test(markup));
+  check('only client strings are serialized', component.includes('const { tips: TIPS, ...CLIENT_T } = T;')
+    && markup.includes('data-strings={JSON.stringify(CLIENT_T)}') && !markup.includes('JSON.stringify(T)'));
+  const tips = ['input', 'files', 'results', 'references'];
+  eq('four contextual help controls', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map((m) => m[1]),
+    ['oav-tip-files', 'oav-tip-input', 'oav-tip-results', 'oav-tip-references']);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ': contextual help covers the same controls', Object.keys(STRINGS[lang].tips || {}), tips);
+    check(lang + ': contextual help uses plain sentences', tips.every((key) => typeof STRINGS[lang].tips[key] === 'string'
+      && STRINGS[lang].tips[key].length > 1 && !/\n|https?:|<\/?[a-z]/i.test(STRINGS[lang].tips[key])));
+    check(lang + ': empty result hint is localized', typeof STRINGS[lang].resultEmpty === 'string' && STRINGS[lang].resultEmpty.length > 1);
+  }
+  for (const key of tips) check('help is rendered: ' + key, markup.includes('{TIPS.' + key + '}'));
+  check('client labels are rendered at build time', !component.includes('data-i18n'));
+  const script = component.slice(component.indexOf('<script>'), component.indexOf('</script>'));
+  const ids = [...new Set([...script.matchAll(/(?:\$|document\.getElementById)\('(oav-[\w-]+)'\)/g)].map((m) => m[1]))];
+  check('client element lookups are covered', ids.length >= 20);
+  for (const id of ids) eq('client element appears once: ' + id, [...markup.matchAll(/\bid="([^"]+)"/g)].filter((m) => m[1] === id).length, 1);
+  check('buttons precede status and input', markup.indexOf('id="oav-validate"') < markup.indexOf('id="oav-status"')
+    && markup.indexOf('id="oav-status"') < markup.indexOf('id="oav-input"'));
+  check('Validate remains available for inputs above the automatic limit', /id="oav-validate" class="btn-primary"/.test(markup)
+    && /size > AUTO_LIMIT && delay !== 0/.test(script));
+  check('file path refresh cannot erase its help control', /<summary><span id="oav-files-title"><\/span> <Toggletip id="oav-tip-references"/.test(markup));
+  check('results explain their empty state', markup.includes('<p class="oav-result-empty">{T.resultEmpty}</p>'));
+  const scroll = markup.slice(markup.indexOf('<div class="oav-results-scroll">'), markup.indexOf('<details id="oav-files"'));
+  for (const id of ['oav-list', 'oav-more', 'oav-missing', 'oav-summary']) check(id + ' stays inside the result scroll area', scroll.includes('id="' + id + '"'));
+  check('filters stay above the result scroll area', markup.indexOf('class="oav-filters"') < markup.indexOf('class="oav-results-scroll"'));
+  check('tool root can shrink', /\.oav-wrap \{[^}]*min-height: 0/.test(style));
+  check('result area grows with its bounded parent', /\.oav-results \{[^}]*flex: 1 1 0[^}]*min-height: 180px[^}]*overflow: hidden/.test(style));
+  check('long results scroll inside their own area', /\.oav-results-scroll \{[^}]*min-height: 0[^}]*overflow: auto/.test(style));
+  check('empty status retains two lines', /\.oav-status \{[^}]*min-height: 2.8em; line-height: 1.4/.test(style));
+  check('desktop empty state expands the input', /\.oav-wrap:has\(#oav-results\[hidden\]\) \.oav-input \{[^}]*flex: 1 1 0/.test(style));
+  check('tablet breakpoint stops empty stretching', /@media \(max-width: 860px\)[\s\S]*?\.oav-result-empty \{ display: none; \}/.test(style));
+  check('phone breakpoint keeps touch sizing separate', style.includes('@media (max-width: 640px)') && !style.includes('.oav-bar :global(button)'));
+  check('registered as an analyze page', /'openapi-validator':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/openapi-validator', lang + '.mdx'), 'utf8');
+    const front = /^---\n([\s\S]*?)\n---/.exec(mdx);
+    const data = jsyaml.load(front[1]);
+    const body = mdx.slice(front[0].length);
+    eq(lang + ': four user steps are in frontmatter', data.steps?.length, 4);
+    check(lang + ': steps fit the llms-full limits', Array.isArray(data.steps) && data.steps.every((step) => typeof step === 'string'
+      && step.length <= 280 && !/<\/?[a-z]/i.test(step)) && data.steps.reduce((sum, step) => sum + step.length, 0) <= 1200);
+    check(lang + ': no duplicate usage section', !/<h2>(?:How to use|使用步骤|使い方|사용 방법)<\/h2>/i.test(body));
+    check(lang + ': limitations remain in the article', /<h2>(?:Limits|限制|制限|제한)<\/h2>/.test(body));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

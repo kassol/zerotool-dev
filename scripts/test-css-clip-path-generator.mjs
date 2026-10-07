@@ -1,8 +1,12 @@
-// Read the component's real functions; write only stdout. No browser is launched.
+// Read the component, its tool pages, ToolLayout and persistence policy; write only stdout.
+// Run real functions and complete page scripts. No browser or network is used.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { parseFragment } from 'parse5';
+import yaml from 'js-yaml';
+import { createRequire } from 'node:module';
+const { transform } = createRequire(import.meta.resolve('astro/package.json'))('@astrojs/compiler');
 const source = fs.readFileSync(new URL('../src/components/tools/CssClipPathGeneratorTool.astro', import.meta.url), 'utf8');
 const script = source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
 function declaration(name) {
@@ -70,7 +74,7 @@ assert.match(declaration('makeDraggable'), /keydown/, 'handles have keyboard edi
 assert.match(declaration('makeDraggable'), /pointercancel/, 'touch cancellation ends dragging');
 assert.doesNotMatch(declaration('applyBackground'), /bg\.style\.backgroundImage/, 'background choice changes the clipped element');
 assert.match(script, /catch[\s\S]*execCommand/, 'clipboard fallback handles rejected writes');
-assert.match(script, /zt:clear/, 'site clear resets tool state');
+assert.match(script, /zt:clear/, 'legacy zt:clear listener remains available');
 assert.match(declaration('showFrame'), /boxGuides\.hidden = !on/, 'reference-box outlines follow the frame option');
 vm.runInContext(declaration('highlight'), context);
 assert.doesNotMatch(vm.runInContext('highlight("<img onerror=x>")', context), /<img/, 'raw CSS highlighting escapes user input');
@@ -173,3 +177,124 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
 }
 console.log(`PASS ${checks} tool-page examples recomputed by the component`);
+
+
+// Real page input/copy events followed by the real ToolLayout Ctrl/Cmd+L handler.
+// Only DOM, CSS.supports, storage, time and clipboard are boundary doubles.
+function loadClipPage() {
+  const elements = [], ids = new Map(), timers = new Map(), clipboard = [];
+  const document = { activeElement: null, listeners: {} };
+  let sequence = 0;
+  function matches(el, selector) {
+    return selector.split(',').some(part => {
+      const attrs = [...part.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+      const plain = part.trim().replace(/\[[^\]]+\]/g, ''), id = /#([\w-]+)/.exec(plain), tag = /^[\w-]+/.exec(plain);
+      return (!id || el.id === id[1]) && (!tag || el.tagName === tag[0].toUpperCase()) &&
+        [...plain.matchAll(/\.([\w-]+)/g)].every(c => el.classList.contains(c[1])) &&
+        attrs.every(a => a[2] === undefined ? el.getAttribute(a[1]) !== null : el.getAttribute(a[1]) === a[2]);
+    });
+  }
+  class Element {
+    constructor(tag = 'div') { Object.assign(this, { tagName: tag.toUpperCase(), id: '', type: tag === 'input' ? 'text' : '', value: '', defaultValue: '', checked: false, disabled: false, style: {}, dataset: {}, attrs: {}, children: [], listeners: {}, className: '', clientWidth: 300, clientHeight: 300, offsetWidth: 300, offsetHeight: 300 }); }
+    set textContent(v) { this.text = String(v); this.children = []; }
+    get textContent() { return (this.text || '') + this.children.map(c => c.textContent).join(''); }
+    set innerHTML(v) { const text = n => n.nodeName === '#text' ? n.value : (n.childNodes || []).map(text).join(''); this.textContent = text(parseFragment(String(v))); }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className += ' ' + c; }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); }, toggle(c, value) { const on = value ?? !this.contains(c); on ? this.add(c) : this.remove(c); return on; } }; }
+    setAttribute(k, v) { this.attrs[k] = String(v); if (['id', 'type', 'min', 'max', 'step'].includes(k)) this[k] = String(v); if (k === 'class') this.className = String(v); if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(v); }
+    getAttribute(k) { return k === 'type' ? this.type : this.attrs[k] ?? null; }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    dispatch(type, init = {}) { for (const fn of this.listeners[type] || []) fn({ type, target: this, preventDefault() {}, ...init }); }
+    click() { if (!this.disabled) this.dispatch('click'); }
+    focus() { document.activeElement = this; }
+    contains(el) { return elements.includes(el); }
+    querySelectorAll(selector) { return elements.filter(el => matches(el, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+    appendChild(el) { this.children.push(el); return el; }
+    append(...children) { this.children.push(...children); }
+    remove() {} select() {} setPointerCapture() {}
+  }
+  const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+  for (const match of markup.matchAll(/<([a-z][\w-]*)\b([^>]*?)>/g)) {
+    const el = new Element(match[1]);
+    for (const attr of match[2].matchAll(/([\w-]+)="([^"]*)"/g)) { el.setAttribute(attr[1], attr[2]); if (attr[1] === 'value') el.value = el.defaultValue = attr[2]; }
+    el.checked = /\bchecked(?=\s|\/|$)/.test(match[2]); elements.push(el); if (el.id) ids.set(el.id, el);
+  }
+  const wrap = elements.find(el => matches(el, '.cpg-wrap'));
+  const get = id => { assert.ok(ids.has(id), 'actual markup contains ' + id); return ids.get(id); };
+  const startLabels = source.indexOf('const labels = '), endLabels = source.indexOf('const L = ', startLabels);
+  const L = vm.runInNewContext(source.slice(startLabels, endLabels) + '\n({...labels.en, ...extra.en})');
+  const store = new Map(), localStorage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k), key: i => [...store.keys()][i] ?? null, get length() { return store.size; } };
+  Object.assign(document, { body: new Element('body'), querySelector: selector => selector === '.tool-widget' ? wrap : wrap.querySelector(selector), createElement: tag => new Element(tag), addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }, execCommand: () => false });
+  const policy = fs.readFileSync(new URL('../src/data/persistence.ts', import.meta.url), 'utf8').match(/export const toolPersistencePolicy = ([\s\S]*?) as const/)[1];
+  const sandbox = { document, L, localStorage, toolPersistencePolicy: vm.runInNewContext('(' + policy + ')'), _slug: 'css-clip-path-generator', console,
+    navigator: { clipboard: { writeText: value => { clipboard.push(value); return Promise.resolve(); } } },
+    CSS: { supports: (property, value) => property === 'clip-path' && /^(polygon|circle|ellipse|inset)\(/.test(value) },
+    ResizeObserver: class { observe() {} }, setTimeout(fn, ms) { const id = ++sequence; timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id) };
+  sandbox.window = sandbox;
+  const ctx = vm.createContext(sandbox), layout = fs.readFileSync(new URL('../src/layouts/ToolLayout.astro', import.meta.url), 'utf8');
+  vm.runInContext(layout.match(/<script is:inline define:vars=\{\{ toolPersistencePolicy \}\}>([\s\S]*?)<\/script>/)[1], ctx);
+  vm.runInContext(script, ctx);
+  const start = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
+  vm.runInContext(layout.slice(start, layout.indexOf('// ── Copy button visual feedback', start)), ctx);
+  return { get, wrap, document, clipboard,
+    type(value) { const el = get('cpg-raw'); el.value = value; el.dispatch('input'); },
+    key(init) { const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...init }; for (const fn of document.listeners.keydown) fn(event); for (const [id, timer] of [...timers]) if (timer.ms === 0) { timers.delete(id); timer.fn(); } return event; }
+  };
+}
+let pagePasses = 0, pageFailures = 0;
+function pageCheck(name, ok) { if (ok) pagePasses++; else { pageFailures++; console.error('FAIL ' + name); } }
+for (const modifier of ['ctrlKey', 'metaKey']) {
+  const page = loadClipPage();
+  page.wrap.querySelector('.cpg-tab[data-shape="raw"]').click();
+  page.type('circle(30% at 40% 60%)');
+  const old = '.element {\n  clip-path: circle(30% at 40% 60%);\n}';
+  pageCheck(modifier + ' input generates complete CSS', page.get('cpg-code').textContent === old);
+  page.get('cpg-copy').click(); await Promise.resolve();
+  pageCheck(modifier + ' copy reads current CSS', page.clipboard.at(-1) === old);
+  page.document.activeElement = page.document.body;
+  const outside = page.key({ [modifier]: true, key: 'l' });
+  pageCheck(modifier + ' outside focus keeps raw value and result', !outside.defaultPrevented && page.get('cpg-raw').value === 'circle(30% at 40% 60%)' && page.get('cpg-code').textContent === old);
+  page.get('cpg-raw').focus();
+  page.key({ key: 'l' });
+  pageCheck(modifier + ' plain L leaves result unchanged', page.get('cpg-code').textContent === old);
+  const event = page.key({ [modifier]: true, key: modifier === 'ctrlKey' ? 'l' : 'L' });
+  pageCheck(modifier + ' real global shortcut clears raw input', event.defaultPrevented && page.get('cpg-raw').value === '');
+  pageCheck(modifier + ' cleared input removes old CSS', page.get('cpg-code').textContent === '');
+  pageCheck(modifier + ' cleared input removes old preview', page.get('cpg-preview-el').style.clipPath === '');
+  pageCheck(modifier + ' cleared input disables copy', page.get('cpg-copy').disabled);
+  const count = page.clipboard.length; page.get('cpg-copy').click(); await Promise.resolve();
+  pageCheck(modifier + ' clear prevents copying old result', page.clipboard.length === count);
+  page.type('circle(20% at 50% 50%)');
+  pageCheck(modifier + ' new input restores current result', !page.get('cpg-copy').disabled && page.get('cpg-preview-el').style.clipPath === 'circle(20% at 50% 50%)');
+  page.get('cpg-reset').click();
+  pageCheck(modifier + ' explicit Reset still restores raw triangle', page.get('cpg-raw').value === 'polygon(50% 0%, 100% 100%, 0% 100%)' && !page.get('cpg-copy').disabled);
+}
+// ---------- v2 page layout ----------
+const pageMarkup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+const layoutStyles = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const tipStrings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?);\nconst L =/)[1]);
+const tipIds = [...pageMarkup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]);
+pageCheck('v2 generate registry', /'css-clip-path-generator':\s*'generate'/.test(fs.readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8')));
+pageCheck('v2 direct root and shared rail', /^\s*<div\s+class="cpg-wrap"/.test(pageMarkup) && /class="cpg-rail zt-rail"/.test(pageMarkup));
+pageCheck('v2 controls precede preview', pageMarkup.indexOf('id="cpg-raw"') < pageMarkup.indexOf('id="cpg-preview-bg"'));
+pageCheck('v2 existing primary operations stay available', /id="cpg-copy"/.test(pageMarkup) && /id="cpg-reset"/.test(pageMarkup) && !/btn-primary/.test(pageMarkup));
+pageCheck('v2 fixed scrollable keyboard-accessible code', /<pre[^>]*id="cpg-pre"[^>]*tabindex="0"[^>]*role="region"/.test(pageMarkup) && /\.cpg-pre\s*\{[^}]*height:\s*11rem;[^}]*overflow:\s*auto/s.test(layoutStyles));
+pageCheck('v2 rail and preview have bounded flexible space', /grid-template-columns:\s*clamp\(270px, 26vw, 320px\) minmax\(0, 1fr\)/.test(layoutStyles) && /\.cpg-wrap\s*\{[^}]*min-height:\s*0/.test(layoutStyles));
+pageCheck('v2 preview adapts to both available dimensions', /container-type:\s*size/.test(layoutStyles) && /100cqw/.test(layoutStyles) && /100cqh/.test(layoutStyles) && /option\[value="2"\]:checked/.test(layoutStyles) && /option\[value="0.5"\]:checked/.test(layoutStyles));
+pageCheck('v2 860 stacking and 640 touch targets', /max-width:\s*860px/.test(layoutStyles) && /max-width:\s*640px/.test(layoutStyles) && /\.cpg-controls-col\s*\{[^}]*height:\s*10.5rem/.test(layoutStyles) && /\.cpg-tab\s*\{[^}]*min-height:\s*44px/.test(layoutStyles));
+pageCheck('v2 tips stay out of runtime strings', /define:vars=\{\{ L \}\}/.test(source) && !/TIPS|STRINGS/.test(script) && /const L = \{ \.\.\.labels\[lang\], \.\.\.extra\[lang\] \};/.test(source));
+pageCheck('v2 tip IDs are unique', tipIds.length === 10 && new Set(tipIds).size === tipIds.length);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const tips = tipStrings[lang].tips;
+  pageCheck(lang + ' v2 same eight nonempty tip facts', Object.keys(tips).join('|') === 'shape|vertices|geometry|raw|preview|reference|copy|reset' && Object.values(tips).every(t => typeof t === 'string' && t.trim().length > 0));
+  const mdx = fs.readFileSync(new URL(`../src/content/tools/css-clip-path-generator/${lang}.mdx`, import.meta.url), 'utf8');
+  const meta = yaml.load(mdx.match(/^---\n([\s\S]*?)\n---/)[1]);
+  pageCheck(lang + ' v2 five bounded steps', meta.steps.length === 5 && meta.steps.every(s => typeof s === 'string' && s.length <= 280) && meta.steps.join('').length <= 1200);
+  pageCheck(lang + ' v2 FAQ SEO limits and checked examples remain', meta.faqItems.length >= 4 && !!meta.seoTitle && !!meta.seoDescription && /cpg-check:/.test(mdx) && /^## (Limits|动画与限制|制限事項|애니메이션과 제한 사항)$/m.test(mdx));
+  pageCheck(lang + ' v2 HowTo removed and resize example conditional', !/^## (How to use|三步生成 clip-path|使い方|사용 방법)$/m.test(mdx) && !/300px desktop|桌面端 300px|デスクトップの 300px|데스크톱의 300px/.test(mdx));
+}
+const compiled = await transform(source, { filename: 'CssClipPathGeneratorTool.astro' });
+pageCheck('v2 Astro compiles and resolves CSS scoping', !compiled.diagnostics.some(d => d.severity === 1) && compiled.css.length > 0 && compiled.css.every(css => !css.includes(':global(')));
+
+console.log(`${pagePasses} page checks passed, ${pageFailures} failed`);
+process.exitCode = pageFailures ? 1 : 0;

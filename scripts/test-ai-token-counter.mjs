@@ -4,7 +4,8 @@
 //        `engine:start` / `engine:end` markers and the frontmatter STRINGS / SAMPLES tables, so this
 //        test cannot drift from the shipped source); js-tiktoken rank files in node_modules;
 //        src/data/deepseek-v4-tokenizer.mjs; scripts/test-ai-token-counter.fixtures.json;
-//        src/content/tools/ai-token-counter/{lang}.mdx and the ai-token-counter-guide mdx files
+//        src/content/tools/ai-token-counter/{lang}.mdx and the ai-token-counter-guide mdx files;
+//        src/data/tool-layouts.ts; real page events through astro-page-harness.mjs
 // Write: stdout only. With --regenerate: the fixtures file, and temporary files under the OS temp
 //        directory (removed afterwards)
 // Exit:  0 if all PASS, 1 if any FAIL
@@ -35,6 +36,8 @@
 // - 4-language STRINGS have the same keys and {placeholders}; SAMPLES exist for each language.
 // - Every `{/* atc: {...} */}` example on the tool pages and guide gives the stated counts.
 // - The component script makes no network requests (fetch / XHR / sendBeacon / WebSocket).
+// - Pending file reads cannot replace newer input or clear actions, or persist stale text.
+// - v2 layout keeps controls, visible notes, five localized tips and frontmatter steps.
 //
 // Run:        node scripts/test-ai-token-counter.mjs
 // Regenerate: node scripts/test-ai-token-counter.mjs --regenerate /path/to/python /path/to/tokenizer.json
@@ -46,6 +49,8 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { loadPage } from './astro-page-harness.mjs';
+import yaml from 'js-yaml';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -350,7 +355,12 @@ for (const l of LONG) {
   const ph = (s) => (s.match(/\{\w+\}/g) || []).sort().join(',');
   for (const l of langs) {
     check(`${l}: STRINGS keys match en`, Object.keys(STRINGS[l]).sort().join(',') === keys);
-    for (const k of Object.keys(STRINGS.en)) check(`${l}.${k}: placeholders match en`, ph(STRINGS[l][k] || '') === ph(STRINGS.en[k]), STRINGS[l][k]);
+    for (const k of Object.keys(STRINGS.en)) {
+      if (k === 'tips') {
+        check(`${l}: tip keys match en`, Object.keys(STRINGS[l].tips).sort().join(',') === Object.keys(STRINGS.en.tips).sort().join(','));
+        for (const name of Object.keys(STRINGS.en.tips)) check(`${l}.tips.${name}: placeholders match en`, ph(STRINGS[l].tips[name] || '') === ph(STRINGS.en.tips[name]));
+      } else check(`${l}.${k}: placeholders match en`, ph(STRINGS[l][k] || '') === ph(STRINGS.en[k]), STRINGS[l][k]);
+    }
     check(`${l}: sample exists`, typeof SAMPLES[l] === 'string' && SAMPLES[l].length > 100);
   }
 }
@@ -467,6 +477,107 @@ const URL_HOOK = 'data:text/javascript,' + encodeURIComponent(`export async func
     check('real worker entry preserves request ids and returns progress', messages.every(m => m.id === 7) && messages.some(m => m.type === 'progress'));
     check('real worker entry counts all three tokenizers', ['o200k', 'cl100k', 'deepseek'].every(k => result.results[k].count === E.encodeAll(enc[k], 'Hello 世界 🦜').length));
   } finally { await worker.terminate(); }
+}
+
+// ── File input: a late read must not replace a newer input or clear ──────────────
+{
+  const open = () => {
+    const writes = [];
+    const p = loadPage('src/components/tools/AiTokenCounterTool.astro', {
+      dataset: { '.atc-wrap': { lang: 'en', strings: JSON.stringify(STRINGS.en), sample: 'sample text' } },
+      globals: {
+        TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, URL,
+        requestIdleCallback: () => 0, addEventListener() {},
+        ztPersist: { load: () => ({}), save: (_slug, value) => writes.push(value), clear() {} },
+      },
+    });
+    // The harness ignores document-level events. Register the real shortcut handler in it.
+    const start = source.indexOf("  document.addEventListener('keydown', (e) => {");
+    const end = source.indexOf('\n  });', start) + '\n  });'.length;
+    p.run("document.addEventListener = (type, handler) => { window.shortcut = handler; };\n" + source.slice(start, end));
+    return { p, writes };
+  };
+  const begin = (p) => {
+    let resolve, reject;
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    p.el('atc-file').files = [{ size: 12, arrayBuffer: () => promise }];
+    p.el('atc-file').dispatch('change');
+    return { resolve: (text) => resolve(new TextEncoder().encode(text).buffer), reject };
+  };
+  const settle = async (p) => { await new Promise(resolve => setImmediate(resolve)); p.flush(); await new Promise(resolve => setImmediate(resolve)); };
+  for (const action of ['clear', 'shortcut', 'typing', 'sample']) {
+    const { p, writes } = open();
+    const pending = begin(p);
+    if (action === 'clear') p.el('atc-clear').click();
+    if (action === 'shortcut') {
+      p.el('atc-input').value = ''; // ToolLayout clears the input in the same key event.
+      p.run("shortcut({ ctrlKey: true, key: 'l' })");
+    }
+    if (action === 'typing') { p.el('atc-input').value = 'new text'; p.el('atc-input').dispatch('input'); }
+    if (action === 'sample') p.el('atc-sample').click();
+    const expected = action === 'typing' ? 'new text' : action === 'sample' ? 'sample text' : '';
+    pending.resolve('stale file');
+    await settle(p);
+    check(`late file read cannot replace ${action}`, p.el('atc-input').value === expected, p.el('atc-input').value);
+    check(`late file read cannot save stale text after ${action}`, writes.every(value => value.text !== 'stale file'));
+  }
+  {
+    const { p } = open(); const old = begin(p); const fresh = begin(p);
+    fresh.resolve('fresh file'); await settle(p); old.resolve('stale file'); await settle(p);
+    check('latest selected file wins when reads finish out of order', p.el('atc-input').value === 'fresh file');
+  }
+  {
+    const { p } = open(); const pending = begin(p);
+    p.el('atc-clear').click(); p.flush(); pending.reject(new Error('old read failed')); await settle(p);
+    check('late read failure cannot replace clear status', p.el('atc-status').textContent === STRINGS.en.idle, p.el('atc-status').textContent);
+  }
+  {
+    const { p, writes } = open(); const pending = begin(p);
+    pending.resolve('current file'); await settle(p);
+    check('current file still populates the input and is saved', p.el('atc-input').value === 'current file' && writes.some(value => value.text === 'current file'));
+    p.el('atc-file').files = [{ size: 2, arrayBuffer: async () => new Uint8Array([0xc3, 0x28]).buffer }];
+    p.el('atc-file').dispatch('change'); await settle(p);
+    check('current invalid UTF-8 file reports the existing error', p.el('atc-status').textContent === STRINGS.en.fileNotText);
+    p.el('atc-file').files = [{ size: 21 * 1024 * 1024, arrayBuffer: () => { throw new Error('oversized file was read'); } }];
+    p.el('atc-file').dispatch('change'); await settle(p);
+    check('oversized file is rejected before reading', p.el('atc-input').value === 'current file' && p.el('atc-status').textContent.includes('20 MB'));
+  }
+}
+
+// ── v2 page layout (DESIGN.md "Tool Pages v2", kind: analyze) ──────────────────
+{
+  const markup = source.replace(/^---\n[\s\S]*?\n---/, '').split('<script>')[0].trim();
+  const tips = ['input', 'file', 'output', 'viz', 'tokenizers'];
+  check('tool root owns the first-screen height', /^<div class="atc-wrap"/.test(markup));
+  check('live counting has no added primary action', !markup.includes('btn-primary'));
+  check('controls and status precede the input', ['atc-sample', 'atc-file', 'atc-clear', 'atc-copy', 'atc-out', 'atc-viz-enc', 'atc-viz-ids']
+    .every(id => markup.indexOf(`id="${id}"`) < markup.indexOf('id="atc-status"'))
+    && markup.indexOf('id="atc-status"') < markup.indexOf('id="atc-input"'));
+  check('result cards and table are inside the scrolling result area', markup.indexOf('class="atc-results"') < markup.indexOf('class="atc-stats"')
+    && /\.atc-results \{[^}]*overflow: auto/.test(source));
+  check('five distinct controls have help', JSON.stringify([...markup.matchAll(/<Toggletip id="atc-tip-(\w+)"/g)].map(m => m[1])) === JSON.stringify(tips));
+  check('tip text stays out of data-strings', source.includes('const { tips: TIPS, ...CLIENT_L } = L;') && markup.includes('data-strings={JSON.stringify(CLIENT_L)}'));
+  check('network, reference accuracy and price notes remain visible text', ['{L.networkNote}', '{L.otherBody}', '{L.refNote}', 'id="atc-price-note"'].every(text => markup.includes(text)));
+  check('optional tokenizer load/retry buttons remain', ['deepseek', 'cl100k'].every(key => markup.includes(`class="btn-secondary atc-load" data-load="${key}"`)));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  for (const id of ['atc-input', 'atc-sample', 'atc-file', 'atc-clear', 'atc-copy', 'atc-status', 'atc-sum', 'atc-chars', 'atc-bytes', 'atc-words', 'atc-lines',
+    'atc-n-o200k', 'atc-n-deepseek', 'atc-n-cl100k', 'atc-out', 'atc-tbody', 'atc-viz-enc', 'atc-viz-ids', 'atc-viz', 'atc-viz-meta', 'atc-price-note']) {
+    check('existing control occurs once: ' + id, ids.filter(value => value === id).length === 1);
+  }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    check(lang + ': all help is nonempty plain text', tips.every(key => typeof STRINGS[lang].tips[key] === 'string'
+      && STRINGS[lang].tips[key].trim().length > 0 && !/<\/?[a-z]/i.test(STRINGS[lang].tips[key])));
+    const mdx = readFileSync(join(root, 'src/content/tools/ai-token-counter/' + lang + '.mdx'), 'utf8');
+    const front = mdx.match(/^---\n([\s\S]*?)\n---/)?.[1] || '';
+    const data = yaml.load(front);
+    check(lang + ': five steps precede FAQ', Array.isArray(data.steps) && data.steps.length === 5 && front.indexOf('\nsteps:') < front.indexOf('\nfaqItems:'));
+    check(lang + ': steps fit the llms text limits', Array.isArray(data.steps) && data.steps.every(step => typeof step === 'string' && step.length <= 280 && !/<\/?[a-z]/i.test(step))
+      && data.steps.reduce((n, step) => n + step.length, 0) <= 1200);
+    check(lang + ': usage section moved and limits retained', !/<h2>(How to use|使用步骤|使い方|사용 방법)<\/h2>/i.test(mdx)
+      && /<h2>(Limits|限制|制限事項|제한 사항)<\/h2>/.test(mdx));
+  }
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as an analyze page', /'ai-token-counter':\s*'analyze'/.test(layouts));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

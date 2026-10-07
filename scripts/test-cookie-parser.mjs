@@ -10,6 +10,7 @@
 //        src/data/persistence.ts; src/data/public-suffix-list.mjs (the list the page loads) and
 //        scripts/sync-public-suffix-list.mjs (its pinned version); scripts/test-cookie-parser.test_psl.txt
 //        (tests/test_psl.txt of the same Public Suffix List commit, CC0, the oracle)
+//        dist/tools/cookie-parser/index.html and its linked tool CSS (when built)
 // Write: stdout only (Python checks pipe through a child process; no files)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -46,6 +47,8 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { domainToASCII } from 'node:url';
+import vm from 'node:vm';
+import yaml from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CookieParserTool.astro'), 'utf8');
@@ -635,6 +638,156 @@ for (const lang of ['zh', 'ja', 'ko']) {
       }
     }
   }
+}
+
+// ── v2 page layout and real page entry points ───────────────────────────────
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script>'));
+  const css = source.slice(source.indexOf('<style>'));
+  const ids = ['mode', 'decode', 'split', 'json', 'redact', 'input', 'results', 'simulation', 'builder'];
+  const chooseStrings = new Function('STRINGS', 'lang', source.slice(source.indexOf('const T = STRINGS'), source.indexOf('\n---\n', 4)) + '\nreturn { CLIENT_T, TIPS, COPY_NOTE };');
+  check('v2: root directly receives the widget height', /^\s*<div class="ck-wrap"/.test(markup));
+  check('v2: controls, reserved status, input, results and secondary tools follow reading order', ['class="ck-top"', 'class="ck-box ck-options"', 'id="ck-status"', 'class="ck-input-pane"', 'class="ck-results"', 'class="ck-secondary"'].map((v) => markup.indexOf(v)).every((v, i, a) => v >= 0 && (!i || v > a[i - 1])));
+  eq('v2: distinct tip IDs', [...markup.matchAll(/<Toggletip id="ck-tip-(\w+)"/g)].map((m) => m[1]), ids);
+  check('v2: all tips use localized control names', (markup.match(/<Toggletip [^>]*lang=\{lang\} about=\{T\.\w+\}/g) || []).length === ids.length);
+  check('v2: serialized strings omit tips', source.includes('define:vars={{ S: CLIENT_T, pageLang: lang }}'));
+  check('v2: redacted-copy privacy note is visible beside results without opening options', markup.includes('<p id="ck-copy-note" class="ck-muted">{COPY_NOTE}</p>') && markup.indexOf('id="ck-copy-note"') > markup.indexOf('id="ck-copy-redacted"') && markup.indexOf('id="ck-copy-note"') < markup.indexOf('class="ck-result-scroll"'));
+  check('v2: input label is visible', markup.includes('<label class="tool-label" for="ck-input">') && !css.includes('clip: rect('));
+  check('v2: reserved status height contains long messages', /\.ck-wrap \.tool-status \{[^}]*height: 2\.8em;[^}]*overflow: auto;/.test(css));
+  check('v2: long results scroll within a named keyboard-accessible region', markup.includes('class="ck-result-scroll" tabindex="0" role="region" aria-label={T.resultLabel}') && /\.ck-result-scroll \{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(css));
+  check('v2: empty results give the first-screen space to input', /\.ck-wrap:has\(\.ck-out:empty\) \.ck-input-pane \{ flex: 1 1 0;/.test(css) && /\.ck-results:has\(\.ck-out:empty\) \{ display: none;/.test(css));
+  check('v2: secondary tools stack at 860px', /@media \(max-width: 860px\)[\s\S]*?\.ck-secondary \{ grid-template-columns: minmax\(0, 1fr\);/.test(css));
+  check('v2: mobile output keeps its height as results grow', /@media \(max-width: 860px\)[\s\S]*?\.ck-result-scroll \{ flex: none; height: 55svh; max-height: none; \}/.test(css));
+  check('v2: simulation results are a localized keyboard-accessible region', markup.includes('id="ck-sim-out" class="ck-sim-out" tabindex="0" role="region" aria-label={T.simTitle} aria-live="polite"'));
+  check('v2: simulation results keep a fixed scrolling height while URL hints keep natural height', /\.ck-wrap :global\(\.ck-sim-out:has\(\.ck-sim-head\)\) \{[^}]*height: min\(30svh, 10rem\);[^}]*overflow: auto;[^}]*flex: none;/.test(css) && !/\.ck-sim-out \{[^}]*height:/.test(css));
+  check('v2: redundant Parse button, binding and translation key are removed', !source.includes('ck-parse') && Object.values(STRINGS).every((v) => !('parse' in v)));
+  check('v2: input still parses without a button', source.includes("inputEl.addEventListener('input', function () { render(false); });"));
+  check('v2: listed as an analyze page', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'cookie-parser': 'analyze'"));
+
+  // Astro must remove :global before browsers can apply the simulator's size constraint.
+  const builtPage = join(root, 'dist/tools/cookie-parser/index.html');
+  if (existsSync(builtPage)) {
+    const links = [...readFileSync(builtPage, 'utf8').matchAll(/<link\b[^>]*>/g)]
+      .filter((m) => /\brel="stylesheet"/.test(m[0]))
+      .map((m) => /\bhref="([^"]+)"/.exec(m[0])?.[1])
+      .filter((href) => href?.startsWith('/_astro/') && href.endsWith('.css'));
+    const toolCss = links.map((href) => readFileSync(join(root, 'dist', href.slice(1)), 'utf8'))
+      .filter((text) => text.includes('.ck-sim-out')).join('\n');
+    check('v2: built page links simulator CSS', toolCss.length > 0);
+    check('v2: compiled simulator CSS contains no unresolved Astro global selector', !toolCss.includes(':global('));
+    const rule = [...toolCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .find((m) => /(?:^|[\s,])\.ck-sim-out:has\(\.ck-sim-head\)(?:$|[\s,])/.test(m[1]));
+    check('v2: compiled simulator selector has the fixed height and scrolling declarations', !!rule && /height:\s*min\(30svh,\s*10rem\)/.test(rule[2]) && /overflow:\s*auto/.test(rule[2]) && /flex:\s*none/.test(rule[2]));
+  } else skip('v2: compiled simulator bounds', 'dist/tools/cookie-parser/index.html missing; run build');
+
+  // Keep child nodes so table/card replacement and clearing are tested, not only status text.
+  function pageFixture(lang, pslResult = 'ready') {
+    const { CLIENT_T } = chooseStrings(STRINGS, lang);
+    const nodes = new Map(), copied = [], timers = new Map();
+    let sequence = 0, loads = 0, releasePsl;
+    function element(tag = 'div') {
+      const events = new Map(); let text = '';
+      const n = { tag, children: [], attrs: {}, style: {}, value: '', checked: false, hidden: false, disabled: false, className: '', scrolls: 0,
+        get textContent() { return text + this.children.map((c) => c.textContent).join(''); },
+        set textContent(v) { text = String(v); this.children = []; },
+        get firstChild() { return this.children[0] || null; },
+        appendChild(c) { this.children.push(c); return c; },
+        setAttribute(k, v) { this.attrs[k] = String(v); },
+        getAttribute(k) { return this.attrs[k] ?? null; },
+        addEventListener(k, fn) { if (!events.has(k)) events.set(k, []); events.get(k).push(fn); },
+        dispatch(k, init = {}) { for (const fn of events.get(k) || []) fn({ target: this, ...init }); },
+        click() { if (!this.disabled) this.dispatch('click'); },
+        focus() { this.dispatch('focus'); },
+        getBoundingClientRect() { return { top: 900 }; },
+        scrollIntoView() { this.scrolls++; }
+      };
+      n.classList = { add(c) { n.className += ' ' + c; } };
+      return n;
+    }
+    for (const m of markup.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
+      const n = element(m[1]); n.value = /\bvalue="([^"]*)"/.exec(m[2])?.[1] || '';
+      n.checked = /\bchecked\b/.test(m[2]); n.hidden = /\bhidden\b/.test(m[2]);
+      if (m[1] === 'select') {
+        const opts = markup.slice(m.index + m[0].length).split('</select>')[0];
+        const list = [...opts.matchAll(/<option\b([^>]*)>/g)];
+        n.value = /value="([^"]*)"/.exec((list.find((o) => /\bselected\b/.test(o[1])) || list[0])[1])[1];
+      }
+      nodes.set(m[3], n);
+    }
+    nodes.get('ck-status').textContent = CLIENT_T.statusEmpty;
+    const modes = [...markup.matchAll(/<button\b[^>]*data-mode="([^"]+)"[^>]*>/g)].map((m) => {
+      const n = element('button'); n.setAttribute('data-mode', m[1]); return n;
+    });
+    const document = Object.assign(element('document'), {
+      getElementById(id) { if (!nodes.has(id)) throw new Error('Missing rendered id: ' + id); return nodes.get(id); },
+      querySelectorAll(selector) { if (selector !== '#ck-wrap [data-mode]') throw new Error('Unexpected selector: ' + selector); return modes; },
+      createElement: element,
+      createTextNode(value) { const n = element('text'); n.textContent = value; return n; }
+    });
+    const ctx = { S: CLIENT_T, pageLang: lang, document, URL, TextEncoder, TextDecoder, atob, btoa, console,
+      navigator: { clipboard: { writeText(t) { copied.push(t); return Promise.resolve(); } } },
+      isSecureContext: true, innerHeight: 844,
+      setTimeout(fn, delay) { const id = ++sequence; timers.set(id, { fn, delay }); return id; },
+      clearTimeout(id) { timers.delete(id); },
+      __ztCookiePsl() { loads++; return pslResult === 'pending' ? new Promise((resolve) => { releasePsl = resolve; }) : pslResult === 'failed' ? Promise.reject(new Error('fixture import failed')) : Promise.resolve(PSL_DATA); }
+    };
+    ctx.window = ctx;
+    vm.runInNewContext(source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1], ctx, { filename: 'CookieParserTool.astro' });
+    return { nodes, copied, modes, document, get loads() { return loads; },
+      set(id, value, event = 'input') { const n = nodes.get(id); n.value = value; n.dispatch(event); },
+      flush() { for (const [id, t] of timers) if (t.delay === 0) { timers.delete(id); t.fn(); } },
+      release() { releasePsl(PSL_DATA); }
+    };
+  }
+  const settle = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const { CLIENT_T, TIPS, COPY_NOTE } = chooseStrings(STRINGS, lang);
+    check(`v2 ${lang}: all tips are complete and kept out of client strings`, Object.keys(TIPS).length === ids.length && Object.values(TIPS).every((v) => v.length > 20 && !JSON.stringify(CLIENT_T).includes(v)) && !('tips' in CLIENT_T));
+    check(`v2 ${lang}: copy privacy note is translated and stays outside client strings`, COPY_NOTE === STRINGS[lang].copyNote && COPY_NOTE.length > 20 && !('copyNote' in CLIENT_T) && !JSON.stringify(CLIENT_T).includes(COPY_NOTE));
+    const mdx = readFileSync(join(root, 'src/content/tools/cookie-parser/' + lang + '.mdx'), 'utf8');
+    const end = mdx.indexOf('\n---\n', 4), front = yaml.load(mdx.slice(4, end)), body = mdx.slice(end + 5);
+    check(`v2 ${lang}: five bounded plain-text steps precede FAQ`, Array.isArray(front.steps) && front.steps.length === 5 && front.steps.every((v) => typeof v === 'string' && v.length <= 280 && !/[<>]/.test(v)) && front.steps.join('').length <= 1200 && mdx.indexOf('\nsteps:') < mdx.indexOf('\nfaqItems:'));
+    check(`v2 ${lang}: usage removed, limits and executable examples kept`, !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body) && /^## (Limits|限制|制限|제한)\s*$/m.test(body) && body.includes('{/* ck-check:'));
+    const page = pageFixture(lang), get = (id) => page.nodes.get(id);
+    check(`v2 ${lang}: initial input remains empty and builder remains populated`, get('ck-input').value === '' && get('ck-out').children.length === 0 && get('ck-b-out').textContent === 'Set-Cookie: session=abc123; Path=/; Max-Age=3600; Secure; HttpOnly; SameSite=Lax');
+    page.set('ck-input', 'sid=first; nickname=%E5%BC%A0; sid=second');
+    check(`v2 ${lang}: input event renders a table without Parse`, get('ck-status').className === 'tool-status success' && get('ck-out').textContent.includes('张') && get('ck-out').textContent.includes('second'));
+    get('ck-copy-json').click(); await settle();
+    eq(`v2 ${lang}: object copy keeps first duplicate and decodes`, JSON.parse(page.copied.at(-1)), { sid: 'first', nickname: '张' });
+    page.set('ck-json-format', 'array', 'change'); get('ck-copy-json').click(); await settle();
+    check(`v2 ${lang}: array copy keeps duplicates`, JSON.parse(page.copied.at(-1)).length === 3);
+    get('ck-copy-redacted').click(); await settle();
+    eq(`v2 ${lang}: default redacted copy hides every value`, page.copied.at(-1), 'Cookie: sid=[redacted]; nickname=[redacted]; sid=[redacted]');
+    get('ck-decode').checked = false; get('ck-decode').dispatch('change');
+    check(`v2 ${lang}: decoding toggle renders the original value`, get('ck-out').textContent.includes('%E5%BC%A0') && !get('ck-out').textContent.includes('张'));
+    page.set('ck-input', 'x=1; Path=/');
+    page.modes.find((n) => n.getAttribute('data-mode') === 'cookie').click();
+    check(`v2 ${lang}: forcing Cookie treats Path as a cookie name`, get('ck-out').textContent.includes('Path') && get('ck-sim').hidden);
+    page.set('ck-input', 'HTTP/1.1 200 OK');
+    check(`v2 ${lang}: unsupported header clears the previous table`, !get('ck-out').firstChild && get('ck-status').textContent === CLIENT_T.statusNothing);
+    get('ck-ex-cookie').click();
+    check(`v2 ${lang}: Cookie example renders and can scroll to results`, get('ck-input').value === CLIENT_T.exampleCookie && get('ck-out').children.length === 1 && get('ck-out').scrolls === 1);
+    get('ck-ex-set').click(); await settle();
+    check(`v2 ${lang}: Set-Cookie example loads PSL and opens simulation`, get('ck-input').value === CLIENT_T.exampleSet && get('ck-out').textContent.includes('SameSite') && !get('ck-sim').hidden && get('ck-sim').open && get('ck-sim-out').textContent.length > 0 && page.loads === 1);
+    get('ck-clear').click(); await settle();
+    check(`v2 ${lang}: Clear removes old output, notes and simulation`, get('ck-input').value === '' && get('ck-out').children.length === 0 && get('ck-notes').children.length === 0 && get('ck-sim').hidden && get('ck-status').textContent === CLIENT_T.statusEmpty);
+    page.set('ck-input', 'theme=dark'); get('ck-input').value = '';
+    page.document.dispatch('keydown', { ctrlKey: true, key: 'l' }); page.flush();
+    check(`v2 ${lang}: Ctrl+L refreshes cleared input and removes stale output`, get('ck-out').children.length === 0 && get('ck-status').textContent === CLIENT_T.statusEmpty);
+    page.set('ck-input', Array.from({ length: 500 }, (_, i) => 'k' + i + '=v' + i).join('; '));
+    get('ck-copy-json').click(); await settle();
+    check(`v2 ${lang}: long input exports all entries`, Object.keys(JSON.parse(page.copied.at(-1))).length === 500);
+  }
+  const pending = pageFixture('en', 'pending');
+  pending.set('ck-input', 'Set-Cookie: sid=x; Domain=example.com; Path=/');
+  check('v2: PSL loading reports progress and exposes no stale result', pending.nodes.get('ck-status').textContent === STRINGS.en.pslLoading && !pending.nodes.get('ck-out').firstChild);
+  pending.nodes.get('ck-clear').click(); pending.release(); await settle();
+  check('v2: clearing while PSL loads does not resurrect the old input', pending.nodes.get('ck-status').textContent === STRINGS.en.statusEmpty && !pending.nodes.get('ck-out').firstChild);
+  const failed = pageFixture('en', 'failed');
+  failed.set('ck-input', 'Set-Cookie: sid=x; Domain=example.com; Path=/'); await settle();
+  check('v2: failed PSL import retains visible reload guidance', failed.nodes.get('ck-status').textContent.includes(STRINGS.en.pslFailed) && failed.nodes.get('ck-status').className === 'tool-status error');
+  failed.set('ck-input', 'Set-Cookie: sid=y; Domain=example.com; Path=/'); await settle();
+  check('v2: editing after PSL failure does not pretend to retry the module', failed.loads === 1 && failed.nodes.get('ck-status').textContent.includes(STRINGS.en.pslFailed));
 }
 
 console.log(`\n${passes} passed, ${failures} failed, ${skips} skipped`);

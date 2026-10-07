@@ -28,8 +28,8 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const source = readFileSync(join(root, 'src/components/tools/ImageSplitterTool.astro'), 'utf8');
+const root = process.env.ZT_B14_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
+const source = readFileSync(process.env.ZT_B14_SOURCE || join(root, 'src/components/tools/ImageSplitterTool.astro'), 'utf8');
 const splitterSource = readFileSync(join(root, 'src/components/tools/GifSplitterTool.astro'), 'utf8');
 
 const START_MARK = '/* ── engine:start ── */';
@@ -424,7 +424,7 @@ for (const name of ['crcTable', 'crc32', 'zipStore']) {
 
 // ---------- 12. STRINGS: same keys in every language ----------
 {
-  const s = source.indexOf('var STRINGS = {');
+  const s = source.indexOf('const STRINGS = {') >= 0 ? source.indexOf('const STRINGS = {') : source.indexOf('var STRINGS = {');
   const e = source.indexOf('\n      };\n', s);
   check('STRINGS block found', s >= 0 && e > s);
   const STRINGS = new Function(source.slice(s, e + 9) + '\nreturn STRINGS;')();
@@ -441,5 +441,290 @@ for (const name of ['crcTable', 'crc32', 'zipStore']) {
   deepEqual('STRINGS: every plan message key exists', missingPlan, []);
 }
 
+
+// Actual full page and shared-shortcut regressions. Canvas operations below are receipts,
+// not browser-rendering evidence. sharp reads and encodes the real fixture bytes.
+const pageSource=source;
+const legacyCounts={PASS:passes,FAIL:failures};
+{
+const {createHash}=await import('node:crypto');
+const {createRequire}=await import('node:module');
+const {relative}=await import('node:path');
+const {pathToFileURL}=await import('node:url');
+const vm=(await import('node:vm')).default;
+const {loadPage,frontmatterStrings}=await import(pathToFileURL(join(root,'scripts/astro-page-harness.mjs')));
+const ROOT=root,require=createRequire(join(ROOT,'package.json'));
+const {parseFragment,defaultTreeAdapter}=require('parse5'),sharp=require('sharp');
+const paths={pixel:process.env.ZT_B14_SOURCE?relative(ROOT,process.env.ZT_B14_SOURCE):'src/components/tools/ImageSplitterTool.astro'},slugs={pixel:'image-splitter'},source={pixel:pageSource};
+const sha=s=>createHash('sha256').update(s).digest('hex');
+const layout=readFileSync(join(ROOT,'src/layouts/ToolLayout.astro'),'utf8');
+const shortcut=layout.slice(layout.indexOf('// ── Keyboard shortcuts:'),layout.indexOf('// ── Copy button visual feedback'));
+const must=(b,m)=>{if(!b)throw Error('Regression prerequisite: '+m);};
+const checks=[],unhandled=[],observations=[];let phase='init';
+const onRejection=e=>unhandled.push({phase,message:e?.message||String(e)});process.on('unhandledRejection',onRejection);
+function check(id,expected,actual){const status=JSON.stringify(expected)===JSON.stringify(actual)?'PASS':'FAIL';checks.push({id,status,expected,actual});console.log(status+' '+id);}
+const settle=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
+function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
+const waitFor=async(fn)=>{const until=Date.now()+5000;while(!fn()){if(Date.now()>until)throw Error('Boundary not reached: '+phase);await new Promise(r=>setTimeout(r,5));}};
+async function scene(id,fn){phase=id;try{await fn();}catch(e){checks.push({id,status:'FAIL',actual:e.stack});console.error(e);}}
+const labels=frontmatterStrings(source.pixel.match(/^---\n([\s\S]*?)\n---/)[1]) || vm.runInNewContext(source.pixel.match(/var STRINGS = [\s\S]*?\n      \};/)[0]+';STRINGS'),L=labels.en;
+function page(order='shared-after',lang='en'){
+ const key='pixel';
+ const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],tracks=[],tasks=[],downloads=[],blobs=new Map(),encodes=[],decodes=[],yields=[];
+ const controls={holdEncode:false,holdDecode:false,holdYield:false};
+ let timerId=0,clock=0,doc,urlId=0;
+ // RGBA/2D boundary: enough for this probe's opaque 2x2 fixtures; not pixel correctness or browser Canvas conformance evidence.
+ function pixels(c){const n=(c.width||0)*(c.height||0)*4;if(!c.rgba||c.rgba.length!==n)c.rgba=new Uint8ClampedArray(n);return c.rgba;}
+ function canvasContext(c){return{canvas:c,fillStyle:'#000000',clearRect(x,y,w,h){const d=pixels(c);for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)d.fill(0,(yy*c.width+xx)*4,(yy*c.width+xx)*4+4);},
+  putImageData(img,x,y){const d=pixels(c);for(let yy=0;yy<img.height;yy++)for(let xx=0;xx<img.width;xx++)d.set(img.data.subarray((yy*img.width+xx)*4,(yy*img.width+xx)*4+4),((y+yy)*c.width+x+xx)*4);},
+  getImageData(x,y,w,h){const data=new Uint8ClampedArray(w*h*4),d=pixels(c);for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++)data.set(d.subarray(((y+yy)*c.width+x+xx)*4,((y+yy)*c.width+x+xx)*4+4),(yy*w+xx)*4);return{data,width:w,height:h};},
+  drawImage(src,...a){must(src,'drawImage source exists');c.drawCalls=(c.drawCalls||0)+1;const data=src.rgba||pixels(src);let sx=0,sy=0,sw=src.width,sh=src.height,dx,dy,dw,dh;if(a.length===8)[sx,sy,sw,sh,dx,dy,dw,dh]=a;else{[dx,dy,dw=sw,dh=sh]=a;}const out=pixels(c);for(let y=0;y<dh;y++)for(let x=0;x<dw;x++){const si=((sy+Math.floor(y*sh/dh))*src.width+sx+Math.floor(x*sw/dw))*4,di=((dy+y)*c.width+dx+x)*4;const alpha=data[si+3]/255;for(let z=0;z<3;z++)out[di+z]=Math.round(data[si+z]*alpha+out[di+z]*(1-alpha));out[di+3]=Math.round((alpha+out[di+3]/255*(1-alpha))*255);}},
+  fillRect(x,y,w,h){const rgb=this.fillStyle.match(/[0-9a-f]{2}/gi).map(v=>parseInt(v,16));const d=pixels(c);for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)d.set([...rgb,255],(yy*c.width+xx)*4);},save(){},restore(){},setLineDash(){},strokeRect(){},measureText(t){return{width:t.length*8};},beginPath(){},roundRect(){},rect(){},fill(){},fillText(){}};}
+ function encodeCanvas(c,callback,mime){const rgba=Buffer.from(pixels(c)),width=c.width,height=c.height,held=controls.holdEncode;
+  const job={mime,width,height,rgba:[...rgba],held,ready:false,delivered:false,deliver(value){must(job.ready&&!job.delivered,'encode delivered once and ready');job.delivered=true;callback(arguments.length?value:job.blob);}};encodes.push(job);
+  let encoder=sharp(rgba,{raw:{width,height,channels:4}});encoder=mime==='image/jpeg'?encoder.jpeg():mime==='image/webp'?encoder.webp():encoder.png();
+  encoder.toBuffer().then(bytes=>{job.blob=new Blob([bytes],{type:mime});job.ready=true;if(!held)job.deliver();},e=>{job.error=e.message;job.blob=null;job.ready=true;if(!held)job.deliver();});
+ }
+ function decode(file){const held=controls.holdDecode,d=deferred(),job={name:file.name,held,ready:false,delivered:false,deliver(){must(job.ready&&!job.delivered,'decode delivered once and ready');job.delivered=true;job.error?d.reject(job.error):d.resolve(job.bitmap);}};decodes.push(job);
+  file.arrayBuffer().then(bytes=>sharp(Buffer.from(bytes)).ensureAlpha().raw().toBuffer({resolveWithObject:true})).then(({data,info})=>{job.bitmap={width:info.width,height:info.height,rgba:new Uint8ClampedArray(data),closed:false,close(){this.closed=true;}};job.ready=true;if(!held)job.deliver();},error=>{job.error=error;job.ready=true;if(!held)job.deliver();});return d.promise;
+ }
+  const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
+  const matchOne = (el, selector) => {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    if (parts.length > 1) {
+      if (!matchOne(el, parts.pop())) return false;
+      for (let parent = el.parentNode; parent; parent = parent.parentNode) if (matchOne(parent, parts.join(' '))) return true;
+      return false;
+    }
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+    return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+      && [...plain.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))
+      && attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+  };
+  const matches = (el, selector) => selector.split(',').some(part => matchOne(el, part.trim()));
+  class EventStub {
+    constructor(type, extra = {}) { Object.assign(this, { type, bubbles: false, defaultPrevented: false, isTrusted: false }, extra); }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() { this.stopped = true; }
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', type: tag === 'input' ? 'text' : '', style: {}, text: '', _value: '', dirtyValue: false, disabled: false, hidden: false }); }
+    get value() {
+      if (!this.dirtyValue && this.tagName === 'TEXTAREA') return this.textContent;
+      if (!this.dirtyValue && this.tagName === 'SELECT') return (this.querySelectorAll('option').find(o=>o.selected)||this.querySelector('option'))?.value ?? '';
+      return this._value;
+    }
+    set value(v) { let x=String(v);if(this.tagName==='SELECT'&&!this.querySelectorAll('option').some(o=>o.value===x))x='';if(this.tagName==='INPUT'&&this.type==='number'&&x!==''&&!Number.isFinite(Number(x)))x='';this._value=x;this.dirtyValue=true; }
+    get firstChild() { return this.children[0]??null; }
+    get dataset() { const el=this;return new Proxy({}, {get(_,key){return el.getAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()));},set(_,key,value){el.setAttribute('data-'+String(key).replace(/[A-Z]/g,x=>'-'+x.toLowerCase()),value);return true;}}); }
+    get parentElement() { return this.parentNode; }
+    get isConnected() { return doc.contains(this); }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); }, toggle(c,force) { const yes=force??!this.contains(c);yes?this.add(c):this.remove(c);return yes; } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (['id', 'class', 'type', 'value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); if (['hidden', 'disabled', 'checked', 'selected'].includes(k)) this[k] = true; }
+    getAttribute(k) { if (['id', 'class', 'type'].includes(k)) return this[k === 'class' ? 'className' : k] || null; return this.attributes[k] ?? null; }
+    removeAttribute(k) { delete this.attributes[k]; if (['hidden','disabled','checked'].includes(k)) this[k]=false; }
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+    set textContent(v) { for (const child of this.children) child.parentNode = null; this.children = []; this.text = String(v); }
+    set innerHTML(v) {
+      this.textContent = '';
+      // parse5 supplies the real HTML tokenizer/entity table in the actual element context.
+      // In particular, textarea uses RCDATA. No homemade entity decoder is used.
+      const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
+      for (const node of parseFragment(context, String(v)).childNodes) this.appendChild(fromParse5(node));
+    }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { const i=this.children.indexOf(child);if(i>=0)this.children.splice(i,1);child.parentNode=null;return child; }
+    querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    contains(el) { return el === this || descendants(this).includes(el); }
+    closest(selector) { for (let el = this; el; el = el.parentNode) if (matches(el, selector)) return el; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatchEvent(event) {
+      event.target = this;
+      for (let el = this; el; el = el.parentNode) {
+        event.currentTarget = el;
+        for (const fn of el.listeners[event.type] || []) {const result=fn.call(el,event);if(result&&typeof result.then==='function')tasks.push(result);}
+        if (!event.bubbles || event.stopped) break;
+      }
+      return !event.defaultPrevented;
+    }
+    dispatch(type, extra = {}) { return this.dispatchEvent(new EventStub(type, { bubbles: true, ...extra })); }
+    click() { if(this.disabled||this.closest('fieldset[disabled]'))return;if(this.tagName==='A'&&this.download){downloads.push({name:this.download,blob:blobs.get(this.href)});return;}this.focus();this.dispatch('click'); }
+    select() { doc.selectedElement=this; }
+    focus() { if(doc.activeElement===this)return;const old=doc.activeElement;doc.activeElement=this;if(old)old.dispatchEvent(new EventStub('blur'));this.dispatchEvent(new EventStub('focus')); }
+    getContext(kind) { must(this.tagName==='CANVAS'&&kind==='2d','canvas context'); return this._ctx??=canvasContext(this); }
+    toBlob(callback,mime='image/png') { encodeCanvas(this,callback,mime); }
+    getBoundingClientRect() { return {left:0,top:0,width:this.width||0,height:this.height||0}; }
+    setSelectionRange(start,end) { this.selectionStart=start;this.selectionEnd=end; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const attr of node.attrs || []) el.setAttribute(attr.name, attr.value);
+    for (const child of node.childNodes || []) if (child.nodeName !== '#comment') el.appendChild(fromParse5(child));
+    return el;
+  }
+
+
+  doc=new Element('#document');doc.documentElement=new Element('html');doc.documentElement.lang=lang;doc.appendChild(doc.documentElement);
+  doc.body=new Element('body');doc.documentElement.appendChild(doc.body);
+  const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
+  widget.innerHTML=source[key].replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g,'');
+  const actualWrap=widget.querySelector('#isp-wrap');actualWrap.setAttribute('data-lang',lang);
+  doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
+  doc.getElementsByName=name=>descendants(doc).filter(el=>el.getAttribute('name')===name);
+  doc.createElement=tag=>new Element(tag);doc.activeElement=doc.body;
+  doc.execCommand=command=>{execCalls.push(command);return false;};
+  const persist={clear(slug){persistCalls.push(['clear',slug]);},save(...args){persistCalls.push(['save',...args]);},load(){return {};}};
+  const globals={clientStrings:labels[lang],document:doc,Blob,File,TextEncoder,TextDecoder,URL:{createObjectURL(blob){const url='blob:memory-'+(++urlId);blobs.set(url,blob);return url;},revokeObjectURL(url){blobs.delete(url);}},Uint8Array,Uint8ClampedArray,ArrayBuffer,
+   ImageData:class{constructor(data,width,height){Object.assign(this,{data,width,height});}},createImageBitmap:decode,
+   MutationObserver:class{observe(){} disconnect(){}},matchMedia:()=>({addEventListener(){}}),getComputedStyle:()=>({getPropertyValue:()=>''}),requestAnimationFrame:fn=>globals.setTimeout(fn,16),cancelAnimationFrame:id=>globals.clearTimeout(id),
+   MessageChannel:class{constructor(){this.port1={};this.port2={postMessage:()=>{const job={delivered:false,deliver:()=>{must(!job.delivered,'yield only once');job.delivered=true;this.port1.onmessage({data:null});}};yields.push(job);if(!controls.holdYield)queueMicrotask(job.deliver);}};}},
+   _slug:slugs[key],ztPersist:persist,trackTool(...a){tracks.push(a);},innerHeight:900,devicePixelRatio:1,performance:{now:()=>controls.stepClock?(controls.time=(controls.time||0)+30):performance.now()},
+   ClipboardItem:class{constructor(data){this.data=data;}},navigator:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value});return d.promise;},write(value){const d=deferred();clipboard.push({...d,value});return d.promise;}}},
+   setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
+  };
+  if(order==='shared-before')vm.runInNewContext(shortcut,{document:doc,window:{ztPersist:persist},_slug:slugs[key]},{filename:'ToolLayout.astro:actual-shortcut'});
+  const actual=loadPage(paths[key],{lang,globals});
+  if(order==='shared-after')actual.run(shortcut);
+  const get=id=>{const el=doc.getElementById(id);must(el,key+' ID '+id);return el;};
+  return{get,doc,widget,globals,clipboard,timers,persistCalls,execCalls,tracks,downloads,encodes,decodes,yields,controls,actual,
+   file(file){const input=get('isp-file');input.files=[file];input.value='C:\\fakepath\\'+file.name;input.dispatch('change');},
+   drop(file){get('isp-wrap').dispatch('drop',{dataTransfer:{files:[file]}});},
+   ctrlL(id,key='l',meta=false){get(id).focus();return get(id).dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta});},
+   change(id,value){get(id).value=value;get(id).dispatch('change');},
+   tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
+  };
+}
+const originalPixels=Array(9).fill([255,0,0,255]).flat();
+const pngBytes=await sharp(Buffer.from(originalPixels),{raw:{width:3,height:3,channels:4}}).png().toBuffer();
+const pngFile=(name='old.png')=>new File([pngBytes],name,{type:'image/png'});
+const badFile=()=>new File(['not image'],'bad.txt',{type:'text/plain'});
+function heldFile(file){const read=file.arrayBuffer.bind(file),d=deferred();let ready=false;Object.defineProperty(file,'arrayBuffer',{value:async()=>{const bytes=await read();ready=true;await d.promise;return bytes;}});return{file,release:d.resolve,ready:()=>ready};}
+async function rgbaOf(blob){return [...await sharp(Buffer.from(await blob.arrayBuffer())).ensureAlpha().raw().toBuffer()];}
+function zipEntries(buffer){const bytes=Buffer.from(buffer),out=[];let off=0;while(bytes.readUInt32LE(off)===0x04034b50){const size=bytes.readUInt32LE(off+18),nl=bytes.readUInt16LE(off+26),xl=bytes.readUInt16LE(off+28),start=off+30+nl+xl;out.push({name:bytes.subarray(off+30,off+30+nl).toString(),data:bytes.subarray(start,start+size)});off=start+size;}return out;}
+const snap=p=>({workspace:p.get('isp-workspace').hidden,tiles:p.get('isp-tiles').querySelectorAll('.isp-cell').length,status:p.get('isp-status').textContent,disabled:p.get('isp-zip').disabled,settings:p.get('isp-settings').disabled,name:p.get('isp-name').textContent,dims:p.get('isp-dims').textContent,size:p.get('isp-size').textContent,summary:p.get('isp-summary').textContent});
+const cleared=[true,0,'',true,false,'','','',''];
+async function load(p,name='old.png'){const n=p.decodes.length;p.file(pngFile(name));await waitFor(()=>p.decodes[n]?.delivered&&!p.get('isp-zip').disabled);await settle();}
+await scene('golden',async()=>{
+ const p=page();await load(p);check(phase+'/actual-source-decoded',[3,3],[p.decodes[0].bitmap.width,p.decodes[0].bitmap.height]);check(phase+'/actual-tile-plan',9,p.get('isp-tiles').querySelectorAll('.isp-cell').length);p.get('isp-tiles').querySelector('.isp-cell-dl').click();await waitFor(()=>p.downloads.length===1);check(phase+'/tile-name','old-r1-c1.png',p.downloads[0].name);check(phase+'/complete-tile-bytes',sha(new Uint8Array(await p.encodes[0].blob.arrayBuffer())),sha(new Uint8Array(await p.downloads[0].blob.arrayBuffer())));p.get('isp-zip').click();await waitFor(()=>p.downloads.length===2);const entries=zipEntries(await p.downloads[1].blob.arrayBuffer());check(phase+'/ZIP-name','old-tiles.zip',p.downloads[1].name);check(phase+'/ZIP-entry-names',Array.from({length:9},(_,i)=>`old-r${Math.floor(i/3)+1}-c${i%3+1}.png`),entries.map(e=>e.name));check(phase+'/ZIP-complete-encoded-file-bytes',await Promise.all(p.encodes.slice(1).map(async j=>sha(new Uint8Array(await j.blob.arrayBuffer())))),entries.map(e=>sha(e.data)));p.get('isp-clear').click();check(phase+'/clear',cleared,Object.values(snap(p)));
+});
+for(const order of ['shared-before','shared-after'])for(const meta of [false,true])await scene('clear/'+order+'/'+meta,async()=>{
+ const p=page(order);await load(p);p.change('isp-format','webp');p.get('isp-quality').value='75';p.get('isp-quality').dispatch('input');p.get('isp-file').value='C:\\fakepath\\old.png';p.ctrlL('isp-zip','L',meta);await settle();check(phase+'/all-derived-cleared',cleared,Object.values(snap(p)));check(phase+'/file-cleared','',p.get('isp-file').value);check(phase+'/preferences-kept',['webp','75'],[p.get('isp-format').value,p.get('isp-quality').value]);check(phase+'/shared-clear-once',1,p.persistCalls.filter(v=>v[0]==='clear').length);
+ const q=page(order);q.controls.holdDecode=true;q.file(pngFile('late.png'));await waitFor(()=>q.decodes[0]?.ready);q.ctrlL('isp-drop','l',meta);q.decodes[0].deliver();await settle();check(phase+'/late-decode-cleared',cleared,Object.values(snap(q)));check(phase+'/late-bitmap-closed',true,q.decodes[0].bitmap.closed);
+ const r=page(order);await load(r);r.get('isp-rows').value='2';r.get('isp-rows').dispatch('input');r.ctrlL('isp-rows','l',meta);r.tick(250);await settle();check(phase+'/queued-render-cancelled',cleared,Object.values(snap(r)));
+});
+await scene('existing-load-and-slice-guards',async()=>{
+ for(const action of ['clear','new-source','invalid']){const p=page();await load(p);p.controls.holdDecode=true;p.file(pngFile('late.png'));await waitFor(()=>p.decodes[1]?.ready);const old=p.decodes[1];if(action==='clear')p.get('isp-clear').click();else if(action==='new-source'){p.controls.holdDecode=false;await load(p,'new.png');}else p.file(badFile());const before=snap(p);old.deliver();await settle();check(phase+'/'+action+'-late-decode-keeps-state',before,snap(p));check(phase+'/'+action+'-late-bitmap-closed',true,old.bitmap.closed);}
+ const p=page();await load(p);p.controls.holdYield=true;p.controls.stepClock=true;p.get('isp-rows').value='2';p.get('isp-rows').dispatch('input');p.tick(250);await settle();const late=p.yields.find(j=>!j.delivered);must(late,'actual buildTiles yields');p.get('isp-clear').click();const before=snap(p);late.deliver();await settle();check(phase+'/old-tile-build-keeps-clear',before,snap(p));
+});
+await scene('PNG-file-versus-pasted-JPEG',async()=>{
+ const p=page();p.controls.holdDecode=true;p.file(pngFile('old.png'));await waitFor(()=>p.decodes[0]?.ready);const bytes=await sharp(Buffer.from(originalPixels),{raw:{width:3,height:3,channels:4}}).jpeg().toBuffer(),file=new File([bytes],'paste.jpg',{type:'image/jpeg'});p.doc.dispatch('paste',{clipboardData:{items:[{kind:'file',type:'image/jpeg',getAsFile:()=>file}]}});await waitFor(()=>p.decodes[1]?.ready);p.decodes[1].deliver();await settle();const before=snap(p);p.decodes[0].deliver();await settle();check(phase+'/old-file-keeps-current-paste',before,snap(p));check(phase+'/old-bitmap-closed',true,p.decodes[0].bitmap.closed);p.get('isp-tiles').querySelector('.isp-cell-dl').click();await waitFor(()=>p.downloads.length===1);check(phase+'/pasted-source-name','image-r1-c1.png',p.downloads[0].name);check(phase+'/pasted-JPEG-source-dimensions',[3,3],[p.decodes[1].bitmap.width,p.decodes[1].bitmap.height]);
+});
+for(const kind of ['tile','zip'])for(const action of ['clear','new-source','invalid','CtrlL'])await scene('export-lifecycle/'+kind+'/'+action,async()=>{
+ const p=page();await load(p);p.controls.holdEncode=true;(kind==='tile'?p.get('isp-tiles').querySelector('.isp-cell-dl'):p.get('isp-zip')).click();await waitFor(()=>p.encodes[0]?.ready);if(action==='clear')p.get('isp-clear').click();else if(action==='new-source')await load(p,'new.png');else if(action==='invalid')p.file(badFile());else p.ctrlL('isp-zip');const before=snap(p);p.encodes[0].deliver();await settle();check(phase+'/old-export-no-download',0,p.downloads.length);check(phase+'/no-late-write',before,snap(p));check(phase+'/busy-released',false,p.get('isp-settings').disabled);if(action==='invalid'){check(phase+'/valid-old-source-preserved',9,p.get('isp-tiles').querySelectorAll('.isp-cell').length);check(phase+'/current-error',L.statusNotImage,p.get('isp-status').textContent);check(phase+'/old-ready-source-unlocked',false,p.get('isp-zip').disabled);}
+});
+for(const kind of ['tile','zip'])await scene('current-export-failure/'+kind,async()=>{
+ const p=page();await load(p);p.controls.holdEncode=true;(kind==='tile'?p.get('isp-tiles').querySelector('.isp-cell-dl'):p.get('isp-zip')).click();await waitFor(()=>p.encodes[0]?.ready);p.encodes[0].deliver(null);await settle();check(phase+'/error-and-retry-state',[false,false,L.statusExportFailed],[p.get('isp-settings').disabled,p.get('isp-zip').disabled,p.get('isp-status').textContent]);p.controls.holdEncode=false;(kind==='tile'?p.get('isp-tiles').querySelector('.isp-cell-dl'):p.get('isp-zip')).click();await waitFor(()=>p.downloads.length===1);check(phase+'/direct-retry-completes',true,p.get('isp-status').className.includes('success'));
+});
+await scene('ZIP-export-options-snapshot',async()=>{
+ const p=page();await load(p);p.controls.holdEncode=true;p.get('isp-zip').click();await waitFor(()=>p.encodes[0]?.ready);check(phase+'/original-export-selector-editable',[false,null],[p.get('isp-format').disabled,p.get('isp-format').closest('fieldset')]);p.change('isp-format','jpg');p.get('isp-quality').value='60';p.get('isp-quality').dispatch('input');p.get('isp-bg').value='#ff0000';p.get('isp-bg').dispatch('input');p.controls.holdEncode=false;p.encodes[0].deliver();await waitFor(()=>p.downloads.length===1);const entries=zipEntries(await p.downloads[0].blob.arrayBuffer());check(phase+'/single-format',Array(9).fill('png'),await Promise.all(entries.map(async e=>(await sharp(e.data).metadata()).format)));check(phase+'/all-names',Array.from({length:9},(_,i)=>`old-r${Math.floor(i/3)+1}-c${i%3+1}.png`),entries.map(e=>e.name));
+});
+await scene('actual-WebP-fallback-type',async()=>{
+ const p=page();await load(p);p.change('isp-format','webp');p.controls.holdEncode=true;p.get('isp-tiles').querySelector('.isp-cell-dl').click();await waitFor(()=>p.encodes[0]?.ready);const blob=new Blob([await sharp(Buffer.from([255,0,0,255]),{raw:{width:1,height:1,channels:4}}).png().toBuffer()],{type:'image/png'});p.encodes[0].deliver(blob);await settle();check(phase+'/actual-PNG-extension','old-r1-c1.png',p.downloads[0].name);check(phase+'/fallback-info',true,p.get('isp-status').textContent.endsWith(L.statusWebpFallback));
+});
+await scene('forced-old-regeneration-timer-after-new-source',async()=>{
+ const p=page();await load(p);p.get('isp-rows').value='2';p.get('isp-rows').dispatch('input');const late=[...p.timers.values()].find(v=>v.ms===250);must(late,'real queued regenerate');await load(p,'new.png');const before=snap(p),first=p.get('isp-tiles').querySelector('.isp-cell');late.fn();await settle();check(phase+'/new-state-kept',before,snap(p));check(phase+'/old-timer-does-not-rebuild-current',true,first===p.get('isp-tiles').querySelector('.isp-cell'));
+});
+
+for(const kind of ['tile','zip'])await scene('queued-regenerate-versus-export/'+kind,async()=>{
+ const p=page();await load(p);p.get('isp-rows').value='2';p.get('isp-rows').dispatch('input');
+ check(phase+'/real-regenerate-is-pending',1,[...p.timers.values()].filter(v=>v.ms===250).length);
+ p.controls.holdEncode=true;(kind==='tile'?p.get('isp-tiles').querySelector('.isp-cell-dl'):p.get('isp-zip')).click();await waitFor(()=>p.encodes[0]?.ready);
+ check(phase+'/download-started-busy',true,p.get('isp-settings').disabled);p.tick(250);await settle();
+ check(phase+'/latest-plan-rendered',6,p.get('isp-tiles').querySelectorAll('.isp-cell').length);
+ check(phase+'/regenerate-unlocks-current-settings',false,p.get('isp-settings').disabled);
+ check(phase+'/regenerate-unlocks-current-ZIP',false,p.get('isp-zip').disabled);
+ const before=snap(p);p.encodes[0].deliver();await settle();check(phase+'/old-export-cancelled',0,p.downloads.length);check(phase+'/old-export-keeps-current-state',before,snap(p));
+ if(p.get('isp-settings').disabled)return; // A failing old candidate cannot start the retry; count only checks actually run.
+ p.controls.holdEncode=false;p.get('isp-tiles').querySelector('.isp-cell-dl').click();await waitFor(()=>p.downloads.length===1);
+ check(phase+'/current-tile-retry-name','old-r1-c1.png',p.downloads[0].name);check(phase+'/current-download-unlocks',false,p.get('isp-settings').disabled);
+});
+for(const action of ['new-source','invalid'])await scene('crop-frame-versus-source/'+action,async()=>{
+ const p=page();await load(p);p.get('isp-settings').querySelector('[data-mode="instagram"]').click();await settle();const crop=p.get('isp-crop');must(!crop.hidden,'actual Instagram crop is visible');
+ crop.dispatch('pointerdown',{clientX:0,clientY:0,pointerId:1});crop.dispatch('keydown',{key:'ArrowRight'});
+ const old=[...p.timers.values()].find(v=>v.ms===16);must(old,'actual crop preview frame is pending');
+ if(action==='new-source'){p.controls.holdDecode=true;p.file(pngFile('new.png'));await waitFor(()=>p.decodes[1]?.ready);}else p.file(badFile());
+ check(phase+'/source-choice-cancels-old-frame',0,[...p.timers.values()].filter(v=>v.ms===16).length);
+ check(phase+'/source-choice-clears-old-drag-class',false,crop.classList.contains('is-dragging'));old.fn();await settle();
+ if(action==='new-source'){p.decodes[1].deliver();await waitFor(()=>!p.get('isp-zip').disabled);await settle();}
+ const first=p.get('isp-tiles').querySelector('.isp-cell');crop.dispatch('pointerup',{pointerId:1});await settle();
+ check(phase+'/old-pointer-release-does-not-rebuild-current-tiles',true,first===p.get('isp-tiles').querySelector('.isp-cell'));
+ const canvas=p.get('isp-canvas'),before=canvas.drawCalls||0;crop.dispatch('keydown',{key:'ArrowLeft'});
+ const fresh=[...p.timers.values()].find(v=>v.ms===16);check(phase+'/current-keyboard-can-schedule-new-frame',true,!!fresh&&fresh.fn!==old.fn);
+ old.fn();check(phase+'/forced-old-frame-no-preview-write',before,canvas.drawCalls||0);p.tick(16);await settle();
+ check(phase+'/current-preview-frame-draws',true,(canvas.drawCalls||0)>before);
+});
+
+
+await scene('v2-contract',async()=>{
+ const s=source.pixel;
+ check(phase+'/direct-flex-root',true,/---\s*<div class="isp-wrap"/.test(s)&&/\.isp-wrap \{ min-height: 0; height: 100%; \}/.test(s));
+ check(phase+'/inner-300-rail',true,/\.isp-panels \{[^}]*grid-template-columns: 300px minmax\(0, 1fr\)/.test(s)&&s.includes('isp-rail zt-rail'));
+ check(phase+'/status-reserved',true,/#isp-status \{ min-height: 2\.8em/.test(s));
+ check(phase+'/actions-before-status',true,['isp-change','isp-clear','isp-zip'].every(id=>s.indexOf('id="'+id+'"')<s.indexOf('id="isp-status"')));
+ check(phase+'/bounded-stage-and-tiles',true,/\.isp-workspace \{[^}]*flex: 1 1 0; min-height: 0; overflow: hidden/.test(s)&&/\.isp-preview \{[^}]*max-height: min\(42svh, 360px\); overflow: auto/.test(s)&&/\.isp-tiles \{[^}]*flex: 1 1 0; min-height: 0; max-height: none/.test(s));
+ check(phase+'/real-keyboard-tile-container',true,/id="isp-tiles"[^>]*tabindex="0"/.test(s));
+ check(phase+'/860-stack-content',true,s.includes('@media (max-width: 860px)')&&s.includes('grid-template-columns: minmax(0, 1fr); flex: none'));
+ check(phase+'/44-main-24-dense',true,/isp-main-actions button[^}]*min-height: 44px/.test(s)&&s.includes('.isp-cell-dl { min-width: 24px; min-height: 24px; }'));
+ check(phase+'/phone-empty-hidden',true,s.includes('.isp-result-panel:has(#isp-workspace[hidden]) { display: none; }'));
+ check(phase+'/desktop-empty',true,s.includes('class="isp-empty">{L.emptyPreview}'));
+ check(phase+'/all-six-business-buttons',6,[...s.matchAll(/<button\b[^>]*(?:id="isp-(?:change|clear|zip)"|data-mode="(?:grid|tile|instagram)")/g)].length);
+ check(phase+'/export-details-default-closed',true,/<details class="isp-panel isp-export-options">/.test(s));
+ check(phase+'/twenty-four-slot-tips',24,[...s.matchAll(/<Toggletip\b[^>]*>\{L\.tips\.[a-zA-Z]+\}<\/Toggletip>/g)].length);
+ const script=s.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+ check(phase+'/no-client-tips',false,/tips|var STRINGS|data-i18n/.test(script));
+ const markup=s.slice(s.indexOf('---',3)+3,s.indexOf('<script'));
+ const used=[...markup.matchAll(/\{L\.([a-zA-Z]+)/g)].map(m=>m[1]).filter(k=>k!=='tips');
+ for(const lang of ['en','zh','ja','ko']){
+  const fragment=parseFragment(markup.replaceAll('{L.exportTitle}',labels[lang].exportTitle)),nodes=[];
+  const walk=n=>{nodes.push(n);for(const child of n.childNodes||[])walk(child);};walk(fragment);
+  const attr=(n,k)=>n.attrs?.find(a=>a.name===k)?.value,txt=n=>n.nodeName==='#text'?n.value:(n.childNodes||[]).map(txt).join('');
+  const details=nodes.find(n=>n.tagName==='details'&&attr(n,'class')==='isp-panel isp-export-options'),summary=details?.childNodes.find(n=>n.tagName==='summary');
+  check(phase+'/'+lang+'-actual-export-summary-child',true,!!summary&&attr(summary,'class')==='isp-panel-title');
+  check(phase+'/'+lang+'-localized-export-summary',labels[lang].exportTitle,summary?txt(summary):null);
+  check(phase+'/'+lang+'-actual-export-details-closed',true,!!details&&!details.attrs.some(a=>a.name==='open'));
+  check(phase+'/'+lang+'-tip-count',24,Object.keys(labels[lang].tips||{}).length);
+  check(phase+'/'+lang+'-localized-empty',true,typeof labels[lang].emptyPreview==='string'&&labels[lang].emptyPreview.length>10);
+  check(phase+'/'+lang+'-all-SSR-keys',true,used.length>30&&used.every(k=>Object.hasOwn(labels[lang],k)));
+  const mdx=readFileSync(join(ROOT,'src/content/tools/image-splitter/'+lang+'.mdx'),'utf8'),steps=mdx.match(/steps:\n([\s\S]*?)faqItems:/)?.[1],items=steps?[...steps.matchAll(/^  - "(.*)"$/gm)].map(m=>JSON.parse('"'+m[1]+'"')):[];
+  check(phase+'/'+lang+'-six-steps-limits',true,items.length===6&&items.every(x=>x.length<=280)&&items.join('').length<=1200);
+  check(phase+'/'+lang+'-Usage-removed',false,/^## (How to Use|使用步骤|使い方|사용 방법)$/m.test(mdx));
+ }
+ const p=page();await load(p);const first=p.get('isp-tiles').querySelector('.isp-cell'),before=p.get('isp-summary').textContent;
+ p.change('isp-format','jpg');p.get('isp-quality').value='65';p.get('isp-quality').dispatch('input');p.get('isp-bg').value='#ff0000';p.get('isp-bg').dispatch('input');await settle();
+ check(phase+'/format-quality-background-do-not-rebuild',true,first===p.get('isp-tiles').querySelector('.isp-cell'));
+ check(phase+'/export-options-keep-plan-summary',before,p.get('isp-summary').textContent);
+ check(phase+'/JPG-export-options-visible',[false,false],[p.get('isp-quality-field').hidden,p.get('isp-bg-field').hidden]);
+ const statusPage=page();statusPage.file(badFile());await settle();const actualStatus=statusPage.get('isp-status');
+ check(phase+'/status-reserved-after-real-error',true,actualStatus.textContent===L.statusNotImage&&statusPage.widget.querySelector('#isp-status')===actualStatus&&/#isp-status \{ min-height: 2\.8em/.test(s));
+ const fn=script.match(/function revealPreview\(\) \{[\s\S]*?\n      \}/)?.[0];
+ check(phase+'/actual-publish-observer',true,!!fn&&script.includes("new MutationObserver(revealPreview).observe(workspaceEl, { attributes: true, attributeFilter: ['hidden'] })"));
+ if(fn){for(const [hidden,mobile,expected] of [[true,true,0],[false,false,0],[false,true,1]]){const calls=[],ctx={workspaceEl:{hidden},stageArea:{scrollIntoView(x){calls.push(x);}},matchMedia:()=>({matches:mobile})};vm.runInNewContext(fn+';revealPreview();',ctx);check(phase+'/reveal-'+hidden+'-'+mobile,expected,calls.length);if(expected)check(phase+'/real-scroll-options',{block:'start',behavior:'smooth'},calls[0]);}}
+ const featureLayouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+ if (/'image-splitter':\s*'generate'/.test(featureLayouts)) check(phase+'/v2-generate-registration', true, true);
+ else console.log('PENDING_ROOT image-splitter generate registration (not counted as PASS)');
+
+});
+
+await settle();check('no-unhandled-rejections',[],unhandled);process.removeListener('unhandledRejection',onRejection);
+const pageCounts={PASS:checks.filter(c=>c.status==='PASS').length,FAIL:checks.filter(c=>c.status==='FAIL').length};
+passes+=pageCounts.PASS;failures+=pageCounts.FAIL;
+const report={node:process.version,source:process.env.ZT_B14_SOURCE||paths[Object.keys(paths)[0]],sourceSHA:sha(pageSource),legacyCounts,pageCounts,counts:{PASS:passes,FAIL:failures},checks,observations};
+if(process.env.ZT_B14_REPORT){const {writeFileSync}=await import('node:fs');writeFileSync(process.env.ZT_B14_REPORT,JSON.stringify(report,null,2)+'\n');}
+}
 console.log(`\n${passes} passed, ${failures} failed`);
-process.exit(failures ? 1 : 0);
+process.exitCode=failures?1:0;

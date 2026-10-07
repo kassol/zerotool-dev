@@ -107,7 +107,7 @@ const strings = vm.runInNewContext('(' + source.split('const STRINGS = ')[1].spl
 for (const lang of ['zh','ja','ko']) {
   test(`${lang} UI keys and message placeholders are complete`, () => {
     assert.deepEqual(Object.keys(strings[lang]).sort(), Object.keys(strings.en).sort());
-    for (const key of Object.keys(strings.en)) assert.deepEqual(strings[lang][key].match(/\{\w+\}/g), strings.en[key].match(/\{\w+\}/g));
+    for (const key of Object.keys(strings.en).filter(key => typeof strings.en[key] === 'string')) assert.deepEqual(strings[lang][key].match(/\{\w+\}/g), strings.en[key].match(/\{\w+\}/g));
   });
 }
 test('generated code highlights keep unscoped styles; local images and settings are not stored or uploaded', () => {
@@ -251,4 +251,59 @@ test('image decode failure has a recoverable message and releases the URL', () =
   assert.match(ui.nodes.status.textContent, /Cannot display/);
   assert.equal(ui.requests.length, 2);
 });
+
+// ---------- v2 page layout ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  test('v2 root receives its height directly', () => assert.match(markup, /^<div class="gsg-wrap">/));
+  test('controls and preview use a bounded generate grid', () => {
+    assert.match(markup, /class="gsg-rail zt-rail"/);
+    assert.match(source, /grid-template-columns: clamp\(270px, 24vw, 320px\) minmax\(0, 1fr\)/);
+    assert.match(source, /\.gsg-preview-canvas \{[^}]*flex: 1 1 0; min-height: 180px/);
+    assert.match(source, /#gsg-scene \{[^}]*height: 100%/);
+  });
+  test('copy controls precede secondary controls', () => assert.ok(markup.indexOf('id="gsg-copy"') < markup.indexOf('class="gsg-secondary"')));
+  test('CSS expansion remains bounded inside the rail', () => assert.match(source, /\.gsg-pre \{ max-height: 20rem; overflow: auto/));
+  test('empty status reserves height above preview', () => {
+    assert.match(source, /#gsg-status \{ height: 3rem; flex: none/);
+    assert.ok(markup.indexOf('id="gsg-status"') < markup.indexOf('id="gsg-preview-canvas"'));
+  });
+  test('output and image consequences stay visible', () => {
+    assert.match(markup, /<p class="gsg-note">\{L.imageLocal\}<\/p>/);
+    assert.match(markup, /<p class="gsg-note">\{L.scope\}<\/p>/);
+  });
+  test('mobile shows main controls then preview then secondary settings', () => {
+    assert.match(source, /@media \(max-width: 860px\)/);
+    for (const [cls, order] of [['primary',1],['preview-section',2],['secondary',3]]) assert.ok(source.includes('.gsg-'+cls+' { order: '+order+'; }'));
+    assert.match(source, /\.gsg-output-header \.btn-copy, \.gsg-output-header select \{ min-height: 44px/);
+  });
+  test('empty preview has text and disappears on mobile', () => {
+    assert.match(markup, /<p class="gsg-empty">\{L.empty\}<\/p>/);
+    assert.match(source, /\.gsg-preview-canvas:has\(\.gsg-card\[hidden\]\) \{ display: none/);
+  });
+  test('tips are excluded from client strings', () => {
+    assert.match(source, /const \{ tips: TIPS, \.\.\.CLIENT_L \} = L/);
+    assert.match(source, /define:vars=\{\{ L: CLIENT_L \}\}/);
+  });
+  test('listed as generate', () => assert.match(readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8'), /'glassmorphism-generator': 'generate'/));
+  const keys = ['bg','alpha','blur','saturation','advanced','background','state','output','contrast'];
+  for (const lang of ['en','zh','ja','ko']) {
+    test(lang + ': nine localized tips and empty state', () => {
+      assert.deepEqual(Object.keys(strings[lang].tips).sort(), [...keys].sort());
+      assert.ok(keys.every(k => strings[lang].tips[k].length > 20));
+      assert.ok(strings[lang].empty.length > 10);
+    });
+    const mdx = readFileSync(new URL(`../src/content/tools/glassmorphism-generator/${lang}.mdx`, import.meta.url), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const steps = [...front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).matchAll(/^  - (".*")$/gm)].map(m => JSON.parse(m[1]));
+    test(lang + ': five bounded steps before FAQ', () => {
+      assert.equal(steps.length, 5); assert.ok(steps.every(v => v.length <= 280) && steps.join('').length <= 1200);
+    });
+    test(lang + ': usage heading removed and limits retained', () => {
+      assert.doesNotMatch(mdx, /^## (?:How to generate|使用方法|用法|使い方|사용법|사용 방법)/m);
+      assert.ok(mdx.includes({ en: '## Differences and limits', zh: '## 估计值、兼容性与上限', ja: '## 推定値の読み方と制限', ko: '## 처리 한계' }[lang]));
+    });
+  }
+}
+
 console.log(`${count} passed`);

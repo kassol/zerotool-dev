@@ -70,7 +70,7 @@ for (const lang of LANGS) {
 
 /* ── converter pages ── */
 const PAGES = [
-  ['yaml-json', 'src/components/tools/YamlJsonTool.astro', '.yj-wrap', 'yj-yaml', 'yj-json', 'yj-copy-json', 'yj-status', '{"ok":1}', 'yj-to-json'],
+  ['yaml-json', 'src/components/tools/YamlJsonTool.astro', '.yj-wrap', 'yj-yaml', 'yj-json', 'yj-copy-json', 'yj-status', '{"ok":1}', null],
   ['yaml-toml', 'src/components/tools/YamlTomlTool.astro', '.yt-wrap', 'yt-yaml', 'yt-toml', 'yt-copy-toml', 'yt-status', 'ok: 1', null],
 ];
 for (const [tool, file, wrap, input, output, copy, status, , button] of PAGES) {

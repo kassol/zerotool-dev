@@ -4,6 +4,8 @@
 //        the `engine:start` / `engine:end` markers and the STRINGS table in the frontmatter,
 //        so this test cannot drift from the shipped source); the 4 tool pages in
 //        src/content/tools/number-base/ (examples marked `{/* nb: {...} */}` are recomputed)
+//        src/layouts/ToolLayout.astro (actual keyboard shortcuts and compact CSS),
+//        src/data/tool-layouts.ts, scripts/audit.mjs (actual layout checker).
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -17,7 +19,8 @@
 // evaluating the output (repeating block in parentheses, or 64 digits cut and marked …)
 // back to the exact fraction; N-bit two's complement output and signed input against
 // BigInt.asIntN / asUintN and Python; digit grouping and prefixes against Python format();
-// the worked steps; 4-language STRINGS; examples on the tool pages.
+// the worked steps; 4-language STRINGS; examples on the tool pages; clipboard callbacks
+// after Clear, Ctrl/Cmd+L, replacement input and subsequent copies in the complete page.
 // Before this test: only bases 2 / 8 / 10 / 16; "1_000", "1 000", "２５５", "-0xFF" and
 // "0.1" were rejected with "Invalid input for base N." and no position; negative numbers
 // had no two's complement form; every keystroke sent a GA event.
@@ -28,6 +31,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import vm from 'node:vm';
+import { load as loadYaml } from 'js-yaml';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -577,6 +584,372 @@ print(json.dumps(res))
   check('GA event is debounced, not sent per keystroke', /trackTimer = setTimeout/.test(script) && !/addEventListener\('input', function \(\) \{[^}]*trackTool/.test(script));
   const persistence = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8');
   check('persistence policy is preference', /'number-base': 'preference'/.test(persistence));
+}
+
+// ---------- complete page: clipboard callbacks belong to the current result ----------
+// Run the real page IIFE and ToolLayout shortcut handler. Only browser boundaries
+// (DOM, timers, clipboard and preference storage) are controlled here.
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const strings = new Function('return ' + stringsMatch[1] + ';')();
+  const { CLIENT_T } = vm.runInNewContext(source.slice(source.indexOf('const T = STRINGS[lang];'), source.indexOf('const otherBases =')) + '\n({CLIENT_T});', { STRINGS: strings, lang: 'en' });
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
+  const resultBases = new Function('return ' + source.match(/const resultBases = (.*?);/)[1].replace(/\bas const\b/g, '') + ';')();
+  const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+  function page(shellFirst = false) {
+    const ids = new Map(), copies = [], timers = new Map(), documentEvents = {}, clears = [];
+    let timerId = 0, now = 0;
+    const document = { activeElement: null };
+    function simpleMatch(el, selector) {
+      const attrs = [...selector.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
+      selector = selector.replace(/\[[^\]]+\]/g, '');
+      const tag = /^[\w-]+/.exec(selector), id = /#([\w-]+)/.exec(selector);
+      const classes = [...selector.matchAll(/\.([\w-]+)/g)];
+      return (!tag || el.tagName === tag[0].toUpperCase()) && (!id || el.id === id[1]) &&
+        classes.every(m => el.classList.contains(m[1])) &&
+        attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+    }
+    function matches(el, selector) {
+      return selector.split(',').some(part => {
+        const parts = part.trim().split(/\s+(?![^\[]*\])/);
+        if (!simpleMatch(el, parts.pop())) return false;
+        let ancestor = el.parentElement;
+        while (parts.length) {
+          while (ancestor && !simpleMatch(ancestor, parts.at(-1))) ancestor = ancestor.parentElement;
+          if (!ancestor) return false;
+          parts.pop(); ancestor = ancestor.parentElement;
+        }
+        return true;
+      });
+    }
+    class Element {
+      constructor(tag = 'div') {
+        Object.assign(this, { tagName: tag.toUpperCase(), id: '', className: '', value: '', textContent: '',
+          hidden: false, disabled: false, checked: false, open: false, attributes: {}, style: {},
+          children: [], parentElement: null, listeners: {} });
+      }
+      setAttribute(key, value) {
+        this.attributes[key] = String(value);
+        if (['id', 'type', 'value', 'class'].includes(key)) this[key === 'class' ? 'className' : key] = String(value);
+      }
+      getAttribute(key) { return this.attributes[key] ?? null; }
+      get classList() {
+        const el = this;
+        return {
+          contains: key => el.className.split(/\s+/).includes(key),
+          toggle(key, on) {
+            const list = el.className.split(/\s+/).filter(Boolean);
+            on = on ?? !list.includes(key);
+            el.className = (on ? [...new Set([...list, key])] : list.filter(v => v !== key)).join(' ');
+          }
+        };
+      }
+      appendChild(el) { el.parentElement = this; this.children.push(el); return el; }
+      removeChild(el) { this.children = this.children.filter(child => child !== el); el.parentElement = null; }
+      contains(el) { return el === this || this.children.some(child => child.contains(el)); }
+      querySelectorAll(selector) {
+        return this.children.flatMap(child => [...(matches(child, selector) ? [child] : []), ...child.querySelectorAll(selector)]);
+      }
+      querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+      addEventListener(type, listener) { (this.listeners[type] ??= []).push(listener); }
+      dispatch(type, extra = {}) {
+        const event = { type, target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...extra };
+        for (const listener of this.listeners[type] || []) listener(event);
+        return event;
+      }
+      click() { if (!this.disabled) this.dispatch('click'); }
+      focus() { document.activeElement = this; }
+      select() {}
+    }
+    const body = new Element('body'), widget = new Element();
+    widget.className = 'tool-widget'; body.appendChild(widget);
+    let markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+    markup = markup.replace(/\{resultBases\.map\(\(b\) => \(([\s\S]*?)\)\)\}/, (_, template) => resultBases.map(b =>
+      template.replace(/\{`([^`]+)`\}/g, (_, value) => '"' + value.replace(/\$\{b\}/g, String(b)) + '"')
+        .replace(/data-base=\{b\}/g, 'data-base="' + b + '"')).join(''));
+    const stack = [widget], voids = new Set(['input', 'br', 'hr', 'img']);
+    for (const match of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>/g)) {
+      const tag = match[1];
+      if (match[0].startsWith('</')) {
+        if (stack.at(-1)?.tagName === tag.toUpperCase()) stack.pop();
+        continue;
+      }
+      const el = new Element(tag);
+      for (const attr of match[2].matchAll(/([\w-]+)="([^"]*)"/g)) el.setAttribute(attr[1], attr[2]);
+      for (const flag of ['hidden', 'disabled', 'open']) el[flag] = new RegExp('\\b' + flag + '(?=\\s|/|$)').test(match[2]);
+      if (el.getAttribute('data-copy')) el.textContent = strings.en.copy;
+      stack.at(-1).appendChild(el);
+      if (el.id) ids.set(el.id, el);
+      if (!voids.has(tag) && !match[2].endsWith('/')) stack.push(el);
+    }
+    const get = id => {
+      if (!ids.has(id)) throw new Error('Missing source ID ' + id);
+      return ids.get(id);
+    };
+    // Read the selected numeric expressions or first literal option from markup.
+    for (const match of markup.matchAll(/<select\b[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
+      const selected = /selected=\{\w+ === (\d+)\}/.exec(match[2]);
+      get(match[1]).value = selected ? selected[1] : /<option value="([^"]+)"/.exec(match[2])[1];
+    }
+    Object.assign(document, {
+      body, activeElement: body, getElementById: get, createElement: tag => new Element(tag), execCommand: () => false,
+      querySelector: selector => body.querySelector(selector), querySelectorAll: selector => body.querySelectorAll(selector),
+      addEventListener(type, listener) { (documentEvents[type] ??= []).push(listener); },
+      dispatch(type, extra = {}) {
+        const event = { type, target: this.activeElement, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...extra };
+        for (const listener of documentEvents[type] || []) listener(event);
+        return event;
+      }
+    });
+    const context = {
+      document, t: CLIENT_T, isSecureContext: true,
+      navigator: { clipboard: { writeText(value) {
+        let resolve, reject;
+        const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+        copies.push({ value, resolve, reject }); return promise;
+      } } },
+      setTimeout(fn, delay = 0) { const id = ++timerId; timers.set(id, { fn, at: now + delay }); return id; },
+      clearTimeout: id => timers.delete(id),
+      ztPersist: { load: () => ({}), save() {}, clear: slug => clears.push(slug) }, _slug: 'number-base'
+    };
+    context.window = context;
+    vm.createContext(context);
+    if (shellFirst) vm.runInContext(shortcut, context);
+    vm.runInContext(script, context, { filename: 'NumberBaseTool.astro' });
+    if (!shellFirst) vm.runInContext(shortcut, context);
+    function tick(ms) {
+      const end = now + ms;
+      while (true) {
+        const next = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        const [id, timer] = next; timers.delete(id); now = timer.at; timer.fn();
+      }
+      now = end;
+    }
+    const button = (base = 10) => body.querySelector('[data-copy="nb-out-' + base + '"]');
+    function input(value) { get('nb-input').value = value; get('nb-input').dispatch('input'); }
+    function copy(base = 10) { button(base).click(); return copies.at(-1); }
+    function snapshot() {
+      return { input: get('nb-input').value, status: get('nb-status').textContent, className: get('nb-status').className,
+        outputs: [10, 2, 16, 8, 'other', 'twos-bin', 'twos-hex'].map(base => get('nb-out-' + base).textContent),
+        copyLabel: button().textContent };
+    }
+    function ctrlL(focusInside = true) {
+      (focusInside ? get('nb-input') : body).focus();
+      return document.dispatch('keydown', { ctrlKey: true, key: 'l' });
+    }
+    return { get, input, copy, button, snapshot, ctrlL, tick, clears };
+  }
+
+  for (const outcome of ['resolve', 'reject']) {
+    const p = page(); p.input('255');
+    eq('page converts 255 into the four standard bases', p.snapshot().outputs.slice(0, 4), ['255', '11111111', 'FF', '377']);
+    const copy = p.copy();
+    eq('current copy reads displayed decimal ' + outcome, copy.value, '255');
+    copy[outcome](new Error('controlled clipboard rejection')); await settle();
+    if (outcome === 'resolve') {
+      eq('current successful copy gives button feedback', p.button().textContent, strings.en.copied);
+      p.tick(1500);
+      eq('successful copy feedback resets after 1500 ms', p.button().textContent, strings.en.copy);
+    } else {
+      eq('current clipboard rejection reports failure', p.snapshot().status, strings.en.copyFail);
+      check('current clipboard rejection is an error', p.snapshot().className.endsWith(' error'));
+      p.input('256');
+      check('valid input recovers from copy failure', p.snapshot().className.endsWith(' success'));
+      const next = p.copy(); next.resolve(); await settle();
+      eq('copy succeeds after recovery', p.button().textContent, strings.en.copied);
+    }
+  }
+
+  for (const action of ['Clear', 'CtrlL', 'valid input', 'invalid input', 'Clear then same input']) {
+    for (const shellFirst of action === 'CtrlL' ? [false, true] : [false]) {
+      for (const outcome of ['reject', 'resolve']) {
+        const name = action + ', shellFirst=' + shellFirst + ', ' + outcome;
+        const p = page(shellFirst); p.input('255'); const pending = p.copy();
+        if (action.startsWith('Clear')) {
+          p.get('nb-clear').click();
+          if (action === 'Clear then same input') p.input('255');
+        } else if (action === 'CtrlL') {
+          check('shortcut prevents browser navigation: ' + name, p.ctrlL().defaultPrevented);
+          eq('shortcut clears persisted state: ' + name, p.clears, ['number-base']);
+          p.tick(0);
+        } else p.input(action === 'valid input' ? '256' : '12Z');
+        const before = p.snapshot();
+        if (action === 'Clear' || action === 'CtrlL') {
+          eq('clear empties input, status and outputs: ' + name, [before.input, before.status, ...before.outputs], Array(9).fill(''));
+        } else if (action === 'invalid input') {
+          check('invalid input has its own diagnosis: ' + name, before.className.endsWith(' error') && before.status.includes('Z'));
+          eq('invalid input removes old output: ' + name, before.outputs, Array(7).fill(''));
+        } else eq('valid replacement has current output: ' + name, before.outputs[0], action === 'valid input' ? '256' : '255');
+        pending[outcome](new Error('controlled late clipboard rejection')); await settle();
+        eq('late copy leaves current page untouched: ' + name, p.snapshot(), before);
+        p.input('1024'); const next = p.copy();
+        eq('recovery copies fresh value: ' + name, next.value, '1024');
+        next.resolve(); await settle();
+        eq('recovery keeps success feedback: ' + name, p.button().textContent, strings.en.copied);
+        p.tick(1500);
+        eq('recovery feedback expires: ' + name, p.button().textContent, strings.en.copy);
+      }
+    }
+  }
+
+  // Promise callbacks run before the component's deferred CtrlL refresh.
+  for (const shellFirst of [false, true]) for (const outcome of ['reject', 'resolve']) {
+    const p = page(shellFirst); p.input('255'); const pending = p.copy();
+    p.ctrlL(); const before = p.snapshot();
+    pending[outcome](new Error('rejected before timer')); await settle();
+    eq('CtrlL suppresses clipboard feedback before its timer: ' + shellFirst + '/' + outcome, p.snapshot(), before);
+    p.tick(0);
+    eq('CtrlL eventually clears current status', p.snapshot().status, '');
+  }
+  {
+    const p = page(); p.input('255'); const pending = p.copy();
+    check('CtrlL outside the tool remains a browser shortcut', !p.ctrlL(false).defaultPrevented);
+    p.tick(0); pending.resolve(); await settle();
+    eq('outside shortcut keeps active copy feedback', p.button().textContent, strings.en.copied);
+  }
+  {
+    const p = page(); p.input('255'); const old = p.copy(), current = p.copy();
+    current.resolve(); await settle(); const before = p.snapshot();
+    old.reject(new Error('older copy rejected')); await settle();
+    eq('older request on the same button cannot replace newer success', p.snapshot(), before);
+  }
+  {
+    const p = page(); p.input('255'); p.copy().resolve(); await settle(); p.tick(500);
+    p.copy().resolve(); await settle(); p.tick(1000);
+    eq('older feedback timer cannot shorten a newer success', p.button().textContent, strings.en.copied);
+    p.tick(500);
+    eq('latest feedback timer restores Copy', p.button().textContent, strings.en.copy);
+    p.copy().resolve(); await settle(); p.get('nb-clear').click();
+    eq('Clear removes feedback for the cleared value', p.button().textContent, strings.en.copy);
+  }
+  {
+    const p = page();
+    p.get('nb-base').value = '2'; p.get('nb-base').dispatch('change');
+    const binary = '1'.repeat(2048), integer = BigInt('0b' + binary);
+    p.input(binary);
+    for (const [base, expected] of [[10, integer.toString(10)], [2, binary], [16, 'F'.repeat(512)], [8, integer.toString(8)], ['other', integer.toString(36).toUpperCase()]]) {
+      eq('2048-bit result retains every digit: ' + base, p.get('nb-out-' + base).textContent, expected);
+      const copy = p.copy(base);
+      eq('2048-bit copy is not clipped by the result row: ' + base, copy.value, expected);
+      copy.resolve(); await settle();
+    }
+    p.get('nb-base').value = '10'; p.get('nb-base').dispatch('change');
+    p.get('nb-width').value = '128'; p.get('nb-width').dispatch('change'); p.input('-1');
+    eq('128-bit binary pattern remains complete', p.get('nb-out-twos-bin').textContent, '1'.repeat(128));
+    eq('128-bit hex pattern remains complete', p.get('nb-out-twos-hex').textContent, 'F'.repeat(32));
+    const copy = p.copy('twos-bin'); eq('two\'s complement copy remains complete', copy.value, '1'.repeat(128));
+    copy.resolve(); await settle();
+    p.get('nb-group').value = 'underscore'; p.get('nb-group').dispatch('change');
+    p.get('nb-prefix').checked = true; p.get('nb-prefix').dispatch('change');
+    p.get('nb-lower').checked = true; p.get('nb-lower').dispatch('change'); p.input('1048575');
+    const formatted = p.copy(16); eq('copy retains grouping, prefix and letter case', formatted.value, '0xf_ffff');
+    formatted.resolve(); await settle();
+  }
+  console.log('Page clipboard lifecycle: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script')).trim();
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css = source.slice(source.indexOf('<style>') + 7, source.indexOf('</style>'));
+  const rules = selector => [...css.matchAll(new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}', 'g'))].map(m => m[1]);
+  const prop = (rule, key, value) => new RegExp('(?:^|;)\\s*' + key + ':\\s*' + value + '\\s*(?:;|$)').test(rule);
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const strings = new Function('return ' + stringsMatch[1] + ';')();
+  const sha256 = text => createHash('sha256').update(text).digest('hex');
+  eq('number-base is registered as compact', /'number-base':\s*'([^']+)'/.exec(layouts)?.[1], 'compact');
+  check('tool root is nb-wrap without an outer wrapper', /^<div class="nb-wrap">/.test(template));
+  check('compact root is a shrinkable natural-height column', rules('.nb-wrap').some(r => prop(r, 'display', 'flex') && prop(r, 'flex-direction', 'column') && prop(r, 'min-height', '0') && prop(r, 'min-width', '0')) && !/\b(?:height|min-height):\s*[^;]*(?:vh|svh)/.test(css));
+  check('options and Clear precede reserved status, input and results', template.indexOf('id="nb-clear"') < template.indexOf('id="nb-status"') && template.indexOf('id="nb-status"') < template.indexOf('id="nb-input"') && template.indexOf('id="nb-input"') < template.indexOf('class="nb-results"'));
+  check('status height is fixed and long messages scroll', rules('.nb-wrap .nb-status').some(r => prop(r, 'height', '3em') && prop(r, 'overflow', 'auto')) && rules('.nb-wrap .nb-status').some(r => prop(r, 'height', '4.5em')));
+  check('all result rows have fixed height and a zero-minimum value track', rules('.nb-row').some(r => prop(r, 'height', '3.25rem') && prop(r, 'grid-template-columns', '8.5rem\\s+minmax\\(0, 1fr\\)\\s+auto')));
+  check('long values scroll horizontally without wrapping or ellipsis', rules('.nb-value').some(r => prop(r, 'min-width', '0') && prop(r, 'height', '2.75rem') && prop(r, 'overflow-x', 'auto') && prop(r, 'overflow-y', 'hidden') && prop(r, 'white-space', 'pre')) && !/text-overflow\s*:\s*ellipsis|word-break\s*:\s*break-all/.test(css));
+  check('phone result track also shrinks below its content width', rules('.nb-row').some(r => prop(r, 'grid-template-columns', '6.8rem\\s+minmax\\(0, 1fr\\)\\s+auto')));
+  check('two\'s complement note has a fixed scrolling height', rules('.nb-twos-info').some(r => prop(r, 'height', '3em') && prop(r, 'overflow', 'auto')));
+  const outputs = [...template.matchAll(/<output\b([^>]*)>/g)];
+  eq('four source output templates retain keyboard focus and accessible names', outputs.length, 4);
+  check('output values can receive Tab and native ArrowRight scrolling', outputs.every(m => /tabindex="0"/.test(m[1]) && /aria-label(?:ledby)?=/.test(m[1])));
+  check('hidden result rows keep display precedence', /\.nb-wrap \[hidden\]\s*\{\s*display:\s*none\s*!important/.test(css));
+  check('worked steps stay after results and start folded', /<details class="nb-steps" id="nb-steps">/.test(template) && template.indexOf('id="nb-steps"') > template.indexOf('class="nb-results"'));
+  check('worked steps have a bounded keyboard-scrollable area', rules('.nb-steps-out').some(r => prop(r, 'height', '18rem') && prop(r, 'overflow', 'auto')) && /id="nb-steps-out"[^>]*tabindex="0"/.test(template));
+  check('860 and 640 breakpoints are present', /@media\s*\(max-width:\s*860px\)/.test(css) && /@media\s*\(max-width:\s*640px\)/.test(css));
+  check('phone option rows and selectors keep 44px touch targets', /\.nb-other-select, \.nb-small-select, \.nb-opt, \.nb-opt-line > label\s*\{\s*min-height:\s*44px/.test(css));
+  check('input label rows remain visible with their separate tips', !/\.nb-field\s+\.tool-label\s*\{[^}]*clip:/.test(css));
+  check('steps tip is a sibling of details, outside summary', /<\/details>\s*<Toggletip id="nb-tip-steps"/.test(template));
+  check('tips are not nested in labels or summaries', !/<(?:label|summary)\b[^>]*>(?:(?!<\/(?:label|summary)>)[\s\S])*?<Toggletip/.test(template));
+  const buttons = [...template.matchAll(/<button\b([^>]*)>/g)].map(m => m[1]);
+  eq('original Clear and four copy templates are preserved', buttons.length, 5);
+  eq('Clear keeps its original ID and secondary action class', buttons.filter(b => /id="nb-clear"/.test(b)).length, 1);
+  check('automatic conversion has no invented primary button', !/btn-primary/.test(template) && script.includes("inputEl.addEventListener('input', convert)"));
+  const keys = ['base', 'number', 'format', 'width', 'signed', 'other', 'steps'].sort();
+  const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  eq('seven tips cover the existing controls', tips.map(m => /id="nb-tip-([^"]+)"/.exec(m[1])?.[1]).sort(), keys);
+  for (const tip of tips) {
+    const key = /id="nb-tip-([^"]+)"/.exec(tip[1])[1];
+    check(key + ' tip is built in the page language', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2] === '{TIPS.' + key + '}');
+  }
+  check('inline script receives only CLIENT_T', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/TIPS|STRINGS|data-i18n/.test(script));
+  eq('protected engine bytes remain unchanged', sha256(source.slice(startIndex, endIndex + END_MARK.length)), '138b3241cb25a1865df9d4f4feca006ef878ec4c8c1be036936fa8a7529d6604');
+  const retained = {
+    en: ['87cd0a0fffb6ae83', '9653e3be42f4a435d7e559572d6623bda74e9e3c5fe15a71b677014115401f77'],
+    zh: ['3e2cd69606278825', 'b9f8dbf7ae961efafc68ea66db76c2dcf4c7e5cb6ce1968577735c982d657edc'],
+    // The status row now precedes the input; only JA's FAQ location phrase changed.
+    ja: ['e564c53b3f16f3c3', 'b503fe02efa1982aef56ea019bbcb6c0ff33e59ec54131b5043a93ad3aa90a68'],
+    ko: ['a339783f70ef2830', 'c64327b82e3d922802eb6869183a95c7c66503dc5ea7da48ebb86e9c3b0b3607']
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const entry = strings[lang];
+    eq(lang + ' has the same seven tip keys', Object.keys(entry.tips).sort(), keys);
+    for (const key of keys) check(lang + '.' + key + ' tip is nonempty plain text', typeof entry.tips[key] === 'string' && entry.tips[key].trim().length > 0 && !/<[^>]*>|\n/.test(entry.tips[key]));
+    const client = vm.runInNewContext(source.slice(source.indexOf('const T = STRINGS[lang];'), source.indexOf('const otherBases =')) + '\n({TIPS, CLIENT_T});', { STRINGS: strings, lang });
+    eq(lang + ' client excludes only tips', Object.keys(client.CLIENT_T).sort(), Object.keys(entry).filter(key => key !== 'tips').sort());
+    check(lang + ' serialized client contains no tip text', Object.values(client.TIPS).every(tip => !JSON.stringify(client.CLIENT_T).includes(JSON.stringify(tip))));
+    const mdx = readFileSync(join(root, 'src/content/tools/number-base', lang + '.mdx'), 'utf8');
+    const [, meta, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx), { steps } = loadYaml(meta);
+    eq(lang + ' has seven usage steps', steps?.length, 7);
+    check(lang + ' steps meet plain-text limits', Array.isArray(steps) && steps.length <= 8 && steps.every(step => typeof step === 'string' && step.trim() && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['inputBase', 'number', 'outOther', 'optGroup', 'optPrefix', 'optLower', 'optWidth', 'optSigned', 'copy', 'stepsSummary']) check(lang + ' steps use current control name ' + key, steps.some(step => step.includes(entry[key])));
+    check(lang + ' Usage removed while Limits remains', !/^## (?:How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body) && /^## (?:Limits|限制|制限事項|제한 사항)\s*$/m.test(body));
+    eq(lang + ' FAQ and SEO retained', sha256(meta.replace(/^steps:\n(?:  .*\n)*/m, '').trim()).slice(0, 16), retained[lang][0]);
+    eq(lang + ' non-Usage body retained byte for byte', sha256(body), retained[lang][1]);
+  }
+
+  // Exercise the actual audit checker with small source fixtures, including compact.
+  const audit = readFileSync(join(root, 'scripts/audit.mjs'), 'utf8');
+  const kinds = audit.match(/const TOOL_PAGE_KINDS = \[[^\n]+;/)[0];
+  const checkerStart = audit.indexOf('function checkToolLayouts(');
+  const checker = audit.slice(checkerStart, audit.indexOf('\n}', checkerStart) + 2);
+  for (const [slug, kind, expected] of [['number-base', 'compact', true], ['number-base', 'convert', true], ['number-base', 'generate', true], ['number-base', 'analyze', true], ['number-base', 'unknown', false], ['missing', 'compact', false]]) {
+    let actual;
+    const context = { read: () => `export const toolPageKinds = { '${slug}': '${kind}' };`, pass: () => { actual = true; }, fail: () => { actual = false; } };
+    vm.runInNewContext(kinds + '\n' + checker + '\ncheckToolLayouts(new Set(["number-base"]));', context);
+    eq('actual layout audit: ' + slug + '/' + kind, actual, expected);
+  }
+  check('compact shell uses content height at all sizes', /\.tool-page--compact \.tool-first\s*\{\s*min-height:\s*0/.test(layout) && /\.tool-page--compact \.tool-widget--v2 > :global\(\*\)\s*\{\s*flex:\s*none/.test(layout));
+  check('compact shell bounds and centers the tool card', /\.tool-page--compact\s*\{\s*--v2-shell:\s*1120px/.test(layout) && /\.tool-page--compact \.tool-widget--v2\s*\{[^}]*width:\s*min\(100%, 960px\);[^}]*align-self:\s*center/.test(layout));
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: transformJs } = await import('esbuild');
+  for (const [filename, content] of [['NumberBaseTool.astro', source], ['ToolLayout.astro', layout]]) {
+    const compiled = await transform(content, { filename });
+    eq(filename + ' compiles without Astro errors', compiled.diagnostics.filter(diagnostic => diagnostic.severity === 1), []);
+    await transformJs(compiled.code, { loader: 'ts', format: 'esm' });
+    check(filename + ' compiled JavaScript parses', true);
+    if (filename === 'NumberBaseTool.astro') check('Astro serializes CLIENT_T into the inline script', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })') && !compiled.code.includes('$$defineScriptVars({ t: T })'));
+  }
+  const layoutModule = { exports: {} };
+  const compiledKinds = await transformJs(layouts, { loader: 'ts', format: 'cjs' });
+  vm.runInNewContext(compiledKinds.code, { module: layoutModule });
+  eq('actual toolPageKind resolves the compact route', layoutModule.exports.toolPageKind('number-base'), 'compact');
+  eq('actual toolPageKind preserves unregistered routes', layoutModule.exports.toolPageKind('not-a-tool'), undefined);
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
 }
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? ', ' + skips + ' skipped' : ''}`);

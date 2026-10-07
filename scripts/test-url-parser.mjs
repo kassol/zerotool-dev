@@ -6,7 +6,7 @@
 //        of web-platform-tests urltestdata.json and setters_tests.json, BSD-3-Clause, commit and
 //        selection rule recorded in the file); src/content/tools/url-parser/{lang}.mdx and
 //        src/content/blog/url-parser-guide/en.mdx (`up-check` annotations are re-run);
-//        src/data/persistence.ts
+//        src/data/persistence.ts and src/data/tool-layouts.ts
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -43,6 +43,7 @@
 // - 4-language STRINGS: same keys and {placeholders}; every error and note code has a message.
 // - The component script stores nothing and sends nothing; it writes no HTML.
 // - `up-check` annotations in the 4 tool pages and the en guide: the engine output matches.
+// - v2 analyze root, preserved controls, localized help and plain-text steps.
 //
 // Run: node scripts/test-url-parser.mjs
 
@@ -51,6 +52,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { domainToUnicode, domainToASCII } from 'node:url';
+import yaml from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/UrlParserTool.astro'), 'utf8');
@@ -476,6 +478,46 @@ check('pages carry up-check annotations', annotations >= 12, annotations);
   }
   const tpl = [/^## What (is|are) /m, /^## .*Online/m, /^## .* in Code/m, /^## (Summary|Conclusion)/m].filter((re) => re.test(guide));
   check('guide has no template headings', tpl.length === 0, tpl.map(String));
+}
+
+
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: analyze) ----------
+{
+  const markup = source.replace(/^---\n[\s\S]*?\n---/, '').split('<script')[0].trim();
+  const tipNames = ['input', 'base', 'normalized', 'fields', 'query'];
+  check('the tool root owns the first-screen height', /^<div class="up-wrap" id="up-wrap">/.test(markup));
+  check('no primary action is added to the live parser', !markup.includes('btn-primary'));
+  check('labels render before the client script starts', !source.includes('data-i18n'));
+  check('controls and status precede the input panel', markup.indexOf('id="up-example"') < markup.indexOf('id="up-status"')
+    && markup.indexOf('id="up-status"') < markup.indexOf('id="up-input"'));
+  check('result help names what appears after input', markup.includes('{L.resultEmpty}'));
+  check('five explained controls have distinct toggletips', JSON.stringify([...markup.matchAll(/<Toggletip id="up-tip-(\w+)"/g)].map((m) => m[1])) === JSON.stringify(tipNames));
+  check('toggletips stay out of the client payload', source.includes('const { tips: TIPS, ...CLIENT_L } = L;')
+    && source.includes('define:vars={{ S: CLIENT_L }}'));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
+  for (const id of ['up-wrap', 'up-input', 'up-example', 'up-clear', 'up-base-box', 'up-base', 'up-status', 'up-suggest',
+    'up-results', 'up-href', 'up-notes', 'up-reveal', 'up-query-title', 'up-copy-json', 'up-query-note', 'up-params',
+    'up-add', 'up-seg-section', 'up-seg-title', 'up-segments', 'up-rfc-summary', 'up-rfc-parts']) {
+    check('existing control occurs once: ' + id, ids.filter((x) => x === id).length === 1);
+  }
+  for (const lang of langs) {
+    check(lang + ': all five controls have help', JSON.stringify(Object.keys(STRINGS[lang].tips || {})) === JSON.stringify(tipNames));
+    check(lang + ': help is nonempty plain text', tipNames.every((key) => typeof STRINGS[lang].tips?.[key] === 'string'
+      && STRINGS[lang].tips[key].trim().length > 0 && !/<\/?[a-z]/i.test(STRINGS[lang].tips[key])));
+    const mdx = readFileSync(join(root, 'src/content/tools/url-parser/' + lang + '.mdx'), 'utf8');
+    const front = mdx.match(/^---\n([\s\S]*?)\n---/)?.[1] || '';
+    const data = yaml.load(front);
+    const body = mdx.slice(front.length + 8);
+    check(lang + ': five steps precede the FAQ', Array.isArray(data.steps) && data.steps.length === 5
+      && front.indexOf('\nsteps:') < front.indexOf('\nfaqItems:'));
+    check(lang + ': steps fit llms-full text limits', Array.isArray(data.steps)
+      && data.steps.every((step) => typeof step === 'string' && step.length <= 280 && !/<\/?[a-z]/i.test(step))
+      && data.steps.reduce((sum, step) => sum + step.length, 0) <= 1200);
+    check(lang + ': no duplicate usage section', !/^## (How to Use|用法|使い方|사용 방법)\s*$/mi.test(body));
+    check(lang + ': limitations remain', /^## (Limits|限制|制限|제한 사항)\s*$/m.test(body));
+  }
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as an analyze page', /'url-parser':\s*'analyze'/.test(layouts));
 }
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? `, ${skips} skipped` : ''}`);

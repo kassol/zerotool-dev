@@ -60,7 +60,7 @@ function makeElement(key) {
     addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
     removeEventListener(type, fn) { listeners[type] = (listeners[type] || []).filter((f) => f !== fn); },
     dispatch(type, init = {}) {
-      const ev = { type, target: el, currentTarget: el, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...init };
+      const ev = { type, target: el, currentTarget: el, defaultPrevented: false, cancelBubble: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.cancelBubble = true; }, ...init };
       for (const fn of listeners[type] || []) fn.call(el, ev);
       return ev;
     },

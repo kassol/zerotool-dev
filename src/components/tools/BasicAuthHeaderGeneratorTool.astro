@@ -1,64 +1,245 @@
 ---
-// BasicAuthHeaderGeneratorTool - UTF-8 safe HTTP Basic Authorization header generator and decoder.
----
+import Toggletip from '../Toggletip.astro';
 
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    tips: {
+      username: "The username cannot contain a colon. Generation joins username and password with a colon and encodes the pair as UTF-8 before Base64.",
+      password: "Passwords may contain colons and may be empty when a username is present. Enter at least one of username or password to generate a header.",
+      visibility: "Show and Hide change whether this input displays the password as text. The generated header and decoded password contain the same credentials.",
+      generate: "Generate reads the current username and password and produces a full Authorization header, its Base64 token, and cURL and Fetch snippets. Load Example fills Aladdin and open sesame and generates them.",
+      copy: "Copy takes the complete value shown beside the button, including text outside the visible part of a scrolling result.",
+      decode: "Decode splits the decoded value at its first colon, preserving any later colons in the password. Load Example decodes user with the password p:a:ss.",
+      token: "Accepts a full Authorization header, Basic plus a token, or a token alone. Only Basic and standard Base64 are accepted. Invalid UTF-8 bytes are displayed as ISO-8859-1 with a notice; check the result.",
+      snippets: "cURL and Fetch use the same generated header and the example URL https://example.com/api. Replace that URL with your endpoint before running the copied code.",
+    },
+    generateTitle: 'Generate Basic Auth Header',
+    generateHint: 'Create an Authorization header from a username and password.',
+    decodeTitle: 'Decode Basic Auth Header',
+    decodeHint: 'Paste a full Authorization header, a Basic token, or a raw token.',
+    username: 'Username',
+    password: 'Password',
+    show: 'Show',
+    hide: 'Hide',
+    generate: 'Generate',
+    decode: 'Decode',
+    loadExample: 'Load Example',
+    clear: 'Clear',
+    copy: 'Copy',
+    copied: 'Copied!',
+    fullHeader: 'Full header',
+    token: 'Token',
+    decodeInput: 'Header or token',
+    decodedUsername: 'Username',
+    decodedPassword: 'Password',
+    generated: 'Header generated.',
+    decoded: 'Credentials decoded.',
+    cleared: 'Cleared.',
+    missingGenerate: 'Enter a username or password first.',
+    usernameColon: 'Username cannot contain a colon.',
+    missingDecode: 'Paste a Basic auth header or token first.',
+    invalidScheme: 'Only the Basic authorization scheme is supported.',
+    invalidBase64: 'Invalid Base64 token.',
+    missingColon: 'Decoded credentials must contain a colon.',
+    decodedLatin1: 'The decoded bytes are not valid UTF-8, so they are shown as ISO-8859-1 (older clients send this; RFC 7617 only defines UTF-8). Check the result.',
+    copyFailed: 'Copy failed. Select and copy manually.',
+    privacy: 'Basic auth is Base64 encoding, not encryption. Use HTTPS when sending it.',
+  },
+  zh: {
+    tips: {
+      username: "用户名不能含冒号。生成时用冒号连接用户名和密码，先按 UTF-8 编码，再转成 Base64。",
+      password: "密码可以含冒号；填写用户名后，密码也可以为空。用户名和密码至少填写一项才能生成请求头。",
+      visibility: "“显示”和“隐藏”切换此输入框是否明文显示密码。生成的请求头和解码后的密码包含相同的凭据。",
+      generate: "“生成”读取当前用户名和密码，输出完整 Authorization 请求头、Base64 token、cURL 和 Fetch 片段。“加载示例”填入 Aladdin 和 open sesame 并生成结果。",
+      copy: "复制按钮旁的完整值，包含结果滚动区域中暂时看不到的文字。",
+      decode: "“解码”按第一个冒号拆分用户名和密码，后面的冒号保留在密码中。“加载示例”解出用户名 user、密码 p:a:ss。",
+      token: "接受完整 Authorization 请求头、Basic 加 token 或纯 token。仅支持 Basic 和标准 Base64。无效 UTF-8 字节按 ISO-8859-1 显示并附提示，请核对结果。",
+      snippets: "cURL 和 Fetch 使用同一个生成的请求头及示例地址 https://example.com/api。运行复制的代码前，把地址换成你的接口。",
+    },
+    generateTitle: '生成 Basic Auth 请求头',
+    generateHint: '用用户名和密码创建 Authorization 请求头。',
+    decodeTitle: '解码 Basic Auth 请求头',
+    decodeHint: '粘贴完整 Authorization 请求头、Basic token 或纯 token。',
+    username: '用户名',
+    password: '密码',
+    show: '显示',
+    hide: '隐藏',
+    generate: '生成',
+    decode: '解码',
+    loadExample: '加载示例',
+    clear: '清除',
+    copy: '复制',
+    copied: '已复制！',
+    fullHeader: '完整请求头',
+    token: 'Token',
+    decodeInput: '请求头或 token',
+    decodedUsername: '用户名',
+    decodedPassword: '密码',
+    generated: '请求头已生成。',
+    decoded: '凭据已解码。',
+    cleared: '已清除。',
+    missingGenerate: '请先输入用户名或密码。',
+    usernameColon: '用户名不能包含冒号。',
+    missingDecode: '请先粘贴 Basic auth 请求头或 token。',
+    invalidScheme: '仅支持 Basic 授权方案。',
+    invalidBase64: 'Base64 token 无效。',
+    missingColon: '解码后的凭据必须包含冒号。',
+    decodedLatin1: '解码出的字节不是有效的 UTF-8，已按 ISO-8859-1 显示（旧客户端会这样发送；RFC 7617 只定义了 UTF-8）。请核对结果。',
+    copyFailed: '复制失败，请手动选择复制。',
+    privacy: 'Basic auth 是 Base64 编码，不是加密。发送时请使用 HTTPS。',
+  },
+  ja: {
+    tips: {
+      username: "ユーザー名にコロンは使えません。ユーザー名とパスワードをコロンでつなぎ、UTF-8 にしてから Base64 に変換します。",
+      password: "パスワードにはコロンを含められ、ユーザー名があれば空でも生成できます。ユーザー名かパスワードのどちらかを入力してください。",
+      visibility: "「表示」と「非表示」で、この入力欄のパスワードを平文で見せるか切り替えます。生成したヘッダーやデコード結果にも同じ認証情報が含まれます。",
+      generate: "「生成」は現在のユーザー名とパスワードから Authorization ヘッダー、Base64 トークン、cURL・Fetch のコードを作ります。「例を読み込む」は Aladdin と open sesame を入力して生成します。",
+      copy: "ボタンの横の値を全体ごとコピーします。スクロール領域の外に隠れている文字も含みます。",
+      decode: "「デコード」は最初のコロンでユーザー名とパスワードを分けます。後のコロンはパスワードに残ります。「例を読み込む」は user と p:a:ss をデコードします。",
+      token: "Authorization ヘッダー全体、Basic とトークン、トークンだけの形式を受け付けます。Basic と標準 Base64 のみ対応します。不正な UTF-8 バイトは注意付きで ISO-8859-1 表示になるため、結果を確認してください。",
+      snippets: "cURL と Fetch は生成した同じヘッダーと例の URL https://example.com/api を使います。コピーしたコードを実行する前に、対象の URL に変更してください。",
+    },
+    generateTitle: 'Basic Auth ヘッダーを生成',
+    generateHint: 'ユーザー名とパスワードから Authorization ヘッダーを作成します。',
+    decodeTitle: 'Basic Auth ヘッダーをデコード',
+    decodeHint: '完全な Authorization ヘッダー、Basic トークン、または生トークンを貼り付けます。',
+    username: 'ユーザー名',
+    password: 'パスワード',
+    show: '表示',
+    hide: '非表示',
+    generate: '生成',
+    decode: 'デコード',
+    loadExample: '例を読み込む',
+    clear: 'クリア',
+    copy: 'コピー',
+    copied: 'コピー済み！',
+    fullHeader: '完全なヘッダー',
+    token: 'トークン',
+    decodeInput: 'ヘッダーまたはトークン',
+    decodedUsername: 'ユーザー名',
+    decodedPassword: 'パスワード',
+    generated: 'ヘッダーを生成しました。',
+    decoded: '認証情報をデコードしました。',
+    cleared: 'クリアしました。',
+    missingGenerate: 'まずユーザー名またはパスワードを入力してください。',
+    usernameColon: 'ユーザー名にコロンは使用できません。',
+    missingDecode: 'まず Basic auth ヘッダーまたはトークンを貼り付けてください。',
+    invalidScheme: 'Basic 認証スキームのみ対応しています。',
+    invalidBase64: 'Base64 トークンが無効です。',
+    missingColon: 'デコード後の認証情報にはコロンが必要です。',
+    decodedLatin1: 'デコードしたバイト列は UTF-8 として正しくないため、ISO-8859-1 として表示しています（古いクライアントはこの形式で送ります。RFC 7617 が定義するのは UTF-8 だけです）。結果を確認してください。',
+    copyFailed: 'コピーに失敗しました。手動で選択してコピーしてください。',
+    privacy: 'Basic auth は Base64 エンコードであり、暗号化ではありません。送信時は HTTPS を使用してください。',
+  },
+  ko: {
+    tips: {
+      username: "사용자 이름에는 콜론을 넣을 수 없습니다. 사용자 이름과 비밀번호를 콜론으로 연결하고 UTF-8로 인코딩한 뒤 Base64로 변환합니다.",
+      password: "비밀번호에는 콜론을 넣을 수 있으며 사용자 이름이 있으면 비워 둘 수도 있습니다. 헤더를 생성하려면 사용자 이름이나 비밀번호 중 하나는 입력하세요.",
+      visibility: "「보기」와 「숨기기」는 이 입력란에서 비밀번호를 평문으로 보여 줄지 전환합니다. 생성된 헤더와 디코딩 결과에도 같은 자격 증명이 들어 있습니다.",
+      generate: "「생성」은 현재 사용자 이름과 비밀번호로 Authorization 헤더, Base64 토큰, cURL 및 Fetch 코드를 만듭니다. 「예제 불러오기」는 Aladdin과 open sesame를 채우고 생성합니다.",
+      copy: "버튼 옆에 표시한 값 전체를 복사합니다. 결과 스크롤 영역 밖에 가려진 문자도 포함합니다.",
+      decode: "「디코딩」은 첫 번째 콜론에서 사용자 이름과 비밀번호를 나눕니다. 뒤의 콜론은 비밀번호에 남습니다. 「예제 불러오기」는 user와 p:a:ss를 디코딩합니다.",
+      token: "전체 Authorization 헤더, Basic과 토큰, 토큰만 있는 형식을 받습니다. Basic과 표준 Base64만 지원합니다. 유효하지 않은 UTF-8 바이트는 ISO-8859-1로 표시하고 안내하므로 결과를 확인하세요.",
+      snippets: "cURL과 Fetch는 생성된 같은 헤더와 예시 URL https://example.com/api를 사용합니다. 복사한 코드를 실행하기 전에 주소를 실제 엔드포인트로 바꾸세요.",
+    },
+    generateTitle: 'Basic Auth 헤더 생성',
+    generateHint: '사용자 이름과 비밀번호로 Authorization 헤더를 만듭니다.',
+    decodeTitle: 'Basic Auth 헤더 디코딩',
+    decodeHint: '전체 Authorization 헤더, Basic 토큰 또는 원본 토큰을 붙여넣으세요.',
+    username: '사용자 이름',
+    password: '비밀번호',
+    show: '보기',
+    hide: '숨기기',
+    generate: '생성',
+    decode: '디코딩',
+    loadExample: '예제 불러오기',
+    clear: '지우기',
+    copy: '복사',
+    copied: '복사됨!',
+    fullHeader: '전체 헤더',
+    token: '토큰',
+    decodeInput: '헤더 또는 토큰',
+    decodedUsername: '사용자 이름',
+    decodedPassword: '비밀번호',
+    generated: '헤더가 생성되었습니다.',
+    decoded: '자격 증명이 디코딩되었습니다.',
+    cleared: '지웠습니다.',
+    missingGenerate: '먼저 사용자 이름 또는 비밀번호를 입력하세요.',
+    usernameColon: '사용자 이름에는 콜론을 포함할 수 없습니다.',
+    missingDecode: '먼저 Basic auth 헤더 또는 토큰을 붙여넣으세요.',
+    invalidScheme: 'Basic 인증 스킴만 지원합니다.',
+    invalidBase64: 'Base64 토큰이 유효하지 않습니다.',
+    missingColon: '디코딩된 자격 증명에는 콜론이 필요합니다.',
+    decodedLatin1: '디코딩한 바이트가 올바른 UTF-8이 아니어서 ISO-8859-1로 표시했습니다(오래된 클라이언트가 이렇게 보냅니다. RFC 7617은 UTF-8만 정의합니다). 결과를 확인하세요.',
+    copyFailed: '복사에 실패했습니다. 직접 선택해서 복사하세요.',
+    privacy: 'Basic auth는 Base64 인코딩이며 암호화가 아닙니다. 전송할 때 HTTPS를 사용하세요.',
+  },
+};
+
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
+---
 <div class="bahg-wrap">
   <section class="bahg-card" aria-labelledby="bahg-generate-title">
     <div class="bahg-card-head">
       <div>
-        <h2 id="bahg-generate-title" data-i18n="generateTitle">Generate Basic Auth Header</h2>
-        <p data-i18n="generateHint">Create an Authorization header from a username and password.</p>
+        <h2 id="bahg-generate-title">{T.generateTitle}</h2>
+        <p>{T.generateHint}</p>
       </div>
-    </div>
-
-    <div class="bahg-grid">
-      <label class="bahg-field" for="bahg-username">
-        <span class="tool-label" data-i18n="username">Username</span>
-        <input id="bahg-username" class="tool-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Aladdin" />
-      </label>
-
-      <label class="bahg-field" for="bahg-password">
-        <span class="tool-label" data-i18n="password">Password</span>
-        <span class="bahg-password-row">
-          <input id="bahg-password" class="tool-input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="open sesame" />
-          <button id="bahg-toggle-password" class="btn-secondary" type="button" data-i18n="show">Show</button>
-        </span>
-      </label>
     </div>
 
     <div class="bahg-actions">
-      <button id="bahg-generate" class="btn-primary" type="button" data-i18n="generate">Generate</button>
-      <button id="bahg-load-generate-example" class="btn-secondary" type="button" data-i18n="loadExample">Load Example</button>
-      <button id="bahg-clear-generate" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+      <div class="bahg-button-help"><button id="bahg-generate" class="btn-primary" type="button">{T.generate}</button><Toggletip id="bahg-tip-generate" lang={lang} about={T.generate}>{TIPS.generate}</Toggletip></div>
+      <button id="bahg-load-generate-example" class="btn-secondary" type="button">{T.loadExample}</button>
+      <button id="bahg-clear-generate" class="btn-ghost" type="button">{T.clear}</button>
     </div>
 
-    <div id="bahg-generate-status" class="tool-status none" aria-live="polite"></div>
+    <div id="bahg-generate-status" class="tool-status none" aria-live="polite" tabindex="0"></div>
+
+    <div class="bahg-grid">
+      <div class="bahg-field">
+        <div class="bahg-field-label"><label class="tool-label" for="bahg-username">{T.username}</label><Toggletip id="bahg-tip-username" lang={lang} about={T.username}>{TIPS.username}</Toggletip></div>
+        <input id="bahg-username" class="tool-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Aladdin" />
+      </div>
+
+      <div class="bahg-field">
+        <div class="bahg-field-label"><label class="tool-label" for="bahg-password">{T.password}</label><Toggletip id="bahg-tip-password" lang={lang} about={T.password}>{TIPS.password}</Toggletip></div>
+        <span class="bahg-password-row">
+          <input id="bahg-password" class="tool-input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="open sesame" />
+          <span class="bahg-button-help"><button id="bahg-toggle-password" class="btn-secondary" type="button">{T.show}</button><Toggletip id="bahg-tip-visibility" lang={lang} about={T.show}>{TIPS.visibility}</Toggletip></span>
+        </span>
+      </div>
+    </div>
+
 
     <div id="bahg-generate-output" class="bahg-output" hidden>
       <div class="tool-result-row">
-        <span class="tool-result-label" data-i18n="fullHeader">Full header</span>
-        <code id="bahg-full-header" class="tool-result-value"></code>
-        <button class="btn-copy" type="button" data-copy-target="bahg-full-header" data-i18n="copy">Copy</button>
+        <span class="tool-result-label">{T.fullHeader}</span>
+        <code id="bahg-full-header" class="tool-result-value" tabindex="0" aria-label={T.fullHeader}></code>
+        <div class="bahg-button-help"><button class="btn-copy" type="button" data-copy-target="bahg-full-header">{T.copy}</button><Toggletip id="bahg-tip-copy" lang={lang} about={T.copy}>{TIPS.copy}</Toggletip></div>
       </div>
       <div class="tool-result-row">
-        <span class="tool-result-label" data-i18n="token">Token</span>
-        <code id="bahg-token" class="tool-result-value"></code>
-        <button class="btn-copy" type="button" data-copy-target="bahg-token" data-i18n="copy">Copy</button>
+        <span class="tool-result-label">{T.token}</span>
+        <code id="bahg-token" class="tool-result-value" tabindex="0" aria-label={T.token}></code>
+        <button class="btn-copy" type="button" data-copy-target="bahg-token">{T.copy}</button>
       </div>
       <div class="bahg-snippet-grid">
         <div class="bahg-snippet">
           <div class="bahg-snippet-head">
-            <span class="tool-result-label">cURL</span>
-            <button class="btn-copy" type="button" data-copy-target="bahg-curl" data-i18n="copy">Copy</button>
+            <div class="bahg-field-label"><span class="tool-result-label">cURL</span><Toggletip id="bahg-tip-snippets" lang={lang} about="cURL / Fetch">{TIPS.snippets}</Toggletip></div>
+            <button class="btn-copy" type="button" data-copy-target="bahg-curl">{T.copy}</button>
           </div>
-          <pre><code id="bahg-curl"></code></pre>
+          <pre><code id="bahg-curl" tabindex="0" aria-label="cURL"></code></pre>
         </div>
         <div class="bahg-snippet">
           <div class="bahg-snippet-head">
             <span class="tool-result-label">Fetch</span>
-            <button class="btn-copy" type="button" data-copy-target="bahg-fetch" data-i18n="copy">Copy</button>
+            <button class="btn-copy" type="button" data-copy-target="bahg-fetch">{T.copy}</button>
           </div>
-          <pre><code id="bahg-fetch"></code></pre>
+          <pre><code id="bahg-fetch" tabindex="0" aria-label="Fetch"></code></pre>
         </div>
       </div>
     </div>
@@ -67,189 +248,49 @@
   <section class="bahg-card" aria-labelledby="bahg-decode-title">
     <div class="bahg-card-head">
       <div>
-        <h2 id="bahg-decode-title" data-i18n="decodeTitle">Decode Basic Auth Header</h2>
-        <p data-i18n="decodeHint">Paste a full Authorization header, a Basic token, or a raw token.</p>
+        <h2 id="bahg-decode-title">{T.decodeTitle}</h2>
+        <p>{T.decodeHint}</p>
       </div>
     </div>
 
-    <label class="bahg-field" for="bahg-decode-input">
-      <span class="tool-label" data-i18n="decodeInput">Header or token</span>
-      <textarea id="bahg-decode-input" class="tool-textarea" rows="4" spellcheck="false" placeholder="Basic dXNlcjpwOmE6c3M="></textarea>
-    </label>
-
     <div class="bahg-actions">
-      <button id="bahg-decode" class="btn-primary" type="button" data-i18n="decode">Decode</button>
-      <button id="bahg-load-decode-example" class="btn-secondary" type="button" data-i18n="loadExample">Load Example</button>
-      <button id="bahg-clear-decode" class="btn-ghost" type="button" data-i18n="clear">Clear</button>
+      <div class="bahg-button-help"><button id="bahg-decode" class="btn-primary" type="button">{T.decode}</button><Toggletip id="bahg-tip-decode" lang={lang} about={T.decode}>{TIPS.decode}</Toggletip></div>
+      <button id="bahg-load-decode-example" class="btn-secondary" type="button">{T.loadExample}</button>
+      <button id="bahg-clear-decode" class="btn-ghost" type="button">{T.clear}</button>
     </div>
 
-    <div id="bahg-decode-status" class="tool-status none" aria-live="polite"></div>
+    <div id="bahg-decode-status" class="tool-status none" aria-live="polite" tabindex="0"></div>
+
+    <div class="bahg-field">
+      <div class="bahg-field-label"><label class="tool-label" for="bahg-decode-input">{T.decodeInput}</label><Toggletip id="bahg-tip-token" lang={lang} about={T.decodeInput}>{TIPS.token}</Toggletip></div>
+      <textarea id="bahg-decode-input" class="tool-textarea" rows="4" spellcheck="false" placeholder="Basic dXNlcjpwOmE6c3M="></textarea>
+    </div>
+
 
     <div id="bahg-decode-output" class="bahg-output" hidden>
       <div class="tool-result-row">
-        <span class="tool-result-label" data-i18n="decodedUsername">Username</span>
-        <code id="bahg-decoded-username" class="tool-result-value"></code>
-        <button class="btn-copy" type="button" data-copy-target="bahg-decoded-username" data-i18n="copy">Copy</button>
+        <span class="tool-result-label">{T.decodedUsername}</span>
+        <code id="bahg-decoded-username" class="tool-result-value" tabindex="0" aria-label={T.decodedUsername}></code>
+        <button class="btn-copy" type="button" data-copy-target="bahg-decoded-username">{T.copy}</button>
       </div>
       <div class="tool-result-row">
-        <span class="tool-result-label" data-i18n="decodedPassword">Password</span>
-        <code id="bahg-decoded-password" class="tool-result-value"></code>
-        <button class="btn-copy" type="button" data-copy-target="bahg-decoded-password" data-i18n="copy">Copy</button>
+        <span class="tool-result-label">{T.decodedPassword}</span>
+        <code id="bahg-decoded-password" class="tool-result-value" tabindex="0" aria-label={T.decodedPassword}></code>
+        <button class="btn-copy" type="button" data-copy-target="bahg-decoded-password">{T.copy}</button>
       </div>
     </div>
   </section>
 
-  <p class="bahg-privacy" data-i18n="privacy">Basic auth is Base64 encoding, not encryption. Use HTTPS when sending it.</p>
+  <p class="bahg-privacy">{T.privacy}</p>
+</div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: {
-          generateTitle: 'Generate Basic Auth Header',
-          generateHint: 'Create an Authorization header from a username and password.',
-          decodeTitle: 'Decode Basic Auth Header',
-          decodeHint: 'Paste a full Authorization header, a Basic token, or a raw token.',
-          username: 'Username',
-          password: 'Password',
-          show: 'Show',
-          hide: 'Hide',
-          generate: 'Generate',
-          decode: 'Decode',
-          loadExample: 'Load Example',
-          clear: 'Clear',
-          copy: 'Copy',
-          copied: 'Copied!',
-          fullHeader: 'Full header',
-          token: 'Token',
-          decodeInput: 'Header or token',
-          decodedUsername: 'Username',
-          decodedPassword: 'Password',
-          generated: 'Header generated.',
-          decoded: 'Credentials decoded.',
-          cleared: 'Cleared.',
-          missingGenerate: 'Enter a username or password first.',
-          usernameColon: 'Username cannot contain a colon.',
-          missingDecode: 'Paste a Basic auth header or token first.',
-          invalidScheme: 'Only the Basic authorization scheme is supported.',
-          invalidBase64: 'Invalid Base64 token.',
-          missingColon: 'Decoded credentials must contain a colon.',
-          decodedLatin1: 'The decoded bytes are not valid UTF-8, so they are shown as ISO-8859-1 (older clients send this; RFC 7617 only defines UTF-8). Check the result.',
-          copyFailed: 'Copy failed. Select and copy manually.',
-          privacy: 'Basic auth is Base64 encoding, not encryption. Use HTTPS when sending it.',
-        },
-        zh: {
-          generateTitle: '生成 Basic Auth 请求头',
-          generateHint: '用用户名和密码创建 Authorization 请求头。',
-          decodeTitle: '解码 Basic Auth 请求头',
-          decodeHint: '粘贴完整 Authorization 请求头、Basic token 或纯 token。',
-          username: '用户名',
-          password: '密码',
-          show: '显示',
-          hide: '隐藏',
-          generate: '生成',
-          decode: '解码',
-          loadExample: '加载示例',
-          clear: '清除',
-          copy: '复制',
-          copied: '已复制！',
-          fullHeader: '完整请求头',
-          token: 'Token',
-          decodeInput: '请求头或 token',
-          decodedUsername: '用户名',
-          decodedPassword: '密码',
-          generated: '请求头已生成。',
-          decoded: '凭据已解码。',
-          cleared: '已清除。',
-          missingGenerate: '请先输入用户名或密码。',
-          usernameColon: '用户名不能包含冒号。',
-          missingDecode: '请先粘贴 Basic auth 请求头或 token。',
-          invalidScheme: '仅支持 Basic 授权方案。',
-          invalidBase64: 'Base64 token 无效。',
-          missingColon: '解码后的凭据必须包含冒号。',
-          decodedLatin1: '解码出的字节不是有效的 UTF-8，已按 ISO-8859-1 显示（旧客户端会这样发送；RFC 7617 只定义了 UTF-8）。请核对结果。',
-          copyFailed: '复制失败，请手动选择复制。',
-          privacy: 'Basic auth 是 Base64 编码，不是加密。发送时请使用 HTTPS。',
-        },
-        ja: {
-          generateTitle: 'Basic Auth ヘッダーを生成',
-          generateHint: 'ユーザー名とパスワードから Authorization ヘッダーを作成します。',
-          decodeTitle: 'Basic Auth ヘッダーをデコード',
-          decodeHint: '完全な Authorization ヘッダー、Basic トークン、または生トークンを貼り付けます。',
-          username: 'ユーザー名',
-          password: 'パスワード',
-          show: '表示',
-          hide: '非表示',
-          generate: '生成',
-          decode: 'デコード',
-          loadExample: '例を読み込む',
-          clear: 'クリア',
-          copy: 'コピー',
-          copied: 'コピー済み！',
-          fullHeader: '完全なヘッダー',
-          token: 'トークン',
-          decodeInput: 'ヘッダーまたはトークン',
-          decodedUsername: 'ユーザー名',
-          decodedPassword: 'パスワード',
-          generated: 'ヘッダーを生成しました。',
-          decoded: '認証情報をデコードしました。',
-          cleared: 'クリアしました。',
-          missingGenerate: 'まずユーザー名またはパスワードを入力してください。',
-          usernameColon: 'ユーザー名にコロンは使用できません。',
-          missingDecode: 'まず Basic auth ヘッダーまたはトークンを貼り付けてください。',
-          invalidScheme: 'Basic 認証スキームのみ対応しています。',
-          invalidBase64: 'Base64 トークンが無効です。',
-          missingColon: 'デコード後の認証情報にはコロンが必要です。',
-          decodedLatin1: 'デコードしたバイト列は UTF-8 として正しくないため、ISO-8859-1 として表示しています（古いクライアントはこの形式で送ります。RFC 7617 が定義するのは UTF-8 だけです）。結果を確認してください。',
-          copyFailed: 'コピーに失敗しました。手動で選択してコピーしてください。',
-          privacy: 'Basic auth は Base64 エンコードであり、暗号化ではありません。送信時は HTTPS を使用してください。',
-        },
-        ko: {
-          generateTitle: 'Basic Auth 헤더 생성',
-          generateHint: '사용자 이름과 비밀번호로 Authorization 헤더를 만듭니다.',
-          decodeTitle: 'Basic Auth 헤더 디코딩',
-          decodeHint: '전체 Authorization 헤더, Basic 토큰 또는 원본 토큰을 붙여넣으세요.',
-          username: '사용자 이름',
-          password: '비밀번호',
-          show: '보기',
-          hide: '숨기기',
-          generate: '생성',
-          decode: '디코딩',
-          loadExample: '예제 불러오기',
-          clear: '지우기',
-          copy: '복사',
-          copied: '복사됨!',
-          fullHeader: '전체 헤더',
-          token: '토큰',
-          decodeInput: '헤더 또는 토큰',
-          decodedUsername: '사용자 이름',
-          decodedPassword: '비밀번호',
-          generated: '헤더가 생성되었습니다.',
-          decoded: '자격 증명이 디코딩되었습니다.',
-          cleared: '지웠습니다.',
-          missingGenerate: '먼저 사용자 이름 또는 비밀번호를 입력하세요.',
-          usernameColon: '사용자 이름에는 콜론을 포함할 수 없습니다.',
-          missingDecode: '먼저 Basic auth 헤더 또는 토큰을 붙여넣으세요.',
-          invalidScheme: 'Basic 인증 스킴만 지원합니다.',
-          invalidBase64: 'Base64 토큰이 유효하지 않습니다.',
-          missingColon: '디코딩된 자격 증명에는 콜론이 필요합니다.',
-          decodedLatin1: '디코딩한 바이트가 올바른 UTF-8이 아니어서 ISO-8859-1로 표시했습니다(오래된 클라이언트가 이렇게 보냅니다. RFC 7617은 UTF-8만 정의합니다). 결과를 확인하세요.',
-          copyFailed: '복사에 실패했습니다. 직접 선택해서 복사하세요.',
-          privacy: 'Basic auth는 Base64 인코딩이며 암호화가 아닙니다. 전송할 때 HTTPS를 사용하세요.',
-        },
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
       var encoder = new TextEncoder();
 
       function byId(id) {
         return document.getElementById(id);
       }
-
-      document.querySelectorAll('.bahg-wrap [data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
 
       var usernameEl = byId('bahg-username');
       var passwordEl = byId('bahg-password');
@@ -271,6 +312,7 @@
       var decodeOutputEl = byId('bahg-decode-output');
       var decodedUsernameEl = byId('bahg-decoded-username');
       var decodedPasswordEl = byId('bahg-decoded-password');
+      var generateRevision = 0, decodeRevision = 0;
 
       function setStatus(el, message, type) {
         el.textContent = message || '';
@@ -341,7 +383,15 @@
       }
       /* ── engine:end ── */
 
+      function resetCopyButtons(output) {
+        output.querySelectorAll('[data-copy-target]').forEach(function (button) {
+          button.classList.remove('copied');
+          button.textContent = t.copy;
+        });
+      }
+
       function generateHeader() {
+        generateRevision++; resetCopyButtons(generateOutputEl);
         var username = usernameEl.value;
         var password = passwordEl.value;
         var token;
@@ -367,6 +417,7 @@
       }
 
       function decodeHeader() {
+        decodeRevision++; resetCopyButtons(decodeOutputEl);
         var result;
         try {
           result = decodeCredentials(decodeInputEl.value);
@@ -381,24 +432,32 @@
         }
       }
 
-      function resetCopyButton(button) {
+      function resetCopyButton(button, isCurrent) {
         window.setTimeout(function () {
+          if (!isCurrent()) return;
           button.classList.remove('copied');
           button.textContent = t.copy;
         }, 1200);
       }
 
-      function copyText(button, statusEl) {
+      async function copyText(button, statusEl, isCurrent) {
         var target = byId(button.getAttribute('data-copy-target'));
         var text = target ? target.textContent : '';
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        if (statusEl.textContent === t.copyFailed && statusEl.classList.contains('error')) setStatus(statusEl, '', 'none');
+        try {
+          await navigator.clipboard.writeText(text);
+          if (!isCurrent()) return;
           button.classList.add('copied');
           button.textContent = t.copied;
-          resetCopyButton(button);
-        }).catch(function () {
-          setStatus(statusEl, t.copyFailed, 'error');
-        });
+          resetCopyButton(button, isCurrent);
+        } catch (err) {
+          if (isCurrent()) {
+            button.classList.remove('copied');
+            button.textContent = t.copy;
+            setStatus(statusEl, t.copyFailed, 'error');
+          }
+        }
       }
 
       togglePasswordBtn.addEventListener('click', function () {
@@ -413,7 +472,8 @@
         passwordEl.value = 'open sesame';
         generateHeader();
       });
-      clearGenerateBtn.addEventListener('click', function () {
+      function clearGenerate() {
+        generateRevision++; resetCopyButtons(generateOutputEl);
         usernameEl.value = '';
         passwordEl.value = '';
         fullHeaderEl.textContent = '';
@@ -422,177 +482,81 @@
         fetchEl.textContent = '';
         generateOutputEl.hidden = true;
         setStatus(generateStatusEl, '', 'none');
-      });
+      }
+      clearGenerateBtn.addEventListener('click', clearGenerate);
 
       decodeBtn.addEventListener('click', decodeHeader);
       loadDecodeExampleBtn.addEventListener('click', function () {
         decodeInputEl.value = 'Basic dXNlcjpwOmE6c3M=';
         decodeHeader();
       });
-      clearDecodeBtn.addEventListener('click', function () {
+      function clearDecode() {
+        decodeRevision++; resetCopyButtons(decodeOutputEl);
         decodeInputEl.value = '';
         decodedUsernameEl.textContent = '';
         decodedPasswordEl.textContent = '';
         decodeOutputEl.hidden = true;
         setStatus(decodeStatusEl, '', 'none');
-      });
+      }
+      clearDecodeBtn.addEventListener('click', clearDecode);
 
       document.querySelectorAll('.bahg-wrap [data-copy-target]').forEach(function (button) {
+        var request = 0;
         button.addEventListener('click', function () {
-          var statusEl = button.closest('#bahg-decode-output') ? decodeStatusEl : generateStatusEl;
-          copyText(button, statusEl);
+          var decoding = !!button.closest('#bahg-decode-output');
+          var statusEl = decoding ? decodeStatusEl : generateStatusEl;
+          var revision = decoding ? decodeRevision : generateRevision, current = ++request;
+          copyText(button, statusEl, function () {
+            return current === request && revision === (decoding ? decodeRevision : generateRevision);
+          });
         });
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.metaKey || e.ctrlKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var widget = document.querySelector('.bahg-wrap');
+        if (!widget || !widget.contains(document.activeElement)) return;
+        e.preventDefault();
+        clearGenerate(); clearDecode();
       });
     })();
   </script>
 
   <style is:global>
-    .bahg-wrap {
-      display: grid;
-      gap: 1rem;
+    .bahg-wrap { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; min-height: 0; }
+    .bahg-card { display: flex; flex-direction: column; gap: 0.7rem; min-width: 0; min-height: 0; }
+    .bahg-card + .bahg-card { padding-top: 1.25rem; border-top: 1px solid var(--color-border-soft); }
+    .bahg-card h2 { margin: 0; color: var(--color-text); font-family: var(--font-display); font-size: clamp(1.1rem, 1rem + 0.5vw, 1.4rem); line-height: 1.2; }
+    .bahg-card-head p { margin: 0.3rem 0 0; color: var(--color-text-secondary); font-size: 0.85rem; line-height: 1.5; }
+    .bahg-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.85rem; }
+    .bahg-field { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+    .bahg-field-label, .bahg-button-help { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+    .bahg-button-help { flex: none; }
+    .bahg-password-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; min-width: 0; }
+    .bahg-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .bahg-wrap .bahg-actions .btn-primary, .bahg-wrap .bahg-actions .btn-secondary, .bahg-wrap .bahg-actions .btn-ghost, .bahg-button-help > button { flex: none; }
+    .bahg-card .tool-status { margin: 0; height: 3em; line-height: 1.5; overflow: auto; overflow-wrap: anywhere; flex: none; }
+    .bahg-wrap #bahg-decode-input { height: 6rem; min-height: 6rem; resize: vertical; }
+    .bahg-output { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; min-height: 0; }
+    .bahg-wrap [hidden] { display: none !important; }
+    .bahg-wrap .tool-result-row { display: grid; grid-template-columns: 7rem minmax(0, 1fr) auto; align-items: center; gap: 0.5rem; height: 4rem; min-width: 0; }
+    .bahg-wrap .tool-result-value { display: block; min-width: 0; height: 2.75rem; padding: 0.65rem 0; line-height: 1.4; white-space: pre; overflow-x: auto; overflow-y: hidden; }
+    .bahg-snippet-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+    .bahg-snippet { display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; padding: 0.75rem; border-radius: var(--radius-md); background: var(--color-bg-secondary); box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+    .bahg-snippet-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+    .bahg-snippet pre { margin: 0; min-width: 0; }
+    .bahg-wrap .bahg-snippet code { display: block; height: 7.5rem; overflow: auto; white-space: pre; font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.55; color: var(--color-text); }
+    .bahg-privacy { margin: 0; padding: 0.8rem 0.9rem; border-radius: var(--radius-md); background: var(--color-surface-muted); color: var(--color-text-secondary); font-size: 0.9rem; line-height: 1.5; box-shadow: inset 0 0 0 1px var(--color-border-soft); }
+    @media (max-width: 860px) {
+      .bahg-grid, .bahg-snippet-grid { grid-template-columns: minmax(0, 1fr); }
     }
-
-    .bahg-card {
-      display: grid;
-      gap: 1rem;
-      padding: 1rem;
-      border-radius: var(--radius-lg);
-      background: var(--color-surface);
-      box-shadow: var(--shadow-card);
-      outline: 1px solid var(--color-border-soft);
-      outline-offset: -1px;
-    }
-
-    .bahg-card-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 1rem;
-      align-items: flex-start;
-    }
-
-    .bahg-card h2 {
-      margin: 0;
-      color: var(--color-text);
-      font-family: var(--font-display);
-      font-size: clamp(1.2rem, 2vw, 1.55rem);
-      line-height: 1.15;
-    }
-
-    .bahg-card p {
-      margin: 0.35rem 0 0;
-      color: var(--color-text-secondary);
-      font-size: 0.92rem;
-      line-height: 1.5;
-    }
-
-    .bahg-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.85rem;
-    }
-
-    .bahg-field {
-      display: grid;
-      gap: 0.35rem;
-      min-width: 0;
-    }
-
-    .bahg-password-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 0.5rem;
-      min-width: 0;
-    }
-
-    .bahg-actions {
-      display: flex;
-      gap: 0.6rem;
-      flex-wrap: wrap;
-    }
-
-    .bahg-output {
-      display: grid;
-      gap: 0.75rem;
-    }
-
-    .bahg-output[hidden] {
-      display: none;
-    }
-
-    .bahg-snippet-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.75rem;
-    }
-
-    .bahg-snippet {
-      display: grid;
-      gap: 0.55rem;
-      min-width: 0;
-      padding: 0.75rem;
-      border-radius: var(--radius-md);
-      background: var(--color-bg-secondary);
-      box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    }
-
-    .bahg-snippet-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-    }
-
-    .bahg-snippet pre {
-      margin: 0;
-      overflow: auto;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      word-break: break-word;
-    }
-
-    .bahg-snippet code {
-      font-family: var(--font-mono);
-      font-size: 0.82rem;
-      line-height: 1.55;
-      color: var(--color-text);
-    }
-
-    .bahg-privacy {
-      margin: 0;
-      padding: 0.8rem 0.9rem;
-      border-radius: var(--radius-md);
-      background: var(--color-surface-muted);
-      color: var(--color-text-secondary);
-      font-size: 0.9rem;
-      line-height: 1.5;
-      box-shadow: inset 0 0 0 1px var(--color-border-soft);
-    }
-
-    @media (max-width: 720px) {
-      .bahg-grid,
-      .bahg-snippet-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 420px) {
-      .bahg-card {
-        padding: 0.85rem;
-      }
-
-      .bahg-password-row {
-        grid-template-columns: 1fr;
-      }
-
-      .bahg-actions > button,
-      .bahg-password-row > button {
-        width: 100%;
-      }
-
-      .bahg-snippet-head,
-      .bahg-wrap .tool-result-row {
-        align-items: flex-start;
-      }
+    @media (max-width: 640px) {
+      .bahg-wrap { gap: 1rem; }
+      .bahg-card { gap: 0.55rem; }
+      .bahg-actions { gap: 0.4rem; }
+      .bahg-actions :is(.btn-primary, .btn-secondary, .btn-ghost) { padding-inline: 0.8rem; }
+      .bahg-card .tool-status { height: 4.5em; }
+      .bahg-wrap .tool-result-row { grid-template-columns: 5.75rem minmax(0, 1fr) auto; }
+      .bahg-password-row { grid-template-columns: minmax(0, 1fr) auto; }
     }
   </style>
-</div>

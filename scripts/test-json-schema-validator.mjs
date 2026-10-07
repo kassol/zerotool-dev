@@ -916,5 +916,55 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check('page: an edit after an empty result keeps the empty-state text until the run', status() === 'none | ' + T.empty, status());
 }
 
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: analyze) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script>'));
+  const css = source.slice(source.indexOf('<style>'));
+  const clientSelection = source.slice(source.indexOf('const S = STRINGS'), source.indexOf('\n---\n', 4));
+  const selectClient = new Function('STRINGS', 'lang', clientSelection + '\nreturn { CLIENT_S, TIPS };');
+  const ids = ['draft', 'formats', 'validate', 'schema', 'data', 'extras', 'results'];
+  check('v2: the tool root receives the shell height directly', /^\s*<div class="jsv-wrap"/.test(markup));
+  check('v2: inputs stay before the full-width result', markup.indexOf('class="jsv-panels"') < markup.indexOf('id="jsv-result"') && markup.indexOf('class="jsv-panels"') > markup.indexOf('class="jsv-status-row"'));
+  check('v2: all seven explanations have distinct tip IDs', JSON.stringify([...markup.matchAll(/<Toggletip id="jsv-tip-(\w+)"/g)].map((m) => m[1])) === JSON.stringify(ids));
+  check('v2: tip buttons use localized names', (markup.match(/<Toggletip [^>]*lang=\{lang\} about=\{S\.\w+\}/g) || []).length === ids.length);
+  check('v2: explanations are omitted from the client data', markup.includes('data-strings={JSON.stringify(CLIENT_S)}') && !markup.includes('JSON.stringify(S)'));
+  check('v2: dropdown labels stay visible on phones', !css.includes('clip: rect(') && markup.includes('label for="jsv-draft"'));
+  check('v2: controls hidden by the script remain hidden under flex styles', /\.jsv-wrap \[hidden\]\s*\{\s*display:\s*none;/.test(css));
+  check('v2: status has reserved height and scrolls long messages', /\.jsv-status \{[^}]*height: 2\.8em;[^}]*overflow: auto;/.test(css));
+  check('v2: output receives remaining space and scrolls internally', /\.jsv-result \{[^}]*flex: 1 1 0;[^}]*min-height: 180px;/.test(css) && /#jsv-out \{[^}]*flex: 1 1 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(css));
+  check('v2: output is keyboard-scrollable and named', markup.includes('id="jsv-out" tabindex="0" aria-label={S.resultLabel}'));
+  check('v2: empty result gives the inputs the remaining height', /\.jsv-wrap:has\(#jsv-result\[hidden\]\) \.jsv-panels \{[^}]*flex: 1 1 0;/.test(css));
+  check('v2: stacking uses the shared 860px breakpoint', /@media \(max-width: 860px\)\s*\{[\s\S]*?\.jsv-panels \{ grid-template-columns: minmax\(0, 1fr\);/.test(css) && !css.includes('max-width: 760px'));
+  check('v2: the empty hint is absent on narrow screens', /@media \(max-width: 860px\)[\s\S]*?\.jsv-result-empty \{ display: none;/.test(css));
+  check('v2: Validate stays available for input above the automatic limit', markup.includes('id="jsv-validate"') && source.includes('const AUTO_LIMIT = 1_000_000;') && source.includes('if (!manual && size > AUTO_LIMIT)'));
+  check('v2: source keeps the initial example', source.includes('schemaEl.value = EXAMPLES.user.schema;\n    dataEl.value = EXAMPLES.user.data;'));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('v2: listed as an analyze page', layouts.includes("'json-schema-validator': 'analyze'"));
+  const { loadPage } = await import('./astro-page-harness.mjs');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const { CLIENT_S, TIPS } = selectClient(STRINGS, lang);
+    check('v2 ' + lang + ': no tips reach the worker strings', !('tips' in CLIENT_S) && Object.values(TIPS).every((v) => !JSON.stringify(CLIENT_S).includes(v)));
+    check('v2 ' + lang + ': all tips are populated', Object.keys(TIPS).length === ids.length && Object.values(TIPS).every((v) => typeof v === 'string' && v.trim().length > 20));
+    const mdx = readFileSync(join(root, 'src/content/tools/json-schema-validator/' + lang + '.mdx'), 'utf8');
+    const end = mdx.indexOf('\n---\n', 4);
+    const front = yaml.load(mdx.slice(4, end));
+    const body = mdx.slice(end + 5);
+    check('v2 ' + lang + ': five bounded plain-text steps', Array.isArray(front.steps) && front.steps.length === 5 && front.steps.every((v) => typeof v === 'string' && v.length <= 280 && !/[<>]/.test(v)) && front.steps.join('').length <= 1200);
+    check('v2 ' + lang + ': steps precede FAQ', mdx.indexOf('\nsteps:') < mdx.indexOf('\nfaqItems:'));
+    check('v2 ' + lang + ': the usage section is removed', !/^## (How to use|使用方法|使い方|사용 방법)\s*$/m.test(body));
+    check('v2 ' + lang + ': limits and reproducible examples remain', /^## (Limits|限制|制限|제한)\s*$/m.test(body) && body.includes('{/* jsv-ex:'));
+    const page = loadPage('src/components/tools/JsonSchemaValidatorTool.astro', { dataset: { 'jsv-wrap': { strings: JSON.stringify(CLIENT_S) } } });
+    const res = run('{"type":"integer"}', '"x"', { T: CLIENT_S });
+    page.ctx.__res = res;
+    page.run('started = true; render(__res)');
+    check('v2 ' + lang + ': rendering works without tip strings', page.el('jsv-status').textContent === E.statusText(res, CLIENT_S) && !page.el('jsv-result').hidden);
+    page.el('jsv-copy-json').click();
+    await Promise.resolve();
+    check('v2 ' + lang + ': JSON copy still exports the full report', page.clipboard[0] === E.reportJson(res, CLIENT_S));
+    page.run("schemaEl.value = ''; dataEl.value = ''; extraEl.value = ''; run(true)");
+    check('v2 ' + lang + ': clearing all inputs hides stale results and copy actions', page.el('jsv-result').hidden && page.el('jsv-copy-text').hidden && page.el('jsv-copy-json').hidden && page.el('jsv-out').textContent === '');
+  }
+}
+
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);

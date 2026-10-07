@@ -21,26 +21,38 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/AspectRatioTool.astro'), 'utf8');
-const scriptMatch = /<script is:inline>([\s\S]*?)<\/script>/.exec(source);
+const scriptMatch = /<script\b[^>]*>([\s\S]*?)<\/script>/.exec(source);
 if (!scriptMatch) {
   console.error('FAIL: could not locate the page script in AspectRatioTool.astro');
   process.exit(1);
 }
+const strings = JSON.parse(/const STRINGS = ([\s\S]*?) as const;/.exec(source)[1]);
 
-function makePage() {
-  const els = {};
+function makePage({ lang = 'en', shellFirst = false } = {}) {
+  const els = {}, documentHandlers = {}, cleared = [];
+  const inputTypes = Object.fromEntries([...source.matchAll(/<input\b[^>]*id="([^"]+)"[^>]*type="([^"]+)"/g)].map(m => [m[1], m[2]]));
   function el(id) {
     if (!els[id]) {
       const handlers = {};
       els[id] = {
-        id, value: '', checked: false, textContent: '', className: '', style: {},
+        id, type: inputTypes[id], value: '', checked: false, textContent: '', className: '', style: {},
         addEventListener(type, fn) { (handlers[type] ||= []).push(fn); },
         fire(type) { (handlers[type] || []).forEach((fn) => fn.call(els[id], { target: els[id] })); },
         getAttribute(name) { return this.attrs ? this.attrs[name] : null; },
-        classList: { add() {}, remove() {} },
+        get classList() {
+          const e = this;
+          return {
+            add(name) { e.className = [...new Set([...e.className.split(/\s+/).filter(Boolean), name])].join(' '); },
+            remove(name) { e.className = e.className.split(/\s+/).filter(c => c !== name).join(' '); },
+            contains(name) { return e.className.split(/\s+/).includes(name); },
+          };
+        },
       };
     }
     return els[id];
@@ -50,19 +62,45 @@ function makePage() {
     c.attrs = { 'data-w': String(w), 'data-h': String(h) };
     return c;
   });
+  const outside = { id: 'outside' };
+  const widget = {
+    contains(node) { return Object.values(els).includes(node); },
+    querySelectorAll(sel) { return sel === 'textarea, input[type="text"]' ? Object.values(els).filter(e => e.type === 'text') : []; },
+  };
   const document = {
-    documentElement: { lang: 'en' },
+    documentElement: { lang }, activeElement: outside,
     getElementById: el,
     querySelectorAll(sel) { return sel === '.ar-chip' ? chips : []; },
+    querySelector(sel) { return ['.tool-widget', '.ar-wrap'].includes(sel) ? widget : null; },
+    addEventListener(type, fn) { (documentHandlers[type] ||= []).push(fn); },
   };
-  new Function('document', 'window', scriptMatch[1])(document, {});
+  const window = { ztPersist: { clear(slug) { cleared.push(slug); } } };
+  const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
+  if (!shortcut.includes("document.addEventListener('keydown'")) throw new Error('Shared shortcut not found');
+  const installShortcut = () => new Function('document', 'window', '_slug', shortcut)(document, window, 'aspect-ratio');
+  if (shellFirst) installShortcut();
+  const { tips, ...client } = strings[lang];
+  new Function('document', 'window', 't', scriptMatch[1])(document, window, client);
+  if (!shellFirst) installShortcut();
   return {
-    els: el,
+    els: el, cleared,
     type(id, v) { el(id).value = String(v); el(id).fire('input'); },
     lock(on) { el('ar-lock').checked = on; el('ar-lock').fire('change'); },
     preset(w, h) { el('chip-' + w + 'x' + h).fire('click'); },
     ratio() { return el('ar-ratio').textContent; },
     decimal() { return el('ar-decimal').textContent; },
+    key({ key = 'l', meta = false, focus = 'ar-width', modifier = true } = {}) {
+      document.activeElement = focus ? el(focus) : outside;
+      const event = { key, metaKey: meta && modifier, ctrlKey: !meta && modifier, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+      for (const fn of documentHandlers.keydown || []) fn(event);
+      return event;
+    },
+    state() {
+      return JSON.stringify({ inputs: ['ar-width', 'ar-height', 'ar-new-width', 'ar-new-height'].map(id => el(id).value), locked: el('ar-lock').checked,
+        ratio: el('ar-ratio').textContent, decimal: el('ar-decimal').textContent, preview: el('ar-preview').style,
+        status: el('ar-status').textContent, chips: chips.map(c => c.className) });
+    },
   };
 }
 
@@ -79,6 +117,20 @@ function eq(name, actual, expected) {
 let p = makePage();
 eq('initial ratio', p.ratio(), '16:9');
 eq('initial decimal', p.decimal(), '1.7778');
+
+// Positive fractional dimensions keep finite results when the rounded GCD is zero.
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const [w, h, ratio, decimal, preview] of [
+  [0.1, 0.1, '0.1:0.1', '1.0000', '200px/200px'],
+  [0.1, 0.2, '0.1:0.2', '0.5000', '100px/200px'],
+  [1.5, 1, '1.5:1', '1.5000', '300px/200px'],
+  [1.5, 1.5, '0.75:0.75', '1.0000', '200px/200px'],
+]) {
+  const q = makePage({ lang }), name = `${lang} fractional ${w}x${h}`;
+  q.type('ar-width', w); q.type('ar-height', h);
+  eq(name + ' ratio', q.ratio(), ratio);
+  eq(name + ' decimal', q.decimal(), decimal);
+  eq(name + ' preview', q.els('ar-preview').style.width + '/' + q.els('ar-preview').style.height, preview);
+}
 
 for (const [w, h, r, d] of [
   [2560, 1080, '64:27', '2.3704'],
@@ -213,6 +265,102 @@ eq('resize 2160 high', p.els('ar-new-width').value, 3840);
     }
   }
   eq('guide has 2 runnable blocks', runs, 2);
+}
+
+// The shared shortcut clears text fields only. Numeric dimensions need a page reset.
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, true]) for (const meta of [false, true]) {
+  const q = makePage({ lang, shellFirst }), name = `${lang} ${shellFirst ? 'shell first' : 'page first'} ${meta ? 'Meta' : 'Ctrl'}`;
+  q.preset(21, 9); q.lock(true); q.type('ar-new-width', 1000);
+  eq(name + ': original dimensions are numeric controls', q.els('ar-width').type + '/' + q.els('ar-height').type, 'number/number');
+  const before = q.state();
+  eq(name + ': outside shortcut is not intercepted', q.key({ meta, focus: null }).defaultPrevented, false);
+  eq(name + ': outside shortcut keeps inputs and result', q.state(), before);
+  eq(name + ': plain L is not intercepted', q.key({ modifier: false }).defaultPrevented, false);
+  eq(name + ': plain L keeps inputs and result', q.state(), before);
+  eq(name + ': shortcut is intercepted inside the tool', q.key({ key: meta ? 'L' : 'l', meta, focus: 'ar-new-height' }).defaultPrevented, true);
+  eq(name + ': all dimensions and resize values clear', ['ar-width', 'ar-height', 'ar-new-width', 'ar-new-height'].every(id => q.els(id).value === ''), true);
+  eq(name + ': cleared input has no locked ratio', q.els('ar-lock').checked, false);
+  eq(name + ': ratio and decimal clear', q.ratio() + '/' + q.decimal(), '—/—');
+  eq(name + ': preview clears', q.els('ar-preview').style.width + '/' + q.els('ar-preview').style.height, '0/0');
+  eq(name + ': status clears', q.els('ar-status').textContent, '');
+  eq(name + ': active preset clears', q.els('chip-21x9').classList.contains('ar-chip-active'), false);
+  eq(name + ': shared persistence clear runs once', q.cleared.join(','), 'aspect-ratio');
+  q.type('ar-width', 16);
+  eq(name + ': new width does not restore the old locked height', q.els('ar-height').value, '');
+  q.type('ar-height', 9);
+  eq(name + ': fresh dimensions restore the correct result', q.ratio(), '16:9');
+  q.type('ar-width', ''); q.type('ar-new-width', 320);
+  eq(name + ': missing original size reports an error', q.els('ar-status').className.includes('error'), true);
+  q.key({ meta });
+  eq(name + ': shortcut clears prior errors too', q.els('ar-status').textContent, '');
+}
+
+// ---------- v2 page layout ----------
+{
+  const before = passes;
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script')).trim();
+  const css = source.slice(source.indexOf('<style>') + 7, source.indexOf('</style>'));
+  const rules = selector => [...css.matchAll(new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}', 'g'))].map(m => m[1]);
+  const has = (selector, pattern) => rules(selector).some(rule => pattern.test(rule));
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  eq('registered compact route', /'aspect-ratio':\s*'compact'/.test(layouts), true);
+  eq('direct tool root', template.startsWith('<div class="ar-wrap">'), true);
+  eq('root has natural-height flex column', has('.ar-wrap', /display:\s*flex/) && has('.ar-wrap', /flex-direction:\s*column/) && has('.ar-wrap', /min-height:\s*0/) && has('.ar-wrap', /min-width:\s*0/) && !/\b(?:height|min-height):[^;]*(?:vh|svh)/.test(css), true);
+  eq('options precede status, original input, result and Resize', template.indexOf('id="ar-lock"') < template.indexOf('id="ar-status"') && template.indexOf('id="ar-status"') < template.indexOf('id="ar-width"') && template.indexOf('id="ar-width"') < template.indexOf('id="ar-result"') && template.indexOf('id="ar-result"') < template.indexOf('id="ar-new-width"'), true);
+  eq('desktop calculation and preview have shrinkable columns', has('.ar-work', /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/), true);
+  eq('860px stacks preview and controls', /@media \(max-width: 860px\)[\s\S]*?\.ar-work \{ grid-template-columns: minmax\(0, 1fr\); \}/.test(css), true);
+  eq('640px retains accessible preset and lock targets', /@media \(max-width: 640px\)[\s\S]*?\.ar-toggle, \.ar-chip \{ min-height: 44px; \}/.test(css), true);
+  eq('status has fixed scrolling height in both sizes', has('.ar-wrap #ar-status', /height:\s*3em;[\s\S]*overflow:\s*auto/) && has('.ar-wrap #ar-status', /height:\s*4\.5em/), true);
+  eq('ratio and decimal stay in fixed-height scrolling boxes', has('.ar-ratio-value', /height:\s*3rem;/) && has('.ar-ratio-value', /overflow:\s*auto;/) && has('.ar-ratio-value', /white-space:\s*nowrap;/), true);
+  eq('preview has a fixed bounded height', has('.ar-preview-container', /height:\s*232px;/) && has('.ar-preview-container', /overflow:\s*auto;/), true);
+  for (const id of ['ar-ratio', 'ar-decimal']) eq(id + ' supports keyboard scrolling and a visible label', new RegExp('id="' + id + '"[^>]*tabindex="0"[^>]*aria-labelledby="').test(template), true);
+  eq('seven preset buttons retained with no redundant primary action', (template.match(/<button\b/g) || []).length === 7 && !/btn-primary/.test(template), true);
+  eq('tips are separate from input labels', !/<label\b[^>]*>(?:(?!<\/label>)[\s\S])*?<Toggletip/.test(template), true);
+  eq('script takes client strings without runtime translation', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/STRINGS|TIPS|data-i18n/.test(scriptMatch[1]) && !/data-i18n/.test(template), true);
+  const tipKeys = ['dimensions', 'lock', 'presets', 'resize', 'preview'].sort();
+  const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  eq('five control tips exist', tips.length, 5);
+  for (const key of tipKeys) eq(key + ' tip uses localized text and name', tips.some(m => m[1].includes('id="ar-tip-' + key + '"') && /lang=\{lang\}/.test(m[1]) && /about=\{T\.\w+\}/.test(m[1]) && m[2] === '{TIPS.' + key + '}'), true);
+  const retained = {
+    en: ['a9e1a051ece0b7f7034f84f58df00698b38c4709fbdac0de1c807ae59a8a5f16', 'cdb0de069c9977df31473e5142b0776abe4cd8d042106478eda25045ba14cdc9'],
+    zh: ['d3463e6329f2a7b32a6005bfc47747edc6cc945b1755ad045212928cc5d1d369', '971f4ddd9c46504b958e426c39f8298ae810728d91e0c1834f2327a72c1cd2fa'],
+    ja: ['cfb2252f15899296cfc3d587fecbeb8ecac16a9dcf74159476c8134002e97297', '9eaafbaf84c720c70c2c057becb2d71834d10c663b5bb9f91c74c038911eecd8'],
+    ko: ['b90ba25e7eb78f3caf0ea874b7abc9c4c8eb463a12501a758fe21d7b01f72432', '811bcc0a4b241e555e168fda6378c7a639baff0c4270f4b27d8f701fe103f970']
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const entry = strings[lang];
+    eq(lang + ' string keys match', Object.keys(entry).sort().join(','), Object.keys(strings.en).sort().join(','));
+    eq(lang + ' five tip keys match', Object.keys(entry.tips).sort().join(','), tipKeys.join(','));
+    for (const key of tipKeys) eq(lang + ' ' + key + ' is plain text', typeof entry.tips[key] === 'string' && !!entry.tips[key].trim() && !/<[^>]*>|\n/.test(entry.tips[key]), true);
+    const { tips: excluded, ...client } = entry;
+    eq(lang + ' inline payload excludes all tip text', Object.values(excluded).every(text => !JSON.stringify(client).includes(JSON.stringify(text))) && source.includes('const { tips: TIPS, ...CLIENT_T } = T;'), true);
+    const mdx = readFileSync(join(root, 'src/content/tools/aspect-ratio', lang + '.mdx'), 'utf8');
+    const [, meta, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx), { steps } = loadYaml(meta);
+    eq(lang + ' six steps precede FAQ', steps?.length === 6 && meta.indexOf('steps:') < meta.indexOf('faqItems:'), true);
+    eq(lang + ' steps meet plain-text limits', steps.every(step => typeof step === 'string' && !!step.trim() && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200, true);
+    for (const key of ['width', 'height', 'lockRatio', 'newWidth', 'newHeight', 'preview']) eq(lang + ' steps use current control ' + key, steps.some(step => step.includes(entry[key])), true);
+    eq(lang + ' Usage heading removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
+    eq(lang + ' existing FAQ and SEO remain exact', sha(meta.replace(/^steps:\n(?:  .*\n)*/m, '').trim()), retained[lang][0]);
+    eq(lang + ' non-Usage body remains exact', sha(body), retained[lang][1]);
+    const q = makePage({ lang });
+    q.type('ar-width', ''); q.lock(true);
+    eq(lang + ' actual error uses the build-time language', q.els('ar-status').textContent, entry.errEnterDims);
+    q.preset(21, 9);
+    eq(lang + ' actual preset feedback uses the build-time language', q.els('ar-status').textContent, 'Preset 21:9' + entry.presetApplied);
+  }
+  const long = makePage();
+  long.type('ar-width', '9007199254740991'); long.type('ar-height', '9007199254740881');
+  eq('large exact integers retain the full coprime ratio', long.ratio(), '9007199254740991:9007199254740881');
+  eq('large ratio decimal remains rounded to four places', long.decimal(), '1.0000');
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const compiled = await transform(source, { filename: 'AspectRatioTool.astro' });
+  eq('Astro compiles without errors', compiled.diagnostics.filter(d => d.severity === 1).length, 0);
+  const { transform: transformJs } = await import('esbuild');
+  await transformJs(compiled.code, { loader: 'ts', format: 'esm' });
+  eq('compiled script serializes only client strings', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'), true);
+  console.log('v2 page layout: ' + (passes - before) + ' passed');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
