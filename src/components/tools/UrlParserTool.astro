@@ -29,6 +29,7 @@ const STRINGS = {
     baseSummary: 'Base URL (for relative links)',
     basePlaceholder: 'https://example.com/docs/',
     ok: 'Valid URL, parsed by your browser (WHATWG URL Standard).',
+    notStandard: 'Not a valid URL under the WHATWG URL Standard: a host name cannot contain “{ch}”, and Node.js rejects this URL. Your browser accepts it anyway and reads the host as {host}; the fields below are that reading. Remove the character before using the URL elsewhere.',
     okBase: 'Valid relative URL, resolved against the base URL.',
     copy: 'Copy',
     copied: 'Copied!',
@@ -143,6 +144,7 @@ const STRINGS = {
     baseSummary: '基准 URL（用于相对链接）',
     basePlaceholder: 'https://example.com/docs/',
     ok: '有效 URL，由浏览器按 WHATWG URL 标准解析。',
+    notStandard: '按 WHATWG URL 标准这不是有效的 URL：主机名不能包含“{ch}”，Node.js 也会拒绝它。你的浏览器仍然接受，并把主机读成 {host}，下面的字段就是这种读法。在别处使用前，请先去掉这个字符。',
     okBase: '有效的相对 URL，已按基准 URL 补全。',
     copy: '复制',
     copied: '已复制',
@@ -257,6 +259,7 @@ const STRINGS = {
     baseSummary: 'ベース URL（相対 URL 用）',
     basePlaceholder: 'https://example.com/docs/',
     ok: '有効な URL です。ブラウザーが WHATWG URL Standard に沿って解析しました。',
+    notStandard: 'WHATWG URL Standard では無効な URL です：ホスト名に「{ch}」は使えず、Node.js もこの URL を受け付けません。お使いのブラウザーはそれでも受け付け、ホストを {host} と読んでいます。下の欄はこの読み方です。ほかで使う前にこの文字を取り除いてください。',
     okBase: '有効な相対 URL です。ベース URL を基準に解決しました。',
     copy: 'コピー',
     copied: 'コピーしました',
@@ -371,6 +374,7 @@ const STRINGS = {
     baseSummary: '기준 URL (상대 링크용)',
     basePlaceholder: 'https://example.com/docs/',
     ok: '유효한 URL입니다. 브라우저가 WHATWG URL 표준대로 분석했습니다.',
+    notStandard: 'WHATWG URL 표준으로는 유효한 URL이 아닙니다. 호스트 이름에는 “{ch}”를 쓸 수 없고, Node.js도 이 URL을 거부합니다. 사용 중인 브라우저는 그래도 받아들여 호스트를 {host}로 읽으며, 아래 항목은 이 읽기 결과입니다. 다른 곳에서 쓰기 전에 이 문자를 지우세요.',
     okBase: '유효한 상대 URL입니다. 기준 URL로 완성했습니다.',
     copy: '복사',
     copied: '복사됨',
@@ -1137,6 +1141,19 @@ const ROWS: Array<{ field: string; editable: boolean }> = [
       return ok;
     }
 
+    /* Chromium accepts some hosts that the URL Standard rejects: "http://exa mple.com/" is read
+       as the host exa%20mple.com, where Node.js (and the standard's host parser) fail. In a
+       special URL the standard never gives a domain that contains a forbidden domain code point
+       (URL Standard, "host parsing"), so a host name with one is the browser's own reading. */
+    var FORBIDDEN_DOMAIN = /[\u0000-\u0020#%\/:<>?@\[\\\]\^|\u007f]/;
+    function standardHostProblem(res) {
+      if (!res || !res.ok || !res.special || res.hostType !== 'domain') return null;
+      var host = res.fields.hostname;
+      if (!FORBIDDEN_DOMAIN.test(host)) return null;
+      var m = FORBIDDEN_DOMAIN.exec(percentDecode(host).text) || FORBIDDEN_DOMAIN.exec(host);
+      return { ch: m[0], host: host };
+    }
+
     function setStatus(text, kind) {
       statusEl.textContent = text;
       statusEl.className = 'tool-status ' + kind;
@@ -1337,7 +1354,9 @@ const ROWS: Array<{ field: string; editable: boolean }> = [
         if (err.code === 'relative' || err.code === 'schemeRelative') baseBox.open = true;
         return;
       }
-      setStatus(editMessage || (res.usedBase ? S.okBase : S.ok), editMessage ? 'info' : 'success');
+      var hostProblem = standardHostProblem(res);
+      if (hostProblem) setStatus(fmt(S.notStandard, { ch: showChar(hostProblem.ch), host: hostProblem.host }), 'error');
+      else setStatus(editMessage || (res.usedBase ? S.okBase : S.ok), editMessage ? 'info' : 'success');
       editMessage = null;
       renderNotes(res);
       renderFields(res);

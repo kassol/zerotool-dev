@@ -26,6 +26,10 @@
 // images (data URI or pre-fetched), footnotes, East Asian font and language, soft line
 // breaks joined without a space between Han / Kana characters, paper size, frontmatter,
 // filename, preview escaping, a 10,000-line document.
+// Page (real module script in astro-page-harness.mjs, four languages): Open .md refuses
+// GBK, Shift_JIS, EUC-KR, UTF-16 and binary files with the byte offset and leaves the
+// editor unchanged (before: file.text() put U+FFFD text in the editor with no status);
+// firstBadUtf8 is compared with json-formatter-engine.js.
 //
 // Run: node scripts/test-markdown-to-word.mjs
 
@@ -548,6 +552,65 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
     check(lang + ' mdx: the steps use the current button names', [E.STRINGS[lang].openFile, E.STRINGS[lang].embedRemote, E.STRINGS[lang].download].every((name) => steps.join(' ').includes(name)));
     check(lang + ' mdx: no usage section in the body', !/^## (How to convert Markdown to Word|使用方法|使い方|사용 방법)\s*$/m.test(body));
     check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한 사항)\s*$/m.test(body));
+  }
+}
+
+// ---------- page: Open .md reads UTF-8 text only ----------
+// The real module script runs in scripts/astro-page-harness.mjs. Before this check the
+// file was read with file.text(): a GBK or Shift_JIS file became U+FFFD in the editor and
+// a PNG was put in as text, with an empty status line.
+{
+  const { loadPage } = await import('./astro-page-harness.mjs');
+  const jsonEngine = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  const fnSrc = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    const j = src.indexOf('\n  }\n', i);
+    return i < 0 || j < 0 ? '' : src.slice(i, j + 4).split('\n').map((l) => l.trim()).join('\n');
+  };
+  const copied = fnSrc(source, 'firstBadUtf8');
+  check('firstBadUtf8 is the same as in json-formatter-engine.js', copied && copied === fnSrc(jsonEngine, 'firstBadUtf8'), copied.slice(0, 80));
+  const before = '# Kept\n\nThe editor text before the file was opened.';
+  const files = [
+    // GBK, Shift_JIS and EUC-KR bytes from Python 3 str.encode; the mdx limits quote byte 2.
+    ['GBK "# 中文"', [0x23, 0x20, 0xd6, 0xd0, 0xce, 0xc4], 'fileNotUtf8', 2],
+    ['Shift_JIS "# 日本語"', [0x23, 0x20, 0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea], 'fileNotUtf8', 2],
+    ['EUC-KR "# 한글"', [0x23, 0x20, 0xc7, 0xd1, 0xb1, 0xdb], 'fileNotUtf8', 2],
+    ['a PNG', [...PNG_1x1], 'fileBinary', PNG_1x1.indexOf(0)],
+    ['UTF-16LE with a BOM', [0xff, 0xfe, 0x23, 0x00, 0x20, 0x00, 0x41, 0x00], 'fileUtf16', 0],
+    ['UTF-16LE without a BOM, with a non-ASCII character', [0x23, 0x00, 0x20, 0x00, 0x2d, 0x4e, 0x87, 0x65], 'fileUtf16', null],
+    ['ASCII text with a NUL byte', [0x23, 0x20, 0x41, 0x00, 0x42], 'fileBinary', 3],
+    ['a truncated UTF-8 sequence at the end', [0x23, 0x20, 0xe4, 0xb8], 'fileNotUtf8', 2],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const { tips, ...clientStrings } = E.STRINGS[lang];
+    const page = loadPage('src/components/tools/MarkdownToWordTool.astro', {
+      lang, dataset: { '.mw-wrap': { strings: JSON.stringify(clientStrings), lang } },
+      globals: { TextDecoder, Uint8Array, navigator: { language: 'en-US', clipboard: { writeText: () => Promise.resolve() } } },
+    });
+    const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+    const editor = page.el('mw-editor');
+    const status = page.el('mw-status');
+    const input = page.el('mw-file');
+    for (const [label, bytes, key, offset] of files) {
+      editor.value = before;
+      input.files = [new File([Uint8Array.from(bytes)], 'notes.md')];
+      input.dispatch('change');
+      await settle();
+      const tmpl = clientStrings[key] || '\u0000missing ' + key;
+      const ok = status.className.includes('mw-status-err') && (offset === null ? status.textContent.length > 20 && !status.textContent.includes('{') : status.textContent === tmpl.replace('{offset}', String(offset)));
+      check(lang + ' page, ' + label + ': refused with the reason' + (offset === null ? '' : ' and byte ' + offset), ok && (offset !== null || status.textContent === tmpl.replace('{offset}', status.textContent.match(/\d+/)?.[0] || '')), status.textContent);
+      check(lang + ' page, ' + label + ': the editor is not changed', editor.value === before && !editor.value.includes('\uFFFD'), JSON.stringify(editor.value.slice(0, 40)));
+    }
+    // A UTF-8 file (with a BOM) still opens, and the status line is cleared.
+    input.files = [new File([Uint8Array.from([0xef, 0xbb, 0xbf]), '# 見出し\n\n本文 ü'], 'ok.md')];
+    input.dispatch('change');
+    await settle();
+    check(lang + ' page: a UTF-8 file opens without its BOM', editor.value === '# 見出し\n\n本文 ü' && status.textContent === '', JSON.stringify(editor.value));
+    for (const key of ['fileNotUtf8', 'fileBinary']) check(lang + ': ' + key + ' has {offset}', (E.STRINGS[lang][key] || '').includes('{offset}'));
+    check(lang + ': the Open .md tip says other encodings are refused', /UTF-16/.test(E.STRINGS[lang].tips.open));
+    const mdx = readFileSync(join(root, 'src/content/tools/markdown-to-word', lang + '.mdx'), 'utf8');
+    const quoted = { en: '`# 中文` saved as GBK stops at byte 2', zh: '按 GBK 保存的 `# 中文` 在第 2 个字节', ja: 'Shift_JIS で保存した `# 日本語` は 2 バイト目', ko: "EUC-KR로 저장한 `# 한글`은 2번째 바이트" }[lang];
+    check(lang + ' mdx: the limits name the refused encodings and the byte from the test', mdx.includes(quoted));
   }
 }
 

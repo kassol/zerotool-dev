@@ -19,6 +19,12 @@
 // ('5" pipe') started a quoted field; columns were not padded, so CJK tables did not line up.
 // Expected now (each checked below against micromark, markdownlint, string-width or the recorded
 // platform output).
+// Page (real module script, stand-in DOM, four languages): after a good CSV import, a broken
+// JSON array in Detect, JSON with a trailing comma or curly quotes, a Markdown table whose
+// delimiter row has fewer cells and HTML without cells give the reason (JSON: line, column and
+// the json-formatter cause), clear the output and turn Copy / Download off; Edit, a good import
+// or an empty import box bring the output back; "[id],[name]" stays CSV; an unclosed CSV quote
+// imports with a note. lineCol and jsonSyntaxError are compared with json-formatter-engine.js.
 //
 // Run: node scripts/test-markdown-table-generator.mjs
 
@@ -524,6 +530,150 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
     check(lang + ' mdx: steps are plain text within the llms limits', steps.every((x) => x.length <= 280 && !/[*`"]/.test(x)) && steps.join('').length <= 1200);
     check(lang + ' mdx: no usage section in the body', !/^## (How to use|使用方法|使い方|사용 방법)\s*$/im.test(body));
     check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한)\s*$/m.test(body));
+  }
+}
+
+// ---------- page: import errors ----------
+// Runs the real module script with a small stand-in DOM. Before this check, in Detect a broken
+// JSON array was read as CSV ("[{"a":1}" in a cell, Copy on), a Markdown table with fewer
+// delimiter cells became a 4-column CSV table, an unclosed quote was read as text without a
+// word, a JSON error showed the V8 message, and a failed import left the previous Markdown
+// in the output with Copy on.
+{
+  const vm = await import('node:vm');
+  const ts = (await import('typescript')).default;
+  const { createRequire } = await import('node:module');
+  const req = createRequire(join(root, 'package.json'));
+  const a = source.indexOf('/* ── strings:start ── */');
+  const b = source.indexOf('/* ── strings:end ── */');
+  const STRINGS = new Function(source.slice(a, b).replace('const STRINGS =', 'return'))();
+  const jsonEngine = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  const fnSrc = (src, name) => {
+    const i = src.indexOf('  function ' + name + '(');
+    const j = src.indexOf('\n  }\n', i);
+    return i < 0 || j < 0 ? '' : src.slice(i, j + 4);
+  };
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = fnSrc(source.slice(e), name);
+    check(name + ' is the same as in json-formatter-engine.js', mine !== '' && mine === fnSrc(jsonEngine, name), mine.slice(0, 60));
+  }
+  const codes = [...new Set([...fnSrc(jsonEngine, 'jsonSyntaxError').matchAll(/(?:fail|code): ?'(\w+)'|fail\('(\w+)'/g)].map((m) => m[1] || m[2]))];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const P = STRINGS[lang].jsonParse || {};
+    check(lang + ': a jsonParse text for every jsonSyntaxError code', codes.length > 10 && codes.every((c) => typeof P[c] === 'string'), codes.filter((c) => typeof P[c] !== 'string').join(' '));
+  }
+  const script = (() => { const m = /<script>([\s\S]*?)<\/script>/.exec(source); return ts.transpileModule(m[1], { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText; })();
+
+  function runPage(lang) {
+    const { tips, ...client } = STRINGS[lang];
+    const els = new Map();
+    const mk = (key) => {
+      const listeners = {};
+      const el = {
+        key, value: '', textContent: '', className: '', hidden: false, disabled: false, dataset: {}, style: {}, attrs: {}, children: [],
+        setAttribute(n, v) { this.attrs[n] = String(v); }, getAttribute(n) { return this.attrs[n] ?? null; }, removeAttribute(n) { delete this.attrs[n]; },
+        addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
+        dispatch(type, init = {}) { for (const fn of listeners[type] || []) fn.call(el, { type, target: el, preventDefault() {}, ...init }); },
+        click() { if (!el.disabled) el.dispatch('click'); }, focus() {}, select() {}, remove() {},
+        appendChild(c) { el.children.push(c); return c; }, querySelector: () => null, querySelectorAll: () => [], closest: () => null,
+        classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+      };
+      return el;
+    };
+    const get = (id) => { if (!els.has(id)) els.set(id, mk(id)); return els.get(id); };
+    const wrap = get('.mdt-wrap');
+    wrap.dataset = { strings: JSON.stringify(client), lang };
+    const tabs = [mk('tab-edit'), mk('tab-import')];
+    tabs[0].dataset.tab = 'edit'; tabs[1].dataset.tab = 'import';
+    wrap.querySelectorAll = (sel) => (sel === '.mdt-tab' ? tabs : []);
+    const toolbar = mk('toolbar');
+    get('mdt-panel-edit').querySelector = () => toolbar;
+    get('mdt-format').value = 'auto';
+    get('mdt-first-header').checked = true;
+    get('mdt-style').value = 'aligned';
+    get('mdt-cell').value = 'markdown';
+    get('mdt-breaks').value = 'br';
+    const clipboard = [];
+    let timers = [];
+    const sandbox = {
+      console, JSON, Math, Number, String, Object, Array, Promise, Error, RegExp, Map, Set, Intl, Symbol, isNaN, parseInt, parseFloat,
+      exports: {}, module: { exports: {} }, require: (n) => req(n),
+      setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {},
+      navigator: { clipboard: { writeText: (t) => { clipboard.push(t); return Promise.resolve(); } } },
+      document: {
+        querySelector: (sel) => get(sel), getElementById: (id) => get(id), addEventListener() {},
+        createElement: (tag) => mk('<' + tag + '>'), createDocumentFragment: () => mk('#fragment'), execCommand: () => false, body: mk('body'),
+      },
+      URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} }, Blob,
+      // DOMParser stand-in: parse5 nodes in the shape DOM_ADAPTER reads.
+      DOMParser: class {
+        parseFromString(html) {
+          const conv = (n) => n.nodeName === '#text' ? { nodeType: 3, nodeName: '#text', nodeValue: n.value, childNodes: [] }
+            : n.nodeName === '#comment' ? { nodeType: 8, nodeName: '#comment', nodeValue: n.data, childNodes: [] }
+            : { nodeType: n.tagName ? 1 : 9, nodeName: (n.tagName || n.nodeName).toUpperCase(), childNodes: (n.content ? [] : n.childNodes || []).map(conv),
+              getAttribute: (k) => { const at = (n.attrs || []).find((x) => x.name === k); return at ? at.value : null; } };
+          return conv(parse5Parse(html));
+        }
+      },
+    };
+    sandbox.window = sandbox;
+    vm.runInNewContext(script, sandbox, { filename: 'MarkdownTableGeneratorTool.astro' });
+    const flush = () => { for (let i = 0; i < 50 && timers.length; i++) timers.shift()(); };
+    return {
+      el: get, clipboard, tabs,
+      importText(text, format = 'auto') { get('mdt-format').value = format; get('mdt-import').value = text; get('mdt-import').dispatch('input'); flush(); },
+      copy() { get('mdt-copy').click(); },
+    };
+  }
+
+  const cases = [
+    // [label, text, format, expected status (built from the page strings), output empty]
+    ['broken JSON array (Detect)', '[{"a":1},', 'auto', (L) => L.jsonSyntax.replace('{line}', 1).replace('{col}', 10).replace('{reason}', L.jsonParse.unexpectedEnd)],
+    ['JSON with a trailing comma (Detect)', '{"a": 1,\n}', 'auto', (L) => L.jsonSyntax.replace('{line}', 1).replace('{col}', 8).replace('{reason}', L.jsonParse.trailingComma)],
+    ['JSON with curly quotes (JSON)', '[{\u201ca\u201d: 1}]', 'json', (L) => L.jsonSyntax.replace('{line}', 1).replace('{col}', 3).replace('{reason}', L.jsonParse.smartQuote.replace('{ch}', '\u201c'))],
+    ['Markdown table, delimiter row too short (Detect)', '| a | b |\n| - |\n| 1 | 2 |', 'auto', (L) => L.mdCols.replace('{line}', 1).replace('{head}', 2).replace('{delim}', 1)],
+    ['Markdown table, delimiter row too short (Markdown)', '| a | b |\n| - |\n| 1 | 2 |', 'markdown', (L) => L.mdCols.replace('{line}', 1).replace('{head}', 2).replace('{delim}', 1)],
+    ['HTML without a table cell', '<table><tr></tr></table>', 'auto', (L) => L.htmlNoTable],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = STRINGS[lang];
+    for (const [label, text, format, expected] of cases) {
+      const p = runPage(lang);
+      p.importText('name,age\nAda,36');
+      const good = p.el('mdt-output').value;
+      check(lang + ' page: a CSV import comes first', good.includes('| Ada ') && !p.el('mdt-copy').disabled, good);
+      p.importText(text, format);
+      let want; try { want = expected(L); } catch (err) { want = 'missing page strings: ' + err.message; }
+      eq(lang + ' page, ' + label + ': status', [p.el('mdt-status').textContent, p.el('mdt-status').className.includes('error')], [want, true]);
+      eq(lang + ' page, ' + label + ': output cleared, Copy and Download off', [p.el('mdt-output').value, p.el('mdt-copy').disabled, p.el('mdt-download').disabled, p.el('mdt-notes').textContent], ['', true, true, L.importCleared]);
+      p.copy();
+      eq(lang + ' page, ' + label + ': Copy gives nothing', p.clipboard, []);
+      // Opening Edit brings back the table the grid still holds.
+      p.tabs[0].dispatch('click');
+      check(lang + ' page, ' + label + ': Edit brings the previous table back', p.el('mdt-output').value === good && !p.el('mdt-copy').disabled && !p.el('mdt-download').disabled);
+    }
+    // A failed import, then a good one: the output and Copy come back.
+    const p = runPage(lang);
+    p.importText('[{"a":1},');
+    p.importText('[{"a":1},{"a":2}]');
+    check(lang + ' page: fixing the JSON imports it', p.el('mdt-output').value.includes('| 2 ') && !p.el('mdt-copy').disabled && p.el('mdt-status').textContent.startsWith(L.imported.split('{')[0].slice(0, 2)), p.el('mdt-output').value);
+    // SQL Server style names are CSV, not JSON.
+    p.importText('[id],[name]\n1,Ada');
+    check(lang + ' page: "[id],[name]" stays CSV', p.el('mdt-output').value.includes('[id]') && !p.el('mdt-copy').disabled, p.el('mdt-status').textContent);
+    // An unclosed quote imports as typed, with a note that gives its line and column.
+    p.importText('name,note\nAda,"open quote\nBob,ok');
+    const st = p.el('mdt-status').textContent;
+    check(lang + ' page: unclosed quote imports with a note', p.el('mdt-output').value.includes('"open quote') && st.includes((L.csvQuote || '\u0000').replace('{line}', 2).replace('{col}', 5)) && !p.el('mdt-copy').disabled, st);
+    p.importText('name,note\nAda,"closed, with comma"\nBob,"5"" tall"');
+    check(lang + ' page: closed quoted fields give no note', !p.el('mdt-status').textContent.includes((L.csvQuote || '\u0000').slice(-15)), p.el('mdt-status').textContent);
+    // Emptying the import box after a failure brings the output back.
+    p.importText('{"a":');
+    check(lang + ' page: the failure is shown', p.el('mdt-copy').disabled);
+    p.importText('');
+    check(lang + ' page: emptying the import box ends the failure', !p.el('mdt-copy').disabled && p.el('mdt-output').value !== '');
+    const mdx = readFileSync(join(root, 'src/content/tools/markdown-table-generator', lang + '.mdx'), 'utf8');
+    const quoted = { en: '"JSON error at line 1, column 10"', zh: '「第 1 行第 10 列」', ja: '「1 行 10 列目」', ko: '「1행 10열」' }[lang];
+    check(lang + ' mdx: the limits quote the line and column the page gives', mdx.includes(quoted));
   }
 }
 

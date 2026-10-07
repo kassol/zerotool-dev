@@ -25,7 +25,10 @@
 // cookies or the network. v2 page layout (DESIGN.md "Tool Pages v2"): the root element,
 // the two-pane grid of each direction, the toggletips and their four-language text, the
 // elements the script looks up, the CSS that follows the hidden attributes, the layout
-// registration, and the steps / limits of the four mdx files.
+// registration, and the steps / limits of the four mdx files. Page (real inline script,
+// stand-in DOM, en / zh): after an image is encoded, a text file, a file over 100 MB or a
+// file that cannot be read clears the output, hides the result (Copy, Download .txt) and
+// gives the reason in the status line; a later image is encoded again.
 //
 // Run: node scripts/test-image-to-base64.mjs
 
@@ -368,6 +371,94 @@ for (const api of ['localStorage', 'sessionStorage', 'ztPersist', 'indexedDB', '
     check(lang + ' mdx: no raw tag in the steps', steps.every((s) => !/<[a-z!\/]/i.test(s)) && steps.some((s) => s.includes('HTML &lt;img&gt;')));
     check(lang + ' mdx: no usage section in the body', !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body));
     check(lang + ' mdx: the limits section stays', /^## (Limits|限制|制限|제한)\s*$/m.test(body));
+  }
+}
+
+// ---------- page: a file that cannot be encoded replaces the previous result ----------
+// Runs the real inline script with a small stand-in DOM. Before this check, a second file
+// that was not an image, too large or unreadable only changed the status line: the
+// previous Base64 stayed in the output box and Copy still gave it.
+{
+  const vm = await import('node:vm');
+  const inline = source.slice(source.indexOf('<script is:inline'), source.indexOf('</script>'));
+  const code = inline.slice(inline.indexOf('>') + 1);
+  function runPage(lang) {
+    const CLIENT_T = { ...STRINGS[lang] };
+    delete CLIENT_T.tips;
+    const els = new Map();
+    const mk = (id) => {
+      const listeners = {};
+      const el = {
+        id, value: '', textContent: '', className: '', hidden: false, disabled: false, dataset: {}, href: '', download: '',
+        onload: null, onerror: null, naturalWidth: 0, naturalHeight: 0,
+        attrs: {}, setAttribute(n, v) { this.attrs[n] = String(v); }, removeAttribute(n) { delete this.attrs[n]; },
+        addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
+        dispatch(type, init = {}) { for (const fn of listeners[type] || []) fn.call(el, { type, target: el, preventDefault() {}, ...init }); },
+        click() { if (!el.disabled) el.dispatch('click'); }, focus() {}, select() {}, remove() {},
+        appendChild(c) { return c; }, querySelectorAll: () => [], querySelector: () => mk('stub'), contains: () => true,
+        classList: { toggle() {}, add() {}, remove() {} },
+      };
+      return el;
+    };
+    const get = (id) => { if (!els.has(id)) els.set(id, mk(id)); return els.get(id); };
+    get('i2b-result').hidden = true;
+    get('i2b-download-txt').hidden = true;
+    const clipboard = [];
+    class FileReader {
+      readAsDataURL(blob) {
+        blob.arrayBuffer().then((buf) => { this.result = 'data:' + (blob.type || '') + ';base64,' + Buffer.from(buf).toString('base64'); this.onload(); },
+          (e) => { this.error = e; this.onerror(); });
+      }
+    }
+    const sandbox = {
+      t: CLIENT_T, pageLang: lang, console, Intl, Promise, Uint8Array, Blob, File, FileReader, Math, String, Number, Array, Object, JSON, RegExp, Error, TextDecoder, TextEncoder,
+      setTimeout, clearTimeout,
+      URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+      navigator: { clipboard: { writeText: (s) => { clipboard.push(s); return Promise.resolve(); } } },
+      document: {
+        getElementById: get, addEventListener() {}, createElement: (tag) => mk('<' + tag + '>'), execCommand: () => false,
+        body: mk('body'), activeElement: null,
+      },
+    };
+    sandbox.window = sandbox;
+    vm.runInNewContext(code, sandbox, { filename: 'ImageToBase64Tool.astro' });
+    return { el: get, clipboard };
+  }
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+  const png = new Uint8Array(await base.png().toBuffer());
+  const pngFile = new File([png], 'dot.png', { type: 'image/png' });
+  const cases = [
+    ['a text file', () => new File([Buffer.from('hello, not an image\n')], 'notes.txt', { type: 'text/plain' }), 'notImage', true],
+    ['a file over 100 MB', () => ({ name: 'huge.png', type: 'image/png', size: E.FILE_LIMIT + 1, slice() { throw new Error('should not be read'); } }), 'tooBig', false],
+    ['a file that cannot be read', () => ({ name: 'gone.png', type: 'image/png', size: 10, slice: () => ({ arrayBuffer: () => Promise.reject(new Error('NotReadableError')) }) }), 'readFailed', false],
+  ];
+  for (const lang of ['en', 'zh']) {
+    for (const [label, makeFile, key, link] of cases) {
+      const p = runPage(lang);
+      const input = p.el('i2b-file');
+      input.files = [pngFile];
+      input.dispatch('change');
+      await settle();
+      const loaded = p.el('i2b-output').value;
+      check(lang + ' page: the PNG is encoded first', loaded.startsWith('data:image/png;base64,') && p.el('i2b-result').hidden === false, loaded.slice(0, 40));
+      input.files = [makeFile()];
+      input.dispatch('change');
+      await settle();
+      const status = p.el('i2b-status');
+      const prefix = STRINGS[lang][key].split('{')[0];
+      check(lang + ' page, ' + label + ': the status gives the reason', status.textContent.startsWith(prefix) && status.className.includes('error'), status.textContent);
+      eq(lang + ' page, ' + label + ': the old output is cleared and the result hidden', [p.el('i2b-output').value, p.el('i2b-result').hidden, p.el('i2b-drop').hidden, p.el('i2b-download-txt').hidden], ['', true, false, true]);
+      eq(lang + ' page, ' + label + ': link to the Base64 tool', p.el('i2b-base64-link').hidden, !link);
+      p.el('i2b-copy').click();
+      p.el('i2b-download-txt').click();
+      await settle();
+      eq(lang + ' page, ' + label + ': Copy gives nothing', p.clipboard, []);
+      // A later image still works.
+      input.files = [pngFile];
+      input.dispatch('change');
+      await settle();
+      check(lang + ' page, ' + label + ': a later image is encoded again', p.el('i2b-output').value === loaded && p.el('i2b-status').textContent === '');
+    }
   }
 }
 
