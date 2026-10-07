@@ -1,7 +1,9 @@
 // ASCII Converter — code formats and strict reading of code tokens
 //
 // Read:  src/components/tools/AsciiConverterTool.astro (the engine block between the
-//        `engine:start` / `engine:end` markers)
+//        `engine:start` / `engine:end` markers, frontmatter and complete page script)
+//        src/content/tools/ascii-converter/{en,zh,ja,ko}.mdx; src/data/tool-layouts.ts
+//        src/layouts/ToolLayout.astro (actual shared keyboard handler)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -29,9 +31,23 @@ import { execFileSync } from 'node:child_process';
 import { inspect } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
+import { toolSteps } from '../src/data/llms.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/AsciiConverterTool.astro'), 'utf8');
+const strings = vm.runInNewContext(source.slice(source.indexOf('const STRINGS ='), source.indexOf('const T = STRINGS[lang]')).replace(/\bas const\b/g, '') + '\nSTRINGS;');
+const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+const escapeHTML = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+function pageMarkup(lang) {
+  return markup.replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '')
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(strings[lang][key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(strings[lang][key]));
+}
+
 const startIndex = source.indexOf('/* ── engine:start ── */');
 const endIndex = source.indexOf('/* ── engine:end ── */');
 if (startIndex < 0 || endIndex <= startIndex) {
@@ -60,7 +76,12 @@ const toText = (s) => s.trim().split(/[\s,]+/).filter(Boolean).map((t) => String
 {
   const fmtOf = { fmtHex: 'hex', fmtOctal: 'oct', fmtBinary: 'bin' };
   const labels = [...source.matchAll(/(fmtHex|fmtOctal|fmtBinary)(?:": "|: '|">)[^'"<]*?\(([^)]+)\)/g)];
-  eq('format labels found (markup + 4 languages × 3)', labels.length, 15);
+  for (const [key, fmt] of Object.entries(fmtOf)) {
+    const value = { hex: 'hex', oct: 'oct', bin: 'bin' }[fmt];
+    const option = pageMarkup('en').match(new RegExp('<option value="' + value + '">([^<]+)</option>'));
+    labels.push([option?.[0], key, option?.[1].match(/\(([^)]+)\)/)?.[1]]);
+  }
+  eq('format labels found (built EN markup + 4 languages × 3)', labels.length, 15);
   for (const m of labels) eq('label sample ' + m[0], m[2], formatCode(65, fmtOf[m[1]]));
 }
 
@@ -222,6 +243,297 @@ if (python) {
   eq('byte 0x82 in ISO-8859-1 is C1', r.x82, '\u0082');
   const ja = readFileSync(join(root, 'src/content/blog/ascii-converter-guide/ja.mdx'), 'utf8');
   for (const [c, b] of Object.entries(r.dame)) eq('ja page quotes ' + c + ' ' + b, ja.includes('「' + c + '」は `' + b + '`'), true);
+}
+
+// ---------- actual page lifecycle and shared keyboard handler ----------
+const pageScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes('window.ztPersist.clear(_slug)')) throw new Error('Shared shortcut extraction failed');
+function pageVM(lang = 'en', shellFirst = false) {
+  const ids = new Map(), timers = new Map(), copies = [], cleared = [], tracked = [];
+  let now = 0, timerID = 0;
+  function matches(el, selector) {
+    return selector.split(',').some(part => {
+      const parts = part.trim().split(/\s+(?![^\[]*\])/), last = parts.pop();
+      const attrs = [...last.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
+      const plain = last.replace(/\[[^\]]*\]/g, ''), tag = /^[\w-]+/.exec(plain);
+      if (tag && el.tagName !== tag[0].toUpperCase()) return false;
+      if (![...plain.matchAll(/\.([\w-]+)/g)].every(m => el.className.split(' ').includes(m[1]))) return false;
+      if (!attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2])) return false;
+      if (!parts.length) return true;
+      for (let p = el.parentElement; p; p = p.parentElement) if (matches(p, parts.join(' '))) return true;
+      return false;
+    });
+  }
+  class PageEvent {
+    constructor(type, options = {}) { Object.assign(this, { type, bubbles: false, defaultPrevented: false }, options); }
+    preventDefault() { this.defaultPrevented = true; }
+  }
+  class Element {
+    constructor(tag = 'div') { Object.assign(this, { tagName: tag.toUpperCase(), id: '', className: '', attributes: {}, children: [], parentElement: null, listeners: {}, text: '', _value: undefined, disabled: false }); }
+    get value() { return this._value ?? (this.tagName === 'SELECT' ? this.querySelector('option')?.value ?? '' : ''); }
+    set value(value) { this._value = String(value); }
+    setAttribute(key, value) { this.attributes[key] = String(value); if (['id', 'class', 'value'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); }
+    getAttribute(key) { return this.attributes[key] ?? null; }
+    get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
+    set textContent(value) { this.text = String(value); this.children = []; }
+    appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
+    contains(el) { return this === el || this.children.some(c => c.contains(el)); }
+    querySelectorAll(selector) { return this.children.flatMap(c => [...(matches(c, selector) ? [c] : []), ...c.querySelectorAll(selector)]); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    dispatchEvent(event) {
+      event.target = this;
+      for (let el = this; el; el = el.parentElement) {
+        for (const fn of el.listeners[event.type] || []) fn.call(el, event);
+        if (!event.bubbles) break;
+      }
+      return !event.defaultPrevented;
+    }
+    dispatch(type, options = {}) { return this.dispatchEvent(new PageEvent(type, { bubbles: true, ...options })); }
+    click() { if (!this.disabled) this.dispatch('click'); }
+    focus() { document.activeElement = this; }
+  }
+  const document = new Element('document'); document.documentElement = { lang };
+  document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
+  const widget = document.body.appendChild(new Element()); widget.className = 'tool-widget';
+  const renderedMarkup = pageMarkup(lang);
+  const stack = [widget], voids = new Set(['input', 'br', 'hr', 'img']);
+  for (const match of renderedMarkup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
+    if (match[3] !== undefined) { stack.at(-1).text += match[3]; continue; }
+    const tag = match[1];
+    if (match[0].startsWith('</')) { if (stack.at(-1).tagName === tag.toUpperCase()) stack.pop(); continue; }
+    const el = new Element(tag);
+    for (const attr of match[2].matchAll(/([\w-]+)="([^"]*)"/g)) el.setAttribute(attr[1], attr[2]);
+    stack.at(-1).appendChild(el); if (el.id) ids.set(el.id, el);
+    if (!voids.has(tag) && !match[2].trimEnd().endsWith('/')) stack.push(el);
+  }
+  document.getElementById = id => ids.get(id) || null;
+  document.createElement = tag => new Element(tag);
+  const { tips, ...clientStrings } = strings[lang];
+  const context = { document, console, Event: PageEvent, _slug: 'ascii-converter', t: JSON.parse(JSON.stringify(clientStrings)),
+    ztPersist: { clear: slug => cleared.push(slug) }, trackTool: (...args) => tracked.push(args),
+    setTimeout(fn, delay = 0) { const id = ++timerID; timers.set(id, { fn, due: now + delay, delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); copies.push({ value, resolve, reject }); return promise; } } }
+  };
+  context.window = context; vm.createContext(context);
+  if (shellFirst) vm.runInContext(shortcut, context);
+  vm.runInContext(pageScript, context);
+  if (!shellFirst) vm.runInContext(shortcut, context);
+  const get = id => { if (!ids.has(id)) throw new Error('Missing actual ID ' + id); return ids.get(id); };
+  return { context, document, get, copies, timers, cleared, tracked,
+    input(id, value) { get(id).value = value; get(id).dispatch('input'); },
+    key(key = 'l', modifiers = { ctrlKey: true }) { document.activeElement.dispatch('keydown', { key, ...modifiers }); },
+    advance(ms) { const target = now + ms; for (;;) { const next = [...timers].filter(([,t]) => t.due <= target).sort((a,b) => a[1].due - b[1].due || a[0] - b[0])[0]; if (!next) break; now = next[1].due; timers.delete(next[0]); next[1].fn(); } now = target; },
+    snapshot() { return ['ac-text', 'ac-codes'].map(id => get(id).value).concat(['ac-status', 'ac-copy-text', 'ac-copy-codes'].map(id => get(id).textContent), get('ac-status').className); }
+  };
+}
+function samePage(name, actual, expected) { eq(name, JSON.stringify(actual), JSON.stringify(expected)); }
+const localized = {
+  en: { copy: 'Copy', copied: 'Copied!', chars: 'Converted 2 characters.', codes: 'Converted 2 codes.', copyFail: 'Could not copy. Please select the content and copy it manually.' },
+  zh: { copy: '复制', copied: '已复制！', chars: '已转换 2 个字符。', codes: '已转换 2 个码值。', copyFail: '复制失败。请选中内容后手动复制。' },
+  ja: { copy: 'コピー', copied: 'コピー済み！', chars: '2 文字を変換しました。', codes: '2 コードを変換しました。', copyFail: 'コピーできませんでした。内容を選択して手動でコピーしてください。' },
+  ko: { copy: '복사', copied: '복사됨!', chars: '2개 문자를 변환했습니다.', codes: '2개 코드를 변환했습니다.', copyFail: '복사하지 못했습니다. 내용을 선택하여 직접 복사하세요.' }
+};
+for (const lang of Object.keys(localized)) {
+  const p = pageVM(lang), t = localized[lang];
+  p.input('ac-text', 'A😀'); eq(lang + ': typing does not convert', p.get('ac-codes').value, '');
+  p.get('ac-to-ascii').click(); samePage(lang + ': real forward and count', [p.get('ac-codes').value, p.get('ac-status').textContent], ['65 128512', t.chars]);
+  p.get('ac-format-select').value = 'hex'; p.get('ac-format-select').dispatch('change');
+  eq(lang + ': format changes do not auto convert', p.get('ac-codes').value, '65 128512');
+  p.get('ac-to-ascii').click(); eq(lang + ': manual format conversion', p.get('ac-codes').value, '0x41 0x1F600');
+  p.input('ac-codes', '65 0x1F600'); p.get('ac-to-text').click();
+  samePage(lang + ': real reverse and count', [p.get('ac-text').value, p.get('ac-status').textContent], ['A😀', t.codes]);
+  const enter = pageVM(lang); enter.input('ac-text','A😀'); enter.get('ac-codes').focus(); enter.key('Enter');
+  samePage(lang + ': shared CtrlEnter executes the first direction once', [enter.get('ac-codes').value,enter.tracked.length], ['65 128512',1]);
+  p.input('ac-codes', '72abc'); p.get('ac-to-text').click(); samePage(lang + ': invalid code clears target', [p.get('ac-text').value, p.get('ac-status').textContent], ['', 'Error: Invalid code: 72abc']);
+  p.get('ac-clear').click(); samePage(lang + ': explicit Clear', [p.get('ac-text').value, p.get('ac-codes').value, p.get('ac-status').textContent], ['', '', '']);
+  for (const shellFirst of [false,true]) for (const modifiers of [{ctrlKey:true},{metaKey:true}]) {
+    const q = pageVM(lang,shellFirst); q.input('ac-text','A😀'); q.get('ac-to-ascii').click();
+    const before = q.snapshot(); q.key(); samePage(lang + ': outside CtrlL preserves page', q.snapshot(), before);
+    q.get('ac-codes').focus(); q.key('L',modifiers);
+    samePage(`${lang}: CtrlL clears fields and status, sharedFirst=${shellFirst}`, [q.get('ac-text').value,q.get('ac-codes').value,q.get('ac-status').textContent,q.cleared], ['','','',['ascii-converter']]);
+  }
+}
+
+const flushCopies = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const unhandled = [];
+const onUnhandled = reason => unhandled.push(String(reason));
+process.on('unhandledRejection', onUnhandled);
+function withResult(lang, shellFirst = false) {
+  const p = pageVM(lang, shellFirst); p.input('ac-text', 'A😀'); p.get('ac-to-ascii').click(); return p;
+}
+for (const lang of Object.keys(localized)) for (const side of ['text','codes']) {
+  const button = 'ac-copy-' + side, expectedValue = side === 'text' ? 'A😀' : '65 128512', t = localized[lang];
+  {
+    const p = withResult(lang); p.get(button).click(); const job = p.copies.at(-1);
+    eq(lang + '/' + side + ': copies exact displayed content', job.value, expectedValue);
+    job.resolve(); await flushCopies(); samePage(lang + '/' + side + ': success keeps conversion status', [p.get(button).textContent,p.get('ac-status').textContent], [t.copied,t.chars]);
+    p.advance(1499); eq(lang + '/' + side + ': copy feedback lasts 1500ms', p.get(button).textContent,t.copied);
+    p.advance(1); eq(lang + '/' + side + ': normal feedback expires', p.get(button).textContent,t.copy);
+    p.get('ac-clear').click(); const count=p.copies.length; p.get(button).click(); eq(lang + '/' + side + ': empty pane never copies',p.copies.length,count);
+  }
+  for (const kind of ['reject','throw','missing']) {
+    const p = withResult(lang), original = p.context.navigator.clipboard, start = unhandled.length; let thrown;
+    if(kind==='missing') p.context.navigator.clipboard=undefined;
+    if(kind==='throw') p.context.navigator.clipboard={writeText(){throw new Error('Clipboard blocked');}};
+    try { p.get(button).click(); if(kind==='reject') p.copies.at(-1).reject(new Error('Clipboard denied')); } catch(error) { thrown=error.message; }
+    await flushCopies(); eq(`${lang}/${side}/${kind}: failure stays inside handler`,thrown,undefined);
+    samePage(`${lang}/${side}/${kind}: no unhandled rejection`,unhandled.slice(start),[]);
+    samePage(`${lang}/${side}/${kind}: failure is localized and visible`,[p.get('ac-status').textContent,p.get('ac-status').className,p.get(button).textContent],[t.copyFail,'ac-status error',t.copy]);
+    p.context.navigator.clipboard=original; p.get(button).click(); const retry=p.copies.at(-1); retry.resolve(); await flushCopies();
+    samePage(`${lang}/${side}/${kind}: direct same-output retry recovers`,[retry.value,p.get('ac-text').value,p.get('ac-codes').value,p.get(button).textContent,p.get('ac-status').textContent],[expectedValue,'A😀','65 128512',t.copied,'']);
+  }
+}
+const copyBoundaries = ['clear','ctrlL','input-text','input-codes','forward','reverse','invalid','empty-forward','empty-reverse'];
+function changeCopyContext(p, action) {
+  if(action==='clear') p.get('ac-clear').click();
+  else if(action==='ctrlL') { p.get('ac-text').focus(); p.key(); }
+  else if(action==='input-text') p.input('ac-text','new text');
+  else if(action==='input-codes') p.input('ac-codes','78 69 87');
+  else if(action==='forward') { p.get('ac-text').value='NEW'; p.get('ac-to-ascii').click(); }
+  else if(action==='reverse') { p.get('ac-codes').value='78 69 87'; p.get('ac-to-text').click(); }
+  else if(action==='invalid') { p.get('ac-codes').value='72abc'; p.get('ac-to-text').click(); }
+  else if(action==='empty-forward') { p.get('ac-text').value=''; p.get('ac-to-ascii').click(); }
+  else if(action==='empty-reverse') { p.get('ac-codes').value=''; p.get('ac-to-text').click(); }
+}
+for(const lang of Object.keys(localized)) for(const side of ['text','codes']) {
+  const button='ac-copy-'+side, other='ac-copy-'+(side==='text'?'codes':'text'), t=localized[lang];
+  for(const action of copyBoundaries) for(const shellFirst of action==='ctrlL'?[false,true]:[false]) for(const outcome of ['resolve','reject']) {
+    const p=withResult(lang,shellFirst); p.get(button).click(); const job=p.copies.at(-1); changeCopyContext(p,action);
+    const before=p.snapshot(), start=unhandled.length; job[outcome](outcome==='reject'?new Error('late copy failed'):undefined); await flushCopies();
+    samePage(`${lang}/${side}: late ${outcome} after ${action}, sharedFirst=${shellFirst}`,p.snapshot(),before);
+    samePage(`${lang}/${side}: late rejection is handled`,unhandled.slice(start),[]);
+  }
+  for(const action of copyBoundaries) for(const shellFirst of action==='ctrlL'?[false,true]:[false]) {
+    const p=withResult(lang,shellFirst); p.get(button).click(); p.copies.at(-1).resolve(); await flushCopies();
+    const oldTimer=[...p.timers.values()].find(t=>t.delay===1500); changeCopyContext(p,action);
+    eq(`${lang}/${side}: ${action} removes old Copied feedback`,p.get(button).textContent,t.copy);
+    const before=p.snapshot(); oldTimer.fn(); samePage(`${lang}/${side}: queued timer after ${action} cannot write`,p.snapshot(),before);
+  }
+  {
+    const p=withResult(lang); p.get(button).click(); p.copies.at(-1).resolve(); await flushCopies();
+    const firstTimer=[...p.timers.values()].find(t=>t.delay===1500); p.advance(500); p.get(button).click(); p.copies.at(-1).resolve(); await flushCopies();
+    firstTimer.fn(); eq(`${lang}/${side}: queued old timer cannot reset second feedback`,p.get(button).textContent,t.copied);
+    p.advance(1000); eq(`${lang}/${side}: first deadline preserves second feedback`,p.get(button).textContent,t.copied);
+    p.advance(500); eq(`${lang}/${side}: latest timer restores idle label`,p.get(button).textContent,t.copy);
+  }
+  {
+    const p=withResult(lang); p.get(button).click(); const old=p.copies.at(-1); p.get(button).click(); p.copies.at(-1).resolve(); await flushCopies();
+    const before=p.snapshot(); old.reject(new Error('old request rejected')); await flushCopies(); samePage(`${lang}/${side}: old rejection cannot replace newer success`,p.snapshot(),before);
+    p.get(button).click(); const older=p.copies.at(-1); p.get(button).click(); p.copies.at(-1).reject(new Error('latest request rejected')); await flushCopies();
+    const failed=p.snapshot(); older.resolve(); await flushCopies(); samePage(`${lang}/${side}: old success cannot clear latest failure`,p.snapshot(),failed);
+  }
+  {
+    const p=withResult(lang); p.get(button).click(); const pending=p.copies.at(-1); p.get(other).click(); p.copies.at(-1).reject(new Error('other pane failed')); await flushCopies();
+    const error=[p.get('ac-status').textContent,p.get('ac-status').className]; pending.resolve(); await flushCopies();
+    samePage(`${lang}/${side}: success cannot clear the other button failure`,[p.get('ac-status').textContent,p.get('ac-status').className],error);
+    p.get(other).click(); p.copies.at(-1).resolve(); await flushCopies(); eq(`${lang}/${side}: owning button retry clears its error`,p.get('ac-status').textContent,'');
+    p.get(button).click(); const current=p.copies.at(-1); p.get('ac-format-select').value='hex'; p.get('ac-format-select').dispatch('change'); current.resolve(); await flushCopies();
+    samePage(`${lang}/${side}: changing format alone preserves current content and copy`,[p.get('ac-codes').value,p.get(button).textContent],['65 128512',t.copied]);
+  }
+}
+samePage('all copy promises handled',unhandled,[]);
+process.removeListener('unhandledRejection',onUnhandled);
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const check = (name, value) => eq(name, !!value, true);
+  const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const tipIDs = ['format', 'text', 'codes', 'copy-text', 'copy-codes', 'reference'].map(key => 'ac-tip-' + key);
+  const tipKeys = ['text', 'codes', 'format', 'copy', 'reference'];
+  samePage('six tips bind to actual controls', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]).sort(), tipIDs.slice().sort());
+  check('direct flex root has zero minimum height', /^\s*<div class="ac-wrap">/.test(markup) && /\.ac-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+  check('controls precede fixed status and panels', markup.indexOf('ac-controls') < markup.indexOf('id="ac-status"') && markup.indexOf('id="ac-status"') < markup.indexOf('ac-panels'));
+  eq('one shared grid', (markup.match(/\bzt-io"/g) || []).length, 1);
+  eq('two shared panes', (markup.match(/\bzt-io-pane\b/g) || []).length, 2);
+  eq('two filling editors', (markup.match(/\bzt-io-fill\b/g) || []).length, 2);
+  check('both textareas stay editable', [...markup.matchAll(/<textarea\b[^>]*>/g)].length === 2 && !/<textarea\b[^>]*(?:readonly|disabled|hidden)/.test(markup));
+  check('mobile keeps both editable panes visible', !/display:\s*none|data-empty/.test(css));
+  samePage('both manual directions plus Clear and two copy buttons remain', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m => m[1]).sort(), ['ac-clear','ac-to-ascii','ac-to-text','ac-copy-text','ac-copy-codes'].sort());
+  eq('two primary actions retained', (markup.match(/class="btn-primary"/g) || []).length, 2);
+  check('labels and reference summary contain no nested interactive controls', [...markup.matchAll(/<(?:label|summary)\b[\s\S]*?<\/(?:label|summary)>/g)].every(m => !/<button|<Toggletip/.test(m[0])));
+  check('reference remains closed and keyboard-scrollable', /<details class="ac-ref">/.test(markup) && /class="ac-ref-table-wrap" tabindex="0" role="region" aria-label=\{T.refTable\}/.test(markup));
+  check('reference appears after both editors', markup.indexOf('ac-reference') > markup.indexOf('id="ac-codes"'));
+  check('status reserves height with internal scrolling', /\.ac-status\s*\{[^}]*height: 2\.8em;[^}]*overflow: auto;[^}]*overflow-wrap: anywhere/.test(css));
+  check('long editor contents scroll internally', /\.ac-box\s*\{[^}]*overflow: auto/.test(css));
+  check('860px editor height is bounded', /@media \(max-width: 860px\)\s*\{\s*\.ac-box\s*\{\s*height: 160px/.test(css));
+  check('640px editors, status and two manual buttons have phone rules', /@media \(max-width: 640px\)/.test(css) && /\.ac-box\s*\{\s*height: 120px/.test(css) && /\.ac-status\s*\{\s*height: 4\.2em/.test(css) && /\.ac-actions\s*\{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/.test(css));
+  check('select uses shared 44px phone control class', /id="ac-format-select" class="tool-input"/.test(markup));
+  check('reference has a bounded scroll region', /\.ac-ref-table-wrap\s*\{[^}]*max-height: 400px;[^}]*overflow: auto/.test(css));
+  check('dynamic reference cells use global selectors', /\.ac-ref-table :global\(td\)/.test(css) && /\.ac-ref-table :global\(tbody tr:last-child td\)/.test(css));
+  check('tips excluded before client serialization', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  check('language text has no runtime DOM replacement', !/data-i18n|document\.documentElement\.lang/.test(source));
+  check('registered as convert', /'ascii-converter':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  eq('markup IDs are unique', new Set(ids).size, ids.length);
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  eq('protected engine bytes stay exact', sha(source.slice(startIndex, endIndex + '/* ── engine:end ── */'.length)), '0d7a02bf521b2c4efe123aa4e134b2b139e07b645f9820a839211367f84340c2');
+  const retained = {
+  "en": {
+    "frontmatter": "77382afe2635f5aaa40531c204b2789b06598b54f44becbd66597930ae55d759",
+    "bodyWithoutUsage": "814be48c70f8c37fd79b43b06ce5b72062caf8af9897c8fb4826b1a202699b7e"
+  },
+  "zh": {
+    "frontmatter": "0d8981a44ef25f12dd08334d4ac639937cb8129869d5b90f1bda80798b8a5d76",
+    "bodyWithoutUsage": "731f0cc2d546aaeb397be982ca67fe382c050e094d8c9e3ee2223fe468aafc2a"
+  },
+  "ja": {
+    "frontmatter": "8f9e93c7f817790ef042554ffdc1458e3c6ab1b7fcb76c9827ad080abf586af3",
+    "bodyWithoutUsage": "afa19a948523573f78954663e8b82ca2dac40692094359f7d92f9cb8eefc8398"
+  },
+  "ko": {
+    "frontmatter": "f6a82621cf9fc1bab70091b917e412f7ac954b5faef7a14bed2c782a57d10b4e",
+    "bodyWithoutUsage": "549d2a7f0bb8963c6ed52baeea9436ba2c4aa51fff3f124964c793c47401154b"
+  }
+};
+  const countFixtures = {
+    en: { chars: ['Converted 1 character.', 'Converted 3 characters.'], codes: ['Converted 1 code.', 'Converted 3 codes.'] },
+    zh: { chars: ['已转换 1 个字符。', '已转换 3 个字符。'], codes: ['已转换 1 个码值。', '已转换 3 个码值。'] },
+    ja: { chars: ['1 文字を変換しました。', '3 文字を変換しました。'], codes: ['1 コードを変換しました。', '3 コードを変換しました。'] },
+    ko: { chars: ['1개 문자를 변환했습니다.', '3개 문자를 변환했습니다.'], codes: ['1개 코드를 변환했습니다.', '3개 코드를 변환했습니다.'] }
+  };
+  for (const lang of Object.keys(localized)) {
+    const entry = strings[lang], { tips, ...client } = entry;
+    samePage(lang + ': translation keys match', Object.keys(entry).sort(), Object.keys(strings.en).sort());
+    samePage(lang + ': five tip facts match', Object.keys(tips).sort(), tipKeys.slice().sort());
+    for (const key of tipKeys) check(lang + '/' + key + ': tip is one nonempty text', typeof tips[key] === 'string' && tips[key].trim().length > 0 && !tips[key].includes('\n'));
+    check(lang + ': serialized client excludes tips and their text', !('tips' in client) && Object.values(tips).every(tip => !JSON.stringify(client).includes(JSON.stringify(tip))));
+    check(lang + ': templates remain serializable', ['convertedChars','convertedCodes'].every(key => ['one','other'].every(form => typeof client[key][form] === 'string' && client[key][form].includes('{n}'))));
+    const mdx = readFileSync(join(root, 'src/content/tools/ascii-converter', lang + '.mdx'), 'utf8');
+    const split = mdx.indexOf('\n---\n', 4), metadata = mdx.slice(0, split), body = mdx.slice(split + 5);
+    const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
+    check(lang + ': five plain steps fit limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['toAscii','toText','copy','clear','refTable']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
+    eq(lang + ': FAQ and SEO bytes preserved', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
+    eq(lang + ': non-Usage body bytes preserved', sha(body), retained[lang].bodyWithoutUsage);
+    check(lang + ': Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    eq(lang + ': llms receives five steps', toolSteps(parsed).length, 5);
+    for (const [text, index] of [['A',0],['A😀\n',1]]) {
+      const p = pageVM(lang); p.input('ac-text', text); p.get('ac-to-ascii').click();
+      eq(lang + ': forward count ' + (index ? 3 : 1), p.get('ac-status').textContent, countFixtures[lang].chars[index]);
+      p.get('ac-to-text').click(); eq(lang + ': reverse count ' + (index ? 3 : 1), p.get('ac-status').textContent, countFixtures[lang].codes[index]);
+      eq(lang + ': actual count fixture round trip', p.get('ac-text').value, text);
+    }
+    const p = pageVM(lang);
+    for (const [id,key] of [['ac-to-ascii','toAscii'],['ac-to-text','toText'],['ac-clear','clear'],['ac-copy-text','copy'],['ac-copy-codes','copy']]) eq(lang + ': built label for ' + id, p.get(id).textContent, entry[key]);
+    const codes = p.get('ac-ref-tbody').children.flatMap(tr => tr.children.filter((_,i) => i % 3 === 1).map(td => td.textContent)).filter(Boolean).map(Number).sort((a,b)=>a-b);
+    samePage(lang + ': all 95 printable reference codes remain accessible', codes, Array.from({length:95},(_,i)=>i+32));
+    eq(lang + ': reference space remains SP', p.get('ac-ref-tbody').children[0].children[0].textContent, 'SP');
+  }
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'AsciiConverterTool.astro' });
+  check('Astro compilation has no errors', compiled.diagnostics.filter(d => d.severity === 1).length === 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('generated JS serializes client strings only', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  const compiledCSS = compiled.css.join('\n');
+  check('compiled dynamic table selectors contain no unresolved global', !compiledCSS.includes(':global(') && /\.ac-ref-table[^{}]* td\s*\{/.test(compiledCSS));
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');

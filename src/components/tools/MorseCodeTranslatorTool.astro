@@ -1,51 +1,86 @@
 ---
 // MorseCodeTranslatorTool — bidirectional text ↔ Morse code
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+const STRINGS = {
+  en: {
+    textLabel: 'Text', morseLabel: 'Morse Code', toMorse: '→ Morse', toText: '← Text', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFail: 'Could not copy. Please select and copy the Morse code manually.', textPlaceholder: 'Type text here…', skipped: 'No Morse code for these characters, left out: {list}', unknown: 'Not in the table, shown as [?]: {list}',
+    tips: {
+      text: 'Enter text, then click → Morse or press Ctrl+Enter (⌘+Enter on Mac). Typing alone does not convert. Letters are case-insensitive; A–Z, É, digits and the listed punctuation have codes. Other characters are skipped and listed in the status row.',
+      morse: 'Edit this box, then click ← Text. Use . or · for dots and - or − for dashes, spaces between letters and / or | between words. Line breaks are kept. Unknown groups become [?] and are listed in the status row. Decoded letters are uppercase.',
+      clear: 'Clear empties both boxes and the status row. Ctrl+L (⌘+L on Mac) does the same while focus is inside this tool.',
+      copy: 'Copy copies the current Morse Code box, including edits. Conversion writes · and − with one space between letters and / between words. This tool does not play audio.',
+    },
+  },
+  zh: {
+    textLabel: '文本', morseLabel: '摩斯码', toMorse: '→ 摩斯码', toText: '← 文本', clear: '清除', copy: '复制', copied: '已复制！', copyFail: '复制失败。请选中摩斯码后手动复制。', textPlaceholder: '在此输入文本…', skipped: '以下字符没有摩斯码，已跳过：{list}', unknown: '以下电码不在对照表中，显示为 [?]：{list}',
+    tips: {
+      text: '输入文本后，点击「→ 摩斯码」或按 Ctrl+Enter（Mac 为 ⌘+Enter）。仅输入不会转换。字母不区分大小写，支持 A–Z、É、数字和对照表中的标点。其他字符会被跳过，并在状态行列出。',
+      morse: '编辑此框后，点击「← 文本」。点可用 . 或 ·，划可用 - 或 −，字母间用空格，单词间用 / 或 |。换行会保留。未知电码显示为 [?]，并在状态行列出。解码后的字母为大写。',
+      clear: '「清除」清空两个文本框和状态行。焦点在本工具内时，Ctrl+L（Mac 为 ⌘+L）执行相同操作。',
+      copy: '「复制」复制摩斯码框中的当前内容，包括手动修改。转换输出用 · 和 −，字母间一个空格，单词间用 /。本工具不播放音频。',
+    },
+  },
+  ja: {
+    textLabel: 'テキスト', morseLabel: 'モールス符号', toMorse: '→ モールス', toText: '← テキスト', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFail: 'コピーできませんでした。モールス符号を選択して手動でコピーしてください。', textPlaceholder: 'テキストを入力…', skipped: 'モールス符号がない文字を省きました：{list}', unknown: '符号表にないため [?] と表示：{list}',
+    tips: {
+      text: 'テキストを入力して「→ モールス」を押すか、Ctrl+Enter（Mac は ⌘+Enter）を押します。入力だけでは変換しません。大文字小文字は区別せず、A–Z、É、数字、表の記号に対応します。それ以外の文字は省き、ステータス行に表示します。',
+      morse: 'この欄を編集して「← テキスト」を押します。短点は . か ·、長点は - か −、文字間は空白、単語間は / か | で区切ります。改行は残ります。未知の符号は [?] になり、ステータス行に表示します。変換後の英字は大文字です。',
+      clear: '「クリア」は両方の欄とステータス行を空にします。このツール内にフォーカスがあるときは Ctrl+L（Mac は ⌘+L）も同じ操作です。',
+      copy: '「コピー」は手動編集を含むモールス符号欄の現在の内容をコピーします。変換結果は · と − を使い、文字間は空白 1 つ、単語間は / で区切ります。音声再生はありません。',
+    },
+  },
+  ko: {
+    textLabel: '텍스트', morseLabel: '모스 부호', toMorse: '→ 모스', toText: '← 텍스트', clear: '지우기', copy: '복사', copied: '복사됨!', copyFail: '복사하지 못했습니다. 모스 부호를 선택하여 직접 복사하세요.', textPlaceholder: '텍스트를 입력…', skipped: '모스 부호가 없는 문자를 건너뛰었습니다: {list}', unknown: '부호표에 없어 [?]로 표시: {list}',
+    tips: {
+      text: '텍스트를 입력한 뒤 「→ 모스」를 누르거나 Ctrl+Enter(Mac은 ⌘+Enter)를 누르세요. 입력만으로는 변환하지 않습니다. 대소문자를 구분하지 않으며 A–Z, É, 숫자와 표에 있는 기호를 지원합니다. 나머지 문자는 건너뛰고 상태 줄에 표시합니다.',
+      morse: '이 입력란을 편집한 뒤 「← 텍스트」를 누르세요. 점은 . 또는 ·, 대시는 - 또는 −, 문자 사이는 공백, 단어 사이는 / 또는 |로 구분합니다. 줄바꿈은 유지됩니다. 알 수 없는 부호는 [?]가 되고 상태 줄에 표시됩니다. 디코딩된 알파벳은 대문자입니다.',
+      clear: '「지우기」는 두 입력란과 상태 줄을 비웁니다. 이 도구 안에 포커스가 있으면 Ctrl+L(Mac은 ⌘+L)도 같은 작업을 합니다.',
+      copy: '「복사」는 직접 수정한 내용을 포함하여 모스 부호 입력란의 현재 내용을 복사합니다. 변환 결과는 ·와 −를 사용하며 문자 사이는 공백 하나, 단어 사이는 /로 구분합니다. 오디오 재생은 지원하지 않습니다.',
+    },
+  },
+} as const;
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
 
 <div class="mct-wrap">
-  <div class="mct-panes">
-    <div class="mct-pane">
+  <div class="mct-toolbar">
+    <button id="mct-text-to-morse" class="btn-primary" type="button">{T.toMorse}</button>
+    <button id="mct-morse-to-text" class="btn-primary" type="button">{T.toText}</button>
+    <span class="mct-clear">
+      <button id="mct-clear-text" class="btn-ghost" type="button">{T.clear}</button>
+      <Toggletip id="mct-tip-clear" lang={lang} about={T.clear}>{TIPS.clear}</Toggletip>
+    </span>
+  </div>
+  <div class="mct-status">
+    <div id="mct-error" class="tool-status error mct-error" role="status" aria-live="polite" hidden></div>
+  </div>
+  <div class="mct-panes zt-io">
+    <div class="mct-pane zt-io-pane">
       <div class="mct-pane-header">
-        <span class="mct-pane-label" data-i18n="textLabel">Text</span>
-        <div class="mct-actions">
-          <button id="mct-text-to-morse" class="btn-primary mct-btn-sm" type="button" data-i18n="toMorse">→ Morse</button>
-          <button id="mct-clear-text" class="btn-ghost mct-btn-sm" type="button" data-i18n="clear">Clear</button>
-        </div>
+        <label for="mct-text" class="mct-pane-label">{T.textLabel}</label>
+        <Toggletip id="mct-tip-text" lang={lang} about={T.textLabel} wide>{TIPS.text}</Toggletip>
       </div>
-      <textarea id="mct-text" class="mct-textarea" spellcheck="false" placeholder="Type text here…" data-i18n-ph="textPlaceholder"></textarea>
+      <textarea id="mct-text" class="tool-textarea mct-textarea zt-io-fill" spellcheck="false" placeholder={T.textPlaceholder}></textarea>
     </div>
-    <div class="mct-pane">
+    <div class="mct-pane zt-io-pane">
       <div class="mct-pane-header">
-        <span class="mct-pane-label" data-i18n="morseLabel">Morse Code (· or ., − or -; spaces between letters, / between words)</span>
-        <div class="mct-actions">
-          <button id="mct-morse-to-text" class="btn-primary mct-btn-sm" type="button" data-i18n="toText">← Text</button>
-          <button id="mct-copy-morse" class="btn-ghost mct-btn-sm" type="button" data-i18n="copy">Copy</button>
-        </div>
+        <label for="mct-morse" class="mct-pane-label">{T.morseLabel}</label>
+        <Toggletip id="mct-tip-morse" lang={lang} about={T.morseLabel} wide>{TIPS.morse}</Toggletip>
+        <span class="mct-copy">
+          <button id="mct-copy-morse" class="btn-copy" type="button">{T.copy}</button>
+          <Toggletip id="mct-tip-copy" lang={lang} about={T.copy}>{TIPS.copy}</Toggletip>
+        </span>
       </div>
-      <textarea id="mct-morse" class="mct-textarea" spellcheck="false" placeholder="·− −··· −·−· ···· ·−−− ··−−··"></textarea>
+      <textarea id="mct-morse" class="tool-textarea mct-textarea zt-io-fill" spellcheck="false" placeholder="·− −··· −·−· ···· ·−−− ··−−··"></textarea>
     </div>
   </div>
-  <div id="mct-error" class="mct-error" role="status" aria-live="polite" hidden></div>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: { textLabel: 'Text', morseLabel: 'Morse Code (· or ., − or -; spaces between letters, / between words)', toMorse: '→ Morse', toText: '← Text', clear: 'Clear', copy: 'Copy', copied: 'Copied!', textPlaceholder: 'Type text here…', skipped: 'No Morse code for these characters, left out: {list}', unknown: 'Not in the table, shown as [?]: {list}' },
-        zh: { textLabel: '文本', morseLabel: '摩斯码（· 或 .，− 或 -；字母间空格，单词间 /）', toMorse: '→ 摩斯码', toText: '← 文本', clear: '清除', copy: '复制', copied: '已复制！', textPlaceholder: '在此输入文本…', skipped: '以下字符没有摩斯码，已跳过：{list}', unknown: '以下电码不在对照表中，显示为 [?]：{list}' },
-        ja: { textLabel: 'テキスト', morseLabel: 'モールス符号（· か .、− か -。文字間はスペース、単語間は /）', toMorse: '→ モールス', toText: '← テキスト', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', textPlaceholder: 'テキストを入力…', skipped: 'モールス符号がない文字を省きました：{list}', unknown: '符号表にないため [?] と表示：{list}' },
-        ko: { textLabel: '텍스트', morseLabel: '모스 부호(· 또는 ., − 또는 -; 문자 사이 공백, 단어 사이 /)', toMorse: '→ 모스', toText: '← 텍스트', clear: '지우기', copy: '복사', copied: '복사됨!', textPlaceholder: '텍스트를 입력…', skipped: '모스 부호가 없는 문자를 건너뛰었습니다: {list}', unknown: '부호표에 없어 [?]로 표시: {list}' }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.mct-wrap [data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('.mct-wrap [data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-      });
-
       var textEl     = document.getElementById('mct-text');
       var morseEl    = document.getElementById('mct-morse');
       var errorEl    = document.getElementById('mct-error');
@@ -53,6 +88,9 @@
       var m2tBtn     = document.getElementById('mct-morse-to-text');
       var clearBtn   = document.getElementById('mct-clear-text');
       var copyBtn    = document.getElementById('mct-copy-morse');
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyError = false;
 
       /* ── engine:start ── */
       /* Codes from ITU-R M.1677-1 part I §1.1 (letters, accented e, figures,
@@ -152,6 +190,7 @@
       /* ── engine:end ── */
 
       function showNotice(msg) {
+        copyError = false;
         if (msg) {
           errorEl.textContent = msg;
           errorEl.hidden = false;
@@ -161,9 +200,17 @@
         }
       }
 
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        if (copyError) showNotice('');
+      }
+
       t2mBtn.addEventListener('click', function () {
+        invalidateCopy();
         var text = textEl.value;
-        if (!text.trim()) return;
+        if (!text.trim()) { morseEl.value = ''; showNotice(''); return; }
         var r = textToMorse(text);
         morseEl.value = r.morse;
         showNotice(r.skipped.length ? t.skipped.replace('{list}', r.skipped.join(' ')) : '');
@@ -171,102 +218,85 @@
       });
 
       m2tBtn.addEventListener('click', function () {
+        invalidateCopy();
         var morse = morseEl.value;
-        if (!morse.trim()) return;
+        if (!morse.trim()) { textEl.value = ''; showNotice(''); return; }
         var r = morseToText(morse);
         textEl.value = r.text;
         showNotice(r.unknown.length ? t.unknown.replace('{list}', r.unknown.join('  ')) : '');
         window.trackTool && window.trackTool('morse-code-translator', 'morse-to-text');
       });
 
-      clearBtn.addEventListener('click', function () {
+      function clearAll() {
+        invalidateCopy();
         textEl.value = '';
         morseEl.value = '';
-        errorEl.hidden = true;
+        showNotice('');
+      }
+
+      clearBtn.addEventListener('click', function () {
+        clearAll();
         textEl.focus();
       });
+
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var root = document.querySelector('.mct-wrap');
+        if (root && root.contains(document.activeElement)) clearAll();
+      });
+
+      textEl.addEventListener('input', invalidateCopy);
+      morseEl.addEventListener('input', invalidateCopy);
 
       copyBtn.addEventListener('click', function () {
         var text = morseEl.value;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyBtn.textContent = t.copy;
+        function done() {
+          if (revision !== copyRevision) return;
+          if (copyError) showNotice('');
           copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-        });
+          copyTimer = setTimeout(function () {
+            if (revision === copyRevision) copyBtn.textContent = t.copy;
+          }, 1500);
+        }
+        function failed() {
+          if (revision !== copyRevision) return;
+          showNotice(t.copyFail);
+          copyError = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(done, failed);
+        } catch (e) { failed(); }
       });
 
       // seed example
       textEl.value = 'Hello World';
-      morseEl.value = textToMorse('Hello World');
+      morseEl.value = textToMorse('Hello World').morse;
     })();
   </script>
 </div>
 
 <style>
-  .mct-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .mct-wrap { display: flex; flex-direction: column; gap: 0.6rem; min-height: 0; min-width: 0; }
+  .mct-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+  .mct-clear, .mct-copy { display: inline-flex; align-items: center; gap: 0.25rem; margin-left: auto; }
+  .mct-status { flex: none; height: 3rem; overflow: auto; }
+  .mct-error { margin: 0; overflow-wrap: anywhere; }
+  .mct-pane-header { display: flex; align-items: center; gap: 0.25rem; min-height: 32px; }
+  .mct-pane-label { font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); }
+  .mct-textarea { font-family: var(--font-mono); line-height: 1.6; overflow: auto; }
 
-  .mct-panes {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
+  @media (max-width: 860px) {
+    .mct-textarea { height: 180px; }
   }
-
-  @media (max-width: 680px) {
-    .mct-panes { grid-template-columns: 1fr; }
-  }
-
-  .mct-pane { display: flex; flex-direction: column; gap: 0.4rem; }
-
-  .mct-pane-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .mct-pane-label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .mct-actions { display: flex; gap: 0.35rem; }
-
-  .mct-btn-sm {
-    font-size: 0.75rem;
-    padding: 0.2rem 0.55rem;
-  }
-
-  .mct-textarea {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    line-height: 1.6;
-    padding: 0.65rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    width: 100%;
-    min-height: 220px;
-    resize: vertical;
-    box-sizing: border-box;
-  }
-
-  .mct-error {
-    font-size: 0.82rem;
-    color: #ef4444;
-    padding: 0.4rem 0.6rem;
-    border: 1px solid #fca5a5;
-    border-radius: var(--radius-sm);
-    background: #fef2f2;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .mct-error {
-      background: #2d1515;
-      border-color: #7f1d1d;
-      color: #fca5a5;
-    }
+  @media (max-width: 640px) {
+    .mct-toolbar { gap: 0.4rem; }
+    .mct-toolbar .btn-primary { flex: 1 1 0; padding-inline: 0.4rem; white-space: nowrap; min-height: 44px; }
+    .mct-clear { margin-left: 0; }
+    .mct-clear .btn-ghost, .mct-copy .btn-copy { min-height: 44px; }
+    .mct-textarea { height: 140px; }
   }
 </style>
