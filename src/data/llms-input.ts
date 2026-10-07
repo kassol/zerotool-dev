@@ -19,11 +19,11 @@ export function llmsSiteData() {
   };
 }
 
-// English tool page content by slug: { seoDescription, steps, body }.
+// English tool page content by slug: { seoDescription, steps }.
 export async function englishToolPages() {
   const entries = await getCollection('tools', (entry) => entry.slug.endsWith('/en'));
   return Object.fromEntries(
-    entries.map((entry) => [entry.slug.slice(0, -'/en'.length), { seoDescription: entry.data.seoDescription, steps: entry.data.steps, body: entry.body }]),
+    entries.map((entry) => [entry.slug.slice(0, -'/en'.length), { seoDescription: entry.data.seoDescription, steps: entry.data.steps }]),
   );
 }
 
