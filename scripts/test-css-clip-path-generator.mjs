@@ -1,5 +1,6 @@
-// Read the component, its tool pages, ToolLayout and persistence policy; write only stdout.
-// Run real functions and complete page scripts. No browser or network is used.
+// Read the component, its tool pages, ToolLayout, persistence policy and
+// scripts/test-css-clip-path-generator.fixtures.json (Chrome 152 results); write only stdout.
+// Run real functions and complete page scripts. No browser or network is used at test time.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -177,6 +178,138 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
 }
 console.log(`PASS ${checks} tool-page examples recomputed by the component`);
+
+// ---------- Independent check: Chrome reads the generated clip-path ----------
+// The corpus below is built with the page's own buildClipPath / overlay functions from a seeded
+// random generator. scripts/test-css-clip-path-generator.fixtures.json holds what Chrome 152 did
+// with each value (recorded in Ego Chromium with getComputedStyle, CSS.supports, a real <style>
+// sheet and elementsFromPoint hit tests on a 400 × 200 box; see scripts/AGENTS.md for the
+// recording steps). This test checks, without a browser:
+//   1. every value the visual editor writes is accepted by Chrome (computed value is not "none"),
+//      and Chrome's computed numbers are the generated numbers (inset shorthand expanded);
+//   2. the area Chrome clips (hit test grid) is the area the preview overlay draws, away from
+//      the edge (points within 1.5 px of the overlay outline are not compared);
+//   3. raw CSS mode accepts a value only when Chrome's stylesheet parser keeps it and keeps the
+//      next rule, and rejects the rest (url(), var() and env() are rejected on purpose).
+// Node has no CSS engine to use instead: css-tree 3.2.1 (installed for svgo) rejects the valid
+// circle(50% at 50% 50%) because its <radial-size> has no percentage.
+// Run with --corpus to print the corpus for a new recording.
+const W = 400, H = 200;
+const GRID = [];
+for (let y = 5; y < H; y += 15) for (let x = 5; x < W; x += 15) GRID.push([x, y]);
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const rnd = mulberry32(20261007);
+const pick = (max, dp) => String(Math.round(rnd() * max * 10 ** dp) / 10 ** dp);
+function overlayFor(shape) {
+  context.previewEl.clientWidth = W; context.previewEl.clientHeight = H;
+  context.currentShape = shape;
+  if (shape === 'polygon') { vm.runInContext('renderPolyShape()', context); return { points: context.polyShape.attrs.points.split(' ').map((p) => p.split(',').map(Number)) }; }
+  if (shape === 'inset') { context.updateInsetOverlay(); const a = context.insetShape.attrs; return { x: a.x, y: a.y, w: a.width, h: a.height, rx: a.rx, ry: a.ry }; }
+  context.updateCircleOverlay(); const a = context.ellipseShape.attrs; return { cx: a.cx, cy: a.cy, rx: a.rx, ry: a.ry };
+}
+const corpus = [];
+for (const name of Object.keys(context.PRESETS)) {
+  context.vertices = context.PRESETS[name].map((v) => ({ ...v }));
+  context.currentShape = 'polygon';
+  corpus.push({ id: 'preset-' + name, shape: 'polygon', value: vm.runInContext('buildClipPath()', context), overlay: overlayFor('polygon') });
+}
+for (let i = 0; i < 40; i++) {
+  const n = 3 + Math.floor(rnd() * 8);
+  context.vertices = Array.from({ length: n }, () => ({ x: Number(pick(100, 2)), y: Number(pick(100, 2)) }));
+  context.currentShape = 'polygon';
+  corpus.push({ id: 'polygon-' + i, shape: 'polygon', value: vm.runInContext('buildClipPath()', context), overlay: overlayFor('polygon') });
+}
+for (let i = 0; i < 30; i++) {
+  for (const [k, max] of [['circle-r', 80], ['circle-cx', 100], ['circle-cy', 100]]) nodes.get('#cpg-' + k).value = pick(max, i % 3);
+  context.currentShape = 'circle';
+  corpus.push({ id: 'circle-' + i, shape: 'circle', value: vm.runInContext('buildClipPath()', context), overlay: overlayFor('circle') });
+}
+for (let i = 0; i < 30; i++) {
+  for (const [k, max] of [['ellipse-rx', 80], ['ellipse-ry', 80], ['ellipse-cx', 100], ['ellipse-cy', 100]]) nodes.get('#cpg-' + k).value = pick(max, i % 3);
+  context.currentShape = 'ellipse';
+  corpus.push({ id: 'ellipse-' + i, shape: 'ellipse', value: vm.runInContext('buildClipPath()', context), overlay: overlayFor('ellipse') });
+}
+for (let i = 0; i < 40; i++) {
+  // Every fourth case lets opposite offsets add up to more than 100% (CSS Shapes: scaled down).
+  const big = i % 4 === 3 ? 100 : 48;
+  for (const k of ['top', 'right', 'bottom', 'left']) nodes.get('#cpg-inset-' + k).value = pick(big, i % 3);
+  nodes.get('#cpg-inset-round').value = i % 5 === 0 ? '0' : pick(50, i % 2);
+  context.currentShape = 'inset';
+  corpus.push({ id: 'inset-' + i, shape: 'inset', value: vm.runInContext('buildClipPath()', context), overlay: overlayFor('inset') });
+}
+const RAW = ['polygon(50% 0%, 100% 100%, 0% 100%)', 'circle(40px at 50% 50%)', 'ellipse(30% 20%)', 'inset(10% round 16px) content-box', 'path("M 20 20 H 180 V 120 H 20 Z")',
+  'shape(from 50% 0%, line to 100% 100%, line to 0% 100%, close)', 'xywh(10px 10px 50% 50% round 8px)', 'rect(10px 90% 90% 10px)', 'content-box', 'none', 'circle(50%) border-box',
+  'polygon(50% 0%, 100% 100%', 'circle(abc)', 'polygon(0 0', 'circle(50%))', 'inset(10%) )(', 'path("M 0 0 H 10', 'circle(50%);color:red', 'foo', 'polygon(0 0, 100% 0, 50%)',
+  'url(#clip)', 'circle(var(--r))', 'circle(env(safe-area-inset-top))', '\\75rl(#x)', 'circle(v/**/ar(--r))', 'inherit', 'ellipse(10% 20% 30%)', 'inset(-10%)', 'circle(-5%)'];
+if (process.argv.includes('--corpus')) {
+  console.log(JSON.stringify({ w: W, h: H, grid: GRID, visual: corpus.map(({ id, value }) => ({ id, value })), raw: RAW }));
+  process.exit(0);
+}
+const fixture = JSON.parse(fs.readFileSync(new URL('./test-css-clip-path-generator.fixtures.json', import.meta.url), 'utf8'));
+assert.equal(fixture.visual.length, corpus.length, 'fixture covers the whole corpus (re-record after changing it)');
+const nums = (s) => (String(s).match(/-?\d*\.?\d+(?:e-?\d+)?/g) || []).map(Number);
+function expectedNumbers(c) {
+  const v = nums(c.value);
+  if (c.shape !== 'inset') return v;
+  return v; // inset(t r b l [round r]) as written by the tool
+}
+function chromeNumbers(c, computed) {
+  const v = nums(computed);
+  if (c.shape !== 'inset') return v;
+  // Chrome serializes the shortest inset form: expand 1–4 offsets back to t r b l.
+  const roundAt = computed.indexOf(' round ');
+  const off = nums(roundAt >= 0 ? computed.slice(0, roundAt) : computed);
+  const t = off[0], r = off[1] ?? t, b = off[2] ?? t, l = off[3] ?? r;
+  const radius = roundAt >= 0 ? nums(computed.slice(roundAt)) : [];
+  return [t, r, b, l, ...radius.slice(0, 1)];
+}
+function insideOverlay(c, x, y) {
+  const o = c.overlay;
+  if (c.shape === 'polygon') {
+    let wn = 0; const p = o.points;
+    for (let i = 0; i < p.length; i++) {
+      const [x1, y1] = p[i], [x2, y2] = p[(i + 1) % p.length];
+      const cross = (x2 - x1) * (y - y1) - (x - x1) * (y2 - y1);
+      if (y1 <= y) { if (y2 > y && cross > 0) wn++; } else if (y2 <= y && cross < 0) wn--;
+    }
+    return wn !== 0;
+  }
+  if (c.shape === 'inset') {
+    if (x < o.x || x > o.x + o.w || y < o.y || y > o.y + o.h) return false;
+    if (!o.rx || !o.ry) return true;
+    const cx = x < o.x + o.rx ? o.x + o.rx : x > o.x + o.w - o.rx ? o.x + o.w - o.rx : x;
+    const cy = y < o.y + o.ry ? o.y + o.ry : y > o.y + o.h - o.ry ? o.y + o.h - o.ry : y;
+    return ((x - cx) / o.rx) ** 2 + ((y - cy) / o.ry) ** 2 <= 1;
+  }
+  if (!o.rx || !o.ry) return false;
+  return ((x - o.cx) / o.rx) ** 2 + ((y - o.cy) / o.ry) ** 2 <= 1;
+}
+let compared = 0, skippedEdge = 0;
+for (let i = 0; i < corpus.length; i++) {
+  const c = corpus[i], f = fixture.visual[i];
+  assert.equal(f.value, c.value, `fixture ${c.id} was recorded for the value the page writes now`);
+  assert.ok(f.supports && f.computed && f.computed !== 'none', `${c.id}: Chrome accepts ${c.value}`);
+  assert.deepEqual(chromeNumbers(c, f.computed), expectedNumbers(c), `${c.id}: Chrome reads ${c.value} as ${f.computed}`);
+  GRID.forEach(([x, y], k) => {
+    const model = insideOverlay(c, x, y);
+    const stable = [[-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5], [0, 1.5], [0, -1.5], [1.5, 0], [-1.5, 0]].every(([dx, dy]) => insideOverlay(c, x + dx, y + dy) === model);
+    if (!stable) { skippedEdge++; return; }
+    compared++;
+    assert.equal(f.hits[k] === '1', model, `${c.id}: point (${x}, ${y}) is ${model ? 'inside' : 'outside'} the preview outline, but Chrome ${f.hits[k] === '1' ? 'shows' : 'clips'} it (${c.value})`);
+  });
+}
+assert.ok(compared > 20000, 'enough hit-test points compared: ' + compared);
+console.log(`PASS ${corpus.length} generated values: Chrome accepts each one with the same numbers; ${compared} hit-test points match the preview outline (${skippedEdge} edge points skipped)`);
+assert.deepEqual(fixture.raw.map((r) => r.value), RAW, 'raw fixture covers the raw corpus');
+let rawChecked = 0;
+for (const r of fixture.raw) {
+  const tool = context.isLocalValue(r.value) && r.supports;
+  if (tool) assert.ok(r.sheetKeeps && r.nextRuleIntact, `raw: the tool accepts ${r.value}, so Chrome's stylesheet parser must keep it and the next rule`);
+  else assert.ok(!(r.sheetKeeps && r.nextRuleIntact) || /url\s*\(|var\s*\(|env\s*\(|\\|\/\*|;/i.test(r.value) || r.value === 'inherit',
+    `raw: the tool rejects ${r.value}, which Chrome keeps; only url(), var(), env(), escapes, comments, a ";" that ends the declaration and inherit are rejected on purpose`);
+  rawChecked++;
+}
+console.log(`PASS ${rawChecked} raw CSS values: the tool's verdict matches Chrome's stylesheet parser`);
 
 
 // Real page input/copy events followed by the real ToolLayout Ctrl/Cmd+L handler.
