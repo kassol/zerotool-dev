@@ -317,6 +317,14 @@ for (const st of shellCases) {
   eq('hint: Python literals', hint('{"a": True}', '.'), ['inputPython']);
   eq('hint: trailing comma', hint('[1,2,]', '.'), ['inputTrailingComma']);
   eq('hint: not JSON', hint('hello world', '.'), ['inputNotJson']);
+  // Before 2026-10-07: these showed only jq's text ("Invalid numeric literal at line 1, column 3").
+  eq('hint: unquoted keys', hint('{a:1}', '.'), ['inputUnquotedKeys']);
+  eq('hint: unquoted keys after a quoted one', hint('{"id": 1, name: "x"}', '.'), ['inputUnquotedKeys']);
+  eq('hint: JS object with unquoted keys and a trailing comma', hint('{a: 1, b: 2,}', '.'), ['inputUnquotedKeys']);
+  eq('hint: colon inside a string is not a key', hint('{"url": "http://x" y}', '.'), []);
+  eq('hint: line comment', hint('{"a": 1 // note\n}', '.'), ['inputComments']);
+  eq('hint: block comment', hint('/* config */ {"a": 1}', '.'), ['inputComments']);
+  eq('hint: slashes inside a string are not a comment', hint('{"u": "http://x"} }', '.'), []);
   eq('hint: none with -R', hint('hello world', '.', { R: true }), []);
   eq('hint: -e', hint('null', '.', { e: true }), ['exitStatus']);
   eq('hint: input-method bar handled by the filter note', hint('1', '.[] ｜ .a'), []);
@@ -437,6 +445,24 @@ for (const code of ['unclosedSingle', 'unclosedDouble', 'noFilter', 'argMissing'
 for (const d of E.BOOL_OPTIONS) check('option text: ' + d.key, !!STRINGS.en.opt[d.key]);
 for (const g of E.EXAMPLE_GROUPS) check('group text: ' + g, !!STRINGS.en.groups[g]);
 for (const v of E.INDENT_VALUES) check('indent text: ' + v, !!STRINGS.en.indentValues[v]);
+
+// Local storage disclosure (persist() saves the filter, options, variables and input up to 40 KB;
+// Clear removes the saved input). Before 2026-10-07 the page said only that nothing is uploaded.
+check('persist() saves filter, options and variables', /var data = \{ filter: filterEl\.value, opts: state\.opts, args: state\.args \};/.test(tool));
+check('Clear removes the saved input', /\$\('jqp-clear'\)[\s\S]{0,200}inputEl\.value = '';[\s\S]{0,120}ztPersist\.clear\(SLUG\)/.test(tool));
+const STORAGE_WORDS = {
+  en: ['saved in this browser', '40 KB', 'Clear'],
+  zh: ['保存在本机浏览器', '40 KB', '清空'],
+  ja: ['このブラウザに保存', '40 KB', 'クリア'],
+  ko: ['이 브라우저에 저장', '40KB', '지우기'],
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const mdx = readFileSync(join(root, 'src/content/tools/jq-playground', lang + '.mdx'), 'utf8');
+  const faq = mdx.slice(mdx.indexOf('faqItems:'), mdx.indexOf('\n---\n', 4));
+  check(lang + ' FAQ says what is saved locally and that Clear removes it', STORAGE_WORDS[lang].every((w) => faq.includes(w)), STORAGE_WORDS[lang].filter((w) => !faq.includes(w)).join());
+  check(lang + ' input tip says what is saved locally', STORAGE_WORDS[lang].every((w) => (STRINGS[lang].tips || {}).input.includes(w)), STORAGE_WORDS[lang].filter((w) => !STRINGS[lang].tips.input.includes(w)).join());
+  check(lang + ' Clear button label matches the wording', STRINGS[lang].clear === STORAGE_WORDS[lang][2], STRINGS[lang].clear);
+}
 
 // ── tool pages: every annotated example is what the page runs ──
 // {/* jqp-check: {"input": …, "filter": …, "flags": {…}, "args": […], "stdout": …, "stderr": …, "exit": n} */}
