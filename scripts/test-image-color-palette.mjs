@@ -265,6 +265,37 @@ const logo = await decode('icp-logo-transparent.png');
   const orange = r.colors.find((c) => hexOf(c.common) === '#F97316');
   const p = E.posToXY(orange.commonPos, 400, 300);
   check('orange marker lies inside the orange square', p.x * 400 >= 40 && p.x * 400 <= 100 && p.y * 300 >= 40 && p.y * 300 <= 100, JSON.stringify(p));
+  // Markers on the image edge (2026-10-08, W5): the preview box clips its children, so a marker
+  // centred on an edge pixel lost half its circle (the example image's first marker reached 7 px
+  // past the left edge). The page now keeps the centre MARKER_INSET px inside the box.
+  {
+    const css = /\.icp-marker \{([\s\S]*?)\n  \}/.exec(source);
+    const half = css ? parseFloat(/\bwidth:\s*([\d.]+)px/.exec(css[1])[1]) / 2 : NaN;
+    const rings = css ? [...css[1].matchAll(/0 0 0 ([\d.]+)px/g)].map((m) => parseFloat(m[1])) : [];
+    const reach = half + Math.max(0, ...rings);
+    const fnM = /function markerPos\(frac\) \{[\s\S]*?\n      \}/.exec(source);
+    const insetM = /var MARKER_INSET = (\d+);/.exec(source);
+    check('page has markerPos and MARKER_INSET', !!(fnM && insetM));
+    if (fnM && insetM) {
+      const markerPos = new Function('MARKER_INSET', fnM[0] + '\nreturn markerPos;')(Number(insetM[1]));
+      // Resolve clamp(Apx, P%, calc(100% - Bpx)) for a box of `size` px, as CSS does.
+      const resolve = (v, size) => {
+        const m = /^clamp\(([\d.]+)px, ([\d.]+)%, calc\(100% - ([\d.]+)px\)\)$/.exec(v);
+        if (!m) return NaN;
+        return Math.max(+m[1], Math.min(size * +m[2] / 100, size - +m[3]));
+      };
+      let bad = [];
+      for (const size of [60, 300, 400, 1200]) {
+        for (const frac of [0.5 / size, 0, 0.01, 0.5, 0.99, 1 - 0.5 / size, 1]) {
+          const at = resolve(markerPos(frac), size);
+          if (!(at - reach >= -1e-9 && at + reach <= size + 1e-9)) bad.push([size, frac, at]);
+          // Away from the edges the marker stays on its pixel.
+          if (frac * size >= reach && frac * size <= size - reach && Math.abs(at - frac * size) > 0.01) bad.push(['moved', size, frac, at]);
+        }
+      }
+      check('markers stay whole inside the preview box (radius + ring = ' + reach + ' px)', reach > 0 && bad.length === 0, JSON.stringify(bad.slice(0, 4)));
+    }
+  }
   eq('fmtShare truncates to one decimal', [E.fmtShare(0.71999), E.fmtShare(0.25), E.fmtShare(0.0004), E.fmtShare(0), E.fmtShare(1)], ['71.9%', '25.0%', '<0.1%', '0.0%', '100.0%']);
 }
 
