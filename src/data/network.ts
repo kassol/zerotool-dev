@@ -14,7 +14,7 @@ export function networkNoteKey(slug: string): string | null {
 }
 
 // Tools that use the network only after the user turns on an option. They keep the
-// "100% Client-Side" badge; the About pages list them with `networkOptional.{slug}`.
+// "Runs in your browser" badge (tool.trustClient); the About pages list them with `networkOptional.{slug}`.
 export const optionalNetworkToolSlugs: readonly string[] = [
   'markdown-to-word',    // "Embed web images" downloads http(s) images at export
 ];
