@@ -14,10 +14,20 @@ export function networkNoteKey(slug: string): string | null {
 }
 
 // Tools that use the network only after the user turns on an option. They keep the
-// "Runs in your browser" badge (tool.trustClient); the About pages list them with `networkOptional.{slug}`.
+// "Runs in your browser" badge (tool.trustClient). In place of tool.trustPrivacy ("data never
+// leaves your browser") the trust bar shows `trustOptional.{slug}`, which states the condition.
+// The text is static: the option lives in the tool component and can be restored from storage,
+// and the sentence is true in both states. The About pages list them with `networkOptional.{slug}`.
 export const optionalNetworkToolSlugs: readonly string[] = [
   'markdown-to-word',    // "Embed web images" downloads http(s) images at export
 ];
+
+// i18n key for the second trust-bar item on a tool page.
+export function trustNoteKey(slug: string): string {
+  if (networkToolSlugs.includes(slug)) return `network.${slug}`;
+  if (optionalNetworkToolSlugs.includes(slug)) return `trustOptional.${slug}`;
+  return 'tool.trustPrivacy';
+}
 
 export const aboutNetworkToolSlugs: readonly string[] = [...networkToolSlugs, ...optionalNetworkToolSlugs];
 
