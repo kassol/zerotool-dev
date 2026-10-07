@@ -30,6 +30,13 @@
 // Download, the row downloads and the ZIP keep saving item.data (checked by running the real page
 // script with a fake DOM). The declaration extractor skips brackets in strings and regexes.
 //
+// XML errors (2026-10-08): the column counted the xmlns the page adds (`<svg><rect></svg>` was
+// reported at column 52) and the reason was sax's English text on every page. The
+// `xml-position:start/end` block maps the position back to the typed text in code points
+// (checked against sax run on the user's text) and turns each known sax message into a reason
+// code with text in all four languages. Not copied from svg-to-png-converter: that tool maps
+// the browser's DOMParser (libxml2 / expat) messages, SVGO uses sax.
+//
 // Run: node scripts/test-svg-optimizer.mjs
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -458,6 +465,93 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
   }
 }
 
+// ---------- XML error position and reason (xml-position block) ----------
+// The page adds xmlns to the root tag before SVGO parses; sax then counts columns in the
+// changed text (`<svg><rect></svg>` was reported at column 52 of a 17-character input) and
+// gives an English reason. sourceXmlError maps the position back and returns a reason code.
+// Oracle: sax itself (same options as SVGO 4.1: strict, xmlns) run on the user's own text,
+// converted from UTF-16 units to code points.
+const XP_START = '/* ── xml-position:start ── */';
+const XP_END = '/* ── xml-position:end ── */';
+const xpStart = source.indexOf(XP_START);
+const xpEnd = source.indexOf(XP_END);
+check('xml-position block is outside the engine block', xpStart > source.indexOf(END_MARK) && xpEnd > xpStart);
+const XP = xpStart > 0 && xpEnd > xpStart
+  ? new Function(source.slice(xpStart, xpEnd) + '\nreturn { sourceXmlError, xmlReasonText, SAX_REASONS };')()
+  : { sourceXmlError: (x) => x, xmlReasonText: () => '', SAX_REASONS: [] };
+{
+  const { runSvgo } = await import(pathToFileURL(join(toolsDir, 'svg-optimizer-run.js')).href);
+  const saxLib = createRequire(import.meta.url)('sax');
+  const saxPosition = (text) => {
+    const p = saxLib.parser(true, { xmlns: true, position: true });
+    let at = null;
+    p.onerror = (e) => { if (!at) at = { line: p.line + 1, column: p.column, reason: e.message.split('\n')[0] }; throw e; };
+    try { p.write(text).close(); } catch {}
+    if (!at) return null;
+    const lineText = text.split('\n')[at.line - 1].slice(0, at.column);
+    return { line: at.line, column: Array.from(lineText).length, reason: at.reason };
+  };
+  const pageError = (text) => {
+    const prep = E.prepareInput(text);
+    const r = runSvgo(svgo, prep.text, E.buildConfig(D));
+    return r.error ? XP.sourceXmlError(E.errorInfo(r.error), prep) : null;
+  };
+  const cases = [
+    ['<svg><rect></svg>', 1, 17, 'closeTag', { tag: 'svg' }],
+    ['<svg><g></svg>', 1, 14, 'closeTag', { tag: 'svg' }],
+    ['<svg width="1" height="1">\n<g>\n<path d="M0 0"></g></svg>', 3, 19, 'closeTag', { tag: 'g' }],
+    ['<svg><title>日本語😀</title><rect></svg>', 1, 36, 'closeTag', { tag: 'svg' }],
+    ['<svg><rect>', 1, 11, 'unclosedRoot', {}],
+    ['<svg><text>&a b;</text></svg>', 1, 14, 'entityName', {}],
+    ['x<svg></svg>', 1, 1, 'beforeRoot', {}],
+    ['<svg></svg>x', 1, 12, 'afterRoot', {}],
+    ['<svg><text>a < b</text></svg>', 1, 17, 'tagName', {}],
+    ['<svg><1rect/></svg>', 1, 7, 'tagName', {}],
+    ['<svg><!-- a -- b --></svg>', 1, 15, 'comment', {}],
+    ['<svg><rect 1x="1"/></svg>', 1, 12, 'attrName', {}],
+    ['<svg><rect x=1/></svg>', 1, 14, 'attrUnquoted', {}],
+    ['<svg><rect x="1"y="2"/></svg>', 1, 17, 'attrSpace', {}],
+    ['<svg><g></g x></svg>', 1, 13, 'closeChars', {}],
+    ['<svg></></svg>', 1, 8, 'closeName', {}],
+    ['<svg><foo:bar/></svg>', 1, 15, 'prefix', { name: 'foo:bar' }],
+    ['<svg><rect / ></svg>', 1, 13, 'slash', {}],
+    ['<svg><text>&#1;</text></svg>', 1, 15, 'entity', {}],
+  ];
+  for (const [text, line, column, code, values] of cases) {
+    const got = pageError(text);
+    eq('xml position: ' + JSON.stringify(text), got && [got.line, got.column, got.reason.code, got.reason.values], [line, column, code, values]);
+    const oracle = saxPosition(text);
+    eq('xml position matches sax on the user text: ' + JSON.stringify(text), got && oracle && [got.line, got.column], oracle && [oracle.line, oracle.column]);
+  }
+  // xmlns and xmlns:xlink both added (sax cannot be the oracle: the original has an unbound xlink prefix).
+  const xl = pageError('<svg><use xlink:href="#a"/>\n  <g></svg>');
+  eq('xml position after both xmlns attributes are added', xl && [xl.line, xl.column, xl.reason.code], [2, 11, 'closeTag']);
+  const bom = pageError('\uFEFF<svg><rect></svg>');
+  eq('xml position ignores a leading BOM', bom && [bom.line, bom.column], [1, 17]);
+  const withNs = pageError('<svg xmlns="http://www.w3.org/2000/svg"><rect></svg>');
+  eq('xml position with xmlns already present is unchanged', withNs && [withNs.line, withNs.column], [1, 52]);
+  eq('unknown sax message → other', XP.sourceXmlError({ code: 'xml', line: 1, column: 3, reason: 'Some new sax message' }, E.prepareInput('<svg/>')).reason.code, 'other');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const mdx = readFileSync(join(root, 'src/content/tools/svg-optimizer/' + lang + '.mdx'), 'utf8');
+    const li = mdx.split('\n').find((l) => l.includes('<code>&lt;svg&gt;&lt;rect&gt;&lt;/svg&gt;</code>')) || '';
+    check(lang + ': limits example states line 1, column 17 as the page reports', /\b1\b/.test(li) && /\b17\b/.test(li), li.slice(0, 120));
+  }
+  eq('non-XML errors pass through', XP.sourceXmlError({ code: 'svgo', message: 'x' }, null), { code: 'svgo', message: 'x' });
+  // Each localized table covers every code; no sax English text reaches the page.
+  const sm = source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/);
+  const S = new Function(sm[1] + '\nreturn STRINGS;')();
+  const codes = [...new Set(XP.SAX_REASONS.map((r) => r[1]).concat(['closeTagAny', 'other']))].sort();
+  const fillT = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v && v[k] != null ? v[k] : m));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ': xml reasons cover every code', Object.keys(S[lang].xmlReason || {}).sort(), codes);
+    for (const [text, , , code, values] of cases) {
+      const shown = fillT(S[lang].err.xml, { line: 1, column: 1, reason: XP.xmlReasonText({ code, values }, S[lang].xmlReason || {}, fillT) });
+      check(lang + ': ' + code + ' message has no sax English or unfilled placeholder', !/\{\w+\}/.test(shown)
+        && !XP.SAX_REASONS.some(([re]) => re.test(shown.split(': ').pop() || '')) && !/Unexpected|Invalid|Unclosed|Unquoted|whitespace/.test(shown), shown);
+    }
+  }
+}
+
 // ---------- page wiring with a fake DOM ----------
 // Runs the real <script> of the component (imports replaced: the worker constructor throws, so
 // the page uses its main-thread fallback with the real runSvgo and svgo/browser). Checks that a
@@ -549,6 +643,12 @@ for (const name of ['figma', 'inkscape', 'illustrator', 'korea', 'art', 'echarts
     $('svgo-input').dispatch('input');
     await wait(() => /^Not valid XML/.test($('svgo-status').textContent));
     check('page: an error in the SVG itself offers no Retry', /^Not valid XML/.test($('svgo-status').textContent) && $('svgo-retry').hidden === true, $('svgo-status').textContent);
+    // Without xmlns the page adds it before SVGO; the column still refers to the typed text.
+    $('svgo-input').value = '<svg><rect></svg>';
+    $('svgo-input').dispatch('input');
+    await wait(() => /column 17/.test($('svgo-status').textContent), 3000);
+    eq('page: XML error column and reason refer to the typed text', $('svgo-status').textContent,
+      'Not valid XML (line 1, column 17): ' + T.xmlReason?.closeTag?.replace('{tag}', 'svg'));
     $('svgo-format').value = 'jsx';
     $('svgo-format').dispatch('change');
     // The refused file is first, so it is the active one while the batch runs.
