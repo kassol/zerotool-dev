@@ -307,50 +307,9 @@ function truncate(text, max) {
   return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:]+$/, '') + '…';
 }
 
-// H2 headings in an MDX body: `## Title` lines or `<h2>Title</h2>` elements.
-function h2Sections(body) {
-  const re = /^##[ \t]+(.+)$|<h2[^>]*>([\s\S]*?)<\/h2>/gm;
-  const heads = [];
-  let m;
-  while ((m = re.exec(body))) heads.push({ title: plainText(m[1] ?? m[2]), start: m.index, end: re.lastIndex });
-  return heads.map((h, i) => ({ title: h.title, content: body.slice(h.end, heads[i + 1]?.start ?? body.length) }));
-}
-
-// Items of the first list in a section, preferring an ordered list.
-function listItems(section) {
-  const found = [];
-  const olHtml = section.match(/<ol[^>]*>([\s\S]*?)<\/ol>/i);
-  if (olHtml) found.push({ at: olHtml.index, items: [...olHtml[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)].map((x) => x[1]) });
-  const olMd = section.match(/^(\d+\.[ \t]+.*(?:\n(?:\d+\.[ \t]+|[ \t]+\S).*)*)/m);
-  if (olMd) {
-    const items = olMd[1].split(/\n(?=\d+\.[ \t]+)/).map((s) => s.replace(/^\d+\.[ \t]+/, ''));
-    found.push({ at: olMd.index, items });
-  }
-  if (found.length === 0) return [];
-  found.sort((a, b) => a.at - b.at);
-  return found[0].items;
-}
-
-/**
- * Steps from the tool page's first H2 section whose heading starts with "How to":
- * the items of its first ordered list, as plain text. Whole steps are kept while the
- * total stays within MAX_HOWTO_CHARS; at most MAX_STEPS steps, each cut to
- * MAX_STEP_CHARS. Returns [] when the page has no such section or list.
- */
-export function howToSteps(body) {
-  const section = h2Sections(body).find((s) => /^how to\b/i.test(s.title));
-  if (!section) return [];
-  return limitSteps(listItems(section.content));
-}
-
-/**
- * Steps for llms-full.txt. A tool page that lists its steps in the frontmatter `steps`
- * field (pages whose usage section moved into the tool, see src/content/AGENTS.md) uses
- * those; other pages fall back to howToSteps() on the body. Same limits either way.
- */
+/** Steps for llms-full.txt, read only from the tool page's frontmatter. */
 export function toolSteps(page) {
-  if (Array.isArray(page?.steps) && page.steps.length > 0) return limitSteps(page.steps);
-  return howToSteps(page?.body ?? '');
+  return Array.isArray(page?.steps) ? limitSteps(page.steps) : [];
 }
 
 function limitSteps(items) {
@@ -368,7 +327,7 @@ function limitSteps(items) {
 
 /**
  * `/llms-full.txt`: one H2 per tool, English, in category order. `pages` maps a slug to
- * the English tool page content entry `{ seoDescription, steps, body }`; the "How to use"
+ * the English tool page content entry `{ seoDescription, steps }`; the "How to use"
  * steps come from toolSteps().
  */
 export function buildLlmsFullTxt(data, pages) {

@@ -124,31 +124,19 @@ Required structure:
 
 ### Tool Pages
 
-`src/layouts/ToolLayout.astro` owns the shared tool page shell.
+`src/layouts/ToolLayout.astro` owns the shared shell for every tool. Register each `tools.ts` slug in `src/data/tool-layouts.ts` with one of the five kinds below. The page uses `.tool-page--v2`, a compact header and folded reference content. The tool root directly fills `.tool-widget--v2`; use `minmax(0, 1fr)` and zero minimum width and height on flexible children.
 
-Required structure:
-
-- `.tool-page`: `width: min(100% - 2rem, 1120px)`
-- `.tool-header`: icon, `ZeroTool Workbench` kicker, title, description, trust bar
-- `.tool-widget`: full-width workbench panel for the actual tool
-- `.tool-guide-link`: card link to the tool's blog guide (`/blog/{slug}-guide/` in the page language), only when that guide exists
-- `.related-tools`: compact related cards below the tool
-- `.tool-content`: SEO and usage content with a reading width near 820px
-- `.tool-faq`: compact accordion cards
-
-Every tool UI fills the `.tool-widget` width. Use inner grids to create local structure, with `minmax(0, 1fr)` and `min-width: 0` on flexible children.
-
-### Tool Pages v2
-
-Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page--v2`; the other tools keep the structure above until they are moved in batches. To move a tool: add its slug with a kind, make its component fill the height it gets, put explanations in toggletips, move the MDX "How to use" facts into the tool and the `steps` frontmatter (the "Limits" section stays in the MDX, see "Reference content"), and run its tests, `test-llms-txt.mjs`, audit and build.
+Put control explanations in four-language toggletips. Put usage steps in the `steps` frontmatter of all four MDX files. Keep worked examples, background, FAQ, SEO and Limits in the reference content. Run the tool tests, audit, build and `test-llms-txt.mjs`, then verify desktop and phone use in both themes.
 
 **Kinds** (pick by what the user mainly looks at):
 
 | Kind | Layout | Shell max width | Sample |
 |---|---|---:|---|
-| `convert` | Input and output side by side, both as tall as the first screen allows; options in one row above them; notes under the output. Stacks below 860px with options after the panels. | 2400px | `JsonFormatterTool` |
-| `generate` | A 270–320px control rail (inputs, options, code export) on the left; the generated preview fills the rest (palettes: six cards in two rows of three, monochromatic full width). Rail stacks on top below 860px. | 1840px | `ColorPaletteGeneratorTool` |
+| `convert` | Input and output side by side, both as tall as the first screen allows; options in one row above them; notes under the output. Stacks at 860px and below with options before the panels. | 2400px | `JsonFormatterTool` |
+| `generate` | A 270–320px control rail (inputs, options, code export) on the left; the generated preview fills the rest (palettes: six cards in two rows of three, monochromatic full width). Controls stack above the preview at 860px and below; the palette sample places code export after the preview. | 1840px | `ColorPaletteGeneratorTool` |
 | `analyze` | The result uses the full width. Before input, the drop zone fills the first screen. From 1280px, details open beside the list; lists grow with the window height. | 2400px | `HarFileAnalyzerTool` |
+| `compact` | Short inputs followed directly by short results. The tool card is centered, at most 960px wide, and uses its content height at every viewport. Controls and a reserved status row precede results. Long values scroll inside their result rows; worked steps may use a bounded area below. | 1120px | `NumberBaseTool` (B5 representative) |
+| `compare` | Two bounded input editors above a full-width result that fills the remaining first screen and scrolls internally. Controls and a reserved status row come first; pagination stays outside the result. Users may collapse inputs after a result; clearing, invalidating or failing a comparison reopens them. | 2400px | `DiffCheckerTool` (B10 representative) |
 
 **Shared classes** (`src/styles/tool-common.css`, loaded on every tool page)
 
@@ -161,8 +149,12 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 | `.zt-empty-drop` | An `analyze` tool's empty drop zone: a centered flex column that fills the available height, with a 220px minimum. Keep the tool class for its border, colors, spacing and compact or mobile state. Used by HAR File Analyzer and QR Code Decoder. |
 | `.zt-rail` | A `generate` tool's control rail: a flex column with a 0.9rem gap and zero minimum width and height. Keep the tool class for its panels, scrolling and mobile order. Used by Color Palette Generator and QR Code Generator. |
 | `.zt-segmented` | The container of a segmented control: flex row, pill radius and an inset border. Keep padding, background, button or radio semantics, and selected-state styling in the tool. Used by Color Palette Generator and Sprite Sheet Generator. |
+| `.zt-compare-inputs` | Two bounded editors above a comparison: equal columns with a 0.75rem gap, 180px textareas, and internal scrolling. At 860px they stack with 120px textareas. Used by Diff Checker and JSON Diff. |
+| `.zt-compare-results` | A comparison result fills the remaining height with zero minimum width and height. At 860px it is 24rem high, at 640px 22rem; `data-empty="true"` hides it on stacked screens. Keep result headers, scrollers and disclosure controls in the tool. |
 
-`convert` tools use `.zt-io`, `.zt-io-pane` and `.zt-io-fill` for the panels and keep their own class next to each for tool-specific rules (tab size, colors, phone heights). Rules that the first batch (2026-10-04, 12 tools; `TextToBinaryTool` is the reference) settled:
+`convert` tools use `.zt-io`, `.zt-io-pane` and `.zt-io-fill` for the panels and keep their own class next to each for tool-specific rules (tab size, colors, phone heights).
+
+When a result uses `.zt-io-fill`, rely on its shared `flex: 1 1 0` rule on desktop and its stacked rule at 860px and below. `.zt-tip` supplies `flex: none`. Do not duplicate these declarations as component fallbacks; retain tool-specific sizes, scrolling and colors. Rules that the first batch (2026-10-04, 12 tools; `TextToBinaryTool` is the reference) settled:
 
 - The component's outermost element is the tool root (a flex column with `min-height: 0`); no wrapper `<div>` around it, because only direct children of the widget get the height.
 - Order: buttons and options in one or two rows, then the status line, then the panels; notes go under the output. The status line keeps its height when it is empty, so a first result does not move the panels.
@@ -176,7 +168,9 @@ Since 2026-10-04, slugs listed in `src/data/tool-layouts.ts` render `.tool-page-
 
 - Width `min(100% - 2 × clamp(0.5rem, 1.6vw, 1.75rem), max)`; the site nav widens to the same edge on these pages (`html:has(.tool-page--v2)` sets `--max-width`).
 - Header: 40px icon well, display-serif H1 `clamp(1.55rem, 1.05rem + 1.25vw, 2.35rem)`, description at 0.93rem, trust items as small muted text at the top right (below the title under 900px). No kicker label.
-- `.tool-first` (header + `.tool-widget--v2`) has `min-height: calc(100svh - var(--header-height))`; the widget is a flex column and the tool's root element gets `flex: 1`, so editors, previews and lists grow into the first screen. Below 760px the first screen does not fill; the tool stacks at its own height.
+- `.tool-first` (header + `.tool-widget--v2`) has `min-height: calc(100svh - var(--header-height))`; the widget is a flex column and the tool's root element gets `flex: 1`, so editors, previews and lists grow into the first screen. At 860px and below the first screen uses content height; narrower screens retain their compact top padding.
+- `compact` uses a 1120px shell and a centered tool card up to 960px. Its first screen has no viewport minimum height; neither the card nor its root stretches. Results follow the inputs without an empty preview area. The shared page order and folded reference content stay the same.
+- `compare` uses the 2400px shell. Input editors are 180px high on desktop and stack at 860px with 120px height. The first screen uses content height at 860px and below; empty output is hidden there and a populated result remains bounded. Keep input values when users collapse the input section; make the result start visible after comparison on phones.
 - Page order: tool → share buttons / guide link → reference `<details id="reference">` (closed) → mid ad → related tools → bottom ad. Sensitive tools show no ads, as before.
 
 **Explanations in the tool**
@@ -318,6 +312,7 @@ Checklist for dark mode:
 - Page background, surface, muted surface, borders, and text come from tokens.
 - The dark token blocks in `BaseLayout.astro` also set `color-scheme: dark`, so native scrollbars, select popups, and checkboxes render dark.
 - Focus rings remain visible on dark surfaces.
+- Selected segment buttons keep a distinct background and readable text in both system dark mode and an explicit dark theme. Keep selected-button rules in the tool; `.zt-segmented` supplies only the container. Current selected-state rules use `--color-primary` and `--color-primary-contrast`.
 - Generated preview colors remain literal user output.
 - Copy states, success states, and danger states use semantic tokens.
 - Favicon supports `prefers-color-scheme: dark`.

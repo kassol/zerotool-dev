@@ -1,60 +1,115 @@
 ---
-// DockerToComposeTool — convert docker run commands to docker-compose.yml
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    empty: "Enter a docker run command or load the example to generate Compose YAML.",
+    tips: {
+      "input": "Enter one docker run or docker container run command. Backslash line continuations are supported. Commands and shell variables are not executed or expanded.",
+      "convert": "Convert the current command to Compose YAML. Review unconverted options in the status and first-line comment. Ctrl/⌘+Enter also converts.",
+      "example": "Replace the input with an Nginx example using a name, port, bind mount, environment variable and restart policy, then convert it.",
+      "clear": "Clear the command, generated YAML and status. Ctrl/⌘+L with focus in the tool does the same.",
+      "copy": "Copy the complete displayed YAML, including any unconverted-options comment. Save it as docker-compose.yml in your project. Empty output is not copied."
+    },
+    inputLabel: 'docker run Command', outputLabel: 'docker-compose.yml', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please copy the output manually.', convert: 'Convert', msgInvalidCmd: 'Not a valid docker run command', msgConverted: 'Converted.', msgUnknownFlag: 'Unknown option {flag}. docker run would reject it too.', msgMissingValue: 'Option {flag} needs a value.', msgNotConverted: 'Converted. Not converted (listed in the first line of the file): {flags}' },
+  zh: {
+    empty: "输入 docker run 命令或载入示例以生成 Compose YAML。",
+    tips: {
+      "input": "输入一条 docker run 或 docker container run 命令，支持反斜杠续行。工具不会执行命令或展开 shell 变量。",
+      "convert": "将当前命令转换为 Compose YAML。请查看状态栏和首行注释中的未转换选项。Ctrl/⌘+Enter 也可转换。",
+      "example": "用带名称、端口、绑定挂载、环境变量和重启策略的 Nginx 示例替换输入，并立即转换。",
+      "clear": "清空命令、生成的 YAML 和状态。在工具内按 Ctrl/⌘+L 执行相同清理。",
+      "copy": "复制当前完整 YAML，包括未转换选项的注释。可在项目中保存为 docker-compose.yml。输出为空时不复制。"
+    },
+    inputLabel: 'docker run 命令', outputLabel: 'docker-compose.yml', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', copyFailed: '复制失败，请手动复制输出。', convert: '转换', msgInvalidCmd: '无效的 docker run 命令', msgConverted: '已转换。', msgUnknownFlag: '未知选项 {flag}，docker run 也会拒绝它。', msgMissingValue: '选项 {flag} 缺少值。', msgNotConverted: '已转换。未转换的选项（列在文件第一行）：{flags}' },
+  ja: {
+    empty: "docker run コマンドを入力するかサンプルを読み込むと、Compose YAML を生成します。",
+    tips: {
+      "input": "docker run または docker container run コマンドを 1 つ入力します。バックスラッシュによる行継続に対応します。コマンドの実行やシェル変数の展開は行いません。",
+      "convert": "現在のコマンドを Compose YAML に変換します。未変換のオプションはステータス欄と 1 行目のコメントで確認します。Ctrl/⌘+Enter でも変換できます。",
+      "example": "名前、ポート、バインドマウント、環境変数、再起動ポリシーを含む Nginx のサンプルで入力を置き換え、すぐに変換します。",
+      "clear": "コマンド、生成した YAML、ステータスを消去します。ツール内の Ctrl/⌘+L でも同じ内容を消去します。",
+      "copy": "未変換オプションのコメントを含む表示中の YAML 全文をコピーします。プロジェクトで docker-compose.yml として保存できます。空の出力はコピーしません。"
+    },
+    inputLabel: 'docker run コマンド', outputLabel: 'docker-compose.yml', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。', convert: '変換', msgInvalidCmd: '無効なdocker runコマンド', msgConverted: '変換しました。', msgUnknownFlag: '不明なオプション {flag}。docker run でもエラーになります。', msgMissingValue: 'オプション {flag} に値がありません。', msgNotConverted: '変換しました。変換していないオプション（ファイルの 1 行目に記載）：{flags}' },
+  ko: {
+    empty: "docker run 명령어를 입력하거나 예시를 불러와 Compose YAML을 생성하세요.",
+    tips: {
+      "input": "docker run 또는 docker container run 명령어 하나를 입력하세요. 백슬래시 줄 연결을 지원합니다. 명령을 실행하거나 셸 변수를 펼치지 않습니다.",
+      "convert": "현재 명령을 Compose YAML로 변환합니다. 상태 표시줄과 첫 줄 주석에서 변환하지 않은 옵션을 확인하세요. Ctrl/⌘+Enter로도 변환할 수 있습니다.",
+      "example": "이름, 포트, 바인드 마운트, 환경변수, 재시작 정책이 포함된 Nginx 예시로 입력을 바꾸고 즉시 변환합니다.",
+      "clear": "명령어, 생성된 YAML, 상태를 지웁니다. 도구 안에서 Ctrl/⌘+L을 눌러도 같은 내용을 지웁니다.",
+      "copy": "변환하지 않은 옵션의 주석을 포함해 현재 YAML 전체를 복사합니다. 프로젝트에서 docker-compose.yml로 저장하세요. 빈 출력은 복사하지 않습니다."
+    },
+    inputLabel: 'docker run 명령어', outputLabel: 'docker-compose.yml', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.', convert: '변환', msgInvalidCmd: '잘못된 docker run 명령어', msgConverted: '변환 완료.', msgUnknownFlag: '알 수 없는 옵션 {flag}. docker run에서도 오류가 납니다.', msgMissingValue: '옵션 {flag}에 값이 없습니다.', msgNotConverted: '변환 완료. 변환하지 않은 옵션(파일 첫 줄에 표시): {flags}' }
+};
+const L = STRINGS[lang];
+const CLIENT_T = {
+  copy: L.copy,
+  copied: L.copied,
+  copyFailed: L.copyFailed,
+  msgInvalidCmd: L.msgInvalidCmd,
+  msgConverted: L.msgConverted,
+  msgUnknownFlag: L.msgUnknownFlag,
+  msgMissingValue: L.msgMissingValue,
+  msgNotConverted: L.msgNotConverted,
+};
 ---
 
-<div class="dtc-wrap">
-  <div class="dtc-panels">
-    <div class="dtc-panel">
+<div class="dtc-wrap" data-strings={JSON.stringify(CLIENT_T)}>
+  <div class="dtc-actions">
+    <div class="dtc-control-label">
+      <button id="dtc-convert" class="btn-primary" type="button">{L.convert}</button>
+      <Toggletip id="dtc-tip-convert" lang={lang} about={L.convert}>{L.tips.convert}</Toggletip>
+    </div>
+    <div class="dtc-control-label">
+      <button id="dtc-example" class="btn-ghost" type="button">{L.example}</button>
+      <Toggletip id="dtc-tip-example" lang={lang} about={L.example}>{L.tips.example}</Toggletip>
+    </div>
+    <div class="dtc-control-label">
+      <button id="dtc-clear" class="btn-ghost" type="button">{L.clear}</button>
+      <Toggletip id="dtc-tip-clear" lang={lang} about={L.clear}>{L.tips.clear}</Toggletip>
+    </div>
+  </div>
+  <div id="dtc-status" class="dtc-status" aria-live="polite"></div>
+  <div class="dtc-panels zt-io">
+    <div class="dtc-panel zt-io-pane">
       <div class="dtc-panel-header">
-        <span data-i18n="inputLabel">docker run Command</span>
-        <div class="dtc-panel-actions">
-          <button id="dtc-example" class="btn-ghost btn-sm" type="button" data-i18n="example">Example</button>
-          <button id="dtc-clear" class="btn-ghost btn-sm" type="button" data-i18n="clear">Clear</button>
+        <div class="dtc-control-label">
+          <label for="dtc-input">{L.inputLabel}</label>
+          <Toggletip id="dtc-tip-input" lang={lang} about={L.inputLabel}>{L.tips.input}</Toggletip>
         </div>
       </div>
-      <textarea
-        id="dtc-input"
-        placeholder="docker run -d --name myapp -p 8080:80 nginx:latest"
-        spellcheck="false"
-      ></textarea>
+      <textarea id="dtc-input" class="zt-io-fill" placeholder="docker run -d --name myapp -p 8080:80 nginx:latest" spellcheck="false"></textarea>
     </div>
-
-    <div class="dtc-panel">
+    <div class="dtc-panel dtc-output-pane zt-io-pane">
       <div class="dtc-panel-header">
-        <span data-i18n="outputLabel">docker-compose.yml</span>
-        <button id="dtc-copy" class="btn-ghost btn-sm" type="button" data-i18n="copy">Copy</button>
+        <span id="dtc-output-label">{L.outputLabel}</span>
+        <div class="dtc-control-label">
+          <button id="dtc-copy" class="btn-ghost" type="button">{L.copy}</button>
+          <Toggletip id="dtc-tip-copy" lang={lang} about={L.copy}>{L.tips.copy}</Toggletip>
+        </div>
       </div>
-      <pre id="dtc-output" class="dtc-output"><code id="dtc-output-code"></code></pre>
+      <p class="dtc-empty zt-io-fill">{L.empty}</p>
+      <pre id="dtc-output" class="dtc-output zt-io-fill" tabindex="0" aria-labelledby="dtc-output-label"><code id="dtc-output-code"></code></pre>
     </div>
   </div>
-
-  <div class="dtc-actions">
-    <button id="dtc-convert" class="btn-primary" type="button" data-i18n="convert">Convert</button>
-  </div>
-
-  <div id="dtc-status" class="dtc-status" aria-live="polite"></div>
 
   <script is:inline>
     (function () {
-      var STRINGS = {
-        en: { inputLabel: 'docker run Command', outputLabel: 'docker-compose.yml', example: 'Example', clear: 'Clear', copy: 'Copy', copied: 'Copied!', convert: 'Convert', msgInvalidCmd: 'Not a valid docker run command', msgConverted: 'Converted.', msgUnknownFlag: 'Unknown option {flag}. docker run would reject it too.', msgMissingValue: 'Option {flag} needs a value.', msgNotConverted: 'Converted. Not converted (listed in the first line of the file): {flags}' },
-        zh: { inputLabel: 'docker run 命令', outputLabel: 'docker-compose.yml', example: '示例', clear: '清除', copy: '复制', copied: '已复制！', convert: '转换', msgInvalidCmd: '无效的 docker run 命令', msgConverted: '已转换。', msgUnknownFlag: '未知选项 {flag}，docker run 也会拒绝它。', msgMissingValue: '选项 {flag} 缺少值。', msgNotConverted: '已转换。未转换的选项（列在文件第一行）：{flags}' },
-        ja: { inputLabel: 'docker run コマンド', outputLabel: 'docker-compose.yml', example: 'サンプル', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', convert: '変換', msgInvalidCmd: '無効なdocker runコマンド', msgConverted: '変換しました。', msgUnknownFlag: '不明なオプション {flag}。docker run でもエラーになります。', msgMissingValue: 'オプション {flag} に値がありません。', msgNotConverted: '変換しました。変換していないオプション（ファイルの 1 行目に記載）：{flags}' },
-        ko: { inputLabel: 'docker run 명령어', outputLabel: 'docker-compose.yml', example: '예시', clear: '지우기', copy: '복사', copied: '복사됨!', convert: '변환', msgInvalidCmd: '잘못된 docker run 명령어', msgConverted: '변환 완료.', msgUnknownFlag: '알 수 없는 옵션 {flag}. docker run에서도 오류가 납니다.', msgMissingValue: '옵션 {flag}에 값이 없습니다.', msgNotConverted: '변환 완료. 변환하지 않은 옵션(파일 첫 줄에 표시): {flags}' }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-      document.querySelectorAll('.dtc-wrap [data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('.dtc-wrap [data-i18n-ph]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n-ph'); if (t[key]) el.placeholder = t[key];
-      });
+      var t = JSON.parse(document.querySelector('.dtc-wrap').dataset.strings);
 
       var inputEl = document.getElementById('dtc-input');
       var outputCodeEl = document.getElementById('dtc-output-code');
       var statusEl = document.getElementById('dtc-status');
+      var wrap = document.querySelector('.dtc-wrap');
+      var copyBtn = document.getElementById('dtc-copy');
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyFailure = false;
 
       var EXAMPLE = 'docker run -d \\\n' +
         '  --name myapp \\\n' +
@@ -65,12 +120,22 @@
         '  nginx:latest';
 
       function setStatus(msg, isError) {
+        copyFailure = false;
         statusEl.textContent = msg;
         statusEl.className = 'dtc-status ' + (isError ? 'error' : 'success');
       }
       function clearStatus() {
+        copyFailure = false;
         statusEl.textContent = '';
         statusEl.className = 'dtc-status';
+      }
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        if (copyFailure) clearStatus();
       }
 
       /* ── engine:start ── */
@@ -429,6 +494,7 @@
 
       /* ── Main convert ── */
       function convert() {
+        invalidateCopy();
         var raw = inputEl.value.trim();
         if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
 
@@ -455,6 +521,7 @@
       /* Prevent textarea blur before click fires (eliminates first-click race) */
       document.getElementById('dtc-convert').addEventListener('mousedown', function(e) { e.preventDefault(); });
       document.getElementById('dtc-convert').addEventListener('click', convert);
+      inputEl.addEventListener('input', invalidateCopy);
 
       document.getElementById('dtc-example').addEventListener('click', function () {
         inputEl.value = EXAMPLE;
@@ -463,97 +530,80 @@
       });
 
       document.getElementById('dtc-clear').addEventListener('click', function () {
+        invalidateCopy();
+        inputEl.focus();
         inputEl.value = '';
         outputCodeEl.textContent = '';
         clearStatus();
       });
 
-      document.getElementById('dtc-copy').addEventListener('click', function () {
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          document.getElementById('dtc-clear').click();
+        }
+      });
+
+      copyBtn.addEventListener('click', function () {
         var text = outputCodeEl.textContent;
         if (!text) return;
-        var btn = document.getElementById('dtc-copy');
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = t.copy; }, 1500);
-        });
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        function failed() {
+          if (revision !== copyRevision) return;
+          setStatus(t.copyFailed, true);
+          copyFailure = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== copyRevision) return;
+            if (copyFailure) clearStatus();
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () {
+              if (revision === copyRevision) copyBtn.textContent = t.copy;
+            }, 1500);
+          }, failed);
+        } catch (e) { failed(); }
       });
     })();
   </script>
 </div>
 
 <style>
-  .dtc-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .dtc-panels {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
+  .dtc-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: 0.75rem; }
+  .dtc-control-label { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+  .dtc-panel-header { display: flex; justify-content: space-between; align-items: center; min-height: 44px; gap: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); }
+  .dtc-panel textarea, .dtc-output {
+    width: 100%; min-width: 0; font-family: var(--font-mono); font-size: 0.82rem; padding: 0.75rem;
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary); color: var(--color-text); line-height: 1.5;
   }
-
-  @media (max-width: 640px) {
-    .dtc-panels { grid-template-columns: 1fr; }
-  }
-
-  .dtc-panel { display: flex; flex-direction: column; gap: 0.4rem; }
-
-  .dtc-panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .dtc-panel-actions { display: flex; gap: 0.3rem; }
-
-  .dtc-panel textarea {
-    width: 100%;
-    min-height: 260px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.5;
-    transition: border-color 0.15s;
-  }
-
   .dtc-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
-
-  .dtc-output {
-    min-height: 260px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    padding: 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    line-height: 1.5;
-    margin: 0;
-    overflow: auto;
-    white-space: pre;
-  }
-
-  .btn-sm {
-    padding: 0.2rem 0.5rem;
-    font-size: 0.78rem;
-  }
-
-  .dtc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-
-  .dtc-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .dtc-output { margin: 0; overflow: auto; white-space: pre; }
+  .dtc-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .dtc-empty { display: none; margin: 0; padding: 2rem; align-items: center; justify-content: center; text-align: center; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+  .dtc-output-pane:has(#dtc-output-code:empty) .dtc-output { display: none; }
+  .dtc-output-pane:has(#dtc-output-code:empty) .dtc-empty { display: flex; }
+  .dtc-actions { display: flex; gap: 0.5rem 1rem; flex-wrap: wrap; }
+  .dtc-status { font-size: 0.85rem; line-height: 1.4; height: 2.4rem; min-height: 2.4rem; flex: none; overflow: auto; overflow-wrap: anywhere; }
   .dtc-status.success { color: #057a55; }
   .dtc-status.error { color: #c0392b; }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .dtc-status.success { color: #34d399; }
-    :root:not([data-theme="light"]) .dtc-status.error { color: #f87171; }
+  @media (max-width: 860px) {
+    .dtc-wrap { gap: 0.5rem; }
+    .dtc-actions button, .dtc-panel-header button { min-height: 44px; }
+    .dtc-panel textarea { height: 144px; min-height: 144px; }
+    .dtc-output { height: 22rem; min-height: 160px; resize: none; }
+    .dtc-output-pane:has(#dtc-output-code:empty) { display: none; }
   }
-  [data-theme="dark"] .dtc-status.success { color: #34d399; }
-  [data-theme="dark"] .dtc-status.error { color: #f87171; }
+  @media (max-width: 640px) {
+    .dtc-panel-header { flex-wrap: wrap; }
+  }
+  @media (prefers-color-scheme: dark) {
+    :global(:root:not([data-theme="light"])) .dtc-status.success { color: #34d399; }
+    :global(:root:not([data-theme="light"])) .dtc-status.error { color: #f87171; }
+  }
+  :global([data-theme="dark"]) .dtc-status.success { color: #34d399; }
+  :global([data-theme="dark"]) .dtc-status.error { color: #f87171; }
 </style>

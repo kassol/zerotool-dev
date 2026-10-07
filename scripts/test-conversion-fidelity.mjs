@@ -5,8 +5,8 @@
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Each case types into the real textarea (input event, then the 300 ms debounce timer), clicks
-// the real button, presses Ctrl+Enter or Swap, and reads the other textarea, the status line and
+// Each case types into the real textarea (input event, then the 300 ms debounce timer)
+// and reads the other textarea, the status line and
 // the copy button. When a value cannot be written to the target format without changing it, the
 // page must name the field (JSON Pointer) and the value, clear the earlier output and disable
 // the copy button for that output; the next convertible input enables it again. Values that the
@@ -30,22 +30,22 @@ const TOOLS = {
   'yaml-toml': {
     file: 'src/components/tools/YamlTomlTool.astro', wrap: '.yt-wrap', status: 'yt-status',
     dirs: {
-      y2t: { input: 'yt-yaml', output: 'yt-toml', copy: 'yt-copy-toml', vias: ['input', 'key', 'swap'], swapFrom: 'yt-toml' },
-      t2y: { input: 'yt-toml', output: 'yt-yaml', copy: 'yt-copy-yaml', vias: ['input', 'key'] },
+      y2t: { input: 'yt-yaml', output: 'yt-toml', copy: 'yt-copy-toml', vias: ['input'] },
+      t2y: { input: 'yt-toml', output: 'yt-yaml', copy: 'yt-copy-yaml', vias: ['input'] },
     },
   },
   'toml-json': {
     file: 'src/components/tools/TomlJsonTool.astro', wrap: '.tj-wrap', status: 'tj-status',
     dirs: {
-      t2j: { input: 'tj-toml', output: 'tj-json', copy: 'tj-copy-json', button: 'tj-to-json', vias: ['input', 'button', 'key'] },
-      j2t: { input: 'tj-json', output: 'tj-toml', copy: 'tj-copy-toml', button: 'tj-to-toml', vias: ['input', 'button', 'key'] },
+      t2j: { input: 'tj-toml', output: 'tj-json', copy: 'tj-copy-json', vias: ['input'] },
+      j2t: { input: 'tj-json', output: 'tj-toml', copy: 'tj-copy-toml', vias: ['input'] },
     },
   },
   'yaml-json': {
     file: 'src/components/tools/YamlJsonTool.astro', wrap: '.yj-wrap', status: 'yj-status',
     dirs: {
-      y2j: { input: 'yj-yaml', output: 'yj-json', copy: 'yj-copy-json', button: 'yj-to-json', vias: ['input', 'button', 'key'] },
-      j2y: { input: 'yj-json', output: 'yj-yaml', copy: 'yj-copy-yaml', button: 'yj-to-yaml', vias: ['input', 'button', 'key'] },
+      y2j: { input: 'yj-yaml', output: 'yj-json', copy: 'yj-copy-json', vias: ['input'] },
+      j2y: { input: 'yj-json', output: 'yj-yaml', copy: 'yj-copy-yaml', vias: ['input'] },
     },
   },
 };
@@ -58,9 +58,6 @@ function open(tool, lang = 'en') {
 function convert(page, tool, dir, text, via) {
   const d = TOOLS[tool].dirs[dir];
   if (via === 'input') page.type(d.input, text);
-  else if (via === 'button') { page.el(d.input).value = text; page.el(d.button).click(); page.flush(); }
-  else if (via === 'key') { page.el(d.input).value = text; page.key(d.input, { key: 'Enter', ctrlKey: true }); }
-  else if (via === 'swap') { page.el(d.input).value = ''; page.el(d.swapFrom).value = text; page.el('yt-swap').click(); page.flush(); }
   return { out: page.el(d.output), copy: page.el(d.copy), status: page.el(TOOLS[tool].status) };
 }
 

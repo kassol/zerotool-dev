@@ -1,10 +1,12 @@
 ---
+import Toggletip from '../Toggletip.astro';
 // UlidGeneratorTool — ULID generator and decoder (Crockford Base32, no deps)
 interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 
 const labels = {
   en: {
+    copyFailed: 'Copy failed. Try again.',
     generate: 'Generate',
     batchLabel: 'Batch Count',
     copy: 'Copy',
@@ -24,6 +26,7 @@ const labels = {
     overflow: 'The random part overflowed within one millisecond. Wait a moment and generate again.',
   },
   zh: {
+    copyFailed: '复制失败，请重试。',
     generate: '生成',
     batchLabel: '批量数量',
     copy: '复制',
@@ -43,6 +46,7 @@ const labels = {
     overflow: '同一毫秒内随机部分已溢出，请稍后再生成。',
   },
   ja: {
+    copyFailed: 'コピーに失敗しました。再試行してください。',
     generate: '生成',
     batchLabel: 'バッチ数',
     copy: 'コピー',
@@ -62,6 +66,7 @@ const labels = {
     overflow: '同じミリ秒内でランダム部分が桁あふれしました。少し待ってから生成してください。',
   },
   ko: {
+    copyFailed: '복사하지 못했습니다. 다시 시도하세요.',
     generate: '생성',
     batchLabel: '일괄 수',
     copy: '복사',
@@ -82,12 +87,59 @@ const labels = {
   },
 };
 
+// strings:start
+const STRINGS = {
+  "en": {
+    "empty": "Generate ULIDs or decode one to view its timestamp.",
+    "tips": {
+      "generate": "Generate creates a new list with the selected count. Existing decoder input and its result remain unchanged.",
+      "count": "Generate reads Batch Count when clicked and keeps it between 1 and 100; an empty value uses 1.",
+      "copy": "Copy All copies the complete list with one ULID per line. Each row also has its own Copy button.",
+      "clear": "Clear removes only the generated list and its copy feedback. Ctrl or Command + L also clears the decoder.",
+      "decode": "Paste a 26-character ULID to decode automatically. Lowercase is accepted; the first character must be 0–7. The result shows UTC and epoch milliseconds."
+    }
+  },
+  "zh": {
+    "empty": "生成 ULID 或解码一个 ULID 后，这里显示结果。",
+    "tips": {
+      "generate": "生成按所选数量建立新列表，保留解码器输入和结果。",
+      "count": "点击生成时读取批量数量，范围为 1–100，留空时使用 1。",
+      "copy": "复制全部把完整列表按每行一个 ULID 复制；每一行也有独立复制按钮。",
+      "clear": "清空只移除生成列表及其复制反馈。Ctrl 或 Command + L 还会清除解码器。",
+      "decode": "粘贴 26 个字符的 ULID 自动解码，接受小写，首字符必须为 0–7。结果显示 UTC 时间与 epoch 毫秒。"
+    }
+  },
+  "ja": {
+    "empty": "ULID を生成するか、デコードすると結果を表示します。",
+    "tips": {
+      "generate": "生成は選択した数で新しいリストを作ります。デコーダーの入力と結果は保持します。",
+      "count": "生成を押すとバッチ数を読み、1〜100 に収めます。空欄は 1 として扱います。",
+      "copy": "すべてコピーはリスト全体を 1 行 1 ULID でコピーします。各行のコピーも使えます。",
+      "clear": "クリアは生成リストとコピー表示だけを消します。Ctrl または Command + L はデコーダーも消します。",
+      "decode": "26 文字の ULID を貼ると自動デコードします。小文字も使えますが、先頭は 0〜7 が必要です。結果は UTC と epoch ミリ秒です。"
+    }
+  },
+  "ko": {
+    "empty": "ULID를 생성하거나 하나를 디코딩하면 결과가 표시됩니다.",
+    "tips": {
+      "generate": "생성은 선택한 개수로 새 목록을 만듭니다. 디코더 입력과 결과는 유지됩니다.",
+      "count": "생성을 누를 때 일괄 수를 읽고 1–100 범위로 제한합니다. 빈 값은 1을 사용합니다.",
+      "copy": "모두 복사는 전체 목록을 한 줄에 ULID 하나씩 복사합니다. 각 행의 복사 버튼도 사용할 수 있습니다.",
+      "clear": "지우기는 생성 목록과 복사 피드백만 지웁니다. Ctrl 또는 Command + L은 디코더도 지웁니다.",
+      "decode": "26자 ULID를 붙여넣으면 자동 디코딩됩니다. 소문자도 허용하며 첫 글자는 0–7이어야 합니다. 결과는 UTC와 epoch 밀리초입니다."
+    }
+  }
+};
+// strings:end
+const U = STRINGS[lang];
+
 const L = labels[lang] ?? labels['en'];
 ---
 
 <div
   class="ulid-wrap"
   data-copy={L.copy}
+  data-copy-failed={L.copyFailed}
   data-copied={L.copied}
   data-copy-all={L.copyAll}
   data-copy-all-done={L.copyAllDone}
@@ -100,21 +152,35 @@ const L = labels[lang] ?? labels['en'];
   data-out-of-range={L.outOfRange}
   data-overflow={L.overflow}
 >
-  {/* Controls */}
-  <div class="ulid-controls">
-    <div class="ulid-batch-row">
-      <label class="ulid-label" for="ulid-count">{L.batchLabel}</label>
-      <input id="ulid-count" class="ulid-count-input" type="number" min="1" max="100" value="1" />
-    </div>
+  <div class="ulid-main">
+    <aside class="ulid-rail zt-rail">
+      <div class="ulid-controls">
+        <div class="ulid-batch-row">
+          <div class="ulid-label-row"><label class="ulid-label" for="ulid-count">{L.batchLabel}</label><Toggletip id="ulid-tip-count" lang={lang} about={L.batchLabel}>{U.tips.count}</Toggletip></div>
+          <input id="ulid-count" class="ulid-count-input" type="number" min="1" max="100" value="1" />
+        </div>
     <div class="ulid-btn-row">
-      <button id="ulid-generate" class="btn-primary" type="button">{L.generate}</button>
-      <button id="ulid-copy-all" class="btn-copy" type="button" disabled>{L.copyAll}</button>
-      <button id="ulid-clear" class="btn-ghost" type="button" disabled>{L.clear}</button>
+      <button id="ulid-generate" class="btn-primary" type="button">{L.generate}</button><Toggletip id="ulid-tip-generate" lang={lang} about={L.generate}>{U.tips.generate}</Toggletip>
+      <button id="ulid-copy-all" class="btn-copy" type="button" disabled>{L.copyAll}</button><Toggletip id="ulid-tip-copy" lang={lang} about={L.copyAll}>{U.tips.copy}</Toggletip>
+      <button id="ulid-clear" class="btn-ghost" type="button" disabled>{L.clear}</button><Toggletip id="ulid-tip-clear" lang={lang} about={L.clear}>{U.tips.clear}</Toggletip>
     </div>
-  </div>
-  <p id="ulid-gen-error" class="ulid-decode-error" role="alert" hidden></p>
-
-  {/* Results table */}
+      </div>
+      <div class="ulid-status" aria-live="polite"><p id="ulid-gen-error" class="ulid-decode-error" role="alert" hidden></p></div>
+      <div class="ulid-decoder-section">
+        <div class="ulid-label-row"><label class="ulid-label" for="ulid-decode-input">{L.decoderLabel}</label><Toggletip id="ulid-tip-decode" lang={lang} about={L.decoderLabel}>{U.tips.decode}</Toggletip></div>
+    <input
+      id="ulid-decode-input"
+      class="ulid-decode-input"
+      type="text"
+      placeholder={L.decoderPlaceholder}
+      spellcheck="false"
+      autocomplete="off"
+      maxlength="26"
+    />
+      </div>
+    </aside>
+    <div class="ulid-result-pane">
+      <p class="ulid-empty">{U.empty}</p>
   <div id="ulid-results" class="ulid-results" style="display:none;">
     <table class="ulid-table">
       <thead>
@@ -128,20 +194,8 @@ const L = labels[lang] ?? labels['en'];
       <tbody id="ulid-tbody"></tbody>
     </table>
   </div>
-
-  {/* Decoder */}
-  <div class="ulid-decoder-section">
-    <label class="ulid-label" for="ulid-decode-input">{L.decoderLabel}</label>
-    <input
-      id="ulid-decode-input"
-      class="ulid-decode-input"
-      type="text"
-      placeholder={L.decoderPlaceholder}
-      spellcheck="false"
-      autocomplete="off"
-      maxlength="26"
-    />
     <div id="ulid-decode-result" class="ulid-decode-result" style="display:none;"></div>
+    </div>
   </div>
 
   <script is:inline>
@@ -154,6 +208,7 @@ const L = labels[lang] ?? labels['en'];
       var COPIED_LABEL   = wrap.dataset.copied;
       var COPY_ALL_LABEL = wrap.dataset.copyAll;
       var COPY_ALL_DONE  = wrap.dataset.copyAllDone;
+      var COPY_FAILED    = wrap.dataset.copyFailed;
       var INVALID_LABEL  = wrap.dataset.invalid;
       var LABEL_TS       = wrap.dataset.decodedTs;
       var LABEL_MS       = wrap.dataset.decodedMs;
@@ -290,6 +345,39 @@ const L = labels[lang] ?? labels['en'];
       var generateUlid = createUlidFactory(Date.now, function (a) { crypto.getRandomValues(a); });
 
 
+      var copyStates = new Map();
+      function resetCopy(btn, label) {
+        var previous = copyStates.get(btn);
+        if (previous) clearTimeout(previous.timer);
+        var state = { timer: null };
+        copyStates.set(btn, state);
+        btn.textContent = label;
+        return state;
+      }
+      function copyText(btn, text, label, copied, delay, action) {
+        if (!text || btn.disabled) return;
+        var state = resetCopy(btn, label);
+        function current() { return copyStates.get(btn) === state; }
+        function failed() { if (current()) btn.textContent = COPY_FAILED; }
+        try {
+          if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') { failed(); return; }
+          Promise.resolve(navigator.clipboard.writeText(text)).then(function () {
+            if (!current()) return;
+            btn.textContent = copied;
+            state.timer = setTimeout(function () { if (current()) btn.textContent = label; }, delay);
+            if (action) window.trackTool && window.trackTool('ulid-generator', action);
+          }, failed);
+        } catch (e) { failed(); }
+      }
+      function resetCopies() {
+        copyStates.forEach(function (state, btn) {
+          clearTimeout(state.timer);
+          btn.textContent = btn === copyAllBtn ? COPY_ALL_LABEL : COPY_LABEL;
+        });
+        copyStates.clear();
+        copyAllBtn.textContent = COPY_ALL_LABEL;
+      }
+
       /* ── Render row ── */
       function buildRow(item) {
         var tr = document.createElement('tr');
@@ -317,11 +405,7 @@ const L = labels[lang] ?? labels['en'];
         copyBtn.className = 'ulid-copy-btn btn-ghost';
         copyBtn.textContent = COPY_LABEL;
         copyBtn.addEventListener('click', function () {
-          navigator.clipboard.writeText(item.ulid).then(function () {
-            copyBtn.textContent = COPIED_LABEL;
-            setTimeout(function () { copyBtn.textContent = COPY_LABEL; }, 1200);
-            window.trackTool && window.trackTool('ulid-generator', 'copy_single');
-          });
+          copyText(copyBtn, item.ulid, COPY_LABEL, COPIED_LABEL, 1200, 'copy_single');
         });
         tdAct.appendChild(copyBtn);
         tr.appendChild(tdAct);
@@ -334,6 +418,7 @@ const L = labels[lang] ?? labels['en'];
 
       /* ── Generate ── */
       genBtn.addEventListener('click', function () {
+        resetCopies();
         var count = Math.max(1, Math.min(100, parseInt(countEl.value) || 1));
         var newItems = [];
         genError.hidden = true;
@@ -360,21 +445,19 @@ const L = labels[lang] ?? labels['en'];
       /* ── Copy All ── */
       copyAllBtn.addEventListener('click', function () {
         var text = generated.map(function (item) { return item.ulid; }).join('\n');
-        navigator.clipboard.writeText(text).then(function () {
-          copyAllBtn.textContent = COPY_ALL_DONE;
-          setTimeout(function () { copyAllBtn.textContent = COPY_ALL_LABEL; }, 1500);
-          window.trackTool && window.trackTool('ulid-generator', 'copy_all');
-        });
+        copyText(copyAllBtn, text, COPY_ALL_LABEL, COPY_ALL_DONE, 1500, 'copy_all');
       });
 
       /* ── Clear ── */
-      clearBtn.addEventListener('click', function () {
+      function clearResults() {
+        resetCopies();
         generated = [];
         tbodyEl.innerHTML = '';
         resultsEl.style.display = 'none';
         copyAllBtn.disabled = true;
         clearBtn.disabled = true;
-      });
+      }
+      clearBtn.addEventListener('click', clearResults);
 
       /* ── Decoder ── */
       decodeInput.addEventListener('input', function () {
@@ -410,12 +493,23 @@ const L = labels[lang] ?? labels['en'];
         decodeResult.appendChild(table);
         window.trackTool && window.trackTool('ulid-generator', 'decode');
       });
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;
+        var tool = document.querySelector('.ulid-wrap');
+        if (!tool || !tool.contains(document.activeElement)) return;
+        clearResults();
+        genError.hidden = true;
+        genError.textContent = '';
+        decodeInput.value = '';
+        decodeResult.innerHTML = '';
+        decodeResult.style.display = 'none';
+      });
     })();
   </script>
 </div>
 
 <style>
-  .ulid-wrap { display: flex; flex-direction: column; gap: 1.25rem; }
+  .ulid-wrap { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; min-height: 0; }
 
   /* ── Controls ── */
   .ulid-controls { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
@@ -585,5 +679,34 @@ const L = labels[lang] ?? labels['en'];
   @media (max-width: 600px) {
     .ulid-th-rand, .ulid-wrap :global(.ulid-td-rand) { display: none; }
     .ulid-th-ts, .ulid-wrap :global(.ulid-td-ts) { display: none; }
+  }
+
+  .ulid-main { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 1rem; flex: 1 1 0; min-width: 0; min-height: 0; }
+  .ulid-rail { overflow: auto; gap: 0.65rem; }
+  .ulid-controls { flex-direction: column; align-items: stretch; }
+  .ulid-batch-row { flex-direction: column; align-items: stretch; gap: 0.35rem; }
+  .ulid-label-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; }
+  .ulid-count-input { width: 100%; }
+  .ulid-status { flex: none; min-height: 2.8em; line-height: 1.4; }
+  .ulid-status p { margin: 0; }
+  .ulid-decoder-section { border-top: 0; padding-top: 0; }
+  .ulid-decode-input { max-width: none; min-width: 0; }
+  .ulid-result-pane { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; min-height: 0; overflow: hidden; }
+  .ulid-empty { display: none; flex: 1 1 0; align-items: center; justify-content: center; margin: 0; color: var(--color-text-secondary); text-align: center; }
+  .ulid-result-pane:has(#ulid-results[style*="none"]):has(#ulid-decode-result[style*="none"]) > .ulid-empty { display: flex; }
+  .ulid-results { flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; }
+  .ulid-decode-result { flex: none; min-width: 0; max-width: none; max-height: 10rem; overflow: auto; }
+  .ulid-wrap :global(.ulid-copy-btn) { min-width: 24px; min-height: 24px; }
+  @media (max-width: 860px) {
+    .ulid-main { grid-template-columns: minmax(0, 1fr); flex: none; }
+    .ulid-rail { overflow: visible; }
+    .ulid-result-pane:has(#ulid-results[style*="none"]):has(#ulid-decode-result[style*="none"]) { display: none; }
+    .ulid-results { flex: none; height: 18rem; max-height: 18rem; }
+  }
+  @media (max-width: 640px) {
+    .ulid-rail { gap: 0.5rem; }
+    .ulid-controls { gap: 0.5rem; }
+    .ulid-count-input, .ulid-decode-input, .ulid-btn-row button { min-height: 44px; }
+    .ulid-label-row :global(.zt-tip-btn), .ulid-btn-row :global(.zt-tip-btn) { min-width: 24px; min-height: 24px; }
   }
 </style>

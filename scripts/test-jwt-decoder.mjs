@@ -1,7 +1,7 @@
 // JWT Decoder — Base64URL decoding to UTF-8 and escaped highlighting
 //
-// Read:  src/components/tools/JwtDecoderTool.astro (the engine block between the
-//        `engine:start` / `engine:end` markers)
+// Read:  src/components/tools/JwtDecoderTool.astro (engine and complete inline script),
+//        src/layouts/ToolLayout.astro (actual shared shortcuts), and existing guide fixtures
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -18,11 +18,17 @@
 // Run: node scripts/test-jwt-decoder.mjs
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { createHmac, generateKeyPairSync, sign as cryptoSign, constants } from 'node:crypto';
+import { createHash, createHmac, generateKeyPairSync, sign as cryptoSign, constants } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
+import { compile } from '@mdx-js/mdx';
+import { toolSteps } from '../src/data/llms.mjs';
+import vm from 'node:vm';
+import { parseFragment, defaultTreeAdapter } from 'parse5';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JwtDecoderTool.astro'), 'utf8');
@@ -45,6 +51,9 @@ function eq(name, actual, expected) {
 }
 const seg = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
 const decode = (token) => token.split('.').slice(0, 2).map((p) => E.parseJSON(E.b64urlDecode(p)));
+const protectedEngine = source.slice(startIndex, endIndex + '/* ── engine:end ── */'.length);
+eq('protected engine bytes', Buffer.byteLength(protectedEngine), 1613);
+eq('protected engine SHA256', createHash('sha256').update(protectedEngine).digest('hex'), 'fa9473b8818ef1d5bc86e16b3b88aa972307e93dc01f75fc14f229c7af31aa82');
 
 // example token in the component
 const example = /var EXAMPLE_JWT = '([^']+)'/.exec(source)[1];
@@ -161,6 +170,383 @@ eq('highlight spans kept', E.syntaxHighlight({ a: 1, b: true, c: null, d: 'x' })
     }
   }
   eq('guide has 3 runnable blocks', runs, 3);
+}
+
+// Complete real page IIFE and actual shared shortcuts. Only DOM, timer and clipboard APIs are controlled.
+const pageScript = source.match(/<script is:inline define:vars=\{\{ t: CLIENT_T \}\}>([\s\S]*?)<\/script>/)[1];
+const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcutScript = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
+const pageStrings = vm.runInNewContext('(' + /const STRINGS = (\{[\s\S]*?\n\});/.exec(source)[1] + ')');
+const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0];
+const escapeHTML = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+const tipMarkup = readFileSync(join(root, 'src/components/Toggletip.astro'), 'utf8').replace(/^---[\s\S]*?---\s*/, '').split('<script>')[0];
+function renderTip(id, about, content) {
+  return tipMarkup.replace("class:list={['zt-tip-btn', { 'zt-tip-btn--text': text }]}", 'class="zt-tip-btn"')
+    .replace("class:list={['zt-tip-pop', { 'zt-tip-pop--wide': wide }]}", 'class="zt-tip-pop"')
+    .replace(/\{text && <span[\s\S]*?<\/span>\}/, '')
+    .replace(/=\{id\}/g, '="' + escapeHTML(id) + '"')
+    .replace('aria-label={text ? undefined : name}', 'aria-label="' + escapeHTML(about) + '"')
+    .replace('<slot />', escapeHTML(content));
+}
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+function page(lang = 'en', order = 'shared-after') {
+  const clipboard = [], timers = new Map(), tracks = [], clears = [];
+  let timerId = 0, now = 0, doc;
+  const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
+  function matchesOne(el, selector) {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    if (parts.length > 1) {
+      if (!matchesOne(el, parts.pop())) return false;
+      for (let parent = el.parentNode; parent; parent = parent.parentNode) if (matchesOne(parent, parts.join(' '))) return true;
+      return false;
+    }
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const plain = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+    return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+      && [...plain.matchAll(/\.([\w-]+)/g)].every(m => el.className.split(/\s+/).includes(m[1]))
+      && attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2]);
+  }
+  const matches = (el, selector) => selector.split(',').some(part => matchesOne(el, part));
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attrs: {}, listeners: {}, id: '', className: '', text: '', value: '', disabled: false, hidden: false }); }
+    get parentElement() { return this.parentNode; }
+    get isConnected() { return doc.contains(this); }
+    setAttribute(key, value) { this.attrs[key] = String(value); if (['id', 'class', 'type'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); }
+    getAttribute(key) { return key === 'class' ? this.className || null : this.attrs[key] ?? null; }
+    get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+    set textContent(value) {
+      if (doc?.activeElement !== this && this.contains(doc?.activeElement)) doc.activeElement = doc.body;
+      for (const child of this.children) child.parentNode = null;
+      this.children = []; this.text = String(value);
+      // DOM boundary: the real :has(#jwt-results:empty) rule hides this focused ancestor.
+      // Browsers then return activeElement to body; no application clear logic is mirrored.
+      if (this.id === 'jwt-results' && !this.text && source.includes('.jwt-result-section:has(#jwt-results:empty) .jwt-result-heading { display: none; }') && doc.querySelector('.jwt-result-heading')?.contains(doc.activeElement)) doc.activeElement = doc.body;
+    }
+    set innerHTML(value) {
+      this.textContent = '';
+      const context = defaultTreeAdapter.createElement(this.tagName.toLowerCase(), 'http://www.w3.org/1999/xhtml', []);
+      for (const node of parseFragment(context, String(value)).childNodes) this.appendChild(fromParse5(node));
+    }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    contains(el) { return el === this || descendants(this).includes(el); }
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatch(type, extra = {}) {
+      const event = { type, target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...extra };
+      // Event propagation path is captured before a listener removes the focused result button.
+      const path = []; for (let el = this; el; el = el.parentNode) path.push(el);
+      for (const el of path) { for (const fn of el.listeners[type] || []) fn.call(el, event); if (event.stopped) break; }
+      return event;
+    }
+    click() { if (!this.disabled) this.dispatch('click'); }
+    focus() { doc.activeElement = this; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const attr of node.attrs || []) el.setAttribute(attr.name, attr.value);
+    for (const child of node.childNodes || []) if (child.nodeName !== '#comment') el.appendChild(fromParse5(child));
+    return el;
+  }
+  doc = new Element('#document'); doc.documentElement = new Element('html'); doc.documentElement.lang = lang; doc.appendChild(doc.documentElement);
+  doc.body = new Element('body'); doc.documentElement.appendChild(doc.body); doc.activeElement = doc.body;
+  const widget = new Element('section'); widget.className = 'tool-widget'; doc.body.appendChild(widget);
+  widget.innerHTML = markup.replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{T\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, key) => renderTip(id, pageStrings[lang][about], pageStrings[lang].tips[key]))
+    .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(pageStrings[lang][key]) + '"')
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(pageStrings[lang][key]));
+  doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
+  doc.createElement = tag => new Element(tag);
+  doc.execCommand = () => { throw Error('Unexpected system clipboard fallback'); };
+  const { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...clientStrings } = pageStrings[lang];
+  const sandbox = { t: clientStrings, document: doc, console, TextDecoder, atob, Date: class extends Date { static now() { return 1791158400250; } }, _slug: 'jwt-decoder', ztPersist: { clear(slug) { clears.push(slug); } },
+    trackTool(...args) { tracks.push(args); },
+    setTimeout(fn, ms) { timers.set(++timerId, { fn, ms, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value: String(value), resolve, reject }); return promise; } } },
+  };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  if (order === 'shared-before') vm.runInContext(shortcutScript, context);
+  vm.runInContext(pageScript, context, { filename: 'JwtDecoderTool.astro:complete-inline', timeout: 1000 });
+  if (order === 'shared-after') vm.runInContext(shortcutScript, context);
+  const get = id => { const el = doc.getElementById(id); if (!el) throw Error('Missing real ID ' + id); return el; };
+  return { get, doc, clipboard, timers, tracks, clears, sandbox,
+    input(value) { get('jwt-input').value = value; get('jwt-input').dispatch('input'); },
+    key(key, extra = {}, target = get('jwt-input')) { target.focus(); return target.dispatch('keydown', { key, ctrlKey: true, ...extra }); },
+    advance(ms) { now += ms; for (const [id, job] of [...timers]) if (job.due <= now && timers.has(id)) { timers.delete(id); job.fn(); } },
+    takeTimer(ms) { const entry = [...timers].find(([, job]) => job.ms === ms); if (!entry) throw Error('Missing actual ' + ms + ' ms timer'); now = Math.max(now, entry[1].due); timers.delete(entry[0]); return entry[1].fn; },
+    snapshot() { return JSON.stringify({ value: get('jwt-input').value, status: get('jwt-status').textContent, className: get('jwt-status').className, result: get('jwt-results').textContent }); },
+  };
+}
+const clearState = page => page.get('jwt-input').value === '' && page.get('jwt-results').children.length === 0 && page.get('jwt-status').textContent === '' && page.get('jwt-status').className === 'jwt-status';
+const differentToken = seg({ alg: 'none' }) + '.' + seg({ name: 'José 東京', count: 2 }) + '.';
+const lifecycleStart = passes;
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before', 'shared-after']) {
+  const name = 'page ' + lang + '/' + order + ': ', p = page(lang, order), t = pageStrings[lang];
+  p.get('jwt-example').click();
+  eq(name + 'actual example yields 3 sections', p.get('jwt-results').querySelectorAll('.jwt-section').length, 3);
+  eq(name + 'current success localized', p.get('jwt-status').textContent, t.decodedOk);
+  eq(name + 'raw signature remains visibly unverified', p.get('jwt-results').querySelector('.jwt-sig-note').textContent, '(raw Base64URL — not verified)');
+  for (const key of [{ ctrlKey: true, metaKey: false }, { ctrlKey: false, metaKey: true }]) {
+    p.get('jwt-example').click(); const tracks = p.tracks.length;
+    p.key('Enter', key); eq(name + JSON.stringify(key) + ' Enter exactly one decode', p.tracks.length - tracks, 1);
+    const before = p.snapshot(), beforeTracks = p.tracks.length;
+    p.key('Enter', { ctrlKey: false }); eq(name + 'plain Enter preserves result', p.snapshot(), before);
+    eq(name + 'plain Enter never decodes', p.tracks.length, beforeTracks);
+    p.key('L', key); eq(name + 'modified L clears all', clearState(p), true);
+    p.input(example); p.key('l', key); p.advance(300); eq(name + 'modified L cancels pending decode', clearState(p), true);
+    p.get('jwt-example').click(); const copy = p.get('jwt-results').querySelector('.btn-copy'), beforeClear = p.clears.length;
+    p.key('l', key, copy); eq(name + 'result-focused L clears all', clearState(p), true);
+    eq(name + 'shared persistence clear still runs from result focus', p.clears.length - beforeClear, 1);
+  }
+  p.get('jwt-clear').click(); p.input(example); p.advance(299); eq(name + 'automatic decode waits 300ms', p.get('jwt-results').children.length, 0);
+  p.advance(1); eq(name + 'automatic decode computes real header', p.get('jwt-results').querySelector('.jwt-json').textContent, '{\n  "alg": "HS256",\n  "typ": "JWT"\n}');
+  p.input(differentToken); const tracks = p.tracks.length;
+  p.get('jwt-decode').click(); p.advance(300); eq(name + 'manual decode consumes pending auto decode', p.tracks.length - tracks, 1);
+  eq(name + 'different UTF8 payload decoded', p.get('jwt-results').querySelectorAll('.jwt-json')[1].textContent, '{\n  "name": "José 東京",\n  "count": 2\n}');
+  p.input('not-a-token'); p.advance(300); eq(name + 'invalid typing clears without automatic error', p.get('jwt-status').textContent, '');
+  p.get('jwt-decode').click(); eq(name + 'manual invalid shows actual parts error', p.get('jwt-status').textContent, t.errInvalid + '1.');
+  p.get('jwt-clear').click(); eq(name + 'Clear removes error state', clearState(p), true);
+  p.input(example); p.get('jwt-clear').click(); p.advance(300); eq(name + 'Clear cancels pending auto decode', clearState(p), true);
+  p.get('jwt-example').click(); const untouched = p.snapshot(); p.doc.body.focus(); p.doc.body.dispatch('keydown', { key: 'l', ctrlKey: true });
+  eq(name + 'outside focus preserves tool', p.snapshot(), untouched);
+  p.key('l', { ctrlKey: false }); eq(name + 'unmodified L preserves tool', p.snapshot(), untouched);
+  p.input(''); p.advance(300); eq(name + 'empty input stays empty', clearState(p), true);
+}
+console.log('Page control checks: ' + (passes - lifecycleStart) + ' passed');
+
+// Real copy listeners: deferred clipboard Promises and real captured timeout callbacks.
+const copyStart = passes, unhandled = [];
+const copyFailures = { en: 'Copy failed', zh: '复制失败', ja: 'コピーに失敗', ko: '복사 실패' };
+const rejected = reason => unhandled.push(String(reason));
+process.on('unhandledRejection', rejected);
+try {
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before', 'shared-after']) for (const index of [0, 1]) {
+    const name = 'copy ' + lang + '/' + order + '/' + (index ? 'payload' : 'header') + ': ', t = pageStrings[lang];
+    const fresh = () => { const p = page(lang, order); p.get('jwt-example').click(); return p; };
+    const button = p => p.get('jwt-results').querySelectorAll('.btn-copy')[index];
+    let p = fresh(), btn = button(p), beforeUnhandled = unhandled.length;
+    btn.click();
+    eq(name + 'actual JSON copied in full', p.clipboard.at(-1).value, JSON.stringify(index ? { sub: '1234567890', name: 'John Doe', iat: 1516239022, exp: 1893456000 } : { alg: 'HS256', typ: 'JWT' }, null, 2));
+    p.clipboard.at(-1).reject(Error('controlled current clipboard denial')); await settle();
+    eq(name + 'current rejection is handled', unhandled.length - beforeUnhandled, 0);
+    eq(name + 'current rejection is visible in the clicked button', btn.textContent, copyFailures[lang]);
+    eq(name + 'copy denial keeps conversion success status', p.get('jwt-status').textContent, t.decodedOk);
+    const output = p.get('jwt-results').querySelectorAll('.jwt-json').map(el => el.textContent).join('|');
+    btn.click(); p.clipboard.at(-1).resolve(); await settle();
+    eq(name + 'same output direct retry succeeds', btn.textContent, t.copied);
+    eq(name + 'retry preserves all output', p.get('jwt-results').querySelectorAll('.jwt-json').map(el => el.textContent).join('|'), output);
+    p.advance(1500); eq(name + 'current copy timer restores label', btn.textContent, t.copy);
+
+    for (const action of ['Clear', 'CtrlL', 'CmdL', 'new valid input', 'invalid input', 'new decoded result', 'Example', 'manual decode error']) for (const completion of ['resolve', 'reject']) {
+      p = fresh(); btn = button(p); btn.click(); const job = p.clipboard.at(-1); beforeUnhandled = unhandled.length;
+      if (action === 'Clear') p.get('jwt-clear').click();
+      else if (action === 'CtrlL') p.key('l', {}, btn);
+      else if (action === 'CmdL') p.key('L', { ctrlKey: false, metaKey: true }, btn);
+      else if (action === 'new valid input') p.input(differentToken);
+      else if (action === 'invalid input') p.input('editing-invalid');
+      else if (action === 'new decoded result') { p.input(differentToken); p.get('jwt-decode').click(); }
+      else if (action === 'Example') p.get('jwt-example').click();
+      else { p.input('one.part'); p.get('jwt-decode').click(); }
+      const before = p.snapshot(), label = btn.textContent;
+      completion === 'resolve' ? job.resolve() : job.reject(Error('controlled old clipboard denial'));
+      await settle();
+      eq(name + completion + ' after ' + action + ' preserves page', p.snapshot(), before);
+      eq(name + completion + ' after ' + action + ' does not mutate old button', btn.textContent, label);
+      eq(name + completion + ' after ' + action + ' is handled', unhandled.length - beforeUnhandled, 0);
+    }
+
+    p = fresh(); btn = button(p); btn.click(); const old = p.clipboard.at(-1); btn.click(); const newer = p.clipboard.at(-1);
+    old.resolve(); await settle(); eq(name + 'older same-button success cannot signal newer pending copy', btn.textContent, t.copy);
+    newer.reject(Error('controlled newer denial')); await settle(); eq(name + 'newest same-button rejection remains visible', btn.textContent, copyFailures[lang]);
+    p = fresh(); btn = button(p); btn.click(); const oldReject = p.clipboard.at(-1); btn.click(); p.clipboard.at(-1).resolve(); await settle();
+    beforeUnhandled = unhandled.length; oldReject.reject(Error('controlled older denial')); await settle();
+    eq(name + 'older rejection cannot overwrite newer success', btn.textContent, t.copied);
+    eq(name + 'older rejection is handled after newer success', unhandled.length - beforeUnhandled, 0);
+
+    p = fresh(); btn = button(p); btn.click(); p.clipboard.at(-1).resolve(); await settle(); p.advance(1000);
+    btn.click(); p.clipboard.at(-1).resolve(); await settle(); p.advance(500);
+    eq(name + 'first timer deadline retains second Copied feedback', btn.textContent, t.copied);
+    p.advance(999); eq(name + 'second feedback lasts its own 1500ms', btn.textContent, t.copied);
+    p.advance(1); eq(name + 'second timer restores its own label', btn.textContent, t.copy);
+    for (const action of ['new copy success', 'new copy failure', 'Clear', 'CtrlL', 'new input', 'new result']) {
+      p = fresh(); btn = button(p); btn.click(); p.clipboard.at(-1).resolve(); await settle();
+      const queued = p.takeTimer(1500); // Its real deadline has passed; delay only callback delivery.
+      if (action === 'Clear') p.get('jwt-clear').click();
+      else if (action === 'CtrlL') p.key('l', {}, btn);
+      else if (action === 'new input') p.input(differentToken);
+      else if (action === 'new result') { p.input(differentToken); p.get('jwt-decode').click(); }
+      else { btn.click(); action === 'new copy success' ? p.clipboard.at(-1).resolve() : p.clipboard.at(-1).reject(Error('controlled second failure')); await settle(); }
+      const before = p.snapshot(), label = btn.textContent; queued();
+      eq(name + 'queued old timer after ' + action + ' preserves page', p.snapshot(), before);
+      eq(name + 'queued old timer after ' + action + ' preserves old button', btn.textContent, label);
+    }
+    for (const boundary of ['missing API', 'sync throw']) {
+      p = fresh(); btn = button(p);
+      p.sandbox.navigator.clipboard = boundary === 'missing API' ? undefined : { writeText() { throw Error('controlled synchronous denial'); } };
+      let thrown = ''; try { btn.click(); } catch (error) { thrown = String(error); }
+      eq(name + boundary + ' does not escape event handler', thrown, '');
+      eq(name + boundary + ' is visibly reported', btn.textContent, copyFailures[lang]);
+    }
+    p = fresh(); btn = button(p); btn.click(); p.clipboard.at(-1).reject(Error('controlled first button denial')); await settle();
+    const other = p.get('jwt-results').querySelectorAll('.btn-copy')[1 - index]; other.click(); p.clipboard.at(-1).resolve(); await settle();
+    eq(name + 'other button success keeps this button error', btn.textContent, copyFailures[lang]);
+    eq(name + 'other button independently shows success', other.textContent, t.copied);
+  }
+} finally { process.removeListener('unhandledRejection', rejected); }
+console.log('Page copy checks: ' + (passes - copyStart) + ' passed');
+
+// NumericDate decorations use the real highlighter, rendered DOM and fixed 2026-10-05T00:00:00.250Z clock.
+const timestampStart = passes;
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(lang), name = 'timestamp ' + lang + ': ';
+  p.get('jwt-example').click();
+  eq(name + 'example dates are actually rendered', JSON.stringify(p.get('jwt-results').querySelectorAll('.jwt-time-hint').map(el => el.textContent)), JSON.stringify(['(Thu, 18 Jan 2018 01:30:22 GMT)', '(Tue, 01 Jan 2030 00:00:00 GMT — valid)']));
+  eq(name + 'example marks expiration only', p.get('jwt-results').querySelectorAll('.jwt-valid').length, 1);
+  for (const fixture of [
+    { payload: { iat: -1, nbf: 0.5, exp: 0 }, hints: ['(Wed, 31 Dec 1969 23:59:59 GMT)', '(Thu, 01 Jan 1970 00:00:00 GMT)', '(Thu, 01 Jan 1970 00:00:00 GMT — EXPIRED)'], status: 'EXPIRED' },
+    { payload: { exp: 1791158400.5 }, hints: ['(Mon, 05 Oct 2026 00:00:00 GMT — valid)'], status: 'valid' },
+    { payload: { exp: 1791158400.125 }, hints: ['(Mon, 05 Oct 2026 00:00:00 GMT — EXPIRED)'], status: 'EXPIRED' },
+    { payload: { exp: 1e-7 }, hints: ['(Thu, 01 Jan 1970 00:00:00 GMT — EXPIRED)'], status: 'EXPIRED' },
+    { payload: { exp: '1893456000', iat: null, nbf: false }, hints: [], status: null },
+  ]) {
+    p.input(seg({ alg: 'none' }) + '.' + seg(fixture.payload) + '.'); p.get('jwt-decode').click();
+    eq(name + JSON.stringify(fixture.payload) + ' exact displayed dates', JSON.stringify(p.get('jwt-results').querySelectorAll('.jwt-time-hint').map(el => el.textContent)), JSON.stringify(fixture.hints));
+    const mark = p.get('jwt-results').querySelector('.jwt-valid,.jwt-expired');
+    eq(name + JSON.stringify(fixture.payload) + ' expiry compares unrounded seconds', mark?.textContent ?? null, fixture.status);
+    for (const [key, value] of Object.entries(fixture.payload)) eq(name + key + ' original numeric/string precision is visible', p.get('jwt-results').querySelectorAll('.jwt-json')[1].textContent.includes('"' + key + '": ' + JSON.stringify(value)), true);
+    p.get('jwt-results').querySelectorAll('.btn-copy')[1].click();
+    eq(name + 'copy excludes time decorations and preserves JSON precision', p.clipboard.at(-1).value, JSON.stringify(fixture.payload, null, 2));
+    p.clipboard.at(-1).resolve(); await settle();
+    eq(name + 'signature remains explicitly unverified', p.get('jwt-results').querySelector('.jwt-sig-note').textContent, '(raw Base64URL — not verified)');
+  }
+}
+console.log('Page timestamp checks: ' + (passes - timestampStart) + ' passed');
+
+// New analyze result-heading tips disappear with the empty result; preserve shared CtrlL cleanup.
+const tipFocusStart = passes;
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before', 'shared-after']) for (const tip of ['results', 'time']) {
+  const p = page(lang, order), name = 'tip focus ' + lang + '/' + order + '/' + tip + ': ';
+  p.get('jwt-example').click();
+  const button = p.doc.querySelector('[data-zt-tip="jwt-tip-' + tip + '"]');
+  button.focus(); p.get('jwt-results').innerHTML = '';
+  eq(name + 'positive control hiding the actual focused heading loses focus', p.doc.activeElement === p.doc.body, true);
+  p.get('jwt-example').click(); const clearsBefore = p.clears.length;
+  p.key('l', {}, button);
+  eq(name + 'actual CtrlL empties editor/results/status', clearState(p), true);
+  eq(name + 'actual CtrlL focuses input before hiding header', p.doc.activeElement === p.get('jwt-input'), true);
+  eq(name + 'actual shared handler still clears persistence once', p.clears.length - clearsBefore, 1);
+}
+console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' passed');
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const check = (name, value) => eq(name, !!value, true);
+  const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  const tipKeys = ['input', 'decode', 'example', 'clear', 'results', 'time'];
+  eq('six real control/result tips', JSON.stringify([...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]).sort()), JSON.stringify(tipKeys.map(key => 'jwt-tip-' + key).sort()));
+  check('direct flex root with zero minimum sizes', /^\s*<div class="jwt-wrap">/.test(markup) && /\.jwt-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0/.test(css));
+  check('manual actions precede reserved status and actual editor', markup.indexOf('jwt-actions') < markup.indexOf('id="jwt-status"') && markup.indexOf('id="jwt-status"') < markup.indexOf('jwt-input-section'));
+  eq('Decode, Example and Clear remain the three explicit actions', JSON.stringify([...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m => m[1]).sort()), JSON.stringify(['jwt-decode', 'jwt-example', 'jwt-clear'].sort()));
+  check('Decode remains the primary action for invalid input diagnosis', /id="jwt-decode" class="btn-primary"/.test(markup));
+  check('input uses the shared analyze empty space', /class="jwt-input-section zt-empty-drop"/.test(markup));
+  check('empty desktop input actually fills remaining height', /\.jwt-wrap:has\(#jwt-results:empty\) \.jwt-input-section\s*\{ flex: 1 1 0;/.test(css) && /\.jwt-wrap:has\(#jwt-results:empty\) #jwt-input\s*\{ flex: 1 1 0; min-height: 220px;/.test(css));
+  check('populated desktop input is bounded and nonresizable', /\.jwt-input-section textarea\s*\{[^}]*height: 140px;[^}]*overflow: auto;[^}]*resize: none;/.test(css));
+  check('status reserves two lines and scrolls internally', /\.jwt-status\s*\{[^}]*height: 2\.4rem;[^}]*overflow: auto;[^}]*overflow-wrap: anywhere;/.test(css));
+  check('visible signature consequence stays outside result scroller', /<p class="jwt-verify-note">\{T.verifyNotice\}<\/p>/.test(markup) && markup.indexOf('jwt-verify-note') < markup.indexOf('jwt-result-section'));
+  check('one full-width result region can receive keyboard focus', /id="jwt-results" class="jwt-results" tabindex="0" role="region" aria-labelledby="jwt-result-label"/.test(markup));
+  check('result flex space cannot expand with result text', /\.jwt-result-section\s*\{[^}]*flex: 1 1 0;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css) && /\.jwt-results\s*\{[^}]*flex: 1 1 0;[^}]*min-width: 0;[^}]*min-height: 0;[^}]*overflow: auto;/.test(css));
+  check('empty result consumes content height only and hides unused heading', /\.jwt-result-section:has\(#jwt-results:empty\)\s*\{ flex: none;/.test(css) && /\.jwt-result-section:has\(#jwt-results:empty\) \.jwt-result-heading\s*\{ display: none;/.test(css));
+  check('populated result hides the localized empty hint', /\.jwt-result-section:has\(#jwt-results:not\(:empty\)\) \.jwt-empty\s*\{ display: none;/.test(css));
+  check('860px empty result hidden, input180 and result384 are fixed', /@media \(max-width: 860px\)[\s\S]*?#jwt-input\s*\{[^}]*height: 180px;[^}]*\}[\s\S]*?\.jwt-result-section\s*\{[^}]*height: 24rem;[^}]*\}[\s\S]*?\.jwt-result-section:has\(#jwt-results:empty\)\s*\{ display: none;/.test(css));
+  check('640px result keeps fixed height352 instead of only a max-height', /@media \(max-width: 640px\)[\s\S]*?\.jwt-result-section\s*\{ height: 22rem;/.test(css));
+  check('mobile action buttons override shared160px flex basis', /\.jwt-wrap \.jwt-actions \.jwt-control > button\s*\{ flex: 0 1 auto;/.test(css));
+  check('real buttons and output copy buttons keep44px minimum', /\.jwt-control button\s*\{ min-height: 44px;/.test(css) && /\.jwt-wrap :global\(\.btn-copy\)\s*\{ min-height: 44px;/.test(css));
+  check('long JSON lines scroll and preserve formatting', /\.jwt-wrap :global\(\.jwt-json\)\s*\{[^}]*overflow-x: auto;[^}]*white-space: pre;/.test(css));
+  check('all dynamic section rules are unscoped', ['jwt-section','jwt-section-header','jwt-section-dot','jwt-sig-note','jwt-json','jwt-sig','jwt-time-hint','jwt-expired','jwt-valid'].every(key => css.includes('.jwt-wrap :global(.' + key + ')')));
+  check('no nested interactive label', [...markup.matchAll(/<label\b[\s\S]*?<\/label>/g)].every(m => !/<button|<Toggletip/.test(m[0])));
+  check('tips and static-only labels excluded before client serialization', /const \{ tips, resultLabel, timeLabel, resultEmpty, verifyNotice, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  check('no runtime language replacement remains', !/data-i18n|document\.documentElement\.lang/.test(source));
+  check('registered analyze', /'jwt-decoder':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('sensitive persistence remains disabled', /'jwt-decoder':\s*'disabled'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
+  check('no new network or persistence path', !/fetch\(|XMLHttpRequest|localStorage|sessionStorage|ztPersist\.(?:save|load)/.test(pageScript));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  eq('static IDs are unique', new Set(ids).size, ids.length);
+  const retained = {
+    "en": {
+        "frontmatter": "81a166b05a24a4043e95465fe50e5cdc19233c4f7b18b55041dffd41218e7f72",
+        "bodyWithoutUsage": "4dfdba6ec5c190bad96bbc259810c313997ee334f25f3c7f0e401184a9fe4c38"
+    },
+    "zh": {
+        "frontmatter": "f60998bd69cf487266b6c7a9b5b922d095ad30cc05120ecee4d74ad474b69f85",
+        "bodyWithoutUsage": "0595cae3db58032f22edc2f3f246e52bbc6d9a97380596a5970bd139380ebea5"
+    },
+    "ja": {
+        "frontmatter": "98e9c55c0b6141e3696a7da941764ae28b114418a7ed20926d0a393103decf0a",
+        "bodyWithoutUsage": "39a61ec9ad495fe89b7317d0384896dac9a872da66ac430f7e225a71d202699c"
+    },
+    "ko": {
+        "frontmatter": "7ad2ab9ee4848f6809eba977bcd1e625d5af277e6137c5a26c069afd0ed97b66",
+        "bodyWithoutUsage": "e4af6307f057d5ee77b53071e6c68126bbd0baeee4b4b3fba7763ceb2209d19e"
+    }
+};
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const entry = pageStrings[lang], { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...client } = entry;
+    eq(lang + ': localized keys match', JSON.stringify(Object.keys(entry).sort()), JSON.stringify(Object.keys(pageStrings.en).sort()));
+    eq(lang + ': six tip keys match', JSON.stringify(Object.keys(tips).sort()), JSON.stringify(tipKeys.slice().sort()));
+    for (const key of tipKeys) check(lang + '/' + key + ': one nonempty explanatory text', typeof tips[key] === 'string' && tips[key].trim().length > 0 && !/[\n<>]/.test(tips[key]));
+    check(lang + ': client serialized data excludes every tip and static note', !('tips' in client) && [...Object.values(tips), resultLabel, timeLabel, resultEmpty, verifyNotice].every(value => !JSON.stringify(client).includes(JSON.stringify(value))));
+    const mdx = readFileSync(join(root, 'src/content/tools/jwt-decoder', lang + '.mdx'), 'utf8');
+    const split = mdx.indexOf('\n---\n', 4), metadata = mdx.slice(0, split), body = mdx.slice(split + 5);
+    const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
+    check(lang + ': six plain steps within8/280/1200 limits', steps.length === 6 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
+    for (const key of ['decode','loadExample','clear','copy']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
+    eq(lang + ': FAQ and SEO bytes preserved', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
+    let protectedBody = body;
+    if (lang === 'en') {
+      check('English Limits specifies numeric seconds and preserves source precision', body.includes('with numeric values in seconds get a readable UTC date. The original numeric precision is retained; the date note displays whole seconds.'));
+      protectedBody = body.replace('with numeric values in seconds get a readable UTC date. The original numeric precision is retained; the date note displays whole seconds.', 'with whole-second integer values get a readable date.');
+    }
+    eq(lang + ': non-Usage body unchanged except numeric-date Limits correction', sha(protectedBody), retained[lang].bodyWithoutUsage);
+    check(lang + ': old Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    eq(lang + ': llms receives six full steps', JSON.stringify(toolSteps(parsed)), JSON.stringify(steps));
+    await compile(body); check(lang + ': MDX body compiles', true);
+    const p = page(lang);
+    for (const [id,key] of [['jwt-decode','decode'],['jwt-example','loadExample'],['jwt-clear','clear']]) eq(lang + ': static localized ' + id, p.get(id).textContent, entry[key]);
+    eq(lang + ': static localized input placeholder', p.get('jwt-input').getAttribute('placeholder'), entry.pastePlaceholder);
+    eq(lang + ': visible signature warning exists outside results', p.doc.querySelector('.jwt-verify-note').textContent, entry.verifyNotice);
+    eq(lang + ': localized empty hint', p.doc.querySelector('.jwt-empty').textContent, entry.resultEmpty);
+    const payload = { nested: { exp: 0 }, note: 'A'.repeat(100000), rows: Array.from({ length: 200 }, (_, i) => 'row ' + i) };
+    p.input(seg({ alg: 'none' }) + '.' + seg(payload) + '.'); p.advance(300);
+    eq(lang + ': long real token renders all3 sections', p.get('jwt-results').children.length, 3);
+    eq(lang + ': dynamic JSON regions are keyboard-focusable', JSON.stringify(p.get('jwt-results').querySelectorAll('.jwt-json').map(pre => pre.tabIndex)), '[0,0]');
+    eq(lang + ': nested numeric date tip matches actual formatting', p.get('jwt-results').querySelector('.jwt-time-hint').textContent, '(Thu, 01 Jan 1970 00:00:00 GMT — EXPIRED)');
+    p.get('jwt-results').querySelectorAll('.btn-copy')[1].click();
+    eq(lang + ': long payload copy preserves all original bytes', p.clipboard.at(-1).value, JSON.stringify(payload, null, 2));
+    p.clipboard.at(-1).resolve(); await settle();
+    p.key('l', {}, p.get('jwt-results').querySelectorAll('.jwt-json')[1]);
+    eq(lang + ': new keyboard-scroll region keeps CtrlL clear semantics', clearState(p), true);
+    eq(lang + ': cleared result focus returns to input', p.doc.activeElement, p.get('jwt-input'));
+  }
+  const require = createRequire(import.meta.url);
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'JwtDecoderTool.astro' });
+  eq('Astro compilation has no errors', compiled.diagnostics.filter(d => d.severity === 1).length, 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('compiled client receives CLIENT_T only', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
+  const compiledCSS = compiled.css.join('\n');
+  const statusDark = [...compiledCSS.matchAll(/([^{}]+)\{/g)].map(m => m[1].trim()).filter(s => /\[data-theme=(?:"dark"|dark)\]/.test(s) && s.includes('.jwt-status'));
+  eq('manual dark theme includes both status variants', statusDark.length, 2);
+  for (const selector of statusDark) check('manual dark status ancestor matches html: ' + selector, !/(?:data-astro-cid|\.astro-)/.test(selector.slice(0, selector.indexOf(' .jwt-status'))));
+
+  check('compiled dynamic selectors resolve global syntax', !compiledCSS.includes(':global(') && /\.jwt-wrap[^{}]* \.jwt-json\s*\{/.test(compiledCSS));
+  check('compiled empty-state selector keeps real empty-result target', /\.jwt-wrap[^{}]*:has\(#jwt-results[^)]*:empty\)[^{}]* \.jwt-input-section/.test(compiledCSS));
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));

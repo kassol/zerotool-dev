@@ -1,69 +1,127 @@
 ---
 // DiffCheckerTool — line-level text diff widget with unified + side-by-side views
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+const STRINGS = {
+  en: {
+    compare: 'Compare', swap: 'Swap', clear: 'Clear', unified: 'Unified', side_by_side: 'Side-by-Side', identical: 'Files are identical.', swapped: 'Swapped.', empty: 'Please enter text in at least one panel.', no_diff: 'No differences found.', original: 'Original', modified: 'Modified', originalPh: 'Paste original text here...', modifiedPh: 'Paste modified text here...',
+    cancel: 'Cancel', previous: 'Previous', next: 'Next', running: 'Comparing…', cancelled: 'Comparison cancelled.', unavailable: 'Comparison needs Web Workers. This browser could not start one.', failed: 'Comparison failed. Try again.',
+    view: "View", result: "Result", hideInputs: "Hide inputs", showInputs: "Show inputs", emptyResult: "Compare two texts to see their line differences here.",
+    tips: {
+      compare: "Click Compare or press Ctrl+Enter (⌘+Enter on Mac) to compare whole lines. Typing does not compare automatically. A Web Worker runs the comparison; Cancel or editing either input stops it and clears the old result.",
+      swap: "Swap exchanges the two inputs and clears the result. Click Compare again to reverse the comparison direction.",
+      clear: "Clear empties both inputs, the result and the status, and cancels pending work. Ctrl+L (⌘+L on Mac) does the same while focus is inside this tool.",
+      view: "Unified shows both line numbers in one column. Side-by-Side pairs removed and added lines in order within each changed block; extra lines have an empty partner. Switching views returns to the first page without comparing again.",
+      original: "Enter the original text. CR LF, LF and lone CR all end a line. Spaces, letter case and a final newline count as differences; there are no ignore options.",
+      modified: "Enter the changed text. One input may be empty; empty text participates as one empty line. Editing either input cancels the comparison and clears the result.",
+      results: "Red − lines were removed; green + lines were added. Counts cover the whole text. Previous and Next show 100 rows per page. After comparing, Hide inputs frees result space without discarding text; Show inputs brings it back.",
+    },
+  },
+  zh: {
+    compare: '比较', swap: '互换', clear: '清除', unified: '合并视图', side_by_side: '双栏视图', identical: '两侧内容完全相同。', swapped: '已互换。', empty: '请至少在一侧输入内容。', no_diff: '未发现差异。', original: '原始', modified: '修改后', originalPh: '粘贴原始文本…', modifiedPh: '粘贴修改后文本…',
+    cancel: '取消', previous: '上一页', next: '下一页', running: '正在比较…', cancelled: '已取消比较。', unavailable: '比较需要 Web Worker，当前浏览器无法启动。', failed: '比较失败，请重试。',
+    view: "视图", result: "结果", hideInputs: "收起输入", showInputs: "展开输入", emptyResult: "比较两段文本后，这里显示逐行差异。",
+    tips: {
+      compare: "点击「比较」或按 Ctrl+Enter（Mac 为 ⌘+Enter）进行整行比较。输入时不会自动比较。比较在 Web Worker 中运行；点击「取消」或编辑任一输入框，会停止比较并清除旧结果。",
+      swap: "「互换」交换两个输入框的内容并清除结果。再次点击「比较」，即可反转比较方向。",
+      clear: "「清除」清空两个输入框、结果和状态，并取消未完成的任务。焦点在本工具内时，Ctrl+L（Mac 为 ⌘+L）执行相同操作。",
+      view: "「合并视图」在一列中显示两侧行号。「双栏视图」将每段改动中的删除行与新增行按顺序配对，多出的行配空白。切换视图会回到第一页，无需重新比较。",
+      original: "输入原始文本。CR LF、LF 和单独的 CR 都算换行。空格、大小写和末尾换行的差异均会计入，没有忽略选项。",
+      modified: "输入修改后的文本。允许一侧为空，空文本按一条空行参与比较。编辑任一输入框会停止比较并清除结果。",
+      results: "红色 − 行表示删除，绿色 + 行表示新增。计数针对全文。「上一页」和「下一页」每页显示 100 行。比较后可点击「收起输入」腾出结果空间，文本仍保留；「展开输入」可恢复显示。",
+    },
+  },
+  ja: {
+    compare: '比較', swap: '入れ替え', clear: 'クリア', unified: '統合表示', side_by_side: '並列表示', identical: '内容は同一です。', swapped: '入れ替えました。', empty: 'いずれかのパネルにテキストを入力してください。', no_diff: '差分はありません。', original: '元テキスト', modified: '変更後', originalPh: '元のテキストを貼り付け…', modifiedPh: '変更後のテキストを貼り付け…',
+    cancel: 'キャンセル', previous: '前へ', next: '次へ', running: '比較中…', cancelled: '比較を中止しました。', unavailable: '比較には Web Worker が必要です。このブラウザーでは起動できません。', failed: '比較に失敗しました。再試行してください。',
+    view: "表示", result: "結果", hideInputs: "入力を隠す", showInputs: "入力を表示", emptyResult: "2 つのテキストを比較すると、行ごとの差分がここに表示されます。",
+    tips: {
+      compare: "「比較」または Ctrl+Enter（Mac は ⌘+Enter）で行単位の比較を実行します。入力だけでは比較しません。Web Worker で処理し、「キャンセル」や入力の編集で停止して以前の結果を消します。",
+      swap: "「入れ替え」は 2 つの入力を交換して結果を消します。もう一度「比較」を押すと、逆方向の差分を表示します。",
+      clear: "「クリア」は両方の入力、結果、ステータスを空にして処理を中止します。このツール内にフォーカスがあるときは Ctrl+L（Mac は ⌘+L）も同じ操作です。",
+      view: "「統合表示」は両方の行番号を 1 列で表示します。「並列表示」は連続した変更の削除行と追加行を順に組み合わせ、余る側は空欄です。表示を切り替えると再計算せず最初のページに戻ります。",
+      original: "元のテキストを入力します。CR LF、LF、単独の CR はすべて改行です。空白、大文字小文字、末尾の改行も差分として数えます。無視する設定はありません。",
+      modified: "変更後のテキストを入力します。片方は空でも比較できます。空のテキストは空行 1 行として扱います。どちらかを編集すると比較を中止して結果を消します。",
+      results: "赤い − は削除行、緑の + は追加行です。件数は全文が対象です。「前へ」「次へ」で 100 行ずつ表示します。比較後に「入力を隠す」で結果の領域を広げてもテキストは残り、「入力を表示」で戻せます。",
+    },
+  },
+  ko: {
+    compare: '비교', swap: '교체', clear: '지우기', unified: '통합 보기', side_by_side: '나란히 보기', identical: '내용이 동일합니다.', swapped: '교체되었습니다.', empty: '최소 한 쪽에 텍스트를 입력해 주세요.', no_diff: '차이점이 없습니다.', original: '원본', modified: '수정본', originalPh: '원본 텍스트를 붙여넣기…', modifiedPh: '수정된 텍스트를 붙여넣기…',
+    cancel: '취소', previous: '이전', next: '다음', running: '비교 중…', cancelled: '비교를 취소했습니다.', unavailable: '비교에 Web Worker가 필요합니다. 이 브라우저에서 시작할 수 없습니다.', failed: '비교에 실패했습니다. 다시 시도해 주세요.',
+    view: "보기", result: "결과", hideInputs: "입력 접기", showInputs: "입력 펼치기", emptyResult: "두 텍스트를 비교하면 여기에 줄 단위 차이가 표시됩니다.",
+    tips: {
+      compare: "「비교」를 누르거나 Ctrl+Enter(Mac은 ⌘+Enter)를 눌러 줄 단위로 비교합니다. 입력만으로는 비교하지 않습니다. Web Worker에서 처리하며 「취소」를 누르거나 입력을 편집하면 중지하고 이전 결과를 지웁니다.",
+      swap: "「교체」는 두 입력을 맞바꾸고 결과를 지웁니다. 「비교」를 다시 누르면 반대 방향으로 비교합니다.",
+      clear: "「지우기」는 두 입력란, 결과, 상태를 비우고 진행 중인 작업을 취소합니다. 도구 안에 포커스가 있으면 Ctrl+L(Mac은 ⌘+L)도 같은 작업을 합니다.",
+      view: "「통합 보기」는 양쪽 줄 번호를 한 열에 표시합니다. 「나란히 보기」는 연속된 변경에서 삭제와 추가 줄을 순서대로 짝짓고 남는 쪽은 빈칸으로 둡니다. 보기를 바꾸면 다시 계산하지 않고 첫 페이지로 돌아갑니다.",
+      original: "원본 텍스트를 입력하세요. CR LF, LF, 단독 CR은 모두 줄바꿈입니다. 공백, 대소문자, 마지막 줄바꿈 차이도 포함하며 무시 옵션은 없습니다.",
+      modified: "수정된 텍스트를 입력하세요. 한쪽을 비워 둘 수 있으며, 빈 텍스트는 빈 줄 하나로 비교합니다. 어느 입력란이든 편집하면 비교를 중지하고 결과를 지웁니다.",
+      results: "빨간 − 줄은 삭제, 초록 + 줄은 추가입니다. 개수는 전체 텍스트 기준입니다. 「이전」「다음」으로 한 페이지에 100줄씩 봅니다. 비교 후 「입력 접기」로 결과 공간을 넓혀도 텍스트는 유지되며 「입력 펼치기」로 다시 표시합니다.",
+    },
+  },
+} as const;
+const T = STRINGS[lang];
+const { tips: TIPS, ...CLIENT_T } = T;
 ---
-<div>
-  <div class="diff-wrap">
-    <div class="diff-inputs">
-      <div class="diff-panel">
-        <label for="diff-original" data-i18n="original">Original</label>
-        <textarea id="diff-original" data-i18n-ph="originalPh" placeholder="Paste original text here..." spellcheck="false"></textarea>
-      </div>
-      <div class="diff-panel">
-        <label for="diff-modified" data-i18n="modified">Modified</label>
-        <textarea id="diff-modified" data-i18n-ph="modifiedPh" placeholder="Paste modified text here..." spellcheck="false"></textarea>
-      </div>
-    </div>
 
-    <div class="diff-actions">
-      <button id="diff-compare" class="btn-primary" data-i18n="compare">Compare</button>
-      <button id="diff-cancel" class="btn-secondary" data-i18n="cancel" hidden>Cancel</button>
-      <button id="diff-swap" class="btn-secondary" data-i18n="swap">Swap</button>
-      <button id="diff-clear" class="btn-ghost" data-i18n="clear">Clear</button>
-      <div class="diff-view-toggle" role="group" aria-label="View mode">
-        <button id="diff-view-unified" class="diff-view-btn active" data-i18n="unified">Unified</button>
-        <button id="diff-view-side" class="diff-view-btn" data-i18n="side_by_side">Side-by-Side</button>
+<div class="diff-wrap">
+  <div class="diff-actions">
+    <span class="diff-control">
+      <button id="diff-compare" class="btn-primary" type="button">{T.compare}</button>
+      <button id="diff-cancel" class="btn-secondary" type="button" hidden>{T.cancel}</button>
+      <Toggletip id="diff-tip-compare" lang={lang} about={T.compare}>{TIPS.compare}</Toggletip>
+    </span>
+    <span class="diff-control">
+      <button id="diff-swap" class="btn-secondary" type="button">{T.swap}</button>
+      <Toggletip id="diff-tip-swap" lang={lang} about={T.swap}>{TIPS.swap}</Toggletip>
+    </span>
+    <span class="diff-control">
+      <button id="diff-clear" class="btn-ghost" type="button">{T.clear}</button>
+      <Toggletip id="diff-tip-clear" lang={lang} about={T.clear}>{TIPS.clear}</Toggletip>
+    </span>
+    <div class="diff-control diff-view-control">
+      <div class="diff-view-toggle zt-segmented" role="group" aria-label={T.view}>
+        <button id="diff-view-unified" class="diff-view-btn active" type="button" aria-pressed="true">{T.unified}</button>
+        <button id="diff-view-side" class="diff-view-btn" type="button" aria-pressed="false">{T.side_by_side}</button>
       </div>
-    </div>
-
-    <div id="diff-status" class="diff-status" aria-live="polite"></div>
-
-    <div id="diff-output" class="diff-output" data-view="unified"></div>
-    <div id="diff-pages" class="diff-actions" hidden>
-      <button id="diff-prev" class="btn-secondary" data-i18n="previous">Previous</button>
-      <span id="diff-page" aria-live="polite"></span>
-      <button id="diff-next" class="btn-secondary" data-i18n="next">Next</button>
+      <Toggletip id="diff-tip-view" lang={lang} about={T.view}>{TIPS.view}</Toggletip>
     </div>
   </div>
+  <div id="diff-status" class="diff-status" role="status" aria-live="polite"></div>
+  <div id="diff-inputs" class="diff-inputs zt-compare-inputs">
+    <div class="diff-panel">
+      <div class="diff-heading">
+        <label for="diff-original">{T.original}</label>
+        <Toggletip id="diff-tip-original" lang={lang} about={T.original}>{TIPS.original}</Toggletip>
+      </div>
+      <textarea id="diff-original" placeholder={T.originalPh} spellcheck="false"></textarea>
+    </div>
+    <div class="diff-panel">
+      <div class="diff-heading">
+        <label for="diff-modified">{T.modified}</label>
+        <Toggletip id="diff-tip-modified" lang={lang} about={T.modified}>{TIPS.modified}</Toggletip>
+      </div>
+      <textarea id="diff-modified" placeholder={T.modifiedPh} spellcheck="false"></textarea>
+    </div>
+  </div>
+  <section id="diff-results" class="diff-results zt-compare-results" data-empty="true" aria-labelledby="diff-result-label">
+    <div class="diff-heading">
+      <span id="diff-result-label">{T.result}</span>
+      <Toggletip id="diff-tip-results" lang={lang} about={T.result}>{TIPS.results}</Toggletip>
+      <button id="diff-toggle-inputs" class="btn-ghost" type="button" aria-controls="diff-inputs" aria-expanded="true" disabled>{T.hideInputs}</button>
+    </div>
+    <div id="diff-output" class="diff-output" data-view="unified" data-placeholder={T.emptyResult} tabindex="0" role="region" aria-label={T.result}></div>
+    <div id="diff-pages" class="diff-actions" hidden>
+      <button id="diff-prev" class="btn-secondary" type="button">{T.previous}</button>
+      <span id="diff-page" aria-live="polite"></span>
+      <button id="diff-next" class="btn-secondary" type="button">{T.next}</button>
+    </div>
+  </section>
 
-  <script is:inline>
+  <script is:inline define:vars={{ t: CLIENT_T }}>
     (function () {
-      var STRINGS = {
-        en: { compare: 'Compare', swap: 'Swap', clear: 'Clear', unified: 'Unified', side_by_side: 'Side-by-Side', identical: 'Files are identical.', swapped: 'Swapped.', empty: 'Please enter text in at least one panel.', no_diff: 'No differences found.', original: 'Original', modified: 'Modified', originalPh: 'Paste original text here...', modifiedPh: 'Paste modified text here...' },
-        zh: { compare: '比较', swap: '互换', clear: '清除', unified: '合并视图', side_by_side: '双栏视图', identical: '两侧内容完全相同。', swapped: '已互换。', empty: '请至少在一侧输入内容。', no_diff: '未发现差异。', original: '原始', modified: '修改后', originalPh: '粘贴原始文本…', modifiedPh: '粘贴修改后文本…' },
-        ja: { compare: '比較', swap: '入れ替え', clear: 'クリア', unified: '統合表示', side_by_side: '並列表示', identical: '内容は同一です。', swapped: '入れ替えました。', empty: 'いずれかのパネルにテキストを入力してください。', no_diff: '差分はありません。', original: '元テキスト', modified: '変更後', originalPh: '元のテキストを貼り付け…', modifiedPh: '変更後のテキストを貼り付け…' },
-        ko: { compare: '비교', swap: '교체', clear: '지우기', unified: '통합 보기', side_by_side: '나란히 보기', identical: '내용이 동일합니다.', swapped: '교체되었습니다.', empty: '최소 한 쪽에 텍스트를 입력해 주세요.', no_diff: '차이점이 없습니다.', original: '원본', modified: '수정본', originalPh: '원본 텍스트를 붙여넣기…', modifiedPh: '수정된 텍스트를 붙여넣기…' }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var RUN_STRINGS = {
-        en: { cancel: 'Cancel', previous: 'Previous', next: 'Next', running: 'Comparing…', cancelled: 'Comparison cancelled.', unavailable: 'Comparison needs Web Workers. This browser could not start one.', failed: 'Comparison failed. Try again.' },
-        zh: { cancel: '取消', previous: '上一页', next: '下一页', running: '正在比较…', cancelled: '已取消比较。', unavailable: '比较需要 Web Worker，当前浏览器无法启动。', failed: '比较失败，请重试。' },
-        ja: { cancel: 'キャンセル', previous: '前へ', next: '次へ', running: '比較中…', cancelled: '比較を中止しました。', unavailable: '比較には Web Worker が必要です。このブラウザーでは起動できません。', failed: '比較に失敗しました。再試行してください。' },
-        ko: { cancel: '취소', previous: '이전', next: '다음', running: '비교 중…', cancelled: '비교를 취소했습니다.', unavailable: '비교에 Web Worker가 필요합니다. 이 브라우저에서 시작할 수 없습니다.', failed: '비교에 실패했습니다. 다시 시도해 주세요.' }
-      };
-      Object.keys(STRINGS).forEach(function (lang) { Object.assign(STRINGS[lang], RUN_STRINGS[lang]); });
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      // Apply i18n to static buttons
-      document.querySelectorAll('[data-i18n]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n');
-        if (t[key]) el.textContent = t[key];
-      });
-      document.querySelectorAll('[data-i18n-ph]').forEach(function (el) {
-        var key = el.getAttribute('data-i18n-ph');
-        if (t[key]) el.placeholder = t[key];
-      });
-
       /* ── engine:start ── */
       // CR LF, lone CR and LF all end a line. A textarea already returns LF only (HTML
       // "normalize newlines"), so this matters only for text that did not come from one.
@@ -198,6 +256,10 @@
         document.getElementById('diff-pages').hidden = true;
         document.getElementById('diff-page').textContent = '';
         document.getElementById('diff-output').innerHTML = '';
+        document.getElementById('diff-results').setAttribute('data-empty', 'true');
+        document.getElementById('diff-inputs').hidden = false;
+        var toggle = document.getElementById('diff-toggle-inputs');
+        toggle.disabled = true; toggle.textContent = t.hideInputs; toggle.setAttribute('aria-expanded', 'true');
       }
 
       function requestPage() {
@@ -264,6 +326,7 @@
         var outputEl = document.getElementById('diff-output');
         if (!lastDiff) { outputEl.innerHTML = ''; return; }
         outputEl.setAttribute('data-view', currentView);
+        document.getElementById('diff-results').setAttribute('data-empty', 'false');
         if (currentView === 'unified') {
           outputEl.innerHTML = renderUnified(lastDiff);
         } else {
@@ -298,6 +361,7 @@
           if (active !== generation || data.id !== active || data.request !== request) return;
           ready = true;
           if (data.view !== currentView) { page = 0; requestPage(); return; }
+          var firstResult = !lastDiff;
           lastDiff = data.rows; page = data.page; total = data.total;
           lastAddCount = data.adds; lastDelCount = data.dels;
           renderOutput();
@@ -309,6 +373,11 @@
           document.getElementById('diff-prev').disabled = page === 0;
           document.getElementById('diff-next').disabled = (page + 1) * 100 >= total;
           document.getElementById('diff-page').textContent = (page * 100 + 1) + '–' + Math.min(total, (page + 1) * 100) + ' / ' + total;
+          document.getElementById('diff-toggle-inputs').disabled = false;
+          var resultEl = document.getElementById('diff-results');
+          if (firstResult && window.matchMedia('(max-width: 640px)').matches && resultEl.getBoundingClientRect().top > window.innerHeight - 96) {
+            resultEl.scrollIntoView({ block: 'start', behavior: 'auto' });
+          }
         };
         worker.onerror = function () {
           if (active !== generation) return;
@@ -333,18 +402,19 @@
         });
       });
       window.addEventListener('pagehide', stop);
-      // Auto-resize textarea
-      function autoResize(ta) {
-        ta.style.height = 'auto';
-        ta.style.height = Math.min(500, Math.max(160, ta.scrollHeight)) + 'px';
-      }
-
       ['diff-original', 'diff-modified'].forEach(function (id) {
         var ta = document.getElementById(id);
-        ta.addEventListener('input', function () { stop(); document.getElementById('diff-status').textContent = ''; autoResize(ta); });
+        ta.addEventListener('input', function () { stop(); document.getElementById('diff-status').textContent = ''; });
       });
 
       document.getElementById('diff-compare').addEventListener('click', compare);
+      document.getElementById('diff-toggle-inputs').addEventListener('click', function () {
+        if (!ready) return;
+        var inputs = document.getElementById('diff-inputs');
+        inputs.hidden = !inputs.hidden;
+        this.textContent = inputs.hidden ? t.showInputs : t.hideInputs;
+        this.setAttribute('aria-expanded', String(!inputs.hidden));
+      });
 
       document.getElementById('diff-swap').addEventListener('click', function () {
         var orig = document.getElementById('diff-original');
@@ -352,26 +422,38 @@
         var tmp = orig.value;
         orig.value = mod.value;
         mod.value = tmp;
-        autoResize(orig); autoResize(mod);
         stop();
         document.getElementById('diff-output').innerHTML = '';
         document.getElementById('diff-status').textContent = t.swapped;
         document.getElementById('diff-status').className = 'diff-status';
       });
 
-      document.getElementById('diff-clear').addEventListener('click', function () {
+      function clearAll() {
+        var focusInResults = document.getElementById('diff-results').contains(document.activeElement);
         var orig = document.getElementById('diff-original');
         var mod = document.getElementById('diff-modified');
         orig.value = ''; mod.value = '';
-        autoResize(orig); autoResize(mod);
         stop();
+        if (focusInResults) orig.focus();
         document.getElementById('diff-output').innerHTML = '';
         document.getElementById('diff-status').textContent = '';
         document.getElementById('diff-status').className = 'diff-status';
+      }
+
+      document.getElementById('diff-clear').addEventListener('click', clearAll);
+      document.addEventListener('keydown', function (e) {
+        if (!(e.ctrlKey || e.metaKey) || (e.key !== 'l' && e.key !== 'L')) return;
+        var root = document.querySelector('.diff-wrap');
+        if (root && root.contains(document.activeElement)) {
+          e.preventDefault();
+          clearAll();
+        }
       });
 
       document.getElementById('diff-view-unified').addEventListener('click', function () {
         currentView = 'unified';
+        document.getElementById('diff-view-unified').setAttribute('aria-pressed', 'true');
+        document.getElementById('diff-view-side').setAttribute('aria-pressed', 'false');
         document.getElementById('diff-view-unified').classList.add('active');
         document.getElementById('diff-view-side').classList.remove('active');
         page = 0; requestPage();
@@ -379,6 +461,8 @@
 
       document.getElementById('diff-view-side').addEventListener('click', function () {
         currentView = 'side';
+        document.getElementById('diff-view-unified').setAttribute('aria-pressed', 'false');
+        document.getElementById('diff-view-side').setAttribute('aria-pressed', 'true');
         document.getElementById('diff-view-side').classList.add('active');
         document.getElementById('diff-view-unified').classList.remove('active');
         page = 0; requestPage();
@@ -388,20 +472,13 @@
 </div>
 
 <style>
-  .diff-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+  .diff-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 0.75rem; }
   .diff-wrap [hidden] { display: none; }
 
-  .diff-inputs {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-  }
-
-  @media (max-width: 600px) {
-    .diff-inputs { grid-template-columns: 1fr; }
-  }
-
-  .diff-panel { display: flex; flex-direction: column; gap: 0.3rem; }
+  .diff-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 0.3rem; }
+  .diff-heading { display: flex; align-items: center; flex: none; min-height: 2rem; gap: 0.4rem; }
+  .diff-heading span { font-size: 0.82rem; font-weight: 600; color: var(--color-text-secondary); }
+  #diff-toggle-inputs { margin-left: auto; }
 
   .diff-panel label {
     font-size: 0.82rem;
@@ -411,30 +488,22 @@
 
   .diff-panel textarea {
     width: 100%;
-    min-height: 160px;
-    max-height: 500px;
     font-family: var(--font-mono);
     font-size: 0.82rem;
     padding: 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    resize: none;
-    overflow-y: auto;
     background: var(--color-bg-secondary);
     color: var(--color-text);
     transition: border-color 0.15s;
   }
   .diff-panel textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
 
-  .diff-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  .diff-actions { flex: none; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
 
-  .diff-view-toggle {
-    display: flex;
-    margin-left: auto;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-  }
+  .diff-control { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .diff-view-control { margin-left: auto; }
+  .diff-view-toggle { overflow: hidden; }
 
   .diff-view-btn {
     padding: 0.3rem 0.75rem;
@@ -455,22 +524,30 @@
     color: var(--color-text);
   }
 
-  .diff-status { font-size: 0.85rem; min-height: 1.2rem; }
+  .diff-status { flex: none; height: 3rem; overflow: auto; font-size: 0.85rem; line-height: 1.4; align-content: center; }
   .diff-status.success { color: #057a55; }
   .diff-status.error { color: #c0392b; }
   .diff-status.info { color: var(--color-primary); }
 
+  .diff-results { gap: 0.5rem; }
   .diff-output {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
     font-family: var(--font-mono);
     font-size: 0.82rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    overflow-x: auto;
+    overflow: auto;
     background: var(--color-bg);
   }
 
+  .diff-output:empty::before { content: attr(data-placeholder); display: block; padding: 1.5rem; text-align: center; color: var(--color-text-muted); }
+  .diff-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
   @media (max-width: 640px) {
-    .diff-view-toggle { margin-left: 0; }
+    .diff-view-control { margin-left: 0; }
+    .diff-actions button, #diff-toggle-inputs { min-height: 44px; }
   }
 
   @media (prefers-color-scheme: dark) {
