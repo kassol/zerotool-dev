@@ -757,11 +757,21 @@ const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
         if (thumbUrl) { URL.revokeObjectURL(thumbUrl); thumbUrl = ''; }
         thumb.removeAttribute('src');
         output.value = '';
+        setNotes(notesEl, []);
+        dlTxt.hidden = true;
         result.hidden = true;
         drop.hidden = false;
         fileInput.value = '';
         setStatus('');
         base64Link.hidden = true;
+      }
+
+      // A file that cannot be encoded replaces the previous result: the old output,
+      // Copy and Download .txt go away, and the status line gives the reason.
+      function failEncode(msg, showBase64Link) {
+        resetEncode();
+        setStatus(msg, 'error');
+        base64Link.hidden = !showBase64Link;
       }
 
       function readAsBase64(blob) {
@@ -778,7 +788,7 @@ const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
         var my = ++job;
         base64Link.hidden = true;
         if (file.size > FILE_LIMIT) {
-          setStatus(fill(t.tooBig, { size: formatSize(file.size, pageLang), chars: plural(t.chars, base64Length(file.size), pageLang) }), 'error');
+          failEncode(fill(t.tooBig, { size: formatSize(file.size, pageLang), chars: plural(t.chars, base64Length(file.size), pageLang) }), false);
           return;
         }
         file.slice(0, 8192).arrayBuffer().then(function (buf) {
@@ -786,8 +796,7 @@ const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
           var head = new Uint8Array(buf);
           var det = detectImage(head, file.name, file.type);
           if (det.error) {
-            setStatus(fill(t.notImage, { hex: det.hex || '\u2014' }), 'error');
-            base64Link.hidden = false;
+            failEncode(fill(t.notImage, { hex: det.hex || '\u2014' }), true);
             return;
           }
           var typed = new Blob([file], { type: det.mime });
@@ -834,7 +843,7 @@ const base64Href = (lang === 'en' ? '' : '/' + lang) + '/tools/base64/';
           });
         }).catch(function () {
           if (my !== job) return;
-          setStatus(t.readFailed, 'error');
+          failEncode(t.readFailed, false);
         });
       }
 
