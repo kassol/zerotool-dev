@@ -319,7 +319,7 @@ eq('blank: one visible pixel', E.isBlank(new Uint8ClampedArray([0, 0, 0, 0, 0, 0
         eq('strings: ' + lang + ' ' + k + ' placeholders', placeholders(get(STRINGS[lang])), placeholders(get(STRINGS.en)));
       }
     }
-    const codes = ['empty', 'notSvg', 'rootNotSvg', 'xml', 'xmlEntity', 'render', 'tainted', 'taintedForeign', 'tooLarge', 'canvas', 'badNumber', 'badScale', 'encode', 'read'];
+    const codes = ['empty', 'notSvg', 'rootNotSvg', 'xml', 'xmlNoPos', 'xmlEntityReason', 'render', 'tainted', 'taintedForeign', 'tooLarge', 'canvas', 'badNumber', 'badScale', 'encode', 'read'];
     for (const c of codes) check('strings: error ' + c, typeof STRINGS.en.err[c] === 'string');
     const notes = ['viewBox', 'default', 'relativeSize', 'xmlns', 'xlink', 'externalImage', 'externalUse', 'externalCss', 'letterbox', 'jpegWhite', 'formatFallback', 'blank', 'skipped'];
     for (const c of notes) check('strings: note ' + c, typeof STRINGS.en.note[c] === 'string');
@@ -467,6 +467,108 @@ eq('blank: one visible pixel', E.isBlank(new Uint8ClampedArray([0, 0, 0, 0, 0, 0
   check('table: the hidden header uses listDownload, no template string is printed in the markup', markup.includes('<span class="s2p-sr">{T.listDownload}</span>') && !/\{T\.(download|result|listSizes|doneOne|doneMany)\}/.test(markup));
   eq('table: listDownload in four languages, without a placeholder', ['en', 'zh', 'ja', 'ko'].map((l) => STRINGS[l].listDownload), ['Download', '下载', 'ダウンロード', '다운로드']);
 }
+
+// ---------- 14. XML errors in the page language (the block between xml-reason:start and xml-reason:end) ----------
+// Parser texts below are what Chrome 152 puts in <parsererror> for each mistake (DOMParser,
+// 'image/svg+xml', recorded 2026-10-07 in Ego Chromium); the Firefox ones follow expat's
+// message names. Before this section: the message showed the parser text as is
+// ("attributes construct error" on the ja page too) and gave a line but no column.
+{
+  const s = source.indexOf('/* ── xml-reason:start ── */');
+  const e = source.indexOf('/* ── xml-reason:end ── */');
+  check('xml: xml-reason block found', s >= 0 && e > s);
+  const STRINGS = new Function(source.slice(source.indexOf('// strings:start'), source.indexOf('// strings:end')).replace(/const STRINGS\s*=/, 'return '))();
+  if (s >= 0 && e > s) {
+    const wrapChrome = (line, col, msg) => `This page contains the following errors:error on line ${line} at column ${col}: ${msg}\nBelow is a rendering of the page up to the first error.`;
+    const CHROME = {
+      ltInAttr: [1, 51, "Unescaped '<' not allowed in attributes values"],
+      attrQuote: [1, 47, 'AttValue: " or \' expected'],
+      tagMismatch: [1, 57, 'Opening and ending tag mismatch: g line 1 and svg'],
+      unclosedTag: [1, 48, 'Premature end of data in tag svg line 1'],
+      dupAttr: [1, 60, 'Attribute width redefined'],
+      bareAmp: [1, 50, 'xmlParseEntityRef: no name'],
+      prefix: [1, 61, 'Namespace prefix xlink for href on use is not defined'],
+      extra: [1, 42, 'Extra content at the end of the document'],
+      noValue: [1, 47, 'Specification mandates value for attribute hidden'],
+      badName: [1, 42, 'StartTag: invalid element name'],
+      comment: [1, 54, 'Comment not terminated'],
+      badChar: [1, 48, 'PCDATA invalid Char value 8'],
+      charRef: [1, 53, 'CharRef: invalid decimal value'],
+      cdata: [1, 76, 'CData section not finished\n a{} </style></sv'],
+      xmlDecl: [2, 6, 'XML declaration allowed only at the start of the document'],
+      attrSyntax: [1, 50, 'attributes construct error'],
+      other: [3, 9, 'Something new the parser says'],
+    };
+    const FIREFOX = {
+      tagExpected: 'XML Parsing Error: mismatched tag. Expected: </g>.\nLocation: blob:x\nLine Number 4, Column 3:',
+      extra: 'XML Parsing Error: junk after document element\nLocation: blob:x\nLine Number 1, Column 43:',
+      dupAttrAny: 'XML Parsing Error: duplicate attribute\nLocation: blob:x\nLine Number 1, Column 50:',
+      prefixAny: 'XML Parsing Error: unbound prefix\nLocation: blob:x\nLine Number 1, Column 46:',
+      entityAny: 'XML Parsing Error: undefined entity\nLocation: blob:x\nLine Number 2, Column 5:',
+    };
+    // Run the shipped block with the shipped parseXmlError (engine) and a DOMParser stand-in
+    // that returns the recorded parser text for the given input.
+    const make = (parserText) => new Function('parseXmlError', 'DOMParser', source.slice(s, e) + '\nreturn { xmlReason, xmlErrorText, checkXml, xmlProblem };')(
+      E.parseXmlError,
+      class { parseFromString(text) { const msg = typeof parserText === 'function' ? parserText(text) : parserText; return { getElementsByTagName: () => (msg ? [{ textContent: msg }] : []) }; } },
+    );
+    const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] != null ? vars[k] : m));
+    const ENGLISH_PARSER_WORDS = /construct|mandates|Premature|Unescaped|AttValue|mismatch|redefined|xmlParse|PCDATA|CharRef|CData|Comment not|Extra content|declaration allowed|Namespace prefix|StartTag|Parsing Error|junk|unbound|Something new/;
+    for (const [code, [line, col, msg]] of Object.entries(CHROME)) {
+      const X = make(wrapChrome(line, col, msg));
+      const err = X.checkXml('<svg/>');
+      eq('xml: chrome "' + msg.split('\n')[0] + '" → ' + code, err && err.reason && err.reason.code, code);
+      eq('xml: chrome ' + code + ' keeps line and column', err && [err.line, err.column], [line, col]);
+      for (const lang of ['en', 'zh', 'ja', 'ko']) {
+        const text = X.xmlErrorText(err, STRINGS[lang], fill);
+        check('xml: ' + lang + ' ' + code + ' has no parser text', !ENGLISH_PARSER_WORDS.test(text), text);
+        check('xml: ' + lang + ' ' + code + ' has no unfilled placeholder', !/\{\w+\}/.test(text), text);
+        check('xml: ' + lang + ' ' + code + ' shows line and column', text.includes(String(line)) && text.includes(String(col)), text);
+      }
+    }
+    for (const [code, msg] of Object.entries(FIREFOX)) {
+      const X = make(msg);
+      const err = X.checkXml('<svg/>');
+      eq('xml: firefox → ' + code, err && err.reason && err.reason.code, code);
+      for (const lang of ['en', 'ja']) {
+        const text = X.xmlErrorText(err, STRINGS[lang], fill);
+        check('xml: firefox ' + lang + ' ' + code + ' has no parser text', !ENGLISH_PARSER_WORDS.test(text) && !/\{\w+\}/.test(text), text);
+      }
+    }
+    {
+      const X = make(wrapChrome(1, 57, 'Opening and ending tag mismatch: g line 1 and svg'));
+      eq('xml: en tag mismatch text', X.xmlErrorText(X.checkXml('x'), STRINGS.en, fill), 'The SVG is not valid XML (line 1, column 57): <g> (line 1) is closed by </svg>. Each element needs its own end tag.');
+      eq('xml: ja tag mismatch text', X.xmlErrorText(X.checkXml('x'), STRINGS.ja, fill), 'SVG が XML として正しくありません（1 行目 57 列）：<g>（1 行目）が </svg> で閉じられています。要素はそれぞれ自分の終了タグで閉じてください。');
+      const Y = make(wrapChrome(1, 48, 'PCDATA invalid Char value 8'));
+      check('xml: control character is named as U+0008', Y.xmlErrorText(Y.checkXml('x'), STRINGS.zh, fill).includes('U+0008'));
+      const Z = make(wrapChrome(3, 17, "Entity 'nbsp' not defined"));
+      eq('xml: HTML entity message keeps its advice, now with the column', Z.xmlErrorText(Z.checkXml('x'), STRINGS.en, fill), 'The SVG is not valid XML (line 3, column 17): &nbsp; is an HTML entity, which XML does not define. Write it as a number, for example &#160; instead of &nbsp;.');
+      const N = make('garbled');
+      check('xml: no position → message without line', !/line|\?/.test(N.xmlErrorText(N.checkXml('x'), STRINGS.en, fill)), N.xmlErrorText(N.checkXml('x'), STRINGS.en, fill));
+    }
+    {
+      // The position must point into what the user wrote. buildSvg adds attributes to the root
+      // tag, so the original text is checked again when the built SVG fails.
+      const X = make((text) => (text === 'ORIGINAL' ? wrapChrome(1, 20, 'attributes construct error') : wrapChrome(1, 95, 'attributes construct error')));
+      eq('xml: error position is taken from the original text', (({ line, column }) => [line, column])(X.xmlProblem('ORIGINAL', 'BUILT')), [1, 20]);
+      const Y = make((text) => (text === 'ORIGINAL' ? wrapChrome(1, 40, 'Namespace prefix xlink for href on use is not defined') : null));
+      eq('xml: an error that buildSvg fixes (xlink) does not stop the conversion', Y.xmlProblem('ORIGINAL', 'BUILT'), null);
+    }
+    for (const lang of ['en', 'zh', 'ja', 'ko']) check('xml: ' + lang + ' err.xml no longer shows {detail}', !/\{detail\}/.test(STRINGS[lang].err.xml));
+    check('xml: page uses xmlProblem in convertItem', /xmlProblem\(item\.text, svg\)/.test(source));
+  }
+}
+
+// ---------- 15. Size wording on the page matches the limits (MAX_SIDE, canvas area) ----------
+// Before: the en seoTitle said "Any Size" while a side stops at 65,535 px.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const mdx = readFileSync(join(root, 'src/content/tools/svg-to-png-converter', lang + '.mdx'), 'utf8');
+  const fm = mdx.slice(0, mdx.indexOf('\n---', 4));
+  const head = (fm.match(/^(seoTitle|seoDescription): .*$/gm) || []).join('\n');
+  check('size wording: ' + lang + ' title and description make no unlimited-size claim', !/any size|any resolution|unlimited|no size limit|任意尺寸|无限|サイズ無制限|任意のサイズ|크기 제한 없|모든 크기/i.test(head), head);
+  check('size wording: ' + lang + ' page states the 65,535 px side limit', mdx.includes('65,535') || mdx.includes('65535'));
+}
+eq('size wording: engine limit is the one the page states', E.MAX_SIDE, 65535);
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
