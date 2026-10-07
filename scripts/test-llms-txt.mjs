@@ -6,7 +6,7 @@
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Covers: plain-text and "How to Use" extraction rules and limits; file structure per
+// Covers: plain-text and frontmatter steps rules and limits; file structure per
 // llmstxt.org (H1, blockquote, notes without headings, H2 file lists of `[name](url)`
 // items); every zerotool.dev URL in the built files is in the sitemap (or is one of the
 // llms files), every tool URL's slug is in tools.ts, and every tool in tools.ts is listed
@@ -18,8 +18,12 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { load as loadYaml } from 'js-yaml';
+import { runInNewContext } from 'node:vm';
+import { defineCollection } from 'astro/content/config';
+import { z } from 'zod';
 import {
-  plainText, howToSteps, toolSteps, buildLlmsTxt, buildLlmsFullTxt, toolUrl, llmsUrl,
+  plainText, toolSteps, buildLlmsTxt, buildLlmsFullTxt, toolUrl, llmsUrl,
   MAX_STEPS, MAX_STEP_CHARS, MAX_HOWTO_CHARS, CATEGORY_ORDER, LLMS_LANGS, SITE,
 } from '../src/data/llms.mjs';
 import { parseToolsSource } from './generate-og.mjs';
@@ -39,6 +43,20 @@ function equal(name, actual, expected) {
 function throws(name, fn, re) {
   try { fn(); check(name, false, 'did not throw'); } catch (e) { check(name, re.test(e.message), e.message); }
 }
+
+// Execute the complete tool content schema with the installed Astro/Zod implementation.
+const configPath = join(root, 'src/content/config.ts');
+const configSource = readFileSync(configPath, 'utf8');
+const collections = runInNewContext(
+  configSource.replace("import { defineCollection, z } from 'astro:content';", '')
+    .replace('export const collections =', 'const collections =') + '\ncollections;',
+  { defineCollection, z }, { filename: configPath },
+);
+const toolsSchema = collections.tools.schema;
+const schemaFixture = { seoTitle: 'Test tool', seoDescription: 'Test tool description.' };
+check('tools schema requires steps', !toolsSchema.safeParse(schemaFixture).success);
+check('tools schema rejects empty steps', !toolsSchema.safeParse({ ...schemaFixture, steps: [] }).success);
+check('tools schema accepts a short steps array', toolsSchema.safeParse({ ...schemaFixture, steps: ['Copy the result.'] }).success);
 
 // Wording that says a tool makes no network requests. Network tools must not use it.
 // "not uploaded" / "不上传" stays allowed: it is true for these tools (they download, not upload).
@@ -60,45 +78,19 @@ equal('plainText expands MDX string expressions', plainText("Type {'[x](url)'} h
 equal('plainText collapses whitespace', plainText('  a\n   b\t c '), 'a b c');
 equal('plainText restores a string expression inside <code>', plainText(`click <code>+ nonce</code> to add <code>{"'nonce-{RANDOM}'"}</code>.`), "click `+ nonce` to add `'nonce-{RANDOM}'`.");
 
-// ── Unit: howToSteps ─────────────────────────────────────────────────────────
-const htmlBody = `
-<h2>How to Use</h2>
-<ol>
-  <li>Paste <strong>JSON</strong>.</li>
-  <li>Click Copy.</li>
-</ol>
-<h2>About</h2>
-<ol><li>Not a step.</li></ol>`;
-equal('howToSteps HTML ordered list', howToSteps(htmlBody), ['Paste JSON.', 'Click Copy.']);
-
-const mdBody = `
-## Why it matters
-
-1. Not a step.
-
-## How to convert Markdown to Word
-
-Intro paragraph.
-
-1. Paste **Markdown**.
-2. Pick a [paper](https://example.com) size
-   and a font.
-3. Click \`Download\`.
-
-## Limits
-1. Not a step.`;
-equal('howToSteps Markdown list after a non-"How to" section, with a continuation line', howToSteps(mdBody), ['Paste Markdown.', 'Pick a paper size and a font.', 'Click `Download`.']);
-equal('howToSteps no "How to" section', howToSteps('## Usage\n\n1. a\n2. b\n'), []);
-equal('howToSteps "How to" section without an ordered list', howToSteps('## How to use\n\nJust type.\n'), []);
-equal('howToSteps "How-to" is not "How to"', howToSteps('## How-tos\n\n1. a\n'), []);
-
-const many = '## How to Use\n\n' + Array.from({ length: 12 }, (_, i) => `${i + 1}. Step ${i + 1}.`).join('\n');
-equal('howToSteps keeps at most MAX_STEPS', howToSteps(many).length, MAX_STEPS);
-const long = howToSteps('## How to Use\n\n1. ' + 'word '.repeat(200) + '\n');
-check('howToSteps cuts a long step to MAX_STEP_CHARS with …', long.length === 1 && long[0].length <= MAX_STEP_CHARS && long[0].endsWith('…'), JSON.stringify(long));
-const wide = '## How to Use\n\n' + Array.from({ length: 8 }, (_, i) => `${i + 1}. ${'x'.repeat(270)} ${i}`).join('\n');
-const wideSteps = howToSteps(wide);
-check('howToSteps keeps whole steps within MAX_HOWTO_CHARS', wideSteps.length === 4 && wideSteps.join('').length <= MAX_HOWTO_CHARS, `${wideSteps.length} steps, ${wideSteps.join('').length} chars`);
+// ── Unit: frontmatter steps ──────────────────────────────────────────────────
+equal('toolSteps cleans HTML fragments', toolSteps({ steps: ['Paste <strong>JSON</strong>.', 'Click Copy.'] }), ['Paste JSON.', 'Click Copy.']);
+equal('toolSteps cleans Markdown, links and continuation whitespace', toolSteps({ steps: ['Paste **Markdown**.', 'Pick a [paper](https://example.com) size\n   and a font.', 'Click `Download`.'] }), ['Paste Markdown.', 'Pick a paper size and a font.', 'Click `Download`.']);
+equal('toolSteps missing steps returns no steps', toolSteps({}), []);
+equal('toolSteps empty steps returns no steps', toolSteps({ steps: [] }), []);
+equal('toolSteps non-array steps returns no steps', toolSteps({ steps: 'Do it.' }), []);
+const many = Array.from({ length: 12 }, (_, i) => `Step ${i + 1}.`);
+equal('toolSteps keeps at most MAX_STEPS', toolSteps({ steps: many }).length, MAX_STEPS);
+const long = toolSteps({ steps: ['word '.repeat(200)] });
+check('toolSteps cuts a long step to MAX_STEP_CHARS with …', long.length === 1 && long[0].length <= MAX_STEP_CHARS && long[0].endsWith('…'), JSON.stringify(long));
+const wide = Array.from({ length: 8 }, (_, i) => `${'x'.repeat(270)} ${i}`);
+const wideSteps = toolSteps({ steps: wide });
+check('toolSteps keeps whole steps within MAX_HOWTO_CHARS', wideSteps.length === 4 && wideSteps.join('').length <= MAX_HOWTO_CHARS, `${wideSteps.length} steps, ${wideSteps.join('').length} chars`);
 
 // ── Unit: builders on fixture data ───────────────────────────────────────────
 const tr = (name, description) => ({ en: { name, description }, zh: { name: name + '-zh', description: description + '（中）' }, ja: { name: name + '-ja', description }, ko: { name: name + '-ko', description } });
@@ -141,7 +133,7 @@ check('fixture zh: links back to the English file', fxZh.includes(`[English](${l
 throws('unknown category throws', () => buildLlmsTxt({ ...fixture, tools: [{ slug: 'x', category: 'misc', translations: tr('X', 'x') }] }, 'en'), /unknown category/);
 throws('missing i18n network key throws', () => buildLlmsTxt({ ...fixture, networkSlugs: ['alpha'] }, 'en'), /missing i18n key network\.alpha/);
 throws('unsupported language throws', () => buildLlmsTxt(fixture, 'fr'), /unsupported language/);
-const pages = Object.fromEntries(fixture.tools.map((t) => [t.slug, { seoDescription: t.slug === 'zeta' ? 'Formats data.' : 'Page summary here.', body: '## How to Use\n\n1. Do it.\n' }]));
+const pages = Object.fromEntries(fixture.tools.map((t) => [t.slug, { seoDescription: t.slug === 'zeta' ? 'Formats data.' : 'Page summary here.', steps: ['Do it.'] }]));
 const fxFull = buildLlmsFullTxt(fixture, pages);
 check('fixture full: one H2 per tool', (fxFull.match(/^## /gm) || []).length === fixture.tools.length);
 const fullBlock = (name) => fxFull.slice(fxFull.indexOf(`## ${name}\n`)).split(/\n(?=## )/)[0];
@@ -151,10 +143,10 @@ check('fixture full: network none for local tools', fxFull.includes('- Network: 
 check('fixture full: network note for network tools', fxFull.includes('- Network: sends-en.'));
 check('fixture full: sensitive storage line', /## Secret[\s\S]*?saves nothing in the browser/.test(fxFull));
 check('fixture full: steps copied', fxFull.includes('How to use:\n\n1. Do it.'));
-// Frontmatter steps win over the body's "How to" list; without them the body is used.
+// Frontmatter steps are the only source; body content never supplies steps.
 equal('toolSteps: frontmatter steps first', toolSteps({ steps: ['Paste `JSON`.', '**Copy** it.'], body: '## How to Use\n\n1. Old.\n' }), [plainText('Paste `JSON`.'), 'Copy it.']);
-equal('toolSteps: empty steps fall back to the body', toolSteps({ steps: [], body: '## How to Use\n\n1. Old.\n' }), ['Old.']);
-equal('toolSteps: no steps field uses the body', toolSteps({ body: '## How to Use\n\n1. Old.\n' }), ['Old.']);
+equal('toolSteps: empty steps do not read the body', toolSteps({ steps: [], body: '## How to Use\n\n1. Old.\n' }), []);
+equal('toolSteps: no steps field does not read the body', toolSteps({ body: '## How to Use\n\n1. Old.\n' }), []);
 equal('toolSteps: steps keep the MAX_STEPS limit', toolSteps({ steps: Array.from({ length: 12 }, (_, i) => 'Step ' + i + '.') }).length, MAX_STEPS);
 const stepsPages = { ...pages, alpha: { ...pages.alpha, steps: ['From frontmatter.'] } };
 const fxSteps = buildLlmsFullTxt(fixture, stepsPages);
@@ -271,11 +263,10 @@ if (missing.length) {
       check(`full: ${slug} entry says Network: None`, block.includes('- Network: None.'), block.slice(0, 200));
     }
   }
-  // Frontmatter `steps`: only the pages listed in src/data/tool-layouts.ts use it (their usage
-  // section moved into the tool). Every language has it; llms-full.txt shows the English steps.
+  // Every registered tool has frontmatter steps in all four languages.
   const layoutSrc = readFileSync(join(root, 'src', 'data', 'tool-layouts.ts'), 'utf8');
-  const v2 = [...layoutSrc.matchAll(/^\s*'([a-z0-9-]+)': '(?:convert|generate|analyze)',$/gm)].map((m) => m[1]);
-  check('steps: tool-layouts.ts lists pages', v2.length > 0, layoutSrc.slice(0, 200));
+  const layouts = [...layoutSrc.matchAll(/^\s*'([a-z0-9-]+)': '(?:convert|generate|analyze|compact|compare)',$/gm)].map((m) => m[1]);
+  equal('steps: every tool has a legal layout kind', layouts.sort(), [...slugs].sort());
   const toolsDir = join(root, 'src', 'content', 'tools');
   const withSteps = [];
   for (const dir of readdirSync(toolsDir)) {
@@ -285,12 +276,18 @@ if (missing.length) {
       if (/^steps:/m.test(fm)) withSteps.push(`${dir}/${lang}`);
     }
   }
-  equal('steps: exactly the v2 pages, in every language', withSteps.sort(), v2.flatMap((s) => LLMS_LANGS.map((l) => `${s}/${l}`)).sort());
-  for (const slug of v2) {
-    const fm = readFileSync(join(toolsDir, slug, 'en.mdx'), 'utf8').split(/^---$/m)[1];
-    const first = fm.match(/^steps:\n\s+- "((?:[^"\\]|\\.)*)"/m)?.[1]?.replace(/\\"/g, '"');
-    const block = blocks.get(toolUrl(slug)) ?? '';
-    check(`full: ${slug} lists its frontmatter steps`, !!first && block.includes('How to use:\n\n1. ' + plainText(first)), block.slice(-400));
+  equal('steps: exactly every tool, in every language', withSteps.sort(), [...slugs].flatMap((s) => LLMS_LANGS.map((l) => `${s}/${l}`)).sort());
+  for (const slug of slugs) {
+    for (const lang of LLMS_LANGS) {
+      const fm = readFileSync(join(toolsDir, slug, `${lang}.mdx`), 'utf8').split(/^---$/m)[1];
+      const { steps } = loadYaml(fm);
+      check(`steps: ${slug}/${lang} meets plain-text and length limits`, Array.isArray(steps) && steps.length > 0 && steps.length <= MAX_STEPS && steps.every(step => typeof step === 'string' && step.trim() && step.length <= MAX_STEP_CHARS && !/<[^>]*>|\n/.test(step)) && steps.join('').length <= MAX_HOWTO_CHARS, JSON.stringify(steps));
+      if (lang === 'en') {
+        const block = blocks.get(toolUrl(slug)) ?? '';
+        const expected = toolSteps({ steps }).map((step, i) => `${i + 1}. ${step}`).join('\n');
+        check(`full: ${slug} lists all its frontmatter steps`, expected.length > 0 && block.includes('How to use:\n\n' + expected), block.slice(-MAX_HOWTO_CHARS - 100));
+      }
+    }
   }
 
 }

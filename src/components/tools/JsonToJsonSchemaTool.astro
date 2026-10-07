@@ -1,47 +1,112 @@
 ---
-// JsonToJsonSchemaTool — paste JSON, get JSON Schema draft-07
+import Toggletip from '../Toggletip.astro';
+
+interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
+const { lang = 'en' } = Astro.props;
+
+const STRINGS = {
+  en: {
+    empty: "Enter JSON to generate a draft-07 schema.",
+    tips: {
+      "input": "Edit the sample JSON or enter your own. Every input change immediately generates draft-07 JSON Schema. Arrays merge all their elements; required keys come from non-null values present in every sampled object.",
+      "clear": "Clear the input, generated schema and error message. Ctrl/⌘+L within the tool also clears them and returns focus to JSON Input.",
+      "copy": "Copy the complete generated schema. The output is read-only; paste it into an editor to refine constraints or required fields. Empty output is not copied."
+    },
+    inputJson: 'JSON Input', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please copy the output manually.', invalidJson: 'Invalid JSON' },
+  zh: {
+    empty: "输入 JSON 以生成 draft-07 Schema。",
+    tips: {
+      "input": "修改示例 JSON 或输入自己的数据。每次输入变化立即生成 draft-07 JSON Schema。数组会合并全部元素；每个样本对象都具有且非 null 的键会列为必填。",
+      "clear": "清空输入、生成的 Schema 和错误信息。在工具内按 Ctrl/⌘+L 也可清空，并返回输入 JSON。",
+      "copy": "复制完整生成的 Schema。输出为只读；请粘贴到编辑器中调整约束或必填字段。输出为空时不复制。"
+    },
+    inputJson: '输入 JSON', clear: '清除', copy: '复制', copied: '已复制！', copyFailed: '复制失败，请手动复制输出。', invalidJson: '无效 JSON' },
+  ja: {
+    empty: "JSON を入力すると draft-07 スキーマを生成します。",
+    tips: {
+      "input": "サンプル JSON を編集するか自分のデータを入力します。入力の変更ごとに draft-07 JSON Schema を即座に生成します。配列は全要素をマージし、すべてのサンプルオブジェクトに null 以外の値であるキーを必須にします。",
+      "clear": "入力、生成したスキーマ、エラーメッセージを消去します。ツール内の Ctrl/⌘+L でも消去し、JSON 入力にフォーカスを戻します。",
+      "copy": "生成したスキーマ全文をコピーします。出力は読み取り専用です。エディターに貼り付けて制約や必須フィールドを調整してください。空の出力はコピーしません。"
+    },
+    inputJson: 'JSON 入力', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。', invalidJson: '無効な JSON' },
+  ko: {
+    empty: "JSON을 입력하면 draft-07 스키마를 생성합니다.",
+    tips: {
+      "input": "샘플 JSON을 수정하거나 데이터를 입력하세요. 입력이 바뀔 때마다 draft-07 JSON Schema를 즉시 생성합니다. 배열은 모든 요소를 병합하며 모든 샘플 객체에 null이 아닌 값으로 있는 키를 필수로 지정합니다.",
+      "clear": "입력, 생성된 스키마, 오류 메시지를 지웁니다. 도구 안에서 Ctrl/⌘+L로도 지우고 JSON 입력으로 포커스를 돌립니다.",
+      "copy": "생성된 스키마 전체를 복사합니다. 출력은 읽기 전용입니다. 편집기에 붙여넣어 제약 조건이나 필수 필드를 조정하세요. 빈 출력은 복사하지 않습니다."
+    },
+    inputJson: 'JSON 입력', clear: '지우기', copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.', invalidJson: '유효하지 않은 JSON' }
+};
+const L = STRINGS[lang];
+const CLIENT_T = {
+  copy: L.copy,
+  copied: L.copied,
+  copyFailed: L.copyFailed,
+  invalidJson: L.invalidJson,
+};
 ---
 
-<div class="jjs-wrap">
-  <div class="jjs-panes">
-    <div class="jjs-pane">
-      <div class="jjs-pane-header">
-        <span class="jjs-pane-label" data-i18n="inputJson">JSON Input</span>
-        <button id="jjs-clear" class="btn-ghost jjs-btn-sm" type="button" data-i18n="clear">Clear</button>
-      </div>
-      <textarea id="jjs-input" class="jjs-textarea" spellcheck="false" placeholder='{"name":"Alice","age":30,"active":true}'></textarea>
-    </div>
-    <div class="jjs-pane">
-      <div class="jjs-pane-header">
-        <span id="jjs-output-label" class="jjs-pane-label">JSON Schema (draft-07)</span>
-        <button id="jjs-copy" class="btn-ghost jjs-btn-sm" type="button" data-i18n="copy">Copy</button>
-      </div>
-      <textarea id="jjs-output" class="jjs-textarea jjs-output-area" aria-labelledby="jjs-output-label" spellcheck="false" readonly></textarea>
+<div class="jjs-wrap" data-strings={JSON.stringify(CLIENT_T)} data-empty="true">
+  <div class="jjs-actions">
+    <div class="jjs-control-label">
+      <button id="jjs-clear" class="btn-ghost" type="button">{L.clear}</button>
+      <Toggletip id="jjs-tip-clear" lang={lang} about={L.clear}>{L.tips.clear}</Toggletip>
     </div>
   </div>
-  <div id="jjs-error" class="jjs-error" hidden></div>
+  <div class="jjs-status" aria-live="polite">
+    <div id="jjs-error" class="jjs-error" hidden></div>
+  </div>
+  <div class="jjs-panes zt-io">
+    <div class="jjs-pane zt-io-pane">
+      <div class="jjs-pane-header">
+        <div class="jjs-control-label">
+          <label for="jjs-input">{L.inputJson}</label>
+          <Toggletip id="jjs-tip-input" lang={lang} about={L.inputJson}>{L.tips.input}</Toggletip>
+        </div>
+      </div>
+      <textarea id="jjs-input" class="zt-io-fill" spellcheck="false" placeholder='{"name":"Alice","age":30,"active":true}'></textarea>
+    </div>
+    <div class="jjs-pane jjs-output-pane zt-io-pane">
+      <div class="jjs-pane-header">
+        <span id="jjs-output-label">JSON Schema (draft-07)</span>
+        <div class="jjs-control-label">
+          <button id="jjs-copy" class="btn-ghost" type="button">{L.copy}</button>
+          <Toggletip id="jjs-tip-copy" lang={lang} about={L.copy}>{L.tips.copy}</Toggletip>
+        </div>
+      </div>
+      <p class="jjs-empty zt-io-fill">{L.empty}</p>
+      <textarea id="jjs-output" class="jjs-output zt-io-fill" tabindex="0" aria-labelledby="jjs-output-label" spellcheck="false" readonly></textarea>
+    </div>
+  </div>
 
   <script is:inline>
     (function () {
-      var STRINGS = {
-        en: { inputJson: 'JSON Input', clear: 'Clear', copy: 'Copy', copied: 'Copied!', invalidJson: 'Invalid JSON' },
-        zh: { inputJson: '输入 JSON', clear: '清除', copy: '复制', copied: '已复制！', invalidJson: '无效 JSON' },
-        ja: { inputJson: 'JSON 入力', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', invalidJson: '無効な JSON' },
-        ko: { inputJson: 'JSON 입력', clear: '지우기', copy: '복사', copied: '복사됨!', invalidJson: '유효하지 않은 JSON' }
-      };
-
-      var pageLang = (document.documentElement.lang || 'en').slice(0, 2);
-      var t = STRINGS[pageLang] || STRINGS.en;
-
-      document.querySelectorAll('.jjs-wrap [data-i18n]').forEach(function(el) {
-        var key = el.getAttribute('data-i18n'); if (t[key]) el.textContent = t[key];
-      });
+      var t = JSON.parse(document.querySelector('.jjs-wrap').dataset.strings);
 
       var inputEl  = document.getElementById('jjs-input');
       var outputEl = document.getElementById('jjs-output');
       var errorEl  = document.getElementById('jjs-error');
       var clearBtn = document.getElementById('jjs-clear');
       var copyBtn  = document.getElementById('jjs-copy');
+      var wrap = document.querySelector('.jjs-wrap');
+      var copyRevision = 0;
+      var copyTimer = null;
+      var copyFailure = false;
+
+      function clearError() {
+        copyFailure = false;
+        errorEl.textContent = '';
+        errorEl.hidden = true;
+      }
+
+      function invalidateCopy() {
+        copyRevision++;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        if (copyFailure) clearError();
+      }
 
       /* ── engine:start ── */
       function kindOf(value) {
@@ -117,10 +182,12 @@
       /* ── engine:end ── */
 
       function convert() {
+        invalidateCopy();
+        clearError();
         var raw = inputEl.value.trim();
         if (!raw) {
           outputEl.value = '';
-          errorEl.hidden = true;
+          wrap.dataset.empty = 'true';
           return;
         }
         try {
@@ -130,32 +197,57 @@
             inferSchema(parsed)
           );
           outputEl.value = JSON.stringify(schema, null, 2);
-          errorEl.hidden = true;
         } catch (e) {
           outputEl.value = '';
           errorEl.textContent = t.invalidJson + ': ' + e.message;
           errorEl.hidden = false;
         }
+        wrap.dataset.empty = String(!outputEl.value);
         window.trackTool && window.trackTool('json-to-json-schema', 'convert');
       }
 
       inputEl.addEventListener('input', convert);
 
       clearBtn.addEventListener('click', function () {
+        invalidateCopy();
+        inputEl.focus();
         inputEl.value = '';
         outputEl.value = '';
-        errorEl.hidden = true;
-        inputEl.focus();
+        wrap.dataset.empty = 'true';
+        clearError();
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          e.preventDefault();
+          clearBtn.click();
+        }
       });
 
       copyBtn.addEventListener('click', function () {
         var text = outputEl.value;
         if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
-          copyBtn.textContent = t.copied;
-          setTimeout(function () { copyBtn.textContent = t.copy; }, 1500);
-          window.trackTool && window.trackTool('json-to-json-schema', 'copy');
-        });
+        var revision = ++copyRevision;
+        clearTimeout(copyTimer);
+        copyTimer = null;
+        copyBtn.textContent = t.copy;
+        function failed() {
+          if (revision !== copyRevision) return;
+          errorEl.textContent = t.copyFailed;
+          errorEl.hidden = false;
+          copyFailure = true;
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            if (revision !== copyRevision) return;
+            if (copyFailure) clearError();
+            copyBtn.textContent = t.copied;
+            copyTimer = setTimeout(function () {
+              if (revision === copyRevision) copyBtn.textContent = t.copy;
+            }, 1500);
+            window.trackTool && window.trackTool('json-to-json-schema', 'copy');
+          }, failed);
+        } catch (e) { failed(); }
       });
 
       // seed example
@@ -175,68 +267,35 @@
 </div>
 
 <style>
-  .jjs-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
-
-  .jjs-panes {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
+  .jjs-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: 0.75rem; }
+  .jjs-control-label { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+  .jjs-pane-header { display: flex; justify-content: space-between; align-items: center; min-height: 44px; gap: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--color-text-secondary); }
+  .jjs-pane textarea {
+    width: 100%; min-width: 0; font-family: var(--font-mono); font-size: 0.82rem; padding: 0.75rem;
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    background: var(--color-bg-secondary); color: var(--color-text); line-height: 1.5;
   }
-
-  @media (max-width: 680px) {
-    .jjs-panes { grid-template-columns: 1fr; }
+  .jjs-pane textarea:focus { outline: none; border-color: var(--color-primary); background: var(--color-bg); }
+  .jjs-output { margin: 0; overflow: auto; }
+  .jjs-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .jjs-empty { display: none; margin: 0; padding: 2rem; align-items: center; justify-content: center; text-align: center; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+  .jjs-wrap[data-empty="true"] .jjs-output { display: none; }
+  .jjs-wrap[data-empty="true"] .jjs-empty { display: flex; }
+  .jjs-actions { display: flex; gap: 0.5rem 1rem; flex-wrap: wrap; }
+  .jjs-status { font-size: 0.85rem; line-height: 1.4; height: 2.4rem; min-height: 2.4rem; flex: none; overflow: auto; overflow-wrap: anywhere; }
+  .jjs-error { color: #c0392b; padding: 0.4rem 0.6rem; border: 1px solid #fca5a5; border-radius: var(--radius-sm); background: #fef2f2; }
+  @media (max-width: 860px) {
+    .jjs-wrap { gap: 0.5rem; }
+    .jjs-actions button, .jjs-pane-header button { min-height: 44px; }
+    #jjs-input { height: 144px; min-height: 144px; }
+    .jjs-output { height: 22rem; min-height: 160px; resize: none; }
+    .jjs-wrap[data-empty="true"] .jjs-output-pane { display: none; }
   }
-
-  .jjs-pane { display: flex; flex-direction: column; gap: 0.4rem; }
-
-  .jjs-pane-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  @media (max-width: 640px) {
+    .jjs-pane-header { flex-wrap: wrap; }
   }
-
-  .jjs-pane-label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--color-text-secondary);
-  }
-
-  .jjs-btn-sm {
-    font-size: 0.75rem;
-    padding: 0.15rem 0.5rem;
-  }
-
-  .jjs-textarea {
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    line-height: 1.5;
-    padding: 0.65rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-    width: 100%;
-    min-height: 300px;
-    resize: vertical;
-    box-sizing: border-box;
-  }
-
-  .jjs-output-area { color: var(--color-text-secondary); }
-
-  .jjs-error {
-    font-size: 0.82rem;
-    color: #ef4444;
-    padding: 0.4rem 0.6rem;
-    border: 1px solid #fca5a5;
-    border-radius: var(--radius-sm);
-    background: #fef2f2;
-  }
-
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .jjs-error {
-      background: #2d1515;
-      border-color: #7f1d1d;
-      color: #fca5a5;
-    }
+    :global(:root:not([data-theme="light"])) .jjs-error { background: #2d1515; border-color: #7f1d1d; color: #fca5a5; }
   }
+  :global([data-theme="dark"]) .jjs-error { background: #2d1515; border-color: #7f1d1d; color: #fca5a5; }
 </style>

@@ -2,7 +2,9 @@
 //
 // Read:  src/components/tools/TotpGeneratorTool.astro (extracts the real engine block between
 //        the `engine:start` / `engine:end` markers and the frontmatter STRINGS table),
-//        public/vendor/qrcode.min.js and public/vendor/zxing-reader.js + .wasm (QR round trip)
+//        public/vendor/qrcode.min.js and public/vendor/zxing-reader.js + .wasm (QR round trip),
+//        src/layouts/ToolLayout.astro, src/data/tool-layouts.ts, persistence.ts and
+//        src/content/tools/totp-generator/*.mdx, src/content/blog/totp-generator-guide/zh.mdx
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -388,6 +390,182 @@ if (STRINGS) {
     check(rel + ' is indexable (noindex lifted in the 2026-10-01 traffic review)', !/^noindex:\s*true/m.test(text));
     const tpl = [/^## .*是什么/m, /^## .*在线/m, /^## (总结|小结)/m].filter((re) => re.test(text));
     check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
+  }
+}
+
+// ---------- real page controls ----------
+// The DOM and QR drawing are stand-ins; the client handlers and Web Crypto are real.
+// The separate vendor round trips above verify the QR data itself. Fetch and clipboard
+// are local recorders and never send a request or touch the system clipboard.
+function totpPage(holdSign = false) {
+  const nodes = new Map(), listeners = {}, intervals = [], copied = [], requests = [], qr = [], randomBytes = [], pending = [];
+  const markup = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script src='));
+  for (const m of markup.matchAll(/<[^>]+\bid="(totp-[^"]+)"[^>]*>/g)) {
+    const tag = m[0], events = {};
+    nodes.set(m[1], {
+      id: m[1], value: /\bvalue="([^"]*)"/.exec(tag)?.[1] || '', hidden: /\bhidden\b/.test(tag),
+      textContent: '', className: '', innerHTML: '', style: {}, children: [],
+      addEventListener(name, fn) { (events[name] ||= []).push(fn); },
+      dispatch(name, event = {}) { for (const fn of events[name] || []) fn.call(this, { target: this, ...event }); },
+      click() { this.dispatch('click'); },
+      appendChild(node) { this.children.push(node); },
+    });
+  }
+  const el = (id) => nodes.get(id);
+  el('totp-algo').value = 'SHA-1'; el('totp-digits').value = '6';
+  const widget = { contains: (node) => [...nodes.values()].includes(node), querySelectorAll: () => ['totp-secret', 'totp-period', 'totp-time', 'totp-issuer', 'totp-account', 'totp-uri'].map(el) };
+  const document = {
+    getElementById: el, createElement: () => ({ style: {} }), hidden: false, activeElement: el('totp-secret'),
+    addEventListener(name, fn) { (listeners[name] ||= []).push(fn); },
+    querySelector: (selector) => ['.tool-widget', '.totp-wrap'].includes(selector) ? widget : null,
+  };
+  const context = {
+    document, S: Object.fromEntries(Object.entries(STRINGS.en).filter(([key]) => key !== 'tips')),
+    crypto: { subtle: holdSign ? {
+      importKey: (...args) => globalThis.crypto.subtle.importKey(...args),
+      sign: (...args) => new Promise(resolve => pending.push(async () => resolve(await globalThis.crypto.subtle.sign(...args)))),
+    } : globalThis.crypto.subtle, getRandomValues(bytes) { randomBytes.push(bytes.length); return globalThis.crypto.getRandomValues(bytes); } },
+    URL, URLSearchParams, Uint8Array, TextEncoder, console,
+    navigator: { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } },
+    location: { pathname: '/tools/totp-generator/' },
+    fetch(url, options) { requests.push({ url, options }); return Promise.resolve({ headers: { get: () => new Date().toUTCString() } }); },
+    QRCode: { toCanvas(canvas, uri, options, callback) { qr.push({ uri, options }); callback(null); } },
+    setInterval(fn) { intervals.push(fn); }, setTimeout() {},
+    ztPersist: { clear() {} }, _slug: 'totp-generator',
+  };
+  context.window = context;
+  const ctx = vm.createContext(context);
+  vm.runInContext(/<script is:inline define:vars[^>]*>([\s\S]*?)<\/script>/.exec(source)[1], ctx);
+  const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  vm.runInContext(shell.slice(shell.indexOf("      document.addEventListener('keydown', function(e) {"), shell.indexOf('      // ── Copy button visual feedback')), ctx);
+  return {
+    el, copied, requests, qr, randomBytes, pending,
+    input(id, value) { el(id).value = value; el(id).dispatch('input'); },
+    change(id, value) { el(id).value = value; el(id).dispatch('change'); },
+    tick() { intervals.forEach((fn) => fn()); },
+    clearShortcut(modifier = 'ctrlKey', inTool = true) {
+      document.activeElement = inTool ? el('totp-secret') : {};
+      (listeners.keydown || []).forEach((fn) => fn({ key: 'l', [modifier]: true, preventDefault() {} }));
+    },
+  };
+}
+async function pageSettles(predicate) {
+  const until = Date.now() + 10000;
+  while (!predicate() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 2));
+  return predicate();
+}
+{
+  const p = totpPage();
+  const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+  check('page starts with outputs hidden', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every((id) => p.el(id).hidden));
+  p.el('totp-time').value = '59'; p.el('totp-digits').value = '8'; p.input('totp-secret', secret);
+  check('typing the RFC secret computes without a generate action', await pageSettles(() => p.el('totp-code').textContent === '94287082'));
+  eq('page previous code matches independent HMAC', p.el('totp-prev').textContent, refHotp(ascii(SEED20), 0, 'SHA-1', 8));
+  eq('page next code matches independent HMAC', p.el('totp-next').textContent, refHotp(ascii(SEED20), 2, 'SHA-1', 8));
+  eq('fixed time stops countdown', p.el('totp-countdown').textContent, STRINGS.en.fixedTime);
+  eq('fixed time does not send a clock request', p.requests.length, 0);
+  check('code, URI and QR outputs reveal after input', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every((id) => !p.el(id).hidden));
+  eq('QR drawing receives the current URI', p.qr.at(-1).uri, p.el('totp-uri').value);
+  eq('QR dimensions and margin remain unchanged', p.qr.at(-1).options, { width: 192, margin: 2 });
+  p.el('totp-copy-code').click(); p.el('totp-copy-uri').click();
+  eq('both copy actions read current outputs', p.copied, ['94287082', 'otpauth://totp/Account?secret=' + secret + '&digits=8']);
+
+  p.input('totp-secret', 'otpauth://totp/Example:alice?secret=' + secret + '&issuer=Example&algorithm=SHA256&digits=8&period=60');
+  const expected = refHotp(ascii(SEED20), 0, 'SHA-256', 8);
+  check('importing a URI recalculates automatically', await pageSettles(() => p.el('totp-code').textContent === expected));
+  eq('URI import fills controls inside details', ['totp-secret', 'totp-algo', 'totp-digits', 'totp-period', 'totp-issuer', 'totp-account'].map((id) => p.el(id).value), [secret, 'SHA-256', '8', '60', 'Example', 'alice']);
+  check('nondefault settings keep the compatibility warning visible', !p.el('totp-ga-note').hidden);
+  check('URI import reports its settings', p.el('totp-status').textContent.includes(STRINGS.en.imported));
+
+  p.input('totp-issuer', 'x'.repeat(10000));
+  check('long issuer reaches the URI output', await pageSettles(() => p.el('totp-uri').value.includes('x'.repeat(10000))));
+  p.el('totp-copy-uri').click();
+  eq('copy keeps the full long URI', p.copied.at(-1), p.el('totp-uri').value);
+  p.input('totp-issuer', 'Invalid:Issuer');
+  check('invalid account metadata reports its error', await pageSettles(() => p.el('totp-status').className.includes('error')));
+  check('metadata error keeps the code but hides URI and QR', !p.el('totp-display').hidden && p.el('totp-uri-block').hidden && p.el('totp-qr-block').hidden);
+  eq('metadata error clears the copyable URI', p.el('totp-uri').value, '');
+
+  p.input('totp-secret', '!');
+  check('invalid secret hides all previous output', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every((id) => p.el(id).hidden));
+  const count = p.copied.length; p.el('totp-copy-code').click(); p.el('totp-copy-uri').click();
+  eq('invalid secret cannot copy an old output', p.copied.length, count);
+  p.input('totp-secret', '');
+  eq('empty input clears the status', p.el('totp-status').textContent, '');
+
+  p.el('totp-issuer').value = ''; p.el('totp-account').value = ''; p.el('totp-period').value = '30'; p.el('totp-digits').value = '6';
+  for (const [algorithm, size] of [['SHA-1', 20], ['SHA-256', 32], ['SHA-512', 64]]) {
+    p.el('totp-algo').value = algorithm; p.el('totp-gen-secret').click();
+    const n = E.normalizeSecret(p.el('totp-secret').value);
+    eq('Random uses the selected algorithm length: ' + algorithm, n.bytes.length, size);
+    const current = refHotp(n.bytes, 1, algorithm, 6);
+    check('Random computes its new code: ' + algorithm, await pageSettles(() => p.el('totp-code').textContent === current));
+  }
+  eq('Random uses crypto.getRandomValues for every algorithm', p.randomBytes, [20, 32, 64]);
+  p.clearShortcut(); p.tick();
+  check('Ctrl+L after a completed calculation clears all results', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every((id) => p.el(id).hidden));
+  eq('Ctrl+L clears the secret and output URI', [p.el('totp-secret').value, p.el('totp-uri').value], ['', '']);
+
+  p.el('totp-algo').value = 'SHA-1'; p.el('totp-period').value = '30'; p.input('totp-secret', secret);
+  check('live code requests the clock once', await pageSettles(() => p.requests.length === 1));
+  eq('clock check stays same-origin with no secret, query or body', p.requests[0], { url: '/tools/totp-generator/', options: { method: 'HEAD', cache: 'no-store' } });
+  p.change('totp-digits', '8');
+  check('changing digits updates the live code', await pageSettles(() => /^\d{8}$/.test(p.el('totp-code').textContent)));
+  eq('later calculations do not repeat the clock request', p.requests.length, 1);
+}
+
+// A first calculation has no state yet; clear must invalidate its pending HMACs.
+for (const modifier of ['ctrlKey', 'metaKey']) {
+  const p = totpPage(true);
+  const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+  p.el('totp-time').value = '59'; p.el('totp-digits').value = '8'; p.input('totp-secret', secret);
+  check(modifier + ': three HMACs are pending before first result', await pageSettles(() => p.pending.length === 3));
+  p.clearShortcut(modifier); p.tick();
+  for (const release of p.pending.splice(0)) await release();
+  for (let i = 0; i < 16; i++) await Promise.resolve();
+  check(modifier + ': pending HMACs cannot reveal old output', ['totp-display', 'totp-uri-block', 'totp-qr-block'].every(id => p.el(id).hidden));
+  eq(modifier + ': pending HMACs leave code and URI cleared', [p.el('totp-code').textContent, p.el('totp-uri').value], ['------', '']);
+  p.el('totp-copy-code').click(); p.el('totp-copy-uri').click();
+  eq(modifier + ': old code and secret URI cannot be copied', p.copied.length, 0);
+  p.el('totp-period').value = '30'; p.el('totp-time').value = '59'; p.input('totp-secret', secret);
+  check(modifier + ': a new input starts new HMACs', await pageSettles(() => p.pending.length === 3));
+  p.clearShortcut(modifier, false);
+  for (const release of p.pending.splice(0)) await release();
+  check(modifier + ': outside focus keeps new work and recovery succeeds', await pageSettles(() => p.el('totp-code').textContent === '94287082'));
+}
+
+// ---------- v2 page layout ----------
+{
+  const template = source.slice(source.indexOf('\n---\n') + 5, source.indexOf('<script src='));
+  const css = source.slice(source.indexOf('<style>'));
+  check('generate layout registered', /'totp-generator':\s*'generate'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('root directly contains body and shared control rail', /^<div class="totp-wrap">\s*<div class="totp-body">\s*<div class="totp-rail zt-rail">/.test(template));
+  check('Random remains a real action before secondary options', template.indexOf('id="totp-gen-secret"') < template.indexOf('<details'));
+  check('secondary settings and identity start collapsed', [...template.matchAll(/<details\b[^>]*>/g)].length === 2 && !/<details\b[^>]*\sopen(?:\s|>)/.test(template));
+  check('output comes after the control rail', template.indexOf('class="totp-result"') > template.lastIndexOf('</details>'));
+  check('compatibility and secret-sharing notices are visible outside details', /id="totp-ga-note"/.test(template.slice(template.lastIndexOf('</details>'))) && /<p class="totp-note">\{L.qrWarning\}<\/p>/.test(template));
+  check('tips are excluded from serialized client strings', /const \{ tips: TIPS, \.\.\.CLIENT_L \} = L/.test(source) && /define:vars=\{\{ S: CLIENT_L \}\}/.test(source));
+  check('no runtime i18n rewriting', !source.includes('data-i18n'));
+  check('root uses a flex column with zero minimum height', /\.totp-wrap\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column[^}]*min-height:\s*0/.test(css));
+  check('desktop body gives the rail 270 to 320px', /\.totp-body\s*\{[^}]*grid-template-columns:\s*clamp\(270px,\s*26vw,\s*320px\)\s*minmax\(0,\s*1fr\)/.test(css));
+  check('result scrolls within the available height', /\.totp-result\s*\{[^}]*min-height:\s*0[^}]*overflow:\s*auto/.test(css));
+  check('status keeps space while empty', /#totp-status\s*\{[^}]*height:\s*7\.5rem[^}]*overflow:\s*auto/.test(css));
+  check('tool stacks at 860px and has phone details at 640px', /@media \(max-width: 860px\)/.test(css) && /@media \(max-width: 640px\)/.test(css));
+  check('mobile empty output stays hidden', /\.totp-result:has\(\.totp-display\[hidden\]\)\s*\{\s*display:\s*none/.test(css));
+  const tips = ['secret', 'random', 'settings', 'time', 'identity', 'code', 'uri'];
+  eq('seven unique control tips', [...template.matchAll(/<Toggletip id="totp-tip-([^" ]+)"/g)].map((m) => m[1]).sort(), [...tips].sort());
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' tip keys', Object.keys(STRINGS[lang].tips).sort(), [...tips].sort());
+    check(lang + ' each tip has explanation text', tips.every((key) => typeof STRINGS[lang].tips[key] === 'string' && STRINGS[lang].tips[key].length > 20));
+    check(lang + ' empty result and secret-sharing notice exist', !!STRINGS[lang].empty && !!STRINGS[lang].qrWarning);
+    const mdx = readFileSync(join(root, 'src/content/tools/totp-generator', lang + '.mdx'), 'utf8');
+    const lines = /^steps:\n([\s\S]*?)(?=^\S)/m.exec(mdx)?.[1].match(/^  - .+$/gm) || [];
+    const steps = lines.map((line) => JSON.parse(line.slice(4)));
+    eq(lang + ' has five usage steps', steps.length, 5);
+    check(lang + ' steps fit content limits', steps.every((step) => step.length <= 280) && steps.join('').length <= 1200);
+    check(lang + ' steps describe the collapsed settings', steps.some((step) => step.includes(STRINGS[lang].settings)) && steps.some((step) => step.includes(STRINGS[lang].identity)));
+    check(lang + ' HowTo heading removed', !/^## (?:How to Use|使用方法|使い方|사용 방법)$/m.test(mdx));
+    check(lang + ' limitations retained', /^## (?:Limits|限制|制限事項|제한 사항)$/m.test(mdx));
   }
 }
 

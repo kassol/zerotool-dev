@@ -52,6 +52,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/PkceGeneratorTool.astro'), 'utf8');
@@ -247,7 +249,7 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
       eq('STRINGS.' + l + ' has the same keys as en', keys(STRINGS[l]), keys(STRINGS.en));
       eq('STRINGS.' + l + ' has the same placeholders as en', ph(STRINGS[l]), ph(STRINGS.en));
     }
-    const used = [...source.matchAll(/S\.(\w+)/g)].map((m) => m[1]).concat([...source.matchAll(/L\.(\w+)/g)].map((m) => m[1]));
+    const used = [...source.matchAll(/\bS\.(\w+)/g)].map((m) => m[1]).concat([...source.matchAll(/\bL\.(\w+)/g)].map((m) => m[1]));
     eq('every S.key / L.key exists in STRINGS.en', [...new Set(used)].filter((k) => !(k in STRINGS.en)), []);
   }
 }
@@ -322,6 +324,99 @@ eq('plain returns the verifier', await E.computeChallenge(RFC_VERIFIER, 'plain')
       eq(lang + ': Go createChallenge(RFC verifier)', out[0], RFC_CHALLENGE);
       eq(lang + ': Go createVerifier() is a valid 43-character verifier', [out[1].length, E.validateVerifier(out[1]).code], [43, 'ok']);
     }
+  }
+}
+
+// ── Clearing while the actual page is waiting for SHA-256 ───────────────────
+{
+  const nodes = new Map(), events = {}, timers = [], digests = [];
+  const get = id => {
+    if (!nodes.has(id)) nodes.set(id, {
+      value: '', textContent: '', hidden: false, className: '', listeners: {},
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
+      dispatch(type) { for (const fn of this.listeners[type] || []) fn({ target: this }); },
+    });
+    return nodes.get(id);
+  };
+  const wrap = { contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [] };
+  const document = {
+    getElementById: get, querySelector: () => wrap, activeElement: null,
+    addEventListener(type, fn) { (events[type] ||= []).push(fn); },
+  };
+  get('pkce-length').value = '43';
+  get('pkce-endpoint').value = 'https://auth.example/authorize';
+  const context = {
+    document, S: STRINGS.en, navigator: {}, TextEncoder, Uint8Array, URL, URLSearchParams, btoa,
+    crypto: {
+      getRandomValues: bytes => crypto.getRandomValues(bytes),
+      subtle: { digest(algorithm, bytes) {
+        const output = createHash('sha256').update(bytes).digest();
+        return new Promise(resolve => digests.push(() => resolve(output.buffer.slice(output.byteOffset, output.byteOffset + output.length))));
+      } },
+    },
+    setTimeout: fn => timers.push(fn),
+  };
+  context.window = context;
+  const inline = source.match(/<script is:inline define:vars=[^>]*>([\s\S]*?)<\/script>/)[1];
+  vm.runInNewContext(inline, context);
+  const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  digests.shift()(); await drain();
+  for (const key of ['ctrlKey', 'metaKey']) {
+    get('pkce-verifier').value = RFC_VERIFIER;
+    get('pkce-verifier').dispatch('input');
+    check(key + ': SHA-256 is pending', digests.length === 1);
+    document.activeElement = get('pkce-verifier');
+    for (const fn of events.keydown) fn({ [key]: true, key: 'l' });
+    // ToolLayout clears these values without input events, after the component listener.
+    for (const node of nodes.values()) node.value = '';
+    digests.shift()(); await drain();
+    eq(key + ': late digest cannot restore outputs before the clear timer',
+      ['pkce-challenge', 'pkce-authurl', 'pkce-curl'].map(id => get(id).textContent), ['—', '—', '—']);
+    while (timers.length) timers.shift()();
+    eq(key + ': outputs stay empty after the clear timer',
+      ['pkce-challenge', 'pkce-authurl', 'pkce-curl'].map(id => get(id).textContent), ['—', '—', '—']);
+    get('pkce-endpoint').value = 'https://auth.example/authorize';
+    get('pkce-verifier').value = RFC_VERIFIER;
+    get('pkce-verifier').dispatch('input');
+    digests.shift()(); await drain();
+    eq(key + ': a new input still produces the RFC challenge', get('pkce-challenge').textContent, RFC_CHALLENGE);
+  }
+  get('pkce-verifier').dispatch('input');
+  document.activeElement = {};
+  for (const fn of events.keydown) fn({ ctrlKey: true, key: 'l' });
+  digests.shift()(); await drain();
+  eq('shortcut outside the tool keeps its pending result', get('pkce-challenge').textContent, RFC_CHALLENGE);
+}
+
+// ── v2 page layout ─────────────────────────────────────────────────────────
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  check('root receives the v2 height directly', /^\s*<div class="pkce-wrap">/.test(markup));
+  check('generate page has a shared control rail and a preview', markup.includes('class="pkce-rail zt-rail"') && markup.includes('class="pkce-preview"'));
+  check('rail is 270–320px beside the preview', source.includes('grid-template-columns: clamp(270px, 24vw, 320px) minmax(0, 1fr)'));
+  check('long request previews scroll inside flex children', source.includes('.pkce-out-text { align-self: stretch; overflow: auto; }') && source.includes('.pkce-results, .pkce-request { flex: 1 1 0; }'));
+  check('mobile puts the result before secondary settings', source.includes('@media (max-width: 860px)') && source.includes('.pkce-preview { order: 2; height: auto; flex: none; }') && source.includes('.pkce-advanced { order: 3; }'));
+  check('empty result has a localized sentence and hides on mobile', markup.includes('id="pkce-empty"') && source.includes('.pkce-preview:has(#pkce-empty:not([hidden])) { display: none; }'));
+  check('empty status rows reserve space', source.includes('#pkce-verifier-status[hidden] { display: block; visibility: hidden; }') && source.includes('#pkce-auth-status[hidden] { display: block; visibility: hidden; }'));
+  check('random generation remains the primary action', /id="pkce-generate" class="btn-primary"/.test(markup));
+  eq('all four copy actions remain', [...markup.matchAll(/id="pkce-copy-([^"]+)"/g)].map(m => m[1]).sort(), ['authurl', 'challenge', 'curl', 'verifier']);
+  check('the plain warning remains outside details', !/<details[^>]*>[\s\S]*?pkce-method-status[\s\S]*?<\/details>/.test(markup));
+  const tipKeys = ['generate', 'verifier', 'method', 'compare', 'auth', 'token'];
+  eq('six control tips', [...markup.matchAll(/<Toggletip id="pkce-tip-([^"]+)"/g)].map(m => m[1]).sort(), [...tipKeys].sort());
+  check('tips are not serialized to the page script', source.includes('const { tips: TIPS, ...CLIENT_L } = L;') && source.includes('define:vars={{ S: CLIENT_L }}'));
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  check('listed as generate', layouts.includes("'pkce-generator': 'generate'"));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ': tip keys match', Object.keys(STRINGS[lang].tips).sort(), [...tipKeys].sort());
+    check(lang + ': tips and empty sentence contain text', tipKeys.every(k => STRINGS[lang].tips[k].length > 20) && STRINGS[lang].empty.length > 10);
+    const mdx = readFileSync(join(root, 'src/content/tools/pkce-generator/' + lang + '.mdx'), 'utf8');
+    const front = mdx.slice(0, mdx.indexOf('\n---\n', 4));
+    const steps = [...front.slice(front.indexOf('\nsteps:\n'), front.indexOf('\nfaqItems:')).matchAll(/^  - (".*")$/gm)].map(m => JSON.parse(m[1]));
+    eq(lang + ': five frontmatter steps', steps.length, 5);
+    check(lang + ': steps stay within limits', steps.every(v => v.length <= 280) && steps.join('').length <= 1200);
+    check(lang + ': no usage section remains', !/^## (How to Use|用法|使い方|사용법)\s*$/m.test(mdx));
+    check(lang + ': limits stay in the body', /^## (Limits|限制|制限|제한)/m.test(mdx));
   }
 }
 

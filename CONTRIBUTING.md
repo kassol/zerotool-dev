@@ -78,25 +78,27 @@ Every new tool requires ALL of the following:
 - [ ] **Tool component**: `src/components/tools/{ToolName}Tool.astro` — single-file widget with inline `<script>` and scoped `<style>`. No client framework; avoid new npm runtime dependencies unless browser-native APIs are insufficient.
 - [ ] **Registry entry**: Append to `src/data/tools.ts` — `slug`, full 4-language `translations` (`en`/`zh`/`ja`/`ko`), `category`, optional `relatedSlugs`.
 - [ ] **Component map**: Add `'{slug}': '{ToolName}Tool'` to `toolComponentFiles` in `src/components/tools/registry.ts`. `toolRoutes()` in `astro.config.mjs` injects the tool page for all four languages from this entry; there is no route file to add.
+- [ ] **Tool layout**: Register the slug in `src/data/tool-layouts.ts` as `convert`, `generate`, `analyze`, `compact` or `compare`. Use the direct tool root and shared classes defined in `DESIGN.md`. Keep tool strings and toggletips in four-language build-time output; send only required state messages to the inline script.
 - [ ] **Icon**: Add a Lucide-style inline SVG to `src/data/icons.ts` (24×24 viewBox, `stroke="currentColor"`, stroke-width 2).
 - [ ] **OG image**: Run `npm run generate-og` to preview `public/og/{slug}.png` locally. Do not commit the image: `public/og/` is a build artifact, and `npm run build` generates it.
 
 ### Content
 
-- [ ] **Tool SEO**: 4 files at `src/content/tools/{slug}/{en,zh,ja,ko}.mdx` with `seoTitle`, `seoDescription`, optional `faqItems`, plus a body for long-tail content. Build will fail if any of the four is missing.
+- [ ] **Tool SEO**: 4 files at `src/content/tools/{slug}/{en,zh,ja,ko}.mdx` with `seoTitle`, `seoDescription`, required plain-text `steps` and optional `faqItems`, plus a body for long-tail content. Usage facts belong in the tool tips and steps; keep examples, FAQ, SEO and Limits. Build will fail if any of the four is missing.
 - [ ] **Blog post (recommended)**: `src/content/blog/{slug}-guide/{en,zh,ja,ko}.mdx` covering common use cases and pitfalls.
 
 ### Verification
 
 - [ ] `node scripts/audit.mjs` passes
 - [ ] `npm run build` passes (CI also runs it)
-- [ ] Design review against `DESIGN.md` on desktop/mobile and light/dark
+- [ ] Dedicated tool regressions cover its registered layout kind, four-language build-time labels and toggletips, usage steps and retained reference content. Run direct cross-reader tests and built `test-llms-txt.mjs` for all tools and languages.
+- [ ] Browser verification against `DESIGN.md` on desktop/phone and light/dark: tips open and close, primary actions, clear/shortcuts, copy failure/retry and long results scroll within bounded containers.
 - [ ] README tool table auto-syncs via `update-readme.yml` on push to `master`
 - [ ] Tag + push to trigger CF Pages deploy
 
 ## Code Conventions
 
-- **i18n strings**: User-facing UI strings live in `src/i18n/{lang}.json` (looked up via `t(lang, key)`). Per-tool name and description live in `src/data/tools.ts` `translations` (read with `getToolName(tool, lang)` / `getToolDescription(tool, lang)`).
+- **i18n strings**: Tool-specific labels and tips use the component frontmatter four-language `STRINGS` table. Shared UI strings live in `src/i18n/{lang}.json` (looked up via `t(lang, key)`). Per-tool name and description live in `src/data/tools.ts` `translations` (read with `getToolName(tool, lang)` / `getToolDescription(tool, lang)`).
 - **Tool styles are page-local**: Each tool page loads only the shared CSS and the CSS of its own component. Do not rely on styles from another tool component. Use a class prefix that no other tool uses (grep `src/components/tools/` first). Put rules that several tools share in `src/styles/tool-common.css`. Elements that a script creates (`innerHTML`, `createElement`) have no scoped attribute, so style them with `:global(...)`.
 - **Design tokens**: Use the CSS custom properties defined in `BaseLayout.astro` global styles (`--color-primary`, `--radius-md`, etc.). Do not hardcode hex colors in component styles. See `DESIGN.md`.
 - **Icons**: All icons are inline SVG in `src/data/icons.ts` — no external icon libraries, zero network dependencies.

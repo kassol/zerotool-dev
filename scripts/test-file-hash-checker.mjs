@@ -320,6 +320,137 @@ if (E) {
   }
 }
 
+// ---------- real page lifecycle: directory and checksum reads ----------
+// Run the complete shipped IIFE plus ToolLayout's real shortcut handler. Only DOM,
+// timers, FileSystemEntry callbacks, clipboard and Worker delivery are controlled.
+{
+  const pageScript = componentSrc.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const stringsAt = componentSrc.indexOf('const STRINGS = '), stringsEnd = componentSrc.indexOf('} as const;', stringsAt);
+  const strings = new Function('return ' + componentSrc.slice(stringsAt + 16, stringsEnd + 1))();
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+  const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return {promise,resolve,reject}; };
+  function page(shellFirst = false) {
+    const ids = new Map(), timers = new Map(), frames = [], workers = [], copies = [], cleared = [];
+    let seq = 0;
+    const doc = {listeners:{},activeElement:null};
+    function matches(node, selector) {
+      return selector.split(',').some(s => {
+        const parts = s.trim().split(/\s+/), last = parts.pop();
+        const attrs = [...last.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)], bare=last.replace(/\[[^\]]*\]/g,'');
+        const id=/#([\w-]+)/.exec(bare), classes=[...bare.matchAll(/\.([\w-]+)/g)], tag=/^[\w-]+/.exec(bare);
+        const own=(!id||node.id===id[1])&&(!tag||node.tagName===tag[0].toUpperCase())&&classes.every(c=>node.classList.contains(c[1]))&&attrs.every(a=>a[2]===undefined?node.hasAttribute(a[1]):node.getAttribute(a[1])===a[2]);
+        if(!own)return false;
+        let p=node.parentNode;while(parts.length&&p&&p!==doc){if(matches(p,parts.at(-1)))parts.pop();p=p.parentNode;}return !parts.length;
+      });
+    }
+    class Element {
+      constructor(tag='div'){Object.assign(this,{tagName:tag.toUpperCase(),id:'',className:'',attributes:{},style:{},children:[],parentNode:null,listeners:{},value:'',type:tag==='input'?'text':'',hidden:false,disabled:false,checked:false,files:[]});}
+      get classList(){const e=this;return{contains:c=>e.className.split(/\s+/).includes(c),add(c){if(!this.contains(c))e.className+=' '+c;},remove(c){e.className=e.className.split(/\s+/).filter(x=>x!==c).join(' ');},toggle(c,on){if(on??!this.contains(c))this.add(c);else this.remove(c);}};}
+      setAttribute(k,v){this.attributes[k]=String(v);if(['id','class','type'].includes(k))this[k==='class'?'className':k]=String(v);}
+      getAttribute(k){return k==='type'?this.type:this.attributes[k]??null;}
+      hasAttribute(k){return this.getAttribute(k)!==null;}
+      get textContent(){return(this.text||'')+this.children.map(c=>c.textContent).join('');}
+      set textContent(v){if(this.children.some(c=>c.contains(doc.activeElement)))doc.activeElement=body;for(const c of this.children)c.parentNode=null;this.children=[];this.text=String(v);}
+      appendChild(n){n.parentNode=this;this.children.push(n);return n;}
+      remove(){if(this.contains(doc.activeElement))doc.activeElement=body;if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(c=>c!==this);this.parentNode=null;}
+      contains(n){return n===this||this.children.some(c=>c.contains(n));}
+      querySelectorAll(s){return this.children.flatMap(c=>[...(matches(c,s)?[c]:[]),...c.querySelectorAll(s)]);}
+      querySelector(s){return this.querySelectorAll(s)[0]||null;}
+      closest(s){for(let p=this;p&&p!==doc;p=p.parentNode)if(matches(p,s))return p;return null;}
+      addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);}
+      dispatch(type,extra={}){const e={type,target:this,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.stopped=true;},...extra};for(let p=this;p&&!e.stopped;p=p.parentNode)for(const fn of p.listeners[type]||[])fn(e);return e;}
+      click(){if(!this.disabled)this.dispatch('click');}
+      focus(){doc.activeElement=this;}
+    }
+    const body=new Element('body'),widget=new Element();widget.className='tool-widget';body.appendChild(widget);body.parentNode=doc;
+    let markup=componentSrc.slice(componentSrc.indexOf('\n---',4)+4,componentSrc.indexOf('<script'));
+    const algoStart=componentSrc.indexOf('const ALGO_UI = '),algoEnd=componentSrc.indexOf('];',algoStart);
+    const algoUi=new Function('T',componentSrc.slice(algoStart,algoEnd+2)+';return ALGO_UI;')(strings.en);
+    markup=markup.replace(/\{ALGO_UI\.map\(\(a\) => \(([\s\S]*?)\)\)\}/g,(_,template)=>algoUi.map(a=>template.replace('data-algo={a.id}','data-algo="'+a.id+'"').replace('checked={a.checked}',a.checked?'checked':'')).join(''));
+    const stack=[widget],voids=new Set(['input','br','hr','img','path']);
+    for(const m of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>/g)){const tag=m[1];if(m[0].startsWith('</')){if(stack.at(-1)?.tagName===tag.toUpperCase())stack.pop();continue;}const e=new Element(tag);for(const a of m[2].matchAll(/([\w-]+)="([^"]*)"/g))e.setAttribute(a[1],a[2]);e.hidden=/\bhidden(?=\s|\/|$)/.test(m[2]);e.checked=/\bchecked(?=\s|\/|$)/.test(m[2]);stack.at(-1).appendChild(e);if(e.id)ids.set(e.id,e);if(!voids.has(tag)&&!m[2].endsWith('/'))stack.push(e);}
+    const get=id=>{if(!ids.has(id))throw new Error('Actual markup ID missing '+id);return ids.get(id);};
+    Object.assign(doc,{body,getElementById:get,createElement:tag=>new Element(tag),createTextNode:text=>{const e=new Element('#text');e.textContent=text;return e;},querySelector:s=>s==='.tool-widget'?widget:widget.querySelector(s),querySelectorAll:s=>widget.querySelectorAll(s),addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);}});
+    const context={S:strings.en,pageLang:'en',document:doc,window:{ztPersist:{clear:slug=>cleared.push(slug)}},_slug:'file-hash-checker',performance,Promise,Uint8Array,ArrayBuffer,DataView,TextEncoder,TextDecoder,atob,URL,Blob,console,
+      navigator:{clipboard:{writeText:async text=>copies.push(text)}},
+      requestAnimationFrame:fn=>frames.push(fn),setTimeout(fn){timers.set(++seq,fn);return seq;},clearTimeout:id=>timers.delete(id),
+      Worker:class{constructor(url){this.url=url;this.jobs=[];workers.push(this);}postMessage(job){this.jobs.push(job);}terminate(){this.terminated=true;}}
+    };
+    vm.createContext(context);if(shellFirst)vm.runInContext(shortcut,context);vm.runInContext(pageScript,context);if(!shellFirst)vm.runInContext(shortcut,context);
+    async function settle(runTimers=true){for(let i=0;i<20;i++){await Promise.resolve();if(runTimers)for(const [key,fn]of [...timers]){timers.delete(key);fn();}for(const fn of frames.splice(0))fn();}}
+    const load=(id,file)=>{const n=get(id);n.files=[file];n.dispatch('change');};
+    const key=(inside=true)=>{(inside?get('fhc-expected'):body).focus();const e={key:'l',ctrlKey:true,preventDefault(){this.defaultPrevented=true;}};for(const fn of doc.listeners.keydown||[])fn(e);return e;};
+    function dropDirectory() {
+      let next;
+      const directory = { isDirectory: true, name: 'folder', createReader() { return { readEntries: ok => { next = ok; } }; } };
+      get('fhc-wrap').dispatch('drop', { dataTransfer: { files: [{ name: 'placeholder' }], items: [{ kind: 'file', webkitGetAsEntry: () => directory }] } });
+      return {
+        batch(entries) { const callback = next; next = null; callback(entries); },
+        file(name = 'late.bin') {
+          let ready;
+          const entry = { isFile: true, file: ok => { ready = ok; } };
+          return { entry, finish() { ready({ name, size: 3 }); } };
+        },
+      };
+    }
+
+    return{get,workers,copies,cleared,settle,load,key,dropDirectory,text(text){get('fhc-expected').value=text;get('fhc-expected').dispatch('input');}};
+  }
+  const checksum='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
+  const list=(name,job)=>({name,size:64,text:()=>job.promise});
+  {
+    const p=page(),d=p.dropDirectory(),f=d.file();d.batch([f.entry]);d.batch([]);await p.settle();f.finish();await p.settle();
+    eq('directory positive control adds the actual file after callbacks',p.get('fhc-list').textContent.includes('folder/late.bin'),true);
+  }
+  for(const shellFirst of [false,true])for(const action of ['clear','shortcut']){
+    const p=page(shellFirst),d=p.dropDirectory(),f=d.file();d.batch([f.entry]);d.batch([]);await p.settle();
+    if(action==='clear')p.get('fhc-clear').click();else p.key();f.finish();await p.settle();
+    eq(`late directory file ignored after ${action}, shellFirst=${shellFirst}`,p.get('fhc-list').children.length,0);
+    eq(`late directory cannot start hashing after ${action}, shellFirst=${shellFirst}`,p.workers.length,0);
+  }
+  {
+    const p=page(),d=p.dropDirectory(),f=d.file();p.get('fhc-clear').click();p.load('fhc-file',{name:'new.bin',size:3});d.batch([f.entry]);d.batch([]);await p.settle();f.finish();await p.settle();
+    eq('late directory batches cannot add old files beside a new selection',p.get('fhc-list').children.length,1);
+    check('new file survives directory cancellation',p.get('fhc-list').textContent.includes('new.bin'));
+  }
+  {
+    const p=page(),job=deferred();p.load('fhc-list-file',list('SHA256SUMS',job));job.resolve(checksum);await p.settle();
+    eq('checksum file positive control updates the real textarea',p.get('fhc-expected').value,checksum);
+    check('checksum file positive control reports its file name',p.get('fhc-status').textContent.includes('SHA256SUMS'));
+  }
+  for(const shellFirst of [false,true])for(const action of ['clear','shortcut','typing']){
+    const p=page(shellFirst),job=deferred();p.load('fhc-list-file',list('old.SHA256SUMS',job));
+    if(action==='clear')p.get('fhc-clear').click();else if(action==='shortcut')p.key();else p.text('new typed value');
+    // Resolve before deferred Ctrl+L cleanup: a microtask may beat the 0ms timer.
+    job.resolve(checksum);await p.settle(false);await p.settle();
+    eq(`late checksum read ignored after ${action}, shellFirst=${shellFirst}`,p.get('fhc-expected').value,action==='typing'?'new typed value':'');
+    check(`late checksum status ignored after ${action}, shellFirst=${shellFirst}`,!p.get('fhc-status').textContent.includes('old.SHA256SUMS'));
+  }
+  {
+    const p=page(),old=deferred(),current=deferred();p.load('fhc-list-file',list('old.SHA256SUMS',old));p.load('fhc-list-file',list('new.SHA256SUMS',current));current.resolve('d41d8cd98f00b204e9800998ecf8427e');await p.settle();old.resolve(checksum);await p.settle();
+    eq('latest checksum selection wins over a late earlier read',p.get('fhc-expected').value,'d41d8cd98f00b204e9800998ecf8427e');
+  }
+  for (const canceled of [false, true]) {
+    const p = page(), job = deferred(), rejections = [];
+    const collect = error => rejections.push(String(error));
+    process.on('unhandledRejection', collect);
+    try {
+      p.load('fhc-list-file', list('unreadable.SHA256SUMS', job));
+      if (canceled) p.get('fhc-clear').click();
+      job.reject(new Error('fixture read failed'));
+      await p.settle(); await new Promise(resolve => setImmediate(resolve)); await p.settle();
+      eq(`checksum read rejection is handled, canceled=${canceled}`, rejections, []);
+      eq(`checksum read failure status, canceled=${canceled}`, p.get('fhc-status').textContent, canceled ? '' : strings.en.errRead);
+    } finally { process.removeListener('unhandledRejection', collect); }
+  }
+  {
+    const p=page(),d=p.dropDirectory(),f=d.file();p.key(false);d.batch([f.entry]);d.batch([]);await p.settle();f.finish();await p.settle();
+    eq('outside Ctrl+L does not cancel a valid directory import',p.get('fhc-list').children.length,1);
+    eq('outside Ctrl+L does not clear persistence',p.cleared.length,0);
+  }
+}
+
 // ---------- 4-language strings ----------
 {
   const s0 = componentSrc.indexOf('const STRINGS = ');
@@ -329,7 +460,7 @@ if (E) {
     const STRINGS = new Function('return ' + componentSrc.slice(s0 + 'const STRINGS = '.length, s1 + 1))();
     const keys = Object.keys(STRINGS.en).sort();
     for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' has the same keys as en', Object.keys(STRINGS[lang]).sort(), keys);
-    const ph = (v) => JSON.stringify([...new Set((Array.isArray(v) ? v.join('|') : v).match(/\{[a-z]+\}/gi) || [])].sort());
+    const ph = (v) => JSON.stringify([...new Set((typeof v === 'string' ? v : JSON.stringify(v)).match(/\{[a-z]+\}/gi) || [])].sort());
     for (const lang of ['zh', 'ja', 'ko']) {
       for (const k of keys) check(lang + '.' + k + ' placeholders', ph(STRINGS[lang][k]) === ph(STRINGS.en[k]), ph(STRINGS[lang][k]) + ' vs ' + ph(STRINGS.en[k]));
     }
@@ -344,6 +475,61 @@ for (const [name, src] of [['worker', workerSrc], ['component', componentSrc]]) 
 }
 check('worker imports only the vendored hash-wasm', (workerSrc.match(/importScripts\(/g) || []).length === 1);
 check('component never reads a whole file into memory', !/\.arrayBuffer\(\)/.test(componentSrc));
+
+// ---------- v2 page layout (DESIGN.md "Tool Pages v2", kind: analyze) ----------
+{
+  const markup = componentSrc.slice(componentSrc.indexOf('\n---\n', 4) + 5, componentSrc.indexOf('<script'));
+  const styles = componentSrc.slice(componentSrc.indexOf('<style'));
+  const stringsAt = componentSrc.indexOf('const STRINGS = '), stringsEnd = componentSrc.indexOf('} as const;', stringsAt);
+  const strings = new Function('return ' + componentSrc.slice(stringsAt + 16, stringsEnd + 1))();
+  check('v2 root directly receives shell height', /^\s*<div class="fhc-wrap" id="fhc-wrap">/.test(markup) && /\.fhc-wrap \{[^}]*min-height: 0/.test(styles));
+  check('v2 empty import uses the shared analyze class', markup.includes('class="fhc-drop zt-empty-drop"'));
+  check('v2 input, actions and reserved status precede result workspace', markup.indexOf('class="fhc-bar"') < markup.indexOf('class="fhc-verify"') && markup.indexOf('id="fhc-tools"') < markup.indexOf('id="fhc-status"') && markup.indexOf('id="fhc-status"') < markup.indexOf('class="fhc-workspace"'));
+  check('v2 result list has a positive-height parent and scrolls internally', /\.fhc-workspace \{[^}]*min-height: 300px/.test(styles) && /\.fhc-list \{[^}]*flex: 1 1 0;[^}]*overflow: auto/.test(styles));
+  check('v2 status reserves height even when empty', /\.fhc-status \{[^}]*height: 2\.9em;[^}]*overflow: auto/.test(styles) && !/\.fhc-status:empty/.test(styles));
+  check('v2 phone workspace has bounded height and dense options remain touchable', /max-width: 860px/.test(styles) && /height: 28rem/.test(styles) && /\.fhc-algo \{ min-height: 44px/.test(styles));
+  check('v2 optional expected input can be expanded without hiding verification results', /<details class="fhc-verify" id="fhc-verify-panel">/.test(markup) && markup.indexOf('id="fhc-verify-out"') > markup.indexOf('</details>'));
+  check('v2 tips and expected hint are excluded from client strings', componentSrc.includes('const { tips: TIPS, expectedHint, ...CLIENT_T } = T;') && componentSrc.includes('define:vars={{ S: CLIENT_T, pageLang: lang }}'));
+  const tipKeys = ['algorithms', 'files', 'expected', 'list', 'upper', 'clear', 'export'];
+  eq('v2 seven control tips are rendered once', [...markup.matchAll(/<Toggletip id="fhc-tip-([a-z]+)"/g)].map(m => m[1]), tipKeys);
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  eq('v2 control IDs stay unique', ids.length, new Set(ids).size);
+  for (const id of ['fhc-file','fhc-dir','fhc-expected','fhc-list-file','fhc-pick-dir','fhc-open-list','fhc-upper','fhc-out-algo','fhc-out-copy','fhc-out-dl','fhc-stop','fhc-clear','fhc-list','fhc-verify-out']) check('v2 retains control ' + id, ids.includes(id));
+  check('v2 analyze registration', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'file-hash-checker': 'analyze'"));
+  const unchanged = {
+  "en": {
+    "front": "79e115a3550197114167d0cc67eabb5b57f7199107aa6c020127c6195642fb7c",
+    "body": "19af8dfd741bb183b1b136763c153a6eb3be1ab6c0cc525d80f12e42719ee0af"
+  },
+  "zh": {
+    "front": "d1f4c44258cc589f06c8fdad2c4b7442cd5df7ea50a978e108789cc57269dd84",
+    "body": "613ed4941698f9e1c2e91fc71a46071d60ec9cddd993012ca83d8d07b8c25aa2"
+  },
+  "ja": {
+    "front": "9722797cfb2358f3b5832650c7617eefdc29128e6bdc391d14cee563823715c4",
+    "body": "863c984989a4faca7532efb50466df5ddefa42fe3881fcb3c36c38ef761d9ee6"
+  },
+  "ko": {
+    "front": "9f0280c19083b21a46f5825a50aecd02175e4b9837028e09c1ebce7baf5de53f",
+    "body": "be33bd465af9846c151c408ab0ef4f62634a679099ee528357c3cbeaf3846ee5"
+  }
+};
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  for (const lang of ['en','zh','ja','ko']) {
+    eq(lang + ' v2 tip keys match', Object.keys(strings[lang].tips).sort(), [...tipKeys].sort());
+    for (const [name,text] of Object.entries(strings[lang].tips)) check(lang + ' v2 plain tip ' + name, typeof text === 'string' && text.trim().length > 0 && !/[<>]|https?:/.test(text));
+    const mdx = readFileSync(join(root, 'src/content/tools/file-hash-checker', lang + '.mdx'), 'utf8');
+    const [front,body] = mdx.split('\n---\n');
+    const stepsText = front.slice(front.indexOf('\nsteps:\n') + 8, front.indexOf('\nfaqItems:'));
+    const steps = stepsText.split('\n').filter(line => line.startsWith('  - ')).map(line => JSON.parse(line.slice(4)));
+    eq(lang + ' v2 has five steps', steps.length, 5);
+    check(lang + ' v2 steps fit plain-text limits', steps.every(step => step.length <= 280 && !/[<>]/.test(step)) && steps.join('').length <= 1200);
+    eq(lang + ' v2 preserves metadata and FAQ', hash(front.replace(/\nsteps:\n[\s\S]*?(?=\nfaqItems:)/, '')), unchanged[lang].front);
+    eq(lang + ' v2 preserves body outside Usage', hash(body), unchanged[lang].body);
+    check(lang + ' v2 removes only the usage heading', !/^## (How to Use|使用方法|使い方|사용 방법)$/m.test(body));
+    check(lang + ' v2 retains Limits', /^## (Limits|限制|制限|한계)$/m.test(body));
+  }
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

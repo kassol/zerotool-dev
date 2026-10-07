@@ -53,6 +53,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { load as loadYaml } from 'js-yaml';
 import assert from 'node:assert/strict';
 import postcss from 'postcss';
 import { compile as twCompile } from 'tailwindcss';
@@ -438,9 +440,10 @@ function readAseBlocks(bytes) {
 const sStart = source.indexOf('const STRINGS = {');
 const sEnd = source.indexOf('\n};', sStart);
 const STRINGS = new Function(source.slice(sStart, sEnd + 3) + '\nreturn STRINGS;')();
+const clientStrings = (lang) => new Function('STRINGS', 'lang', source.slice(source.indexOf('const T = STRINGS'), source.indexOf('const CODE_KINDS')) + '\nreturn { TIPS, CLIENT_T };')(STRINGS, lang);
 {
   const keys = (o) => Object.keys(o).sort();
-  const ph = (o) => keys(o).map((k) => k + ':' + ((o[k].match(/\{\w+\}/g) || []).sort().join(',')));
+  const ph = (o) => keys(o).filter(k => typeof o[k] === 'string').map((k) => k + ':' + ((o[k].match(/\{\w+\}/g) || []).sort().join(',')));
   for (const l of ['zh', 'ja', 'ko']) {
     eq('STRINGS.' + l + ' has the same keys as en', keys(STRINGS[l]), keys(STRINGS.en));
     eq('STRINGS.' + l + ' has the same placeholders as en', ph(STRINGS[l]), ph(STRINGS.en));
@@ -495,9 +498,10 @@ const STRINGS = new Function(source.slice(sStart, sEnd + 3) + '\nreturn STRINGS;
 // Worker / OffscreenCanvas / createImageBitmap are stubbed and the worker runs the exact source
 // text the page builds, in its own vm context.
 const WORKER_SIGNALS = { decodeError: 'decode failed' };
-function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = true, src = source,
+function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = true, src = source, shellFirst = null, holdCopies = false,
   srgbPixel = () => [30, 0, 0], p3Pixel = () => [255, 0, 0] } = {}) {
-  const timers = [], nodes = new Map(), reads = [], images = [], workers = [], blobs = new Map(), downloads = [];
+  const timers = [], nodes = new Map(), reads = [], images = [], workers = [], blobs = new Map(), downloads = [], copies = [], clearCalls = [];
+  const faults = {};
   let countCalls = 0, canvasIds = 0;
   function fakeCtx(node, opts, p3ok, where) {
     return {
@@ -506,6 +510,7 @@ function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = 
       clearRect() {}, fillRect() {}, beginPath() {}, arc() {}, fill() {}, moveTo() {}, lineTo() {}, closePath() {},
       getImageData(x, y, w, h) {
         const isP3 = opts.colorSpace === 'display-p3';
+        if (!isP3 && faults.read) { faults.read = false; throw new Error('fixture image read'); }
         if (isP3) {
           if (readError) throw new Error('read failed');
           reads.push({ w, h, y, where, canvas: node.id, file: this.source && this.source.file && this.source.file.name });
@@ -525,28 +530,29 @@ function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = 
       this.attrs = {}; this.value = ''; this.hidden = false; this.classes = new Set();
       this.classList = { add: (x) => this.classes.add(x), remove: (x) => this.classes.delete(x), toggle() {}, contains: (x) => this.classes.has(x) };
     }
-    set textContent(v) { this.text = v; this.children = []; }
+    set textContent(v) { if (this.children.some(n => n.contains(document.activeElement))) document.activeElement = document.body; this.text = v; this.children = []; }
     get textContent() { return this.text || ''; }
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
-    dispatch(type, e = {}) { for (const fn of this.listeners[type] || []) fn({ target: this, ...e }); }
+    dispatch(type, e = {}) { const event = { target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...e }; for (const fn of this.listeners[type] || []) fn(event); return event; }
     setAttribute(k, v) { this.attrs[k] = v; }
     getAttribute(k) { return this.attrs[k]; }
-    appendChild(n) { this.children.push(n); return n; }
-    contains(n) { return n === this || [...nodes.values()].includes(n); }
+    appendChild(n) { this.children.push(n); n.parentElement = this; return n; }
+    contains(n) { return n === this || this.children.some(c => c.contains(n)) || (this === nodes.get('icp-wrap') && [...nodes.values()].some(c => c !== this && c.contains(n))); }
     querySelector(sel) { return this.children.flatMap((n) => n.children).find((n) => n.className === sel.slice(1)) || null; }
     querySelectorAll() { return []; }
     getBoundingClientRect() { return { bottom: 0, top: 0 }; }
-    remove() {} select() {}
+    remove() {} select() {} focus() { document.activeElement = this; }
     click() { if (this.tagName === 'A' && this.download) downloads.push({ name: this.download, blob: blobs.get(this.href) }); this.dispatch('click'); }
     getContext(type, opts = {}) { return fakeCtx(this, opts, p3, 'main'); }
   }
   const document = new Node();
-  document.getElementById = (id) => { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); };
+  const actualIds = new Set([...src.slice(src.indexOf('\n---', 4) + 4, src.indexOf('<script')).matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
+  document.getElementById = (id) => { assert.ok(actualIds.has(id), 'actual markup contains ' + id); if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); };
   document.createElement = (tag) => new Node(tag);
-  document.querySelector = () => null;
+  document.querySelector = s => s === '.tool-widget' ? nodes.get('icp-wrap') : null;
   document.body = new Node('body');
   const window = { innerHeight: 900, matchMedia: () => ({ matches: false, addEventListener() {} }), scrollBy() {},
-    ztPersist: { load() {}, save() {}, clear() {} } };
+    ztPersist: { load() {}, save() {}, clear(slug) { clearCalls.push(slug); } } };
   let script = src.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
   const countSignature = 'function countOutOfSrgb(px) {';
   assert.equal(script.split(countSignature).length - 1, 1, 'instrument exactly one real P3 counter');
@@ -580,7 +586,7 @@ function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = 
     postMessage(m) { this.posted.push(m); if (this.ready) this.self.onmessage({ data: m }); else this.inbox.push(m); }
     terminate() { this.terminated = true; }
   }
-  const globals = { document, window, t: STRINGS.en, navigator: { clipboard: { writeText: () => Promise.resolve() } },
+  const globals = { document, window, t: clientStrings('en').CLIENT_T, _slug: 'image-color-palette', navigator: { clipboard: { writeText(text) { const job = { text }; copies.push(job); return holdCopies ? new Promise((resolve, reject) => Object.assign(job, { resolve, reject })) : Promise.resolve(); } } },
     Uint8ClampedArray, Uint8Array, ArrayBuffer, DataView, Blob, TextEncoder, URL: URLStub,
     Image: class { constructor() { this.naturalWidth = 6000; this.naturalHeight = 4752; images.push(this); } decode() { return Promise.resolve(); } },
     setTimeout: setTimeoutStub, clearTimeout: (timer) => { if (timer) timer.cancelled = true; },
@@ -591,9 +597,13 @@ function pageHarness({ p3 = true, readError = false, worker = false, workerP3 = 
     globals.createImageBitmap = () => Promise.reject(new Error('main thread createImageBitmap is not used'));
   }
   const ctx = vm.createContext(globals);
+  const layout = read('src/layouts/ToolLayout.astro');
+  const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+  if (shellFirst === true) vm.runInContext(shortcut, ctx);
   vm.runInContext(script, ctx);
+  if (shellFirst === false) vm.runInContext(shortcut, ctx);
   const flush = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
-  return { nodes, reads, workers, downloads, document, window, flush, ctx, get countCalls() { return countCalls; },
+  return { nodes, reads, workers, downloads, document, window, flush, ctx, images, copies, clearCalls, faults, get countCalls() { return countCalls; },
     status() { return nodes.get('icp-status').textContent; },
     async open(name = 'photo.jpg', type = 'image/jpeg', extra = {}) {
       const file = { name, type, ...extra };
@@ -727,6 +737,147 @@ const SAMPLE_PIXELS = 575 * 455;   // fitImageSize(6000, 4752, SAMPLE_AREA)
     for (const k of Object.keys(a)) if (k !== 'status') check('export byte-identical before/after: ' + k, a[k] === b[k] && a[k].length > 0, k);
     eq('status (palette + P3 note) identical before/after', b.status, a.status);
   }
+}
+
+// ── File replacement and asynchronous result lifecycle ──
+{
+  const base = { passes, failures };
+  const start = (p, name = 'next.png', type = 'image/png', method = 'change') => {
+    const file = { name, type };
+    if (method === 'drop') p.nodes.get('icp-wrap').dispatch('drop', { dataTransfer: { files: [file] } });
+    else { const n = p.nodes.get('icp-file'); n.files = [file]; n.value = name; n.dispatch('change'); }
+    const im = p.images.at(-1); if (im) im.file = file; return im;
+  };
+  const snapshot = p => ({ status: p.status(), main: p.nodes.get('icp-main').hidden, exports: p.nodes.get('icp-export').hidden, code: p.nodes.get('icp-code-out').textContent, info: p.nodes.get('icp-info').textContent, palette: p.nodes.get('icp-palette').children.length, width: p.nodes.get('icp-canvas').width, height: p.nodes.get('icp-canvas').height });
+  const empty = (name, p) => {
+    check(name + ' hides preview and exports', p.nodes.get('icp-main').hidden && p.nodes.get('icp-export').hidden);
+    eq(name + ' clears code, image details and swatches', [p.nodes.get('icp-code-out').textContent, p.nodes.get('icp-info').textContent, p.nodes.get('icp-palette').children.length], ['', '', 0]);
+    eq(name + ' clears preview pixels', [p.nodes.get('icp-canvas').width, p.nodes.get('icp-canvas').height], [0, 0]);
+    p.nodes.get('icp-copy-code').click(); p.nodes.get('icp-gpl').click(); p.nodes.get('icp-ase').click();
+    eq(name + ' cannot export previous image', p.downloads.length, 0);
+    eq(name + ' cannot copy previous code', p.copies.length, 0);
+  };
+  for (const fail of ['decode', 'zero size', 'read pixels', 'type']) {
+    const p = pageHarness(); await p.open('old.png', 'image/png');
+    const im = start(p, fail === 'type' ? 'bad.txt' : 'broken.png', fail === 'type' ? 'text/plain' : 'image/png', 'drop');
+    if (fail === 'decode') im.onerror();
+    if (fail === 'zero size') { im.naturalWidth = 0; im.onload(); }
+    if (fail === 'read pixels') { p.faults.read = true; im.onload(); }
+    await p.flush(); await p.drain();
+    empty(fail, p); check(fail + ' keeps a specific error', p.nodes.get('icp-status').className.includes('error') && /broken.png|bad.txt/.test(p.status()), p.status());
+    await p.open('recovered.png', 'image/png');
+    check(fail + ' recovers with a new image', !p.nodes.get('icp-main').hidden && p.nodes.get('icp-info').textContent.includes('recovered.png') && p.nodes.get('icp-code-out').textContent.includes('--palette-1'));
+  }
+  for (const phase of ['load', 'decode']) for (const action of ['invalid', 'clear', 'sample', 'new file']) for (const fail of [false, true]) {
+    const p = pageHarness({ shellFirst: false }); const im = start(p, 'slow.png');
+    let resolve, reject;
+    if (phase === 'decode') { im.decode = () => new Promise((a, b) => { resolve = a; reject = b; }); im.onload(); }
+    if (action === 'invalid') start(p, 'bad.txt', 'text/plain', 'drop');
+    if (action === 'clear') p.clear();
+    if (action === 'sample') p.nodes.get('icp-sample').click();
+    if (action === 'new file') await p.open('new.png', 'image/png');
+    await p.drain(); const expected = snapshot(p);
+    if (phase === 'decode') { if (fail) reject(new Error('fixture decode')); else resolve(); } else if (fail) im.onerror(); else im.onload();
+    await p.flush(); await p.drain();
+    eq('old ' + phase + '/' + action + '/error=' + fail + ' cannot change newer UI', snapshot(p), expected);
+  }
+  for (const shellFirst of [false, true]) {
+    const p = pageHarness({ shellFirst }); await p.open(); p.clear(); await p.drain();
+    empty('CtrlL order ' + shellFirst, p);
+    eq('CtrlL still executes shared clear order ' + shellFirst, p.clearCalls, ['image-color-palette']);
+    const q = pageHarness({ shellFirst }); await q.open(); q.nodes.get('icp-palette').querySelector('.icp-chip').focus();
+    const event = q.document.dispatch('keydown', { key: 'l', ctrlKey: true });
+    eq('focused swatch CtrlL prevents default order ' + shellFirst, event.defaultPrevented, true);
+    eq('focused swatch keeps shared clear order ' + shellFirst, q.clearCalls, ['image-color-palette']);
+    check('focused swatch moves focus to Open image order ' + shellFirst, q.document.activeElement === q.nodes.get('icp-open'));
+  }
+  for (const control of ['code', 'swatch']) for (const action of ['clear', 'new file', 'invalid', 'options']) for (const fail of [false, true]) {
+    const p = pageHarness({ holdCopies: true }); await p.open(); await p.drain();
+    if (control === 'code') p.nodes.get('icp-copy-code').click(); else p.nodes.get('icp-palette').querySelector('.icp-chip').click();
+    const copy = p.copies[0]; check(control + ' starts a real copy', !!copy?.text);
+    if (action === 'clear') p.clear();
+    if (action === 'new file') await p.open('new.png', 'image/png');
+    if (action === 'invalid') start(p, 'bad.txt', 'text/plain', 'drop');
+    if (action === 'options') { p.nodes.get('icp-k').value = '3'; p.nodes.get('icp-k').dispatch('input'); }
+    await p.drain(); const expected = snapshot(p);
+    fail ? copy.reject(new Error('fixture denied')) : copy.resolve(); await p.flush();
+    eq('late ' + control + ' copy preserves ' + action + '/error=' + fail, snapshot(p), expected);
+  }
+  for (const fail of [false, true]) {
+    const p = pageHarness({ holdCopies: true }); await p.open(); await p.drain(); p.nodes.get('icp-copy-code').click();
+    fail ? p.copies[0].reject(new Error('fixture denied')) : p.copies[0].resolve(); await p.flush();
+    eq('current copy still reports ' + (fail ? 'failure' : 'success'), p.nodes.get('icp-status').className, fail ? 'icp-status is-error' : 'icp-status is-ok');
+  }
+  {
+    const p = pageHarness({ holdCopies: true }); await p.open(); await p.drain(); const code = p.nodes.get('icp-code-out').textContent;
+    p.nodes.get('icp-copy-code').click(); p.nodes.get('icp-code').value = 'json'; p.nodes.get('icp-code').dispatch('change');
+    p.copies[0].resolve(); await p.flush();
+    eq('copy keeps the click-time code', p.copies[0].text, code);
+    eq('copy feedback names the click-time format', p.status(), STRINGS.en.copiedCode.replace('{format}', STRINGS.en.code_css));
+  }
+  console.log(`Page lifecycle: ${passes - base.passes} passed, ${failures - base.failures} failed`);
+}
+
+
+// ── v2 page layout ──
+{
+  const base = { passes, failures };
+  const template = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script')).trimStart();
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const css = source.slice(source.indexOf('<style')).replace(/<\/?style\b[^>]*>/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (selector, pattern) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].some(m => m[1].split(',').some(s => s.trim() === selector) && pattern.test(m[2]));
+  check('analyze layout registered', /'image-color-palette':\s*'analyze'/.test(read('src/data/tool-layouts.ts')));
+  check('direct tool root is a flex column with zero minimum height', /^<div class="icp-wrap" id="icp-wrap"/.test(template) && rule('.icp-wrap', /display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*min-height:\s*0/));
+  check('empty input uses shared filling drop area', /class="icp-drop zt-empty-drop"/.test(template));
+  check('loaded file leaves a compact toolbar', rule('.icp-drop.is-compact', /flex:\s*none;[\s\S]*min-height:\s*0/));
+  check('results use zero-basis flex with internal scrolling', rule('.icp-results', /flex:\s*1 1 0;[\s\S]*min-height:\s*300px;[\s\S]*overflow:\s*auto/));
+  check('mobile results keep a fixed positive height', rule('.icp-results', /flex:\s*none;\s*height:\s*34rem;\s*min-height:\s*0/));
+  check('unloaded state hides controls and result wrapper', rule('.icp-wrap:has(#icp-main[hidden]) .icp-controls', /display:\s*none/) && rule('.icp-wrap:has(#icp-main[hidden]) .icp-results', /display:\s*none/));
+  check('existing hidden result and export flags remain authoritative', rule('.icp-wrap [hidden]', /display:\s*none\s*!important/));
+  check('status reserves positive fixed height with scrolling', rule('.icp-status', /height:\s*3rem;\s*flex:\s*none;\s*overflow:\s*auto/));
+  check('controls precede status and result area', ['icp-open', 'icp-sample', 'icp-k', 'icp-sort', 'icp-pick', 'icp-vivid', 'icp-white', 'icp-black'].every(id => template.indexOf('id="' + id + '"') < template.indexOf('id="icp-status"')) && template.indexOf('id="icp-status"') < template.indexOf('class="icp-results"'));
+  check('stack and phone breakpoints remain', /max-width:\s*860px/.test(css) && /max-width:\s*640px/.test(css));
+  check('phone result stacks cards and preview', rule('.icp-main', /grid-template-columns:\s*minmax\(0, 1fr\);/));
+  check('secondary export starts folded inside the bounded result', /<details class="icp-export-fold">\s*<summary>\{T.exportTitle\}<\/summary>/.test(template) && template.indexOf('class="icp-export-fold"') > template.indexOf('class="icp-results"'));
+  check('long code has fixed height and its own scroll', rule('.icp-code', /height:\s*12rem;\s*overflow:\s*auto/));
+  check('canvas display preserves aspect ratio within bounded preview', rule('.icp-canvas', /width:\s*auto;\s*height:\s*auto;\s*max-width:\s*100%;\s*max-height:\s*26rem/));
+  eq('all five original operation buttons remain', [...template.matchAll(/<button[^>]*id="([^"]+)"/g)].map(m => m[1]).sort(), ['icp-ase', 'icp-copy-code', 'icp-gpl', 'icp-open', 'icp-sample']);
+  check('client receives no tips', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/\bTIPS\b|\bt\.tips\b/.test(script));
+  check('text is rendered at build time', !source.includes('data-i18n'));
+  const tipKeys = ['open', 'sample', 'colors', 'sort', 'pick', 'filters', 'palette', 'export'].sort();
+  const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
+  eq('eight distinct control tips', tips.map(m => /id="icp-tip-([^"]+)"/.exec(m[1])?.[1]).sort(), tipKeys);
+  for (const tip of tips) {
+    const key = /id="icp-tip-([^"]+)"/.exec(tip[1])[1];
+    check(key + ' tip uses local language and control label', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2] === '{TIPS.' + key + '}');
+  }
+  const ph = text => (String(text).match(/\{\w+\}/g) || []).sort();
+  function tipTree(lang, value, reference, path = 'tips') {
+    if (reference && typeof reference === 'object') {
+      eq(lang + '.' + path + ' keys match en', Object.keys(value || {}).sort(), Object.keys(reference).sort());
+      for (const key of Object.keys(reference)) tipTree(lang, value?.[key], reference[key], path + '.' + key);
+    } else {
+      check(lang + '.' + path + ' nonempty text', typeof value === 'string' && value.trim().length > 0);
+      eq(lang + '.' + path + ' placeholders match en', ph(value), ph(reference));
+    }
+  }
+  // f2621cc7 snapshots: preserve all metadata and all reference content outside How to Use.
+  const retained = {"en": ["042764347a1f4699", "09e875886904ab93"], "zh": ["ad45cf322c33f2ff", "d8daa78c3d7bcf44"], "ja": ["50ffe1e069d2f4a3", "6aa968131aad19d5"], "ko": ["87950050c2f0bc40", "1442b6ac377ebb1d"]};
+  const hash = text => createHash('sha256').update(text.trim()).digest('hex').slice(0, 16);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    tipTree(lang, STRINGS[lang].tips, STRINGS.en.tips);
+    const { TIPS, CLIENT_T } = clientStrings(lang);
+    eq(lang + ' serialized client excludes tips only', Object.keys(CLIENT_T).sort(), Object.keys(STRINGS[lang]).filter(k => k !== 'tips').sort());
+    check(lang + ' tip texts never enter client JSON', !('tips' in CLIENT_T) && Object.values(TIPS).every(t => !JSON.stringify(CLIENT_T).includes(JSON.stringify(t))));
+    const mdx = read('src/content/tools/image-color-palette/' + lang + '.mdx');
+    const [, fm, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx), { steps } = loadYaml(fm);
+    check(lang + ' five bounded plain-text steps', steps.length === 5 && steps.every(s => typeof s === 'string' && s.trim() && s.length <= 280 && !/<[^>]+>/.test(s)) && steps.join('').length <= 1200);
+    check(lang + ' usage heading removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+    check(lang + ' Limits kept', /<h2>(?:Limits|限制|制限|제한 사항)<\/h2>/.test(body));
+    eq(lang + ' SEO and FAQ preserved', hash(fm.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang][0]);
+    eq(lang + ' worked examples and all other body content preserved', hash(body), retained[lang][1]);
+  }
+  console.log(`v2 page layout: ${passes - base.passes} passed, ${failures - base.failures} failed`);
 }
 
 console.log((failures ? 'FAIL' : 'PASS') + ': image-color-palette — ' + passes + ' passed, ' + failures + ' failed');

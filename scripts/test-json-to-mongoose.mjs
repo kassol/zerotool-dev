@@ -46,7 +46,7 @@ function eq(name, got, want) {
 function gen(json, model, mode, timestamps, required) {
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {},
-      classList: { add() {}, remove() {} }, removeAttribute() {},
+      classList: { add() {}, remove() {} }, setAttribute() {}, removeAttribute() {},
       addEventListener(event, fn) { this.handlers[event] = fn; } };
   }
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'model-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jtm-' + id, element()]));
@@ -64,15 +64,15 @@ function gen(json, model, mode, timestamps, required) {
   groups['#jtm-lang-tabs .jtm-tab'].find((tab) => tab.dataset.lang === mode).handlers.click();
   groups['#jtm-ts-tabs .jtm-tab'].find((tab) => tab.dataset.ts === String(timestamps)).handlers.click();
   groups['#jtm-req-tabs .jtm-tab'].find((tab) => tab.dataset.req === String(required)).handlers.click();
-  elements['jtm-convert'].handlers.click();
   return elements['jtm-output-code'].textContent;
 }
 // A page session: the real client script with stubs, driven by input events and buttons.
 function session() {
   const docHandlers = {};
+  let activeInside = true;
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {}, disabled: false,
-      classList: { add() {}, remove() {} }, removeAttribute() {},
+      classList: { add() {}, remove() {} }, setAttribute() {}, removeAttribute() {}, focus() {},
       addEventListener(event, fn) { this.handlers[event] = fn; } };
   }
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'model-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jtm-' + id, element()]));
@@ -81,15 +81,16 @@ function session() {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
-    { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
+    { get activeElement() { return activeInside ? elements['jtm-input'] : null; }, querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
   const type = (text) => { elements['jtm-input'].value = text; elements['jtm-input'].handlers.input(); };
   const state = () => ({ code: elements['jtm-output-code'].textContent, status: elements['jtm-status'].textContent, copyDisabled: elements['jtm-copy'].disabled });
   // ToolLayout's Ctrl/Cmd+L (src/layouts/ToolLayout.astro): when focus is inside the tool it sets every
   // textarea and text input to '' without input events, then other keydown listeners run.
   const shortcut = (init, focusInside = true) => {
+    activeInside = focusInside;
     if (focusInside) { elements['jtm-input'].value = ''; elements['jtm-model-name'].value = ''; }
     for (const fn of docHandlers.keydown || []) fn({ key: 'l', ctrlKey: false, metaKey: false, preventDefault() {}, ...init });
   };
@@ -112,7 +113,7 @@ function session() {
   eq('stale output: Example enables Copy', s.state().copyDisabled, false);
   s.type('   ');
   eq('stale output: empty input disables Copy', s.state().code === '' && s.state().copyDisabled, true);
-  const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + '\nreturn labels;')();
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + '\nreturn STRINGS;')();
   eq('stale output: the error prefix exists in 4 languages', ['en', 'zh', 'ja', 'ko'].every((l) => labels[l] && labels[l].msgInvalidJson && labels[l].msgInvalidJson.trim()), true);
 }
 {
@@ -311,6 +312,167 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 } else { console.log('SKIP TypeScript strict compile (set MONGOOSE_TEST_DIR to an external mongoose@9.10.3 install; needs TypeScript 5.9.3, have ' + ts.version + ')'); }
+
+// ---------- real page lifecycle ----------
+// Execute the complete production script and actual shared keyboard listener.
+// Only DOM, timers, highlighting and clipboard delivery are controlled here.
+{
+  console.log('Original regression: ' + passes + ' passed, ' + failures + ' failed');
+  const cfg = {"slug": "json-to-mongoose", "file": "JsonToMongooseTool.astro", "input": "jtm-input", "output": "jtm-output-code", "status": "jtm-status", "copy": "jtm-copy", "clear": "jtm-clear", "example": "jtm-example", "invalid": "{\"bad\":", "sample": "{\"fresh\": true}", "valueOutput": false};
+  const vm = await import('node:vm');
+  const tsPage = (await import('typescript')).default;
+  const { createRequire: pageRequire } = await import('node:module');
+  const requirePage = pageRequire(join(root, 'src/components/tools/' + cfg.file));
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
+  const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+  const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+  if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  const js = tsPage.transpileModule(script, { compilerOptions: { target: tsPage.ScriptTarget.ES2022, module: tsPage.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
+  const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+  const unhandled = [], onUnhandled = error => unhandled.push(String(error));
+  process.on('unhandledRejection', onUnhandled);
+  const same = (name, got, want) => {
+    if (JSON.stringify(got) === JSON.stringify(want)) passes++;
+    else { failures++; console.log('FAIL page ' + name + '\n got ' + JSON.stringify(got) + '\n expected ' + JSON.stringify(want)); }
+  };
+  function page(lang, shellFirst) {
+    const copies = [], timers = new Map(), clears = [], tracks = [], blobs = [], highlights = [];
+    let now = 0, timerID = 0, document;
+    const descendants = e => e.children.flatMap(c => [c, ...descendants(c)]);
+    function simple(e, selector) {
+      if (e.tagName === '#TEXT') return false;
+      const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)], plain = selector.replace(/\[[^\]]+\]/g, '');
+      const tag = /^[a-z][\w-]*/i.exec(plain)?.[0], id = /#([\w-]+)/.exec(plain)?.[1];
+      return (!tag || e.tagName === tag.toUpperCase()) && (!id || e.id === id)
+        && [...plain.matchAll(/\.([\w-]+)/g)].every(m => e.className.split(/\s+/).includes(m[1]))
+        && attrs.every(a => a[2] === undefined ? e.getAttribute(a[1]) !== null : e.getAttribute(a[1]) === a[2]);
+    }
+    function matches(e, selector) {
+      return selector.split(',').some(part => {
+        const parts = part.trim().split(/\s+(?![^\[]*\])/); if (!simple(e, parts.pop())) return false;
+        let parent = e.parentNode;
+        while (parts.length) { while (parent && !simple(parent, parts.at(-1))) parent = parent.parentNode; if (!parent) return false; parts.pop(); parent = parent.parentNode; }
+        return true;
+      });
+    }
+    class Element {
+      constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, dataset: {}, listeners: {}, id: '', className: '', text: '', value: '', hidden: false, disabled: false, checked: false, scrollTop: 0, scrollLeft: 0 }); }
+      get parentElement() { return this.parentNode; }
+      setAttribute(key, value) { this.attributes[key] = String(value); if (['id','class','type','value'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); if (['hidden','disabled','checked'].includes(key)) this[key] = true; if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())] = String(value); }
+      getAttribute(key) { return this.attributes[key] ?? null; }
+      removeAttribute(key) { delete this.attributes[key]; if (key.startsWith('data-')) delete this.dataset[key.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]; }
+      get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
+      set textContent(value) { this.text = String(value); this.children = []; }
+      get classList() { const el=this; return { add(...names) { el.className=[...new Set([...el.className.split(/\s+/).filter(Boolean),...names])].join(' '); }, remove(...names) { el.className=el.className.split(/\s+/).filter(n=>!names.includes(n)).join(' '); }, contains(name) { return el.className.split(/\s+/).includes(name); } }; }
+      appendChild(e) { this.children.push(e); e.parentNode=this; return e; }
+      contains(e) { return this === e || descendants(this).includes(e); }
+      querySelectorAll(selector) { return descendants(this).filter(e=>matches(e,selector)); }
+      querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+      addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+      dispatch(type, extra={}) { const event={type,target:this,defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.stopped=true;},...extra}; for(let e=this;e;e=e.parentNode){event.currentTarget=e; for(const fn of e.listeners[type]||[]) fn.call(e,event); if(event.stopped)break;} return event; }
+      click() { if(!this.disabled)return this.dispatch('click'); }
+      focus() { document.activeElement=this; }
+    }
+    document=new Element('#document');document.documentElement={lang}; document.body=document.appendChild(new Element('body'));document.activeElement=document.body;
+    const widget=document.body.appendChild(new Element('section'));widget.className='tool-widget';
+    const esc=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const decode=value=>value.replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+    const markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0]
+      .replace(/<Toggletip id="([^"]+)"[^>]*>[\s\S]*?<\/Toggletip>/g,(_,id)=>'<span class="zt-tip"><button type="button" class="zt-tip-btn" data-zt-tip="'+id+'">?</button></span>')
+      .replace(/<!--[\s\S]*?-->/g,'').replace(/placeholder=\{`[\s\S]*?`\}/g,'').replace(/placeholder='[^']*'/g,'')
+      .replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+esc(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>esc(labels[lang][key])).replace(/=\{lang\}/g,'="'+lang+'"');
+    const stack=[widget];
+    for(const token of markup.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)) { const text=token[0]; if(text.startsWith('</'))stack.pop();else if(text.startsWith('<')){const tag=/^<([\w-]+)/.exec(text)[1],e=new Element(tag);for(const a of text.matchAll(/([\w-]+)="([^"]*)"/g))e.setAttribute(a[1],decode(a[2]));for(const a of ['hidden','disabled','readonly','checked'])if(new RegExp('\\s'+a+'(?=\\s|/?>)').test(text))e.setAttribute(a,'');stack.at(-1).appendChild(e);if(!/\/>$/.test(text)&&!['input','br','hr','img'].includes(tag))stack.push(e);}else{const e=new Element('#text');e.text=decode(text);stack.at(-1).appendChild(e);} }
+    if(stack.length!==1)throw Error('Unbalanced source markup');
+    document.getElementById=id=>descendants(document).find(e=>e.id===id)??null;document.createElement=tag=>new Element(tag);
+    const get=id=>{const e=document.getElementById(id);if(!e)throw Error('Missing actual source ID '+id);return e;};
+    const clipboard={writeText(value){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});copies.push({value:String(value),resolve,reject});return promise;}};
+    const context={document,console,exports:{},Blob,Error,_slug:cfg.slug,navigator:{clipboard},
+      require(name){if(name==='highlight.js/lib/core')return{registerLanguage(){},highlightElement(e){highlights.push(e.id);e.setAttribute('data-highlighted','yes');}};if(name.startsWith('highlight.js/lib/languages/'))return()=>({});return requirePage(name);},
+      setTimeout(fn,ms=0){const id=++timerID;timers.set(id,{fn,ms,due:now+ms});return id;},clearTimeout(id){timers.delete(id);},
+      URL:{createObjectURL(blob){blobs.push(blob);return 'blob:test';},revokeObjectURL(){}},ztPersist:{clear(slug){clears.push(slug);}},trackTool(...args){tracks.push(args);}};
+    context.window=context;vm.createContext(context);const shared=()=>vm.runInContext(shortcut,context);
+    if(shellFirst)shared();vm.runInContext(js,context,{filename:cfg.file});if(!shellFirst)shared();
+    function advance(ms){const target=now+ms;for(;;){const next=[...timers].filter(([,t])=>t.due<=target).sort((a,b)=>a[1].due-b[1].due||a[0]-b[0])[0];if(!next)break;now=next[1].due;timers.delete(next[0]);next[1].fn();}now=target;}
+    const out=()=>cfg.valueOutput?get(cfg.output).value:get(cfg.output).textContent;
+    return{get,document,context,copies,timers,clears,tracks,blobs,highlights,advance,out,
+      input(value,id=cfg.input){get(id).value=value;get(id).dispatch('input');},
+      key(key='l',modifier='ctrlKey',target=cfg.input){(target?get(target):document.body).focus();return document.activeElement.dispatch('keydown',{key,[modifier]:true});},
+      example(){get(cfg.example).click();},copy(){get(cfg.copy).click();return copies.at(-1);},
+      snapshot(){return{input:get(cfg.input).value,output:out(),status:get(cfg.status).textContent,statusClass:get(cfg.status).className,copy:get(cfg.copy).textContent,copyClass:get(cfg.copy).className};}};
+  }
+  for(const lang of ['en','zh','ja','ko'])for(const shellFirst of [false,true]){
+    const p=page(lang,shellFirst),tag=lang+'/'+shellFirst;
+    p.example();same(tag+' actual Example creates output',!!p.out(),true);
+    p.input(cfg.invalid);p.advance(300);same(tag+' invalid input clears old output',p.out(),'');same(tag+' invalid input shows error',p.get(cfg.status).classList.contains('error'),true);
+    p.input('   ');p.advance(300);same(tag+' empty removes input error',p.get(cfg.input).classList.contains('error'),false);same(tag+' empty clears status/output',[p.out(),p.get(cfg.status).textContent],['','']);
+    for(const [key,mod,target]of [['l','ctrlKey',cfg.input],['L','metaKey',cfg.copy]]){
+      p.example();p.input(cfg.sample);const event=p.key(key,mod,target);
+      same(tag+' shortcut synchronously clears '+key,[p.get(cfg.input).value,p.out(),p.get(cfg.status).textContent,event.defaultPrevented],['','','',true]);
+      same(tag+' shortcut returns focus to input '+key,p.document.activeElement.id,cfg.input);p.advance(300);same(tag+' queued debounce stays cancelled '+key,[p.out(),p.get(cfg.status).textContent],['','']);
+    }
+    same(tag+' shared clear executes in both orders',p.clears,[cfg.slug,cfg.slug]);p.example();const outside=p.snapshot();p.key('l','ctrlKey',null);same(tag+' outside shortcut unchanged',p.snapshot(),outside);
+    p.get(cfg.input).focus();p.get(cfg.input).dispatch('keydown',{key:'l'});same(tag+' unmodified key unchanged',p.snapshot(),outside);
+    p.input(cfg.sample);p.get(cfg.clear).click();p.advance(300);same(tag+' Clear drops pending work',[p.get(cfg.input).value,p.out(),p.get(cfg.status).textContent],['','','']);
+    p.example();const output=p.out(),status=p.get(cfg.status).textContent;
+    const rejected=p.copy();same(tag+' exact full copy bytes',rejected.value,output);rejected.reject(Error('denied'));await settle();same(tag+' current rejection is localized',p.get(cfg.copy).textContent,labels[lang].copyFailed);same(tag+' current failure keeps output/status',[p.out(),p.get(cfg.status).textContent],[output,status]);
+    const retry=p.copy();retry.resolve();await settle();same(tag+' direct retry success',p.get(cfg.copy).textContent,labels[lang].copied);p.advance(1500);same(tag+' success settles to Copy',p.get(cfg.copy).textContent,labels[lang].copy);
+    p.context.navigator.clipboard=undefined;let thrown;try{p.copy();}catch(e){thrown=String(e);}same(tag+' absent Clipboard API is handled',thrown,undefined);same(tag+' absent API localized',p.get(cfg.copy).textContent,labels[lang].copyFailed);
+    p.context.navigator.clipboard={writeText(){throw Error('sync failure');}};thrown=undefined;try{p.copy();}catch(e){thrown=String(e);}same(tag+' synchronous clipboard throw handled',thrown,undefined);
+    for(const finish of ['resolve','reject'])for(const action of ['clear','shortcut','input','result']){
+      const q=page(lang,shellFirst);q.example();const job=q.copy();
+      if(action==='clear')q.get(cfg.clear).click();else if(action==='shortcut')q.key('L','metaKey',cfg.copy);else{q.input(cfg.sample);if(action==='result')q.advance(300);}
+      const current=q.snapshot();job[finish](finish==='reject'?Error('late'):undefined);await settle();same(tag+' stale completion immediately preserves '+action+'/'+finish,q.snapshot(),current);q.advance(1500);same(tag+' stale '+finish+' after '+action,q.snapshot(),action==='input'?{...current,output:q.out(),status:q.get(cfg.status).textContent,statusClass:q.get(cfg.status).className}:current);same(tag+' stale feedback stays reset '+action+'/'+finish,q.get(cfg.copy).textContent,labels[lang].copy);
+    }
+    const q=page(lang,shellFirst);q.example();q.copy().resolve();await settle();const old=[...q.timers.values()].filter(t=>t.ms===1500).map(t=>t.fn);same(tag+' real success timer exists',old.length>0,true);q.advance(400);q.copy().resolve();await settle();old.forEach(fn=>fn());same(tag+' old timer cannot reset new Copied',q.get(cfg.copy).textContent,labels[lang].copied);q.advance(1500);same(tag+' latest timer settles',q.get(cfg.copy).textContent,labels[lang].copy);
+    const r=page(lang,shellFirst);r.example();const one=r.copy(),two=r.copy();two.resolve();await settle();one.reject(Error('older request'));await settle();same(tag+' older rejection cannot replace new success',r.get(cfg.copy).textContent,labels[lang].copied);
+    const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const generated=queued.tracks.length;queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',queued.tracks.length,generated);
+    queued.input(cfg.sample);const beforeShortcut=queued.tracks.length;queued.key('Enter');same(tag+' no primary means CtrlEnter does not generate',queued.tracks.length,beforeShortcut);queued.advance(300);same(tag+' CtrlEnter preserves the real input debounce',queued.tracks.length,beforeShortcut+1);
+    for(const [id,key]of [['jtm-lang-tabs','lang'],['jtm-ts-tabs','ts'],['jtm-req-tabs','req']]){const tabs=p.get(id).querySelectorAll('.jtm-tab');for(const selected of tabs){const before=p.tracks.length;selected.click();same(tag+' option generates immediately '+id,p.tracks.length,before+1);same(tag+' aria-pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
+    for(const focus of [p.get('jtm-output'),p.document.querySelector('[data-zt-tip="jtm-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output CtrlL returns to input',[p.document.activeElement.id,p.out(),p.get(cfg.input).value],[cfg.input,'','']);}
+    p.get('jtm-lang-tabs').querySelector('[data-lang="javascript"]').click();p.example();p.input('Renamed','jtm-model-name');p.advance(300);same(tag+' model name re-generates',p.out().includes("mongoose.model('Renamed'"),true);p.get(cfg.clear).click();same(tag+' explicit Clear retains model option',p.get('jtm-model-name').value,'Renamed');
+  }
+  await settle();same('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
+}
+
+// ---------- v2 page layout ----------
+{
+  const { createHash } = await import('node:crypto');
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const equalLayout = (name, got, want) => eq(name, JSON.stringify(got), JSON.stringify(want));
+  const check = (name, passed) => equalLayout('v2 ' + name, !!passed, true);
+  const strings = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
+  const markup = source.split('\n---')[1].split('<script')[0], css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+  check('registered convert', /'json-to-mongoose':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('direct flex root', /^\s*<div\s+class="jtm-wrap"/.test(markup) && /\.jtm-wrap\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;/.test(css));
+  check('actions then reserved status then panels', markup.indexOf('class="jtm-actions"') < markup.indexOf('id="jtm-status"') && markup.indexOf('id="jtm-status"') < markup.indexOf('class="jtm-panels zt-io"') && /\.jtm-status\s*\{[^}]*height:\s*2\.4rem/.test(css));
+  equalLayout('v2 two shared panes', (markup.match(/\bzt-io-pane\b/g)||[]).length, 2);
+  check('input and output fill panes', markup.includes('id="jtm-input" class="zt-io-fill"') && markup.includes('class="jtm-output zt-io-fill"'));
+  check('accessible output scroller', /id="jtm-output"[^>]*tabindex="0"[^>]*aria-labelledby="jtm-output-label"/.test(markup) && /\.jtm-output\s*\{[^}]*overflow:\s*auto/.test(css));
+  check('segmented option groups', (markup.match(/zt-segmented/g)||[]).length===3 && (markup.match(/role="group"/g)||[]).length===3 && (markup.match(/aria-pressed="(?:true|false)"/g)||[]).length===6);
+  const mobile=css.slice(css.indexOf('@media (max-width: 860px)'));
+  check('mobile input144 and output22rem', /\.jtm-panel textarea\s*\{[^}]*height:\s*144px/.test(mobile) && /\.jtm-output\s*\{[^}]*height:\s*22rem/.test(mobile));
+  check('empty output follows actual text and hides on mobile', css.includes('.jtm-output-pane:has(#jtm-output-code:empty) .jtm-empty { display: flex; }') && mobile.includes('.jtm-output-pane:has(#jtm-output-code:empty) { display: none; }'));
+  check('phone touch sizing and global dark ancestors', css.includes('@media (max-width: 640px)') && css.includes('min-height: 44px') && css.includes(':global([data-theme="dark"])') && css.includes(':global(:root:not([data-theme="light"]))'));
+  check('no automatic Generate control, binding or label', !source.includes('jtm-convert') && !Object.values(strings).some(v=>'generate' in v));
+  equalLayout('v2 retained actual operation IDs', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m=>m[1]).sort(), ['jtm-clear','jtm-copy','jtm-example']);
+  check('build-time strings and tips excluded from script data', source.includes("import Toggletip from '../Toggletip.astro'") && !/data-i18n|define:vars|JSON\.stringify\(STRINGS/.test(source) && !/STRINGS|L\.tips/.test(script));
+  const map=[['input','jsonInput'],['model','modelName'],['language','language'],['timestamps','timestamps'],['required','required'],['example','example'],['clear','clear'],['copy','copy']];
+  equalLayout('v2 eight tips', (markup.match(/<Toggletip\b/g)||[]).length, map.length);
+  const protectedContent={"en": ["9f453e9f83fd937b4343fbab508c00961aab911495ba2f164d9a2c63a47843a0", "05120497f674dcc72834176d0e747ed859039fa284cd74cd1e4aedb97d5b1fe4"], "zh": ["4f9a9c62e510f5cfce8c37b16383d87ed916ab86632f99126f9491d3a5781880", "7a1a1eccc4e62b2dee3002852201f1f7b8550c7ddbba0456f7bfed2a6a670c5f"], "ja": ["8914c42973a2b4e78ec48e73d70b756360c151cd4234699259c99099ff3182f7", "76081e0ec44f849f42cae060fe9e1a576845a6f2114c0ad0b857836f7608e285"], "ko": ["539ab8e3b8b6899c25b5336ab4969b1af5e5b150fdf27d4729c275c5f6848cb6", "04b1064a8801979aa8cc92eaa53f07dae34ef69e5d20f191ca72e470cec1423e"]};
+  for(const lang of ['en','zh','ja','ko']){
+    const L=strings[lang];equalLayout(lang+' v2 same tip keys',Object.keys(L.tips).sort(),map.map(x=>x[0]).sort());
+    check(lang+' localized empty text',typeof L.empty==='string'&&!!L.empty.trim());
+    for(const [key,about]of map){check(lang+' localized '+key,typeof L.tips[key]==='string'&&!!L.tips[key].trim()&&typeof L[about]==='string'&&!!L[about].trim());equalLayout(lang+' placeholder parity '+key,[...L.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]),[...strings.en.tips[key].matchAll(/\{\w+\}/g)].map(m=>m[0]));check(lang+' binding '+key,markup.includes('<Toggletip id="jtm-tip-'+key+'" lang={lang} about={L.'+about+'}>{L.tips.'+key+'}</Toggletip>'));}
+    const mdx=readFileSync(join(root,'src/content/tools/json-to-mongoose/'+lang+'.mdx'),'utf8'),[,fm,body]=mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+    const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
+    check(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
+    equalLayout(lang+' protected SEO and FAQ',hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang][0]);equalLayout(lang+' all non-Usage content protected',hash(body),protectedContent[lang][1]);
+    check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+  }
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

@@ -37,15 +37,18 @@ src/
 - 入口 → `components/ToolPage.astro`（取 content 条目、渲染 `ToolLayout`）+ 只 import 本工具的 `components/tools/{Name}Tool.astro`（放进 `tool` slot）；非 EN 页向组件传 `lang` prop
 - 每个工具页的 CSS = 全站 CSS + 共享工具 CSS（`tool-common.css`、`ToolLayout`、`ShareButtons`、`AdUnit`）+ 本工具组件 CSS。组件不能依赖其他工具组件的样式（根 AGENTS.md 全局规范第 11 条）
 - `components/Toggletip.astro`（v2 工具页的说明气泡）→ `i18n/utils.t()` 取 `tool.tipAbout` 拼按钮的 aria-label（调用方传 `lang` 与 `about`）；组件没有 `<style>`，样式是 `styles/tool-common.css` 的 `.zt-tip*`
-- `styles/tool-common.css` 另含 convert 类工具的双栏布局类 `.zt-io` / `.zt-io-pane` / `.zt-io-fill`（用法见 DESIGN.md「Tool Pages v2」）
+- `styles/tool-common.css` 另含 convert 类工具的双栏布局类 `.zt-io` / `.zt-io-pane` / `.zt-io-fill`（用法见 DESIGN.md「Tool Pages」）
+- compare 类的双输入与结果容器用共享 `.zt-compare-inputs` / `.zt-compare-results`（Diff Checker、JSON Diff）：桌面输入 180px，860px 以下堆叠为 120px；结果桌面填满剩余高度，手机保持有界，滚动与收起交互留在组件。
 - analyze 类工具的空状态拖放区用共享 `.zt-empty-drop` 填满可用高度；边框、配色、间距与紧凑状态留在各工具组件（HAR、QR Decoder）。
+- generate 类工具的控件栏用共享 `.zt-rail`（flex 列、0.9rem 间距、最小宽高为 0）；面板、滚动与手机顺序留在各工具组件（Color Palette、QR Generator）。
+- 分段控件的容器用 `.zt-segmented`（flex 行、胶囊圆角与内描边）；内边距、背景、按钮或单选语义与选中态留在组件（Color Palette、Sprite Sheet）。
 - `BaseLayout.astro` → `i18n/utils.t()`（导航 / footer）
 - `components/SEO.astro` → `getCollection('blog')` 列出可收录（非 draft、非 noindex，判定在 `data/blog-index.mjs`）的语言变体生成 hreflang；noindex 页面不输出 hreflang
 - 工具页 → `data/tools.ts` 取元数据，`data/icons.ts` 取 SVG
 
 ## 新增/重命名约束
 
-- 新增工具 slug：必须同步 `components/tools/{Name}Tool.astro` + `components/tools/registry.ts`（一行 `'{slug}': '{Name}Tool'`） + `data/tools.ts` + `data/icons.ts` + `content/tools/{slug}/{en,zh,ja,ko}.mdx`
+- 新增工具 slug：必须同步 `components/tools/{Name}Tool.astro` + `components/tools/registry.ts`（一行 `'{slug}': '{Name}Tool'`） + `data/tools.ts` + `data/icons.ts` + `data/tool-layouts.ts` 五类登记 + `content/tools/{slug}/{en,zh,ja,ko}.mdx`（四语 steps 必填）；工具 labels 与说明气泡在 frontmatter 构建期输出
 - 重命名 slug：必须在 `public/_redirects` 加 301 规则，避免老链接 404 影响 SEO
 - 新增 i18n 文案 key：4 个 JSON 文件同步加，避免运行时回退到 key 字符串
 
