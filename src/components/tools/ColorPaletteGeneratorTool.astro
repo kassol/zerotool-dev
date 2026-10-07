@@ -47,6 +47,7 @@ const STRINGS = {
     scheme_monochromatic: 'Monochromatic',
     desc_monochromatic: 'One hue, five lightness steps',
     err_empty: 'Enter a color.',
+    noPalette: 'No palette: the base color is empty or not a color.',
     err_hexLength: 'A hex color has 3, 4, 6 or 8 digits. This one has {n}.',
     err_hexChar: '“{ch}” (character {pos}) is not a hex digit. Use 0–9 and A–F.',
     err_unsupportedFn: '{fn}() is not supported. Use hex, rgb(), hsl(), oklch() or a CSS color name.',
@@ -108,6 +109,7 @@ const STRINGS = {
     scheme_monochromatic: '单色配色',
     desc_monochromatic: '同一色相，五级明度',
     err_empty: '请输入颜色。',
+    noPalette: '没有配色：基色为空或不是颜色。',
     err_hexLength: 'HEX 颜色应为 3、4、6 或 8 位，这里是 {n} 位。',
     err_hexChar: '第 {pos} 个字符“{ch}”不是十六进制数字，只能用 0–9 和 A–F。',
     err_unsupportedFn: '不支持 {fn}()。请用 HEX、rgb()、hsl()、oklch() 或 CSS 颜色名。',
@@ -169,6 +171,7 @@ const STRINGS = {
     scheme_monochromatic: 'モノクロマティック',
     desc_monochromatic: '同じ色相で明度を 5 段階',
     err_empty: '色を入力してください。',
+    noPalette: '配色はありません。基準色が空か、色として読み取れません。',
     err_hexLength: 'HEX は 3・4・6・8 桁です。入力は {n} 桁です。',
     err_hexChar: '{pos} 文字目の「{ch}」は 16 進数ではありません。0〜9 と A〜F を使ってください。',
     err_unsupportedFn: '{fn}() には対応していません。HEX、rgb()、hsl()、oklch()、CSS の色名を使ってください。',
@@ -230,6 +233,7 @@ const STRINGS = {
     scheme_monochromatic: '단색 배색',
     desc_monochromatic: '같은 색상, 명도 5단계',
     err_empty: '색을 입력하세요.',
+    noPalette: '배색이 없습니다. 기준 색이 비어 있거나 색으로 읽을 수 없습니다.',
     err_hexLength: 'HEX 색은 3, 4, 6, 8자리입니다. 입력은 {n}자리입니다.',
     err_hexChar: '{pos}번째 문자 “{ch}”는 16진수가 아닙니다. 0–9와 A–F만 쓸 수 있습니다.',
     err_unsupportedFn: '{fn}()은 지원하지 않습니다. HEX, rgb(), hsl(), oklch(), CSS 색 이름을 쓰세요.',
@@ -735,7 +739,7 @@ const CODE_FORMATS = ['list', 'css', 'scss', 'tw4', 'tw3', 'json'] as const;
       var exportCopyEl = wrap.querySelector('#cpal-export-copy');
       var segBtns = Array.prototype.slice.call(wrap.querySelectorAll('.cpal-seg-btn'));
 
-      var state = { rgb: [0x3b, 0x82, 0xf6], space: 'hsl', format: 'hex', code: 'list', inputNotes: [], readAs: '' };
+      var state = { valid: true, rgb: [0x3b, 0x82, 0xf6], space: 'hsl', format: 'hex', code: 'list', inputNotes: [], readAs: '' };
       var current = null;
       var errorTimer = null;
       var noteTimer = null;
@@ -873,9 +877,23 @@ const CODE_FORMATS = ['list', 'css', 'scss', 'tw4', 'tw3', 'json'] as const;
         exportCodeEl.textContent = exportCode(current.schemes, state.code, state.format);
       }
 
+      // While the base color is empty or invalid, nothing from the previous color stays on the page.
+      function clearOutput() {
+        current = null;
+        while (palettesEl.firstChild) palettesEl.removeChild(palettesEl.firstChild);
+        var empty = document.createElement('p');
+        empty.className = 'cpal-empty';
+        empty.textContent = t.noPalette;
+        palettesEl.appendChild(empty);
+        exportCodeEl.textContent = '';
+        exportCopyEl.disabled = true;
+      }
+
       function render() {
         clearTimeout(noteTimer);
+        if (!state.valid) { clearOutput(); return; }
         renderCards();
+        exportCopyEl.disabled = false;
         showNotes();
       }
 
@@ -885,6 +903,7 @@ const CODE_FORMATS = ['list', 'css', 'scss', 'tw4', 'tw3', 'json'] as const;
         var res = parseColor(raw);
         if (res.ok) {
           inputEl.removeAttribute('aria-invalid');
+          state.valid = true;
           state.rgb = res.rgb;
           state.inputNotes = res.notes;
           state.readAs = /^#?[0-9a-f]{6}$/i.test(raw.trim()) ? '' : res.hex;
@@ -897,6 +916,12 @@ const CODE_FORMATS = ['list', 'css', 'scss', 'tw4', 'tw3', 'json'] as const;
           inputEl.setAttribute('aria-invalid', 'true');
           setStatus(fill(t['err_' + res.error], { n: res.n, ch: res.ch, pos: res.pos, fn: res.fn, value: res.value }), 'error');
         }
+        state.valid = false;
+        state.readAs = '';
+        state.inputNotes = [];
+        clearTimeout(noteTimer);
+        clearOutput();
+        setStatus('');
         if (showErrors) showError(); else errorTimer = setTimeout(showError, 700);
         return false;
       }
@@ -932,10 +957,10 @@ const CODE_FORMATS = ['list', 'css', 'scss', 'tw4', 'tw3', 'json'] as const;
           else setStatus(t.copyFailed, 'error');
         });
       });
-      // The page-wide Ctrl/Cmd+L shortcut empties the text input; say so instead of keeping a stale "read as".
+      // The page-wide Ctrl/Cmd+L shortcut empties the text input without an input event; clear the palette with it.
       document.addEventListener('keydown', function (e) {
         if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')) {
-          setTimeout(function () { if (inputEl.value === '') setStatus(t.err_empty, 'info'); }, 0);
+          setTimeout(function () { if (inputEl.value === '') applyInput(true); }, 0);
         }
       });
 
@@ -1107,6 +1132,14 @@ const CODE_FORMATS = ['list', 'css', 'scss', 'tw4', 'tw3', 'json'] as const;
     color: var(--color-text-secondary);
   }
   .cpal-status:empty { display: none; }
+  .cpal-empty {
+    grid-column: 1 / -1;
+    align-self: start;
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+  }
+  .cpal-export-copy:disabled { opacity: 0.45; cursor: not-allowed; }
   .cpal-status--error { color: var(--color-danger); }
   .cpal-status--ok { color: var(--color-success); }
 

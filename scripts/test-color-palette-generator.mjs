@@ -508,6 +508,123 @@ check('settings are saved through ztPersist', /ztPersist\.save\(/.test(script));
 const persistence = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8');
 check('persistence policy is preference', /'color-palette-generator': 'preference'/.test(persistence));
 
+// ---------- page lifecycle: an invalid base color must not leave the old palette copyable ----------
+// Runs the real page script against the real markup in a small DOM stand-in. Before 2026-10-07 the
+// failure branch of applyInput only set the status: the cards, the export code and every copy
+// button kept the previous color (on zerotool.dev: #3B82F6, then #3b82f, still showed and copied
+// the #3B82F6 schemes).
+{
+  const pageScript = /<script is:inline define:vars=\{\{ t: T \}\}>([\s\S]*?)<\/script>/.exec(source)[1];
+  const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+  function matches(n, s) {
+    return s.split(',').some((raw) => {
+      let sel = raw.trim();
+      const attrs = [...sel.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
+      sel = sel.replace(/\[[^\]]+\]/g, '');
+      const id = /#([\w-]+)/.exec(sel), classes = [...sel.matchAll(/\.([\w-]+)/g)], tag = /^[\w-]+/.exec(sel);
+      return (!id || n.id === id[1]) && classes.every((c) => n.classList.contains(c[1])) && (!tag || n.tagName === tag[0].toUpperCase())
+        && attrs.every((a) => (a[2] === undefined ? n.getAttribute(a[1]) !== null : n.getAttribute(a[1]) === a[2]));
+    });
+  }
+  function page(lang, persisted = {}) {
+    const doc = { listeners: {}, activeElement: null };
+    const timers = new Map();
+    const copies = [];
+    let seq = 0;
+    class Element {
+      constructor(tag = 'div') { Object.assign(this, { tagName: tag.toUpperCase(), id: '', className: '', attributes: {}, style: {}, children: [], parentNode: null, listeners: {}, value: '', title: '', disabled: false, text: '' }); }
+      get classList() { const n = this; return { contains: (c) => n.className.split(/\s+/).includes(c), add(c) { if (!this.contains(c)) n.className += ' ' + c; }, remove(c) { n.className = n.className.split(/\s+/).filter((x) => x !== c).join(' '); } }; }
+      setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'id') this.id = String(v); if (k === 'class') this.className = String(v); if (k === 'value') this.value = String(v); if (k === 'disabled') this.disabled = true; }
+      getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; }
+      removeAttribute(k) { delete this.attributes[k]; if (k === 'disabled') this.disabled = false; }
+      get textContent() { return this.text + this.children.map((c) => c.textContent).join(''); }
+      set textContent(v) { for (const c of this.children) c.parentNode = null; this.children = []; this.text = String(v); }
+      get firstChild() { return this.children[0] || null; }
+      appendChild(n) { n.parentNode = this; this.children.push(n); return n; }
+      removeChild(n) { this.children = this.children.filter((c) => c !== n); n.parentNode = null; return n; }
+      querySelectorAll(s) { return this.children.flatMap((c) => [...(matches(c, s) ? [c] : []), ...c.querySelectorAll(s)]); }
+      querySelector(s) { return this.querySelectorAll(s)[0] || null; }
+      closest(s) { for (let p = this; p; p = p.parentNode) if (p.tagName && matches(p, s)) return p; return null; }
+      addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+      dispatch(type, extra = {}) { const e = { type, target: this, preventDefault() {}, ...extra }; for (const fn of this.listeners[type] || []) fn(e); return e; }
+      click() { if (!this.disabled) this.dispatch('click'); }
+    }
+    const body = new Element('body');
+    const stack = [body], voids = new Set(['input', 'br', 'hr', 'img', 'meta', 'link']);
+    for (const m of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>/g)) {
+      const tag = m[1];
+      if (m[0].startsWith('</')) { if (stack.at(-1)?.tagName === tag.toUpperCase()) stack.pop(); continue; }
+      const n = new Element(tag);
+      for (const a of m[2].matchAll(/([\w-]+)="([^"]*)"/g)) n.setAttribute(a[1], a[2]);
+      stack.at(-1).appendChild(n);
+      if (!voids.has(tag) && !m[2].endsWith('/')) stack.push(n);
+    }
+    const wrap = body.querySelector('.cpal-wrap');
+    Object.assign(doc, {
+      body, currentScript: { closest: () => wrap },
+      createElement: (tag) => new Element(tag),
+      querySelector: (s) => body.querySelector(s),
+      addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); },
+      dispatch(type, extra = {}) { const e = { type, target: this.activeElement, ...extra }; for (const fn of this.listeners[type] || []) fn(e); return e; },
+      execCommand: () => false,
+    });
+    const context = {
+      document: doc, console, t: STRINGS[lang], Promise, Math, URLSearchParams, location: { search: '' },
+      navigator: { clipboard: { writeText(text) { copies.push(text); return Promise.resolve(); } } },
+      setTimeout(fn, ms = 0) { const id = ++seq; timers.set(id, { fn, ms }); return id; }, clearTimeout: (id) => timers.delete(id),
+      ztPersist: { load: () => structuredClone(persisted), save() {}, clear() {} },
+    };
+    context.window = context;
+    vm.createContext(context);
+    vm.runInContext(pageScript, context);
+    const get = (id) => wrap.querySelector('#' + id);
+    const flush = () => { for (let i = 0; i < 50 && timers.size; i++) for (const [id, tm] of [...timers]) { timers.delete(id); tm.fn(); } };
+    const type = (text) => { get('cpal-input').value = text; get('cpal-input').dispatch('input'); };
+    const enter = () => get('cpal-input').dispatch('keydown', { key: 'Enter' });
+    const cards = () => get('cpal-palettes').querySelectorAll('.cpal-card');
+    const copyButtons = () => wrap.querySelectorAll('.btn-copy').filter((b) => !b.disabled);
+    return { doc, wrap, get, flush, type, enter, cards, copyButtons, copies };
+  }
+  const microtasks = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+  for (const lang of langs) {
+    const p = page(lang);
+    eq(lang + ' initial page shows 7 scheme cards', p.cards().length, 7);
+    check(lang + ' initial export code is filled', p.get('cpal-export-code').textContent.includes('#3B82F6'));
+    eq(lang + ' initial copy buttons enabled (7 cards + export)', p.copyButtons().length, 8);
+    for (const bad of ['#3b82f', '#3b82fg', 'lab(50% 20 30)', 'rgb(1, 2)', 'hello']) {
+      p.type('#3B82F6'); p.enter(); p.flush();
+      p.type(bad);
+      eq(`${lang} "${bad}" while typing: old cards removed`, p.cards().length, 0);
+      eq(`${lang} "${bad}" while typing: export code empty`, p.get('cpal-export-code').textContent, '');
+      eq(`${lang} "${bad}" while typing: no copy button enabled`, p.copyButtons().length, 0);
+      check(`${lang} "${bad}" while typing: status no longer describes the old color`, !p.get('cpal-status').textContent.includes('#3B82F6'), p.get('cpal-status').textContent);
+      p.flush();
+      const res = E.parseColor(bad);
+      const msg = STRINGS[lang]['err_' + res.error].replace(/\{([a-z]+)\}/g, (m, k) => (res[k] !== undefined ? res[k] : m));
+      eq(`${lang} "${bad}" after the pause: localized error with the reason`, p.get('cpal-status').textContent, msg);
+      check(`${lang} "${bad}": empty-palette note is shown`, p.get('cpal-palettes').textContent === STRINGS[lang].noPalette, p.get('cpal-palettes').textContent);
+      // Option changes must not bring the old color back.
+      p.get('cpal-format').value = 'rgb'; p.get('cpal-format').dispatch('change');
+      p.wrap.querySelector('[data-space="oklch"]').click();
+      eq(`${lang} "${bad}": format / wheel change keeps the palette empty`, [p.cards().length, p.get('cpal-export-code').textContent, p.copyButtons().length], [0, '', 0]);
+      p.get('cpal-format').value = 'hex'; p.get('cpal-format').dispatch('change');
+      p.wrap.querySelector('[data-space="hsl"]').click();
+    }
+    // A valid color restores everything.
+    p.type('#FF0000'); p.flush();
+    eq(lang + ' valid color after an error restores 7 cards', p.cards().length, 7);
+    check(lang + ' valid color after an error refills export code', p.get('cpal-export-code').textContent.includes('#FF0000'));
+    eq(lang + ' valid color after an error re-enables copy', p.copyButtons().length, 8);
+    p.get('cpal-export-copy').click(); await microtasks();
+    check(lang + ' export copy copies the new color', p.copies.at(-1)?.includes('#FF0000') && !p.copies.at(-1)?.includes('#3B82F6'));
+    // Ctrl/Cmd+L empties the field without an input event; the palette goes with it.
+    p.get('cpal-input').value = '';
+    p.doc.dispatch('keydown', { ctrlKey: true, key: 'l' }); p.flush();
+    eq(lang + ' Ctrl+L leaves no cards and no enabled copy', [p.cards().length, p.get('cpal-export-code').textContent, p.copyButtons().length], [0, '', 0]);
+    eq(lang + ' Ctrl+L shows the empty prompt', p.get('cpal-status').textContent, STRINGS[lang].err_empty);
+  }
+}
+
 // ---------- examples on the tool pages ----------
 for (const lang of langs) {
   const mdxPath = join(root, 'src/content/tools/color-palette-generator', lang + '.mdx');
