@@ -49,6 +49,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { loadPage } from './astro-page-harness.mjs';
 import yaml from 'js-yaml';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
@@ -541,6 +542,44 @@ const URL_HOOK = 'data:text/javascript,' + encodeURIComponent(`export async func
     p.el('atc-file').files = [{ size: 21 * 1024 * 1024, arrayBuffer: () => { throw new Error('oversized file was read'); } }];
     p.el('atc-file').dispatch('change'); await settle(p);
     check('oversized file is rejected before reading', p.el('atc-input').value === 'current file' && p.el('atc-status').textContent.includes('20 MB'));
+  }
+}
+
+// ── Status line carries the main count ────────────────────────────────────────
+// On a 390×844 phone the o200k count in the stats row sat at y 867 after counting, below the
+// first screen; the status line above the input only said how many characters were counted.
+// The finished status now starts with the o200k_base token count.
+{
+  const realRequire = createRequire(join(root, 'package.json'));
+  class ReplyingWorker {
+    postMessage(message) {
+      if (message.type !== 'count') return;
+      const result = {
+        results: { o200k: { count: 1234, tokens: [] } }, failed: {},
+        stats: { chars: 5678, bytes: 5678, words: 900, lines: 12 }, ms: 7,
+      };
+      Promise.resolve().then(() => this.onmessage({ data: { id: message.id, type: 'result', result } }));
+    }
+    terminate() {}
+  }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const p = loadPage('src/components/tools/AiTokenCounterTool.astro', {
+      lang,
+      dataset: { '.atc-wrap': { lang, strings: JSON.stringify(STRINGS[lang]), sample: 'sample text' } },
+      globals: {
+        TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, URL, requestIdleCallback: () => 0, addEventListener() {},
+        ztPersist: { load: () => ({}), save() {}, clear() {} },
+        require: (name) => name.endsWith('?worker') ? ReplyingWorker
+          : realRequire(name.startsWith('.') ? join(root, 'src/components/tools', name) : name),
+      },
+    });
+    p.type('atc-input', 'some text');
+    for (let i = 0; i < 5; i++) { await new Promise((resolve) => setImmediate(resolve)); p.flush(); }
+    const nf = new Intl.NumberFormat(lang === 'en' ? 'en-US' : lang);
+    const status = p.el('atc-status').textContent;
+    const want = String(STRINGS[lang].done).replace(/\{(\w+)\}/g, (m, k) => ({ tokens: nf.format(1234), chars: nf.format(5678), ms: 7 })[k] ?? m);
+    check(lang + ': finished status equals the done text', status === want, status);
+    check(lang + ': finished status names the o200k_base count before the character count', status.includes('o200k_base') && status.indexOf(nf.format(1234)) >= 0 && status.indexOf(nf.format(1234)) < status.indexOf(nf.format(5678)), status);
   }
 }
 

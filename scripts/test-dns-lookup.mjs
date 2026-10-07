@@ -16,7 +16,10 @@
 // other SERVFAIL → unknown; real dnssec-failed.org responses of 2026-09-30); mergeAllResults (NOERROR when any type
 // answers, NXDOMAIN / SERVFAIL kept when every type returns it, all-failed becomes SERVFAIL,
 // AD only when every type validated, TC, partial errors, comments merged); 4-language STRINGS
-// have the same keys. The page suite executes the actual client scripts with a DOM and
+// have the same keys; diagnoseDomain (the `diagnose:start/end` block after the engine) names
+// the reason for a rejected name — no host, a bad character with its code-point position, an
+// empty label, a hyphen at a label edge, a label over 63, one label, over 253 — and the
+// page shows the localized reason; the article examples match the engine. The page suite executes the actual client scripts with a DOM and
 // deferred fetch stubs: result copying, tab changes, failures, cancellation, request order,
 // ALL, keyboard bubbling, and v2 localization/content contracts. It never sends a request.
 //
@@ -209,6 +212,47 @@ if (stringsMatch) {
     eq('STRINGS keys ' + lang, Object.keys(STRINGS[lang]).sort().join(','), enKeys);
   }
   check('STRINGS.en has summaryDnssecFailed', 'summaryDnssecFailed' in STRINGS.en);
+  const reasonKeys = ['noHost', 'badChar', 'idnChar', 'emptyLabel', 'hyphenStart', 'hyphenEnd', 'labelTooLong', 'singleLabel', 'tooLong'];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq('domain error reasons ' + lang, Object.keys(STRINGS[lang].domainErrors || {}).sort(), [...reasonKeys].sort());
+    const placeholders = (s) => [...String(s).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',');
+    for (const key of reasonKeys) {
+      eq('domain error placeholders ' + lang + ' ' + key, placeholders(STRINGS[lang].domainErrors?.[key]), placeholders(STRINGS.en.domainErrors?.[key]));
+    }
+  }
+}
+
+// ---------- diagnoseDomain (runs only after isValidDomain rejects) ----------
+const DIAG_START = '/* ── diagnose:start ── */';
+const DIAG_END = '/* ── diagnose:end ── */';
+const diagStart = source.indexOf(DIAG_START);
+const diagEnd = source.indexOf(DIAG_END);
+check('diagnose block present outside the engine block', diagStart > endIndex && diagEnd > diagStart);
+const D = diagStart > 0 && diagEnd > diagStart
+  ? new Function(source.slice(diagStart, diagEnd) + '\nreturn { diagnoseDomain };')()
+  : { diagnoseDomain: () => null };
+const diagCases = [
+  ['http://', { code: 'noHost' }],
+  ['https:///path', { code: 'noHost' }],
+  ['exa mple.com', { code: 'badChar', ch: ' ', cp: 'U+0020', pos: 4 }],
+  ['  https://exa mple.com/x', { code: 'badChar', ch: ' ', cp: 'U+0020', pos: 14 }],
+  ['example!.com', { code: 'badChar', ch: '!', cp: 'U+0021', pos: 8 }],
+  ['😀😀a b.com', { code: 'badChar', ch: ' ', cp: 'U+0020', pos: 4 }],
+  ['example.com:abc', { code: 'badChar', ch: ':', cp: 'U+003A', pos: 12 }],
+  ['ｅｘａｍｐｌｅ＊．ｃｏｍ', { code: 'badChar', ch: '＊', cp: 'U+FF0A', pos: 8 }],
+  ['a..b', { code: 'emptyLabel', n: 2 }],
+  ['.example.com', { code: 'emptyLabel', n: 1 }],
+  ['example.com..', { code: 'emptyLabel', n: 3 }],
+  ['-foo.com', { code: 'hyphenStart', n: 1, label: '-foo' }],
+  ['www.foo-.com', { code: 'hyphenEnd', n: 2, label: 'foo-' }],
+  ['a'.repeat(64) + '.com', { code: 'labelTooLong', n: 1, label: 'a'.repeat(24) + '…', len: 64 }],
+  ['localhost', { code: 'singleLabel', name: 'localhost' }],
+  ['LOCALHOST:8080', { code: 'singleLabel', name: 'localhost' }],
+  [Array(64).fill('abc').join('.'), { code: 'tooLong', len: 255 }],
+];
+for (const [input, expected] of diagCases) {
+  check('isValidDomain rejects ' + JSON.stringify(input), !E.isValidDomain(E.normalizeDomain(input)));
+  eq('diagnose ' + JSON.stringify(input), D.diagnoseDomain(input), expected);
 }
 
 // ---------- real page entry points (no network) ----------
@@ -360,7 +404,22 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
   page.lookup('bad domain');
   eq(lang + ': invalid input does not query', page.requests.length, 1);
-  eq(lang + ': invalid input reports localized error', page.get('dnsl-status').textContent, page.strings.invalidDomain);
+  const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (_, k) => vars[k]);
+  const reasons = page.strings.domainErrors || {};
+  eq(lang + ': invalid input names the character and position', page.get('dnsl-status').textContent,
+    fill(reasons.badChar, { ch: ' ', cp: 'U+0020', pos: 4 }));
+  check(lang + ': invalid input status is an error', page.get('dnsl-status').className.includes('error'));
+  for (const [input, key, vars] of [
+    ['-foo.com', 'hyphenStart', { n: 1, label: '-foo' }],
+    ['a..b', 'emptyLabel', { n: 2 }],
+    ['localhost', 'singleLabel', { name: 'localhost' }],
+    ['http://', 'noHost', {}],
+    ['x'.repeat(64) + '.com', 'labelTooLong', { n: 1, label: 'x'.repeat(24) + '…', len: 64 }],
+  ]) {
+    page.lookup(input);
+    eq(lang + ': ' + key + ' message for ' + JSON.stringify(input.slice(0, 12)), page.get('dnsl-status').textContent, fill(reasons[key], vars));
+  }
+  eq(lang + ': invalid inputs send no query', page.requests.length, 1);
   page.get('dnsl-copy-json').click();
   await new Promise(setImmediate);
   eq(lang + ': invalid input cannot copy previous JSON', page.clipboard.length, 1);
@@ -539,6 +598,19 @@ for (const action of ['Clear', 'Ctrl+L']) {
       && data.steps.reduce((sum, step) => sum + step.length, 0) <= 1200);
     check(lang + ': no duplicate how-to section', !/^## (How to Use|使用方法|使い方|사용 방법)\s*$/mi.test(body));
     check(lang + ': limitations remain in the article', /^## (Limits|限制|制限事項|제한 사항)\s*$/m.test(body));
+    if (ALL_STRINGS) {
+      const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (_, k) => vars[k]);
+      const firstSentence = (s) => s.split(/(?<=[.。])\s?/)[0].replace(/[.。]$/, '');
+      const reasons = ALL_STRINGS[lang].domainErrors;
+      eq(lang + ': article example for exa mple.com matches the engine', D.diagnoseDomain('exa mple.com'), { code: 'badChar', ch: ' ', cp: 'U+0020', pos: 4 });
+      eq(lang + ': article example for -foo.com matches the engine', D.diagnoseDomain('-foo.com'), { code: 'hyphenStart', n: 1, label: '-foo' });
+      if (lang === 'en') {
+        check('en: article quotes the space message', body.includes('`' + firstSentence(fill(reasons.badChar, { ch: ' ', cp: 'U+0020', pos: 4 })) + '`'));
+        check('en: article quotes the hyphen message', body.includes('`' + firstSentence(fill(reasons.hyphenStart, { n: 1, label: '-foo' })) + '`'));
+      } else {
+        check(lang + ': article names the space position and the hyphen label', /U\+0020/.test(body) && /-foo/.test(body) && /4/.test(body));
+      }
+    }
   }
 }
 

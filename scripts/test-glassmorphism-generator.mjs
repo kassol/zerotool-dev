@@ -306,4 +306,19 @@ test('image decode failure has a recoverable message and releases the URL', () =
   }
 }
 
+// "Border, shadow & readability" used `display: flex` on its <summary>, which drops the
+// disclosure marker (the other summary on the page and the rest of the site keep it).
+test('both folded sections keep the native disclosure marker', () => {
+  const style = source.slice(source.lastIndexOf('<style'));
+  const rules = [...style.matchAll(/([^{}]*\bsummary\b[^{}]*)\{([^{}]*)\}/g)];
+  assert.ok(rules.some(([, sel]) => sel.includes('.gsg-options summary')) && rules.some(([, sel]) => sel.includes('.gsg-code-details summary')));
+  for (const [, sel, body] of rules) {
+    const display = /(?:^|;)\s*display\s*:\s*([^;]+)/.exec(body);
+    assert.ok(!display || display[1].trim() === 'list-item', sel.trim() + ' sets display: ' + (display && display[1]));
+    assert.doesNotMatch(body, /list-style\s*:\s*none/, sel.trim());
+  }
+  assert.doesNotMatch(style, /summary::-webkit-details-marker\s*\{[^}]*display\s*:\s*none/);
+  assert.match(source, /<details class="gsg-options"><summary>/);
+});
+
 console.log(`${count} passed`);
