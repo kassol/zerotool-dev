@@ -859,6 +859,111 @@ const PAGE_EXAMPLES = {
   },
 };
 
+// ---------- page: why a file could not be opened, in the page language ----------
+// The real inline script runs in a vm with stub elements; a file is opened through the
+// file input. Before 2026-10-08 a JSON error showed the browser's English message on every
+// page ("这不是有效的 JSON（Unexpected end of JSON input）。") and an empty file got the same
+// JSON error. lineCol and jsonSyntaxError are copied from json-formatter-engine.js.
+{
+  const vm = await import('node:vm');
+  const s0 = componentSrc.indexOf('const STRINGS = ');
+  const s1 = componentSrc.indexOf('\n};\n', s0);
+  const STRINGS = new Function('return ' + componentSrc.slice(s0 + 'const STRINGS = '.length, s1 + 2))();
+  const jsonEngine = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  const fnSrc = (src, name) => {
+    const lines = src.split('\n');
+    const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+    if (at < 0) return '';
+    const indent = lines[at].match(/^\s*/)[0];
+    let end = at + 1;
+    while (end < lines.length && lines[end] !== indent + '}') end++;
+    return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+  };
+  const rs = componentSrc.indexOf('/* ── json-reason:start ── */');
+  const re = componentSrc.indexOf('/* ── json-reason:end ── */');
+  check('json-reason block sits outside the engine block', rs > ei && re > rs);
+  const reasonSrc = rs > 0 ? componentSrc.slice(rs, re) : '';
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = fnSrc(reasonSrc, name);
+    check(name + ' is the same as in json-formatter-engine.js', mine !== '' && mine === fnSrc(jsonEngine, name));
+  }
+  const codes = [...new Set([...fnSrc(jsonEngine, 'jsonSyntaxError').matchAll(/fail\('(\w+)'/g)].map((m) => m[1]))];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const P = STRINGS[lang].jsonParse || {};
+    check(lang + ': a jsonParse text for every jsonSyntaxError code', codes.length > 10 && codes.every((c) => typeof P[c] === 'string'), codes.filter((c) => typeof P[c] !== 'string').join(' '));
+  }
+  const scriptMatch = /<script is:inline define:vars=\{\{ S: T, TYPE_LABEL, pageLang: lang \}\}>([\s\S]*?)<\/script>/.exec(componentSrc);
+  check('page script found', !!scriptMatch);
+  function runPage(lang) {
+    const els = new Map();
+    const docListeners = {};
+    function mk(id) {
+      const listeners = {};
+      const attrs = {};
+      return {
+        id, hidden: false, disabled: false, value: '', checked: false, textContent: '', innerHTML: '', files: null, tagName: 'DIV',
+        style: { setProperty() {} }, dataset: {}, scrollTop: 0, clientHeight: 400, offsetHeight: 30,
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+        addEventListener(t, fn) { (listeners[t] ||= []).push(fn); },
+        removeEventListener() {},
+        dispatch(t, ev = {}) { for (const fn of listeners[t] || []) fn(Object.assign({ type: t, target: this, preventDefault() {}, stopPropagation() {} }, ev)); },
+        setAttribute(k, v) { attrs[k] = String(v); }, getAttribute(k) { return k in attrs ? attrs[k] : null }, removeAttribute(k) { delete attrs[k]; },
+        querySelector() { return mk(); }, querySelectorAll() { return []; }, closest() { return null; },
+        appendChild(c) { return c; }, removeChild() {}, append() {}, replaceChildren() {}, contains() { return false; },
+        focus() {}, blur() {}, click() { this.dispatch('click'); }, select() {}, scrollIntoView() {}, scrollTo() {},
+        getBoundingClientRect() { return { top: 0, left: 0, width: 800, height: 400, bottom: 400, right: 800 }; },
+      };
+    }
+    const get = (id) => { if (!els.has(id)) els.set(id, mk(id)); return els.get(id); };
+    const document = {
+      getElementById: get, createElement: () => mk(), querySelector: () => mk(), querySelectorAll: () => [],
+      addEventListener(t, fn) { (docListeners[t] ||= []).push(fn); }, removeEventListener() {},
+      activeElement: null, body: mk('body'), documentElement: mk('html'),
+    };
+    const sandbox = {
+      document, S: STRINGS[lang], pageLang: lang, console, URL, Blob, TextEncoder, TextDecoder, Promise, Date, Math, JSON,
+      TYPE_LABEL: { document: STRINGS[lang].tDocument, fetch: STRINGS[lang].tFetch, js: STRINGS[lang].tJs, css: STRINGS[lang].tCss, img: STRINGS[lang].tImg, font: STRINGS[lang].tFont, media: STRINGS[lang].tMedia, ws: STRINGS[lang].tWs, other: STRINGS[lang].tOther },
+      performance: { now: () => performance.now(), measure() {}, mark() {} },
+      setTimeout, clearTimeout, requestAnimationFrame: (fn) => setTimeout(fn, 0), cancelAnimationFrame() {},
+      navigator: {}, matchMedia: () => ({ matches: false, addEventListener() {} }),
+      ResizeObserver: class { observe() {} disconnect() {} }, IntersectionObserver: class { observe() {} disconnect() {} },
+    };
+    sandbox.addEventListener = () => {};
+    sandbox.removeEventListener = () => {};
+    sandbox.window = sandbox;
+    vm.runInContext(scriptMatch[1], vm.createContext(sandbox), { filename: 'HarFileAnalyzerTool.astro' });
+    return {
+      get,
+      async open(name, text) {
+        const file = get('har-file');
+        file.files = [{ name, size: Buffer.byteLength(text), text: () => Promise.resolve(text) }];
+        file.dispatch('change');
+        for (let k = 0; k < 50 && !get('har-status').getAttribute('data-tone'); k++) await new Promise((r) => setTimeout(r, 5));
+        await new Promise((r) => setTimeout(r, 5));
+        return [get('har-status').textContent, get('har-status').getAttribute('data-tone')];
+      },
+    };
+  }
+  if (scriptMatch) {
+    const fill = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v[k] != null ? v[k] : m));
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      const T = STRINGS[lang];
+      const page = runPage(lang);
+      eq(lang + ': truncated file names line, column and reason', await page.open('cut.har', '{"log":{"version":"1.2","entries":['),
+        [fill(T.errJsonAt, { line: 1, col: 36, reason: T.jsonParse?.unexpectedEnd }), 'error']);
+      eq(lang + ': trailing comma is located', await page.open('comma.har', '{\n  "log": {\n    "entries": [],\n  }\n}'),
+        [fill(T.errJsonAt, { line: 3, col: 18, reason: T.jsonParse?.trailingComma }), 'error']);
+      eq(lang + ': empty file has its own message', await page.open('empty.har', ''), [T.errEmptyFile, 'error']);
+      eq(lang + ': whitespace-only file counts as empty', await page.open('blank.har', ' \n\t\n'), [T.errEmptyFile, 'error']);
+      eq(lang + ': not a HAR keeps its message', await page.open('x.har', '{"entries":[]}'), [T.errNotHar, 'error']);
+      if (lang !== 'en') {
+        const [text] = await page.open('html.har', '<!doctype html><html></html>');
+        check(lang + ': no English parser message in the status', !/Unexpected|JSON input|token|position/i.test(text) && text === fill(T.errJsonAt, { line: 1, col: 1, reason: fill(T.jsonParse?.unexpectedChar, { ch: '<' }) }), text);
+      }
+    }
+  }
+}
+
 // ---------- page and policy ----------
 {
   const policy = readFileSync(join(root, 'src/data/persistence.ts'), 'utf8');
