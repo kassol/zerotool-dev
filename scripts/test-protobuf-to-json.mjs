@@ -1,4 +1,5 @@
 // Protobuf to JSON — wire decoder, ProtoJSON printer and parser, encoder, raw decoder
+// Also reads src/styles/tool-common.css for the shared fill and toggletip rules.
 //
 // Read:  src/components/tools/ProtobufToJsonTool.astro (extracts the engine block between the
 //        `engine:start` / `engine:end` markers, the order of its vendor <script> tags and the
@@ -38,6 +39,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const commonStyle = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
 const source = readFileSync(join(root, 'src/components/tools/ProtobufToJsonTool.astro'), 'utf8');
 const FIXTURES = join(root, 'scripts/test-protobuf-to-json.fixtures.json');
 const REGENERATE = process.argv.includes('--regenerate');
@@ -997,7 +999,7 @@ check('tool pages carry checked examples', mdxChecks >= 8, mdxChecks + ' found')
     fm.includes('const L = STRINGS[lang];\n// The script gets every string except the toggletip text, which is in the HTML.\nconst { tips: TIPS, ...CLIENT_L } = L;') && !/S\.tips/.test(script));
   check('the hint lines moved into the schema toggletip', !/schemaHintDecode|wktNote|pbj-hint/.test(source));
   const css = source.slice(source.indexOf('<style>'));
-  check('a long output scrolls inside its pane instead of stretching the page', /@media \(min-width: 861px\) \{\s*\.pbj-output \{ flex-basis: 0; \}\s*\}/.test(css) && /\.pbj-output \{[^}]*overflow: auto;/.test(css));
+  check('a long output scrolls inside its pane instead of stretching the page', source.includes('class="pbj-output zt-io-fill"') && /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(commonStyle) && /\.pbj-output \{[^}]*overflow: auto;/.test(css));
   check('the empty "Imported files" row stays hidden', css.includes('.pbj-files-wrap[hidden] { display: none; }') && markup.includes('<div id="pbj-files-wrap" class="pbj-files-wrap" hidden>'));
   check('stacked, the output comes before the schema', /@media \(max-width: 860px\) \{[^@]*\.pbj-in \{ display: contents; \}\s*\.pbj-out \{ order: 2; \}\s*\.pbj-schema \{ order: 3; \}/.test(css));
   // ToolLayout's Ctrl/Cmd+L empties the text boxes without input events; the component reruns,

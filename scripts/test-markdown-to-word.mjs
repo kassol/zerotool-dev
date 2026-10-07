@@ -1,4 +1,5 @@
 // Markdown to Word — Markdown → .docx conversion engine
+// Also reads src/styles/tool-common.css for the shared fill and toggletip rules.
 //
 // Read:  src/components/tools/MarkdownToWordTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers, so this test cannot drift
@@ -42,6 +43,7 @@ import { gfmStrikethroughCjkFriendly } from 'micromark-extension-cjk-friendly-gf
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const commonStyle = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
 const source = readFileSync(join(root, 'src/components/tools/MarkdownToWordTool.astro'), 'utf8');
 
 const START_MARK = '/* ── engine:start ── */';
@@ -531,8 +533,8 @@ const PNG_DATA_URI = 'data:image/png;base64,' + Buffer.from(PNG_1x1).toString('b
   check('Ctrl/Cmd+L refreshes the preview and clears the status and the switch',
     /e\.key !== 'l' && e\.key !== 'L'\)\) return;\s*setTimeout\(\(\) => \{\s*if \(editor\.value\) return;\s*clearTimeout\(timer\);\s*embedRemoteBox\.checked = false;\s*syncEmbedNote\(\);\s*setStatus\(''\);\s*refresh\(\);/.test(source));
   const style = source.slice(source.lastIndexOf('\n<style>\n'));
-  check('stacking breakpoint is 860px, phone details at 640px', (style.match(/@media \((?:max|min)-width: \d+px\)/g) || []).join() === '@media (min-width: 861px),@media (max-width: 860px),@media (max-width: 640px)');
-  check('a long document scrolls inside the preview', /@media \(min-width: 861px\) \{\s*\.mw-preview \{ flex-basis: 0; \}/.test(style) && /\.mw-preview \{\s*overflow: auto;/.test(style) && !/max-height: 640px|min-height: 420px/.test(style));
+  check('stacking breakpoint is 860px, phone details at 640px', (style.match(/@media \((?:max|min)-width: \d+px\)/g) || []).join() === '@media (max-width: 860px),@media (max-width: 640px)');
+  check('a long document scrolls inside the preview', source.includes('class="mw-preview zt-io-fill"') && /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(commonStyle) && /\.mw-preview \{\s*overflow: auto;/.test(style) && !/max-height: 640px|min-height: 420px/.test(style));
   check('stacked, both boxes get a height', /@media \(max-width: 860px\) \{[^}]*\}\s*\.mw-editor \{ height: \d+px; \}\s*\.mw-preview \{ height: \d+px; \}/.test(style));
   check('preview content rules stay global (the script writes it with innerHTML)', (style.match(/^  \.mw-preview :global\(/gm) || []).length >= 20);
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');

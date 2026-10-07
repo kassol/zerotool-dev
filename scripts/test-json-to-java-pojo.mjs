@@ -1,6 +1,7 @@
 // JSON to Java POJO — type inference, number widening, page examples
 //
 // Read:  src/components/tools/JsonToJavaTool.astro (extracts the real engine block
+//        src/layouts/ToolLayout.astro (the real shared keyboard listener in the page VM);
 //        between the `engine:start` / `engine:end` markers)
 // Write: a temporary directory under os.tmpdir() when javac is available (removed); stdout
 // Exit:  0 if all PASS, 1 if any FAIL
@@ -22,6 +23,9 @@
 // compiles. Missing jars → SKIP. AB_TYPES_EVIDENCE=<dir> writes the generated sources there.
 // The {/* jjp-check */} examples on the 4 tool pages are recomputed by the engine.
 // Run: node scripts/test-json-to-java-pojo.mjs
+
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, mkdirSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -49,19 +53,18 @@ function field(c, cls, name) { return (c[cls] || []).find((f) => f.fieldName ===
 function page(json, mode = 'none', rootName = 'RootObject') {
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {},
-      classList: { add() {}, remove() {} }, removeAttribute() {},
+      classList: { add() {}, remove() {} }, removeAttribute() {}, setAttribute() {}, focus() {}, click() { this.handlers.click?.(); },
       addEventListener(event, fn) { this.handlers[event] = fn; } };
   }
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'root-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jjp-' + id, element()]));
   elements['jjp-root-name'].value = rootName;
   const tabs = ['none', 'jackson', 'gson', 'lombok'].map((ann) => element({ ann }));
-  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenerated: 'Generated.', msgGenOne: 'Generated 1 class.', msgGenMany: 'Generated {n} classes.' }, querySelectorAll: () => tabs };
+  const wrap = { contains: el => !!el?.inside, dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenerated: 'Generated.', msgGenOne: 'Generated 1 class.', msgGenMany: 'Generated {n} classes.' }, querySelectorAll: () => tabs };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
   elements['jjp-input'].value = json;
   tabs.find((tab) => tab.dataset.ann === mode).handlers.click();
-  elements['jjp-convert'].handlers.click();
   return { code: elements['jjp-output-code'].textContent, status: elements['jjp-status'].textContent };
 }
 
@@ -70,21 +73,22 @@ function session() {
   const docHandlers = {};
   function element(dataset = {}) {
     return { dataset, value: '', textContent: '', className: '', handlers: {}, disabled: false,
-      classList: { add() {}, remove() {} }, removeAttribute() {},
+      classList: { add() {}, remove() {} }, removeAttribute() {}, setAttribute() {}, focus() {}, click() { this.handlers.click?.(); },
       addEventListener(event, fn) { this.handlers[event] = fn; } };
   }
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'root-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jjp-' + id, element()]));
   const tabs = ['none', 'jackson', 'gson', 'lombok'].map((ann) => element({ ann }));
-  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenerated: 'Generated.', msgGenOne: 'Generated 1 class.', msgGenMany: 'Generated {n} classes.' }, querySelectorAll: () => tabs };
+  const wrap = { contains: el => !!el?.inside, dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenerated: 'Generated.', msgGenOne: 'Generated 1 class.', msgGenMany: 'Generated {n} classes.' }, querySelectorAll: () => tabs };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
-    { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
+    { activeElement: { inside: true }, querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
   const type = (text) => { elements['jjp-input'].value = text; elements['jjp-input'].handlers.input(); };
   const state = () => ({ code: elements['jjp-output-code'].textContent, status: elements['jjp-status'].textContent, copyDisabled: elements['jjp-copy'].disabled });
   // ToolLayout's Ctrl/Cmd+L (src/layouts/ToolLayout.astro): when focus is inside the tool it sets every
   // textarea and text input to '' without input events, then other keydown listeners run.
   const shortcut = (init, focusInside = true) => {
     if (focusInside) { elements['jjp-input'].value = ''; elements['jjp-root-name'].value = ''; }
+    wrap.contains = () => focusInside;
     for (const fn of docHandlers.keydown || []) fn({ key: 'l', ctrlKey: false, metaKey: false, preventDefault() {}, ...init });
   };
   return { type, state, shortcut, click: (id) => elements['jjp-' + id].handlers.click() };
@@ -106,7 +110,7 @@ function session() {
   eq('stale output: Example enables Copy', s.state().copyDisabled, false);
   s.type('   ');
   eq('stale output: empty input disables Copy', s.state().code === '' && s.state().copyDisabled, true);
-  const labels = new Function(source.slice(source.indexOf('const labels'), source.indexOf('const L = labels')) + '\nreturn labels;')();
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + '\nreturn STRINGS;')();
   eq('stale output: the error prefix exists in 4 languages', ['en', 'zh', 'ja', 'ko'].every((l) => labels[l] && labels[l].msgInvalidJson && labels[l].msgInvalidJson.trim()), true);
 }
 {
@@ -285,6 +289,275 @@ if (!hasJavac) {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+}
+
+// Complete page lifecycle plus actual ToolLayout keyboard handler; DOM/clipboard/timers are boundary doubles.
+const pageScript = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
+const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
+const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
+const engineLines = source.slice(source.lastIndexOf('\n', a) + 1, b + '/* ── engine:end ── */'.length);
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12872);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '512bd7dfbd595e60277c2769afb69d6c923cc646b75757691797ab9975b1c02f');
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const unhandled = [];
+const onUnhandled = reason => unhandled.push(String(reason));
+process.on('unhandledRejection', onUnhandled);
+function lifecyclePage(lang, shellFirst = false) {
+  const copies = [], tracks = [], clears = [], downloads = [], blobs = new Map(), timers = new Map(), docEvents = {};
+  let now = 0, timerId = 0, doc;
+  const decode = s => s.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
+  const escape = s => String(s).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  const descendants = el => el.children.flatMap(c => [c, ...descendants(c)]);
+  function matches(el, selector) {
+    return selector.split(',').some(part => {
+      const words = part.trim().split(/\s+/);
+      if (words.length > 1) {
+        if (!matches(el, words.pop())) return false;
+        for (let p = el.parentElement; p; p = p.parentElement) if (matches(p, words.join(' '))) return true;
+        return false;
+      }
+      const tag = /^[a-z][\w-]*/i.exec(part)?.[0], id = /#([\w-]+)/.exec(part)?.[1];
+      return (!tag || el.tagName === tag.toUpperCase()) && (!id || el.id === id)
+        && [...part.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))
+        && [...part.matchAll(/\[([\w-]+)="([^"]*)"\]/g)].every(m => el.attributes[m[1]] === m[2]);
+    });
+  }
+  class Element {
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), attributes: {}, dataset: {}, listeners: {}, children: [], parentElement: null, className: '', value: '', textContent: '', checked: false }); }
+    setAttribute(key, value) {
+      this.attributes[key] = value;
+      if (['id', 'type', 'value'].includes(key)) this[key] = value;
+      if (key === 'class') this.className = value;
+      if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
+    }
+    removeAttribute(key) { delete this.attributes[key]; }
+    getAttribute(key) { return this.attributes[key] ?? null; }
+    get classList() { const e = this; return { contains(c) { return e.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) e.className += ' ' + c; }, remove(c) { e.className = e.className.split(/\s+/).filter(v => v !== c).join(' '); } }; }
+    appendChild(e) { this.children.push(e); e.parentElement = this; }
+    querySelectorAll(s) { return descendants(this).filter(e => matches(e, s)); }
+    querySelector(s) { return this.querySelectorAll(s)[0] || null; }
+    contains(e) { return this === e || descendants(this).includes(e); }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    dispatch(type) { for (const fn of this.listeners[type] || []) fn.call(this, { target: this, type }); }
+    click() { if (this.tagName === 'A') { downloads.push({ name: this.download, blob: blobs.get(this.href) }); return; } if (!this.disabled) this.dispatch('click'); }
+    focus() { doc.activeElement = this; }
+  }
+  const body = new Element('body'), widget = new Element('section'); widget.className = 'tool-widget'; body.appendChild(widget);
+  const markup = source.split('\n---')[1].split('<script')[0]
+    .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
+      '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
+    .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
+  const stack = [widget];
+  for (const token of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*?)>|([^<]+)/g)) {
+    if (token[3] !== undefined) { stack.at(-1).textContent += decode(token[3]).trim(); continue; }
+    if (token[0].startsWith('</')) { if (stack.at(-1).tagName !== token[1].toUpperCase()) throw Error('Unbalanced real markup'); stack.pop(); continue; }
+    const el = new Element(token[1]);
+    for (const a of token[2].matchAll(/([\w-]+)=(?:"([^"]*)"|'([^']*)')/g)) el.setAttribute(a[1], decode(a[2] ?? a[3]));
+    stack.at(-1).appendChild(el);
+    if (!['input', 'br', 'hr'].includes(token[1]) && !token[2].endsWith('/')) stack.push(el);
+  }
+  const get = id => { const el = descendants(body).find(e => e.id === id); if (!el) throw Error('Missing real ID ' + id); return el; };
+  doc = { createElement: tag => new Element(tag), body, activeElement: body, getElementById: get, querySelector: s => body.querySelector(s), addEventListener(type, fn) { (docEvents[type] ||= []).push(fn); } };
+  const context = { document: doc, _slug: 'json-to-java-pojo', console, Blob, hljs: { highlightElement() {} },
+    URL: { createObjectURL(blob) { const id = 'blob:' + blobs.size; blobs.set(id, blob); return id; }, revokeObjectURL() {} },
+    trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) },
+    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); copies.push({ value, resolve, reject }); return promise; } } },
+    setTimeout(fn, ms) { timers.set(++timerId, { fn, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+  };
+  context.window = context; vm.createContext(context);
+  if (shellFirst) vm.runInContext(shortcut, context);
+  vm.runInContext(pageScript, context, { filename: 'JsonToJavaTool.astro' });
+  if (!shellFirst) vm.runInContext(shortcut, context);
+  return { get, context, copies, tracks, clears, downloads, timers, doc,
+    input(value) { get('jjp-input').value = value; get('jjp-input').dispatch('input'); },
+    key(id = 'jjp-input', key = 'l', modifier = 'ctrlKey') { (typeof id === 'string' ? get(id) : id || body).focus(); const e = { key, [modifier]: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } }; for (const fn of docEvents.keydown || []) fn(e); return e; },
+    advance(ms) { const end = now + ms; for (;;) { const next = [...timers].filter(([, t]) => t.due <= end).sort((a, b) => a[1].due - b[1].due)[0]; if (!next) break; timers.delete(next[0]); now = next[1].due; next[1].fn(); } now = end; },
+  };
+}
+
+const snapshot = p => JSON.stringify(['jjp-input', 'jjp-root-name', 'jjp-output-code', 'jjp-status', 'jjp-copy'].map(id => { const e = p.get(id); return [e.value, e.textContent, e.className, !!e.disabled]; }));
+const golden = p => { p.input('{}'); p.advance(300); };
+const goldenCode = "public class RootObject {\n}";
+const copy = p => { p.get('jjp-copy').click(); return p.copies.at(-1); };
+const copyFailure = { en: 'Copy failed. Please copy the output manually.', zh: '复制失败，请手动复制输出。', ja: 'コピーに失敗しました。出力を手動でコピーしてください。', ko: '복사하지 못했습니다. 출력을 직접 복사하세요.' };
+try {
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang], p = lifecyclePage(lang); golden(p);
+    eq(lang + ': page golden complete bytes', p.get('jjp-output-code').textContent, goldenCode);
+    eq(lang + ': localized current result', p.get('jjp-status').textContent, L.msgGenOne);
+    p.get('jjp-root-name').value = 'Api'; p.get('jjp-root-name').dispatch('input'); p.advance(300);
+    eq(lang + ': root changes automatically convert', p.get('jjp-output-code').textContent.includes('Api'), true);
+    p.advance(300);
+    eq(lang + ': automatic root change applies name', p.get('jjp-output-code').textContent.includes('Api'), true);
+    p.get('jjp-clear').click();
+    eq(lang + ': Clear preserves root name', p.get('jjp-root-name').value, 'Api');
+    eq(lang + ': Clear removes derived state', !p.get('jjp-input').value && !p.get('jjp-output-code').textContent && !p.get('jjp-status').textContent, true);
+    for (const shellFirst of [false, true]) for (const modifier of ['ctrlKey', 'metaKey']) {
+      const q = lifecyclePage(lang, shellFirst); golden(q); q.input('{');
+      q.key('jjp-copy', 'L', modifier);
+      eq(lang + ': shared clear immediate ' + shellFirst + modifier, !q.get('jjp-input').value && !q.get('jjp-root-name').value && !q.get('jjp-output-code').textContent && !q.get('jjp-status').textContent, true);
+      eq(lang + ': clear focuses input ' + shellFirst + modifier, q.doc.activeElement === q.get('jjp-input'), true);
+      eq(lang + ': queued work cancelled ' + shellFirst + modifier, q.timers.size, 0);
+      eq(lang + ': shared storage clear ' + shellFirst + modifier, q.clears.join(','), 'json-to-java-pojo');
+      q.advance(1);
+      eq(lang + ': shared clear remains empty after deferred callbacks ' + shellFirst + modifier, !q.get('jjp-output-code').textContent && !q.get('jjp-status').textContent, true);
+    }
+    const outside = lifecyclePage(lang); golden(outside); const beforeOutside = snapshot(outside); outside.key(null); outside.advance(1); eq(lang + ': outside shortcut unchanged', snapshot(outside), beforeOutside);
+    const invalid = lifecyclePage(lang); golden(invalid); invalid.input('{'); invalid.advance(300);
+    eq(lang + ': error removes old result', invalid.get('jjp-output-code').textContent, '');
+    eq(lang + ': invalid input is visibly marked', invalid.get('jjp-input').classList.contains('error'), true);
+
+    invalid.input(''); invalid.advance(300);
+    eq(lang + ': empty input removes error and status', !invalid.get('jjp-input').classList.contains('error') && !invalid.get('jjp-status').textContent && !invalid.get('jjp-output-code').textContent, true);
+    const q = lifecyclePage(lang); golden(q);
+    const good = copy(q); eq(lang + ': clipboard complete output bytes', good.value, goldenCode); good.resolve(); await settle(); eq(lang + ': copy success', q.get('jjp-copy').textContent, L.copied); q.advance(1500); eq(lang + ': current timer restores Copy', q.get('jjp-copy').textContent, L.copy);
+    for (const failure of ['reject', 'missing']) {
+      const beforeUnhandled = unhandled.length, clipboard = q.context.navigator.clipboard; let thrown = null;
+      try { if (failure === 'missing') { q.context.navigator.clipboard = undefined; copy(q); } else copy(q).reject(Error('denied')); } catch (e) { thrown = e; }
+      await settle(); eq(lang + ': copy ' + failure + ' does not throw', thrown, null); eq(lang + ': copy ' + failure + ' has translated failure', q.get('jjp-status').textContent, copyFailure[lang]); eq(lang + ': copy ' + failure + ' handled', unhandled.length, beforeUnhandled);
+      q.context.navigator.clipboard = clipboard; const retry = copy(q); eq(lang + ': retry preserves bytes ' + failure, retry.value, goldenCode); retry.resolve(); await settle(); eq(lang + ': retry succeeds ' + failure, q.get('jjp-copy').textContent, L.copied); eq(lang + ': retry clears owned error ' + failure, q.get('jjp-status').textContent === copyFailure[lang], false);
+    }
+    for (const action of ["input", "clear", "shortcut", "result", "error", "example", "root", "tab"]) for (const outcome of ['resolve', 'reject', 'timer']) {
+      const r = lifecyclePage(lang); golden(r); const old = copy(r);
+      if (outcome === 'timer') { old.resolve(); await settle(); }
+      if (action === 'input') r.input('{"next":true}');
+      if (action === 'root') { r.get('jjp-root-name').value = 'NewRoot'; r.get('jjp-root-name').dispatch('input'); }
+      if (action === 'tab') r.doc.querySelector("[data-ann=\"lombok\"]").click();
+      if (action === 'clear') r.get('jjp-clear').click();
+      if (action === 'shortcut') r.key();
+      if (action === 'result') { r.input('{"next":true}'); r.advance(300); }
+      if (action === 'error') { r.input('{'); r.advance(300); }
+      if (action === 'example') r.get('jjp-example').click();
+      const before = snapshot(r), rejectedBefore = unhandled.length;
+      if (outcome === 'timer') r.advance(1500); else { old[outcome](Error('late')); await settle(); }
+      if (outcome !== 'timer' || !['input', 'root'].includes(action)) eq(lang + ': stale ' + action + '/' + outcome, snapshot(r), before);
+      else eq(lang + ': expired feedback after edit ' + action, r.get('jjp-copy').textContent, L.copy);
+      eq(lang + ': stale rejection handled ' + action + '/' + outcome, unhandled.length, rejectedBefore);
+    }
+    const t = lifecyclePage(lang); golden(t); copy(t).resolve(); await settle(); t.advance(1000); copy(t).resolve(); await settle(); t.advance(500); eq(lang + ': old timer leaves newer feedback', t.get('jjp-copy').textContent, L.copied); t.advance(1000); eq(lang + ': new timer expires', t.get('jjp-copy').textContent, L.copy);
+    const order = lifecyclePage(lang); golden(order); const first = copy(order), second = copy(order); second.reject(Error('current')); await settle(); first.resolve(); await settle(); eq(lang + ': older success keeps current copy failure', order.get('jjp-status').textContent, copyFailure[lang]); eq(lang + ': older success cannot claim copied', order.get('jjp-copy').textContent, L.copy);
+    const d = lifecyclePage(lang); eq(lang + ': original initial sample remains', d.get('jjp-input').value.includes('Alice') && d.get('jjp-output-code').textContent.includes('public class RootObject'), true); golden(d); d.doc.querySelector('[data-ann="lombok"]').click(); eq(lang + ': annotation click converts immediately', d.get('jjp-output-code').textContent, 'import lombok.Data;\n\n@Data\npublic class RootObject {\n}');
+  }
+} finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
+eq('no unhandled clipboard rejections', unhandled.length, 0);
+
+
+// ---------- v2 page layout ----------
+const V2 = {
+  "slug": "json-to-java-pojo",
+  "prefix": "jjp",
+  "manual": false,
+  "tips": [
+    [
+      "root-name",
+      "rootName",
+      "rootName"
+    ],
+    [
+      "input",
+      "jsonInput",
+      "input"
+    ],
+    [
+      "example",
+      "example",
+      "example"
+    ],
+    [
+      "clear",
+      "clear",
+      "clear"
+    ],
+    [
+      "copy",
+      "copy",
+      "copy"
+    ],
+    [
+      "annotation",
+      "annotation",
+      "annotation"
+    ]
+  ],
+  "scriptSHA": "0150698efcde58a2bc320d507a80547494523144424c4f9a09da36cc398a17ed",
+  "protectedContent": {
+    "en": [
+      "2482f1801b46f92b96e6e556319136b9caa0989875e28d8fb420a5825fab0c35",
+      "e5111fc7c74941946c04d43cfbb317fb0da790f0e6397392f5f73689356869e8"
+    ],
+    "zh": [
+      "a47bdf26460743e8f69c0d026d51fcbe04c10dddce38ad6deb21b1606930956e",
+      "09db91aba9d3fd3e8a7d64d2904e13f3cd6fa9c37b00954ed20d0a218bed9027"
+    ],
+    "ja": [
+      "23a563868b82460e6cc2d72a4825028638bf8e6e821ed23a4ca65e1e5e1172ab",
+      "8cdd5cabe3971e470b3be0925615d5b187d3c5f88123cf75055207f937321441"
+    ],
+    "ko": [
+      "bcb8c2e7166827a671a0684ac75b2a72317497fe0930f7b68372b5dbeeda15e0",
+      "71ff9db8e8627072932329127a779c9194114f073b1ac916295884a3ac40a674"
+    ]
+  }
+};
+const hash = value => createHash('sha256').update(value).digest('hex');
+const layoutMarkup = source.split('\n---')[1].split('<script')[0];
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+const prefix = V2.prefix;
+eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
+eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
+eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
+eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
+eq('v2 two shared IO panes', (layoutMarkup.match(/\bzt-io-pane\b/g) || []).length, 2);
+eq('v2 both editors fill panes', layoutMarkup.includes('id="' + prefix + '-input" class="zt-io-fill"') && layoutMarkup.includes('id="' + prefix + '-output" class="' + prefix + '-output zt-io-fill"'), true);
+eq('v2 fixed status with internal overflow', css.includes('height: 2.8rem; flex: none; overflow: auto; overflow-wrap: anywhere;'), true);
+eq('v2 bounded keyboard accessible output', layoutMarkup.includes('tabindex="0" aria-labelledby="' + prefix + '-output-label"') && css.includes('.' + prefix + '-output { margin: 0; overflow: auto; white-space: pre; }'), true);
+eq('v2 actual output controls desktop empty hint', css.includes('.' + prefix + '-output-pane:has(#' + prefix + '-output-code:empty) .' + prefix + '-empty { display: flex; }'), true);
+eq('v2 stacked empty pane hidden and result bounded', css.includes('@media (max-width: 860px)') && css.includes('.' + prefix + '-output-pane:has(#' + prefix + '-output-code:empty) { display: none; }') && css.includes('height: 22rem; min-height: 160px; resize: none;'), true);
+eq('v2 phone input 144px and name inline', css.includes('height: 144px; min-height: 144px;') && css.includes('width: 100%; flex-direction: row; align-items: center;') && css.includes('@media (max-width: 640px)'), true);
+eq('v2 44px actions', css.includes('.' + prefix + '-actions button, .' + prefix + '-panel-header button { min-height: 44px; }'), true);
+eq('v2 dark ancestry global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'), true);
+eq('v2 tips remain build-time only', !/data-i18n|define:vars/.test(source) && !/STRINGS|L\.tips|\.tips\b/.test(pageScript), true);
+eq('v2 exact actual tip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, V2.tips.length);
+for (const [id, about, key] of V2.tips) eq('v2 exact tip binding ' + id, layoutMarkup.includes('<Toggletip id="' + prefix + '-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'), true);
+const actualButtons = [...layoutMarkup.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map(m => m[1]).sort();
+eq('v2 explicit buttons retained', actualButtons.join(','), ['clear','copy','example', ...(V2.manual ? ['convert'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].map(id => prefix + '-' + id).sort().join(','));
+if (!V2.manual) {
+  eq('v2 no residual Generate label/action', !/generate:/.test(source) && !source.includes(prefix + '-convert') && !layoutMarkup.includes('btn-primary'), true);
+  eq('v2 existing tab container shares segmented layout', layoutMarkup.includes(prefix + '-tabs zt-segmented'), true);
+  eq('v2 selected segment contrasts in either theme', css.includes('.' + prefix + '-tab.active { background: var(--color-text); color: var(--color-bg); }'), true);
+}
+for (const lang of ['en','zh','ja','ko']) {
+  const L = pageLabels[lang];
+  eq(lang + ': v2 exact translated tip keys', Object.keys(L.tips).sort().join(','), V2.tips.map(t => t[2]).sort().join(','));
+  for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
+  eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
+  const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
+  const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
+  const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
+  eq(lang + ': v2 steps correspond to controls', steps.length, V2.tips.length);
+  eq(lang + ': v2 step limits and order', fm.indexOf('steps:') < fm.indexOf('faqItems:') && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n,x) => n+[...x].length,0) <= 1200, true);
+  for (const [, about] of V2.tips) eq(lang + ': v2 steps actual label ' + about, steps.join('\n').includes(L[about]), true);
+  eq(lang + ': v2 SEO and FAQ unchanged', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')), V2.protectedContent[lang][0]);
+  eq(lang + ': v2 non-Usage content unchanged', hash(body.replace(/\n\{\/\* b6-sample-coverage:start \*\/\}[\s\S]*?\{\/\* b6-sample-coverage:end \*\/\}\n/,'')), V2.protectedContent[lang][1]);
+  eq(lang + ': v2 no duplicate usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
+  for (const shellFirst of [false,true]) for (const focus of ['output','tip']) {
+    const q = lifecyclePage(lang,shellFirst);golden(q);q.key(focus === 'output' ? q.get(prefix + '-output') : q.doc.querySelector('[data-zt-tip="' + prefix + '-tip-copy"]'));
+    eq(lang + ': v2 output focus survives CtrlL ' + shellFirst + focus, q.doc.activeElement === q.get(prefix+'-input') && !q.get(prefix+'-input').value && !q.get(prefix+'-root-name').value && !q.get(prefix+'-output-code').textContent && !q.get(prefix+'-status').textContent && q.clears.length === 1, true);
+  }
+  const selected=lifecyclePage(lang);
+  for (const value of ["none", "jackson", "gson", "lombok"]) {
+    selected.doc.querySelector('[data-ann="'+value+'"]').click();
+    for (const tab of selected.doc.querySelector('.jjp-wrap').querySelectorAll('.jjp-tab')) eq(lang + ': v2 pressed state ' + value + '/' + tab.dataset.ann, tab.getAttribute('aria-pressed'), String(tab.dataset.ann === value));
+  }
+  const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
+  q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

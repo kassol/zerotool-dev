@@ -1,7 +1,6 @@
-// Tool page v2 layout. Slugs listed here get the compact header, a layout
-// chosen by tool type, and the reference content folded
-// into one <details>. Every other tool page keeps the shared layout unchanged.
-// To move a tool over, follow DESIGN.md "Tool Pages v2".
+// Every tool page uses the compact header, its registered layout kind and
+// reference content folded into one <details>. Register every tools.ts slug here.
+// Follow DESIGN.md "Tool Pages" when adding a tool.
 //
 //   convert  — input and output side by side, both as tall as the screen allows
 //   generate — the generated preview leads; controls sit in a narrow rail
@@ -11,6 +10,53 @@
 export type ToolPageKind = 'convert' | 'generate' | 'analyze' | 'compact' | 'compare';
 
 export const toolPageKinds: Record<string, ToolPageKind> = {
+  'meta-tag-generator': 'generate',
+  'favicon-generator': 'generate',
+  'csp-header-generator': 'generate',
+  'gitignore-generator': 'generate',
+  'cron-job-generator': 'generate',
+  'htaccess-generator': 'generate',
+  'fake-data-generator': 'generate',
+  'barcode-generator': 'generate',
+  'ip-subnet-calculator': 'analyze',
+  'mime-type-lookup': 'analyze',
+  'css-specificity-calculator': 'analyze',
+  'keycode-explorer': 'analyze',
+  'timezone-converter': 'analyze',
+  'http-status-codes': 'analyze',
+  'iban-validator-parser': 'analyze',
+  'cron-parser': 'analyze',
+  'markdown-preview': 'convert',
+  'css-to-tailwind': 'convert',
+  'html-minifier': 'convert',
+  'html-to-markdown': 'convert',
+  'html-to-jsx': 'convert',
+  'graphql-formatter': 'convert',
+  'markdown-toc-generator': 'convert',
+  'svg-to-jsx': 'convert',
+  'jsonl-converter': 'convert',
+  'json-xml-converter': 'convert',
+  'yaml-toml': 'convert',
+  'csv-to-sql': 'convert',
+  'csv-to-markdown': 'convert',
+  'xml-formatter': 'convert',
+  'csv-json': 'convert',
+  'toml-json': 'convert',
+  'sql-formatter': 'convert',
+  'yaml-json': 'convert',
+  'curl-to-code': 'convert',
+  'json-to-json-schema': 'convert',
+  'openapi-to-typescript': 'convert',
+  'json-to-csv': 'convert',
+  'docker-to-compose': 'convert',
+  'json-to-mongoose': 'convert',
+  'typescript-to-zod': 'convert',
+  'json-to-zod': 'convert',
+  'json-to-python-dataclass': 'convert',
+  'json-to-java-pojo': 'convert',
+  'json-to-go-struct': 'convert',
+  'json-to-kotlin': 'convert',
+  'json-to-typescript': 'convert',
   'diff-checker': 'compare',
   'json-diff': 'compare',
   'yaml-validator': 'analyze',
@@ -66,6 +112,16 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'pkce-generator': 'generate',
   'htpasswd-generator': 'generate',
   'sprite-sheet-generator': 'generate',
+  'box-shadow-generator': 'generate',
+  'color-contrast-checker': 'generate',
+  'css-filter-generator': 'generate',
+  'css-gradient-generator': 'generate',
+  'css-flexbox-generator': 'generate',
+  'css-grid-generator': 'generate',
+  'css-variables-generator': 'generate',
+  'css-triangle-generator': 'generate',
+  'css-clamp-calculator': 'generate',
+  'robots-txt-generator': 'generate',
   'har-file-analyzer': 'analyze',
   'color-blindness-simulator': 'analyze',
   'sqlite-viewer': 'analyze',
@@ -85,6 +141,16 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'ai-token-counter': 'analyze',
   'ssl-certificate-decoder': 'analyze',
   'qr-code-decoder': 'analyze',
+  'gif-splitter': 'generate',
+  'lorem-ipsum': 'generate',
+  'password-generator': 'generate',
+  'rsa-key-generator': 'generate',
+  'pixelate-image': 'generate',
+  'nano-id-generator': 'generate',
+  'uuid-generator': 'generate',
+  'gif-compressor': 'generate',
+  'ulid-generator': 'generate',
+  'image-splitter': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {
