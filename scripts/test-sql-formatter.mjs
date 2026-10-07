@@ -186,5 +186,243 @@ eq('page: minify formatted aggregate',
 // ---------- minify unchanged ----------
 eq('minify', E.minifySQL('WITH r AS (\n  SELECT SUM(total) -- c\n  FROM t\n) SELECT 1;'), 'WITH r AS(SELECT SUM(total)FROM t)SELECT 1;');
 
+
+// ---------- complete production page + real shared shortcuts; controlled DOM/clock/clipboard ----------
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+const requireRoot = createRequire(join(root, 'package.json'));
+const { parseFragment } = requireRoot('parse5');
+const ts = requireRoot('typescript');
+const pageFile = 'src/components/tools/SqlFormatterTool.astro';
+const requirePage = createRequire(join(root, pageFile));
+const pageSource = readFileSync(join(root, pageFile), 'utf8');
+const pageScript = pageSource.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+const labels = pageSource.match(/(?:const|var) STRINGS = (\{[\s\S]*?\n\s*\});/);
+const pageStrings = vm.runInNewContext('(' + labels[1] + ')');
+const clientStrings = lang => vm.runInNewContext('(' + pageSource.match(/const CLIENT_T = ([\s\S]*?);\n/)[1] + ')', { T: pageStrings[lang] });
+const pageJS = ts.transpileModule(pageScript, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = layoutSource.slice(layoutSource.indexOf('// ── Keyboard shortcuts:'), layoutSource.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Missing actual shared shortcut');
+const hash = value => createHash('sha256').update(value).digest('hex');
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const unhandled = [];
+const onUnhandled = reason => unhandled.push(String(reason));
+process.on('unhandledRejection', onUnhandled);
+function same(name, actual, expected) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  if (a === e) passes++;
+  else { failures++; console.log('FAIL: lifecycle ' + name + '\n actual=' + a + '\n expected=' + e); }
+}
+
+const cfg = {"input": "sf-input", "output": "sf-output", "primary": "sf-format", "clear": "sf-clear", "status": "sf-status", "copies": ["sf-copy"], "copyFields": {"sf-copy": "sf-output"}, "raw": "select a, b from t", "golden": "SELECT\n  a,\n  b\nFROM t", "next": "select c from z", "minified": "SELECT a, b FROM t", "extraActions": ["minify"], "slug": "sql-formatter", "prefix": "sf"};
+const descendants = e => e.children.flatMap(c => [c, ...descendants(c)]);
+function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = null) {
+  let document, now = 0, nextTimer = 0;
+  const timers = new Map(), copies = [], clears = [], tracks = [];
+  function simple(e, selector) {
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const rest = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[\w-]+/.exec(rest)?.[0], id = /#([\w-]+)/.exec(rest)?.[1];
+    return (!tag || e.tagName === tag.toUpperCase()) && (!id || e.id === id)
+      && [...rest.matchAll(/\.([\w-]+)/g)].every(m => e.classList.contains(m[1]))
+      && attrs.every(a => a[2] === undefined ? e.getAttribute(a[1]) !== null : e.getAttribute(a[1]) === a[2]);
+  }
+  function matches(e, selector) {
+    return selector.split(',').some(part => {
+      const pieces = part.trim().split(/\s+(?![^\[]*\])/);
+      if (!simple(e, pieces.pop())) return false;
+      let parent = e.parentNode;
+      while (pieces.length) { while (parent && !simple(parent, pieces.at(-1))) parent = parent.parentNode; if (!parent) return false; pieces.pop(); parent = parent.parentNode; }
+      return true;
+    });
+  }
+  class Element {
+    constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.parentNode = null; this.attributes = {}; this.dataset = {}; this.listeners = {}; this.value = ''; this.textContent = ''; this.className = ''; this.id = ''; this.disabled = false; this.hidden = false; }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(...cs) { el.className = [...new Set([...el.className.split(/\s+/).filter(Boolean), ...cs])].join(' '); }, remove(...cs) { el.className = el.className.split(/\s+/).filter(c => !cs.includes(c)).join(' '); } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'class') this.className = String(v); if (k === 'id') this.id = String(v); if (k === 'disabled') this.disabled = true; if (k === 'checked') this.checked = true; if (k === 'value') this.value = String(v); if (k === 'hidden') this.hidden = true; if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(v); }
+    getAttribute(k) { return Object.hasOwn(this.attributes, k) ? this.attributes[k] : null; }
+    removeAttribute(k) { delete this.attributes[k]; if (k === 'disabled') this.disabled = false; if (k === 'hidden') this.hidden = false; }
+    appendChild(c) { if (c.parentNode) c.parentNode.children.splice(c.parentNode.children.indexOf(c), 1); c.parentNode = this; this.children.push(c); return c; }
+    get firstElementChild() { return this.children[0] || null; }
+    contains(c) { return c === this || descendants(this).includes(c); }
+    querySelectorAll(s) { return descendants(this).filter(e => matches(e, s)); }
+    querySelector(s) { return this.querySelectorAll(s)[0] || null; }
+    closest(s) { for (let e = this; e; e = e.parentNode) if (matches(e, s)) return e; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    focus() { document.activeElement = this; }
+    dispatch(type, init = {}) {
+      const e = { type, target: this, currentTarget: this, key: '', ctrlKey: false, metaKey: false, defaultPrevented: false, stopped: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...init };
+      for (let node = this; node; node = node.parentNode) { e.currentTarget = node; for (const fn of node.listeners[type] || []) fn.call(node, e); if (e.stopped) break; }
+      return e;
+    }
+    click() { if (!this.disabled) { this.focus(); return this.dispatch('click'); } }
+  }
+  document = new Element('#document'); document.documentElement = { lang };
+  document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
+  const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
+  const esc = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
+    .replace(/data-strings=\{JSON\.stringify\(CLIENT_T\)\}/g, 'data-strings="' + esc(JSON.stringify(clientStrings(lang))) + '"')
+    .replace(/data-lang=\{lang\}/g, 'data-lang="' + lang + '"').replace(/\{T\.(\w+)\}/g, (_, k) => esc(pageStrings[lang][k]));
+  function append(ast, parent) { for (const node of ast.childNodes || []) { if (!node.tagName) { if (node.nodeName === '#text') parent.textContent += node.value; continue; } const e = parent.appendChild(new Element(node.tagName)); for (const a of node.attrs) e.setAttribute(a.name, a.value); append(node, e); if (e.tagName === 'TEXTAREA') e.value = e.textContent; if (e.tagName === 'SELECT') e.value = (e.children.find(c => c.getAttribute('selected') !== null) || e.children[0]).value; } }
+  append(parseFragment(markup), widget);
+  document.getElementById = id => descendants(document).find(e => e.id === id) || null;
+  const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing production ID ' + id); return e; };
+  for (const [id, value] of Object.entries(preset)) get(id).value = value;
+  if (active) get(active).focus();
+  const context = { document, console, exports: {}, module: { exports: {} },
+    require: name => requirePage(name), _slug: cfg.slug,
+    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); copies.push({ value, resolve, reject }); return promise; } } },
+    setTimeout(fn, ms = 0) { const id = ++nextTimer; timers.set(id, { fn, ms, due: now + ms }); return id; }, clearTimeout(id) { timers.delete(id); },
+    ztPersist: { clear(slug) { clears.push(slug); } }, trackTool(...args) { tracks.push(args); } };
+  context.window = context; vm.createContext(context);
+  const installShared = () => vm.runInContext(shortcut, context, { filename: 'ToolLayout.shortcuts.js' });
+  if (shellFirst) installShared(); vm.runInContext(pageJS, context, { filename: pageFile }); if (!shellFirst) installShared();
+  function advance(ms) { const end = now + ms; let executions = 0; for (;;) { const next = [...timers].filter(([, t]) => t.due <= end).sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0]; if (!next) break; if (++executions > 1000) throw Error('Timer runaway'); now = next[1].due; timers.delete(next[0]); next[1].fn(); } now = end; }
+  return { get, document, context, copies, clears, tracks, timers, advance,
+    input(id, value) { get(id).focus(); get(id).value = value; get(id).dispatch('input'); },
+    key(id, key = 'l', modifier = 'ctrlKey') { (id ? get(id) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
+    copy(id) { get(id).click(); return copies.at(-1); },
+    snapshot() { return { values: [get(cfg.input).value, get(cfg.output).value], status: get(cfg.status).textContent, statusClass: get(cfg.status).className, copies: cfg.copies.map(id => [get(id).textContent, get(id).disabled]) }; } };
+}
+
+const protectedCore = pageSource.match(/^[ \t]*\/\* ── engine:start ── \*\/[\s\S]*?\/\* ── engine:end ── \*\//m)[0];
+same('protected conversion bytes',Buffer.byteLength(protectedCore),13949);
+same('protected conversion SHA256',hash(protectedCore),'4b6afde76ce0e8ffd31c668272eb99888849dee91f9c945bbf6ad081fd4fbb6e');
+
+const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
+const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, true]) {
+  const S = pageStrings[lang], tag = lang + '/' + shellFirst;
+  let p = lifecyclePage(lang, shellFirst); golden(p);
+  same(tag + ' genuine golden output', p.get(cfg.output).value, cfg.golden);
+  p.input(cfg.input, ''); p.advance(300);
+  same(tag + ' blank input clears previous output and status', [p.get(cfg.output).value,p.get(cfg.status).textContent],['','']);
+  for (const action of ['clear','shortcut']) for (const focus of [cfg.input, cfg.copies.at(-1)]) {
+    p = lifecyclePage(lang, shellFirst); golden(p); p.input(cfg.input,cfg.next); p.advance(100);
+    if (action === 'clear') p.get(cfg.clear).click(); else p.key(focus);
+    same(tag + '/' + action + '/' + focus + ' clears synchronously', [p.get(cfg.input).value,p.get(cfg.output).value,p.get(cfg.status).textContent],['','','']);
+    same(tag + '/' + action + '/' + focus + ' cancels queued work',p.timers.size,0);
+    same(tag + '/' + action + '/' + focus + ' focuses source input',p.document.activeElement.id,cfg.input);
+    if (action === 'shortcut') same(tag + '/' + focus + ' shared persistence still clears exactly once',p.clears,[cfg.slug]);
+    p.advance(2000);same(tag + '/' + action + '/' + focus + ' no late content', [p.get(cfg.input).value,p.get(cfg.output).value,p.get(cfg.status).textContent],['','','']);
+    golden(p);const before=p.snapshot();p.key(null);same(tag+' outside CtrlL preserves widget',p.snapshot(),before);
+  }
+
+  p=lifecyclePage(lang,shellFirst);golden(p);const before=p.get(cfg.output).value;p.get(cfg.prefix+'-indent').value='4';p.get(cfg.prefix+'-indent').dispatch('change');same(tag+' indent waits for Format',p.get(cfg.output).value,before);p.get(cfg.primary).click();same(tag+' Format applies indent',p.get(cfg.output).value,cfg.golden.replace(/^  /gm,'    '));
+  p=lifecyclePage(lang,shellFirst);p.input(cfg.input,cfg.raw);p.advance(100);p.get(cfg.prefix+'-minify').click();same(tag+' Minify uses actual algorithm',p.get(cfg.output).value,cfg.minified);same(tag+' Minify cancels queued Format',p.timers.size,0);p.advance(200);same(tag+' Minify survives previous deadline',p.get(cfg.output).value,cfg.minified);
+  p=lifecyclePage(lang,shellFirst);p.input(cfg.input,cfg.raw);p.tracks.length=0;p.key(cfg.input,'Enter');same(tag+' CtrlEnter formats exactly once',p.tracks.filter(t=>t[1]==='format').length,1);same(tag+' Enter cancels queued Format',p.timers.size,0);
+
+  p=lifecyclePage(lang,shellFirst);golden(p);p.get('sf-uppercase').checked=false;p.get('sf-uppercase').dispatch('change');same(tag+' keyword option alone retains output',p.get(cfg.output).value,cfg.golden);p.get('sf-format').click();same(tag+' Format applies keyword option',p.get(cfg.output).value,'select\n  a,\n  b\nfrom t');
+
+  for (const id of cfg.copies) {
+    const field = cfg.copyFields[id], label = tag+'/'+id;
+    p=lifecyclePage(lang,shellFirst);golden(p);const initial=p.snapshot(), job=p.copy(id);
+    same(label+' exact copied bytes',job.value,p.get(field).value);job.resolve();await settle();
+    same(label+' current copy success',p.get(id).textContent,S.copied);p.advance(1500);same(label+' normal timer restores label',p.get(id).textContent,S.copy);
+    const rejected=p.copy(id), n=unhandled.length;rejected.reject(Error('controlled current rejection'));await settle();
+    same(label+' rejection handled',unhandled.length-n,0);same(label+' localized visible current failure',[p.get(cfg.status).textContent,p.get(cfg.status).className],[failureText[lang],cfg.prefix+'-status error']);
+    const retry=p.copy(id);same(label+' direct retry retains bytes',retry.value,job.value);retry.resolve();await settle();
+    same(label+' direct retry succeeds and clears its error',[p.get(id).textContent,p.get(cfg.status).textContent,p.snapshot().values],[S.copied,'',initial.values]);
+    p=lifecyclePage(lang,shellFirst);golden(p);const clipboard=p.context.navigator.clipboard;delete p.context.navigator.clipboard;let threw='';try{p.copy(id);}catch(e){threw=String(e);}
+    same(label+' unavailable API handled',[threw,p.get(cfg.status).textContent],['',failureText[lang]]);p.context.navigator.clipboard=clipboard;p.copy(id).resolve();await settle();same(label+' API recovery same result',[p.get(id).textContent,p.get(cfg.status).textContent],[S.copied,'']);
+    for(const action of ['input','result','clear','shortcut',...cfg.extraActions]) for(const outcome of ['resolve','reject']) {
+      p=lifecyclePage(lang,shellFirst);golden(p);const pending=p.copy(id), count=unhandled.length;
+      if(action==='clear')p.get(cfg.clear).click();else if(action==='shortcut')p.key(id);else if(action==='minify')p.get(cfg.prefix+'-minify').click();else{p.input(cfg.input,cfg.next);if(action==='result')p.advance(300);}
+      const current=p.snapshot();pending[outcome](outcome==='reject'?Error('controlled stale rejection'):undefined);await settle();
+      same(label+' stale '+action+'/'+outcome,p.snapshot(),current);same(label+' no stale unhandled '+action+'/'+outcome,unhandled.length-count,0);
+    }
+    for(const outcome of ['resolve','reject']) {
+      p=lifecyclePage(lang,shellFirst);golden(p);const first=p.copy(id),last=p.copy(id);same(label+' same text separate requests', [first!==last,first.value,last.value],[true,p.get(field).value,p.get(field).value]);
+      last.resolve();await settle();const current=p.snapshot();const n=unhandled.length;first[outcome](outcome==='reject'?Error('older same text'):undefined);await settle();
+      same(label+' same text older '+outcome+' ignored',p.snapshot(),current);same(label+' same text handled '+outcome,unhandled.length-n,0);
+    }
+    p=lifecyclePage(lang,shellFirst);golden(p);p.copy(id).resolve();await settle();const oldTimer=[...p.timers.values()].find(t=>t.ms===1500);p.advance(1000);p.copy(id).resolve();await settle();p.advance(500);
+    same(label+' old timer does not reset new success',p.get(id).textContent,S.copied);oldTimer.fn();same(label+' already queued old callback cannot reset new success',p.get(id).textContent,S.copied);p.advance(1000);same(label+' new timer resets normally',p.get(id).textContent,S.copy);
+    p=lifecyclePage(lang,shellFirst);golden(p);p.copy(id).resolve();await settle();const timer=[...p.timers.values()].find(t=>t.ms===1500);p.get(cfg.clear).click();const cleared=p.snapshot();timer.fn();same(label+' already queued feedback after Clear is ignored',p.snapshot(),cleared);
+  }
+
+}
+
+// ---------- v2 page layout ----------
+same('all FIX checks retained', [passes, failures], [598, 0]);
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), 'ed078958c5a0dc563f8486915db1f37f29b69b01d84f2da75d0e3b82594c39e8');
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "ce321fad0c0dbd0abe871bf5abedf19832f18b22f6c3e0a2f4322e306a8bf852",
+    "body": "a0dbaf7aa7f03dd60d7e83b7dd71fe8551ac26e6d1155584ae28290b233da7b4",
+    "examples": "7cacf1db76cc3dfce8e3bdb6889466b96bb4fcf312b751887b343b9bc847cb67"
+  },
+  "zh": {
+    "front": "4bed20156cc6ae5822de8d7e05b386608ed73e9264f176de3f12c9eee6dc4fd0",
+    "body": "70a255da3da0d69ac200e4260ca52da1559f26cde3f76fdae2358c35b8b9e37c",
+    "examples": "c33af7cccf71bfbf0914c6030f89b6cba267ef10354f65e1d99b864f7f4c46c2"
+  },
+  "ja": {
+    "front": "19f80c3635c59b1df7561f1647ac71bf735aa8de1848a32ba360d15aa8e8dd8f",
+    "body": "87c34ad6bdd4eeb1b59d2981c26b300100f2a803daf39e865c8561171277c071",
+    "examples": "c33af7cccf71bfbf0914c6030f89b6cba267ef10354f65e1d99b864f7f4c46c2"
+  },
+  "ko": {
+    "front": "a0354f251788d0f15ffcff57effe030da8cee112db7c3b4b1d6c2a318ef56298",
+    "body": "998c01499b877f0bb78c671e77c9a68de51cde98bf24fd6e0c91ee2640277ca9",
+    "examples": "c33af7cccf71bfbf0914c6030f89b6cba267ef10354f65e1d99b864f7f4c46c2"
+  }
+};
+const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
+const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
+same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
+same('options and actions precede stable status then shared panes', /sf-options[\s\S]*sf-toolbar[\s\S]*id="sf-status"[\s\S]*sf-panels zt-io/.test(markup), true);
+same('shared pane and fill count', [(markup.match(/zt-io-pane/g)||[]).length,(markup.match(/zt-io-fill/g)||[]).length], [2,2]);
+same('all original functional buttons remain', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m=>m[1]), ['sf-format','sf-minify','sf-clear','sf-copy']);
+same('format remains the only primary action', (markup.match(/class="btn-primary"/g)||[]).length, 1);
+same('seven adjacent tip IDs', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m=>m[1]), ['sf-tip-indent','sf-tip-uppercase','sf-tip-format','sf-tip-minify','sf-tip-clear','sf-tip-input','sf-tip-copy']);
+same('no tips are inside labels or buttons', /<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup), false);
+same('input editable and output remains readonly', [/<textarea id="sf-input"[^>]*\breadonly/.test(markup),/<textarea id="sf-output"[^>]*\breadonly/.test(markup)], [false,true]);
+same('default uppercase checked', /id="sf-uppercase" checked/.test(markup), true);
+same('root zero minima and flex column', /\.sf-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css), true);
+same('status fixed and internally scrollable', /\.sf-status\s*\{[^}]*height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css), true);
+same('long textarea content scrolls inside pane', /\.sf-box\s*\{[^}]*overflow: auto;/.test(css), true);
+same('empty desktop output has a localized sentence', /<p class="sf-empty">\{T.outputPlaceholder\}<\/p>/.test(markup), true);
+same('empty state follows actual textarea value via placeholder state', /\.sf-result:has\(#sf-output:placeholder-shown\) \.sf-empty \{ display: flex; \}/.test(css), true);
+same('860 stacked empty result hidden and bounded editors', /@media \(max-width: 860px\)[\s\S]*\.sf-box \{ height: 180px; \}[\s\S]*\.sf-result:has\(#sf-output:placeholder-shown\) \{ display: none; \}/.test(css), true);
+same('640 bounded editors and 44px heads', /@media \(max-width: 640px\)[\s\S]*min-height: 44px;[\s\S]*height: 120px;/.test(css), true);
+same('select remains at least 44px high', /\.sf-options select \{ min-height: 44px;/.test(css), true);
+same('theme feedback uses semantic tokens', /var\(--color-success\)/.test(css)&&/var\(--color-danger\)/.test(css), true);
+same('runtime i18n mutation removed', /data-i18n|var STRINGS/.test(pageSource), false);
+same('script stays inline inside root without relocation or reindent', /  <script is:inline>[\s\S]*  <\/script>\s*<\/div>\s*<style>/.test(pageSource), true);
+const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'),'utf8');
+same('sql-formatter registered convert', /['"]sql-formatter['"]\s*:\s*['"]convert['"]/.test(registry), true);
+const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
+same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
+const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
+for(const lang of ['en','zh','ja','ko']) {
+  const S=pageStrings[lang], payload=clientStrings(lang), expected=PROTECTED_CONTENT[lang];
+  same(lang+' tip keys',Object.keys(S.tips),['input','indent','uppercase','format','minify','clear','copy']);
+  same(lang+' short complete tips',Object.values(S.tips).every(x=>typeof x==='string'&&x.length>0&&x.length<=280),true);
+  same(lang+' client has only runtime strings',Object.keys(payload),['copy','copied','copyFailed','formatted','minified']);
+  same(lang+' tips excluded from payload and script',Object.values(S.tips).some(x=>JSON.stringify(payload).includes(x)||pageScript.includes(x)),false);
+  same(lang+' localized empty hint exists',typeof S.outputPlaceholder==='string'&&S.outputPlaceholder.length>0,true);
+  const text=readFileSync(join(root,'src/content/tools/sql-formatter',lang+'.mdx'),'utf8');
+  const parts=text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/),front=requireRoot('js-yaml').load(parts[1]),body=parts[2];
+  same(lang+' six bounded plain steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
+  same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
+  same(lang+' all other frontmatter bytes unchanged',hash(parts[1].replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),expected.front);
+  same(lang+' all nonUsage body bytes unchanged',hash(body),expected.body);
+  same(lang+' worked example blocks unchanged',hash(JSON.stringify([...body.matchAll(/```[^\n]*\n[\s\S]*?```/g)].map(m=>m[0]))),expected.examples);
+  same(lang+' Usage removed',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body),false);
+  let mdxError='';try{await mdxCompiler.compile(body);}catch(e){mdxError=String(e);}same(lang+' MDX compiles',mdxError,'');
+}
+const {transform}=await import(requireRoot.resolve('@astrojs/compiler',{paths:[requireRoot.resolve('astro')]}));
+const compiled=await transform(pageSource,{filename:join(root,pageFile)});
+same('Astro diagnostics have no errors',compiled.diagnostics.filter(d=>d.severity===1),[]);
+same('compiled CSS contains no unresolved global selectors',compiled.css.some(c=>c.includes(':global')),false);
+let compileError='';try{await requireRoot('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){compileError=String(e);}same('generated Astro module parses',compileError,'');
+same('source unchanged during test',hash(readFileSync(join(root,pageFile),'utf8')),hash(pageSource));
+
+process.removeListener('unhandledRejection',onUnhandled);
+
 console.log((failures ? 'FAILED' : 'PASSED') + ': ' + passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

@@ -3,8 +3,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
 
 const source = readFileSync(new URL('../src/components/tools/JsonlConverterTool.astro', import.meta.url), 'utf8');
+const STR = vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1].replace(/ as const;/, ';') + ';STRINGS');
+const clientStrings = lang => vm.runInNewContext(source.slice(source.indexOf('// strings:end') + '// strings:end'.length, source.indexOf('\n---', source.indexOf('// strings:end'))) + ';CLIENT_T', { STRINGS: STR, lang });
 let passed = 0, failed = 0;
 async function test(name, run) {
   try { await run(); passed++; }
@@ -12,25 +15,26 @@ async function test(name, run) {
 }
 function page(lang = 'en') {
   const elements = new Map(), copied = [], downloads = [], timers = new Map(), readers = [], docEvents = {};
-  let timerId = 0;
+  let timerId = 0, document;
   function element() {
     const events = {};
     return { value: '', checked: false, disabled: false, textContent: '', children: [],
-      classList: { toggle() {} }, addEventListener(k, fn) { events[k] = fn; },
+      focus() { document.activeElement = this; }, classList: { toggle() {} }, addEventListener(k, fn) { events[k] = fn; },
       fire(k, ev = {}) { return events[k]?.(ev); }, click() { if (!this.disabled) { if (this.download) downloads.push(this.href); return this.fire('click'); } },
       appendChild(child) { this.children.push(child); }, remove() {} };
   }
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   get('jlc-ignore-empty').checked = get('jlc-pretty-json').checked = true;
-  vm.runInNewContext(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], {
-    document: { documentElement: { lang }, getElementById: get, querySelectorAll: () => [], createElement: element, body: element(), addEventListener(k, fn) { docEvents[k] = fn; } },
+  document = { documentElement: { lang }, activeElement: get('jlc-jsonl'), getElementById: get, querySelectorAll: () => [], querySelector: () => ({ contains: el => [...elements.values()].includes(el) }), createElement: element, body: element(), addEventListener(k, fn) { docEvents[k] = fn; } };
+  vm.runInNewContext(source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1], {
+    document, t: clientStrings(lang),
     window: {}, navigator: { clipboard: { writeText: async text => copied.push(text) } }, Blob,
     URL: { createObjectURL: blob => blob, revokeObjectURL() {} },
     FileReader: class { constructor() { readers.push(this); } readAsText(file) { this.file = file; }
       finish(text) { this.result = text; this.onload(); } fail() { this.onerror(); } },
     setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id)
   });
-  return { get, copied, downloads, readers, docKey(ev) { docEvents.keydown?.(ev); }, open(target) { get('jlc-open-' + target).click(); get('jlc-file').files = [{ name: 'sample.txt' }]; get('jlc-file').fire('change'); return readers.at(-1); },
+  return { get, copied, downloads, readers, docKey(ev) { docEvents.keydown?.({ preventDefault() {}, ...ev }); }, open(target) { get('jlc-open-' + target).click(); get('jlc-file').files = [{ name: 'sample.txt' }]; get('jlc-file').fire('change'); return readers.at(-1); },
     flush() { const tasks = [...timers.values()]; timers.clear(); tasks.forEach(fn => fn()); } };
 }
 const records = ['9007199254740991', '9007199254740992', '9007199254740993', '1e400', '-0', '1.00', '1E+03', '1e-400', '{"n":9007199254740993,"a":[-0,1e400],"s":"1e400"}'];
@@ -127,7 +131,7 @@ await test('panel Ctrl+Enter stops the page-wide shortcut', () => {
 });
 await test('emptying the JSONL panel also resets its counters and issues', () => {
   for (const action of ['non-array', 'invalid', 'edit']) {
-    const p = page(); p.get('jlc-jsonl').value = '1\n{bad}'; p.get('jlc-validate').click();
+    const p = page(); p.get('jlc-jsonl').value = '1\n{bad}'; p.get('jlc-jsonl').fire('input'); p.flush();
     assert.equal(p.get('jlc-error-lines').textContent, '1');
     if (action === 'edit') { p.get('jlc-json').value = '[1]'; p.get('jlc-json').fire('input'); }
     else { p.get('jlc-json').value = action === 'invalid' ? '[1,' : '{}'; p.get('jlc-to-jsonl').click(); }
@@ -152,7 +156,7 @@ await test('Ctrl+L drops cached copy/download output', async () => {
 // the dir panel ("jsonl" / "json"); after the conversion, out ("json" / "jsonl" panel, or
 // "download-json" / "download-jsonl" / "copy-jsonl" / "copy-json") must equal the following block,
 // and status (optional) must be the status line. {/* jlc-validate: {"counts","line","message"} */} →
-// Validate on the next block gives these counters (lines, valid, errors, empty) and this message
+// Automatic validation after input on the next block gives these counters (lines, valid, errors, empty) and this message
 // for that line (V8 wording, the same engine as Chrome).
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const rel = `src/content/tools/jsonl-converter/${lang}.mdx`;
@@ -178,7 +182,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     n++;
     await test(rel + ' validate example ' + n, () => {
       const spec = JSON.parse(m[1]), [input] = fences(m.index), p = page(lang);
-      p.get('jlc-jsonl').value = input; p.get('jlc-validate').click();
+      p.get('jlc-jsonl').value = input; p.get('jlc-jsonl').fire('input'); p.flush();
       assert.deepEqual(['total', 'valid', 'error', 'empty'].map(k => Number(p.get('jlc-' + k + '-lines').textContent)), spec.counts);
       const row = p.get('jlc-issues-list').children.find(r => r.children?.[0]?.textContent.endsWith(' ' + spec.line));
       assert.equal(row?.children[1].textContent, spec.message);
@@ -195,6 +199,287 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     }
     assert.ok(!/after validation to export|校验后使用|検証後に \.jsonl|검증 후 \.jsonl/.test(mdx), 'old validate-then-download claim');
   });
+}
+
+/* ── Full production IIFE and actual ToolLayout shortcuts ── */
+{
+  const { parseFragment } = await import('parse5');
+  const { createHash } = await import('node:crypto');
+  const js = source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1];
+  const layout = readFileSync(new URL('../src/layouts/ToolLayout.astro', import.meta.url), 'utf8');
+  const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
+  assert.ok(shortcut.includes("document.addEventListener('keydown'"));
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const checks = [];
+  function check(name, actual, expected) {
+    const ok = JSON.stringify(actual) === JSON.stringify(expected);
+    checks.push(ok);
+    if (!ok) console.log('FAIL ' + name + '\n actual: ' + JSON.stringify(actual) + '\n expected: ' + JSON.stringify(expected));
+  }
+const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const unhandled = [];
+const onUnhandled = error => unhandled.push(String(error));
+process.on('unhandledRejection', onUnhandled);
+const descendants = e => e.children.flatMap(c => [c, ...descendants(c)]);
+function page(lang = 'en', shellFirst = false, preset = {}, active = null) {
+  let document, now = 0, nextTimer = 0;
+  const timers = new Map(), copies = [], clears = [], tracks = [], readers = [], downloads = [];
+  function simple(e, selector) {
+    const attrs = [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
+    const rest = selector.replace(/\[[^\]]+\]/g, '');
+    const tag = /^[\w-]+/.exec(rest)?.[0], id = /#([\w-]+)/.exec(rest)?.[1];
+    return (!tag || e.tagName === tag.toUpperCase()) && (!id || e.id === id)
+      && [...rest.matchAll(/\.([\w-]+)/g)].every(m => e.classList.contains(m[1]))
+      && attrs.every(a => a[2] === undefined ? e.getAttribute(a[1]) !== null : e.getAttribute(a[1]) === a[2]);
+  }
+  function matches(e, selector) {
+    return selector.split(',').some(part => {
+      const pieces = part.trim().split(/\s+(?![^\[]*\])/);
+      if (!simple(e, pieces.pop())) return false;
+      let parent = e.parentNode;
+      while (pieces.length) { while (parent && !simple(parent, pieces.at(-1))) parent = parent.parentNode; if (!parent) return false; pieces.pop(); parent = parent.parentNode; }
+      return true;
+    });
+  }
+  class Element {
+    constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.parentNode = null; this.attributes = {}; this.dataset = {}; this.listeners = {}; this.value = ''; this.textContent = ''; this.className = ''; this.id = ''; this.disabled = false; this.hidden = false; }
+    get value() { return this._value || ''; }
+    set value(v) { this._value = String(v); if (this.getAttribute('type') === 'file' && v === '') this.files = []; }
+    get textContent() { return (this._textContent || '') + this.children.map(c => c.textContent).join(''); }
+    set textContent(v) { this._textContent = String(v); this.children = []; }
+    remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(c => c !== this); this.parentNode = null; }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(...cs) { el.className = [...new Set([...el.className.split(/\s+/).filter(Boolean), ...cs])].join(' '); }, remove(...cs) { el.className = el.className.split(/\s+/).filter(c => !cs.includes(c)).join(' '); }, toggle(c, on) { const want = on === undefined ? !this.contains(c) : on; if (want) this.add(c); else this.remove(c); return want; } }; }
+    setAttribute(k, v) { this.attributes[k] = String(v); if (k === 'class') this.className = String(v); if (k === 'id') this.id = String(v); if (k === 'disabled') this.disabled = true; if (k === 'checked') this.checked = true; if (k === 'value') this.value = String(v); if (k === 'hidden') this.hidden = true; if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(v); }
+    getAttribute(k) { return Object.hasOwn(this.attributes, k) ? this.attributes[k] : null; }
+    removeAttribute(k) { delete this.attributes[k]; if (k === 'disabled') this.disabled = false; if (k === 'hidden') this.hidden = false; }
+    appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+    contains(c) { return c === this || descendants(this).includes(c); }
+    querySelectorAll(s) { return descendants(this).filter(e => matches(e, s)); }
+    querySelector(s) { return this.querySelectorAll(s)[0] || null; }
+    closest(s) { for (let e = this; e; e = e.parentNode) if (matches(e, s)) return e; return null; }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    focus() { document.activeElement = this; }
+    dispatch(type, init = {}) {
+      const e = { type, target: this, currentTarget: this, key: '', ctrlKey: false, metaKey: false, defaultPrevented: false, stopped: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...init };
+      for (let node = this; node; node = node.parentNode) { e.currentTarget = node; for (const fn of node.listeners[type] || []) fn.call(node, e); if (e.stopped) break; }
+      return e;
+    }
+    click() { if (!this.disabled) { if (this.download) downloads.push({ filename: this.download, blob: this.href }); this.focus(); return this.dispatch('click'); } }
+  }
+  document = new Element('#document'); document.documentElement = { lang };
+  document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
+  const widget = document.body.appendChild(new Element('section')); widget.className = 'tool-widget';
+  const esc = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const markup = source.replace(/^---[\s\S]*?---\s*/, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').split('<style')[0]
+    .replace(/data-strings=\{JSON\.stringify\(T\)\}/g, 'data-strings="' + esc(JSON.stringify(STR[lang])) + '"')
+    .replace(/data-lang=\{lang\}/g, 'data-lang="' + lang + '"').replace(/\{T\.(\w+)\}/g, (_, k) => esc(STR[lang][k]));
+  function append(ast, parent) { for (const node of ast.childNodes || []) { if (!node.tagName) { if (node.nodeName === '#text') parent._textContent = (parent._textContent || '') + node.value; continue; } const e = parent.appendChild(new Element(node.tagName)); for (const a of node.attrs) e.setAttribute(a.name, a.value); append(node, e); if (e.tagName === 'TEXTAREA') e.value = e.textContent; } }
+  append(parseFragment(markup), widget);
+  document.createElement = tag => new Element(tag);
+  document.getElementById = id => descendants(document).find(e => e.id === id) || null;
+  const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing production ID ' + id); return e; };
+  for (const [id, value] of Object.entries(preset)) get(id).value = value;
+  if (active) get(active).focus();
+  const context = { document, t: clientStrings(lang), console, exports: {}, module: { exports: {} },
+    Blob, URL: { createObjectURL: blob => blob, revokeObjectURL() {} },
+    FileReader: class { constructor() { readers.push(this); } readAsText(file) { this.file = file; } finish(text) { this.result = text; this.onload(); } fail() { this.onerror(); } }, _slug: 'jsonl-converter',
+    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); copies.push({ value, resolve, reject }); return promise; } } },
+    setTimeout(fn, ms = 0) { const id = ++nextTimer; timers.set(id, { fn, ms, due: now + ms }); return id; }, clearTimeout(id) { timers.delete(id); },
+    ztPersist: { clear(slug) { clears.push(slug); } }, trackTool(...args) { tracks.push(args); } };
+  context.window = context; vm.createContext(context);
+  const installShared = () => vm.runInContext(shortcut, context, { filename: 'ToolLayout.shortcuts.js' });
+  if (shellFirst) installShared(); vm.runInContext(js, context, { filename: 'JsonlConverterTool.page.js' }); if (!shellFirst) installShared();
+  function advance(ms) { const end = now + ms; let executions = 0; for (;;) { const next = [...timers].filter(([, t]) => t.due <= end).sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0]; if (!next) break; if (++executions > 1000) throw Error('Timer runaway'); now = next[1].due; timers.delete(next[0]); next[1].fn(); } now = end; }
+  return { get, document, context, copies, clears, tracks, timers, advance, readers, downloads,
+    open(target) { get('jlc-open-' + target).click(); const f = get('jlc-file'); f.value = 'C:\\fakepath\\sample.txt'; f.files = [{ name: 'sample.txt' }]; f.dispatch('change'); return readers.at(-1); },
+    input(id, value) { get(id).focus(); get(id).value = value; get(id).dispatch('input'); },
+    key(id, key = 'l', modifier = 'ctrlKey') { (id ? get(id) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
+    copy(id) { get(id).click(); return copies.at(-1); },
+    snapshot() { return { json: get('jlc-json').value, jsonl: get('jlc-jsonl').value, status: get('jlc-status').textContent, statusClass: get('jlc-status').className, copyJson: get('jlc-copy-json').textContent, copyJsonl: get('jlc-copy-jsonl').textContent, disabledJson: get('jlc-copy-json').disabled, disabledJsonl: get('jlc-copy-jsonl').disabled, downloadJson: get('jlc-download-json').disabled, downloadJsonl: get('jlc-download-jsonl').disabled, counts: ['total', 'valid', 'error', 'empty'].map(k => get('jlc-' + k + '-lines').textContent), issues: get('jlc-issues-count').textContent, errorJson: get('jlc-json').classList.contains('jlc-input-error'), errorJsonl: get('jlc-jsonl').classList.contains('jlc-input-error') }; } };
+}
+
+const JSONL = '{"n":9007199254740993}\n1e400';
+const JSON_OUT = '[\n  {\n    "n": 9007199254740993\n  },\n  1e400\n]';
+const golden = p => { p.input('jlc-jsonl', JSONL); p.get('jlc-to-json').click(); };
+for (const [name, begin, end, expected] of [
+  ['lossless token core', '      // JSON.parse validates', '      function invalidateOutput', 'dbd54ec4bc34a044902843557a0a912e835ffe2f504ff82e34a3b02fe0f35f07'],
+  ['line parser', '      function parseJsonl', '      function updateStats', '9923cc6ddc4a79c67b8173d9f44d5ed2b85fc7414ace5c9e9d79f5073c65ac28'],
+  ['JSONL formatting', '      function compactJsonlFromValues', '      function convertJsonlToJson', '0051f32080d31dc299a7bfbbd1cd5500b28704547b9fe1fd075327644cb3fe78'],
+  ['download bytes', '      function downloadText', '      function openFile', '3a1e722365c31bebb902c0cfaad017e50cd6397b942c26ead6972516d45ec15b']
+]) check(name + ' byte-exact', hash(source.slice(source.indexOf(begin), source.indexOf(end))), expected);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = STR[lang];
+  for (const shellFirst of [false, true]) {
+    const p = page(lang, shellFirst), tag = lang + '/' + shellFirst;
+    golden(p); check(tag + ' actual conversion preserves numeric tokens', p.get('jlc-json').value, JSON_OUT);
+    p.get('jlc-download-json').click(); p.get('jlc-download-jsonl').click();
+    check(tag + ' real download Blobs contain full exact bytes', await Promise.all(p.downloads.map(async d => [d.filename, await d.blob.text()])), [['jsonl-converted.json', JSON_OUT], ['jsonl-converted.jsonl', JSONL]]);
+    p.input('jlc-json', '[2]'); p.advance(350); check(tag + ' JSON editing only invalidates, remains manual', [p.get('jlc-jsonl').value, p.get('jlc-status').textContent], ['', '']);
+    p.input('jlc-jsonl', '2'); p.advance(350); check(tag + ' JSONL typing validates without conversion', [p.get('jlc-json').value, p.get('jlc-status').textContent, p.get('jlc-valid-lines').textContent], ['', S.validJsonl, '1']);
+    for (const side of ['jsonl', 'json']) {
+      p.input('jlc-' + side, side === 'json' ? '[1, 2]' : '1\n2'); p.tracks.length = 0; const key = p.key('jlc-' + side, 'Enter');
+      check(tag + '/' + side + ' existing Enter stops shared primary', [key.stopped, key.defaultPrevented, p.tracks.length], [true, true, 1]);
+      check(tag + '/' + side + ' manual Enter literal output', p.get(side === 'json' ? 'jlc-jsonl' : 'jlc-json').value, side === 'json' ? '1\n2' : '[\n  1,\n  2\n]');
+    }
+    p.input('jlc-json', '{'); p.get('jlc-to-jsonl').click(); check(tag + ' invalid JSON positive control error class', p.get('jlc-json').classList.contains('jlc-input-error'), true);
+    p.input('jlc-json', ''); check(tag + ' empty JSON edit clears old error class', [p.get('jlc-json').classList.contains('jlc-input-error'), p.get('jlc-status').textContent], [false, '']);
+    p.input('jlc-json', '{'); p.get('jlc-to-jsonl').click(); p.get('jlc-json').value = ''; p.get('jlc-to-jsonl').click(); check(tag + ' empty manual JSON clears old error class', p.get('jlc-json').classList.contains('jlc-input-error'), false);
+    golden(p); p.get('jlc-valid-only').checked = true; p.input('jlc-jsonl', '{bad}'); p.key('jlc-copy-jsonl', 'L', 'metaKey');
+    check(tag + ' CtrlL clears cached outputs and persistence synchronously', [p.get('jlc-jsonl').value, p.get('jlc-json').value, p.get('jlc-copy-json').disabled, p.get('jlc-copy-jsonl').disabled, p.get('jlc-status').textContent, p.clears, p.get('jlc-valid-only').checked], ['', '', true, true, '', ['jsonl-converter'], true]);
+    const cleared = p.snapshot(); p.advance(2000); check(tag + ' CtrlL cancels queued validation', p.snapshot(), cleared);
+    golden(p); const beforeOutside = p.snapshot(); p.key(null); p.advance(0); check(tag + ' outside shortcut untouched', p.snapshot(), beforeOutside);
+    for (const target of ['json', 'jsonl']) for (const outcome of ['finish', 'fail']) {
+      const q = page(lang, shellFirst); golden(q); const reader = q.open(target); q.key('jlc-' + target);
+      const before = q.snapshot(); reader[outcome](target === 'json' ? '[7]' : '7');
+      check(tag + '/' + target + '/' + outcome + ' old reader cannot write before 0ms timer', q.snapshot(), before);
+      check(tag + '/' + target + '/' + outcome + ' CtrlL clears selected file', [q.get('jlc-file').value, q.get('jlc-file').files.length], ['', 0]);
+      q.advance(1000); check(tag + '/' + target + '/' + outcome + ' old reader leaves empty state', [q.get('jlc-json').value, q.get('jlc-jsonl').value, q.get('jlc-status').textContent], ['', '', '']);
+      const current = q.open(target); current.finish(target === 'json' ? '[8]' : '8');
+      check(tag + '/' + target + '/' + outcome + ' new file reading recovers', [q.get('jlc-' + target).value, q.get('jlc-status').classList.contains('success')], [target === 'json' ? '[8]' : '8', true]);
+    }
+    for (const action of ['clear', 'input', 'convert']) {
+      const q = page(lang, shellFirst); const reader = q.open('json');
+      if (action === 'clear') q.get('jlc-clear').click(); else { q.input('jlc-jsonl', '3'); if (action === 'convert') q.get('jlc-to-json').click(); }
+      const current = q.snapshot(); reader.finish('[4]'); reader.fail(); check(tag + ' existing file cancellation after ' + action, q.snapshot(), current);
+    }
+    const files = page(lang, shellFirst), first = files.open('json'), last = files.open('jsonl'); last.finish('9'); const recent = files.snapshot(); first.finish('[1]'); first.fail(); check(tag + ' newest file keeps its captured target', files.snapshot(), recent);
+    for (const side of ['json', 'jsonl']) {
+      const id = 'jlc-copy-' + side, field = 'jlc-' + side, labelKey = side === 'json' ? 'copyJson' : 'copyJsonl';
+      const q = page(lang, shellFirst); golden(q);
+      const savedClipboard = q.context.navigator.clipboard; delete q.context.navigator.clipboard;
+      let thrown = ''; try { q.copy(id); } catch (e) { thrown = String(e); }
+      check(tag + '/' + side + ' no API controlled localized error', [thrown, q.get('jlc-status').classList.contains('error'), typeof S.copyFailed === 'string' && q.get('jlc-status').textContent === S.copyFailed], ['', true, true]);
+      q.context.navigator.clipboard = savedClipboard; const retryApi = q.copy(id); retryApi.resolve(); await settle();
+      check(tag + '/' + side + ' API recovery success', [q.get(id).textContent, q.get('jlc-status').classList.contains('error')], [S.copied, false]);
+      q.advance(1500); check(tag + '/' + side + ' current copy timer', q.get(id).textContent, S.copy);
+      const fail = q.copy(id), beforeUnhandled = unhandled.length; fail.reject(Error('controlled copy rejection')); await settle();
+      check(tag + '/' + side + ' rejection caught', unhandled.length - beforeUnhandled, 0);
+      check(tag + '/' + side + ' rejection localized', q.get('jlc-status').classList.contains('error') && typeof S.copyFailed === 'string' && q.get('jlc-status').textContent === S.copyFailed, true);
+      const retry = q.copy(id); check(tag + '/' + side + ' retry complete bytes', retry.value, q.get(field).value); retry.resolve(); await settle();
+      check(tag + '/' + side + ' retry clears copy error', [q.get(id).textContent, q.get('jlc-status').classList.contains('error')], [S.copied, false]);
+      for (const action of ['input', 'result', 'clear', 'shortcut']) for (const outcome of ['resolve', 'reject']) {
+        const r = page(lang, shellFirst); golden(r); const job = r.copy(id), beforeUnhandled = unhandled.length;
+        if (action === 'clear') r.get('jlc-clear').click();
+        else if (action === 'shortcut') r.key(id);
+        else { r.input(field, side === 'json' ? '[3]' : '3'); if (action === 'result') r.get(side === 'json' ? 'jlc-to-jsonl' : 'jlc-to-json').click(); }
+        const current = r.snapshot(); job[outcome](outcome === 'reject' ? Error('controlled stale copy') : undefined); await settle();
+        check(tag + '/' + side + '/' + action + '/' + outcome + ' stale feedback ignored', r.snapshot(), current);
+        check(tag + '/' + side + '/' + action + '/' + outcome + ' rejection caught', unhandled.length - beforeUnhandled, 0);
+      }
+      for (const outcome of ['reject', 'resolve']) {
+        const r = page(lang, shellFirst); golden(r); const initial = r.snapshot(), expected = { ...initial, [labelKey]: S.copied };
+        const old = r.copy(id), fresh = r.copy(id), beforeUnhandled = unhandled.length;
+        check(tag + '/' + side + '/' + outcome + ' same-value captured twice', [old.value, fresh.value, old !== fresh], [r.get(field).value, r.get(field).value, true]);
+        fresh.resolve(); await settle(); r.advance(500); old[outcome](outcome === 'reject' ? Error('controlled old same-value rejection') : undefined); await settle();
+        check(tag + '/' + side + '/' + outcome + ' newest copy survives old completion', r.snapshot(), expected);
+        check(tag + '/' + side + '/' + outcome + ' old rejection caught', unhandled.length - beforeUnhandled, 0);
+        r.advance(500); r.copy(id).resolve(); await settle(); r.advance(500);
+        check(tag + '/' + side + '/' + outcome + ' old timer leaves new feedback', r.snapshot(), expected);
+        r.advance(1000); check(tag + '/' + side + '/' + outcome + ' own timer expires', r.snapshot(), initial);
+      }
+      const canceledDialog = page(lang, shellFirst); golden(canceledDialog);
+      const normalBeforeOpen = canceledDialog.snapshot(); canceledDialog.get('jlc-open-' + side).click();
+      check(tag + '/' + side + ' canceled Open preserves normal status and output', canceledDialog.snapshot(), normalBeforeOpen);
+      canceledDialog.copy(id).reject(Error('controlled rejection before canceled Open')); await settle();
+      check(tag + '/' + side + ' canceled Open case starts with owned copy error', [canceledDialog.get('jlc-status').textContent, canceledDialog.get('jlc-status').classList.contains('error')], [S.copyFailed, true]);
+      canceledDialog.get('jlc-open-' + side).click();
+      const afterDialog = canceledDialog.copy(id); afterDialog.resolve(); await settle();
+      check(tag + '/' + side + ' same output retry after canceled Open clears owned error', [afterDialog.value, canceledDialog.get(id).textContent, canceledDialog.get('jlc-status').classList.contains('error')], [canceledDialog.get(field).value, S.copied, false]);
+      for (const action of ['clear', 'input']) {
+        const r = page(lang, shellFirst); golden(r); r.copy(id).resolve(); await settle();
+        if (action === 'clear') r.get('jlc-clear').click(); else r.input(field, side === 'json' ? '[2]' : '2');
+        r.advance(350); const current = r.snapshot(); r.advance(1500); check(tag + '/' + side + '/' + action + ' old success timer ignored', r.snapshot(), current);
+      }
+    }
+  }
+}
+
+/* ── v2 page layout ── */
+check('all FIX behavior checks retained', checks.length, 884);
+check('client script only loses runtime localization and redundant Validate listener', hash(js), 'a771d59cb884172a48557c36fcbe77441cf36654f4b54b16752d0aa53ae24e90');
+const PROTECTED_CONTENT = {
+  "en": {
+    "front": "c88aa7d972886ee53e45c57496fbf900ca65619f28cddebfc2f1b330f8175bc1",
+    "body": "581e20a3eac6b3b4ab74dd0f10b2eded210ef7f1fe7375a44aef94bf250ddf92"
+  },
+  "zh": {
+    "front": "84240ec3322efd643b6237ff734b97f708232aed5b5d833050fbb056e5859627",
+    "body": "c29acccdf7dc8a373f677c67122a0e0279cc0d863908737953b15c241a832a47"
+  },
+  "ja": {
+    "front": "efe9c22d17f2d993ea7d3cb2f8471e38d04427eb151e36f487fc4200d6b9bd06",
+    "body": "2ad1d8db37f2dedba18e320c8cb8d463d514e2d2983d0654635850ff95bd4297"
+  },
+  "ko": {
+    "front": "5f6fea9cd1a532707ccb511cfbe6e0e95f80200cc62dc19eefb42e86020aa058",
+    "body": "530a9a670d3d7b48f1851c0785a51a413b9c4ef8e850fe0403325d0bb18665e7"
+  }
+};
+const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
+const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
+check('direct tool root', /^\s*<div class="jlc-wrap"/.test(markup), true);
+check('controls status paired editors in order', /class="jlc-actions"[\s\S]*id="jlc-status"[\s\S]*class="jlc-panels zt-io"/.test(markup), true);
+check('both shared panes and fills', [(markup.match(/class="jlc-panel zt-io-pane"/g) || []).length, (markup.match(/class="tool-textarea jlc-box zt-io-fill"/g) || []).length], [2, 2]);
+check('ten functional buttons retained and only redundant Validate removed', [...markup.matchAll(/<button id="([^"]+)"/g)].map(m => m[1]), ['jlc-to-json','jlc-to-jsonl','jlc-load-sample','jlc-clear','jlc-download-json','jlc-download-jsonl','jlc-open-jsonl','jlc-copy-jsonl','jlc-open-json','jlc-copy-json']);
+check('twelve source-bound tips', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]), ['jlc-tip-to-json','jlc-tip-to-jsonl','jlc-tip-load-sample','jlc-tip-clear','jlc-tip-ignore-empty','jlc-tip-valid-only','jlc-tip-pretty-json','jlc-tip-jsonl','jlc-tip-copy-jsonl','jlc-tip-json','jlc-tip-copy-json','jlc-tip-issues']);
+check('all tip bodies use the Toggletip slot API', [...markup.matchAll(/<Toggletip\b[^>]*>\{TIPS\.(\w+)\}<\/Toggletip>/g)].length, 12);
+check('tip explanations never become button text', /<Toggletip\b[^>]*\btext=/.test(markup), false);
+check('secondary options and downloads default closed', /<details class="jlc-options">[\s\S]*id="jlc-ignore-empty"[\s\S]*id="jlc-download-json"[\s\S]*<\/details>/.test(markup), true);
+check('both textareas remain editable and visible', /<textarea[^>]*(?:readonly|hidden)/.test(markup), false);
+check('all labels use build-time strings', /data-i18n|var STRINGS|document.documentElement.lang/.test(source), false);
+check('client receives selected strings without tips', /<script is:inline define:vars=\{\{ t: CLIENT_T \}\}>/.test(source), true);
+check('removed validation control has no orphan binding', /jlc-validate|\bvalidate:/.test(source), false);
+check('tips outside labels and buttons', /<(label|button)\b[^>]*>(?:(?!<\/\1>)[\s\S])*<Toggletip/.test(markup), false);
+const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
+check('root flexible with zero minimum', /\.jlc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css), true);
+check('reserved scrollable status', /#jlc-status\s*\{[^}]*height: 2\.6rem;[^}]*flex: none;[^}]*overflow: auto;/.test(css), true);
+check('bounded editors at both breakpoints and touch controls', /\.jlc-box\s*\{[^}]*overflow: auto;/.test(css) && /@media \(max-width: 860px\)[\s\S]*height: 180px;[\s\S]*@media \(max-width: 640px\)[\s\S]*min-height: 44px;[\s\S]*height: 120px;/.test(css), true);
+check('fixed issues region scrolls rather than growing', /\.jlc-issues-list\s*\{[^}]*height: 4\.5rem;[^}]*overflow: auto;/.test(css), true);
+check('issues region keyboard accessible and named', /id="jlc-issues-list"[^>]*role="region"[^>]*tabindex="0"[^>]*aria-label=\{T.lineIssues\}/.test(markup), true);
+check('dynamic issue rows use global selectors', /\.jlc-issues-list :global\(\.jlc-issue-row\)/.test(css) && /\.jlc-issues-list :global\(\.jlc-issue-message\)/.test(css), true);
+check('convert registry', readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8').match(/['"]jsonl-converter['"]\s*:\s*['"]([^'"]+)['"]/)?.[1], 'convert');
+const requireRoot = createRequire(import.meta.url), mdxCompiler = await import('@mdx-js/mdx');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = STR[lang], payload = clientStrings(lang), expected = PROTECTED_CONTENT[lang];
+  check(lang + ' recursive localization key parity', [Object.keys(S), Object.keys(S.tips)], [Object.keys(STR.en), Object.keys(STR.en.tips)]);
+  check(lang + ' twelve same tip keys', Object.keys(S.tips), ['jsonl','json','toJson','toJsonl','sample','ignoreEmpty','validOnly','pretty','copyJsonl','copyJson','clear','issues']);
+  check(lang + ' tip plain text bounds', Object.values(S.tips).every(v => typeof v === 'string' && v.length && [...v].length <= 280 && !/[<>]/.test(v)), true);
+  check(lang + ' tip placeholders match', Object.values(S.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()), Object.values(STR.en.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()));
+  check(lang + ' tips excluded client payload', Object.hasOwn(payload, 'tips') || Object.values(S.tips).some(v => JSON.stringify(payload).includes(v)), false);
+  const q = page(lang); q.input('jlc-jsonl', '1\n{bad}\n2');
+  q.advance(349); check(lang + ' validation does not run early', q.get('jlc-error-lines').textContent, '0');
+  q.advance(1); check(lang + ' automatic validation replaces removed button', [q.get('jlc-error-lines').textContent, q.get('jlc-json').value, q.get('jlc-copy-json').disabled], ['1','',true]);
+  q.get('jlc-valid-only').checked = true; q.get('jlc-valid-only').dispatch('change');
+  check(lang + ' valid-only change validates without converting', [q.get('jlc-json').value, q.get('jlc-copy-json').disabled], ['',true]);
+  q.get('jlc-to-json').click(); check(lang + ' manual direction applies valid-only', q.get('jlc-json').value, '[\n  1,\n  2\n]');
+  q.get('jlc-pretty-json').checked = false; q.get('jlc-pretty-json').dispatch('change');
+  check(lang + ' pretty option still converts when JSONL has input', q.get('jlc-json').value, '[1,2]');
+  q.get('jlc-load-sample').click(); check(lang + ' sample converts three records', [q.get('jlc-total-lines').textContent, q.get('jlc-copy-json').disabled, JSON.parse(q.get('jlc-json').value).length], ['3',false,3]);
+  const file = q.open('jsonl'); file.finish('9007199254740993\n1e400');
+  check(lang + ' JSONL file validates without enabling export', [q.get('jlc-json').value,q.get('jlc-valid-lines').textContent,q.get('jlc-copy-jsonl').disabled], ['', '2', true]);
+  const arrayFile = q.open('json'); arrayFile.finish('[9007199254740993,1e400]');
+  check(lang + ' JSON array file converts and enables exact export', [q.get('jlc-jsonl').value,q.get('jlc-copy-jsonl').disabled], ['9007199254740993\n1e400',false]);
+  q.get('jlc-download-json').click(); q.get('jlc-download-jsonl').click();
+  check(lang + ' downloads retain cache and numeric bytes', await Promise.all(q.downloads.map(async d => [d.filename,await d.blob.text()])), [['jsonl-converted.json','[9007199254740993,1e400]'],['jsonl-converted.jsonl','9007199254740993\n1e400']]);
+  q.input('jlc-jsonl', Array(80).fill('{bad}').join('\n')); q.advance(350);
+  check(lang + ' long issues retain full count and display first40', [q.get('jlc-error-lines').textContent,q.get('jlc-issues-count').textContent,q.get('jlc-issues-list').children.length], ['80','80',40]);
+  for (const shellFirst of [false,true]) { const r = page(lang,shellFirst); golden(r); const ev = r.key('jlc-issues-list'); check(lang + '/' + shellFirst + ' keyboard result clear keeps shared shortcut', [ev.defaultPrevented,r.document.activeElement.id,r.clears,r.get('jlc-json').value], [true,'jlc-jsonl',['jsonl-converter'],'']); }
+  const content = readFileSync(new URL('../src/content/tools/jsonl-converter/' + lang + '.mdx', import.meta.url), 'utf8');
+  const [,front,body] = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), fm = requireRoot('js-yaml').load(front);
+  check(lang + ' six steps before FAQ', fm.steps.length === 6 && front.indexOf('steps:') < front.indexOf('faqItems:'), true);
+  check(lang + ' step8/280/1200 limits', fm.steps.length <= 8 && fm.steps.every(v => typeof v === 'string' && [...v].length <= 280) && fm.steps.reduce((n,v) => n + [...v].length,0) <= 1200, true);
+  check(lang + ' metadata FAQ only correct redundant Validate wording', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.front);
+  check(lang + ' body protects cases limits and only removes Usage/corrects Validate wording', hash(body), expected.body);
+  let error = ''; try { await mdxCompiler.compile(body); } catch (e) { error = String(e); } check(lang + ' MDX compiles', error, '');
+}
+const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
+const compiled = await transform(source, { filename: new URL('../src/components/tools/JsonlConverterTool.astro', import.meta.url).pathname });
+check('Astro no errors', compiled.diagnostics.filter(d => d.severity === 1), []);
+let compileError = ''; try { await requireRoot('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' }); } catch (e) { compileError = String(e); }
+check('Astro generated module parses', compileError, '');
+
+await settle(); process.removeListener('unhandledRejection', onUnhandled);
+passed += checks.filter(Boolean).length; failed += checks.filter(v => !v).length;
 }
 
 console.log(`${passed} passed, ${failed} failed`);
