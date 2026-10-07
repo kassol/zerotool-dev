@@ -44,6 +44,11 @@
 // - The component script stores nothing and sends nothing; it writes no HTML.
 // - `up-check` annotations in the 4 tool pages and the en guide: the engine output matches.
 // - v2 analyze root, preserved controls, localized help and plain-text steps.
+// - Hosts the URL Standard forbids but Chromium accepts (a space becomes %20): the regex equals
+//   the standard's forbidden domain code points and Node's rejections; no WPT success case is
+//   flagged; WPT failure cases read leniently are flagged with their character; the real page
+//   script (en / zh) with a Chrome-like URL says "not valid under the standard" and still shows
+//   the browser's reading.
 //
 // Run: node scripts/test-url-parser.mjs
 
@@ -518,6 +523,109 @@ check('pages carry up-check annotations', annotations >= 12, annotations);
   }
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
   check('listed as an analyze page', /'url-parser':\s*'analyze'/.test(layouts));
+}
+
+// ── Hosts the URL Standard forbids but Chromium accepts ───────────────────────
+// Chrome 152 reads "http://exa mple.com/" as the host exa%20mple.com; Node.js (ada) and the
+// standard's host parser fail. Before this check the status said "Valid URL, parsed by your
+// browser (WHATWG URL Standard)".
+{
+  const vm = await import('node:vm');
+  const fs = source.indexOf('    var FORBIDDEN_DOMAIN = ');
+  const fe = source.indexOf('\n    }\n', source.indexOf('function standardHostProblem', fs)) + 7;
+  const H = fs < 0 ? null : new Function('percentDecode', source.slice(fs, fe) + '\nreturn { FORBIDDEN_DOMAIN, standardHostProblem };')(E.percentDecode);
+  check('standardHostProblem is in the page script', H !== null);
+  if (H) {
+    // URL Standard: forbidden domain code point = forbidden host code points, C0 controls, % and DEL.
+    const spec = new Set([...Array(0x21).keys(), 0x23, 0x25, 0x2f, 0x3a, 0x3c, 0x3e, 0x3f, 0x40, 0x5b, 0x5c, 0x5d, 0x5e, 0x7c, 0x7f]);
+    const regexSet = [...Array(0x80).keys()].filter((c) => H.FORBIDDEN_DOMAIN.test(String.fromCharCode(c)));
+    check('FORBIDDEN_DOMAIN is the URL Standard list of forbidden domain code points', regexSet.length === spec.size && regexSet.every((c) => spec.has(c)), regexSet.join(','));
+    // Independent check with Node's parser: a percent-encoded ASCII character in a special host
+    // fails exactly when it is a forbidden domain code point.
+    const nodeSet = [...Array(0x80).keys()].filter((c) => { try { new URL('http://a%' + c.toString(16).padStart(2, '0') + 'b/'); return false; } catch { return true; } });
+    check('Node.js rejects exactly the same percent-encoded host characters', nodeSet.length === spec.size && nodeSet.every((c) => spec.has(c)), nodeSet.join(','));
+    // No WPT success case is flagged.
+    let flagged = 0, okSpecial = 0;
+    for (const c of fixture.parsing) {
+      if (c.failure) continue;
+      const res = E.analyze(c.input, c.base == null ? '' : c.base);
+      if (!res.ok) continue;
+      if (res.special && res.hostType === 'domain') okSpecial++;
+      if (H.standardHostProblem(res)) { flagged++; check('WPT success not flagged: ' + JSON.stringify(c.input), false); }
+    }
+    check('WPT success cases with a domain host are checked', okSpecial >= 40 && flagged === 0, okSpecial);
+    // WPT failure cases whose host has a forbidden character: given the reading Chromium gives
+    // (the character percent-encoded in the host), the page names that character.
+    let hostFailures = 0;
+    for (const c of fixture.parsing) {
+      if (!c.failure || c.base) continue;
+      const d = E.diagnoseFailure(E.stripInput(c.input).text, false);
+      if (!d || d.code !== 'badHostChar' || !/^(https?|wss?|ftp):\/\//i.test(c.input)) continue;
+      hostFailures++;
+      const raw = E.stripInput(c.input).text.replace(/^[a-z]+:\/\//i, '').split(/[\/?#\\]/)[0];
+      const lenient = E.percentDecode(raw).text.replace(/[\u0000-\u0020#%:<>@\[\]\^|\u007f]/g, (ch) => '%' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')).toLowerCase();
+      const res = { ok: true, special: true, hostType: 'domain', fields: { hostname: lenient } };
+      const p = H.standardHostProblem(res);
+      check('WPT failure ' + JSON.stringify(c.input) + ' read leniently is flagged with ' + JSON.stringify(d.detail), p && p.ch === d.detail && p.host === lenient, p);
+    }
+    check('WPT failure cases with a forbidden host character are covered', hostFailures >= 8, hostFailures);
+  }
+
+  // The real page script with a URL constructor that reads "exa mple.com" the way Chrome 152 does.
+  const inline = source.slice(source.indexOf('<script is:inline define:vars={{ S: CLIENT_L }}>'));
+  const code = inline.slice(inline.indexOf('>') + 1, inline.indexOf('</script>'));
+  const NodeURL = URL;
+  function ChromeLikeURL(input, base) {
+    const s = String(input);
+    if (s.indexOf('exa mple.com') < 0) return base === undefined ? new NodeURL(s) : new NodeURL(s, base);
+    const u = new NodeURL(s.replace('exa mple.com', 'exa-mple.invalid'));
+    const swap = (v) => v.replace('exa-mple.invalid', 'exa%20mple.com');
+    return { href: swap(u.href), origin: swap(u.origin), protocol: u.protocol, username: u.username, password: u.password,
+      host: swap(u.host), hostname: swap(u.hostname), port: u.port, pathname: u.pathname, search: u.search, hash: u.hash };
+  }
+  function runPage(lang) {
+    const els = new Map();
+    const mk = (key) => {
+      const listeners = {};
+      const el = {
+        key, value: '', textContent: '', className: '', hidden: false, open: false, type: '', style: {}, attrs: {}, childNodes: [],
+        setAttribute(n, v) { this.attrs[n] = String(v); }, getAttribute(n) { return this.attrs[n] ?? null; },
+        addEventListener(t, fn) { (listeners[t] = listeners[t] || []).push(fn); },
+        dispatch(t) { for (const fn of listeners[t] || []) fn.call(el, { type: t, target: el, preventDefault() {} }); },
+        appendChild(c) { el.childNodes.push(c); return c; }, removeChild() {}, focus() {}, select() {},
+        querySelector: () => mk('stub'), querySelectorAll: () => [], closest: () => mk('row'), contains: () => false,
+        classList: { toggle() {}, add() {}, remove() {} },
+      };
+      return el;
+    };
+    const get = (id) => { if (!els.has(id)) els.set(id, mk(id)); return els.get(id); };
+    const { tips, ...client } = STRINGS[lang];
+    const sandbox = {
+      S: client, URL: ChromeLikeURL, TextEncoder, TextDecoder, console, Intl, JSON, Math, Array, Object, String, Number, RegExp, Error, Set, Map, Promise,
+      encodeURIComponent, decodeURIComponent, parseInt, isNaN,
+      setTimeout: () => 0, clearTimeout() {},
+      navigator: { clipboard: { writeText: () => Promise.resolve() } },
+      document: { getElementById: get, querySelectorAll: () => [], createElement: (t) => mk('<' + t + '>'), addEventListener() {}, body: mk('body'), activeElement: null, execCommand: () => false },
+    };
+    sandbox.window = sandbox;
+    vm.runInNewContext(code, sandbox, { filename: 'UrlParserTool.astro' });
+    return { el: get, type(v) { get('up-input').value = v; get('up-input').dispatch('input'); } };
+  }
+  for (const lang of ['en', 'zh']) {
+    const S = STRINGS[lang];
+    const p = runPage(lang);
+    p.type('https://example.com/a?b=1');
+    check(lang + ' page: a valid URL keeps the valid status', p.el('up-status').textContent === S.ok && p.el('up-status').className.includes('success'), p.el('up-status').textContent);
+    p.type('http://exa mple.com/');
+    const want = (S.notStandard || '\u0000').replace('{ch}', S.space).replace('{host}', 'exa%20mple.com');
+    check(lang + ' page: a space in the host is not called valid', p.el('up-status').textContent === want && p.el('up-status').className.includes('error') && !p.el('up-status').textContent.includes(S.ok), p.el('up-status').textContent);
+    check(lang + ' page: the browser reading is still shown', p.el('up-results').hidden === false && p.el('up-href').textContent === 'http://exa%20mple.com/', p.el('up-href').textContent);
+  }
+  for (const lang of langs) {
+    check(lang + ': notStandard names the character and the host', /\{ch\}/.test(STRINGS[lang].notStandard || '') && /\{host\}/.test(STRINGS[lang].notStandard || ''));
+    const mdx = readFileSync(join(root, 'src/content/tools/url-parser', lang + '.mdx'), 'utf8');
+    check(lang + ' mdx: the limits name the space-in-host case', mdx.includes('`http://exa mple.com/`') && mdx.includes('`exa%20mple.com`'));
+  }
 }
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? `, ${skips} skipped` : ''}`);
