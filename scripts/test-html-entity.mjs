@@ -442,19 +442,19 @@ process.removeListener('unhandledRejection',onUnhandled);
   const sha = text => createHash('sha256').update(text).digest('hex');
   const retained = {
   "en": {
-    "frontmatter": "caa68c5e679ca4dbcc72608337ddb13b7946aa8e858d5edb90d2262db6fe5888",
+    "frontmatter": "7d98dbb8dfb6aeb78060139e2c2b36964b0e3f08c944853e363315afc121d1cc",
     "bodyWithoutUsage": "e9fc42d4ef3ef47ce276de7a4e48e9ad0f46a2cbfa4cb1d55d70d3126b070e12"
   },
   "zh": {
-    "frontmatter": "bf7533ce227f6d226413ef72d4fab3b8e50f03a338adb94ff533945a978835ac",
+    "frontmatter": "3851b16276dfee4c6b45e7eef0d2540b91b7773d21f94504179cef7deb616355",
     "bodyWithoutUsage": "b92642ebe5d8d19a19b0707b3f3cb2eeee33792ebfbd5dd28dc50cbd25551d68"
   },
   "ja": {
-    "frontmatter": "c81b9a02f38c1a518ef1e10ff392b1a1c41b99227646a5409ba53195d10138f1",
+    "frontmatter": "46457f0d18581d2df4cca5358019babc4da04e4aea375cb0fbb564fbd6f9c17d",
     "bodyWithoutUsage": "64b39dad714eecc62a1b92586d21c508dc8e5b197905c9f1cdcb11561348abbd"
   },
   "ko": {
-    "frontmatter": "5f16c29513d07d184d28b79062223b6318d1d68352d63404f3fec0f638458e06",
+    "frontmatter": "cbd3af5fbb7612bdb63bd288db155b210ef536438d0b515cb9ae6281ab35c2cb",
     "bodyWithoutUsage": "12fa2b6eca1b4f688f2a58efda882663a55f855504f2f145dc68b32697ae2498"
   }
 };

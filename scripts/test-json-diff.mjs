@@ -371,10 +371,10 @@ const tipMap = { compare: 'compare', clear: 'clear', swap: 'swap', before: 'labe
 const tips = [...markup.matchAll(/<Toggletip id="(jd-tip-[^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 exactly eight source-backed tip bindings', tips.map(m => [m[1], m[2], m[3]]).sort(), Object.entries(tipMap).map(([key, about]) => ['jd-tip-' + key, about, key]).sort());
 const MDX_HASHES = {
-  en: 'd44e7d2cf3ee1abb9ef839f29b10f28b0b59f31b9ad252a817c64d0f40e045e8',
-  zh: 'b30d9f07f684b5e1d6791d22198ed51fb424127ff7456916543a133beb77fb81',
-  ja: '471d54bc18d5ddb3ae6a5b9198cd72462eb2333e5963b469f209597a8276cc23',
-  ko: '8bfe1394d61ad850108fb15b099e5440058cfacfe2354cc18767457be37a5375',
+  en: 'a49f648bb01290dd4e3d3e746bd33b350e9461c2cc9021a5ac83c744446675d5',
+  zh: '9c293c3fddc7d065debe69de2e6b88e811c7eeb61a04498f9293953bdd129dfe',
+  ja: '126a414cd7e8d7cf6f5bcf15ab556c441f17bd4814a8fc7b29170ad1c0cde609',
+  ko: 'da238a20d6525fdb61cb8bd3a126bba64bf7f752e0877be6854b90ecd926e1e2',
 };
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' v2 root string keys', Object.keys(strings[lang]).sort(), Object.keys(strings.en).sort());

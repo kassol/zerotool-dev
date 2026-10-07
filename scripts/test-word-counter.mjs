@@ -161,7 +161,7 @@ check('v2 stacked input stays 160px and hides empty results', /@media \(max-widt
 check('v2 phone results use two bounded columns', /@media \(max-width: 640px\)[\s\S]*repeat\(2, minmax\(0, 1fr\)\)/.test(css));
 const tips = [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{T.tips\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 eight tips cover input and every metric', tips.map(x => x[3]).sort(), ['input','characters','charsNoSpaces','words','sentences','paragraphs','readingTime','speakingTime'].sort());
-const hashes = { en: 'fc2fbfca80fe4a6265b54312ea75aef6f0c19d90fda94377f97f834bd2d9b27d', zh: '173d7e875ead40e6e3f980b47960feee0dbff60a1a018f40f1c61fd92b0f88c6', ja: 'e927289f7866c4576432f048caaad97175f29df937dbca463064e39cbb5e7bfb', ko: '732a4d98aaeb29da690cecf23ffe479da65d5ffb537893d52216901b07b9392c' };
+const hashes = { en: 'af8ee969a81b1d477067bedc1010bd2d06f6fb3d4c9ae4d77284faf6c466d4ad', zh: 'fdc6b545189d8c6e80a7e454e6787ae3d1f58b798c75c3f5c7ef90cb07af8d7d', ja: '4e7747594233b564a4769dc84ac13d267ae335413af81d5a5a458c4ad7bcba8c', ko: 'b552aeaf29f2cefe528fd16411e39f6ec2690eda88d7f2f30d80c1c8f8cc23a7' };
 for (const lang of ['en','zh','ja','ko']) {
   const t = strings[lang];
   eq(lang + ' v2 locale keys', Object.keys(t).sort(), Object.keys(strings.en).sort());

@@ -355,7 +355,7 @@ process.removeListener('unhandledRejection', unhandled);
   const protectedContent = {
   "en": {
     "nonUsageBodySha256": "cdf1ffeb01d87710ba79930048ae4ff96167005944ef914fcaf212cbc63354e6",
-    "frontmatterWithoutStepsSha256": "8402622717cc675c9c536d3cd7a2d24cd97cc573e621049dae9e6670dc520eb5",
+    "frontmatterWithoutStepsSha256": "3d6f9c01f2eb62bbe8d8d8086e20a0f4756865e98a95c4f73b45e9fd642d4423",
     "mdxSha256": "aef4b6ff2ce6577bfbb7ae6db7d83b82409affd80844c0d9305e49269e0699af",
     "wordsBefore": 607,
     "wordsAfter": 505,
@@ -365,7 +365,7 @@ process.removeListener('unhandledRejection', unhandled);
   },
   "zh": {
     "nonUsageBodySha256": "f4f4a6851150acf884557086e96cbd5ed37afe9a1b631ddd710041921b14709d",
-    "frontmatterWithoutStepsSha256": "8c5beaf34c02ef3b4f72807454b7b0497a7376a912e84a229b6f7714fed46495",
+    "frontmatterWithoutStepsSha256": "72be02ebf8c6499523f9d1843bf239365d5bba5cbd27c1f9663e2bb2820229ce",
     "mdxSha256": "6fe68095b75a640bf81144ee5f39a5ee19e3827c7cf72d67b4cb4dee5f76a9a3",
     "wordsBefore": 36,
     "wordsAfter": 32,
@@ -375,7 +375,7 @@ process.removeListener('unhandledRejection', unhandled);
   },
   "ja": {
     "nonUsageBodySha256": "2ef2d0272ffbbadb18e97df28d0353de5c2827853d840bf5c9975d52518b192c",
-    "frontmatterWithoutStepsSha256": "951308bdc8e137b1d755932c1506087dc19cfaff3c465f5bf431e53de02eaf9d",
+    "frontmatterWithoutStepsSha256": "3c5ad6b7eec6e3ea9e2e37129910fc7e360c2e6755b461ad9e5ed1a43dc4e1e7",
     "mdxSha256": "94733de54cf6c653bcb855b0f33bb8710797884fec90e182a3d08e691894557f",
     "wordsBefore": 35,
     "wordsAfter": 31,

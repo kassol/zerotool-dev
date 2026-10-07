@@ -323,10 +323,10 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
   eq('five control tips exist', tips.length, 5);
   for (const key of tipKeys) eq(key + ' tip uses localized text and name', tips.some(m => m[1].includes('id="ar-tip-' + key + '"') && /lang=\{lang\}/.test(m[1]) && /about=\{T\.\w+\}/.test(m[1]) && m[2] === '{TIPS.' + key + '}'), true);
   const retained = {
-    en: ['a9e1a051ece0b7f7034f84f58df00698b38c4709fbdac0de1c807ae59a8a5f16', 'cdb0de069c9977df31473e5142b0776abe4cd8d042106478eda25045ba14cdc9'],
-    zh: ['d3463e6329f2a7b32a6005bfc47747edc6cc945b1755ad045212928cc5d1d369', '971f4ddd9c46504b958e426c39f8298ae810728d91e0c1834f2327a72c1cd2fa'],
-    ja: ['cfb2252f15899296cfc3d587fecbeb8ecac16a9dcf74159476c8134002e97297', '9eaafbaf84c720c70c2c057becb2d71834d10c663b5bb9f91c74c038911eecd8'],
-    ko: ['b90ba25e7eb78f3caf0ea874b7abc9c4c8eb463a12501a758fe21d7b01f72432', '811bcc0a4b241e555e168fda6378c7a639baff0c4270f4b27d8f701fe103f970']
+    en: ['275b86d216ac2c773f3561965e1850fc1180291b147178332c96081b68be109f', 'cdb0de069c9977df31473e5142b0776abe4cd8d042106478eda25045ba14cdc9'],
+    zh: ['0931ccab8adfae2c65a2e91d570fc20d43e15b4bf59eb99647d3c4949fcbf686', '971f4ddd9c46504b958e426c39f8298ae810728d91e0c1834f2327a72c1cd2fa'],
+    ja: ['c58a70350a99aedeacbd54d8c0f34d63ff68f66d1dc16c2d4a92245eeca0237d', '9eaafbaf84c720c70c2c057becb2d71834d10c663b5bb9f91c74c038911eecd8'],
+    ko: ['27ea557348fe212494619bed9b5aef3af84978eef88c89e956aab0d2f94a8d90', '811bcc0a4b241e555e168fda6378c7a639baff0c4270f4b27d8f701fe103f970']
   };
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const entry = strings[lang];

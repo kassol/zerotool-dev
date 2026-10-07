@@ -553,19 +553,19 @@ process.off('unhandledRejection',onUnhandled);
   const ids=[...markup.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);check('all IDs unique',new Set(ids).size,ids.length);
   const retained = {
   "en": {
-    "frontmatter": "24bb9d4f9e788c71377359da3e0c0113338fc8285604550e02457b039196fe0f",
+    "frontmatter": "74e968286c664f895062e8643a800201d9e2ab08ed5c16e3a612f0882d0c6a38",
     "bodyWithoutUsage": "1734e27cf29092335eed4d8fdfb68eb9ae12cc957afac8f92fc033ed503cefed"
   },
   "zh": {
-    "frontmatter": "8b152b1a4cfc6cc66598800ad4affa50ebc625eef219499bb72d56aedf1e5ad8",
+    "frontmatter": "16fcc0b9abfa35f752f9b2ccaee3ee8546c0fde6f00e01670dbbe5ebe5a2962a",
     "bodyWithoutUsage": "00cd400520610b68c051f9bad0f5a23e87d4cc072a75f956f550092bb0534d67"
   },
   "ja": {
-    "frontmatter": "0c6c9eb1ba15a82a267bbc2a657721abd52094bfbb68bdf9cf7645391426c183",
+    "frontmatter": "3bf1de5c02655c739caa8472b45a939c1701bcc242b7db220f7db0d14ec04ce4",
     "bodyWithoutUsage": "efa63b0a09686250bafee842aafcdf6871d6671334b1d936e910b8e21ce08367"
   },
   "ko": {
-    "frontmatter": "2f6f410cd764d8a2076cb9a1b7d7d0867a6325a798a640ecf227906b5dcd1439",
+    "frontmatter": "1234d8bf99b1e6d28ce96c50185c3356b838a8df0b5b56c58ee040500d9fda7f",
     "bodyWithoutUsage": "202808284047d07cebe658cee2107ae246a60fbc127b8df85050c4d8dd31e843"
   }
 };

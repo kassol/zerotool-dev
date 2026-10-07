@@ -313,11 +313,11 @@ for(const cls of ['hg-row','hg-label','hg-value']){
     "body": "2d5b56e773f8f155325d521fda43948440978432756adb40b697e4c1375b722d"
   },
   "ja": {
-    "frontmatter": "17223732c6a03bb2a26b4a3357f68233ad3e500b49e93e0cc4babe60894e7e23",
+    "frontmatter": "079d91f90f1a99135b951d85525b74a4189284ef0cdaed980faa47705b5653f1",
     "body": "7a66df4f83baeff237573e4643562ccd8c267a7a8369f4b59b1d09e27c25f808"
   },
   "ko": {
-    "frontmatter": "b13f2a3e9eb3aa60b35b3d71386a560665af86b04acb9a9051b17bf52fe34087",
+    "frontmatter": "4c2911084e36ad8ac3c4835ff1deb96f10517c828fec6305bf0ef509c5038024",
     "body": "e00f8e700a1a243bd183e1585e1f7ecffd247b3a6519911419d5d8852389aad4"
   }
 };

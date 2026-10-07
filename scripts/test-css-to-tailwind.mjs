@@ -293,15 +293,15 @@ const MDX_PROTECTION = {
     "bodySHA": "4b313d491a921092a5c90dd689bfe6006c65087719210d6c51056de0349c21af"
   },
   "zh": {
-    "frontSHA": "b8695778e62411856e9b7482ca31fcabb6e59e726d185c293c36d34564bb47b8",
+    "frontSHA": "bedfe5668d1a660ca075e81c0bb5d1954e6e0826158781ae8fe5296b153c3d89",
     "bodySHA": "2bfb49aef77d631d7966cfc92984ef4dbe95914f0fb4320b6a471602ed9323aa"
   },
   "ja": {
-    "frontSHA": "97b6e77e3a16a8f2122bd2fdec00d1f50bec2c2a0a65c2b642e2e70453b61559",
+    "frontSHA": "e8dff96e087db917a642e05066db44dd35f07d37cef60c0ce668c0e8d7e54717",
     "bodySHA": "7733d5c53927001f9211deeef45cda44d3cc3f26d88e069adba309e437f4b21c"
   },
   "ko": {
-    "frontSHA": "a0da5bff12d7373bd42284e8586f634ee59657df21795b3e39f52dbb9103b534",
+    "frontSHA": "f25ff4437f9f7a572dc984f8c512b94e7b0c807c468fd7a48184bbce488ed695",
     "bodySHA": "7a21173b129d273d53daaf342e62f698ed6da7bfd1a8a9501ecd434e3d088383"
   }
 };

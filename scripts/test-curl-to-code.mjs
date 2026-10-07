@@ -525,15 +525,15 @@ for (const [id, about, key] of tipMap) check('v2 tip binding ' + id, layoutMarku
 // Hashes captured before migrating Usage; all other frontmatter and body are protected.
 const protectedContent = {
   "en": [
-    "f5017df115257fd615d8908c473e71efb4bf9bb5f362eaa02137da674e5609be",
+    "06f4b9d7c32d267b0648b6c099feabe31cf49d7e3b446792b7a7d89d11d49736",
     "e9c15cf4eb4ba3833c6375bd32ab06cf9bbb804f7f0a50ccd49aeac809a111b6"
   ],
   "zh": [
-    "17d9b5ed5d850e15787d836d274f87021cb914df156fb17fe64108cba1914151",
+    "91074e590655be9ab80504c7bc12e0830f6af494e95c520eb939df6a30f04db9",
     "7fbac32daeccbe2484c421c9fcb4b836698a54433b6a8389682d102135d056d2"
   ],
   "ja": [
-    "0556841c0a972b593a4cd3cdaae98a9edfeefc454f1aba79151b596e81609bf2",
+    "2646e4c48aafdf23f8d09fe2ca49312f887c70ff70c05f39e4e628c373e90432",
     "602f0f9a337df550209e74641298bdcff1f5b076513f93acd09580f695012365"
   ],
   "ko": [

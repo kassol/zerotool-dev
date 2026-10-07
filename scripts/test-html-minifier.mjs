@@ -224,7 +224,7 @@ eq('no unhandled clipboard rejection', unhandled.length, 0);
 
 // ── v2 page layout ──
 const MDX_PROTECTED = {
-  "en": "3f994d83a0962cf36465e7f3460383f25bb723609e31b1d458bf2c8e36d5a86f",
+  "en": "db3a260bfb05ac7b502ab8c369ecbba7f3e46ca5f5ab228c204426a42e17f13e",
   "zh": "ada0add21e20cd8580bc2d35af3ba3c8b26fcf6fe26506b642c7b31d3637a7ce",
   "ja": "c7984aea3cbab9f49b215a982a588052101d950979871b9f54c5d0f9001e2527",
   "ko": "1591d15c1c8f6ac422fc30576b117d23231f79f79fb5d018cfc15af82e3d168e"

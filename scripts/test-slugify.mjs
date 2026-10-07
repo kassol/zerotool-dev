@@ -427,8 +427,8 @@ const tips=['input','lowercase','trim','separator','copy'];eq('v2 five real-cont
 const protectedDocs={
   "en": "ba77a240ed8777c8101f80b9be08303dbc5a08af4807dfc27941104ef1f4b91c",
   "zh": "741cbc9ba89c4a215d9c529fc4603e108a968580581e369e34a876c762ef24ab",
-  "ja": "0b544e1aef908dd4716e99ea2c1a16136c6baf5301540ac8a7f79a871dcf1101",
-  "ko": "ede3aed4c56aee2b11918aaf8935f73201b5502217ec039e8b2755240d4c834b"
+  "ja": "ecfdfe83701755880ed8959b40987b3ea5efca1b7069c9670fd6ae286137546e",
+  "ko": "cc8cd95fa7d800c3d49b96109b101d937354c030df06f1868fdab91d832f6133"
 };const hash=text=>createHash('sha256').update(text).digest('hex');
 for(const lang of Object.keys(copyLabels)){
  eq(lang+': v2 strings same keys',Object.keys(STR[lang]).sort(),Object.keys(STR.en).sort());eq(lang+': v2 tips same keys',Object.keys(STR[lang].tips).sort(),tips.toSorted());

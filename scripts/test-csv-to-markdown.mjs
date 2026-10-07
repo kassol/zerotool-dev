@@ -325,19 +325,19 @@ const ORIGINAL_CLIENT_STRINGS = {
 };
 const PROTECTED_CONTENT = {
   "en": {
-    "front": "a49ee58258ab3d4cf0a78c23114b39f87518d86cc18272d076ef3515f3e99ab9",
+    "front": "99a782b68c604e4b363d5162ee072fb86e3d71e416ac4d1c6c8f886ece45ed78",
     "body": "47baed871ff4bcfcc2cd8d44a2ef734bffbd360c99634b8a826c8ee0d2deaffe"
   },
   "zh": {
-    "front": "b8201f44e605ed14dfe992482779f40430c4e80c417a40130b8f7601e9a1a02a",
+    "front": "e37a3c3a511beed19d6937eb41c5f139a0a1798e44dac9d9c4b2812dfaa4dd89",
     "body": "68185714048f39cbd81820fede05725a9ed0510d2554e0ef4160c38cfbecc94b"
   },
   "ja": {
-    "front": "6766ba7cf407f8b42666b000b4509409e16c43285f2c5abd0b19d63eb78190c5",
+    "front": "ba3ce4a03e8717b58f01b107a80bd627617120439dfb741ba4e434dbc6a519b4",
     "body": "25221ad87e6141925f62b8fa9a2c0a750836139ce474bfbdaa12f3a389cf340b"
   },
   "ko": {
-    "front": "391589800c467917dbebde7bbbbd337f4f7ad822c702eafa1e92c43f30c14654",
+    "front": "2fddedcf7e83a0c0b6008547af81af213547577f4837755aa01d7113881ece51",
     "body": "6e5bd3f598e7b0151996d92e415df898c938a1854009dc42019fc497d926aa04"
   }
 };

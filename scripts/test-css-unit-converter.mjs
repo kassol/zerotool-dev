@@ -258,19 +258,19 @@ console.log('\nv2 page layout');
   const preserved = {
   "en": {
     "body": "0dce96cb37e20e84f2f7faee0862a1a872e9b9fa08c91559f4c0402f235df171",
-    "front": "fea4183dc835f3eb738042e5f7fea4b762d3fe9e314a82db0038e706097de8f9"
+    "front": "c7b0bcbafcbeed43998daf5daa36dc225e3d69b6c3b4d995960395d414afb6fa"
   },
   "zh": {
     "body": "646522953672f4745dd844d40c1b2cb64f7e88a8c98abb4c6e05d7f218121506",
-    "front": "c0be0eab81fddc39dbd63038384abd8c3a42311eadcab308c8fb2821df337799"
+    "front": "06151b11a668dac8d758cf1546fe84706056a9f015202f3c1e44913955097b4a"
   },
   "ja": {
     "body": "728e4e3ee2d3a8b49078081afec9c9f6a379c46bc7f779e5bd5bf91383b8b4f3",
-    "front": "87127ff5452891194878cc61a59481714ce2405b37105d7ee648ad8228f93a85"
+    "front": "5c30f74ad4d52dd36324207ddf99fc39df63dd3faa35e30338dc73ecead72ed2"
   },
   "ko": {
     "body": "0ce30006896227c75c9476a532110d6fbb3bc2837b6e476f4233527881421a33",
-    "front": "56ca96b00161a1f1ec45b281e33683a48a3950ca03201df9171305bf03afcad0"
+    "front": "a03caa808b0a2ce9a5e477468bdd4754b49735473e4a44eb6961395e9d71d22c"
   }
 };
   const strings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);

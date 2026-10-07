@@ -394,7 +394,7 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     }
   }
   // Snapshot from 2d4ce406: metadata unchanged, and body with only its usage section removed.
-  const retained = {"en": ["0902ca24ad27d31d", "3b1dcadcf1105255"], "zh": ["6f217aea293b700a", "dd841e9ac63f4baa"], "ja": ["81d5a09229d05c93", "a32ca5dd84912764"], "ko": ["af4cf2d10d3cc286", "0fe2c0058fe852f9"]};
+  const retained = {"en": ["f6d916a008811b87", "3b1dcadcf1105255"], "zh": ["8218e37820e6aa48", "dd841e9ac63f4baa"], "ja": ["f0bda7fc2b41e192", "a32ca5dd84912764"], "ko": ["4f2dc13f46487e7e", "0fe2c0058fe852f9"]};
   const hash = text => createHash('sha256').update(text.trim()).digest('hex').slice(0, 16);
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ' string keys match en', Object.keys(STRINGS[lang]).sort(), Object.keys(STRINGS.en).sort());

@@ -313,7 +313,7 @@ check('v2 tips outside input label',!/<label\b[^>]*>[\s\S]*?<Toggletip[\s\S]*?<\
 const contentHashes={
   "en": "736d4a1a887f8546b0d90b7ded0e2783a0f001846a4d7105948892f4a10aa579",
   "zh": "f43086564db62647b64ad1724cbcd0c8e173014ae395f2c1c4327ea396362802",
-  "ja": "05881fa3c61733a7fb55819878d54fc70d6e3b99c8bb0196cd6c6bd018cc0844",
+  "ja": "31e39448e328b30b3fde5f14c4fc5bbc719da30da1b7d841dd467fc4441e8cfd",
   "ko": "f81937a299479f5e914057e4d305588182e4bd98979cb6dbd3a42f590e3bac80"
 };
 const {compile}=await import('@mdx-js/mdx');

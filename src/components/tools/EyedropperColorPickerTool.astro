@@ -804,6 +804,19 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
       if (args.alpha !== null && alphaOf(args.alpha) === null) return { error: 'fnValue', fn: fn, value: args.alpha };
       return { error: 'unknown' };
     }
+    // parseColor() (engine block, left as is) reads only the first four values of the comma form,
+    // so rgb(1,2,3,0.5,9) and hsl(10,20%,30%,0.5,1) came out as opaque colors with the alpha
+    // dropped. The comma form has three channels and an optional alpha (CSS Color 4, legacy
+    // syntax), so typed and pasted values with more go through readColor(), which refuses them;
+    // diagnoseColor() then names the cause (fnArgs). Values the page itself writes still use
+    // parseColor() directly.
+    function readColor(input) {
+      var s = String(input == null ? '' : input).trim().toLowerCase().replace(/;$/, '').trim();
+      var fm = /^[a-z-]+\(([^()]*)\)$/.exec(s);
+      var args = fm ? splitArgs(fm[1]) : null;
+      if (args && args.legacy && args.count > 4) return { error: 'syntax' };
+      return parseColor(input);
+    }
     /* ── diagnose:end ── */
 
     var SLUG = 'eyedropper-color-picker';
@@ -951,7 +964,7 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
     FIELDS_EACH(function (k) {
       var el = fieldEls[k];
       el.addEventListener('input', function () {
-        var c = parseColor(el.value);
+        var c = readColor(el.value);
         if (!c.error) { show(c, { skip: k, status: '' }); return; }
         emptyColor(k);
         setStatus('');
@@ -962,7 +975,7 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
       });
       el.addEventListener('change', function () {
         if (!el.value.trim()) return;
-        var c = parseColor(el.value);
+        var c = readColor(el.value);
         if (c.error) { clearTimeout(errorTimer); setStatus(reasonText(diagnoseColor(el.value)), 'error'); }
       });
     });
@@ -1124,7 +1137,7 @@ const FIELDS = ['hex', 'rgb', 'hsl', 'oklch', 'p3'];
       var target = e.target;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
       var text = cd.getData('text/plain');
-      var c = parseColor(text);
+      var c = readColor(text);
       if (!c.error) { e.preventDefault(); show(c, { status: '' }); return; }
       if (wrap.contains(target) || target === document.body) setStatus(t.noImageInClipboard, 'info');
     });

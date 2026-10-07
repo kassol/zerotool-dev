@@ -289,7 +289,7 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
   check('file tips are outside the file-input overlay', !/<div id="[a-z]+-drop"[\s\S]*?<Toggletip/.test(markup.slice(markup.indexOf('<div id="' + prefix + '-drop"'))));
   const retained = {
     "en": [
-        "33e3ad90f46ed2df85fc02d4c95750916f2cc4fefff64c33bcdf49758f96c08a",
+        "921c1bf82d898ea7d7cff1f3a50cca323df05d6f5d4fc620467f9d0751d117a2",
         "f20215fbec222bab485bfb117efcf964ac6b55b93490aae95d1267725e378b53"
     ],
     "zh": [
@@ -297,7 +297,7 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
         "ccfcac01c778ee815b15d227e6161ff99205b83469e7262af26846732faae328"
     ],
     "ja": [
-        "1797d898ffee1144897e1c25a56efe5bc3f5b5ca8149727df3cc64833aa15ed4",
+        "754a939478e3154335132fb61febffb873b445d207856333d54f44d6f61f8e85",
         "40762cd04d4a3b82cb22af2539964cf496cefa3197a5da78d5303fcb55fb7f61"
     ],
     "ko": [

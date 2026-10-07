@@ -336,7 +336,7 @@ eq('sensitive notice visible below result',markup.includes('<p class="hha-privac
 const tipMap={analyze:'analyze',example:'exampleLabel',clear:'clear',copy:'copyJson',input:'rawHeaders',views:'views'};
 eq('six tips only',[...markup.matchAll(/<Toggletip\b/g)].length,Object.keys(tipMap).length);
 for(const[key,about]of Object.entries(tipMap))eq('tip binding '+key,markup.includes('id="hha-tip-'+key+'" lang={lang} about={T.'+about+'}>{TIPS.'+key+'}</Toggletip>'),true);
-const protectedContent={"en": "5e0223383c170d7bdd89f7ad4096ae8f943042189ecf1d645dacd6fd030f25d5", "zh": "825e9da68f0c610a10a30dd770f459401d400c734c56b0538424d3eb7b081c71", "ja": "0b520848006c27118f36869a0c0a2b5892f540c2bc6e10f14f595586b517e8c3", "ko": "8a314beab53dd66bd0f6576ef38ad2155adf3c663ca549d86c4ab473db54f32f"};
+const protectedContent={"en": "c1bf040fee4a004d9611ae32020ce910ef8f868662739dacff9ea93db9f5ba7b", "zh": "5a6e0a9060db3c61524c627632087b5551cc359677474b495e12a4bda34297d7", "ja": "85d2b3de0dfb8616e497e1d663aa1a81ac10326bd9260a7162d10474569aa21c", "ko": "5b4501d34cecd181e8afcb54cbbdc83468d6902f9d14b7f8c7b2fe752911c6d7"};
 for(const lang of ['en','zh','ja','ko']){
   const T=strings[lang],h=page(lang);
   eq(lang+' localized keys',Object.keys(T).sort(),Object.keys(strings.en).sort());

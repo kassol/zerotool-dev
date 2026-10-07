@@ -556,7 +556,7 @@ check('v2 <=640 controls and results stay bounded', /@media \(max-width: 640px\)
 const tips=[...markup.matchAll(/<Toggletip id="(jpt-tip-[^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)].map(m=>[m[1],m[2],m[3]]);
 eq('v2 five tips tied to their controls',tips.sort(),[['jpt-tip-input','jsonInput','input'],['jpt-tip-expression','expression','expression'],['jpt-tip-examples','examples','examples'],['jpt-tip-results','results','results'],['jpt-tip-copy','copy','copy']].sort());
 check('v2 tips stay in build-time HTML and out of client dataset',source.includes('const { tips: TIPS } = L;')&&!/TIPS|labels|\.tips/.test(inline)&&!/data-[\w-]+=\{[^}]*tips/i.test(markup));
-const MDX_HASHES = {"en": "43921b62db2ce7b48dcc57727ab5d0ab1c69c57654e1ec1fde5b96344bd038a1", "zh": "101a9e601584fbe078bd9cfa7d0f6e8d411a3abb7e183d28e25732f800e3e5bb", "ja": "3027cc69ce0fd662627f5ce70f521e36b078d79c47b75f08ea6aa9e44fc03d24", "ko": "1b4b34019f9017d9842c995e6b4dad39d7e7c61a4f6af7257b8fb1b8cb424b5e"};
+const MDX_HASHES = {"en": "43921b62db2ce7b48dcc57727ab5d0ab1c69c57654e1ec1fde5b96344bd038a1", "zh": "101a9e601584fbe078bd9cfa7d0f6e8d411a3abb7e183d28e25732f800e3e5bb", "ja": "b8d4fc9261a13a84e8953586b2d2c8711d73ce1c2af6fc0372adc0dcf9594482", "ko": "1b4b34019f9017d9842c995e6b4dad39d7e7c61a4f6af7257b8fb1b8cb424b5e"};
 function leaves(value,path=''){return Object.entries(value).flatMap(([key,item])=>typeof item==='object'?leaves(item,path+key+'.'):[[path+key,item]]);}
 const enLeaves=Object.fromEntries(leaves(labels.en));
 for(const lang of ['en','zh','ja','ko']) {

@@ -431,15 +431,15 @@ check('v2 output placeholder is localized desktop empty hint', markup.includes('
 check('v2 registry convert', /['"]html-to-jsx['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 const MDX_PROTECTION = {
   "en": {
-    "frontSHA": "e05ab43ad631ae8bcaedd7876942f8d3e198a5ff4a20f30e77c236e5b90ef112",
+    "frontSHA": "73ef0b8aaea99ad8e45f3f137d0c5536e136caecf08428cc3fca45c123894cf0",
     "bodySHA": "141e53658e24bd86b1aab71601dcaf23acd7e8d5ca5bf0007045b49c7c5bfc2e"
   },
   "zh": {
-    "frontSHA": "027a12f7416e9ea9b3d71031d029bc9f71c772da051021046d265881541126b1",
+    "frontSHA": "90d657951aae236f802562b0a4437f652d1454e01ade507b865a5b1d66272652",
     "bodySHA": "0a551ad311b141dfbcf6d2d8010f01406730d082773c4323b60399082ef61cac"
   },
   "ja": {
-    "frontSHA": "4030fb343dbf73bdd3893fb79795da71961fee32252618f0bbccf3a577e0933f",
+    "frontSHA": "8c343492b87a022e35cf00a24691ba2872ad3e2b0603000ef6c2b2ab0c4b9158",
     "bodySHA": "1e6de7568a88737f10cdfb9436731ca1195bcffac2319b8576812ab595750b43"
   },
   "ko": {

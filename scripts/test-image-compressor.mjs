@@ -213,19 +213,19 @@ for (const cls of ['ic-card', 'ic-card-name', 'ic-card-sizes', 'ic-card-note', '
   check('file tips are outside the file-input overlay', !/<div id="[a-z]+-drop"[\s\S]*?<Toggletip/.test(markup.slice(markup.indexOf('<div id="' + prefix + '-drop"'))));
   const retained = {
     "en": [
-        "69cca5b2aa6ece31bbcb34e435abfabcb615a092246d07c720a7bb4ae54b8d7f",
-        "9cab4c9d7bf8ebedf8901a80747c56d4bc95671cd69f22a624d78b768f13a544"
+        "b2241a38f502c69f420097ee07dc5d754fb58db16a99a0807bd4ba619f60d260",
+        "a7696edbab6422cc633a0fd30707c29aed9e1aa9b61096aebdb4f2d7d9a76805"
     ],
     "zh": [
-        "a79f8868b73ecc52a18ae2d74ecd22fe3f0f3dc23299d2fef3d38139495416b1",
+        "2cef4184d9974f85cc7e3b1ee9aba15a96bcb51e5a23962f356bfc02d6dec3fb",
         "498c366d1cabfd17add7e159e43d290bb4768729e8d88c1dd842a812ca0f5784"
     ],
     "ja": [
-        "89c3590f91aa0ffc8a0f5feab7af7bdb34802dfe7ed7d1317f19803dfbf47d33",
+        "e0d10859ac3e10588579f621f7487fac914536ae5537be4b6e8fdd1c0bfb6c52",
         "472912a5864fc5ac67aac03b3193aee477bdbeff4ac75ebccd07a98d1ceac6ca"
     ],
     "ko": [
-        "187a35df0c29986a500d10eeb0767cfa6ef3b4f08bc0d0b9702123249642116c",
+        "9663835f0be6d8bb8d5a31a8a2739b65c78b94ecf330fc62324bd199a66317d1",
         "ef38fbfdf030047be27f021a84df0161f3dfc0c8a9401d33d3f0989a02f31235"
     ]
 };

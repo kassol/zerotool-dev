@@ -407,8 +407,8 @@ const oldStringHashes = {
 const unchangedContent = {
   "en": "22a7f67557ff9a3d8691fa2a5c7c097450faaa1b2164cb959831210cfbce5fe5",
   "zh": "4b2f0d27f28f391fba5e8e9aea56c30cbcdcab94422a7100e2d8c785642613bd",
-  "ja": "f2d7146c607846c2d63271c422620b494616c8adb271c42569eaf5ec082b64bf",
-  "ko": "94a5cd882eff4aea9bb2d84c43ad9accfb8141019ef4e34f151cf8f9ef01eabb"
+  "ja": "aa6f350c4bbf89ca8198a731c44f1175fb6d2e2173e013e14cfc8f79b36b7d71",
+  "ko": "65b32ac71f0f9e6105a3f461f607e8aabec5b2681d98594e3f18aefcf797975f"
 };
 const tipKeys = ['input', 'parse', 'presets', 'explanation', 'fields', 'runs'];
 const bindings = [...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];

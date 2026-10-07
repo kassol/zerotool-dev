@@ -301,19 +301,19 @@ for (const [id, about, key] of tipMap) check('v2 tip binding ' + id, layoutMarku
 // Hashes captured before migrating Usage; all other frontmatter and body are protected.
 const protectedContent = {
   "en": [
-    "8647329816a8cba59efb0b3e2958b76f71afb08ab5eed4d6116045688a34b2e9",
+    "319141604dd5d610428e683b80e48afb0f5917ce517ab00b36c5816ffb43435d",
     "61cac543b12318a2600b98ce027af6c3f6209740a39418cf91a6d344eac5ee15"
   ],
   "zh": [
-    "52e6e97153ea23419249a79e2af7bcdb03f9986a41d814c0237a7e8526a9b08c",
+    "05be11da992e9e8d76a5bd35dd0a173d8b21ad77976a1a104fafd0bb7bd10d22",
     "2aaac0bea6fbf114796f25862489bc367cc75717e096dcb0343182e6df4a401a"
   ],
   "ja": [
-    "166836303b0e046df3ce062af6d34157ac25ed4107fac3cb4d187ddda33f6efd",
+    "a90e5742337548091b2483327e75c70a052b4c6afb6d9e6a2257a6c1ec6b27f8",
     "ca2c52ac5ae0ff2afa68ec29fcfebeb6dca459382f47c5e9527298eb4843fd04"
   ],
   "ko": [
-    "c88c68ec8ea91e8f3eb4679e68847d6887c8b025603eb032e8fe4fe5901df935",
+    "973f9aeccabc4fd43c1f4a186c8b209fc5dbf891e1cfcd76445c3e314488ddd3",
     "e274bc43e7ad950f5c1637844175434310996235e886c345f0a7bdfc07ce588e"
   ]
 };
