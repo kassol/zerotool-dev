@@ -1,4 +1,5 @@
 // jq Playground — the page runs jq 1.7.1 (jq-web 0.6.2 + scripts/jq-web-patch.mjs) the way
+// Also reads src/styles/tool-common.css for the shared fill and toggletip rules.
 // `jq FLAGS FILTER input.json` runs, and its helpers read jq's options, errors and output.
 //
 // Read:  node_modules/jq-web/{jq.js,jq.wasm,package.json}, scripts/jq-web-patch.mjs,
@@ -29,6 +30,7 @@ import { patchJqWeb, PATCHES, JQ_WEB_VERSION } from './jq-web-patch.mjs';
 import * as E from '../src/components/tools/jq-playground-engine.js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const commonStyle = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
 const require = createRequire(join(root, 'package.json'));
 const FIXTURE_PATH = join(root, 'scripts/test-jq-playground.fixtures.json');
 const fixtures = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'));
@@ -484,7 +486,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check('tips: download file names', tool.includes("a.download = state.lastJson ? (state.opts.c ? 'output.jsonl' : 'output.json') : 'output.txt';") && ['output.json,', 'output.jsonl with -c', 'output.txt with -r or -j'].every((x) => STRINGS.en.tips.output.includes(x)));
   check('one breakpoint for stacking (860px), 640px for phones', !tool.includes('760px') && tool.includes('@media (max-width: 860px)') && tool.includes('.jqp-io > .jqp-panel:last-child { order: -1; }'));
   check('stacked, the status line reserves two rows (the loading message must not move the panes on the first tap)', /@media \(max-width: 860px\) \{[^@]*\.jqp-statusline \{ display: block; min-height: 2\.75rem; line-height: 1\.25rem; \}[^@]*\.jqp-status \{ display: inline; \}/.test(tool) && /\.jqp-statusline \{ display: flex; [^}]*min-height: 1\.5rem; \}/.test(tool));
-  check('side by side, a long output scrolls inside its pane', /@media \(min-width: 861px\) \{\s*\.jqp-io \{ min-height: 360px; \}\s*\.jqp-out \{ flex-basis: 0; min-height: 200px; \}\s*\}/.test(tool) && !/\.jqp-out \{[^}]*max-height/.test(tool));
+  check('side by side, a long output scrolls inside its pane', tool.includes('class="jqp-out zt-io-fill"') && /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(commonStyle) && /@media \(min-width: 861px\) \{\s*\.jqp-io \{ min-height: 360px; \}\s*\.jqp-out \{ min-height: 200px; \}\s*\}/.test(tool) && /\.jqp-out \{[^}]*overflow: auto;/.test(tool) && !/\.jqp-out \{[^}]*max-height/.test(tool));
   check('Ctrl/Cmd+L also drops a queued run', /key === 'l' \|\| e\.key === 'L'[\s\S]{0,160}if \(inputEl\.value === '' && filterEl\.value === ''\) \{\s*clearTimeout\(runTimer\);\s*closeFile\(\);[\s\S]{0,160}clearOutput\(\); setStatus\('', ''\);/.test(tool));
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
   check('listed as a convert page', layouts.includes("'jq-playground': 'convert'"));
