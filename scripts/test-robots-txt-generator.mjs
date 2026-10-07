@@ -26,9 +26,13 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const source = readFileSync(join(root, 'src/components/tools/RobotsTxtGeneratorTool.astro'), 'utf8');
+const root = process.env.ZT_TEST_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
+const requireRoot = createRequire(join(root, 'package.json'));
+const { parseFragment } = requireRoot('parse5');
+const ts = requireRoot('typescript');
+const source = readFileSync(process.env.ZT_ROBOTS_SOURCE || join(root, 'src/components/tools/RobotsTxtGeneratorTool.astro'), 'utf8');
 
 let failures = 0;
 let passes = 0;
@@ -42,64 +46,129 @@ function check(name, ok, detail) {
 // ---------- stand-in DOM ----------
 // The page script builds each block with innerHTML and then queries it by class name. The
 // stand-in parses only what the script needs: elements carrying one of the known classes.
-const KNOWN = ['rt-remove-block', 'rt-ua-select', 'rt-ua-custom', 'rt-rules-list', 'rt-add-allow',
-  'rt-add-disallow', 'rt-rule-type', 'rt-rule-path', 'rt-remove-rule'];
-function makeEl(tag) {
+function makeEl(tag, docState = {}) {
   const handlers = {};
   const el = {
-    tagName: tag, children: [], parent: null, classes: [], dataset: {}, style: {}, value: '',
+    tagName: tag, type: '', attributes: {}, children: [], parent: null, classes: [], dataset: {}, style: {}, value: '',
     textContent: '', disabled: false, placeholder: '', _html: '',
     get className() { return this.classes.join(' '); },
     set className(v) { this.classes = v.split(/\s+/).filter(Boolean); },
     classList: null,
     addEventListener(type, fn) { (handlers[type] ||= []).push(fn); },
-    fire(type) { (handlers[type] || []).forEach((fn) => fn.call(el, {})); },
+    fire(type, init = {}) {
+      const event = { type, target: el, preventDefault() {}, stopPropagation() {}, ...init };
+      (handlers[type] || []).forEach((fn) => fn.call(el, event));
+    },
     appendChild(c) { c.parent = this; this.children.push(c); return c; },
     remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; },
-    focus() {},
+    focus() { if (docState.document) docState.document.activeElement = el; },
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+    contains(node) { while (node) { if (node === this) return true; node = node.parent; } return false; },
+    closest(sel) { let node = this; while (node) { if (node.classes.includes(sel.slice(1))) return node; node = node.parent; } return null; },
     get innerHTML() { return this._html; },
     set innerHTML(html) {
       this._html = html;
       this.children = [];
-      const re = /<(\w+)([^>]*)class="([^"]+)"([^>]*)>([^<]*)/g;
-      let m;
-      while ((m = re.exec(html))) {
-        const cls = m[3].split(/\s+/);
-        if (!cls.some((c) => KNOWN.includes(c))) continue;
-        const child = makeEl(m[1]);
-        child.classes = cls;
-        child.textContent = m[5];
-        if (m[1] === 'select') {
-          const opt = /<option value="([^"]+)"/.exec(html.slice(m.index));
-          child.value = opt ? opt[1] : '';
-        }
-        this.appendChild(child);
+      if (tag === 'template') return;
+      function fromNode(node) {
+        const child = makeEl(node.tagName, docState);
+        child.attributes = Object.fromEntries((node.attrs || []).map((attr) => [attr.name, attr.value]));
+        child.className = child.attributes.class || '';
+        child.type = child.attributes.type || (node.tagName === 'input' ? 'text' : '');
+        child.value = child.attributes.value || '';
+        child.disabled = Object.hasOwn(child.attributes, 'disabled');
+        child.hidden = Object.hasOwn(child.attributes, 'hidden');
+        child.textContent = (node.childNodes || []).filter((n) => n.nodeName === '#text').map((n) => n.value).join('');
+        if (node.tagName === 'select') child.value = node.childNodes.find((n) => n.tagName === 'option')?.attrs.find((a) => a.name === 'value')?.value || '';
+        for (const nested of node.childNodes || []) if (nested.tagName) child.appendChild(fromNode(nested));
+        return child;
       }
+      for (const node of parseFragment(html).childNodes) if (node.tagName) this.appendChild(fromNode(node));
     },
     querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
     querySelectorAll(sel) {
-      const cls = sel.replace(/^\./, '');
+      const selectors = sel.split(',').map((x) => x.trim());
+      const matches = (node, selector) => {
+        if (selector.startsWith('.')) return node.classes.includes(selector.slice(1));
+        if (selector.startsWith('[')) return selector.slice(1, -1) in node.attributes;
+        const field = /^(\w+)(?:\[type="([^"]+)"\])?$/.exec(selector);
+        return !!field && node.tagName === field[1] && (!field[2] || node.type === field[2]);
+      };
       const out = [];
-      const walk = (n) => { for (const c of n.children) { if (c.classes.includes(cls)) out.push(c); walk(c); } };
+      const walk = (node) => { for (const child of node.children) { if (selectors.some((s) => matches(child, s))) out.push(child); walk(child); } };
       walk(this);
       return out;
     },
   };
-  el.classList = { add: (c) => el.classes.push(c), remove: (c) => { el.classes = el.classes.filter((x) => x !== c); } };
+  el.classList = {
+    add: (c) => { if (!el.classes.includes(c)) el.classes.push(c); },
+    remove: (c) => { el.classes = el.classes.filter((x) => x !== c); },
+    contains: (c) => el.classes.includes(c),
+  };
   return el;
 }
 
-function runTool() {
-  const scriptMatch = /<script is:inline>([\s\S]*?)<\/script>/.exec(source);
-  const byId = {};
-  for (const id of ['rt-blocks', 'rt-add-block', 'rt-sitemap', 'rt-output', 'rt-copy', 'rt-status']) byId[id] = makeEl('div');
+const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const sharedShortcuts = layoutSource.slice(layoutSource.indexOf('      // ── Keyboard shortcuts:'), layoutSource.indexOf('      // ── Copy button visual feedback'));
+
+function serverData(lang = 'en') {
+  const frontmatter = /^---\n([\s\S]*?)\n---/.exec(source)?.[1];
+  if (!frontmatter || !frontmatter.includes('// strings:start')) return null;
+  const server = frontmatter.replace(/^import .*;\n/gm, '');
+  const js = ts.transpileModule(server, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  return new Function('Astro', js + '\nreturn { STRINGS, L, CLIENT_T, RULE_HTML, BLOCK_HTML, RULE_BODY_HTML, blockHtml };')({ props: { lang } });
+}
+
+function runTool({ lang = 'en', sharedFirst = false } = {}) {
+  const scriptMatch = /<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/.exec(source);
+  const docState = {}, byId = {}, handlers = {}, requests = [], timers = [];
+  const widget = makeEl('div', docState), wrap = makeEl('div', docState);
+  widget.className = 'tool-widget'; wrap.className = 'rt-wrap'; widget.appendChild(wrap);
+  for (const id of ['rt-blocks', 'rt-add-block', 'rt-sitemap', 'rt-output', 'rt-copy', 'rt-status']) {
+    byId[id] = makeEl(id === 'rt-sitemap' ? 'input' : id === 'rt-copy' || id === 'rt-add-block' ? 'button' : 'div', docState);
+    wrap.appendChild(byId[id]);
+  }
+  byId['rt-sitemap'].type = 'url';
+  const data = serverData(lang);
+  if (data) {
+    byId['rt-copy'].textContent = data.L.copy;
+    byId['rt-result'] = makeEl('div', docState); wrap.appendChild(byId['rt-result']);
+    byId['rt-empty'] = makeEl('p', docState); byId['rt-empty'].hidden = true; wrap.appendChild(byId['rt-empty']);
+    byId['rt-block-template'] = makeEl('template', docState); byId['rt-block-template'].innerHTML = data.BLOCK_HTML;
+    byId['rt-rule-template'] = makeEl('template', docState); byId['rt-rule-template'].innerHTML = data.RULE_BODY_HTML;
+    const initial = makeEl('div', docState); initial.innerHTML = data.blockHtml('rt-block-1', true);
+    byId['rt-blocks'].appendChild(initial.children[0]);
+  }
+  byId['rt-copy'].textContent = data ? data.L.copy : 'Copy'; byId['rt-copy'].attributes['data-i18n'] = 'copy';
   const document = {
-    documentElement: { lang: 'en' },
-    querySelectorAll: () => [],
+    documentElement: { lang }, activeElement: null,
+    querySelector: (sel) => sel === '.tool-widget' ? widget : widget.querySelector(sel),
+    querySelectorAll: (sel) => widget.querySelectorAll(sel),
     getElementById: (id) => byId[id],
-    createElement: (tag) => makeEl(tag),
+    createElement: (tag) => makeEl(tag, docState),
+    addEventListener(type, fn) { (handlers[type] ||= []).push(fn); },
+    dispatch(type, event) { for (const fn of handlers[type] || []) fn(event); },
   };
-  new Function('document', 'window', 'navigator', 'setTimeout', scriptMatch[1])(document, {}, {}, () => {});
+  docState.document = document;
+  let now = 0, sequence = 0;
+  const window = { generated: 0, cleared: [], trackTool() { this.generated++; }, ztPersist: { clear(slug) { window.cleared.push(slug); } } };
+  const navigator = { clipboard: { writeText: (text) => new Promise((resolve, reject) => requests.push({ text, resolve, reject })) } };
+  const setTimeout = (fn, ms) => { const id = ++sequence; timers.push({ id, fn, ms, due: now + ms, cancelled: false, ran: false }); return id; };
+  const clearTimeout = (id) => { const timer = timers.find((t) => t.id === id); if (timer) timer.cancelled = true; };
+  const runShared = () => new Function('document', 'window', 'var _slug="robots-txt-generator";\n' + sharedShortcuts)(document, window);
+  if (sharedFirst) runShared();
+  new Function('document', 'window', 'navigator', 'setTimeout', 'clearTimeout', 't', scriptMatch[1])(document, window, navigator, setTimeout, clearTimeout, data?.CLIENT_T);
+  if (!sharedFirst) runShared();
+  byId.lifecycle = {
+    document, window, navigator, requests, timers, wrap,
+    advance(ms) { now += ms; for (const timer of timers.filter((t) => !t.cancelled && !t.ran && t.due <= now)) { timer.ran = true; timer.fn(); } },
+    key(key, meta = false, target = byId['rt-sitemap']) {
+      document.activeElement = target;
+      const event = { key, ctrlKey: !meta, metaKey: meta, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() {} };
+      document.dispatch('keydown', event); return event;
+    },
+  };
   return byId;
 }
 
@@ -226,6 +295,188 @@ for (const lang of ['en', 'ja', 'ko']) {
     if (hasProtego) check(`${lang}: Protego ${c.ua} ${c.path}`, res[i].protego === c.protego, `got ${res[i].protego}`);
     else skips++;
   });
+}
+
+// ---------- copy failure and direct retry ----------
+const settleCopy = () => new Promise((resolve) => setImmediate(resolve));
+const copyLabels = {
+  en: ['Copy', 'Copied!', 'Copy failed. Try again.'],
+  zh: ['复制', '已复制！', '复制失败，请重试。'],
+  ja: ['コピー', 'コピー済み！', 'コピーに失敗しました。もう一度お試しください。'],
+  ko: ['복사', '복사됨!', '복사에 실패했습니다. 다시 시도하세요.'],
+};
+for (const [lang, [copy, copied, failed]] of Object.entries(copyLabels)) {
+  const ids = runTool({ lang }), h = ids.lifecycle;
+  ids['rt-copy'].fire('click');
+  check(lang + ': copy sends complete current text', h.requests[0].text === 'User-agent: *\nDisallow: /');
+  h.requests[0].reject(new Error('controlled clipboard rejection'));
+  await settleCopy();
+  check(lang + ': rejected copy remains retryable and reports failure', ids['rt-copy'].textContent === copy && !ids['rt-copy'].disabled && !ids['rt-copy'].classList.contains('copied') && ids['rt-status'].textContent === failed);
+  ids['rt-copy'].fire('click'); h.requests[1].resolve(); await settleCopy();
+  check(lang + ': same-result retry clears failure and reports success', ids['rt-copy'].textContent === copied && ids['rt-status'].textContent === '' && ids['rt-copy'].classList.contains('copied'));
+  h.advance(1500);
+  check(lang + ': success feedback returns to original label', ids['rt-copy'].textContent === copy && !ids['rt-copy'].classList.contains('copied'));
+}
+
+// ---------- real shared shortcuts and copy lifecycle ----------
+function copyState(ids) {
+  return { output: ids['rt-output'].textContent, label: ids['rt-copy'].textContent, disabled: ids['rt-copy'].disabled, copied: ids['rt-copy'].classList.contains('copied'), status: ids['rt-status'].textContent };
+}
+function clickCopy(ids) {
+  try { ids['rt-copy'].fire('click'); return ''; } catch (error) { return String(error); }
+}
+function typeSitemap(ids, text = 'https://example.test/sitemap.xml') {
+  ids['rt-sitemap'].value = text; ids['rt-sitemap'].fire('input');
+}
+for (const [lang, [copy, copied, failed]] of Object.entries(copyLabels)) {
+  for (const mode of ['missing', 'sync throw', 'invalid method']) {
+    const ids = runTool({ lang }), h = ids.lifecycle;
+    let nativeCalls = 0;
+    if (mode === 'missing') {
+      Object.setPrototypeOf(h.navigator, { clipboard: { writeText() { nativeCalls++; throw new Error('prototype native clipboard must remain blocked'); } } });
+      Object.defineProperty(h.navigator, 'clipboard', { configurable: true, value: undefined });
+    } else if (mode === 'sync throw') {
+      h.navigator.clipboard.writeText = () => { throw new Error('controlled synchronous clipboard failure'); };
+    } else h.navigator.clipboard.writeText = null;
+    check(lang + ': ' + mode + ' is handled without synchronous escape', clickCopy(ids) === '');
+    await settleCopy();
+    check(lang + ': ' + mode + ' shows honest failure and keeps original label', ids['rt-status'].textContent === failed && ids['rt-copy'].textContent === copy && !ids['rt-copy'].disabled && !ids['rt-copy'].classList.contains('copied'));
+    check(lang + ': ' + mode + ' never reaches prototype/native clipboard', nativeCalls === 0);
+    Object.defineProperty(h.navigator, 'clipboard', { configurable: true, value: { writeText: (text) => new Promise((resolve, reject) => h.requests.push({ text, resolve, reject })) } });
+    clickCopy(ids); h.requests[0].resolve(); await settleCopy();
+    check(lang + ': ' + mode + ' permits direct retry without editing', ids['rt-copy'].textContent === copied && ids['rt-status'].textContent === '');
+  }
+}
+
+for (const sharedFirst of [false, true]) for (const meta of [false, true]) {
+  const ids = runTool({ sharedFirst }), h = ids.lifecycle;
+  const first = ids['rt-blocks'].children[0];
+  first.querySelector('.rt-ua-select').value = 'Googlebot'; first.querySelector('.rt-ua-select').fire('change');
+  first.querySelector('.rt-rule-path').value = '/private/'; first.querySelector('.rt-rule-path').fire('input');
+  first.querySelector('.rt-add-allow').fire('click'); first.querySelectorAll('.rt-rule-path')[1].value = '/public/'; first.querySelectorAll('.rt-rule-path')[1].fire('input');
+  ids['rt-add-block'].fire('click');
+  const second = ids['rt-blocks'].children[1];
+  second.querySelector('.rt-ua-select').value = '__custom__'; second.querySelector('.rt-ua-select').fire('change');
+  second.querySelector('.rt-ua-custom').value = 'GPTBot'; second.querySelector('.rt-ua-custom').fire('input');
+  typeSitemap(ids);
+  const prefix = (sharedFirst ? 'shared first ' : 'component first ') + (meta ? 'MetaL' : 'CtrlL');
+  const groupCount = ids['rt-blocks'].children.length, ruleCount = h.wrap.querySelectorAll('.rt-rule-row').length;
+  const generated = h.window.generated;
+  h.key('Enter', meta);
+  check(prefix + ': shared modified Enter has no primary action', h.window.generated === generated && h.requests.length === 0);
+  const event = h.key(meta ? 'L' : 'l', meta, first.querySelector('.rt-rule-path'));
+  check(prefix + ': clears text and URL synchronously', h.wrap.querySelectorAll('input[type="text"], input[type="url"]').every((el) => el.value === ''));
+  check(prefix + ': clears result/status and disables copy synchronously', JSON.stringify(copyState(ids)) === JSON.stringify({ output: '', label: 'Copy', disabled: true, copied: false, status: '' }));
+  check(prefix + ': preserves groups/rules/types/User-agent selections', ids['rt-blocks'].children.length === groupCount && h.wrap.querySelectorAll('.rt-rule-row').length === ruleCount && first.querySelector('.rt-ua-select').value === 'Googlebot' && second.querySelector('.rt-ua-select').value === '__custom__' && first.querySelectorAll('.rt-rule-type').map((el) => el.textContent).join('|') === 'Disallow|Allow');
+  check(prefix + ': shared persistence clear runs exactly once', event.defaultPrevented && h.window.cleared.length === 1 && h.window.cleared[0] === 'robots-txt-generator');
+  check(prefix + ': clearing never generates a new result', h.window.generated === generated);
+  clickCopy(ids); check(prefix + ': cleared output cannot send clipboard text', h.requests.length === 0);
+  first.querySelector('.rt-rule-path').value = '/again/'; first.querySelector('.rt-rule-path').fire('input');
+  check(prefix + ': next input resumes generation with retained configuration', ids['rt-output'].textContent === 'User-agent: Googlebot\nDisallow: /again/\nAllow: \n\nUser-agent: *\nDisallow:' && !ids['rt-copy'].disabled);
+  const before = copyState(ids), cleared = h.window.cleared.length;
+  h.key('l', meta, makeEl('input'));
+  check(prefix + ': shortcut outside tool leaves this tool unchanged', JSON.stringify(copyState(ids)) === JSON.stringify(before) && h.window.cleared.length === cleared);
+  h.document.activeElement = first.querySelector('.rt-rule-path');
+  h.document.dispatch('keydown', { key: 'l', ctrlKey: false, metaKey: false, preventDefault() {}, stopPropagation() {} });
+  check(prefix + ': ordinary L leaves result unchanged', JSON.stringify(copyState(ids)) === JSON.stringify(before));
+}
+
+const mutations = {
+  'Sitemap input': (ids) => typeSitemap(ids),
+  'path input': (ids) => { const el = ids['rt-blocks'].querySelector('.rt-rule-path'); el.value = '/new/'; el.fire('input'); },
+  'same path input': (ids) => ids['rt-blocks'].querySelector('.rt-rule-path').fire('input'),
+  'User-agent change': (ids) => { const el = ids['rt-blocks'].querySelector('.rt-ua-select'); el.value = 'Bingbot'; el.fire('change'); },
+  'custom bot input': (ids) => { const block = ids['rt-blocks'].children[0]; block.querySelector('.rt-ua-select').value = '__custom__'; block.querySelector('.rt-ua-select').fire('change'); const el = block.querySelector('.rt-ua-custom'); el.value = 'GPTBot'; el.fire('input'); },
+  'add Allow': (ids) => ids['rt-blocks'].querySelector('.rt-add-allow').fire('click'),
+  'add Disallow': (ids) => ids['rt-blocks'].querySelector('.rt-add-disallow').fire('click'),
+  'remove rule': (ids) => ids['rt-blocks'].querySelector('.rt-remove-rule').fire('click'),
+  'add group': (ids) => ids['rt-add-block'].fire('click'),
+  'remove all groups': (ids) => ids['rt-blocks'].querySelector('.rt-remove-block').fire('click'),
+  'CtrlL': (ids) => ids.lifecycle.key('l'),
+  'MetaL': (ids) => ids.lifecycle.key('L', true),
+};
+for (const [name, mutate] of Object.entries(mutations)) for (const outcome of ['resolve', 'reject']) {
+  const ids = runTool(), h = ids.lifecycle;
+  clickCopy(ids); mutate(ids); const current = copyState(ids);
+  check(name + ': cancels original copy feedback immediately', current.label === 'Copy' && !current.copied && current.status === '');
+  h.requests[0][outcome](outcome === 'reject' ? new Error('controlled stale rejection') : undefined); await settleCopy();
+  check(name + ': late ' + outcome + ' cannot alter current result/feedback', JSON.stringify(copyState(ids)) === JSON.stringify(current));
+}
+for (const oldOutcome of ['resolve', 'reject']) for (const newOutcome of ['resolve', 'reject']) {
+  const ids = runTool(), h = ids.lifecycle;
+  clickCopy(ids); clickCopy(ids);
+  h.requests[1][newOutcome](newOutcome === 'reject' ? new Error('controlled current rejection') : undefined); await settleCopy();
+  const current = copyState(ids);
+  check(oldOutcome + '/' + newOutcome + ': newest request determines feedback', current.label === (newOutcome === 'resolve' ? 'Copied!' : 'Copy') && current.status === (newOutcome === 'resolve' ? '' : 'Copy failed. Try again.'));
+  h.requests[0][oldOutcome](oldOutcome === 'reject' ? new Error('controlled previous rejection') : undefined); await settleCopy();
+  check(oldOutcome + '/' + newOutcome + ': old request cannot replace newer feedback', JSON.stringify(copyState(ids)) === JSON.stringify(current));
+}
+for (const [name, mutate] of Object.entries(mutations)) {
+  const ids = runTool(), h = ids.lifecycle;
+  clickCopy(ids); h.requests[0].resolve(); await settleCopy();
+  const previousTimer = h.timers.at(-1); mutate(ids); const current = copyState(ids);
+  check(name + ': cancels active copied timer and restores feedback', previousTimer.cancelled && current.label === 'Copy' && !current.copied);
+  previousTimer.fn();
+  check(name + ': forcibly delivered old timer stays inert', JSON.stringify(copyState(ids)) === JSON.stringify(current));
+}
+{
+  const ids = runTool(), h = ids.lifecycle;
+  clickCopy(ids); h.requests[0].resolve(); await settleCopy(); const oldTimer = h.timers.at(-1);
+  h.advance(1499); clickCopy(ids); h.requests[1].resolve(); await settleCopy();
+  check('same-button retry cancels old timer and starts one current timer', oldTimer.cancelled && h.timers.filter((timer) => !timer.cancelled && !timer.ran).length === 1);
+  h.advance(1); oldTimer.fn();
+  check('old 1500ms deadline cannot erase second success', ids['rt-copy'].textContent === 'Copied!' && ids['rt-copy'].classList.contains('copied'));
+  h.advance(1499);
+  check('current 1500ms deadline restores original label exactly', ids['rt-copy'].textContent === 'Copy' && !ids['rt-copy'].classList.contains('copied'));
+}
+
+// ---------- v2 page layout (DESIGN.md, kind: generate) ----------
+{
+  const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
+  const scripts = source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)?.[1] || '';
+  const data = serverData();
+  check('v2: the tool root receives the first-screen height directly', /^\s*<div class="rt-wrap">/.test(markup) && /\.rt-wrap[^}]*min-height: 0/.test(source));
+  check('v2: shared generate rail and bounded result are siblings', markup.includes('class="rt-rail zt-rail"') && markup.includes('id="rt-result" class="rt-result"') && source.includes('grid-template-columns: 300px minmax(0, 1fr)') && /\.rt-output[\s\S]*?overflow: auto;[\s\S]*?flex: 1 1 0;/.test(source));
+  check('v2: primary actions and reserved status precede form panels', markup.indexOf('id="rt-add-block"') < markup.indexOf('id="rt-status"') && markup.indexOf('id="rt-copy"') < markup.indexOf('id="rt-status"') && markup.indexOf('id="rt-status"') < markup.indexOf('id="rt-sitemap"') && markup.indexOf('id="rt-sitemap"') < markup.indexOf('id="rt-blocks"') && source.includes('min-height: 2.8em'));
+  const tips = [...markup.matchAll(/<Toggletip id="(rt-tip-[a-z]+)"/g)].map(m => m[1]);
+  check('v2: five unique SSR explanation controls', tips.join('|') === 'rt-tip-block|rt-tip-copy|rt-tip-sitemap|rt-tip-ua|rt-tip-rules' && new Set(tips).size === 5);
+  check('v2: client gets only copy wording, with no tips/runtime translation', !!data && Object.keys(data.CLIENT_T).sort().join('|') === 'copied|copy|copyFailed' && source.includes('define:vars={{ t: CLIENT_T }}') && !/data-i18n|var STRINGS|tips|pageLang/.test(scripts));
+  check('v2: 860px stack and empty result hide, 640px touch targets', source.includes('@media (max-width: 860px)') && source.includes('.rt-result[data-empty="true"] { display: none; }') && source.includes('@media (max-width: 640px)') && source.includes('.rt-add-btn, #rt-copy, .rt-field input, .rt-ua-select, .rt-ua-custom, .rt-rule-path { min-height: 44px; }') && source.includes('.rt-add-rule { min-height: 24px; }'));
+  if (data) {
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      const local = serverData(lang), ids = runTool({ lang });
+      check(lang + ': SSR shapes and client boundary match', JSON.stringify(Object.keys(local.L).sort()) === JSON.stringify(Object.keys(data.L).sort()) && Object.keys(local.L.tips).sort().join('|') === 'block|copy|rules|sitemap|ua');
+      const initial = local.blockHtml('rt-block-1', true);
+      check(lang + ': initial SSR controls contain localized labels and default blocking rule', initial.includes(local.L.blockTitle) && initial.includes(local.L.userAgent) && initial.includes(local.L.customBot) && initial.includes(local.L.addAllow) && initial.includes(local.L.addDisallow) && initial.includes('value="/"') && initial.includes('>Disallow</span>') && local.L.initialNotice.includes('Disallow: /'));
+      ids['rt-add-block'].fire('click'); const newBlock = ids['rt-blocks'].children[1];
+      check(lang + ': SSR template produces localized new controls with matching label IDs', newBlock.querySelector('.rt-block-title').textContent === local.L.blockTitle && newBlock.querySelector('.rt-add-allow').textContent === local.L.addAllow && newBlock.querySelector('.rt-ua-select').getAttribute('id') === 'rt-block-2-ua');
+      ids.lifecycle.key('L', true);
+      check(lang + ': shortcut reveals desktop empty sentence and marks stacked result hidden', ids['rt-result'].dataset.empty === 'true' && !ids['rt-empty'].hidden && ids['rt-output'].hidden);
+      newBlock.querySelector('.rt-add-allow').fire('click');
+      check(lang + ': real subsequent operation restores result', ids['rt-result'].dataset.empty === 'false' && ids['rt-empty'].hidden && !ids['rt-output'].hidden);
+      const facts = runTool({ lang });
+      const block = facts['rt-blocks'].children[0], select = block.querySelector('.rt-ua-select');
+      select.value = '__custom__'; select.fire('change');
+      block.querySelector('.rt-rule-path').value = '  admin/  '; block.querySelector('.rt-rule-path').fire('input');
+      typeSitemap(facts, '  invalid-url  ');
+      check(lang + ': tooltip facts use real trim/fallback/no-validation behavior', facts['rt-output'].textContent === 'User-agent: *\nDisallow: admin/\n\nSitemap: invalid-url');
+      block.querySelector('.rt-remove-rule').fire('click');
+      check(lang + ': a rule-free block keeps the actual empty Disallow line', facts['rt-output'].textContent === 'User-agent: *\nDisallow:\n\nSitemap: invalid-url');
+      block.querySelector('.rt-add-allow').fire('click');
+      check(lang + ': empty added Allow path is preserved', facts['rt-output'].textContent === 'User-agent: *\nAllow: \n\nSitemap: invalid-url');
+      block.querySelector('.rt-remove-block').fire('click');
+      check(lang + ': remove-all reveals empty result and retains optional sitemap field', facts['rt-output'].textContent === '' && facts['rt-result'].dataset.empty === 'true' && facts['rt-sitemap'].value === '  invalid-url  ' && facts['rt-copy'].disabled);
+      const mdx = readFileSync(process.env.ZT_ROBOTS_MDX_PREFIX ? process.env.ZT_ROBOTS_MDX_PREFIX + lang + '.mdx' : join(root, 'src/content/tools/robots-txt-generator', lang + '.mdx'), 'utf8');
+      const fm = /^---\n([\s\S]*?)\n---/.exec(mdx)?.[1] || '', body = mdx.slice(mdx.indexOf('\n---\n', 4) + 5);
+      const steps = [...fm.slice(fm.indexOf('steps:\n'), fm.indexOf('faqItems:')).matchAll(/^  - (".*")$/gm)].map(m => JSON.parse(m[1]));
+      check(lang + ': five bounded plain-text steps replace Usage', steps.length === 5 && steps.every(x => x.length <= 280 && !/<\/?[a-z]/i.test(x)) && steps.join('').length <= 1200 && !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
+      check(lang + ': steps use current Copy and Add Block labels', steps.join('').includes(local.L.copy) && steps.join('').includes(local.L.addBlock));
+    }
+    check('SSR unknown language safely falls back to English', JSON.stringify(serverData('invalid').L) === JSON.stringify(data.L));
+  }
+  const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
+  if (process.env.ZT_ROBOTS_REGISTRATION_PENDING === '1') console.log('PENDING: generate registration is reserved for root adoption; not counted as PASS');
+  else check('v2: registered with the implemented generate page', layouts.includes("'robots-txt-generator': 'generate'"));
 }
 
 if (skips) console.log(`SKIP: ${skips} parser checks (python3${hasPython ? ' without protego' : ' not found'})`);

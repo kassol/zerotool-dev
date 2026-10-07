@@ -21,6 +21,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { load as loadYaml } from 'js-yaml';
+import { toolSteps } from '../src/data/llms.mjs';
+import { parseFragment } from 'parse5';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -302,6 +308,333 @@ for (const [name, text] of localNegatives) {
   equal('1 MB round-trip exact', back.text === big, true);
   console.log('1 MB detect: ' + (t1 - t0).toFixed(1) + ' ms (' + r.hits.length + ' hits, ' + r.entries.length + ' placeholders); restore: ' + (t2 - t1).toFixed(1) + ' ms');
   check('1 MB detect under 1000 ms in Node', t1 - t0 < 1000 * PERF_SLACK, (t1 - t0).toFixed(1) + ' ms');
+}
+
+// ---------- real page copy/clear lifecycle and actual shared shortcuts ----------
+const pageScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
+const labelTable = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?) as const;/)[1] + ')');
+const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
+const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
+if (!shortcut.includes('window.ztPersist.clear(_slug)')) throw Error('Shared keyboard handler extraction failed');
+function pageVM(lang = 'en', shellFirst = false) {
+  const timers = new Map(), copies = [], fallbackCalls = [], cleared = [], tracked = [], windowListeners = {};
+  let now = 0, nextTimer = 0, selected, document;
+  const childrenOf = el => el.children.flatMap(child => [child, ...childrenOf(child)]);
+  const matches = (el, selector) => selector.split(',').some(part => {
+    if (el.tagName.startsWith('#')) return false;
+    const parts = part.trim().split(/\s+(?![^\[]*\])/), last = parts.pop();
+    const attrs = [...last.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)], plain = last.replace(/\[[^\]]*\]/g, '');
+    const tag = /^[\w-]+/.exec(plain), id = /#([\w-]+)/.exec(plain);
+    if ((tag && el.tagName !== tag[0].toUpperCase()) || (id && el.id !== id[1])) return false;
+    if (![...plain.matchAll(/\.([\w-]+)/g)].every(m => el.classList.contains(m[1]))) return false;
+    if (!attrs.every(m => m[2] === undefined ? el.getAttribute(m[1]) !== null : el.getAttribute(m[1]) === m[2])) return false;
+    if (!parts.length) return true;
+    for (let p = el.parentElement; p; p = p.parentElement) if (matches(p, parts.join(' '))) return true;
+    return false;
+  });
+  class Element {
+    constructor(tag = 'div') { Object.assign(this, { tagName: tag.toUpperCase(), children: [], attributes: {}, listeners: {}, id: '', className: '', text: '', value: '', style: {}, disabled: false, checked: false, hidden: false, open: false, parentElement: null }); }
+    setAttribute(k,v) { this.attributes[k] = String(v); if (['id','class','type','value'].includes(k)) this[k === 'class' ? 'className' : k] = String(v); if (['disabled','checked','hidden','open'].includes(k)) this[k] = true; }
+    getAttribute(k) { return this.attributes[k] ?? null; }
+    get classList() { const el = this; return { contains(c) { return el.className.split(/\s+/).includes(c); }, add(c) { if (!this.contains(c)) el.className = (el.className + ' ' + c).trim(); }, remove(c) { el.className = el.className.split(/\s+/).filter(x => x !== c).join(' '); } }; }
+    get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
+    set textContent(value) { for (const c of this.children) c.parentElement = null; this.children = []; this.text = String(value); }
+    set innerHTML(value) { this.textContent = ''; for (const node of parseFragment(String(value)).childNodes) this.appendChild(fromParse5(node)); }
+    appendChild(el) { el.parentElement = this; this.children.push(el); return el; }
+    append(...els) { els.forEach(el => this.appendChild(el)); }
+    removeChild(el) { const i = this.children.indexOf(el); if (i < 0) throw Error('Cannot remove detached node'); this.children.splice(i,1); el.parentElement = null; return el; }
+    contains(el) { return this === el || childrenOf(this).includes(el); }
+    querySelectorAll(selector) { return childrenOf(this).filter(el => matches(el,selector)); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    addEventListener(type,fn) { (this.listeners[type] ??= []).push(fn); }
+    dispatch(type, options = {}) {
+      const event = { type, target: this, bubbles: true, defaultPrevented: false, ...options, preventDefault() { this.defaultPrevented = true; } };
+      for (let el = this; el; el = el.parentElement) { for (const fn of el.listeners[type] || []) fn.call(el,event); if (!event.bubbles) break; }
+      return event;
+    }
+    click() { if (!this.disabled) this.dispatch('click'); }
+    focus() { document.activeElement = this; }
+    select() { selected = this; }
+  }
+  function fromParse5(node) {
+    const el = new Element(node.tagName || node.nodeName);
+    if (node.nodeName === '#text') el.text = node.value;
+    for (const a of node.attrs || []) el.setAttribute(a.name,a.value);
+    for (const c of node.childNodes || []) if (c.nodeName !== '#comment') el.appendChild(fromParse5(c));
+    return el;
+  }
+  const escape = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+  const { tips: _tips, ...T } = labelTable[lang];
+  const categories = vm.runInNewContext('(' + source.match(/const categories = ([\s\S]*?);/)[1] + ')', { L: T });
+  let markup = source.slice(source.indexOf('\n---',4)+4,source.indexOf('<script'));
+  markup = markup.replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '').replace(/\{categories\.map\(\(c\) => \(([\s\S]*?)\)\)\}/, (_,template) => categories.map(c => template
+    .replace(/class=\{`([^`]+)`\}/g, (_,value) => 'class="'+value.replace('${c.id}',c.id)+'"')
+    .replace(/=\{c\.id\}/g,'="'+c.id+'"').replace(/\{c\.name\}/g,escape(c.name))).join(''))
+    .replace(/=\{L\.(\w+)\}/g,(_,key) => '="'+escape(T[key])+'"').replace(/\{L\.(\w+)\}/g,(_,key) => escape(T[key]));
+  document = new Element('#document'); document.body = document.appendChild(new Element('body')); document.activeElement = document.body;
+  const widget = document.body.appendChild(new Element()); widget.className = 'tool-widget'; widget.innerHTML = markup;
+  document.getElementById = id => childrenOf(document).find(el => el.id === id) ?? null;
+  document.createElement = tag => new Element(tag);
+  const options = { fallback: false };
+  document.execCommand = command => { fallbackCalls.push({ command, value: selected?.value }); if (options.fallback instanceof Error) throw options.fallback; return options.fallback; };
+  const context = { document, console, T, atob, btoa, _slug: 'secret-redactor',
+    navigator: { clipboard: { writeText(value) { let resolve,reject; const promise = new Promise((yes,no) => { resolve=yes; reject=no; }); copies.push({value,resolve,reject}); return promise; } } },
+    ztPersist: { clear(slug) { cleared.push(slug); } }, trackTool(...args) { tracked.push(args); },
+    addEventListener(type,fn) { (windowListeners[type] ??= []).push(fn); },
+    setTimeout(fn,delay=0) { const id = ++nextTimer; timers.set(id,{fn,delay,due:now+delay}); return id; }, clearTimeout(id) { timers.delete(id); }
+  };
+  context.window=context; vm.createContext(context);
+  if (shellFirst) vm.runInContext(shortcut,context);
+  vm.runInContext(pageScript,context);
+  if (!shellFirst) vm.runInContext(shortcut,context);
+  const get = id => { const el=document.getElementById(id); if (!el) throw Error('Missing actual ID '+id); return el; };
+  return { get, context, document, copies, fallbackCalls, options, cleared, tracked, timers,
+    input(id,value) { get(id).value=value;get(id).dispatch('input'); },
+    key(key='l',modifiers={ctrlKey:true}) { return document.activeElement.dispatch('keydown',{key,...modifiers}); },
+    pagehide() { for (const fn of windowListeners.pagehide || []) fn(); },
+    advance(ms) { const until=now+ms;for (;;) { const item=[...timers].filter(([,t])=>t.due<=until).sort((a,b)=>a[1].due-b[1].due||a[0]-b[0])[0];if (!item)break;now=item[1].due;timers.delete(item[0]);item[1].fn(); }now=until; },
+    snapshot() { return ['scr-input','scr-reply','scr-output','scr-restored','scr-status','scr-restore-status','scr-unknown','scr-findings-count','scr-copy','scr-copy-restored'].map(id => { const e=get(id); return [id,e.tagName==='TEXTAREA'?e.value:e.textContent,e.className,e.hidden,e.disabled]; }); }
+  };
+}
+const samePage = (name,actual,expected) => equal(name,JSON.stringify(actual),JSON.stringify(expected));
+const flushCopy = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+const copyMessages = {
+  en: 'Could not copy. Select and copy the text manually.',
+  zh: '复制失败。请选中文本后手动复制。',
+  ja: 'コピーできませんでした。テキストを選択して手動でコピーしてください。',
+  ko: '복사하지 못했습니다. 텍스트를 선택하여 직접 복사하세요.'
+};
+const copyCases = [
+  { button:'scr-copy', status:'scr-status', output:'scr-output', expected:'password=[SECRET_1]', action:'redact_copy' },
+  { button:'scr-copy-restored', status:'scr-restore-status', output:'scr-restored', expected:'Use sampleSecret42', action:'restore_copy' }
+];
+function readyPage(lang='en',shellFirst=false) {
+  const p=pageVM(lang,shellFirst);
+  p.input('scr-input','password=sampleSecret42');p.advance(250);
+  p.input('scr-reply','Use [SECRET_1]');p.advance(150);return p;
+}
+const unhandled=[];const onUnhandled=error=>unhandled.push(String(error));process.on('unhandledRejection',onUnhandled);
+for (const lang of Object.keys(copyMessages)) for (const c of copyCases) {
+  const name=lang+'/'+c.button,T=labelTable[lang];
+  const p=readyPage(lang);samePage(name+': actual detection and restore', [p.get('scr-output').textContent,p.get('scr-restored').textContent], ['password=[SECRET_1]','Use sampleSecret42']);
+  p.get(c.button).click();equal(name+': copies full current result',p.copies.at(-1).value,c.expected);
+  const beforeStatus=p.get(c.status).textContent;p.copies.at(-1).resolve();await flushCopy();
+  samePage(name+': current success preserves scan/restore status',[p.get(c.button).textContent,p.get(c.status).textContent],[T.copied,beforeStatus]);
+  p.advance(1399);equal(name+': feedback remains for 1400ms',p.get(c.button).textContent,T.copied);
+  p.advance(1);equal(name+': current feedback expires',p.get(c.button).textContent,T.copy);
+  for (const api of ['reject','missing','throw']) for (const fallback of [false,new Error('stub copy denied'),true]) {
+    const q=readyPage(lang),clipboard=q.context.navigator.clipboard;let thrown;
+    q.options.fallback=fallback;
+    if (api==='missing')q.context.navigator.clipboard=undefined;
+    if (api==='throw')q.context.navigator.clipboard={writeText(){throw Error('API throws synchronously');}};
+    try { q.get(c.button).click();if(api==='reject')q.copies.at(-1).reject(Error('API rejected')); } catch(error) { thrown=error.message; }
+    await flushCopy();equal(name+'/'+api+': failure boundary does not throw',thrown,undefined);
+    samePage(name+'/'+api+': fallback copies only clicked value',q.fallbackCalls,[{command:'copy',value:c.expected}]);
+    equal(name+'/'+api+': fallback removes temporary textarea',q.document.querySelectorAll('textarea').length,2);
+    if (fallback===true) {
+      equal(name+'/'+api+': truthful fallback success',q.get(c.button).textContent,T.copied);
+    } else {
+      samePage(name+'/'+api+': false/throw fallback is visibly failed',[q.get(c.button).textContent,q.get(c.status).textContent,q.get(c.status).className],[T.copy,copyMessages[lang],'tool-status error']);
+      q.context.navigator.clipboard=clipboard;q.get(c.button).click();q.copies.at(-1).resolve();await flushCopy();
+      samePage(name+'/'+api+': same-output direct retry clears own error',[q.get(c.button).textContent,q.get(c.status).textContent,q.get(c.output).textContent],[T.copied,'',c.expected]);
+    }
+  }
+}
+const lifecyclePasses=passes,lifecycleFailures=failures;
+function boundary(p,action) {
+  if(action==='clear')p.get('scr-clear').click();
+  else if(action==='ctrlL'){p.get('scr-input').focus();p.key();p.advance(0);}
+  else if(action==='pagehide')p.pagehide();
+  else if(action==='example')p.get('scr-example').click();
+  else if(action==='input')p.input('scr-input','password=nextValue73');
+  else if(action==='new-redaction'){p.input('scr-input','password=nextValue73');p.advance(250);}
+  else if(action==='reply')p.input('scr-reply','Next [SECRET_1]');
+  else if(action==='new-reply'){p.input('scr-reply','Next [SECRET_1]');p.advance(150);}
+  else if(action==='category'){const toggle=p.document.querySelector('input[data-cat="password"]');toggle.checked=false;toggle.dispatch('change');}
+  else if(action==='too-long'){p.input('scr-input','x'.repeat(1000001));p.advance(250);}
+  else if(action==='empty'){p.input('scr-input','');p.advance(250);}
+  else throw Error('Unknown test boundary '+action);
+}
+for(const lang of Object.keys(copyMessages))for(const c of copyCases){
+  const T=labelTable[lang],name=lang+'/'+c.button;
+  const actions=['clear','ctrlL','pagehide','example','input','new-redaction','category','too-long','empty',...(c.button==='scr-copy-restored'?['reply','new-reply']:[])];
+  for(const action of actions)for(const shellFirst of action==='ctrlL'?[false,true]:[false])for(const result of ['resolve','reject']){
+    const p=readyPage(lang,shellFirst);p.get(c.button).click();const old=p.copies.at(-1);boundary(p,action);
+    const before=p.snapshot(),track=p.tracked.length,fallback=p.fallbackCalls.length;
+    old[result](result==='reject'?Error('old request rejected'):undefined);await flushCopy();
+    samePage(`${name}: late ${result} after ${action}, sharedFirst=${shellFirst}`,p.snapshot(),before);
+    equal(name+': old '+result+' never invokes fallback after '+action,p.fallbackCalls.length,fallback);
+    equal(name+': old '+result+' never reports copied after '+action,p.tracked.length,track);
+  }
+  for(const action of actions)for(const shellFirst of action==='ctrlL'?[false,true]:[false]){
+    const p=readyPage(lang,shellFirst);p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();
+    const timer=[...p.timers.values()].find(t=>t.delay===1400);if(!timer)throw Error('Actual copy feedback timer missing');
+    boundary(p,action);equal(name+': '+action+' removes previous feedback immediately',p.get(c.button).textContent,T.copy);
+    const before=p.snapshot();timer.fn();samePage(name+': already queued old timer after '+action+' has no effect',p.snapshot(),before);
+  }
+  for(const shellFirst of [false,true])for(const modifiers of [{ctrlKey:true},{metaKey:true}])for(const outcome of ['resolve','reject']){
+    const p=readyPage(lang,shellFirst);p.get(c.button).click();const old=p.copies.at(-1);p.get('scr-reply').focus();p.key('L',modifiers);
+    const before=p.snapshot();old[outcome](outcome==='reject'?Error('between keydown and timer'):undefined);await flushCopy();
+    samePage(name+': CtrlL synchronously invalidates copy before zero timer',p.snapshot(),before);
+    equal(name+': CtrlL blocks fallback before zero timer',p.fallbackCalls.length,0);
+    p.advance(0);samePage(name+': shared CtrlL clears inputs and both outputs', ['scr-input','scr-reply'].map(id=>p.get(id).value).concat(['scr-output','scr-restored'].map(id=>p.get(id).textContent)),['','','','']);
+    samePage(name+': shared CtrlL preserves disabled persistence contract',p.cleared,['secret-redactor']);
+  }
+  {
+    const p=readyPage(lang);p.get(c.button).click();const old=p.copies.at(-1);p.get(c.button).click();const newer=p.copies.at(-1);
+    newer.resolve();await flushCopy();const state=p.snapshot();old.reject(Error('older failed'));await flushCopy();
+    samePage(name+': older reject cannot replace newer success',p.snapshot(),state);equal(name+': older reject cannot call fallback',p.fallbackCalls.length,0);
+    p.get(c.button).click();const first=p.copies.at(-1);p.get(c.button).click();p.copies.at(-1).reject(Error('newest fails'));await flushCopy();const failed=p.snapshot();first.resolve();await flushCopy();
+    samePage(name+': older success cannot clear newer error',p.snapshot(),failed);
+    p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();equal(name+': latest direct retry recovers',p.get(c.status).textContent,'');
+  }
+  {
+    const p=readyPage(lang);p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();
+    const oldTimer=[...p.timers.values()].find(t=>t.delay===1400);p.advance(500);p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();
+    oldTimer.fn();equal(name+': old timer cannot reset newest copied label',p.get(c.button).textContent,T.copied);
+    p.advance(900);equal(name+': first deadline retains new copied label',p.get(c.button).textContent,T.copied);
+    p.advance(500);equal(name+': newest deadline resets copied label',p.get(c.button).textContent,T.copy);
+  }
+  {
+    const p=readyPage(lang);p.get(c.button).click();p.copies.at(-1).resolve();await flushCopy();p.get(c.button).click();p.copies.at(-1).reject(Error('retry failed'));await flushCopy();
+    samePage(name+': false fallback after earlier success cannot leave Copied',[p.get(c.button).textContent,p.get(c.status).textContent],[T.copy,copyMessages[lang]]);
+    p.document.body.focus();const before=p.snapshot();p.key();p.advance(0);samePage(name+': CtrlL outside tool leaves current status and data unchanged',p.snapshot(),before);
+  }
+  {
+    const p=readyPage(lang);p.get(c.button).click();p.copies.at(-1).reject(Error('current failure'));await flushCopy();p.get(c.button).click();const retry=p.copies.at(-1);
+    boundary(p,'too-long');const before=p.snapshot();retry.resolve();await flushCopy();samePage(name+': retry success cannot erase later validation state',p.snapshot(),before);
+  }
+}
+for(const lang of Object.keys(copyMessages)){
+  const p=readyPage(lang),T=labelTable[lang];
+  p.get('scr-copy').click();const redacted=p.copies.at(-1);p.input('scr-reply','Next [SECRET_1]');p.advance(150);
+  redacted.resolve();await flushCopy();equal(lang+': editing reply keeps unrelated redacted copy current',p.get('scr-copy').textContent,T.copied);
+  p.get('scr-copy-restored').click();p.copies.at(-1).reject(Error('restore copy failed'));await flushCopy();const restoreError=p.get('scr-restore-status').textContent;
+  p.get('scr-copy').click();p.copies.at(-1).resolve();await flushCopy();equal(lang+': redacted success preserves other copy error',p.get('scr-restore-status').textContent,restoreError);
+  p.get('scr-copy').click();p.copies.at(-1).reject(Error('redacted failed'));await flushCopy();const redactError=p.get('scr-status').textContent;
+  p.get('scr-copy-restored').click();p.copies.at(-1).resolve();await flushCopy();equal(lang+': restored success preserves other copy error',p.get('scr-status').textContent,redactError);
+  const q=pageVM(lang);q.input('scr-input','password=sampleSecret42');q.advance(249);equal(lang+': actual scan waits 250ms',q.get('scr-output').textContent,'');q.advance(1);
+  q.input('scr-reply','Use [SECRET_1] and [UNKNOWN_9]');q.advance(149);equal(lang+': actual restore waits 150ms',q.get('scr-restored').textContent,'');q.advance(1);
+  samePage(lang+': real mapping/unknown/count state', [q.get('scr-output').textContent,q.get('scr-restored').textContent,q.get('scr-findings-count').textContent,q.get('scr-unknown').hidden,q.get('scr-unknown').textContent.includes('[UNKNOWN_9]')], ['password=[SECRET_1]','Use sampleSecret42 and [UNKNOWN_9]','1',false,true]);
+  q.input('scr-input','password=willNeverReturn');q.get('scr-clear').click();q.advance(250);samePage(lang+': queued scan after Clear reads only current empty data',[q.get('scr-input').value,q.get('scr-output').textContent,q.get('scr-restored').textContent,q.get('scr-copy').disabled,q.get('scr-copy-restored').disabled],['','','',true,true]);
+  const toggles=q.document.querySelectorAll('input[data-cat]');samePage(lang+': Clear keeps category settings',toggles.map(t=>t.checked),[true,true,true,true,true,true]);
+  q.input('scr-input','password=nextValue73');q.advance(250);toggles.forEach(t=>{t.checked=false;t.dispatch('change');});
+  samePage(lang+': all detectors off keeps original text and empty mapping',[q.get('scr-output').textContent,q.get('scr-findings-count').textContent,q.get('scr-status').textContent],['password=nextValue73','0',T.statusAllOff]);
+}
+console.log('Page lifecycle: '+(passes-lifecyclePasses)+' passed, '+(failures-lifecycleFailures)+' failed');
+
+samePage('all rejected copy promises handled',unhandled,[]);
+process.removeListener('unhandledRejection',onUnhandled);
+equal('protected engine bytes remain exact',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'cac8d2eecee8cf79150ea3d92f261a0513e98f1a75e761bfa93ce745d42ce7df');
+
+// ---------- v2 page layout ----------
+{
+  const beforePasses = passes, beforeFailures = failures;
+  const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
+  const css = source.match(/<style is:global>([\s\S]*?)<\/style>/)[1];
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  const tipKeys = ['detect', 'example', 'clear', 'input', 'output', 'findings', 'reply', 'restored'];
+  equal('entire page script remains byte-exact after layout', sha(pageScript), '59b4bedf4be3633631cbf7f91f17b31d3fcc52e4c359611f16ad4853982444d4');
+  equal('protected engine is still 11145 bytes', Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), 11145);
+  check('registered convert layout', /'secret-redactor':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+  check('direct flex root has zero minimum height', /^\s*<div class="scr-wrap">/.test(markup) && /\.scr-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+  equal('two shared input/output grids', (markup.match(/class="scr-panels zt-io"/g) || []).length, 2);
+  equal('four shared panes', (markup.match(/\bzt-io-pane\b/g) || []).length, 4);
+  equal('four filling text regions', (markup.match(/\bzt-io-fill\b/g) || []).length, 4);
+  check('desktop stages divide remaining height without viewport-sized children', /\.scr-stage\s*\{[^}]*flex: 1 1 0;[^}]*min-height: 0/.test(css) && /\.scr-panels\.zt-io\s*\{ flex: 1 1 0; min-height: 0; \}/.test(css) && !/100svh|100vh/.test(css));
+  check('controls precede stable status and first input', markup.indexOf('scr-controls') < markup.indexOf('id="scr-status"') && markup.indexOf('id="scr-status"') < markup.indexOf('id="scr-input"'));
+  samePage('all four original actions remain buttons', [...markup.matchAll(/<button\b[^>]*id="([^"]+)"/g)].map(m => m[1]).sort(), ['scr-example', 'scr-clear', 'scr-copy', 'scr-copy-restored'].sort());
+  check('automatic tool has no invented primary execution action', !/btn-primary/.test(markup));
+  samePage('eight build-time tips attach to actual workflow', [...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]).sort(), tipKeys.map(k => 'scr-tip-' + k).sort());
+  check('tips and buttons are outside labels and summaries', [...markup.matchAll(/<(?:label|summary)\b[\s\S]*?<\/(?:label|summary)>/g)].every(m => !/<Toggletip|<button/.test(m[0])));
+  check('tips are excluded from client payload', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = L;/.test(source) && /define:vars=\{\{ T: CLIENT_T \}\}/.test(source));
+  check('no runtime language replacements', !/data-i18n|document\.documentElement\.lang/.test(source));
+  check('output pre elements own keyboard-scroll regions', ['scr-output','scr-restored'].every(id => new RegExp('<pre id="' + id + '"[^>]*zt-io-fill[^>]*tabindex="0"').test(markup)) && /\.scr-editor\.zt-io-fill, \.scr-out\.zt-io-fill\s*\{ min-height: 0; overflow: auto; \}/.test(css));
+  check('findings fixed height scroll region stays keyboard accessible', /id="scr-findings-list"[^>]*tabindex="0" role="region"/.test(markup) && /\.scr-findings-list\s*\{[^}]*height: min\(12svh, 7rem\);[^}]*overflow: auto/.test(css));
+  check('unknown placeholders have visible, reserved, keyboard-scrollable area', markup.indexOf('id="scr-unknown"') > markup.indexOf('id="scr-restored"') && /id="scr-unknown"[^>]*tabindex="0"/.test(markup) && /\.scr-unknown-slot\s*\{ height: 2\.5rem;[^}]*flex: none/.test(css) && /\.scr-unknown\s*\{ height: 100%; overflow: auto;/.test(css));
+  check('status height is reserved and scrollable', /\.scr-wrap #scr-status, \.scr-wrap #scr-restore-status\s*\{ height: 1\.5rem; overflow: auto; flex: none; \}/.test(css));
+  check('shared hidden cannot be overridden by flex/grid', /\.scr-wrap \[hidden\]\s*\{ display: none !important; \}/.test(css));
+  check('860 stacks without hiding either input', /@media \(max-width: 860px\)/.test(css) && /\.scr-result-pane:has\(> \.scr-out:empty\)\s*\{ display: none; \}/.test(css) && !/#scr-(?:input|reply)[^{]*\{[^}]*display:\s*none/.test(css));
+  check('phone fixed editor/status heights and 44px controls', /@media \(max-width: 640px\)/.test(css) && /\.scr-editor\.zt-io-fill, \.scr-out\.zt-io-fill\s*\{ height: 10rem; \}/.test(css) && /height: 3\.75rem/.test(css) && /\.scr-controls \.btn-ghost\s*\{ min-height: 44px; \}/.test(css));
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  equal('all IDs unique', new Set(ids).size, ids.length);
+  const retained = {
+  "en": {
+    "frontmatter": "61bf8ba16857dc3a82e493c149d55ba92fa06af3cf774c88744508a67484e051",
+    "bodyWithoutUsage": "8c148290a37fcd934fb807b0c5ae4ea5477ef5c962b69d3dde99de3e350ad972"
+  },
+  "zh": {
+    "frontmatter": "e259e746cf9a7b44ff4d136bee259ef042b81681751f02989e8ee68c99526149",
+    "bodyWithoutUsage": "70519f9fc856fabae900acfbcff5942ff9fee33b00e04011e68794bc5af4e742"
+  },
+  "ja": {
+    "frontmatter": "2cf32b5fd06d428d2cd644b7cb97d017a7309fdf7558b445712a8bf2d253df55",
+    "bodyWithoutUsage": "ccc5170eb4f95750774101098e910a0153ab9b2a4dd2fa70b414c93224b77ccc"
+  },
+  "ko": {
+    "frontmatter": "b91350503123fb6f53c7440a7335a1a1bd4b809ca67afb3b22795378f74f3e29",
+    "bodyWithoutUsage": "659e3dc2c06cf91d9acd6097009d4a4e2d959d300d7aafbc185dfb08c8004171"
+  }
+};
+  const require = createRequire(import.meta.url);
+  const { compile } = await import(require.resolve('@mdx-js/mdx'));
+  for (const lang of ['en','zh','ja','ko']) {
+    const entry = labelTable[lang], { tips, ...client } = entry;
+    samePage(lang + ': all localized keys match', Object.keys(entry).sort(), Object.keys(labelTable.en).sort());
+    samePage(lang + ': tip keys match actual controls', Object.keys(tips).sort(), tipKeys.slice().sort());
+    for (const key of tipKeys) check(lang + '/' + key + ': plain nonempty tip', typeof tips[key] === 'string' && tips[key].trim().length > 0 && !tips[key].includes('\n'));
+    check(lang + ': client excludes every tip string', !('tips' in client) && Object.values(tips).every(tip => !JSON.stringify(client).includes(JSON.stringify(tip))));
+    const mdx = readFileSync(join(root, 'src/content/tools/secret-redactor', lang + '.mdx'), 'utf8');
+    const [,metadata,body] = mdx.match(/^---([\s\S]*?)---([\s\S]*)$/);
+    const parsed = loadYaml(metadata);
+    check(lang + ': six plain steps fit content limits', parsed.steps.length === 6 && parsed.steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && parsed.steps.join('').length <= 1200);
+    equal(lang + ': FAQ and SEO preserve exact bytes', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
+    equal(lang + ': all non-Usage content including Limits/examples preserves exact bytes', sha(body), retained[lang].bodyWithoutUsage);
+    check(lang + ': Usage section removed', !/<h2>(?:How to use|使用步骤|使い方|사용 방법)<\/h2>/.test(body));
+    equal(lang + ': llms sees six steps', toolSteps(parsed).length, 6);
+    await compile(body); check(lang + ': preserved MDX compiles', true);
+    const p = pageVM(lang);
+    for (const [id,key] of [['scr-example','loadExample'],['scr-clear','clear'],['scr-copy','copy'],['scr-copy-restored','copy']]) equal(lang + ': localized button ' + id, p.get(id).textContent, entry[key]);
+    for (const [id,key] of [['scr-output','outputEmpty'],['scr-restored','restoredEmpty']]) equal(lang + ': localized empty output ' + id, p.get(id).getAttribute('data-empty'), entry[key]);
+    for (const id of ['scr-input','scr-reply']) {
+      check(lang + ': editable input preserved ' + id, p.get(id).tagName === 'TEXTAREA' && !p.get(id).disabled && p.get(id).getAttribute('readonly') === null);
+      samePage(lang + ': sensitive input settings ' + id, ['autocomplete','autocorrect','autocapitalize','spellcheck'].map(k => p.get(id).getAttribute(k)), ['off','off','off','false']);
+    }
+    for (const [selector,key] of [['.scr-mapping-hint','replyHint'],['.scr-review-hint','reviewHint'],['.scr-restored-hint','restoredHint']]) {
+      const hint = p.document.querySelector(selector);
+      equal(lang + ': directly rendered ' + key, hint.textContent, entry[key]);
+      let hiddenAncestor = false;
+      for (let el = hint; el; el = el.parentElement) if (el.hidden || el.tagName === 'DETAILS') hiddenAncestor = true;
+      check(lang + ': ' + key + ' is outside collapsed/hidden content', !hiddenAncestor);
+    }
+    samePage(lang + ': six detector defaults retained', p.document.querySelectorAll('input[data-cat]').map(el => [el.getAttribute('data-cat'),el.checked]), E.CATEGORY_IDS.map(id => [id,true]));
+    equal(lang + ': detector details initially closed', p.get('scr-detectors').getAttribute('open'), null);
+    const initial = p.snapshot();
+    for (const focus of ['scr-input','scr-reply','scr-example']) {
+      p.get(focus).focus();p.key('Enter');samePage(lang + ': CtrlEnter has no invented conversion ' + focus,p.snapshot(),initial);
+    }
+    p.input('scr-input','password=sampleSecret42');p.advance(250);
+    p.input('scr-reply','Use [secret_1], [ UNKNOWN_7 ]');p.advance(150);
+    samePage(lang + ': visible warning retains unknown placeholder', [p.get('scr-restored').textContent,p.get('scr-unknown').hidden,p.get('scr-unknown').textContent], ['Use sampleSecret42, [ UNKNOWN_7 ]',false,entry.restoreUnknown.replace('{list}','[UNKNOWN_7]')]);
+    p.input('scr-reply','[unknown_7]');p.advance(150);
+    samePage(lang + ': unknown lowercase spelling stays literal without uppercase warning', [p.get('scr-restored').textContent,p.get('scr-unknown').hidden], ['[unknown_7]',true]);
+    p.get('scr-clear').click();check(lang + ': Clear hides warning and findings', p.get('scr-unknown').hidden && p.get('scr-findings').hidden);
+    p.input('scr-input','password=sampleSecret42\n' + 'a'.repeat(100000));p.advance(250);
+    equal(lang + ': long displayed redacted result keeps every character',p.get('scr-output').textContent,'password=[SECRET_1]\n' + 'a'.repeat(100000));
+    p.get('scr-copy').click();equal(lang + ': long result copy has no truncation',p.copies.at(-1).value,p.get('scr-output').textContent);p.copies.at(-1).resolve();await flushCopy();
+    p.input('scr-reply', '[SECRET_1]\n'.repeat(2000));p.advance(150);
+    equal(lang + ': long restored result keeps every replacement',p.get('scr-restored').textContent,'sampleSecret42\n'.repeat(2000));
+    p.get('scr-copy-restored').click();equal(lang + ': long restored copy has no truncation',p.copies.at(-1).value,p.get('scr-restored').textContent);p.copies.at(-1).resolve();await flushCopy();
+  }
+  const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));
+  const { transform: parseJs } = await import('esbuild');
+  const compiled = await transform(source, { filename: 'SecretRedactorTool.astro' });
+  check('Astro compiler emits no errors', compiled.diagnostics.filter(d => d.severity === 1).length === 0);
+  await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
+  check('compiled script serializes only client strings', compiled.code.includes('$$defineScriptVars({ T: CLIENT_T })'));
+  check('global stylesheet contains no unresolved global syntax', !compiled.css.join('\n').includes(':global('));
+  check('compiled CSS retains native empty-state selector', compiled.css.join('\n').includes('.scr-result-pane:has(>.scr-out:empty)') || compiled.css.join('\n').includes('.scr-result-pane:has(> .scr-out:empty)'));
+  console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
 }
 
 console.log('PASS ' + passes + '  FAIL ' + failures);
