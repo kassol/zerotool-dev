@@ -441,8 +441,8 @@ eq('v2 tip IDs',bindings.map(m=>m[1]),['isc-tip-input','isc-tip-prefix','isc-tip
 check('v2 tips outside labels and buttons',!/<(?:label|button)\b[^>]*>(?:(?!<\/(?:label|button)>)[\s\S])*?<Toggletip/.test(markupTemplate));
 const contentHashes={
   "en": "4c0183233d07ae080596e0a0ab947c6f1776c6cd6ba47ca57ddc8d057d3ae766",
-  "zh": "7d538535cb8d6d6db25719e283dbc8ff8170356a577d7a635ffc00b37010e92c",
-  "ja": "4e2204376284eddc2e9a7ab20ab9111ec6c515dfa75eac31ce012b361e206c4e",
+  "zh": "dc88d1eaa30a977f9553995f10fb9c735b8d7cdf964ce1c23110dd6bfcf9dc25",
+  "ja": "0e22f8c7171b19ca8a2fbd4dbc9a4d237c6daa9075edee33ad41fecbd88a015e",
   "ko": "7f7927e43e91a49333d53a8fa9ff7dde0a0aab055a6652d0291be7a8b8d6a660"
 };
 const originalStringsHashes={

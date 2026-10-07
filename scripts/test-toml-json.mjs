@@ -267,22 +267,22 @@ check('all FIX behavior checks retained before source guard', checks.length, 658
 check('script changes only remove automatic direction buttons and local Enter', hash(script), 'd34debf090093b6f24274ae9c0fd9d991742b1b74379483df8e6faa6f5f220c1');
 const PROTECTED_CONTENT = {
   "en": {
-    "front": "71968bfa683356d15f79ca91cd6919fd3c1286c93f905c1ea2a0b12a63100cd4",
+    "front": "ff94d4e5fa69c1e155e9b3dcc5d7a10433b982aedacf2f013d56e9c998c592c3",
     "body": "1c7e3aa0d748e0c65ff0f0838f50f001815f32042ef183893443eb7ed0af5ba1",
     "client": "0147e7fae3155f923662d9b19fab221412ee45c377ea4b1a333cf74cb6761dd6"
   },
   "zh": {
-    "front": "fad9924d93e5fc120a3dfb7afa904c924f23209f4c57cfe221c94cb1f6350238",
+    "front": "e974fd2f1f68953bc83982baae59b898d8b844cb9a3481098deff265c7913d85",
     "body": "e5fb1e647d7287a49d7a1e4878f2d26a4a1bb7425ea78178b86cb900bca0f15e",
     "client": "ce84157589a4cecc855e453a6ef11286ea0e9ac16655a79b6e73c12b3809977c"
   },
   "ja": {
-    "front": "5f2abd3729768fd1152e0b63918c01186c9c4ea5f7c71d61f8cab77d83838343",
+    "front": "b7e5fd3cf3ecf1c6578f130189e2e2ecb840f590dee0864f319217bb1defb996",
     "body": "ac77e6344f4e494fc6e6b153a2f6a271558bb90ea9ea878fb0c31a5374c12eb9",
     "client": "b598c715df15b556f5c5f9e654c502440b2e841ec2806085b3bc2d32e76f1c97"
   },
   "ko": {
-    "front": "f08dd142e67ef55fd5c6f4a2b27248c318f8919b55b34fb5a133f88aa7986ea2",
+    "front": "1ffb1d1ea1df8c6f6f61aa6d5d18b90c0366f8f7ebffc210349f00010c977736",
     "body": "1e9f9df733be1ca94940ef2a77c98c3df03818862dbd7d584b9765b93e44c70f",
     "client": "9b11e6abc94f5f81ba963d54d6d79d1cdb186b282d3240a2473ab99fae667b39"
   }

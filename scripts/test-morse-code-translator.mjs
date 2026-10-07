@@ -412,9 +412,9 @@ const v2Start = passes;
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 // All pre-layout MDX except Usage; only notice-position phrases changed to status row.
 const MDX_HASHES = {
-  "en": "3927a65948f43a746619635560a1acb1cd3a192619216acbc24193690caea1b3",
-  "zh": "5a7efdaf764a7845b5eaa0d6167d3a430e7449a072e15fe2c8667287f2a31981",
-  "ja": "087aa70830410a3f2121bf9bd156d77bcb5b88f65e89b807d1324f681aa16e30",
+  "en": "7f675b371c9d3211665249924e3a85587561d0b75c395483b6d846683a7ee3ac",
+  "zh": "7df16f610d643f48259f552e6f9c461d7e8854f849ffabb00cb944c091281d37",
+  "ja": "eb18c4369a1e277cce38ca1f830d45161aa9bcf1aebb0923707a9f82f139caaa",
   "ko": "497067f4d093f36c5c48175cbf91d741d329a5023bfc29116e649fa965f3d968"
 };
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];

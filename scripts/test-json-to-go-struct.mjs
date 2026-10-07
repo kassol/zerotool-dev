@@ -368,7 +368,7 @@ const V2 = {
       "83605ffa621e52d8f9f149407eb31338585f08e6080f82d88c5dd0fcbd39eae7"
     ],
     "ja": [
-      "6dc51f58e8a4e8e2a3c680fc3190d3198da4e3feff2d768cebfb9e25cada594b",
+      "61b690c4821c137032e6495d195bff74be9949a8374b75426a0a01c38bba0125",
       "ae4ac7488bca6e9a4b7d0c5b5e83dee93b46fdb173825bd6694c18f1a9d4e37f"
     ],
     "ko": [

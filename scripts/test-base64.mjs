@@ -483,7 +483,7 @@ process.removeListener('unhandledRejection', onUnhandled);
     "bodyWithoutUsage": "e52ce8e13331215d654d67e7ce82ad112a69bb3c646938d6a0b31f3ed2a945d5"
   },
   "ja": {
-    "frontmatter": "4e8e820ca8f2345feb3147ddde2a7e9d4c8c3b555b9b2b68c5c6535b5e8905f1",
+    "frontmatter": "c1f2426a65e9ae228d12cf495b19a03601a54302c63086f8b9f63ef09dcd82dc",
     "bodyWithoutUsage": "084bbc0f0e26efecb3587c6805a76568ddc3e6a5530f0d8c1ef58af53b9efb4d"
   },
   "ko": {

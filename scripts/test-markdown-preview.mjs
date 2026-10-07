@@ -514,7 +514,7 @@ const PROTECTED_MDX = {
   },
   "zh": {
     "beforeSHA256": "f34b51b8248acd93e3908c21058b46d5f15ca3c10097ea7c6be48128911d9169",
-    "frontSHA256": "1fa3e1e14d0a9c9607764a497be7f10e703008863d8c38a4caf35ee290cfbada",
+    "frontSHA256": "8d31cdc84d3a5603b24fa111d44a9e1f29ed970026b6d652205aecef40265191",
     "bodyWithoutUsageSHA256": "84b3229158d2321c2481aed8f0585fce9d54a37dbf85f4382a5889913429c9c2"
   },
   "ja": {

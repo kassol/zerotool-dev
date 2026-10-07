@@ -327,8 +327,8 @@ eq('v2 exact eight control-bound tip IDs', tips.map(m => [m[1],m[4]]), tipKeys.m
 const contentHashes = {
   en: '8b202f911ad16d3a479bfdaea5cb1d593a347e9912d7a7c26827281f3449a492',
   zh: '48953aa5ba640b5c2a821b75550680a6a6a8f3b95ed01840dbc7680d5b838983',
-  ja: '858c4453437415fe41b8cb5bbf0e26d408641456ba3cdf2b6ae0a49e5bb4d7bc',
-  ko: '837422ee708f9e75e31d339875625104c9c387be7b78c15674efe34534cc3eb5'
+  ja: 'af5b5e9d82c766f6e2df1f54da6836c1037aa03c2ac78e49922dfcef9c6979a1',
+  ko: 'b7389cc3fbdb249ac9f6bc84fce72b0e7bdaa476b9730375ab823a3347576f6b'
 };
 const statusLiterals = {
   en: ['No matches.', '1 match found.', '2 matches found.', '... and 2 more matches.', '0 match found.'],

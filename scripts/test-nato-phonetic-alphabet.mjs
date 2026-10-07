@@ -395,10 +395,10 @@ process.removeListener('unhandledRejection', onUnhandled);
 const v2Start = passes;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const PROTECTED = {
-  "en": "64020ae9359e9a0c6d4ad2d415f464dbb112f5718af10eb521acedd90edbb0bd",
-  "zh": "013b61c85a45b0a437c1b8ac166cf44e7b23c3294ae0a822eae3a2d6decc4de3",
-  "ja": "372c87e3087259e3fc4a8628ce050dd5f1f558891346d3511c80cd6b889c13ab",
-  "ko": "bfe1da91faab12691d45d8606fc7a902381c9e4ab5942088d276780d08ea4ee7",
+  "en": "1f4b85be3871c0aa4207c65751ddb24c7fac38b326baf29a8a2767cfa06426da",
+  "zh": "0244f7bbcbda0738a04ce91c20e2edcc80068659341a70a0c66a7200cdae9d15",
+  "ja": "c4bc4f42434a862bc3d428704905de2a121ed4dcab8d14d8281467a07f6e3a3b",
+  "ko": "a3fe973e258236dd30ccfdbd554672b59e72940c68773f45ae93ab887f163e1e",
   "png": "b944281f5bb9dcfcb363c49b3e73b06ba69bbf7d5a24a9df231e8b3186c4df31"
 };
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];

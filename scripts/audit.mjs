@@ -721,6 +721,56 @@ function checkAboutNetworkClaims() {
   else fail('about_network_claims', 'About page claims contradict the network tool list', issues);
 }
 
+// Published text says where a tool runs in concrete words ("Runs in your browser",
+// "在浏览器中处理", "ブラウザ内で処理", "브라우저에서 처리"). Absolute wording such as
+// "100% client-side" was removed on 2026-10-08; this check stops it from coming back
+// through new tool pages, blog posts or descriptions. Draft blog posts are not built
+// and are skipped.
+const ABSOLUTE_RUN_CLAIMS = [
+  /100\s*[%％]\s*-?\s*(client|browser|local|offline|private|in[- ](your )?browser|客户端|浏览器|本地|离线|クライアント|ブラウザ|ローカル|オフライン|클라이언트|브라우저|로컬|오프라인)/i,
+  /\bentirely (in|on) (your|the) browser/i,
+  /\bfully client[- ]side/i,
+  /\bcompletely (private|client[- ]side|local)/i,
+  /纯浏览器/,
+  /完全在浏览器/,
+  /ブラウザ完結/,
+  /完全ブラウザ/,
+  /完全にブラウザ/,
+  /브라우저에서 완결/,
+  /완전히 브라우저/,
+];
+
+function checkNoAbsoluteRunClaims() {
+  const issues = [];
+  const files = ['src/data/tools.ts', 'src/data/llms.mjs', 'scripts/generate-og.mjs', 'README.md'];
+  const walk = (rel, test) => {
+    const abs = join(ROOT, rel);
+    if (!existsSync(abs)) return;
+    for (const f of readdirSync(abs)) {
+      const child = `${rel}/${f}`;
+      if (statSync(join(ROOT, child)).isDirectory()) walk(child, test);
+      else if (test(f)) files.push(child);
+    }
+  };
+  walk('src/content', (f) => f.endsWith('.mdx'));
+  walk('src/i18n', (f) => f.endsWith('.json'));
+  walk('src/pages', (f) => f.endsWith('.astro'));
+  walk('src/layouts', (f) => f.endsWith('.astro'));
+  walk('src/components', (f) => f.endsWith('.astro'));
+  for (const rel of files) {
+    const text = read(rel);
+    if (rel.startsWith('src/content/blog/') && /^---[\s\S]*?\ndraft:\s*true\b[\s\S]*?\n---/.test(text)) continue;
+    text.split('\n').forEach((line, i) => {
+      for (const re of ABSOLUTE_RUN_CLAIMS) {
+        const m = line.match(re);
+        if (m) issues.push(`${rel}:${i + 1}: "${m[0]}" — state the fact instead (for example "Runs in your browser")`);
+      }
+    });
+  }
+  if (issues.length === 0) pass('no_absolute_run_claims', `no "100% client-side" style wording in published text (${files.length} files)`);
+  else fail('no_absolute_run_claims', 'absolute wording about where tools run', issues);
+}
+
 function checkRedirects() {
   const issues = [];
   const path = 'public/_redirects';
@@ -781,6 +831,7 @@ try {
   checkRedirects();
   checkNoPublishedAgentsMd();
   checkAboutNetworkClaims();
+  checkNoAbsoluteRunClaims();
 } catch (e) {
   fail('fatal', 'audit setup', [e.message, e.stack].filter(Boolean));
 }

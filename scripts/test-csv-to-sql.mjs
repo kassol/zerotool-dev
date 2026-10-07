@@ -471,11 +471,11 @@ const PROTECTED_CONTENT = {
     "body": "ff057f1a7865636ce112c214ba4f05b53b095b2a3ac5fe0ded9d834f7b42b5fa"
   },
   "zh": {
-    "front": "f8726da693f88b77fde9b9c2cc527b3182d9799b7537151c75758844939bdb98",
+    "front": "b1caee849fd3373b60632f0afc26c3fee104daf04143c935b047617477721b1a",
     "body": "e9597a443a530b895aeb24feef4578af830d88329dc3eed9d5c3c6b4e6b98b87"
   },
   "ja": {
-    "front": "7e7ccde867ffb61e27e9136b9da76929b9d851a7039ab20a0a28c4344247a57b",
+    "front": "4278dc31d9b7be30d1dab2d94a7561d22c402d3b61b3d88165430476f65db2ec",
     "body": "57ca09cec2ff6f61ba5276b20011863fca321202c82931bf7cf0fba2884606cd"
   },
   "ko": {

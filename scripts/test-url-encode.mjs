@@ -415,8 +415,8 @@ const tips=['mode','input','plus','swap','clear','copy'];same('v2 six tips on re
 const protection={
   "en": "d59713ac4b021467020e012553322dd1ef2d26bab65e273cfc720a6d8e85454e",
   "zh": "871e2f4695f4714d457fa8ee6b087ed68f163429e2ed6ca0b8824e9d215aa6ad",
-  "ja": "5b7a6ad01e4839a0bd12428c883aa9bdc2c953a24bbf093ff671b5196988384e",
-  "ko": "194d19e2e9ed20423389882aa87922e84e73c2a9a4cc69cbde9a1245fd2f7f3b"
+  "ja": "26f67db661a8e1fdceae759bda290f98bfdf7a3a70e541922636f135a168a2d3",
+  "ko": "d0f2a0d1c0c6c986819ed7982bdf0c7b2207b3e0af8f11bebe51dc12c3c18c52"
 };
 const hash=text=>createHash('sha256').update(text).digest('hex');
 for(const lang of Object.keys(textLabels)){

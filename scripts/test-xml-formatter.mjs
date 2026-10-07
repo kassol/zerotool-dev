@@ -295,22 +295,22 @@ same('all FIX checks retained', [passes, failures], [923, 0]);
 same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var inputEl = document.getElementById('xf-input');"))), 'c33049a8c448c3f537c19ccf15de7979df300024176c9fff04d69387ebbcf0bd');
 const PROTECTED_CONTENT = {
   "en": {
-    "front": "385b0699b747acccce4a18bbc2afd3e74a1b175ec87eff2087e131d5540e3f3d",
+    "front": "efecbff62d07f92c5d91e995b2c48b5fc5e2906eff0e59193c2fbef9c6883634",
     "body": "6fac1ab4c0a89820c95acf2f17c2103ecc43b4027ca3695e56df81876cc19f39",
     "examples": "4f5e9c17e674c931fcb5e7f96d0575f98d0dd52ef50467a23ebaec24b162819b"
   },
   "zh": {
-    "front": "9e172da81cf2a1a4172168406fdfbe1402d0efe592210b869bc76e4e3afc1494",
+    "front": "f63ac3435dfbce0924b762e5195e2370188d6d7f1b92b7e525d4ed773dd666ad",
     "body": "f633e87bb0cde8202eb8a20dedf3b715c8c860e125c726850f53e98c6844dcc9",
     "examples": "7f97ed11b6e218cade84b880385329a596a57ed0200ea4d57ab8c98faed538ad"
   },
   "ja": {
-    "front": "cfb0a2db2e62aeefbac1216eb7ef5b8b5b1646b348128e961c1c2cd1386037ed",
+    "front": "e19f0e2e590c1305f7a7b47dff85b4f28baa595a630f8d5f54e80fb247511185",
     "body": "2edff6bcba7026a690577ea4e00a8c10d0a23384eec1b744bbe8baf7a4d48836",
     "examples": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
   },
   "ko": {
-    "front": "9a4df5b316f64641eb527c4fd2fd135af5766748711099dba6f053e87445d1ab",
+    "front": "836d4baab7c559f4daac4f96554c7ca5dfdd87137aee3a61d139b3699bb13a19",
     "body": "699f68035ef29bd3479a5998cd168e8f02d2af81828621a731efb2afbe0450d2",
     "examples": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
   }

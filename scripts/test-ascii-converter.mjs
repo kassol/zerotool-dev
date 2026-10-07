@@ -474,19 +474,19 @@ process.removeListener('unhandledRejection',onUnhandled);
   eq('protected engine bytes stay exact', sha(source.slice(startIndex, endIndex + '/* ── engine:end ── */'.length)), '0d7a02bf521b2c4efe123aa4e134b2b139e07b645f9820a839211367f84340c2');
   const retained = {
   "en": {
-    "frontmatter": "77382afe2635f5aaa40531c204b2789b06598b54f44becbd66597930ae55d759",
+    "frontmatter": "919c4fe73a485c5ee2ddf2fe38fc067cf58a6dcd31b3fa9303769f74c1eb99f7",
     "bodyWithoutUsage": "814be48c70f8c37fd79b43b06ce5b72062caf8af9897c8fb4826b1a202699b7e"
   },
   "zh": {
-    "frontmatter": "0d8981a44ef25f12dd08334d4ac639937cb8129869d5b90f1bda80798b8a5d76",
+    "frontmatter": "1298b011de621305b3b1d54d0097157990052d188050808bffa1dca9746cd3c3",
     "bodyWithoutUsage": "731f0cc2d546aaeb397be982ca67fe382c050e094d8c9e3ee2223fe468aafc2a"
   },
   "ja": {
-    "frontmatter": "8f9e93c7f817790ef042554ffdc1458e3c6ab1b7fcb76c9827ad080abf586af3",
+    "frontmatter": "207c983f0081b284cb2ce95fd32a8832509d7030a9be2dca56fc4b16f2ce1739",
     "bodyWithoutUsage": "afa19a948523573f78954663e8b82ca2dac40692094359f7d92f9cb8eefc8398"
   },
   "ko": {
-    "frontmatter": "f6a82621cf9fc1bab70091b917e412f7ac954b5faef7a14bed2c782a57d10b4e",
+    "frontmatter": "e505dc3769723c224650d9e4ae313cf26cfc44ef34bd7abc0af9e8dc41fe21b2",
     "bodyWithoutUsage": "549d2a7f0bb8963c6ed52baeea9436ba2c4aa51fff3f124964c793c47401154b"
   }
 };

@@ -478,19 +478,19 @@ console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' pass
   eq('static IDs are unique', new Set(ids).size, ids.length);
   const retained = {
     "en": {
-        "frontmatter": "81a166b05a24a4043e95465fe50e5cdc19233c4f7b18b55041dffd41218e7f72",
+        "frontmatter": "be6d582e53c9ce598920ded1bf047d9061302311bacb94aa8cf5661668a38ccc",
         "bodyWithoutUsage": "4dfdba6ec5c190bad96bbc259810c313997ee334f25f3c7f0e401184a9fe4c38"
     },
     "zh": {
-        "frontmatter": "f60998bd69cf487266b6c7a9b5b922d095ad30cc05120ecee4d74ad474b69f85",
+        "frontmatter": "cfb262a884462ca7ba764480c000d15f1be244c2614809c2c14b39937ffb2d0a",
         "bodyWithoutUsage": "0595cae3db58032f22edc2f3f246e52bbc6d9a97380596a5970bd139380ebea5"
     },
     "ja": {
-        "frontmatter": "98e9c55c0b6141e3696a7da941764ae28b114418a7ed20926d0a393103decf0a",
+        "frontmatter": "639d320c1c7ce999e2eb7dd7662fba378d626477c33df52e312676d6a588fba3",
         "bodyWithoutUsage": "39a61ec9ad495fe89b7317d0384896dac9a872da66ac430f7e225a71d202699c"
     },
     "ko": {
-        "frontmatter": "7ad2ab9ee4848f6809eba977bcd1e625d5af277e6137c5a26c069afd0ed97b66",
+        "frontmatter": "039c65751a2a3f03b625e2dcc2a45442270aaa7024c1b0e79f2c4aeca234863a",
         "bodyWithoutUsage": "e4af6307f057d5ee77b53071e6c68126bbd0baeee4b4b3fba7763ceb2209d19e"
     }
 };

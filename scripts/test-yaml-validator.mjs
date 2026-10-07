@@ -286,7 +286,7 @@ for (const name of ['yv-err-title','yv-err-reason','yv-err-location','yv-err-sni
 const tips = [...markup.matchAll(/<Toggletip id="(yv-tip-[^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 five tips map to visible controls', tips.map(m=>[m[1],m[2],m[3]]).sort(), [['yv-tip-input','inputLabel','input'],['yv-tip-validate','validate','validate'],['yv-tip-clear','clear','clear'],['yv-tip-preview','parsedStructure','preview'],['yv-tip-copy','copyJson','copy']].sort());
 check('v2 existing build-time labels/data interface excludes tips from client payload', source.includes('const { tips: TIPS } = L;') && !/TIPS|labels|\.tips/.test(script) && !/data-[\w-]+=\{[^}]*tips/i.test(markup));
-const MDX_HASHES={en:'631de9ba531aeae2131c00b9564980e70f644ff0ef212d90ab2e4b1be22fea47',zh:'2383aea49676ae9c86843fd72dd6507dc1d76968dbe54ee8801ddc58c650bb77',ja:'90edeceda73422e2965f2d2651849866c309dddf2a74b3df28a7040086660191',ko:'70426f62b6bcc525c81faa4188feeefa66c03fc9fa60552fa48211e752f9a72e'};
+const MDX_HASHES={en:'cbf0d0535bf092872920937948b481aa563ac3b10676e4dedbdb6a3abe8c85d1',zh:'f5244e1e181e8d03728774c24fb31e29906873d0cb5fa6fb4c85cda624402f8c',ja:'636bcd59aa24603c725cf8c1aa0d93377874a454fe391a5d87fb0ea6658415cd',ko:'fab96d585ec7696725a2bfe268368aac4b6ace70052c9139c56f2bf7c8e78cd0'};
 function leaves(value,path=''){return Object.entries(value).flatMap(([key,item])=>typeof item==='object'?leaves(item,path+key+'.'):[[path+key,item]]);}
 const enLeaves=Object.fromEntries(leaves(labels.en));
 for(const lang of Object.keys(labels)) {

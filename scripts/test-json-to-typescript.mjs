@@ -305,9 +305,9 @@ for (const [id, about, key] of tipMap) check('v2 control-bound tip ' + id, layou
 // frontmatter excludes delimiter lines and includes its final LF; body starts just after the closing delimiter LF.
 const protectedContent = {
   en: ['33f065bb48a85210c08068f16b5f67d3731f2adcf8e11bf8102240b1e12f760e', '355632c69f03febe913c35eb53def30ef7f7ffe1749f1d972293703e14d3666f'],
-  zh: ['7780dbf80da4c955fd59cb0d4023dfee471b9ff987391d5e3cdd32d78ee40220', 'd2be61f91451c0f7c591dfa9ee383580556ad4de4b43b17ff862c14e8a95608f'],
-  ja: ['4cbafb9c681c5bd680f6f8fb7e20d16e522a9f698092b87830a2603d7a4fa16c', '6e1f57024bba9b14603dd369125e79784b8d5cf83a0e72d4d65f454d3d509870'],
-  ko: ['d4f80ef461dc0bbab31937b5a0dc6d06be224a6cd4111954d932a3de59cf6dda', '92fcb11d13155416ad1bd12b0372c35e955a24b360ef51f0608d36711a0696c5'],
+  zh: ['6797bc7035b8ccb426ab901f63e98ac4b6c9bccc0cba7137eef81dd0b5bf98c2', 'd2be61f91451c0f7c591dfa9ee383580556ad4de4b43b17ff862c14e8a95608f'],
+  ja: ['fe4f36ba127b4db5b75e65b137b07ca89ab5e439842a7dd352bf3341ef8fad75', '6e1f57024bba9b14603dd369125e79784b8d5cf83a0e72d4d65f454d3d509870'],
+  ko: ['2d51f96f730c0214d083ace66816faa08df5ce28757e9ef36a87ebd4c3b34474', '92fcb11d13155416ad1bd12b0372c35e955a24b360ef51f0608d36711a0696c5'],
 };
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const L = pageLabels[lang], p = page(lang), rootEl = p.doc.querySelector('.jtt-wrap');

@@ -461,7 +461,7 @@ eq('privacy notice directly after output',markup.includes('<p class="efp-privacy
 const tipMap={input:['envContent','input'],parse:['parse','parse'],clear:['clear','clear'],export:['exportJson','download'],results:['results','results']};
 eq('five tips only',[...markup.matchAll(/<Toggletip\b/g)].length,5);
 for(const[id,[about,key]]of Object.entries(tipMap))eq('tip binding '+id,markup.includes('id="efp-tip-'+id+'" lang={lang} about={T.'+about+'}>{TIPS.'+key+'}</Toggletip>'),true);
-const protectedContent={"en": "09ebde0f4d37ad0fcc6984377da8b3eb04c4ec0f44d5d8cee782c71eaf7d7c6c", "zh": "2891443b2ce83c0aa91e8ffeb44ad8bd73899bcb6a4dad946cb967982a46ea9a", "ja": "cbaf410c6e9d129f0d275629de666c9afc684dc4aa855fef7e672815ccac51b0", "ko": "713bcbd3e448d02968c39c13919bfd7b41d0fc705e5e3e414fcfb21c062961f7"};
+const protectedContent={"en": "a4a30fda6c1fa849fadfa53cb00d7b3228c64eb59400eb08381f371f0fa53536", "zh": "f7d02094cff44cbe4d7662d2b85aadffc98c48c8750bf91ab5b04df9363c6560", "ja": "12eb15d76ffbbd026c75c1456157778cb4beff451bda0b903a0b1244a08d11b1", "ko": "c0af50ef4610f5cede5a0c6036a7719e1da6a0c65272be5f80738f6a6d9275e0"};
 for(const lang of ['en','zh','ja','ko']){
   const T=pageStrings[lang],h=fullPage(lang,'shared-after');
   eq(lang+' tips keys',Object.keys(T.tips).sort(),['input','parse','clear','results','download'].sort());

@@ -361,9 +361,9 @@ for(const [name,begin,end,expected] of [
 const v2Pass=passes,v2Fail=failures;
 const frozen={
   "contentHashes": {
-    "en": "01644ec3717b79108baa8350e6397beab8f2484711f52fb868cca16c70aa9abd",
+    "en": "9a0a06ee58a556a8fb61f9b78b13ba79105d2d3d221894eeb59f5f2ba8f55cea",
     "zh": "1480858fbb95e362639978fe04beae693a58e4268b7e7e7112fd85923677afe4",
-    "ja": "304177644e75356eb702634bca0e105ca019f63ffe28f561afda669645e325be",
+    "ja": "f7efb11a423a250867aec6e95db057ab42bd1c235c2f14c7030a887f92e93da7",
     "ko": "cafea9ac7aa244a2f02b03971ee1fc4ace070a0d4e5d4876193cbdfabe328574"
   },
   "scriptHash": "e41610c910b4d235cbb3b5bd343c3d665f8906860fd889d2531c40a0d9dfb97a",

@@ -393,10 +393,10 @@ eq('v2 excludes all tips and unselected languages from client strings', source.i
 const tips = [...markup.matchAll(/<Toggletip id="(diff-tip-[^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 seven tips map to actual controls', tips.map(m => [m[1], m[2], m[3]]).sort(), ['compare', 'swap', 'clear', 'view', 'original', 'modified', 'results'].map(key => ['diff-tip-' + key, key === 'results' ? 'result' : key, key]).sort());
 const MDX_HASHES = {
-  en: 'c01a6e557e98bf31518a470a000eeb7fc9108bde70f9ad946e6d6db36b2f8924',
-  zh: '49b0fa6cfdf710282db7ee7182374b267a8b27c51473f96cc1239e9eecc34996',
-  ja: '3ba2eb7eeb4bb40f5ed48a6e40eb8d2dfd09feafce3f08706461d52bcc750021',
-  ko: '9dfbdcea5874056b6404a7b176157c8b219a9bdc8afdc28a21cdd7159e0409c7'
+  en: '6dda3bf7222a9cb937d5c17d04b152d4a27cf421945b29fc20cb6ae2ddb21805',
+  zh: '36f7ba7b4fdf92de05a83b808558813f8b80a8f0ff0314b096e8252b498de6b7',
+  ja: '88881c0a182f77bd5a5bae00d8acd1ae198c46a094f9b168e5ef56c192543e39',
+  ko: 'c1a0817c2273673a38a942cc2d3166a1ae129b646ee9e3e3c86f2134505182cc'
 };
 function leaves(value, path = '') { return Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? leaves(item, path + key + '.') : [[path + key, item]]); }
 const enLeaves = Object.fromEntries(leaves(STRINGS.en));

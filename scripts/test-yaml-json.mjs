@@ -225,28 +225,28 @@ check('protected conversion core byte count', Buffer.byteLength(algorithm), 1053
 check('early-input recovery remains byte exact', hash(script.slice(script.indexOf('    /* ── Page load ──'))), '0c9b713aae6626572bb9c231584d998724c617f57ff733a63505bc73cd2ba2c1');
 const PROTECTED_CONTENT = {
   "en": {
-    "front": "8bdc7260919bb258d7a4904e817fa3d387878680f4cfda2f883887fe84ea655f",
+    "front": "76ce0fd3238f88aa1f8e4d195b5e81261caaf2c8082572534e96df84b737b29e",
     "body": "b6618f780b59af4f313339d99da9b708e9012c8abb02232b0005dd4d71e03d9e",
     "examples": "dc8a3749daa5a54472b4bbf1b5816465711814aa00e110bc5d275f4780470f6a",
     "exampleCount": 9,
     "client": "f7bfed8034cf52c218ad2f9a09ae46a7de752832da535249f9dd4359ab903a5e"
   },
   "zh": {
-    "front": "3df129434aac0304bed0270c531594dffcba4631229ac6247be369fa66f8f8ba",
+    "front": "2c58a66ea5a9dfe5ab64496252e7a753e865a4ee094319b86724846ca46b4394",
     "body": "983d1dd8b8c241d7a9d1437b97fd138ad1c101e8a33aefa71d11012c599ede77",
     "examples": "9cbb33aebc8f22764b3e8892e1ae0fecfc528017ea6858c3ee8ce73b38e3eacd",
     "exampleCount": 4,
     "client": "f7e6852272fc75dd30701f9e5a2d799772cdf3624fd7eb55072e34260e7f90cf"
   },
   "ja": {
-    "front": "4709dcd5c7240439326d3f4bfcac64c8c49d67bdb0291919494a2bfc54798168",
+    "front": "77d64081771ecef044d22f040d3899246f97d73b27731e8de146fcd76818871b",
     "body": "ab960bee3913332d9efdb9e8c259abd87a43ceaef2255c5aab55e30721acd8e1",
     "examples": "6fbfda14c8e7768fa2ea525522c315173aef9752c0b35c0f64f6bc676df2d034",
     "exampleCount": 2,
     "client": "14f5001dc9ac82918950e493c93514306bbdb0eb32f0e4a4b5bfc28437cf0391"
   },
   "ko": {
-    "front": "047f595bb6ca6c995474ba1345f30b593e4853d3f177157b228632cefe3accbc",
+    "front": "e24eaea186c847b65a3c9b3b67a68d61f99c6b1805aaa05960de19fbd5b552be",
     "body": "2ebcf8e7fc8ed5fb1811f8e54530b634be0f3886d950db83c3ac5aad8cfddb1d",
     "examples": "6fbfda14c8e7768fa2ea525522c315173aef9752c0b35c0f64f6bc676df2d034",
     "exampleCount": 2,

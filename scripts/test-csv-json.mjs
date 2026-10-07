@@ -306,19 +306,19 @@ const ORIGINAL_CLIENT_STRINGS = {
 };
 const PROTECTED_CONTENT = {
   "en": {
-    "front": "3910fb8417a40efc6fa4eef7c3fed47f516b027530e55d0efb0d25aa72031ef3",
+    "front": "522431c694597be3d9613ea7408143cb31e2153c05924bdf8e8855039ca67c8d",
     "body": "0e45b434f9f82277ce1698820f749180e01fc8fc71799263b103f2920aa0f146"
   },
   "zh": {
-    "front": "41e6c023aee2487682e47ff48bb71d339aafb01f8d4237aaf3961a1a2eaa8be9",
+    "front": "cadef054c24a5bb3702149ac3166c673fd77b21fc1233f8e8f861cb0997075e4",
     "body": "5f15a4792b9cae1fa12b708b40786ceedaa731812d8d46091bfaeb995906cf69"
   },
   "ja": {
-    "front": "90f918a7f23be3f46e2eb9996057cc9541ec8dde8c9a95dae12bd8ca4e345b2a",
+    "front": "c09bf22f93d2dc526c5d1385eb60b0391dc11fa853d4117f6796d9895a9bf724",
     "body": "2a67a06843448e370a49d80369c59e6352e7548e7f63965e96f9600b9eaa5f8c"
   },
   "ko": {
-    "front": "d6d08d3dff5737d30fd730f5af66736571308de08783ebd373134cd880742be4",
+    "front": "5cbe47329c4b278a884f2f42d01c32655ae6058ab8ce5e9f6f22871a04baf282",
     "body": "12a930d77ec1895959b39ae28f045857973ffb0dcd6782248549975b0c7735ca"
   }
 };

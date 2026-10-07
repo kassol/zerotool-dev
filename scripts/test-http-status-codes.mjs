@@ -108,8 +108,8 @@ check('v2 no tip button nested in an input label',!/<label\b[^>]*>[\s\S]*?<Toggl
 const contentHashes={
   "en": "b6018857ba58bb8cd64f150b5a532bc54a552804da4a83387f72621fc7e9a33a",
   "zh": "eb3d4a4d96899c81208412445847c686882a51df3183c92af171e226fb03fea0",
-  "ja": "095cdf4b24c5eaef7736f8cffb4491bcaa0692e6ff19b4ec4e1886613200090b",
-  "ko": "ce5f5f8e1cd084c815b8f8ea28bdf0470347fc3df436932bef4bd41553bb96a6"
+  "ja": "91af250fdbc57177618bbff251204d39214a1bdab16ad55ba5aa4a3ea2fbad44",
+  "ko": "7bac6043c3fd139d430fe71b6c0cd4195ca54f33ede4f87313b18a71459492d6"
 };
 const {compile}=await import('@mdx-js/mdx');
 for(const lang of ['en','zh','ja','ko']){
