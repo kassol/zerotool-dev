@@ -597,6 +597,7 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
     let timers = [];
     const sandbox = {
       console, JSON, Math, Number, String, Object, Array, Promise, Error, RegExp, Map, Set, Intl, Symbol, isNaN, parseInt, parseFloat,
+      Uint8Array, ArrayBuffer, TextDecoder,
       exports: {}, module: { exports: {} }, require: (n) => req(n),
       setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {},
       navigator: { clipboard: { writeText: (t) => { clipboard.push(t); return Promise.resolve(); } } },
@@ -674,6 +675,85 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
     const mdx = readFileSync(join(root, 'src/content/tools/markdown-table-generator', lang + '.mdx'), 'utf8');
     const quoted = { en: '"JSON error at line 1, column 10"', zh: '「第 1 行第 10 列」', ja: '「1 行 10 列目」', ko: '「1행 10열」' }[lang];
     check(lang + ' mdx: the limits quote the line and column the page gives', mdx.includes(quoted));
+  }
+
+  // Open file and drag and drop (2026-10-08, W4). Before: the import area took pasted text only.
+  // Now a file is read as strict UTF-8 (the same checks as Markdown to Word's "Open .md"): a GBK,
+  // Shift_JIS or UTF-16 file or a binary file is refused with the byte position and the import box
+  // keeps its text; a good file goes into the import box and is imported, with the format taken
+  // from the file name (.tsv, .json, .md, .html) and Detect for .csv and other names.
+  const m2w = readFileSync(join(root, 'src/components/tools/MarkdownToWordTool.astro'), 'utf8');
+  check('firstBadUtf8 is the same as in json-formatter-engine.js', fnSrc(source.slice(e), 'firstBadUtf8') !== '' && fnSrc(source.slice(e), 'firstBadUtf8') === fnSrc(jsonEngine, 'firstBadUtf8'));
+  check('decodeTextFile is the same as in MarkdownToWordTool.astro', fnSrc(source.slice(e), 'decodeTextFile') !== '' && fnSrc(source.slice(e), 'decodeTextFile') === fnSrc(m2w, 'decodeTextFile'));
+  const fileOf = (name, bytes) => ({ name, size: bytes.length, arrayBuffer: () => Promise.resolve(Uint8Array.from(bytes).buffer) });
+  const utf8 = (s) => [...Buffer.from(s, 'utf8')];
+  const settle = () => new Promise((r) => setImmediate(r));
+  const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = STRINGS[lang];
+    const open = async (p, file) => {
+      const input = p.el('mdt-file');
+      input.files = [file];
+      input.dispatch('change');
+      await settle(); await settle();
+      for (let i = 0; i < 5; i++) p.el('mdt-import').dispatch('noop');
+    };
+    const cases = [
+      ['people.csv', utf8('name,city\nAda,London'), 'auto', '| Ada  | London |'],
+      ['\uFEFF.csv', [0xef, 0xbb, 0xbf, ...utf8('name,city\nAda,London')], 'auto', '| name | city   |'],
+      ['data.tsv', utf8('name\tcity\nAda\tLondon'), 'tsv', '| Ada  | London |'],
+      ['data.json', utf8('[{"name":"Ada","city":"東京"}]'), 'json', '| Ada  | 東京 |'],
+      ['table.md', utf8('| name | city |\n| --- | --- |\n| Ada | London |'), 'markdown', '| Ada  | London |'],
+      ['table.html', utf8('<table><tr><th>name</th><th>city</th></tr><tr><td>Ada</td><td>London</td></tr></table>'), 'html', '| Ada  | London |'],
+    ];
+    for (const [name, bytes, format, row] of cases) {
+      const p = runPage(lang);
+      await open(p, fileOf(name, bytes));
+      p.el('mdt-import').dispatch('noop');
+      const out = p.el('mdt-output').value;
+      check(lang + ' page: opening ' + name + ' imports it', out.includes(row) && !p.el('mdt-copy').disabled, JSON.stringify([out, p.el('mdt-status').textContent]));
+      eq(lang + ' page: opening ' + name + ' sets Format', p.el('mdt-format').value, format);
+      check(lang + ' page: opening ' + name + ' puts the text in the import box', p.el('mdt-import').value === Buffer.from(bytes).toString('utf8').replace(/^\uFEFF/, ''));
+    }
+    const bad = [
+      ['GBK', 'gbk.csv', [0x6e, 0x61, 0x6d, 0x65, 0x0a, 0xd5, 0xc5, 0xc8, 0xfd], 'fileNotUtf8', 5],
+      ['Shift_JIS', 'sjis.csv', [0x61, 0x0a, 0x93, 0x8c, 0x8b, 0x9e], 'fileNotUtf8', 2],
+      ['a PNG', 'image.csv', PNG, 'fileBinary', 8],
+      ['UTF-16LE with a BOM', 'u16.csv', [0xff, 0xfe, 0x61, 0x00], 'fileUtf16', 0],
+    ];
+    for (const [label, name, bytes, code, offset] of bad) {
+      const p = runPage(lang);
+      p.importText('name,age\nAda,36');
+      const before = [p.el('mdt-import').value, p.el('mdt-output').value];
+      await open(p, fileOf(name, bytes));
+      const want = (L[code] || 'missing ' + code).replace('{offset}', offset);
+      eq(lang + ' page: ' + label + ' file is refused with its byte position', [p.el('mdt-status').textContent, p.el('mdt-status').className.includes('error')], [want, true]);
+      eq(lang + ' page: ' + label + ' file leaves the import box and the output alone', [p.el('mdt-import').value, p.el('mdt-output').value], before);
+    }
+    for (const key of ['fileNotUtf8', 'fileBinary']) check(lang + ': ' + key + ' has {offset}', (L[key] || '').includes('{offset}'));
+    // The limits quote the message for a legacy-encoded CSV whose first line is name,city:
+    // GBK 张 D5 C5, Shift_JIS 佐 8D B2, EUC-KR 김 B1 E8 all stop at byte 10.
+    {
+      const legacy = { en: [0xd5, 0xc5], zh: [0xd5, 0xc5], ja: [0x8d, 0xb2], ko: [0xb1, 0xe8] }[lang];
+      const p = runPage(lang);
+      await open(p, fileOf('legacy.csv', [...utf8('name,city\n'), ...legacy]));
+      const st = p.el('mdt-status').textContent;
+      check(lang + ' page: a legacy-encoded CSV stops at byte 10', st === (L.fileNotUtf8 || '\u0000').replace('{offset}', 10), st);
+      const mdx = readFileSync(join(root, 'src/content/tools/markdown-table-generator', lang + '.mdx'), 'utf8');
+      const quote = { en: 'byte 10 (counting from 0) is not valid UTF-8', zh: '第 10 个字节（从 0 数）不是有效的 UTF-8', ja: '10 バイト目（0 から数えて）が UTF-8 として正しくなく', ko: '10번째 바이트(0부터 셈)가 올바른 UTF-8이 아니어서' }[lang];
+      check(lang + ' mdx: the limits quote the page message', mdx.includes(quote) && (L.fileNotUtf8 || '\u0000').replace('{offset}', 10).includes(quote));
+    }
+    for (const key of ['fileOpen', 'fileUtf16', 'fileTooBig', 'fileError']) check(lang + ': ' + key + ' is set', typeof L[key] === 'string' && L[key].length > 0);
+    // Dropping a file anywhere on the tool opens the Import tab and imports it.
+    const p = runPage(lang);
+    p.el('.mdt-wrap').dispatch('drop', { dataTransfer: { types: ['Files'], files: [fileOf('drop.tsv', utf8('a\tb\n1\t2'))] } });
+    await settle(); await settle();
+    check(lang + ' page: a dropped file is imported', /\| 1 +\| 2 +\|/.test(p.el('mdt-output').value) && p.el('mdt-format').value === 'tsv', p.el('mdt-output').value);
+    eq(lang + ' page: a dropped file opens the Import tab', p.tabs.map((t) => t.attrs['aria-selected']), ['false', 'true']);
+    // A drop without files (text dragged from elsewhere) is left to the browser.
+    let prevented = false;
+    p.el('.mdt-wrap').dispatch('drop', { dataTransfer: { types: ['text/plain'], files: [] }, preventDefault() { prevented = true; } });
+    check(lang + ' page: a text drop is not taken over', !prevented);
   }
 }
 
