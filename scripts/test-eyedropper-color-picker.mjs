@@ -133,6 +133,84 @@ const invalid = {
 for (const [s, code] of Object.entries(invalid)) eq('rejects ' + JSON.stringify(s), E.parseColor(s).error, code);
 eq('trailing semicolon from a CSS declaration is ignored', engine8('#1a73e8;'), [26, 115, 232, 255]);
 
+// ── 1b. A rejected value gets its reason and position ──
+// Before 2026-10-07 every rejected value showed the same sentence ("Not a color this tool reads…"),
+// whether it was a 5-digit hex, rgb() with two values or an unknown color() space. diagnoseColor()
+// sits outside the protected engine block (between `diagnose:start` / `diagnose:end`) and runs
+// only after parseColor() has rejected the value.
+const D0 = source.indexOf('/* ── diagnose:start ── */'), D1 = source.indexOf('/* ── diagnose:end ── */');
+check('diagnoseColor block exists outside the engine block', D0 > s1 && D1 > D0);
+const diagnose = D0 > s1 && D1 > D0
+  ? new Function(source.slice(s0, s1) + source.slice(D0, D1) + '\nreturn diagnoseColor;')()
+  : () => ({ error: 'missing' });
+const reasons = {
+  '#12345': { error: 'hexLength', n: 5 }, '12345': { error: 'hexLength', n: 5 }, '#1234567': { error: 'hexLength', n: 7 },
+  '#1a73eg': { error: 'hexChar', ch: 'g', pos: 7 }, '#1A7 3E8': { error: 'hexChar', ch: ' ', pos: 5 },
+  '#１２': { error: 'hexChar', ch: '１', pos: 2 },
+  '＃１ａ７３ｅ８': { error: 'fullWidth', value: '#1a73e8' }, 'ｒｇｂ(1 2 3)': { error: 'fullWidth', value: 'rgb(1 2 3)' },
+  'blurple': { error: 'unknown' }, 'zz': { error: 'unknown' },
+  'rgb(10%, 20, 30%)': { error: 'fnValue', fn: 'rgb', value: '20' }, 'rgb(1 2 3, 4)': { error: 'fnArgs', fn: 'rgb' },
+  'rgb(1, 2)': { error: 'fnArgs', fn: 'rgb' }, 'rgb(1 2 3 / 0.5 / 1)': { error: 'fnArgs', fn: 'rgb' },
+  'rgb(none, 0, 0)': { error: 'fnValue', fn: 'rgb', value: 'none' }, 'rgb(1deg 2 3)': { error: 'fnValue', fn: 'rgb', value: '1deg' },
+  'hwb(200, 10%, 20%)': { error: 'fnArgs', fn: 'hwb' }, 'oklch(50%, 0.1, 20)': { error: 'fnArgs', fn: 'oklch' },
+  'hsl(1px 2% 3%)': { error: 'fnValue', fn: 'hsl', value: '1px' }, 'hsl(abc 1% 2%)': { error: 'fnValue', fn: 'hsl', value: 'abc' },
+  'hsl(214 82% 51% / x)': { error: 'fnValue', fn: 'hsl', value: 'x' },
+  'color(rec2020 1 0 0)': { error: 'space', value: 'rec2020' }, 'color(foo 1 2 3)': { error: 'space', value: 'foo' },
+  'color(display-p3 1 0)': { error: 'fnArgs', fn: 'color' }, 'rgb(1 2 3) x': { error: 'trailing', fn: 'rgb', value: 'x' },
+  'rgb(1 2 3': { error: 'paren', fn: 'rgb' }, 'url(#a)': { error: 'unsupportedFn', fn: 'url' },
+  'lab(50% 20 30)': { error: 'unsupportedFn', fn: 'lab' }, 'oklab(0.5 0.1)': { error: 'fnArgs', fn: 'oklab' },
+};
+for (const [s, want] of Object.entries(reasons)) {
+  check('engine rejects ' + JSON.stringify(s), !!E.parseColor(s).error);
+  eq('reason for ' + JSON.stringify(s), diagnose(s), want);
+}
+// Each reason has a localized message whose placeholders the diagnosis fills.
+const reasonKey = (code) => 'err' + code[0].toUpperCase() + code.slice(1);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  for (const want of Object.values(reasons)) {
+    const key = want.error === 'unknown' ? 'invalid' : reasonKey(want.error);
+    const msg = STRINGS[lang][key];
+    check(`${lang} has message ${key}`, typeof msg === 'string' && msg.length > 0);
+    const unfilled = (String(msg).match(/\{(\w+)\}/g) || []).filter((ph) => want[ph.slice(1, -1)] === undefined);
+    eq(`${lang} ${key} placeholders are all filled`, unfilled, []);
+  }
+}
+// Random edits of valid colors: whenever the engine rejects one, the diagnosis names a known reason.
+{
+  let seedD = 7, unknownCount = 0, total = 0, badCode = null;
+  const r = () => { seedD = (seedD * 1103515245 + 12345) >>> 0; return seedD / 4294967296; };
+  const alphabet = '#0123456789abcdefgxyz(),/% .-degturnoklchrgbhslwbcolordisplay-p3';
+  const codes = new Set(Object.values(reasons).map((w) => w.error));
+  for (let i = 0; i < 4000; i++) {
+    const base = valid[Math.floor(r() * valid.length)].split('');
+    const op = Math.floor(r() * 3), at = Math.floor(r() * (base.length + 1)), ch = alphabet[Math.floor(r() * alphabet.length)];
+    if (op === 0) base.splice(at, 1); else if (op === 1) base.splice(at, 0, ch); else base[at] = ch;
+    const s = base.join('');
+    if (!s.trim() || !E.parseColor(s).error) continue;
+    total++;
+    let d;
+    try { d = diagnose(s); } catch (e) { d = { error: 'threw ' + e.message }; }
+    if (!codes.has(d.error)) badCode = badCode || [s, d];
+    if (d.error === 'unknown') unknownCount++;
+  }
+  check(`random rejected edits (${total}) get a known reason`, badCode === null, JSON.stringify(badCode));
+  check(`most random rejected edits get a specific reason (${unknownCount} / ${total} unknown)`, unknownCount < total * 0.2);
+}
+// The hex messages and codes are the ones Color Palette Generator already uses: same code, count
+// and position for the same text, and the same message wording in every language.
+{
+  const cpalSrc = readFileSync(join(root, 'src/components/tools/ColorPaletteGeneratorTool.astro'), 'utf8');
+  const cpal = new Function(cpalSrc.slice(cpalSrc.indexOf('/* ── engine:start ── */'), cpalSrc.indexOf('/* ── engine:end ── */')) + '\nreturn parseColor;')();
+  const cpalStrings = new Function(cpalSrc.slice(cpalSrc.indexOf('/* ── strings:start ── */') + '/* ── strings:start ── */'.length, cpalSrc.indexOf('/* ── strings:end ── */')).replace(/^\s*const STRINGS = /, 'return ').replace(/\}\s*as const;\s*$/, '}'))();
+  for (const s of ['#12345', '12345', '#1234567', '#1a73eg', '#1A7 3E8', '#12g', '#xyz', '1234567890']) {
+    const a = cpal(s), b = diagnose(s);
+    eq('same reason as Color Palette Generator for ' + JSON.stringify(s), [b.error, b.n, b.ch, b.pos], [a.error, a.n, a.ch, a.pos]);
+  }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const [mine, theirs] of [['errHexLength', 'err_hexLength'], ['errHexChar', 'err_hexChar'], ['errFnValue', 'err_fnValue']]) {
+    eq(`${lang} ${mine} is the Color Palette Generator wording`, STRINGS[lang][mine], cpalStrings[lang][theirs]);
+  }
+}
+
 // ── 2. Fixed bugs ──
 eq('hsl(720, 100%, 50%) is red', E.formatColor(E.parseColor('hsl(720, 100%, 50%)')).hex, '#ff0000');
 eq('hsl(-120 100% 50%) is blue', E.formatColor(E.parseColor('hsl(-120 100% 50%)')).hex, '#0000ff');
@@ -316,6 +394,7 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
       get classList(){const n=this;return{contains:c=>n.className.split(/\s+/).includes(c),add(c){if(!this.contains(c))n.className+=' '+c;},remove(c){n.className=n.className.split(/\s+/).filter(x=>x!==c).join(' ');},toggle(c,on){if(on??!this.contains(c))this.add(c);else this.remove(c);}};}
       setAttribute(k,v){this.attributes[k]=String(v);if(['id','class','type','value'].includes(k))this[k==='class'?'className':k]=String(v);}
       getAttribute(k){return k==='type'?this.type:this.attributes[k]??null;}
+      removeAttribute(k){delete this.attributes[k];}
       get textContent(){return(this.text||'')+this.children.map(c=>c.textContent).join('');}
       set textContent(v){if(this.children.some(c=>c.contains(doc.activeElement)))doc.activeElement=doc.body;for(const c of this.children)c.parentNode=null;this.children=[];this.text=String(v);}
       appendChild(n){n.parentNode=this;this.children.push(n);return n;}
@@ -359,7 +438,8 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
     function resize(width,height){queueResize(width,height)();}
     function shortcutClear(inside=true){(inside?get('ecp-hex'):body).focus();return doc.dispatch('keydown',{ctrlKey:true,key:'l'});}
     function snapshot(){return{fields:fields.map(f=>get('ecp-'+f).value),status:get('ecp-status').textContent,viewer:get('ecp-viewer').hidden,drop:get('ecp-drop').hidden,info:get('ecp-imginfo').textContent,pixel:[...get('ecp-canvas').pixel],size:[get('ecp-canvas').width,get('ecp-canvas').height],recent:get('ecp-recent-grid').children.length};}
-    return{get,doc,picks,images,saved,cleared,revoked,copies,zeros,startFile,release,resize,queueResize,shortcutClear,snapshot,windowResize(){for(const fn of windowEvents.resize||[])fn();}};
+    function flushAll(){for(let i=0;i<20&&timers.size;i++)for(const[id,t]of[...timers]){timers.delete(id);t.fn();}}
+    return{get,doc,picks,images,saved,cleared,revoked,copies,zeros,flushAll,startFile,release,resize,queueResize,shortcutClear,snapshot,windowResize(){for(const fn of windowEvents.resize||[])fn();}};
   }
   const compare=(label,actual,expected)=>eq(label,JSON.stringify(actual),JSON.stringify(expected));
   {
@@ -405,6 +485,52 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
     const before=p.snapshot(),saved=structuredClone(p.saved);notify();
     compare(`queued resize after ${action} cannot restore image or color`,p.snapshot(),before);
     compare(`queued resize after ${action} does not write preferences`,p.saved,saved);
+  }
+  // Typed values: an invalid value in one field must not leave the previous color in the others.
+  // Before 2026-10-07, #1a73e8 then #12345 in HEX kept rgb(26, 115, 232), hsl(…), oklch(…) and
+  // color(display-p3 …) in the other fields with working Copy buttons, and every reason showed
+  // the same sentence.
+  const ALL=['hex','rgb','hsl','oklch','p3'];
+  for(const lang of ['en','zh','ja','ko'])for(const field of ['hex','rgb','p3']){
+    const p=page(lang),el=p.get('ecp-'+field),others=ALL.filter(f=>f!==field);
+    const copyBtns=()=>p.get('ecp-wrap').querySelectorAll('[data-copy]');
+    const enabled=()=>copyBtns().filter(b=>!b.disabled).map(b=>b.getAttribute('data-copy'));
+    eq(`${lang} ${field}: initial fields filled`,ALL.map(f=>p.get('ecp-'+f).value).every(Boolean),true);
+    eq(`${lang} ${field}: initial copy buttons enabled`,enabled().length,5);
+    for(const bad of ['#12345','rgb(1, 2)','zz','hsl(abc 1% 2%)','color(foo 1 2 3)','＃１ａ７３ｅ８']){
+      el.value='#1a73e8';el.dispatch('input');p.flushAll();
+      el.value=bad;el.dispatch('input');
+      eq(`${lang} ${field} "${bad}": other fields cleared at once`,others.map(f=>p.get('ecp-'+f).value),others.map(()=>''));
+      eq(`${lang} ${field} "${bad}": typed text kept`,el.value,bad);
+      eq(`${lang} ${field} "${bad}": no copy button enabled`,enabled(),[]);
+      eq(`${lang} ${field} "${bad}": swatch emptied`,p.get('ecp-swatch-fill').style.background,'');
+      eq(`${lang} ${field} "${bad}": field marked invalid`,el.getAttribute('aria-invalid'),'true');
+      const before=p.copies.length;copyBtns().forEach(b=>b.click());
+      eq(`${lang} ${field} "${bad}": copy buttons copy nothing`,p.copies.length,before);
+      p.flushAll();
+      const d=diagnose(bad),key=d.error==='unknown'?'invalid':reasonKey(d.error);
+      const msg=String(STRINGS[lang][key]??'(missing '+key+')').replace(/\{(\w+)\}/g,(m,k)=>d[k]!==undefined?String(d[k]):m);
+      eq(`${lang} ${field} "${bad}": status names the reason after the pause`,p.get('ecp-status').textContent,msg);
+      el.dispatch('change');
+      eq(`${lang} ${field} "${bad}": status names the reason on change`,p.get('ecp-status').textContent,msg);
+      check(`${lang} ${field} "${bad}": status is an error`,p.get('ecp-status').className.includes('is-error'));
+    }
+    el.value='rgb(255 0 0)';el.dispatch('input');p.flushAll();
+    eq(`${lang} ${field}: valid value restores the other fields`,p.get('ecp-'+(field==='hex'?'rgb':'hex')).value,field==='hex'?'rgb(255, 0, 0)':'#ff0000');
+    eq(`${lang} ${field}: valid value re-enables every copy button`,enabled().length,5);
+    eq(`${lang} ${field}: valid value clears the error`,[p.get('ecp-status').textContent,el.getAttribute('aria-invalid')],['',null]);
+    el.value='';el.dispatch('input');p.flushAll();
+    eq(`${lang} ${field}: empty field clears the others without an error`,[others.map(f=>p.get('ecp-'+f).value),p.get('ecp-status').textContent,enabled()],[others.map(()=>''),'',[]]);
+    el.value='zz';el.dispatch('input');
+    p.get('ecp-native').value='#00ff00';p.get('ecp-native').dispatch('input');
+    eq(`${lang} ${field}: color dialog after an error refills every field`,p.get('ecp-hex').value,'#00ff00');
+    eq(`${lang} ${field}: color dialog clears the pending error`,[p.get('ecp-status').textContent,el.getAttribute('aria-invalid')],['',null]);
+    p.flushAll();
+    eq(`${lang} ${field}: the pending error message does not come back later`,p.get('ecp-status').textContent,'');
+  }
+  {
+    const p=page();p.get('ecp-clear').click();
+    eq('Clear leaves no copy button enabled',p.get('ecp-wrap').querySelectorAll('[data-copy]').filter(b=>!b.disabled).length,0);
   }
   {
     const p=page();p.release(p.startFile('ready.png'));
@@ -488,7 +614,19 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
   const tips=[...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
   eq('ten control tip IDs',tips.map(m=>/id="ecp-tip-([^"]+)"/.exec(m[1])?.[1]).sort(),keys);
   for(const tip of tips){const key=/id="ecp-tip-([^"]+)"/.exec(tip[1])[1];check(key+' tip is localized',/lang=\{lang\}/.test(tip[1])&&/about=\{L\.\w+\}/.test(tip[1])&&tip[2]==='{TIPS.'+key+'}');}
-  const retained={"en": ["8d95c28a9ffa54c8", "99cb20585b5f8d53"], "zh": ["943b165a4878695d", "769680b7765b3032"], "ja": ["bc071b569b6891bd", "8399d254430720f0"], "ko": ["31229a4208afc6fc", "6e1f5a8df1f30013"]};
+  // FAQ / step hashes updated 2026-10-07: the storage answer now names both saved settings and
+  // the color-field step says what happens to an invalid value. The body hash is unchanged.
+  const retained={"en": ["d6b21108b45a0c31", "99cb20585b5f8d53"], "zh": ["6996d372fd56a9b0", "769680b7765b3032"], "ja": ["1b3bffa5fc398f67", "8399d254430720f0"], "ko": ["0da8e0d487dc4e7e", "6e1f5a8df1f30013"]};
+  // The storage answer must list what the code saves (W6): recent colors and the sample size.
+  const savedKeys=/ztPersist\.save\(SLUG, \{ (recent): [^,]+, (sample): [^}]+\}\)/.exec(source);
+  eq('page saves exactly recent colors and sample size',savedKeys&&[savedKeys[1],savedKeys[2]],['recent','sample']);
+  const sampleWords={en:'sample size',zh:'取样大小',ja:'サンプルの大きさ',ko:'샘플 크기'};
+  for(const lang of langs){
+    const faq=loadYaml(/^---\n([\s\S]*?)\n---/.exec(readFileSync(join(pageDir,lang+'.mdx'),'utf8'))[1]).faqItems.map(f=>f.answer).filter(a=>a.includes('localStorage')).join('\n');
+    check(lang+' storage answer names the sample size',faq.includes('localStorage')&&faq.includes(sampleWords[lang]));
+    check(lang+' storage answer no longer says only HEX is kept',!/Only the last 16|だけで、|값\(이 브라우저의 localStorage\)뿐/.test(faq));
+    check(lang+' recent note names the sample size',STRINGS[lang].recentNote.includes(sampleWords[lang]));
+  }
   const hash=text=>createHash('sha256').update(text.trim()).digest('hex').slice(0,16);
   for(const lang of langs){
     const strings=STRINGS[lang];eq(lang+' tip keys match',Object.keys(strings.tips).sort(),keys);
