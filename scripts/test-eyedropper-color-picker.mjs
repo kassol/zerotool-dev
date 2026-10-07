@@ -164,6 +164,19 @@ for (const [s, want] of Object.entries(reasons)) {
   check('engine rejects ' + JSON.stringify(s), !!E.parseColor(s).error);
   eq('reason for ' + JSON.stringify(s), diagnose(s), want);
 }
+// More than four values in the comma form (2026-10-08). The engine's parseColor() reads the first
+// four and drops the rest (alpha included), so readColor() (diagnose block) refuses them before
+// the page shows a color; diagnoseColor() names the cause. Values with four or fewer still read.
+const readColor = D0 > s1 && D1 > D0
+  ? new Function(source.slice(s0, s1) + source.slice(D0, D1) + "\nreturn typeof readColor === 'function' ? readColor : () => ({ error: 'missing' });")()
+  : () => ({ error: 'missing' });
+for (const s of ['rgb(1,2,3,0.5,9)', 'hsl(10,20%,30%,0.5,1)', 'rgba(1, 2, 3, 0.5, 0.2)', 'hsla(10, 20%, 30%, 1, 1, 1)']) {
+  check('readColor refuses ' + s, !!readColor(s).error);
+  eq('reason for ' + s, diagnose(s), { error: 'fnArgs', fn: /^\w+/.exec(s)[0] });
+}
+for (const s of ['rgb(1,2,3,0.5)', 'hsl(10,20%,30%)', 'rgba(1, 2, 3, 50%)', '#1a73e8', 'rgb(1 2 3 / 0.5)', 'color(display-p3 1 0 0)']) {
+  eq('readColor reads ' + s + ' as parseColor does', readColor(s), E.parseColor(s));
+}
 // Each reason has a localized message whose placeholders the diagnosis fills.
 const reasonKey = (code) => 'err' + code[0].toUpperCase() + code.slice(1);
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
@@ -497,7 +510,7 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
     const enabled=()=>copyBtns().filter(b=>!b.disabled).map(b=>b.getAttribute('data-copy'));
     eq(`${lang} ${field}: initial fields filled`,ALL.map(f=>p.get('ecp-'+f).value).every(Boolean),true);
     eq(`${lang} ${field}: initial copy buttons enabled`,enabled().length,5);
-    for(const bad of ['#12345','rgb(1, 2)','zz','hsl(abc 1% 2%)','color(foo 1 2 3)','＃１ａ７３ｅ８']){
+    for(const bad of ['#12345','rgb(1, 2)','zz','hsl(abc 1% 2%)','color(foo 1 2 3)','＃１ａ７３ｅ８','rgb(1,2,3,0.5,9)','hsl(10,20%,30%,0.5,1)']){
       el.value='#1a73e8';el.dispatch('input');p.flushAll();
       el.value=bad;el.dispatch('input');
       eq(`${lang} ${field} "${bad}": other fields cleared at once`,others.map(f=>p.get('ecp-'+f).value),others.map(()=>''));
