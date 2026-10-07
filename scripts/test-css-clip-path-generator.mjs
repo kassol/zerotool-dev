@@ -314,7 +314,7 @@ console.log(`PASS ${rawChecked} raw CSS values: the tool's verdict matches Chrom
 
 // Real page input/copy events followed by the real ToolLayout Ctrl/Cmd+L handler.
 // Only DOM, CSS.supports, storage, time and clipboard are boundary doubles.
-function loadClipPage() {
+function loadClipPage(lang = 'en', supports = null) {
   const elements = [], ids = new Map(), timers = new Map(), clipboard = [];
   const document = { activeElement: null, listeners: {} };
   let sequence = 0;
@@ -355,13 +355,13 @@ function loadClipPage() {
   const wrap = elements.find(el => matches(el, '.cpg-wrap'));
   const get = id => { assert.ok(ids.has(id), 'actual markup contains ' + id); return ids.get(id); };
   const startLabels = source.indexOf('const labels = '), endLabels = source.indexOf('const L = ', startLabels);
-  const L = vm.runInNewContext(source.slice(startLabels, endLabels) + '\n({...labels.en, ...extra.en})');
+  const L = vm.runInNewContext(source.slice(startLabels, endLabels) + '\n({...labels[' + JSON.stringify(lang) + '], ...extra[' + JSON.stringify(lang) + ']})');
   const store = new Map(), localStorage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k), key: i => [...store.keys()][i] ?? null, get length() { return store.size; } };
   Object.assign(document, { body: new Element('body'), querySelector: selector => selector === '.tool-widget' ? wrap : wrap.querySelector(selector), createElement: tag => new Element(tag), addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }, execCommand: () => false });
   const policy = fs.readFileSync(new URL('../src/data/persistence.ts', import.meta.url), 'utf8').match(/export const toolPersistencePolicy = ([\s\S]*?) as const/)[1];
   const sandbox = { document, L, localStorage, toolPersistencePolicy: vm.runInNewContext('(' + policy + ')'), _slug: 'css-clip-path-generator', console,
     navigator: { clipboard: { writeText: value => { clipboard.push(value); return Promise.resolve(); } } },
-    CSS: { supports: (property, value) => property === 'clip-path' && /^(polygon|circle|ellipse|inset)\(/.test(value) },
+    CSS: { supports: supports || ((property, value) => property === 'clip-path' && /^(polygon|circle|ellipse|inset)\(/.test(value)) },
     ResizeObserver: class { observe() {} }, setTimeout(fn, ms) { const id = ++sequence; timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id) };
   sandbox.window = sandbox;
   const ctx = vm.createContext(sandbox), layout = fs.readFileSync(new URL('../src/layouts/ToolLayout.astro', import.meta.url), 'utf8');
@@ -401,6 +401,78 @@ for (const modifier of ['ctrlKey', 'metaKey']) {
   pageCheck(modifier + ' new input restores current result', !page.get('cpg-copy').disabled && page.get('cpg-preview-el').style.clipPath === 'circle(20% at 50% 50%)');
   page.get('cpg-reset').click();
   pageCheck(modifier + ' explicit Reset still restores raw triangle', page.get('cpg-raw').value === 'polygon(50% 0%, 100% 100%, 0% 100%)' && !page.get('cpg-copy').disabled);
+}
+// ---------- CSS value errors name the cause (2026-10-08, W2) ----------
+// Before: every refused value got one sentence ("Invalid or unsupported clip-path value in this
+// browser."), and unknown words got the "needs a page context" sentence. The diagnose block runs
+// only after CSS.supports() or the engine has refused the value; checked against the Chrome
+// verdicts recorded in the fixture: no value Chrome keeps gets an error, and the refused ones get
+// the cause and position.
+{
+  const a = script.indexOf('/* diagnose:start'), b = script.indexOf('/* diagnose:end */');
+  pageCheck('diagnose block present', a > 0 && b > a);
+  const D = a > 0 && b > a ? vm.runInNewContext(script.slice(a, b) + '\n({ diagnoseClipPath, diagnoseText })') : { diagnoseClipPath: () => 'missing', diagnoseText: () => null };
+  const chromeKeeps = (r) => r.sheetKeeps && r.nextRuleIntact;
+  const pageRefuses = /url\s*\(|var\s*\(|env\s*\(|\\|\/\*|;|^inherit$/i;
+  for (const r of fixture.raw) if (chromeKeeps(r) && !pageRefuses.test(r.value)) pageCheck('no error for a value Chrome keeps: ' + r.value, D.diagnoseClipPath(r.value) === null);
+  for (const c of corpus) pageCheck('no error for generated value ' + c.id, D.diagnoseClipPath(c.value) === null);
+  const want = [
+    // [value, code, args] — the first group is the fixture's refused values.
+    ['polygon(50% 0%, 100% 100%', 'unclosedParen', { fn: 'polygon', pos: 1 }],
+    ['circle(abc)', 'badValue', { fn: 'circle', token: 'abc' }],
+    ['polygon(0 0', 'unclosedParen', { fn: 'polygon', pos: 1 }],
+    ['circle(50%))', 'extraParen', { pos: 12 }],
+    ['inset(10%) )(', 'extraParen', { pos: 12 }],
+    ['path("M 0 0 H 10', 'unclosedQuote', { pos: 6 }],
+    ['foo', 'unknownWord', { word: 'foo' }],
+    ['polygon(0 0, 100% 0, 50%)', 'pointCount', { n: 3, got: 1 }],
+    ['ellipse(10% 20% 30%)', 'argCount', { fn: 'ellipse', want: 'want_rr', got: 3 }],
+    ['circle(-5%)', 'negative', { fn: 'circle', token: '-5%' }],
+    // Typical mistakes outside the fixture.
+    ['polgon(50% 0%, 100% 100%, 0% 100%)', 'unknownFn', { name: 'polgon', pos: 1 }],
+    ['circle(50 at 50% 50%)', 'unitless', { token: '50' }],
+    ['inset(10pz)', 'badUnit', { token: '10pz', unit: 'pz' }],
+    ['circle(50% at middle)', 'badPosition', { fn: 'circle', token: 'middle' }],
+    ['circle(50%) border-box content-box', 'twoParts', { word: 'content-box' }],
+    ['none border-box', 'noneAlone', {}],
+    ['polygon()', 'noPoints', {}],
+    ['xywh(0 0 -10px 10px)', 'negative', { fn: 'xywh', token: '-10px' }],
+    ['circle(calc(50% - 4px) at 50% 50%', 'unclosedParen', { fn: 'circle', pos: 1 }],
+    ['inset(0 0 0 0 0)', 'argCount', { fn: 'inset', want: 'want_inset', got: 5 }],
+  ];
+  for (const [value, code, args] of want) {
+    const r = fixture.raw.find((x) => x.value === value);
+    if (r) pageCheck('fixture: Chrome refuses ' + value, !chromeKeeps(r));
+    const d = D.diagnoseClipPath(value);
+    pageCheck('diagnose ' + value + ' → ' + code, !!d && d.code === code && JSON.stringify(d.args) === JSON.stringify(args));
+  }
+  pageCheck('a typo gets a suggestion', (D.diagnoseClipPath('polgon(0 0)') || {}).hint === 'polygon');
+  // Real page, four languages: the status line gives the localized cause, the old CSS goes.
+  const accepted = new Map(fixture.raw.map((r) => [r.value, chromeKeeps(r) && r.supports]));
+  const supports = (prop, value) => prop === 'clip-path' && (accepted.has(value) ? accepted.get(value) : D.diagnoseClipPath(value) === null);
+  const expect = {
+    en: ['Character 12: “)” has no matching “(”.', 'polygon() point 3 has 1 value(s). Each point is “x y”; separate points with commas.', 'Character 1: polgon() is not a clip-path shape. Use polygon(), circle(), ellipse(), inset(), rect(), xywh(), path() or shape(). Did you mean polygon()?'],
+    zh: ['第 12 个字符：「)」没有对应的「(」。', 'polygon() 第 3 个点有 1 个值。每个点写成「x y」，点与点之间用逗号分隔。', '第 1 个字符：polgon() 不是 clip-path 形状。可用 polygon()、circle()、ellipse()、inset()、rect()、xywh()、path() 或 shape()。是不是 polygon()？'],
+    ja: ['12 文字目：「)」に対応する「(」がありません。', 'polygon() の 3 番目の点に値が 1 個あります。点は「x y」で書き、点と点はカンマで区切ります。', '1 文字目：polgon() は clip-path の図形ではありません。polygon()、circle()、ellipse()、inset()、rect()、xywh()、path()、shape() を使ってください。polygon() のことですか？'],
+    ko: ['12번째 문자: 「)」에 맞는 「(」가 없습니다.', 'polygon()의 3번째 점에 값이 1개 있습니다. 점은 「x y」로 쓰고 점 사이는 쉼표로 구분합니다.', '1번째 문자: polgon()은(는) clip-path 도형이 아닙니다. polygon(), circle(), ellipse(), inset(), rect(), xywh(), path(), shape()를 쓰세요. polygon()을(를) 쓰려던 것인가요?'],
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const page = loadClipPage(lang, supports);
+    page.wrap.querySelector('.cpg-tab[data-shape="raw"]').click();
+    ['circle(50%))', 'polygon(0 0, 100% 0, 50%)', 'polgon(50% 0%, 100% 100%, 0% 100%)'].forEach((value, k) => {
+      page.type('circle(30% at 40% 60%)');
+      const okBefore = page.get('cpg-code').textContent !== '' && !page.get('cpg-copy').disabled;
+      page.type(value);
+      pageCheck(lang + ' page: ' + value + ' gives the cause', okBefore && page.get('cpg-status').textContent === expect[lang][k] && page.get('cpg-code').textContent === '' && page.get('cpg-copy').disabled);
+    });
+    page.type('url(#clip)');
+    const L2 = vm.runInNewContext(source.slice(source.indexOf('const labels = '), source.indexOf('const L = ')) + '\n({...labels[' + JSON.stringify(lang) + '], ...extra[' + JSON.stringify(lang) + ']})');
+    pageCheck(lang + ' page: url() keeps the page-context message', page.get('cpg-status').textContent === L2.localOnly);
+    // The tool page quotes the first message and the start of the second as the page gives them.
+    const mdx = fs.readFileSync(new URL(`../src/content/tools/css-clip-path-generator/${lang}.mdx`, import.meta.url), 'utf8');
+    const second = expect[lang][1].slice(0, expect[lang][1].search(/[.。] ?/) + 1);
+    pageCheck(lang + ' mdx quotes the page messages', mdx.includes(expect[lang][0]) && mdx.includes(second) && /polgon\(\)/.test(mdx));
+  }
 }
 // ---------- v2 page layout ----------
 const pageMarkup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
