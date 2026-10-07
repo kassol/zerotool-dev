@@ -1,7 +1,6 @@
-// Tool page v2 layout. Slugs listed here get the compact header, a layout
-// chosen by tool type, and the reference content folded
-// into one <details>. Every other tool page keeps the shared layout unchanged.
-// To move a tool over, follow DESIGN.md "Tool Pages v2".
+// Every tool page uses the compact header, its registered layout kind and
+// reference content folded into one <details>. Register every tools.ts slug here.
+// Follow DESIGN.md "Tool Pages" when adding a tool.
 //
 //   convert  — input and output side by side, both as tall as the screen allows
 //   generate — the generated preview leads; controls sit in a narrow rail
@@ -142,6 +141,16 @@ export const toolPageKinds: Record<string, ToolPageKind> = {
   'ai-token-counter': 'analyze',
   'ssl-certificate-decoder': 'analyze',
   'qr-code-decoder': 'analyze',
+  'gif-splitter': 'generate',
+  'lorem-ipsum': 'generate',
+  'password-generator': 'generate',
+  'rsa-key-generator': 'generate',
+  'pixelate-image': 'generate',
+  'nano-id-generator': 'generate',
+  'uuid-generator': 'generate',
+  'gif-compressor': 'generate',
+  'ulid-generator': 'generate',
+  'image-splitter': 'generate',
 };
 
 export function toolPageKind(slug: string): ToolPageKind | undefined {

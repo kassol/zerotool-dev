@@ -140,7 +140,7 @@ node scripts/test-llms-txt.mjs   # 检查构建出的 dist/llms*.txt（先 build
 |------|--------|----------|
 | Google Analytics 4 | `src/layouts/BaseLayout.astro` 通过 Partytown 加载 `gtag.js`；`window.trackTool(name, action)` 发送 `tool_use` 自定义事件。敏感工具页（`src/data/persistence.ts` 中 policy 为 `disabled` 的 slug，4 语言路由）不加载 `gtag.js`：`ToolLayout` 向 `BaseLayout` 传 `sensitive`，`trackTool` 仍可调用，事件只进本地 `dataLayer` | 新增第三方脚本要同步 `BaseLayout.astro` 中 `partytownSnippet` 的 `forward` 列表 |
 | Google Search Console | 域名级验证（Cloudflare DNS TXT 记录） | 切换 DNS 服务商时验证失效，需提前在新 DNS 加 TXT |
-| Google AdSense | Auto Ads 主线程 async 加载（Partytown worker 不支持 adsbygoogle.js）；`src/components/AdUnit.astro` 手动广告位：设置了 publisher ID 时，`ToolLayout` 在非敏感工具页渲染 mid（相关工具之后）/ bottom（FAQ 之后）2 个位（`PUBLIC_ADSENSE_SLOT_MID` / `_BOTTOM`），H1 与工具之间不放广告；`ArticleLayout` 在博客文章渲染 top / bottom 2 个位（`PUBLIC_ADSENSE_SLOT_TOP` / `_BOTTOM`）。AdSense 后台 zerotool.dev 的自动广告总开关为关闭（2026-09-29 核实），Auto Ads 不投放，页面只有手动广告位；以后打开自动广告前，先在同一面板（Ads → 站点行的 Edit → Overlay formats）关掉锚定广告与插页广告，广告代码没有关闭开关（`data-overlays` 反而会强制开启锚定广告）；`public/ads.txt` 声明 publisher。敏感工具页（同上 `disabled` slug）不加载 `adsbygoogle.js`，`ToolLayout` 也不渲染 `AdUnit`，`BaseLayout` 也不注入 Partytown snippet | publisher ID 改动必须三处同步：`ads.txt`、env、CF Pages secret |
+| Google AdSense | Auto Ads 主线程 async 加载（Partytown worker 不支持 adsbygoogle.js）；`src/components/AdUnit.astro` 手动广告位：设置了 publisher ID 时，`ToolLayout` 在非敏感工具页渲染 mid（参考内容折叠区之后、相关工具之前）/ bottom（相关工具之后）2 个位（`PUBLIC_ADSENSE_SLOT_MID` / `_BOTTOM`），H1 与工具之间不放广告；`ArticleLayout` 在博客文章渲染 top / bottom 2 个位（`PUBLIC_ADSENSE_SLOT_TOP` / `_BOTTOM`）。AdSense 后台 zerotool.dev 的自动广告总开关为关闭（2026-09-29 核实），Auto Ads 不投放，页面只有手动广告位；以后打开自动广告前，先在同一面板（Ads → 站点行的 Edit → Overlay formats）关掉锚定广告与插页广告，广告代码没有关闭开关（`data-overlays` 反而会强制开启锚定广告）；`public/ads.txt` 声明 publisher。敏感工具页（同上 `disabled` slug）不加载 `adsbygoogle.js`，`ToolLayout` 也不渲染 `AdUnit`，`BaseLayout` 也不注入 Partytown snippet | publisher ID 改动必须三处同步：`ads.txt`、env、CF Pages secret |
 | Google Ads（投放后台） | 未集成 | 未来要投流量需新增 conversion tag（`AW-` ID） |
 
 ## 自动化质量门
@@ -148,18 +148,18 @@ node scripts/test-llms-txt.mjs   # 检查构建出的 dist/llms*.txt（先 build
 | 检查 | 触发 | 阻塞条件 |
 |------|------|----------|
 | `scripts/check-icon-coverage.mjs` | `npm run build` 第 1 步 | 任何 slug 缺图标 |
-| `scripts/audit.mjs` | `.github/workflows/ci.yml` audit job + 手动 | 任何 FAIL（发布目录含 AGENTS.md、schema 漂移、孤儿组件、路由缺失、i18n key 漂移、blog 命名违规、看起来处理凭据的工具没设 `disabled` 也不在豁免清单、`tool-layouts.ts` 的键不是 `tools.ts` 的 slug 或值不是 `convert` / `generate` / `analyze` / `compact` / `compare` 五种类型之一） |
+| `scripts/audit.mjs` | `.github/workflows/ci.yml` audit job + 手动 | 任何 FAIL（发布目录含 AGENTS.md、schema 漂移、孤儿组件、路由缺失、i18n key 漂移、blog 命名违规、看起来处理凭据的工具没设 `disabled` 也不在豁免清单、`tools.ts` 的 slug 未登记在 `tool-layouts.ts`、`tool-layouts.ts` 的键不是工具 slug 或值不是 `convert` / `generate` / `analyze` / `compact` / `compare` 五种类型之一） |
 | `scripts/check-tool-css-order.mjs` | `npm run build`（astro build 之后） | 任一工具页的共享工具 CSS（tool-common、ToolLayout、ShareButtons、AdUnit）没有排在本工具 CSS 之前，或 `<head>` 出现内联 `<style>` |
 | `npm run build` | `.github/workflows/ci.yml` build job + 手动 | 任何编译错误 |
 | `scripts/test-*.mjs` | `.github/workflows/ci.yml` build job（build 之后，部分测试读 `dist/`）+ 提交前手动 | 任一测试脚本退出码非 0 |
-| `scripts/test-llms-txt.mjs` | `.github/workflows/ci.yml` build job（build 之后，与其他 `test-*.mjs` 一起） | llms 文件里的站内 URL 不在 sitemap（也不是 llms 文件本身）、工具 URL 的 slug 不在 `tools.ts`、`tools.ts` 有工具没列出、联网工具的条目缺联网说明或含「100% client-side」一类说法、`public/` 里出现手写的 llms 文件 |
+| `scripts/test-llms-txt.mjs` | `.github/workflows/ci.yml` build job（build 之后，与其他 `test-*.mjs` 一起） | llms 文件里的站内 URL 不在 sitemap（也不是 llms 文件本身）、工具 URL 的 slug 不在 `tools.ts`、`tools.ts` 有工具没列出、联网工具的条目缺联网说明或含「100% client-side」一类说法、`public/` 里出现手写的 llms 文件、任一工具的四语 steps 缺失/空值/超限或构建步骤不一致 |
 | `scripts/indexnow-submit.mjs` | `.github/workflows/deploy.yml` 部署成功之后 | 不阻塞：失败只在日志标 `::error`，步骤 `continue-on-error`。密钥文件路由与映射规则由 `test-indexnow-urls.mjs` 在 CI 中校验 |
 
 CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两个 job 都过才能合并。Tag push 触发 `deploy.yml`，已经依赖前面 PR 的 CI 通过。
 
 ## 全局规范
 
-1. **新工具清单**：完整步骤见 `CONTRIBUTING.md`「New Tool Checklist」。一句话总结：组件 + `components/tools/registry.ts`（加一行 `'{slug}': '{Name}Tool'`，路由自动注入） + `tools.ts` + `icons.ts` + 4 语言 `content/tools/{slug}/` mdx + 推荐 4 语言博客 + OG 验证 + audit/build + tag 部署。提交前跑 `node scripts/audit.mjs`
+1. **新工具清单**：完整步骤见 `CONTRIBUTING.md`「New Tool Checklist」。一句话总结：组件 + `components/tools/registry.ts`（加一行 `'{slug}': '{Name}Tool'`，路由自动注入） + `tools.ts` + `icons.ts` + `tool-layouts.ts` 五类登记 + 4 语言 `content/tools/{slug}/` mdx（含 steps） + 组件构建期控件气泡 + 推荐 4 语言博客 + OG 验证 + audit/build + tag 部署。提交前跑 `node scripts/audit.mjs`
 2. **i18n 完整性**：`src/data/tools.ts` 的 `translations` 必须含全部 4 语言；缺失会回退 EN，但提交前必须补齐
 3. **图标同步**：每个 `tools.ts` 的 slug 必须在 `src/data/icons.ts` 有对应 SVG，`scripts/check-icon-coverage.mjs` 在 build 时校验
 4. **博客命名**：博客使用目录结构 `src/content/blog/{base-slug}/{lang}.mdx`（如 `csv-json-guide/zh.mdx`）。旧的 `{base-slug}-{lang}.mdx` 只作为历史 URL 兼容形态，由 `generate-blog-redirects.mjs` 在构建后追加 301
@@ -172,6 +172,12 @@ CI 在 PR 与 master push 时跑 `audit → build → test-*.mjs`，PR 必须两
 11. **工具样式隔离**：每个工具页只加载共享 CSS + 本工具 CSS。组件不得依赖其他工具组件的样式；类名用本工具独有的前缀（新前缀先 grep `src/components/tools/` 确认没有被占用）；多个工具共用的规则放 `src/styles/tool-common.css`。脚本里用 `innerHTML` / `createElement` 生成的元素没有 scoped 属性，给它们的规则要写成 `:global(...)`
 
 ## 变更日志
+
+- 2026-10-07 — dns-lookup、url-parser、iban-validator-parser 的空状态在桌面端（≥861px）把输入区当作 flex 子项撑满首屏并垂直居中，控件落在工具区中部、上下各留一大片空白（2000×1280 下输入框距工具顶部 429 / 422 px，1366×900 下 241 / 234 px）。改为输入区保持在顶部，结果占位句所在的元素占满剩余高度、居中显示，并加与结果面板一致的边框与底色；860px 及以下仍隐藏占位句，按内容高度排列。改后输入框距工具顶部 dns 49 / url 85 / iban 148 px（1366×900），en / ja 亮暗与 390px 横向溢出 0，三页输入后结果正常显示。iban 测试中「空状态输入区撑满首屏」的断言改为新规则。全站 141 页按同一判据（首个控件距工具顶部 > 140px）扫描，只有这三页属于此问题；gif-splitter、sprite-sheet-generator 超出是因为上方为拖放区，非此问题。
+
+- 2026-10-07 — 工具页v2推广与共享收尾完成，按原Goal第5节保留验收例外：126个工具源码迁移完成，全站141个工具登记五类版式、564份四语steps。迁移原生验收123通过，Password／Nano ID／RSA各连续三次键盘滚动失败后跳过；失败原因未证实。共享收尾原15页中14页签收，Unicode长结果连续三次原生超时后整工具29case跳过，旧17矩阵／3图仅作为观察，未宣称15页全部通过。最终正式406组用例（238矩阵、28完整流程、140断点）／13,867检查全PASS，42图每张单次复核、0发现，页面错误／横向溢出0；9工具261整行／9,082检查／27既审图在源码及全部引用资源逐字保持后复用，5工具145组／4,785检查／15新图重新执行。收尾8处CSS修正保护markup／客户端脚本与引擎；最后三处为AES手机控件网格与56px编辑框（完整IV风险提示保留）、Color Palette桌面色板内部滚动、HAR已载入手机shell固定1010px与桌面余高内部滚动。HAR首次载入首行达标；导出后英文／日文状态和报告会把首行推到844px下方，分开记录。Node22.23.3完整门：audit22、build／564页CSS顺序、159默认测试脚本全退出0，已打印回归124,867 PASS及另4,822官方JSON Schema案例；既有可选SKIP保留、无新SKIP。118个engine块／112源文件与固定初始基线逐字保持，薄页80／80、精品40／40；地址归一HTML比较初始52same／512different、收尾564same／0different，512差异页面集合保持；最后构建另有28HTML／22JS资源新增删除／6CSS资源变化，不将归一比较当作rawJS相同。13个叠栈PR供评审；现有CI只监听master，本地完整门与远端CI分列。文件范围内持久忽略的Impeccable预览图／脚本注释与严重度边框误报在报告披露；归属不明的既有布局动画提示未当作回归扩展范围。26项既有业务backlog保留。未合并、打tag或部署。仓库外最终报告为final-report.md／final-report.json，正式原生签收为final-native14-root-acceptance.json。
+
+- 2026-10-07 — 工具页 v2 推广 B14：gif-splitter（代表）、lorem-ipsum、password-generator、uuid-generator、rsa-key-generator、ulid-generator、nano-id-generator、pixelate-image、gif-compressor、image-splitter 十页登记 generate；约300px控件栏及余宽有界结果，860px以下堆叠。每语95个气泡，40份用法转steps，控件文案构建期输出，业务按钮保留。隔离清空、换素材后的旧结果和复制反馈；Image Splitter重生成解除旧导出busy，取消旧裁切rAF。ULID/Nano手机结果框固定18rem，Pixelate已载图框固定60svh。算法与编码核心保持。正式专测1055→4541 PASS；Node22.23.3本地159脚本退出0，audit22/22、build/564页CSS顺序、薄页80/80、精品40/40通过。本批原生7页通过；password-generator、nano-id-generator、rsa-key-generator同一问题连续三次失败，按目标规则跳过，根因未确认。累计迁移126/126，原生123页通过/3页跳过；最终15页共享样式回归待验。未合并、打tag或部署。
 
 - 2026-10-06 — 工具页 v2 推广 B13：robots-txt-generator（代表）、barcode-generator、fake-data-generator、htaccess-generator、cron-job-generator、favicon-generator、meta-tag-generator、gitignore-generator、csp-header-generator 共9页登记为 generate。采用前置控件栏、有界结果、预留状态，新增77个四语说明气泡，36份用法转为 steps，保留全部业务按钮与计算逻辑。修复清空、新输入后的迟到结果及复制反馈；正式浏览器验收另修条码手机预览、Htaccess结果高度、Cron列表编号、Meta手机标题与预览裁切、Gitignore固定页头下方的结果滚动。Node22.23.3：npm ci、audit22、build与564页CSS顺序通过，158个脚本退出0（21个含既有可选SKIP），本批960→4004 PASS；118段engine在112个源文件中逐字保持，薄页80/80、精品40/40。固定初始基线92页相同、472页不同，差异集合精确符合已迁移工具。Ego验收153组矩阵、18条完整流程、13296项检查通过，27张截图已复核；本批正式复制使用页内替身，系统剪贴板访问0。手机修复重建后七页已接受的28份HTML保持；其余变化为Meta/Gitignore八页及16份Markdown页的单个脚本资源地址，后者逆换地址后恢复完整旧HTML。累计完成116/126；未合并、打tag或部署。
 

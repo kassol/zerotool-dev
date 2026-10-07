@@ -1,4 +1,5 @@
 // AES Encrypt / Decrypt — AES-256-GCM with a password (PBKDF2) or a raw key, text and files
+// Also reads src/styles/tool-common.css for the shared fill and toggletip rules.
 //
 // Read:  src/components/tools/AesEncryptDecryptTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers and the frontmatter STRINGS table,
@@ -52,6 +53,7 @@ import { execFileSync } from 'node:child_process';
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const commonStyle = readFileSync(join(root, 'src/styles/tool-common.css'), 'utf8');
 const source = readFileSync(join(root, 'src/components/tools/AesEncryptDecryptTool.astro'), 'utf8');
 
 const START_MARK = '/* ── engine:start ── */';
@@ -567,7 +569,7 @@ if (need('encryptFile') && need('decryptFile')) {
     /function setFile\(slot, file\) \{[\s\S]{0,400}clearDownload\(\);\s*setStatus\(''\);\s*\}/.test(script));
   eq('stacks at 860px, phone details at 640px', source.match(/@media \(max-width: \d+px\)/g), ['@media (max-width: 860px)', '@media (max-width: 640px)']);
   check('no script breakpoint is left behind', !/matchMedia/.test(script));
-  check('the "?" buttons are not squeezed in flex rows', source.includes('.aes-wrap :global(.zt-tip) { flex: none; }'));
+  check('the "?" buttons are not squeezed in flex rows', source.includes('<Toggletip id="aes-tip-key"') && /\.zt-tip\s*\{[^}]*flex:\s*none;/.test(commonStyle));
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
   check('listed as a convert page', layouts.includes("'aes-encrypt-decrypt': 'convert'"));
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
