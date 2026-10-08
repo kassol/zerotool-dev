@@ -9,21 +9,66 @@ steps:
   - "点击「交换」对调两个框并切换方向；编辑输入或改变选项后再次转换。"
   - "点击「清除」，或在工具内按 Ctrl/⌘+L，清空两个框并删除已保存的输入。"
 faqItems:
-  - question: "什么是 URL 编码？"
-    answer: "URL 编码（百分号编码）将 URL 中不允许的字符转换为 '%' 加两位十六进制数。例如空格变为 %20，'&' 变为 %26。"
-  - question: "encodeURI 和 encodeURIComponent 有什么区别？"
-    answer: "encodeURI 编码整个 URL，会跳过 '/'、'?' 和 '#' 等字符。encodeURIComponent 编码单个组件（如查询参数值），会编码这些字符。两者都不编码 ! ' ( ) *。本工具使用 encodeURIComponent。"
-  - question: "我的数据会发送到服务器吗？"
-    answer: "不会。所有处理通过浏览器内置的 encodeURIComponent/decodeURIComponent 函数完成。"
-  - question: "什么时候需要 URL 编码？"
-    answer: "当查询字符串、表单数据或路径段中包含特殊字符时——空格、&、= 和非 ASCII 字符都需要编码。"
+  - id: "what-is"
+    question: "什么是 URL 编码？"
+    answer: "URL 编码（百分号编码，RFC 3986 第 2.1 节）把一个字符的每个 UTF-8 字节写成 % 加两位十六进制数。空格变成 %20，& 变成 %26，汉字一般是 3 个字节，所以“中”变成 %E4%B8%AD。"
+  - id: "encodeuri-vs-component"
+    question: "encodeURI 和 encodeURIComponent 有什么区别？"
+    answer: "encodeURI 用于整个 URL，不编码 ; , / ? : @ & = + $ # 这些分隔符；encodeURIComponent 用于 URL 的一部分（如一个查询参数的值），会把这些分隔符也编码。两者都不编码字母、数字和 - _ . ! ~ * ' ( )。本工具使用 encodeURIComponent。"
+  - id: "plus-sign"
+    question: "为什么解码后 + 号还在？"
+    answer: "decodeURIComponent 只还原 %XX。用 + 表示空格是 HTML 表单编码（application/x-www-form-urlencoded）的写法，不属于百分号编码，所以默认情况下 a+b 解码后还是 a+b。勾选「空格写成 +（表单数据）」后，工具会像 URLSearchParams 一样把 + 读成空格。"
+  - id: "decode-errors"
+    question: "为什么解码失败？"
+    answer: "要么是 % 后面不是两位十六进制数（如 100%、%zz），要么是字节不是有效的 UTF-8：被截断的 %E4%B8，或者 GBK 编码的 %C4%E3。状态行会写出出错的位置和那一段内容。"
+  - id: "local-fullwidth"
+    question: "中文输入法打出的全角空格和全角标点会怎么编码？"
+    answer: "全角空格（U+3000）不是普通空格，会编码成 %E3%80%80，勾选「空格写成 +」也不会变成 +；全角逗号“，”是 %EF%BC%8C。搜索框里看起来差不多的空格和标点，在 URL 里是另一串字节。"
+  - id: "privacy"
+    question: "我的数据会发送到服务器吗？"
+    answer: "不会。转换在浏览器里完成，结果与 JavaScript 内置的 encodeURIComponent / decodeURIComponent 相同。最后一次输入会保存在本浏览器的本地存储中，下次打开时恢复；点「清除」会删除它。"
 ---
 
-<h2>何时需要 URL 编码</h2>
-<p>
-  浏览器和服务器通过 URL 通信，而 URL 仅允许特定字符集。
-  超出该字符集的内容——空格、Unicode 字符、<code>&amp;</code> 和 <code>=</code> 等运算符——必须经过百分号编码后才能包含在 URL 中。
-</p>
-<p>
-  常见场景：传递包含特殊字符的查询参数、构造重定向 URL、编码表单数据、构建包含动态值的 REST API 调用。
-</p>
+## 示例：中文搜索词放进查询参数
+
+把用户输入的搜索词拼进 `?q=` 之前，要先把它当作一个“值”编码，否则空格、`&`、`=` 会破坏 URL 的结构。
+
+{/* ue-check: {"mode":"encode","in":"北京 天气"} */}
+
+输入 `北京 天气`，默认输出 `%E5%8C%97%E4%BA%AC%20%E5%A4%A9%E6%B0%94`。每个汉字是 3 个 UTF-8 字节，变成 3 组 `%XX`；中间的半角空格变成 `%20`。
+
+{/* ue-check: {"mode":"encode","plus":true,"in":"北京 天气"} */}
+
+勾选「空格写成 +（表单数据）」后，同一个输入得到 `%E5%8C%97%E4%BA%AC+%E5%A4%A9%E6%B0%94`。这和浏览器提交 GET 表单、`URLSearchParams` 生成的写法一致。服务端两种都能读，但签名校验类接口通常要求逐字节一致，要先确认对方用的是哪一种。
+
+解码方向同理：`%E5%8C%97%E4%BA%AC+%E5%A4%A9%E6%B0%94` 默认解码为 `北京+天气`，`+` 原样保留；打开表单选项才会得到 `北京 天气`。
+
+## GBK 编码的旧链接
+
+HTML 表单提交时，查询串按页面自己的字符编码来编码（[HTML 标准 4.10.22.5 节](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#selecting-a-form-submission-encoding)：编码先取文档的字符编码）。所以早年以 GBK 编码的网页，提交出来的“北京”是 `%B1%B1%BE%A9`，而不是 UTF-8 的 `%E5%8C%97%E4%BA%AC`。
+
+{/* ue-check: {"mode":"decode","in":"q=%B1%B1%BE%A9","error":true} */}
+
+把 `q=%B1%B1%BE%A9` 放进解码框，工具不会显示乱码，而是停下来报 `第 3 个字符起：%B1%B1%BE%A9 不是有效的 UTF-8。GBK 等其他编码的文本无法在这里解码。`。位置从 1 开始按字符计数，`q=` 占了前两个。看到这条提示，说明这段字节来自 GBK 一类的[旧编码](https://encoding.spec.whatwg.org/#names-and-labels)，需要用能指定编码的程序处理，例如 Python 的 `urllib.parse.unquote('%B1%B1%BE%A9', encoding='gbk')`。
+
+## 编码了两次
+
+链接里出现 `%25`，通常是已经编码过的值又被编码了一次：`%` 本身被编码成 `%25`。
+
+{/* ue-check: {"mode":"encode","in":"%E5%8C%97%E4%BA%AC"} */}
+
+对 `%E5%8C%97%E4%BA%AC` 再编码一次，得到 `%25E5%258C%2597%25E4%25BA%25AC`。服务端只解码一次，拿到的就不是“北京”而是一串 `%E5…`。把这样的值放进解码框解一次，可以看到上一步的样子，再逐层排查是哪个环节多编码了一次。
+
+## 什么时候用这个工具
+
+- 查询参数的值里有空格、`&`、`=`、`#` 或中文时。
+- 一个 URL 要作为另一个 URL 的参数传递时，例如登录后跳回的 `redirect` 参数：`https://example.com/?redirect=/zh/工具` 整体编码后是 `https%3A%2F%2Fexample.com%2F%3Fredirect%3D%2Fzh%2F%E5%B7%A5%E5%85%B7`，冒号和斜杠也被编码。
+- 不要用它处理准备直接打开的完整地址。整个地址编码后，`:` 和 `/` 也变成了 `%XX`，不再是可用的链接。要整理完整 URL，请用 [URL 解析器](/zh/tools/url-parser/)逐个修改参数值。
+
+## 限制
+
+- 只支持 UTF-8。GBK、GB18030 等编码的百分号序列会报错，不会尝试猜测编码。
+- 解码遇到第一个问题就停止，并写出位置。`100%` 这类结尾孤立的 `%` 也算错误。
+- 默认编码保留 `! ' ( ) *` 不编码（`encodeURIComponent` 的规则）。有些签名算法要求把它们写成 `%21 %27 %28 %29 %2A`，需要手动替换。
+- 没有 `encodeURI` 模式。
+- 被截断的 emoji（孤立的代理项）无法编码，状态行会给出它的位置。
