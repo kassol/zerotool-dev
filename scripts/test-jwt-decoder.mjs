@@ -13,7 +13,12 @@
 // (src/content/blog/jwt-decoder-guide/en.mdx): the demo token is rebuilt from its claims and
 // secret, the decoded JSON, dates, lengths and the signature-length table are recomputed, the
 // RFC 7515 A.1 and RFC 7519 6.1 tokens decode as the guide says, and code blocks marked
-// {/* jwt-run: {"lang":"node|python","expect":"…"} */} are run (Python needs PyJWT; SKIP otherwise).
+// {/* jwt-run: {"lang":"node|python","expect":"…"} */} are run (Python needs PyJWT; SKIP otherwise);
+// the four tool pages (src/content/tools/jwt-decoder/{lang}.mdx): {/* jwtd-check: … */} examples are
+// decoded by the real page script (token, payload JSON, date notes and status text must appear in
+// the code after the note; demo-signed tokens are re-signed here), plus the general statements on
+// prefixes, quotes, automatic decode and GBK bytes; line breaks inside a token (any segment, any
+// position) give the same result as without them.
 //
 // Run: node scripts/test-jwt-decoder.mjs
 
@@ -29,7 +34,7 @@ import { compile } from '@mdx-js/mdx';
 import { toolSteps } from '../src/data/llms.mjs';
 import vm from 'node:vm';
 import { parseFragment, defaultTreeAdapter } from 'parse5';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JwtDecoderTool.astro'), 'utf8');
@@ -190,7 +195,7 @@ function renderTip(id, about, content) {
     .replace('<slot />', escapeHTML(content));
 }
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
-function page(lang = 'en', order = 'shared-after') {
+function page(lang = 'en', order = 'shared-after', nowMs = 1791158400250) {
   const clipboard = [], timers = new Map(), tracks = [], clears = [];
   let timerId = 0, now = 0, doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
@@ -262,7 +267,7 @@ function page(lang = 'en', order = 'shared-after') {
   doc.createElement = tag => new Element(tag);
   doc.execCommand = () => { throw Error('Unexpected system clipboard fallback'); };
   const { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...clientStrings } = pageStrings[lang];
-  const sandbox = { t: clientStrings, document: doc, console, TextDecoder, atob, Date: class extends Date { static now() { return 1791158400250; } }, _slug: 'jwt-decoder', ztPersist: { clear(slug) { clears.push(slug); } },
+  const sandbox = { t: clientStrings, document: doc, console, TextDecoder, atob, Date: class extends Date { static now() { return nowMs; } }, _slug: 'jwt-decoder', ztPersist: { clear(slug) { clears.push(slug); } },
     trackTool(...args) { tracks.push(args); },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value: String(value), resolve, reject }); return promise; } } },
@@ -441,6 +446,141 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before
   eq(name + 'actual shared handler still clears persistence once', p.clears.length - clearsBefore, 1);
 }
 console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' passed');
+
+// ---------- tool page worked examples ----------
+// {/* jwtd-check: {...} */} notes in src/content/tools/jwt-decoder/{lang}.mdx. The token is
+//   "example": true  the component's EXAMPLE_JWT;
+//   "token"          a literal token (RFC examples);
+//   "header" + "payload" + "secret"  signed here with HS256 (the secret must contain "demo", so no
+//                    real key is ever used);
+// then "prefix" / "suffix" wrap it, "wrap": N inserts a line break every N characters, or "input"
+// replaces it. The real page script decodes it with the Decode button, with the clock at "now"
+// (Unix seconds, default 2026-10-05T00:00:00Z). "show" lists what must appear verbatim in inline
+// code or in a code block after the note (up to the next jwtd-check note or H2): token, header and
+// payload (two-space JSON, as Copy writes it), hints (each date note without its parentheses) and
+// status (the status line). "segment" decodes one Base64URL segment with the engine instead.
+{
+  const before = passes;
+  const decodeHTML = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  function codeTexts(text) {
+    const out = fencedBlocks(text).map((b) => b.text);
+    const rest = text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, ' ');
+    for (const m of rest.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+      const inner = m[1].trim();
+      const lit = /^\{([`'"])([\s\S]*)\1\}$/.exec(inner);
+      out.push(lit ? new Function('return ' + lit[1] + lit[2] + lit[1])() : decodeHTML(inner));
+    }
+    for (const m of rest.replace(/<code\b[\s\S]*?<\/code>/g, ' ').matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+    return out;
+  }
+  const buildToken = (spec) => {
+    if (spec.example) return example;
+    if (spec.token) return spec.token;
+    if (!spec.header || !spec.payload || !/demo/.test(spec.secret || '')) return null;
+    const signing = seg(spec.header) + '.' + seg(spec.payload);
+    return signing + '.' + createHmac('sha256', spec.secret).update(signing).digest('base64url');
+  };
+  const verify = ({ spec, after, lang }) => {
+    if (!spec) return 'note has no JSON';
+    const texts = codeTexts(after);
+    const missing = [];
+    const need = (label, value) => { if (!texts.some((t) => t.includes(value))) missing.push(label + ' ' + JSON.stringify(value)); };
+    if (spec.segment) {
+      need('segment', spec.segment);
+      const decoded = E.b64urlDecode(spec.segment);
+      if (decoded === null) return 'segment does not decode';
+      need('decoded segment', decoded);
+      return missing.length ? 'not in code after the note: ' + missing.join('; ') : null;
+    }
+    const token = buildToken(spec);
+    if (!token) return 'no token: give "example", "token" or "header" + "payload" + a demo "secret"';
+    let input = spec.input ?? (spec.prefix ?? '') + (spec.wrap ? token.match(new RegExp('.{1,' + spec.wrap + '}', 'g')).join('\n') : token) + (spec.suffix ?? '');
+    const p = page(lang, 'shared-after', (spec.now ?? 1791158400) * 1000);
+    p.get('jwt-input').value = input;
+    p.get('jwt-decode').click();
+    const show = spec.show ?? [];
+    if (!show.length) return '"show" is empty';
+    for (const item of show) {
+      if (item === 'token') need('token', token);
+      else if (item === 'status') need('status', p.get('jwt-status').textContent);
+      else if (item === 'header' || item === 'payload') {
+        if (p.get('jwt-results').querySelectorAll('.jwt-section').length !== 3) return 'the page did not decode the token: ' + p.get('jwt-status').textContent;
+        const [h, pl] = decode(token);
+        need(item, JSON.stringify(item === 'header' ? h : pl, null, 2));
+      } else if (item === 'hints') {
+        const hints = p.get('jwt-results').querySelectorAll('.jwt-time-hint').map((el) => el.textContent.replace(/^\(|\)$/g, ''));
+        if (!hints.length) return 'the page shows no date notes';
+        hints.forEach((h) => need('hint', h));
+      } else return 'unknown show item ' + item;
+    }
+    return missing.length ? 'not in code after the note: ' + missing.join('; ') : null;
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ': tool page jwtd-check examples match the page', contractProblems('jwt-decoder', lang, { annotations: [{ tag: 'jwtd-check', min: 2, verify }] }), '');
+    const mdx = readFileSync(join(root, 'src/content/tools/jwt-decoder', lang + '.mdx'), 'utf8');
+    for (const note of annotations(mdx, 'jwtd-check')) {
+      const s = note.spec || {};
+      if (s.secret) eq(lang + ': demo secret only (' + s.secret + ')', /demo/.test(s.secret), true);
+    }
+  }
+  // General statements on the tool pages: a "Bearer " or "Authorization: Bearer " prefix and JSON
+  // quotes always give the decode error (never a partial result), none of them triggers the 300 ms
+  // automatic decode, and UTF-8 decoding turns GBK bytes into U+FFFD.
+  const autoRegex = new RegExp(/var JWT_REGEX = \/(.+)\/;/.exec(source)[1]);
+  let seed = 20261008;
+  const rand = (n) => Array.from({ length: n }, () => 'abcXYZ019_-'[(seed = (seed * 1103515245 + 12345) % 2147483648) % 11]).join('');
+  let prefixOk = true, autoOk = true;
+  for (let i = 0; i < 300; i++) {
+    const t = buildToken({ header: { alg: 'HS256', typ: 'JWT', k: rand(i % 7) }, payload: { sub: rand(i % 13), n: i }, secret: 'demo-' + i });
+    for (const input of ['Bearer ' + t, 'Authorization: Bearer ' + t, '"' + t + '"']) {
+      const parts = input.split('.');
+      if (E.b64urlDecode(parts[0]) !== null && E.b64urlDecode(parts[1]) !== null) prefixOk = false;
+      if (autoRegex.test(input)) autoOk = false;
+    }
+  }
+  eq('Bearer prefix and JSON quotes always fail to decode (300 tokens)', prefixOk, true);
+  eq('Bearer prefix and JSON quotes never auto-decode', autoOk, true);
+  eq('two-part input never auto-decodes', autoRegex.test('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDA4NiJ9'), false);
+  eq('GBK bytes of 张三 decode to U+FFFD, not Chinese', /\uFFFD/.test(E.b64urlDecode(Buffer.from([0x22, 0xd5, 0xc5, 0xc8, 0xfd, 0x22]).toString('base64url'))), true);
+  // Line breaks inside a token (a token wrapped in a log or an e-mail) must not change the result:
+  // the same token with a line break ("\n", "\r\n", or a break with indentation) in any segment and
+  // at several positions decodes exactly as without it, by the Decode button and by the 300 ms
+  // automatic decode. Before the fix the result depended on the segment length, because
+  // b64urlDecode added "=" padding before atob() removed the whitespace. A space or tab that is not
+  // next to a line break, inside the header or payload, always gives the decode error.
+  {
+    const snap = (p) => p.get('jwt-status').textContent + '|' + p.get('jwt-results').textContent;
+    const wrapTokens = [example, ...[0, 1, 2, 3].map((k) => buildToken({ header: { alg: 'HS256', typ: 'JWT', p: 'x'.repeat(k) }, payload: { sub: 'u' + 'y'.repeat(k), name: 'José 東京', exp: 1893456000 }, secret: 'demo-wrap-' + k }))];
+    let same = 0, differ = [];
+    for (const lang of ['en', 'ja']) for (const t of wrapTokens) {
+      const base = page(lang); base.get('jwt-input').value = t; base.get('jwt-decode').click();
+      const want = snap(base);
+      const parts = t.split('.');
+      for (let s = 0; s < 3; s++) {
+        const segLen = parts[s].length;
+        for (const at of [1, Math.floor(segLen / 2), segLen - 1].filter((x) => x > 0 && x < segLen)) for (const br of ['\n', '\r\n', '\n    ', '  \n\t']) {
+          const offset = parts.slice(0, s).reduce((a, x) => a + x.length + 1, 0) + at;
+          const wrapped = t.slice(0, offset) + br + t.slice(offset);
+          const p = page(lang); p.get('jwt-input').value = wrapped; p.get('jwt-decode').click();
+          const q = page(lang); q.input(wrapped); q.advance(300);
+          if (snap(p) === want && snap(q) === want) same++; else differ.push(lang + ' seg' + s + '@' + at + ' len' + segLen + ' ' + JSON.stringify(br));
+        }
+      }
+    }
+    eq('line breaks inside a token give the same result as without them (Decode and auto decode)', differ.slice(0, 6).join('; '), '');
+    let spaceOk = true;
+    for (const t of wrapTokens) for (let s = 0; s < 2; s++) for (const sp of [' ', '\t']) {
+      const parts = t.split('.'); parts[s] = parts[s].slice(0, 5) + sp + parts[s].slice(5);
+      const p = page('en'); p.get('jwt-input').value = parts.join('.'); p.get('jwt-decode').click();
+      if (p.get('jwt-status').textContent !== pageStrings.en.errDecode || p.get('jwt-results').children.length !== 0) spaceOk = false;
+    }
+    eq('a space or tab inside the header or payload always gives the decode error', spaceOk, true);
+    console.log('Line-break checks: ' + same + ' wrapped inputs matched');
+  }
+  eq('GBK bytes C4 A3 (模) decode to ģ, as the zh page says', E.b64urlDecode(Buffer.from([0x22, 0xc4, 0xa3, 0x22]).toString('base64url')), '"ģ"');
+  eq('zh page names the C4 A3 example', readFileSync(join(root, 'src/content/tools/jwt-decoder/zh.mdx'), 'utf8').includes('「模」的 GBK 字节 C4 A3 恰好是 UTF-8 的「ģ」'), true);
+  console.log('Tool page worked examples: ' + (passes - before) + ' passed');
+}
 
 // ---------- v2 page layout ----------
 {
