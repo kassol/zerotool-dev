@@ -102,7 +102,19 @@ const parsed = E.parseCsv(out);
 eq('round trip header', parsed.rows[0], ['id', 'user.name', 'user.tags', 'note']);
 eq('round trip values', parsed.rows[1], ['7', 'Bob, Jr.', '["a"]', '']);
 
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), 'e87896cdb21292ad09516b68bb49503cf2f8bcbeaf541ff70eae2056298d7b32');
+// ---------- CSV → JSON number reading: RFC 8259 §6 number syntax, and only values JavaScript keeps exactly ----------
+const iv = (raw) => E.inferValue(raw, false, true, false);
+for (const [raw, want] of [
+  ['+81', '+81'], [' 007', ' 007'], ['007', '007'], ['.5', '.5'], ['5.', '5.'], ['0x1F', '0x1F'], [' 30', ' 30'], ['1_000', '1_000'], ['Infinity', 'Infinity'],
+  ['1e-400', '1e-400'], ['1e400', '1e400'], ['0.1000000000000000055511', '0.1000000000000000055511'], ['1234567890123456.7', '1234567890123456.7'],
+  ['-0', '-0'], ['-0.0', '-0.0'], ['9007199254740993', '9007199254740993'], ['9007199254740992', '9007199254740992'],
+  ['0', 0], ['-12', -12], ['3.14', 3.14], ['1.50', 1.5], ['0.0', 0], ['1e3', 1000], ['1E5', 100000], ['2.5e-7', 2.5e-7],
+  ['0.30000000000000004', 0.30000000000000004], ['123456789012345.6', 123456789012345.6], ['9007199254740991', 9007199254740991],
+]) eq('number reading ' + JSON.stringify(raw), iv(raw), want);
+
+// Engine changed with approval (2026-10-08, S2-6d): number reading (RFC 8259 syntax, exact values only).
+
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), 'a989d4fd4ab9d70c076e2ba01eabcd4215b314e692af2ed2b2a7d581b23354e5');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises and time are controlled boundaries; conversion code is real.
@@ -284,7 +296,7 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; the hash pins that reviewed script.
-eq('reviewed page script is unchanged', hash(script), 'fc74c6e3c932414a1043cdf246412ba2c820c29c0f1c6ac617620de6b513e6af');
+eq('reviewed page script is unchanged', hash(script), '35a45d7a6820e7f6d0fd8a4229badb2feaef2a72716468da0e5aebcfa01a5d00');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);

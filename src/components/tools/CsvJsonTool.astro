@@ -233,6 +233,17 @@ const { tips: TIPS, ...CLIENT } = T;
         return lines.join('\n');
       }
 
+      /* A number text is exact when the JavaScript number keeps its value: finite, not -0 (JSON
+         writes it as 0), not rounded to 0, and with the same significant digits. */
+      function sigDigits(text) {
+        return text.replace(/^-/, '').split(/[eE]/)[0].replace('.', '').replace(/^0+/, '').replace(/0+$/, '');
+      }
+      function isExactNumber(text, n) {
+        if (!isFinite(n) || Object.is(n, -0)) return false;
+        if (n === 0) return !/[1-9]/.test(text.split(/[eE]/)[0]);
+        return sigDigits(text) === sigDigits(String(n));
+      }
+
       /* ── Type inference for a single CSV field value ── */
       function inferValue(raw, quoted, parseTypes, emptyNull) {
         if (quoted) return raw;
@@ -242,15 +253,12 @@ const { tips: TIPS, ...CLIENT } = T;
         if (lo === 'null') return null;
         if (lo === 'true') return true;
         if (lo === 'false') return false;
-        /* number: reject leading-zero strings (e.g. "007", "0123") */
-        if (raw.length > 1 && raw[0] === '0' && raw[1] !== '.' && raw[1] !== 'e' && raw[1] !== 'E') return raw;
+        /* number: only the RFC 8259 §6 number syntax (no +, leading zeros, bare . or spaces) */
+        if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(raw)) return raw;
         var n = Number(raw);
-        if (!isNaN(n) && isFinite(n) && raw.trim() !== '') {
-          /* reject integers that exceed safe range to avoid precision loss */
-          if (Number.isInteger(n) && !Number.isSafeInteger(n)) return raw;
-          return n;
-        }
-        return raw;
+        /* reject integers that exceed safe range to avoid precision loss */
+        if (Number.isInteger(n) && !Number.isSafeInteger(n)) return raw;
+        return isExactNumber(raw, n) ? n : raw;
       }
 
       /* ── CSV parser: handles quoted fields; tracks per-field quoted status ── */
