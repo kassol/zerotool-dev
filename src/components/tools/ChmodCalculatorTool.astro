@@ -167,7 +167,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           <Toggletip id="chmod-tip-numeric" lang={lang} about={T.numeric}>{TIPS.numeric}</Toggletip>
         </div>
         <div class="chmod-result-value">
-          <input type="text" id="chmod-numeric" class="tool-input chmod-numeric-input" value="755" maxlength="4" inputmode="numeric" spellcheck="false" autocomplete="off" aria-describedby="chmod-numeric-error" />
+          <input type="text" id="chmod-numeric" class="tool-input chmod-numeric-input" value="755" maxlength="6" inputmode="numeric" spellcheck="false" autocomplete="off" aria-describedby="chmod-numeric-error" />
           <button id="chmod-copy-numeric" class="btn-copy" type="button">{T.copy}</button>
         </div>
       </div>
@@ -452,31 +452,34 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       // Numeric input
       var numericInput = document.getElementById('chmod-numeric');
+      // Spaces at the ends and a 0o / 0O prefix (Python and JavaScript octal literals) are ignored,
+      // and full-width digits typed with an IME are read through NFKC. Any other character is an
+      // error; the field is not rewritten, so the last valid result stays until the input is fixed.
+      function readNumeric(value) {
+        return value.normalize('NFKC').trim().replace(/^0o/i, '');
+      }
       numericInput.addEventListener('input', function () {
         resetCopyFeedback();
-        var original = this.value;
-        var raw = original.replace(/[^0-7]/g, '');
-        this.value = raw;
-        if (raw.length >= 3 && raw.length <= 4) {
-          if (applyNumericToState(raw)) {
-            var digits = calcDigits();
-            var special = getSpecialBits();
-            document.getElementById('chmod-symbolic').value = buildSymbolic(digits, special);
-            document.getElementById('chmod-command').textContent = 'chmod ' + raw + ' filename';
-            document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits, special);
-            document.getElementById('chmod-find-perm').textContent = 'find . -type f -perm ' + (special > 0 ? raw : ('0' + raw));
-            document.getElementById('chmod-description').textContent = buildDescription(digits, special);
-            setError('chmod-numeric', '');
-            setError('chmod-symbolic', '');
-            window.trackTool && window.trackTool('chmod_calculator', 'numeric_input');
-          }
-        } else if (raw.length > 0 && raw.length < 3) {
-          setError('chmod-numeric', t.errInvalidOctal);
-        } else if (original.length > 0 && raw.length === 0) {
+        var raw = readNumeric(this.value);
+        if (/^[0-7]{3,4}$/.test(raw) && applyNumericToState(raw)) {
+          var digits = calcDigits();
+          var special = getSpecialBits();
+          var numeric = buildNumericStr(digits, special);
+          document.getElementById('chmod-symbolic').value = buildSymbolic(digits, special);
+          document.getElementById('chmod-command').textContent = 'chmod ' + numeric + ' filename';
+          document.getElementById('chmod-command-sym').textContent = buildSymCmd(digits, special);
+          document.getElementById('chmod-find-perm').textContent = 'find . -type f -perm ' + (special > 0 ? numeric : ('0' + numeric));
+          document.getElementById('chmod-description').textContent = buildDescription(digits, special);
+          setError('chmod-numeric', '');
+          setError('chmod-symbolic', '');
+        } else if (this.value.trim().length > 0) {
           setError('chmod-numeric', t.errInvalidOctal);
         } else {
           setError('chmod-numeric', '');
         }
+      });
+      numericInput.addEventListener('change', function () {
+        if (/^[0-7]{3,4}$/.test(readNumeric(this.value))) window.trackTool && window.trackTool('chmod_calculator', 'numeric_input');
       });
 
       // Symbolic input
@@ -496,7 +499,6 @@ const { tips: TIPS, ...CLIENT_T } = T;
             document.getElementById('chmod-description').textContent = buildDescription(digits, special);
             setError('chmod-symbolic', '');
             setError('chmod-numeric', '');
-            window.trackTool && window.trackTool('chmod_calculator', 'symbolic_input');
           } else {
             setError('chmod-symbolic', t.errInvalidSymbolic);
           }
@@ -505,6 +507,10 @@ const { tips: TIPS, ...CLIENT_T } = T;
         } else {
           setError('chmod-symbolic', '');
         }
+      });
+      symbolicInput.addEventListener('change', function () {
+        var raw = stripLsDecorations(this.value.trim());
+        if (raw.length === 9 && !this.classList.contains('chmod-input-error')) window.trackTool && window.trackTool('chmod_calculator', 'symbolic_input');
       });
 
       // Copy helpers

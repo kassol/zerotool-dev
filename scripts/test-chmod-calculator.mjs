@@ -214,7 +214,7 @@ const settle = async () => { await new Promise(setImmediate); await new Promise(
 function page({ lang = 'en', shellFirst = false } = {}) {
   const allStrings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
   const { tips, ...t } = allStrings[lang];
-  const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map();
+  const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map(), tracks = [];
   let now = 0, timerId = 0;
   const doc = { documentElement: { lang }, activeElement: null };
   function simple(e, sel) {
@@ -311,7 +311,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
     },
   });
   const context = {
-    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) },
+    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) }, trackTool: (...args) => tracks.push(args),
     navigator: { clipboard: { writeText(value) {
       let resolve, reject;
       const promise = new Promise((a, b) => { resolve = a; reject = b; });
@@ -325,7 +325,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
   vm.runInContext(source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1], context, { filename: SLUG + '.astro' });
   if (!shellFirst) vm.runInContext(shortcut, context);
   return {
-    doc, body, get, copies, clears,
+    doc, body, get, copies, clears, tracks,
     input(id, value, type = 'input') { get(id).value = value; get(id).dispatch(type); },
     key(focus, { key = 'l', ctrlKey = true, metaKey = false } = {}) {
       (typeof focus === 'string' ? get(focus) : focus || body).focus();
@@ -440,6 +440,55 @@ try {
   }
   await settle(); eq('all current and stale clipboard rejections are handled', unhandled.length, 0);
 } finally { process.off('unhandledRejection', onUnhandled); }
+
+// Analytics: one event per committed change. Typing sends nothing; the change event of a valid
+// field sends one; an invalid or empty field sends none. Checkboxes send one per click.
+console.log('\nAnalytics events and numeric input reading');
+const t_en = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]).en;
+{
+  const p = page();
+  eq('GA: nothing on load', p.tracks.length, 0);
+  for (const v of ['6', '64', '644']) p.input('chmod-numeric', v);
+  eq('GA: typing a numeric value sends nothing', p.tracks.length, 0);
+  p.get('chmod-numeric').dispatch('change');
+  same('GA: committing a valid numeric value sends one numeric_input', p.tracks, [['chmod_calculator', 'numeric_input']]);
+  p.input('chmod-numeric', '64'); p.get('chmod-numeric').dispatch('change');
+  eq('GA: committing an incomplete numeric value sends nothing', p.tracks.length, 1);
+  for (const v of ['r', 'rw-', 'rw-r--r--']) p.input('chmod-symbolic', v);
+  eq('GA: typing a mode string sends nothing', p.tracks.length, 1);
+  p.get('chmod-symbolic').dispatch('change');
+  same('GA: committing a valid mode string sends one symbolic_input', p.tracks.at(-1), ['chmod_calculator', 'symbolic_input']);
+  p.input('chmod-symbolic', 'rwz'); p.get('chmod-symbolic').dispatch('change');
+  eq('GA: committing an invalid mode string sends nothing', p.tracks.length, 2);
+  p.body.querySelector('input[data-who="group"][data-perm="w"]').click();
+  same('GA: a checkbox sends one toggle', p.tracks.at(-1), ['chmod_calculator', 'toggle']);
+  p.get('chmod-setgid').click();
+  same('GA: a special bit sends one special_bit', p.tracks.at(-1), ['chmod_calculator', 'special_bit']);
+  eq('GA: four events in total', p.tracks.length, 4);
+}
+{
+  // A character that is not 0-7 used to be removed silently: "7558" became 755 and a pasted
+  // Python literal "0o644" (cut to "0o64" by maxlength 4) became 064. Now a 0o / 0O prefix and
+  // spaces at the ends are ignored, full-width digits from an IME are read through NFKC, and any
+  // other character shows the error and keeps the last valid result.
+  const p = page();
+  p.input('chmod-numeric', '0o644');
+  same('0o644 is read as 644', state(p).commands, ['chmod 644 filename', 'chmod u=rw,g=r,o=r filename', 'find . -type f -perm 0644']);
+  p.input('chmod-numeric', ' 0O2775 ');
+  same('" 0O2775 " is read as 2775', [state(p).values[1], state(p).commands[0]], ['rwxrwsr-x', 'chmod 2775 filename']);
+  p.input('chmod-numeric', '７５５');
+  same('full-width ７５５ is read as 755', [state(p).values[1], state(p).commands[0], state(p).errors[0]], ['rwxr-xr-x', 'chmod 755 filename', ['', false]]);
+  const valid = state(p);
+  for (const bad of ['7558', '758', '64 4', '0x1ED', 'chmod', '-644', '0o', '8']) {
+    p.input('chmod-numeric', bad);
+    const s = state(p);
+    same(`${JSON.stringify(bad)} shows the error`, s.errors[0], [t_en.errInvalidOctal, true]);
+    same(`${JSON.stringify(bad)} keeps the last valid commands`, s.commands, valid.commands);
+    eq(`${JSON.stringify(bad)} is left as typed`, p.get('chmod-numeric').value, bad);
+  }
+  const m = source.match(/id="chmod-numeric"[^>]*maxlength="(\d+)"/);
+  eq('numeric field accepts a 0o prefix and four digits (maxlength 6)', m && m[1], '6');
+}
 
 
 console.log('\nv2 page layout');
