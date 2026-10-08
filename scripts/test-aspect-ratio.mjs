@@ -396,7 +396,7 @@ const AR_CHECK = {
     q.type('ar-width', ''); q.lock(true);
     eq(lang + ' actual error uses the build-time language', q.els('ar-status').textContent, entry.errEnterDims);
     q.preset(21, 9);
-    eq(lang + ' actual preset feedback uses the build-time language', q.els('ar-status').textContent, 'Preset 21:9' + entry.presetApplied);
+    eq(lang + ' actual preset feedback is fully in the page language', q.els('ar-status').textContent, { en: 'Preset 21:9 applied', zh: '已应用预设 21:9', ja: 'プリセット 21:9 を適用しました', ko: '프리셋 21:9 적용됨' }[lang]);
   }
   const long = makePage();
   long.type('ar-width', '9007199254740991'); long.type('ar-height', '9007199254740881');
