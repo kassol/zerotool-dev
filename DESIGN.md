@@ -43,16 +43,21 @@ Text color tokens must reach a contrast ratio of at least 4.5:1 (WCAG AA) agains
 
 Tool cards, related cards, and directory panel items use category tinting through `--category-color`.
 
-| Category | Token |
-|---|---|
-| Data | `--color-cat-data` |
-| Color | `--color-cat-color` |
-| Encoding | `--color-cat-encoding` |
-| Text | `--color-cat-text` |
-| Security | `--color-cat-security` |
-| Dev | `--color-cat-dev` |
-| API | `--color-cat-api` |
-| Image | `--color-cat-image` |
+| Category (`category` key) | Token | Light | Dark |
+|---|---|---:|---:|
+| JSON & Data (`data`) | `--color-cat-data` | `oklch(52% 0.085 210)` | `oklch(74% 0.089 210)` |
+| Code & Types (`code`) | `--color-cat-code` | `oklch(48% 0.075 255)` | `oklch(74% 0.079 255)` |
+| Text & Markdown (`text`) | `--color-cat-text` | `oklch(49% 0.085 145)` | `oklch(74% 0.089 145)` |
+| Encoding (`encoding`) | `--color-cat-encoding` | `oklch(57% 0.11 82)` | `oklch(74% 0.116 82)` |
+| Crypto & Auth (`security`) | `--color-cat-security` | `oklch(50% 0.13 28)` | `oklch(74% 0.13 28)` |
+| Web & HTTP (`web`) | `--color-cat-web` | `oklch(52% 0.09 300)` | `oklch(74% 0.095 300)` |
+| CSS (`css`) | `--color-cat-css` | `oklch(50% 0.11 178)` | `oklch(74% 0.116 178)` |
+| Color (`color`) | `--color-cat-color` | `oklch(56% 0.12 345)` | `oklch(74% 0.126 345)` |
+| Image (`image`) | `--color-cat-image` | `oklch(55% 0.12 58)` | `oklch(74% 0.126 58)` |
+| IDs & QR (`ids`) | `--color-cat-ids` | `oklch(52% 0.1 115)` | `oklch(74% 0.105 115)` |
+| DevOps & Time (`devops`) | `--color-cat-devops` | `oklch(45% 0.02 250)` | `oklch(74% 0.021 250)` |
+
+`code` and `web` keep the values of the removed `dev` and `api` tokens. Dark values share one lightness (74%) so icons reach at least 8:1 against the dark background; light values reach at least 4.4:1 against `--color-surface`. Any two tokens differ by at least ΔEOK 0.05 in each theme (the closest pair is `encoding` / `image`, unchanged from the 8-category palette). `devops` is a low-chroma slate so it reads as neutral next to the blue `code`. Tool components may borrow a category token for their own accents; they must name an existing token.
 
 The tint appears in icon wells, hover background mixes, and small category tags. Keep the page chrome warm and neutral while category color helps scanning.
 

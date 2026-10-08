@@ -30,7 +30,7 @@ interface ToolTranslation {
 interface ToolInfo {
   slug: string;                                    // URL slug；工具页路由由 astro.config.mjs 的 toolRoutes() 按 components/tools/registry.ts 注入
   translations: Record<'en'|'zh'|'ja'|'ko', ToolTranslation>;  // 4 语言必填
-  category: 'data'|'encoding'|'text'|'security'|'dev'|'api'|'color'|'image';
+  category: 'data'|'code'|'text'|'encoding'|'security'|'web'|'css'|'color'|'image'|'ids'|'devops';
   relatedSlugs?: string[];                         // 可选，工具页底部「相关工具」
 }
 ```
@@ -40,7 +40,7 @@ interface ToolInfo {
 1. **4 语言完整**：`translations` 必须有 `en/zh/ja/ko` 全部 key。回退会发生但应避免（影响 SEO 和用户体验）
 2. **slug 唯一**：新增前 grep `slug:` 确认无冲突
 3. **slug 格式**：`kebab-case`，仅 `a-z0-9-`，不允许大写、下划线、点
-4. **category 枚举封闭**：`scripts/audit.mjs` 把 `tools.ts` 的 `category` 联合类型当作单源，从这里 grep 出可选值并与 `src/components/CategoryFilter.astro` 比对。要新增分类必须先改类型联合，再同步 UI 过滤器
+4. **category 枚举封闭**：`scripts/audit.mjs` 把 `tools.ts` 的 `category` 联合类型当作单源，从这里 grep 出可选值并与 `src/components/CategoryFilter.astro` 比对。要新增分类必须先改类型联合，再同步 UI 过滤器（`CategoryFilter.astro`）、`llms.mjs` 的 `CATEGORY_ORDER`、四语 `category.*` 键、`BaseLayout.astro` 的 `--color-cat-*`（亮暗各一份）与 `ToolDirectory.astro` / `ToolLayout.astro` 的选择器。每类的工具集合由 `scripts/test-tool-categories.mjs` 按表断言，改归属时同步改表
 5. **图标必配**：`tools.ts` 每加一条，必须在 `icons.ts` 加同名 key 的 SVG。`scripts/check-icon-coverage.mjs` 在 `npm run build` 第一步校验，缺图标会让构建失败
 
 ## icons.ts 规范
@@ -56,10 +56,11 @@ interface ToolInfo {
 | 新增 tool | push master 后自动跑 `update-readme.yml`，README.md 工具表自动更新 |
 | 改 name/description | 翻译影响 4 语言页面 SEO title/description |
 | 改 slug | 必须同步：`pages/tools/`、`pages/{lang}/tools/`、`icons.ts`、`_redirects`（加 301） |
-| 改 category | 列表页过滤器映射可能要改 |
+| 改 category | 同步 `scripts/test-tool-categories.mjs` 的归属表；工具页相关卡片颜色、博客相关文章同分类加分（`ArticleLayout.astro`）、llms 分节随之变化；IndexNow 按 `tools.ts` 改动行推送对应工具页 |
 
 ## 变更日志
 
+- 2026-10-08 — 分类由 8 类改为 11 类（data / code / text / encoding / security / web / css / color / image / ids / devops，删去 dev、api），75 个工具换分类，URL 不变；归属表在 `scripts/test-tool-categories.mjs`。
 - 2026-10-08 — `network.ts` 新增 `trustNoteKey()`：联网工具用 `network.{slug}`，只在打开选项后联网的工具用新键 `trustOptional.{slug}`，其余用 `tool.trustPrivacy`；`ToolLayout` 的信任栏第二项改用它（此前 markdown-to-word 显示「数据不离开浏览器」）。
 - 2026-10-06 — B13在tool-layouts.ts新增九个generate登记（清单见根AGENTS.md同日条目），此批后v2登记131/141。tools.ts、icons.ts及联网、存储、敏感策略保持；audit22与564页构建通过，剩余十页及旧版式清理由B14继续。
 

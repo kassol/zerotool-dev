@@ -99,7 +99,7 @@ const pick = (current, posts, cats = {}, limit = 3) => dirs(selectRelatedPosts(c
 
 // ---------- 2. category bonus ----------
 {
-  const cats = { 'json-formatter-guide': 'data', 'yaml-json-guide': 'data', 'regex-tester-guide': 'dev', 'uuid-generator-guide': 'dev' };
+  const cats = { 'json-formatter-guide': 'data', 'yaml-json-guide': 'data', 'regex-tester-guide': 'code', 'uuid-generator-guide': 'ids' };
   const cur = post('json-formatter-guide', 10);
   const posts = [
     cur,
