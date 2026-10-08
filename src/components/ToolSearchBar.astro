@@ -27,41 +27,80 @@ const noResultsText = t(lang, 'search.noResults');
   <p id="no-results" class="no-results" hidden>{noResultsText}</p>
 </div>
 
-<script is:inline>
-  (function () {
-    var input = document.getElementById('tool-search');
-    var noResults = document.getElementById('no-results');
-    if (!input || !noResults) return;
+<script>
+  // Ranking and matching rules are in tool-search.mjs. CategoryFilter.astro keeps the chip
+  // state in window.__ztCat and calls window.__ztApply after a click.
+  import { makeEntry, searchEntries } from './tool-search.mjs';
 
-    var timer;
-    input.addEventListener('input', function () {
-      clearTimeout(timer);
-      timer = setTimeout(filter, 150);
-    });
+  const input = document.getElementById('tool-search') as HTMLInputElement | null;
+  const noResults = document.getElementById('no-results');
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('.tool-card'));
+  const w = window as unknown as { __ztCat?: string; __ztApply?: () => void };
 
-    function filter() {
-      var q = input.value.trim().toLowerCase();
-      window.__ztSearch = q;
-      // Delegate to shared filter if CategoryFilter is present
-      if (typeof window.__ztApply === 'function') {
-        window.__ztApply();
-        return;
+  if (input && noResults && cards.length) {
+    const grid = cards[0].parentNode as HTMLElement;
+    const entries = cards.map((c) => makeEntry({
+      slug: c.dataset.slug || '',
+      name: c.dataset.name || '',
+      description: c.dataset.desc || '',
+      altNames: (c.dataset.alt || '').split('\n'),
+    }));
+
+    const getRecent = (): string[] => {
+      try { return JSON.parse(localStorage.getItem('zt-recent') || '[]'); } catch { return []; }
+    };
+
+    // The first result should start inside the window; when it does not, bring the search
+    // controls to the top (below the sticky header) so the results follow right under them.
+    const revealResults = (first: HTMLElement) => {
+      if (first.getBoundingClientRect().top <= window.innerHeight - 120) return;
+      const header = document.querySelector('.site-header');
+      const offset = header ? header.getBoundingClientRect().height : 0;
+      const target = input.closest('.directory-controls') || input;
+      const top = target.getBoundingClientRect().top + window.scrollY - offset - 8;
+      const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
+    };
+
+    const apply = (reveal: boolean) => {
+      const cat = w.__ztCat || 'all';
+      const ranked = searchEntries(entries, input.value);
+      const recent = cat === 'recent' ? getRecent() : [];
+      let order = cards.map((_, i) => i);
+      if (ranked) {
+        const hit = new Set(ranked);
+        order = ranked.concat(order.filter((i) => !hit.has(i)));
+      } else if (cat === 'recent') {
+        const rank = (i: number) => { const k = recent.indexOf(cards[i].dataset.slug || ''); return k === -1 ? 9999 : k; };
+        order = order.slice().sort((a, b) => rank(a) - rank(b) || a - b);
       }
-      // Fallback: search-only filter
-      var cards = document.querySelectorAll('.tool-card');
-      var visible = 0;
-      for (var i = 0; i < cards.length; i++) {
-        var kw = cards[i].getAttribute('data-keywords') || '';
-        if (!q || kw.indexOf(q) !== -1) {
-          cards[i].style.display = '';
-          visible++;
-        } else {
-          cards[i].style.display = 'none';
-        }
+      const hit = ranked ? new Set(ranked) : null;
+      let visible = 0;
+      let first: HTMLElement | null = null;
+      for (const i of order) {
+        const card = cards[i];
+        grid.appendChild(card);
+        const inCat = cat === 'all' || (cat === 'recent' ? recent.includes(card.dataset.slug || '') : card.dataset.category === cat);
+        const show = inCat && (!hit || hit.has(i));
+        card.style.display = show ? '' : 'none';
+        if (show) { visible++; if (!first) first = card; }
       }
       noResults.hidden = visible > 0;
-    }
-  })();
+      if (reveal && ranked && first) revealResults(first);
+    };
+
+    w.__ztApply = () => apply(false);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => apply(true), 150);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { clearTimeout(timer); apply(true); }
+    });
+    // Text typed or restored before this module ran, or a chip clicked before it.
+    if (input.value.trim() || (w.__ztCat && w.__ztCat !== 'all')) apply(false);
+  }
 </script>
 
 <style>
