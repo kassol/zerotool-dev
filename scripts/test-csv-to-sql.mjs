@@ -259,9 +259,10 @@ function page(lang='en', order='shared-after') {
   const widget=el();doc={documentElement:{lang},body:el('body'),activeElement:null,getElementById:get,querySelector(sel){if(sel==='.tool-widget')return widget;if(sel==='.tool-widget .btn-primary')return nodes.find(e=>e.classList.contains('btn-primary'))||null;return queryAll(sel)[0]||null;},querySelectorAll:queryAll,createElement:el,addEventListener(k,fn){(docs[k]??=[]).push(fn);},execCommand(){throw Error('native clipboard forbidden');}};doc.activeElement=doc.body;
   if(strings){const root=doc.querySelector('.cts-wrap');const {tips,...client}=strings;root.dataset={strings:JSON.stringify(client),lang};}
   const setTimeout=(fn,ms=0)=>{const id=++seq;jobs.set(id,{id,fn,ms,due:now+ms});return id;};
-  const globals={document:doc,Event:class{constructor(type){this.type=type;}},setTimeout,clearTimeout:id=>jobs.delete(id),trackTool:(...a)=>tracks.push(a),ztPersist:{clear:slug=>cleared.push(slug)},
+  const globals={document:doc,TextDecoder,Event:class{constructor(type){this.type=type;}},setTimeout,clearTimeout:id=>jobs.delete(id),trackTool:(...a)=>tracks.push(a),ztPersist:{clear:slug=>cleared.push(slug)},
     navigator:{clipboard:{writeText(text){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});copies.push({text,resolve,reject});return promise;}}},
-    FileReader:class{constructor(){readers.push(this);}readAsText(file){this.file=file;}finish(text){this.result=text;this.onload?.({target:this});}fail(){this.onerror?.({target:this});}}};
+    // readAsArrayBuffer: finish(text) hands the UTF-8 bytes of text, finish(Uint8Array) the bytes as given.
+    FileReader:class{constructor(){readers.push(this);}readAsText(file){this.file=file;this.mode='text';}readAsArrayBuffer(file){this.file=file;this.mode='buffer';}finish(x){const u8=typeof x==='string'?new TextEncoder().encode(x):x;this.result=this.mode==='buffer'?u8.buffer.slice(u8.byteOffset,u8.byteOffset+u8.byteLength):(typeof x==='string'?x:new TextDecoder().decode(x));this.onload?.({target:this});}fail(){this.onerror?.({target:this});}}};
   const addShared=()=>vm.runInNewContext(shared,{document:doc,window:globals,_slug:s.slug});
   if(order==='shared-before')addShared();loadPage(rel,{lang,globals});if(order==='shared-after')addShared();
   function advance(ms){const end=now+ms;for(let i=0;i<100;i++){const next=[...jobs.values()].filter(j=>j.due<=end).sort((a,b)=>a.due-b.due||a.id-b.id)[0];if(!next)break;jobs.delete(next.id);now=next.due;next.fn();}now=end;}
@@ -370,6 +371,79 @@ try {
   }
 } finally { rmSync(fixtureDir,{recursive:true,force:true}); }
 
+// ---------- analytics: one event per committed change (S2-7, 2026-10-08) ----------
+// The page used to send csv_to_sql/convert on load (the sample) and after every 0.3 s typing pause.
+{
+  for (const lang of ['en','zh','ja','ko']) {
+    const p = page(lang);
+    eq(lang+' no event on page load', p.tracks.length, 0);
+    p.type(s.left, 'n\n1'); p.advance(300); p.type(s.left, 'n\n12'); p.advance(300);
+    eq(lang+' no event per typing pause', p.tracks.length, 0);
+    p.get(s.left).fire('change');
+    eq(lang+' one event on CSV change', p.tracks, [['csv_to_sql','convert']]);
+    p.get(s.left).fire('change');
+    eq(lang+' same input and options are not sent twice', p.tracks.length, 1);
+    p.type(s.left, 'n\n7'); p.get(s.left).fire('change');
+    eq(lang+' change before the debounce converts first', [p.get(s.right).value, p.tracks.length], ['INSERT INTO `my_table` (`n`) VALUES\n  (7);', 2]);
+    p.get('cts-dialect').value='sqlite'; p.get('cts-dialect').fire('change');
+    eq(lang+' dialect change sends', p.tracks.length, 3);
+    p.get('cts-mode').value='individual'; p.get('cts-mode').fire('change');
+    p.get('cts-create').checked=true; p.get('cts-create').fire('change');
+    eq(lang+' mode and CREATE TABLE changes send', p.tracks.length, 5);
+    p.type('cts-table','orders'); p.advance(300);
+    eq(lang+' table typing pause does not send', p.tracks.length, 5);
+    p.get('cts-table').fire('change');
+    eq(lang+' table change sends', p.tracks.length, 6);
+    p.open().finish('n\n9');
+    eq(lang+' loaded file sends', p.tracks.length, 7);
+    p.type(s.left, ''); p.advance(300); p.get(s.left).fire('change');
+    eq(lang+' empty output does not send', p.tracks.length, 7);
+    p.type(s.left, 'n\n9'); p.key(s.left); p.type(s.left, 'n\n9'); p.get(s.left).fire('change');
+    eq(lang+' after Ctrl+L the same input sends again', p.tracks.length, 8);
+  }
+}
+
+// ---------- uploaded files must be UTF-8 (S2-7, 2026-10-08) ----------
+// FileReader.readAsText(file, 'UTF-8') turned every byte that is not UTF-8 into U+FFFD, so a
+// Shift_JIS or GBK CSV saved by Excel became SQL full of replacement characters with no warning.
+{
+  const fileMsgs = frontmatterStrings(readComponent('src/components/tools/CsvToSqlTool.astro').frontmatter);
+  const fmtMsg = (t, o) => t.replace('{offset}', String(o));
+  // "id,名前\n1,山田" in Shift_JIS (名 96 BC, 前 91 4F, 山 8E 52, 田 93 63) and GBK (名 C3 FB, 前 C7 B0)
+  const sjis = Uint8Array.from([0x69,0x64,0x2c,0x96,0xbc,0x91,0x4f,0x0a,0x31,0x2c,0x8e,0x52,0x93,0x63]);
+  const gbk = Uint8Array.from([0x69,0x64,0x2c,0xc3,0xfb,0xc7,0xb0,0x0a,0x31,0x2c,0x41]);
+  const utf16 = Uint8Array.from([0xff,0xfe,0x61,0x00,0x0a,0x00,0x31,0x00]);
+  const binary = Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00]);
+  const utf8bom = Uint8Array.from([0xef,0xbb,0xbf,...new TextEncoder().encode('名前,年齢\n山田,30')]);
+  for (const lang of ['en','zh','ja','ko']) {
+    const S = fileMsgs?.[lang] || {};
+    for (const [name, bytes, key, offset] of [['Shift_JIS', sjis, 'fileNotUtf8', 3], ['GBK', gbk, 'fileNotUtf8', 3], ['UTF-16LE', utf16, 'fileUtf16', 0], ['binary', binary, 'fileBinary', 8]]) {
+      const p = page(lang); p.golden(); const before = [p.get(s.left).value, p.get(s.right).value];
+      p.open({ name: 'x.csv' }).finish(bytes);
+      eq(lang+' '+name+' file is refused in the page language', [p.get('cts-status').textContent, p.get('cts-status').classList.contains('error')], [fmtMsg(S[key] || key, offset), true]);
+      eq(lang+' '+name+' file leaves CSV Input and SQL unchanged', [p.get(s.left).value, p.get(s.right).value], before);
+      check(lang+' '+name+' file sends no event', p.tracks.length === 0);
+    }
+    const nul = Uint8Array.from([0x61,0x2c,0x62,0x0a,0x31,0x00,0x32]);
+    let p = page(lang); p.golden(); p.open().finish(nul);
+    eq(lang+' NUL byte is a binary file', p.get('cts-status').textContent, fmtMsg(S.fileBinary || 'fileBinary', 5));
+    p = page(lang); p.open().finish(utf8bom);
+    eq(lang+' UTF-8 file with BOM loads without the BOM', [p.get(s.left).value, p.get(s.right).value], ['名前,年齢\n山田,30', 'INSERT INTO `my_table` (`名前`, `年齢`) VALUES\n  (\'山田\', 30);']);
+    p = page(lang); p.golden(); const r = p.open(); r.fail();
+    eq(lang+' read error is reported', [p.get('cts-status').textContent, p.get(s.right).value], [S.fileError || 'fileError', s.expected]);
+  }
+  // The function text up to the closing brace at its own indentation, each line trimmed.
+  const fnLines = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return '';
+    const indent = src.slice(src.lastIndexOf('\n', i) + 1, i);
+    const end = src.indexOf('\n' + indent + '}\n', i);
+    return end < 0 ? '' : src.slice(i, end + indent.length + 2).split('\n').map((l) => l.trim()).join('\n');
+  };
+  const jf = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  check('firstBadUtf8 is the same as in json-formatter-engine.js', fnLines(source, 'firstBadUtf8') !== '' && fnLines(source, 'firstBadUtf8') === fnLines(jf, 'firstBadUtf8'));
+}
+
 
 /* ── v2 page layout ── */
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -378,7 +452,9 @@ const allStrings = frontmatterStrings(readComponent('src/components/tools/CsvToS
 const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
-eq('reviewed FIX script preserves all bytes except i18n and removed buttons', hash(script), '6685c5ec81f47133fe62776e902af72fa590512536deb8d4abcd349e48ae880f');
+// Pinned page script. S2-7 (2026-10-08) changed it outside the engine block: analytics only on
+// committed changes, and uploaded files are checked for UTF-8 (tests above). The engine hash is unchanged.
+eq('reviewed page script is unchanged since S2-7', hash(script), '1a15ba3816b77304e9f1d1571682e4649cbec99348df16a3421cce9b865d2faa');
 check('direct zero-minimum flex column root', /^\s*<div class="cts-wrap"/.test(markupSource) && /\.cts-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cts-(?:toolbar|controls)"[\s\S]*id="cts-status"[\s\S]*class="cts-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
