@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, examplePairs, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToCsvTool.astro'), 'utf8');
@@ -283,14 +283,15 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
     const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
     check(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
     equalLayout(lang+' MDX content contract', contractProblems('json-to-csv', lang), '');
-    // JSON → CSV examples, recomputed with some flatten / formula-guard setting. The formula-guard
-    // example shows invalid JSON on the page (the MDX template literal drops the \" escapes), so it
-    // is listed here; the check below fails once the page is fixed, and the entry must go.
-    const KNOWN_INVALID_INPUT = ['[{"name":"Ann","comment":"=HYPERLINK("http://example.com","Click")"}]'];
+    // JSON → CSV examples, recomputed with some flatten / formula-guard setting; a {/* jtc-check: {"guard": …} */}
+    // marker fixes the guard for the input and output blocks right after it.
     const csvPairs=examplePairs(body,b=>b.lang==='pre'&&/^[[{]/.test(b.text),b=>b.lang==='pre'&&!/^[[{]/.test(b.text));
     equalLayout(lang+' has JSON → CSV examples',csvPairs.length>0,true);
-    equalLayout(lang+' known invalid example input is still invalid JSON',csvPairs.filter(([a])=>KNOWN_INVALID_INPUT.includes(a.text)).every(([a])=>{try{JSON.parse(a.text);return false;}catch{return true;}}),true);
-    equalLayout(lang+' each CSV example equals the engine output',csvPairs.filter(([a])=>!KNOWN_INVALID_INPUT.includes(a.text)).filter(([a,b])=>![true,false].some(fl=>['off','quote','tab'].some(guard=>conv(JSON.parse(a.text),{flatten:fl,guard}).csv===b.text))).map(([,b])=>b.text),[]);
+    equalLayout(lang+' each example input is valid JSON',csvPairs.filter(([a])=>{try{JSON.parse(a.text);return false;}catch{return true;}}).map(([a])=>a.text),[]);
+    equalLayout(lang+' each CSV example equals the engine output',csvPairs.filter(([a,b])=>{try{return ![true,false].some(fl=>['off','quote','tab'].some(guard=>conv(JSON.parse(a.text),{flatten:fl,guard}).csv===b.text));}catch{return true;}}).map(([,b])=>b.text),[]);
+    const guardNotes=annotations(body,'jtc-check');
+    equalLayout(lang+' has the formula-guard example marker',guardNotes.length,1);
+    for(const note of guardNotes){const [input,output]=fencedBlocks(note.after);equalLayout(lang+' jtc-check '+JSON.stringify(note.spec)+' equals the engine output',input&&output?conv(JSON.parse(input.text),{guard:note.spec.guard}).csv:null,output?.text);}
     check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   }
 }

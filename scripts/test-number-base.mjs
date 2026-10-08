@@ -512,11 +512,67 @@ if (stringsMatch) {
 }
 
 // ---------- examples on the tool pages ----------
+// Code shown after a marker: inline code spans and code blocks between the end of the marker's
+// group (markers separated only by whitespace) and the next marker or heading.
+function shownAfter(text, at) {
+  const marker = /\{\/\*[\s\S]*?\*\/\}\s*/y;
+  let pos = at;
+  for (;;) { marker.lastIndex = pos; if (!marker.exec(text)) break; pos = marker.lastIndex; }
+  const rest = text.slice(pos);
+  const stop = rest.search(/\{\/\*|^#{1,6}\s|<h[1-6]\b/m);
+  const region = stop < 0 ? rest : rest.slice(0, stop);
+  const blocks = [...region.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)].map((b) => b[1]);
+  const inline = [...region.replace(/^```[^\n]*\n[\s\S]*?^```/gm, '').matchAll(/`([^`\n]+)`/g)].map((c) => c[1]);
+  return { includes: (want) => inline.includes(want) || blocks.some((b) => b.includes(want)) };
+}
+// Code in the text right before a marker group: from the previous marker or heading to the group.
+function shownBefore(text, at) {
+  let head = text.slice(0, at);
+  for (let i = head.lastIndexOf('{/* nb:'); i >= 0 && /^\{\/\* nb:[^\n]*?\*\/\}\s*$/.test(head.slice(i)); i = head.lastIndexOf('{/* nb:')) head = head.slice(0, i);
+  const cut = Math.max(head.lastIndexOf('*/}') + 3, ...[...head.matchAll(/^#{1,6}\s.*$|<\/h[1-6]>/gm)].map((h) => h.index + h[0].length));
+  const region = head.slice(cut);
+  const blocks = [...region.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)].map((b) => b[1]);
+  const inline = [...region.replace(/^```[^\n]*\n[\s\S]*?^```/gm, '').matchAll(/`([^`\n]+)`/g)].map((c) => c[1]);
+  return { includes: (want) => inline.includes(want) || blocks.some((b) => b.includes(want)) };
+}
+// Real examples whose output is written in the paragraph before the marker instead of after it
+// (S2-0, 2026-10-08). The text is unchanged; the output must still be in that paragraph's code.
+// Key: file + ' ' + the marker JSON.
+const SHOWN_BEFORE_MARKER = new Set([
+  "en.mdx {\"in\": \"0.1\", \"base\": 10, \"out\": 2, \"expect\": \"0.0(0011)\"}",
+  "en.mdx {\"in\": \"0.1\", \"base\": 10, \"out\": 16, \"expect\": \"0.1(9)\"}",
+  "en.mdx {\"in\": \"0.625\", \"base\": 10, \"out\": 2, \"expect\": \"0.101\"}",
+  "ja.mdx {\"in\": \"1000\", \"base\": 10, \"out\": 2, \"expect\": \"1111101000\"}",
+  "ja.mdx {\"in\": \"755\", \"base\": 8, \"out\": 2, \"expect\": \"111101101\"}",
+  "ja.mdx {\"in\": \"0.1\", \"base\": 10, \"out\": 2, \"expect\": \"0.0(0011)\"}",
+  "ko.mdx {\"in\": \"-10\", \"base\": 10, \"twos\": 32, \"field\": \"hex\", \"expect\": \"FFFFFFF6\"}",
+  "ko.mdx {\"in\": \"1101 0110\", \"base\": 2, \"out\": 16, \"expect\": \"D6\"}",
+  "ko.mdx {\"in\": \"0.75\", \"base\": 10, \"out\": 2, \"expect\": \"0.11\"}",
+  "ko.mdx {\"in\": \"0.1\", \"base\": 10, \"out\": 16, \"expect\": \"0.1(9)\"}",
+  "zh.mdx {\"in\": \"0.1\", \"base\": 10, \"out\": 16, \"expect\": \"0.1(9)\"}",
+  "zh.mdx {\"in\": \"0.625\", \"base\": 10, \"out\": 2, \"expect\": \"0.101\"}",
+]);
+// Real examples whose output is not written verbatim in code near the marker (S2-0, 2026-10-08;
+// text unchanged): en writes −10 with U+2212 in prose, and does not show −255 at all. The value
+// is still recomputed; the entry must go once the page shows the output after the marker.
+const NOT_SHOWN_VERBATIM = new Set([
+  "en.mdx {\"in\": \"FFFFFFF6\", \"base\": 16, \"signed\": 32, \"out\": 10, \"expect\": \"-10\"}",
+  "en.mdx {\"in\": \"-0xff\", \"base\": 10, \"out\": 10, \"expect\": \"-255\"}",
+]);
+{
+  // A wrong shown output must be caught even when the right value appears elsewhere on the page.
+  const page = 'Text `-1010` elsewhere.\n\n{/* nb: {"in": "-10", "base": 10, "out": 2, "expect": "-1010"} */}\n{/* nb: {"in": "-10", "base": 10, "twos": 8, "expect": "11110110"} */}\n\n- Binary row: `-1011`\n- 8-bit row: `11110110`\n\n## Next\n\n`-1010`\n';
+  const at = page.indexOf('{/* nb:');
+  check('shownAfter: a wrong shown output is not found', !shownAfter(page, at).includes('-1010'));
+  check('shownAfter: the second marker of a group reads the same region', shownAfter(page, page.indexOf('{/* nb:', at + 1)).includes('11110110'));
+  check('shownAfter: text before the marker or after the next heading does not count', !shownAfter(page, at).includes('Next'));
+}
 // An example is written as {/* nb: {"in": "...", "base": 10, "out": 2, "opts": {...}, "expect": "..."} */}
 // (or "twos": 8 for a two's complement pattern, "signed": 8 for signed input, "error": "code").
 {
   const dir = join(root, 'src/content/tools/number-base');
   let count = 0;
+  const seenBefore = new Set();
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.mdx'))) {
     const text = readFileSync(join(dir, file), 'utf8');
     for (const m of text.matchAll(/\{\/\* nb: (\{.*?\}) \*\/\}/g)) {
@@ -530,11 +586,23 @@ if (stringsMatch) {
       else got = E.formatValue(r.n, r.d, ex.out, ex.opts || {}).text;
       const want = ex.error || ex.expect;
       check(file + ' example ' + m[1], got === want, 'got ' + show(got));
-      // The expected text must appear in the page right after the marker's paragraph.
-      if (!ex.error) check(file + ' shows ' + want, text.includes(want), 'not found in page');
+      // The recomputed output must appear in inline code or a code block after the marker: from the
+      // end of its group of consecutive markers to the next marker or heading.
+      if (!ex.error) {
+        const key = file + ' ' + m[1];
+        if (NOT_SHOWN_VERBATIM.has(key)) {
+          seenBefore.add(key);
+          check(file + ' listed exception ' + want + ' is still not shown verbatim near its marker', !shownAfter(text, m.index).includes(want) && !shownBefore(text, m.index).includes(want), 'now shown: remove it from NOT_SHOWN_VERBATIM');
+        } else if (SHOWN_BEFORE_MARKER.has(key)) {
+          seenBefore.add(key);
+          check(file + ' shows ' + want + ' in the code right before its marker (listed exception)', shownBefore(text, m.index).includes(want), 'not in the code before the marker');
+          check(file + ' listed exception ' + want + ' is still not shown after its marker', !shownAfter(text, m.index).includes(want), 'shown after the marker: remove it from SHOWN_BEFORE_MARKER');
+        } else check(file + ' shows ' + want + ' after its marker', shownAfter(text, m.index).includes(want), 'not in the code after the marker');
+      }
     }
   }
   check('tool pages carry examples', count >= 12, count + ' examples');
+  check('every listed exception is a marker on a page', [...SHOWN_BEFORE_MARKER, ...NOT_SHOWN_VERBATIM].every((k) => seenBefore.has(k)), [...SHOWN_BEFORE_MARKER, ...NOT_SHOWN_VERBATIM].filter((k) => !seenBefore.has(k)).join('; '));
 }
 
 // ---------- guide: practice table, step listings and code samples ----------
