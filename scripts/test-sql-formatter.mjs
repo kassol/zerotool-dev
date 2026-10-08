@@ -291,8 +291,8 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
 
 const protectedCore = pageSource.match(/^[ \t]*\/\* ── engine:start ── \*\/[\s\S]*?\/\* ── engine:end ── \*\//m)[0];
 // Engine block changed with approval on 2026-10-08 (S2-4 engine fixes a–d); see git log.
-same('protected conversion bytes',Buffer.byteLength(protectedCore),16024);
-same('protected conversion SHA256',hash(protectedCore),'99153fd984835c5ce472e68728354ea3585e5a765e928c86a2543a186e441040');
+same('protected conversion bytes',Buffer.byteLength(protectedCore),16105);
+same('protected conversion SHA256',hash(protectedCore),'fd70268118d5e2744eab4d888b442bd1b21564e8686c0c79c6140cfd361ff818');
 
 const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
 const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
@@ -350,7 +350,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [598, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), 'd246517681d0a1aa10f4625fd97153979d42ab2790a2307b341edb245e591f8a');
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '3a020713a072c9d1ef7df51b3c00917f972ac6f65e137635688dd8545a2385c9');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -531,6 +531,16 @@ for (const [name, sql] of [
   ['PostgreSQL dollar quoting', "create function f() returns int as $body$ select  1 $body$ language sql;"],
   ['MySQL variables', 'select @@session.sql_mode, @x := 1 from dual;'],
 ]) sameTokens(name, sql);
+
+// d) Minify follows the uppercase option.
+eq('d: minify with uppercase off', E.minifySQL('SELECT a, COUNT(*) FROM t WHERE b IS NULL', false), 'select a, count(*)from t where b is null');
+eq('d: minify with uppercase on (default)', E.minifySQL('select a from t'), 'SELECT a FROM t');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = lifecyclePage(lang); p.input(cfg.input, 'Select Id From Users'); p.get('sf-uppercase').checked = false; p.get('sf-minify').click();
+  same(lang + ' d: page Minify uses the unchecked uppercase option', p.get(cfg.output).value, 'select Id from Users');
+  p.get('sf-uppercase').checked = true; p.get('sf-minify').click();
+  same(lang + ' d: page Minify uses the checked uppercase option', p.get(cfg.output).value, 'SELECT Id FROM Users');
+}
 
 const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
 for(const lang of ['en','zh','ja','ko']) {
