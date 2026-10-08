@@ -326,15 +326,47 @@ for (const lang of ['en','zh','ja','ko']) for (const order of ['shared-before','
 }
 console.log('Page copy checks: ' + (passes - copyStart) + ' passed');
 
-// Lint failure text in the page language.
+// Lint failure text in the page language, and the Copy Results fallback: when the Clipboard API
+// is missing, throws or rejects, a hidden textarea and execCommand('copy') are tried (same
+// pattern as TextToAsciiArtTool / ColorPaletteGeneratorTool); only when both fail does the
+// button show the failure label. The copy event is tracked only after a successful copy.
 const fallbackStart = passes;
 for (const lang of ['en','zh','ja','ko']) {
   const t = strings[lang];
   const failed = pageVM(lang); await failed.release(failed.jobs[0], true);
   eq(lang + ': lint failure text uses the page language', failed.get('ml-results').textContent, (t.lintFailed ?? 'Error: ') + 'controlled lint rejection');
   eq(lang + ': lint failure text has no fixed English prefix', lang === 'en' || !failed.get('ml-results').textContent.startsWith('Error: '), true);
+  for (const mode of ['absent','throw','reject']) for (const fallbackOk of [true, false]) {
+    const p = pageVM(lang), name = lang + ' ' + mode + (fallbackOk ? ' + fallback ok' : ' + fallback fails') + ': ';
+    const actual = await p.release();
+    const want = actual.content.map(i => `${t.line} ${i.lineNumber} [${i.ruleNames[0]}] ${i.ruleDescription}${i.errorDetail ? ' — ' + i.errorDetail : ''}${i.errorContext ? ' [' + i.errorContext + ']' : ''}`).join('\n');
+    const calls = [];
+    p.doc.execCommand = (cmd) => { calls.push([cmd, p.doc.selection]); return fallbackOk; };
+    if (mode === 'absent') delete p.sandbox.navigator.clipboard;
+    if (mode === 'throw') p.sandbox.navigator.clipboard = { writeText() { throw Error('clipboard throws'); } };
+    const n = unhandled.length;
+    p.get('ml-copy').focus(); p.get('ml-copy').click();
+    if (mode === 'reject') p.clipboard.at(-1).reject(Error('NotAllowedError'));
+    await settle();
+    eq(name + 'execCommand copy received the full results', calls, [['copy', want]]);
+    eq(name + 'button label', p.get('ml-copy').textContent, fallbackOk ? t.copied : t.copyFailed);
+    eq(name + 'hidden textarea removed', p.doc.body.querySelectorAll('textarea').filter(el => el.id !== 'ml-editor').length, 0);
+    eq(name + 'focus returns to Copy Results', p.doc.activeElement === p.get('ml-copy'), true);
+    eq(name + 'tracked only after a successful copy', p.tracks, fallbackOk ? [['markdown_linter', 'copy_results']] : []);
+    eq(name + 'no unhandled rejection', unhandled.length - n, 0);
+    if (fallbackOk) { p.advance(1500); eq(name + 'label returns after 1500 ms', p.get('ml-copy').textContent, t.copyResults); }
+  }
+  const ok = pageVM(lang); await ok.release(); let execUsed = false;
+  ok.doc.execCommand = () => { execUsed = true; return true; };
+  ok.get('ml-copy').click(); ok.clipboard.at(-1).resolve(); await settle();
+  eq(lang + ': Clipboard API success does not use the fallback', [execUsed, ok.get('ml-copy').textContent, ok.tracks.length], [false, t.copied, 1]);
+  const stale = pageVM(lang); await stale.release(); const staleCalls = [];
+  stale.doc.execCommand = () => { staleCalls.push(1); return true; };
+  stale.get('ml-copy').click(); const old = stale.clipboard.at(-1); stale.get('ml-clear').click();
+  old.reject(Error('late rejection')); await settle();
+  eq(lang + ': a rejection after Clear does not run the fallback', [staleCalls.length, stale.get('ml-copy').textContent], [0, t.copyResults]);
 }
-console.log('Lint failure checks: ' + (passes - fallbackStart) + ' passed');
+console.log('Lint failure and copy fallback checks: ' + (passes - fallbackStart) + ' passed');
 eq('all clipboard Promise rejections are handled', unhandled.length, 0);
 process.off('unhandledRejection', onUnhandled);
 // This component has no engine markers: protect the real library bootstrap, rendering and sample bytes.

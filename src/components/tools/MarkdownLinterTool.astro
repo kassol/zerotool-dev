@@ -295,17 +295,38 @@ const { tips, ...CLIENT_T } = T;
           var desc = el.querySelector('.ml-desc').textContent;
           lines.push(line + ' [' + rule + '] ' + desc);
         });
+        var text = lines.join('\n');
         function current() { return request === _copyRequest; }
         function copied() {
           if (!current()) return;
           copyBtn.textContent = t.copied;
           _copyTimer = setTimeout(function() { if (current()) copyBtn.textContent = t.copyResults; }, 1500);
+          window.trackTool && window.trackTool('markdown_linter', 'copy_results');
         }
         function failed() { if (current()) copyBtn.textContent = t.copyFailed; }
-        try {
-          Promise.resolve(navigator.clipboard.writeText(lines.join('\n'))).then(copied, failed);
-        } catch (error) { failed(); }
-        window.trackTool && window.trackTool('markdown_linter', 'copy_results');
+        // Clipboard API first; when it is missing, throws or rejects, a hidden textarea and
+        // execCommand('copy') (same as TextToAsciiArtTool.astro); both failing shows copyFailed.
+        function fallback() {
+          if (!current()) return;
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (error) { ok = false; }
+          document.body.removeChild(ta);
+          // select() moved focus to the textarea; give it back to the button (keyboard users).
+          copyBtn.focus();
+          ok ? copied() : failed();
+        }
+        var pending;
+        try { pending = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(text) : null; }
+        catch (error) { pending = null; }
+        if (pending) Promise.resolve(pending).then(copied, fallback);
+        else fallback();
       });
 
       // Default sample with intentional issues
