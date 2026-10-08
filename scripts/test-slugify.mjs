@@ -252,6 +252,20 @@ t('Ｊｏｈｎ＇ｓ', 'johns');
   }
 }
 
+// zh / ko guides: the paragraph that describes this tool's output carries sl-check annotations too
+// (same format as above; no runnable code block or heading rules for these two languages).
+for (const lang of ['zh', 'ko']) {
+  const rel = 'src/content/blog/slugify-guide/' + lang + '.mdx';
+  const text = readFileSync(join(root, rel), 'utf8');
+  let count = 0;
+  for (const m of text.matchAll(/\{\/\* sl-check: (\{.*?\}) \*\/\}/g)) {
+    count++;
+    const spec = JSON.parse(m[1]);
+    eq(rel + ' ' + JSON.stringify(spec.input), s(spec.input), spec.slug);
+    if (spec.slug) check(rel + ' quotes ' + spec.slug + ' after the annotation', text.slice(m.index, m.index + 4000).includes('`' + spec.slug + '`'), spec.slug);
+  }
+  check(rel + ' has sl-check annotations', count >= 4, count);
+}
 
 // ---------- actual page lifecycle and shared keyboard handler ----------
 const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
