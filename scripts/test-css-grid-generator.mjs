@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseFragment } from 'parse5';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssGridGeneratorTool.astro'), 'utf8');
@@ -129,6 +129,44 @@ for (const lang of ['en', 'ja']) {
     const g = readFileSync(join(root, `src/content/blog/css-grid-generator-guide/${lang}.mdx`), 'utf8');
     for (const s of ['187.2', '492', '322.67', '203.2']) check(`${lang} guide quotes ${s}`, g.includes(s));
   }
+}
+
+// ---------- tool page MDX (src/content/tools/css-grid-generator/{lang}.mdx): worked examples ----------
+// `cgg-check` gives the field values (cols, rows, colGap, rowGap, optional tmplCols / tmplRows, set in
+// that order through the page script); a code block between the annotation and the next cgg-check or
+// H2 must equal the copied CSS. `cgg-fr` recomputes the track sizes quoted in the prose with the fr
+// rule of CSS Grid Level 2 §7.2.4 (share = flex × leftover / sum of flex factors, leftover = container
+// − fixed tracks − gutters; content minimums ignored): `out` lists the sizes, and each one must appear
+// in the text that follows (rounded to 2 decimals).
+{
+  const fmt = (x) => String(+x.toFixed(2));
+  const shown = (text, n) => new RegExp('(?<![\\d.])' + n.replace('.', '\\.') + '(?![\\d]|\\.\\d)').test(text);
+  function trackSizes({ container, gap, tracks }) {
+    const parsed = tracks.map((t) => {
+      const fr = /^(?:minmax\(0,\s*)?([\d.]+)fr\)?$/.exec(t), px = /^([\d.]+)px$/.exec(t);
+      if (fr) return { flex: +fr[1] };
+      if (px) return { fixed: +px[1] };
+      throw new Error('unsupported track ' + t);
+    });
+    const leftover = container - parsed.reduce((n, t) => n + (t.fixed ?? 0), 0) - gap * (tracks.length - 1);
+    if (leftover < 0) throw new Error('negative leftover space');
+    const sum = parsed.reduce((n, t) => n + (t.flex ?? 0), 0);
+    return parsed.map((t) => (t.fixed ?? (t.flex * leftover) / sum));
+  }
+  const contract = toolMdxContract('css-grid-generator', { annotations: [
+    { tag: 'cgg-check', min: 2, verify: ({ spec, after }) => {
+      const out = generate(spec);
+      return fencedBlocks(after).some((b) => b.text === out) ? null : 'no code block equals ' + JSON.stringify(out);
+    } },
+    { tag: 'cgg-fr', verify: ({ spec, after }) => {
+      const got = trackSizes(spec).map(fmt);
+      const want = spec.out.map(fmt);
+      if (JSON.stringify([...new Set(got)].sort()) !== JSON.stringify([...new Set(want)].sort())) return 'computed ' + got.join(', ') + ', annotation says ' + want.join(', ');
+      const missing = want.filter((n) => !shown(after, n));
+      return missing.length ? 'not shown after the annotation: ' + missing.join(', ') : null;
+    } },
+  ] });
+  for (const r of contract.results) check('tool MDX: ' + r.message, r.ok, r.message);
 }
 
 // Actual complete script and ToolLayout shortcuts; only browser boundaries are controlled.

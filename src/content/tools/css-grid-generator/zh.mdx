@@ -9,28 +9,94 @@ steps:
   - "点击复制将生成的 .container { ... } 代码块复制到剪贴板。 Ctrl/⌘+L 清空文本、CSS 和预览，保留列数和行数。"
 faqItems:
   - question: "什么是 CSS Grid？"
+    id: "what-is-grid"
     answer: "CSS Grid 是 CSS 内置的二维布局系统，可以同时定义行和列，并将元素精确放置在网格容器中。适用于页面级布局、卡片网格、图片画廊以及任何需要水平和垂直结构的 UI。"
   - question: "grid-template-columns 有什么用？"
+    id: "template-columns"
     answer: "grid-template-columns 定义网格的列数和各列大小。生成器默认填充 repeat(N, 1fr)——N 列等宽，每列占用可用空间的一个分数单位。你也可以自定义，例如 200px 1fr 2fr 或 repeat(auto-fill, minmax(200px, 1fr))。"
   - question: "column-gap 和 row-gap 有什么区别？"
-    answer: "column-gap 设置列之间的间距，row-gap 设置行之间的间距，共同控制网格内部的沟槽。也可以用简写 gap: row-gap column-gap 一次设置。"
+    id: "gaps"
+    answer: "column-gap 设置列之间的间距，row-gap 设置行之间的间距，共同控制网格内部的沟槽。简写是 gap: <row-gap> <column-gap>；只写一个值时，两个方向的间距相同。"
   - question: "1fr 单位是什么意思？"
-    answer: "fr 是分数单位（fractional unit），按比例分配网格容器中的剩余空间。例如 1fr 2fr 1fr 创建三列，中间列宽是其他两列的两倍。它是响应式网格布局最常用的单位。"
+    id: "fr-unit"
+    answer: "fr 是分数单位（fractional unit），按比例分配网格容器中的剩余空间。例如 1fr 2fr 1fr 创建三列，中间列宽是其他两列的两倍。1fr 列不会窄于其内容的最小宽度；要让它可以更窄，写 minmax(0, 1fr)。"
   - question: "如何不用媒体查询实现响应式网格？"
-    answer: "使用 auto-fill 或 auto-fit 配合 minmax()：grid-template-columns: repeat(auto-fill, minmax(200px, 1fr))。这会自动创建尽可能多的列（每列至少 200px），并伸展填满剩余空间——无需媒体查询。"
+    id: "responsive"
+    answer: "使用 auto-fill 或 auto-fit 配合 minmax()：grid-template-columns: repeat(auto-fill, minmax(200px, 1fr))。这会创建能放下最小宽度的尽可能多的列，并伸展填满剩余空间。auto-fit 还会把空列压成 0，所以只有几个子项时它们会铺满整行。"
+  - question: "我输入的值会被发送或保存吗？"
+    id: "privacy"
+    answer: "不会。CSS 在浏览器标签页里生成，列数、间距和模板不会发送到服务器，也不会写入浏览器存储。页面的统计只记录使用事件（工具名和动作：生成或复制），不包含你输入的值。"
 ---
 
-<h2>理解生成的 CSS</h2>
-<p>
-  生成器输出一条 <code>.container</code> 规则，包含五个属性：
-  <code>display: grid</code>、<code>grid-template-columns</code>、<code>grid-template-rows</code>、
-  <code>column-gap</code> 和 <code>row-gap</code>。粘贴到样式表后，将 <code>.container</code> 改为你自己的类名即可。
-</p>
+## 生成的规则包含什么
 
-<h2>常见网格模式</h2>
-<ul>
-  <li><strong>等宽列</strong> — <code>repeat(3, 1fr)</code> 创建三列等宽布局。</li>
-  <li><strong>侧边栏布局</strong> — <code>250px 1fr</code> 固定侧边栏 + 弹性主区域。</li>
-  <li><strong>圣杯布局</strong> — <code>200px 1fr 200px</code> 配合行定义，实现头部/底部固定。</li>
-  <li><strong>响应式磁贴</strong> — <code>repeat(auto-fill, minmax(180px, 1fr))</code> 在任意屏幕宽度下自动换行。</li>
-</ul>
+生成器只输出一条 `.container` 规则，固定五条声明：`display: grid`、`grid-template-columns`、`grid-template-rows`、`column-gap`、`row-gap`。粘贴到样式表后，把 `.container` 换成你自己的类名即可。
+
+这条规则只描述容器。子元素不需要写任何定位，浏览器会按 HTML 中的顺序把它们一个格子一个格子地放进去，放满一行再换下一行。工具里的预览也是这样画的：它总是画出“列数 × 行数”个色块。如果你在模板里写的列数和“列数”不一致，多出来的色块会进入隐式行，和真实页面里的子元素表现相同。
+
+## 示例一：商品列表的四列卡片
+
+电商首页的商品列表常常是四列等宽卡片。把列数设为 4、行数设为 3，列间距填 `12px`，行间距填 `20px`，复制得到：
+
+{/* cgg-check: {"cols":4,"rows":3,"colGap":"12px","rowGap":"20px"} */}
+
+```css
+.container {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  column-gap: 12px;
+  row-gap: 20px;
+}
+```
+
+{/* cgg-fr: {"container":1200,"gap":12,"tracks":["1fr","1fr","1fr","1fr"],"out":[291]} */}
+fr 的份额是先扣掉间距再分的：容器宽 1200px 时，三条列间距共 36px，每列宽 (1200 − 36) ÷ 4 = 291px。
+
+两点要留意。第一，商品数量通常不固定，超过 12 件时，多出的商品会进入隐式行，隐式行默认是 `auto` 高度，不受 `repeat(3, 1fr)` 控制；如果只想让卡片按内容撑高，可以把行模板删掉，不写 `grid-template-rows`。第二，`1fr` 行在容器没有固定高度时会按内容计算后再拉成一样高，所以某张卡片的标题多了一行，同一网格里所有行都会跟着变高。
+
+## 示例二：后台管理页的侧边菜单
+
+后台管理系统常见的结构是左侧固定宽度的菜单、右侧内容区，上方一条顶栏。先把列数设为 2、行数设为 3，再展开“自定义模板”，列模板填 `200px 1fr`，行模板填 `56px 1fr auto`，两个间距都填 `0`：
+
+{/* cgg-check: {"cols":2,"rows":3,"colGap":"0","rowGap":"0","tmplCols":"200px 1fr","tmplRows":"56px 1fr auto"} */}
+
+```css
+.container {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  grid-template-rows: 56px 1fr auto;
+  column-gap: 0;
+  row-gap: 0;
+}
+```
+
+{/* cgg-fr: {"container":1440,"gap":0,"tracks":["200px","1fr"],"out":[200,1240]} */}
+在 1440px 宽的窗口里，菜单列 200px，内容列拿到剩下的 1240px。顺序一定是先改数量、最后填模板：改动列数会把列模板重置为 `repeat(N, 1fr)`，改动行数会重置行模板；只改间距时模板保留。顶栏要横跨两列，需要在顶栏元素上自己补写 `grid-column: 1 / -1`，工具不生成子元素的规则。
+
+## 中文输入法带进来的全角空格
+
+在中文输入法下直接打模板，很容易把两个值之间的空格打成全角空格（U+3000）。例如列模板写成 `240px　1fr`，工具不做校验，会原样输出：
+
+{/* cgg-check: {"cols":2,"rows":1,"colGap":"16px","rowGap":"16px","tmplCols":"240px\u30001fr"} */}
+
+```css
+.container {
+  display: grid;
+  grid-template-columns: 240px　1fr;
+  grid-template-rows: repeat(1, 1fr);
+  column-gap: 16px;
+  row-gap: 16px;
+}
+```
+
+肉眼几乎看不出差别，但这条声明是无效的。CSS Syntax Level 3 对空白的定义是 `A newline, U+0009 CHARACTER TABULATION, or U+0020 SPACE.`，U+3000 不在其中，也不能出现在标识符里，所以浏览器会丢弃整条 `grid-template-columns`；没有别的规则时，网格退回单列。全角数字（如 `２４０px`）同样会让声明失效。工具的预览这时会停在上一个有效的模板上，因为浏览器忽略了无效值，所以预览“没变化”本身就是一个提示：检查一下空格和数字是不是半角。
+
+## 限制
+
+- 只生成容器规则。`grid-column`、`grid-row`、`grid-template-areas`、命名网格线和对齐属性都没有控件，需要在复制后自己补写。
+- 列数 1–12、行数 1–8。填入更大的数会按 12 列或 8 行处理。
+- 模板和间距输入框不校验，无效值（如 `repeat(3 1fr)`）也会照原样复制。
+- `1fr` 列的最小值是 `auto`，即内容的最小宽度。单元格里有很长的英文单词或网址时，这一列会被撑宽，甚至超出容器；改用 `repeat(3, minmax(0, 1fr))` 可以让各列保持等宽。纯中文正文几乎可以在任意两个字之间换行，一般不会触发这个问题，中英混排的网址才是常见原因。
+
+网格轨道的计算规则见 [CSS Grid Layout Level 2](https://www.w3.org/TR/css-grid-2/)。只需要沿一个方向排列时，[CSS Flexbox 生成器](/zh/tools/css-flexbox-generator/)通常更简单。
