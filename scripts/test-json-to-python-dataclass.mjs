@@ -115,6 +115,13 @@ eq('A3: a third shape gets a number when the prefixed name is taken', /class Met
 
 // Review fix 1: dependencies on class names outside ASCII are ordered too.
 for (const [i, v] of TOPO_CASES.entries()) for (const mode of ['dataclass', 'pydantic', 'typeddict']) eq('topo: case ' + (i + 1) + ' (' + mode + ') defines every class before use', definedBeforeUse(gen(v, mode)), []);
+// Review fix 2: a key with arrays in very many root objects (~110,000) does not overflow the stack.
+{
+  const many = Array.from({ length: 110000 }, (_, i) => ({ id: i, tags: ['a'] }));
+  let out; try { out = gen(many, 'dataclass'); } catch (e) { out = String(e); }
+  eq('many root objects with array fields generate', out.split('\n').slice(-3), ['class Root:', '    id: int', '    tags: List[str]']);
+}
+
 // B2: values beside the objects of a root array stay in a <root>Array alias (List[Union[...]]).
 const B2_IN = [{ a: 1 }, 2, 'x', null, [1], { a: 3, b: true }];
 eq('B2: root array keeps non-object values in RootArray', E.generatePython(B2_IN, 'Root', 'dataclass').code.split('\n'), [
@@ -174,8 +181,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 16179);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'b18147a7c4dc9b747555f962026f7e524ea864eaef5969f3f12e7d47aef86b28');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 16487);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '00902b9c7435a70a6e0700fa296733e9ab0bcb1bb24f9857c17289a8852c704f');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -393,7 +400,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "17f743b9bc7b0b2f0dd31a1391971d5935b00f6129abc12ff01b8482ffc54ccf"
+  "scriptSHA": "14dcb59f675e9ab34cd5c1e52f5d47bc6472abd75ffd407972b4a5e853b3c887"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
