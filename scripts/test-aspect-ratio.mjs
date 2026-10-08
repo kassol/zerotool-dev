@@ -74,7 +74,8 @@ function makePage({ lang = 'en', shellFirst = false } = {}) {
     querySelector(sel) { return ['.tool-widget', '.ar-wrap'].includes(sel) ? widget : null; },
     addEventListener(type, fn) { (documentHandlers[type] ||= []).push(fn); },
   };
-  const window = { ztPersist: { clear(slug) { cleared.push(slug); } } };
+  const tracks = [];
+  const window = { ztPersist: { clear(slug) { cleared.push(slug); } }, trackTool(slug, action) { tracks.push(slug + ':' + action); } };
   const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
   if (!shortcut.includes("document.addEventListener('keydown'")) throw new Error('Shared shortcut not found');
@@ -84,8 +85,9 @@ function makePage({ lang = 'en', shellFirst = false } = {}) {
   new Function('document', 'window', 't', scriptMatch[1])(document, window, client);
   if (!shellFirst) installShortcut();
   return {
-    els: el, cleared,
+    els: el, cleared, tracks,
     type(id, v) { el(id).value = String(v); el(id).fire('input'); },
+    commit(id) { el(id).fire('change'); },
     lock(on) { el('ar-lock').checked = on; el('ar-lock').fire('change'); },
     preset(w, h) { el('chip-' + w + 'x' + h).fire('click'); },
     ratio() { return el('ar-ratio').textContent; },
@@ -159,6 +161,21 @@ p.lock(false);
 p.type('ar-width', 1000);
 eq('unlocked: height stays', p.els('ar-height').value, '720');
 eq('unlocked: ratio follows inputs', p.ratio(), '25:18');
+
+// Analytics: one event per committed change (as in css-triangle-generator), not one per keystroke.
+p = makePage();
+for (const v of ['1', '12', '128', '1280']) p.type('ar-width', v);
+eq('typing a width sends no analytics event per input', p.tracks.length, 0);
+p.commit('ar-width');
+eq('committing the width sends one calculate event', p.tracks.join(','), 'aspect_ratio:calculate');
+p.type('ar-height', '0'); p.commit('ar-height');
+eq('committing an unusable height sends nothing', p.tracks.length, 1);
+p.type('ar-height', '720'); p.commit('ar-height');
+eq('committing a usable height sends one more event', p.tracks.length, 2);
+p.preset(4, 3);
+eq('a preset click still sends one event', p.tracks.length, 3);
+p.lock(true); p.type('ar-width', '1000');
+eq('typing with Lock Ratio on sends no event', p.tracks.length, 3);
 
 // presets
 p = makePage();
