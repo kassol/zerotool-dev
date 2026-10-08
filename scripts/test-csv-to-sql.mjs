@@ -28,7 +28,7 @@ import { loadPage, readComponent, frontmatterStrings } from './astro-page-harnes
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, annotations, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -121,6 +121,89 @@ eq('no added columns normally', conv('a\n1').addedColumns, []);
   eq('added name avoids an existing header', r.addedColumns, ['column_3']);
 }
 
+// ---------- quote rule (S2-7, approved engine change, same as csv-json and csv-to-markdown) ----------
+// A double quote opened a quoted section anywhere in a field, so `5" pipe,x` swallowed the comma and
+// the next line, and a quote that was never closed took the rest of the input with no error.
+{
+  eq('quote inside an unquoted field is text', conv('a,b\n5" pipe,x\ny,z').sql, 'INSERT INTO "t" ("a", "b") VALUES\n  (\'5" pipe\', \'x\'),\n  (\'y\', \'z\');');
+  eq('x"y"z stays as written', readLiterals(conv('a\nx"y"z').sql, false), ['x"y"z']);
+  eq('unclosed quote is an error with its line', conv('a,b\n1,2\n"x,y\nz,w'), { error: 'unclosed', line: 3 });
+  eq('unclosed quote in the header is line 1', conv('"a,b\n1,2'), { error: 'unclosed', line: 1 });
+  eq('quoted fields still work', readLiterals(conv('a,b\n"x, ""y""",2').sql, false), ['x, "y"', { num: '2' }]);
+}
+{
+  // The three parseCsv copies agree on random input, including the unclosed-quote error.
+  const { execFileSync } = await import('node:child_process');
+  const sourceOf = (rel) => {
+    const own = readFileSync(join(root, rel), 'utf8');
+    if (own.includes('quoteStart')) return own;
+    try { const m = execFileSync('git', ['show', 'master:' + rel], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); return m.includes('quoteStart') ? m : null; } catch { return null; }
+  };
+  const fnOf = (src) => {
+    const i = src.indexOf('function parseCsv(');
+    const indent = src.slice(src.lastIndexOf('\n', i) + 1, i);
+    const end = src.indexOf('\n' + indent + '}\n', i);
+    return new Function(src.slice(i, end + indent.length + 2) + '\nreturn parseCsv;')();
+  };
+  const others = [['csv-json', 'src/components/tools/CsvJsonTool.astro', (r) => r.rows], ['csv-to-markdown', 'src/components/tools/CsvToMarkdownTool.astro', (r) => r]];
+  const run = (fn, pick, s) => { try { return pick(fn(s)); } catch (e) { return 'ERR ' + e.message; } };
+  let seed = 11;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const parts = ['"', '""', ',', '\n', '\r\n', '\r', 'a', 'b', ' ', '中'];
+  const inputs = [];
+  for (let k = 0; k < 5000; k++) { let s = ''; const n = 1 + rnd(12); for (let j = 0; j < n; j++) s += parts[rnd(parts.length)]; inputs.push(s); }
+  for (const [name, rel, pick] of others) {
+    const src = sourceOf(rel);
+    if (!src) { console.log('SKIP: ' + name + ' parseCsv with the quote rule is not on this checkout or master'); continue; }
+    const theirs = fnOf(src);
+    const diffs = inputs.filter((s) => JSON.stringify(run(E.parseCsv, (r) => r, s)) !== JSON.stringify(run(theirs, pick, s)));
+    check('parseCsv gives the same rows and errors as ' + name + ' (5,000 random inputs)', diffs.length === 0, JSON.stringify(diffs.slice(0, 3)));
+  }
+}
+
+// ---------- input cleanup (S2-7, approved engine change, same as csv-json) ----------
+// The engine ran trim() on the whole input, so the first header lost its leading spaces and the
+// last cell its trailing spaces. Now only a BOM, leading blank lines and trailing line breaks go.
+{
+  eq('trailing spaces of the last cell stay', readLiterals(conv('a,b\nx,y  ').sql, false), ['x', 'y  ']);
+  eq('trailing spaces before the final line break stay', readLiterals(conv('a,b\nx,y  \n').sql, false), ['x', 'y  ']);
+  eq('leading spaces of the first header stay', conv('  a,b\n1,2').sql.split('\n')[0], 'INSERT INTO "t" ("  a", "b") VALUES');
+  eq('leading blank lines are skipped', conv('\n  \n\r\na,b\n1,2').sql, 'INSERT INTO "t" ("a", "b") VALUES\n  (1, 2);');
+  eq('trailing blank lines are skipped', conv('a\n1\n\n  \n').sql, 'INSERT INTO "t" ("a") VALUES\n  (1);');
+  eq('BOM is removed', conv('\uFEFFa\n1').sql, 'INSERT INTO "t" ("a") VALUES\n  (1);');
+  eq('unclosed quote line counts the skipped blank lines', conv('\n\na\n"x'), { error: 'unclosed', line: 4 });
+  eq('whitespace only input has no data', conv('   ').error, 'noData');
+}
+
+// ---------- duplicate and empty header names (S2-7, approved engine change) ----------
+// Header names were used as written: two equal names gave SQL that SQLite rejects with
+// "duplicate column name", and an empty header cell gave the empty name "".
+{
+  const cols = (r) => (r.sql || '').match(/^INSERT INTO "(?:[^"]|"")*" \(([^)]*)\)/m)?.[1];
+  let r = conv('id,name,name\n1,a,b');
+  eq('repeated name gets _2', [cols(r), r.renamedColumns], ['"id", "name", "name_2"', ['name → name_2']]);
+  r = conv('a,,c\n1,2,3');
+  eq('empty header becomes column_N', [cols(r), r.renamedColumns], ['"a", "column_2", "c"', ['"" → column_2']]);
+  r = conv('Name,name,NAME\n1,2,3');
+  eq('names that differ only in case are duplicates', [cols(r), r.renamedColumns], ['"Name", "name_2", "NAME_3"', ['name → name_2', 'NAME → NAME_3']]);
+  r = conv('a,a,a_2\n1,2,3');
+  eq('a new name avoids names already in the header', [cols(r), r.renamedColumns], ['"a", "a_3", "a_2"', ['a → a_3']]);
+  r = conv('x,,column_2\n1,2,3,4');
+  eq('empty header avoids an existing column_N, extra cells still get column_N', [cols(r), r.renamedColumns, r.addedColumns], ['"x", "column_2_2", "column_2", "column_4"', ['"" → column_2_2'], ['column_4']]);
+  eq('no renames normally', conv('a,b\n1,2').renamedColumns, []);
+  for (const csv of ['id,name,name\n1,a,b', 'a,,c\n1,2,3', 'Name,name,NAME\n1,2,3', 'a,a,a_2\n1,2,3', 'x,,column_2\n1,2,3,4', '名,名,\n山田,田中,x']) {
+    for (const dialect of ['sqlite', 'mysql', 'postgresql']) {
+      const out = conv(csv, { dialect, createTable: true }).sql;
+      const names = [...(out.split('\n')[0].match(/\(([^)]*)\)/)?.[1] ?? '').matchAll(/[`"]((?:[^`"]|``|"")+)[`"] /g)].map((m) => m[1].toLowerCase());
+      check(dialect + ' column names are unique and nonempty: ' + JSON.stringify(csv), names.length > 0 && new Set(names).size === names.length && names.every(Boolean), out.split('\n')[0]);
+    }
+    const db = new SQL.Database(); let err = '';
+    try { db.run(conv(csv, { createTable: true }).sql); } catch (e) { err = e.message; }
+    db.close();
+    eq('SQLite runs the SQL for ' + JSON.stringify(csv), err, '');
+  }
+}
+
 // ---------- number detection ----------
 const NUMS = { '42': 42, '-7': -7, '0': 0, '3.14': 3.14, '0.5': 0.5, '-0.25': -0.25, '123456789012345': 123456789012345 };
 for (const [v] of Object.entries(NUMS)) eq('number ' + v + ' unquoted', readLiterals(conv('n\n' + v).sql, false), [{ num: v }]);
@@ -211,12 +294,33 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   let m, n = 0;
   while ((m = re.exec(mdx))) {
     n++;
-    eq(lang + ' page example ' + n, tpl(m[3]), conv(tpl(m[2]), JSON.parse(m[1])).sql);
+    const opts = JSON.parse(m[1]), csv = tpl(m[2]), sql = tpl(m[3]);
+    eq(lang + ' page example ' + n, sql, conv(csv, opts).sql);
+    // Execution level (S2-7): every value in the printed SQL reads back as the CSV cell.
+    const rows = E.parseCsv(csv.trim()).filter((r) => r.some((c) => c !== ''));
+    const width = Math.max(...rows.map((r) => r.length));
+    const cells = rows.slice(1).flatMap((r) => Array.from({ length: width }, (_, i) => r[i] ?? ''));
+    const decoded = readLiterals(sql, opts.dialect === 'mysql');
+    eq(lang + ' page example ' + n + ' literals decode to the CSV cells', decoded.map((v) => (v === null ? '' : typeof v === 'object' ? v.num : v)), cells);
+    if (opts.dialect === 'sqlite') {
+      const db = new SQL.Database();
+      let got, err = '';
+      try {
+        // Without CREATE TABLE in the example, create the table the tool would have written.
+        if (!opts.createTable) db.run(conv(csv, { ...opts, createTable: true }).sql.split('\n')[0]);
+        db.run(sql);
+        got = db.exec('SELECT * FROM ' + JSON.stringify(opts.table))[0].values.flat();
+      } catch (e) { err = e.message; }
+      db.close();
+      eq(lang + ' page example ' + n + ' runs in SQLite (sql.js)', err, '');
+      if (!err) check(lang + ' page example ' + n + ' SQLite stores the CSV cells', got.length === cells.length && got.every((v, i) => (v === null ? cells[i] === '' : typeof v === 'number' ? v === Number(cells[i]) : v === cells[i])), JSON.stringify(got));
+    }
   }
   check(lang + ' page has at least 2 checked examples', n >= 2, n);
 }
 
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '92bcfd3c010e49f93d0fc64b41477108d53b19241f0b72a8305c921da47c750a');
+// Engine hash. S2-7 (2026-10-08) approved changes: quote rule, input cleanup, header names.
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '815b9fd4807d3d5402e3cc1609304df1dc57b6188f62bd7350d87ada2415c931');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises, FileReader and time are controlled boundaries; conversion code is real.
@@ -259,9 +363,10 @@ function page(lang='en', order='shared-after') {
   const widget=el();doc={documentElement:{lang},body:el('body'),activeElement:null,getElementById:get,querySelector(sel){if(sel==='.tool-widget')return widget;if(sel==='.tool-widget .btn-primary')return nodes.find(e=>e.classList.contains('btn-primary'))||null;return queryAll(sel)[0]||null;},querySelectorAll:queryAll,createElement:el,addEventListener(k,fn){(docs[k]??=[]).push(fn);},execCommand(){throw Error('native clipboard forbidden');}};doc.activeElement=doc.body;
   if(strings){const root=doc.querySelector('.cts-wrap');const {tips,...client}=strings;root.dataset={strings:JSON.stringify(client),lang};}
   const setTimeout=(fn,ms=0)=>{const id=++seq;jobs.set(id,{id,fn,ms,due:now+ms});return id;};
-  const globals={document:doc,Event:class{constructor(type){this.type=type;}},setTimeout,clearTimeout:id=>jobs.delete(id),trackTool:(...a)=>tracks.push(a),ztPersist:{clear:slug=>cleared.push(slug)},
+  const globals={document:doc,TextDecoder,Event:class{constructor(type){this.type=type;}},setTimeout,clearTimeout:id=>jobs.delete(id),trackTool:(...a)=>tracks.push(a),ztPersist:{clear:slug=>cleared.push(slug)},
     navigator:{clipboard:{writeText(text){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});copies.push({text,resolve,reject});return promise;}}},
-    FileReader:class{constructor(){readers.push(this);}readAsText(file){this.file=file;}finish(text){this.result=text;this.onload?.({target:this});}fail(){this.onerror?.({target:this});}}};
+    // readAsArrayBuffer: finish(text) hands the UTF-8 bytes of text, finish(Uint8Array) the bytes as given.
+    FileReader:class{constructor(){readers.push(this);}readAsText(file){this.file=file;this.mode='text';}readAsArrayBuffer(file){this.file=file;this.mode='buffer';}finish(x){const u8=typeof x==='string'?new TextEncoder().encode(x):x;this.result=this.mode==='buffer'?u8.buffer.slice(u8.byteOffset,u8.byteOffset+u8.byteLength):(typeof x==='string'?x:new TextDecoder().decode(x));this.onload?.({target:this});}fail(){this.onerror?.({target:this});}}};
   const addShared=()=>vm.runInNewContext(shared,{document:doc,window:globals,_slug:s.slug});
   if(order==='shared-before')addShared();loadPage(rel,{lang,globals});if(order==='shared-after')addShared();
   function advance(ms){const end=now+ms;for(let i=0;i<100;i++){const next=[...jobs.values()].filter(j=>j.due<=end).sort((a,b)=>a.due-b.due||a.id-b.id)[0];if(!next)break;jobs.delete(next.id);now=next.due;next.fn();}now=end;}
@@ -370,6 +475,125 @@ try {
   }
 } finally { rmSync(fixtureDir,{recursive:true,force:true}); }
 
+// ---------- analytics: one event per committed change (S2-7, 2026-10-08) ----------
+// The page used to send csv_to_sql/convert on load (the sample) and after every 0.3 s typing pause.
+{
+  for (const lang of ['en','zh','ja','ko']) {
+    const p = page(lang);
+    eq(lang+' no event on page load', p.tracks.length, 0);
+    p.type(s.left, 'n\n1'); p.advance(300); p.type(s.left, 'n\n12'); p.advance(300);
+    eq(lang+' no event per typing pause', p.tracks.length, 0);
+    p.get(s.left).fire('change');
+    eq(lang+' one event on CSV change', p.tracks, [['csv_to_sql','convert']]);
+    p.get(s.left).fire('change');
+    eq(lang+' same input and options are not sent twice', p.tracks.length, 1);
+    p.type(s.left, 'n\n7'); p.get(s.left).fire('change');
+    eq(lang+' change before the debounce converts first', [p.get(s.right).value, p.tracks.length], ['INSERT INTO `my_table` (`n`) VALUES\n  (7);', 2]);
+    p.get('cts-dialect').value='sqlite'; p.get('cts-dialect').fire('change');
+    eq(lang+' dialect change sends', p.tracks.length, 3);
+    p.get('cts-mode').value='individual'; p.get('cts-mode').fire('change');
+    p.get('cts-create').checked=true; p.get('cts-create').fire('change');
+    eq(lang+' mode and CREATE TABLE changes send', p.tracks.length, 5);
+    p.type('cts-table','orders'); p.advance(300);
+    eq(lang+' table typing pause does not send', p.tracks.length, 5);
+    p.get('cts-table').fire('change');
+    eq(lang+' table change sends', p.tracks.length, 6);
+    p.open().finish('n\n9');
+    eq(lang+' loaded file sends', p.tracks.length, 7);
+    p.type(s.left, ''); p.advance(300); p.get(s.left).fire('change');
+    eq(lang+' empty output does not send', p.tracks.length, 7);
+    p.type(s.left, 'n\n9'); p.key(s.left); p.type(s.left, 'n\n9'); p.get(s.left).fire('change');
+    eq(lang+' after Ctrl+L the same input sends again', p.tracks.length, 8);
+  }
+}
+
+// ---------- unclosed quote on the page (S2-7 approved engine change) ----------
+{
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvToSqlTool.astro').frontmatter);
+  for (const lang of ['en','zh','ja','ko']) {
+    const p = page(lang); p.golden();
+    p.type(s.left, 'n\n1\n"x,2\n3'); p.advance(300);
+    eq(lang+' unclosed quote is reported with its line and clears the SQL', [p.get('cts-status').textContent, p.get('cts-status').classList.contains('error'), p.get(s.right).value], [(S[lang].errUnclosed || 'errUnclosed').replace('{line}', '3'), true, '']);
+    p.get(s.left).fire('change');
+    eq(lang+' no event for an error', p.tracks.length, 0);
+    p.type(s.left, 'a,a,\n1,2,3,4'); p.advance(300);
+    eq(lang+' renamed and added columns are listed', [p.get('cts-status').textContent, p.get('cts-status').classList.contains('error')],
+      [(S[lang].addedColumns).replace('{cols}', 'column_4') + ' ' + (S[lang].renamedColumns || 'renamedColumns').replace('{cols}', 'a → a_2, "" → column_3'), false]);
+  }
+}
+
+// ---------- uploaded files must be UTF-8 (S2-7, 2026-10-08) ----------
+// FileReader.readAsText(file, 'UTF-8') turned every byte that is not UTF-8 into U+FFFD, so a
+// Shift_JIS or GBK CSV saved by Excel became SQL full of replacement characters with no warning.
+{
+  const fileMsgs = frontmatterStrings(readComponent('src/components/tools/CsvToSqlTool.astro').frontmatter);
+  const fmtMsg = (t, o) => t.replace('{offset}', String(o));
+  // "id,名前\n1,山田" in Shift_JIS (名 96 BC, 前 91 4F, 山 8E 52, 田 93 63) and GBK (名 C3 FB, 前 C7 B0)
+  const sjis = Uint8Array.from([0x69,0x64,0x2c,0x96,0xbc,0x91,0x4f,0x0a,0x31,0x2c,0x8e,0x52,0x93,0x63]);
+  const gbk = Uint8Array.from([0x69,0x64,0x2c,0xc3,0xfb,0xc7,0xb0,0x0a,0x31,0x2c,0x41]);
+  const utf16 = Uint8Array.from([0xff,0xfe,0x61,0x00,0x0a,0x00,0x31,0x00]);
+  const binary = Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00]);
+  const utf8bom = Uint8Array.from([0xef,0xbb,0xbf,...new TextEncoder().encode('名前,年齢\n山田,30')]);
+  for (const lang of ['en','zh','ja','ko']) {
+    const S = fileMsgs?.[lang] || {};
+    for (const [name, bytes, key, offset] of [['Shift_JIS', sjis, 'fileNotUtf8', 3], ['GBK', gbk, 'fileNotUtf8', 3], ['UTF-16LE', utf16, 'fileUtf16', 0], ['binary', binary, 'fileBinary', 8]]) {
+      const p = page(lang); p.golden(); const before = [p.get(s.left).value, p.get(s.right).value];
+      p.open({ name: 'x.csv' }).finish(bytes);
+      eq(lang+' '+name+' file is refused in the page language', [p.get('cts-status').textContent, p.get('cts-status').classList.contains('error')], [fmtMsg(S[key] || key, offset), true]);
+      eq(lang+' '+name+' file leaves CSV Input and SQL unchanged', [p.get(s.left).value, p.get(s.right).value], before);
+      check(lang+' '+name+' file sends no event', p.tracks.length === 0);
+    }
+    const nul = Uint8Array.from([0x61,0x2c,0x62,0x0a,0x31,0x00,0x32]);
+    let p = page(lang); p.golden(); p.open().finish(nul);
+    eq(lang+' NUL byte is a binary file', p.get('cts-status').textContent, fmtMsg(S.fileBinary || 'fileBinary', 5));
+    p = page(lang); p.open().finish(utf8bom);
+    eq(lang+' UTF-8 file with BOM loads without the BOM', [p.get(s.left).value, p.get(s.right).value], ['名前,年齢\n山田,30', 'INSERT INTO `my_table` (`名前`, `年齢`) VALUES\n  (\'山田\', 30);']);
+    p = page(lang); p.golden(); const r = p.open(); r.fail();
+    eq(lang+' read error is reported', [p.get('cts-status').textContent, p.get(s.right).value], [S.fileError || 'fileError', s.expected]);
+  }
+  // The function text up to the closing brace at its own indentation, each line trimmed.
+  const fnLines = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return '';
+    const indent = src.slice(src.lastIndexOf('\n', i) + 1, i);
+    const end = src.indexOf('\n' + indent + '}\n', i);
+    return end < 0 ? '' : src.slice(i, end + indent.length + 2).split('\n').map((l) => l.trim()).join('\n');
+  };
+  const jf = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  check('firstBadUtf8 is the same as in json-formatter-engine.js', fnLines(source, 'firstBadUtf8') !== '' && fnLines(source, 'firstBadUtf8') === fnLines(jf, 'firstBadUtf8'));
+
+  // Page examples of a status line: {/* cts-status: {"csv":"…","dialect":"…"} */} followed by a code
+  // block that holds the status the page shows after that CSV is typed, word for word.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readFileSync(join(root, 'src/content/tools/csv-to-sql', lang + '.mdx'), 'utf8');
+    const notes = annotations(body, 'cts-status');
+    check(lang + ' page has a cts-status example', notes.length >= 1, notes.length);
+    for (const note of notes) {
+      const p = page(lang);
+      if (note.spec.dialect) { p.get('cts-dialect').value = note.spec.dialect; p.get('cts-dialect').fire('change'); }
+      p.type(s.left, note.spec.csv); p.advance(300);
+      const status = p.get('cts-status').textContent;
+      check(lang + ' cts-status example shows the page status word for word', status !== '' && fencedBlocks(note.after.split(/\{\/\*/)[0]).some((b) => b.text === status), status);
+    }
+  }
+
+  // Page examples of a refused file: {/* cts-file: {"hex":"…"} */} followed by a code block that
+  // holds the status line the page shows for those bytes, word for word.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readFileSync(join(root, 'src/content/tools/csv-to-sql', lang + '.mdx'), 'utf8');
+    for (const note of annotations(body, 'cts-file')) {
+      const bytes = Uint8Array.from(note.spec.hex.match(/../g).map((h) => parseInt(h, 16)));
+      const p = page(lang); p.golden(); p.open().finish(bytes);
+      const status = p.get('cts-status').textContent;
+      check(lang + ' cts-file example shows the page status word for word', status !== '' && fencedBlocks(note.after).some((b) => b.text === status), status);
+      if (note.spec.text !== undefined) {
+        const enc = { gbk: 'gbk', shift_jis: 'shift_jis', 'euc-kr': 'euc-kr' }[note.spec.encoding];
+        eq(lang + ' cts-file bytes are ' + note.spec.encoding + ' for the text shown', new TextDecoder(enc).decode(bytes), note.spec.text);
+      }
+    }
+  }
+}
+
 
 /* ── v2 page layout ── */
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -378,7 +602,9 @@ const allStrings = frontmatterStrings(readComponent('src/components/tools/CsvToS
 const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
-eq('reviewed FIX script preserves all bytes except i18n and removed buttons', hash(script), '6685c5ec81f47133fe62776e902af72fa590512536deb8d4abcd349e48ae880f');
+// Pinned page script. S2-7 (2026-10-08) changed it outside the engine block: analytics only on
+// committed changes, and uploaded files are checked for UTF-8; then the unclosed-quote message and the renamed-header note (tests above).
+eq('reviewed page script is unchanged since S2-7', hash(script), 'd691b1046916b28826e244c76c206d1e12f0647d2a2b66aea4f10b802be84819');
 check('direct zero-minimum flex column root', /^\s*<div class="cts-wrap"/.test(markupSource) && /\.cts-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cts-(?:toolbar|controls)"[\s\S]*id="cts-status"[\s\S]*class="cts-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);

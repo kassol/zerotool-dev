@@ -9,16 +9,24 @@ steps:
   - "Swap exchanges the inputs and clears results. Click Compare again to reverse the patch."
   - "Clear or Ctrl+L (⌘+L on Mac) clears the tool. Editing either input also clears old results."
 faqItems:
-  - question: "What is RFC 6902 JSON Patch?"
-    answer: "RFC 6902 defines a JSON document format for expressing a sequence of operations to apply to a JSON document. Each operation is an object with 'op' (add/remove/replace/move/copy/test), 'path' (JSON Pointer per RFC 6901), and optionally 'value'."
-  - question: "Is my JSON data sent to any server?"
-    answer: "No. The comparison is done in your browser using JavaScript. Nothing leaves your machine."
-  - question: "Can I compare large JSON files?"
-    answer: "Yes, but very large objects (thousands of keys or deeply nested arrays) may take a moment to process. All computation is in-browser."
-  - question: "How does the visual diff work?"
-    answer: "The tool performs a deep recursive comparison. Keys present only in 'After' are shown as additions (+). Keys present only in 'Before' are shown as removals (−). Keys with changed values are shown as changes (~) with both the old and new values."
-  - question: "How is this different from the Diff Checker tool?"
+  - id: "rfc6902"
+    question: "What is RFC 6902 JSON Patch?"
+    answer: "RFC 6902 defines a JSON document format for expressing a sequence of operations to apply to a JSON document. Each operation is an object with 'op' (add/remove/replace/move/copy/test), 'path' (JSON Pointer per RFC 6901), and optionally 'value'. This tool writes only add, remove and replace operations."
+  - id: "visual"
+    question: "How does the visual diff work?"
+    answer: "The tool performs a deep recursive comparison. Keys present only in 'After' are shown as additions (+). Keys present only in 'Before' are shown as removals (−). Keys with changed values are shown as changes (~) with both the old and new values. Paths in the visual diff are joined with dots for reading; use the JSON Pointer paths from the patch in code."
+  - id: "numbers"
+    question: "Why does it say 'No differences' when two IDs differ?"
+    answer: "JavaScript reads JSON numbers as 64-bit floating-point values, so integers beyond 2^53 that a double cannot hold exactly, and very long decimals, are rounded, and 1830000000000000001 and 1830000000000000002 both become 1830000000000000000. The tool compares the values as read, but it scans both inputs and lists in the status line the rounded numbers and the keys that appear twice in one object, with their JSON Pointer paths (the first 10 of each, then a count of the rest)."
+  - id: "large"
+    question: "Can I compare large JSON files?"
+    answer: "There is no size limit; the comparison runs only when you click Compare, in the browser tab. Very deep nesting is the practical limit: a document nested about 1,900 levels deep (measured in Node.js 22; browsers differ) runs out of the call stack, and the status line reports that nothing was compared."
+  - id: "vs-diff-checker"
+    question: "How is this different from the Diff Checker tool?"
     answer: "The Diff Checker tool compares plain text line-by-line. This JSON Diff tool understands JSON structure — it compares values semantically, not textually, and outputs machine-readable JSON Patch operations."
+  - id: "privacy"
+    question: "Is my JSON data sent to any server?"
+    answer: "No. Both documents are compared in this browser tab; they are not sent anywhere and are not saved in browser storage. When a comparison of a new pair of inputs finds differences, the page's analytics records one usage event (the tool name and the action diff), without the JSON or the patch."
 ---
 
 <h2>Use Cases</h2>
@@ -131,6 +139,27 @@ When the two roots have different types, such as an object and an array, the pat
 
 The Visual Diff joins keys with dots (`profile.age`, `list.3`) for reading only; use the paths from the JSON Patch in code.
 
+## Numbers JavaScript Cannot Hold
+
+JSON allows any number of digits, but JavaScript reads every number as a 64-bit float, and RFC 8259 notes that only integers in the range [-(2^53)+1, (2^53)-1] are interoperable ([RFC 8259, section 6](https://www.rfc-editor.org/rfc/rfc8259#section-6)). Here both IDs are past that range:
+
+{/* jd-page: {"before":"{\"id\":9007199254740993,\"status\":\"pending\"}","after":"{\"id\":9007199254740995,\"status\":\"paid\"}"} */}
+
+```json
+[
+  { "op": "replace", "path": "/id", "value": 9007199254740996 },
+  { "op": "replace", "path": "/status", "value": "paid" }
+]
+```
+
+The status line names both numbers:
+
+```text
+2 change(s) detected. JavaScript cannot hold these numbers exactly and compares them as rounded values, so differences in them can be missed and the patch writes the rounded values: Before /id: 9007199254740993 → 9007199254740992; After /id: 9007199254740995 → 9007199254740996.
+```
+
+The patch sets `/id` to `9007199254740996`, not the `9007199254740995` in the After text. If IDs like these must survive, send them as strings. The same scan names keys that appear twice in one object, because `JSON.parse` keeps only the last value.
+
 ## How the Patches Are Checked
 
 The tool's test suite applies every generated patch to Before and compares the result with After, using a strict RFC 6902 implementation and, when it is installed, Python's `jsonpatch`. Besides the examples on this page, it runs 3,000 random document pairs with nested arrays and keys such as `constructor`, `__proto__`, `""`, `a/b`, and `m~n`.
@@ -139,5 +168,7 @@ The tool's test suite applies every generated patch to Before and compares the r
 
 - No `move` or `copy` operations are generated; a renamed key appears as `remove` plus `add`.
 - Arrays of objects are not matched by an `id` field, and an element inserted at the start of an array makes every later element look changed.
-- Numbers are compared after JavaScript parses them, so `1.0` and `1` are equal, and integers above 2^53 lose precision.
+- Numbers are compared after JavaScript parses them, so `1.0` and `1` are equal, and `-0` is written as `0` in the patch. Integers beyond 2^53 that a double cannot hold exactly (`9007199254740993`; `9007199254740994` and `1e20` are exact) and very long decimals are rounded, and numbers too large for a double, such as `1e400`, become Infinity. The status line names them (first 10, then a count of the rest), and the patch writes the values as read (`1e400` becomes `null`).
+- A key that appears twice in one object keeps only its last value; the status line names it.
+- A document nested about 1,900 levels deep (Node.js 22; the depth depends on the browser) cannot be compared. The status line says so.
 - Both inputs must be valid JSON. The status line names the side that failed, for example `Before JSON parse error: Expected double-quoted property name in JSON at position 7`.

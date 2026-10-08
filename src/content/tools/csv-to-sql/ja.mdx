@@ -9,25 +9,54 @@ steps:
   - "必要なら「CREATE TABLE を追加」を選択し、SQL を実行する前に推定された列の型を確認します。"
   - "「SQL 出力」とパネル上のステータスを確認し、「コピー」で出力全体を取得します。ツール内にフォーカスがあれば Ctrl+L（Mac は ⌘+L）でテキストと結果をクリアできます。"
 faqItems:
-  - question: "このツールは何をしますか？"
+  - id: "what-it-does"
+    question: "このツールは何をしますか？"
     answer: "CSV データを SQL の INSERT 文に変換し、必要なら CREATE TABLE 文も出力します。ヘッダー行が列名になり、各データ行が値の組になります。値は選んだ方言に合わせて引用符で囲み、エスケープします。"
-  - question: "対応している SQL 方言は？"
+  - id: "dialects"
+    question: "対応している SQL 方言は？"
     answer: "MySQL（識別子はバッククォート、文字列中のバックスラッシュは 2 つに）、PostgreSQL と SQLite（識別子は二重引用符、バックスラッシュはそのまま）です。INSERT の構文は 3 つとも同じです。"
-  - question: "NULL はどう扱われますか？"
-    answer: "空のフィールドは引用符なしの NULL になります。空白だけのフィールドは文字列で、NULL ではありません。空文字列 '' は出力できません。"
-  - question: "02134 は引用符付きなのに 10001 は付かないことがあるのはなぜ？"
-    answer: "列のすべての空でないセルが普通の数値（先頭のゼロなし、+ や指数なし、15 桁以内）のときだけ、その列を数値として出力します。02134 は普通の数値ではないので zip 列全体を引用符で囲み、先頭のゼロが残ります。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。変換はすべてブラウザー内の JavaScript で行われ、CSV データは送信されません。"
+  - id: "null"
+    question: "NULL はどう扱われますか？"
+    answer: "空のフィールドは引用符なしの NULL になり、引用符だけの空フィールド（\"\"）も同じです。空白だけのフィールドは文字列で、NULL ではありません。空文字列 '' は出力できません。"
+  - id: "numbers"
+    question: "02134 は引用符付きなのに 10001 は付かないことがあるのはなぜ？"
+    answer: "列のすべての空でないセルが普通の数値（先頭のゼロなし、+ や指数なし、15 桁以内）のときだけ、その列を数値として出力します。02134 は普通の数値ではないので zip 列全体を引用符で囲み、先頭のゼロが残ります。全角数字の「１２」も普通の数値ではないため、同じ列の数値はすべて文字列になります。"
+  - id: "file-encoding"
+    question: "アップロードした CSV が読み込まれないのはなぜ？"
+    answer: "「CSV アップロード」は UTF-8 のファイルだけを読み込みます。Shift_JIS などほかの文字コードのファイルは読み込まず、UTF-8 でない最初のバイトの位置をステータスに表示します。UTF-16 のファイルは UTF-16 であることを、バイナリファイルは最初の NUL バイトの位置を表示します。いずれの場合も「CSV 入力」の内容はそのままです。UTF-8 で保存し直してから読み込んでください。先頭の UTF-8 BOM は取り除きます。"
+  - id: "privacy"
+    question: "データはサーバーに送信されますか？"
+    answer: "いいえ。CSV はこのブラウザーのタブ内で変換し、CSV も生成した SQL も送信せず、ブラウザーのストレージにも保存しません。CSV やテーブル名を編集し終えてフォーカスを外したとき、オプションを変えたとき、ファイルを読み込んだときに、ページのアクセス解析が利用イベントを 1 回記録します（ツール名と動作 convert だけで、CSV や SQL の内容は含みません）。"
 ---
 
 <h2>値の書き方</h2>
 <ul>
   <li>空のフィールドは <code>NULL</code> になります。</li>
   <li>空でないセルがすべて普通の数値（<code>42</code>、<code>-7</code>、<code>19.90</code>）の列は引用符なしで出力します。普通の数値とは、先頭のゼロ・<code>+</code>・指数がなく、15 桁以内のものです。</li>
-  <li>それ以外の列は数値も含めてすべて引用符付きの文字列にするので、<code>02134</code>、<code>1e5</code>、20 桁のカード番号も元の文字のまま残ります。列が数値型なら、MySQL・PostgreSQL・SQLite はいずれも引用符付きの数値を変換して格納します。</li>
+  <li>それ以外の列は数値も含めてすべて引用符付きの文字列にするので、<code>02134</code>、<code>1e5</code>、20 桁のカード番号も元の文字のまま残ります。</li>
   <li>単一引用符はどの方言でも 2 つ重ねます（<code>O''Brien</code>）。MySQL ではバックスラッシュも 2 つにします。MySQL の既定の SQL モードは文字列中の <code>\n</code> を改行として読むためです（<a href="https://dev.mysql.com/doc/refman/8.4/en/string-literals.html" target="_blank" rel="noopener">MySQL 8.4 Reference Manual, String Literals</a>、表 11.1）。<code>standard_conforming_strings</code> が有効な PostgreSQL（9.1 以降の既定、<a href="https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-STRINGS" target="_blank" rel="noopener">PostgreSQL 4.1.2.1</a>）と SQLite は、バックスラッシュをそのまま保存します。</li>
   <li>ヘッダーより多いセルには <code>column_3</code>、<code>column_4</code> などの列を追加し、ステータス行に表示します。短い行は <code>NULL</code> で埋めます。</li>
+</ul>
+
+<h2>例：郵便番号と全角数字が混ざった在庫表（PostgreSQL）</h2>
+
+<p>住所は zipcloud「<a href="https://zipcloud.ibsnet.co.jp/doc/api" target="_blank" rel="noopener">郵便番号検索API</a>」のレスポンスサンプル（郵便番号 <code>0790177</code>）のものです。在庫数の 1 行目は、IME の全角モードのまま入力した <code>１２</code> になっています。PostgreSQL、「CREATE TABLE を追加」あり、テーブル名 <code>店舗在庫</code> で変換します。</p>
+
+{/* sql: {"dialect":"postgresql","table":"店舗在庫","mode":"batch","createTable":true} */}
+
+<pre><code>{`郵便番号,住所,在庫数
+0790177,北海道美唄市上美唄町協和,１２
+0790177,北海道美唄市上美唄町南,3`}</code></pre>
+
+<pre><code>{`CREATE TABLE "店舗在庫" ("郵便番号" TEXT, "住所" TEXT, "在庫数" TEXT);
+INSERT INTO "店舗在庫" ("郵便番号", "住所", "在庫数") VALUES
+  ('0790177', '北海道美唄市上美唄町協和', '１２'),
+  ('0790177', '北海道美唄市上美唄町南', '3');`}</code></pre>
+
+<ul>
+  <li>郵便番号は先頭が 0 なので文字列のままで、<code>0790177</code> の 0 は消えません。</li>
+  <li>全角の <code>１２</code> は普通の数値ではありません。そのため在庫数の列全体が文字列になり、半角の <code>3</code> も <code>'3'</code> と書かれ、型も <code>TEXT</code> です。数値の列にしたいときは、変換前に全角数字を半角に直してください。</li>
+  <li>日本語のテーブル名と列名は二重引用符で囲んで使えます。PostgreSQL のマニュアルでは、引用符付きの識別子にはコード 0 の文字以外のすべての文字を使えます（<a href="https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS" target="_blank" rel="noopener">PostgreSQL 4.1.1 Identifiers and Key Words</a>）。</li>
 </ul>
 
 <h2>例：引用符・先頭のゼロ・空のフィールド</h2>
@@ -44,9 +73,7 @@ faqItems:
   (1, 'O''Brien, Pat', '02134', NULL),
   (2, 'Lee', '10001', 'path C:\\new');`}</code></pre>
 
-<p>引用符付きの <code>"O'Brien, Pat"</code> はカンマを含んだまま、空の <code>note</code> は <code>NULL</code> になります。<code>02134</code> があるため zip 列は文字列の列になり、<code>10001</code> も引用符で囲みます。SQLite 3 で実行すると、<code>SELECT zip FROM customers</code> は <code>02134</code> と <code>10001</code> を返します。</p>
-
-<p>同じ入力で MySQL を選ぶとバックスラッシュが 2 つになり、保存される値は <code>path C:\new</code> のままです。</p>
+<p>引用符付きの <code>"O'Brien, Pat"</code> はカンマを含んだまま、空の <code>note</code> は <code>NULL</code> になります。同じ入力で MySQL を選ぶとバックスラッシュが 2 つになり、保存される値は <code>path C:\new</code> のままです。</p>
 
 {/* sql: {"dialect":"mysql","table":"customers","mode":"batch"} */}
 
@@ -59,6 +86,16 @@ faqItems:
   (2, 'Lee', '10001', 'path C:\\\\new');`}</code></pre>
 
 <p>サーバーの <code>sql_mode</code> に <code>NO_BACKSLASH_ESCAPES</code> が入っている場合、バックスラッシュは普通の文字です。そのサーバーには PostgreSQL か SQLite の出力を使ってください。</p>
+
+<h2>Shift_JIS の CSV をアップロードしたとき</h2>
+
+<p>次のファイルは中身が <code>id,氏名</code> と 1 行のデータですが、Shift_JIS で保存されています。「氏」は <code>8E 81</code> の 2 バイトで、先頭の <code>id,</code> の後、3 バイト目（0 から数えて）にあります。アップロードしても「CSV 入力」は変わらず、ステータスには次のように表示されます。</p>
+
+{/* cts-file: {"hex":"69642c8e8196bc0a312c8e529363","encoding":"shift_jis","text":"id,氏名\n1,山田"} */}
+
+<pre><code>{`ファイルを読み込みませんでした：3 バイト目（0 から数えて）が UTF-8 として正しくないため、別の文字コード（Shift_JIS など）のファイルです。「CSV 入力」は変わっていません。UTF-8 で保存し直して（Excel では「CSV UTF-8」）から読み込んでください。`}</code></pre>
+
+<p>このバイト列をそのまま UTF-8 として読むと、日本語は置換文字 U+FFFD（� と表示）に変わり、列名が文字化けした SQL が警告なしにできてしまいます。そこで読み込む前にバイトを確認し、Shift_JIS、UTF-16、バイナリのファイルは止めて、問題のバイトの位置を示します。</p>
 
 <h2>例：CREATE TABLE</h2>
 
@@ -90,10 +127,57 @@ INSERT INTO "stock" ("sku", "qty", "column_3") VALUES ('B-2', 5, NULL);`}</code>
 
 <p>追加した <code>column_3</code> はステータス行に表示されます。正式な列名にしたい場合はヘッダー行で名前を付けてください。</p>
 
+<h2>例：重複したヘッダー名とフィールド内の引用符</h2>
+
+<p>表計算ソフトからコピーしたヘッダーには、同じ名前が 2 回あったり、最後のセルが空だったりします。その場合も各列に別の名前を付けます（SQLite、「CREATE TABLE を追加」あり、テーブル名 <code>stock</code>）。</p>
+
+{/* sql: {"dialect":"sqlite","table":"stock","mode":"batch","createTable":true} */}
+
+<pre><code>{`品名,数量,数量,
+キーボード,3,4,梱包済み
+マウス,5,,`}</code></pre>
+
+<pre><code>{`CREATE TABLE "stock" ("品名" TEXT, "数量" INTEGER, "数量_2" INTEGER, "column_4" TEXT);
+INSERT INTO "stock" ("品名", "数量", "数量_2", "column_4") VALUES
+  ('キーボード', 3, 4, '梱包済み'),
+  ('マウス', 5, NULL, NULL);`}</code></pre>
+
+{/* cts-status: {"csv":"品名,数量,数量,\nキーボード,3,4,梱包済み\nマウス,5,,"} */}
+
+<p>ステータスには変更した名前が表示されます。</p>
+
+<pre><code>{`重複または空のヘッダー名を変更しました：数量 → 数量_2, "" → column_4。`}</code></pre>
+
+<p>2 つ目の「数量」は <code>数量_2</code> に、空だった 4 列目のヘッダーは位置に合わせて <code>column_4</code> になります。名前は大文字と小文字を区別せずに比べるので、<code>Name</code> と <code>name</code> も重複とみなします。MySQL の列名は大文字と小文字を区別せず（<a href="https://dev.mysql.com/doc/refman/8.4/en/identifier-case-sensitivity.html" target="_blank" rel="noopener">MySQL 8.4, Identifier Case Sensitivity</a>）、SQLite も 1 つのテーブルに <code>"Name"</code> と <code>"name"</code> を並べると受け付けません。PostgreSQL の引用符付きの列名は大文字と小文字を区別しますが、ツールは同じ規則で名前を変えるので、3 つの方言で列名が同じになります。新しい名前はヘッダーにある名前と重なりません。<code>a,a,a_2</code> は <code>a</code>、<code>a_3</code>、<code>a_2</code> になります。</p>
+
+{/* sql: {"dialect":"sqlite","table":"stock","mode":"batch","createTable":true} */}
+
+<pre><code>{`品名,サイズ
+モニター,27" ワイド`}</code></pre>
+
+<pre><code>{`CREATE TABLE "stock" ("品名" TEXT, "サイズ" TEXT);
+INSERT INTO "stock" ("品名", "サイズ") VALUES
+  ('モニター', '27" ワイド');`}</code></pre>
+
+<p>引用符付きフィールドを始めるのは、フィールドの先頭にある二重引用符だけです。引用符で囲んでいないフィールドの途中にある引用符（インチを表す <code>{'27"'}</code> など）は普通の文字として残ります。閉じられていない引用符付きフィールドがあると、変換を止めます。</p>
+
+{/* cts-status: {"csv":"sku,note\nA-1,\"fragile\nB-2,ok"} */}
+
+<pre><code>{`sku,note
+A-1,"fragile
+B-2,ok`}</code></pre>
+
+<pre><code>{`2 行目で始まる引用符付きフィールドが閉じられていません。閉じる " を追加するか、開始の " を削除してください。`}</code></pre>
+
+<p>行番号は「CSV 入力」での行数で、先頭の空行も数えます。引用符を直すまで SQL 出力は空のままです。</p>
+
 <h2>制限事項</h2>
 <ul>
-  <li>区切り文字はカンマだけで、1 行目は常にヘッダーです。セミコロンやタブ区切りのファイルは先に変換してください。</li>
-  <li>型は文字列から推測するだけです。日付、真偽値、<code>1e5</code> は文字列として扱います。</li>
+  <li>区切り文字は半角カンマだけで、1 行目は常にヘッダーです。セミコロンやタブ区切りのファイルは先に変換してください。</li>
+  <li>型は文字列から推測するだけです。日付、真偽値、<code>1e5</code>、全角数字は文字列として扱います。</li>
   <li>テーブル名と列名は 1 つの識別子として囲むので、<code>public.users</code> はドットを含む 1 つの名前になります。</li>
+  <li>重複したヘッダー名（大文字と小文字は区別しない）は <code>_2</code>、<code>_3</code> を付け、空のヘッダーは <code>column_N</code> にして、ステータスに表示します。ほかの名前は空白も含めてそのまま使います。MySQL の列名は末尾を空白にできません。</li>
+  <li>閉じられていない引用符付きフィールドがあると、開始行を示して変換を止めます。引用符で囲んでいないフィールドの途中の引用符は普通の文字として残します。</li>
+  <li>入力から取り除くのは BOM、先頭の空行、末尾の改行だけです。ヘッダーやセルの前後の空白はそのまま残ります。</li>
   <li>大きなファイルもブラウザーのタブ内で一度に変換します。数百万行ならデータベースの一括読み込み（<code>LOAD DATA</code>、<code>COPY</code>、<code>.import</code>）を使ってください。</li>
 </ul>

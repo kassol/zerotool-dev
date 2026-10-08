@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, annotations, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonDiffTool.astro'), 'utf8');
@@ -296,9 +296,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
   h.input('jd-right', '{"x":3}');
   check(name + 'editing invalidates results without comparing', noResult(h.snap()) && !h.snap().status && h.tracked.length === 1);
   h.run(); click('jd-swap');
-  check(name + 'swap invalidates results and keeps manual comparison', noResult(h.snap()) && h.tracked.length === 2);
+  // Analytics: one event per pair of inputs (S2-7 review J6); the same pair compared again is not sent.
+  check(name + 'swap invalidates results and keeps manual comparison', noResult(h.snap()) && h.tracked.length === 1);
   eq(name + 'swap preserves exact text', h.snap().inputs, ['{"x":2}', '{"x":1}']);
   click('jd-run'); eq(name + 'manual reverse patch', JSON.parse(h.snap().patch), [{ op: 'replace', path: '/x', value: 1 }]);
+  check(name + 'the reversed pair is a new pair and is sent', h.tracked.length === 2);
+  click('jd-run'); check(name + 'comparing the same pair again is not sent', h.tracked.length === 2);
   for (const [id, value] of [['jd-left', ''], ['jd-left', '{'], ['jd-right', '{']]) {
     h.run(); h.nodes.get(id).value = value; click('jd-run');
     check(name + id + '/' + value + ' error removes old output and preserves inputs', noResult(h.snap()) && h.nodes.get('jd-status').className.includes('error') && h.nodes.get(id).value === value);
@@ -310,7 +313,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
     check(name + key + '/' + meta + ' clears all result state and persists once', noResult(h.snap()) && h.snap().inputs.every(x => !x) && !h.snap().status && h.persisted.length === count + 1);
   }
   h.run(); const saved = h.snap(); h.key('l', 'outside'); eq(name + 'outside shortcut has no effect', h.snap(), saved);
-  const count = h.tracked.length; h.key('Enter'); check(name + 'CtrlEnter compares once', h.tracked.length === count + 1);
+  h.input('jd-right', '{"x":"enter"}'); const count = h.tracked.length; h.key('Enter'); check(name + 'CtrlEnter compares once', h.tracked.length === count + 1 && JSON.parse(h.snap().patch)[0].value === 'enter');
+  click('jd-clear'); h.input('jd-left', '{"x":1}'); h.input('jd-right', '{"x":"enter"}'); click('jd-run'); check(name + 'after Clear the same pair is sent again', h.tracked.length === count + 2);
   for (const action of ['clear', 'input', 'swap', 'new', 'error', 'shortcut']) for (const rejected of [false, true]) {
     h.run(); click('jd-copy-patch'); const index = h.copies.length - 1;
     eq(name + 'copies exact complete patch', h.copies[index].text, h.snap().patch);
@@ -339,6 +343,94 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
   const before = h.copies.length; click('jd-copy-patch'); check(name + 'empty result never calls clipboard', h.copies.length === before);
 }
 process.removeListener('unhandledRejection', onUnhandled);
+
+// ---------- numbers JavaScript cannot hold, duplicate keys, deep nesting (S2-7, 2026-10-08) ----------
+// JSON.parse rounds 9007199254740993 to 9007199254740992 and keeps only the last of two equal
+// keys, so the page said "No differences" for documents that differ. It now names those values.
+// A document nested a few thousand levels deep overflowed the call stack and the click failed
+// with nothing on the page.
+{
+  const fill = (tpl, o) => tpl.replace(/\{(\w+)\}/g, (_, k) => String(o[k]));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const h = pageHarness(lang, false), L = h.labels, n = id => h.nodes.get(id);
+    const compare = (a, b) => { h.input('jd-left', a); h.input('jd-right', b); n('jd-run').click(); return h.snap(); };
+    const side = { before: L.sideBefore, after: L.sideAfter };
+    let r = compare('{"x":1}', '{"x":2}');
+    eq(lang + ' plain comparison has no note', [r.status, n('jd-status').className], [fill(L.msgChanges, { n: 1 }), 'jd-status success']);
+    r = compare('{"id":9007199254740993,"name":"a"}', '{"id":9007199254740992,"name":"a"}');
+    const sep = L.noteSep ?? ' ';
+    eq(lang + ' rounded number is named next to "no differences"', [r.status, n('jd-status').className],
+      [L.msgNoDiff + sep + fill(L.msgLossy || 'msgLossy', { list: side.before + ' /id: 9007199254740993 → 9007199254740992' }), 'jd-status error']);
+    r = compare('{"p":1}', '{"p":1e400,"q":0.1000000000000000055511}');
+    eq(lang + ' overflow and long decimal are named with the patch', r.status,
+      fill(L.msgChanges, { n: 2 }) + sep + fill(L.msgLossy || 'msgLossy', { list: side.after + ' /p: 1e400 → Infinity; ' + side.after + ' /q: 0.1000000000000000055511 → 0.1' }));
+    eq(lang + ' the patch still shows what JavaScript read', JSON.parse(r.patch), [{ op: 'replace', path: '/p', value: null }, { op: 'add', path: '/q', value: 0.1 }]);
+    r = compare('{"a":9007199254740994,"b":1e20}', '{"a":9007199254740994,"b":100000000000000000000}');
+    eq(lang + ' exact large integers are not listed', [r.status, n('jd-status').className], [L.msgNoDiff, 'jd-status success']);
+    r = compare('{"a":1,"a":2,"m/n":{"k":0,"k":1}}', '{"a":2,"m/n":{"k":1}}');
+    eq(lang + ' duplicate keys are named', r.status,
+      L.msgNoDiff + sep + fill(L.msgDup || 'msgDup', { list: side.before + ' /a; ' + side.before + ' /m~1n/k' }));
+    const many = '[' + Array(12).fill('9007199254740993').join(',') + ']';
+    r = compare(many, '[]');
+    check(lang + ' long lists end with a count of the rest', r.status.endsWith(fill(L.msgMore || 'msgMore', { n: 2 }) + (lang === 'zh' || lang === 'ja' ? '。' : '.')), r.status.slice(-80));
+    let deepA = '1', deepB = '2';
+    for (let i = 0; i < 20000; i++) { deepA = '[' + deepA + ']'; deepB = '[' + deepB + ']'; }
+    let thrown = '';
+    try { r = compare(deepA, deepB); } catch (e) { thrown = e.name; }
+    eq(lang + ' deep nesting reports an error instead of throwing', [thrown, r.status, n('jd-status').className, r.patch], ['', L.msgTooDeep, 'jd-status error', '']);
+    r = compare('{"x":1}', '{"x":2}');
+    eq(lang + ' a later comparison recovers', r.status, fill(L.msgChanges, { n: 1 }));
+  }
+  const fnLines = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return '';
+    const indent = src.slice(src.lastIndexOf('\n', i) + 1, i);
+    const end = src.indexOf('\n' + indent + '}\n', i);
+    return end < 0 ? '' : src.slice(i, end + indent.length + 2).split('\n').map((l) => l.trim()).join('\n');
+  };
+  const jsv = readFileSync(join(root, 'src/components/tools/json-schema-validator-engine.js'), 'utf8');
+  for (const name of ['decimalKey', 'isExactNumber', 'scanJson']) {
+    check(name + ' is the same as in json-schema-validator-engine.js', fnLines(source, name) !== '' && fnLines(source, name) === fnLines(jsv, name));
+  }
+  // Page examples run through the real page: {/* jd-page: {"before":"<JSON text>","after":"<JSON text>"} */}
+  // (texts, so that numbers such as 1830000000000000001 keep their digits). The status line must
+  // appear word for word in a ```text block after the note, and the patch (when there is one) in a
+  // ```json block.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readFileSync(join(root, 'src/content/tools/json-diff', lang + '.mdx'), 'utf8');
+    for (const note of annotations(body, 'jd-page')) {
+      const h = pageHarness(lang, false);
+      h.input('jd-left', note.spec.before); h.input('jd-right', note.spec.after); h.nodes.get('jd-run').click();
+      const own = note.after.split(/\{\/\*/)[0];  // up to the next annotation of any kind
+      const snap = h.snap(), blocks = fencedBlocks(own);
+      check(lang + ' jd-page example status appears word for word', blocks.some((b) => b.lang === 'text' && b.text === snap.status), snap.status);
+      if (snap.patch) check(lang + ' jd-page example patch is what the page writes', blocks.some((b) => b.lang === 'json' && JSON.stringify(JSON.parse(b.text)) === JSON.stringify(JSON.parse(snap.patch))), snap.patch);
+      for (const b of blocks.filter((b) => b.lang === 'json')) check(lang + ' jd-page example has no unchecked JSON block', !!snap.patch && JSON.stringify(JSON.parse(b.text)) === JSON.stringify(JSON.parse(snap.patch)), b.text.slice(0, 60));
+    }
+  }
+  const oneLine = (src, re) => (src.match(re) || [''])[0].trim();
+  check('escSeg is the same as in json-schema-validator-engine.js', oneLine(source, /^\s*function escSeg\(.*$/m) !== '' && oneLine(source, /^\s*function escSeg\(.*$/m) === oneLine(jsv, /^\s*function escSeg\(.*$/m));
+}
+
+// ---------- input labels (S2-7 review J4) ----------
+// zh 输入前 / 输入后 read as "before typing / after typing", and ko 이전 / 이후 as "previous / next".
+{
+  const S = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?);\n\nconst L/)[1] + ')');
+  const want = {
+    en: ['Before (JSON)', 'After (JSON)', 'Before JSON parse error: ', 'After JSON parse error: ', 'Before', 'After'],
+    zh: ['原 JSON', '新 JSON', '原 JSON 解析错误：', '新 JSON 解析错误：', '原 JSON', '新 JSON'],
+    ja: ['変更前 (JSON)', '変更後 (JSON)', '変更前 JSON の解析エラー：', '変更後 JSON の解析エラー：', '変更前', '変更後'],
+    ko: ['변경 전 (JSON)', '변경 후 (JSON)', '변경 전 JSON 파싱 오류: ', '변경 후 JSON 파싱 오류: ', '변경 전', '변경 후'],
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = S[lang];
+    eq(lang + ' input labels, parse error prefixes and status side names', [L.labelBefore, L.labelAfter, L.msgParseErrorBefore, L.msgParseErrorAfter, L.sideBefore, L.sideAfter], want[lang]);
+  }
+  for (const [lang, old] of [['zh', /输入前|输入后|前 JSON 解析|后 JSON 解析/], ['ko', /이전 \(JSON\)|이후 \(JSON\)|이전 JSON 파싱|\*\*이전|\*\*이후|"이전"|"이후"|이후 문서|이전으로 두고|이후로 둡니다|이후에만|이전에만/]]) {
+    const mdx = readFileSync(join(root, 'src/content/tools/json-diff', lang + '.mdx'), 'utf8');
+    check(lang + ' page no longer uses the old labels', !old.test(mdx) && !old.test(JSON.stringify(S[lang])), (mdx.match(old) || JSON.stringify(S[lang]).match(old) || [''])[0]);
+  }
+}
 
 // ---------- v2 page layout ----------
 const v2Start = passes;
@@ -379,6 +471,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const steps = (mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1] || '').trim().split('\n').filter(Boolean).map(line => JSON.parse(line.trim().slice(2)));
   eq(lang + ' v2 six steps before FAQ', steps.length, 6);
   check(lang + ' v2 plain steps meet 280/1200 limits', steps.every(step => [...step].length <= 280 && !/[<>]|\]\(|\*\*|`/.test(step)) && steps.reduce((n, step) => n + [...step].length, 0) <= 1200);
+  check(lang + ' steps name the two input labels as shown', steps.join(' ').includes(strings[lang].labelBefore) && steps.join(' ').includes(strings[lang].labelAfter));
   check(lang + ' v2 steps use actual manual controls', ['compare', 'clear', 'swap', 'copy', 'hideInputs', 'showInputs'].every(key => steps.join(' ').includes(strings[lang][key])));
   check(lang + ' v2 Usage is removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
   eq(lang + ' MDX content contract', contractProblems('json-diff', lang), '');
