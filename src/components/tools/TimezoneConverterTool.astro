@@ -15,7 +15,7 @@ const STRINGS = {
     targets: 'Target timezones',
     copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed.',
     remove: 'Remove', empty: 'No target zones — add one to start comparing.',
-    invalidTime: 'Invalid base time.', invalidZone: 'Unknown timezone.',
+    invalidTime: 'Invalid base time.', invalidZone: 'Unknown timezone. Enter a city or an IANA name.',
     summaryHeader: 'Timezone comparison for {time}',
     dstShiftFuture: 'DST shift in {n} day(s)', dstShiftPast: 'DST shifted {n} day(s) ago',
     dstShiftToday: 'DST shift today', dstShiftedToday: 'DST shifted today',
@@ -39,7 +39,7 @@ const STRINGS = {
     targets: '目标时区',
     copy: '复制', copied: '已复制！', copyFailed: '复制失败。',
     remove: '删除', empty: '尚无目标时区 — 添加一个开始对比。',
-    invalidTime: '基准时间无效。', invalidZone: '未知时区。',
+    invalidTime: '基准时间无效。', invalidZone: '未知时区，请输入城市或 IANA 名称。',
     summaryHeader: '{time} 的时区对照',
     dstShiftFuture: '{n} 天后切换夏令时', dstShiftPast: '{n} 天前已切换夏令时',
     dstShiftToday: '今天切换夏令时', dstShiftedToday: '今天已切换夏令时',
@@ -63,7 +63,7 @@ const STRINGS = {
     targets: 'ターゲットタイムゾーン',
     copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。',
     remove: '削除', empty: '対象タイムゾーンがありません — 追加して比較を始めましょう。',
-    invalidTime: '基準時刻が無効です。', invalidZone: '未知のタイムゾーンです。',
+    invalidTime: '基準時刻が無効です。', invalidZone: '未知のタイムゾーンです。都市名か IANA 名を入力してください。',
     summaryHeader: '{time} のタイムゾーン対照',
     dstShiftFuture: '{n}日後にサマータイム切替', dstShiftPast: '{n}日前にサマータイム切替済み',
     dstShiftToday: '本日サマータイム切替', dstShiftedToday: '本日サマータイム切替済み',
@@ -87,7 +87,7 @@ const STRINGS = {
     targets: '대상 시간대',
     copy: '복사', copied: '복사됨!', copyFailed: '복사 실패.',
     remove: '삭제', empty: '대상 시간대가 없습니다 — 추가하여 비교를 시작하세요.',
-    invalidTime: '기준 시간이 잘못되었습니다.', invalidZone: '알 수 없는 시간대.',
+    invalidTime: '기준 시간이 잘못되었습니다.', invalidZone: '알 수 없는 시간대입니다. 도시 이름이나 IANA 이름을 입력하세요.',
     summaryHeader: '{time} 시간대 비교',
     dstShiftFuture: '{n}일 후 서머타임 전환', dstShiftPast: '{n}일 전 서머타임 전환됨',
     dstShiftToday: '오늘 서머타임 전환', dstShiftedToday: '오늘 서머타임 전환됨',
@@ -186,6 +186,24 @@ const { tips: TIPS, emptyResult, ...L } = T;
     'moscow': 'Europe/Moscow',
     'auckland': 'Pacific/Auckland',
   };
+
+  // Time zone abbreviations are rejected instead of being read as part of a city name (ist used to
+  // give Europe/Istanbul, cat America/Catamarca). The list is every alphabetic abbreviation of 2–5
+  // letters in the tz 2026c source files (africa, antarctica, asia, australasia, europe,
+  // northamerica, southamerica, etcetera): the Zone FORMAT fields, with %s replaced by each LETTER
+  // of the Zone's rules and A/B forms split. UTC and GMT are handled before this check.
+  const TZ_ABBREVIATIONS = new Set([
+    'acdt', 'acst', 'addt', 'adt', 'aedt', 'aest', 'ahdt', 'ahpt', 'ahst', 'ahwt', 'akdt', 'akpt',
+    'akst', 'akwt', 'amt', 'apt', 'ast', 'at', 'awdt', 'awst', 'awt', 'bdst', 'bdt', 'bmt', 'bpt',
+    'bst', 'bwt', 'cast', 'cat', 'cdt', 'cemt', 'cest', 'cet', 'chst', 'cmt', 'cpt', 'cst', 'ct',
+    'cwt', 'dmt', 'eat', 'edt', 'eest', 'eet', 'emt', 'ept', 'est', 'ewt', 'ffmt', 'fmt', 'gdt',
+    'gst', 'hdt', 'hkst', 'hkt', 'hkwt', 'hmt', 'hpt', 'hst', 'hwt', 'iddt', 'idt', 'imt', 'ist',
+    'jdt', 'jmt', 'jst', 'kdt', 'kmt', 'kst', 'lmt', 'lst', 'mdst', 'mdt', 'mmt', 'mpt', 'msd',
+    'msk', 'mst', 'mwt', 'nddt', 'ndt', 'npt', 'nst', 'nwt', 'nzdt', 'nzmt', 'nzst', 'pdt', 'pkst',
+    'pkt', 'plmt', 'pmmt', 'pmt', 'ppmt', 'ppt', 'pst', 'pwt', 'qmt', 'rmt', 'sast', 'sdmt', 'sjmt',
+    'smt', 'sst', 'tbmt', 'tmt', 'wast', 'wat', 'wemt', 'west', 'wet', 'wib', 'wit', 'wita', 'wmt',
+    'yddt', 'ydt', 'ypt', 'yst', 'ywt',
+  ]);
 
   const $ = (id) => document.getElementById(id);
   const baseInput = $('tzc-base');
@@ -589,18 +607,20 @@ const { tips: TIPS, emptyResult, ...L } = T;
     if (ALIASES[lc] && isZone(ALIASES[lc])) return ALIASES[lc];
     const match = allZones.find((z) => z.toLowerCase() === lc);
     if (match) return match;
-    const cityMatch = allZones.find((z) => z.toLowerCase().endsWith('/' + lc.replace(/ /g, '_')));
-    if (cityMatch) return cityMatch;
-    // Abbreviations such as EST, IST or CST name several zones, so they are rejected, not matched.
-    // Any other partial name must start a word of the zone name ("york", "los", "america/new");
-    // the old substring match turned EST into America/Creston and IST into America/Boa_Vista.
-    if (/^[A-Z]{2,5}$/.test(trimmed)) return null;
     const q = lc.replace(/ /g, '_');
-    const partial = allZones.find((z) => {
+    const cityMatch = allZones.find((z) => z.toLowerCase().endsWith('/' + q));
+    if (cityMatch) return cityMatch;
+    if (TZ_ABBREVIATIONS.has(lc) || q.length < 3) return null;
+    // A partial name must start a word of the city part ("york", "los"), or the whole name when it
+    // has a slash ("america/new"), and match one zone only: us, la, asia or san used to give the
+    // first of several zones without a warning.
+    const hits = allZones.filter((z) => {
       const name = z.toLowerCase();
-      return name.startsWith(q) || name.split('/').some((seg) => seg.startsWith(q) || seg.split(/[_-]/).some((w) => w.startsWith(q)));
+      if (q.indexOf('/') !== -1) return name.startsWith(q);
+      const city = name.slice(name.lastIndexOf('/') + 1);
+      return city.startsWith(q) || city.split(/[_-]/).some((w) => w.startsWith(q));
     });
-    return partial || null;
+    return hits.length === 1 ? hits[0] : null;
   }
 
   function escapeHtml(s) {

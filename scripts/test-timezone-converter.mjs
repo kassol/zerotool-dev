@@ -350,19 +350,32 @@ for (const lang of ['en','zh','ja','ko']) for (const order of ['shared-before','
   q.ctrlL('tzc-share','L','metaKey');await settle();eq(tag+' MetaL shares same clear behavior',[q.get('tzc-base').value,rows(q).length,q.get('tzc-status').textContent],['',0,'']);
 }
 
-// Typed names: a partial name matches the start of a word in the zone name, so an abbreviation such
-// as EST or IST is rejected with "Unknown timezone." instead of picking America/Creston or
-// America/Boa_Vista (the old substring match); kolkata and kyiv resolve although V8 lists
-// Asia/Calcutta and Europe/Kiev.
+// Typed names, case-insensitive. A tz abbreviation (TZ_ABBREVIATIONS in the component: the
+// alphabetic abbreviations of the tz 2026c source files) is rejected, so ist / ast / cat no longer
+// turn into Europe/Istanbul, Europe/Astrakhan or America/Catamarca. A partial name needs 3 or more
+// characters, must start a word of the city part (or the whole name when it has a /), and must
+// match one zone only (us, la, asia, san, new used to pick the first match). The error says to
+// enter a city or an IANA name. kolkata and kyiv resolve although V8 lists Asia/Calcutta and
+// Europe/Kiev. The old substring match turned EST into America/Creston, IST into Boa_Vista.
+{
+  const list = [...source.slice(source.indexOf('const TZ_ABBREVIATIONS'), source.indexOf(']);', source.indexOf('const TZ_ABBREVIATIONS'))).matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
+  eq('abbreviation list: 121 tz abbreviations, 2–5 lowercase letters, no UTC / GMT', [list.length, list.every((a) => /^[a-z]{2,5}$/.test(a)), list.includes('utc') || list.includes('gmt')], [121, true, false]);
+  const want = 'est edt cst cdt mst mdt pst pdt akst hst ist jst kst cet cest eet eest wet bst ast cat eat wat msk aest aedt acst awst nzst nzdt hkt sast wib'.split(' ');
+  eq('abbreviation list covers the common abbreviations', want.filter((a) => !list.includes(a)), []);
+  const cities = new Set(Intl.supportedValuesOf('timeZone').map((z) => z.slice(z.lastIndexOf('/') + 1).toLowerCase()));
+  eq('no abbreviation is a whole city name in the list', list.filter((a) => cities.has(a)), []);
+}
+const UNKNOWN = { en: 'Unknown timezone. Enter a city or an IANA name.', zh: '未知时区，请输入城市或 IANA 名称。', ja: '未知のタイムゾーンです。都市名か IANA 名を入力してください。', ko: '알 수 없는 시간대입니다. 도시 이름이나 IANA 이름을 입력하세요.' };
 for (const lang of ['en','zh','ja','ko']) {
-  const L = tzLabels(lang);
-  for (const [typed, zone] of [['york','America/New_York'],['los','America/Los_Angeles'],['paulo','America/Sao_Paulo'],['seoul','Asia/Seoul'],['kolkata','Asia/Kolkata'],['kyiv','Europe/Kyiv'],['america/new','America/New_York']]) {
+  eq(lang+' unknown-zone message', tzLabels(lang).invalidZone, UNKNOWN[lang]);
+  eq(lang+' page quotes the unknown-zone message', readFileSync(join(root, 'src/content/tools/timezone-converter/' + lang + '.mdx'), 'utf8').includes(UNKNOWN[lang]), true);
+  for (const [typed, zone] of [['york','America/New_York'],['YORK','America/New_York'],['los','America/Los_Angeles'],['LOS','America/Los_Angeles'],['angeles','America/Los_Angeles'],['paulo','America/Sao_Paulo'],['sao paulo','America/Sao_Paulo'],['seoul','Asia/Seoul'],['SEOUL','Asia/Seoul'],['tokyo','Asia/Tokyo'],['TOKYO','Asia/Tokyo'],['new york','America/New_York'],['NEW YORK','America/New_York'],['shanghai','Asia/Shanghai'],['beijing','Asia/Shanghai'],['london','Europe/London'],['paris','Europe/Paris'],['hong kong','Asia/Hong_Kong'],['mexico city','America/Mexico_City'],['utc','UTC'],['UTC','UTC'],['gmt','UTC'],['GMT','UTC'],['kolkata','Asia/Kolkata'],['kyiv','Europe/Kyiv'],['america/new','America/New_York'],['Asia/Seoul','Asia/Seoul']]) {
     const q = pageVM(lang); q.input('tzc-add', typed); q.key('tzc-add', {key:'Enter'});
-    eq(lang+' typed '+typed+' adds '+zone, [rows(q).at(-1)?.[0], q.get('tzc-status').textContent], [zone, '']);
+    eq(lang+' typed '+typed+' adds '+zone, [rows(q).some(r => r[0] === zone), q.get('tzc-status').textContent], [true, '']);
   }
-  for (const typed of ['EST','IST','PST','CST','北京','東京','서울','est']) {
+  for (const typed of ['EST','IST','PST','CST','JST','KST','CET','BST','est','ist','ast','cat','pst','jst','kst','cet','edt','hkt','msk','eat','wat','aest','nzst','sast','wib','sgt','北京','東京','서울','us','la','asia','san','new','port']) {
     const q = pageVM(lang); const before = rows(q).map(r => r[0]); q.input('tzc-add', typed); q.key('tzc-add', {key:'Enter'});
-    eq(lang+' typed '+typed+' is rejected', [rows(q).map(r => r[0]), q.get('tzc-status').textContent], [before, L.invalidZone]);
+    eq(lang+' typed '+typed+' is rejected', [rows(q).map(r => r[0]), q.get('tzc-status').textContent], [before, UNKNOWN[lang]]);
   }
 }
 
@@ -437,7 +450,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 eq('v2 compiled module parses',moduleError,'');
 const style=compiled.css.join('\n');
 const mainScript=source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
-eq('v2 complete FIX script exact',hash(mainScript),'fe3ad9a7451df69a5bc05523d8e8c73f1be44b3b91fb3014ef3d87e36a1ca9d1');
+eq('v2 complete FIX script exact',hash(mainScript),'05f2b52040ebb1dd2d62aedfe782539765c6ed9db1cc45a36bf7794487c0eae7');
 eq('v2 analyze registry',/['"]timezone-converter['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('v2 outermost root',/^<div class="tzc-wrap">/.test(source.split('\n---\n')[1].trim()),true);
 eq('v2 no runtime i18n',source.includes('data-i18n'),false);
@@ -458,7 +471,7 @@ const originalLabelHashes={"en":"b520294f233fa5ed9d1ee9758f84ddd38d39b5eb5877853
 for(const lang of ['en','zh','ja','ko']){
  const T=tzStrings(lang),L=tzLabels(lang),p=pageVM(lang);
  eq('v2 '+lang+' same seven fact groups',Object.keys(T.tips),expectedTipKeys);
- { const {dstShiftToday,dstShiftedToday,...orig}=L; eq('v2 '+lang+' all original labels retained',hash(JSON.stringify(orig)),originalLabelHashes[lang]); eq('v2 '+lang+' same-day badge labels',typeof dstShiftToday==='string'&&typeof dstShiftedToday==='string'&&!dstShiftToday.includes('{n}'),true); }
+ { const {dstShiftToday,dstShiftedToday,...orig}=L; orig.invalidZone=({en:'Unknown timezone.',zh:'未知时区。',ja:'未知のタイムゾーンです。',ko:'알 수 없는 시간대.'})[lang]; eq('v2 '+lang+' all original labels retained',hash(JSON.stringify(orig)),originalLabelHashes[lang]); eq('v2 '+lang+' same-day badge labels',typeof dstShiftToday==='string'&&typeof dstShiftedToday==='string'&&!dstShiftToday.includes('{n}'),true); }
  eq('v2 '+lang+' client excludes tips/empty',Object.keys(L).some(k=>k==='tips'||k==='emptyResult'),false);
  eq('v2 '+lang+' translated empty hint',p.get('tzc-empty-result').textContent,T.emptyResult);
  eq('v2 '+lang+' result keyboard focus',p.get('tzc-results').getAttribute('tabindex'),'0');
