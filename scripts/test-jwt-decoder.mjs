@@ -577,6 +577,8 @@ console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' pass
     eq('a space or tab inside the header or payload always gives the decode error', spaceOk, true);
     console.log('Line-break checks: ' + same + ' wrapped inputs matched');
   }
+  eq('GBK bytes C4 A3 (模) decode to ģ, as the zh page says', E.b64urlDecode(Buffer.from([0x22, 0xc4, 0xa3, 0x22]).toString('base64url')), '"ģ"');
+  eq('zh page names the C4 A3 example', readFileSync(join(root, 'src/content/tools/jwt-decoder/zh.mdx'), 'utf8').includes('「模」的 GBK 字节 C4 A3 恰好是 UTF-8 的「ģ」'), true);
   console.log('Tool page worked examples: ' + (passes - before) + ' passed');
 }
 
