@@ -1,12 +1,16 @@
 // Box Shadow Generator — output format and the examples in the box-shadow guide
 //
 // Read:  src/components/tools/BoxShadowGeneratorTool.astro (runs the page script against a
-//        stand-in DOM); src/content/blog/box-shadow-generator-guide/{en,ja}.mdx;
+//        stand-in DOM); src/content/tools/box-shadow-generator/{en,zh,ja,ko}.mdx;
+//        src/content/blog/box-shadow-generator-guide/{en,ja}.mdx;
 //        node_modules/tailwindcss/theme.css (the Tailwind tokens quoted in the en guide)
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Covers: the output on load; `bsg-check` annotations (slider values → the generated
+// Covers: the tool page worked examples (`bsg-check` notes, at least 2 per language, recomputed
+// by the page script and shown verbatim as code after the note; every declaration in the tool's
+// output format on the four pages has a note) and the MDX contract with FAQ ids;
+// the output on load; guide `bsg-check` annotations (slider values → the generated
 // declaration, which must also appear in the guide text); an invalid hex code leaves the
 // color unchanged; `bsg-radius` annotations against the spread-radius rule in CSS Backgrounds
 // and Borders Level 3 §6.1.1 (radius + spread × (1 + (r − 1)^3) when r = radius / spread < 1);
@@ -20,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks, readToolMdx } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/BoxShadowGeneratorTool.astro'), 'utf8');
@@ -83,6 +87,69 @@ el('bsg-color').value = '#1a73e8';
 el('bsg-color-hex').value = '#abc';
 el('bsg-color-hex').fire('input');
 check('3-digit hex is ignored', el('bsg-code').textContent.includes('rgba(26, 115, 232,'), el('bsg-code').textContent);
+
+// ---------- tool page: worked examples ----------
+// {/* bsg-check: {"h":…, "v":…, "blur":…, "spread":…, "opacity":…, "color":"#rrggbb", "inset":…,
+// "hex"?: "text typed into the hex field", "out"?: "…"} */} sets the sliders, the color picker and
+// the inset switch, then (with "hex") types into the hex field, as on the page. {"layers": [ … ]}
+// holds several such settings, one per shadow layer. Every output must appear verbatim as a line of
+// a code block, or as inline code, after the note and before the next bsg-check note or H2. Every
+// declaration in the tool's output format on the page must be covered by such a note.
+function toolOutput(c) {
+  generate(c);
+  if (c.hex !== undefined) {
+    el('bsg-color-hex').value = c.hex;
+    el('bsg-color-hex').fire('input');
+  }
+  return el('bsg-code').textContent;
+}
+function shownCode(text) {
+  const out = [];
+  for (const b of fencedBlocks(text)) out.push(...b.text.split('\n'));
+  let rest = text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, ' ');
+  for (const m of rest.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) out.push(m[1].trim());
+  rest = rest.replace(/<code\b[^>]*>[\s\S]*?<\/code>/g, ' ');
+  for (const m of rest.matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+  return out;
+}
+function exampleOutputs(spec) {
+  const layers = spec.layers ?? [spec];
+  return layers.map((c) => {
+    for (const key of ['h', 'v', 'blur', 'spread', 'opacity']) if (!Number.isInteger(c[key])) throw new Error('missing ' + key);
+    if (!/^#[0-9a-f]{6}$/.test(c.color) || typeof c.inset !== 'boolean') throw new Error('color must be lowercase #rrggbb and inset a boolean');
+    const out = toolOutput(c);
+    if (c.out !== undefined && c.out !== out) throw new Error('note says ' + JSON.stringify(c.out) + ', engine gives ' + JSON.stringify(out));
+    return out;
+  });
+}
+function verifyToolExample({ spec, after }) {
+  if (!spec) return 'empty note';
+  const shown = shownCode(after);
+  for (const out of exampleOutputs(spec)) if (!shown.includes(out)) return 'engine result is not shown as code: ' + JSON.stringify(out);
+  return null;
+}
+const toolAnnotations = [{ tag: 'bsg-check', min: 2, verify: verifyToolExample }];
+const OUTPUT_FORMAT = /box-shadow: (?:inset )?-?\d+px -?\d+px \d+px -?\d+px rgba\(\d+, \d+, \d+, [01]\.\d\d\);/g;
+{
+  const docs = readToolMdx('box-shadow-generator', { root });
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = docs[lang].body;
+    const notes = annotations(body, 'bsg-check');
+    const covered = notes.map((n) => {
+      const start = n.index + body.slice(n.index).indexOf('*/}') + 3;
+      let outs = [];
+      try { outs = exampleOutputs(n.spec); } catch { /* reported by the contract */ }
+      return { start, end: start + n.after.length, outs };
+    });
+    const visible = body.replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => ' '.repeat(m.length));
+    for (const m of visible.matchAll(OUTPUT_FORMAT)) {
+      const ok = covered.some((c) => m.index >= c.start && m.index < c.end && c.outs.includes(m[0]));
+      check(`${lang} tool page: generator output ${m[0]} has a bsg-check note`, ok);
+    }
+  }
+}
+// Restore the defaults for the guide checks below.
+toolOutput({ h: 5, v: 5, blur: 10, spread: 0, opacity: 30, color: '#000000', inset: false });
 
 // ---------- guides ----------
 function erfc(x) {
@@ -378,7 +445,7 @@ process.removeListener('unhandledRejection', unhandled);
     check(lang + ' steps contain the actual Copy label', steps[7].includes(strings.copy));
     check(lang + ' steps name the clear shortcut', steps[7].includes('Ctrl/⌘+L'));
     check(lang + ' Usage section removed', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
-    eq(lang + ' MDX content contract', contractProblems('box-shadow-generator', lang), '');
+    eq(lang + ' MDX content contract', contractProblems('box-shadow-generator', lang, { annotations: toolAnnotations }), '');
   }
 }
 
