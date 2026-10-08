@@ -119,9 +119,37 @@ eq('unclosed quote reports its line', unclosed, 'Unclosed quote starting on line
   eq('csv-json and csv-to-markdown parse ' + corpus.length + ' inputs the same way', diff, []);
 }
 
+// ---------- pipes: escapePipes is copied verbatim from markdown-table-generator ----------
+eq('existing \\| stays one escaped pipe', md('a\nx\\|y').markdown.split('\n')[2], '| x\\|y |');
+eq('two backslashes before a pipe get one more', md('a\nx\\\\|y').markdown.split('\n')[2], '| x\\\\\\|y |');
+{
+  const fnText = (src) => {
+    const i = src.indexOf('function escapePipes(s) {'); if (i < 0) return '';
+    const indent = src.slice(src.lastIndexOf('\n', i) + 1, i), lines = src.slice(i).split('\n');
+    return lines.slice(0, lines.indexOf(indent + '}') + 1).map(l => l.trim()).join('\n');
+  };
+  const mtg = readFileSync(join(root, 'src/components/tools/MarkdownTableGeneratorTool.astro'), 'utf8');
+  const own = fnText(source), theirs = fnText(mtg);
+  check('escapePipes found in both tools', own.length > 100 && theirs.length > 100, own.length + '/' + theirs.length);
+  eq('escapePipes is a verbatim copy of markdown-table-generator', own, theirs);
+}
+// Rendered with micromark + GFM (remark, MDX and Astro use it): every row keeps the header's cell count.
+{
+  const requireRoot = createRequire(join(root, 'package.json'));
+  const { micromark } = await import(requireRoot.resolve('micromark'));
+  const { gfm, gfmHtml } = await import(requireRoot.resolve('micromark-extension-gfm'));
+  const cells = ['x|y', 'x\\|y', 'x\\\\|y', 'x\\\\\\|y', '|', '||', '\\', '\\\\', 'a\\', 'q\\|r|s', 'end\\'];
+  const csvText = 'h1,h2\n' + cells.map(c => '"' + c.replace(/"/g, '""') + '",z').join('\n');
+  const html = micromark(md(csvText).markdown, { extensions: [gfm()], htmlExtensions: [gfmHtml()] });
+  const rows = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map(m => (m[1].match(/<t[hd]\b/g) || []).length);
+  eq('micromark: header plus ' + cells.length + ' rows, 2 cells each', rows, Array(cells.length + 1).fill(2));
+  const second = [...html.matchAll(/<tr>\s*<td\b[^>]*>[\s\S]*?<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(m => m[1]);
+  eq('micromark: the second cell is never pushed out', second, Array(cells.length).fill('z'));
+}
+
 // Engine changed with approval (2026-10-08, S2-6d): parseCsv opens a quoted field only at the field start
-// and throws on an unclosed quote.
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '805ea3345417c9f6d0606c322a3ad91a5457ca4b5b570ce9d309d12af4bbb18f');
+// and throws on an unclosed quote; escapeMd uses escapePipes copied from markdown-table-generator.
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '548eeb657861eff5e3bc8b0cbccbfe4a75541816391b29f379c3562d9924aa2f');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises and time are controlled boundaries; conversion code is real.
@@ -302,7 +330,7 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // S2-6d (2026-10-08) moved analytics to change / alignment click and localized the no-data error; the hash pins that reviewed script.
-eq('reviewed page script is unchanged', hash(script), '7a46bd1f3260ab662b759743781f696f4846a4c01fd5e3a5022e950dc2fa9d39');
+eq('reviewed page script is unchanged', hash(script), '7cc5a8d01214d9f25cedf7730fd4a6485e1d75a7d0d2d88c71a81e2304372cb1');
 check('direct zero-minimum flex column root', /^\s*<div class="cm-wrap"/.test(markupSource) && /\.cm-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cm-(?:toolbar|controls)"[\s\S]*id="cm-status"[\s\S]*class="cm-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
