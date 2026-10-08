@@ -16,6 +16,9 @@
 // (they used to follow the input and threw ReferenceError); self and mutual recursion with
 // z.lazy() and a written-out TS type with z.ZodType<T>; enum declarations (string, numeric with
 // auto-increment, mixed, const / declare, computed → note); the page examples and messages.
+// S2: ttz-check examples in every language (engine output, tsc strict for zod 3.25 and zod/v4, accepts /
+// rejects / drops under both), ttz-error parse messages, prose facts (nullish, ASCII-only names, Box<T>),
+// and analytics sent once per committed change.
 // Run: node scripts/test-typescript-to-zod.mjs
 
 import { readFileSync } from 'node:fs';
@@ -23,7 +26,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import ts from 'typescript';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, examplePairs, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -223,6 +226,26 @@ eq('computed member → unknown with a note', comp.includes('export const ESchem
 const unk = convert('interface Member { joined: Date }');
 eq('Date reference', unk.includes('joined: z.unknown() /* Date */,'), true);
 
+// ---------- facts stated in the page prose and FAQ (S2) ----------
+const nullish = convert('interface A { p?: string | null }');
+eq('prose: prop?: T | null → union with null, optional', nullish.includes('  p: z.union([z.string(), z.null()]).optional(),'), true);
+for (const [v, z] of Object.entries(zods)) {
+  const { ASchema } = load(nullish, z);
+  eq(v + ': prop?: T | null accepts a missing key, null and a value', [{}, { p: null }, { p: 'x' }].map((x) => ASchema.safeParse(x).success), [true, true, true]);
+}
+// Names: only A–Z, a–z, digits, _ and $ are read; other characters are skipped without an error
+const accented = convert('interface Café { prénom: string; id: string }');
+eq('prose: Café → CafSchema', accented.includes('export const CafSchema = z.object({'), true);
+eq('prose: prénom → nom', accented.includes('  nom: z.string(),'), true);
+eq('prose: 名前 without quotes is dropped', convert('interface U { 名前: string; age: number }').includes('名前'), false);
+eq('prose: quoted 名前 is kept', convert('interface U { "名前": string }').includes('  "名前": z.string(),'), true);
+eq('prose: full-width colon drops the property', convert('interface U { id: string; age：number }').includes('age'), false);
+eq('FAQ: Box<T> value → z.unknown() /* T */', convert('interface Box<T> { value: T }').includes('  value: z.unknown() /* T */,'), true);
+let classOnly = '';
+try { convert('class User { name: string }'); } catch (e) { classOnly = e.message; }
+eq('FAQ: classes only → no declarations message', classOnly, 'No interface or type declarations found.');
+eq('prose: missing brace message', (() => { try { convert('interface A { a: string'); } catch (e) { return e.message; } })(), 'Expected "}" got ""');
+
 // ---------- page ----------
 eq('page no longer says extends is skipped', page.includes('</code> is skipped.'), false);
 const MENU = 'interface Menu extends Base { root: Category; [key: string]: unknown }\ninterface Base { id: string }\ninterface Category { name: string; children: Category[] }';
@@ -403,6 +426,32 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
     const zodPairs=examplePairs(body,b=>b.lang==='pre'&&/^(?:interface|type|enum|export (?:interface|type))\b/.test(b.text),b=>b.lang==='pre'&&/^import \{ z \}/.test(b.text));
     eq(lang+' has TypeScript → Zod examples',zodPairs.length>0,true);
     eq(lang+' each Zod example equals the engine output',zodPairs.filter(([a,b])=>convert(a.text)!==b.text).map(([,b])=>b.text),[]);
+    // {/* ttz-check: {"schema": "NameSchema", "accepts": [...], "rejects": [...], "drops": [...]} */}: the first two <pre>
+    // blocks after the marker are the TypeScript input and the engine output. The output must equal the engine, pass
+    // tsc strict against zod 3.25 and zod/v4, and load under both; "accepts" must parse, "rejects" must fail, and the
+    // parsed result of the first accepted value must not contain the keys in "drops" (Zod strips unknown keys).
+    // {/* ttz-error: {"message": "..."} */}: the first <pre> block after the marker gives "Parse error: " + message.
+    const notes=annotations(body,'ttz-check');
+    eq(lang+' has at least 2 ttz-check examples',notes.length>=2,true);
+    notes.forEach((note,i)=>{
+      const tag=lang+' ttz-check #'+(i+1),blocks=fencedBlocks(note.after).filter(b=>b.lang==='pre');
+      if(blocks.length<2){eq(tag+' has input and output blocks',blocks.length,2);return;}
+      const out=convert(blocks[0].text);eq(tag+' output equals the engine',blocks[1].text,out);
+      for(const entry of ['zod','zod/v4'])eq(tag+' tsc strict ('+entry+')',tsErrors(out,entry),[]);
+      for(const [v,z] of Object.entries(zods)){
+        let S;try{S=loadTs(out,z);}catch(e){eq(tag+' '+v+' loads',e.message,'no error');continue;}
+        const schema=S[note.spec?.schema];if(note.spec?.schema&&!schema){eq(tag+' names an exported schema',note.spec.schema,'');continue;}
+        for(const value of note.spec?.accepts??[])eq(tag+' '+v+' accepts '+JSON.stringify(value),schema.safeParse(value).success,true);
+        for(const value of note.spec?.rejects??[])eq(tag+' '+v+' rejects '+JSON.stringify(value),schema.safeParse(value).success,false);
+        if(note.spec?.drops)eq(tag+' '+v+' drops '+note.spec.drops.join(','),note.spec.drops.filter(k=>k in schema.parse(note.spec.accepts[0])),[]);
+      }
+    });
+    for(const note of annotations(body,'ttz-error')){
+      const block=fencedBlocks(note.after).find(b=>b.lang==='pre');let message='';
+      try{convert(block.text);}catch(e){message=e.message;}
+      eq(lang+' ttz-error example gives '+note.spec?.message,message,note.spec?.message);
+      eq(lang+' ttz-error message is quoted on the page',note.after.includes(strings[lang].msgError+note.spec?.message),true);
+    }
     check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   }
 }
