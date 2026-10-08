@@ -147,6 +147,17 @@ function open(s,lang='en',shellFirst=false){
   }
     const h=open(spec);h.query('.cgg-dir-btn[data-deg="0"]').click();check('real zero-angle path',h.el('cgg-preview').style.background.startsWith('linear-gradient(0deg,'),true);
     h.query('.cgg-tab[data-type="radial"]').click();check('real radial path',h.el('cgg-preview').style.background.startsWith('radial-gradient('),true);h.query('.cgg-tab[data-type="conic"]').click();check('real conic zero path',h.el('cgg-preview').style.background.startsWith('conic-gradient(from 0deg'),true);
+    // Full-width input from a CJK IME is read through NFKC, as in the color palette generator.
+    for(const lang of ['en','zh','ja','ko']){
+      const p=open(spec,lang);const hex=p.query('.cgg-stop-hex');
+      hex.value='＃１Ａ７３Ｅ８';hex.dispatch('input');
+      check(lang+' full-width hex is applied',p.el('cgg-code').textContent,'.gradient {\n  background: linear-gradient(90deg, #1a73e8 0%, #8b5cf6 100%);\n}');
+      check(lang+' full-width hex sets the picker',p.query('.cgg-stop-picker').value,'#1a73e8');
+      hex.value='　#256EF4　';hex.dispatch('input');
+      check(lang+' ideographic spaces and upper case are read',p.el('cgg-code').textContent.includes('#256ef4 0%'),true);
+      hex.value='#ㄹㄹㄹㄹㄹㄹ';hex.dispatch('input');
+      check(lang+' Hangul jamo are not hex digits',p.el('cgg-code').textContent.includes('#256ef4 0%'),true);
+    }
     for(let i=0;i<5;i++)h.click('cgg-add-stop');check('six stop maximum',h.all('.cgg-stop').length,6);for(let i=0;i<8;i++)h.query('.cgg-stop-remove').click();check('two stop minimum',h.all('.cgg-stop').length,2);
   process.removeListener('unhandledRejection',onUnhandled);
   const bad=rows.filter(r=>!r.passed); for(const r of bad)console.log('FAIL: '+r.name+' '+JSON.stringify({actual:r.actual,expected:r.expected}));
@@ -213,14 +224,20 @@ function open(s,lang='en',shellFirst=false){
   const check = (name, ok, detail = '') => { if (ok) passes++; else { failures++; console.log('FAIL: examples ' + name + (detail ? ' — ' + detail : '')); } };
   const POSITIONS = ['center', 'top', 'bottom', 'left', 'right', 'top left', 'top right', 'bottom left', 'bottom right'];
   const whole = (n, lo, hi) => Number.isInteger(n) && n >= lo && n <= hi;
+  // readHex() is the page function that reads the stop text field (NFKC, then #rrggbb). An
+  // annotation with "typed": true lists the text as typed into the field.
+  const readHexSrc = source.match(/function readHex\(value\) \{[\s\S]*?\n      \}/);
+  check('page script has readHex()', !!readHexSrc);
+  const readHex = readHexSrc ? new Function(readHexSrc[0] + '\nreturn readHex;')() : () => null;
   function rule(spec) {
     const stops = spec.stops;
     if (!Array.isArray(stops) || stops.length < 2 || stops.length > 6) throw new Error('the tool keeps 2–6 stops');
     for (const [color, pos] of stops) {
-      if (!/^#[0-9a-f]{6}$/.test(color)) throw new Error(`stop color ${color} is not a lowercase #rrggbb picker value`);
+      if (spec.typed && !readHex(color)) throw new Error(`typed stop ${color} is not read as a color`);
+      if (!spec.typed && !/^#[0-9a-f]{6}$/.test(color)) throw new Error(`stop color ${color} is not a lowercase #rrggbb picker value`);
       if (!whole(pos, 0, 100)) throw new Error(`stop position ${pos} is not a whole number from 0 to 100`);
     }
-    const list = stopList(stops.map(([color, pos]) => ({ color, pos: String(pos) }))).join(', ');
+    const list = stopList(stops.map(([color, pos]) => ({ color: spec.typed ? readHex(color) : color, pos: String(pos) }))).join(', ');
     let opts;
     if (spec.type === 'linear') {
       if (!whole(spec.angle, 0, 360)) throw new Error('angle must be a whole number from 0 to 360');
@@ -234,8 +251,9 @@ function open(s,lang='en',shellFirst=false){
     } else throw new Error(`unknown type ${spec.type}`);
     return '.gradient {\n  background: ' + gradientCss(spec.type, opts, list) + ';\n}';
   }
-  function verify({ spec, after }) {
+  function verify({ spec, after, body }) {
     const want = rule(spec);
+    if (spec.typed) for (const [color] of spec.stops) if (!body.includes(color)) return `typed text ${color} is not shown on the page`;
     const block = fencedBlocks(after)[0];
     if (!block) return 'no code block after the annotation';
     return block.text === want ? null : `page shows ${JSON.stringify(block.text)}, engine writes ${JSON.stringify(want)}`;
@@ -256,6 +274,8 @@ function open(s,lang='en',shellFirst=false){
   let threw = 0;
   for (const bad of [{ ...base, stops: [['#3B82F6', 0], ['#8b5cf6', 100]] }, { ...base, stops: Array(7).fill(['#000000', 0]) }, { ...base, angle: 12.5 }]) { try { rule(bad); } catch { threw++; } }
   check('checker rejects settings the controls cannot hold', threw === 3, String(threw));
+  check('readHex reads full-width input', readHex('＃１Ａ７３Ｅ８') === '#1a73e8');
+  check('readHex rejects Hangul jamo', readHex('#ㄹㄹㄹㄹㄹㄹ') === null);
   console.log('EXAMPLES ' + passes + ' passed, ' + failures + ' failed');
   if (failures) process.exitCode = 1;
 }
