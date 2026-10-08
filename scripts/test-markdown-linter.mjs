@@ -1,6 +1,6 @@
 // Markdown Linter — the results quoted on the English page come from markdownlint
 //
-// Read:  src/components/tools/MarkdownLinterTool.astro, src/content/tools/markdown-linter/en.mdx
+// Read:  src/components/tools/MarkdownLinterTool.astro, MarkdownPreviewTool.astro (engine block), src/content/tools/markdown-linter/{en,zh,ja,ko}.mdx
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -23,7 +23,9 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { compile } from '@mdx-js/mdx';
 import { toolSteps } from '../src/data/llms.mjs';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks, readToolMdx } from './lib/tool-mdx-contract.mjs';
+import { micromark } from 'micromark';
+import { gfm, gfmHtml } from 'micromark-extension-gfm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/MarkdownLinterTool.astro'), 'utf8');
@@ -121,7 +123,9 @@ function pageVM(lang = 'en', order = 'shared-after', ready = true) {
   }
   const matches = (el, selector) => selector.split(',').some(part => matchesOne(el, part));
   class Element {
-    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attrs: {}, listeners: {}, id: '', className: '', text: '', value: '', disabled: false, hidden: false, clientHeight: 200, scrollTop: 0 }); }
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attrs: {}, listeners: {}, id: '', className: '', text: '', value: '', disabled: false, hidden: false, clientHeight: 200, scrollTop: 0, style: {} }); }
+    select() { doc.activeElement = this; doc.selection = this.value; }
+    removeChild(child) { this.children = this.children.filter(c => c !== child); child.parentNode = null; return child; }
     get parentElement() { return this.parentNode; }
     setAttribute(key, value) { this.attrs[key] = String(value); if (['id', 'class', 'type'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); if (this.id === 'ml-results' && key === 'data-empty' && String(value) === 'true' && doc.querySelector('.ml-results-pane .ml-heading')?.contains(doc.activeElement)) doc.activeElement = doc.body; }
     getAttribute(key) { return key === 'class' ? this.className || null : this.attrs[key] ?? null; }
@@ -233,7 +237,7 @@ for (const lang of ['en','zh','ja','ko']) for (const order of ['shared-before','
   }
   {
     const p = pageVM(lang, order); await p.release(p.jobs[0], true);
-    eq(prefix + 'current failure is visible', p.get('ml-results').textContent, 'Error: Error: controlled lint rejection');
+    eq(prefix + 'current failure is visible', p.get('ml-results').textContent, t.lintFailed + 'controlled lint rejection');
     p.input(safeDoc); p.advance(300); await p.release();
     eq(prefix + 'current failure recovers via real lint', p.get('ml-summary').textContent, t.noIssues);
   }
@@ -321,6 +325,48 @@ for (const lang of ['en','zh','ja','ko']) for (const order of ['shared-before','
   }
 }
 console.log('Page copy checks: ' + (passes - copyStart) + ' passed');
+
+// Lint failure text in the page language, and the Copy Results fallback: when the Clipboard API
+// is missing, throws or rejects, a hidden textarea and execCommand('copy') are tried (same
+// pattern as TextToAsciiArtTool / ColorPaletteGeneratorTool); only when both fail does the
+// button show the failure label. The copy event is tracked only after a successful copy.
+const fallbackStart = passes;
+for (const lang of ['en','zh','ja','ko']) {
+  const t = strings[lang];
+  const failed = pageVM(lang); await failed.release(failed.jobs[0], true);
+  eq(lang + ': lint failure text uses the page language', failed.get('ml-results').textContent, (t.lintFailed ?? 'Error: ') + 'controlled lint rejection');
+  eq(lang + ': lint failure text has no fixed English prefix', lang === 'en' || !failed.get('ml-results').textContent.startsWith('Error: '), true);
+  for (const mode of ['absent','throw','reject']) for (const fallbackOk of [true, false]) {
+    const p = pageVM(lang), name = lang + ' ' + mode + (fallbackOk ? ' + fallback ok' : ' + fallback fails') + ': ';
+    const actual = await p.release();
+    const want = actual.content.map(i => `${t.line} ${i.lineNumber} [${i.ruleNames[0]}] ${i.ruleDescription}${i.errorDetail ? ' — ' + i.errorDetail : ''}${i.errorContext ? ' [' + i.errorContext + ']' : ''}`).join('\n');
+    const calls = [];
+    p.doc.execCommand = (cmd) => { calls.push([cmd, p.doc.selection]); return fallbackOk; };
+    if (mode === 'absent') delete p.sandbox.navigator.clipboard;
+    if (mode === 'throw') p.sandbox.navigator.clipboard = { writeText() { throw Error('clipboard throws'); } };
+    const n = unhandled.length;
+    p.get('ml-copy').focus(); p.get('ml-copy').click();
+    if (mode === 'reject') p.clipboard.at(-1).reject(Error('NotAllowedError'));
+    await settle();
+    eq(name + 'execCommand copy received the full results', calls, [['copy', want]]);
+    eq(name + 'button label', p.get('ml-copy').textContent, fallbackOk ? t.copied : t.copyFailed);
+    eq(name + 'hidden textarea removed', p.doc.body.querySelectorAll('textarea').filter(el => el.id !== 'ml-editor').length, 0);
+    eq(name + 'focus returns to Copy Results', p.doc.activeElement === p.get('ml-copy'), true);
+    eq(name + 'tracked only after a successful copy', p.tracks, fallbackOk ? [['markdown_linter', 'copy_results']] : []);
+    eq(name + 'no unhandled rejection', unhandled.length - n, 0);
+    if (fallbackOk) { p.advance(1500); eq(name + 'label returns after 1500 ms', p.get('ml-copy').textContent, t.copyResults); }
+  }
+  const ok = pageVM(lang); await ok.release(); let execUsed = false;
+  ok.doc.execCommand = () => { execUsed = true; return true; };
+  ok.get('ml-copy').click(); ok.clipboard.at(-1).resolve(); await settle();
+  eq(lang + ': Clipboard API success does not use the fallback', [execUsed, ok.get('ml-copy').textContent, ok.tracks.length], [false, t.copied, 1]);
+  const stale = pageVM(lang); await stale.release(); const staleCalls = [];
+  stale.doc.execCommand = () => { staleCalls.push(1); return true; };
+  stale.get('ml-copy').click(); const old = stale.clipboard.at(-1); stale.get('ml-clear').click();
+  old.reject(Error('late rejection')); await settle();
+  eq(lang + ': a rejection after Clear does not run the fallback', [staleCalls.length, stale.get('ml-copy').textContent], [0, t.copyResults]);
+}
+console.log('Lint failure and copy fallback checks: ' + (passes - fallbackStart) + ' passed');
 eq('all clipboard Promise rejections are handled', unhandled.length, 0);
 process.off('unhandledRejection', onUnhandled);
 // This component has no engine markers: protect the real library bootstrap, rendering and sample bytes.
@@ -427,6 +473,67 @@ for (const [name, code, bytes, hash] of protectedParts) {
   check('compiled dynamic selectors resolve global syntax', !compiledCSS.includes(':global(') && /\.ml-wrap[^{}]* \.ml-issue\s*\{/.test(compiledCSS) && /\.ml-wrap[^{}]* \.ml-desc\s*\{/.test(compiledCSS));
   check('compiled empty selector targets real result state', /\.ml-wrap[^{}]*:has\(#ml-results[^)]*\[data-empty="true"\][^)]*\)/.test(compiledCSS));
   console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
+
+// ---------- Worked examples on the four tool pages (S2) ----------
+// `{/* mdl-check: {"eol": true} */}` is followed by two code blocks: the Markdown input (with a
+// final line break added when eol is true, because a <pre> block drops it) and exactly what Copy
+// Results writes for it in that page language, or the "no issues" summary when markdownlint
+// reports nothing. The input is linted with the real markdownlint, the same call as the page.
+{
+  const start = passes;
+  const linted = new Map();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readToolMdx('markdown-linter')[lang].body;
+    for (const note of annotations(body, 'mdl-check')) {
+      const [input] = fencedBlocks(body.slice(note.index));
+      if (input) {
+        const content = input.text + (note.spec?.eol ? '\n' : '');
+        if (!linted.has(content)) linted.set(content, await run(content));
+      }
+    }
+  }
+  // The blocks are read from the annotation onward, not from `after`: example inputs contain
+  // `## ` heading lines, which annotations() treats as the end of the section.
+  const mdlCheck = { tag: 'mdl-check', min: 2, verify({ spec, index, body, lang }) {
+    if (!spec || typeof spec.eol !== 'boolean') return 'spec needs "eol": true or false';
+    const [input, output] = fencedBlocks(body.slice(index));
+    if (!input || !output) return 'needs an input block and an output block';
+    const issues = linted.get(input.text + (spec.eol ? '\n' : ''));
+    const t = strings[lang];
+    const want = issues.length ? issues.map((i) => `${t.line} ${i.lineNumber} [${i.ruleNames[0]}] ${i.ruleDescription}${i.errorDetail ? ' — ' + i.errorDetail : ''}${i.errorContext ? ' [' + i.errorContext + ']' : ''}`).join('\n') : t.noIssues;
+    return output.text === want ? null : `block ${JSON.stringify(output.text)} != tool ${JSON.stringify(want)}`;
+  } };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ': mdl-check examples match markdownlint', contractProblems('markdown-linter', lang, { annotations: [mdlCheck] }), '');
+
+  // Facts stated next to the examples. Rendering uses the Markdown Preview engine block.
+  const comp = readFileSync(join(root, 'src/components/tools/MarkdownPreviewTool.astro'), 'utf8');
+  const renderMarkdown = new Function(comp.slice(comp.indexOf('/* ── engine:start ── */'), comp.indexOf('/* ── engine:end ── */')) + '\nreturn renderMarkdown;')();
+  const preview = (md) => renderMarkdown(md, { micromark, gfm, gfmHtml });
+  eq('zh: bold after a fullwidth colon stays literal', preview('**注意：**这里必须填写手机号。').includes('**注意：**这里'), true);
+  eq('zh: fullwidth-space line is not a nested list', preview('- 基本信息\n\u3000- 姓名\n'), '<ul>\n<li>基本信息\n\u3000- 姓名</li>\n</ul>\n');
+  eq('ja: #+U+3000 is a paragraph, not a heading', preview('#\u3000インストール\n'), '<p>#\u3000インストール</p>\n');
+  eq('ja: bold after a closing bracket stays literal', preview('**「重要」**です。').includes('**「重要」**です'), true);
+  eq('ko: bold after a quote stays literal, plain bold works', preview('**"중요"**합니다. **굵게**는 됩니다.'), '<p>**&quot;중요&quot;**합니다. <strong>굵게</strong>는 됩니다.</p>');
+  eq('en: Markdown Preview shows a markdownlint comment as text', preview('<!-- markdownlint-disable-next-line MD034 -->\n').includes('&lt;!-- markdownlint-disable-next-line MD034 --&gt;'), true);
+  const jaLong = '日本語の文章は単語のあいだに空白を入れないため、一つの段落を一行で書くとこの行のように八十文字を大きく超えますが、MD013は八十桁目より後ろに空白のない行を報告しないので、この行は問題として表示されません。';
+  eq('ja: the long line has 104 characters and no space', [jaLong.length, jaLong.includes(' ')], [104, false]);
+  const en104 = 'word '.repeat(20) + 'abcd';
+  eq('a 104-character English line reports Expected: 80; Actual: 104', (await run('# T\n\n' + en104 + '\n')).map((i) => i.errorDetail), ['Expected: 80; Actual: 104']);
+  const koLine = '이 문장은 한국어로 작성한 긴 설명이며 띄어쓰기가 있어서 줄 길이 규칙이 적용됩니다. 이 문장은 한국어로 작성한 긴 설명이며 띄어쓰기가 있어서 줄 길이 규칙이 적용됩니다.';
+  eq('ko: MD013 counts each Hangul syllable as one character', [...koLine].length, 95);
+  // MD013 only looks for whitespace after column 80 (ja / zh limits text): no space → no report,
+  // ASCII or fullwidth (U+3000) space after column 80 → report.
+  const md013 = async (line) => (await run('# T\n\n' + line + '\n')).filter((i) => i.ruleNames[0] === 'MD013').map((i) => i.errorDetail);
+  eq('MD013: an English word without a space after column 80 is not reported', await md013('あ'.repeat(85) + 'English'), []);
+  eq('MD013: a fullwidth space after column 80 is reported', await md013('あ'.repeat(85) + '\u3000い'), ['Expected: 80; Actual: 87']);
+  eq('MD013: a Chinese line with an ASCII space after column 80 is reported', await md013('中'.repeat(82) + ' npm install 之前'), ['Expected: 80; Actual: 97']);
+  const md026 = (await import(join(root, 'node_modules/markdownlint/helpers/helpers.cjs'))).default.allPunctuationNoQuestion;
+  eq('MD026 default punctuation quoted on the pages', md026, '.,;:!。，；：！');
+  eq('MD026 skips a heading that ends with ？ or ?', (await run('# A\n\n## よくある質問？\n\n## 설치가 안 되나요?\n\n## 常见问题？\n')).filter((i) => i.ruleNames[0] === 'MD026'), []);
+  eq('MD043 and MD044 report nothing without configuration', (await run('# JavaScript notes\n\n## javascript\n\nUse javascript and github.\n')).filter((i) => ['MD043', 'MD044'].includes(i.ruleNames[0])), []);
+  eq('results are sorted by rule, then by line', (await run('#a\n\n## b:\n')).map((i) => i.ruleNames[0] + ':' + i.lineNumber), ['MD018:1', 'MD026:3', 'MD041:1']);
+  console.log('Worked examples: ' + (passes - start) + ' passed');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
