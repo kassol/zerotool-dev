@@ -15,6 +15,9 @@
 // (PEP 484 numeric tower) instead of `Union[int, float]`.
 // With python3 >= 3.11 the generated TypedDict is executed and its __required_keys__ /
 // __optional_keys__ are checked; otherwise SKIP.
+// GA (2026-10-08): one `generate` event per committed action (input or root-name change, Example,
+// a mode that changes) and only when code is shown; none after each 300 ms typing pause (before:
+// every generation).
 //
 // Run: node scripts/test-json-to-python-dataclass.mjs
 
@@ -238,6 +241,23 @@ try {
     }
     const t = lifecyclePage(lang); golden(t); copy(t).resolve(); await settle(); t.advance(1000); copy(t).resolve(); await settle(); t.advance(500); eq(lang + ': old timer leaves newer feedback', t.get('jpdc-copy').textContent, L.copied); t.advance(1000); eq(lang + ': new timer expires', t.get('jpdc-copy').textContent, L.copy);
     const order = lifecyclePage(lang); golden(order); const first = copy(order), second = copy(order); second.reject(Error('current')); await settle(); first.resolve(); await settle(); eq(lang + ': older success keeps current copy failure', order.get('jpdc-status').textContent, copyFailure[lang]); eq(lang + ': older success cannot claim copied', order.get('jpdc-copy').textContent, L.copy);
+    // GA: one generate event per committed action (change, Example, a new mode), none on page load or typing pauses.
+    const g = lifecyclePage(lang);
+    eq(lang + ': GA page load sends no event', g.tracks.length, 0);
+    g.input('{"a":1}'); g.advance(300);
+    eq(lang + ': GA typing pause regenerates without an event', [g.get('jpdc-output-code').textContent.includes('a: int'), g.tracks.length], [true, 0]);
+    g.get('jpdc-input').dispatch('change');
+    eq(lang + ': GA change sends one event', g.tracks, [['json-to-python-dataclass', 'generate']]);
+    g.input('{"pending":1}'); g.get('jpdc-input').dispatch('change');
+    eq(lang + ': GA change flushes the pending edit first', [g.get('jpdc-output-code').textContent.includes('pending: int'), g.tracks.length], [true, 2]);
+    g.advance(300); eq(lang + ': GA flushed edit sends nothing more', g.tracks.length, 2);
+    g.input('{'); g.advance(300); g.get('jpdc-input').dispatch('change'); eq(lang + ': GA invalid JSON sends no event', g.tracks.length, 2);
+    g.input(''); g.get('jpdc-input').dispatch('change'); eq(lang + ': GA empty input sends no event', g.tracks.length, 2);
+    g.get('jpdc-example').click(); eq(lang + ': GA Example sends one event', g.tracks.length, 3);
+    g.doc.querySelector('[data-mode="typeddict"]').click(); eq(lang + ': GA a new mode sends one event', g.tracks.length, 4);
+    g.doc.querySelector('[data-mode="typeddict"]').click(); eq(lang + ': GA the same mode sends none', g.tracks.length, 4);
+    g.get('jpdc-root-name').value = 'Order'; g.get('jpdc-root-name').dispatch('input'); g.get('jpdc-root-name').dispatch('change');
+    eq(lang + ': GA root name change sends one event', [g.get('jpdc-output-code').textContent.includes('class Order('), g.tracks.length], [true, 5]);
     const d = lifecyclePage(lang); golden(d); d.get('jpdc-download').click(); eq(lang + ': current download filename', d.downloads[0].name, 'root.py'); eq(lang + ': actual Blob full bytes', await d.downloads[0].blob.text(), goldenCode); d.doc.querySelector('[data-mode="typeddict"]').click(); eq(lang + ': mode click converts immediately', d.get('jpdc-output-code').textContent, 'from typing import TypedDict\n\nclass Root(TypedDict):\n    pass');
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
@@ -286,7 +306,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "eb49012a1c4549f826e2e0d59e0c718793a29be856b9fd5186f91fc911144bab"
+  "scriptSHA": "a5f0a65919541c66d7a7151ffa7261ad97423d75d4aa5b4d29ee72fa0b8a860b"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -294,7 +314,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 page script hash (2026-10-08: GA only on change, Example and a new mode)', hash(pageScript), V2.scriptSHA);
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);

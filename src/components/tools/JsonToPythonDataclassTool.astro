@@ -241,6 +241,7 @@ const L = STRINGS[lang];
       for (var ti = 0; ti < tabs.length; ti++) {
         (function (tab) {
           tab.addEventListener('click', function () {
+            var changed = currentMode !== tab.dataset.mode;
             for (var j = 0; j < tabs.length; j++) {
               tabs[j].classList.remove('active');
               tabs[j].setAttribute('aria-pressed', 'false');
@@ -249,6 +250,7 @@ const L = STRINGS[lang];
             tab.setAttribute('aria-pressed', 'true');
             currentMode = tab.dataset.mode;
             convert();
+            if (changed) trackGenerate();
           });
         })(tabs[ti]);
       }
@@ -623,13 +625,17 @@ const L = STRINGS[lang];
             ? '# Array of primitives — no class to generate'
             : '# Primitive value — no class to generate';
           setStatus(MSG_GENERATED, false);
-          window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
           return;
         }
         outputCodeEl.textContent = r.code;
         var msg = r.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', r.count);
         setStatus(msg, false);
-        window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
+      }
+
+      // Analytics: one event per committed edit (change), Example or new mode, only when code is
+      // shown; not after each typing pause.
+      function trackGenerate() {
+        if (outputCodeEl.textContent) window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
       }
 
       var _liveTimer = null;
@@ -643,12 +649,20 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(convert, 300);
       });
+      // A committed edit runs a pending generation first, so the event matches the shown code.
+      function commitEdit() {
+        if (_liveTimer) convert();
+        trackGenerate();
+      }
+      inputEl.addEventListener('change', commitEdit);
+      rootNameEl.addEventListener('change', commitEdit);
 
       document.getElementById('jpdc-example').addEventListener('click', function () {
         inputEl.value = EXAMPLE;
         inputEl.classList.remove('error');
         clearStatus();
         convert();
+        trackGenerate();
       });
 
       document.getElementById('jpdc-clear').addEventListener('click', function () {
