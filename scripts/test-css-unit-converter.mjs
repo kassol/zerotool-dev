@@ -29,7 +29,7 @@ const settle = async () => { await new Promise(setImmediate); await new Promise(
 function page({ lang = 'en', shellFirst = false } = {}) {
   const allStrings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
   const { tips, ...t } = allStrings[lang];
-  const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map();
+  const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map(), tracks = [];
   let now = 0, timerId = 0;
   const doc = { documentElement: { lang }, activeElement: null };
   function simple(e, sel) {
@@ -126,7 +126,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
     },
   });
   const context = {
-    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) },
+    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) }, trackTool: (slug, action) => tracks.push(slug + ':' + action),
     navigator: { clipboard: { writeText(value) {
       let resolve, reject;
       const promise = new Promise((a, b) => { resolve = a; reject = b; });
@@ -140,7 +140,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
   vm.runInContext(source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1], context, { filename: SLUG + '.astro' });
   if (!shellFirst) vm.runInContext(shortcut, context);
   return {
-    doc, body, get, copies, clears,
+    doc, body, get, copies, clears, tracks,
     input(id, value, type = 'input') { get(id).value = value; get(id).dispatch(type); },
     key(focus, { key = 'l', ctrlKey = true, metaKey = false } = {}) {
       (typeof focus === 'string' ? get(focus) : focus || body).focus();
@@ -254,6 +254,27 @@ try {
   }
   await settle(); eq('all current and stale clipboard rejections are handled', unhandled.length, 0);
 } finally { process.off('unhandledRejection', onUnhandled); }
+console.log('\nanalytics events');
+// One `convert` event per committed change (change event on Value / Root Font Size / Viewport Width,
+// or a unit selection) while a result is shown, as in box-shadow-generator; none on load and none for
+// each `input` event while typing (2026-10-08: before, every keystroke sent one).
+{
+  const q = page();
+  const n = () => q.tracks.filter(x => x === 'css-unit-converter:convert').length;
+  eq('GA: no convert event on load', n(), 0);
+  for (const v of ['1', '16', '16.5']) q.input('cu-value', v);
+  q.input('cu-root-size', '20'); q.input('cu-viewport', '390');
+  eq('GA: no convert event per input event', n(), 0);
+  q.get('cu-value').dispatch('change');
+  eq('GA: one convert event when Value is committed', n(), 1);
+  q.get('cu-root-size').dispatch('change'); q.get('cu-viewport').dispatch('change'); q.input('cu-unit', 'rem', 'change');
+  eq('GA: one convert event per committed setting or unit change', n(), 4);
+  q.input('cu-value', ''); q.get('cu-value').dispatch('change');
+  eq('GA: no convert event when there is no result', n(), 4);
+  q.input('cu-unit', 'px', 'change');
+  eq('GA: no convert event for a unit change without a result', n(), 4);
+}
+
 console.log('\ntool page worked examples');
 // `cuc-check: {"value","unit"?,"root"?,"viewport"?,"show":[unit…]}` runs the complete page script: the unit
 // select gets a change event, Root Font Size and Viewport Width get input events (left at the defaults
