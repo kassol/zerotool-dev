@@ -150,7 +150,7 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
   const file = (name) => (typeof name === 'string' ? { name, type: 'image/png', size: 500 } : name);
-  function page(lang = 'en') {
+  function page(lang = 'en', opts = {}) {
     const nodes = [], byId = new Map(), images = [], encodes = [], downloads = [], urls = new Map(), revoked = new Set();
     let document, wrap, serial = 0, persistenceClears = 0; const tracks = [];
     function matches(el, selector) {
@@ -205,6 +205,7 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
       setTimeout() {}, window: { ztPersist: { clear() { persistenceClears++; } }, trackTool: (...args) => tracks.push(args) }, _slug: prefix === 'wc' ? 'webp-converter' : 'image-compressor' };
     sandbox.t = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS[' + JSON.stringify(lang) + '];')();
     const context = createContext(sandbox);
+    if (opts.before) opts.before(get);
     runInContext(inline[1], context);
     const keyStart = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
     runInContext(layout.slice(keyStart, layout.indexOf('// ── Copy button visual feedback', keyStart)), context);
@@ -314,6 +315,16 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
     await p.ready([{ name: 'ok.png', type: 'image/png', size: 500 }, { name: 'bad.heic', type: 'image/heic', size: 10 }]);
     check('mixed batch: status keeps both counts', p.get('wc-status').textContent === '1 file(s) converted, 1 failed', p.get('wc-status').textContent);
     check('mixed batch: one convert event', p.tracks.length === 1 && p.tracks[0][0] === 'webp-converter' && p.tracks[0][1] === 'convert', JSON.stringify(p.tracks));
+  }
+  // Firefox restores form controls on reload, so the script can start with "WebP → PNG" already checked.
+  // The file input, hint and quality row must follow the checked radio, not the markup default.
+  {
+    const p = page('en', { before(get) { get('wc-mode-to').checked = false; get('wc-mode-from').checked = true; } });
+    check('restored WebP → PNG: accept lists WebP', p.get('wc-file').accept === 'image/webp', String(p.get('wc-file').accept));
+    check('restored WebP → PNG: quality row hidden', p.get('wc-quality-row').hidden === true);
+    check('restored WebP → PNG: hint names WebP', p.get('wc-hint').textContent === 'Supports WebP', p.get('wc-hint').textContent);
+    const q = page('en');
+    check('default PNG / JPG / GIF → WebP: accept unchanged', q.get('wc-file').accept === 'image/png,image/jpeg,image/gif' && q.get('wc-quality-row').hidden === false, String(q.get('wc-file').accept));
   }
   // A larger output kept one decimal only when it was not .0: Math.abs() on the toFixed(1) string
   // turned "-36.0" into 36, so the card read "+36%" next to "−66.2%".
