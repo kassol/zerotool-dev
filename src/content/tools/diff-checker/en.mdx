@@ -9,14 +9,24 @@ steps:
   - "Swap exchanges the inputs; click Compare again. Cancel or editing an input stops pending work and clears the result."
   - "Clear or Ctrl+L (⌘+L on Mac) inside this tool clears both inputs and the result."
 faqItems:
-  - question: "Is my text sent to any server?"
-    answer: "No. All diff computation runs in your browser. Your text never leaves your machine."
-  - question: "What diffing algorithm does this use?"
-    answer: "This tool uses a line-level Longest Common Subsequence (LCS) algorithm — the same principle used by Unix diff."
-  - question: "Can I compare code files?"
-    answer: "Yes. Paste any plain text — source code, config files, prose — and this tool will show added and removed lines."
-  - question: "Are whitespace-only differences shown?"
-    answer: "Yes. By default all differences are shown, including lines that differ only in whitespace."
+  - id: privacy
+    question: "Is my text sent to any server?"
+    answer: "No. The comparison runs in a Web Worker in your browser; neither text is sent to a server or written to browser storage. Analytics records only the tool name and the action when you click Compare, not the text."
+  - id: algorithm
+    question: "What diffing algorithm does this use?"
+    answer: "A line-level Longest Common Subsequence (LCS): it keeps as many lines as possible in both texts and marks the rest as removed or added. git diff and GNU diff find the same kind of shortest diff with Myers' algorithm, which is faster when the texts are similar. When several equally short diffs exist, the order of - and + lines can differ from Git."
+  - id: code-files
+    question: "Can I compare code files?"
+    answer: "Yes. Paste any plain text — source code, config files, prose — and this tool will show added and removed lines. It does not know the language, so a moved function shows as removed lines and added lines."
+  - id: whitespace
+    question: "Are whitespace-only differences shown?"
+    answer: "Yes. There are no ignore options, so a trailing space, a tab instead of spaces or a non-breaking space makes the line differ. The status line counts the changed line pairs that differ only in whitespace or invisible characters, and the pairs that differ only in Unicode normalization (NFC / NFD), so lines that look identical are explained."
+  - id: large-input
+    question: "Can it handle large files?"
+    answer: "Yes. The comparison runs in a Web Worker, so the page keeps responding and Cancel stops it at any time. The work grows with the number of original lines times the number of modified lines, so two texts of tens of thousands of lines take time. Results are drawn 100 rows per page."
+  - id: local-smart-quotes
+    question: "Why does a line with an apostrophe show as changed after I pasted from Word?"
+    answer: "Word can replace straight quotes with curly ones as you type (the AutoFormat As You Type option \"Straight quotes\" with “smart quotes”), so don't (U+0027) becomes don’t (U+2019). The two are different characters, so the line is marked removed and added. The status line does not count these pairs, because the characters look different; compare the quotes in the changed lines."
 ---
 
 <h2>About This Tool</h2>
@@ -34,6 +44,7 @@ faqItems:
 
 The **Unified** view lists every line of both texts in one column. The first two number columns are the line numbers in the original and the modified text. A `-` marks a line that exists only in the original, a `+` marks a line that exists only in the modified text, and unmarked lines are the same in both. For example, comparing
 
+{/* dc-check: {"show":["status"]} */}
 ```text
 timeout = 30
 retries = 3
@@ -46,10 +57,11 @@ timeout = 60
 retries = 3
 ```
 
-shows `- timeout = 30`, then `+ timeout = 60`, then the unchanged `retries = 3`. The **Side-by-Side** view puts removed and added lines next to each other: in each block of changed lines, the first removed line sits next to the first added line, the second next to the second, and so on.
+shows `- timeout = 30`, then `+ timeout = 60`, then the unchanged `retries = 3`, with `+1 / -1` on the status line. The **Side-by-Side** view puts removed and added lines next to each other: in each block of changed lines, the first removed line sits next to the first added line, the second next to the second, and so on.
 
 ## Example: a Configuration Change
 
+{/* dc-check */}
 Original:
 
 ```yaml
@@ -90,12 +102,24 @@ Each changed line appears as a removal followed by an addition. The new `file: a
 
 CR LF (Windows), LF and a lone CR all end a line, so the same text saved with different line endings compares as identical. A browser text box already turns pasted CR LF into LF (the HTML standard's "normalize newlines" step), and the tool splits text the same way. Other invisible differences still count: a trailing space, a tab instead of spaces, or a non-breaking space (U+00A0) instead of a normal one makes the line differ.
 
+{/* dc-check: {"a":"a\nb","b":"a\nb\n","show":["status"]} */}
 A final newline also counts. `a`, `b` compared with `a`, `b` plus a trailing line break gives `+1 / -0`: the extra line is an empty one at the end.
+
+## Lines That Look the Same
+
+Because nothing is ignored, a changed line can look exactly like its partner. The status line then says how many changed pairs differ only in whitespace or invisible characters, and how many differ only in Unicode normalization: the same letter stored as one code point (NFC) or as a base letter plus a combining mark (NFD). For example, comparing `café ` (with a trailing space) and `naïve` with `café` and `naïve` written with a combining diaeresis (U+0308):
+
+{/* dc-check: {"a":"café \nnaïve","b":"café\nnai\u0308ve","show":["status"]} */}
+```text
++2 / -2 Changed line pairs that differ only in whitespace or invisible characters (trailing spaces, tabs, U+00A0, U+3000, zero-width): 1. Pairs that differ only in Unicode normalization (NFC / NFD): 1.
+```
+
+Both pairs are still shown as one removal and one addition; the note only tells you why. A pair where one letter really changed, or where a straight quote became a curly one, is not counted.
 
 ## Limits
 
 - **Whole lines only.** A one-character change marks the whole line as removed and added; there is no word- or character-level highlighting.
-- **No ignore options.** Whitespace and letter-case differences count as changes. `one`, `two` against `ONE`, `TWO` is two removals and two additions.
+- **No ignore options.** Whitespace and letter-case differences count as changes. `one`, `two` against `ONE`, `TWO` is two removals and two additions. The status-line notes above only count pairs; they do not hide them.
 - **Side-by-Side pairs lines by position.** Within a block of changes, removed and added lines are paired in order, whether or not they are related. If a block removes three lines and adds one, the added line sits next to the first removed line and the other two have empty partners.
 - **No context folding.** Unchanged lines are always shown in full, and the output has no `@@` hunk headers, so it is not a patch you can apply.
 - **Large inputs take time, but not on the page.** The comparison runs in a Web Worker, so the page keeps responding and **Cancel** stops it at once. The algorithm keeps only a few rows of scores at a time instead of a table of every original line against every modified line. In a Node.js 22 test with two 10,000-line files where every tenth line changed, it took about 0.7 seconds with a peak memory footprint of about 31 MB; the earlier full-table version took about 2.9 seconds and 946 MB. In a browser the worker may take longer, depending on how the browser schedules background threads. Only one page of 100 rows is drawn at a time.

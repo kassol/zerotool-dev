@@ -12,7 +12,9 @@
 // addition, so two removals followed by two additions were drawn as del/empty, del/add,
 // empty/add), with empty partners only for the extra lines of the longer side; line numbers on
 // each side run 1..n; 2,000 random line lists keep both sides intact after pairing; the English
-// page example.
+// page example. The status line counts changed pairs that differ only in whitespace / invisible
+// characters or only in Unicode normalization. The worked examples on the four tool pages
+// ({/* dc-check */}) are compared on the real page (page script and Worker) in that language.
 //
 // Run: node scripts/test-diff-checker.mjs
 
@@ -22,7 +24,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { Worker as ThreadWorker } from 'node:worker_threads';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, toolMdxContract, annotations, fencedBlocks, splitToolMdx, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/DiffCheckerTool.astro'), 'utf8');
@@ -456,6 +458,32 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
     eq(prefix + ' empty side still represents one empty line', blank.rows.map(row => [row.type, row.val]), [['del', ''], ['add', 'only']]);
   } finally { await h.close(); }
 }
+// ---------- changed lines that look the same ----------
+// A pair of changed lines that differ only in whitespace or invisible characters (trailing
+// space, tab, U+00A0, U+3000, U+200B, U+FEFF) or only in Unicode normalization (NFC / NFD) was
+// shown as - / + with no reason. The status line now counts these pairs.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const T = STRINGS[lang];
+  const h = pageHarness(lang);
+  try {
+    const status = () => h.nodes.get('diff-status').textContent;
+    await h.compare('a \nb\tc\nx\u00a0y\n全角\u3000\nz\u200bw\nsame', 'a\nb    c\nx y\n全角\nzw\nsame');
+    eq(lang + ' whitespace-only pairs are counted', status(), '+5 / -5 ' + T.onlySpace?.replace('{n}', '5'));
+    await h.compare('caf\u00e9\n\u1100\u1161\nkeep', 'cafe\u0301\n\uac00\nkeep');
+    eq(lang + ' normalization-only pairs are counted', status(), '+2 / -2 ' + T.onlyNormalization?.replace('{n}', '2'));
+    await h.compare('one\ntwo ', 'ONE\ntwo');
+    eq(lang + ' only qualifying pairs are counted', status(), '+2 / -2 ' + T.onlySpace?.replace('{n}', '1'));
+    await h.compare('\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\nx\u200Cy', '\u{1F468}\u{1F469}\u{1F467}\nxy');
+    eq(lang + ' ZWJ / ZWNJ change the rendering, so they are not counted', status(), '+2 / -2');
+    await h.compare('a\nb', 'A\nb');
+    eq(lang + ' ordinary change has no note', status(), '+1 / -1');
+    await h.compare('a', 'a ');
+    eq(lang + ' single pair', status(), '+1 / -1 ' + T.onlySpace?.replace('{n}', '1'));
+    await h.compare('x\ny', 'x\ny');
+    eq(lang + ' identical text', status(), T.identical);
+  } finally { await h.close(); }
+}
+
 for (const [mobile, top] of [[false, 900], [true, 100]]) {
   const h = pageHarness('en', { mobile, resultTop: top });
   try {
@@ -464,6 +492,52 @@ for (const [mobile, top] of [[false, 900], [true, 100]]) {
   } finally { await h.close(); }
 }
 console.log('v2 page layout: ' + (passes - v2Start) + ' passed, ' + failures + ' total failures');
+
+// ---------- worked examples on the tool pages ({/* dc-check: {...} */}) ----------
+// Each example is compared on the real page (page script and Worker) in that page language.
+// Inputs: spec.a / spec.b, or else the first two code blocks after the annotation. The Unified
+// output (marker, space, line; the first page) must equal a later code block when spec.show has
+// "unified"; the status line must appear verbatim in a code block or inline code when it has
+// "status". Default show: ["unified", "status"].
+{
+  const examplesStart = passes;
+  const pending = [];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = splitToolMdx(readFileSync(join(root, 'src/content/tools/diff-checker', lang + '.mdx'), 'utf8')).body;
+    for (const note of annotations(body, 'dc-check')) pending.push({ lang, note });
+  }
+  const results = new Map();
+  for (const { lang, note } of pending) {
+    note.spec ??= {};
+    const blocks = fencedBlocks(note.after);
+    const a = note.spec.a ?? blocks[0]?.text, b = note.spec.b ?? blocks[1]?.text;
+    if (typeof a !== 'string' || typeof b !== 'string') { results.set(lang + '#' + note.index, { error: 'no inputs' }); continue; }
+    const h = pageHarness(lang);
+    try {
+      const r = await h.compare(a, b);
+      const marker = { equal: ' ', del: '-', add: '+' };
+      results.set(lang + '#' + note.index, { unified: r.rows.map(op => marker[op.type] + ' ' + op.val).join('\n'), status: h.nodes.get('diff-status').textContent });
+    } finally { await h.close(); }
+  }
+  const codeTexts = after => {
+    const out = fencedBlocks(after).map(x => x.text);
+    const prose = withoutCode(after);
+    for (const m of prose.matchAll(/<code>\{("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\}<\/code>/g)) out.push(new Function('return ' + m[1])());
+    for (const m of prose.replace(/<code>[\s\S]*?<\/code>/g, ' ').matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+    return out;
+  };
+  const verify = ({ spec, after, lang, index }) => {
+    const got = results.get(lang + '#' + index);
+    if (!got) return 'not computed';
+    if (got.error) return got.error;
+    const codes = codeTexts(after);
+    const missing = ((spec ?? {}).show ?? ['unified', 'status']).filter(k => !codes.includes(got[k]));
+    return missing.length ? missing.map(k => k + ' ' + JSON.stringify(got[k]) + ' not shown').join('; ') : null;
+  };
+  const contract = toolMdxContract('diff-checker', { annotations: [{ tag: 'dc-check', min: 2, verify }] });
+  for (const r of contract.results.filter(r => /dc-check/.test(r.rule))) eq(r.message, r.ok, true);
+  console.log('page examples: ' + (passes - examplesStart) + ' passed, ' + failures + ' total failures');
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

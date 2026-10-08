@@ -14,6 +14,11 @@
 // throw a JsonPathError with a position instead of returning an empty result. Also the tool's
 // example pills against the sample bookstore JSON.
 //
+// Page script: the analytics event is sent on change only; numbers that JSON.parse changes and
+// full-width / CJK punctuation in a query are explained on the status line; query errors are
+// shown in the page language (one pattern per engine message). The worked examples on the four
+// tool pages ({/* jpt-check */}) run through the real page script in that language.
+//
 // Guide: tables, error messages and the Python block of src/content/blog/jsonpath-tester-guide/en.mdx
 // are recomputed (see the block at the end).
 //
@@ -25,7 +30,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, toolMdxContract, fencedBlocks, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonpathTesterTool.astro'), 'utf8');
@@ -305,7 +310,7 @@ err(store, '$.store.*~');
   if (labels.zh) check('zh 3 条匹配', EC.matchCountText(3, labels.zh.one, labels.zh.many) === '3 条匹配');
   if (labels.ja) check('ja 1 件マッチ', EC.matchCountText(1, labels.ja.one, labels.ja.many) === '1 件マッチ');
   if (labels.ko) check('ko 2개 매칭', EC.matchCountText(2, labels.ko.one, labels.ko.many) === '2개 매칭');
-  check('count element uses matchCountText', /countEl\.textContent = matchCountText\(/.test(source));
+  check('count element uses matchCountText', /countEl\.textContent = (?:joinNotes\()?matchCountText\(/.test(source));
 }
 
 // ---------- English page examples and the invalid-JSON message ----------
@@ -376,7 +381,7 @@ err(store, '$.store.*~');
   });
   for (const r of tableAfter('{/* jp-errors */}')) {
     let msg = '';
-    try { E.jsonpath(doc, code(r[0])); } catch (e) { msg = 'Unsupported syntax: ' + e.message; }
+    try { E.jsonpath(doc, code(r[0])); } catch (e) { msg = source.match(/unsupported: '([^']*)'/)[1] + ': ' + e.message; }
     eq('guide error message ' + r[0], msg, r[1]);
   }
   const run = text.match(/\{\/\* jp-run: \{"lang":"python"\} \*\/\}\s*```python\n([\s\S]*?)```/);
@@ -399,6 +404,10 @@ const requireFromRoot = createRequire(join(root, 'package.json'));
 const { parseFragment, defaultTreeAdapter } = requireFromRoot('parse5');
 const labels = vm.runInNewContext(source.slice(source.indexOf('const labels ='), source.indexOf('const L =')) + ';labels;');
 const sampleJson = source.match(/const SAMPLE_JSON = `([\s\S]*?)`;/)[1];
+const errorTables = source.includes('const ERROR_PATTERNS')
+  ? vm.runInNewContext(source.slice(source.indexOf('const ERROR_PATTERNS'), source.indexOf('const ERRORS_JSON')) + ';({ ERROR_PATTERNS, ERROR_TEXT });')
+  : { ERROR_PATTERNS: [], ERROR_TEXT: {} };
+const errorsJson = lang => (lang === 'en' || !errorTables.ERROR_TEXT[lang] ? '' : JSON.stringify({ re: errorTables.ERROR_PATTERNS, ...errorTables.ERROR_TEXT[lang] }));
 const inline = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
@@ -455,7 +464,7 @@ function page(lang, sharedFirst = false) {
   }
   const escape = value => String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const markup = source.replace(/^---\n[\s\S]*?\n---\s*/, '').split('<script')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
-    .replace(/=\{L\.(\w+)\}/g, (_,key) => '="'+escape(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g, (_,key) => escape(labels[lang][key])).replace('{SAMPLE_JSON}',escape(sampleJson));
+    .replace(/=\{L\.(\w+)\}/g, (_,key) => '="'+escape(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g, (_,key) => escape(labels[lang][key])).replace('{SAMPLE_JSON}',escape(sampleJson)).replace('={ERRORS_JSON}', () => '="'+escape(errorsJson(lang))+'"');
   const body = new Element('body'), widget = body.appendChild(new Element('section')); widget.className = 'tool-widget'; widget.innerHTML = markup;
   const wrap = widget.querySelectorAll('.jpt-wrap')[0], script = wrap.appendChild(new Element('script'));
   const document = { body, activeElement: body, currentScript: script,
@@ -528,6 +537,155 @@ for (const lang of ['en','zh','ja','ko']) {
     const p=page(lang);p.query();p.get('jpt-copy').click();p.get('jpt-copy').click();p.copies[1].resolve();await settle();p.copies[0][oldOutcome](Error('Old denial'));await settle();eq(lang+' newest copy wins old '+oldOutcome,p.get('jpt-copy').textContent,L.copied);
   }
 }
+// ---------- analytics: one 'run' event per committed change, not per keystroke ----------
+// The usage event used to be sent from run(), so the page load and every keystroke sent one.
+// Now it is sent on the change event of either input when Results has matches, once per
+// JSON + expression; examples keep their own 'example' event.
+for (const lang of ['en','zh','ja','ko']) {
+  const h = page(lang);
+  const runs = () => h.tracks.filter(t => t[1] === 'run').length;
+  eq(lang+' GA: page load sends no run event', runs(), 0);
+  h.query(1, '$.value');
+  eq(lang+' GA: typing sends no run event', runs(), 0);
+  h.get('jpt-expr').dispatch('change');
+  eq(lang+' GA: change with matches sends one run event', runs(), 1);
+  h.get('jpt-expr').dispatch('change'); h.get('jpt-json').dispatch('change');
+  eq(lang+' GA: the same JSON and expression are sent once', runs(), 1);
+  h.input('jpt-expr', '$.missing'); h.get('jpt-expr').dispatch('change');
+  eq(lang+' GA: change without matches sends nothing', runs(), 1);
+  h.input('jpt-expr', '$'); h.get('jpt-expr').dispatch('change');
+  eq(lang+' GA: a new committed query sends one more', runs(), 2);
+  h.input('jpt-json', '{'); h.get('jpt-json').dispatch('change');
+  eq(lang+' GA: invalid JSON sends nothing', runs(), 2);
+  h.key(); h.query(1, '$.value'); h.get('jpt-expr').dispatch('change');
+  eq(lang+' GA: after Ctrl+L the same query counts again', runs(), 3);
+  h.wrap.querySelectorAll('.jpt-pill')[1].click();
+  eq(lang+' GA: example click sends only its example event', [runs(), h.tracks.filter(t => t[1] === 'example').length], [3, 1]);
+}
+
+// ---------- numbers JavaScript cannot hold exactly, full-width characters ----------
+// JSON.parse turned 12345678901234567890 into 12345678901234567000, -0 into 0 and 1e400 into
+// Infinity (shown as null) with no message. The status line now lists them. A full-width ．
+// inside a shorthand name made the query silently find nothing; the status line now says why.
+{
+  const jse = readFileSync(join(root, 'src/components/tools/json-schema-validator-engine.js'), 'utf8');
+  const fn = (text, name) => { const m = text.match(new RegExp('^([ \\t]*)function ' + name + '\\([\\s\\S]*?^\\1\\}', 'm')); return m ? m[0].split('\n').map(l => l.trim()).join('\n') : null; };
+  for (const name of ['decimalKey', 'isExactNumber']) {
+    check(name + ' is copied verbatim from json-schema-validator-engine.js', fn(jse, name) !== null && fn(jse, name) === fn(inline, name), name);
+  }
+  for (const lang of ['en','zh','ja','ko']) {
+    const L = labels[lang];
+    const h = page(lang);
+    h.input('jpt-json', '{"id":12345678901234567890,"n":-0,"big":1e400,"ok":1.0,"id2":12345678901234567890}');
+    h.input('jpt-expr', '$.ok');
+    const list = '12345678901234567890 → 12345678901234567000, -0 → 0, 1e400 → null';
+    eq(lang+' number note lists the changed numbers', h.get('jpt-count').textContent,
+      L.matchOne.replace('{n}', '1') + ' · ' + L.numberNote.replace('{n}', '4').replace('{list}', list));
+    h.input('jpt-expr', '$.missing');
+    eq(lang+' number note also shows when nothing matches', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.numberNote.replace('{n}', '4').replace('{list}', list)]);
+    h.input('jpt-json', '{"a":1.50,"b":"12345678901234567890","c":0.1,"d":9007199254740991}'); h.input('jpt-expr', '$.a');
+    eq(lang+' exact numbers and number-like strings give no note', h.get('jpt-count').textContent, L.matchOne.replace('{n}', '1'));
+    h.input('jpt-json', '{"store":{"book":[1]}}'); h.input('jpt-expr', '$.store．book');
+    eq(lang+' full-width dot: no match plus a note', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.fullwidthNote.replace('{chars}', '．')]);
+    h.input('jpt-expr', '$.store【0】');
+    eq(lang+' Chinese-mode brackets: no match plus a note', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.fullwidthNote.replace('{chars}', '【 】')]);
+    h.input('jpt-expr', '$【0】');
+    check(lang+' full-width character in an error also gets the note', h.get('jpt-count').textContent.endsWith(' · ' + L.fullwidthErrorNote.replace('{chars}', '【 】')) && h.get('jpt-count').textContent === h.get('jpt-code').textContent, h.get('jpt-count').textContent);
+    h.input('jpt-expr', "$['ｂｏｏｋ']");
+    eq(lang+' full-width text in a quoted name gives no note', h.get('jpt-count').textContent, '');
+    h.input('jpt-expr', '$.store.book');
+    eq(lang+' half-width query matches', h.get('jpt-count').textContent, L.matchOne.replace('{n}', '1'));
+  }
+}
+
+// ---------- status label covers syntax errors too ----------
+// Most engine errors are plain syntax errors (unclosed string, leading zero), not syntax RFC 9535
+// lacks, so the label says both.
+eq('error labels name both cases', ['en','zh','ja','ko'].map(l => labels[l].unsupported),
+  ['Invalid or unsupported syntax', '语法错误或不支持的语法', '構文エラーまたは未対応の構文', '구문 오류 또는 지원하지 않는 구문']);
+
+// ---------- query errors in the page language ----------
+// The status line showed the engine's English detail on zh / ja / ko pages. Every engine
+// message now has a pattern with zh / ja / ko text; en pages keep the engine text.
+const ERROR_QUERIES = [
+  '$[?(@.a == 1]', '$[?(@.a == 1', 'store.book', '$.1', '$.', '$..', '$[1 2]', '$[(@.length-1)]', '$[',
+  '$[a]', '$[-]', '$[01]', '$[-0]', '$[9007199254740992]', "$['a", "$['\\uDC00']", "$['\\uD800']",
+  "$['\\uD800\\u0041']", "$['\\x']", "$['a\u0001b']", "$['\\u00']", '$[?!1]', '$[?!@.a == 1]',
+  '$[?@.a == (1)]', '$[?@.a =~ /x/]', '$[?@.a = 1]', '$[?@.a == 01]', '$[?price < 10]', '$[?@.a ==',
+  '$[?@.a == #]', '$[?foo(@)]', '$[?length(@.a, 1) == 1]', '$[?length(@)]', '$[?1]', '$[?@.* == 1]',
+  "$[?match(@.a,'x') == true]", '$[?length(1 == 1) == 1]', '$[?count(1) == 1]', '@.a', '$.a b',
+  '$.store.book[?(@.category in ["fiction"])]', '$[?@.a && 1]', '$[?True]', '$[?@.a == 1 == 2]',
+];
+// Messages no query reaches (the parser checks the same thing earlier); the pattern is checked
+// against the engine text directly.
+const UNREACHED = ['expected an index', 'expected a member name or * after "."', 'only literals, singular queries and functions can be compared'];
+{
+  const details = [];
+  for (const q of ERROR_QUERIES) {
+    let e = null; try { E.jsonpath({}, q); } catch (x) { e = x; }
+    check('error query throws a JsonPathError: ' + q, e && e.name === 'JsonPathError', e && e.message);
+    if (e && e.name === 'JsonPathError') details.push({ q, detail: e.detail, pos: e.pos, message: e.message });
+  }
+  const engineSites = (block.match(/(?:this|p)\.fail\('|throw JsonPathError\('|throw JsonPathError\(e\.name|this\.fail\(name/g) || []).length;
+  eq('engine has 39 error sites (add a pattern when this changes)', engineSites, 39);
+  eq('one pattern per distinct engine message', errorTables.ERROR_PATTERNS.length, 39);
+  const all = details.map(d => d.detail).concat(UNREACHED);
+  const firstMatch = d => errorTables.ERROR_PATTERNS.findIndex(re => new RegExp(re).test(d));
+  for (const d of all) check('error detail has a pattern: ' + d, firstMatch(d) >= 0);
+  errorTables.ERROR_PATTERNS.forEach((re, i) => check('pattern ' + i + ' matches an engine message: ' + re, all.some(d => firstMatch(d) === i)));
+  for (const lang of ['zh', 'ja', 'ko']) {
+    const T = errorTables.ERROR_TEXT[lang];
+    eq(lang + ' one text per pattern', T && T.t.length, 39);
+    const h = page(lang);
+    h.input('jpt-json', '{}');
+    for (const d of details) {
+      h.input('jpt-expr', d.q);
+      const shown = h.get('jpt-count').textContent;
+      check(lang + ' localized error for ' + d.q, shown.startsWith(labels[lang].unsupported + ': ') && !shown.includes(d.detail)
+        && shown.endsWith(T.at.replace('{n}', String(d.pos + 1))) && shown === h.get('jpt-code').textContent, shown);
+    }
+  }
+  const h = page('en'); h.input('jpt-json', '{}');
+  for (const d of details) { h.input('jpt-expr', d.q); eq('en keeps the engine text for ' + d.q, h.get('jpt-count').textContent, labels.en.unsupported + ': ' + d.message); }
+}
+
+// ---------- worked examples on the tool pages ({/* jpt-check: {...} */}) ----------
+// Each annotation runs through the real page script in that page language. Spec:
+//   q     the expression;
+//   json  "sample" (the preloaded bookstore), "block" (the first code block after the
+//         annotation) or JSON text;
+//   show  which outputs must appear verbatim in a code block or inline code after the
+//         annotation (up to the next annotation or H2): "compact" = JSON.stringify of the
+//         match list, "panel" = the Results panel text, "status" = the status line.
+{
+  const decodeEntities = t => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  const codeTexts = after => {
+    const out = fencedBlocks(after).map(b => b.text);
+    const prose = withoutCode(after);
+    for (const m of prose.matchAll(/<code>\{("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\}<\/code>/g)) out.push(new Function('return ' + m[1])());
+    for (const m of prose.matchAll(/<code>([^<{]*)<\/code>/g)) out.push(decodeEntities(m[1]));
+    for (const m of prose.replace(/<code>[\s\S]*?<\/code>/g, ' ').matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+    return out;
+  };
+  const pages = {};
+  const verify = ({ spec, after, lang }) => {
+    if (!spec || typeof spec.q !== 'string') return 'spec needs q';
+    const json = spec.json === 'sample' || spec.json === undefined ? sampleJson : spec.json === 'block' ? fencedBlocks(after)[0]?.text : spec.json;
+    if (typeof json !== 'string') return 'no JSON input';
+    const h = pages[lang] ??= page(lang);
+    h.input('jpt-json', json); h.input('jpt-expr', spec.q);
+    const panel = h.get('jpt-code').textContent, status = h.get('jpt-count').textContent;
+    let compact = null;
+    try { compact = JSON.stringify(E.jsonpath(JSON.parse(json), spec.q)); } catch {}
+    const got = { compact, panel, status };
+    const codes = codeTexts(after);
+    const missing = (spec.show ?? ['compact']).filter(k => !codes.includes(got[k]));
+    return missing.length ? missing.map(k => k + ' ' + JSON.stringify(got[k]) + ' not shown').join('; ') : null;
+  };
+  const contract = toolMdxContract('jsonpath-tester', { annotations: [{ tag: 'jpt-check', min: 2, verify }] });
+  for (const r of contract.results.filter(r => /jpt-check/.test(r.rule))) check(r.message, r.ok);
+}
+
 await settle();eq('no unhandled copy rejections',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
 eq('protected engine byte-exact',[Buffer.byteLength(source.slice(startIndex,endIndex+END_MARK.length)),createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex')],[23622,'b43418c33b1a8b84b34daf2956c4197e6ffe1b35cd0d19c1365dd90c8340d153']);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
