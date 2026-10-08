@@ -103,6 +103,11 @@ eq('B2: root array keeps non-object values in RootArray', E.generatePython(B2_IN
 ]);
 eq('B2: a root array of objects only has no alias', /RootArray/.test(E.generatePython([{ a: 1 }], 'Root', 'dataclass').code), false);
 
+// Root class name: kept when it is a Python identifier that is not reserved; otherwise built by the
+// class-name rules, with "_" after a reserved name and Root when nothing usable is left.
+const ROOT_NAMES = [['User', 'User'], ['my_model', 'my_model'], ['用户', '用户'], ['order-item', 'OrderItem'], ['order item', 'OrderItem'], ['2fa', '_2fa'], ['class', 'class_'], ['None', 'None_'], ['List', 'List_'], ['str', 'str_'], ['!!!', 'Root'], ['ＵＳＥＲ', 'USER']];
+for (const [raw, want] of ROOT_NAMES) eq('root name ' + raw + ' → ' + want, (E.generatePython({ a: 1 }, raw, 'dataclass').code.match(/^class (.+):$/m) || [])[1], want);
+
 // A4: class names follow the Python identifier rules (PEP 3131): Unicode letters are kept, keywords,
 // the typing names the output imports, str / int / float / bool and the JSON keys themselves are not
 // used as class names (a field and its class with one name break Pydantic's Optional default).
@@ -126,6 +131,10 @@ if (py.status !== 0 || py.stdout.trim() !== 'True') {
     const c = spawnSync('python3', ['-c', gen(SAMPLE, mode)], { encoding: 'utf8' });
     check('python runs the ' + mode + ' output', c.status === 0, c.stderr);
   }
+  for (const [raw] of ROOT_NAMES) for (const mode of ['dataclass', 'typeddict']) {
+    const c = spawnSync('python3', ['-c', E.generatePython({ a: 1, b: [{ c: 'x' }] }, raw, mode).code + "\nprint('ok')"], { encoding: 'utf8' });
+    eq('root name ' + raw + ' runs in Python (' + mode + ')', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
+  }
   const ids = spawnSync('python3', ['-c', 'import json, keyword, sys\nnames = json.loads(sys.stdin.read())\nprint(json.dumps([n for n in names if not n.isidentifier() or keyword.iskeyword(n)]))'], { input: JSON.stringify(a4Names), encoding: 'utf8' });
   eq('A4: every class name is a Python identifier and not a keyword', ids.stdout.trim(), '[]');
   for (const mode of ['dataclass', 'typeddict']) {
@@ -141,8 +150,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 15534);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '4d3ce3a34a7e5aa6007b3f9902f3fa057ae75c10b18a4b40d581cda8b19b6c27');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 16169);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '1dc44125a0e95e473390ef481b9fbada7f3a2c2b133d87ee6b8ff09686442297');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -360,7 +369,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "a30895b7b3c493c8ce01de73ef4304b2667c684af2840c1c94e6a5e80b46db93"
+  "scriptSHA": "24b49cf9325b42a9cb0e4ff52ba33257f3f23f81ea089e34b8b47ac36e5ba9ca"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
