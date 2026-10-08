@@ -144,7 +144,11 @@ function checkCase(label, input, samples) {
   for (const [v, z] of Object.entries(zods)) {
     let S;
     try { S = loadTs(out, z); } catch (e) { eq(label + ' ' + v + ': loads', e.name + ': ' + e.message, 'no error'); continue; }
-    for (const [schema, value, ok] of samples) eq(label + ' ' + v + ': ' + schema + ' ' + JSON.stringify(value), S[schema].safeParse(value).success, ok);
+    for (const [schema, value, ok] of samples) {
+      let got;
+      try { got = S[schema].safeParse(value).success; } catch (e) { got = 'throws ' + e.message; }
+      eq(label + ' ' + v + ': ' + schema + ' ' + JSON.stringify(value), got, ok);
+    }
   }
   return out;
 }
@@ -245,6 +249,26 @@ let classOnly = '';
 try { convert('class User { name: string }'); } catch (e) { classOnly = e.message; }
 eq('FAQ: classes only → no declarations message', classOnly, 'No interface or type declarations found.');
 eq('prose: missing brace message', (() => { try { convert('interface A { a: string'); } catch (e) { return e.message; } })(), 'Expected "}" got ""');
+
+// ---------- engine fix 1 (S2-6b): names that are Object.prototype members ----------
+// The keyword, primitive-type and generator tables were plain objects, so a type named constructor or
+// toString was read as a primitive and printed as native function source, and cycle detection treated
+// it as visited.
+{
+  const out = checkCase('prototype member type names', 'interface constructor { a: string }\ninterface toString { b: number }\ninterface hasOwnProperty { c: boolean }\ninterface User { x: constructor; y: toString[]; z: hasOwnProperty }', [
+    ['UserSchema', { x: { a: '1' }, y: [{ b: 1 }], z: { c: true } }, true],
+    ['UserSchema', { x: { a: 1 }, y: [], z: { c: true } }, false],
+    ['UserSchema', { x: { a: '1' }, y: [{ b: '1' }], z: { c: true } }, false],
+  ]);
+  eq('prototype names: no native code in the output', /native code/.test(out), false);
+  eq('prototype names: references use the schemas', ['  x: constructorSchema,', '  y: z.array(toStringSchema),', '  z: hasOwnPropertySchema,'].map((l) => out.includes(l)), [true, true, true]);
+  eq('prototype names: no false cycles', /z\.ZodType</.test(out), false);
+  const cyc = checkCase('prototype member names in a cycle', 'interface toString { n: valueOf }\ninterface valueOf { t?: toString }', [
+    ['toStringSchema', { n: { t: { n: {} } } }, true],
+    ['toStringSchema', { n: { t: { n: { t: 1 } } } }, false],
+  ]);
+  eq('prototype names: the real cycle is annotated', (cyc.match(/: z\.ZodType</g) || []).length, 2);
+}
 
 // ---------- page ----------
 eq('page no longer says extends is skipped', page.includes('</code> is skipped.'), false);
