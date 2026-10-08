@@ -522,6 +522,12 @@ for (const [name, code, bytes, hash] of protectedParts) {
   eq('a 104-character English line reports Expected: 80; Actual: 104', (await run('# T\n\n' + en104 + '\n')).map((i) => i.errorDetail), ['Expected: 80; Actual: 104']);
   const koLine = '이 문장은 한국어로 작성한 긴 설명이며 띄어쓰기가 있어서 줄 길이 규칙이 적용됩니다. 이 문장은 한국어로 작성한 긴 설명이며 띄어쓰기가 있어서 줄 길이 규칙이 적용됩니다.';
   eq('ko: MD013 counts each Hangul syllable as one character', [...koLine].length, 95);
+  // MD013 only looks for whitespace after column 80 (ja / zh limits text): no space → no report,
+  // ASCII or fullwidth (U+3000) space after column 80 → report.
+  const md013 = async (line) => (await run('# T\n\n' + line + '\n')).filter((i) => i.ruleNames[0] === 'MD013').map((i) => i.errorDetail);
+  eq('MD013: an English word without a space after column 80 is not reported', await md013('あ'.repeat(85) + 'English'), []);
+  eq('MD013: a fullwidth space after column 80 is reported', await md013('あ'.repeat(85) + '\u3000い'), ['Expected: 80; Actual: 87']);
+  eq('MD013: a Chinese line with an ASCII space after column 80 is reported', await md013('中'.repeat(82) + ' npm install 之前'), ['Expected: 80; Actual: 97']);
   const md026 = (await import(join(root, 'node_modules/markdownlint/helpers/helpers.cjs'))).default.allPunctuationNoQuestion;
   eq('MD026 default punctuation quoted on the pages', md026, '.,;:!。，；：！');
   eq('MD026 skips a heading that ends with ？ or ?', (await run('# A\n\n## よくある質問？\n\n## 설치가 안 되나요?\n\n## 常见问题？\n')).filter((i) => i.ruleNames[0] === 'MD026'), []);

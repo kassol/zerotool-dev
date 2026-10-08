@@ -423,6 +423,7 @@ eq('NFC joins the NFD Hangul of the ko example', '\u1112\u1161\u11ab\u1100\u1173
 eq('ko NFD example: [가-힣] finds 한글 after NFC', toolText('ko', '[가-힣]+', 'g', '\u1112\u1161\u11ab\u1100\u1173\u11af 파일.txt'.normalize('NFC')).split('\n')[1], '일치 1: 한글 (인덱스 0)');
 eq('[가-힣] holds 11,172 syllables', 0xD7A3 - 0xAC00 + 1, 11172);
 eq('𰻞 is U+30EDE, two UTF-16 units', ['𰻞'.codePointAt(0).toString(16), '𰻞'.length], ['30ede', 2]);
+eq('BMP emoji take 1 unit, characters above U+FFFF take 2', ['☺'.length, '😀'.length], [1, 2]);
 eq('ㅋ is the compatibility jamo U+314B', 'ㅋ'.codePointAt(0).toString(16), '314b');
 eq('won signs are U+20A9 and U+FFE6', ['₩', '￦'].map((c) => c.codePointAt(0).toString(16)), ['20a9', 'ffe6']);
 console.log('Worked examples: ' + (passes - examplesStart) + ' passed');
