@@ -150,6 +150,24 @@ for (const button of ['clamp-copy-css','clamp-copy-value']) {
   for(const r of contract.results)check('tool MDX: '+r.message,r.ok,r.message);
 }
 
+// Privacy wording (2026-10-08): no blanket run claims ("Everything runs client-side", "all happen in
+// your browser"); the Privacy section and the privacy FAQ say what is stored and what analytics records
+// (the component sends trackTool only for copy and reset).
+{
+  const absolute=/client-side|クライアント|클라이언트|客户端|everything runs|all happen|すべてブラウザー|모두 브라우저|都在浏览器/i;
+  const analytics={en:/analytics/,zh:/统计/,ja:/アクセス解析/,ko:/통계/};
+  const contract=toolMdxContract(SLUG);
+  check('component tracks only copy and reset',JSON.stringify([...source.matchAll(/trackTool\(SLUG, '(\w+)'\)/g)].map(m=>m[1]))==='["copy","reset"]');
+  for(const lang of langKeys){
+    const {body,data}=contract.docs[lang];
+    const privacy=body.slice(body.lastIndexOf('<h2>'));
+    const faq=data.faqItems.find(f=>f.id==='privacy')?.answer||'';
+    check(lang+' no blanket run claim in the page',!absolute.test(body)&&!absolute.test(faq),(body.match(absolute)||faq.match(absolute)||[])[0]);
+    check(lang+' Privacy section names the analytics events',analytics[lang].test(privacy),privacy.slice(0,80));
+    check(lang+' privacy FAQ names the analytics events',analytics[lang].test(faq));
+  }
+}
+
 check('client self assertions',open().assertions.every(a=>a.ok));
 check('no unhandled promises',asyncErrors.length===0,asyncErrors.join(';'));
 
