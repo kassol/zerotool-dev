@@ -149,10 +149,10 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
   const prefix = 'wc';
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-  const file = (name) => ({ name, type: 'image/png', size: 500 });
-  function page() {
+  const file = (name) => (typeof name === 'string' ? { name, type: 'image/png', size: 500 } : name);
+  function page(lang = 'en', opts = {}) {
     const nodes = [], byId = new Map(), images = [], encodes = [], downloads = [], urls = new Map(), revoked = new Set();
-    let document, wrap, serial = 0, persistenceClears = 0;
+    let document, wrap, serial = 0, persistenceClears = 0; const tracks = [];
     function matches(el, selector) {
       return selector.split(',').some((part) => {
         const attrs = [...part.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
@@ -184,7 +184,7 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
       querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
       click() { if (this.disabled) return; if (this.tagName === 'A') downloads.push({ name: this.download || this.getAttribute('download'), url: this.href || this.getAttribute('href') }); this.dispatch('click'); }
       getContext() { return { drawImage() {}, fillRect() {} }; }
-      toBlob(callback, type) { encodes.push({ callback, type, done: false }); }
+      toBlob(callback, type, quality) { encodes.push({ callback, type, quality, done: false }); }
     }
     function attributes(el, text) {
       for (const a of text.matchAll(/([\w-]+)="([^"]*)"/g)) el.setAttribute(a[1], a[2]);
@@ -196,19 +196,20 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
     }
     wrap = nodes.find((el) => el.className.split(/\s+/).includes(prefix + '-wrap'));
     const get = (id) => { const el = byId.get(id); if (!el) throw new Error('Missing source ID: ' + id); return el; };
-    document = new Element('document'); document.body = new Element('body'); document.documentElement = { lang: 'en' }; document.activeElement = document.body;
+    document = new Element('document'); document.body = new Element('body'); document.documentElement = { lang }; document.activeElement = document.body;
     document.createElement = (tag) => new Element(tag); document.getElementById = get; document.getElementsByName = (name) => nodes.filter((el) => el.name === name);
     document.querySelectorAll = (selector) => nodes.filter((el) => matches(el, selector)); document.querySelector = (selector) => selector === '.tool-widget' ? wrap : document.querySelectorAll(selector)[0];
     wrap.querySelectorAll = document.querySelectorAll;
     const sandbox = { document, Blob, console, URL: { createObjectURL(blob) { const url = 'blob:test-' + ++serial; urls.set(url, blob); return url; }, revokeObjectURL(url) { revoked.add(url); } },
       Image: class { constructor() { this.naturalWidth = 64; this.naturalHeight = 48; images.push(this); } },
-      setTimeout() {}, window: { ztPersist: { clear() { persistenceClears++; } } }, _slug: prefix === 'wc' ? 'webp-converter' : 'image-compressor' };
-    sandbox.t = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS.en;')();
+      setTimeout() {}, window: { ztPersist: { clear() { persistenceClears++; } }, trackTool: (...args) => tracks.push(args) }, _slug: prefix === 'wc' ? 'webp-converter' : 'image-compressor' };
+    sandbox.t = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS[' + JSON.stringify(lang) + '];')();
     const context = createContext(sandbox);
+    if (opts.before) opts.before(get);
     runInContext(inline[1], context);
     const keyStart = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
     runInContext(layout.slice(keyStart, layout.indexOf('// ── Copy button visual feedback', keyStart)), context);
-    return { get, images, encodes, downloads, urls, revoked, document,
+    return { get, images, encodes, downloads, urls, revoked, document, tracks,
       get persistenceClears() { return persistenceClears; },
       drop(names) { get(prefix + '-drop').dispatch('drop', { dataTransfer: { files: names.map(file) } }); },
       key(target = get(prefix + '-drop')) { target.focus(); return document.dispatch('keydown', { ctrlKey: true, key: 'l' }); },
@@ -249,10 +250,110 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
     for (let i = 0; i < p.encodes.length; i++) if (!p.encodes[i].done) await p.encode(i);
     check('batch lifecycle: ' + cancel + ' ignores old encoding', p.rows().length === 0 && p.get(prefix + '-results').hidden && p.get(prefix + '-actions').hidden && p.get(prefix + '-status').textContent === '');
   }
+  // Picking the same file again after changing the quality must start a new batch. The file input kept
+  // its value after each batch, so the browser fired no change event for the same selection.
+  {
+    const p = page(), input = p.get(prefix + '-file');
+    input.files = [file('same.png')]; input.value = 'C:\\fakepath\\same.png'; input.dispatch('change');
+    check('file input: value is reset after a batch starts, so the same file can be picked again', input.value === '', input.value);
+    check('file input: the batch still converts the picked file', p.images.length === 1);
+  }
+  check('file input: the initial accept list matches the PNG / JPG / GIF → WebP direction',
+    /<input type="file" id="wc-file" accept="image\/png,image\/jpeg,image\/gif" /.test(src));
   {
     const p = page(); await p.ready(['settings.png']); const imageCount = p.images.length;
     p.get(prefix + '-quality').value = '42'; p.get(prefix + '-quality').dispatch('input');
     check('batch lifecycle: quality changes label without recompressing', p.images.length === imageCount && p.get(prefix + '-quality-val').textContent === '42' && p.rows().length === 1);
+  }
+  // ---------- tool page examples (src/content/tools/webp-converter/{lang}.mdx) ----------
+  // {/* wc-check: {"mode":"to-webp"|"from-webp","quality":N?,"files":[{"name","type","size","out"?,"outType"?,"broken"?}]} */}
+  // runs the page script in that language: sets the direction and the quality slider, drops the files,
+  // lets each accepted file decode (or fail to decode when "broken"), and answers each toBlob call with a
+  // blob of "out" bytes of type "outType" (default: the requested type). The sizes ("size", "out") are
+  // browser measurements quoted on the page; the test recomputes what the tool shows for them. Expected
+  // text, one line per result in file order: "<download name>  <sizes line>" for a card, the error card
+  // text for a failure, then the status line. It must equal a fenced block after the annotation and
+  // before the next annotation or H2. toBlob must receive quality / 100 (to-webp) or no quality.
+  async function exampleOutput(spec, lang) {
+    const p = page(lang);
+    if (spec.mode === 'from-webp') { p.get('wc-mode-to').checked = false; p.get('wc-mode-from').checked = true; p.get('wc-mode-from').dispatch('change'); }
+    if (spec.quality !== undefined) { const q = p.get('wc-quality'); q.value = String(spec.quality); q.dispatch('input'); }
+    const files = spec.files.map((f) => ({ name: f.name, type: f.type, size: f.size }));
+    p.get('wc-drop').dispatch('drop', { dataTransfer: { files } });
+    const problems = [];
+    for (const img of [...p.images]) {
+      const f = spec.files[files.indexOf(p.urls.get(img.src))];
+      if (!f) { problems.push('image without a file'); continue; }
+      if (f.broken) { img.onerror(); await flush(); continue; }
+      const before = p.encodes.length; img.onload(); await flush();
+      const job = p.encodes[before];
+      if (!job) { problems.push('no toBlob call for ' + f.name); continue; }
+      const wantQ = spec.mode === 'from-webp' ? undefined : (spec.quality ?? 85) / 100;
+      if (job.quality !== wantQ) problems.push(f.name + ' toBlob quality ' + job.quality + ' != ' + wantQ);
+      job.done = true; job.callback(new Blob([new Uint8Array(f.out)], { type: f.outType || job.type })); await flush();
+    }
+    await flush();
+    const decode = (h) => h.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+    const lines = p.get('wc-results').children.map((card) => card.className.includes('wc-card-error')
+      ? card.textContent
+      : card.querySelector('.wc-dl').getAttribute('download') + '  ' + decode((card.html || '').match(/wc-card-sizes">([\s\S]*?)<\/div>/)?.[1] ?? ''));
+    lines.push(p.get('wc-status').textContent);
+    return { text: lines.join('\n'), problems };
+  }
+  // A batch where every file fails: no convert event (it was sent for every batch), and the status line
+  // says that the files failed instead of "0 file(s) converted, N failed". Mixed batches keep both counts.
+  {
+    const allFail = { en: '2 file(s) failed to convert', zh: '2 个文件转换失败', ja: '2 件の変換に失敗しました', ko: '2개 파일 변환 실패' };
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      const p = page(lang);
+      p.drop([{ name: 'a.heic', type: 'image/heic', size: 10 }, { name: 'b.bmp', type: 'image/bmp', size: 10 }]); await flush(); await flush();
+      check(lang + ' all-failed batch: status says the files failed', p.get('wc-status').textContent === allFail[lang], p.get('wc-status').textContent);
+      check(lang + ' all-failed batch: status is styled as an error', p.get('wc-status').className.includes('error'), p.get('wc-status').className);
+      check(lang + ' all-failed batch: no convert event', p.tracks.length === 0, JSON.stringify(p.tracks));
+    }
+    const p = page('en');
+    await p.ready([{ name: 'ok.png', type: 'image/png', size: 500 }, { name: 'bad.heic', type: 'image/heic', size: 10 }]);
+    check('mixed batch: status keeps both counts', p.get('wc-status').textContent === '1 file(s) converted, 1 failed', p.get('wc-status').textContent);
+    check('mixed batch: one convert event', p.tracks.length === 1 && p.tracks[0][0] === 'webp-converter' && p.tracks[0][1] === 'convert', JSON.stringify(p.tracks));
+  }
+  // Firefox restores form controls on reload, so the script can start with "WebP → PNG" already checked.
+  // The file input, hint and quality row must follow the checked radio, not the markup default.
+  {
+    const p = page('en', { before(get) { get('wc-mode-to').checked = false; get('wc-mode-from').checked = true; } });
+    check('restored WebP → PNG: accept lists WebP', p.get('wc-file').accept === 'image/webp', String(p.get('wc-file').accept));
+    check('restored WebP → PNG: quality row hidden', p.get('wc-quality-row').hidden === true);
+    check('restored WebP → PNG: hint names WebP', p.get('wc-hint').textContent === 'Supports WebP', p.get('wc-hint').textContent);
+    const q = page('en');
+    check('default PNG / JPG / GIF → WebP: accept unchanged', q.get('wc-file').accept === 'image/png,image/jpeg,image/gif' && q.get('wc-quality-row').hidden === false, String(q.get('wc-file').accept));
+  }
+  // A larger output kept one decimal only when it was not .0: Math.abs() on the toFixed(1) string
+  // turned "-36.0" into 36, so the card read "+36%" next to "−66.2%".
+  {
+    const out = await exampleOutput({ mode: 'to-webp', quality: 100, files: [{ name: 'a.png', type: 'image/png', size: 197067, out: 267920 }] }, 'en');
+    check('larger output keeps one decimal (+36.0%)', out.text.split('\n')[0] === 'a.webp  192.4 KB → 261.6 KB +36.0%', out.text);
+  }
+  const { fencedBlocks, toolMdxContract } = await import('./lib/tool-mdx-contract.mjs');
+  const outputs = new Map();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readFileSync(join(root, 'src/content/tools/webp-converter', lang + '.mdx'), 'utf8').split('\n---\n').slice(1).join('\n---\n');
+    for (const m of body.matchAll(/\{\/\*\s*wc-check:\s*([\s\S]*?)\s*\*\/\}/g)) {
+      try { outputs.set(lang + m[1], await exampleOutput(JSON.parse(m[1]), lang)); } catch (error) { outputs.set(lang + m[1], { text: '', problems: [error.message] }); }
+    }
+  }
+  const covered = { en: 0, zh: 0, ja: 0, ko: 0 };
+  const contract = toolMdxContract('webp-converter', { annotations: [{ tag: 'wc-check', min: 2, verify({ raw, after, lang }) {
+    const out = outputs.get(lang + raw);
+    if (!out) return 'no output computed';
+    if (out.problems.length) return out.problems.join('; ');
+    const hit = fencedBlocks(after).some((b) => b.text.trimEnd() === out.text);
+    if (hit) covered[lang]++;
+    return hit ? null : 'no fenced block after the annotation equals the tool output:\n' + out.text;
+  } }] });
+  for (const r of contract.results.filter((r) => r.rule.includes('wc-check'))) check('tool page ' + r.message, r.ok);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = contract.docs[lang].body;
+    const textBlocks = fencedBlocks(body).filter((b) => b.lang === 'text').length;
+    check(lang + ' every text block on the tool page is a checked tool output', textBlocks === covered[lang], textBlocks + ' text blocks, ' + covered[lang] + ' checked');
   }
 }
 

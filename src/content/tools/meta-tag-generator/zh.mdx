@@ -9,15 +9,23 @@ steps:
   - "将标签粘贴到页面 head 内并替换示例值。Ctrl/⌘+L 清除文本字段；URL、数字和选项保留，head 会重新计算。"
 faqItems:
   - question: "Open Graph 和 Twitter Card 有什么区别？"
-    answer: "Open Graph（og:）是 Facebook 提出的社交预览协议；LinkedIn、Slack、Discord、iMessage 等几乎所有平台现在都读它。Twitter（X）则有自己的 twitter:* 标签和 card 类型控制。两者同时存在时，Twitter 优先用自己的标签，缺失字段才回退到 Open Graph，所以两套都写是常规做法。"
-  - question: "og:image 应该用多大尺寸？"
-    answer: "1200×630 px（1.91:1）是 Facebook、LinkedIn、Discord 通用的安全默认值；Twitter 的 summary_large_image 期望 2:1，1200×600 也能正常显示。文件控制在 5 MB 以内，PNG 或 JPEG 即可。多数平台会读取 og:image:width 与 og:image:height 来分发。"
+    answer: "Open Graph（以 og: 开头）是 Facebook 提出的分享预览协议，LinkedIn、Slack、Discord、iMessage 等多数平台都读它。Twitter（X）另有一套 twitter:* 标签，用 twitter:card 选择卡片类型。两套同时存在时，Twitter 先用自己的标签，缺少的字段再回退到 Open Graph，所以通常两套都写。"
+    id: "og-vs-twitter"
+  - question: "og:image 用多大尺寸？"
+    answer: "Facebook、LinkedIn、Discord 常用 1200×630 px（1.91:1）。X 的文档给 summary_large_image 的要求是 2:1，最小 300×157、最大 4096×4096，文件小于 5 MB，格式为 JPG、PNG、WEBP 或 GIF，不支持 SVG。写上 og:image:width 和 og:image:height，抓取器不必先下载图片就能排好卡片。"
+    id: "image-size"
   - question: "Open Graph 和 Schema.org JSON-LD 都要写吗？"
-    answer: "面向不同消费者：Open Graph 服务社交平台的 unfurl 预览；Schema.org JSON-LD 服务 Google 富结果与爬虫语义理解。两者重叠的字段（title / description / image）很少。要同时拿到搜索富摘要 + 社交富预览，建议两套都写，成本几乎为零。"
-  - question: "这个工具会上传我的图片吗？"
-    answer: "不会。图片 URL 仅作为字符串拼进生成的 meta 区块，并在预览里用作 img 的 src。ZeroTool 不上传任何内容。为了显示预览，浏览器会从该 URL 加载图片，图片所在的服务器会收到这次请求。"
-  - question: "Canonical URL 对 Open Graph 为什么重要？"
-    answer: "Canonical URL 会作为 og:url 输出。如果不写，社交平台会从请求 URL 猜——而请求 URL 往往不同（带 utm 参数、是否带斜杠、www vs 裸域），错误的 canonical 会让分享数被拆散，并破坏跨 URL 去重逻辑。"
+    answer: "两者的读取方不同：Open Graph 用于社交平台的链接预览，Schema.org JSON-LD 用于 Google 的富媒体搜索结果和爬虫理解页面。两者重叠的只有标题、描述、图片几项。搜索结果和社交预览都想要，就两套都写，多出来的只是几行代码。"
+    id: "json-ld"
+  - question: "这个工具会上传图片或保存我填写的内容吗？"
+    answer: "不会。head 在页面里生成，填写的内容不会发送给 ZeroTool，也不会存进浏览器存储。图片 URL 只写进标签，并作为 Facebook、Twitter、Discord 预览里 img 的地址，所以切到这三个预览时，浏览器会向图片所在的服务器请求这张图（Google 预览不显示图片）。统计只在你修改字段后记录工具名和 update 动作，不记录填写的值。"
+    id: "privacy"
+  - question: "为什么规范 URL 会写两次？"
+    answer: "工具用它生成两个标签：给搜索引擎的 <link rel=\"canonical\">，以及 og:url，Open Graph 协议把 og:url 定义为页面（对象）的永久 ID。没有 og:url 时，平台直接使用被分享的网址，于是同一页面带不带 utm 参数、有没有结尾斜杠，分享数会分开统计。og:url 需要与 canonical 不同时，复制后改那一行即可。"
+    id: "canonical"
+  - question: "在微信里分享，怎么指定卡片的标题、描述和图片？"
+    answer: "按微信开放文档《JS-SDK 使用说明》，在网页里调用 wx.updateAppMessageShareData，传入 title、desc、link、imgUrl（分享到朋友圈用 wx.updateTimelineShareData）。调用前要在服务号的“功能设置”里填写“JS接口安全域名”，并用 wx.config 注入签名配置；link 的域名或路径必须与 JS 安全域名一致。本工具不生成 JS-SDK 代码；这里填写的标题、描述和 og:image 地址可以原样作为 title、desc、imgUrl 传入。"
+    id: "local-wechat"
 ---
 
 <h2>生成内容包含</h2>
@@ -26,6 +34,113 @@ faqItems:
   <li><strong>Open Graph</strong>——<code>og:type</code>、<code>og:title</code>、<code>og:description</code>、<code>og:url</code>、<code>og:site_name</code>、<code>og:image</code>（含 width / height / alt）、<code>og:locale</code>。</li>
   <li><strong>Twitter Card</strong>——<code>twitter:card</code>、<code>twitter:site</code>、<code>twitter:creator</code>、<code>twitter:title</code>、<code>twitter:description</code>、<code>twitter:image</code>。</li>
   <li><strong>Schema.org JSON-LD</strong>——最小的 <code>WebPage</code>、<code>Article</code>、<code>Product</code> 或 <code>Organization</code> 块（name / description / url / image）。</li>
+</ul>
+
+<h2>示例：打开页面时的默认输出</h2>
+<p>表单预先填好了本站的英文示例值，中文页面上 og:locale 默认是 <code>zh_CN</code>。什么都不改，复制得到的是：</p>
+
+{/* mtg-check: {"page":true} */}
+```html
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZeroTool — Free browser-based dev utilities</title>
+<meta name="description" content="A growing library of one-task tools that run in your browser. No accounts, no uploads.">
+<link rel="canonical" href="https://zerotool.dev/">
+<meta name="author" content="ZeroTool Workshop">
+<meta name="keywords" content="dev tools, meta tags, open graph, twitter card">
+<meta name="theme-color" content="#5b3d20">
+<meta name="robots" content="index, follow">
+
+<!-- Open Graph / Facebook -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="ZeroTool — Free browser-based dev utilities">
+<meta property="og:description" content="A growing library of one-task tools that run in your browser. No accounts, no uploads.">
+<meta property="og:url" content="https://zerotool.dev/">
+<meta property="og:site_name" content="ZeroTool">
+<meta property="og:image" content="https://zerotool.dev/og/json-formatter.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="ZeroTool cover image">
+<meta property="og:locale" content="zh_CN">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@zerotooldev">
+<meta name="twitter:creator" content="@zerotooldev">
+<meta name="twitter:title" content="ZeroTool — Free browser-based dev utilities">
+<meta name="twitter:description" content="A growing library of one-task tools that run in your browser. No accounts, no uploads.">
+<meta name="twitter:image" content="https://zerotool.dev/og/json-formatter.png">
+```
+
+<p>这里有 <a href="https://ogp.me/">ogp.me</a> 要求每个页面都写的四项：<code>og:title</code>、<code>og:type</code>、<code>og:image</code>、<code>og:url</code>。Twitter 图片字段是空的，所以 <code>twitter:image</code> 沿用 og:image。“语言”下拉框只在 og:locale 输入框为空时，把对应的 locale 显示为输入框里的占位提示，本身不输出任何标签；要改 locale，直接改 og:locale 输入框。发布前把示例值全部换成自己的。</p>
+
+<h2>示例：一篇中文测评文章</h2>
+<p>测评博客的一篇文章：标题里有直角引号和 <code>&amp;</code>，og:type 选 <strong>article</strong>，Schema.org 选 <strong>Article</strong>，再填上作者。按 Ctrl/⌘+L 清掉示例文字，取消勾选 viewport，换掉两个示例 URL，填入下面的值，得到：</p>
+
+{/* mtg-check: {"title":"「双十一」电动牙刷横评：5 款实测 & 选购建议","description":"实测 5 款 300 元以内的电动牙刷，续航、噪音和刷头价格一次看完。","canonical":"https://blog.example.cn/2026/toothbrush/","siteName":"小王测评","author":"王小明","ogType":"article","ogLocale":"zh_CN","ogImage":"https://blog.example.cn/og/toothbrush.jpg","ogImageWidth":"1200","ogImageHeight":"630","ogImageAlt":"5 款电动牙刷并排摆放","schemaType":"Article"} */}
+```html
+<title>「双十一」电动牙刷横评：5 款实测 &amp; 选购建议</title>
+<meta name="description" content="实测 5 款 300 元以内的电动牙刷，续航、噪音和刷头价格一次看完。">
+<link rel="canonical" href="https://blog.example.cn/2026/toothbrush/">
+<meta name="author" content="王小明">
+<meta name="robots" content="index, follow">
+
+<!-- Open Graph / Facebook -->
+<meta property="og:type" content="article">
+<meta property="og:title" content="「双十一」电动牙刷横评：5 款实测 &amp; 选购建议">
+<meta property="og:description" content="实测 5 款 300 元以内的电动牙刷，续航、噪音和刷头价格一次看完。">
+<meta property="og:url" content="https://blog.example.cn/2026/toothbrush/">
+<meta property="og:site_name" content="小王测评">
+<meta property="og:image" content="https://blog.example.cn/og/toothbrush.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="5 款电动牙刷并排摆放">
+<meta property="og:locale" content="zh_CN">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="「双十一」电动牙刷横评：5 款实测 &amp; 选购建议">
+<meta name="twitter:description" content="实测 5 款 300 元以内的电动牙刷，续航、噪音和刷头价格一次看完。">
+<meta name="twitter:image" content="https://blog.example.cn/og/toothbrush.jpg">
+
+<!-- Schema.org JSON-LD -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "name": "「双十一」电动牙刷横评：5 款实测 & 选购建议",
+  "description": "实测 5 款 300 元以内的电动牙刷，续航、噪音和刷头价格一次看完。",
+  "url": "https://blog.example.cn/2026/toothbrush/",
+  "image": "https://blog.example.cn/og/toothbrush.jpg",
+  "author": {
+    "@type": "Person",
+    "name": "王小明"
+  }
+}
+</script>
+```
+
+<p><code>&amp;</code> 在属性里写成 <code>&amp;amp;</code>，直角引号「」不用转义，原样保留；JSON-LD 里的 <code>&amp;</code> 也保持原样，因为 JSON 字符串里它没有特殊含义。选了 Article 并填了作者，JSON-LD 才多出类型为 <code>Person</code> 的 <code>author</code>。</p>
+
+{/* mtg-count: {"title":"「双十一」电动牙刷横评：5 款实测 & 选购建议","description":"实测 5 款 300 元以内的电动牙刷，续航、噪音和刷头价格一次看完。"} */}
+<p>标题旁的计数器显示 <code>24 / 60</code>，描述显示 <code>35 / 160</code>。计数器按字符串长度计数，一个汉字、一个标点、一个空格都算 1，不反映显示宽度。Google 的<a href="https://developers.google.com/search/docs/appearance/snippet">摘要文档</a>写的是：meta description 没有长度上限，但搜索结果会按需要截断，通常按设备宽度截断。所以 60 和 160 只能当作提醒，写中文标题时以实际显示为准。</p>
+
+<h2>在微信里分享</h2>
+<p>生成的 og 标签面向读取 Open Graph 的平台。在微信内置浏览器里自定义“分享给朋友”的卡片，微信开放文档《JS-SDK 使用说明》给出的步骤是：</p>
+<ol>
+  <li>登录微信公众平台，在“服务号设置”的“功能设置”里填写“JS接口安全域名”。文档写明：最多 5 个域名，不支持 IP 地址、端口号和短链域名，域名须通过 ICP 备案验证，新备案的域名 24 小时后才能配置。</li>
+  <li>页面引入 <code>jweixin-1.6.0.js</code>，用 <code>wx.config</code> 注入签名配置。</li>
+  <li>在 <code>wx.ready</code> 里调用 <code>wx.updateAppMessageShareData</code>，传入 <code>title</code>、<code>desc</code>、<code>link</code>、<code>imgUrl</code>；朋友圈用 <code>wx.updateTimelineShareData</code>。<code>link</code> 的域名或路径必须与 JS 接口安全域名一致。旧的 <code>wx.onMenuShareAppMessage</code> 等接口文档标注为即将废弃。</li>
+</ol>
+<p>本工具不生成这段 JS-SDK 代码，也不检查签名。上面测评文章的例子里，<code>og:title</code>、<code>og:description</code>、<code>og:image</code> 的值可以直接作为 title、desc、imgUrl 传进去，两边保持一致。</p>
+
+<h2>限制</h2>
+<ul>
+  <li><strong>JSON-LD 只有最少的字段。</strong>只有 name、description、url、image，Article 另加 author。Google 的 <a href="https://developers.google.com/search/docs/appearance/structured-data/article">Article 文档</a>建议写 <code>headline</code>、<code>datePublished</code>；Product 要有 <code>offers</code>、<code>review</code> 或 <code>aggregateRating</code> 才可能出现产品富媒体结果。这些字段需要手工补，再用 Google 的富媒体搜索结果测试检查。</li>
+  <li><strong>有的选项没有配套字段。</strong>Twitter 的 <code>player</code>、<code>app</code> 卡片需要 <code>twitter:player</code> 或 <code>twitter:app:&#42;</code> 标签，工具不生成；og:type 里的 <code>product</code> 不在 ogp.me 定义的类型中。工具也不生成 <code>article:published_time</code>、<code>og:image:type</code> 和 hreflang。</li>
+  <li><strong>robots 总会输出。</strong><code>index, follow</code> 本来就是爬虫的默认行为，不改成 noindex 或 nofollow 时可以删掉这一行。</li>
+  <li><strong>预览只是近似。</strong>各平台的卡片样式只是模拟。规范 URL 为空时，预览用站点名生成一个示例域名；站点名里没有半角英文字母或数字（比如“小王测评”）时显示 <code>example.com</code>。上线后请用平台自己的调试工具看真实卡片。</li>
+  <li><strong>联网：</strong>标签内容留在浏览器里，但 Facebook、Twitter、Discord 预览会加载你填写的图片 URL，图片所在的服务器会看到这次请求。默认显示的 Google 预览不含图片。</li>
+  <li><strong>Ctrl/⌘+L 只清文本。</strong>文本框（包括 og:locale 和主题色文本框）会被清空；URL、数字框、下拉选项和 viewport 复选框保留，head 按剩下的值重新生成。</li>
 </ul>
 
 <h2>图片尺寸速查</h2>
@@ -42,5 +157,5 @@ faqItems:
 </table>
 
 <h2>把输出粘贴到哪里</h2>
-<p>生成的 meta 区块放进 <code>&lt;head&gt;</code> 即可，建议靠前——在 <code>&lt;meta charset&gt;</code> 之后、第三方脚本之前。爬虫不在意顺序，但把社交 meta 集中放有助于审计。</p>
-<p>同一 SEO 工具栈中常配合使用：<a href="/zh/tools/robots-txt-generator/">Robots.txt 生成器</a>（爬虫规则）与 <a href="/zh/tools/favicon-generator/">Favicon 生成器</a>（图标包）。</p>
+<p>生成的 meta 区块放进 <code>&lt;head&gt;</code> 即可，建议靠前，放在 <code>&lt;meta charset&gt;</code> 之后、第三方脚本之前。爬虫不在意顺序，但把社交 meta 放在一起，以后检查起来方便。</p>
+<p>同一套 SEO 配置里常一起用：<a href="/zh/tools/robots-txt-generator/">Robots.txt 生成器</a>（爬虫规则）与 <a href="/zh/tools/favicon-generator/">Favicon 生成器</a>（图标包）。</p>

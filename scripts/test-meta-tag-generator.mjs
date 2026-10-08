@@ -213,6 +213,80 @@ for (const platform of ['facebook', 'twitter', 'discord']) {
   check(platform + ': existing inert img source and lazy network boundary retained', p.$('mtg-preview').innerHTML.includes('src="https://example.com/' + (platform === 'twitter' ? 'tw' : 'og') + '.png"') && p.$('mtg-preview').innerHTML.includes('loading="lazy"'));
 }
 
+// Analytics: one `update` event per committed change (change event), as in color-palette-generator.
+// Before the fix update() sent one on page load, on every keystroke and on every preview tab click.
+{
+  const p = page(spec);
+  eq('analytics: no event on page load', p.tracks.length, 0);
+  p.input('mtg-title', 'Draft'); p.input('mtg-title', 'Draft title');
+  eq('analytics: no event per input', p.tracks.length, 0);
+  p.$('mtg-title').dispatch('change');
+  check('analytics: one event when the text field is committed', p.tracks.length === 1 && p.tracks[0][0] === 'meta-tag-generator' && p.tracks[0][1] === 'update', JSON.stringify(p.tracks));
+  p.input('mtg-og-type', 'article', 'change');
+  eq('analytics: one event per select change', p.tracks.length, 2);
+  p.$('mtg-viewport').checked = false; p.$('mtg-viewport').dispatch('change');
+  eq('analytics: one event per checkbox change', p.tracks.length, 3);
+  p.click('[data-platform="facebook"]');
+  eq('analytics: switching the preview tab sends no event', p.tracks.length, 3);
+}
+// Preview domain: without a canonical URL the preview derives a domain from the site name. A name
+// with no ASCII letters or digits ("週末さんぽ帖") gave ".com"; it now falls back to example.com.
+for (const [name, want] of [['週末さんぽ帖', 'example.com'], ['小王咖啡', 'example.com'], ['My Site', 'mysite.com']]) {
+  const p = page(spec, 'ja');
+  p.input('mtg-canonical', ''); p.input('mtg-site-name', name); p.click('[data-platform="twitter"]');
+  check('preview domain for site name ' + name + ' is ' + want, p.$('mtg-preview').innerHTML.includes('>' + want + '<'), p.$('mtg-preview').innerHTML.slice(0, 400));
+}
+
+// ---------- tool pages (src/content/tools/meta-tag-generator/{lang}.mdx) ----------
+// `{/* mtg-check: {json} */}` before an ```html block. With "page": true the page script runs in the
+// page language (the form starts with the sample values for that language), each "input" entry is
+// applied in order (select: change event; boolean: checkbox `checked` + change; other: input event)
+// and the block must equal #mtg-output. Without "page" the block equals buildHead() on an empty form,
+// as in the guides. The block must sit after the annotation and before the next annotation or H2, and
+// every ```html block on the four tool pages must be such an output.
+{
+  const { fencedBlocks, toolMdxContract } = await import('./lib/tool-mdx-contract.mjs');
+  const emptyForm = {
+    title: '', description: '', canonical: '', siteName: '', author: '', keywords: '', language: 'en', themeColor: '',
+    robotsIndex: 'index', robotsFollow: 'follow', viewport: false, ogType: 'website', ogLocale: '', ogImage: '',
+    ogImageWidth: '', ogImageHeight: '', ogImageAlt: '', twCard: 'summary_large_image', twSite: '', twCreator: '', twImage: '', schemaType: '',
+  };
+  function toolPageOutput(example, lang) {
+    if (!example.page) return buildHead({ ...emptyForm, ...example });
+    const p = page(spec, lang);
+    for (const [id, value] of Object.entries(example.input || {})) {
+      const el = p.$(id);
+      if (typeof value === 'boolean') { el.checked = value; el.dispatch('change'); }
+      else p.input(id, value, el.tagName === 'SELECT' ? 'change' : 'input');
+    }
+    return p.$('mtg-output').textContent;
+  }
+  // `{/* mtg-count: {"title": "…", "description": "…"} */}`: type both into the page; the two counter
+  // texts ("N / 60", "M / 160") must appear as inline code after the annotation.
+  function counterTexts(example, lang) {
+    const p = page(spec, lang);
+    p.input('mtg-title', example.title); p.input('mtg-description', example.description);
+    return [p.$('mtg-title-counter').textContent, p.$('mtg-description-counter').textContent];
+  }
+  const inlineCode = (text, value) => text.includes('<code>' + value + '</code>') || text.includes('`' + value + '`');
+  const covered = { en: 0, zh: 0, ja: 0, ko: 0 };
+  const contract = toolMdxContract('meta-tag-generator', { annotations: [{ tag: 'mtg-check', min: 2, verify({ spec: example, after, lang }) {
+    const out = toolPageOutput(example, lang);
+    if (headOf(out).bodyNodes !== 0) return 'output does not parse as one head';
+    const hit = fencedBlocks(after).some((b) => b.text.trimEnd() === out);
+    if (hit) covered[lang]++;
+    return hit ? null : 'no fenced block after the annotation equals the generated head:\n' + out;
+  } }, { tag: 'mtg-count', verify({ spec: example, after, lang }) {
+    const missing = counterTexts(example, lang).filter((t) => !inlineCode(after, t));
+    return missing.length ? 'counter text not shown as inline code: ' + missing.join(', ') : null;
+  } }] });
+  for (const r of contract.results) check('tool page ' + r.message, r.ok);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const html = fencedBlocks(contract.docs[lang].body).filter((b) => b.lang === 'html').length;
+    check(lang + ' every html block on the tool page is a checked generator output', html === covered[lang], html + ' html blocks, ' + covered[lang] + ' checked');
+  }
+}
+
 // v2 presentation checks; all original engine/blog/live-dist and FIX lifecycle groups remain above.
 const baselineRetained = passes;
 const markupV2=source.slice(source.indexOf('---',3)+3,source.indexOf('<script is:inline'));

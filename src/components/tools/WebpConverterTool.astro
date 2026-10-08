@@ -32,7 +32,8 @@ const STRINGS = {
     "errLoad": "Failed to load image",
     "unknownType": "an unknown type",
     "statusOk": "{n} file(s) converted",
-    "statusFail": ", {n} failed"
+    "statusFail": ", {n} failed",
+    "statusAllFail": "{n} file(s) failed to convert"
   },
   "zh": {
     "imagesLabel": "图片",
@@ -60,7 +61,8 @@ const STRINGS = {
     "errLoad": "无法载入图片",
     "unknownType": "未知类型",
     "statusOk": "已转换 {n} 个文件",
-    "statusFail": "，{n} 个失败"
+    "statusFail": "，{n} 个失败",
+    "statusAllFail": "{n} 个文件转换失败"
   },
   "ja": {
     "imagesLabel": "画像",
@@ -88,7 +90,8 @@ const STRINGS = {
     "errLoad": "画像を読み込めませんでした",
     "unknownType": "不明な形式",
     "statusOk": "{n} 件を変換しました",
-    "statusFail": "、{n} 件失敗"
+    "statusFail": "、{n} 件失敗",
+    "statusAllFail": "{n} 件の変換に失敗しました"
   },
   "ko": {
     "imagesLabel": "이미지",
@@ -104,7 +107,7 @@ const STRINGS = {
     "downloadAll": "모두 다운로드",
     "download": "다운로드",
     "converting": "변환 중…",
-    "qualityLabel": "품질：",
+    "qualityLabel": "품질: ",
     "hintTo": "PNG, JPG, GIF 지원",
     "hintFrom": "WebP 지원",
     "dropText": "이미지를 여기에 끌어다 놓거나 ",
@@ -116,7 +119,8 @@ const STRINGS = {
     "errLoad": "이미지를 불러올 수 없습니다",
     "unknownType": "알 수 없는 형식",
     "statusOk": "{n}개 파일 변환 완료",
-    "statusFail": ", {n}개 실패"
+    "statusFail": ", {n}개 실패",
+    "statusAllFail": "{n}개 파일 변환 실패"
   }
 };
 /* ── strings:end ── */
@@ -168,7 +172,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         <p><span>{T.dropText}</span><strong>{T.dropAction}</strong></p>
         <p class="wc-hint" id="wc-hint">{T.hintTo}</p>
       </div>
-      <input type="file" id="wc-file" accept="image/png,image/jpeg,image/gif,image/webp" multiple class="wc-file-input" aria-label={T.selectFiles} />
+      <input type="file" id="wc-file" accept="image/png,image/jpeg,image/gif" multiple class="wc-file-input" aria-label={T.selectFiles} />
     </div>
 
     {/* Results list */}
@@ -235,6 +239,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
       for (var ri = 0; ri < modeRadios.length; ri++) {
         modeRadios[ri].addEventListener('change', onModeChange);
       }
+      // Firefox restores the checked radio on reload; match accept, hint and quality row to it.
+      onModeChange();
 
       /* ── Quality slider ── */
       qualityInput.addEventListener('input', function () {
@@ -317,11 +323,12 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var card = document.createElement('div');
         card.className = 'wc-card';
 
-        var ratio = ((1 - item.outSize / item.origSize) * 100).toFixed(1);
+        var change = (1 - item.outSize / item.origSize) * 100;
         var saved = item.outSize < item.origSize;
+        // Format the absolute value: Math.abs() on the toFixed(1) string dropped a trailing ".0" (+36%).
         var ratioHtml = saved
-          ? '<span class="wc-saved">−' + ratio + '%</span>'
-          : '<span class="wc-larger">+' + Math.abs(ratio) + '%</span>';
+          ? '<span class="wc-saved">−' + change.toFixed(1) + '%</span>'
+          : '<span class="wc-larger">+' + Math.abs(change).toFixed(1) + '%</span>';
 
         card.innerHTML =
           '<img class="wc-thumb" src="' + esc(item.thumbUrl) + '" alt="' + esc(item.outName) + '" />' +
@@ -386,11 +393,12 @@ const { tips: TIPS, ...CLIENT_T } = T;
             dlAllBtn.hidden = ok < 2;
           }
 
-          var msg = t.statusOk.replace('{n}', ok);
-          if (fail > 0) msg += t.statusFail.replace('{n}', fail);
-          setStatus(msg, fail > 0 && ok === 0);
+          // Every file failed: say so instead of "0 file(s) converted, N failed", and send no event.
+          var msg = ok === 0 ? t.statusAllFail.replace('{n}', fail) : t.statusOk.replace('{n}', ok);
+          if (ok > 0 && fail > 0) msg += t.statusFail.replace('{n}', fail);
+          setStatus(msg, ok === 0);
 
-          window.trackTool && window.trackTool('webp-converter', 'convert');
+          if (ok > 0) window.trackTool && window.trackTool('webp-converter', 'convert');
         });
       }
 
@@ -405,6 +413,9 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       fileInput.addEventListener('change', function () {
         if (this.files && this.files.length) processFiles(this.files);
+        // processFiles reads every File synchronously; clear the input so picking the same file
+        // again (for example after changing the quality) fires a new change event.
+        this.value = '';
       });
 
       dropEl.addEventListener('dragover', function (e) {
