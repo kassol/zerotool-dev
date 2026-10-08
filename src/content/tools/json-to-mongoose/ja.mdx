@@ -8,24 +8,31 @@ steps:
   - "JSON またはモデル名を編集してから 300 ミリ秒待ち、コピーをクリックします。"
   - "クリアをクリックして JSON、出力、ステータスを消去します。"
 faqItems:
-  - question: "このツールは何を生成しますか？"
-    answer: "JSONからMongooseスキーマ定義を生成します。ネストオブジェクトは独立したスキーマ変数になり、末尾にmodelのエクスポート文が含まれます。"
-  - question: "対応言語モードは何ですか？"
+  - id: "output"
+    question: "このツールは何を生成しますか？"
+    answer: "JSONからMongooseスキーマ定義を生成します。ネストしたオブジェクトはサブスキーマになり、それを使うスキーマより前に書かれます（同じキーでフィールドと型が同じオブジェクトは1つを共有）。末尾にmodelのエクスポート文が付きます。"
+  - id: "languages"
+    question: "対応言語モードは何ですか？"
     answer: "JavaScript（CommonJS require/module.exports）とTypeScript（ES module import/export）です。TypeScript出力はMongooseのTypeScriptガイドの書き方に従い、Documentを継承しない通常のドキュメントインターフェースをSchema<T>とmodel<T>に渡します。"
-  - question: "JSON型はMongoose型にどう対応しますか？"
-    answer: "string→String、number→Number、boolean→Boolean、すべてのサンプルが null→mongoose.Schema.Types.Mixed、サンプルごとに型が違う→Mixed、プリミティブ配列→[Type]、オブジェクト配列→独立サブスキーマ、ネストオブジェクト→独立サブスキーマ。"
-  - question: "timestampsオプションの効果は？"
-    answer: "オンにすると{ timestamps: true }でスキーマが作成され、MongooseがcreatedAtとupdatedAtフィールド（Date型）を自動管理します。TypeScriptモードではインターフェースにもcreatedAt: DateとupdatedAt: Dateが入り、hydratedドキュメントでも.lean()の結果でもそのまま読めます。JSONのルートに同名のキーがある場合は、そのキーの型を残します。"
-  - question: "フィールドはrequiredになりますか？"
-    answer: "なりません。JSONだけではrequiredかどうか判断できないため、デフォルトはrequired: trueなしです。「必須フィールド」をオンにすると、ネストしたスキーマとオブジェクト配列以外のすべてのフィールドに required: true が付くので、実際の仕様に合わせて調整してください。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。変換はブラウザ内で実行されます。データは外部に送信されません。"
+  - id: "type-mapping"
+    question: "JSON型はMongoose型にどう対応しますか？"
+    answer: "string→String、ISO 8601 の日時で始まる文字列（2026-10-01T09:30:00Z など）→Date、number→Number、boolean→Boolean、すべてのサンプルが null か、サンプルごとに型が違うフィールド→mongoose.Schema.Types.Mixed、プリミティブ配列→[Type]（配列内の日時は String のまま）、null を含まないオブジェクト配列→[サブスキーマ]、ネストオブジェクト→サブスキーマ。"
+  - id: "timestamps"
+    question: "timestampsオプションの効果は？"
+    answer: "オンにすると{ timestamps: true }でスキーマが作成され、MongooseがcreatedAtとupdatedAtフィールド（Date型）を自動管理します。TypeScriptモードではインターフェースにもcreatedAt: DateとupdatedAt: Dateが入ります。JSONのルートに同名のキーがある場合は、そのキーの型を残します。"
+  - id: "required"
+    question: "フィールドはrequiredになりますか？"
+    answer: "既定ではなりません。JSONのサンプルだけでは必須かどうか判断できないためです。「必須フィールド」をオンにすると、ネストしたスキーマとオブジェクト配列以外のすべてのフィールドに required: true が付くので、任意のフィールドから外してください。Mongoose の required は null を通さないため、サンプルで null だったフィールドは required のままにできません。"
+  - id: "privacy"
+    question: "データはサーバーに送信されますか？"
+    answer: "いいえ。JSON とモデル名はこのブラウザのタブの中で処理され、送信されません。ブラウザのストレージにも保存しません。入力を編集してフォーカスを外したとき、サンプルをクリックしたとき、設定を切り替えたときに、ツール名と操作名（generate）だけの統計イベントを記録します。"
 ---
 
 <h2>型マッピング</h2>
 <ul>
   <li><code>null</code> はどの型にも入るので推論では読み飛ばします。すべてのサンプルで <code>null</code> のフィールド → <code>mongoose.Schema.Types.Mixed</code></li>
   <li>サンプルごとに型が違うフィールド（数値と文字列、オブジェクトと文字列）→ <code>mongoose.Schema.Types.Mixed</code>。ISO 日時とほかの文字列が混ざる場合 → <code>String</code></li>
+  <li>ISO 8601 の日時で始まる文字列（<code>2026-10-01T09:30:00Z</code>）→ <code>Date</code>。日付だけの <code>2026-10-01</code>、<code>T</code> の代わりに空白を入れた <code>2026-10-01 09:30:00</code>、配列の中の日時は <code>String</code> のまま</li>
   <li>文字列 → <code>String</code></li>
   <li>数値 → <code>Number</code></li>
   <li>真偽値 → <code>Boolean</code></li>
@@ -35,6 +42,9 @@ faqItems:
 </ul>
 
 <h2>例</h2>
+
+{/* jtm-check: {"json":"{\"username\": \"alice\", \"age\": 28, \"tags\": [\"admin\"], \"address\": {\"city\": \"London\"}}","model":"User","mode":"javascript","timestamps":true,"required":false} */}
+
 <p>モデル名 <code>User</code>、以下のJSONを入力した場合：</p>
 <pre><code>{`{"username": "alice", "age": 28, "tags": ["admin"], "address": {"city": "London"}}`}</code></pre>
 <p>JavaScript出力（timestampsオン）：</p>
@@ -79,6 +89,81 @@ module.exports = mongoose.model('Order', orderSchema);`}</code></pre>
 <ul>
   <li><code>code</code> は 1 件目が <code>1</code>、2 件目が <code>"A-2"</code> なので <code>Mixed</code> です。<code>Number</code> だと <code>"A-2"</code> を拒否します。<code>note</code> は <code>null</code> と <code>"gift"</code> なので <code>String</code> です。<code>tags</code> は文字列と数値が混ざるので要素が <code>Mixed</code> です。</li>
   <li>2 つの <code>meta</code> はフィールドが違うので、2 つ目は親のキーを前に付けます（<code>buyerMetaSchema</code>）。同じキーでフィールドと型が同じオブジェクトは 1 つのスキーマを共有します。前置きしても名前が重なるときは番号を付けます。</li>
-  <li><code>Mixed</code> のフィールドは型変換も検証もされず、中を変更したときは <code>markModified()</code> を呼ばないと Mongoose が保存しません。データが許すなら 1 つの型にしてください。</li>
 </ul>
 <p>ツールのテストでは、生成した JavaScript を Mongoose 9.10.3 で実行し、各サンプルからドキュメントを作って <code>validateSync()</code> が通ること、すべてのフィールドと値が残ることを確認しています（ISO 日時は <code>Date</code> になり、<code>toISOString()</code> の形で比較。サンプルにない配列フィールドは Mongoose の既定値 <code>[]</code> になります）。</p>
+
+<h2>気象庁の天気予報 JSON から作る</h2>
+
+{/* jtm-check: {"json":"[{\"publishingOffice\":\"気象庁\",\"reportDatetime\":\"2026-10-08T17:00:00+09:00\",\"timeSeries\":[{\"timeDefines\":[\"2026-10-08T17:00:00+09:00\",\"2026-10-09T00:00:00+09:00\"],\"areas\":[{\"area\":{\"name\":\"東京地方\",\"code\":\"130010\"},\"weatherCodes\":[\"100\",\"101\"],\"weathers\":[\"晴れ\",\"晴れ　時々　くもり\"]}]},{\"timeDefines\":[\"2026-10-08T18:00:00+09:00\",\"2026-10-09T00:00:00+09:00\"],\"areas\":[{\"area\":{\"name\":\"東京地方\",\"code\":\"130010\"},\"pops\":[\"0\",\"10\"]}]}]}]","model":"forecast","mode":"typescript","timestamps":false,"required":false} */}
+
+<p>気象庁が公開している天気予報の JSON（東京都は <code>https://www.jma.go.jp/bosai/forecast/data/forecast/130000.json</code>）を、取得した予報をそのまま保存するコレクションの下書きに使う例です。2026 年 10 月 8 日 17 時発表分から、東京地方の 2 つの時系列を 2 時点ずつ残して短くしました（モデル名 <code>forecast</code>、TypeScript、timestamps オフ）：</p>
+<pre><code>{`[{"publishingOffice":"気象庁","reportDatetime":"2026-10-08T17:00:00+09:00","timeSeries":[{"timeDefines":["2026-10-08T17:00:00+09:00","2026-10-09T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"weatherCodes":["100","101"],"weathers":["晴れ","晴れ　時々　くもり"]}]},{"timeDefines":["2026-10-08T18:00:00+09:00","2026-10-09T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"pops":["0","10"]}]}]}]`}</code></pre>
+<p>出力：</p>
+<pre><code>{`import mongoose, { Schema } from 'mongoose';
+
+export interface IArea {
+  name: string;
+  code: string;
+}
+
+export interface IAreas {
+  area: IArea;
+  weatherCodes: string[];
+  weathers: string[];
+  pops: string[];
+}
+
+export interface ITimeSeries {
+  timeDefines: string[];
+  areas: IAreas[];
+}
+
+export interface IForecast {
+  publishingOffice: string;
+  reportDatetime: Date;
+  timeSeries: ITimeSeries[];
+}
+
+const areaSchema = new Schema({
+  name: { type: String },
+  code: { type: String },
+});
+
+const areasSchema = new Schema({
+  area: areaSchema,
+  weatherCodes: [String],
+  weathers: [String],
+  pops: [String],
+});
+
+const timeSeriesSchema = new Schema({
+  timeDefines: [String],
+  areas: [areasSchema],
+});
+
+const forecastSchema = new Schema<IForecast>({
+  publishingOffice: { type: String },
+  reportDatetime: { type: Date },
+  timeSeries: [timeSeriesSchema],
+}, { timestamps: false });
+
+export default mongoose.model<IForecast>('Forecast', forecastSchema);`}</code></pre>
+
+{/* jtm-date: {"in":"2026-10-08T17:00:00+09:00","iso":"2026-10-08T08:00:00.000Z"} */}
+
+<ul>
+  <li>天気の時系列と降水確率（<code>pops</code>）の時系列は <code>areas</code> の形が違いますが、どちらも <code>timeSeries</code> の要素なので 1 つの <code>areasSchema</code> にまとめられ、<code>weatherCodes</code>・<code>weathers</code>・<code>pops</code> がすべて入ります。インターフェースではどれも必須の形なので、片方の時系列にしかないものには <code>?</code> を付けてください。</li>
+  <li><code>reportDatetime</code> は <code>+09:00</code> 付きの ISO 日時なので <code>Date</code> になります。MongoDB の日付は時刻の一点だけを記録し、タイムゾーンを持ちません（<a href="https://mongoosejs.com/docs/tutorials/dates.html">Mongoose: Working With Dates</a>）。保存後に読むと <code>2026-10-08T08:00:00.000Z</code> になるので、日本時間で表示するときは表示側で変換します。</li>
+  <li><code>timeDefines</code> は同じ形の日時ですが、配列の中なので <code>[String]</code> です。時刻で検索するなら <code>[Date]</code> に書き換えます。</li>
+  <li>降水確率は <code>"10"</code> のように文字列で入っているので <code>[String]</code> です。数値として集計するなら、保存前に変換するか <code>[Number]</code> に変えて Mongoose に変換させます。</li>
+</ul>
+
+<h2>制限</h2>
+<ul>
+  <li><strong>Mixed は何でも受け入れます。</strong>サンプルの型がそろわず <code>Mixed</code> になったフィールドは型変換も検証もされず、中を変更したときは <code>markModified()</code> を呼ばないと Mongoose が保存しません。データが許すなら 1 つの型にしてください。</li>
+  <li><strong>Date になる書き方は 1 つです。</strong><code>YYYY-MM-DDThh:mm:ss</code> で始まる文字列だけが <code>Date</code> になります。データベースから書き出した <code>2026-10-08 09:30:00</code> のような空白区切りは <code>String</code> のままです。</li>
+  <li><strong>ルート配列はオブジェクトだけを見ます。</strong>オブジェクトと並ぶ数値・文字列・配列は無視します。すべてプリミティブならスキーマは作らず、コメント <code>{"// Array of primitives — no schema to generate"}</code> だけを出します。</li>
+  <li><strong>ObjectId・enum・インデックス・検証は作りません。</strong>24 文字の 16 進文字列も <code>String</code> です。<code>Schema.Types.ObjectId</code> と <code>ref</code>、<code>unique</code>、<code>enum</code>、<code>min</code>/<code>max</code> は自分で足してください。</li>
+  <li><strong>日本語のキーは引用符付きで残ります。</strong><code>"住所"</code> のようにパスとしてはそのまま使えますが、スキーマ変数名は ASCII だけで作るため <code>fieldSchema</code> になります。わかる名前に付け替えてください。</li>
+  <li><strong>型引数はルートスキーマだけです。</strong>サブスキーマの <code>new Schema()</code> には型引数がなく、「必須フィールド」がオフでもインターフェースのフィールドに <code>?</code> は付きません。Mongoose はインターフェースとスキーマが合っているか確かめないので、任意のフィールドには自分で <code>?</code> を付けます。</li>
+</ul>

@@ -33,7 +33,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import ts from 'typescript';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToMongooseTool.astro'), 'utf8');
@@ -193,6 +193,8 @@ eq('A-MONGOOSE-NESTED-NAME: real convert keeps b.meta.y', /const bMetaSchema = n
 
 // {/* jtm-check: {"json", "model", "mode", "timestamps", "required"} */}: the next code block is the
 // input JSON and the one after it the full output, both as on the page.
+const JTM_DATES = [];
+const PAGE_JSON = [];
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, `src/content/tools/json-to-mongoose/${lang}.mdx`), 'utf8');
   let count = 0;
@@ -202,9 +204,23 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const blocks = [...mdx.slice(m.index).matchAll(/<pre><code>\{`([\s\S]*?)`\}<\/code><\/pre>/g)].map((x) => new Function('return `' + x[1] + '`')());
     eq(`${lang} jtm-check ${count}: input block`, blocks[0], spec.json);
     eq(`${lang} jtm-check ${count}: output block`, blocks[1], gen(spec.json, spec.model, spec.mode, spec.timestamps, spec.required));
+    if (!PAGE_JSON.some(([, json]) => json === spec.json)) PAGE_JSON.push([`page ${lang} jtm-check ${count}`, spec.json]);
   }
-  eq(`${lang} page has the inference example`, count >= 1, true);
+  eq(`${lang} page has at least 2 jtm-check examples`, count >= 2, true);
   eq(`${lang} page no longer says the first value decides`, /first value wins|首个值|最初の値|첫 값/.test(mdx), false);
+  // {/* jtm-date: {"in", "iso"} */}: the value a Date path stores for `in`, as toISOString(), must be shown
+  // in inline code before the next jtm-date note or heading. Mongoose casts a string with the Date
+  // constructor, except numeric strings outside the Date year range, which it reads as milliseconds
+  // (lib/cast/date.js; mongoosejs.com/docs/tutorials/dates.html "Casting Edge Cases"). With
+  // MONGOOSE_TEST_DIR the real cast is used below as well.
+  for (const note of annotations(mdx.slice(mdx.indexOf('\n---\n', 4) + 5), 'jtm-date')) {
+    const { in: value, iso } = note.spec;
+    const n = Number(value);
+    const cast = typeof value === 'string' && value !== '' && !isNaN(n) && (n >= 275761 || n < -271820) ? new Date(n) : new Date(value);
+    eq(`${lang} jtm-date ${value}: cast value`, cast.toISOString(), iso);
+    eq(`${lang} jtm-date ${value}: shown on the page`, note.after.includes('<code>' + iso + '</code>'), true);
+    JTM_DATES.push([lang, value, iso]);
+  }
 }
 
 if (process.env.AB_TYPES_EVIDENCE) {
@@ -234,10 +250,26 @@ const RUNTIME = [
   ['own _id', '{"_id":"abc","child":{"_id":7,"n":1}}'],
   ['page order example', '[{"code":1,"note":null,"seller":{"meta":{"x":1}},"buyer":{"meta":{"y":"2"}}},{"code":"A-2","note":"gift","tags":["a",1]}]']
 ];
+// Every jtm-check input on the four pages also runs through Mongoose and tsc below.
+const sameJson = (x, y) => JSON.stringify(JSON.parse(x)) === JSON.stringify(JSON.parse(y));
+for (const entry of PAGE_JSON) if (!RUNTIME.some(([, r]) => sameJson(r, entry[1]))) RUNTIME.push(entry);
+eq('page examples in the Mongoose runtime set', PAGE_JSON.length >= 6 && PAGE_JSON.every(([, json]) => RUNTIME.some(([, r]) => sameJson(r, json))), true);
 if (process.env.MONGOOSE_TEST_DIR) {
   const require = createRequire(join(process.env.MONGOOSE_TEST_DIR, 'package.json'));
   const mongoose = require('mongoose');
   eq('fixed Mongoose runtime version', mongoose.version, '9.10.3');
+  {
+    // Page claims about Mongoose casting, with the real library: the jtm-date values, and strings
+    // in a [Number] array (ja: precipitation percentages such as "10").
+    const isolated = new mongoose.Mongoose();
+    const M = isolated.model('Cast', new isolated.Schema({ at: Date, pops: [Number] }));
+    for (const [lang, value, iso] of JTM_DATES) {
+      const doc = new M({ at: value });
+      eq(`Mongoose casts ${lang} jtm-date ${value}`, JSON.stringify([doc.validateSync()?.message ?? true, doc.at && doc.at.toISOString()]), JSON.stringify([true, iso]));
+    }
+    const pops = new M({ pops: ['0', '10'] });
+    eq('Mongoose casts ["0","10"] on a [Number] path to [0,10]', JSON.stringify([pops.validateSync()?.message ?? true, [...pops.pops]]), JSON.stringify([true, [0, 10]]));
+  }
   for (const [name, json] of RUNTIME) {
     try {
       const isolated = new mongoose.Mongoose();

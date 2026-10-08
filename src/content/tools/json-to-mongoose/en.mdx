@@ -8,25 +8,31 @@ steps:
   - "Wait 300 ms after editing JSON or the model name, then click Copy."
   - "Click Clear to empty JSON, output and status."
 faqItems:
-  - question: "What does this tool generate?"
-    answer: "It generates Mongoose schema definitions from JSON. Each nested object becomes its own named schema, and a model export is included at the bottom."
-  - question: "What language modes are supported?"
+  - id: "output"
+    question: "What does this tool generate?"
+    answer: "It generates Mongoose schema definitions from JSON. Nested objects become sub-schemas that are written before the schema that uses them (objects under the same key with the same fields share one), and a model export is included at the bottom."
+  - id: "languages"
+    question: "What language modes are supported?"
     answer: "JavaScript (CommonJS require/module.exports) and TypeScript (ES module import/export with a plain document interface passed to Schema<T> and model<T>, as in the Mongoose TypeScript guide)."
-  - question: "How are JSON types mapped to Mongoose types?"
-    answer: "string → String, number → Number, boolean → Boolean, null → mongoose.Schema.Types.Mixed when every sample is null, array of primitives → [Type], array of objects → separate sub-schema, nested object → separate sub-schema."
-  - question: "What does the timestamps option do?"
+  - id: "type-mapping"
+    question: "How are JSON types mapped to Mongoose types?"
+    answer: "string → String, and a string that starts like an ISO 8601 date-time (2026-10-01T09:30:00Z) → Date; number → Number; boolean → Boolean; a field that is null in every sample, or whose samples have different types → mongoose.Schema.Types.Mixed; array of primitives → [Type] (date-times inside an array stay String); array of objects without null elements → [subSchema]; nested object → sub-schema."
+  - id: "timestamps"
+    question: "What does the timestamps option do?"
     answer: "When On, the schema is created with { timestamps: true }, which automatically adds createdAt and updatedAt fields managed by Mongoose. In TypeScript mode the interface also lists createdAt: Date and updatedAt: Date, unless your JSON already has a key with that name."
-  - question: "Are all fields marked as required?"
+  - id: "required"
+    question: "Are all fields marked as required?"
     answer: "Not by default, since a JSON sample cannot show which fields are required. Turning the required switch On adds required: true to every field except nested schemas and arrays of objects; then remove it where a field is optional. Note that Mongoose's required validator rejects null, so a field that is null in your sample cannot stay required."
-  - question: "Is my data sent to a server?"
-    answer: "No. The entire conversion runs in your browser. No data leaves your machine."
+  - id: "privacy"
+    question: "Is my data sent to a server?"
+    answer: "No. The JSON and the model name are processed in this browser tab and are not sent anywhere, and the tool does not save them in browser storage. The page records an analytics event with only the tool name and the action (generate) when you finish an edit (the field loses focus), click Example or change an option."
 ---
 
 <h2>Type Mapping</h2>
 <ul>
   <li><code>null</code> fits any type and is skipped; a field that is <code>null</code> in every sample → <code>mongoose.Schema.Types.Mixed</code></li>
   <li>a field whose samples have different types (number and string, object and string) → <code>mongoose.Schema.Types.Mixed</code>; ISO date-times mixed with other strings → <code>String</code></li>
-  <li>string that starts like an ISO 8601 date-time (<code>2026-10-01T09:30:00Z</code>) → <code>Date</code>; a plain date such as <code>2026-10-01</code> stays <code>String</code></li>
+  <li>string that starts like an ISO 8601 date-time (<code>2026-10-01T09:30:00Z</code>) → <code>Date</code>; a plain date such as <code>2026-10-01</code>, a date-time with a space instead of <code>T</code> (<code>2026-10-01 09:30:00</code>) and date-times inside an array stay <code>String</code></li>
   <li>string → <code>String</code></li>
   <li>number → <code>Number</code></li>
   <li>boolean → <code>Boolean</code></li>
@@ -36,6 +42,9 @@ faqItems:
 </ul>
 
 <h2>Example</h2>
+
+{/* jtm-check: {"json":"{\"username\": \"alice\", \"age\": 28, \"tags\": [\"admin\"], \"address\": {\"city\": \"London\"}}","model":"User","mode":"javascript","timestamps":true,"required":false} */}
+
 <p>Given this JSON with model name <code>User</code>:</p>
 <pre><code>{`{"username": "alice", "age": 28, "tags": ["admin"], "address": {"city": "London"}}`}</code></pre>
 <p>JavaScript output (timestamps On):</p>
@@ -48,6 +57,9 @@ faqItems:
 </p>
 
 <h2>Example: TypeScript With required On</h2>
+
+{/* jtm-check: {"json":"{\"sku\":\"A-1\",\"price\":9.5,\"created_at\":\"2026-10-01T09:30:00Z\",\"release-date\":\"2026-10-01\",\n \"variants\":[{\"color\":\"red\",\"stock\":3},{\"color\":\"blue\",\"size\":\"M\"}],\"meta\":null}","model":"product","mode":"typescript","timestamps":true,"required":true} */}
+
 <p>Model name <code>product</code>, TypeScript, timestamps On, required On:</p>
 <pre><code>{`{"sku":"A-1","price":9.5,"created_at":"2026-10-01T09:30:00Z","release-date":"2026-10-01",
  "variants":[{"color":"red","stock":3},{"color":"blue","size":"M"}],"meta":null}`}</code></pre>
@@ -139,6 +151,8 @@ module.exports = mongoose.model('Order', orderSchema);`}</code></pre>
 <h2>Limits</h2>
 <ul>
   <li><strong>Mixed accepts anything.</strong> A field typed <code>Mixed</code> because its samples disagree is not cast or validated, and Mongoose does not track changes inside it unless you call <code>markModified()</code>. Pick one type when the data allows it.</li>
+  <li><strong>Only one date format becomes Date.</strong> A string must start with <code>YYYY-MM-DDThh:mm:ss</code>. A database export such as <code>2026-10-08 09:30:00</code> stays <code>String</code>. A value with an offset (<code>+08:00</code>) is stored as that instant in UTC; MongoDB keeps no time zone with a date (<a href="https://mongoosejs.com/docs/tutorials/dates.html">Mongoose: Working With Dates</a>).</li>
+  <li><strong>Non-ASCII keys get placeholder schema names.</strong> Keys such as <code>收货地址</code> or <code>주소</code> are quoted and kept as paths, but a sub-schema variable needs an ASCII name, so it becomes <code>fieldSchema</code>, and the next shape gets the parent prefix (<code>orderFieldSchema</code> with model name <code>order</code>). Rename them before you commit the file.</li>
   <li><strong>Only objects at the root.</strong> In a root array, numbers, strings and arrays next to the objects are ignored; the schema describes the objects.</li>
   <li><strong>No ObjectId, enum, index or validation.</strong> A 24-character hex string stays <code>String</code>; add <code>Schema.Types.ObjectId</code> and <code>ref</code>, <code>unique</code>, <code>enum</code> or <code>min</code>/<code>max</code> yourself.</li>
   <li><strong>Only the root schema is typed.</strong> Sub-schemas get an interface for the root interface to use, but <code>new Schema()</code> for them has no type argument, and fields are not optional even when <code>required</code> is Off. Mongoose does not check that the interface matches the schema (TypeScript guide), so mark optional fields with <code>?</code> yourself.</li>
