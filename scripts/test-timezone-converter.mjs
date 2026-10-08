@@ -11,7 +11,10 @@
 // spring-forward gap (02:30 → 03:30, RFC 5545 3.3.5; it used to give 01:30) and the fall-back
 // overlap (first occurrence), checked against a brute-force search over every minute; "Now"
 // gives the wall-clock time in the source zone (it used to give the browser's local time even
-// after the source zone was changed); the examples on the English page.
+// after the source zone was changed); the examples on the English page; {/* tzc-check: … */} examples
+// on the four tool pages, recomputed with the same functions (at least 2 per language, see TZC_CHECK);
+// typed names: abbreviations such as EST / IST are rejected and partial names match word starts
+// (EST used to resolve to America/Creston, IST to America/Boa_Vista).
 //
 // Run: node scripts/test-timezone-converter.mjs
 
@@ -108,12 +111,52 @@ for (const [wall, src, zone, want] of [
   ['2026-03-25T15:00', 'Europe/London', 'Australia/Sydney', '2026-03-26 02:00:00, UTC+11:00'],
 ]) {
   eq('page: ' + wall + ' ' + src + ' → ' + zone, show(wall, src, zone), want);
-  eq('page shows ' + want, page.includes('<td>' + want + '</td>'), true);
+  eq('page shows ' + want, page.includes('<td><code>' + want + '</code></td>'), true);
 }
 eq('gap: 02:30 New York → 07:30 UTC', E.wallClockToUtc('2026-03-08T02:30', 'America/New_York').toISOString(), '2026-03-08T07:30:00.000Z');
 eq('overlap: 01:30 New York → 05:30 UTC', E.wallClockToUtc('2026-11-01T01:30', 'America/New_York').toISOString(), '2026-11-01T05:30:00.000Z');
 eq('no DST badge zones', ['Asia/Tokyo', 'Asia/Shanghai', 'Australia/Brisbane'].map((z) => E.dstSummary(new Date(Date.UTC(2026, 5, 1)), z).observesDst), [false, false, false]);
 eq('DST badge 3 days before the US change', E.dstSummary(E.wallClockToUtc('2026-03-05T12:00', 'America/New_York'), 'America/New_York').shiftDays, 3);
+
+// ---------- worked examples on the four tool pages ----------
+// {/* tzc-check: {"t","s","z":[zones],"badge"?} */} or {"cases":[{…}, …]}: every row the tool shows
+// for base time t in source zone s, written "local, offset (abbr)", must be a <code> span (or sit in
+// a code block) after the note and before the next note or H2. With "badge": true the row's DST
+// badge text in the page language (the component's STRINGS) must appear there too.
+function codeSpans(text) {
+  const spans = [...text.matchAll(/<code>([^<]*)<\/code>|`([^`\n]+)`/g)].map((m) => (m[1] ?? m[2]).trim());
+  const blocks = [...text.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)].map((m) => m[1]);
+  return { spans, blocks };
+}
+function badgeText(utc, zone, T) {
+  const d = E.dstSummary(utc, zone);
+  if (!d.observesDst) return T.noDst;
+  if (d.shiftDays === null) return null;
+  return (d.shiftDays > 0 ? T.dstShiftFuture : T.dstShiftPast).replace('{n}', String(Math.abs(d.shiftDays)));
+}
+const TZC_CHECK = {
+  tag: 'tzc-check', min: 2,
+  verify({ spec, after, lang }) {
+    if (!spec) return 'missing spec';
+    const T = tzStrings(lang);
+    const { spans, blocks } = codeSpans(after);
+    const problems = [];
+    for (const c of spec.cases ?? [spec]) {
+      const utc = E.wallClockToUtc(c.t, c.s);
+      if (!utc || !E.isZone(c.s)) { problems.push('bad case ' + JSON.stringify(c)); continue; }
+      for (const zone of c.z) {
+        const want = show(c.t, c.s, zone);
+        if (!spans.includes(want) && !blocks.some((b) => b.includes(want))) problems.push(c.t + ' ' + c.s + ' → ' + zone + ': ' + want + ' not shown as code');
+        if (c.badge) {
+          const b = badgeText(utc, zone, T);
+          if (b === null) problems.push(c.t + ' → ' + zone + ': the tool shows no badge');
+          else if (!after.includes(b)) problems.push(c.t + ' → ' + zone + ': badge "' + b + '" not shown');
+        }
+      }
+    }
+    return problems.join('; ') || null;
+  },
+};
 
 // ---------- Now in the source zone ----------
 const instant = new Date(Date.UTC(2026, 9, 1, 0, 0, 5));
@@ -385,7 +428,7 @@ for(const lang of ['en','zh','ja','ko']){
  const match=content.match(/^steps:\n((?:  - .*\n)+)/m);const steps=match?[...match[1].matchAll(/^  - (.*)$/gm)].map(m=>JSON.parse(m[1])):[];
  eq('v2 '+lang+' six bounded steps',steps.length===6&&steps.every(t=>t.length<=280)&&steps.join('').length<=1200,true);
  eq('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'),true);
- eq('v2 '+lang+' MDX content contract', contractProblems('timezone-converter', lang), '');
+ eq('v2 '+lang+' MDX content contract', contractProblems('timezone-converter', lang, { annotations: [TZC_CHECK] }), '');
  for(const order of ['shared-before','shared-after']){
   const q=pageVM(lang,order);q.ctrlL('tzc-tip-results-trigger');await settle();
   eq('v2 '+lang+'/'+order+' result tip CtrlL clears values',[q.get('tzc-base').value,q.get('tzc-add').value,q.get('tzc-results').textContent],['','','']);
