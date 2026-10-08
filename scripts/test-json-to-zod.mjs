@@ -108,8 +108,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('protected engine byte count', Buffer.byteLength(engineLines), 4787);
-eq('protected engine SHA256', createHash('sha256').update(engineLines).digest('hex'), "a10358280158662f40bc389df30b6ab5f9ff7b7ac9989dd71670fece3a15a699");
+eq('protected engine byte count', Buffer.byteLength(engineLines), 6149);
+eq('protected engine SHA256', createHash('sha256').update(engineLines).digest('hex'), "d06c54e5e6e6b1c0cce6e8f306f4fa106e478b81a616bbc0b9f74bc6f66050f0");
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -431,14 +431,10 @@ const pageText = Object.fromEntries(['en', 'zh', 'ja', 'ko'].map((l) => [l, read
     check('strict mode is off: extra keys are removed (' + v + ')', JSON.stringify(z.object({ a: z.number() }).parse({ a: 1, b: 2 })) === '{"a":1}');
   }
   const E2 = new Function(block + '\nreturn { toPascalCase };')();
-  eq('root name 用户 gives 户', E2.toPascalCase('用户'), '户');
-  eq('root name 天気 gives 気', E2.toPascalCase('天気'), '気');
-  eq('root name 회원 gives 원', E2.toPascalCase('회원'), '원');
+  eq('root name 用户 keeps its letters', E2.toPascalCase('用户'), '用户');
+  eq('root name 天気 keeps its letters', E2.toPascalCase('天気'), '天気');
+  eq('root name 회원 keeps its letters', E2.toPascalCase('회원'), '회원');
   eq('root name "user profile" gives UserProfile', E2.toPascalCase('user profile'), 'UserProfile');
-  check('en: page states 用户 → 户Schema', pageText.en.includes('`用户` gives `户Schema`'));
-  check('zh: page states 用户 → 户Schema', pageText.zh.includes('`用户` 会得到 `户Schema`'));
-  check('ja: page states 天気 → 気Schema', pageText.ja.includes('`天気` と入力すると `気Schema`'));
-  check('ko: page states 회원 → 원Schema', pageText.ko.includes('`회원`을 입력하면 `원Schema`'));
   eq('the int/float union text', E.buildRootZod([{ p: 128.5 }, { p: 299 }], 'Root', false), 'z.array(z.object({\n    p: z.union([z.number(), z.number().int()]),\n  }))');
   for (const l of ['en', 'zh', 'ja', 'ko']) check(l + ': page shows the int/float union', pageText[l].includes('`z.union([z.number(), z.number().int()])`'));
   const v4Big = zods.v4.number().int().safeParse(JSON.parse('1830000000000000001'));
@@ -488,6 +484,13 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': next result enables Copy again', !p.get('jtz-copy').disabled && output(p) === goldenCode);
   p.get('jtz-clear').click();
   check(lang + ': Clear disables Copy', p.get('jtz-copy').disabled === true);
+}
+
+// ---------- root names follow the ECMAScript identifier rules ----------
+for (const [name, typeName] of [['用户', '用户'], ['2fa', 'T2fa'], ['class', 'Class'], ['', 'Root'], ['  ', 'Root'], ['user profile', 'UserProfile'], ['天気', '天気'], ['회원', '회원'], ['!!!', 'Root'], ['user-name', 'UserName'], ['$store', '$store'], ['_id', '_id']]) {
+  const code = pageOutput('en', name, false, '{"a":1}');
+  check('root name ' + JSON.stringify(name) + ' gives ' + typeName, code.includes('const ' + typeName + 'Schema = ') && code.includes('export type ' + typeName + ' = z.infer<typeof ' + typeName + 'Schema>;'), code);
+  for (const entry of ['zod', 'zod/v4']) eq('root name ' + JSON.stringify(name) + ' compiles (' + entry + ')', tsErrors(code + '\nexport const sample: ' + typeName + ' = {"a":1};\n', entry).join('; '), '');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
