@@ -303,7 +303,7 @@ const L = STRINGS[lang];
 
       // Names a class must not take: keywords, the names the output imports or uses as types, and
       // every JSON key (a Pydantic field with a default shadows a class of the same name).
-      var RESERVED_NAMES = ['False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield', 'Any', 'List', 'NotRequired', 'Optional', 'TypedDict', 'Union', 'BaseModel', 'dataclass', 'str', 'int', 'float', 'bool'];
+      var RESERVED_NAMES = ['False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield', 'Any', 'List', 'NotRequired', 'Optional', 'TypedDict', 'Union', 'BaseModel', 'Field', 'dataclass', 'str', 'int', 'float', 'bool'];
       function reserveNames(taken, parsed) {
         for (var i = 0; i < RESERVED_NAMES.length; i++) taken[RESERVED_NAMES[i]] = true;
         var stack = [parsed];
@@ -461,11 +461,44 @@ const L = STRINGS[lang];
         return name;
       }
 
+      // Public attributes of pydantic.BaseModel (Pydantic 2.13): a field with one of these names fails
+      // (model_config, model_dump) or hides the method.
+      var BASEMODEL_ATTRS = ['construct', 'copy', 'dict', 'from_orm', 'json', 'model_computed_fields', 'model_config', 'model_construct', 'model_copy', 'model_dump', 'model_dump_json', 'model_extra', 'model_fields', 'model_fields_set', 'model_json_schema', 'model_parametrized_name', 'model_post_init', 'model_rebuild', 'model_validate', 'model_validate_json', 'model_validate_strings', 'parse_file', 'parse_obj', 'parse_raw', 'schema', 'schema_json', 'update_forward_refs', 'validate'];
+
+      // Field name for each key. A key is kept when it is already a usable name: a Python identifier
+      // as typed (NFKC leaves it unchanged), not a keyword or a name the annotations use (a field
+      // with a default would hide it), not starting with "__" (mangled in a class body), and for
+      // Pydantic not starting with "_" (private attribute) or naming a BaseModel attribute. Other
+      // keys get a name from their identifier characters with "_" added until it is free.
+      function pyFieldNames(fields, mode) {
+        var used = Object.create(null), names = [];
+        function usable(n) {
+          return /^[\p{ID_Start}_]\p{ID_Continue}*$/u.test(n) && n === n.normalize('NFKC') &&
+            RESERVED_NAMES.indexOf(n) === -1 && !/^__/.test(n) &&
+            !(mode === 'pydantic' && (/^_/.test(n) || BASEMODEL_ATTRS.indexOf(n) !== -1));
+        }
+        for (var i = 0; i < fields.length; i++) if (usable(fields[i].key)) used[fields[i].key] = true;
+        for (var i = 0; i < fields.length; i++) {
+          var key = fields[i].key;
+          if (usable(key)) { names.push(key); continue; }
+          var n = key.normalize('NFKC').replace(/[^\p{ID_Continue}]+/gu, '_');
+          n = mode === 'pydantic' ? n.replace(/^_+/, '') : n.replace(/^_{2,}/, '_');
+          if (!n) n = 'field';
+          if (!/^[\p{ID_Start}_]/u.test(n)) n = (mode === 'pydantic' ? 'field_' : '_') + n;
+          if (!usable(n)) n += '_';
+          for (var c = n, k = 2; used[c] || !usable(c); k++) c = n + k;
+          n = c;
+          used[n] = true;
+          names.push(n);
+        }
+        return names;
+      }
+
       function renderClass(name, fields, mode) {
         if (!fields) return '';
-        var required = fields.filter(function (f) { return !f.optional; });
-        var optional = fields.filter(function (f) { return f.optional; });
-        var ordered = required.concat(optional);
+        var names = pyFieldNames(fields, mode);
+        var entries = fields.map(function (f, i) { return { f: f, name: names[i] }; });
+        var ordered = entries.filter(function (e) { return !e.f.optional; }).concat(entries.filter(function (e) { return e.f.optional; }));
 
         var lines = [];
 
@@ -476,11 +509,12 @@ const L = STRINGS[lang];
             lines.push('    pass');
           } else {
             for (var i = 0; i < ordered.length; i++) {
-              var f = ordered[i];
+              var f = ordered[i].f, n = ordered[i].name;
+              var note = n === f.key ? '' : '  # JSON key: ' + JSON.stringify(f.key);
               if (f.optional) {
-                lines.push('    ' + f.key + ': Optional[' + f.type + '] = None');
+                lines.push('    ' + n + ': Optional[' + f.type + '] = None' + note);
               } else {
-                lines.push('    ' + f.key + ': ' + f.type);
+                lines.push('    ' + n + ': ' + f.type + note);
               }
             }
           }
@@ -490,28 +524,32 @@ const L = STRINGS[lang];
             lines.push('    pass');
           } else {
             for (var i = 0; i < ordered.length; i++) {
-              var f = ordered[i];
+              var f = ordered[i].f, n = ordered[i].name;
+              var alias = n === f.key ? null : 'alias=' + JSON.stringify(f.key);
               if (f.optional) {
-                lines.push('    ' + f.key + ': Optional[' + f.type + '] = None');
+                lines.push('    ' + n + ': Optional[' + f.type + '] = ' + (alias ? 'Field(default=None, ' + alias + ')' : 'None'));
               } else {
-                lines.push('    ' + f.key + ': ' + f.type);
+                lines.push('    ' + n + ': ' + f.type + (alias ? ' = Field(' + alias + ')' : ''));
               }
             }
           }
         } else {
           /* TypedDict: a key missing from some samples is NotRequired (PEP 655); a key whose
-             value can be null is Optional. Keys keep their JSON order. */
-          lines.push('class ' + name + '(TypedDict):');
-          if (fields.length === 0) {
+             value can be null is Optional. Keys keep their JSON order. Keys that cannot be class
+             attributes use the functional syntax, which keeps every key as it is. */
+          var functional = entries.some(function (e) { return e.name !== e.f.key; });
+          lines.push(functional ? name + ' = TypedDict(' + JSON.stringify(name) + ', {' : 'class ' + name + '(TypedDict):');
+          if (fields.length === 0 && !functional) {
             lines.push('    pass');
           } else {
             for (var i = 0; i < fields.length; i++) {
               var f = fields[i];
               var tt = f.nullable ? 'Optional[' + f.type + ']' : f.type;
               if (f.missing) tt = 'NotRequired[' + tt + ']';
-              lines.push('    ' + f.key + ': ' + tt);
+              lines.push(functional ? '    ' + JSON.stringify(f.key) + ': ' + tt + ',' : '    ' + f.key + ': ' + tt);
             }
           }
+          if (functional) lines.push('})');
         }
         return lines.join('\n');
       }
@@ -592,7 +630,13 @@ const L = STRINGS[lang];
         var importLines = [];
 
         if (needDataclass) importLines.push('from dataclasses import dataclass');
-        if (needPydantic) importLines.push('from pydantic import BaseModel');
+        if (needPydantic) {
+          var needField = Object.keys(classes).some(function (n) {
+            var fs = classes[n] || [], ns = pyFieldNames(fs, 'pydantic');
+            return fs.some(function (f, i) { return ns[i] !== f.key; });
+          });
+          importLines.push('from pydantic import BaseModel' + (needField ? ', Field' : ''));
+        }
 
         // Collect typing imports by scanning classes
         var hasOptional = false, hasList = false, hasAny = false, hasUnion = false, hasTypedDict = needTypedDict;

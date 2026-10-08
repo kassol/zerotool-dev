@@ -127,6 +127,19 @@ eq('nested arrays: objects of all sub-arrays merge', gen({ n: [[{ a: 1 }], [{ b:
   'from typing import List, NotRequired, TypedDict', '', 'class NItemItem(TypedDict):', '    a: NotRequired[int]', '    b: NotRequired[int]', '', 'class Root(TypedDict):', '    n: List[List[NItemItem]]',
 ]);
 
+// Field names: a key that is a keyword (keyword.kwlist), not an identifier, changed by NFKC, starts with
+// "__", shadows a name the annotations use, or (Pydantic) starts with "_" or is a BaseModel attribute
+// gets a valid field name; dataclass notes the JSON key in a comment, Pydantic sets Field(alias=...),
+// TypedDict uses the functional syntax with the original keys.
+const KW_SAMPLES = [
+  { class: 1, from: 'x', None: true, 'user-id': 2, '2fa': 'a', _id: 'abc', str: null, json: 3, model_config: 4, 'ｆｕｌｌ': 5, __x: 6, type: 7, match: 8, _: 9, 'a b': 10, class_: 11, ok: 12 },
+  { class: 2, ok: 13 },
+];
+eq('field names: Pydantic aliases the keyword key', /^    class_\w*: int = Field\(alias="class"\)$/m.test(gen(KW_SAMPLES, 'pydantic')), true);
+eq('field names: dataclass notes the JSON key', /^    class_\w*: int  # JSON key: "class"$/m.test(gen(KW_SAMPLES, 'dataclass')), true);
+eq('field names: TypedDict uses the functional syntax', gen(KW_SAMPLES, 'typeddict').includes('Root = TypedDict("Root", {\n    "class": int,'), true);
+eq('field names: plain keys keep the class syntax', gen({ a: 1 }, 'typeddict').includes('class Root(TypedDict):'), true);
+
 // B2: values beside the objects of a root array stay in a <root>Array alias (List[Union[...]]).
 const B2_IN = [{ a: 1 }, 2, 'x', null, [1], { a: 3, b: true }];
 eq('B2: root array keeps non-object values in RootArray', E.generatePython(B2_IN, 'Root', 'dataclass').code.split('\n'), [
@@ -171,10 +184,20 @@ if (py.status !== 0 || py.stdout.trim() !== 'True') {
     const c = spawnSync(PY3, ['-c', gen(v, mode) + "\nprint('ok')"], { encoding: 'utf8' });
     eq('topo: case ' + (i + 1) + ' (' + mode + ') runs in Python', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
   }
+  {
+    const data = JSON.stringify(JSON.stringify(KW_SAMPLES));
+    const dc = gen(KW_SAMPLES, 'dataclass');
+    const r1 = spawnSync(PY3, ['-c', dc + `\nimport json, re\nSRC = ${JSON.stringify(dc)}\nmapping = {json.loads(m.group(2)): m.group(1) for m in re.finditer(r'^    (\\S+): .*  # JSON key: (".*")$', SRC, re.M)}\nfor d in json.loads(${data}):\n    Root(**{mapping.get(k, k): v for k, v in d.items()})\nprint('ok')`], { encoding: 'utf8' });
+    eq('field names: dataclass output runs and builds every sample through the noted keys', r1.stdout.trim() || r1.stderr.trim().split('\n').pop(), 'ok');
+    const td = gen(KW_SAMPLES, 'typeddict');
+    const r2 = spawnSync(PY3, ['-c', td + `\nimport json\ndata = json.loads(${data})\nprint('ok' if sorted(Root.__required_keys__ | Root.__optional_keys__) == sorted({k for d in data for k in d}) and sorted(Root.__required_keys__) == ['class', 'ok'] else sorted(Root.__required_keys__ | Root.__optional_keys__))`], { encoding: 'utf8' });
+    eq('field names: TypedDict output keeps every JSON key', r2.stdout.trim() || r2.stderr.trim().split('\n').pop(), 'ok');
+  }
   const ids = spawnSync(PY3, ['-c', 'import json, keyword, sys\nnames = json.loads(sys.stdin.read())\nprint(json.dumps([n for n in names if not n.isidentifier() or keyword.iskeyword(n)]))'], { input: JSON.stringify(a4Names), encoding: 'utf8' });
   eq('A4: every class name is a Python identifier and not a keyword', ids.stdout.trim(), '[]');
   for (const mode of ['dataclass', 'typeddict']) {
-    const c = spawnSync(PY3, ['-c', gen(A4_RUN, mode) + `\nimport json\n${mode === 'dataclass' ? 'Root(**json.loads(' + JSON.stringify(JSON.stringify(A4_RUN)) + '))' : 'pass'}\nprint('ok')`], { encoding: 'utf8' });
+    const src = gen(A4_RUN, mode);
+    const c = spawnSync(PY3, ['-c', src + `\nimport json, re\nmapping = {json.loads(m.group(2)): m.group(1) for m in re.finditer(r'^    (\\S+): .*  # JSON key: (".*")$', ${JSON.stringify(src)}, re.M)}\n${mode === 'dataclass' ? 'Root(**{mapping.get(k, k): v for k, v in json.loads(' + JSON.stringify(JSON.stringify(A4_RUN)) + ').items()})' : 'pass'}\nprint('ok')`], { encoding: 'utf8' });
     eq('A4: non-ASCII and reserved-name keys run in Python (' + mode + ')', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
   }
 }
@@ -186,8 +209,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 17488);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'd2f2ef5e809b5a258f6013e7b5a6401c7bd92fa45e7f85260963527afe2bf712');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 20824);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '67f7e2bd0ecd0000fb69c939c896735d584030257d6db9416766186b93e67140');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -331,7 +354,7 @@ try {
     {
       const a = lifecyclePage(lang); golden(a);
       a.input('[{"constructor": 1, "toString": "x"}, {"__proto__": true, "hasOwnProperty": null}]'); a.advance(300);
-      eq(lang + ': A1 prototype-named keys in a root array generate fields', ['constructor: Optional[int] = None', 'toString: Optional[str] = None', '__proto__: Optional[bool] = None', 'hasOwnProperty: Optional[Any] = None'].every((l) => a.get('jpdc-output-code').textContent.includes(l)), true);
+      eq(lang + ': A1 prototype-named keys in a root array generate fields', ['constructor: Optional[int] = None', 'toString: Optional[str] = None', '_proto__: Optional[bool] = None  # JSON key: "__proto__"', 'hasOwnProperty: Optional[Any] = None'].every((l) => a.get('jpdc-output-code').textContent.includes(l)), true);
       a.get('jpdc-root-name').value = 'toString'; a.input('{"a": 1}'); a.advance(300);
       eq(lang + ': A2 root name toString generates its class', a.get('jpdc-output-code').textContent.includes('class toString:') && a.get('jpdc-status').textContent === pageLabels[lang].msgGenOne, true);
       a.get('jpdc-root-name').value = 'Root'; a.input('{"a": 1}'); a.advance(300);
@@ -405,7 +428,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "b8774248fb908a30a899376725b64d1fe65cb7df036aae9a95728f33384ef90d"
+  "scriptSHA": "d4fb5e364de684195d1e7208e69c83f9793aea25bf0528388a2696ab1e740ea0"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -523,6 +546,10 @@ const CLAIMS = [
 if (!pydBin) { skips++; console.log('SKIP: Python 3.11+ with Pydantic 2 not available (set PYDANTIC_PYTHON)'); }
 else {
   console.log('Pydantic ' + runPy(pydBin, 'import pydantic; print(pydantic.VERSION)').stdout.trim());
+  {
+    const r = runPy(pydBin, E.generatePython(KW_SAMPLES, 'Root', 'pydantic').code + `\nimport json\ndata = json.loads(${JSON.stringify(JSON.stringify(KW_SAMPLES))})\nrs = [Root.model_validate(d) for d in data]\nprint('ok' if [r.model_dump(by_alias=True, exclude_unset=True) for r in rs] == data else [r.model_dump(by_alias=True, exclude_unset=True) for r in rs])`);
+    eq('field names: Pydantic output parses every key through its alias and dumps the same JSON', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
+  }
   for (const [i, v] of TOPO_CASES.entries()) {
     const r = runPy(pydBin, E.generatePython(v, 'Root', 'pydantic').code + `\nimport json\nRoot.model_validate(json.loads(${JSON.stringify(JSON.stringify(v))}))\nprint('ok')`);
     eq('topo: case ' + (i + 1) + ' validates with Pydantic', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
