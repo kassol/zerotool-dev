@@ -296,9 +296,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
   h.input('jd-right', '{"x":3}');
   check(name + 'editing invalidates results without comparing', noResult(h.snap()) && !h.snap().status && h.tracked.length === 1);
   h.run(); click('jd-swap');
-  check(name + 'swap invalidates results and keeps manual comparison', noResult(h.snap()) && h.tracked.length === 2);
+  // Analytics: one event per pair of inputs (S2-7 review J6); the same pair compared again is not sent.
+  check(name + 'swap invalidates results and keeps manual comparison', noResult(h.snap()) && h.tracked.length === 1);
   eq(name + 'swap preserves exact text', h.snap().inputs, ['{"x":2}', '{"x":1}']);
   click('jd-run'); eq(name + 'manual reverse patch', JSON.parse(h.snap().patch), [{ op: 'replace', path: '/x', value: 1 }]);
+  check(name + 'the reversed pair is a new pair and is sent', h.tracked.length === 2);
+  click('jd-run'); check(name + 'comparing the same pair again is not sent', h.tracked.length === 2);
   for (const [id, value] of [['jd-left', ''], ['jd-left', '{'], ['jd-right', '{']]) {
     h.run(); h.nodes.get(id).value = value; click('jd-run');
     check(name + id + '/' + value + ' error removes old output and preserves inputs', noResult(h.snap()) && h.nodes.get('jd-status').className.includes('error') && h.nodes.get(id).value === value);
@@ -310,7 +313,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
     check(name + key + '/' + meta + ' clears all result state and persists once', noResult(h.snap()) && h.snap().inputs.every(x => !x) && !h.snap().status && h.persisted.length === count + 1);
   }
   h.run(); const saved = h.snap(); h.key('l', 'outside'); eq(name + 'outside shortcut has no effect', h.snap(), saved);
-  const count = h.tracked.length; h.key('Enter'); check(name + 'CtrlEnter compares once', h.tracked.length === count + 1);
+  h.input('jd-right', '{"x":"enter"}'); const count = h.tracked.length; h.key('Enter'); check(name + 'CtrlEnter compares once', h.tracked.length === count + 1 && JSON.parse(h.snap().patch)[0].value === 'enter');
+  click('jd-clear'); h.input('jd-left', '{"x":1}'); h.input('jd-right', '{"x":"enter"}'); click('jd-run'); check(name + 'after Clear the same pair is sent again', h.tracked.length === count + 2);
   for (const action of ['clear', 'input', 'swap', 'new', 'error', 'shortcut']) for (const rejected of [false, true]) {
     h.run(); click('jd-copy-patch'); const index = h.copies.length - 1;
     eq(name + 'copies exact complete patch', h.copies[index].text, h.snap().patch);
@@ -361,6 +365,8 @@ process.removeListener('unhandledRejection', onUnhandled);
     eq(lang + ' overflow and long decimal are named with the patch', r.status,
       fill(L.msgChanges, { n: 2 }) + sep + fill(L.msgLossy || 'msgLossy', { list: side.after + ' /p: 1e400 → Infinity; ' + side.after + ' /q: 0.1000000000000000055511 → 0.1' }));
     eq(lang + ' the patch still shows what JavaScript read', JSON.parse(r.patch), [{ op: 'replace', path: '/p', value: null }, { op: 'add', path: '/q', value: 0.1 }]);
+    r = compare('{"a":9007199254740994,"b":1e20}', '{"a":9007199254740994,"b":100000000000000000000}');
+    eq(lang + ' exact large integers are not listed', [r.status, n('jd-status').className], [L.msgNoDiff, 'jd-status success']);
     r = compare('{"a":1,"a":2,"m/n":{"k":0,"k":1}}', '{"a":2,"m/n":{"k":1}}');
     eq(lang + ' duplicate keys are named', r.status,
       L.msgNoDiff + sep + fill(L.msgDup || 'msgDup', { list: side.before + ' /a; ' + side.before + ' /m~1n/k' }));
