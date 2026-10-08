@@ -347,6 +347,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before
   const p = page(lang, order), tag = lang + '/' + order;
   const input = p.get('cron-input'), result = p.get('cron-results'), status = p.get('cron-status');
   eq(tag + '/default input', input.value, '0 9 * * 1-5');
+  // The automatic parse on page load is not a user action: no analytics event.
+  eq(tag + '/no analytics event on load', p.tracks.length, 0);
   eq(tag + '/initial result', [result.querySelectorAll('.cron-field-row').length, result.querySelectorAll('.cron-next-list li').length, status.textContent], [5, 10, S[lang].valid]);
   const old = result.textContent;
   p.input('* * * * *'); eq(tag + '/input remains manual', result.textContent, old);
@@ -469,7 +471,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   p.input('0 0 * * 7'); p.get('cron-parse').click();
   eq('v2 weekday seven remains numeric in the real breakdown', p.get('cron-results').querySelectorAll('.cron-field-vals')[4].textContent, '7');
 }
-eq('v2 full engine, rendering and FIX event tail unchanged', hash(source.slice(source.indexOf('      /* ── engine:start'), source.indexOf('  </script>'))), '4c72a60dddd96e6897b0474d3529f3bcbc3bdc09df9706006ed955a759288538');
+// Updated 2026-10-08 (S2-3c): parse() sends the analytics event only after the automatic parse on load.
+eq('v2 full engine, rendering and FIX event tail unchanged', hash(source.slice(source.indexOf('      /* ── engine:start'), source.indexOf('  </script>'))), 'fcd0e986354b73bd89cf2e5ac6726413441a3eeaa0a874c42bc600726554b06d');
 let moduleError = '';
 try { await require('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' }); } catch (error) { moduleError = String(error); }
 eq('v2 Astro generated module parses', moduleError, '');
