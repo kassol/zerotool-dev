@@ -489,8 +489,34 @@ const t_en = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1])
   // The symbolic field takes ASCII only (the ja page says so): a full-width mode string is an error.
   p.input('chmod-symbolic', 'ｒｗ－ｒ－－ｒ－－');
   same('full-width mode string is rejected', [state(p).errors[1][1], state(p).commands[0]], [true, 'chmod 755 filename']);
-  const m = source.match(/id="chmod-numeric"[^>]*maxlength="(\d+)"/);
-  eq('numeric field accepts a 0o prefix and four digits (maxlength 6)', m && m[1], '6');
+}
+{
+  // Pasting goes through the field's maxlength first (the browser cuts the pasted text to that
+  // many UTF-16 code units). With maxlength 6, " 0o2775" became " 0o277" and was read as 277
+  // without an error. The field now has no maxlength; the length is checked by the reading rule.
+  const paste = (p, text) => {
+    const ml = p.get('chmod-numeric').getAttribute('maxlength');
+    p.input('chmod-numeric', ml === null ? text : text.slice(0, +ml));
+  };
+  for (const [text, sym, cmd] of [
+    [' 0o2775', 'rwxrwsr-x', 'chmod 2775 filename'],
+    [' 0o2775 ', 'rwxrwsr-x', 'chmod 2775 filename'],
+    ['  0O4755  ', 'rwsr-xr-x', 'chmod 4755 filename'],
+    ['0o1777\n', 'rwxrwxrwt', 'chmod 1777 filename'],
+    ['　０ｏ２７７５', 'rwxrwsr-x', 'chmod 2775 filename'],
+    ['　４７５５　', 'rwsr-xr-x', 'chmod 4755 filename'],
+    ['０Ｏ６４４', 'rw-r--r--', 'chmod 644 filename'],
+  ]) {
+    const p = page();
+    paste(p, text);
+    same(`pasted ${JSON.stringify(text)} is read in full`, [state(p).values[1], state(p).commands[0], state(p).errors[0]], [sym, cmd, ['', false]]);
+  }
+  for (const text of [' 0o27751', '0o77777', '27751', '　０ｏ２７７５１']) {
+    const p = page();
+    paste(p, text);
+    same(`pasted ${JSON.stringify(text)} (five digits) shows the error`, [state(p).errors[0], state(p).commands[0]], [[t_en.errInvalidOctal, true], 'chmod 755 filename']);
+  }
+  eq('numeric field has no maxlength that cuts a pasted value', /id="chmod-numeric"[^>]*maxlength=/.test(source), false);
 }
 
 
