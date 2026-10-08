@@ -188,9 +188,9 @@ export type Payment = z.infer<typeof PaymentSchema>;`}</code></pre>
 
 <h2>한글 속성 이름</h2>
 
-<p>이 도구의 토크나이저는 이름으로 영문자, 숫자, <code>_</code>, <code>$</code>만 읽고 나머지 문자는 오류 없이 건너뜁니다. 따옴표 없는 한글 키가 있는 다음 interface에서는:</p>
+<p>속성 이름과 타입 이름은 TypeScript 식별자 규칙으로 읽으므로 한글을 그대로 쓸 수 있습니다. 따옴표 없는 한글 키가 있는 다음 interface에서는:</p>
 
-{/* ttz-check: {"schema": "MemberSchema", "accepts": [{"id": "m1", "이름": "홍길동", "닉네임": "길동"}], "rejects": [{"id": "m1"}], "drops": ["이름"]} */}
+{/* ttz-check: {"schema": "MemberSchema", "accepts": [{"id": "m1", "이름": "홍길동", "닉네임": "길동"}], "rejects": [{"id": "m1", "닉네임": "길동"}]} */}
 
 <pre><code>{`interface Member {
   id: string;
@@ -202,19 +202,23 @@ export type Payment = z.infer<typeof PaymentSchema>;`}</code></pre>
 
 export const MemberSchema = z.object({
   id: z.string(),
+  이름: z.string(),
   "닉네임": z.string(),
 });
 export type Member = z.infer<typeof MemberSchema>;`}</code></pre>
 
-<p><code>이름</code>이 출력에서 사라지고, 상태 표시는 그대로 "스키마 1개를 생성했습니다."입니다. <code>이름</code>이 들어 있는 데이터도 검증은 통과하지만 결과 객체에서는 지워집니다. 따옴표로 감싼 <code>"닉네임"</code>은 그대로 남으니 한글 키는 모두 따옴표로 감싸세요.</p>
+<p><code>이름</code>은 그대로 속성 이름이 되고, 따옴표로 감싼 <code>"닉네임"</code>은 따옴표째 출력됩니다. <code>이름</code>이 빠진 데이터는 검증에 실패합니다. 타입 이름도 한글로 쓸 수 있어 <code>{"interface 회원"}</code>은 <code>회원Schema</code>가 됩니다.</p>
 
-{/* ttz-error: {"message": "Expected identifier, got \"{\""} */}
+{/* ttz-error: {"message": "3행 3열: \"이름\" 뒤에 \":\"가 없습니다."} */}
 
-<p>타입 이름이 한글이면 파싱 오류가 납니다. 입력:</p>
+<p>콜론을 빠뜨리면 그 속성을 건너뛰지 않고 위치와 함께 오류를 냅니다. 입력:</p>
 
-<pre><code>{`interface 회원 { id: string }`}</code></pre>
+<pre><code>{`interface 회원 {
+  id: string;
+  이름 string;
+}`}</code></pre>
 
-<p>상태 표시에 <code>{'파싱 오류: Expected identifier, got "{"'}</code>가 나오고 출력은 지워집니다. 오류 본문은 영어이며 파서가 예상하지 못한 첫 토큰만 알려 줍니다. 닫는 중괄호가 없는 <code>{"interface A { a: string"}</code>는 <code>{'Expected "}" got ""'}</code>, <code>const</code> 문만 있는 입력은 "interface 또는 type 선언을 찾을 수 없습니다."가 됩니다.</p>
+<p>상태 표시에 <code>{'파싱 오류: 3행 3열: "이름" 뒤에 ":"가 없습니다.'}</code>가 나오고 출력은 지워집니다. 열은 글자 단위로 셉니다. 그 밖의 구문 오류 본문은 영어이며 파서가 예상하지 못한 첫 토큰만 알려 줍니다. 닫는 중괄호가 없는 <code>{"interface A { a: string"}</code>는 <code>{'Expected "}" got ""'}</code>, <code>const</code> 문만 있는 입력은 "interface 또는 type 선언을 찾을 수 없습니다."가 됩니다.</p>
 
 <h2>TypeScript로 표현할 수 없는 규칙 추가</h2>
 
@@ -240,6 +244,6 @@ export type Member = z.infer<typeof MemberSchema>;`}</code></pre>
   <li><strong>enum은 값을 복사합니다.</strong> 스키마는 enum의 값(<code>"RED"</code>, <code>0</code>)을 검사하며 런타임 enum 객체를 쓰지 않습니다. enum을 import할 수 있다면 <code>z.nativeEnum(Color)</code>(Zod 3)나 <code>z.enum(Color)</code>(Zod 4)도 같은 결과입니다.</li>
   <li><strong>인덱스 시그니처의 키</strong>는 항상 <code>z.string()</code>입니다. <code>.catchall()</code>과 함께 쓰면 선언된 속성도 자기 스키마에 맞아야 합니다.</li>
   <li><strong>리터럴 키의 Record</strong>(<code>{'Record<"read" | "write", boolean>'}</code>)는 <code>{'z.record(z.enum(["read", "write"]), z.boolean())'}</code>가 됩니다. Zod 4는 TypeScript처럼 두 키를 모두 요구하고, Zod 3는 하나만 있어도 통과시킵니다.</li>
-  <li><strong>이름은 영문자만 읽습니다.</strong> 한글뿐 아니라 악센트가 있는 라틴 문자도 중간에 잘립니다. <code>{"prénom: string"}</code>은 <code>{"nom: z.string()"}</code>이 됩니다.</li>
+  <li><strong>전각 문자는 콜론만 반각으로 읽습니다.</strong> 전각 물음표 등은 알 수 없는 문자로 건너뛰므로 <code>{"age？: number"}</code>는 선택적 속성이 되지 않고 <code>{"age: z.number()"}</code>가 됩니다.</li>
   <li><strong>변환하지 않는 것:</strong> 제네릭 타입 매개변수, class, 메서드(건너뜀), 매핑된 타입과 조건부 타입, <code>keyof</code>, <code>typeof</code>. 템플릿 리터럴 타입은 <code>z.string()</code>이 됩니다.</li>
 </ul>

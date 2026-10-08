@@ -206,11 +206,11 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
   <li><code>{"prop?: T | null"}</code> は <code>{"z.union([T, z.null()]).optional()"}</code> になります。キーがなくても値が <code>{"null"}</code> でもよく、<code>{"T.nullish()"}</code> と同じ意味です。</li>
 </ul>
 
-<h2>日本語のプロパティ名と全角コロン</h2>
+<h2>日本語の名前と全角コロン</h2>
 
-<p>このツールの字句解析は、名前として英字・数字・<code>_</code>・<code>$</code> だけを読み、それ以外の文字はエラーにせず読み飛ばします。クォートなしの <code>氏名</code> と、IME で入力した全角コロン <code>：</code> を含む次の interface では：</p>
+<p>プロパティ名と型名は TypeScript の識別子の規則で読むので、日本語をそのまま書けます。IME で入力した全角コロン <code>：</code> は、文字列リテラルの外では半角の <code>:</code> として読みます。クォートなしの <code>氏名</code> と、全角コロンを含む次の interface では：</p>
 
-{/* ttz-check: {"schema": "MemberSchema", "accepts": [{"id": "m1", "氏名": "山田太郎", "フリガナ": "ヤマダタロウ", "age": 30}], "rejects": [{"id": "m1"}], "drops": ["氏名", "age"]} */}
+{/* ttz-check: {"schema": "MemberSchema", "accepts": [{"id": "m1", "氏名": "山田太郎", "フリガナ": "ヤマダタロウ", "age": 30}], "rejects": [{"id": "m1", "フリガナ": "ヤマダタロウ", "age": 30}, {"id": "m1", "氏名": "山田太郎", "フリガナ": "ヤマダタロウ", "age": "30"}]} */}
 
 <pre><code>{`interface Member {
   id: string;
@@ -223,19 +223,24 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
 
 export const MemberSchema = z.object({
   id: z.string(),
+  氏名: z.string(),
   "フリガナ": z.string(),
+  age: z.number(),
 });
 export type Member = z.infer<typeof MemberSchema>;`}</code></pre>
 
-<p><code>氏名</code> と <code>age</code> の 2 項目が消え、ステータスは「1 個のスキーマを生成しました。」のままです。生成されたスキーマは余分なキーを取り除くので、<code>氏名</code> と <code>age</code> を含むデータも検証を通り、結果にはこの 2 つが残りません。クォートで囲んだ <code>"フリガナ"</code> はそのまま残ります。日本語のキーはクォートで囲み、コロンは半角で入力してください。</p>
+<p>4 項目すべてが残り、<code>氏名</code> はそのままプロパティ名に、クォートで囲んだ <code>"フリガナ"</code> はクォート付きで出力されます。入力全体を NFKC で正規化しないのは、文字列リテラル型まで変わってしまうためです（<code>{'"ﾎｯｶｲﾄﾞｳ"'}</code> が <code>{'"ホッカイドウ"'}</code> になります）。型名も日本語で書け、<code>{"interface 会員"}</code> は <code>会員Schema</code> になります。</p>
 
-{/* ttz-error: {"message": "Expected identifier, got \"{\""} */}
+{/* ttz-error: {"message": "3 行 3 列：「氏名」の後に「:」がありません。"} */}
 
-<p>型名が日本語だと解析エラーになります。入力：</p>
+<p>コロンを書き忘れると、そのプロパティを読み飛ばさず、位置付きのエラーになります。入力：</p>
 
-<pre><code>{`interface 会員 { id: string }`}</code></pre>
+<pre><code>{`interface 会員 {
+  id: string;
+  氏名 string;
+}`}</code></pre>
 
-<p>ステータスには <code>{'解析エラー：Expected identifier, got "{"'}</code> と表示され、出力は消えます。エラー本文は英語で、パーサーが予期しなかった最初のトークンだけを示します。閉じ括弧のない <code>{"interface A { a: string"}</code> は <code>{'Expected "}" got ""'}</code>、<code>const</code> 文だけの入力は「interface または type 宣言が見つかりません。」です。</p>
+<p>ステータスには <code>{'解析エラー：3 行 3 列：「氏名」の後に「:」がありません。'}</code> と表示され、出力は消えます。列は文字単位で数えます。その他の構文エラーは英語のままで、パーサーが予期しなかった最初のトークンだけを示します。閉じ括弧のない <code>{"interface A { a: string"}</code> は <code>{'Expected "}" got ""'}</code>、<code>const</code> 文だけの入力は「interface または type 宣言が見つかりません。」です。</p>
 
 <h2>TypeScript では書けないルールを足す</h2>
 
@@ -261,6 +266,6 @@ export type Member = z.infer<typeof MemberSchema>;`}</code></pre>
   <li><strong>enum は値をコピーします。</strong>スキーマが検証するのは enum の値（<code>"RED"</code>、<code>0</code>）で、実行時の enum オブジェクトではありません。enum を import できるなら <code>z.nativeEnum(Color)</code>（Zod 3）や <code>z.enum(Color)</code>（Zod 4）でも同じです。</li>
   <li><strong>インデックスシグネチャのキー</strong>は常に <code>z.string()</code> です。<code>.catchall()</code> と併用すると、宣言済みのプロパティも自身のスキーマに合う必要があります。</li>
   <li><strong>リテラルキーの Record</strong>（<code>{'Record<"read" | "write", boolean>'}</code>）は <code>{'z.record(z.enum(["read", "write"]), z.boolean())'}</code> になります。Zod 4 は TypeScript と同じく両方のキーを要求し、Zod 3 は片方だけでも通します。</li>
-  <li><strong>名前は英字だけを読みます。</strong>日本語のほか、アクセント付きのラテン文字も途中で切れます。<code>{"prénom: string"}</code> は <code>{"nom: z.string()"}</code> になります。</li>
+  <li><strong>全角で読むのはコロンだけです。</strong>全角の疑問符などは未知の文字として読み飛ばすため、<code>{"age？: number"}</code> は省略可能にならず <code>{"age: z.number()"}</code> になります。</li>
   <li><strong>変換しないもの：</strong>ジェネリックの型パラメーター、class、メソッド（読み飛ばし）、Mapped Types と Conditional Types、<code>keyof</code>、<code>typeof</code>。テンプレートリテラル型は <code>z.string()</code> になります。</li>
 </ul>

@@ -40,7 +40,8 @@ if (startIndex < 0 || endIndex <= startIndex) {
   console.error('FAIL: could not locate the engine block in TypescriptToZodTool.astro');
   process.exit(1);
 }
-const E = new Function('var MSG_NO_DECL = "No interface or type declarations found.";\n' + source.slice(startIndex, endIndex) + '\nreturn { tokenize, parse, generate };')();
+const engineFor = (noDecl, noColon) => new Function('var MSG_NO_DECL = ' + JSON.stringify(noDecl) + ';\nvar MSG_NO_COLON = ' + JSON.stringify(noColon) + ';\n' + source.slice(startIndex, endIndex) + '\nreturn { tokenize, parse, generate };')();
+const E = engineFor('No interface or type declarations found.', 'Line {line}, column {col}: "{name}" needs ":" before its type.');
 const convert = (src) => E.generate(E.parse(E.tokenize(src)));
 const zods = { v3: require('zod').z, v4: require('zod/v4').z };
 
@@ -139,7 +140,8 @@ function loadTs(code, z) {
   return module.exports;
 }
 function checkCase(label, input, samples) {
-  const out = convert(input);
+  let out;
+  try { out = convert(input); } catch (e) { eq(label + ': converts', e.message, 'no error'); return ''; }
   for (const entry of ['zod', 'zod/v4']) eq(label + ': tsc strict (' + entry + ')', tsErrors(out, entry), []);
   for (const [v, z] of Object.entries(zods)) {
     let S;
@@ -237,13 +239,32 @@ for (const [v, z] of Object.entries(zods)) {
   const { ASchema } = load(nullish, z);
   eq(v + ': prop?: T | null accepts a missing key, null and a value', [{}, { p: null }, { p: 'x' }].map((x) => ASchema.safeParse(x).success), [true, true, true]);
 }
-// Names: only A–Z, a–z, digits, _ and $ are read; other characters are skipped without an error
-const accented = convert('interface Café { prénom: string; id: string }');
-eq('prose: Café → CafSchema', accented.includes('export const CafSchema = z.object({'), true);
-eq('prose: prénom → nom', accented.includes('  nom: z.string(),'), true);
-eq('prose: 名前 without quotes is dropped', convert('interface U { 名前: string; age: number }').includes('名前'), false);
-eq('prose: quoted 名前 is kept', convert('interface U { "名前": string }').includes('  "名前": z.string(),'), true);
-eq('prose: full-width colon drops the property', convert('interface U { id: string; age：number }').includes('age'), false);
+// ---------- engine fix 3 (S2-6b): Unicode names, full-width colon, missing colon ----------
+// Names were read as A–Z, a–z, digits, _ and $ only, and other characters were skipped without an error
+// (名前 dropped, prénom → nom, Café → Caf). Names now follow Unicode ID_Start / ID_Continue (plus $ and _,
+// as in TypeScript). A full-width colon U+FF1A outside string literals is read as ":" (the whole input is
+// not NFKC-normalised, because that would change string literal types). A property without ":" is a
+// parse error with its line and column.
+{
+  const uni = checkCase('Unicode names', 'interface Café { prénom: string; 名前: string; "닉네임": string; id: string }\ninterface 会員 { 氏名: string; café: Café }', [
+    ['会員Schema', { 氏名: '山田', café: { prénom: 'Ana', 名前: '名', 닉네임: '닉', id: '1' } }, true],
+    ['会員Schema', { 氏名: '山田', café: { prénom: 'Ana', id: '1', 닉네임: '닉' } }, false],
+  ]);
+  eq('Unicode: Café keeps its name', uni.includes('export const CaféSchema = z.object({'), true);
+  eq('Unicode: prénom and 名前 are properties', ['  prénom: z.string(),', '  名前: z.string(),', '  "닉네임": z.string(),'].map((l) => uni.includes(l)), [true, true, true]);
+  eq('Unicode: 会員 is a declaration', uni.includes('export const 会員Schema = z.object({'), true);
+  const fw = checkCase('full-width colon', 'interface U { id: string; age：number; label: "a：b" }', [
+    ['USchema', { id: '1', age: 3, label: 'a：b' }, true],
+    ['USchema', { id: '1', label: 'a：b' }, false],
+  ]);
+  eq('full-width colon is read as ":"', fw.includes('  age: z.number(),'), true);
+  eq('full-width colon inside a string literal type is kept', fw.includes('  label: z.literal("a：b"),'), true);
+}
+const parseError = (src) => { try { convert(src); return null; } catch (e) { return e.message; } };
+eq('missing colon: error with line and column', parseError('interface U {\n  id: string;\n  age number;\n}'), 'Line 3, column 3: "age" needs ":" before its type.');
+eq('missing colon: a property with no type', parseError('interface U { a; }'), 'Line 1, column 15: "a" needs ":" before its type.');
+eq('missing colon: column counts code points', parseError('type T = { "😀": string; 名前 }'), 'Line 1, column 25: "名前" needs ":" before its type.');
+eq('missing colon: quoted key is quoted in the message', parseError('interface U { "収货 人" string }'), 'Line 1, column 15: "収货 人" needs ":" before its type.');
 eq('FAQ: Box<T> value → z.unknown() /* T */', convert('interface Box<T> { value: T }').includes('  value: z.unknown() /* T */,'), true);
 let classOnly = '';
 try { convert('class User { name: string }'); } catch (e) { classOnly = e.message; }
@@ -473,7 +494,8 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
     // blocks after the marker are the TypeScript input and the engine output. The output must equal the engine, pass
     // tsc strict against zod 3.25 and zod/v4, and load under both; "accepts" must parse, "rejects" must fail, and the
     // parsed result of the first accepted value must not contain the keys in "drops" (Zod strips unknown keys).
-    // {/* ttz-error: {"message": "..."} */}: the first <pre> block after the marker gives "Parse error: " + message.
+    // {/* ttz-error: {"message": "..."} */}: the first <pre> block after the marker gives the page language's
+    // "Parse error: " + message (the engine runs with that language's messages).
     const notes=annotations(body,'ttz-check');
     eq(lang+' has at least 2 ttz-check examples',notes.length>=2,true);
     notes.forEach((note,i)=>{
@@ -491,7 +513,8 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
     });
     for(const note of annotations(body,'ttz-error')){
       const block=fencedBlocks(note.after).find(b=>b.lang==='pre');let message='';
-      try{convert(block.text);}catch(e){message=e.message;}
+      const LE=engineFor(strings[lang].msgNoDecl,strings[lang].msgNoColon);
+      try{LE.generate(LE.parse(LE.tokenize(block.text)));}catch(e){message=e.message;}
       eq(lang+' ttz-error example gives '+note.spec?.message,message,note.spec?.message);
       eq(lang+' ttz-error message is quoted on the page',note.after.includes(strings[lang].msgError+note.spec?.message),true);
     }

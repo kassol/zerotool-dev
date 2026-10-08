@@ -183,11 +183,11 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
   <li><code>{"prop?: T | null"}</code> 变成 <code>{"z.union([T, z.null()]).optional()"}</code>：键可以不存在，值也可以是 <code>{"null"}</code>，与 <code>{"T.nullish()"}</code> 相同。</li>
 </ul>
 
-<h2>中文属性名与全角冒号</h2>
+<h2>中文名称与全角冒号</h2>
 
-<p>工具的分词器只把英文字母、数字、<code>_</code> 和 <code>$</code> 当作名字的一部分，其他字符直接跳过，不报错。下面这段 interface 里，<code>备注</code> 没加引号，<code>amount</code> 后面是中文输入法打出的全角冒号 <code>：</code>：</p>
+<p>属性名和类型名按 TypeScript 的标识符规则读取，可以直接写中文。中文输入法打出的全角冒号 <code>：</code> 在字符串字面量之外按半角 <code>:</code> 读取。下面这段 interface 里，<code>备注</code> 没加引号，<code>amount</code> 后面是全角冒号：</p>
 
-{/* ttz-check: {"schema": "OrderSchema", "accepts": [{"id": "A1", "amount": 99, "备注": "尽快发货", "收货人": "张三"}], "rejects": [{"id": "A1"}], "drops": ["amount", "备注"]} */}
+{/* ttz-check: {"schema": "OrderSchema", "accepts": [{"id": "A1", "amount": 99, "备注": "尽快发货", "收货人": "张三"}], "rejects": [{"id": "A1", "amount": 99, "收货人": "张三"}, {"id": "A1", "amount": "99", "备注": "", "收货人": "张三"}]} */}
 
 <pre><code>{`interface Order {
   id: string;
@@ -200,19 +200,24 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
 
 export const OrderSchema = z.object({
   id: z.string(),
+  amount: z.number(),
+  备注: z.string(),
   "收货人": z.string(),
 });
 export type Order = z.infer<typeof OrderSchema>;`}</code></pre>
 
-<p><code>amount</code> 和 <code>备注</code> 都不见了，状态栏仍显示「已生成 1 个 schema。」。Zod 默认会去掉 schema 里没有的键，所以带着这两个字段的数据照样校验通过，<code>parse()</code> 的结果里却没有它们。加了引号的 <code>"收货人"</code> 原样保留。中文字段名请都加引号，冒号用半角。</p>
+<p>四个属性都在：<code>amount</code> 是 <code>z.number()</code>，<code>备注</code> 原样作为属性名，加了引号的 <code>"收货人"</code> 保留引号。只把冒号当作例外处理，是因为对整段输入做 NFKC 会连字符串字面量类型一起改掉（<code>{'"ＡＢ"'}</code> 会变成 <code>{'"AB"'}</code>）。类型名同样可以是中文，<code>{"interface 订单"}</code> 生成 <code>订单Schema</code>。</p>
 
-{/* ttz-error: {"message": "Expected identifier, got \"{\""} */}
+{/* ttz-error: {"message": "第 3 行第 3 列：“amount”后面缺少冒号“:”。"} */}
 
-<p>类型名是中文时直接报错。输入：</p>
+<p>漏写冒号时会报错并给出位置，不再跳过这个属性。输入：</p>
 
-<pre><code>{`interface 订单 { id: string }`}</code></pre>
+<pre><code>{`interface 订单 {
+  id: string;
+  amount number;
+}`}</code></pre>
 
-<p>状态栏显示 <code>{'解析错误：Expected identifier, got "{"'}</code>，输出清空。解析器的报错正文是英文，只给出它没料到的第一个记号；缺少右花括号的 <code>{"interface A { a: string"}</code> 报 <code>{'Expected "}" got ""'}</code>，只有 <code>const</code> 语句的输入提示「未找到 interface 或 type 声明。」。</p>
+<p>状态栏显示 <code>{'解析错误：第 3 行第 3 列：“amount”后面缺少冒号“:”。'}</code>，输出清空。列号按字符计，一个汉字算一列。其他语法错误的正文仍是英文，只给出解析器没料到的第一个记号：缺少右花括号的 <code>{"interface A { a: string"}</code> 报 <code>{'Expected "}" got ""'}</code>，只有 <code>const</code> 语句的输入提示「未找到 interface 或 type 声明。」。</p>
 
 <h2>补上 TypeScript 表达不了的规则</h2>
 
@@ -238,6 +243,6 @@ export type Order = z.infer<typeof OrderSchema>;`}</code></pre>
   <li><strong>enum 按值复制。</strong>schema 检查的是枚举的值（<code>"RED"</code>、<code>0</code>），不是运行时的枚举对象；如果项目里能 import 这个 enum，用 <code>z.nativeEnum(Color)</code>（Zod 3）或 <code>z.enum(Color)</code>（Zod 4）效果相同。</li>
   <li><strong>索引签名的键</strong>总是 <code>z.string()</code>；与 <code>.catchall()</code> 并用时，声明过的属性也要符合自己的 schema。</li>
   <li><strong>字面量键的 Record</strong>，如 <code>{'Record<"read" | "write", boolean>'}</code>，生成 <code>{'z.record(z.enum(["read", "write"]), z.boolean())'}</code>。Zod 4 要求两个键都在，与 TypeScript 一致；Zod 3 只有一个键也通过。</li>
-  <li><strong>名字只认英文字母。</strong>除了上面的中文名，带重音的拉丁字母也会被截断：<code>{"prénom: string"}</code> 变成 <code>{"nom: z.string()"}</code>。</li>
+  <li><strong>只有冒号按全角读取。</strong>全角问号等其他符号仍按未知字符跳过：<code>{"age？: number"}</code> 生成必填的 <code>{"age: z.number()"}</code>，不会变成可选。</li>
   <li><strong>不转换：</strong>泛型参数、class、方法（跳过）、映射类型与条件类型、<code>keyof</code>、<code>typeof</code>，模板字面量类型写成 <code>z.string()</code>。</li>
 </ul>
