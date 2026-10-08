@@ -294,7 +294,12 @@ const L = STRINGS[lang];
           .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
       }
 
-      function inferPythonType(value, key, classes, visiting, imp) {
+      function isPlainObject(v) {
+        return v !== null && typeof v === 'object' && !Array.isArray(v);
+      }
+
+      // ctx: classes (name → fields), taken (names in use) and shapes (stem + fields → name).
+      function inferPythonType(value, key, ctx, imp, parentStem) {
         if (value === null) {
           imp.any = true;
           return 'Any';
@@ -315,16 +320,15 @@ const L = STRINGS[lang];
           var primitiveTypes = [];
           for (var i = 0; i < value.length; i++) {
             var item = value[i];
-            if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+            if (isPlainObject(item)) {
               objectItems.push(item);
             } else {
-              var t = inferPythonType(item, key + 'Item', classes, visiting, imp);
+              var t = inferPythonType(item, key + 'Item', ctx, imp, parentStem);
               if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
             }
           }
           if (objectItems.length > 0) {
-            var itemClassName = toPascalCase(key) + 'Item';
-            mergeObjectsToClass(objectItems, itemClassName, classes, visiting, imp);
+            var itemClassName = mergeObjectsToClass(objectItems, toPascalCase(key) + 'Item', parentStem, ctx, imp);
             if (primitiveTypes.indexOf(itemClassName) === -1) primitiveTypes.push(itemClassName);
           }
           if (primitiveTypes.length === 0) {
@@ -336,70 +340,48 @@ const L = STRINGS[lang];
           return 'List[Union[' + primitiveTypes.join(', ') + ']]';
         }
 
-        if (typeof value === 'object') {
-          var className = toPascalCase(key);
-          buildClass(value, className, classes, visiting, imp);
-          return className;
-        }
+        if (typeof value === 'object') return mergeObjectsToClass([value], toPascalCase(key), parentStem, ctx, imp);
 
         imp.any = true;
         return 'Any';
       }
 
-      function buildClass(obj, name, classes, visiting, imp) {
-        if (Object.prototype.hasOwnProperty.call(classes, name) || visiting[name]) return;
-        visiting[name] = true;
-
-        var fields = [];
-        var keys = Object.keys(obj);
-        for (var i = 0; i < keys.length; i++) {
-          var k = keys[i];
-          var v = obj[k];
-          var type = inferPythonType(v, k, classes, visiting, imp);
-          var optional = (v === null);
-          if (optional) imp.optional = true;
-          fields.push({ key: k, type: type, optional: optional, missing: false, nullable: optional });
-        }
-        // Insert AFTER children so child classes appear first in output
-        classes[name] = fields;
-      }
-
-      function mergeObjectsToClass(objects, name, classes, visiting, imp) {
-        if (Object.prototype.hasOwnProperty.call(classes, name) || visiting[name]) return;
-        visiting[name] = true;
-
+      // One class from one or more objects. Every sample of a key counts: its objects merge into one
+      // class and its arrays into one list. A class with the same stem and fields is reused; another
+      // shape gets the parent stem as a prefix (b.meta → BMeta), then a number (Meta2).
+      function mergeObjectsToClass(objects, stem, parentStem, ctx, imp, fixedName) {
         var totalCount = objects.length;
         var allKeys = Object.create(null);
+        var keyList = [];
         for (var i = 0; i < objects.length; i++) {
           var ks = Object.keys(objects[i]);
           for (var j = 0; j < ks.length; j++) {
-            if (!allKeys[ks[j]]) allKeys[ks[j]] = [];
+            if (!allKeys[ks[j]]) { allKeys[ks[j]] = []; keyList.push(ks[j]); }
             allKeys[ks[j]].push(objects[i][ks[j]]);
           }
         }
 
         var fields = [];
-        var keyList = Object.keys(allKeys);
         for (var ki = 0; ki < keyList.length; ki++) {
           var k = keyList[ki];
           var vals = allKeys[k];
           var missing = vals.length < totalCount;
-          var nullable = false;
+          var present = vals.filter(function (v) { return v !== null; });
+          var nullable = present.length < vals.length;
+          var objs = present.filter(isPlainObject);
+          var arrs = present.filter(function (v) { return Array.isArray(v); });
 
           var types = [];
-          for (var vi = 0; vi < vals.length; vi++) {
-            if (vals[vi] === null) { nullable = true; continue; }
-            var t = inferPythonType(vals[vi], k, classes, visiting, imp);
-            if (types.indexOf(t) === -1) types.push(t);
+          for (var vi = 0; vi < present.length; vi++) {
+            var v = present[vi], t = null;
+            if (isPlainObject(v)) { if (v === objs[0]) t = mergeObjectsToClass(objs, toPascalCase(k), stem, ctx, imp); }
+            else if (Array.isArray(v)) { if (v === arrs[0]) t = inferPythonType([].concat.apply([], arrs), k, ctx, imp, stem); }
+            else t = inferPythonType(v, k, ctx, imp, stem);
+            if (t !== null && types.indexOf(t) === -1) types.push(t);
           }
 
           // PEP 484 lets int stand in for float, so int and float together are float.
           if (types.length === 2 && types.indexOf('int') >= 0 && types.indexOf('float') >= 0) types = ['float'];
-          // An empty array says nothing about the element type; drop List[Any] when another
-          // sample gives a typed list.
-          if (types.indexOf('List[Any]') >= 0 && types.some(function (x) { return x !== 'List[Any]' && x.indexOf('List[') === 0; })) {
-            types = types.filter(function (x) { return x !== 'List[Any]'; });
-          }
           if (types.length === 0) {
             imp.any = true;
             types = ['Any'];
@@ -417,8 +399,24 @@ const L = STRINGS[lang];
           if (optional) imp.optional = true;
           fields.push({ key: k, type: type, optional: optional, missing: missing, nullable: nullable });
         }
-        // Insert AFTER children so child classes appear first in output
-        classes[name] = fields;
+
+        var sig = JSON.stringify(fields.map(function (f) { return [f.key, f.type, f.optional, f.missing, f.nullable]; }));
+        if (!fixedName) {
+          for (var si = 0; si < ctx.shapes.length; si++) {
+            if (ctx.shapes[si].stem === stem && ctx.shapes[si].sig === sig) return ctx.shapes[si].name;
+          }
+        }
+        var name = fixedName || null;
+        var candidates = [stem, parentStem + stem];
+        for (var ci = 0; ci < candidates.length && !name; ci++) {
+          if (!ctx.taken[candidates[ci]]) name = candidates[ci];
+        }
+        for (var n = 2; !name; n++) if (!ctx.taken[stem + n]) name = stem + n;
+        ctx.taken[name] = true;
+        // Children are inserted first; topoSort orders the output anyway.
+        ctx.classes[name] = fields;
+        ctx.shapes.push({ stem: stem, sig: sig, name: name });
+        return name;
       }
 
       function renderClass(name, fields, mode) {
@@ -596,19 +594,18 @@ const L = STRINGS[lang];
 
       /* Classes for an object or an array of objects; null for other roots. */
       function generatePython(parsed, rootName, mode) {
-        var classes = Object.create(null), visiting = Object.create(null), imp = {};
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          buildClass(parsed, rootName, classes, visiting, imp);
+        var ctx = { classes: Object.create(null), taken: Object.create(null), shapes: [] }, imp = {};
+        ctx.taken[rootName] = true;
+        if (isPlainObject(parsed)) {
+          mergeObjectsToClass([parsed], rootName, '', ctx, imp, rootName);
         } else if (Array.isArray(parsed)) {
-          var objectItems = parsed.filter(function (v) {
-            return v !== null && typeof v === 'object' && !Array.isArray(v);
-          });
+          var objectItems = parsed.filter(isPlainObject);
           if (!objectItems.length) return null;
-          mergeObjectsToClass(objectItems, rootName, classes, visiting, imp);
+          mergeObjectsToClass(objectItems, rootName, '', ctx, imp, rootName);
         } else {
           return null;
         }
-        return { code: renderAll(classes, mode), count: Object.keys(classes).length };
+        return { code: renderAll(ctx.classes, mode), count: Object.keys(ctx.classes).length };
       }
       /* ── engine:end ── */
 

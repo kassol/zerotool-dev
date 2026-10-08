@@ -79,6 +79,22 @@ eq('pydantic unchanged', gen(SAMPLE, 'pydantic').split('\n').slice(-2), ['    no
 eq('int and float across samples → float', gen([{ p: 2 }, { p: 1.5 }], 'dataclass').split('\n').pop(), '    p: float');
 eq('primitive root → null', E.generatePython(5, 'Root', 'typeddict'), null);
 
+// A3: a class is reused only for the same fields; another shape under the same name gets the parent
+// prefix (then a number), and every sample of a key is merged (objects into one class, arrays into one list).
+eq('A3: b.meta keeps y in its own class', gen({ a: { meta: { x: 1 } }, b: { meta: { y: 2 } } }, 'dataclass').split('\n'), [
+  'from dataclasses import dataclass', '', '@dataclass', 'class Meta:', '    x: int', '', '@dataclass', 'class BMeta:', '    y: int', '',
+  '@dataclass', 'class A:', '    meta: Meta', '', '@dataclass', 'class B:', '    meta: BMeta', '', '@dataclass', 'class Root:', '    a: A', '    b: B',
+]);
+eq('A3: the same fields share one class', (gen({ a: { meta: { x: 1 } }, b: { meta: { x: 2 } } }, 'dataclass').match(/^class /gm) || []).length, 4);
+eq('A3: a third shape gets a number when the prefixed name is taken', /class Meta2:\n    z: int\n[\s\S]*class CB:\n    meta: Meta2\n\n@dataclass\nclass C:\n    b: CB/.test(gen({ a: { meta: { x: 1 } }, b: { meta: { y: 1 } }, c: { b: { meta: { z: 1 } } } }, 'dataclass')), true);
+{
+  // 気象庁 forecast excerpt (ja page): the second time series' areas carry pops.
+  const jma = [{ publishingOffice: '気象庁', timeSeries: [{ areas: [{ area: { name: '東京地方' }, weathers: ['晴れ'] }] }, { areas: [{ area: { name: '東京地方' }, pops: ['0', '10'] }] }] }];
+  const out = gen(jma, 'typeddict');
+  eq('A3: areas from every time series merge into one class', /class AreasItem\(TypedDict\):\n    area: Area\n    weathers: NotRequired\[List\[str\]\]\n    pops: NotRequired\[List\[str\]\]/.test(out), true);
+  eq('A3: objects of one key across samples merge into one class', gen([{ u: { a: 1 } }, { u: { b: 'x' } }], 'typeddict').includes('class U(TypedDict):\n    a: NotRequired[int]\n    b: NotRequired[str]'), true);
+}
+
 const py = spawnSync('python3', ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
 if (py.status !== 0 || py.stdout.trim() !== 'True') {
   skips++;
@@ -100,8 +116,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12384);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '7c7b9051b69a268857938664f6a1115950f3df51306c65ec7a71bb8819ccd118');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12709);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '3f88d8ff3801a6996bccebe00b0fbac3989a951601cae1a10821623547f2ac41');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -319,7 +335,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "160c211c1405876287b73dc1e902efa0f6a11ab38c3d03d76e12bd2b7589cbec"
+  "scriptSHA": "30f49467ba59be49f8a2fc1cdb8a80b24735d194400ef34308039704f4811e6e"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
