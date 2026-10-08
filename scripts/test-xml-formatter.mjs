@@ -295,7 +295,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 same('all FIX checks retained', [passes, failures], [923, 0]);
 // Updated 2026-10-08 (S2-4): status strings come from the page language and parseXml keeps only
 // the located libxml2 message; the engine block hash above is unchanged.
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var inputEl = document.getElementById('xf-input');"))), '1f22c61dad675a2f11231673316449d7014f97941e918a6ace461e83f7444af2');
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var inputEl = document.getElementById('xf-input');"))), '409803a2a158f57b93ab2b0355a186a50b3582a2d5a571fce10dfdd85745fdfb');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="xf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -322,6 +322,13 @@ same('xml-formatter registered convert', /['"]xml-formatter['"]\s*:\s*['"]conver
 const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
 same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
 
+// parseXmlError is copied verbatim from SvgToPngConverterTool.astro (Chrome / Safari libxml2 and
+// Firefox expat formats); the two copies must stay identical.
+{
+  const fnSrc = file => { const t = readFileSync(join(root, file), 'utf8'); const i = t.indexOf('function parseXmlError(text) {'); return i < 0 ? '' : t.slice(i, t.indexOf('\n      }\n', i) + 8); };
+  const a = fnSrc('src/components/tools/XmlFormatterTool.astro'), b = fnSrc('src/components/tools/SvgToPngConverterTool.astro');
+  same('parseXmlError is a verbatim copy of the svg-to-png-converter function', [a.length > 100, a === b], [true, true]);
+}
 // ---------- status line in the page language (S2-4, 2026-10-08) ----------
 // The status was English on every page ('Formatted.', 'Formatted successfully.', 'Minified
 // successfully.', 'Error: ') and repeated Chrome's "This page contains the following errors:"
@@ -348,7 +355,10 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   same(lang + ' error status: page-language prefix and the located parser message only', [p.get(cfg.status).textContent, p.get(cfg.status).className], [want.error + "error on line 1 at column 14: EntityRef: expecting ';'", 'xf-status error']);
   p.context.DOMParser = class { parseFromString() { const err = { localName: 'parsererror', textContent: 'XML Parsing Error: mismatched tag. Expected: </b>.\nLocation: about:blank\nLine Number 1, Column 10:' }; return { documentElement: err, querySelector: () => err }; } };
   p.get(cfg.primary).click();
-  same(lang + ' error status: other parser text keeps its first line', p.get(cfg.status).textContent, want.error + 'XML Parsing Error: mismatched tag. Expected: </b>.');
+  same(lang + ' error status: Firefox text keeps the reason and its line and column', p.get(cfg.status).textContent, want.error + 'XML Parsing Error: mismatched tag. Expected: </b>. Line Number 1, Column 10');
+  p.context.DOMParser = class { parseFromString() { const err = { localName: 'parsererror', textContent: 'Some other parser message\nsecond line' }; return { documentElement: err, querySelector: () => err }; } };
+  p.get(cfg.primary).click();
+  same(lang + ' error status: text without a position keeps its first line', p.get(cfg.status).textContent, want.error + 'Some other parser message');
 }
 // Worked examples on the tool pages, recomputed with the protected serializers. The DOM shapes
 // stand in for the browser's DOMParser (native parsing is browser QA, as for thinFixtures below).

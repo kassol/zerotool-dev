@@ -91,6 +91,21 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
         return new Array(parseInt(val, 10) + 1).join(' ');
       }
 
+      /* Copied verbatim from SvgToPngConverterTool.astro (test-xml-formatter.mjs compares them):
+         Chrome and Safari (libxml2) write "error on line N at column M: …", Firefox (expat)
+         writes "XML Parsing Error: …" and "Line Number N, Column M:" on a later line. */
+      function parseXmlError(text) {
+        var s = String(text || '');
+        var m = /line (\d+) at column (\d+):\s*([^\n]*)/.exec(s);
+        if (m) {
+          var detail = m[3].trim();
+          var ent = /Entity '([^']+)' not defined/.exec(detail);
+          return { line: +m[1], column: +m[2], detail: detail, entity: ent ? ent[1] : null };
+        }
+        m = /Line Number (\d+), Column (\d+)/.exec(s);
+        if (m) return { line: +m[1], column: +m[2], detail: s.split('\n')[0].trim(), entity: null };
+        return { line: null, column: null, detail: s.trim().slice(0, 200), entity: null };
+      }
       /* ── Parse XML with DOMParser ── */
       function parseXml(text) {
         var parser = new DOMParser();
@@ -103,10 +118,14 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
           : doc.querySelector('parsererror');
         if (errNode) {
           var errText = errNode.textContent || errNode.innerText || 'Invalid XML';
-          // Chrome and Safari (libxml2) put "This page contains the following errors:" before
-          // the located message; keep only "error on line N at column M: …".
-          var located = /error on line \d+ at column \d+:[^\n]*/.exec(errText);
-          throw new Error(located ? located[0] : errText.split('\n')[0]);
+          // Keep the parser's own words with the position: libxml2 "error on line N at column M: …"
+          // without Chrome's "This page contains the following errors:" header, or Firefox's
+          // first line followed by "Line Number N, Column M".
+          var info = parseXmlError(errText);
+          throw new Error(/line \d+ at column \d+:/.test(errText)
+            ? 'error on line ' + info.line + ' at column ' + info.column + ': ' + info.detail
+            : info.line != null ? info.detail + ' Line Number ' + info.line + ', Column ' + info.column
+            : errText.split('\n')[0]);
         }
         return doc;
       }
