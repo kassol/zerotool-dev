@@ -271,7 +271,7 @@ for (const lang of Object.keys(expected)) {
     p.input('SGVsbG8'); p.choose('b64mode', 'decode'); equal(lang + ': mode immediately converts current text', p.snapshot().output, 'Hello');
     rendered(p, 'SGVsbG8'); equal(lang + ': actual decode missing padding', p.snapshot().output, 'Hello');
     rendered(p, '%invalid');
-    same(lang + ': invalid decode clears output', [p.snapshot().output, p.snapshot().status], ['', T.invalidBase64]);
+    same(lang + ': invalid decode clears output and names the character', [p.snapshot().output, p.snapshot().status], ['', T.b64Err.badChar.replace('{n}', '1').replace('{c}', '%').replace('{u}', 'U+0025')]);
     p.choose('b64mode', 'encode'); rendered(p, 'a\uD800');
     equal(lang + ': actual surrogate error', p.snapshot().status, T.loneSurrogate.replace('{n}', '2'));
     rendered(p, 'restored'); equal(lang + ': valid input recovers', p.snapshot().output, 'cmVzdG9yZWQ=');
@@ -477,6 +477,81 @@ function b64Example({ spec, after, lang }) {
   for (const r of rows) check('worked example: ' + r.message, r.ok);
   check('worked examples found in all 4 pages', rows.filter((r) => r.rule.includes('matches the engine')).length >= 8);
 }
+// ---------- decode diagnosis (diagnose:start/end, outside the engine block) ----------
+// A failed decode used to show one generic sentence. The diagnosis names the first character outside
+// the selected alphabet (- or _ in Standard suggests URL-safe; URL-safe also reads + and /, so there
+// is no reverse case), a "=" before data, padding that does not fit, a length that leaves one
+// character after groups of four, or the first byte that is not UTF-8.
+{
+  const ds = source.indexOf('/* ── diagnose:start ── */'), de = source.indexOf('/* ── diagnose:end ── */');
+  check('diagnose block exists after the engine block', ds > ee && de > ds);
+  const block = ds > 0 && de > ds ? source.slice(ds, de) : '';
+  const D = block ? new Function(block + '\nreturn { diagnoseBase64, firstBadUtf8 };')() : null;
+  const fnSrc = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return '';
+    let depth = 0, j = src.indexOf('{', i);
+    for (; j < src.length; j++) { if (src[j] === '{') depth++; else if (src[j] === '}' && --depth === 0) break; }
+    return src.slice(i, j + 1).split('\n').map((l) => l.trim()).join('\n');
+  };
+  const jsonEngine = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  check('firstBadUtf8 is the same as in json-formatter-engine.js', fnSrc(block, 'firstBadUtf8') !== '' && fnSrc(block, 'firstBadUtf8') === fnSrc(jsonEngine, 'firstBadUtf8'));
+  const codes = ['badChar', 'urlsafeChar', 'midPad', 'badPad', 'length', 'notUtf8'];
+  for (const lang of Object.keys(expected)) {
+    same(lang + ': diagnosis messages for every code', Object.keys(strings[lang].b64Err || {}).sort(), codes.slice().sort());
+    for (const code of codes) same(lang + ': ' + code + ' placeholders match en', ((strings[lang].b64Err || {})[code] || '').match(/\{\w\}/g)?.sort(), ((strings.en.b64Err || {})[code] || '').match(/\{\w\}/g)?.sort());
+  }
+  const fill = (lang, code, v) => (strings[lang].b64Err?.[code] || '\u0000missing').replace(/\{(\w)\}/g, (_, k) => String(v[k]));
+  const cases = [
+    ['standard', 'eyJuYW1lIjoi7ZmN6ri464-ZIn0', 'urlsafeChar', { n: 23, c: '-' }],
+    ['standard', 'a_b', 'urlsafeChar', { n: 2, c: '_' }],
+    ['standard', 'SGVs#bG8', 'badChar', { n: 5, c: '#', u: 'U+0023' }],
+    ['urlsafe', 'SGVs#bG8', 'badChar', { n: 5, c: '#', u: 'U+0023' }],
+    ['standard', '😀SGVs', 'badChar', { n: 1, c: '😀', u: 'U+1F600' }],
+    ['standard', 'ＳＧＶｓ', 'badChar', { n: 1, c: 'Ｓ', u: 'U+FF33' }],
+    ['standard', 'SGVs=bG8', 'midPad', { n: 5 }],
+    ['standard', 'SG\nVs=bG8', 'midPad', { n: 6 }],
+    ['standard', 'QQ=', 'badPad', { n: 3 }],
+    ['standard', 'QQ===', 'badPad', { n: 3 }],
+    ['standard', 'SGVsbG8gV', 'length', { n: 9 }],
+    ['urlsafe', 'SGVsbG8gV', 'length', { n: 9 }],
+    ['standard', 'xOO6ww==', 'notUtf8', { n: 1, b: 'C4' }],
+    ['standard', 'QUKA', 'notUtf8', { n: 3, b: '80' }],
+  ];
+  for (const lang of Object.keys(expected)) {
+    for (const [variant, input, code, v] of cases) {
+      const p = pageVM(lang); if (variant === 'urlsafe') p.choose('b64variant', 'urlsafe'); p.choose('b64mode', 'decode'); p.input(input); p.advance(300);
+      same(`${lang}: ${variant} ${JSON.stringify(input)} reports ${code}`, [p.snapshot().output, p.snapshot().status, p.snapshot().statusClass], ['', fill(lang, code, v), 'b64-status error']);
+    }
+  }
+  // Every failed decode gets a specific reason (random inputs, both alphabets), and a diagnosis
+  // never appears for input that decodes.
+  if (D) {
+    let seed = 7; const rand = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    const pieces = ['QUJD', 'SGVs', '5L2g', 'xOO6', '-', '_', '+', '/', '=', '==', ' ', '\n', 'Q', 'QQ', '#', 'ｱ', '😀', 'gA', 'wA=='];
+    let generic = 0, wrong = 0;
+    for (const variant of ['standard', 'urlsafe']) {
+      const p = pageVM('en'); if (variant === 'urlsafe') p.choose('b64variant', 'urlsafe'); p.choose('b64mode', 'decode');
+      for (let i = 0; i < 1500; i++) {
+        const input = Array.from({ length: 1 + rand(6) }, () => pieces[rand(pieces.length)]).join('');
+        p.input(input); p.advance(300);
+        const s = p.snapshot(), failed = s.statusClass.includes('error');
+        if (failed && s.status === strings.en.invalidBase64) generic++;
+        if (!failed && D.diagnoseBase64(input, variant)) wrong++;
+      }
+    }
+    equal('random failed decodes all get a specific reason', generic, 0);
+    equal('no diagnosis for input that decodes', wrong, 0);
+    let agree = 0;
+    for (let i = 0; i < 3000; i++) {
+      const u8 = Uint8Array.from({ length: 1 + rand(8) }, () => rand(4) === 0 ? rand(256) : [0xc3, 0xa9, 0xe4, 0xb8, 0xad, 0xf0, 0x9f, 0x98, 0x80, 0x41, 0xed, 0xa0, 0xc0][rand(13)]);
+      let fatal = false; try { new TextDecoder('utf-8', { fatal: true }).decode(u8); } catch { fatal = true; }
+      if ((D.firstBadUtf8(u8) >= 0) === fatal) agree++;
+    }
+    equal('firstBadUtf8 agrees with TextDecoder fatal on 3,000 random byte strings', agree, 3000);
+  }
+}
+
 // Whitespace inside the input: Standard (atob) drops ASCII whitespace (tab, LF, FF, CR, space).
 // URL-safe used to add "=" by the length that still included it, so 'eyJh\nIjoxfQ' failed there
 // while Standard decoded it. Both alphabets now drop the same whitespace before decoding.
@@ -545,7 +620,7 @@ for (const lang of Object.keys(expected)) {
     p.input('c3ViamVjdHM_X2Q'); p.choose('b64variant', 'urlsafe');
     equal(lang + ': Decode alphabet directly converts current text', p.snapshot().output, 'subjects?_d');
     p.choose('b64variant', 'standard');
-    same(lang + ': invalid alphabet conversion empties pane and reports error', [p.snapshot().output, p.snapshot().outputEmpty, p.snapshot().status], ['', 'true', entry.invalidBase64]);
+    same(lang + ': invalid alphabet conversion empties pane and reports error', [p.snapshot().output, p.snapshot().outputEmpty, p.snapshot().status], ['', 'true', entry.b64Err.urlsafeChar.replace('{n}', '12').replace('{c}', '_')]);
     p.choose('b64variant', 'urlsafe'); equal(lang + ': alphabet change recovers valid output', p.snapshot().outputEmpty, 'false');
     p.get('b64-clear').click(); equal(lang + ': Clear empties output pane', p.snapshot().outputEmpty, 'true');
     const q = pageVM(lang); q.file('empty.txt', [], 'text/plain').finish('load');
