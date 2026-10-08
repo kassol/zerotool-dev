@@ -288,10 +288,33 @@ const L = STRINGS[lang];
       }
 
       /* ── engine:start ── */
+      // Class name for a key by the Python identifier rules (PEP 3131): NFKC as Python reads
+      // identifiers; words split at "_" and at characters that cannot be in an identifier; each word
+      // starts with a capital (letters without case stay); "_" before a leading digit.
       function toPascalCase(str) {
-        return str
-          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
-          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+        var words = String(str).normalize('NFKC').split(/[^\p{ID_Continue}]+|_+/u);
+        var name = '';
+        for (var i = 0; i < words.length; i++) {
+          if (words[i]) name += words[i].charAt(0).toUpperCase() + words[i].slice(1);
+        }
+        if (!name) return 'Field';
+        return /^\p{ID_Start}/u.test(name) ? name : '_' + name;
+      }
+
+      // Names a class must not take: keywords, the names the output imports or uses as types, and
+      // every JSON key (a Pydantic field with a default shadows a class of the same name).
+      var RESERVED_NAMES = ['False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield', 'Any', 'List', 'NotRequired', 'Optional', 'TypedDict', 'Union', 'BaseModel', 'dataclass', 'str', 'int', 'float', 'bool'];
+      function reserveNames(taken, parsed) {
+        for (var i = 0; i < RESERVED_NAMES.length; i++) taken[RESERVED_NAMES[i]] = true;
+        var stack = [parsed];
+        while (stack.length) {
+          var v = stack.pop();
+          if (Array.isArray(v)) { for (var j = 0; j < v.length; j++) stack.push(v[j]); }
+          else if (isPlainObject(v)) {
+            var ks = Object.keys(v);
+            for (var k = 0; k < ks.length; k++) { taken[ks[k].normalize('NFKC')] = true; stack.push(v[ks[k]]); }
+          }
+        }
       }
 
       function isPlainObject(v) {
@@ -595,6 +618,7 @@ const L = STRINGS[lang];
       /* Classes for an object or an array of objects; null for other roots. */
       function generatePython(parsed, rootName, mode) {
         var ctx = { classes: Object.create(null), taken: Object.create(null), shapes: [] }, imp = {};
+        reserveNames(ctx.taken, parsed);
         ctx.taken[rootName] = true;
         if (isPlainObject(parsed)) {
           mergeObjectsToClass([parsed], rootName, '', ctx, imp, rootName);

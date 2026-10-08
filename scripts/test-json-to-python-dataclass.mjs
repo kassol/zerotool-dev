@@ -95,6 +95,17 @@ eq('A3: a third shape gets a number when the prefixed name is taken', /class Met
   eq('A3: objects of one key across samples merge into one class', gen([{ u: { a: 1 } }, { u: { b: 'x' } }], 'typeddict').includes('class U(TypedDict):\n    a: NotRequired[int]\n    b: NotRequired[str]'), true);
 }
 
+// A4: class names follow the Python identifier rules (PEP 3131): Unicode letters are kept, keywords,
+// the typing names the output imports, str / int / float / bool and the JSON keys themselves are not
+// used as class names (a field and its class with one name break Pydantic's Optional default).
+const A4_KEYS = ['收货地址', '发票地址', '住所', '주소', 'none', 'class', 'list', 'Optional', 'Address', '2fa', 'user-id', 'a b', '__proto__', '', '-', '😀', 'ß', 'x²', 'ﾃｽﾄ', 'naïve', 'ｆｕｌｌ', '𠮷野家'];
+const a4Out = gen(Object.fromEntries(A4_KEYS.map((k, i) => [k, { ['v' + i]: 1 }])), 'dataclass');
+const a4Names = [...a4Out.matchAll(/^class (.+?):$/gm)].map((m) => m[1]);
+eq('A4: 收货地址 keeps every character', a4Names.some((n) => n.endsWith('收货地址')) && a4Names.some((n) => n.endsWith('发票地址')), true);
+eq('A4: one class per key (no two keys share a class by name)', a4Names.length, A4_KEYS.length + 1);
+eq('A4: no class is named after a JSON key or a reserved name', a4Names.filter((n) => A4_KEYS.includes(n) || ['None', 'List', 'Optional', 'Any', 'Union', 'TypedDict', 'NotRequired', 'BaseModel', 'str', 'int', 'float', 'bool'].includes(n)), []);
+const A4_RUN = { 收货地址: { 省: '浙江省' }, 发票地址: { 抬头: '某公司' }, none: { a: 1 }, list: { b: [1] }, Optional: { c: 'x' }, Address: { d: null }, naïve: { e: true }, 住所: { f: 'x' }, 주소: { g: 'x' } };
+
 const py = spawnSync('python3', ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
 if (py.status !== 0 || py.stdout.trim() !== 'True') {
   skips++;
@@ -107,6 +118,12 @@ if (py.status !== 0 || py.stdout.trim() !== 'True') {
     const c = spawnSync('python3', ['-c', gen(SAMPLE, mode)], { encoding: 'utf8' });
     check('python runs the ' + mode + ' output', c.status === 0, c.stderr);
   }
+  const ids = spawnSync('python3', ['-c', 'import json, keyword, sys\nnames = json.loads(sys.stdin.read())\nprint(json.dumps([n for n in names if not n.isidentifier() or keyword.iskeyword(n)]))'], { input: JSON.stringify(a4Names), encoding: 'utf8' });
+  eq('A4: every class name is a Python identifier and not a keyword', ids.stdout.trim(), '[]');
+  for (const mode of ['dataclass', 'typeddict']) {
+    const c = spawnSync('python3', ['-c', gen(A4_RUN, mode) + `\nimport json\n${mode === 'dataclass' ? 'Root(**json.loads(' + JSON.stringify(JSON.stringify(A4_RUN)) + '))' : 'pass'}\nprint('ok')`], { encoding: 'utf8' });
+    eq('A4: non-ASCII and reserved-name keys run in Python (' + mode + ')', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
+  }
 }
 
 // Complete page lifecycle plus actual ToolLayout keyboard handler; DOM/clipboard/timers are boundary doubles.
@@ -116,8 +133,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12709);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '3f88d8ff3801a6996bccebe00b0fbac3989a951601cae1a10821623547f2ac41');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 14375);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '5b3a5b83b0c0a507498df3577c18d6049e5ed94e0826727b0fbd5179d6794c73');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -335,7 +352,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "30f49467ba59be49f8a2fc1cdb8a80b24735d194400ef34308039704f4811e6e"
+  "scriptSHA": "000aa5affcd51fcddc382147dc5663b0a1f06dc1f591e4744fc18360ffd31889"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -449,6 +466,11 @@ const CLAIMS = [
 if (!pydBin) { skips++; console.log('SKIP: Python 3.11+ with Pydantic 2 not available (set PYDANTIC_PYTHON)'); }
 else {
   console.log('Pydantic ' + runPy(pydBin, 'import pydantic; print(pydantic.VERSION)').stdout.trim());
+  {
+    // A4 with Pydantic: a nested object under a non-ASCII key is parsed into its own class, not shadowed.
+    const r = runPy(pydBin, E.generatePython(A4_RUN, 'Root', 'pydantic').code + `\nimport json\nroot = Root.model_validate(json.loads(${JSON.stringify(JSON.stringify(A4_RUN))}))\nprint(type(root.收货地址).__name__, root.收货地址.省, root.发票地址.抬头, root.Address.d)`);
+    eq('A4: Pydantic parses nested objects under non-ASCII and reserved-name keys', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'Root收货地址 浙江省 某公司 None');
+  }
   for (const [i, c] of CLAIMS.entries()) {
     const r = runPy(pydBin, c.code);
     eq('claim ' + (i + 1) + ' Python output', r.stdout.trim() || r.stderr.trim().split('\n').pop(), c.expect);
