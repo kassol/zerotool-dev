@@ -213,6 +213,30 @@ check('output on load is the whole-site block', initial === 'User-agent: *\nDisa
 check('a block with no rules writes an empty Disallow', build({ blocks: [{ ua: 'Googlebot' }] }) === 'User-agent: Googlebot\nDisallow:');
 check('custom user agent is written as typed', build({ blocks: [{ custom: 'GPTBot', rules: [['Disallow', '/']] }] }) === 'User-agent: GPTBot\nDisallow: /');
 
+// ---------- analytics: one event per committed change ----------
+// The page used to call trackTool from generate(), so loading the page and every input
+// event (each typed character) sent a GA event. It now sends one event when a change is
+// committed: a change event on a text field or select, or a button that adds or removes a
+// block or rule.
+{
+  const ids = runTool(), w = ids.lifecycle.window;
+  check('analytics: loading the page sends no event', w.generated === 0, String(w.generated));
+  const path = ids['rt-blocks'].querySelector('.rt-rule-path');
+  for (const text of ['/a', '/ad', '/adm', '/admin/']) { path.value = text; path.fire('input'); }
+  ids['rt-sitemap'].value = 'https://example.com/sitemap.xml'; ids['rt-sitemap'].fire('input');
+  check('analytics: input events send no event', w.generated === 0, String(w.generated));
+  path.fire('change');
+  check('analytics: committing a path sends one event', w.generated === 1, String(w.generated));
+  ids['rt-sitemap'].fire('change');
+  const select = ids['rt-blocks'].querySelector('.rt-ua-select'); select.value = 'Bingbot'; select.fire('change');
+  check('analytics: sitemap change and User-agent change send one event each', w.generated === 3, String(w.generated));
+  ids['rt-blocks'].querySelector('.rt-add-allow').fire('click');
+  ids['rt-add-block'].fire('click');
+  check('analytics: adding a rule or a block sends one event each', w.generated === 5, String(w.generated));
+  for (const b of [...ids['rt-blocks'].children]) b.querySelector('.rt-remove-block').fire('click');
+  check('analytics: removing blocks until the output is empty does not send for the empty result', w.generated === 6, String(w.generated));
+}
+
 // ---------- python helpers ----------
 const PY = process.env.PYTHON || 'python3';
 function pyOk(code) {
