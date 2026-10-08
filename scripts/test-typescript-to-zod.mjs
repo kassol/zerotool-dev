@@ -292,6 +292,7 @@ for (const [v, z] of Object.entries(zods)) {
   }
   eq('non-property members: only the properties remain', skip.split('\n').filter((l) => /^  \S/.test(l)), ['  id: z.number(),', '  get: z.string(),', '  set: z.boolean().optional(),']);
 }
+eq('limits: Unicode escapes in names are not decoded', convert('interface U { \\u0061: string }').includes('  u0061: z.string(),'), true);
 const parseError = (src) => { try { convert(src); return null; } catch (e) { return e.message; } };
 eq('missing colon: error with line and column', parseError('interface U {\n  id: string;\n  age number;\n}'), 'Line 3, column 3: "age" needs ":" before its type.');
 eq('missing colon: a property with no type', parseError('interface U { a; }'), 'Line 1, column 15: "a" needs ":" before its type.');

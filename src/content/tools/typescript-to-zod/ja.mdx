@@ -9,7 +9,7 @@ steps:
 faqItems:
   - id: "constructs"
     question: "どのようなTypeScript構文をサポートしていますか？"
-    answer: "interfaceとtype alias宣言をサポートし、基本型（string、number、boolean、null、undefined、any、unknown）、省略可能プロパティ（?）、Union型（A | B）、文字列enum（リテラルUnion）、enum宣言、extends、インデックスシグネチャ、再帰型、配列（T[]、Array<T>）、インラインネストオブジェクト、宣言済み型間の相互参照、Partial<T>・Record<K, V>・Array<T>・Promise<T>などのユーティリティ型に対応しています。"
+    answer: "interfaceとtype alias宣言をサポートし、基本型（string、number、boolean、null、undefined、any、unknown）、省略可能プロパティ（?）、Union型（A | B）、文字列enum（リテラルUnion）、enum宣言、extends、インデックスシグネチャ、再帰型、配列（T[]、Array<T>）、インラインで書いたネストしたオブジェクト型、宣言済み型間の相互参照、Partial<T>・Record<K, V>・Array<T>・Promise<T>などのユーティリティ型に対応しています。"
   - id: "references"
     question: "型間の相互参照はどのように処理されますか？"
     answer: "入力に複数のinterfaceまたはtype aliasが宣言されている場合、宣言済み型名への参照は対応するSchemaの定数に変換されます。例えばAddress型のフィールドはAddressSchemaになります。入力で宣言されていない型はz.unknown()（コメント付き）になります。"
@@ -190,10 +190,10 @@ export type SignupForm = z.infer<typeof SignupFormSchema>;`}</code></pre>
 <p>生成したスキーマで zod 3.25 を使い 3 つのデータを検証した結果：</p>
 
 <pre><code>{`SignupFormSchema.safeParse({ email: "not-an-email", password: "1", referrer: null, plan: "pro" })
-// success: true  (types match; no format rules yet)
+// success: true  （型は合っている。形式のルールはまだない）
 
 SignupFormSchema.safeParse({ email: "a@example.com", password: "x", plan: "free" })
-// referrer: Invalid input  (string | null is required, it cannot be missing)
+// referrer: Invalid input  （string | null はキー必須で、省略できない）
 
 SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "ad", plan: "team" })
 // plan: Invalid enum value. Expected 'free' | 'pro', received 'team'`}</code></pre>
@@ -266,6 +266,7 @@ export type Member = z.infer<typeof MemberSchema>;`}</code></pre>
   <li><strong>enum は値をコピーします。</strong>スキーマが検証するのは enum の値（<code>"RED"</code>、<code>0</code>）で、実行時の enum オブジェクトではありません。enum を import できるなら <code>z.nativeEnum(Color)</code>（Zod 3）や <code>z.enum(Color)</code>（Zod 4）でも同じです。</li>
   <li><strong>インデックスシグネチャのキー</strong>は常に <code>z.string()</code> です。<code>.catchall()</code> と併用すると、宣言済みのプロパティも自身のスキーマに合う必要があります。</li>
   <li><strong>リテラルキーの Record</strong>（<code>{'Record<"read" | "write", boolean>'}</code>）は <code>{'z.record(z.enum(["read", "write"]), z.boolean())'}</code> になります。Zod 4 は TypeScript と同じく両方のキーを要求し、Zod 3 は片方だけでも通します。</li>
+  <li><strong>名前の Unicode エスケープは解釈しません。</strong><code>{"\\u0061: string"}</code> は <code>a</code> ではなく <code>u0061</code> というプロパティになります。</li>
   <li><strong>全角で読むのはコロンだけです。</strong>全角の疑問符などは未知の文字として読み飛ばすため、<code>{"age？: number"}</code> は省略可能にならず <code>{"age: z.number()"}</code> になります。</li>
   <li><strong>変換しないもの：</strong>ジェネリックの型パラメーター、class、メソッド（読み飛ばし）、Mapped Types と Conditional Types、<code>keyof</code>、<code>typeof</code>。テンプレートリテラル型は <code>z.string()</code> になります。</li>
 </ul>
