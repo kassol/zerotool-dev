@@ -627,7 +627,56 @@ v2Check('compiled module contains the HTML tip slots', v2TipKeys.every(k => v2Co
 if (process.env.ZT_B14_REGISTRATION_PENDING === '1') console.log('PENDING_ROOT v2 generate registration');
 else v2Check('generate kind is registered', /['"]ulid-generator['"]\s*:\s*['"]generate['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 
+// Four-language tool pages (S2): MDX contract and worked examples recomputed with the engine.
+//   {/* ulid-check: {"ulid":"…","tz":"Asia/Tokyo"} */}  the decoder path (trim, upper case,
+//     decodeUlid, formatMs): inline code or a code block after the note shows the decoder's
+//     Timestamp and Milliseconds values and, with "tz", the same instant as
+//     `YYYY-MM-DD HH:MM:SS.mmm` in that time zone. With "error": "invalid" | "range" the decoder
+//     must reject the input with that error and the page's own label must be shown.
+//   {/* ulid-batch: {"utc":"…Z","bytes":[10 bytes],"n":3} */}  createUlidFactory with that clock
+//     and those random bytes; every generated ULID is shown in code.
+import { toolMdxContract, fencedBlocks } from './lib/tool-mdx-contract.mjs';
+let s2Pass = 0, s2Fail = 0;
+function s2Check(name, ok) { if (ok) s2Pass++; else { s2Fail++; console.log('FAIL S2 ' + name); } }
+const codeTexts = (after) => [
+  ...fencedBlocks(after).map((b) => b.text),
+  ...[...after.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]),
+  ...[...after.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)].map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')),
+];
+const missing = (after, list) => { const gone = list.filter((t) => !codeTexts(after).some((c) => c.includes(t))); return gone.length ? 'not shown in code after the annotation: ' + gone.map((t) => JSON.stringify(t)).join(', ') : null; };
+function wallTime(ms, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}.${String(ms % 1000).padStart(3, '0')}`;
+}
+const s2Contract = toolMdxContract('ulid-generator', {
+  annotations: [
+    { tag: 'ulid-check', min: 1, verify: ({ spec, after, lang }) => {
+      const decoded = E.decodeUlid(String(spec.ulid).trim().toUpperCase());
+      if (spec.error) {
+        if (decoded.error !== spec.error) return `decoder gives ${JSON.stringify(decoded)}, not error ${spec.error}`;
+        const L = lifecycleLabels(lang);
+        return missing(after, [spec.ulid, decoded.error === 'range' ? L.outOfRange : L.invalidUlid]);
+      }
+      if (decoded.error) return 'decoder rejects it: ' + decoded.error;
+      return missing(after, [spec.ulid, E.formatMs(decoded.ms), String(decoded.ms), ...(spec.tz ? [wallTime(decoded.ms, spec.tz)] : [])]);
+    } },
+    { tag: 'ulid-batch', min: 1, verify: ({ spec, after }) => {
+      if (!Array.isArray(spec.bytes) || spec.bytes.length !== 10) return 'bytes must list 10 values';
+      const next = E.createUlidFactory(() => Date.parse(spec.utc), (a) => a.set(spec.bytes));
+      return missing(after, Array.from({ length: spec.n }, () => next().ulid));
+    } },
+  ],
+});
+for (const r of s2Contract.results) s2Check(r.message, r.ok);
+s2Check('wall time: Tokyo is UTC+9', wallTime(Date.parse('2026-12-31T15:00:00Z'), 'Asia/Tokyo') === '2027-01-01 00:00:00.000');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const body = s2Contract.docs[lang].body;
+  const n = (body.match(/\{\/\*\s*ulid-(?:check|batch)\b/g) || []).length;
+  s2Check(lang + ' has at least 2 recomputed examples', n >= 2);
+}
+
 process.removeListener('unhandledRejection', onUnhandled);
+console.log(`S2 CONTENT ${s2Pass} passed, ${s2Fail} failed`);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
-console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
-process.exitCode = failures + lifecycleFail ? 1 : 0;
+console.log(`FINAL ${passes + lifecyclePass + s2Pass} passed, ${failures + lifecycleFail + s2Fail} failed`);
+process.exitCode = failures + lifecycleFail + s2Fail ? 1 : 0;

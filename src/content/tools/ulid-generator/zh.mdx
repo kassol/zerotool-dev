@@ -9,28 +9,69 @@ steps:
   - "点击清空只清生成列表；Ctrl 或 Command + L 还会清除解码器。"
 faqItems:
   - question: "什么是 ULID？"
-    answer: "ULID（Universally Unique Lexicographically Sortable Identifier，通用唯一字典序可排序标识符）是一种 128 位标识符，用 26 个 Crockford Base32 字符表示。与 UUID v4 不同，ULID 支持按创建时间字典序排序——前 10 个字符编码 48 位毫秒级时间戳，后 16 个字符为 80 位随机值。"
+    id: "what-is-ulid"
+    answer: "ULID（Universally Unique Lexicographically Sortable Identifier，通用唯一字典序可排序标识符）是一种 128 位标识符，用 26 个 Crockford Base32 字符表示。与 UUID v4 不同，ULID 按字典序排序就是按创建时间排序——前 10 个字符编码 48 位毫秒级时间戳，后 16 个字符是 80 位随机部分。"
   - question: "ULID 的结构是什么？"
-    answer: "ULID 共 26 个字符：前 10 个字符编码时间戳（48 位，毫秒精度，有效期至 10889 年），后 16 个字符为密码学安全随机数（80 位）。编码使用 Crockford Base32：0-9 加 A-Z 去掉 I、L、O、U 以避免视觉混淆。"
+    id: "structure"
+    answer: "ULID 共 26 个字符：前 10 个字符编码时间戳（48 位，毫秒精度，可用到 10889 年），后 16 个字符是 80 位随机部分，来自 crypto.getRandomValues；同一毫秒内的下一个 ULID 则取上一个随机部分加 1。编码使用 Crockford Base32：0-9 加 A-Z，去掉 I、L、O、U 以避免看错。"
   - question: "ULID 与 UUID 有何不同？"
-    answer: "UUID v4 完全随机，无法按创建时间排序。ULID 按字典序即创建时间顺序排列，非常适合数据库主键——顺序插入可减少 B 树碎片，提升范围查询性能。ULID 还是 URL 安全且大小写不敏感的。"
+    id: "ulid-vs-uuid"
+    answer: "UUID v4 完全随机，无法按创建时间排序。ULID 的字典序就是创建顺序，更适合做数据库主键：按顺序插入可减少 B 树的页分裂，范围查询也更快。ULID 同样可以直接放进 URL，并且不区分大小写。"
   - question: "ULID 解码器有什么用？"
-    answer: "粘贴现有 ULID 即可提取其创建时间戳。在调试时非常有用——无需单独的 created_at 字段，直接从 ID 判断记录创建时间。大小写都可以；第一个字符大于 7 的会被拒绝：最大的 ULID 是 7ZZZZZZZZZZZZZZZZZZZZZZZZZ，更大的值超出 128 位（ULID 规范「Overflow Errors when Parsing Base32 Strings」）。"
+    id: "decoder"
+    answer: "粘贴现有 ULID 即可读出它的创建时间。调试时很方便：不必另设 created_at 字段，从 ID 就能看出记录是什么时候建的。大小写都可以；第一个字符大于 7 的会被拒绝：最大的 ULID 是 7ZZZZZZZZZZZZZZZZZZZZZZZZZ，更大的值超出 128 位（ULID 规范「Overflow Errors when Parsing Base32 Strings」）。"
   - question: "同一批生成的 ULID 是按顺序排列的吗？"
+    id: "batch-order"
     answer: "是。一批 ULID 通常在同一毫秒内生成，时间戳相同。按 ULID 规范的单调性（Monotonicity）一节，后一个 ULID 的随机部分在前一个基础上加 1，所以列表本身已按字典序排好：…EMMVRZ 之后是 …EMMVS0。进入新的毫秒时重新取随机数。同一毫秒内随机部分若要超过 ZZZZZZZZZZZZZZZZ，生成会报错停止，不会回绕。"
-  - question: "工具是纯客户端运行的吗？"
-    answer: "是的。ULID 生成使用浏览器的 Web Crypto API（crypto.getRandomValues）保证随机性，使用 Date.now() 获取时间戳，不向服务器发送任何数据。"
+  - question: "生成或解码的 ULID 会被发送或保存吗？"
+    id: "privacy"
+    answer: "不会。生成用的是浏览器的 Web Crypto API（crypto.getRandomValues）和 Date.now()，解码也在同一页面里完成；生成或粘贴的 ULID 不会发送给 ZeroTool，离开页面后工具不保留 ULID，也不保留设置。页面上的 Google Analytics 只记录用了哪个操作（生成、解码、复制），不包含 ULID 的值。"
 ---
 
-<h2>ULID 结构</h2>
+## ULID 结构
 
 ```
 01ARZ3NDEKTSV4RRFFQ69G5FAV
 ├─ 时间戳（10 字符）──┤├── 随机部分（16 字符）──┤
- 48 位毫秒级时间戳      80 位密码学安全随机数
+ 48 位毫秒级时间戳      80 位：随机数，或同一毫秒内上一个值加 1
 ```
 
-<h2>ULID vs UUID 对比</h2>
+每个字符代表 5 位，字母表是 Crockford Base32 的 `0123456789ABCDEFGHJKMNPQRSTVWXYZ`。10 个字符能装 50 位，比 48 位时间戳多出 2 位，所以第一个字符只能是 0–7。
+
+## 解码器显示的是 UTC：国庆零点的例子
+
+假设一个服务在北京时间 2026 年 10 月 1 日 0 点整生成了 3 个 ULID，那一刻是 UTC 2026-09-30 16:00:00.000。用工具的同一套生成函数，把随机数换成一组固定字节来复现，结果如下：
+
+{/* ulid-batch: {"utc":"2026-09-30T16:00:00.000Z","bytes":[90,23,140,3,225,68,155,45,112,15],"n":3} */}
+- `01M3SGPM00B8BRR0Z18JDJTW0F`
+- `01M3SGPM00B8BRR0Z18JDJTW0G`
+- `01M3SGPM00B8BRR0Z18JDJTW0H`
+
+前 10 个字符 `01M3SGPM00` 相同，因为它们来自同一毫秒；后两个只在最后一位递增，这就是单调性规则。你自己点生成时随机部分每次都不同，但时间前缀的规律一样。
+
+{/* ulid-check: {"ulid":"01M3SGPM00B8BRR0Z18JDJTW0F","tz":"Asia/Shanghai"} */}
+把第一个 `01M3SGPM00B8BRR0Z18JDJTW0F` 粘贴进解码器，显示如下：
+
+- 时间戳：`2026-09-30 16:00:00.000 UTC`
+- 毫秒（epoch）：`1790784000000`
+- 换成北京时间（Asia/Shanghai）：`2026-10-01 00:00:00.000`
+
+工具只显示 UTC，日期看起来是 9 月 30 日，比北京时间早一天。排查「这条记录是不是国庆当天建的」这类问题时，要先加 8 小时再看日期；也可以把毫秒值粘贴到[时间戳转换器](/zh/tools/timestamp-converter/)里按本地时区查看。
+
+## 小写、空格和输错的字符
+
+- 解码器会去掉首尾空格，并把小写转成大写，所以从数据库里复制出来的小写 ULID 可以直接粘贴。
+- 第一个字符大于 7 时给出超出范围的提示，例如：
+
+{/* ulid-check: {"ulid":"8ZZZZZZZZZZZZZZZZZZZZZZZZZ","error":"range"} */}
+输入 `8ZZZZZZZZZZZZZZZZZZZZZZZZZ`，提示：`超出范围：第一个字符必须是 0–7（最大的 ULID 是 7ZZZZZZZZZZZZZZZZZZZZZZZZZ）`
+
+- 手抄 ULID 时最常见的错误是把数字 0 写成字母 O。Crockford 的方案允许把 O 读作 0、把 I 和 L 读作 1，但本工具不做这种替换，直接判为无效：
+
+{/* ulid-check: {"ulid":"O1M3SGPM00B8BRR0Z18JDJTW0F","error":"invalid"} */}
+输入 `O1M3SGPM00B8BRR0Z18JDJTW0F`，提示：`无效的 ULID`
+
+## ULID vs UUID 对比
 
 | 特性 | ULID | UUID v4 |
 |---|---|---|
@@ -41,7 +82,17 @@ faqItems:
 | 大小写不敏感 | ✓ 是 | ✓ 是 |
 | 随机位数 | 80 位 | 122 位 |
 
-<h2>相关工具</h2>
-<ul>
-  <li><a href="/zh/tools/uuid-generator/">UUID 生成器</a> — 生成标准 UUID v4 标识符</li>
-</ul>
+UUID 第 7 版（RFC 9562 第 5.7 节）同样以 48 位毫秒时间戳开头，并且能直接存进数据库的 `uuid` 类型；ULID 通常存成 26 个字符的字符串，或解码成 16 字节。还要注意，任何看到 ID 的人都能读出时间，对外公开的 ID 会暴露记录的创建时刻；不想暴露时改用随机的 UUID v4。
+
+## 限制
+
+- 每次最多生成 100 个。大于 100 按 100 处理；小于 1、留空或不是数字时按 1 处理。
+- 解码器只接受字母表里的 32 个字符，不把 I、L、O 自动读成 1 和 0。
+- 解码器只读前 10 个字符的时间，结果只有 UTC 时间和毫秒值，不显示本地时间，也不解析随机部分。
+- 没有小写输出，也不能把 ULID 转成 UUID 字符串或 16 字节。
+- 同一毫秒内随机部分若到达 `ZZZZZZZZZZZZZZZZ`，生成会停止并提示溢出，不会回绕；从随机起点出发，实际上需要约 2<sup>79</sup> 个才会发生。
+
+## 相关工具
+
+- [UUID 生成器](/zh/tools/uuid-generator/) — 生成标准 UUID v4 标识符
+- [Nano ID 生成器](/zh/tools/nano-id-generator/) — 不带时间戳的短随机 ID
