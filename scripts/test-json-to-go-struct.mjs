@@ -358,7 +358,7 @@ const V2 = {
       "generate"
     ]
   ],
-  "scriptSHA": "790dd0136eec120f53d537283b5bd32b2f451a4aa6316ec8e3070b91dd3c39b1"
+  "scriptSHA": "24a5b92f6e08d658fa66c847ae91830865085dcc33211710d4b51efe25bb46b2"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -366,7 +366,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 original script preserved except removed redundant Generate listener and change-based analytics (S2-5)', hash(pageScript), V2.scriptSHA);
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
@@ -410,6 +410,15 @@ for (const lang of ['en','zh','ja','ko']) {
   }
   const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
   q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
+  // Analytics: one event per committed change (input change, Generate, Example), not on load or per typing pause.
+  const ga=lifecyclePage(lang);eq(lang + ': GA: page load sends nothing',ga.tracks.length,0);
+  ga.input('{"a":1}');ga.advance(300);eq(lang + ': GA: typing pause sends nothing',ga.tracks.length,0);
+  ga.get('jgs-input').dispatch('change');eq(lang + ': GA: committed change sends one generate event',JSON.stringify(ga.tracks),JSON.stringify([['json-to-go-struct','generate']]));
+  ga.input('{"b":"x"}');ga.get('jgs-input').dispatch('change');eq(lang + ': GA: change before the debounce generates the new input first',[ga.get('jgs-output-code').textContent.includes('B string'),ga.tracks.length].join(),'true,2');ga.advance(300);eq(lang + ': GA: no second event after the debounce',ga.tracks.length,2);
+  ga.input('{');ga.get('jgs-input').dispatch('change');eq(lang + ': GA: invalid input change sends nothing',ga.tracks.length,2);
+  ga.get('jgs-convert').click();eq(lang + ': GA: Generate with invalid input sends nothing',ga.tracks.length,2);
+  ga.get('jgs-example').click();eq(lang + ': GA: Example sends one event',ga.tracks.length,3);
+  ga.get('jgs-convert').click();eq(lang + ': GA: Generate sends one event',ga.tracks.length,4);
 }
 
 console.log(`\n${passes} passed, ${failures} failed` + (skips ? `, ${skips} skipped` : ''));
