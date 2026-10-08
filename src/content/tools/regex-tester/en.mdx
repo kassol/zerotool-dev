@@ -9,14 +9,24 @@ steps:
   - "Use Cancel to stop a running match. The Worker also stops after two seconds; cancellation and timeout give no complete result."
   - "Press Ctrl+L (⌘+L on Mac) inside the tool to clear both inputs and results while keeping flags."
 faqItems:
-  - question: "Which regex flavor does this tool use?"
-    answer: "JavaScript (ECMAScript) regex via the browser's built-in RegExp engine."
-  - question: "What flags are supported?"
-    answer: "g (global), i (case-insensitive), m (multiline), and s (dotAll — dot matches newline). You can combine them."
-  - question: "Why does 'g' flag matter?"
+  - id: flavor
+    question: "Which regex flavor does this tool use?"
+    answer: "JavaScript (ECMAScript) regex via the browser's built-in RegExp engine. It runs in a browser Worker that stops after two seconds."
+  - id: flags
+    question: "What flags are supported?"
+    answer: "g (global), i (case-insensitive), m (multiline), and s (dotAll — dot matches newline). You can combine them. There is no u, y, d or v flag."
+  - id: global
+    question: "Why does 'g' flag matter?"
     answer: "Without 'g', only the first match is returned. With 'g', all matches are found."
-  - question: "Are capture groups shown?"
-    answer: "Yes. The list shows the first 100 matches and up to 20 groups per match. Shortened values are marked with … ."
+  - id: groups
+    question: "Are capture groups shown?"
+    answer: "Yes. The list shows the first 100 matches and up to 20 groups per match, numbered even when the group has a name. Shortened values are marked with … ."
+  - id: privacy
+    question: "Is my pattern or test text sent anywhere?"
+    answer: "No. Your browser runs the match in a Worker on this page; the pattern and the text are not sent to a server, and the tool does not write them to browser storage. The page loads Google Analytics, which receives the tool name and a 'match' event the first time a run on the page finds a match, not the pattern or the text."
+  - id: local-python
+    question: "Can I paste a pattern written for Python or PCRE?"
+    answer: "Only if it uses syntax that JavaScript shares. Python's (?P<name>...) gives 'Invalid group', and possessive quantifiers such as a++ and atomic groups (?>...) are errors in JavaScript. The same pattern can also match different text: Python's \\d and \\w accept Unicode digits and letters, JavaScript's only ASCII. The regex cheat sheet compares the engines."
 ---
 
 <h2>Common Regex Patterns</h2>
@@ -59,7 +69,47 @@ ERROR timeout
 - `.` never crosses a line break unless `s` is on: `a.b` finds nothing in "a", newline, "b" until you tick `s`.
 - `cafe` with `i` on `Café CAFE cafe` finds `CAFE` and `cafe` but not `Café`; case-insensitive matching does not ignore accents.
 
+{/* rgx-check: {"p":"^ERROR .+","f":"gm","s":"ERROR disk full\nWARN retry 3\nERROR timeout"} */}
+
+With `g` and `m` ticked, the status line and the match list read:
+
+```text
+2 matches found.
+Match 1: ERROR disk full (index 0)
+Match 2: ERROR timeout (index 29)
+```
+
 Each match line shows its index, and each capture group is listed under it in order, including groups that did not take part in the match (shown as *undefined*). There is no Run button: the result updates 0.3 seconds after you stop typing. To try a pattern against a JSON document instead, the [JSONPath tester](/tools/jsonpath-tester/) queries by path rather than by text.
+
+## Indexes, Emoji and Named Groups
+
+The tool reports positions the way JavaScript counts them: in UTF-16 code units. An emoji outside the Basic Multilingual Plane takes two units, so a digit after `😀 ` sits at index 3, not 2. A named group is listed by its number:
+
+{/* rgx-check: {"p":"(?<digit>\\d)","f":"g","s":"😀 7"} */}
+
+```text
+1 match found.
+Match 1: 7 (index 3)
+  Group 1: 7
+```
+
+Because there is no `u` flag, `.` also matches one code unit. `^.$` against the single character `😀` therefore finds nothing: the emoji is two units long.
+
+{/* rgx-check: {"p":"^.$","f":"g","s":"😀"} */}
+
+```text
+No matches.
+```
+
+An invalid pattern shows the browser's own error text after the tool's prefix. In Chrome, Python's named-group syntax gives:
+
+{/* rgx-check: {"p":"(?P<year>\\d{4})","f":"g","s":"2026"} */}
+
+```text
+Invalid regex: Invalid regular expression: /(?P<year>\d{4})/g: Invalid group
+```
+
+The wording comes from the browser's JavaScript engine, so other browsers can phrase it differently. The message lists the `g` flag even when `g` is off, because the Worker always adds `g` and stops after the first match itself.
 
 ## Common Mistakes
 
@@ -70,7 +120,7 @@ Each match line shows its index, and each capture group is listed under it in or
 
 ## Limits
 
-- **JavaScript syntax only.** Python's `(?P<name>...)` gives "Invalid group"; use `(?<name>...)`. Patterns written for Go (RE2), PCRE, or .NET can behave differently.
+- **JavaScript syntax only.** Python's `(?P<name>...)` gives "Invalid group"; use `(?<name>...)`. Patterns written for Go (RE2), PCRE, or .NET can behave differently; the [regex cheat sheet](/blog/regex-cheat-sheet/) runs the same patterns in JavaScript, Python, PCRE2 and Go.
 - **Four flags.** Only `g`, `i`, `m`, and `s` are available. There is no `u` flag, so `\p{L}` is read as the literal text `p{L}`, and `y`, `d`, and `v` are not available.
 - **Groups are listed by number.** Named groups appear as Group 1, Group 2, and so on.
 - **Full counts, bounded preview.** Completed runs count every match. Highlights cover the first 100,000 UTF-16 units and at most 1,000 matches. The list shows the first 100 matches and 20 groups per match; each value is limited to 1,000 units, with a total value budget of 100,000 units. Shortened values end in `…`. Indices use UTF-16 units, so an emoji before a match adds 2. Worker support is required.

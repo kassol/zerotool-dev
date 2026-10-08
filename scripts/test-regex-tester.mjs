@@ -1,6 +1,6 @@
 // Regex Tester — styles for the match list, and the results quoted on the en tool page
 //
-// Read:  src/components/tools/RegexTesterTool.astro, src/content/tools/regex-tester/en.mdx
+// Read:  src/components/tools/RegexTesterTool.astro, src/content/tools/regex-tester/{en,zh,ja,ko}.mdx
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -20,7 +20,7 @@ import vm from 'node:vm';
 import { Worker as ThreadWorker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const src = readFileSync(join(root, 'src/components/tools/RegexTesterTool.astro'), 'utf8');
@@ -382,5 +382,49 @@ try {
   eq('v2 generated Astro JavaScript compiles', true, true);
 } catch (error) { eq('v2 actual Astro and generated JavaScript compilation', error.message, 'no error'); }
 console.log('v2 page layout: ' + (passes - v2Start) + ' passed, ' + failures + ' total failures');
+
+// ---------- Worked examples on the four tool pages (S2) ----------
+// `{/* rgx-check: {"p": pattern, "f": ticked flags, "s": test string} */}` is followed by a text
+// block that must equal what the tool shows: the status line, then one line per match
+// ("Match 1: x (index n)") with its groups indented by two spaces. The match comes from the
+// component's own matchWorker source, run here in a vm with a stub `self`.
+function engineRun(pattern, flags, text) {
+  let out;
+  const context = vm.createContext({ self: { postMessage(v) { out = v; } }, input: { pattern, flags, text } });
+  vm.runInContext(workerSource + '\nmatchWorker(); self.onmessage({ data: input });', context, { timeout: 2000 });
+  return out;
+}
+function toolText(lang, pattern, flags, text) {
+  const t = clientStrings(lang), r = engineRun(pattern, flags, text);
+  if (r.error) return t.invalidRegex + r.error;
+  const lines = [r.count === 0 ? t.noMatches : (r.count > 1 ? t.matchMany : t.matchOne).replace('{n}', r.count)];
+  r.matches.slice(0, 100).forEach((m, i) => {
+    lines.push(`${t.matchLabel} ${i + 1}: ${m.match} (${t.indexLabel} ${m.index})`);
+    if (m.groups.some((g) => g !== undefined)) m.groups.forEach((g, j) => lines.push(`  ${t.groupLabel} ${j + 1}: ${g === undefined ? 'undefined' : g}`));
+  });
+  return lines.join('\n');
+}
+const examplesStart = passes;
+const rgxCheck = { tag: 'rgx-check', min: 2, verify({ spec, after, lang }) {
+  if (!spec || typeof spec.p !== 'string' || typeof spec.f !== 'string' || typeof spec.s !== 'string') return 'spec needs p, f and s strings';
+  if (!/^g?i?m?s?$/.test(spec.f)) return 'flags must be a subset of the four checkboxes, in order gims';
+  const block = fencedBlocks(after)[0];
+  if (!block) return 'no code block after the annotation';
+  const want = toolText(lang, spec.p, spec.f, spec.s);
+  return block.text === want ? null : `block ${JSON.stringify(block.text)} != tool ${JSON.stringify(want)}`;
+} };
+for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ' rgx-check examples match the engine', contractProblems('regex-tester', lang, { annotations: [rgxCheck] }), '');
+// Facts quoted beside the examples and in the FAQ
+eq('possessive quantifier is a syntax error', toolText('en', 'a++', 'g', 'aa'), 'Invalid regex: Invalid regular expression: /a++/g: Nothing to repeat');
+eq('atomic group is a syntax error', toolText('en', '(?>a)', 'g', 'a'), 'Invalid regex: Invalid regular expression: /(?>a)/g: Invalid group');
+eq('error message lists g when only i is ticked', toolText('en', '(', 'i', 'a').includes('/(/gi'), true);
+eq('NFKC turns fullwidth digits into ASCII', ['１３８１２３４５６７８', '１５０-０００２'].map((s) => s.normalize('NFKC')), ['13812345678', '150-0002']);
+eq('NFC joins the NFD Hangul of the ko example', '\u1112\u1161\u11ab\u1100\u1173\u11af'.normalize('NFC'), '한글');
+eq('ko NFD example: [가-힣] finds 한글 after NFC', toolText('ko', '[가-힣]+', 'g', '\u1112\u1161\u11ab\u1100\u1173\u11af 파일.txt'.normalize('NFC')).split('\n')[1], '일치 1: 한글 (인덱스 0)');
+eq('[가-힣] holds 11,172 syllables', 0xD7A3 - 0xAC00 + 1, 11172);
+eq('𰻞 is U+30EDE, two UTF-16 units', ['𰻞'.codePointAt(0).toString(16), '𰻞'.length], ['30ede', 2]);
+eq('ㅋ is the compatibility jamo U+314B', 'ㅋ'.codePointAt(0).toString(16), '314b');
+eq('won signs are U+20A9 and U+FFE6', ['₩', '￦'].map((c) => c.codePointAt(0).toString(16)), ['20a9', 'ffe6']);
+console.log('Worked examples: ' + (passes - examplesStart) + ' passed');
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
