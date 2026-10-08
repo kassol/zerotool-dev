@@ -17,7 +17,7 @@ faqItems:
     answer: "No. This tool focuses on formatting, not validation. It beautifies the structure of your query but does not check for syntax errors or schema correctness, and invalid SQL is formatted without an error."
   - id: complex
     question: "Can it format long queries with joins, subqueries and CTEs?"
-    answer: "Yes. Each JOIN starts a line, a subquery or the body of WITH ... AS (...) is indented one level deeper, and function calls such as SUM(total) or ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) stay on one line. CASE expressions and the column list of CREATE TABLE stay on one line."
+    answer: "Yes. Each JOIN starts a line, a subquery or the body of WITH ... AS (...) is indented one level deeper, and function calls such as SUM(total) or ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) stay on one line. CASE expressions stay on one line except that AND / OR inside them start a new line, and the column list of CREATE TABLE stays on one line."
   - id: options
     question: "Can I customize the formatting?"
     answer: "Yes. Choose 2-space, 4-space or tab indentation, and turn uppercase keywords on or off. Typing formats with the current options; after you change an option, click Format to apply it to the current output."
@@ -157,6 +157,14 @@ ORDER BY r.spent DESC;
 
 - **One generic dialect, no validation.** There is no MySQL, PostgreSQL, or SQL Server mode, and invalid SQL is formatted without an error.
 - **Backslashes in strings follow one of two readings.** MySQL reads `\'` inside a string as an escaped quote unless the `NO_BACKSLASH_ESCAPES` SQL mode is on ([MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)); PostgreSQL with its default `standard_conforming_strings = on` ([PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)) and SQLite ([SQLite: Literal Values](https://www.sqlite.org/lang_expr.html)) treat a backslash as an ordinary character. The tool uses the MySQL reading when it closes every quoted string, and the standard reading otherwise. So {/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'` stays `SELECT * FROM users WHERE note = 'It\'s'`, and a lone `'C:\'` stays one string. Strings are always copied as written; the reading only decides where each string ends.
-- **`CASE` stays on one line.** `CASE WHEN ... THEN ... END` is not broken into `WHEN` lines.
+- **A `#` or `--x` segment is copied to the end of its line.** The rest of that line is not formatted, so after a PostgreSQL `#` operator or a SQL Server `#temp` name the keywords keep their case and stay on the line. If such a segment opens a string or a `/* */` comment that continues on the next line (valid in MySQL), the result can differ from the input.
+- **`CASE` stays on one line, except for `AND` / `OR`.** `CASE WHEN ... THEN ... END` is not broken into `WHEN` lines, but an `AND` or `OR` inside it starts a new line as in `WHERE`: {/* sqlf-check: {"op":"format","in":"select case when a = 1 and b = 2 then 'x' else 'y' end as k from t"} */}`select case when a = 1 and b = 2 then 'x' else 'y' end as k from t` gives a `CASE WHEN a = 1` line followed by `  AND b = 2 THEN 'x' ELSE 'y' END AS k`.
+
+```sql
+SELECT
+  CASE WHEN a = 1
+  AND b = 2 THEN 'x' ELSE 'y' END AS k
+FROM t
+```
 - **Write statements are only lightly formatted.** See the `INSERT` and `UPDATE` examples above; `CREATE TABLE` column definitions also stay on one line.
 - **Minify removes `-- ` and `/* */` comments** (`/*! … */` and `/*+ … */` are kept; a `#` comment or `--x` without a space is kept and ends the line) and the space after a closing parenthesis, for example `SELECT COUNT(*)FROM events`.
