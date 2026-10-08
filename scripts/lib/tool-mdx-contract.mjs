@@ -22,19 +22,19 @@ export const LANGS = ['en', 'zh', 'ja', 'ko'];
 // Tools that have not finished S2: S2-PLAN.md §1.2 table A 32 + table B 15 + §7 29 = 76
 // (S2-evidence/content-stats.py on v1.140.3), plus 3 added by S2-0 = 79; S2-1 (2026-10-08)
 // finished 9, S2-2 (2026-10-08) finished 9, S2-3 (2026-10-08) finished 8, S2-4 (2026-10-08)
-// finished 8 and S2-5 (2026-10-08) finished 13, so 32 are left. These get only the basic checks:
+// finished 8, S2-5 (2026-10-08) finished 13 and S2-6 (2026-10-08) finished 8, so 24 are left.
+// These get only the basic checks:
 // files, steps, nonempty FAQ items, no Usage section, and equal FAQ and step counts (unless
 // listed in FAQ_COUNT_MISMATCH / STEPS_COUNT_MISMATCH).
 export const S2_PENDING = new Set([
   // §1.2 table A: site self-review, min(zh, ja, ko) < 800 characters (32; S2-1 to S2-4 finished all 32)
   // §1.2 table B: FAQ counts differ between languages (15; S2-4 finished 2 and S2-5 finished 13)
-  // §7 / §8.2: other non-premium tools below the body floor in at least one language (29)
-  'color-contrast-checker', 'css-specificity-calculator', 'csv-json', 'csv-to-markdown', 'csv-to-sql',
-  'diff-checker', 'env-file-parser', 'exif-metadata-viewer', 'fake-data-generator', 'hash-generator',
-  'http-header-analyzer', 'http-status-codes', 'json-diff', 'json-to-kotlin', 'json-to-mongoose',
-  'json-to-python-dataclass', 'json-to-typescript', 'json-to-zod', 'jsonpath-tester', 'jwt-generator',
+  // §7 / §8.2: other non-premium tools below the body floor in at least one language (29; S2-6 finished 8)
+  'color-contrast-checker', 'css-specificity-calculator', 'csv-to-sql', 'diff-checker',
+  'env-file-parser', 'exif-metadata-viewer', 'fake-data-generator', 'hash-generator',
+  'http-header-analyzer', 'http-status-codes', 'json-diff', 'jsonpath-tester', 'jwt-generator',
   'keycode-explorer', 'markdown-linter', 'nato-phonetic-alphabet', 'regex-tester', 'rsa-key-generator',
-  'text-case', 'timestamp-converter', 'typescript-to-zod', 'word-counter',
+  'text-case', 'timestamp-converter', 'word-counter',
   // Added by S2-0 (2026-10-08): the parity test found no Limits section in any of the four
   // languages. The text is unchanged; an S2 batch adds the section.
   'csp-header-generator', 'cubic-bezier-generator', 'favicon-generator',
