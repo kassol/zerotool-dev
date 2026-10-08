@@ -17,7 +17,8 @@
 // the four tool pages (src/content/tools/jwt-decoder/{lang}.mdx): {/* jwtd-check: … */} examples are
 // decoded by the real page script (token, payload JSON, date notes and status text must appear in
 // the code after the note; demo-signed tokens are re-signed here), plus the general statements on
-// prefixes, quotes, automatic decode and GBK bytes.
+// prefixes, quotes, automatic decode and GBK bytes; line breaks inside a token (any segment, any
+// position) give the same result as without them.
 //
 // Run: node scripts/test-jwt-decoder.mjs
 
@@ -541,6 +542,41 @@ console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' pass
   eq('Bearer prefix and JSON quotes never auto-decode', autoOk, true);
   eq('two-part input never auto-decodes', autoRegex.test('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDA4NiJ9'), false);
   eq('GBK bytes of 张三 decode to U+FFFD, not Chinese', /\uFFFD/.test(E.b64urlDecode(Buffer.from([0x22, 0xd5, 0xc5, 0xc8, 0xfd, 0x22]).toString('base64url'))), true);
+  // Line breaks inside a token (a token wrapped in a log or an e-mail) must not change the result:
+  // the same token with a line break ("\n", "\r\n", or a break with indentation) in any segment and
+  // at several positions decodes exactly as without it, by the Decode button and by the 300 ms
+  // automatic decode. Before the fix the result depended on the segment length, because
+  // b64urlDecode added "=" padding before atob() removed the whitespace. A space or tab that is not
+  // next to a line break, inside the header or payload, always gives the decode error.
+  {
+    const snap = (p) => p.get('jwt-status').textContent + '|' + p.get('jwt-results').textContent;
+    const wrapTokens = [example, ...[0, 1, 2, 3].map((k) => buildToken({ header: { alg: 'HS256', typ: 'JWT', p: 'x'.repeat(k) }, payload: { sub: 'u' + 'y'.repeat(k), name: 'José 東京', exp: 1893456000 }, secret: 'demo-wrap-' + k }))];
+    let same = 0, differ = [];
+    for (const lang of ['en', 'ja']) for (const t of wrapTokens) {
+      const base = page(lang); base.get('jwt-input').value = t; base.get('jwt-decode').click();
+      const want = snap(base);
+      const parts = t.split('.');
+      for (let s = 0; s < 3; s++) {
+        const segLen = parts[s].length;
+        for (const at of [1, Math.floor(segLen / 2), segLen - 1].filter((x) => x > 0 && x < segLen)) for (const br of ['\n', '\r\n', '\n    ', '  \n\t']) {
+          const offset = parts.slice(0, s).reduce((a, x) => a + x.length + 1, 0) + at;
+          const wrapped = t.slice(0, offset) + br + t.slice(offset);
+          const p = page(lang); p.get('jwt-input').value = wrapped; p.get('jwt-decode').click();
+          const q = page(lang); q.input(wrapped); q.advance(300);
+          if (snap(p) === want && snap(q) === want) same++; else differ.push(lang + ' seg' + s + '@' + at + ' len' + segLen + ' ' + JSON.stringify(br));
+        }
+      }
+    }
+    eq('line breaks inside a token give the same result as without them (Decode and auto decode)', differ.slice(0, 6).join('; '), '');
+    let spaceOk = true;
+    for (const t of wrapTokens) for (let s = 0; s < 2; s++) for (const sp of [' ', '\t']) {
+      const parts = t.split('.'); parts[s] = parts[s].slice(0, 5) + sp + parts[s].slice(5);
+      const p = page('en'); p.get('jwt-input').value = parts.join('.'); p.get('jwt-decode').click();
+      if (p.get('jwt-status').textContent !== pageStrings.en.errDecode || p.get('jwt-results').children.length !== 0) spaceOk = false;
+    }
+    eq('a space or tab inside the header or payload always gives the decode error', spaceOk, true);
+    console.log('Line-break checks: ' + same + ' wrapped inputs matched');
+  }
   console.log('Tool page worked examples: ' + (passes - before) + ' passed');
 }
 

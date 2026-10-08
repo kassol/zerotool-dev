@@ -141,6 +141,13 @@ const { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...CLIENT_T } =
 
       /* ── engine:end ── */
 
+      // A token wrapped in a log or an e-mail: drop each line break together with the spaces or
+      // tabs next to it, so the result does not depend on where the break falls. Other whitespace
+      // is kept and makes the header or payload fail to decode (see decode()).
+      function normalizeInput(value) {
+        return value.trim().replace(/[ \t]*(?:\r\n|\r|\n)[ \t]*/g, '');
+      }
+
       function invalidateOutput() {
         outputRevision++;
         clearTimeout(debounceTimer);
@@ -229,7 +236,7 @@ const { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...CLIENT_T } =
 
       function decode() {
         invalidateOutput();
-        var raw = document.getElementById('jwt-input').value.trim();
+        var raw = normalizeInput(document.getElementById('jwt-input').value);
         var statusEl = document.getElementById('jwt-status');
         var resultsEl = document.getElementById('jwt-results');
         resultsEl.innerHTML = '';
@@ -247,8 +254,9 @@ const { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...CLIENT_T } =
           return;
         }
 
-        var headerStr = b64urlDecode(parts[0]);
-        var payloadStr = b64urlDecode(parts[1]);
+        var hasSpace = /\s/.test(parts[0]) || /\s/.test(parts[1]);
+        var headerStr = hasSpace ? null : b64urlDecode(parts[0]);
+        var payloadStr = hasSpace ? null : b64urlDecode(parts[1]);
 
         if (!headerStr || !payloadStr) {
           statusEl.textContent = t.errDecode;
@@ -282,7 +290,7 @@ const { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...CLIENT_T } =
 
       document.getElementById('jwt-input').addEventListener('input', function () {
         invalidateOutput();
-        var val = this.value.trim();
+        var val = normalizeInput(this.value);
         if (!val || !JWT_REGEX.test(val)) {
           clearOutput();
           return;
