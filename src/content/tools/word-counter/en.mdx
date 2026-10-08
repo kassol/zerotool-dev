@@ -7,28 +7,79 @@ steps:
   - "Reading Time uses 200 words per minute; Speaking Time uses 130. Both are rough English-text estimates."
   - "Delete the text or press Ctrl+L (⌘+L on Mac) while focused inside the tool to reset all counts."
 faqItems:
-  - question: "What counts as a word?"
-    answer: "A word is any sequence of non-whitespace characters separated by spaces, tabs, or newlines. Hyphenated terms like 'well-known' count as one word. Numbers like '42' also count as one word."
-  - question: "How is reading time calculated?"
-    answer: "Reading time is based on an average reading speed of 200 words per minute (wpm), which is the standard for adult English readers. Speaking time uses 130 wpm, typical for presentations and speeches."
-  - question: "What is the difference between characters with and without spaces?"
-    answer: "Characters (with spaces) counts every character in your text including spaces, tabs, and newlines. Characters (without spaces) excludes all whitespace, giving you the count of only visible characters."
-  - question: "Is my text sent to a server?"
-    answer: "No. All counting happens in your browser using JavaScript. Your text never leaves your device."
+  - id: "words"
+    question: "What counts as a word?"
+    answer: "A word is any sequence of non-whitespace characters separated by spaces, tabs, or line breaks. Hyphenated terms like 'well-known' count as one word, and so do numbers like '42' and URLs. Chinese or Japanese text without spaces counts as one word per run, so use the character counts for those languages."
+  - id: "reading-time"
+    question: "How is reading time calculated?"
+    answer: "Reading time is the word count divided by 200 words per minute, and speaking time is the word count divided by 130 words per minute. Both are rough estimates for English text. A nonzero time under one minute shows '< 1 min'; longer times round up to whole minutes, so 1,000 words show 5 min reading and 8 min speaking."
+  - id: "spaces"
+    question: "What is the difference between characters with and without spaces?"
+    answer: "Characters counts every UTF-16 code unit in the text, including spaces, tabs and line breaks. Characters (no spaces) removes every character that JavaScript treats as whitespace first, including the full-width space U+3000 and the no-break space. Invisible characters that are not whitespace, such as a zero-width space, are still counted."
+  - id: "length"
+    question: "Is there a length limit?"
+    answer: "The tool sets no limit. Every input event counts the whole text again, so the practical limit is what your browser can handle in a text box."
+  - id: "local-x-posts"
+    question: "Why does X say my post is too long when Characters shows 280 or fewer?"
+    answer: "X does not count the way this tool does. X's documentation counts every URL as 23 characters and most CJK characters and emoji as 2. A family emoji such as 👨‍👩‍👧 counts as 2 on X but as 8 here, because this tool counts UTF-16 code units. Check the final post in the X composer."
+  - id: "privacy"
+    question: "Is my text sent to a server?"
+    answer: "No. The counting runs in your browser tab with JavaScript; the text is not sent, and the tool does not save it in browser storage. Page analytics record one 'count' event with the tool name when you leave the text box after an edit, without the text."
 ---
 
 <h2>Worked Examples</h2>
-<h3>Tweet Length Check</h3>
-<p>Paste a draft tweet and check the <strong>Characters</strong> stat. X (formerly Twitter) allows 280 characters per post. If your count exceeds 280, trim until it fits.</p>
+<p>Each example shows the input and the numbers that the tool shows for it.</p>
 
-<h3>Essay Word Count</h3>
-<p>Writing a 500-word essay? Paste your draft and watch the <strong>Words</strong> counter. You can also verify paragraph structure — most essays need at least 4–5 paragraphs.</p>
+<h3>Abbreviations and the sentence count</h3>
+{/* wc-check: {"show":["words","sentences"]} */}
 
-<h3>Speech Timing</h3>
-<p>Preparing a 5-minute presentation? Aim for roughly 650 words (at 130 wpm). Paste your script and check <strong>Speaking Time</strong> to see if you're on target.</p>
+```text
+Dr. Smith arrived at 3.30 p.m. He left early.
+```
+
+```text
+Words: 9
+Sentences: 3
+```
+
+<p>A human reader sees two sentences. The Unicode sentence rules also end one after <code>Dr.</code> because a capital letter follows it; the period inside <code>3.30</code> does not end a sentence. The three sentences are <code>Dr.</code>, <code>Smith arrived at 3.30 p.m.</code> and <code>He left early.</code> Read the sentence count as an estimate when the text has abbreviations.</p>
+
+<h3>A short post with an emoji</h3>
+{/* wc-check: {"show":["characters","charsNoSpaces","words"]} */}
+
+```text
+I love it 👨‍👩‍👧
+```
+
+```text
+Characters: 18
+Characters (no spaces): 15
+Words: 4
+```
+
+<p>The family emoji is three person emoji joined by two zero-width joiners: 8 UTF-16 code units. The emoji also counts as one word because whitespace separates it. X counts this emoji as 2 (see Limits), so X would count this post as 12.</p>
+
+<h3>Paragraphs and line breaks</h3>
+{/* wc-check: {"show":["sentences","paragraphs"]} */}
+
+```text
+Release notes
+
+Fixed the login bug.
+Improved search speed.
+
+Thanks to all testers!
+```
+
+```text
+Sentences: 4
+Paragraphs: 3
+```
+
+<p>The heading line counts as a sentence because a line break ends a sentence. The two lines in the middle are one paragraph: a single line break does not start a new paragraph, only a blank line does.</p>
 
 <h2>Character Counting Standards</h2>
-<p>Different platforms count characters differently. Some count Unicode code points (so an emoji may be 1 or 2), while others count UTF-16 code units. This tool counts JavaScript string length, which uses UTF-16 code units — the same method browsers and most web platforms use. For the vast majority of Latin, CJK, and Cyrillic text, one visible character equals one count.</p>
+<p>Different platforms count characters differently. Some count Unicode code points, some count graphemes (what a reader sees as one character), and some weight characters. This tool counts JavaScript string length, which is UTF-16 code units. Most Latin, Cyrillic, Chinese, Japanese and Korean characters count as 1. Emoji, rare CJK characters outside the Basic Multilingual Plane (for example 𠮷) and letters written with a separate combining accent count as 2 or more.</p>
 
 ## How Each Number Is Counted
 
@@ -38,7 +89,7 @@ faqItems:
 | Characters | JavaScript string length (UTF-16 code units), including spaces and line breaks | `👍` counts as 2 |
 | Characters (no spaces) | The same, with all whitespace removed | — |
 | Sentences | Unicode sentence boundaries ([UAX #29](https://www.unicode.org/reports/tr29/#Sentence_Boundaries)), computed by the browser's `Intl.Segmenter`. Sentence-ending marks include `.` `!` `?` and the full-width `。` `！` `？`; a period before a lowercase word or inside a number does not end a sentence, and each line break ends one | `Dr. Smith agreed.` counts 2; `The value is 3.14. Next line.` counts 2; `今日は晴れです。明日は雨です！` counts 2 |
-| Paragraphs | Blocks separated by a blank line | — |
+| Paragraphs | Blocks separated by a blank line; a line that has only spaces also counts as blank | — |
 | Reading / speaking time | Words ÷ 200 and words ÷ 130 per minute, rounded up to whole minutes; under 1 minute shows `< 1 min` | 1,000 words → 5 min reading, 8 min speaking |
 
 Other counters can give different numbers for the same text. Microsoft Word, Google Docs, and web counters do not all treat hyphenated words, URLs, Markdown symbols, and code in the same way. When you must stay under a limit, measure with the tool that the reviewer uses.
@@ -48,4 +99,6 @@ Other counters can give different numbers for the same text. Microsoft Word, Goo
 - **Abbreviations and lowercase starts affect the sentence count.** `Dr.` before a capital letter counts as a sentence end. A sentence that starts with a lowercase letter or a digit after a period is not counted as a new sentence. `…` alone does not end a sentence.
 - **Line breaks end sentences.** A heading or list item on its own line counts as a sentence, and text with hard line breaks inside sentences (for example, copied from a PDF) shows more sentences than it has.
 - **Chinese and Japanese text.** These languages do not put spaces between words, so a whole paragraph counts as 1 word, and reading time is not useful. Sentence counts work (`。` `！` `？` end a sentence). Use the character counts for length.
+- **Characters are code units, not what you see.** A thumbs-up with a skin tone (👍🏽) counts as 4, a family of four (👨‍👩‍👧‍👦) as 11, and an accent typed as a separate combining mark adds 1.
+- **Time units are always written in English** (`min`, `hr`) on every language version of the page.
 - **Posts on X.** X counts each URL as 23 characters and most CJK characters and emoji as 2 ([counting characters](https://docs.x.com/fundamentals/counting-characters)), so the X count can differ from the Characters stat here.

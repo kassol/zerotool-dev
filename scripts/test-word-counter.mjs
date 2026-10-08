@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/WordCounterTool.astro'), 'utf8');
@@ -196,5 +196,38 @@ for (const lang of ['en','zh','ja','ko']) {
   h.key('l'); eq(lang + ' v2 keyboard clear restores empty layout', h.widget.dataset.empty, 'true');
 }
 console.log('v2 page layout: ' + (passes - v2Start) + ' passed, ' + failures + ' total failures');
+
+// ---------- worked examples on the tool pages (S2-7, 2026-10-08) ----------
+// Annotation {/* wc-check: {"show":["characters","words"]} */} on src/content/tools/word-counter/
+// {lang}.mdx: the first code block after the annotation is the input (or "input" in the JSON
+// when the text cannot be shown as typed, such as decomposed Hangul), and the next code block
+// must be exactly one "Label: value" line per listed stat, with the page's own labels and the
+// values that the real page script shows for that input. "show" defaults to all seven stats.
+{
+  const before = passes, beforeFailures = failures;
+  const STATS = ['characters', 'charsNoSpaces', 'words', 'sentences', 'paragraphs', 'readingTime', 'speakingTime'];
+  const verify = ({ spec, after, lang }) => {
+    const show = spec?.show ?? STATS;
+    if (!Array.isArray(show) || !show.length || show.some((k) => !STATS.includes(k))) return 'bad "show" list ' + JSON.stringify(show);
+    const blocks = fencedBlocks(after).map((b) => b.text);
+    const given = typeof spec?.input === 'string';
+    const input = given ? spec.input : blocks[0];
+    const shown = given ? blocks[0] : blocks[1];
+    if (input === undefined) return 'no input block';
+    if (shown === undefined) return 'no output block';
+    const h = page(lang, false);
+    h.input(input);
+    const values = h.stats();
+    const expected = show.map((k) => strings[lang][k] + ': ' + values[STATS.indexOf(k)]).join('\n');
+    return shown === expected ? null : 'page gives ' + JSON.stringify(expected) + ', MDX shows ' + JSON.stringify(shown);
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' worked examples match the page script', contractProblems('word-counter', lang, { annotations: [{ tag: 'wc-check', min: 2, verify }] }), '');
+  }
+  check('worked example check catches a wrong count', verify({ spec: { show: ['words'] }, after: '\n```text\none two\n```\n\n```text\nWords: 3\n```\n', lang: 'en' }) !== null);
+  check('worked example check accepts the page count', verify({ spec: { show: ['words', 'readingTime'] }, after: '\n```text\none two\n```\n\n```text\nWords: 2\nReading Time: < 1 min\n```\n', lang: 'en' }) === null);
+  check('worked example check reads "input" from the annotation', verify({ spec: { input: 'a\u3000b', show: ['charsNoSpaces'] }, after: '\n```text\nCharacters (no spaces): 2\n```\n', lang: 'en' }) === null);
+  console.log('tool page examples: ' + (passes - before) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
