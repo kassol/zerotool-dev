@@ -31,7 +31,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const E = new Function(block + '\nreturn { formatSQL, minifySQL };')();
+const E = new Function(block + '\nreturn { formatSQL, minifySQL, tokenize };')();
 
 let failures = 0;
 let passes = 0;
@@ -290,8 +290,9 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
 }
 
 const protectedCore = pageSource.match(/^[ \t]*\/\* ── engine:start ── \*\/[\s\S]*?\/\* ── engine:end ── \*\//m)[0];
-same('protected conversion bytes',Buffer.byteLength(protectedCore),13949);
-same('protected conversion SHA256',hash(protectedCore),'4b6afde76ce0e8ffd31c668272eb99888849dee91f9c945bbf6ad081fd4fbb6e');
+// Engine block changed with approval on 2026-10-08 (S2-4 engine fixes a–d); see git log.
+same('protected conversion bytes',Buffer.byteLength(protectedCore),14047);
+same('protected conversion SHA256',hash(protectedCore),'a7fd87c830e96e4cf81880b4c0a7345752b3ef5a850448026cd4ae835dd09446');
 
 const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
 const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
@@ -349,7 +350,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [598, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), 'ed078958c5a0dc563f8486915db1f37f29b69b01d84f2da75d0e3b82594c39e8');
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '016ae7e738aa01df6e203350d0ee4760ba3ea58c195e8afcd3e997f92286485b');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -436,15 +437,55 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 // ko says the AND of BETWEEN ... AND starts a new line like a condition AND.
 same('BETWEEN ... AND puts AND on a new line', fmt('select * from t where rn between 11 and 20').endsWith('WHERE rn BETWEEN 11\n  AND 20'), true);
-// Pages say a formatted statement with split non-ASCII names fails in SQLite while the input runs.
-for (const [input, message] of [
-  ['select name as 用户名, count(*) as 订单数 from orders group by name;', 'near "户": syntax error'],
-  ["select 社員番号, 氏名 from 社員 where 部署 = '営業部';", 'near "番": syntax error'],
-  ["select 이름, 가입일 from 회원 where 등급 = 'VIP';", 'near "일": syntax error'],
-]) {
-  same('SQLite runs the input ' + input, sqliteRun(input), null);
-  same('SQLite rejects the formatted output of ' + input, sqliteRun(fmt(input)), message);
+// ---------- engine fixes (approved 2026-10-08): output must keep the meaning of the input ----------
+// Execution check: SQLite runs the input, the formatted output (2 / 4 / tab, upper / lower) and the
+// minified output (upper / lower); the result rows must be the same. Column names are not compared,
+// because SQLite names an unaliased column by its expression text.
+const EXEC_SCHEMA = SQLITE_SCHEMA + `
+create table 订单 (订单编号 int, 收货人 text, 实付金额 int, 状态 text);
+insert into 订单 values (1001, '张三', 50, '已支付'), (1002, '李四', 30, '待发货');
+create table café (naïve int, straße text); insert into café values (1, 'x');
+create table "order items" ("order id" int, "a""b" text); insert into "order items" values (7, 'q');
+create table paths (p text); insert into paths values ('C:\\temp\\new'), ('a\\\\b');`;
+function sqliteRows(sql, params) {
+  const db = new SQL.Database();
+  try { db.run(EXEC_SCHEMA); return { rows: JSON.stringify(db.exec(sql, params).map(r => r.values)) }; }
+  catch (e) { return { error: e.message }; } finally { db.close(); }
 }
+function sameExecution(name, sql, params) {
+  const want = sqliteRows(sql, params);
+  same('exec: input runs: ' + name, want.error ?? null, null);
+  const variants = [];
+  for (const indent of ['  ', '    ', '\t']) for (const upper of [true, false]) variants.push(['format ' + JSON.stringify(indent) + ' ' + upper, E.formatSQL(sql, indent, upper)]);
+  for (const upper of [true, false]) variants.push(['minify ' + upper, E.minifySQL(sql, upper)]);
+  for (const [label, out] of variants) same('exec: ' + label + ' gives the same rows: ' + name, sqliteRows(out, params), want);
+}
+// Token check for syntax that SQLite does not run: the token sequence (keyword case ignored) of the
+// formatted and minified output equals that of the input.
+const tokenSeq = sql => E.tokenize(sql).map(t => t.type + ':' + (t.type === 'keyword' ? t.value.toUpperCase() : t.value));
+function sameTokens(name, sql) {
+  const want = tokenSeq(sql).filter(t => !t.startsWith('comment:'));
+  for (const indent of ['  ', '\t']) for (const upper of [true, false]) same('tokens: format ' + upper + ': ' + name, tokenSeq(E.formatSQL(sql, indent, upper)).filter(t => !t.startsWith('comment:')), want);
+  for (const upper of [true, false]) same('tokens: minify ' + upper + ': ' + name, tokenSeq(E.minifySQL(sql, upper)), want);
+}
+
+// a) Unquoted identifiers with non-ASCII letters stay one token.
+eq('a: Chinese alias stays whole', fmt('select name as 用户名, count(*) as 订单数 from orders group by name;'),
+  lines('SELECT', '  name AS 用户名,', '  COUNT(*) AS 订单数', 'FROM orders', 'GROUP BY name;'));
+eq('a: accented names stay whole', E.minifySQL('select café, naïve from t'), 'SELECT café, naïve FROM t');
+eq('a: Japanese names stay whole', fmt("select 社員番号, 氏名 from 社員 where 部署 = '営業部';"),
+  lines('SELECT', '  社員番号,', '  氏名', 'FROM 社員', "WHERE 部署 = '営業部';"));
+eq('a: two-syllable Korean name is not split into column and alias', E.minifySQL("select 이름, 가입일 from 회원 where 등급 = 'VIP';"), "SELECT 이름, 가입일 FROM 회원 WHERE 등급 = 'VIP';");
+eq('a: characters outside the BMP and combining marks', E.minifySQL('select 𠮷野家, e\u0301tat from t'), 'SELECT 𠮷野家, e\u0301tat FROM t');
+eq('a: a non-ASCII word whose upper case is a keyword stays an identifier', E.minifySQL('select ın, ſelect from t'), 'SELECT ın, ſelect FROM t');
+for (const [name, sql] of [
+  ['Chinese alias', 'select name as 用户名, count(*) as 订单数 from orders group by name;'],
+  ['Chinese table and columns', "select 收货人, sum(实付金额) as 合计 from 订单 where 状态 = '已支付' group by 收货人 order by 合计 desc;"],
+  ['Japanese columns', "select 社員番号, 氏名 from 社員 where 部署 = '営業部';"],
+  ['Korean two-syllable names', "select 이름, 가입일 from 회원 where 등급 = 'VIP';"],
+  ['accented names', 'select naïve, straße from café;'],
+]) sameExecution(name, sql);
+
 const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
 for(const lang of ['en','zh','ja','ko']) {
   const S=pageStrings[lang], payload=clientStrings(lang);

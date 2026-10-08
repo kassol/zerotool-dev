@@ -22,8 +22,8 @@ faqItems:
     question: "서식 옵션을 바꿀 수 있나요?"
     answer: "들여쓰기(공백 2개·공백 4개·탭)와 키워드 대소문자를 고를 수 있습니다. 입력하는 동안의 자동 서식은 현재 옵션을 쓰고, 옵션을 바꾼 뒤에는 “서식 지정”을 눌러야 지금 출력에 반영됩니다."
   - id: non-ascii-names
-    question: "한글 컬럼명이 한 글자씩 띄어지는 이유는 무엇인가요?"
-    answer: "토크나이저가 ASCII 영문자·숫자·_·$만 이름의 일부로 읽기 때문입니다. 따옴표 없는 한글 이름은 글자마다 다른 토큰이 되어 가입일 이 가 입 일 로 바뀌고, 서식을 지정한 SQL은 실행되지 않습니다. 한글 이름은 큰따옴표(표준 SQL·PostgreSQL·Oracle)나 백틱(MySQL)으로 감싸세요. 감싼 이름은 그대로 남습니다."
+    question: "한글 컬럼명은 따옴표로 감싸야 하나요?"
+    answer: "이 도구 때문에 감쌀 필요는 없습니다. 이어진 유니코드 문자·숫자·결합 문자·_·$를 한 이름으로 읽으므로 이름, 가입일 같은 한글 이름은 그대로 남고, 대소문자가 바뀌는 것은 54개 영어 키워드뿐입니다. 따옴표 없는 한글 이름을 받아들이는지는 데이터베이스에 따라 다릅니다. PostgreSQL은 비라틴 문자를, MySQL은 U+0080~U+FFFF 문자를 따옴표 없는 이름에 쓸 수 있습니다."
   - id: privacy
     question: "데이터가 서버로 전송되나요?"
     answer: "아니요. 쿼리는 지금 보고 있는 브라우저 탭 안에서 정렬하며, 서버로 보내지도 브라우저 저장소에 저장하지도 않습니다. “서식 지정” 또는 “최소화”를 누르면 페이지 통계에 도구 이름과 그 동작이 기록되지만 SQL 내용은 담지 않습니다."
@@ -58,9 +58,9 @@ WHERE rn > 10;
 
 서브쿼리마다 한 단계씩 들여쓰고, 닫는 괄호는 여는 괄호가 있던 줄의 들여쓰기로 돌아갑니다. `rownum`은 키워드 목록에 없으므로 입력한 대로 소문자로 남습니다. `rn > 10` 대신 `rn between 11 and 20`이라고 쓰면, `BETWEEN` 뒤의 `AND`도 조건을 잇는 `AND`처럼 새 줄에서 시작합니다. 의미는 같지만 줄 모양이 어색해 보일 수 있습니다.
 
-## 한글 컬럼명은 따옴표로 감싸기
+## 한글 컬럼명 그대로 정렬하기
 
-PostgreSQL은 따옴표 없는 식별자에 비라틴 문자도 쓸 수 있다고 설명합니다([PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)). 그래서 `가입일` 같은 한글 컬럼명은 따옴표 없이도 실행됩니다. 하지만 이 도구는 ASCII 영문자·숫자·`_`·`$`만 이름으로 읽으므로, 한글은 한 글자씩 떨어집니다.
+PostgreSQL은 따옴표 없는 식별자에 비라틴 문자도 쓸 수 있다고 설명합니다([PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)). 그래서 `가입일` 같은 한글 컬럼명은 따옴표 없이도 실행됩니다. 이 도구는 이어진 유니코드 문자·숫자·`_`·`$`를 한 이름으로 읽기 때문에 한글 이름도 떨어지지 않고 그대로 남습니다.
 
 {/* sqlf-check: {"op":"format"} */}
 ```sql
@@ -69,13 +69,13 @@ select 이름, 가입일 from 회원 where 등급 = 'VIP';
 
 ```sql
 SELECT
-  이 름,
-  가 입 일
-FROM 회 원
-WHERE 등 급 = 'VIP';
+  이름,
+  가입일
+FROM 회원
+WHERE 등급 = 'VIP';
 ```
 
-SQLite 3.49.1(sql.js)에서 확인하면 {/* sqlf-sqlite: {"sql":"select 이름, 가입일 from 회원 where 등급 = 'VIP';"} */}원래 문장은 실행되고, {/* sqlf-sqlite: {"sql":"SELECT\n  이 름,\n  가 입 일\nFROM 회 원\nWHERE 등 급 = 'VIP';","error":"near \"일\": syntax error"} */}서식을 지정한 문장은 `near "일": syntax error`로 멈춥니다. `이 름`처럼 두 글자인 이름은 구문 오류가 아니라 “`이` 컬럼에 `름`이라는 별칭”으로 읽힙니다. {/* sqlf-sqlite: {"sql":"SELECT 이 름 FROM 회원;","error":"no such column: 이"} */}이 부분만 실행하면 `no such column: 이`가 나오고, 마침 `이`라는 컬럼이 있는 테이블이라면 오류 없이 다른 값을 돌려줍니다. 한글 이름은 큰따옴표로 감싸 두면 한 덩어리로 정렬됩니다.
+`이름`처럼 두 글자인 이름도 한 덩어리로 남으므로, “`이` 컬럼에 `름`이라는 별칭”으로 잘못 읽힐 일이 없습니다. SQLite 3.49.1(sql.js)에서 확인하면 {/* sqlf-sqlite: {"sql":"select 이름, 가입일 from 회원 where 등급 = 'VIP';"} */}원래 문장과 {/* sqlf-sqlite: {"sql":"SELECT\n  이름,\n  가입일\nFROM 회원\nWHERE 등급 = 'VIP';"} */}서식을 지정한 문장이 모두 실행되고 같은 행을 돌려줍니다. 큰따옴표로 감싼 한글 이름도 그대로 정렬됩니다.
 
 {/* sqlf-check: {"op":"format"} */}
 ```sql
@@ -136,7 +136,6 @@ ORDER BY r.spent DESC;
 ## 제한 사항
 
 - **방언은 범용 1종류뿐이며 문법 검사를 하지 않습니다.** MySQL·PostgreSQL·SQL Server 등의 모드가 없고, 잘못된 SQL도 오류 없이 서식이 지정됩니다.
-- **따옴표 없는 한글 이름은 한 글자씩 떨어집니다.** 위 예시와 같습니다. 악센트가 붙은 영문자도 마찬가지입니다.
 - **문자열 안의 백슬래시 이스케이프를 인식하지 않습니다.** MySQL은 `NO_BACKSLASH_ESCAPES`가 꺼져 있으면 문자열 안의 `\'`를 작은따옴표 한 글자로 읽습니다([MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)). 이 도구는 그 따옴표에서 문자열을 끝내므로 {/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'`가 `SELECT * FROM users WHERE note = 'It\' s '`로 바뀌어 문자열 내용이 달라집니다. `'It''s'`처럼 작은따옴표를 두 번 쓰면 그대로 남습니다.
 - **다른 방언 문법에는 공백이 들어갑니다.** PostgreSQL의 `$1`은 `$ 1`이 됩니다.
 - **`CASE`는 한 줄로 유지됩니다.** `CASE WHEN ... THEN ... END`는 `WHEN`마다 줄바꿈되지 않습니다.

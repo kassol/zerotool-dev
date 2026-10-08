@@ -22,8 +22,8 @@ faqItems:
     question: "Can I customize the formatting?"
     answer: "Yes. Choose 2-space, 4-space or tab indentation, and turn uppercase keywords on or off. Typing formats with the current options; after you change an option, click Format to apply it to the current output."
   - id: non-ascii-names
-    question: "Why are names with accents or Chinese, Japanese or Korean characters split apart?"
-    answer: "The tokenizer reads only ASCII letters, digits, _ and $ as part of a name, so every other letter in an unquoted name becomes a separate token: café becomes caf é. The result no longer runs. Put such names in quotes (double quotes in standard SQL and PostgreSQL, backticks in MySQL); quoted names are copied unchanged."
+    question: "Do names with accents or Chinese, Japanese or Korean characters need quotes?"
+    answer: "Not for this tool. An unquoted name is read as any run of Unicode letters, digits, combining marks, _ and $, so café, 社員番号 or 가입일 stays one name and keeps its spelling; only the 54 ASCII keywords change case. Whether your database accepts such a name without quotes is up to the database: MySQL allows U+0080 to U+FFFF in unquoted names, and PostgreSQL allows non-Latin letters."
   - id: privacy
     question: "Is my data sent anywhere?"
     answer: "No. The query is formatted in this browser tab and is not sent to a server or saved in browser storage. When you click Format or Minify, the page statistics record the tool name and that action, not the SQL."
@@ -105,7 +105,9 @@ The column list after `SET` stays on one line, and all `VALUES` rows go on one l
 
 ## Keyword Case
 
-With the uppercase option on, the formatter capitalizes a fixed list of 54 words: clause keywords such as `SELECT`, `LEFT`, `HAVING`, `UNION`, `CASE`, `EXISTS`, plus the five aggregate functions `COUNT`, `SUM`, `AVG`, `MIN` and `MAX`. Other function names (`now()`, `coalesce()`, `date_trunc()`) and data types are left as typed. With the option off, the same keywords are converted to lower case, so `Select Id From Users` becomes `select Id from Users`. Unquoted names made of ASCII letters, digits, `_` and `$` are never changed (names with other letters are split, see Limits), and quoted names (`"Order Id"`, `` `name` ``) and string literals, including doubled quotes as in `'it''s here'`, are copied as written.
+With the uppercase option on, the formatter capitalizes a fixed list of 54 words: clause keywords such as `SELECT`, `LEFT`, `HAVING`, `UNION`, `CASE`, `EXISTS`, plus the five aggregate functions `COUNT`, `SUM`, `AVG`, `MIN` and `MAX`. Other function names (`now()`, `coalesce()`, `date_trunc()`) and data types are left as typed. With the option off, the same keywords are converted to lower case, so `Select Id From Users` becomes `select Id from Users`. Unquoted names, including names with accented or non-Latin letters such as `café` or `社員番号`, are never changed, and quoted names (`"Order Id"`, `` `name` ``) and string literals, including doubled quotes as in `'it''s here'`, are copied as written.
+
+Names with other letters are kept whole as well. {/* sqlf-check: {"op":"minify","in":"select café, naïve from t"} */}`select café, naïve from t` minifies to `SELECT café, naïve FROM t`.
 
 ## Subquery Example
 
@@ -154,7 +156,6 @@ ORDER BY r.spent DESC;
 ## Limits
 
 - **One generic dialect, no validation.** There is no MySQL, PostgreSQL, or SQL Server mode, and invalid SQL is formatted without an error.
-- **Unquoted names with non-ASCII letters are split.** Only ASCII letters, digits, `_` and `$` are read as part of a name. {/* sqlf-check: {"op":"minify","in":"select café, naïve from t"} */}`select café, naïve from t` comes out as `SELECT caf é, na ï ve FROM t`, which no database reads as the original columns. Quote such names: `"café"` or `` `café` `` stays as written.
 - **Backslash escapes in strings are not recognized.** MySQL reads `\'` inside a string as a quote unless the `NO_BACKSLASH_ESCAPES` SQL mode is on ([MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)). The tool ends the string at that quote, so {/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'` becomes `SELECT * FROM users WHERE note = 'It\' s '`, and the string value changes. Write `'It''s'` instead; doubled quotes are kept.
 - **Other dialect tokens get extra spaces.** {/* sqlf-check: {"op":"minify","in":"select [order id] from t where id = $1 and name = N'Zoë'"} */}`select [order id] from t where id = $1 and name = N'Zoë'` becomes `SELECT [ ORDER id ] FROM t WHERE id = $ 1 AND name = N 'Zoë'`: the SQL Server brackets are split and the keyword inside them is uppercased, and the PostgreSQL parameter `$1` and the `N'...'` prefix are separated.
 - **`CASE` stays on one line.** `CASE WHEN ... THEN ... END` is not broken into `WHEN` lines.

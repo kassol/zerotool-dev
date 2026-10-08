@@ -22,16 +22,16 @@ faqItems:
     question: "可以自定义格式吗？"
     answer: "可以。缩进可选 2 个空格、4 个空格或制表符，关键字可选大写或小写。输入时自动格式化会用当前选项；改了选项之后，点击“格式化”才会应用到已有的输出。"
   - id: non-ascii-names
-    question: "为什么中文列名、别名被拆成了一个个字？"
-    answer: "分词器只把 ASCII 字母、数字、_ 和 $ 当作名字的一部分，未加引号的中文名会按字拆开，例如 用户名 变成 用 户 名，格式化后的 SQL 就无法执行。给这类名字加上引号即可：MySQL 用反引号，标准 SQL 和 PostgreSQL 用双引号，引号内的内容原样保留。"
+    question: "中文列名、别名需要加引号吗？"
+    answer: "对本工具来说不需要。连续的 Unicode 字母、数字、组合符号、_ 和 $ 都按一个名字读取，用户名、订单数这样的中文名整体保留，只有 54 个英文关键字改变大小写。数据库是否接受不加引号的中文名由数据库决定：MySQL 允许 U+0080 到 U+FFFF 的字符，PostgreSQL 允许非拉丁字母。"
   - id: privacy
     question: "数据会发送到服务器吗？"
     answer: "不会。查询在当前浏览器标签页里格式化，不会发送到服务器，也不会保存到浏览器存储。点击“格式化”或“压缩”时，页面统计会记录工具名和这个操作，不包含 SQL 内容。"
 ---
 
-<h2>示例：中文别名要加反引号</h2>
+<h2>示例：中文别名和中文表名</h2>
 
-MySQL 允许不加引号的名字使用 U+0080 到 U+FFFF 的字符（[MySQL 8.4 参考手册：Schema Object Names](https://dev.mysql.com/doc/refman/8.4/en/identifiers.html)），所以 `as 用户名` 这样的中文别名在 MySQL 里可以直接执行。本工具的分词器只把 ASCII 字母、数字、`_`、`$` 当作名字，未加引号的中文会被拆成单个字：
+MySQL 允许不加引号的名字使用 U+0080 到 U+FFFF 的字符（[MySQL 8.4 参考手册：Schema Object Names](https://dev.mysql.com/doc/refman/8.4/en/identifiers.html)），所以 `as 用户名` 这样的中文别名在 MySQL 里可以直接执行。本工具把连续的 Unicode 字母、数字、`_`、`$` 读作一个名字，未加引号的中文名会整体保留，只有关键字改变大小写：
 
 {/* sqlf-check: {"op":"format"} */}
 ```sql
@@ -40,13 +40,30 @@ select name as 用户名, count(*) as 订单数 from orders group by name;
 
 ```sql
 SELECT
-  name AS 用 户 名,
-  COUNT(*) AS 订 单 数
+  name AS 用户名,
+  COUNT(*) AS 订单数
 FROM orders
 GROUP BY name;
 ```
 
-拆开之后语句就不能执行了。在 SQLite 3.49.1（sql.js）里实测，{/* sqlf-sqlite: {"sql":"select name as 用户名, count(*) as 订单数 from orders group by name;"} */}原句能正常返回结果，{/* sqlf-sqlite: {"sql":"SELECT\n  name AS 用 户 名,\n  COUNT(*) AS 订 单 数\nFROM orders\nGROUP BY name;","error":"near \"户\": syntax error"} */}格式化后的句子报 `near "户": syntax error`。给中文名加上反引号（MySQL）或双引号（标准 SQL、PostgreSQL）后，名字会作为一个整体原样保留，字符串里的中文也不受影响：
+在 SQLite 3.49.1（sql.js）里实测，{/* sqlf-sqlite: {"sql":"select name as 用户名, count(*) as 订单数 from orders group by name;"} */}原句和{/* sqlf-sqlite: {"sql":"SELECT\n  name AS 用户名,\n  COUNT(*) AS 订单数\nFROM orders\nGROUP BY name;"} */}格式化后的句子都能执行，返回的行相同。表名、列名都是中文时也一样：
+
+{/* sqlf-check: {"op":"format"} */}
+```sql
+select 收货人, sum(实付金额) as 合计 from 订单 where 状态 = '已支付' group by 收货人 order by 合计 desc;
+```
+
+```sql
+SELECT
+  收货人,
+  SUM(实付金额) AS 合计
+FROM 订单
+WHERE 状态 = '已支付'
+GROUP BY 收货人
+ORDER BY 合计 DESC;
+```
+
+用反引号（MySQL）或双引号（标准 SQL、PostgreSQL）括起来的名字同样原样保留：
 
 {/* sqlf-check: {"op":"format"} */}
 ```sql
@@ -127,8 +144,7 @@ ORDER BY r.spent DESC;
 ## 限制
 
 - **只有一种通用方言，不做语法校验。** 没有 MySQL、PostgreSQL、SQL Server 等模式，错误的 SQL 也会照样格式化，不报错。
-- **未加引号的非 ASCII 名字会被拆开。** 中文、带重音的字母都会按字拆开，见上面的例子。加引号的名字不受影响。
 - **不认识字符串里的反斜杠转义。** MySQL 在未开启 `NO_BACKSLASH_ESCAPES` 时把字符串里的 `\'` 当作一个单引号（[MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)），本工具却在这个引号处结束字符串，{/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'` 会变成 `SELECT * FROM users WHERE note = 'It\' s '`，字符串内容被改了。改用两个单引号 `'It''s'` 就能原样保留。
-- **其他方言写法会被插入空格。** {/* sqlf-check: {"op":"minify","in":"select [订单编号] from t where id = $1 and name = N'张三'"} */}`select [订单编号] from t where id = $1 and name = N'张三'` 压缩后是 `SELECT [ 订 单 编 号 ] FROM t WHERE id = $ 1 AND name = N '张三'`：SQL Server 的方括号名称被拆开，PostgreSQL 的参数 `$1` 和 `N'...'` 前缀也被分开。
+- **其他方言写法会被插入空格。** {/* sqlf-check: {"op":"minify","in":"select [订单编号] from t where id = $1 and name = N'张三'"} */}`select [订单编号] from t where id = $1 and name = N'张三'` 压缩后是 `SELECT [ 订单编号 ] FROM t WHERE id = $ 1 AND name = N '张三'`：SQL Server 的方括号名称被拆开，PostgreSQL 的参数 `$1` 和 `N'...'` 前缀也被分开。
 - **`CASE` 保持在一行。** `CASE WHEN ... THEN ... END` 不会按 `WHEN` 拆行。
 - **压缩会删掉注释**，也会去掉右括号后的空格，例如 `SELECT COUNT(*)FROM events`。

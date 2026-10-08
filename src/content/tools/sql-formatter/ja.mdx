@@ -22,16 +22,16 @@ faqItems:
     question: "整形オプションはカスタマイズできますか？"
     answer: "インデント（2スペース・4スペース・タブ）とキーワードの大文字・小文字を設定できます。入力中の自動整形は今の設定を使います。設定を変えたあとは「整形」を押すと、今の出力に反映されます。"
   - id: non-ascii-names
-    question: "日本語のカラム名が1文字ずつ区切られるのはなぜですか？"
-    answer: "トークナイザーは ASCII の英字・数字・_・$ だけを名前の一部として読むため、引用符のない日本語の名前は1文字ずつ別のトークンになります。社員番号 が 社 員 番 号 になり、整形後の SQL は実行できません。日本語の名前は二重引用符（標準 SQL・PostgreSQL）またはバッククォート（MySQL）で囲んでください。囲んだ名前はそのまま残ります。"
+    question: "日本語のカラム名は引用符で囲む必要がありますか？"
+    answer: "このツールのためには不要です。連続する Unicode の文字・数字・結合文字・_・$ を1つの名前として読むので、社員番号 や 氏名 は区切られずに残り、大文字・小文字が変わるのは 54 語の英語キーワードだけです。引用符なしの日本語名を受け付けるかどうかはデータベース次第で、PostgreSQL はラテン文字以外の文字を、MySQL は U+0080〜U+FFFF の文字を引用符なしの名前に使えます。"
   - id: privacy
     question: "データはサーバーに送信されますか？"
     answer: "いいえ。クエリはこのブラウザのタブ内で整形し、サーバーへの送信もブラウザのストレージへの保存もしません。「整形」または「圧縮」を押すと、ページの統計にツール名とその操作が記録されますが、SQL の内容は含みません。"
 ---
 
-## 日本語のカラム名は引用符で囲む
+## 日本語のカラム名をそのまま整形する
 
-PostgreSQL のマニュアルは、引用符なしの識別子にラテン文字以外の文字（non-Latin letters）も使えると説明しています（[PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)）。そのため `社員番号` のような名前は、引用符なしでもそのまま実行できます。このツールのトークナイザーは ASCII の英字・数字・`_`・`$` だけを名前として読むので、日本語の部分は1文字ずつ区切られます。
+PostgreSQL のマニュアルは、引用符なしの識別子にラテン文字以外の文字（non-Latin letters）も使えると説明しています（[PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)）。そのため `社員番号` のような名前は、引用符なしでもそのまま実行できます。このツールのトークナイザーは、連続する Unicode の文字・数字・`_`・`$` を1つの名前として読むので、日本語の名前は区切られずに残ります。
 
 {/* sqlf-check: {"op":"format"} */}
 ```sql
@@ -40,13 +40,13 @@ select 社員番号, 氏名 from 社員 where 部署 = '営業部';
 
 ```sql
 SELECT
-  社 員 番 号,
-  氏 名
-FROM 社 員
-WHERE 部 署 = '営業部';
+  社員番号,
+  氏名
+FROM 社員
+WHERE 部署 = '営業部';
 ```
 
-文字列 `'営業部'` はそのままですが、名前が区切られたので、もう同じ SQL ではありません。SQLite 3.49.1（sql.js）で試すと、{/* sqlf-sqlite: {"sql":"select 社員番号, 氏名 from 社員 where 部署 = '営業部';"} */}元の文は実行でき、{/* sqlf-sqlite: {"sql":"SELECT\n  社 員 番 号,\n  氏 名\nFROM 社 員\nWHERE 部 署 = '営業部';","error":"near \"番\": syntax error"} */}整形後の文は `near "番": syntax error` で止まります。名前を二重引用符で囲めば、ひとまとまりのまま整形されます。
+大文字になるのは `SELECT`、`FROM`、`WHERE` などのキーワードだけです。SQLite 3.49.1（sql.js）で試すと、{/* sqlf-sqlite: {"sql":"select 社員番号, 氏名 from 社員 where 部署 = '営業部';"} */}元の文も{/* sqlf-sqlite: {"sql":"SELECT\n  社員番号,\n  氏名\nFROM 社員\nWHERE 部署 = '営業部';"} */}整形後の文も実行でき、返る行は同じです。二重引用符で囲んだ名前も、ひとまとまりのまま整形されます。
 
 {/* sqlf-check: {"op":"format"} */}
 ```sql
@@ -123,7 +123,6 @@ WHERE id IN (
 ## 制限事項
 
 - **方言は汎用の 1 種類のみで、構文チェックはしません。** MySQL・PostgreSQL・SQL Server などのモードはなく、誤った SQL もエラーなしで整形されます。
-- **引用符のない日本語の名前は1文字ずつ区切られます。** 上の例のとおりです。アクセント付きの英字も同じです。
 - **文字列中のバックスラッシュエスケープを認識しません。** MySQL は `NO_BACKSLASH_ESCAPES` が無効なとき、文字列中の `\'` を引用符1文字として読みます（[MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)）。このツールはその引用符で文字列を終えるため、{/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'` が `SELECT * FROM users WHERE note = 'It\' s '` になり、文字列の中身が変わります。`'It''s'` のように引用符を2つ重ねて書けば、そのまま残ります。
 - **ほかの方言の書き方には空白が入ります。** {/* sqlf-check: {"op":"minify","in":"select * from t where id = $1 and name = N'山田'"} */}`select * from t where id = $1 and name = N'山田'` は `SELECT * FROM t WHERE id = $ 1 AND name = N '山田'` になり、PostgreSQL のパラメーター `$1` と SQL Server の `N'...'` が分かれます。
 - **`CASE` は 1 行のままです。** `CASE WHEN ... THEN ... END` は `WHEN` ごとに改行されません。
