@@ -22,6 +22,7 @@ const STRINGS = {
     "errNoHeader": "CSV must have a header row.",
     "createTable": "Add CREATE TABLE",
     "addedColumns": "Some rows have more cells than the header; added columns: {cols}.",
+    "renamedColumns": "Duplicate or empty header names were renamed: {cols}.",
     "empty": "SQL statements will appear here.",
     "fileNotUtf8": "The file was not loaded: byte {offset} (counting from 0) is not valid UTF-8, so the file uses another encoding (Shift_JIS, GBK, EUC-KR or Windows-1252?). CSV Input was not changed. Save the file as UTF-8 (in Excel: CSV UTF-8) and load it again.",
     "fileUtf16": "The file was not loaded: it looks like UTF-16 text. CSV Input was not changed. Save the file as UTF-8 and load it again.",
@@ -55,6 +56,7 @@ const STRINGS = {
     "errNoHeader": "CSV 必须包含表头行。",
     "createTable": "添加 CREATE TABLE",
     "addedColumns": "部分行的单元格比表头多，已补充列：{cols}。",
+    "renamedColumns": "表头有重名或空名，已改名：{cols}。",
     "empty": "SQL 语句将显示在这里。",
     "fileNotUtf8": "未载入文件：第 {offset} 个字节（从 0 数）不是有效的 UTF-8，文件用的是其他编码（GBK、Big5 或 Windows-1252？）。“CSV 输入”未改动。请另存为 UTF-8（Excel 选“CSV UTF-8”）后再载入。",
     "fileUtf16": "未载入文件：它像是 UTF-16 文本。“CSV 输入”未改动。请另存为 UTF-8 后再载入。",
@@ -88,6 +90,7 @@ const STRINGS = {
     "errNoHeader": "CSVにはヘッダー行が必要です。",
     "createTable": "CREATE TABLE を追加",
     "addedColumns": "ヘッダーより多いセルがある行のため、列を追加しました：{cols}。",
+    "renamedColumns": "重複または空のヘッダー名を変更しました：{cols}。",
     "empty": "SQL 文がここに表示されます。",
     "fileNotUtf8": "ファイルを読み込みませんでした：{offset} バイト目（0 から数えて）が UTF-8 として正しくないため、別の文字コード（Shift_JIS など）のファイルです。「CSV 入力」は変わっていません。UTF-8 で保存し直して（Excel では「CSV UTF-8」）から読み込んでください。",
     "fileUtf16": "ファイルを読み込みませんでした：UTF-16 のテキストのようです。「CSV 入力」は変わっていません。UTF-8 で保存し直してから読み込んでください。",
@@ -121,6 +124,7 @@ const STRINGS = {
     "errNoHeader": "CSV에는 헤더 행이 필요합니다.",
     "createTable": "CREATE TABLE 추가",
     "addedColumns": "헤더보다 셀이 많은 행이 있어 열을 추가했습니다: {cols}.",
+    "renamedColumns": "중복되거나 비어 있는 헤더 이름을 바꿨습니다: {cols}.",
     "empty": "SQL 문이 여기에 표시됩니다.",
     "fileNotUtf8": "파일을 불러오지 않았습니다: {offset}번째 바이트(0부터 셈)가 올바른 UTF-8이 아니어서 다른 인코딩(EUC-KR, CP949 등)의 파일입니다. CSV 입력은 바뀌지 않았습니다. UTF-8로 다시 저장한 뒤(Excel에서는 ‘CSV UTF-8’) 불러오세요.",
     "fileUtf16": "파일을 불러오지 않았습니다: UTF-16 텍스트로 보입니다. CSV 입력은 바뀌지 않았습니다. UTF-8로 다시 저장한 뒤 불러오세요.",
@@ -312,7 +316,7 @@ const { tips: TIPS, ...CLIENT } = T;
       }
 
       /* opts: { dialect, table, mode: 'batch' | 'individual', createTable }.
-         Returns { sql, addedColumns } or { error: 'noData' | 'noHeader' } or { error: 'unclosed', line }. Cells beyond the header
+         Returns { sql, addedColumns, renamedColumns } or { error: 'noData' | 'noHeader' } or { error: 'unclosed', line }. Cells beyond the header
          get columns named column_N (N = position), so no value is dropped. */
       function csvToSql(text, opts) {
         /* Drop a BOM, leading blank lines and trailing line breaks only (same as csv-json), so spaces
@@ -331,18 +335,34 @@ const { tips: TIPS, ...CLIENT } = T;
           return r.some(function (c) { return c !== ''; });
         });
         if (rows.length === 0) return { error: 'noData' };
-        var headers = rows[0].slice();
-        if (headers.every(function (h) { return h === ''; })) return { error: 'noHeader' };
+        var header = rows[0];
+        if (header.every(function (h) { return h === ''; })) return { error: 'noHeader' };
         var dataRows = rows.slice(1);
         if (dataRows.length === 0) return { error: 'noData' };
 
-        var width = dataRows.reduce(function (w, r) { return Math.max(w, r.length); }, headers.length);
+        /* Every column gets a unique, nonempty name. Names are compared without case, because
+           MySQL and SQLite column names are not case-sensitive. An empty header and a cell beyond
+           the header get column_N (N = position); a repeated name gets _2, _3 … The new names
+           avoid every name written in the header. */
+        var width = dataRows.reduce(function (w, r) { return Math.max(w, r.length); }, header.length);
+        var written = Object.create(null);
+        header.forEach(function (h) { written[h.toLowerCase()] = true; });
+        var taken = Object.create(null);
+        var headers = [];
         var addedColumns = [];
-        for (var c = headers.length; c < width; c++) {
-          var name = 'column_' + (c + 1);
-          while (headers.indexOf(name) >= 0) name += '_';
+        var renamedColumns = [];
+        for (var c = 0; c < width; c++) {
+          var given = c < header.length ? header[c] : '';
+          var base = given === '' ? 'column_' + (c + 1) : given;
+          var name = base;
+          if (taken[name.toLowerCase()] || (given === '' && written[name.toLowerCase()])) {
+            for (var k = 2; taken[(base + '_' + k).toLowerCase()] || written[(base + '_' + k).toLowerCase()]; k++) {}
+            name = base + '_' + k;
+          }
+          taken[name.toLowerCase()] = true;
           headers.push(name);
-          addedColumns.push(name);
+          if (c >= header.length) addedColumns.push(name);
+          else if (name !== given) renamedColumns.push((given === '' ? '""' : given) + ' → ' + name);
         }
 
         var dialect = opts.dialect;
@@ -371,7 +391,7 @@ const { tips: TIPS, ...CLIENT } = T;
           lines.push('INSERT INTO ' + qTable + ' (' + qCols + ') VALUES');
           lines.push(dataRows.map(function (row) { return '  ' + tuple(row); }).join(',\n') + ';');
         }
-        return { sql: lines.join('\n'), addedColumns: addedColumns };
+        return { sql: lines.join('\n'), addedColumns: addedColumns, renamedColumns: renamedColumns };
       }
       /* ── engine:end ── */
 
@@ -396,7 +416,10 @@ const { tips: TIPS, ...CLIENT } = T;
           return;
         }
         sqlEl.value = r.sql;
-        if (r.addedColumns.length) setStatus(t.addedColumns.replace('{cols}', r.addedColumns.join(', ')), false);
+        var notes = [];
+        if (r.addedColumns.length) notes.push(t.addedColumns.replace('{cols}', r.addedColumns.join(', ')));
+        if (r.renamedColumns.length) notes.push(t.renamedColumns.replace('{cols}', r.renamedColumns.join(', ')));
+        if (notes.length) setStatus(notes.join(' '), false);
         else clearStatus();
       }
 

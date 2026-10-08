@@ -175,6 +175,35 @@ eq('no added columns normally', conv('a\n1').addedColumns, []);
   eq('whitespace only input has no data', conv('   ').error, 'noData');
 }
 
+// ---------- duplicate and empty header names (S2-7, approved engine change) ----------
+// Header names were used as written: two equal names gave SQL that SQLite rejects with
+// "duplicate column name", and an empty header cell gave the empty name "".
+{
+  const cols = (r) => (r.sql || '').match(/^INSERT INTO "(?:[^"]|"")*" \(([^)]*)\)/m)?.[1];
+  let r = conv('id,name,name\n1,a,b');
+  eq('repeated name gets _2', [cols(r), r.renamedColumns], ['"id", "name", "name_2"', ['name → name_2']]);
+  r = conv('a,,c\n1,2,3');
+  eq('empty header becomes column_N', [cols(r), r.renamedColumns], ['"a", "column_2", "c"', ['"" → column_2']]);
+  r = conv('Name,name,NAME\n1,2,3');
+  eq('names that differ only in case are duplicates', [cols(r), r.renamedColumns], ['"Name", "name_2", "NAME_3"', ['name → name_2', 'NAME → NAME_3']]);
+  r = conv('a,a,a_2\n1,2,3');
+  eq('a new name avoids names already in the header', [cols(r), r.renamedColumns], ['"a", "a_3", "a_2"', ['a → a_3']]);
+  r = conv('x,,column_2\n1,2,3,4');
+  eq('empty header avoids an existing column_N, extra cells still get column_N', [cols(r), r.renamedColumns, r.addedColumns], ['"x", "column_2_2", "column_2", "column_4"', ['"" → column_2_2'], ['column_4']]);
+  eq('no renames normally', conv('a,b\n1,2').renamedColumns, []);
+  for (const csv of ['id,name,name\n1,a,b', 'a,,c\n1,2,3', 'Name,name,NAME\n1,2,3', 'a,a,a_2\n1,2,3', 'x,,column_2\n1,2,3,4', '名,名,\n山田,田中,x']) {
+    for (const dialect of ['sqlite', 'mysql', 'postgresql']) {
+      const out = conv(csv, { dialect, createTable: true }).sql;
+      const names = [...(out.split('\n')[0].match(/\(([^)]*)\)/)?.[1] ?? '').matchAll(/[`"]((?:[^`"]|``|"")+)[`"] /g)].map((m) => m[1].toLowerCase());
+      check(dialect + ' column names are unique and nonempty: ' + JSON.stringify(csv), names.length > 0 && new Set(names).size === names.length && names.every(Boolean), out.split('\n')[0]);
+    }
+    const db = new SQL.Database(); let err = '';
+    try { db.run(conv(csv, { createTable: true }).sql); } catch (e) { err = e.message; }
+    db.close();
+    eq('SQLite runs the SQL for ' + JSON.stringify(csv), err, '');
+  }
+}
+
 // ---------- number detection ----------
 const NUMS = { '42': 42, '-7': -7, '0': 0, '3.14': 3.14, '0.5': 0.5, '-0.25': -0.25, '123456789012345': 123456789012345 };
 for (const [v] of Object.entries(NUMS)) eq('number ' + v + ' unquoted', readLiterals(conv('n\n' + v).sql, false), [{ num: v }]);
@@ -290,8 +319,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' page has at least 2 checked examples', n >= 2, n);
 }
 
-// Engine hash. S2-7 (2026-10-08) approved changes: quote rule, input cleanup.
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), 'dc9b9b97b8da861743c06b19f8b3fdec8ff201a6ad44bedeae4594e20506ce87');
+// Engine hash. S2-7 (2026-10-08) approved changes: quote rule, input cleanup, header names.
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '815b9fd4807d3d5402e3cc1609304df1dc57b6188f62bd7350d87ada2415c931');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises, FileReader and time are controlled boundaries; conversion code is real.
@@ -487,6 +516,9 @@ try {
     eq(lang+' unclosed quote is reported with its line and clears the SQL', [p.get('cts-status').textContent, p.get('cts-status').classList.contains('error'), p.get(s.right).value], [(S[lang].errUnclosed || 'errUnclosed').replace('{line}', '3'), true, '']);
     p.get(s.left).fire('change');
     eq(lang+' no event for an error', p.tracks.length, 0);
+    p.type(s.left, 'a,a,\n1,2,3,4'); p.advance(300);
+    eq(lang+' renamed and added columns are listed', [p.get('cts-status').textContent, p.get('cts-status').classList.contains('error')],
+      [(S[lang].addedColumns).replace('{cols}', 'column_4') + ' ' + (S[lang].renamedColumns || 'renamedColumns').replace('{cols}', 'a → a_2, "" → column_3'), false]);
   }
 }
 
@@ -556,8 +588,8 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // Pinned page script. S2-7 (2026-10-08) changed it outside the engine block: analytics only on
-// committed changes, and uploaded files are checked for UTF-8; then the unclosed-quote message (tests above).
-eq('reviewed page script is unchanged since S2-7', hash(script), 'c6dbf727f4ae7c260b819cb28067cdffa8e5fef0b7497c1b004b8d0dd0548af3');
+// committed changes, and uploaded files are checked for UTF-8; then the unclosed-quote message and the renamed-header note (tests above).
+eq('reviewed page script is unchanged since S2-7', hash(script), 'd691b1046916b28826e244c76c206d1e12f0647d2a2b66aea4f10b802be84819');
 check('direct zero-minimum flex column root', /^\s*<div class="cts-wrap"/.test(markupSource) && /\.cts-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cts-(?:toolbar|controls)"[\s\S]*id="cts-status"[\s\S]*class="cts-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
