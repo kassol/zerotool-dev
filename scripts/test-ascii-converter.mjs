@@ -24,6 +24,14 @@
 // escape column and the code page facts quoted in the text run when python3 is available
 // (SKIP otherwise).
 //
+// Tool page checks (src/content/tools/ascii-converter/{en,zh,ja,ko}.mdx, S2): every language has
+// at least 2 examples marked {/* ac-check: {"text": ..., "fmt": ...} */} (Text → ASCII) or
+// {/* ac-check: {"codes": ...} */} (ASCII → Text; "error": true when the page shows the error
+// status). The engine output (or "Error: " + message) and the input must appear verbatim in a code
+// block or inline code after the note, up to the next ac-check or H2 ("hideInput": true for
+// inputs with control characters). "status": true requires the page-language count message.
+// Byte and code page facts quoted on the pages are recomputed (cp437 needs python3).
+//
 // Run: node scripts/test-ascii-converter.mjs
 
 import { readFileSync } from 'node:fs';
@@ -36,7 +44,8 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { toolSteps } from '../src/data/llms.mjs';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { decodeHTML } from 'entities';
+import { contractProblems, fencedBlocks, readToolMdx } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/AsciiConverterTool.astro'), 'utf8');
@@ -244,6 +253,88 @@ if (python) {
   eq('byte 0x82 in ISO-8859-1 is C1', r.x82, '\u0082');
   const ja = readFileSync(join(root, 'src/content/blog/ascii-converter-guide/ja.mdx'), 'utf8');
   for (const [c, b] of Object.entries(r.dame)) eq('ja page quotes ' + c + ' ' + b, ja.includes('「' + c + '」は `' + b + '`'), true);
+}
+
+
+// ---------- tool page: worked examples and quoted facts ----------
+function shownCode(text) {
+  const out = fencedBlocks(text).map((b) => b.text);
+  let rest = text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, ' ');
+  for (const m of rest.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+    const inner = m[1].trim();
+    out.push(/^\{\s*(['"`])[\s\S]*\1\s*\}$/.test(inner) ? new Function('return ' + inner.slice(1, -1))() : decodeHTML(inner));
+  }
+  rest = rest.replace(/<code\b[^>]*>[\s\S]*?<\/code>/g, ' ');
+  for (const m of rest.matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+  return out;
+}
+const countText = (lang, key, n) => strings[lang][key][n === 1 ? 'one' : 'other'].replace('{n}', String(n));
+function verifyExample({ spec, after, lang }) {
+  if (!spec || (spec.text === undefined) === (spec.codes === undefined)) return 'needs exactly one of text / codes';
+  let input, out, status;
+  if (spec.text !== undefined) {
+    input = spec.text; out = toCodes(spec.text, spec.fmt ?? 'dec');
+    status = countText(lang, 'convertedChars', [...spec.text].length);
+  } else {
+    input = spec.codes;
+    try { out = toText(spec.codes); status = countText(lang, 'convertedCodes', spec.codes.trim().split(/[\s,]+/).filter(Boolean).length); }
+    catch (e) { out = 'Error: ' + e.message; }
+  }
+  if (!!spec.error !== out.startsWith('Error: ')) return spec.error ? 'expected an error, engine gave ' + JSON.stringify(out) : 'engine error: ' + out;
+  const shown = shownCode(after);
+  if (!spec.hideInput && !shown.some((c) => c.includes(input))) return 'input is not shown as code: ' + JSON.stringify(input);
+  if (!shown.some((c) => c.includes(out))) return 'engine result is not shown as code: ' + JSON.stringify(out);
+  if (spec.status && !shown.some((c) => c.includes(status))) return 'status not quoted: ' + status;
+  return null;
+}
+const toolAnnotations = [{ tag: 'ac-check', min: 2, verify: verifyExample }];
+{
+  const docs = readToolMdx('ascii-converter', { root });
+  const faq = (lang) => Object.fromEntries((docs[lang].data.faqItems || []).map((f) => [f.id, f.answer]));
+  // Every page: the FAQ separators example and the code points quoted in the unicode answer.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' FAQ separators example gives Hello', toText('72 0x65 0b1101100 0o154 111'), 'Hello');
+    eq(lang + ' FAQ quotes the separators example', faq(lang).separators.includes('72 0x65 0b1101100 0o154 111'), true);
+    const quoted = ['é', '中', 'あ', '한'].filter((c) => faq(lang).unicode.includes(c));
+    eq(lang + ' FAQ unicode quotes a character', quoted.length > 0, true);
+    for (const c of quoted) eq(lang + ' FAQ unicode: ' + c + ' code point quoted', faq(lang).unicode.includes(toCodes(c, 'dec')), true);
+    eq(lang + ' FAQ control characters: CR LF and tab', toCodes('\r\n\t', 'dec'), '13 10 9');
+    const limits = docs[lang].body;
+    eq(lang + ' limits: 👍🏽 gives two codes', toCodes('👍🏽', 'dec'), '128077 127997');
+    eq(lang + ' limits quote 👍🏽 codes', limits.includes('128077 127997'), true);
+  }
+  // zh: full-width digits and comma are rejected, an ideographic space separates; byte facts.
+  const zh = faq('zh')['local-fullwidth'];
+  throws('zh FAQ: full-width 72 rejected', () => toText('７２'), 'Invalid code: ７２');
+  throws('zh FAQ: Chinese comma is not a separator', () => toText('72，105'), 'Invalid code: 72，105');
+  eq('zh FAQ: ideographic space separates', toText('72\u3000105'), 'Hi');
+  eq('zh FAQ quotes the three inputs', ['７２', '72，105', '72\u3000105'].every((x) => zh.includes(x)), true);
+  eq('zh: 中 UTF-8 bytes', Buffer.from('中').toString('hex').toUpperCase().match(/../g).join(' '), 'E4 B8 AD');
+  eq('zh: 中 GBK bytes', new TextDecoder('gbk').decode(new Uint8Array([0xd6, 0xd0])), '中');
+  eq('zh body quotes UTF-8 and GBK bytes', /`E4 B8 AD`[^\n]*`D6 D0`/.test(docs.zh.body), true);
+  eq('full-width offset 65248', 'Ａ'.codePointAt(0) - 'A'.codePointAt(0), 65248);
+  for (const lang of ['zh', 'ja']) eq(lang + ' body quotes the full-width offset', docs[lang].body.includes('65248') && docs[lang].body.includes('FEE0'), true);
+  eq('zh: 72, 0x69 0o41 is Hi!', toText('72, 0x69 0o41'), 'Hi!');
+  // ja: ¥ and \, Shift_JIS bytes of あ.
+  const ja = faq('ja')['local-yen'];
+  eq('ja FAQ: \\ is 92 and ¥ is 165', toCodes('\\¥', 'dec'), '92 165');
+  eq('ja FAQ quotes 92 and 165', ja.includes('92') && ja.includes('165'), true);
+  eq('ja: あ is 82 A0 in Shift_JIS', new TextDecoder('shift_jis').decode(new Uint8Array([0x82, 0xa0])), 'あ');
+  eq('ja body quotes あ Shift_JIS bytes', docs.ja.body.includes('`82 A0`'), true);
+  // ko: \, ₩ and ￦; EUC-KR bytes of 한.
+  const ko = faq('ko')['local-won'];
+  eq('ko FAQ: \\ ₩ ￦ codes', toCodes('\\₩￦', 'dec'), '92 8361 65510');
+  eq('ko FAQ quotes the three codes', ['92', '8361', '65510'].every((x) => ko.includes(x)), true);
+  eq('ko: 한 is C7 D1 in EUC-KR', new TextDecoder('euc-kr').decode(new Uint8Array([0xc7, 0xd1])), '한');
+  eq('ko body quotes 한 EUC-KR bytes', docs.ko.body.includes('`C7 D1`'), true);
+  eq('ko FAQ: 한 is 54620', faq('ko').unicode.includes(toCodes('한', 'dec')), true);
+  // en: extended ASCII answer.
+  const en = faq('en')['local-extended-ascii'];
+  eq('en FAQ: é and € code points', toCodes('é€', 'dec'), '233 8364');
+  eq('en FAQ: Windows-1252 bytes 233 and 128', new TextDecoder('windows-1252').decode(new Uint8Array([233, 128])), 'é€');
+  eq('en FAQ quotes 233, 130, 8364 and 128', ['233', '130', '8364', '128'].every((x) => en.includes(x)), true);
+  if (python) eq('en FAQ: é is byte 130 in code page 437', py('print("é".encode("cp437")[0])').trim(), '130');
+  else console.log('SKIP: python3 not found; code page 437 fact not run');
 }
 
 // ---------- actual page lifecycle and shared keyboard handler ----------
@@ -491,7 +582,7 @@ process.removeListener('unhandledRejection',onUnhandled);
     const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
     check(lang + ': five plain steps fit limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['toAscii','toText','copy','clear','refTable']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
-    eq(lang + ': MDX content contract', contractProblems('ascii-converter', lang), '');
+    eq(lang + ': MDX content contract', contractProblems('ascii-converter', lang, { annotations: toolAnnotations }), '');
     check(lang + ': Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     eq(lang + ': llms receives five steps', toolSteps(parsed).length, 5);
     for (const [text, index] of [['A',0],['A😀\n',1]]) {
