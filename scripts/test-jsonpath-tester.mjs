@@ -528,6 +528,32 @@ for (const lang of ['en','zh','ja','ko']) {
     const p=page(lang);p.query();p.get('jpt-copy').click();p.get('jpt-copy').click();p.copies[1].resolve();await settle();p.copies[0][oldOutcome](Error('Old denial'));await settle();eq(lang+' newest copy wins old '+oldOutcome,p.get('jpt-copy').textContent,L.copied);
   }
 }
+// ---------- analytics: one 'run' event per committed change, not per keystroke ----------
+// The usage event used to be sent from run(), so the page load and every keystroke sent one.
+// Now it is sent on the change event of either input when Results has matches, once per
+// JSON + expression; examples keep their own 'example' event.
+for (const lang of ['en','zh','ja','ko']) {
+  const h = page(lang);
+  const runs = () => h.tracks.filter(t => t[1] === 'run').length;
+  eq(lang+' GA: page load sends no run event', runs(), 0);
+  h.query(1, '$.value');
+  eq(lang+' GA: typing sends no run event', runs(), 0);
+  h.get('jpt-expr').dispatch('change');
+  eq(lang+' GA: change with matches sends one run event', runs(), 1);
+  h.get('jpt-expr').dispatch('change'); h.get('jpt-json').dispatch('change');
+  eq(lang+' GA: the same JSON and expression are sent once', runs(), 1);
+  h.input('jpt-expr', '$.missing'); h.get('jpt-expr').dispatch('change');
+  eq(lang+' GA: change without matches sends nothing', runs(), 1);
+  h.input('jpt-expr', '$'); h.get('jpt-expr').dispatch('change');
+  eq(lang+' GA: a new committed query sends one more', runs(), 2);
+  h.input('jpt-json', '{'); h.get('jpt-json').dispatch('change');
+  eq(lang+' GA: invalid JSON sends nothing', runs(), 2);
+  h.key(); h.query(1, '$.value'); h.get('jpt-expr').dispatch('change');
+  eq(lang+' GA: after Ctrl+L the same query counts again', runs(), 3);
+  h.wrap.querySelectorAll('.jpt-pill')[1].click();
+  eq(lang+' GA: example click sends only its example event', [runs(), h.tracks.filter(t => t[1] === 'example').length], [3, 1]);
+}
+
 await settle();eq('no unhandled copy rejections',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
 eq('protected engine byte-exact',[Buffer.byteLength(source.slice(startIndex,endIndex+END_MARK.length)),createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex')],[23622,'b43418c33b1a8b84b34daf2956c4197e6ffe1b35cd0d19c1365dd90c8340d153']);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
