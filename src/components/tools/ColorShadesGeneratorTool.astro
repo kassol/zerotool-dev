@@ -734,7 +734,6 @@ const VALUE_LIST = ['hex', 'oklch', 'rgb', 'hsl'] as const;
       var scaleNoteEl = document.getElementById('csg-scale-note');
       var codeEl = document.getElementById('csg-code');
       var current = null;
-      var tracked = false;
 
       function fill(tpl, vars) {
         return tpl.replace(/\{(\w+)\}/g, function (m, k) { return k in vars ? String(vars[k]) : m; });
@@ -885,7 +884,11 @@ const VALUE_LIST = ['hex', 'oklch', 'rgb', 'hsl'] as const;
         if (name !== String(nameEl.value).trim()) notes.push(fill(S.noteName, { name: name }));
         if (format === 'tw3' && valueFormat === 'oklch') notes.push(fill(S.noteTw3Oklch, { name: name }));
         noteEl.textContent = notes.join(' ');
-        if (!tracked) { tracked = true; } else if (window.trackTool) { window.trackTool(SLUG, 'generate'); }
+      }
+
+      /* One analytics event per committed change (change event), none per input event. */
+      function trackGenerate() {
+        if (current && window.trackTool) window.trackTool(SLUG, 'generate');
       }
 
       inputEl.addEventListener('input', update);
@@ -893,8 +896,9 @@ const VALUE_LIST = ['hex', 'oklch', 'rgb', 'hsl'] as const;
         inputEl.value = pickerEl.value;
         update();
       });
-      [anchorEl, formatEl, valuesEl].forEach(function (el) { el.addEventListener('change', update); });
+      [anchorEl, formatEl, valuesEl].forEach(function (el) { el.addEventListener('change', function () { update(); trackGenerate(); }); });
       [hueLightEl, hueDarkEl, nameEl].forEach(function (el) { el.addEventListener('input', update); });
+      [inputEl, pickerEl, hueLightEl, hueDarkEl, nameEl].forEach(function (el) { el.addEventListener('change', trackGenerate); });
 
       copyBtn.addEventListener('click', function () {
         if (!codeEl.textContent) return;
