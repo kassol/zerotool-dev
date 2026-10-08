@@ -26,6 +26,9 @@ const toolsCollection = defineCollection({
     // See src/content/AGENTS.md for the 8/280/1200 limits checked by test-llms-txt.mjs.
     steps: z.array(z.string()).nonempty(),
     faqItems: z.array(z.object({
+      // Optional match key across the four languages (src/content/AGENTS.md). Pages and
+      // FAQPage data do not use it; scripts/test-tool-content-parity.mjs reads it.
+      id: z.string().regex(/^(?:local-)?[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/).optional(),
       question: z.string(),
       answer: z.string(),
     })).default([]),
