@@ -9,20 +9,65 @@ steps:
   - "복사로 표시된 출력 전체를 복사합니다. 실패하면 출력을 선택하여 직접 복사하세요."
   - "교체는 두 입력란의 값을 서로 바꾸며 모드를 바꾸거나 다시 변환하지 않습니다. 입력을 수정하거나 모드를 바꾸면 변환합니다. 지우기는 텍스트와 파일 결과를 지우고 선택한 모드와 알파벳은 유지합니다."
 faqItems:
-  - question: "Base64란 무엇입니까?"
+  - id: "what-is"
+    question: "Base64란 무엇입니까?"
     answer: "Base64는 바이너리 데이터를 ASCII 텍스트로 변환하는 인코딩 방식으로, 64종류의 인쇄 가능한 문자를 사용합니다. Data URI, 이메일 첨부 파일, API 토큰 등에 자주 사용됩니다."
-  - question: "데이터가 서버로 전송됩니까?"
-    answer: "아니요. 모든 처리는 브라우저 내에서 JavaScript 내장 API(btoa/atob)를 사용하여 이루어지며, 데이터는 기기 밖으로 나가지 않습니다."
-  - question: "바이너리 파일도 인코딩할 수 있습니까?"
+  - id: "privacy"
+    question: "데이터가 서버로 전송됩니까?"
+    answer: "아니요. 변환은 브라우저 안에서 JavaScript 내장 함수 btoa / atob로 처리하며, 입력한 텍스트와 선택한 파일을 외부로 보내지 않습니다. 마지막으로 입력한 텍스트는 다음에 열 때 복원하도록 이 브라우저의 로컬 저장소에 저장됩니다. 파일은 저장하지 않으며, 지우기를 누르면 저장된 텍스트도 삭제됩니다."
+  - id: "binary-files"
+    question: "바이너리 파일도 인코딩할 수 있습니까?"
     answer: "예. 인코딩 모드에서 파일을 업로드 영역에 끌어 놓거나 영역을 클릭해 선택합니다. 종류와 관계없이 파일의 바이트를 그대로 Base64로 바꾸며, data:<mime>;base64, 접두사도 붙일 수 있습니다. 디코딩 결과는 UTF-8 텍스트로만 표시하므로 이미지 같은 바이너리 데이터의 Base64는 오류가 나고 파일로 저장할 수 없습니다. 이미지를 Data URI로 바꿀 때는 이미지 Base64 변환기를 사용하세요."
-  - question: "디코딩에 실패하는 이유는 무엇입니까?"
+  - id: "decode-errors"
+    question: "디코딩에 실패하는 이유는 무엇입니까?"
     answer: "원인은 세 가지입니다. Base64에 없는 문자가 들어 있는 경우(Standard를 선택한 채 URL-safe의 - 나 _ 를 넣은 경우 등), 문자열이 잘려 4글자 단위로 1글자가 남는 경우, 디코딩한 바이트가 UTF-8로 읽히지 않는 경우(바이너리 데이터나 EUC-KR 텍스트)입니다. 끝의 = 가 빠져 있어도 디코딩됩니다."
 ---
 
-<h2>주요 사용 사례</h2>
-<ul>
-  <li><strong>API 인증:</strong> Basic Auth 헤더에는 Base64 인코딩된 인증 정보가 사용됩니다.</li>
-  <li><strong>Data URI:</strong> CSS/HTML에 인라인으로 삽입하는 이미지나 폰트는 Base64 인코딩되어 있습니다.</li>
-  <li><strong>JWT 토큰:</strong> 헤더와 페이로드는 Base64url 인코딩되어 있습니다.</li>
-  <li><strong>이메일:</strong> MIME 첨부 파일은 Base64 인코딩을 사용합니다.</li>
-</ul>
+## 한글을 인코딩하면
+
+이 도구는 텍스트를 먼저 UTF-8 바이트로 바꾼 뒤 Base64로 인코딩합니다. 완성형 한글 음절은 UTF-8에서 한 글자에 3바이트이므로, 한글만 있는 문자열은 글자 수의 4배 길이가 됩니다.
+
+{/* b64-check: {"mode":"encode","in":"안녕하세요"} */}
+
+`안녕하세요`(5글자, 15바이트)를 Standard로 인코딩하면 `7JWI64WV7ZWY7IS47JqU`가 나옵니다. 20글자이고 끝에 `=`가 붙지 않습니다.
+
+## JWT 페이로드 속 한글 이름
+
+로그인 토큰(JWT)의 가운데 부분은 패딩 없는 URL-safe Base64입니다([RFC 7515 제2절](https://www.rfc-editor.org/rfc/rfc7515#section-2)). 페이로드에 한글 이름이 들어 있으면 `-`나 `_`가 섞이기 쉽습니다. 예를 들어 `{"name":"홍길동"}`의 페이로드는 `eyJuYW1lIjoi7ZmN6ri464-ZIn0`입니다.
+
+{/* b64-check: {"mode":"decode","in":"eyJuYW1lIjoi7ZmN6ri464-ZIn0","error":true} */}
+
+이 문자열을 Standard 모드에서 디코딩하면 `-` 때문에 `유효하지 않은 Base64 입력입니다. 입력을 확인하고 다시 시도하세요.`라는 오류가 납니다.
+
+{/* b64-check: {"mode":"decode","variant":"urlsafe","in":"eyJuYW1lIjoi7ZmN6ri464-ZIn0"} */}
+
+URL-safe로 바꾸면 바로 `{"name":"홍길동"}`이 표시됩니다. 이 도구는 서명을 확인하지 않으므로, 토큰 전체를 살펴볼 때는 [JWT 디코더](/ko/tools/jwt-decoder/)를 쓰세요.
+
+## EUC-KR로 저장된 텍스트
+
+오래된 시스템이나 파일은 한글을 EUC-KR로 저장하는 경우가 있습니다. 같은 `홍길동`이라도 UTF-8은 `7ZmN6ri464+Z`, EUC-KR 바이트(`C8 AB B1 E6 B5 BF`)는 `yKux5rW/`로 Base64가 달라집니다. Python의 `base64.b64encode('홍길동'.encode('euc-kr'))`로 확인할 수 있습니다.
+
+{/* b64-check: {"mode":"decode","in":"yKux5rW/","error":true} */}
+
+`yKux5rW/`를 붙여 넣으면 깨진 글자 대신 `유효하지 않은 Base64 입력입니다. 입력을 확인하고 다시 시도하세요.`가 표시됩니다. Base64 자체는 올바르지만, 풀어낸 6바이트가 UTF-8이 아니기 때문입니다. EUC-KR 같은 [기존 인코딩](https://encoding.spec.whatwg.org/#names-and-labels)은 원래 인코딩을 지정할 수 있는 프로그램에서 읽어야 합니다.
+
+## 디코딩할 때 허용되는 입력
+
+- 끝의 `=`는 생략해도 됩니다. 브라우저의 `atob()`는 WHATWG의 [forgiving-base64 decode](https://infra.spec.whatwg.org/#forgiving-base64-decode)를 따르며 패딩을 요구하지 않습니다.
+- Standard 모드에서는 줄바꿈과 공백을 무시합니다. 76글자마다 줄이 바뀐 메일 본문의 Base64도 그대로 붙여 넣을 수 있습니다. URL-safe 모드는 공백을 포함한 길이로 `=`를 채운 뒤 공백을 지우므로 줄바꿈이 있는 문자열에서 오류가 날 수 있습니다. 먼저 줄바꿈을 지우세요.
+- URL-safe 모드는 `-`와 `_`를 `+`와 `/`로 되돌리기만 하므로 Standard 문자열도 읽습니다.
+
+## 제한 사항
+
+- 디코딩 결과는 UTF-8 텍스트로만 표시합니다. 이미지 같은 파일로 되돌릴 수는 없습니다.
+- 문자열 중간에 `=`가 있거나, 4글자씩 나누고 1글자가 남으면 오류가 납니다.
+- 이모지 반쪽(짝이 없는 서로게이트)이 남은 텍스트는 UTF-8로 바꿀 수 없어 인코딩 시 위치와 함께 오류를 표시합니다.
+- 파일 인코딩에는 정해진 크기 제한이 없지만, 5 MiB(5,242,880바이트)를 넘으면 `파일이 커서 인코딩에 몇 초 걸릴 수 있습니다.`라고 표시합니다. 파일 전체와 결과를 메모리에 두므로 아주 큰 파일은 페이지를 느리게 만듭니다.
+- Base64는 암호화가 아니므로 누구나 디코딩할 수 있습니다. 비밀 정보에는 [AES 암호화 도구](/ko/tools/aes-encrypt-decrypt/)를 사용하세요.
+
+## 주요 사용 사례
+
+- **API 인증:** HTTP Basic 인증은 `사용자명:비밀번호`를 Base64로 바꿔 헤더에 넣습니다([RFC 7617](https://www.rfc-editor.org/rfc/rfc7617#section-2)).
+- **Data URI:** CSS나 HTML에 넣는 이미지와 폰트는 Base64입니다. 이미지는 [이미지 Base64 변환기](/ko/tools/image-to-base64/)가 파일 내용으로 종류를 판단합니다.
+- **JWT 토큰:** 헤더와 페이로드는 URL-safe Base64입니다.
+- **이메일:** 첨부 파일과 비ASCII 제목이 Base64로 전송됩니다.

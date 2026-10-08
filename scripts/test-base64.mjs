@@ -12,7 +12,8 @@
 // large-file and read-error messages and the Data URI label are in the page language (they were
 // English, and a lone surrogate showed "Invalid Base64 input" in Encode mode); switching Standard /
 // URL-safe converts the current output (it used to keep the old alphabet). The engine block is
-// read from src/components/tools/Base64Tool.astro.
+// read from src/components/tools/Base64Tool.astro. The `b64-check` worked examples in the four
+// tool pages are re-run through the real page script (at least 2 per language).
 //
 // Run: node scripts/test-base64.mjs
 
@@ -24,7 +25,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { toolSteps } from '../src/data/llms.mjs';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -440,6 +441,50 @@ for(const lang of Object.keys(expected)) {
 same('all page copy promises handled',unhandled,[]);
 
 process.removeListener('unhandledRejection', onUnhandled);
+
+// ---------- worked examples: `b64-check` annotations in the 4 tool pages ----------
+// {/* b64-check: {"mode":"encode"|"decode","variant":"urlsafe"?,"in":"…","error":true?,"controlPictures":true?} */}
+// runs the real page script (mode, alphabet, input, 300 ms) and requires the output, or the status
+// message when "error" is set, to appear verbatim as an inline code span (exact) or inside a code
+// block between the annotation and the next annotation or H2. "controlPictures" shows C0 control
+// characters as U+2400–U+241F (the page text cannot hold an ESC byte).
+function codeSpans(text) {
+  const spans = fencedBlocks(text).map((b) => ({ text: b.text, block: true }));
+  let rest = text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, ' ');
+  for (const m of rest.matchAll(/(`+)([^`][\s\S]*?)\1(?!`)/g)) spans.push({ text: m[2].replace(/^ ([\s\S]*) $/, '$1') });
+  rest = rest.replace(/(`+)([^`][\s\S]*?)\1(?!`)/g, ' ');
+  for (const m of rest.matchAll(/<code>([\s\S]*?)<\/code>/g)) {
+    spans.push({ text: m[1].replace(/\{(['"`])([\s\S]*?)\1\}/g, '$2').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&') });
+  }
+  return spans;
+}
+function b64Example({ spec, after, lang }) {
+  if (!spec || typeof spec.in !== 'string' || !['encode', 'decode'].includes(spec.mode)) return 'annotation needs "mode" and "in"';
+  const p = pageVM(lang);
+  if (spec.variant === 'urlsafe') p.choose('b64variant', 'urlsafe');
+  if (spec.mode === 'decode') p.choose('b64mode', 'decode');
+  p.input(spec.in); p.advance(300);
+  const s = p.snapshot(), isError = s.statusClass.includes('error');
+  if (!!spec.error !== isError) return `expected ${spec.error ? 'an error' : 'a result'}, page shows ${JSON.stringify(s.status)}`;
+  let shown = isError ? s.status : s.output;
+  if (spec.controlPictures) shown = shown.replace(/[\u0000-\u001f]/g, (c) => String.fromCharCode(0x2400 + c.charCodeAt(0)));
+  const found = codeSpans(after).some((c) => (c.block ? c.text.includes(shown) : c.text === shown));
+  return found ? null : `${JSON.stringify(shown)} is not shown as code after the annotation`;
+}
+{
+  const contract = toolMdxContract('base64', { annotations: [{ tag: 'b64-check', min: 2, verify: b64Example }] });
+  const rows = contract.results.filter((r) => r.rule.includes('b64-check'));
+  for (const r of rows) check('worked example: ' + r.message, r.ok);
+  check('worked examples found in all 4 pages', rows.filter((r) => r.rule.includes('matches the engine')).length >= 8);
+}
+// The four pages say Standard ignores line breaks but URL-safe can fail on them (fromUrlSafe pads
+// by the length that still includes whitespace). If the page code changes, update the pages.
+for (const lang of Object.keys(expected)) {
+  const run = (variant) => { const p = pageVM(lang); if (variant) p.choose('b64variant', variant); p.choose('b64mode', 'decode'); p.input('eyJh\nIjoxfQ'); p.advance(300); return p.snapshot(); };
+  equal(lang + ': Standard decode ignores a line break', run().output, '{"a":1}');
+  equal(lang + ': URL-safe decode of the same wrapped text fails', run('urlsafe').status, strings[lang].invalidBase64);
+  check(lang + ': page describes the URL-safe line-break failure', /URL-safe/.test(readFileSync(join(root, 'src/content/tools/base64', lang + '.mdx'), 'utf8').split('\n').find((l) => /Standard/.test(l) && /(whitespace|换行|改行|줄바꿈)/.test(l)) || ''));
+}
 
 
 // ---------- v2 page layout ----------
