@@ -270,6 +270,25 @@ eq('prose: missing brace message', (() => { try { convert('interface A { a: stri
   eq('prototype names: the real cycle is annotated', (cyc.match(/: z\.ZodType</g) || []).length, 2);
 }
 
+// ---------- engine fix 2 (S2-6b): a property named __proto__ ----------
+// `{ __proto__: z.string() }` in an object literal sets the prototype of the shape, so the key was never
+// checked. A computed key `["__proto__"]` defines an own property. Both Zod versions then require and check
+// the key, but leave it out of the parsed result (zod/v3/helpers/parseUtil.js and zod/v4/core/schemas.js
+// skip "__proto__" on purpose).
+for (const decl of ['interface T { __proto__: string; id: string }', 'interface T { "__proto__": string; id: string }']) {
+  const out = checkCase('__proto__ key ' + decl, decl, [
+    ['TSchema', JSON.parse('{"__proto__": "x", "id": "1"}'), true],
+    ['TSchema', { id: '1' }, false],
+    ['TSchema', JSON.parse('{"__proto__": 1, "id": "1"}'), false],
+  ]);
+  eq('__proto__ key is written as a computed key: ' + decl, out.includes('  ["__proto__"]: z.string(),'), true);
+  for (const [v, z] of Object.entries(zods)) {
+    const S = loadTs(out, z).TSchema;
+    eq(v + ': __proto__ is an own key of the shape: ' + decl, Object.keys(S.shape), ['__proto__', 'id']);
+    eq(v + ': Zod leaves __proto__ out of the parsed result: ' + decl, Object.keys(S.parse(JSON.parse('{"__proto__": "x", "id": "1"}'))), ['id']);
+  }
+}
+
 // ---------- page ----------
 eq('page no longer says extends is skipped', page.includes('</code> is skipped.'), false);
 const MENU = 'interface Menu extends Base { root: Category; [key: string]: unknown }\ninterface Base { id: string }\ninterface Category { name: string; children: Category[] }';
