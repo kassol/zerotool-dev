@@ -148,6 +148,11 @@ for (const [wall, src, zone, want] of [
   ['1950-05-07T00:30', 'Asia/Tokyo', 'Asia/Tokyo', 'today, done'],
 ]) eq('badge days ' + wall + ' ' + src + ' → ' + zone, badge(wall, src, zone), want);
 eq('en page states the 4-day London example', page.includes('2026-10-29 in London shows <em>' + tzStrings('en').dstShiftPast.replace('{n}', '4') + '</em>'), true);
+// A zone whose 15 January and 15 July offsets match can still change within the window
+// (Africa/Casablanca leaves +01:00 for Ramadan on 2026-02-15); the badge shows that change instead
+// of No DST.
+eq('badge: Casablanca Ramadan change', badge('2026-02-16T12:00', 'Africa/Casablanca', 'Africa/Casablanca'), '-1');
+eq('badge: Casablanca with no change near', E.dstBadge(E.wallClockToUtc('2026-01-10T12:00', 'Africa/Casablanca'), 'Africa/Casablanca'), { observesDst: false, days: null, future: false });
 eq('badge: no DST zone', E.dstBadge(E.wallClockToUtc('2026-10-29T10:00', 'Asia/Tokyo'), 'Asia/Tokyo'), { observesDst: false, days: null, future: false });
 eq('DST badge 3 days before the US change', E.dstSummary(E.wallClockToUtc('2026-03-05T12:00', 'America/New_York'), 'America/New_York').shiftDays, 3);
 
@@ -450,7 +455,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 eq('v2 compiled module parses',moduleError,'');
 const style=compiled.css.join('\n');
 const mainScript=source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
-eq('v2 complete FIX script exact',hash(mainScript),'05f2b52040ebb1dd2d62aedfe782539765c6ed9db1cc45a36bf7794487c0eae7');
+eq('v2 complete FIX script exact',hash(mainScript),'fe4a3b2a467f6d5a58fa818fbb4a69193cda92895a99098e1d246d2e2a9793c6');
 eq('v2 analyze registry',/['"]timezone-converter['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('v2 outermost root',/^<div class="tzc-wrap">/.test(source.split('\n---\n')[1].trim()),true);
 eq('v2 no runtime i18n',source.includes('data-i18n'),false);
