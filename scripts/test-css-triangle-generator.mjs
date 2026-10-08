@@ -184,6 +184,26 @@ function open(s,lang='en',shellFirst=false){
     h.input('ctg-hex','#12');h.el('ctg-hex').dispatch('change');
     check('GA: no generate event for an incomplete hex code',g(h),5);
   }
+  // Hex field (as in box-shadow-generator): text that cannot become `#rrggbb` shows a hint in the
+  // page language and keeps the color; an incomplete code shows the hint on change; maxlength 16 so
+  // a pasted 8-digit code is not silently cut to a valid 6-digit one.
+  check('triangle hex field allows 16 characters',/id="ctg-hex"[^>]*maxlength="16"/.test(source),true);
+  for (const lang of ['en','zh','ja','ko']) {
+    const hint=open(spec,lang).L.badColor;
+    check(lang+' triangle badColor hint exists',typeof hint==='string'&&hint.length>0,true);
+    for (const bad of ['rgba(0,0,0,.5)','＃ｆｆｆｆｆｆ','red','#00000080']) {
+      const h=open(spec,lang); h.input('ctg-hex',bad);
+      check(lang+' triangle hex '+bad+' hint, color kept',[h.el('ctg-status').textContent,h.el('ctg-status').className,h.el(spec.output).textContent.includes('#3b82f6')],[hint,'tool-status error',true]);
+      h.input('ctg-hex','#ff0000');
+      check(lang+' triangle hex '+bad+' then valid clears hint',[h.el('ctg-status').textContent,h.el(spec.output).textContent.includes('#ff0000')],['',true]);
+    }
+    let h=open(spec,lang); h.input('ctg-hex','#12');
+    check(lang+' triangle incomplete hex while typing: no hint',h.el('ctg-status').textContent,'');
+    h.el('ctg-hex').dispatch('change');
+    check(lang+' triangle incomplete hex on change: hint',h.el('ctg-status').textContent,hint);
+    h=open(spec,lang); h.input('ctg-width','0'); h.input('ctg-hex','red');
+    check(lang+' triangle size error is not replaced by the color hint',h.el('ctg-status').textContent,h.L.badWidth);
+  }
   // Width and height: whole numbers from 1 to 500 (the inputs' min / max). Empty, 0, negative,
   // too large or fractional values show an error in the page language, clear the CSS and the
   // preview, and disable Copy; the next valid value restores them. (Before: empty and 0 became
