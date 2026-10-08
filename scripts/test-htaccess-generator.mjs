@@ -372,7 +372,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
   const labels=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
   const escaped=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace('data-strings={JSON.stringify(CLIENT_T)}','data-strings="'+escaped(JSON.stringify({copy:labels[lang].copy,copied:labels[lang].copied,copyFailed:labels[lang].copyFailed,badFrom:labels[lang].badFrom}))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
+  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace('data-strings={JSON.stringify(CLIENT_T)}','data-strings="'+escaped(JSON.stringify({copy:labels[lang].copy,copied:labels[lang].copied,copyFailed:labels[lang].copyFailed,badFrom:labels[lang].badFrom,badFromSpace:labels[lang].badFromSpace,badToSpace:labels[lang].badToSpace}))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
@@ -450,6 +450,37 @@ for (const lang of ['en','zh','ja','ko']) {
   }
 }
 
+// Custom Redirect with a space inside the From path or the To URL: the line gets four arguments,
+// and Apache 2.4.67 answers 500 for the whole directory ("Redirect takes one, two or three
+// arguments", checked with the hta-apache cases on the tool pages). The page leaves the line out
+// and names the field, as for a relative From path. A full-width space (U+3000) is not a separator
+// for Apache and is allowed; "%20" in the To URL is allowed.
+{
+  const strings=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+  for (const lang of ['en','zh','ja','ko']) {
+    const q=ready(lang),from=q.get('hta-redir-from'),to=q.get('hta-redir-to'),status=q.get('hta-status');
+    const S=strings[lang];
+    assert(lang+' has localized space errors',[typeof S.badFromSpace,typeof S.badToSpace],['string','string']);
+    q.choose('hta-redir-enable',true);
+    q.input('hta-redir-to','https://example.test/new');q.input('hta-redir-from','/old page');
+    assert(lang+' From path with a space: no Redirect line, field error',[/^Redirect /m.test(output(q)),status.textContent,from.getAttribute('aria-invalid'),to.getAttribute('aria-invalid')],[false,S.badFromSpace,'true',null]);
+    q.input('hta-redir-from','/old\tpage');
+    assert(lang+' From path with a tab: field error',status.textContent,S.badFromSpace);
+    q.input('hta-redir-from','/old');q.input('hta-redir-to','https://example.test/new page');
+    assert(lang+' To URL with a space: no Redirect line, field error',[/^Redirect /m.test(output(q)),status.textContent,to.getAttribute('aria-invalid'),from.getAttribute('aria-invalid')],[false,S.badToSpace,'true',null]);
+    q.input('hta-redir-to','https://example.test/new%20page');
+    assert(lang+' To URL with %20 is written',[output(q).endsWith('Redirect 301 /old https://example.test/new%20page'),status.textContent,to.getAttribute('aria-invalid')],[true,'',null]);
+    q.input('hta-redir-from','/old　page');
+    assert(lang+' a full-width space in the From path is written',[output(q).endsWith('Redirect 301 /old　page https://example.test/new%20page'),status.textContent],[true,'']);
+    q.input('hta-redir-from','  /old  ');q.input('hta-redir-to','  https://example.test/new  ');
+    assert(lang+' spaces around the values are not errors',[output(q).endsWith('Redirect 301 /old https://example.test/new'),status.textContent],[true,'']);
+    q.input('hta-redir-from','/a b');q.input('hta-redir-to','https://example.test/c d');
+    assert(lang+' both fields with spaces: both errors and both fields marked',[status.textContent,from.getAttribute('aria-invalid'),to.getAttribute('aria-invalid'),/^Redirect /m.test(output(q))],[S.badFromSpace+' '+S.badToSpace,'true','true',false]);
+    q.ctrlL('hta-redir-to');
+    assert(lang+' Ctrl+L clears both field marks',[status.textContent,from.getAttribute('aria-invalid'),to.getAttribute('aria-invalid')],['',null,null]);
+  }
+}
+
 for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
  const id=SLUG+'/'+lang+'/'+order;
  let primary=ready(lang,order);const beforeEnter=output(primary);primary.ctrlL(INPUT,'Enter');assert(id+' shared primary behavior',output(primary),beforeEnter);
@@ -478,7 +509,7 @@ for(const lang of ['en','zh','ja','ko']){
  q.input(INPUT,'home.html');assert(lang+' real input restores preview',q.doc.querySelector('.hta-wrap').dataset.empty,'false');
  assert(lang+' SSR labels before runtime replacement',q.doc.querySelector('label.hta-toggle').textContent.includes(L.forceHttps),true);
  assert(lang+' seven SSR tip keys',Object.keys(L.tips).sort(),['cache','copy','https','index','redirect','security','www']);
- assert(lang+' client gets copy feedback and the From path error only',Object.keys(JSON.parse(q.doc.querySelector('.hta-wrap').dataset.strings)).sort(),['badFrom','copied','copy','copyFailed']);
+ assert(lang+' client gets copy feedback and the From path error only',Object.keys(JSON.parse(q.doc.querySelector('.hta-wrap').dataset.strings)).sort(),['badFrom','badFromSpace','badToSpace','copied','copy','copyFailed']);
  const prefix=process.env.ZT_B13_MDX_PREFIX,mdx=readFileSync(prefix?prefix+'-'+lang+'.mdx':join(root,'src/content/tools/htaccess-generator',lang+'.mdx'),'utf8');const y=requireFromRoot('js-yaml').load(mdx.split('---')[1]);
  assert(lang+' steps limits and position',y.steps.length<=8&&y.steps.every(x=>x.length<=280)&&y.steps.join('').length<=1200&&mdx.indexOf('steps:')<mdx.indexOf('faqItems:'),true);
  assert(lang+' Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);
