@@ -170,10 +170,15 @@ eq('null value not required', E.inferSchema({ a: null }), { type: 'object', prop
   const kana = ajv.compile({ type: 'string', pattern: '^[ｦ-ﾟ]+$' });
   check('ja FAQ: half-width kana pattern', kana('ﾎｯｶｲﾄﾞｳ') && kana('ﾋﾞﾊﾞｲｼ') && !kana('ホッカイドウ'));
   eq('ja FAQ: half-width kana and full-width digits are plain strings', E.inferSchema({ k: 'ﾎｯｶｲﾄﾞｳ', d: '０７９' }).properties, { k: { type: 'string' }, d: { type: 'string' } });
-  // ko FAQ: Hangul keys stay property names and Ajv compiles the schema
-  const hangul = E.inferSchema({ 이름: '홍길동', 나이: 30 });
-  eq('ko FAQ: Hangul keys', hangul, { type: 'object', properties: { 이름: { type: 'string' }, 나이: { type: 'integer' } }, required: ['이름', '나이'] });
-  check('ko FAQ: Ajv accepts the Hangul-key sample', ajv.compile(hangul)({ 이름: '홍길동', 나이: 30 }));
+  // ko FAQ local-kakao-xy and prose: keyword search (string x / y) and coord2regioncode (number x / y) merged in one array
+  const kakao = E.inferSchema([
+    { meta: { total_count: 14 }, documents: [{ x: '127.05902969025047', y: '37.51207412593136' }] },
+    { meta: { total_count: 2 }, documents: [{ x: 127.10459896729914, y: 37.40269721785548 }] },
+  ]);
+  eq('ko FAQ/prose: merged Kakao x / y become ["string","number"]', kakao.items.properties.documents.items.properties, { x: { type: ['string', 'number'] }, y: { type: ['string', 'number'] } });
+  // ja prose: the zipcode type comes from the JSON type, not from the leading 0
+  eq('ja prose: zipcode as a JSON number is integer', E.inferSchema({ zipcode: 790177 }).properties.zipcode, { type: 'integer' });
+  eq('ja prose: zipcode as a JSON string is string', E.inferSchema({ zipcode: '0790177' }).properties.zipcode, { type: 'string' });
 }
 
 
