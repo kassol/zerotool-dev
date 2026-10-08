@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ChmodCalculatorTool.astro'), 'utf8');
@@ -214,7 +214,7 @@ const settle = async () => { await new Promise(setImmediate); await new Promise(
 function page({ lang = 'en', shellFirst = false } = {}) {
   const allStrings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
   const { tips, ...t } = allStrings[lang];
-  const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map();
+  const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map(), tracks = [];
   let now = 0, timerId = 0;
   const doc = { documentElement: { lang }, activeElement: null };
   function simple(e, sel) {
@@ -311,7 +311,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
     },
   });
   const context = {
-    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) },
+    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) }, trackTool: (...args) => tracks.push(args),
     navigator: { clipboard: { writeText(value) {
       let resolve, reject;
       const promise = new Promise((a, b) => { resolve = a; reject = b; });
@@ -325,7 +325,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
   vm.runInContext(source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1], context, { filename: SLUG + '.astro' });
   if (!shellFirst) vm.runInContext(shortcut, context);
   return {
-    doc, body, get, copies, clears,
+    doc, body, get, copies, clears, tracks,
     input(id, value, type = 'input') { get(id).value = value; get(id).dispatch(type); },
     key(focus, { key = 'l', ctrlKey = true, metaKey = false } = {}) {
       (typeof focus === 'string' ? get(focus) : focus || body).focus();
@@ -441,6 +441,153 @@ try {
   await settle(); eq('all current and stale clipboard rejections are handled', unhandled.length, 0);
 } finally { process.off('unhandledRejection', onUnhandled); }
 
+// Analytics: one event per committed change. Typing sends nothing; the change event of a valid
+// field sends one; an invalid or empty field sends none. Checkboxes send one per click.
+console.log('\nAnalytics events and numeric input reading');
+const t_en = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]).en;
+{
+  const p = page();
+  eq('GA: nothing on load', p.tracks.length, 0);
+  for (const v of ['6', '64', '644']) p.input('chmod-numeric', v);
+  eq('GA: typing a numeric value sends nothing', p.tracks.length, 0);
+  p.get('chmod-numeric').dispatch('change');
+  same('GA: committing a valid numeric value sends one numeric_input', p.tracks, [['chmod_calculator', 'numeric_input']]);
+  p.input('chmod-numeric', '64'); p.get('chmod-numeric').dispatch('change');
+  eq('GA: committing an incomplete numeric value sends nothing', p.tracks.length, 1);
+  for (const v of ['r', 'rw-', 'rw-r--r--']) p.input('chmod-symbolic', v);
+  eq('GA: typing a mode string sends nothing', p.tracks.length, 1);
+  p.get('chmod-symbolic').dispatch('change');
+  same('GA: committing a valid mode string sends one symbolic_input', p.tracks.at(-1), ['chmod_calculator', 'symbolic_input']);
+  p.input('chmod-symbolic', 'rwz'); p.get('chmod-symbolic').dispatch('change');
+  eq('GA: committing an invalid mode string sends nothing', p.tracks.length, 2);
+  p.body.querySelector('input[data-who="group"][data-perm="w"]').click();
+  same('GA: a checkbox sends one toggle', p.tracks.at(-1), ['chmod_calculator', 'toggle']);
+  p.get('chmod-setgid').click();
+  same('GA: a special bit sends one special_bit', p.tracks.at(-1), ['chmod_calculator', 'special_bit']);
+  eq('GA: four events in total', p.tracks.length, 4);
+}
+{
+  // A character that is not 0-7 used to be removed silently: "7558" became 755 and a pasted
+  // Python literal "0o644" (cut to "0o64" by maxlength 4) became 064. Now a 0o / 0O prefix and
+  // spaces at the ends are ignored, full-width digits from an IME are read through NFKC, and any
+  // other character shows the error and keeps the last valid result.
+  const p = page();
+  p.input('chmod-numeric', '0o644');
+  same('0o644 is read as 644', state(p).commands, ['chmod 644 filename', 'chmod u=rw,g=r,o=r filename', 'find . -type f -perm 0644']);
+  p.input('chmod-numeric', ' 0O2775 ');
+  same('" 0O2775 " is read as 2775', [state(p).values[1], state(p).commands[0]], ['rwxrwsr-x', 'chmod 2775 filename']);
+  p.input('chmod-numeric', '７５５');
+  same('full-width ７５５ is read as 755', [state(p).values[1], state(p).commands[0], state(p).errors[0]], ['rwxr-xr-x', 'chmod 755 filename', ['', false]]);
+  const valid = state(p);
+  for (const bad of ['7558', '758', '64 4', '0x1ED', 'chmod', '-644', '0o', '8']) {
+    p.input('chmod-numeric', bad);
+    const s = state(p);
+    same(`${JSON.stringify(bad)} shows the error`, s.errors[0], [t_en.errInvalidOctal, true]);
+    same(`${JSON.stringify(bad)} keeps the last valid commands`, s.commands, valid.commands);
+    eq(`${JSON.stringify(bad)} is left as typed`, p.get('chmod-numeric').value, bad);
+  }
+  // The symbolic field takes ASCII only (the ja page says so): a full-width mode string is an error.
+  p.input('chmod-symbolic', 'ｒｗ－ｒ－－ｒ－－');
+  same('full-width mode string is rejected', [state(p).errors[1][1], state(p).commands[0]], [true, 'chmod 755 filename']);
+}
+{
+  // Pasting goes through the field's maxlength first (the browser cuts the pasted text to that
+  // many UTF-16 code units). With maxlength 6, " 0o2775" became " 0o277" and was read as 277
+  // without an error. The field now has no maxlength; the length is checked by the reading rule.
+  const paste = (p, text) => {
+    const ml = p.get('chmod-numeric').getAttribute('maxlength');
+    p.input('chmod-numeric', ml === null ? text : text.slice(0, +ml));
+  };
+  for (const [text, sym, cmd] of [
+    [' 0o2775', 'rwxrwsr-x', 'chmod 2775 filename'],
+    [' 0o2775 ', 'rwxrwsr-x', 'chmod 2775 filename'],
+    ['  0O4755  ', 'rwsr-xr-x', 'chmod 4755 filename'],
+    ['0o1777\n', 'rwxrwxrwt', 'chmod 1777 filename'],
+    ['　０ｏ２７７５', 'rwxrwsr-x', 'chmod 2775 filename'],
+    ['　４７５５　', 'rwsr-xr-x', 'chmod 4755 filename'],
+    ['０Ｏ６４４', 'rw-r--r--', 'chmod 644 filename'],
+  ]) {
+    const p = page();
+    paste(p, text);
+    same(`pasted ${JSON.stringify(text)} is read in full`, [state(p).values[1], state(p).commands[0], state(p).errors[0]], [sym, cmd, ['', false]]);
+  }
+  for (const text of [' 0o27751', '0o77777', '27751', '　０ｏ２７７５１']) {
+    const p = page();
+    paste(p, text);
+    same(`pasted ${JSON.stringify(text)} (five digits) shows the error`, [state(p).errors[0], state(p).commands[0]], [[t_en.errInvalidOctal, true], 'chmod 755 filename']);
+  }
+  eq('numeric field has no maxlength that cuts a pasted value', /id="chmod-numeric"[^>]*maxlength=/.test(source), false);
+}
+
+
+// ── Tool page worked examples (src/content/tools/chmod-calculator/{lang}.mdx) ───────────────
+// `chmod-page: {"numeric": "755"}` or `{"symbolic": "-rw-r--r--."}` types the text into that
+// field of the real page script (stand-in DOM, page language), then each output listed in "show"
+// must appear in code between the note and the next note or H2: an inline <code> / backtick span
+// equal to it, or a whole token of a code block or <pre>. Outputs: numeric, symbolic, command,
+// sym (the symbolic command), find, description. For command and sym the page may show the
+// command with " filename" replaced by a path, so the text before " filename" is enough.
+// `chmod-sys: {"start": "755", "cmd": "uo+rwx", "mode": "757"}` runs the system chmod on a
+// directory set to "start", then "cmd", and the resulting mode must equal "mode" (and appear in
+// code after the note). Each language needs at least 2 chmod-page examples.
+console.log('\nTool page worked examples');
+{
+  const decode = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  const cut = (after) => { const i = after.indexOf('{/*'); return i < 0 ? after : after.slice(0, i); };
+  function codeParts(text) {
+    const blocks = fencedBlocks(text).map((b) => b.text);
+    const rest = text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, ' ');
+    const inline = [];
+    for (const m of rest.matchAll(/<pre\b[^>]*>\s*<code\b[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/g)) blocks.push(decode(m[1]));
+    const rest2 = rest.replace(/<pre\b[\s\S]*?<\/pre>/g, ' ');
+    for (const m of rest2.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+      const inner = m[1].trim(), lit = /^\{([`'"])([\s\S]*)\1\}$/.exec(inner);
+      inline.push(lit ? lit[2] : decode(inner));
+    }
+    for (const m of rest2.replace(/<code\b[\s\S]*?<\/code>/g, ' ').matchAll(/`([^`\n]+)`/g)) inline.push(m[1]);
+    return { blocks, inline };
+  }
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const shown = (parts, v) => parts.inline.includes(v) || parts.blocks.some((b) => new RegExp('(?<![\\w-])' + esc(v) + '(?![\\w-])').test(b));
+  function outputs(lang, spec) {
+    const q = page({ lang });
+    if (spec.numeric !== undefined) q.input('chmod-numeric', spec.numeric);
+    else q.input('chmod-symbolic', spec.symbolic);
+    const s = state(q);
+    if (s.errors.some(([text]) => text)) return { error: s.errors.map(([text]) => text).join(' ') };
+    return { numeric: s.values[0], symbolic: s.values[1], command: s.commands[0], sym: s.commands[1], find: s.commands[2], description: s.description };
+  }
+  const isGnuChmod = (() => { try { return /GNU coreutils/.test(execFileSync('chmod', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })); } catch { return false; } })();
+  const contract = toolMdxContract(SLUG, { annotations: [
+    { tag: 'chmod-page', min: 2, verify: ({ spec, after, lang }) => {
+      if (!spec || (spec.numeric === undefined) === (spec.symbolic === undefined)) return 'give exactly one of "numeric" and "symbolic"';
+      if (!Array.isArray(spec.show) || !spec.show.length) return '"show" is empty';
+      const out = outputs(lang, spec);
+      if (out.error) return 'the page shows an error: ' + out.error;
+      const parts = codeParts(cut(after));
+      const missing = spec.show.filter((k) => {
+        const v = out[k];
+        if (v === undefined) return true;
+        if ((k === 'command' || k === 'sym') && shown(parts, v.replace(/ filename$/, ''))) return false;
+        return !shown(parts, v);
+      }).map((k) => k + ' ' + JSON.stringify(out[k]));
+      return missing.length ? 'not in code after the note: ' + missing.join(', ') : null;
+    } },
+    { tag: 'chmod-sys', verify: ({ spec, after }) => {
+      if (process.platform === 'win32') return null;
+      if (spec.gnu && !isGnuChmod) return null;
+      const dir = mkdtempSync(join(tmpdir(), 'chmod-page-'));
+      try {
+        const d = join(dir, 'd');
+        execFileSync('mkdir', [d]); execFileSync('chmod', [spec.start, d]); execFileSync('chmod', [spec.cmd, d]);
+        const got = (statSync(d).mode & 0o7777).toString(8);
+        if (got !== spec.mode) return `chmod ${spec.cmd} on ${spec.start} gives ${got}, not ${spec.mode}`;
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+      return shown(codeParts(cut(after)), spec.mode) ? null : spec.mode + ' is not in code after the note';
+    } },
+  ] });
+  for (const r of contract.results) eq('tool MDX: ' + r.message, r.ok, true);
+}
 
 console.log('\nv2 page layout');
 {

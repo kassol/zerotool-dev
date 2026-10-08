@@ -9,19 +9,26 @@ steps:
   - "Use Ctrl/⌘+L to clear the input and results while keeping the selected prefix."
 faqItems:
   - question: "What is a subnet?"
+    id: "what-is"
     answer: "A subnet (subnetwork) is a logical subdivision of an IP network. Subnetting divides a large network into smaller, more manageable segments, improving performance and security."
   - question: "What is CIDR notation?"
+    id: "cidr"
     answer: "CIDR (Classless Inter-Domain Routing) notation expresses an IP address and its associated prefix length together, e.g. 192.168.1.0/24. The number after the slash is the prefix length — the count of bits reserved for the network portion."
   - question: "How is the subnet mask calculated?"
+    id: "mask"
     answer: "The subnet mask is derived from the prefix length by setting the first N bits to 1 and the rest to 0. For /24 that gives 255.255.255.0 (24 ones followed by 8 zeros)."
   - question: "What is the wildcard mask?"
+    id: "wildcard"
     answer: "The wildcard mask is the bitwise inverse of the subnet mask. It is used in ACLs and routing protocols (e.g. OSPF) to specify which bits of an address are significant."
   - question: "How many usable hosts does a /24 have?"
+    id: "hosts-24"
     answer: "A /24 subnet has 256 total addresses. Two are reserved — one for the network address and one for the broadcast address — leaving 254 usable host addresses."
   - question: "Which address formats does the calculator accept?"
-    answer: "Dotted decimal as inet_pton reads it: four numbers from 0 to 255 separated by dots, digits only, with no leading zeros. 10.0.0.01, 10.0.0.1x, 0x0a.0.0.1 and 10.1 are rejected with an error, not guessed at (some parsers read 010 as octal 8). The prefix after the slash must be a whole number from 0 to 32, so /24x and /024 are rejected too."
-  - question: "Is any data sent to a server?"
-    answer: "No. All calculations are performed locally in your browser using pure JavaScript bit operations. Nothing is transmitted."
+    id: "formats"
+    answer: "Dotted decimal as inet_pton reads it: four numbers from 0 to 255 separated by dots, digits only, with no leading zeros. 10.0.0.01, 10.0.0.1x, 0x0a.0.0.1 and 10.1 are rejected with an error, not guessed at (some parsers read 010 as octal 8). The prefix after the slash must be a whole number from 0 to 32, so /24x and /024 are rejected too. Full-width digits, dots and slash typed with an IME, and the ideographic full stop 。, are read as their ASCII forms first."
+  - question: "Is the address I enter sent or saved anywhere?"
+    id: "privacy"
+    answer: "No. The calculation runs in your browser tab with JavaScript bit operations; the address and prefix are not sent to a server and are not saved in browser storage. The page's analytics records a usage event with the tool name and the action when you leave the address field or change the prefix, not the address itself."
 ---
 
 <h2>Examples</h2>
@@ -43,6 +50,18 @@ faqItems:
   a router. The CIDR Notation field shows the corrected form, <code>192.168.1.64/26</code>, which is what most firewall and cloud
   consoles expect; many of them reject <code>192.168.1.77/26</code> because host bits are set.
 </p>
+<p>Copy writes the eight fields as labelled lines, ready for a ticket or a change request:</p>
+{/* isc-page: {"in":"192.168.1.77/26","show":["cidr"],"copy":true} */}
+```text
+Network Address: 192.168.1.64
+Broadcast Address: 192.168.1.127
+Subnet Mask: 255.255.255.192
+Wildcard Mask: 0.0.0.63
+First Usable Host: 192.168.1.65
+Last Usable Host: 192.168.1.126
+Usable Hosts: 62
+CIDR Notation: 192.168.1.64/26
+```
 <p>
   The second row is a typical cloud subnet. The calculator counts 4,094 usable hosts, but AWS reserves the first four and the last
   address of every VPC subnet, and Azure reserves five as well, so only 4,091 can be assigned there. Subtract those yourself when you
@@ -51,8 +70,15 @@ faqItems:
 <p>
   For /31 and /32 the calculator does not subtract a network and a broadcast address. A /31 is a point-to-point link with two usable
   addresses (RFC 3021), and a /32 is a single host, as used in route tables and allow-lists. Neither has a broadcast address, so the
-  Broadcast Address field says None and gives the reason.
+  Broadcast Address field says None and gives the reason:
 </p>
+{/* isc-page: {"in":"203.0.113.9/31","show":["broadcast","first","last","hosts"]} */}
+```text
+Broadcast Address: None (/31 point-to-point link, RFC 3021)
+First Usable Host: 203.0.113.8
+Last Usable Host: 203.0.113.9
+Usable Hosts: 2
+```
 
 <h2>Output Fields Explained</h2>
 
@@ -62,7 +88,7 @@ faqItems:
 | Broadcast Address | Last address — sent to all hosts in the subnet; none for /31 and /32 |
 | Subnet Mask | Dotted-decimal form of the prefix (e.g. 255.255.255.0) |
 | Wildcard Mask | Bitwise inverse of the subnet mask |
-| First Usable Host | Network address + 1 |
+| First Usable Host | Network address + 1; the network address itself for /31 and /32 |
 | Last Usable Host | Broadcast address − 1; the last address for /31 and /32 |
 | Usable Hosts | Total addresses minus 2 (network + broadcast); 2 for /31 and 1 for /32 |
 | CIDR Notation | Canonical network/prefix form |
@@ -87,6 +113,7 @@ faqItems:
   <li>Addresses must be four decimal numbers from 0 to 255 with no leading zeros. <code>10.0.0.01</code>, <code>0x0a.0.0.1</code> and
   <code>10.1</code> show “Invalid IPv4 address. Use four numbers from 0 to 255 separated by dots, with no leading zeros (e.g. 10.0.0.1).”
   This matches <code>inet_pton</code> and Node's <code>net.isIPv4</code>; it avoids guessing whether <code>010</code> means 10 or octal 8.</li>
+  <li>Before that check, full-width digits, dots and slash (<code>１９２．１６８．１．７７／２６</code>) and the ideographic full stop (<code>192。168。1。77/26</code>) that an IME may type are read as ASCII. The text in the field is left as you typed it.</li>
   <li>The prefix must be a whole number from 0 to 32. <code>/33</code>, <code>/24x</code> and <code>/024</code> show “The CIDR prefix must be a whole number from 0 to 32 (e.g. /24).”</li>
   <li>Dotted masks are not accepted after the slash. Type <code>/26</code>, or look up the prefix for a mask in the table above.</li>
   <li>IPv4 only. IPv6 addresses are rejected as invalid.</li>

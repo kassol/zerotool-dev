@@ -304,9 +304,15 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, net
         copyBtn.textContent = t.copy;
       }
 
+      // Full-width digits, dots and slash from an IME (NFKC) and the ideographic full stop 。 are
+      // read as ASCII. The field text itself is not rewritten.
+      function readInput(value) {
+        return value.normalize('NFKC').replace(/\u3002/g, '.');
+      }
+
       function render() {
         invalidateCopy();
-        var raw = inputEl.value.trim();
+        var raw = readInput(inputEl.value).trim();
         if (!raw) { clearError(); resultsEl.hidden = true; return; }
 
         var parsed = parseInput(raw, parseInt(prefixEl.value, 10));
@@ -329,8 +335,12 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, net
         cellHosts.textContent     = result.usable;
         cellCidr.textContent      = result.cidr;
         resultsEl.hidden = false;
+      }
 
-        window.trackTool && window.trackTool('ip_subnet_calculator', 'calculate');
+      // One analytics event per committed change: the change event of the address field (it renders
+      // at once, so leaving the field before the 250 ms pause still counts) and the prefix menu.
+      function track() {
+        if (!resultsEl.hidden) window.trackTool && window.trackTool('ip_subnet_calculator', 'calculate');
       }
 
       var _debounce;
@@ -339,11 +349,17 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, net
         clearTimeout(_debounce);
         _debounce = setTimeout(render, 250);
       });
+      inputEl.addEventListener('change', function () {
+        clearTimeout(_debounce);
+        render();
+        track();
+      });
       // A prefix typed after the slash wins in render(), so a dropdown change rewrites it
       prefixEl.addEventListener('change', function () {
-        var slashIdx = inputEl.value.indexOf('/');
+        var slashIdx = inputEl.value.search(/[\/\uFF0F]/);
         if (slashIdx !== -1) inputEl.value = inputEl.value.slice(0, slashIdx) + '/' + prefixEl.value;
         render();
+        track();
       });
 
       document.addEventListener('keydown', function (e) {
