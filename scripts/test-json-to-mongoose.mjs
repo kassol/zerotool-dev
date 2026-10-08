@@ -183,6 +183,19 @@ eq('"release-date" quoted', js.includes('  "release-date": { type: String },'), 
 eq('$ok and _id2 stay bare', js.includes('  $ok: { type: Number },') && js.includes('  _id2: { type: Number },'), true);
 eq('"2fa" quoted', js.includes('  "2fa": { type: Boolean },'), true);
 
+// Model name: variable and interface names come from nameStem (ASCII identifier, "_" before a digit);
+// the name passed to mongoose.model() is a string literal, so quotes and backslashes are escaped.
+const MODEL_NAMES = [["it's", "It's"], ['a\\b', 'A\\b'], ['2fa', '2fa'], ['class', 'Class'], ['用户', '用户'], ['order-item', 'OrderItem'], ['!!!', '!!!']];
+for (const [raw, want] of MODEL_NAMES) {
+  for (const mode of ['javascript', 'typescript']) {
+    const out = gen('{"a":1}', raw, mode, true, false);
+    eq(`model name ${raw} (${mode}) parses`, mode === 'javascript' ? parsesAsJs(out) : parsesAsTs(out), true);
+  }
+  const captured = [];
+  new Function('require', 'module', gen('{"a":1}', raw, 'javascript', true, false))(() => ({ Schema: function () {}, model: (name) => captured.push(name) }), { exports: {} });
+  eq(`model name ${raw} reaches mongoose.model() as ${want}`, captured[0], want);
+}
+
 // B1: a "__proto__" key is written as a computed key, so the object literal gets an own property
 // (a bare `__proto__:` sets the prototype); the TypeScript interface quotes it.
 {
@@ -285,6 +298,11 @@ if (process.env.MONGOOSE_TEST_DIR) {
     const proto = { exports: {} };
     new Function('require', 'module', gen('{"__proto__":1,"constructor":"c","b":1}', 'Proto', 'javascript', false, false))(() => isolated, proto);
     eq('B1: Mongoose 9.10.3 skips the __proto__ and constructor paths', JSON.stringify(Object.keys(proto.exports.schema.paths).filter((k) => k !== '_id' && k !== '__v')), JSON.stringify(['b']));
+    for (const [raw, want] of MODEL_NAMES) {
+      const named = { exports: {} };
+      new Function('require', 'module', gen('{"a":1}', raw, 'javascript', true, false))(() => new mongoose.Mongoose(), named);
+      eq(`Mongoose model name for ${raw}`, named.exports.modelName, want);
+    }
     const pops = new M({ pops: ['0', '10'] });
     eq('Mongoose casts ["0","10"] on a [Number] path to [0,10]', JSON.stringify([pops.validateSync()?.message ?? true, [...pops.pops]]), JSON.stringify([true, [0, 10]]));
   }
