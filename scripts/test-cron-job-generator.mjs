@@ -15,13 +15,16 @@
 // field may match; checkExpression accepts weekday 7 (cronie: 0 and 7 are Sunday; the typed
 // expression used to reject it) and reports the field and value of the first bad field, which the
 // page uses for the free-text Minute box (it used to be copied unchecked); 4-language
-// exprErrorField; the next-run examples on the English page.
+// exprErrorField; the next-run examples on the English page; analytics only on a committed change;
+// step and range boxes keep the typed value (no clamping or swapping); tool pages: cjg-check worked
+// examples in all four languages, typed into the real page (description, run times, messages).
 //
 // Run: node scripts/test-cron-job-generator.mjs
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems, fencedBlocks, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 process.env.TZ = 'Asia/Tokyo';
 
@@ -134,7 +137,7 @@ for (const [expr, runs] of [
 ]) {
   const got = E.nextRuns(expr.split(' '), runs.length, true, FROM).map((d) => d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
   eq('page runs for ' + expr, got, runs);
-  eq('page shows runs for ' + expr, page.includes(runs.join(', ')), true);
+  eq('page shows runs for ' + expr, page.includes(runs.map((r) => '`' + r + '`').join(', ')), true);
   eq('page shows description for ' + expr, page.includes(E.humanizeCron(expr.split(' '))), true);
 }
 
@@ -390,6 +393,76 @@ for(const lang of ['en','zh','ja','ko']){
   assert('typed */75 keeps its schedule (first runs 09:00 and 10:00 UTC)',[output(p),runs(p).slice(0,2),p.get('cjg-desc').textContent],['*/75 * * * *',['2026-10-05 09:00 UTC','2026-10-05 10:00 UTC'],'At every 75 minutes past every hour']);
   p=ready('en');p.input(INPUT,'0 9 * * */7');
   assert('typed weekday */7 runs on Sundays only',[runs(p).slice(0,2)],[['2026-10-11 09:00 UTC','2026-10-18 09:00 UTC']]);
+}
+
+// ---------- tool pages: cjg-check worked examples (S2-3c) ----------
+// {/* cjg-check: {"expr","from","utc","tz","runs","error"} */} or {"from","utc","tz","cases":[{...}]}
+// (case keys override the outer ones; "utc" defaults to true). The expression is typed into the
+// real page (lifecycle harness): for a valid one, the page's description must equal the engine's
+// description of the typed fields (so the field controls did not rewrite it) and must appear in
+// code after the comment, with the first `runs` run times from the instant `from` (exclusive):
+// `YYYY-MM-DD HH:MM UTC` as the page prints in UTC mode, or `YYYY-MM-DD HH:MM` in time zone `tz`
+// for Local mode (the page itself prints the browser's date format plus the zone name). For an
+// invalid one ("error": true is required) the page's error text must appear. "In code" means a line
+// of a code block or an inline code span, up to the next cjg-check or H2.
+{
+  const codeSpans = (text) => {
+    const out = [];
+    for (const b of fencedBlocks(text)) out.push(...b.text.split('\n').map((l) => l.trim()));
+    for (const m of withoutCode(text).matchAll(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g)) out.push(m[2].trim());
+    return out;
+  };
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const savedTz = process.env.TZ;
+  const covered = { en: [], zh: [], ja: [], ko: [] };
+  const expected = (c, lang) => {
+    const p = ready(lang);
+    p.input(INPUT, c.expr);
+    const err = p.get('cjg-error').textContent, desc = p.get('cjg-desc').textContent;
+    const checked = E.checkExpression(c.expr);
+    if (checked.error) return c.error ? (err ? [err] : { problem: c.expr + ': the page shows no error' }) : { problem: c.expr + ' is invalid: ' + err };
+    if (c.error) return { problem: c.expr + ' is valid but the annotation expects an error' };
+    const engineDesc = E.humanizeCron(checked.parts);
+    if (desc !== engineDesc) return { problem: c.expr + ': the page describes it as "' + desc + '", the typed fields give "' + engineDesc + '"' };
+    const utc = c.utc !== false;
+    process.env.TZ = utc ? 'UTC' : c.tz;
+    const runs = E.nextRuns(checked.parts, c.runs || 0, utc, Date.parse(c.from)).map((d) => utc
+      ? d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+      : d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()));
+    process.env.TZ = savedTz;
+    return (c.desc === false ? [] : [desc]).concat(runs);
+  };
+  const verify = ({ spec, after, lang }) => {
+    const cases = spec.cases ? spec.cases.map((c) => ({ from: spec.from, utc: spec.utc, tz: spec.tz, ...c })) : [spec];
+    const shown = codeSpans(after);
+    for (const c of cases) {
+      const want = expected(c, lang);
+      if (want.problem) return want.problem;
+      for (const w of want) {
+        if (!shown.includes(w)) return c.expr + ': "' + w + '" is not shown in code after the annotation';
+        covered[lang].push(w);
+      }
+    }
+    return null;
+  };
+  const opts = { annotations: [{ tag: 'cjg-check', min: 2, verify }] };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    assert('cjg-check ' + lang + ' MDX contract and worked examples', contractProblems(SLUG, lang, opts), '');
+    const body = readFileSync(join(root, 'src/content/tools/cron-job-generator', lang + '.mdx'), 'utf8').split(/^---$/m).slice(2).join('---');
+    const loose = codeSpans(body).filter((x) => /^At |^\d{4}-\d\d-\d\d \d\d:\d\d/.test(x) && !covered[lang].includes(x));
+    assert('cjg-check ' + lang + ' every description and run time in code is recomputed', loose, []);
+  }
+  process.env.TZ = savedTz;
+}
+// The four MDX files compile (an annotation that contains */ ends the MDX comment early).
+{
+  const mdx = await import(requireFromRoot.resolve('@mdx-js/mdx'));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const text = readFileSync(join(root, 'src/content/tools/cron-job-generator', lang + '.mdx'), 'utf8');
+    let error = '';
+    try { await mdx.compile(text.slice(text.indexOf('\n---\n', 4) + 5)); } catch (e) { error = String(e.message || e); }
+    assert('cron-job-generator ' + lang + ' MDX compiles', error, '');
+  }
 }
 
 console.log(`v2 total: ${passes} PASS, ${failures} FAIL`);process.exitCode=failures?1:0;

@@ -8,26 +8,36 @@ steps:
   - "Use Copy to copy only the expression. Ctrl/⌘+L clears text, errors and scheduled results while keeping field controls, time zone and saved preferences."
 faqItems:
   - question: "What is a cron expression?"
+    id: "what-is"
     answer: "A cron expression is a string of five fields separated by spaces that defines a recurring schedule: minute (0–59), hour (0–23), day of month (1–31), month (1–12), and day of week (0–7, where 0 and 7 are Sunday). The asterisk (*) means 'every value'; */N means 'every N units'; a range like 9-17 means 'from 9 to 17'; and a list like 1,15 means 'on the 1st and 15th'."
   - question: "What is the difference between cron-job-generator and cron-parser?"
+    id: "vs-parser"
     answer: "The cron-job-generator lets you build a cron expression by selecting options for each field visually — you choose the schedule and the expression is generated. The cron-parser does the reverse: you type an existing expression and it explains what the schedule means and shows the next run times."
   - question: "What does 'Every N' mode mean?"
+    id: "every-n"
     answer: "Every N mode generates a step expression like */5 for the minute field, meaning 'at every 5th minute' (0, 5, 10, 15 … 55). You can use this in any field: */2 in the hour field means 'every 2 hours', */3 in the month field means 'every 3 months', and so on."
   - question: "Can I combine different modes across fields?"
+    id: "combine"
     answer: "Yes. Each field is independent, so you can mix modes freely. For example, to run at 9 AM on the 1st and 15th of every month, set minute to Specific with the value 0, hour to Specific with 9, day to Specific with 1 and 15, and leave month and weekday on Every. The result is 0 9 1,15 * *."
   - question: "Why doesn't the generator support six-field (seconds) cron expressions?"
+    id: "six-field"
     answer: "The five-field format is the one used by cron (crontab(5)), GitHub Actions and Kubernetes CronJob. Some tools like Quartz Scheduler add a seconds field, but there is no universal standard for it. This generator focuses on the widely supported five-field format."
+  - question: "Is my cron expression sent anywhere or saved?"
+    id: "privacy"
+    answer: "It is not sent to a server. The page saves the last valid expression and your UTC or Local choice in this browser's local storage, so they come back on your next visit; Ctrl/⌘+L empties the boxes but keeps the saved values, and clearing this site's data in the browser removes them. The page's analytics records a usage event with the tool name and the action when you change the schedule or copy it, not the expression."
 ---
 
 <h2>Examples</h2>
 
 The descriptions and run times below are the tool's own output, computed from 2026-10-01 10:00 UTC with the UTC switch on. To explain an expression you already have, paste it into the box above or into the [Cron Expression Parser](/tools/cron-parser/).
 
+{/* cjg-check: {"from":"2026-10-01T10:00:00Z","cases":[{"expr":"0 9 * * 1-5","runs":3},{"expr":"0 0 1,15 * 1","runs":4},{"expr":"0 0 \u002a/2 * 1","runs":3}]} */}
+
 | Expression | Description | Next runs |
 |---|---|---|
-| `0 9 * * 1-5` | At 9:00, on Monday through Friday | 2026-10-02 09:00 UTC, 2026-10-05 09:00 UTC, 2026-10-06 09:00 UTC |
-| `0 0 1,15 * 1` | At midnight, on day 1, 15 of the month or on Monday | 2026-10-05 00:00 UTC, 2026-10-12 00:00 UTC, 2026-10-15 00:00 UTC, 2026-10-19 00:00 UTC |
-| `0 0 */2 * 1` | At midnight, on day every 2 days of the month and on Monday | 2026-10-05 00:00 UTC, 2026-10-19 00:00 UTC, 2026-11-09 00:00 UTC |
+| `0 9 * * 1-5` | `At 9:00, on Monday through Friday` | `2026-10-02 09:00 UTC`, `2026-10-05 09:00 UTC`, `2026-10-06 09:00 UTC` |
+| `0 0 1,15 * 1` | `At midnight, on day 1, 15 of the month or on Monday` | `2026-10-05 00:00 UTC`, `2026-10-12 00:00 UTC`, `2026-10-15 00:00 UTC`, `2026-10-19 00:00 UTC` |
+| `0 0 */2 * 1` | `At midnight, on day every 2 days of the month and on Monday` | `2026-10-05 00:00 UTC`, `2026-10-19 00:00 UTC`, `2026-11-09 00:00 UTC` |
 
 The second and third rows show the rule that surprises most people. When both the day-of-month and the weekday field are restricted, cron runs the job on days that match **either** field, so `0 0 1,15 * 1` fires on the 1st, the 15th and every Monday. But a field that starts with `*`, including a step such as `*/2`, does not count as a restriction, so in the third row both fields must match: only Mondays that fall on an odd date. The tool follows cronie, the cron on most Linux distributions, which marks a day field as unrestricted when its first character is `*` (crontab(5) describes the either-field rule).
 
@@ -37,10 +47,13 @@ A cron expression has no time zone of its own; the scheduler that reads it suppl
 
 <h2>Limitations</h2>
 
-- Five fields only: no seconds field and no Quartz or Spring extensions (`?`, `L`, `W`, `#`). An expression typed with them shows "Invalid cron expression".
+{/* cjg-check: {"cases":[{"expr":"0 0 L * *","error":true},{"expr":"75 * * * *","error":true},{"expr":"\u002a/0 * * * *","error":true}]} */}
+
+- Five fields only: no seconds field and no Quartz or Spring extensions (`?`, `L`, `W`, `#`). An expression typed with them names the field and the value, for example `Day: "L" is not valid. Use numbers from 1 to 31, *, -, / and commas.`
 - Numbers must be whole decimal numbers: `1.5`, `5abc` and `1#2` are rejected. A step needs `*` or a range in front of it, so `5/10` is rejected, as cronie rejects it.
 - Weekdays are 0–7 and the names `sun`–`sat`; 0 and 7 are both Sunday, as in cronie's crontab(5). A typed range that ends in 7, such as `5-7`, is shown with the weekday buttons (Friday, Saturday, Sunday), because the Range boxes stop at 6; the expression box keeps what you typed.
-- Values typed into the Minute box are checked. `75` shows "Minute: "75" is not valid. Use numbers from 0 to 59, *, -, / and commas." and the description and run list stay empty until it is fixed.
+- Values typed into the Minute box are checked. `75` shows `Minute: "75" is not valid. Use numbers from 0 to 59, *, -, / and commas.` and the description and run list stay empty until it is fixed.
+- The Step, From and To boxes give the value you type. A step of 0 shows `Minute: "*/0" is not valid. Use numbers from 0 to 59, *, -, / and commas.`, and a range from 17 to 9 is reported in the same way rather than swapped. A step larger than the field is valid cron and is kept: `*/75` in Minute runs once an hour, at :00.
 - A schedule that never occurs, such as `0 0 30 2 *` (30 February), shows an empty run list.
 - The description is in English on every language version of this page.
 
