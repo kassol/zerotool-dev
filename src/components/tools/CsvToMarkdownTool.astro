@@ -17,6 +17,7 @@ const STRINGS = {
     "converted": "Converted {n} row{s} to Markdown table.",
     "errorPrefix": "Error: ",
     "addedColumns": "Some rows have more fields than the header, so these columns were added: {cols}.",
+    "errNoData": "No data found.",
     "empty": "The Markdown table will appear here.",
     "tips": {
       "csv": "Paste comma-separated CSV. The first row becomes the header. After 0.3 seconds without typing, the table updates. Quoted commas and line breaks are supported.",
@@ -39,6 +40,7 @@ const STRINGS = {
     "converted": "已将 {n} 行转换为 Markdown 表格。",
     "errorPrefix": "错误：",
     "addedColumns": "部分行的字段比表头多，已补上这些列：{cols}。",
+    "errNoData": "没有找到数据。",
     "empty": "Markdown 表格将显示在这里。",
     "tips": {
       "csv": "粘贴逗号分隔的 CSV，第一行作为表头。停止输入 0.3 秒后自动更新表格。支持引号字段内的逗号与换行。",
@@ -61,6 +63,7 @@ const STRINGS = {
     "converted": "{n} 行を Markdown テーブルに変換しました。",
     "errorPrefix": "エラー：",
     "addedColumns": "ヘッダーより項目が多い行があるため、次の列を追加しました：{cols}。",
+    "errNoData": "データがありません。",
     "empty": "Markdown テーブルがここに表示されます。",
     "tips": {
       "csv": "カンマ区切りの CSV を貼り付けます。1行目がヘッダーになり、入力を止めて0.3秒後に表が更新されます。引用符内のカンマや改行に対応します。",
@@ -83,6 +86,7 @@ const STRINGS = {
     "converted": "{n}행을 Markdown 표로 변환했습니다.",
     "errorPrefix": "오류: ",
     "addedColumns": "헤더보다 필드가 많은 행이 있어 다음 열을 추가했습니다: {cols}.",
+    "errNoData": "데이터가 없습니다.",
     "empty": "Markdown 표가 여기에 표시됩니다.",
     "tips": {
       "csv": "쉼표로 구분한 CSV를 붙여 넣습니다. 첫 행을 헤더로 사용하며 입력을 멈춘 뒤 0.3초 후 표가 갱신됩니다. 따옴표 안의 쉼표와 줄바꿈을 지원합니다.",
@@ -150,6 +154,7 @@ const { tips: TIPS, ...CLIENT } = T;
           btn.classList.add('active');
           currentAlign = btn.getAttribute('data-align');
           if (csvEl.value.trim()) doConvert();
+          trackChange();
         });
       });
 
@@ -272,11 +277,21 @@ const { tips: TIPS, ...CLIENT } = T;
           var msg = rowMsg(result.rowCount);
           if (result.addedColumns.length) msg += ' ' + t.addedColumns.replace('{cols}', result.addedColumns.join(', '));
           setStatus(msg, false);
-          window.trackTool && window.trackTool('csv_to_markdown', 'convert');
         } catch (e) {
           mdEl.value = '';
-          setStatus(t.errorPrefix + e.message, true);
+          setStatus(t.errorPrefix + (e.message === 'No data found.' ? t.errNoData : e.message), true);
         }
+      }
+
+      /* Analytics: one event per committed change (input change event, alignment click), not per typing pause.
+         The same input with the same alignment is sent once. */
+      var lastTracked = null;
+      function trackChange() {
+        if (!mdEl.value) return;
+        var key = currentAlign + '\u0000' + csvEl.value;
+        if (key === lastTracked) return;
+        lastTracked = key;
+        window.trackTool && window.trackTool('csv_to_markdown', 'convert');
       }
 
       /* ── Real-time conversion (debounced 300ms) ── */
@@ -286,9 +301,14 @@ const { tips: TIPS, ...CLIENT } = T;
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(doConvert, 300);
       });
+      csvEl.addEventListener('change', function () {
+        doConvert();
+        trackChange();
+      });
 
       /* ── Clear ── */
       function clearAll() {
+        lastTracked = null;
         clearTimeout(_liveTimer);
         resetCopies();
         csvEl.focus();

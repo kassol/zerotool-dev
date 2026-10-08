@@ -10,7 +10,8 @@
 // Covers: rows with more fields than the header get extra columns named "Column N" (N is the
 // 1-based column position) and the added names are reported (these fields were dropped before),
 // short rows padded with empty cells, alignment separators, pipe escaping, quoted fields with
-// commas / quotes / line breaks, CRLF input, header-only input, 4-language STRINGS keys.
+// commas / quotes / line breaks, CRLF input, header-only input, 4-language STRINGS keys; analytics only on
+// input change or alignment click (deduplicated, reset by Clear), no-data error in the page language.
 //
 // Run: node scripts/test-csv-to-markdown.mjs
 
@@ -245,8 +246,26 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  const p=page(lang,order);p.type(s.left,s.input);p.advance(100);p.key(s.left,'Enter',mod);
  eq(lang+order+mod+' Enter does not rush conversion',p.get(s.right).value,'');
  p.advance(199);eq(lang+order+mod+' original 300ms debounce remains',p.get(s.right).value,'');
- p.advance(1);eq(lang+order+mod+' only one automatic conversion',p.tracks.filter(x=>x[1]==='convert').length,1);
+ p.advance(1);eq(lang+order+mod+' automatic conversion sends no analytics event',p.tracks.length,0);
  eq(lang+order+mod+' complete automatic output',p.get(s.right).value,s.expected);
+}
+
+// Analytics: one event per committed change (input change, alignment click), not per typing pause.
+for (const lang of ['en','zh','ja','ko']) {
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvToMarkdownTool.astro').frontmatter)[lang];
+  let p = page(lang); p.type(s.left, 'a\n1'); p.advance(300); p.type(s.left, 'a\n12'); p.advance(300);
+  eq(lang+' typing pauses send nothing', p.tracks.length, 0);
+  p.get(s.left).fire('change'); eq(lang+' change sends one event', p.tracks, [['csv_to_markdown','convert']]);
+  p.get(s.left).fire('change'); eq(lang+' same input and alignment sent once', p.tracks.length, 1);
+  p.get('cm-align-right').click(); eq(lang+' alignment click sends one event', p.tracks.length, 2);
+  p.get('cm-align-right').click(); eq(lang+' clicking the active alignment again sends nothing', p.tracks.length, 2);
+  p = page(lang); p.type(s.left, 'a\n1'); p.advance(100); p.get(s.left).fire('change');
+  eq(lang+' change converts a pending edit at once', [p.get(s.right).value, p.tracks.length], ['| a   |\n| :---- |\n| 1   |', 1]);
+  check(lang+' change cancels the pending conversion', ![...p.jobs.values()].some(j => j.ms === 300));
+  p.clear(); p.type(s.left, 'a\n1'); p.get(s.left).fire('change'); eq(lang+' Clear resets the sent key', p.tracks.length, 2);
+  p = page(lang); p.type(s.left, '""'); p.get(s.left).fire('change'); p.get('cm-align-center').click();
+  eq(lang+' no event without a table', p.tracks.length, 0);
+  eq(lang+' no-data error in page language', p.get('cm-status').textContent, S.errorPrefix + S.errNoData);
 }
 
 /* ── v2 page layout ── */
@@ -256,7 +275,8 @@ const allStrings = frontmatterStrings(readComponent('src/components/tools/CsvToM
 const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
-eq('reviewed FIX script preserves all bytes except i18n and removed buttons', hash(script), '5337a6c01e2d2397c7fa8cd65a56b35166474f8b3020e63de973b5ca171af45b');
+// S2-6d (2026-10-08) moved analytics to change / alignment click and localized the no-data error; the hash pins that reviewed script.
+eq('reviewed page script is unchanged', hash(script), '5d375fd5b91f862bf992b5e53d1ff27b2a77dbdf714c05cfc073744581d8dbda');
 check('direct zero-minimum flex column root', /^\s*<div class="cm-wrap"/.test(markupSource) && /\.cm-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cm-(?:toolbar|controls)"[\s\S]*id="cm-status"[\s\S]*class="cm-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
