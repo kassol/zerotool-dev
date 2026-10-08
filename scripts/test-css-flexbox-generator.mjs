@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseFragment } from 'parse5';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssFlexboxGeneratorTool.astro'), 'utf8');
@@ -151,6 +151,50 @@ for (const lang of ['en', 'ja']) {
     check(`${lang} ${m[1]} ${m[2]}`, JSON.stringify(got) === JSON.stringify(c.out), JSON.stringify(got));
   }
   check(lang + ' guide has grow and shrink checks', /cfg-grow:/.test(guide) && /cfg-shrink:/.test(guide));
+}
+
+// ---------- tool page MDX (src/content/tools/css-flexbox-generator/{lang}.mdx): worked examples ----------
+// `cfg-check` gives the field values (dir, wrap, justify, alignItems, alignContent, gap, items; missing
+// fields take the page defaults) set through the page script; a code block between the annotation and
+// the next cfg-check or H2 must equal the copied CSS. `cfg-justify` recomputes the main-start
+// positions quoted in the prose for fixed-size items in one line (no grow or shrink; free space =
+// container − sizes − gaps, which must not be negative): `out` maps a justify-content value to the
+// positions, by CSS Flexbox Level 1 §8.2 and CSS Box Alignment Level 3 §5.3 (space-evenly); every
+// position must appear in the text that follows (rounded to 2 decimals).
+{
+  const fmt = (x) => String(+x.toFixed(2));
+  const shown = (text, n) => new RegExp('(?<![\\d.])' + n.replace('.', '\\.') + '(?![\\d]|\\.\\d)').test(text);
+  function positions({ container, sizes, gap }, justify) {
+    const n = sizes.length;
+    const free = container - sizes.reduce((a, b) => a + b, 0) - gap * (n - 1);
+    if (free < 0) throw new Error('negative free space');
+    const [start, between] = {
+      normal: [0, 0], 'flex-start': [0, 0], 'flex-end': [free, 0], center: [free / 2, 0],
+      'space-between': [0, n > 1 ? free / (n - 1) : 0],
+      'space-around': [free / n / 2, free / n],
+      'space-evenly': [free / (n + 1), free / (n + 1)],
+    }[justify];
+    const out = [];
+    let x = start;
+    for (const size of sizes) { out.push(x); x += size + gap + between; }
+    return out;
+  }
+  const contract = toolMdxContract('css-flexbox-generator', { annotations: [
+    { tag: 'cfg-check', min: 2, verify: ({ spec, after }) => {
+      const out = generate(spec);
+      return fencedBlocks(after).some((b) => b.text === out) ? null : 'no code block equals ' + JSON.stringify(out);
+    } },
+    { tag: 'cfg-justify', verify: ({ spec, after }) => {
+      for (const [justify, want] of Object.entries(spec.out)) {
+        const got = positions(spec, justify).map(fmt);
+        if (JSON.stringify(got) !== JSON.stringify(want.map(fmt))) return justify + ': computed ' + got.join(', ') + ', annotation says ' + want.join(', ');
+        const missing = got.filter((n) => !shown(after, n));
+        if (missing.length) return justify + ': not shown after the annotation: ' + missing.join(', ');
+      }
+      return null;
+    } },
+  ] });
+  for (const r of contract.results) check('tool MDX: ' + r.message, r.ok, r.message);
 }
 
 // Actual complete script and ToolLayout shortcuts; only browser boundaries are controlled.
