@@ -167,6 +167,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': page has at least three examples', count >= 3, String(count));
 }
 
+// ---------- facts stated in the FAQ (nullable / json-tags, all four languages) ----------
+eq('FAQ: a key that is only null becomes interface{}', gen('{"a":null}'), 'type RootObject struct {\n\tA interface{} `json:"a"`\n}');
+eq('FAQ: null in some items and a value in others gives a pointer without omitempty', gen('[{"a":null},{"a":"x"}]'), 'type RootObject struct {\n\tA *string `json:"a"`\n}');
+eq('FAQ: a key missing from some items gives a pointer with omitempty; a slice stays a slice', gen('[{"t":["a"],"n":1,"s":"x"},{"n":2}]'), 'type RootObject struct {\n\tT []string `json:"t,omitempty"`\n\tN int `json:"n"`\n\tS *string `json:"s,omitempty"`\n}');
+check('FAQ: keys a struct tag cannot hold become comments', gen('{"":1,"a,b":2,"ok":3}').includes('// JSON key "a,b" cannot be named in a struct tag'));
+
 rmSync(tmp, { recursive: true, force: true });
 // Complete page lifecycle plus actual ToolLayout keyboard handler; DOM/clipboard/timers are boundary doubles.
 const pageScript = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
