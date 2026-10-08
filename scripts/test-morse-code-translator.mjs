@@ -459,5 +459,49 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 eq('v2 engine bytes unchanged', sha256(source.slice(startIndex, endIndex + END_MARK.length)), '94b0710579cac9cacf59c3d973a930b624b4e378fc929e20cd1551f0f9a1df29');
 console.log('v2 page layout: ' + (passes - v2Start) + ' passed');
 
+// ---------- worked examples on the tool pages (S2-5, 2026-10-08) ----------
+// {/* mct-check: {"encode": "SOS 中国", "status": true} */} or {"decode": "..."}: the input and the
+// engine's output must both be shown as code after the marker (before the next marker or H2). With
+// "status": true the status-row message for skipped characters or unknown codes, in the page's
+// language, must be shown too.
+{
+  const exStart = passes;
+  const shownCode = (region) => {
+    const out = [];
+    for (const m of region.matchAll(/^(`{3,})[^\n]*\n([\s\S]*?)\n?^\1[ \t]*$/gm)) out.push(m[2]);
+    const rest = region.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '');
+    for (const m of rest.matchAll(/<code>\{("(?:[^"\\]|\\.)*")\}<\/code>/g)) out.push(JSON.parse(m[1]));
+    for (const m of rest.matchAll(/<code>([^<{]*)<\/code>/g)) out.push(m[1]);
+    for (const m of rest.replace(/<code>[\s\S]*?<\/code>/g, '').matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+    return out;
+  };
+  const verify = ({ spec, after, lang }) => {
+    const encode = typeof spec?.encode === 'string';
+    if (!encode && typeof spec?.decode !== 'string') return 'needs "encode" or "decode"';
+    const input = encode ? spec.encode : spec.decode;
+    const r = encode ? enc(input) : dec(input);
+    const output = encode ? r.morse : r.text;
+    const codes = shownCode(after);
+    if (!codes.includes(input)) return 'input ' + JSON.stringify(input) + ' not shown as code';
+    if (!codes.includes(output)) return 'engine output ' + JSON.stringify(output) + ' not shown as code';
+    const list = encode ? r.skipped : r.unknown;
+    if (spec.status) {
+      if (!list.length) return 'status requested but the engine reports nothing';
+      const msg = encode ? STRINGS[lang].skipped.replace('{list}', list.join(' ')) : STRINGS[lang].unknown.replace('{list}', list.join('  '));
+      if (!codes.includes(msg)) return 'status ' + JSON.stringify(msg) + ' not shown as code';
+    } else if (list.length) return 'engine reports ' + JSON.stringify(list) + '; add "status": true and show the message';
+    return null;
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' worked examples match the engine', contractProblems('morse-code-translator', lang, { annotations: [{ tag: 'mct-check', min: 2, verify }] }), '');
+  }
+  check('worked example check catches a wrong output', verify({ spec: { encode: 'SOS' }, after: '<code>{"SOS"}</code> <code>{"··· −−− ··−"}</code>', lang: 'en' }) !== null);
+  // Korean (국문) and Japanese (和文) codes from the national tables reuse dot-dash patterns of the
+  // Latin alphabet, so the decoder reads them as Latin letters (pages explain this).
+  eq('국문 ㅎㅏㄴㄱㅜㄱ decodes as Latin letters', dec('·−−− · ··−· ·−·· ···· ·−··').text, 'JEFLHL');
+  eq('和文 ハナ in the law\'s notation decodes as Latin letters', dec('－・・・ ・－・').text, 'BR');
+  console.log('worked examples: ' + (passes - exStart) + ' passed');
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

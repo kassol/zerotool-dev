@@ -552,13 +552,10 @@ const SHOWN_BEFORE_MARKER = new Set([
   "zh.mdx {\"in\": \"0.1\", \"base\": 10, \"out\": 16, \"expect\": \"0.1(9)\"}",
   "zh.mdx {\"in\": \"0.625\", \"base\": 10, \"out\": 2, \"expect\": \"0.101\"}",
 ]);
-// Real examples whose output is not written verbatim in code near the marker (S2-0, 2026-10-08;
-// text unchanged): en writes −10 with U+2212 in prose, and does not show −255 at all. The value
-// is still recomputed; the entry must go once the page shows the output after the marker.
-const NOT_SHOWN_VERBATIM = new Set([
-  "en.mdx {\"in\": \"FFFFFFF6\", \"base\": 16, \"signed\": 32, \"out\": 10, \"expect\": \"-10\"}",
-  "en.mdx {\"in\": \"-0xff\", \"base\": 10, \"out\": 10, \"expect\": \"-255\"}",
-]);
+// Real examples whose output is not written verbatim in code near the marker. The value is still
+// recomputed; an entry must go once the page shows the output after the marker. S2-0 listed two en
+// examples here; S2-5 (2026-10-08) rewrote both so the page shows `-10` and `-255` after them.
+const NOT_SHOWN_VERBATIM = new Set([]);
 {
   // A wrong shown output must be caught even when the right value appears elsewhere on the page.
   const page = 'Text `-1010` elsewhere.\n\n{/* nb: {"in": "-10", "base": 10, "out": 2, "expect": "-1010"} */}\n{/* nb: {"in": "-10", "base": 10, "twos": 8, "expect": "11110110"} */}\n\n- Binary row: `-1011`\n- 8-bit row: `11110110`\n\n## Next\n\n`-1010`\n';
