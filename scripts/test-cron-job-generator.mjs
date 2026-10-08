@@ -15,13 +15,16 @@
 // field may match; checkExpression accepts weekday 7 (cronie: 0 and 7 are Sunday; the typed
 // expression used to reject it) and reports the field and value of the first bad field, which the
 // page uses for the free-text Minute box (it used to be copied unchecked); 4-language
-// exprErrorField; the next-run examples on the English page.
+// exprErrorField; the next-run examples on the English page; analytics only on a committed change;
+// step and range boxes keep the typed value (no clamping or swapping); tool pages: cjg-check worked
+// examples in all four languages, typed into the real page (description, run times, messages).
 //
 // Run: node scripts/test-cron-job-generator.mjs
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems, fencedBlocks, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 process.env.TZ = 'Asia/Tokyo';
 
@@ -107,6 +110,24 @@ eq('local (Asia/Tokyo): 0 9 * * 1-5 runs at 09:00 JST = 00:00 UTC',
 eq('either day field: or', E.humanizeCron('0 0 1,15 * 1'.split(' ')), 'At midnight, on day 1, 15 of the month or on Monday');
 eq('day field starts with *: and', /and on Monday$/.test(E.humanizeCron('0 0 */2 * 1'.split(' '))), true);
 eq('weekdays 9', E.humanizeCron('0 9 * * 1-5'.split(' ')), 'At 9:00, on Monday through Friday');
+// A day-of-month step used to read "on day every 2 days of the month"; the parser already drops
+// "day " before "every …" (CronParserTool.astro humanizeCron).
+for (const [expr, want] of [
+  ['0 0 */2 * *', 'At midnight, on every 2 days of the month'],
+  ['0 0 */2 * 1', 'At midnight, on every 2 days of the month and on Monday'],
+  ['0 9 */3 * 1-5', 'At 9:00, on every 3 days of the month and on Monday through Friday'],
+  ['0 0 */1 * */2', 'At midnight, on every 1 day of the month and on every 2 days of week'],
+]) {
+  eq('day step description ' + expr, E.humanizeCron(expr.split(' ')), want);
+  eq('no "on day every" in ' + expr, / on day every /.test(E.humanizeCron(expr.split(' '))), false);
+}
+// Engine block guard: changed 2026-10-08 (S2-3c, approved) only in the three description lines
+// above (", on day " → ", on " + "day " unless the day text starts with "every"); was b002beba….
+{
+  const { createHash } = await import('node:crypto');
+  eq('engine block SHA-256', createHash('sha256').update(source.slice(startIndex, endIndex)).digest('hex'), 'a754f1902dfff4910e010ab76802218634433ef2789265cf0c1257056379f980');
+}
+eq('day list keeps "on day"', E.humanizeCron('0 0 1,15 * */2'.split(' ')), 'At midnight, on day 1, 15 of the month and on every 2 days of week');
 
 // ---------- typed expression and the Minute box ----------
 // cronie crontab(5): day of week 0–7, 0 or 7 is Sunday. The typed expression used to reject 7.
@@ -122,6 +143,7 @@ const stringsRegion = source.split('// strings:start')[1]?.split('// strings:end
 if (!stringsRegion) throw Error('Missing SSR strings boundary');
 const STR = new Function(stringsRegion + ';return STRINGS;')();
 const SSR_STRINGS=STR;
+for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ' has exprErrorEmpty with placeholders', ['{field}', '{min}', '{max}'].every((k) => (STR[lang].exprErrorEmpty || '').includes(k)), true);
 for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ' has exprErrorField with placeholders', /\{field\}/.test(STR[lang].exprErrorField || '') && /\{value\}/.test(STR[lang].exprErrorField || ''), true);
 eq('page no longer says 7 is rejected', page.includes('it rejects 7'), false);
 eq('page no longer says the Minute box is copied as is', page.includes('without an error message'), false);
@@ -134,7 +156,7 @@ for (const [expr, runs] of [
 ]) {
   const got = E.nextRuns(expr.split(' '), runs.length, true, FROM).map((d) => d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
   eq('page runs for ' + expr, got, runs);
-  eq('page shows runs for ' + expr, page.includes(runs.join(', ')), true);
+  eq('page shows runs for ' + expr, page.includes(runs.map((r) => '`' + r + '`').join(', ')), true);
   eq('page shows description for ' + expr, page.includes(E.humanizeCron(expr.split(' '))), true);
 }
 
@@ -160,7 +182,7 @@ const SLUG='cron-job-generator',component='src/components/tools/CronJobGenerator
 const templates={};
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}){
-  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map();let stored=structuredClone(saved);
+  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map(),tracks=[];let stored=structuredClone(saved);
   let timerId=0,clock=0,doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
   const matchOne = (el, selector) => {
@@ -256,8 +278,8 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
   const persist={clear(slug){if(slug!=='cron-job-generator')stored={};persistCalls.push(['clear',slug]);},save(slug,data){stored=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,stored]);},load(){return structuredClone(stored);}};
-  const globals={CLIENT_T:Object.fromEntries(['copy','copied','copyFailed','nextLabelUtc','nextLabelLocal','exprErrorLen','exprErrorVal','exprErrorField','fieldMinute','fieldHour','fieldDay','fieldMonth','fieldWeekday'].map(k=>[k,SSR_STRINGS[lang][k]])),document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
-    _slug:SLUG,ztPersist:persist,trackTool(){},
+  const globals={CLIENT_T:Object.fromEntries(JSON.parse(('['+/const CLIENT_T = Object\.fromEntries\(\[([^\]]+)\]/.exec(source)[1]+']').replace(/'/g,'"')).map(k=>[k,SSR_STRINGS[lang][k]])),document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
+    _slug:SLUG,ztPersist:persist,trackTool(...a){tracks.push(a);},
     navigator:noClipboard?{}:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
   };
@@ -266,7 +288,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   if(order==='shared-after')actual.run(shortcut);
   const get=id=>{const el=doc.getElementById(id);must(el,SLUG+' ID '+id);return el;};
   const errors=[];activePage={errors};
-  return{errors,doc,get,widget,clipboard,timers,persistCalls,execCalls,downloads,stored:()=>structuredClone(stored),actual,
+  return{errors,doc,get,widget,clipboard,timers,persistCalls,tracks,execCalls,downloads,stored:()=>structuredClone(stored),actual,
     input(id,value,event='input'){get(id).value=value;get(id).dispatch(event);},
     ctrlL(id,key='l',mod='ctrlKey'){const el=get(id);el.focus();el.dispatch('keydown',{key,[mod]:true});},
     choose(id,checked){get(id).checked=checked;get(id).dispatch('change');},
@@ -342,4 +364,209 @@ for(const lang of ['en','zh','ja','ko']){
  checkV2(!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(md),lang+' Usage removed from prose');
  if(lang==='en'){const words=md.replace(/^---[\s\S]*?---/, '').replace(/<[^>]*>/g,' ').replace(/[^\p{L}\p{N}'’]+/gu,' ').trim().split(/\s+/).length;checkV2(words>=400,'English prose retains 400 words');}
 }
+// ---------- S2-3c: analytics only on a committed change ----------
+// The page used to send 'update' on load and on every input event (each keystroke in the
+// expression box or the Minute box, each step of a number field).
+{
+  const updates=p=>p.tracks.filter(t=>t[1]==='update').length;
+  let p=ready('en');
+  assert('analytics: no event on load',updates(p),0);
+  p.input(INPUT,'*/15 10 * * 1');assert('analytics: no event while typing the expression',updates(p),0);
+  p.get(INPUT).dispatch('change');assert('analytics: one event when the typed expression is committed',updates(p),1);
+  p.input(INPUT,'75 * * * *');p.get(INPUT).dispatch('change');assert('analytics: no event for an invalid committed expression',updates(p),1);
+  p=ready('en');
+  const minute=p.doc.querySelector('.cjg-field[data-field="minute"]');
+  minute.querySelector('.cjg-mode-btn[data-mode="step"]').click();assert('analytics: mode button click sends one event',updates(p),1);
+  const step=minute.querySelector('[data-role="step"]');step.value='10';step.dispatch('input');assert('analytics: no event on number input',updates(p),1);
+  step.dispatch('change');assert('analytics: one event on number change',updates(p),2);
+  p.doc.querySelector('.cjg-field[data-field="hour"] .cjg-chip[data-val="11"]').click();assert('analytics: chip click sends one event',updates(p),3);
+  p.doc.querySelector('.cjg-btn-preset[data-expr="0 0 * * 0"]').click();assert('analytics: preset click sends one event',updates(p),4);
+  p.doc.querySelector('.cjg-tz-btn[data-tz="local"]').click();assert('analytics: time zone click sends one event',updates(p),5);
+  p.ctrlL(INPUT);assert('analytics: Ctrl+L sends no event',updates(p),5);
+}
+
+// Clicking a control that is already selected (same mode, same time zone, the preset that is
+// already loaded) or committing the same text does not change the schedule: no event.
+{
+  const updates=p=>p.tracks.filter(t=>t[1]==='update').length;
+  const p=ready('en');
+  p.doc.querySelector('.cjg-field[data-field="minute"] .cjg-mode-btn[data-mode="specific"]').click();
+  assert('analytics: re-clicking the selected mode sends no event',updates(p),0);
+  p.doc.querySelector('.cjg-tz-btn[data-tz="utc"]').click();assert('analytics: re-clicking the selected time zone sends no event',updates(p),0);
+  p.doc.querySelector('.cjg-btn-preset[data-expr="0 9 * * 1-5"]').click();assert('analytics: the preset already loaded sends no event',updates(p),0);
+  p.get(INPUT).dispatch('change');assert('analytics: committing the same expression sends no event',updates(p),0);
+  p.doc.querySelector('.cjg-tz-btn[data-tz="local"]').click();assert('analytics: a new time zone still sends one event',updates(p),1);
+  p.doc.querySelector('.cjg-tz-btn[data-tz="utc"]').click();assert('analytics: switching back sends one more',updates(p),2);
+}
+
+// ---------- S2-3c: field controls do not change the value silently ----------
+// Step and range values used to be clamped, swapped or replaced: step 0 became */1, step 75 in
+// Minute became */59 (runs at :00 and :59 instead of :00), weekday step 7 became */6, hour
+// range 17 to 9 became 9-17, hour range 9 to 30 became 9-23. Now the field gives what was typed
+// and the expression check reports what is not valid.
+{
+  const field=(p,name)=>p.doc.querySelector('.cjg-field[data-field="'+name+'"]');
+  const setNum=(p,name,role,value)=>{const el=field(p,name).querySelector('[data-role="'+role+'"]');el.value=value;el.dispatch('input');};
+  const runs=p=>p.get('cjg-next-list').children.filter(c=>c.tagName==='LI').map(c=>c.textContent);
+  let p=ready('en');p.doc.querySelector('.cjg-btn-preset[data-expr="* * * * *"]').click();
+  field(p,'minute').querySelector('.cjg-mode-btn[data-mode="step"]').click();
+  setNum(p,'minute','step','0');
+  assert('step 0 is reported, not replaced by 1',[output(p),p.get('cjg-error').textContent,p.get('cjg-desc').textContent],['*/0 * * * *','Minute: "*/0" is not valid. Use numbers from 0 to 59, *, -, / and commas.','']);
+  setNum(p,'minute','step','1.5');assert('step 1.5 is reported, not read as 1',output(p),'*/1.5 * * * *');
+  setNum(p,'minute','step','75');
+  assert('step 75 in Minute stays 75 (runs once an hour at :00)',[output(p),p.get('cjg-error').textContent,runs(p).slice(0,2)],['*/75 * * * *','',['2026-10-05 09:00 UTC','2026-10-05 10:00 UTC']]);
+  p=ready('en');p.doc.querySelector('.cjg-btn-preset[data-expr="* * * * *"]').click();
+  field(p,'hour').querySelector('.cjg-mode-btn[data-mode="range"]').click();
+  setNum(p,'hour','from','17');setNum(p,'hour','to','9');
+  assert('reversed hour range is reported, not swapped',[output(p),p.get('cjg-error').textContent],['* 17-9 * * *','Hour: "17-9" is not valid. Use numbers from 0 to 23, *, -, / and commas.']);
+  setNum(p,'hour','from','9');setNum(p,'hour','to','30');
+  assert('hour range end 30 is reported, not clamped to 23',[output(p),!!p.get('cjg-error').textContent],['* 9-30 * * *',true]);
+  setNum(p,'hour','to','17');assert('valid range recovers',[output(p),p.get('cjg-error').textContent,p.get('cjg-desc').textContent],['* 9-17 * * *','','At every minute past 9 through 17']);
+  p=ready('en');p.input(INPUT,'*/75 * * * *');
+  assert('typed */75 keeps its schedule (first runs 09:00 and 10:00 UTC)',[output(p),runs(p).slice(0,2),p.get('cjg-desc').textContent],['*/75 * * * *',['2026-10-05 09:00 UTC','2026-10-05 10:00 UTC'],'At every 75 minutes past every hour']);
+  p=ready('en');p.input(INPUT,'0 9 * * */7');
+  assert('typed weekday */7 runs on Sundays only',[runs(p).slice(0,2)],[['2026-10-11 09:00 UTC','2026-10-18 09:00 UTC']]);
+}
+
+// ---------- S2-3c review: an empty Minute box is reported, not read as * ----------
+// In Specific mode the Minute box is free text. Empty used to give "*", so "every day at 9:00"
+// became every minute of hour 9 with no message.
+{
+  const MSG={en:'Minute: the box is empty. Enter numbers from 0 to 59, *, -, / or commas.',ja:'分：入力欄が空です。0〜59 の数字と *、-、/、カンマで入力してください。'};
+  for(const lang of ['en','ja']){
+    const p=ready(lang);
+    const box=p.doc.querySelector('.cjg-field[data-field="minute"] [data-role="values"]');
+    assert(lang+' empty Minute: starts valid',[output(p),p.get(COPY).disabled],['0 9 * * 1-5',false]);
+    box.value='';box.dispatch('input');
+    assert(lang+' empty Minute: reported, copy disabled, result cleared',[p.get('cjg-error').textContent,p.get(COPY).disabled,p.get('cjg-desc').textContent,p.get('cjg-next-list').textContent],[MSG[lang],true,'','']);
+    assert(lang+' empty Minute: expression is not every minute',output(p)==='* 9 * * 1-5',false);
+    box.value='30';box.dispatch('input');
+    assert(lang+' empty Minute: a value recovers',[output(p),p.get('cjg-error').textContent,p.get(COPY).disabled],['30 9 * * 1-5','',false]);
+  }
+}
+
+// ---------- S2-3c review: an invalid expression cannot be copied ----------
+// The copy button stayed enabled for an invalid expression (typed or built from the field
+// controls) and copied it; the description and run list were already cleared.
+{
+  let p=ready('en');
+  p.input(INPUT,'75 * * * *');
+  assert('invalid typed expression: copy disabled, result cleared',[p.get(COPY).disabled,p.get('cjg-desc').textContent,p.get('cjg-next-list').textContent],[true,'','']);
+  let n=p.clipboard.length;p.get(COPY).click();assert('invalid typed expression: nothing copied',p.clipboard.length,n);
+  p.input(INPUT,'0 9 * * 1-5');assert('valid expression re-enables copy',[p.get(COPY).disabled,p.get('cjg-desc').textContent],[false,'At 9:00, on Monday through Friday']);
+  p.input(INPUT,'0 9 * *');assert('wrong field count: copy disabled',p.get(COPY).disabled,true);
+  p=ready('en');
+  const minute=p.doc.querySelector('.cjg-field[data-field="minute"]');
+  minute.querySelector('.cjg-mode-btn[data-mode="step"]').click();
+  const step=minute.querySelector('[data-role="step"]');step.value='0';step.dispatch('input');
+  assert('invalid field value: copy disabled, result cleared',[output(p),p.get(COPY).disabled,p.get('cjg-desc').textContent,p.get('cjg-next-list').textContent],['*/0 9 * * 1-5',true,'','']);
+  n=p.clipboard.length;p.get(COPY).click();assert('invalid field value: nothing copied',p.clipboard.length,n);
+  step.value='5';step.dispatch('input');assert('fixed field value re-enables copy',[output(p),p.get(COPY).disabled],['*/5 9 * * 1-5',false]);
+}
+
+// ---------- tool pages: cjg-check worked examples (S2-3c) ----------
+// {/* cjg-check: {"expr","from","utc","tz","runs","error"} */} or {"from","utc","tz","cases":[{...}]}
+// (case keys override the outer ones; "utc" defaults to true). The expression is typed into the
+// real page (lifecycle harness): for a valid one, the page's description must equal the engine's
+// description of the typed fields (so the field controls did not rewrite it) and must appear in
+// code after the comment, with the first `runs` run times from the instant `from` (exclusive):
+// `YYYY-MM-DD HH:MM UTC` as the page prints in UTC mode, or `YYYY-MM-DD HH:MM` in time zone `tz`
+// for Local mode (the page itself prints the browser's date format plus the zone name). For an
+// invalid one ("error": true is required) the page's error text must appear. "In code" means a line
+// of a code block or an inline code span, up to the next cjg-check or H2.
+{
+  const codeSpans = (text) => {
+    const out = [];
+    for (const b of fencedBlocks(text)) out.push(...b.text.split('\n').map((l) => l.trim()));
+    for (const m of withoutCode(text).matchAll(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g)) out.push(m[2].trim());
+    return out;
+  };
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const savedTz = process.env.TZ;
+  const covered = { en: [], zh: [], ja: [], ko: [] };
+  const expected = (c, lang) => {
+    const p = ready(lang);
+    p.input(INPUT, c.expr);
+    const err = p.get('cjg-error').textContent, desc = p.get('cjg-desc').textContent;
+    const checked = E.checkExpression(c.expr);
+    if (checked.error) return c.error ? (err ? [err] : { problem: c.expr + ': the page shows no error' }) : { problem: c.expr + ' is invalid: ' + err };
+    if (c.error) return { problem: c.expr + ' is valid but the annotation expects an error' };
+    const engineDesc = E.humanizeCron(checked.parts);
+    if (desc !== engineDesc) return { problem: c.expr + ': the page describes it as "' + desc + '", the typed fields give "' + engineDesc + '"' };
+    const utc = c.utc !== false;
+    process.env.TZ = utc ? 'UTC' : c.tz;
+    const runs = E.nextRuns(checked.parts, c.runs || 0, utc, Date.parse(c.from)).map((d) => utc
+      ? d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+      : d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()));
+    process.env.TZ = savedTz;
+    return (c.desc === false ? [] : [desc]).concat(runs);
+  };
+  const verify = ({ spec, after, lang }) => {
+    const cases = spec.cases ? spec.cases.map((c) => ({ from: spec.from, utc: spec.utc, tz: spec.tz, ...c })) : [spec];
+    const shown = codeSpans(after);
+    for (const c of cases) {
+      const want = expected(c, lang);
+      if (want.problem) return want.problem;
+      for (const w of want) {
+        if (!shown.includes(w)) return c.expr + ': "' + w + '" is not shown in code after the annotation';
+        covered[lang].push(w);
+      }
+    }
+    return null;
+  };
+  const opts = { annotations: [{ tag: 'cjg-check', min: 2, verify }] };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    assert('cjg-check ' + lang + ' MDX contract and worked examples', contractProblems(SLUG, lang, opts), '');
+    const body = readFileSync(join(root, 'src/content/tools/cron-job-generator', lang + '.mdx'), 'utf8').split(/^---$/m).slice(2).join('---');
+    const loose = codeSpans(body).filter((x) => /^At |^\d{4}-\d\d-\d\d \d\d:\d\d/.test(x) && !covered[lang].includes(x));
+    assert('cjg-check ' + lang + ' every description and run time in code is recomputed', loose, []);
+  }
+  process.env.TZ = savedTz;
+}
+// Every Markdown table in the four MDX files is rendered as one table with the same number of
+// body rows (a blank line after the separator row used to end the table, and the rows became a
+// paragraph). Reads the built pages: run after `npm run build`.
+{
+  const { existsSync } = await import('node:fs');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const html = join(root, 'dist', ...(lang === 'en' ? [] : [lang]), 'tools', 'cron-job-generator', 'index.html');
+    if (!existsSync(html)) { assert('built page exists for the table check: ' + lang + ' (run npm run build first)', false, true); continue; }
+    const page = readFileSync(html, 'utf8');
+    const text = readFileSync(join(root, 'src/content/tools/cron-job-generator', lang + '.mdx'), 'utf8');
+    const body = text.slice(text.indexOf('\n---\n', 4) + 5);
+    let heading = '', tables = [];
+    const lines = body.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const h = /^##\s+(.+?)\s*$/.exec(lines[i]) || /^<h2>(.+?)<\/h2>$/.exec(lines[i]);
+      if (h) heading = h[1];
+      if (/^\|/.test(lines[i]) && /^\|[-| :]+\|$/.test(lines[i + 1] || '')) {
+        let rows = 0, j = i + 2;
+        // count data rows up to the first line that is not a table row (blank lines included)
+        for (; j < lines.length && lines[j].trim() !== ''; j++) if (/^\|/.test(lines[j])) rows++;
+        // rows written after a blank line are the defect this check catches
+        let stray = 0;
+        for (let k = j; k < lines.length && !/^##\s|^<h2>/.test(lines[k]); k++) if (/^\| `/.test(lines[k])) stray++;
+        tables.push({ heading, rows: rows + stray });
+        i = j;
+      }
+    }
+    for (const t of tables) {
+      const at = page.indexOf('>' + t.heading + '</h2>');
+      const table = at < 0 ? '' : (page.slice(at).match(/<table[\s\S]*?<\/table>/) || [''])[0];
+      const rendered = (table.match(/<tbody>[\s\S]*?<\/tbody>/) || [''])[0].split('<tr').length - 1;
+      assert('built ' + lang + ' table under "' + t.heading + '" has all ' + t.rows + ' rows', rendered, t.rows);
+    }
+  }
+}
+// The four MDX files compile (an annotation that contains */ ends the MDX comment early).
+{
+  const mdx = await import(requireFromRoot.resolve('@mdx-js/mdx'));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const text = readFileSync(join(root, 'src/content/tools/cron-job-generator', lang + '.mdx'), 'utf8');
+    let error = '';
+    try { await mdx.compile(text.slice(text.indexOf('\n---\n', 4) + 5)); } catch (e) { error = String(e.message || e); }
+    assert('cron-job-generator ' + lang + ' MDX compiles', error, '');
+  }
+}
+
 console.log(`v2 total: ${passes} PASS, ${failures} FAIL`);process.exitCode=failures?1:0;
