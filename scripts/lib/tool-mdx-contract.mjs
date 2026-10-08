@@ -21,15 +21,14 @@ export const LANGS = ['en', 'zh', 'ja', 'ko'];
 
 // Tools that have not finished S2: S2-PLAN.md §1.2 table A 32 + table B 15 + §7 29 = 76
 // (S2-evidence/content-stats.py on v1.140.3), plus 3 added by S2-0 = 79; S2-1 (2026-10-08)
-// finished 9 and S2-2 (2026-10-08) finished 9, so 61 are left. These get only the basic checks:
+// finished 9, S2-2 (2026-10-08) finished 9 and S2-3 (2026-10-08) finished 8, so 53 are left.
+// These get only the basic checks:
 // files, steps, nonempty FAQ items, no Usage section, and equal FAQ and step counts (unless
 // listed in FAQ_COUNT_MISMATCH / STEPS_COUNT_MISMATCH).
 export const S2_PENDING = new Set([
-  // §1.2 table A: site self-review, min(zh, ja, ko) < 800 characters (32; S2-1 and S2-2 finished 18, 14 left)
-  'aspect-ratio', 'chmod-calculator', 'cron-job-generator', 'cron-parser',
-  'htaccess-generator', 'html-to-markdown', 'ip-subnet-calculator', 'lorem-ipsum',
-  'meta-tag-generator', 'robots-txt-generator', 'sql-formatter', 'timezone-converter',
-  'webp-converter', 'xml-formatter',
+  // §1.2 table A: site self-review, min(zh, ja, ko) < 800 characters (32; S2-1, S2-2 and S2-3 finished 26, 6 left)
+  'chmod-calculator', 'html-to-markdown', 'ip-subnet-calculator', 'lorem-ipsum',
+  'sql-formatter', 'xml-formatter',
   // §1.2 table B: FAQ counts differ between languages (15)
   'color-blindness-simulator', 'color-converter', 'color-shades-generator', 'css-clip-path-generator',
   'json-to-csv', 'json-to-go-struct', 'json-to-json-schema', 'line-tools', 'morse-code-translator',
@@ -79,9 +78,10 @@ export const FAQ_COUNT_MISMATCH = new Set([
   'wifi-qr-code-generator', 'zero-width-character-detector',
 ]);
 
-// Tools whose four languages have different step counts today (S2-PLAN.md §1.1:
-// htaccess-generator has 5 en steps and 4 in zh / ja / ko). Remove a tool when its counts match.
-export const STEPS_COUNT_MISMATCH = new Set(['htaccess-generator']);
+// Tools whose four languages have different step counts today. S2-PLAN.md §1.1 listed
+// htaccess-generator (5 en steps, 4 in zh / ja / ko); S2-3 (2026-10-08) aligned it, so the list
+// is empty. Add a tool only while its counts differ; remove it when they match.
+export const STEPS_COUNT_MISMATCH = new Set([]);
 
 // The three v2 sample pages moved every limit into the control tips (root AGENTS.md,
 // 2026-10-04: the later tools keep a Limits section in the reference text).
