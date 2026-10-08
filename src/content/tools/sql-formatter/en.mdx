@@ -5,21 +5,32 @@ steps:
   - "Paste SQL into SQL Input; formatting runs 0.3 seconds after typing stops."
   - "Choose the indentation and whether to uppercase keywords."
   - "Click Format to apply the current options, or use Ctrl+Enter / ⌘+Enter in the input."
-  - "Click Minify for a single line without comments."
+  - "Click Minify for a single line without -- and /* */ comments; /*! */ and /*+ */ stay, and a # comment or --x without a space is kept and the line ends after it."
   - "Click Copy to copy the complete output."
   - "Click Clear to empty both text areas and the status while keeping the formatting options."
 faqItems:
-  - question: "What SQL dialects are supported?"
-    answer: "The formatter handles standard SQL syntax including SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, JOINs, subqueries, and CTEs. It works well with MySQL, PostgreSQL, SQLite, and SQL Server queries."
-  - question: "Does it validate my SQL?"
-    answer: "This tool focuses on formatting, not validation. It will beautify the structure of your query but does not check for syntax errors or schema correctness."
-  - question: "Can I customize the formatting?"
-    answer: "Yes. You can choose between 2-space, 4-space, or tab indentation, and toggle uppercase keywords on or off."
-  - question: "Is my data sent anywhere?"
-    answer: "No. All formatting runs in your browser using JavaScript. Your SQL never leaves your machine."
+  - id: dialects
+    question: "What SQL dialects are supported?"
+    answer: "There is one generic mode for SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, JOINs, subqueries and CTEs, with no MySQL, PostgreSQL, SQLite or SQL Server switch. Common dialect tokens are copied unchanged: backtick and [bracketed] names, N'...', X'...' and PostgreSQL E'...' strings, $$...$$ dollar-quoted strings, and parameters such as $1, ?1, :id, @id and @@session.sql_mode. Backslashes in strings are read the MySQL way only when that reading closes every string. Minify drops a comment that starts with -- and a space and plain /* */ comments, keeps MySQL /*! */ executable comments and /*+ */ optimizer hints; a # comment (MySQL) or --x without a space, which other databases read differently, is kept to the end of its line and the line ends there."
+  - id: validate
+    question: "Does it validate my SQL?"
+    answer: "No. This tool focuses on formatting, not validation. It beautifies the structure of your query but does not check for syntax errors or schema correctness, and invalid SQL is formatted without an error."
+  - id: complex
+    question: "Can it format long queries with joins, subqueries and CTEs?"
+    answer: "Yes. Each JOIN starts a line, a subquery or the body of WITH ... AS (...) is indented one level deeper, and function calls such as SUM(total) or ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) stay on one line. CASE expressions stay on one line except that AND / OR inside them start a new line, and the column list of CREATE TABLE stays on one line."
+  - id: options
+    question: "Can I customize the formatting?"
+    answer: "Yes. Choose 2-space, 4-space or tab indentation, and turn uppercase keywords on or off. Typing formats with the current options; after you change an option, click Format to apply it to the current output."
+  - id: non-ascii-names
+    question: "Do names with accents or Chinese, Japanese or Korean characters need quotes?"
+    answer: "Not for this tool. An unquoted name is read as any run of Unicode letters, digits, combining marks, _ and $, so café, 社員番号 or 가입일 stays one name and keeps its spelling; only the 54 ASCII keywords change case. Whether your database accepts such a name without quotes is up to the database: MySQL allows U+0080 to U+FFFF in unquoted names, and PostgreSQL allows non-Latin letters."
+  - id: privacy
+    question: "Is my data sent anywhere?"
+    answer: "No. The query is formatted in this browser tab and is not sent to a server or saved in browser storage. When you click Format or Minify, the page statistics record the tool name and that action, not the SQL."
 ---
 
 <h2>Worked Examples</h2>
+{/* sqlf-check: {"op":"format"} */}
 <h3>Before formatting</h3>
 
 ```sql
@@ -45,6 +56,8 @@ LIMIT 10;
 
 `GROUP BY`, `HAVING` and `ORDER BY` each start a new line at the same level as `FROM`. Comments stay where they were, at the end of the line they belonged to:
 
+{/* sqlf-check: {"op":"format"} */}
+
 ```sql
 select status, count(*) as n -- per status
 from orders /* this year */ where created_at >= '2026-01-01' group by status having count(*) > 5 order by n desc;
@@ -65,7 +78,7 @@ Several statements separated by `;` are formatted one after another, each starti
 
 ## Minify
 
-**Minify** puts the whole query on one line, for example to paste it into a log search, a shell variable or a JSON string. Comments are dropped, because a `--` comment would swallow everything after it on a single line. Minifying the formatted aggregate query above gives:
+**Minify** puts the whole query on one line, for example to paste it into a log search, a shell variable or a JSON string. `--` and `/* */` comments are dropped, because a `--` comment would swallow everything after it on a single line. A `#` comment or a `--x` without a space is kept and the line ends after it, because other databases read those characters as code (see the FAQ on dialects). MySQL executable comments `/*! … */` and optimizer hints `/*+ … */` are code too, so both outputs keep them as written. Minifying the formatted aggregate query above gives:
 
 ```sql
 SELECT status, COUNT(*)AS n FROM orders WHERE created_at >= '2026-01-01' GROUP BY status HAVING COUNT(*)> 5 ORDER BY n DESC;
@@ -92,7 +105,9 @@ The column list after `SET` stays on one line, and all `VALUES` rows go on one l
 
 ## Keyword Case
 
-With the uppercase option on, the formatter capitalizes a fixed list of 54 words: clause keywords such as `SELECT`, `LEFT`, `HAVING`, `UNION`, `CASE`, `EXISTS`, plus the five aggregate functions `COUNT`, `SUM`, `AVG`, `MIN` and `MAX`. Other function names (`now()`, `coalesce()`, `date_trunc()`) and data types are left as typed. With the option off, the same keywords are converted to lower case, so `Select Id From Users` becomes `select Id from Users`. Identifiers are never changed, and quoted names (`"Order Id"`, `` `name` ``) and string literals, including doubled quotes as in `'it''s here'`, are copied as written.
+With the uppercase option on, the formatter capitalizes a fixed list of 54 words: clause keywords such as `SELECT`, `LEFT`, `HAVING`, `UNION`, `CASE`, `EXISTS`, plus the five aggregate functions `COUNT`, `SUM`, `AVG`, `MIN` and `MAX`. Other function names (`now()`, `coalesce()`, `date_trunc()`) and data types are left as typed. With the option off, the same keywords are converted to lower case, so `Select Id From Users` becomes `select Id from Users`. Unquoted names, including names with accented or non-Latin letters such as `café` or `社員番号`, are never changed, and quoted names (`"Order Id"`, `` `name` ``) and string literals, including doubled quotes as in `'it''s here'`, are copied as written.
+
+Names with other letters are kept whole as well. {/* sqlf-check: {"op":"minify","in":"select café, naïve from t"} */}`select café, naïve from t` minifies to `SELECT café, naïve FROM t`.
 
 ## Subquery Example
 
@@ -141,6 +156,15 @@ ORDER BY r.spent DESC;
 ## Limits
 
 - **One generic dialect, no validation.** There is no MySQL, PostgreSQL, or SQL Server mode, and invalid SQL is formatted without an error.
-- **`CASE` stays on one line.** `CASE WHEN ... THEN ... END` is not broken into `WHEN` lines.
+- **Backslashes in strings follow one of two readings.** MySQL reads `\'` inside a string as an escaped quote unless the `NO_BACKSLASH_ESCAPES` SQL mode is on ([MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)); PostgreSQL with its default `standard_conforming_strings = on` ([PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)) and SQLite ([SQLite: Literal Values](https://www.sqlite.org/lang_expr.html)) treat a backslash as an ordinary character. The tool uses the MySQL reading when it closes every quoted string, and the standard reading otherwise. So {/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'` stays `SELECT * FROM users WHERE note = 'It\'s'`, and a lone `'C:\'` stays one string. Strings are always copied as written; the reading only decides where each string ends.
+- **A `#` or `--x` segment is copied to the end of its line.** The rest of that line is not formatted, so after a PostgreSQL `#` operator or a SQL Server `#temp` name the keywords keep their case and stay on the line. If such a segment opens a string or a `/* */` comment that continues on the next line (valid in MySQL), the result can differ from the input.
+- **`CASE` stays on one line, except for `AND` / `OR`.** `CASE WHEN ... THEN ... END` is not broken into `WHEN` lines, but an `AND` or `OR` inside it starts a new line as in `WHERE`: {/* sqlf-check: {"op":"format","in":"select case when a = 1 and b = 2 then 'x' else 'y' end as k from t"} */}`select case when a = 1 and b = 2 then 'x' else 'y' end as k from t` gives a `CASE WHEN a = 1` line followed by `  AND b = 2 THEN 'x' ELSE 'y' END AS k`.
+
+```sql
+SELECT
+  CASE WHEN a = 1
+  AND b = 2 THEN 'x' ELSE 'y' END AS k
+FROM t
+```
 - **Write statements are only lightly formatted.** See the `INSERT` and `UPDATE` examples above; `CREATE TABLE` column definitions also stay on one line.
-- **Minify removes comments** and the space after a closing parenthesis, for example `SELECT COUNT(*)FROM events`.
+- **Minify removes `-- ` and `/* */` comments** (`/*! … */` and `/*+ … */` are kept; a `#` comment or `--x` without a space is kept and ends the line) and the space after a closing parenthesis, for example `SELECT COUNT(*)FROM events`.

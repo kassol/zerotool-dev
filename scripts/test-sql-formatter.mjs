@@ -31,7 +31,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const E = new Function(block + '\nreturn { formatSQL, minifySQL };')();
+const E = new Function(block + '\nreturn { formatSQL, minifySQL, tokenize };')();
 
 let failures = 0;
 let passes = 0;
@@ -191,7 +191,7 @@ eq('minify', E.minifySQL('WITH r AS (\n  SELECT SUM(total) -- c\n  FROM t\n) SEL
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 const requireRoot = createRequire(join(root, 'package.json'));
 const { parseFragment } = requireRoot('parse5');
 const ts = requireRoot('typescript');
@@ -290,8 +290,9 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
 }
 
 const protectedCore = pageSource.match(/^[ \t]*\/\* ── engine:start ── \*\/[\s\S]*?\/\* ── engine:end ── \*\//m)[0];
-same('protected conversion bytes',Buffer.byteLength(protectedCore),13949);
-same('protected conversion SHA256',hash(protectedCore),'4b6afde76ce0e8ffd31c668272eb99888849dee91f9c945bbf6ad081fd4fbb6e');
+// Engine block changed with approval on 2026-10-08 (S2-4 engine fixes a–d); see git log.
+same('protected conversion bytes',Buffer.byteLength(protectedCore),17265);
+same('protected conversion SHA256',hash(protectedCore),'77c52a93a68b8696dfebda6f212083f9c87085a2a59d1c840a6eab2cc1d8e206');
 
 const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
 const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
@@ -349,7 +350,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [598, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), 'ed078958c5a0dc563f8486915db1f37f29b69b01d84f2da75d0e3b82594c39e8');
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '68a104051e3658e4fc72faa20bdde43d6305527e39089744eba6e5c5b078fff9');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -376,6 +377,259 @@ const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'),'utf8');
 same('sql-formatter registered convert', /['"]sql-formatter['"]\s*:\s*['"]convert['"]/.test(registry), true);
 const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
 same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
+
+// ---------- worked examples with annotations (S2-4, 2026-10-08) ----------
+// {/* sqlf-check: {"op":"format"|"minify","indent":"2"|"4"|"tab","upper":true|false,"in"?:"…"} */}:
+// the input is "in" or the first ```sql block after the annotation; the engine output must equal a
+// later ```sql block or inline code (up to the next sqlf-check or H2). Blocks inside an annotated
+// region are checked here and skipped by the default-option block checks in the loop below.
+// {/* sqlf-sqlite: {"sql":"…","error"?:"…"} */}: the statement runs in SQLite (sql.js, the
+// version recorded below) against SQLITE_SCHEMA; with "error" it must fail with that message, which
+// must appear as inline code after the annotation, and without "error" it must run.
+const SQLITE_SCHEMA = `
+create table orders (id int, name text, total int, status text, created_at text);
+insert into orders values (1, 'a', 10, 'paid', '2026-10-01'), (2, 'a', 20, 'paid', '2026-10-02'), (3, 'b', 5, 'new', '2026-10-03');
+create table 社員 (社員番号 int, 氏名 text, 部署 text);
+insert into 社員 values (1, '山田', '営業　第一部'), (2, '佐藤', '営業部');
+create table 회원 (이름 text, 가입일 text, 등급 text);
+insert into 회원 values ('홍길동', '2026-01-02', 'VIP');`;
+const initSqlJs = requireRoot('sql.js');
+const SQL = await initSqlJs();
+const sqliteVersion = (() => { const db = new SQL.Database(); const v = db.exec('select sqlite_version()')[0].values[0][0]; db.close(); return v; })();
+same('sql.js SQLite version named on the pages', sqliteVersion, '3.49.1');
+function sqliteRun(sql) {
+  const db = new SQL.Database();
+  try { db.run(SQLITE_SCHEMA); db.exec(sql); return null; } catch (e) { return e.message; } finally { db.close(); }
+}
+const INDENTS = { '2': '  ', '4': '    ', tab: '\t' };
+const sqlCodeTexts = after => [
+  ...[...after.matchAll(/```sql\n([\s\S]*?)\n```/g)].map(m => m[1]),
+  ...[...after.replace(/```[\s\S]*?```/g, '').matchAll(/`([^`\n]+)`/g)].map(m => m[1]),
+];
+const sqlfCheck = {
+  tag: 'sqlf-check', min: 2,
+  verify({ spec, after }) {
+    if (!spec || !['format', 'minify'].includes(spec.op)) return 'spec needs op format or minify';
+    const blocks = [...after.matchAll(/```sql\n([\s\S]*?)\n```/g)].map(m => m[1]);
+    const input = spec.in ?? blocks[0];
+    if (input === undefined) return 'no input block after the annotation';
+    const raw = input.trim();
+    const got = spec.op === 'minify' ? E.minifySQL(raw) : E.formatSQL(raw, INDENTS[spec.indent ?? '2'], spec.upper ?? true);
+    const rest = spec.in === undefined ? after.slice(after.indexOf('```sql\n' + input + '\n```') + input.length + 11) : after;
+    return sqlCodeTexts(rest).includes(got) ? null : 'engine output is not shown after the annotation: ' + JSON.stringify(got.slice(0, 80));
+  },
+};
+const sqlfSqlite = {
+  tag: 'sqlf-sqlite',
+  verify({ spec, after }) {
+    if (!spec || typeof spec.sql !== 'string') return 'spec needs sql';
+    const error = sqliteRun(spec.sql);
+    if (spec.error === undefined) return error === null ? null : 'SQLite error: ' + error;
+    if (error !== spec.error) return 'SQLite returned ' + JSON.stringify(error);
+    return sqlCodeTexts(after).includes(spec.error) ? null : 'SQLite message not shown verbatim';
+  },
+};
+const sqlContract = toolMdxContract('sql-formatter', { annotations: [sqlfCheck, sqlfSqlite] });
+for (const r of sqlContract.results.filter(r => /sqlf-(check|sqlite)/.test(r.rule))) check('MDX annotations: ' + r.message, r.ok);
+const annotatedRegions = {};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  annotatedRegions[lang] = annotations(sqlContract.docs[lang].body, 'sqlf-check').map(a => [a.index, a.index + a.raw.length + a.after.length + 20]);
+}
+// ko says the AND of BETWEEN ... AND starts a new line like a condition AND.
+same('BETWEEN ... AND puts AND on a new line', fmt('select * from t where rn between 11 and 20').endsWith('WHERE rn BETWEEN 11\n  AND 20'), true);
+// ---------- engine fixes (approved 2026-10-08): output must keep the meaning of the input ----------
+// Execution check: SQLite runs the input, the formatted output (2 / 4 / tab, upper / lower) and the
+// minified output (upper / lower); the result rows must be the same. Column names are not compared,
+// because SQLite names an unaliased column by its expression text.
+const EXEC_SCHEMA = SQLITE_SCHEMA + `
+create table 订单 (订单编号 int, 收货人 text, 实付金额 int, 状态 text);
+insert into 订单 values (1001, '张三', 50, '已支付'), (1002, '李四', 30, '待发货');
+create table café (naïve int, straße text); insert into café values (1, 'x');
+create table "order items" ("order id" int, "a""b" text); insert into "order items" values (7, 'q');
+create table paths (p text); insert into paths values ('C:\\temp\\new'), ('a\\\\b');`;
+function sqliteRows(sql, params) {
+  const db = new SQL.Database();
+  try { db.run(EXEC_SCHEMA); return { rows: JSON.stringify(db.exec(sql, params).map(r => r.values)) }; }
+  catch (e) { return { error: e.message }; } finally { db.close(); }
+}
+function sameExecution(name, sql, params) {
+  const want = sqliteRows(sql, params);
+  same('exec: input runs: ' + name, want.error ?? null, null);
+  const variants = [];
+  for (const indent of ['  ', '    ', '\t']) for (const upper of [true, false]) variants.push(['format ' + JSON.stringify(indent) + ' ' + upper, E.formatSQL(sql, indent, upper)]);
+  for (const upper of [true, false]) variants.push(['minify ' + upper, E.minifySQL(sql, upper)]);
+  for (const [label, out] of variants) same('exec: ' + label + ' gives the same rows: ' + name, sqliteRows(out, params), want);
+}
+// Token check for syntax that SQLite does not run: the token sequence (keyword case ignored) of the
+// formatted and minified output equals that of the input.
+const tokenSeq = sql => E.tokenize(sql).map(t => t.type + ':' + (t.type === 'keyword' ? t.value.toUpperCase() : t.value));
+function sameTokens(name, sql) {
+  const want = tokenSeq(sql).filter(t => !t.startsWith('comment:'));
+  for (const indent of ['  ', '\t']) for (const upper of [true, false]) same('tokens: format ' + upper + ': ' + name, tokenSeq(E.formatSQL(sql, indent, upper)).filter(t => !t.startsWith('comment:')), want);
+  for (const upper of [true, false]) same('tokens: minify ' + upper + ': ' + name, tokenSeq(E.minifySQL(sql, upper)).filter(t => !t.startsWith('comment:')), want);
+}
+
+// a) Unquoted identifiers with non-ASCII letters stay one token.
+eq('a: Chinese alias stays whole', fmt('select name as 用户名, count(*) as 订单数 from orders group by name;'),
+  lines('SELECT', '  name AS 用户名,', '  COUNT(*) AS 订单数', 'FROM orders', 'GROUP BY name;'));
+eq('a: accented names stay whole', E.minifySQL('select café, naïve from t'), 'SELECT café, naïve FROM t');
+eq('a: Japanese names stay whole', fmt("select 社員番号, 氏名 from 社員 where 部署 = '営業部';"),
+  lines('SELECT', '  社員番号,', '  氏名', 'FROM 社員', "WHERE 部署 = '営業部';"));
+eq('a: two-syllable Korean name is not split into column and alias', E.minifySQL("select 이름, 가입일 from 회원 where 등급 = 'VIP';"), "SELECT 이름, 가입일 FROM 회원 WHERE 등급 = 'VIP';");
+eq('a: characters outside the BMP and combining marks', E.minifySQL('select 𠮷野家, e\u0301tat from t'), 'SELECT 𠮷野家, e\u0301tat FROM t');
+eq('a: a non-ASCII word whose upper case is a keyword stays an identifier', E.minifySQL('select ın, ſelect from t'), 'SELECT ın, ſelect FROM t');
+for (const [name, sql] of [
+  ['Chinese alias', 'select name as 用户名, count(*) as 订单数 from orders group by name;'],
+  ['Chinese table and columns', "select 收货人, sum(实付金额) as 合计 from 订单 where 状态 = '已支付' group by 收货人 order by 合计 desc;"],
+  ['Japanese columns', "select 社員番号, 氏名 from 社員 where 部署 = '営業部';"],
+  ['Korean two-syllable names', "select 이름, 가입일 from 회원 where 등급 = 'VIP';"],
+  ['accented names', 'select naïve, straße from café;'],
+]) sameExecution(name, sql);
+
+// b) Strings: MySQL backslash escapes, doubled quotes in quoted names.
+eq('b: MySQL \\\' stays inside the string', E.minifySQL("select * from users where note = 'It\\'s'"), "SELECT * FROM users WHERE note = 'It\\'s'");
+eq('b: two MySQL strings with \\\'', fmt("select * from t where a = 'It\\'s' and b = 'don\\'t'"),
+  lines('SELECT', '  *', 'FROM t', "WHERE a = 'It\\'s'", "  AND b = 'don\\'t'"));
+eq('b: MySQL \\\\ before the closing quote', E.minifySQL("select 'a\\\\', 'b' from t"), "SELECT 'a\\\\', 'b' FROM t");
+eq('b: MySQL double-quoted string with \\"', E.minifySQL('select * from t where s = "say \\"hi\\" now"'), 'SELECT * FROM t WHERE s = "say \\"hi\\" now"');
+eq('b: a standard string that ends with a backslash stays standard', fmt("select 'C:\\' as p, 'x' as q from t"),
+  lines('SELECT', "  'C:\\' AS p,", "  'x' AS q", 'FROM t'));
+eq('b: doubled double quote in a quoted name', E.minifySQL('select "a""b" from "order items"'), 'SELECT "a""b" FROM "order items"');
+eq('b: doubled backtick in a quoted name', E.minifySQL('select `a``b` from t'), 'SELECT `a``b` FROM t');
+for (const [name, sql] of [
+  ['backslashes that SQLite reads literally', "select p from paths where p = 'C:\\temp\\new' or p = 'a\\\\b';"],
+  ['doubled single quote', "select 'It''s' as s, p from paths;"],
+  ['doubled double quote in a name', 'select "a""b", "order id" from "order items";'],
+  ['string that ends with a backslash', "select 'C:\\' as p, count(*) from paths;"],
+]) sameExecution(name, sql);
+for (const [name, sql] of [
+  ['MySQL \\\' strings', "select * from users where note = 'It\\'s' and nick = 'don\\'t' -- check\norder by id;"],
+  ['MySQL double-quoted string', 'select * from t where s = "say \\"hi\\" now" and id in (1, 2);'],
+]) sameTokens(name, sql);
+for (const [name, sql] of [
+  ['MySQL \\\' strings', "select * from users where note = 'It\\'s' and nick = 'don\\'t';"],
+]) for (const out of [fmt(sql), E.minifySQL(sql)]) check('b: literals copied verbatim: ' + name, out.includes("'It\\'s'") && out.includes("'don\\'t'"), out);
+
+// c) Dialect tokens: parameters, bracketed names, string prefixes, dollar-quoted strings.
+eq('c: PostgreSQL / SQLite $1 parameter', E.minifySQL('select * from t where id = $1 and n = ?2'), 'SELECT * FROM t WHERE id = $1 AND n = ?2');
+eq('c: named parameters and variables', E.minifySQL('select :id, @p1, @@session.sql_mode from t where a = :id'), 'SELECT :id, @p1, @@session.sql_mode FROM t WHERE a = :id');
+eq('c: PostgreSQL cast keeps working', E.minifySQL('select id::text from t'), 'SELECT id :: text FROM t');
+eq('c: bracketed name stays whole and keeps its case', E.minifySQL('select [order id], [订单编号], [a]]b] from t'), 'SELECT [order id], [订单编号], [a]]b] FROM t');
+eq('c: N, X, B and E prefixes stay on the string', E.minifySQL("select N'Zoë', X'41', B'101', E'It\\'s', 'C:\\' from t"), "SELECT N'Zoë', X'41', B'101', E'It\\'s', 'C:\\' FROM t");
+eq('c: dollar-quoted body is copied as written', E.minifySQL("select $$ it's  a  'body' $$, $fn$ select  1 $fn$ from t"), "SELECT $$ it's  a  'body' $$, $fn$ select  1 $fn$ FROM t");
+eq('c: format keeps a bracketed name on its line', fmt('select [order id], count(*) from [order items] group by [order id]'),
+  lines('SELECT', '  [order id],', '  COUNT(*)', 'FROM [order items]', 'GROUP BY [order id]'));
+for (const [name, sql, params] of [
+  ['bracketed names', 'select [order id], "a""b" from [order items];'],
+  ['bracketed Chinese name', 'select [订单编号], [收货人] from [订单] where [状态] = \'待发货\';'],
+  ['blob literal', "select X'41' = X'41' as same, p from paths;"],
+  ['positional and named parameters', 'select $1 + 1, ?2, :id, @n, $v from paths where p <> :id;', { $1: 5, '?2': 6, ':id': 'x', '@n': 7, $v: 8 }],
+]) sameExecution(name, sql, params);
+for (const [name, sql] of [
+  ['SQL Server N strings', "select [order id] from t where name = N'Zoë' and memo = N'张三';"],
+  ['PostgreSQL E strings and casts', "select E'It\\'s'::text, id::int from t where id = $1;"],
+  ['PostgreSQL dollar quoting', "create function f() returns int as $body$ select  1 $body$ language sql;"],
+  ['MySQL variables', 'select @@session.sql_mode, @x := 1 from dual;'],
+]) sameTokens(name, sql);
+
+// e) Line comments must not swallow the code after them. MySQL starts a comment at # and at "-- "
+// only when the second dash is followed by whitespace or a control character ("--x" is two minus
+// signs); standard SQL, PostgreSQL and SQLite start a comment at any "--", and PostgreSQL uses # as
+// an operator. A "--" comment followed by whitespace is a comment everywhere and Minify removes it,
+// as before; "#…" and "--x…" are kept to the end of the line and Minify ends the line after them.
+eq('e: MySQL # comment is kept and ends the line', E.minifySQL('SELECT 1 # note\nFROM t'), 'SELECT 1 # note\nFROM t');
+eq('e: --x after a number is kept and ends the line', E.minifySQL('SELECT 1--x\nFROM t'), 'SELECT 1 --x\nFROM t');
+eq('e: "-- " comment is still removed', E.minifySQL('SELECT 1 -- note\nFROM t'), 'SELECT 1 FROM t');
+eq('e: a number is not followed by its own minus sign', E.minifySQL('select 3-2, 1e-3, .5, 0x1F from t'), 'SELECT 3 - 2, 1e-3, .5, 0x1F FROM t');
+eq('e: format starts a new line after a line comment', fmt('select a, -- first\n b, c # third\n from t'),
+  lines('SELECT', '  a,', '  -- first', '  b,', '  c # third', 'FROM t'));
+eq('e: format keeps the field after an end-of-line comment', fmt('select a -- why\n, b from t'),
+  lines('SELECT', '  a -- why', '  ,', '  b', 'FROM t'));
+for (const [name, sql] of [
+  ['"--x" comment after a number (standard reading)', 'select 1--x\nfrom paths;'],
+  ['"-- " comment before a comma', 'select p -- note\n, 1 from paths;'],
+  ['"-- " comment after a comma', 'select p, -- note\n 1 from paths;'],
+  ['comment between clauses', 'select count(*) -- n\nfrom paths -- table\nwhere p <> \'\';'],
+]) sameExecution(name, sql);
+// MySQL reading: drop # comments, read "--x" as "- -x", "-- " to the end of the line as a comment.
+const mysqlReading = sql => sql.replace(/#[^\n]*/g, '').replace(/--(?=[^\s\x00-\x1f\x7f])/g, '- -').replace(/--[\s\x00-\x1f\x7f][^\n]*/g, '');
+for (const [name, sql] of [
+  ['MySQL # comment', 'select 1 # note\nfrom paths;'],
+  ['MySQL "--1" is minus minus one', 'select 2--1\nfrom paths;'],
+  ['MySQL # comment after a comma', 'select p, # note\n 2 from paths;'],
+]) {
+  const want = sqliteRows(mysqlReading(sql));
+  same('exec (MySQL reading): input runs: ' + name, want.error ?? null, null);
+  for (const [label, out] of [['format', fmt(sql)], ['format lower', E.formatSQL(sql, '    ', false)], ['minify', E.minifySQL(sql)], ['minify lower', E.minifySQL(sql, false)]]) {
+    same('exec (MySQL reading): ' + label + ': ' + name, sqliteRows(mysqlReading(out)), want);
+  }
+}
+for (const [name, sql] of [
+  ['PostgreSQL # operator', 'select 5 # 3 as x, data #> \'{a}\' from t\nwhere id = 1;'],
+  ['SQL Server #temp table', 'select * from #orders where id = 1\norder by id;'],
+]) {
+  sameTokens(name, sql);
+  for (const out of [fmt(sql), E.minifySQL(sql)]) check('e: # line kept verbatim: ' + name, out.includes(sql.slice(sql.indexOf('#'), sql.indexOf('\n'))), out);
+}
+
+// f) Multi-character operators stay one token (review S2-4 part 3, must-fix 2).
+eq('f: JSON and comparison operators', E.minifySQL("select data->>'a', data->'b', a <=> b, tags @> '{a}', '{a}' <@ tags, tsv @@ q, x == y from t"),
+  "SELECT data ->> 'a', data -> 'b', a <=> b, tags @> '{a}', '{a}' <@ tags, tsv @@ q, x == y FROM t");
+eq('f: assignment, power, shifts, regex and geometry', E.minifySQL("select @v := 1, 2 ** 3, 1 << 2, 8 >> 1, a ~* 'x', a !~* 'y', a !~ 'z', p <-> q, i <<= j, i >>= j, |/ 25, ||/ 27, r &< s, r &> s, a && b"),
+  "SELECT @v := 1, 2 ** 3, 1 << 2, 8 >> 1, a ~* 'x', a !~* 'y', a !~ 'z', p <-> q, i <<= j, i >>= j, |/ 25, ||/ 27, r &< s, r &> s, a && b");
+for (const [name, sql] of [
+  ['SQLite JSON operators', `select '{"a":{"b":2}}' -> '$.a' as j, '{"a":1}' ->> '$.a' as v from paths;`],
+  ['SQLite comparison and bit operators', 'select 1 << 2, 8 >> 1, 1 == 1, 1 != 2, 1 <> 2, 2 >= 1, 1 <= 2, 3 | 4, 3 & 1, \'a\' || \'b\' from paths;'],
+  ['operators written without spaces', `select '{"a":1}'->>'$.a', 1<<2, 2>=1, 'a'||'b', 1==1 from paths;`],
+]) sameExecution(name, sql);
+for (const [name, sql, want] of [
+  ['PostgreSQL JSON, array and text search operators', "select data->>'a', data->'b', tags @> '{a}', '{a}' <@ tags, tsv @@ q, p <-> q from t where a ~* 'x' and b !~* 'y' and c::int >= 1;", ['->>', '->', '@>', '<@', '@@', '<->', '~*', '!~*', '::', '>=']],
+  ['MySQL null-safe equality and assignment', 'select @v := 1, a <=> b, j->>\'$.x\' from t where a && b;', [':=', '<=>', '->>', '&&']],
+]) {
+  sameTokens(name, sql);
+  const ops = E.tokenize(sql).filter(t => t.type === 'operator').map(t => t.value);
+  for (const op of want) check('f: operator ' + op + ' stays whole: ' + name, ops.includes(op), ops.join(' '));
+}
+
+// g) MySQL executable comments /*! … */ and optimizer hints /*+ … */ are code, not comments: both
+// outputs keep them as written (review S2-4 part 3, must-fix 2).
+eq('g: Minify keeps /*! */ and /*+ */', E.minifySQL('select /*! STRAIGHT_JOIN */ a /* note */ from t, u where /*+ INDEX(t idx_a) */ 1 = 1'),
+  'SELECT /*! STRAIGHT_JOIN */ a FROM t, u WHERE /*+ INDEX(t idx_a) */ 1 = 1');
+eq('g: Minify keeps a versioned mysqldump line', E.minifySQL('/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;\nselect 1;'),
+  '/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */; SELECT 1;');
+eq('g: Format keeps an Oracle hint after SELECT', fmt('select /*+ INDEX(t idx_a) */ a from t'), lines('SELECT', '  /*+ INDEX(t idx_a) */ a', 'FROM t'));
+// MySQL reading of /*! … */: the text inside runs.
+const mysqlExecReading = sql => mysqlReading(sql.replace(/\/\*!\d*([\s\S]*?)\*\//g, ' $1 '));
+for (const [name, sql] of [
+  ['MySQL executable comment adds to the result', 'select /*! 1 + */ 1 as x from paths;'],
+  ['versioned executable comment', 'select 2 /*!50001 * 3 */ as y from paths;'],
+]) {
+  const want = sqliteRows(mysqlExecReading(sql)), plain = sqliteRows(sql);
+  same('exec (MySQL reading): input runs and differs from the plain reading: ' + name, [want.error ?? null, want.rows !== plain.rows], [null, true]);
+  for (const [label, out] of [['format', fmt(sql)], ['format lower', E.formatSQL(sql, '\t', false)], ['minify', E.minifySQL(sql)], ['minify lower', E.minifySQL(sql, false)]]) {
+    same('exec (MySQL reading): ' + label + ': ' + name, sqliteRows(mysqlExecReading(out)), want);
+    same('exec (SQLite reading): ' + label + ': ' + name, sqliteRows(out), plain);
+  }
+}
+for (const [name, sql] of [
+  ['Oracle hint', 'select /*+ FULL(e) PARALLEL(e, 4) */ e.name from employees e where e.id = 1;'],
+  ['MySQL optimizer hint and executable comment', 'select /*+ MAX_EXECUTION_TIME(1000) */ /*! SQL_NO_CACHE */ id from t;'],
+]) {
+  for (const out of [fmt(sql), E.minifySQL(sql), E.minifySQL(sql, false)]) {
+    for (const c of sql.match(/\/\*[!+][\s\S]*?\*\//g)) check('g: kept verbatim: ' + name + ' ' + c, out.includes(c), out);
+  }
+}
+
+// d) Minify follows the uppercase option.
+eq('d: minify with uppercase off', E.minifySQL('SELECT a, COUNT(*) FROM t WHERE b IS NULL', false), 'select a, count(*)from t where b is null');
+eq('d: minify with uppercase on (default)', E.minifySQL('select a from t'), 'SELECT a FROM t');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = lifecyclePage(lang); p.input(cfg.input, 'Select Id From Users'); p.get('sf-uppercase').checked = false; p.get('sf-minify').click();
+  same(lang + ' d: page Minify uses the unchecked uppercase option', p.get(cfg.output).value, 'select Id from Users');
+  p.get('sf-uppercase').checked = true; p.get('sf-minify').click();
+  same(lang + ' d: page Minify uses the checked uppercase option', p.get(cfg.output).value, 'SELECT Id FROM Users');
+}
+
 const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
 for(const lang of ['en','zh','ja','ko']) {
   const S=pageStrings[lang], payload=clientStrings(lang);
@@ -387,13 +641,17 @@ for(const lang of ['en','zh','ja','ko']) {
   const text=readFileSync(join(root,'src/content/tools/sql-formatter',lang+'.mdx'),'utf8');
   const parts=text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/),front=requireRoot('js-yaml').load(parts[1]),body=parts[2];
   same(lang+' six bounded plain steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
+  // Minify keeps # and --x comments and ends the line after them (review S2-4 part 3, must-fix 1).
+  same(lang+' Minify tip and step mention the kept # / --x comments',[S.tips.minify.includes('#')&&S.tips.minify.includes('--x'),front.steps[3].includes('#')&&front.steps[3].includes('--x')],[true,true]);
   same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
   same(lang+' MDX content contract', contractProblems('sql-formatter', lang), '');
   // Worked examples are recomputed with the engine: a block after an unformatted input must be its
   // formatted output; every block is an input, an output, a minified output or already formatted.
-  const sqlBlocks=[...body.matchAll(/```sql\n([\s\S]*?)\n```/g)].map(m=>m[1]);
-  same(lang+' has worked SQL examples',sqlBlocks.length>=6,true);
-  const minified=i=>sqlBlocks.slice(0,i).some(x=>E.minifySQL(fmt(x))===sqlBlocks[i]);
+  const allSqlBlocks=[...body.matchAll(/```sql\n([\s\S]*?)\n```/g)];
+  same(lang+' has worked SQL examples',allSqlBlocks.length>=6,true);
+  const sqlBlocks=allSqlBlocks.filter(m=>!annotatedRegions[lang].some(([a,b])=>m.index>a&&m.index<b)).map(m=>m[1]);
+  const minifiedAt=i=>allSqlBlocks.some(x=>x.index<allSqlBlocks.find(m=>m[1]===sqlBlocks[i]).index&&E.minifySQL(fmt(x[1]))===sqlBlocks[i]);
+  const minified=i=>i>=0&&minifiedAt(i);
   same(lang+' each example output equals the engine format of the input before it',sqlBlocks.flatMap((b,i)=>i>0&&fmt(sqlBlocks[i-1])!==sqlBlocks[i-1]&&!minified(i-1)&&fmt(sqlBlocks[i-1])!==b?[b]:[]),[]);
   same(lang+' every SQL block is an input, an engine output, a minified output or already formatted',sqlBlocks.filter((b,i)=>!(fmt(b)===sqlBlocks[i+1]||(i>0&&fmt(sqlBlocks[i-1])===b)||minified(i)||fmt(b)===b)),[]);
   same(lang+' Usage removed',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body),false);

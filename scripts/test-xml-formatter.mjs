@@ -112,7 +112,7 @@ eq('no prolog format', E.prettyPrint(doc(el('root', { id: '1' }, el('name', {}, 
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 const requireRoot = createRequire(join(root, 'package.json'));
 const { parseFragment } = requireRoot('parse5');
 const ts = requireRoot('typescript');
@@ -293,7 +293,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 }
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [923, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var inputEl = document.getElementById('xf-input');"))), 'c33049a8c448c3f537c19ccf15de7979df300024176c9fff04d69387ebbcf0bd');
+// Updated 2026-10-08 (S2-4): status strings come from the page language and parseXml keeps only
+// the located libxml2 message; the engine block hash above is unchanged.
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var inputEl = document.getElementById('xf-input');"))), '409803a2a158f57b93ab2b0355a186a50b3582a2d5a571fce10dfdd85745fdfb');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="xf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -319,6 +321,45 @@ const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'),'utf8');
 same('xml-formatter registered convert', /['"]xml-formatter['"]\s*:\s*['"]convert['"]/.test(registry), true);
 const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
 same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
+
+// parseXmlError is copied verbatim from SvgToPngConverterTool.astro (Chrome / Safari libxml2 and
+// Firefox expat formats); the two copies must stay identical.
+{
+  const fnSrc = file => { const t = readFileSync(join(root, file), 'utf8'); const i = t.indexOf('function parseXmlError(text) {'); return i < 0 ? '' : t.slice(i, t.indexOf('\n      }\n', i) + 8); };
+  const a = fnSrc('src/components/tools/XmlFormatterTool.astro'), b = fnSrc('src/components/tools/SvgToPngConverterTool.astro');
+  same('parseXmlError is a verbatim copy of the svg-to-png-converter function', [a.length > 100, a === b], [true, true]);
+}
+// ---------- status line in the page language (S2-4, 2026-10-08) ----------
+// The status was English on every page ('Formatted.', 'Formatted successfully.', 'Minified
+// successfully.', 'Error: ') and repeated Chrome's "This page contains the following errors:"
+// header. The parser stand-in below returns the parsererror text in the form Chromium 152
+// returned it (CHROME_152, recorded with DOMParser on 2026-10-08).
+const STATUS_TEXT = {
+  en: { formatted: 'Formatted.', minified: 'Minified.', error: 'Error: ' },
+  zh: { formatted: '已格式化。', minified: '已压缩。', error: '错误：' },
+  ja: { formatted: '整形しました。', minified: '圧縮しました。', error: 'エラー：' },
+  ko: { formatted: '포맷했습니다.', minified: '압축했습니다.', error: '오류: ' },
+};
+const chromeError = (line, column, msg) => `This page contains the following errors:error on line ${line} at column ${column}: ${msg}\nBelow is a rendering of the page up to the first error.`;
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const want = STATUS_TEXT[lang];
+  let p = lifecyclePage(lang); golden(p);
+  same(lang + ' live format status is in the page language', p.get(cfg.status).textContent, want.formatted);
+  p.get(cfg.primary).click();
+  same(lang + ' Format status is in the page language', p.get(cfg.status).textContent, want.formatted);
+  p.get(cfg.prefix + '-minify').click();
+  same(lang + ' Minify status is in the page language', p.get(cfg.status).textContent, want.minified);
+  p = lifecyclePage(lang);
+  p.context.DOMParser = class { parseFromString() { const err = { localName: 'parsererror', textContent: chromeError(1, 14, "EntityRef: expecting ';'") }; return { documentElement: err, querySelector: () => err }; } };
+  p.input(cfg.input, '<company>AT&T</company>'); p.advance(300);
+  same(lang + ' error status: page-language prefix and the located parser message only', [p.get(cfg.status).textContent, p.get(cfg.status).className], [want.error + "error on line 1 at column 14: EntityRef: expecting ';'", 'xf-status error']);
+  p.context.DOMParser = class { parseFromString() { const err = { localName: 'parsererror', textContent: 'XML Parsing Error: mismatched tag. Expected: </b>.\nLocation: about:blank\nLine Number 1, Column 10:' }; return { documentElement: err, querySelector: () => err }; } };
+  p.get(cfg.primary).click();
+  same(lang + ' error status: Firefox text keeps the reason and its line and column', p.get(cfg.status).textContent, want.error + 'XML Parsing Error: mismatched tag. Expected: </b>. Line Number 1, Column 10');
+  p.context.DOMParser = class { parseFromString() { const err = { localName: 'parsererror', textContent: 'Some other parser message\nsecond line' }; return { documentElement: err, querySelector: () => err }; } };
+  p.get(cfg.primary).click();
+  same(lang + ' error status: text without a position keeps its first line', p.get(cfg.status).textContent, want.error + 'Some other parser message');
+}
 // Worked examples on the tool pages, recomputed with the protected serializers. The DOM shapes
 // stand in for the browser's DOMParser (native parsing is browser QA, as for thinFixtures below).
 const cdata=(data)=>({nodeType:4,data});
@@ -331,12 +372,114 @@ const pageFixtures=[
 ];
 const exampleTexts=new Set(pageFixtures.flatMap(f=>{const prolog=E.scanProlog(f.input);return [f.input,E.prettyPrint(f.dom,'  ',prolog),E.minify(f.dom,prolog)];}));
 same('order example minifies back to its one-line input',E.minify(pageFixtures[1].dom,E.scanProlog(pageFixtures[1].input)),pageFixtures[1].input);
+
+// ---------- worked examples with annotations (S2-4, 2026-10-08) ----------
+// {/* xf-check: {"op":"format"|"minify","indent":"2"|"4"|"tab","in"?:"…"} */}: the input is "in" or
+// the first ```xml block after the annotation; the engine output must equal one of the following
+// ```xml blocks or inline codes (up to the next xf-check or H2). The DOM comes from the sax-based
+// stand-in below, and every annotated input must be in CHROME_152, so the stand-in's result is
+// compared with what Chromium 152's DOMParser and the same engine returned on 2026-10-08.
+// {/* xf-error: {"in":"…"} */}: the located parser message Chromium 152 returned for the input must
+// appear verbatim as inline code or a block after the annotation; the tool shows it after the
+// page-language prefix (status test above).
+const CHROME_152 = {
+  "<root><user id=\"1\"><name>Alice</name><email>alice@example.com</email></user></root>": {"2":"<root>\n  <user id=\"1\">\n    <name>Alice</name>\n    <email>alice@example.com</email>\n  </user>\n</root>","4":"<root>\n    <user id=\"1\">\n        <name>Alice</name>\n        <email>alice@example.com</email>\n    </user>\n</root>","tab":"<root>\n\t<user id=\"1\">\n\t\t<name>Alice</name>\n\t\t<email>alice@example.com</email>\n\t</user>\n</root>","minify":"<root><user id=\"1\"><name>Alice</name><email>alice@example.com</email></user></root>"},
+  "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!-- order 1042 --><order id=\"1042\" status=\"paid\"><item sku=\"A-1\" qty=\"2\"/><note><![CDATA[Leave at <door> & ring]]></note><total currency=\"EUR\">59.90</total></order>": {"2":"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- order 1042 -->\n<order id=\"1042\" status=\"paid\">\n  <item sku=\"A-1\" qty=\"2\"/>\n  <note>\n    <![CDATA[Leave at <door> & ring]]>\n  </note>\n  <total currency=\"EUR\">59.90</total>\n</order>","4":"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- order 1042 -->\n<order id=\"1042\" status=\"paid\">\n    <item sku=\"A-1\" qty=\"2\"/>\n    <note>\n        <![CDATA[Leave at <door> & ring]]>\n    </note>\n    <total currency=\"EUR\">59.90</total>\n</order>","tab":"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- order 1042 -->\n<order id=\"1042\" status=\"paid\">\n\t<item sku=\"A-1\" qty=\"2\"/>\n\t<note>\n\t\t<![CDATA[Leave at <door> & ring]]>\n\t</note>\n\t<total currency=\"EUR\">59.90</total>\n</order>","minify":"<?xml version=\"1.0\" encoding=\"UTF-8\"?><!-- order 1042 --><order id=\"1042\" status=\"paid\"><item sku=\"A-1\" qty=\"2\"/><note><![CDATA[Leave at <door> & ring]]></note><total currency=\"EUR\">59.90</total></order>"},
+  "<p>Hello <b>world</b>!</p>": {"2":"<p>\n  Hello\n  <b>world</b>\n  !\n</p>","4":"<p>\n    Hello\n    <b>world</b>\n    !\n</p>","tab":"<p>\n\tHello\n\t<b>world</b>\n\t!\n</p>","minify":"<p>Hello<b>world</b>!</p>"},
+  "<root><value>  x  </value><blank> </blank><empty/></root>": {"2":"<root>\n  <value>x</value>\n  <blank/>\n  <empty/>\n</root>","4":"<root>\n    <value>x</value>\n    <blank/>\n    <empty/>\n</root>","tab":"<root>\n\t<value>x</value>\n\t<blank/>\n\t<empty/>\n</root>","minify":"<root><value>x</value><blank></blank><empty/></root>"},
+  "<item name='A &amp; B'>1 &lt; 2</item>": {"2":"<item name=\"A &amp; B\">1 &lt; 2</item>","4":"<item name=\"A &amp; B\">1 &lt; 2</item>","tab":"<item name=\"A &amp; B\">1 &lt; 2</item>","minify":"<item name=\"A &amp; B\">1 &lt; 2</item>"},
+  "<company>AT&T</company>": {"error":"error on line 1 at column 14: EntityRef: expecting ';'"},
+  "<a><b>x</a>": {"error":"error on line 1 at column 12: Opening and ending tag mismatch: b line 1 and a"},
+  "<xml><ToUserName><![CDATA[toUser]]></ToUserName><FromUserName><![CDATA[fromUser]]></FromUserName><CreateTime>1348831860</CreateTime><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[你好，想查一下订单]]></Content><MsgId>1234567890123456</MsgId></xml>": {"2":"<xml>\n  <ToUserName>\n    <![CDATA[toUser]]>\n  </ToUserName>\n  <FromUserName>\n    <![CDATA[fromUser]]>\n  </FromUserName>\n  <CreateTime>1348831860</CreateTime>\n  <MsgType>\n    <![CDATA[text]]>\n  </MsgType>\n  <Content>\n    <![CDATA[你好，想查一下订单]]>\n  </Content>\n  <MsgId>1234567890123456</MsgId>\n</xml>","4":"<xml>\n    <ToUserName>\n        <![CDATA[toUser]]>\n    </ToUserName>\n    <FromUserName>\n        <![CDATA[fromUser]]>\n    </FromUserName>\n    <CreateTime>1348831860</CreateTime>\n    <MsgType>\n        <![CDATA[text]]>\n    </MsgType>\n    <Content>\n        <![CDATA[你好，想查一下订单]]>\n    </Content>\n    <MsgId>1234567890123456</MsgId>\n</xml>","tab":"<xml>\n\t<ToUserName>\n\t\t<![CDATA[toUser]]>\n\t</ToUserName>\n\t<FromUserName>\n\t\t<![CDATA[fromUser]]>\n\t</FromUserName>\n\t<CreateTime>1348831860</CreateTime>\n\t<MsgType>\n\t\t<![CDATA[text]]>\n\t</MsgType>\n\t<Content>\n\t\t<![CDATA[你好，想查一下订单]]>\n\t</Content>\n\t<MsgId>1234567890123456</MsgId>\n</xml>","minify":"<xml><ToUserName><![CDATA[toUser]]></ToUserName><FromUserName><![CDATA[fromUser]]></FromUserName><CreateTime>1348831860</CreateTime><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[你好，想查一下订单]]></Content><MsgId>1234567890123456</MsgId></xml>"},
+  "<订单 编号=\"1001\">\n  <商品 数量=\"2\">茶叶</商品>\n  <商品 数量=\"1\">紫砂壶</商品>\n</订单>": {"2":"<订单 编号=\"1001\">\n  <商品 数量=\"2\">茶叶</商品>\n  <商品 数量=\"1\">紫砂壶</商品>\n</订单>","4":"<订单 编号=\"1001\">\n    <商品 数量=\"2\">茶叶</商品>\n    <商品 数量=\"1\">紫砂壶</商品>\n</订单>","tab":"<订单 编号=\"1001\">\n\t<商品 数量=\"2\">茶叶</商品>\n\t<商品 数量=\"1\">紫砂壶</商品>\n</订单>","minify":"<订单 编号=\"1001\"><商品 数量=\"2\">茶叶</商品><商品 数量=\"1\">紫砂壶</商品></订单>"},
+  "<item id=“1001”>茶叶</item>": {"error":"error on line 1 at column 10: AttValue: \" or ' expected"},
+  "<law_info><law_type>Constitution</law_type><law_id>321CONSTITUTION</law_id><law_num>昭和二十一年憲法</law_num><law_num_era>Showa</law_num_era><law_num_year>21</law_num_year><law_num_type>Constitution</law_num_type><law_num_num>000</law_num_num><promulgation_date>1946-11-03</promulgation_date></law_info>": {"2":"<law_info>\n  <law_type>Constitution</law_type>\n  <law_id>321CONSTITUTION</law_id>\n  <law_num>昭和二十一年憲法</law_num>\n  <law_num_era>Showa</law_num_era>\n  <law_num_year>21</law_num_year>\n  <law_num_type>Constitution</law_num_type>\n  <law_num_num>000</law_num_num>\n  <promulgation_date>1946-11-03</promulgation_date>\n</law_info>","4":"<law_info>\n    <law_type>Constitution</law_type>\n    <law_id>321CONSTITUTION</law_id>\n    <law_num>昭和二十一年憲法</law_num>\n    <law_num_era>Showa</law_num_era>\n    <law_num_year>21</law_num_year>\n    <law_num_type>Constitution</law_num_type>\n    <law_num_num>000</law_num_num>\n    <promulgation_date>1946-11-03</promulgation_date>\n</law_info>","tab":"<law_info>\n\t<law_type>Constitution</law_type>\n\t<law_id>321CONSTITUTION</law_id>\n\t<law_num>昭和二十一年憲法</law_num>\n\t<law_num_era>Showa</law_num_era>\n\t<law_num_year>21</law_num_year>\n\t<law_num_type>Constitution</law_num_type>\n\t<law_num_num>000</law_num_num>\n\t<promulgation_date>1946-11-03</promulgation_date>\n</law_info>","minify":"<law_info><law_type>Constitution</law_type><law_id>321CONSTITUTION</law_id><law_num>昭和二十一年憲法</law_num><law_num_era>Showa</law_num_era><law_num_year>21</law_num_year><law_num_type>Constitution</law_num_type><law_num_num>000</law_num_num><promulgation_date>1946-11-03</promulgation_date></law_info>"},
+  "<revision_info><law_title>日本国憲法</law_title><law_title_kana>にほんこくけんぽう</law_title_kana><abbrev></abbrev><category>憲法</category><amendment_enforcement_comment/></revision_info>": {"2":"<revision_info>\n  <law_title>日本国憲法</law_title>\n  <law_title_kana>にほんこくけんぽう</law_title_kana>\n  <abbrev/>\n  <category>憲法</category>\n  <amendment_enforcement_comment/>\n</revision_info>","4":"<revision_info>\n    <law_title>日本国憲法</law_title>\n    <law_title_kana>にほんこくけんぽう</law_title_kana>\n    <abbrev/>\n    <category>憲法</category>\n    <amendment_enforcement_comment/>\n</revision_info>","tab":"<revision_info>\n\t<law_title>日本国憲法</law_title>\n\t<law_title_kana>にほんこくけんぽう</law_title_kana>\n\t<abbrev/>\n\t<category>憲法</category>\n\t<amendment_enforcement_comment/>\n</revision_info>","minify":"<revision_info><law_title>日本国憲法</law_title><law_title_kana>にほんこくけんぽう</law_title_kana><abbrev/><category>憲法</category><amendment_enforcement_comment/></revision_info>"},
+  "<?xml version=\"1.0\" encoding=\"Shift_JIS\"?><商品><品名>緑茶</品名><価格>500</価格></商品>": {"2":"<?xml version=\"1.0\" encoding=\"Shift_JIS\"?>\n<商品>\n  <品名>緑茶</品名>\n  <価格>500</価格>\n</商品>","4":"<?xml version=\"1.0\" encoding=\"Shift_JIS\"?>\n<商品>\n    <品名>緑茶</品名>\n    <価格>500</価格>\n</商品>","tab":"<?xml version=\"1.0\" encoding=\"Shift_JIS\"?>\n<商品>\n\t<品名>緑茶</品名>\n\t<価格>500</価格>\n</商品>","minify":"<?xml version=\"1.0\" encoding=\"Shift_JIS\"?><商品><品名>緑茶</品名><価格>500</価格></商品>"},
+  "<p>東京都<b>港区</b>六本木</p>": {"2":"<p>\n  東京都\n  <b>港区</b>\n  六本木\n</p>","4":"<p>\n    東京都\n    <b>港区</b>\n    六本木\n</p>","tab":"<p>\n\t東京都\n\t<b>港区</b>\n\t六本木\n</p>","minify":"<p>東京都<b>港区</b>六本木</p>"},
+  "<item　id=\"1\"/>": {"error":"error on line 1 at column 6: error parsing attribute name"},
+  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<OpenAPI_ServiceResponse>\n<cmmMsgHeader>\n  <errMsg>SERVICE_KEY_IS_NULL</errMsg>\n  <returnAuthMsg>서비스 접근거부</returnAuthMsg>\n  <returnReasonCode>20</returnReasonCode>\n</cmmMsgHeader>\n</OpenAPI_ServiceResponse>": {"2":"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<OpenAPI_ServiceResponse>\n  <cmmMsgHeader>\n    <errMsg>SERVICE_KEY_IS_NULL</errMsg>\n    <returnAuthMsg>서비스 접근거부</returnAuthMsg>\n    <returnReasonCode>20</returnReasonCode>\n  </cmmMsgHeader>\n</OpenAPI_ServiceResponse>","4":"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<OpenAPI_ServiceResponse>\n    <cmmMsgHeader>\n        <errMsg>SERVICE_KEY_IS_NULL</errMsg>\n        <returnAuthMsg>서비스 접근거부</returnAuthMsg>\n        <returnReasonCode>20</returnReasonCode>\n    </cmmMsgHeader>\n</OpenAPI_ServiceResponse>","tab":"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<OpenAPI_ServiceResponse>\n\t<cmmMsgHeader>\n\t\t<errMsg>SERVICE_KEY_IS_NULL</errMsg>\n\t\t<returnAuthMsg>서비스 접근거부</returnAuthMsg>\n\t\t<returnReasonCode>20</returnReasonCode>\n\t</cmmMsgHeader>\n</OpenAPI_ServiceResponse>","minify":"<?xml version=\"1.0\" encoding=\"UTF-8\"?><OpenAPI_ServiceResponse><cmmMsgHeader><errMsg>SERVICE_KEY_IS_NULL</errMsg><returnAuthMsg>서비스 접근거부</returnAuthMsg><returnReasonCode>20</returnReasonCode></cmmMsgHeader></OpenAPI_ServiceResponse>"},
+  "<p>서울특별시 <b>강남구</b> 테헤란로</p>": {"2":"<p>\n  서울특별시\n  <b>강남구</b>\n  테헤란로\n</p>","4":"<p>\n    서울특별시\n    <b>강남구</b>\n    테헤란로\n</p>","tab":"<p>\n\t서울특별시\n\t<b>강남구</b>\n\t테헤란로\n</p>","minify":"<p>서울특별시<b>강남구</b>테헤란로</p>"},
+  "<주소>서울&nbsp;강남구</주소>": {"error":"error on line 1 at column 13: Entity 'nbsp' not defined"},
+  "<r xmlns=\"urn:a\" xmlns:x=\"urn:x\"><x:v x:id=\"1\">t</x:v></r>": {"2":"<r xmlns=\"urn:a\" xmlns:x=\"urn:x\">\n  <x:v x:id=\"1\">t</x:v>\n</r>","4":"<r xmlns=\"urn:a\" xmlns:x=\"urn:x\">\n    <x:v x:id=\"1\">t</x:v>\n</r>","tab":"<r xmlns=\"urn:a\" xmlns:x=\"urn:x\">\n\t<x:v x:id=\"1\">t</x:v>\n</r>","minify":"<r xmlns=\"urn:a\" xmlns:x=\"urn:x\"><x:v x:id=\"1\">t</x:v></r>"},
+  "<note>It's \"ok\"</note>": {"2":"<note>It&apos;s &quot;ok&quot;</note>","4":"<note>It&apos;s &quot;ok&quot;</note>","tab":"<note>It&apos;s &quot;ok&quot;</note>","minify":"<note>It&apos;s &quot;ok&quot;</note>"},
+};
+
+function saxDom(raw) {
+  const out = { nodeType: 9, childNodes: [] }, stack = [out], parser = sax.parser(true);
+  let error = '';
+  parser.onerror = e => { error ||= e.message.split('\n')[0]; parser.error = null; };
+  parser.ondoctype = () => out.childNodes.push({ nodeType: 10 });
+  parser.onopentag = t => { const n = { nodeType: 1, tagName: t.name, attributes: Object.entries(t.attributes).map(([name, value]) => ({ name, value })), childNodes: [] }; stack.at(-1).childNodes.push(n); stack.push(n); };
+  parser.onclosetag = () => stack.pop();
+  parser.ontext = data => { if (stack.length > 1) stack.at(-1).childNodes.push({ nodeType: 3, data }); };
+  parser.oncdata = data => stack.at(-1).childNodes.push({ nodeType: 4, data });
+  parser.oncomment = data => stack.at(-1).childNodes.push({ nodeType: 8, data });
+  parser.onprocessinginstruction = ({ name, body }) => { if (name !== 'xml') stack.at(-1).childNodes.push({ nodeType: 7, target: name, data: body }); };
+  parser.write(raw).close();
+  if (error) throw Error('sax: ' + error);
+  return out;
+}
+const INDENTS = { '2': '  ', '4': '    ', tab: '\t' };
+function xfRun(raw, op, indent = '2') {
+  const src = raw.trim(), dom = saxDom(src), prolog = E.scanProlog(src);
+  return op === 'minify' ? E.minify(dom, prolog) : E.prettyPrint(dom, INDENTS[indent], prolog);
+}
+for (const [input, rec] of Object.entries(CHROME_152)) {
+  if (rec.error) continue;
+  for (const key of ['2', '4', 'tab', 'minify']) {
+    same('sax stand-in equals Chromium 152 (' + key + ') for ' + input.slice(0, 40), xfRun(input, key === 'minify' ? 'minify' : 'format', key), rec[key]);
+  }
+}
+const codeTexts = after => [
+  ...[...after.matchAll(/```xml\n([\s\S]*?)\n```/g)].map(m => m[1]),
+  ...[...after.replace(/```[\s\S]*?```/g, '').matchAll(/`([^`\n]+)`/g)].map(m => m[1]),
+  ...[...after.matchAll(/<code>([\s\S]*?)<\/code>/g)].map(m => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&')),
+];
+const annotatedTexts = { en: new Set(), zh: new Set(), ja: new Set(), ko: new Set() };
+const xfCheck = {
+  tag: 'xf-check', min: 2,
+  verify({ spec, after, lang }) {
+    if (!spec || !['format', 'minify'].includes(spec.op)) return 'spec needs op format or minify';
+    const blocks = [...after.matchAll(/```xml\n([\s\S]*?)\n```/g)].map(m => m[1]);
+    const input = spec.in ?? blocks[0];
+    if (input === undefined) return 'no input block after the annotation';
+    if (!CHROME_152[input]) return 'input is not recorded in CHROME_152: ' + JSON.stringify(input.slice(0, 60));
+    const key = spec.op === 'minify' ? 'minify' : (spec.indent ?? '2');
+    const got = xfRun(input, spec.op, spec.indent);
+    if (got !== CHROME_152[input][key]) return 'stand-in differs from Chromium 152';
+    const shown = codeTexts(spec.in === undefined ? after.slice(after.indexOf('```xml\n' + input + '\n```') + input.length + 11) : after);
+    if (!shown.includes(got)) return 'engine output is not shown after the annotation: ' + JSON.stringify(got.slice(0, 80));
+    annotatedTexts[lang].add(input); annotatedTexts[lang].add(got);
+    return null;
+  },
+};
+const xfError = {
+  tag: 'xf-error',
+  verify({ spec, after }) {
+    const rec = spec && CHROME_152[spec.in];
+    if (!rec?.error) return 'input has no recorded Chromium 152 error';
+    return codeTexts(after).includes(rec.error) ? null : 'Chromium message not shown verbatim: ' + rec.error;
+  },
+};
+// zh says Minify on the formatted WeChat message gives back the one-line original.
+const wechat = Object.keys(CHROME_152).find(k => k.startsWith('<xml><ToUserName>'));
+same('zh WeChat example: Minify of the formatted output is the original line', xfRun(CHROME_152[wechat]['2'], 'minify'), wechat);
+// ja / ko / zh say an element without content is <x/> in both outputs.
+const revision = Object.keys(CHROME_152).find(k => k.startsWith('<revision_info>'));
+same('ja revision_info example: <abbrev></abbrev> is <abbrev/> after Format and Minify', [CHROME_152[revision]['2'].includes('<abbrev/>'), CHROME_152[revision].minify.includes('<abbrev/>')], [true, true]);
+const xfContract = toolMdxContract('xml-formatter', { annotations: [xfCheck, xfError] });
+for (const r of xfContract.results.filter(r => /xf-(check|error)/.test(r.rule))) check('MDX annotations: ' + r.message, r.ok);
+for (const lang of ['zh', 'ja', 'ko']) {
+  const body = xfContract.docs[lang].body;
+  same(lang + ' has at least 1 xf-error example', (body.match(/\{\/\* xf-error:/g) || []).length >= 1, true);
+}
 const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
 for(const lang of ['en','zh','ja','ko']) {
   const S=pageStrings[lang], payload=clientStrings(lang);
   same(lang+' tip keys',Object.keys(S.tips),['input','indent','format','minify','clear','copyInput','copyOutput']);
   same(lang+' short complete tips',Object.values(S.tips).every(x=>typeof x==='string'&&x.length>0&&x.length<=280),true);
-  same(lang+' client has only runtime strings',Object.keys(payload),['copy','copied','copyFailed']);
+  same(lang+' client has only runtime strings',Object.keys(payload),['copy','copied','copyFailed','formatted','minified','errorPrefix']);
   same(lang+' tips excluded from payload and script',Object.values(S.tips).some(x=>JSON.stringify(payload).includes(x)||pageScript.includes(x)),false);
   same(lang+' localized empty hint exists',typeof S.formattedXmlPh==='string'&&S.formattedXmlPh.length>0,true);
   const text=readFileSync(join(root,'src/content/tools/xml-formatter',lang+'.mdx'),'utf8');
@@ -344,7 +487,7 @@ for(const lang of ['en','zh','ja','ko']) {
   same(lang+' six bounded plain steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
   same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
   same(lang+' MDX content contract', contractProblems('xml-formatter', lang), '');
-  same(lang+' every XML example is a fixture input or its engine output',[...body.matchAll(/```xml\n([\s\S]*?)\n```/g)].map(m=>m[1]).filter(b=>!exampleTexts.has(b)),[]);
+  same(lang+' every XML example is a fixture input, an annotated example or its engine output',[...body.matchAll(/```xml\n([\s\S]*?)\n```/g)].map(m=>m[1]).filter(b=>!exampleTexts.has(b)&&!annotatedTexts[lang].has(b)),[]);
   same(lang+' Usage removed',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body),false);
   let mdxError='';try{await mdxCompiler.compile(body);}catch(e){mdxError=String(e);}same(lang+' MDX compiles',mdxError,'');
 }
