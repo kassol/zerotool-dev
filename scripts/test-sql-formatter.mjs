@@ -291,8 +291,8 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
 
 const protectedCore = pageSource.match(/^[ \t]*\/\* ── engine:start ── \*\/[\s\S]*?\/\* ── engine:end ── \*\//m)[0];
 // Engine block changed with approval on 2026-10-08 (S2-4 engine fixes a–d); see git log.
-same('protected conversion bytes',Buffer.byteLength(protectedCore),14047);
-same('protected conversion SHA256',hash(protectedCore),'a7fd87c830e96e4cf81880b4c0a7345752b3ef5a850448026cd4ae835dd09446');
+same('protected conversion bytes',Buffer.byteLength(protectedCore),14419);
+same('protected conversion SHA256',hash(protectedCore),'874ebe8b213432e3671e0390709ea79b5a7be88fac75ce8d7a994ef7eb2e7c6c');
 
 const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
 const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
@@ -350,7 +350,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [598, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '016ae7e738aa01df6e203350d0ee4760ba3ea58c195e8afcd3e997f92286485b');
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '9d73b9bf26ce891b449d50eff2edc1f97f270311add6bc2e35a6609b8669f321');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -485,6 +485,30 @@ for (const [name, sql] of [
   ['Korean two-syllable names', "select 이름, 가입일 from 회원 where 등급 = 'VIP';"],
   ['accented names', 'select naïve, straße from café;'],
 ]) sameExecution(name, sql);
+
+// b) Strings: MySQL backslash escapes, doubled quotes in quoted names.
+eq('b: MySQL \\\' stays inside the string', E.minifySQL("select * from users where note = 'It\\'s'"), "SELECT * FROM users WHERE note = 'It\\'s'");
+eq('b: two MySQL strings with \\\'', fmt("select * from t where a = 'It\\'s' and b = 'don\\'t'"),
+  lines('SELECT', '  *', 'FROM t', "WHERE a = 'It\\'s'", "  AND b = 'don\\'t'"));
+eq('b: MySQL \\\\ before the closing quote', E.minifySQL("select 'a\\\\', 'b' from t"), "SELECT 'a\\\\', 'b' FROM t");
+eq('b: MySQL double-quoted string with \\"', E.minifySQL('select * from t where s = "say \\"hi\\" now"'), 'SELECT * FROM t WHERE s = "say \\"hi\\" now"');
+eq('b: a standard string that ends with a backslash stays standard', fmt("select 'C:\\' as p, 'x' as q from t"),
+  lines('SELECT', "  'C:\\' AS p,", "  'x' AS q", 'FROM t'));
+eq('b: doubled double quote in a quoted name', E.minifySQL('select "a""b" from "order items"'), 'SELECT "a""b" FROM "order items"');
+eq('b: doubled backtick in a quoted name', E.minifySQL('select `a``b` from t'), 'SELECT `a``b` FROM t');
+for (const [name, sql] of [
+  ['backslashes that SQLite reads literally', "select p from paths where p = 'C:\\temp\\new' or p = 'a\\\\b';"],
+  ['doubled single quote', "select 'It''s' as s, p from paths;"],
+  ['doubled double quote in a name', 'select "a""b", "order id" from "order items";'],
+  ['string that ends with a backslash', "select 'C:\\' as p, count(*) from paths;"],
+]) sameExecution(name, sql);
+for (const [name, sql] of [
+  ['MySQL \\\' strings', "select * from users where note = 'It\\'s' and nick = 'don\\'t' -- check\norder by id;"],
+  ['MySQL double-quoted string', 'select * from t where s = "say \\"hi\\" now" and id in (1, 2);'],
+]) sameTokens(name, sql);
+for (const [name, sql] of [
+  ['MySQL \\\' strings', "select * from users where note = 'It\\'s' and nick = 'don\\'t';"],
+]) for (const out of [fmt(sql), E.minifySQL(sql)]) check('b: literals copied verbatim: ' + name, out.includes("'It\\'s'") && out.includes("'don\\'t'"), out);
 
 const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
 for(const lang of ['en','zh','ja','ko']) {

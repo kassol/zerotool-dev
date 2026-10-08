@@ -11,7 +11,7 @@ steps:
 faqItems:
   - id: dialects
     question: "支持哪些 SQL 方言？"
-    answer: "只有一种通用模式，处理 SELECT、INSERT、UPDATE、DELETE、CREATE TABLE、JOIN、子查询和 CTE，没有 MySQL、PostgreSQL、SQLite、SQL Server 的切换。分词器不认识的方言写法可能被改动：MySQL 字符串里的反斜杠转义、PostgreSQL 的 $1 参数、SQL Server 的 [方括号] 名称都会被插入空格，详见下文「限制」。"
+    answer: "只有一种通用模式，处理 SELECT、INSERT、UPDATE、DELETE、CREATE TABLE、JOIN、子查询和 CTE，没有 MySQL、PostgreSQL、SQLite、SQL Server 的切换。分词器不认识的方言写法可能被改动：PostgreSQL 的 $1 参数、SQL Server 的 [方括号] 名称会被插入空格，详见下文「限制」。字符串里的反斜杠只在按 MySQL 读法能让每个字符串闭合时才当作转义。"
   - id: validate
     question: "会验证 SQL 语法吗？"
     answer: "不会。本工具只整理排版，不检查语法错误或表结构，写错的 SQL 也会照样格式化，不报错。"
@@ -144,7 +144,7 @@ ORDER BY r.spent DESC;
 ## 限制
 
 - **只有一种通用方言，不做语法校验。** 没有 MySQL、PostgreSQL、SQL Server 等模式，错误的 SQL 也会照样格式化，不报错。
-- **不认识字符串里的反斜杠转义。** MySQL 在未开启 `NO_BACKSLASH_ESCAPES` 时把字符串里的 `\'` 当作一个单引号（[MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)），本工具却在这个引号处结束字符串，{/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'` 会变成 `SELECT * FROM users WHERE note = 'It\' s '`，字符串内容被改了。改用两个单引号 `'It''s'` 就能原样保留。
+- **字符串里的反斜杠按两种读法之一处理。** MySQL 在未开启 `NO_BACKSLASH_ESCAPES` 时把字符串里的 `\'` 当作转义的单引号（[MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)）；PostgreSQL 在默认的 `standard_conforming_strings = on` 下（[PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)）和 SQLite（[SQLite: Literal Values](https://www.sqlite.org/lang_expr.html)）把反斜杠当普通字符。本工具在按 MySQL 读法能让每个字符串都闭合时用 MySQL 读法，否则用标准读法：{/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'` 压缩后仍是 `SELECT * FROM users WHERE note = 'It\'s'`，单独的 `'C:\'` 也仍是一个字符串。字符串内容总是原样复制，读法只决定字符串在哪里结束。
 - **其他方言写法会被插入空格。** {/* sqlf-check: {"op":"minify","in":"select [订单编号] from t where id = $1 and name = N'张三'"} */}`select [订单编号] from t where id = $1 and name = N'张三'` 压缩后是 `SELECT [ 订单编号 ] FROM t WHERE id = $ 1 AND name = N '张三'`：SQL Server 的方括号名称被拆开，PostgreSQL 的参数 `$1` 和 `N'...'` 前缀也被分开。
 - **`CASE` 保持在一行。** `CASE WHEN ... THEN ... END` 不会按 `WHEN` 拆行。
 - **压缩会删掉注释**，也会去掉右括号后的空格，例如 `SELECT COUNT(*)FROM events`。

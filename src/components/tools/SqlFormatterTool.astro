@@ -122,10 +122,33 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
       for (var i = 0; i < KEYWORDS.length; i++) kwSet[KEYWORDS[i]] = true;
 
       /* ── Tokenizer ── */
-      function tokenize(sql) {
+      /* backslash: read \ as an escape inside '...' and "..." (MySQL and MariaDB by default).
+         Without the argument, use that reading when it closes every quoted text, else the
+         standard reading, where a backslash is an ordinary character. */
+      function tokenize(sql, backslash) {
+        if (backslash === undefined) {
+          var escaped = tokenize(sql, true);
+          return escaped.closed ? escaped : tokenize(sql, false);
+        }
         var tokens = [];
+        tokens.closed = true;
         var len = sql.length;
         var pos = 0;
+
+        /* end of a quoted text that starts at `from`; a doubled closing character is kept inside */
+        function quotedEnd(from, close, escapes) {
+          var p = from + 1;
+          while (p < len) {
+            if (escapes && sql[p] === '\\') { p += 2; continue; }
+            if (sql[p] === close) {
+              if (sql[p + 1] === close) { p += 2; continue; }
+              return p + 1;
+            }
+            p++;
+          }
+          tokens.closed = false;
+          return len;
+        }
 
         while (pos < len) {
           var ch = sql[pos];
@@ -153,38 +176,17 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
 
           /* string literal (single-quoted, with '' escape) */
           if (ch === "'") {
-            var s = ch;
-            pos++;
-            while (pos < len) {
-              if (sql[pos] === "'" && pos + 1 < len && sql[pos + 1] === "'") {
-                s += "''"; pos += 2;
-              } else if (sql[pos] === "'") {
-                s += "'"; pos++; break;
-              } else {
-                s += sql[pos]; pos++;
-              }
-            }
-            tokens.push({ type: 'string', value: s });
+            var qEnd = quotedEnd(pos, "'", backslash);
+            tokens.push({ type: 'string', value: sql.slice(pos, qEnd) });
+            pos = qEnd;
             continue;
           }
 
-          /* double-quoted identifier */
-          if (ch === '"') {
-            var s = ch;
-            pos++;
-            while (pos < len && sql[pos] !== '"') { s += sql[pos]; pos++; }
-            if (pos < len) { s += sql[pos]; pos++; }
-            tokens.push({ type: 'ident', value: s });
-            continue;
-          }
-
-          /* backtick-quoted identifier */
-          if (ch === '`') {
-            var s = ch;
-            pos++;
-            while (pos < len && sql[pos] !== '`') { s += sql[pos]; pos++; }
-            if (pos < len) { s += sql[pos]; pos++; }
-            tokens.push({ type: 'ident', value: s });
+          /* double-quoted identifier (a string in MySQL) or backtick-quoted identifier */
+          if (ch === '"' || ch === '`') {
+            var qEnd = quotedEnd(pos, ch, backslash && ch === '"');
+            tokens.push({ type: 'ident', value: sql.slice(pos, qEnd) });
+            pos = qEnd;
             continue;
           }
 

@@ -11,7 +11,7 @@ steps:
 faqItems:
   - id: dialects
     question: "어떤 SQL 방언을 지원합니까?"
-    answer: "방언별 모드는 없고, SELECT·INSERT·UPDATE·DELETE·CREATE TABLE·JOIN·서브쿼리·CTE를 범용 SQL로 정렬합니다. 토크나이저가 모르는 방언 문법은 바뀔 수 있습니다. MySQL 문자열 안의 백슬래시 이스케이프, PostgreSQL의 $1 매개변수, SQL Server의 [대괄호] 이름에는 공백이 들어갑니다(아래 「제한 사항」 참고)."
+    answer: "방언별 모드는 없고, SELECT·INSERT·UPDATE·DELETE·CREATE TABLE·JOIN·서브쿼리·CTE를 범용 SQL로 정렬합니다. 토크나이저가 모르는 방언 문법은 바뀔 수 있습니다. PostgreSQL의 $1 매개변수, SQL Server의 [대괄호] 이름에는 공백이 들어갑니다(아래 「제한 사항」 참고). 문자열 안의 백슬래시는 MySQL 방식으로 읽어 모든 문자열이 닫힐 때만 이스케이프로 봅니다."
   - id: validate
     question: "SQL 문법도 검사하나요?"
     answer: "아니요. 서식만 정리하는 도구라 문법 오류나 테이블 구조는 확인하지 않습니다. 잘못된 SQL도 오류 없이 서식이 지정됩니다."
@@ -136,7 +136,7 @@ ORDER BY r.spent DESC;
 ## 제한 사항
 
 - **방언은 범용 1종류뿐이며 문법 검사를 하지 않습니다.** MySQL·PostgreSQL·SQL Server 등의 모드가 없고, 잘못된 SQL도 오류 없이 서식이 지정됩니다.
-- **문자열 안의 백슬래시 이스케이프를 인식하지 않습니다.** MySQL은 `NO_BACKSLASH_ESCAPES`가 꺼져 있으면 문자열 안의 `\'`를 작은따옴표 한 글자로 읽습니다([MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)). 이 도구는 그 따옴표에서 문자열을 끝내므로 {/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'`가 `SELECT * FROM users WHERE note = 'It\' s '`로 바뀌어 문자열 내용이 달라집니다. `'It''s'`처럼 작은따옴표를 두 번 쓰면 그대로 남습니다.
+- **문자열 안의 백슬래시는 두 가지 읽기 방식 중 하나로 처리합니다.** MySQL은 `NO_BACKSLASH_ESCAPES`가 꺼져 있으면 문자열 안의 `\'`를 이스케이프된 작은따옴표로 읽습니다([MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)). 기본값 `standard_conforming_strings = on`인 PostgreSQL([PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html))과 SQLite([SQLite: Literal Values](https://www.sqlite.org/lang_expr.html))에서 백슬래시는 일반 문자입니다. 이 도구는 MySQL 방식으로 읽었을 때 모든 문자열이 닫히면 그 방식을, 닫히지 않으면 표준 방식을 씁니다. {/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'`는 최소화한 뒤에도 `SELECT * FROM users WHERE note = 'It\'s'`이고, 단독으로 쓴 `'C:\'`도 한 문자열로 남습니다. 문자열 내용은 항상 그대로 복사하며, 읽기 방식은 문자열이 끝나는 위치만 정합니다.
 - **다른 방언 문법에는 공백이 들어갑니다.** PostgreSQL의 `$1`은 `$ 1`이 됩니다.
 - **`CASE`는 한 줄로 유지됩니다.** `CASE WHEN ... THEN ... END`는 `WHEN`마다 줄바꿈되지 않습니다.
 - **최소화하면 주석이 제거되고**, 닫는 괄호 뒤의 공백도 없어집니다(예: `SELECT COUNT(*)FROM events`). 최소화 결과의 키워드는 “키워드 대문자” 설정과 상관없이 항상 대문자입니다.
