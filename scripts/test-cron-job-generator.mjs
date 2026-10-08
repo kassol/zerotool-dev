@@ -363,4 +363,33 @@ for(const lang of ['en','zh','ja','ko']){
   p.ctrlL(INPUT);assert('analytics: Ctrl+L sends no event',updates(p),5);
 }
 
+// ---------- S2-3c: field controls do not change the value silently ----------
+// Step and range values used to be clamped, swapped or replaced: step 0 became */1, step 75 in
+// Minute became */59 (runs at :00 and :59 instead of :00), weekday step 7 became */6, hour
+// range 17 to 9 became 9-17, hour range 9 to 30 became 9-23. Now the field gives what was typed
+// and the expression check reports what is not valid.
+{
+  const field=(p,name)=>p.doc.querySelector('.cjg-field[data-field="'+name+'"]');
+  const setNum=(p,name,role,value)=>{const el=field(p,name).querySelector('[data-role="'+role+'"]');el.value=value;el.dispatch('input');};
+  const runs=p=>p.get('cjg-next-list').children.filter(c=>c.tagName==='LI').map(c=>c.textContent);
+  let p=ready('en');p.doc.querySelector('.cjg-btn-preset[data-expr="* * * * *"]').click();
+  field(p,'minute').querySelector('.cjg-mode-btn[data-mode="step"]').click();
+  setNum(p,'minute','step','0');
+  assert('step 0 is reported, not replaced by 1',[output(p),p.get('cjg-error').textContent,p.get('cjg-desc').textContent],['*/0 * * * *','Minute: "*/0" is not valid. Use numbers from 0 to 59, *, -, / and commas.','']);
+  setNum(p,'minute','step','1.5');assert('step 1.5 is reported, not read as 1',output(p),'*/1.5 * * * *');
+  setNum(p,'minute','step','75');
+  assert('step 75 in Minute stays 75 (runs once an hour at :00)',[output(p),p.get('cjg-error').textContent,runs(p).slice(0,2)],['*/75 * * * *','',['2026-10-05 09:00 UTC','2026-10-05 10:00 UTC']]);
+  p=ready('en');p.doc.querySelector('.cjg-btn-preset[data-expr="* * * * *"]').click();
+  field(p,'hour').querySelector('.cjg-mode-btn[data-mode="range"]').click();
+  setNum(p,'hour','from','17');setNum(p,'hour','to','9');
+  assert('reversed hour range is reported, not swapped',[output(p),p.get('cjg-error').textContent],['* 17-9 * * *','Hour: "17-9" is not valid. Use numbers from 0 to 23, *, -, / and commas.']);
+  setNum(p,'hour','from','9');setNum(p,'hour','to','30');
+  assert('hour range end 30 is reported, not clamped to 23',[output(p),!!p.get('cjg-error').textContent],['* 9-30 * * *',true]);
+  setNum(p,'hour','to','17');assert('valid range recovers',[output(p),p.get('cjg-error').textContent,p.get('cjg-desc').textContent],['* 9-17 * * *','','At every minute past 9 through 17']);
+  p=ready('en');p.input(INPUT,'*/75 * * * *');
+  assert('typed */75 keeps its schedule (first runs 09:00 and 10:00 UTC)',[output(p),runs(p).slice(0,2),p.get('cjg-desc').textContent],['*/75 * * * *',['2026-10-05 09:00 UTC','2026-10-05 10:00 UTC'],'At every 75 minutes past every hour']);
+  p=ready('en');p.input(INPUT,'0 9 * * */7');
+  assert('typed weekday */7 runs on Sundays only',[runs(p).slice(0,2)],[['2026-10-11 09:00 UTC','2026-10-18 09:00 UTC']]);
+}
+
 console.log(`v2 total: ${passes} PASS, ${failures} FAIL`);process.exitCode=failures?1:0;
