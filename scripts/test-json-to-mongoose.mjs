@@ -196,6 +196,14 @@ for (const [raw, want] of MODEL_NAMES) {
   eq(`model name ${raw} reaches mongoose.model() as ${want}`, captured[0], want);
 }
 
+// ~150,000 root objects with an array field: the arrays of a key are joined with a loop
+// (concat.apply spread them as arguments and overflowed the stack, master included).
+{
+  const many = JSON.stringify(Array.from({ length: 150000 }, (_, i) => ({ id: i, tags: ['a'] })));
+  let out; try { out = gen(many, 'Item', 'javascript', false, false); } catch (e) { out = String(e); }
+  eq('many root objects with array fields generate', out.includes('  tags: [String],'), true);
+}
+
 // B1: a "__proto__" key is written as a computed key, so the object literal gets an own property
 // (a bare `__proto__:` sets the prototype); the TypeScript interface quotes it.
 {
