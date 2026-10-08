@@ -14,7 +14,9 @@
 // after the source zone was changed); the examples on the English page; {/* tzc-check: … */} examples
 // on the four tool pages, recomputed with the same functions (at least 2 per language, see TZC_CHECK);
 // typed names: abbreviations such as EST / IST are rejected and partial names match word starts
-// (EST used to resolve to America/Creston, IST to America/Boa_Vista).
+// (EST used to resolve to America/Creston, IST to America/Boa_Vista); DST badge days counted as
+// calendar days in the row's zone (dstBadge), including the change date itself ("today") and the
+// 7-day edge (2026-10-29 Tokyo → London used to show 5 days ago, not 4).
 //
 // Run: node scripts/test-timezone-converter.mjs
 
@@ -36,8 +38,11 @@ if (start < 0 || end <= start) {
   console.error('FAIL: could not locate the conversion code in TimezoneConverterTool.astro');
   process.exit(1);
 }
-const E = new Function('allZones', 'datalist', source.slice(start, end) +
-  '\nreturn { isZone, wallClockToUtc, formatInZone, dstSummary, nowInZone, getOffsetMin };')(
+// dstBadge sits after zoneCity, outside the protected slice above.
+const badgeStart = source.indexOf('  function dstBadge(');
+const badgeEnd = badgeStart < 0 ? -1 : source.indexOf('\n  }\n', badgeStart) + 5;
+const E = new Function('allZones', 'datalist', source.slice(start, end) + (badgeStart < 0 ? 'function dstBadge() { return null; }' : source.slice(badgeStart, badgeEnd)) +
+  '\nreturn { isZone, wallClockToUtc, formatInZone, dstSummary, dstBadge, nowInZone, getOffsetMin };')(
   Intl.supportedValuesOf('timeZone'), {});
 
 let failures = 0;
@@ -116,6 +121,34 @@ for (const [wall, src, zone, want] of [
 eq('gap: 02:30 New York → 07:30 UTC', E.wallClockToUtc('2026-03-08T02:30', 'America/New_York').toISOString(), '2026-03-08T07:30:00.000Z');
 eq('overlap: 01:30 New York → 05:30 UTC', E.wallClockToUtc('2026-11-01T01:30', 'America/New_York').toISOString(), '2026-11-01T05:30:00.000Z');
 eq('no DST badge zones', ['Asia/Tokyo', 'Asia/Shanghai', 'Australia/Brisbane'].map((z) => E.dstSummary(new Date(Date.UTC(2026, 5, 1)), z).observesDst), [false, false, false]);
+// DST badge days: calendar days in the row's zone between the base date and the date of the
+// change. dstSummary compares instants 24 h apart, so a change exactly n days before the base
+// counted as n + 1 (2026-10-29 Tokyo → London showed 5, not 4) and a change earlier on the
+// same date as 1 (2026-11-02 Seoul → New York showed "1 day ago").
+const badge = (wall, src, zone) => { const b = E.dstBadge(E.wallClockToUtc(wall, src), zone); return b && (b.days === null ? 'none' : b.days === 0 ? (b.future ? 'today, ahead' : 'today, done') : String(b.days)); };
+for (const [wall, src, zone, want] of [
+  ['2026-10-29T10:00', 'Asia/Tokyo', 'Europe/London', '-4'],
+  ['2026-10-27T10:00', 'Asia/Tokyo', 'Europe/London', '-2'],
+  ['2026-10-26T10:00', 'Asia/Tokyo', 'Europe/London', '-1'],
+  ['2026-10-25T09:30', 'Asia/Tokyo', 'Europe/London', 'today, ahead'],
+  ['2026-10-25T10:00', 'Asia/Tokyo', 'Europe/London', 'today, done'],
+  ['2026-10-24T10:00', 'Asia/Tokyo', 'Europe/London', '1'],
+  ['2026-10-22T10:00', 'Asia/Tokyo', 'Europe/London', '3'],
+  ['2026-03-07T12:00', 'America/New_York', 'America/New_York', '1'],
+  ['2026-03-08T01:30', 'America/New_York', 'America/New_York', 'today, ahead'],
+  ['2026-03-08T02:30', 'America/New_York', 'America/New_York', 'today, done'],
+  ['2026-03-09T12:00', 'America/New_York', 'America/New_York', '-1'],
+  ['2026-03-05T12:00', 'America/New_York', 'America/New_York', '3'],
+  ['2026-03-10T10:00', 'Asia/Shanghai', 'America/New_York', '-1'],
+  ['2026-11-02T10:00', 'Asia/Seoul', 'America/New_York', 'today, done'],
+  ['2026-10-29T10:00', 'Asia/Seoul', 'America/New_York', '4'],
+  ['2026-10-25T00:30', 'America/New_York', 'America/New_York', '7'],
+  ['2026-10-24T12:00', 'America/New_York', 'America/New_York', 'none'],
+  ['1990-04-15T02:30', 'Asia/Shanghai', 'Asia/Shanghai', 'today, done'],
+  ['1950-05-07T00:30', 'Asia/Tokyo', 'Asia/Tokyo', 'today, done'],
+]) eq('badge days ' + wall + ' ' + src + ' → ' + zone, badge(wall, src, zone), want);
+eq('en page states the 4-day London example', page.includes('2026-10-29 in London shows <em>' + tzStrings('en').dstShiftPast.replace('{n}', '4') + '</em>'), true);
+eq('badge: no DST zone', E.dstBadge(E.wallClockToUtc('2026-10-29T10:00', 'Asia/Tokyo'), 'Asia/Tokyo'), { observesDst: false, days: null, future: false });
 eq('DST badge 3 days before the US change', E.dstSummary(E.wallClockToUtc('2026-03-05T12:00', 'America/New_York'), 'America/New_York').shiftDays, 3);
 
 // ---------- worked examples on the four tool pages ----------
@@ -129,10 +162,11 @@ function codeSpans(text) {
   return { spans, blocks };
 }
 function badgeText(utc, zone, T) {
-  const d = E.dstSummary(utc, zone);
-  if (!d.observesDst) return T.noDst;
-  if (d.shiftDays === null) return null;
-  return (d.shiftDays > 0 ? T.dstShiftFuture : T.dstShiftPast).replace('{n}', String(Math.abs(d.shiftDays)));
+  const d = E.dstBadge(utc, zone);
+  if (!d || !d.observesDst) return d ? T.noDst : null;
+  if (d.days === null) return null;
+  if (d.days === 0) return d.future ? T.dstShiftToday : T.dstShiftedToday;
+  return (d.future ? T.dstShiftFuture : T.dstShiftPast).replace('{n}', String(Math.abs(d.days)));
 }
 const TZC_CHECK = {
   tag: 'tzc-check', min: 2,
@@ -332,6 +366,16 @@ for (const lang of ['en','zh','ja','ko']) {
   }
 }
 
+// The rendered row badge uses the calendar-day count, in the page language.
+for (const lang of ['en','zh','ja','ko']) {
+  const T = tzStrings(lang);
+  for (const [base, want] of [['2026-10-29T10:00:00', (T.dstShiftPast||'').replace('{n}','4')], ['2026-10-25T10:00:00', T.dstShiftedToday], ['2026-10-25T09:30:00', T.dstShiftToday], ['2026-10-24T10:00:00', (T.dstShiftFuture||'').replace('{n}','1')]]) {
+    const q = pageVM(lang); q.change('tzc-source', 'Asia/Tokyo'); q.input('tzc-add', 'london'); q.key('tzc-add', {key:'Enter'}); q.change('tzc-base', base);
+    const row = q.get('tzc-results').querySelectorAll('.tzc-result').find((r) => r.dataset.zone === 'Europe/London');
+    eq(lang + ' rendered London badge for ' + base, row?.querySelector('.tzc-dst')?.textContent, want);
+  }
+}
+
 // Copy uses complete real page output; only the clipboard Promise and timer delivery are controlled.
 const failureLabels={en:'Copy failed.',zh:'复制失败。',ja:'コピーに失敗しました。',ko:'복사 실패.'};
 const button=(p,id)=>id==='row'?p.get('tzc-results').querySelector('.tzc-copy'):p.get(id);
@@ -393,7 +437,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 eq('v2 compiled module parses',moduleError,'');
 const style=compiled.css.join('\n');
 const mainScript=source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
-eq('v2 complete FIX script exact',hash(mainScript),'406dda2a4f3f32e494c3482b5d477cb758e11cff99b3e3be9a9cc8fc9a9e27db');
+eq('v2 complete FIX script exact',hash(mainScript),'fe3ad9a7451df69a5bc05523d8e8c73f1be44b3b91fb3014ef3d87e36a1ca9d1');
 eq('v2 analyze registry',/['"]timezone-converter['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('v2 outermost root',/^<div class="tzc-wrap">/.test(source.split('\n---\n')[1].trim()),true);
 eq('v2 no runtime i18n',source.includes('data-i18n'),false);
@@ -414,7 +458,7 @@ const originalLabelHashes={"en":"b520294f233fa5ed9d1ee9758f84ddd38d39b5eb5877853
 for(const lang of ['en','zh','ja','ko']){
  const T=tzStrings(lang),L=tzLabels(lang),p=pageVM(lang);
  eq('v2 '+lang+' same seven fact groups',Object.keys(T.tips),expectedTipKeys);
- eq('v2 '+lang+' all original labels retained',hash(JSON.stringify(L)),originalLabelHashes[lang]);
+ { const {dstShiftToday,dstShiftedToday,...orig}=L; eq('v2 '+lang+' all original labels retained',hash(JSON.stringify(orig)),originalLabelHashes[lang]); eq('v2 '+lang+' same-day badge labels',typeof dstShiftToday==='string'&&typeof dstShiftedToday==='string'&&!dstShiftToday.includes('{n}'),true); }
  eq('v2 '+lang+' client excludes tips/empty',Object.keys(L).some(k=>k==='tips'||k==='emptyResult'),false);
  eq('v2 '+lang+' translated empty hint',p.get('tzc-empty-result').textContent,T.emptyResult);
  eq('v2 '+lang+' result keyboard focus',p.get('tzc-results').getAttribute('tabindex'),'0');
