@@ -117,7 +117,10 @@ function open(s,lang='en',shellFirst=false){
   const h={s,L,document,ids,timers,requests,assertions,persist,readers,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),frames(force=false){for(const r of rafs.splice(0))if(force||!r.cancelled)r.fn();},unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
   active=h;
   class LocalReader {constructor(){readers.push(this);}readAsDataURL(file){this.ready=file.arrayBuffer().then(bytes=>{this.result='data:'+file.type+';base64,'+Buffer.from(bytes).toString('base64');});}deliver(){this.onload?.({target:this});}}
-  const globals={document,isSecureContext:true,FileReader:LocalReader,File,Blob,requestAnimationFrame:f=>{const id=++seq;rafs.push({id,fn:f});return id;},cancelAnimationFrame:id=>{const r=rafs.find(r=>r.id===id);if(r)r.cancelled=true;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(){}};
+  // Decodes like a browser for the test files: SVG text or a PNG signature loads, anything else
+  // (an empty file, text renamed to .png) fires error. Synchronous, so delivery order stays explicit.
+  class LocalImage {set src(v){this._src=String(v);const bytes=Buffer.from(this._src.split(',')[1]||'','base64');const ok=bytes.length>0&&(bytes.toString('utf8').startsWith('<svg')||bytes[0]===0x89);if(ok){this.naturalWidth=10;this.naturalHeight=10;}(ok?this.onload:this.onerror)?.call(this,{target:this});}get src(){return this._src||'';}}
+  const globals={document,isSecureContext:true,FileReader:LocalReader,Image:LocalImage,File,Blob,requestAnimationFrame:f=>{const id=++seq;rafs.push({id,fn:f});return id;},cancelAnimationFrame:id=>{const r=rafs.find(r=>r.id===id);if(r)r.cancelled=true;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(){}};
   globals.window=globals;const ctx=vm.createContext(globals);const shared='var _slug='+JSON.stringify(s.slug)+';\n'+shortcuts;if(shellFirst)vm.runInContext(shared,ctx);for(const m of source.matchAll(/<script is:inline>([\s\S]*?)<\/script>/g))vm.runInContext(m[1],ctx);if(!shellFirst)vm.runInContext(shared,ctx);h.page={run:code=>vm.runInContext(code,ctx)};h.wrap=wrap;
   return h;
 }
@@ -154,7 +157,40 @@ function open(s,lang='en',shellFirst=false){
     h=open(spec);const first=await selection(h,'first');const second=await selection(h,'second');second.deliver();first.deliver();check('FileReader newer selection wins',h.el('cfg-preview-img').src,second.result);check('real File bytes preserved',Buffer.from(second.result.split(',')[1],'base64').toString(),'<svg>second</svg>');
     h=open(spec);h.input('cfg-blur',2.5);h.key();h.frames(true);check('queued rAF cannot restore cleared CSS',h.el(spec.output).textContent,'');check('queued rAF cannot save after clear',h.persist.saved.length,0);check('numeric setting retained',h.el('cfg-blur').value,'2.5');h.input('cfg-brightness',0);h.frames();check('numeric change restores default local SVG',h.el('cfg-preview-img').src.startsWith('data:image/svg+xml,'),true);check('zero and prior numeric setting preserved',h.el(spec.output).textContent.includes('blur(2.5px) brightness(0%)'),true);
     h=open(spec);h.input('cfg-blur',3);const reader=await selection(h,'new');reader.deliver();const saves=h.persist.saved.length;h.frames(true);check('new selection invalidates queued save',h.persist.saved.length,saves);check('new selection remains',h.el('cfg-preview-img').src,reader.result);
-    h=open(spec);h.el('cfg-file-input').files=[new File([new Uint8Array(5*1024*1024+1)],'large.png',{type:'image/png'})];h.el('cfg-file-input').dispatch('change');check('same 5MB rejection',h.alerts,['Max file size is 5 MB']);check('5MB rejection skips FileReader',h.readers.length,0);
+    // A rejected file is reported in the status line in the page language (as the color blindness
+    // simulator does), never with alert(); the preview keeps the previous image.
+    const rejected={
+      en:{decode:'This browser cannot decode “{name}”.',big:'“large.png” is larger than 5 MB. Choose an image up to 5 MB.',not:'“notes.txt” is not an image file.'},
+      zh:{decode:'当前浏览器无法解码“{name}”。',big:'“large.png”超过 5 MB，请选择 5 MB 以内的图片。',not:'“notes.txt”不是图片文件。'},
+      ja:{decode:'このブラウザでは「{name}」をデコードできません。',big:'「large.png」は 5 MB を超えています。5 MB までの画像を選んでください。',not:'「notes.txt」は画像ファイルではありません。'},
+      ko:{decode:'이 브라우저는 “{name}”을(를) 디코딩할 수 없습니다.',big:'“large.png”은(는) 5 MB를 넘습니다. 5 MB 이하의 이미지를 선택하세요.',not:'“notes.txt”은(는) 이미지 파일이 아닙니다.'},
+    };
+    for(const lang of ['en','zh','ja','ko']){
+      h=open(spec,lang);const before=h.el('cfg-preview-img').src;
+      h.el('cfg-file-input').files=[new File([new Uint8Array(5*1024*1024+1)],'large.png',{type:'image/png'})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' 5MB rejection uses no alert',h.alerts,undefined);check(lang+' 5MB rejection skips FileReader',h.readers.length,0);
+      check(lang+' 5MB rejection in status',[h.el('cfg-status').textContent,h.el('cfg-status').className],[rejected[lang].big,'tool-status error']);
+      check(lang+' 5MB rejection keeps preview',h.el('cfg-preview-img').src,before);
+      h.el('cfg-file-input').files=[new File([new Uint8Array(5*1024*1024)],'edge.png',{type:'image/png'})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' exactly 5MB is read',h.readers.length,1);check(lang+' accepted file clears the rejection',h.el('cfg-status').textContent,'');
+      h=open(spec,lang);h.el('cfg-file-input').files=[new File(['plain text'],'notes.txt',{type:'text/plain'})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' non-image rejection uses no alert',h.alerts,undefined);check(lang+' non-image skips FileReader',h.readers.length,0);
+      check(lang+' non-image rejection in status',[h.el('cfg-status').textContent,h.el('cfg-status').className],[rejected[lang].not,'tool-status error']);
+      h=open(spec,lang);h.el('cfg-file-input').files=[new File(['<svg/>'],'logo.svg',{type:''})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' image recognised by extension when the type is empty',[h.readers.length,h.el('cfg-status').textContent],[1,'']);
+      // A rejected file is cleared from the input, so choosing the same file again fires change.
+      h=open(spec,lang);h.el('cfg-file-input').files=[new File(['plain text'],'notes.txt',{type:'text/plain'})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' rejected file is cleared from the input',[h.el('cfg-file-input').value,h.el('cfg-file-input').files.length],['',0]);
+      // A file that passes the type check but cannot be decoded (0 bytes, text renamed to .png,
+      // HEIC in Chrome) keeps the previous preview and reports why, as the color blindness simulator does.
+      for(const [label,file] of [['empty',new File([],'empty.png',{type:'image/png'})],['renamed',new File(['plain text'],'renamed.png',{type:'image/png'})]]){
+        h=open(spec,lang);const before=h.el('cfg-preview-img').src;
+        h.el('cfg-file-input').files=[file];h.el('cfg-file-input').dispatch('change');const r=h.readers.at(-1);await r.ready;r.deliver();
+        check(lang+' '+label+' file keeps preview',h.el('cfg-preview-img').src,before);
+        check(lang+' '+label+' file reported',[h.el('cfg-status').textContent,h.el('cfg-status').className],[rejected[lang].decode.replace('{name}',file.name),'tool-status error']);
+        check(lang+' '+label+' file is cleared from the input',h.el('cfg-file-input').files.length,0);
+      }
+    }
     for(const key of ['blur','brightness','contrast','grayscale','hue-rotate','invert','opacity','saturate','sepia']) {h=open(spec);h.input('cfg-'+key,0);h.frames();check(key+' page preserves zero',h.el('cfg-'+key).value,'0');h.query('.cfg-reset-btn[data-key="'+key+'"]').click();h.frames();check(key+' Reset resumes CSS',h.el(spec.output).textContent,'.element {\n  filter: none;\n}');check(key+' saves numbers only',Object.values(h.persist.saved.at(-1).value).every(v=>typeof v==='number'),true);}
     h=open(spec);h.input('cfg-sepia',50);h.frames();h.click('cfg-reset-all');h.frames();check('Reset All preserves original defaults',h.el(spec.output).textContent,'.element {\n  filter: none;\n}');
   process.removeListener('unhandledRejection',onUnhandled);
@@ -210,9 +246,60 @@ function open(s,lang='en',shellFirst=false){
     check('uploaded result scrolls on phones',script.includes("scrollIntoView({ block: 'start', behavior: 'smooth' })"));
     check('no empty image address',!markup.includes('src=""'));
     const page=readFileSync(process.env.ZT_B12_MDX_PREFIX?process.env.ZT_B12_MDX_PREFIX+'en.mdx':join(root,'src/content/tools/'+slug+'/en.mdx'),'utf8');
-    const m=page.match(/\{\/\* cfg-check: (\{[^\n]+\}) \*\/\}/);check('worked example annotation',!!m);
+    const m=page.match(/\{\/\* cfg-check: (\{[^\n]*"out"[^\n]*\}) \*\/\}/);check('worked example annotation',!!m);
     if(m) {const c=JSON.parse(m[1]);const block=source.match(/\/\* ── engine:start ── \*\/([\s\S]*?)\/\* ── engine:end ── \*\//)[1];const make=new Function('state',block+';return {DEFAULTS,buildFilter};');const state={};for(const [k,v]of Object.entries(make({}).DEFAULTS))state[k]=v.default;Object.assign(state,c.values);check('actual worked example output',make(state).buildFilter()===c.out);check('worked output shown',page.includes('filter: '+c.out+';'));}
   console.log('V2 '+passes+' passed, '+failures+' failed');
   if(process.env.ZT_B12_LAYOUT_REPORT)(await import('node:fs')).writeFileSync(process.env.ZT_B12_LAYOUT_REPORT,JSON.stringify({node:process.version,passes,failures,tips:tips.length},null,2)+'\n');
   if(failures)process.exitCode=1;
+}
+
+
+// ---------- Worked examples on the four tool pages (`cfg-check`) ----------
+// Each annotation lists the controls that differ from their defaults ({"values": {...}}, the keys
+// of DEFAULTS). The values must be ones the sliders can hold (inside min–max, on the step), and the
+// first code block after the annotation must be the rule renderOutput() writes:
+// `.element {\n  filter: <buildFilter()>;\n}`. An optional "out" must equal buildFilter().
+// Every `.element {` block on a page must carry an annotation.
+{
+  const { toolMdxContract, fencedBlocks, LANGS } = await import('./lib/tool-mdx-contract.mjs');
+  let passes = 0, failures = 0;
+  const check = (name, ok, detail = '') => { if (ok) passes++; else { failures++; console.log('FAIL: examples ' + name + (detail ? ' — ' + detail : '')); } };
+  function rule(spec) {
+    const values = spec?.values;
+    if (!values || typeof values !== 'object' || !Object.keys(values).length) throw new Error('annotation needs "values"');
+    for (const [k, v] of Object.entries(values)) {
+      const d = probe.DEFAULTS[k];
+      if (!d) throw new Error(`unknown control ${k}`);
+      if (typeof v !== 'number' || probe.clampValue(k, String(v)) !== v) throw new Error(`${k} ${v} is outside ${d.min}–${d.max}`);
+      if (Math.abs(Math.round(v / d.step) * d.step - v) > 1e-9) throw new Error(`${k} ${v} is not on the ${d.step} step`);
+      if (v === d.default) throw new Error(`${k} ${v} is the default; leave it out`);
+    }
+    const value = filterOf(values);
+    if (spec.out !== undefined && spec.out !== value) throw new Error(`"out" ${spec.out} differs from the engine ${value}`);
+    return '.element {\n  filter: ' + value + ';\n}';
+  }
+  function verify({ spec, after }) {
+    const want = rule(spec);
+    const block = fencedBlocks(after)[0];
+    if (!block) return 'no code block after the annotation';
+    return block.text === want ? null : `page shows ${JSON.stringify(block.text)}, engine writes ${JSON.stringify(want)}`;
+  }
+  const contract = toolMdxContract('css-filter-generator', { annotations: [{ tag: 'cfg-check', min: 2, verify }] });
+  for (const r of contract.results.filter((r) => r.rule.includes('cfg-check'))) check(r.message, r.ok);
+  for (const lang of LANGS) {
+    const body = contract.docs[lang].body;
+    const blocks = [...body.matchAll(/(\{\/\*\s*cfg-check:[^\n]*\*\/\}[ \t]*\n)?```css\n\.element \{/g)];
+    check(`${lang} has generated .element blocks`, blocks.length >= 2, String(blocks.length));
+    blocks.forEach((m, i) => check(`${lang} .element block #${i + 1} is annotated`, !!m[1]));
+  }
+  // The checker itself: a changed output, an off-step value and a default value are reported.
+  const fake = (spec, text) => verify({ spec, after: '\n```css\n' + text + '\n```\n' });
+  const base = { values: { grayscale: 100, opacity: 60 } };
+  check('checker accepts the engine output', fake(base, rule(base)) === null);
+  check('checker reports a changed output', fake(base, rule(base).replace('60%', '50%')) !== null);
+  let threw = 0;
+  for (const bad of [{ values: { blur: 1.25 } }, { values: { brightness: 100 } }, { values: { contrast: 250 } }, { values: { glow: 1 } }]) { try { rule(bad); } catch { threw++; } }
+  check('checker rejects values the controls cannot hold', threw === 4, String(threw));
+  console.log('EXAMPLES ' + passes + ' passed, ' + failures + ' failed');
+  if (failures) process.exitCode = 1;
 }
