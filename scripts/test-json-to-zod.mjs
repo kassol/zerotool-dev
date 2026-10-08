@@ -26,7 +26,8 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { transform as esbuildTransform } from 'esbuild';
 import { compile as compileMdx } from '@mdx-js/mdx';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import ts from 'typescript';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToZodTool.astro'), 'utf8');
@@ -354,6 +355,104 @@ try {
   await esbuildTransform(compiled.code, { loader: 'ts' }); check('v2 generated Astro module parses', true);
 } catch (e) { check('v2 Astro compilation', false, e.message); }
 check('v2 dark status ancestors are global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'));
+
+// ---------- tool page examples: {/* jtz-check: {"root":"…","strict":false} */} ----------
+// The annotation is followed by a ```json block (the input) and a ```ts block. The real page script
+// runs with that root name and strict setting (the output includes the import and type lines that
+// are built outside the engine), and its output must be shown byte for byte. The output plus
+// `export const sample: <Type> = <the JSON>;` must compile in strict TypeScript against zod (3)
+// and zod/v4, and the schema must parse the sample with both, unless "rejects" names the version
+// and the path of the one expected issue.
+const require2 = createRequire(import.meta.url);
+const zods = { v3: require2('zod').z, v4: require2('zod/v4').z };
+const TS_OPTIONS = { strict: true, noEmit: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, lib: ['lib.es2022.d.ts'], types: [], skipLibCheck: true };
+function tsErrors(code, entry) {
+  const text = code.replace('from "zod";', 'from "' + entry + '";');
+  const fileName = join(root, '__json_to_zod_check__.ts');
+  const host = ts.createCompilerHost(TS_OPTIONS);
+  const origGet = host.getSourceFile, origExists = host.fileExists, origRead = host.readFile;
+  host.getSourceFile = (name, lang) => (name === fileName ? ts.createSourceFile(name, text, lang) : origGet.call(host, name, lang));
+  host.fileExists = (name) => name === fileName || origExists.call(host, name);
+  host.readFile = (name) => (name === fileName ? text : origRead.call(host, name));
+  const program = ts.createProgram([fileName], TS_OPTIONS, host);
+  return ts.getPreEmitDiagnostics(program).map((d) => ts.flattenDiagnosticMessageText(d.messageText, ' '));
+}
+function schemaOf(code, schemaName, z) {
+  const js = ts.transpileModule(code + '\nmodule.exports.__schema = ' + schemaName + ';\n', { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', js)(() => ({ z }), module, module.exports);
+  return module.exports.__schema;
+}
+function pageOutput(lang, rootName, strict, json) {
+  const p = page(lang);
+  p.get('jtz-root-name').value = rootName;
+  p.get('jtz-strict').checked = !!strict;
+  p.input(json);
+  p.get('jtz-convert').click();
+  return output(p);
+}
+const jtzCheck = {
+  tag: 'jtz-check',
+  min: 2,
+  verify({ spec, after, lang }) {
+    if (!spec || typeof spec.root !== 'string') return 'annotation needs {"root": "<name>"}';
+    const blocks = fencedBlocks(after);
+    const input = blocks.find((b) => b.lang === 'json');
+    if (!input) return 'no ```json input block after the annotation';
+    let sample;
+    try { sample = JSON.parse(input.text); } catch (e) { return 'input is not JSON: ' + e.message; }
+    const code = pageOutput(lang, spec.root, spec.strict, input.text);
+    if (!blocks.some((b) => (b.lang === 'ts' || b.lang === 'typescript') && b.text === code)) return 'page output not shown:\n' + code;
+    const typeName = /export type (\S+) =/.exec(code)[1], schemaName = /^const (\S+) = /m.exec(code)[1];
+    for (const entry of ['zod', 'zod/v4']) {
+      const errors = tsErrors(code + '\n\nexport const sample: ' + typeName + ' = ' + input.text + ';\n', entry);
+      if (errors.length) return 'tsc (' + entry + '): ' + errors.join('; ');
+    }
+    for (const [v, z] of Object.entries(zods)) {
+      const r = schemaOf(code, schemaName, z).safeParse(sample);
+      const want = spec.rejects?.[v];
+      if (want) {
+        if (r.success || r.error.issues.length !== 1 || r.error.issues[0].path.join('.') !== want.join('.')) return v + ' should reject only ' + want.join('.') + ': ' + JSON.stringify(r.error?.issues ?? 'success');
+      } else if (!r.success) return v + ' rejects its own sample: ' + JSON.stringify(r.error.issues);
+    }
+    return null;
+  },
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq(lang + ': jtz-check examples match the page, compile and parse', contractProblems('json-to-zod', lang, { annotations: [jtzCheck] }), '');
+}
+
+// ---------- facts stated in the text ----------
+const pageText = Object.fromEntries(['en', 'zh', 'ja', 'ko'].map((l) => [l, readFileSync(join(root, 'src/content/tools/json-to-zod/' + l + '.mdx'), 'utf8')]));
+{
+  const code = pageOutput('en', 'Config', true, '{"port":8080,"host":"localhost","db":{"url":"postgres://localhost/app","pool":10},"features":["search"]}');
+  for (const [v, z] of Object.entries(zods)) {
+    check('en: strict Config rejects a misspelled nested key (' + v + ')', !schemaOf(code, 'ConfigSchema', z).safeParse({ port: 1, host: 'h', db: { url: 'u', pool: 1, poool: 2 }, features: [] }).success);
+    check('strict mode is off: extra keys are removed (' + v + ')', JSON.stringify(z.object({ a: z.number() }).parse({ a: 1, b: 2 })) === '{"a":1}');
+  }
+  const E2 = new Function(block + '\nreturn { toPascalCase };')();
+  eq('root name 用户 gives 户', E2.toPascalCase('用户'), '户');
+  eq('root name 天気 gives 気', E2.toPascalCase('天気'), '気');
+  eq('root name 회원 gives 원', E2.toPascalCase('회원'), '원');
+  eq('root name "user profile" gives UserProfile', E2.toPascalCase('user profile'), 'UserProfile');
+  check('en: page states 用户 → 户Schema', pageText.en.includes('`用户` gives `户Schema`'));
+  check('zh: page states 用户 → 户Schema', pageText.zh.includes('`用户` 会得到 `户Schema`'));
+  check('ja: page states 天気 → 気Schema', pageText.ja.includes('`天気` と入力すると `気Schema`'));
+  check('ko: page states 회원 → 원Schema', pageText.ko.includes('`회원`을 입력하면 `원Schema`'));
+  eq('the int/float union text', E.buildRootZod([{ p: 128.5 }, { p: 299 }], 'Root', false), 'z.array(z.object({\n    p: z.union([z.number(), z.number().int()]),\n  }))');
+  for (const l of ['en', 'zh', 'ja', 'ko']) check(l + ': page shows the int/float union', pageText[l].includes('`z.union([z.number(), z.number().int()])`'));
+  const v4Big = zods.v4.number().int().safeParse(JSON.parse('1830000000000000001'));
+  eq('JSON.parse rounds the zh ID', String(JSON.parse('1830000000000000001')), '1830000000000000000');
+  check('zod 3 int accepts the rounded ID', zods.v3.number().int().safeParse(JSON.parse('1830000000000000001')).success);
+  check('zh: page quotes the zod/v4 too_big message', !v4Big.success && pageText.zh.includes('`' + v4Big.error.issues[0].message + '`'), v4Big.error?.issues[0].message);
+  const v4Float = zods.v4.number().int().safeParse(10.5);
+  for (const l of ['zh', 'ja', 'ko']) check(l + ': page quotes the zod/v4 message for 10.5', pageText[l].includes('`' + v4Float.error.issues[0].message + '`'), v4Float.error.issues[0].message);
+  check('zh: string ID refinement passes', zods.v4.string().regex(/^\d+$/).safeParse('1830000000000000001').success && zods.v3.string().regex(/^\d+$/).safeParse('1830000000000000001').success);
+  const dt = '2026-10-08T16:35:00+09:00';
+  check('ja: datetime with +09:00 needs offset: true', zods.v4.iso.datetime({ offset: true }).safeParse(dt).success && !zods.v4.iso.datetime().safeParse(dt).success
+    && zods.v3.string().datetime({ offset: true }).safeParse(dt).success && !zods.v3.string().datetime().safeParse(dt).success);
+  check('ja: status literal union exists in both', ['v3', 'v4'].every((v) => zods[v].union([zods[v].literal(200), zods[v].literal(400), zods[v].literal(500)]).safeParse(400).success));
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

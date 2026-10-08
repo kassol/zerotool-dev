@@ -10,15 +10,23 @@ steps:
   - "Click Clear to clear JSON, output and status while keeping the name and strict mode. Ctrl/⌘+L within the tool also clears the name."
 faqItems:
   - question: "What is Zod?"
+    id: "zod"
     answer: "Zod is a TypeScript-first schema declaration and validation library. It lets you define the shape of your data with a schema, then validate data against that schema at runtime. It's widely used for API response validation, form validation, and configuration parsing."
   - question: "How does the generator infer types?"
-    answer: "The generator inspects each JSON value: strings become z.string(), booleans become z.boolean(), integers become z.number().int(), floats become z.number(), null becomes z.null(), arrays become z.array(), and objects become z.object(). For arrays of objects, keys present in only some items are marked as optional."
+    id: "inference"
+    answer: "The generator inspects each JSON value: strings become z.string(), booleans become z.boolean(), integers become z.number().int(), floats become z.number(), null becomes z.null(), arrays become z.array(), and objects become z.object(). For arrays of objects, keys present in only some items are marked as optional, and a key with different types in different items becomes a z.union."
   - question: "What is strict mode?"
-    answer: "In strict mode, .strict() is appended to every z.object() call. This causes Zod to reject input objects that contain keys not defined in the schema. Without strict mode, extra keys are silently ignored (the default Zod behavior)."
+    id: "strict"
+    answer: "In strict mode, .strict() is appended to every z.object() call, nested ones included. This causes Zod to reject input objects that contain keys not defined in the schema. Without strict mode, extra keys are silently removed from the parsed result (the default Zod behavior)."
+  - question: "Does the output work with Zod 3 and Zod 4?"
+    id: "zod-versions"
+    answer: "Yes. The generator uses only z.object, z.array, z.union, z.record, z.string, z.number().int(), z.boolean, z.null, z.unknown, .optional() and .strict(), which exist in both versions. The examples on this page are compiled with TypeScript in strict mode against Zod 3 and against the Zod 4 API (zod/v4). One difference: in Zod 4, z.number().int() also rejects integers outside the safe range (above 9007199254740991)."
   - question: "Does this generate production-ready schemas?"
+    id: "refine"
     answer: "The generated schemas are a strong starting point. You should review and refine them — for example, adding .min()/.max() constraints on strings and numbers, converting nullable fields to .nullable().optional(), or splitting nested schemas into separate named constants."
   - question: "Is my JSON data sent anywhere?"
-    answer: "No. All processing happens in your browser. Your JSON data never leaves your device."
+    id: "privacy"
+    answer: "No. The page builds the schema from your JSON in your browser and does not send the JSON anywhere or save it in browser storage. The page's analytics record only a usage event (the tool name and the action generate) after you edit the input and move the focus out of it, or click Generate Zod Schema or Example, without any of the JSON or the generated code."
 ---
 
 <h2>Output Format</h2>
@@ -40,6 +48,8 @@ faqItems:
 ## Example
 
 With the root name `User`, this sample:
+
+{/* jtz-check: {"root":"User"} */}
 
 ```json
 {
@@ -76,7 +86,37 @@ const UserSchema = z.object({
 export type User = z.infer<typeof UserSchema>;
 ```
 
-`note` is optional because only one of the two orders has it. The output uses only calls that work in both Zod 3 and Zod 4.
+`note` is optional because only one of the two orders has it. The output uses only calls that work in both Zod 3 and Zod 4. The schema constant is not exported; add `export` if another module needs it.
+
+## Example: A Strict Config File
+
+Strict mode is useful for configuration, where an unknown key is usually a typo. With the root name `Config` and **Strict mode (no extra keys)** checked:
+
+{/* jtz-check: {"root":"Config","strict":true} */}
+
+```json
+{"port":8080,"host":"localhost","db":{"url":"postgres://localhost/app","pool":10},"features":["search"]}
+```
+
+produces:
+
+```ts
+import { z } from "zod";
+
+const ConfigSchema = z.object({
+  port: z.number().int(),
+  host: z.string(),
+  db: z.object({
+    url: z.string(),
+    pool: z.number().int(),
+  }).strict(),
+  features: z.array(z.string()),
+}).strict();
+
+export type Config = z.infer<typeof ConfigSchema>;
+```
+
+The nested `db` object is strict as well, so a misspelled `poool` key fails instead of being dropped without a warning.
 
 ## Refining the Generated Schema
 
@@ -98,3 +138,7 @@ Use `.parse()` where a failure should stop the program (configuration at startup
 - **`null` becomes `z.null()`.** The generator does not add `.nullable()`. In an array of objects, a key that is `null` in the first item and a string in the second becomes `z.union([z.null(), z.string()])`.
 - **Mixed arrays become a union.** An array such as `[{"a": 1}, 2]`, at the root or inside an object, gives `z.array(z.union([z.number().int(), z.object({ a: z.number().int() })]))`. All objects in one array merge into a single `z.object`, so the union has one object member.
 - **No string formats or limits.** Emails, URLs, dates, and UUIDs are all `z.string()`.
+- **Whole numbers and decimals under one key give a union.** Prices such as `128.5` and `299` in two array items become `z.union([z.number(), z.number().int()])`; simplify it to `z.number()`.
+- **Large integers.** The input is read with `JSON.parse`, so an integer above 9007199254740991 loses digits before the schema is built.
+- **Root name.** Use ASCII letters and digits. Other characters are removed and the next character is capitalized: `user profile` gives `UserProfileSchema`, and a name such as `用户` gives `户Schema`.
+- **Invalid JSON.** The output is cleared, and after "Invalid JSON:" the status line shows the browser's own parser message (in English in Chrome).

@@ -10,49 +10,37 @@ steps:
   - "点击清空可清除 JSON、输出和状态，保留名称与严格模式。在工具内按 Ctrl/⌘+L 还会清空名称。"
 faqItems:
   - question: "什么是 Zod？"
+    id: "zod"
     answer: "Zod 是一个 TypeScript 优先的 schema 声明和验证库，让你定义数据结构并在运行时进行验证。广泛应用于 API 响应验证、表单验证和配置解析。"
   - question: "生成器如何推断类型？"
-    answer: "生成器检查每个 JSON 值：字符串 → z.string()，布尔 → z.boolean()，整数 → z.number().int()，浮点 → z.number()，null → z.null()，数组 → z.array()，对象 → z.object()。对于对象数组，只在部分 item 中出现的 key 会被标记为 optional。"
+    id: "inference"
+    answer: "生成器检查每个 JSON 值：字符串 → z.string()，布尔 → z.boolean()，整数 → z.number().int()，小数 → z.number()，null → z.null()，数组 → z.array()，对象 → z.object()。对于对象数组，只在部分元素中出现的键会加 .optional()，不同元素里类型不同的键会生成 z.union。"
   - question: "什么是严格模式？"
-    answer: "启用严格模式后，每个 z.object() 后会追加 .strict()，Zod 会拒绝包含 schema 中未定义的多余字段的输入对象。不启用时，多余字段会被静默忽略（Zod 默认行为）。"
+    id: "strict"
+    answer: "勾选「严格模式（不允许多余字段）」后，每个 z.object() 后都会追加 .strict()，嵌套对象也一样。Zod 会拒绝包含 schema 中未定义字段的输入对象。不勾选时，多余字段会从解析结果里被悄悄去掉（Zod 默认行为）。"
+  - question: "生成的代码能用于 Zod 3 和 Zod 4 吗？"
+    id: "zod-versions"
+    answer: "能。生成器只用 z.object、z.array、z.union、z.record、z.string、z.number().int()、z.boolean、z.null、z.unknown、.optional() 和 .strict()，两个版本都有。本页示例在 TypeScript 严格模式下分别对 Zod 3 和 Zod 4 API（zod/v4）编译通过。有一处差别：Zod 4 的 z.number().int() 还会拒绝超出安全整数范围（大于 9007199254740991）的整数。"
   - question: "生成的 schema 可以直接用于生产吗？"
+    id: "refine"
     answer: "生成的 schema 是良好的起点，建议进一步审查和完善，例如为字符串和数字添加 .min()/.max() 约束，将 nullable 字段改为 .nullable().optional()，或将嵌套 schema 拆分为独立的命名常量。"
   - question: "我的 JSON 数据会发送到服务器吗？"
-    answer: "不会。所有处理均在浏览器中完成，JSON 数据不会离开你的设备。"
+    id: "privacy"
+    answer: "不会。页面在浏览器里根据你的 JSON 生成 schema，不把 JSON 发送到任何地方，也不保存到浏览器存储。页面的统计只在你改完输入、焦点离开输入框后，或点击「生成 Zod Schema」「示例」时记录一次使用事件（工具名和动作 generate），不包含 JSON 或生成的代码。"
 ---
 
-<h2>输出格式</h2>
-<p>生成器输出完整的 TypeScript 代码片段，包括：</p>
-<ul>
-  <li><code>import &#123; z &#125; from "zod"</code> — Zod 导入</li>
-  <li><code>const FooSchema = z.object(&#123;...&#125;)</code> — Schema 定义</li>
-  <li><code>export type Foo = z.infer&lt;typeof FooSchema&gt;</code> — 推断的 TypeScript 类型</li>
-</ul>
+## 输出是什么样子
 
-<h2>常见使用场景</h2>
-<ul>
-  <li><strong>API 验证：</strong>从 API 响应示例生成 schema，在运行时验证真实响应。</li>
-  <li><strong>表单验证：</strong>将表单预期的数据结构转换为 Zod schema，用于 react-hook-form 等库。</li>
-  <li><strong>配置文件：</strong>定义和验证从 JSON 文件加载的配置对象。</li>
-  <li><strong>类型安全：</strong>与 TypeScript 结合，从单一 schema 同时获得运行时验证和静态类型推断。</li>
-</ul>
+输出是一段可以直接粘进 `.ts` 文件的代码：第一行 `import { z } from "zod";`，中间是 `const 名称Schema = …;`，最后是 `export type 名称 = z.infer<typeof 名称Schema>;`。schema 常量没有 `export`，别的模块要用时自己加上。名称取自「根 Schema 名称」，留空时用 `Root`。
 
-## 示例
+## 示例：中文键名的订单
 
-根名称填 `User`，输入：
+低代码平台或报表导出的 JSON 常用中文键名。根名称填 `Order`：
+
+{/* jtz-check: {"root":"Order"} */}
 
 ```json
-{
-  "id": 42,
-  "email": "alice@example.com",
-  "price": 19.9,
-  "tags": ["admin", "beta"],
-  "metadata": null,
-  "orders": [
-    { "sku": "A1", "qty": 2 },
-    { "sku": "B7", "qty": 1, "note": "gift" }
-  ]
-}
+{"订单号":"A-1001","收货地址":{"省份":"浙江省","城市":"杭州市"},"商品列表":[{"名称":"龙井茶","数量":2,"单价":128.5},{"名称":"茶具","数量":1,"单价":299,"备注":"礼盒装"}]}
 ```
 
 输出：
@@ -60,33 +48,70 @@ faqItems:
 ```ts
 import { z } from "zod";
 
-const UserSchema = z.object({
-  id: z.number().int(),
-  email: z.string(),
-  price: z.number(),
-  tags: z.array(z.string()),
-  metadata: z.null(),
-  orders: z.array(z.object({
-    sku: z.string(),
-    qty: z.number().int(),
-    note: z.string().optional(),
+const OrderSchema = z.object({
+  "订单号": z.string(),
+  "收货地址": z.object({
+    "省份": z.string(),
+    "城市": z.string(),
+  }),
+  "商品列表": z.array(z.object({
+    "名称": z.string(),
+    "数量": z.number().int(),
+    "单价": z.union([z.number(), z.number().int()]),
+    "备注": z.string().optional(),
   })),
 });
 
-export type User = z.infer<typeof UserSchema>;
+export type Order = z.infer<typeof OrderSchema>;
 ```
 
-两个订单里只有一个有 `note`，所以 `note` 是可选的。输出只用了 Zod 3 和 Zod 4 都支持的写法。
+三处值得注意：
 
-## 调整生成的 schema
+- 中文键名一律加引号，这是合法的 JavaScript 对象键。
+- `单价` 在第一件商品是 `128.5`、第二件是 `299`，生成器把两种数字都列进 `z.union`。这个 union 等价于 `z.number()`，直接改成 `z.number()` 更清楚。如果样本里的价格碰巧都是整数，就只会得到 `z.number().int()`，以后遇到 `128.5` 会校验失败，所以价格字段要手动检查。
+- `备注` 只在第二件商品里出现，所以加了 `.optional()`。
 
-样本里每个字段只有一个值，生成器不知道你的业务规则。使用前检查这几处：
+根名称请用英文字母和数字。生成器只保留 ASCII 字母和数字，其他字符被去掉、后一个字符变成大写：填 `用户` 会得到 `户Schema`，不是合法又好读的名称。
+
+## 示例：后端返回的 19 位 ID
+
+很多 Java 后端用 MyBatis-Plus 的 `IdType.ASSIGN_ID` 生成主键。按 [MyBatis-Plus 注解文档](https://baomidou.com/reference/annotation/)，它默认用雪花算法，适用于 Long、Integer、String 类型的主键。主键是 Long 时，接口返回的 JSON 里会是一个很长的数字。根名称填 `UserResult`：
+
+{/* jtz-check: {"root":"UserResult","rejects":{"v4":["data","id"]}} */}
+
+```json
+{"code":200,"msg":"操作成功","data":{"id":1830000000000000001,"userName":"张三","remark":null}}
+```
+
+输出：
+
+```ts
+import { z } from "zod";
+
+const UserResultSchema = z.object({
+  code: z.number().int(),
+  msg: z.string(),
+  data: z.object({
+    id: z.number().int(),
+    userName: z.string(),
+    remark: z.null(),
+  }),
+});
+
+export type UserResult = z.infer<typeof UserResultSchema>;
+```
+
+`1830000000000000001` 大于 `Number.MAX_SAFE_INTEGER`（9007199254740991，见 [MDN](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER)），`JSON.parse` 读出来是 `1830000000000000000`，生成器和你的前端拿到的都是这个已经变了的值。用这份 schema 去校验这份样本，两个版本的结果不同：Zod 3 的 `z.number().int()` 放行，错误的 ID 一路传下去；Zod 4 的 `z.number().int()` 只接受安全范围内的整数，报 `Too big: expected int to be <9007199254740991`。两种结果都说明数字类型装不下这个 ID，应让后端把它输出成字符串，schema 改为 `z.string().regex(/^\d+$/)`。
+
+`remark` 样本里是 `null`，生成 `z.null()`，只接受 `null`。按接口文档改成 `z.string().nullable()`。
+
+## 生成后怎么改
 
 | 生成结果 | 问题 | 改为（Zod 4） |
 |---|---|---|
 | `email: z.string()` | 任意字符串都能通过 | `z.email()`（Zod 3：`z.string().email()`） |
-| `qty: z.number().int()` | 只有值一定是整数时才对。样本里 `price: 10` 也会得到 `.int()`，之后 `10.5` 会报 "expected int" | 价格用 `z.number()`，再加 `.min(0)` 或 `.positive()` |
-| `metadata: z.null()` | 只有 `null` 能通过 | `z.string().nullable()` |
+| `数量: z.number().int()` | 只有一定是整数时才对，`10.5` 会报 `Invalid input: expected int, received number` | 价格类字段用 `z.number()`，再加 `.min(0)` |
+| `remark: z.null()` | 只有 `null` 能通过 | `z.string().nullable()` |
 | `status: z.string()` | 任意字符串都能通过 | `z.enum(["active", "inactive"])` |
 | 样本里出现过的字段 | 一律必填，即使接口有时不返回 | 加 `.optional()` |
 
@@ -97,4 +122,7 @@ export type User = z.infer<typeof UserSchema>;
 - **类型只来自一份样本。** 空数组生成 `z.array(z.unknown())`，空对象生成 `z.record(z.string(), z.unknown())`。
 - **`null` 生成 `z.null()`。** 不会自动加 `.nullable()`。在对象数组里，某个键在第一项是 `null`、第二项是字符串时，生成 `z.union([z.null(), z.string()])`。
 - **混合数组生成 union。** `[{"a": 1}, 2]` 这样的数组，不论在根上还是在对象内部，都生成 `z.array(z.union([z.number().int(), z.object({ a: z.number().int() })]))`。同一数组里的对象合并成一个 `z.object`，所以 union 里只有一个对象成员。
+- **同一个键既有整数又有小数时生成 union。** `z.union([z.number(), z.number().int()])` 可以直接改成 `z.number()`。
+- **大整数。** 输入用 `JSON.parse` 读取，大于 9007199254740991 的整数在生成 schema 之前就已经变了。
 - **没有字符串格式与范围。** 邮箱、URL、日期、UUID 都是 `z.string()`。
+- **输入必须是合法 JSON。** 无效时输出被清空，状态栏在「JSON 格式错误：」后面显示浏览器自带的解析错误（Chrome 里是英文）。中文输入法带进来的全角引号 `“”` 和全角冒号 `：` 也会报错。
