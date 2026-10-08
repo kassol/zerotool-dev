@@ -143,6 +143,18 @@ t("John's Guide", 'johns-guide');
 t('你好', '');
 t('日本語 Guide', 'guide');
 
+// ---------- format characters (General_Category=Cf) are deleted ----------
+// Soft hyphen, zero-width space / non-joiner / joiner, word joiner, LRM and BOM are invisible and
+// are deleted without a separator, as on master and in WordPress sanitize_title_with_dashes().
+t('hyphen\u00ADation', 'hyphenation');
+t('Java\u200BScript', 'javascript');
+t('co\u200Coperate', 'cooperate');
+t('Ice\u2060cream', 'icecream');
+t('Hello\u200EWorld', 'helloworld');
+t('\uFEFFTitle', 'title');
+t('a\u200Db', 'ab');
+t('Don\u00AD\u2019t stop', 'dont-stop');
+
 // ---------- removed characters split words; full-width forms; won sign ----------
 // A deleted character (CJK, full-width space, other non-ASCII) acts as a separator, so the
 // Latin words around it stay apart; runs merge and Trim removes them at the ends. Before the
@@ -508,7 +520,7 @@ for (const lang of Object.keys(copyLabels)) {
   q.input('sl-input', ''); q.get('sl-input').dispatch('change');
   eq(lang + ': empty input sends no event', q.tracks.length, 3);
 }
-eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'dc8c3bc29ebe074e91fada219c56fca57a7a5f4681c1809ccf215b6ea150ae5c');
+eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'9fb04cf8567cf3d9a59f1a6ced6a5e27e00e8246a6903524ecf9cf7be4592396');
 eq('no unhandled copy rejections',unhandled,[]);process.off('unhandledRejection',onUnhandled);
 // ---------- v2 page layout ----------
 const v2Start=passes;
