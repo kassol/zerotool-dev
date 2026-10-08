@@ -3,21 +3,29 @@ seoTitle: "JWT Token Generator — Create & Sign JWTs | ZeroTool"
 seoDescription: "Generate and sign JWT tokens using HS256, HS384, or HS512 directly in your browser. Edit header and payload JSON, set your secret, and copy the signed token — no data sent to servers."
 steps:
   - "Choose Algorithm: HS256, HS384 or HS512. The selection updates alg in a valid Header JSON object."
-  - "Edit Payload JSON and enter a test Secret. Choose UTF-8 or Base64 to match how your key is stored."
+  - "Edit the Payload JSON object and enter a test Secret. Choose UTF-8 or Base64 to match how your key is stored."
   - "Expand Header to edit its JSON. Its alg must match the selected algorithm; a mismatch opens Header with an error."
   - "Wait 0.5 seconds after editing for Generated Token to update. A short key still signs and displays a warning."
   - "Click Copy for the full token. Ctrl+L (⌘+L on Mac) inside the tool clears all three fields and results while keeping the algorithm and secret format."
 faqItems:
-  - question: "What is a JWT?"
+  - id: what-is
+    question: "What is a JWT?"
     answer: "A JSON Web Token (JWT) is a compact, URL-safe token format defined in RFC 7519. It consists of three Base64URL-encoded parts separated by dots: a header (algorithm and type), a payload (claims), and a signature. JWTs are commonly used for authentication and information exchange."
-  - question: "Is my secret key sent to any server?"
-    answer: "No. All signing is performed using the browser's built-in Web Crypto API (SubtleCrypto). Your header, payload, and secret never leave your browser."
-  - question: "Which algorithm should I choose?"
-    answer: "HS256 (HMAC-SHA256) is the most widely used algorithm and is suitable for most use cases. HS384 and HS512 use larger hash outputs and are appropriate when extra security margin is required. All three are symmetric algorithms — the same secret is used to both sign and verify."
-  - question: "Can I verify the token generated here on jwt.io?"
-    answer: "Yes. Copy the generated token and paste it into jwt.io. Enter the same secret and select the matching algorithm to verify the signature."
-  - question: "What is the Base64 secret format option?"
-    answer: "Some services provide secrets pre-encoded in Base64 (or Base64URL). Select the Base64 option when your secret is already in that form — the tool will decode it before signing, producing the correct signature."
+  - id: privacy
+    question: "Is my secret key sent to any server?"
+    answer: "No. Signing uses the browser's built-in Web Crypto API (SubtleCrypto); the header, payload and secret are not sent anywhere. The tool does not save them, and stored values for this page are deleted each time it loads. Because the page handles secrets, it loads neither Google Analytics nor AdSense."
+  - id: algorithm
+    question: "Which algorithm should I choose?"
+    answer: "HS256 (HMAC-SHA256) is the most widely used and suits most cases; HS384 and HS512 use longer hashes. All three are symmetric: the same secret signs and verifies. Whichever you pick, RFC 7518 requires a key at least as long as the hash output: 32, 48 or 64 bytes."
+  - id: verify
+    question: "How do I check that a token from this page verifies?"
+    answer: "Verify it with any HMAC JWT library, using the same algorithm and the same key bytes. The examples on this page are verified with PyJWT 2.10.1: jwt.decode(token, key, algorithms=[\"HS256\"]). In Base64 mode, pass the decoded bytes, not the Base64 text. The JWT Decoder on this site shows the claims but does not check the signature."
+  - id: base64-secret
+    question: "What is the Base64 secret format option?"
+    answer: "Some services provide secrets pre-encoded in Base64 (or Base64URL). Select the Base64 option when your secret is already in that form — the tool will decode it before signing, producing the correct signature. The key length that counts is the decoded length: 44 Base64 characters decode to 32 bytes."
+  - id: whitespace
+    question: "Why is my token longer than one made by a library for the same claims?"
+    answer: "The tool signs the Header and Payload text exactly as typed, including line breaks and indentation; only leading and trailing whitespace is removed. Libraries usually serialize compact JSON. Both tokens are valid and verify with the same key. To get the compact form, paste minified JSON, for example {\"alg\":\"HS256\",\"typ\":\"JWT\"}."
 ---
 
 <h2>Common Use Cases</h2>
@@ -29,6 +37,8 @@ faqItems:
 </ul>
 
 <h2>Example: A Token for a Local API Test</h2>
+
+{/* jwt-check: {"algo":"HS256","fmt":"utf8","secret":"dev-secret-at-least-32-bytes-long!!","header":"{\n  \"alg\": \"HS256\",\n  \"typ\": \"JWT\"\n}","payload":"{\n  \"sub\": \"user-42\",\n  \"role\": \"admin\",\n  \"iat\": 1767225600,\n  \"exp\": 1767229200\n}","inputLen":160} */}
 
 <p>Header (unchanged default) and payload as typed into the tool, with the UTF-8 secret <code>{"dev-secret-at-least-32-bytes-long!!"}</code>:</p>
 
@@ -50,18 +60,71 @@ faqItems:
 
 <p>The tool encodes the header and payload text exactly as typed, including line breaks and indentation, so this token is longer than one made from minified JSON (160 vs 125 characters before the signature). It is still a valid JWS. Verifying it with PyJWT:</p>
 
-<pre><code>{`import jwt  # PyJWT 2.10
+{/* jwt-py: {"expect":"{'sub': 'user-42', 'role': 'admin', 'iat': 1767225600, 'exp': 1767229200}\nExpiredSignatureError: Signature has expired"} */}
 
-jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"],
-           options={"verify_exp": False})
-# {'sub': 'user-42', 'role': 'admin', 'iat': 1767225600, 'exp': 1767229200}
+<pre><code>{`import jwt  # PyJWT 2.10.1
 
-jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"])
-# jwt.exceptions.ExpiredSignatureError: Signature has expired`}</code></pre>
+token = "ewogICJhbGciOiAiSFMyNTYiLAogICJ0eXAiOiAiSldUIgp9.ewogICJzdWIiOiAidXNlci00MiIsCiAgInJvbGUiOiAiYWRtaW4iLAogICJpYXQiOiAxNzY3MjI1NjAwLAogICJleHAiOiAxNzY3MjI5MjAwCn0.Bv_t0OCTXuNeir4XkkMmC0CJs8jGuy1knb6zZGgSRTs"
+key = "dev-secret-at-least-32-bytes-long!!"
+print(jwt.decode(token, key, algorithms=["HS256"], options={"verify_exp": False}))
+try:
+    jwt.decode(token, key, algorithms=["HS256"])
+except jwt.ExpiredSignatureError as e:
+    print("ExpiredSignatureError:", e)`}</code></pre>
+
+<p>Output:</p>
+
+<pre><code>{`{'sub': 'user-42', 'role': 'admin', 'iat': 1767225600, 'exp': 1767229200}
+ExpiredSignatureError: Signature has expired`}</code></pre>
 
 <p><code>{"iat"}</code> 1767225600 is 2026-01-01 00:00:00 UTC and <code>{"exp"}</code> is one hour later, so a library that checks expiry rejects the token today. The tool does not add or check <code>{"iat"}</code>, <code>{"exp"}</code> or <code>{"nbf"}</code>; write the timestamps you need yourself (Unix seconds, <a href="https://www.rfc-editor.org/rfc/rfc7519#section-4.1" target="_blank" rel="noopener">RFC 7519 §4.1</a>).</p>
 
 <p>Editing Header alg to HS512 while HS256 remains selected shows an error and clears the previous token.</p>
+
+<h2>Example: The Same Key Text in UTF-8 and Base64 Mode</h2>
+
+<p>A key generated with <code>{"openssl rand -base64 32"}</code> is 44 characters of Base64 text that stand for 32 random bytes. This demo key was made up for the page:</p>
+
+<pre><code>{`q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=`}</code></pre>
+
+<p>With compact JSON in both fields:</p>
+
+<pre><code>{`{"alg":"HS256","typ":"JWT"}`}</code></pre>
+
+<pre><code>{`{"sub":"user-42","iat":1767225600}`}</code></pre>
+
+{/* jwt-check: {"algo":"HS256","fmt":"base64","secret":"q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=","header":"{\"alg\":\"HS256\",\"typ\":\"JWT\"}","payload":"{\"sub\":\"user-42\",\"iat\":1767225600}","inputLen":83} */}
+
+<p>Base64 mode signs with the 32 decoded bytes:</p>
+
+<pre><code>{`eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTQyIiwiaWF0IjoxNzY3MjI1NjAwfQ.ObzNwrIiJoDqNA5f-RGsGcZB1_yg_YfeziEmaFgph6Q`}</code></pre>
+
+{/* jwt-check: {"algo":"HS256","fmt":"utf8","secret":"q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=","header":"{\"alg\":\"HS256\",\"typ\":\"JWT\"}","payload":"{\"sub\":\"user-42\",\"iat\":1767225600}"} */}
+
+<p>UTF-8 mode signs with the 44 bytes of the text itself, so only the signature changes:</p>
+
+<pre><code>{`eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTQyIiwiaWF0IjoxNzY3MjI1NjAwfQ.JQZj6nLnAjm412MFmVpVqGVWBXx3MVzFUWA6IvPHjVw`}</code></pre>
+
+<p>Neither mode shows a warning, because both keys are at least 32 bytes. A server that decodes the key before verifying accepts only the first token:</p>
+
+{/* jwt-py: {"expect":"{'sub': 'user-42', 'iat': 1767225600}\nInvalidSignatureError: Signature verification failed"} */}
+
+<pre><code>{`import base64
+import jwt  # PyJWT 2.10.1
+
+key = base64.b64decode("q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=")
+base64_mode = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTQyIiwiaWF0IjoxNzY3MjI1NjAwfQ.ObzNwrIiJoDqNA5f-RGsGcZB1_yg_YfeziEmaFgph6Q"
+utf8_mode = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTQyIiwiaWF0IjoxNzY3MjI1NjAwfQ.JQZj6nLnAjm412MFmVpVqGVWBXx3MVzFUWA6IvPHjVw"
+print(jwt.decode(base64_mode, key, algorithms=["HS256"]))
+try:
+    jwt.decode(utf8_mode, key, algorithms=["HS256"])
+except jwt.InvalidSignatureError as e:
+    print("InvalidSignatureError:", e)`}</code></pre>
+
+<p>Output:</p>
+
+<pre><code>{`{'sub': 'user-42', 'iat': 1767225600}
+InvalidSignatureError: Signature verification failed`}</code></pre>
 
 <h2>Choosing a Key</h2>
 
@@ -78,5 +141,8 @@ openssl rand -base64 64   # HS512`}</code></pre>
   <li>Only HMAC algorithms (HS256, HS384, HS512). RS256 and ES256 tokens need a private key and are not supported.</li>
   <li><a href="https://www.rfc-editor.org/rfc/rfc7518#section-3.2" target="_blank" rel="noopener">RFC 7518 §3.2</a> requires a key at least as long as the hash output: 32 bytes for HS256, 48 for HS384, 64 for HS512. The tool still signs with a shorter secret but shows a warning with the byte count; the default sample secret <code>your-256-bit-secret</code> is only 19 bytes and triggers it.</li>
   <li>In Base64 mode the secret is decoded first (standard or URL-safe alphabet, padding optional). Use it when the server stores the key as Base64; otherwise the signature will not match.</li>
+  <li>The Payload must be a JSON object. An array, string, number or <code>{"null"}</code> shows an error instead of a token, because <a href="https://www.rfc-editor.org/rfc/rfc7519#section-7.2" target="_blank" rel="noopener">RFC 7519 §7.2</a> requires the claims to be a JSON object and libraries such as PyJWT reject anything else.</li>
+  <li>Header and Payload lose only their leading and trailing whitespace. The secret is used exactly as typed, so a trailing space or line break changes the signature.</li>
+  <li>Half of an emoji (an unpaired UTF-16 surrogate) in any field is rejected with its position, because UTF-8 cannot encode it.</li>
   <li>Do not paste production signing secrets into any web page. Use a dedicated test secret.</li>
 </ul>

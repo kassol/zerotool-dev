@@ -20,13 +20,15 @@
 //
 // Run: node scripts/test-jwt-generator.mjs
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createHmac, createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, readToolMdx, annotations, fencedBlocks, LANGS } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JwtGeneratorTool.astro'), 'utf8');
@@ -451,6 +453,99 @@ process.removeListener('unhandledRejection',onUnhandled);
 console.log('real page lifecycle: ' + (passes - pageStart) + ' passed');
 
 
+// ---------- worked examples on the four pages ----------
+// {/* jwt-check: {"algo","fmt","secret","header","payload", "warn"?, "inputLen"?, "secretShown"?} */}
+//   The token is signed again with node:crypto (and, in a separate pass, with the page engine) and must
+//   appear in inline code or a code block after the note. Header and Payload must be shown as code
+//   blocks, and the secret as code, in the same section (before or after the note). The inputs must pass
+//   the page's own checks (alg matches, Payload is an object, no unpaired surrogate, key not empty). A
+//   key shorter than RFC 7518 §3.2 needs "warn": <bytes>, and the page's localized warning must appear.
+// {/* jwt-time: {"iso","unix"} */}  Date.parse(iso) / 1000 = unix, and unix is shown as code after the note.
+// {/* jwt-py: {"expect"} */}  the next code block is Python; with PyJWT 2.10.1 (python3, or $PYJWT_PYTHON)
+//   it runs and prints expect, which must also be shown as code after the note. Without PyJWT: SKIP.
+function shownCode(text) {
+  const inline = [...text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').replace(/<pre\b[\s\S]*?<\/pre>/g, '').matchAll(/`([^`\n]+)`|<code>\{"((?:[^"\\]|\\.)*)"\}<\/code>|<code>([^<{]+)<\/code>/g)].map(m => m[1] ?? m[3] ?? JSON.parse('"' + m[2] + '"'));
+  return [...inline, ...fencedBlocks(text).map(b => b.text)];
+}
+function sectionBefore(body, index) {
+  const before = body.slice(0, index);
+  const h2 = Math.max(before.lastIndexOf('\n## '), before.lastIndexOf('<h2'));
+  return h2 < 0 ? before : before.slice(h2);
+}
+const HMAC = { HS256: 'sha256', HS384: 'sha384', HS512: 'sha512' };
+function lone(str) { for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); if (c >= 0xd800 && c <= 0xdbff) { const d = str.charCodeAt(i + 1); if (d >= 0xdc00 && d <= 0xdfff) { i++; continue; } return true; } if (c >= 0xdc00 && c <= 0xdfff) return true; } return false; }
+function exampleToken(spec) {
+  const key = Buffer.from(E.decodeSecret(spec.secret, spec.fmt) ?? []);
+  const input = b64url(Buffer.from(spec.header.trim())) + '.' + b64url(Buffer.from(spec.payload.trim()));
+  return { key, input, token: input + '.' + createHmac(HMAC[spec.algo], key).update(input).digest('base64url') };
+}
+function verifyJwtExample({ spec, after, lang, body, index }) {
+  for (const k of ['algo', 'fmt', 'secret', 'header', 'payload']) if (typeof spec?.[k] !== 'string') return 'annotation needs ' + k;
+  if (!HMAC[spec.algo] || !['utf8', 'base64'].includes(spec.fmt)) return 'bad algo or fmt';
+  let header, payload;
+  try { header = JSON.parse(spec.header.trim()); payload = JSON.parse(spec.payload.trim()); } catch { return 'header or payload is not JSON'; }
+  if (!header || header.alg !== spec.algo) return 'header alg does not match the algorithm';
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return 'payload is not an object';
+  if (lone(spec.header) || lone(spec.payload) || (spec.fmt === 'utf8' && lone(spec.secret))) return 'unpaired surrogate';
+  const decoded = E.decodeSecret(spec.secret, spec.fmt);
+  if (!decoded || !decoded.length) return 'secret does not decode to key bytes';
+  const { input, token } = exampleToken(spec);
+  const section = sectionBefore(body, index) + after;
+  const blocks = fencedBlocks(section).map(b => b.text), codes = shownCode(section), here = shownCode(after);
+  if (!here.some(c => c === token || c.includes(token))) return 'token ' + token + ' not shown after the note';
+  if (!blocks.includes(spec.header)) return 'header block not shown in the section';
+  if (!blocks.includes(spec.payload)) return 'payload block not shown in the section';
+  if (spec.secretShown !== false && !codes.includes(spec.secret)) return 'secret not shown as code in the section';
+  const min = E.minKeyBytes(spec.algo);
+  if (decoded.length < min) {
+    if (spec.warn !== decoded.length) return `key is ${decoded.length} bytes; annotation needs "warn": ${decoded.length}`;
+    const text = PAGE_STRINGS[lang].warnShortKey.replace('{bytes}', decoded.length).replace('{min}', min).replace('{algo}', spec.algo);
+    if (!after.includes(text)) return 'warning not shown: ' + text;
+  } else if (spec.warn !== undefined) return `key is ${decoded.length} bytes, no warning`;
+  if (spec.inputLen !== undefined && input.length !== spec.inputLen) return `signing input is ${input.length} characters, not ${spec.inputLen}`;
+  return null;
+}
+function verifyJwtTime({ spec, after }) {
+  if (typeof spec?.iso !== 'string' || !Number.isInteger(spec.unix)) return 'annotation needs iso and unix';
+  if (Date.parse(spec.iso) / 1000 !== spec.unix) return `${spec.iso} is ${Date.parse(spec.iso) / 1000}, not ${spec.unix}`;
+  if (!shownCode(after).some(c => c.includes(String(spec.unix)))) return spec.unix + ' not shown as code after the note';
+  return null;
+}
+const pyjwtPython = process.env.PYJWT_PYTHON || 'python3';
+let pyjwt = false;
+try { pyjwt = execFileSync(pyjwtPython, ['-c', 'import jwt;print(jwt.__version__)'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() === '2.10.1'; } catch {}
+let skips = 0;
+function verifyJwtPy({ spec, after }) {
+  if (typeof spec?.expect !== 'string') return 'annotation needs expect';
+  const block = fencedBlocks(after)[0];
+  if (!block || !/^import jwt\b/m.test(block.text)) return 'next code block is not PyJWT code';
+  if (!shownCode(after).some(c => c.includes(spec.expect))) return 'expected output not shown after the code';
+  if (!pyjwt) { skips++; return null; }
+  const dir = mkdtempSync(join(tmpdir(), 'jwt-py-'));
+  try {
+    writeFileSync(join(dir, 'main.py'), block.text);
+    const out = execFileSync(pyjwtPython, [join(dir, 'main.py')]).toString().trim();
+    return out === spec.expect ? null : 'PyJWT printed ' + JSON.stringify(out);
+  } catch (e) { return 'PyJWT failed: ' + String(e.stderr || e.message).slice(0, 300); }
+  finally { rmSync(dir, { recursive: true, force: true }); }
+}
+const JWT_ANNOTATIONS = { annotations: [
+  { tag: 'jwt-check', min: 2, verify: verifyJwtExample },
+  { tag: 'jwt-time', verify: verifyJwtTime },
+  { tag: 'jwt-py', verify: verifyJwtPy },
+] };
+{
+  // The page engine (Web Crypto) signs every annotated example to the same token as node:crypto.
+  const docs = readToolMdx('jwt-generator');
+  for (const lang of LANGS) for (const note of annotations(docs[lang].body, 'jwt-check')) {
+    if (!note.spec) continue;
+    const key = E.decodeSecret(note.spec.secret, note.spec.fmt);
+    if (!key || !key.length) continue;
+    const engine = await E.signJwt(note.spec.header.trim(), note.spec.payload.trim(), key, note.spec.algo, subtle);
+    eq(lang + ' jwt-check engine token equals node:crypto: ' + engine.slice(-12), engine, exampleToken(note.spec).token);
+  }
+}
+
 // ---------- v2 page layout ----------
 const v2Start = passes;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
@@ -503,7 +598,7 @@ for (const lang of ['en','zh','ja','ko']) {
   check(lang+' v2 steps are plain text with current labels',steps.every(step=>!/[<>]|\]\(|\*\*|`/.test(step))&&['algorithm','headerLabel','payloadLabel','secretLabel','copy'].every(key=>steps.join(' ').includes(PAGE_STRINGS[lang][key])));
   check(lang+' v2 usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
   check(lang+' v2 new example is present',mdx.includes(addedExample[lang]));
-  eq(lang+' MDX content contract', contractProblems('jwt-generator', lang), '');
+  eq(lang+' MDX content contract and worked examples', contractProblems('jwt-generator', lang, JWT_ANNOTATIONS), '');
   const p=pageVM(lang,false),details=p.get('jg-header-details'),pane=p.get('jg-result-pane');
   eq(lang+' v2 Header initially closed and pending token empty',[details.open,pane.getAttribute('data-empty')],[false,'true']);
   await p.waitJobs(1); await p.finish(0);
@@ -526,5 +621,6 @@ check('v2 sensitive policy remains disabled',/'jwt-generator':\s*'disabled'/.tes
 check('v2 client adds no network or persistence',!/\bfetch\s*\(|XMLHttpRequest|localStorage|sessionStorage/.test(clientScript));
 console.log('v2 page layout: '+(passes-v2Start)+' passed');
 
+if (skips) console.log(`SKIP: ${skips} jwt-py example(s): ${pyjwtPython} with PyJWT 2.10.1 not found (set PYJWT_PYTHON)`);
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
