@@ -12,180 +12,162 @@ steps:
   - "クリアは JSON、出力、ステータスを消去し、ルート名と両方の設定を保持します。ツール内で Ctrl/⌘+L を押すとルート名も消去します。"
 faqItems:
   - question: "このツールは何を生成しますか？"
-    answer: "JSONオブジェクトからTypeScriptのinterface（またはtype alias）宣言を生成します。ネストされたオブジェクトは個別の名前付きインターフェースになり、配列内の混合型はUnion型になります。"
+    id: "output"
+    answer: "JSON オブジェクトから TypeScript の interface（または type エイリアス）宣言を生成します。ネストされたオブジェクトは個別の名前付きインターフェースになり、配列内の型が混在する場合はユニオン型になります。"
   - question: "ネストされたオブジェクトはどう処理されますか？"
-    answer: "ネストされた各オブジェクトフィールドは、フィールドキーのPascalCase名を持つ独立したインターフェースとして抽出されます。例えば 'address' フィールドは 'Address' インターフェースになり、親インターフェースはその名前で参照します。"
+    id: "nested"
+    answer: "ネストされた各オブジェクトは、キー名を PascalCase にした名前の独立したインターフェースになります。たとえば address は Address になり、親のインターフェースはその名前で参照します。大文字になるのはハイフンや空白などの区切りの後ろの文字だけなので、user-info は UserInfo、same_name は Same_name になります。日本語のキーはそのまま型名になります（例：住所）。"
   - question: "オブジェクトの配列はどう処理されますか？"
-    answer: "配列にオブジェクトが含まれる場合、すべてのオブジェクトのフィールドがマージされて1つのアイテムインターフェースになります。一部のオブジェクトにしか存在しないフィールドはオプショナルになります。"
-  - question: "'Make properties optional' オプションとは何ですか？"
-    answer: "チェックすると、生成されるすべてのインターフェースのすべてのプロパティに '?' が付き、省略可能になります。部分的なデータを受け取る可能性がある場合や、緩い型定義が必要な場合に便利です。"
+    id: "object-arrays"
+    answer: "配列内のオブジェクトはすべてマージされて 1 つの要素インターフェースになります。一部の要素にしかないフィールドには ? が付き、要素によって型が違うフィールドは (null | string) のようなユニオン型になります。"
+  - question: "「プロパティをオプションにする」とは何ですか？"
+    id: "optional"
+    answer: "オンにすると、生成するすべてのインターフェースのすべてのプロパティに ? が付き、省略可能になります。一部のフィールドしか返らないデータを受け取る場合や、緩い型定義が欲しい場合に使います。変更後は「TypeScript を生成」をクリックして適用します。"
   - question: "interface と type の違いは何ですか？"
-    answer: "どちらもオブジェクトの形状を宣言できます。'interface' は宣言マージをサポートし、オブジェクト型の慣用的な書き方です。'type' はより柔軟で、プリミティブ・Union型・タプルも表現できます。'Use type instead of interface' で切り替えられます。"
+    id: "interface-vs-type"
+    answer: "どちらもオブジェクトの形を宣言できます。interface は宣言のマージができ、オブジェクト型によく使われる書き方です。type はプリミティブ、ユニオン型、タプルも表せます。「interface の代わりに type を使用」で切り替えます。"
   - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。型推論エンジン全体がブラウザ内で動作します。データは端末の外に出ません。"
+    id: "privacy"
+    answer: "いいえ。ページはブラウザ内で JSON から型を推論し、JSON をどこにも送信せず、ブラウザのストレージにも保存しません。ページのアクセス解析は、入力を編集してフォーカスが外れたとき、または「TypeScript を生成」「サンプル」をクリックしたときに利用イベント（ツール名と動作 generate）を 1 回記録するだけで、JSON や生成したコードは含みません。"
 ---
 
-<h2>型推論ルール</h2>
-<ul>
-  <li><code>null</code> → 省略可能な <code>null</code>（<code>field?: null</code>）</li>
-  <li>文字列 → <code>string</code></li>
-  <li>数値 → <code>number</code></li>
-  <li>真偽値 → <code>boolean</code></li>
-  <li>空配列 → <code>unknown[]</code></li>
-  <li>オブジェクト配列 → マージされたインターフェース + <code>ItemName[]</code></li>
-  <li>混合プリミティブ配列 → Union型（例: <code>(string | number)[]</code>）</li>
-  <li>ネストオブジェクト → 独立した名前付きインターフェース</li>
-</ul>
+## 型の決まり方
 
-<h2>例</h2>
-<p>以下のJSONを入力すると:</p>
-<pre><code>{`{"user": {"name": "Alice", "age": 30}, "tags": ["admin", "user"]}`}</code></pre>
-<p>次のように生成されます:</p>
-<pre><code>{`interface RootObject {\n  user: User;\n  tags: string[];\n}\n\ninterface User {\n  name: string;\n  age: number;\n}`}</code></pre>
+- 文字列は `string`、数値は整数と小数を区別せず `number`、真偽値は `boolean` になります。
+- オブジェクトのプロパティが `null` のときは `field?: null` になります。値があるときの型はサンプル 1 件からはわからないためです。
+- 空配列は `unknown[]`、プリミティブが混ざった配列は `(string | number)[]` のようなユニオン型になります。
+- オブジェクトの配列は全要素をマージして 1 つの要素インターフェース（`ResultsItem` など）にします。
+- ルートのインターフェースが先頭に来て、残りは最初に見つかった順に並びます。
 
-## 例：API レスポンス
+## 例：郵便番号検索 API のレスポンス
+
+[zipcloud の郵便番号検索 API](https://zipcloud.ibsnet.co.jp/doc/api) は、日本郵便が公開している郵便番号データを検索する API です。ドキュメントのレスポンスサンプル（郵便番号 0790177 で 2 件ヒット）をそのまま貼り、ルートインターフェース名を `ZipcloudResponse` にします。
+
+{/* jtt-check: {"root":"ZipcloudResponse"} */}
 
 ```json
 {
-  "user": {
-    "id": 42,
-    "name": "Alice",
-    "email": "alice@example.com",
-    "roles": ["admin", "editor"],
-    "preferences": { "theme": "dark", "notifications": true },
-    "lastLogin": null
-  },
-  "pagination": { "page": 1, "perPage": 20, "total": 143 }
-}
-```
-
-から次の型が生成されます。
-
-```typescript
-interface RootObject {
-  user: User;
-  pagination: Pagination;
-}
-
-interface User {
-  id: number;
-  name: string;
-  email: string;
-  roles: string[];
-  preferences: Preferences;
-  lastLogin?: null;
-}
-
-interface Preferences {
-  theme: string;
-  notifications: boolean;
-}
-
-interface Pagination {
-  page: number;
-  perPage: number;
-  total: number;
-}
-```
-
-ルートのインターフェースが先頭に来て、ネストしたインターフェースは見つかった順に続きます。`null` の値は型 `null` として出力され、省略可能になります。1つのサンプルからは値があるときの型がわからないためです。API ドキュメントを確認して `lastLogin: string | null` のように直してください。
-
-## 例：形の異なる要素を含む配列
-
-```json
-{
-  "items": [
-    { "id": 1, "name": "a", "tags": [] },
-    { "id": 2, "price": 9.5, "tags": ["x", 1] }
+  "message": null,
+  "results": [
+    {
+      "address1": "北海道",
+      "address2": "美唄市",
+      "address3": "上美唄町協和",
+      "kana1": "ﾎｯｶｲﾄﾞｳ",
+      "kana2": "ﾋﾞﾊﾞｲｼ",
+      "kana3": "ｶﾐﾋﾞﾊﾞｲﾁｮｳｷｮｳﾜ",
+      "prefcode": "1",
+      "zipcode": "0790177"
+    },
+    {
+      "address1": "北海道",
+      "address2": "美唄市",
+      "address3": "上美唄町南",
+      "kana1": "ﾎｯｶｲﾄﾞｳ",
+      "kana2": "ﾋﾞﾊﾞｲｼ",
+      "kana3": "ｶﾐﾋﾞﾊﾞｲﾁｮｳﾐﾅﾐ",
+      "prefcode": "1",
+      "zipcode": "0790177"
+    }
   ],
-  "messages": [
-    { "type": "text", "content": "hi" },
-    { "type": "image", "url": "/a.png" }
-  ]
+  "status": 200
 }
 ```
 
-から次の型が生成されます。
+生成結果：
 
 ```typescript
-interface RootObject {
-  items: ItemsItem[];
-  messages: MessagesItem[];
+interface ZipcloudResponse {
+  message?: null;
+  results: ResultsItem[];
+  status: number;
 }
 
-interface ItemsItem {
-  id: number;
-  name?: string;
-  tags: (unknown[] | (string | number)[]);
-  price?: number;
-}
-
-interface MessagesItem {
-  type: string;
-  content?: string;
-  url?: string;
+interface ResultsItem {
+  address1: string;
+  address2: string;
+  address3: string;
+  kana1: string;
+  kana2: string;
+  kana3: string;
+  prefcode: string;
+  zipcode: string;
 }
 ```
 
-配列内のオブジェクトはすべてマージされ、一部の要素にしかないキーには `?` が付きます。`messages` は実際には `type` で区別される2つの形です。マージ後のインターフェースは「`url` を持つ text メッセージ」のような不正な組み合わせも通すので、判別可能なユニオン型に書き直します（[TypeScript Handbook: Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#discriminated-unions)）：
+`prefcode` と `zipcode` は数字ですが、JSON では文字列なので `string` になります。郵便番号の先頭の 0 が消えないので、このまま文字列で扱うのが安全です。半角カナの `kana1` なども、ツールから見ればただの `string` です。
 
-```typescript
-type Message =
-  | { type: "text"; content: string }
-  | { type: "image"; url: string };
-```
+一方で、この型はエラー時のレスポンスに合いません。ドキュメントのエラー時サンプルでは `message` に文字列が入り、`results` は `null` です。成功時の 1 件だけから作ると、`message` は「`null` しか入らない省略可能なフィールド」、`results` は「必ず配列」になってしまいます。
 
-## 例：同じキー名のオブジェクトが 2 つある場合
+## 例：成功時とエラー時をまとめて貼る
+
+複数のパターンを 1 つの型にしたいときは、レスポンスを配列に入れて貼ります。ルートが配列の場合、各要素がマージされ、要素 1 件分の型がルート名で出力されます。成功時（results は 1 件に省略）とエラー時のサンプルを並べると：
+
+{/* jtt-check: {"root":"ZipcloudResponse"} */}
 
 ```json
-{
-  "order": { "id": "A-1001", "meta": { "createdBy": "alice", "source": "web" } },
-  "payment": { "status": "paid", "meta": { "provider": "stripe", "fee": 0.3 } }
-}
+[
+  {
+    "message": null,
+    "results": [
+      {
+        "address1": "北海道",
+        "address2": "美唄市",
+        "address3": "上美唄町協和",
+        "kana1": "ﾎｯｶｲﾄﾞｳ",
+        "kana2": "ﾋﾞﾊﾞｲｼ",
+        "kana3": "ｶﾐﾋﾞﾊﾞｲﾁｮｳｷｮｳﾜ",
+        "prefcode": "1",
+        "zipcode": "0790177"
+      }
+    ],
+    "status": 200
+  },
+  {
+    "message": "必須パラメータが指定されていません。",
+    "results": null,
+    "status": 400
+  }
+]
 ```
 
-から生成される型：
+生成結果：
 
 ```typescript
-interface RootObject {
-  order: Order;
-  payment: Payment;
+interface ZipcloudResponse {
+  message: (null | string);
+  results: (ResultsItem[] | null);
+  status: number;
 }
 
-interface Order {
-  id: string;
-  meta: Meta;
-}
-
-interface Meta {
-  createdBy: string;
-  source: string;
-}
-
-interface Payment {
-  status: string;
-  meta: PaymentMeta;
-}
-
-interface PaymentMeta {
-  provider: string;
-  fee: number;
+interface ResultsItem {
+  address1: string;
+  address2: string;
+  address3: string;
+  kana1: string;
+  kana2: string;
+  kana3: string;
+  prefcode: string;
+  zipcode: string;
 }
 ```
 
-`order.meta` は `Meta` という名前になります。`payment.meta` はフィールドが違うので別のインターフェースになり、親の名前を前に付けた `PaymentMeta` になります。`order.meta` と同じフィールドなら、両方とも `Meta` を共有します。2 つをすべて省略可能なフィールドの `Meta` にまとめると、どちらの API も返さないオブジェクトまで受け入れてしまうため、形ごとに型を分けています。名前がまだ使われている場合は番号を付けます（`Meta2`）。ネストしたキーがルートと同じ名前でも、ルートは指定した名前のままです。
+`message` と `results` が `null` を含むユニオン型になり、両方のパターンを受け入れます。ここで出力された `ZipcloudResponse` は配列の要素 1 件の型なので、API の戻り値には `ZipcloudResponse` をそのまま使い、配列全体には `ZipcloudResponse[]` を使います。
 
 ## 手で直すところ
 
-- `null` のフィールド：`?: null` を実際の型と `| null` に置き換えます。
-- 空配列：`[]` は `unknown[]` になるので要素の型を補います。
-- 日付：ISO 8601 文字列と Unix タイムスタンプはそれぞれ `string`・`number` のままです。
-- 識別子として使えないキー（`user-name`、`2fa`）は引用符付きで出力されます。TypeScript として有効です。
-- `PaymentMeta` や `Meta2` のような名前は JSON のキーから作られます。用途に合わせて名前を変えてください。
-- 有効な型名にならないキー（`2fa`、空のキー）は、インターフェース名の先頭に `T` を付けます（`T2fa`）。プロパティ自体は元のキーを引用符付きで使います。
+- `?: null`：API ドキュメントを確認して `string | null` のような実際の型に置き換えます。
+- 空配列の `unknown[]`：要素の型を補います。
+- 日付：ISO 8601 の文字列も Unix タイムスタンプも、それぞれ `string`・`number` のままです。
+- `ResultsItem`、`Same_name`、`PaymentMeta` のような名前はキー名から作られます。用途に合わせて名前を変えてください。同じキー名でフィールドが違うオブジェクトが 2 つあると、2 つ目には親の名前が付き（`payment.meta` なら `PaymentMeta`）、それも使われていれば番号が付きます（`Meta2`）。
+- 日本語のキー（`"氏名"` など）はプロパティ名が引用符付きになり、インターフェース名は `住所` のように日本語のままです。どちらも TypeScript として有効です。
+- 有効な型名にならないキー（`2fa`、空のキー）は、インターフェース名の先頭に `T` を付けます（`T2fa`）。
 
 ## 制限
 
-- 入力は有効な JSON である必要があります（コメントや末尾のカンマは不可）。エラーメッセージに位置が表示されます。
+- 入力は有効な JSON である必要があります（コメントや末尾のカンマは不可）。「無効なJSON：」の後ろにはブラウザ自身のパーサーのメッセージがそのまま表示され、Chrome では英語で位置も出ます。IME で入った全角の `：` や `“”` もエラーになります。
+- ルートの配列にオブジェクトとそれ以外の値が混在する場合（`[{"id": 1}, "x"]` など）、オブジェクトだけが使われて `interface RootObject { id: number; }` になり、文字列は捨てられます。
+- ルートインターフェース名は入力どおりに使われ、チェックされません。空白を含む名前ではコンパイルできないコードになります。
+- 9007199254740991（`Number.MAX_SAFE_INTEGER`）を超える整数は `JSON.parse` で桁が丸められ、型も `number` になります。
 - 型は貼り付けたサンプルだけから決まります。サンプルでは文字列でも本番で数値になることがあるフィールドは `string` のままです。
-- **interface の代わりに type を使用**を選ぶと、各宣言は `type Name = { ... }` になります。
+- 「interface の代わりに type を使用」を選ぶと、各宣言は `type Name = { ... }` になります。

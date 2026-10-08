@@ -26,7 +26,7 @@ import { dirname, join } from 'node:path';
 import ts from 'typescript';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, examplePairs, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToTypescriptTool.astro'), 'utf8');
@@ -105,19 +105,42 @@ eq('primitive root', E.generateTypeScript(5, 'Root', false, false).code, 'type R
 eq('array of primitives root', E.generateTypeScript([1, 'a'], 'Root', false, false).code, 'type Root = (number | string)[];');
 eq('count of declarations', E.generateTypeScript(JSON.parse('{"a":{"meta":{"x":1}},"b":{"meta":{"y":"s"}}}'), 'R', false, false).count, 5);
 
-// ---------- tool page examples ----------
-for (const lang of ['en', 'zh', 'ja', 'ko']) {
-  const mdx = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
-  const re = /```json\n([\s\S]*?)\n```\s*\n[^`]*```typescript\n([\s\S]*?)\n```/g;
-  let m;
-  let count = 0;
-  while ((m = re.exec(mdx))) {
-    count++;
+// ---------- tool page examples: {/* jtt-check: {"root":"…","optional":false,"useType":false} */} ----------
+// The annotation is followed by a ```json block (the input) and a ```typescript block that must be
+// the engine output for that root name and those options, byte for byte. The output must also
+// compile (strict) together with the sample assigned to the root type (Root[] for a root array).
+const jttCheck = {
+  tag: 'jtt-check',
+  min: 2,
+  verify({ spec, after }) {
+    if (!spec || typeof spec.root !== 'string') return 'annotation needs {"root": "<name>"}';
+    const blocks = fencedBlocks(after);
+    const input = blocks.find((b) => b.lang === 'json');
+    if (!input) return 'no ```json input block after the annotation';
     let parsed;
-    try { parsed = JSON.parse(m[1]); } catch { continue; }
-    eq(lang + ': example ' + count + ' output', E.generateTypeScript(parsed, 'RootObject', false, false).code, m[2]);
-  }
-  check(lang + ': page has at least three examples', count >= 3, String(count));
+    try { parsed = JSON.parse(input.text); } catch (e) { return 'input is not JSON: ' + e.message; }
+    const code = E.generateTypeScript(parsed, spec.root, !!spec.optional, !!spec.useType).code;
+    if (!blocks.some((b) => b.lang === 'typescript' && b.text === code)) return 'engine output not shown:\n' + code;
+    const isRootObjects = Array.isArray(parsed) && parsed.some((v) => v !== null && typeof v === 'object' && !Array.isArray(v));
+    const errors = compile(code + '\n\nexport const sample: ' + spec.root + (isRootObjects ? '[]' : '') + ' = ' + input.text + ';\n');
+    return errors.length ? 'does not compile with the sample: ' + errors.join('; ') : null;
+  },
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq(lang + ': jtt-check examples match the engine and compile', contractProblems('json-to-typescript', lang, { annotations: [jttCheck] }), '');
+  // Facts stated in every Limits section.
+  const text = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
+  check(lang + ': page states Number.MAX_SAFE_INTEGER', text.includes(String(Number.MAX_SAFE_INTEGER)));
+  check(lang + ': page shows the root-array result that drops the string', text.includes('`[{"id": 1}, "x"]`') && text.includes('`interface RootObject { id: number; }`'));
+}
+eq('a root array of an object and a string keeps only the object', E.generateTypeScript([{ id: 1 }, 'x'], 'RootObject', false, false).code, 'interface RootObject {\n  id: number;\n}');
+eq('JSON.parse rounds the zh snowflake ID', String(JSON.parse('1830000000000000001')), '1830000000000000000');
+{
+  const zh = readFileSync(join(root, 'src/content/tools/json-to-typescript/zh.mdx'), 'utf8');
+  check('zh: page shows the rounded ID', zh.includes('`1830000000000000000`'));
+  let message = '';
+  try { JSON.parse('{"a":1,}'); } catch (e) { message = e.message; }
+  check('zh: page quotes the V8 trailing-comma message', zh.includes('`' + message + '`'), message);
 }
 
 // ---------- complete page lifecycle: real script/shortcuts, controlled DOM/clipboard/time ----------
@@ -337,7 +360,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ': MDX content contract', contractProblems('json-to-typescript', lang), '');
   const tsPairs = examplePairs(body, (b) => b.lang === 'json' || (b.lang === 'pre' && /^[[{]/.test(b.text)), (b) => b.lang === 'typescript' || (b.lang === 'pre' && /^(?:interface|type|export) /.test(b.text)));
   check(lang + ': has JSON → TypeScript examples', tsPairs.length > 0);
-  eq(lang + ': each TypeScript example equals the engine output (RootObject, some option setting)', tsPairs.filter(([a, b]) => ![[false, false], [true, false], [false, true], [true, true]].some(([opt, useType]) => E.generateTypeScript(JSON.parse(a.text), 'RootObject', opt, useType).code === b.text)).map(([, b]) => b.text).join('\n---\n'), '');
+  // The root name is the first declaration of the shown output (RootObject unless the page says otherwise).
+  eq(lang + ': each TypeScript example equals the engine output (its root name, some option setting)', tsPairs.filter(([a, b]) => { const rootName = /^(?:interface|type) ([^\s={]+)/.exec(b.text)?.[1] ?? 'RootObject'; return ![[false, false], [true, false], [false, true], [true, true]].some(([opt, useType]) => E.generateTypeScript(JSON.parse(a.text), rootName, opt, useType).code === b.text); }).map(([, b]) => b.text).join('\n---\n'), '');
   check(lang + ': v2 no duplicate Usage heading', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {
     const q = page(lang, shellFirst); golden(q);
