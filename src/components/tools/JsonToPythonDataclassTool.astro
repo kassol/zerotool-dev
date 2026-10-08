@@ -30,6 +30,7 @@ const STRINGS = {
     copyFailed: 'Copy failed. Please copy the output manually.',
     download: 'Download .py',
     msgInvalidJson: 'Invalid JSON: ',
+    msgFailed: 'Could not generate Python: ',
     msgGenerated: 'Generated.',
     msgGenOne: 'Generated 1 class.',
     msgGenMany: 'Generated {n} classes.',
@@ -59,6 +60,7 @@ const STRINGS = {
     copyFailed: '复制失败，请手动复制输出。',
     download: '下载 .py',
     msgInvalidJson: 'JSON 格式错误：',
+    msgFailed: '无法生成 Python：',
     msgGenerated: '已生成。',
     msgGenOne: '已生成 1 个类。',
     msgGenMany: '已生成 {n} 个类。',
@@ -88,6 +90,7 @@ const STRINGS = {
     copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。',
     download: '.py ダウンロード',
     msgInvalidJson: '無効なJSON：',
+    msgFailed: 'Python を生成できませんでした：',
     msgGenerated: '生成しました。',
     msgGenOne: '1 個のクラスを生成しました。',
     msgGenMany: '{n} 個のクラスを生成しました。',
@@ -117,6 +120,7 @@ const STRINGS = {
     copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.',
     download: '.py 다운로드',
     msgInvalidJson: '잘못된 JSON: ',
+    msgFailed: 'Python 코드를 생성하지 못했습니다: ',
     msgGenerated: '생성 완료.',
     msgGenOne: '클래스 1개를 생성했습니다.',
     msgGenMany: '클래스 {n}개를 생성했습니다.',
@@ -133,6 +137,7 @@ const L = STRINGS[lang];
   data-copy-failed={L.copyFailed}
   data-download={L.download}
   data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-failed={L.msgFailed}
   data-msg-generated={L.msgGenerated}
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
@@ -205,6 +210,7 @@ const L = STRINGS[lang];
       var COPY_FAILED = wrap ? wrap.dataset.copyFailed : 'Copy failed. Please copy the output manually.';
       var DOWNLOAD = wrap ? wrap.dataset.download : 'Download .py';
       var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_FAILED = wrap ? wrap.dataset.msgFailed : 'Could not generate Python: ';
       var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 class.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} classes.';
@@ -217,6 +223,13 @@ const L = STRINGS[lang];
       var copyRevision = 0;
       var copyTimer = null;
       var copyFailure = false;
+
+      // Copy is enabled only while there is output to copy.
+      function setOutput(text) {
+        outputCodeEl.textContent = text;
+        copyBtn.disabled = !text;
+      }
+      setOutput('');
 
       var currentMode = 'dataclass';
 
@@ -356,7 +369,7 @@ const L = STRINGS[lang];
         visiting[name] = true;
 
         var totalCount = objects.length;
-        var allKeys = {};
+        var allKeys = Object.create(null);
         for (var i = 0; i < objects.length; i++) {
           var ks = Object.keys(objects[i]);
           for (var j = 0; j < ks.length; j++) {
@@ -465,10 +478,10 @@ const L = STRINGS[lang];
 
       function topoSort(classes) {
         var names = Object.keys(classes);
-        var nameSet = {};
+        var nameSet = Object.create(null);
         for (var i = 0; i < names.length; i++) nameSet[names[i]] = true;
 
-        var deps = {};
+        var deps = Object.create(null);
         var identRe = /[A-Za-z_][A-Za-z0-9_]*/g;
         for (var i = 0; i < names.length; i++) {
           var n = names[i];
@@ -487,8 +500,8 @@ const L = STRINGS[lang];
           }
         }
 
-        var inDegree = {};
-        var rev = {};
+        var inDegree = Object.create(null);
+        var rev = Object.create(null);
         for (var i = 0; i < names.length; i++) {
           inDegree[names[i]] = 0;
           rev[names[i]] = [];
@@ -583,7 +596,7 @@ const L = STRINGS[lang];
 
       /* Classes for an object or an array of objects; null for other roots. */
       function generatePython(parsed, rootName, mode) {
-        var classes = {}, visiting = {}, imp = {};
+        var classes = Object.create(null), visiting = Object.create(null), imp = {};
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
           buildClass(parsed, rootName, classes, visiting, imp);
         } else if (Array.isArray(parsed)) {
@@ -604,7 +617,7 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         _liveTimer = null;
         var raw = inputEl.value.trim();
-        if (!raw) { inputEl.classList.remove('error'); clearStatus(); outputCodeEl.textContent = ''; return; }
+        if (!raw) { inputEl.classList.remove('error'); clearStatus(); setOutput(''); return; }
         inputEl.classList.remove('error');
 
         var parsed;
@@ -612,22 +625,30 @@ const L = STRINGS[lang];
           parsed = JSON.parse(raw);
         } catch (e) {
           inputEl.classList.add('error');
-          outputCodeEl.textContent = '';
+          setOutput('');
           setStatus(MSG_INVALID + e.message, true);
           return;
         }
 
         inputEl.classList.remove('error');
         var rootName = rootNameEl.value.trim() || 'Root';
-        var r = generatePython(parsed, rootName, currentMode);
+        var r;
+        try {
+          r = generatePython(parsed, rootName, currentMode);
+        } catch (e) {
+          // For example a stack overflow on very deep nesting: never leave the previous output.
+          setOutput('');
+          setStatus(MSG_FAILED + (e && e.message ? e.message : String(e)), true);
+          return;
+        }
         if (!r) {
-          outputCodeEl.textContent = Array.isArray(parsed)
+          setOutput(Array.isArray(parsed)
             ? '# Array of primitives — no class to generate'
-            : '# Primitive value — no class to generate';
+            : '# Primitive value — no class to generate');
           setStatus(MSG_GENERATED, false);
           return;
         }
-        outputCodeEl.textContent = r.code;
+        setOutput(r.code);
         var msg = r.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', r.count);
         setStatus(msg, false);
       }
@@ -670,7 +691,7 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         _liveTimer = null;
         inputEl.value = '';
-        outputCodeEl.textContent = '';
+        setOutput('');
         inputEl.classList.remove('error');
         clearStatus();
       });

@@ -100,8 +100,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12265);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '09bdd50af71f3e9d0a9ed72651cf3f8964cfcafc80803bfe818b107eae12154f');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12384);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '7c7b9051b69a268857938664f6a1115950f3df51306c65ec7a71bb8819ccd118');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -241,6 +241,19 @@ try {
     }
     const t = lifecyclePage(lang); golden(t); copy(t).resolve(); await settle(); t.advance(1000); copy(t).resolve(); await settle(); t.advance(500); eq(lang + ': old timer leaves newer feedback', t.get('jpdc-copy').textContent, L.copied); t.advance(1000); eq(lang + ': new timer expires', t.get('jpdc-copy').textContent, L.copy);
     const order = lifecyclePage(lang); golden(order); const first = copy(order), second = copy(order); second.reject(Error('current')); await settle(); first.resolve(); await settle(); eq(lang + ': older success keeps current copy failure', order.get('jpdc-status').textContent, copyFailure[lang]); eq(lang + ': older success cannot claim copied', order.get('jpdc-copy').textContent, L.copy);
+    // A1 / A2: prototype names are ordinary keys and root names; a failed generation clears the old output.
+    {
+      const a = lifecyclePage(lang); golden(a);
+      a.input('[{"constructor": 1, "toString": "x"}, {"__proto__": true, "hasOwnProperty": null}]'); a.advance(300);
+      eq(lang + ': A1 prototype-named keys in a root array generate fields', ['constructor: Optional[int] = None', 'toString: Optional[str] = None', '__proto__: Optional[bool] = None', 'hasOwnProperty: Optional[Any] = None'].every((l) => a.get('jpdc-output-code').textContent.includes(l)), true);
+      a.get('jpdc-root-name').value = 'toString'; a.input('{"a": 1}'); a.advance(300);
+      eq(lang + ': A2 root name toString generates its class', a.get('jpdc-output-code').textContent.includes('class toString:') && a.get('jpdc-status').textContent === pageLabels[lang].msgGenOne, true);
+      a.get('jpdc-root-name').value = 'Root'; a.input('{"a": 1}'); a.advance(300);
+      a.input(Array.from({ length: 50000 }, (_, i) => '{"k' + i + '":').join('') + '1' + '}'.repeat(50000)); a.advance(300);
+      eq(lang + ': a failed generation clears the old output and disables Copy', [a.get('jpdc-output-code').textContent, !!a.get('jpdc-copy').disabled, a.get('jpdc-status').textContent.startsWith(pageLabels[lang].msgFailed || '\u0000')], ['', true, true]);
+      a.input('{"b": 2}'); a.advance(300);
+      eq(lang + ': the next input generates again and enables Copy', [a.get('jpdc-output-code').textContent.includes('b: int'), !!a.get('jpdc-copy').disabled], [true, false]);
+    }
     // GA: one generate event per committed action (change, Example, a new mode), none on page load or typing pauses.
     const g = lifecyclePage(lang);
     eq(lang + ': GA page load sends no event', g.tracks.length, 0);
@@ -306,7 +319,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "a5f0a65919541c66d7a7151ffa7261ad97423d75d4aa5b4d29ee72fa0b8a860b"
+  "scriptSHA": "160c211c1405876287b73dc1e902efa0f6a11ab38c3d03d76e12bd2b7589cbec"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -343,7 +356,7 @@ for (const lang of ['en','zh','ja','ko']) {
   for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
   eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
   const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
-  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgFailed','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
   const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
   const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
