@@ -10,7 +10,8 @@
 // Covers: rows with more fields than the header get extra columns named "Column N" (N is the
 // 1-based column position) and the added names are reported (these fields were dropped before),
 // short rows padded with empty cells, alignment separators, pipe escaping, quoted fields with
-// commas / quotes / line breaks, CRLF input, header-only input, 4-language STRINGS keys.
+// commas / quotes / line breaks, CRLF input, header-only input, 4-language STRINGS keys; analytics only on
+// input change or alignment click (deduplicated, reset by Clear), no-data error in the page language.
 //
 // Run: node scripts/test-csv-to-markdown.mjs
 
@@ -21,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { loadPage, readComponent, frontmatterStrings } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, examplePairs, annotations, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CsvToMarkdownTool.astro'), 'utf8');
@@ -35,7 +36,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const E = new Function(block + '\nreturn { csvToMarkdown };')();
+const E = new Function(block + '\nreturn { csvToMarkdown, parseCsv };')();
 
 let failures = 0;
 let passes = 0;
@@ -102,7 +103,53 @@ eq('en page example (center)', md('id,city,score\n1,東京,9.5\n2,"Paris, FR",\n
   '| id  | city      | score |', '| :---: | :---------: | :-----: |', '| 1   | 東京        | 9.5   |', '| 2   | Paris, FR |       |', '| 3   | Berlin    |       |',
 ]);
 
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '0075c68c80e8b13b3c831c0cebdc72b80dae651b28ec1ab223bb368b87e3e041');
+// ---------- quotes: only a quote at the start of a field opens a quoted section; an unclosed one stops ----------
+eq('mid-field quote is literal', md('size,note\n5" pipe,x\n6,y').markdown.split('\n').slice(2), ['| 5" pipe | x    |', '| 6       | y    |']);
+let unclosed = '';
+try { md('a,b\n"x,1\n2,3'); } catch (e) { unclosed = e.message; }
+eq('unclosed quote reports its line', unclosed, 'Unclosed quote starting on line 2.');
+// Both tools parse CSV the same way (the parsers differ only in quoted-field flags and the BOM).
+{
+  const cjSource = readFileSync(join(root, 'src/components/tools/CsvJsonTool.astro'), 'utf8');
+  const CJ = new Function(cjSource.slice(cjSource.indexOf(START_MARK), cjSource.indexOf(END_MARK)) + '\nreturn { parseCsv };')();
+  const corpus = ['a,b\n1,2', 'a,b\r\n1,2\r\n', 'a\n"x,y"', 'a\n"say ""hi"""', 'a\n"l1\nl2"', 'a\n"l1\r\nl2"', 'a\n"x"y', 'a\nx"y', 'a,b\n5" pipe,x', 'a\n""', 'a\n"""x"""', 'a,,b\n,,', 'a\n"', 'a\n"x\n', 'h\n1,2,3\n4', 'a\r"b"\rc'];
+  for (let k = 0; k < 400; k++) { let t = ''; const n = 1 + (k * 7) % 25; for (let j = 0; j < n; j++) t += 'ab",\n\r x'[(k * 31 + j * 17 + (j * j) % 11) % 10]; corpus.push(t); }
+  const run = (f) => { try { return { ok: f() }; } catch (e) { return { error: e.message }; } };
+  const diff = corpus.filter(t => JSON.stringify(run(() => CJ.parseCsv(t).rows)) !== JSON.stringify(run(() => E.parseCsv(t))));
+  eq('csv-json and csv-to-markdown parse ' + corpus.length + ' inputs the same way', diff, []);
+}
+
+// ---------- pipes: escapePipes is copied verbatim from markdown-table-generator ----------
+eq('existing \\| stays one escaped pipe', md('a\nx\\|y').markdown.split('\n')[2], '| x\\|y |');
+eq('two backslashes before a pipe get one more', md('a\nx\\\\|y').markdown.split('\n')[2], '| x\\\\\\|y |');
+{
+  const fnText = (src) => {
+    const i = src.indexOf('function escapePipes(s) {'); if (i < 0) return '';
+    const indent = src.slice(src.lastIndexOf('\n', i) + 1, i), lines = src.slice(i).split('\n');
+    return lines.slice(0, lines.indexOf(indent + '}') + 1).map(l => l.trim()).join('\n');
+  };
+  const mtg = readFileSync(join(root, 'src/components/tools/MarkdownTableGeneratorTool.astro'), 'utf8');
+  const own = fnText(source), theirs = fnText(mtg);
+  check('escapePipes found in both tools', own.length > 100 && theirs.length > 100, own.length + '/' + theirs.length);
+  eq('escapePipes is a verbatim copy of markdown-table-generator', own, theirs);
+}
+// Rendered with micromark + GFM (remark, MDX and Astro use it): every row keeps the header's cell count.
+{
+  const requireRoot = createRequire(join(root, 'package.json'));
+  const { micromark } = await import(requireRoot.resolve('micromark'));
+  const { gfm, gfmHtml } = await import(requireRoot.resolve('micromark-extension-gfm'));
+  const cells = ['x|y', 'x\\|y', 'x\\\\|y', 'x\\\\\\|y', '|', '||', '\\', '\\\\', 'a\\', 'q\\|r|s', 'end\\'];
+  const csvText = 'h1,h2\n' + cells.map(c => '"' + c.replace(/"/g, '""') + '",z').join('\n');
+  const html = micromark(md(csvText).markdown, { extensions: [gfm()], htmlExtensions: [gfmHtml()] });
+  const rows = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map(m => (m[1].match(/<t[hd]\b/g) || []).length);
+  eq('micromark: header plus ' + cells.length + ' rows, 2 cells each', rows, Array(cells.length + 1).fill(2));
+  const second = [...html.matchAll(/<tr>\s*<td\b[^>]*>[\s\S]*?<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(m => m[1]);
+  eq('micromark: the second cell is never pushed out', second, Array(cells.length).fill('z'));
+}
+
+// Engine changed with approval (2026-10-08, S2-6d): parseCsv opens a quoted field only at the field start
+// and throws on an unclosed quote; escapeMd uses escapePipes copied from markdown-table-generator.
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '548eeb657861eff5e3bc8b0cbccbfe4a75541816391b29f379c3562d9924aa2f');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises and time are controlled boundaries; conversion code is real.
@@ -245,8 +292,34 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  const p=page(lang,order);p.type(s.left,s.input);p.advance(100);p.key(s.left,'Enter',mod);
  eq(lang+order+mod+' Enter does not rush conversion',p.get(s.right).value,'');
  p.advance(199);eq(lang+order+mod+' original 300ms debounce remains',p.get(s.right).value,'');
- p.advance(1);eq(lang+order+mod+' only one automatic conversion',p.tracks.filter(x=>x[1]==='convert').length,1);
+ p.advance(1);eq(lang+order+mod+' automatic conversion sends no analytics event',p.tracks.length,0);
  eq(lang+order+mod+' complete automatic output',p.get(s.right).value,s.expected);
+}
+
+// Analytics: one event per committed change (input change, alignment click), not per typing pause.
+for (const lang of ['en','zh','ja','ko']) {
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvToMarkdownTool.astro').frontmatter)[lang];
+  let p = page(lang); p.type(s.left, 'a\n1'); p.advance(300); p.type(s.left, 'a\n12'); p.advance(300);
+  eq(lang+' typing pauses send nothing', p.tracks.length, 0);
+  p.get(s.left).fire('change'); eq(lang+' change sends one event', p.tracks, [['csv_to_markdown','convert']]);
+  p.get(s.left).fire('change'); eq(lang+' same input and alignment sent once', p.tracks.length, 1);
+  p.get('cm-align-right').click(); eq(lang+' alignment click sends one event', p.tracks.length, 2);
+  p.get('cm-align-right').click(); eq(lang+' clicking the active alignment again sends nothing', p.tracks.length, 2);
+  p = page(lang); p.type(s.left, 'a\n1'); p.advance(100); p.get(s.left).fire('change');
+  eq(lang+' change converts a pending edit at once', [p.get(s.right).value, p.tracks.length], ['| a   |\n| :---- |\n| 1   |', 1]);
+  check(lang+' change cancels the pending conversion', ![...p.jobs.values()].some(j => j.ms === 300));
+  p.clear(); p.type(s.left, 'a\n1'); p.get(s.left).fire('change'); eq(lang+' Clear resets the sent key', p.tracks.length, 2);
+  p = page(lang); p.type(s.left, '""'); p.get(s.left).fire('change'); p.get('cm-align-center').click();
+  eq(lang+' no event without a table', p.tracks.length, 0);
+  eq(lang+' no-data error in page language', p.get('cm-status').textContent, S.errorPrefix + S.errNoData);
+}
+
+// Unclosed quote: the page stops with an error in the page language, using the textarea line.
+const UNCLOSED = { en: 'A quoted field that starts on line {line} is never closed. Add the closing " or remove the opening one.', zh: '第 {line} 行开始的引号字段没有闭合。请补上结尾的 "，或删掉开头的 "。', ja: '{line} 行目で始まる引用符付きフィールドが閉じられていません。閉じる " を追加するか、開始の " を削除してください。', ko: '{line}행에서 시작한 따옴표 필드가 닫히지 않았습니다. 닫는 "를 추가하거나 여는 "를 지우세요.' };
+for (const lang of ['en','zh','ja','ko']) {
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvToMarkdownTool.astro').frontmatter)[lang];
+  const p = page(lang); p.golden(); p.type(s.left, '\n\nname,price\n"Gadget, large,24.99\nWidget,9.99'); p.advance(300);
+  eq(lang+' unclosed quote: error with the textarea line, no output', [p.get(s.right).value, p.get('cm-status').textContent], ['', S.errorPrefix + UNCLOSED[lang].replace('{line}', '4')]);
 }
 
 /* ── v2 page layout ── */
@@ -256,7 +329,8 @@ const allStrings = frontmatterStrings(readComponent('src/components/tools/CsvToM
 const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
-eq('reviewed FIX script preserves all bytes except i18n and removed buttons', hash(script), '5337a6c01e2d2397c7fa8cd65a56b35166474f8b3020e63de973b5ca171af45b');
+// S2-6d (2026-10-08) moved analytics to change / alignment click and localized the no-data error; the hash pins that reviewed script.
+eq('reviewed page script is unchanged', hash(script), '7cc5a8d01214d9f25cedf7730fd4a6485e1d75a7d0d2d88c71a81e2304372cb1');
 check('direct zero-minimum flex column root', /^\s*<div class="cm-wrap"/.test(markupSource) && /\.cm-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cm-(?:toolbar|controls)"[\s\S]*id="cm-status"[\s\S]*class="cm-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
@@ -340,6 +414,19 @@ for (const lang of ['en','zh','ja','ko']) {
   const mdPairs = examplePairs(body, b => b.lang === 'csv', b => b.lang === 'markdown');
   eq(lang+' has CSV → Markdown examples', mdPairs.length > 0, true);
   eq(lang+' each Markdown example equals the engine output for one alignment', mdPairs.filter(([a, b]) => !['left','center','right'].some(al => md(a.text, al).markdown === b.text)).map(([, b]) => b.text), []);
+  // Worked examples, recomputed through the real page script: `{/* cm-check: {"align": …} */}` is
+  // followed by the CSV block and the exact Markdown block; status: true also requires the page's
+  // status line verbatim in the same section.
+  const notes = annotations(body, 'cm-check');
+  check(lang+' at least 2 cm-check examples', notes.length >= 2, String(notes.length));
+  for (const [i, note] of notes.entries()) {
+    const spec = note.spec || {}, blocks = fencedBlocks(note.after);
+    const pg = page(lang); pg.get('cm-align-' + (spec.align || 'left')).click(); pg.type(s.left, blocks[0]?.text ?? ''); pg.advance(300);
+    eq(lang+' cm-check #'+(i+1)+' output', pg.get(s.right).value, blocks[1]?.text);
+    if (spec.status) check(lang+' cm-check #'+(i+1)+' status shown verbatim', note.after.includes(pg.get('cm-status').textContent), pg.get('cm-status').textContent);
+  }
+  const covered = notes.reduce((n, note) => n + fencedBlocks(note.after).filter(b => b.lang === 'csv' || b.lang === 'markdown').length, 0);
+  eq(lang+' every CSV / Markdown example block is recomputed', mdPairs.length * 2, covered);
   check(lang+' Usage removed', !/<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error='';try{await mdxCompiler.compile(body);}catch(e){error=String(e);}eq(lang+' MDX compiles',error,'');
 }

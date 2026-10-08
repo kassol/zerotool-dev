@@ -1,6 +1,6 @@
 ---
 seoTitle: "CSV to JSON Converter Online — Free Data Format Tool | ZeroTool"
-seoDescription: "Convert CSV to JSON and JSON to CSV instantly. Handles quoted fields, auto-detects headers. Free, browser-based, no server required."
+seoDescription: "Convert CSV to JSON and JSON to CSV instantly. Handles quoted fields, reads the first row as the header. Free, browser-based, no server required."
 steps:
   - "Paste CSV with a header and at least one data row into CSV. After 0.3 seconds without typing, JSON updates automatically."
   - "For the reverse direction, paste a non-empty array of objects into JSON. After 0.3 seconds, CSV updates automatically."
@@ -8,38 +8,89 @@ steps:
   - "Read the row count or parsing error in the status line above the panes."
   - "Use Copy beside either pane to copy its current full text, or Clear to empty both panes."
 faqItems:
-  - question: "What CSV format is supported?"
-    answer: "Standard RFC 4180 CSV: comma-separated values with optional double-quote escaping. Quoted fields may contain commas, newlines, and escaped quotes."
-  - question: "How are headers handled?"
-    answer: "The first row of your CSV is always treated as headers. Each subsequent row becomes a JSON object whose keys are the header values."
-  - question: "Is there a maximum file size?"
-    answer: "There is no hard limit — processing happens in your browser. Practically, files up to a few MB convert instantly; very large files may slow down depending on your device."
-  - question: "Is my data sent anywhere?"
-    answer: "No. All conversion runs in your browser using JavaScript. Your data never leaves your machine."
+  - id: "format"
+    question: "What CSV format is supported?"
+    answer: "Comma-separated values with RFC 4180 quoting: a field wrapped in double quotes may contain commas, line breaks and doubled quotes (\"\"). Rows may end with LF, CRLF or CR. Only the comma separates fields; tabs and semicolons stay inside the field."
+  - id: "header"
+    question: "How are headers handled?"
+    answer: "The first row is always the header, and each later row becomes one JSON object with those names as keys. No value is dropped: a repeated name gets _2, _3 and so on (sku, sku_2), fields beyond the last header get keys named column_N by position, and the status line lists both. A row with fewer fields gets empty values."
+  - id: "json-to-csv"
+    question: "Can I convert JSON back to CSV?"
+    answer: "Yes. Paste an array of objects into the JSON pane. The columns are every key found in any object, in first-seen order; nested objects become dot-path columns such as user.name, arrays and empty objects are written as JSON text, and null becomes an empty field. The nesting is not rebuilt when you convert that CSV back."
+  - id: "size"
+    question: "Is there a maximum size?"
+    answer: "The code sets no limit. The whole text is converted again each time you stop typing for 0.3 seconds, so a very large paste makes the page slower to respond. The tool reads pasted text only; it does not open files."
+  - id: "local-spreadsheet-paste"
+    question: "Can I paste cells copied straight from Excel or Google Sheets?"
+    answer: "Not as they are. Cells copied from a spreadsheet arrive as tab-separated text, and this tool only splits on commas, so each whole line becomes one field under one long key. Save or download the sheet as CSV (comma-separated) and paste that text instead."
+  - id: "privacy"
+    question: "Is my data sent anywhere?"
+    answer: "No. Both directions are converted in your browser tab. The CSV and JSON are not sent to a server and are not saved in browser storage. This tool sends no usage event; the page's analytics records only the page view."
 ---
 
 <h2>Worked Examples</h2>
 
 <h3>Simple table</h3>
-<p>Input CSV:</p>
-<pre><code>name,age,city
+
+With the default options, unquoted numbers become JSON numbers and the rest stays text:
+
+{/* cj-check: {"to":"json"} */}
+
+```csv
+name,age,city
 Alice,30,London
-Bob,25,Paris</code></pre>
-<p>Output JSON contains objects with name, age, and city keys for each row.</p>
+Bob,25,Paris
+```
+
+```json
+[
+  {
+    "name": "Alice",
+    "age": 30,
+    "city": "London"
+  },
+  {
+    "name": "Bob",
+    "age": 25,
+    "city": "Paris"
+  }
+]
+```
+
+<h3>Repeated header and an extra field</h3>
+
+A product export where two columns are both called `sku` and one row carries a fourth value:
+
+{/* cj-check: {"to":"json","status":true} */}
+
+```csv
+sku,sku,qty
+A-1,A-1-RED,3,boxed
+```
+
+```json
+[
+  {
+    "sku": "A-1",
+    "sku_2": "A-1-RED",
+    "qty": 3,
+    "column_4": "boxed"
+  }
+]
+```
+
+The status line reads `Converted 1 row to JSON. Duplicate header names were renamed: sku → sku_2. Some rows have more fields than the header, so these keys were added: column_4.` Rename the columns in your source if you want other key names.
 
 <h3>Quoted fields with commas</h3>
 <p>Input CSV:</p>
 <pre><code>product,description,price
 Widget,"Small, round widget",9.99
 Gadget,"Includes ""turbo"" mode",24.50</code></pre>
-<p>The <code>description</code> field contains a comma and escaped quotes — both are handled correctly.</p>
-
-<h3>JSON back to CSV</h3>
-<p>Paste the JSON output back into the JSON panel. After 0.3 seconds without typing, it converts to CSV automatically.</p>
+<p>The <code>description</code> field contains a comma and escaped quotes — both are handled correctly. The price <code>24.50</code> becomes the JSON number <code>24.5</code>.</p>
 
 <h2>Supported CSV Format</h2>
 <p>
-  This tool follows the <strong>RFC 4180</strong> standard. Fields are separated by commas.
+  This tool follows the quoting rules of <strong>RFC 4180</strong>. Fields are separated by commas.
   If a field contains a comma, newline, or double-quote, it must be enclosed in double quotes.
   A literal double-quote inside a quoted field is escaped as two consecutive double-quotes (<code>""</code>).
   The first row is always interpreted as column headers.
@@ -47,7 +98,9 @@ Gadget,"Includes ""turbo"" mode",24.50</code></pre>
 
 ## Edge Cases: What This Converter Does
 
-**Empty fields.** In this CSV, Bob has no email and row 3 has no name:
+**Empty fields.** In this CSV, Bob has no email and row 3 has no name. By default an empty field becomes `""`. With **Empty → null** ticked:
+
+{/* cj-check: {"to":"json","emptyNull":true} */}
 
 ```csv
 id,name,email
@@ -56,23 +109,76 @@ id,name,email
 3,,charlie@example.com
 ```
 
-By default an empty field becomes `""`. Tick **Empty → null** to get `null` instead:
-
 ```json
 [
-  { "id": 1, "name": "Alice", "email": "alice@example.com" },
-  { "id": 2, "name": "Bob", "email": null },
-  { "id": 3, "name": null, "email": "charlie@example.com" }
+  {
+    "id": 1,
+    "name": "Alice",
+    "email": "alice@example.com"
+  },
+  {
+    "id": 2,
+    "name": "Bob",
+    "email": null
+  },
+  {
+    "id": 3,
+    "name": null,
+    "email": "charlie@example.com"
+  }
 ]
 ```
 
-**Type inference.** With **Parse numbers & booleans** ticked (the default), unquoted `true`, `false`, and `null` (any case) become JSON literals and numbers become JSON numbers. Three kinds of values stay strings so that nothing is lost: quoted fields (`"42"`), values with a leading zero (`007`, `0123`), and integers too large for a JavaScript number (above 2^53 − 1), such as long order IDs.
+**Type inference.** With **Parse numbers & booleans** ticked (the default), unquoted `true`, `false`, and `null` (any case) become JSON literals. A value becomes a JSON number only when it is written in the JSON number syntax of [RFC 8259 §6](https://www.rfc-editor.org/rfc/rfc8259#section-6) (an optional minus, no leading zeros, no `+`, digits on both sides of a decimal point) and a JavaScript number keeps it exactly. Everything else stays a string so that nothing is lost: quoted fields (`"42"`), `007`, `+44`, `.5`, integers above 2^53 − 1 such as long order IDs, and values a double cannot hold (`-0`, `1e-400`, decimals with more than about 17 significant digits):
 
-**Header row.** The first row is always the header. A CSV without one needs a header line added before converting. If two columns share a name, the later column overwrites the earlier one in each object, so rename duplicates first. Fields beyond the last header are dropped; missing trailing fields are treated as empty.
+{/* cj-check: {"to":"json"} */}
 
-**Delimiter.** Only commas are recognized. Convert semicolon- or tab-separated files to commas first.
+```csv
+code,value
+plus,+44
+zero,007
+dot,.5
+exp,1e3
+negzero,-0
+tiny,1e-400
+```
+
+```json
+[
+  {
+    "code": "plus",
+    "value": "+44"
+  },
+  {
+    "code": "zero",
+    "value": "007"
+  },
+  {
+    "code": "dot",
+    "value": ".5"
+  },
+  {
+    "code": "exp",
+    "value": 1000
+  },
+  {
+    "code": "negzero",
+    "value": "-0"
+  },
+  {
+    "code": "tiny",
+    "value": "1e-400"
+  }
+]
+```
+
+`1e3` is valid JSON number syntax and becomes `1000`; `1.50` would become `1.5`, because a JSON number has no trailing-zero form.
+
+**Header row.** The first row is always the header. A CSV without one needs a header line added before converting. A repeated name gets a suffix (`sku_2`); a field beyond the last header gets the key `column_N` by position; missing trailing fields are treated as empty.
 
 **JSON → CSV.** The input must be an array of objects. The columns are every key that appears in any object, in the order the keys first appear; a row without a key gets an empty field. Nested objects are flattened into dot-path columns such as `user.name` (the same layout as pandas [`json_normalize`](https://pandas.pydata.org/docs/reference/api/pandas.json_normalize.html)), arrays and empty objects are written as JSON text, and `null` becomes an empty field:
+
+{/* cj-check: {"to":"csv"} */}
 
 ```json
 [
@@ -88,3 +194,22 @@ id,user.name,user.city,tags,manager
 ```
 
 Converting that CSV back to JSON does not rebuild the nesting: `user.name` stays a flat key and the array stays a string.
+
+## Limits
+
+- **Commas only.** Tabs and semicolons are not separators. Tab-separated text, such as cells copied from a spreadsheet, becomes one field per line under a single long key.
+- **Quotes count only at the start of a field.** A `"` inside an unquoted field is text, so `5" pipe,x` gives the two fields `5" pipe` and `x`. A quoted field that is never closed stops the conversion with an error that names the line where it starts, and the JSON pane stays empty:
+
+{/* cj-check: {"to":"json","error":true} */}
+
+```csv
+name,price
+"Gadget, large,24.99
+Widget,9.99
+```
+
+  The status line reads `Error: A quoted field that starts on line 2 is never closed. Add the closing " or remove the opening one.`
+- **No other number formats.** Thousands separators, `+` signs, spaces around a number and full-width digits keep the value a string; remove them in the source if you need numbers.
+- **Large JSON numbers keep their digits.** A JSON number that a JavaScript number cannot hold exactly, such as `12345678901234567890`, `1e-400` or `-0`, is written to the CSV as it appears in the JSON. This needs `JSON.rawJSON`, which Chrome 114, Firefox 135 and Safari 18.4 and later have. An older browser writes such a number as text (inside an array cell it gets quotes, `"12345678901234567890"`), and the status line lists those numbers. No number is written rounded.
+- **Key order.** JavaScript lists keys that look like whole numbers (`2024`) before the other keys, in both directions. The values are not affected.
+- **JSON syntax errors** are shown with the browser's own message, which is in English.

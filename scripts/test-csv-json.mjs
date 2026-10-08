@@ -11,7 +11,10 @@
 // nesting, arrays written as JSON text, null / undefined / missing keys as empty fields, empty
 // objects as {}, columns are the union of all rows in first-seen order, booleans and numbers,
 // RFC 4180 quoting (comma, quote, LF, CR), input validation (not an array, empty array,
-// non-object items with their index); parseCsv / inferValue round trip of the flattened output.
+// non-object items with their index); parseCsv / inferValue round trip of the flattened output;
+// page CSV → JSON keeps every key (__proto__ / constructor headers, duplicate names renamed _2…,
+// fields beyond the header as column_N) and reports renames in the page language; input errors
+// in the page language; trailing spaces of the last field kept.
 //
 // Run: node scripts/test-csv-json.mjs
 
@@ -22,7 +25,7 @@ import { createHash } from 'node:crypto';
 import { loadPage, readComponent, frontmatterStrings } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, annotations, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CsvJsonTool.astro'), 'utf8');
@@ -99,7 +102,21 @@ const parsed = E.parseCsv(out);
 eq('round trip header', parsed.rows[0], ['id', 'user.name', 'user.tags', 'note']);
 eq('round trip values', parsed.rows[1], ['7', 'Bob, Jr.', '["a"]', '']);
 
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), 'e87896cdb21292ad09516b68bb49503cf2f8bcbeaf541ff70eae2056298d7b32');
+// ---------- CSV → JSON number reading: RFC 8259 §6 number syntax, and only values JavaScript keeps exactly ----------
+const iv = (raw) => E.inferValue(raw, false, true, false);
+for (const [raw, want] of [
+  ['+81', '+81'], [' 007', ' 007'], ['007', '007'], ['.5', '.5'], ['5.', '5.'], ['0x1F', '0x1F'], [' 30', ' 30'], ['1_000', '1_000'], ['Infinity', 'Infinity'],
+  ['1e-400', '1e-400'], ['1e400', '1e400'], ['0.1000000000000000055511', '0.1000000000000000055511'], ['1234567890123456.7', '1234567890123456.7'],
+  ['-0', '-0'], ['-0.0', '-0.0'], ['9007199254740993', '9007199254740993'], ['9007199254740992', '9007199254740992'],
+  ['0', 0], ['-12', -12], ['3.14', 3.14], ['1.50', 1.5], ['0.0', 0], ['1e3', 1000], ['1E5', 100000], ['2.5e-7', 2.5e-7],
+  ['0.30000000000000004', 0.30000000000000004], ['123456789012345.6', 123456789012345.6], ['9007199254740991', 9007199254740991],
+]) eq('number reading ' + JSON.stringify(raw), iv(raw), want);
+
+// Engine changed with approval (2026-10-08, S2-6d): number reading (RFC 8259 syntax, exact values only)
+// and isPlainObject skips JSON.rawJSON values (JSON → CSV numbers keep their source text); parseCsv opens a
+// quoted field only at the field start and throws on an unclosed quote.
+
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '41774b71a42667e06254c3726ff6dc8fcea536a86e058a7dfb10dff0ac9d2767');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises and time are controlled boundaries; conversion code is real.
@@ -111,7 +128,7 @@ process.on('unhandledRejection', onUnhandled);
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const copyFailures = { en: 'Copy failed', zh: '复制失败', ja: 'コピー失敗', ko: '복사 실패' };
 const s = {"slug": "csv-json", "file": "CsvJsonTool", "p": "cj", "left": "cj-csv", "right": "cj-json", "input": "n\n1", "expected": "[\n  {\n    \"n\": 1\n  }\n]", "copy": ["cj-copy-csv", "cj-copy-json"], "delay": 300};
-function page(lang='en', order='shared-after') {
+function page(lang='en', order='shared-after', extra={}) {
   const rel='src/components/tools/'+s.file+'.astro', comp=readComponent(rel), source=comp.src;
   const strings=frontmatterStrings(comp.frontmatter)?.[lang];
   const nodes=[], byId=new Map(), docs={}, jobs=new Map(), copies=[], tracks=[], cleared=[];
@@ -143,7 +160,7 @@ function page(lang='en', order='shared-after') {
   if(strings){const root=doc.querySelector('.cj-wrap');const {tips,...client}=strings;root.dataset={strings:JSON.stringify(client),lang};}
   const setTimeout=(fn,ms=0)=>{const id=++seq;jobs.set(id,{id,fn,ms,due:now+ms});return id;};
   const globals={document:doc,Event:class{constructor(type){this.type=type;}},setTimeout,clearTimeout:id=>jobs.delete(id),trackTool:(...a)=>tracks.push(a),ztPersist:{clear:slug=>cleared.push(slug)},
-    navigator:{clipboard:{writeText(text){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});copies.push({text,resolve,reject});return promise;}}}};
+    navigator:{clipboard:{writeText(text){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});copies.push({text,resolve,reject});return promise;}}}};Object.assign(globals,extra);
   const addShared=()=>vm.runInNewContext(shared,{document:doc,window:globals,_slug:s.slug});
   if(order==='shared-before')addShared();loadPage(rel,{lang,globals});if(order==='shared-after')addShared();
   function advance(ms){const end=now+ms;for(let i=0;i<100;i++){const next=[...jobs.values()].filter(j=>j.due<=end).sort((a,b)=>a.due-b.due||a.id-b.id)[0];if(!next)break;jobs.delete(next.id);now=next.due;next.fn();}now=end;}
@@ -237,6 +254,83 @@ for (const lang of ['en','zh','ja','ko']) {
   p.type(s.left,s.input);p.key(s.left,'Enter');eq(lang+' CtrlEnter leaves pending automatic output empty',p.get(s.right).value,'');p.advance(300);eq(lang+' queued conversion still uses preserved settings',JSON.parse(p.get(s.right).value),[{n:'1'}]);
 }
 
+// ---------- page-level CSV → JSON: keys are never lost, messages follow the page language ----------
+// buildJsonFromCsv runs outside the engine block, so these go through the real page script.
+const NOTES = {
+  en: { renamed: 'Duplicate header names were renamed: {list}.', added: 'Some rows have more fields than the header, so these keys were added: {cols}.', needRows: 'CSV must have at least a header row and one data row.', notArray: 'JSON must be an array of objects.', emptyArray: 'JSON array is empty.', item: 'Item {n} must be a plain object.' },
+  zh: { renamed: '表头有重名，已改名：{list}。', added: '部分行的字段比表头多，已补上这些键：{cols}。', needRows: 'CSV 至少需要一行表头和一行数据。', notArray: 'JSON 必须是对象数组。', emptyArray: 'JSON 数组为空。', item: '第 {n} 项必须是对象。' },
+  ja: { renamed: '重複したヘッダー名を変更しました：{list}。', added: 'ヘッダーより項目が多い行があるため、次のキーを追加しました：{cols}。', needRows: 'CSV にはヘッダー行とデータ行が 1 行以上必要です。', notArray: 'JSON はオブジェクトの配列である必要があります。', emptyArray: 'JSON 配列が空です。', item: '{n} 番目の要素はオブジェクトである必要があります。' },
+  ko: { renamed: '중복된 헤더 이름을 바꿨습니다: {list}.', added: '헤더보다 필드가 많은 행이 있어 다음 키를 추가했습니다: {cols}.', needRows: 'CSV에는 헤더 행과 데이터 행이 하나 이상 있어야 합니다.', notArray: 'JSON은 객체 배열이어야 합니다.', emptyArray: 'JSON 배열이 비어 있습니다.', item: '{n}번째 항목은 객체여야 합니다.' },
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvJsonTool.astro').frontmatter)[lang];
+  const N = NOTES[lang];
+  const run = (csvText) => { const p = page(lang); p.type(s.left, csvText); p.advance(300); return { json: p.get(s.right).value, status: p.get(s.p + '-status').textContent, error: p.get(s.p + '-status').classList.contains('error') }; };
+  let r = run('__proto__,constructor,toString\nx,y,z');
+  eq(lang + ' __proto__ / constructor headers stay keys', r.json, '[\n  {\n    "__proto__": "x",\n    "constructor": "y",\n    "toString": "z"\n  }\n]');
+  r = run('__proto__,a\nnull,1');
+  eq(lang + ' __proto__ header with null value stays', r.json, '[\n  {\n    "__proto__": null,\n    "a": 1\n  }\n]');
+  r = run('name,name,name_2\nA,B,C');
+  eq(lang + ' duplicate headers renamed, no value lost', JSON.parse(r.json), [{ name: 'A', name_3: 'B', name_2: 'C' }]);
+  check(lang + ' rename reported in page language', r.status.includes(N.renamed.replace('{list}', 'name → name_3')), r.status);
+  r = run('a,b\n1,2,3,4\n5');
+  eq(lang + ' extra fields kept as column_N', JSON.parse(r.json), [{ a: 1, b: 2, column_3: 3, column_4: 4 }, { a: 5, b: '', column_3: '', column_4: '' }]);
+  check(lang + ' added keys reported in page language', r.status.includes(N.added.replace('{cols}', 'column_3, column_4')), r.status);
+  r = run('a,column_3\n1,2,3');
+  eq(lang + ' added key avoids an existing header', JSON.parse(r.json), [{ a: 1, column_3: 2, column_3_2: 3 }]);
+  r = run('a,b\n1,x  ');
+  eq(lang + ' trailing spaces of the last field kept', JSON.parse(r.json), [{ a: 1, b: 'x  ' }]);
+  r = run('\uFEFFa,b\n1,2\n\n');
+  eq(lang + ' BOM and trailing blank lines dropped', JSON.parse(r.json), [{ a: 1, b: 2 }]);
+  r = run('a,b');
+  eq(lang + ' header-only error in page language', [r.error, r.status], [true, S.errorPrefix + N.needRows]);
+  for (const [input, msg] of [['{"a":1}', N.notArray], ['[]', N.emptyArray], ['[{"a":1},2]', N.item.replace('{n}', '2')]]) {
+    const p = page(lang); p.type(s.right, input); p.advance(300);
+    eq(lang + ' JSON → CSV error in page language: ' + input, p.get(s.p + '-status').textContent, S.errorPrefix + msg);
+  }
+}
+
+// ---------- quotes: only a quote at the start of a field opens a quoted section; an unclosed one stops ----------
+eq('mid-field quote is literal', E.parseCsv('size,note\n5" pipe,x\n6,y').rows, [['size', 'note'], ['5" pipe', 'x'], ['6', 'y']]);
+eq('quote after text is literal, quoted field still works', E.parseCsv('a,b\nx"y","p,q"').rows, [['a', 'b'], ['x"y"', 'p,q']]);
+eq('text after a closing quote is kept', E.parseCsv('a\n"x"y').rows, [['a'], ['xy']]);
+throws('unclosed quote reports its line', () => E.parseCsv('a,b\n"x,1\n2,3'), /^Unclosed quote starting on line 2\.$/);
+throws('unclosed quote line counts quoted line breaks', () => E.parseCsv('a\r\n"p\nq"\r\n"r'), /^Unclosed quote starting on line 4\.$/);
+const UNCLOSED = { en: 'A quoted field that starts on line {line} is never closed. Add the closing " or remove the opening one.', zh: '第 {line} 行开始的引号字段没有闭合。请补上结尾的 "，或删掉开头的 "。', ja: '{line} 行目で始まる引用符付きフィールドが閉じられていません。閉じる " を追加するか、開始の " を削除してください。', ko: '{line}행에서 시작한 따옴표 필드가 닫히지 않았습니다. 닫는 "를 추가하거나 여는 "를 지우세요.' };
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvJsonTool.astro').frontmatter)[lang];
+  const p = page(lang); p.golden(); p.type(s.left, '\n\nname,price\n"Gadget, large,24.99\nWidget,9.99'); p.advance(300);
+  eq(lang + ' unclosed quote: error with the textarea line, no output', [p.get(s.right).value, p.get(s.p + '-status').textContent], ['', S.errorPrefix + UNCLOSED[lang].replace('{line}', '4')]);
+}
+
+// ---------- JSON → CSV: numbers JavaScript cannot keep exactly are written as in the source ----------
+// Old browsers (no JSON.rawJSON / reviver source, before Chrome 114, Firefox 135, Safari 18.4) are
+// simulated with a JSON object whose reviver gets no context: the numbers become text, and the
+// status says so, instead of a rounded value.
+const OLD_JSON = { parse: (text, reviver) => JSON.parse(text, reviver ? function (k, v) { return reviver.call(this, k, v); } : undefined), stringify: JSON.stringify };
+const BIG = '[{"id":1830000000000000001,"n":1.0,"tags":[12345678901234567890,1],"o":{"big":9007199254740993,"tiny":1e-400,"z":-0,"inf":1e400},"s":"1830000000000000001 in text","ok":9007199254740992}]';
+const NOTE = {
+  en: 'This browser cannot keep these numbers exactly, so they were written as text: {list}.',
+  zh: '此浏览器无法精确保留这些数字，已按文本写出：{list}。',
+  ja: 'このブラウザーでは次の数値を正確に保持できないため、文字列として書き出しました：{list}。',
+  ko: '이 브라우저는 다음 숫자를 정확히 유지할 수 없어 텍스트로 썼습니다: {list}.',
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  let p = page(lang); p.type(s.right, BIG); p.advance(300);
+  eq(lang + ' modern browser writes source digits', p.get(s.left).value, 'id,n,tags,o.big,o.tiny,o.z,o.inf,s,ok\n1830000000000000001,1,"[12345678901234567890,1]",9007199254740993,1e-400,-0,1e400,1830000000000000001 in text,9007199254740992');
+  eq(lang + ' modern browser adds no note', p.get(s.p + '-status').textContent, frontmatterStrings(readComponent('src/components/tools/CsvJsonTool.astro').frontmatter)[lang].convertedToCsv.replace('{n}', 1).replace('{s}', ''));
+  p = page(lang, 'shared-after', { JSON: OLD_JSON }); p.type(s.right, BIG); p.advance(300);
+  eq(lang + ' old browser keeps text, never a rounded value', p.get(s.left).value, 'id,n,tags,o.big,o.tiny,o.z,o.inf,s,ok\n1830000000000000001,1,"[""12345678901234567890"",1]",9007199254740993,1e-400,-0,1e400,1830000000000000001 in text,9007199254740992');
+  check(lang + ' old browser status explains', p.get(s.p + '-status').textContent.includes(NOTE[lang].replace('{list}', '1830000000000000001, 12345678901234567890, 9007199254740993, 1e-400, -0, 1e400')), p.get(s.p + '-status').textContent);
+  // A long list is cut after 10 numbers, so the status line stays short.
+  const MORE = { en: ' and {n} more', zh: ' 等，共 {total} 个', ja: ' ほか {n} 個', ko: ' 외 {n}개' };
+  const ids = Array.from({ length: 13 }, (_, k) => String(1830000000000000001n + BigInt(k)));
+  p = page(lang, 'shared-after', { JSON: OLD_JSON }); p.type(s.right, '[' + ids.map(id => '{"id":' + id + '}').join(',') + ']'); p.advance(300);
+  check(lang + ' old browser status lists 10 numbers and a count', p.get(s.p + '-status').textContent.endsWith(NOTE[lang].replace('{list}', ids.slice(0, 10).join(', ') + MORE[lang].replace('{n}', 3).replace('{total}', 13))), p.get(s.p + '-status').textContent);
+  eq(lang + ' old browser writes all 13 ids as text', p.get(s.left).value, 'id\n' + ids.join('\n'));
+  p = page(lang, 'shared-after', { JSON: OLD_JSON }); p.type(s.right, '[{"a":12345678901234567890,}]'); p.advance(300);
+  eq(lang + ' old browser: syntax error still reported, no output', [p.get(s.left).value, p.get(s.p + '-status').classList.contains('error')], ['', true]);
+}
 
 /* ── v2 page layout ── */
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -245,7 +339,8 @@ const allStrings = frontmatterStrings(readComponent('src/components/tools/CsvJso
 const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
-eq('reviewed FIX script preserves all bytes except i18n and removed buttons', hash(script), 'ccd9c3d1b1ceff5c8be3690b26ef920c98877ede09057e505418d17d4aaf8d81');
+// S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; the hash pins that reviewed script.
+eq('reviewed page script is unchanged', hash(script), '0b5f3999caab4771a0d38cea46246a65bef94b1db7f33609906314aea0a6eedd');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
@@ -305,6 +400,14 @@ const ORIGINAL_CLIENT_STRINGS = {
     "emptyNull": "빈 필드 → null"
   }
 };
+function runPage(lang, spec, input) {
+  const p = page(lang);
+  p.get('cj-parse-types').checked = spec.parseTypes !== false;
+  p.get('cj-empty-null').checked = !!spec.emptyNull;
+  const [from, to] = spec.to === 'csv' ? ['cj-json', 'cj-csv'] : ['cj-csv', 'cj-json'];
+  p.type(from, input); p.advance(300);
+  return { out: p.get(to).value, status: p.get('cj-status').textContent };
+}
 const yaml = requireRoot('js-yaml');
 const mdxCompiler = await import(requireRoot.resolve('@mdx-js/mdx'));
 for (const lang of ['en','zh','ja','ko']) {
@@ -318,14 +421,23 @@ for (const lang of ['en','zh','ja','ko']) {
   eq(lang+' step count', data.steps.length, 5);
   check(lang+' steps within 8/280/1200 before FAQ', data.steps.length<=8&&data.steps.every(s=>typeof s==='string'&&[...s].length<=280)&&data.steps.reduce((n,s)=>n+[...s].length,0)<=1200&&front.indexOf('steps:')<front.indexOf('faqItems:'));
   eq(lang+' MDX content contract', contractProblems('csv-json', lang), '');
-  // Worked examples, recomputed: CSV → JSON as the page builds it (buildJsonFromCsv over the
-  // engine's parseCsv / inferValue, any option setting), compared as values; JSON → CSV exactly.
-  const pageJson = (raw, parseTypes, emptyNull) => { const { rows, quotedFlags } = E.parseCsv(raw); return rows.slice(1).map((row, r) => Object.fromEntries(rows[0].map((h, c) => [h, E.inferValue(row[c] ?? '', !!quotedFlags[r + 1]?.[c], parseTypes, emptyNull)]))); };
-  const toJsonPairs = examplePairs(body, b => b.lang === 'csv', b => b.lang === 'json');
-  const toCsvPairs = examplePairs(body, b => b.lang === 'json', b => b.lang === 'csv');
-  eq(lang+' has CSV → JSON and JSON → CSV examples', [toJsonPairs.length > 0, toCsvPairs.length > 0], [true, true]);
-  eq(lang+' each JSON example equals the page conversion', toJsonPairs.filter(([a, b]) => ![[true, true], [true, false], [false, true], [false, false]].some(([t, n]) => JSON.stringify(pageJson(a.text, t, n)) === JSON.stringify(JSON.parse(b.text)))).map(([, b]) => b.text), []);
-  eq(lang+' each CSV example equals the engine output', toCsvPairs.filter(([a, b]) => csv(JSON.parse(a.text)) !== b.text).map(([, b]) => b.text), []);
+  // Worked examples, recomputed through the real page script. A `{/* cj-check: {...} */}` note is
+  // followed by an input block and the exact output block (spec: to "json" | "csv", parseTypes,
+  // emptyNull; in: input text instead of the first block; status: true / error: true also require the
+  // page's status line verbatim in the same section, and error: true expects an empty output).
+  const notes = annotations(body, 'cj-check');
+  check(lang+' at least 2 cj-check examples', notes.length >= 2, String(notes.length));
+  for (const [i, note] of notes.entries()) {
+    const spec = note.spec || {}, blocks = fencedBlocks(note.after);
+    const r = runPage(lang, spec, spec.in ?? blocks[0]?.text ?? '');
+    const want = spec.error ? '' : blocks[1]?.text;
+    eq(lang+' cj-check #'+(i+1)+' output', r.out, want);
+    if (spec.status || spec.error) check(lang+' cj-check #'+(i+1)+' status shown verbatim', note.after.includes(r.status), r.status);
+  }
+  // Every CSV / JSON code block on the page belongs to a cj-check example, and both directions appear.
+  const covered = notes.reduce((n, note) => n + fencedBlocks(note.after).filter(b => b.lang === 'csv' || b.lang === 'json').length, 0);
+  eq(lang+' every CSV / JSON block is a recomputed example', fencedBlocks(body).filter(b => b.lang === 'csv' || b.lang === 'json').length, covered);
+  eq(lang+' has CSV → JSON and JSON → CSV examples', ['json', 'csv'].map(to => notes.some(n => (n.spec?.to ?? 'json') === to)), [true, true]);
   check(lang+' Usage removed', !/<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error='';try{await mdxCompiler.compile(body);}catch(e){error=String(e);}eq(lang+' MDX compiles',error,'');
 }
