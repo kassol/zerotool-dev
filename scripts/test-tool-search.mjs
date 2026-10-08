@@ -49,7 +49,11 @@ eq('half-width katakana folds to full width', normalizeSearchText('ｶﾗｰ'), 
   eq('exact slug', wordScore(e, 'gif-compressor'), 100);
   eq('name prefix', wordScore(e, 'gif'), 80);
   eq('word start in name', wordScore(e, 'compress'), 60);
-  eq('inside name', wordScore(e, 'ompress'), 40);
+  eq('Latin word inside a name word (not at a word start)', wordScore(e, 'ompress'), 12);
+  // CJK names have no word boundaries: a hit inside them keeps the inside-name score.
+  const c = makeEntry({ slug: 'gif-compressor', name: 'GIF 压缩工具', description: '', altNames: [] });
+  eq('CJK word inside a CJK name', wordScore(c, '缩工'), 40);
+  eq('Latin word after a hyphen in the slug', wordScore(e, 'compressor'), 60);
   eq('other-language name, word start', wordScore(e, '压缩'), 30);
   eq('other-language name, inside', wordScore(e, '缩工'), 20);
   eq('description word start', wordScore(e, 'shrink'), 15);
@@ -69,7 +73,7 @@ eq('half-width katakana folds to full width', normalizeSearchText('ｶﾗｰ'), 
     makeEntry({ slug: 'gif-a', name: 'GIF A', description: '', altNames: [] }),
     makeEntry({ slug: 'gif-b', name: 'GIF B', description: '', altNames: [] }),
   ];
-  eq('ranking: prefix, prefix (input order), inside name, description', searchEntries(list, 'gif'), [2, 3, 0, 1]);
+  eq('ranking: prefix, prefix (input order), description word start, inside a name word', searchEntries(list, 'gif'), [2, 3, 1, 0]);
   eq('empty query returns null (no filter)', searchEntries(list, ''), null);
 }
 
@@ -112,8 +116,19 @@ for (const [lang, q, first] of expectFirst) {
 for (const lang of LANGS) {
   const got = slugsFor(lang, 'gif');
   check(`${lang} "gif": the two GIF tools come first`, got.slice(0, 2).sort().join() === 'gif-compressor,gif-splitter', JSON.stringify(got));
-  check(`${lang} "gif": slugify ranks after the GIF tools`, got.indexOf('slugify') > 1);
+  // "gif" is inside "slu-gif-y" (not at a word start): it ranks below description word starts.
+  check(`${lang} "gif": slugify ranks after the tools whose description has the word "gif"`,
+    got.indexOf('slugify') > got.indexOf('webp-converter') && got.indexOf('slugify') > got.indexOf('sprite-sheet-generator'), JSON.stringify(got));
 }
+// Full result lists recorded on 2026-10-08 before the word-start change; they must not change.
+const unchanged = [
+  ['en', 'format json', ['json-formatter', 'toml-json']],
+  ['en', 'compress gif', ['gif-compressor']],
+  ['zh', '格式化 json', ['json-formatter', 'json-xml-converter', 'env-file-parser']],
+  ['ko', 'dns 조회', ['dns-lookup']],
+  ['ko', 'gif 압축', ['gif-compressor']],
+];
+for (const [lang, q, list] of unchanged) eq(`${lang} "${q}" results unchanged`, slugsFor(lang, q), list);
 for (const lang of LANGS) {
   for (const t of allTools) {
     const name = t.translations[lang].name;

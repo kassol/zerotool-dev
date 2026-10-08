@@ -13,7 +13,8 @@
 // "压缩", "gif" and "图片" all in one tool.
 //
 // Score per word, best field wins: exact name or slug 100, name or slug prefix 80, word start
-// in name or slug 60, inside name or slug 40, other-language name 30 / 20 (word start / inside),
+// in name or slug 60, inside name or slug 40 (CJK words) or 12 (Latin words, which would
+// otherwise match inside unrelated words), other-language name 30 / 20 (word start / inside),
 // description 15 / 10. A multi-word query also gets a bonus when the whole phrase is the name
 // (50), starts it (30) or is inside it (20). Equal scores keep the directory order.
 
@@ -81,7 +82,11 @@ export function wordScore(entry, word) {
   if (word === entry.name || word === entry.slug) return 100;
   if (entry.name.startsWith(word) || entry.slug.startsWith(word)) return 80;
   if (atWordStart(entry.name, word) || atWordStart(entry.slug, word)) return 60;
-  if (entry.name.includes(word) || entry.slug.includes(word)) return 40;
+  if (entry.name.includes(word) || entry.slug.includes(word)) {
+    // CJK has no word boundaries, so a hit inside a CJK name is as good as a word start.
+    // A Latin word inside another word ("gif" in "slu-gif-y") ranks below description word starts.
+    return Array.from(word).some(isCjk) ? 40 : 12;
+  }
   if (atWordStart(entry.alt, word)) return 30;
   if (entry.alt.includes(word)) return 20;
   if (atWordStart(entry.desc, word)) return 15;
