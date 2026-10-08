@@ -249,7 +249,7 @@ function page(lang = 'en', shellFirst = false) {
   }
   ids['bsg-copy'].textContent = labels.copy;
   const get = id => { if (!ids[id]) throw new Error('Missing actual markup ID ' + id); return ids[id]; };
-  const wrap = { dataset: { copy: labels.copy, copied: labels.copied, copyFailed: labels.copyFailed }, contains: e => Object.values(ids).includes(e), querySelectorAll: () => Object.values(ids).filter(e => e.type === 'text') };
+  const wrap = { dataset: { copy: labels.copy, copied: labels.copied, copyFailed: labels.copyFailed, badColor: labels.badColor }, contains: e => Object.values(ids).includes(e), querySelectorAll: () => Object.values(ids).filter(e => e.type === 'text') };
   Object.assign(doc, {
     getElementById: get,
     querySelector: sel => sel === '.bsg-wrap' || sel === '.tool-widget' ? wrap : null,
@@ -295,6 +295,34 @@ function configure(h) {
   h.get('bsg-inset').checked = true; h.get('bsg-inset').fire('change');
 }
 const configuredCode = 'box-shadow: inset 12px -9px 42px -6px rgba(18, 52, 86, 0.73);';
+// Hex field: maxlength 9 so an 8-digit code is not cut to 6 digits (Chrome cut `#00000080` to
+// `#000000` and dropped the alpha without a message). `#rrggbbaa` sets the color and the opacity
+// slider (alpha / 255, rounded to a whole percent). Text that cannot become a valid code shows a
+// hint in the page language and keeps the previous color; an incomplete code shows the hint only
+// on change (when the field is left).
+check('hex field allows 9 characters', /id="bsg-color-hex"[^>]*maxlength="9"/.test(source));
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const hint = allLabels[lang].badColor;
+  check(lang + ' badColor hint exists', typeof hint === 'string' && /6/.test(hint) && /8/.test(hint), hint);
+  let h = page(lang);
+  h.input('bsg-color-hex', '#00000080');
+  eq(lang + ' 8-digit hex sets color and opacity', [h.get('bsg-code').textContent, h.get('bsg-opacity').value, h.get('bsg-opacity-val').textContent, h.get('bsg-color').value, h.get('bsg-status').textContent], ['box-shadow: 5px 5px 10px 0px rgba(0, 0, 0, 0.50);', '50', '50%', '#000000', '']);
+  h.input('bsg-color-hex', '#1A73E81F');
+  eq(lang + ' 8-digit hex, uppercase, 0x1f → 12%', h.get('bsg-code').textContent, 'box-shadow: 5px 5px 10px 0px rgba(26, 115, 232, 0.12);');
+  for (const bad of ['rgba(0,0,0,.5)', '＃１６７７ｆｆ', 'red', '#1a73e8x']) {
+    h = page(lang); h.input('bsg-color-hex', '#1a73e8'); h.input('bsg-color-hex', bad);
+    eq(lang + ' ' + bad + ' shows the hint and keeps the color', [h.get('bsg-status').textContent, h.get('bsg-status').className, h.get('bsg-code').textContent], [hint, 'tool-status error', 'box-shadow: 5px 5px 10px 0px rgba(26, 115, 232, 0.30);']);
+    h.input('bsg-color-hex', '#000000');
+    eq(lang + ' ' + bad + ' then a valid code clears the hint', [h.get('bsg-status').textContent, h.get('bsg-status').className], ['', 'tool-status']);
+  }
+  h = page(lang); h.input('bsg-color-hex', '#12');
+  eq(lang + ' incomplete code while typing: no hint', h.get('bsg-status').textContent, '');
+  h.input('bsg-color-hex', '#12', 'change');
+  eq(lang + ' incomplete code on change: hint', h.get('bsg-status').textContent, hint);
+  h = page(lang); h.input('bsg-color-hex', '', 'change');
+  eq(lang + ' empty field: no hint', h.get('bsg-status').textContent, '');
+}
+
 // Analytics: one `generate` event per committed change (change event), as in
 // color-palette-generator; none on load and none for each `input` event while dragging or typing.
 {
@@ -452,7 +480,7 @@ process.removeListener('unhandledRejection', unhandled);
     eq(lang + ' tip keys match English', Object.keys(strings.tips).sort(), Object.keys(allLabels.en.tips).sort());
     check(lang + ' empty preview copy exists', typeof strings.empty === 'string' && strings.empty.length > 0);
     check(lang + ' every tip is factual plain prose', Object.values(strings.tips).every(text => typeof text === 'string' && text.length > 0 && !/[<>]\s*|https?:|\n[-*]/.test(text)));
-    const old = Object.fromEntries(Object.entries(strings).filter(([key]) => !['empty','tips'].includes(key)).sort(([a],[b]) => a.localeCompare(b)));
+    const old = Object.fromEntries(Object.entries(strings).filter(([key]) => !['empty','tips','badColor'].includes(key)).sort(([a],[b]) => a.localeCompare(b)));
     eq(lang + ' old fourteen localized values stay exact', digest(JSON.stringify(old)), oldLabels[lang]);
     const mdx = readFileSync(join(root, 'src/content/tools/box-shadow-generator/' + lang + '.mdx'), 'utf8');
     const fm = mdx.match(/^---\n([\s\S]*?)\n---/);
