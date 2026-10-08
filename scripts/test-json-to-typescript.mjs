@@ -150,8 +150,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 8398);
-eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '94146e45945c603a2133ccd7b9c0149e920bf4bb2b098a0d2b9124f0a48d5798');
+eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 9781);
+eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'c756c2f142fec2be95b2244216b865d08bfe3ff9cb555c208e786d3a31abf8e2');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -320,6 +320,15 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': next result enables Copy again', !p.get('jtt-copy').disabled && p.get('jtt-output-code').textContent === goldenCode);
   p.get('jtt-clear').click();
   check(lang + ': Clear disables Copy', p.get('jtt-copy').disabled === true);
+}
+
+// ---------- root names follow the ECMAScript identifier rules ----------
+for (const [name, typeName] of [['用户', '用户'], ['2fa', 'T2fa'], ['class', 'class_'], ['string', 'string_'], ['', 'RootObject'], ['  ', 'RootObject'], ['user profile', 'userProfile'], ['!!!', 'RootObject'], ['Api', 'Api'], ['$store', '$store']]) {
+  const p = page('en');
+  p.get('jtt-root-name').value = name; p.input('{"a":1}'); p.get('jtt-convert').click();
+  const code = p.get('jtt-output-code').textContent;
+  check('root name ' + JSON.stringify(name) + ' gives ' + typeName, code.startsWith('interface ' + typeName + ' {'), code);
+  eq('root name ' + JSON.stringify(name) + ' compiles with the sample', compile(code + '\nexport const sample: ' + typeName + ' = {"a":1};\n').join('; '), '');
 }
 
 // ---------- analytics: one event per committed edit or button, not per typing pause ----------
