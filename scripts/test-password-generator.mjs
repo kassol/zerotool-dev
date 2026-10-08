@@ -12,7 +12,9 @@
 // the first 4294967296 % size characters slightly more likely); length and charset of
 // the output; a chi-square check on 176,000 characters; strength thresholds and the bit
 // counts quoted on the en tool page; STRINGS has the same keys in all four languages,
-// including the five strength labels (before the fix they were English on every page).
+// including the five strength labels (before the fix they were English on every page); the four
+// tool pages (src/content/tools/password-generator/{lang}.mdx): MDX contract plus `pwg-meter` /
+// `pwg-miss` worked examples recomputed with the engine and the page-language meter text.
 //
 // Run: node scripts/test-password-generator.mjs
 
@@ -224,6 +226,85 @@ if (sm) {
         check('en Python block prints "94 20"', out === '94 20', out);
       } else if (!havePy) console.log('SKIP en Python block (python3 not installed)');
     }
+  }
+}
+
+// ── tool pages: worked examples (src/content/tools/password-generator/{lang}.mdx) ───────────
+// Recomputed with the engine and the page's STRINGS. Each note takes one item or an array; sets
+// are letters U (upper) L (lower) D (digits) S (symbols), "amb": true excludes 0 O l 1 I.
+//   {/* pwg-meter: {"len":20,"sets":"ULDS"} */}  the strength meter text the page writes,
+//      `${label} (${Math.round(bits)} bits)` in the page language; "size" (if given) must equal the
+//      character-pool size; "pw" (if given) is a printed sample: it must have that length and use
+//      only characters from that pool.
+//   {/* pwg-miss: {"len":20,"sets":"ULDS","missing":"D","digits":0} */}  the chance that a password
+//      has no character from set "missing" ("any": at least one selected set is absent), written as
+//      a percentage with "digits" decimals.
+// Every output must appear verbatim in inline code or in a code block after the note (up to the
+// next note with the same tag or the next H2). Each language needs at least 2 pwg-meter notes.
+{
+  const { contractProblems } = await import('./lib/tool-mdx-contract.mjs');
+  const { fencedBlocks } = await import('./lib/tool-mdx-contract.mjs');
+  const S = new Function('return ' + source.match(/(?:var|const) STRINGS = (\{[\s\S]*?\n\s*\});/)[1])();
+  const SET = { U: 'upper', L: 'lower', D: 'digits', S: 'symbols' };
+  const optsOf = (item) => {
+    if (typeof item.sets !== 'string' || !/^[ULDS]+$/.test(item.sets)) throw new Error('bad "sets" ' + JSON.stringify(item.sets));
+    const o = Object.fromEntries([...item.sets].map((c) => [SET[c], true]));
+    if (item.amb) o.ambiguous = true;
+    return o;
+  };
+  const decodeHTML = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  function codeTexts(text) {
+    const out = fencedBlocks(text).map((b) => b.text);
+    const rest = text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, ' ');
+    for (const m of rest.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+      const inner = m[1].trim();
+      const lit = /^\{([`'"])([\s\S]*)\1\}$/.exec(inner);
+      out.push(lit ? new Function('return ' + lit[1] + lit[2] + lit[1])() : decodeHTML(inner));
+    }
+    for (const m of rest.replace(/<code\b[\s\S]*?<\/code>/g, ' ').matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+    return out;
+  }
+  const items = (spec) => (Array.isArray(spec) ? spec : [spec]);
+  const inCode = (after, value) => codeTexts(after).some((t) => t.includes(value));
+  const meter = ({ spec, after, lang }) => {
+    const bad = [];
+    for (const item of items(spec)) {
+      const pool = E.charsetFor(optsOf(item));
+      if (item.size !== undefined && item.size !== pool.length) bad.push(`pool ${item.sets} is ${pool.length}, not ${item.size}`);
+      const bits = item.len * Math.log2(pool.length);
+      const text = S[lang][E.strengthInfo(bits).key] + ' (' + Math.round(bits) + ' bits)';
+      if (!inCode(after, text)) bad.push('meter ' + JSON.stringify(text) + ' not in code');
+      if (item.pw !== undefined) {
+        if ([...item.pw].length !== item.len || [...item.pw].some((c) => !pool.includes(c))) bad.push('sample ' + JSON.stringify(item.pw) + ' is not ' + item.len + ' characters from the pool');
+        if (!inCode(after, item.pw)) bad.push('sample ' + JSON.stringify(item.pw) + ' not in code');
+      }
+    }
+    return bad.join('; ') || null;
+  };
+  const SIZE = { U: 26, L: 26, D: 10, S: E.SYMBOLS.length };
+  const miss = ({ spec, after }) => {
+    const bad = [];
+    for (const item of items(spec)) {
+      const keys = [...item.sets];
+      const N = E.charsetFor(optsOf(item)).length;
+      if (item.amb || N !== keys.reduce((a, k) => a + SIZE[k], 0)) { bad.push('pwg-miss needs full sets without "amb"'); continue; }
+      let p;
+      if (item.missing === 'any') {
+        p = 0;
+        for (let m = 1; m < 1 << keys.length; m++) {
+          const sub = keys.filter((_, i) => (m >> i) & 1);
+          p += (sub.length % 2 ? 1 : -1) * Math.pow((N - sub.reduce((a, k) => a + SIZE[k], 0)) / N, item.len);
+        }
+      } else if (keys.includes(item.missing)) p = Math.pow((N - SIZE[item.missing]) / N, item.len);
+      else { bad.push('bad "missing" ' + item.missing); continue; }
+      const text = (p * 100).toFixed(item.digits ?? 0) + '%';
+      if (!inCode(after, text)) bad.push(JSON.stringify(text) + ' not in code');
+    }
+    return bad.join('; ') || null;
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const problems = contractProblems('password-generator', lang, { annotations: [{ tag: 'pwg-meter', min: 2, verify: meter }, { tag: 'pwg-miss', verify: miss }] });
+    check(lang + ' tool page: MDX contract and pwg-* worked examples', problems === '', problems);
   }
 }
 
