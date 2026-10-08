@@ -9,16 +9,24 @@ steps:
   - "「交换」交换两侧输入并清除结果。再次点击「比较」生成反向 Patch。"
   - "「清除」或 Ctrl+L（Mac 为 ⌘+L）清空工具。编辑任一输入也会清除旧结果。"
 faqItems:
-  - question: "什么是 RFC 6902 JSON Patch？"
-    answer: "RFC 6902 定义了一种 JSON 文档格式，用于表达对 JSON 文档的一系列操作。每个操作是一个包含 'op'（add/remove/replace/move/copy/test）、'path'（RFC 6901 JSON Pointer）和可选 'value' 的对象。"
-  - question: "我的 JSON 数据会被发送到服务器吗？"
-    answer: "不会。比较在浏览器中通过 JavaScript 完成，数据不会离开本机。"
-  - question: "可以比较大型 JSON 文件吗？"
-    answer: "可以，但包含数千个键或深层嵌套数组的超大对象可能需要片刻处理时间。所有计算均在浏览器内完成。"
-  - question: "可视化差异是如何工作的？"
-    answer: "工具执行深层递归比较。只在「After」中存在的键显示为添加（+）；只在「Before」中存在的键显示为删除（−）；值发生变化的键显示为修改（~），同时展示旧值和新值。"
-  - question: "这与文本对比工具有什么不同？"
+  - id: "rfc6902"
+    question: "什么是 RFC 6902 JSON Patch？"
+    answer: "RFC 6902 定义了一种 JSON 文档格式，用于表达对 JSON 文档的一系列操作。每个操作是一个包含 'op'（add/remove/replace/move/copy/test）、'path'（RFC 6901 JSON Pointer）和可选 'value' 的对象。本工具只生成 add、remove、replace 三种操作。"
+  - id: "visual"
+    question: "可视差异是如何工作的？"
+    answer: "工具逐层递归比较。只在「输入后」中存在的键显示为新增（+），只在「输入前」中存在的键显示为删除（−），值发生变化的键显示为修改（~），同时列出旧值和新值。可视差异里的路径用点号连接，只方便阅读；代码里请使用 Patch 中的 JSON Pointer 路径。"
+  - id: "numbers"
+    question: "两个订单号明明不同，为什么显示“未发现差异”？"
+    answer: "JavaScript 把 JSON 数字读成 64 位浮点数，超过 2^53 的整数和很长的小数会被舍入，1830000000000000001 和 1830000000000000002 都变成 1830000000000000000。工具按读到的值比较，但会扫描两侧原文，把被舍入的数字和同一对象中重复出现的键连同 JSON Pointer 路径写进状态栏（各列出前 10 个，其余写出个数）。"
+  - id: "large"
+    question: "可以比较大型 JSON 吗？"
+    answer: "没有大小上限，只在点击「比较」时在当前标签页中计算。实际的限制是嵌套层数：嵌套约 1,900 层的文档（在 Node.js 22 中测得，浏览器之间有差异）会耗尽调用栈，状态栏会提示没有完成比较。"
+  - id: "vs-diff-checker"
+    question: "这与文本对比工具有什么不同？"
     answer: "文本对比工具逐行比较纯文本。JSON 差异工具理解 JSON 结构，对值进行语义比较而非文本比较，并输出机器可读的 JSON Patch 操作。"
+  - id: "privacy"
+    question: "我的 JSON 数据会被发送到服务器吗？"
+    answer: "不会。两份 JSON 在当前浏览器标签页中比较，不会发送出去，也不会保存到浏览器存储。比较发现差异时，页面统计会记录一次使用事件（只含工具名和动作 diff），不包含 JSON 或 Patch 内容。"
 ---
 
 <h2>使用场景</h2>
@@ -31,7 +39,7 @@ faqItems:
 
 <p>相关工具：<a href="/zh/tools/json-formatter/">JSON 格式化</a> — 在差异对比前格式化并验证 JSON。</p>
 
-## 示例
+## 示例：一次 API 响应的变化
 
 **输入前：**
 
@@ -43,18 +51,6 @@ faqItems:
 
 ```json
 {"status":"active","name":"Alice","role":"admin","tags":["b","c"],"profile":{"age":31,"city":"Paris"}}
-```
-
-**可视化差异：**
-
-```text
-~status: "pending" → "active"
-−legacy_id: 12345
-~tags.0: "a" → "b"
-~tags.1: "b" → "c"
-−tags.2: "c"
-~profile.age: 30 → 31
-+role: "admin"
 ```
 
 **JSON Patch：**
@@ -73,22 +69,46 @@ faqItems:
 ]
 ```
 
-键顺序不影响结果：`name` 换了位置但不会被报告。这个 patch 用 Python 的 `jsonpatch` 1.33 应用后得到「输入后」的文档：
+键顺序不影响结果：`name` 换了位置但不会被报告。这个 patch 用 Python 的 `jsonpatch` 1.33 应用后得到「输入后」的文档。
 
-```python
-import jsonpatch  # pip install jsonpatch
+## 示例：雪花 ID 订单为什么显示“未发现差异”
 
-before = {"name": "Alice", "status": "pending", "legacy_id": 12345,
-          "tags": ["a", "b", "c"], "profile": {"age": 30, "city": "Paris"}}
-patch = jsonpatch.JsonPatch([...])  # paste the patch from the tool
-after = patch.apply(before)
+不少 Java 后端用雪花算法生成 19 位的 Long 型主键，例如 MyBatis-Plus 的 `IdType.ASSIGN_ID` 默认用雪花算法生成 ID（[MyBatis-Plus 注解文档](https://baomidou.com/reference/annotation/)）。接口如果把它当数字输出，比较两条订单时：
+
+{/* jd-page: {"before":"{\"orderId\":1830000000000000001,\"status\":\"待支付\"}","after":"{\"orderId\":1830000000000000002,\"status\":\"已支付\"}"} */}
+
+```json
+[
+  { "op": "replace", "path": "/status", "value": "已支付" }
+]
 ```
+
+```text
+检测到 1 处变更。JavaScript 无法精确保存以下数字，按舍入后的值比较，因此其中的差异可能漏报，Patch 也写入舍入后的值：输入前 /orderId: 1830000000000000001 → 1830000000000000000; 输入后 /orderId: 1830000000000000002 → 1830000000000000000。
+```
+
+两个订单号在 JavaScript 里都变成 `1830000000000000000`，所以 Patch 只有 `status` 一条，订单号的变化被漏掉了；状态栏把两处舍入都列了出来。RFC 8259 指出，只有 [-(2^53)+1, (2^53)-1] 范围内的整数在各实现之间能保证一致（[RFC 8259 第 6 节](https://www.rfc-editor.org/rfc/rfc8259#section-6)）。这类 ID 最好在接口里以字符串输出。
+
+## 示例：收货地址与商品列表
+
+键名是中文时，Patch 路径里直接写中文；按下标比较的数组，删掉第一件商品后会显示成「替换 + 删除」：
+
+{/* diff: {"before":{"收货人":"张伟","收货地址":{"省":"广东省","市":"深圳市"},"商品":[{"sku":"A1","数量":2},{"sku":"B2","数量":1}]},"after":{"收货人":"张伟","收货地址":{"省":"广东省","市":"广州市"},"商品":[{"sku":"B2","数量":1}]}} */}
+
+```json
+[
+  { "op": "replace", "path": "/收货地址/市", "value": "广州市" },
+  { "op": "replace", "path": "/商品/0/sku", "value": "B2" },
+  { "op": "replace", "path": "/商品/0/数量", "value": 1 },
+  { "op": "remove", "path": "/商品/1" }
+]
+```
+
+`A1` 那一行其实是被删除了，但工具不按 `sku` 配对，而是把第 0 项改成 `B2` 的内容，再删掉第 1 项。应用这个 Patch 后的结果与「输入后」相同，只是读起来不像“删除一件商品”。
 
 ## 数组如何比较
 
-数组按下标比较，而不是按内容。从 `["a","b","c"]` 去掉第一个标签，会显示为两次替换加一次删除，而不是一条 `remove /tags/0`。patch 仍然正确，只是比需要的长。
-
-同一个数组删除多个元素时，删除按下标从大到小写出。例如一张订单原有 3 个商品行、现在只剩 1 个且数量变了：
+数组按下标比较，而不是按内容。同一个数组删除多个元素时，删除按下标从大到小写出。例如一张订单原有 3 个商品行、现在只剩 1 个且数量变了：
 
 {/* diff: {"before":{"id":7,"items":[{"sku":"A1","qty":2},{"sku":"B2","qty":1},{"sku":"C3","qty":5}]},"after":{"id":7,"items":[{"sku":"A1","qty":3}]}} */}
 
@@ -117,22 +137,14 @@ patch 里的路径是 JSON Pointer（[RFC 6901](https://www.rfc-editor.org/rfc/r
 ]
 ```
 
-两边根节点类型不同（如对象与数组）时，patch 替换整个文档，路径是空串 `""`（RFC 6901 中 `/` 指向名为空字符串的成员）：
-
-{/* diff: {"before":{"a":1},"after":[1]} */}
-
-```json
-[
-  { "op": "replace", "path": "", "value": [1] }
-]
-```
-
-可视化差异用点号连接键名（`profile.age`、`list.3`），只是方便阅读；代码里请使用 JSON Patch 中的路径。
+两边根节点类型不同（如对象与数组）时，patch 替换整个文档，路径是空串 `""`（RFC 6901 中 `/` 指向名为空字符串的成员）。可视差异用点号连接键名（`profile.age`、`list.3`），只是方便阅读。
 
 ## 限制
 
 - 不生成 move、copy 操作；改名的键显示为 `remove` 加 `add`。
-- 对象数组不会按 `id` 字段配对。
-- 两边都必须是合法 JSON，状态栏会指出哪一边解析失败，例如 `前 JSON 解析错误：Expected double-quoted property name in JSON at position 7`。
-- 数字按 JavaScript 解析后比较：`1.0` 与 `1` 相同，超过 2^53 的整数会丢精度。
+- 对象数组不会按 `id` 或 `sku` 字段配对。
+- 两边都必须是合法 JSON，状态栏会指出哪一边解析失败，例如 `前 JSON 解析错误：Expected double-quoted property name in JSON at position 7`（原因部分是浏览器给出的英文）。
+- 数字按 JavaScript 解析后比较：`1.0` 与 `1` 相同，`-0` 在 Patch 里写成 `0`。超过 2^53 的整数、很长的小数和 `1e400` 这类数字会被舍入，状态栏列出它们（最多 10 个，其余写出个数），Patch 写入舍入后的值（`1e400` 写成 `null`）。
+- 同一对象中重复出现的键只保留最后一个值，状态栏会列出。
+- 嵌套约 1,900 层（Node.js 22 中测得，浏览器之间有差异）的文档无法比较，状态栏会给出提示。
 - 工具的测试把每个生成的 patch 用严格的 RFC 6902 实现（以及已安装时的 Python `jsonpatch`）应用到「前」，结果必须等于「后」，另跑 3,000 组随机文档。
