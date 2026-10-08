@@ -84,8 +84,8 @@ check('FAQ_ID: local id', FAQ_ID.test('local-fullwidth'));
 check('FAQ_ID: rejects capitals, spaces, empty and trailing hyphen', !['Privacy', 'max size', '', 'limits-', 'local-'].some((id) => FAQ_ID.test(id)));
 
 // ── Lists ───────────────────────────────────────────────────────────────────
-equal('S2_PENDING: 45 tools (79 after S2-0, minus 9 in S2-1, 9 in S2-2, 8 in S2-3 and 8 in S2-4)', S2_PENDING.size, 45);
-equal('FAQ_COUNT_MISMATCH: 13 tools (23 after S2-0, minus 3 in S2-1, 3 in S2-2 and 4 in S2-4; S2-3 had none)', FAQ_COUNT_MISMATCH.size, 13);
+equal('S2_PENDING: 32 tools (79 after S2-0, minus 9 in S2-1, 9 in S2-2, 8 in S2-3, 8 in S2-4 and 13 in S2-5)', S2_PENDING.size, 32);
+equal('FAQ_COUNT_MISMATCH: empty (23 after S2-0, minus 3 in S2-1, 3 in S2-2, 4 in S2-4 and 13 in S2-5; S2-3 had none)', FAQ_COUNT_MISMATCH.size, 0);
 equal('STEPS_COUNT_MISMATCH: empty (htaccess-generator aligned in S2-3)', STEPS_COUNT_MISMATCH.size, 0);
 check('FAQ_COUNT_MISMATCH is inside S2_PENDING', [...FAQ_COUNT_MISMATCH].every((s) => S2_PENDING.has(s)));
 check('STEPS_COUNT_MISMATCH is inside S2_PENDING', [...STEPS_COUNT_MISMATCH].every((s) => S2_PENDING.has(s)));

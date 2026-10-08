@@ -21,17 +21,13 @@ export const LANGS = ['en', 'zh', 'ja', 'ko'];
 
 // Tools that have not finished S2: S2-PLAN.md §1.2 table A 32 + table B 15 + §7 29 = 76
 // (S2-evidence/content-stats.py on v1.140.3), plus 3 added by S2-0 = 79; S2-1 (2026-10-08)
-// finished 9, S2-2 (2026-10-08) finished 9, S2-3 (2026-10-08) finished 8 and S2-4 (2026-10-08)
-// finished 8, so 45 are left. These get only the basic checks:
+// finished 9, S2-2 (2026-10-08) finished 9, S2-3 (2026-10-08) finished 8, S2-4 (2026-10-08)
+// finished 8 and S2-5 (2026-10-08) finished 13, so 32 are left. These get only the basic checks:
 // files, steps, nonempty FAQ items, no Usage section, and equal FAQ and step counts (unless
 // listed in FAQ_COUNT_MISMATCH / STEPS_COUNT_MISMATCH).
 export const S2_PENDING = new Set([
   // §1.2 table A: site self-review, min(zh, ja, ko) < 800 characters (32; S2-1 to S2-4 finished all 32)
-  // §1.2 table B: FAQ counts differ between languages (15; S2-4 finished slugify and color-converter, 13 left)
-  'color-blindness-simulator', 'color-shades-generator', 'css-clip-path-generator',
-  'json-to-csv', 'json-to-go-struct', 'json-to-json-schema', 'line-tools', 'morse-code-translator',
-  'number-base', 'svg-optimizer', 'text-to-ascii-art', 'wifi-qr-code-generator',
-  'zero-width-character-detector',
+  // §1.2 table B: FAQ counts differ between languages (15; S2-4 finished 2 and S2-5 finished 13)
   // §7 / §8.2: other non-premium tools below the body floor in at least one language (29)
   'color-contrast-checker', 'css-specificity-calculator', 'csv-json', 'csv-to-markdown', 'csv-to-sql',
   'diff-checker', 'env-file-parser', 'exif-metadata-viewer', 'fake-data-generator', 'hash-generator',
@@ -68,14 +64,10 @@ export const FAQ_IDS_TODO = new Set([
 // Tools whose four languages have different FAQ counts today (S2-PLAN.md §1.2: 8 in table A,
 // 15 in table B; S2-1 aligned password-generator, url-encode and uuid-generator, S2-2 aligned
 // box-shadow-generator, css-gradient-generator and css-unit-converter, S2-4 aligned
-// html-to-markdown, lorem-ipsum, slugify and color-converter, 13 left).
-// All of them are in S2_PENDING. Remove a tool when its counts match.
-export const FAQ_COUNT_MISMATCH = new Set([
-  'color-blindness-simulator', 'color-shades-generator',
-  'css-clip-path-generator', 'json-to-csv', 'json-to-go-struct', 'json-to-json-schema', 'line-tools',
-  'morse-code-translator', 'number-base', 'svg-optimizer', 'text-to-ascii-art',
-  'wifi-qr-code-generator', 'zero-width-character-detector',
-]);
+// html-to-markdown, lorem-ipsum, slugify and color-converter, S2-5 aligned the other 13, so the
+// list is empty). Add a tool only while its counts differ and it is in S2_PENDING; remove it
+// when they match.
+export const FAQ_COUNT_MISMATCH = new Set([]);
 
 // Tools whose four languages have different step counts today. S2-PLAN.md §1.1 listed
 // htaccess-generator (5 en steps, 4 in zh / ja / ko); S2-3 (2026-10-08) aligned it, so the list
