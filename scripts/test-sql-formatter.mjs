@@ -291,8 +291,8 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
 
 const protectedCore = pageSource.match(/^[ \t]*\/\* ── engine:start ── \*\/[\s\S]*?\/\* ── engine:end ── \*\//m)[0];
 // Engine block changed with approval on 2026-10-08 (S2-4 engine fixes a–d); see git log.
-same('protected conversion bytes',Buffer.byteLength(protectedCore),17112);
-same('protected conversion SHA256',hash(protectedCore),'6c072b6d872d3dff119d9f106878f31b79c7c5d1ca9340322aefd6d33a24924b');
+same('protected conversion bytes',Buffer.byteLength(protectedCore),17265);
+same('protected conversion SHA256',hash(protectedCore),'77c52a93a68b8696dfebda6f212083f9c87085a2a59d1c840a6eab2cc1d8e206');
 
 const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
 const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
@@ -350,7 +350,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [598, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), 'bbc29f299a07ab719cd1d4b9f40005fa7b7c9b41302698b096f8c6c4a1603054');
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '68a104051e3658e4fc72faa20bdde43d6305527e39089744eba6e5c5b078fff9');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -589,6 +589,35 @@ for (const [name, sql, want] of [
   sameTokens(name, sql);
   const ops = E.tokenize(sql).filter(t => t.type === 'operator').map(t => t.value);
   for (const op of want) check('f: operator ' + op + ' stays whole: ' + name, ops.includes(op), ops.join(' '));
+}
+
+// g) MySQL executable comments /*! … */ and optimizer hints /*+ … */ are code, not comments: both
+// outputs keep them as written (review S2-4 part 3, must-fix 2).
+eq('g: Minify keeps /*! */ and /*+ */', E.minifySQL('select /*! STRAIGHT_JOIN */ a /* note */ from t, u where /*+ INDEX(t idx_a) */ 1 = 1'),
+  'SELECT /*! STRAIGHT_JOIN */ a FROM t, u WHERE /*+ INDEX(t idx_a) */ 1 = 1');
+eq('g: Minify keeps a versioned mysqldump line', E.minifySQL('/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;\nselect 1;'),
+  '/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */; SELECT 1;');
+eq('g: Format keeps an Oracle hint after SELECT', fmt('select /*+ INDEX(t idx_a) */ a from t'), lines('SELECT', '  /*+ INDEX(t idx_a) */ a', 'FROM t'));
+// MySQL reading of /*! … */: the text inside runs.
+const mysqlExecReading = sql => mysqlReading(sql.replace(/\/\*!\d*([\s\S]*?)\*\//g, ' $1 '));
+for (const [name, sql] of [
+  ['MySQL executable comment adds to the result', 'select /*! 1 + */ 1 as x from paths;'],
+  ['versioned executable comment', 'select 2 /*!50001 * 3 */ as y from paths;'],
+]) {
+  const want = sqliteRows(mysqlExecReading(sql)), plain = sqliteRows(sql);
+  same('exec (MySQL reading): input runs and differs from the plain reading: ' + name, [want.error ?? null, want.rows !== plain.rows], [null, true]);
+  for (const [label, out] of [['format', fmt(sql)], ['format lower', E.formatSQL(sql, '\t', false)], ['minify', E.minifySQL(sql)], ['minify lower', E.minifySQL(sql, false)]]) {
+    same('exec (MySQL reading): ' + label + ': ' + name, sqliteRows(mysqlExecReading(out)), want);
+    same('exec (SQLite reading): ' + label + ': ' + name, sqliteRows(out), plain);
+  }
+}
+for (const [name, sql] of [
+  ['Oracle hint', 'select /*+ FULL(e) PARALLEL(e, 4) */ e.name from employees e where e.id = 1;'],
+  ['MySQL optimizer hint and executable comment', 'select /*+ MAX_EXECUTION_TIME(1000) */ /*! SQL_NO_CACHE */ id from t;'],
+]) {
+  for (const out of [fmt(sql), E.minifySQL(sql), E.minifySQL(sql, false)]) {
+    for (const c of sql.match(/\/\*[!+][\s\S]*?\*\//g)) check('g: kept verbatim: ' + name + ' ' + c, out.includes(c), out);
+  }
 }
 
 // d) Minify follows the uppercase option.

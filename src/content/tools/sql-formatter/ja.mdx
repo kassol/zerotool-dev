@@ -5,13 +5,13 @@ steps:
   - "SQL 入力欄に貼り付けます。入力を止めて0.3秒後に自動整形します。"
   - "インデントとキーワードの大文字変換を選びます。"
   - "「整形」で現在の設定を適用します。入力欄の Ctrl+Enter / ⌘+Enter でも実行できます。"
-  - "「圧縮」で -- と /* */ のコメントを除いた1行の SQL を作ります。# のコメントと空白なしの --x は残し、その後で改行します。"
+  - "「圧縮」で -- と /* */ のコメントを除いた1行の SQL を作ります。/*! */ と /*+ */ はそのまま残し、# のコメントと空白なしの --x も残してその後で改行します。"
   - "「コピー」で出力全体をコピーします。"
   - "「クリア」で両方の欄とステータスを消去します。整形設定は保持します。"
 faqItems:
   - id: dialects
     question: "どのSQL方言に対応していますか？"
-    answer: "方言ごとのモードはなく、SELECT・INSERT・UPDATE・DELETE・CREATE TABLE・JOIN・サブクエリ・CTE を汎用の SQL として整形します。よく使われる方言の書き方はそのまま残ります。バッククォートと [角括弧] の名前、N'...'・X'...'・PostgreSQL の E'...' 文字列、$$...$$ のドル記号引用、$1・?1・:id・@id・@@session.sql_mode のようなパラメーターと変数です。文字列中のバックスラッシュは、MySQL の読み方ですべての文字列が閉じるときだけエスケープとして扱います。圧縮では -- と空白で始まるコメントを削除します。# のコメント（MySQL）と空白なしの --x はデータベースによって読み方が違うため、行末までそのまま残し、そこで改行します。"
+    answer: "方言ごとのモードはなく、SELECT・INSERT・UPDATE・DELETE・CREATE TABLE・JOIN・サブクエリ・CTE を汎用の SQL として整形します。よく使われる方言の書き方はそのまま残ります。バッククォートと [角括弧] の名前、N'...'・X'...'・PostgreSQL の E'...' 文字列、$$...$$ のドル記号引用、$1・?1・:id・@id・@@session.sql_mode のようなパラメーターと変数です。文字列中のバックスラッシュは、MySQL の読み方ですべての文字列が閉じるときだけエスケープとして扱います。圧縮では -- と空白で始まるコメントと普通の /* */ コメントを削除し、MySQL の /*! */（実行されるコメント）と /*+ */（オプティマイザーヒント）は残します。# のコメント（MySQL）と空白なしの --x はデータベースによって読み方が違うため、行末までそのまま残し、そこで改行します。"
   - id: validate
     question: "SQL の構文チェックはできますか？"
     answer: "できません。整形専用のツールで、構文エラーやテーブル定義との整合は確認しません。誤った SQL もエラーなしで整形されます。"
@@ -125,4 +125,4 @@ WHERE id IN (
 - **方言は汎用の 1 種類のみで、構文チェックはしません。** MySQL・PostgreSQL・SQL Server などのモードはなく、誤った SQL もエラーなしで整形されます。
 - **文字列中のバックスラッシュは2通りの読み方のどちらかで扱います。** MySQL は `NO_BACKSLASH_ESCAPES` が無効なとき、文字列中の `\'` をエスケープされた引用符として読みます（[MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)）。既定の `standard_conforming_strings = on` の PostgreSQL（[PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)）や SQLite（[SQLite: Literal Values](https://www.sqlite.org/lang_expr.html)）では、バックスラッシュは普通の文字です。このツールは、MySQL の読み方ですべての文字列が閉じるときはその読み方を使い、閉じないときは標準の読み方を使います。{/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'` は圧縮後も `SELECT * FROM users WHERE note = 'It\'s'` のままで、単独の `'C:\'` も1つの文字列のままです。文字列の中身は常にそのままコピーし、読み方で決まるのは文字列の終わりの位置だけです。
 - **`CASE` は 1 行のままです。** `CASE WHEN ... THEN ... END` は `WHEN` ごとに改行されません。
-- **圧縮すると `-- ` と `/* */` のコメントが消え**（`#` のコメントと空白なしの `--x` は残して改行します）、閉じ括弧の後の空白もなくなります（例：`SELECT COUNT(*)FROM events`）。
+- **圧縮すると `-- ` と `/* */` のコメントが消え**（`/*! … */` と `/*+ … */` はそのまま残し、`#` のコメントと空白なしの `--x` は残して改行します）、閉じ括弧の後の空白もなくなります（例：`SELECT COUNT(*)FROM events`）。

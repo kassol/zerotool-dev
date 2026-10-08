@@ -5,13 +5,13 @@ steps:
   - "Paste SQL into SQL Input; formatting runs 0.3 seconds after typing stops."
   - "Choose the indentation and whether to uppercase keywords."
   - "Click Format to apply the current options, or use Ctrl+Enter / ⌘+Enter in the input."
-  - "Click Minify for a single line without -- and /* */ comments; a # comment or --x without a space is kept and the line ends after it."
+  - "Click Minify for a single line without -- and /* */ comments; /*! */ and /*+ */ stay, and a # comment or --x without a space is kept and the line ends after it."
   - "Click Copy to copy the complete output."
   - "Click Clear to empty both text areas and the status while keeping the formatting options."
 faqItems:
   - id: dialects
     question: "What SQL dialects are supported?"
-    answer: "There is one generic mode for SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, JOINs, subqueries and CTEs, with no MySQL, PostgreSQL, SQLite or SQL Server switch. Common dialect tokens are copied unchanged: backtick and [bracketed] names, N'...', X'...' and PostgreSQL E'...' strings, $$...$$ dollar-quoted strings, and parameters such as $1, ?1, :id, @id and @@session.sql_mode. Backslashes in strings are read the MySQL way only when that reading closes every string. Minify drops a comment that starts with -- and a space; a # comment (MySQL) or --x without a space, which other databases read differently, is kept to the end of its line and the line ends there."
+    answer: "There is one generic mode for SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, JOINs, subqueries and CTEs, with no MySQL, PostgreSQL, SQLite or SQL Server switch. Common dialect tokens are copied unchanged: backtick and [bracketed] names, N'...', X'...' and PostgreSQL E'...' strings, $$...$$ dollar-quoted strings, and parameters such as $1, ?1, :id, @id and @@session.sql_mode. Backslashes in strings are read the MySQL way only when that reading closes every string. Minify drops a comment that starts with -- and a space and plain /* */ comments, keeps MySQL /*! */ executable comments and /*+ */ optimizer hints; a # comment (MySQL) or --x without a space, which other databases read differently, is kept to the end of its line and the line ends there."
   - id: validate
     question: "Does it validate my SQL?"
     answer: "No. This tool focuses on formatting, not validation. It beautifies the structure of your query but does not check for syntax errors or schema correctness, and invalid SQL is formatted without an error."
@@ -78,7 +78,7 @@ Several statements separated by `;` are formatted one after another, each starti
 
 ## Minify
 
-**Minify** puts the whole query on one line, for example to paste it into a log search, a shell variable or a JSON string. `--` and `/* */` comments are dropped, because a `--` comment would swallow everything after it on a single line. A `#` comment or a `--x` without a space is kept and the line ends after it, because other databases read those characters as code (see the FAQ on dialects). Minifying the formatted aggregate query above gives:
+**Minify** puts the whole query on one line, for example to paste it into a log search, a shell variable or a JSON string. `--` and `/* */` comments are dropped, because a `--` comment would swallow everything after it on a single line. A `#` comment or a `--x` without a space is kept and the line ends after it, because other databases read those characters as code (see the FAQ on dialects). MySQL executable comments `/*! … */` and optimizer hints `/*+ … */` are code too, so both outputs keep them as written. Minifying the formatted aggregate query above gives:
 
 ```sql
 SELECT status, COUNT(*)AS n FROM orders WHERE created_at >= '2026-01-01' GROUP BY status HAVING COUNT(*)> 5 ORDER BY n DESC;
@@ -159,4 +159,4 @@ ORDER BY r.spent DESC;
 - **Backslashes in strings follow one of two readings.** MySQL reads `\'` inside a string as an escaped quote unless the `NO_BACKSLASH_ESCAPES` SQL mode is on ([MySQL 8.4 String Literals](https://dev.mysql.com/doc/refman/8.4/en/string-literals.html)); PostgreSQL with its default `standard_conforming_strings = on` ([PostgreSQL: Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)) and SQLite ([SQLite: Literal Values](https://www.sqlite.org/lang_expr.html)) treat a backslash as an ordinary character. The tool uses the MySQL reading when it closes every quoted string, and the standard reading otherwise. So {/* sqlf-check: {"op":"minify","in":"select * from users where note = 'It\\'s'"} */}`select * from users where note = 'It\'s'` stays `SELECT * FROM users WHERE note = 'It\'s'`, and a lone `'C:\'` stays one string. Strings are always copied as written; the reading only decides where each string ends.
 - **`CASE` stays on one line.** `CASE WHEN ... THEN ... END` is not broken into `WHEN` lines.
 - **Write statements are only lightly formatted.** See the `INSERT` and `UPDATE` examples above; `CREATE TABLE` column definitions also stay on one line.
-- **Minify removes `-- ` and `/* */` comments** (a `#` comment or `--x` without a space is kept and ends the line) and the space after a closing parenthesis, for example `SELECT COUNT(*)FROM events`.
+- **Minify removes `-- ` and `/* */` comments** (`/*! … */` and `/*+ … */` are kept; a `#` comment or `--x` without a space is kept and ends the line) and the space after a closing parenthesis, for example `SELECT COUNT(*)FROM events`.
