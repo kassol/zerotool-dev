@@ -291,8 +291,8 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
 
 const protectedCore = pageSource.match(/^[ \t]*\/\* ── engine:start ── \*\/[\s\S]*?\/\* ── engine:end ── \*\//m)[0];
 // Engine block changed with approval on 2026-10-08 (S2-4 engine fixes a–d); see git log.
-same('protected conversion bytes',Buffer.byteLength(protectedCore),16105);
-same('protected conversion SHA256',hash(protectedCore),'fd70268118d5e2744eab4d888b442bd1b21564e8686c0c79c6140cfd361ff818');
+same('protected conversion bytes',Buffer.byteLength(protectedCore),17077);
+same('protected conversion SHA256',hash(protectedCore),'c3242498e2a5fe655e2e94aa6ab5f160f0192ca9951b5d6efd14abb210c75324');
 
 const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
 const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
@@ -350,7 +350,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [598, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '3a020713a072c9d1ef7df51b3c00917f972ac6f65e137635688dd8545a2385c9');
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '348059113776f9b51dde1813eb3c5eb6e1cd6339727e2f92872e4a3c3aa86668');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -466,7 +466,7 @@ const tokenSeq = sql => E.tokenize(sql).map(t => t.type + ':' + (t.type === 'key
 function sameTokens(name, sql) {
   const want = tokenSeq(sql).filter(t => !t.startsWith('comment:'));
   for (const indent of ['  ', '\t']) for (const upper of [true, false]) same('tokens: format ' + upper + ': ' + name, tokenSeq(E.formatSQL(sql, indent, upper)).filter(t => !t.startsWith('comment:')), want);
-  for (const upper of [true, false]) same('tokens: minify ' + upper + ': ' + name, tokenSeq(E.minifySQL(sql, upper)), want);
+  for (const upper of [true, false]) same('tokens: minify ' + upper + ': ' + name, tokenSeq(E.minifySQL(sql, upper)).filter(t => !t.startsWith('comment:')), want);
 }
 
 // a) Unquoted identifiers with non-ASCII letters stay one token.
@@ -531,6 +531,46 @@ for (const [name, sql] of [
   ['PostgreSQL dollar quoting', "create function f() returns int as $body$ select  1 $body$ language sql;"],
   ['MySQL variables', 'select @@session.sql_mode, @x := 1 from dual;'],
 ]) sameTokens(name, sql);
+
+// e) Line comments must not swallow the code after them. MySQL starts a comment at # and at "-- "
+// only when the second dash is followed by whitespace or a control character ("--x" is two minus
+// signs); standard SQL, PostgreSQL and SQLite start a comment at any "--", and PostgreSQL uses # as
+// an operator. A "--" comment followed by whitespace is a comment everywhere and Minify removes it,
+// as before; "#…" and "--x…" are kept to the end of the line and Minify ends the line after them.
+eq('e: MySQL # comment is kept and ends the line', E.minifySQL('SELECT 1 # note\nFROM t'), 'SELECT 1 # note\nFROM t');
+eq('e: --x after a number is kept and ends the line', E.minifySQL('SELECT 1--x\nFROM t'), 'SELECT 1 --x\nFROM t');
+eq('e: "-- " comment is still removed', E.minifySQL('SELECT 1 -- note\nFROM t'), 'SELECT 1 FROM t');
+eq('e: a number is not followed by its own minus sign', E.minifySQL('select 3-2, 1e-3, .5, 0x1F from t'), 'SELECT 3 - 2, 1e-3, .5, 0x1F FROM t');
+eq('e: format starts a new line after a line comment', fmt('select a, -- first\n b, c # third\n from t'),
+  lines('SELECT', '  a,', '  -- first', '  b,', '  c # third', 'FROM t'));
+eq('e: format keeps the field after an end-of-line comment', fmt('select a -- why\n, b from t'),
+  lines('SELECT', '  a -- why', '  ,', '  b', 'FROM t'));
+for (const [name, sql] of [
+  ['"--x" comment after a number (standard reading)', 'select 1--x\nfrom paths;'],
+  ['"-- " comment before a comma', 'select p -- note\n, 1 from paths;'],
+  ['"-- " comment after a comma', 'select p, -- note\n 1 from paths;'],
+  ['comment between clauses', 'select count(*) -- n\nfrom paths -- table\nwhere p <> \'\';'],
+]) sameExecution(name, sql);
+// MySQL reading: drop # comments, read "--x" as "- -x", "-- " to the end of the line as a comment.
+const mysqlReading = sql => sql.replace(/#[^\n]*/g, '').replace(/--(?=[^\s\x00-\x1f\x7f])/g, '- -').replace(/--[\s\x00-\x1f\x7f][^\n]*/g, '');
+for (const [name, sql] of [
+  ['MySQL # comment', 'select 1 # note\nfrom paths;'],
+  ['MySQL "--1" is minus minus one', 'select 2--1\nfrom paths;'],
+  ['MySQL # comment after a comma', 'select p, # note\n 2 from paths;'],
+]) {
+  const want = sqliteRows(mysqlReading(sql));
+  same('exec (MySQL reading): input runs: ' + name, want.error ?? null, null);
+  for (const [label, out] of [['format', fmt(sql)], ['format lower', E.formatSQL(sql, '    ', false)], ['minify', E.minifySQL(sql)], ['minify lower', E.minifySQL(sql, false)]]) {
+    same('exec (MySQL reading): ' + label + ': ' + name, sqliteRows(mysqlReading(out)), want);
+  }
+}
+for (const [name, sql] of [
+  ['PostgreSQL # operator', 'select 5 # 3 as x, data #> \'{a}\' from t\nwhere id = 1;'],
+  ['SQL Server #temp table', 'select * from #orders where id = 1\norder by id;'],
+]) {
+  sameTokens(name, sql);
+  for (const out of [fmt(sql), E.minifySQL(sql)]) check('e: # line kept verbatim: ' + name, out.includes(sql.slice(sql.indexOf('#'), sql.indexOf('\n'))), out);
+}
 
 // d) Minify follows the uppercase option.
 eq('d: minify with uppercase off', E.minifySQL('SELECT a, COUNT(*) FROM t WHERE b IS NULL', false), 'select a, count(*)from t where b is null');

@@ -156,11 +156,16 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
           /* whitespace — skip */
           if (/\s/.test(ch)) { pos++; continue; }
 
-          /* single-line comment -- */
-          if (ch === '-' && pos + 1 < len && sql[pos + 1] === '-') {
+          /* line comments. "-- " followed by whitespace or a control character is a comment in
+             every dialect (keep: false, Minify drops it). MySQL reads "--x" as two minus signs and
+             # as a comment; standard SQL, PostgreSQL and SQLite read any "--" as a comment and
+             PostgreSQL uses # as an operator. Those two forms are copied to the end of the line
+             (keep: true, Minify ends the line after them). */
+          if ((ch === '-' && sql[pos + 1] === '-') || ch === '#') {
             var end = sql.indexOf('\n', pos);
             if (end === -1) end = len;
-            tokens.push({ type: 'comment', value: sql.slice(pos, end) });
+            var keep = ch === '#' || (pos + 2 < len && !/[\s\x00-\x1f\x7f]/.test(sql[pos + 2]));
+            tokens.push({ type: 'comment', value: sql.slice(pos, end), line: true, keep: keep });
             pos = end;
             continue;
           }
@@ -230,10 +235,12 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
           }
 
           /* number */
-          if (/[0-9]/.test(ch) || (ch === '.' && pos + 1 < len && /[0-9]/.test(sql[pos + 1]))) {
-            var s = '';
-            while (pos < len && /[0-9.eE\-+]/.test(sql[pos])) { s += sql[pos]; pos++; }
-            tokens.push({ type: 'number', value: s });
+          var numRe = /0[xX][0-9A-Fa-f]+|0[bB][01]+|(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?/y;
+          numRe.lastIndex = pos;
+          var num = /[0-9.]/.test(ch) ? numRe.exec(sql) : null;
+          if (num) {
+            tokens.push({ type: 'number', value: num[0] });
+            pos += num[0].length;
             continue;
           }
 
@@ -330,7 +337,7 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
         }
 
         function pushLine() {
-          if (curLine.length > 0) lines.push(curLine);
+          if (curLine.trim().length > 0) lines.push(curLine);
           curLine = '';
         }
 
@@ -346,6 +353,13 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
         var i = 0;
         while (i < tokens.length) {
           var tok = tokens[i];
+
+          /* a line comment runs to the end of its line: the next token starts a new line */
+          if (i > 0 && tokens[i - 1].line) {
+            var commentLevel = lineLevel(curLine);
+            pushLine();
+            curLine = indent(commentLevel);
+          }
 
           /* ── open paren: a subquery starts a deeper block; any other paren (function call,
                 expression, list) stays inline. Every paren is pushed so that its ")" closes
@@ -531,8 +545,8 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
         var parts = [];
         for (var i = 0; i < tokens.length; i++) {
           var tok = tokens[i];
-          if (tok.type === 'comment') continue;
-          if (parts.length > 0) {
+          if (tok.type === 'comment' && !tok.keep) continue;
+          if (parts.length > 0 && parts[parts.length - 1] !== '\n') {
             var last = parts[parts.length - 1];
             var needsSpace =
               (tok.type === 'punct' && (tok.value === '(' || tok.value === ')' || tok.value === ',' || tok.value === ';' || tok.value === '.')) ||
@@ -540,8 +554,9 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, for
             if (!needsSpace) parts.push(' ');
           }
           parts.push(tok.type === 'keyword' && toUpper === false ? tok.value.toLowerCase() : tok.value);
+          if (tok.keep) parts.push('\n');
         }
-        return parts.join('');
+        return parts.join('').replace(/\n$/, '');
       }
 
       /* ── engine:end ── */
