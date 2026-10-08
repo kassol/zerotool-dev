@@ -359,6 +359,7 @@ function asciiExportPage(opts = {}) {
       Object.assign(this, { id, tagName: tag.toUpperCase(), value: '', checked: false, hidden: false, disabled: false, textContent: '', className: '', children: [], listeners: {}, style: {} });
     }
     select() { document.activeElement = this; }
+    focus() { document.activeElement = this; }
     removeChild(child) { this.children = this.children.filter((c) => c !== child); return child; }
     set textContent(value) { this.text = String(value); this.children = []; }
     get textContent() { return (this.text || '') + this.children.map((child) => child.textContent || '').join(''); }
@@ -435,7 +436,7 @@ function asciiExportPage(opts = {}) {
   vm.runInContext(pageScript[1], ctx, { filename: 'TextToAsciiArtTool.astro', lineOffset: source.slice(0, pageScript.index).split('\n').length - 1 });
   function flush(ms) { for (const [id, timer] of [...timers]) if (timer.ms === ms) { timers.delete(id); timer.fn(); } }
   return {
-    get, pendingBlobs, downloads, copied, revoked, tracks, execCopied, flush, body: document.body,
+    get, pendingBlobs, downloads, copied, revoked, tracks, execCopied, flush, body: document.body, doc: document,
     text(value) { get('taa-input').value = value; get('taa-input').dispatch('input'); flush(120); },
     font(value) { get('taa-font').value = value; get('taa-font').dispatch('change'); },
     clearShortcut() { document.activeElement = get('taa-input'); for (const fn of listeners.keydown || []) fn({ ctrlKey: true, key: 'l', preventDefault() {} }); flush(0); },
@@ -622,6 +623,7 @@ for (const mutation of ['text', 'font', 'empty', 'shortcut', 'invalid']) {
     eq('copy ' + mode + ' + execCommand: the button says copied', page.get('taa-copy').textContent, STRINGS.en.copied);
     eq('copy ' + mode + ' + execCommand: no error in the status line', page.get('taa-status').textContent, '');
     eq('copy ' + mode + ' + execCommand: the helper textarea is removed', page.body.children.filter((c) => c.tagName === 'TEXTAREA').length, 0);
+    check('copy ' + mode + ' + execCommand: focus returns to the Copy button', page.doc.activeElement === page.get('taa-copy'));
     page.get('taa-copy-command').click();
     for (let i = 0; i < 10; i++) await Promise.resolve();
     eq('copy command ' + mode + ' + execCommand: the fallback copies the command', page.execCopied[1], "figlet -f standard 'Hello World'");
