@@ -570,5 +570,10 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
   }
 }
 
+
+// ja page sample: 気象庁 130000.json, reportDatetime 2026-10-08T17:00:00+09:00 (fetched 2026-10-08), 東京地方 only,
+// the weather series with all 3 points and the precipitation series with its first 2 points, values unchanged.
+const JMA_20261008_1700 = '[{"publishingOffice":"気象庁","reportDatetime":"2026-10-08T17:00:00+09:00","timeSeries":[{"timeDefines":["2026-10-08T17:00:00+09:00","2026-10-09T00:00:00+09:00","2026-10-10T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"weatherCodes":["100","100","101"],"weathers":["晴れ","晴れ","晴れ\u3000時々\u3000くもり"]}]},{"timeDefines":["2026-10-08T18:00:00+09:00","2026-10-09T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"pops":["0","0"]}]}]}]';
+{ const t = readFileSync(join(root, 'src/content/tools/json-to-mongoose/ja.mdx'), 'utf8'); if (!t.includes('<pre><code>{`' + JMA_20261008_1700 + '`}</code></pre>')) { failures++; console.log('FAIL ja page uses the recorded 気象庁 17:00 sample'); } else passes++; }
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
