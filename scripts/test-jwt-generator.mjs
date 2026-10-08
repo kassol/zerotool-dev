@@ -14,7 +14,8 @@
 // non-ASCII); Base64 and base64url secrets with or without padding; invalid Base64 is rejected;
 // 4-language STRINGS keys. Page: the payload must be a JSON object (RFC 7519 §7.2 step 10), a Base64
 // secret that decodes to 0 bytes and a failed signature show localized messages (the browser message
-// goes to the console only), Copy falls back to execCommand('copy'), and analytics send one event per
+// goes to the console only), an unpaired UTF-16 surrogate in Header, Payload or a UTF-8 secret is
+// rejected with its position (TextEncoder would sign U+FFFD instead), Copy falls back to execCommand('copy'), and analytics send one event per
 // committed edit (change, algorithm, format) once its token exists, not per typing pause or on load.
 //
 // Run: node scripts/test-jwt-generator.mjs
@@ -302,12 +303,20 @@ for (const lang of ['en','zh','ja','ko']) for (const shellFirst of [false, true]
     ['string payload','jg-payload','"user-42"','jg-payload-err',t.errPayloadObject],
     ['number payload','jg-payload','42','jg-payload-err',t.errPayloadObject],
     ['null payload','jg-payload','null','jg-payload-err',t.errPayloadObject],
+    ['lone surrogate in payload','jg-payload','{"name": "a\ud83d"}','jg-payload-err',t.errSurrogate.replace('{pos}', 12)],
+    ['lone surrogate in header','jg-header','{"alg":"HS256","x":"\udc00"}','jg-header-err',t.errSurrogate.replace('{pos}', 21)],
+    ['lone surrogate in UTF-8 secret','jg-secret','key-\ud800-more','jg-secret-warn',t.errSurrogate.replace('{pos}', 5)],
   ]) {
     const p = await populated(); if (name === 'invalid Base64' || name === 'whitespace-only Base64 key') p.format('base64'); p.input(id,value); p.advance(500); await settle();
     eq(tag + ' ' + name + ' visible localized validation', p.get(errorId).textContent, error);
     eq(tag + ' ' + name + ' never starts another signing job', p.jobs.length, 1);
     eq(tag + ' ' + name + ' preserves typed text', p.get(id).value, value);
     eq(tag + ' ' + name + ' erases stale token and copy data', [p.snapshot().token,p.snapshot().display,p.copy()], ['', 'none', null]);
+  }
+  {
+    const p = await populated(); p.input('jg-payload','{"name": "\\ud83d\\ude00 ok 😀"}'); p.advance(500); await p.waitJobs(2); await p.finish(1);
+    const s = p.snapshot();
+    check(tag + ' JSON escapes and a paired emoji still sign', verifies(s.token, 'HS256', Buffer.from('your-256-bit-secret'), s.inputs[0], s.inputs[1]) && s.errors[1] === '');
   }
   {
     const p = await populated(); const before = p.snapshot(); const event = p.key('l','ctrlKey',null);

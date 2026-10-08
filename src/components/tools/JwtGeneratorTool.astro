@@ -18,6 +18,7 @@ const STRINGS = {
     errEmptyKey: 'The Base64 secret decodes to 0 bytes. Enter key data to sign the token.',
     errPayloadObject: 'Payload must be a JSON object, for example {"sub": "42"}. RFC 7519 requires the claims to be an object.',
     errSign: 'The browser could not sign the token. Edit a field to try again.',
+    errSurrogate: 'Character {pos} is half of an emoji or other character (an unpaired UTF-16 surrogate). UTF-8 cannot encode it, so it would be signed as U+FFFD. Delete it or paste the whole character again.',
     warnShortKey: 'The key is {bytes} bytes; RFC 7518 requires at least {min} bytes for {algo}. The token is signed, but the key is too short to rely on.',
     privacyNote: 'All processing is done locally in your browser.',
     secretFormat: 'Secret format',
@@ -44,6 +45,7 @@ const STRINGS = {
     errEmptyKey: 'Base64 密钥解码后为 0 字节。请输入密钥内容后再签名。',
     errPayloadObject: 'Payload 必须是 JSON 对象，例如 {"sub": "42"}。RFC 7519 要求声明集是对象。',
     errSign: '浏览器未能签名 Token。修改任一字段后会重试。',
+    errSurrogate: '第 {pos} 个字符是 emoji 等字符的一半（落单的 UTF-16 代理项）。UTF-8 无法编码它，签名时会变成 U+FFFD。请删除它，或重新粘贴完整的字符。',
     warnShortKey: '密钥只有 {bytes} 字节；RFC 7518 要求 {algo} 至少 {min} 字节。Token 照常签名，但这个密钥太短，不宜使用。',
     privacyNote: '所有处理均在浏览器本地完成。',
     secretFormat: '密钥格式',
@@ -70,6 +72,7 @@ const STRINGS = {
     errEmptyKey: 'Base64 の秘密鍵をデコードすると 0 バイトになります。鍵の内容を入力してください。',
     errPayloadObject: 'ペイロードは JSON オブジェクトにしてください（例：{"sub": "42"}）。RFC 7519 はクレームをオブジェクトで表すよう定めています。',
     errSign: 'ブラウザーでトークンに署名できませんでした。いずれかの欄を編集すると再試行します。',
+    errSurrogate: '{pos} 文字目は絵文字などの片割れ（対になっていない UTF-16 サロゲート）です。UTF-8 では表せないため、署名時に U+FFFD に変わります。削除するか、文字全体を貼り直してください。',
     warnShortKey: '鍵は {bytes} バイトです。RFC 7518 は {algo} に {min} バイト以上を求めています。署名はしますが、この鍵は短すぎます。',
     privacyNote: 'すべての処理はブラウザ内でローカルに行われます。',
     secretFormat: '秘密鍵の形式',
@@ -96,6 +99,7 @@ const STRINGS = {
     errEmptyKey: 'Base64 비밀 키를 디코딩하면 0바이트입니다. 키 내용을 입력하세요.',
     errPayloadObject: '페이로드는 JSON 객체여야 합니다(예: {"sub": "42"}). RFC 7519는 클레임을 객체로 표현하도록 정합니다.',
     errSign: '브라우저가 토큰에 서명하지 못했습니다. 아무 필드나 수정하면 다시 시도합니다.',
+    errSurrogate: '{pos}번째 문자는 이모지 등의 반쪽(짝이 없는 UTF-16 서로게이트)입니다. UTF-8로 인코딩할 수 없어 서명할 때 U+FFFD로 바뀝니다. 삭제하거나 문자 전체를 다시 붙여 넣으세요.',
     warnShortKey: '키가 {bytes}바이트입니다. RFC 7518은 {algo}에 {min}바이트 이상을 요구합니다. 서명은 하지만 이 키는 너무 짧습니다.',
     privacyNote: '모든 처리는 브라우저에서 로컬로 수행됩니다.',
     secretFormat: '비밀 키 형식',
@@ -232,6 +236,23 @@ const { tips: TIPS, ...CLIENT_T } = T;
           obj.alg = algo;
           headerEl.value = JSON.stringify(obj, null, 2);
         } catch (e) { /* leave as-is if invalid JSON */ }
+      }
+
+      /* 1-based character position of the first unpaired UTF-16 surrogate, or 0. TextEncoder would
+         write it as U+FFFD, so the signed bytes would differ from the text in the field. */
+      function loneSurrogateAt(str) {
+        var pos = 0;
+        for (var i = 0; i < str.length; i++) {
+          pos++;
+          var c = str.charCodeAt(i);
+          if (c >= 0xd800 && c <= 0xdbff) {
+            var d = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+            if (d >= 0xdc00 && d <= 0xdfff) { i++; continue; }
+            return pos;
+          }
+          if (c >= 0xdc00 && c <= 0xdfff) return pos;
+        }
+        return 0;
       }
 
       /* ── engine:start ── */
@@ -371,7 +392,12 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
         if (!headerStr && !payloadStr && !secretStr) return;
         var headerOk = true, payloadOk = true, header;
+        var headerLone = loneSurrogateAt(headerEl.value), payloadLone = loneSurrogateAt(payloadEl.value);
         try { header = JSON.parse(headerStr); } catch (e) { headerErrEl.textContent = t.errHeaderJson; headerOk = false; }
+        if (headerOk && headerLone) {
+          headerErrEl.textContent = t.errSurrogate.replace('{pos}', headerLone);
+          headerOk = false;
+        }
         if (headerOk && (!header || header.alg !== currentAlgo)) {
           headerErrEl.textContent = t.errHeaderAlgo.replace('{algo}', currentAlgo);
           headerOk = false;
@@ -382,6 +408,10 @@ const { tips: TIPS, ...CLIENT_T } = T;
            an array, string, number or null payload. */
         if (payloadOk && (payload === null || typeof payload !== 'object' || Array.isArray(payload))) {
           payloadErrEl.textContent = t.errPayloadObject;
+          payloadOk = false;
+        }
+        if (payloadOk && payloadLone) {
+          payloadErrEl.textContent = t.errSurrogate.replace('{pos}', payloadLone);
           payloadOk = false;
         }
         if (!headerOk || !payloadOk) {
@@ -400,6 +430,13 @@ const { tips: TIPS, ...CLIENT_T } = T;
           return;
         }
 
+        var secretLone = currentFmt === 'utf8' ? loneSurrogateAt(secretStr) : 0;
+        if (secretLone) {
+          secretWarnEl.textContent = t.errSurrogate.replace('{pos}', secretLone);
+          resultWrap.style.display = 'none';
+          statusEl.textContent = '';
+          return;
+        }
         var keyBytes = decodeSecret(secretStr, currentFmt);
         if (!keyBytes) {
           secretWarnEl.textContent = t.errBase64Secret;
