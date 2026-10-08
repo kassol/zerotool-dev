@@ -249,6 +249,16 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
     for (let i = 0; i < p.encodes.length; i++) if (!p.encodes[i].done) await p.encode(i);
     check('batch lifecycle: ' + cancel + ' ignores old encoding', p.rows().length === 0 && p.get(prefix + '-results').hidden && p.get(prefix + '-actions').hidden && p.get(prefix + '-status').textContent === '');
   }
+  // Picking the same file again after changing the quality must start a new batch. The file input kept
+  // its value after each batch, so the browser fired no change event for the same selection.
+  {
+    const p = page(), input = p.get(prefix + '-file');
+    input.files = [file('same.png')]; input.value = 'C:\\fakepath\\same.png'; input.dispatch('change');
+    check('file input: value is reset after a batch starts, so the same file can be picked again', input.value === '', input.value);
+    check('file input: the batch still converts the picked file', p.images.length === 1);
+  }
+  check('file input: the initial accept list matches the PNG / JPG / GIF → WebP direction',
+    /<input type="file" id="wc-file" accept="image\/png,image\/jpeg,image\/gif" /.test(src));
   {
     const p = page(); await p.ready(['settings.png']); const imageCount = p.images.length;
     p.get(prefix + '-quality').value = '42'; p.get(prefix + '-quality').dispatch('input');
