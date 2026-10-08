@@ -187,11 +187,30 @@ for (const lang of ['en','zh','ja','ko']) {
 }
 await settle();eq('no unhandled copy rejection',unhandled.length,0);process.removeListener('unhandledRejection',recordUnhandled);
 
+// ---------- analytics: one event per committed edit, none on load ----------
+// The input event converts after 300 ms; the change event (the textarea loses focus after an
+// edit) and Example record one `convert`. Loading the page and each typing pause record nothing.
+for (const lang of ['en','zh','ja','ko']) {
+  const p=page({lang});
+  eq(lang+' analytics: page load records nothing',JSON.stringify(p.tracks),'[]');
+  p.type('<h2>A</h2>');p.advance(300);p.type('<h2>AB</h2>');p.advance(300);
+  eq(lang+' analytics: typing pauses record nothing',JSON.stringify(p.tracks),'[]');
+  p.input.dispatch('change');
+  eq(lang+' analytics: change records one convert',JSON.stringify(p.tracks),'[["html-to-markdown","convert"]]');
+  p.type('<h2>ABC</h2>');p.input.dispatch('change');
+  eq(lang+' analytics: change converts a pending edit at once',p.output.value,'## ABC');
+  eq(lang+' analytics: second change records a second convert',p.tracks.length,2);
+  p.$('htm-example').click();
+  eq(lang+' analytics: Example records one convert',p.tracks.length,3);
+  p.type('   ');p.input.dispatch('change');
+  eq(lang+' analytics: empty result records nothing',p.tracks.length,3);
+}
+
 
 // ---------- v2 page layout ----------
 const sha = text => createHash('sha256').update(text).digest('hex');
 const scripts = [...source.matchAll(/<script\b[^>]*>[\s\S]*?<\/script>/g)].map(m=>m[0]).join('\n');
-eq('v2 complete FIX scripts byte-exact',sha(scripts),"e6162d423430662ebd659ceaef6e1bbbfad5bc5c4ba3095cb30bc8906a197e4d");
+eq('v2 complete FIX scripts byte-exact',sha(scripts),"76f4b5cd80a6e188d091d91dec8aa808fc3585264a5c955e58c05d55fb7aa7ef");
 const engineStart=source.indexOf('  // engine:start'),engineEnd=source.indexOf('  // engine:end',engineStart)+'  // engine:end'.length;
 eq('v2 immutable engine exact hash',sha(source.slice(engineStart,engineEnd)),'f2666340a3e26e120c074b02aa779430fbbe7127b16ac2aa5767ad217966bbaf');
 check('v2 registered convert',/['"]html-to-markdown['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
