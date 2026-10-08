@@ -14,6 +14,11 @@
 // throw a JsonPathError with a position instead of returning an empty result. Also the tool's
 // example pills against the sample bookstore JSON.
 //
+// Page script: the analytics event is sent on change only; numbers that JSON.parse changes and
+// full-width / CJK punctuation in a query are explained on the status line; query errors are
+// shown in the page language (one pattern per engine message). The worked examples on the four
+// tool pages ({/* jpt-check */}) run through the real page script in that language.
+//
 // Guide: tables, error messages and the Python block of src/content/blog/jsonpath-tester-guide/en.mdx
 // are recomputed (see the block at the end).
 //
@@ -25,7 +30,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, toolMdxContract, fencedBlocks, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonpathTesterTool.astro'), 'utf8');
@@ -634,6 +639,43 @@ const UNREACHED = ['expected an index', 'expected a member name or * after "."',
   }
   const h = page('en'); h.input('jpt-json', '{}');
   for (const d of details) { h.input('jpt-expr', d.q); eq('en keeps the engine text for ' + d.q, h.get('jpt-count').textContent, 'Unsupported syntax: ' + d.message); }
+}
+
+// ---------- worked examples on the tool pages ({/* jpt-check: {...} */}) ----------
+// Each annotation runs through the real page script in that page language. Spec:
+//   q     the expression;
+//   json  "sample" (the preloaded bookstore), "block" (the first code block after the
+//         annotation) or JSON text;
+//   show  which outputs must appear verbatim in a code block or inline code after the
+//         annotation (up to the next annotation or H2): "compact" = JSON.stringify of the
+//         match list, "panel" = the Results panel text, "status" = the status line.
+{
+  const decodeEntities = t => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  const codeTexts = after => {
+    const out = fencedBlocks(after).map(b => b.text);
+    const prose = withoutCode(after);
+    for (const m of prose.matchAll(/<code>\{("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\}<\/code>/g)) out.push(new Function('return ' + m[1])());
+    for (const m of prose.matchAll(/<code>([^<{]*)<\/code>/g)) out.push(decodeEntities(m[1]));
+    for (const m of prose.replace(/<code>[\s\S]*?<\/code>/g, ' ').matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+    return out;
+  };
+  const pages = {};
+  const verify = ({ spec, after, lang }) => {
+    if (!spec || typeof spec.q !== 'string') return 'spec needs q';
+    const json = spec.json === 'sample' || spec.json === undefined ? sampleJson : spec.json === 'block' ? fencedBlocks(after)[0]?.text : spec.json;
+    if (typeof json !== 'string') return 'no JSON input';
+    const h = pages[lang] ??= page(lang);
+    h.input('jpt-json', json); h.input('jpt-expr', spec.q);
+    const panel = h.get('jpt-code').textContent, status = h.get('jpt-count').textContent;
+    let compact = null;
+    try { compact = JSON.stringify(E.jsonpath(JSON.parse(json), spec.q)); } catch {}
+    const got = { compact, panel, status };
+    const codes = codeTexts(after);
+    const missing = (spec.show ?? ['compact']).filter(k => !codes.includes(got[k]));
+    return missing.length ? missing.map(k => k + ' ' + JSON.stringify(got[k]) + ' not shown').join('; ') : null;
+  };
+  const contract = toolMdxContract('jsonpath-tester', { annotations: [{ tag: 'jpt-check', min: 2, verify }] });
+  for (const r of contract.results.filter(r => /jpt-check/.test(r.rule))) check(r.message, r.ok);
 }
 
 await settle();eq('no unhandled copy rejections',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);

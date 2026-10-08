@@ -8,18 +8,24 @@ steps:
   - "Read Results: one match is shown as its value, several as a JSON array. Review the message for invalid input or no matches."
   - "Use Copy to copy the complete matched JSON. Ctrl+L (⌘+L on Mac) inside the tool clears both inputs and results."
 faqItems:
-  - question: "What is JSONPath?"
+  - id: what-is
+    question: "What is JSONPath?"
     answer: "JSONPath is a query language for JSON, analogous to XPath for XML. It uses a path expression to select nodes from a JSON document. RFC 9535 (2024) standardizes it. Variants of it appear in kubectl output templates, AWS Step Functions and many API testing tools."
-  - question: "What does $ mean in a JSONPath expression?"
-    answer: "$ refers to the root element of the JSON document. Every valid JSONPath expression must start with $. On its own, $ selects the entire document. You chain selectors after it, such as $.store.book[0].title."
-  - question: "How do I select all items in an array?"
-    answer: "Use the wildcard selector [*] after the array's key. For example, $.store.book[*] returns all book objects in the array. You can further drill into each item: $.store.book[*].author returns every author value."
-  - question: "How do filter expressions work?"
-    answer: "A filter is written [?expression], and @ is the element being tested. Under RFC 9535 the parentheses are optional, so $.store.book[?@.price < 10] and $.store.book[?(@.price < 10)] are the same. You can use ==, !=, <, <=, >, >=, combine conditions with &&, || and !, test nested paths such as @.author.name, compare with other parts of the document through $, and call length(), count(), match(), search() and value()."
-  - question: "What is recursive descent (..) ?"
+  - id: root
+    question: "What does $ mean in a JSONPath expression?"
+    answer: "$ refers to the root element of the JSON document. Every valid JSONPath expression must start with $. On its own, $ selects the entire document. You chain selectors after it, such as $.store.book[0].title; [*] selects every element of an array, so $.store.book[*].author returns every author."
+  - id: filters
+    question: "How do filter expressions work?"
+    answer: "A filter is written [?expression], and @ is the element being tested. Under RFC 9535 the parentheses are optional, so $.store.book[?@.price < 10] and $.store.book[?(@.price < 10)] are the same. You can use ==, !=, <, <=, >, >=, combine conditions with &&, || and !, test nested paths such as @.author.name, compare with other parts of the document through $, and call length(), count(), match(), search() and value(). A string never equals a number: a price stored as \"9.99\" is not less than 10."
+  - id: descendant
+    question: "What is recursive descent (..) ?"
     answer: "The .. operator recursively searches all descendants of the current node. For example, $..author finds every author field anywhere in the JSON tree, regardless of nesting depth."
-  - question: "Why do I see \"Unsupported syntax\"?"
-    answer: "The expression uses syntax that RFC 9535 does not define, so the tool stops and shows the character position instead of returning an empty result. Common cases are script expressions such as [(@.length-1)] (use [-1]), the =~ operator (use match() or search()), and in / nin. An empty result with \"No matches found\" means the expression is valid but nothing in the JSON matches it."
+  - id: unsupported
+    question: "Why do I see \"Unsupported syntax\"?"
+    answer: "The expression uses syntax that RFC 9535 does not define, so the tool stops and shows the character position instead of returning an empty result. Common cases are script expressions such as [(@.length-1)] (use [-1]), the =~ operator (use match() or search()), and in / nin. \"No matches found\" means the expression is valid but nothing in the JSON matches it; if the expression has full-width characters such as ． or ［, the status line says so, because JSONPath reads them as part of a name."
+  - id: privacy
+    question: "Is my JSON sent anywhere or saved?"
+    answer: "No. The query runs in the page script on this page; the JSON and the expression are not sent to a server and are not written to browser storage. Analytics records only the tool name and an action: a committed query that finds matches, an example click or a copy. It does not record the JSON or the expression."
 ---
 
 <h2>JSONPath Syntax Reference (RFC 9535)</h2>
@@ -42,9 +48,12 @@ faqItems:
   <li>Syntax outside RFC 9535 is rejected with "Unsupported syntax" and the character position: script expressions <code>{"[(...)]"}</code>, <code>{"=~"}</code>, <code>{"in"}</code> / <code>{"nin"}</code>, and extensions such as <code>{"~"}</code> for member names from other libraries.</li>
   <li><code>{"$.store.book.length"}</code> selects a member named <code>{"length"}</code>, which arrays do not have, so the result is empty. Use <code>{"length()"}</code> inside a filter, for example <code>{"$[?length(@.book) > 3]"}</code>.</li>
   <li>Results list the matched values. Normalized paths (such as <code>{"$['store']['book'][0]"}</code>) are not shown.</li>
-  <li>Object members are returned in the order they appear in your JSON. RFC 9535 leaves this order open, so other implementations can return them in a different order.</li>
+  <li>Object members come back in the order JavaScript keeps them: names that are array indexes, such as <code>{'"2"'}</code> or <code>{'"10"'}</code>, first and in ascending order, then the other names in the order of your JSON (<a href="https://tc39.es/ecma262/#sec-ordinaryownpropertykeys" target="_blank" rel="noopener">ECMA-262 OrdinaryOwnPropertyKeys</a>). The pretty-printed Results use the same order. RFC 9535 §2.3.2.2 leaves the order open, so other implementations can differ.</li>
+  <li>If an object has the same name twice, <code>{"JSON.parse"}</code> keeps the last value and the query never sees the first one.</li>
+  <li>Member names are compared code point by code point, with no Unicode normalization (RFC 9535 §2.3.1.2): <code>{"é"}</code> typed as one character does not select a name stored as <code>{"e"}</code> plus a combining accent.</li>
   <li><code>{"match()"}</code> and <code>{"search()"}</code> run the pattern as a JavaScript regular expression with the <code>{"u"}</code> flag after changing <code>{"."}</code> to <code>{"[^\\n\\r]"}</code> (RFC 9485 §5.3). Patterns that JavaScript rejects give false; JavaScript-only syntax such as <code>{"\\d"}</code> or lookahead is accepted.</li>
-  <li>Numbers are JavaScript numbers after <code>{"JSON.parse"}</code>, so integers above 2<sup>53</sup> lose precision before they are compared.</li>
+  <li>Numbers are JavaScript numbers after <code>{"JSON.parse"}</code>. Integers above 2<sup>53</sup>, very long decimals, <code>{"-0"}</code> and numbers too large for a double change before they are compared and shown; the status line lists them (see the example below).</li>
+  <li>The invalid-JSON message is the browser's own JavaScript parser message, so its wording depends on the browser.</li>
 </ul>
 
 <h2>Examples on the Sample Data</h2>
@@ -54,13 +63,35 @@ faqItems:
     <tr><th>Expression</th><th>Result</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>{"$.store.book[?@.price < 10].title"}</code></td><td><code>{'["Sayings of the Century", "Moby Dick"]'}</code> (2 matches)</td></tr>
-    <tr><td><code>{"$.store.book[-1].author"}</code></td><td><code>{'"J. R. R. Tolkien"'}</code> (1 match)</td></tr>
-    <tr><td><code>{"$..price"}</code></td><td><code>{"[8.95, 12.99, 8.99, 22.99, 19.95]"}</code>: the four book prices, then the bicycle</td></tr>
-    <tr><td><code>{"$.store.book[?@.isbn].title"}</code></td><td>No matches found: no book in the sample has an <code>{"isbn"}</code> member</td></tr>
-    <tr><td><code>{"$.store.book[(@.length-1)]"}</code></td><td>Unsupported syntax: script expressions such as [(@.length-1)] are not part of RFC 9535; use a negative index such as [-1] (at character 14)</td></tr>
+    <tr>{/* jpt-check: {"q":"$.store.book[?@.price < 10].title"} */}<td><code>{"$.store.book[?@.price < 10].title"}</code></td><td><code>{'["Sayings of the Century","Moby Dick"]'}</code> (2 matches)</td></tr>
+    <tr>{/* jpt-check: {"q":"$.store.book[-1].author","show":["panel"]} */}<td><code>{"$.store.book[-1].author"}</code></td><td><code>{'"J. R. R. Tolkien"'}</code> (1 match, shown as the value itself)</td></tr>
+    <tr>{/* jpt-check: {"q":"$..price"} */}<td><code>{"$..price"}</code></td><td><code>{"[8.95,12.99,8.99,22.99,19.95]"}</code>: the four book prices, then the bicycle</td></tr>
+    <tr>{/* jpt-check: {"q":"$.store.book[?@.isbn].title","show":["panel"]} */}<td><code>{"$.store.book[?@.isbn].title"}</code></td><td><code>{"No matches found"}</code>: no book in the sample has an <code>{"isbn"}</code> member</td></tr>
+    <tr>{/* jpt-check: {"q":"$.store.book[(@.length-1)]","show":["status"]} */}<td><code>{"$.store.book[(@.length-1)]"}</code></td><td><code>{"Unsupported syntax: script expressions such as [(@.length-1)] are not part of RFC 9535; use a negative index such as [-1] (at character 14)"}</code></td></tr>
   </tbody>
 </table>
+<h2>Example: an ID Larger Than 2<sup>53</sup></h2>
+<p>
+  An order export that stores 64-bit IDs as JSON numbers looks fine in the input box, but a filter for one ID can match two orders:
+</p>
+{/* jpt-check: {"q":"$.orders[?@.id == 9007199254740993].total","json":"block","show":["compact","status"]} */}
+```json
+{"orders": [
+  {"id": 9007199254740993, "total": 25.0},
+  {"id": 9007199254740992, "total": 10}
+]}
+```
+<p>
+  <code>{"$.orders[?@.id == 9007199254740993].total"}</code> returns <code>{"[25,10]"}</code>, and the status line reads
+</p>
+```text
+2 matches Numbers that JavaScript cannot hold exactly (1): 9007199254740993 → 9007199254740992. Filters and Results use the JavaScript value.
+```
+<p>
+  Both IDs become the same double, so the comparison cannot tell them apart; <code>{"25.0"}</code> is also shown as <code>{"25"}</code>, which is the same value and is not listed.
+  RFC 8259 §6 says only integers in the range −(2<sup>53</sup>)+1 to 2<sup>53</sup>−1 are interoperable. Send such IDs as strings and compare them as strings: <code>{"[?@.id == '9007199254740993']"}</code>.
+</p>
+
 <p>
   When exactly one value matches, the Results panel shows that value on its own; with two or more, it shows a JSON array. Copy takes
   the panel as shown, so a single string is copied with its quotes. Results are pretty-printed with two-space indentation.
