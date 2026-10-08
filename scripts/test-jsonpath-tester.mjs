@@ -381,7 +381,7 @@ err(store, '$.store.*~');
   });
   for (const r of tableAfter('{/* jp-errors */}')) {
     let msg = '';
-    try { E.jsonpath(doc, code(r[0])); } catch (e) { msg = 'Unsupported syntax: ' + e.message; }
+    try { E.jsonpath(doc, code(r[0])); } catch (e) { msg = source.match(/unsupported: '([^']*)'/)[1] + ': ' + e.message; }
     eq('guide error message ' + r[0], msg, r[1]);
   }
   const run = text.match(/\{\/\* jp-run: \{"lang":"python"\} \*\/\}\s*```python\n([\s\S]*?)```/);
