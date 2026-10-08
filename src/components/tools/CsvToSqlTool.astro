@@ -315,11 +315,16 @@ const { tips: TIPS, ...CLIENT } = T;
          Returns { sql, addedColumns } or { error: 'noData' | 'noHeader' } or { error: 'unclosed', line }. Cells beyond the header
          get columns named column_N (N = position), so no value is dropped. */
       function csvToSql(text, opts) {
+        /* Drop a BOM, leading blank lines and trailing line breaks only (same as csv-json), so spaces
+           around the first header and the last cell stay. skipped = blank lines removed at the start. */
+        var bomless = text.replace(/^\uFEFF/, '');
+        var lead = /^(?:[ \t]*(?:\r\n|\r|\n))+/.exec(bomless);
+        var skipped = lead ? lead[0].split(/\r\n|\r|\n/).length - 1 : 0;
         var parsed;
-        try { parsed = parseCsv(text.trim()); }
+        try { parsed = parseCsv(bomless.slice(lead ? lead[0].length : 0).replace(/(?:\r\n|\r|\n)[ \t\r\n]*$/, '')); }
         catch (e) {
           var unclosed = /^Unclosed quote starting on line (\d+)\.$/.exec(e.message);
-          if (unclosed) return { error: 'unclosed', line: Number(unclosed[1]) };
+          if (unclosed) return { error: 'unclosed', line: Number(unclosed[1]) + skipped };
           throw e;
         }
         var rows = parsed.filter(function (r) {

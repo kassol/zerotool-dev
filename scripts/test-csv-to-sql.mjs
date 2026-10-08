@@ -161,6 +161,20 @@ eq('no added columns normally', conv('a\n1').addedColumns, []);
   }
 }
 
+// ---------- input cleanup (S2-7, approved engine change, same as csv-json) ----------
+// The engine ran trim() on the whole input, so the first header lost its leading spaces and the
+// last cell its trailing spaces. Now only a BOM, leading blank lines and trailing line breaks go.
+{
+  eq('trailing spaces of the last cell stay', readLiterals(conv('a,b\nx,y  ').sql, false), ['x', 'y  ']);
+  eq('trailing spaces before the final line break stay', readLiterals(conv('a,b\nx,y  \n').sql, false), ['x', 'y  ']);
+  eq('leading spaces of the first header stay', conv('  a,b\n1,2').sql.split('\n')[0], 'INSERT INTO "t" ("  a", "b") VALUES');
+  eq('leading blank lines are skipped', conv('\n  \n\r\na,b\n1,2').sql, 'INSERT INTO "t" ("a", "b") VALUES\n  (1, 2);');
+  eq('trailing blank lines are skipped', conv('a\n1\n\n  \n').sql, 'INSERT INTO "t" ("a") VALUES\n  (1);');
+  eq('BOM is removed', conv('\uFEFFa\n1').sql, 'INSERT INTO "t" ("a") VALUES\n  (1);');
+  eq('unclosed quote line counts the skipped blank lines', conv('\n\na\n"x'), { error: 'unclosed', line: 4 });
+  eq('whitespace only input has no data', conv('   ').error, 'noData');
+}
+
 // ---------- number detection ----------
 const NUMS = { '42': 42, '-7': -7, '0': 0, '3.14': 3.14, '0.5': 0.5, '-0.25': -0.25, '123456789012345': 123456789012345 };
 for (const [v] of Object.entries(NUMS)) eq('number ' + v + ' unquoted', readLiterals(conv('n\n' + v).sql, false), [{ num: v }]);
@@ -276,8 +290,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' page has at least 2 checked examples', n >= 2, n);
 }
 
-// Engine hash. S2-7 (2026-10-08) approved changes: quote rule.
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), 'a3e55534be8d2ed09a51f6e978cce3451bd2c65f449f48de5677ac18d60c446f');
+// Engine hash. S2-7 (2026-10-08) approved changes: quote rule, input cleanup.
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), 'dc9b9b97b8da861743c06b19f8b3fdec8ff201a6ad44bedeae4594e20506ce87');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises, FileReader and time are controlled boundaries; conversion code is real.
@@ -543,7 +557,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // Pinned page script. S2-7 (2026-10-08) changed it outside the engine block: analytics only on
 // committed changes, and uploaded files are checked for UTF-8; then the unclosed-quote message (tests above).
-eq('reviewed page script is unchanged since S2-7', hash(script), '8cb6b243bf13d0844fb78b1a53928b6579a0aacb1ea509aa09cd7e21c024e1cb');
+eq('reviewed page script is unchanged since S2-7', hash(script), 'c6dbf727f4ae7c260b819cb28067cdffa8e5fef0b7497c1b004b8d0dd0548af3');
 check('direct zero-minimum flex column root', /^\s*<div class="cts-wrap"/.test(markupSource) && /\.cts-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cts-(?:toolbar|controls)"[\s\S]*id="cts-status"[\s\S]*class="cts-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
