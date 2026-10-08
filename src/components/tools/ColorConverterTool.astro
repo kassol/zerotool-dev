@@ -279,7 +279,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       hexEl.addEventListener('input', function () {
         invalidateCopies();
-        var raw = this.value.trim().replace(/^#/, '');
+        var raw = this.value.normalize('NFKC').trim().replace(/^#/, '');
         if (!raw) { clearStatus(); return; }
         if (raw.length === 3 || raw.length === 6) {
           var rgb = hexToRgb(raw);
@@ -292,7 +292,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       rgbEl.addEventListener('input', function () {
         invalidateCopies();
-        var val = this.value.trim();
+        var val = this.value.normalize('NFKC').trim();
         if (!val) { clearStatus(); return; }
         var rgb = parseRgb(val);
         if (rgb && hasExtraText(val, RGB_HEAD)) { showInvalidState('rgb', t.extra); return; }
@@ -303,7 +303,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       hslEl.addEventListener('input', function () {
         invalidateCopies();
-        var val = this.value.trim();
+        var val = this.value.normalize('NFKC').trim();
         if (!val) { clearStatus(); return; }
         var hsl = parseHsl(val);
         if (hsl && hasExtraText(val, HSL_HEAD)) { showInvalidState('hsl', t.extra); return; }
@@ -314,6 +314,17 @@ const { tips: TIPS, ...CLIENT_T } = T;
         }
         var looksLikeHsl = /^hsla?\s*\(/i.test(val);
         if (!looksLikeHsl || /\)/.test(val)) showInvalidState('hsl');
+      });
+
+      /* Full-width input (＃１Ａ７３Ｅ８, ｒｇｂ（２６，１１５，２３２）) is read through NFKC, as the color palette
+         generator and the CSS gradient generator do. When the field is left, its own text is
+         replaced by the NFKC form if that form is ASCII, so Copy gives a usable CSS value; text
+         such as Hangul jamo is left as typed. */
+      [hexEl, rgbEl, hslEl].forEach(function (el) {
+        el.addEventListener('change', function () {
+          var n = el.value.normalize('NFKC');
+          if (n !== el.value && /^[\x20-\x7e]*$/.test(n)) el.value = n;
+        });
       });
 
       picker.addEventListener('input', function () {

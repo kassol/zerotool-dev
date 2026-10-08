@@ -279,7 +279,7 @@ try {
   // "Invalid color format" and wrote it into both other fields).
   const invalidText = { en: 'Invalid color format', zh: '颜色格式无效', ja: '色の形式が正しくありません', ko: '색상 형식이 올바르지 않습니다' };
   for (const lang of Object.keys(invalidText)) {
-    for (const [id, bad] of [['cc-hex', '#ggg'], ['cc-hex', '#1a73e880'], ['cc-rgb', 'rgb(300, 0, 0)'], ['cc-rgb', 'rgb(26，115，232)'], ['cc-hsl', 'hsl(-30, 50%, 50%)']]) {
+    for (const [id, bad] of [['cc-hex', '#ggg'], ['cc-hex', '#1a73e880'], ['cc-rgb', 'rgb(300, 0, 0)'], ['cc-rgb', 'rgb(26、115、232)'], ['cc-hsl', 'hsl(-30, 50%, 50%)']]) {
       const p = lifecyclePage(lang); p.input(id, bad); const s = colorSnapshot(p);
       const others = ['cc-hex', 'cc-rgb', 'cc-hsl'].filter(x => x !== id);
       check(lang + ' invalid ' + id + ' ' + bad + ': localized status', s.status === invalidText[lang] && s.statusClass === 'cc-status error', s.status);
@@ -291,6 +291,28 @@ try {
       check(lang + ' valid input after ' + bad + ' recovers', colorSnapshot(p).fields.join('|') === '#1677ff|rgb(22, 119, 255)|hsl(215, 100%, 54%)' && !p.get('cc-status').textContent);
     }
   }
+  // Full-width input is read through NFKC (as color-palette-generator and css-gradient-generator
+  // do), so ＃１Ａ７３Ｅ８ and ｒｇｂ（２６，１１５，２３２） convert. On change (leaving the field) the field's
+  // own text is replaced by its NFKC form when that form is ASCII, so Copy gives a usable value.
+  // Before the fix all of these were rejected as an invalid format.
+  for (const lang of Object.keys(invalidText)) {
+    for (const [id, wide, fields, ascii] of [
+      ['cc-hex', '＃１Ａ７３Ｅ８', '|rgb(26, 115, 232)|hsl(214, 82%, 51%)', '#1A73E8'],
+      ['cc-hex', '１ａ７３ｅ８', '|rgb(26, 115, 232)|hsl(214, 82%, 51%)', '1a73e8'],
+      ['cc-rgb', 'ｒｇｂ（２６，１１５，２３２）', '#1a73e8||hsl(214, 82%, 51%)', 'rgb(26,115,232)'],
+      ['cc-rgb', 'rgb(26，115，232)', '#1a73e8||hsl(214, 82%, 51%)', 'rgb(26,115,232)'],
+      ['cc-hsl', 'ｈｓｌ（２１４，８２％，５１％）', '#1c74e9|rgb(28, 116, 233)|', 'hsl(214,82%,51%)'],
+    ]) {
+      const p = lifecyclePage(lang); p.input(id, wide); const s = colorSnapshot(p);
+      const shown = s.fields.map((v, i) => ['cc-hex', 'cc-rgb', 'cc-hsl'][i] === id ? '' : v).join('|');
+      check(lang + ' full-width ' + wide + ' converts', shown === fields && !s.status, shown + ' ' + s.status);
+      p.get(id).dispatch('change');
+      check(lang + ' full-width ' + wide + ' is rewritten as ASCII on change', p.get(id).value === ascii, p.get(id).value);
+    }
+    const q = lifecyclePage(lang); q.input('cc-hex', '#1ㅁ73ㄷ8'); q.get('cc-hex').dispatch('change');
+    check(lang + ' a value whose NFKC form is not ASCII is left as typed', q.get('cc-hex').value === '#1ㅁ73ㄷ8' && q.get('cc-status').textContent === invalidText[lang]);
+  }
+
   // Text after a complete rgb() / hsl() value is rejected with a localized reason. The engine's
   // parseRgb / parseHsl match only the start of the text, so before the fix rgb(26, 115, 232)abc
   // converted as if the extra text were not there. Values still being typed are not rejected.
