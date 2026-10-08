@@ -335,6 +335,20 @@ try {
       check(lang + ' complete or partial value still converts ' + ok, p.get('cc-hex').value === hex && !p.get('cc-status').textContent, p.get('cc-hex').value + ' ' + p.get('cc-status').textContent);
     }
   }
+  // A value copied from CSS may end with ; or sit in quotes. As in color-palette-generator
+  // (parseColor: NFKC, trim, drop trailing ;, drop matching quotes), these are removed before the
+  // value is read. Before the fix rgb(26, 115, 232); was rejected as extra text and #1a73e8; as invalid.
+  for (const lang of Object.keys(extraText)) {
+    for (const [id, v, hex] of [['cc-hex', '#1a73e8;', '#1a73e8'], ['cc-hex', '"#1a73e8"', '#1a73e8'], ['cc-hex', "'#f53';", '#ff5533'], ['cc-rgb', 'rgb(26, 115, 232);', '#1a73e8'], ['cc-rgb', 'rgb(26, 115, 232);;', '#1a73e8'], ['cc-rgb', "'rgb(26, 115, 232)'", '#1a73e8'], ['cc-hsl', 'hsl(214, 82%, 51%);', '#1c74e9'], ['cc-hsl', '"hsl(214, 82%, 51%)";', '#1c74e9']]) {
+      const p = lifecyclePage(lang); p.input(id, v);
+      const got = id === 'cc-hex' ? p.get('cc-swatch-label').textContent : p.get('cc-hex').value;
+      check(lang + ' trailing ; and quotes are accepted ' + v, got === hex && !p.get('cc-status').textContent, got + ' ' + p.get('cc-status').textContent);
+    }
+    for (const [id, v] of [['cc-rgb', 'rgb(26, 115, 232) !important;'], ['cc-rgb', 'rgb(26, 115, 232); color: red'], ['cc-hsl', 'hsl(214, 82%, 51%) x;']]) {
+      const p = lifecyclePage(lang); p.input(id, v);
+      check(lang + ' other trailing text is still rejected ' + v, p.get('cc-status').textContent === extraText[lang], p.get('cc-status').textContent);
+    }
+  }
   {
     const engine = source.slice(start, end), script = lifecycleScript.slice(lifecycleScript.indexOf('/* ── engine:end ── */'));
     for (const head of ['/^rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/', '/^hsla?\\(\\s*(\\d+(?:\\.\\d+)?)\\s*,\\s*(\\d+(?:\\.\\d+)?)%?\\s*,\\s*(\\d+(?:\\.\\d+)?)%?/']) {
