@@ -458,7 +458,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 if (!pyBin) { skips++; console.log('SKIP: python3 >= 3.11 not available for the page examples'); }
 else for (const c of checks) {
   if (c.mode === 'pydantic' && !pydBin) continue;
-  const tail = c.mode === 'pydantic' ? `\nimport json\n${c.root}.model_validate(json.loads(${JSON.stringify(c.input)}))\nprint('ok')`
+  const alias = (c.out.match(/^(\S+Array\d*) = List\[/m) || [])[1];
+  const tail = c.mode === 'pydantic' && alias ? `\nimport json\nfrom pydantic import TypeAdapter\nTypeAdapter(${alias}).validate_python(json.loads(${JSON.stringify(c.input)}))\nprint('ok')`
+    : c.mode === 'pydantic' ? `\nimport json\n${c.root}.model_validate(json.loads(${JSON.stringify(c.input)}))\nprint('ok')`
     : c.mode === 'dataclass' ? `\nimport json\n${c.root}(**json.loads(${JSON.stringify(c.input)}))\nprint('ok')` : `\nprint('ok')`;
   const r = runPy(c.mode === 'pydantic' ? pydBin : pyBin, c.out + tail);
   eq(c.name + ' runs in Python' + (c.mode === 'pydantic' ? ' and validates its input with Pydantic' : c.mode === 'dataclass' ? ' and builds from its input' : ''), r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');

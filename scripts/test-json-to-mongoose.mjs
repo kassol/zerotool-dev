@@ -233,6 +233,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     if (!PAGE_JSON.some(([, json]) => json === spec.json)) PAGE_JSON.push([`page ${lang} jtm-check ${count}`, spec.json]);
   }
   eq(`${lang} page has at least 2 jtm-check examples`, count >= 2, true);
+  const pageLabels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
+  eq(`${lang} page quotes the skipped-values status as the page shows it`, mdx.includes(pageLabels[lang].msgSkipped.replace('{n}', '5').replace('{types}', 'number × 2, string, null, array')), true);
+  eq(`${lang} page names the three keys Mongoose skips`, ['__proto__', 'constructor', 'prototype', '["__proto__"]'].every((k) => mdx.includes('<code>' + k + '</code>')), true);
   eq(`${lang} page no longer says the first value decides`, /first value wins|首个值|最初の値|첫 값/.test(mdx), false);
   // {/* jtm-date: {"in", "iso"} */}: the value a Date path stores for `in`, as toISOString(), must be shown
   // in inline code before the next jtm-date note or heading. Mongoose casts a string with the Date
