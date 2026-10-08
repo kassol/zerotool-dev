@@ -53,6 +53,24 @@ function eq(name, actual, expected) {
   check(name, a === e, 'got ' + a + ', expected ' + e);
 }
 const gen = (v, mode) => E.generatePython(v, 'Root', mode).code;
+// Python used to run generated code: PYTHON_BIN (for example a 3.12 interpreter, where annotations are
+// evaluated when the class body runs, unlike 3.14 with PEP 649), else python3.
+const PY3 = process.env.PYTHON_BIN || 'python3';
+
+// Every class is defined before a later class refers to it (also for names outside ASCII): read the
+// class names in output order and the identifiers in each field type with the Python identifier rules.
+function definedBeforeUse(code) {
+  const seen = new Set(), all = new Set([...code.matchAll(/^class ([^\s(:]+)/gmu)].map((m) => m[1])), late = [];
+  let current = null;
+  for (const line of code.split('\n')) {
+    const c = line.match(/^class ([^\s(:]+)/u);
+    if (c) { if (current) seen.add(current); current = c[1]; continue; }
+    const f = line.match(/^    [^:]+: (.+?)(?: = None)?$/u);
+    if (f && current) for (const id of f[1].match(/[\p{ID_Start}_]\p{ID_Continue}*/gu) || []) if (all.has(id) && id !== current && !seen.has(id)) late.push(current + ' → ' + id);
+  }
+  return late;
+}
+const TOPO_CASES = [{ 订单: [{ meta: { x: 1 } }] }, { 주문: [{ 상품: { 이름: 'a' }, meta: { x: 1 } }] }, { items: [{ 注文: [{ meta: { x: 1 } }] }] }];
 
 const SAMPLE = [
   { id: 1, name: 'Pen', note: null, tags: ['a'] },
@@ -95,6 +113,8 @@ eq('A3: a third shape gets a number when the prefixed name is taken', /class Met
   eq('A3: objects of one key across samples merge into one class', gen([{ u: { a: 1 } }, { u: { b: 'x' } }], 'typeddict').includes('class U(TypedDict):\n    a: NotRequired[int]\n    b: NotRequired[str]'), true);
 }
 
+// Review fix 1: dependencies on class names outside ASCII are ordered too.
+for (const [i, v] of TOPO_CASES.entries()) for (const mode of ['dataclass', 'pydantic', 'typeddict']) eq('topo: case ' + (i + 1) + ' (' + mode + ') defines every class before use', definedBeforeUse(gen(v, mode)), []);
 // B2: values beside the objects of a root array stay in a <root>Array alias (List[Union[...]]).
 const B2_IN = [{ a: 1 }, 2, 'x', null, [1], { a: 3, b: true }];
 eq('B2: root array keeps non-object values in RootArray', E.generatePython(B2_IN, 'Root', 'dataclass').code.split('\n'), [
@@ -119,26 +139,30 @@ eq('A4: one class per key (no two keys share a class by name)', a4Names.length, 
 eq('A4: no class is named after a JSON key or a reserved name', a4Names.filter((n) => A4_KEYS.includes(n) || ['None', 'List', 'Optional', 'Any', 'Union', 'TypedDict', 'NotRequired', 'BaseModel', 'str', 'int', 'float', 'bool'].includes(n)), []);
 const A4_RUN = { 收货地址: { 省: '浙江省' }, 发票地址: { 抬头: '某公司' }, none: { a: 1 }, list: { b: [1] }, Optional: { c: 'x' }, Address: { d: null }, naïve: { e: true }, 住所: { f: 'x' }, 주소: { g: 'x' } };
 
-const py = spawnSync('python3', ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
+const py = spawnSync(PY3, ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
 if (py.status !== 0 || py.stdout.trim() !== 'True') {
   skips++;
   console.log('SKIP: python3 >= 3.11 not available');
 } else {
   const code = gen(SAMPLE, 'typeddict') + '\nprint(sorted(Root.__required_keys__), sorted(Root.__optional_keys__))\n';
-  const r = spawnSync('python3', ['-c', code], { encoding: 'utf8' });
+  const r = spawnSync(PY3, ['-c', code], { encoding: 'utf8' });
   eq('python: required / optional keys', r.stdout.trim(), "['id', 'name', 'tags'] ['discount', 'note']");
   for (const mode of ['dataclass', 'typeddict']) {
-    const c = spawnSync('python3', ['-c', gen(SAMPLE, mode)], { encoding: 'utf8' });
+    const c = spawnSync(PY3, ['-c', gen(SAMPLE, mode)], { encoding: 'utf8' });
     check('python runs the ' + mode + ' output', c.status === 0, c.stderr);
   }
   for (const [raw] of ROOT_NAMES) for (const mode of ['dataclass', 'typeddict']) {
-    const c = spawnSync('python3', ['-c', E.generatePython({ a: 1, b: [{ c: 'x' }] }, raw, mode).code + "\nprint('ok')"], { encoding: 'utf8' });
+    const c = spawnSync(PY3, ['-c', E.generatePython({ a: 1, b: [{ c: 'x' }] }, raw, mode).code + "\nprint('ok')"], { encoding: 'utf8' });
     eq('root name ' + raw + ' runs in Python (' + mode + ')', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
   }
-  const ids = spawnSync('python3', ['-c', 'import json, keyword, sys\nnames = json.loads(sys.stdin.read())\nprint(json.dumps([n for n in names if not n.isidentifier() or keyword.iskeyword(n)]))'], { input: JSON.stringify(a4Names), encoding: 'utf8' });
+  for (const [i, v] of TOPO_CASES.entries()) for (const mode of ['dataclass', 'typeddict']) {
+    const c = spawnSync(PY3, ['-c', gen(v, mode) + "\nprint('ok')"], { encoding: 'utf8' });
+    eq('topo: case ' + (i + 1) + ' (' + mode + ') runs in Python', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
+  }
+  const ids = spawnSync(PY3, ['-c', 'import json, keyword, sys\nnames = json.loads(sys.stdin.read())\nprint(json.dumps([n for n in names if not n.isidentifier() or keyword.iskeyword(n)]))'], { input: JSON.stringify(a4Names), encoding: 'utf8' });
   eq('A4: every class name is a Python identifier and not a keyword', ids.stdout.trim(), '[]');
   for (const mode of ['dataclass', 'typeddict']) {
-    const c = spawnSync('python3', ['-c', gen(A4_RUN, mode) + `\nimport json\n${mode === 'dataclass' ? 'Root(**json.loads(' + JSON.stringify(JSON.stringify(A4_RUN)) + '))' : 'pass'}\nprint('ok')`], { encoding: 'utf8' });
+    const c = spawnSync(PY3, ['-c', gen(A4_RUN, mode) + `\nimport json\n${mode === 'dataclass' ? 'Root(**json.loads(' + JSON.stringify(JSON.stringify(A4_RUN)) + '))' : 'pass'}\nprint('ok')`], { encoding: 'utf8' });
     eq('A4: non-ASCII and reserved-name keys run in Python (' + mode + ')', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
   }
 }
@@ -150,8 +174,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 16169);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '1dc44125a0e95e473390ef481b9fbada7f3a2c2b133d87ee6b8ff09686442297');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 16179);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'b18147a7c4dc9b747555f962026f7e524ea864eaef5969f3f12e7d47aef86b28');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -369,7 +393,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "24b49cf9325b42a9cb0e4ff52ba33257f3f23f81ea089e34b8b47ac36e5ba9ca"
+  "scriptSHA": "17f743b9bc7b0b2f0dd31a1391971d5935b00f6129abc12ff01b8482ffc54ccf"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -438,8 +462,8 @@ for (const lang of ['en','zh','ja','ko']) {
 // Pydantic 2 importable (PYDANTIC_PYTHON=<python with pydantic>, else python3) a Pydantic output
 // validates its input with model_validate() and a dataclass output is built with Root(**data).
 const PY_OK = (bin) => { const r = spawnSync(bin, ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' }); return r.status === 0 && r.stdout.trim() === 'True'; };
-const pyBin = PY_OK('python3') ? 'python3' : null;
-const pydBin = [process.env.PYDANTIC_PYTHON, 'python3'].filter(Boolean).find((bin) => PY_OK(bin) && spawnSync(bin, ['-c', 'import pydantic; assert pydantic.VERSION.startswith("2.")'], { encoding: 'utf8' }).status === 0) || null;
+const pyBin = PY_OK(PY3) ? PY3 : null;
+const pydBin = [process.env.PYDANTIC_PYTHON, PY3].filter(Boolean).find((bin) => PY_OK(bin) && spawnSync(bin, ['-c', 'import pydantic; assert pydantic.VERSION.startswith("2.")'], { encoding: 'utf8' }).status === 0) || null;
 const runPy = (bin, code) => spawnSync(bin, ['-c', code], { encoding: 'utf8' });
 const checks = [];
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
@@ -455,6 +479,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     checks.push({ name: lang + ' jpdc-check ' + (i + 1), input, out, root: note.spec.root, mode: note.spec.mode });
   });
 }
+console.log('Python for generated code: ' + (pyBin ? runPy(pyBin, 'import sys; print(sys.version.split()[0])').stdout.trim() : 'none'));
+for (const c of checks) eq(c.name + ' defines every class before use', definedBeforeUse(c.out), []);
 if (!pyBin) { skips++; console.log('SKIP: python3 >= 3.11 not available for the page examples'); }
 else for (const c of checks) {
   if (c.mode === 'pydantic' && !pydBin) continue;
@@ -485,6 +511,10 @@ const CLAIMS = [
 if (!pydBin) { skips++; console.log('SKIP: Python 3.11+ with Pydantic 2 not available (set PYDANTIC_PYTHON)'); }
 else {
   console.log('Pydantic ' + runPy(pydBin, 'import pydantic; print(pydantic.VERSION)').stdout.trim());
+  for (const [i, v] of TOPO_CASES.entries()) {
+    const r = runPy(pydBin, E.generatePython(v, 'Root', 'pydantic').code + `\nimport json\nRoot.model_validate(json.loads(${JSON.stringify(JSON.stringify(v))}))\nprint('ok')`);
+    eq('topo: case ' + (i + 1) + ' validates with Pydantic', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
+  }
   for (const mode of ['pydantic', 'dataclass', 'typeddict']) {
     // B2 with Pydantic: the alias validates the whole root array.
     const r = runPy(pydBin, E.generatePython(B2_IN, 'Root', mode).code + `\nimport json\nfrom pydantic import TypeAdapter\nprint(len(TypeAdapter(RootArray).validate_python(json.loads(${JSON.stringify(JSON.stringify(B2_IN))}))))`);
