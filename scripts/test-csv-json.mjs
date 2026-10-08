@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto';
 import { loadPage, readComponent, frontmatterStrings } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, annotations, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CsvJsonTool.astro'), 'utf8');
@@ -344,6 +344,14 @@ const ORIGINAL_CLIENT_STRINGS = {
     "emptyNull": "빈 필드 → null"
   }
 };
+function runPage(lang, spec, input) {
+  const p = page(lang);
+  p.get('cj-parse-types').checked = spec.parseTypes !== false;
+  p.get('cj-empty-null').checked = !!spec.emptyNull;
+  const [from, to] = spec.to === 'csv' ? ['cj-json', 'cj-csv'] : ['cj-csv', 'cj-json'];
+  p.type(from, input); p.advance(300);
+  return { out: p.get(to).value, status: p.get('cj-status').textContent };
+}
 const yaml = requireRoot('js-yaml');
 const mdxCompiler = await import(requireRoot.resolve('@mdx-js/mdx'));
 for (const lang of ['en','zh','ja','ko']) {
@@ -357,14 +365,23 @@ for (const lang of ['en','zh','ja','ko']) {
   eq(lang+' step count', data.steps.length, 5);
   check(lang+' steps within 8/280/1200 before FAQ', data.steps.length<=8&&data.steps.every(s=>typeof s==='string'&&[...s].length<=280)&&data.steps.reduce((n,s)=>n+[...s].length,0)<=1200&&front.indexOf('steps:')<front.indexOf('faqItems:'));
   eq(lang+' MDX content contract', contractProblems('csv-json', lang), '');
-  // Worked examples, recomputed: CSV → JSON as the page builds it (buildJsonFromCsv over the
-  // engine's parseCsv / inferValue, any option setting), compared as values; JSON → CSV exactly.
-  const pageJson = (raw, parseTypes, emptyNull) => { const { rows, quotedFlags } = E.parseCsv(raw); return rows.slice(1).map((row, r) => Object.fromEntries(rows[0].map((h, c) => [h, E.inferValue(row[c] ?? '', !!quotedFlags[r + 1]?.[c], parseTypes, emptyNull)]))); };
-  const toJsonPairs = examplePairs(body, b => b.lang === 'csv', b => b.lang === 'json');
-  const toCsvPairs = examplePairs(body, b => b.lang === 'json', b => b.lang === 'csv');
-  eq(lang+' has CSV → JSON and JSON → CSV examples', [toJsonPairs.length > 0, toCsvPairs.length > 0], [true, true]);
-  eq(lang+' each JSON example equals the page conversion', toJsonPairs.filter(([a, b]) => ![[true, true], [true, false], [false, true], [false, false]].some(([t, n]) => JSON.stringify(pageJson(a.text, t, n)) === JSON.stringify(JSON.parse(b.text)))).map(([, b]) => b.text), []);
-  eq(lang+' each CSV example equals the engine output', toCsvPairs.filter(([a, b]) => csv(JSON.parse(a.text)) !== b.text).map(([, b]) => b.text), []);
+  // Worked examples, recomputed through the real page script. A `{/* cj-check: {...} */}` note is
+  // followed by an input block and the exact output block (spec: to "json" | "csv", parseTypes,
+  // emptyNull; in: input text instead of the first block; status: true / error: true also require the
+  // page's status line verbatim in the same section, and error: true expects an empty output).
+  const notes = annotations(body, 'cj-check');
+  check(lang+' at least 2 cj-check examples', notes.length >= 2, String(notes.length));
+  for (const [i, note] of notes.entries()) {
+    const spec = note.spec || {}, blocks = fencedBlocks(note.after);
+    const r = runPage(lang, spec, spec.in ?? blocks[0]?.text ?? '');
+    const want = spec.error ? '' : blocks[1]?.text;
+    eq(lang+' cj-check #'+(i+1)+' output', r.out, want);
+    if (spec.status || spec.error) check(lang+' cj-check #'+(i+1)+' status shown verbatim', note.after.includes(r.status), r.status);
+  }
+  // Every CSV / JSON code block on the page belongs to a cj-check example, and both directions appear.
+  const covered = notes.reduce((n, note) => n + fencedBlocks(note.after).filter(b => b.lang === 'csv' || b.lang === 'json').length, 0);
+  eq(lang+' every CSV / JSON block is a recomputed example', fencedBlocks(body).filter(b => b.lang === 'csv' || b.lang === 'json').length, covered);
+  eq(lang+' has CSV → JSON and JSON → CSV examples', ['json', 'csv'].map(to => notes.some(n => (n.spec?.to ?? 'json') === to)), [true, true]);
   check(lang+' Usage removed', !/<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error='';try{await mdxCompiler.compile(body);}catch(e){error=String(e);}eq(lang+' MDX compiles',error,'');
 }

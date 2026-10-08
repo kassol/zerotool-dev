@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { loadPage, readComponent, frontmatterStrings } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, examplePairs, annotations, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CsvToMarkdownTool.astro'), 'utf8');
