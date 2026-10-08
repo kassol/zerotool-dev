@@ -150,8 +150,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 8381);
-eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '0ee4e584eb3ee903925cbc5fb4213a8e9b5e62910556691a4effe72bc2930caf');
+eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 8398);
+eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '94146e45945c603a2133ccd7b9c0149e920bf4bb2b098a0d2b9124f0a48d5798');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -300,6 +300,28 @@ try {
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
 
+// ---------- prototype key names: the name table has no prototype ----------
+{
+  const r = E.generateTypeScript(JSON.parse('{"__proto__":{"a":1},"b":{"c":2}}'), 'RootObject', false, false);
+  check('a __proto__ key takes its own name', /^interface __proto__ \{\n  a: number;\n\}/m.test(r.code) && /  __proto__: __proto__;/.test(r.code), r.code);
+  eq('__proto__ declarations compile', compile(r.code).join('; '), '');
+}
+
+// ---------- an engine error clears the old output and disables Copy ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(lang); golden(p);
+  check(lang + ': Copy is enabled with output', !p.get('jtt-copy').disabled);
+  let thrown; try { p.input('['.repeat(20000) + ']'.repeat(20000)); p.advance(300); } catch (e) { thrown = e; }
+  check(lang + ': engine error does not escape the handler', !thrown, thrown && thrown.message);
+  eq(lang + ': engine error clears the old output', p.get('jtt-output-code').textContent, '');
+  check(lang + ': engine error is shown as an error', p.get('jtt-status').className.includes('error') && p.get('jtt-status').textContent.startsWith(pageLabels[lang].msgFailed || '\u0000'), p.get('jtt-status').textContent);
+  check(lang + ': engine error disables Copy', p.get('jtt-copy').disabled === true);
+  golden(p);
+  check(lang + ': next result enables Copy again', !p.get('jtt-copy').disabled && p.get('jtt-output-code').textContent === goldenCode);
+  p.get('jtt-clear').click();
+  check(lang + ': Clear disables Copy', p.get('jtt-copy').disabled === true);
+}
+
 // ---------- analytics: one event per committed edit or button, not per typing pause ----------
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const g = page(lang), sent = () => g.tracks.map((t) => t.join(':')).join(',');
@@ -354,7 +376,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ': v2 same eight tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
   for (const [id, about, key] of tipMap) check(lang + ': v2 plain localized tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]));
   check(lang + ': v2 localized empty hint', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'));
-  eq(lang + ': v2 only runtime feedback data is forwarded', Object.keys(rootEl.dataset).sort().join(','), 'copied,copy,copyFailed,msgGenMany,msgGenOne,msgGenerated,msgInvalidJson');
+  eq(lang + ': v2 only runtime feedback data is forwarded', Object.keys(rootEl.dataset).sort().join(','), 'copied,copy,copyFailed,msgFailed,msgGenMany,msgGenOne,msgGenerated,msgInvalidJson');
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
   const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];

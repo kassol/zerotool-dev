@@ -30,6 +30,7 @@ const STRINGS = {
     copyFailed: 'Copy failed. Please copy the output manually.',
     generate: 'Generate TypeScript',
     msgInvalidJson: 'Invalid JSON: ',
+    msgFailed: 'Could not generate TypeScript: ',
     msgGenerated: 'Generated.',
     msgGenOne: 'Generated 1 interface.',
     msgGenMany: 'Generated {n} interfaces.',
@@ -59,6 +60,7 @@ const STRINGS = {
     copyFailed: '复制失败，请手动复制输出。',
     generate: '生成 TypeScript',
     msgInvalidJson: 'JSON 格式错误：',
+    msgFailed: '无法生成 TypeScript：',
     msgGenerated: '已生成。',
     msgGenOne: '已生成 1 个接口。',
     msgGenMany: '已生成 {n} 个接口。',
@@ -88,6 +90,7 @@ const STRINGS = {
     copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。',
     generate: 'TypeScript を生成',
     msgInvalidJson: '無効なJSON：',
+    msgFailed: 'TypeScript を生成できませんでした：',
     msgGenerated: '生成しました。',
     msgGenOne: '1 個の型を生成しました。',
     msgGenMany: '{n} 個の型を生成しました。',
@@ -117,6 +120,7 @@ const STRINGS = {
     copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.',
     generate: 'TypeScript 생성',
     msgInvalidJson: '잘못된 JSON: ',
+    msgFailed: 'TypeScript를 생성하지 못했습니다: ',
     msgGenerated: '생성 완료.',
     msgGenOne: '인터페이스 1개를 생성했습니다.',
     msgGenMany: '인터페이스 {n}개를 생성했습니다.',
@@ -132,6 +136,7 @@ const L = STRINGS[lang];
   data-copied={L.copied}
   data-copy-failed={L.copyFailed}
   data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-failed={L.msgFailed}
   data-msg-generated={L.msgGenerated}
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
@@ -211,6 +216,7 @@ const L = STRINGS[lang];
       var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
       var COPY_FAILED = wrap ? wrap.dataset.copyFailed : 'Copy failed. Please copy the output manually.';
       var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_FAILED = wrap ? wrap.dataset.msgFailed : 'Could not generate TypeScript: ';
       var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 interface.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} interfaces.';
@@ -225,6 +231,13 @@ const L = STRINGS[lang];
       var copyRevision = 0;
       var copyTimer = null;
       var copyFailure = false;
+
+      // Copy is enabled only while there is output to copy.
+      function setOutput(text) {
+        outputCodeEl.textContent = text;
+        copyBtn.disabled = !text;
+      }
+      setOutput('');
 
       var EXAMPLE = JSON.stringify({
         id: 1,
@@ -284,7 +297,7 @@ const L = STRINGS[lang];
       // number is added; an object with the same fields as an earlier one of the same key
       // reuses that type. The root name is reserved so a nested key cannot take it.
       function newState(rootName) {
-        var reserved = {};
+        var reserved = Object.create(null);
         reserved[rootName] = true;
         return { list: [], byName: Object.create(null), reserved: reserved };
       }
@@ -454,7 +467,7 @@ const L = STRINGS[lang];
         clearTimeout(_jttLiveTimer);
         _jttLiveTimer = null;
         var raw = inputEl.value.trim();
-        if (!raw) { inputEl.classList.remove('error'); clearStatus(); outputCodeEl.textContent = ''; return; }
+        if (!raw) { inputEl.classList.remove('error'); clearStatus(); setOutput(''); return; }
 
         // Real-time error highlighting
         inputEl.classList.remove('error');
@@ -464,7 +477,7 @@ const L = STRINGS[lang];
           parsed = JSON.parse(raw);
         } catch (e) {
           inputEl.classList.add('error');
-          outputCodeEl.textContent = '';
+          setOutput('');
           setStatus(MSG_INVALID + e.message, true);
           return;
         }
@@ -472,8 +485,16 @@ const L = STRINGS[lang];
         inputEl.classList.remove('error');
 
         var rootName = (rootNameEl.value.trim() || 'RootObject');
-        var result = generateTypeScript(parsed, rootName, optionalEl.checked, useTypeEl.checked);
-        outputCodeEl.textContent = result.code;
+        var result;
+        try {
+          result = generateTypeScript(parsed, rootName, optionalEl.checked, useTypeEl.checked);
+        } catch (e) {
+          // For example a stack overflow on very deep nesting: never leave the previous output.
+          setOutput('');
+          setStatus(MSG_FAILED + (e && e.message ? e.message : String(e)), true);
+          return;
+        }
+        setOutput(result.code);
         if (result.count === 0) setStatus(MSG_GENERATED, false);
         else setStatus(result.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', result.count), false);
       }
@@ -521,7 +542,7 @@ const L = STRINGS[lang];
         clearTimeout(_jttLiveTimer);
         _jttLiveTimer = null;
         inputEl.value = '';
-        outputCodeEl.textContent = '';
+        setOutput('');
         inputEl.classList.remove('error');
         clearStatus();
       });
@@ -587,6 +608,7 @@ const L = STRINGS[lang];
   .jtt-panel textarea.error { border-color: #c0392b; }
   .jtt-output { margin: 0; overflow: auto; white-space: pre; }
   .jtt-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .jtt-panel-header button:disabled { opacity: 0.5; cursor: not-allowed; }
   .jtt-empty { display: none; margin: 0; padding: 2rem; align-items: center; justify-content: center; text-align: center; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
   .jtt-output-pane:has(#jtt-output-code:empty) .jtt-output { display: none; }
   .jtt-output-pane:has(#jtt-output-code:empty) .jtt-empty { display: flex; }
