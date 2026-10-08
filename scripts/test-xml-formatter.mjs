@@ -293,7 +293,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 }
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [923, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var inputEl = document.getElementById('xf-input');"))), 'c33049a8c448c3f537c19ccf15de7979df300024176c9fff04d69387ebbcf0bd');
+// Updated 2026-10-08 (S2-4): status strings come from the page language and parseXml keeps only
+// the located libxml2 message; the engine block hash above is unchanged.
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var inputEl = document.getElementById('xf-input');"))), '1f22c61dad675a2f11231673316449d7014f97941e918a6ace461e83f7444af2');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="xf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -319,6 +321,35 @@ const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'),'utf8');
 same('xml-formatter registered convert', /['"]xml-formatter['"]\s*:\s*['"]convert['"]/.test(registry), true);
 const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
 same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
+
+// ---------- status line in the page language (S2-4, 2026-10-08) ----------
+// The status was English on every page ('Formatted.', 'Formatted successfully.', 'Minified
+// successfully.', 'Error: ') and repeated Chrome's "This page contains the following errors:"
+// header. The parser stand-in below returns the parsererror text in the form Chromium 152
+// returned it (CHROME_152, recorded with DOMParser on 2026-10-08).
+const STATUS_TEXT = {
+  en: { formatted: 'Formatted.', minified: 'Minified.', error: 'Error: ' },
+  zh: { formatted: '已格式化。', minified: '已压缩。', error: '错误：' },
+  ja: { formatted: '整形しました。', minified: '圧縮しました。', error: 'エラー：' },
+  ko: { formatted: '포맷했습니다.', minified: '압축했습니다.', error: '오류: ' },
+};
+const chromeError = (line, column, msg) => `This page contains the following errors:error on line ${line} at column ${column}: ${msg}\nBelow is a rendering of the page up to the first error.`;
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const want = STATUS_TEXT[lang];
+  let p = lifecyclePage(lang); golden(p);
+  same(lang + ' live format status is in the page language', p.get(cfg.status).textContent, want.formatted);
+  p.get(cfg.primary).click();
+  same(lang + ' Format status is in the page language', p.get(cfg.status).textContent, want.formatted);
+  p.get(cfg.prefix + '-minify').click();
+  same(lang + ' Minify status is in the page language', p.get(cfg.status).textContent, want.minified);
+  p = lifecyclePage(lang);
+  p.context.DOMParser = class { parseFromString() { const err = { localName: 'parsererror', textContent: chromeError(1, 14, "EntityRef: expecting ';'") }; return { documentElement: err, querySelector: () => err }; } };
+  p.input(cfg.input, '<company>AT&T</company>'); p.advance(300);
+  same(lang + ' error status: page-language prefix and the located parser message only', [p.get(cfg.status).textContent, p.get(cfg.status).className], [want.error + "error on line 1 at column 14: EntityRef: expecting ';'", 'xf-status error']);
+  p.context.DOMParser = class { parseFromString() { const err = { localName: 'parsererror', textContent: 'XML Parsing Error: mismatched tag. Expected: </b>.\nLocation: about:blank\nLine Number 1, Column 10:' }; return { documentElement: err, querySelector: () => err }; } };
+  p.get(cfg.primary).click();
+  same(lang + ' error status: other parser text keeps its first line', p.get(cfg.status).textContent, want.error + 'XML Parsing Error: mismatched tag. Expected: </b>.');
+}
 // Worked examples on the tool pages, recomputed with the protected serializers. The DOM shapes
 // stand in for the browser's DOMParser (native parsing is browser QA, as for thinFixtures below).
 const cdata=(data)=>({nodeType:4,data});
@@ -336,7 +367,7 @@ for(const lang of ['en','zh','ja','ko']) {
   const S=pageStrings[lang], payload=clientStrings(lang);
   same(lang+' tip keys',Object.keys(S.tips),['input','indent','format','minify','clear','copyInput','copyOutput']);
   same(lang+' short complete tips',Object.values(S.tips).every(x=>typeof x==='string'&&x.length>0&&x.length<=280),true);
-  same(lang+' client has only runtime strings',Object.keys(payload),['copy','copied','copyFailed']);
+  same(lang+' client has only runtime strings',Object.keys(payload),['copy','copied','copyFailed','formatted','minified','errorPrefix']);
   same(lang+' tips excluded from payload and script',Object.values(S.tips).some(x=>JSON.stringify(payload).includes(x)||pageScript.includes(x)),false);
   same(lang+' localized empty hint exists',typeof S.formattedXmlPh==='string'&&S.formattedXmlPh.length>0,true);
   const text=readFileSync(join(root,'src/content/tools/xml-formatter',lang+'.mdx'),'utf8');
