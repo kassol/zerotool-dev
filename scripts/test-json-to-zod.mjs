@@ -26,7 +26,8 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { transform as esbuildTransform } from 'esbuild';
 import { compile as compileMdx } from '@mdx-js/mdx';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import ts from 'typescript';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToZodTool.astro'), 'utf8');
@@ -107,8 +108,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('protected engine byte count', Buffer.byteLength(engineLines), 4497);
-eq('protected engine SHA256', createHash('sha256').update(engineLines).digest('hex'), "450e4c5c4d815e1ed28c7028ed8a9982809b86fe3d17fe2b96fe09f3e1aa9de5");
+eq('protected engine byte count', Buffer.byteLength(engineLines), 6149);
+eq('protected engine SHA256', createHash('sha256').update(engineLines).digest('hex'), "d06c54e5e6e6b1c0cce6e8f306f4fa106e478b81a616bbc0b9f74bc6f66050f0");
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -277,6 +278,29 @@ try {
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
 
+// ---------- analytics: one event per committed edit or button, not per typing pause ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const g = page(lang), sent = () => g.tracks.map((t) => t.join(':')).join(',');
+  g.input('{"a":1}'); g.advance(300); g.input('{"a":1,"b":2}'); g.advance(300);
+  eq(lang + ': analytics: typing pauses send nothing', sent(), '');
+  g.get('jtz-input').dispatch('change');
+  eq(lang + ': analytics: change after an edit sends one generate', sent(), 'json-to-zod:generate');
+  g.input('{"c":3}'); g.get('jtz-input').dispatch('change');
+  check(lang + ': analytics: change flushes the pending debounce', output(g).includes('  c: z.number().int(),'), output(g));
+  eq(lang + ': analytics: flushed change sends once', g.tracks.length, 2);
+  g.advance(300); eq(lang + ': analytics: no delayed event after a flush', g.tracks.length, 2);
+  g.get('jtz-convert').click(); eq(lang + ': analytics: Generate on the same JSON and settings is not sent again', g.tracks.length, 2);
+  g.input('{"d":4}'); g.get('jtz-input').dispatch('change'); g.get('jtz-convert').click();
+  eq(lang + ': analytics: change then Generate (one click) sends once', g.tracks.length, 3);
+  g.get('jtz-strict').checked = true; g.get('jtz-convert').click(); eq(lang + ': analytics: Generate after a strict change sends one', g.tracks.length, 4);
+  g.get('jtz-example').click(); eq(lang + ': analytics: Example sends one', g.tracks.length, 5);
+  g.get('jtz-example').click(); eq(lang + ': analytics: Example again with the same settings is not sent again', g.tracks.length, 5);
+  g.get('jtz-clear').click(); g.get('jtz-example').click(); eq(lang + ': analytics: Clear resets the last sent input', g.tracks.length, 6);
+  g.input('{'); g.get('jtz-input').dispatch('change'); g.get('jtz-convert').click();
+  eq(lang + ': analytics: invalid JSON sends nothing', g.tracks.length, 6);
+  g.input(''); g.get('jtz-input').dispatch('change'); eq(lang + ': analytics: empty input sends nothing', g.tracks.length, 6);
+}
+
 
 // ---------- v2 page layout ----------
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -307,7 +331,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ': v2 rendered tip ' + id, p.get('jtz-tip-' + id).textContent, L.tips[key]);
   }
   check(lang + ': v2 localized empty state', !!L.empty && layoutMarkup.includes('{L.empty}'));
-  eq(lang + ': v2 runtime dataset excludes tips', Object.keys(p.doc.querySelector('.jtz-wrap').dataset).sort().join(','), 'copied,copy,copyFailed,msgGenerated,msgInvalidJson');
+  eq(lang + ': v2 runtime dataset excludes tips', Object.keys(p.doc.querySelector('.jtz-wrap').dataset).sort().join(','), 'copied,copy,copyFailed,msgFailed,msgGenerated,msgInvalidJson');
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-zod/' + lang + '.mdx'), 'utf8');
   const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
@@ -331,6 +355,147 @@ try {
   await esbuildTransform(compiled.code, { loader: 'ts' }); check('v2 generated Astro module parses', true);
 } catch (e) { check('v2 Astro compilation', false, e.message); }
 check('v2 dark status ancestors are global', css.includes(':global(:root:not([data-theme="light"]))') && css.includes(':global([data-theme="dark"])'));
+
+// ---------- tool page examples: {/* jtz-check: {"root":"…","strict":false} */} ----------
+// The annotation is followed by a ```json block (the input) and a ```ts block. The real page script
+// runs with that root name and strict setting (the output includes the import and type lines that
+// are built outside the engine), and its output must be shown byte for byte. The output plus
+// `export const sample: <Type> = <the JSON>;` must compile in strict TypeScript against zod (3)
+// and zod/v4, and the schema must parse the sample with both, unless "rejects" names the version
+// and the path of the one expected issue.
+const require2 = createRequire(import.meta.url);
+const zods = { v3: require2('zod').z, v4: require2('zod/v4').z };
+const TS_OPTIONS = { strict: true, noEmit: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, lib: ['lib.es2022.d.ts'], types: [], skipLibCheck: true };
+function tsErrors(code, entry) {
+  const text = code.replace('from "zod";', 'from "' + entry + '";');
+  const fileName = join(root, '__json_to_zod_check__.ts');
+  const host = ts.createCompilerHost(TS_OPTIONS);
+  const origGet = host.getSourceFile, origExists = host.fileExists, origRead = host.readFile;
+  host.getSourceFile = (name, lang) => (name === fileName ? ts.createSourceFile(name, text, lang) : origGet.call(host, name, lang));
+  host.fileExists = (name) => name === fileName || origExists.call(host, name);
+  host.readFile = (name) => (name === fileName ? text : origRead.call(host, name));
+  const program = ts.createProgram([fileName], TS_OPTIONS, host);
+  return ts.getPreEmitDiagnostics(program).map((d) => ts.flattenDiagnosticMessageText(d.messageText, ' '));
+}
+function schemaOf(code, schemaName, z) {
+  const js = ts.transpileModule(code + '\nmodule.exports.__schema = ' + schemaName + ';\n', { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', js)(() => ({ z }), module, module.exports);
+  return module.exports.__schema;
+}
+function pageOutput(lang, rootName, strict, json) {
+  const p = page(lang);
+  p.get('jtz-root-name').value = rootName;
+  p.get('jtz-strict').checked = !!strict;
+  p.input(json);
+  p.get('jtz-convert').click();
+  return output(p);
+}
+const jtzCheck = {
+  tag: 'jtz-check',
+  min: 2,
+  verify({ spec, after, lang }) {
+    if (!spec || typeof spec.root !== 'string') return 'annotation needs {"root": "<name>"}';
+    const blocks = fencedBlocks(after);
+    const input = blocks.find((b) => b.lang === 'json');
+    if (!input) return 'no ```json input block after the annotation';
+    let sample;
+    try { sample = JSON.parse(input.text); } catch (e) { return 'input is not JSON: ' + e.message; }
+    const code = pageOutput(lang, spec.root, spec.strict, input.text);
+    if (!blocks.some((b) => (b.lang === 'ts' || b.lang === 'typescript') && b.text === code)) return 'page output not shown:\n' + code;
+    const typeName = /export type (\S+) =/.exec(code)[1], schemaName = /^const (\S+) = /m.exec(code)[1];
+    for (const entry of ['zod', 'zod/v4']) {
+      const errors = tsErrors(code + '\n\nexport const sample: ' + typeName + ' = ' + input.text + ';\n', entry);
+      if (errors.length) return 'tsc (' + entry + '): ' + errors.join('; ');
+    }
+    for (const [v, z] of Object.entries(zods)) {
+      const r = schemaOf(code, schemaName, z).safeParse(sample);
+      const want = spec.rejects?.[v];
+      if (want) {
+        if (r.success || r.error.issues.length !== 1 || r.error.issues[0].path.join('.') !== want.join('.')) return v + ' should reject only ' + want.join('.') + ': ' + JSON.stringify(r.error?.issues ?? 'success');
+      } else if (!r.success) return v + ' rejects its own sample: ' + JSON.stringify(r.error.issues);
+    }
+    return null;
+  },
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq(lang + ': jtz-check examples match the page, compile and parse', contractProblems('json-to-zod', lang, { annotations: [jtzCheck] }), '');
+}
+
+// ---------- facts stated in the text ----------
+const pageText = Object.fromEntries(['en', 'zh', 'ja', 'ko'].map((l) => [l, readFileSync(join(root, 'src/content/tools/json-to-zod/' + l + '.mdx'), 'utf8')]));
+{
+  const code = pageOutput('en', 'Config', true, '{"port":8080,"host":"localhost","db":{"url":"postgres://localhost/app","pool":10},"features":["search"]}');
+  for (const [v, z] of Object.entries(zods)) {
+    check('en: strict Config rejects a misspelled nested key (' + v + ')', !schemaOf(code, 'ConfigSchema', z).safeParse({ port: 1, host: 'h', db: { url: 'u', pool: 1, poool: 2 }, features: [] }).success);
+    check('strict mode is off: extra keys are removed (' + v + ')', JSON.stringify(z.object({ a: z.number() }).parse({ a: 1, b: 2 })) === '{"a":1}');
+  }
+  const E2 = new Function(block + '\nreturn { toPascalCase };')();
+  eq('root name 用户 keeps its letters', E2.toPascalCase('用户'), '用户');
+  eq('root name 天気 keeps its letters', E2.toPascalCase('天気'), '天気');
+  eq('root name 회원 keeps its letters', E2.toPascalCase('회원'), '회원');
+  eq('root name "user profile" gives UserProfile', E2.toPascalCase('user profile'), 'UserProfile');
+  check('en: page states the root-name rules', pageText.en.includes('`用户` gives `用户Schema`') && pageText.en.includes('`2fa` gives `T2faSchema`'));
+  check('zh: page states the root-name rules', pageText.zh.includes('`用户` 得到 `用户Schema`') && pageText.zh.includes('`2fa` 得到 `T2faSchema`'));
+  check('ja: page states the root-name rules', pageText.ja.includes('`天気` は `天気Schema`') && pageText.ja.includes('`2fa` は `T2faSchema`'));
+  check('ko: page states the root-name rules', pageText.ko.includes('`회원`은 `회원Schema`') && pageText.ko.includes('`2fa`는 `T2faSchema`'));
+  eq('the int/float union text', E.buildRootZod([{ p: 128.5 }, { p: 299 }], 'Root', false), 'z.array(z.object({\n    p: z.union([z.number(), z.number().int()]),\n  }))');
+  for (const l of ['en', 'zh', 'ja', 'ko']) check(l + ': page shows the int/float union', pageText[l].includes('`z.union([z.number(), z.number().int()])`'));
+  const v4Big = zods.v4.number().int().safeParse(JSON.parse('1830000000000000001'));
+  eq('JSON.parse rounds the zh ID', String(JSON.parse('1830000000000000001')), '1830000000000000000');
+  check('zod 3 int accepts the rounded ID', zods.v3.number().int().safeParse(JSON.parse('1830000000000000001')).success);
+  check('zh: page quotes the zod/v4 too_big message', !v4Big.success && pageText.zh.includes('`' + v4Big.error.issues[0].message + '`'), v4Big.error?.issues[0].message);
+  const v4Float = zods.v4.number().int().safeParse(10.5);
+  for (const l of ['zh', 'ja', 'ko']) check(l + ': page quotes the zod/v4 message for 10.5', pageText[l].includes('`' + v4Float.error.issues[0].message + '`'), v4Float.error.issues[0].message);
+  check('zh: string ID refinement passes', zods.v4.string().regex(/^\d+$/).safeParse('1830000000000000001').success && zods.v3.string().regex(/^\d+$/).safeParse('1830000000000000001').success);
+  const dt = '2026-10-08T16:35:00+09:00';
+  check('ja: datetime with +09:00 needs offset: true', zods.v4.iso.datetime({ offset: true }).safeParse(dt).success && !zods.v4.iso.datetime().safeParse(dt).success
+    && zods.v3.string().datetime({ offset: true }).safeParse(dt).success && !zods.v3.string().datetime().safeParse(dt).success);
+  check('ja: status literal union exists in both', ['v3', 'v4'].every((v) => zods[v].union([zods[v].literal(200), zods[v].literal(400), zods[v].literal(500)]).safeParse(400).success));
+}
+
+// ---------- own-property keys: prototype names are ordinary JSON keys ----------
+{
+  let expr = '';
+  try { expr = E.buildRootZod(JSON.parse('[{"hasOwnProperty":1},{"a":2}]'), 'Root', false); } catch (e) { expr = 'THROW ' + e.message; }
+  eq('array items with a hasOwnProperty key', expr, 'z.array(z.object({\n    hasOwnProperty: z.number().int().optional(),\n    a: z.number().int().optional(),\n  }))');
+  eq('constructor / toString in every item stay required', E.buildRootZod(JSON.parse('[{"constructor":1,"toString":"a"},{"constructor":2,"toString":"b"}]'), 'Root', false),
+    'z.array(z.object({\n    constructor: z.number().int(),\n    toString: z.string(),\n  }))');
+  const protoSample = JSON.parse('[{"__proto__":{"a":1},"b":1},{"__proto__":{"a":2},"b":2}]');
+  const protoExpr = E.buildRootZod(protoSample, 'Root', false);
+  check('a __proto__ key is kept as a computed key', protoExpr.includes('["__proto__"]: z.object({'), protoExpr);
+  const protoObj = E.buildRootZod(JSON.parse('{"__proto__":{"a":1}}'), 'Root', false);
+  check('a __proto__ key of a single object is kept as a computed key', protoObj.includes('["__proto__"]: z.object({'), protoObj);
+  for (const [v, z] of Object.entries(zods)) {
+    let s; try { s = new Function('z', 'return ' + protoExpr + ';')(z); } catch (e) { s = null; }
+    check('__proto__ schema accepts its sample (' + v + ')', !!s && s.safeParse(protoSample).success);
+    check('__proto__ schema rejects an item without it (' + v + ')', !!s && !s.safeParse(JSON.parse('[{"b":1}]')).success);
+  }
+}
+
+// ---------- an engine error clears the old output and disables Copy ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(lang);
+  run(p);
+  check(lang + ': Copy is enabled with output', !p.get('jtz-copy').disabled);
+  const deep = '['.repeat(20000) + ']'.repeat(20000);
+  let thrown; try { run(p, deep); } catch (e) { thrown = e; }
+  check(lang + ': engine error does not escape the handler', !thrown, thrown && thrown.message);
+  eq(lang + ': engine error clears the old output', output(p), '');
+  check(lang + ': engine error is shown as an error', status(p).className.includes('error') && status(p).textContent.startsWith(pageLabels[lang].msgFailed || '\u0000'), status(p).textContent);
+  check(lang + ': engine error disables Copy', p.get('jtz-copy').disabled === true);
+  run(p);
+  check(lang + ': next result enables Copy again', !p.get('jtz-copy').disabled && output(p) === goldenCode);
+  p.get('jtz-clear').click();
+  check(lang + ': Clear disables Copy', p.get('jtz-copy').disabled === true);
+}
+
+// ---------- root names follow the ECMAScript identifier rules ----------
+for (const [name, typeName] of [['用户', '用户'], ['2fa', 'T2fa'], ['class', 'Class'], ['', 'Root'], ['  ', 'Root'], ['user profile', 'UserProfile'], ['天気', '天気'], ['회원', '회원'], ['!!!', 'Root'], ['user-name', 'UserName'], ['$store', '$store'], ['_id', '_id']]) {
+  const code = pageOutput('en', name, false, '{"a":1}');
+  check('root name ' + JSON.stringify(name) + ' gives ' + typeName, code.includes('const ' + typeName + 'Schema = ') && code.includes('export type ' + typeName + ' = z.infer<typeof ' + typeName + 'Schema>;'), code);
+  for (const entry of ['zod', 'zod/v4']) eq('root name ' + JSON.stringify(name) + ' compiles (' + entry + ')', tsErrors(code + '\nexport const sample: ' + typeName + ' = {"a":1};\n', entry).join('; '), '');
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

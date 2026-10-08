@@ -26,7 +26,7 @@ import { dirname, join } from 'node:path';
 import ts from 'typescript';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, examplePairs, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToTypescriptTool.astro'), 'utf8');
@@ -105,19 +105,61 @@ eq('primitive root', E.generateTypeScript(5, 'Root', false, false).code, 'type R
 eq('array of primitives root', E.generateTypeScript([1, 'a'], 'Root', false, false).code, 'type Root = (number | string)[];');
 eq('count of declarations', E.generateTypeScript(JSON.parse('{"a":{"meta":{"x":1}},"b":{"meta":{"y":"s"}}}'), 'R', false, false).count, 5);
 
-// ---------- tool page examples ----------
-for (const lang of ['en', 'zh', 'ja', 'ko']) {
-  const mdx = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
-  const re = /```json\n([\s\S]*?)\n```\s*\n[^`]*```typescript\n([\s\S]*?)\n```/g;
-  let m;
-  let count = 0;
-  while ((m = re.exec(mdx))) {
-    count++;
+// ---------- tool page examples: {/* jtt-check: {"root":"…","optional":false,"useType":false} */} ----------
+// The annotation is followed by a ```json block (the input) and a ```typescript block that must be
+// the engine output for that root name and those options, byte for byte. The output must also
+// compile (strict) together with the sample assigned to the root type (Root[] for a root array).
+const jttCheck = {
+  tag: 'jtt-check',
+  min: 2,
+  verify({ spec, after }) {
+    if (!spec || typeof spec.root !== 'string') return 'annotation needs {"root": "<name>"}';
+    const blocks = fencedBlocks(after);
+    const input = blocks.find((b) => b.lang === 'json');
+    if (!input) return 'no ```json input block after the annotation';
     let parsed;
-    try { parsed = JSON.parse(m[1]); } catch { continue; }
-    eq(lang + ': example ' + count + ' output', E.generateTypeScript(parsed, 'RootObject', false, false).code, m[2]);
-  }
-  check(lang + ': page has at least three examples', count >= 3, String(count));
+    try { parsed = JSON.parse(input.text); } catch (e) { return 'input is not JSON: ' + e.message; }
+    const code = E.generateTypeScript(parsed, spec.root, !!spec.optional, !!spec.useType).code;
+    if (!blocks.some((b) => b.lang === 'typescript' && b.text === code)) return 'engine output not shown:\n' + code;
+    const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+    const isRootObjects = Array.isArray(parsed) && parsed.some(isObject);
+    const sampleType = !isRootObjects ? spec.root : parsed.every(isObject) ? spec.root + '[]' : spec.root + 'Array';
+    const errors = compile(code + '\n\nexport const sample: ' + sampleType + ' = ' + input.text + ';\n');
+    return errors.length ? 'does not compile with the sample: ' + errors.join('; ') : null;
+  },
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq(lang + ': jtt-check examples match the engine and compile', contractProblems('json-to-typescript', lang, { annotations: [jttCheck] }), '');
+  // Facts stated in every Limits section.
+  const text = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
+  check(lang + ': page states Number.MAX_SAFE_INTEGER', text.includes(String(Number.MAX_SAFE_INTEGER)));
+  check(lang + ': page shows the mixed root-array alias', text.includes('`[{"id": 1}, "x", null]`') && text.includes('`' + E.generateTypeScript([{ id: 1 }, 'x', null], 'RootObject', false, false).code.split('\n')[0] + '`'));
+  check(lang + ': page shows the root-name examples', ['`userProfile`', '`T2fa`', '`class_`'].every((s) => text.includes(s)));
+}
+// A root array that mixes objects with other values: the objects merge into the root interface and
+// a <root>Array alias lists every element type, written like a nested array.
+{
+  const mixed = (json, root = 'RootObject', opts = {}) => {
+    const parsed = JSON.parse(json), r = E.generateTypeScript(parsed, root, !!opts.optional, !!opts.useType);
+    eq('mixed root array ' + json + ' compiles with the sample', compile(r.code + '\n\nexport const sample: ' + root + 'Array = ' + json + ';\n').join('; '), '');
+    return r;
+  };
+  eq('a root array of an object, a string, a number and null', mixed('[{"id":1},"x",2,null]').code,
+    'type RootObjectArray = (string | number | null | RootObject)[];\n\ninterface RootObject {\n  id: number;\n}');
+  eq('the alias does not count as an interface', mixed('[{"id":1},"x"]').count, 1);
+  eq('nested arrays among the objects', mixed('[{"a":1},[1,2]]').code, 'type RootObjectArray = (number[] | RootObject)[];\n\ninterface RootObject {\n  a: number;\n}');
+  eq('type option keeps the alias', mixed('[{"a":1},true]', 'Api', { useType: true }).code, 'type ApiArray = (boolean | Api)[];\n\ntype Api = {\n  a: number;\n}');
+  check('a nested key cannot take the alias name', !/interface RootObjectArray /.test(mixed('[{"rootObjectArray":{"x":1}},1]').code));
+  mixed('[{"id":1,"tags":[{"t":"a"}]},"x",{"id":2}]');
+  eq('a root array of objects only is unchanged', E.generateTypeScript([{ id: 1 }, { id: 2 }], 'RootObject', false, false).code, 'interface RootObject {\n  id: number;\n}');
+}
+eq('JSON.parse rounds the zh snowflake ID', String(JSON.parse('1830000000000000001')), '1830000000000000000');
+{
+  const zh = readFileSync(join(root, 'src/content/tools/json-to-typescript/zh.mdx'), 'utf8');
+  check('zh: page shows the rounded ID', zh.includes('`1830000000000000000`'));
+  let message = '';
+  try { JSON.parse('{"a":1,}'); } catch (e) { message = e.message; }
+  check('zh: page quotes the V8 trailing-comma message', zh.includes('`' + message + '`'), message);
 }
 
 // ---------- complete page lifecycle: real script/shortcuts, controlled DOM/clipboard/time ----------
@@ -127,8 +169,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 8381);
-eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '0ee4e584eb3ee903925cbc5fb4213a8e9b5e62910556691a4effe72bc2930caf');
+eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 10604);
+eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'be5a3bfd026e952389cf41d79a31a2cf7cff24aec890e42ff41791f2716d284d');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -277,6 +319,60 @@ try {
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
 
+// ---------- prototype key names: the name table has no prototype ----------
+{
+  const r = E.generateTypeScript(JSON.parse('{"__proto__":{"a":1},"b":{"c":2}}'), 'RootObject', false, false);
+  check('a __proto__ key takes its own name', /^interface __proto__ \{\n  a: number;\n\}/m.test(r.code) && /  __proto__: __proto__;/.test(r.code), r.code);
+  eq('__proto__ declarations compile', compile(r.code).join('; '), '');
+}
+
+// ---------- an engine error clears the old output and disables Copy ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(lang); golden(p);
+  check(lang + ': Copy is enabled with output', !p.get('jtt-copy').disabled);
+  let thrown; try { p.input('['.repeat(20000) + ']'.repeat(20000)); p.advance(300); } catch (e) { thrown = e; }
+  check(lang + ': engine error does not escape the handler', !thrown, thrown && thrown.message);
+  eq(lang + ': engine error clears the old output', p.get('jtt-output-code').textContent, '');
+  check(lang + ': engine error is shown as an error', p.get('jtt-status').className.includes('error') && p.get('jtt-status').textContent.startsWith(pageLabels[lang].msgFailed || '\u0000'), p.get('jtt-status').textContent);
+  check(lang + ': engine error disables Copy', p.get('jtt-copy').disabled === true);
+  golden(p);
+  check(lang + ': next result enables Copy again', !p.get('jtt-copy').disabled && p.get('jtt-output-code').textContent === goldenCode);
+  p.get('jtt-clear').click();
+  check(lang + ': Clear disables Copy', p.get('jtt-copy').disabled === true);
+}
+
+// ---------- root names follow the ECMAScript identifier rules ----------
+for (const [name, typeName] of [['用户', '用户'], ['2fa', 'T2fa'], ['class', 'class_'], ['string', 'string_'], ['', 'RootObject'], ['  ', 'RootObject'], ['user profile', 'userProfile'], ['!!!', 'RootObject'], ['Api', 'Api'], ['$store', '$store']]) {
+  const p = page('en');
+  p.get('jtt-root-name').value = name; p.input('{"a":1}'); p.get('jtt-convert').click();
+  const code = p.get('jtt-output-code').textContent;
+  check('root name ' + JSON.stringify(name) + ' gives ' + typeName, code.startsWith('interface ' + typeName + ' {'), code);
+  eq('root name ' + JSON.stringify(name) + ' compiles with the sample', compile(code + '\nexport const sample: ' + typeName + ' = {"a":1};\n').join('; '), '');
+}
+
+// ---------- analytics: one event per committed edit or button, not per typing pause ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const g = page(lang), sent = () => g.tracks.map((t) => t.join(':')).join(',');
+  g.input('{"a":1}'); g.advance(300); g.input('{"a":1,"b":2}'); g.advance(300);
+  eq(lang + ': analytics: typing pauses send nothing', sent(), '');
+  g.get('jtt-input').dispatch('change');
+  eq(lang + ': analytics: change after an edit sends one generate', sent(), 'json-to-typescript:generate');
+  g.input('{"c":3}'); g.get('jtt-input').dispatch('change');
+  eq(lang + ': analytics: change flushes the pending debounce', g.get('jtt-output-code').textContent, 'interface RootObject {\n  c: number;\n}');
+  eq(lang + ': analytics: flushed change sends once', g.tracks.length, 2);
+  g.advance(300); eq(lang + ': analytics: no delayed event after a flush', g.tracks.length, 2);
+  g.get('jtt-convert').click(); eq(lang + ': analytics: Generate on the same JSON and settings is not sent again', g.tracks.length, 2);
+  g.input('{"d":4}'); g.get('jtt-input').dispatch('change'); g.get('jtt-convert').click();
+  eq(lang + ': analytics: change then Generate (one click) sends once', g.tracks.length, 3);
+  g.get('jtt-use-type').checked = true; g.get('jtt-convert').click(); eq(lang + ': analytics: Generate after a use type change sends one', g.tracks.length, 4);
+  g.get('jtt-example').click(); eq(lang + ': analytics: Example sends one', g.tracks.length, 5);
+  g.get('jtt-example').click(); eq(lang + ': analytics: Example again with the same settings is not sent again', g.tracks.length, 5);
+  g.get('jtt-clear').click(); g.get('jtt-example').click(); eq(lang + ': analytics: Clear resets the last sent input', g.tracks.length, 6);
+  g.input('{'); g.get('jtt-input').dispatch('change'); g.get('jtt-convert').click();
+  eq(lang + ': analytics: invalid JSON sends nothing', g.tracks.length, 6);
+  g.input(''); g.get('jtt-input').dispatch('change'); eq(lang + ': analytics: empty input sends nothing', g.tracks.length, 6);
+}
+
 // ---------- v2 page layout ----------
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
@@ -308,7 +404,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ': v2 same eight tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
   for (const [id, about, key] of tipMap) check(lang + ': v2 plain localized tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]));
   check(lang + ': v2 localized empty hint', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'));
-  eq(lang + ': v2 only runtime feedback data is forwarded', Object.keys(rootEl.dataset).sort().join(','), 'copied,copy,copyFailed,msgGenMany,msgGenOne,msgGenerated,msgInvalidJson');
+  eq(lang + ': v2 only runtime feedback data is forwarded', Object.keys(rootEl.dataset).sort().join(','), 'copied,copy,copyFailed,msgFailed,msgGenMany,msgGenOne,msgGenerated,msgInvalidJson');
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
   const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
@@ -319,7 +415,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ': MDX content contract', contractProblems('json-to-typescript', lang), '');
   const tsPairs = examplePairs(body, (b) => b.lang === 'json' || (b.lang === 'pre' && /^[[{]/.test(b.text)), (b) => b.lang === 'typescript' || (b.lang === 'pre' && /^(?:interface|type|export) /.test(b.text)));
   check(lang + ': has JSON → TypeScript examples', tsPairs.length > 0);
-  eq(lang + ': each TypeScript example equals the engine output (RootObject, some option setting)', tsPairs.filter(([a, b]) => ![[false, false], [true, false], [false, true], [true, true]].some(([opt, useType]) => E.generateTypeScript(JSON.parse(a.text), 'RootObject', opt, useType).code === b.text)).map(([, b]) => b.text).join('\n---\n'), '');
+  // The root name is the first declaration of the shown output (RootObject unless the page says otherwise).
+  eq(lang + ': each TypeScript example equals the engine output (its root name, some option setting)', tsPairs.filter(([a, b]) => { const rootName = /^(?:interface|type) ([^\s={]+)/.exec(b.text)?.[1] ?? 'RootObject'; return ![[false, false], [true, false], [false, true], [true, true]].some(([opt, useType]) => E.generateTypeScript(JSON.parse(a.text), rootName, opt, useType).code === b.text); }).map(([, b]) => b.text).join('\n---\n'), '');
   check(lang + ': v2 no duplicate Usage heading', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {
     const q = page(lang, shellFirst); golden(q);

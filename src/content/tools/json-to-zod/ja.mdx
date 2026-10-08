@@ -9,92 +9,112 @@ steps:
   - "コピーをクリックし、Zod スキーマ出力の全文をプロジェクトに貼り付けます。"
   - "クリアで JSON、出力、ステータスを消去し、名前と設定は保持します。ツール内の Ctrl/⌘+L では名前も消去します。"
 faqItems:
-  - question: "Zodとは何ですか？"
-    answer: "ZodはTypeScriptファーストのスキーマ宣言・バリデーションライブラリです。データの形状をスキーマで定義し、実行時にデータを検証できます。APIレスポンス検証・フォームバリデーション・設定ファイル解析に広く使われています。"
+  - question: "Zod とは何ですか？"
+    id: "zod"
+    answer: "Zod は TypeScript ファーストのスキーマ宣言・バリデーションライブラリです。データの形をスキーマで定義し、実行時にデータを検証できます。API レスポンスの検証、フォームのバリデーション、設定ファイルの読み込みによく使われます。"
   - question: "型の推論はどう行われますか？"
-    answer: "各JSON値を検査します：文字列→z.string()、真偽値→z.boolean()、整数→z.number().int()、浮動小数点→z.number()、null→z.null()、配列→z.array()、オブジェクト→z.object()。オブジェクトの配列では、一部のアイテムにしか存在しないキーはoptionalとしてマークされます。"
+    id: "inference"
+    answer: "各 JSON 値を調べます。文字列 → z.string()、真偽値 → z.boolean()、整数 → z.number().int()、小数 → z.number()、null → z.null()、配列 → z.array()、オブジェクト → z.object()。オブジェクトの配列では、一部の要素にしかないキーに .optional() を付け、要素によって型が違うキーは z.union にします。"
   - question: "ストリクトモードとは何ですか？"
-    answer: "ストリクトモードを有効にすると、すべてのz.object()に.strict()が追加されます。スキーマに定義されていない余分なキーを含む入力オブジェクトはZodに拒否されます。無効時は余分なキーが無視されます（Zodのデフォルト動作）。"
+    id: "strict"
+    answer: "「ストリクトモード（余分なキーを禁止）」をオンにすると、ネストしたものも含めてすべての z.object() に .strict() が付きます。スキーマにないキーを含むオブジェクトは Zod に拒否されます。オフのときは、余分なキーはパース結果から黙って取り除かれます（Zod の既定の動作）。"
+  - question: "出力は Zod 3 と Zod 4 の両方で使えますか？"
+    id: "zod-versions"
+    answer: "使えます。生成器が使うのは z.object、z.array、z.union、z.record、z.string、z.number().int()、z.boolean、z.null、z.unknown、.optional()、.strict() だけで、どちらのバージョンにもあります。このページの例は、TypeScript の strict モードで Zod 3 と Zod 4 の API（zod/v4）の両方に対してコンパイルできることを確認しています。違いが 1 つあり、Zod 4 の z.number().int() は安全な整数の範囲（9007199254740991 以下）を超える整数も拒否します。"
   - question: "生成されたスキーマはそのまま使えますか？"
-    answer: "生成スキーマは良い出発点です。文字列・数値への.min()/.max()制約追加、nullableフィールドの.nullable().optional()への変更、ネストスキーマの個別定数への分割など、プロジェクトに合わせて調整することをお勧めします。"
-  - question: "JSONデータはサーバーに送信されますか？"
-    answer: "いいえ。すべての処理はブラウザ内で完結します。JSONデータがデバイス外に出ることはありません。"
+    id: "refine"
+    answer: "生成スキーマは出発点です。文字列や数値への .min()/.max() の追加、null になりうるフィールドの .nullable().optional() への変更、ネストしたスキーマの個別定数への分割など、プロジェクトに合わせて調整してください。"
+  - question: "JSON データはサーバーに送信されますか？"
+    id: "privacy"
+    answer: "いいえ。ページはブラウザ内で JSON からスキーマを生成し、JSON をどこにも送信せず、ブラウザのストレージにも保存しません。ページのアクセス解析は、入力を編集してフォーカスが外れたとき、または「Zod スキーマを生成」「サンプル」をクリックしたときに利用イベント（ツール名と動作 generate）を 1 回記録するだけで、JSON や生成したコードは含みません。"
 ---
 
-<h2>出力形式</h2>
-<p>完全なTypeScriptスニペットを出力します：</p>
-<ul>
-  <li><code>import &#123; z &#125; from "zod"</code> — Zodインポート</li>
-  <li><code>const FooSchema = z.object(&#123;...&#125;)</code> — スキーマ定義</li>
-  <li><code>export type Foo = z.infer&lt;typeof FooSchema&gt;</code> — 推論されたTypeScript型</li>
-</ul>
+## 出力されるコード
 
-<h2>主な用途</h2>
-<ul>
-  <li><strong>APIバリデーション：</strong>APIレスポンス例からスキーマを生成し、実際のレスポンスを実行時に検証。</li>
-  <li><strong>フォームバリデーション：</strong>フォームのデータ形状をZodスキーマに変換してreact-hook-formなどで活用。</li>
-  <li><strong>設定ファイル：</strong>JSONファイルから読み込む設定オブジェクトの定義と検証。</li>
-  <li><strong>型安全性：</strong>TypeScriptと組み合わせて1つのスキーマから実行時検証と静的型推論を同時に取得。</li>
-</ul>
+出力はそのまま `.ts` ファイルに貼れるコードです。1 行目が `import { z } from "zod";`、続いて `const 名前Schema = …;`、最後に `export type 名前 = z.infer<typeof 名前Schema>;` が並びます。スキーマ定数には `export` が付かないので、ほかのモジュールから使う場合は自分で付けます。名前は「ルートスキーマ名」から作られ、空欄なら `Root` です。ルートスキーマ名は先頭を大文字にし、ECMAScript の識別子のルールで整えます。日本語を含む各言語の文字、数字、`$`、`_` は残るので、`天気` は `天気Schema` になります。それ以外の文字は取り除かれて次の文字が大文字になり（`user profile` は `UserProfileSchema`）、識別子の先頭に使えない名前には `T` が付きます（`2fa` は `T2faSchema`）。何も残らない場合は `Root` です。
 
-## 変換例
+## 例：気象庁の天気概況 JSON
 
-ルート名を `User` にして次の JSON を入力すると、
+気象庁サイトの天気予報ページが読み込んでいる天気概況の JSON（`https://www.jma.go.jp/bosai/forecast/data/overview_forecast/130000.json`、東京都）を 2026 年 10 月 8 日に取得し、そのまま貼りました。ルート名は `Overview` です。
+
+{/* jtz-check: {"root":"Overview"} */}
 
 ```json
-{
-  "id": 42,
-  "email": "alice@example.com",
-  "price": 19.9,
-  "tags": ["admin", "beta"],
-  "metadata": null,
-  "orders": [
-    { "sku": "A1", "qty": 2 },
-    { "sku": "B7", "qty": 1, "note": "gift" }
-  ]
-}
+{"publishingOffice":"気象庁","reportDatetime":"2026-10-08T16:35:00+09:00","targetArea":"東京都","headlineText":"","text":"　日本海の高気圧が本州付近に張り出しています。\n\n　東京地方は、晴れています。\n\n　８日は、高気圧に覆われる見込みです。このため、晴れるでしょう。\n\n　９日は、引き続き高気圧に覆われる見込みです。このため、晴れるでしょう。"}
 ```
 
-次のように出力されます。
+出力：
 
 ```ts
 import { z } from "zod";
 
-const UserSchema = z.object({
-  id: z.number().int(),
-  email: z.string(),
-  price: z.number(),
-  tags: z.array(z.string()),
-  metadata: z.null(),
-  orders: z.array(z.object({
-    sku: z.string(),
-    qty: z.number().int(),
-    note: z.string().optional(),
-  })),
+const OverviewSchema = z.object({
+  publishingOffice: z.string(),
+  reportDatetime: z.string(),
+  targetArea: z.string(),
+  headlineText: z.string(),
+  text: z.string(),
 });
 
-export type User = z.infer<typeof UserSchema>;
+export type Overview = z.infer<typeof OverviewSchema>;
 ```
 
-`note` は 2 件の注文のうち 1 件にしかないので optional になります。出力には Zod 3 と Zod 4 の両方で動く書き方だけを使っています。
+すべて `z.string()` になります。空文字列の `headlineText` も、全角スペースや改行を含む `text` も、ツールから見れば同じ文字列です。日時の `reportDatetime` を厳密にチェックしたいときは、Zod 4 なら `z.iso.datetime({ offset: true })`、Zod 3 なら `z.string().datetime({ offset: true })` に書き換えます。`offset: true` を付けないと、`+09:00` 付きの値は不正として拒否されます。
 
-## 生成したスキーマの調整
+## 例：郵便番号検索 API の成功時とエラー時
 
-サンプルには各フィールドの値が 1 つしかないため、業務ルールは推論できません。使う前に次の点を確認してください。
+[zipcloud の郵便番号検索 API](https://zipcloud.ibsnet.co.jp/doc/api) は、成功すると `results` に住所の配列を返し、エラーのときは `message` に文字列、`results` に `null` を入れて返します（ドキュメントの「エラー発生時のサンプル」）。成功時だけから作ったスキーマはエラー時のレスポンスを拒否するので、2 つのサンプル（成功時は 1 件に省略）を配列に入れて貼ります。ルート名は `ZipcloudResponse` です。
+
+{/* jtz-check: {"root":"ZipcloudResponse"} */}
+
+```json
+[{"message":null,"results":[{"address1":"北海道","address2":"美唄市","address3":"上美唄町協和","kana1":"ﾎｯｶｲﾄﾞｳ","kana2":"ﾋﾞﾊﾞｲｼ","kana3":"ｶﾐﾋﾞﾊﾞｲﾁｮｳｷｮｳﾜ","prefcode":"1","zipcode":"0790177"}],"status":200},{"message":"必須パラメータが指定されていません。","results":null,"status":400}]
+```
+
+出力：
+
+```ts
+import { z } from "zod";
+
+const ZipcloudResponseSchema = z.array(z.object({
+    message: z.union([z.null(), z.string()]),
+    results: z.union([z.array(z.object({
+        address1: z.string(),
+        address2: z.string(),
+        address3: z.string(),
+        kana1: z.string(),
+        kana2: z.string(),
+        kana3: z.string(),
+        prefcode: z.string(),
+        zipcode: z.string(),
+      })), z.null()]),
+    status: z.number().int(),
+  }));
+
+export type ZipcloudResponse = z.infer<typeof ZipcloudResponseSchema>;
+```
+
+`message` と `results` が `null` を含む union になり、両方のレスポンスが通ります。ルートが配列なので、出力全体は `z.array(…)` です。API のレスポンス 1 件を検証するには、`z.array(` と最後の `)` を外して中の `z.object(…)` だけを使います。`zipcode` は先頭の 0 を保つために文字列のままにしておきます。
+
+## 使う前に直すところ
 
 | 生成結果 | 問題 | 修正（Zod 4） |
 |---|---|---|
 | `email: z.string()` | どんな文字列も通る | `z.email()`（Zod 3 は `z.string().email()`） |
-| `qty: z.number().int()` | 常に整数の場合だけ正しい。サンプルが `price: 10` でも `.int()` になり、あとで `10.5` が "expected int" で失敗する | 価格は `z.number()` にし、`.min(0)` や `.positive()` を足す |
-| `metadata: z.null()` | `null` しか通らない | `z.string().nullable()` |
-| `status: z.string()` | どんな文字列も通る | `z.enum(["active", "inactive"])` |
+| `qty: z.number().int()` | 常に整数のときだけ正しい。`10.5` は `Invalid input: expected int, received number` で失敗する | 価格は `z.number()` にし、`.min(0)` を足す |
+| `message: z.union([z.null(), z.string()])` | 意味は合っているが読みにくい | `z.string().nullable()` |
+| `status: z.number().int()` | どんな整数も通る | `z.union([z.literal(200), z.literal(400), z.literal(500)])` |
 | サンプルにあったフィールド | API が省略することがあっても必須になる | `.optional()` を付ける |
 
 失敗したら処理を止めたい場所（起動時の設定読み込みなど）では `.parse()` を使います。`ZodError` を投げます。API レスポンスやユーザー入力には `.safeParse()` を使います。`{ success: false, error }` を返すので、エラーを自分で処理できます。
 
 ## 制限事項
 
-- **型は 1 つのサンプルから決まります。** 空の配列は `z.array(z.unknown())`、空のオブジェクトは `z.record(z.string(), z.unknown())` になります。
-- **`null` は `z.null()` になります。** `.nullable()` は付きません。オブジェクトの配列で、あるキーが 1 件目で `null`、2 件目で文字列のときは `z.union([z.null(), z.string()])` になります。
-- **型が混ざった配列は union になります。** `[{"a": 1}, 2]` のような配列は、ルートでもオブジェクトの中でも `z.array(z.union([z.number().int(), z.object({ a: z.number().int() })]))` になります。同じ配列のオブジェクトは 1 つの `z.object` にまとめるので、union のオブジェクトは 1 つです。
+- **型は貼ったサンプルだけから決まります。** 空の配列は `z.array(z.unknown())`、空のオブジェクトは `z.record(z.string(), z.unknown())` になります。
+- **`null` は `z.null()` になります。** `.nullable()` は付きません。
+- **型が混ざった配列は union になります。** `[{"a": 1}, 2]` のような配列は `z.array(z.union([z.number().int(), z.object({ a: z.number().int() })]))` になります。同じ配列のオブジェクトは 1 つの `z.object` にまとまります。
+- **整数と小数が同じキーにあると union になります。** `z.union([z.number(), z.number().int()])` は `z.number()` にまとめられます。
+- **大きな整数。** 入力は `JSON.parse` で読むので、9007199254740991 を超える整数はスキーマを作る前に桁が変わります。
 - **文字列の形式や範囲は付きません。** メール、URL、日付、UUID はすべて `z.string()` です。
+- **ネストが非常に深い JSON。** ブラウザのコールスタックを超えることがあり、その場合はステータスにエラーを表示し、前のスキーマを消去してコピーを無効にします。
+- **入力は有効な JSON である必要があります。** 無効なときは出力が消え、「無効なJSON：」の後ろにブラウザのパーサーのメッセージ（Chrome では英語）が表示されます。IME で入った全角の `：` や `“”` もエラーになります。

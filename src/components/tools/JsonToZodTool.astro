@@ -27,6 +27,7 @@ const STRINGS = {
     copyFailed: 'Copy failed. Please copy the output manually.',
     generate: 'Generate Zod Schema',
     msgInvalidJson: 'Invalid JSON: ',
+    msgFailed: 'Could not generate the schema: ',
     msgGenerated: 'Generated.',
   },
   zh: {
@@ -51,6 +52,7 @@ const STRINGS = {
     copyFailed: '复制失败，请手动复制输出。',
     generate: '生成 Zod Schema',
     msgInvalidJson: 'JSON 格式错误：',
+    msgFailed: '无法生成 Schema：',
     msgGenerated: '已生成。',
   },
   ja: {
@@ -75,6 +77,7 @@ const STRINGS = {
     copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。',
     generate: 'Zod スキーマを生成',
     msgInvalidJson: '無効なJSON：',
+    msgFailed: 'スキーマを生成できませんでした：',
     msgGenerated: '生成しました。',
   },
   ko: {
@@ -99,6 +102,7 @@ const STRINGS = {
     copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.',
     generate: 'Zod 스키마 생성',
     msgInvalidJson: '잘못된 JSON: ',
+    msgFailed: '스키마를 생성하지 못했습니다: ',
     msgGenerated: '생성 완료.',
   },
 };
@@ -112,6 +116,7 @@ const L = STRINGS[lang];
   data-copied={L.copied}
   data-copy-failed={L.copyFailed}
   data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-failed={L.msgFailed}
   data-msg-generated={L.msgGenerated}
 >
   <div class="jtz-config">
@@ -178,6 +183,7 @@ const L = STRINGS[lang];
       var COPIED = wrap ? wrap.dataset.copied : 'Copied!';
       var COPY_FAILED = wrap ? wrap.dataset.copyFailed : 'Copy failed. Please copy the output manually.';
       var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_FAILED = wrap ? wrap.dataset.msgFailed : 'Could not generate the schema: ';
       var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
 
       var inputEl = document.getElementById('jtz-input');
@@ -189,6 +195,13 @@ const L = STRINGS[lang];
       var copyRevision = 0;
       var copyTimer = null;
       var copyFailure = false;
+
+      // Copy is enabled only while there is output to copy.
+      function setOutput(text) {
+        outputCodeEl.textContent = text;
+        copyBtn.disabled = !text;
+      }
+      setOutput('');
 
       var EXAMPLE = JSON.stringify({
         id: 1,
@@ -227,11 +240,29 @@ const L = STRINGS[lang];
       }
 
       /* ── engine:start ── */
-      /* ── PascalCase helper ── */
+      // A type name from free text: ECMAScript identifier characters (ID_Start / ID_Continue,
+      // $ and _) are kept, runs of other characters are removed and the next character is
+      // capitalized (user profile → userProfile). A name that cannot start an identifier gets a
+      // T prefix (2fa → T2fa); a reserved word or a TypeScript primitive type name gets a _
+      // suffix (class → class_). Returns '' when nothing is left.
+      var RESERVED_NAMES = Object.create(null);
+      ('break case catch class const continue debugger default delete do else enum export extends false finally for ' +
+        'function if import in instanceof new null return super switch this throw true try typeof var void while with ' +
+        'implements interface let package private protected public static yield await ' +
+        'any unknown never object string number boolean symbol bigint undefined').split(' ').forEach(function (w) { RESERVED_NAMES[w] = true; });
+      function safeIdentifier(str) {
+        var name = String(str)
+          .replace(/[^\p{ID_Continue}$\u200C\u200D]+(.)/gu, function (_, ch) { return ch.toUpperCase(); })
+          .replace(/[^\p{ID_Continue}$\u200C\u200D]/gu, '');
+        if (!name) return '';
+        if (!/^[\p{ID_Start}$_]/u.test(name)) name = 'T' + name;
+        if (RESERVED_NAMES[name]) name += '_';
+        return name;
+      }
+
+      /* ── PascalCase helper: first letter in upper case, then a safe identifier ── */
       function toPascalCase(str) {
-        return str
-          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
-          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+        return safeIdentifier(String(str).replace(/^(.)/u, function (_, ch) { return ch.toUpperCase(); }));
       }
 
       /* ── Zod type inference ── */
@@ -279,6 +310,13 @@ const L = STRINGS[lang];
         return 'z.unknown()';
       }
 
+      // An object-literal key. "__proto__" (quoted or not) sets the prototype in a literal, so it
+      // is written as a computed key to stay an own property of the shape.
+      function objectKey(k) {
+        if (k === '__proto__') return '["__proto__"]';
+        return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
+      }
+
       function buildObjectZod(obj, strict, indent) {
         var keys = Object.keys(obj);
         if (keys.length === 0) {
@@ -288,7 +326,7 @@ const L = STRINGS[lang];
 
         var nextIndent = indent + '  ';
         var fields = keys.map(function (k) {
-          var safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
+          var safeKey = objectKey(k);
           var zodType = inferZod(obj[k], k, strict, nextIndent);
           return nextIndent + safeKey + ': ' + zodType + ',';
         });
@@ -299,7 +337,7 @@ const L = STRINGS[lang];
 
       function buildMergedObjectZod(objects, strict, indent) {
         // Collect all keys and their presence count
-        var allKeys = {};
+        var allKeys = Object.create(null);
         objects.forEach(function (obj) {
           Object.keys(obj).forEach(function (k) {
             if (!allKeys[k]) allKeys[k] = 0;
@@ -315,14 +353,14 @@ const L = STRINGS[lang];
           // Collect distinct types for this key
           var types = [];
           objects.forEach(function (obj) {
-            if (obj.hasOwnProperty(k)) {
+            if (Object.prototype.hasOwnProperty.call(obj, k)) {
               var t = inferZod(obj[k], k, strict, nextIndent + '  ');
               if (types.indexOf(t) === -1) types.push(t);
             }
           });
           var zodType = types.length === 1 ? types[0] : 'z.union([' + types.join(', ') + '])';
           if (!presentInAll) zodType = zodType + '.optional()';
-          var safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
+          var safeKey = objectKey(k);
           return nextIndent + safeKey + ': ' + zodType + ',';
         });
 
@@ -346,7 +384,7 @@ const L = STRINGS[lang];
         clearTimeout(_jtzLiveTimer);
         _jtzLiveTimer = null;
         var raw = inputEl.value.trim();
-        if (!raw) { inputEl.classList.remove('error'); clearStatus(); outputCodeEl.textContent = ''; return; }
+        if (!raw) { inputEl.classList.remove('error'); clearStatus(); setOutput(''); return; }
 
         inputEl.classList.remove('error');
 
@@ -354,7 +392,7 @@ const L = STRINGS[lang];
         try {
           parsed = JSON.parse(raw);
         } catch (e) {
-          outputCodeEl.textContent = '';
+          setOutput('');
           inputEl.classList.add('error');
           setStatus(MSG_INVALID + e.message, true);
           return;
@@ -364,10 +402,18 @@ const L = STRINGS[lang];
 
         var rootName = (rootNameEl.value.trim() || 'Root');
         var strict = strictEl.checked;
-        var schemaName = toPascalCase(rootName) + 'Schema';
-        var typeName = toPascalCase(rootName);
+        var typeName = toPascalCase(rootName) || 'Root';
+        var schemaName = typeName + 'Schema';
 
-        var zodExpr = buildRootZod(parsed, rootName, strict);
+        var zodExpr;
+        try {
+          zodExpr = buildRootZod(parsed, rootName, strict);
+        } catch (e) {
+          // For example a stack overflow on very deep nesting: never leave the previous schema.
+          setOutput('');
+          setStatus(MSG_FAILED + (e && e.message ? e.message : String(e)), true);
+          return;
+        }
 
         var lines = [];
         lines.push('import { z } from "zod";');
@@ -376,8 +422,19 @@ const L = STRINGS[lang];
         lines.push('');
         lines.push('export type ' + typeName + ' = z.infer<typeof ' + schemaName + '>;');
 
-        outputCodeEl.textContent = lines.join('\n');
+        setOutput(lines.join('\n'));
         setStatus(MSG_GENERATED, false);
+      }
+
+      /* Analytics: one event per committed edit, Generate or Example, not per typing pause.
+         One action can fire both change (blur on mousedown) and click, so the same JSON,
+         root name and strict mode are sent once. */
+      var lastTracked = null;
+      function trackGenerate() {
+        if (!outputCodeEl.textContent || inputEl.classList.contains('error')) return;
+        var key = inputEl.value + '\u0000' + (rootNameEl.value.trim() || 'Root') + '\u0000' + strictEl.checked;
+        if (key === lastTracked) return;
+        lastTracked = key;
         window.trackTool && window.trackTool('json-to-zod', 'generate');
       }
 
@@ -388,23 +445,32 @@ const L = STRINGS[lang];
         clearTimeout(_jtzLiveTimer);
         _jtzLiveTimer = setTimeout(generate, 300);
       });
+      inputEl.addEventListener('change', function () {
+        if (_jtzLiveTimer) generate();
+        trackGenerate();
+      });
 
-      document.getElementById('jtz-convert').addEventListener('click', generate);
+      document.getElementById('jtz-convert').addEventListener('click', function () {
+        generate();
+        trackGenerate();
+      });
 
       document.getElementById('jtz-example').addEventListener('click', function () {
         inputEl.value = EXAMPLE;
         inputEl.classList.remove('error');
         clearStatus();
         generate();
+        trackGenerate();
       });
 
       document.getElementById('jtz-clear').addEventListener('click', function () {
         invalidateCopy();
+        lastTracked = null;
         clearTimeout(_jtzLiveTimer);
         _jtzLiveTimer = null;
         inputEl.focus();
         inputEl.value = '';
-        outputCodeEl.textContent = '';
+        setOutput('');
         inputEl.classList.remove('error');
         clearStatus();
       });
@@ -468,6 +534,7 @@ const L = STRINGS[lang];
   .jtz-panel textarea.error { border-color: #c0392b; }
   .jtz-output { margin: 0; overflow: auto; white-space: pre; }
   .jtz-output:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .jtz-panel-header button:disabled { opacity: 0.5; cursor: not-allowed; }
   .jtz-empty { display: none; margin: 0; padding: 2rem; align-items: center; justify-content: center; text-align: center; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
   .jtz-output-pane:has(#jtz-output-code:empty) .jtz-output { display: none; }
   .jtz-output-pane:has(#jtz-output-code:empty) .jtz-empty { display: flex; }

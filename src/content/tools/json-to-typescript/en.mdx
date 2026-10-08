@@ -12,22 +12,28 @@ steps:
   - "Clear removes JSON, output and status while keeping the root name and both options. Ctrl/⌘+L, with focus in the tool, also clears the root name."
 faqItems:
   - question: "What does this tool generate?"
+    id: "output"
     answer: "It generates TypeScript interface (or type alias) declarations from a JSON object. Each nested object becomes its own named interface. Array items with mixed types produce union types."
   - question: "How are nested objects handled?"
-    answer: "Each nested object field is extracted into a separate interface named after the field key in PascalCase. For example, a field named 'address' becomes an 'Address' interface, and the parent interface references it by name."
+    id: "nested"
+    answer: "Each nested object field is extracted into a separate interface named after the field key in PascalCase. For example, a field named 'address' becomes an 'Address' interface, and the parent interface references it by name. Only letters after a hyphen, space or other separator are capitalized, so 'user-info' gives 'UserInfo' but 'same_name' gives 'Same_name'."
   - question: "What happens with arrays of objects?"
-    answer: "If an array contains objects, all objects are merged to form a single item interface. Fields present in some but not all objects are marked as optional."
+    id: "object-arrays"
+    answer: "If an array contains objects, all objects are merged to form a single item interface. Fields present in some but not all objects are marked as optional. A field that has different types in different items becomes a union, for example (null | string)."
   - question: "What is the 'Make properties optional' option?"
-    answer: "When checked, every property in every generated interface gets a '?' suffix, making it optional. Useful when you expect partial data or want a loose type definition."
+    id: "optional"
+    answer: "When checked, every property in every generated interface gets a '?' suffix, making it optional. Useful when you expect partial data or want a loose type definition. Click Generate TypeScript after changing it."
   - question: "What is the difference between interface and type?"
+    id: "interface-vs-type"
     answer: "Both declare object shapes in TypeScript. 'interface' supports declaration merging and is idiomatic for object types. 'type' is more flexible and can also represent primitives, unions, and tuples. Toggle 'Use type instead of interface' to switch."
   - question: "Is my data sent to a server?"
-    answer: "No. The entire type inference engine runs in your browser. No data leaves your machine."
+    id: "privacy"
+    answer: "No. The page infers the types from your JSON in your browser and does not send the JSON anywhere or save it in browser storage. The page's analytics record only a usage event (the tool name and the action generate) after you edit the input and move the focus out of it, or click Generate TypeScript or Example, without any of the JSON or the generated code."
 ---
 
 <h2>Type Inference Rules</h2>
 <ul>
-  <li><code>null</code> → optional <code>null</code> (<code>field?: null</code>)</li>
+  <li><code>null</code> on an object property → optional <code>null</code> (<code>field?: null</code>); in an array of objects, a key that is <code>null</code> in every item stays required (<code>field: null</code>)</li>
   <li>string → <code>string</code></li>
   <li>number → <code>number</code></li>
   <li>boolean → <code>boolean</code></li>
@@ -44,6 +50,8 @@ faqItems:
 <pre><code>{`interface RootObject {\n  user: User;\n  tags: string[];\n}\n\ninterface User {\n  name: string;\n  age: number;\n}`}</code></pre>
 
 ## Example: An API Response
+
+{/* jtt-check: {"root":"RootObject"} */}
 
 ```json
 {
@@ -92,6 +100,8 @@ The root interface comes first, then each nested interface in the order it is fo
 
 ## Example: Arrays With Different Shapes
 
+{/* jtt-check: {"root":"RootObject"} */}
+
 ```json
 {
   "items": [
@@ -136,6 +146,8 @@ type Message =
 ```
 
 ## Example: Two Objects Under the Same Key
+
+{/* jtt-check: {"root":"RootObject"} */}
 
 ```json
 {
@@ -186,6 +198,10 @@ interface PaymentMeta {
 
 ## Limits
 
-- The input must be valid JSON (no comments or trailing commas); the error message gives the position.
+- The input must be valid JSON (no comments or trailing commas). After "Invalid JSON:" the status line shows the browser's own parser message, which is in English in Chrome and gives the position there.
+- A root array that mixes objects with other values, such as `[{"id": 1}, "x", null]`, gives the objects one interface named after the root and adds an alias for the whole array, written like a nested array: `type RootObjectArray = (string | null | RootObject)[];`. Use `RootObjectArray` for the response.
+- The root name keeps Unicode letters, digits, `$` and `_` (the ECMAScript identifier rules). Other characters are removed and the next letter is capitalized (`user profile` gives `userProfile`), a name that cannot start an identifier gets a `T` prefix (`2fa` gives `T2fa`), and a reserved word or a primitive type name gets a `_` suffix (`class` gives `class_`). A name with nothing left uses RootObject.
+- Very deep nesting can exceed the browser's call stack. The status line then shows the error and the previous output is cleared.
+- Integers larger than 9007199254740991 (`Number.MAX_SAFE_INTEGER`) are read by `JSON.parse` and lose digits, and the type is `number`. If an API sends such IDs, ask for them as strings and type them as `string`.
 - Types come only from the sample you paste. A field that is a string in your sample but sometimes a number in production stays `string`.
 - With **Use type instead of interface**, each declaration is written as `type Name = { ... }`; the status line still says "interfaces".
