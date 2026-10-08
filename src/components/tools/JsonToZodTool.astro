@@ -380,11 +380,16 @@ const L = STRINGS[lang];
         setStatus(MSG_GENERATED, false);
       }
 
-      /* Analytics: one event per committed edit, Generate or Example, not per typing pause. */
+      /* Analytics: one event per committed edit, Generate or Example, not per typing pause.
+         One action can fire both change (blur on mousedown) and click, so the same JSON,
+         root name and strict mode are sent once. */
+      var lastTracked = null;
       function trackGenerate() {
-        if (outputCodeEl.textContent && !inputEl.classList.contains('error')) {
-          window.trackTool && window.trackTool('json-to-zod', 'generate');
-        }
+        if (!outputCodeEl.textContent || inputEl.classList.contains('error')) return;
+        var key = inputEl.value + '\u0000' + (rootNameEl.value.trim() || 'Root') + '\u0000' + strictEl.checked;
+        if (key === lastTracked) return;
+        lastTracked = key;
+        window.trackTool && window.trackTool('json-to-zod', 'generate');
       }
 
       /* ── Real-time generate (debounced 300ms) ── */
@@ -414,6 +419,7 @@ const L = STRINGS[lang];
 
       document.getElementById('jtz-clear').addEventListener('click', function () {
         invalidateCopy();
+        lastTracked = null;
         clearTimeout(_jtzLiveTimer);
         _jtzLiveTimer = null;
         inputEl.focus();

@@ -288,11 +288,16 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': analytics: change flushes the pending debounce', output(g).includes('  c: z.number().int(),'), output(g));
   eq(lang + ': analytics: flushed change sends once', g.tracks.length, 2);
   g.advance(300); eq(lang + ': analytics: no delayed event after a flush', g.tracks.length, 2);
-  g.get('jtz-convert').click(); eq(lang + ': analytics: Generate sends one', g.tracks.length, 3);
-  g.get('jtz-example').click(); eq(lang + ': analytics: Example sends one', g.tracks.length, 4);
+  g.get('jtz-convert').click(); eq(lang + ': analytics: Generate on the same JSON and settings is not sent again', g.tracks.length, 2);
+  g.input('{"d":4}'); g.get('jtz-input').dispatch('change'); g.get('jtz-convert').click();
+  eq(lang + ': analytics: change then Generate (one click) sends once', g.tracks.length, 3);
+  g.get('jtz-strict').checked = true; g.get('jtz-convert').click(); eq(lang + ': analytics: Generate after a strict change sends one', g.tracks.length, 4);
+  g.get('jtz-example').click(); eq(lang + ': analytics: Example sends one', g.tracks.length, 5);
+  g.get('jtz-example').click(); eq(lang + ': analytics: Example again with the same settings is not sent again', g.tracks.length, 5);
+  g.get('jtz-clear').click(); g.get('jtz-example').click(); eq(lang + ': analytics: Clear resets the last sent input', g.tracks.length, 6);
   g.input('{'); g.get('jtz-input').dispatch('change'); g.get('jtz-convert').click();
-  eq(lang + ': analytics: invalid JSON sends nothing', g.tracks.length, 4);
-  g.input(''); g.get('jtz-input').dispatch('change'); eq(lang + ': analytics: empty input sends nothing', g.tracks.length, 4);
+  eq(lang + ': analytics: invalid JSON sends nothing', g.tracks.length, 6);
+  g.input(''); g.get('jtz-input').dispatch('change'); eq(lang + ': analytics: empty input sends nothing', g.tracks.length, 6);
 }
 
 
