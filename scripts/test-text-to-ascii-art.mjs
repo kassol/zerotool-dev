@@ -28,6 +28,11 @@
 // backticks, # and // comments, heredoc delimiter that no line equals, trimming), download
 // names, PNG size limits, the input limit and its render time, every annotated example and the
 // width table in the four tool pages, the 4 language STRINGS tables.
+// 2026-10-08 (S2-5): analytics and copy run through the real page script with a fake DOM.
+// Before, the page sent `generate` on the first input event of each page load and nothing for
+// copy or download; Copy only used the Clipboard API, so a missing or rejected API meant no copy.
+// Now one event per committed action, and Copy falls back to execCommand('copy') before showing
+// copyFailed.
 //
 // Run:        node scripts/test-text-to-ascii-art.mjs
 // Regenerate: node scripts/test-text-to-ascii-art.mjs --regenerate /path/to/figlet-2.2.5
@@ -341,15 +346,20 @@ eq('fill', E.fill('{a} and {b}', { a: 1, b: 'x' }), '1 and x');
 // Canvas records the page's drawing calls; only the browser's toBlob completion is held.
 // The PNG fixture is a valid opaque payload at this API boundary, not a substitute renderer.
 // Actual browser font rasterization is covered by the browser acceptance flow.
-function asciiExportPage() {
+// opts.clipboard: 'ok' (default), 'reject' (writeText rejects) or 'none' (no Clipboard API);
+// opts.exec: the result of document.execCommand('copy') (default false).
+function asciiExportPage(opts = {}) {
   const nodes = new Map(), pendingBlobs = [], downloads = [], copied = [], urls = new Map(), revoked = [], timers = new Map(), listeners = {};
+  const tracks = [], execCopied = [];
   const heldFonts = new Map(), failedFonts = new Set();
   let sequence = 0;
   const document = { activeElement: null };
   class Element {
     constructor(id = '', tag = 'div') {
-      Object.assign(this, { id, tagName: tag.toUpperCase(), value: '', checked: false, hidden: false, disabled: false, textContent: '', className: '', children: [], listeners: {} });
+      Object.assign(this, { id, tagName: tag.toUpperCase(), value: '', checked: false, hidden: false, disabled: false, textContent: '', className: '', children: [], listeners: {}, style: {} });
     }
+    select() { document.activeElement = this; }
+    removeChild(child) { this.children = this.children.filter((c) => c !== child); return child; }
     set textContent(value) { this.text = String(value); this.children = []; }
     get textContent() { return (this.text || '') + this.children.map((child) => child.textContent || '').join(''); }
     get firstChild() { return this.children[0] || null; }
@@ -389,7 +399,16 @@ function asciiExportPage() {
     createElement: (tag) => tag === 'canvas' ? new Canvas() : new Element('', tag), createTextNode: (text) => ({ textContent: text }),
     querySelector: (selector) => selector === '.tool-widget' ? get('widget') : null,
     addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
+    execCommand(cmd) {
+      const el = document.activeElement;
+      if (cmd !== 'copy' || !opts.exec) return false;
+      execCopied.push(el && el.value);
+      return true;
+    },
   });
+  const clipboardMode = opts.clipboard || 'ok';
+  const navigator = clipboardMode === 'none' ? {}
+    : { clipboard: { writeText: (text) => (clipboardMode === 'reject' ? Promise.reject(new Error('NotAllowedError')) : (copied.push(text), Promise.resolve())) } };
   for (const [id, value] of Object.entries({ input: 'Hello World', font: 'Standard', layout: 'default', width: '0', format: 'plain' })) get('taa-' + id).value = value;
   get('taa-trim').checked = true; get('taa-gallery').hidden = true;
   const sandbox = {
@@ -404,7 +423,8 @@ function asciiExportPage() {
     URL: { createObjectURL(blob) { const url = 'blob:ascii-' + (++sequence); urls.set(url, blob); return url; }, revokeObjectURL(url) { revoked.push(url); urls.delete(url); } },
     getComputedStyle: () => ({ fontFamily: 'monospace', color: '#111111', backgroundColor: '#ffffff' }),
     setTimeout(fn, ms) { const id = ++sequence; timers.set(id, { fn, ms }); return id; }, clearTimeout(id) { timers.delete(id); },
-    navigator: { clipboard: { writeText: (text) => { copied.push(text); return Promise.resolve(); } } }, ztPersist: { clear() {} }, _slug: 'text-to-ascii-art',
+    navigator, ztPersist: { clear() {} }, _slug: 'text-to-ascii-art',
+    trackTool: (slug, action) => tracks.push(slug + ':' + action),
   };
   sandbox.window = sandbox;
   const ctx = vm.createContext(sandbox);
@@ -415,7 +435,7 @@ function asciiExportPage() {
   vm.runInContext(pageScript[1], ctx, { filename: 'TextToAsciiArtTool.astro', lineOffset: source.slice(0, pageScript.index).split('\n').length - 1 });
   function flush(ms) { for (const [id, timer] of [...timers]) if (timer.ms === ms) { timers.delete(id); timer.fn(); } }
   return {
-    get, pendingBlobs, downloads, copied, revoked,
+    get, pendingBlobs, downloads, copied, revoked, tracks, execCopied, flush, body: document.body,
     text(value) { get('taa-input').value = value; get('taa-input').dispatch('input'); flush(120); },
     font(value) { get('taa-font').value = value; get('taa-font').dispatch('change'); },
     clearShortcut() { document.activeElement = get('taa-input'); for (const fn of listeners.keydown || []) fn({ ctrlKey: true, key: 'l', preventDefault() {} }); flush(0); },
@@ -546,6 +566,75 @@ for (const mutation of ['text', 'font', 'empty', 'shortcut', 'invalid']) {
   check('retry loads the font and restores output', await asciiPageSettles(() => page.get('taa-output').textContent === E.formatOutput(E.renderFiglet(fonts.Big, 'Hello World', {}), 'plain', true)));
   eq('successful retry clears the error', page.get('taa-status').textContent, '');
   check('successful retry enables exports', !page.get('taa-download-png').disabled && !page.get('taa-copy').disabled);
+}
+
+// ---------- analytics: one event per committed action (S2-5, 2026-10-08) ----------
+// Before: one `generate` event on the first input event of each page load, none afterwards and
+// none for copy or download. Now, as in the other S2 tools: no event on load or for input
+// events while typing; one `generate` per committed change (the text box's change event, a
+// font / spacing / width / trim change, Use in the font preview), one `copy` per copy and one
+// `download` per TXT or PNG download.
+{
+  const page = asciiExportPage();
+  await asciiPageSettles(() => page.get('taa-output').textContent === initialArt);
+  const n = (action) => page.tracks.filter((t) => t === 'text_to_ascii_art:' + action).length;
+  eq('GA: no event on load', page.tracks.length, 0);
+  page.text('H'); page.text('Hi'); page.text('Hi there');
+  eq('GA: no event for input events while typing', page.tracks.length, 0);
+  page.get('taa-input').dispatch('change');
+  eq('GA: the text box change event sends one generate', n('generate'), 1);
+  page.font('Big');
+  page.get('taa-layout').value = 'full'; page.get('taa-layout').dispatch('change');
+  page.get('taa-width').value = '80'; page.get('taa-width').dispatch('change');
+  page.get('taa-trim').checked = false; page.get('taa-trim').dispatch('change');
+  eq('GA: font, spacing, width and trim changes send one generate each', n('generate'), 5);
+  await asciiPageSettles(() => !page.get('taa-copy').disabled && page.get('taa-output').textContent !== initialArt);
+  page.get('taa-copy').click(); page.get('taa-copy-command').click();
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  eq('GA: each copy sends one copy event', n('copy'), 2);
+  page.get('taa-download-txt').click();
+  eq('GA: TXT download sends one download event', n('download'), 1);
+  page.get('taa-download-png').click();
+  eq('GA: PNG sends nothing before the encoder finishes', n('download'), 1);
+  page.release(page.pendingBlobs.shift(), pngFixture());
+  eq('GA: PNG download sends one download event', n('download'), 2);
+  page.get('taa-download-png').click();
+  page.release(page.pendingBlobs.shift(), null);
+  eq('GA: a failed PNG encode sends nothing', n('download'), 2);
+  page.text('');
+  page.get('taa-input').dispatch('change');
+  eq('GA: committing an empty text box sends nothing', n('generate'), 5);
+}
+
+// ---------- copy fallback and failure ----------
+// Same pattern as ColorPaletteGeneratorTool.astro copyText(): Clipboard API first; when it is
+// missing or rejects, a hidden textarea and document.execCommand('copy'); when both fail, the
+// status line shows copyFailed.
+{
+  const lines = E.renderFiglet(fonts.Standard, 'Hello World', {});
+  const plain = E.formatOutput(lines, 'plain', true);
+  for (const mode of ['reject', 'none']) {
+    const page = asciiExportPage({ clipboard: mode, exec: true });
+    await asciiPageSettles(() => page.get('taa-output').textContent === initialArt);
+    page.get('taa-copy').click();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    eq('copy ' + mode + ' + execCommand: the fallback copies the art', page.execCopied, [plain]);
+    eq('copy ' + mode + ' + execCommand: the button says copied', page.get('taa-copy').textContent, STRINGS.en.copied);
+    eq('copy ' + mode + ' + execCommand: no error in the status line', page.get('taa-status').textContent, '');
+    eq('copy ' + mode + ' + execCommand: the helper textarea is removed', page.body.children.filter((c) => c.tagName === 'TEXTAREA').length, 0);
+    page.get('taa-copy-command').click();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    eq('copy command ' + mode + ' + execCommand: the fallback copies the command', page.execCopied[1], "figlet -f standard 'Hello World'");
+  }
+  for (const mode of ['reject', 'none']) {
+    const page = asciiExportPage({ clipboard: mode, exec: false });
+    await asciiPageSettles(() => page.get('taa-output').textContent === initialArt);
+    page.get('taa-copy').click();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    eq('copy ' + mode + ' + no execCommand: the status line says copying was blocked', page.get('taa-status').textContent, STRINGS.en.copyFailed);
+    check('copy ' + mode + ' + no execCommand: the status is an error', /\berror\b/.test(page.get('taa-status').className));
+    eq('copy ' + mode + ' + no execCommand: the button keeps its label', page.get('taa-copy').textContent === STRINGS.en.copied, false);
+  }
 }
 
 // ---------- v2 page layout ----------
