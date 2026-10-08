@@ -164,7 +164,7 @@ const EXTRA_STRINGS = {
   "ko": {
     "options": "추가 메타데이터",
     "platform": "미리보기 플랫폼",
-    "networkNotice": "Facebook, Twitter, Discord 이미지 미리보기는 브라우저가 입력한 이미지 URL을 요청합니다. 이미지 호스트가 이 요청을 받습니다。"
+    "networkNotice": "Facebook, Twitter, Discord 이미지 미리보기는 브라우저가 입력한 이미지 URL을 요청합니다. 이미지 호스트가 이 요청을 받습니다."
   }
 };
 const STRINGS = Object.fromEntries(Object.keys(ORIGINAL_STRINGS).map(code => [code, { ...ORIGINAL_STRINGS[code], ...EXTRA_STRINGS[code], tips: TIP_STRINGS[code] }]));
@@ -579,7 +579,9 @@ const CLIENT_T = Object.fromEntries(['copy', 'copied', 'copyFailed', 'fillToPrev
           return;
         }
 
-        var domain = getDomain(v.canonical) || (v.siteName ? v.siteName.toLowerCase().replace(/[^a-z0-9]+/g, '') + '.com' : 'example.com');
+        // A site name with no ASCII letters or digits (Chinese, Japanese, Korean) would give ".com".
+        var nameDomain = v.siteName ? v.siteName.toLowerCase().replace(/[^a-z0-9]+/g, '') : '';
+        var domain = getDomain(v.canonical) || (nameDomain ? nameDomain + '.com' : 'example.com');
         var breadcrumb = getBreadcrumb(v.canonical) || domain;
         var titleText = v.title || 'Page Title';
         var descText = v.description || 'Description preview will appear here.';
@@ -683,8 +685,15 @@ const CLIENT_T = Object.fromEntries(['copy', 'copied', 'copyFailed', 'fillToPrev
         copyBtn.disabled = !head;
         renderPreview(v);
         refreshOutput(v);
+      }
+
+      /* Analytics: one event per committed change (as in color-palette-generator), not per input event or on load. */
+      function trackChange() {
         window.trackTool && window.trackTool('meta-tag-generator', 'update');
       }
+      Object.keys(fields).forEach(function (k) {
+        if (fields[k]) fields[k].addEventListener('change', trackChange);
+      });
 
       // Wire all inputs
       Object.keys(fields).forEach(function (k) {

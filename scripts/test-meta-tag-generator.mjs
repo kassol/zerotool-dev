@@ -213,6 +213,30 @@ for (const platform of ['facebook', 'twitter', 'discord']) {
   check(platform + ': existing inert img source and lazy network boundary retained', p.$('mtg-preview').innerHTML.includes('src="https://example.com/' + (platform === 'twitter' ? 'tw' : 'og') + '.png"') && p.$('mtg-preview').innerHTML.includes('loading="lazy"'));
 }
 
+// Analytics: one `update` event per committed change (change event), as in color-palette-generator.
+// Before the fix update() sent one on page load, on every keystroke and on every preview tab click.
+{
+  const p = page(spec);
+  eq('analytics: no event on page load', p.tracks.length, 0);
+  p.input('mtg-title', 'Draft'); p.input('mtg-title', 'Draft title');
+  eq('analytics: no event per input', p.tracks.length, 0);
+  p.$('mtg-title').dispatch('change');
+  check('analytics: one event when the text field is committed', p.tracks.length === 1 && p.tracks[0][0] === 'meta-tag-generator' && p.tracks[0][1] === 'update', JSON.stringify(p.tracks));
+  p.input('mtg-og-type', 'article', 'change');
+  eq('analytics: one event per select change', p.tracks.length, 2);
+  p.$('mtg-viewport').checked = false; p.$('mtg-viewport').dispatch('change');
+  eq('analytics: one event per checkbox change', p.tracks.length, 3);
+  p.click('[data-platform="facebook"]');
+  eq('analytics: switching the preview tab sends no event', p.tracks.length, 3);
+}
+// Preview domain: without a canonical URL the preview derives a domain from the site name. A name
+// with no ASCII letters or digits ("週末さんぽ帖") gave ".com"; it now falls back to example.com.
+for (const [name, want] of [['週末さんぽ帖', 'example.com'], ['小王咖啡', 'example.com'], ['My Site', 'mysite.com']]) {
+  const p = page(spec, 'ja');
+  p.input('mtg-canonical', ''); p.input('mtg-site-name', name); p.click('[data-platform="twitter"]');
+  check('preview domain for site name ' + name + ' is ' + want, p.$('mtg-preview').innerHTML.includes('>' + want + '<'), p.$('mtg-preview').innerHTML.slice(0, 400));
+}
+
 // v2 presentation checks; all original engine/blog/live-dist and FIX lifecycle groups remain above.
 const baselineRetained = passes;
 const markupV2=source.slice(source.indexOf('---',3)+3,source.indexOf('<script is:inline'));
