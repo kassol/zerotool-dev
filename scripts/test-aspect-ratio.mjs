@@ -12,7 +12,10 @@
 // English page; the English guide (src/content/blog/aspect-ratio-calculator-guide/en.mdx): the
 // Euclidean-algorithm listings, the resolution table (ratio and decimal as the calculator shows
 // them), the resize, letterbox and pillarbox figures, and code blocks marked
-// {/* ar-run: {"lang":"node|python","expect":"…"} */} are run (python3 missing: SKIP).
+// {/* ar-run: {"lang":"node|python","expect":"…"} */} are run (python3 missing: SKIP); the four tool
+// pages (src/content/tools/aspect-ratio/{lang}.mdx): {/* ar-check: … */} examples are recomputed with
+// the page script (at least 2 per language, see AR_CHECK); analytics: one calculate event per
+// committed Width / Height change or preset click, none per input event.
 //
 // Run: node scripts/test-aspect-ratio.mjs
 
@@ -74,7 +77,8 @@ function makePage({ lang = 'en', shellFirst = false } = {}) {
     querySelector(sel) { return ['.tool-widget', '.ar-wrap'].includes(sel) ? widget : null; },
     addEventListener(type, fn) { (documentHandlers[type] ||= []).push(fn); },
   };
-  const window = { ztPersist: { clear(slug) { cleared.push(slug); } } };
+  const tracks = [];
+  const window = { ztPersist: { clear(slug) { cleared.push(slug); } }, trackTool(slug, action) { tracks.push(slug + ':' + action); } };
   const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), shell.indexOf('// ── Copy button visual feedback'));
   if (!shortcut.includes("document.addEventListener('keydown'")) throw new Error('Shared shortcut not found');
@@ -84,8 +88,9 @@ function makePage({ lang = 'en', shellFirst = false } = {}) {
   new Function('document', 'window', 't', scriptMatch[1])(document, window, client);
   if (!shellFirst) installShortcut();
   return {
-    els: el, cleared,
+    els: el, cleared, tracks,
     type(id, v) { el(id).value = String(v); el(id).fire('input'); },
+    commit(id) { el(id).fire('change'); },
     lock(on) { el('ar-lock').checked = on; el('ar-lock').fire('change'); },
     preset(w, h) { el('chip-' + w + 'x' + h).fire('click'); },
     ratio() { return el('ar-ratio').textContent; },
@@ -159,6 +164,21 @@ p.lock(false);
 p.type('ar-width', 1000);
 eq('unlocked: height stays', p.els('ar-height').value, '720');
 eq('unlocked: ratio follows inputs', p.ratio(), '25:18');
+
+// Analytics: one event per committed change (as in css-triangle-generator), not one per keystroke.
+p = makePage();
+for (const v of ['1', '12', '128', '1280']) p.type('ar-width', v);
+eq('typing a width sends no analytics event per input', p.tracks.length, 0);
+p.commit('ar-width');
+eq('committing the width sends one calculate event', p.tracks.join(','), 'aspect_ratio:calculate');
+p.type('ar-height', '0'); p.commit('ar-height');
+eq('committing an unusable height sends nothing', p.tracks.length, 1);
+p.type('ar-height', '720'); p.commit('ar-height');
+eq('committing a usable height sends one more event', p.tracks.length, 2);
+p.preset(4, 3);
+eq('a preset click still sends one event', p.tracks.length, 3);
+p.lock(true); p.type('ar-width', '1000');
+eq('typing with Lock Ratio on sends no event', p.tracks.length, 3);
 
 // presets
 p = makePage();
@@ -295,6 +315,43 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
   eq(name + ': shortcut clears prior errors too', q.els('ar-status').textContent, '');
 }
 
+// ---------- worked examples on the four tool pages ----------
+// {/* ar-check: {"cases":[…]} or one case {"w","h"} | {"preset":"21:9"}, then optional "lock":true, "setWidth", "setHeight",
+// "newWidth", "newHeight", and "show": fields to compare (default ["ratio","decimal"]) */}: the page
+// script runs these steps; each shown field (ratio, decimal, width, height, newWidth, newHeight) must
+// be a <code> span (or sit in a code block) after the note and before the next note or H2.
+function codeSpans(text) {
+  const spans = [...text.matchAll(/<code>([^<]*)<\/code>|`([^`\n]+)`/g)].map((m) => (m[1] ?? m[2]).trim());
+  const blocks = [...text.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)].map((m) => m[1]);
+  return { spans, blocks };
+}
+const AR_FIELDS = { ratio: 'ar-ratio', decimal: 'ar-decimal', width: 'ar-width', height: 'ar-height', newWidth: 'ar-new-width', newHeight: 'ar-new-height' };
+function runArSpec(spec, lang) {
+  const q = makePage({ lang });
+  if (spec.preset) { const [a, b] = spec.preset.split(':'); q.preset(a, b); }
+  else { q.type('ar-width', spec.w); q.type('ar-height', spec.h); }
+  if (spec.lock) q.lock(true);
+  if (spec.setWidth !== undefined) q.type('ar-width', spec.setWidth);
+  if (spec.setHeight !== undefined) q.type('ar-height', spec.setHeight);
+  if (spec.newWidth !== undefined) q.type('ar-new-width', spec.newWidth);
+  if (spec.newHeight !== undefined) q.type('ar-new-height', spec.newHeight);
+  const out = {};
+  for (const f of spec.show ?? ['ratio', 'decimal']) {
+    const el = q.els(AR_FIELDS[f]);
+    out[f] = String(f === 'ratio' || f === 'decimal' ? el.textContent : el.value);
+  }
+  return out;
+}
+const AR_CHECK = {
+  tag: 'ar-check', min: 2,
+  verify({ spec, after, lang }) {
+    if (!spec || typeof spec !== 'object') return 'missing spec';
+    const { spans, blocks } = codeSpans(after);
+    const missing = (spec.cases ?? [spec]).flatMap((c) => Object.entries(runArSpec(c, lang))).filter(([, v]) => !spans.includes(v) && !blocks.some((b) => b.includes(v)));
+    return missing.length ? 'not shown as code: ' + missing.map(([f, v]) => f + '=' + v).join(', ') : null;
+  },
+};
+
 // ---------- v2 page layout ----------
 {
   const before = passes;
@@ -334,12 +391,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
     eq(lang + ' steps meet plain-text limits', steps.every(step => typeof step === 'string' && !!step.trim() && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200, true);
     for (const key of ['width', 'height', 'lockRatio', 'newWidth', 'newHeight', 'preview']) eq(lang + ' steps use current control ' + key, steps.some(step => step.includes(entry[key])), true);
     eq(lang + ' Usage heading removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
-    eq(lang + ' MDX content contract', contractProblems('aspect-ratio', lang), '');
+    eq(lang + ' MDX content contract', contractProblems('aspect-ratio', lang, { annotations: [AR_CHECK] }), '');
     const q = makePage({ lang });
     q.type('ar-width', ''); q.lock(true);
     eq(lang + ' actual error uses the build-time language', q.els('ar-status').textContent, entry.errEnterDims);
     q.preset(21, 9);
-    eq(lang + ' actual preset feedback uses the build-time language', q.els('ar-status').textContent, 'Preset 21:9' + entry.presetApplied);
+    eq(lang + ' actual preset feedback is fully in the page language', q.els('ar-status').textContent, { en: 'Preset 21:9 applied', zh: '已应用预设 21:9', ja: 'プリセット 21:9 を適用しました', ko: '프리셋 21:9 적용됨' }[lang]);
   }
   const long = makePage();
   long.type('ar-width', '9007199254740991'); long.type('ar-height', '9007199254740881');

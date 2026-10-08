@@ -10,39 +10,104 @@ steps:
   - "点击「分享链接」复制可重建对照的 URL。浏览器会记住源时区和目标列表，不保存基准时间。"
 faqItems:
   - question: "如何处理夏令时？"
-    answer: "工具使用浏览器自带的 IANA 时区数据库（通过 Intl.DateTimeFormat 调用），夏令时会按你输入的日期自动应用，历史与未来的切换都能正确处理。当所选基准时间位于任一时区夏令时切换前后 7 天内，会显示 DST 提示徽章。"
+    id: "dst"
+    answer: "工具通过 Intl.DateTimeFormat 使用浏览器自带的 IANA 时区数据，按你输入的日期套用当时的规则，过去和未来的日期都一样。某个目标时区在基准时间前后 7 天内改变 UTC 偏移时，该行会显示切换提示。落在春季拨快、被跳过的那一小时里的时间，会顺延一小时读取。"
   - question: "为什么和其他时区工具的结果不一样？"
-    answer: "不同工具可能使用较旧的 tzdata，或对历史日期处理夏令时规则有误。本工具依赖浏览器内置的 IANA tzdata，每次浏览器更新都会刷新。典型边界：巴西 2019 年废除夏令时、俄罗斯 2014 年重置时区，这类追溯性调整在旧数据上常出错。"
+    id: "other-tools"
+    answer: "每个浏览器自带一份 IANA 数据，随浏览器版本更新；刚宣布的规则变更不一定已经进入所有浏览器。别的工具可能用固定偏移代替时区，或者把 CST 这类缩写理解成另一个地区。巴西 2019 年取消夏令时这类历史变更，只要浏览器的数据里有，就会按新规则计算。"
   - question: "能把转换结果分享给其他时区的人吗？"
-    answer: "可以。点击「分享链接」即可复制带 hash 的 URL，编码了基准时间、源时区与目标时区列表。对方打开链接即可在本地复现同样的对照，无需服务端参与。"
+    id: "share"
+    answer: "可以。点击「分享链接」，网址 # 之后包含基准时间、源时区和目标时区，对方不论身在哪个时区，打开后看到的都是同一组对照。对方浏览器不认识的时区名会被略去。"
+  - question: "输入的时间和时区会被发送或保存吗？"
+    id: "privacy"
+    answer: "工具不会把它们发出去，换算由浏览器的 Intl.DateTimeFormat 完成。源时区和目标时区列表保存在本浏览器的本地存储（localStorage）里。基准时间不存进本地存储，但每次修改后，工具都会把基准时间、源时区和目标时区写进地址栏 # 之后，所以它们会留在浏览器历史里，刷新页面也会恢复。浏览器请求页面时不会把 # 之后的部分发给服务器；2026-10-08 本地实测，页面统计上报的页面地址也不含这一部分。页面统计只记录工具名和用了哪个按钮（现在、添加、复制摘要、分享链接）。"
   - question: "可以离线使用吗？"
-    answer: "转换本身不需要网络：时区数据来自浏览器内置的 Intl API，页面打开后断网也能继续换算。本站没有离线缓存，关掉页面后要联网才能重新打开。"
+    id: "offline"
+    answer: "换算本身不需要网络：时区数据内置在浏览器里，页面打开后断网也能继续换算。本站没有离线缓存，页面关掉后要联网才能重新打开。"
   - question: "浏览器不支持 Intl.supportedValuesOf 怎么办？"
-    answer: "工具会回退到内置的约 60 个常用 IANA 时区列表，例如 Asia/Tokyo、America/New_York。2022 年中期前的旧浏览器会走这条 fallback，转换仍能正常工作，只是搜索候选数较少。"
+    id: "zone-list"
+    answer: "搜索候选会退回内置的 58 个常用时区，例如 Asia/Tokyo、America/New_York。Chrome 99、Firefox 93、Safari 15.4 起支持 Intl.supportedValuesOf。其他合法的 IANA 名称照样可以手动输入，因为工具用 Intl.DateTimeFormat 校验名称。"
 ---
+
+<h2>示例：北京时间上午 10 点在纽约是几点</h2>
+<p>
+  美国从 3 月第二个星期日开始夏令时（2026 年是 3 月 8 日），中国现在不实行夏令时，所以两地时差在这一天前后从 13 小时变成 12 小时。源时区选 <code>Asia/Shanghai</code>，目标加 <code>America/New_York</code>，两个日期的结果如下：
+</p>
+{/* tzc-check: {"cases":[{"t":"2026-03-05T10:00","s":"Asia/Shanghai","z":["America/New_York"],"badge":true},{"t":"2026-03-10T10:00","s":"Asia/Shanghai","z":["America/New_York"],"badge":true}]} */}
+<table>
+  <thead>
+    <tr><th>基准时间（北京）</th><th>纽约</th><th>该行徽章</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>2026-03-05 10:00</td><td><code>2026-03-04 21:00:00, UTC-05:00 (EST)</code></td><td>4 天后切换夏令时</td></tr>
+    <tr><td>2026-03-10 10:00</td><td><code>2026-03-09 22:00:00, UTC-04:00 (EDT)</code></td><td>1 天前已切换夏令时</td></tr>
+  </tbody>
+</table>
+<p>
+  固定在北京时间上午 10 点开的跨国会议，3 月 8 日之前在纽约是前一天晚上 9 点，之后变成晚上 10 点。纽约与北京之间没有固定时差，工具按每个日期当天的规则计算；美国的切换规则见 IANA 时区数据库 <a href="https://github.com/eggert/tz/blob/main/northamerica" target="_blank" rel="noopener">northamerica 文件</a>中的 <code>Rule US</code>。
+</p>
+
+<h2>中国 1986–1991 年的夏令时</h2>
+<p>
+  IANA 时区数据库的 <a href="https://github.com/eggert/tz/blob/main/asia" target="_blank" rel="noopener">asia 文件</a>记录了中国在 1986 年至 1991 年实行过夏令时（规则名 PRC），夏季比标准时间快一小时，注释里列出了当年国务院公报的通知。同一文件还记录了 1919 年和 1940–1949 年的夏令时（规则名 Shang），规则与这一段不同。工具按历史日期取当时的规则，所以 1990 年夏天北京时间的偏移是 UTC+09:00：
+</p>
+{/* tzc-check: {"t":"1990-07-01T10:00","s":"Asia/Shanghai","z":["Asia/Shanghai","UTC"]} */}
+<ul>
+  <li>源时区和目标都是 Asia/Shanghai：<code>1990-07-01 10:00:00, UTC+09:00</code></li>
+  <li>目标为 UTC：<code>1990-07-01 01:00:00, UTC+00:00</code></li>
+</ul>
+<p>
+  核对旧日志或档案时会碰到这种情况：把 1990 年夏天的北京时间一律减 8 小时换成 UTC，结果会差 1 小时。同年 4 月 15 日凌晨 2 点时钟拨到 3 点，当天 2:00–2:59 在当地并不存在。输入 1990-04-15 02:30，工具按跳过之前的偏移读取，得到 3:30：
+</p>
+{/* tzc-check: {"t":"1990-04-15T02:30","s":"Asia/Shanghai","z":["Asia/Shanghai"]} */}
+<p><code>1990-04-15 03:30:00, UTC+09:00</code></p>
+
+<h2>不存在与重复出现的时刻</h2>
+<p>
+  夏令时开始时拨快的那一小时不存在，结束时拨回的那一小时出现两次。工具采用 <a href="https://www.rfc-editor.org/rfc/rfc5545#section-3.3.5" target="_blank" rel="noopener">RFC 5545</a>（iCalendar）第 3.3.5 节的读法：不存在的时间按跳过之前的 UTC 偏移解释，所以往后顺延一小时；出现两次的时间取第一次。例如纽约 2026-11-01 01:30 出现两次，工具取第一次（EDT），换成北京时间是：
+</p>
+{/* tzc-check: {"t":"2026-11-01T01:30","s":"America/New_York","z":["Asia/Shanghai"]} */}
+<p><code>2026-11-01 13:30:00, UTC+08:00</code></p>
+<p>
+  如果要的是第二次出现的 01:30（EST），把源时区换成 UTC，输入 2026-11-01 06:30。
+</p>
+
+<h2>输入城市名的规则</h2>
+<p>
+  「添加时区」和「源时区」只认英文城市名、UTC 和 IANA 名称。beijing、shanghai 都会解析为 <code>Asia/Shanghai</code>，这是北京时间在 IANA 数据里的名称，数据里没有 Asia/Beijing。输入「北京」会提示「未知时区，请输入城市或 IANA 名称。」。不区分大小写。只输入一部分也可以，但至少 3 个字符，必须是城市名里某个单词的开头，而且只对应一个时区：york 会找到 America/New_York，san 对应 San_Juan、Santiago 等多个时区，会被拒绝。CST、ist、JST 这类时区缩写也一律拒绝（CST、IST 各自对应多个地区，原因见下一节），提示同上。
+</p>
 
 <h2>为什么必须用 IANA 标识</h2>
 <p>
-  <code>PST</code>、<code>CST</code>、<code>IST</code> 这类时区缩写存在严重歧义：仅 <code>CST</code> 一项就同时指北美中部标准时间、中国标准时间和古巴标准时间。IANA 时区数据库用「大洲/城市」的方式（例如 <code>America/Chicago</code>、<code>Asia/Shanghai</code>、<code>America/Havana</code>）唯一标识每个区域，并附带每个时区从历史到未来的完整偏移与夏令时规则。
+  <code>PST</code>、<code>CST</code>、<code>IST</code> 这类时区缩写有歧义：仅 <code>CST</code> 一项就可以指北美中部标准时间、中国标准时间或古巴标准时间。IANA 时区数据库用「大洲/城市」的方式（例如 <code>America/Chicago</code>、<code>Asia/Shanghai</code>、<code>America/Havana</code>）标识每个区域，并附带每个时区历史上的全部偏移与夏令时规则。
 </p>
 <p>
-  本工具的所有计算都基于 IANA 标识进行；行内显示的缩写只是给人看的辅助信息，不参与运算。
+  工具的计算都基于 IANA 标识；行内显示的缩写只供阅读，不参与运算。
 </p>
 
 <h2>夏令时与 7 天提示窗</h2>
 <p>
-  夏令时切换在跨地区会议安排中是常见坑。本工具会计算基准日期的 UTC 偏移，并对前后 7 天每日再算一次。如果任意一天偏移与基准日不同，对应行会出现 DST 提示徽章，并附上距切换的天数，提醒你换算结果在几天后会变。
+  工具找出目标时区在基准时间前后 7 天内的 UTC 偏移变化，按该时区的日历日计算基准日期与切换日期相差几天，在该行显示「n 天后切换夏令时」或「n 天前已切换夏令时」；切换就在基准日期当天时，显示「今天切换夏令时」或「今天已切换夏令时」。提醒你：同一个会议时间，切换前后换算出来的钟点不同。上面的例子里，纽约 3 月 8 日切换，北京时间 3 月 10 日上午 10 点在纽约是 3 月 9 日，所以显示「1 天前」。
 </p>
 <p>
-  不实施夏令时的时区（例如 <code>Asia/Tokyo</code>、<code>Asia/Shanghai</code>、<code>Australia/Brisbane</code>）则会显示「无夏令时」徽章。
+  当年不实行夏令时的时区（例如 <code>Asia/Tokyo</code>、<code>Asia/Shanghai</code>、<code>Australia/Brisbane</code>）显示「无夏令时」。判断方法是比较基准年份 1 月 15 日和 7 月 15 日的偏移，所以基准时间设在 1990 年时，<code>Asia/Shanghai</code> 不显示「无夏令时」。1 月和 7 月偏移相同、但前后 7 天内偏移有变化的时区照样显示切换天数，例如 <code>Africa/Casablanca</code> 在 2026-02-15 因斋月从 UTC+01:00 改为 UTC+00:00。
 </p>
 
-<h2>可分享链接的工作原理</h2>
+<h2>分享链接里有什么</h2>
 <p>
-  URL hash 中携带三个参数：<code>t</code> 表示基准时间，<code>s</code> 表示源时区，<code>z</code> 是逗号分隔的目标时区列表。打开链接的人在本地浏览器中根据这些参数重新生成对照，不经过任何服务器，符合零数据上传原则。
+  网址 # 之后带三个参数：<code>t</code> 是基准时间，<code>s</code> 是源时区，<code>z</code> 是逗号分隔的目标时区列表。每次修改后工具都会更新地址栏里的这些参数，并非只在点击「分享链接」时才写入。打开链接的人在自己的浏览器里读取这些参数、重建对照。
 </p>
 
 <h2>隐私与离线使用</h2>
 <p>
-  所有转换通过浏览器的 <code>Intl.DateTimeFormat</code> API 在本地完成。时间、时区、链接均不会发送到服务器。换算不需要联网，页面打开后断网仍可继续使用；本站没有离线缓存，关闭后需联网才能重新打开。
+  换算在浏览器里用 <code>Intl.DateTimeFormat</code> 完成，工具不发送你输入的时间和时区。源时区和目标列表存在本浏览器的本地存储里，基准时间不存，但会和源时区、目标一起写在地址栏 # 之后，留在浏览器历史里。按 <a href="https://www.rfc-editor.org/rfc/rfc9110#section-7.1" target="_blank" rel="noopener">RFC 9110</a> 第 7.1 节，请求的目标网址不含 # 之后的部分，所以分享链接里的值不会随页面请求发到服务器。页面打开后断网仍可继续换算；本站没有离线缓存，关闭后需联网才能重新打开。
 </p>
+
+<h2>限制</h2>
+<ul>
+  <li>缩写取自浏览器的英语（加拿大）区域数据，只有北美时区有（EST、PDT、AKST 等）；中国标准时间不显示 CST，日本的 JST 也不显示。UTC 偏移始终显示。</li>
+  <li>搜索候选来自 <code>Intl.supportedValuesOf('timeZone')</code>，每个时区只列一个名字，不同浏览器引擎列出的名字不同：Chrome 列出 <code>Asia/Calcutta</code>、<code>Europe/Kiev</code>，而不是 <code>Asia/Kolkata</code>、<code>Europe/Kyiv</code>，也没有 <code>UTC</code>。这些名字手动输入都能用。</li>
+  <li>时区数据是浏览器自带的那一份。某国临时修改规则后，在浏览器更新之前，未来日期的结果可能不对。</li>
+  <li>基准时间带秒时会保留秒；没有工作时间网格或会议规划视图。</li>
+  <li>处理 Unix 时间戳请用 <a href="/zh/tools/timestamp-converter/">时间戳转换器</a>。</li>
+</ul>
