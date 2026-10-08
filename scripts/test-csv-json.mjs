@@ -11,7 +11,10 @@
 // nesting, arrays written as JSON text, null / undefined / missing keys as empty fields, empty
 // objects as {}, columns are the union of all rows in first-seen order, booleans and numbers,
 // RFC 4180 quoting (comma, quote, LF, CR), input validation (not an array, empty array,
-// non-object items with their index); parseCsv / inferValue round trip of the flattened output.
+// non-object items with their index); parseCsv / inferValue round trip of the flattened output;
+// page CSV → JSON keeps every key (__proto__ / constructor headers, duplicate names renamed _2…,
+// fields beyond the header as column_N) and reports renames in the page language; input errors
+// in the page language; trailing spaces of the last field kept.
 //
 // Run: node scripts/test-csv-json.mjs
 
@@ -237,6 +240,41 @@ for (const lang of ['en','zh','ja','ko']) {
   p.type(s.left,s.input);p.key(s.left,'Enter');eq(lang+' CtrlEnter leaves pending automatic output empty',p.get(s.right).value,'');p.advance(300);eq(lang+' queued conversion still uses preserved settings',JSON.parse(p.get(s.right).value),[{n:'1'}]);
 }
 
+// ---------- page-level CSV → JSON: keys are never lost, messages follow the page language ----------
+// buildJsonFromCsv runs outside the engine block, so these go through the real page script.
+const NOTES = {
+  en: { renamed: 'Duplicate header names were renamed: {list}.', added: 'Some rows have more fields than the header, so these keys were added: {cols}.', needRows: 'CSV must have at least a header row and one data row.', notArray: 'JSON must be an array of objects.', emptyArray: 'JSON array is empty.', item: 'Item {n} must be a plain object.' },
+  zh: { renamed: '表头有重名，已改名：{list}。', added: '部分行的字段比表头多，已补上这些键：{cols}。', needRows: 'CSV 至少需要一行表头和一行数据。', notArray: 'JSON 必须是对象数组。', emptyArray: 'JSON 数组为空。', item: '第 {n} 项必须是对象。' },
+  ja: { renamed: '重複したヘッダー名を変更しました：{list}。', added: 'ヘッダーより項目が多い行があるため、次のキーを追加しました：{cols}。', needRows: 'CSV にはヘッダー行とデータ行が 1 行以上必要です。', notArray: 'JSON はオブジェクトの配列である必要があります。', emptyArray: 'JSON 配列が空です。', item: '{n} 番目の要素はオブジェクトである必要があります。' },
+  ko: { renamed: '중복된 헤더 이름을 바꿨습니다: {list}.', added: '헤더보다 필드가 많은 행이 있어 다음 키를 추가했습니다: {cols}.', needRows: 'CSV에는 헤더 행과 데이터 행이 하나 이상 있어야 합니다.', notArray: 'JSON은 객체 배열이어야 합니다.', emptyArray: 'JSON 배열이 비어 있습니다.', item: '{n}번째 항목은 객체여야 합니다.' },
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvJsonTool.astro').frontmatter)[lang];
+  const N = NOTES[lang];
+  const run = (csvText) => { const p = page(lang); p.type(s.left, csvText); p.advance(300); return { json: p.get(s.right).value, status: p.get(s.p + '-status').textContent, error: p.get(s.p + '-status').classList.contains('error') }; };
+  let r = run('__proto__,constructor,toString\nx,y,z');
+  eq(lang + ' __proto__ / constructor headers stay keys', r.json, '[\n  {\n    "__proto__": "x",\n    "constructor": "y",\n    "toString": "z"\n  }\n]');
+  r = run('__proto__,a\nnull,1');
+  eq(lang + ' __proto__ header with null value stays', r.json, '[\n  {\n    "__proto__": null,\n    "a": 1\n  }\n]');
+  r = run('name,name,name_2\nA,B,C');
+  eq(lang + ' duplicate headers renamed, no value lost', JSON.parse(r.json), [{ name: 'A', name_3: 'B', name_2: 'C' }]);
+  check(lang + ' rename reported in page language', r.status.includes(N.renamed.replace('{list}', 'name → name_3')), r.status);
+  r = run('a,b\n1,2,3,4\n5');
+  eq(lang + ' extra fields kept as column_N', JSON.parse(r.json), [{ a: 1, b: 2, column_3: 3, column_4: 4 }, { a: 5, b: '', column_3: '', column_4: '' }]);
+  check(lang + ' added keys reported in page language', r.status.includes(N.added.replace('{cols}', 'column_3, column_4')), r.status);
+  r = run('a,column_3\n1,2,3');
+  eq(lang + ' added key avoids an existing header', JSON.parse(r.json), [{ a: 1, column_3: 2, column_3_2: 3 }]);
+  r = run('a,b\n1,x  ');
+  eq(lang + ' trailing spaces of the last field kept', JSON.parse(r.json), [{ a: 1, b: 'x  ' }]);
+  r = run('\uFEFFa,b\n1,2\n\n');
+  eq(lang + ' BOM and trailing blank lines dropped', JSON.parse(r.json), [{ a: 1, b: 2 }]);
+  r = run('a,b');
+  eq(lang + ' header-only error in page language', [r.error, r.status], [true, S.errorPrefix + N.needRows]);
+  for (const [input, msg] of [['{"a":1}', N.notArray], ['[]', N.emptyArray], ['[{"a":1},2]', N.item.replace('{n}', '2')]]) {
+    const p = page(lang); p.type(s.right, input); p.advance(300);
+    eq(lang + ' JSON → CSV error in page language: ' + input, p.get(s.p + '-status').textContent, S.errorPrefix + msg);
+  }
+}
 
 /* ── v2 page layout ── */
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -245,7 +283,8 @@ const allStrings = frontmatterStrings(readComponent('src/components/tools/CsvJso
 const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
-eq('reviewed FIX script preserves all bytes except i18n and removed buttons', hash(script), 'ccd9c3d1b1ceff5c8be3690b26ef920c98877ede09057e505418d17d4aaf8d81');
+// S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; the hash pins that reviewed script.
+eq('reviewed page script is unchanged', hash(script), 'fc74c6e3c932414a1043cdf246412ba2c820c29c0f1c6ac617620de6b513e6af');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
