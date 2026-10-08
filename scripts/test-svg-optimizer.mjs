@@ -705,6 +705,20 @@ const XP = xpStart > 0 && xpEnd > xpStart
     $('svgo-format').value = 'svg';
     $('svgo-format').dispatch('change');
     check('page: SVG format of the refused file is copyable', $('svgo-copy').disabled === false && refusedEl.hidden === true && $('svgo-code').textContent === optimized[0]);
+    // The copy event is sent only when the copy succeeds (review S2-5 part 3, svg suggestion 1).
+    const copyEvents = () => tracks.filter((t) => t === 'svg-optimizer:copy').length;
+    const copiesBefore = copyEvents();
+    $('svgo-copy').click();
+    await new Promise((r) => setTimeout(r, 0));
+    eq('GA: a successful copy sends one copy event', copyEvents() - copiesBefore, 1);
+    const writeOk = nav.clipboard.writeText;
+    nav.clipboard.writeText = () => Promise.reject(new Error('NotAllowedError'));
+    $('svgo-status').textContent = '';
+    $('svgo-copy').click();
+    await new Promise((r) => setTimeout(r, 0));
+    eq('GA: a failed copy (API rejected, execCommand false) sends no copy event', copyEvents() - copiesBefore, 1);
+    eq('page: a failed copy shows copyFail', $('svgo-status').textContent, T.copyFail);
+    nav.clipboard.writeText = writeOk;
     // No Optimize button (v2 layout): typing in the code box runs SVGO after the 450 ms pause.
     $('svgo-input').value = ok2;
     $('svgo-input').dispatch('input');
