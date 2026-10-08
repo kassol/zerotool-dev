@@ -36,6 +36,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { toolSteps } from '../src/data/llms.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/AsciiConverterTool.astro'), 'utf8');
@@ -472,24 +473,6 @@ process.removeListener('unhandledRejection',onUnhandled);
   eq('markup IDs are unique', new Set(ids).size, ids.length);
   const sha = text => createHash('sha256').update(text).digest('hex');
   eq('protected engine bytes stay exact', sha(source.slice(startIndex, endIndex + '/* ── engine:end ── */'.length)), '0d7a02bf521b2c4efe123aa4e134b2b139e07b645f9820a839211367f84340c2');
-  const retained = {
-  "en": {
-    "frontmatter": "919c4fe73a485c5ee2ddf2fe38fc067cf58a6dcd31b3fa9303769f74c1eb99f7",
-    "bodyWithoutUsage": "814be48c70f8c37fd79b43b06ce5b72062caf8af9897c8fb4826b1a202699b7e"
-  },
-  "zh": {
-    "frontmatter": "1298b011de621305b3b1d54d0097157990052d188050808bffa1dca9746cd3c3",
-    "bodyWithoutUsage": "731f0cc2d546aaeb397be982ca67fe382c050e094d8c9e3ee2223fe468aafc2a"
-  },
-  "ja": {
-    "frontmatter": "207c983f0081b284cb2ce95fd32a8832509d7030a9be2dca56fc4b16f2ce1739",
-    "bodyWithoutUsage": "afa19a948523573f78954663e8b82ca2dac40692094359f7d92f9cb8eefc8398"
-  },
-  "ko": {
-    "frontmatter": "e505dc3769723c224650d9e4ae313cf26cfc44ef34bd7abc0af9e8dc41fe21b2",
-    "bodyWithoutUsage": "549d2a7f0bb8963c6ed52baeea9436ba2c4aa51fff3f124964c793c47401154b"
-  }
-};
   const countFixtures = {
     en: { chars: ['Converted 1 character.', 'Converted 3 characters.'], codes: ['Converted 1 code.', 'Converted 3 codes.'] },
     zh: { chars: ['已转换 1 个字符。', '已转换 3 个字符。'], codes: ['已转换 1 个码值。', '已转换 3 个码值。'] },
@@ -508,8 +491,7 @@ process.removeListener('unhandledRejection',onUnhandled);
     const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
     check(lang + ': five plain steps fit limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['toAscii','toText','copy','clear','refTable']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
-    eq(lang + ': FAQ and SEO bytes preserved', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
-    eq(lang + ': non-Usage body bytes preserved', sha(body), retained[lang].bodyWithoutUsage);
+    eq(lang + ': MDX content contract', contractProblems('ascii-converter', lang), '');
     check(lang + ': Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     eq(lang + ': llms receives five steps', toolSteps(parsed).length, 5);
     for (const [text, index] of [['A',0],['A😀\n',1]]) {

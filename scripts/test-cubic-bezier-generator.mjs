@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import yaml from 'js-yaml';
 import { createRequire } from 'node:module';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 const { transform } = createRequire(import.meta.resolve('astro/package.json'))('@astrojs/compiler');
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -222,7 +223,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/cubic-bezier-generator', lang + '.mdx'), 'utf8');
   const meta = yaml.load(mdx.match(/^---\n([\s\S]*?)\n---/)[1]);
   check(lang + ' v2 five bounded steps', meta.steps.length === 5 && meta.steps.every(s => typeof s === 'string' && s.length <= 280) && meta.steps.join('').length <= 1200);
-  check(lang + ' v2 FAQ and SEO remain', meta.faqItems.length === 5 && !!meta.seoTitle && !!meta.seoDescription);
+  check(lang + ' MDX content contract', !contractProblems('cubic-bezier-generator', lang), contractProblems('cubic-bezier-generator', lang));
   check(lang + ' v2 preset references remain', /m2.material.io/.test(mdx) && /m3.material.io/.test(mdx) && /developer.apple.com/.test(mdx) && /tailwindcss.com/.test(mdx));
 }
 const positioned = loadCubicPage();

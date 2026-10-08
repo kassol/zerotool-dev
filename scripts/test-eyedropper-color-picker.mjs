@@ -26,10 +26,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 import { load as loadYaml } from 'js-yaml';
 import Color from 'colorjs.io';
 import { parse as culoriParse, converter, colorsNamed, inGamut as culoriInGamut } from 'culori';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/EyedropperColorPickerTool.astro'), 'utf8');
@@ -629,7 +629,6 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
   for(const tip of tips){const key=/id="ecp-tip-([^"]+)"/.exec(tip[1])[1];check(key+' tip is localized',/lang=\{lang\}/.test(tip[1])&&/about=\{L\.\w+\}/.test(tip[1])&&tip[2]==='{TIPS.'+key+'}');}
   // FAQ / step hashes updated 2026-10-07: the storage answer now names both saved settings and
   // the color-field step says what happens to an invalid value. The body hash is unchanged.
-  const retained={"en": ["d6b21108b45a0c31", "99cb20585b5f8d53"], "zh": ["6996d372fd56a9b0", "769680b7765b3032"], "ja": ["1b3bffa5fc398f67", "8399d254430720f0"], "ko": ["0da8e0d487dc4e7e", "6e1f5a8df1f30013"]};
   // The storage answer must list what the code saves (W6): recent colors and the sample size.
   const savedKeys=/ztPersist\.save\(SLUG, \{ (recent): [^,]+, (sample): [^}]+\}\)/.exec(source);
   eq('page saves exactly recent colors and sample size',savedKeys&&[savedKeys[1],savedKeys[2]],['recent','sample']);
@@ -640,7 +639,6 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
     check(lang+' storage answer no longer says only HEX is kept',!/Only the last 16|だけで、|값\(이 브라우저의 localStorage\)뿐/.test(faq));
     check(lang+' recent note names the sample size',STRINGS[lang].recentNote.includes(sampleWords[lang]));
   }
-  const hash=text=>createHash('sha256').update(text.trim()).digest('hex').slice(0,16);
   for(const lang of langs){
     const strings=STRINGS[lang];eq(lang+' tip keys match',Object.keys(strings.tips).sort(),keys);
     for(const key of keys)check(lang+'.'+key+' tip nonempty plain text',typeof strings.tips[key]==='string'&&strings.tips[key].length>0&&!/<[^>]*>|\n/.test(strings.tips[key]));
@@ -650,8 +648,7 @@ check('tool pages carry checked examples', examples >= 8, examples + ' found');
     const mdx=readFileSync(join(pageDir,lang+'.mdx'),'utf8'),[,meta,body]=/^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx),{steps}=loadYaml(meta);
     check(lang+' steps plain text within limits',Array.isArray(steps)&&steps.length>0&&steps.length<=8&&steps.every(s=>typeof s==='string'&&s.trim()&&s.length<=280&&!/<[^>]*>/.test(s))&&steps.join('').length<=1200);
     check(lang+' usage removed and limits retained',!/^## (How to pick a color|三种取色方式|使い方|추출 순서)$/m.test(body)&&/^## (Limits|限制|制限|제한)$/m.test(body));
-    eq(lang+' FAQ and SEO unchanged',hash(meta.replace(/^steps:\n(?:  .*\n)*/m,'')),retained[lang][0]);
-    eq(lang+' all body except usage unchanged',hash(body),retained[lang][1]);
+    eq(lang+' MDX content contract', contractProblems('eyedropper-color-picker', lang), '');
   }
   console.log(`v2 page layout: ${passes-before.passes} passed, ${failures-before.failures} failed`);
 }

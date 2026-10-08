@@ -98,8 +98,16 @@ steps:                   # 必填，所有工具四语的用法步骤（纯文�
 faqItems:                # 可选，结构化 FAQ
   - question: "..."
     answer: "..."
+    id: "privacy"        # 可选，四语对照用（见下方「FAQ id」）
 ---
 ```
+
+`faqItems[].id`（可选，`config.ts` 声明；页面与 FAQPage 结构化数据只用 question / answer，加 id 不改页面输出）：
+- 用途：标出四种语言里哪几条是同一个问题，供 `scripts/test-tool-content-parity.mjs` 核对（S2 一致性规则，S2-PLAN 2026-10-08）。
+- 共同题（四语都有、意思相同、答案的事实相同）用语义 id：小写英文与数字，连字符分词，如 `privacy`（数据是否发送或保存，每个工具必有）、`limits`、`max-size`、`formats`。四种语言里共同题的 id 与顺序必须相同。
+- 本地题（只为当地读者写的问题）用 `local-` 开头，如 `local-fullwidth`；每种语言最多 1 条，四种语言要么都有、要么都没有，并放在同一位置（测试按位置对齐 `local-*`）。
+- 一个工具用了 id 就要四语每条都写；同一语言内 id 不重复。每个工具至少 3 条共同题。
+- 未完成 S2 的工具不加 id（测试里的 `S2_PENDING` / `FAQ_IDS_TODO` 清单，`scripts/lib/tool-mdx-contract.mjs`）；给某个工具加 id 时把它从 `FAQ_IDS_TODO` 删去。
 
 正文部分作为工具页底部的长尾内容（教程、用例、原理说明），SEO 关键。所有工具页正文收在默认关闭的「示例、说明与常见问题」区，不再写「How to Use / 使用方法」一节：用法放进工具内的说明气泡与 `steps`。「Limits / 限制」一节留在正文里；只有与单个控件绑定的限制另写进该控件旁的说明气泡（决策人 2026-10-04 的决定）。json-formatter、color-palette-generator、har-file-analyzer 三个样板在这项决定之前完成，限制已全部写在气泡里，正文没有「限制」节，不回填。
 
@@ -133,6 +141,7 @@ faqItems:                # 可选，结构化 FAQ
 
 ## 变更日志
 
+- 2026-10-08 — S2-0：tools schema 的 `faqItems` 新增可选字段 `id`（命名规则见上文「FAQ id」），本批不给任何 MDX 加 id；有无 id 不改页面 HTML 与 FAQPage JSON-LD（`ToolLayout.astro` 只取 question / answer，全部 564 个工具页与同一提交的另一次构建逐字节相同）。工具测试不再对 MDX、FAQ、SEO 求字节哈希，改为 `scripts/lib/tool-mdx-contract.mjs` 的结构断言加引擎复算示例，所以改写正文与 FAQ 不需要改测试里的哈希；四语一致由 `scripts/test-tool-content-parity.mjs` 检查（详见 scripts/AGENTS.md）。同日修正 json-to-csv 四语公式防护示例：`<pre><code>{`…`}` 模板字面量里的 `\"` 会被吃掉反斜杠，页面曾显示无效 JSON；要显示 `\"` 须写 `\\"`。
 - 2026-10-06 — B13九个生成工具（清单见根AGENTS.md同日条目）的36份四语MDX将用法写入steps；限制、其余正文、FAQ与SEO保持。本批77个控件说明按实际行为分别绑定四语气泡；全部原业务按钮保留，用法不引用额外自动执行。完整构建、工具正文与步骤回归通过，薄页80/80、精品40/40保持。
 
 - 2026-10-04 — v2 版式推广第 1 批（12 个转换类工具，清单见根 AGENTS.md 同日条目）：四语言 mdx 删去「用法」一节（`## How to …` 或 `<h2>` 加 `<ol>` 两种写法都有），步骤写入 `steps`；「限制」节保留在正文。随界面改动同步的正文：unicode-text-converter 的「输入框下方」改为「状态行」、en 示例的样式名、四语言限制节补下标；四语言正文与 FAQ 里没有再提到已删除的按钮（生成 HMAC、压缩、解码 / 编码 / 生成、换一个 SVG、文本 → 二进制）。steps 里形如标签的文字（`<img>`）会被 `llms.mjs` 的 `plainText()` 删掉，要写成实体（`&lt;img&gt;`）。

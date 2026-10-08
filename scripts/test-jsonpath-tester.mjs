@@ -25,6 +25,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonpathTesterTool.astro'), 'utf8');
@@ -556,7 +557,6 @@ check('v2 <=640 controls and results stay bounded', /@media \(max-width: 640px\)
 const tips=[...markup.matchAll(/<Toggletip id="(jpt-tip-[^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)].map(m=>[m[1],m[2],m[3]]);
 eq('v2 five tips tied to their controls',tips.sort(),[['jpt-tip-input','jsonInput','input'],['jpt-tip-expression','expression','expression'],['jpt-tip-examples','examples','examples'],['jpt-tip-results','results','results'],['jpt-tip-copy','copy','copy']].sort());
 check('v2 tips stay in build-time HTML and out of client dataset',source.includes('const { tips: TIPS } = L;')&&!/TIPS|labels|\.tips/.test(inline)&&!/data-[\w-]+=\{[^}]*tips/i.test(markup));
-const MDX_HASHES = {"en": "43921b62db2ce7b48dcc57727ab5d0ab1c69c57654e1ec1fde5b96344bd038a1", "zh": "101a9e601584fbe078bd9cfa7d0f6e8d411a3abb7e183d28e25732f800e3e5bb", "ja": "b8d4fc9261a13a84e8953586b2d2c8711d73ce1c2af6fc0372adc0dcf9594482", "ko": "1b4b34019f9017d9842c995e6b4dad39d7e7c61a4f6af7257b8fb1b8cb424b5e"};
 function leaves(value,path=''){return Object.entries(value).flatMap(([key,item])=>typeof item==='object'?leaves(item,path+key+'.'):[[path+key,item]]);}
 const enLeaves=Object.fromEntries(leaves(labels.en));
 for(const lang of ['en','zh','ja','ko']) {
@@ -567,7 +567,7 @@ for(const lang of ['en','zh','ja','ko']) {
   eq(lang+' v2 five steps',steps.length,5);check(lang+' v2 step lengths and plain text',steps.every(x=>[...x].length<=280&&!/[<>]|\]\(|\*\*|`/.test(x))&&steps.reduce((n,x)=>n+[...x].length,0)<=1200);
   check(lang+' v2 steps match actual controls',['jsonInput','expression','examples','results','copy'].every(key=>steps.join(' ').includes(labels[lang][key])));
   check(lang+' v2 usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
-  eq(lang+' v2 preserves all nonusage SEO/FAQ/limits/examples',createHash('sha256').update(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m,'')).digest('hex'),MDX_HASHES[lang]);
+  eq(lang+' MDX content contract', contractProblems('jsonpath-tester', lang), '');
   const h=page(lang);eq(lang+' v2 initial example produces results',h.wrap.dataset.empty,'false');
   h.key('L','metaKey','jpt-pre');eq(lang+' v2 keyboard clear restores empty/focus',[h.wrap.dataset.empty,h.document.activeElement===h.get('jpt-json')],['true',true]);
   h.query(1,'');eq(lang+' v2 empty expression hides empty result',h.wrap.dataset.empty,'true');

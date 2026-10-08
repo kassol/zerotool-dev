@@ -19,8 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import initSqlJs from 'sql.js';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 import { load as loadYaml } from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SqliteViewerTool.astro'), 'utf8');
@@ -283,8 +283,6 @@ equal('garbage body rejected by SQLite', err, 'file is not a database');
   equal('eight control tips',tips.map(m=>/id="sqv-tip-([^"]+)"/.exec(m[1])?.[1]).sort(),keys);
   for(const tip of tips){const key=/id="sqv-tip-([^"]+)"/.exec(tip[1])[1];check(key+' tip is localized',/lang=\{lang\}/.test(tip[1])&&/(?:about|text)=\{T\.\w+\}/.test(tip[1])&&tip[2]==='{TIPS.'+key+'}');}
   const STRINGS=new Function(source.slice(source.indexOf('const STRINGS = '),source.indexOf('\nconst T = STRINGS[lang]'))+';return STRINGS;')();
-  const retained={"en": ["fd52ac0fce237d81", "e6cb329321e42f5f"], "zh": ["1b17ba4b9d79ea8e", "7dac4fd81e3eb1fd"], "ja": ["bf64a1e4068be4c1", "bc0a2abff0b1940b"], "ko": ["9cfe97d117cc7b55", "9c5d0178b1ed5b6a"]};
-  const hash=text=>createHash('sha256').update(text.trim()).digest('hex').slice(0,16);
   for(const lang of ['en','zh','ja','ko']){
     const strings=STRINGS[lang];equal(lang+' STRINGS keys match en',Object.keys(strings).sort(),Object.keys(STRINGS.en).sort());equal(lang+' tip keys match',Object.keys(strings.tips).sort(),keys);
     for(const key of keys)check(lang+'.'+key+' tip is nonempty plain text',typeof strings.tips[key]==='string'&&strings.tips[key].length>0&&!/<[^>]*>|\n/.test(strings.tips[key]));
@@ -293,7 +291,7 @@ equal('garbage body rejected by SQLite', err, 'file is not a database');
     const mdx=readFileSync(join(root,'src/content/tools/sqlite-viewer',lang+'.mdx'),'utf8'),[,meta,body]=/^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx),{steps}=loadYaml(meta);
     check(lang+' steps within plain-text limits',Array.isArray(steps)&&steps.length>0&&steps.length<=8&&steps.every(s=>typeof s==='string'&&s.trim()&&s.length<=280&&!/<[^>]*>/.test(s))&&steps.join('').length<=1200);
     check(lang+' usage removed and scope retained',!/<h2>(How to inspect a SQLite file|使用步骤|使い方|사용 방법)<\/h2>/.test(body)&&/<h2>(Scope|范围|対応範囲|지원 범위)<\/h2>/.test(body));
-    equal(lang+' FAQ and SEO unchanged',hash(meta.replace(/^steps:\n(?:  .*\n)*/m,'')),retained[lang][0]);equal(lang+' other body unchanged',hash(body),retained[lang][1]);
+    equal(lang+' MDX content contract', contractProblems('sqlite-viewer', lang), '');
   }
   console.log(`v2 page layout: ${passes-before.passes} passed, ${failures-before.failures} failed`);
 }

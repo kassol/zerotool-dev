@@ -191,6 +191,7 @@ eq('minify', E.minifySQL('WITH r AS (\n  SELECT SUM(total) -- c\n  FROM t\n) SEL
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 const requireRoot = createRequire(join(root, 'package.json'));
 const { parseFragment } = requireRoot('parse5');
 const ts = requireRoot('typescript');
@@ -349,28 +350,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [598, 0]);
 same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), 'ed078958c5a0dc563f8486915db1f37f29b69b01d84f2da75d0e3b82594c39e8');
-const PROTECTED_CONTENT = {
-  "en": {
-    "front": "d1f0e894a249b6355dc599c5587b7370b495f1644c7b99744ffabf5b3d8a0c13",
-    "body": "a0dbaf7aa7f03dd60d7e83b7dd71fe8551ac26e6d1155584ae28290b233da7b4",
-    "examples": "7cacf1db76cc3dfce8e3bdb6889466b96bb4fcf312b751887b343b9bc847cb67"
-  },
-  "zh": {
-    "front": "812e17cd336751e37fd376e81691815f92848059747ee44a634c74a8b289d4ca",
-    "body": "70a255da3da0d69ac200e4260ca52da1559f26cde3f76fdae2358c35b8b9e37c",
-    "examples": "c33af7cccf71bfbf0914c6030f89b6cba267ef10354f65e1d99b864f7f4c46c2"
-  },
-  "ja": {
-    "front": "8bb89827c751249a263e147e1dcbe859180b0fe7681f78044a3235ea91feea27",
-    "body": "87c34ad6bdd4eeb1b59d2981c26b300100f2a803daf39e865c8561171277c071",
-    "examples": "c33af7cccf71bfbf0914c6030f89b6cba267ef10354f65e1d99b864f7f4c46c2"
-  },
-  "ko": {
-    "front": "547eb94517b0e0e409166e2c5ebba37684af4be66b467bf68d61cb0b06a65514",
-    "body": "998c01499b877f0bb78c671e77c9a68de51cde98bf24fd6e0c91ee2640277ca9",
-    "examples": "c33af7cccf71bfbf0914c6030f89b6cba267ef10354f65e1d99b864f7f4c46c2"
-  }
-};
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -399,7 +378,7 @@ const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
 same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
 const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
 for(const lang of ['en','zh','ja','ko']) {
-  const S=pageStrings[lang], payload=clientStrings(lang), expected=PROTECTED_CONTENT[lang];
+  const S=pageStrings[lang], payload=clientStrings(lang);
   same(lang+' tip keys',Object.keys(S.tips),['input','indent','uppercase','format','minify','clear','copy']);
   same(lang+' short complete tips',Object.values(S.tips).every(x=>typeof x==='string'&&x.length>0&&x.length<=280),true);
   same(lang+' client has only runtime strings',Object.keys(payload),['copy','copied','copyFailed','formatted','minified']);
@@ -409,9 +388,14 @@ for(const lang of ['en','zh','ja','ko']) {
   const parts=text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/),front=requireRoot('js-yaml').load(parts[1]),body=parts[2];
   same(lang+' six bounded plain steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
   same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
-  same(lang+' all other frontmatter bytes unchanged',hash(parts[1].replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),expected.front);
-  same(lang+' all nonUsage body bytes unchanged',hash(body),expected.body);
-  same(lang+' worked example blocks unchanged',hash(JSON.stringify([...body.matchAll(/```[^\n]*\n[\s\S]*?```/g)].map(m=>m[0]))),expected.examples);
+  same(lang+' MDX content contract', contractProblems('sql-formatter', lang), '');
+  // Worked examples are recomputed with the engine: a block after an unformatted input must be its
+  // formatted output; every block is an input, an output, a minified output or already formatted.
+  const sqlBlocks=[...body.matchAll(/```sql\n([\s\S]*?)\n```/g)].map(m=>m[1]);
+  same(lang+' has worked SQL examples',sqlBlocks.length>=6,true);
+  const minified=i=>sqlBlocks.slice(0,i).some(x=>E.minifySQL(fmt(x))===sqlBlocks[i]);
+  same(lang+' each example output equals the engine format of the input before it',sqlBlocks.flatMap((b,i)=>i>0&&fmt(sqlBlocks[i-1])!==sqlBlocks[i-1]&&!minified(i-1)&&fmt(sqlBlocks[i-1])!==b?[b]:[]),[]);
+  same(lang+' every SQL block is an input, an engine output, a minified output or already formatted',sqlBlocks.filter((b,i)=>!(fmt(b)===sqlBlocks[i+1]||(i>0&&fmt(sqlBlocks[i-1])===b)||minified(i)||fmt(b)===b)),[]);
   same(lang+' Usage removed',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body),false);
   let mdxError='';try{await mdxCompiler.compile(body);}catch(e){mdxError=String(e);}same(lang+' MDX compiles',mdxError,'');
 }

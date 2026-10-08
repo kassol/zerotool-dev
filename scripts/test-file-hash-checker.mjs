@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import vm from 'node:vm';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -496,25 +497,6 @@ check('component never reads a whole file into memory', !/\.arrayBuffer\(\)/.tes
   eq('v2 control IDs stay unique', ids.length, new Set(ids).size);
   for (const id of ['fhc-file','fhc-dir','fhc-expected','fhc-list-file','fhc-pick-dir','fhc-open-list','fhc-upper','fhc-out-algo','fhc-out-copy','fhc-out-dl','fhc-stop','fhc-clear','fhc-list','fhc-verify-out']) check('v2 retains control ' + id, ids.includes(id));
   check('v2 analyze registration', readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8').includes("'file-hash-checker': 'analyze'"));
-  const unchanged = {
-  "en": {
-    "front": "79e115a3550197114167d0cc67eabb5b57f7199107aa6c020127c6195642fb7c",
-    "body": "19af8dfd741bb183b1b136763c153a6eb3be1ab6c0cc525d80f12e42719ee0af"
-  },
-  "zh": {
-    "front": "d1f4c44258cc589f06c8fdad2c4b7442cd5df7ea50a978e108789cc57269dd84",
-    "body": "613ed4941698f9e1c2e91fc71a46071d60ec9cddd993012ca83d8d07b8c25aa2"
-  },
-  "ja": {
-    "front": "9722797cfb2358f3b5832650c7617eefdc29128e6bdc391d14cee563823715c4",
-    "body": "863c984989a4faca7532efb50466df5ddefa42fe3881fcb3c36c38ef761d9ee6"
-  },
-  "ko": {
-    "front": "9f0280c19083b21a46f5825a50aecd02175e4b9837028e09c1ebce7baf5de53f",
-    "body": "be33bd465af9846c151c408ab0ef4f62634a679099ee528357c3cbeaf3846ee5"
-  }
-};
-  const hash = text => createHash('sha256').update(text).digest('hex');
   for (const lang of ['en','zh','ja','ko']) {
     eq(lang + ' v2 tip keys match', Object.keys(strings[lang].tips).sort(), [...tipKeys].sort());
     for (const [name,text] of Object.entries(strings[lang].tips)) check(lang + ' v2 plain tip ' + name, typeof text === 'string' && text.trim().length > 0 && !/[<>]|https?:/.test(text));
@@ -524,8 +506,7 @@ check('component never reads a whole file into memory', !/\.arrayBuffer\(\)/.tes
     const steps = stepsText.split('\n').filter(line => line.startsWith('  - ')).map(line => JSON.parse(line.slice(4)));
     eq(lang + ' v2 has five steps', steps.length, 5);
     check(lang + ' v2 steps fit plain-text limits', steps.every(step => step.length <= 280 && !/[<>]/.test(step)) && steps.join('').length <= 1200);
-    eq(lang + ' v2 preserves metadata and FAQ', hash(front.replace(/\nsteps:\n[\s\S]*?(?=\nfaqItems:)/, '')), unchanged[lang].front);
-    eq(lang + ' v2 preserves body outside Usage', hash(body), unchanged[lang].body);
+    eq(lang + ' MDX content contract', contractProblems('file-hash-checker', lang), '');
     check(lang + ' v2 removes only the usage heading', !/^## (How to Use|使用方法|使い方|사용 방법)$/m.test(body));
     check(lang + ' v2 retains Limits', /^## (Limits|限制|制限|한계)$/m.test(body));
   }

@@ -20,6 +20,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/NatoPhoneticAlphabetTool.astro'), 'utf8');
@@ -395,10 +396,6 @@ process.removeListener('unhandledRejection', onUnhandled);
 const v2Start = passes;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const PROTECTED = {
-  "en": "1f4b85be3871c0aa4207c65751ddb24c7fac38b326baf29a8a2767cfa06426da",
-  "zh": "0244f7bbcbda0738a04ce91c20e2edcc80068659341a70a0c66a7200cdae9d15",
-  "ja": "c4bc4f42434a862bc3d428704905de2a121ed4dcab8d14d8281467a07f6e3a3b",
-  "ko": "a3fe973e258236dd30ccfdbd554672b59e72940c68773f45ae93ab887f163e1e",
   "png": "b944281f5bb9dcfcb363c49b3e73b06ba69bbf7d5a24a9df231e8b3186c4df31"
 };
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
@@ -441,7 +438,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' v2 steps are plain text', steps.every(step => !/[<>]|\]\(|\*\*|`/.test(step)));
   check(lang + ' v2 steps name current controls', ['labelInput', 'labelOutput', 'modeWord', 'modeTable', 'clear', 'copy'].every(key => steps.join(' ').includes(STRINGS[lang][key])));
   check(lang + ' v2 removes only Usage section', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
-  eq(lang + ' v2 protects all other MDX metadata, FAQ, limitations and examples', sha256(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), PROTECTED[lang]);
+  eq(lang + ' MDX content contract', contractProblems('nato-phonetic-alphabet', lang), '');
   const p = pageVM(lang, false), result = p.get('nato-result-pane');
   eq(lang + ' v2 initial result has empty state', result.getAttribute('data-empty'), 'true');
   check(lang + ' v2 both bodies and Copy share one result pane', ['nato-output', 'nato-table-wrap', 'nato-copy'].every(id => result.contains(p.get(id))));

@@ -23,6 +23,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import ts from 'typescript';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -360,8 +361,6 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
 
 // ---------- v2 page layout ----------
 {
-  const { createHash } = await import('node:crypto');
-  const hash = value => createHash('sha256').update(value).digest('hex');
   const check = (name, passed) => eq('v2 ' + name, !!passed, true);
   const strings = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
   const markup = source.split('\n---')[1].split('<script')[0], css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
@@ -382,7 +381,6 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
   check('build-time strings and tips excluded from script data', source.includes("import Toggletip from '../Toggletip.astro'") && !/data-i18n|define:vars|JSON\.stringify\(STRINGS/.test(source) && !/STRINGS|L\.tips/.test(script));
   const map=[['input','tsInput'],['example','example'],['clear','clear'],['copy','copy']];
   eq('v2 four tips', (markup.match(/<Toggletip\b/g)||[]).length, map.length);
-  const protectedContent={"en": ["c13d6d38efa1423c9cf2cad98bfa2d79202f303ec2be56cc0e5d3556e4fb69cb", "bbc6b96d355ad8d232a68c933716fb4599d005d2733f24267417989b7b39088a"], "zh": ["6d2a7bbfba18a7b494dd3daeb06dbee434dea020b84ece195751178c37faf55d", "dca0cc603c3b6a16f71c9c0deec101699b4b499bbe95c9244faeb1d36f4952c1"], "ja": ["e5ef5840f8568054458bdcf65062ff52f69ede486040a997f0b329911285d694", "0ce16f0b2f86b4ae1a031a1bda2ac156716cb6764c1359eb06d3c64f643e1e6b"], "ko": ["e6e2e6bb074d248598b52e65da8ee836f89e8de5a0ef60671e4fb775744a1e97", "efa6af9c764c55a820a810cc936fbf5e2f53aacd47631d6331a2c0f31d6e75a9"]};
   for(const lang of ['en','zh','ja','ko']){
     const L=strings[lang];eq(lang+' v2 same tip keys',Object.keys(L.tips).sort(),map.map(x=>x[0]).sort());
     check(lang+' localized empty text',typeof L.empty==='string'&&!!L.empty.trim());
@@ -390,7 +388,11 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
     const mdx=readFileSync(join(root,'src/content/tools/typescript-to-zod/'+lang+'.mdx'),'utf8'),[,fm,body]=mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
     const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
     check(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
-    eq(lang+' protected SEO and FAQ',hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang][0]);eq(lang+' all non-Usage content protected',hash(body),protectedContent[lang][1]);
+    eq(lang+' MDX content contract', contractProblems('typescript-to-zod', lang), '');
+    // TypeScript → Zod examples, recomputed.
+    const zodPairs=examplePairs(body,b=>b.lang==='pre'&&/^(?:interface|type|enum|export (?:interface|type))\b/.test(b.text),b=>b.lang==='pre'&&/^import \{ z \}/.test(b.text));
+    eq(lang+' has TypeScript → Zod examples',zodPairs.length>0,true);
+    eq(lang+' each Zod example equals the engine output',zodPairs.filter(([a,b])=>convert(a.text)!==b.text).map(([,b])=>b.text),[]);
     check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   }
 }

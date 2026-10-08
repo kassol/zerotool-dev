@@ -32,6 +32,7 @@ import { createHash, generateKeyPairSync, sign as nodeSign, randomBytes } from '
 import { domainToUnicode } from 'node:url';
 import vm from 'node:vm';
 import yaml from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SslCertificateDecoderTool.astro'), 'utf8');
@@ -760,7 +761,8 @@ for (const action of ['Clear', 'Ctrl+L']) {
     check(lang + ' steps describe automatic decoding', frontmatter.steps[1].includes('350') && !text.includes('Ctrl/⌘+Enter'));
     check(lang + ' only the usage section is removed', !/\n## (How to decode|使用步骤|使い方|사용 방법)/.test(text));
     check(lang + ' limitations remain in the reference', text.includes('## ' + limitsHeading[lang]));
-    check(lang + ' FAQ and checked examples remain', frontmatter.faqItems.length === 5 && text.includes('scd-check:'));
+    check(lang + ' MDX content contract', !contractProblems('ssl-certificate-decoder', lang), contractProblems('ssl-certificate-decoder', lang));
+    check(lang + ' checked examples remain', text.includes('scd-check:'));
   }
 }
 

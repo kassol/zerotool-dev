@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonDiffTool.astro'), 'utf8');
@@ -370,12 +371,6 @@ check('v2 tips and all languages stay outside inline client', source.includes('c
 const tipMap = { compare: 'compare', clear: 'clear', swap: 'swap', before: 'labelBefore', after: 'labelAfter', patch: 'patchTitle', visual: 'visualTitle', results: 'result' };
 const tips = [...markup.matchAll(/<Toggletip id="(jd-tip-[^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 exactly eight source-backed tip bindings', tips.map(m => [m[1], m[2], m[3]]).sort(), Object.entries(tipMap).map(([key, about]) => ['jd-tip-' + key, about, key]).sort());
-const MDX_HASHES = {
-  en: 'a49f648bb01290dd4e3d3e746bd33b350e9461c2cc9021a5ac83c744446675d5',
-  zh: '9c293c3fddc7d065debe69de2e6b88e811c7eeb61a04498f9293953bdd129dfe',
-  ja: '126a414cd7e8d7cf6f5bcf15ab556c441f17bd4814a8fc7b29170ad1c0cde609',
-  ko: 'da238a20d6525fdb61cb8bd3a126bba64bf7f752e0877be6854b90ecd926e1e2',
-};
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' v2 root string keys', Object.keys(strings[lang]).sort(), Object.keys(strings.en).sort());
   eq(lang + ' v2 same eight tip keys', Object.keys(strings[lang].tips).sort(), Object.keys(tipMap).sort());
@@ -386,7 +381,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' v2 plain steps meet 280/1200 limits', steps.every(step => [...step].length <= 280 && !/[<>]|\]\(|\*\*|`/.test(step)) && steps.reduce((n, step) => n + [...step].length, 0) <= 1200);
   check(lang + ' v2 steps use actual manual controls', ['compare', 'clear', 'swap', 'copy', 'hideInputs', 'showInputs'].every(key => steps.join(' ').includes(strings[lang][key])));
   check(lang + ' v2 Usage is removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
-  eq(lang + ' v2 all non-Usage MDX bytes preserved', sha256(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), MDX_HASHES[lang]);
+  eq(lang + ' MDX content contract', contractProblems('json-diff', lang), '');
   for (const sharedFirst of [false, true]) {
     const h = pageHarness(lang, sharedFirst, { width: 390, height: 844, resultTop: 900 });
     const prefix = lang + '/v2/sharedFirst=' + sharedFirst + ': ', n = id => h.nodes.get(id), click = id => n(id).click();

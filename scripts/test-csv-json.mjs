@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { loadPage, readComponent, frontmatterStrings } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CsvJsonTool.astro'), 'utf8');
@@ -304,24 +305,6 @@ const ORIGINAL_CLIENT_STRINGS = {
     "emptyNull": "빈 필드 → null"
   }
 };
-const PROTECTED_CONTENT = {
-  "en": {
-    "front": "522431c694597be3d9613ea7408143cb31e2153c05924bdf8e8855039ca67c8d",
-    "body": "0e45b434f9f82277ce1698820f749180e01fc8fc71799263b103f2920aa0f146"
-  },
-  "zh": {
-    "front": "cadef054c24a5bb3702149ac3166c673fd77b21fc1233f8e8f861cb0997075e4",
-    "body": "5f15a4792b9cae1fa12b708b40786ceedaa731812d8d46091bfaeb995906cf69"
-  },
-  "ja": {
-    "front": "c09bf22f93d2dc526c5d1385eb60b0391dc11fa853d4117f6796d9895a9bf724",
-    "body": "2a67a06843448e370a49d80369c59e6352e7548e7f63965e96f9600b9eaa5f8c"
-  },
-  "ko": {
-    "front": "5cbe47329c4b278a884f2f42d01c32655ae6058ab8ce5e9f6f22871a04baf282",
-    "body": "12a930d77ec1895959b39ae28f045857973ffb0dcd6782248549975b0c7735ca"
-  }
-};
 const yaml = requireRoot('js-yaml');
 const mdxCompiler = await import(requireRoot.resolve('@mdx-js/mdx'));
 for (const lang of ['en','zh','ja','ko']) {
@@ -334,8 +317,15 @@ for (const lang of ['en','zh','ja','ko']) {
   const [,front,body] = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), data = yaml.load(front);
   eq(lang+' step count', data.steps.length, 5);
   check(lang+' steps within 8/280/1200 before FAQ', data.steps.length<=8&&data.steps.every(s=>typeof s==='string'&&[...s].length<=280)&&data.steps.reduce((n,s)=>n+[...s].length,0)<=1200&&front.indexOf('steps:')<front.indexOf('faqItems:'));
-  eq(lang+' FAQ and SEO byte protection', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')), PROTECTED_CONTENT[lang].front);
-  eq(lang+' protected remaining body with explicit removed-button exceptions', hash(body), PROTECTED_CONTENT[lang].body);
+  eq(lang+' MDX content contract', contractProblems('csv-json', lang), '');
+  // Worked examples, recomputed: CSV → JSON as the page builds it (buildJsonFromCsv over the
+  // engine's parseCsv / inferValue, any option setting), compared as values; JSON → CSV exactly.
+  const pageJson = (raw, parseTypes, emptyNull) => { const { rows, quotedFlags } = E.parseCsv(raw); return rows.slice(1).map((row, r) => Object.fromEntries(rows[0].map((h, c) => [h, E.inferValue(row[c] ?? '', !!quotedFlags[r + 1]?.[c], parseTypes, emptyNull)]))); };
+  const toJsonPairs = examplePairs(body, b => b.lang === 'csv', b => b.lang === 'json');
+  const toCsvPairs = examplePairs(body, b => b.lang === 'json', b => b.lang === 'csv');
+  eq(lang+' has CSV → JSON and JSON → CSV examples', [toJsonPairs.length > 0, toCsvPairs.length > 0], [true, true]);
+  eq(lang+' each JSON example equals the page conversion', toJsonPairs.filter(([a, b]) => ![[true, true], [true, false], [false, true], [false, false]].some(([t, n]) => JSON.stringify(pageJson(a.text, t, n)) === JSON.stringify(JSON.parse(b.text)))).map(([, b]) => b.text), []);
+  eq(lang+' each CSV example equals the engine output', toCsvPairs.filter(([a, b]) => csv(JSON.parse(a.text)) !== b.text).map(([, b]) => b.text), []);
   check(lang+' Usage removed', !/<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error='';try{await mdxCompiler.compile(body);}catch(e){error=String(e);}eq(lang+' MDX compiles',error,'');
 }

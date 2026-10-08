@@ -26,6 +26,7 @@ import { dirname, join } from 'node:path';
 import ts from 'typescript';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToTypescriptTool.astro'), 'utf8');
@@ -279,7 +280,6 @@ eq('no unhandled clipboard rejections', unhandled.length, 0);
 // ---------- v2 page layout ----------
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
-const hash = value => createHash('sha256').update(value).digest('hex');
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 check('v2 registered as convert', /'json-to-typescript':\s*'convert'/.test(registration));
 check('v2 direct flex root has zero minimum height', /^\s*<div\s+class="jtt-wrap"/.test(layoutMarkup) && /\.jtt-wrap\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;/.test(css));
@@ -303,12 +303,6 @@ eq('v2 eight actual Toggletip bindings', (layoutMarkup.match(/<Toggletip\b/g) ||
 for (const [id, about, key] of tipMap) check('v2 control-bound tip ' + id, layoutMarkup.includes('<Toggletip id="jtt-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'));
 // Pre-migration hashes from b6-json-to-typescript-copy.md; only Usage became steps.
 // frontmatter excludes delimiter lines and includes its final LF; body starts just after the closing delimiter LF.
-const protectedContent = {
-  en: ['33f065bb48a85210c08068f16b5f67d3731f2adcf8e11bf8102240b1e12f760e', '355632c69f03febe913c35eb53def30ef7f7ffe1749f1d972293703e14d3666f'],
-  zh: ['6797bc7035b8ccb426ab901f63e98ac4b6c9bccc0cba7137eef81dd0b5bf98c2', 'd2be61f91451c0f7c591dfa9ee383580556ad4de4b43b17ff862c14e8a95608f'],
-  ja: ['fe4f36ba127b4db5b75e65b137b07ca89ab5e439842a7dd352bf3341ef8fad75', '6e1f57024bba9b14603dd369125e79784b8d5cf83a0e72d4d65f454d3d509870'],
-  ko: ['2d51f96f730c0214d083ace66816faa08df5ce28757e9ef36a87ebd4c3b34474', '92fcb11d13155416ad1bd12b0372c35e955a24b360ef51f0608d36711a0696c5'],
-};
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const L = pageLabels[lang], p = page(lang), rootEl = p.doc.querySelector('.jtt-wrap');
   eq(lang + ': v2 same eight tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
@@ -322,8 +316,10 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ': v2 eight steps before FAQ', steps.length, 8);
   check(lang + ': v2 step limits and order', fm.indexOf('steps:') < fm.indexOf('faqItems:') && steps.every(s => [...s].length <= 280 && !/[<>]/.test(s)) && steps.reduce((n, s) => n + [...s].length, 0) <= 1200);
   for (const key of ['jsonInput', 'example', 'rootName', 'makeOptional', 'useTypeAbout', 'generate', 'copy', 'clear']) check(lang + ': v2 steps name actual ' + key, steps.join('\n').includes(L[key]));
-  eq(lang + ': v2 unchanged SEO/FAQ frontmatter', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m, '')), protectedContent[lang][0]);
-  eq(lang + ': v2 all non-Usage body and examples unchanged', hash(body), protectedContent[lang][1]);
+  eq(lang + ': MDX content contract', contractProblems('json-to-typescript', lang), '');
+  const tsPairs = examplePairs(body, (b) => b.lang === 'json' || (b.lang === 'pre' && /^[[{]/.test(b.text)), (b) => b.lang === 'typescript' || (b.lang === 'pre' && /^(?:interface|type|export) /.test(b.text)));
+  check(lang + ': has JSON → TypeScript examples', tsPairs.length > 0);
+  eq(lang + ': each TypeScript example equals the engine output (RootObject, some option setting)', tsPairs.filter(([a, b]) => ![[false, false], [true, false], [false, true], [true, true]].some(([opt, useType]) => E.generateTypeScript(JSON.parse(a.text), 'RootObject', opt, useType).code === b.text)).map(([, b]) => b.text).join('\n---\n'), '');
   check(lang + ': v2 no duplicate Usage heading', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {
     const q = page(lang, shellFirst); golden(q);

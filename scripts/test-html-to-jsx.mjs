@@ -27,6 +27,7 @@ import { createRequire } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import { transformSync } from 'esbuild';
 import { parseFragment } from 'parse5';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HtmlToJsxTool.astro'), 'utf8');
@@ -429,24 +430,6 @@ check('v2 mobile input and output bounds', /@media \(max-width: 860px\)[\s\S]*he
 check('v2 mobile empty output follows actual textarea value', /@media \(max-width: 860px\)[\s\S]*\.htj-result-pane:has\(#htj-output:placeholder-shown\)\s*\{\s*display: none;/.test(css));
 check('v2 output placeholder is localized desktop empty hint', markup.includes('placeholder={T.empty}'));
 check('v2 registry convert', /['"]html-to-jsx['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
-const MDX_PROTECTION = {
-  "en": {
-    "frontSHA": "73ef0b8aaea99ad8e45f3f137d0c5536e136caecf08428cc3fca45c123894cf0",
-    "bodySHA": "141e53658e24bd86b1aab71601dcaf23acd7e8d5ca5bf0007045b49c7c5bfc2e"
-  },
-  "zh": {
-    "frontSHA": "90d657951aae236f802562b0a4437f652d1454e01ade507b865a5b1d66272652",
-    "bodySHA": "0a551ad311b141dfbcf6d2d8010f01406730d082773c4323b60399082ef61cac"
-  },
-  "ja": {
-    "frontSHA": "8c343492b87a022e35cf00a24691ba2872ad3e2b0603000ef6c2b2ab0c4b9158",
-    "bodySHA": "1e6de7568a88737f10cdfb9436731ca1195bcffac2319b8576812ab595750b43"
-  },
-  "ko": {
-    "frontSHA": "0a0018815fef513d388eb524c514479263ce1da8b4e5300964e9e7313803f80a",
-    "bodySHA": "0ef2723a044cc0ec2fac6854a49901b3cab58d4d3067c336c1fc2c0ea57f52cc"
-  }
-};
 const LEGACY_STRINGS = {
   "en": {
     "inputLabel": "HTML Input",
@@ -523,8 +506,10 @@ for (const lang of ['en','zh','ja','ko']) {
   same(lang + ' five steps', parsed.steps.length, 5);
   check(lang + ' steps precede FAQ', front.indexOf('steps:') < front.indexOf('faqItems:'));
   check(lang + ' bounded plain steps', parsed.steps.every(x => typeof x === 'string' && x.length <= 280 && !/[<>]/.test(x)) && parsed.steps.join('').length <= 1200);
-  same(lang + ' protected FAQ/SEO frontmatter', sha(front.replace(/steps:\n(?:  - .*\n)+/, '')), MDX_PROTECTION[lang].frontSHA);
-  same(lang + ' non-Usage body exact', sha(body), MDX_PROTECTION[lang].bodySHA);
+  same(lang + ' MDX content contract', contractProblems('html-to-jsx', lang), '');
+  const jsxPairs = examplePairs(body, (b) => b.lang === 'html', (b) => b.lang === 'jsx');
+  same(lang + ' has HTML → JSX examples', jsxPairs.length > 0, true);
+  same(lang + ' each JSX example equals the engine output', jsxPairs.filter(([a, b]) => jsx(a.text) !== b.text).map(([, b]) => b.text), []);
   check(lang + ' no Usage section', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error = ''; try { await compileMdx(body); } catch (e) { error = String(e); } same(lang + ' actual MDX compile', error, '');
 }

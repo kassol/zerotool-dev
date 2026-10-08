@@ -26,6 +26,7 @@ import { loadPage } from './astro-page-harness.mjs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const src = readFileSync(join(root, 'src/components/tools/MimeTypeLookupTool.astro'), 'utf8');
@@ -360,12 +361,6 @@ for(const [name,begin,end,expected] of [
 // v2 page layout — compiled CSS, real SSR text and page controls; browser geometry is separate.
 const v2Pass=passes,v2Fail=failures;
 const frozen={
-  "contentHashes": {
-    "en": "9a0a06ee58a556a8fb61f9b78b13ba79105d2d3d221894eeb59f5f2ba8f55cea",
-    "zh": "1480858fbb95e362639978fe04beae693a58e4268b7e7e7112fd85923677afe4",
-    "ja": "f7efb11a423a250867aec6e95db057ab42bd1c235c2f14c7030a887f92e93da7",
-    "ko": "cafea9ac7aa244a2f02b03971ee1fc4ace070a0d4e5d4876193cbdfabe328574"
-  },
   "scriptHash": "e41610c910b4d235cbb3b5bd343c3d665f8906860fd889d2531c40a0d9dfb97a",
   "oldKeys": [
     "tabSearch",
@@ -460,7 +455,7 @@ for(const lang of ['en','zh','ja','ko']){
   eq('v2 '+lang+' four original Usage steps',meta.steps.length,4);
   check('v2 '+lang+' bounded plain steps',meta.steps.every(x=>typeof x==='string'&&x.length<=280&&!/[<>\n]/.test(x))&&meta.steps.join('').length<=1200);
   check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
-  eq('v2 '+lang+' every nonUsage byte retained',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),frozen.contentHashes[lang]);
+  eq('v2 '+lang+' MDX content contract', contractProblems('mime-type-lookup', lang), '');
   let error='';try{await compileMdx(content.replace(/^---[\s\S]*?---\s*/,''));}catch(e){error=String(e);}eq('v2 '+lang+' MDX compiles',error,'');
 }
 eq('v2 entire client script after old i18n exact',hash(src.slice(src.indexOf('      // Curated MIME database'),src.indexOf('<style is:global>'))),frozen.scriptHash);

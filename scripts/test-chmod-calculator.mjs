@@ -19,13 +19,13 @@
 // Run: node scripts/test-chmod-calculator.mjs
 
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
 import { readFileSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ChmodCalculatorTool.astro'), 'utf8');
@@ -444,24 +444,6 @@ try {
 
 console.log('\nv2 page layout');
 {
-  const preserved = {
-  "en": {
-    "body": "eeb8437e98fe635f1a854def067f294027227e6d3263f87c1615e0f26ddb8081",
-    "front": "719cccfeb16651c7c39948ae16c5f498be5618d80bd92bf19b189d6cb022e228"
-  },
-  "zh": {
-    "body": "8fe2d044a7f3cd1b6540782b80795d5bd2cd9eba3d0d69fd0607e780ca7f0103",
-    "front": "99b4f092d62444e0863adccef736bc5d3da292c0c863abf13a551e0e57de454c"
-  },
-  "ja": {
-    "body": "157399e6a89632183d8d2f4e6d093530de2c58887d145939fc51c1a26dfed6a4",
-    "front": "bca22a134b6c34baddc9255d1ec573543f5e1d50d5db5fbbd701ebdeaa00adee"
-  },
-  "ko": {
-    "body": "bedd347e2b131078aaa72b4c70b27b28e14b185f3606c94a222a72f47047a249",
-    "front": "2c158094bb9edfa8bc36ac64cc7887c340807d797a1271b8f77349182fefcfac"
-  }
-};
   const strings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
   const leaves = (value, prefix = '') => Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? leaves(item, prefix + key + '.') : [[prefix + key, item]]);
   const en = leaves(strings.en);
@@ -477,9 +459,7 @@ console.log('\nv2 page layout');
     eq(lang + ' steps are present and bounded', Array.isArray(meta.steps) && meta.steps.length > 0 && meta.steps.length <= 8 && meta.steps.every(s => typeof s === 'string' && s.length <= 280) && meta.steps.join('').length <= 1200, true);
     eq(lang + ' steps precede FAQ', match[1].indexOf('steps:') < match[1].indexOf('faqItems:'), true);
     eq(lang + ' How to Use removed', /<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(match[2]), false);
-    const hash = value => createHash('sha256').update(value).digest('hex');
-    eq(lang + ' all remaining body sections unchanged', hash(match[2]), preserved[lang].body);
-    eq(lang + ' SEO and FAQ frontmatter unchanged', hash(match[1].replace(/\nsteps:\n(?:  - .*\n)+/, '\n')), preserved[lang].front);
+    eq(lang + ' MDX content contract', contractProblems('chmod-calculator', lang), '');
   }
   const markup = source.split('---')[2].split('<script')[0];
   eq('direct component root uses chmod-wrap', /^\s*<div class="chmod-wrap">/.test(markup), true);

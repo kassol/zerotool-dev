@@ -21,9 +21,9 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/AspectRatioTool.astro'), 'utf8');
@@ -302,7 +302,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
   const css = source.slice(source.indexOf('<style>') + 7, source.indexOf('</style>'));
   const rules = selector => [...css.matchAll(new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}', 'g'))].map(m => m[1]);
   const has = (selector, pattern) => rules(selector).some(rule => pattern.test(rule));
-  const sha = text => createHash('sha256').update(text).digest('hex');
   const layouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
   eq('registered compact route', /'aspect-ratio':\s*'compact'/.test(layouts), true);
   eq('direct tool root', template.startsWith('<div class="ar-wrap">'), true);
@@ -322,12 +321,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
   const tips = [...template.matchAll(/<Toggletip\b([^>]*)>([\s\S]*?)<\/Toggletip>/g)];
   eq('five control tips exist', tips.length, 5);
   for (const key of tipKeys) eq(key + ' tip uses localized text and name', tips.some(m => m[1].includes('id="ar-tip-' + key + '"') && /lang=\{lang\}/.test(m[1]) && /about=\{T\.\w+\}/.test(m[1]) && m[2] === '{TIPS.' + key + '}'), true);
-  const retained = {
-    en: ['275b86d216ac2c773f3561965e1850fc1180291b147178332c96081b68be109f', 'cdb0de069c9977df31473e5142b0776abe4cd8d042106478eda25045ba14cdc9'],
-    zh: ['0931ccab8adfae2c65a2e91d570fc20d43e15b4bf59eb99647d3c4949fcbf686', '971f4ddd9c46504b958e426c39f8298ae810728d91e0c1834f2327a72c1cd2fa'],
-    ja: ['c58a70350a99aedeacbd54d8c0f34d63ff68f66d1dc16c2d4a92245eeca0237d', '9eaafbaf84c720c70c2c057becb2d71834d10c663b5bb9f91c74c038911eecd8'],
-    ko: ['27ea557348fe212494619bed9b5aef3af84978eef88c89e956aab0d2f94a8d90', '811bcc0a4b241e555e168fda6378c7a639baff0c4270f4b27d8f701fe103f970']
-  };
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const entry = strings[lang];
     eq(lang + ' string keys match', Object.keys(entry).sort().join(','), Object.keys(strings.en).sort().join(','));
@@ -341,8 +334,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
     eq(lang + ' steps meet plain-text limits', steps.every(step => typeof step === 'string' && !!step.trim() && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200, true);
     for (const key of ['width', 'height', 'lockRatio', 'newWidth', 'newHeight', 'preview']) eq(lang + ' steps use current control ' + key, steps.some(step => step.includes(entry[key])), true);
     eq(lang + ' Usage heading removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
-    eq(lang + ' existing FAQ and SEO remain exact', sha(meta.replace(/^steps:\n(?:  .*\n)*/m, '').trim()), retained[lang][0]);
-    eq(lang + ' non-Usage body remains exact', sha(body), retained[lang][1]);
+    eq(lang + ' MDX content contract', contractProblems('aspect-ratio', lang), '');
     const q = makePage({ lang });
     q.type('ar-width', ''); q.lock(true);
     eq(lang + ' actual error uses the build-time language', q.els('ar-status').textContent, entry.errEnterDims);

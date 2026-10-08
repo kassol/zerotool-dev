@@ -21,10 +21,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { isDeepStrictEqual } from 'node:util';
-import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { toolSteps } from '../src/data/llms.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -473,25 +473,6 @@ process.removeListener('unhandledRejection', onUnhandled);
   check('registered as convert', /'base64':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
   equal('markup IDs are unique', new Set(ids).size, ids.length);
-  const retained = {
-  "en": {
-    "frontmatter": "1fe3e6396ec2fa7186529de64e1c609dc7a610b271ec2ff5cf6a917db17deca4",
-    "bodyWithoutUsage": "62cd5b8e6f277fdd6216f2de9d25c7be4b9894e646f37284fffc6519e1f51acf"
-  },
-  "zh": {
-    "frontmatter": "8540dc4c3264489959b4e50ca57bcc1cae7c967bc2ba7c5d18a5dcc3e94ddb37",
-    "bodyWithoutUsage": "e52ce8e13331215d654d67e7ce82ad112a69bb3c646938d6a0b31f3ed2a945d5"
-  },
-  "ja": {
-    "frontmatter": "c1f2426a65e9ae228d12cf495b19a03601a54302c63086f8b9f63ef09dcd82dc",
-    "bodyWithoutUsage": "084bbc0f0e26efecb3587c6805a76568ddc3e6a5530f0d8c1ef58af53b9efb4d"
-  },
-  "ko": {
-    "frontmatter": "95db0e4caa9183c31a0bfb604a27c2dbd2c897bef994cb88d92455580d33b3b3",
-    "bodyWithoutUsage": "134675de98b4f63d2c29ab6e3ddd20e508d0a1ab0aff37e0a6c291231e50c001"
-  }
-};
-  const sha = text => createHash('sha256').update(text).digest('hex');
   for (const lang of Object.keys(expected)) {
     const entry = strings[lang], { tips, ...client } = entry;
     same(lang + ': translation keys match', Object.keys(entry).sort(), Object.keys(strings.en).sort());
@@ -503,8 +484,7 @@ process.removeListener('unhandledRejection', onUnhandled);
     const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
     check(lang + ': six plain steps fit limits', steps.length === 6 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['encode', 'decode', 'dataUri', 'copy', 'swap', 'clear']) check(lang + ': steps use actual ' + key + ' control label', steps.some(step => step.includes(entry[key])));
-    equal(lang + ': original FAQ and SEO remain byte-identical', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
-    equal(lang + ': non-Usage body remains byte-identical', sha(body), retained[lang].bodyWithoutUsage);
+    equal(lang + ': MDX content contract', contractProblems('base64', lang), '');
     check(lang + ': old Usage removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     equal(lang + ': llms retains all six steps', toolSteps(parsed).length, 6);
     check(lang + ': llms retains MIME placeholder', toolSteps(parsed).some(step => step.includes('data:<mime>;base64,')));

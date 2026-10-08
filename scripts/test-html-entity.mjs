@@ -36,6 +36,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { toolSteps } from '../src/data/llms.mjs';
 import { parseFragment, defaultTreeAdapter } from 'parse5';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HtmlEntityTool.astro'), 'utf8');
@@ -439,25 +440,6 @@ process.removeListener('unhandledRejection',onUnhandled);
   check('registered as convert', /'html-entity':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
   eq('markup IDs are unique', new Set(ids).size, ids.length);
-  const sha = text => createHash('sha256').update(text).digest('hex');
-  const retained = {
-  "en": {
-    "frontmatter": "7d98dbb8dfb6aeb78060139e2c2b36964b0e3f08c944853e363315afc121d1cc",
-    "bodyWithoutUsage": "e9fc42d4ef3ef47ce276de7a4e48e9ad0f46a2cbfa4cb1d55d70d3126b070e12"
-  },
-  "zh": {
-    "frontmatter": "3851b16276dfee4c6b45e7eef0d2540b91b7773d21f94504179cef7deb616355",
-    "bodyWithoutUsage": "b92642ebe5d8d19a19b0707b3f3cb2eeee33792ebfbd5dd28dc50cbd25551d68"
-  },
-  "ja": {
-    "frontmatter": "46457f0d18581d2df4cca5358019babc4da04e4aea375cb0fbb564fbd6f9c17d",
-    "bodyWithoutUsage": "64b39dad714eecc62a1b92586d21c508dc8e5b197905c9f1cdcb11561348abbd"
-  },
-  "ko": {
-    "frontmatter": "cbd3af5fbb7612bdb63bd288db155b210ef536438d0b515cb9ae6281ab35c2cb",
-    "bodyWithoutUsage": "12fa2b6eca1b4f688f2a58efda882663a55f855504f2f145dc68b32697ae2498"
-  }
-};
   const require = createRequire(import.meta.url);
   const { compile } = await import(require.resolve('@mdx-js/mdx'));
   for (const lang of Object.keys(localized)) {
@@ -471,24 +453,18 @@ process.removeListener('unhandledRejection',onUnhandled);
     const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
     check(lang + ': five plain steps fit limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['encode','decode','copy','clear','refTable']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
-    eq(lang + ': FAQ and SEO bytes preserved', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
-    // Only removed-button instructions and the now translated copy error need wording changes.
-    let protectedBody = body;
+    eq(lang + ': MDX content contract', contractProblems('html-entity', lang), '');
+    // Wording that changed with the v2 controls (removed buttons, translated copy error).
     if (lang === 'en') {
       eq('en: two Encode examples select the direction', (body.match(/select <strong>Encode<\/strong>/g) || []).length, 2);
       eq('en: Decode example selects the direction', (body.match(/select <strong>Decode<\/strong>/g) || []).length, 1);
       check('en: limits identify conversion status as English', body.includes('The conversion status messages are in English'));
       check('en: repeat decode uses output as the new input', body.includes('For double-encoded text, put the output back into Input while Decode is selected.'));
-      protectedBody = body.replaceAll('select <strong>Encode</strong>', 'click <strong>Encode</strong>').replaceAll('select <strong>Decode</strong>', 'click <strong>Decode</strong>')
-        .replace('The conversion status messages are in English', 'The status messages are in English')
-        .replace('For double-encoded text, put the output back into Input while Decode is selected.', 'Run Decode again for double-encoded text.');
     }
     if (lang === 'zh') {
       eq('zh: two Encode examples select the direction', (body.match(/选择<strong>编码<\/strong>/g) || []).length, 2);
       eq('zh: Decode example selects the direction', (body.match(/选择<strong>解码<\/strong>/g) || []).length, 1);
-      protectedBody = body.replaceAll('选择<strong>编码</strong>', '点击<strong>编码</strong>').replaceAll('选择<strong>解码</strong>', '点击<strong>解码</strong>');
     }
-    eq(lang + ': non-Usage body preserves exact bytes except named UI corrections', sha(protectedBody), retained[lang].bodyWithoutUsage);
     check(lang + ': Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     eq(lang + ': llms receives five steps', toolSteps(parsed).length, 5);
     await compile(body); check(lang + ': preserved MDX body compiles', true);

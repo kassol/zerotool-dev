@@ -23,8 +23,8 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 import { load as loadYaml } from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ExifMetadataViewerTool.astro'), 'utf8');
@@ -394,8 +394,6 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     }
   }
   // Snapshot from 2d4ce406: metadata unchanged, and body with only its usage section removed.
-  const retained = {"en": ["f6d916a008811b87", "3b1dcadcf1105255"], "zh": ["8218e37820e6aa48", "dd841e9ac63f4baa"], "ja": ["f0bda7fc2b41e192", "a32ca5dd84912764"], "ko": ["4f2dc13f46487e7e", "0fe2c0058fe852f9"]};
-  const hash = text => createHash('sha256').update(text.trim()).digest('hex').slice(0, 16);
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ' string keys match en', Object.keys(STRINGS[lang]).sort(), Object.keys(STRINGS.en).sort());
     strings(lang, STRINGS[lang].tips, STRINGS.en.tips, '.tips');
@@ -406,8 +404,7 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     const [, fm, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(mdx), { steps } = loadYaml(fm);
     eq(lang + ' four concise plain-text steps', steps.length === 4 && steps.every(s => typeof s === 'string' && s.trim() && s.length <= 280 && !/<[^>]+>/.test(s)) && steps.join('').length <= 1200, true);
     eq(lang + ' usage removed', !/<h2>(?:How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
-    eq(lang + ' SEO and FAQ preserved', hash(fm.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang][0]);
-    eq(lang + ' all other reference content preserved', hash(body), retained[lang][1]);
+    eq(lang + ' MDX content contract', contractProblems('exif-metadata-viewer', lang), '');
   }
   console.log(`v2 page layout: ${passes - base.passes} passed, ${failures - base.failures} failed`);
 }

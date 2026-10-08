@@ -23,6 +23,7 @@ import vm from 'node:vm';
 import { parseFragment } from 'parse5';
 import { createHash } from 'node:crypto';
 import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -250,24 +251,6 @@ const oldLabels={
     largInput: '입력이 매우 크면 변환이 느릴 수 있습니다.',
   },
 };
-const protectedMdx={
-  "en": {
-    "withoutUsageSHA256": "58c287be05d0be1375a4ec894e6fea98a8c56b139ce026221bace11171c9175b",
-    "frontSHA256": "f553e1915516586bf86fe504eb0eab6ddccfcc96f8eaf14bcf1fa31a43a18e55"
-  },
-  "zh": {
-    "withoutUsageSHA256": "949244f71ebf3359387bd41272933875e2607eff292adc236380ce5213837cd6",
-    "frontSHA256": "a5cddfff67d43814a41f5a24f712c69e4860caca25cdc306bebb6200b888367d"
-  },
-  "ja": {
-    "withoutUsageSHA256": "43e9e5da87de596ade399ac411db450a5e85608741d053b2e8e6e04c7c3ad9ef",
-    "frontSHA256": "fc11ee214deed0ad378a3a992d18781d4af91eda1703cee2dd7d5cd9fbf52984"
-  },
-  "ko": {
-    "withoutUsageSHA256": "815c2e0f6335585f0332b7c922798ae092c77d847803a25b9470fd70a974bbac",
-    "frontSHA256": "5f5d0c19c85f3c9186bde61867e7a351e0bd8ffbf06c1af13343bde064f0e7e0"
-  }
-};
 for(const lang of ['en','zh','ja','ko']){
   const L=allLabels[lang],p=page({lang});eq(lang+' v2 six tip keys',JSON.stringify(Object.keys(L.tips)),JSON.stringify(Object.keys(tipMap)));
   check(lang+' v2 plain concise tip facts',Object.values(L.tips).every(x=>typeof x==='string' && x.length>0 && [...x].length<=280 && !/[<>]/.test(x)));
@@ -280,7 +263,7 @@ for(const lang of ['en','zh','ja','ko']){
   const front=content.match(/^---\n([\s\S]*?)\n---/)[1],data=require('js-yaml').load(front);
   check(lang+' v2 four steps before FAQ',data.steps.length===4 && front.indexOf('steps:')<front.indexOf('faqItems:'));
   check(lang+' v2 step bounds',data.steps.every(x=>[...x].length<=280) && data.steps.reduce((n,x)=>n+[...x].length,0)<=1200);
-  eq(lang+' v2 only Usage moved',sha(content.replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),protectedMdx[lang].withoutUsageSHA256);
+  eq(lang+' MDX content contract', contractProblems('html-to-markdown', lang), '');
   check(lang+' v2 Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(content));
 }
 const {transform}=await import(require.resolve('@astrojs/compiler',{paths:[require.resolve('astro')]}));

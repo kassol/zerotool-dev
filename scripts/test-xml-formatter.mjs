@@ -112,6 +112,7 @@ eq('no prolog format', E.prettyPrint(doc(el('root', { id: '1' }, el('name', {}, 
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 const requireRoot = createRequire(join(root, 'package.json'));
 const { parseFragment } = requireRoot('parse5');
 const ts = requireRoot('typescript');
@@ -293,28 +294,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [923, 0]);
 same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var inputEl = document.getElementById('xf-input');"))), 'c33049a8c448c3f537c19ccf15de7979df300024176c9fff04d69387ebbcf0bd');
-const PROTECTED_CONTENT = {
-  "en": {
-    "front": "efecbff62d07f92c5d91e995b2c48b5fc5e2906eff0e59193c2fbef9c6883634",
-    "body": "6fac1ab4c0a89820c95acf2f17c2103ecc43b4027ca3695e56df81876cc19f39",
-    "examples": "4f5e9c17e674c931fcb5e7f96d0575f98d0dd52ef50467a23ebaec24b162819b"
-  },
-  "zh": {
-    "front": "f63ac3435dfbce0924b762e5195e2370188d6d7f1b92b7e525d4ed773dd666ad",
-    "body": "f633e87bb0cde8202eb8a20dedf3b715c8c860e125c726850f53e98c6844dcc9",
-    "examples": "7f97ed11b6e218cade84b880385329a596a57ed0200ea4d57ab8c98faed538ad"
-  },
-  "ja": {
-    "front": "e19f0e2e590c1305f7a7b47dff85b4f28baa595a630f8d5f54e80fb247511185",
-    "body": "2edff6bcba7026a690577ea4e00a8c10d0a23384eec1b744bbe8baf7a4d48836",
-    "examples": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
-  },
-  "ko": {
-    "front": "836d4baab7c559f4daac4f96554c7ca5dfdd87137aee3a61d139b3699bb13a19",
-    "body": "699f68035ef29bd3479a5998cd168e8f02d2af81828621a731efb2afbe0450d2",
-    "examples": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
-  }
-};
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="xf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -340,9 +319,21 @@ const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'),'utf8');
 same('xml-formatter registered convert', /['"]xml-formatter['"]\s*:\s*['"]convert['"]/.test(registry), true);
 const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
 same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
+// Worked examples on the tool pages, recomputed with the protected serializers. The DOM shapes
+// stand in for the browser's DOMParser (native parsing is browser QA, as for thinFixtures below).
+const cdata=(data)=>({nodeType:4,data});
+const pageFixtures=[
+  { input:'<root><user id="1"><name>Alice</name><email>alice@example.com</email></user></root>', dom:doc(el('root',{},el('user',{id:'1'},el('name',{},text('Alice')),el('email',{},text('alice@example.com'))))) },
+  { input:'<?xml version="1.0" encoding="UTF-8"?><!-- order 1042 --><order id="1042" status="paid"><item sku="A-1" qty="2"/><note><![CDATA[Leave at <door> & ring]]></note><total currency="EUR">59.90</total></order>', dom:doc(comment(' order 1042 '),el('order',{id:'1042',status:'paid'},el('item',{sku:'A-1',qty:'2'}),el('note',{},cdata('Leave at <door> & ring')),el('total',{currency:'EUR'},text('59.90')))) },
+  { input:'<p>Hello <b>world</b>!</p>', dom:doc(el('p',{},text('Hello '),el('b',{},text('world')),text('!'))) },
+  { input:'<root><value>  x  </value><blank> </blank><empty/></root>', dom:doc(el('root',{},el('value',{},text('  x  ')),el('blank',{},text(' ')),el('empty',{}))) },
+  { input:"<item name='A &amp; B'>1 &lt; 2</item>", dom:doc(el('item',{name:'A & B'},text('1 < 2'))) },
+];
+const exampleTexts=new Set(pageFixtures.flatMap(f=>{const prolog=E.scanProlog(f.input);return [f.input,E.prettyPrint(f.dom,'  ',prolog),E.minify(f.dom,prolog)];}));
+same('order example minifies back to its one-line input',E.minify(pageFixtures[1].dom,E.scanProlog(pageFixtures[1].input)),pageFixtures[1].input);
 const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
 for(const lang of ['en','zh','ja','ko']) {
-  const S=pageStrings[lang], payload=clientStrings(lang), expected=PROTECTED_CONTENT[lang];
+  const S=pageStrings[lang], payload=clientStrings(lang);
   same(lang+' tip keys',Object.keys(S.tips),['input','indent','format','minify','clear','copyInput','copyOutput']);
   same(lang+' short complete tips',Object.values(S.tips).every(x=>typeof x==='string'&&x.length>0&&x.length<=280),true);
   same(lang+' client has only runtime strings',Object.keys(payload),['copy','copied','copyFailed']);
@@ -350,12 +341,10 @@ for(const lang of ['en','zh','ja','ko']) {
   same(lang+' localized empty hint exists',typeof S.formattedXmlPh==='string'&&S.formattedXmlPh.length>0,true);
   const text=readFileSync(join(root,'src/content/tools/xml-formatter',lang+'.mdx'),'utf8');
   const parts=text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/),front=requireRoot('js-yaml').load(parts[1]),body=parts[2];
-  const preservedBody=lang==='en'?body.replace(/\{\/\* xml-whitespace-quotes:start \*\/\}\n[\s\S]*?\{\/\* xml-whitespace-quotes:end \*\/\}\n\n/,'').replace('**During formatting, empty elements are self-closed.**','**Empty elements are self-closed.**'):body;
   same(lang+' six bounded plain steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
   same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
-  same(lang+' all other frontmatter bytes unchanged',hash(parts[1].replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),expected.front);
-  same(lang+' all nonUsage body bytes unchanged',hash(preservedBody),expected.body);
-  same(lang+' worked example blocks unchanged',hash(JSON.stringify([...preservedBody.matchAll(/```[^\n]*\n[\s\S]*?```/g)].map(m=>m[0]))),expected.examples);
+  same(lang+' MDX content contract', contractProblems('xml-formatter', lang), '');
+  same(lang+' every XML example is a fixture input or its engine output',[...body.matchAll(/```xml\n([\s\S]*?)\n```/g)].map(m=>m[1]).filter(b=>!exampleTexts.has(b)),[]);
   same(lang+' Usage removed',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body),false);
   let mdxError='';try{await mdxCompiler.compile(body);}catch(e){mdxError=String(e);}same(lang+' MDX compiles',mdxError,'');
 }

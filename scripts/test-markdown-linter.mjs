@@ -23,6 +23,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { compile } from '@mdx-js/mdx';
 import { toolSteps } from '../src/data/llms.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/MarkdownLinterTool.astro'), 'utf8');
@@ -337,7 +338,6 @@ for (const [name, code, bytes, hash] of protectedParts) {
 {
   const beforePasses = passes, beforeFailures = failures;
   const check = (name, value) => eq(name, Boolean(value), true);
-  const sha = value => createHash('sha256').update(value).digest('hex');
   const css = source.split('<style>')[1].split('</style>')[0];
   check('registered as analyze', /'markdown-linter':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
   check('direct tool root after frontmatter', /^<div class="ml-wrap">/.test(markup));
@@ -358,12 +358,6 @@ for (const [name, code, bytes, hash] of protectedParts) {
   check('no primary action or extra Enter listener', !markup.includes('btn-primary') && !inline.includes("e.key === 'Enter'"));
   check('strings are build-time and tips excluded from client', !source.includes('data-i18n') && source.includes('const { tips, ...CLIENT_T } = T;') && !inline.includes('STRINGS') && !inline.includes('tips'));
   check('no storage/network changes in actual inline logic', !/fetch\(|XMLHttpRequest|localStorage|sessionStorage/.test(inline));
-  const retained = {
-    en: ['a2cfd73ad974f489bb4406148d7e0c1348cc5c6c5a0ad6e9f1ce4862958bf9fb','fd173c97e6e065d9536dfeacf3964093bd339828cdd610232cd689e99e0a2ffc'],
-    zh: ['1653ad931d4d653ddefbcd6ef165336aa8dce58068b09e88362148d4e24f6ec3','d1699c9ea2747a126ee203f6db257978b095af1831a29619ccd3d28c0fb005c9'],
-    ja: ['00103260025c05ef967f27ed0c495e022bdfd22497c74bdd3408f84c7299e9fb','f0cf4ece6a565a25e6ccf3f1a044e5fbc9703764ac59d7de1fdb7ccb8f88cc45'],
-    ko: ['01dba0cfab6d59cb027cdee74f14dc418eb7998ca83eeae3549fc4716d998249','ff3a4daebcde704fec200ab2f9942465b66cc01e096af96dd583b8ad89d63e02'],
-  };
   const tipKeys = ['input','clear','copy','results'];
   eq('four control-bound tips', [...markup.matchAll(/<Toggletip id="ml-tip-([^"]+)"/g)].map(m => m[1]).sort(), tipKeys.slice().sort());
   for (const key of tipKeys) check(key + ': tip binds matching localized text', markup.includes('{T.tips.' + key + '}'));
@@ -379,8 +373,7 @@ for (const [name, code, bytes, hash] of protectedParts) {
     const { steps } = parsed;
     check(lang + ': five plain steps within8/280/1200 limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['inputLabel','resultsLabel','clear','copyResults']) check(lang + ': steps reference actual ' + key, steps.some(step => step.includes(entry[key])));
-    eq(lang + ': FAQ and SEO byte-identical', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang][0]);
-    eq(lang + ': non-Usage body byte-identical', sha(body), retained[lang][1]);
+    eq(lang + ': MDX content contract', contractProblems('markdown-linter', lang), '');
     check(lang + ': Usage removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     eq(lang + ': llms receives complete steps', toolSteps(parsed), steps);
     await compile(body); check(lang + ': MDX body compiles', true);

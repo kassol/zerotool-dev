@@ -24,6 +24,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TimestampConverterTool.astro'), 'utf8');
@@ -320,24 +321,6 @@ try {
   check('runtime i18n removed and only client strings serialized', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/data-i18n|STRINGS|TIPS/.test(lifecycleScript));
   const engine = source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
   check('exact engine bytes protected', sha(engine) === '478ed4b2739a9d8a0ddb6b24247629961e1988e624e7446675df6680c40f628e');
-  const retained = {
-  "en": [
-    "55d1e82a136d96647d098e99d6eecb89d171aed82505ea3372c03f893115da3a",
-    "14e6220ba8638e7dd11c5ba1ab30379963cf948724b6df311af4a698f027c840"
-  ],
-  "zh": [
-    "352f67eabeb26d41fddd0772df4cae3efbed3a06ba2ff9fc94f47ecc79df2d31",
-    "8a5c721c26b13b85b20a0910eff4c54b6260bb196e0868036155c1c5e4e11540"
-  ],
-  "ja": [
-    "4c1a0b4c932da4041236f2ccffe1a6d56a942abe88a683fcad504b957539c2df",
-    "30d1c088e3a8e11d5b3f0f7573a739ecdbd3ccc074955e6204857ea1e992aaf2"
-  ],
-  "ko": [
-    "6d1403430653d1494273920dda1dcdc06d48ea2d5c1360abd8d814457ff3f66d",
-    "a5cc880b630ac38ee1d66bc31e9d0b46e397a8331068b79f6cfacadefa54cd03"
-  ]
-};
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const entry = lifecycleStrings[lang], client = clientFor(lang);
     check(lang + ' all four languages share string keys', JSON.stringify(Object.keys(entry).sort()) === JSON.stringify(Object.keys(lifecycleStrings.en).sort()));
@@ -349,8 +332,7 @@ try {
     check(lang + ' five plain steps remain within llms limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['copy', 'convert', 'now', 'timestamp', 'dateTime']) check(lang + ' steps use the actual ' + key + ' label', steps.some(step => step.includes(entry[key])));
     check(lang + ' Usage removed, Limits retained', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body) && /^## (?:Limits|限制|制限事項|제한 사항)/m.test(body));
-    check(lang + ' original FAQ/SEO unchanged', sha(meta.replace(/^steps:\n(?:  .*\n)*/m, '').trim()) === retained[lang][0]);
-    check(lang + ' non-Usage body byte-identical', sha(body) === retained[lang][1]);
+    check(lang + ' MDX content contract', !contractProblems('timestamp-converter', lang), contractProblems('timestamp-converter', lang));
   }
   const require = createRequire(import.meta.url);
   const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));

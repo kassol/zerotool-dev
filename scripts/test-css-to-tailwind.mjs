@@ -25,6 +25,7 @@ import { runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssToTailwindTool.astro'), 'utf8');
@@ -287,24 +288,6 @@ check('v2 mobile empty output follows actual textarea value', /@media \(max-widt
 check('v2 output placeholder is localized desktop empty hint', markup.includes('placeholder={T.tailwindPlaceholder}'));
 check('v2 coverage remains accessible outside hidden result', /<\/div>\s*<details class="c2t-coverage">[\s\S]*T.coverageDesc/.test(markup));
 check('v2 registry convert', /['"]css-to-tailwind['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
-const MDX_PROTECTION = {
-  "en": {
-    "frontSHA": "d174f8a60e799af54a421898227aa823ce77da5e5305a65769470fa521931612",
-    "bodySHA": "4b313d491a921092a5c90dd689bfe6006c65087719210d6c51056de0349c21af"
-  },
-  "zh": {
-    "frontSHA": "bedfe5668d1a660ca075e81c0bb5d1954e6e0826158781ae8fe5296b153c3d89",
-    "bodySHA": "2bfb49aef77d631d7966cfc92984ef4dbe95914f0fb4320b6a471602ed9323aa"
-  },
-  "ja": {
-    "frontSHA": "e8dff96e087db917a642e05066db44dd35f07d37cef60c0ce668c0e8d7e54717",
-    "bodySHA": "7733d5c53927001f9211deeef45cda44d3cc3f26d88e069adba309e437f4b21c"
-  },
-  "ko": {
-    "frontSHA": "f25ff4437f9f7a572dc984f8c512b94e7b0c807c468fd7a48184bbce488ed695",
-    "bodySHA": "7a21173b129d273d53daaf342e62f698ed6da7bfd1a8a9501ecd434e3d088383"
-  }
-};
 const LEGACY_STRINGS = {
   "en": {
     "cssInput": "CSS Input",
@@ -373,8 +356,7 @@ for (const lang of ['en','zh','ja','ko']) {
   same(lang + ' five steps', parsed.steps.length, 5);
   check(lang + ' steps precede FAQ', front.indexOf('steps:') < front.indexOf('faqItems:'));
   check(lang + ' bounded plain steps', parsed.steps.every(x => typeof x === 'string' && x.length <= 280 && !/[<>]/.test(x)) && parsed.steps.join('').length <= 1200);
-  same(lang + ' protected FAQ/SEO frontmatter', sha(front.replace(/steps:\n(?:  - .*\n)+/, '')), MDX_PROTECTION[lang].frontSHA);
-  same(lang + ' non-Usage body exact', sha(body), MDX_PROTECTION[lang].bodySHA);
+  same(lang + ' MDX content contract', contractProblems('css-to-tailwind', lang), '');
   check(lang + ' no Usage section', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error = ''; try { await compileMdx(body); } catch (e) { error = String(e); } same(lang + ' actual MDX compile', error, '');
 }

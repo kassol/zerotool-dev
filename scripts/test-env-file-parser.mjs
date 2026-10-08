@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const require = createRequire(import.meta.url);
 const dotenv = require('dotenv');
@@ -461,7 +462,6 @@ eq('privacy notice directly after output',markup.includes('<p class="efp-privacy
 const tipMap={input:['envContent','input'],parse:['parse','parse'],clear:['clear','clear'],export:['exportJson','download'],results:['results','results']};
 eq('five tips only',[...markup.matchAll(/<Toggletip\b/g)].length,5);
 for(const[id,[about,key]]of Object.entries(tipMap))eq('tip binding '+id,markup.includes('id="efp-tip-'+id+'" lang={lang} about={T.'+about+'}>{TIPS.'+key+'}</Toggletip>'),true);
-const protectedContent={"en": "a4a30fda6c1fa849fadfa53cb00d7b3228c64eb59400eb08381f371f0fa53536", "zh": "f7d02094cff44cbe4d7662d2b85aadffc98c48c8750bf91ab5b04df9363c6560", "ja": "12eb15d76ffbbd026c75c1456157778cb4beff451bda0b903a0b1244a08d11b1", "ko": "c0af50ef4610f5cede5a0c6036a7719e1da6a0c65272be5f80738f6a6d9275e0"};
 for(const lang of ['en','zh','ja','ko']){
   const T=pageStrings[lang],h=fullPage(lang,'shared-after');
   eq(lang+' tips keys',Object.keys(T.tips).sort(),['input','parse','clear','results','download'].sort());
@@ -496,7 +496,7 @@ for(const lang of ['en','zh','ja','ko']){
   const steps=mdx.match(/^steps:\n((?:  - .+\n)+)/m)?.[1].trim().split('\n').map(x=>JSON.parse(x.trim().slice(2)))||[];
   eq(lang+' five steps',steps.length,5);eq(lang+' steps plain and bounded',steps.every(x=>x.length>0&&x.length<=280&&!/<\/?[a-z]/i.test(x))&&steps.join('').length<=1200,true);
   eq(lang+' Usage removed',/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),false);
-  eq(lang+' all nonusage MDX bytes protected',createHash('sha256').update(mdx.replace(/^steps:\n(?:  - .+\n)+/m,'')).digest('hex'),protectedContent[lang]);
+  eq(lang+' MDX content contract', contractProblems('env-file-parser', lang), '');
 }
 const big=fullPage('en','shared-after'),entries=Array.from({length:1000},(_,i)=>['KEY_'+i,'value'+i+'x'.repeat(160)]);
 big.input(entries.map(([k,v])=>k+'='+v).join('\n'));big.get('efp-parse').click();eq('long result all rows rendered',big.get('efp-tbody').children.length,1000);big.get('efp-export-json').click();eq('long export full bytes',await big.downloads[0].blob.text(),JSON.stringify(Object.fromEntries(entries),null,2));

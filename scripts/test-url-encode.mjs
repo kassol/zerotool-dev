@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/UrlEncodeTool.astro'), 'utf8');
@@ -412,20 +413,13 @@ eq('v2 labels have no interactive descendants',[...markup.matchAll(/<label\b[\s\
 eq('v2 excludes tips from client',source.includes('const { tips: TIPS, ...CLIENT_T } = T;')&&source.includes('define:vars={{ t: CLIENT_T }}'),true);
 eq('v2 registered convert',/'url-encode':\s*'convert'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 const tips=['mode','input','plus','swap','clear','copy'];same('v2 six tips on real controls',[...markup.matchAll(/<Toggletip id="url-tip-([^"]+)"/g)].map(m=>m[1]).sort(),tips.toSorted());
-const protection={
-  "en": "d59713ac4b021467020e012553322dd1ef2d26bab65e273cfc720a6d8e85454e",
-  "zh": "871e2f4695f4714d457fa8ee6b087ed68f163429e2ed6ca0b8824e9d215aa6ad",
-  "ja": "26f67db661a8e1fdceae759bda290f98bfdf7a3a70e541922636f135a168a2d3",
-  "ko": "d0f2a0d1c0c6c986819ed7982bdf0c7b2207b3e0af8f11bebe51dc12c3c18c52"
-};
-const hash=text=>createHash('sha256').update(text).digest('hex');
 for(const lang of Object.keys(textLabels)){
  same(lang+': v2 tips same keys',Object.keys(STR[lang].tips).sort(),tips.toSorted());
  for(const tip of tips)eq(lang+': v2 '+tip+' tip plain nonempty',typeof STR[lang].tips[tip]==='string'&&STR[lang].tips[tip].length>20&&!/[<>]|https?:/.test(STR[lang].tips[tip]),true);
  const doc=readFileSync(join(root,'src/content/tools/url-encode/'+lang+'.mdx'),'utf8'),fm=doc.match(/^---\n([\s\S]*?)\n---/)[1];
  const steps=require('js-yaml').load(fm).steps;
  eq(lang+': v2 six bounded steps',steps.length===6&&steps.every(s=>s.length<=280&&!/[<>]/.test(s))&&steps.join('').length<=1200,true);
- eq(lang+': v2 preserves non-Usage MDX',hash(doc.replace(/^steps:\n(?:  .*\n)*/m,'')),protection[lang]);
+ eq(lang+': MDX content contract', contractProblems('url-encode', lang), '');
  await (await import('@mdx-js/mdx')).compile(doc.replace(/^---[\s\S]*?---\s*/,''));eq(lang+': v2 MDX compiles',true,true);
  const q=pageVM(lang);
  eq(lang+': v2 input label rendered before scripts',q.get('url-input-label').textContent,STR[lang].plainUrlLabel);

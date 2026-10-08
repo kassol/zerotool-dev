@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path';
 import { createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HashGeneratorTool.astro'), 'utf8');
@@ -303,35 +304,16 @@ for(const cls of ['hg-row','hg-label','hg-value']){
   eq('registered convert',/['"]hash-generator['"]:\s*['"]convert['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
   eq('labels contain no interactive children',[...markup.matchAll(/<label\b[\s\S]*?<\/label>/g)].every(m=>!/<Toggletip|<button/.test(m[0])),true);
   const ids=[...markup.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);eq('unique markup IDs',new Set(ids).size,ids.length);
-  const protectedContent={
-  "en": {
-    "frontmatter": "1b647f3037c7ca961ca54770761f9850a148e7d7e0bc0cc5eec93cff7229c185",
-    "body": "bf7b654464cbd7e90712a33be5ae88f0a294478a55b9b75ff1c9b7bf50b0cfb9"
-  },
-  "zh": {
-    "frontmatter": "5345d79e734895ec3c604657455238499dce1f73619e6aba6084c573b540f351",
-    "body": "2d5b56e773f8f155325d521fda43948440978432756adb40b697e4c1375b722d"
-  },
-  "ja": {
-    "frontmatter": "079d91f90f1a99135b951d85525b74a4189284ef0cdaed980faa47705b5653f1",
-    "body": "7a66df4f83baeff237573e4643562ccd8c267a7a8369f4b59b1d09e27c25f808"
-  },
-  "ko": {
-    "frontmatter": "4c2911084e36ad8ac3c4835ff1deb96f10517c828fec6305bf0ef509c5038024",
-    "body": "e00f8e700a1a243bd183e1585e1f7ecffd247b3a6519911419d5d8852389aad4"
-  }
-};
   const yaml=require('js-yaml');
   const hash=text=>createHash('sha256').update(text).digest('hex');
   for(const lang of Object.keys(labels)){
     same(lang+': equal client text keys',Object.keys(strings[lang]).sort(),Object.keys(strings.en).sort());
     same(lang+': complete tip keys',Object.keys(strings[lang].tips).sort(),tips.toSorted());
     for(const key of tips)eq(lang+': tip '+key+' is plain nonempty text',typeof strings[lang].tips[key]==='string'&&strings[lang].tips[key].length>20&&!/[<>]|https?:/.test(strings[lang].tips[key]),true);
-    const doc=readFileSync(join(root,'src/content/tools/hash-generator/'+lang+'.mdx'),'utf8'),fm=doc.match(/^---\n([\s\S]*?)\n---/)[1],body=doc.slice(doc.indexOf('\n---',4)+4),meta=yaml.load(fm);
+    const doc=readFileSync(join(root,'src/content/tools/hash-generator/'+lang+'.mdx'),'utf8'),fm=doc.match(/^---\n([\s\S]*?)\n---/)[1],meta=yaml.load(fm);
     eq(lang+': four steps before FAQ',meta.steps.length===4&&fm.indexOf('steps:')<fm.indexOf('faqItems:'),true);
     eq(lang+': bounded plain steps',meta.steps.every(x=>typeof x==='string'&&x.length<=280&&!/[<>]/.test(x))&&meta.steps.join('').length<=1200,true);
-    eq(lang+': FAQ and SEO byte protection',hash(fm.replace(/^steps:\n(?:  .*\n)*/m,'')),protectedContent[lang].frontmatter);
-    eq(lang+': all non-Usage body byte protection',hash(body),protectedContent[lang].body);
+    eq(lang+': MDX content contract', contractProblems('hash-generator', lang), '');
     const p=pageVM(lang);eq(lang+': input label is local before IIFE',p.get('hg-input').parentElement.querySelector('label').textContent,strings[lang].inputLabel);eq(lang+': initial output has no rows',rows(p).length,0);eq(lang+': localized empty message',p.widget.querySelector('.hg-empty').textContent,strings[lang].emptyOutput);
   }
   eq('MD5 and SHA helpers unchanged',hash(source.slice(source.indexOf('      // Compact MD5'),source.indexOf('      var inputEl'))),'fa6dbe7d03462cdef083bac56db494bb240a4aa8d110cdec05eedbc7de7ef74f');

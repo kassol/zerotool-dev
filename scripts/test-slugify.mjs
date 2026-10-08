@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SlugifyTool.astro'), 'utf8');
@@ -424,17 +425,11 @@ check('v2 source-localized markup',!/data-i18n|var STRINGS|pageLang/.test(source
 check('v2 tips not serialized',source.includes('const { tips: TIPS, ...CLIENT_T } = T;')&&source.includes('define:vars={{ t: CLIENT_T }}'));
 check('v2 registered convert',/'slugify':\s*'convert'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
 const tips=['input','lowercase','trim','separator','copy'];eq('v2 five real-control tips',[...markup.matchAll(/<Toggletip id="sl-tip-([^"]+)"/g)].map(m=>m[1]).sort(),tips.toSorted());
-const protectedDocs={
-  "en": "ba77a240ed8777c8101f80b9be08303dbc5a08af4807dfc27941104ef1f4b91c",
-  "zh": "741cbc9ba89c4a215d9c529fc4603e108a968580581e369e34a876c762ef24ab",
-  "ja": "ecfdfe83701755880ed8959b40987b3ea5efca1b7069c9670fd6ae286137546e",
-  "ko": "cc8cd95fa7d800c3d49b96109b101d937354c030df06f1868fdab91d832f6133"
-};const hash=text=>createHash('sha256').update(text).digest('hex');
 for(const lang of Object.keys(copyLabels)){
  eq(lang+': v2 strings same keys',Object.keys(STR[lang]).sort(),Object.keys(STR.en).sort());eq(lang+': v2 tips same keys',Object.keys(STR[lang].tips).sort(),tips.toSorted());
  for(const tip of tips)check(lang+': v2 plain nonempty '+tip,typeof STR[lang].tips[tip]==='string'&&STR[lang].tips[tip].length>20&&!/[<>]|https?:/.test(STR[lang].tips[tip]));
  const doc=readFileSync(join(root,'src/content/tools/slugify/'+lang+'.mdx'),'utf8'),fm=doc.match(/^---\n([\s\S]*?)\n---/)[1],steps=require('js-yaml').load(fm).steps;
- check(lang+': v2 five bounded plain steps',steps.length===5&&steps.every(s=>s.length<=280&&!/[<>]/.test(s))&&steps.join('').length<=1200);eq(lang+': v2 non-Usage content protected',hash(doc.replace(/^steps:\n(?:  .*\n)*/m,'')),protectedDocs[lang]);
+ check(lang+': v2 five bounded plain steps',steps.length===5&&steps.every(s=>s.length<=280&&!/[<>]/.test(s))&&steps.join('').length<=1200);eq(lang+': MDX content contract', contractProblems('slugify', lang), '');
  await (await import('@mdx-js/mdx')).compile(doc.replace(/^---[\s\S]*?---\s*/,''));check(lang+': v2 MDX compiles',true);
  const q=pageVM(lang);eq(lang+': v2 label localized',q.get('sl-input').parentElement.querySelector('label').textContent,STR[lang].inputText);eq(lang+': v2 initial empty message localized',q.body.querySelector('.sl-empty').textContent,STR[lang].emptyOutput);
  q.input('sl-input','Hello World '.repeat(5000));eq(lang+': v2 output not truncated',q.get('sl-result').textContent,'hello-world-'.repeat(5000).slice(0,-1));q.get('sl-copy').click();eq(lang+': v2 full long output copied',q.copies.at(-1).value,q.get('sl-result').textContent);q.copies.at(-1).resolve();await settle();

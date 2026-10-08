@@ -28,6 +28,7 @@ import { loadPage, readComponent, frontmatterStrings } from './astro-page-harnes
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -465,24 +466,6 @@ const ORIGINAL_CLIENT_STRINGS = {
     "addedColumns": "헤더보다 셀이 많은 행이 있어 열을 추가했습니다: {cols}."
   }
 };
-const PROTECTED_CONTENT = {
-  "en": {
-    "front": "abef3533f874855a961dc612174dfab4d348481e29fbc9272193399d4cf205b9",
-    "body": "ff057f1a7865636ce112c214ba4f05b53b095b2a3ac5fe0ded9d834f7b42b5fa"
-  },
-  "zh": {
-    "front": "b1caee849fd3373b60632f0afc26c3fee104daf04143c935b047617477721b1a",
-    "body": "e9597a443a530b895aeb24feef4578af830d88329dc3eed9d5c3c6b4e6b98b87"
-  },
-  "ja": {
-    "front": "4278dc31d9b7be30d1dab2d94a7561d22c402d3b61b3d88165430476f65db2ec",
-    "body": "57ca09cec2ff6f61ba5276b20011863fca321202c82931bf7cf0fba2884606cd"
-  },
-  "ko": {
-    "front": "3f1d96ebc59ec145d02aa0ab177e84e54d0ec71958e68be346031987286368c6",
-    "body": "8f34369db11904d5637f265e216fa2755388618be12aec257f4248e858a23cbc"
-  }
-};
 const yaml = requireRoot('js-yaml');
 const mdxCompiler = await import(requireRoot.resolve('@mdx-js/mdx'));
 for (const lang of ['en','zh','ja','ko']) {
@@ -495,8 +478,7 @@ for (const lang of ['en','zh','ja','ko']) {
   const [,front,body] = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), data = yaml.load(front);
   eq(lang+' step count', data.steps.length, 6);
   check(lang+' steps within 8/280/1200 before FAQ', data.steps.length<=8&&data.steps.every(s=>typeof s==='string'&&[...s].length<=280)&&data.steps.reduce((n,s)=>n+[...s].length,0)<=1200&&front.indexOf('steps:')<front.indexOf('faqItems:'));
-  eq(lang+' FAQ and SEO byte protection', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')), PROTECTED_CONTENT[lang].front);
-  eq(lang+' protected remaining body with explicit removed-button exceptions', hash(body), PROTECTED_CONTENT[lang].body);
+  eq(lang+' MDX content contract', contractProblems('csv-to-sql', lang), '');
   check(lang+' Usage removed', !/<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error='';try{await mdxCompiler.compile(body);}catch(e){error=String(e);}eq(lang+' MDX compiles',error,'');
 }

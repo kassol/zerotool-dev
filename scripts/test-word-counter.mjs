@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/WordCounterTool.astro'), 'utf8');
@@ -161,7 +162,6 @@ check('v2 stacked input stays 160px and hides empty results', /@media \(max-widt
 check('v2 phone results use two bounded columns', /@media \(max-width: 640px\)[\s\S]*repeat\(2, minmax\(0, 1fr\)\)/.test(css));
 const tips = [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{T.tips\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 eight tips cover input and every metric', tips.map(x => x[3]).sort(), ['input','characters','charsNoSpaces','words','sentences','paragraphs','readingTime','speakingTime'].sort());
-const hashes = { en: 'af8ee969a81b1d477067bedc1010bd2d06f6fb3d4c9ae4d77284faf6c466d4ad', zh: 'fdc6b545189d8c6e80a7e454e6787ae3d1f58b798c75c3f5c7ef90cb07af8d7d', ja: '4e7747594233b564a4769dc84ac13d267ae335413af81d5a5a458c4ad7bcba8c', ko: 'b552aeaf29f2cefe528fd16411e39f6ec2690eda88d7f2f30d80c1c8f8cc23a7' };
 for (const lang of ['en','zh','ja','ko']) {
   const t = strings[lang];
   eq(lang + ' v2 locale keys', Object.keys(t).sort(), Object.keys(strings.en).sort());
@@ -171,7 +171,7 @@ for (const lang of ['en','zh','ja','ko']) {
   const steps = (mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1] || '').trim().split('\n').filter(Boolean).map(line => JSON.parse(line.trim().slice(2)));
   eq(lang + ' v2 four plain steps', steps.length, 4);
   check(lang + ' v2 step limits and actual labels', steps.every(x => [...x].length <= 280 && !/[<>]|\]\(|\*\*|`/.test(x)) && steps.reduce((n,x) => n + [...x].length, 0) <= 1200 && ['inputText','characters','words','readingTime','speakingTime'].every(key => steps.join(' ').includes(t[key])));
-  eq(lang + ' v2 preserves all non-Usage content', sha(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), hashes[lang]);
+  eq(lang + ' MDX content contract', contractProblems('word-counter', lang), '');
   const h = page(lang, false);
   eq(lang + ' v2 initial state is empty', h.widget.dataset.empty, 'true');
   h.input(' \t\n'); eq(lang + ' v2 whitespace has meaningful character counts', [h.widget.dataset.empty, h.stats()], ['false', ['3','0','0','0','0','0 min','0 min']]);

@@ -31,6 +31,7 @@ import { createRequire } from 'node:module';
 import { parseFragment } from 'parse5';
 import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
 import GithubSlugger, { slug as githubSlug } from 'github-slugger';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/MarkdownTocGeneratorTool.astro'), 'utf8');
@@ -143,6 +144,10 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const toc = E.renderTOC(E.parseHeadings(spec.md), Object.assign({ minLevel: 1, maxLevel: 6, includeH1: true, bullet: '-', indent: '2', style: 'github' }, spec.opts || {}));
     eq(lang + ': example ' + (spec.opts && spec.opts.style || 'github'), m[2].trim(), toc);
   }
+  // Fenced Input → Output examples, recomputed with GitHub anchors and a 2-space indent.
+  const tocPairs = examplePairs(mdx.slice(mdx.indexOf('\n---\n', 4) + 5), b => b.lang === 'markdown' && /^#/.test(b.text), b => b.lang === 'markdown' && /^- \[/.test(b.text));
+  check(lang + ': has a fenced Input → Output TOC example', tocPairs.length > 0, lang);
+  for (const [a, b] of tocPairs) eq(lang + ': fenced TOC example equals the engine output', b.text, E.renderTOC(E.parseHeadings(a.text), { minLevel: 1, maxLevel: 6, includeH1: true, bullet: '-', indent: '2', style: 'github' }));
 }
 
 // ---------- real complete page lifecycle + actual shared shortcut ----------
@@ -263,24 +268,6 @@ const protectedLabels={
   "ja": "6b76c76075ab61fee5b60d9686d0b0359bff9b1527a6398f3be5e3a3729d049a",
   "ko": "e97515d12f3f4b0444da3709435dacbd19b735e697ec12a346183b73f81fd412"
 };
-const protectedMdx={
-  "en": {
-    "withoutUsageSHA256": "170243a135e281f76fe0ff4680d43f4dc08198193a1797aa1800545930bc06fb",
-    "frontSHA256": "8f4f59c688342f648306dd38ee7c6a54e881cc6a7ef0a7d640b844af218086ea"
-  },
-  "zh": {
-    "withoutUsageSHA256": "c776d4daff34f5d492c869f43f6f39bf5011dcaf3406b1eba17b4b39b036412a",
-    "frontSHA256": "a18dd5aaf7856bc196b0c8accf6d56df705809a5f0cd92e370fe45a5af60742d"
-  },
-  "ja": {
-    "withoutUsageSHA256": "60816bd7ff72d3e3af7a616a802cc20f2208a1c0e6706882de44d5496da06ecb",
-    "frontSHA256": "c5bfd352ecc2ce81f4d0ee9c845dab249c04d707a38e42297b410328586896c1"
-  },
-  "ko": {
-    "withoutUsageSHA256": "ea66b7fddfed74f1078fb151f890615ac810f5e72c4c6e593d3a8a27764247f5",
-    "frontSHA256": "df21d49335707b557b93c393c6f328f049061cea02897be5d939bf9f850f7329"
-  }
-};
 const countGoldens={en:['0 headings','1 heading','2 headings'],zh:['共 0 个标题','共 1 个标题','共 2 个标题'],ja:['見出し 0 件','見出し 1 件','見出し 2 件'],ko:['제목 0개','제목 1개','제목 2개']};
 for(const lang of ['en','zh','ja','ko']){
   const L=allLabels[lang],p=page({lang});eq(lang+' v2 ten matching tip keys',Object.keys(L.tips),Object.keys(tipMap));
@@ -305,7 +292,7 @@ for(const lang of ['en','zh','ja','ko']){
   const content=readFileSync(join(root,'src/content/tools/markdown-toc-generator',lang+'.mdx'),'utf8');const front=content.match(/^---\n([\s\S]*?)\n---/)[1],data=require('js-yaml').load(front);
   check(lang+' v2 five steps before FAQ',data.steps.length===5 && front.indexOf('steps:')<front.indexOf('faqItems:'));
   check(lang+' v2 step bounds',data.steps.every(x=>[...x].length<=280) && data.steps.reduce((n,x)=>n+[...x].length,0)<=1200);
-  eq(lang+' v2 only Usage moved',sha(content.replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),protectedMdx[lang].withoutUsageSHA256);
+  eq(lang+' MDX content contract', contractProblems('markdown-toc-generator', lang), '');
   check(lang+' v2 actual new summary named by steps',data.steps.some(x=>x.includes(L.formatOptions)));
   check(lang+' v2 Usage removed',!/<h2>(?:How to Use|使用步骤|使い方|사용 방법)<\/h2>/.test(content));
 }

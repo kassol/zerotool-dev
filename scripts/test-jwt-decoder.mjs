@@ -29,6 +29,7 @@ import { compile } from '@mdx-js/mdx';
 import { toolSteps } from '../src/data/llms.mjs';
 import vm from 'node:vm';
 import { parseFragment, defaultTreeAdapter } from 'parse5';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JwtDecoderTool.astro'), 'utf8');
@@ -446,7 +447,6 @@ console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' pass
   const beforePasses = passes, beforeFailures = failures;
   const check = (name, value) => eq(name, !!value, true);
   const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
-  const sha = text => createHash('sha256').update(text).digest('hex');
   const tipKeys = ['input', 'decode', 'example', 'clear', 'results', 'time'];
   eq('six real control/result tips', JSON.stringify([...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1]).sort()), JSON.stringify(tipKeys.map(key => 'jwt-tip-' + key).sort()));
   check('direct flex root with zero minimum sizes', /^\s*<div class="jwt-wrap">/.test(markup) && /\.jwt-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0/.test(css));
@@ -476,24 +476,6 @@ console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' pass
   check('no new network or persistence path', !/fetch\(|XMLHttpRequest|localStorage|sessionStorage|ztPersist\.(?:save|load)/.test(pageScript));
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
   eq('static IDs are unique', new Set(ids).size, ids.length);
-  const retained = {
-    "en": {
-        "frontmatter": "be6d582e53c9ce598920ded1bf047d9061302311bacb94aa8cf5661668a38ccc",
-        "bodyWithoutUsage": "4dfdba6ec5c190bad96bbc259810c313997ee334f25f3c7f0e401184a9fe4c38"
-    },
-    "zh": {
-        "frontmatter": "cfb262a884462ca7ba764480c000d15f1be244c2614809c2c14b39937ffb2d0a",
-        "bodyWithoutUsage": "0595cae3db58032f22edc2f3f246e52bbc6d9a97380596a5970bd139380ebea5"
-    },
-    "ja": {
-        "frontmatter": "639d320c1c7ce999e2eb7dd7662fba378d626477c33df52e312676d6a588fba3",
-        "bodyWithoutUsage": "39a61ec9ad495fe89b7317d0384896dac9a872da66ac430f7e225a71d202699c"
-    },
-    "ko": {
-        "frontmatter": "039c65751a2a3f03b625e2dcc2a45442270aaa7024c1b0e79f2c4aeca234863a",
-        "bodyWithoutUsage": "e4af6307f057d5ee77b53071e6c68126bbd0baeee4b4b3fba7763ceb2209d19e"
-    }
-};
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const entry = pageStrings[lang], { tips, resultLabel, timeLabel, resultEmpty, verifyNotice, ...client } = entry;
     eq(lang + ': localized keys match', JSON.stringify(Object.keys(entry).sort()), JSON.stringify(Object.keys(pageStrings.en).sort()));
@@ -505,13 +487,10 @@ console.log('Page result-tip focus checks: ' + (passes - tipFocusStart) + ' pass
     const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
     check(lang + ': six plain steps within8/280/1200 limits', steps.length === 6 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['decode','loadExample','clear','copy']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
-    eq(lang + ': FAQ and SEO bytes preserved', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
-    let protectedBody = body;
+    eq(lang + ': MDX content contract', contractProblems('jwt-decoder', lang), '');
     if (lang === 'en') {
       check('English Limits specifies numeric seconds and preserves source precision', body.includes('with numeric values in seconds get a readable UTC date. The original numeric precision is retained; the date note displays whole seconds.'));
-      protectedBody = body.replace('with numeric values in seconds get a readable UTC date. The original numeric precision is retained; the date note displays whole seconds.', 'with whole-second integer values get a readable date.');
     }
-    eq(lang + ': non-Usage body unchanged except numeric-date Limits correction', sha(protectedBody), retained[lang].bodyWithoutUsage);
     check(lang + ': old Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     eq(lang + ': llms receives six full steps', JSON.stringify(toolSteps(parsed)), JSON.stringify(steps));
     await compile(body); check(lang + ': MDX body compiles', true);

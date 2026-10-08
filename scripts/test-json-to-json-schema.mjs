@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { transform as esbuildTransform } from 'esbuild';
 import { compile as compileMdx } from '@mdx-js/mdx';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToJsonSchemaTool.astro'), 'utf8');
@@ -338,7 +339,6 @@ eq('no unhandled clipboard rejections', unhandled.length, 0);
 // ---------- v2 page layout ----------
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
-const hash = value => createHash('sha256').update(value).digest('hex');
 check('v2 registered as convert', /'json-to-json-schema':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 check('v2 direct flex root with zero minimum size', /^\s*<div\s+class="jjs-wrap"/.test(layoutMarkup) && /\.jjs-wrap\s*\{[^}]*display:\s*flex;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(css));
 check('v2 controls/status precede panels', layoutMarkup.indexOf('class="jjs-actions"') < layoutMarkup.indexOf('id="jjs-error"') && layoutMarkup.indexOf('id="jjs-error"') < layoutMarkup.indexOf('zt-io"'));
@@ -357,24 +357,6 @@ const tipMap = [["clear", "clear", "clear"], ["input", "inputJson", "input"], ["
 eq('v2 actual Toggletip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, tipMap.length);
 for (const [id, about, key] of tipMap) check('v2 tip binding ' + id, layoutMarkup.includes('<Toggletip id="jjs-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'));
 // Hashes captured before migrating Usage; all other frontmatter and body are protected.
-const protectedContent = {
-  "en": [
-    "e7dc68fcd6d6bb7560bf939dc1becba5102501ecff5a246babd3323fff8ea60a",
-    "1aabafae7644ba3a485aef93d5653ff515c4639718cdd013046342f8a1af7c9a"
-  ],
-  "zh": [
-    "2738c44f4d80816aa283eebb776bf45ccb323bb4293791fc8c643b0df13eeb72",
-    "3adb59819a02b8d298d23e9ad3e253a5a50497dd7aa006cc72bda67d1a22849b"
-  ],
-  "ja": [
-    "812828b1797bfef6b69a5852dbcc84001392b9ec1474937d4374e2786e28a64f",
-    "a8f32f67dce1d6134dcb864d4011c7ddc8e3027a3ba81761299ee3e00982134b"
-  ],
-  "ko": [
-    "159a3b080365c8daa93f9ce6700b55a3906655cc5e0a069d5c28b5d5d1b07b6c",
-    "d97d2223b039956ea68804e471e8f236191f7aaa0aa5f5459340921194f96b77"
-  ]
-};
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const L = pageLabels[lang], p = page(lang);
   const emptyState = () => p.doc.querySelector('.jjs-wrap').dataset.empty;
@@ -400,8 +382,11 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const steps = stepsText.trimEnd().split('\n').map(line => JSON.parse(line.slice(4)));
   check(lang + ': v2 steps bounds/order', steps.length > 0 && steps.length <= 8 && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n, x) => n + [...x].length, 0) <= 1200 && fm.indexOf('steps:') < fm.indexOf('faqItems:'));
   for (const key of ["inputJson", "clear", "copy"]) check(lang + ': v2 steps use actual ' + key, steps.join('\n').includes(L[key]));
-  eq(lang + ': v2 original SEO/FAQ exact', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m, '')), protectedContent[lang][0]);
-  eq(lang + ': v2 non-Usage body/limits/examples exact', hash(body), protectedContent[lang][1]);
+  eq(lang + ': MDX content contract', contractProblems('json-to-json-schema', lang), '');
+  // The page shows the schema with short objects on one line, so compare the parsed values.
+  const schemaPairs = examplePairs(body, (b) => b.lang === 'json', (b) => b.lang === 'json' && /"\$schema"/.test(b.text));
+  check(lang + ': has JSON → schema examples', schemaPairs.length > 0);
+  eq(lang + ': each schema example equals the engine output', schemaPairs.filter(([a, b]) => JSON.stringify(JSON.parse(b.text)) !== JSON.stringify({ $schema: 'http://json-schema.org/draft-07/schema#', ...E.inferSchema(JSON.parse(a.text)) })).map(([, b]) => b.text), []);
   check(lang + ': v2 no duplicate Usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>|^## How to/m.test(body));
   try { await compileMdx(body); check(lang + ': v2 MDX compiles', true); } catch (e) { check(lang + ': v2 MDX compiles', false, e.message); }
   for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {

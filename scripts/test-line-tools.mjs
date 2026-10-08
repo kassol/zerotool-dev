@@ -11,9 +11,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/LineToolsTool.astro'), 'utf8');
@@ -551,25 +551,6 @@ process.off('unhandledRejection',onUnhandled);
   check('script serializes client strings only', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
   check('registered as convert', /'line-tools':\s*'convert'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
   const ids=[...markup.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);check('all IDs unique',new Set(ids).size,ids.length);
-  const retained = {
-  "en": {
-    "frontmatter": "74e968286c664f895062e8643a800201d9e2ab08ed5c16e3a612f0882d0c6a38",
-    "bodyWithoutUsage": "1734e27cf29092335eed4d8fdfb68eb9ae12cc957afac8f92fc033ed503cefed"
-  },
-  "zh": {
-    "frontmatter": "16fcc0b9abfa35f752f9b2ccaee3ee8546c0fde6f00e01670dbbe5ebe5a2962a",
-    "bodyWithoutUsage": "00cd400520610b68c051f9bad0f5a23e87d4cc072a75f956f550092bb0534d67"
-  },
-  "ja": {
-    "frontmatter": "3bf1de5c02655c739caa8472b45a939c1701bcc242b7db220f7db0d14ec04ce4",
-    "bodyWithoutUsage": "efa63b0a09686250bafee842aafcdf6871d6671334b1d936e910b8e21ce08367"
-  },
-  "ko": {
-    "frontmatter": "1234d8bf99b1e6d28ce96c50185c3356b838a8df0b5b56c58ee040500d9fda7f",
-    "bodyWithoutUsage": "202808284047d07cebe658cee2107ae246a60fbc127b8df85050c4d8dd31e843"
-  }
-};
-  const sha = text => createHash('sha256').update(text).digest('hex');
   for(const lang of languages) {
     const T=strings[lang],{tips,...client}=T;
     check(lang+': all translation keys match',Object.keys(T).sort(),Object.keys(strings.en).sort());
@@ -584,8 +565,7 @@ process.off('unhandledRejection',onUnhandled);
     const at=mdx.indexOf('\n---\n',4),meta=mdx.slice(0,at),body=mdx.slice(at+5),{steps}=loadYaml(meta.slice(4));
     check(lang+': six steps fit limits',steps.length===6 && steps.every(step=>typeof step==='string' && step.length<=280 && !/<[^>]*>/.test(step)) && steps.join('').length<=1200);
     for(const key of ['inputLines','output','dedup','sortAsc','sortDesc','sortNum','reverse','shuffle','trim','removeEmpty','copy','clear']) check(lang+': steps name '+key,steps.some(step=>step.includes(T[key])));
-    check(lang+': original FAQ/SEO bytes retained',sha(meta.replace(/^steps:\n(?:  .*\n)*/m,'')),retained[lang].frontmatter);
-    check(lang+': non-Usage body bytes retained',sha(body),retained[lang].bodyWithoutUsage);
+    check(lang+': MDX content contract', contractProblems('line-tools', lang), '');
     check(lang+': Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     const p=page(lang);check(lang+': empty output hidden flag',p.get('lt-output-pane').getAttribute('data-empty'),'true');
     input(p,'z\na');check(lang+': editing keeps output empty',p.get('lt-output-pane').getAttribute('data-empty'),'true');

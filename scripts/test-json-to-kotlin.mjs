@@ -35,6 +35,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToKotlinTool.astro'), 'utf8');
@@ -472,25 +473,7 @@ const V2 = {
       "generate"
     ]
   ],
-  "scriptSHA": "24a9c630058e507d8ec5ddfbcdd1c0db09bc0406c251a56ec2e3ee1fea44076d",
-  "protectedContent": {
-    "en": [
-      "4e8c307da248db62e5eb554a5322f539017cf4bf2cfdd671328bd9f682b0f260",
-      "bf0210418cdeb30183c6b5271dc55494c1a5ec9d1a62959dd792c72ddc77a708"
-    ],
-    "zh": [
-      "339b00a6210c73f142b21b2e4c956c653727c168df2baafb516a1cf521189ed0",
-      "6c5f76b463d233f365bfb5621ab551d1d538e61342368c301a89ef67ef971614"
-    ],
-    "ja": [
-      "0d4201914c73c703de73652f07029ab6bd0f8d0fa755976ba5f04e7ea8fee187",
-      "9178315bfc7b6a8256346669e1b2bdf12185d450562770d181829862d236aa51"
-    ],
-    "ko": [
-      "f654d4220e04bcfe30cf108b265d6faba4ed7dd84815223cc79a6d08abfff9c5",
-      "61a97283886113456437a44177b9bae0d636d0ac0dc2ad9e32efe4afabe64d39"
-    ]
-  }
+  "scriptSHA": "24a9c630058e507d8ec5ddfbcdd1c0db09bc0406c251a56ec2e3ee1fea44076d"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -534,8 +517,7 @@ for (const lang of ['en','zh','ja','ko']) {
   eq(lang + ': v2 steps correspond to controls', steps.length, V2.tips.length);
   eq(lang + ': v2 step limits and order', fm.indexOf('steps:') < fm.indexOf('faqItems:') && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n,x) => n+[...x].length,0) <= 1200, true);
   for (const [, about] of V2.tips) eq(lang + ': v2 steps actual label ' + about, steps.join('\n').includes(L[about]), true);
-  eq(lang + ': v2 SEO and FAQ unchanged', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')), V2.protectedContent[lang][0]);
-  eq(lang + ': v2 non-Usage content unchanged', hash(body.replace(/\n\{\/\* b6-sample-coverage:start \*\/\}[\s\S]*?\{\/\* b6-sample-coverage:end \*\/\}\n/,'')), V2.protectedContent[lang][1]);
+  eq(lang + ': MDX content contract', contractProblems('json-to-kotlin', lang), '');
   eq(lang + ': v2 no duplicate usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
   for (const shellFirst of [false,true]) for (const focus of ['output','tip']) {
     const q = lifecyclePage(lang,shellFirst);golden(q);q.key(focus === 'output' ? q.get(prefix + '-output') : q.doc.querySelector('[data-zt-tip="' + prefix + '-tip-copy"]'));

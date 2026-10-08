@@ -29,6 +29,7 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import domino from '@mixmark-io/domino';
 import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/IpSubnetCalculatorTool.astro'), 'utf8');
@@ -439,12 +440,6 @@ check('v2 tips excluded from script',/define:vars=\{\{ t: CLIENT_T \}\}/.test(so
 const bindings=[...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 tip IDs',bindings.map(m=>m[1]),['isc-tip-input','isc-tip-prefix','isc-tip-results','isc-tip-copy']);
 check('v2 tips outside labels and buttons',!/<(?:label|button)\b[^>]*>(?:(?!<\/(?:label|button)>)[\s\S])*?<Toggletip/.test(markupTemplate));
-const contentHashes={
-  "en": "4c0183233d07ae080596e0a0ab947c6f1776c6cd6ba47ca57ddc8d057d3ae766",
-  "zh": "dc88d1eaa30a977f9553995f10fb9c735b8d7cdf964ce1c23110dd6bfcf9dc25",
-  "ja": "0e22f8c7171b19ca8a2fbd4dbc9a4d237c6daa9075edee33ad41fecbd88a015e",
-  "ko": "7f7927e43e91a49333d53a8fa9ff7dde0a0aab055a6652d0291be7a8b8d6a660"
-};
 const originalStringsHashes={
   "en": "4d5f514b6aa8b815cfeaba10cd92b17a8772ea75d0045e532f7e2b9c673b3e61",
   "zh": "9785685de1b68fcf399d9f8059efe5b8d31ff5fd77a6bf561426d7c924884264",
@@ -467,7 +462,7 @@ for(const lang of ['en','zh','ja','ko']){
  for(const [,id,label,key]of bindings){eq('v2 '+lang+' real tip '+id,p.document.getElementById(id).textContent,TIPS[key]);check('v2 '+lang+' localized tip aria '+id,p.document.querySelector('[data-zt-tip="'+id+'"]').getAttribute('aria-label').includes(T[label]));}
  const content=readFileSync(join(root,'src/content/tools/ip-subnet-calculator',lang+'.mdx'),'utf8'),data=require('js-yaml').load(content.match(/^---\n([\s\S]*?)\n---/)[1]);
  eq('v2 '+lang+' five steps',data.steps.length,5);check('v2 '+lang+' plain bounded steps',data.steps.every(t=>t.length<=280&&!/[<>\n]/.test(t))&&data.steps.join('').length<=1200);check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
- eq('v2 '+lang+' non-Usage content exact',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),contentHashes[lang]);
+ eq('v2 '+lang+' MDX content contract', contractProblems('ip-subnet-calculator', lang), '');
  let error='';try{await compile(content.replace(/^---\n[\s\S]*?\n---/,''));}catch(e){error=String(e);}eq('v2 '+lang+' MDX compiles',error,'');
  for(const order of ['shared-before','shared-after'])for(const selector of ['[data-zt-tip="isc-tip-results"]','[data-zt-tip="isc-tip-copy"]','.isc-table-scroll']){
   const q=page(lang,order);q.key(q.document.querySelector(selector),{key:'l',ctrlKey:true});

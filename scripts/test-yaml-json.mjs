@@ -14,6 +14,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const FILE = 'src/components/tools/YamlJsonTool.astro';
 const SOURCE_FILE = join(ROOT, FILE);
@@ -225,31 +226,15 @@ check('protected conversion core byte count', Buffer.byteLength(algorithm), 1053
 check('early-input recovery remains byte exact', hash(script.slice(script.indexOf('    /* ── Page load ──'))), '0c9b713aae6626572bb9c231584d998724c617f57ff733a63505bc73cd2ba2c1');
 const PROTECTED_CONTENT = {
   "en": {
-    "front": "76ce0fd3238f88aa1f8e4d195b5e81261caaf2c8082572534e96df84b737b29e",
-    "body": "b6618f780b59af4f313339d99da9b708e9012c8abb02232b0005dd4d71e03d9e",
-    "examples": "dc8a3749daa5a54472b4bbf1b5816465711814aa00e110bc5d275f4780470f6a",
-    "exampleCount": 9,
     "client": "f7bfed8034cf52c218ad2f9a09ae46a7de752832da535249f9dd4359ab903a5e"
   },
   "zh": {
-    "front": "2c58a66ea5a9dfe5ab64496252e7a753e865a4ee094319b86724846ca46b4394",
-    "body": "983d1dd8b8c241d7a9d1437b97fd138ad1c101e8a33aefa71d11012c599ede77",
-    "examples": "9cbb33aebc8f22764b3e8892e1ae0fecfc528017ea6858c3ee8ce73b38e3eacd",
-    "exampleCount": 4,
     "client": "f7e6852272fc75dd30701f9e5a2d799772cdf3624fd7eb55072e34260e7f90cf"
   },
   "ja": {
-    "front": "77d64081771ecef044d22f040d3899246f97d73b27731e8de146fcd76818871b",
-    "body": "ab960bee3913332d9efdb9e8c259abd87a43ceaef2255c5aab55e30721acd8e1",
-    "examples": "6fbfda14c8e7768fa2ea525522c315173aef9752c0b35c0f64f6bc676df2d034",
-    "exampleCount": 2,
     "client": "14f5001dc9ac82918950e493c93514306bbdb0eb32f0e4a4b5bfc28437cf0391"
   },
   "ko": {
-    "front": "e24eaea186c847b65a3c9b3b67a68d61f99c6b1805aaa05960de19fbd5b552be",
-    "body": "2ebcf8e7fc8ed5fb1811f8e54530b634be0f3886d950db83c3ac5aad8cfddb1d",
-    "examples": "6fbfda14c8e7768fa2ea525522c315173aef9752c0b35c0f64f6bc676df2d034",
-    "exampleCount": 2,
     "client": "952bbeca3eeb9d8ad488e3440f968593fdd1c09ad718dd63f34511804cdc8e60"
   }
 };
@@ -294,17 +279,20 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     p.advance(1); check(lang + '/' + shellFirst + '/' + side + ' automatic direction still completes after Enter', p.get(peer).value, side === 'yaml' ? JSON_PRETTY : YAML_OUT);
   }
   const content = readFileSync(join(ROOT, 'src/content/tools/yaml-json', lang + '.mdx'), 'utf8');
-  const after = splitMdx(content), front = yaml.load(after.front), expected = PROTECTED_CONTENT[lang];
+  const after = splitMdx(content), front = yaml.load(after.front);
   check(lang + ' has five steps before faqItems', Array.isArray(front.steps) && front.steps.length === 5 && after.front.indexOf('steps:') < after.front.indexOf('faqItems:'), true);
   check(lang + ' steps obey 8/280/1200 limits', front.steps.length <= 8 && front.steps.every(s => typeof s === 'string' && [...s].length <= 280) && front.steps.reduce((n, s) => n + [...s].length, 0) <= 1200, true);
-  check(lang + ' all original frontmatter including SEO/FAQ remains byte exact', hash(after.front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.front);
-  check(lang + ' remaining body exact except documented removed-button sentence', hash(after.body), expected.body);
-  const fences = body => [...body.matchAll(/```[^\n]*\n[\s\S]*?```/g)].map(m => m[0]);
-  check(lang + ' every worked-example code block is byte exact', { count: fences(after.body).length, hash: hash(JSON.stringify(fences(after.body))) }, { count: expected.exampleCount, hash: expected.examples });
+  check(lang + ' MDX content contract', contractProblems('yaml-json', lang), '');
+  // Worked examples are recomputed: a ```json block right after a ```yaml block (or the reverse) is
+  // the page's conversion of that block (blocks are paired from the start, an output never starts a pair).
+  const yjBlocks = [...after.body.matchAll(/```(yaml|json)\n([\s\S]*?)```/g)].map(m => ({ kind: m[1], text: m[2].replace(/\n$/, '') }));
+  const yjPairs = []; for (let i = 1; i < yjBlocks.length; i++) if (yjBlocks[i - 1].kind !== yjBlocks[i].kind) { yjPairs.push([yjBlocks[i - 1], yjBlocks[i]]); i++; }
+  const yjConvert = ({ kind, text }) => { const p = page(lang); p.input('yj-' + kind, text); p.advance(300); return p.get(kind === 'yaml' ? 'yj-json' : 'yj-yaml').value.replace(/\n$/, ''); };
+  check(lang + ' each converted example equals the page output', yjPairs.filter(([a, b]) => yjConvert(a) !== b.text).map(([, b]) => b.text), []);
   check(lang + ' removed Usage heading absent', /<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(after.body), false);
   let mdxError = ''; try { await mdxCompiler.compile(after.body); } catch (e) { mdxError = String(e); }
   check(lang + ' remaining body compiles as actual MDX', mdxError, '');
-  contentProtection.push({ lang, steps: front.steps.length, totalStepChars: front.steps.reduce((n, s) => n + [...s].length, 0), frozenFrontSHA256: expected.front, preservedFrontSHA256: hash(after.front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), frozenBodySHA256: expected.body, bodySHA256: hash(after.body), examples: fences(after.body).length, frozenExampleSHA256: expected.examples, exampleSHA256: hash(JSON.stringify(fences(after.body))) });
+  contentProtection.push({ lang, steps: front.steps.length, totalStepChars: front.steps.reduce((n, s) => n + [...s].length, 0), faqItems: (front.faqItems ?? []).length, convertedExamples: yjPairs.length });
 }
 const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
 const compiled = await transform(source, { filename: join(ROOT, FILE) });

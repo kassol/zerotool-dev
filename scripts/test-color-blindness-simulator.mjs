@@ -47,13 +47,13 @@
 // Run: node scripts/test-color-blindness-simulator.mjs
 
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { converter, filterDeficiencyProt, filterDeficiencyDeuter, filterDeficiencyTrit, differenceEuclidean, wcagContrast } from 'culori';
 import Color from 'colorjs.io';
 import { load as loadYaml } from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -788,13 +788,6 @@ console.log(`Page lifecycle: ${passes-lifecycleStart.passes} passed, ${failures-
   }
   // e6748489 snapshots: frontmatter without steps, and the complete body after removing only
   // its localized How to Use section. Keep FAQ, SEO, Limits, examples and cbs-check annotations.
-  const retained = {
-    en: ['f335d0678d73e840', 'e64ed6939c7a26ce'],
-    zh: ['43f9b055b2143731', '3acc74e07943eb31'],
-    ja: ['b62c8a214b840ecb', 'aea1e91bd77d49e2'],
-    ko: ['76f7e8dd15702e06', 'e8b6f000b0091c1b'],
-  };
-  const hash = text => createHash('sha256').update(text.trim()).digest('hex').slice(0, 16);
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ' tip keys cover all controls', Object.keys(STRINGS[lang].tips).sort(), tipKeys);
     checkTipTree(lang, STRINGS[lang].tips, STRINGS.en.tips);
@@ -809,8 +802,7 @@ console.log(`Page lifecycle: ${passes-lifecycleStart.passes} passed, ${failures-
     check(lang + ' steps fit per-step and total limits', Array.isArray(steps) && steps.every(s => s.length <= 280) && steps.join('').length <= 1200);
     check(lang + ' usage heading removed', !/<h2>(?:How to Use|操作步骤|使い方|사용 방법)<\/h2>/.test(body));
     check(lang + ' Limits retained', /<h2>(?:Limits|限制|制限|제한 사항)<\/h2>/.test(body));
-    eq(lang + ' SEO and FAQ unchanged from before layout', hash(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang][0]);
-    eq(lang + ' all non-usage body content unchanged', hash(body), retained[lang][1]);
+    eq(lang + ' MDX content contract', contractProblems('color-blindness-simulator', lang), '');
   }
   console.log(`v2 page layout: ${passes-layoutStart.passes} passed, ${failures-layoutStart.failures} failed`);
 }

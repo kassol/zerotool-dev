@@ -30,6 +30,7 @@ import vm from 'node:vm';
 import { createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -866,7 +867,7 @@ function makePage(lang='en', layoutFirst=false) {
   check('page serializes only CLIENT_L and worker URL',/define:vars=\{\{ S: CLIENT_L, WORKER_URL \}\}/.test(source)&&!/TIPS|STRINGS|data-i18n/.test(pageScript));
   check('protected engine bytes unchanged',sha(source.slice(startIndex,endIndex+END_MARK.length))==='7b4e5f81ff6b8bc56a545fb79775aea4cd06535650c789d8f47dcc5b28adc8a0');
   check('complete page script matches the copy-lifecycle fix snapshot',sha(pageScript)==='abdb34a0659c77996efb0827ece094974f5653aedf6b9e3ff483974b96e7f236');
-  const retained={"en": {"meta": "410ab5ed8e9db222b79fe36fe1f4afe9b4e7faa013fddb0681c69fcd3e511319", "body": "da35a319310d1b2b9ce34d81a66c5dbb09d5a343792fc3830199251620b0557c", "markers": 5}, "zh": {"meta": "8f8b008e996c53053b9f8db7c52100af15685c25583aa548d4ab1ffb07466843", "body": "5595c96180afe27134a315563b4353279ce50bad34a749251f1470cd0385a25f", "markers": 4}, "ja": {"meta": "9f4005ba458ee0f1e789a6631e10782bda424c4929a1d511e63b61cd67805949", "body": "a2b5c8fac997b361502e7e3a07a3227815c16530da1afb8615db6b962e3ad370", "markers": 3}, "ko": {"meta": "ed0c1eb51473c9aff56849fd84cd2a534b99b950dce4d2d2c130b40bf5e2cc18", "body": "1ce37191baf536ff2d98251e034a0aeebe17a3b29655b7949f7be917fd3082c6", "markers": 3}};
+  const retained={"en": {"markers": 5}, "zh": {"markers": 4}, "ja": {"markers": 3}, "ko": {"markers": 3}};
   for(const lang of ['en','zh','ja','ko']){
     const entry=STRINGS[lang];
     check(lang+' tip keys are complete',Object.keys(entry.tips).sort().join()===tipKeys.join());
@@ -879,8 +880,7 @@ function makePage(lang='en', layoutFirst=false) {
     check(lang+' has six bounded plain-text steps',steps.length===6&&steps.every(step=>typeof step==='string'&&step.length<=280&&!/<[^>]*>/.test(step))&&steps.join('').length<=1200);
     for(const key of ['tabGen','prefix','cost','password','generate','copy','cancel','tabVer','example','verify'])check(lang+' steps use current '+key+' label',steps.some(step=>step.includes(entry[key])));
     check(lang+' Usage removed and Limits retained',!/<h2>(?:How to use|怎么用|使い方|사용 방법)<\/h2>/.test(body)&&/<h2>(?:Limits|限制|制限|제한)<\/h2>/.test(body));
-    check(lang+' FAQ and SEO metadata byte-for-byte retained',sha(meta.replace(/^steps:\n(?:  - .*\n)*/m,''))===retained[lang].meta);
-    check(lang+' non-Usage body byte-for-byte retained',sha(body)===retained[lang].body);
+    check(lang+' MDX content contract', !contractProblems('bcrypt-generator', lang), contractProblems('bcrypt-generator', lang));
     check(lang+' all recalculation markers retained',(body.match(/bcg-check:/g)||[]).length===retained[lang].markers);
   }
   const require=createRequire(import.meta.url);

@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import { loadPage, readComponent, frontmatterStrings } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CsvToMarkdownTool.astro'), 'utf8');
@@ -323,24 +324,6 @@ const ORIGINAL_CLIENT_STRINGS = {
     "addedColumns": "헤더보다 필드가 많은 행이 있어 다음 열을 추가했습니다: {cols}."
   }
 };
-const PROTECTED_CONTENT = {
-  "en": {
-    "front": "99a782b68c604e4b363d5162ee072fb86e3d71e416ac4d1c6c8f886ece45ed78",
-    "body": "47baed871ff4bcfcc2cd8d44a2ef734bffbd360c99634b8a826c8ee0d2deaffe"
-  },
-  "zh": {
-    "front": "e37a3c3a511beed19d6937eb41c5f139a0a1798e44dac9d9c4b2812dfaa4dd89",
-    "body": "68185714048f39cbd81820fede05725a9ed0510d2554e0ef4160c38cfbecc94b"
-  },
-  "ja": {
-    "front": "ba3ce4a03e8717b58f01b107a80bd627617120439dfb741ba4e434dbc6a519b4",
-    "body": "25221ad87e6141925f62b8fa9a2c0a750836139ce474bfbdaa12f3a389cf340b"
-  },
-  "ko": {
-    "front": "2fddedcf7e83a0c0b6008547af81af213547577f4837755aa01d7113881ece51",
-    "body": "6e5bd3f598e7b0151996d92e415df898c938a1854009dc42019fc497d926aa04"
-  }
-};
 const yaml = requireRoot('js-yaml');
 const mdxCompiler = await import(requireRoot.resolve('@mdx-js/mdx'));
 for (const lang of ['en','zh','ja','ko']) {
@@ -353,8 +336,10 @@ for (const lang of ['en','zh','ja','ko']) {
   const [,front,body] = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), data = yaml.load(front);
   eq(lang+' step count', data.steps.length, 4);
   check(lang+' steps within 8/280/1200 before FAQ', data.steps.length<=8&&data.steps.every(s=>typeof s==='string'&&[...s].length<=280)&&data.steps.reduce((n,s)=>n+[...s].length,0)<=1200&&front.indexOf('steps:')<front.indexOf('faqItems:'));
-  eq(lang+' FAQ and SEO byte protection', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')), PROTECTED_CONTENT[lang].front);
-  eq(lang+' protected remaining body with explicit removed-button exceptions', hash(body), PROTECTED_CONTENT[lang].body);
+  eq(lang+' MDX content contract', contractProblems('csv-to-markdown', lang), '');
+  const mdPairs = examplePairs(body, b => b.lang === 'csv', b => b.lang === 'markdown');
+  eq(lang+' has CSV → Markdown examples', mdPairs.length > 0, true);
+  eq(lang+' each Markdown example equals the engine output for one alignment', mdPairs.filter(([a, b]) => !['left','center','right'].some(al => md(a.text, al).markdown === b.text)).map(([, b]) => b.text), []);
   check(lang+' Usage removed', !/<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error='';try{await mdxCompiler.compile(body);}catch(e){error=String(e);}eq(lang+' MDX compiles',error,'');
 }

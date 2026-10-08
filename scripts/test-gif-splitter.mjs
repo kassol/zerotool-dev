@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_B14_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(process.env.ZT_B14_SOURCE || join(root, 'src/components/tools/GifSplitterTool.astro'), 'utf8');
@@ -1167,7 +1168,7 @@ await scene('v2-source-contract',async()=>{
   const mdx=readFileSync(path,'utf8'),meta=yaml.load(mdx.match(/^---\n([\s\S]*?)\n---/)[1]);
   check(phase+'/'+lang+'-6-steps',6,meta.steps?.length);
   check(phase+'/'+lang+'-step-bounds',true,meta.steps.every(v=>v.length<=280)&&meta.steps.join('').length<=1200);
-  check(phase+'/'+lang+'-FAQ-kept',5,meta.faqItems.length);
+  check(phase+'/'+lang+'-MDX content contract', contractProblems('gif-splitter', lang), '');
   check(phase+'/'+lang+'-Usage-removed',false,/^## (How to Use|使用步骤|使い方|사용 방법)$/m.test(mdx));
  }
  const registry=readFileSync(join(ROOT,'src/data/tool-layouts.ts'),'utf8');

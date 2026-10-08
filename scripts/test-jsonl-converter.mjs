@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const source = readFileSync(new URL('../src/components/tools/JsonlConverterTool.astro', import.meta.url), 'utf8');
 const STR = vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1].replace(/ as const;/, ';') + ';STRINGS');
@@ -397,24 +398,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 /* ── v2 page layout ── */
 check('all FIX behavior checks retained', checks.length, 884);
 check('client script only loses runtime localization and redundant Validate listener', hash(js), 'a771d59cb884172a48557c36fcbe77441cf36654f4b54b16752d0aa53ae24e90');
-const PROTECTED_CONTENT = {
-  "en": {
-    "front": "c88aa7d972886ee53e45c57496fbf900ca65619f28cddebfc2f1b330f8175bc1",
-    "body": "581e20a3eac6b3b4ab74dd0f10b2eded210ef7f1fe7375a44aef94bf250ddf92"
-  },
-  "zh": {
-    "front": "84240ec3322efd643b6237ff734b97f708232aed5b5d833050fbb056e5859627",
-    "body": "c29acccdf7dc8a373f677c67122a0e0279cc0d863908737953b15c241a832a47"
-  },
-  "ja": {
-    "front": "efe9c22d17f2d993ea7d3cb2f8471e38d04427eb151e36f487fc4200d6b9bd06",
-    "body": "2ad1d8db37f2dedba18e320c8cb8d463d514e2d2983d0654635850ff95bd4297"
-  },
-  "ko": {
-    "front": "5f6fea9cd1a532707ccb511cfbe6e0e95f80200cc62dc19eefb42e86020aa058",
-    "body": "530a9a670d3d7b48f1851c0785a51a413b9c4ef8e850fe0403325d0bb18665e7"
-  }
-};
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jlc-wrap"/.test(markup), true);
@@ -440,7 +423,7 @@ check('dynamic issue rows use global selectors', /\.jlc-issues-list :global\(\.j
 check('convert registry', readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8').match(/['"]jsonl-converter['"]\s*:\s*['"]([^'"]+)['"]/)?.[1], 'convert');
 const requireRoot = createRequire(import.meta.url), mdxCompiler = await import('@mdx-js/mdx');
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
-  const S = STR[lang], payload = clientStrings(lang), expected = PROTECTED_CONTENT[lang];
+  const S = STR[lang], payload = clientStrings(lang);
   check(lang + ' recursive localization key parity', [Object.keys(S), Object.keys(S.tips)], [Object.keys(STR.en), Object.keys(STR.en.tips)]);
   check(lang + ' twelve same tip keys', Object.keys(S.tips), ['jsonl','json','toJson','toJsonl','sample','ignoreEmpty','validOnly','pretty','copyJsonl','copyJson','clear','issues']);
   check(lang + ' tip plain text bounds', Object.values(S.tips).every(v => typeof v === 'string' && v.length && [...v].length <= 280 && !/[<>]/.test(v)), true);
@@ -468,8 +451,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const [,front,body] = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), fm = requireRoot('js-yaml').load(front);
   check(lang + ' six steps before FAQ', fm.steps.length === 6 && front.indexOf('steps:') < front.indexOf('faqItems:'), true);
   check(lang + ' step8/280/1200 limits', fm.steps.length <= 8 && fm.steps.every(v => typeof v === 'string' && [...v].length <= 280) && fm.steps.reduce((n,v) => n + [...v].length,0) <= 1200, true);
-  check(lang + ' metadata FAQ only correct redundant Validate wording', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.front);
-  check(lang + ' body protects cases limits and only removes Usage/corrects Validate wording', hash(body), expected.body);
+  check(lang + ' MDX content contract', contractProblems('jsonl-converter', lang), '');
   let error = ''; try { await mdxCompiler.compile(body); } catch (e) { error = String(e); } check(lang + ' MDX compiles', error, '');
 }
 const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));
