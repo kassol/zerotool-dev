@@ -305,7 +305,7 @@ err(store, '$.store.*~');
   if (labels.zh) check('zh 3 条匹配', EC.matchCountText(3, labels.zh.one, labels.zh.many) === '3 条匹配');
   if (labels.ja) check('ja 1 件マッチ', EC.matchCountText(1, labels.ja.one, labels.ja.many) === '1 件マッチ');
   if (labels.ko) check('ko 2개 매칭', EC.matchCountText(2, labels.ko.one, labels.ko.many) === '2개 매칭');
-  check('count element uses matchCountText', /countEl\.textContent = matchCountText\(/.test(source));
+  check('count element uses matchCountText', /countEl\.textContent = (?:joinNotes\()?matchCountText\(/.test(source));
 }
 
 // ---------- English page examples and the invalid-JSON message ----------
@@ -552,6 +552,37 @@ for (const lang of ['en','zh','ja','ko']) {
   eq(lang+' GA: after Ctrl+L the same query counts again', runs(), 3);
   h.wrap.querySelectorAll('.jpt-pill')[1].click();
   eq(lang+' GA: example click sends only its example event', [runs(), h.tracks.filter(t => t[1] === 'example').length], [3, 1]);
+}
+
+// ---------- numbers JavaScript cannot hold exactly, full-width characters ----------
+// JSON.parse turned 12345678901234567890 into 12345678901234567000, -0 into 0 and 1e400 into
+// Infinity (shown as null) with no message. The status line now lists them. A full-width ．
+// inside a shorthand name made the query silently find nothing; the status line now says why.
+{
+  const jse = readFileSync(join(root, 'src/components/tools/json-schema-validator-engine.js'), 'utf8');
+  const fn = (text, name) => { const m = text.match(new RegExp('^([ \\t]*)function ' + name + '\\([\\s\\S]*?^\\1\\}', 'm')); return m ? m[0].split('\n').map(l => l.trim()).join('\n') : null; };
+  for (const name of ['decimalKey', 'isExactNumber']) {
+    check(name + ' is copied verbatim from json-schema-validator-engine.js', fn(jse, name) !== null && fn(jse, name) === fn(inline, name), name);
+  }
+  for (const lang of ['en','zh','ja','ko']) {
+    const L = labels[lang];
+    const h = page(lang);
+    h.input('jpt-json', '{"id":12345678901234567890,"n":-0,"big":1e400,"ok":1.0,"id2":12345678901234567890}');
+    h.input('jpt-expr', '$.ok');
+    const list = '12345678901234567890 → 12345678901234567000, -0 → 0, 1e400 → null';
+    eq(lang+' number note lists the changed numbers', h.get('jpt-count').textContent,
+      L.matchOne.replace('{n}', '1') + ' ' + L.numberNote.replace('{n}', '4').replace('{list}', list));
+    h.input('jpt-expr', '$.missing');
+    eq(lang+' number note also shows when nothing matches', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.numberNote.replace('{n}', '4').replace('{list}', list)]);
+    h.input('jpt-json', '{"a":1.50,"b":"12345678901234567890","c":0.1,"d":9007199254740991}'); h.input('jpt-expr', '$.a');
+    eq(lang+' exact numbers and number-like strings give no note', h.get('jpt-count').textContent, L.matchOne.replace('{n}', '1'));
+    h.input('jpt-json', '{"store":{"book":[1]}}'); h.input('jpt-expr', '$.store．book');
+    eq(lang+' full-width dot: no match plus a note', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.fullwidthNote.replace('{chars}', '．')]);
+    h.input('jpt-expr', "$['ｂｏｏｋ']");
+    eq(lang+' full-width text in a quoted name gives no note', h.get('jpt-count').textContent, '');
+    h.input('jpt-expr', '$.store.book');
+    eq(lang+' half-width query matches', h.get('jpt-count').textContent, L.matchOne.replace('{n}', '1'));
+  }
 }
 
 await settle();eq('no unhandled copy rejections',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
