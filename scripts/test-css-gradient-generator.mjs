@@ -199,3 +199,63 @@ function open(s,lang='en',shellFirst=false){
   if(process.env.ZT_B12_LAYOUT_REPORT)(await import('node:fs')).writeFileSync(process.env.ZT_B12_LAYOUT_REPORT,JSON.stringify({node:process.version,passes,failures,tips:tips.length},null,2)+'\n');
   if(failures)process.exitCode=1;
 }
+
+
+// ---------- Worked examples on the four tool pages (`cgg-check`) ----------
+// Each annotation records the control settings, as the page would hold them: the type tab, the
+// whole-number Angle / From fields, the Shape and Position selects, and the stops as
+// [picker value, position] in list order (the picker value is what buildStopList() reads).
+// gradientCss() and stopList() rebuild the rule, and the first code block after the annotation
+// must show it byte for byte. Every `.gradient {` block on a page must carry an annotation.
+{
+  const { toolMdxContract, fencedBlocks, LANGS } = await import('./lib/tool-mdx-contract.mjs');
+  let passes = 0, failures = 0;
+  const check = (name, ok, detail = '') => { if (ok) passes++; else { failures++; console.log('FAIL: examples ' + name + (detail ? ' — ' + detail : '')); } };
+  const POSITIONS = ['center', 'top', 'bottom', 'left', 'right', 'top left', 'top right', 'bottom left', 'bottom right'];
+  const whole = (n, lo, hi) => Number.isInteger(n) && n >= lo && n <= hi;
+  function rule(spec) {
+    const stops = spec.stops;
+    if (!Array.isArray(stops) || stops.length < 2 || stops.length > 6) throw new Error('the tool keeps 2–6 stops');
+    for (const [color, pos] of stops) {
+      if (!/^#[0-9a-f]{6}$/.test(color)) throw new Error(`stop color ${color} is not a lowercase #rrggbb picker value`);
+      if (!whole(pos, 0, 100)) throw new Error(`stop position ${pos} is not a whole number from 0 to 100`);
+    }
+    const list = stopList(stops.map(([color, pos]) => ({ color, pos: String(pos) }))).join(', ');
+    let opts;
+    if (spec.type === 'linear') {
+      if (!whole(spec.angle, 0, 360)) throw new Error('angle must be a whole number from 0 to 360');
+      opts = { angle: String(spec.angle) };
+    } else if (spec.type === 'radial') {
+      if (!['circle', 'ellipse'].includes(spec.shape) || !POSITIONS.includes(spec.position)) throw new Error('radial needs a listed shape and position');
+      opts = { shape: spec.shape, position: spec.position };
+    } else if (spec.type === 'conic') {
+      if (!whole(spec.from, 0, 360) || !POSITIONS.includes(spec.position)) throw new Error('conic needs from 0–360 and a listed position');
+      opts = { from: String(spec.from), position: spec.position };
+    } else throw new Error(`unknown type ${spec.type}`);
+    return '.gradient {\n  background: ' + gradientCss(spec.type, opts, list) + ';\n}';
+  }
+  function verify({ spec, after }) {
+    const want = rule(spec);
+    const block = fencedBlocks(after)[0];
+    if (!block) return 'no code block after the annotation';
+    return block.text === want ? null : `page shows ${JSON.stringify(block.text)}, engine writes ${JSON.stringify(want)}`;
+  }
+  const contract = toolMdxContract('css-gradient-generator', { annotations: [{ tag: 'cgg-check', min: 2, verify }] });
+  for (const r of contract.results.filter((r) => r.rule.includes('cgg-check'))) check(r.message, r.ok);
+  for (const lang of LANGS) {
+    const body = contract.docs[lang].body;
+    const blocks = [...body.matchAll(/(\{\/\*\s*cgg-check:[^\n]*\*\/\}[ \t]*\n)?```css\n\.gradient \{/g)];
+    check(`${lang} has generated .gradient blocks`, blocks.length >= 2, String(blocks.length));
+    blocks.forEach((m, i) => check(`${lang} .gradient block #${i + 1} is annotated`, !!m[1]));
+  }
+  // The checker itself: a wrong output, an upper-case picker value and a 7th stop are reported.
+  const fake = (spec, text) => verify({ spec, after: '\n```css\n' + text + '\n```\n' });
+  const base = { type: 'linear', angle: 90, stops: [['#3b82f6', 0], ['#8b5cf6', 100]] };
+  check('checker accepts the engine output', fake(base, rule(base)) === null);
+  check('checker reports a changed output', fake(base, rule(base).replace('90deg', '0deg')) !== null);
+  let threw = 0;
+  for (const bad of [{ ...base, stops: [['#3B82F6', 0], ['#8b5cf6', 100]] }, { ...base, stops: Array(7).fill(['#000000', 0]) }, { ...base, angle: 12.5 }]) { try { rule(bad); } catch { threw++; } }
+  check('checker rejects settings the controls cannot hold', threw === 3, String(threw));
+  console.log('EXAMPLES ' + passes + ' passed, ' + failures + ' failed');
+  if (failures) process.exitCode = 1;
+}
