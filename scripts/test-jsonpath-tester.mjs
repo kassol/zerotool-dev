@@ -582,6 +582,8 @@ for (const lang of ['en','zh','ja','ko']) {
     eq(lang+' exact numbers and number-like strings give no note', h.get('jpt-count').textContent, L.matchOne.replace('{n}', '1'));
     h.input('jpt-json', '{"store":{"book":[1]}}'); h.input('jpt-expr', '$.store．book');
     eq(lang+' full-width dot: no match plus a note', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.fullwidthNote.replace('{chars}', '．')]);
+    h.input('jpt-expr', '$.store【0】');
+    eq(lang+' Chinese-mode brackets: no match plus a note', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.fullwidthNote.replace('{chars}', '【 】')]);
     h.input('jpt-expr', "$['ｂｏｏｋ']");
     eq(lang+' full-width text in a quoted name gives no note', h.get('jpt-count').textContent, '');
     h.input('jpt-expr', '$.store.book');
