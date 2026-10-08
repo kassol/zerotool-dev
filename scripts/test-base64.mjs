@@ -477,13 +477,17 @@ function b64Example({ spec, after, lang }) {
   for (const r of rows) check('worked example: ' + r.message, r.ok);
   check('worked examples found in all 4 pages', rows.filter((r) => r.rule.includes('matches the engine')).length >= 8);
 }
-// The four pages say Standard ignores line breaks but URL-safe can fail on them (fromUrlSafe pads
-// by the length that still includes whitespace). If the page code changes, update the pages.
+// Whitespace inside the input: Standard (atob) drops ASCII whitespace (tab, LF, FF, CR, space).
+// URL-safe used to add "=" by the length that still included it, so 'eyJh\nIjoxfQ' failed there
+// while Standard decoded it. Both alphabets now drop the same whitespace before decoding.
 for (const lang of Object.keys(expected)) {
-  const run = (variant) => { const p = pageVM(lang); if (variant) p.choose('b64variant', variant); p.choose('b64mode', 'decode'); p.input('eyJh\nIjoxfQ'); p.advance(300); return p.snapshot(); };
-  equal(lang + ': Standard decode ignores a line break', run().output, '{"a":1}');
-  equal(lang + ': URL-safe decode of the same wrapped text fails', run('urlsafe').status, strings[lang].invalidBase64);
-  check(lang + ': page describes the URL-safe line-break failure', /URL-safe/.test(readFileSync(join(root, 'src/content/tools/base64', lang + '.mdx'), 'utf8').split('\n').find((l) => /Standard/.test(l) && /(whitespace|换行|改行|줄바꿈)/.test(l)) || ''));
+  const run = (input, variant) => { const p = pageVM(lang); if (variant) p.choose('b64variant', variant); p.choose('b64mode', 'decode'); p.input(input); p.advance(300); return p.snapshot(); };
+  for (const input of ['eyJh\nIjoxfQ', 'eyJh IjoxfQ', 'eyJh\r\nIjox\tfQ', ' eyJhIjoxfQ\n', 'ey Jh\fIjoxfQ==']) {
+    same(lang + ': Standard and URL-safe decode the same wrapped text ' + JSON.stringify(input), [run(input).output, run(input, 'urlsafe').output], ['{"a":1}', '{"a":1}']);
+  }
+  equal(lang + ': URL-safe still decodes - and _ after a line break', run('eyJuYW1lIjoi7ZmN6ri4\n64-ZIn0', 'urlsafe').output, '{"name":"홍길동"}');
+  const text = readFileSync(join(root, 'src/content/tools/base64', lang + '.mdx'), 'utf8');
+  check(lang + ': page no longer says URL-safe fails on line breaks', !/(URL-safe mode, remove line breaks|URL-safe 模式会先按含空白|URL-safe モードでは空白を含めた|URL-safe 모드는 공백을 포함한)/.test(text));
 }
 
 
