@@ -22,6 +22,9 @@
 // and value comes back (keys compared sorted, generated _id dropped only where the sample has
 // none, ISO strings on Date paths compared as toISOString()). Otherwise SKIP; no database.
 // AB_TYPES_EVIDENCE=<dir> writes generated files there.
+// GA (2026-10-08): the page sends one `generate` event per committed action (input or model-name
+// change, Example, an option that changes) and only when a schema is shown; none on page load or
+// after each 300 ms typing pause (before: every generation, including the load).
 // Run: node scripts/test-json-to-mongoose.mjs
 
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
@@ -30,7 +33,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import ts from 'typescript';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToMongooseTool.astro'), 'utf8');
@@ -57,7 +60,7 @@ function gen(json, model, mode, timestamps, required) {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
@@ -82,7 +85,7 @@ function session() {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { get activeElement() { return activeInside ? elements['jtm-input'] : null; }, querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
@@ -180,6 +183,43 @@ eq('"release-date" quoted', js.includes('  "release-date": { type: String },'), 
 eq('$ok and _id2 stay bare', js.includes('  $ok: { type: Number },') && js.includes('  _id2: { type: Number },'), true);
 eq('"2fa" quoted', js.includes('  "2fa": { type: Boolean },'), true);
 
+// Model name: variable and interface names come from nameStem (ASCII identifier, "_" before a digit);
+// the name passed to mongoose.model() is a string literal, so quotes and backslashes are escaped.
+const MODEL_NAMES = [["it's", "It's"], ['a\\b', 'A\\b'], ['2fa', '2fa'], ['class', 'Class'], ['用户', '用户'], ['order-item', 'OrderItem'], ['!!!', '!!!']];
+for (const [raw, want] of MODEL_NAMES) {
+  for (const mode of ['javascript', 'typescript']) {
+    const out = gen('{"a":1}', raw, mode, true, false);
+    eq(`model name ${raw} (${mode}) parses`, mode === 'javascript' ? parsesAsJs(out) : parsesAsTs(out), true);
+  }
+  const captured = [];
+  new Function('require', 'module', gen('{"a":1}', raw, 'javascript', true, false))(() => ({ Schema: function () {}, model: (name) => captured.push(name) }), { exports: {} });
+  eq(`model name ${raw} reaches mongoose.model() as ${want}`, captured[0], want);
+}
+
+// ~150,000 root objects with an array field: the arrays of a key are joined with a loop
+// (concat.apply spread them as arguments and overflowed the stack, master included).
+{
+  const many = JSON.stringify(Array.from({ length: 150000 }, (_, i) => ({ id: i, tags: ['a'] })));
+  let out; try { out = gen(many, 'Item', 'javascript', false, false); } catch (e) { out = String(e); }
+  eq('many root objects with array fields generate', out.includes('  tags: [String],'), true);
+}
+
+// Mongoose 9.10.3 Schema.reserved (lib/schema.js), without prototype (skipped as a special property).
+const MONGOOSE_RESERVED = ['emit', 'listeners', 'removeListener', 'collection', 'errors', 'get', 'init', 'isModified', 'isNew', 'populated', 'remove', 'save', 'toObject', 'validate'];
+
+// B1: a "__proto__" key is written as a computed key, so the object literal gets an own property
+// (a bare `__proto__:` sets the prototype); the TypeScript interface quotes it.
+{
+  const json = '{"__proto__":{"x":1},"b":1,"constructor":"c"}';
+  const jsOut = gen(json, 'Doc', 'javascript', false, false);
+  eq('B1: __proto__ is a computed key in the schema object', jsOut.includes('  ["__proto__"]: '), true);
+  const defs = [];
+  new Function('require', 'module', jsOut)(() => ({ Schema: function (def) { defs.push(def); }, model: () => null }), { exports: {} });
+  eq('B1: the root schema definition has an own __proto__ property', Object.hasOwn(defs.at(-1), '__proto__') && Object.getPrototypeOf(defs.at(-1)) === Object.prototype, true);
+  const tsOut = gen(json, 'Doc', 'typescript', false, false);
+  eq('B1: TypeScript output parses and quotes __proto__ in the interface', parsesAsTs(tsOut) === true && tsOut.includes('  "__proto__": '), true);
+}
+
 eq('null is skipped: null then string → String', gen('[{"v": null}, {"v": "x"}]', 'T', 'javascript', false, false).includes('v: { type: String },'), true);
 
 const nestedRepro = '{"a":{"meta":{"x":1}},"b":{"meta":{"y":2}}}';
@@ -190,6 +230,8 @@ eq('A-MONGOOSE-NESTED-NAME: real convert keeps b.meta.y', /const bMetaSchema = n
 
 // {/* jtm-check: {"json", "model", "mode", "timestamps", "required"} */}: the next code block is the
 // input JSON and the one after it the full output, both as on the page.
+const JTM_DATES = [];
+const PAGE_JSON = [];
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, `src/content/tools/json-to-mongoose/${lang}.mdx`), 'utf8');
   let count = 0;
@@ -199,9 +241,26 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const blocks = [...mdx.slice(m.index).matchAll(/<pre><code>\{`([\s\S]*?)`\}<\/code><\/pre>/g)].map((x) => new Function('return `' + x[1] + '`')());
     eq(`${lang} jtm-check ${count}: input block`, blocks[0], spec.json);
     eq(`${lang} jtm-check ${count}: output block`, blocks[1], gen(spec.json, spec.model, spec.mode, spec.timestamps, spec.required));
+    if (!PAGE_JSON.some(([, json]) => json === spec.json)) PAGE_JSON.push([`page ${lang} jtm-check ${count}`, spec.json]);
   }
-  eq(`${lang} page has the inference example`, count >= 1, true);
+  eq(`${lang} page has at least 2 jtm-check examples`, count >= 2, true);
+  const pageLabels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
+  eq(`${lang} page quotes the skipped-values status as the page shows it`, mdx.includes(pageLabels[lang].msgSkipped.replace('{n}', '5').replace('{types}', 'number × 2, string, null, array')), true);
+  eq(`${lang} page names the three keys Mongoose skips`, ['<code>{"__proto__"}</code>', '<code>constructor</code>', '<code>prototype</code>', `<code>{'["__proto__"]'}</code>`].every((k) => mdx.includes(k)), true);
   eq(`${lang} page no longer says the first value decides`, /first value wins|首个值|最初の値|첫 값/.test(mdx), false);
+  // {/* jtm-date: {"in", "iso"} */}: the value a Date path stores for `in`, as toISOString(), must be shown
+  // in inline code before the next jtm-date note or heading. Mongoose casts a string with the Date
+  // constructor, except numeric strings outside the Date year range, which it reads as milliseconds
+  // (lib/cast/date.js; mongoosejs.com/docs/tutorials/dates.html "Casting Edge Cases"). With
+  // MONGOOSE_TEST_DIR the real cast is used below as well.
+  for (const note of annotations(mdx.slice(mdx.indexOf('\n---\n', 4) + 5), 'jtm-date')) {
+    const { in: value, iso } = note.spec;
+    const n = Number(value);
+    const cast = typeof value === 'string' && value !== '' && !isNaN(n) && (n >= 275761 || n < -271820) ? new Date(n) : new Date(value);
+    eq(`${lang} jtm-date ${value}: cast value`, cast.toISOString(), iso);
+    eq(`${lang} jtm-date ${value}: shown on the page`, note.after.includes('<code>' + iso + '</code>'), true);
+    JTM_DATES.push([lang, value, iso]);
+  }
 }
 
 if (process.env.AB_TYPES_EVIDENCE) {
@@ -231,10 +290,49 @@ const RUNTIME = [
   ['own _id', '{"_id":"abc","child":{"_id":7,"n":1}}'],
   ['page order example', '[{"code":1,"note":null,"seller":{"meta":{"x":1}},"buyer":{"meta":{"y":"2"}}},{"code":"A-2","note":"gift","tags":["a",1]}]']
 ];
+// Every jtm-check input on the four pages also runs through Mongoose and tsc below.
+const sameJson = (x, y) => JSON.stringify(JSON.parse(x)) === JSON.stringify(JSON.parse(y));
+for (const entry of PAGE_JSON) if (!RUNTIME.some(([, r]) => sameJson(r, entry[1]))) RUNTIME.push(entry);
+eq('page examples in the Mongoose runtime set', PAGE_JSON.length >= 6 && PAGE_JSON.every(([, json]) => RUNTIME.some(([, r]) => sameJson(r, json))), true);
 if (process.env.MONGOOSE_TEST_DIR) {
   const require = createRequire(join(process.env.MONGOOSE_TEST_DIR, 'package.json'));
   const mongoose = require('mongoose');
   eq('fixed Mongoose runtime version', mongoose.version, '9.10.3');
+  {
+    // Page claims about Mongoose casting, with the real library: the jtm-date values, and strings
+    // in a [Number] array (ja: precipitation percentages such as "10").
+    const isolated = new mongoose.Mongoose();
+    const M = isolated.model('Cast', new isolated.Schema({ at: Date, pops: [Number] }));
+    for (const [lang, value, iso] of JTM_DATES) {
+      const doc = new M({ at: value });
+      eq(`Mongoose casts ${lang} jtm-date ${value}`, JSON.stringify([doc.validateSync()?.message ?? true, doc.at && doc.at.toISOString()]), JSON.stringify([true, iso]));
+    }
+    // B1: the computed key reaches Mongoose, which skips __proto__ / constructor / prototype paths
+    // (lib/schema.js, utils.specialProperties); the page says so on the status line.
+    const proto = { exports: {} };
+    new Function('require', 'module', gen('{"__proto__":1,"constructor":"c","b":1}', 'Proto', 'javascript', false, false))(() => isolated, proto);
+    eq('B1: Mongoose 9.10.3 skips the __proto__ and constructor paths', JSON.stringify(Object.keys(proto.exports.schema.paths).filter((k) => k !== '_id' && k !== '__v')), JSON.stringify(['b']));
+    for (const [raw, want] of MODEL_NAMES) {
+      const named = { exports: {} };
+      new Function('require', 'module', gen('{"a":1}', raw, 'javascript', true, false))(() => new mongoose.Mongoose(), named);
+      eq(`Mongoose model name for ${raw}`, named.exports.modelName, want);
+    }
+    // Reserved path names: kept as paths with a warning, and the field value replaces the document
+    // method of the same name (the status line says so).
+    for (const k of MONGOOSE_RESERVED) {
+      const warnings = [];
+      const onWarn = (w) => warnings.push(String(w.message));
+      process.on('warning', onWarn);
+      const r = new mongoose.Mongoose();
+      const R = r.model('R', new r.Schema({ [k]: String }));
+      await new Promise(setImmediate);
+      process.removeListener('warning', onWarn);
+      const d = new R({ [k]: 'v' });
+      eq(`reserved ${k}: kept as a path, warned, document property is the value`, JSON.stringify([Object.hasOwn(R.schema.paths, k), warnings.some((w) => w.includes('`' + k + '` is a reserved schema pathname')), d[k]]), JSON.stringify([true, true, 'v']));
+    }
+    const pops = new M({ pops: ['0', '10'] });
+    eq('Mongoose casts ["0","10"] on a [Number] path to [0,10]', JSON.stringify([pops.validateSync()?.message ?? true, [...pops.pops]]), JSON.stringify([true, [0, 10]]));
+  }
   for (const [name, json] of RUNTIME) {
     try {
       const isolated = new mongoose.Mongoose();
@@ -429,8 +527,27 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     const q=page(lang,shellFirst);q.example();q.copy().resolve();await settle();const old=[...q.timers.values()].filter(t=>t.ms===1500).map(t=>t.fn);same(tag+' real success timer exists',old.length>0,true);q.advance(400);q.copy().resolve();await settle();old.forEach(fn=>fn());same(tag+' old timer cannot reset new Copied',q.get(cfg.copy).textContent,labels[lang].copied);q.advance(1500);same(tag+' latest timer settles',q.get(cfg.copy).textContent,labels[lang].copy);
     const r=page(lang,shellFirst);r.example();const one=r.copy(),two=r.copy();two.resolve();await settle();one.reject(Error('older request'));await settle();same(tag+' older rejection cannot replace new success',r.get(cfg.copy).textContent,labels[lang].copied);
     const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const generated=queued.tracks.length;queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',queued.tracks.length,generated);
-    queued.input(cfg.sample);const beforeShortcut=queued.tracks.length;queued.key('Enter');same(tag+' no primary means CtrlEnter does not generate',queued.tracks.length,beforeShortcut);queued.advance(300);same(tag+' CtrlEnter preserves the real input debounce',queued.tracks.length,beforeShortcut+1);
-    for(const [id,key]of [['jtm-lang-tabs','lang'],['jtm-ts-tabs','ts'],['jtm-req-tabs','req']]){const tabs=p.get(id).querySelectorAll('.jtm-tab');for(const selected of tabs){const before=p.tracks.length;selected.click();same(tag+' option generates immediately '+id,p.tracks.length,before+1);same(tag+' aria-pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
+    queued.input('{"ctrlEnter": 1}');const beforeShortcut=queued.tracks.length;queued.key('Enter');same(tag+' no primary means CtrlEnter does not generate',[queued.tracks.length,queued.out().includes('ctrlEnter')],[beforeShortcut,false]);queued.advance(300);same(tag+' CtrlEnter preserves the real input debounce',queued.out().includes('ctrlEnter'),true);
+    for(const [id,key]of [['jtm-lang-tabs','lang'],['jtm-ts-tabs','ts'],['jtm-req-tabs','req']]){const tabs=p.get(id).querySelectorAll('.jtm-tab');for(const selected of tabs){const before=p.tracks.length,wasActive=selected.classList.contains('active');p.get(cfg.output).textContent='stale';selected.click();same(tag+' option generates immediately '+id,p.out()!=='stale',true);same(tag+' option sends one GA event only when it changes '+id,p.tracks.length,before+(wasActive?0:1));same(tag+' aria-pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
+    // B1: the status line names the keys Mongoose skips as schema paths (lib/schema.js specialProperties).
+    {const w=page(lang,shellFirst);w.input('{"__proto__":{"x":1},"constructor":"c","b":{"prototype":1}}');w.advance(300);
+      same(tag+' B1: status names the keys Mongoose ignores',w.get(cfg.status).textContent.includes(String(labels[lang].msgIgnored).replace('{keys}','__proto__, constructor, prototype')),true);
+      w.input('{"b":1}');w.advance(300);same(tag+' B1: no notice without such keys',w.get(cfg.status).textContent,labels[lang].msgGenOne);}
+    // Reserved path names (Mongoose 9.10.3 lib/schema.js Schema.reserved): the status line names them.
+    {const w=page(lang,shellFirst);w.input('{"save":"s","errors":["e"],"b":{"isNew":true}}');w.advance(300);
+      same(tag+' reserved: status names the reserved path names',w.get(cfg.status).textContent.includes(String(labels[lang].msgReserved).replace('{keys}','errors, isNew, save')),true);}
+    // B2: values beside the objects of a root array are reported, with their count and JSON types.
+    {const w=page(lang,shellFirst);w.input('[{"a":1},2,"x",null,[1],3]');w.advance(300);
+      same(tag+' B2: status reports the skipped root array values',w.get(cfg.status).textContent.includes(String(labels[lang].msgSkipped).replace('{n}','5').replace('{types}','number × 2, string, null, array')),true);}
+    // GA: one generate event per committed action (change, Example, a new option), none on page load or typing pauses.
+    {const g=page(lang,shellFirst);same(tag+' GA: page load sends no event',g.tracks.length,0);
+      g.input(cfg.sample);g.advance(300);same(tag+' GA: a typing pause regenerates without an event',[g.out().includes('fresh'),g.tracks.length],[true,0]);
+      g.get(cfg.input).dispatch('change');same(tag+' GA: change sends one event',g.tracks,[['json-to-mongoose','generate']]);
+      g.input('{"pending": true}');g.get(cfg.input).dispatch('change');same(tag+' GA: change flushes the pending edit first',[g.out().includes('pending'),g.tracks.length],[true,2]);g.advance(300);same(tag+' GA: the flushed edit sends nothing more',g.tracks.length,2);
+      g.input(cfg.invalid);g.advance(300);g.get(cfg.input).dispatch('change');same(tag+' GA: invalid JSON sends no event',g.tracks.length,2);
+      g.input('');g.get(cfg.input).dispatch('change');same(tag+' GA: empty input sends no event',g.tracks.length,2);
+      g.example();same(tag+' GA: Example sends one event',g.tracks.length,3);
+      g.input('Order','jtm-model-name');g.get('jtm-model-name').dispatch('change');same(tag+' GA: model name change sends one event',[g.out().includes("'Order'"),g.tracks.length],[true,4]);}
     for(const focus of [p.get('jtm-output'),p.document.querySelector('[data-zt-tip="jtm-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output CtrlL returns to input',[p.document.activeElement.id,p.out(),p.get(cfg.input).value],[cfg.input,'','']);}
     p.get('jtm-lang-tabs').querySelector('[data-lang="javascript"]').click();p.example();p.input('Renamed','jtm-model-name');p.advance(300);same(tag+' model name re-generates',p.out().includes("mongoose.model('Renamed'"),true);p.get(cfg.clear).click();same(tag+' explicit Clear retains model option',p.get('jtm-model-name').value,'Renamed');
   }
@@ -472,5 +589,10 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
   }
 }
 
+
+// ja page sample: 気象庁 130000.json, reportDatetime 2026-10-08T17:00:00+09:00 (fetched 2026-10-08), 東京地方 only,
+// the weather series with all 3 points and the precipitation series with its first 2 points, values unchanged.
+const JMA_20261008_1700 = '[{"publishingOffice":"気象庁","reportDatetime":"2026-10-08T17:00:00+09:00","timeSeries":[{"timeDefines":["2026-10-08T17:00:00+09:00","2026-10-09T00:00:00+09:00","2026-10-10T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"weatherCodes":["100","100","101"],"weathers":["晴れ","晴れ","晴れ\u3000時々\u3000くもり"]}]},{"timeDefines":["2026-10-08T18:00:00+09:00","2026-10-09T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"pops":["0","0"]}]}]}]';
+{ const t = readFileSync(join(root, 'src/content/tools/json-to-mongoose/ja.mdx'), 'utf8'); if (!t.includes('<pre><code>{`' + JMA_20261008_1700 + '`}</code></pre>')) { failures++; console.log('FAIL ja page uses the recorded 気象庁 17:00 sample'); } else passes++; }
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

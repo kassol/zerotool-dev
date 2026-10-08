@@ -10,18 +10,24 @@ steps:
   - "使用「下载 .py」：将当前完整输出保存为 .py 文件。文件名使用小写根名，ASCII 字母、数字和下划线以外的字符替换为下划线。输出为空时不下载。"
   - "使用「清空」：清空 JSON、输出和状态，保留根名和所选模式。在工具内按 Ctrl/⌘+L 还会清空根名。"
 faqItems:
-  - question: "这个工具生成什么？"
-    answer: "从 JSON 生成 Python 类定义，可选标准 @dataclass（stdlib）、Pydantic v2 BaseModel 或 TypedDict。每个嵌套对象都会成为独立的命名类。"
-  - question: "支持哪些输出模式？"
+  - id: "output"
+    question: "这个工具生成什么？"
+    answer: "从 JSON 生成 Python 类定义，可选标准 @dataclass（stdlib）、Pydantic v2 BaseModel 或 TypedDict。嵌套对象会成为单独命名的类。"
+  - id: "modes"
+    question: "支持哪些输出模式？"
     answer: "三种模式：@dataclass（Python 标准库，默认）、Pydantic v2 BaseModel、TypedDict（Python 3.8+；用到 NotRequired 时需 3.11+ 或 typing_extensions）。"
-  - question: "JSON 类型如何映射到 Python 类型？"
-    answer: "string→str、integer→int、float→float、boolean→bool、null→Optional[Any]、array→List[T]、嵌套对象→独立类。"
-  - question: "何时字段标记为 Optional？"
-    answer: "当 JSON 样本中字段值为 null，或在合并数组对象时某些对象中字段缺失，该字段被标记为 Optional[T] = None。"
-  - question: "嵌套对象如何处理？"
-    answer: "每个嵌套对象提取为独立类，类名由字段名转换为 PascalCase。子类始终在父类之前定义，输出可直接使用。"
-  - question: "我的数据会发送到服务器吗？"
-    answer: "不会。整个转换在浏览器中运行，数据不会离开本机。"
+  - id: "type-mapping"
+    question: "JSON 类型如何映射到 Python 类型？"
+    answer: "string→str、整数→int、其他数字→float、boolean→bool、null→Optional[Any]、array→List[T]（元素类型不一时为 List[Union[...]]，空数组为 List[Any]）、嵌套对象→独立类。写成 10.0 的数字会被读成整数 10，因此是 int。"
+  - id: "optional"
+    question: "字段什么时候会写成 Optional？"
+    answer: "@dataclass 和 Pydantic 模式下，字段值在样本里为 null，或合并数组时在部分对象中缺失，就写成 Optional[T] = None，并排到必填字段之后。TypedDict 保留 JSON 里的键顺序：部分对象缺少的键写成 NotRequired[T]，值为 null 的写成 Optional[T]。"
+  - id: "nested"
+    question: "嵌套对象如何处理？"
+    answer: "每个嵌套对象生成一个类，类名取键名的 PascalCase；数组里的对象加后缀 Item（comments → CommentsItem）。类写在使用它的类之前。同一个键下字段相同的对象共用一个类；结构不同时加父级类名作前缀（b.meta → BMeta），再不行就加编号。非 ASCII 键名在类名里保留全部字符（PEP 3131），除根类名外，类名也不会与 JSON 键名、Python 关键字或输出里导入的名字相同。"
+  - id: "privacy"
+    question: "我的数据会发送到服务器吗？"
+    answer: "不会。JSON 和根类名称只在当前浏览器标签页里处理，不会发送出去，工具也不把它们存进浏览器存储。页面只在你改完输入并移开焦点、点击示例或切换模式时记录一条统计事件，内容只有工具名和动作（generate）。"
 ---
 
 <h2>类型映射</h2>
@@ -37,6 +43,9 @@ faqItems:
 </ul>
 
 <h2>示例</h2>
+
+{/* jpdc-check: {"root":"Root","mode":"dataclass"} */}
+
 <p>给定如下 JSON：</p>
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"], "note": null}`}</code></pre>
 <p>@dataclass 模式下生成：</p>
@@ -92,6 +101,8 @@ root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre
 
 <h2>示例：带缺失键的 TypedDict</h2>
 
+{/* jpdc-check: {"root":"Product","mode":"typeddict"} */}
+
 <p>两个商品：<code>note</code> 在第一个里为 null、在第二个里缺失，<code>discount</code> 只出现在第二个里（根类名 <code>Product</code>，TypedDict 模式）：</p>
 
 <pre><code>{`[{"id": 1, "sku": "PEN-01", "price": 2, "note": null}, {"id": 2, "sku": "INK-07", "price": 1.5, "discount": 0.1}]`}</code></pre>
@@ -107,14 +118,75 @@ class Product(TypedDict):
 
 <p><code>price</code> 一个是 <code>2</code>、一个是 <code>1.5</code>，PEP 484 允许 <code>int</code> 当作 <code>float</code> 使用，所以字段是 <code>float</code>。运行时 <code>Product.__required_keys__</code> 为 <code>{"{'id', 'sku', 'price'}"}</code>，<code>__optional_keys__</code> 为 <code>{"{'note', 'discount'}"}</code>（Python 3.12 实测）。</p>
 
+<h2>高德地理编码响应：同一个字段既是字符串又是数组</h2>
+
+{/* jpdc-check: {"root":"GeocodeResponse","mode":"pydantic"} */}
+
+<p>高德 Web 服务 API 的地理编码接口按 JSON 返回结果。返回参数说明写明 <code>status</code> 的值为 0 或 1（1 表示成功），并提示：「部分返回值当返回值存在时，将以字符串类型返回；当返回值不存在时，则以数组类型返回」（<a href="https://lbs.amap.com/api/webservice/guide/api/georegeo">地理/逆地理编码</a>）。下面按文档里的字段写了两条结果：第一条匹配到门牌号，第二条只匹配到区县，所以 <code>street</code> 和 <code>number</code> 是空数组。数值按上面那条说明都写成字符串，坐标为示意值（根类名 <code>GeocodeResponse</code>，Pydantic v2 模式）：</p>
+
+<pre><code>{`{"status":"1","info":"OK","count":"2","geocodes":[{"formatted_address":"北京市朝阳区阜通东大街6号","province":"北京市","city":"北京市","district":"朝阳区","street":"阜通东大街","number":"6号","adcode":"110105","location":"116.483038,39.990633","level":"门牌号"},{"formatted_address":"浙江省杭州市西湖区","province":"浙江省","city":"杭州市","district":"西湖区","street":[],"number":[],"adcode":"330106","location":"120.130396,30.259242","level":"区县"}]}`}</code></pre>
+
+<pre><code>{`from pydantic import BaseModel
+from typing import Any, List, Union
+
+class GeocodesItem(BaseModel):
+    formatted_address: str
+    province: str
+    city: str
+    district: str
+    street: Union[str, List[Any]]
+    number: Union[str, List[Any]]
+    adcode: str
+    location: str
+    level: str
+
+class GeocodeResponse(BaseModel):
+    status: str
+    info: str
+    count: str
+    geocodes: List[GeocodesItem]`}</code></pre>
+
+<ul>
+  <li><code>street</code> 和 <code>number</code> 在两条结果里分别是字符串和空数组，所以生成 <code>{"Union[str, List[Any]]"}</code>。用这段代码的 <code>GeocodeResponse.model_validate()</code> 读入上面的 JSON，两条都能通过（工具测试用 Pydantic 实跑）。如果只拿第一条门牌级结果生成，字段会是 <code>str</code>，之后遇到区县级结果时 Pydantic 会报校验错误。所以生成前要把不同匹配级别的结果放进同一个样本。</li>
+  <li><code>status</code>、<code>count</code>、<code>adcode</code> 是字符串，生成的是 <code>str</code>。判断成功要写 <code>{'resp.status == "1"'}</code>，写成 <code>== 1</code> 永远不成立。</li>
+  <li><code>location</code> 是「经度,纬度」一个字符串，工具不会拆成两个数字，需要时自己 <code>split(",")</code>。</li>
+</ul>
+
 <h2>限制</h2>
 
 <ul>
   <li><code>{"null"}</code> 会变成 <code>{"Optional[Any]"}</code>，请把 <code>{"Any"}</code> 换成真实类型。</li>
-  <li>不是合法 Python 标识符的键（如 <code>{"user-id"}</code>，或 <code>{"class"}</code> 这样的关键字）需要改名，Pydantic 里再配 <code>{"Field(alias=\"user-id\")"}</code>。</li>
+  <li>不能原样作字段名的键（<code>{"class"}</code> 等关键字、<code>{"user-id"}</code> 和 <code>2fa</code> 这类非标识符、NFKC 会改变的键（如全角的 <code>ｎａｍｅ</code>）、以 <code>{"__"}</code> 开头的键、与输出导入或用作类型的名字（<code>str</code>、<code>Field</code>）或生成的类同名的键；Pydantic 模式下还有以 <code>{"_"}</code> 或 <code>{"model_"}</code> 开头的键，如 MongoDB 的 <code>{"_id"}</code>，以及 <code>json</code> 这类 <code>BaseModel</code> 属性名）会换成合法的字段名：@dataclass 模式在行尾用注释写出原键（用 <code>{"Root(**data)"}</code> 构造前要自己对应一下），Pydantic 模式加 <code>{"Field(alias=...)"}</code>，<code>{"model_validate()"}</code> 照样按原键读取（<code>{"model_dump()"}</code> 输出的是字段名，要还原原键请用 <code>{"model_dump(by_alias=True)"}</code>），TypedDict 模式改用函数式写法 <code>{'TypedDict("Name", {...})'}</code>，原键全部保留。工具的测试在 Python 3.12 和 3.14 下运行这三种输出并读回样例。</li>
   <li>日期保持为 <code>{"str"}</code>；把类型改成 <code>{"datetime"}</code> 后，Pydantic 会解析 ISO 8601 字符串。</li>
-  <li>根节点是基础类型数组时不生成类。</li>
+  <li>根节点是基础类型数组时不生成类。根数组里对象和其他值混在一起时，对象生成根类，整个数组在最后写成别名 <code>{"RootArray = List[Union[...]]"}</code>（<code>None</code> 表示 null 元素），Pydantic 里可以用 <code>{"TypeAdapter(RootArray)"}</code> 校验整个数组。</li>
+  <li>写成 <code>10.0</code> 的数字到工具里已经是整数 <code>10</code>（JavaScript 的 <code>JSON.parse</code> 不保留末尾的 0），所以生成 <code>{"price: int"}</code>。之后 Pydantic 遇到 <code>10.5</code> 会报 <code>Input should be a valid integer, got a number with a fractional part</code>。金额可能带小数时，请改成 <code>float</code>，或者按分存成整数。</li>
+  <li>根类名称是合法的 Python 标识符时原样使用，否则转换：<code>{"order-item"}</code> → <code>OrderItem</code>，数字开头的 <code>2fa</code> → <code>{"_2fa"}</code>，关键字 <code>class</code> → <code>{"class_"}</code>，开头的 <code>{"__"}</code> 改成一个 <code>{"_"}</code>（嵌套类名以根类名开头，Python 会在类体里改写以两个下划线开头的名字），没有可用字符时用 <code>Root</code>。</li>
+  <li>中文键名在类名里保留全部字符。类名不会和 JSON 里的键名相同（Pydantic 里带默认值的字段会遮住同名的类），所以会加上父级类名作前缀，见下例。</li>
 </ul>
+
+{/* jpdc-check: {"root":"Order","mode":"dataclass"} */}
+
+<p>例如收货地址和发票地址（根类名 <code>Order</code>，@dataclass 模式）：</p>
+
+<pre><code>{`{"收货地址": {"省": "浙江省", "市": "杭州市"}, "发票地址": {"抬头": "杭州示例科技有限公司"}}`}</code></pre>
+
+<pre><code>{`from dataclasses import dataclass
+
+@dataclass
+class Order收货地址:
+    省: str
+    市: str
+
+@dataclass
+class Order发票地址:
+    抬头: str
+
+@dataclass
+class Order:
+    收货地址: Order收货地址
+    发票地址: Order发票地址`}</code></pre>
+
+<p>Python 3 允许非 ASCII 标识符，中文键名可以直接作字段名，这段代码能运行；两个地址结构不同，各自生成一个类，<code>抬头</code> 字段也会保留。想要英文类名时，可以把 <code>Order收货地址</code>、<code>Order发票地址</code> 改成 <code>ShippingAddress</code>、<code>InvoiceInfo</code>。</p>
 
 {/* b6-sample-coverage:start */}
 <h2>空数组与样本覆盖</h2>

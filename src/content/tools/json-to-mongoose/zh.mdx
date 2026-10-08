@@ -8,24 +8,31 @@ steps:
   - "修改 JSON 或模型名称后等待 300 毫秒，再点击复制。"
   - "点击清空，清除 JSON、输出和状态。"
 faqItems:
-  - question: "这个工具生成什么？"
-    answer: "从 JSON 生成 Mongoose schema 定义。每个嵌套对象都会生成独立的 schema 变量，底部包含 model 导出语句。"
-  - question: "支持哪些语言模式？"
+  - id: "output"
+    question: "这个工具生成什么？"
+    answer: "从 JSON 生成 Mongoose schema 定义。嵌套对象生成子 schema，写在使用它的 schema 之前（同一个 key 下字段和类型都相同的对象共用一个），底部包含 model 导出语句。"
+  - id: "languages"
+    question: "支持哪些语言模式？"
     answer: "JavaScript（CommonJS require/module.exports）和 TypeScript（ES module import/export）。TypeScript 输出按 Mongoose TypeScript 指南的写法，生成普通的文档接口并传给 Schema<T> 与 model<T>，不继承 Document。"
-  - question: "JSON 类型如何映射到 Mongoose 类型？"
-    answer: "string→String、number→Number、boolean→Boolean、所有样例都为 null 时→mongoose.Schema.Types.Mixed、各样例类型不同时→Mixed、基本类型数组→[Type]、对象数组→独立子 schema、嵌套对象→独立子 schema。"
-  - question: "timestamps 选项有什么作用？"
-    answer: "开启时，schema 会以 { timestamps: true } 创建，Mongoose 将自动管理 createdAt 和 updatedAt 字段（类型为 Date）。TypeScript 模式下接口也会列出 createdAt: Date 与 updatedAt: Date，hydrated 文档与 .lean() 结果都能直接读取；JSON 根对象已有同名键时保留它自己的类型。"
-  - question: "所有字段都会标记为必填吗？"
-    answer: "不会。仅凭 JSON 无法判断字段是否必填，默认不添加 required: true。打开「必填字段」开关会给所有非嵌套字段加上 required: true（嵌套 Schema 与对象数组除外），之后再按实际删改。"
-  - question: "我的数据会发送到服务器吗？"
-    answer: "不会。整个转换在浏览器中运行，数据不会离开本机。"
+  - id: "type-mapping"
+    question: "JSON 类型如何映射到 Mongoose 类型？"
+    answer: "string→String，以 ISO 8601 日期时间开头的字符串（如 2026-10-01T09:30:00Z）→Date；number→Number；boolean→Boolean；所有样例都为 null 或各样例类型不同的字段→mongoose.Schema.Types.Mixed；基本类型数组→[Type]（数组里的日期时间仍是 String）；不含 null 元素的对象数组→[子 schema]；嵌套对象→子 schema。"
+  - id: "timestamps"
+    question: "timestamps 选项有什么作用？"
+    answer: "开启时，schema 会以 { timestamps: true } 创建，Mongoose 将自动管理 createdAt 和 updatedAt 字段（类型为 Date）。TypeScript 模式下接口也会列出 createdAt: Date 与 updatedAt: Date；JSON 根对象已有同名键时保留它自己的类型。"
+  - id: "required"
+    question: "所有字段都会标记为必填吗？"
+    answer: "默认不会。仅凭 JSON 样例无法判断哪些字段必填。打开「必填字段」后，除嵌套 schema 和对象数组外的所有字段都会加上 required: true，再把可选字段的 required 删掉即可。注意 Mongoose 的 required 校验不接受 null，样例里为 null 的字段不能保留 required。"
+  - id: "privacy"
+    question: "我的数据会发送到服务器吗？"
+    answer: "不会。JSON 和模型名称只在当前浏览器标签页里处理，不会发送出去，工具也不把它们存进浏览器存储。页面只在你改完输入并移开焦点、点击示例或切换选项时记录一条统计事件，内容只有工具名和动作（generate）。"
 ---
 
 <h2>类型映射</h2>
 <ul>
-  <li><code>null</code> 可放入任何类型，推断时跳过；所有样例都是 <code>null</code> 的字段 → <code>mongoose.Schema.Types.Mixed</code></li>
+  <li><code>null</code> 不参与类型推断；所有样例都是 <code>null</code> 的字段 → <code>mongoose.Schema.Types.Mixed</code></li>
   <li>各样例类型不同的字段（数字和字符串、对象和字符串）→ <code>mongoose.Schema.Types.Mixed</code>；ISO 日期时间与其他字符串混在一起 → <code>String</code></li>
+  <li>以 ISO 8601 日期时间开头的字符串（<code>2026-10-01T09:30:00Z</code>）→ <code>Date</code>；只有日期的 <code>2026-10-01</code>、用空格代替 <code>T</code> 的 <code>2026-10-01 09:30:00</code>，以及数组里的日期时间都保持 <code>String</code></li>
   <li>字符串 → <code>String</code></li>
   <li>数字 → <code>Number</code></li>
   <li>布尔值 → <code>Boolean</code></li>
@@ -35,6 +42,9 @@ faqItems:
 </ul>
 
 <h2>示例</h2>
+
+{/* jtm-check: {"json":"{\"username\": \"alice\", \"age\": 28, \"tags\": [\"admin\"], \"address\": {\"city\": \"London\"}}","model":"User","mode":"javascript","timestamps":true,"required":false} */}
+
 <p>给定如下 JSON，模型名称为 <code>User</code>：</p>
 <pre><code>{`{"username": "alice", "age": 28, "tags": ["admin"], "address": {"city": "London"}}`}</code></pre>
 <p>JavaScript 输出（timestamps 开启）：</p>
@@ -79,6 +89,55 @@ module.exports = mongoose.model('Order', orderSchema);`}</code></pre>
 <ul>
   <li><code>code</code> 一条是 <code>1</code>、另一条是 <code>"A-2"</code>，所以是 <code>Mixed</code>；写成 <code>Number</code> 会拒绝 <code>"A-2"</code>。<code>note</code> 一条是 <code>null</code>、一条是 <code>"gift"</code>，所以是 <code>String</code>。<code>tags</code> 里有字符串也有数字，元素为 <code>Mixed</code>。</li>
   <li>两个 <code>meta</code> 对象字段不同，第二个用父级 key 作前缀（<code>buyerMetaSchema</code>）。同一个 key 下字段和类型都相同的对象共用一个 schema；加前缀后仍重名时再加数字。</li>
-  <li><code>Mixed</code> 字段不做类型转换和校验，内部改动要调用 <code>markModified()</code> Mongoose 才会保存。数据允许时请改成一种类型。</li>
 </ul>
 <p>工具的测试用 Mongoose 9.10.3 运行生成的 JavaScript，用每个样例创建文档，确认 <code>validateSync()</code> 通过、所有字段和值都保留（ISO 日期时间以 <code>Date</code> 保存，按 <code>toISOString()</code> 形式比较；样例里没有的数组字段会得到 Mongoose 的默认值 <code>[]</code>）。</p>
+
+<h2>中文键名与 MySQL 导出的时间</h2>
+
+{/* jtm-check: {"json":"{\"订单号\":\"A202610080001\",\"下单时间\":\"2026-10-08 09:30:00\",\"支付时间\":\"2026-10-08T09:31:05+08:00\",\"金额\":59.9,\"收货地址\":{\"省\":\"浙江省\",\"市\":\"杭州市\"},\"发票\":{\"抬头\":\"杭州示例科技有限公司\"}}","model":"order","mode":"javascript","timestamps":true,"required":false} */}
+
+<p>从 MySQL 导出后交给 Node.js 服务的订单数据，键名常用中文，时间列是 <code>DATETIME</code>。MySQL 8.4 手册写明 <code>DATETIME</code> 按 <code>'YYYY-MM-DD hh:mm:ss'</code> 格式读取和显示（<a href="https://dev.mysql.com/doc/refman/8.4/en/datetime.html">The DATE, DATETIME, and TIMESTAMP Types</a>）。下面这条订单里，<code>下单时间</code>是这种格式，<code>支付时间</code>是带 <code>+08:00</code> 的 ISO 8601（模型名称 <code>order</code>，JavaScript，timestamps 开启）：</p>
+<pre><code>{`{"订单号":"A202610080001","下单时间":"2026-10-08 09:30:00","支付时间":"2026-10-08T09:31:05+08:00","金额":59.9,"收货地址":{"省":"浙江省","市":"杭州市"},"发票":{"抬头":"杭州示例科技有限公司"}}`}</code></pre>
+<p>输出：</p>
+<pre><code>{`const mongoose = require('mongoose');
+const { Schema } = mongoose;
+
+const fieldSchema = new Schema({
+  "省": { type: String },
+  "市": { type: String },
+});
+
+const orderFieldSchema = new Schema({
+  "抬头": { type: String },
+});
+
+const orderSchema = new Schema({
+  "订单号": { type: String },
+  "下单时间": { type: String },
+  "支付时间": { type: Date },
+  "金额": { type: Number },
+  "收货地址": fieldSchema,
+  "发票": orderFieldSchema,
+}, { timestamps: true });
+
+module.exports = mongoose.model('Order', orderSchema);`}</code></pre>
+
+{/* jtm-date: {"in":"2026-10-08T09:31:05+08:00","iso":"2026-10-08T01:31:05.000Z"} */}
+
+<ul>
+  <li>中文键名原样保留为字段路径，并加上引号，生成的文件可以直接运行。变量名只用 ASCII，所以<code>收货地址</code>的子 schema 叫 <code>fieldSchema</code>；<code>发票</code>的字段不同，加上模型名作前缀，成为 <code>orderFieldSchema</code>。提交代码前，建议改成 <code>addressSchema</code>、<code>invoiceSchema</code> 这样能看懂的名字。</li>
+  <li><code>下单时间</code>中间是空格而不是 <code>T</code>，所以识别为 <code>String</code>，查询时按字符串比较。</li>
+  <li><code>支付时间</code>识别为 <code>Date</code>。MongoDB 的日期只记录一个时间点，不保存时区（<a href="https://mongoosejs.com/docs/tutorials/dates.html">Mongoose：Working With Dates</a>），所以存进去后读出来是 <code>2026-10-08T01:31:05.000Z</code>，要显示北京时间需在展示时再换算。</li>
+  <li><code>金额</code>是 <code>Number</code>，也就是双精度浮点数。Mongoose 另有 <code>Decimal128</code> 类型（<a href="https://mongoosejs.com/docs/schematypes.html">SchemaTypes</a>），需要精确到分的金额时，可以改用它，或者改存以分为单位的整数。</li>
+</ul>
+
+<h2>限制</h2>
+<ul>
+  <li><strong>Mixed 什么都收。</strong>因样例类型不一致而成为 <code>Mixed</code> 的字段，不做类型转换和校验；修改它内部的值后要调用 <code>markModified()</code>，Mongoose 才会保存。数据允许时，请统一成一种类型。</li>
+  <li><strong>只认一种日期写法。</strong>字符串必须以 <code>YYYY-MM-DDThh:mm:ss</code> 开头才会成为 <code>Date</code>，上面的空格写法和只有日期的值都保持 <code>String</code>。</li>
+  <li><strong>根数组只看对象。</strong>schema 描述的是文档，根数组里与对象并列的数字、字符串、null 和数组不写进 schema，状态行会写明跳过了几个、各是什么 JSON 类型，例如 <code>根数组中有 5 个值不是对象，未写进 schema（number × 2, string, null, array）。</code>全是基本类型时不生成 schema，只输出注释 <code>{"// Array of primitives — no schema to generate"}</code>。</li>
+  <li><strong>保留路径名仍会保留，但会警告。</strong>Mongoose 9.10.3 把 <code>collection</code>, <code>emit</code>, <code>errors</code>, <code>get</code>, <code>init</code>, <code>isModified</code>, <code>isNew</code>, <code>listeners</code>, <code>populated</code>, <code>remove</code>, <code>removeListener</code>, <code>save</code>, <code>toObject</code>, <code>validate</code> 列为保留名（<a href="https://github.com/Automattic/mongoose/blob/9.10.3/lib/schema.js">lib/schema.js</a> 中的 <code>Schema.reserved</code>）。这些键仍是路径、值也会保存，但 Mongoose 会打印警告；在文档上，字段值会取代同名的方法或属性（<code>errors</code>、<code>isNew</code> 是属性）：有名为 <code>save</code> 的字段时，<code>doc.save</code> 是这个值，<code>doc.save()</code> 会出错。状态行会列出这些键。schema 选项 <code>suppressReservedKeysWarning</code> 只是不显示警告，所以工具不加它；请改键名。</li>
+  <li><strong>三个键名不会成为路径。</strong>Mongoose 9.10.3 建 schema 时跳过名为 <code>{"__proto__"}</code>、<code>constructor</code>、<code>prototype</code> 的键（<a href="https://github.com/Automattic/mongoose/blob/9.10.3/lib/schema.js">lib/schema.js</a>，为防止原型污染）。输出里仍保留这些键，<code>{"__proto__"}</code> 写成 <code>{'["__proto__"]'}</code>，避免对象字面量把它当成原型；状态行会列出它们，保存这类数据前请改键名。</li>
+  <li><strong>不生成 ObjectId、enum、索引和校验。</strong>24 位十六进制字符串仍是 <code>String</code>；<code>Schema.Types.ObjectId</code> 与 <code>ref</code>、<code>unique</code>、<code>enum</code>、<code>min</code>/<code>max</code> 需要自己补。</li>
+  <li><strong>TypeScript 只给根 schema 加类型参数。</strong>子 schema 的 <code>new Schema()</code> 没有类型参数；<code>必填字段</code>关闭时接口里的字段也不带 <code>?</code>。Mongoose 不检查接口与 schema 是否一致，可选字段请自己加 <code>?</code>。</li>
+</ul>

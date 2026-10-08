@@ -15,6 +15,9 @@
 // (PEP 484 numeric tower) instead of `Union[int, float]`.
 // With python3 >= 3.11 the generated TypedDict is executed and its __required_keys__ /
 // __optional_keys__ are checked; otherwise SKIP.
+// GA (2026-10-08): one `generate` event per committed action (input or root-name change, Example,
+// a mode that changes) and only when code is shown; none after each 300 ms typing pause (before:
+// every generation).
 //
 // Run: node scripts/test-json-to-python-dataclass.mjs
 
@@ -25,7 +28,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, examplePairs, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToPythonDataclassTool.astro'), 'utf8');
@@ -50,6 +53,24 @@ function eq(name, actual, expected) {
   check(name, a === e, 'got ' + a + ', expected ' + e);
 }
 const gen = (v, mode) => E.generatePython(v, 'Root', mode).code;
+// Python used to run generated code: PYTHON_BIN (for example a 3.12 interpreter, where annotations are
+// evaluated when the class body runs, unlike 3.14 with PEP 649), else python3.
+const PY3 = process.env.PYTHON_BIN || 'python3';
+
+// Every class is defined before a later class refers to it (also for names outside ASCII): read the
+// class names in output order and the identifiers in each field type with the Python identifier rules.
+function definedBeforeUse(code) {
+  const seen = new Set(), all = new Set([...code.matchAll(/^class ([^\s(:]+)/gmu)].map((m) => m[1])), late = [];
+  let current = null;
+  for (const line of code.split('\n')) {
+    const c = line.match(/^class ([^\s(:]+)/u);
+    if (c) { if (current) seen.add(current); current = c[1]; continue; }
+    const f = line.match(/^    [^:]+: (.+?)(?: = None)?$/u);
+    if (f && current) for (const id of f[1].match(/[\p{ID_Start}_]\p{ID_Continue}*/gu) || []) if (all.has(id) && id !== current && !seen.has(id)) late.push(current + ' → ' + id);
+  }
+  return late;
+}
+const TOPO_CASES = [{ 订单: [{ meta: { x: 1 } }] }, { 주문: [{ 상품: { 이름: 'a' }, meta: { x: 1 } }] }, { items: [{ 注文: [{ meta: { x: 1 } }] }] }];
 
 const SAMPLE = [
   { id: 1, name: 'Pen', note: null, tags: ['a'] },
@@ -76,17 +97,119 @@ eq('pydantic unchanged', gen(SAMPLE, 'pydantic').split('\n').slice(-2), ['    no
 eq('int and float across samples → float', gen([{ p: 2 }, { p: 1.5 }], 'dataclass').split('\n').pop(), '    p: float');
 eq('primitive root → null', E.generatePython(5, 'Root', 'typeddict'), null);
 
-const py = spawnSync('python3', ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
+// A3: a class is reused only for the same fields; another shape under the same name gets the parent
+// prefix (then a number), and every sample of a key is merged (objects into one class, arrays into one list).
+eq('A3: b.meta keeps y in its own class', gen({ a: { meta: { x: 1 } }, b: { meta: { y: 2 } } }, 'dataclass').split('\n'), [
+  'from dataclasses import dataclass', '', '@dataclass', 'class Meta:', '    x: int', '', '@dataclass', 'class BMeta:', '    y: int', '',
+  '@dataclass', 'class A:', '    meta: Meta', '', '@dataclass', 'class B:', '    meta: BMeta', '', '@dataclass', 'class Root:', '    a: A', '    b: B',
+]);
+eq('A3: the same fields share one class', (gen({ a: { meta: { x: 1 } }, b: { meta: { x: 2 } } }, 'dataclass').match(/^class /gm) || []).length, 4);
+eq('A3: a third shape gets a number when the prefixed name is taken', /class Meta2:\n    z: int\n[\s\S]*class CB:\n    meta: Meta2\n\n@dataclass\nclass C:\n    b: CB/.test(gen({ a: { meta: { x: 1 } }, b: { meta: { y: 1 } }, c: { b: { meta: { z: 1 } } } }, 'dataclass')), true);
+{
+  // 気象庁 forecast excerpt (ja page): the second time series' areas carry pops.
+  const jma = [{ publishingOffice: '気象庁', timeSeries: [{ areas: [{ area: { name: '東京地方' }, weathers: ['晴れ'] }] }, { areas: [{ area: { name: '東京地方' }, pops: ['0', '10'] }] }] }];
+  const out = gen(jma, 'typeddict');
+  eq('A3: areas from every time series merge into one class', /class AreasItem\(TypedDict\):\n    area: Area\n    weathers: NotRequired\[List\[str\]\]\n    pops: NotRequired\[List\[str\]\]/.test(out), true);
+  eq('A3: objects of one key across samples merge into one class', gen([{ u: { a: 1 } }, { u: { b: 'x' } }], 'typeddict').includes('class U(TypedDict):\n    a: NotRequired[int]\n    b: NotRequired[str]'), true);
+}
+
+// Review fix 1: dependencies on class names outside ASCII are ordered too.
+for (const [i, v] of TOPO_CASES.entries()) for (const mode of ['dataclass', 'pydantic', 'typeddict']) eq('topo: case ' + (i + 1) + ' (' + mode + ') defines every class before use', definedBeforeUse(gen(v, mode)), []);
+// Review fix 2: a key with arrays in very many root objects (~110,000) does not overflow the stack.
+{
+  const many = Array.from({ length: 110000 }, (_, i) => ({ id: i, tags: ['a'] }));
+  let out; try { out = gen(many, 'dataclass'); } catch (e) { out = String(e); }
+  eq('many root objects with array fields generate', out.split('\n').slice(-3), ['class Root:', '    id: int', '    tags: List[str]']);
+}
+
+// Review suggestion 1: objects in nested arrays of one array merge into one class, like other samples.
+eq('nested arrays: objects of all sub-arrays merge', gen({ n: [[{ a: 1 }], [{ b: 2 }]] }, 'typeddict').split('\n'), [
+  'from typing import List, NotRequired, TypedDict', '', 'class NItemItem(TypedDict):', '    a: NotRequired[int]', '    b: NotRequired[int]', '', 'class Root(TypedDict):', '    n: List[List[NItemItem]]',
+]);
+
+// Field names: a key that is a keyword (keyword.kwlist), not an identifier, changed by NFKC, starts with
+// "__", shadows a name the annotations use, or (Pydantic) starts with "_" or is a BaseModel attribute
+// gets a valid field name; dataclass notes the JSON key in a comment, Pydantic sets Field(alias=...),
+// TypedDict uses the functional syntax with the original keys.
+const KW_SAMPLES = [
+  { class: 1, from: 'x', None: true, 'user-id': 2, '2fa': 'a', _id: 'abc', str: null, json: 3, model_config: 4, 'ｆｕｌｌ': 5, __x: 6, type: 7, match: 8, _: 9, 'a b': 10, class_: 11, ok: 12 },
+  { class: 2, ok: 13 },
+];
+eq('field names: Pydantic aliases the keyword key', /^    class_\w*: int = Field\(alias="class"\)$/m.test(gen(KW_SAMPLES, 'pydantic')), true);
+eq('field names: dataclass notes the JSON key', /^    class_\w*: int  # JSON key: "class"$/m.test(gen(KW_SAMPLES, 'dataclass')), true);
+eq('field names: TypedDict uses the functional syntax', gen(KW_SAMPLES, 'typeddict').includes('Root = TypedDict("Root", {\n    "class": int,'), true);
+// Review part3: a renamed field never takes the name of a generated class (Pydantic reads the class
+// name as the field), and Pydantic keys in the "model_" namespace are renamed with an alias.
+const CLASH_SAMPLES = [{ '-Meta': { a: 1 }, other: { b: 2 } }, { $Ref: { a: 1 } }, { '@Type': { a: 1 } }, { _Meta: 1, meta: { a: 1 } }, { '2fa': { a: 1 }, b: [{ '2fa': null }] }];
+const MODEL_NS = { model_validate_x: 1, model_dump_y: 2, model_name: 3, ok: 4 };
+for (const [i, v] of CLASH_SAMPLES.entries()) for (const mode of ['dataclass', 'pydantic', 'typeddict']) {
+  const code = gen(v, mode);
+  const classes = new Set([...code.matchAll(/^(?:class ([^\s(:]+)|(\S+) = TypedDict\()/gmu)].map((m) => m[1] || m[2]));
+  const fieldNames = [...code.matchAll(/^    ([^\s:"]+): /gmu)].map((m) => m[1]);
+  eq('field/class clash ' + (i + 1) + ' (' + mode + '): no field is named like a class', fieldNames.filter((n) => classes.has(n)), []);
+}
+eq('model_ namespace: Pydantic renames model_ keys with an alias', ['model_validate_x', 'model_dump_y', 'model_name'].every((k) => new RegExp('= Field\\(alias="' + k + '"\\)$', 'm').test(gen(MODEL_NS, 'pydantic'))), true);
+eq('field names: plain keys keep the class syntax', gen({ a: 1 }, 'typeddict').includes('class Root(TypedDict):'), true);
+
+// B2: values beside the objects of a root array stay in a <root>Array alias (List[Union[...]]).
+const B2_IN = [{ a: 1 }, 2, 'x', null, [1], { a: 3, b: true }];
+eq('B2: root array keeps non-object values in RootArray', E.generatePython(B2_IN, 'Root', 'dataclass').code.split('\n'), [
+  'from dataclasses import dataclass', 'from typing import List, Optional, Union', '', '@dataclass', 'class Root:', '    a: int', '    b: Optional[bool] = None', '',
+  'RootArray = List[Union[int, str, None, List[int], Root]]',
+]);
+eq('B2: a root array of objects only has no alias', /RootArray/.test(E.generatePython([{ a: 1 }], 'Root', 'dataclass').code), false);
+
+// Root class name: kept when it is a Python identifier that is not reserved; otherwise built by the
+// class-name rules, with "_" after a reserved name and Root when nothing usable is left.
+const ROOT_NAMES = [['User', 'User'], ['my_model', 'my_model'], ['用户', '用户'], ['order-item', 'OrderItem'], ['order item', 'OrderItem'], ['2fa', '_2fa'], ['class', 'class_'], ['None', 'None_'], ['List', 'List_'], ['str', 'str_'], ['!!!', 'Root'], ['ＵＳＥＲ', 'USER'], ['__proto__', '_proto__'], ['__Data', '_Data'], ['__init__', '_init__']];
+for (const [raw, want] of ROOT_NAMES) eq('root name ' + raw + ' → ' + want, (E.generatePython({ a: 1 }, raw, 'dataclass').code.match(/^class (.+):$/m) || [])[1], want);
+
+// A4: class names follow the Python identifier rules (PEP 3131): Unicode letters are kept, keywords,
+// the typing names the output imports, str / int / float / bool and the JSON keys themselves are not
+// used as class names (a field and its class with one name break Pydantic's Optional default).
+const A4_KEYS = ['收货地址', '发票地址', '住所', '주소', 'none', 'class', 'list', 'Optional', 'Address', '2fa', 'user-id', 'a b', '__proto__', '', '-', '😀', 'ß', 'x²', 'ﾃｽﾄ', 'naïve', 'ｆｕｌｌ', '𠮷野家'];
+const a4Out = gen(Object.fromEntries(A4_KEYS.map((k, i) => [k, { ['v' + i]: 1 }])), 'dataclass');
+const a4Names = [...a4Out.matchAll(/^class (.+?):$/gm)].map((m) => m[1]);
+eq('A4: 收货地址 keeps every character', a4Names.some((n) => n.endsWith('收货地址')) && a4Names.some((n) => n.endsWith('发票地址')), true);
+eq('A4: one class per key (no two keys share a class by name)', a4Names.length, A4_KEYS.length + 1);
+eq('A4: no class is named after a JSON key or a reserved name', a4Names.filter((n) => A4_KEYS.includes(n) || ['None', 'List', 'Optional', 'Any', 'Union', 'TypedDict', 'NotRequired', 'BaseModel', 'str', 'int', 'float', 'bool'].includes(n)), []);
+const A4_RUN = { 收货地址: { 省: '浙江省' }, 发票地址: { 抬头: '某公司' }, none: { a: 1 }, list: { b: [1] }, Optional: { c: 'x' }, Address: { d: null }, naïve: { e: true }, 住所: { f: 'x' }, 주소: { g: 'x' } };
+
+const py = spawnSync(PY3, ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' });
 if (py.status !== 0 || py.stdout.trim() !== 'True') {
   skips++;
   console.log('SKIP: python3 >= 3.11 not available');
 } else {
   const code = gen(SAMPLE, 'typeddict') + '\nprint(sorted(Root.__required_keys__), sorted(Root.__optional_keys__))\n';
-  const r = spawnSync('python3', ['-c', code], { encoding: 'utf8' });
+  const r = spawnSync(PY3, ['-c', code], { encoding: 'utf8' });
   eq('python: required / optional keys', r.stdout.trim(), "['id', 'name', 'tags'] ['discount', 'note']");
   for (const mode of ['dataclass', 'typeddict']) {
-    const c = spawnSync('python3', ['-c', gen(SAMPLE, mode)], { encoding: 'utf8' });
+    const c = spawnSync(PY3, ['-c', gen(SAMPLE, mode)], { encoding: 'utf8' });
     check('python runs the ' + mode + ' output', c.status === 0, c.stderr);
+  }
+  for (const [raw] of ROOT_NAMES) for (const mode of ['dataclass', 'typeddict']) {
+    const c = spawnSync(PY3, ['-c', E.generatePython({ a: 1, b: [{ c: 'x' }], 收货地址: { d: 1 } }, raw, mode).code + "\nprint('ok')"], { encoding: 'utf8' });
+    eq('root name ' + raw + ' runs in Python (' + mode + ')', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
+  }
+  for (const [i, v] of TOPO_CASES.entries()) for (const mode of ['dataclass', 'typeddict']) {
+    const c = spawnSync(PY3, ['-c', gen(v, mode) + "\nprint('ok')"], { encoding: 'utf8' });
+    eq('topo: case ' + (i + 1) + ' (' + mode + ') runs in Python', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
+  }
+  {
+    const data = JSON.stringify(JSON.stringify(KW_SAMPLES));
+    const dc = gen(KW_SAMPLES, 'dataclass');
+    const r1 = spawnSync(PY3, ['-c', dc + `\nimport json, re\nSRC = ${JSON.stringify(dc)}\nmapping = {json.loads(m.group(2)): m.group(1) for m in re.finditer(r'^    (\\S+): .*  # JSON key: (".*")$', SRC, re.M)}\nfor d in json.loads(${data}):\n    Root(**{mapping.get(k, k): v for k, v in d.items()})\nprint('ok')`], { encoding: 'utf8' });
+    eq('field names: dataclass output runs and builds every sample through the noted keys', r1.stdout.trim() || r1.stderr.trim().split('\n').pop(), 'ok');
+    const td = gen(KW_SAMPLES, 'typeddict');
+    const r2 = spawnSync(PY3, ['-c', td + `\nimport json\ndata = json.loads(${data})\nprint('ok' if sorted(Root.__required_keys__ | Root.__optional_keys__) == sorted({k for d in data for k in d}) and sorted(Root.__required_keys__) == ['class', 'ok'] else sorted(Root.__required_keys__ | Root.__optional_keys__))`], { encoding: 'utf8' });
+    eq('field names: TypedDict output keeps every JSON key', r2.stdout.trim() || r2.stderr.trim().split('\n').pop(), 'ok');
+  }
+  const ids = spawnSync(PY3, ['-c', 'import json, keyword, sys\nnames = json.loads(sys.stdin.read())\nprint(json.dumps([n for n in names if not n.isidentifier() or keyword.iskeyword(n)]))'], { input: JSON.stringify(a4Names), encoding: 'utf8' });
+  eq('A4: every class name is a Python identifier and not a keyword', ids.stdout.trim(), '[]');
+  for (const mode of ['dataclass', 'typeddict']) {
+    const src = gen(A4_RUN, mode);
+    const c = spawnSync(PY3, ['-c', src + `\nimport json, re\nmapping = {json.loads(m.group(2)): m.group(1) for m in re.finditer(r'^    (\\S+): .*  # JSON key: (".*")$', ${JSON.stringify(src)}, re.M)}\n${mode === 'dataclass' ? 'Root(**{mapping.get(k, k): v for k, v in json.loads(' + JSON.stringify(JSON.stringify(A4_RUN)) + ').items()})' : 'pass'}\nprint('ok')`], { encoding: 'utf8' });
+    eq('A4: non-ASCII and reserved-name keys run in Python (' + mode + ')', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
   }
 }
 
@@ -97,8 +220,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12265);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '09bdd50af71f3e9d0a9ed72651cf3f8964cfcafc80803bfe818b107eae12154f');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 21390);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '95fcb02074fa3c4c13f7e7bc12e04299dc9681d581e433e94a0b919ee257e09a');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -238,6 +361,36 @@ try {
     }
     const t = lifecyclePage(lang); golden(t); copy(t).resolve(); await settle(); t.advance(1000); copy(t).resolve(); await settle(); t.advance(500); eq(lang + ': old timer leaves newer feedback', t.get('jpdc-copy').textContent, L.copied); t.advance(1000); eq(lang + ': new timer expires', t.get('jpdc-copy').textContent, L.copy);
     const order = lifecyclePage(lang); golden(order); const first = copy(order), second = copy(order); second.reject(Error('current')); await settle(); first.resolve(); await settle(); eq(lang + ': older success keeps current copy failure', order.get('jpdc-status').textContent, copyFailure[lang]); eq(lang + ': older success cannot claim copied', order.get('jpdc-copy').textContent, L.copy);
+    // A1 / A2: prototype names are ordinary keys and root names; a failed generation clears the old output.
+    {
+      const a = lifecyclePage(lang); golden(a);
+      a.input('[{"constructor": 1, "toString": "x"}, {"__proto__": true, "hasOwnProperty": null}]'); a.advance(300);
+      eq(lang + ': A1 prototype-named keys in a root array generate fields', ['constructor: Optional[int] = None', 'toString: Optional[str] = None', '_proto__: Optional[bool] = None  # JSON key: "__proto__"', 'hasOwnProperty: Optional[Any] = None'].every((l) => a.get('jpdc-output-code').textContent.includes(l)), true);
+      a.get('jpdc-root-name').value = 'toString'; a.input('{"a": 1}'); a.advance(300);
+      eq(lang + ': A2 root name toString generates its class', a.get('jpdc-output-code').textContent.includes('class toString:') && a.get('jpdc-status').textContent === pageLabels[lang].msgGenOne, true);
+      a.get('jpdc-root-name').value = 'Root'; a.input('{"a": 1}'); a.advance(300);
+      a.input(Array.from({ length: 50000 }, (_, i) => '{"k' + i + '":').join('') + '1' + '}'.repeat(50000)); a.advance(300);
+      eq(lang + ': a failed generation clears the old output and disables Copy', [a.get('jpdc-output-code').textContent, !!a.get('jpdc-copy').disabled, a.get('jpdc-status').textContent.startsWith(pageLabels[lang].msgFailed || '\u0000')], ['', true, true]);
+      a.input('{"b": 2}'); a.advance(300);
+      eq(lang + ': the next input generates again and enables Copy', [a.get('jpdc-output-code').textContent.includes('b: int'), !!a.get('jpdc-copy').disabled], [true, false]);
+    }
+    // GA: one generate event per committed action (change, Example, a new mode), none on page load or typing pauses.
+    const g = lifecyclePage(lang);
+    eq(lang + ': GA page load sends no event', g.tracks.length, 0);
+    g.input('{"a":1}'); g.advance(300);
+    eq(lang + ': GA typing pause regenerates without an event', [g.get('jpdc-output-code').textContent.includes('a: int'), g.tracks.length], [true, 0]);
+    g.get('jpdc-input').dispatch('change');
+    eq(lang + ': GA change sends one event', g.tracks, [['json-to-python-dataclass', 'generate']]);
+    g.input('{"pending":1}'); g.get('jpdc-input').dispatch('change');
+    eq(lang + ': GA change flushes the pending edit first', [g.get('jpdc-output-code').textContent.includes('pending: int'), g.tracks.length], [true, 2]);
+    g.advance(300); eq(lang + ': GA flushed edit sends nothing more', g.tracks.length, 2);
+    g.input('{'); g.advance(300); g.get('jpdc-input').dispatch('change'); eq(lang + ': GA invalid JSON sends no event', g.tracks.length, 2);
+    g.input(''); g.get('jpdc-input').dispatch('change'); eq(lang + ': GA empty input sends no event', g.tracks.length, 2);
+    g.get('jpdc-example').click(); eq(lang + ': GA Example sends one event', g.tracks.length, 3);
+    g.doc.querySelector('[data-mode="typeddict"]').click(); eq(lang + ': GA a new mode sends one event', g.tracks.length, 4);
+    g.doc.querySelector('[data-mode="typeddict"]').click(); eq(lang + ': GA the same mode sends none', g.tracks.length, 4);
+    g.get('jpdc-root-name').value = 'Order'; g.get('jpdc-root-name').dispatch('input'); g.get('jpdc-root-name').dispatch('change');
+    eq(lang + ': GA root name change sends one event', [g.get('jpdc-output-code').textContent.includes('class Order('), g.tracks.length], [true, 5]);
     const d = lifecyclePage(lang); golden(d); d.get('jpdc-download').click(); eq(lang + ': current download filename', d.downloads[0].name, 'root.py'); eq(lang + ': actual Blob full bytes', await d.downloads[0].blob.text(), goldenCode); d.doc.querySelector('[data-mode="typeddict"]').click(); eq(lang + ': mode click converts immediately', d.get('jpdc-output-code').textContent, 'from typing import TypedDict\n\nclass Root(TypedDict):\n    pass');
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
@@ -286,7 +439,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "eb49012a1c4549f826e2e0d59e0c718793a29be856b9fd5186f91fc911144bab"
+  "scriptSHA": "adf11eb5e7159fc96b0f9691467a9dd81c6b5a74817dd338f282de87a5d86639"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -294,7 +447,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 page script hash (2026-10-08: GA only on change, Example and a new mode)', hash(pageScript), V2.scriptSHA);
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
@@ -323,7 +476,7 @@ for (const lang of ['en','zh','ja','ko']) {
   for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
   eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
   const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
-  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgFailed','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
   const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
   const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
@@ -348,6 +501,91 @@ for (const lang of ['en','zh','ja','ko']) {
   const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
   q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
 }
+
+// ---------- {/* jpdc-check: {"root", "mode"} */} worked examples, recomputed and executed ----------
+// The first code block after the note is the input JSON, the second the complete output for that
+// root name and mode. Each language needs at least 2. With Python 3.11+ every output runs; with
+// Pydantic 2 importable (PYDANTIC_PYTHON=<python with pydantic>, else python3) a Pydantic output
+// validates its input with model_validate() and a dataclass output is built with Root(**data).
+const PY_OK = (bin) => { const r = spawnSync(bin, ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' }); return r.status === 0 && r.stdout.trim() === 'True'; };
+const pyBin = PY_OK(PY3) ? PY3 : null;
+const pydBin = [process.env.PYDANTIC_PYTHON, PY3].filter(Boolean).find((bin) => PY_OK(bin) && spawnSync(bin, ['-c', 'import pydantic; assert pydantic.VERSION.startswith("2.")'], { encoding: 'utf8' }).status === 0) || null;
+const runPy = (bin, code) => spawnSync(bin, ['-c', code], { encoding: 'utf8' });
+const checks = [];
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const mdx = readFileSync(join(root, 'src/content/tools/json-to-python-dataclass/' + lang + '.mdx'), 'utf8');
+  const body = mdx.slice(mdx.indexOf('\n---\n', 4) + 5);
+  const notes = annotations(body, 'jpdc-check');
+  eq(lang + ': at least 2 jpdc-check examples', notes.length >= 2, true);
+  notes.forEach((note, i) => {
+    const blocks = fencedBlocks(note.after);
+    const input = blocks[0]?.text, shown = blocks[1]?.text;
+    const out = E.generatePython(JSON.parse(input), note.spec.root, note.spec.mode)?.code;
+    eq(lang + ': jpdc-check ' + (i + 1) + ' output equals the engine', shown, out);
+    checks.push({ name: lang + ' jpdc-check ' + (i + 1), input, out, root: note.spec.root, mode: note.spec.mode });
+  });
+}
+console.log('Python for generated code: ' + (pyBin ? runPy(pyBin, 'import sys; print(sys.version.split()[0])').stdout.trim() : 'none'));
+for (const c of checks) eq(c.name + ' defines every class before use', definedBeforeUse(c.out), []);
+if (!pyBin) { skips++; console.log('SKIP: python3 >= 3.11 not available for the page examples'); }
+else for (const c of checks) {
+  if (c.mode === 'pydantic' && !pydBin) continue;
+  const alias = (c.out.match(/^(\S+Array\d*) = List\[/m) || [])[1];
+  const tail = c.mode === 'pydantic' && alias ? `\nimport json\nfrom pydantic import TypeAdapter\nTypeAdapter(${alias}).validate_python(json.loads(${JSON.stringify(c.input)}))\nprint('ok')`
+    : c.mode === 'pydantic' ? `\nimport json\n${c.root}.model_validate(json.loads(${JSON.stringify(c.input)}))\nprint('ok')`
+    : c.mode === 'dataclass' ? `\nimport json\n${c.root}(**json.loads(${JSON.stringify(c.input)}))\nprint('ok')` : `\nprint('ok')`;
+  const r = runPy(c.mode === 'pydantic' ? pydBin : pyBin, c.out + tail);
+  eq(c.name + ' runs in Python' + (c.mode === 'pydantic' ? ' and validates its input with Pydantic' : c.mode === 'dataclass' ? ' and builds from its input' : ''), r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
+}
+// Page claims about Python and Pydantic behaviour: the printed value must be what each listed page shows.
+const pageText = Object.fromEntries(['en', 'zh', 'ja', 'ko'].map((l) => [l, readFileSync(join(root, 'src/content/tools/json-to-python-dataclass/' + l + '.mdx'), 'utf8')]));
+const nestedJson = '{"id": 7, "title": "Release notes", "author": {"name": "Alice", "email": null}, "tags": ["python", "json"], "score": 4.5, "comments": [{"user": "bob", "text": "nice"}, {"user": "carol"}]}';
+const geo = JSON.parse(checks.find((c) => c.root === 'GeocodeResponse').input);
+const CLAIMS = [
+  { langs: ['en', 'zh', 'ja', 'ko'], code: E.generatePython(JSON.parse('{"price": 10.0, "qty": 2}'), 'Item', 'pydantic').code + '\nfrom pydantic import ValidationError\ntry:\n    Item(price=10.5, qty=2)\nexcept ValidationError as e:\n    print(e.errors()[0]["msg"])', expect: 'Input should be a valid integer, got a number with a fractional part' },
+  { langs: ['en', 'zh', 'ja', 'ko'], code: E.generatePython(JSON.parse(nestedJson), 'Root', 'dataclass').code + `\nimport json\nroot = Root(**json.loads(${JSON.stringify(nestedJson)}))\nprint(type(root.author))`, expect: "<class 'dict'>" },
+  { langs: ['en', 'zh', 'ja', 'ko'], code: E.generatePython(JSON.parse(nestedJson), 'Root', 'pydantic').code + `\nimport json\nroot = Root.model_validate(json.loads(${JSON.stringify(nestedJson)}))\nprint(repr(root.comments[1]))`, expect: "CommentsItem(user='carol', text=None)" },
+  { langs: ['ja'], code: 'from typing import List\nfrom pydantic import BaseModel\nclass A(BaseModel):\n    pops: List[int]\nprint(A(pops=["0", "10"]).pops)', expect: '[0, 10]' },
+  { langs: [], code: 'from datetime import datetime\nfrom pydantic import BaseModel\nclass A(BaseModel):\n    at: datetime\nprint(A(at="2026-10-08T17:00:00+09:00").at.utcoffset().total_seconds())', expect: '32400.0' },
+  { langs: ['ko'], code: 'from datetime import date\nfrom pydantic import BaseModel, ValidationError\nclass A(BaseModel):\n    postdate: date\ntry:\n    A(postdate="20161208")\nexcept ValidationError as e:\n    print(e.errors()[0]["msg"])', expect: 'Datetimes provided to dates should have zero time - e.g. be exact dates' },
+  { langs: ['ko'], code: 'from datetime import datetime\nfrom pydantic import BaseModel, ValidationError\nclass A(BaseModel):\n    lastBuildDate: datetime\ntry:\n    A(lastBuildDate="Mon, 26 Sep 2016 10:39:37 +0900")\nexcept ValidationError as e:\n    print(e.errors()[0]["msg"])', expect: 'Input should be a valid datetime or date, invalid character in year' },
+  { langs: ['ko'], code: 'from email.utils import parsedate_to_datetime\nprint(parsedate_to_datetime("Mon, 26 Sep 2016 10:39:37 +0900"))', expect: '2016-09-26 10:39:37+09:00' },
+  { langs: [], code: 'from datetime import datetime\nprint(datetime.strptime("20161208", "%Y%m%d").date())', expect: '2016-12-08' },
+  // zh: a model generated from the house-number result alone rejects the district-level result.
+  { langs: [], code: E.generatePython({ ...geo, geocodes: [geo.geocodes[0]] }, 'GeocodeResponse', 'pydantic').code + `\nimport json\nfrom pydantic import ValidationError\ntry:\n    GeocodeResponse.model_validate(json.loads(${JSON.stringify(JSON.stringify(geo))}))\n    print('accepted')\nexcept ValidationError as e:\n    print('rejected ' + e.errors()[0]['loc'][-1])`, expect: 'rejected street' },
+];
+if (!pydBin) { skips++; console.log('SKIP: Python 3.11+ with Pydantic 2 not available (set PYDANTIC_PYTHON)'); }
+else {
+  console.log('Pydantic ' + runPy(pydBin, 'import pydantic; print(pydantic.VERSION)').stdout.trim());
+  {
+    const r = runPy(pydBin, E.generatePython(KW_SAMPLES, 'Root', 'pydantic').code + `\nimport json\ndata = json.loads(${JSON.stringify(JSON.stringify(KW_SAMPLES))})\nrs = [Root.model_validate(d) for d in data]\nprint('ok' if [r.model_dump(by_alias=True, exclude_unset=True) for r in rs] == data else [r.model_dump(by_alias=True, exclude_unset=True) for r in rs])`);
+    eq('field names: Pydantic output parses every key through its alias and dumps the same JSON', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
+  }
+  for (const [i, v] of [...CLASH_SAMPLES, MODEL_NS, KW_SAMPLES[0]].entries()) {
+    // Warnings are errors here: the model must build without a protected-namespace or shadowing warning.
+    const r = runPy(pydBin, 'import warnings\nwarnings.simplefilter("error")\n' + E.generatePython(v, 'Root', 'pydantic').code + `\nimport json\ndata = json.loads(${JSON.stringify(JSON.stringify(v))})\nr = Root.model_validate(data)\nprint('ok' if r.model_dump(by_alias=True, exclude_unset=True) == data else r.model_dump(by_alias=True, exclude_unset=True))`);
+    eq('field names: Pydantic sample ' + (i + 1) + ' builds without warnings and reads back', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
+  }
+  for (const [i, v] of TOPO_CASES.entries()) {
+    const r = runPy(pydBin, E.generatePython(v, 'Root', 'pydantic').code + `\nimport json\nRoot.model_validate(json.loads(${JSON.stringify(JSON.stringify(v))}))\nprint('ok')`);
+    eq('topo: case ' + (i + 1) + ' validates with Pydantic', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
+  }
+  for (const mode of ['pydantic', 'dataclass', 'typeddict']) {
+    // B2 with Pydantic: the alias validates the whole root array.
+    const r = runPy(pydBin, E.generatePython(B2_IN, 'Root', mode).code + `\nimport json\nfrom pydantic import TypeAdapter\nprint(len(TypeAdapter(RootArray).validate_python(json.loads(${JSON.stringify(JSON.stringify(B2_IN))}))))`);
+    eq('B2: TypeAdapter(RootArray) validates the whole root array (' + mode + ')', r.stdout.trim() || r.stderr.trim().split('\n').pop(), '6');
+  }
+  {
+    // A4 with Pydantic: a nested object under a non-ASCII key is parsed into its own class, not shadowed.
+    const r = runPy(pydBin, E.generatePython(A4_RUN, 'Root', 'pydantic').code + `\nimport json\nroot = Root.model_validate(json.loads(${JSON.stringify(JSON.stringify(A4_RUN))}))\nprint(type(root.收货地址).__name__, root.收货地址.省, root.发票地址.抬头, root.Address.d)`);
+    eq('A4: Pydantic parses nested objects under non-ASCII and reserved-name keys', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'Root收货地址 浙江省 某公司 None');
+  }
+  for (const [i, c] of CLAIMS.entries()) {
+    const r = runPy(pydBin, c.code);
+    eq('claim ' + (i + 1) + ' Python output', r.stdout.trim() || r.stderr.trim().split('\n').pop(), c.expect);
+  }
+}
+for (const [i, c] of CLAIMS.entries()) for (const lang of c.langs) eq(lang + ': claim ' + (i + 1) + ' shown on the page', pageText[lang].includes(c.expect), true);
 
 // Sample-coverage supplement uses independently recorded complete outputs.
 const coverageFixtures = [
@@ -388,5 +626,10 @@ const coverageFixtures = [
 ];
 for (const [i, f] of coverageFixtures.entries()) eq("sample coverage full output " + i, E.generatePython(f.input, "Root", "dataclass").code, f.output);
 
+
+// ja page sample: 気象庁 130000.json, reportDatetime 2026-10-08T17:00:00+09:00 (fetched 2026-10-08), 東京地方 only,
+// the weather series with all 3 points and the precipitation series with its first 2 points, values unchanged.
+const JMA_20261008_1700 = '[{"publishingOffice":"気象庁","reportDatetime":"2026-10-08T17:00:00+09:00","timeSeries":[{"timeDefines":["2026-10-08T17:00:00+09:00","2026-10-09T00:00:00+09:00","2026-10-10T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"weatherCodes":["100","100","101"],"weathers":["晴れ","晴れ","晴れ\u3000時々\u3000くもり"]}]},{"timeDefines":["2026-10-08T18:00:00+09:00","2026-10-09T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"pops":["0","0"]}]}]}]';
+{ const t = readFileSync(join(root, 'src/content/tools/json-to-python-dataclass/ja.mdx'), 'utf8'); if (!t.includes('<pre><code>{`' + JMA_20261008_1700 + '`}</code></pre>')) { failures++; console.log('FAIL ja page uses the recorded 気象庁 17:00 sample'); } else passes++; }
 console.log(`\n${passes} passed, ${failures} failed${skips ? ', ' + skips + ' skipped' : ''}`);
 process.exit(failures ? 1 : 0);

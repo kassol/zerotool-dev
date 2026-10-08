@@ -10,18 +10,24 @@ steps:
   - "「.py ダウンロード」：表示中の出力全体を .py ファイルに保存します。ファイル名はルート名を小文字にし、ASCII の英数字とアンダースコア以外をアンダースコアに置き換えます。空の出力は保存しません。"
   - "「クリア」：JSON、出力、ステータスを消去し、ルート名と選択したモードを保持します。ツール内で Ctrl/⌘+L を押すとルート名も消去します。"
 faqItems:
-  - question: "このツールは何を生成しますか？"
-    answer: "JSONからPythonクラス定義を生成します。標準の@dataclass（stdlib）、Pydantic v2 BaseModel、またはTypedDictから選択できます。各ネストオブジェクトは独自の名前付きクラスになります。"
-  - question: "対応している出力モードは？"
+  - id: "output"
+    question: "このツールは何を生成しますか？"
+    answer: "JSONからPythonクラス定義を生成します。標準の@dataclass（stdlib）、Pydantic v2 BaseModel、TypedDictから選べます。ネストしたオブジェクトはそれぞれ名前付きのクラスになります。"
+  - id: "modes"
+    question: "対応している出力モードは？"
     answer: "3つのモード：@dataclass（Python stdlib、デフォルト）、Pydantic v2 BaseModel、TypedDict（Python 3.8+。NotRequired を使う場合は 3.11+ か typing_extensions）。"
-  - question: "JSONの型はPythonの型にどのようにマッピングされますか？"
-    answer: "string→str、integer→int、float→float、boolean→bool、null→Optional[Any]、array→List[T]、ネストオブジェクト→別クラス。"
-  - question: "フィールドはいつOptionalになりますか？"
-    answer: "JSONサンプルでフィールドの値がnullの場合、または配列オブジェクトのマージ時に一部のオブジェクトにフィールドが存在しない場合、そのフィールドはOptional[T] = Noneとしてマークされます。"
-  - question: "ネストオブジェクトはどのように処理されますか？"
-    answer: "各ネストオブジェクトは、フィールドキーをPascalCaseに変換した名前の独立したクラスとして抽出されます。子クラスは常に親クラスの前に定義されるので、出力はすぐに使用できます。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。変換はすべてブラウザ上で実行されます。データはお使いのマシン外に出ることはありません。"
+  - id: "type-mapping"
+    question: "JSONの型はPythonの型にどのようにマッピングされますか？"
+    answer: "string→str、整数→int、それ以外の数値→float、boolean→bool、null→Optional[Any]、array→List[T]（要素の型が混ざると List[Union[...]]、空なら List[Any]）、ネストオブジェクト→別クラス。10.0 と書いた数値は整数 10 として読まれるので int になります。"
+  - id: "optional"
+    question: "フィールドはいつOptionalになりますか？"
+    answer: "@dataclass と Pydantic モードでは、サンプルで値が null のとき、または配列のオブジェクトをまとめる際に一部のオブジェクトにないとき、Optional[T] = None になり、必須フィールドの後ろに移ります。TypedDict は JSON のキー順を保ち、一部にないキーは NotRequired[T]、null の値は Optional[T] にします。"
+  - id: "nested"
+    question: "ネストオブジェクトはどのように処理されますか？"
+    answer: "ネストしたオブジェクトは、キーを PascalCase にした名前のクラスになり、配列の中のオブジェクトには Item が付きます（comments → CommentsItem）。クラスは、それを使うクラスより前に出力されます。同じキーでフィールドも同じオブジェクトは 1 つのクラスを共有し、形が違えば親クラス名を前に付け（b.meta → BMeta）、それでも重なれば番号を付けます。ASCII 以外のキーはクラス名に全文字を残し（PEP 3131）、ルートクラス名を除き、JSON のキー名、Python の予約語、出力が import する名前とは重ならないようにします。"
+  - id: "privacy"
+    question: "データはサーバーに送信されますか？"
+    answer: "いいえ。JSON とルートクラス名はこのブラウザのタブの中で処理され、送信されません。ブラウザのストレージにも保存しません。入力を編集してフォーカスを外したとき、サンプルをクリックしたとき、モードを切り替えたときに、ツール名と操作名（generate）だけの統計イベントを記録します。"
 ---
 
 <h2>型マッピング</h2>
@@ -37,6 +43,9 @@ faqItems:
 </ul>
 
 <h2>例</h2>
+
+{/* jpdc-check: {"root":"Root","mode":"dataclass"} */}
+
 <p>このJSONが与えられた場合：</p>
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"], "note": null}`}</code></pre>
 <p>@dataclassモードで生成されるコード：</p>
@@ -92,6 +101,8 @@ root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre
 
 <h2>例：キーが欠ける TypedDict</h2>
 
+{/* jpdc-check: {"root":"Product","mode":"typeddict"} */}
+
 <p><code>note</code> が 1 件目では null、2 件目では欠けていて、<code>discount</code> は 2 件目にしかない商品データ（ルートクラス名 <code>Product</code>、TypedDict モード）：</p>
 
 <pre><code>{`[{"id": 1, "sku": "PEN-01", "price": 2, "note": null}, {"id": 2, "sku": "INK-07", "price": 1.5, "discount": 0.1}]`}</code></pre>
@@ -107,14 +118,73 @@ class Product(TypedDict):
 
 <p><code>price</code> は <code>2</code> と <code>1.5</code> です。PEP 484 では <code>int</code> を <code>float</code> として扱えるので、型は <code>float</code> になります。実行時の <code>Product.__required_keys__</code> は <code>{"{'id', 'sku', 'price'}"}</code>、<code>__optional_keys__</code> は <code>{"{'note', 'discount'}"}</code> です（Python 3.12 で確認）。</p>
 
+<h2>気象庁の天気予報 JSON を TypedDict にする</h2>
+
+{/* jpdc-check: {"root":"Forecast","mode":"typeddict"} */}
+
+<p>気象庁が公開している天気予報の JSON（東京都は <code>https://www.jma.go.jp/bosai/forecast/data/forecast/130000.json</code>）を TypedDict にする例です。2026 年 10 月 8 日 17 時発表分から東京地方だけを取り出し、天気の時系列は 3 時点すべて、降水確率の時系列は最初の 2 時点だけを残しました（値は発表時のまま）。1 つ目の時系列には天気（<code>weatherCodes</code>、<code>weathers</code>）、2 つ目には降水確率（<code>pops</code>）が入っています（ルートクラス名 <code>Forecast</code>、TypedDict モード）：</p>
+
+<pre><code>{`[{"publishingOffice":"気象庁","reportDatetime":"2026-10-08T17:00:00+09:00","timeSeries":[{"timeDefines":["2026-10-08T17:00:00+09:00","2026-10-09T00:00:00+09:00","2026-10-10T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"weatherCodes":["100","100","101"],"weathers":["晴れ","晴れ","晴れ　時々　くもり"]}]},{"timeDefines":["2026-10-08T18:00:00+09:00","2026-10-09T00:00:00+09:00"],"areas":[{"area":{"name":"東京地方","code":"130010"},"pops":["0","0"]}]}]}]`}</code></pre>
+
+<pre><code>{`from typing import List, NotRequired, TypedDict
+
+class Area(TypedDict):
+    name: str
+    code: str
+
+class AreasItem(TypedDict):
+    area: Area
+    weatherCodes: NotRequired[List[str]]
+    weathers: NotRequired[List[str]]
+    pops: NotRequired[List[str]]
+
+class TimeSeriesItem(TypedDict):
+    timeDefines: List[str]
+    areas: List[AreasItem]
+
+class Forecast(TypedDict):
+    publishingOffice: str
+    reportDatetime: str
+    timeSeries: List[TimeSeriesItem]`}</code></pre>
+
+<ul>
+  <li>2 つの時系列の <code>areas</code> は中身が違いますが、同じキーのオブジェクトはすべてのサンプルをまとめて 1 つのクラスにするので、<code>AreasItem</code> には天気と降水確率の両方が入り、片方の時系列にしかない <code>weatherCodes</code>・<code>weathers</code>・<code>pops</code> は <code>NotRequired</code> になります。</li>
+  <li><code>reportDatetime</code> と <code>timeDefines</code> は <code>+09:00</code> 付きの日時ですが <code>str</code> のままです。Pydantic で <code>datetime</code> に変えると、オフセット付きの値として読み込まれます。</li>
+  <li>降水確率は <code>"0"</code> のように文字列で入っているので <code>{"List[str]"}</code> です。Pydantic のモデルで <code>{"List[int]"}</code> に変えると、既定の lax モードでは文字列が数値に変換されます（たとえば <code>{'["0", "10"]'}</code> は <code>{"[0, 10]"}</code>。Pydantic 2.13.5 で確認）。</li>
+  <li><code>weathers</code> の「晴れ　時々　くもり」には全角スペースが入っていますが、文字列なので型には影響しません。</li>
+</ul>
+
 <h2>制限</h2>
 
 <ul>
   <li><code>{"null"}</code> は <code>{"Optional[Any]"}</code> になります。<code>{"Any"}</code> を実際の型に置き換えてください。</li>
-  <li>Python の識別子として使えないキー（<code>{"user-id"}</code> や <code>{"class"}</code> のような予約語）は名前を変え、Pydantic では <code>{"Field(alias=\"user-id\")"}</code> を付けます。</li>
+  <li>そのままではフィールド名にできないキー（<code>{"class"}</code> などの予約語、<code>{"user-id"}</code> や <code>2fa</code> のように識別子でないもの、全角の <code>ｎａｍｅ</code> のように NFKC で変わるもの、<code>{"__"}</code> で始まるもの、出力が import する名前や型として使う名前（<code>str</code>、<code>Field</code>）や生成したクラスと同じ名前のもの。Pydantic ではさらに <code>{"_"}</code> や <code>{"model_"}</code> で始まるキー（MongoDB の <code>{"_id"}</code> など）と、<code>json</code> など <code>BaseModel</code> の属性名）は、使える名前に置き換えます。@dataclass モードは行末のコメントに元のキーを書くので、<code>{"Root(**data)"}</code> の前に自分で対応させます。Pydantic モードは <code>{"Field(alias=...)"}</code> を付けるので <code>{"model_validate()"}</code> は元のキーのまま読めます（<code>{"model_dump()"}</code> はフィールド名で出力するので、元のキーに戻すには <code>{"model_dump(by_alias=True)"}</code> を使います）。TypedDict モードは関数形式 <code>{'TypedDict("Name", {...})'}</code> に切り替えて、キーをすべてそのまま残します。ツールのテストでは Python 3.12 と 3.14 で 3 つの出力を実行し、サンプルを読み戻しています。</li>
   <li>日付は <code>{"str"}</code> のままです。型を <code>{"datetime"}</code> に変えれば Pydantic が ISO 8601 文字列を変換します。</li>
-  <li>ルートがプリミティブの配列のときはクラスを生成しません。</li>
+  <li>ルートがプリミティブの配列のときはクラスを生成しません。ルート配列にオブジェクトとそれ以外の値が混ざっている場合は、オブジェクトからルートクラスを作り、配列全体の型を最後に別名 <code>{"RootArray = List[Union[...]]"}</code> として出力します（null の要素は <code>None</code>）。Pydantic では <code>{"TypeAdapter(RootArray)"}</code> で配列全体を検証できます。</li>
+  <li><code>10.0</code> と書いた数値は、ツールに届いた時点で整数 <code>10</code> です（JavaScript の <code>JSON.parse</code> は末尾の 0 を残しません）。そのため <code>{"price: int"}</code> になり、後で <code>10.5</code> が来ると Pydantic は <code>Input should be a valid integer, got a number with a fractional part</code> で拒否します。小数がありうる値は <code>float</code> に直してください。</li>
+  <li>ルートクラス名は Python の識別子として使えればそのまま使い、使えなければ変換します：<code>{"order-item"}</code> → <code>OrderItem</code>、数字で始まる <code>2fa</code> → <code>{"_2fa"}</code>、予約語の <code>class</code> → <code>{"class_"}</code>、先頭の <code>{"__"}</code> は <code>{"_"}</code> 1 つに（ネストしたクラス名はルートクラス名で始まり、Python はクラス本体の中で 2 つの下線で始まる名前を書き換えるため）、識別子に使える文字がなければ <code>Root</code>。</li>
+  <li>漢字や仮名のキーでも、クラス名にすべての文字がそのまま残ります。ただし JSON のキーと同じ名前のクラスは作らないので（Pydantic では、既定値のあるフィールドが同名のクラスを隠します）、親クラス名を前に付けます。</li>
 </ul>
+
+{/* jpdc-check: {"root":"Member","mode":"dataclass"} */}
+
+<p>会員データの例（ルートクラス名 <code>Member</code>、@dataclass モード）：</p>
+
+<pre><code>{`{"氏名": "山田太郎", "住所": {"都道府県": "東京都", "市区町村": "千代田区"}}`}</code></pre>
+
+<pre><code>{`from dataclasses import dataclass
+
+@dataclass
+class Member住所:
+    都道府県: str
+    市区町村: str
+
+@dataclass
+class Member:
+    氏名: str
+    住所: Member住所`}</code></pre>
+
+<p>Python 3 は識別子に日本語を使えるので、<code>氏名</code> や <code>住所</code> はそのままフィールド名になり、このコードは実行できます。住所のクラスは親の名前を付けた <code>Member住所</code> です。英語の名前にしたいときは <code>Address</code> などに付け替えてください。</p>
 
 {/* b6-sample-coverage:start */}
 <h2>空の配列とサンプルの範囲</h2>

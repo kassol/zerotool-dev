@@ -30,6 +30,7 @@ const STRINGS = {
     copyFailed: 'Copy failed. Please copy the output manually.',
     download: 'Download .py',
     msgInvalidJson: 'Invalid JSON: ',
+    msgFailed: 'Could not generate Python: ',
     msgGenerated: 'Generated.',
     msgGenOne: 'Generated 1 class.',
     msgGenMany: 'Generated {n} classes.',
@@ -59,6 +60,7 @@ const STRINGS = {
     copyFailed: '复制失败，请手动复制输出。',
     download: '下载 .py',
     msgInvalidJson: 'JSON 格式错误：',
+    msgFailed: '无法生成 Python：',
     msgGenerated: '已生成。',
     msgGenOne: '已生成 1 个类。',
     msgGenMany: '已生成 {n} 个类。',
@@ -88,6 +90,7 @@ const STRINGS = {
     copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。',
     download: '.py ダウンロード',
     msgInvalidJson: '無効なJSON：',
+    msgFailed: 'Python を生成できませんでした：',
     msgGenerated: '生成しました。',
     msgGenOne: '1 個のクラスを生成しました。',
     msgGenMany: '{n} 個のクラスを生成しました。',
@@ -117,6 +120,7 @@ const STRINGS = {
     copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.',
     download: '.py 다운로드',
     msgInvalidJson: '잘못된 JSON: ',
+    msgFailed: 'Python 코드를 생성하지 못했습니다: ',
     msgGenerated: '생성 완료.',
     msgGenOne: '클래스 1개를 생성했습니다.',
     msgGenMany: '클래스 {n}개를 생성했습니다.',
@@ -133,6 +137,7 @@ const L = STRINGS[lang];
   data-copy-failed={L.copyFailed}
   data-download={L.download}
   data-msg-invalid-json={L.msgInvalidJson}
+  data-msg-failed={L.msgFailed}
   data-msg-generated={L.msgGenerated}
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
@@ -205,6 +210,7 @@ const L = STRINGS[lang];
       var COPY_FAILED = wrap ? wrap.dataset.copyFailed : 'Copy failed. Please copy the output manually.';
       var DOWNLOAD = wrap ? wrap.dataset.download : 'Download .py';
       var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
+      var MSG_FAILED = wrap ? wrap.dataset.msgFailed : 'Could not generate Python: ';
       var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 class.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} classes.';
@@ -217,6 +223,13 @@ const L = STRINGS[lang];
       var copyRevision = 0;
       var copyTimer = null;
       var copyFailure = false;
+
+      // Copy is enabled only while there is output to copy.
+      function setOutput(text) {
+        outputCodeEl.textContent = text;
+        copyBtn.disabled = !text;
+      }
+      setOutput('');
 
       var currentMode = 'dataclass';
 
@@ -241,6 +254,7 @@ const L = STRINGS[lang];
       for (var ti = 0; ti < tabs.length; ti++) {
         (function (tab) {
           tab.addEventListener('click', function () {
+            var changed = currentMode !== tab.dataset.mode;
             for (var j = 0; j < tabs.length; j++) {
               tabs[j].classList.remove('active');
               tabs[j].setAttribute('aria-pressed', 'false');
@@ -249,6 +263,7 @@ const L = STRINGS[lang];
             tab.setAttribute('aria-pressed', 'true');
             currentMode = tab.dataset.mode;
             convert();
+            if (changed) trackGenerate();
           });
         })(tabs[ti]);
       }
@@ -273,13 +288,41 @@ const L = STRINGS[lang];
       }
 
       /* ── engine:start ── */
+      // Class name for a key by the Python identifier rules (PEP 3131): NFKC as Python reads
+      // identifiers; words split at "_" and at characters that cannot be in an identifier; each word
+      // starts with a capital (letters without case stay); "_" before a leading digit.
       function toPascalCase(str) {
-        return str
-          .replace(/[^a-zA-Z0-9]+(.)/g, function (_, ch) { return ch.toUpperCase(); })
-          .replace(/^(.)/, function (_, ch) { return ch.toUpperCase(); });
+        var words = String(str).normalize('NFKC').split(/[^\p{ID_Continue}]+|_+/u);
+        var name = '';
+        for (var i = 0; i < words.length; i++) {
+          if (words[i]) name += words[i].charAt(0).toUpperCase() + words[i].slice(1);
+        }
+        if (!name) return 'Field';
+        return /^\p{ID_Start}/u.test(name) ? name : '_' + name;
       }
 
-      function inferPythonType(value, key, classes, visiting, imp) {
+      // Names a class must not take: keywords, the names the output imports or uses as types, and
+      // every JSON key (a Pydantic field with a default shadows a class of the same name).
+      var RESERVED_NAMES = ['False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield', 'Any', 'List', 'NotRequired', 'Optional', 'TypedDict', 'Union', 'BaseModel', 'Field', 'dataclass', 'str', 'int', 'float', 'bool'];
+      function reserveNames(taken, parsed) {
+        for (var i = 0; i < RESERVED_NAMES.length; i++) taken[RESERVED_NAMES[i]] = true;
+        var stack = [parsed];
+        while (stack.length) {
+          var v = stack.pop();
+          if (Array.isArray(v)) { for (var j = 0; j < v.length; j++) stack.push(v[j]); }
+          else if (isPlainObject(v)) {
+            var ks = Object.keys(v);
+            for (var k = 0; k < ks.length; k++) { taken[ks[k].normalize('NFKC')] = true; stack.push(v[ks[k]]); }
+          }
+        }
+      }
+
+      function isPlainObject(v) {
+        return v !== null && typeof v === 'object' && !Array.isArray(v);
+      }
+
+      // ctx: classes (name → fields), taken (names in use) and shapes (stem + fields → name).
+      function inferPythonType(value, key, ctx, imp, parentStem) {
         if (value === null) {
           imp.any = true;
           return 'Any';
@@ -298,18 +341,29 @@ const L = STRINGS[lang];
           }
           var objectItems = [];
           var primitiveTypes = [];
+          var subArrays = [], subAt = -1;
           for (var i = 0; i < value.length; i++) {
             var item = value[i];
-            if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+            if (isPlainObject(item)) {
               objectItems.push(item);
+            } else if (Array.isArray(item)) {
+              // The sub-arrays of one array are samples of one element type: read them together.
+              if (subAt === -1) { subAt = primitiveTypes.length; primitiveTypes.push(null); }
+              subArrays.push(item);
             } else {
-              var t = inferPythonType(item, key + 'Item', classes, visiting, imp);
+              var t = inferPythonType(item, key + 'Item', ctx, imp, parentStem);
               if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
             }
           }
+          if (subAt !== -1) {
+            var joinedItems = [];
+            for (var si = 0; si < subArrays.length; si++) for (var sj = 0; sj < subArrays[si].length; sj++) joinedItems.push(subArrays[si][sj]);
+            var subType = inferPythonType(joinedItems, key + 'Item', ctx, imp, parentStem);
+            if (primitiveTypes.indexOf(subType) === -1) primitiveTypes[subAt] = subType;
+            else primitiveTypes.splice(subAt, 1);
+          }
           if (objectItems.length > 0) {
-            var itemClassName = toPascalCase(key) + 'Item';
-            mergeObjectsToClass(objectItems, itemClassName, classes, visiting, imp);
+            var itemClassName = mergeObjectsToClass(objectItems, toPascalCase(key) + 'Item', parentStem, ctx, imp);
             if (primitiveTypes.indexOf(itemClassName) === -1) primitiveTypes.push(itemClassName);
           }
           if (primitiveTypes.length === 0) {
@@ -321,70 +375,55 @@ const L = STRINGS[lang];
           return 'List[Union[' + primitiveTypes.join(', ') + ']]';
         }
 
-        if (typeof value === 'object') {
-          var className = toPascalCase(key);
-          buildClass(value, className, classes, visiting, imp);
-          return className;
-        }
+        if (typeof value === 'object') return mergeObjectsToClass([value], toPascalCase(key), parentStem, ctx, imp);
 
         imp.any = true;
         return 'Any';
       }
 
-      function buildClass(obj, name, classes, visiting, imp) {
-        if (Object.prototype.hasOwnProperty.call(classes, name) || visiting[name]) return;
-        visiting[name] = true;
-
-        var fields = [];
-        var keys = Object.keys(obj);
-        for (var i = 0; i < keys.length; i++) {
-          var k = keys[i];
-          var v = obj[k];
-          var type = inferPythonType(v, k, classes, visiting, imp);
-          var optional = (v === null);
-          if (optional) imp.optional = true;
-          fields.push({ key: k, type: type, optional: optional, missing: false, nullable: optional });
-        }
-        // Insert AFTER children so child classes appear first in output
-        classes[name] = fields;
-      }
-
-      function mergeObjectsToClass(objects, name, classes, visiting, imp) {
-        if (Object.prototype.hasOwnProperty.call(classes, name) || visiting[name]) return;
-        visiting[name] = true;
-
+      // One class from one or more objects. Every sample of a key counts: its objects merge into one
+      // class and its arrays into one list. A class with the same stem and fields is reused; another
+      // shape gets the parent stem as a prefix (b.meta → BMeta), then a number (Meta2).
+      function mergeObjectsToClass(objects, stem, parentStem, ctx, imp, fixedName) {
         var totalCount = objects.length;
-        var allKeys = {};
+        var allKeys = Object.create(null);
+        var keyList = [];
         for (var i = 0; i < objects.length; i++) {
           var ks = Object.keys(objects[i]);
           for (var j = 0; j < ks.length; j++) {
-            if (!allKeys[ks[j]]) allKeys[ks[j]] = [];
+            if (!allKeys[ks[j]]) { allKeys[ks[j]] = []; keyList.push(ks[j]); }
             allKeys[ks[j]].push(objects[i][ks[j]]);
           }
         }
 
         var fields = [];
-        var keyList = Object.keys(allKeys);
         for (var ki = 0; ki < keyList.length; ki++) {
           var k = keyList[ki];
           var vals = allKeys[k];
           var missing = vals.length < totalCount;
-          var nullable = false;
+          var present = vals.filter(function (v) { return v !== null; });
+          var nullable = present.length < vals.length;
+          var objs = present.filter(isPlainObject);
+          var arrs = present.filter(function (v) { return Array.isArray(v); });
 
           var types = [];
-          for (var vi = 0; vi < vals.length; vi++) {
-            if (vals[vi] === null) { nullable = true; continue; }
-            var t = inferPythonType(vals[vi], k, classes, visiting, imp);
-            if (types.indexOf(t) === -1) types.push(t);
+          for (var vi = 0; vi < present.length; vi++) {
+            var v = present[vi], t = null;
+            if (isPlainObject(v)) { if (v === objs[0]) t = mergeObjectsToClass(objs, toPascalCase(k), stem, ctx, imp); }
+            else if (Array.isArray(v)) {
+              if (v === arrs[0]) {
+                // A loop, not concat.apply: spreading ~100,000 arrays as arguments overflows the stack.
+                var joined = [];
+                for (var ai = 0; ai < arrs.length; ai++) for (var aj = 0; aj < arrs[ai].length; aj++) joined.push(arrs[ai][aj]);
+                t = inferPythonType(joined, k, ctx, imp, stem);
+              }
+            }
+            else t = inferPythonType(v, k, ctx, imp, stem);
+            if (t !== null && types.indexOf(t) === -1) types.push(t);
           }
 
           // PEP 484 lets int stand in for float, so int and float together are float.
           if (types.length === 2 && types.indexOf('int') >= 0 && types.indexOf('float') >= 0) types = ['float'];
-          // An empty array says nothing about the element type; drop List[Any] when another
-          // sample gives a typed list.
-          if (types.indexOf('List[Any]') >= 0 && types.some(function (x) { return x !== 'List[Any]' && x.indexOf('List[') === 0; })) {
-            types = types.filter(function (x) { return x !== 'List[Any]'; });
-          }
           if (types.length === 0) {
             imp.any = true;
             types = ['Any'];
@@ -402,15 +441,66 @@ const L = STRINGS[lang];
           if (optional) imp.optional = true;
           fields.push({ key: k, type: type, optional: optional, missing: missing, nullable: nullable });
         }
-        // Insert AFTER children so child classes appear first in output
-        classes[name] = fields;
+
+        var sig = JSON.stringify(fields.map(function (f) { return [f.key, f.type, f.optional, f.missing, f.nullable]; }));
+        if (!fixedName) {
+          for (var si = 0; si < ctx.shapes.length; si++) {
+            if (ctx.shapes[si].stem === stem && ctx.shapes[si].sig === sig) return ctx.shapes[si].name;
+          }
+        }
+        var name = fixedName || null;
+        var candidates = [stem, parentStem + stem];
+        for (var ci = 0; ci < candidates.length && !name; ci++) {
+          if (!ctx.taken[candidates[ci]]) name = candidates[ci];
+        }
+        for (var n = 2; !name; n++) if (!ctx.taken[stem + n]) name = stem + n;
+        ctx.taken[name] = true;
+        // Children are inserted first; topoSort orders the output anyway.
+        ctx.classes[name] = fields;
+        ctx.shapes.push({ stem: stem, sig: sig, name: name });
+        return name;
       }
 
-      function renderClass(name, fields, mode) {
+      // Public attributes of pydantic.BaseModel (Pydantic 2.13): a field with one of these names fails
+      // (model_config, model_dump) or hides the method.
+      var BASEMODEL_ATTRS = ['construct', 'copy', 'dict', 'from_orm', 'json', 'model_computed_fields', 'model_config', 'model_construct', 'model_copy', 'model_dump', 'model_dump_json', 'model_extra', 'model_fields', 'model_fields_set', 'model_json_schema', 'model_parametrized_name', 'model_post_init', 'model_rebuild', 'model_validate', 'model_validate_json', 'model_validate_strings', 'parse_file', 'parse_obj', 'parse_raw', 'schema', 'schema_json', 'update_forward_refs', 'validate'];
+
+      // Field name for each key. A key is kept when it is already a usable name: a Python identifier
+      // as typed (NFKC leaves it unchanged), not a keyword or a name the annotations use (a field
+      // with a default would hide it), not starting with "__" (mangled in a class body), and for
+      // Pydantic not starting with "_" (private attribute) or "model_", or naming a BaseModel attribute. Other
+      // keys get a name from their identifier characters with "_" added until it is free.
+      function pyFieldNames(fields, mode, classNames) {
+        var used = Object.create(null), names = [];
+        function usable(n) {
+          return /^[\p{ID_Start}_]\p{ID_Continue}*$/u.test(n) && n === n.normalize('NFKC') &&
+            RESERVED_NAMES.indexOf(n) === -1 && !/^__/.test(n) && !(classNames && classNames[n]) &&
+            !(mode === 'pydantic' && (/^_|^model_/.test(n) || BASEMODEL_ATTRS.indexOf(n) !== -1));
+        }
+        for (var i = 0; i < fields.length; i++) if (usable(fields[i].key)) used[fields[i].key] = true;
+        for (var i = 0; i < fields.length; i++) {
+          var key = fields[i].key;
+          if (usable(key)) { names.push(key); continue; }
+          var n = key.normalize('NFKC').replace(/[^\p{ID_Continue}]+/gu, '_');
+          n = mode === 'pydantic' ? n.replace(/^_+/, '') : n.replace(/^_{2,}/, '_');
+          if (!n) n = 'field';
+          if (!/^[\p{ID_Start}_]/u.test(n)) n = (mode === 'pydantic' ? 'field_' : '_') + n;
+          // Pydantic names its own members model_…; its protected namespaces warn on such fields.
+          if (mode === 'pydantic' && /^model_/.test(n)) n = 'field_' + n;
+          if (!usable(n)) n += '_';
+          for (var c = n, k = 2; used[c] || !usable(c); k++) c = n + k;
+          n = c;
+          used[n] = true;
+          names.push(n);
+        }
+        return names;
+      }
+
+      function renderClass(name, fields, mode, classNames) {
         if (!fields) return '';
-        var required = fields.filter(function (f) { return !f.optional; });
-        var optional = fields.filter(function (f) { return f.optional; });
-        var ordered = required.concat(optional);
+        var names = pyFieldNames(fields, mode, classNames);
+        var entries = fields.map(function (f, i) { return { f: f, name: names[i] }; });
+        var ordered = entries.filter(function (e) { return !e.f.optional; }).concat(entries.filter(function (e) { return e.f.optional; }));
 
         var lines = [];
 
@@ -421,11 +511,12 @@ const L = STRINGS[lang];
             lines.push('    pass');
           } else {
             for (var i = 0; i < ordered.length; i++) {
-              var f = ordered[i];
+              var f = ordered[i].f, n = ordered[i].name;
+              var note = n === f.key ? '' : '  # JSON key: ' + JSON.stringify(f.key);
               if (f.optional) {
-                lines.push('    ' + f.key + ': Optional[' + f.type + '] = None');
+                lines.push('    ' + n + ': Optional[' + f.type + '] = None' + note);
               } else {
-                lines.push('    ' + f.key + ': ' + f.type);
+                lines.push('    ' + n + ': ' + f.type + note);
               }
             }
           }
@@ -435,39 +526,43 @@ const L = STRINGS[lang];
             lines.push('    pass');
           } else {
             for (var i = 0; i < ordered.length; i++) {
-              var f = ordered[i];
+              var f = ordered[i].f, n = ordered[i].name;
+              var alias = n === f.key ? null : 'alias=' + JSON.stringify(f.key);
               if (f.optional) {
-                lines.push('    ' + f.key + ': Optional[' + f.type + '] = None');
+                lines.push('    ' + n + ': Optional[' + f.type + '] = ' + (alias ? 'Field(default=None, ' + alias + ')' : 'None'));
               } else {
-                lines.push('    ' + f.key + ': ' + f.type);
+                lines.push('    ' + n + ': ' + f.type + (alias ? ' = Field(' + alias + ')' : ''));
               }
             }
           }
         } else {
           /* TypedDict: a key missing from some samples is NotRequired (PEP 655); a key whose
-             value can be null is Optional. Keys keep their JSON order. */
-          lines.push('class ' + name + '(TypedDict):');
-          if (fields.length === 0) {
+             value can be null is Optional. Keys keep their JSON order. Keys that cannot be class
+             attributes use the functional syntax, which keeps every key as it is. */
+          var functional = entries.some(function (e) { return e.name !== e.f.key; });
+          lines.push(functional ? name + ' = TypedDict(' + JSON.stringify(name) + ', {' : 'class ' + name + '(TypedDict):');
+          if (fields.length === 0 && !functional) {
             lines.push('    pass');
           } else {
             for (var i = 0; i < fields.length; i++) {
               var f = fields[i];
               var tt = f.nullable ? 'Optional[' + f.type + ']' : f.type;
               if (f.missing) tt = 'NotRequired[' + tt + ']';
-              lines.push('    ' + f.key + ': ' + tt);
+              lines.push(functional ? '    ' + JSON.stringify(f.key) + ': ' + tt + ',' : '    ' + f.key + ': ' + tt);
             }
           }
+          if (functional) lines.push('})');
         }
         return lines.join('\n');
       }
 
       function topoSort(classes) {
         var names = Object.keys(classes);
-        var nameSet = {};
+        var nameSet = Object.create(null);
         for (var i = 0; i < names.length; i++) nameSet[names[i]] = true;
 
-        var deps = {};
-        var identRe = /[A-Za-z_][A-Za-z0-9_]*/g;
+        var deps = Object.create(null);
+        var identRe = /[\p{ID_Start}_]\p{ID_Continue}*/gu;
         for (var i = 0; i < names.length; i++) {
           var n = names[i];
           deps[n] = [];
@@ -485,8 +580,8 @@ const L = STRINGS[lang];
           }
         }
 
-        var inDegree = {};
-        var rev = {};
+        var inDegree = Object.create(null);
+        var rev = Object.create(null);
         for (var i = 0; i < names.length; i++) {
           inDegree[names[i]] = 0;
           rev[names[i]] = [];
@@ -523,8 +618,12 @@ const L = STRINGS[lang];
         return ordered;
       }
 
-      function renderAll(classes, mode) {
+      function renderAll(classes, mode, alias) {
         var imp = {};
+        // Field names must not take a generated class or alias name (Pydantic would read the field).
+        var classNames = Object.create(null);
+        Object.keys(classes).forEach(function (n) { classNames[n] = true; });
+        if (alias) classNames[alias.name] = true;
 
         // Re-scan classes to collect imports (already set during build, but
         // we reference the global imp object from buildClass/merge calls,
@@ -537,7 +636,13 @@ const L = STRINGS[lang];
         var importLines = [];
 
         if (needDataclass) importLines.push('from dataclasses import dataclass');
-        if (needPydantic) importLines.push('from pydantic import BaseModel');
+        if (needPydantic) {
+          var needField = Object.keys(classes).some(function (n) {
+            var fs = classes[n] || [], ns = pyFieldNames(fs, 'pydantic', classNames);
+            return fs.some(function (f, i) { return ns[i] !== f.key; });
+          });
+          importLines.push('from pydantic import BaseModel' + (needField ? ', Field' : ''));
+        }
 
         // Collect typing imports by scanning classes
         var hasOptional = false, hasList = false, hasAny = false, hasUnion = false, hasTypedDict = needTypedDict;
@@ -555,6 +660,11 @@ const L = STRINGS[lang];
             if (t.indexOf('Union[') !== -1) hasUnion = true;
           }
         }
+        if (alias) {
+          hasList = true;
+          if (alias.type.indexOf('Any') !== -1) hasAny = true;
+          if (alias.type.indexOf('Union[') !== -1) hasUnion = true;
+        }
         var typingParts = [];
         if (hasAny) typingParts.push('Any');
         if (hasList) typingParts.push('List');
@@ -570,30 +680,61 @@ const L = STRINGS[lang];
         var orderedNames = topoSort(classes);
         var blocks = [];
         for (var i = 0; i < orderedNames.length; i++) {
-          var rendered = renderClass(orderedNames[i], classes[orderedNames[i]], mode);
+          var rendered = renderClass(orderedNames[i], classes[orderedNames[i]], mode, classNames);
           if (rendered) blocks.push(rendered);
         }
 
         var result = importLines.length > 0 ? importLines.join('\n') + '\n\n' : '';
         result += blocks.join('\n\n');
+        if (alias) result += '\n\n' + alias.name + ' = ' + alias.type;
         return result;
+      }
+
+      // Root class name: as typed (NFKC) when it is a Python identifier that is not reserved;
+      // otherwise built like a key's class name (order-item → OrderItem, 2fa → _2fa); "_" after a
+      // reserved name (class → class_); Root when no identifier character is left.
+      function cleanRootName(raw) {
+        var s = String(raw).normalize('NFKC');
+        if (!/\p{ID_Continue}/u.test(s)) return 'Root';
+        var name = /^[\p{ID_Start}_]\p{ID_Continue}*$/u.test(s) ? s : toPascalCase(s);
+        // Nested classes take the root name as a prefix; a name starting with "__" would be mangled
+        // inside class bodies (Python private name mangling), so keep one leading "_".
+        name = name.replace(/^_{2,}/, '_');
+        return RESERVED_NAMES.indexOf(name) === -1 ? name : name + '_';
       }
 
       /* Classes for an object or an array of objects; null for other roots. */
       function generatePython(parsed, rootName, mode) {
-        var classes = {}, visiting = {}, imp = {};
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          buildClass(parsed, rootName, classes, visiting, imp);
+        rootName = cleanRootName(rootName);
+        var ctx = { classes: Object.create(null), taken: Object.create(null), shapes: [] }, imp = {}, alias = null;
+        reserveNames(ctx.taken, parsed);
+        ctx.taken[rootName] = true;
+        if (isPlainObject(parsed)) {
+          mergeObjectsToClass([parsed], rootName, '', ctx, imp, rootName);
         } else if (Array.isArray(parsed)) {
-          var objectItems = parsed.filter(function (v) {
-            return v !== null && typeof v === 'object' && !Array.isArray(v);
-          });
+          var objectItems = parsed.filter(isPlainObject);
           if (!objectItems.length) return null;
-          mergeObjectsToClass(objectItems, rootName, classes, visiting, imp);
+          // Values beside the objects stay in a module-level alias: <root>Array = List[Union[...]].
+          var others = parsed.filter(function (v) { return !isPlainObject(v); });
+          if (others.length) {
+            var aliasName = rootName + 'Array';
+            for (var n = 2; ctx.taken[aliasName]; n++) aliasName = rootName + 'Array' + n;
+            ctx.taken[aliasName] = true;
+          }
+          mergeObjectsToClass(objectItems, rootName, '', ctx, imp, rootName);
+          if (others.length) {
+            var elementTypes = [];
+            for (var oi = 0; oi < others.length; oi++) {
+              var et = others[oi] === null ? 'None' : inferPythonType(others[oi], rootName, ctx, imp, '');
+              if (elementTypes.indexOf(et) === -1) elementTypes.push(et);
+            }
+            elementTypes.push(rootName);
+            alias = { name: aliasName, type: 'List[Union[' + elementTypes.join(', ') + ']]' };
+          }
         } else {
           return null;
         }
-        return { code: renderAll(classes, mode), count: Object.keys(classes).length };
+        return { code: renderAll(ctx.classes, mode, alias), count: Object.keys(ctx.classes).length };
       }
       /* ── engine:end ── */
 
@@ -602,7 +743,7 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         _liveTimer = null;
         var raw = inputEl.value.trim();
-        if (!raw) { inputEl.classList.remove('error'); clearStatus(); outputCodeEl.textContent = ''; return; }
+        if (!raw) { inputEl.classList.remove('error'); clearStatus(); setOutput(''); return; }
         inputEl.classList.remove('error');
 
         var parsed;
@@ -610,26 +751,38 @@ const L = STRINGS[lang];
           parsed = JSON.parse(raw);
         } catch (e) {
           inputEl.classList.add('error');
-          outputCodeEl.textContent = '';
+          setOutput('');
           setStatus(MSG_INVALID + e.message, true);
           return;
         }
 
         inputEl.classList.remove('error');
         var rootName = rootNameEl.value.trim() || 'Root';
-        var r = generatePython(parsed, rootName, currentMode);
-        if (!r) {
-          outputCodeEl.textContent = Array.isArray(parsed)
-            ? '# Array of primitives — no class to generate'
-            : '# Primitive value — no class to generate';
-          setStatus(MSG_GENERATED, false);
-          window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
+        var r;
+        try {
+          r = generatePython(parsed, rootName, currentMode);
+        } catch (e) {
+          // For example a stack overflow on very deep nesting: never leave the previous output.
+          setOutput('');
+          setStatus(MSG_FAILED + (e && e.message ? e.message : String(e)), true);
           return;
         }
-        outputCodeEl.textContent = r.code;
+        if (!r) {
+          setOutput(Array.isArray(parsed)
+            ? '# Array of primitives — no class to generate'
+            : '# Primitive value — no class to generate');
+          setStatus(MSG_GENERATED, false);
+          return;
+        }
+        setOutput(r.code);
         var msg = r.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', r.count);
         setStatus(msg, false);
-        window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
+      }
+
+      // Analytics: one event per committed edit (change), Example or new mode, only when code is
+      // shown; not after each typing pause.
+      function trackGenerate() {
+        if (outputCodeEl.textContent) window.trackTool && window.trackTool('json-to-python-dataclass', 'generate');
       }
 
       var _liveTimer = null;
@@ -643,12 +796,20 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(convert, 300);
       });
+      // A committed edit runs a pending generation first, so the event matches the shown code.
+      function commitEdit() {
+        if (_liveTimer) convert();
+        trackGenerate();
+      }
+      inputEl.addEventListener('change', commitEdit);
+      rootNameEl.addEventListener('change', commitEdit);
 
       document.getElementById('jpdc-example').addEventListener('click', function () {
         inputEl.value = EXAMPLE;
         inputEl.classList.remove('error');
         clearStatus();
         convert();
+        trackGenerate();
       });
 
       document.getElementById('jpdc-clear').addEventListener('click', function () {
@@ -656,7 +817,7 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         _liveTimer = null;
         inputEl.value = '';
-        outputCodeEl.textContent = '';
+        setOutput('');
         inputEl.classList.remove('error');
         clearStatus();
       });

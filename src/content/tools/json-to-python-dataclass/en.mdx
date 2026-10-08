@@ -10,18 +10,24 @@ steps:
   - "Use Download .py: Save the complete displayed output as a .py file. The filename uses the lowercase root name; characters outside ASCII letters, digits and underscores become underscores. Empty output is not downloaded."
   - "Use Clear: Clear JSON, output and status. Keep the root name and the selected mode. Ctrl/⌘+L with focus in the tool also clears the root name."
 faqItems:
-  - question: "What does this tool generate?"
-    answer: "It generates Python class definitions from JSON. Choose between standard @dataclass (stdlib), Pydantic v2 BaseModel, or TypedDict. Each nested object becomes its own named class."
-  - question: "What output modes are supported?"
+  - id: "output"
+    question: "What does this tool generate?"
+    answer: "It generates Python class definitions from JSON. Choose between standard @dataclass (stdlib), Pydantic v2 BaseModel, or TypedDict. Nested objects become their own named classes."
+  - id: "modes"
+    question: "What output modes are supported?"
     answer: "Three modes: @dataclass (Python stdlib, default), Pydantic v2 BaseModel, and TypedDict (Python 3.8+; NotRequired needs 3.11+ or typing_extensions)."
-  - question: "How are JSON types mapped to Python types?"
-    answer: "string → str, integer → int, float → float, boolean → bool, null → Optional[Any], array → List[T], nested object → separate class."
-  - question: "When are fields marked as Optional?"
-    answer: "A field is marked Optional[T] = None when its value is null in the JSON sample, or when it is missing in some objects of a merged array."
-  - question: "How are nested objects handled?"
-    answer: "Each nested object is extracted into a separate class named after the field key in PascalCase. Child classes are always defined before the parent class so the output is immediately usable."
-  - question: "Is my data sent to a server?"
-    answer: "No. The entire conversion runs in your browser. No data leaves your machine."
+  - id: "type-mapping"
+    question: "How are JSON types mapped to Python types?"
+    answer: "string → str, integer → int, other numbers → float, boolean → bool, null → Optional[Any], array → List[T] (List[Union[...]] for mixed elements, List[Any] when empty), nested object → separate class. A number written as 10.0 is read as the integer 10, so it becomes int."
+  - id: "optional"
+    question: "When are fields marked as Optional?"
+    answer: "In @dataclass and Pydantic mode a field becomes Optional[T] = None, and moves after the required fields, when its value is null in a sample or when it is missing from some objects of a merged array. TypedDict keeps the JSON key order: a key missing from some objects becomes NotRequired[T] and a null value becomes Optional[T]."
+  - id: "nested"
+    question: "How are nested objects handled?"
+    answer: "Each nested object becomes a class named after its key in PascalCase; objects inside an array get the suffix Item (comments → CommentsItem). Classes are written before the classes that use them. Objects under the same key with the same fields share one class; another shape gets the parent name as a prefix (b.meta → BMeta), then a number. Class names keep every letter of a key outside ASCII (PEP 3131) and, except the root class name, never equal a JSON key, a keyword or a name the output imports."
+  - id: "privacy"
+    question: "Is my data sent to a server?"
+    answer: "No. The JSON and the root class name are processed in this browser tab and are not sent anywhere, and the tool does not save them in browser storage. The page records an analytics event with only the tool name and the action (generate) when you finish an edit (the field loses focus), click Example or change the mode."
 ---
 
 <h2>Type Mapping</h2>
@@ -37,6 +43,9 @@ faqItems:
 </ul>
 
 <h2>Example</h2>
+
+{/* jpdc-check: {"root":"Root","mode":"dataclass"} */}
+
 <p>Given this JSON:</p>
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"], "note": null}`}</code></pre>
 <p>The tool generates (@dataclass mode):</p>
@@ -92,6 +101,8 @@ root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre
 
 <h2>Example: TypedDict with Missing Keys</h2>
 
+{/* jpdc-check: {"root":"Product","mode":"typeddict"} */}
+
 <p>Two products where <code>note</code> is null in the first and absent from the second, and <code>discount</code> only appears in the second (root class name <code>Product</code>, TypedDict mode):</p>
 
 <pre><code>{`[{"id": 1, "sku": "PEN-01", "price": 2, "note": null}, {"id": 2, "sku": "INK-07", "price": 1.5, "discount": 0.1}]`}</code></pre>
@@ -111,10 +122,83 @@ class Product(TypedDict):
 
 <ul>
   <li><code>{"null"}</code> becomes <code>{"Optional[Any]"}</code>; replace <code>{"Any"}</code> with the real type.</li>
-  <li>Keys that are not valid Python identifiers (for example <code>{"user-id"}</code> or keywords such as <code>{"class"}</code>) need renaming, plus <code>{"Field(alias=\"user-id\")"}</code> in Pydantic.</li>
+  <li>Keys that cannot be field names as they are (keywords such as <code>{"class"}</code>, keys like <code>{"user-id"}</code> or <code>2fa</code>, keys that NFKC would change such as full-width <code>ｎａｍｅ</code>, keys that start with <code>{"__"}</code>, keys named like something the output imports or uses as a type (<code>str</code>, <code>Field</code>) or like a generated class, and in Pydantic keys that start with <code>{"_"}</code> or <code>{"model_"}</code> or name a <code>BaseModel</code> attribute such as <code>json</code>) get a valid name. @dataclass notes the JSON key in a comment (map it yourself before <code>{"Root(**data)"}</code>), Pydantic adds <code>{"Field(alias=...)"}</code> so <code>{"model_validate()"}</code> reads the original key (<code>{"model_dump()"}</code> writes the field names; use <code>{"model_dump(by_alias=True)"}</code> to get the JSON keys back), and TypedDict switches to the functional form <code>{'TypedDict("Name", {...})'}</code>, which keeps every key. See the example below.</li>
   <li>Dates stay <code>{"str"}</code>; Pydantic converts ISO 8601 strings if you change the type to <code>{"datetime"}</code>.</li>
-  <li>Arrays of primitives at the root generate no class.</li>
+  <li>Arrays of primitives at the root generate no class. In a root array that mixes objects and other values, the objects become the root class and the whole array gets an alias at the end, <code>{"ProductArray = List[Union[...]]"}</code> (see below).</li>
+  <li>A number written as <code>10.0</code> reaches the generator as the integer <code>10</code> (JavaScript's <code>JSON.parse</code> keeps no trailing zeros), so <code>{"price: int"}</code>. Pydantic then rejects a later <code>10.5</code> with <code>Input should be a valid integer, got a number with a fractional part</code>; change the field to <code>float</code> when prices can have decimals.</li>
+  <li>The root class name is used as typed when it is a Python identifier; otherwise it is converted: <code>{"order-item"}</code> → <code>OrderItem</code>, <code>2fa</code> → <code>{"_2fa"}</code>, the keyword <code>class</code> → <code>{"class_"}</code>, a leading <code>{"__"}</code> becomes one <code>{"_"}</code> (nested class names start with the root name, and Python mangles names that start with two underscores inside a class body), and <code>Root</code> when no identifier character is left.</li>
 </ul>
+
+<h2>Keys That Are Not Field Names</h2>
+
+{/* jpdc-check: {"root":"Ticket","mode":"pydantic"} */}
+
+<p>A MongoDB-style <code>{"_id"}</code>, a keyword, a dashed key and <code>json</code>, which is a <code>BaseModel</code> method (root class name <code>Ticket</code>, Pydantic v2 mode):</p>
+
+<pre><code>{`{"_id": "65f0c1", "class": "economy", "user-id": 7, "json": null}`}</code></pre>
+
+<pre><code>{`from pydantic import BaseModel, Field
+from typing import Any, Optional
+
+class Ticket(BaseModel):
+    id: str = Field(alias="_id")
+    class_: str = Field(alias="class")
+    user_id: int = Field(alias="user-id")
+    json_: Optional[Any] = Field(default=None, alias="json")`}</code></pre>
+
+<p>In @dataclass mode <code>{"_id"}</code> and <code>json</code> stay (they are valid there) and the other two get <code>{"class_"}</code> and <code>{"user_id"}</code> with a <code>{"# JSON key"}</code> comment; in TypedDict mode the output is <code>{'Ticket = TypedDict("Ticket", {"_id": str, "class": str, ...})'}</code>. The tool's test runs all three in Python 3.12 and 3.14 and reads samples back.</p>
+
+<h2>Repeated Key Names</h2>
+
+{/* jpdc-check: {"root":"Root","mode":"dataclass"} */}
+
+<p>Two <code>meta</code> objects with different fields get two classes; the second takes the parent name as a prefix:</p>
+
+<pre><code>{`{"a": {"meta": {"x": 1}}, "b": {"meta": {"y": 2}}}`}</code></pre>
+
+<pre><code>{`from dataclasses import dataclass
+
+@dataclass
+class Meta:
+    x: int
+
+@dataclass
+class BMeta:
+    y: int
+
+@dataclass
+class A:
+    meta: Meta
+
+@dataclass
+class B:
+    meta: BMeta
+
+@dataclass
+class Root:
+    a: A
+    b: B`}</code></pre>
+
+<p>A <code>meta</code> with the same fields as <code>a.meta</code> would reuse <code>Meta</code>; if <code>BMeta</code> were taken as well, the next shape would be <code>Meta2</code>. Every sample of a key counts: the objects of one key in a root array, or in arrays inside it, merge into one class, and a key missing from some of them becomes optional. A key outside ASCII keeps all its characters in the class name, and because a class never takes the name of a JSON key (a Pydantic field with a default would hide a class of the same name), <code>{"{\"收货地址\": {...}}"}</code> under root <code>Order</code> gives the class <code>Order收货地址</code>.</p>
+
+<h2>Root Arrays With Other Values</h2>
+
+{/* jpdc-check: {"root":"Product","mode":"pydantic"} */}
+
+<p>A root array can hold values that are not objects. They are kept in an alias after the classes (root class name <code>Product</code>, Pydantic v2 mode):</p>
+
+<pre><code>{`[{"sku": "PEN-01", "price": 2}, "sold out", null, {"sku": "INK-07", "price": 1.5}]`}</code></pre>
+
+<pre><code>{`from pydantic import BaseModel
+from typing import List, Union
+
+class Product(BaseModel):
+    sku: str
+    price: float
+
+ProductArray = List[Union[str, None, Product]]`}</code></pre>
+
+<p><code>{"TypeAdapter(ProductArray).validate_python(data)"}</code> validates the whole array in Pydantic; the tool's test runs it with Pydantic 2.13.5. A <code>null</code> element becomes <code>None</code> in the union.</p>
 
 {/* b6-sample-coverage:start */}
 <h2>Empty arrays and sample coverage</h2>
