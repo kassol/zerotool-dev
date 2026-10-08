@@ -16,6 +16,10 @@
 // source text access), PaymentMeta-style names, imports, keywords in backticks, @SerialName with
 // Kotlin string escapes, empty objects as `class X`, names that would hide List / String,
 // root arrays and scalars.
+// S2: every page example in all four languages is compiled and decoded; a {/* kt: … */} marker can list
+// "decodes" (payloads that must decode, optionally with the expected re-encoded JSON), "rejects"
+// ([payload, exception class] that must fail) and "decodeAs" (the type for those payloads). Also
+// keys that are Object.prototype members, non-ASCII names, and analytics sent once per committed change.
 //
 // Compile check: when KOTLINC points at a kotlinc binary (or `kotlinc` is on PATH) and
 // KOTLINX_SERIALIZATION_CLASSPATH lists the kotlinx-serialization-core-jvm and -json-jvm jars, every
@@ -197,6 +201,21 @@ const EXAMPLE = JSON.stringify({
   eq('string array root', l.code, 'typealias Tags = List<String>');
 }
 
+// ---------- names that are Object.prototype members, non-ASCII names (S2) ----------
+{
+  const r = add('prototype member keys', '{"constructor": 1, "__proto__": {"a": 1}, "toString": "x", "hasOwnProperty": {"b": 2}, "valueOf": {"c": 3}}', null, true);
+  has('constructor key is a plain property', r.code, '    val constructor: Int = 0,');
+  has('__proto__ key keeps @SerialName', r.code, '    @SerialName("__proto__")');
+  has('__proto__ object → Proto class', r.code, '    val proto: Proto = Proto(),');
+  has('hasOwnProperty object → own class', r.code, 'data class HasOwnProperty(');
+  eq('non-ASCII root name kept', gen('{"a": 1}', '회원').code.includes('data class 회원('), true);
+  eq('root name __proto__ → Proto', gen('{"a": 1}', '__proto__').code.includes('data class Proto('), true);
+  // zh page prose: Chinese keys stay property names without @SerialName; array items are named <Key>Item
+  const zhKeys = add('Chinese keys', '{"订单号": "202610080001"}', null, true);
+  has('zh prose: Chinese key → property', zhKeys.code, '    val 订单号: String = ""');
+  lacks('zh prose: no @SerialName for a Chinese key', zhKeys.code, /SerialName/);
+}
+
 // ---------- examples on the tool pages ----------
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-kotlin', lang + '.mdx'), 'utf8');
@@ -209,7 +228,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const json = tpl(m[2]);
     const out = gen(json, opt.root).code;
     eq(lang + ' page example ' + n + ' matches the engine', tpl(m[3]), out);
-    if (lang === 'en') cases.push({ name: 'page example ' + n, json, rootName: opt.root || 'RootObject', roundTrip: !!opt.roundTrip });
+    // Every page example is compiled and decoded (once per distinct input). Optional "decodes" lists other
+    // payloads the generated class must decode with the default Json (a string, or [payload, expected
+    // re-encoded JSON]); "rejects" lists payloads it must fail to decode, with the expected exception class.
+    if (!cases.some((c) => c.json === json && c.rootName === (opt.root || 'RootObject'))) {
+      cases.push({ name: lang + ' page example ' + n, json, rootName: opt.root || 'RootObject', roundTrip: !!opt.roundTrip, decodes: opt.decodes || [], rejects: opt.rejects || [], decodeAs: opt.decodeAs });
+    }
   }
   check(lang + ' page has at least 2 checked examples', n >= 2, n);
 }
@@ -253,11 +277,23 @@ if (!kotlinc || cpJars.length < 2) {
         '    val v = kotlinx.serialization.json.Json.decodeFromString(kotlinx.serialization.serializer<' + r.rootType + '>(), s)',
         '    return out.encodeToString(kotlinx.serialization.serializer<' + r.rootType + '>(), v)',
         '}',
+        // Extra payloads decode as the root type, or as decodeAs (one response decoded with the class
+        // generated from an array of sample responses).
+        'fun roundTripExtra(s: String): String {',
+        '    val out = kotlinx.serialization.json.Json { encodeDefaults = true; explicitNulls = true }',
+        '    val v = kotlinx.serialization.json.Json.decodeFromString(kotlinx.serialization.serializer<' + (c.decodeAs || r.rootType) + '>(), s)',
+        '    return out.encodeToString(kotlinx.serialization.serializer<' + (c.decodeAs || r.rootType) + '>(), v)',
+        '}',
       ].join('\n');
       writeFileSync(join(dir, pkg + '.kt'), 'package ' + pkg + '\n\n' + r.code + '\n' + decodeFn + '\n');
       writeFileSync(join(dir, pkg + '.json'), c.json);
       mainLines.push('    try { File("$dir/' + pkg + '.out").writeText(' + pkg + '.roundTrip(File("$dir/' + pkg + '.json").readText())) }');
       mainLines.push('    catch (e: Exception) { File("$dir/' + pkg + '.err").writeText(e.toString()) }');
+      [...(c.decodes || []).map((d) => (Array.isArray(d) ? d[0] : d)), ...(c.rejects || []).map((r) => r[0])].forEach((extra, j) => {
+        writeFileSync(join(dir, pkg + '.x' + j + '.json'), extra);
+        mainLines.push('    try { File("$dir/' + pkg + '.x' + j + '.out").writeText(' + pkg + '.roundTripExtra(File("$dir/' + pkg + '.x' + j + '.json").readText())) }');
+        mainLines.push('    catch (e: Exception) { File("$dir/' + pkg + '.x' + j + '.err").writeText(e.toString()) }');
+      });
     });
     mainLines.push('}');
     writeFileSync(join(dir, 'Main.kt'), mainLines.join('\n') + '\n');
@@ -276,6 +312,19 @@ if (!kotlinc || cpJars.length < 2) {
           const back = JSON.parse(readFileSync(out, 'utf8'));
           check('round trip ' + c.name, isDeepStrictEqual(back, JSON.parse(c.json)), readFileSync(out, 'utf8'));
         }
+        const decodes = c.decodes || [];
+        decodes.forEach((d, j) => {
+          const base = join(dir, 'c' + i + '.x' + j);
+          check(c.name + ': decodes extra payload ' + (j + 1), !existsSync(base + '.err'), existsSync(base + '.err') ? readFileSync(base + '.err', 'utf8') : '');
+          if (Array.isArray(d) && existsSync(base + '.out')) {
+            check(c.name + ': extra payload ' + (j + 1) + ' re-encodes as stated', isDeepStrictEqual(JSON.parse(readFileSync(base + '.out', 'utf8')), JSON.parse(d[1])), readFileSync(base + '.out', 'utf8'));
+          }
+        });
+        (c.rejects || []).forEach(([, exception], k) => {
+          const base = join(dir, 'c' + i + '.x' + (decodes.length + k));
+          const err = existsSync(base + '.err') ? readFileSync(base + '.err', 'utf8') : '';
+          check(c.name + ': rejects payload ' + (k + 1) + ' with ' + exception, err.startsWith(exception + ':'), err || 'decoded without an error');
+        });
       });
     }
   } finally {
@@ -473,7 +522,7 @@ const V2 = {
       "generate"
     ]
   ],
-  "scriptSHA": "24a9c630058e507d8ec5ddfbcdd1c0db09bc0406c251a56ec2e3ee1fea44076d"
+  "scriptSHA": "36ad513b4d507c32471837ad502a84cf314263266acc013ca9b3a722480c816a"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -481,7 +530,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 original script preserved except removed redundant Generate listener and change-based analytics sent once per JSON and root name (S2-6)', hash(pageScript), V2.scriptSHA);
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
@@ -524,7 +573,21 @@ for (const lang of ['en','zh','ja','ko']) {
     eq(lang + ': v2 output focus survives CtrlL ' + shellFirst + focus, q.doc.activeElement === q.get(prefix+'-input') && !q.get(prefix+'-input').value && !q.get(prefix+'-root-name').value && !q.get(prefix+'-output-code').textContent && !q.get(prefix+'-status').textContent && q.clears.length === 1, true);
   }
   const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
-  q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
+  q.input('{"x":1}');q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
+  // Analytics: one event per committed change (input change, Generate, Example), not on load or per typing pause.
+  const ga=lifecyclePage(lang);eq(lang + ': GA: page load sends nothing',ga.tracks.length,0);
+  ga.input('{"a":1}');ga.advance(300);eq(lang + ': GA: typing pause sends nothing',ga.tracks.length,0);
+  ga.get('jkt-input').dispatch('change');eq(lang + ': GA: committed change sends one generate event',JSON.stringify(ga.tracks),JSON.stringify([['json-to-kotlin','generate']]));
+  ga.input('{"b":"x"}');ga.get('jkt-input').dispatch('change');eq(lang + ': GA: change before the debounce generates the new input first',[ga.get('jkt-output-code').textContent.includes('val b: String'),ga.tracks.length].join(),'true,2');ga.advance(300);eq(lang + ': GA: no second event after the debounce',ga.tracks.length,2);
+  ga.input('{');ga.get('jkt-input').dispatch('change');eq(lang + ': GA: invalid input change sends nothing',ga.tracks.length,2);
+  ga.get('jkt-convert').click();eq(lang + ': GA: Generate with invalid input sends nothing',ga.tracks.length,2);
+  ga.get('jkt-example').click();eq(lang + ': GA: Example sends one event',ga.tracks.length,3);
+  ga.get('jkt-convert').click();eq(lang + ': GA: Generate on the unchanged example sends nothing',ga.tracks.length,3);
+  // One user action that fires both change (blur on mousedown) and click, or click (Ctrl/⌘+Enter) then change, counts once.
+  const once=lifecyclePage(lang);once.input('{"c":1}');once.get('jkt-input').dispatch('change');once.get('jkt-convert').click();eq(lang + ': GA: change then Generate click sends one event',once.tracks.length,1);
+  once.input('{"d":2}');once.key('jkt-input','Enter');once.get('jkt-input').dispatch('change');eq(lang + ': GA: Ctrl+Enter then change sends one event',once.tracks.length,2);
+  once.get('jkt-root-name').value='Api';once.get('jkt-convert').click();eq(lang + ': GA: a new root name then Generate sends one event',once.tracks.length,3);
+  once.get('jkt-clear').click();once.input('{"d":2}');once.get('jkt-root-name').value='Api';once.get('jkt-convert').click();eq(lang + ': GA: the same input after Clear sends again',once.tracks.length,4);
 }
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? ', ' + skips + ' skipped' : ''}`);

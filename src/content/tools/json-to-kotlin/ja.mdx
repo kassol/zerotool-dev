@@ -9,16 +9,21 @@ steps:
   - "「コピー」：import を含む Kotlin 出力を全文コピーし、.kt ファイルに貼り付けます。出力が空の場合はコピーしません。"
   - "「クリア」：JSON、出力、ステータスを消去し、ルート名を保持します。ツール内で Ctrl/⌘+L を押すとルート名も消去します。"
 faqItems:
-  - question: "何が生成されますか？"
+  - id: "output"
+    question: "何が生成されますか？"
     answer: "@Serializable（kotlinx.serialization）を付けた Kotlin の data class と、必要な import です。ネストしたオブジェクトはそれぞれ別のクラスになります。kotlinx.serialization のコンパイラプラグインを入れればそのままコンパイルでき、既定の Json 設定でサンプルをデコードできます。"
-  - question: "Nullable なフィールドはどう扱われますか？"
+  - id: "nullable"
+    question: "Nullable なフィールドはどう扱われますか？"
     answer: "値が null のフィールドは Nullable 型（例: String?）になります。配列の一部の要素にしかないキーも Nullable で、既定値は null です。サンプルで常に null のフィールドは、本当の型がわからないため JsonElement? になります。"
-  - question: "各型の既定値は？"
+  - id: "defaults"
+    question: "各型の既定値は？"
     answer: "String は \"\"、Int は 0、Long は 0L、Double は 0.0、Boolean は false、List は emptyList()、JsonElement は JsonNull、Nullable 型は null、ネストしたクラスは引数なしコンストラクターです。既定値があるため、キーが欠けていてもデコードできます。"
-  - question: "Any ではなく JsonElement を使うのはなぜですか？"
+  - id: "json-element"
+    question: "Any ではなく JsonElement を使うのはなぜですか？"
     answer: "kotlinx.serialization には Any のシリアライザーがなく、Any のフィールドを持つ @Serializable クラスはコンパイルできません。JsonElement は形が決まらない JSON のためにライブラリが用意している型で、常に null のフィールド、空配列、サンプル間で型が異なる値に使います。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。変換はすべてブラウザ内で行われ、データは端末の外に出ません。"
+  - id: "privacy"
+    question: "データはサーバーに送信されますか？"
+    answer: "いいえ。JSON はこのブラウザのタブ内で変換し、サーバーに送信することも、ブラウザのストレージに保存することもありません。ページのアクセス解析が記録するのは、入力を編集してフォーカスを外したとき、「Kotlin を生成」を押したとき（Ctrl/⌘+Enter を含む）、「サンプル」を押したときの利用イベント（ツール名と動作 generate）だけで、JSON の内容は含みません。"
 ---
 
 <h2>型マッピング</h2>
@@ -129,6 +134,67 @@ data class PaymentMeta(
     val last4: String = ""
 )`}</code></pre>
 
+<h2>例：郵便番号検索 API の正常応答とエラー応答</h2>
+
+<p>zipcloud の郵便番号検索 API（日本郵便の郵便番号データを検索する REST API）は、ドキュメントに正常時とエラー時のレスポンスサンプルを載せています。まず正常時のサンプルをそのまま貼り付けます。</p>
+
+{/* kt: {"roundTrip": true, "rejects": [["{\"message\": \"必須パラメータが指定されていません。\", \"results\": null, \"status\": 400}", "kotlinx.serialization.json.JsonDecodingException"]]} */}
+
+<pre><code>{`{"message": null, "results": [{"address1": "北海道", "address2": "美唄市", "address3": "上美唄町協和", "kana1": "ﾎｯｶｲﾄﾞｳ", "kana2": "ﾋﾞﾊﾞｲｼ", "kana3": "ｶﾐﾋﾞﾊﾞｲﾁｮｳｷｮｳﾜ", "prefcode": "1", "zipcode": "0790177"}, {"address1": "北海道", "address2": "美唄市", "address3": "上美唄町南", "kana1": "ﾎｯｶｲﾄﾞｳ", "kana2": "ﾋﾞﾊﾞｲｼ", "kana3": "ｶﾐﾋﾞﾊﾞｲﾁｮｳﾐﾅﾐ", "prefcode": "1", "zipcode": "0790177"}], "status": 200}`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+
+@Serializable
+data class RootObject(
+    val message: JsonElement? = null,
+    val results: List<ResultsItem> = emptyList(),
+    val status: Int = 0
+)
+
+@Serializable
+data class ResultsItem(
+    val address1: String = "",
+    val address2: String = "",
+    val address3: String = "",
+    val kana1: String = "",
+    val kana2: String = "",
+    val kana3: String = "",
+    val prefcode: String = "",
+    val zipcode: String = ""
+)`}</code></pre>
+
+<p>サンプルで常に <code>null</code> の <code>message</code> は <code>JsonElement?</code>、<code>results</code> は <code>List&lt;ResultsItem&gt;</code> で null を許しません。このクラスでドキュメントのエラー時サンプル <code>{'{"message": "必須パラメータが指定されていません。", "results": null, "status": 400}'}</code> をデコードすると、<code>results</code> の <code>null</code> を受け付けず <code>JsonDecodingException</code> になります。半角カナの <code>kana1</code> などはそのまま <code>String</code> です。郵便番号 <code>"0790177"</code> も文字列なので、先頭の 0 は消えません。</p>
+
+<p>正常時とエラー時のサンプルを配列にまとめて生成すると、両方を見た型になります。</p>
+
+{/* kt: {"roundTrip": true, "decodeAs": "RootObject", "decodes": ["{\"message\": null, \"results\": [{\"address1\": \"北海道\", \"address2\": \"美唄市\", \"address3\": \"上美唄町協和\", \"kana1\": \"ﾎｯｶｲﾄﾞｳ\", \"kana2\": \"ﾋﾞﾊﾞｲｼ\", \"kana3\": \"ｶﾐﾋﾞﾊﾞｲﾁｮｳｷｮｳﾜ\", \"prefcode\": \"1\", \"zipcode\": \"0790177\"}, {\"address1\": \"北海道\", \"address2\": \"美唄市\", \"address3\": \"上美唄町南\", \"kana1\": \"ﾎｯｶｲﾄﾞｳ\", \"kana2\": \"ﾋﾞﾊﾞｲｼ\", \"kana3\": \"ｶﾐﾋﾞﾊﾞｲﾁｮｳﾐﾅﾐ\", \"prefcode\": \"1\", \"zipcode\": \"0790177\"}], \"status\": 200}", "{\"message\": \"必須パラメータが指定されていません。\", \"results\": null, \"status\": 400}"]} */}
+
+<pre><code>{`[{"message": null, "results": [{"address1": "北海道", "address2": "美唄市", "address3": "上美唄町協和", "kana1": "ﾎｯｶｲﾄﾞｳ", "kana2": "ﾋﾞﾊﾞｲｼ", "kana3": "ｶﾐﾋﾞﾊﾞｲﾁｮｳｷｮｳﾜ", "prefcode": "1", "zipcode": "0790177"}, {"address1": "北海道", "address2": "美唄市", "address3": "上美唄町南", "kana1": "ﾎｯｶｲﾄﾞｳ", "kana2": "ﾋﾞﾊﾞｲｼ", "kana3": "ｶﾐﾋﾞﾊﾞｲﾁｮｳﾐﾅﾐ", "prefcode": "1", "zipcode": "0790177"}], "status": 200}, {"message": "必須パラメータが指定されていません。", "results": null, "status": 400}]`}</code></pre>
+
+<pre><code>{`import kotlinx.serialization.Serializable
+
+@Serializable
+data class RootObject(
+    val message: String? = null,
+    val results: List<ResultsItem>? = null,
+    val status: Int = 0
+)
+
+@Serializable
+data class ResultsItem(
+    val address1: String = "",
+    val address2: String = "",
+    val address3: String = "",
+    val kana1: String = "",
+    val kana2: String = "",
+    val kana3: String = "",
+    val prefcode: String = "",
+    val zipcode: String = ""
+)`}</code></pre>
+
+<p><code>message</code> は文字列と <code>null</code> の両方を見たので <code>String?</code>、<code>results</code> は <code>List&lt;ResultsItem&gt;?</code> になりました。ステータス行には配列として <code>{"List<RootObject>"}</code> でデコードするよう表示されますが、API が返すのは毎回 1 件のオブジェクトなので、実際には <code>{"Json.decodeFromString<RootObject>(body)"}</code> で 1 件ずつ読みます。正常時もエラー時もこのクラスでデコードできることを確認しています。</p>
+
 <h2>デコード</h2>
 
 <p>ビルド設定にシリアライゼーションプラグインと JSON ライブラリを追加し（<a href="https://kotlinlang.org/docs/serialization.html" target="_blank" rel="noopener">Kotlin のシリアライゼーションガイド</a>参照）、次のようにデコードします。</p>
@@ -146,8 +212,8 @@ val lenient = Json { ignoreUnknownKeys = true }`}</code></pre>
 <h2>制限事項</h2>
 <ul>
   <li>型は 1 つのサンプルだけから決まります。サンプルで小さい ID は <code>Int</code> になるので、本番の ID が 2,147,483,647 を超えるなら <code>Long</code> に直してください。</li>
-  <li>ブラウザーは JSON の数値を 64 ビット浮動小数点で読むため、9,007,199,254,740,991 を超える整数は型を決める前に桁が落ちます。型は <code>Long</code> のままですが、範囲は手で確認してください。</li>
-  <li><code>19.0</code> を小数と判定できるのは、<code>JSON.parse</code> にソーステキストを渡すブラウザー（Chrome 114+、Firefox 135+、Safari 18.4+）だけです。古いブラウザーでは <code>Int</code> になります。</li>
+  <li>ブラウザは JSON の数値を 64 ビット浮動小数点で読むため、9,007,199,254,740,991 を超える整数は型を決める前に桁が落ちます。型は <code>Long</code> のままですが、範囲は手で確認してください。</li>
+  <li><code>19.0</code> を小数と判定できるのは、<code>JSON.parse</code> にソーステキストを渡すブラウザ（Chrome 114+、Firefox 135+、Safari 18.4+）だけです。古いブラウザでは <code>Int</code> になります。</li>
   <li><code>JsonElement</code> のフィールドは <code>Json</code> 形式でだけ使え、CBOR や ProtoBuf では使えません。</li>
   <li>日付は <code>String</code> のままです。JSON に日付型はないので、デコード後に解析するかカスタムシリアライザーを追加してください。</li>
   <li>すべてのプロパティに既定値があるため、キーが欠けても黙って既定値になります。必須のキーは既定値を削除してください。</li>

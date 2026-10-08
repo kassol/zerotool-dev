@@ -24,6 +24,7 @@ const STRINGS = {
     msgGenOne: 'Generated 1 schema.',
     msgGenMany: 'Generated {n} schemas.',
     msgError: 'Parse error: ',
+    msgNoColon: 'Line {line}, column {col}: "{name}" needs ":" before its type.',
   },
   zh: {
     empty: "输入 TypeScript 或载入示例以生成 Zod schema。",
@@ -44,6 +45,7 @@ const STRINGS = {
     msgGenOne: '已生成 1 个 schema。',
     msgGenMany: '已生成 {n} 个 schema。',
     msgError: '解析错误：',
+    msgNoColon: '第 {line} 行第 {col} 列：“{name}”后面缺少冒号“:”。',
   },
   ja: {
     empty: "TypeScript を入力するかサンプルを読み込むと、Zod スキーマを生成します。",
@@ -64,6 +66,7 @@ const STRINGS = {
     msgGenOne: '1 個のスキーマを生成しました。',
     msgGenMany: '{n} 個のスキーマを生成しました。',
     msgError: '解析エラー：',
+    msgNoColon: '{line} 行 {col} 列：「{name}」の後に「:」がありません。',
   },
   ko: {
     empty: "TypeScript를 입력하거나 예시를 불러와 Zod 스키마를 생성하세요.",
@@ -84,6 +87,7 @@ const STRINGS = {
     msgGenOne: '스키마 1개를 생성했습니다.',
     msgGenMany: '스키마 {n}개를 생성했습니다.',
     msgError: '파싱 오류: ',
+    msgNoColon: '{line}행 {col}열: "{name}" 뒤에 ":"가 없습니다.',
   },
 };
 
@@ -99,6 +103,7 @@ const L = STRINGS[lang];
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
   data-msg-error={L.msgError}
+  data-msg-no-colon={L.msgNoColon}
 >
   <div class="ttz-actions">
     <div class="ttz-control-label">
@@ -153,6 +158,7 @@ const L = STRINGS[lang];
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 schema.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} schemas.';
       var MSG_ERROR = wrap ? wrap.dataset.msgError : 'Parse error: ';
+      var MSG_NO_COLON = wrap ? wrap.dataset.msgNoColon : 'Line {line}, column {col}: "{name}" needs ":" before its type.';
 
       var inputEl = document.getElementById('ttz-input');
       var hlInputCodeEl = document.getElementById('ttz-input-hl-code');
@@ -209,14 +215,24 @@ const L = STRINGS[lang];
       /* ── engine:start ── */
       /* ── TOKENIZER ── */
 
-      var KEYWORDS = {
+      var KEYWORDS = Object.assign(Object.create(null), {
         'interface': 1, 'type': 1, 'export': 1, 'readonly': 1,
         'extends': 1, 'implements': 1, 'class': 1, 'enum': 1,
         'import': 1, 'from': 1, 'declare': 1, 'abstract': 1,
         'namespace': 1, 'module': 1, 'const': 1, 'let': 1, 'var': 1,
         'function': 1, 'return': 1, 'keyof': 1, 'typeof': 1, 'infer': 1,
         'in': 1, 'is': 1, 'as': 1,
-      };
+      });
+
+      var ID_START = /[\p{ID_Start}$_]/u;
+      var ID_PART = /[\p{ID_Continue}$\u200C\u200D]/u;
+
+      /* 1-based line and column (in code points) of source index p */
+      function position(src, p) {
+        var before = src.slice(0, p);
+        var lineStart = before.lastIndexOf('\n') + 1;
+        return { line: before.split('\n').length, col: Array.from(before.slice(lineStart)).length + 1 };
+      }
 
       function tokenize(src) {
         var tokens = [];
@@ -276,11 +292,15 @@ const L = STRINGS[lang];
             continue;
           }
 
-          /* identifier / keyword */
-          if (ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch === '_' || ch === '$') {
-            var j = i;
-            while (j < n && (src[j] >= 'a' && src[j] <= 'z' || src[j] >= 'A' && src[j] <= 'Z' ||
-                   src[j] >= '0' && src[j] <= '9' || src[j] === '_' || src[j] === '$')) j++;
+          /* identifier / keyword: Unicode ID_Start / ID_Continue plus $ and _, as in TypeScript */
+          var cp = String.fromCodePoint(src.codePointAt(i));
+          if (ID_START.test(cp)) {
+            var j = i + cp.length;
+            while (j < n) {
+              var cj = String.fromCodePoint(src.codePointAt(j));
+              if (!ID_PART.test(cj)) break;
+              j += cj.length;
+            }
             var word = src.slice(i, j);
             tokens.push({ t: KEYWORDS[word] ? 'KW' : 'IDENT', v: word, p: i });
             i = j;
@@ -291,6 +311,13 @@ const L = STRINGS[lang];
           if (src[i] === '.' && src[i + 1] === '.' && src[i + 2] === '.') {
             tokens.push({ t: 'PUNCT', v: '...', p: i });
             i += 3;
+            continue;
+          }
+
+          /* full-width colon (U+FF1A, typed with a CJK input method) reads as ":" outside string literals */
+          if (ch === '\uFF1A') {
+            tokens.push({ t: 'PUNCT', v: ':', p: i });
+            i++;
             continue;
           }
 
@@ -516,6 +543,9 @@ const L = STRINGS[lang];
             continue;
           }
 
+          /* call signature (x: T): R or <T>(x: T): R — skip */
+          if (p.pv() === '(' || p.pv() === '<') { skipSignature(p); continue; }
+
           /* property key */
           var kt = p.peek();
           if (kt.t !== 'IDENT' && kt.t !== 'KW' && kt.t !== 'STRING' && kt.t !== 'NUMBER') {
@@ -524,24 +554,49 @@ const L = STRINGS[lang];
           var key = p.next().v;
           if (kt.t === 'STRING') key = '"' + key + '"';
 
-          /* optional */
-          var opt = p.maybe('?');
-
-          /* method signature: foo(args): ReturnType — skip */
-          if (p.pv() === '(') {
-            skipParens(p);
-            if (p.pv() === ':') { p.next(); parseTypeExpr(p); }
-            p.maybe(';'); p.maybe(',');
+          /* get / set accessor: get name(): T, set [k](v: T) — skip */
+          var nt = p.peek();
+          if (kt.t === 'IDENT' && (key === 'get' || key === 'set') &&
+              (nt.v === '[' || nt.t === 'IDENT' || nt.t === 'KW' || nt.t === 'STRING' || nt.t === 'NUMBER')) {
+            if (p.pv() === '[') skipBrackets(p); else p.next();
+            skipSignature(p);
             continue;
           }
 
-          if (!p.maybe(':')) { p.maybe(';'); p.maybe(','); continue; }
+          /* optional */
+          var opt = p.maybe('?');
+
+          /* method signature foo(args): R, generic foo<T>(args): R, construct signature new (args): R — skip */
+          if (p.pv() === '(' || p.pv() === '<') { skipSignature(p); continue; }
+
+          if (!p.maybe(':')) {
+            var at = position(p.tok.src, kt.p);
+            throw new Error(MSG_NO_COLON.replace('{line}', at.line).replace('{col}', at.col).replace('{name}', kt.v));
+          }
 
           var te = parseTypeExpr(p);
           p.maybe(';'); p.maybe(',');
           members.push({ kind: 'prop', key: key, opt: opt, te: te });
         }
         return members;
+      }
+
+      /* <T>(args): R — type parameters, parameters, return type, separator */
+      function skipSignature(p) {
+        if (p.pv() === '<') skipAngle(p);
+        if (p.pv() === '(') skipParens(p);
+        if (p.pv() === ':') { p.next(); parseTypeExpr(p); }
+        p.maybe(';'); p.maybe(',');
+      }
+
+      function skipBrackets(p) {
+        p.eat('[');
+        var d = 1;
+        while (p.pt() !== 'EOF' && d > 0) {
+          if (p.pv() === '[') d++;
+          else if (p.pv() === ']') d--;
+          p.next();
+        }
       }
 
       function skipParens(p) {
@@ -621,8 +676,8 @@ const L = STRINGS[lang];
           if (nm === 'true')  return { kind: 'lit', v: 'true', lt: 'b' };
           if (nm === 'false') return { kind: 'lit', v: 'false', lt: 'b' };
 
-          var PRIMS = { string:1, number:1, boolean:1, null:1, undefined:1,
-                        any:1, unknown:1, void:1, never:1, object:1, bigint:1, symbol:1 };
+          var PRIMS = Object.assign(Object.create(null), { string:1, number:1, boolean:1, null:1, undefined:1,
+                        any:1, unknown:1, void:1, never:1, object:1, bigint:1, symbol:1 });
           if (PRIMS[nm]) return { kind: 'prim', n: nm };
 
           /* generic */
@@ -682,7 +737,7 @@ const L = STRINGS[lang];
       function generate(ast) {
         if (ast.decls.length === 0) throw new Error(MSG_NO_DECL);
 
-        var byName = {};
+        var byName = Object.create(null);
         ast.decls.forEach(function (d) { if (!Object.prototype.hasOwnProperty.call(byName, d.name)) byName[d.name] = d; });
         ast.decls.forEach(function (d) { d.deps = declDeps(d, byName); });
         var cyclic = cyclicNames(ast.decls, byName);
@@ -697,7 +752,7 @@ const L = STRINGS[lang];
         }
         ast.decls.forEach(visit);
 
-        var ctx = { names: byName, defined: {}, cyclic: cyclic, isObject: {} };
+        var ctx = { names: byName, defined: Object.create(null), cyclic: cyclic, isObject: Object.create(null) };
         var parts = ['import { z } from "zod";'];
         order.forEach(function (d) {
           parts.push('');
@@ -731,7 +786,7 @@ const L = STRINGS[lang];
 
       /* Names in a dependency cycle (Tarjan's strongly connected components) */
       function cyclicNames(decls, byName) {
-        var index = 0, stack = [], idx = {}, low = {}, on = {}, out = {};
+        var index = 0, stack = [], idx = Object.create(null), low = Object.create(null), on = Object.create(null), out = Object.create(null);
         function strong(d) {
           idx[d.name] = low[d.name] = index++;
           stack.push(d.name); on[d.name] = true;
@@ -810,7 +865,8 @@ const L = STRINGS[lang];
           if (m.kind !== 'prop') return;
           var expr = genType(m.te, pi + '  ', ctx);
           if (m.opt) expr += '.optional()';
-          lines.push(pi + m.key + ': ' + expr + ',');
+          /* `__proto__: x` in an object literal sets the prototype; a computed key defines the property */
+          lines.push(pi + (m.key === '__proto__' || m.key === '"__proto__"' ? '["__proto__"]' : m.key) + ': ' + expr + ',');
         });
         lines.push(ind + '}');
         return lines.join('\n');
@@ -860,12 +916,12 @@ const L = STRINGS[lang];
       }
 
       function genPrim(n) {
-        var map = {
+        var map = Object.assign(Object.create(null), {
           string: 'z.string()', number: 'z.number()', boolean: 'z.boolean()',
           null: 'z.null()', undefined: 'z.undefined()', any: 'z.any()',
           unknown: 'z.unknown()', void: 'z.void()', never: 'z.never()',
           object: 'z.object({})', bigint: 'z.bigint()', symbol: 'z.symbol()',
-        };
+        });
         return map[n] || 'z.unknown()';
       }
 
@@ -877,8 +933,9 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         resetCopy();
         inputEl.classList.remove('error');
-        var raw = inputEl.value.trim();
-        if (!raw) { clearStatus(); outputCodeEl.textContent = ''; return; }
+        /* the untrimmed input goes to the tokenizer, so error lines and columns match the text box */
+        var raw = inputEl.value;
+        if (!raw.trim()) { clearStatus(); outputCodeEl.textContent = ''; return; }
 
         inputEl.classList.remove('error');
 
@@ -903,6 +960,14 @@ const L = STRINGS[lang];
         var n = result.count;
         var msg = n === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', n);
         setStatus(msg, false);
+      }
+
+      /* Analytics: one event per committed change (textarea change, Example), not on load or per typing pause.
+         The same input is sent once. */
+      var lastTracked = null;
+      function trackChange() {
+        if (!outputCodeEl.textContent || inputEl.value === lastTracked) return;
+        lastTracked = inputEl.value;
         window.trackTool && window.trackTool('typescript-to-zod', 'generate');
       }
 
@@ -915,6 +980,10 @@ const L = STRINGS[lang];
         _liveTimer = setTimeout(convert, 300);
         clearTimeout(_hlInputTimer);
         _hlInputTimer = setTimeout(syncInputHL, 80);
+      });
+      inputEl.addEventListener('change', function () {
+        convert();
+        trackChange();
       });
 
       inputEl.addEventListener('scroll', function () {
@@ -930,9 +999,11 @@ const L = STRINGS[lang];
         clearStatus();
         syncInputHL();
         convert();
+        trackChange();
       });
 
       function clearAll() {
+        lastTracked = null;
         clearTimeout(_liveTimer);
         clearTimeout(_hlInputTimer);
         resetCopy();

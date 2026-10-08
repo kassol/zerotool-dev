@@ -7,18 +7,24 @@ steps:
   - "Click Copy to copy the complete output, including import and inferred types."
   - "Click Clear to empty the input, output and status."
 faqItems:
-  - question: "What TypeScript constructs does this tool support?"
+  - id: "constructs"
+    question: "What TypeScript constructs does this tool support?"
     answer: "It supports interface and type alias declarations, including basic types (string, number, boolean, null, undefined, any, unknown), optional properties (?), union types (A | B), string enums (literal unions), enum declarations, extends, index signatures, recursive types, arrays (T[] and Array<T>), nested inline objects, cross-references between declared types, and generic utilities like Partial<T>, Record<K, V>, Array<T>, and Promise<T>."
-  - question: "How are cross-references between types handled?"
+  - id: "references"
+    question: "How are cross-references between types handled?"
     answer: "If you declare multiple interfaces or type aliases in the input, any reference to a declared type by name is replaced with its Schema constant. For example, a field typed as Address becomes AddressSchema in the output. Types not declared in the input become z.unknown() with a comment."
-  - question: "What Zod version does the output target?"
+  - id: "zod-version"
+    question: "What Zod version does the output target?"
     answer: "The output uses APIs that exist in both Zod 3 and Zod 4: z.object(), z.string(), z.union(), z.enum(), z.array(), .optional(), z.literal(), z.record(key, value), .extend(), .shape, .catchall(), z.lazy(), z.ZodType and z.infer<>. Record types are written with an explicit key schema because Zod 4 no longer accepts z.record(value) alone. Promise<T> becomes z.promise(), which Zod 4 marks as deprecated."
-  - question: "How does the tool handle string union types?"
+  - id: "string-unions"
+    question: "How does the tool handle string union types?"
     answer: "A union of string literals like \"admin\" | \"user\" | \"guest\" is automatically converted to z.enum([\"admin\", \"user\", \"guest\"]) for conciseness. Mixed unions (e.g. string | null) use z.union([z.string(), z.null()])."
-  - question: "Can I convert TypeScript class or generic type definitions?"
-    answer: "Classes and generics are outside the MVP scope. The tool focuses on interface and type alias conversions. Generic type parameters (like T in Partial<T>) in the declared types' own signature are not expanded. Generic utility types applied to concrete types (Array<string>, Record<string, number>) are supported."
-  - question: "Is my code sent to a server?"
-    answer: "No. The entire TypeScript parser and Zod code generator run in your browser. No source code leaves your machine."
+  - id: "classes-generics"
+    question: "Can I convert TypeScript class or generic type definitions?"
+    answer: "No. Class declarations are skipped, so input that has only classes gives \"No interface or type declarations found.\" Type parameters of a declared type are not expanded: in interface Box<T> { value: T }, value becomes z.unknown() /* T */. Generic utility types applied to concrete types (Array<string>, Record<string, number>) are supported."
+  - id: "privacy"
+    question: "Is my code sent to a server?"
+    answer: "No. The parser and the Zod generator run in this browser tab. Your code is not sent to a server and is not saved in browser storage. The page statistics record one usage event (the tool name and the action generate) when you edit the input and move the focus out of it, or click Example, and never include the code."
 ---
 
 <h2>Supported TypeScript Features</h2>
@@ -42,6 +48,8 @@ faqItems:
 </ul>
 
 <h2>Example: Recursion, extends and an Index Signature</h2>
+
+{/* ttz-check: {"schema": "MenuSchema", "accepts": [{"id": "m", "root": {"name": "r", "children": [{"name": "c", "children": []}]}, "extra": 1}], "rejects": [{"root": {"name": "r", "children": []}}, {"id": "m", "root": {"name": "r", "children": [{"name": "c"}]}}]} */}
 
 <p>Input, with <code>Category</code> declared after the type that uses it:</p>
 
@@ -114,6 +122,8 @@ export type Status = z.infer<typeof StatusSchema>;`}</code></pre>
 
 <h2>Example: A Signup Form</h2>
 
+{/* ttz-check: {"schema": "SignupFormSchema", "accepts": [{"email": "not-an-email", "password": "1", "referrer": null, "plan": "pro"}], "rejects": [{"email": "a@example.com", "password": "x", "plan": "free"}, {"email": "a@example.com", "password": "x", "referrer": "ad", "plan": "team"}]} */}
+
 <p>Input:</p>
 
 <pre><code>{`interface SignupForm {
@@ -155,7 +165,7 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
 <ul>
   <li><code>{"prop?: T"}</code> becomes <code>{".optional()"}</code>: the key may be missing.</li>
   <li><code>{"T | null"}</code> becomes <code>{"z.union([T, z.null()])"}</code> — the same as <code>{"T.nullable()"}</code>: the key must be present, and its value may be <code>{"null"}</code>. A payload without <code>{"referrer"}</code> fails.</li>
-  <li><code>{"T | null"}</code> on an optional property (<code>{"prop?: T | null"}</code>) needs both; write <code>{".nullish()"}</code> by hand if that is what the API sends.</li>
+  <li><code>{"prop?: T | null"}</code> becomes <code>{"z.union([T, z.null()]).optional()"}</code>: the key may be missing or <code>{"null"}</code>, the same as <code>{"T.nullish()"}</code>.</li>
 </ul>
 
 <h2>Adding the Rules TypeScript Cannot Express</h2>
@@ -175,7 +185,16 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
 
 <h2>Errors</h2>
 
-<p>The status line shows <strong>Parse error:</strong> followed by the first token the parser did not expect. A missing closing brace in <code>{"interface A { a: string"}</code> gives <code>{'Expected "}" got ""'}</code>, and <code>{"type = string"}</code> gives <code>{'Expected identifier, got "="'}</code>. Input with no <code>interface</code> or <code>type</code> declaration, such as a file of <code>const</code> statements, gives “No interface or type declarations found.”</p>
+<p>The status line shows <strong>Parse error:</strong> followed by the first token the parser did not expect. A missing closing brace in <code>{"interface A { a: string"}</code> gives <code>{'Expected "}" got ""'}</code>, and <code>{"type = string"}</code> gives <code>{'Expected identifier, got "="'}</code>. Input with no <code>interface</code> or <code>type</code> declaration, such as a file of <code>const</code> statements, gives “No interface or type declarations found.” A property without a colon is reported with its position instead of being skipped: line 3 of</p>
+
+{/* ttz-error: {"message": "Line 3, column 3: \"age\" needs \":\" before its type."} */}
+
+<pre><code>{`interface User {
+  id: string;
+  age number;
+}`}</code></pre>
+
+<p>gives <code>{'Parse error: Line 3, column 3: "age" needs ":" before its type.'}</code> Columns count characters, so an emoji or a Chinese character is one column.</p>
 
 <h2>Limitations</h2>
 
@@ -186,7 +205,9 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
   <li><strong>Enums are copied as values.</strong> The schema checks the enum's values (<code>"RED"</code>, <code>0</code>), not the runtime enum object; if you import the enum, <code>z.nativeEnum(Color)</code> (Zod 3) or <code>z.enum(Color)</code> (Zod 4) does the same. Members with computed values such as <code>{"1 << 2"}</code> make the whole enum <code>{"z.unknown() /* enum E: computed member A */"}</code>.</li>
   <li><strong>Index signature keys</strong> are always <code>z.string()</code>, because every key of a parsed JSON object is a string; <code>{"[id: number]: V"}</code> is converted the same way. With <code>.catchall()</code>, a declared property must also match its own schema.</li>
   <li><strong>Records with literal keys</strong> such as <code>{'Record<"read" | "write", boolean>'}</code> become <code>{'z.record(z.enum(["read", "write"]), z.boolean())'}</code>. Zod 4 then requires both keys, as TypeScript does; Zod 3 accepts an object with only one of them.</li>
-  <li><strong>Not converted:</strong> generic parameters (a recursive generic type also needs its written-out type fixed by hand), classes, methods (skipped), mapped and conditional types, <code>keyof</code>, <code>typeof</code> and template literal types (written as <code>z.string()</code>).</li>
+  <li><strong>Unicode escapes in names are not decoded.</strong> <code>{"\\u0061: string"}</code> becomes a property named <code>u0061</code>, not <code>a</code>.</li>
+  <li><strong>Only the colon is read in full width.</strong> Names follow TypeScript's Unicode identifier rules (<code>{"prénom: string"}</code>, <code>{"interface Café"}</code> and <code>{"名前: string"}</code> are kept as written), and a full-width colon <code>：</code> outside string literals is read as <code>:</code>. Other full-width symbols are skipped: <code>{"age？: number"}</code> gives a required <code>{"age: z.number()"}</code>.</li>
+  <li><strong>Not converted:</strong> generic parameters (a recursive generic type also needs its written-out type fixed by hand), classes, methods, get / set accessors and call or construct signatures (skipped), mapped and conditional types, <code>keyof</code>, <code>typeof</code> and template literal types (written as <code>z.string()</code>).</li>
 </ul>
 
 <p>For JSON you already have, the <a href="/tools/json-to-zod/">JSON to Zod</a> tool infers a schema from sample data instead of from types.</p>

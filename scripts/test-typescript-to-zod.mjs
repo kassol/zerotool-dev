@@ -16,6 +16,9 @@
 // (they used to follow the input and threw ReferenceError); self and mutual recursion with
 // z.lazy() and a written-out TS type with z.ZodType<T>; enum declarations (string, numeric with
 // auto-increment, mixed, const / declare, computed → note); the page examples and messages.
+// S2: ttz-check examples in every language (engine output, tsc strict for zod 3.25 and zod/v4, accepts /
+// rejects / drops under both), ttz-error parse messages, prose facts (nullish, ASCII-only names, Box<T>),
+// and analytics sent once per committed change.
 // Run: node scripts/test-typescript-to-zod.mjs
 
 import { readFileSync } from 'node:fs';
@@ -23,7 +26,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import ts from 'typescript';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, examplePairs, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -37,7 +40,8 @@ if (startIndex < 0 || endIndex <= startIndex) {
   console.error('FAIL: could not locate the engine block in TypescriptToZodTool.astro');
   process.exit(1);
 }
-const E = new Function('var MSG_NO_DECL = "No interface or type declarations found.";\n' + source.slice(startIndex, endIndex) + '\nreturn { tokenize, parse, generate };')();
+const engineFor = (noDecl, noColon) => new Function('var MSG_NO_DECL = ' + JSON.stringify(noDecl) + ';\nvar MSG_NO_COLON = ' + JSON.stringify(noColon) + ';\n' + source.slice(startIndex, endIndex) + '\nreturn { tokenize, parse, generate };')();
+const E = engineFor('No interface or type declarations found.', 'Line {line}, column {col}: "{name}" needs ":" before its type.');
 const convert = (src) => E.generate(E.parse(E.tokenize(src)));
 const zods = { v3: require('zod').z, v4: require('zod/v4').z };
 
@@ -136,12 +140,17 @@ function loadTs(code, z) {
   return module.exports;
 }
 function checkCase(label, input, samples) {
-  const out = convert(input);
+  let out;
+  try { out = convert(input); } catch (e) { eq(label + ': converts', e.message, 'no error'); return ''; }
   for (const entry of ['zod', 'zod/v4']) eq(label + ': tsc strict (' + entry + ')', tsErrors(out, entry), []);
   for (const [v, z] of Object.entries(zods)) {
     let S;
     try { S = loadTs(out, z); } catch (e) { eq(label + ' ' + v + ': loads', e.name + ': ' + e.message, 'no error'); continue; }
-    for (const [schema, value, ok] of samples) eq(label + ' ' + v + ': ' + schema + ' ' + JSON.stringify(value), S[schema].safeParse(value).success, ok);
+    for (const [schema, value, ok] of samples) {
+      let got;
+      try { got = S[schema].safeParse(value).success; } catch (e) { got = 'throws ' + e.message; }
+      eq(label + ' ' + v + ': ' + schema + ' ' + JSON.stringify(value), got, ok);
+    }
   }
   return out;
 }
@@ -222,6 +231,117 @@ const comp = convert('enum E { A = 1 << 2, B }');
 eq('computed member → unknown with a note', comp.includes('export const ESchema = z.unknown() /* enum E: computed member A */;'), true);
 const unk = convert('interface Member { joined: Date }');
 eq('Date reference', unk.includes('joined: z.unknown() /* Date */,'), true);
+
+// ---------- facts stated in the page prose and FAQ (S2) ----------
+const nullish = convert('interface A { p?: string | null }');
+eq('prose: prop?: T | null → union with null, optional', nullish.includes('  p: z.union([z.string(), z.null()]).optional(),'), true);
+for (const [v, z] of Object.entries(zods)) {
+  const { ASchema } = load(nullish, z);
+  eq(v + ': prop?: T | null accepts a missing key, null and a value', [{}, { p: null }, { p: 'x' }].map((x) => ASchema.safeParse(x).success), [true, true, true]);
+}
+// ---------- engine fix 3 (S2-6b): Unicode names, full-width colon, missing colon ----------
+// Names were read as A–Z, a–z, digits, _ and $ only, and other characters were skipped without an error
+// (名前 dropped, prénom → nom, Café → Caf). Names now follow Unicode ID_Start / ID_Continue (plus $ and _,
+// as in TypeScript). A full-width colon U+FF1A outside string literals is read as ":" (the whole input is
+// not NFKC-normalised, because that would change string literal types). A property without ":" is a
+// parse error with its line and column.
+{
+  const uni = checkCase('Unicode names', 'interface Café { prénom: string; 名前: string; "닉네임": string; id: string }\ninterface 会員 { 氏名: string; café: Café }', [
+    ['会員Schema', { 氏名: '山田', café: { prénom: 'Ana', 名前: '名', 닉네임: '닉', id: '1' } }, true],
+    ['会員Schema', { 氏名: '山田', café: { prénom: 'Ana', id: '1', 닉네임: '닉' } }, false],
+  ]);
+  eq('Unicode: Café keeps its name', uni.includes('export const CaféSchema = z.object({'), true);
+  eq('Unicode: prénom and 名前 are properties', ['  prénom: z.string(),', '  名前: z.string(),', '  "닉네임": z.string(),'].map((l) => uni.includes(l)), [true, true, true]);
+  eq('Unicode: 会員 is a declaration', uni.includes('export const 会員Schema = z.object({'), true);
+  const fw = checkCase('full-width colon', 'interface U { id: string; age：number; label: "a：b" }', [
+    ['USchema', { id: '1', age: 3, label: 'a：b' }, true],
+    ['USchema', { id: '1', label: 'a：b' }, false],
+  ]);
+  eq('full-width colon is read as ":"', fw.includes('  age: z.number(),'), true);
+  eq('full-width colon inside a string literal type is kept', fw.includes('  label: z.literal("a：b"),'), true);
+}
+// Members that are not properties are skipped, never reported as a missing colon (review s2-6 must-fix 1):
+// methods (plain, optional, generic), get / set accessors, call and construct signatures (plain and
+// generic), index signatures.
+{
+  const skip = checkCase('non-property members are skipped', [
+    'interface Api {',
+    '  get<T>(url: string): T;',
+    '  find?<K extends string>(key: K): number;',
+    '  get size(): number;',
+    '  set size(v: number);',
+    '  get [k](): string;',
+    '  (x: number): string;',
+    '  <T>(x: T): T;',
+    '  new (x: string): Api;',
+    '  new <T>(x: T): Api;',
+    '  readonly [key: string]: unknown;',
+    '  id: number;',
+    '  get: string;',
+    '  set?: boolean;',
+    '  log(msg: string): void;',
+    '}',
+  ].join('\n'), [
+    ['ApiSchema', { id: 1, get: 'g', extra: true }, true],
+    ['ApiSchema', { id: 1 }, false],
+  ]);
+  for (const member of ['get<T>(url: string): T;', 'find?<K extends string>(key: K): number;', 'get size(): number;', 'set size(v: number);', 'get [k](): string;', '(x: number): string;', '<T>(x: T): T;', 'new (x: string): Api;', 'new <T>(x: T): Api;']) {
+    let out = '';
+    try { out = convert('interface Api { ' + member + ' id: number }'); } catch (e) { out = e.message; }
+    eq('skipped member: ' + member, out.split('\n').filter((l) => /^  \S/.test(l)), ['  id: z.number(),']);
+  }
+  eq('non-property members: only the properties remain', skip.split('\n').filter((l) => /^  \S/.test(l)), ['  id: z.number(),', '  get: z.string(),', '  set: z.boolean().optional(),']);
+}
+eq('limits: Unicode escapes in names are not decoded', convert('interface U { \\u0061: string }').includes('  u0061: z.string(),'), true);
+const parseError = (src) => { try { convert(src); return null; } catch (e) { return e.message; } };
+eq('missing colon: error with line and column', parseError('interface U {\n  id: string;\n  age number;\n}'), 'Line 3, column 3: "age" needs ":" before its type.');
+eq('missing colon: a property with no type', parseError('interface U { a; }'), 'Line 1, column 15: "a" needs ":" before its type.');
+eq('missing colon: column counts code points', parseError('type T = { "😀": string; 名前 }'), 'Line 1, column 25: "名前" needs ":" before its type.');
+eq('missing colon: quoted key is quoted in the message', parseError('interface U { "収货 人" string }'), 'Line 1, column 15: "収货 人" needs ":" before its type.');
+eq('FAQ: Box<T> value → z.unknown() /* T */', convert('interface Box<T> { value: T }').includes('  value: z.unknown() /* T */,'), true);
+let classOnly = '';
+try { convert('class User { name: string }'); } catch (e) { classOnly = e.message; }
+eq('FAQ: classes only → no declarations message', classOnly, 'No interface or type declarations found.');
+eq('prose: missing brace message', (() => { try { convert('interface A { a: string'); } catch (e) { return e.message; } })(), 'Expected "}" got ""');
+
+// ---------- engine fix 1 (S2-6b): names that are Object.prototype members ----------
+// The keyword, primitive-type and generator tables were plain objects, so a type named constructor or
+// toString was read as a primitive and printed as native function source, and cycle detection treated
+// it as visited.
+{
+  const out = checkCase('prototype member type names', 'interface constructor { a: string }\ninterface toString { b: number }\ninterface hasOwnProperty { c: boolean }\ninterface User { x: constructor; y: toString[]; z: hasOwnProperty }', [
+    ['UserSchema', { x: { a: '1' }, y: [{ b: 1 }], z: { c: true } }, true],
+    ['UserSchema', { x: { a: 1 }, y: [], z: { c: true } }, false],
+    ['UserSchema', { x: { a: '1' }, y: [{ b: '1' }], z: { c: true } }, false],
+  ]);
+  eq('prototype names: no native code in the output', /native code/.test(out), false);
+  eq('prototype names: references use the schemas', ['  x: constructorSchema,', '  y: z.array(toStringSchema),', '  z: hasOwnPropertySchema,'].map((l) => out.includes(l)), [true, true, true]);
+  eq('prototype names: no false cycles', /z\.ZodType</.test(out), false);
+  const cyc = checkCase('prototype member names in a cycle', 'interface toString { n: valueOf }\ninterface valueOf { t?: toString }', [
+    ['toStringSchema', { n: { t: { n: {} } } }, true],
+    ['toStringSchema', { n: { t: { n: { t: 1 } } } }, false],
+  ]);
+  eq('prototype names: the real cycle is annotated', (cyc.match(/: z\.ZodType</g) || []).length, 2);
+}
+
+// ---------- engine fix 2 (S2-6b): a property named __proto__ ----------
+// `{ __proto__: z.string() }` in an object literal sets the prototype of the shape, so the key was never
+// checked. A computed key `["__proto__"]` defines an own property. Both Zod versions then require and check
+// the key, but leave it out of the parsed result (zod/v3/helpers/parseUtil.js and zod/v4/core/schemas.js
+// skip "__proto__" on purpose).
+for (const decl of ['interface T { __proto__: string; id: string }', 'interface T { "__proto__": string; id: string }']) {
+  const out = checkCase('__proto__ key ' + decl, decl, [
+    ['TSchema', JSON.parse('{"__proto__": "x", "id": "1"}'), true],
+    ['TSchema', { id: '1' }, false],
+    ['TSchema', JSON.parse('{"__proto__": 1, "id": "1"}'), false],
+  ]);
+  eq('__proto__ key is written as a computed key: ' + decl, out.includes('  ["__proto__"]: z.string(),'), true);
+  for (const [v, z] of Object.entries(zods)) {
+    const S = loadTs(out, z).TSchema;
+    eq(v + ': __proto__ is an own key of the shape: ' + decl, Object.keys(S.shape), ['__proto__', 'id']);
+    eq(v + ': Zod leaves __proto__ out of the parsed result: ' + decl, Object.keys(S.parse(JSON.parse('{"__proto__": "x", "id": "1"}'))), ['id']);
+  }
+}
 
 // ---------- page ----------
 eq('page no longer says extends is skipped', page.includes('</code> is skipped.'), false);
@@ -351,9 +471,24 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
     }
     const q=page(lang,shellFirst);q.example();q.copy().resolve();await settle();const old=[...q.timers.values()].filter(t=>t.ms===1500).map(t=>t.fn);same(tag+' real success timer exists',old.length>0,true);q.advance(400);q.copy().resolve();await settle();old.forEach(fn=>fn());same(tag+' old timer cannot reset new Copied',q.get(cfg.copy).textContent,labels[lang].copied);q.advance(1500);same(tag+' latest timer settles',q.get(cfg.copy).textContent,labels[lang].copy);
     const r=page(lang,shellFirst);r.example();const one=r.copy(),two=r.copy();two.resolve();await settle();one.reject(Error('older request'));await settle();same(tag+' older rejection cannot replace new success',r.get(cfg.copy).textContent,labels[lang].copied);
-    const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const highlighted=queued.highlights.filter(id=>id==='ttz-input-hl-code').length,generated=queued.tracks.length;queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',queued.tracks.length,generated);same(tag+' Example cancels obsolete highlighting',queued.highlights.filter(id=>id==='ttz-input-hl-code').length,highlighted);
-    queued.input(cfg.sample);const beforeShortcut=queued.tracks.length;queued.key('Enter');same(tag+' no primary button means CtrlEnter does not generate',queued.tracks.length,beforeShortcut);queued.advance(300);same(tag+' CtrlEnter leaves the real debounce intact',queued.tracks.length,beforeShortcut+1);same(tag+' input highlighting remains queued',queued.get('ttz-input-hl-code').textContent,cfg.sample+'\n');
+    const runs=q=>q.highlights.filter(id=>id==='ttz-output-code').length;
+    const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const highlighted=queued.highlights.filter(id=>id==='ttz-input-hl-code').length,generated=runs(queued);queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',runs(queued),generated);same(tag+' Example cancels obsolete highlighting',queued.highlights.filter(id=>id==='ttz-input-hl-code').length,highlighted);
+    queued.input(cfg.sample);const beforeShortcut=runs(queued);queued.key('Enter');same(tag+' no primary button means CtrlEnter does not generate',runs(queued),beforeShortcut);queued.advance(300);same(tag+' CtrlEnter leaves the real debounce intact',runs(queued),beforeShortcut+1);same(tag+' input highlighting remains queued',queued.get('ttz-input-hl-code').textContent,cfg.sample+'\n');
+    // Analytics: one event per committed change (textarea change, Example), not on load or per typing pause; the same input once.
+    const ga=page(lang,shellFirst),gaEvent=['typescript-to-zod','generate'];same(tag+' GA: page load sends nothing',ga.tracks.length,0);
+    ga.input(cfg.sample);ga.advance(300);same(tag+' GA: typing pause sends nothing',ga.tracks.length,0);
+    ga.get(cfg.input).dispatch('change');same(tag+' GA: committed change sends one event',ga.tracks,[gaEvent]);
+    ga.get(cfg.input).dispatch('change');same(tag+' GA: the same input again sends nothing',ga.tracks.length,1);
+    ga.input('interface Next { n: number }');ga.get(cfg.input).dispatch('change');same(tag+' GA: change before the debounce generates the new input first',[ga.out().includes('NextSchema'),ga.tracks.length],[true,2]);ga.advance(300);same(tag+' GA: no event after the debounce',ga.tracks.length,2);
+    ga.input(cfg.invalid);ga.get(cfg.input).dispatch('change');same(tag+' GA: invalid input sends nothing',ga.tracks.length,2);
+    ga.example();same(tag+' GA: Example sends one event',ga.tracks.length,3);ga.get(cfg.input).dispatch('change');same(tag+' GA: change on the unchanged example sends nothing',ga.tracks.length,3);
+    ga.get(cfg.clear).click();ga.example();same(tag+' GA: the same example after Clear is sent again',ga.tracks.length,4);
     for(const focus of [p.get('ttz-output'),p.document.querySelector('[data-zt-tip="ttz-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output area CtrlL returns to editable input',[p.document.activeElement.id,p.out(),p.get(cfg.input).value,p.get(cfg.status).textContent],[cfg.input,'','','']);}
+    // Error positions count the original input, including leading blank lines and spaces (review s2-6 must-fix 2)
+    const at=(line,col,name)=>labels[lang].msgError+labels[lang].msgNoColon.replace('{line}',line).replace('{col}',col).replace('{name}',name);
+    const lc=page(lang,shellFirst);lc.input('\n\n\n  interface U {\n    name string;\n  }\n\n');lc.advance(300);same(tag+' error position after leading blank lines',lc.get(cfg.status).textContent,at(5,5,'name'));
+    lc.input('   interface U { a b }');lc.advance(300);same(tag+' error column after leading spaces',lc.get(cfg.status).textContent,at(1,18,'a'));
+    lc.input('  \n  ');lc.advance(300);same(tag+' whitespace-only input stays empty',[lc.out(),lc.get(cfg.status).textContent],['','']);
     p.input('interface T { x: string; }');p.advance(79);const beforeHL=p.get('ttz-input-hl-code').textContent;p.advance(1);same(tag+' 80ms highlighting reads current input',p.get('ttz-input-hl-code').textContent,'interface T { x: string; }\n');p.get(cfg.input).scrollTop=21;p.get(cfg.input).scrollLeft=17;p.get(cfg.input).dispatch('scroll');same(tag+' input scroll is mirrored',[p.get('ttz-input-hl-code').parentElement.scrollTop,p.get('ttz-input-hl-code').parentElement.scrollLeft],[21,17]);p.get(cfg.clear).click();p.advance(300);same(tag+' Clear also clears input highlighting',p.get('ttz-input-hl-code').textContent,'');
   }
   await settle();same('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
@@ -393,6 +528,39 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
     const zodPairs=examplePairs(body,b=>b.lang==='pre'&&/^(?:interface|type|enum|export (?:interface|type))\b/.test(b.text),b=>b.lang==='pre'&&/^import \{ z \}/.test(b.text));
     eq(lang+' has TypeScript → Zod examples',zodPairs.length>0,true);
     eq(lang+' each Zod example equals the engine output',zodPairs.filter(([a,b])=>convert(a.text)!==b.text).map(([,b])=>b.text),[]);
+    // {/* ttz-check: {"schema": "NameSchema", "accepts": [...], "rejects": [...], "drops": [...]} */}: the first two <pre>
+    // blocks after the marker are the TypeScript input and the engine output. The output must equal the engine, pass
+    // tsc strict against zod 3.25 and zod/v4, and load under both; "accepts" must parse, "rejects" must fail, and the
+    // parsed result of the first accepted value must not contain the keys in "drops" (Zod strips unknown keys).
+    // {/* ttz-error: {"message": "..."} */}: the first <pre> block after the marker gives the page language's
+    // "Parse error: " + message (the engine runs with that language's messages).
+    const notes=annotations(body,'ttz-check');
+    eq(lang+' has at least 2 ttz-check examples',notes.length>=2,true);
+    notes.forEach((note,i)=>{
+      const tag=lang+' ttz-check #'+(i+1),blocks=fencedBlocks(note.after).filter(b=>b.lang==='pre');
+      if(blocks.length<2){eq(tag+' has input and output blocks',blocks.length,2);return;}
+      const out=convert(blocks[0].text);eq(tag+' output equals the engine',blocks[1].text,out);
+      for(const entry of ['zod','zod/v4'])eq(tag+' tsc strict ('+entry+')',tsErrors(out,entry),[]);
+      for(const [v,z] of Object.entries(zods)){
+        let S;try{S=loadTs(out,z);}catch(e){eq(tag+' '+v+' loads',e.message,'no error');continue;}
+        const schema=S[note.spec?.schema];if(note.spec?.schema&&!schema){eq(tag+' names an exported schema',note.spec.schema,'');continue;}
+        for(const value of note.spec?.accepts??[])eq(tag+' '+v+' accepts '+JSON.stringify(value),schema.safeParse(value).success,true);
+        for(const value of note.spec?.rejects??[])eq(tag+' '+v+' rejects '+JSON.stringify(value),schema.safeParse(value).success,false);
+        // drops: a key ("a") or a dotted path ("message.markAsReadToken") present in accepts[0] and absent after parsing
+        if(note.spec?.drops){
+          const parsed=schema.parse(note.spec.accepts[0]),at=(o,path)=>path.split('.').reduce((x,k)=>x==null?undefined:x[k],o);
+          const owns=(o,path)=>{const parts=path.split('.'),parent=at(o,parts.slice(0,-1).join('.')||'');const obj=parts.length>1?parent:o;return obj!=null&&Object.prototype.hasOwnProperty.call(obj,parts.at(-1));};
+          eq(tag+' '+v+' drops '+note.spec.drops.join(','),note.spec.drops.filter(k=>!owns(note.spec.accepts[0],k)||owns(parsed,k)),[]);
+        }
+      }
+    });
+    for(const note of annotations(body,'ttz-error')){
+      const block=fencedBlocks(note.after).find(b=>b.lang==='pre');let message='';
+      const LE=engineFor(strings[lang].msgNoDecl,strings[lang].msgNoColon);
+      try{LE.generate(LE.parse(LE.tokenize(block.text)));}catch(e){message=e.message;}
+      eq(lang+' ttz-error example gives '+note.spec?.message,message,note.spec?.message);
+      eq(lang+' ttz-error message is quoted on the page',note.after.includes(strings[lang].msgError+note.spec?.message),true);
+    }
     check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   }
 }

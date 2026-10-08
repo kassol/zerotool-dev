@@ -7,18 +7,24 @@ steps:
   - "コピーをクリックし、import と推論された型を含む出力をコピーします。"
   - "クリアをクリックして入力、出力、ステータスを消去します。"
 faqItems:
-  - question: "どのようなTypeScript構文をサポートしていますか？"
-    answer: "interfaceとtype alias宣言をサポートし、基本型（string、number、boolean、null、undefined、any、unknown）、省略可能プロパティ（?）、Union型（A | B）、文字列enum（リテラルUnion）、配列（T[]、Array<T>）、インラインネストオブジェクト、宣言済み型間の相互参照、Partial<T>・Record<K, V>・Array<T>・Promise<T>などのユーティリティ型に対応しています。"
-  - question: "型間の相互参照はどのように処理されますか？"
+  - id: "constructs"
+    question: "どのようなTypeScript構文をサポートしていますか？"
+    answer: "interfaceとtype alias宣言をサポートし、基本型（string、number、boolean、null、undefined、any、unknown）、省略可能プロパティ（?）、Union型（A | B）、文字列enum（リテラルUnion）、enum宣言、extends、インデックスシグネチャ、再帰型、配列（T[]、Array<T>）、インラインで書いたネストしたオブジェクト型、宣言済み型間の相互参照、Partial<T>・Record<K, V>・Array<T>・Promise<T>などのユーティリティ型に対応しています。"
+  - id: "references"
+    question: "型間の相互参照はどのように処理されますか？"
     answer: "入力に複数のinterfaceまたはtype aliasが宣言されている場合、宣言済み型名への参照は対応するSchemaの定数に変換されます。例えばAddress型のフィールドはAddressSchemaになります。入力で宣言されていない型はz.unknown()（コメント付き）になります。"
-  - question: "生成されるスキーマはどのZodバージョンに対応していますか？"
-    answer: "出力にはZod 3とZod 4の両方にあるz.object()、z.string()、z.union()、z.enum()、z.array()、z.optional()、z.literal()、z.record(キー, 値)、.extend()、.shape、.catchall()、z.lazy()、z.ZodType、z.infer<>などのAPIだけを使います。Zod 4は値だけのz.record()を受け付けないため、Recordには常にキーのスキーマを書きます。Promise<T>から生成するz.promise()はZod 4で非推奨です。"
-  - question: "文字列Union型はどのように変換されますか？"
+  - id: "zod-version"
+    question: "生成されるスキーマはどのZodバージョンに対応していますか？"
+    answer: "出力にはZod 3とZod 4の両方にあるz.object()、z.string()、z.union()、z.enum()、z.array()、.optional()、z.literal()、z.record(キー, 値)、.extend()、.shape、.catchall()、z.lazy()、z.ZodType、z.infer<>などのAPIだけを使います。Zod 4は値だけのz.record()を受け付けないため、Recordには常にキーのスキーマを書きます。Promise<T>から生成するz.promise()はZod 4で非推奨です。"
+  - id: "string-unions"
+    question: "文字列Union型はどのように変換されますか？"
     answer: "文字列リテラルのUnion（例：\"admin\" | \"user\" | \"guest\"）は簡潔にするためz.enum([\"admin\", \"user\", \"guest\"])に自動変換されます。混合Union（例：string | null）はz.union([z.string(), z.null()])を使用します。"
-  - question: "TypeScriptのclassやジェネリック型定義は変換できますか？"
-    answer: "classとジェネリック型はサポート範囲外です。このツールはinterfaceとtype aliasの変換に特化しています。具体的な型に適用されたユーティリティ型（Array<string>、Record<string, number>）はサポートされています。"
-  - question: "コードはサーバーに送信されますか？"
-    answer: "いいえ。TypeScriptパーサーとZodコードジェネレーターはすべてブラウザ内で動作します。ソースコードはお使いの端末から送信されません。"
+  - id: "classes-generics"
+    question: "TypeScriptのclassやジェネリック型定義は変換できますか？"
+    answer: "できません。class宣言は読み飛ばすため、classだけの入力では「interface または type 宣言が見つかりません。」と表示されます。宣言した型自身の型パラメーターは展開しません。interface Box<T> { value: T } の value は z.unknown() /* T */ になります。具体的な型に適用されたユーティリティ型（Array<string>、Record<string, number>）は変換できます。"
+  - id: "privacy"
+    question: "コードはサーバーに送信されますか？"
+    answer: "いいえ。パーサーとZod生成処理はこのブラウザのタブ内で動き、コードをサーバーに送信することも、ブラウザのストレージに保存することもありません。ページのアクセス解析が記録するのは、入力を編集してフォーカスを外したときと「サンプル」を押したときの利用イベント（ツール名と動作 generate）だけで、コードの内容は含みません。"
 ---
 
 <h2>対応TypeScript機能</h2>
@@ -84,7 +90,77 @@ export type User = z.infer<typeof UserSchema>;
 export const StatusSchema = z.enum(["active", "inactive", "pending"]);
 export type Status = z.infer<typeof StatusSchema>;`}</code></pre>
 
+<h2>例：LINE Messaging API の Webhook イベント</h2>
+
+<p>LINE が公開している OpenAPI 定義（line/line-openapi の <code>webhook.yml</code>）では、すべての Webhook イベントに <code>type</code>、<code>timestamp</code>、<code>mode</code>、<code>webhookEventId</code>、<code>deliveryContext</code> が必須で、<code>mode</code> は <code>active</code> か <code>standby</code>、<code>deliveryContext.isRedelivery</code> は真偽値です。メッセージイベントはこれに <code>replyToken</code> と <code>message</code> を加え、テキストメッセージでは <code>id</code>、<code>text</code>、<code>quoteToken</code> が必須です。共通部分を基底の interface にして <code>extends</code> で書くと、次のようになります。</p>
+
+{/* ttz-check: {"schema": "TextMessageEventSchema", "accepts": [{"type": "message", "timestamp": 1759885200000, "mode": "active", "webhookEventId": "01K70M3Q8ZABCDEFGHJKMNPQRS", "deliveryContext": {"isRedelivery": false}, "replyToken": "r-0001", "source": {"type": "user", "userId": "U0001"}, "message": {"type": "text", "id": "100001", "text": "予約したいです", "quoteToken": "q-0001", "markAsReadToken": "m-0001"}}], "drops": ["message.markAsReadToken"], "rejects": [{"type": "message", "timestamp": 1759885200000, "mode": "paused", "webhookEventId": "01K70M3Q8ZABCDEFGHJKMNPQRS", "deliveryContext": {"isRedelivery": false}, "message": {"type": "text", "id": "100001", "text": "予約したいです", "quoteToken": "q-0001"}}, {"type": "follow", "timestamp": 1759885200000, "mode": "active", "webhookEventId": "01K70M3Q8ZABCDEFGHJKMNPQRS", "deliveryContext": {"isRedelivery": false}, "message": {"type": "text", "id": "100001", "text": "予約したいです", "quoteToken": "q-0001"}}]} */}
+
+<pre><code>{`type EventMode = "active" | "standby";
+
+interface DeliveryContext {
+  isRedelivery: boolean;
+}
+
+interface WebhookEvent {
+  type: string;
+  timestamp: number;
+  mode: EventMode;
+  webhookEventId: string;
+  deliveryContext: DeliveryContext;
+}
+
+interface TextMessageEvent extends WebhookEvent {
+  type: "message";
+  replyToken?: string;
+  source?: { type: "user"; userId?: string };
+  message: { type: "text"; id: string; text: string; quoteToken: string };
+}`}</code></pre>
+
+<p>生成結果：</p>
+
+<pre><code>{`import { z } from "zod";
+
+export const EventModeSchema = z.enum(["active", "standby"]);
+export type EventMode = z.infer<typeof EventModeSchema>;
+
+export const DeliveryContextSchema = z.object({
+  isRedelivery: z.boolean(),
+});
+export type DeliveryContext = z.infer<typeof DeliveryContextSchema>;
+
+export const WebhookEventSchema = z.object({
+  type: z.string(),
+  timestamp: z.number(),
+  mode: EventModeSchema,
+  webhookEventId: z.string(),
+  deliveryContext: DeliveryContextSchema,
+});
+export type WebhookEvent = z.infer<typeof WebhookEventSchema>;
+
+export const TextMessageEventSchema = WebhookEventSchema.extend({
+  type: z.literal("message"),
+  replyToken: z.string().optional(),
+  source: z.object({
+      type: z.literal("user"),
+      userId: z.string().optional(),
+    }).optional(),
+  message: z.object({
+      type: z.literal("text"),
+      id: z.string(),
+      text: z.string(),
+      quoteToken: z.string(),
+    }),
+});
+export type TextMessageEvent = z.infer<typeof TextMessageEventSchema>;`}</code></pre>
+
+<p>宣言の順番を入れ替えても、依存先の <code>EventModeSchema</code> から順に出力されます。<code>.extend()</code> は同じキーを上書きするため、<code>type</code> は基底の <code>z.string()</code> ではなく <code>z.literal("message")</code> で検証されます。<code>mode</code> が <code>paused</code> のデータや <code>type</code> が <code>follow</code> のデータは失敗します。</p>
+
+<p>上の interface に書かなかった <code>markAsReadToken</code>（webhook.yml では省略可能なプロパティ）を含むメッセージも検証は通りますが、Zod はスキーマにないキーを既定で取り除くため、<code>parse()</code> の結果からは消えます。パース後のオブジェクトは受け取ったボディと同じではないので、元のデータが必要な処理には生のボディを使ってください。値（ID やトークン）はこのページ用の例です。</p>
+
 <h2>例：会員登録フォーム</h2>
+
+{/* ttz-check: {"schema": "SignupFormSchema", "accepts": [{"email": "not-an-email", "password": "1", "referrer": null, "plan": "pro"}], "rejects": [{"email": "a@example.com", "password": "x", "plan": "free"}, {"email": "a@example.com", "password": "x", "referrer": "ad", "plan": "team"}]} */}
 
 <p>入力：</p>
 
@@ -114,10 +190,10 @@ export type SignupForm = z.infer<typeof SignupFormSchema>;`}</code></pre>
 <p>生成したスキーマで zod 3.25 を使い 3 つのデータを検証した結果：</p>
 
 <pre><code>{`SignupFormSchema.safeParse({ email: "not-an-email", password: "1", referrer: null, plan: "pro" })
-// success: true  (types match; no format rules yet)
+// success: true  （型は合っている。形式のルールはまだない）
 
 SignupFormSchema.safeParse({ email: "a@example.com", password: "x", plan: "free" })
-// referrer: Invalid input  (string | null is required, it cannot be missing)
+// referrer: Invalid input  （string | null はキー必須で、省略できない）
 
 SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "ad", plan: "team" })
 // plan: Invalid enum value. Expected 'free' | 'pro', received 'team'`}</code></pre>
@@ -127,8 +203,44 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
 <ul>
   <li><code>{"prop?: T"}</code> は <code>{".optional()"}</code> になります。キーがなくてもかまいません。</li>
   <li><code>{"T | null"}</code> は <code>{"z.union([T, z.null()])"}</code>、つまり <code>{"T.nullable()"}</code> と同じです。キーは必須で、値に <code>{"null"}</code> を許します。<code>{"referrer"}</code> のないデータは失敗します。</li>
-  <li>省略可能かつ null 可（<code>{"prop?: T | null"}</code>）なら両方が必要です。API がそう返すなら <code>{".nullish()"}</code> と手で書きます。</li>
+  <li><code>{"prop?: T | null"}</code> は <code>{"z.union([T, z.null()]).optional()"}</code> になります。キーがなくても値が <code>{"null"}</code> でもよく、<code>{"T.nullish()"}</code> と同じ意味です。</li>
 </ul>
+
+<h2>日本語の名前と全角コロン</h2>
+
+<p>プロパティ名と型名は TypeScript の識別子の規則で読むので、日本語をそのまま書けます。IME で入力した全角コロン <code>：</code> は、文字列リテラルの外では半角の <code>:</code> として読みます。クォートなしの <code>氏名</code> と、全角コロンを含む次の interface では：</p>
+
+{/* ttz-check: {"schema": "MemberSchema", "accepts": [{"id": "m1", "氏名": "山田太郎", "フリガナ": "ヤマダタロウ", "age": 30}], "rejects": [{"id": "m1", "フリガナ": "ヤマダタロウ", "age": 30}, {"id": "m1", "氏名": "山田太郎", "フリガナ": "ヤマダタロウ", "age": "30"}]} */}
+
+<pre><code>{`interface Member {
+  id: string;
+  氏名: string;
+  "フリガナ": string;
+  age：number;
+}`}</code></pre>
+
+<pre><code>{`import { z } from "zod";
+
+export const MemberSchema = z.object({
+  id: z.string(),
+  氏名: z.string(),
+  "フリガナ": z.string(),
+  age: z.number(),
+});
+export type Member = z.infer<typeof MemberSchema>;`}</code></pre>
+
+<p>4 項目すべてが残り、<code>氏名</code> はそのままプロパティ名に、クォートで囲んだ <code>"フリガナ"</code> はクォート付きで出力されます。入力全体を NFKC で正規化しないのは、文字列リテラル型まで変わってしまうためです（<code>{'"ﾎｯｶｲﾄﾞｳ"'}</code> が <code>{'"ホッカイドウ"'}</code> になります）。型名も日本語で書け、<code>{"interface 会員"}</code> は <code>会員Schema</code> になります。</p>
+
+{/* ttz-error: {"message": "3 行 3 列：「氏名」の後に「:」がありません。"} */}
+
+<p>コロンを書き忘れると、そのプロパティを読み飛ばさず、位置付きのエラーになります。入力：</p>
+
+<pre><code>{`interface 会員 {
+  id: string;
+  氏名 string;
+}`}</code></pre>
+
+<p>ステータスには <code>{'解析エラー：3 行 3 列：「氏名」の後に「:」がありません。'}</code> と表示され、出力は消えます。列は文字単位で数えます。その他の構文エラーは英語のままで、パーサーが予期しなかった最初のトークンだけを示します。閉じ括弧のない <code>{"interface A { a: string"}</code> は <code>{'Expected "}" got ""'}</code>、<code>const</code> 文だけの入力は「interface または type 宣言が見つかりません。」です。</p>
 
 <h2>TypeScript では書けないルールを足す</h2>
 
@@ -144,3 +256,17 @@ SignupFormSchema.safeParse({ email: "a@example.com", password: "x", referrer: "a
 });`}</code></pre>
 
 <p>生成した <code>{"z.infer"}</code> の型を唯一の定義にして元の interface は消すと、両者がずれていくことを防げます。</p>
+
+<h2>制限事項</h2>
+
+<p>宣言の読み取りには TypeScript コンパイラではなく独自の小さなパーサーを使うため、別ファイルの型は解決せず、型チェックもしません。使う前に次の点を確認してください。</p>
+
+<ul>
+  <li><strong>宣言のない名前は <code>z.unknown()</code> になります。</strong><code>Date</code> や import した型など、入力で宣言していない型は <code>{"z.unknown() /* Name */"}</code> と出力されます。<code>z.date()</code> や対応するスキーマに置き換えてください。宣言のない基底型は通常の <code>z.object()</code> にコメント <code>{"/* extends Name: not declared in the input */"}</code> を付けます。</li>
+  <li><strong>enum は値をコピーします。</strong>スキーマが検証するのは enum の値（<code>"RED"</code>、<code>0</code>）で、実行時の enum オブジェクトではありません。enum を import できるなら <code>z.nativeEnum(Color)</code>（Zod 3）や <code>z.enum(Color)</code>（Zod 4）でも同じです。</li>
+  <li><strong>インデックスシグネチャのキー</strong>は常に <code>z.string()</code> です。<code>.catchall()</code> と併用すると、宣言済みのプロパティも自身のスキーマに合う必要があります。</li>
+  <li><strong>リテラルキーの Record</strong>（<code>{'Record<"read" | "write", boolean>'}</code>）は <code>{'z.record(z.enum(["read", "write"]), z.boolean())'}</code> になります。Zod 4 は TypeScript と同じく両方のキーを要求し、Zod 3 は片方だけでも通します。</li>
+  <li><strong>名前の Unicode エスケープは解釈しません。</strong><code>{"\\u0061: string"}</code> は <code>a</code> ではなく <code>u0061</code> というプロパティになります。</li>
+  <li><strong>全角で読むのはコロンだけです。</strong>全角の疑問符などは未知の文字として読み飛ばすため、<code>{"age？: number"}</code> は省略可能にならず <code>{"age: z.number()"}</code> になります。</li>
+  <li><strong>変換しないもの：</strong>ジェネリックの型パラメーター、class、メソッド・get / set アクセサー・呼び出しシグネチャ・コンストラクトシグネチャ（読み飛ばし）、Mapped Types と Conditional Types、<code>keyof</code>、<code>typeof</code>。テンプレートリテラル型は <code>z.string()</code> になります。</li>
+</ul>
