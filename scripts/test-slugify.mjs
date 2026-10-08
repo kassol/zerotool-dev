@@ -371,10 +371,10 @@ for(const [lang,labels] of Object.entries(copyLabels)) {
   p.input('sl-input','世界');eq(lang+': unsupported letters disable copy',p.get('sl-copy').disabled,true);check(lang+': unsupported letters warn',p.get('sl-status').textContent.length>0);
   p.input('sl-input','');eq(lang+': empty input resets warning class',[p.get('sl-status').textContent,p.get('sl-status').className],['','sl-status']);
   for(const order of [false,true])for(const mod of [{ctrlKey:true},{ctrlKey:false,metaKey:true}]) {
-    const q=resultPage(lang,order);q.input('sl-separator','_','change');q.get('sl-lowercase').click();const before=snapshot(q);q.key(q.body);eq(lang+': external CtrlL preserves page',snapshot(q),before);
+    const q=resultPage(lang,order);q.input('sl-separator','_','change');q.get('sl-lowercase').click();const tracked=q.tracks.length;const before=snapshot(q);q.key(q.body);eq(lang+': external CtrlL preserves page',snapshot(q),before);
     q.key('sl-copy',{key:'L',...mod});eq(lang+': CtrlL clears code/status/buttons '+order,snapshot(q),['','',true,labels[0],'','sl-status']);
     eq(lang+': CtrlL keeps options',[q.get('sl-separator').value,q.get('sl-lowercase').checked,q.get('sl-trim').checked],['_',false,true]);
-    q.get('sl-copy').click();eq(lang+': cleared result cannot copy old text',q.copies.length,0);q.advance(1000);eq(lang+': clear cancels queued tracking',q.tracks.length,0);eq(lang+': shared clear storage called once',q.clears,['slugify']);
+    q.get('sl-copy').click();eq(lang+': cleared result cannot copy old text',q.copies.length,0);q.advance(1000);eq(lang+': clear sends no analytics event',q.tracks.length,tracked);eq(lang+': shared clear storage called once',q.clears,['slugify']);
     q.input('sl-input','New Text');eq(lang+': input recovers after shortcut',q.get('sl-result').textContent,'New_Text');
   }
   for(const kind of ['reject','throw','missing']) {
@@ -404,6 +404,22 @@ for(const [lang,labels] of Object.entries(copyLabels)) {
     q.get('sl-copy').click();const older=q.copies.at(-1);q.get('sl-copy').click();q.copies.at(-1).reject(Error('latest'));await settle();const failed=snapshot(q);older.resolve();await settle();eq(lang+': old success cannot erase latest error',snapshot(q),failed);
     q.get('sl-copy').click();const oldError=q.copies.at(-1);q.get('sl-copy').click();q.copies.at(-1).resolve();await settle();const success=snapshot(q);oldError.reject(Error('older'));await settle();eq(lang+': old error cannot erase latest success',snapshot(q),success);
   }
+}
+// Analytics: one event per committed change (as in css-triangle-generator), not per pause in typing.
+// Before the fix every input event queued a 500 ms timer, so typing a title with pauses sent
+// several 'convert' events.
+for (const lang of Object.keys(copyLabels)) {
+  const q = pageVM(lang);
+  for (const v of ['R', 'Ro', 'Rock', 'Rock &', 'Rock & Roll']) { q.input('sl-input', v); q.advance(800); }
+  eq(lang + ': typing sends no analytics event', q.tracks.length, 0);
+  q.get('sl-input').dispatch('change');
+  eq(lang + ': committed input sends one event', q.tracks, [['slugify', 'convert']]);
+  q.input('sl-separator', '_', 'change'); q.get('sl-trim').click();
+  eq(lang + ': each option change sends one event', q.tracks.length, 3);
+  q.input('sl-input', '世界'); q.get('sl-input').dispatch('change'); q.get('sl-lowercase').click();
+  eq(lang + ': empty result sends no event', q.tracks.length, 3);
+  q.input('sl-input', ''); q.get('sl-input').dispatch('change');
+  eq(lang + ': empty input sends no event', q.tracks.length, 3);
 }
 eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'924eade0152ec855fd200dcf14d74a58652a7f9cc8ea9efaf7f1b8f6c7dd1528');
 eq('no unhandled copy rejections',unhandled,[]);process.off('unhandledRejection',onUnhandled);
