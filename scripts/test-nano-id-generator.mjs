@@ -567,6 +567,15 @@ const s2Contract = toolMdxContract('nano-id-generator', {
 });
 for (const r of s2Contract.results) s2Check(r.message, r.ok);
 s2Check('preset sizes are 64 / 62 / 10 / 16', ['url-safe', 'alphanumeric', 'numbers', 'hex'].map((k) => new Set(presets[k]).size).join() === '64,62,10,16');
+// The English page describes how the bundled Nano ID 3.3.11 picks preset symbols; check the
+// statement against the vendor file the page loads (not against the upstream README).
+{
+  const vendor = readFileSync(join(root, 'public/vendor/nanoid.min.js'), 'utf8');
+  const maskOf = (n) => (2 << (Math.log(n - 1) / Math.LN2)) - 1;
+  s2Check('vendor is Nano ID 3.3.11 with the masking customRandom and 6-bit nanoid()', vendor.includes('nanoid 3.3.11') && vendor.includes('var mask = (2 << (Math.log(alphabet.length - 1) / Math.LN2)) - 1;') && vendor.includes("alphabet[bytes[j] & mask] || ''") && vendor.includes('byte &= 63;'));
+  s2Check('vendor masks: 63 for 62 symbols, 15 for 10 and 16', [62, 10, 16].map(maskOf).join() === '63,15,15');
+  s2Check('English page states the masks and does not cite the README for them', page.includes('(63 for 62 symbols, 15 for 10 and 16 symbols)') && !/Nano ID README/.test(page));
+}
 s2Check('count format', [countText(141.77), countText(148663.8), countText(1.3076605e18)].join('|') === '142|149,000|1.3 × 10^18');
 
 process.removeListener('unhandledRejection', onUnhandled);
