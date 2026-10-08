@@ -456,6 +456,30 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
     eq(prefix + ' empty side still represents one empty line', blank.rows.map(row => [row.type, row.val]), [['del', ''], ['add', 'only']]);
   } finally { await h.close(); }
 }
+// ---------- changed lines that look the same ----------
+// A pair of changed lines that differ only in whitespace or invisible characters (trailing
+// space, tab, U+00A0, U+3000, U+200B, U+FEFF) or only in Unicode normalization (NFC / NFD) was
+// shown as - / + with no reason. The status line now counts these pairs.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const T = STRINGS[lang];
+  const h = pageHarness(lang);
+  try {
+    const status = () => h.nodes.get('diff-status').textContent;
+    await h.compare('a \nb\tc\nx\u00a0y\n全角\u3000\nz\u200bw\nsame', 'a\nb    c\nx y\n全角\nzw\nsame');
+    eq(lang + ' whitespace-only pairs are counted', status(), '+5 / -5 ' + T.onlySpace?.replace('{n}', '5'));
+    await h.compare('caf\u00e9\n\u1100\u1161\nkeep', 'cafe\u0301\n\uac00\nkeep');
+    eq(lang + ' normalization-only pairs are counted', status(), '+2 / -2 ' + T.onlyNormalization?.replace('{n}', '2'));
+    await h.compare('one\ntwo ', 'ONE\ntwo');
+    eq(lang + ' only qualifying pairs are counted', status(), '+2 / -2 ' + T.onlySpace?.replace('{n}', '1'));
+    await h.compare('a\nb', 'A\nb');
+    eq(lang + ' ordinary change has no note', status(), '+1 / -1');
+    await h.compare('a', 'a ');
+    eq(lang + ' single pair', status(), '+1 / -1 ' + T.onlySpace?.replace('{n}', '1'));
+    await h.compare('x\ny', 'x\ny');
+    eq(lang + ' identical text', status(), T.identical);
+  } finally { await h.close(); }
+}
+
 for (const [mobile, top] of [[false, 900], [true, 100]]) {
   const h = pageHarness('en', { mobile, resultTop: top });
   try {
