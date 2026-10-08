@@ -143,6 +143,7 @@ const stringsRegion = source.split('// strings:start')[1]?.split('// strings:end
 if (!stringsRegion) throw Error('Missing SSR strings boundary');
 const STR = new Function(stringsRegion + ';return STRINGS;')();
 const SSR_STRINGS=STR;
+for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ' has exprErrorEmpty with placeholders', ['{field}', '{min}', '{max}'].every((k) => (STR[lang].exprErrorEmpty || '').includes(k)), true);
 for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ' has exprErrorField with placeholders', /\{field\}/.test(STR[lang].exprErrorField || '') && /\{value\}/.test(STR[lang].exprErrorField || ''), true);
 eq('page no longer says 7 is rejected', page.includes('it rejects 7'), false);
 eq('page no longer says the Minute box is copied as is', page.includes('without an error message'), false);
@@ -277,7 +278,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
   const persist={clear(slug){if(slug!=='cron-job-generator')stored={};persistCalls.push(['clear',slug]);},save(slug,data){stored=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,stored]);},load(){return structuredClone(stored);}};
-  const globals={CLIENT_T:Object.fromEntries(['copy','copied','copyFailed','nextLabelUtc','nextLabelLocal','exprErrorLen','exprErrorVal','exprErrorField','fieldMinute','fieldHour','fieldDay','fieldMonth','fieldWeekday'].map(k=>[k,SSR_STRINGS[lang][k]])),document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
+  const globals={CLIENT_T:Object.fromEntries(JSON.parse(('['+/const CLIENT_T = Object\.fromEntries\(\[([^\]]+)\]/.exec(source)[1]+']').replace(/'/g,'"')).map(k=>[k,SSR_STRINGS[lang][k]])),document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
     _slug:SLUG,ztPersist:persist,trackTool(...a){tracks.push(a);},
     navigator:noClipboard?{}:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
@@ -425,6 +426,23 @@ for(const lang of ['en','zh','ja','ko']){
   assert('typed */75 keeps its schedule (first runs 09:00 and 10:00 UTC)',[output(p),runs(p).slice(0,2),p.get('cjg-desc').textContent],['*/75 * * * *',['2026-10-05 09:00 UTC','2026-10-05 10:00 UTC'],'At every 75 minutes past every hour']);
   p=ready('en');p.input(INPUT,'0 9 * * */7');
   assert('typed weekday */7 runs on Sundays only',[runs(p).slice(0,2)],[['2026-10-11 09:00 UTC','2026-10-18 09:00 UTC']]);
+}
+
+// ---------- S2-3c review: an empty Minute box is reported, not read as * ----------
+// In Specific mode the Minute box is free text. Empty used to give "*", so "every day at 9:00"
+// became every minute of hour 9 with no message.
+{
+  const MSG={en:'Minute: the box is empty. Enter numbers from 0 to 59, *, -, / or commas.',ja:'分：入力欄が空です。0〜59 の数字と *、-、/、カンマで入力してください。'};
+  for(const lang of ['en','ja']){
+    const p=ready(lang);
+    const box=p.doc.querySelector('.cjg-field[data-field="minute"] [data-role="values"]');
+    assert(lang+' empty Minute: starts valid',[output(p),p.get(COPY).disabled],['0 9 * * 1-5',false]);
+    box.value='';box.dispatch('input');
+    assert(lang+' empty Minute: reported, copy disabled, result cleared',[p.get('cjg-error').textContent,p.get(COPY).disabled,p.get('cjg-desc').textContent,p.get('cjg-next-list').textContent],[MSG[lang],true,'','']);
+    assert(lang+' empty Minute: expression is not every minute',output(p)==='* 9 * * 1-5',false);
+    box.value='30';box.dispatch('input');
+    assert(lang+' empty Minute: a value recovers',[output(p),p.get('cjg-error').textContent,p.get(COPY).disabled],['30 9 * * 1-5','',false]);
+  }
 }
 
 // ---------- S2-3c review: an invalid expression cannot be copied ----------
