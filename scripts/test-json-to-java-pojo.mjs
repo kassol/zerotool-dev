@@ -32,6 +32,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, delimiter } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToJavaTool.astro'), 'utf8');
@@ -482,25 +483,7 @@ const V2 = {
       "annotation"
     ]
   ],
-  "scriptSHA": "0150698efcde58a2bc320d507a80547494523144424c4f9a09da36cc398a17ed",
-  "protectedContent": {
-    "en": [
-      "2482f1801b46f92b96e6e556319136b9caa0989875e28d8fb420a5825fab0c35",
-      "e5111fc7c74941946c04d43cfbb317fb0da790f0e6397392f5f73689356869e8"
-    ],
-    "zh": [
-      "a47bdf26460743e8f69c0d026d51fcbe04c10dddce38ad6deb21b1606930956e",
-      "09db91aba9d3fd3e8a7d64d2904e13f3cd6fa9c37b00954ed20d0a218bed9027"
-    ],
-    "ja": [
-      "9dfdd03757640abdced3aee710f51ffa9b06b2b02c55b03206676b85385bf311",
-      "8cdd5cabe3971e470b3be0925615d5b187d3c5f88123cf75055207f937321441"
-    ],
-    "ko": [
-      "bcb8c2e7166827a671a0684ac75b2a72317497fe0930f7b68372b5dbeeda15e0",
-      "71ff9db8e8627072932329127a779c9194114f073b1ac916295884a3ac40a674"
-    ]
-  }
+  "scriptSHA": "0150698efcde58a2bc320d507a80547494523144424c4f9a09da36cc398a17ed"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -544,8 +527,7 @@ for (const lang of ['en','zh','ja','ko']) {
   eq(lang + ': v2 steps correspond to controls', steps.length, V2.tips.length);
   eq(lang + ': v2 step limits and order', fm.indexOf('steps:') < fm.indexOf('faqItems:') && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n,x) => n+[...x].length,0) <= 1200, true);
   for (const [, about] of V2.tips) eq(lang + ': v2 steps actual label ' + about, steps.join('\n').includes(L[about]), true);
-  eq(lang + ': v2 SEO and FAQ unchanged', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')), V2.protectedContent[lang][0]);
-  eq(lang + ': v2 non-Usage content unchanged', hash(body.replace(/\n\{\/\* b6-sample-coverage:start \*\/\}[\s\S]*?\{\/\* b6-sample-coverage:end \*\/\}\n/,'')), V2.protectedContent[lang][1]);
+  eq(lang + ': MDX content contract', contractProblems('json-to-java-pojo', lang), '');
   eq(lang + ': v2 no duplicate usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
   for (const shellFirst of [false,true]) for (const focus of ['output','tip']) {
     const q = lifecyclePage(lang,shellFirst);golden(q);q.key(focus === 'output' ? q.get(prefix + '-output') : q.doc.querySelector('[data-zt-tip="' + prefix + '-tip-copy"]'));

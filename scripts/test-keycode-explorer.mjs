@@ -21,6 +21,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { loadPage } from './astro-page-harness.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/KeycodeExplorerTool.astro'), 'utf8');
@@ -261,7 +262,7 @@ for(const [name,re]of [
  ['coarse fallback honors hidden',/\.kce-mobile-fallback\[hidden\]\s*\{\s*display:\s*none/],
 ])eq('v2 '+name,re.test(style),true);
 const bindings={pad:'capturePad',mobile:'mobileInputLabel',properties:'eventProps',modifiers:'modifiers',snippet:'snippet',copy:'copy',history:'recentKeys',clear:'clear'};
-const protectedContent={"en": "b961daec626de3d3be7bc033ebd6e0050949f3a752b372bd31f5db2e4f2f1a0f", "zh": "377d96c5070adf0aaa17a62aa8e1a26a6ef439bf85ebc0049da5899dd7ea258d", "ja": "eeff0699b0f3634991d88b90a7c88b6e4f18570efc5ff88d69ddd0c55b43370f", "ko": "a28904036ced589ee55b956557627330a31806056997cdb5dcbbea104d7a52d7"},originalLabelHashes={"en": "ecfb232b89ccb99b9a025ef8d06b9d8859fa32d73ae51f09008765b9aeda30d2", "zh": "77f4888f79fea060a1f687082fb957d91966b5ab40c853013850f9483693741a", "ja": "2137be2f49ae36466829cd8876db93161eb528e609e52cf979924754b21f5af2", "ko": "cf7398b9b2b8109639f1381b9597f99228192489f134c0183de3fff4b2ed8bd8"};
+const originalLabelHashes={"en": "ecfb232b89ccb99b9a025ef8d06b9d8859fa32d73ae51f09008765b9aeda30d2", "zh": "77f4888f79fea060a1f687082fb957d91966b5ab40c853013850f9483693741a", "ja": "2137be2f49ae36466829cd8876db93161eb528e609e52cf979924754b21f5af2", "ko": "cf7398b9b2b8109639f1381b9597f99228192489f134c0183de3fff4b2ed8bd8"};
 for(const lang of ['en','zh','ja','ko']){
  const T=keyStrings(lang),L=keyLabels(lang),p=pageVM(lang);
  eq('v2 '+lang+' eight translated fact groups',Object.keys(T.tips).sort(),Object.keys(bindings).sort());
@@ -282,7 +283,7 @@ for(const lang of ['en','zh','ja','ko']){
  const match=content.match(/^steps:\n((?:  - .*\n)+)/m);const steps=match?[...match[1].matchAll(/^  - (.*)$/gm)].map(m=>JSON.parse(m[1])):[];
  eq('v2 '+lang+' five bounded steps',steps.length===5&&steps.every(t=>t.length<=280)&&steps.join('').length<=1200,true);
  eq('v2 '+lang+' steps precede FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'),true);
- eq('v2 '+lang+' all non-Usage content exact',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang]);
+ eq('v2 '+lang+' MDX content contract', contractProblems('keycode-explorer', lang), '');
  for(const order of ['shared-before','shared-after']){
   const q=ready(lang,order);q.ctrlL('kce-tip-properties-trigger');await settle();
   eq('v2 '+lang+'/'+order+' result tip CtrlL clears',getState(q).fields,Array(8).fill('—'));

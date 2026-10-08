@@ -18,6 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ImageCompressorTool.astro'), 'utf8');
@@ -181,7 +182,6 @@ for (const cls of ['ic-card', 'ic-card-name', 'ic-card-sizes', 'ic-card-note', '
 
 // ---------- v2 page layout ----------
 {
-  const { createHash } = await import('node:crypto');
   const { createRequire } = await import('node:module');
   const { load: loadYaml } = await import('js-yaml');
   const pageSource = source, prefix = 'ic', slug = 'image-compressor';
@@ -190,7 +190,6 @@ for (const cls of ['ic-card', 'ic-card-name', 'ic-card-sizes', 'ic-card-note', '
   const css = pageSource.slice(pageSource.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/<\/?style\b[^>]*>/g, '');
   const rules = (selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].split(',').some((s) => s.trim() === selector)).map((m) => m[2]);
   const property = (body, name, value) => new RegExp('(?:^|;)\\s*' + name + '\\s*:\\s*' + value + '\\s*(?:;|$)').test(body);
-  const hash = (s) => createHash('sha256').update(s).digest('hex');
   check('analyze layout registered', new RegExp("'" + slug + "':\\s*'analyze'").test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
   check('tool root is the direct first element', markup.startsWith('<div class="' + prefix + '-wrap" id="' + prefix + '-wrap">'));
   check('root can shrink with available height', rules('.' + prefix + '-wrap').some((r) => property(r, 'display', 'flex') && property(r, 'flex-direction', 'column') && property(r, 'min-height', '0')));
@@ -211,24 +210,6 @@ for (const cls of ['ic-card', 'ic-card-name', 'ic-card-sizes', 'ic-card-note', '
   const keys = prefix === 'wc' ? ['mode', 'quality', 'files', 'download'] : ['format', 'quality', 'resize', 'files', 'download'];
   check('each control tip appears once', JSON.stringify([...markup.matchAll(/<Toggletip id="[a-z]+-tip-([^"]+)"/g)].map((m) => m[1]).sort()) === JSON.stringify([...keys].sort()));
   check('file tips are outside the file-input overlay', !/<div id="[a-z]+-drop"[\s\S]*?<Toggletip/.test(markup.slice(markup.indexOf('<div id="' + prefix + '-drop"'))));
-  const retained = {
-    "en": [
-        "b2241a38f502c69f420097ee07dc5d754fb58db16a99a0807bd4ba619f60d260",
-        "a7696edbab6422cc633a0fd30707c29aed9e1aa9b61096aebdb4f2d7d9a76805"
-    ],
-    "zh": [
-        "2cef4184d9974f85cc7e3b1ee9aba15a96bcb51e5a23962f356bfc02d6dec3fb",
-        "498c366d1cabfd17add7e159e43d290bb4768729e8d88c1dd842a812ca0f5784"
-    ],
-    "ja": [
-        "e0d10859ac3e10588579f621f7487fac914536ae5537be4b6e8fdd1c0bfb6c52",
-        "472912a5864fc5ac67aac03b3193aee477bdbeff4ac75ebccd07a98d1ceac6ca"
-    ],
-    "ko": [
-        "9663835f0be6d8bb8d5a31a8a2739b65c78b94ecf330fc62324bd199a66317d1",
-        "ef38fbfdf030047be27f021a84df0161f3dfc0c8a9401d33d3f0989a02f31235"
-    ]
-};
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     check(lang + ' same string keys', JSON.stringify(Object.keys(table[lang]).sort()) === JSON.stringify(Object.keys(table.en).sort()));
     check(lang + ' complete control tips', JSON.stringify(Object.keys(table[lang].tips).sort()) === JSON.stringify([...keys].sort()) && keys.every((key) => table[lang].tips[key].length > 20));
@@ -240,8 +221,7 @@ for (const cls of ['ic-card', 'ic-card-name', 'ic-card-sizes', 'ic-card-note', '
     check(lang + ' bounded plain-text steps', steps.length > 0 && steps.length <= 8 && steps.every((s) => typeof s === 'string' && s.length <= 280 && !/<[^>]+>|\*\*/.test(s)) && steps.join('').length <= 1200);
     check(lang + ' steps name current download actions', steps.some((s) => s.includes(table[lang].downloadAll)) && steps.some((s) => s.includes(table[lang].download)));
     check(lang + ' usage heading removed', !/<h2>(?:How to Use|使用方法|使用步骤|使い方|사용 방법)<\/h2>/.test(body));
-    check(lang + ' SEO and FAQ unchanged', hash(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')) === retained[lang][0]);
-    check(lang + ' all non-usage body content unchanged', hash(body) === retained[lang][1]);
+    check(lang + ' MDX content contract', !contractProblems('image-compressor', lang), contractProblems('image-compressor', lang));
   }
   const require = createRequire(import.meta.url);
   const { transform: compileAstro } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));

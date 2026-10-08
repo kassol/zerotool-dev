@@ -44,6 +44,7 @@ import php from 'highlight.js/lib/languages/php';
 import { createRequire } from 'node:module';
 import { transform as esbuildTransform } from 'esbuild';
 import { compile as compileMdx } from '@mdx-js/mdx';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CurlToCodeTool.astro'), 'utf8');
@@ -504,7 +505,6 @@ eq('no unhandled clipboard rejections', unhandled.length, 0);
 // ---------- v2 page layout ----------
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
-const hash = value => createHash('sha256').update(value).digest('hex');
 check('v2 registered as convert', /'curl-to-code':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 check('v2 direct flex root with zero minimum size', /^\s*<div\s+class="ctc-wrap"/.test(layoutMarkup) && /\.ctc-wrap\s*\{[^}]*display:\s*flex;[^}]*min-width:\s*0;[^}]*min-height:\s*0;/.test(css));
 check('v2 controls/status precede panels', layoutMarkup.indexOf('class="ctc-actions"') < layoutMarkup.indexOf('id="ctc-status"') && layoutMarkup.indexOf('id="ctc-status"') < layoutMarkup.indexOf('zt-io"'));
@@ -523,24 +523,6 @@ const tipMap = [["convert", "convert", "convert"], ["example", "example", "examp
 eq('v2 actual Toggletip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, tipMap.length);
 for (const [id, about, key] of tipMap) check('v2 tip binding ' + id, layoutMarkup.includes('<Toggletip id="ctc-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'));
 // Hashes captured before migrating Usage; all other frontmatter and body are protected.
-const protectedContent = {
-  "en": [
-    "06f4b9d7c32d267b0648b6c099feabe31cf49d7e3b446792b7a7d89d11d49736",
-    "e9c15cf4eb4ba3833c6375bd32ab06cf9bbb804f7f0a50ccd49aeac809a111b6"
-  ],
-  "zh": [
-    "91074e590655be9ab80504c7bc12e0830f6af494e95c520eb939df6a30f04db9",
-    "7fbac32daeccbe2484c421c9fcb4b836698a54433b6a8389682d102135d056d2"
-  ],
-  "ja": [
-    "2646e4c48aafdf23f8d09fe2ca49312f887c70ff70c05f39e4e628c373e90432",
-    "602f0f9a337df550209e74641298bdcff1f5b076513f93acd09580f695012365"
-  ],
-  "ko": [
-    "9b9fa4f69e057611fe3239ec0472c4965ac05123aff54c7ff0b05108f59e9d50",
-    "e26f5f9fa0bf2b0e4bf8ead9f315710c27a034fa9d6adab77cd366c270b618be"
-  ]
-};
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const L = pageLabels[lang], p = page(lang);
   eq(lang + ': v2 same tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
@@ -556,8 +538,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const steps = stepsText.trimEnd().split('\n').map(line => JSON.parse(line.slice(4)));
   check(lang + ': v2 steps bounds/order', steps.length > 0 && steps.length <= 8 && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n, x) => n + [...x].length, 0) <= 1200 && fm.indexOf('steps:') < fm.indexOf('faqItems:'));
   for (const key of ["curlInput", "convert", "example", "clear", "copy"]) check(lang + ': v2 steps use actual ' + key, steps.join('\n').includes(L[key]));
-  eq(lang + ': v2 original SEO/FAQ exact', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m, '')), protectedContent[lang][0]);
-  eq(lang + ': v2 non-Usage body/limits/examples exact', hash(body), protectedContent[lang][1]);
+  eq(lang + ': MDX content contract', contractProblems('curl-to-code', lang), '');
   check(lang + ': v2 no duplicate Usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>|^## How to/m.test(body));
   try { await compileMdx(body); check(lang + ': v2 MDX compiles', true); } catch (e) { check(lang + ': v2 MDX compiles', false, e.message); }
   for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {

@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { loadPage } from './astro-page-harness.mjs';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const comp = readFileSync(join(root, 'src/components/tools/TomlJsonTool.astro'), 'utf8');
@@ -267,23 +268,15 @@ check('all FIX behavior checks retained before source guard', checks.length, 658
 check('script changes only remove automatic direction buttons and local Enter', hash(script), 'd34debf090093b6f24274ae9c0fd9d991742b1b74379483df8e6faa6f5f220c1');
 const PROTECTED_CONTENT = {
   "en": {
-    "front": "ff94d4e5fa69c1e155e9b3dcc5d7a10433b982aedacf2f013d56e9c998c592c3",
-    "body": "1c7e3aa0d748e0c65ff0f0838f50f001815f32042ef183893443eb7ed0af5ba1",
     "client": "0147e7fae3155f923662d9b19fab221412ee45c377ea4b1a333cf74cb6761dd6"
   },
   "zh": {
-    "front": "e974fd2f1f68953bc83982baae59b898d8b844cb9a3481098deff265c7913d85",
-    "body": "e5fb1e647d7287a49d7a1e4878f2d26a4a1bb7425ea78178b86cb900bca0f15e",
     "client": "ce84157589a4cecc855e453a6ef11286ea0e9ac16655a79b6e73c12b3809977c"
   },
   "ja": {
-    "front": "b7e5fd3cf3ecf1c6578f130189e2e2ecb840f590dee0864f319217bb1defb996",
-    "body": "ac77e6344f4e494fc6e6b153a2f6a271558bb90ea9ea878fb0c31a5374c12eb9",
     "client": "b598c715df15b556f5c5f9e654c502440b2e841ec2806085b3bc2d32e76f1c97"
   },
   "ko": {
-    "front": "1ffb1d1ea1df8c6f6f61aa6d5d18b90c0366f8f7ebffc210349f00010c977736",
-    "body": "1e9f9df733be1ca94940ef2a77c98c3df03818862dbd7d584b9765b93e44c70f",
     "client": "9b11e6abc94f5f81ba963d54d6d79d1cdb186b282d3240a2473ab99fae667b39"
   }
 };
@@ -323,8 +316,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const fm = requireRoot('js-yaml').load(front);
   check(lang + ' five steps before FAQ', fm.steps.length === 5 && front.indexOf('steps:') < front.indexOf('faqItems:'), true);
   check(lang + ' steps8/280/1200 limits', fm.steps.length <= 8 && fm.steps.every(v => typeof v === 'string' && [...v].length <= 280) && fm.steps.reduce((n, v) => n + [...v].length, 0) <= 1200, true);
-  check(lang + ' original metadata and FAQ byte exact', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.front);
-  check(lang + ' body only removes Usage, preserving all examples and limits', hash(body), expected.body);
+  check(lang + ' MDX content contract', contractProblems('toml-json', lang), '');
+  // Worked examples, recomputed through the page: TOML → JSON compared as values (the page text
+  // may wrap JSON differently), JSON → TOML exactly.
+  const tjPairs = examplePairs(body, b => b.lang === 'toml' || b.lang === 'json', b => b.lang === 'toml' || b.lang === 'json').filter(([a, b]) => a.lang !== b.lang);
+  check(lang + ' has converted examples', tjPairs.length > 0, true);
+  check(lang + ' each converted example equals the page output', tjPairs.filter(([a, b]) => a.lang === 'toml' ? t2j(a.text, lang) !== JSON.stringify(JSON.parse(b.text)) : j2t(a.text, lang) !== b.text + '\n').map(([, b]) => b.text), []);
   let error = ''; try { await mdxCompiler.compile(body); } catch (e) { error = String(e); }
   check(lang + ' actual MDX compiles', error, '');
 }

@@ -15,6 +15,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_B12_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(process.env.ZT_B12_COMPONENT || join(root, 'src/components/tools/CssFilterGeneratorTool.astro'), 'utf8');
@@ -167,8 +168,6 @@ function open(s,lang='en',shellFirst=false){
 // ---------- v2 page layout ----------
 {
   const vm = (await import('node:vm')).default;
-  const { createHash } = await import('node:crypto');
-  const hash = s => createHash('sha256').update(s).digest('hex');
   let passes=0, failures=0;
   const check=(name, ok, detail='') => {if(ok)passes++;else {failures++;console.log('FAIL: v2 '+name+' '+detail);}};
   const slug="css-filter-generator", prefix="cfg";
@@ -197,16 +196,14 @@ function open(s,lang='en',shellFirst=false){
   check('reserved status',markup.includes('role="status"')&&source.includes('min-height: 1.4rem'));
   check('scrollable selectable code',markup.includes('tabindex="0" role="region"')&&source.includes('max-height: 8rem'));
   check('phone Copy target',source.includes('.'+prefix+'-wrap .btn-copy { min-height: 44px; }'));
-  for(const snap of [{"lang": "en", "frontmatterSha": "962c24ec9f9af8021f3045c0adc9ec3c7cef178a7e277a6071e8d11a80b86ee7", "nonUsageBodySha": "691bab032fd109529352ee38cde9df766f0c1345e549ba86bde2a7e1758af994"}, {"lang": "zh", "frontmatterSha": "db04d4e4659cf000780dae4b1a31fd564012eaa6bec2daa0fda0019b11b42b03", "nonUsageBodySha": "0462c93e02ae0115d2f2107c635f79487931fc21facaf855848f19f43273769a"}, {"lang": "ja", "frontmatterSha": "bbdf38f47ce177a6966eb20a47c8ebbee0d836ed09176284195e8e4cabcfef08", "nonUsageBodySha": "a142f958abb1cd16e239f04aab02b1ddde25838f951f7394bd65abb1178836d4"}, {"lang": "ko", "frontmatterSha": "a508ca0e7419cdd387c225aca25a42fab6215ab883d1d3305384ef1fe62dac52", "nonUsageBodySha": "50d22c928e40482f4806e9b9be450b1fbe8baf665c2399e34fbb6804dce9f24a"}]) {
+  for(const snap of [{"lang": "en"}, {"lang": "zh"}, {"lang": "ja"}, {"lang": "ko"}]) {
     const path=process.env.ZT_B12_MDX_PREFIX ? process.env.ZT_B12_MDX_PREFIX+snap.lang+'.mdx' : join(root,'src/content/tools/'+slug+'/'+snap.lang+'.mdx');
     const page=readFileSync(path,'utf8');const fm=page.match(/^---\n([\s\S]*?)\n---/)[1];
     const steps=[...fm.matchAll(/^  - ("[^\n]*")$/gm)].map(m=>JSON.parse(m[1]));
     check(snap.lang+' plain bounded steps',steps.length>0&&steps.length<=8&&steps.every(s=>s.length<=280)&&steps.reduce((n,s)=>n+s.length,0)<=1200);
-    const withoutSteps=fm.replace(/^steps:\n(?:  - "[^\n]*"\n)+/m,'');
-    check(snap.lang+' SEO/FAQ exact',hash(withoutSteps)===snap.frontmatterSha);
+    check(snap.lang+' MDX content contract', !contractProblems('css-filter-generator', snap.lang), contractProblems('css-filter-generator', snap.lang));
     let body=page.slice(page.indexOf('\n---')+4);
     if(snap.lang==='en') body=body.replace("\n<h2>Example: Zero Brightness and Opacity</h2>\n<p>Set Brightness and Opacity to zero while leaving the other seven controls at their defaults. The generator preserves both zero values and writes brightness before opacity. Reset Opacity alone to 100 to remove opacity() from the rule; brightness(0%) stays.</p>\n\n{/* cfg-check: {\"values\":{\"brightness\":0,\"opacity\":0},\"out\":\"brightness(0%) opacity(0%)\"} */}\n```css\n.element {\n  filter: brightness(0%) opacity(0%);\n}\n```\n",'');
-    check(snap.lang+' non-Usage body exact',hash(body)===snap.nonUsageBodySha);
     check(snap.lang+' old Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(page));
   }
     check('native secondary disclosure',markup.includes('<details id="cfg-more"')&&script.includes("moreFilters.open = false"));

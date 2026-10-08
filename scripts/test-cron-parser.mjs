@@ -29,6 +29,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -404,12 +405,6 @@ const oldStringHashes = {
   "ja": "6d68c536f1b01f71160a57d71eecf42b272a3817b0303669a61f1067952f7fb3",
   "ko": "4db98115d82ba54b470bf10bde2d6254117c94afbd891947cc261f2cc42b1888"
 };
-const unchangedContent = {
-  "en": "22a7f67557ff9a3d8691fa2a5c7c097450faaa1b2164cb959831210cfbce5fe5",
-  "zh": "4b2f0d27f28f391fba5e8e9aea56c30cbcdcab94422a7100e2d8c785642613bd",
-  "ja": "aa6f350c4bbf89ca8198a731c44f1175fb6d2e2173e013e14cfc8f79b36b7d71",
-  "ko": "65b32ac71f0f9e6105a3f461f607e8aabec5b2681d98594e3f18aefcf797975f"
-};
 const tipKeys = ['input', 'parse', 'presets', 'explanation', 'fields', 'runs'];
 const bindings = [...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 six unique literal tip IDs', bindings.map(m => m[1]), tipKeys.map(k => 'cron-tip-' + k));
@@ -456,7 +451,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check('v2 ' + lang + ' steps bounded', data.steps.every(text => text.length <= 280 && !/[<>\n]/.test(text)) && data.steps.join('').length <= 1200);
   check('v2 ' + lang + ' steps before FAQ', content.indexOf('steps:') < content.indexOf('faqItems:'));
   check('v2 ' + lang + ' steps use current Parse label and actual first-12 limit', data.steps.some(text => text.includes(T.parse)) && data.steps.some(text => text.includes('12')));
-  eq('v2 ' + lang + ' all non-Usage MDX bytes retained', hash(content.replace(/^steps:\n(?:  - .*\n)+/m, '')), unchangedContent[lang]);
+  eq('v2 ' + lang + ' MDX content contract', contractProblems('cron-parser', lang), '');
   for (const order of ['shared-before', 'shared-after']) {
     const q = page(lang, order), tip = q.document.querySelector('[data-zt-tip="cron-tip-fields"]');
     tip.focus(); tip.dispatch('keydown', { key: 'l', ctrlKey: true });

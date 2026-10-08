@@ -24,6 +24,7 @@ import { parseFragment, defaultTreeAdapter } from 'parse5';
 import { loadPage } from './astro-page-harness.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/IbanValidatorParserTool.astro'), 'utf8');
@@ -326,12 +327,6 @@ const frozen={
     "ja": "7794ca90878f1cd607053bd3c224b5c91115e5ff75337a4f12c0d9f1c088a9bf",
     "ko": "cac1b8b023b9f8adc5bc59616f04bef9c5d3d0713a464ebb9c7f33a89798c351"
   },
-  "contentHashes": {
-    "en": "3ce2c6a28acc79bb20b3f8fc0d1e5cca07fa675f14299f5da2bcc34d5a286116",
-    "zh": "e3953f0e0c4a2046811b92adb576f733fc371e95c78f36f994526faebd1034b5",
-    "ja": "b754089d42051af6c3b46831157aefc273085daec3ee871fe85bf6d07647a7e2",
-    "ko": "d6b6867f6fc9d85098a27d55122b3a66c125f76396952abded6cb70357503d21"
-  },
   "scriptHash": "9940a157c7a4c0e874de4a244e1c6fb2aea904f818e6ba5a37ffeb32f5191417"
 };
 
@@ -391,7 +386,7 @@ for(const lang of ['en','zh','ja','ko']){
   check('v2 '+lang+' bounded plain steps',meta.steps.every(x=>typeof x==='string'&&x.length<=280&&!/[<>\n]/.test(x))&&meta.steps.join('').length<=1200);
   check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
   check('v2 '+lang+' steps retain current example/formats labels',meta.steps.some(x=>x.includes(T.loadExample))&&meta.steps.some(x=>x.includes(T.sectionFormats)));
-  eq('v2 '+lang+' all non-Usage content exact',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),frozen.contentHashes[lang]);
+  eq('v2 '+lang+' MDX content contract', contractProblems('iban-validator-parser', lang), '');
   let error='';try{await compileMdx(content.replace(/^---[\s\S]*?---\s*/,''));}catch(e){error=String(e);}
   eq('v2 '+lang+' MDX compiles',error,'');
 }

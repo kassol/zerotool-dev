@@ -25,6 +25,7 @@ import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/GraphqlFormatterTool.astro'), 'utf8');
@@ -233,12 +234,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 eq('no unhandled clipboard rejection', unhandled.length, 0);
 
 // ── v2 page layout ──
-const MDX_PROTECTED = {
-  "en": "0f1974f95ef763b5d4e40c12fcf75736d138b637ff65261ad15c29411039a5a1",
-  "zh": "3ae298e34934aa043a1e8890573196570a3b61fa56b9e5d0814fe53cff44792e",
-  "ja": "63bd40ac62b4103840b793eb00ef03b6dcdbbc8d969a6d2a81503e5480a8f493",
-  "ko": "ce597bd59def4e30f102e31f6120972e1373accf958c1f8d09585e05a4f8cb11"
-};
 const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 check('v2 page layout: convert registry', /['"]graphql-formatter['"]\s*:\s*['"]convert['"]/.test(registry));
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
@@ -270,7 +265,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check('v2 page layout: ' + lang + ' bounded steps', Array.isArray(data.steps) && data.steps.length > 0 && data.steps.length <= 8 && data.steps.every(s => typeof s === 'string' && s.length <= 280) && data.steps.join('').length <= 1200);
   check('v2 page layout: ' + lang + ' steps before FAQ', text.indexOf('steps:') < text.indexOf('faqItems:'));
   check('v2 page layout: ' + lang + ' usage removed', !/<h2>(How to Use|使用步骤|使い方|사용 방법)<\/h2>/.test(text));
-  eq('v2 page layout: ' + lang + ' all other MDX bytes protected', createHash('sha256').update(text.replace(/^steps:\n(?:  - .*\n)+/m, '').replace(/\{\/\* gqlf-examples:start \*\/\}[\s\S]*?\{\/\* gqlf-examples:end \*\/\}\n\n/, '')).digest('hex'), MDX_PROTECTED[lang]);
+  eq('v2 page layout: ' + lang + ' MDX content contract', contractProblems('graphql-formatter', lang), '');
 }
 const css = source.slice(source.indexOf('<style>'));
 check('v2 page layout: root flex and zero minimum', /\.gqlf-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));

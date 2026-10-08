@@ -21,6 +21,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ColorConverterTool.astro'), 'utf8');
@@ -302,24 +303,6 @@ try {
   check('runtime i18n removed and only client strings serialized', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/data-i18n|STRINGS|TIPS/.test(lifecycleScript));
   const engine = source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
   check('exact engine bytes protected', sha(engine) === 'f4515734c3724feb0413859e2e3c7cebc5af08ed0c896e176da458743146ebcd');
-  const retained = {
-  "en": [
-    "6a1e02e2cdd08e7b0f7899bc8636e3eb94c9bd22b5e0cdca895beaeb682cf46c",
-    "283f57c71043e251cdb7914407120b7fc65c82826a6fd28c6e06fbfa5304c317"
-  ],
-  "zh": [
-    "e271e275bbaa475abdbe8d1861c57ae6e5227f1e9ec130bca5bf77dc1bda5ef7",
-    "d8fcbd0309e48773a39041f76da63f83e21da4f25f268cc602d964b514ed298c"
-  ],
-  "ja": [
-    "fa27e079494e9345408bc224b0e876648bfae4285ccdcd15178a8ff14e266b73",
-    "56ba369d51c7fd8d71ba198957bd74ba403bdbafcfe8875bd94036f35659283b"
-  ],
-  "ko": [
-    "2bc79e0c3a33b291ed738e1232aa6237d9ac54abea7e15d7de8245d1830f5219",
-    "ea23051fcd1e5a87bbd122121306afe48a39e208a790760c84bf7269b4a206d8"
-  ]
-};
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const entry = lifecycleStrings[lang], client = clientFor(lang);
     check(lang + ' all four languages share string keys', JSON.stringify(Object.keys(entry).sort()) === JSON.stringify(Object.keys(lifecycleStrings.en).sort()));
@@ -331,8 +314,7 @@ try {
     check(lang + ' four plain steps remain within llms limits', steps.length === 4 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['copy', 'clear', 'pickColor']) check(lang + ' steps use the actual ' + key + ' label', steps.some(step => step.includes(entry[key])));
     check(lang + ' Usage removed, Limits retained', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body) && /^## (?:Limits|限制|制限事項|제한 사항)/m.test(body));
-    check(lang + ' original FAQ/SEO unchanged', sha(meta.replace(/^steps:\n(?:  .*\n)*/m, '').trim()) === retained[lang][0]);
-    check(lang + ' non-Usage body byte-identical', sha(body) === retained[lang][1]);
+    check(lang + ' MDX content contract', !contractProblems('color-converter', lang), contractProblems('color-converter', lang));
   }
   const require = createRequire(import.meta.url);
   const { transform } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));

@@ -53,7 +53,6 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 import { load as loadYaml } from 'js-yaml';
 import assert from 'node:assert/strict';
 import postcss from 'postcss';
@@ -61,6 +60,7 @@ import { compile as twCompile } from 'tailwindcss';
 import * as sass from 'sass';
 import sharp from 'sharp';
 import { converter, formatHex, parse as culoriParse } from 'culori';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -894,8 +894,6 @@ const SAMPLE_PIXELS = 575 * 455;   // fitImageSize(6000, 4752, SAMPLE_AREA)
   }
   // f2621cc7 snapshots: preserve all metadata and all reference content outside How to Use.
   // Updated 2026-10-07: only the color-group wording changed (8 → 32 levels per channel, checked below).
-  const retained = {"en": ["b20741f2f6f47cc3", "a7761b0937582421"], "zh": ["1c2e2754e1bab0bf", "d35be8940538d513"], "ja": ["80f01bf12d373309", "9ee15f736ef46cf2"], "ko": ["ee5b6c025b1d1311", "b9893c2b520e1326"]};
-  const hash = text => createHash('sha256').update(text.trim()).digest('hex').slice(0, 16);
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     tipTree(lang, STRINGS[lang].tips, STRINGS.en.tips);
     const { TIPS, CLIENT_T } = clientStrings(lang);
@@ -906,8 +904,7 @@ const SAMPLE_PIXELS = 575 * 455;   // fitImageSize(6000, 4752, SAMPLE_AREA)
     check(lang + ' five bounded plain-text steps', steps.length === 5 && steps.every(s => typeof s === 'string' && s.trim() && s.length <= 280 && !/<[^>]+>/.test(s)) && steps.join('').length <= 1200);
     check(lang + ' usage heading removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     check(lang + ' Limits kept', /<h2>(?:Limits|限制|制限|제한 사항)<\/h2>/.test(body));
-    eq(lang + ' SEO and FAQ preserved', hash(fm.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang][0]);
-    eq(lang + ' worked examples and all other body content preserved', hash(body), retained[lang][1]);
+    eq(lang + ' MDX content contract', contractProblems('image-color-palette', lang), '');
   }
   console.log(`v2 page layout: ${passes - base.passes} passed, ${failures - base.failures} failed`);
 }

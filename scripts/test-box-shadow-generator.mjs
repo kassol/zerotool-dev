@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/BoxShadowGeneratorTool.astro'), 'utf8');
@@ -352,48 +353,6 @@ process.removeListener('unhandledRejection', unhandled);
   check('every tip has localized about and native language metadata', [...markup.matchAll(/<Toggletip[^>]+>/g)].every(m => /lang=\{lang\} about=\{L\.\w+\}/.test(m[0])));
   check('tooltip prose stays in HTML and out of the page script', !scriptMatch[1].includes('.tips') && !source.includes('define:vars') && !source.includes('data-strings') && ['copy', 'copied', 'copy-failed'].every(key => markup.includes('data-' + key + '={L.')));
   check('automatic generator has no redundant Generate button', !markup.includes('btn-primary') && (markup.match(/<button /g) || []).length === 1 && markup.includes('id="bsg-copy"'));
-  const protectedContent = {
-  "en": {
-    "nonUsageBodySha256": "cdf1ffeb01d87710ba79930048ae4ff96167005944ef914fcaf212cbc63354e6",
-    "frontmatterWithoutStepsSha256": "3d6f9c01f2eb62bbe8d8d8086e20a0f4756865e98a95c4f73b45e9fd642d4423",
-    "mdxSha256": "aef4b6ff2ce6577bfbb7ae6db7d83b82409affd80844c0d9305e49269e0699af",
-    "wordsBefore": 607,
-    "wordsAfter": 505,
-    "stepCount": 8,
-    "maxStepChars": 151,
-    "totalStepChars": 642
-  },
-  "zh": {
-    "nonUsageBodySha256": "f4f4a6851150acf884557086e96cbd5ed37afe9a1b631ddd710041921b14709d",
-    "frontmatterWithoutStepsSha256": "72be02ebf8c6499523f9d1843bf239365d5bba5cbd27c1f9663e2bb2820229ce",
-    "mdxSha256": "6fe68095b75a640bf81144ee5f39a5ee19e3827c7cf72d67b4cb4dee5f76a9a3",
-    "wordsBefore": 36,
-    "wordsAfter": 32,
-    "stepCount": 8,
-    "maxStepChars": 64,
-    "totalStepChars": 208
-  },
-  "ja": {
-    "nonUsageBodySha256": "2ef2d0272ffbbadb18e97df28d0353de5c2827853d840bf5c9975d52518b192c",
-    "frontmatterWithoutStepsSha256": "3c5ad6b7eec6e3ea9e2e37129910fc7e360c2e6755b461ad9e5ed1a43dc4e1e7",
-    "mdxSha256": "94733de54cf6c653bcb855b0f33bb8710797884fec90e182a3d08e691894557f",
-    "wordsBefore": 35,
-    "wordsAfter": 31,
-    "stepCount": 8,
-    "maxStepChars": 91,
-    "totalStepChars": 321
-  },
-  "ko": {
-    "nonUsageBodySha256": "5e3855ba847482466ee145c19387c789cb07499cdbdf837c50054701471488ae",
-    "frontmatterWithoutStepsSha256": "098c3c9ac97c1b0f4f30bf4a13ab19fe7299c78de70f9dbc8accccf65e9f07e9",
-    "mdxSha256": "d73107ea155b14aa2982ec0dbdb741d9ec1f6959976ae192e0a06e83ffa55c24",
-    "wordsBefore": 35,
-    "wordsAfter": 31,
-    "stepCount": 8,
-    "maxStepChars": 89,
-    "totalStepChars": 332
-  }
-};
   const oldLabels = {
   "en": "608e579b7b2af5a021c33ffc3f56680abf60049660f8e8a24e99f1aa6a67a69a",
   "zh": "af75a67c12759fce886816742f84ab20a2c4b8b1d99e0c0ef6adc2373514e006",
@@ -419,8 +378,7 @@ process.removeListener('unhandledRejection', unhandled);
     check(lang + ' steps contain the actual Copy label', steps[7].includes(strings.copy));
     check(lang + ' steps name the clear shortcut', steps[7].includes('Ctrl/⌘+L'));
     check(lang + ' Usage section removed', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
-    eq(lang + ' other body including limits stays exact', digest(body), protectedContent[lang].nonUsageBodySha256);
-    eq(lang + ' FAQ and SEO stay exact', digest(front.replace(/\nsteps:\n(?:  - .*\n)*/,'\n')), protectedContent[lang].frontmatterWithoutStepsSha256);
+    eq(lang + ' MDX content contract', contractProblems('box-shadow-generator', lang), '');
   }
 }
 

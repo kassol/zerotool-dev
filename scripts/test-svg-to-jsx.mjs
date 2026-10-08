@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path';
 import { transformSync } from 'esbuild';
 import { createRequire } from 'node:module';
 import { runInNewContext } from 'node:vm';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/SvgToJsxTool.astro'), 'utf8');
@@ -426,24 +427,6 @@ check('v2 mobile input and output bounds', /@media \(max-width: 860px\)[\s\S]*he
 check('v2 mobile empty output follows actual textarea value', /@media \(max-width: 860px\)[\s\S]*\.stj-result-pane:has\(#stj-output:placeholder-shown\)\s*\{\s*display: none;/.test(css));
 check('v2 output placeholder is localized desktop empty hint', markup.includes('placeholder={T.empty}'));
 check('v2 registry convert', /['"]svg-to-jsx['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
-const MDX_PROTECTION = {
-  "en": {
-    "frontSHA": "724a267edc37e3ebe6e4143a1855e1e144ac3906b2834e0c90c92065fd558084",
-    "bodySHA": "eec5f462c19d7d78cb38bd40bddeefcad395cc696bac6c0dd692ab584e3fdf5c"
-  },
-  "zh": {
-    "frontSHA": "113dbe36f652d55dc6db0369782ffa93c4f3d870136bb564844ff91300bef1d5",
-    "bodySHA": "c3761171c3ccc71325e4302bd14422c0a44b0c7947a24e021bd33bd1d3b517b6"
-  },
-  "ja": {
-    "frontSHA": "fcc611d442db1fb6d9287d56593bf4d05f933193b48dd7a0d0abd54a2db3a1b6",
-    "bodySHA": "0809b74378ce0f5a5694378db760ac6e88f251884bd0a485e40389192b2102db"
-  },
-  "ko": {
-    "frontSHA": "c822346223c3158fed09eb60b088c98d81069d96acc4f3b9cbd1cb3e083c60ec",
-    "bodySHA": "79980f29509e79a9da5f9552d6f211b849a1174987a78e73f0e716c755479d67"
-  }
-};
 const LEGACY_STRINGS = {
   "en": {
     "inputLabel": "SVG Input",
@@ -536,8 +519,7 @@ for (const lang of ['en','zh','ja','ko']) {
   same(lang + ' six steps', parsed.steps.length, 6);
   check(lang + ' steps precede FAQ', front.indexOf('steps:') < front.indexOf('faqItems:'));
   check(lang + ' bounded plain steps', parsed.steps.every(x => typeof x === 'string' && x.length <= 280 && !/[<>]/.test(x)) && parsed.steps.join('').length <= 1200);
-  same(lang + ' protected FAQ/SEO frontmatter', sha(front.replace(/steps:\n(?:  - .*\n)+/, '')), MDX_PROTECTION[lang].frontSHA);
-  same(lang + ' non-Usage body exact', sha(body), MDX_PROTECTION[lang].bodySHA);
+  same(lang + ' MDX content contract', contractProblems('svg-to-jsx', lang), '');
   check(lang + ' no Usage section', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error = ''; try { await compileMdx(body); } catch (e) { error = String(e); } same(lang + ' actual MDX compile', error, '');
 }

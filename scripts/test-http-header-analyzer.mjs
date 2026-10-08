@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HttpHeaderAnalyzerTool.astro'), 'utf8');
@@ -336,7 +337,6 @@ eq('sensitive notice visible below result',markup.includes('<p class="hha-privac
 const tipMap={analyze:'analyze',example:'exampleLabel',clear:'clear',copy:'copyJson',input:'rawHeaders',views:'views'};
 eq('six tips only',[...markup.matchAll(/<Toggletip\b/g)].length,Object.keys(tipMap).length);
 for(const[key,about]of Object.entries(tipMap))eq('tip binding '+key,markup.includes('id="hha-tip-'+key+'" lang={lang} about={T.'+about+'}>{TIPS.'+key+'}</Toggletip>'),true);
-const protectedContent={"en": "c1bf040fee4a004d9611ae32020ce910ef8f868662739dacff9ea93db9f5ba7b", "zh": "5a6e0a9060db3c61524c627632087b5551cc359677474b495e12a4bda34297d7", "ja": "85d2b3de0dfb8616e497e1d663aa1a81ac10326bd9260a7162d10474569aa21c", "ko": "5b4501d34cecd181e8afcb54cbbdc83468d6902f9d14b7f8c7b2fe752911c6d7"};
 for(const lang of ['en','zh','ja','ko']){
   const T=strings[lang],h=page(lang);
   eq(lang+' localized keys',Object.keys(T).sort(),Object.keys(strings.en).sort());
@@ -378,8 +378,7 @@ for(const lang of ['en','zh','ja','ko']){
   eq(lang+' five usage steps',steps.length,5);
   eq(lang+' bounded plain steps',steps.every(x=>x.length>0&&x.length<=280&&!/<\/?[a-z]/i.test(x))&&steps.join('').length<=1200,true);
   eq(lang+' old usage removed',/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(pages[lang]),false);
-  const withoutSteps=pages[lang].replace(/^steps:\n(?:  - .+\n)+/m,'');
-  eq(lang+' metadata FAQ examples Limits unchanged',createHash('sha256').update(withoutSteps).digest('hex'),protectedContent[lang]);
+  eq(lang+' MDX content contract', contractProblems('http-header-analyzer', lang), '');
 }
 const longPage=page();
 const longHeaders=Array.from({length:1200},(_,i)=>'X-Entry-'+i+': '+('payload'+i).repeat(12));

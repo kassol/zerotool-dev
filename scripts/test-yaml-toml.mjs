@@ -79,6 +79,7 @@ eq('en page names the parser versions', pages.en.includes('1.7.1 for TOML') && p
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 const requireRoot = createRequire(join(root, 'package.json'));
 const { parseFragment } = requireRoot('parse5');
 const ts = requireRoot('typescript');
@@ -258,27 +259,15 @@ same('all FIX checks retained with automatic direction coverage', [passes,failur
 same('only redundant local Enter block removed from FIX script',hash(pageScript),'4c85341f760d75a229ffca8b4e5aaf66e1580908f16f062eb1cb748db34f9b1a');
 const PROTECTED_CONTENT = {
   "en": {
-    "front": "2e11c0704fc39b970c7673fb4d1b07f85331e3a3db363dd7a0ff6916dd020df7",
-    "body": "d015aadcee73319cb29348aba66834652336ab4a8da58792cf01670c223b7107",
-    "examples": "fe538d9b63e8c19f07318c4275dfddb9d34b08c6a4d2c23ca65d3462eb7eb79a",
     "client": "979df8ff9b2911ea43d9fca232a1dc57774226d2b9ed23a4706487f045b346bf"
   },
   "zh": {
-    "front": "872eccb229500a5187bd94e4c6dbd2e9b4cb373ba7360512fe372805451eb334",
-    "body": "a63ac2aba5e1fcd718f3a3dd9696db922aeb6f945f78da92090b36138389ce8a",
-    "examples": "c22647bf37a6761a3bfd7f37e8c7ba8b5cb49dbe5213f5e8c078bc32d7953d4d",
     "client": "ced8bb1aa005f4317db32d9cfe09ecc00f5b50258d89be5e61c1bce69c94a329"
   },
   "ja": {
-    "front": "581536f06a3ae25a268fc79342e2d4d604457913e6014efbbc562ac2f12c537f",
-    "body": "3deea18d26c144346a27ba12633e1de3dfa1da8eb9c166fcb43e54c36d2fd593",
-    "examples": "c22647bf37a6761a3bfd7f37e8c7ba8b5cb49dbe5213f5e8c078bc32d7953d4d",
     "client": "2ea3c60d0d0c219f360d02d78f9a5581a108ed33d8f604681ed6abf8cd727536"
   },
   "ko": {
-    "front": "bb02433d4f5bc59b1edb71727b97a795e013dbcc60073244c3117d3f50c54c20",
-    "body": "700f168351edb8bfe3cecfa1350ba4867a4eedaf3ab879958796015136f4f158",
-    "examples": "c22647bf37a6761a3bfd7f37e8c7ba8b5cb49dbe5213f5e8c078bc32d7953d4d",
     "client": "a2cb7ff39720d80e9f9541299cd97407d95e6dac2dd8cc0a2ee99badcff91ae9"
   }
 };
@@ -311,9 +300,13 @@ for(const lang of ['en','zh','ja','ko']) {
   const parts=readFileSync(join(root,'src/content/tools/yaml-toml',lang+'.mdx'),'utf8').match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/),front=requireRoot('js-yaml').load(parts[1]),body=parts[2];
   same(lang+' six bounded steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
   same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
-  same(lang+' other frontmatter bytes unchanged',hash(parts[1].replace(/steps:\n[\s\S]*?(?=faqItems:)/,'')),expected.front);
-  same(lang+' nonUsage body bytes unchanged',hash(body),expected.body);
-  same(lang+' worked example bytes unchanged',hash(JSON.stringify([...body.matchAll(/```[^\n]*\n[\s\S]*?```/g)].map(m=>m[0]))),expected.examples);
+  same(lang+' MDX content contract', contractProblems('yaml-toml', lang), '');
+  // Worked examples are recomputed: a ```toml block right after a ```yaml block (or the reverse)
+  // is the engine conversion of that block (blocks are paired from the start, an output never starts a pair).
+  const ytBlocks=[...body.matchAll(/```(yaml|toml)\n([\s\S]*?)```/g)].map(m=>({kind:m[1],text:m[2]}));
+  const ytPairs=[];for(let i=1;i<ytBlocks.length;i++)if(ytBlocks[i-1].kind!==ytBlocks[i].kind){ytPairs.push([ytBlocks[i-1],ytBlocks[i]]);i++;}
+  same(lang+' has converted example pairs',ytPairs.length>=2,true);
+  same(lang+' each converted example equals the engine output',ytPairs.filter(([a,b])=>(a.kind==='yaml'?y2t(a.text.replace(/\n$/,''),lang):t2y(a.text))!==b.text).map(([,b])=>b.text),[]);
   same(lang+' removed Usage and Enter instructions absent',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>|Ctrl.{0,5}Enter|Cmd.{0,5}Enter/.test(body),false);
   let mdxError='';try{await mdxCompiler.compile(body);}catch(e){mdxError=String(e);}same(lang+' MDX compiles',mdxError,'');
 }

@@ -10,6 +10,7 @@ import {createRequire} from 'node:module';
 import vm from 'node:vm';
 import domino from '@mixmark-io/domino';
 import {loadPage,frontmatterStrings} from './astro-page-harness.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const source=readFileSync(join(root,'src/components/tools/HttpStatusCodesTool.astro'),'utf8');
 const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
@@ -105,12 +106,6 @@ eq('v2 original core and complete FIX tail SHA',sha(source.slice(source.indexOf(
 const tipBindings=[...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 two literal tip IDs',tipBindings.map(m=>m[1]),['hs-tip-search','hs-tip-results']);
 check('v2 no tip button nested in an input label',!/<label\b[^>]*>[\s\S]*?<Toggletip[\s\S]*?<\/label>/.test(markupTemplate));
-const contentHashes={
-  "en": "b6018857ba58bb8cd64f150b5a532bc54a552804da4a83387f72621fc7e9a33a",
-  "zh": "eb3d4a4d96899c81208412445847c686882a51df3183c92af171e226fb03fea0",
-  "ja": "91af250fdbc57177618bbff251204d39214a1bdab16ad55ba5aa4a3ea2fbad44",
-  "ko": "7bac6043c3fd139d430fe71b6c0cd4195ca54f33ede4f87313b18a71459492d6"
-};
 const {compile}=await import('@mdx-js/mdx');
 for(const lang of ['en','zh','ja','ko']){
  const T=STRINGS[lang],p=page(lang,'shared-after'),doc=p.document;
@@ -132,7 +127,7 @@ for(const lang of ['en','zh','ja','ko']){
  check('v2 '+lang+' steps bounded',data.steps.every(t=>typeof t==='string'&&t.length<=280&&!/[<>\n]/.test(t))&&data.steps.join('').length<=1200);
  check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
  check('v2 '+lang+' Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(content));
- eq('v2 '+lang+' all non-Usage content byte protected',sha(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),contentHashes[lang]);
+ eq('v2 '+lang+' MDX content contract', contractProblems('http-status-codes', lang), '');
  eq('v2 '+lang+' JavaScript example protected',sha((content.match(/```[\s\S]*?```/g)||[]).join('\n')),'72144a96b2523d315c9c4a21391e9ad92c36bae19e8ddd9610dc6a6242f3a92a');
  let error='';try{await compile(content.replace(/^---\n[\s\S]*?\n---/,''));}catch(e){error=String(e);}
  eq('v2 '+lang+' real MDX compiles',error,'');

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const sax = createRequire(import.meta.url)('sax');
 const source = readFileSync(new URL('../src/components/tools/JsonXmlConverterTool.astro', import.meta.url), 'utf8');
@@ -375,24 +376,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 /* ── v2 page layout ── */
 check('all FIX behavior checks retained', checks.length, 642);
 check('client script only removes runtime STRINGS and localization', hash(js), '95b8c2313ea150e4a38772d3c6ffd5a30090611cc2d7bccd4720f219a3a74a70');
-const PROTECTED_CONTENT = {
-  "en": {
-    "front": "4975332b8753caea19489380d5af2e55b7f96bea8c7c2e7efe97a553db5299e3",
-    "body": "1c81c8682dcf007a368d170596d715cfaefac042f580bea62c513672b1204854"
-  },
-  "zh": {
-    "front": "22f844d769d598e8af87289ed35f602c7f977d7c17ba46f2248e490b131b9aae",
-    "body": "2ce62dd700bd773cbe3212f688eb59b185f8341161533c98c1c913a7f4a6c4a0"
-  },
-  "ja": {
-    "front": "5d4f10a93c0c205f0e23cf8467879990a89dfef8cd4fd4506306d924a995a905",
-    "body": "f291246c6a0a04c70f8b68625c3c854f9dd842eee8ec4ecffb461ff37cdc8589"
-  },
-  "ko": {
-    "front": "0c9f7a9a543de59e3e0f42df61bf50ea6e8400fa2cdddba00cec507a84d5c4c1",
-    "body": "9c383793b6748988595a591175868a909aaed212a5b5f9520c9b1c37696666dc"
-  }
-};
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jx-wrap"/.test(markup), true);
@@ -413,7 +396,7 @@ check('semantic light/dark status tokens', /var\(--color-success\)/.test(css) &&
 check('convert registry', readFileSync(new URL('../src/data/tool-layouts.ts', import.meta.url), 'utf8').match(/['"]json-xml-converter['"]\s*:\s*['"]([^'"]+)['"]/)?.[1], 'convert');
 const requireRoot = createRequire(import.meta.url), mdxCompiler = await import('@mdx-js/mdx');
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
-  const S = STR[lang], payload = clientStrings(lang), expected = PROTECTED_CONTENT[lang];
+  const S = STR[lang], payload = clientStrings(lang);
   check(lang + ' nine same tip keys', Object.keys(S.tips), ['json','xml','toXml','toJson','root','pretty','copyJson','copyXml','clear']);
   check(lang + ' tips are short nonempty plain text', Object.values(S.tips).every(v => typeof v === 'string' && v.length && [...v].length <= 280 && !/[<>]/.test(v)), true);
   check(lang + ' every tip placeholder matches EN', Object.values(S.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()), Object.values(STR.en.tips).map(v => (v.match(/\{\w+\}/g) || []).sort()));
@@ -427,8 +410,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const [, front, body] = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), fm = requireRoot('js-yaml').load(front);
   check(lang + ' six steps before FAQ', fm.steps.length === 6 && front.indexOf('steps:') < front.indexOf('faqItems:'), true);
   check(lang + ' steps8/280/1200 limits', fm.steps.length <= 8 && fm.steps.every(v => typeof v === 'string' && [...v].length <= 280) && fm.steps.reduce((n, v) => n + [...v].length, 0) <= 1200, true);
-  check(lang + ' metadata and FAQ byte exact', hash(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.front);
-  check(lang + ' body only loses Usage and retains all limits/examples', hash(body), expected.body);
+  check(lang + ' MDX content contract', contractProblems('json-xml-converter', lang), '');
   let error = ''; try { await mdxCompiler.compile(body); } catch (e) { error = String(e); } check(lang + ' MDX compiles', error, '');
 }
 const { transform } = await import(requireRoot.resolve('@astrojs/compiler', { paths: [requireRoot.resolve('astro')] }));

@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
 import jsyaml from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const sourcePath = process.env.OPENAPI_TS_SOURCE || join(root, 'src/components/tools/OpenapiToTypescriptTool.astro');
@@ -371,8 +372,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 // ---------- v2 page layout ----------
 {
-  const { createHash } = await import('node:crypto');
-  const hash = value => createHash('sha256').update(value).digest('hex');
   const layoutCheck = (name, passed) => check('v2 ' + name, !!passed);
   const equalLayout = (name, got, want) => layoutCheck(name, JSON.stringify(got)===JSON.stringify(want));
   const strings = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
@@ -394,7 +393,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   layoutCheck('build-time strings and tips excluded from script data', source.includes("import Toggletip from '../Toggletip.astro'") && !/data-i18n|define:vars|JSON\.stringify\(STRINGS/.test(source) && !/STRINGS|L\.tips/.test(script));
   const map=[['input','inputLabel'],['root','rootName'],['optional','makeOptional'],['paths','includePaths'],['zod','includeZod'],['example','example'],['clear','clear'],['copy','copy']];
   equalLayout('v2 eight tips', (markup.match(/<Toggletip\b/g)||[]).length, map.length);
-  const protectedContent={"en": ["04ca15936fa50a4676ad30f3c0b0b2122a69375378079df39a7fd31ed42aaae9", "e75fd66cef488c645c8f26684900cc6fd6dd4f45544f5132b135990bdc53fa44"], "zh": ["eab2555bd7bfb407c80fa3864c23f0bfbfbf3f6215edf7e296ece427ed541cd2", "8c7672d0a260bbe329002ccaf23d443dc804726ff4f3b55d6bed425b8c02abc1"], "ja": ["d038cf3a0e0eea579ff5b337055d3faabd1fed15f07336d114d2964ba5feba31", "a23bc73f6eb226ce9837d7c580a2a0db14de617fbf7e51305eef4c2d7fb7e9a4"], "ko": ["64f423c180a3d5731b8657918ff270b8511c0ae5451dfc3cdfecad2e03323c68", "0debaf3244ed2b0d01ceed3c5c0e672582b59e71d212b4ba72dad12cfa80467d"]};
   for(const lang of ['en','zh','ja','ko']){
     const L=strings[lang];equalLayout(lang+' v2 same tip keys',Object.keys(L.tips).sort(),map.map(x=>x[0]).sort());
     layoutCheck(lang+' localized empty text',typeof L.empty==='string'&&!!L.empty.trim());
@@ -402,7 +400,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const mdx=readFileSync(join(root,'src/content/tools/openapi-to-typescript/'+lang+'.mdx'),'utf8'),[,fm,body]=mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
     const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
     layoutCheck(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
-    equalLayout(lang+' protected SEO and FAQ',hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang][0]);equalLayout(lang+' all non-Usage content protected',hash(body),protectedContent[lang][1]);
+    equalLayout(lang+' MDX content contract', contractProblems('openapi-to-typescript', lang), '');
     layoutCheck(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   }
 }

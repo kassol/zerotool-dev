@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import { load as loadYaml } from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -897,13 +898,6 @@ print(json.dumps(res))
   }
   check('inline script receives only CLIENT_T', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/TIPS|STRINGS|data-i18n/.test(script));
   eq('protected engine bytes remain unchanged', sha256(source.slice(startIndex, endIndex + END_MARK.length)), '138b3241cb25a1865df9d4f4feca006ef878ec4c8c1be036936fa8a7529d6604');
-  const retained = {
-    en: ['87cd0a0fffb6ae83', '9653e3be42f4a435d7e559572d6623bda74e9e3c5fe15a71b677014115401f77'],
-    zh: ['3e2cd69606278825', 'b9f8dbf7ae961efafc68ea66db76c2dcf4c7e5cb6ce1968577735c982d657edc'],
-    // The status row now precedes the input; only JA's FAQ location phrase changed.
-    ja: ['e564c53b3f16f3c3', 'b503fe02efa1982aef56ea019bbcb6c0ff33e59ec54131b5043a93ad3aa90a68'],
-    ko: ['a339783f70ef2830', 'c64327b82e3d922802eb6869183a95c7c66503dc5ea7da48ebb86e9c3b0b3607']
-  };
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const entry = strings[lang];
     eq(lang + ' has the same seven tip keys', Object.keys(entry.tips).sort(), keys);
@@ -917,8 +911,7 @@ print(json.dumps(res))
     check(lang + ' steps meet plain-text limits', Array.isArray(steps) && steps.length <= 8 && steps.every(step => typeof step === 'string' && step.trim() && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['inputBase', 'number', 'outOther', 'optGroup', 'optPrefix', 'optLower', 'optWidth', 'optSigned', 'copy', 'stepsSummary']) check(lang + ' steps use current control name ' + key, steps.some(step => step.includes(entry[key])));
     check(lang + ' Usage removed while Limits remains', !/^## (?:How to Use|使用方法|使い方|사용 방법)\s*$/m.test(body) && /^## (?:Limits|限制|制限事項|제한 사항)\s*$/m.test(body));
-    eq(lang + ' FAQ and SEO retained', sha256(meta.replace(/^steps:\n(?:  .*\n)*/m, '').trim()).slice(0, 16), retained[lang][0]);
-    eq(lang + ' non-Usage body retained byte for byte', sha256(body), retained[lang][1]);
+    eq(lang + ' MDX content contract', contractProblems('number-base', lang), '');
   }
 
   // Exercise the actual audit checker with small source fixtures, including compact.

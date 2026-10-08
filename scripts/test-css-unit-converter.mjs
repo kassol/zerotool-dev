@@ -6,8 +6,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssUnitConverterTool.astro'), 'utf8');
 const SLUG = 'css-unit-converter';
@@ -255,24 +255,6 @@ try {
 } finally { process.off('unhandledRejection', onUnhandled); }
 console.log('\nv2 page layout');
 {
-  const preserved = {
-  "en": {
-    "body": "0dce96cb37e20e84f2f7faee0862a1a872e9b9fa08c91559f4c0402f235df171",
-    "front": "c7b0bcbafcbeed43998daf5daa36dc225e3d69b6c3b4d995960395d414afb6fa"
-  },
-  "zh": {
-    "body": "646522953672f4745dd844d40c1b2cb64f7e88a8c98abb4c6e05d7f218121506",
-    "front": "06151b11a668dac8d758cf1546fe84706056a9f015202f3c1e44913955097b4a"
-  },
-  "ja": {
-    "body": "728e4e3ee2d3a8b49078081afec9c9f6a379c46bc7f779e5bd5bf91383b8b4f3",
-    "front": "5c30f74ad4d52dd36324207ddf99fc39df63dd3faa35e30338dc73ecead72ed2"
-  },
-  "ko": {
-    "body": "0ce30006896227c75c9476a532110d6fbb3bc2837b6e476f4233527881421a33",
-    "front": "a03caa808b0a2ce9a5e477468bdd4754b49735473e4a44eb6961395e9d71d22c"
-  }
-};
   const strings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
   const leaves = (value, prefix = '') => Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? leaves(item, prefix + key + '.') : [[prefix + key, item]]);
   const en = leaves(strings.en);
@@ -288,9 +270,7 @@ console.log('\nv2 page layout');
     eq(lang + ' steps are present and bounded', Array.isArray(meta.steps) && meta.steps.length > 0 && meta.steps.length <= 8 && meta.steps.every(s => typeof s === 'string' && s.length <= 280) && meta.steps.join('').length <= 1200, true);
     eq(lang + ' steps precede FAQ', match[1].indexOf('steps:') < match[1].indexOf('faqItems:'), true);
     eq(lang + ' How to Use removed', /<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(match[2]), false);
-    const hash = value => createHash('sha256').update(value).digest('hex');
-    eq(lang + ' all remaining body sections unchanged', hash(match[2]), preserved[lang].body);
-    eq(lang + ' SEO and FAQ frontmatter unchanged', hash(match[1].replace(/\nsteps:\n(?:  - .*\n)+/, '\n')), preserved[lang].front);
+    eq(lang + ' MDX content contract', contractProblems('css-unit-converter', lang), '');
   }
   const markup = source.split('---')[2].split('<script')[0];
   eq('direct component root uses cu-wrap', /^\s*<div class="cu-wrap">/.test(markup), true);

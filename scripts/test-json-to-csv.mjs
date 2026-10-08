@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToCsvTool.astro'), 'utf8');
@@ -251,8 +252,6 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
 
 // ---------- v2 page layout ----------
 {
-  const { createHash } = await import('node:crypto');
-  const hash = value => createHash('sha256').update(value).digest('hex');
   const equalLayout = (name, got, want) => eq(name, JSON.stringify(got), JSON.stringify(want));
   const check = (name, passed) => equalLayout('v2 ' + name, !!passed, true);
   const strings = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
@@ -276,7 +275,6 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
   check('build-time strings and tips excluded from script data', source.includes("import Toggletip from '../Toggletip.astro'") && !/data-i18n|define:vars|JSON\.stringify\(STRINGS/.test(source) && !/STRINGS|L\.tips/.test(script));
   const map=[['input','jsonInput'],['delimiter','delimiter'],['flatten','flatten'],['header','header'],['formula','formula'],['bom','bom'],['example','example'],['clear','clear'],['copy','copy'],['download','download']];
   equalLayout('v2 ten tips', (markup.match(/<Toggletip\b/g)||[]).length, map.length);
-  const protectedContent={"en": ["235f1e9f5facabe39c2176948f6ac18cd6570ed08ea471f86e452b850386f89f", "0003a258bd31aa72449f5b3fece0ae4b8d73d6d32751350e2d6a590181870158"], "zh": ["9fc5075546bead90eda53792a1c5b9ed80bffd8c3dab6143d06ab5db1923488a", "97222d551e83bb6a27a3a053718e959bf38dac8a3806759847fc1166c0fa8a93"], "ja": ["a12f6bdc93c270c153ab2357905aa06ec0480791e6be660b6203e5a61413551b", "b91b84fd6040326e47f34900044b5a6c1b72c378836e8f88e5135dd7185a24e6"], "ko": ["1a20b8f340f2a18a9ce561dd5e49015a7bf7ae746b60c20935537a113c9a47ba", "106b217c8b3e1e9139587dc0dbe256542d76c2ca246ce03de04aed8d8e66bbe8"]};
   for(const lang of ['en','zh','ja','ko']){
     const L=strings[lang];equalLayout(lang+' v2 same tip keys',Object.keys(L.tips).sort(),map.map(x=>x[0]).sort());
     check(lang+' localized empty text',typeof L.empty==='string'&&!!L.empty.trim());
@@ -284,7 +282,15 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
     const mdx=readFileSync(join(root,'src/content/tools/json-to-csv/'+lang+'.mdx'),'utf8'),[,fm,body]=mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
     const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
     check(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
-    equalLayout(lang+' protected SEO and FAQ',hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang][0]);equalLayout(lang+' all non-Usage content protected',hash(body),protectedContent[lang][1]);
+    equalLayout(lang+' MDX content contract', contractProblems('json-to-csv', lang), '');
+    // JSON → CSV examples, recomputed with some flatten / formula-guard setting. The formula-guard
+    // example shows invalid JSON on the page (the MDX template literal drops the \" escapes), so it
+    // is listed here; the check below fails once the page is fixed, and the entry must go.
+    const KNOWN_INVALID_INPUT = ['[{"name":"Ann","comment":"=HYPERLINK("http://example.com","Click")"}]'];
+    const csvPairs=examplePairs(body,b=>b.lang==='pre'&&/^[[{]/.test(b.text),b=>b.lang==='pre'&&!/^[[{]/.test(b.text));
+    equalLayout(lang+' has JSON → CSV examples',csvPairs.length>0,true);
+    equalLayout(lang+' known invalid example input is still invalid JSON',csvPairs.filter(([a])=>KNOWN_INVALID_INPUT.includes(a.text)).every(([a])=>{try{JSON.parse(a.text);return false;}catch{return true;}}),true);
+    equalLayout(lang+' each CSV example equals the engine output',csvPairs.filter(([a])=>!KNOWN_INVALID_INPUT.includes(a.text)).filter(([a,b])=>![true,false].some(fl=>['off','quote','tab'].some(guard=>conv(JSON.parse(a.text),{flatten:fl,guard}).csv===b.text))).map(([,b])=>b.text),[]);
     check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   }
 }

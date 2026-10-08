@@ -26,6 +26,7 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import domino from '@mixmark-io/domino';
 import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssSpecificityCalculatorTool.astro'), 'utf8');
@@ -310,12 +311,6 @@ check('v2 tips not sent to client',/define:vars=\{\{ t: CLIENT_T \}\}/.test(sour
 const bindings=[...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 literal tip IDs',bindings.map(m=>m[1]),['csc-tip-input','csc-tip-parsing','csc-tip-results','csc-tip-copy']);
 check('v2 tips outside input label',!/<label\b[^>]*>[\s\S]*?<Toggletip[\s\S]*?<\/label>/.test(markupTemplate));
-const contentHashes={
-  "en": "736d4a1a887f8546b0d90b7ded0e2783a0f001846a4d7105948892f4a10aa579",
-  "zh": "f43086564db62647b64ad1724cbcd0c8e173014ae395f2c1c4327ea396362802",
-  "ja": "31e39448e328b30b3fde5f14c4fc5bbc719da30da1b7d841dd467fc4441e8cfd",
-  "ko": "f81937a299479f5e914057e4d305588182e4bd98979cb6dbd3a42f590e3bac80"
-};
 const {compile}=await import('@mdx-js/mdx');
 for(const lang of ['en','zh','ja','ko']){
  const {T,TIPS,CLIENT_T}=locale(lang),p=page(lang,'shared-after');
@@ -332,7 +327,7 @@ for(const lang of ['en','zh','ja','ko']){
  for(const [,id,label,key]of bindings){eq('v2 '+lang+' literal tip '+id,p.document.getElementById(id).textContent,TIPS[key]);check('v2 '+lang+' localized aria '+id,p.document.querySelector('[data-zt-tip="'+id+'"]').getAttribute('aria-label').includes(T[label]));}
  const content=readFileSync(join(root,'src/content/tools/css-specificity-calculator',lang+'.mdx'),'utf8'),data=require('js-yaml').load(content.match(/^---\n([\s\S]*?)\n---/)[1]);
  eq('v2 '+lang+' five steps',data.steps.length,5);check('v2 '+lang+' bounded plain steps',data.steps.every(t=>t.length<=280&&!/[<>\n]/.test(t))&&data.steps.join('').length<=1200);check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
- eq('v2 '+lang+' non-Usage bytes preserved',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),contentHashes[lang]);
+ eq('v2 '+lang+' MDX content contract', contractProblems('css-specificity-calculator', lang), '');
  let error='';try{await compile(content.replace(/^---\n[\s\S]*?\n---/,''));}catch(e){error=String(e);}eq('v2 '+lang+' MDX compiles',error,'');
  for(const order of ['shared-before','shared-after'])for(const id of ['csc-tip-results','csc-tip-copy']){
   const q=prepared(lang,order);q.key(q.document.querySelector('[data-zt-tip="'+id+'"]'),{ctrlKey:true,key:'l'});

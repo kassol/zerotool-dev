@@ -25,6 +25,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const src = readFileSync(join(root, 'src/components/tools/WebpConverterTool.astro'), 'utf8');
@@ -257,7 +258,6 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
 
 // ---------- v2 page layout ----------
 {
-  const { createHash } = await import('node:crypto');
   const { createRequire } = await import('node:module');
   const { load: loadYaml } = await import('js-yaml');
   const pageSource = src, prefix = 'wc', slug = 'webp-converter';
@@ -266,7 +266,6 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
   const css = pageSource.slice(pageSource.indexOf('<style')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/<\/?style\b[^>]*>/g, '');
   const rules = (selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].split(',').some((s) => s.trim() === selector)).map((m) => m[2]);
   const property = (body, name, value) => new RegExp('(?:^|;)\\s*' + name + '\\s*:\\s*' + value + '\\s*(?:;|$)').test(body);
-  const hash = (s) => createHash('sha256').update(s).digest('hex');
   check('analyze layout registered', new RegExp("'" + slug + "':\\s*'analyze'").test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
   check('tool root is the direct first element', markup.startsWith('<div class="' + prefix + '-wrap" id="' + prefix + '-wrap">'));
   check('root can shrink with available height', rules('.' + prefix + '-wrap').some((r) => property(r, 'display', 'flex') && property(r, 'flex-direction', 'column') && property(r, 'min-height', '0')));
@@ -287,24 +286,6 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
   const keys = prefix === 'wc' ? ['mode', 'quality', 'files', 'download'] : ['format', 'quality', 'resize', 'files', 'download'];
   check('each control tip appears once', JSON.stringify([...markup.matchAll(/<Toggletip id="[a-z]+-tip-([^"]+)"/g)].map((m) => m[1]).sort()) === JSON.stringify([...keys].sort()));
   check('file tips are outside the file-input overlay', !/<div id="[a-z]+-drop"[\s\S]*?<Toggletip/.test(markup.slice(markup.indexOf('<div id="' + prefix + '-drop"'))));
-  const retained = {
-    "en": [
-        "921c1bf82d898ea7d7cff1f3a50cca323df05d6f5d4fc620467f9d0751d117a2",
-        "f20215fbec222bab485bfb117efcf964ac6b55b93490aae95d1267725e378b53"
-    ],
-    "zh": [
-        "f701082b074e9687191781b0fcbe97bddee154f204ff1dbfa1b59d13cf5569b6",
-        "ccfcac01c778ee815b15d227e6161ff99205b83469e7262af26846732faae328"
-    ],
-    "ja": [
-        "754a939478e3154335132fb61febffb873b445d207856333d54f44d6f61f8e85",
-        "40762cd04d4a3b82cb22af2539964cf496cefa3197a5da78d5303fcb55fb7f61"
-    ],
-    "ko": [
-        "150aa07c946615398765acc0eba0fee69329af0a060d237bfac1bc1534971fcb",
-        "ac5d9787fbc95547095b239507e96c0a7c1b1f059e1da1fe52fcf5376a07a7cd"
-    ]
-};
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     check(lang + ' same string keys', JSON.stringify(Object.keys(table[lang]).sort()) === JSON.stringify(Object.keys(table.en).sort()));
     check(lang + ' complete control tips', JSON.stringify(Object.keys(table[lang].tips).sort()) === JSON.stringify([...keys].sort()) && keys.every((key) => table[lang].tips[key].length > 20));
@@ -316,8 +297,7 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
     check(lang + ' bounded plain-text steps', steps.length > 0 && steps.length <= 8 && steps.every((s) => typeof s === 'string' && s.length <= 280 && !/<[^>]+>|\*\*/.test(s)) && steps.join('').length <= 1200);
     check(lang + ' steps name current download actions', steps.some((s) => s.includes(table[lang].downloadAll)) && steps.some((s) => s.includes(table[lang].download)));
     check(lang + ' usage heading removed', !/<h2>(?:How to Use|使用方法|使用步骤|使い方|사용 방법)<\/h2>/.test(body));
-    check(lang + ' SEO and FAQ unchanged', hash(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')) === retained[lang][0]);
-    check(lang + ' all non-usage body content unchanged', hash(body) === retained[lang][1]);
+    check(lang + ' MDX content contract', !contractProblems('webp-converter', lang), contractProblems('webp-converter', lang));
   }
   const require = createRequire(import.meta.url);
   const { transform: compileAstro } = await import(require.resolve('@astrojs/compiler', { paths: [dirname(require.resolve('astro'))] }));

@@ -30,6 +30,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import ts from 'typescript';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToMongooseTool.astro'), 'utf8');
@@ -438,8 +439,6 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
 
 // ---------- v2 page layout ----------
 {
-  const { createHash } = await import('node:crypto');
-  const hash = value => createHash('sha256').update(value).digest('hex');
   const equalLayout = (name, got, want) => eq(name, JSON.stringify(got), JSON.stringify(want));
   const check = (name, passed) => equalLayout('v2 ' + name, !!passed, true);
   const strings = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
@@ -461,7 +460,6 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
   check('build-time strings and tips excluded from script data', source.includes("import Toggletip from '../Toggletip.astro'") && !/data-i18n|define:vars|JSON\.stringify\(STRINGS/.test(source) && !/STRINGS|L\.tips/.test(script));
   const map=[['input','jsonInput'],['model','modelName'],['language','language'],['timestamps','timestamps'],['required','required'],['example','example'],['clear','clear'],['copy','copy']];
   equalLayout('v2 eight tips', (markup.match(/<Toggletip\b/g)||[]).length, map.length);
-  const protectedContent={"en": ["136921aee7ab14733606cfa8cc84916c782efbfc881061196d2601c9f3440f41", "05120497f674dcc72834176d0e747ed859039fa284cd74cd1e4aedb97d5b1fe4"], "zh": ["f1eaa02218771de33c001756b95f87be8b2c0967384f8bbd376bafdc507c8cf6", "7a1a1eccc4e62b2dee3002852201f1f7b8550c7ddbba0456f7bfed2a6a670c5f"], "ja": ["969a298ac58208b3d7e35f7cc95a97c02cb4f87799712fa39dc0a29fccc0903e", "76081e0ec44f849f42cae060fe9e1a576845a6f2114c0ad0b857836f7608e285"], "ko": ["539ab8e3b8b6899c25b5336ab4969b1af5e5b150fdf27d4729c275c5f6848cb6", "04b1064a8801979aa8cc92eaa53f07dae34ef69e5d20f191ca72e470cec1423e"]};
   for(const lang of ['en','zh','ja','ko']){
     const L=strings[lang];equalLayout(lang+' v2 same tip keys',Object.keys(L.tips).sort(),map.map(x=>x[0]).sort());
     check(lang+' localized empty text',typeof L.empty==='string'&&!!L.empty.trim());
@@ -469,7 +467,7 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     const mdx=readFileSync(join(root,'src/content/tools/json-to-mongoose/'+lang+'.mdx'),'utf8'),[,fm,body]=mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
     const stepBlock=fm.match(/^steps:\n((?:  - .*\n)+)/m),steps=stepBlock[1].trimEnd().split('\n').map(line=>JSON.parse(line.slice(4)));
     check(lang+' step limits and before FAQ',steps.length>0&&steps.length<=8&&steps.every(v=>[...v].length<=280)&&steps.reduce((n,v)=>n+[...v].length,0)<=1200&&fm.indexOf('steps:')<fm.indexOf('faqItems:'));
-    equalLayout(lang+' protected SEO and FAQ',hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang][0]);equalLayout(lang+' all non-Usage content protected',hash(body),protectedContent[lang][1]);
+    equalLayout(lang+' MDX content contract', contractProblems('json-to-mongoose', lang), '');
     check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   }
 }

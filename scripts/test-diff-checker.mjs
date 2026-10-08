@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { Worker as ThreadWorker } from 'node:worker_threads';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/DiffCheckerTool.astro'), 'utf8');
@@ -392,12 +393,6 @@ eq('v2 build-time text only', !/data-i18n|RUN_STRINGS|pageLang|var STRINGS/.test
 eq('v2 excludes all tips and unselected languages from client strings', source.includes('const { tips: TIPS, ...CLIENT_T } = T;') && source.includes('define:vars={{ t: CLIENT_T }}') && !/TIPS|STRINGS/.test(clientScript), true);
 const tips = [...markup.matchAll(/<Toggletip id="(diff-tip-[^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 seven tips map to actual controls', tips.map(m => [m[1], m[2], m[3]]).sort(), ['compare', 'swap', 'clear', 'view', 'original', 'modified', 'results'].map(key => ['diff-tip-' + key, key === 'results' ? 'result' : key, key]).sort());
-const MDX_HASHES = {
-  en: '6dda3bf7222a9cb937d5c17d04b152d4a27cf421945b29fc20cb6ae2ddb21805',
-  zh: '36f7ba7b4fdf92de05a83b808558813f8b80a8f0ff0314b096e8252b498de6b7',
-  ja: '88881c0a182f77bd5a5bae00d8acd1ae198c46a094f9b168e5ef56c192543e39',
-  ko: 'c1a0817c2273673a38a942cc2d3166a1ae129b646ee9e3e3c86f2134505182cc'
-};
 function leaves(value, path = '') { return Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? leaves(item, path + key + '.') : [[path + key, item]]); }
 const enLeaves = Object.fromEntries(leaves(STRINGS.en));
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
@@ -413,7 +408,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' v2 steps meet 280/1200 limits and use plain text', steps.every(step => [...step].length <= 280 && !/[<>]|\]\(|\*\*|`/.test(step)) && steps.reduce((n, step) => n + [...step].length, 0) <= 1200, true);
   eq(lang + ' v2 steps use actual operation labels', ['compare', 'cancel', 'swap', 'clear', 'unified', 'side_by_side', 'previous', 'next', 'hideInputs', 'showInputs'].every(key => steps.join(' ').includes(STRINGS[lang][key])), true);
   eq(lang + ' v2 usage removed', /<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx), false);
-  eq(lang + ' v2 preserves all other MDX bytes including SEO, FAQ, examples and Limits', sha256(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), MDX_HASHES[lang]);
+  eq(lang + ' MDX content contract', contractProblems('diff-checker', lang), '');
 }
 eq('v2 engine marker bytes unchanged', [Buffer.byteLength(source.slice(s, e + END.length)), sha256(source.slice(s, e + END.length))], [4153, 'a1e1be3e9e9d76a3c3756294a6bd755ee7a389bf37dd44c0cac556c4e3e96d2f']);
 

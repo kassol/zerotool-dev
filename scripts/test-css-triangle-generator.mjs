@@ -15,6 +15,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_B12_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(process.env.ZT_B12_COMPONENT || join(root, 'src/components/tools/CssTriangleGeneratorTool.astro'), 'utf8');
@@ -171,8 +172,6 @@ function open(s,lang='en',shellFirst=false){
 // ---------- v2 page layout ----------
 {
   const vm = (await import('node:vm')).default;
-  const { createHash } = await import('node:crypto');
-  const hash = s => createHash('sha256').update(s).digest('hex');
   let passes=0, failures=0;
   const check=(name, ok, detail='') => {if(ok)passes++;else {failures++;console.log('FAIL: v2 '+name+' '+detail);}};
   const slug="css-triangle-generator", prefix="ctg";
@@ -201,15 +200,12 @@ function open(s,lang='en',shellFirst=false){
   check('reserved status',markup.includes('role="status"')&&source.includes('min-height: 1.4rem'));
   check('scrollable selectable code',markup.includes('tabindex="0" role="region"')&&source.includes('max-height: 8rem'));
   check('phone Copy target',source.includes('.'+prefix+'-wrap .btn-copy { min-height: 44px; }'));
-  for(const snap of [{"lang": "en", "frontmatterSha": "136ffa43b3e8974fdf0e1efdcb4b351ce393cf162622e6e0421c7a77dceef203", "nonUsageBodySha": "8e12879c1d761c2eb748f6dde20201ad32836c4a9a6ee3ae3a51f9b997bf05d3"}, {"lang": "zh", "frontmatterSha": "3626e0456e5ad08f7c742faa44316efa805933dc29cf4a09a362bfc2de3585dd", "nonUsageBodySha": "68ffd9fefaf24219a2ac99ca220c226fbd0d0565adccc1e8a0356fae259eb049"}, {"lang": "ja", "frontmatterSha": "dfc9f0a0ff201ec9787d8377c0dbf0f08d023028f2394404f91380e7a842f468", "nonUsageBodySha": "6c47ee1210e0f7bd6cb16b05d5d02f0b7cd0bc12cee0c16b3d5025ccd474afa4"}, {"lang": "ko", "frontmatterSha": "ffa834aa4d704812aaecc36f50f637bd2126241028efb2ab54bc598abb929e20", "nonUsageBodySha": "aa242b623d2a6fd53304d7b02c14cbdffcb3f1e01e24e200fcf13b9c43fd1f55"}]) {
+  for(const snap of [{"lang": "en"}, {"lang": "zh"}, {"lang": "ja"}, {"lang": "ko"}]) {
     const path=process.env.ZT_B12_MDX_PREFIX ? process.env.ZT_B12_MDX_PREFIX+snap.lang+'.mdx' : join(root,'src/content/tools/'+slug+'/'+snap.lang+'.mdx');
     const page=readFileSync(path,'utf8');const fm=page.match(/^---\n([\s\S]*?)\n---/)[1];
     const steps=[...fm.matchAll(/^  - ("[^\n]*")$/gm)].map(m=>JSON.parse(m[1]));
     check(snap.lang+' plain bounded steps',steps.length>0&&steps.length<=8&&steps.every(s=>s.length<=280)&&steps.reduce((n,s)=>n+s.length,0)<=1200);
-    const withoutSteps=fm.replace(/^steps:\n(?:  - "[^\n]*"\n)+/m,'');
-    check(snap.lang+' SEO/FAQ exact',hash(withoutSteps)===snap.frontmatterSha);
-    let body=page.slice(page.indexOf('\n---')+4);
-    check(snap.lang+' non-Usage body exact',hash(body)===snap.nonUsageBodySha);
+    check(snap.lang+' MDX content contract', !contractProblems('css-triangle-generator', snap.lang), contractProblems('css-triangle-generator', snap.lang));
     check(snap.lang+' old Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(page));
   }
   console.log('V2 '+passes+' passed, '+failures+' failed');

@@ -25,6 +25,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToPythonDataclassTool.astro'), 'utf8');
@@ -285,25 +286,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "eb49012a1c4549f826e2e0d59e0c718793a29be856b9fd5186f91fc911144bab",
-  "protectedContent": {
-    "en": [
-      "c9f9414c96481b8ad08f0075879a140d67f553386a426d955f2a59bc4cf8fcdd",
-      "4829ba52d3c043d746bdeca4e4aab760fe5cc1d9fd3ebd8dfa1f2bc0debd3090"
-    ],
-    "zh": [
-      "e01a7813285b8de9f81f3ef8ed582ebf05a7f8f216c0f38f41889323c7123ab8",
-      "7b8402e640463aee12a0b3f07e7d09d553dac3f6325f707ab870a8144b2af28f"
-    ],
-    "ja": [
-      "42633625d018dc7f076ff3a62349af516a9c25bd0feaf13e5339cec5f56ce115",
-      "51d2702a4ee2e1e78cd2779a11b92df05f4f365639a488ba3940cad29413f3d3"
-    ],
-    "ko": [
-      "0733360ad500ac983f1eae79fd7cd7a0dc136e2661999d7449a64e6a80be981c",
-      "1ee40f771d3d14904500cb4d3e159f7da6a9c5f451ae584330440aabff0aa7e2"
-    ]
-  }
+  "scriptSHA": "eb49012a1c4549f826e2e0d59e0c718793a29be856b9fd5186f91fc911144bab"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -347,8 +330,11 @@ for (const lang of ['en','zh','ja','ko']) {
   eq(lang + ': v2 steps correspond to controls', steps.length, V2.tips.length);
   eq(lang + ': v2 step limits and order', fm.indexOf('steps:') < fm.indexOf('faqItems:') && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n,x) => n+[...x].length,0) <= 1200, true);
   for (const [, about] of V2.tips) eq(lang + ': v2 steps actual label ' + about, steps.join('\n').includes(L[about]), true);
-  eq(lang + ': v2 SEO and FAQ unchanged', hash(fm.replace(/^steps:\n(?:  - .*\n)+/m,'')), V2.protectedContent[lang][0]);
-  eq(lang + ': v2 non-Usage content unchanged', hash(body.replace(/\n\{\/\* b6-sample-coverage:start \*\/\}[\s\S]*?\{\/\* b6-sample-coverage:end \*\/\}\n/,'')), V2.protectedContent[lang][1]);
+  eq(lang + ': MDX content contract', contractProblems('json-to-python-dataclass', lang), '');
+  // JSON → Python examples, recomputed: the root name is one of the classes in the shown output.
+  const pyPairs = examplePairs(body, b => b.lang === 'pre' && /^[[{]/.test(b.text), b => b.lang === 'pre' && /^from /.test(b.text));
+  eq(lang + ': has JSON → Python examples', pyPairs.length > 0, true);
+  eq(lang + ': each Python example equals the engine output', pyPairs.filter(([a, b]) => ![...b.text.matchAll(/^class (\w+)/gm)].some(([, name]) => ['dataclass', 'pydantic', 'typeddict'].some(mode => E.generatePython(JSON.parse(a.text), name, mode)?.code === b.text))).map(([, b]) => b.text), []);
   eq(lang + ': v2 no duplicate usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body), true);
   for (const shellFirst of [false,true]) for (const focus of ['output','tip']) {
     const q = lifecyclePage(lang,shellFirst);golden(q);q.key(focus === 'output' ? q.get(prefix + '-output') : q.doc.querySelector('[data-zt-tip="' + prefix + '-tip-copy"]'));

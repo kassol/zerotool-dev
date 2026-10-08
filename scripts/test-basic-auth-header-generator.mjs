@@ -22,6 +22,7 @@ import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/BasicAuthHeaderGeneratorTool.astro'), 'utf8');
@@ -329,7 +330,6 @@ function makePage(lang='en',layoutFirst=false) {
   check('script serializes CLIENT_T only',/define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
   check('engine retained byte-for-byte',sha(source.slice(startIndex,endIndex+END_MARK.length))==='255013361b5b68fd62c58577ea8678a18b3ee5e13b30d0da62b559e82d25e16e');
   check('page script unchanged except removed runtime i18n',sha(pageScript)==='013a09c5d0bdcab483a8ecc0aca431dac2bca82f5770458afa04863d2dc207a6');
-  const retained={"en": {"meta": "84343e9645aa2ae8e10983a8a348b6262c01efb70077da959b1af38117423c72", "body": "653fce34bb3b7722525d0bafcc2c173aa64653801fd03c4392625f5607bb9d7b"}, "zh": {"meta": "df92ad4cc04fca68912fe754dc07a1163ce4bdb870709b39acbc44e57906939e", "body": "7c767b158fc71035ef64361bcf8438600f1c835d3853b28d3bf9554b245b6648"}, "ja": {"meta": "db9fdd01958ee9e876d00837e92e68a5548bd5f9365af85f88cc8c7c79254c19", "body": "343ec0a342d7c578c4c3304e50bcb9a442cfcda821f167509911dcdfb6a3b7f4"}, "ko": {"meta": "2cb2c109269b109700add82ed5fd80c2e03d75588a35c833fc5e5ce960f88898", "body": "24423142643ed7357a2260bfe516d20e35225990d2f325a5ede08395164cac82"}};
   for(const lang of ['en','zh','ja','ko']){
     const entry=STRINGS[lang];eq(lang+' tip keys complete',Object.keys(entry.tips).sort(),keys);
     for(const key of keys)check(lang+'.'+key+' tip is nonempty plain text',typeof entry.tips[key]==='string'&&entry.tips[key].trim()&&!/<[^>]*>|\n/.test(entry.tips[key]));
@@ -341,8 +341,7 @@ function makePage(lang='en',layoutFirst=false) {
     const [,meta,body]=/^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(read('src/content/tools/basic-auth-header-generator/'+lang+'.mdx')),{steps}=loadYaml(meta);
     check(lang+' six steps meet limits',steps.length===6&&steps.every(step=>typeof step==='string'&&step.length<=280&&!/<[^>]*>/.test(step))&&steps.join('').length<=1200);
     for(const key of ['username','password','show','hide','generate','loadExample','copy','fullHeader','token','decodeInput','decode','clear'])check(lang+' steps use current '+key+' label',steps.some(step=>step.includes(entry[key])));
-    check(lang+' FAQ and SEO retained byte-for-byte',sha(meta.replace(/^steps:\n(?:  - .*\n)*/m,''))===retained[lang].meta);
-    check(lang+' entire original body retained byte-for-byte',sha(body)===retained[lang].body);
+    check(lang+' MDX content contract', !contractProblems('basic-auth-header-generator', lang), contractProblems('basic-auth-header-generator', lang));
     check(lang+' Limits retained',/<h2>(?:Limits|限制|制限|제한)<\/h2>/.test(body));
   }
   const require=createRequire(import.meta.url);

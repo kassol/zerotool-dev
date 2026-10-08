@@ -22,6 +22,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { loadPage } from './astro-page-harness.mjs';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TimezoneConverterTool.astro'), 'utf8');
@@ -350,7 +351,6 @@ for(const [name,re] of [
 ])eq('v2 '+name,re.test(style),true);
 const expectedTipKeys=['base','now','source','add','copy','share','results'];
 const tipBindings={base:'baseTime',now:'now',source:'sourceZone',add:'addZone',copy:'copySummary',share:'shareLink',results:'targets'};
-const protectedContent={"en": "238952fd63f10a178a51b17c0260798307f54517abec9da9cdc0fcd3230b0e36", "zh": "0d516ba2d27945018546c3ad9169a286b2bb35c27feab550ff2aa5ef046f6ba8", "ja": "d73b0084c2952c34410c7d582a41c13ad5b541ccd88933c2b9842d5d16e4f516", "ko": "9435e5615fcea4e2acdf0dcb7e26cecdc57641624e0fb05d208ee22bb3a824e5"};
 const originalLabelHashes={"en":"b520294f233fa5ed9d1ee9758f84ddd38d39b5eb58778530d873bc16327b2eb2","zh":"0cdc1955d6dca986420b982a078c2c32ca860e51422574d23e91923feac8b9b4","ja":"492f3bfad83cbcee1470aac434759a66057482bb6255d0f360daa5916d62ad45","ko":"be90df0197fd0f874914f349a071831fe1b46544222061b3d15c4c99e66ba2e5"};
 for(const lang of ['en','zh','ja','ko']){
  const T=tzStrings(lang),L=tzLabels(lang),p=pageVM(lang);
@@ -369,7 +369,7 @@ for(const lang of ['en','zh','ja','ko']){
  const match=content.match(/^steps:\n((?:  - .*\n)+)/m);const steps=match?[...match[1].matchAll(/^  - (.*)$/gm)].map(m=>JSON.parse(m[1])):[];
  eq('v2 '+lang+' six bounded steps',steps.length===6&&steps.every(t=>t.length<=280)&&steps.join('').length<=1200,true);
  eq('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'),true);
- eq('v2 '+lang+' all non-Usage content exact',hash(content.replace(/^steps:\n(?:  - .*\n)+/m,'')),protectedContent[lang]);
+ eq('v2 '+lang+' MDX content contract', contractProblems('timezone-converter', lang), '');
  for(const order of ['shared-before','shared-after']){
   const q=pageVM(lang,order);q.ctrlL('tzc-tip-results-trigger');await settle();
   eq('v2 '+lang+'/'+order+' result tip CtrlL clears values',[q.get('tzc-base').value,q.get('tzc-add').value,q.get('tzc-results').textContent],['','','']);

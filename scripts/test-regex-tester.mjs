@@ -20,6 +20,7 @@ import vm from 'node:vm';
 import { Worker as ThreadWorker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const src = readFileSync(join(root, 'src/components/tools/RegexTesterTool.astro'), 'utf8');
@@ -278,7 +279,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const order of ['shared-before
 
 // ---------- v2 page layout ----------
 const v2Start = passes;
-const sha = text => createHash('sha256').update(text).digest('hex');
 eq('v2 direct flex root with zero minimum sizes', /^<div class="rgx-wrap" data-empty="true">/.test(markup)
   && /\.rgx-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0/.test(style), true);
 eq('v2 registered analyze', /'regex-tester':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')), true);
@@ -324,12 +324,6 @@ eq('v2 original plural branch remains n greater than one', script.includes("coun
 const tipKeys = ['pattern','g','i','m','s','input','highlight','matches'];
 const tips = [...markup.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=(?:\{T\.(\w+)\}|"([gims])")>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 exact eight control-bound tip IDs', tips.map(m => [m[1],m[4]]), tipKeys.map(k => ['rgx-tip-' + k,k]));
-const contentHashes = {
-  en: '8b202f911ad16d3a479bfdaea5cb1d593a347e9912d7a7c26827281f3449a492',
-  zh: '48953aa5ba640b5c2a821b75550680a6a6a8f3b95ed01840dbc7680d5b838983',
-  ja: 'af5b5e9d82c766f6e2df1f54da6836c1037aa03c2ac78e49922dfcef9c6979a1',
-  ko: 'b7389cc3fbdb249ac9f6bc84fce72b0e7bdaa476b9730375ab823a3347576f6b'
-};
 const statusLiterals = {
   en: ['No matches.', '1 match found.', '2 matches found.', '... and 2 more matches.', '0 match found.'],
   zh: ['无匹配项。', '找到 1 个匹配项。', '找到 2 个匹配项。', '... 还有 2 个匹配项。', '找到 0 个匹配项。'],
@@ -346,7 +340,7 @@ for (const lang of ['en','zh','ja','ko']) {
   const steps = (mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1] || '').trim().split('\n').filter(Boolean).map(line => JSON.parse(line.trim().slice(2)));
   eq(lang + ' v2 six plain steps', steps.length, 6);
   eq(lang + ' v2 bounded steps use actual localized controls', steps.every(s => [...s].length <= 280 && !/[<>]|\]\(|\*\*|`/.test(s)) && steps.reduce((n,s) => n + [...s].length, 0) <= 1200 && ['pattern','testString','highlightedMatches','matches','cancel'].every(k => steps.join(' ').includes(t[k])), true);
-  eq(lang + ' v2 Usage-only body change preserves FAQ SEO examples and limits', sha(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), contentHashes[lang]);
+  eq(lang + ' MDX content contract', contractProblems('regex-tester', lang), '');
   eq(lang + ' v2 zero retains original singular template', client.matchOne.replace('{n}', 0), statusLiterals[lang][4]);
   const p = pageHarness(lang);
   try {

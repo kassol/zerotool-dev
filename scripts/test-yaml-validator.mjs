@@ -23,6 +23,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -286,7 +287,6 @@ for (const name of ['yv-err-title','yv-err-reason','yv-err-location','yv-err-sni
 const tips = [...markup.matchAll(/<Toggletip id="(yv-tip-[^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 five tips map to visible controls', tips.map(m=>[m[1],m[2],m[3]]).sort(), [['yv-tip-input','inputLabel','input'],['yv-tip-validate','validate','validate'],['yv-tip-clear','clear','clear'],['yv-tip-preview','parsedStructure','preview'],['yv-tip-copy','copyJson','copy']].sort());
 check('v2 existing build-time labels/data interface excludes tips from client payload', source.includes('const { tips: TIPS } = L;') && !/TIPS|labels|\.tips/.test(script) && !/data-[\w-]+=\{[^}]*tips/i.test(markup));
-const MDX_HASHES={en:'cbf0d0535bf092872920937948b481aa563ac3b10676e4dedbdb6a3abe8c85d1',zh:'f5244e1e181e8d03728774c24fb31e29906873d0cb5fa6fb4c85cda624402f8c',ja:'636bcd59aa24603c725cf8c1aa0d93377874a454fe391a5d87fb0ea6658415cd',ko:'fab96d585ec7696725a2bfe268368aac4b6ace70052c9139c56f2bf7c8e78cd0'};
 function leaves(value,path=''){return Object.entries(value).flatMap(([key,item])=>typeof item==='object'?leaves(item,path+key+'.'):[[path+key,item]]);}
 const enLeaves=Object.fromEntries(leaves(labels.en));
 for(const lang of Object.keys(labels)) {
@@ -302,7 +302,7 @@ for(const lang of Object.keys(labels)) {
   check(lang+' v2 steps limits/plain text',steps.every(x=>[...x].length<=280&&!/[<>]|\]\(|\*\*|`/.test(x))&&steps.reduce((n,x)=>n+[...x].length,0)<=1200);
   check(lang+' v2 steps use current buttons', ['validate','clear','copyJson'].every(key=>steps.join(' ').includes(labels[lang][key])));
   check(lang+' v2 removes only Usage',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
-  eq(lang+' v2 keeps SEO/FAQ/examples/Limits byte-exact',createHash('sha256').update(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m,'')).digest('hex'),MDX_HASHES[lang]);
+  eq(lang+' MDX content contract', contractProblems('yaml-validator', lang), '');
   const h=page(lang); h.validate('number: .inf');
   eq(lang+' v2 valid result expands region',h.get('yv-results').dataset.empty,'false');
   check(lang+' v2 precision note stays exposed before JSON',!h.get('yv-preview-note').hidden&&h.get('yv-preview-note').textContent.includes('/number'));

@@ -27,6 +27,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { toolSteps } from '../src/data/llms.mjs';
 import { parseFragment } from 'parse5';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -558,24 +559,6 @@ equal('protected engine bytes remain exact',createHash('sha256').update(source.s
   check('phone fixed editor/status heights and 44px controls', /@media \(max-width: 640px\)/.test(css) && /\.scr-editor\.zt-io-fill, \.scr-out\.zt-io-fill\s*\{ height: 10rem; \}/.test(css) && /height: 3\.75rem/.test(css) && /\.scr-controls \.btn-ghost\s*\{ min-height: 44px; \}/.test(css));
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
   equal('all IDs unique', new Set(ids).size, ids.length);
-  const retained = {
-  "en": {
-    "frontmatter": "61bf8ba16857dc3a82e493c149d55ba92fa06af3cf774c88744508a67484e051",
-    "bodyWithoutUsage": "8c148290a37fcd934fb807b0c5ae4ea5477ef5c962b69d3dde99de3e350ad972"
-  },
-  "zh": {
-    "frontmatter": "e259e746cf9a7b44ff4d136bee259ef042b81681751f02989e8ee68c99526149",
-    "bodyWithoutUsage": "70519f9fc856fabae900acfbcff5942ff9fee33b00e04011e68794bc5af4e742"
-  },
-  "ja": {
-    "frontmatter": "2cf32b5fd06d428d2cd644b7cb97d017a7309fdf7558b445712a8bf2d253df55",
-    "bodyWithoutUsage": "ccc5170eb4f95750774101098e910a0153ab9b2a4dd2fa70b414c93224b77ccc"
-  },
-  "ko": {
-    "frontmatter": "b91350503123fb6f53c7440a7335a1a1bd4b809ca67afb3b22795378f74f3e29",
-    "bodyWithoutUsage": "659e3dc2c06cf91d9acd6097009d4a4e2d959d300d7aafbc185dfb08c8004171"
-  }
-};
   const require = createRequire(import.meta.url);
   const { compile } = await import(require.resolve('@mdx-js/mdx'));
   for (const lang of ['en','zh','ja','ko']) {
@@ -588,8 +571,7 @@ equal('protected engine bytes remain exact',createHash('sha256').update(source.s
     const [,metadata,body] = mdx.match(/^---([\s\S]*?)---([\s\S]*)$/);
     const parsed = loadYaml(metadata);
     check(lang + ': six plain steps fit content limits', parsed.steps.length === 6 && parsed.steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && parsed.steps.join('').length <= 1200);
-    equal(lang + ': FAQ and SEO preserve exact bytes', sha(metadata.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
-    equal(lang + ': all non-Usage content including Limits/examples preserves exact bytes', sha(body), retained[lang].bodyWithoutUsage);
+    equal(lang + ': MDX content contract', contractProblems('secret-redactor', lang), '');
     check(lang + ': Usage section removed', !/<h2>(?:How to use|使用步骤|使い方|사용 방법)<\/h2>/.test(body));
     equal(lang + ': llms sees six steps', toolSteps(parsed).length, 6);
     await compile(body); check(lang + ': preserved MDX compiles', true);

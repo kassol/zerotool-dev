@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path';
 import { createHmac, createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JwtGeneratorTool.astro'), 'utf8');
@@ -370,12 +371,6 @@ console.log('real page lifecycle: ' + (passes - pageStart) + ' passed');
 // ---------- v2 page layout ----------
 const v2Start = passes;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
-const PROTECTED = {
-  en: 'a9b9afab705ce897ca058b9d1f250051163710edb5fcf2b1d041aec7c98c9f5a',
-  zh: 'ba9a38f22a801d2d052a6177f0d0d46fa2e2feffcf0de30ac846b560c35d0072',
-  ja: 'bccf9f4a1351b1fb29d09acb30ee38c229c13b77b41ec7b3ce2b90b86e9002da',
-  ko: 'ba251d4d27e483dc66b6d3bf46c0d0da4f6078eee7eeb5b80abf6f1f7feb2afb',
-};
 const addedExample = {
   en: '<p>Editing Header alg to HS512 while HS256 remains selected shows an error and clears the previous token.</p>',
   zh: '<p>例如，所选算法仍为 HS256 时，把 Header 的 alg 改为 HS512，会显示错误并清除旧 Token。</p>',
@@ -425,8 +420,7 @@ for (const lang of ['en','zh','ja','ko']) {
   check(lang+' v2 steps are plain text with current labels',steps.every(step=>!/[<>]|\]\(|\*\*|`/.test(step))&&['algorithm','headerLabel','payloadLabel','secretLabel','copy'].every(key=>steps.join(' ').includes(PAGE_STRINGS[lang][key])));
   check(lang+' v2 usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
   check(lang+' v2 new example is present',mdx.includes(addedExample[lang]));
-  const protectedMDX=mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m,'').replace(addedExample[lang]+'\n\n','').replace('Select <strong>Base64</strong> beside the Secret label','Select <strong>Base64</strong> under the secret field');
-  eq(lang+' v2 protects all other body, Limits, FAQ and metadata',sha256(protectedMDX),PROTECTED[lang]);
+  eq(lang+' MDX content contract', contractProblems('jwt-generator', lang), '');
   const p=pageVM(lang,false),details=p.get('jg-header-details'),pane=p.get('jg-result-pane');
   eq(lang+' v2 Header initially closed and pending token empty',[details.open,pane.getAttribute('data-empty')],[false,'true']);
   await p.waitJobs(1); await p.finish(0);

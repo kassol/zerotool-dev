@@ -28,6 +28,7 @@ import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
 import { micromark } from 'micromark';
 import { gfm, gfmHtml } from 'micromark-extension-gfm';
 import { parseFragment } from 'parse5';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -506,28 +507,6 @@ check('v2 empty preview hides only at stacked width', /@media \(max-width: 860px
 check('v2 image notice follows actual nonempty dynamic image source', cssSource.includes(':global(.mp-preview-pane:has(img[src]:not([src=""]))) .mp-image-notice { display: block; }'));
 check('v2 notice is outside copied/highlighted preview', /id="mp-preview"[^>]*><\/div>[\s\S]*id="mp-image-notice"/.test(markup));
 check('v2 selected kind is convert', /['"]markdown-preview['"]\s*:\s*['"]convert['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
-const PROTECTED_MDX = {
-  "en": {
-    "beforeSHA256": "1d87ac51524f74a452f023e34f6e0bbacce7f38d2d2eceffa3f9543bdcc1de71",
-    "frontSHA256": "e11be4ccb18a7155fd723ac95d66159fc950bfb00e934ed5f1b6637d20e65846",
-    "bodyWithoutUsageSHA256": "d6238557d74c19ea79e254f72a98ed2f78117cbb6124b2677559230f76351ddc"
-  },
-  "zh": {
-    "beforeSHA256": "f34b51b8248acd93e3908c21058b46d5f15ca3c10097ea7c6be48128911d9169",
-    "frontSHA256": "8d31cdc84d3a5603b24fa111d44a9e1f29ed970026b6d652205aecef40265191",
-    "bodyWithoutUsageSHA256": "84b3229158d2321c2481aed8f0585fce9d54a37dbf85f4382a5889913429c9c2"
-  },
-  "ja": {
-    "beforeSHA256": "1431c81247e41eb72925fd03b14ca0e007bf8443ea6f46fe3fa1ef4bc8afadea",
-    "frontSHA256": "14ad6560c8dba353f539615ed89193535e5d15d8e59a65ceb9416b90d19fd88c",
-    "bodyWithoutUsageSHA256": "3d36f747981b1afa5f40bddc97c3cbdd579465df3760bc747bdcf1c3fdbb78ed"
-  },
-  "ko": {
-    "beforeSHA256": "7f8c5ec3ad05306a48113037f1213980dd0574fb381bf1e3c9bd0b891557f15a",
-    "frontSHA256": "7dda2ff91129122a1590356aa583006472d5b4746f45bfe7f041eb94ec37e1f0",
-    "bodyWithoutUsageSHA256": "5371d548dc22582b372de927beae8ce3ef7b0d0d64fcff2807bb431e1c3dcd32"
-  }
-};
 const legacyKeys = ['copyHtml','clear','copied','copyFailed','markdownLabel','previewLabel','wordsSep','charsSep'];
 const LEGACY_STRINGS = {
   "en": {
@@ -595,11 +574,10 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     q.advance(300); eq(lang + '/' + order + ' v2 tip focus CtrlL cancels queued preview', q.preview.innerHTML, '');
   }
   const content = readFileSync(join(root, 'src/content/tools/markdown-preview', lang + '.mdx'), 'utf8');
-  const [, front, body] = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), data = yaml.load(front), expected = PROTECTED_MDX[lang];
+  const [, front, body] = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/), data = yaml.load(front);
   check(lang + ' v2 four steps precede FAQ', Array.isArray(data.steps) && data.steps.length === 4 && front.indexOf('steps:') < front.indexOf('faqItems:'));
   check(lang + ' v2 step limits 8/280/1200', data.steps.length <= 8 && data.steps.every(s => [...s].length <= 280) && data.steps.reduce((n,s) => n + [...s].length, 0) <= 1200);
-  eq(lang + ' v2 SEO/FAQ/frontmatter unchanged', sha(front.replace(/steps:\n[\s\S]*?(?=faqItems:)/, '')), expected.frontSHA256);
-  eq(lang + ' v2 only Usage removed from body', sha(body), expected.bodyWithoutUsageSHA256);
+  eq(lang + ' MDX content contract', contractProblems('markdown-preview', lang), '');
   check(lang + ' v2 Usage absent', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let mdxError = ''; try { await mdx.compile(body); } catch (e) { mdxError = String(e); }
   eq(lang + ' v2 remaining body compiles', mdxError, '');

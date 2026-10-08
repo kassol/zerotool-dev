@@ -25,6 +25,7 @@ import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/MorseCodeTranslatorTool.astro'), 'utf8');
@@ -411,12 +412,6 @@ process.removeListener('unhandledRejection', onUnhandled);
 const v2Start = passes;
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 // All pre-layout MDX except Usage; only notice-position phrases changed to status row.
-const MDX_HASHES = {
-  "en": "7f675b371c9d3211665249924e3a85587561d0b75c395483b6d846683a7ee3ac",
-  "zh": "7df16f610d643f48259f552e6f9c461d7e8854f849ffabb00cb944c091281d37",
-  "ja": "eb18c4369a1e277cce38ca1f830d45161aa9bcf1aebb0923707a9f82f139caaa",
-  "ko": "497067f4d093f36c5c48175cbf91d741d329a5023bfc29116e649fa965f3d968"
-};
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = source.split('<style>')[1].split('</style>')[0];
 check('v2 directly exposes the flex root', /^<div class="mct-wrap">/.test(markup) && /\.mct-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0/.test(css));
@@ -459,7 +454,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' v2 steps are plain text', steps.every(step => !/[<>]|\]\(|\*\*|`/.test(step)));
   check(lang + ' v2 steps use actual action labels', ['toMorse', 'toText', 'copy', 'clear'].every(key => steps.join(' ').includes(STRINGS[lang][key])));
   check(lang + ' v2 usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
-  eq(lang + ' v2 protects all remaining MDX including FAQ, examples and charts', sha256(mdx.replace(/^steps:\n[\s\S]*?(?=^faqItems:)/m, '')), MDX_HASHES[lang]);
+  eq(lang + ' MDX content contract', contractProblems('morse-code-translator', lang), '');
 }
 eq('v2 engine bytes unchanged', sha256(source.slice(startIndex, endIndex + END_MARK.length)), '94b0710579cac9cacf59c3d973a930b624b4e378fc929e20cd1551f0f9a1df29');
 console.log('v2 page layout: ' + (passes - v2Start) + ' passed');

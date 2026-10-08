@@ -21,9 +21,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
+import { contractProblems } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TextCaseTool.astro'), 'utf8');
@@ -399,13 +399,6 @@ console.log('page lifecycle: ' + (passes - lifecycleStart.passes) + ' passed, ' 
   const markup = source.split('\n---\n')[1].split('<script')[0];
   const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
   const css = source.split('<style is:global>')[1];
-  const sha = value => createHash('sha256').update(value).digest('hex');
-  const retained = {
-    en: { frontmatter: '5599a09054fc0549bf7c93a84ce4615cc4f27e9e0b318546fc7c87d7e4cbd791', bodyWithoutUsage: '0496eb63d3207212cd03443c218856230f4d463841bc70cffe6fd1e7e65da4d9' },
-    zh: { frontmatter: '3594faa8c1b7d3a60faebe8e9dfb5fa88728c9d42e3f211cc6248a50ee082af8', bodyWithoutUsage: 'c1139df342fd88a57bc11f632d08b278ebabd4b9ebd6d1f6b02e01cceb7d846a' },
-    ja: { frontmatter: '8cfd3e14f11f6e42914e5249f49d7e847e07f9de10625b24dca4679ab316cdfb', bodyWithoutUsage: '90c91aaef436500e0f6ceb2496e2acb4a1f48761d2ddf36f8ec8c740353968f6' },
-    ko: { frontmatter: '46fa839fecc65e360010f36fd8b3fb5c42140fbc433bec6bead77f1273927786', bodyWithoutUsage: '2aff1500ed2eeb7caa0aa26edf4d25ee132a1765442a9cc873ccc948a7e96f9b' },
-  };
   check('v2 outermost element is tool root', /^\s*<div class="tcase-wrap">/.test(markup));
   check('v2 root flex column can shrink', /\.tcase-wrap \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
   for (const cls of ['zt-io', 'zt-io-pane', 'zt-io-fill']) check('v2 shared ' + cls, markup.includes(cls));
@@ -445,8 +438,7 @@ console.log('page lifecycle: ' + (passes - lifecycleStart.passes) + ' passed, ' 
     eq(lang + ' four steps', steps.length, 4);
     check(lang + ' step size and plain text', steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['inputText', 'output', 'copy', 'copyFailed']) check(lang + ' steps use actual ' + key, steps.some(step => step.includes(T[key])));
-    eq(lang + ' original SEO/FAQ unchanged', sha(meta.replace(/^steps:\n(?:  .*\n)*/m, '')), retained[lang].frontmatter);
-    eq(lang + ' non-Usage body unchanged', sha(body), retained[lang].bodyWithoutUsage);
+    eq(lang + ' MDX content contract', contractProblems('text-case', lang), '');
     check(lang + ' Usage removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     check(lang + ' Limits retained', /<h2>(?:Limitations|限制|制限事項|제한 사항)<\/h2>/.test(body));
     for (const shellFirst of [false, true]) {
