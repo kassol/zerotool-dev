@@ -577,9 +577,19 @@ const CHIP_HTML = { hour: chipHtml(24, 0), day: chipHtml(31, 1), month: chipHtml
 
   // One analytics event per committed change (click, or change event of a text or number box),
   // and only when the expression is valid. Load and input events send nothing.
+  // A click on a control that is already selected leaves the schedule as it was: no event.
+  var lastTracked = null;
+  function scheduleKey() {
+    var exprInput = document.getElementById('cjg-expr');
+    return (exprInput ? exprInput.value.trim().split(/\s+/).join(' ') : '') + '|' + (useUtc ? 'utc' : 'local');
+  }
   function trackUpdate() {
     var exprInput = document.getElementById('cjg-expr');
-    if (exprInput && !checkExpression(exprInput.value).error) window.trackTool && window.trackTool('cron_job_generator', 'update');
+    if (!exprInput || checkExpression(exprInput.value).error) return;
+    var key = scheduleKey();
+    if (key === lastTracked) return;
+    lastTracked = key;
+    window.trackTool && window.trackTool('cron_job_generator', 'update');
   }
 
   /* ── engine:start ── */
@@ -1020,6 +1030,7 @@ const CHIP_HTML = { hour: chipHtml(24, 0), day: chipHtml(31, 1), month: chipHtml
   // Load persisted state or fall back to default preset (triggers rebuildExpression internally)
   var savedExpr = loadState();
   loadPreset(savedExpr || '0 9 * * 1-5');
+  lastTracked = scheduleKey();
 })();
 </script>
 

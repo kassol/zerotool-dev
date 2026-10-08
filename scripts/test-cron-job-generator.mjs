@@ -384,6 +384,20 @@ for(const lang of ['en','zh','ja','ko']){
   p.ctrlL(INPUT);assert('analytics: Ctrl+L sends no event',updates(p),5);
 }
 
+// Clicking a control that is already selected (same mode, same time zone, the preset that is
+// already loaded) or committing the same text does not change the schedule: no event.
+{
+  const updates=p=>p.tracks.filter(t=>t[1]==='update').length;
+  const p=ready('en');
+  p.doc.querySelector('.cjg-field[data-field="minute"] .cjg-mode-btn[data-mode="specific"]').click();
+  assert('analytics: re-clicking the selected mode sends no event',updates(p),0);
+  p.doc.querySelector('.cjg-tz-btn[data-tz="utc"]').click();assert('analytics: re-clicking the selected time zone sends no event',updates(p),0);
+  p.doc.querySelector('.cjg-btn-preset[data-expr="0 9 * * 1-5"]').click();assert('analytics: the preset already loaded sends no event',updates(p),0);
+  p.get(INPUT).dispatch('change');assert('analytics: committing the same expression sends no event',updates(p),0);
+  p.doc.querySelector('.cjg-tz-btn[data-tz="local"]').click();assert('analytics: a new time zone still sends one event',updates(p),1);
+  p.doc.querySelector('.cjg-tz-btn[data-tz="utc"]').click();assert('analytics: switching back sends one more',updates(p),2);
+}
+
 // ---------- S2-3c: field controls do not change the value silently ----------
 // Step and range values used to be clamped, swapped or replaced: step 0 became */1, step 75 in
 // Minute became */59 (runs at :00 and :59 instead of :00), weekday step 7 became */6, hour
