@@ -237,6 +237,56 @@ for (const [name, want] of [['週末さんぽ帖', 'example.com'], ['小王咖�
   check('preview domain for site name ' + name + ' is ' + want, p.$('mtg-preview').innerHTML.includes('>' + want + '<'), p.$('mtg-preview').innerHTML.slice(0, 400));
 }
 
+// ---------- tool pages (src/content/tools/meta-tag-generator/{lang}.mdx) ----------
+// `{/* mtg-check: {json} */}` before an ```html block. With "page": true the page script runs in the
+// page language (the form starts with the sample values for that language), each "input" entry is
+// applied in order (select: change event; boolean: checkbox `checked` + change; other: input event)
+// and the block must equal #mtg-output. Without "page" the block equals buildHead() on an empty form,
+// as in the guides. The block must sit after the annotation and before the next annotation or H2, and
+// every ```html block on the four tool pages must be such an output.
+{
+  const { fencedBlocks, toolMdxContract } = await import('./lib/tool-mdx-contract.mjs');
+  const emptyForm = {
+    title: '', description: '', canonical: '', siteName: '', author: '', keywords: '', language: 'en', themeColor: '',
+    robotsIndex: 'index', robotsFollow: 'follow', viewport: false, ogType: 'website', ogLocale: '', ogImage: '',
+    ogImageWidth: '', ogImageHeight: '', ogImageAlt: '', twCard: 'summary_large_image', twSite: '', twCreator: '', twImage: '', schemaType: '',
+  };
+  function toolPageOutput(example, lang) {
+    if (!example.page) return buildHead({ ...emptyForm, ...example });
+    const p = page(spec, lang);
+    for (const [id, value] of Object.entries(example.input || {})) {
+      const el = p.$(id);
+      if (typeof value === 'boolean') { el.checked = value; el.dispatch('change'); }
+      else p.input(id, value, el.tagName === 'SELECT' ? 'change' : 'input');
+    }
+    return p.$('mtg-output').textContent;
+  }
+  // `{/* mtg-count: {"title": "…", "description": "…"} */}`: type both into the page; the two counter
+  // texts ("N / 60", "M / 160") must appear as inline code after the annotation.
+  function counterTexts(example, lang) {
+    const p = page(spec, lang);
+    p.input('mtg-title', example.title); p.input('mtg-description', example.description);
+    return [p.$('mtg-title-counter').textContent, p.$('mtg-description-counter').textContent];
+  }
+  const inlineCode = (text, value) => text.includes('<code>' + value + '</code>') || text.includes('`' + value + '`');
+  const covered = { en: 0, zh: 0, ja: 0, ko: 0 };
+  const contract = toolMdxContract('meta-tag-generator', { annotations: [{ tag: 'mtg-check', min: 2, verify({ spec: example, after, lang }) {
+    const out = toolPageOutput(example, lang);
+    if (headOf(out).bodyNodes !== 0) return 'output does not parse as one head';
+    const hit = fencedBlocks(after).some((b) => b.text.trimEnd() === out);
+    if (hit) covered[lang]++;
+    return hit ? null : 'no fenced block after the annotation equals the generated head:\n' + out;
+  } }, { tag: 'mtg-count', verify({ spec: example, after, lang }) {
+    const missing = counterTexts(example, lang).filter((t) => !inlineCode(after, t));
+    return missing.length ? 'counter text not shown as inline code: ' + missing.join(', ') : null;
+  } }] });
+  for (const r of contract.results) check('tool page ' + r.message, r.ok);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const html = fencedBlocks(contract.docs[lang].body).filter((b) => b.lang === 'html').length;
+    check(lang + ' every html block on the tool page is a checked generator output', html === covered[lang], html + ' html blocks, ' + covered[lang] + ' checked');
+  }
+}
+
 // v2 presentation checks; all original engine/blog/live-dist and FIX lifecycle groups remain above.
 const baselineRetained = passes;
 const markupV2=source.slice(source.indexOf('---',3)+3,source.indexOf('<script is:inline'));
