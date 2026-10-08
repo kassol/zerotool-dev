@@ -17,7 +17,9 @@
 // Feb 29 across 2100, Feb 30 never) within a time limit; non-existent DST times skipped; a step
 // after a single number (5/10) is an error; 4-language STRINGS have the same keys; the English
 // guide (src/content/blog/cron-parser-guide/en.mdx): the examples table (description and next three
-// runs from 2026-10-01 08:00 local), the */35 runs, the quoted error messages and the DST example.
+// runs from 2026-10-01 08:00 local), the */35 runs, the quoted error messages and the DST example;
+// the analytics event is not sent for the automatic parse on load; tool pages: cp-check worked
+// examples in all four languages (description, run times from a fixed start and zone, messages).
 //
 // Run: node scripts/test-cron-parser.mjs
 
@@ -29,7 +31,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, withoutCode } from './lib/tool-mdx-contract.mjs';
 // Timing limits catch order-of-magnitude regressions; CI runners are several times slower than a dev machine.
 const PERF_SLACK = process.env.CI ? 4 : 1;
 
@@ -477,6 +479,88 @@ let moduleError = '';
 try { await require('esbuild').transform(compiled.code, { loader: 'ts', format: 'esm' }); } catch (error) { moduleError = String(error); }
 eq('v2 Astro generated module parses', moduleError, '');
 check('v2 registered as analyze', /'cron-parser':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
+
+// ---------- tool pages: cp-check worked examples (S2-3c) ----------
+// {/* cp-check: {"expr","from","tz","runs","desc"} */} or {"from","tz","cases":[{...}]} (case keys
+// override the outer ones). The engine parses `expr`; for a valid expression the description
+// (unless "desc": false) and the first `runs` run times, written `YYYY-MM-DD HH:MM` in time zone
+// `tz` from the local start `from` (exclusive, as on the page), must each appear verbatim as a
+// line of a code block or an inline code span after the comment (up to the next cp-check or H2).
+// "noRuns": true expects the no-run message instead. For an invalid expression ("error": true is
+// required) the page-language status message must appear. The run list on the page uses the
+// browser's date format; the annotations fix the start and the zone so the times do not depend on
+// the day the test runs.
+{
+  const ALL_S = new Function('return ' + stringsMatch[1])();
+  const codeSpans = (text) => {
+    const out = [];
+    for (const b of fencedBlocks(text)) out.push(...b.text.split('\n').map((l) => l.trim()));
+    const prose = withoutCode(text);
+    for (const m of prose.matchAll(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g)) out.push(m[2].trim());
+    for (const m of prose.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+      const inner = m[1].trim();
+      const js = /^\{\s*(['"])([\s\S]*)\1\s*\}$/.exec(inner);
+      out.push(js ? js[2].replace(/\\(['"\\])/g, '$1') : inner.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+    }
+    return out;
+  };
+  const messageFor = (err, lang) => {
+    const s = ALL_S[lang], names = [s.fMinute, s.fHour, s.fDay, s.fMonth, s.fWeekday];
+    if (err.code === 'empty') return s.errEmpty;
+    if (err.code === 'fields') return s.errFields.replace('{n}', err.n);
+    if (err.code === 'unsupported') return s.errUnsupported.replace('{token}', err.token).replace('{field}', names[err.field]);
+    if (err.code === 'step') return s.errStep.replace('{token}', err.token).replace('{field}', names[err.field]);
+    return s.errInvalid;
+  };
+  const savedTz = process.env.TZ;
+  const expected = (c, lang) => {
+    const r = E.parseCron(c.expr);
+    if (r.error) return c.error ? [messageFor(r.error, lang)] : { problem: c.expr + ' is invalid: ' + JSON.stringify(r.error) };
+    if (c.error) return { problem: c.expr + ' is valid but the annotation expects an error' };
+    const want = c.desc === false ? [] : [E.humanizeCron(r.fields)];
+    process.env.TZ = c.tz || 'UTC';
+    const [d, t] = String(c.from || '').split('T');
+    const [Y, M, D] = d.split('-').map(Number), [h, mi] = (t || '0:0').split(':').map(Number);
+    const list = E.nextRuns(r.fields, Math.max(c.runs || 0, 1), new Date(Y, M - 1, D, h, mi));
+    const shownRuns = list.slice(0, c.runs || 0).map((x) => x.getFullYear() + '-' + pad(x.getMonth() + 1) + '-' + pad(x.getDate()) + ' ' + pad(x.getHours()) + ':' + pad(x.getMinutes()));
+    process.env.TZ = savedTz;
+    if (c.noRuns) return list.length ? { problem: c.expr + ' has runs' } : want.concat(ALL_S[lang].noRuns);
+    return want.concat(shownRuns);
+  };
+  const covered = { en: [], zh: [], ja: [], ko: [] };
+  const verify = ({ spec, after, lang }) => {
+    const cases = spec.cases ? spec.cases.map((c) => ({ from: spec.from, tz: spec.tz, ...c })) : [spec];
+    const shown = codeSpans(after);
+    for (const c of cases) {
+      const want = expected(c, lang);
+      if (want.problem) return want.problem;
+      for (const w of want) {
+        if (!shown.includes(w)) return c.expr + ': "' + w + '" is not shown in code after the annotation';
+        covered[lang].push(w);
+      }
+    }
+    return null;
+  };
+  const annotationOpts = { annotations: [{ tag: 'cp-check', min: 2, verify }] };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq('cp-check ' + lang + ' MDX contract and worked examples', contractProblems('cron-parser', lang, annotationOpts), '');
+    // Every description-like code span on the page ("At …") comes from an annotation.
+    const body = readFileSync(join(root, 'src/content/tools/cron-parser', lang + '.mdx'), 'utf8').split(/^---$/m).slice(2).join('---');
+    const loose = codeSpans(body).filter((x) => /^At /.test(x) && !covered[lang].includes(x));
+    eq('cp-check ' + lang + ' every description in code is recomputed', loose, []);
+  }
+  process.env.TZ = savedTz;
+}
+// The four MDX files compile (an annotation that contains */ ends the MDX comment early).
+{
+  const mdx = await import(require.resolve('@mdx-js/mdx'));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const text = readFileSync(join(root, 'src/content/tools/cron-parser', lang + '.mdx'), 'utf8');
+    let error = '';
+    try { await mdx.compile(text.slice(text.indexOf('\n---\n', 4) + 5)); } catch (e) { error = String(e.message || e); }
+    eq('cron-parser ' + lang + ' MDX compiles', error, '');
+  }
+}
 
 console.log((failures ? 'FAILED' : 'PASSED') + ': ' + passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
