@@ -286,6 +286,15 @@ function open(s,lang='en',shellFirst=false){
     const steps=[...fm.matchAll(/^  - ("[^\n]*")$/gm)].map(m=>JSON.parse(m[1]));
     check(snap.lang+' plain bounded steps',steps.length>0&&steps.length<=8&&steps.every(s=>s.length<=280)&&steps.reduce((n,s)=>n+s.length,0)<=1200);
     check(snap.lang+' MDX content contract', !contractProblems('css-triangle-generator', snap.lang), contractProblems('css-triangle-generator', snap.lang));
+    // FAQ: the old second question (border hack) repeated the first; it is now the odd-size question,
+    // whose 25 → 12px + 13px split comes from the engine.
+    {
+      const faq=readToolMdx(slug,{root})[snap.lang].data.faqItems;
+      const ids=JSON.stringify(faq.map(f=>f.id));check(snap.lang+' FAQ id sequence',ids===JSON.stringify(['how-it-works','odd-size','width-height','clip-path-svg','dark-mode','privacy']),ids);
+      const split=E.computeBorders('top',25,10,'#000000').slice(0,2).map(r=>r.match(/\d+px/)[0]);
+      const odd=faq.find(f=>f.id==='odd-size');
+      check(snap.lang+' odd-size answer quotes the engine split',!!odd&&split.every(v=>odd.answer.includes(v))&&odd.answer.includes('25'),split.join('+'));
+    }
     check(snap.lang+' old Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(page));
   }
   console.log('V2 '+passes+' passed, '+failures+' failed');
