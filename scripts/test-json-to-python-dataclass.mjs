@@ -137,7 +137,7 @@ eq('B2: a root array of objects only has no alias', /RootArray/.test(E.generateP
 
 // Root class name: kept when it is a Python identifier that is not reserved; otherwise built by the
 // class-name rules, with "_" after a reserved name and Root when nothing usable is left.
-const ROOT_NAMES = [['User', 'User'], ['my_model', 'my_model'], ['用户', '用户'], ['order-item', 'OrderItem'], ['order item', 'OrderItem'], ['2fa', '_2fa'], ['class', 'class_'], ['None', 'None_'], ['List', 'List_'], ['str', 'str_'], ['!!!', 'Root'], ['ＵＳＥＲ', 'USER']];
+const ROOT_NAMES = [['User', 'User'], ['my_model', 'my_model'], ['用户', '用户'], ['order-item', 'OrderItem'], ['order item', 'OrderItem'], ['2fa', '_2fa'], ['class', 'class_'], ['None', 'None_'], ['List', 'List_'], ['str', 'str_'], ['!!!', 'Root'], ['ＵＳＥＲ', 'USER'], ['__proto__', '_proto__'], ['__Data', '_Data'], ['__init__', '_init__']];
 for (const [raw, want] of ROOT_NAMES) eq('root name ' + raw + ' → ' + want, (E.generatePython({ a: 1 }, raw, 'dataclass').code.match(/^class (.+):$/m) || [])[1], want);
 
 // A4: class names follow the Python identifier rules (PEP 3131): Unicode letters are kept, keywords,
@@ -164,7 +164,7 @@ if (py.status !== 0 || py.stdout.trim() !== 'True') {
     check('python runs the ' + mode + ' output', c.status === 0, c.stderr);
   }
   for (const [raw] of ROOT_NAMES) for (const mode of ['dataclass', 'typeddict']) {
-    const c = spawnSync(PY3, ['-c', E.generatePython({ a: 1, b: [{ c: 'x' }] }, raw, mode).code + "\nprint('ok')"], { encoding: 'utf8' });
+    const c = spawnSync(PY3, ['-c', E.generatePython({ a: 1, b: [{ c: 'x' }], 收货地址: { d: 1 } }, raw, mode).code + "\nprint('ok')"], { encoding: 'utf8' });
     eq('root name ' + raw + ' runs in Python (' + mode + ')', c.stdout.trim() || c.stderr.trim().split('\n').pop(), 'ok');
   }
   for (const [i, v] of TOPO_CASES.entries()) for (const mode of ['dataclass', 'typeddict']) {
@@ -186,8 +186,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 17255);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'ce112821ced43d4797b4c9d969521631776c17e180f4146d8fc4890e1f5fc917');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 17488);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'd2f2ef5e809b5a258f6013e7b5a6401c7bd92fa45e7f85260963527afe2bf712');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -405,7 +405,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "8ce85c827d6d836f358c052c979ce4606544f818ff3ab20cf058db9e68f5e1cc"
+  "scriptSHA": "b8774248fb908a30a899376725b64d1fe65cb7df036aae9a95728f33384ef90d"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
