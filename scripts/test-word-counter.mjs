@@ -146,15 +146,34 @@ eq('59 minutes', E.formatTime(59), '59 min');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('      // ── Keyboard shortcuts:'), layout.indexOf('      // ── Copy button visual feedback'));
 check('real shared shortcut block is available', shortcut.includes('window.ztPersist.clear(_slug)'));
+// Time units are localized (approved engine change, 2026-10-09): the page passes its language's
+// units to formatTime through data-units. Before the fix every language showed "min" / "hr".
+const UNITS = {
+  en: { zero: '0 min', under: '< 1 min', min: '{m} min', hrMin: '{h} hr {m} min' },
+  zh: { zero: '0 分钟', under: '不足 1 分钟', min: '{m} 分钟', hrMin: '{h} 小时 {m} 分钟' },
+  ja: { zero: '0 分', under: '1 分未満', min: '{m} 分', hrMin: '{h} 時間 {m} 分' },
+  ko: { zero: '0분', under: '1분 미만', min: '{m}분', hrMin: '{h}시간 {m}분' },
+};
+const tm = (lang, m) => UNITS[lang].min.replace('{m}', m);
+const pageStrings = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?);\nconst T/)[1] + ')');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq(lang + ' page passes its own time units', pageStrings[lang].units, UNITS[lang]);
+  eq(lang + ' formatTime 0', E.formatTime(0, UNITS[lang]), UNITS[lang].zero);
+  eq(lang + ' formatTime under a minute', E.formatTime(0.4, UNITS[lang]), UNITS[lang].under);
+  eq(lang + ' formatTime 5 minutes', E.formatTime(5, UNITS[lang]), tm(lang, 5));
+  eq(lang + ' formatTime 90.2 minutes', E.formatTime(90.2, UNITS[lang]), UNITS[lang].hrMin.replace('{h}', 1).replace('{m}', 31));
+}
+check('markup passes the units to the script', /class="wc-wrap" data-empty="true" data-units=\{JSON\.stringify\(T\.units\)\}/.test(source));
+check('markup starts both times at the localized zero', (source.match(/>\{T\.units\.zero\}</g) || []).length === 2);
 function page(lang, sharedFirst) {
   const nodes = new Map(), listeners = [], clears = [], tracks = [];
   for (const [, id] of source.matchAll(/id="(wc-[^"]+)"/g)) {
-    let text = id.includes('time') ? '0 min' : '0';
+    let text = id.includes('time') ? pageStrings[lang].units.zero : '0';
     nodes.set(id, { id, value: '', handlers: {}, get textContent() { return text; }, set textContent(v) { text = String(v); },
       addEventListener(type, fn) { this.handlers[type] = fn; }, focus() { document.activeElement = this; } });
   }
   let empty = 'true';
-  const widget = { dataset: { get empty() { return empty; }, set empty(value) { empty = value; if (value === 'true' && document.activeElement?.id === 'wc-tip-chars') document.activeElement = {}; } }, contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [nodes.get('wc-input')] };
+  const widget = { dataset: { units: JSON.stringify(pageStrings[lang].units), get empty() { return empty; }, set empty(value) { empty = value; if (value === 'true' && document.activeElement?.id === 'wc-tip-chars') document.activeElement = {}; } }, contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [nodes.get('wc-input')] };
   const document = { documentElement: { lang }, activeElement: nodes.get('wc-input'), getElementById: id => nodes.get(id),
     querySelector: s => ['.tool-widget', '.wc-wrap'].includes(s) ? widget : null, querySelectorAll: () => [], addEventListener: (type, fn) => { if (type === 'keydown') listeners.push(fn); } };
   const context = vm.createContext({ document, Intl, _slug: 'word-counter', window: { trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) } } });
@@ -170,21 +189,22 @@ function page(lang, sharedFirst) {
 }
 for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, true]) {
   const h = page(lang, sharedFirst), prefix = lang + '/sharedFirst=' + sharedFirst + ': ';
-  h.input('One two.'); eq(prefix + 'real full-page statistics', h.stats(), ['8', '7', '2', '1', '1', '< 1 min', '< 1 min']);
+  const U = UNITS[lang];
+  h.input('One two.'); eq(prefix + 'real full-page statistics', h.stats(), ['8', '7', '2', '1', '1', U.under, U.under]);
   for (const meta of [false, true]) for (const key of ['l', 'L']) {
     const before = h.stats();
     check(prefix + 'outside shortcut is inert', !h.key(key, meta, false)); eq(prefix + 'outside retains statistics', h.stats(), before);
     check(prefix + 'unmodified key is inert', !h.key(key, meta, true, false)); eq(prefix + 'unmodified retains statistics', h.stats(), before);
     const n = h.clears.length;
     check(prefix + key + '/' + meta + ' clears the tool', h.key(key, meta));
-    eq(prefix + 'all seven statistics reset with input', [h.nodes.get('wc-input').value, h.stats()], ['', ['0', '0', '0', '0', '0', '0 min', '0 min']]);
+    eq(prefix + 'all seven statistics reset with input', [h.nodes.get('wc-input').value, h.stats()], ['', ['0', '0', '0', '0', '0', U.zero, U.zero]]);
     eq(prefix + 'shared persistence clear runs once', h.clears.slice(n), ['word-counter']);
-    h.input('One two.'); eq(prefix + 'new input recovers', h.stats(), ['8', '7', '2', '1', '1', '< 1 min', '< 1 min']);
+    h.input('One two.'); eq(prefix + 'new input recovers', h.stats(), ['8', '7', '2', '1', '1', U.under, U.under]);
   }
   const beforeTipClear = h.clears.length;
   h.key('l', false, true, true, 'wc-tip-chars');
   eq(prefix + 'clearing from a statistic tip preserves shared persistence cleanup', h.clears.slice(beforeTipClear), ['word-counter']);
-  h.input(''); eq(prefix + 'ordinary empty input resets statistics', h.stats(), ['0', '0', '0', '0', '0', '0 min', '0 min']);
+  h.input(''); eq(prefix + 'ordinary empty input resets statistics', h.stats(), ['0', '0', '0', '0', '0', U.zero, U.zero]);
 }
 
 // ---------- analytics: one event per committed change, not per keystroke ----------
@@ -207,8 +227,8 @@ const strings = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = source.split('<style>')[1].split('</style>')[0];
 const script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
-eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [3534, '4365cd295c597da11c7723d4d571e72772a92f1565db53caa0465def5862b3d2']); // engine changed with approval 2026-10-09 (word count per script, reading rates)
-check('v2 direct flex root', /^<div class="wc-wrap" data-empty="true">/.test(markup) && /\.wc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [3832, '9161d18bda9b2896fbd22095abfd7ac9ec47a327d21207226ef54e77d1e11563']); // engine changed with approval 2026-10-09 (word count per script, reading rates, localized time units)
+check('v2 direct flex root', /^<div class="wc-wrap" data-empty="true" data-units=\{JSON\.stringify\(T\.units\)\}>/.test(markup) && /\.wc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
 check('v2 registered analyze', /'word-counter':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 check('v2 only actual automatic counting controls', !/<button|btn-primary|btn-copy|download/.test(markup));
 check('v2 runtime language replacement removed', !/data-i18n/.test(source) && !/STRINGS|tips|pageLang/.test(script));
@@ -233,10 +253,10 @@ for (const lang of ['en','zh','ja','ko']) {
   eq(lang + ' MDX content contract', contractProblems('word-counter', lang), '');
   const h = page(lang, false);
   eq(lang + ' v2 initial state is empty', h.widget.dataset.empty, 'true');
-  h.input(' \t\n'); eq(lang + ' v2 whitespace has meaningful character counts', [h.widget.dataset.empty, h.stats()], ['false', ['3','0','0','0','0','0 min','0 min']]);
-  h.input('👍 a'); eq(lang + ' v2 unicode uses the actual engine', h.stats(), ['4','3','2','1','1','< 1 min','< 1 min']);
+  h.input(' \t\n'); eq(lang + ' v2 whitespace has meaningful character counts', [h.widget.dataset.empty, h.stats()], ['false', ['3','0','0','0','0',UNITS[lang].zero,UNITS[lang].zero]]);
+  h.input('👍 a'); eq(lang + ' v2 unicode uses the actual engine', h.stats(), ['4','3','2','1','1',UNITS[lang].under,UNITS[lang].under]);
   const text = Array.from({ length: 1200 }, () => 'Hello world.').join('\n');
-  h.input(text); eq(lang + ' v2 long content keeps every count and minute', h.stats(), ['15599','13200','2400','1200','1','12 min','19 min']);
+  h.input(text); eq(lang + ' v2 long content keeps every count and minute', h.stats(), ['15599','13200','2400','1200','1',tm(lang, 12),tm(lang, 19)]);
   eq(lang + ' v2 long input is preserved', h.nodes.get('wc-input').value, text);
   h.key('l'); eq(lang + ' v2 keyboard clear restores empty layout', h.widget.dataset.empty, 'true');
 }
