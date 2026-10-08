@@ -215,7 +215,8 @@ const shortcut = shell.slice(shell.indexOf('// ── Keyboard shortcuts:'), she
 check('actual shared shortcut found', shortcut.includes("document.addEventListener('keydown'"));
 const allLabels = vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1] + '\n;STRINGS');
 const algorithm = ['hexToRgb\\(hex\\)', 'generate\\(\\)'].map(name => source.match(new RegExp('      function ' + name + ' \\{[\\s\\S]*?\\n      \\}'))[0]).join('\n\n');
-eq('generation algorithm bytes unchanged', createHash('sha256').update(algorithm).digest('hex'), '11fa791496bac41c5ddfad2bd6b860dd8527e6ae54716717a528441240c85990');
+// 2026-10-08: re-hashed after the per-input trackTool call moved out of generate() (the only change).
+eq('generation algorithm bytes unchanged', createHash('sha256').update(algorithm).digest('hex'), 'dbd6dcb50fb595bfe02e83eef66035797b75eebe710becb7c8fc806c8d6c8052');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 let currentPage;
 const unhandled = error => { if (currentPage) currentPage.unhandled.push(String(error)); };
@@ -294,6 +295,24 @@ function configure(h) {
   h.get('bsg-inset').checked = true; h.get('bsg-inset').fire('change');
 }
 const configuredCode = 'box-shadow: inset 12px -9px 42px -6px rgba(18, 52, 86, 0.73);';
+// Analytics: one `generate` event per committed change (change event), as in
+// color-palette-generator; none on load and none for each `input` event while dragging or typing.
+{
+  const h = page('en');
+  const g = () => h.tracks.filter(t => t.action === 'generate').length;
+  eq('GA: no generate event on load', g(), 0);
+  for (const v of [1, 2, 3, 4, 5]) h.input('bsg-h', v);
+  h.input('bsg-opacity', 55); h.input('bsg-color', '#ff0000'); h.input('bsg-color-hex', '#00ff00');
+  eq('GA: no generate event per input event', g(), 0);
+  h.input('bsg-h', 6, 'change');
+  eq('GA: one generate event when a slider is released', g(), 1);
+  for (const id of ['bsg-v', 'bsg-blur', 'bsg-spread', 'bsg-opacity']) h.input(id, 7, 'change');
+  h.input('bsg-color', '#123456', 'change'); h.input('bsg-color-hex', '#654321', 'change');
+  h.get('bsg-inset').checked = true; h.get('bsg-inset').fire('change');
+  eq('GA: one generate event per committed slider / picker / hex / inset change', g(), 8);
+  h.input('bsg-color-hex', '#12', 'change');
+  eq('GA: no generate event for an incomplete hex code', g(), 8);
+}
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' copy failure label exists', typeof allLabels[lang].copyFailed === 'string' && !!allLabels[lang].copyFailed);
   for (const shellFirst of [false, true]) {

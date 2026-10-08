@@ -119,10 +119,10 @@ function open(s,lang='en',shellFirst=false){
   function query(sel,within){return queryAll(sel,within)[0]||null;}
   const docHandlers={};document={currentScript:null,documentElement:{lang},getElementById:id=>ids.get(id)||null,querySelector:sel=>sel==='.tool-widget'?wrap:sel==='.tool-widget .btn-primary'?query('.btn-primary',wrap):query(sel),querySelectorAll:sel=>queryAll(sel),addEventListener:(k,f)=>(docHandlers[k]??=[]).push(f),dispatch(type,e){for(const f of docHandlers[type]||[])f(e);},body:{appendChild:c=>c},createElement:tag=>{const n=parseFragment('<'+tag+'></'+tag+'>').childNodes[0];adapt(n);return n;},execCommand:()=>false};
   adapt(tree);const wrap=query(s.root);wrap.closest=()=>wrap;
-  const timers=[],requests=[],assertions=[],persist={cleared:[],saved:[]},events={};let now=0,seq=0;
-  const h={s,L,document,ids,timers,requests,assertions,persist,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
+  const timers=[],requests=[],assertions=[],persist={cleared:[],saved:[]},events={},tracks=[];let now=0,seq=0;
+  const h={s,L,document,ids,timers,requests,assertions,persist,tracks,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
   active=h;
-  const globals={document,isSecureContext:true,navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{clear:slug=>persist.cleared.push(slug)},trackTool(){}};
+  const globals={document,isSecureContext:true,navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{clear:slug=>persist.cleared.push(slug)},trackTool(slug,action){tracks.push(slug+':'+action);}};
   globals.window=globals;const ctx=vm.createContext(globals);const shared='var _slug='+JSON.stringify(s.slug)+';\n'+shortcuts;if(shellFirst)vm.runInContext(shared,ctx);for(const m of source.matchAll(/<script is:inline>([\s\S]*?)<\/script>/g))vm.runInContext(m[1],ctx);if(!shellFirst)vm.runInContext(shared,ctx);h.page={run:code=>vm.runInContext(code,ctx)};h.wrap=wrap;
   return h;
 }
@@ -163,6 +163,26 @@ function open(s,lang='en',shellFirst=false){
     h.advance(1499);h.click('ctg-copy-html');h.requests[2].resolve();await settle();h.advance(1);check(lang+' HTML old timer invalid',h.el('ctg-copy-html').textContent,h.L.copied);h.advance(1500);check(lang+' HTML newest timer expires',h.el('ctg-copy-html').textContent,h.L.copy);
     h=open(spec,lang);h.click('ctg-copy-html');h.click('ctg-copy-css');h.requests[1].resolve();await settle();const before=h.state();h.requests[0].reject(new Error('HTML stale after CSS'));await settle();check(lang+' HTML stale rejection after CSS',[h.state(),h.el('ctg-copy-html').textContent,h.unhandled.length],[before,h.L.copy,0]);
     h=open(spec,lang);h.click('ctg-copy-css');h.click('ctg-copy-html');h.requests[1].resolve();await settle();h.requests[0].resolve();await settle();check(lang+' CSS stale success after HTML',[h.el('ctg-copy-css').textContent,h.el('ctg-copy-html').textContent],[h.L.copy,h.L.copied]);
+  }
+  // Analytics: one `generate` event per committed change (change event, direction click), as in
+  // color-palette-generator; none on load and none for each `input` event while typing or dragging.
+  {
+    const g=h=>h.tracks.filter(t=>t==='css-triangle-generator:generate').length;
+    let h=open(spec,'en');
+    check('GA: no generate event on load',g(h),0);
+    for(const v of ['1','12','125'])h.input('ctg-width',v);
+    h.input('ctg-height','40');h.input('ctg-picker','#ff0000');h.input('ctg-hex','#00ff00');
+    check('GA: no generate event per input event',g(h),0);
+    h.el('ctg-width').dispatch('change');
+    check('GA: one generate event on width change',g(h),1);
+    h.el('ctg-height').dispatch('change');h.el('ctg-picker').dispatch('change');h.el('ctg-hex').dispatch('change');
+    check('GA: one generate event per committed height / picker / hex change',g(h),4);
+    h.query('.ctg-dir-btn[data-dir="left"]').click();
+    check('GA: one generate event per direction click',g(h),5);
+    h.input('ctg-width','0');h.el('ctg-width').dispatch('change');
+    check('GA: no generate event for an invalid size',g(h),5);
+    h.input('ctg-hex','#12');h.el('ctg-hex').dispatch('change');
+    check('GA: no generate event for an incomplete hex code',g(h),5);
   }
   // Width and height: whole numbers from 1 to 500 (the inputs' min / max). Empty, 0, negative,
   // too large or fractional values show an error in the page language, clear the CSS and the
