@@ -14,7 +14,8 @@
 // counts quoted on the en tool page; STRINGS has the same keys in all four languages,
 // including the five strength labels (before the fix they were English on every page); the four
 // tool pages (src/content/tools/password-generator/{lang}.mdx): MDX contract plus `pwg-meter` /
-// `pwg-miss` worked examples recomputed with the engine and the page-language meter text.
+// `pwg-miss` worked examples recomputed with the engine and the page-language meter text; Copy writes
+// nothing while no password is shown, in every language (it used to compare with English text).
 //
 // Run: node scripts/test-password-generator.mjs
 
@@ -707,6 +708,25 @@ process.removeListener('unhandledRejection', onUnhandled);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
 console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
 process.exitCode = failures + lifecycleFail ? 1 : 0;
+
+// Copy decides by state, not by text: when no password is shown (the localized "Click Generate"
+// placeholder, or the localized "select a character set" message) the button writes nothing, in
+// every language. Before the fix it compared the text with the English 'Click Generate', so the
+// zh / ja / ko placeholder was copied as if it were a password.
+for (const lang of ['en', 'zh', 'ja', 'ko']) await attempt(lang + '/copy state', async () => {
+    const p = lifecyclePage(lang), L = lifecycleLabels(lang), out = p.get('pg-output'), btn = p.get('pg-copy');
+    out.textContent = L.clickGenerate; out.classList.remove('has-value'); btn.disabled = false;
+    let n = p.clipboard.length; btn.click(); await settle();
+    lifeCheck(lang + '/placeholder text is never copied', p.clipboard.length === n);
+    for (const id of ['pg-upper', 'pg-lower', 'pg-digits', 'pg-symbols']) { p.get(id).checked = false; p.get(id).dispatch('change'); }
+    lifeCheck(lang + '/no-charset message shown', out.textContent === JSON.parse(p.doc.querySelector('.pg-wrap').dataset.strings).noCharset);
+    btn.disabled = false; n = p.clipboard.length; btn.click(); await settle();
+    lifeCheck(lang + '/no-charset message is never copied', p.clipboard.length === n);
+    p.get('pg-upper').checked = true; p.get('pg-upper').dispatch('change');
+    n = p.clipboard.length; btn.click();
+    lifeCheck(lang + '/generated password is copied', p.clipboard.length === n + 1 && p.clipboard.at(-1).value === out.textContent && /^[A-Z]{20}$/.test(out.textContent));
+    p.clipboard.at(-1).resolve(); await settle();
+});
 
 // v2 page layout: source bindings, real four-language controls and structured usage.
 const featureTips = ['length', 'upper', 'lower', 'digits', 'symbols', 'ambiguous', 'generate', 'batch', 'copy', 'strength'];
