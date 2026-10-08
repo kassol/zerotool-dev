@@ -322,6 +322,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   p = page(lang, 'shared-after', { JSON: OLD_JSON }); p.type(s.right, BIG); p.advance(300);
   eq(lang + ' old browser keeps text, never a rounded value', p.get(s.left).value, 'id,n,tags,o.big,o.tiny,o.z,o.inf,s,ok\n1830000000000000001,1,"[""12345678901234567890"",1]",9007199254740993,1e-400,-0,1e400,1830000000000000001 in text,9007199254740992');
   check(lang + ' old browser status explains', p.get(s.p + '-status').textContent.includes(NOTE[lang].replace('{list}', '1830000000000000001, 12345678901234567890, 9007199254740993, 1e-400, -0, 1e400')), p.get(s.p + '-status').textContent);
+  // A long list is cut after 10 numbers, so the status line stays short.
+  const MORE = { en: ' and {n} more', zh: ' 等，共 {total} 个', ja: ' ほか {n} 個', ko: ' 외 {n}개' };
+  const ids = Array.from({ length: 13 }, (_, k) => String(1830000000000000001n + BigInt(k)));
+  p = page(lang, 'shared-after', { JSON: OLD_JSON }); p.type(s.right, '[' + ids.map(id => '{"id":' + id + '}').join(',') + ']'); p.advance(300);
+  check(lang + ' old browser status lists 10 numbers and a count', p.get(s.p + '-status').textContent.endsWith(NOTE[lang].replace('{list}', ids.slice(0, 10).join(', ') + MORE[lang].replace('{n}', 3).replace('{total}', 13))), p.get(s.p + '-status').textContent);
+  eq(lang + ' old browser writes all 13 ids as text', p.get(s.left).value, 'id\n' + ids.join('\n'));
   p = page(lang, 'shared-after', { JSON: OLD_JSON }); p.type(s.right, '[{"a":12345678901234567890,}]'); p.advance(300);
   eq(lang + ' old browser: syntax error still reported, no output', [p.get(s.left).value, p.get(s.p + '-status').classList.contains('error')], ['', true]);
 }
@@ -334,7 +340,7 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; the hash pins that reviewed script.
-eq('reviewed page script is unchanged', hash(script), 'a254d92b83fec844b64781fec0409571bb7eec5f7de2e893b8e97aa806f43f54');
+eq('reviewed page script is unchanged', hash(script), '0b5f3999caab4771a0d38cea46246a65bef94b1db7f33609906314aea0a6eedd');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
