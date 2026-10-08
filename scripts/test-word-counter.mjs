@@ -35,7 +35,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const E = new Function(block + '\nreturn { stats, formatTime };')();
+const E = new Function(block + "\nreturn { stats, formatTime, readingMinutes: typeof readingMinutes === 'function' ? readingMinutes : null, speakingMinutes: typeof speakingMinutes === 'function' ? speakingMinutes : null };")();
 
 let failures = 0;
 let passes = 0;
@@ -82,7 +82,52 @@ eq('empty', sentences(''), 0);
   eq('words split on whitespace only', s.words, 4);
 }
 eq('ko words = eojeol', E.stats('안녕하세요. 반갑습니다. 좋은 하루예요.').words, 4);
-eq('zh paragraph without spaces is 1 word', E.stats('今天天气很好。明天会下雨！').words, 1);
+// Word count (approved engine change, 2026-10-09): every Han, Hiragana and Katakana character
+// (half-width katakana included) is one word; Hangul and every other script are split on
+// whitespace; mixed text adds the two. Before the fix a Chinese or Japanese paragraph without
+// spaces counted as 1 word.
+const words = (t) => E.stats(t).words;
+eq('zh: each Han character is a word', words('今天天气很好。明天会下雨！'), 11);
+eq('ja: kana and kanji are words, punctuation is not', words('今日は晴れです。'), 7);
+eq('ja: the prolonged sound mark is part of katakana', words('ユーザー名'), 5);
+eq('ja: half-width katakana, voiced marks attach to the letter', words('ｶﾞｲﾄﾞ ガイド'), 6);
+eq('ja: 々 and 〆 are counted', words('時々〆切'), 4);
+eq('ja: astral kanji counts once', words('𠮷野家'), 3);
+eq('mixed: Han next to Latin in one token', words('用户ID 列表'), 5);
+eq('mixed: Latin, digit and Han with full-width spaces', words('使用　Vue 3　开发小程序'), 9);
+eq('mixed: Han between Latin letters splits them', words('A中B'), 3);
+eq('mixed: Hangul word plus kanji', words('한국어와 日本語'), 4);
+eq('emoji next to Han adds no word', words('好吃😋'), 2);
+eq('ko: Hangul is split on whitespace only', words('저는 꼼꼼한 사람입니다.'), 3);
+eq('ko: Hangul with an attached Latin word stays one word', words('회원ID 확인'), 2);
+eq('en unchanged: dash between spaces still a word', words('a — b'), 3);
+eq('en unchanged: hyphenated, decimal, URL', words('well-being 3.14 https://example.com/a'), 3);
+eq('whitespace only has no words', words(' \u3000\n '), 0);
+// Reading / speaking minutes: Latin and other words 200 / 130 per minute (unchanged); Korean
+// words 226 / 133 (Brysbaert 2019, Table 5); Chinese characters 390 / 228 per minute (Brysbaert
+// 2019: 260 / 152 wpm with 1.5 characters per word). Text with any kana is Japanese: no source
+// was found for Japanese, so its characters use 200 / 130 per minute as words.
+check('readingMinutes is exported', typeof E.readingMinutes === 'function');
+check('speakingMinutes is exported', typeof E.speakingMinutes === 'function');
+if (E.readingMinutes && E.speakingMinutes) {
+  const t = (fn, text) => E.formatTime(fn(E.stats(text)));
+  eq('zh 390 characters read in 1 min', t(E.readingMinutes, '字'.repeat(390)), '1 min');
+  eq('zh 391 characters read in 2 min', t(E.readingMinutes, '字'.repeat(391)), '2 min');
+  eq('zh 228 characters spoken in 1 min', t(E.speakingMinutes, '字'.repeat(228)), '1 min');
+  eq('zh 229 characters spoken in 2 min', t(E.speakingMinutes, '字'.repeat(229)), '2 min');
+  eq('ja 200 characters read in 1 min', t(E.readingMinutes, 'あ'.repeat(200)), '1 min');
+  eq('ja 201 characters read in 2 min', t(E.readingMinutes, 'あ'.repeat(201)), '2 min');
+  eq('ja kanji in a text with kana use the Japanese rate', t(E.readingMinutes, '字'.repeat(199) + 'あ'), '1 min');
+  eq('ja 131 characters spoken in 2 min', t(E.speakingMinutes, 'あ'.repeat(131)), '2 min');
+  eq('ko 226 words read in 1 min', t(E.readingMinutes, Array(226).fill('한글').join(' ')), '1 min');
+  eq('ko 227 words read in 2 min', t(E.readingMinutes, Array(227).fill('한글').join(' ')), '2 min');
+  eq('ko 133 words spoken in 1 min', t(E.speakingMinutes, Array(133).fill('한글').join(' ')), '1 min');
+  eq('ko 134 words spoken in 2 min', t(E.speakingMinutes, Array(134).fill('한글').join(' ')), '2 min');
+  eq('en 1,000 words read in 5 min', t(E.readingMinutes, Array(1000).fill('word').join(' ')), '5 min');
+  eq('en 1,000 words spoken in 8 min', t(E.speakingMinutes, Array(1000).fill('word').join(' ')), '8 min');
+  eq('mixed adds the parts: 100 en + 195 zh = 0.5 + 0.5 min', E.readingMinutes(E.stats(Array(100).fill('w').join(' ') + ' ' + '字'.repeat(195))), 1);
+  eq('empty text is 0 minutes', [E.readingMinutes(E.stats('')), E.speakingMinutes(E.stats(''))], [0, 0]);
+}
 eq('characters are UTF-16 code units', E.stats('👍 a').chars, 4);
 eq('characters without whitespace', E.stats('a b\tc\nd　e').charsNoSpaces, 5);
 eq('paragraphs split on blank lines', E.stats('one\n\ntwo\nstill two\n\n\nthree').paragraphs, 3);
@@ -162,7 +207,7 @@ const strings = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = source.split('<style>')[1].split('</style>')[0];
 const script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
-eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [1683, 'ceed0fc51136f9b4b92c36f42207404f9f0554369f3d15712413735d4b1335f1']);
+eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [3534, '4365cd295c597da11c7723d4d571e72772a92f1565db53caa0465def5862b3d2']); // engine changed with approval 2026-10-09 (word count per script, reading rates)
 check('v2 direct flex root', /^<div class="wc-wrap" data-empty="true">/.test(markup) && /\.wc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
 check('v2 registered analyze', /'word-counter':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 check('v2 only actual automatic counting controls', !/<button|btn-primary|btn-copy|download/.test(markup));
