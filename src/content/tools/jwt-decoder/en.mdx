@@ -9,17 +9,25 @@ steps:
   - "Use Copy in Header or Payload to copy that JSON with two-space indentation and no date notes."
   - "Use Clear or Ctrl/⌘+L while focus is in the tool to remove the token, results and status."
 faqItems:
-  - question: "Is my JWT token sent to any server?"
-    answer: "No. Decoding happens in your browser using JavaScript. Your token never leaves your machine."
-  - question: "Can this tool verify the JWT signature?"
+  - id: privacy
+    question: "Is my JWT token sent to any server?"
+    answer: "No. Decoding happens in your browser using JavaScript. The token is not sent to any server or written to browser storage, and this page does not load Google Analytics or AdSense."
+  - id: verify-signature
+    question: "Can this tool verify the JWT signature?"
     answer: "Signature verification requires the secret key or public key. This tool decodes and displays the payload without verifying the signature — use it to inspect claims only."
-  - question: "What are the three parts of a JWT?"
+  - id: three-parts
+    question: "What are the three parts of a JWT?"
     answer: "A JWT is three Base64URL-encoded parts separated by dots: Header (algorithm and token type), Payload (claims/data), and Signature (used to verify integrity)."
-  - question: "What does 'exp' mean in the payload?"
-    answer: "'exp' is the expiration time claim — a Unix timestamp indicating when the token expires. This tool shows a human-readable date next to the raw value."
+  - id: exp-claim
+    question: "What does 'exp' mean in the payload?"
+    answer: "'exp' is the expiration time claim — a Unix timestamp in seconds indicating when the token expires. This tool shows a human-readable date next to the raw value and marks it valid or EXPIRED by your device clock."
+  - id: utc-time
+    question: "Why are the dates shown in GMT instead of my time zone?"
+    answer: "The date notes are always UTC (written as GMT), whatever time zone your device uses. Add your offset to read them: Thu, 18 Jan 2018 01:30:22 GMT is 20:30:22 on 17 January in New York (UTC−5). The valid or EXPIRED mark compares the raw seconds with your clock, so it does not depend on the time zone."
 ---
 
 <h2>Examples</h2>
+{/* jwtd-check: {"example":true,"show":["payload","hints"]} */}
 <p><strong>The example token.</strong> <strong>Load Example</strong> fills in an HS256 token. The tool shows the header <code>{`{"alg":"HS256","typ":"JWT"}`}</code> and this payload:</p>
 
 ```json
@@ -32,13 +40,16 @@ faqItems:
 ```
 
 <p>Next to <code>iat</code> it prints <code>Thu, 18 Jan 2018 01:30:22 GMT</code>, and next to <code>exp</code> it prints <code>Tue, 01 Jan 2030 00:00:00 GMT — valid</code>. The dates are in UTC; "valid" or "EXPIRED" compares <code>exp</code> with your computer's clock and nothing else.</p>
+{/* jwtd-check: {"segment":"eyJuYW1lIjoiSm9zw6kiLCJyb2xlcyI6WyJhZG1pbiJdfQ"} */}
 <p><strong>Non-ASCII claims.</strong> The payload segment <code>eyJuYW1lIjoiSm9zw6kiLCJyb2xlcyI6WyJhZG1pbiJdfQ</code> decodes to <code>{`{"name":"José","roles":["admin"]}`}</code>. JSON in a JWT is UTF-8 (<a href="https://www.rfc-editor.org/rfc/rfc7519#section-7.1" target="_blank" rel="noopener">RFC 7519 §7.1</a>), so the decoder turns the Base64URL bytes into UTF-8 text before parsing. A decoder that only calls <code>atob()</code> shows <code>JosÃ©</code> instead.</p>
 <p>To decode a single segment without the token structure, paste it into <a href="/tools/base64/">Base64 Encode / Decode</a> with URL-safe selected. To build a test token with your own claims and secret, use the <a href="/tools/jwt-generator/">JWT Generator</a>.</p>
 
 <h2>What the Decoder Checks</h2>
 <ul>
-  <li>The input must have exactly three parts separated by dots. Otherwise the status shows "Invalid JWT: expected 3 dot-separated parts, got N." An encrypted JWE has five parts and cannot be read without the key (<a href="https://www.rfc-editor.org/rfc/rfc7516#section-3" target="_blank" rel="noopener">RFC 7516 §3</a>).</li>
-  <li>Header and payload must be Base64URL. Missing <code>=</code> padding is fine; other characters give "Failed to Base64URL-decode token parts."</li>
+  {/* jwtd-check: {"input":"a.b.c.d.e","token":"a.b.c.d.e","show":["status"]} */}
+  <li>The input must have exactly three parts separated by dots. Otherwise the status shows a message such as <code>Invalid JWT: expected 3 dot-separated parts, got 5.</code> for five parts. An encrypted JWE has five parts and cannot be read without the key (<a href="https://www.rfc-editor.org/rfc/rfc7516#section-3" target="_blank" rel="noopener">RFC 7516 §3</a>).</li>
+  {/* jwtd-check: {"token":"eyJhbGciOiJub25lIn0.e30.","prefix":"\"","suffix":"\"","show":["status"]} */}
+  <li>Header and payload must be Base64URL. Missing <code>=</code> padding and the standard <code>+</code> and <code>/</code> characters are accepted. A quote copied from a JSON response, as in <code>"eyJhbGciOiJub25lIn0.e30."</code>, or a <code>Bearer </code> prefix gives <code>Failed to Base64URL-decode token parts.</code> Paste the token alone.</li>
   <li>A segment that decodes but is not JSON is shown as "(unable to parse)".</li>
   <li>The signature is displayed as the raw Base64URL string and is <strong>not verified</strong>. A token with a forged payload looks exactly the same here as a genuine one. Never accept a token on the server because it decodes; verify the signature with the issuer's key, and check <code>exp</code>, <code>nbf</code>, <code>iss</code> and <code>aud</code> as <a href="https://www.rfc-editor.org/rfc/rfc8725#section-3" target="_blank" rel="noopener">RFC 8725 §3</a> recommends.</li>
 </ul>

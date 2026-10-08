@@ -9,27 +9,84 @@ steps:
   - "点 Header 或 Payload 的「复制」，复制缩进为两个空格的 JSON，不含日期注记。"
   - "点「清除」，或焦点在工具内时按 Ctrl/⌘+L，清除令牌、结果和状态。"
 faqItems:
-  - question: "我的 JWT 令牌会发送到服务器吗？"
-    answer: "不会。解码在浏览器中使用 JavaScript 完成，令牌不会离开您的设备。"
-  - question: "这个工具能验证 JWT 签名吗？"
-    answer: "签名验证需要密钥或公钥。此工具仅解码和显示 Payload，不验证签名——仅用于查看声明内容。"
-  - question: "JWT 的三个部分是什么？"
-    answer: "JWT 由三个 Base64URL 编码的部分组成，用点号分隔：Header（算法和令牌类型）、Payload（声明/数据）和 Signature（用于验证完整性）。"
-  - question: "Payload 中的 'exp' 是什么意思？"
-    answer: "'exp' 是过期时间声明——一个 Unix 时间戳，表示令牌何时过期。此工具会在原始值旁显示可读的日期。"
+  - id: privacy
+    question: "我的 JWT 会发送到服务器或被保存吗？"
+    answer: "不会。解码在浏览器里用 JavaScript 完成，令牌不会发送到任何服务器，也不会写入浏览器存储。本页不加载 Google Analytics 和 AdSense。"
+  - id: verify-signature
+    question: "这个工具能验证 JWT 签名吗？"
+    answer: "不能。验证签名需要签发方的密钥或公钥。本工具只解码并显示 Header 和 Payload，Signature 原样显示，用来查看声明内容。"
+  - id: three-parts
+    question: "JWT 的三个部分是什么？"
+    answer: "JWT 由三段 Base64URL 编码的内容组成，用点号分隔：Header（签名算法和令牌类型）、Payload（声明数据）和 Signature（用于校验令牌是否被改过）。"
+  - id: exp-claim
+    question: "Payload 里的 exp 是什么意思？"
+    answer: "exp 是过期时间声明，值是以秒为单位的 Unix 时间戳。本工具在原始数值旁显示可读日期，并按本机时钟标出 valid 或 EXPIRED。"
+  - id: utc-time
+    question: "为什么显示的时间比北京时间早 8 个小时？"
+    answer: "日期注记一律按 UTC 显示（写作 GMT），不随设备时区变化。北京时间是 UTC+8，看到的时间加 8 小时即可：Mon, 05 Oct 2026 15:59:59 GMT 就是北京时间 10 月 5 日 23:59:59。valid 或 EXPIRED 直接比较秒数与本机时钟，与时区无关。"
 ---
 
-<h2>什么是 JWT？</h2>
-<p>
-  JSON Web Token（JWT）是一种紧凑的、URL 安全的令牌格式，用于身份验证和信息交换。
-  它由三个 Base64URL 编码的部分组成，用点号分隔：
-</p>
+<h2>示例：查看业务系统签发的登录令牌</h2>
+<p>下面这个令牌由本站测试脚本用演示密钥 <code>zerotool-demo-secret-zh</code> 按 HS256 签出，不对应任何真实系统。载荷里有中文姓名和部门，<code>iat</code> 是北京时间 2026 年 10 月 5 日 8:00，<code>exp</code> 是同一天 23:59:59。把它粘贴进输入框，点「解码」：</p>
+{/* jwtd-check: {"header":{"alg":"HS256","typ":"JWT"},"payload":{"sub":"10086","name":"张三","dept":"研发部","iat":1791158400,"exp":1791215999},"secret":"zerotool-demo-secret-zh","show":["token","payload","hints"]} */}
+
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDA4NiIsIm5hbWUiOiLlvKDkuIkiLCJkZXB0Ijoi56CU5Y-R6YOoIiwiaWF0IjoxNzkxMTU4NDAwLCJleHAiOjE3OTEyMTU5OTl9.ra4F_l6uSTHmzMT6AOWLglbAZB1oSvSQVyT-GAW-9is
+```
+
+<p>Payload 区域显示下面的 JSON（点「复制」得到的也是它，不带日期注记）：</p>
+
+```json
+{
+  "sub": "10086",
+  "name": "张三",
+  "dept": "研发部",
+  "iat": 1791158400,
+  "exp": 1791215999
+}
+```
+
+<p>在北京时间 10 月 5 日早上 8 点打开时，<code>iat</code> 旁显示 <code>Mon, 05 Oct 2026 00:00:00 GMT</code>，<code>exp</code> 旁显示 <code>Mon, 05 Oct 2026 15:59:59 GMT — valid</code>。注记是 UTC，加 8 小时才是北京时间：00:00:00 对应 8:00:00，15:59:59 对应 23:59:59。过了当天 24 点再看，<code>exp</code> 旁就会变成 EXPIRED。</p>
+<p>「张三」「研发部」能正常显示，是因为工具先把 Base64URL 还原成字节，再按 UTF-8 解码。JSON 在系统之间传输时必须用 UTF-8（<a href="https://www.rfc-editor.org/rfc/rfc8259#section-8.1" target="_blank" rel="noopener">RFC 8259 §8.1</a>）。如果令牌是旧系统按 GBK 编码后签发的，中文会显示成替换字符 �。</p>
+
+<h2>粘贴时常见的几种失败</h2>
+<p>从接口文档、抓包工具或日志里复制令牌时，经常多带或少带几个字符。下面三种情况都要点「解码」才会看到提示，自动解码不会触发：</p>
 <ul>
-  <li><strong>Header：</strong>指定签名算法（如 HS256、RS256）和令牌类型。</li>
-  <li><strong>Payload：</strong>包含声明——关于实体（通常是用户）的陈述和附加元数据。</li>
-  <li><strong>Signature：</strong>确保令牌未被篡改。需要密钥或公钥来验证。</li>
+  {/* jwtd-check: {"header":{"alg":"HS256","typ":"JWT"},"payload":{"sub":"10086","name":"张三","dept":"研发部","iat":1791158400,"exp":1791215999},"secret":"zerotool-demo-secret-zh","prefix":"Bearer ","show":["status"]} */}
+  <li><strong>连 Bearer 一起复制。</strong>从请求头 <code>Authorization: Bearer eyJ...</code> 里复制时，如果带上了 <code>Bearer </code>，状态栏显示 <code>Base64URL 解码失败。</code>只保留 <code>eyJ</code> 开头的部分即可。</li>
+  {/* jwtd-check: {"header":{"alg":"HS256","typ":"JWT"},"payload":{"sub":"10086","name":"张三","dept":"研发部","iat":1791158400,"exp":1791215999},"secret":"zerotool-demo-secret-zh","prefix":"\"","suffix":"\"","show":["status"]} */}
+  <li><strong>连引号一起复制。</strong>接口返回 <code>{`{"token": "eyJ..."}`}</code> 时，复制的值如果带着两端的双引号，同样显示 <code>Base64URL 解码失败。</code></li>
+  {/* jwtd-check: {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDA4NiJ9","show":["status"]} */}
+  <li><strong>只复制了前两段。</strong>令牌太长、被界面折行时，容易漏掉最后一段签名。输入 <code>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDA4NiJ9</code> 会显示 <code>JWT 无效：应有 3 段，实际为 2.</code>。注意不带签名的 JWT（<code>alg</code> 为 <code>none</code>）结尾也有一个点，签名为空也是三段，可以正常解码。</li>
 </ul>
-<p>
-  常见声明包括 <code>sub</code>（主题）、<code>iss</code>（签发者）、<code>exp</code>（过期时间）、
-  <code>iat</code>（签发时间）和 <code>aud</code>（受众）。
-</p>
+
+<h2>exp 写成了毫秒怎么办</h2>
+<p>JWT 的时间声明是 NumericDate，单位是秒（<a href="https://www.rfc-editor.org/rfc/rfc7519#section-2" target="_blank" rel="noopener">RFC 7519 §2</a>）。Java 的 <a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/System.html#currentTimeMillis()" target="_blank" rel="noopener"><code>System.currentTimeMillis()</code></a> 返回的是毫秒，如果直接拿它算 <code>exp</code>，数值会大 1000 倍。下面这个演示令牌就是这样：</p>
+{/* jwtd-check: {"header":{"alg":"HS256","typ":"JWT"},"payload":{"uid":10086,"iat":1791158400,"exp":1791215999000},"secret":"zerotool-demo-secret-zh","show":["token","hints"]} */}
+
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOjEwMDg2LCJpYXQiOjE3OTExNTg0MDAsImV4cCI6MTc5MTIxNTk5OTAwMH0.9EaBcmkknqdMb0CmhJXZiLrWYNVcETdtgwq-X4Rf0Zg
+```
+
+<p><code>iat</code> 旁正常显示 <code>Mon, 05 Oct 2026 00:00:00 GMT</code>，<code>exp</code> 旁却显示 <code>Mon, 18 May 58731 15:43:20 GMT — valid</code>。年份变成五位数，就说明这个值是毫秒。这种令牌几乎永不过期，服务端校验 <code>exp</code> 时也拦不住它，应在签发处除以 1000。</p>
+
+<h2>解码不等于验证</h2>
+<p>Header 和 Payload 只是 Base64URL 编码，任何人都能解码，也能改掉其中的字段后重新编码。本工具不检查签名，所以一个被改过 Payload 的令牌在这里看起来和真令牌一模一样。服务端不能因为令牌「能解码」就信任它：要用签发方的密钥验证签名，再检查 <code>exp</code>、<code>nbf</code>、<code>iss</code>、<code>aud</code>（<a href="https://www.rfc-editor.org/rfc/rfc8725#section-3" target="_blank" rel="noopener">RFC 8725 §3</a>）。要生成带自定义声明的测试令牌，可以用 <a href="/zh/tools/jwt-generator/">JWT 生成器 / 签名器</a>。</p>
+
+<h2>限制</h2>
+<ul>
+  <li>只有 <code>exp</code>、<code>iat</code>、<code>nbf</code> 且值为数字（单位为秒）时才显示 UTC 日期，嵌套对象里的同名字段也会显示。原始数值保持不变，日期注记只显示到整秒。</li>
+  <li>「valid」「EXPIRED」、签名区的「not verified」说明和「(unable to parse)」在所有语言页面上都是英文。</li>
+  <li>Header 或 Payload 能解码但不是 JSON 时，对应区域显示「(unable to parse)」。</li>
+  <li>加密的 JWE 有五段，没有密钥无法读取，这里会提示应有 3 段（<a href="https://www.rfc-editor.org/rfc/rfc7516#section-3" target="_blank" rel="noopener">RFC 7516 §3</a>）。</li>
+  <li>令牌不会保存到任何地方。JWT 常常就是登录凭据，所以本页不加载统计和广告脚本。</li>
+</ul>
+
+<h2>JWT 的三个部分</h2>
+<p>JSON Web Token（JWT）是一种紧凑、可放进 URL 的令牌格式，常用于登录态和接口鉴权。它由三段 Base64URL 编码的内容组成，用点号分隔：</p>
+<ul>
+  <li><strong>Header：</strong>签名算法（如 HS256、RS256）和令牌类型。</li>
+  <li><strong>Payload：</strong>声明，即关于用户等实体的数据和附加信息。</li>
+  <li><strong>Signature：</strong>用来确认令牌没有被改过，验证时需要密钥或公钥。</li>
+</ul>
+<p>常见的注册声明有 <code>sub</code>（主体）、<code>iss</code>（签发方）、<code>exp</code>（过期时间）、<code>iat</code>（签发时间）、<code>nbf</code>（生效时间）和 <code>aud</code>（受众）。</p>

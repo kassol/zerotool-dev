@@ -9,16 +9,85 @@ steps:
   - "Header または Payload の「コピー」で、日付注記を含めず、空白 2 個のインデントで JSON をコピーします。"
   - "「クリア」、またはツール内にフォーカスがある状態の Ctrl/⌘+L で、トークン・結果・状態を消去します。"
 faqItems:
-  - question: "JWTとは何ですか？"
-    answer: "JWT（JSON Web Token）はJSONオブジェクトを安全に転送するためのコンパクトな標準形式です。認証情報やクレームを含み、ヘッダー・ペイロード・署名の3つの部分をドット（.）で区切って構成されます。"
-  - question: "JWTを検証できますか？"
-    answer: "このツールはJWTの内容を解析・表示しますが、署名の暗号学的検証は行いません。署名検証には秘密鍵または公開鍵が必要です。"
-  - question: "JWTは安全にこのツールで処理できますか？"
-    answer: "はい。すべての処理はブラウザ内で完結し、JWTが外部サーバーに送信されることはありません。ただし、機密性の高いJWTを信頼できない環境で扱う際は注意してください。"
-  - question: "有効期限チェックはどう動きますか？"
-    answer: "ペイロードにexp（有効期限）クレームが含まれている場合、現在時刻と比較して有効または期限切れを表示します。"
+  - id: privacy
+    question: "貼り付けた JWT はサーバーに送信・保存されますか？"
+    answer: "いいえ。デコードはブラウザ内の JavaScript で行い、トークンをサーバーに送信することも、ブラウザのストレージに保存することもありません。このページは Google Analytics と AdSense を読み込みません。"
+  - id: verify-signature
+    question: "署名の検証はできますか？"
+    answer: "できません。署名の検証には発行元の秘密鍵または公開鍵が必要です。このツールは Header と Payload をデコードして表示し、Signature は生の文字列のまま表示します。クレームの中身を確認する用途に使ってください。"
+  - id: three-parts
+    question: "JWT の 3 つの部分は何ですか？"
+    answer: "JWT は Base64URL でエンコードした 3 つの部分をドット（.）でつないだ文字列です。Header（署名アルゴリズムとトークンの種類）、Payload（クレーム）、Signature（改ざんされていないかを確かめるための値）です。"
+  - id: exp-claim
+    question: "Payload の exp は何を表しますか？"
+    answer: "exp は有効期限のクレームで、値は秒単位の UNIX 時間です。このツールは元の数値の横に読める日付を表示し、端末の時計と比べて valid または EXPIRED を付けます。"
+  - id: utc-time
+    question: "表示される時刻が日本時間より 9 時間早いのはなぜですか？"
+    answer: "日付注記は端末のタイムゾーンに関係なく、常に UTC（GMT と表記）で表示します。日本時間は UTC+9 なので 9 時間足して読みます。たとえばサンプルの Thu, 18 Jan 2018 01:30:22 GMT は、日本時間の 2018 年 1 月 18 日 10:30:22 です。valid／EXPIRED の判定は秒数どうしを比べるので、タイムゾーンの影響は受けません。"
 ---
 
+<h2>例：LINE ログインの ID トークンを読む</h2>
+<p>LINE Developers の「<a href="https://developers.line.biz/ja/docs/line-login/verify-id-token/" target="_blank" rel="noopener">IDトークンからプロフィール情報を取得する</a>」によると、LINE ログインの ID トークンは JWT で、ウェブログインでは <code>HS256</code>（検証用の鍵はチャネルシークレット）、ネイティブアプリや LINE SDK、LIFF アプリでは <code>ES256</code> で署名されます。下のトークンは、このページに載っているペイロードの例をそのまま使い、デモ用の文字列 <code>demo-channel-secret</code> で HS256 署名したものです。実際のチャネルとは関係ありません。</p>
+{/* jwtd-check: {"header":{"typ":"JWT","alg":"HS256"},"payload":{"iss":"https://access.line.me","sub":"U1234567890abcdef1234567890abcdef","aud":"1234567890","exp":1504169092,"iat":1504263657,"nonce":"0987654asdf","amr":["pwd"],"name":"Taro Line","picture":"https://sample_line.me/aBcdefg123456"},"secret":"demo-channel-secret","show":["token","payload","hints"]} */}
+
+```text
+eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2FjY2Vzcy5saW5lLm1lIiwic3ViIjoiVTEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmIiwiYXVkIjoiMTIzNDU2Nzg5MCIsImV4cCI6MTUwNDE2OTA5MiwiaWF0IjoxNTA0MjYzNjU3LCJub25jZSI6IjA5ODc2NTRhc2RmIiwiYW1yIjpbInB3ZCJdLCJuYW1lIjoiVGFybyBMaW5lIiwicGljdHVyZSI6Imh0dHBzOi8vc2FtcGxlX2xpbmUubWUvYUJjZGVmZzEyMzQ1NiJ9.5bqWZz1LSji2XkaXdR0_FS3Q_9E7Ocl9GF-B848uw70
+```
+
+<p>Payload には次の JSON が表示されます（「コピー」でも同じ内容がコピーされ、日付注記は含まれません）。</p>
+
+```json
+{
+  "iss": "https://access.line.me",
+  "sub": "U1234567890abcdef1234567890abcdef",
+  "aud": "1234567890",
+  "exp": 1504169092,
+  "iat": 1504263657,
+  "nonce": "0987654asdf",
+  "amr": [
+    "pwd"
+  ],
+  "name": "Taro Line",
+  "picture": "https://sample_line.me/aBcdefg123456"
+}
+```
+
+<p><code>exp</code> の横には <code>Thu, 31 Aug 2017 08:44:52 GMT — EXPIRED</code>、<code>iat</code> の横には <code>Fri, 01 Sep 2017 11:00:57 GMT</code> と表示されます。日本時間に直すと、有効期限は 2017 年 8 月 31 日 17:44:52、生成時刻は 9 月 1 日 20:00:57 です。ドキュメントの例の値では、有効期限が生成時刻より約 26 時間前になっています。デコーダーは値の前後関係を検査しないので、こうした不自然さは日付を見て自分で気づく必要があります。</p>
+<p>同じページには、LINE プラットフォームから直接受け取ったものでない ID トークンは、サーバーで検証するよう書かれています。検証用のエンドポイント（<code>https://api.line.me/oauth2/v2.1/verify</code>）も用意されています。このツールで中身を見られても、トークンが本物かどうかはわかりません。</p>
+
+<h2>例：日本語のクレームと日本時間</h2>
+<p>社内システムのトークンに日本語の氏名や役職が入っている例です。デモ用の秘密鍵 <code>zerotool-demo-secret-ja</code> で署名しました。<code>exp</code> は日本時間 2026 年 10 月 5 日 18:00 です。</p>
+{/* jwtd-check: {"header":{"alg":"HS256","typ":"JWT"},"payload":{"sub":"user-0042","name":"山田太郎","role":"店舗管理者","exp":1791190800},"secret":"zerotool-demo-secret-ja","show":["token","payload","hints"]} */}
+
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTAwNDIiLCJuYW1lIjoi5bGx55Sw5aSq6YOOIiwicm9sZSI6IuW6l-iIl-euoeeQhuiAhSIsImV4cCI6MTc5MTE5MDgwMH0.gq6FePfJmLKXKvgYkH3wmwbW8UegjMT3Hed2yipfQOE
+```
+
+```json
+{
+  "sub": "user-0042",
+  "name": "山田太郎",
+  "role": "店舗管理者",
+  "exp": 1791190800
+}
+```
+
+<p>日本時間の 10 月 5 日 9:00 に開くと、<code>exp</code> の横は <code>Mon, 05 Oct 2026 09:00:00 GMT — valid</code> です。GMT の 09:00 に 9 時間足した 18:00 が日本時間の期限です。18:00 を過ぎてから開くと EXPIRED に変わります。日本語が文字化けしないのは、Base64URL をバイト列に戻してから UTF-8 として読むためです（JSON は UTF-8 で交換すると <a href="https://www.rfc-editor.org/rfc/rfc8259#section-8.1" target="_blank" rel="noopener">RFC 8259 §8.1</a> で決まっています）。</p>
+
+<h2>貼り付けでよくある失敗</h2>
+{/* jwtd-check: {"header":{"alg":"HS256","typ":"JWT"},"payload":{"sub":"user-0042","name":"山田太郎","role":"店舗管理者","exp":1791190800},"secret":"zerotool-demo-secret-ja","prefix":"Authorization: Bearer ","show":["status"]} */}
+<p>リクエストヘッダーを行ごとコピーすると、トークンの前に <code>Authorization: Bearer</code> まで入ります。この形のまま「デコード」を押すと、状態欄に <code>Base64URL デコードに失敗しました。</code> と表示されます。<code>eyJ</code> から始まる部分だけを貼り付けてください。空白を含むので、300 ミリ秒後の自動デコードも動きません。</p>
+{/* jwtd-check: {"input":"a.b.c.d.e","token":"a.b.c.d.e","show":["status"]} */}
+<p>暗号化された JWE は 5 つの部分からなり、鍵がないと中身を読めません（<a href="https://www.rfc-editor.org/rfc/rfc7516#section-3" target="_blank" rel="noopener">RFC 7516 §3</a>）。5 つの部分がある入力では <code>無効な JWT：3 つのパートが必要です。実際: 5.</code> と表示されます。</p>
+
+<h2>制限</h2>
+<ul>
+  <li>日付を表示するのは、値が数値（秒）の <code>exp</code>・<code>iat</code>・<code>nbf</code> だけです。ネストしたオブジェクトの同名フィールドにも付きます。元の数値はそのまま表示し、日付注記は秒単位までです。ミリ秒の値を入れると、数万年先の日付になります。</li>
+  <li>「valid」「EXPIRED」、署名欄の「not verified」、「(unable to parse)」はどの言語のページでも英語です。</li>
+  <li>デコードはできても JSON でない部分は「(unable to parse)」と表示されます。</li>
+  <li>署名は検証しません。サーバー側では、発行元の鍵で署名を検証したうえで <code>exp</code>・<code>nbf</code>・<code>iss</code>・<code>aud</code> を確認してください（<a href="https://www.rfc-editor.org/rfc/rfc8725#section-3" target="_blank" rel="noopener">RFC 8725 §3</a>）。</li>
+  <li>トークンはどこにも保存しません。JWT はログインの資格情報そのものであることが多いため、このページは解析・広告のスクリプトを読み込みません。</li>
+</ul>
+
 <h2>JWTについて</h2>
-<p>JWTはウェブアプリケーションの認証・認可で広く使われています。ユーザーがログインするとサーバーはJWTを発行し、クライアントはその後のリクエストでJWTをAuthorizationヘッダーに含めて送信します。</p>
-<p>デバッグ時にJWTの内容（ユーザーID、ロール、有効期限など）を確認したい場合にこのツールが役立ちます。</p>
+<p>JWT はウェブアプリケーションの認証・認可で広く使われています。ユーザーがログインするとサーバーが JWT を発行し、クライアントはその後のリクエストで JWT を Authorization ヘッダーに入れて送ります。デバッグ中にトークンの中身（ユーザー ID、ロール、有効期限など）を確かめたいときにこのツールを使います。テスト用に自分でクレームを決めたトークンを作るには <a href="/ja/tools/jwt-generator/">JWT ジェネレーター / 署名ツール</a>が使えます。</p>
