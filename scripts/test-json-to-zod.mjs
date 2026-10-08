@@ -108,8 +108,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('protected engine byte count', Buffer.byteLength(engineLines), 4497);
-eq('protected engine SHA256', createHash('sha256').update(engineLines).digest('hex'), "450e4c5c4d815e1ed28c7028ed8a9982809b86fe3d17fe2b96fe09f3e1aa9de5");
+eq('protected engine byte count', Buffer.byteLength(engineLines), 4787);
+eq('protected engine SHA256', createHash('sha256').update(engineLines).digest('hex'), "a10358280158662f40bc389df30b6ab5f9ff7b7ac9989dd71670fece3a15a699");
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -331,7 +331,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ': v2 rendered tip ' + id, p.get('jtz-tip-' + id).textContent, L.tips[key]);
   }
   check(lang + ': v2 localized empty state', !!L.empty && layoutMarkup.includes('{L.empty}'));
-  eq(lang + ': v2 runtime dataset excludes tips', Object.keys(p.doc.querySelector('.jtz-wrap').dataset).sort().join(','), 'copied,copy,copyFailed,msgGenerated,msgInvalidJson');
+  eq(lang + ': v2 runtime dataset excludes tips', Object.keys(p.doc.querySelector('.jtz-wrap').dataset).sort().join(','), 'copied,copy,copyFailed,msgFailed,msgGenerated,msgInvalidJson');
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-zod/' + lang + '.mdx'), 'utf8');
   const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
@@ -452,6 +452,42 @@ const pageText = Object.fromEntries(['en', 'zh', 'ja', 'ko'].map((l) => [l, read
   check('ja: datetime with +09:00 needs offset: true', zods.v4.iso.datetime({ offset: true }).safeParse(dt).success && !zods.v4.iso.datetime().safeParse(dt).success
     && zods.v3.string().datetime({ offset: true }).safeParse(dt).success && !zods.v3.string().datetime().safeParse(dt).success);
   check('ja: status literal union exists in both', ['v3', 'v4'].every((v) => zods[v].union([zods[v].literal(200), zods[v].literal(400), zods[v].literal(500)]).safeParse(400).success));
+}
+
+// ---------- own-property keys: prototype names are ordinary JSON keys ----------
+{
+  let expr = '';
+  try { expr = E.buildRootZod(JSON.parse('[{"hasOwnProperty":1},{"a":2}]'), 'Root', false); } catch (e) { expr = 'THROW ' + e.message; }
+  eq('array items with a hasOwnProperty key', expr, 'z.array(z.object({\n    hasOwnProperty: z.number().int().optional(),\n    a: z.number().int().optional(),\n  }))');
+  eq('constructor / toString in every item stay required', E.buildRootZod(JSON.parse('[{"constructor":1,"toString":"a"},{"constructor":2,"toString":"b"}]'), 'Root', false),
+    'z.array(z.object({\n    constructor: z.number().int(),\n    toString: z.string(),\n  }))');
+  const protoSample = JSON.parse('[{"__proto__":{"a":1},"b":1},{"__proto__":{"a":2},"b":2}]');
+  const protoExpr = E.buildRootZod(protoSample, 'Root', false);
+  check('a __proto__ key is kept as a computed key', protoExpr.includes('["__proto__"]: z.object({'), protoExpr);
+  const protoObj = E.buildRootZod(JSON.parse('{"__proto__":{"a":1}}'), 'Root', false);
+  check('a __proto__ key of a single object is kept as a computed key', protoObj.includes('["__proto__"]: z.object({'), protoObj);
+  for (const [v, z] of Object.entries(zods)) {
+    let s; try { s = new Function('z', 'return ' + protoExpr + ';')(z); } catch (e) { s = null; }
+    check('__proto__ schema accepts its sample (' + v + ')', !!s && s.safeParse(protoSample).success);
+    check('__proto__ schema rejects an item without it (' + v + ')', !!s && !s.safeParse(JSON.parse('[{"b":1}]')).success);
+  }
+}
+
+// ---------- an engine error clears the old output and disables Copy ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(lang);
+  run(p);
+  check(lang + ': Copy is enabled with output', !p.get('jtz-copy').disabled);
+  const deep = '['.repeat(20000) + ']'.repeat(20000);
+  let thrown; try { run(p, deep); } catch (e) { thrown = e; }
+  check(lang + ': engine error does not escape the handler', !thrown, thrown && thrown.message);
+  eq(lang + ': engine error clears the old output', output(p), '');
+  check(lang + ': engine error is shown as an error', status(p).className.includes('error') && status(p).textContent.startsWith(pageLabels[lang].msgFailed || '\u0000'), status(p).textContent);
+  check(lang + ': engine error disables Copy', p.get('jtz-copy').disabled === true);
+  run(p);
+  check(lang + ': next result enables Copy again', !p.get('jtz-copy').disabled && output(p) === goldenCode);
+  p.get('jtz-clear').click();
+  check(lang + ': Clear disables Copy', p.get('jtz-copy').disabled === true);
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
