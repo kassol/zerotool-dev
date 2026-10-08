@@ -12,7 +12,10 @@
 // is only 19 bytes. Also: the RFC 7515 Appendix A.1 HS256 example signs to the published JWS;
 // HS384 / HS512 match node:crypto; header and payload are signed byte-for-byte as written (UTF-8,
 // non-ASCII); Base64 and base64url secrets with or without padding; invalid Base64 is rejected;
-// 4-language STRINGS keys.
+// 4-language STRINGS keys. Page: the payload must be a JSON object (RFC 7519 §7.2 step 10), a Base64
+// secret that decodes to 0 bytes and a failed signature show localized messages (the browser message
+// goes to the console only), Copy falls back to execCommand('copy'), and analytics send one event per
+// committed edit (change, algorithm, format) once its token exists, not per typing pause or on load.
 //
 // Run: node scripts/test-jwt-generator.mjs
 
@@ -149,6 +152,8 @@ function pageVM(lang, shellFirst) {
     get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
     set textContent(value) { this.text = String(value); this.children = []; }
     appendChild(e) { this.children.push(e); e.parentNode = this; return e; }
+    removeChild(e) { this.children = this.children.filter(c => c !== e); e.parentNode = null; return e; }
+    select() { document.selected = this; }
     contains(e) { return this === e || descendants(this).includes(e); }
     querySelectorAll(selector) { return descendants(this).filter(e => matches(e, selector)); }
     querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
@@ -183,9 +188,18 @@ function pageVM(lang, shellFirst) {
   }
   if (stack.length !== 1) throw Error('Incomplete source markup');
   document.getElementById = id => descendants(document).find(e => e.id === id) ?? null;
+  document.createElement = tag => new Element(tag);
+  // Copy fallback: 'forbidden' (default) throws, 'fail' returns false, 'ok' copies the selected textarea.
+  const exec = { mode: 'forbidden', calls: [] };
+  document.execCommand = cmd => {
+    exec.calls.push({ cmd, value: document.selected?.value, attached: !!document.selected && document.contains(document.selected) });
+    if (exec.mode === 'forbidden') throw Error('Forbidden unexpected execCommand');
+    return exec.mode === 'ok';
+  };
+  const errors = [];
   const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing actual source ID ' + id); return e; };
   const context = {
-    document, console, TextEncoder, TextDecoder, atob, btoa, _slug: 'jwt-generator',
+    document, console: { ...console, error: (...args) => errors.push(args.map(String).join(' ')) }, TextEncoder, TextDecoder, atob, btoa, _slug: 'jwt-generator',
     t: Object.fromEntries(Object.entries(PAGE_STRINGS[lang]).filter(([key]) => key !== 'tips')),
     crypto: { subtle: {
       importKey(...args) { return webcrypto.subtle.importKey(...args); },
@@ -218,8 +232,9 @@ function pageVM(lang, shellFirst) {
     now = target;
   }
   return {
-    get, document, copies, clears, tracks, timers, jobs, advance,
+    get, document, copies, clears, tracks, timers, jobs, advance, exec, errors, context,
     input(id, value) { get(id).value = value; get(id).dispatch('input'); },
+    change(id) { get(id).dispatch('change'); },
     key(key = 'l', modifier = 'ctrlKey', target = 'jg-header') { if (target === 'jg-header') get('jg-header-details').open = true; (target ? get(target) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
     copy() { const before = copies.length; get('jg-copy').click(); return copies.length > before ? copies.at(-1) : null; },
     setCopyThrows(value) { copyThrows = value; },
@@ -282,8 +297,13 @@ for (const lang of ['en','zh','ja','ko']) for (const shellFirst of [false, true]
     ['bad payload','jg-payload','{','jg-payload-err',t.errPayloadJson],
     ['empty key','jg-secret','','jg-secret-warn',t.errEmptySecret],
     ['invalid Base64','jg-secret','not base64!','jg-secret-warn',t.errBase64Secret],
+    ['whitespace-only Base64 key','jg-secret','   ','jg-secret-warn',t.errEmptyKey],
+    ['array payload','jg-payload','[1, 2]','jg-payload-err',t.errPayloadObject],
+    ['string payload','jg-payload','"user-42"','jg-payload-err',t.errPayloadObject],
+    ['number payload','jg-payload','42','jg-payload-err',t.errPayloadObject],
+    ['null payload','jg-payload','null','jg-payload-err',t.errPayloadObject],
   ]) {
-    const p = await populated(); if (name === 'invalid Base64') p.format('base64'); p.input(id,value); p.advance(500); await settle();
+    const p = await populated(); if (name === 'invalid Base64' || name === 'whitespace-only Base64 key') p.format('base64'); p.input(id,value); p.advance(500); await settle();
     eq(tag + ' ' + name + ' visible localized validation', p.get(errorId).textContent, error);
     eq(tag + ' ' + name + ' never starts another signing job', p.jobs.length, 1);
     eq(tag + ' ' + name + ' preserves typed text', p.get(id).value, value);
@@ -324,7 +344,8 @@ for (const lang of ['en','zh','ja','ko']) for (const shellFirst of [false, true]
   }
   {
     const p = await populated(); p.input('jg-payload','{"retry":true}'); p.advance(500); await p.waitJobs(2); await p.finish(1,'reject');
-    eq(tag + ' current sign failure is visible and old token erased', [p.snapshot().status,p.snapshot().statusClass,p.snapshot().token,p.snapshot().display], ['Error: controlled sign rejection','jg-status error','','none']);
+    eq(tag + ' current sign failure is visible, localized and old token erased', [p.snapshot().status,p.snapshot().statusClass,p.snapshot().token,p.snapshot().display], [t.errSign,'jg-status error','','none']);
+    check(tag + ' sign failure logs the browser message to the console only', p.errors.some(e => /controlled sign rejection/.test(e)) && !/controlled|Error:/.test(p.snapshot().status));
     p.input('jg-payload','{"retry":true}'); p.advance(500); await p.waitJobs(3); await p.finish(2);
     eq(tag + ' failed sign can retry same input', [p.snapshot().status,p.snapshot().display], [t.generated,'']);
   }
@@ -363,6 +384,59 @@ for (const lang of ['en','zh','ja','ko']) for (const shellFirst of [false, true]
     eq(tag + ' held old feedback timer after '+action,p.snapshot(),before);
   }
 }
+// ---------- copy fallback and analytics ----------
+for (const lang of ['en','zh','ja','ko']) {
+  const t = PAGE_STRINGS[lang];
+  const populated = async () => { const p = pageVM(lang, false); await p.waitJobs(1); await p.finish(0); return p; };
+  for (const kind of ['reject','throw','missing']) {
+    for (const mode of ['ok','fail']) {
+      const p = await populated(), token = p.snapshot().token; p.exec.mode = mode;
+      if (kind === 'throw') p.setCopyThrows(true);
+      if (kind === 'missing') p.context.navigator.clipboard = undefined;
+      const pending = kind === 'missing' ? null : (kind === 'throw' ? (p.get('jg-copy').click(), null) : p.copy());
+      if (kind === 'missing') p.get('jg-copy').click();
+      if (pending) pending.reject(Error('denied'));
+      await settle();
+      eq(lang + ' copy ' + kind + ' tries execCommand with the full token in an attached textarea', p.exec.calls.map(c => [c.cmd, c.value, c.attached]), [['copy', token, true]]);
+      eq(lang + ' copy ' + kind + ' fallback textarea is removed', p.document.selected ? p.document.selected.parentNode : 'no fallback textarea', null);
+      eq(lang + ' copy ' + kind + ' fallback ' + mode, [p.snapshot().copy, p.snapshot().status], mode === 'ok' ? [t.copied, t.generated] : [t.copy, COPY_FAILURE[lang]]);
+    }
+  }
+  {
+    // A refused copy that is already obsolete does not try the fallback.
+    const p = await populated(), pending = p.copy(); p.input('jg-payload', '{"sub":"NEW"}'); p.exec.mode = 'ok';
+    pending.reject(Error('late')); await settle();
+    eq(lang + ' obsolete copy rejection does not run execCommand', p.exec.calls.length, 0);
+  }
+  {
+    // Analytics: the automatic first token and typing pauses send nothing; a committed change
+    // (change event, algorithm or format) sends one event once its token exists; same state once.
+    const p = await populated();
+    eq(lang + ' first automatic token sends no event', p.tracks.length, 0);
+    p.input('jg-payload', '{"sub":"a"}'); p.advance(500); await p.waitJobs(2); await p.finish(1);
+    eq(lang + ' typing pause sends no event', p.tracks.length, 0);
+    p.change('jg-payload'); eq(lang + ' change after the token exists sends one event', p.tracks, [['jwt-generator','generate']]);
+    p.change('jg-payload'); p.change('jg-secret'); eq(lang + ' same inputs are not sent again', p.tracks.length, 1);
+    p.input('jg-payload', '{"sub":"b"}'); p.change('jg-payload'); await p.waitJobs(3);
+    eq(lang + ' change flushes the pending debounce at once', p.jobs.length, 3);
+    eq(lang + ' no event before the flushed token exists', p.tracks.length, 1);
+    await p.finish(2); eq(lang + ' flushed token sends its event', p.tracks.length, 2);
+    p.advance(1000); eq(lang + ' no second signing after the flush', p.jobs.length, 3);
+    p.input('jg-payload', '['); p.change('jg-payload'); p.advance(500); await settle();
+    eq(lang + ' invalid input sends no event', p.tracks.length, 2);
+    p.input('jg-payload', '{"sub":"b"}'); p.change('jg-payload'); await p.waitJobs(4); await p.finish(3);
+    eq(lang + ' returning to the last tracked inputs sends nothing', p.tracks.length, 2);
+    p.algo('HS512'); p.advance(500); await p.waitJobs(5); await p.finish(4);
+    eq(lang + ' algorithm change sends one event once signed', p.tracks.length, 3);
+    p.format('base64'); p.advance(500); await p.waitJobs(6); await p.finish(5);
+    eq(lang + ' format change sends one event once signed', p.tracks.length, 4);
+    p.key('l', 'ctrlKey', 'jg-payload');
+    p.input('jg-header', '{"alg":"HS512","typ":"JWT"}'); p.input('jg-secret', 'your-256-bit-secret'); p.input('jg-payload', '{"sub":"b"}'); p.change('jg-payload'); await p.waitJobs(7); await p.finish(6);
+    eq(lang + ' Ctrl+L resets the duplicate check', p.tracks.length, 5);
+    check(lang + ' every event is jwt-generator/generate', p.tracks.every(a => a[0] === 'jwt-generator' && a[1] === 'generate'));
+  }
+}
+
 await settle(); eq('all page Promise rejections handled',unhandled,[]);
 process.removeListener('unhandledRejection',onUnhandled);
 console.log('real page lifecycle: ' + (passes - pageStart) + ' passed');
