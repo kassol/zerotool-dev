@@ -649,7 +649,7 @@ if (E.buildExport && E.parseColor) {
 
 // ---------- 9. Real client script with DOM events ----------
 function makePage(lang) {
-  const ids = {}, clipboard = [], downloads = [], timers = [];
+  const ids = {}, clipboard = [], downloads = [], timers = [], tracks = [];
   const blobs = new Map();
   class Element {
     constructor(tag = 'div') {
@@ -700,7 +700,7 @@ function makePage(lang) {
     querySelector: (selector) => selector === '.tool-widget' ? widget : null
   });
   const context = vm.createContext({
-    document, S: STRINGS[lang], window: { ztPersist: { clear() {} } },
+    document, S: STRINGS[lang], window: { ztPersist: { clear() {} }, trackTool: (slug, action) => { tracks.push(slug + ':' + action); } },
     navigator: { clipboard: { writeText: async (text) => { clipboard.push(text); } } },
     location: { search: '', pathname: '/tools/color-shades-generator/' }, URLSearchParams, Blob,
     URL: { createObjectURL: (blob) => { const url = 'blob:' + blobs.size; blobs.set(url, blob); return url; }, revokeObjectURL() {} },
@@ -711,7 +711,7 @@ function makePage(lang) {
   const ux = layout.slice(layout.indexOf('{/* Tool UX enhancements:'));
   vm.runInContext(ux.match(/<script is:inline>([\s\S]*?)<\/script>/)[1], context);
   return {
-    ids, clipboard, downloads, document,
+    ids, clipboard, downloads, document, tracks,
     async flush() { await Promise.resolve(); while (timers.length) timers.shift()(); },
     change(id, value, type = 'input') { ids[id].value = value; ids[id].dispatch(type); }
   };
@@ -770,6 +770,32 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     page.change('csg-picker', '#16a34a');
     await validOutputs('picker recovery', [22, 163, 74]);
   }
+}
+
+// ---------- 10. Analytics: one `generate` event per committed change ----------
+// Same rule as css-triangle-generator / box-shadow-generator: no event on load and none for
+// each `input` event while typing or dragging; one event when a change is committed and the
+// scale is valid. Copy / download events stay as they are.
+{
+  const page = makePage('en'), el = page.ids;
+  const g = () => page.tracks.filter((t) => t === 'color-shades-generator:generate').length;
+  await page.flush();
+  equal('GA: no generate event on load', g(), 0);
+  for (const v of ['#1', '#16', '#16a', '#16a3', '#16a34', '#16a34a']) page.change('csg-input', v);
+  page.change('csg-picker', '#ff0000'); page.change('csg-picker', '#ff8800');
+  page.change('csg-hue-light', '10'); page.change('csg-hue-light', '20');
+  page.change('csg-hue-dark', '-10'); page.change('csg-name', 'b'); page.change('csg-name', 'brand');
+  equal('GA: no generate event per input event', g(), 0);
+  el['csg-input'].dispatch('change');
+  equal('GA: one generate event on color text change', g(), 1);
+  el['csg-picker'].dispatch('change'); el['csg-hue-light'].dispatch('change');
+  el['csg-hue-dark'].dispatch('change'); el['csg-name'].dispatch('change');
+  equal('GA: one event per committed picker / hue / name change', g(), 5);
+  page.change('csg-anchor', '500', 'change'); page.change('csg-format', 'tw3', 'change'); page.change('csg-values', 'oklch', 'change');
+  equal('GA: one event per select change', g(), 8);
+  page.change('csg-input', '#zz'); el['csg-input'].dispatch('change');
+  page.change('csg-format', 'css', 'change');
+  equal('GA: no generate event while the color is invalid', g(), 8);
 }
 
 // ---------- v2 page layout ----------
