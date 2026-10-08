@@ -122,12 +122,31 @@ class Product(TypedDict):
 
 <ul>
   <li><code>{"null"}</code> becomes <code>{"Optional[Any]"}</code>; replace <code>{"Any"}</code> with the real type.</li>
-  <li>Keys that are not valid Python identifiers (for example <code>{"user-id"}</code> or keywords such as <code>{"class"}</code>) need renaming, plus <code>{"Field(alias=\"user-id\")"}</code> in Pydantic.</li>
+  <li>Keys that cannot be field names as they are (keywords such as <code>{"class"}</code>, keys like <code>{"user-id"}</code> or <code>2fa</code>, keys that start with <code>{"__"}</code> or name a type the annotations use, and in Pydantic keys that start with <code>{"_"}</code> or name a <code>BaseModel</code> attribute such as <code>json</code>) get a valid name. @dataclass notes the JSON key in a comment (map it yourself before <code>{"Root(**data)"}</code>), Pydantic adds <code>{"Field(alias=...)"}</code> so <code>{"model_validate()"}</code> reads the original key, and TypedDict switches to the functional form <code>{'TypedDict("Name", {...})'}</code>, which keeps every key. See the example below.</li>
   <li>Dates stay <code>{"str"}</code>; Pydantic converts ISO 8601 strings if you change the type to <code>{"datetime"}</code>.</li>
   <li>Arrays of primitives at the root generate no class. In a root array that mixes objects and other values, the objects become the root class and the whole array gets an alias at the end, <code>{"ProductArray = List[Union[...]]"}</code> (see below).</li>
   <li>A number written as <code>10.0</code> reaches the generator as the integer <code>10</code> (JavaScript's <code>JSON.parse</code> keeps no trailing zeros), so <code>{"price: int"}</code>. Pydantic then rejects a later <code>10.5</code> with <code>Input should be a valid integer, got a number with a fractional part</code>; change the field to <code>float</code> when prices can have decimals.</li>
   <li>The root class name is used as typed when it is a Python identifier; otherwise it is converted: <code>{"order-item"}</code> → <code>OrderItem</code>, <code>2fa</code> → <code>{"_2fa"}</code>, the keyword <code>class</code> → <code>{"class_"}</code>, a leading <code>{"__"}</code> becomes one <code>{"_"}</code> (nested class names start with the root name, and Python mangles names that start with two underscores inside a class body), and <code>Root</code> when no identifier character is left.</li>
 </ul>
+
+<h2>Keys That Are Not Field Names</h2>
+
+{/* jpdc-check: {"root":"Ticket","mode":"pydantic"} */}
+
+<p>A MongoDB-style <code>{"_id"}</code>, a keyword, a dashed key and <code>json</code>, which is a <code>BaseModel</code> method (root class name <code>Ticket</code>, Pydantic v2 mode):</p>
+
+<pre><code>{`{"_id": "65f0c1", "class": "economy", "user-id": 7, "json": null}`}</code></pre>
+
+<pre><code>{`from pydantic import BaseModel, Field
+from typing import Any, Optional
+
+class Ticket(BaseModel):
+    id: str = Field(alias="_id")
+    class_: str = Field(alias="class")
+    user_id: int = Field(alias="user-id")
+    json_: Optional[Any] = Field(default=None, alias="json")`}</code></pre>
+
+<p>In @dataclass mode <code>{"_id"}</code> and <code>json</code> stay (they are valid there) and the other two get <code>{"class_"}</code> and <code>{"user_id"}</code> with a <code>{"# JSON key"}</code> comment; in TypedDict mode the output is <code>{'Ticket = TypedDict("Ticket", {"_id": str, "class": str, ...})'}</code>. The tool's test runs all three in Python 3.12 and 3.14 and reads samples back.</p>
 
 <h2>Repeated Key Names</h2>
 
