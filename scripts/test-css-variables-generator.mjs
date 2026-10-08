@@ -5,6 +5,8 @@
 //        src/content/tools/css-variables-generator/en.mdx,
 //        src/content/blog/css-variables-generator-guide/en.mdx (the default output, `cvg-check`
 //        prefix/rows → css block, and the `cvg-sass` example compiled with the installed Dart Sass)
+//        src/content/tools/css-variables-generator/{lang}.mdx (`cvg-default` / `cvg-check` examples
+//        recomputed through the page script),
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -22,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseFragment } from 'parse5';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssVariablesGeneratorTool.astro'), 'utf8');
@@ -193,6 +195,38 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','s
   for(const event of ['input','CtrlL']){h=open(spec,lang,order);h.click();h.requests[0].resolve();await settle();const timer=h.timers.find(t=>t.ms===1500);if(event==='input')changePage(h);else h.key('l');const before=h.state();timer.fn();assertEq(name+'old timer after '+event,h.state(),before);}
   h=open(spec,lang,order);h.key('l');h.click();assertEq(name+'empty result is never copied',h.requests.length,0);
 }
+// ---------- tool page MDX (src/content/tools/css-variables-generator/{lang}.mdx): worked examples ----------
+// The examples are recomputed through the page script (the same stand-in DOM as above), not through
+// the engine alone. `cvg-default`: a fresh page; a code block between the annotation and the next
+// cvg-default or H2 must equal the generated CSS. `cvg-check: {"prefix","tokens":[[name, value, group?]]}`:
+// remove every pre-filled row, add each token with "+ Add Token" in its group (default "colors"), type the
+// name and value, then type the prefix; a code block between the annotation and the next cvg-check or H2
+// must equal the generated CSS. Each language needs one cvg-default and at least two cvg-check examples.
+{
+  function pageCss(lang, c) {
+    const h = open(spec, lang);
+    if (c) {
+      for (const b of h.all('.cvg-remove-btn')) b.click();
+      for (const [name, value, group = 'colors'] of c.tokens) {
+        const section = h.all('.cvg-group').find((g) => g.dataset.groupId === group);
+        if (!section) throw new Error('unknown group ' + group);
+        section.querySelector('.cvg-add-btn').click();
+        const row = section.querySelectorAll('.cvg-token-row').at(-1);
+        const n = row.querySelector('.cvg-token-name'); n.value = name; n.dispatch('input');
+        const v = row.querySelector('.cvg-token-value'); v.value = value; v.dispatch('input');
+      }
+      h.input('cvg-prefix', c.prefix);
+    }
+    return h.el(spec.output).textContent;
+  }
+  const blockEquals = (after, out) => (fencedBlocks(after).some((b) => b.text === out) ? null : 'no code block equals ' + JSON.stringify(out));
+  const contract = toolMdxContract('css-variables-generator', { annotations: [
+    { tag: 'cvg-default', min: 1, verify: ({ after, lang }) => blockEquals(after, pageCss(lang, null)) },
+    { tag: 'cvg-check', min: 2, verify: ({ spec: c, after, lang }) => blockEquals(after, pageCss(lang, c)) },
+  ] });
+  for (const r of contract.results) check('tool MDX: ' + r.message, r.ok, r.message);
+}
+
 active=null;process.removeListener('unhandledRejection',unhandled);
 
 // ---------- generate layout and four-language reference protection ----------
