@@ -335,6 +335,7 @@ function page(lang,order){
  function event(el,type,values={}){const e=document.createEvent('Event');e.initEvent(type,true,true);Object.assign(e,values);try{el.dispatchEvent(e);}catch(error){errors.push(String(error));}return e;}
  return{document,input,prefix,result,error,btn,clipboard,clears,tracks,errors,effects,timers,navigator,
   type(value){input.value=value;event(input,'input');},
+  commit(){event(input,'change');},
   select(value){prefix.value=String(value);event(prefix,'change');},
   tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
   key(el,values){focus(el);return event(el,'keydown',{ctrlKey:false,metaKey:false,...values});},
@@ -407,6 +408,31 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
   const p=page(lang,order);p.type('');p.tick(250);p.click();eq(tag+' hidden old result cannot be copied',p.clipboard.length,0);eq(tag+' no network or fallback effects',p.effects,[]);
  }
 }
+// Analytics: render() used to send `calculate` on load and after every 250 ms pause while typing.
+// Now the change event of the address field sends one event when it shows a result (it renders at
+// once, so a quick Tab before the pause still counts), and a prefix menu change sends one.
+for(const lang of ['en','ja']){
+ const p=page(lang,'shared-after');
+ eq(lang+' GA: nothing on load',p.tracks.length,0);
+ for(const v of ['10','10.0.0','10.0.0.5/2','10.0.0.5/26']){p.type(v);p.tick(250);}
+ eq(lang+' GA: typing and pausing sends nothing',p.tracks.length,0);
+ p.commit();eq(lang+' GA: committing a valid address sends one calculate',p.tracks,[['ip_subnet_calculator','calculate']]);
+ p.type('10.0.0.01');p.commit();eq(lang+' GA: committing an invalid address sends nothing',[p.tracks.length,p.result.hidden],[1,true]);
+ p.type('192.168.1.7/24');p.commit();eq(lang+' GA: change renders before the 250 ms pause',[p.tracks.length,p.cells()[7]],[2,'192.168.1.0/24']);
+ p.select(26);eq(lang+' GA: a prefix change sends one calculate',p.tracks.length,3);
+ p.type('');p.commit();eq(lang+' GA: committing an empty field sends nothing',p.tracks.length,3);
+}
+// IME input: full-width digits, dots and slash (NFKC) and the ideographic full stop 。 that a
+// Chinese or Japanese IME writes for "." are read as ASCII; the field text is not rewritten.
+for(const lang of ['zh','ja','ko']){
+ for(const [typed,cidr] of [['１９２．１６８．１．７７／２６','192.168.1.64/26'],['192。168。1。77/26','192.168.1.64/26'],['１０．０．０．５',null]]){
+  const p=page(lang,'shared-after');p.select(28);p.type(typed);p.tick(250);
+  eq(lang+' IME '+typed+' gives a result',[p.result.hidden,p.error.hidden,p.cells()[7]],[false,true,cidr??'10.0.0.0/28']);
+  eq(lang+' IME '+typed+' field unchanged',p.input.value,typed);
+ }
+ const q=page(lang,'shared-after');q.type('10.0.0.5／24');q.tick(250);q.select(30);
+ eq(lang+' prefix menu rewrites after a full-width slash',[q.input.value,q.cells()[7]],['10.0.0.5/30','10.0.0.4/30']);
+}
 process.removeListener('unhandledRejection',onUnhandled);
 const protectedEngine=source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
 eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),2859);
@@ -419,7 +445,8 @@ const compiled=await astroRequire('@astrojs/compiler').transform(source,{filenam
 check('v2 Astro compilation diagnostics',!compiled.diagnostics.some(d=>d.severity===1));
 let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){moduleError=String(e);}eq('v2 generated module parses',moduleError,'');
 const css=compiled.css.join('\n'),hash=v=>createHash('sha256').update(v).digest('hex');
-eq('v2 whole client core retained after build-time localization',hash(source.slice(source.indexOf('      var inputEl    ='),source.indexOf('  </script>'))),'2e5e3700cc84a92770e1a43c33f82b141010a1a799e6ad9d31d374f1fa487850');
+// Updated 2026-10-08 (S2-4): readInput() for IME text and track() on change replace the trackTool call in render().
+eq('v2 whole client core retained after build-time localization',hash(source.slice(source.indexOf('      var inputEl    ='),source.indexOf('  </script>'))),'404bacd421f263ae9007b0ab42bb7031acb2f49add2f241cb28b523b0618d179');
 check('v2 direct flex root',/^<div class="isc-wrap">/.test(markupTemplate)&&/\.isc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
 check('v2 controls then stable status then full-width result',markupTemplate.indexOf('isc-inputs')<markupTemplate.indexOf('isc-status')&&markupTemplate.indexOf('isc-status')<markupTemplate.indexOf('isc-result-section'));
 check('v2 fixed status and long error scroll',/\.isc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css)&&/@media\s*\(max-width:\s*860px\)[\s\S]*?height:\s*4\.2em/.test(css));
