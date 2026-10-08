@@ -1,6 +1,6 @@
 // Markdown Linter — the results quoted on the English page come from markdownlint
 //
-// Read:  src/components/tools/MarkdownLinterTool.astro, src/content/tools/markdown-linter/en.mdx
+// Read:  src/components/tools/MarkdownLinterTool.astro, MarkdownPreviewTool.astro (engine block), src/content/tools/markdown-linter/{en,zh,ja,ko}.mdx
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -23,7 +23,9 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { compile } from '@mdx-js/mdx';
 import { toolSteps } from '../src/data/llms.mjs';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks, readToolMdx } from './lib/tool-mdx-contract.mjs';
+import { micromark } from 'micromark';
+import { gfm, gfmHtml } from 'micromark-extension-gfm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/MarkdownLinterTool.astro'), 'utf8');
@@ -427,6 +429,61 @@ for (const [name, code, bytes, hash] of protectedParts) {
   check('compiled dynamic selectors resolve global syntax', !compiledCSS.includes(':global(') && /\.ml-wrap[^{}]* \.ml-issue\s*\{/.test(compiledCSS) && /\.ml-wrap[^{}]* \.ml-desc\s*\{/.test(compiledCSS));
   check('compiled empty selector targets real result state', /\.ml-wrap[^{}]*:has\(#ml-results[^)]*\[data-empty="true"\][^)]*\)/.test(compiledCSS));
   console.log('v2 page layout: ' + (passes - beforePasses) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
+
+// ---------- Worked examples on the four tool pages (S2) ----------
+// `{/* mdl-check: {"eol": true} */}` is followed by two code blocks: the Markdown input (with a
+// final line break added when eol is true, because a <pre> block drops it) and exactly what Copy
+// Results writes for it in that page language, or the "no issues" summary when markdownlint
+// reports nothing. The input is linted with the real markdownlint, the same call as the page.
+{
+  const start = passes;
+  const linted = new Map();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readToolMdx('markdown-linter')[lang].body;
+    for (const note of annotations(body, 'mdl-check')) {
+      const [input] = fencedBlocks(body.slice(note.index));
+      if (input) {
+        const content = input.text + (note.spec?.eol ? '\n' : '');
+        if (!linted.has(content)) linted.set(content, await run(content));
+      }
+    }
+  }
+  // The blocks are read from the annotation onward, not from `after`: example inputs contain
+  // `## ` heading lines, which annotations() treats as the end of the section.
+  const mdlCheck = { tag: 'mdl-check', min: 2, verify({ spec, index, body, lang }) {
+    if (!spec || typeof spec.eol !== 'boolean') return 'spec needs "eol": true or false';
+    const [input, output] = fencedBlocks(body.slice(index));
+    if (!input || !output) return 'needs an input block and an output block';
+    const issues = linted.get(input.text + (spec.eol ? '\n' : ''));
+    const t = strings[lang];
+    const want = issues.length ? issues.map((i) => `${t.line} ${i.lineNumber} [${i.ruleNames[0]}] ${i.ruleDescription}${i.errorDetail ? ' — ' + i.errorDetail : ''}${i.errorContext ? ' [' + i.errorContext + ']' : ''}`).join('\n') : t.noIssues;
+    return output.text === want ? null : `block ${JSON.stringify(output.text)} != tool ${JSON.stringify(want)}`;
+  } };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ': mdl-check examples match markdownlint', contractProblems('markdown-linter', lang, { annotations: [mdlCheck] }), '');
+
+  // Facts stated next to the examples. Rendering uses the Markdown Preview engine block.
+  const comp = readFileSync(join(root, 'src/components/tools/MarkdownPreviewTool.astro'), 'utf8');
+  const renderMarkdown = new Function(comp.slice(comp.indexOf('/* ── engine:start ── */'), comp.indexOf('/* ── engine:end ── */')) + '\nreturn renderMarkdown;')();
+  const preview = (md) => renderMarkdown(md, { micromark, gfm, gfmHtml });
+  eq('zh: bold after a fullwidth colon stays literal', preview('**注意：**这里必须填写手机号。').includes('**注意：**这里'), true);
+  eq('zh: fullwidth-space line is not a nested list', preview('- 基本信息\n\u3000- 姓名\n'), '<ul>\n<li>基本信息\n\u3000- 姓名</li>\n</ul>\n');
+  eq('ja: #+U+3000 is a paragraph, not a heading', preview('#\u3000インストール\n'), '<p>#\u3000インストール</p>\n');
+  eq('ja: bold after a closing bracket stays literal', preview('**「重要」**です。').includes('**「重要」**です'), true);
+  eq('ko: bold after a quote stays literal, plain bold works', preview('**"중요"**합니다. **굵게**는 됩니다.'), '<p>**&quot;중요&quot;**합니다. <strong>굵게</strong>는 됩니다.</p>');
+  eq('en: Markdown Preview shows a markdownlint comment as text', preview('<!-- markdownlint-disable-next-line MD034 -->\n').includes('&lt;!-- markdownlint-disable-next-line MD034 --&gt;'), true);
+  const jaLong = '日本語の文章は単語のあいだに空白を入れないため、一つの段落を一行で書くとこの行のように八十文字を大きく超えますが、MD013は八十桁目より後ろに空白のない行を報告しないので、この行は問題として表示されません。';
+  eq('ja: the long line has 104 characters and no space', [jaLong.length, jaLong.includes(' ')], [104, false]);
+  const en104 = 'word '.repeat(20) + 'abcd';
+  eq('a 104-character English line reports Expected: 80; Actual: 104', (await run('# T\n\n' + en104 + '\n')).map((i) => i.errorDetail), ['Expected: 80; Actual: 104']);
+  const koLine = '이 문장은 한국어로 작성한 긴 설명이며 띄어쓰기가 있어서 줄 길이 규칙이 적용됩니다. 이 문장은 한국어로 작성한 긴 설명이며 띄어쓰기가 있어서 줄 길이 규칙이 적용됩니다.';
+  eq('ko: MD013 counts each Hangul syllable as one character', [...koLine].length, 95);
+  const md026 = (await import(join(root, 'node_modules/markdownlint/helpers/helpers.cjs'))).default.allPunctuationNoQuestion;
+  eq('MD026 default punctuation quoted on the pages', md026, '.,;:!。，；：！');
+  eq('MD026 skips a heading that ends with ？ or ?', (await run('# A\n\n## よくある質問？\n\n## 설치가 안 되나요?\n\n## 常见问题？\n')).filter((i) => i.ruleNames[0] === 'MD026'), []);
+  eq('MD043 and MD044 report nothing without configuration', (await run('# JavaScript notes\n\n## javascript\n\nUse javascript and github.\n')).filter((i) => ['MD043', 'MD044'].includes(i.ruleNames[0])), []);
+  eq('results are sorted by rule, then by line', (await run('#a\n\n## b:\n')).map((i) => i.ruleNames[0] + ':' + i.lineNumber), ['MD018:1', 'MD026:3', 'MD041:1']);
+  console.log('Worked examples: ' + (passes - start) + ' passed');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');
