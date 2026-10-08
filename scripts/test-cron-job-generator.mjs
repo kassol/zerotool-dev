@@ -160,7 +160,7 @@ const SLUG='cron-job-generator',component='src/components/tools/CronJobGenerator
 const templates={};
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
 function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}){
-  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map();let stored=structuredClone(saved);
+  const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map(),tracks=[];let stored=structuredClone(saved);
   let timerId=0,clock=0,doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
   const matchOne = (el, selector) => {
@@ -257,7 +257,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
   const persist={clear(slug){if(slug!=='cron-job-generator')stored={};persistCalls.push(['clear',slug]);},save(slug,data){stored=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,stored]);},load(){return structuredClone(stored);}};
   const globals={CLIENT_T:Object.fromEntries(['copy','copied','copyFailed','nextLabelUtc','nextLabelLocal','exprErrorLen','exprErrorVal','exprErrorField','fieldMinute','fieldHour','fieldDay','fieldMonth','fieldWeekday'].map(k=>[k,SSR_STRINGS[lang][k]])),document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
-    _slug:SLUG,ztPersist:persist,trackTool(){},
+    _slug:SLUG,ztPersist:persist,trackTool(...a){tracks.push(a);},
     navigator:noClipboard?{}:{clipboard:{writeText(value){const d=deferred();clipboard.push({...d,value:String(value)});return d.promise;},write(){throw Error('Unexpected clipboard.write');}}},
     setTimeout(fn,ms){timers.set(++timerId,{fn,ms,due:clock+ms});return timerId;},clearTimeout(id){timers.delete(id);},
   };
@@ -266,7 +266,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   if(order==='shared-after')actual.run(shortcut);
   const get=id=>{const el=doc.getElementById(id);must(el,SLUG+' ID '+id);return el;};
   const errors=[];activePage={errors};
-  return{errors,doc,get,widget,clipboard,timers,persistCalls,execCalls,downloads,stored:()=>structuredClone(stored),actual,
+  return{errors,doc,get,widget,clipboard,timers,persistCalls,tracks,execCalls,downloads,stored:()=>structuredClone(stored),actual,
     input(id,value,event='input'){get(id).value=value;get(id).dispatch(event);},
     ctrlL(id,key='l',mod='ctrlKey'){const el=get(id);el.focus();el.dispatch('keydown',{key,[mod]:true});},
     choose(id,checked){get(id).checked=checked;get(id).dispatch('change');},
@@ -342,4 +342,25 @@ for(const lang of ['en','zh','ja','ko']){
  checkV2(!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(md),lang+' Usage removed from prose');
  if(lang==='en'){const words=md.replace(/^---[\s\S]*?---/, '').replace(/<[^>]*>/g,' ').replace(/[^\p{L}\p{N}'’]+/gu,' ').trim().split(/\s+/).length;checkV2(words>=400,'English prose retains 400 words');}
 }
+// ---------- S2-3c: analytics only on a committed change ----------
+// The page used to send 'update' on load and on every input event (each keystroke in the
+// expression box or the Minute box, each step of a number field).
+{
+  const updates=p=>p.tracks.filter(t=>t[1]==='update').length;
+  let p=ready('en');
+  assert('analytics: no event on load',updates(p),0);
+  p.input(INPUT,'*/15 10 * * 1');assert('analytics: no event while typing the expression',updates(p),0);
+  p.get(INPUT).dispatch('change');assert('analytics: one event when the typed expression is committed',updates(p),1);
+  p.input(INPUT,'75 * * * *');p.get(INPUT).dispatch('change');assert('analytics: no event for an invalid committed expression',updates(p),1);
+  p=ready('en');
+  const minute=p.doc.querySelector('.cjg-field[data-field="minute"]');
+  minute.querySelector('.cjg-mode-btn[data-mode="step"]').click();assert('analytics: mode button click sends one event',updates(p),1);
+  const step=minute.querySelector('[data-role="step"]');step.value='10';step.dispatch('input');assert('analytics: no event on number input',updates(p),1);
+  step.dispatch('change');assert('analytics: one event on number change',updates(p),2);
+  p.doc.querySelector('.cjg-field[data-field="hour"] .cjg-chip[data-val="11"]').click();assert('analytics: chip click sends one event',updates(p),3);
+  p.doc.querySelector('.cjg-btn-preset[data-expr="0 0 * * 0"]').click();assert('analytics: preset click sends one event',updates(p),4);
+  p.doc.querySelector('.cjg-tz-btn[data-tz="local"]').click();assert('analytics: time zone click sends one event',updates(p),5);
+  p.ctrlL(INPUT);assert('analytics: Ctrl+L sends no event',updates(p),5);
+}
+
 console.log(`v2 total: ${passes} PASS, ${failures} FAIL`);process.exitCode=failures?1:0;
