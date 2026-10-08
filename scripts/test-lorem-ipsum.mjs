@@ -45,7 +45,7 @@ check('sentence pool found', SENTENCES.length > 0, String(SENTENCES.length));
 check('classic paragraph found', CLASSIC.length > 0);
 check('classic paragraph = first five pool sentences', SENTENCES.slice(0, 5).join(' ') === CLASSIC);
 check('paragraph uses 3–6 sentences', source.includes('var count = 3 + Math.floor(Math.random() * 4);'));
-check('count clamped to 1–20, default 5', source.includes("var count = Math.min(20, Math.max(1, parseInt(typed) || 5));") && source.includes("var typed = countEl.value;"));
+check('count clamped to 1–20, default 5', source.includes("var count = Math.min(20, Math.max(1, Math.trunc(Number(typed)) || 5));") && source.includes("var typed = countEl.value;"));
 check('Copy All joins paragraphs with a blank line', source.includes("output.dataset.text = paragraphs.join('\\n\\n');"));
 
 const loebSet = new Set(tokens(fx.loeb1914.text));
@@ -515,7 +515,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko'])
         lifeCheck(lang + '/Generate records one event', JSON.stringify(p.tracks) === '[["lorem_ipsum","generate"]]');
         const note = () => p.get('li-count-note').textContent;
         lifeCheck(lang + '/note text exists', typeof L.countNote === 'string' && L.countNote.includes('{n}'));
-        for (const [typed, used] of [['0', 5], ['', 5], ['50', 20], ['-3', 1], ['2.5', 2], ['3', 3], ['20', 20], ['1', 1], ['03', 3]]) {
+        for (const [typed, used] of [['0', 5], ['', 5], ['50', 20], ['-3', 1], ['2.5', 2], ['3', 3], ['20', 20], ['1', 1], ['03', 3], ['1e1', 10], ['0.5', 5], ['-2.7', 1], ['19.9', 19]]) {
             p.get('li-count').value = typed;
             p.get('li-generate').click();
             const paras = p.get('li-output').children.length;
