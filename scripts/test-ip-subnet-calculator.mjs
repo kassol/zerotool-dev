@@ -430,6 +430,7 @@ for(const lang of ['zh','ja','ko']){
   eq(lang+' IME '+typed+' gives a result',[p.result.hidden,p.error.hidden,p.cells()[7]],[false,true,cidr??'10.0.0.0/28']);
   eq(lang+' IME '+typed+' field unchanged',p.input.value,typed);
  }
+ for(const typed of ['192、168、10、77/26','192，168，10，77/26']){const r=page(lang,'shared-after');r.type(typed);r.tick(250);eq(lang+' other punctuation '+typed+' stays invalid (zh page)',[r.result.hidden,r.error.textContent],[true,pageStrings[lang].errInvalidIp]);}
  const q=page(lang,'shared-after');q.type('10.0.0.5／24');q.tick(250);q.select(30);
  eq(lang+' prefix menu rewrites after a full-width slash',[q.input.value,q.cells()[7]],['10.0.0.5/30','10.0.0.4/30']);
 }
