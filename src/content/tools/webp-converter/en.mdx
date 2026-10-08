@@ -11,16 +11,22 @@ steps:
 faqItems:
   - question: "What is WebP and why should I use it?"
     answer: "WebP is an image format from Google with lossy and lossless modes, transparency and animation. Google's published tests found WebP lossless images 26% smaller than PNG and lossy images 25–34% smaller than JPEG at equal SSIM. Results vary by image, so convert a few representative files and compare."
+    id: "what-is"
   - question: "Is my image uploaded to a server?"
-    answer: "No. All conversion happens in your browser using the Canvas API. Your images never leave your device."
+    answer: "No. Each file is read in the page through an object URL and drawn on a canvas; it is not uploaded, and nothing is saved in browser storage. Analytics records only the tool name and a convert action once per batch, not file names, sizes or pixels."
+    id: "privacy"
   - question: "What does the Quality slider control?"
     answer: "Quality (0–100) is passed to the browser's WebP encoder. Below 100 the output is lossy; higher values keep more detail and make larger files. In Chrome, 100 switches to lossless WebP: opaque pixels of an sRGB image come back unchanged, but an image with an embedded color profile is converted to sRGB first and semi-transparent edge pixels can shift by one level. For flat graphics, compare the result with the PNG: Chrome's lossless files are often larger than cwebp -lossless. 85, the default, is a reasonable start for photos; lower it until you see artifacts."
+    id: "quality"
   - question: "Can I convert WebP back to PNG?"
-    answer: "Yes. Switch the mode to 'WebP → PNG' and drop your WebP files. The tool uses lossless PNG output so no additional quality is lost."
+    answer: "Yes. Switch the mode to 'WebP → PNG' and drop your WebP files. PNG is lossless, so the conversion adds no new compression loss, but the image passes through a canvas: an animated WebP keeps only its first frame, an embedded color profile is converted to sRGB, and semi-transparent pixels can shift slightly."
+    id: "webp-to-png"
   - question: "Why is my converted file larger than the original?"
-    answer: "Some images — especially ones already heavily compressed — may not compress further. PNG screenshots and simple graphics can actually be smaller in PNG than in lossy WebP at high quality settings. Try lowering the quality slider."
+    answer: "Lossy WebP can be larger than a PNG of flat colors and text. In a Chrome 152 test, a 66,664-byte palette PNG chart became 102,454 bytes at quality 85 and 82,628 bytes at quality 100. Lowering the quality does not always fix this; keep the PNG for such images, or try cwebp -lossless (55,210 bytes for the same chart)."
+    id: "larger"
   - question: "How many files can I convert at once?"
     answer: "There is no fixed limit. You can select or drop multiple files and they are processed in parallel; very large images are limited by the browser's canvas size and memory. Download each file individually, or use Download All, which starts one download per file (it does not make a ZIP, and the browser may ask to allow multiple downloads)."
+    id: "batch"
 ---
 
 <h2>Measured Example</h2>
@@ -44,11 +50,40 @@ faqItems:
   diagrams, compare quality 100 (lossless) with your PNG before choosing lossy: text edges are where lossy WebP shows first.
 </p>
 
+<h2>What the Result List Shows</h2>
+<p>
+  Each converted file gets a card with the output name (the last extension is replaced), the original and output sizes
+  (1 KB = 1,024 bytes) and the change. The status line counts successes and failures. With the Chrome 152 sizes from the table above,
+  the card for this page's preview image at the default quality reads:
+</p>
+
+{/* wc-check: {"mode":"to-webp","quality":85,"files":[{"name":"webp-converter.png","type":"image/png","size":69005,"out":23234}]} */}
+```text
+webp-converter.webp  67.4 KB → 22.7 KB −66.3%
+1 file(s) converted
+```
+
+<p>
+  A mixed batch shows one line per file in the order you dropped them. Below, <code>chart.png</code> is the 66,664-byte text chart
+  that grew to 102,454 bytes at quality 85 in the <a href="/blog/webp-converter-guide/">WebP guide</a>'s Chrome 152 test, the HEIC
+  photo is refused because the browser does not report PNG, JPEG or GIF, and <code>notes.png</code> is a text file renamed to .png:
+</p>
+
+{/* wc-check: {"mode":"to-webp","quality":85,"files":[{"name":"chart.png","type":"image/png","size":66664,"out":102454},{"name":"IMG_0412.HEIC","type":"image/heic","size":2400000},{"name":"notes.png","type":"image/png","size":1200,"broken":true}]} */}
+```text
+chart.webp  65.1 KB → 100.1 KB +53.7%
+IMG_0412.HEIC: Not a supported format (PNG/JPG/GIF)
+notes.png: Failed to load image
+1 file(s) converted, 2 failed
+```
+
+<p>Download All appears only when at least two files succeed; with one result, use the Download button on its card.</p>
+
 <h2>Limits</h2>
 <ul>
   <li><strong>Animation is lost.</strong> The image is drawn to a canvas once, so an animated GIF becomes a still WebP of its first frame, and an animated WebP becomes a one-frame PNG. To shrink an animated GIF instead, use the <a href="/tools/gif-compressor/">GIF compressor</a>.</li>
   <li><strong>Metadata is dropped.</strong> EXIF (camera, GPS, date) and XMP are not copied.</li>
-  <li><strong>Input types:</strong> PNG, JPEG and GIF for the WebP direction, WebP for the PNG direction. Files are checked by the type the browser reports, so HEIC, AVIF, BMP or a file with the wrong extension is listed as "Not a supported format".</li>
+  <li><strong>Input types:</strong> PNG, JPEG and GIF for the WebP direction, WebP for the PNG direction. Files are checked by the type the browser reports, which <a href="https://developer.mozilla.org/en-US/docs/Web/API/Blob/type">MDN</a> says is assumed from the file extension. HEIC, AVIF or BMP is listed as "Not a supported format"; a PNG renamed to .jpg is accepted and converted, and a file that is not an image but has an image extension fails with "Failed to load image".</li>
   <li><strong>The encoder is your browser's.</strong> Sizes differ between Chrome and Firefox for the same quality. Safari has no WebP encoder for canvas; there the tool reports that WebP cannot be encoded instead of saving a PNG under a .webp name.</li>
   <li><strong>Quality and lossless only.</strong> There is no resize, crop, or setting for encoder effort or near-lossless mode. For those, use <code>cwebp</code> from libwebp, for example <code>cwebp -q 80 in.png -o out.webp</code> or <code>cwebp -lossless in.png -o out.webp</code>.</li>
 </ul>

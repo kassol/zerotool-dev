@@ -305,6 +305,29 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
     const out = await exampleOutput({ mode: 'to-webp', quality: 100, files: [{ name: 'a.png', type: 'image/png', size: 197067, out: 267920 }] }, 'en');
     check('larger output keeps one decimal (+36.0%)', out.text.split('\n')[0] === 'a.webp  192.4 KB → 261.6 KB +36.0%', out.text);
   }
+  const { fencedBlocks, toolMdxContract } = await import('./lib/tool-mdx-contract.mjs');
+  const outputs = new Map();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readFileSync(join(root, 'src/content/tools/webp-converter', lang + '.mdx'), 'utf8').split('\n---\n').slice(1).join('\n---\n');
+    for (const m of body.matchAll(/\{\/\*\s*wc-check:\s*([\s\S]*?)\s*\*\/\}/g)) {
+      try { outputs.set(lang + m[1], await exampleOutput(JSON.parse(m[1]), lang)); } catch (error) { outputs.set(lang + m[1], { text: '', problems: [error.message] }); }
+    }
+  }
+  const covered = { en: 0, zh: 0, ja: 0, ko: 0 };
+  const contract = toolMdxContract('webp-converter', { annotations: [{ tag: 'wc-check', min: 2, verify({ raw, after, lang }) {
+    const out = outputs.get(lang + raw);
+    if (!out) return 'no output computed';
+    if (out.problems.length) return out.problems.join('; ');
+    const hit = fencedBlocks(after).some((b) => b.text.trimEnd() === out.text);
+    if (hit) covered[lang]++;
+    return hit ? null : 'no fenced block after the annotation equals the tool output:\n' + out.text;
+  } }] });
+  for (const r of contract.results.filter((r) => r.rule.includes('wc-check'))) check('tool page ' + r.message, r.ok);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = contract.docs[lang].body;
+    const textBlocks = fencedBlocks(body).filter((b) => b.lang === 'text').length;
+    check(lang + ' every text block on the tool page is a checked tool output', textBlocks === covered[lang], textBlocks + ' text blocks, ' + covered[lang] + ' checked');
+  }
 }
 
 // ---------- v2 page layout ----------
