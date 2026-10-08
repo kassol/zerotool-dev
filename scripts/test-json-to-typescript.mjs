@@ -277,6 +277,24 @@ try {
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
 eq('no unhandled clipboard rejections', unhandled.length, 0);
 
+// ---------- analytics: one event per committed edit or button, not per typing pause ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const g = page(lang), sent = () => g.tracks.map((t) => t.join(':')).join(',');
+  g.input('{"a":1}'); g.advance(300); g.input('{"a":1,"b":2}'); g.advance(300);
+  eq(lang + ': analytics: typing pauses send nothing', sent(), '');
+  g.get('jtt-input').dispatch('change');
+  eq(lang + ': analytics: change after an edit sends one generate', sent(), 'json-to-typescript:generate');
+  g.input('{"c":3}'); g.get('jtt-input').dispatch('change');
+  eq(lang + ': analytics: change flushes the pending debounce', g.get('jtt-output-code').textContent, 'interface RootObject {\n  c: number;\n}');
+  eq(lang + ': analytics: flushed change sends once', g.tracks.length, 2);
+  g.advance(300); eq(lang + ': analytics: no delayed event after a flush', g.tracks.length, 2);
+  g.get('jtt-convert').click(); eq(lang + ': analytics: Generate sends one', g.tracks.length, 3);
+  g.get('jtt-example').click(); eq(lang + ': analytics: Example sends one', g.tracks.length, 4);
+  g.input('{'); g.get('jtt-input').dispatch('change'); g.get('jtt-convert').click();
+  eq(lang + ': analytics: invalid JSON sends nothing', g.tracks.length, 4);
+  g.input(''); g.get('jtt-input').dispatch('change'); eq(lang + ': analytics: empty input sends nothing', g.tracks.length, 4);
+}
+
 // ---------- v2 page layout ----------
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
