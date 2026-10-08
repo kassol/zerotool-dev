@@ -16,6 +16,10 @@
 // source text access), PaymentMeta-style names, imports, keywords in backticks, @SerialName with
 // Kotlin string escapes, empty objects as `class X`, names that would hide List / String,
 // root arrays and scalars.
+// S2: every page example in all four languages is compiled and decoded; a {/* kt: … */} marker can list
+// "decodes" (payloads that must decode, optionally with the expected re-encoded JSON), "rejects"
+// ([payload, exception class] that must fail) and "decodeAs" (the type for those payloads). Also
+// keys that are Object.prototype members, non-ASCII names, and analytics sent once per committed change.
 //
 // Compile check: when KOTLINC points at a kotlinc binary (or `kotlinc` is on PATH) and
 // KOTLINX_SERIALIZATION_CLASSPATH lists the kotlinx-serialization-core-jvm and -json-jvm jars, every
@@ -197,6 +201,21 @@ const EXAMPLE = JSON.stringify({
   eq('string array root', l.code, 'typealias Tags = List<String>');
 }
 
+// ---------- names that are Object.prototype members, non-ASCII names (S2) ----------
+{
+  const r = add('prototype member keys', '{"constructor": 1, "__proto__": {"a": 1}, "toString": "x", "hasOwnProperty": {"b": 2}, "valueOf": {"c": 3}}', null, true);
+  has('constructor key is a plain property', r.code, '    val constructor: Int = 0,');
+  has('__proto__ key keeps @SerialName', r.code, '    @SerialName("__proto__")');
+  has('__proto__ object → Proto class', r.code, '    val proto: Proto = Proto(),');
+  has('hasOwnProperty object → own class', r.code, 'data class HasOwnProperty(');
+  eq('non-ASCII root name kept', gen('{"a": 1}', '회원').code.includes('data class 회원('), true);
+  eq('root name __proto__ → Proto', gen('{"a": 1}', '__proto__').code.includes('data class Proto('), true);
+  // zh page prose: Chinese keys stay property names without @SerialName; array items are named <Key>Item
+  const zhKeys = add('Chinese keys', '{"订单号": "202610080001"}', null, true);
+  has('zh prose: Chinese key → property', zhKeys.code, '    val 订单号: String = ""');
+  lacks('zh prose: no @SerialName for a Chinese key', zhKeys.code, /SerialName/);
+}
+
 // ---------- examples on the tool pages ----------
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-kotlin', lang + '.mdx'), 'utf8');
@@ -209,7 +228,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const json = tpl(m[2]);
     const out = gen(json, opt.root).code;
     eq(lang + ' page example ' + n + ' matches the engine', tpl(m[3]), out);
-    if (lang === 'en') cases.push({ name: 'page example ' + n, json, rootName: opt.root || 'RootObject', roundTrip: !!opt.roundTrip });
+    // Every page example is compiled and decoded (once per distinct input). Optional "decodes" lists other
+    // payloads the generated class must decode with the default Json (a string, or [payload, expected
+    // re-encoded JSON]); "rejects" lists payloads it must fail to decode, with the expected exception class.
+    if (!cases.some((c) => c.json === json && c.rootName === (opt.root || 'RootObject'))) {
+      cases.push({ name: lang + ' page example ' + n, json, rootName: opt.root || 'RootObject', roundTrip: !!opt.roundTrip, decodes: opt.decodes || [], rejects: opt.rejects || [], decodeAs: opt.decodeAs });
+    }
   }
   check(lang + ' page has at least 2 checked examples', n >= 2, n);
 }
@@ -253,11 +277,23 @@ if (!kotlinc || cpJars.length < 2) {
         '    val v = kotlinx.serialization.json.Json.decodeFromString(kotlinx.serialization.serializer<' + r.rootType + '>(), s)',
         '    return out.encodeToString(kotlinx.serialization.serializer<' + r.rootType + '>(), v)',
         '}',
+        // Extra payloads decode as the root type, or as decodeAs (one response decoded with the class
+        // generated from an array of sample responses).
+        'fun roundTripExtra(s: String): String {',
+        '    val out = kotlinx.serialization.json.Json { encodeDefaults = true; explicitNulls = true }',
+        '    val v = kotlinx.serialization.json.Json.decodeFromString(kotlinx.serialization.serializer<' + (c.decodeAs || r.rootType) + '>(), s)',
+        '    return out.encodeToString(kotlinx.serialization.serializer<' + (c.decodeAs || r.rootType) + '>(), v)',
+        '}',
       ].join('\n');
       writeFileSync(join(dir, pkg + '.kt'), 'package ' + pkg + '\n\n' + r.code + '\n' + decodeFn + '\n');
       writeFileSync(join(dir, pkg + '.json'), c.json);
       mainLines.push('    try { File("$dir/' + pkg + '.out").writeText(' + pkg + '.roundTrip(File("$dir/' + pkg + '.json").readText())) }');
       mainLines.push('    catch (e: Exception) { File("$dir/' + pkg + '.err").writeText(e.toString()) }');
+      [...(c.decodes || []).map((d) => (Array.isArray(d) ? d[0] : d)), ...(c.rejects || []).map((r) => r[0])].forEach((extra, j) => {
+        writeFileSync(join(dir, pkg + '.x' + j + '.json'), extra);
+        mainLines.push('    try { File("$dir/' + pkg + '.x' + j + '.out").writeText(' + pkg + '.roundTripExtra(File("$dir/' + pkg + '.x' + j + '.json").readText())) }');
+        mainLines.push('    catch (e: Exception) { File("$dir/' + pkg + '.x' + j + '.err").writeText(e.toString()) }');
+      });
     });
     mainLines.push('}');
     writeFileSync(join(dir, 'Main.kt'), mainLines.join('\n') + '\n');
@@ -276,6 +312,19 @@ if (!kotlinc || cpJars.length < 2) {
           const back = JSON.parse(readFileSync(out, 'utf8'));
           check('round trip ' + c.name, isDeepStrictEqual(back, JSON.parse(c.json)), readFileSync(out, 'utf8'));
         }
+        const decodes = c.decodes || [];
+        decodes.forEach((d, j) => {
+          const base = join(dir, 'c' + i + '.x' + j);
+          check(c.name + ': decodes extra payload ' + (j + 1), !existsSync(base + '.err'), existsSync(base + '.err') ? readFileSync(base + '.err', 'utf8') : '');
+          if (Array.isArray(d) && existsSync(base + '.out')) {
+            check(c.name + ': extra payload ' + (j + 1) + ' re-encodes as stated', isDeepStrictEqual(JSON.parse(readFileSync(base + '.out', 'utf8')), JSON.parse(d[1])), readFileSync(base + '.out', 'utf8'));
+          }
+        });
+        (c.rejects || []).forEach(([, exception], k) => {
+          const base = join(dir, 'c' + i + '.x' + (decodes.length + k));
+          const err = existsSync(base + '.err') ? readFileSync(base + '.err', 'utf8') : '';
+          check(c.name + ': rejects payload ' + (k + 1) + ' with ' + exception, err.startsWith(exception + ':'), err || 'decoded without an error');
+        });
       });
     }
   } finally {
