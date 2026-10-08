@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path';
 import { createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HashGeneratorTool.astro'), 'utf8');
@@ -83,6 +83,45 @@ eq('page: 你好 GBK md5', quoted(hex('md5', [0xc4, 0xe3, 0xba, 0xc3])), true);
 eq('page: hello with BOM', quoted(hex('sha256', [0xef, 0xbb, 0xbf, ...utf8('hello')])), true);
 eq('page: git blob id', quoted(hex('sha1', utf8('blob 6\0hello\n'))), true);
 eq('page: plain sha1 of hello + LF', quoted(hex('sha1', utf8('hello\n'))), true);
+
+// Worked examples on the four pages: {/* hash-check: {...} */} before the output.
+//   {"in": text, "algos": [...]}           what the tool prints for that text (MD5 from the page's
+//                                          md5(), SHA from node:crypto = Web Crypto), lowercase hex
+//   {"hex": "…", "enc": "gbk", "text": …}  the same characters in another encoding (reference, not
+//                                          tool output): TextDecoder(enc) must turn the bytes into text
+//   "bytes": true                          the bytes must be shown as spaced lowercase hex
+//   "upper": ["md5"]                       those digests must also be shown in uppercase
+// Each value must appear in inline code or a code block after the note, before the next note or H2.
+const ALGO = { md5: 'md5', sha1: 'sha1', sha256: 'sha256', sha384: 'sha384', sha512: 'sha512' };
+function shownCode(after) {
+  const inline = [...after.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').matchAll(/`([^`\n]+)`/g)].map(m => m[1]);
+  return [...inline, ...fencedBlocks(after).map(b => b.text)];
+}
+function verifyHashExample({ spec, after }) {
+  if (!spec || !Array.isArray(spec.algos) || !spec.algos.length) return 'annotation needs algos';
+  let bytes;
+  if (typeof spec.in === 'string') bytes = utf8(spec.in);
+  else {
+    if (!/^[0-9a-f]+$/.test(spec.hex || '') || !spec.enc || typeof spec.text !== 'string') return 'annotation needs in, or hex + enc + text';
+    bytes = Uint8Array.from(Buffer.from(spec.hex, 'hex'));
+    const decoded = new TextDecoder(spec.enc).decode(bytes);
+    if (decoded !== spec.text) return `hex is not ${JSON.stringify(spec.text)} in ${spec.enc} (decodes to ${JSON.stringify(decoded)})`;
+  }
+  const codes = shownCode(after), has = v => codes.some(c => c === v || c.includes(v));
+  for (const algo of spec.algos) {
+    if (!ALGO[algo]) return 'unknown algo ' + algo;
+    const want = hex(ALGO[algo], bytes);
+    if (algo === 'md5' && typeof spec.in === 'string' && md5(spec.in) !== want) return 'page md5() differs from node:crypto';
+    if (!has(want)) return `${algo} ${want} not shown`;
+    if ((spec.upper || []).includes(algo) && !has(want.toUpperCase())) return `${algo} ${want.toUpperCase()} not shown`;
+  }
+  if (spec.bytes) {
+    const spaced = Buffer.from(bytes).toString('hex').match(/../g).join(' ');
+    if (!has(spaced)) return `bytes ${spaced} not shown`;
+  }
+  return null;
+}
+const HASH_ANNOTATIONS = { annotations: [{ tag: 'hash-check', min: 3, verify: verifyHashExample }] };
 
 // Actual page lifecycle: native WebCrypto bytes with controlled promise delivery.
 const require = createRequire(import.meta.url);
@@ -344,7 +383,7 @@ for(const cls of ['hg-row','hg-label','hg-value']){
     const doc=readFileSync(join(root,'src/content/tools/hash-generator/'+lang+'.mdx'),'utf8'),fm=doc.match(/^---\n([\s\S]*?)\n---/)[1],meta=yaml.load(fm);
     eq(lang+': four steps before FAQ',meta.steps.length===4&&fm.indexOf('steps:')<fm.indexOf('faqItems:'),true);
     eq(lang+': bounded plain steps',meta.steps.every(x=>typeof x==='string'&&x.length<=280&&!/[<>]/.test(x))&&meta.steps.join('').length<=1200,true);
-    eq(lang+': MDX content contract', contractProblems('hash-generator', lang), '');
+    eq(lang+': MDX content contract and hash-check examples', contractProblems('hash-generator', lang, HASH_ANNOTATIONS), '');
     const p=pageVM(lang);eq(lang+': input label is local before IIFE',p.get('hg-input').parentElement.querySelector('label').textContent,strings[lang].inputLabel);eq(lang+': initial output has no rows',rows(p).length,0);eq(lang+': localized empty message',p.widget.querySelector('.hg-empty').textContent,strings[lang].emptyOutput);
   }
   eq('MD5 and SHA helpers unchanged',hash(source.slice(source.indexOf('      // Compact MD5'),source.indexOf('      var inputEl'))),'fa6dbe7d03462cdef083bac56db494bb240a4aa8d110cdec05eedbc7de7ef74f');
