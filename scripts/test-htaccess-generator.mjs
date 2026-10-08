@@ -407,6 +407,19 @@ function restoreResult(p){p.input(INPUT,'home.html index.html');}
 const recover=p=>output(p).includes('DirectoryIndex home.html index.html');
 let p=ready();assert('actual default matches quoted full output',output(p),toolDefault);p.choose('hta-redir-enable',true);p.input('hta-redir-from','/old');p.input('hta-redir-to','https://example.test/new');p.input('hta-redir-type','302','change');assert('actual change/input redirect',output(p).endsWith('Redirect 302 /old https://example.test/new'),true);p.choose('hta-www-enable',true);const radios=p.doc.querySelectorAll('input[name="hta-www"]');radios.forEach(r=>r.checked=r.value==='remove');radios[1].dispatch('change');assert('actual radio WWW applied',output(p).includes('https://%1%{REQUEST_URI} [L,R=301]'),true);act(p,'all off');assert('all off keeps original empty notice and disables copy',[output(p),p.get(COPY).disabled],['# (no options selected)',true]);
 
+// Default files: a value of spaces only is treated like an empty field (the page and the tip say
+// an empty value uses index.php index.html). Before, the engine wrote "DirectoryIndex " with no
+// file names, and Apache then served no index file (403 on every directory).
+for (const lang of ['en','zh','ja','ko']) {
+  const q=ready(lang);
+  for (const [value,want] of [['   ','DirectoryIndex index.php index.html'],['','DirectoryIndex index.php index.html'],['  home.html  index.php ','DirectoryIndex home.html  index.php'],['\t','DirectoryIndex index.php index.html']]) {
+    q.input(INPUT,value);
+    const line=output(q).split('\n').find(l=>l.startsWith('DirectoryIndex'));
+    assert(lang+' default files '+JSON.stringify(value)+' write a usable DirectoryIndex',line,want);
+  }
+  assert(lang+' the default files field keeps what was typed',q.get(INPUT).value,'\t');
+}
+
 for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
  const id=SLUG+'/'+lang+'/'+order;
  let primary=ready(lang,order);const beforeEnter=output(primary);primary.ctrlL(INPUT,'Enter');assert(id+' shared primary behavior',output(primary),beforeEnter);
