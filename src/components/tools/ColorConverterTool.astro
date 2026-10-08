@@ -257,16 +257,22 @@ const { tips: TIPS, ...CLIENT_T } = T;
       var HSL_HEAD = /^hsla?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%?\s*,\s*(\d+(?:\.\d+)?)%?/;
       var TAIL_OK = /^\s*(?:,\s*(?:[\d.]+%?)?\s*)?\)?\s*$/;
       /* Text as the fields read it, as color-palette-generator's parseColor does: NFKC (full-width
-         input), trim, drop a trailing ; and matching quotes around the value (copied from CSS). */
+         input), trim, drop a trailing ; and matching quotes around the value (copied from CSS), and
+         lower-case an rgb / hsl function name (CSS function names are case-insensitive). */
       function readValue(text) {
         var v = String(text).normalize('NFKC').trim().replace(/;+$/, '').trim();
         if (/^(['"]).*\1$/.test(v)) v = v.slice(1, -1).trim();
-        return v;
+        return v.replace(/^(rgba?|hsla?)(?=\()/i, function (name) { return name.toLowerCase(); });
       }
 
-      function hasExtraText(val, head) {
+      /* null when the value has no extra text; otherwise the status message. A digit or a dot right
+         after the match (rgb(26, 115, 23.5)) is a malformed number, so it gets the general message. */
+      function extraMessage(val, head) {
         var m = val.match(head);
-        return !!m && !TAIL_OK.test(val.slice(m[0].length));
+        if (!m) return null;
+        var tail = val.slice(m[0].length);
+        if (TAIL_OK.test(tail)) return null;
+        return /^[.\d]/.test(tail) ? t.invalid : t.extra;
       }
 
       function updateAll(hex, source) {
@@ -303,7 +309,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var val = readValue(this.value);
         if (!val) { clearStatus(); return; }
         var rgb = parseRgb(val);
-        if (rgb && hasExtraText(val, RGB_HEAD)) { showInvalidState('rgb', t.extra); return; }
+        var rgbExtra = rgb && extraMessage(val, RGB_HEAD);
+        if (rgbExtra) { showInvalidState('rgb', rgbExtra); return; }
         if (rgb) { updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'rgb'); return; }
         var looksLikeRgb = /^rgba?\s*\(/i.test(val);
         if (!looksLikeRgb || /\)/.test(val)) showInvalidState('rgb');
@@ -314,7 +321,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var val = readValue(this.value);
         if (!val) { clearStatus(); return; }
         var hsl = parseHsl(val);
-        if (hsl && hasExtraText(val, HSL_HEAD)) { showInvalidState('hsl', t.extra); return; }
+        var hslExtra = hsl && extraMessage(val, HSL_HEAD);
+        if (hslExtra) { showInvalidState('hsl', hslExtra); return; }
         if (hsl) {
           var rgb = hslToRgb(hsl.h, hsl.s, hsl.l);
           updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'hsl');

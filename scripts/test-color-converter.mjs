@@ -349,6 +349,18 @@ try {
       check(lang + ' other trailing text is still rejected ' + v, p.get('cc-status').textContent === extraText[lang], p.get('cc-status').textContent);
     }
   }
+  // A decimal channel (rgb(26, 115, 23.5)) is not "extra text": it gets the general invalid-format
+  // message. CSS function names are case-insensitive, so RGB(…) / HSL(…) are read like rgb(…).
+  for (const lang of Object.keys(extraText)) {
+    for (const [id, v] of [['cc-rgb', 'rgb(26, 115, 23.5)'], ['cc-rgb', 'rgb(26, 115, 232.0)'], ['cc-hsl', 'hsl(214, 82%, 51%2)']]) {
+      const p = lifecyclePage(lang); p.input(id, v);
+      check(lang + ' decimal or digit after the value uses the general message ' + v, p.get('cc-status').textContent === invalidText[lang], p.get('cc-status').textContent);
+    }
+    for (const [id, v, hex] of [['cc-rgb', 'RGB(26, 115, 232)', '#1a73e8'], ['cc-rgb', 'Rgba(26,115,232,.5)', '#1a73e8'], ['cc-hsl', 'HSL(214, 82%, 51%)', '#1c74e9'], ['cc-hsl', 'HSLA(214, 82%, 51%, 1)', '#1c74e9']]) {
+      const p = lifecyclePage(lang); p.input(id, v);
+      check(lang + ' upper-case function name is read ' + v, p.get('cc-hex').value === hex && !p.get('cc-status').textContent, p.get('cc-hex').value + ' ' + p.get('cc-status').textContent);
+    }
+  }
   {
     const engine = source.slice(start, end), script = lifecycleScript.slice(lifecycleScript.indexOf('/* ── engine:end ── */'));
     for (const head of ['/^rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/', '/^hsla?\\(\\s*(\\d+(?:\\.\\d+)?)\\s*,\\s*(\\d+(?:\\.\\d+)?)%?\\s*,\\s*(\\d+(?:\\.\\d+)?)%?/']) {
