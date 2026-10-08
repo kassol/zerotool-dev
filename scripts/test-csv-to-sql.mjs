@@ -121,6 +121,46 @@ eq('no added columns normally', conv('a\n1').addedColumns, []);
   eq('added name avoids an existing header', r.addedColumns, ['column_3']);
 }
 
+// ---------- quote rule (S2-7, approved engine change, same as csv-json and csv-to-markdown) ----------
+// A double quote opened a quoted section anywhere in a field, so `5" pipe,x` swallowed the comma and
+// the next line, and a quote that was never closed took the rest of the input with no error.
+{
+  eq('quote inside an unquoted field is text', conv('a,b\n5" pipe,x\ny,z').sql, 'INSERT INTO "t" ("a", "b") VALUES\n  (\'5" pipe\', \'x\'),\n  (\'y\', \'z\');');
+  eq('x"y"z stays as written', readLiterals(conv('a\nx"y"z').sql, false), ['x"y"z']);
+  eq('unclosed quote is an error with its line', conv('a,b\n1,2\n"x,y\nz,w'), { error: 'unclosed', line: 3 });
+  eq('unclosed quote in the header is line 1', conv('"a,b\n1,2'), { error: 'unclosed', line: 1 });
+  eq('quoted fields still work', readLiterals(conv('a,b\n"x, ""y""",2').sql, false), ['x, "y"', { num: '2' }]);
+}
+{
+  // The three parseCsv copies agree on random input, including the unclosed-quote error.
+  const { execFileSync } = await import('node:child_process');
+  const sourceOf = (rel) => {
+    const own = readFileSync(join(root, rel), 'utf8');
+    if (own.includes('quoteStart')) return own;
+    try { const m = execFileSync('git', ['show', 'master:' + rel], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); return m.includes('quoteStart') ? m : null; } catch { return null; }
+  };
+  const fnOf = (src) => {
+    const i = src.indexOf('function parseCsv(');
+    const indent = src.slice(src.lastIndexOf('\n', i) + 1, i);
+    const end = src.indexOf('\n' + indent + '}\n', i);
+    return new Function(src.slice(i, end + indent.length + 2) + '\nreturn parseCsv;')();
+  };
+  const others = [['csv-json', 'src/components/tools/CsvJsonTool.astro', (r) => r.rows], ['csv-to-markdown', 'src/components/tools/CsvToMarkdownTool.astro', (r) => r]];
+  const run = (fn, pick, s) => { try { return pick(fn(s)); } catch (e) { return 'ERR ' + e.message; } };
+  let seed = 11;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const parts = ['"', '""', ',', '\n', '\r\n', '\r', 'a', 'b', ' ', '中'];
+  const inputs = [];
+  for (let k = 0; k < 5000; k++) { let s = ''; const n = 1 + rnd(12); for (let j = 0; j < n; j++) s += parts[rnd(parts.length)]; inputs.push(s); }
+  for (const [name, rel, pick] of others) {
+    const src = sourceOf(rel);
+    if (!src) { console.log('SKIP: ' + name + ' parseCsv with the quote rule is not on this checkout or master'); continue; }
+    const theirs = fnOf(src);
+    const diffs = inputs.filter((s) => JSON.stringify(run(E.parseCsv, (r) => r, s)) !== JSON.stringify(run(theirs, pick, s)));
+    check('parseCsv gives the same rows and errors as ' + name + ' (5,000 random inputs)', diffs.length === 0, JSON.stringify(diffs.slice(0, 3)));
+  }
+}
+
 // ---------- number detection ----------
 const NUMS = { '42': 42, '-7': -7, '0': 0, '3.14': 3.14, '0.5': 0.5, '-0.25': -0.25, '123456789012345': 123456789012345 };
 for (const [v] of Object.entries(NUMS)) eq('number ' + v + ' unquoted', readLiterals(conv('n\n' + v).sql, false), [{ num: v }]);
@@ -236,7 +276,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' page has at least 2 checked examples', n >= 2, n);
 }
 
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '92bcfd3c010e49f93d0fc64b41477108d53b19241f0b72a8305c921da47c750a');
+// Engine hash. S2-7 (2026-10-08) approved changes: quote rule.
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), 'a3e55534be8d2ed09a51f6e978cce3451bd2c65f449f48de5677ac18d60c446f');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises, FileReader and time are controlled boundaries; conversion code is real.
@@ -423,6 +464,18 @@ try {
   }
 }
 
+// ---------- unclosed quote on the page (S2-7 approved engine change) ----------
+{
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvToSqlTool.astro').frontmatter);
+  for (const lang of ['en','zh','ja','ko']) {
+    const p = page(lang); p.golden();
+    p.type(s.left, 'n\n1\n"x,2\n3'); p.advance(300);
+    eq(lang+' unclosed quote is reported with its line and clears the SQL', [p.get('cts-status').textContent, p.get('cts-status').classList.contains('error'), p.get(s.right).value], [(S[lang].errUnclosed || 'errUnclosed').replace('{line}', '3'), true, '']);
+    p.get(s.left).fire('change');
+    eq(lang+' no event for an error', p.tracks.length, 0);
+  }
+}
+
 // ---------- uploaded files must be UTF-8 (S2-7, 2026-10-08) ----------
 // FileReader.readAsText(file, 'UTF-8') turned every byte that is not UTF-8 into U+FFFD, so a
 // Shift_JIS or GBK CSV saved by Excel became SQL full of replacement characters with no warning.
@@ -489,8 +542,8 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // Pinned page script. S2-7 (2026-10-08) changed it outside the engine block: analytics only on
-// committed changes, and uploaded files are checked for UTF-8 (tests above). The engine hash is unchanged.
-eq('reviewed page script is unchanged since S2-7', hash(script), '1a15ba3816b77304e9f1d1571682e4649cbec99348df16a3421cce9b865d2faa');
+// committed changes, and uploaded files are checked for UTF-8; then the unclosed-quote message (tests above).
+eq('reviewed page script is unchanged since S2-7', hash(script), '8cb6b243bf13d0844fb78b1a53928b6579a0aacb1ea509aa09cd7e21c024e1cb');
 check('direct zero-minimum flex column root', /^\s*<div class="cts-wrap"/.test(markupSource) && /\.cts-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cts-(?:toolbar|controls)"[\s\S]*id="cts-status"[\s\S]*class="cts-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);

@@ -27,6 +27,7 @@ const STRINGS = {
     "fileUtf16": "The file was not loaded: it looks like UTF-16 text. CSV Input was not changed. Save the file as UTF-8 and load it again.",
     "fileBinary": "The file was not loaded: byte {offset} (counting from 0) is a NUL byte, so this is not a text file. CSV Input was not changed.",
     "fileError": "The file could not be read. CSV Input was not changed.",
+    "errUnclosed": "A quoted field that starts on line {line} is never closed. Add the closing \" or remove the opening one.",
     "tips": {
       "dialect": "Chooses MySQL, PostgreSQL or SQLite quoting and CREATE TABLE types. Changing the dialect immediately updates the current CSV. MySQL also doubles backslashes in string values.",
       "table": "The default table name is my_table; a blank name uses it too. The whole name is quoted as one identifier. Editing it updates the output after 0.3 seconds without typing.",
@@ -59,6 +60,7 @@ const STRINGS = {
     "fileUtf16": "未载入文件：它像是 UTF-16 文本。“CSV 输入”未改动。请另存为 UTF-8 后再载入。",
     "fileBinary": "未载入文件：第 {offset} 个字节（从 0 数）是 NUL 字节，这不是文本文件。“CSV 输入”未改动。",
     "fileError": "无法读取文件。“CSV 输入”未改动。",
+    "errUnclosed": "第 {line} 行开始的引号字段没有闭合。请补上结尾的 \"，或删掉开头的 \"。",
     "tips": {
       "dialect": "选择 MySQL、PostgreSQL 或 SQLite 的引号规则及 CREATE TABLE 类型。更改方言会立即转换当前 CSV。MySQL 还会将字符串值中的反斜杠加倍。",
       "table": "表名默认为 my_table，留空时也使用它。整个名称按一个标识符加引号。编辑后停止输入 0.3 秒，输出自动更新。",
@@ -91,6 +93,7 @@ const STRINGS = {
     "fileUtf16": "ファイルを読み込みませんでした：UTF-16 のテキストのようです。「CSV 入力」は変わっていません。UTF-8 で保存し直してから読み込んでください。",
     "fileBinary": "ファイルを読み込みませんでした：{offset} バイト目（0 から数えて）が NUL バイトのため、テキストファイルではありません。「CSV 入力」は変わっていません。",
     "fileError": "ファイルを読み取れませんでした。「CSV 入力」は変わっていません。",
+    "errUnclosed": "{line} 行目で始まる引用符付きフィールドが閉じられていません。閉じる \" を追加するか、開始の \" を削除してください。",
     "tips": {
       "dialect": "MySQL、PostgreSQL、SQLite の引用符と CREATE TABLE の型を選びます。変更すると現在の CSV をすぐに変換します。MySQL では文字列値のバックスラッシュも二重にします。",
       "table": "既定のテーブル名は my_table で、空欄でもこの名前を使います。名前全体を1つの識別子として引用符で囲みます。編集を止めて0.3秒後に出力を更新します。",
@@ -123,6 +126,7 @@ const STRINGS = {
     "fileUtf16": "파일을 불러오지 않았습니다: UTF-16 텍스트로 보입니다. CSV 입력은 바뀌지 않았습니다. UTF-8로 다시 저장한 뒤 불러오세요.",
     "fileBinary": "파일을 불러오지 않았습니다: {offset}번째 바이트(0부터 셈)가 NUL 바이트이므로 텍스트 파일이 아닙니다. CSV 입력은 바뀌지 않았습니다.",
     "fileError": "파일을 읽을 수 없습니다. CSV 입력은 바뀌지 않았습니다.",
+    "errUnclosed": "{line}행에서 시작한 따옴표 필드가 닫히지 않았습니다. 닫는 \"를 추가하거나 여는 \"를 지우세요.",
     "tips": {
       "dialect": "MySQL, PostgreSQL 또는 SQLite의 따옴표 규칙과 CREATE TABLE 자료형을 선택합니다. 변경하면 현재 CSV를 바로 변환합니다. MySQL은 문자열 값의 백슬래시도 두 개로 씁니다.",
       "table": "기본 테이블명은 my_table이며 비워도 이 이름을 사용합니다. 전체 이름을 하나의 식별자로 따옴표로 감쌉니다. 편집을 멈춘 뒤 0.3초 후 출력을 갱신합니다.",
@@ -202,6 +206,7 @@ const { tips: TIPS, ...CLIENT } = T;
         var row = [];
         var field = '';
         var inQuote = false;
+        var quoteStart = 0;
         var i = 0;
         var len = text.length;
 
@@ -221,8 +226,10 @@ const { tips: TIPS, ...CLIENT } = T;
               i++;
             }
           } else {
-            if (ch === '"') {
+            if (ch === '"' && field === '') {
+              /* a quote opens a quoted field only at the start of the field; elsewhere it is text */
               inQuote = true;
+              quoteStart = i;
               i++;
             } else if (ch === ',') {
               row.push(field);
@@ -247,6 +254,8 @@ const { tips: TIPS, ...CLIENT } = T;
             }
           }
         }
+
+        if (inQuote) throw new Error('Unclosed quote starting on line ' + text.slice(0, quoteStart).split(/\r\n|\r|\n/).length + '.');
 
         if (field || row.length > 0) {
           row.push(field);
@@ -303,10 +312,17 @@ const { tips: TIPS, ...CLIENT } = T;
       }
 
       /* opts: { dialect, table, mode: 'batch' | 'individual', createTable }.
-         Returns { sql, addedColumns } or { error: 'noData' | 'noHeader' }. Cells beyond the header
+         Returns { sql, addedColumns } or { error: 'noData' | 'noHeader' } or { error: 'unclosed', line }. Cells beyond the header
          get columns named column_N (N = position), so no value is dropped. */
       function csvToSql(text, opts) {
-        var rows = parseCsv(text.trim()).filter(function (r) {
+        var parsed;
+        try { parsed = parseCsv(text.trim()); }
+        catch (e) {
+          var unclosed = /^Unclosed quote starting on line (\d+)\.$/.exec(e.message);
+          if (unclosed) return { error: 'unclosed', line: Number(unclosed[1]) };
+          throw e;
+        }
+        var rows = parsed.filter(function (r) {
           return r.some(function (c) { return c !== ''; });
         });
         if (rows.length === 0) return { error: 'noData' };
@@ -370,7 +386,7 @@ const { tips: TIPS, ...CLIENT } = T;
           createTable: createEl.checked,
         });
         if (r.error) {
-          setStatus(r.error === 'noHeader' ? t.errNoHeader : t.errNoData, true);
+          setStatus(r.error === 'unclosed' ? t.errUnclosed.replace('{line}', String(r.line)) : r.error === 'noHeader' ? t.errNoHeader : t.errNoData, true);
           sqlEl.value = '';
           return;
         }
