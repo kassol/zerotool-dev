@@ -20,11 +20,11 @@ faqItems:
     question: "JSON 类型如何映射到 Python 类型？"
     answer: "string→str、整数→int、其他数字→float、boolean→bool、null→Optional[Any]、array→List[T]（元素类型不一时为 List[Union[...]]，空数组为 List[Any]）、嵌套对象→独立类。写成 10.0 的数字会被读成整数 10，因此是 int。"
   - id: "optional"
-    question: "何时字段标记为 Optional？"
+    question: "字段什么时候会写成 Optional？"
     answer: "@dataclass 和 Pydantic 模式下，字段值在样本里为 null，或合并数组时在部分对象中缺失，就写成 Optional[T] = None，并排到必填字段之后。TypedDict 保留 JSON 里的键顺序：部分对象缺少的键写成 NotRequired[T]，值为 null 的写成 Optional[T]。"
   - id: "nested"
     question: "嵌套对象如何处理？"
-    answer: "每个嵌套对象生成一个类，类名取键名的 PascalCase；数组里的对象加后缀 Item（comments → CommentsItem）。类写在使用它的类之前。同一个键下字段相同的对象共用一个类；结构不同时加父级类名作前缀（b.meta → BMeta），再不行就加编号。非 ASCII 键名在类名里保留全部字符（PEP 3131），类名也不会与 JSON 键名、Python 关键字或输出里导入的名字相同。"
+    answer: "每个嵌套对象生成一个类，类名取键名的 PascalCase；数组里的对象加后缀 Item（comments → CommentsItem）。类写在使用它的类之前。同一个键下字段相同的对象共用一个类；结构不同时加父级类名作前缀（b.meta → BMeta），再不行就加编号。非 ASCII 键名在类名里保留全部字符（PEP 3131），除根类名外，类名也不会与 JSON 键名、Python 关键字或输出里导入的名字相同。"
   - id: "privacy"
     question: "我的数据会发送到服务器吗？"
     answer: "不会。JSON 和根类名称只在当前浏览器标签页里处理，不会发送出去，工具也不把它们存进浏览器存储。页面只在你改完输入并移开焦点、点击示例或切换模式时记录一条统计事件，内容只有工具名和动作（generate）。"
@@ -160,7 +160,7 @@ class GeocodeResponse(BaseModel):
   <li>日期保持为 <code>{"str"}</code>；把类型改成 <code>{"datetime"}</code> 后，Pydantic 会解析 ISO 8601 字符串。</li>
   <li>根节点是基础类型数组时不生成类。根数组里对象和其他值混在一起时，对象生成根类，整个数组在最后写成别名 <code>{"RootArray = List[Union[...]]"}</code>（<code>None</code> 表示 null 元素），Pydantic 里可以用 <code>{"TypeAdapter(RootArray)"}</code> 校验整个数组。</li>
   <li>写成 <code>10.0</code> 的数字到工具里已经是整数 <code>10</code>（JavaScript 的 <code>JSON.parse</code> 不保留末尾的 0），所以生成 <code>{"price: int"}</code>。之后 Pydantic 遇到 <code>10.5</code> 会报 <code>Input should be a valid integer, got a number with a fractional part</code>。金额可能带小数时，请改成 <code>float</code>，或者按分存成整数。</li>
-  <li>根类名称是合法的 Python 标识符时原样使用，否则转换：<code>{"order-item"}</code> → <code>OrderItem</code>，数字开头的 <code>2fa</code> → <code>{"_2fa"}</code>，关键字 <code>class</code> → <code>{"class_"}</code>，没有可用字符时用 <code>Root</code>。</li>
+  <li>根类名称是合法的 Python 标识符时原样使用，否则转换：<code>{"order-item"}</code> → <code>OrderItem</code>，数字开头的 <code>2fa</code> → <code>{"_2fa"}</code>，关键字 <code>class</code> → <code>{"class_"}</code>，开头的 <code>{"__"}</code> 改成一个 <code>{"_"}</code>（嵌套类名以根类名开头，Python 会在类体里改写以两个下划线开头的名字），没有可用字符时用 <code>Root</code>。</li>
   <li>中文键名在类名里保留全部字符。类名不会和 JSON 里的键名相同（Pydantic 里带默认值的字段会遮住同名的类），所以会加上父级类名作前缀，见下例。</li>
 </ul>
 
@@ -186,7 +186,7 @@ class Order:
     收货地址: Order收货地址
     发票地址: Order发票地址`}</code></pre>
 
-<p>Python 3 允许非 ASCII 标识符，中文键名可以直接作字段名，这段代码能运行；两个地址结构不同，各自生成一个类，「抬头」字段也在。想要英文类名时，可以把 <code>Order收货地址</code>、<code>Order发票地址</code> 改成 <code>ShippingAddress</code>、<code>InvoiceInfo</code>。</p>
+<p>Python 3 允许非 ASCII 标识符，中文键名可以直接作字段名，这段代码能运行；两个地址结构不同，各自生成一个类，<code>抬头</code> 字段也会保留。想要英文类名时，可以把 <code>Order收货地址</code>、<code>Order发票地址</code> 改成 <code>ShippingAddress</code>、<code>InvoiceInfo</code>。</p>
 
 {/* b6-sample-coverage:start */}
 <h2>空数组与样本覆盖</h2>
