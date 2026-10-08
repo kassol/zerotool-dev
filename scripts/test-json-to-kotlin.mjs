@@ -473,7 +473,7 @@ const V2 = {
       "generate"
     ]
   ],
-  "scriptSHA": "24a9c630058e507d8ec5ddfbcdd1c0db09bc0406c251a56ec2e3ee1fea44076d"
+  "scriptSHA": "36ad513b4d507c32471837ad502a84cf314263266acc013ca9b3a722480c816a"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -481,7 +481,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 original script preserved except removed redundant Generate listener and change-based analytics sent once per JSON and root name (S2-6)', hash(pageScript), V2.scriptSHA);
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
@@ -524,7 +524,21 @@ for (const lang of ['en','zh','ja','ko']) {
     eq(lang + ': v2 output focus survives CtrlL ' + shellFirst + focus, q.doc.activeElement === q.get(prefix+'-input') && !q.get(prefix+'-input').value && !q.get(prefix+'-root-name').value && !q.get(prefix+'-output-code').textContent && !q.get(prefix+'-status').textContent && q.clears.length === 1, true);
   }
   const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
-  q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
+  q.input('{"x":1}');q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
+  // Analytics: one event per committed change (input change, Generate, Example), not on load or per typing pause.
+  const ga=lifecyclePage(lang);eq(lang + ': GA: page load sends nothing',ga.tracks.length,0);
+  ga.input('{"a":1}');ga.advance(300);eq(lang + ': GA: typing pause sends nothing',ga.tracks.length,0);
+  ga.get('jkt-input').dispatch('change');eq(lang + ': GA: committed change sends one generate event',JSON.stringify(ga.tracks),JSON.stringify([['json-to-kotlin','generate']]));
+  ga.input('{"b":"x"}');ga.get('jkt-input').dispatch('change');eq(lang + ': GA: change before the debounce generates the new input first',[ga.get('jkt-output-code').textContent.includes('val b: String'),ga.tracks.length].join(),'true,2');ga.advance(300);eq(lang + ': GA: no second event after the debounce',ga.tracks.length,2);
+  ga.input('{');ga.get('jkt-input').dispatch('change');eq(lang + ': GA: invalid input change sends nothing',ga.tracks.length,2);
+  ga.get('jkt-convert').click();eq(lang + ': GA: Generate with invalid input sends nothing',ga.tracks.length,2);
+  ga.get('jkt-example').click();eq(lang + ': GA: Example sends one event',ga.tracks.length,3);
+  ga.get('jkt-convert').click();eq(lang + ': GA: Generate on the unchanged example sends nothing',ga.tracks.length,3);
+  // One user action that fires both change (blur on mousedown) and click, or click (Ctrl/⌘+Enter) then change, counts once.
+  const once=lifecyclePage(lang);once.input('{"c":1}');once.get('jkt-input').dispatch('change');once.get('jkt-convert').click();eq(lang + ': GA: change then Generate click sends one event',once.tracks.length,1);
+  once.input('{"d":2}');once.key('jkt-input','Enter');once.get('jkt-input').dispatch('change');eq(lang + ': GA: Ctrl+Enter then change sends one event',once.tracks.length,2);
+  once.get('jkt-root-name').value='Api';once.get('jkt-convert').click();eq(lang + ': GA: a new root name then Generate sends one event',once.tracks.length,3);
+  once.get('jkt-clear').click();once.input('{"d":2}');once.get('jkt-root-name').value='Api';once.get('jkt-convert').click();eq(lang + ': GA: the same input after Clear sends again',once.tracks.length,4);
 }
 
 console.log(`\n${passes} passed, ${failures} failed${skips ? ', ' + skips + ' skipped' : ''}`);
