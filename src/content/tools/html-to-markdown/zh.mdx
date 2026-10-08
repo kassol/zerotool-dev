@@ -8,18 +8,106 @@ steps:
   - "点击清空以清除两栏并取消排队的转换；焦点在工具内时也可按 Ctrl/⌘+L。"
 faqItems:
   - question: "支持哪些 HTML 元素？"
-    answer: "支持所有常用 HTML 元素：h1–h6、p、strong/b、em/i、a、img、code、pre+code（含语言 class）、ul、ol、li、blockquote、hr、table（GFM 格式）和 br。未知元素会回退为纯文本内容。"
+    id: "elements"
+    answer: "常用元素都能转换：h1–h6、p、strong/b、em/i、a、img、code、pre+code（读取语言 class）、ul、ol、li、blockquote、hr、table（GFM 表格）和 br。del、s、mark、表单控件等其他元素只保留其中的文字。"
   - question: "代码块如何处理？"
-    answer: "内联 <code> 转为反引号格式。<pre><code class=\"language-javascript\"> 代码块转为保留语言标签的围栏式代码块：```javascript。若无语言 class，则使用纯 ``` 围栏。"
+    id: "code-blocks"
+    answer: "行内 <code> 转为反引号包住的代码。<pre><code class=\"language-javascript\"> 转为带语言标记的围栏代码块 ```javascript。语言只从 <code> 元素的 language-* class 读取；没有这个 class 时输出不带语言的 ``` 围栏。"
   - question: "支持 GFM 表格吗？"
-    answer: "支持。首行是 th 单元格的表格会转换为 GitHub Flavored Markdown（GFM）管道符表格并带分隔行；单元格里的 | 写成 \\|，<br> 保留为 <br>。首行没有 th 的表格按原 HTML 输出，因为 GFM 表格必须有表头行。"
+    id: "tables"
+    answer: "支持。表格第一行在 thead 里，或者第一行全部是 th 单元格时，转换为带分隔行的 GitHub Flavored Markdown（GFM）管道表格；单元格里的 | 写成 \\|，<br> 保留为 <br>。其他表格按原 HTML 输出，因为 GFM 表格必须有表头行。"
   - question: "无效或不完整的 HTML 如何处理？"
-    answer: "转换器使用浏览器内置 HTML 解析器，与浏览器的容错行为一致。不规范的 HTML 会被自动修正，然后继续转换。"
+    id: "invalid-html"
+    answer: "转换器使用浏览器内置的 HTML 解析器，容错方式与浏览器显示网页时相同：能修正的不规范 HTML 会先被修正，再按修正后的结构转换。所以结果有时和你预想的不同，例如没有闭合的 <b> 会让下一段也变成加粗。"
+  - question: "可以转换整个网页吗？"
+    id: "full-page"
+    answer: "可以，但要先去掉不需要的部分。转换器没有删除 <script>、<style> 和 <title> 的规则，它们里面的文字会出现在 Markdown 里。更好的做法是在浏览器开发者工具的元素面板里只复制正文所在元素的 outerHTML。"
   - question: "我的 HTML 会被发送到服务器吗？"
-    answer: "不会。所有转换在浏览器中完成，使用 turndown.js 库。数据不会传输到任何服务器。"
+    id: "privacy"
+    answer: "不会。页面在浏览器里用 Turndown 库转换 HTML，不发送到任何地方，也不保存到浏览器存储。页面的统计只在你改完输入、焦点离开输入框后，或点击「示例」时记录一次使用事件（工具名和动作 convert），不包含 HTML 或 Markdown 内容。"
 ---
 
-<h2>转换规则对照</h2>
+## 示例：一份上线通知
+
+下面的输出都由本工具的转换器算出：Turndown 7.2.4，加上 turndown-plugin-gfm 1.0.2 的表格规则。
+
+{/* htm-check: {"in": "<h3>今晚 22:00 发布</h3>\n<ul><li>订单列表支持按<strong>支付时间</strong>筛选</li><li>修复导出 Excel 时文件名乱码</li></ul>\n<table><thead><tr><th>模块</th><th>负责人</th></tr></thead><tbody><tr><td>订单</td><td>张伟</td></tr><tr><td>报表</td><td>李娜</td></tr></tbody></table>\n<p>回滚方案见<a href=\"https://wiki.example.cn/release/1008\">发布文档</a>。</p>", "bytes": 264} */}
+
+从内部 Wiki 复制出来的发布说明通常是这样一段 HTML：
+
+```html
+<h3>今晚 22:00 发布</h3>
+<ul><li>订单列表支持按<strong>支付时间</strong>筛选</li><li>修复导出 Excel 时文件名乱码</li></ul>
+<table><thead><tr><th>模块</th><th>负责人</th></tr></thead><tbody><tr><td>订单</td><td>张伟</td></tr><tr><td>报表</td><td>李娜</td></tr></tbody></table>
+<p>回滚方案见<a href="https://wiki.example.cn/release/1008">发布文档</a>。</p>
+```
+
+转换结果：
+
+```markdown
+### 今晚 22:00 发布
+
+-   订单列表支持按**支付时间**筛选
+-   修复导出 Excel 时文件名乱码
+
+| 模块 | 负责人 |
+| --- | --- |
+| 订单 | 张伟 |
+| 报表 | 李娜 |
+
+回滚方案见[发布文档](https://wiki.example.cn/release/1008)。
+```
+
+标题级别保持 `h3` 的三个 `#`，列表符号是 `-` 加三个空格，表格因为第一行在 `thead` 里，所以转成了 GFM 表格。整段输出按 UTF-8 计算是 `264` 字节。
+
+## 发到企业微信群之前
+
+企业微信的《[消息推送配置说明](https://developer.work.weixin.qq.com/document/path/91770)》（页面标注最后更新 2025/08/07）规定，群消息推送的 `markdown` 和 `markdown_v2` 两种类型，`content` 都最长不超过 4096 个字节，必须是 UTF-8 编码。两种类型能用的语法不一样：
+
+- `markdown` 只支持标题、加粗、链接、行内代码、引用和三种内置字体颜色。上面的列表和表格都不在这个范围里。
+- `markdown_v2` 另外支持斜体、列表、表格、图片、分割线和代码块，但不支持字体颜色和 @群成员。文档还写明，客户端低于 4.1.36（安卓低于 4.1.38）时，这种消息显示为纯文本。
+
+所以上面这段转换结果要按 `markdown_v2` 发送。264 字节离 4096 字节的上限还很远；一个汉字在 UTF-8 里占 3 字节，纯中文正文大约 1365 个字就会到上限。有两处和文档里的示例写法不同：本工具的列表符号后面有三个空格，文档示例只有一个；`<hr>` 会转成 `* * *`，文档示例的分割线写作 `---`。我们没有在企业微信客户端里实测这两种写法，发送前可以先在测试群里试一次，或者手动改成文档的写法。
+
+## 中文标点后面的加粗
+
+从网页复制的 HTML 里，经常能看到连冒号一起加粗的写法。转换器会如实输出：
+
+{/* htm-check: {"in": "<p><strong>注意：</strong>这里必须填写手机号</p>", "bold": false} */}
+
+输入 `<p><strong>注意：</strong>这里必须填写手机号</p>`，输出 `**注意：**这里必须填写手机号`。
+
+这行 Markdown 在本站的 [Markdown 预览](/zh/tools/markdown-preview/)里不会变成加粗，两边的 `**` 原样显示。原因在 CommonMark 的分隔符规则（[CommonMark 0.31.2 §6.2](https://spec.commonmark.org/0.31.2/#left-flanking-delimiter-run)）：结尾的 `**` 前面是标点「：」时，后面必须是空白或标点才能闭合，而这里紧跟着汉字「这」。中文句子不用空格分词，这种情况比英文常见得多。
+
+{/* htm-check: {"in": "<p><strong>注意</strong>：这里必须填写手机号</p>", "bold": true} */}
+
+修法是改 HTML，把标点移出加粗：`<p><strong>注意</strong>：这里必须填写手机号</p>` 转成 `**注意**：这里必须填写手机号`，预览里能正常加粗。也可以在转换后的 Markdown 里手动移动 `**`。
+
+## 不完整的 HTML 与没有表头的表格
+
+{/* htm-check: {"in": "<p>价格：<b>¥199<p>库存：12 件"} */}
+
+只复制了半截的 HTML 常常缺结束标签。输入 `<p>价格：<b>¥199<p>库存：12 件` 时，输出是：
+
+```markdown
+价格：**¥199**
+
+**库存：12 件**
+```
+
+第二段本来不该加粗。浏览器的解析器遇到新的 `<p>` 会结束上一段，但还没闭合的 `<b>` 会在下一段里重新打开，这是 HTML 标准规定的做法（[重建活动格式元素](https://html.spec.whatwg.org/multipage/parsing.html#reconstruct-the-active-formatting-elements)）。转换前补上 `</b>` 就不会这样。
+
+{/* htm-check: {"in": "<table><tr><td>型号</td><td>价格</td></tr><tr><td>A1</td><td>199</td></tr></table>"} */}
+
+表格的第一行如果用的是 `td` 而不是 `th`，又不在 `thead` 里，转换器不猜表头，把整张表原样保留为 HTML。输入 `<table><tr><td>型号</td><td>价格</td></tr><tr><td>A1</td><td>199</td></tr></table>`，输出是：
+
+```html
+<table><tbody><tr><td>型号</td><td>价格</td></tr><tr><td>A1</td><td>199</td></tr></tbody></table>
+```
+
+`<tbody>` 是解析器自动补上的。想得到 GFM 表格，就把第一行改成 `th`，或者放进 `thead`。
+
+## 转换规则对照
 
 <table>
   <thead><tr><th>HTML</th><th>Markdown</th></tr></thead>
@@ -33,13 +121,17 @@ faqItems:
     <tr><td><code>&lt;table&gt;</code></td><td>GFM 管道表格</td></tr>
     <tr><td><code>&lt;blockquote&gt;</code></td><td><code>&gt; 引用</code></td></tr>
     <tr><td><code>&lt;hr&gt;</code></td><td><code>{'* * *'}</code></td></tr>
+    <tr><td><code>&lt;br&gt;</code></td><td>行尾两个空格加换行</td></tr>
   </tbody>
 </table>
 
-<h2>常见使用场景</h2>
-<ul>
-  <li><strong>CMS 内容迁移</strong>：将 WordPress 或 Drupal 的 HTML 内容转换为 Markdown，用于 Hugo、Astro 等静态站生成器。</li>
-  <li><strong>README 整理</strong>：抓取网页内容后转换为 Markdown，用于 GitHub README 或文档站点。</li>
-  <li><strong>LLM 输入优化</strong>：将网页转换为 Markdown 格式，减少 token 数量和噪声，再输入大语言模型。</li>
-  <li><strong>笔记整理</strong>：将邮件 HTML 或富文本片段转换为 Markdown，导入 Obsidian、Notion 等笔记工具。</li>
-</ul>
+## 限制
+
+- 删除线（`<del>`、`<s>`）、高亮（`<mark>`）和任务列表的复选框不会转换，只留下文字。
+- 表格的 `colspan` 和 `rowspan` 会被忽略，GFM 表格没有合并单元格。
+- `<script>`、`<style>`、`<title>` 里的文字不会被删掉，只粘贴需要的那部分 HTML。
+- 没有 `src` 属性的 `<img>` 会被整个丢掉，不留任何痕迹。延迟加载图片的网页常把地址先放在 `data-src` 里，要等图片加载出来再复制，或者先把属性名改成 `src`。
+- 代码语言只从 `<code>` 上的 `language-` class 读取，写在 `<pre>` 上的 class 或 `data-lang` 属性读不到，得到的是不带语言的围栏。
+- 相对路径的链接和图片原样保留，发布后按新页面的地址解析。
+- 输入超过 1,048,576 个字符时会显示「输入内容过大，转换可能较慢。」，转换仍在页面里进行。
+- 本站的 Markdown 预览会把原始 HTML 当文字显示，表格里的 `<br>` 和保留为 HTML 的表格在预览里会显示成标签。

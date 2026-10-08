@@ -45,7 +45,7 @@ check('sentence pool found', SENTENCES.length > 0, String(SENTENCES.length));
 check('classic paragraph found', CLASSIC.length > 0);
 check('classic paragraph = first five pool sentences', SENTENCES.slice(0, 5).join(' ') === CLASSIC);
 check('paragraph uses 3–6 sentences', source.includes('var count = 3 + Math.floor(Math.random() * 4);'));
-check('count clamped to 1–20, default 5', source.includes("Math.min(20, Math.max(1, parseInt(document.getElementById('li-count').value) || 5))"));
+check('count clamped to 1–20, default 5', source.includes("var count = Math.min(20, Math.max(1, Math.trunc(Number(typed)) || 5));") && source.includes("var typed = countEl.value;"));
 check('Copy All joins paragraphs with a blank line', source.includes("output.dataset.text = paragraphs.join('\\n\\n');"));
 
 const loebSet = new Set(tokens(fx.loeb1914.text));
@@ -502,6 +502,35 @@ for (const lang of ['en', 'zh', 'ja', 'ko'])
             lifeCheck('no native clipboard ever', p.execCalls.length === 0);
         });
 
+// Analytics and the paragraph count (2026-10-08): loading the page generates once without an
+// event; each click on Generate records one `generate`. A count outside 1–20 or not a whole
+// number is still moved into the range (empty or 0 gives 5, as before), but the field then shows
+// the number used and a note says so, in the page language.
+for (const lang of ['en', 'zh', 'ja', 'ko'])
+    await attempt(lang + '/count-and-analytics', async () => {
+        const p = lifecyclePage(lang);
+        const L = lifecycleLabels(lang);
+        lifeCheck(lang + '/load generates without an event', !!fullOutput(p) && p.tracks.length === 0);
+        p.get('li-generate').click();
+        lifeCheck(lang + '/Generate records one event', JSON.stringify(p.tracks) === '[["lorem_ipsum","generate"]]');
+        const note = () => p.get('li-count-note').textContent;
+        lifeCheck(lang + '/note text exists', typeof L.countNote === 'string' && L.countNote.includes('{n}'));
+        for (const [typed, used] of [['0', 5], ['', 5], ['50', 20], ['-3', 1], ['2.5', 2], ['3', 3], ['20', 20], ['1', 1], ['03', 3], ['1e1', 10], ['0.5', 5], ['-2.7', 1], ['19.9', 19]]) {
+            p.get('li-count').value = typed;
+            p.get('li-generate').click();
+            const paras = p.get('li-output').children.length;
+            lifeCheck(`${lang}/count "${typed}" gives ${used} paragraphs`, paras === used && fullOutput(p).split('\n\n').length === used);
+            const valid = typed !== '' && Number(typed) === used;
+            lifeCheck(`${lang}/count "${typed}" field shows ${used}`, p.get('li-count').value === (valid ? typed : String(used)));
+            lifeCheck(`${lang}/count "${typed}" note`, note() === (valid ? '' : L.countNote.replace('{n}', String(used))));
+        }
+        p.get('li-count').value = '0';
+        p.get('li-generate').click();
+        lifeCheck(lang + '/note before clear', note() !== '');
+        p.ctrlL('li-generate');
+        lifeCheck(lang + '/Ctrl+L clears the note', note() === '');
+    });
+
 process.removeListener('unhandledRejection', onUnhandled);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
 console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
@@ -528,7 +557,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     lifeCheck(lang + '/four-language empty sentence', typeof L?.empty === 'string' && L.empty.length > 0 && source.includes('{L.empty}'));
     lifeCheck(lang + '/copy feedback precedes result', p.get('li-copy').closest('.li-status')?.getAttribute('role') === 'status' && p.get('li-copy').closest('.li-rail') !== null);
     const client = JSON.parse(p.doc.querySelector('.li-wrap').dataset.strings);
-    lifeCheck(lang + '/only required dynamic strings sent', Object.keys(client).sort().join(',') === 'copied,copyAll,copyFailed' && !Object.hasOwn(client, 'tips'));
+    lifeCheck(lang + '/only required dynamic strings sent', Object.keys(client).sort().join(',') === 'copied,copyAll,copyFailed,countNote' && !Object.hasOwn(client, 'tips'));
     for (const key of featureTips) {
         lifeCheck(lang + '/tip ' + key + ' is SSR-bound', typeof L?.tips?.[key] === 'string' && L.tips[key].length > 0 && source.includes('id="li-tip-' + key + '"') && source.includes('{L.tips.' + key + '}</Toggletip>'));
     }
@@ -542,3 +571,82 @@ if (/'lorem-ipsum':\s*'generate'/.test(featureLayouts)) lifeCheck('v2 generate r
 else console.log('PENDING_ROOT lorem-ipsum generate registration (not counted as PASS)');
 console.log(`FEATURE FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
 process.exitCode = failures + lifecycleFail ? 1 : 0;
+
+// ── Tool pages: `li-check` worked examples and the MDX contract ─────────────────────
+// Annotation {/* li-check: {"case": …, "show": [keys]} */}: the listed values are recomputed from
+// the component (sentence pool, classic paragraph, count rule and the four-language note) and each
+// must be the whole text of an inline code span (`…` or <code>…</code>) or code block after the annotation (before the
+// next li-check annotation or H2). Random paragraphs are not recomputed; their bounds are.
+//   classic                      text, words (69), chars (445), sentences (5)
+//   prefix {k}                   text and chars of the first k classic sentences
+//   fit {limit}                  k = most classic sentences within limit characters, chars, next
+//   output {paragraphs, classic} wordsMin/wordsMax and charsMin/charsMax of the Copy All text
+//                                (paragraphs joined with a blank line; ASCII, so bytes = chars)
+//   average {paragraphs, classic} expected words (4.5 sentences × mean sentence length), rounded
+//   count {typed}                used and note: run the page, type the value, click Generate
+//   cjkBytes {bytes}             chars = how many 3-byte UTF-8 characters fit in bytes
+//   xWeight {text}               weighted length under twitter-text config v3 (weight 1 for
+//                                U+0000–10FF, U+2000–200D, U+2010–201F, U+2032–2037, else 2)
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
+const SENT = SENTENCES.slice(0, 5).join(' ') === CLASSIC ? CLASSIC.split(/(?<=\.)\s+/) : [];
+const wordLens = SENTENCES.map((x) => tokens(x).length).sort((a, b) => a - b);
+const charLens = SENTENCES.map((x) => x.length).sort((a, b) => a - b);
+const sum = (a) => a.reduce((x, y) => x + y, 0);
+const para = { wMin: sum(wordLens.slice(0, 3)), wMax: sum(wordLens.slice(-6)), cMin: sum(charLens.slice(0, 3)) + 2, cMax: sum(charLens.slice(-6)) + 5 };
+const meanWords = sum(wordLens) / wordLens.length;
+const X_RANGES = [[0, 4351], [8192, 8205], [8208, 8223], [8242, 8247]];
+const xWeight = (text) => [...text].reduce((n, ch) => n + (X_RANGES.some(([a, b]) => ch.codePointAt(0) >= a && ch.codePointAt(0) <= b) ? 1 : 2), 0);
+const prefixOf = (k) => SENT.slice(0, k).join(' ');
+function liValues(spec, lang) {
+  switch (spec.case) {
+    case 'classic': return { text: CLASSIC, words: tokens(CLASSIC).length, chars: CLASSIC.length, sentences: SENT.length };
+    case 'prefix': return { text: prefixOf(spec.k), chars: prefixOf(spec.k).length };
+    case 'fit': { let k = 0; while (k < SENT.length && prefixOf(k + 1).length <= spec.limit) k++; return { k, chars: prefixOf(k).length, next: prefixOf(k + 1).length }; }
+    case 'output': {
+      const n = spec.paragraphs, first = spec.classic ? 1 : 0, rest = n - first, sep = 2 * (n - 1);
+      return { wordsMin: first * tokens(CLASSIC).length + rest * para.wMin, wordsMax: first * tokens(CLASSIC).length + rest * para.wMax,
+        charsMin: first * CLASSIC.length + rest * para.cMin + sep, charsMax: first * CLASSIC.length + rest * para.cMax + sep };
+    }
+    case 'average': { const n = spec.paragraphs, first = spec.classic ? 1 : 0; return { words: Math.round(first * tokens(CLASSIC).length + (n - first) * 4.5 * meanWords) }; }
+    case 'count': {
+      const p = lifecyclePage(lang);
+      p.get('li-count').value = spec.typed;
+      p.get('li-generate').click();
+      return { used: Number(p.get('li-count').value), paragraphs: p.get('li-output').children.length, note: p.get('li-count-note').textContent };
+    }
+    case 'cjkBytes': return { chars: Math.floor(spec.bytes / Buffer.byteLength('汉', 'utf8')) };
+    case 'xWeight': return { weight: xWeight(spec.text) };
+    default: throw Error('unknown case ' + spec.case);
+  }
+}
+function liRegion(body, index) {
+  let rest = body.slice(body.indexOf('*/}', index) + 3);
+  const next = rest.indexOf('{/* li-check');
+  if (next >= 0) rest = rest.slice(0, next);
+  const masked = rest.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, (m) => m.replace(/[^\n]/g, ' '));
+  const h2 = masked.search(/^(?:##[ \t]|<h2\b)/m);
+  return h2 < 0 ? rest : rest.slice(0, h2);
+}
+function liVerify({ spec, body, index, lang }) {
+  if (!spec || !Array.isArray(spec.show) || !spec.show.length) return 'annotation needs "case" and "show"';
+  const values = liValues(spec, lang), region = liRegion(body, index);
+  const shown = new Set([...region.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').matchAll(/`([^`\n]+)`/g)].map((m) => m[1]).concat(fencedBlocks(region).map((b) => b.text))
+    .concat([...region.matchAll(/<code>([^<]*)<\/code>/g)].map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'))));
+  for (const key of spec.show) {
+    if (!(key in values)) return 'no value ' + key;
+    if (!shown.has(String(values[key]))) return `${key} = ${JSON.stringify(values[key])} is not shown as code`;
+  }
+  return null;
+}
+let pagePass = 0, pageFail = 0;
+function pageCheck(name, ok, detail) { if (ok) pagePass++; else { pageFail++; console.log('FAIL page ' + name + (detail ? ' — ' + detail : '')); } }
+pageCheck('pool bounds match the guide figures', para.wMin === 26 && para.wMax === 89, JSON.stringify(para));
+pageCheck('verifier rejects a wrong value', liVerify({ spec: { case: 'classic', show: ['chars'] }, body: '{/* li-check */}\n`444`\n', index: 0, lang: 'en' }) !== null);
+pageCheck('verifier accepts the right value', liVerify({ spec: { case: 'classic', show: ['chars'] }, body: '{/* li-check */}\n`445`\n', index: 0, lang: 'en' }) === null);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const problems = contractProblems('lorem-ipsum', lang, { annotations: [{ tag: 'li-check', min: 2, verify: liVerify }] });
+  pageCheck(lang + ' MDX content contract and li-check examples', problems === '', problems);
+}
+console.log(`PAGES ${pagePass} passed, ${pageFail} failed`);
+console.log(`ALL ${passes + lifecyclePass + pagePass} passed, ${failures + lifecycleFail + pageFail} failed`);
+process.exitCode = failures + lifecycleFail + pageFail ? 1 : 0;
