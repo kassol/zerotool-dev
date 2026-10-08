@@ -60,7 +60,7 @@ function gen(json, model, mode, timestamps, required) {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
@@ -85,7 +85,7 @@ function session() {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { get activeElement() { return activeInside ? elements['jtm-input'] : null; }, querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
@@ -183,6 +183,19 @@ eq('"release-date" quoted', js.includes('  "release-date": { type: String },'), 
 eq('$ok and _id2 stay bare', js.includes('  $ok: { type: Number },') && js.includes('  _id2: { type: Number },'), true);
 eq('"2fa" quoted', js.includes('  "2fa": { type: Boolean },'), true);
 
+// B1: a "__proto__" key is written as a computed key, so the object literal gets an own property
+// (a bare `__proto__:` sets the prototype); the TypeScript interface quotes it.
+{
+  const json = '{"__proto__":{"x":1},"b":1,"constructor":"c"}';
+  const jsOut = gen(json, 'Doc', 'javascript', false, false);
+  eq('B1: __proto__ is a computed key in the schema object', jsOut.includes('  ["__proto__"]: '), true);
+  const defs = [];
+  new Function('require', 'module', jsOut)(() => ({ Schema: function (def) { defs.push(def); }, model: () => null }), { exports: {} });
+  eq('B1: the root schema definition has an own __proto__ property', Object.hasOwn(defs.at(-1), '__proto__') && Object.getPrototypeOf(defs.at(-1)) === Object.prototype, true);
+  const tsOut = gen(json, 'Doc', 'typescript', false, false);
+  eq('B1: TypeScript output parses and quotes __proto__ in the interface', parsesAsTs(tsOut) === true && tsOut.includes('  "__proto__": '), true);
+}
+
 eq('null is skipped: null then string → String', gen('[{"v": null}, {"v": "x"}]', 'T', 'javascript', false, false).includes('v: { type: String },'), true);
 
 const nestedRepro = '{"a":{"meta":{"x":1}},"b":{"meta":{"y":2}}}';
@@ -267,6 +280,11 @@ if (process.env.MONGOOSE_TEST_DIR) {
       const doc = new M({ at: value });
       eq(`Mongoose casts ${lang} jtm-date ${value}`, JSON.stringify([doc.validateSync()?.message ?? true, doc.at && doc.at.toISOString()]), JSON.stringify([true, iso]));
     }
+    // B1: the computed key reaches Mongoose, which skips __proto__ / constructor / prototype paths
+    // (lib/schema.js, utils.specialProperties); the page says so on the status line.
+    const proto = { exports: {} };
+    new Function('require', 'module', gen('{"__proto__":1,"constructor":"c","b":1}', 'Proto', 'javascript', false, false))(() => isolated, proto);
+    eq('B1: Mongoose 9.10.3 skips the __proto__ and constructor paths', JSON.stringify(Object.keys(proto.exports.schema.paths).filter((k) => k !== '_id' && k !== '__v')), JSON.stringify(['b']));
     const pops = new M({ pops: ['0', '10'] });
     eq('Mongoose casts ["0","10"] on a [Number] path to [0,10]', JSON.stringify([pops.validateSync()?.message ?? true, [...pops.pops]]), JSON.stringify([true, [0, 10]]));
   }
@@ -466,6 +484,10 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const generated=queued.tracks.length;queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',queued.tracks.length,generated);
     queued.input('{"ctrlEnter": 1}');const beforeShortcut=queued.tracks.length;queued.key('Enter');same(tag+' no primary means CtrlEnter does not generate',[queued.tracks.length,queued.out().includes('ctrlEnter')],[beforeShortcut,false]);queued.advance(300);same(tag+' CtrlEnter preserves the real input debounce',queued.out().includes('ctrlEnter'),true);
     for(const [id,key]of [['jtm-lang-tabs','lang'],['jtm-ts-tabs','ts'],['jtm-req-tabs','req']]){const tabs=p.get(id).querySelectorAll('.jtm-tab');for(const selected of tabs){const before=p.tracks.length,wasActive=selected.classList.contains('active');p.get(cfg.output).textContent='stale';selected.click();same(tag+' option generates immediately '+id,p.out()!=='stale',true);same(tag+' option sends one GA event only when it changes '+id,p.tracks.length,before+(wasActive?0:1));same(tag+' aria-pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
+    // B1: the status line names the keys Mongoose skips as schema paths (lib/schema.js specialProperties).
+    {const w=page(lang,shellFirst);w.input('{"__proto__":{"x":1},"constructor":"c","b":{"prototype":1}}');w.advance(300);
+      same(tag+' B1: status names the keys Mongoose ignores',w.get(cfg.status).textContent.includes(String(labels[lang].msgIgnored).replace('{keys}','__proto__, constructor, prototype')),true);
+      w.input('{"b":1}');w.advance(300);same(tag+' B1: no notice without such keys',w.get(cfg.status).textContent,labels[lang].msgGenOne);}
     // GA: one generate event per committed action (change, Example, a new option), none on page load or typing pauses.
     {const g=page(lang,shellFirst);same(tag+' GA: page load sends no event',g.tracks.length,0);
       g.input(cfg.sample);g.advance(300);same(tag+' GA: a typing pause regenerates without an event',[g.out().includes('fresh'),g.tracks.length],[true,0]);

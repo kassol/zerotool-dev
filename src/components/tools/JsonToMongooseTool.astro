@@ -31,6 +31,7 @@ const STRINGS = {
     msgInvalidJson: 'Invalid JSON: ',
     msgGenOne: 'Generated 1 schema.',
     msgGenMany: 'Generated {n} schemas.',
+    msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: 'On',
@@ -62,6 +63,7 @@ const STRINGS = {
     msgInvalidJson: 'JSON 格式错误：',
     msgGenOne: '已生成 1 个 Schema。',
     msgGenMany: '已生成 {n} 个 Schema。',
+    msgIgnored: 'Mongoose 会跳过名为 __proto__、constructor、prototype 的 schema 路径：{keys}。',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: '开启',
@@ -93,6 +95,7 @@ const STRINGS = {
     msgInvalidJson: '無効なJSON：',
     msgGenOne: '1 個のスキーマを生成しました。',
     msgGenMany: '{n} 個のスキーマを生成しました。',
+    msgIgnored: 'Mongoose は __proto__・constructor・prototype という名前のスキーマパスを無視します：{keys}。',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: 'オン',
@@ -124,6 +127,7 @@ const STRINGS = {
     msgInvalidJson: '잘못된 JSON: ',
     msgGenOne: '스키마 1개를 생성했습니다.',
     msgGenMany: '스키마 {n}개를 생성했습니다.',
+    msgIgnored: 'Mongoose는 __proto__, constructor, prototype이라는 스키마 경로를 건너뜁니다: {keys}.',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: '켜짐',
@@ -142,6 +146,7 @@ const L = STRINGS[lang];
   data-msg-invalid-json={L.msgInvalidJson}
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
+  data-msg-ignored={L.msgIgnored}
 >
   <div class="jtm-config">
     <div class="jtm-config-row jtm-model-row">
@@ -205,6 +210,7 @@ const L = STRINGS[lang];
       var MSG_INVALID = wrap ? wrap.dataset.msgInvalidJson : 'Invalid JSON: ';
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 schema.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} schemas.';
+      var MSG_IGNORED = wrap ? wrap.dataset.msgIgnored : 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.';
 
       var inputEl = document.getElementById('jtm-input');
       var outputCodeEl = document.getElementById('jtm-output-code');
@@ -459,7 +465,10 @@ const L = STRINGS[lang];
 
       // Keys that are not JavaScript identifiers (first-name, "a b", 2fa) must be quoted in the
       // schema object and the TypeScript interface, or the output does not parse.
-      function propKey(key) {
+      // In an object literal a bare or quoted __proto__ sets the prototype, so it is a computed key
+      // there; in a TypeScript interface it is quoted.
+      function propKey(key, inObject) {
+        if (key === '__proto__') return inObject ? '["__proto__"]' : '"__proto__"';
         return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
       }
 
@@ -516,7 +525,7 @@ const L = STRINGS[lang];
           for (var j = 0; j < schema.fields.length; j++) {
             var field = schema.fields[j];
             var applyReq = useRequired && !isRefKind(field.typeInfo.kind);
-            lines.push('  ' + propKey(field.key) + ': ' + getMongooseFieldType(field.typeInfo, applyReq) + ',');
+            lines.push('  ' + propKey(field.key, true) + ': ' + getMongooseFieldType(field.typeInfo, applyReq) + ',');
           }
           if (isRoot) {
             lines.push('}, { timestamps: ' + useTimestamps + ' });');
@@ -605,6 +614,11 @@ const L = STRINGS[lang];
         showOutput(renderOutput(schemas, rawModelName, currentLang, currentTimestamps, currentRequired));
         var count = schemas.length;
         var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', String(count));
+        // Mongoose skips these keys when it builds a schema (lib/schema.js, specialProperties).
+        var ignored = ['__proto__', 'constructor', 'prototype'].filter(function (k) {
+          return schemas.some(function (s) { return s.fields.some(function (f) { return f.key === k; }); });
+        });
+        if (ignored.length) msg += ' ' + MSG_IGNORED.replace('{keys}', ignored.join(', '));
         setStatus(msg, false);
       }
 
