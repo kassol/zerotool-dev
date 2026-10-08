@@ -13,12 +13,13 @@
 // break in a cell becomes <br> (both used to split the row); tables without a header row are
 // kept as HTML; the worked examples on the four tool pages (`htm-check`, below).
 //
-// Annotation {/* htm-check: {"in": "<html>", "bytes"?: n, "bold"?: bool, "preview"?: "text"} */}:
+// Annotation {/* htm-check: {"in": "<html>", "bytes"?: n, "bold"?: bool, "preview"?: "text", "previewLacks"?: "text"} */}:
 // the HTML `in` must appear after the annotation (before the next annotation or H2), and the
 // converter's output must be the whole text of a code block or inline code there. `bytes`: the
 // output's UTF-8 length, also shown as inline code. `bold`: whether the site's Markdown Preview
 // (the renderMarkdown engine of MarkdownPreviewTool.astro, micromark + GFM) renders <strong>.
-// `preview`: a string that must occur in that preview HTML. At least 2 per language.
+// `preview` / `previewLacks`: a string that must / must not occur in that preview HTML. At least 2 per
+// language.
 //
 // Run: node scripts/test-html-to-markdown.mjs
 
@@ -140,12 +141,15 @@ function verifyHtm({ spec, body, index, after: libAfter }) {
   const html = preview(out);
   if (spec.bold !== undefined && html.includes('<strong>') !== spec.bold) return 'preview bold is ' + html.includes('<strong>') + ': ' + html;
   if (spec.preview !== undefined && !html.includes(spec.preview)) return 'preview lacks ' + JSON.stringify(spec.preview) + ': ' + html;
+  if (spec.previewLacks !== undefined && html.includes(spec.previewLacks)) return 'preview still has ' + JSON.stringify(spec.previewLacks) + ': ' + html;
   return null;
 }
 const htmAnnotations = [{ tag: 'htm-check', min: 2, verify: verifyHtm }];
 // Positive and negative controls for the verifier.
 check('verifier accepts a shown output', verifyHtm({ spec: { in: '<h1>T</h1>' }, after: '`<h1>T</h1>`\n\n```markdown\n# T\n```\n' }) === null);
 check('verifier rejects a wrong output', verifyHtm({ spec: { in: '<h1>T</h1>' }, after: '`<h1>T</h1>`\n\n```markdown\n## T\n```\n' }) !== null);
+check('verifier rejects a cell the preview still shows', verifyHtm({ spec: { in: '<table><thead><tr><th>a</th><th colspan="2">b</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table>', previewLacks: '<td>2</td>' }, after: '<table><thead><tr><th>a</th><th colspan="2">b</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table>\n\n```markdown\n| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n```\n' }) !== null);
+check('verifier accepts a dropped cell', verifyHtm({ spec: { in: '<table><thead><tr><th>a</th><th colspan="2">b</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table>', previewLacks: '<td>3</td>' }, after: '<table><thead><tr><th>a</th><th colspan="2">b</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table>\n\n```markdown\n| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n```\n' }) === null);
 check('verifier rejects a wrong bold claim', verifyHtm({ spec: { in: '<p><strong>a</strong></p>', bold: false }, after: '<p><strong>a</strong></p> `**a**`' }) !== null);
 
 // ---------- real complete page lifecycle + actual shared shortcut ----------
