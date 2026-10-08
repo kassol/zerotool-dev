@@ -350,6 +350,10 @@ for (const lang of ['en','zh','ja','ko']) {
       eq(lang + ' v2 literal count message ' + count, p.nodes.get('rgx-status').textContent, statusLiterals[lang][count]);
       eq(lang + ' v2 actual result expands correct layout ' + count, p.widget.dataset.empty, 'false');
     }
+    // The match list labels its UTF-16 position in the page language (it said "index" in all four).
+    const firstItem = p.nodes.get('rgx-matches').children[0].children[1].innerHTML;
+    eq(lang + ' match list position label is in the page language', /\(index \d+\)/.test(firstItem), lang === 'en');
+    eq(lang + ' match list shows the localized position of match 2', firstItem.includes('(' + (client.indexLabel ?? 'index') + ' 1)'), true);
     p.flags[0].checked = false; p.flags[0].listeners.change(); p.tick(300);
     eq(lang + ' v2 actual flag change still runs automatically', (await p.ready(p.workers.at(-1))).count, 1);
     await p.match('a','a'.repeat(102));
