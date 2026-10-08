@@ -585,5 +585,41 @@ process.off('unhandledRejection',onUnhandled);
   console.log('v2 page layout: '+(passes-beforePasses)+' passed, '+(failures-beforeFailures)+' failed');
 }
 
+// ── Worked examples on the tool pages (S2-5, 2026-10-08) ──
+// Each example is {/* lt-check: {"op": "sort-asc", "locale": "zh"} */} followed by its input block
+// and its output block (Markdown fence or <pre><code>…</code></pre>). With "input" in the JSON the
+// first block after the marker is the output. The page's own script runs the button; "locale" is
+// the browser language the page describes (sorting uses localeCompare with that locale).
+{
+  const before = passes, beforeFailures = failures;
+  const ops = new Set(['dedup', 'sort-asc', 'sort-desc', 'sort-num', 'reverse', 'trim', 'empty']);
+  const blocksOf = text => [...text.matchAll(/^(`{3,})[^\n]*\n([\s\S]*?)\n?^\1[ \t]*$|<pre><code>([\s\S]*?)<\/code><\/pre>/gm)].map(m => m[2] ?? m[3]);
+  const outputOf = (lang, op, value, locale) => {
+    const p = page(lang);
+    vm.runInContext('(function (L) { var o = String.prototype.localeCompare; String.prototype.localeCompare = function (b) { return o.call(this, b, L); }; })', p.context)(locale);
+    run(p, op, value);
+    return snapshot(p).output;
+  };
+  const verify = ({ spec, after, lang }) => {
+    if (!spec || !ops.has(spec.op)) return 'unknown op ' + JSON.stringify(spec?.op);
+    if (typeof spec.locale !== 'string') return 'locale missing';
+    const blocks = blocksOf(after);
+    const given = typeof spec.input === 'string';
+    const value = given ? spec.input : blocks[0];
+    const shown = given ? blocks[0] : blocks[1];
+    if (!value) return 'no input block';
+    if (shown === undefined) return 'no output block';
+    const got = outputOf(lang, spec.op, value, spec.locale);
+    return got === shown ? null : 'engine gives ' + JSON.stringify(got) + ', page shows ' + JSON.stringify(shown);
+  };
+  for (const lang of languages) {
+    check(lang + ': worked examples match the page script', contractProblems('line-tools', lang, { annotations: [{ tag: 'lt-check', min: 2, verify }] }), '');
+  }
+  // A wrong output must fail: the same verifier on a page with a changed line.
+  check('worked example check catches a wrong output', verify({ spec: { op: 'dedup', locale: 'en' }, after: '\n```text\na\na\nb\n```\n\n```text\na\na\nb\n```\n', lang: 'en' }) !== null);
+  check('worked example sort follows the locale', [outputOf('en', 'sort-asc', '张伟\n李娜', 'en'), outputOf('en', 'sort-asc', '张伟\n李娜', 'zh')], ['张伟\n李娜', '李娜\n张伟']);
+  console.log('worked examples: ' + (passes - before) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
+
 console.log(`${passes} passed, ${failures} failed`);
 process.exitCode=failures?1:0;
