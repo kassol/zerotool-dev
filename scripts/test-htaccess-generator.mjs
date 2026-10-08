@@ -26,6 +26,7 @@ import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, relative } from 'node:path';
+import { reportContract, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_B13_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(process.env.ZT_B13_SOURCE || join(root, 'src/components/tools/HtaccessGeneratorTool.astro'), 'utf8');
@@ -115,22 +116,81 @@ const defIdx = guide.indexOf('{/* hta-default */}');
 const defBlock = /```apache\n([\s\S]*?)\n```/.exec(guide.slice(defIdx));
 check('ja guide quotes the tool default output verbatim', defIdx >= 0 && defBlock && defBlock[1] === toolDefault, defBlock && defBlock[1]);
 
-// Each `hta-apache` annotation names the .htaccess body: "ht" (a literal, "tool-default" or
-// "tool-default-no-https") or, when absent, the closest ```apache block above it.
-const cases = [];
-for (const m of guide.matchAll(/\{\/\* hta-apache: (.+?) \*\/\}/g)) {
-  const spec = JSON.parse(m[1]);
-  if (spec.ht === 'tool-default') spec.body = toolDefault + '\n';
-  else if (spec.ht === 'tool-default-no-https') spec.body = toolDefaultNoHttps + '\n';
-  else if (spec.ht) spec.body = spec.ht;
-  else {
-    const before = guide.slice(0, m.index);
-    const blocks = [...before.matchAll(/```apache\n([\s\S]*?)```/g)];
-    spec.body = blocks[blocks.length - 1][1];
+// ---------- tool page: `hta-check` examples (src/content/tools/htaccess-generator/{lang}.mdx) ----------
+// `{/* hta-check: {…} */}` sets the form like a user would, starting from the default state:
+//   https: bool; www: false | "add" | "remove"; index: false | "default files";
+//   cache: false | [images, css/js, fonts]; security: false | {dir, ht, env, xss} (missing keys keep
+//   the default); redirect: false | [from, to, "301" | "302"]; part: true.
+// Without `part`, a code block after the annotation (before the next annotation or H2) must equal
+// the generated file. With `part`, the blank-line-separated sections of that block must appear as
+// sections of the generated file, in the same order (the page quotes only the changed blocks).
+const makeLinesWww = new Function('els', 'wwwMode', block + '\nreturn lines;');
+function formFrom(spec) {
+  const els = defaultEls();
+  let mode = 'add';
+  const set = (key, checked) => { els[key] = { ...els[key], checked }; };
+  if ('https' in spec) set('https', !!spec.https);
+  if ('www' in spec) { set('wwwEnable', !!spec.www); if (spec.www) mode = spec.www; }
+  if ('index' in spec) { set('indexEnable', spec.index !== false); if (spec.index !== false) els.indexFiles = { checked: false, value: spec.index }; }
+  if ('cache' in spec) {
+    set('cacheEnable', spec.cache !== false);
+    if (spec.cache) ['cacheImages', 'cacheCss', 'cacheFonts'].forEach((k, i) => { els[k] = { checked: false, value: spec.cache[i] }; });
   }
-  cases.push(spec);
+  if ('security' in spec) {
+    set('secEnable', spec.security !== false);
+    const map = { dir: 'secDirListing', ht: 'secHtaccess', env: 'secEnvFiles', xss: 'secXss' };
+    for (const [k, key] of Object.entries(map)) if (spec.security && k in spec.security) set(key, !!spec.security[k]);
+  }
+  if ('redirect' in spec) {
+    set('redirEnable', !!spec.redirect);
+    if (spec.redirect) {
+      els.redirFrom = { checked: false, value: spec.redirect[0] };
+      els.redirTo = { checked: false, value: spec.redirect[1] };
+      els.redirType = { checked: false, value: spec.redirect[2] || '301' };
+    }
+  }
+  return makeLinesWww(els, () => mode)();
 }
-check('ja guide has Apache cases', cases.length >= 8, cases.length);
+const sectionsOf = (text) => text.split(/\n\n+/).map((s) => s.trim()).filter(Boolean);
+function verifyCheck({ spec, after }) {
+  const out = formFrom(spec);
+  const blocks = fencedBlocks(after).map((b) => b.text);
+  if (!blocks.length) return 'no code block after the annotation';
+  if (!spec.part) return blocks.includes(out) ? null : 'generated file not quoted verbatim:\n' + out;
+  const want = sectionsOf(out);
+  const ok = blocks.some((b) => {
+    let i = 0;
+    for (const s of sectionsOf(b)) { i = want.indexOf(s, i); if (i < 0) return false; i++; }
+    return true;
+  });
+  return ok ? null : 'quoted sections are not sections of the generated file:\n' + out;
+}
+check('hta-check: default spec equals the default form state', formFrom({}) === toolDefault);
+reportContract(check, 'htaccess-generator', { stepCount: 5, annotations: [{ tag: 'hta-check', min: 2, verify: verifyCheck }] });
+
+// Each `hta-apache` annotation names the .htaccess body: "ht" (a literal, "tool-default" or
+// "tool-default-no-https") or, when absent, the closest ```apache block above it. The ja guide
+// and the four tool pages are read. A request is [path, status, cache-control?, location?, host?].
+const cases = [];
+const apacheSources = [['ja guide', guide], ...['en', 'zh', 'ja', 'ko'].map((l) => [l + ' tool page', readFileSync(join(root, 'src/content/tools/htaccess-generator', l + '.mdx'), 'utf8')])];
+for (const [label, text] of apacheSources) {
+  let count = 0;
+  for (const m of text.matchAll(/\{\/\* hta-apache: (.+?) \*\/\}/g)) {
+    const spec = JSON.parse(m[1]);
+    spec.source = label;
+    if (spec.ht === 'tool-default') spec.body = toolDefault + '\n';
+    else if (spec.ht === 'tool-default-no-https') spec.body = toolDefaultNoHttps + '\n';
+    else if (spec.ht) spec.body = spec.ht;
+    else {
+      const before = text.slice(0, m.index);
+      const blocks = [...before.matchAll(/```apache\n([\s\S]*?)```/g)];
+      spec.body = blocks[blocks.length - 1][1];
+    }
+    cases.push(spec);
+    count++;
+  }
+  if (label === 'ja guide') check('ja guide has Apache cases', count >= 8, count);
+}
 
 // Apache runs only where an Apache 2.4 binary and its module directory exist (macOS ships
 // /usr/sbin/httpd with /usr/libexec/apache2; Debian / Ubuntu use /usr/sbin/apache2 with
@@ -154,7 +214,7 @@ if (!found || !mimeTypes) {
   writeFileSync(join(docs, '.env'), 'SECRET=1\n');
   writeFileSync(join(docs, 'app', 'foo'), 'foo\n');
   const port = 18000 + Math.floor(Math.random() * 1000);
-  const mods = ['mpm_prefork', 'unixd', 'authz_core', 'authz_host', 'dir', 'mime', 'log_config', 'rewrite', 'expires', 'headers', 'alias', 'autoindex'];
+  const mods = ['mpm_prefork', 'unixd', 'authz_core', 'authz_host', 'dir', 'mime', 'log_config', 'rewrite', 'expires', 'headers', 'alias', 'autoindex', 'setenvif'];
   function conf(spec) {
     const lines = [
       'ServerRoot "' + base + '"', 'Listen 127.0.0.1:' + port, 'ServerName localhost',
@@ -167,9 +227,9 @@ if (!found || !mimeTypes) {
     ];
     return lines.join('\n') + '\n';
   }
-  function request(path) {
+  function request(path, host = 'example.test') {
     return new Promise((resolve) => {
-      const req = httpRequest({ host: '127.0.0.1', port, path, headers: { Host: 'example.test' } }, (res) => {
+      const req = httpRequest({ host: '127.0.0.1', port, path, headers: { Host: host } }, (res) => {
         res.resume();
         res.on('end', () => resolve({ status: res.statusCode, cc: res.headers['cache-control'] || null, loc: res.headers.location || null }));
       });
@@ -179,7 +239,7 @@ if (!found || !mimeTypes) {
   }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   for (const spec of cases) {
-    const label = 'Apache ' + JSON.stringify(spec.requests) + ' ' + (spec.override) + (spec.compat ? ' +compat' : '');
+    const label = 'Apache (' + spec.source + ') ' + JSON.stringify(spec.requests) + ' ' + (spec.override) + (spec.compat ? ' +compat' : '');
     writeFileSync(join(docs, '.htaccess'), spec.body);
     writeFileSync(join(base, 'error.log'), '');
     writeFileSync(join(base, 'httpd.conf'), conf(spec));
@@ -187,8 +247,8 @@ if (!found || !mimeTypes) {
     let ready = null;
     for (let i = 0; i < 50 && !ready; i++) { await sleep(100); ready = await request('/__ping'); }
     if (!ready) { child.kill('SIGKILL'); skipped += 1; continue; }
-    for (const [path, status, cc, loc] of spec.requests) {
-      const r = await request(path);
+    for (const [path, status, cc, loc, host] of spec.requests) {
+      const r = await request(path, host);
       check(label + ' ' + path + ' status', r && r.status === status, r && r.status);
       if (cc !== undefined && cc !== null) check(label + ' ' + path + ' Cache-Control', r && r.cc === cc, r && r.cc);
       if (loc !== undefined && loc !== null) check(label + ' ' + path + ' Location', r && r.loc === loc, r && r.loc);
