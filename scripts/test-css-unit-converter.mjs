@@ -1,5 +1,6 @@
 // CSS Unit Converter — complete page conversion, copy and shared shortcut regression.
-// Read: CssUnitConverterTool.astro and ToolLayout.astro. Write: stdout only.
+// Read: CssUnitConverterTool.astro, ToolLayout.astro and the four tool page MDX files (`cuc-check` /
+// `cuc-em` examples recomputed through the page script). Write: stdout only.
 // The source-parsed DOM preserves number/text distinctions and actual default settings.
 // No network or system clipboard. Run: node scripts/test-css-unit-converter.mjs
 import { readFileSync } from 'node:fs';
@@ -7,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import yaml from 'js-yaml';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssUnitConverterTool.astro'), 'utf8');
 const SLUG = 'css-unit-converter';
@@ -28,7 +29,7 @@ const settle = async () => { await new Promise(setImmediate); await new Promise(
 function page({ lang = 'en', shellFirst = false } = {}) {
   const allStrings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
   const { tips, ...t } = allStrings[lang];
-  const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map();
+  const ids = new Map(), copies = [], clears = [], docEvents = {}, timers = new Map(), tracks = [];
   let now = 0, timerId = 0;
   const doc = { documentElement: { lang }, activeElement: null };
   function simple(e, sel) {
@@ -125,7 +126,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
     },
   });
   const context = {
-    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) },
+    document: doc, console, t, _slug: SLUG, ztPersist: { clear: slug => clears.push(slug) }, trackTool: (slug, action) => tracks.push(slug + ':' + action),
     navigator: { clipboard: { writeText(value) {
       let resolve, reject;
       const promise = new Promise((a, b) => { resolve = a; reject = b; });
@@ -139,7 +140,7 @@ function page({ lang = 'en', shellFirst = false } = {}) {
   vm.runInContext(source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1], context, { filename: SLUG + '.astro' });
   if (!shellFirst) vm.runInContext(shortcut, context);
   return {
-    doc, body, get, copies, clears,
+    doc, body, get, copies, clears, tracks,
     input(id, value, type = 'input') { get(id).value = value; get(id).dispatch(type); },
     key(focus, { key = 'l', ctrlKey = true, metaKey = false } = {}) {
       (typeof focus === 'string' ? get(focus) : focus || body).focus();
@@ -253,6 +254,94 @@ try {
   }
   await settle(); eq('all current and stale clipboard rejections are handled', unhandled.length, 0);
 } finally { process.off('unhandledRejection', onUnhandled); }
+console.log('\nnegative settings');
+// Root Font Size and Viewport Width below zero (2026-10-08: `parseFloat(...) || 16` kept -5 and gave
+// negative results). A negative setting shows the localized error, clears every result (so nothing can
+// be copied) and sends no convert event; an empty field or 0 still falls back to 16px / 1920px as the
+// tips and the four pages say; a positive value restores the results.
+{
+  const strings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const msg = strings[lang].invalidSetting;
+    eq(lang + ' negative-setting message exists', typeof msg === 'string' && msg.length > 0, true);
+    for (const [id, bad, good] of [['cu-root-size', '-5', '20'], ['cu-viewport', '-390', '390']]) {
+      const q = page({ lang });
+      q.input('cu-value', '16');
+      q.input(id, bad);
+      same(lang + ' ' + id + ' negative clears every result', outputs(q), ['', '', '', '']);
+      eq(lang + ' ' + id + ' negative shows the localized error', q.get('cu-status').textContent, msg);
+      eq(lang + ' ' + id + ' negative uses the error style', q.get('cu-status').classList.contains('error'), true);
+      copy(q).click(); eq(lang + ' ' + id + ' negative leaves nothing to copy', q.copies.length, 0);
+      q.get(id).dispatch('change'); eq(lang + ' ' + id + ' negative sends no convert event', q.tracks.filter(x => x.endsWith(':convert')).length, 0);
+      q.input('cu-value', '24'); same(lang + ' ' + id + ' negative stays an error while Value changes', [outputs(q)[0], q.get('cu-status').textContent], ['', msg]);
+      q.input(id, good); eq(lang + ' ' + id + ' a positive value restores the results', outputs(q)[0], '24px');
+      q.input(id, '0'); eq(lang + ' ' + id + ' zero still falls back to the default', outputs(q)[0], '24px');
+      q.input(id, ''); eq(lang + ' ' + id + ' empty still falls back to the default', q.get('cu-status').textContent, strings[lang].converted);
+    }
+  }
+}
+
+console.log('\nanalytics events');
+// One `convert` event per committed change (change event on Value / Root Font Size / Viewport Width,
+// or a unit selection) while a result is shown, as in box-shadow-generator; none on load and none for
+// each `input` event while typing (2026-10-08: before, every keystroke sent one).
+{
+  const q = page();
+  const n = () => q.tracks.filter(x => x === 'css-unit-converter:convert').length;
+  eq('GA: no convert event on load', n(), 0);
+  for (const v of ['1', '16', '16.5']) q.input('cu-value', v);
+  q.input('cu-root-size', '20'); q.input('cu-viewport', '390');
+  eq('GA: no convert event per input event', n(), 0);
+  q.get('cu-value').dispatch('change');
+  eq('GA: one convert event when Value is committed', n(), 1);
+  q.get('cu-root-size').dispatch('change'); q.get('cu-viewport').dispatch('change'); q.input('cu-unit', 'rem', 'change');
+  eq('GA: one convert event per committed setting or unit change', n(), 4);
+  q.input('cu-value', ''); q.get('cu-value').dispatch('change');
+  eq('GA: no convert event when there is no result', n(), 4);
+  q.input('cu-unit', 'px', 'change');
+  eq('GA: no convert event for a unit change without a result', n(), 4);
+}
+
+console.log('\ntool page worked examples');
+// `cuc-check: {"value","unit"?,"root"?,"viewport"?,"show":[unit…]}` runs the complete page script: the unit
+// select gets a change event, Root Font Size and Viewport Width get input events (left at the defaults
+// 16 and 1920 when absent), then Value gets an input event. For each unit in `show`, the result text
+// ("0.833333vw") must be an inline code span, or a whole token of a code block, between the annotation
+// and the next cuc-check or H2. `cuc-em: {"root","factor","levels"}` recomputes the nested em example:
+// level i has root × factor^i pixels, and each "Npx" must appear in a code block in the same range.
+// Each language needs at least 2 cuc-check examples.
+{
+  const decode = t => t.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const inline = text => [
+    ...[...text.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)].map(m => decode(m[1])),
+    ...[...text.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').matchAll(/`([^`\n]+)`/g)].map(m => m[1]),
+  ];
+  const token = (block, s) => new RegExp('(?<![\\w.])' + s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w.])').test(block);
+  const shown = (text, s) => inline(text).includes(s) || fencedBlocks(text).some(b => token(b.text, s));
+  function pageOutputs(lang, c) {
+    const q = page({ lang });
+    if (c.unit) q.input('cu-unit', c.unit, 'change');
+    if (c.root !== undefined) q.input('cu-root-size', String(c.root));
+    if (c.viewport !== undefined) q.input('cu-viewport', String(c.viewport));
+    q.input('cu-value', String(c.value));
+    return Object.fromEntries(['px', 'rem', 'em', 'vw'].map(u => [u, q.get('cu-out-' + u).value]));
+  }
+  const contract = toolMdxContract(SLUG, { annotations: [
+    { tag: 'cuc-check', min: 2, verify: ({ spec: c, after, lang }) => {
+      const out = pageOutputs(lang, c);
+      if (!Array.isArray(c.show) || !c.show.length) return 'annotation lists no unit in show';
+      const missing = c.show.filter(u => !out[u] || !shown(after, out[u])).map(u => out[u] || u + ' (empty)');
+      return missing.length ? 'not shown after the annotation: ' + missing.join(', ') : null;
+    } },
+    { tag: 'cuc-em', verify: ({ spec: c, after }) => {
+      const want = Array.from({ length: c.levels }, (_, i) => String(+(c.root * c.factor ** (i + 1)).toFixed(4)) + 'px');
+      const missing = want.filter(s => !fencedBlocks(after).some(b => token(b.text, s)));
+      return missing.length ? 'nested em sizes not in a code block: ' + missing.join(', ') : null;
+    } },
+  ] });
+  for (const r of contract.results) eq('tool MDX: ' + r.message, r.ok, true);
+}
+
 console.log('\nv2 page layout');
 {
   const strings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
@@ -273,6 +362,11 @@ console.log('\nv2 page layout');
     eq(lang + ' MDX content contract', contractProblems('css-unit-converter', lang), '');
   }
   const markup = source.split('---')[2].split('<script')[0];
+  // Root Font Size and Viewport Width accept decimals such as 37.5 (a lib-flexible root on a 375px
+  // screen, used on the zh page) without a step mismatch: step="any" (2026-10-08: they had step="1").
+  for (const id of ['cu-value', 'cu-root-size', 'cu-viewport']) {
+    eq(id + ' allows any decimal step', (new RegExp('<input id="' + id + '"[^>]*\\sstep="([^"]*)"').exec(markup) || [])[1], 'any');
+  }
   eq('direct component root uses cu-wrap', /^\s*<div class="cu-wrap">/.test(markup), true);
   eq('six distinct tips cover controls', new Set([...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1])).size, 6);
   eq('frontmatter removes tips from client strings', source.includes('const { tips: TIPS, ...CLIENT_T } = T;'), true);

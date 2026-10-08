@@ -5,6 +5,8 @@
 //        src/content/tools/css-variables-generator/en.mdx,
 //        src/content/blog/css-variables-generator-guide/en.mdx (the default output, `cvg-check`
 //        prefix/rows → css block, and the `cvg-sass` example compiled with the installed Dart Sass)
+//        src/content/tools/css-variables-generator/{lang}.mdx (`cvg-default` / `cvg-check` examples
+//        recomputed through the page script),
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -22,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseFragment } from 'parse5';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssVariablesGeneratorTool.astro'), 'utf8');
@@ -147,9 +149,9 @@ function open(s,lang='en',order='component-first'){
   adapt(tree);const wrap=query(s.root);wrap.closest=()=>wrap;
   const timers=[],requests=[],assertions=[],rafs=[],readers=[],persist={cleared:[],saved:[]},events={};let now=0,seq=0;
   const h={s,L,document,ids,scrolls:0,timers,requests,assertions,persist,readers,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),frames(){for(const f of rafs.splice(0))f();},unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key){this.el(s.input).focus();document.dispatch('keydown',{key,ctrlKey:true,metaKey:false,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label'),disabled:this.el(s.copy).disabled,status:ids.get(s.status)?.textContent||'',preview:s.preview?{html:this.el(s.preview).innerHTML,children:this.el(s.preview).children.length,style:{...this.el(s.preview).style}}:null};}};
-  active=h;
+  active=h;h.tracks=[];
   class LocalReader {constructor(){readers.push(this);}readAsDataURL(file){this.ready=file.arrayBuffer().then(bytes=>{this.result='data:'+file.type+';base64,'+Buffer.from(bytes).toString('base64');});}deliver(){this.onload?.({target:this});}}
-  const globals={document,isSecureContext:true,FileReader:LocalReader,File,Blob,requestAnimationFrame:f=>{rafs.push(f);return rafs.length;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(){}};
+  const globals={document,isSecureContext:true,FileReader:LocalReader,File,Blob,requestAnimationFrame:f=>{rafs.push(f);return rafs.length;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(slug,action){h.tracks.push(slug+':'+action);}};
   globals.window=globals;globals.matchMedia=()=>({matches:false});const ctx=vm.createContext(globals);const page={ctx,run:code=>vm.runInContext(code,ctx)};
   if(order==='shared-first')page.run('var _slug='+JSON.stringify(s.slug)+';\n'+shortcuts);
   page.run(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1]);
@@ -193,6 +195,63 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','s
   for(const event of ['input','CtrlL']){h=open(spec,lang,order);h.click();h.requests[0].resolve();await settle();const timer=h.timers.find(t=>t.ms===1500);if(event==='input')changePage(h);else h.key('l');const before=h.state();timer.fn();assertEq(name+'old timer after '+event,h.state(),before);}
   h=open(spec,lang,order);h.key('l');h.click();assertEq(name+'empty result is never copied',h.requests.length,0);
 }
+// ---------- analytics ----------
+// One `generate` event per committed change (change event on the prefix, a name, a value or a swatch,
+// or a row removal) while the block has declarations, as in box-shadow-generator; none on load and
+// none for each `input` event while typing (2026-10-08: before, every keystroke and the initial render
+// sent one). "+ Add Token" keeps its own add_token event.
+{
+  const h = open(spec, 'en');
+  const g = () => h.tracks.filter((x) => x === 'css-variables-generator:generate').length;
+  assertEq('GA: no generate event on load', g(), 0);
+  const name = h.query('.cvg-token-name'), value = h.query('.cvg-token-value'), swatch = h.query('.cvg-swatch');
+  for (const v of ['b', 'br', 'brand']) h.input('cvg-prefix', v);
+  name.value = 'main'; name.dispatch('input'); value.value = '#abc'; value.dispatch('input'); swatch.value = '#123456'; swatch.dispatch('input');
+  assertEq('GA: no generate event per input event', g(), 0);
+  h.el('cvg-prefix').dispatch('change');
+  assertEq('GA: one generate event when the prefix is committed', g(), 1);
+  name.dispatch('change'); value.dispatch('change'); swatch.dispatch('change');
+  assertEq('GA: one generate event per committed name / value / swatch change', g(), 4);
+  h.query('.cvg-remove-btn').click();
+  assertEq('GA: one generate event per removed row', g(), 5);
+  h.query('.cvg-add-btn').click();
+  assertEq('GA: Add Token sends add_token, not generate', [g(), h.tracks.filter((x) => x.endsWith(':add_token')).length], [5, 1]);
+  h.key('l'); h.el('cvg-prefix').dispatch('change');
+  assertEq('GA: no generate event after Ctrl/⌘+L emptied the block', g(), 5);
+}
+
+// ---------- tool page MDX (src/content/tools/css-variables-generator/{lang}.mdx): worked examples ----------
+// The examples are recomputed through the page script (the same stand-in DOM as above), not through
+// the engine alone. `cvg-default`: a fresh page; a code block between the annotation and the next
+// cvg-default or H2 must equal the generated CSS. `cvg-check: {"prefix","tokens":[[name, value, group?]]}`:
+// remove every pre-filled row, add each token with "+ Add Token" in its group (default "colors"), type the
+// name and value, then type the prefix; a code block between the annotation and the next cvg-check or H2
+// must equal the generated CSS. Each language needs one cvg-default and at least two cvg-check examples.
+{
+  function pageCss(lang, c) {
+    const h = open(spec, lang);
+    if (c) {
+      for (const b of h.all('.cvg-remove-btn')) b.click();
+      for (const [name, value, group = 'colors'] of c.tokens) {
+        const section = h.all('.cvg-group').find((g) => g.dataset.groupId === group);
+        if (!section) throw new Error('unknown group ' + group);
+        section.querySelector('.cvg-add-btn').click();
+        const row = section.querySelectorAll('.cvg-token-row').at(-1);
+        const n = row.querySelector('.cvg-token-name'); n.value = name; n.dispatch('input');
+        const v = row.querySelector('.cvg-token-value'); v.value = value; v.dispatch('input');
+      }
+      h.input('cvg-prefix', c.prefix);
+    }
+    return h.el(spec.output).textContent;
+  }
+  const blockEquals = (after, out) => (fencedBlocks(after).some((b) => b.text === out) ? null : 'no code block equals ' + JSON.stringify(out));
+  const contract = toolMdxContract('css-variables-generator', { annotations: [
+    { tag: 'cvg-default', min: 1, verify: ({ after, lang }) => blockEquals(after, pageCss(lang, null)) },
+    { tag: 'cvg-check', min: 2, verify: ({ spec: c, after, lang }) => blockEquals(after, pageCss(lang, c)) },
+  ] });
+  for (const r of contract.results) check('tool MDX: ' + r.message, r.ok, r.message);
+}
+
 active=null;process.removeListener('unhandledRejection',unhandled);
 
 // ---------- generate layout and four-language reference protection ----------
