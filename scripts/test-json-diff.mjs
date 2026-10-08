@@ -340,6 +340,56 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
 }
 process.removeListener('unhandledRejection', onUnhandled);
 
+// ---------- numbers JavaScript cannot hold, duplicate keys, deep nesting (S2-7, 2026-10-08) ----------
+// JSON.parse rounds 9007199254740993 to 9007199254740992 and keeps only the last of two equal
+// keys, so the page said "No differences" for documents that differ. It now names those values.
+// A document nested a few thousand levels deep overflowed the call stack and the click failed
+// with nothing on the page.
+{
+  const fill = (tpl, o) => tpl.replace(/\{(\w+)\}/g, (_, k) => String(o[k]));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const h = pageHarness(lang, false), L = h.labels, n = id => h.nodes.get(id);
+    const compare = (a, b) => { h.input('jd-left', a); h.input('jd-right', b); n('jd-run').click(); return h.snap(); };
+    const side = { before: L.sideBefore, after: L.sideAfter };
+    let r = compare('{"x":1}', '{"x":2}');
+    eq(lang + ' plain comparison has no note', [r.status, n('jd-status').className], [fill(L.msgChanges, { n: 1 }), 'jd-status success']);
+    r = compare('{"id":9007199254740993,"name":"a"}', '{"id":9007199254740992,"name":"a"}');
+    const sep = L.noteSep ?? ' ';
+    eq(lang + ' rounded number is named next to "no differences"', [r.status, n('jd-status').className],
+      [L.msgNoDiff + sep + fill(L.msgLossy || 'msgLossy', { list: side.before + ' /id: 9007199254740993 → 9007199254740992' }), 'jd-status error']);
+    r = compare('{"p":1}', '{"p":1e400,"q":0.1000000000000000055511}');
+    eq(lang + ' overflow and long decimal are named with the patch', r.status,
+      fill(L.msgChanges, { n: 2 }) + sep + fill(L.msgLossy || 'msgLossy', { list: side.after + ' /p: 1e400 → Infinity; ' + side.after + ' /q: 0.1000000000000000055511 → 0.1' }));
+    eq(lang + ' the patch still shows what JavaScript read', JSON.parse(r.patch), [{ op: 'replace', path: '/p', value: null }, { op: 'add', path: '/q', value: 0.1 }]);
+    r = compare('{"a":1,"a":2,"m/n":{"k":0,"k":1}}', '{"a":2,"m/n":{"k":1}}');
+    eq(lang + ' duplicate keys are named', r.status,
+      L.msgNoDiff + sep + fill(L.msgDup || 'msgDup', { list: side.before + ' /a; ' + side.before + ' /m~1n/k' }));
+    const many = '[' + Array(12).fill('9007199254740993').join(',') + ']';
+    r = compare(many, '[]');
+    check(lang + ' long lists end with a count of the rest', r.status.endsWith(fill(L.msgMore || 'msgMore', { n: 2 }) + (lang === 'zh' || lang === 'ja' ? '。' : '.')), r.status.slice(-80));
+    let deepA = '1', deepB = '2';
+    for (let i = 0; i < 20000; i++) { deepA = '[' + deepA + ']'; deepB = '[' + deepB + ']'; }
+    let thrown = '';
+    try { r = compare(deepA, deepB); } catch (e) { thrown = e.name; }
+    eq(lang + ' deep nesting reports an error instead of throwing', [thrown, r.status, n('jd-status').className, r.patch], ['', L.msgTooDeep, 'jd-status error', '']);
+    r = compare('{"x":1}', '{"x":2}');
+    eq(lang + ' a later comparison recovers', r.status, fill(L.msgChanges, { n: 1 }));
+  }
+  const fnLines = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return '';
+    const indent = src.slice(src.lastIndexOf('\n', i) + 1, i);
+    const end = src.indexOf('\n' + indent + '}\n', i);
+    return end < 0 ? '' : src.slice(i, end + indent.length + 2).split('\n').map((l) => l.trim()).join('\n');
+  };
+  const jsv = readFileSync(join(root, 'src/components/tools/json-schema-validator-engine.js'), 'utf8');
+  for (const name of ['decimalKey', 'isExactNumber', 'scanJson']) {
+    check(name + ' is the same as in json-schema-validator-engine.js', fnLines(source, name) !== '' && fnLines(source, name) === fnLines(jsv, name));
+  }
+  const oneLine = (src, re) => (src.match(re) || [''])[0].trim();
+  check('escSeg is the same as in json-schema-validator-engine.js', oneLine(source, /^\s*function escSeg\(.*$/m) !== '' && oneLine(source, /^\s*function escSeg\(.*$/m) === oneLine(jsv, /^\s*function escSeg\(.*$/m));
+}
+
 // ---------- v2 page layout ----------
 const v2Start = passes;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
