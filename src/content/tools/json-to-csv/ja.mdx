@@ -9,31 +9,68 @@ steps:
   - "コピーで CSV テキストを取得するか、.csv をダウンロードで保存します。"
   - "クリアで入力、出力、ステータスを消去します。"
 faqItems:
-  - question: "どのようなJSON形式に対応していますか？"
+  - id: "input-format"
+    question: "どのようなJSON形式に対応していますか？"
     answer: "オブジェクトのJSON配列（例：[{\"id\":1,\"name\":\"Alice\"},{\"id\":2,\"name\":\"Bob\"}]）を受け付けます。各オブジェクトがCSVの1行になります。"
-  - question: "ネストオブジェクトの展開はどのように機能しますか？"
+  - id: "flatten"
+    question: "ネストオブジェクトの展開はどのように機能しますか？"
     answer: "「ネストオブジェクトを展開」をオンにすると、address.cityのようなフィールドがaddress.cityという列名で独立した列になります。オフにすると、ネストオブジェクト全体がJSON文字列として1つの列に収まります。"
-  - question: "行ごとにキーが異なる場合はどうなりますか？"
+  - id: "missing-keys"
+    question: "行ごとにキーが異なる場合はどうなりますか？"
     answer: "全行のキーの和集合をヘッダーとして使用します。特定の行に存在しないフィールドは空文字列として出力されます。"
-  - question: "特殊文字はどのように処理されますか？"
+  - id: "quoting"
+    question: "特殊文字はどのように処理されますか？"
     answer: "区切り文字・ダブルクォート・改行を含むフィールドはRFC 4180に従い自動的にダブルクォートで囲まれます。フィールド内のダブルクォートは\"\"にエスケープされます。"
-  - question: "データはサーバーに送信されますか？"
-    answer: "いいえ。すべての変換はブラウザ内で完結します。データがデバイスの外に出ることはありません。"
+  - id: "excel-garbled"
+    question: "Excel で開くと文字化けするのはなぜですか？"
+    answer: "Windows 版 Excel は、ダブルクリックで開いた CSV がバイト順マーク（BOM）で始まっている場合だけ UTF-8 として読み、それ以外はシステムのコードページ（日本語環境では Shift_JIS（CP932））で読むため、日本語が化けます。ダウンロードしたファイルには既定で BOM が付きます。この設定をオフにした場合は、［データ］タブの［テキスト/CSV から］で読み込み、文字コードに UTF-8 を選んでください。"
+  - id: "privacy"
+    question: "データはサーバーに送信されますか？"
+    answer: "いいえ。CSV はブラウザーのタブの中で作成し、入力した JSON をサーバーへ送ったり、ブラウザーのストレージに保存したりしません。入力欄の編集を終えたとき、設定を変えたとき、サンプルを読み込んだときに、ページのアクセス解析が利用イベント（ツール名と convert という操作名）を 1 件記録するだけで、JSON や CSV の内容は含みません。"
 ---
 
 <h2>例</h2>
 
 <h3>基本的な変換</h3>
+{/* jtc-check */}
 <p>入力JSON：</p>
 <pre><code>{`[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]`}</code></pre>
 <p>出力CSV：</p>
 <pre><code>{`id,name\n1,Alice\n2,Bob`}</code></pre>
 
 <h3>ネストオブジェクトの展開</h3>
+{/* jtc-check */}
 <p>入力JSON：</p>
 <pre><code>{`[{"user":{"name":"Alice","age":30}}]`}</code></pre>
 <p>出力CSV（展開オン）：</p>
 <pre><code>{`user.name,user.age\nAlice,30`}</code></pre>
+
+<h3>郵便番号検索 API の結果を表にする</h3>
+<p>
+  <a href="https://zipcloud.ibsnet.co.jp/doc/api" target="_blank" rel="noopener">zipcloud の郵便番号検索API</a> は、日本郵便の郵便番号データを検索して JSON で返します。レスポンスは <code>message</code>・<code>results</code>・<code>status</code> を持つオブジェクトなので、そのまま貼り付けると「入力はオブジェクトの JSON 配列である必要があります」と表示されます。表にしたいのは <code>results</code> の配列だけです。ドキュメントのレスポンスサンプルにある 2 件を貼り付けると、次のようになります。
+</p>
+{/* jtc-check */}
+<pre><code>{`[{"address1":"北海道","address2":"美唄市","address3":"上美唄町協和","kana1":"ﾎｯｶｲﾄﾞｳ","kana2":"ﾋﾞﾊﾞｲｼ","kana3":"ｶﾐﾋﾞﾊﾞｲﾁｮｳｷｮｳﾜ","prefcode":"1","zipcode":"0790177"},
+ {"address1":"北海道","address2":"美唄市","address3":"上美唄町南","kana1":"ﾎｯｶｲﾄﾞｳ","kana2":"ﾋﾞﾊﾞｲｼ","kana3":"ｶﾐﾋﾞﾊﾞｲﾁｮｳﾐﾅﾐ","prefcode":"1","zipcode":"0790177"}]`}</code></pre>
+<p>出力CSV：</p>
+<pre><code>{`address1,address2,address3,kana1,kana2,kana3,prefcode,zipcode
+北海道,美唄市,上美唄町協和,ﾎｯｶｲﾄﾞｳ,ﾋﾞﾊﾞｲｼ,ｶﾐﾋﾞﾊﾞｲﾁｮｳｷｮｳﾜ,1,0790177
+北海道,美唄市,上美唄町南,ﾎｯｶｲﾄﾞｳ,ﾋﾞﾊﾞｲｼ,ｶﾐﾋﾞﾊﾞｲﾁｮｳﾐﾅﾐ,1,0790177`}</code></pre>
+<p>
+  カナは API が返す半角カナのまま書き出され、全角への変換はしません。郵便番号 <code>0790177</code> も JSON の文字列どおりに先頭の 0 が残ります。注意が必要なのは Excel で開くときです。Microsoft のサポートページ
+  <a href="https://support.microsoft.com/ja-jp/office/keeping-leading-zeros-and-large-numbers-1bf7b935-36e1-4985-842f-5dfa51f85fe7" target="_blank" rel="noopener">先頭のゼロおよび大きい数値の保持</a>
+  によると、Excel は先頭のゼロを自動的に削除し、有効桁数は最大 15 桁です。そのままダブルクリックで開くと <code>zipcode</code> 列が <code>790177</code> になります。0 を残すには、同じページの手順どおり［データ］タブの［テキスト/CSV から］で読み込み、クエリ エディターでその列のデータ型を［テキスト］に変えてください。
+</p>
+
+<h3>全角の記号で始まる値</h3>
+<p>IME で入力したメモには、全角の <code>－</code> や <code>＋</code> で始まる値が混ざることがあります。ツールは半角の <code>=</code> <code>+</code> <code>-</code> <code>@</code> に加えて全角の <code>＝</code> <code>＋</code> <code>－</code> <code>＠</code> で始まる文字列も数えます。「その他の CSV 設定」で数式対策を「' を付ける」にした場合：</p>
+{/* jtc-check: {"guard":"quote","status":true} */}
+<pre><code>{`[{"商品":"マグカップ","メモ":"－30%（セール）"},{"商品":"タンブラー","メモ":"在庫あり"}]`}</code></pre>
+<p>出力CSV：</p>
+<pre><code>{`商品,メモ
+マグカップ,"'－30%（セール）"
+タンブラー,在庫あり`}</code></pre>
+<p>ステータス欄には <code>2 行を変換しました · 1 個の値に数式対策を付けました。</code> と表示されます。数式対策がオフのままなら値は変わらず、該当する値の数だけが警告として表示されます。</p>
 
 <h2>RFC 4180 準拠</h2>
 <p>
@@ -53,11 +90,15 @@ Ann,"'=HYPERLINK(""http://example.com"",""Click"")"`}</code></pre>
 
 <h2>Excel と BOM</h2>
 <p>
-  ダウンロードしたファイルは既定で UTF-8 の BOM（バイト <code>EF BB BF</code>）で始まります。Microsoft のサポートページ <a href="https://support.microsoft.com/en-us/office/opening-csv-utf-8-files-correctly-in-excel-8a935af5-3416-4edd-ba7e-3dfd2bc4a032" target="_blank" rel="noopener">Opening CSV UTF-8 files correctly in Excel</a> は、BOM 付きで保存された UTF-8 の CSV はそのまま開けると説明しています。BOM がないと、Windows 版 Excel はダブルクリックで開いた CSV をシステムのコードページ（日本語環境では Shift_JIS）で読み、日本語が文字化けします。BOM を想定しないプログラムは BOM を最初の列名の一部として読むことがあります（Python で <code>encoding="utf-8"</code> なら <code>\ufeffid</code>、<code>"utf-8-sig"</code> なら取り除かれます）。その場合は「ダウンロードに UTF-8 BOM を付ける」をオフにしてください。<strong>コピー</strong>した内容には BOM は付きません。
+  ダウンロードしたファイルは既定で UTF-8 の BOM（バイト <code>EF BB BF</code>）で始まります。Microsoft のサポートページ <a href="https://support.microsoft.com/en-us/office/opening-csv-utf-8-files-correctly-in-excel-8a935af5-3416-4edd-ba7e-3dfd2bc4a032" target="_blank" rel="noopener">Opening CSV UTF-8 files correctly in Excel</a> は、BOM 付きで保存された UTF-8 の CSV はそのまま開けると説明しています。BOM がないと、Windows 版 Excel はダブルクリックで開いた CSV をシステムのコードページ（日本語環境では Shift_JIS（CP932））で読み、日本語が文字化けします。BOM を想定しないプログラムは BOM を最初の列名の一部として読むことがあります（Python で <code>encoding="utf-8"</code> なら <code>\ufeffid</code>、<code>"utf-8-sig"</code> なら取り除かれます）。その場合は「ダウンロードに UTF-8 BOM を付ける」をオフにしてください。<strong>コピー</strong>した内容には BOM は付きません。
 </p>
 
 <h2>制限</h2>
 <ul>
-  <li>空のネストオブジェクトと配列は展開しません。<code>{`"meta":{}`}</code> は <code>meta</code> 列になり、値は <code>{`{}`}</code> です。</li>
-  <li>2<sup>53</sup> を超える整数は JSON の解析時に精度が落ちます。長い ID は JSON 側で文字列にしてください。</li>
+  <li>入力は JSON の配列に限ります。オブジェクトを 1 つだけ貼ると「入力はオブジェクトの JSON 配列である必要があります」と表示されるので、<code>[ ]</code> で囲んでください。<code>[1,"two",null]</code> のようにオブジェクトでない要素は、1 つの <code>value</code> 列に入ります。</li>
+  <li>空のネストオブジェクトと配列は展開しません。<code>{`"meta":{}`}</code> は <code>meta</code> 列になり、値は <code>{`{}`}</code> です。<code>["a","b"]</code> のような配列は JSON テキストとして 1 列に入ります。</li>
+  <li>2<sup>53</sup> を超える整数は JSON の解析時に精度が落ちます。<code>12345678901234567890</code> は <code>12345678901234567000</code> として書き出されます。長い ID は JSON 側で文字列にしてください。</li>
+  <li>文字コードの変換はしません。Shift_JIS の CSV が必要な場合は、ダウンロード後に別のツールで変換してください。</li>
+  <li>行区切りは LF です。CR LF が必要なプログラムでは変換が必要です。</li>
+  <li>変換は JSON から CSV への一方向です。逆方向は <a href="/ja/tools/csv-json/">CSV → JSON 変換ツール</a> を使ってください。</li>
 </ul>

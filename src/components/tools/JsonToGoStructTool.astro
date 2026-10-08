@@ -481,6 +481,16 @@ const L = STRINGS[lang];
         outputCodeEl.textContent = result.code;
         if (result.count === 0) setStatus(MSG_GENERATED, false);
         else setStatus(result.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', result.count), false);
+      }
+
+      /* Analytics: one event per committed change (input change, Generate, Example), not on load or per typing pause.
+         One action can fire both change (blur on mousedown) and click, so the same JSON and root name are sent once. */
+      var lastTracked = null;
+      function trackChange() {
+        if (!outputCodeEl.textContent) return;
+        var key = inputEl.value + '\u0000' + (rootNameEl.value.trim() || 'RootObject');
+        if (key === lastTracked) return;
+        lastTracked = key;
         window.trackTool && window.trackTool('json-to-go-struct', 'generate');
       }
 
@@ -490,18 +500,27 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(convert, 300);
       });
+      inputEl.addEventListener('change', function () {
+        convert();
+        trackChange();
+      });
 
-      document.getElementById('jgs-convert').addEventListener('click', convert);
+      document.getElementById('jgs-convert').addEventListener('click', function () {
+        convert();
+        trackChange();
+      });
 
       document.getElementById('jgs-example').addEventListener('click', function () {
         inputEl.value = EXAMPLE;
         inputEl.classList.remove('error');
         clearStatus();
         convert();
+        trackChange();
       });
 
       document.getElementById('jgs-clear').addEventListener('click', function () {
         invalidateCopy();
+        lastTracked = null;
         clearTimeout(_liveTimer);
         _liveTimer = null;
         inputEl.value = '';

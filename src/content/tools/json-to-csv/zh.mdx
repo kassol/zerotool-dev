@@ -9,31 +9,64 @@ steps:
   - "点击复制获取 CSV 文本，或点击下载 .csv 保存文件。"
   - "点击清空，清除输入、输出和状态。"
 faqItems:
-  - question: "支持哪种 JSON 格式？"
+  - id: "input-format"
+    question: "支持哪种 JSON 格式？"
     answer: "工具接受 JSON 对象数组，例如 [{\"id\":1,\"name\":\"Alice\"},{\"id\":2,\"name\":\"Bob\"}]，每个对象转换为一行 CSV。"
-  - question: "嵌套对象展开是如何工作的？"
+  - id: "flatten"
+    question: "嵌套对象展开是如何工作的？"
     answer: "开启「展开嵌套对象」后，address.city 这样的嵌套字段会成为独立的 CSV 列（列名为 address.city）。关闭时，整个嵌套对象以 JSON 字符串形式填入单个列。"
-  - question: "不同行的 key 不同时怎么处理？"
+  - id: "missing-keys"
+    question: "不同行的 key 不同时怎么处理？"
     answer: "工具会收集所有行 key 的并集作为表头，缺失字段输出为空字符串。"
-  - question: "特殊字符如何处理？"
+  - id: "quoting"
+    question: "特殊字符如何处理？"
     answer: "含有分隔符、双引号或换行的字段会按 RFC 4180 规范自动用双引号包裹，字段内的双引号转义为两个连续双引号。"
-  - question: "数据会上传到服务器吗？"
-    answer: "不会。所有转换在浏览器中完成，数据不离开本地。"
+  - id: "excel-garbled"
+    question: "用 Excel 打开为什么是乱码？"
+    answer: "Windows 版 Excel 双击打开 CSV 时，只有文件以字节顺序标记（BOM）开头才按 UTF-8 读取，否则按系统代码页读取，中文会变成乱码。下载的文件默认带 BOM；如果关掉了这个选项，请在「数据」选项卡选「从文本/CSV」导入，并选择 UTF-8 编码。"
+  - id: "privacy"
+    question: "数据会上传到服务器吗？"
+    answer: "不会。CSV 在浏览器标签页里生成，输入的 JSON 不会发送到服务器，也不会保存到浏览器存储。编辑完输入框、焦点移开时，或修改选项、或载入示例时，页面的统计只记录一次使用事件（工具名和动作 convert），不包含 JSON 或 CSV 内容。"
 ---
 
 <h2>示例</h2>
 
 <h3>基础转换</h3>
+{/* jtc-check */}
 <p>输入 JSON：</p>
 <pre><code>{`[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]`}</code></pre>
 <p>输出 CSV：</p>
 <pre><code>{`id,name\n1,Alice\n2,Bob`}</code></pre>
 
 <h3>嵌套对象展开</h3>
+{/* jtc-check */}
 <p>输入 JSON：</p>
 <pre><code>{`[{"user":{"name":"Alice","age":30}}]`}</code></pre>
 <p>输出 CSV（展开开启）：</p>
 <pre><code>{`user.name,user.age\nAlice,30`}</code></pre>
+
+<h3>订单导出：20 位订单号</h3>
+<p>电商后台导出的订单 JSON 通常把订单号写成字符串，收货地址是嵌套对象。下面这条记录的订单号有 20 位：</p>
+{/* jtc-check */}
+<pre><code>{`[{"订单号":"20261008123456789012","收货人":"张伟","手机":"13800138000","金额":59.9,"地址":{"省":"北京市","区":"东城区"}}]`}</code></pre>
+<p>输出 CSV：</p>
+<pre><code>{`订单号,收货人,手机,金额,地址.省,地址.区
+20261008123456789012,张伟,13800138000,59.9,北京市,东城区`}</code></pre>
+<p>
+  中文键名原样成为列名，嵌套的地址展开成 <code>地址.省</code>、<code>地址.区</code> 两列。工具把订单号逐字写出，CSV 本身不带类型。变化发生在 Excel 打开文件时：微软支持页面
+  <a href="https://support.microsoft.com/zh-cn/office/keeping-leading-zeros-and-large-numbers-1bf7b935-36e1-4985-842f-5dfa51f85fe7" target="_blank" rel="noopener">保留前导零和大数</a>
+  写明，Excel 会自动删除前导零、把大数转换为科学记数法，而且最多保留 15 位有效数字，第 15 位之后的数字会变成 0。这个订单号有 20 位，直接用 Excel 打开时后 5 位会变成 0。要保留原样，按该页面的做法，在「数据」选项卡选「从文本/CSV」导入，在查询编辑器里把这一列的数据类型改成「文本」。
+</p>
+
+<h3>用户评论：以 + 开头的值</h3>
+<p>评论区里常见「+1」。下面两条评论导出时，第一条以 <code>+</code> 开头，第二条含半角逗号。打开「更多 CSV 选项」，把公式防护设为「前加 '」：</p>
+{/* jtc-check: {"guard":"quote","status":true} */}
+<pre><code>{`[{"用户":"小李","评论":"+1 同求链接"},{"用户":"阿杰","评论":"颜色偏暗, 不过很便宜"}]`}</code></pre>
+<p>输出 CSV：</p>
+<pre><code>{`用户,评论
+小李,"'+1 同求链接"
+阿杰,"颜色偏暗, 不过很便宜"`}</code></pre>
+<p>状态栏显示 <code>已转换 2 行 · 已对 1 个值加公式防护。</code>第一条加了 <code>'</code> 并用引号包起来；第二条没有公式风险，只因为含逗号按 RFC 4180 加了引号。全角逗号「，」不是分隔符，不会触发引号。公式防护默认关闭，关闭时状态栏会提示有几个值以这些字符开头。</p>
 
 <h2>RFC 4180 规范</h2>
 <p>
@@ -56,8 +89,11 @@ Ann,"'=HYPERLINK(""http://example.com"",""Click"")"`}</code></pre>
   下载的文件默认以 UTF-8 BOM（字节 <code>EF BB BF</code>）开头。微软支持页面 <a href="https://support.microsoft.com/en-us/office/opening-csv-utf-8-files-correctly-in-excel-8a935af5-3416-4edd-ba7e-3dfd2bc4a032" target="_blank" rel="noopener">Opening CSV UTF-8 files correctly in Excel</a> 写明：带 BOM 的 UTF-8 CSV 可以直接打开；没有 BOM 时，Windows 版 Excel 双击打开会按系统代码页读取，中文会显示成乱码。不认 BOM 的程序可能把它读进第一个列名（Python 用 <code>encoding="utf-8"</code> 打开得到 <code>\ufeffid</code>，用 <code>"utf-8-sig"</code> 则会去掉），这时关闭「下载文件加 UTF-8 BOM」。<strong>复制</strong>的内容不含 BOM。
 </p>
 
-<h2>注意事项</h2>
+<h2>限制</h2>
 <ul>
-  <li>空的嵌套对象和数组不展开：<code>{`"meta":{}`}</code> 得到 <code>meta</code> 列，值为 <code>{`{}`}</code>。</li>
-  <li>超过 2<sup>53</sup> 的整数在解析 JSON 时会丢失精度，长 ID 请在 JSON 里写成字符串。</li>
+  <li>输入必须是 JSON 数组。粘贴单个对象会提示「输入必须是 JSON 对象数组」，在外面加一对 <code>[ ]</code> 即可。数组里不是对象的元素（如 <code>[1,"two",null]</code>）放进同一个 <code>value</code> 列。</li>
+  <li>空的嵌套对象和数组不展开：<code>{`"meta":{}`}</code> 得到 <code>meta</code> 列，值为 <code>{`{}`}</code>；<code>["a","b"]</code> 这样的数组写成一列 JSON 文本。</li>
+  <li>超过 2<sup>53</sup> 的整数在解析 JSON 时会丢失精度：<code>12345678901234567890</code> 会写成 <code>12345678901234567000</code>。长 ID 请在 JSON 里写成字符串。</li>
+  <li>行之间用 LF 分隔。需要 CR LF 的程序要先转换。</li>
+  <li>只做 JSON 到 CSV。反方向请用 <a href="/zh/tools/csv-json/">CSV 转 JSON 工具</a>。</li>
 </ul>

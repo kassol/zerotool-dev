@@ -7,17 +7,30 @@ steps:
   - "コピーでスキーマ全文を取得し、エディターに貼り付けて制約や必須フィールドを調整します。"
   - "クリアで入力、スキーマ、エラーを消去します。ツール内の Ctrl/⌘+L でも消去できます。"
 faqItems:
-  - question: "JSON Schemaとは何ですか？"
-    answer: "JSON SchemaはJSONデータの構造・制約・ドキュメントを記述する語彙仕様です。期待される型、必須フィールド、フォーマットルール、ネストしたオブジェクトの形状を定義し、APIバリデーション・コード生成・ドキュメント作成に広く使われています。"
-  - question: "このツールはどのバージョンのJSON Schemaを生成しますか？"
-    answer: "最も広くサポートされているJSON Schema draft-07を生成します。AJV・jsonschema（Python）などの主要バリデーターと互換性があります。"
-  - question: "必須フィールドはどのように決まりますか？"
-    answer: "入力JSONオブジェクト内のnull以外のすべてのプロパティがrequired配列に追加されます。nullは必然的な存在を保証できないため除外されます。オブジェクトの配列では、すべてのオブジェクトに null 以外の値で存在するキーだけが必須になります。出力スキーマを編集してrequiredリストを調整できます。"
-  - question: "ネストしたオブジェクトや配列に対応していますか？"
+  - id: "version"
+    question: "このツールはどのバージョンのJSON Schemaを生成しますか？"
+    answer: "広くサポートされているJSON Schema draft-07を生成します。AJV・jsonschema（Python）などの主要バリデーターと互換性があり、ZeroToolのJSON Schemaバリデーターでもそのまま使えます。"
+  - id: "required"
+    question: "必須フィールドはどのように決まりますか？"
+    answer: "入力JSONオブジェクト内のnull以外のすべてのプロパティがrequired配列に追加されます。null は値があるとは限らないため除外されます。オブジェクトの配列では、すべてのオブジェクトに null 以外の値で存在するキーだけが必須になります。出力スキーマを編集してrequiredリストを調整できます。"
+  - id: "nested"
+    question: "ネストしたオブジェクトや配列に対応していますか？"
     answer: "対応しています。ネストしたオブジェクトと配列を再帰的に処理します。配列の items スキーマはすべての要素をマージして作り、どの要素も通ります。ネストオブジェクトはpropertiesとrequired配列を生成します。"
-  - question: "生成したスキーマをバリデーションに使えますか？"
+  - id: "validate"
+    question: "生成したスキーマをバリデーションに使えますか？"
     answer: "使えます。生成したスキーマをZeroToolのJSON Schemaバリデーターやその他のAJVベースバリデーターに貼り付けてください。オプションフィールドの調整やminLength・minimum・patternなどの追加制約が必要な場合があります。"
+  - id: "privacy"
+    question: "JSON はサーバーに送信されますか？"
+    answer: "いいえ。スキーマは入力に合わせてブラウザーのタブの中で生成し、入力した JSON をサーバーへ送ったり、ブラウザーのストレージに保存したりしません。入力欄の編集を終えたときとスキーマをコピーしたときに、ページのアクセス解析が利用イベント（ツール名と convert または copy という操作名）を 1 件記録するだけで、JSON やスキーマの内容は含みません。"
+  - id: "local-hankaku-kana"
+    question: "半角カナや全角数字の値はどう扱われますか？"
+    answer: "どちらも文字列なので \"type\": \"string\" になるだけで、文字の種類は検査しません。zipcloud の kana1 のように半角カナだけを許したい場合は、\"pattern\": \"^[ｦ-ﾟ]+$\" のような制約を自分で追加します。このパターンは ﾎｯｶｲﾄﾞｳ を通し、全角の ホッカイドウ を拒否します。"
 ---
+
+<h2>JSON Schema とは</h2>
+<p>
+  JSON Schema は、JSON データの構造を JSON で書き表すための仕様です。各フィールドの型、必須かどうか、ネストしたオブジェクトの形を定義し、Ajv などのバリデーターがそれに沿ってデータを検査します。API の入力チェック、コード生成、ドキュメント作成に使われます。このツールはサンプルの JSON から draft-07 のスキーマを推論し、ゼロから手書きする手間を省きます。
+</p>
 
 <h2>出力の見方</h2>
 <p>
@@ -38,6 +51,7 @@ faqItems:
 
 ## 変換例
 
+{/* jjs-check */}
 入力：
 
 ```json
@@ -80,6 +94,88 @@ faqItems:
 - 整数は `integer`、小数は `number` になります。`qty` が `1.5` になりうるなら `number` に変えます。
 - サンプルの `coupon` は `null` なので、型は `null` で `required` にも入りません。文字列も入るなら型を `["string", "null"]` にします。
 - 空の配列は `"items": {}` になり、どんな要素も通ります。
+
+## 郵便番号検索 API のレスポンスから作る
+
+[zipcloud の郵便番号検索API](https://zipcloud.ibsnet.co.jp/doc/api) は、成功すると `results` に住所の配列を、エラーのときは `results` に `null`、`message` にエラー内容を入れて返します。ドキュメントのレスポンスサンプル（2 件のうち 1 件）から作ると次のようになります。
+
+{/* jjs-check: {"rejects":[{"message":"必須パラメータが指定されていません。","results":null,"status":400}]} */}
+```json
+{
+  "message": null,
+  "results": [
+    {
+      "address1": "北海道", "address2": "美唄市", "address3": "上美唄町協和",
+      "kana1": "ﾎｯｶｲﾄﾞｳ", "kana2": "ﾋﾞﾊﾞｲｼ", "kana3": "ｶﾐﾋﾞﾊﾞｲﾁｮｳｷｮｳﾜ",
+      "prefcode": "1", "zipcode": "0790177"
+    }
+  ],
+  "status": 200
+}
+```
+
+生成されるスキーマ：
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "message": { "type": "null" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "address1": { "type": "string" }, "address2": { "type": "string" }, "address3": { "type": "string" },
+          "kana1": { "type": "string" }, "kana2": { "type": "string" }, "kana3": { "type": "string" },
+          "prefcode": { "type": "string" }, "zipcode": { "type": "string" }
+        },
+        "required": ["address1", "address2", "address3", "kana1", "kana2", "kana3", "prefcode", "zipcode"]
+      }
+    },
+    "status": { "type": "integer" }
+  },
+  "required": ["results", "status"]
+}
+```
+
+このスキーマでドキュメントのエラー時サンプル（`"message": "必須パラメータが指定されていません。"`、`"results": null`、`"status": 400`）を検査すると、`message` が文字列、`results` が `null` なので通りません。成功時だけのサンプルでは、エラー時の形が分からないからです。成功時とエラー時のレスポンスを配列にまとめて生成すると、要素のスキーマが両方を受け入れる形になります。
+
+{/* jjs-check: {"accepts":[[{"message":null,"results":[{"zipcode":"0600000","address1":"北海道"}],"status":200}],[{"message":"必須パラメータが指定されていません。","results":null,"status":400}]]} */}
+```json
+[
+  { "message": null, "results": [{ "zipcode": "0790177", "address1": "北海道" }], "status": 200 },
+  { "message": "必須パラメータが指定されていません。", "results": null, "status": 400 }
+]
+```
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "message": { "type": ["null", "string"] },
+      "results": {
+        "type": ["array", "null"],
+        "items": {
+          "type": "object",
+          "properties": { "zipcode": { "type": "string" }, "address1": { "type": "string" } },
+          "required": ["zipcode", "address1"]
+        }
+      },
+      "status": { "type": "integer" }
+    },
+    "required": ["status"]
+  }
+}
+```
+
+- 1 件のレスポンスを検査するには `items` の中身を使います。両方のレスポンスにある `status` だけが必須になります。
+- `zipcode` は JSON で `"0790177"` と文字列として書かれているので `string` になります（数値の `790177` なら `integer`）。桁数までは検査しないので、必要なら `"pattern": "^[0-9]{7}$"` を自分で追加します。
+- カナ（`kana1` など）は半角カナですが、型は `string` で文字の種類は区別しません。
 
 ## Ajv で検証する
 

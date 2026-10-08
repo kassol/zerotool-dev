@@ -243,8 +243,21 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
     queued.input(cfg.sample);queued.get('jtc-header-tabs').querySelector('[data-header="true"]').click();const manual=queued.tracks.length;queued.advance(300);same(tag+' immediate option update cancels queued conversion',queued.tracks.length,manual);
     const layout=page(lang,shellFirst);layout.example();same(tag+' actual nonempty output has visible state',layout.get(cfg.output).dataset.empty,'false');layout.input(cfg.invalid);layout.advance(300);same(tag+' invalid hides output pane',layout.get(cfg.output).dataset.empty,'true');layout.example();layout.get(cfg.clear).click();same(tag+' Clear hides output pane',layout.get(cfg.output).dataset.empty,'true');
     for(const focus of [layout.get(cfg.output),layout.document.querySelector('[data-zt-tip="jtc-tip-copy"]')]){layout.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output shortcut focuses input before hiding',[layout.document.activeElement.id,layout.out(),layout.get(cfg.output).dataset.empty],[cfg.input,'','true']);}
-    layout.example();for(const id of ['jtc-del-tabs','jtc-flatten-tabs','jtc-header-tabs','jtc-guard-tabs','jtc-bom-tabs']){const tabs=layout.get(id).querySelectorAll('.jtc-tab');for(const selected of tabs){const before=layout.tracks.length;selected.click();same(tag+' option converts immediately '+id,layout.tracks.length,before+1);same(tag+' aria pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
-    layout.input(cfg.sample);const beforeEnter=layout.tracks.length;layout.key('Enter');same(tag+' no Generate means CtrlEnter has no primary action',layout.tracks.length,beforeEnter);layout.advance(300);same(tag+' CtrlEnter retains normal debounce',layout.tracks.length,beforeEnter+1);
+    layout.example();for(const id of ['jtc-del-tabs','jtc-flatten-tabs','jtc-header-tabs','jtc-guard-tabs','jtc-bom-tabs']){const tabs=layout.get(id).querySelectorAll('.jtc-tab');for(const selected of tabs){const before=layout.tracks.length,wasActive=selected.classList.contains('active');selected.click();same(tag+' option sends one event only when the selection changes '+id,layout.tracks.length,before+(wasActive?0:1));same(tag+' aria pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
+    layout.input(cfg.sample);const beforeEnter=layout.tracks.length;layout.key('Enter');same(tag+' no Generate means CtrlEnter has no primary action',layout.tracks.length,beforeEnter);layout.advance(300);same(tag+' CtrlEnter retains normal debounce (header is off after the option loop)',[layout.out(),layout.tracks.length],['true',beforeEnter]);
+    // Analytics: one event per committed change (input change event, option click, Example), not on load or per typing pause.
+    const ga=page(lang,shellFirst);same(tag+' GA: page load sends nothing',ga.tracks.length,0);
+    ga.input('[{"a":1}]');ga.advance(300);same(tag+' GA: typing pause sends nothing',ga.tracks.length,0);
+    ga.get(cfg.input).dispatch('change');same(tag+' GA: committed change sends one convert event',ga.tracks,[['json-to-csv','convert']]);
+    ga.input('[{"b":2}]');ga.get(cfg.input).dispatch('change');same(tag+' GA: change before the debounce converts the new input first',[ga.out(),ga.tracks.length],['b\n2',2]);ga.advance(300);same(tag+' GA: no second event after the debounce',ga.tracks.length,2);
+    ga.input('{"bad":');ga.get(cfg.input).dispatch('change');same(tag+' GA: invalid input change sends nothing',ga.tracks.length,2);
+    ga.input('');ga.get(cfg.input).dispatch('change');same(tag+' GA: empty input change sends nothing',ga.tracks.length,2);
+    ga.example();same(tag+' GA: Example sends one event',ga.tracks.length,3);
+    ga.example();same(tag+' GA: a second Example click with the same result sends nothing',ga.tracks.length,3);
+    ga.get('jtc-del-tabs').querySelector('[data-del=","]').click();same(tag+' GA: clicking the active delimiter sends nothing',ga.tracks.length,3);
+    ga.get('jtc-del-tabs').querySelector('[data-del=";"]').click();same(tag+' GA: a new delimiter sends one event',ga.tracks.length,4);
+    ga.get('jtc-input').dispatch('change');same(tag+' GA: change with nothing new sends nothing',ga.tracks.length,4);
+    ga.get(cfg.clear).click();ga.example();same(tag+' GA: Example after Clear sends again',ga.tracks.length,5);
     const csv=page(lang,shellFirst);csv.input('[{"v":"=1+1"}]');csv.advance(300);same(tag+' formula warning remains directly visible',csv.get(cfg.status).classList.contains('warn')&&csv.get(cfg.status).textContent.includes(labels[lang].msgFormulaRisk.replace('{n}','1')),true);csv.copy().resolve();same(tag+' Copy excludes BOM',csv.copies.at(-1).value,'v\n=1+1');csv.get('jtc-download').click();same(tag+' real Blob download includes BOM by default',Buffer.from(await csv.blobs.at(-1).arrayBuffer()).toString('hex'),Buffer.from('\uFEFFv\n=1+1').toString('hex'));csv.get('jtc-bom-tabs').querySelector('[data-bom="false"]').click();csv.get('jtc-download').click();same(tag+' real Blob download excludes BOM when off',Buffer.from(await csv.blobs.at(-1).arrayBuffer()).toString('utf8'),'v\n=1+1');csv.get('jtc-guard-tabs').querySelector('[data-guard="quote"]').click();same(tag+' formula guard changes actual output',csv.out(),"v\n\"'=1+1\"");await settle();
   }
   await settle();same('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
@@ -289,9 +302,23 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
     equalLayout(lang+' has JSON → CSV examples',csvPairs.length>0,true);
     equalLayout(lang+' each example input is valid JSON',csvPairs.filter(([a])=>{try{JSON.parse(a.text);return false;}catch{return true;}}).map(([a])=>a.text),[]);
     equalLayout(lang+' each CSV example equals the engine output',csvPairs.filter(([a,b])=>{try{return ![true,false].some(fl=>['off','quote','tab'].some(guard=>conv(JSON.parse(a.text),{flatten:fl,guard}).csv===b.text));}catch{return true;}}).map(([,b])=>b.text),[]);
-    const guardNotes=annotations(body,'jtc-check');
-    equalLayout(lang+' has the formula-guard example marker',guardNotes.length,1);
-    for(const note of guardNotes){const [input,output]=fencedBlocks(note.after);equalLayout(lang+' jtc-check '+JSON.stringify(note.spec)+' equals the engine output',input&&output?conv(JSON.parse(input.text),{guard:note.spec.guard}).csv:null,output?.text);}
+    // {/* jtc-check: {"guard","del","flatten","header","status"} */} (all optional): the first two code blocks after the
+    // marker are the input and its CSV with exactly those options; "status": true also requires the status line
+    // text (rows converted + formula note) to appear after the marker.
+    const notes=annotations(body,'jtc-check');
+    equalLayout(lang+' has at least 2 jtc-check examples',notes.length>=2,true);
+    equalLayout(lang+' has a formula-guard example',notes.some(n=>n.spec?.guard==='quote'||n.spec?.guard==='tab'),true);
+    for(const [i,note] of notes.entries()){
+      const spec=note.spec||{},[input,output]=fencedBlocks(note.after);
+      const res=input&&output?conv(JSON.parse(input.text),{guard:spec.guard,del:spec.del,flatten:spec.flatten,header:spec.header}):null;
+      equalLayout(lang+' jtc-check #'+(i+1)+' '+JSON.stringify(spec)+' equals the engine output',res?.csv,output?.text);
+      if(spec.status){
+        const L=strings[lang],rows=JSON.parse(input.text).length,g=spec.guard||'off';
+        const status=(rows===1?L.msgOneRow:L.msgRows.replace('{n}',String(rows)))+(res.formulaCells?' · '+(g==='off'?L.msgFormulaRisk:L.msgFormulaGuarded).replace('{n}',String(res.formulaCells)):'');
+        equalLayout(lang+' jtc-check #'+(i+1)+' shows the status line '+status,note.after.includes(status),true);
+      }
+    }
+    check(lang+' Limits quote the not-an-array message',body.includes(strings[lang].msgNotArray));
     check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   }
 }

@@ -318,6 +318,7 @@ const L = STRINGS[lang];
               tab.setAttribute('aria-pressed', 'true');
               setter((tab as HTMLElement).dataset[prop] || '');
               convert();
+              trackChange();
             });
           })(tabs[i]);
         }
@@ -464,6 +465,16 @@ const L = STRINGS[lang];
         } else {
           setStatus(msg, false);
         }
+      }
+
+      /* Analytics: one event per committed change (input change event, option click, Example), not on load or per typing pause.
+         Clicking the active option or Example again changes nothing, so the same input and options are sent once. */
+      var lastTracked: string | null = null;
+      function trackChange() {
+        if (!outputEl.value) return;
+        var key = [inputEl.value, delimiter, flatten, includeHeader, guard, addBom].join('\u0000');
+        if (key === lastTracked) return;
+        lastTracked = key;
         window.trackTool && window.trackTool('json-to-csv', 'convert');
       }
 
@@ -473,15 +484,21 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer!);
         _liveTimer = setTimeout(convert, 300);
       });
+      inputEl.addEventListener('change', function () {
+        convert();
+        trackChange();
+      });
 
       document.getElementById('jtc-example')!.addEventListener('click', function () {
         inputEl.value = EXAMPLE;
         inputEl.classList.remove('error');
         convert();
+        trackChange();
       });
 
       function clearAll() {
         clearTimeout(_liveTimer!);
+        lastTracked = null;
         resetCopy();
         inputEl.value = '';
         outputEl.value = '';
