@@ -95,6 +95,21 @@ all('!!!', { camel: '', kebab: '', constant: '' });
 eq('title', conv.title('hello world, élan vital'), 'Hello World, Élan Vital');
 eq('title keeps punctuation', conv.title('(hello) world'), '(Hello) World');
 eq('sentence', conv.sentence('hello WORLD'), 'Hello world');
+// Sentence case capitalizes the first letter, skipping leading whitespace, quotes, brackets and
+// other characters that are neither letters nor digits (approved engine change, 2026-10-09).
+// Before the fix only s.charAt(0) was uppercased, so these inputs got no capital at all.
+eq('sentence after a quote', conv.sentence('"hello" she SAID'), '"Hello" she said');
+eq('sentence after leading spaces', conv.sentence('  hello WORLD'), '  Hello world');
+eq('sentence after a bracket', conv.sentence('(draft) release notes'), '(Draft) release notes');
+eq('sentence after CJK quote marks', conv.sentence('「hello」 WORLD'), '「Hello」 world');
+eq('sentence after an emoji', conv.sentence('🚀 launch DAY'), '🚀 Launch day');
+eq('sentence with an astral first letter (Deseret)', conv.sentence('𐐨𐐯 X'), '𐐀𐐯 x');
+eq('sentence with a combining accent keeps it on the letter', conv.sentence('e\u0301COLE'), 'E\u0301cole');
+eq('sentence starting with a digit capitalizes nothing', conv.sentence('2FA CODE'), '2fa code');
+eq('sentence of a numbered line capitalizes nothing', conv.sentence('1. FIRST item'), '1. first item');
+eq('sentence without letters', conv.sentence('!!! 123'), '!!! 123');
+eq('sentence ß at the start', conv.sentence('ßtraße'), 'SStraße');
+eq('sentence keeps CJK', conv.sentence('「用户」 ID'), '「用户」 id');
 eq('upper', conv.upper('café'), 'CAFÉ');
 eq('lower', conv.lower('CAFÉ'), 'café');
 
