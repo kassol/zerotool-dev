@@ -313,6 +313,14 @@ try {
     check(lang + ' a value whose NFKC form is not ASCII is left as typed', q.get('cc-hex').value === '#1ㅁ73ㄷ8' && q.get('cc-status').textContent === invalidText[lang]);
   }
 
+  // The local FAQ and examples describe the input text and the tool's result only; there is no
+  // official source for how an input method types commas or letters, so no page asserts it.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const page = readFileSync(join(root, 'src/content/tools/color-converter', lang + '.mdx'), 'utf8');
+    const claim = page.match(/输入法|IME|두벌식|한\/영|자판|input method/);
+    check(lang + ' page makes no input-method behavior claim', !claim, claim?.[0]);
+  }
+
   // Text after a complete rgb() / hsl() value is rejected with a localized reason. The engine's
   // parseRgb / parseHsl match only the start of the text, so before the fix rgb(26, 115, 232)abc
   // converted as if the extra text were not there. Values still being typed are not rejected.
