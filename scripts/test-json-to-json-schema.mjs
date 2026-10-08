@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { transform as esbuildTransform } from 'esbuild';
 import { compile as compileMdx } from '@mdx-js/mdx';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, examplePairs, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToJsonSchemaTool.astro'), 'utf8');
@@ -157,6 +157,24 @@ eq('seed example', E.inferSchema({
 });
 eq('empty object', E.inferSchema({}), { type: 'object', properties: {} });
 eq('null value not required', E.inferSchema({ a: null }), { type: 'object', properties: { a: { type: 'null' } } });
+
+// ---------- facts stated in the page prose and FAQ (S2) ----------
+{
+  // en: a sample with only the success response rejects every error response
+  const v = ajv.compile(E.inferSchema([{ ok: true, data: { id: 7 } }]));
+  check('en prose: success-only sample rejects the error response', !v([{ ok: false, error: 'not found' }]));
+  // zh: a sample with only the record that has a street rejects street: []
+  const amap = ajv.compile(E.inferSchema({ geocodes: [{ street: '阜通东大街', number: '6号' }] }));
+  check('zh prose/FAQ: string-only sample rejects street: []', !amap({ geocodes: [{ street: [], number: [] }] }));
+  // ja FAQ: the half-width kana pattern accepts ﾎｯｶｲﾄﾞｳ and rejects full-width ホッカイドウ; the type stays string
+  const kana = ajv.compile({ type: 'string', pattern: '^[ｦ-ﾟ]+$' });
+  check('ja FAQ: half-width kana pattern', kana('ﾎｯｶｲﾄﾞｳ') && kana('ﾋﾞﾊﾞｲｼ') && !kana('ホッカイドウ'));
+  eq('ja FAQ: half-width kana and full-width digits are plain strings', E.inferSchema({ k: 'ﾎｯｶｲﾄﾞｳ', d: '０７９' }).properties, { k: { type: 'string' }, d: { type: 'string' } });
+  // ko FAQ: Hangul keys stay property names and Ajv compiles the schema
+  const hangul = E.inferSchema({ 이름: '홍길동', 나이: 30 });
+  eq('ko FAQ: Hangul keys', hangul, { type: 'object', properties: { 이름: { type: 'string' }, 나이: { type: 'integer' } }, required: ['이름', '나이'] });
+  check('ko FAQ: Ajv accepts the Hangul-key sample', ajv.compile(hangul)({ 이름: '홍길동', 나이: 30 }));
+}
 
 
 // ---------- real complete page lifecycle; controlled DOM, clipboard and clock boundaries ----------
@@ -393,6 +411,22 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const schemaPairs = examplePairs(body, (b) => b.lang === 'json', (b) => b.lang === 'json' && /"\$schema"/.test(b.text));
   check(lang + ': has JSON → schema examples', schemaPairs.length > 0);
   eq(lang + ': each schema example equals the engine output', schemaPairs.filter(([a, b]) => JSON.stringify(JSON.parse(b.text)) !== JSON.stringify({ $schema: 'http://json-schema.org/draft-07/schema#', ...E.inferSchema(JSON.parse(a.text)) })).map(([, b]) => b.text), []);
+  // {/* jjs-check: {"accepts": [...], "rejects": [...]} */} (spec optional): the first two json code blocks after the
+  // marker are the input and the schema the engine generates from it (compared as parsed JSON); every value in
+  // "accepts" must pass that schema and every value in "rejects" must fail it (Ajv draft-07).
+  const notes = annotations(body, 'jjs-check');
+  check(lang + ': has at least 2 jjs-check examples', notes.length >= 2, String(notes.length));
+  notes.forEach((note, i) => {
+    const blocks = fencedBlocks(note.after).filter((b) => b.lang === 'json');
+    const tag = lang + ': jjs-check #' + (i + 1);
+    if (blocks.length < 2) { check(tag + ' has input and schema blocks', false, String(blocks.length)); return; }
+    const schema = { $schema: 'http://json-schema.org/draft-07/schema#', ...E.inferSchema(JSON.parse(blocks[0].text)) };
+    eq(tag + ' schema equals the engine output', JSON.parse(blocks[1].text), schema);
+    const validate = ajv.compile(schema);
+    check(tag + ' input passes its schema', validate(JSON.parse(blocks[0].text)));
+    for (const v of note.spec?.accepts ?? []) check(tag + ' accepts ' + JSON.stringify(v), validate(v), JSON.stringify(validate.errors));
+    for (const v of note.spec?.rejects ?? []) check(tag + ' rejects ' + JSON.stringify(v), !validate(v));
+  });
   check(lang + ': v2 no duplicate Usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>|^## How to/m.test(body));
   try { await compileMdx(body); check(lang + ': v2 MDX compiles', true); } catch (e) { check(lang + ': v2 MDX compiles', false, e.message); }
   for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {

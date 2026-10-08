@@ -7,21 +7,32 @@ steps:
   - "Click Copy to copy the complete schema. Paste it into an editor to refine constraints or required fields."
   - "Click Clear to clear the input, schema and error. Ctrl/⌘+L within the tool also clears them."
 faqItems:
-  - question: "What is JSON Schema?"
-    answer: "JSON Schema is a vocabulary that describes the structure, constraints, and documentation of JSON data. It defines expected types, required fields, format rules, and nested object shapes, and is widely used for API validation, code generation, and documentation."
-  - question: "Which JSON Schema version does this tool generate?"
+  - id: "version"
+    question: "Which JSON Schema version does this tool generate?"
     answer: "This tool generates JSON Schema draft-07, one of the most widely supported versions, compatible with validators like AJV, jsonschema (Python), and the JSON Schema Validator tool on ZeroTool."
-  - question: "How are required fields determined?"
+  - id: "required"
+    question: "How are required fields determined?"
     answer: "Every non-null property found in the input JSON object is added to the required array. Null values are excluded because their presence cannot be guaranteed. In an array of objects, a key is required only when every object has it with a non-null value. You can edit the output schema to adjust the required list for your use case."
-  - question: "Does it handle nested objects and arrays?"
+  - id: "nested"
+    question: "Does it handle nested objects and arrays?"
     answer: "Yes. The tool recursively processes nested objects and arrays. Arrays get one items schema merged from all their elements, so every element passes it. Nested objects produce nested properties and required arrays."
-  - question: "Can I use the generated schema for validation?"
+  - id: "validate"
+    question: "Can I use the generated schema for validation?"
     answer: "Yes. Paste the generated schema into the JSON Schema Validator tool on ZeroTool or any AJV-based validator. You may need to refine optional fields or add additional constraints like minLength, minimum, or pattern."
-  - question: "Can this replace jinja2schema infer().to_json_schema()?"
+  - id: "privacy"
+    question: "Is my JSON sent to a server?"
+    answer: "No. The schema is generated in your browser tab as you type, and the JSON is not sent to a server or saved in browser storage. When you finish editing the input or copy the schema, the page's analytics records one usage event with the tool name and the action (convert or copy), not the JSON or the schema."
+  - id: "local-jinja2schema"
+    question: "Can this replace jinja2schema infer().to_json_schema()?"
     answer: "Use jinja2schema when you need to infer data requirements from Jinja templates in Python code. Use ZeroTool when you have example JSON and want to infer a draft-07 JSON Schema quickly in the browser, without installing a package."
 ---
 
 <h2>JSON to JSON Schema Online</h2>
+<p>
+  JSON Schema is a vocabulary that describes the structure of JSON data: expected types, required fields,
+  format rules and the shape of nested objects. Validators such as Ajv check data against it, and it is used
+  for API validation, code generation and documentation.
+</p>
 <p>
   Paste a representative JSON object or array and ZeroTool will infer a draft-07 JSON Schema with object properties,
   required fields, array item types, and nested structures. This is a fast starting point for API validation,
@@ -51,6 +62,7 @@ faqItems:
 
 ## Example
 
+{/* jjs-check */}
 Input:
 
 ```json
@@ -93,6 +105,33 @@ Output:
 - A whole number becomes `integer` and a decimal becomes `number`. If `qty` can be `1.5`, change it to `number`.
 - `coupon` is `null` in the sample, so its type is `null` and it is not in `required`. If it can also be a string, change the type to `["string", "null"]`.
 - An empty array gives `"items": {}`, which accepts any item.
+
+## Example: Success and Error Responses
+
+An API that returns `{"ok": true, "data": …}` on success and `{"ok": false, "error": …}` on failure needs both shapes in the sample. Put one of each in an array:
+
+{/* jjs-check: {"accepts":[[{"ok":true,"data":{"id":1}}],[{"ok":false,"error":"timeout"}]],"rejects":[[{"data":{"id":1}}]]} */}
+```json
+[{"ok": true, "data": {"id": 7}}, {"ok": false, "error": "not found"}]
+```
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "ok": { "type": "boolean" },
+      "data": { "type": "object", "properties": { "id": { "type": "integer" } }, "required": ["id"] },
+      "error": { "type": "string" }
+    },
+    "required": ["ok"]
+  }
+}
+```
+
+`ok` appears in both responses, so it is the only required key; `data` and `error` are optional. Use the `items` schema to validate a single response. A sample with only the success response would make `data` required and reject every error response.
 
 ## Using the Schema with Ajv
 
