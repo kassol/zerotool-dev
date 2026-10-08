@@ -340,6 +340,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq('GA: one generate event per committed slider / picker / hex / inset change', g(), 8);
   h.input('bsg-color-hex', '#12', 'change');
   eq('GA: no generate event for an incomplete hex code', g(), 8);
+  h.input('bsg-color-hex', '#00000080', 'change');
+  eq('GA: one generate event when an 8-digit hex code is committed', g(), 9);
 }
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ' copy failure label exists', typeof allLabels[lang].copyFailed === 'string' && !!allLabels[lang].copyFailed);
