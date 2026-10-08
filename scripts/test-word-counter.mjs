@@ -103,10 +103,11 @@ eq('ko: Hangul with an attached Latin word stays one word', words('회원ID 확�
 eq('en unchanged: dash between spaces still a word', words('a — b'), 3);
 eq('en unchanged: hyphenated, decimal, URL', words('well-being 3.14 https://example.com/a'), 3);
 eq('whitespace only has no words', words(' \u3000\n '), 0);
-// Reading / speaking minutes: Latin and other words 200 / 130 per minute (unchanged); Korean
+// Reading / speaking minutes (Brysbaert 2019, Table 5, silent / aloud): English and other words
+// 236 / 190 per minute (changed 2026-10-09 from 200 / 130 so every script uses the same table); Korean
 // words 226 / 133 (Brysbaert 2019, Table 5); Chinese characters 390 / 228 per minute (Brysbaert
-// 2019: 260 / 152 wpm with 1.5 characters per word). Text with any kana is Japanese: no source
-// was found for Japanese, so its characters use 200 / 130 per minute as words.
+// 2019: 260 / 152 wpm with 1.5 characters per word). Text with any kana is Japanese: Table 5 has
+// no Japanese row, so its characters use the English rate, 236 / 190 per minute, as words.
 check('readingMinutes is exported', typeof E.readingMinutes === 'function');
 check('speakingMinutes is exported', typeof E.speakingMinutes === 'function');
 if (E.readingMinutes && E.speakingMinutes) {
@@ -115,17 +116,22 @@ if (E.readingMinutes && E.speakingMinutes) {
   eq('zh 391 characters read in 2 min', t(E.readingMinutes, '字'.repeat(391)), '2 min');
   eq('zh 228 characters spoken in 1 min', t(E.speakingMinutes, '字'.repeat(228)), '1 min');
   eq('zh 229 characters spoken in 2 min', t(E.speakingMinutes, '字'.repeat(229)), '2 min');
-  eq('ja 200 characters read in 1 min', t(E.readingMinutes, 'あ'.repeat(200)), '1 min');
-  eq('ja 201 characters read in 2 min', t(E.readingMinutes, 'あ'.repeat(201)), '2 min');
-  eq('ja kanji in a text with kana use the Japanese rate', t(E.readingMinutes, '字'.repeat(199) + 'あ'), '1 min');
-  eq('ja 131 characters spoken in 2 min', t(E.speakingMinutes, 'あ'.repeat(131)), '2 min');
+  eq('ja 236 characters read in 1 min', t(E.readingMinutes, 'あ'.repeat(236)), '1 min');
+  eq('ja 237 characters read in 2 min', t(E.readingMinutes, 'あ'.repeat(237)), '2 min');
+  eq('ja kanji in a text with kana use the Japanese rate', t(E.readingMinutes, '字'.repeat(235) + 'あ'), '1 min');
+  eq('ja 190 characters spoken in 1 min', t(E.speakingMinutes, 'あ'.repeat(190)), '1 min');
+  eq('ja 191 characters spoken in 2 min', t(E.speakingMinutes, 'あ'.repeat(191)), '2 min');
   eq('ko 226 words read in 1 min', t(E.readingMinutes, Array(226).fill('한글').join(' ')), '1 min');
   eq('ko 227 words read in 2 min', t(E.readingMinutes, Array(227).fill('한글').join(' ')), '2 min');
   eq('ko 133 words spoken in 1 min', t(E.speakingMinutes, Array(133).fill('한글').join(' ')), '1 min');
   eq('ko 134 words spoken in 2 min', t(E.speakingMinutes, Array(134).fill('한글').join(' ')), '2 min');
   eq('en 1,000 words read in 5 min', t(E.readingMinutes, Array(1000).fill('word').join(' ')), '5 min');
-  eq('en 1,000 words spoken in 8 min', t(E.speakingMinutes, Array(1000).fill('word').join(' ')), '8 min');
-  eq('mixed adds the parts: 100 en + 195 zh = 0.5 + 0.5 min', E.readingMinutes(E.stats(Array(100).fill('w').join(' ') + ' ' + '字'.repeat(195))), 1);
+  eq('en 1,000 words spoken in 6 min', t(E.speakingMinutes, Array(1000).fill('word').join(' ')), '6 min');
+  eq('en 236 words read in 1 min', t(E.readingMinutes, Array(236).fill('word').join(' ')), '1 min');
+  eq('en 237 words read in 2 min', t(E.readingMinutes, Array(237).fill('word').join(' ')), '2 min');
+  eq('en 190 words spoken in 1 min', t(E.speakingMinutes, Array(190).fill('word').join(' ')), '1 min');
+  eq('en 191 words spoken in 2 min', t(E.speakingMinutes, Array(191).fill('word').join(' ')), '2 min');
+  eq('mixed adds the parts: 118 en + 195 zh = 0.5 + 0.5 min', E.readingMinutes(E.stats(Array(118).fill('w').join(' ') + ' ' + '字'.repeat(195))), 1);
   eq('empty text is 0 minutes', [E.readingMinutes(E.stats('')), E.speakingMinutes(E.stats(''))], [0, 0]);
 }
 eq('characters are UTF-16 code units', E.stats('👍 a').chars, 4);
@@ -227,7 +233,7 @@ const strings = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = source.split('<style>')[1].split('</style>')[0];
 const script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
-eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [3832, '9161d18bda9b2896fbd22095abfd7ac9ec47a327d21207226ef54e77d1e11563']); // engine changed with approval 2026-10-09 (word count per script, reading rates, localized time units)
+eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [3794, '8477cdcb4436be51278206dfa1f3c3e363857589d1d61cbc2d87fc80d4de9608']); // engine changed with approval 2026-10-09 (word count per script, Table 5 reading rates, localized time units)
 check('v2 direct flex root', /^<div class="wc-wrap" data-empty="true" data-units=\{JSON\.stringify\(T\.units\)\}>/.test(markup) && /\.wc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
 check('v2 registered analyze', /'word-counter':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 check('v2 only actual automatic counting controls', !/<button|btn-primary|btn-copy|download/.test(markup));
@@ -256,7 +262,7 @@ for (const lang of ['en','zh','ja','ko']) {
   h.input(' \t\n'); eq(lang + ' v2 whitespace has meaningful character counts', [h.widget.dataset.empty, h.stats()], ['false', ['3','0','0','0','0',UNITS[lang].zero,UNITS[lang].zero]]);
   h.input('👍 a'); eq(lang + ' v2 unicode uses the actual engine', h.stats(), ['4','3','2','1','1',UNITS[lang].under,UNITS[lang].under]);
   const text = Array.from({ length: 1200 }, () => 'Hello world.').join('\n');
-  h.input(text); eq(lang + ' v2 long content keeps every count and minute', h.stats(), ['15599','13200','2400','1200','1',tm(lang, 12),tm(lang, 19)]);
+  h.input(text); eq(lang + ' v2 long content keeps every count and minute', h.stats(), ['15599','13200','2400','1200','1',tm(lang, 11),tm(lang, 13)]);
   eq(lang + ' v2 long input is preserved', h.nodes.get('wc-input').value, text);
   h.key('l'); eq(lang + ' v2 keyboard clear restores empty layout', h.widget.dataset.empty, 'true');
 }
