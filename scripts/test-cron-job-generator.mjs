@@ -395,6 +395,25 @@ for(const lang of ['en','zh','ja','ko']){
   assert('typed weekday */7 runs on Sundays only',[runs(p).slice(0,2)],[['2026-10-11 09:00 UTC','2026-10-18 09:00 UTC']]);
 }
 
+// ---------- S2-3c review: an invalid expression cannot be copied ----------
+// The copy button stayed enabled for an invalid expression (typed or built from the field
+// controls) and copied it; the description and run list were already cleared.
+{
+  let p=ready('en');
+  p.input(INPUT,'75 * * * *');
+  assert('invalid typed expression: copy disabled, result cleared',[p.get(COPY).disabled,p.get('cjg-desc').textContent,p.get('cjg-next-list').textContent],[true,'','']);
+  let n=p.clipboard.length;p.get(COPY).click();assert('invalid typed expression: nothing copied',p.clipboard.length,n);
+  p.input(INPUT,'0 9 * * 1-5');assert('valid expression re-enables copy',[p.get(COPY).disabled,p.get('cjg-desc').textContent],[false,'At 9:00, on Monday through Friday']);
+  p.input(INPUT,'0 9 * *');assert('wrong field count: copy disabled',p.get(COPY).disabled,true);
+  p=ready('en');
+  const minute=p.doc.querySelector('.cjg-field[data-field="minute"]');
+  minute.querySelector('.cjg-mode-btn[data-mode="step"]').click();
+  const step=minute.querySelector('[data-role="step"]');step.value='0';step.dispatch('input');
+  assert('invalid field value: copy disabled, result cleared',[output(p),p.get(COPY).disabled,p.get('cjg-desc').textContent,p.get('cjg-next-list').textContent],['*/0 9 * * 1-5',true,'','']);
+  n=p.clipboard.length;p.get(COPY).click();assert('invalid field value: nothing copied',p.clipboard.length,n);
+  step.value='5';step.dispatch('input');assert('fixed field value re-enables copy',[output(p),p.get(COPY).disabled],['*/5 9 * * 1-5',false]);
+}
+
 // ---------- tool pages: cjg-check worked examples (S2-3c) ----------
 // {/* cjg-check: {"expr","from","utc","tz","runs","error"} */} or {"from","utc","tz","cases":[{...}]}
 // (case keys override the outer ones; "utc" defaults to true). The expression is typed into the
