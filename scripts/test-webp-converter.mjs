@@ -149,8 +149,8 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
   const prefix = 'wc';
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-  const file = (name) => ({ name, type: 'image/png', size: 500 });
-  function page() {
+  const file = (name) => (typeof name === 'string' ? { name, type: 'image/png', size: 500 } : name);
+  function page(lang = 'en') {
     const nodes = [], byId = new Map(), images = [], encodes = [], downloads = [], urls = new Map(), revoked = new Set();
     let document, wrap, serial = 0, persistenceClears = 0;
     function matches(el, selector) {
@@ -184,7 +184,7 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
       querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
       click() { if (this.disabled) return; if (this.tagName === 'A') downloads.push({ name: this.download || this.getAttribute('download'), url: this.href || this.getAttribute('href') }); this.dispatch('click'); }
       getContext() { return { drawImage() {}, fillRect() {} }; }
-      toBlob(callback, type) { encodes.push({ callback, type, done: false }); }
+      toBlob(callback, type, quality) { encodes.push({ callback, type, quality, done: false }); }
     }
     function attributes(el, text) {
       for (const a of text.matchAll(/([\w-]+)="([^"]*)"/g)) el.setAttribute(a[1], a[2]);
@@ -196,14 +196,14 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
     }
     wrap = nodes.find((el) => el.className.split(/\s+/).includes(prefix + '-wrap'));
     const get = (id) => { const el = byId.get(id); if (!el) throw new Error('Missing source ID: ' + id); return el; };
-    document = new Element('document'); document.body = new Element('body'); document.documentElement = { lang: 'en' }; document.activeElement = document.body;
+    document = new Element('document'); document.body = new Element('body'); document.documentElement = { lang }; document.activeElement = document.body;
     document.createElement = (tag) => new Element(tag); document.getElementById = get; document.getElementsByName = (name) => nodes.filter((el) => el.name === name);
     document.querySelectorAll = (selector) => nodes.filter((el) => matches(el, selector)); document.querySelector = (selector) => selector === '.tool-widget' ? wrap : document.querySelectorAll(selector)[0];
     wrap.querySelectorAll = document.querySelectorAll;
     const sandbox = { document, Blob, console, URL: { createObjectURL(blob) { const url = 'blob:test-' + ++serial; urls.set(url, blob); return url; }, revokeObjectURL(url) { revoked.add(url); } },
       Image: class { constructor() { this.naturalWidth = 64; this.naturalHeight = 48; images.push(this); } },
       setTimeout() {}, window: { ztPersist: { clear() { persistenceClears++; } } }, _slug: prefix === 'wc' ? 'webp-converter' : 'image-compressor' };
-    sandbox.t = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS.en;')();
+    sandbox.t = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS[' + JSON.stringify(lang) + '];')();
     const context = createContext(sandbox);
     runInContext(inline[1], context);
     const keyStart = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
@@ -263,6 +263,47 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
     const p = page(); await p.ready(['settings.png']); const imageCount = p.images.length;
     p.get(prefix + '-quality').value = '42'; p.get(prefix + '-quality').dispatch('input');
     check('batch lifecycle: quality changes label without recompressing', p.images.length === imageCount && p.get(prefix + '-quality-val').textContent === '42' && p.rows().length === 1);
+  }
+  // ---------- tool page examples (src/content/tools/webp-converter/{lang}.mdx) ----------
+  // {/* wc-check: {"mode":"to-webp"|"from-webp","quality":N?,"files":[{"name","type","size","out"?,"outType"?,"broken"?}]} */}
+  // runs the page script in that language: sets the direction and the quality slider, drops the files,
+  // lets each accepted file decode (or fail to decode when "broken"), and answers each toBlob call with a
+  // blob of "out" bytes of type "outType" (default: the requested type). The sizes ("size", "out") are
+  // browser measurements quoted on the page; the test recomputes what the tool shows for them. Expected
+  // text, one line per result in file order: "<download name>  <sizes line>" for a card, the error card
+  // text for a failure, then the status line. It must equal a fenced block after the annotation and
+  // before the next annotation or H2. toBlob must receive quality / 100 (to-webp) or no quality.
+  async function exampleOutput(spec, lang) {
+    const p = page(lang);
+    if (spec.mode === 'from-webp') { p.get('wc-mode-to').checked = false; p.get('wc-mode-from').checked = true; p.get('wc-mode-from').dispatch('change'); }
+    if (spec.quality !== undefined) { const q = p.get('wc-quality'); q.value = String(spec.quality); q.dispatch('input'); }
+    const files = spec.files.map((f) => ({ name: f.name, type: f.type, size: f.size }));
+    p.get('wc-drop').dispatch('drop', { dataTransfer: { files } });
+    const problems = [];
+    for (const img of [...p.images]) {
+      const f = spec.files[files.indexOf(p.urls.get(img.src))];
+      if (!f) { problems.push('image without a file'); continue; }
+      if (f.broken) { img.onerror(); await flush(); continue; }
+      const before = p.encodes.length; img.onload(); await flush();
+      const job = p.encodes[before];
+      if (!job) { problems.push('no toBlob call for ' + f.name); continue; }
+      const wantQ = spec.mode === 'from-webp' ? undefined : (spec.quality ?? 85) / 100;
+      if (job.quality !== wantQ) problems.push(f.name + ' toBlob quality ' + job.quality + ' != ' + wantQ);
+      job.done = true; job.callback(new Blob([new Uint8Array(f.out)], { type: f.outType || job.type })); await flush();
+    }
+    await flush();
+    const decode = (h) => h.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+    const lines = p.get('wc-results').children.map((card) => card.className.includes('wc-card-error')
+      ? card.textContent
+      : card.querySelector('.wc-dl').getAttribute('download') + '  ' + decode((card.html || '').match(/wc-card-sizes">([\s\S]*?)<\/div>/)?.[1] ?? ''));
+    lines.push(p.get('wc-status').textContent);
+    return { text: lines.join('\n'), problems };
+  }
+  // A larger output kept one decimal only when it was not .0: Math.abs() on the toFixed(1) string
+  // turned "-36.0" into 36, so the card read "+36%" next to "−66.2%".
+  {
+    const out = await exampleOutput({ mode: 'to-webp', quality: 100, files: [{ name: 'a.png', type: 'image/png', size: 197067, out: 267920 }] }, 'en');
+    check('larger output keeps one decimal (+36.0%)', out.text.split('\n')[0] === 'a.webp  192.4 KB → 261.6 KB +36.0%', out.text);
   }
 }
 
