@@ -543,6 +543,9 @@ const L = STRINGS[lang];
             continue;
           }
 
+          /* call signature (x: T): R or <T>(x: T): R — skip */
+          if (p.pv() === '(' || p.pv() === '<') { skipSignature(p); continue; }
+
           /* property key */
           var kt = p.peek();
           if (kt.t !== 'IDENT' && kt.t !== 'KW' && kt.t !== 'STRING' && kt.t !== 'NUMBER') {
@@ -551,16 +554,20 @@ const L = STRINGS[lang];
           var key = p.next().v;
           if (kt.t === 'STRING') key = '"' + key + '"';
 
+          /* get / set accessor: get name(): T, set [k](v: T) — skip */
+          var nt = p.peek();
+          if (kt.t === 'IDENT' && (key === 'get' || key === 'set') &&
+              (nt.v === '[' || nt.t === 'IDENT' || nt.t === 'KW' || nt.t === 'STRING' || nt.t === 'NUMBER')) {
+            if (p.pv() === '[') skipBrackets(p); else p.next();
+            skipSignature(p);
+            continue;
+          }
+
           /* optional */
           var opt = p.maybe('?');
 
-          /* method signature: foo(args): ReturnType — skip */
-          if (p.pv() === '(') {
-            skipParens(p);
-            if (p.pv() === ':') { p.next(); parseTypeExpr(p); }
-            p.maybe(';'); p.maybe(',');
-            continue;
-          }
+          /* method signature foo(args): R, generic foo<T>(args): R, construct signature new (args): R — skip */
+          if (p.pv() === '(' || p.pv() === '<') { skipSignature(p); continue; }
 
           if (!p.maybe(':')) {
             var at = position(p.tok.src, kt.p);
@@ -572,6 +579,24 @@ const L = STRINGS[lang];
           members.push({ kind: 'prop', key: key, opt: opt, te: te });
         }
         return members;
+      }
+
+      /* <T>(args): R — type parameters, parameters, return type, separator */
+      function skipSignature(p) {
+        if (p.pv() === '<') skipAngle(p);
+        if (p.pv() === '(') skipParens(p);
+        if (p.pv() === ':') { p.next(); parseTypeExpr(p); }
+        p.maybe(';'); p.maybe(',');
+      }
+
+      function skipBrackets(p) {
+        p.eat('[');
+        var d = 1;
+        while (p.pt() !== 'EOF' && d > 0) {
+          if (p.pv() === '[') d++;
+          else if (p.pv() === ']') d--;
+          p.next();
+        }
       }
 
       function skipParens(p) {

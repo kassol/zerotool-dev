@@ -260,6 +260,38 @@ for (const [v, z] of Object.entries(zods)) {
   eq('full-width colon is read as ":"', fw.includes('  age: z.number(),'), true);
   eq('full-width colon inside a string literal type is kept', fw.includes('  label: z.literal("a：b"),'), true);
 }
+// Members that are not properties are skipped, never reported as a missing colon (review s2-6 must-fix 1):
+// methods (plain, optional, generic), get / set accessors, call and construct signatures (plain and
+// generic), index signatures.
+{
+  const skip = checkCase('non-property members are skipped', [
+    'interface Api {',
+    '  get<T>(url: string): T;',
+    '  find?<K extends string>(key: K): number;',
+    '  get size(): number;',
+    '  set size(v: number);',
+    '  get [k](): string;',
+    '  (x: number): string;',
+    '  <T>(x: T): T;',
+    '  new (x: string): Api;',
+    '  new <T>(x: T): Api;',
+    '  readonly [key: string]: unknown;',
+    '  id: number;',
+    '  get: string;',
+    '  set?: boolean;',
+    '  log(msg: string): void;',
+    '}',
+  ].join('\n'), [
+    ['ApiSchema', { id: 1, get: 'g', extra: true }, true],
+    ['ApiSchema', { id: 1 }, false],
+  ]);
+  for (const member of ['get<T>(url: string): T;', 'find?<K extends string>(key: K): number;', 'get size(): number;', 'set size(v: number);', 'get [k](): string;', '(x: number): string;', '<T>(x: T): T;', 'new (x: string): Api;', 'new <T>(x: T): Api;']) {
+    let out = '';
+    try { out = convert('interface Api { ' + member + ' id: number }'); } catch (e) { out = e.message; }
+    eq('skipped member: ' + member, out.split('\n').filter((l) => /^  \S/.test(l)), ['  id: z.number(),']);
+  }
+  eq('non-property members: only the properties remain', skip.split('\n').filter((l) => /^  \S/.test(l)), ['  id: z.number(),', '  get: z.string(),', '  set: z.boolean().optional(),']);
+}
 const parseError = (src) => { try { convert(src); return null; } catch (e) { return e.message; } };
 eq('missing colon: error with line and column', parseError('interface U {\n  id: string;\n  age number;\n}'), 'Line 3, column 3: "age" needs ":" before its type.');
 eq('missing colon: a property with no type', parseError('interface U { a; }'), 'Line 1, column 15: "a" needs ":" before its type.');
