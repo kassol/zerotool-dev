@@ -405,6 +405,36 @@ for(const [lang,labels] of Object.entries(copyLabels)) {
     q.get('sl-copy').click();const oldError=q.copies.at(-1);q.get('sl-copy').click();q.copies.at(-1).resolve();await settle();const success=snapshot(q);oldError.reject(Error('older'));await settle();eq(lang+': old error cannot erase latest success',snapshot(q),success);
   }
 }
+// ---------- tool page worked examples (src/content/tools/slugify/{lang}.mdx) ----------
+// Annotation {/* slug-check: {"in":"…","sep"?:"_","lower"?:false,"trim"?:false,"empty"?:true} */}
+// runs the engine on "in" with the page's defaults (hyphen, Lowercase on, Trim on) changed by the
+// optional keys. The input must appear in the text after the annotation (up to the next annotation
+// or H2); a non-empty slug must appear there as inline code or in a code block; an empty slug must
+// be declared with "empty": true. Each language needs at least 2 examples.
+function codeSpans(text) {
+  const out = [];
+  for (const m of text.matchAll(/<code>\{"((?:[^"\\]|\\.)*)"\}<\/code>/g)) out.push(JSON.parse('"' + m[1] + '"'));
+  for (const m of text.matchAll(/<code>([^<{]*)<\/code>/g)) out.push(m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+  for (const m of text.replace(/^```[\s\S]*?^```/gm, '').matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+  for (const m of text.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)) out.push(...m[1].split('\n'));
+  return out;
+}
+{
+  const { toolMdxContract } = await import('./lib/tool-mdx-contract.mjs');
+  const contract = toolMdxContract('slugify', { annotations: [{ tag: 'slug-check', min: 2, verify: ({ spec, after }) => {
+    if (!spec || typeof spec.in !== 'string') return 'spec needs "in"';
+    const opts = { separator: spec.sep ?? '-', lowercase: spec.lower ?? true, trim: spec.trim ?? true };
+    const got = E.slugify(spec.in, opts);
+    const codes = codeSpans(after);
+    const plain = after.replace(/&amp;/g, '&');
+    if (!codes.includes(spec.in) && !plain.includes(spec.in)) return 'input ' + JSON.stringify(spec.in) + ' is not on the page after the annotation';
+    if (got === '') return spec.empty === true ? null : 'engine gives an empty slug; declare "empty": true';
+    if (spec.empty) return 'declared empty but the engine gives ' + JSON.stringify(got);
+    return codes.includes(got) ? null : 'engine output ' + JSON.stringify(got) + ' is not shown as code after the annotation';
+  } }] });
+  for (const r of contract.results.filter((r) => /slug-check/.test(r.rule))) check('tool page: ' + r.message, r.ok);
+}
+
 // Analytics: one event per committed change (as in css-triangle-generator), not per pause in typing.
 // Before the fix every input event queued a 500 ms timer, so typing a title with pauses sent
 // several 'convert' events.
