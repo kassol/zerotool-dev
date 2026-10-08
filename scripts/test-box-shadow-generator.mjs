@@ -300,7 +300,18 @@ const configuredCode = 'box-shadow: inset 12px -9px 42px -6px rgba(18, 52, 86, 0
 // slider (alpha / 255, rounded to a whole percent). Text that cannot become a valid code shows a
 // hint in the page language and keeps the previous color; an incomplete code shows the hint only
 // on change (when the field is left).
-check('hex field allows 9 characters', /id="bsg-color-hex"[^>]*maxlength="9"/.test(source));
+// maxlength 16: room for an 8-digit code with surrounding spaces from a paste (trimmed before
+// it is read); maxlength 9 cut ` #00000080` to ` #0000008`.
+check('hex field allows 16 characters', /id="bsg-color-hex"[^>]*maxlength="16"/.test(source));
+{
+  const h = page('en');
+  h.input('bsg-color-hex', ' #00000080 ');
+  eq('8-digit code with spaces is read', [h.get('bsg-opacity').value, h.get('bsg-status').textContent], ['50', '']);
+  h.input('bsg-opacity', 70);
+  eq('moving opacity after an 8-digit code trims the field to 6 digits', [h.get('bsg-color-hex').value, h.get('bsg-code').textContent], ['#000000', 'box-shadow: 5px 5px 10px 0px rgba(0, 0, 0, 0.70);']);
+  h.input('bsg-color-hex', '#1a73e8'); h.input('bsg-opacity', 40);
+  eq('a 6-digit code is left as typed', h.get('bsg-color-hex').value, '#1a73e8');
+}
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const hint = allLabels[lang].badColor;
   check(lang + ' badColor hint exists', typeof hint === 'string' && /6/.test(hint) && /8/.test(hint), hint);
