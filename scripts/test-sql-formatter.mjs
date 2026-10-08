@@ -291,8 +291,8 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
 
 const protectedCore = pageSource.match(/^[ \t]*\/\* ── engine:start ── \*\/[\s\S]*?\/\* ── engine:end ── \*\//m)[0];
 // Engine block changed with approval on 2026-10-08 (S2-4 engine fixes a–d); see git log.
-same('protected conversion bytes',Buffer.byteLength(protectedCore),14419);
-same('protected conversion SHA256',hash(protectedCore),'874ebe8b213432e3671e0390709ea79b5a7be88fac75ce8d7a994ef7eb2e7c6c');
+same('protected conversion bytes',Buffer.byteLength(protectedCore),16024);
+same('protected conversion SHA256',hash(protectedCore),'99153fd984835c5ce472e68728354ea3585e5a765e928c86a2543a186e441040');
 
 const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
 const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
@@ -350,7 +350,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [598, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '9d73b9bf26ce891b449d50eff2edc1f97f270311add6bc2e35a6609b8669f321');
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), 'd246517681d0a1aa10f4625fd97153979d42ab2790a2307b341edb245e591f8a');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -509,6 +509,28 @@ for (const [name, sql] of [
 for (const [name, sql] of [
   ['MySQL \\\' strings', "select * from users where note = 'It\\'s' and nick = 'don\\'t';"],
 ]) for (const out of [fmt(sql), E.minifySQL(sql)]) check('b: literals copied verbatim: ' + name, out.includes("'It\\'s'") && out.includes("'don\\'t'"), out);
+
+// c) Dialect tokens: parameters, bracketed names, string prefixes, dollar-quoted strings.
+eq('c: PostgreSQL / SQLite $1 parameter', E.minifySQL('select * from t where id = $1 and n = ?2'), 'SELECT * FROM t WHERE id = $1 AND n = ?2');
+eq('c: named parameters and variables', E.minifySQL('select :id, @p1, @@session.sql_mode from t where a = :id'), 'SELECT :id, @p1, @@session.sql_mode FROM t WHERE a = :id');
+eq('c: PostgreSQL cast keeps working', E.minifySQL('select id::text from t'), 'SELECT id :: text FROM t');
+eq('c: bracketed name stays whole and keeps its case', E.minifySQL('select [order id], [订单编号], [a]]b] from t'), 'SELECT [order id], [订单编号], [a]]b] FROM t');
+eq('c: N, X, B and E prefixes stay on the string', E.minifySQL("select N'Zoë', X'41', B'101', E'It\\'s', 'C:\\' from t"), "SELECT N'Zoë', X'41', B'101', E'It\\'s', 'C:\\' FROM t");
+eq('c: dollar-quoted body is copied as written', E.minifySQL("select $$ it's  a  'body' $$, $fn$ select  1 $fn$ from t"), "SELECT $$ it's  a  'body' $$, $fn$ select  1 $fn$ FROM t");
+eq('c: format keeps a bracketed name on its line', fmt('select [order id], count(*) from [order items] group by [order id]'),
+  lines('SELECT', '  [order id],', '  COUNT(*)', 'FROM [order items]', 'GROUP BY [order id]'));
+for (const [name, sql, params] of [
+  ['bracketed names', 'select [order id], "a""b" from [order items];'],
+  ['bracketed Chinese name', 'select [订单编号], [收货人] from [订单] where [状态] = \'待发货\';'],
+  ['blob literal', "select X'41' = X'41' as same, p from paths;"],
+  ['positional and named parameters', 'select $1 + 1, ?2, :id, @n, $v from paths where p <> :id;', { $1: 5, '?2': 6, ':id': 'x', '@n': 7, $v: 8 }],
+]) sameExecution(name, sql, params);
+for (const [name, sql] of [
+  ['SQL Server N strings', "select [order id] from t where name = N'Zoë' and memo = N'张三';"],
+  ['PostgreSQL E strings and casts', "select E'It\\'s'::text, id::int from t where id = $1;"],
+  ['PostgreSQL dollar quoting', "create function f() returns int as $body$ select  1 $body$ language sql;"],
+  ['MySQL variables', 'select @@session.sql_mode, @x := 1 from dual;'],
+]) sameTokens(name, sql);
 
 const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
 for(const lang of ['en','zh','ja','ko']) {
