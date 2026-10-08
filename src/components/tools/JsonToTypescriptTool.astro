@@ -478,11 +478,16 @@ const L = STRINGS[lang];
         else setStatus(result.count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', result.count), false);
       }
 
-      /* Analytics: one event per committed edit, Generate or Example, not per typing pause. */
+      /* Analytics: one event per committed edit, Generate or Example, not per typing pause.
+         One action can fire both change (blur on mousedown) and click, so the same JSON,
+         root name and options are sent once. */
+      var lastTracked = null;
       function trackGenerate() {
-        if (outputCodeEl.textContent && !inputEl.classList.contains('error')) {
-          window.trackTool && window.trackTool('json-to-typescript', 'generate');
-        }
+        if (!outputCodeEl.textContent || inputEl.classList.contains('error')) return;
+        var key = inputEl.value + '\u0000' + (rootNameEl.value.trim() || 'RootObject') + '\u0000' + optionalEl.checked + '\u0000' + useTypeEl.checked;
+        if (key === lastTracked) return;
+        lastTracked = key;
+        window.trackTool && window.trackTool('json-to-typescript', 'generate');
       }
 
       /* ── Real-time generate (debounced 300ms) ── */
@@ -512,6 +517,7 @@ const L = STRINGS[lang];
 
       document.getElementById('jtt-clear').addEventListener('click', function () {
         invalidateCopy();
+        lastTracked = null;
         clearTimeout(_jttLiveTimer);
         _jttLiveTimer = null;
         inputEl.value = '';
