@@ -26,6 +26,7 @@ import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, relative } from 'node:path';
+import { reportContract, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_B13_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(process.env.ZT_B13_SOURCE || join(root, 'src/components/tools/HtaccessGeneratorTool.astro'), 'utf8');
@@ -115,22 +116,81 @@ const defIdx = guide.indexOf('{/* hta-default */}');
 const defBlock = /```apache\n([\s\S]*?)\n```/.exec(guide.slice(defIdx));
 check('ja guide quotes the tool default output verbatim', defIdx >= 0 && defBlock && defBlock[1] === toolDefault, defBlock && defBlock[1]);
 
-// Each `hta-apache` annotation names the .htaccess body: "ht" (a literal, "tool-default" or
-// "tool-default-no-https") or, when absent, the closest ```apache block above it.
-const cases = [];
-for (const m of guide.matchAll(/\{\/\* hta-apache: (.+?) \*\/\}/g)) {
-  const spec = JSON.parse(m[1]);
-  if (spec.ht === 'tool-default') spec.body = toolDefault + '\n';
-  else if (spec.ht === 'tool-default-no-https') spec.body = toolDefaultNoHttps + '\n';
-  else if (spec.ht) spec.body = spec.ht;
-  else {
-    const before = guide.slice(0, m.index);
-    const blocks = [...before.matchAll(/```apache\n([\s\S]*?)```/g)];
-    spec.body = blocks[blocks.length - 1][1];
+// ---------- tool page: `hta-check` examples (src/content/tools/htaccess-generator/{lang}.mdx) ----------
+// `{/* hta-check: {…} */}` sets the form like a user would, starting from the default state:
+//   https: bool; www: false | "add" | "remove"; index: false | "default files";
+//   cache: false | [images, css/js, fonts]; security: false | {dir, ht, env, xss} (missing keys keep
+//   the default); redirect: false | [from, to, "301" | "302"]; part: true.
+// Without `part`, a code block after the annotation (before the next annotation or H2) must equal
+// the generated file. With `part`, the blank-line-separated sections of that block must appear as
+// sections of the generated file, in the same order (the page quotes only the changed blocks).
+const makeLinesWww = new Function('els', 'wwwMode', block + '\nreturn lines;');
+function formFrom(spec) {
+  const els = defaultEls();
+  let mode = 'add';
+  const set = (key, checked) => { els[key] = { ...els[key], checked }; };
+  if ('https' in spec) set('https', !!spec.https);
+  if ('www' in spec) { set('wwwEnable', !!spec.www); if (spec.www) mode = spec.www; }
+  if ('index' in spec) { set('indexEnable', spec.index !== false); if (spec.index !== false) els.indexFiles = { checked: false, value: spec.index }; }
+  if ('cache' in spec) {
+    set('cacheEnable', spec.cache !== false);
+    if (spec.cache) ['cacheImages', 'cacheCss', 'cacheFonts'].forEach((k, i) => { els[k] = { checked: false, value: spec.cache[i] }; });
   }
-  cases.push(spec);
+  if ('security' in spec) {
+    set('secEnable', spec.security !== false);
+    const map = { dir: 'secDirListing', ht: 'secHtaccess', env: 'secEnvFiles', xss: 'secXss' };
+    for (const [k, key] of Object.entries(map)) if (spec.security && k in spec.security) set(key, !!spec.security[k]);
+  }
+  if ('redirect' in spec) {
+    set('redirEnable', !!spec.redirect);
+    if (spec.redirect) {
+      els.redirFrom = { checked: false, value: spec.redirect[0] };
+      els.redirTo = { checked: false, value: spec.redirect[1] };
+      els.redirType = { checked: false, value: spec.redirect[2] || '301' };
+    }
+  }
+  return makeLinesWww(els, () => mode)();
 }
-check('ja guide has Apache cases', cases.length >= 8, cases.length);
+const sectionsOf = (text) => text.split(/\n\n+/).map((s) => s.trim()).filter(Boolean);
+function verifyCheck({ spec, after }) {
+  const out = formFrom(spec);
+  const blocks = fencedBlocks(after).map((b) => b.text);
+  if (!blocks.length) return 'no code block after the annotation';
+  if (!spec.part) return blocks.includes(out) ? null : 'generated file not quoted verbatim:\n' + out;
+  const want = sectionsOf(out);
+  const ok = blocks.some((b) => {
+    let i = 0;
+    for (const s of sectionsOf(b)) { i = want.indexOf(s, i); if (i < 0) return false; i++; }
+    return true;
+  });
+  return ok ? null : 'quoted sections are not sections of the generated file:\n' + out;
+}
+check('hta-check: default spec equals the default form state', formFrom({}) === toolDefault);
+reportContract(check, 'htaccess-generator', { stepCount: 5, annotations: [{ tag: 'hta-check', min: 2, verify: verifyCheck }] });
+
+// Each `hta-apache` annotation names the .htaccess body: "ht" (a literal, "tool-default" or
+// "tool-default-no-https") or, when absent, the closest ```apache block above it. The ja guide
+// and the four tool pages are read. A request is [path, status, cache-control?, location?, host?].
+const cases = [];
+const apacheSources = [['ja guide', guide], ...['en', 'zh', 'ja', 'ko'].map((l) => [l + ' tool page', readFileSync(join(root, 'src/content/tools/htaccess-generator', l + '.mdx'), 'utf8')])];
+for (const [label, text] of apacheSources) {
+  let count = 0;
+  for (const m of text.matchAll(/\{\/\* hta-apache: (.+?) \*\/\}/g)) {
+    const spec = JSON.parse(m[1]);
+    spec.source = label;
+    if (spec.ht === 'tool-default') spec.body = toolDefault + '\n';
+    else if (spec.ht === 'tool-default-no-https') spec.body = toolDefaultNoHttps + '\n';
+    else if (spec.ht) spec.body = spec.ht;
+    else {
+      const before = text.slice(0, m.index);
+      const blocks = [...before.matchAll(/```apache\n([\s\S]*?)```/g)];
+      spec.body = blocks[blocks.length - 1][1];
+    }
+    cases.push(spec);
+    count++;
+  }
+  if (label === 'ja guide') check('ja guide has Apache cases', count >= 8, count);
+}
 
 // Apache runs only where an Apache 2.4 binary and its module directory exist (macOS ships
 // /usr/sbin/httpd with /usr/libexec/apache2; Debian / Ubuntu use /usr/sbin/apache2 with
@@ -154,7 +214,7 @@ if (!found || !mimeTypes) {
   writeFileSync(join(docs, '.env'), 'SECRET=1\n');
   writeFileSync(join(docs, 'app', 'foo'), 'foo\n');
   const port = 18000 + Math.floor(Math.random() * 1000);
-  const mods = ['mpm_prefork', 'unixd', 'authz_core', 'authz_host', 'dir', 'mime', 'log_config', 'rewrite', 'expires', 'headers', 'alias', 'autoindex'];
+  const mods = ['mpm_prefork', 'unixd', 'authz_core', 'authz_host', 'dir', 'mime', 'log_config', 'rewrite', 'expires', 'headers', 'alias', 'autoindex', 'setenvif'];
   function conf(spec) {
     const lines = [
       'ServerRoot "' + base + '"', 'Listen 127.0.0.1:' + port, 'ServerName localhost',
@@ -167,9 +227,9 @@ if (!found || !mimeTypes) {
     ];
     return lines.join('\n') + '\n';
   }
-  function request(path) {
+  function request(path, host = 'example.test') {
     return new Promise((resolve) => {
-      const req = httpRequest({ host: '127.0.0.1', port, path, headers: { Host: 'example.test' } }, (res) => {
+      const req = httpRequest({ host: '127.0.0.1', port, path, headers: { Host: host } }, (res) => {
         res.resume();
         res.on('end', () => resolve({ status: res.statusCode, cc: res.headers['cache-control'] || null, loc: res.headers.location || null }));
       });
@@ -179,7 +239,7 @@ if (!found || !mimeTypes) {
   }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   for (const spec of cases) {
-    const label = 'Apache ' + JSON.stringify(spec.requests) + ' ' + (spec.override) + (spec.compat ? ' +compat' : '');
+    const label = 'Apache (' + spec.source + ') ' + JSON.stringify(spec.requests) + ' ' + (spec.override) + (spec.compat ? ' +compat' : '');
     writeFileSync(join(docs, '.htaccess'), spec.body);
     writeFileSync(join(base, 'error.log'), '');
     writeFileSync(join(base, 'httpd.conf'), conf(spec));
@@ -187,8 +247,8 @@ if (!found || !mimeTypes) {
     let ready = null;
     for (let i = 0; i < 50 && !ready; i++) { await sleep(100); ready = await request('/__ping'); }
     if (!ready) { child.kill('SIGKILL'); skipped += 1; continue; }
-    for (const [path, status, cc, loc] of spec.requests) {
-      const r = await request(path);
+    for (const [path, status, cc, loc, host] of spec.requests) {
+      const r = await request(path, host);
       check(label + ' ' + path + ' status', r && r.status === status, r && r.status);
       if (cc !== undefined && cc !== null) check(label + ' ' + path + ' Cache-Control', r && r.cc === cc, r && r.cc);
       if (loc !== undefined && loc !== null) check(label + ' ' + path + ' Location', r && r.loc === loc, r && r.loc);
@@ -312,7 +372,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
   const labels=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
   const escaped=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace('data-strings={JSON.stringify(CLIENT_T)}','data-strings="'+escaped(JSON.stringify({copy:labels[lang].copy,copied:labels[lang].copied,copyFailed:labels[lang].copyFailed}))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
+  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace('data-strings={JSON.stringify(CLIENT_T)}','data-strings="'+escaped(JSON.stringify({copy:labels[lang].copy,copied:labels[lang].copied,copyFailed:labels[lang].copyFailed,badFrom:labels[lang].badFrom,badFromSpace:labels[lang].badFromSpace,badToSpace:labels[lang].badToSpace,badFromUrl:labels[lang].badFromUrl,badFromFullwidth:labels[lang].badFromFullwidth}))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
@@ -347,6 +407,103 @@ function restoreResult(p){p.input(INPUT,'home.html index.html');}
 const recover=p=>output(p).includes('DirectoryIndex home.html index.html');
 let p=ready();assert('actual default matches quoted full output',output(p),toolDefault);p.choose('hta-redir-enable',true);p.input('hta-redir-from','/old');p.input('hta-redir-to','https://example.test/new');p.input('hta-redir-type','302','change');assert('actual change/input redirect',output(p).endsWith('Redirect 302 /old https://example.test/new'),true);p.choose('hta-www-enable',true);const radios=p.doc.querySelectorAll('input[name="hta-www"]');radios.forEach(r=>r.checked=r.value==='remove');radios[1].dispatch('change');assert('actual radio WWW applied',output(p).includes('https://%1%{REQUEST_URI} [L,R=301]'),true);act(p,'all off');assert('all off keeps original empty notice and disables copy',[output(p),p.get(COPY).disabled],['# (no options selected)',true]);
 
+// Default files: a value of spaces only is treated like an empty field (the page and the tip say
+// an empty value uses index.php index.html). Before, the engine wrote "DirectoryIndex " with no
+// file names, and Apache then served no index file (403 on every directory).
+for (const lang of ['en','zh','ja','ko']) {
+  const q=ready(lang);
+  for (const [value,want] of [['   ','DirectoryIndex index.php index.html'],['','DirectoryIndex index.php index.html'],['  home.html  index.php ','DirectoryIndex home.html  index.php'],['\t','DirectoryIndex index.php index.html']]) {
+    q.input(INPUT,value);
+    const line=output(q).split('\n').find(l=>l.startsWith('DirectoryIndex'));
+    assert(lang+' default files '+JSON.stringify(value)+' write a usable DirectoryIndex',line,want);
+  }
+  assert(lang+' the default files field keeps what was typed',q.get(INPUT).value,'\t');
+  // A full-width space (U+3000, typed with a Chinese, Japanese or Korean IME) is not a separator
+  // for Apache: "DirectoryIndex index.php　index.html" is one file name (403 on Apache 2.4.67).
+  q.input(INPUT,'index.php　index.html');
+  assert(lang+' a full-width space between default files becomes a space',output(q).split('\n').find(l=>l.startsWith('DirectoryIndex')),'DirectoryIndex index.php index.html');
+  assert(lang+' the field still shows the full-width space',q.get(INPUT).value,'index.php　index.html');
+}
+
+// Custom Redirect: the From path must start with "/" (Apache Redirect: "A relative path is not
+// allowed"). Apache loads `Redirect 301 old-page …` without an error and never matches it, so the
+// page leaves the line out and shows a field error in the status line, the same way it already
+// leaves the line out while one of the two fields is empty. The other rules stay copyable.
+{
+  const strings=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+  for (const lang of ['en','zh','ja','ko']) {
+    const q=ready(lang),from=q.get('hta-redir-from'),status=q.get('hta-status');
+    const msg=strings[lang].badFrom;
+    assert(lang+' has a localized From path error',typeof msg==='string'&&msg.includes('/'),true);
+    q.choose('hta-redir-enable',true);q.input('hta-redir-to','https://example.test/new');
+    q.input('hta-redir-from','old-page');
+    assert(lang+' relative From path: no Redirect line',/^Redirect /m.test(output(q)),false);
+    assert(lang+' relative From path: field error in the status line',status.textContent,msg);
+    assert(lang+' relative From path: field marked invalid',from.getAttribute('aria-invalid'),'true');
+    assert(lang+' relative From path: the other rules can still be copied',[output(q).includes('# Force HTTPS'),q.get(COPY).disabled],[true,false]);
+    q.input('hta-redir-from','  old-page');
+    assert(lang+' leading spaces do not hide a relative path',[status.textContent,/^Redirect /m.test(output(q))],[msg,false]);
+    q.input('hta-redir-from','/old-page');
+    assert(lang+' absolute From path: Redirect line and no error',[output(q).endsWith('Redirect 301 /old-page https://example.test/new'),status.textContent,from.getAttribute('aria-invalid')],[true,'',null]);
+    q.input('hta-redir-from','old-page');q.choose('hta-redir-enable',false);
+    assert(lang+' a turned-off redirect shows no error',[status.textContent,from.getAttribute('aria-invalid')],['',null]);
+    q.choose('hta-redir-enable',true);assert(lang+' turning it on again shows the error',status.textContent,msg);
+    q.input('hta-redir-from','');
+    assert(lang+' an empty From path is not an error',[status.textContent,from.getAttribute('aria-invalid')],['',null]);
+    q.input('hta-redir-from','old-page');q.ctrlL('hta-redir-from');
+    assert(lang+' Ctrl+L clears the error',[status.textContent,from.getAttribute('aria-invalid')],['',null]);
+  }
+}
+
+// Relative From paths of other shapes: a pasted full URL and a full-width "／" get their own hint;
+// "./old-page" gets the general one; a leading space is trimmed and the path is valid.
+{
+  const strings=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+  for (const lang of ['en','zh','ja','ko']) {
+    const q=ready(lang),from=q.get('hta-redir-from'),status=q.get('hta-status'),S=strings[lang];
+    assert(lang+' has localized URL and full-width hints',[typeof S.badFromUrl,typeof S.badFromFullwidth],['string','string']);
+    q.choose('hta-redir-enable',true);q.input('hta-redir-to','https://example.test/new');
+    for (const [value,key] of [['https://example.com/old-page','badFromUrl'],['HTTP://example.com/old-page','badFromUrl'],['／old-page','badFromFullwidth'],['./old-page','badFrom']]) {
+      q.input('hta-redir-from',value);
+      assert(lang+' From path '+JSON.stringify(value)+' is rejected with '+key,[status.textContent,/^Redirect /m.test(output(q)),from.getAttribute('aria-invalid')],[S[key],false,'true']);
+    }
+    q.input('hta-redir-from',' /old-page');
+    assert(lang+' a leading space before / is trimmed and accepted',[status.textContent,output(q).endsWith('Redirect 301 /old-page https://example.test/new')],['',true]);
+  }
+  assert('ko messages use the section name 리다이렉트',['badFrom','badFromSpace','badToSpace'].every(k=>!strings.ko[k].includes('리디렉션')),true);
+}
+
+// Custom Redirect with a space inside the From path or the To URL: the line gets four arguments,
+// and Apache 2.4.67 answers 500 for the whole directory ("Redirect takes one, two or three
+// arguments", checked with the hta-apache cases on the tool pages). The page leaves the line out
+// and names the field, as for a relative From path. A full-width space (U+3000) is not a separator
+// for Apache and is allowed; "%20" in the To URL is allowed.
+{
+  const strings=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+  for (const lang of ['en','zh','ja','ko']) {
+    const q=ready(lang),from=q.get('hta-redir-from'),to=q.get('hta-redir-to'),status=q.get('hta-status');
+    const S=strings[lang];
+    assert(lang+' has localized space errors',[typeof S.badFromSpace,typeof S.badToSpace],['string','string']);
+    q.choose('hta-redir-enable',true);
+    q.input('hta-redir-to','https://example.test/new');q.input('hta-redir-from','/old page');
+    assert(lang+' From path with a space: no Redirect line, field error',[/^Redirect /m.test(output(q)),status.textContent,from.getAttribute('aria-invalid'),to.getAttribute('aria-invalid')],[false,S.badFromSpace,'true',null]);
+    q.input('hta-redir-from','/old\tpage');
+    assert(lang+' From path with a tab: field error',status.textContent,S.badFromSpace);
+    q.input('hta-redir-from','/old');q.input('hta-redir-to','https://example.test/new page');
+    assert(lang+' To URL with a space: no Redirect line, field error',[/^Redirect /m.test(output(q)),status.textContent,to.getAttribute('aria-invalid'),from.getAttribute('aria-invalid')],[false,S.badToSpace,'true',null]);
+    q.input('hta-redir-to','https://example.test/new%20page');
+    assert(lang+' To URL with %20 is written',[output(q).endsWith('Redirect 301 /old https://example.test/new%20page'),status.textContent,to.getAttribute('aria-invalid')],[true,'',null]);
+    q.input('hta-redir-from','/old　page');
+    assert(lang+' a full-width space in the From path is written',[output(q).endsWith('Redirect 301 /old　page https://example.test/new%20page'),status.textContent],[true,'']);
+    q.input('hta-redir-from','  /old  ');q.input('hta-redir-to','  https://example.test/new  ');
+    assert(lang+' spaces around the values are not errors',[output(q).endsWith('Redirect 301 /old https://example.test/new'),status.textContent],[true,'']);
+    q.input('hta-redir-from','/a b');q.input('hta-redir-to','https://example.test/c d');
+    assert(lang+' both fields with spaces: both errors and both fields marked',[status.textContent,from.getAttribute('aria-invalid'),to.getAttribute('aria-invalid'),/^Redirect /m.test(output(q))],[S.badFromSpace+' '+S.badToSpace,'true','true',false]);
+    q.ctrlL('hta-redir-to');
+    assert(lang+' Ctrl+L clears both field marks',[status.textContent,from.getAttribute('aria-invalid'),to.getAttribute('aria-invalid')],['',null,null]);
+  }
+}
+
 for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','shared-after']){
  const id=SLUG+'/'+lang+'/'+order;
  let primary=ready(lang,order);const beforeEnter=output(primary);primary.ctrlL(INPUT,'Enter');assert(id+' shared primary behavior',output(primary),beforeEnter);
@@ -375,7 +532,7 @@ for(const lang of ['en','zh','ja','ko']){
  q.input(INPUT,'home.html');assert(lang+' real input restores preview',q.doc.querySelector('.hta-wrap').dataset.empty,'false');
  assert(lang+' SSR labels before runtime replacement',q.doc.querySelector('label.hta-toggle').textContent.includes(L.forceHttps),true);
  assert(lang+' seven SSR tip keys',Object.keys(L.tips).sort(),['cache','copy','https','index','redirect','security','www']);
- assert(lang+' client only original copy feedback',Object.keys(JSON.parse(q.doc.querySelector('.hta-wrap').dataset.strings)).sort(),['copied','copy','copyFailed']);
+ assert(lang+' client gets copy feedback and the From path error only',Object.keys(JSON.parse(q.doc.querySelector('.hta-wrap').dataset.strings)).sort(),['badFrom','badFromFullwidth','badFromSpace','badFromUrl','badToSpace','copied','copy','copyFailed']);
  const prefix=process.env.ZT_B13_MDX_PREFIX,mdx=readFileSync(prefix?prefix+'-'+lang+'.mdx':join(root,'src/content/tools/htaccess-generator',lang+'.mdx'),'utf8');const y=requireFromRoot('js-yaml').load(mdx.split('---')[1]);
  assert(lang+' steps limits and position',y.steps.length<=8&&y.steps.every(x=>x.length<=280)&&y.steps.join('').length<=1200&&mdx.indexOf('steps:')<mdx.indexOf('faqItems:'),true);
  assert(lang+' Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);

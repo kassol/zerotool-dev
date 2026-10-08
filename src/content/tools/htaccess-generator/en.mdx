@@ -8,23 +8,31 @@ steps:
   - "Click Copy and paste the complete output into your .htaccess file."
   - "Request a few URLs with curl -I and check the status code and Location header before relying on the rules."
 faqItems:
-  - question: "What is a .htaccess file?"
+  - id: "what-is"
+    question: "What is a .htaccess file?"
     answer: ".htaccess is a directory-level configuration file used by Apache web servers. It lets you override server settings per directory — including URL redirects, caching rules, access control, and security headers — without editing the main server config. Apache only reads the directives that the AllowOverride setting for that directory permits."
-  - question: "Will this work on Nginx or other servers?"
+  - id: "nginx"
+    question: "Will this work on Nginx or other servers?"
     answer: ".htaccess is Apache-specific (LiteSpeed also reads it). Nginx uses a different config syntax and does not read .htaccess files. If you are on Nginx, these rules need to be translated into nginx.conf directives."
-  - question: "Why does my site return 500 Internal Server Error after uploading the file?"
+  - id: "error-500"
+    question: "Why does my site return 500 Internal Server Error after uploading the file?"
     answer: "Apache answers 500 when .htaccess contains a directive that AllowOverride does not allow for that directory, for example Options -Indexes when Options is not in AllowOverride. The error log names the directive (\"Options not allowed here\"). Remove that line or ask your host to allow it."
-  - question: "What is the difference between 301 and 302 redirects?"
+  - id: "hide-htaccess"
+    question: "Is it safe to block access to .htaccess itself?"
+    answer: "Yes, and it does no harm if the server already does it: the httpd.conf shipped with Apache 2.4 has a <Files \".ht*\"> block with Require all denied. The generated block uses the same Apache 2.4 Require directive (mod_authz_core). The Apache 2.2 Order / Deny lines work in 2.4 only when mod_access_compat is loaded."
+  - id: "redirect-codes"
+    question: "What is the difference between 301 and 302 redirects?"
     answer: "301 is a permanent redirect — browsers and search engines cache it and update links. 302 is a temporary redirect — clients check back each time. Use 301 for domain migrations or canonical URL changes, and 302 for short-term redirects."
-  - question: "How do I use the generated .htaccess file?"
-    answer: "Copy the generated content, create (or edit) a file named .htaccess in your website's root directory, and paste it in. Upload or save the file, then test your site. Always keep a backup of any existing .htaccess before making changes."
+  - id: "privacy"
+    question: "Is my configuration sent anywhere or saved?"
+    answer: "No. The file is built in your browser tab from the options you set. The options are not sent to a server or written to browser storage, so reloading the page brings back the defaults. When you click Copy, the site's analytics records a usage event with the tool name and the action, not the paths, URLs or file content."
 ---
 
 <h2>What Each Section Does</h2>
 <ul>
   <li><strong>Force HTTPS:</strong> Adds a RewriteRule that issues a 301 redirect from any <code>http://</code> request to <code>https://</code> on the same host. Requires <code>mod_rewrite</code>.</li>
   <li><strong>WWW Redirect:</strong> Enforces a single canonical form of your domain — either always with <code>www.</code> or always without it — preventing duplicate-content issues. The target is always <code>https://</code>, even when Force HTTPS is off.</li>
-  <li><strong>Directory Index:</strong> Sets the files Apache will serve when a directory URL is requested. Listing multiple files defines a fallback order.</li>
+  <li><strong>Directory Index:</strong> Sets the files Apache will serve when a directory URL is requested. Listing multiple files defines a fallback order. An empty field, or one with spaces only, writes <code>index.php index.html</code>. A full-width space between names counts as a space, because Apache splits names only at ASCII white space.</li>
   <li><strong>Browser Caching:</strong> Uses <code>mod_expires</code> to send <code>Expires</code> and <code>Cache-Control: max-age</code> for images, CSS/JS, and fonts. Each MIME type gets its own <code>ExpiresByType</code> line, so a file only gets the header if Apache serves it with one of the listed types.</li>
   <li><strong>Security:</strong> Disables directory listing (<code>Options -Indexes</code>), blocks direct access to <code>.htaccess</code> and <code>.env</code> with <code>Require all denied</code> (Apache 2.4), and optionally adds security headers: <code>X-Content-Type-Options: nosniff</code>, <code>X-Frame-Options: SAMEORIGIN</code>, <code>Referrer-Policy</code>, and <code>X-XSS-Protection: 0</code>, which turns off the old browser XSS filter as the <a href="https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#x-xss-protection">OWASP HTTP Headers Cheat Sheet</a> advises.</li>
   <li><strong>Custom Redirect:</strong> Creates a single-path redirect using the Apache <code>Redirect</code> directive. Choose 301 (permanent) or 302 (temporary).</li>
@@ -32,6 +40,8 @@ faqItems:
 
 <h2>Example: the Default Output</h2>
 <p>With the default options (Force HTTPS, Directory Index, Browser Caching, and the first three Security boxes), the tool writes the file below. We loaded it into Apache 2.4.67 with <code>AllowOverride All</code> and requested a few paths: <code>/a.ttf</code> came back with <code>Cache-Control: max-age=31536000</code>, while <code>/.env</code>, <code>/.htaccess</code> and a directory without an index file returned 403.</p>
+
+{/* hta-check: {} */}
 
 ```apache
 # Force HTTPS
@@ -75,7 +85,9 @@ Options -Indexes
 <p>Both <code>font/ttf</code> and <code>application/x-font-ttf</code> are listed because the <code>mime.types</code> file shipped with Apache 2.4 maps <code>.ttf</code> to <code>font/ttf</code>, while older configurations use the <code>x-</code> name. With only the old name, TTF files get no caching header.</p>
 
 <h2>Example: Remove www and Move an Old Section</h2>
-<p>Turn on WWW Redirect with <strong>Remove www</strong>, then add a Custom Redirect from <code>/old-blog</code> to <code>https://example.com/blog/</code> (301). The tool adds these blocks after Force HTTPS:</p>
+<p>Turn on WWW Redirect and pick <strong>Remove www</strong> under Options, then turn on Custom Redirect and enter a redirect from <code>/old-blog</code> to <code>https://example.com/blog/</code> (301). The www block goes right after Force HTTPS, and the redirect line goes at the end of the file:</p>
+
+{/* hta-check: {"www":"remove","redirect":["/old-blog","https://example.com/blog/","301"],"part":true} */}
 
 ```apache
 # Remove www
@@ -98,6 +110,11 @@ Redirect 301 /old-blog https://example.com/blog/
   <li><strong>Redirect loop behind a proxy or CDN.</strong> <code>%&#123;HTTPS&#125;</code> describes the connection Apache itself receives. If a load balancer terminates TLS and talks plain HTTP to Apache, the variable is always <code>off</code> and Force HTTPS redirects forever. In that setup, test the header your proxy sets instead, or force HTTPS at the proxy.</li>
   <li><strong>Force www on subdomains.</strong> The rule adds <code>www.</code> to any host without it: <code>blog.example.com</code> becomes <code>www.blog.example.com</code>, and an IP address gets the prefix too. Use it only when the site answers on the bare domain alone.</li>
   <li><strong>Exact file names only.</strong> The <code>.env</code> block protects a file named exactly <code>.env</code>; <code>.env.local</code> or <code>.env.production</code> are still served. Keep such files outside the document root.</li>
-  <li>One custom redirect per output; for several, copy the <code>Redirect</code> line and edit it. There is no Basic Auth, CORS or gzip/Brotli section.</li>
+  <li><strong>The From path must start with a slash.</strong> The <a href="https://httpd.apache.org/docs/2.4/mod/mod_alias.html#redirect">Redirect</a> documentation says the old URL-path begins with a slash and "A relative path is not allowed". Apache 2.4.67 loaded <code>Redirect 301 old-page https://example.test/new</code> without an error, and a request for <code>/old-page</code> was not redirected. So when the From path does not start with <code>/</code>, the tool leaves the redirect line out and shows an error in the status line under Copy; the other rules can still be copied.</li>
+  <li><strong>No spaces inside the paths.</strong> A space in the From path or the To URL gives the <code>Redirect</code> line four arguments, and Apache 2.4.67 answered 500 for the whole directory ("Redirect takes one, two or three arguments"). The tool shows an error and leaves the line out. Write a space in the To URL as <code>%20</code>; for a From path with a space, edit the file by hand and put the path in quotes (<code>Redirect 301 "/old page" …</code> worked in the same test).</li>
+  {/* hta-apache: {"override":"All","ht":"Redirect 301 /old page https://example.test/new\n","requests":[["/",500]],"log":"Redirect takes one, two or three arguments"} */}
+  {/* hta-apache: {"override":"All","ht":"Redirect 301 \"/old page\" https://example.test/new\n","requests":[["/old%20page",301,null,"https://example.test/new"],["/",200]]} */}
+  {/* hta-apache: {"override":"All","ht":"Redirect 301 old-page https://example.test/new\n","requests":[["/old-page",404],["/",200]]} */}
+  <li>One custom redirect per output; for several, copy the <code>Redirect</code> line and edit it. There is no Basic Auth, CORS or gzip/Brotli section. Keep a copy of your current <code>.htaccess</code> before you replace it.</li>
 </ul>
 <p>Nginx, Caddy and other servers ignore this file. To protect a directory with a password, create the credentials file with the <a href="/tools/htpasswd-generator/">htpasswd generator</a>; for a full set of response headers, the <a href="/tools/csp-header-generator/">CSP header generator</a> covers Content-Security-Policy.</p>

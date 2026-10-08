@@ -1,30 +1,120 @@
 ---
 seoTitle: ".htaccess 生成器 — 免费在线工具 | ZeroTool"
-seoDescription: "在线生成 Apache .htaccess 配置。支持强制 HTTPS、浏览器缓存、禁止目录浏览、自定义跳转，无需注册，即用即走。"
+seoDescription: "在线生成 Apache .htaccess 配置。支持强制 HTTPS、浏览器缓存、禁止目录浏览、自定义重定向，无需注册，即用即走。"
 steps:
   - "用复选框开启或关闭各配置区域。"
   - "展开“选项”，设置缓存时长、www 偏好、默认文件或自定义重定向。"
   - "修改设置后，.htaccess 输出自动更新。"
   - "点击“复制”，将完整输出粘贴到你的 .htaccess 文件中。"
+  - "上线前用 curl -I 请求几个网址，确认状态码和 Location 响应头符合预期。"
 faqItems:
-  - question: ".htaccess 文件是什么？"
-    answer: ".htaccess 是 Apache Web 服务器使用的目录级配置文件。它允许你在不修改主服务器配置的情况下，针对特定目录覆盖服务器设置，包括 URL 跳转、缓存规则、访问控制和安全响应头。"
-  - question: "这些配置在 Nginx 或其他服务器上有效吗？"
-    answer: ".htaccess 是 Apache 专用格式。Nginx 使用不同的配置语法，不读取 .htaccess 文件。如果你使用 Nginx，需要将这些规则转换为 nginx.conf 指令。"
-  - question: "拒绝访问 .htaccess 本身是否安全？"
-    answer: "是的，而且建议这样做。公开暴露 .htaccess 可能泄露服务器配置细节。生成的块用 <Files> 加 Require all denied（Apache 2.4 的 mod_authz_core）阻止该文件被直接访问；Apache 2.2 的 Order / Deny 指令在 2.4 中要加载 mod_access_compat 才能用。"
-  - question: "301 和 302 跳转有什么区别？"
-    answer: "301 是永久跳转——浏览器和搜索引擎会缓存并更新链接。302 是临时跳转——客户端每次都会重新请求。域名迁移或规范化 URL 变更请用 301，短期跳转用 302。"
-  - question: "如何使用生成的 .htaccess 文件？"
-    answer: "复制生成的内容，在网站根目录创建（或编辑）一个名为 .htaccess 的文件，粘贴内容后保存上传。修改前请务必备份现有的 .htaccess 文件。"
+  - id: "what-is"
+    question: ".htaccess 文件是什么？"
+    answer: ".htaccess 是 Apache Web 服务器按目录读取的配置文件。不改主配置文件，也能为某个目录设置 URL 重定向、缓存规则、访问控制和安全响应头。Apache 只执行该目录的 AllowOverride 允许的指令。"
+  - id: "nginx"
+    question: "这些配置在 Nginx 或其他服务器上有效吗？"
+    answer: ".htaccess 是 Apache 的格式（LiteSpeed 也会读取）。Nginx 使用另一套配置语法，不读取 .htaccess 文件。服务器是 Nginx 时，需要把这些规则改写成 nginx.conf 里的指令。"
+  - id: "error-500"
+    question: "上传文件后网站返回 500 Internal Server Error，是什么原因？"
+    answer: ".htaccess 里出现了该目录的 AllowOverride 不允许的指令时，Apache 返回 500。例如 AllowOverride 不含 Options 时写了 Options -Indexes，错误日志会写明“Options not allowed here”。删掉这一行，或请主机商放开该指令。"
+  - id: "hide-htaccess"
+    question: "拒绝访问 .htaccess 本身是否安全？"
+    answer: "安全，即使服务器已经这样设置也不冲突：Apache 2.4 自带的 httpd.conf 里本来就有 <Files \".ht*\"> 加 Require all denied 的配置。生成的块用的是同样的 Apache 2.4 指令 Require（mod_authz_core）。Apache 2.2 的 Order / Deny 写法在 2.4 中要加载 mod_access_compat 才能用。"
+  - id: "redirect-codes"
+    question: "301 和 302 重定向有什么区别？"
+    answer: "301 是永久重定向，浏览器和搜索引擎会缓存它并更新链接。302 是临时重定向，客户端每次都会重新请求原地址。更换域名或统一规范网址用 301，短期重定向用 302。"
+  - id: "privacy"
+    question: "我填写的配置会被发送或保存吗？"
+    answer: "不会。文件在你的浏览器页面里根据所选项生成，选项不会发送到服务器，也不会写入浏览器存储，刷新页面后恢复默认值。点击“复制”时，网站统计只记录工具名和动作，不记录路径、网址或文件内容。"
 ---
 
-<h2>各配置区域说明</h2>
+<h2>各配置区域生成什么</h2>
 <ul>
-  <li><strong>强制 HTTPS：</strong>添加 RewriteRule，将所有 <code>http://</code> 请求 301 跳转到 <code>https://</code>。需要服务器启用 <code>mod_rewrite</code>。</li>
-  <li><strong>WWW 跳转：</strong>统一域名的访问形式——强制带 <code>www.</code> 或不带 <code>www.</code>，避免重复内容问题。</li>
-  <li><strong>目录索引：</strong>设置 Apache 在请求目录 URL 时默认返回的文件列表，多个文件名形成回退顺序。</li>
-  <li><strong>浏览器缓存：</strong>使用 <code>mod_expires</code> 告知浏览器图片、CSS/JS 和字体的缓存有效期，减少重复请求，加快页面加载。</li>
-  <li><strong>安全：</strong>禁止目录浏览（<code>Options -Indexes</code>），阻止直接访问 <code>.htaccess</code> 和 <code>.env</code> 文件，并可选择添加安全响应头：<code>X-Content-Type-Options: nosniff</code>、<code>X-Frame-Options: SAMEORIGIN</code>、<code>Referrer-Policy</code>，以及按 <a href="https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#x-xss-protection">OWASP HTTP Headers Cheat Sheet</a> 建议关闭旧版浏览器 XSS 过滤器的 <code>X-XSS-Protection: 0</code>。</li>
-  <li><strong>自定义跳转：</strong>使用 Apache <code>Redirect</code> 指令创建单路径跳转，可选 301（永久）或 302（临时）。</li>
+  <li><strong>强制 HTTPS：</strong>在 <code>%&#123;HTTPS&#125;</code> 为 <code>off</code> 时，用 RewriteRule 把请求 301 重定向到同一主机的 <code>https://</code> 地址，需要 <code>mod_rewrite</code>。规则包在 <code>&lt;IfModule mod_rewrite.c&gt;</code> 里，服务器没有加载该模块时这段不生效，也不会报错。</li>
+  <li><strong>WWW 重定向：</strong>统一成带 <code>www.</code> 或不带 <code>www.</code> 的一种写法。重定向目标始终是 <code>https://</code>，即使关闭了“强制 HTTPS”也一样。</li>
+  <li><strong>目录索引：</strong>请求目录时 Apache 依次查找的默认文件，默认值为 <code>index.php index.html index.htm</code>；输入框为空或只有空格时写成 <code>index.php index.html</code>。文件名之间的全角空格按半角空格处理，因为 Apache 只按半角空白分隔文件名。</li>
+  <li><strong>浏览器缓存：</strong>用 <code>mod_expires</code> 为图片、CSS/JS 和字体发送 <code>Expires</code> 与 <code>Cache-Control: max-age</code>。每种 MIME 类型各写一行 <code>ExpiresByType</code>，Apache 返回的类型不在列表里时，该文件就没有缓存头。</li>
+  <li><strong>安全：</strong>禁止目录浏览（<code>Options -Indexes</code>），用 <code>Require all denied</code> 拒绝直接访问 <code>.htaccess</code> 和 <code>.env</code>。可选的响应头有 <code>X-Content-Type-Options: nosniff</code>、<code>X-Frame-Options: SAMEORIGIN</code>、<code>Referrer-Policy: strict-origin-when-cross-origin</code>，以及按 <a href="https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#x-xss-protection">OWASP HTTP Headers Cheat Sheet</a> 建议关闭旧版浏览器 XSS 过滤器的 <code>X-XSS-Protection: 0</code>，默认不勾选。</li>
+  <li><strong>自定义重定向：</strong>来源路径和目标 URL 都填写后，生成一条 Apache <code>Redirect</code> 指令，状态码可选 301 或 302。</li>
+</ul>
+
+<h2>示例：默认选项的输出</h2>
+<p>打开页面不做任何修改，输出如下（强制 HTTPS、目录索引、浏览器缓存，以及安全区域的前三项）。把它放进 Apache 2.4.67、目录设为 <code>AllowOverride All</code>，用 HTTP 请求 <code>/</code>，返回 301。去掉 HTTPS 一段后再测：<code>.ttf</code> 文件带 <code>Cache-Control: max-age=31536000</code>（1 年），<code>/.env</code>、<code>/.htaccess</code> 和没有首页文件的目录都返回 403。</p>
+
+{/* hta-check: {} */}
+
+```apache
+# Force HTTPS
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# Directory Index
+DirectoryIndex index.php index.html index.htm
+
+# Browser Caching
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/gif "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType text/css "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+  ExpiresByType text/javascript "access plus 1 month"
+  ExpiresByType font/woff "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType font/ttf "access plus 1 year"
+  ExpiresByType application/x-font-ttf "access plus 1 year"
+  ExpiresByType application/vnd.ms-fontobject "access plus 1 year"
+</IfModule>
+
+# Security
+Options -Indexes
+<Files ".htaccess">
+  Require all denied
+</Files>
+<Files ".env">
+  Require all denied
+</Files>
+```
+
+<p>字体同时列出 <code>font/ttf</code> 和 <code>application/x-font-ttf</code>：Apache 2.4 自带的 <code>mime.types</code> 把 <code>.ttf</code> 映射为 <code>font/ttf</code>，较旧的配置用的是带 <code>x-</code> 的名字，只写其中一个，另一种服务器上的 TTF 文件就拿不到缓存头。</p>
+
+<h2>示例：在阿里云虚拟主机上把中文栏目迁到新地址</h2>
+<p>先确认主机类型。阿里云的文档写明，Linux 普通版云虚拟主机的 Web 服务是 Apache，伪静态规则写在站点根目录 <code>/htdocs</code> 下的 <code>.htaccess</code> 里；增强版的 Web 服务是 Nginx 1.18，不支持通过 <code>.htaccess</code> 设置伪静态，要在控制台“高级环境设置 → NGINX设置”里写规则（<a href="https://help.aliyun.com/zh/cloud-web-hosting/use-cases/using-urlrewrite-configuration-cloud-hosting-pseudo-static-function">使用 URL Rewrite 配置伪静态</a>、<a href="https://help.aliyun.com/zh/cloud-web-hosting/user-guide/nginx-configuration-file">配置 Nginx 文件</a>）。控制台自带的 301 重定向在普通版上只支持网站首页（<a href="https://help.aliyun.com/zh/cloud-web-hosting/user-guide/configure-a-301-redirect-and-https-redirection">设置 301 重定向</a>），所以普通版上要重定向某个栏目，用 <code>.htaccess</code> 里的 <code>Redirect</code> 更直接。</p>
+<p>假设旧站的“关于我们”页面路径是中文 <code>/关于我们</code>，要永久重定向到 <code>https://example.cn/about/</code>，同时去掉 www。在工具里勾选“WWW 重定向”和“自定义重定向”，然后展开“选项”：选“去除 www”，来源路径填 <code>/关于我们</code>、目标 URL 填 <code>https://example.cn/about/</code>、类型选“301 永久重定向”。输出中新增的两段是：</p>
+
+{/* hta-check: {"www":"remove","redirect":["/关于我们","https://example.cn/about/","301"],"part":true} */}
+
+```apache
+# Remove www
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+  RewriteRule ^(.*)$ https://%1%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# Custom Redirect
+Redirect 301 /关于我们 https://example.cn/about/
+```
+
+{/* hta-apache: {"override":"All","ht":"Redirect 301 /关于我们 https://example.cn/about/\n","requests":[["/%E5%85%B3%E4%BA%8E%E6%88%91%E4%BB%AC",301,null,"https://example.cn/about/"],["/%E5%85%B3%E4%BA%8E%E6%88%91%E4%BB%AC/team",301,null,"https://example.cn/about//team"]]} */}
+
+<p>浏览器发出的请求路径是百分号编码的 <code>/%E5%85%B3%E4%BA%8E%E6%88%91%E4%BB%AC</code>。<a href="https://httpd.apache.org/docs/2.4/mod/mod_alias.html#redirect">Redirect 文档</a>说明来源路径按解码后的形式比较，所以 <code>.htaccess</code> 里直接写中文即可，前提是文件以 UTF-8 保存。在 Apache 2.4.67 中实测，这个请求得到 301，<code>Location</code> 为 <code>https://example.cn/about/</code>。<code>Redirect</code> 是前缀匹配，会把剩余部分接在目标后面：<code>/关于我们/team</code> 被重定向到了 <code>https://example.cn/about//team</code>，中间多了一个斜杠。来源和目标的结尾斜杠保持一致（都写或都不写）就能避免。</p>
+<p>阿里云文档的操作步骤里，示例文件先以 <code>htaccess</code> 的名字通过 FTP 传到 <code>/htdocs</code>，再重命名为 <code>.htaccess</code>。文档还提醒 <code>.htaccess</code> 是隐藏文件，要在 FTP 客户端里打开显示隐藏文件才能看到；目录里已有 <code>.htaccess</code> 时，先下载到本地备份。</p>
+
+<h2>限制与常见错误</h2>
+<ul>
+  <li><strong>500 Internal Server Error：</strong><code>.htaccess</code> 里的每条指令都要被该目录的 <a href="https://httpd.apache.org/docs/2.4/mod/core.html#allowoverride">AllowOverride</a> 允许。在 <code>AllowOverride FileInfo</code> 下，仅 <code>Options -Indexes</code> 一行就让整个目录返回 500。</li>
+  <li><strong>所有页面都是 403：</strong><code>.htaccess</code> 中的 <code>RewriteRule</code> 需要 <code>Options FollowSymLinks</code> 或 <code>SymLinksIfOwnerMatch</code>，两者都关闭时，Apache 拒绝所有经过该规则的请求（错误日志 AH00670）。</li>
+  <li><strong>CDN 或负载均衡后面无限重定向：</strong><code>%&#123;HTTPS&#125;</code> 描述的是 Apache 自己收到的连接。前面的代理终止 TLS、再用 HTTP 转给 Apache 时，这个变量永远是 <code>off</code>，强制 HTTPS 会一直重定向。这种情况在代理上强制 HTTPS，或改为判断代理设置的请求头。</li>
+  <li><strong>强制 www 会作用到子域名：</strong>规则给所有不以 <code>www.</code> 开头的主机加前缀，<code>blog.example.cn</code> 会被重定向到 <code>www.blog.example.cn</code>，IP 地址也会被加上。只有站点只用主域名时才适合开启。</li>
+  <li><strong>只保护完全同名的文件：</strong><code>.env</code> 块只拦截名字正好是 <code>.env</code> 的文件，<code>.env.local</code>、<code>.env.production</code> 仍会被返回，这类文件应放在网站根目录之外。</li>
+  <li><strong>来源路径必须以斜杠开头：</strong>Redirect 文档要求旧路径以 <code>/</code> 开头、不允许相对路径。<code>Redirect 301 old-page …</code> 在 Apache 2.4.67 中加载时不报错，但请求 <code>/old-page</code> 不会重定向。因此来源路径不以 <code>/</code> 开头时，工具不写出这条重定向，并在“复制”下方的状态行提示；其他规则照常可以复制。</li>
+  <li><strong>路径中间不能有空格：</strong>来源路径或目标 URL 中间有空格时，<code>Redirect</code> 行会变成 4 个参数，Apache 2.4.67 对整个目录返回 500（错误日志写“Redirect takes one, two or three arguments”）。工具会提示并不写出这一行。目标 URL 里的空格写成 <code>%20</code>；来源路径确实含空格时，手动编辑文件并给路径加引号（<code>Redirect 301 "/old page" …</code> 在同一测试中可以重定向）。</li>
+  <li>每次只生成一条自定义重定向，需要多条时复制 <code>Redirect</code> 行再修改。没有 Basic 认证、CORS、gzip/Brotli 压缩这些区域；需要密码保护目录时，可以用 <a href="/zh/tools/htpasswd-generator/">htpasswd 生成器</a>生成凭据文件。</li>
 </ul>
