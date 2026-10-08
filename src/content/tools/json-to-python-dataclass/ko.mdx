@@ -10,18 +10,24 @@ steps:
   - ".py 다운로드: 현재 출력 전체를 .py 파일로 저장합니다. 파일명은 루트 이름을 소문자로 바꾸고 ASCII 영숫자와 밑줄 외의 문자를 밑줄로 바꿉니다. 빈 출력은 저장하지 않습니다."
   - "지우기: JSON, 출력, 상태를 지우고 루트 이름과 선택한 모드는 유지합니다. 도구 안에서 Ctrl/⌘+L을 누르면 루트 이름도 지웁니다."
 faqItems:
-  - question: "이 도구는 무엇을 생성하나요?"
-    answer: "JSON에서 Python 클래스 정의를 생성합니다. 표준 @dataclass(stdlib), Pydantic v2 BaseModel, 또는 TypedDict 중에서 선택할 수 있습니다. 각 중첩 객체는 자체 명명된 클래스가 됩니다."
-  - question: "어떤 출력 모드를 지원하나요?"
+  - id: "output"
+    question: "이 도구는 무엇을 생성하나요?"
+    answer: "JSON에서 Python 클래스 정의를 생성합니다. 표준 @dataclass(stdlib), Pydantic v2 BaseModel, TypedDict 중에서 고를 수 있습니다. 중첩 객체는 각각 이름이 붙은 클래스가 됩니다."
+  - id: "modes"
+    question: "어떤 출력 모드를 지원하나요?"
     answer: "세 가지 모드: @dataclass(Python stdlib, 기본값), Pydantic v2 BaseModel, TypedDict(Python 3.8+, NotRequired를 쓰면 3.11+ 또는 typing_extensions)."
-  - question: "JSON 타입은 Python 타입에 어떻게 매핑되나요?"
-    answer: "string→str, integer→int, float→float, boolean→bool, null→Optional[Any], array→List[T], 중첩 객체→별도 클래스."
-  - question: "필드가 Optional이 되는 경우는?"
-    answer: "JSON 샘플에서 필드 값이 null이거나, 배열 객체를 병합할 때 일부 객체에서 필드가 누락된 경우 해당 필드는 Optional[T] = None으로 표시됩니다."
-  - question: "중첩 객체는 어떻게 처리되나요?"
-    answer: "각 중첩 객체는 필드 키를 PascalCase로 변환한 이름의 독립 클래스로 추출됩니다. 자식 클래스는 항상 부모 클래스보다 먼저 정의되어 출력을 바로 사용할 수 있습니다."
-  - question: "데이터가 서버로 전송되나요?"
-    answer: "아니요. 모든 변환은 브라우저에서 실행됩니다. 데이터는 사용자의 기기를 벗어나지 않습니다."
+  - id: "type-mapping"
+    question: "JSON 타입은 Python 타입에 어떻게 매핑되나요?"
+    answer: "string→str, 정수→int, 그 밖의 숫자→float, boolean→bool, null→Optional[Any], array→List[T](요소 타입이 섞이면 List[Union[...]], 비어 있으면 List[Any]), 중첩 객체→별도 클래스. 10.0으로 쓴 숫자는 정수 10으로 읽히므로 int가 됩니다."
+  - id: "optional"
+    question: "필드가 Optional이 되는 경우는?"
+    answer: "@dataclass와 Pydantic 모드에서는 샘플 값이 null이거나, 배열의 객체를 합칠 때 일부 객체에 없으면 Optional[T] = None이 되고 필수 필드 뒤로 옮겨집니다. TypedDict는 JSON의 키 순서를 유지하며, 일부 객체에 없는 키는 NotRequired[T], null 값은 Optional[T]로 씁니다."
+  - id: "nested"
+    question: "중첩 객체는 어떻게 처리되나요?"
+    answer: "중첩 객체는 키를 PascalCase로 바꾼 이름의 클래스가 되고, 배열 안의 객체에는 Item이 붙습니다(comments → CommentsItem). 클래스는 그것을 쓰는 클래스보다 먼저 나옵니다. 같은 이름의 클래스는 한 번만 만들기 때문에, 나중에 같은 이름이 되는 키에는 처음 클래스를 그대로 쓰고 뒤쪽 필드는 추가하지 않습니다. meta처럼 여러 번 나오는 키는 확인하세요."
+  - id: "privacy"
+    question: "데이터가 서버로 전송되나요?"
+    answer: "아닙니다. JSON과 루트 클래스 이름은 이 브라우저 탭 안에서 처리되고 어디로도 전송되지 않으며, 브라우저 저장소에도 저장하지 않습니다. 입력을 편집하고 포커스를 옮기거나 예시를 클릭하거나 모드를 바꿀 때 도구 이름과 동작(generate)만 담긴 통계 이벤트를 기록합니다."
 ---
 
 <h2>타입 매핑</h2>
@@ -37,6 +43,9 @@ faqItems:
 </ul>
 
 <h2>예시</h2>
+
+{/* jpdc-check: {"root":"Root","mode":"dataclass"} */}
+
 <p>다음 JSON이 주어졌을 때:</p>
 <pre><code>{`{"user": {"first_name": "Alice", "age": 30}, "tags": ["admin"], "note": null}`}</code></pre>
 <p>@dataclass 모드에서 생성되는 코드:</p>
@@ -92,6 +101,8 @@ root.comments[1]           # CommentsItem(user='carol', text=None)`}</code></pre
 
 <h2>예시: 키가 빠지는 TypedDict</h2>
 
+{/* jpdc-check: {"root":"Product","mode":"typeddict"} */}
+
 <p><code>note</code>가 첫 항목에서는 null, 둘째 항목에서는 없고, <code>discount</code>는 둘째 항목에만 있는 상품 데이터(루트 클래스 이름 <code>Product</code>, TypedDict 모드):</p>
 
 <pre><code>{`[{"id": 1, "sku": "PEN-01", "price": 2, "note": null}, {"id": 2, "sku": "INK-07", "price": 1.5, "discount": 0.1}]`}</code></pre>
@@ -107,14 +118,69 @@ class Product(TypedDict):
 
 <p><code>price</code>는 <code>2</code>와 <code>1.5</code>입니다. PEP 484는 <code>int</code>를 <code>float</code> 자리에 쓸 수 있게 하므로 타입은 <code>float</code>입니다. 실행 시 <code>Product.__required_keys__</code>는 <code>{"{'id', 'sku', 'price'}"}</code>, <code>__optional_keys__</code>는 <code>{"{'note', 'discount'}"}</code>입니다(Python 3.12에서 확인).</p>
 
+<h2>네이버 블로그 검색 API 응답을 Pydantic 모델로</h2>
+
+{/* jpdc-check: {"root":"BlogSearch","mode":"pydantic"} */}
+
+<p>네이버 검색 API의 블로그 검색은 결과를 XML 또는 JSON으로 돌려주며, JSON에서는 개별 결과가 <code>items</code> 배열로 옵니다(<a href="https://developers.naver.com/docs/serviceapi/search/blog/blog.md">블로그 검색 API 레퍼런스</a>). 아래는 문서의 XML 응답 예에 나온 값을 JSON 모양으로 옮기고 <code>link</code>와 <code>description</code>을 줄인 샘플입니다(루트 클래스 이름 <code>BlogSearch</code>, Pydantic v2 모드):</p>
+
+<pre><code>{`{"lastBuildDate":"Mon, 26 Sep 2016 10:39:37 +0900","total":8714891,"start":1,"display":10,"items":[{"title":"명예훼손 없이 <b>리뷰</b>쓰기","link":"http://openapi.naver.com/l?AAAB...","description":"명예훼손 없이 <b>리뷰</b>쓰기 우리 블로그하시는 분들께는...","bloggername":"건짱의 Best Drawing World2","bloggerlink":"http://blog.naver.com/yoonbitgaram","postdate":"20161208"}]}`}</code></pre>
+
+<pre><code>{`from pydantic import BaseModel
+from typing import List
+
+class ItemsItem(BaseModel):
+    title: str
+    link: str
+    description: str
+    bloggername: str
+    bloggerlink: str
+    postdate: str
+
+class BlogSearch(BaseModel):
+    lastBuildDate: str
+    total: int
+    start: int
+    display: int
+    items: List[ItemsItem]`}</code></pre>
+
+<ul>
+  <li><code>title</code>과 <code>description</code>에는 검색어를 감싼 <code>{"<b>"}</code> 태그가 그대로 들어 있습니다. 타입은 <code>str</code>이고 태그는 지워지지 않으니, 화면에 보여 주기 전에 직접 제거하세요.</li>
+  <li><code>postdate</code>는 <code>20161208</code> 같은 8자리 문자열이라 <code>str</code>입니다. 여기서 타입을 <code>date</code>로 바꾸면 Pydantic 2.13.5는 숫자로만 된 문자열을 Unix 타임스탬프로 읽기 때문에(<a href="https://docs.pydantic.dev/latest/api/standard_library_types/">Pydantic 표준 라이브러리 타입 문서</a>) <code>Datetimes provided to dates should have zero time - e.g. be exact dates</code> 오류가 납니다. 날짜로 쓰려면 <code>{'datetime.strptime(v, "%Y%m%d")'}</code>로 직접 변환하세요.</li>
+  <li><code>lastBuildDate</code>는 <code>Mon, 26 Sep 2016 10:39:37 +0900</code> 형식이라 <code>datetime</code>으로 바꾸면 <code>Input should be a valid datetime or date, invalid character in year</code> 오류가 납니다. 표준 라이브러리의 <code>email.utils.parsedate_to_datetime()</code>은 이 형식을 읽어 <code>2016-09-26 10:39:37+09:00</code>을 돌려줍니다.</li>
+</ul>
+
 <h2>제한</h2>
 
 <ul>
   <li><code>{"null"}</code>은 <code>{"Optional[Any]"}</code>가 됩니다. <code>{"Any"}</code>를 실제 타입으로 바꾸세요.</li>
   <li>Python 식별자로 쓸 수 없는 키(<code>{"user-id"}</code>나 <code>{"class"}</code> 같은 예약어)는 이름을 바꾸고, Pydantic에서는 <code>{"Field(alias=\"user-id\")"}</code>를 붙입니다.</li>
   <li>날짜는 <code>{"str"}</code>로 남습니다. 타입을 <code>{"datetime"}</code>으로 바꾸면 Pydantic이 ISO 8601 문자열을 변환합니다.</li>
-  <li>루트가 기본 타입 배열이면 클래스를 만들지 않습니다.</li>
+  <li>루트가 기본 타입 배열이면 클래스를 만들지 않습니다. 루트 배열에 객체와 다른 값이 섞여 있으면 객체만 읽습니다.</li>
+  <li><code>10.0</code>으로 쓴 숫자는 도구에 들어올 때 이미 정수 <code>10</code>입니다(JavaScript의 <code>JSON.parse</code>는 끝자리 0을 남기지 않음). 그래서 <code>{"price: int"}</code>가 되고, 나중에 <code>10.5</code>가 오면 Pydantic이 <code>Input should be a valid integer, got a number with a fractional part</code>로 거부합니다. 소수가 올 수 있는 값은 <code>float</code>로 고치세요.</li>
+  <li>루트 클래스 이름은 입력한 그대로 씁니다. <code>{"order-item"}</code>처럼 Python 식별자가 아닌 이름이면 실행되지 않는 코드가 나옵니다.</li>
+  <li>같은 이름의 클래스는 한 번만 만들고, 나중에 같은 이름이 되는 키에는 처음 클래스를 그대로 씁니다. 키가 모두 한글이면 클래스 이름에 마지막 한 글자만 남기 때문에, 같은 글자로 끝나는 키끼리 클래스를 함께 쓰게 되고 뒤쪽 키의 필드가 빠집니다.</li>
 </ul>
+
+{/* jpdc-check: {"root":"Member","mode":"dataclass"} */}
+
+<p>회원 데이터 예(루트 클래스 이름 <code>Member</code>, @dataclass 모드):</p>
+
+<pre><code>{`{"이름": "홍길동", "주소": {"시도": "서울특별시", "시군구": "중구"}}`}</code></pre>
+
+<pre><code>{`from dataclasses import dataclass
+
+@dataclass
+class 소:
+    시도: str
+    시군구: str
+
+@dataclass
+class Member:
+    이름: str
+    주소: 소`}</code></pre>
+
+<p>Python 3은 식별자에 한글을 쓸 수 있어 <code>이름</code>, <code>주소</code>가 그대로 필드 이름이 되고 이 코드는 실행됩니다. 다만 주소 클래스 이름이 <code>소</code>가 되므로 <code>Address</code> 같은 이름으로 바꿔서 쓰세요.</p>
 
 {/* b6-sample-coverage:start */}
 <h2>빈 배열과 샘플 범위</h2>

@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { contractProblems, examplePairs } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, examplePairs, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonToPythonDataclassTool.astro'), 'utf8');
@@ -368,6 +368,64 @@ for (const lang of ['en','zh','ja','ko']) {
   const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
   q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
 }
+
+// ---------- {/* jpdc-check: {"root", "mode"} */} worked examples, recomputed and executed ----------
+// The first code block after the note is the input JSON, the second the complete output for that
+// root name and mode. Each language needs at least 2. With Python 3.11+ every output runs; with
+// Pydantic 2 importable (PYDANTIC_PYTHON=<python with pydantic>, else python3) a Pydantic output
+// validates its input with model_validate() and a dataclass output is built with Root(**data).
+const PY_OK = (bin) => { const r = spawnSync(bin, ['-c', 'import sys; print(sys.version_info >= (3, 11))'], { encoding: 'utf8' }); return r.status === 0 && r.stdout.trim() === 'True'; };
+const pyBin = PY_OK('python3') ? 'python3' : null;
+const pydBin = [process.env.PYDANTIC_PYTHON, 'python3'].filter(Boolean).find((bin) => PY_OK(bin) && spawnSync(bin, ['-c', 'import pydantic; assert pydantic.VERSION.startswith("2.")'], { encoding: 'utf8' }).status === 0) || null;
+const runPy = (bin, code) => spawnSync(bin, ['-c', code], { encoding: 'utf8' });
+const checks = [];
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const mdx = readFileSync(join(root, 'src/content/tools/json-to-python-dataclass/' + lang + '.mdx'), 'utf8');
+  const body = mdx.slice(mdx.indexOf('\n---\n', 4) + 5);
+  const notes = annotations(body, 'jpdc-check');
+  eq(lang + ': at least 2 jpdc-check examples', notes.length >= 2, true);
+  notes.forEach((note, i) => {
+    const blocks = fencedBlocks(note.after);
+    const input = blocks[0]?.text, shown = blocks[1]?.text;
+    const out = E.generatePython(JSON.parse(input), note.spec.root, note.spec.mode)?.code;
+    eq(lang + ': jpdc-check ' + (i + 1) + ' output equals the engine', shown, out);
+    checks.push({ name: lang + ' jpdc-check ' + (i + 1), input, out, root: note.spec.root, mode: note.spec.mode });
+  });
+}
+if (!pyBin) { skips++; console.log('SKIP: python3 >= 3.11 not available for the page examples'); }
+else for (const c of checks) {
+  if (c.mode === 'pydantic' && !pydBin) continue;
+  const tail = c.mode === 'pydantic' ? `\nimport json\n${c.root}.model_validate(json.loads(${JSON.stringify(c.input)}))\nprint('ok')`
+    : c.mode === 'dataclass' ? `\nimport json\n${c.root}(**json.loads(${JSON.stringify(c.input)}))\nprint('ok')` : `\nprint('ok')`;
+  const r = runPy(c.mode === 'pydantic' ? pydBin : pyBin, c.out + tail);
+  eq(c.name + ' runs in Python' + (c.mode === 'pydantic' ? ' and validates its input with Pydantic' : c.mode === 'dataclass' ? ' and builds from its input' : ''), r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
+}
+// Page claims about Python and Pydantic behaviour: the printed value must be what each listed page shows.
+const pageText = Object.fromEntries(['en', 'zh', 'ja', 'ko'].map((l) => [l, readFileSync(join(root, 'src/content/tools/json-to-python-dataclass/' + l + '.mdx'), 'utf8')]));
+const nestedJson = '{"id": 7, "title": "Release notes", "author": {"name": "Alice", "email": null}, "tags": ["python", "json"], "score": 4.5, "comments": [{"user": "bob", "text": "nice"}, {"user": "carol"}]}';
+const geo = JSON.parse(checks.find((c) => c.root === 'GeocodeResponse').input);
+const CLAIMS = [
+  { langs: ['en', 'zh', 'ja', 'ko'], code: E.generatePython(JSON.parse('{"price": 10.0, "qty": 2}'), 'Item', 'pydantic').code + '\nfrom pydantic import ValidationError\ntry:\n    Item(price=10.5, qty=2)\nexcept ValidationError as e:\n    print(e.errors()[0]["msg"])', expect: 'Input should be a valid integer, got a number with a fractional part' },
+  { langs: ['en', 'zh', 'ja', 'ko'], code: E.generatePython(JSON.parse(nestedJson), 'Root', 'dataclass').code + `\nimport json\nroot = Root(**json.loads(${JSON.stringify(nestedJson)}))\nprint(type(root.author))`, expect: "<class 'dict'>" },
+  { langs: ['en', 'zh', 'ja', 'ko'], code: E.generatePython(JSON.parse(nestedJson), 'Root', 'pydantic').code + `\nimport json\nroot = Root.model_validate(json.loads(${JSON.stringify(nestedJson)}))\nprint(repr(root.comments[1]))`, expect: "CommentsItem(user='carol', text=None)" },
+  { langs: ['ja'], code: 'from typing import List\nfrom pydantic import BaseModel\nclass A(BaseModel):\n    pops: List[int]\nprint(A(pops=["0", "10"]).pops)', expect: '[0, 10]' },
+  { langs: [], code: 'from datetime import datetime\nfrom pydantic import BaseModel\nclass A(BaseModel):\n    at: datetime\nprint(A(at="2026-10-08T17:00:00+09:00").at.utcoffset().total_seconds())', expect: '32400.0' },
+  { langs: ['ko'], code: 'from datetime import date\nfrom pydantic import BaseModel, ValidationError\nclass A(BaseModel):\n    postdate: date\ntry:\n    A(postdate="20161208")\nexcept ValidationError as e:\n    print(e.errors()[0]["msg"])', expect: 'Datetimes provided to dates should have zero time - e.g. be exact dates' },
+  { langs: ['ko'], code: 'from datetime import datetime\nfrom pydantic import BaseModel, ValidationError\nclass A(BaseModel):\n    lastBuildDate: datetime\ntry:\n    A(lastBuildDate="Mon, 26 Sep 2016 10:39:37 +0900")\nexcept ValidationError as e:\n    print(e.errors()[0]["msg"])', expect: 'Input should be a valid datetime or date, invalid character in year' },
+  { langs: ['ko'], code: 'from email.utils import parsedate_to_datetime\nprint(parsedate_to_datetime("Mon, 26 Sep 2016 10:39:37 +0900"))', expect: '2016-09-26 10:39:37+09:00' },
+  { langs: [], code: 'from datetime import datetime\nprint(datetime.strptime("20161208", "%Y%m%d").date())', expect: '2016-12-08' },
+  // zh: a model generated from the house-number result alone rejects the district-level result.
+  { langs: [], code: E.generatePython({ ...geo, geocodes: [geo.geocodes[0]] }, 'GeocodeResponse', 'pydantic').code + `\nimport json\nfrom pydantic import ValidationError\ntry:\n    GeocodeResponse.model_validate(json.loads(${JSON.stringify(JSON.stringify(geo))}))\n    print('accepted')\nexcept ValidationError as e:\n    print('rejected ' + e.errors()[0]['loc'][-1])`, expect: 'rejected street' },
+];
+if (!pydBin) { skips++; console.log('SKIP: Python 3.11+ with Pydantic 2 not available (set PYDANTIC_PYTHON)'); }
+else {
+  console.log('Pydantic ' + runPy(pydBin, 'import pydantic; print(pydantic.VERSION)').stdout.trim());
+  for (const [i, c] of CLAIMS.entries()) {
+    const r = runPy(pydBin, c.code);
+    eq('claim ' + (i + 1) + ' Python output', r.stdout.trim() || r.stderr.trim().split('\n').pop(), c.expect);
+  }
+}
+for (const [i, c] of CLAIMS.entries()) for (const lang of c.langs) eq(lang + ': claim ' + (i + 1) + ' shown on the page', pageText[lang].includes(c.expect), true);
 
 // Sample-coverage supplement uses independently recorded complete outputs.
 const coverageFixtures = [
