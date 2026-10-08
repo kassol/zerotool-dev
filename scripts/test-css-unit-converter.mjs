@@ -1,5 +1,6 @@
 // CSS Unit Converter — complete page conversion, copy and shared shortcut regression.
-// Read: CssUnitConverterTool.astro and ToolLayout.astro. Write: stdout only.
+// Read: CssUnitConverterTool.astro, ToolLayout.astro and the four tool page MDX files (`cuc-check` /
+// `cuc-em` examples recomputed through the page script). Write: stdout only.
 // The source-parsed DOM preserves number/text distinctions and actual default settings.
 // No network or system clipboard. Run: node scripts/test-css-unit-converter.mjs
 import { readFileSync } from 'node:fs';
@@ -7,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import yaml from 'js-yaml';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssUnitConverterTool.astro'), 'utf8');
 const SLUG = 'css-unit-converter';
@@ -253,6 +254,46 @@ try {
   }
   await settle(); eq('all current and stale clipboard rejections are handled', unhandled.length, 0);
 } finally { process.off('unhandledRejection', onUnhandled); }
+console.log('\ntool page worked examples');
+// `cuc-check: {"value","unit"?,"root"?,"viewport"?,"show":[unit…]}` runs the complete page script: the unit
+// select gets a change event, Root Font Size and Viewport Width get input events (left at the defaults
+// 16 and 1920 when absent), then Value gets an input event. For each unit in `show`, the result text
+// ("0.833333vw") must be an inline code span, or a whole token of a code block, between the annotation
+// and the next cuc-check or H2. `cuc-em: {"root","factor","levels"}` recomputes the nested em example:
+// level i has root × factor^i pixels, and each "Npx" must appear in a code block in the same range.
+// Each language needs at least 2 cuc-check examples.
+{
+  const decode = t => t.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const inline = text => [
+    ...[...text.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)].map(m => decode(m[1])),
+    ...[...text.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').matchAll(/`([^`\n]+)`/g)].map(m => m[1]),
+  ];
+  const token = (block, s) => new RegExp('(?<![\\w.])' + s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w.])').test(block);
+  const shown = (text, s) => inline(text).includes(s) || fencedBlocks(text).some(b => token(b.text, s));
+  function pageOutputs(lang, c) {
+    const q = page({ lang });
+    if (c.unit) q.input('cu-unit', c.unit, 'change');
+    if (c.root !== undefined) q.input('cu-root-size', String(c.root));
+    if (c.viewport !== undefined) q.input('cu-viewport', String(c.viewport));
+    q.input('cu-value', String(c.value));
+    return Object.fromEntries(['px', 'rem', 'em', 'vw'].map(u => [u, q.get('cu-out-' + u).value]));
+  }
+  const contract = toolMdxContract(SLUG, { annotations: [
+    { tag: 'cuc-check', min: 2, verify: ({ spec: c, after, lang }) => {
+      const out = pageOutputs(lang, c);
+      if (!Array.isArray(c.show) || !c.show.length) return 'annotation lists no unit in show';
+      const missing = c.show.filter(u => !out[u] || !shown(after, out[u])).map(u => out[u] || u + ' (empty)');
+      return missing.length ? 'not shown after the annotation: ' + missing.join(', ') : null;
+    } },
+    { tag: 'cuc-em', verify: ({ spec: c, after }) => {
+      const want = Array.from({ length: c.levels }, (_, i) => String(+(c.root * c.factor ** (i + 1)).toFixed(4)) + 'px');
+      const missing = want.filter(s => !fencedBlocks(after).some(b => token(b.text, s)));
+      return missing.length ? 'nested em sizes not in a code block: ' + missing.join(', ') : null;
+    } },
+  ] });
+  for (const r of contract.results) eq('tool MDX: ' + r.message, r.ok, true);
+}
+
 console.log('\nv2 page layout');
 {
   const strings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
