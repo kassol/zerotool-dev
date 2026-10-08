@@ -110,6 +110,24 @@ eq('local (Asia/Tokyo): 0 9 * * 1-5 runs at 09:00 JST = 00:00 UTC',
 eq('either day field: or', E.humanizeCron('0 0 1,15 * 1'.split(' ')), 'At midnight, on day 1, 15 of the month or on Monday');
 eq('day field starts with *: and', /and on Monday$/.test(E.humanizeCron('0 0 */2 * 1'.split(' '))), true);
 eq('weekdays 9', E.humanizeCron('0 9 * * 1-5'.split(' ')), 'At 9:00, on Monday through Friday');
+// A day-of-month step used to read "on day every 2 days of the month"; the parser already drops
+// "day " before "every …" (CronParserTool.astro humanizeCron).
+for (const [expr, want] of [
+  ['0 0 */2 * *', 'At midnight, on every 2 days of the month'],
+  ['0 0 */2 * 1', 'At midnight, on every 2 days of the month and on Monday'],
+  ['0 9 */3 * 1-5', 'At 9:00, on every 3 days of the month and on Monday through Friday'],
+  ['0 0 */1 * */2', 'At midnight, on every 1 day of the month and on every 2 days of week'],
+]) {
+  eq('day step description ' + expr, E.humanizeCron(expr.split(' ')), want);
+  eq('no "on day every" in ' + expr, / on day every /.test(E.humanizeCron(expr.split(' '))), false);
+}
+// Engine block guard: changed 2026-10-08 (S2-3c, approved) only in the three description lines
+// above (", on day " → ", on " + "day " unless the day text starts with "every"); was b002beba….
+{
+  const { createHash } = await import('node:crypto');
+  eq('engine block SHA-256', createHash('sha256').update(source.slice(startIndex, endIndex)).digest('hex'), 'a754f1902dfff4910e010ab76802218634433ef2789265cf0c1257056379f980');
+}
+eq('day list keeps "on day"', E.humanizeCron('0 0 1,15 * */2'.split(' ')), 'At midnight, on day 1, 15 of the month and on every 2 days of week');
 
 // ---------- typed expression and the Minute box ----------
 // cronie crontab(5): day of week 0–7, 0 or 7 is Sunday. The typed expression used to reject 7.
