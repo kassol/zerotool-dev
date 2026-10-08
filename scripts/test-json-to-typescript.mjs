@@ -133,7 +133,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   // Facts stated in every Limits section.
   const text = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
   check(lang + ': page states Number.MAX_SAFE_INTEGER', text.includes(String(Number.MAX_SAFE_INTEGER)));
-  check(lang + ': page shows the root-array result that drops the string', text.includes('`[{"id": 1}, "x"]`') && text.includes('`interface RootObject { id: number; }`'));
+  check(lang + ': page shows the mixed root-array alias', text.includes('`[{"id": 1}, "x", null]`') && text.includes('`' + E.generateTypeScript([{ id: 1 }, 'x', null], 'RootObject', false, false).code.split('\n')[0] + '`'));
+  check(lang + ': page shows the root-name examples', ['`userProfile`', '`T2fa`', '`class_`'].every((s) => text.includes(s)));
 }
 // A root array that mixes objects with other values: the objects merge into the root interface and
 // a <root>Array alias lists every element type, written like a nested array.
