@@ -118,13 +118,57 @@ INSERT INTO "stock" ("sku", "qty", "column_3") VALUES ('B-2', 5, NULL);`}</code>
 
 <p>状态栏会报告补上的 <code>column_3</code>，需要正式列名时在表头行里改名即可。</p>
 
+<h2>示例：重名表头与字段里的引号</h2>
+
+<p>从表格软件复制的表头可能有重名，最后一格也可能是空的。每一列仍会得到自己的名字（SQLite，勾选“添加 CREATE TABLE”，表名 <code>stock</code>）：</p>
+
+{/* sql: {"dialect":"sqlite","table":"stock","mode":"batch","createTable":true} */}
+
+<pre><code>{`商品,数量,数量,
+键盘,3,4,已打包
+鼠标,5,,`}</code></pre>
+
+<pre><code>{`CREATE TABLE "stock" ("商品" TEXT, "数量" INTEGER, "数量_2" INTEGER, "column_4" TEXT);
+INSERT INTO "stock" ("商品", "数量", "数量_2", "column_4") VALUES
+  ('键盘', 3, 4, '已打包'),
+  ('鼠标', 5, NULL, NULL);`}</code></pre>
+
+{/* cts-status: {"csv":"商品,数量,数量,\n键盘,3,4,已打包\n鼠标,5,,"} */}
+
+<p>状态栏列出改过的名字：</p>
+
+<pre><code>{`表头有重名或空名，已改名：数量 → 数量_2, "" → column_4。`}</code></pre>
+
+<p>第二个“数量”改成 <code>数量_2</code>，空着的第 4 个表头按位置改成 <code>column_4</code>。比较名字时不区分大小写，<code>Name</code> 和 <code>name</code> 也算重名：MySQL 的列名不区分大小写（<a href="https://dev.mysql.com/doc/refman/8.4/en/identifier-case-sensitivity.html" target="_blank" rel="noopener">MySQL 8.4, Identifier Case Sensitivity</a>），SQLite 也不接受同一张表里同时有 <code>"Name"</code> 和 <code>"name"</code>。新名字不会占用表头里已有的名字：<code>a,a,a_2</code> 得到 <code>a</code>、<code>a_3</code>、<code>a_2</code>。</p>
+
+{/* sql: {"dialect":"sqlite","table":"stock","mode":"batch","createTable":true} */}
+
+<pre><code>{`商品,尺寸
+显示器,27" 宽屏`}</code></pre>
+
+<pre><code>{`CREATE TABLE "stock" ("商品" TEXT, "尺寸" TEXT);
+INSERT INTO "stock" ("商品", "尺寸") VALUES
+  ('显示器', '27" 宽屏');`}</code></pre>
+
+<p>只有字段开头的双引号才开启引号字段。没加引号的字段中间出现的引号（如表示英寸的 <code>{'27"'}</code>）按普通字符保留。引号字段始终没有闭合时，转换会停下：</p>
+
+{/* cts-status: {"csv":"sku,note\nA-1,\"fragile\nB-2,ok"} */}
+
+<pre><code>{`sku,note
+A-1,"fragile
+B-2,ok`}</code></pre>
+
+<pre><code>{`第 2 行开始的引号字段没有闭合。请补上结尾的 "，或删掉开头的 "。`}</code></pre>
+
+<p>行号按“CSV 输入”里的行数计算，开头的空行也算在内。补好引号之前，SQL 输出保持为空。</p>
+
 <h2>限制</h2>
 <ul>
   <li>分隔符只支持半角逗号，第一行总是表头。分号或制表符分隔的文件需要先转换。</li>
   <li>类型只根据文本判断，日期、布尔值和 <code>1e5</code> 都按字符串处理；全角数字（如 <code>１２</code>）也是字符串。</li>
   <li>表名和列名作为单个标识符加引号，<code>public.users</code> 会成为一个含点号的名字。</li>
-  <li>表头名称原样使用。两列同名时生成的 SQL 会被数据库拒绝（SQLite 报 <code>duplicate column name</code>）；表头里的空单元格成为空名 <code>{'""'}</code>。MySQL 的列名不能以空格结尾。</li>
-  <li>未加引号的字段中间出现双引号（如 <code>{'5" pipe'}</code>）时，会从这里开始按引号字段读取；引号始终没有闭合时，后面的全部内容都并入同一个值。这两种情况都不报错，请核对输出的行数是否与文件一致。</li>
-  <li>整段输入首尾的空格与换行会被去掉，所以第一个表头开头和最后一个单元格结尾的空格不会保留。</li>
+  <li>重名表头（不区分大小写）依次改成 <code>_2</code>、<code>_3</code>，空表头改成 <code>column_N</code>，状态栏会列出；其余名字原样使用，包括其中的空格。MySQL 的列名不能以空格结尾。</li>
+  <li>引号字段没有闭合时，转换停下并给出起始行号；未加引号的字段中间的引号按普通字符保留。</li>
+  <li>输入只去掉 BOM、开头的空行和末尾的换行，表头与单元格首尾的空格原样保留。</li>
   <li>大文件在浏览器标签页中一次性转换；上百万行请用数据库自带的批量导入（<code>LOAD DATA</code>、<code>COPY</code>、<code>.import</code>）。</li>
 </ul>

@@ -127,13 +127,57 @@ INSERT INTO "stock" ("sku", "qty", "column_3") VALUES ('B-2', 5, NULL);`}</code>
 
 <p>追加した <code>column_3</code> はステータス行に表示されます。正式な列名にしたい場合はヘッダー行で名前を付けてください。</p>
 
+<h2>例：重複したヘッダー名とフィールド内の引用符</h2>
+
+<p>表計算ソフトからコピーしたヘッダーには、同じ名前が 2 回あったり、最後のセルが空だったりします。その場合も各列に別の名前を付けます（SQLite、「CREATE TABLE を追加」あり、テーブル名 <code>stock</code>）。</p>
+
+{/* sql: {"dialect":"sqlite","table":"stock","mode":"batch","createTable":true} */}
+
+<pre><code>{`品名,数量,数量,
+キーボード,3,4,梱包済み
+マウス,5,,`}</code></pre>
+
+<pre><code>{`CREATE TABLE "stock" ("品名" TEXT, "数量" INTEGER, "数量_2" INTEGER, "column_4" TEXT);
+INSERT INTO "stock" ("品名", "数量", "数量_2", "column_4") VALUES
+  ('キーボード', 3, 4, '梱包済み'),
+  ('マウス', 5, NULL, NULL);`}</code></pre>
+
+{/* cts-status: {"csv":"品名,数量,数量,\nキーボード,3,4,梱包済み\nマウス,5,,"} */}
+
+<p>ステータスには変更した名前が表示されます。</p>
+
+<pre><code>{`重複または空のヘッダー名を変更しました：数量 → 数量_2, "" → column_4。`}</code></pre>
+
+<p>2 つ目の「数量」は <code>数量_2</code> に、空だった 4 列目のヘッダーは位置に合わせて <code>column_4</code> になります。名前は大文字と小文字を区別せずに比べるので、<code>Name</code> と <code>name</code> も重複とみなします。MySQL の列名は大文字と小文字を区別せず（<a href="https://dev.mysql.com/doc/refman/8.4/en/identifier-case-sensitivity.html" target="_blank" rel="noopener">MySQL 8.4, Identifier Case Sensitivity</a>）、SQLite も 1 つのテーブルに <code>"Name"</code> と <code>"name"</code> を並べると受け付けません。新しい名前はヘッダーにある名前と重なりません。<code>a,a,a_2</code> は <code>a</code>、<code>a_3</code>、<code>a_2</code> になります。</p>
+
+{/* sql: {"dialect":"sqlite","table":"stock","mode":"batch","createTable":true} */}
+
+<pre><code>{`品名,サイズ
+モニター,27" ワイド`}</code></pre>
+
+<pre><code>{`CREATE TABLE "stock" ("品名" TEXT, "サイズ" TEXT);
+INSERT INTO "stock" ("品名", "サイズ") VALUES
+  ('モニター', '27" ワイド');`}</code></pre>
+
+<p>引用符付きフィールドを始めるのは、フィールドの先頭にある二重引用符だけです。引用符で囲んでいないフィールドの途中にある引用符（インチを表す <code>{'27"'}</code> など）は普通の文字として残ります。閉じられない引用符付きフィールドがあると、変換を止めます。</p>
+
+{/* cts-status: {"csv":"sku,note\nA-1,\"fragile\nB-2,ok"} */}
+
+<pre><code>{`sku,note
+A-1,"fragile
+B-2,ok`}</code></pre>
+
+<pre><code>{`2 行目で始まる引用符付きフィールドが閉じられていません。閉じる " を追加するか、開始の " を削除してください。`}</code></pre>
+
+<p>行番号は「CSV 入力」での行数で、先頭の空行も数えます。引用符を直すまで SQL 出力は空のままです。</p>
+
 <h2>制限事項</h2>
 <ul>
   <li>区切り文字は半角カンマだけで、1 行目は常にヘッダーです。セミコロンやタブ区切りのファイルは先に変換してください。</li>
   <li>型は文字列から推測するだけです。日付、真偽値、<code>1e5</code>、全角数字は文字列として扱います。</li>
   <li>テーブル名と列名は 1 つの識別子として囲むので、<code>public.users</code> はドットを含む 1 つの名前になります。</li>
-  <li>ヘッダーの名前はそのまま使います。同じ名前の列が 2 つあると、データベースが受け付けない SQL になります（SQLite では <code>duplicate column name</code>）。空のヘッダーセルは空の名前 <code>{'""'}</code> になります。MySQL の列名は末尾を空白にできません。</li>
-  <li>引用符で囲んでいないフィールドの途中に二重引用符（例：<code>{'5" pipe'}</code>）があると、そこから引用符付きフィールドとして読みます。閉じられない引用符があると、残りのすべてが 1 つの値に入ります。どちらもエラーにならないので、出力の行数がファイルと同じか確認してください。</li>
-  <li>入力全体の先頭と末尾の空白・改行は取り除くため、最初のヘッダーの先頭や最後のセルの末尾にある空白は残りません。</li>
+  <li>重複したヘッダー名（大文字と小文字は区別しない）は <code>_2</code>、<code>_3</code> を付け、空のヘッダーは <code>column_N</code> にして、ステータスに表示します。ほかの名前は空白も含めてそのまま使います。MySQL の列名は末尾を空白にできません。</li>
+  <li>閉じられない引用符付きフィールドがあると、開始行を示して変換を止めます。引用符で囲んでいないフィールドの途中の引用符は普通の文字として残します。</li>
+  <li>入力から取り除くのは BOM、先頭の空行、末尾の改行だけです。ヘッダーやセルの前後の空白はそのまま残ります。</li>
   <li>大きなファイルもブラウザーのタブ内で一度に変換します。数百万行ならデータベースの一括読み込み（<code>LOAD DATA</code>、<code>COPY</code>、<code>.import</code>）を使ってください。</li>
 </ul>

@@ -562,6 +562,21 @@ try {
   const jf = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
   check('firstBadUtf8 is the same as in json-formatter-engine.js', fnLines(source, 'firstBadUtf8') !== '' && fnLines(source, 'firstBadUtf8') === fnLines(jf, 'firstBadUtf8'));
 
+  // Page examples of a status line: {/* cts-status: {"csv":"…","dialect":"…"} */} followed by a code
+  // block that holds the status the page shows after that CSV is typed, word for word.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readFileSync(join(root, 'src/content/tools/csv-to-sql', lang + '.mdx'), 'utf8');
+    const notes = annotations(body, 'cts-status');
+    check(lang + ' page has a cts-status example', notes.length >= 1, notes.length);
+    for (const note of notes) {
+      const p = page(lang);
+      if (note.spec.dialect) { p.get('cts-dialect').value = note.spec.dialect; p.get('cts-dialect').fire('change'); }
+      p.type(s.left, note.spec.csv); p.advance(300);
+      const status = p.get('cts-status').textContent;
+      check(lang + ' cts-status example shows the page status word for word', status !== '' && fencedBlocks(note.after.split(/\{\/\*/)[0]).some((b) => b.text === status), status);
+    }
+  }
+
   // Page examples of a refused file: {/* cts-file: {"hex":"…"} */} followed by a code block that
   // holds the status line the page shows for those bytes, word for word.
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
