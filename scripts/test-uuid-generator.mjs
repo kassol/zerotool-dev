@@ -83,7 +83,8 @@ for (const [count, expected] of [['5', 5], ['1', 1], ['100', 100], ['250', 100],
 
 // UUIDs quoted on the English page are well-formed v4 values
 const quoted = page.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g) || [];
-eq('page quotes 4 UUIDs', quoted.length, 4);
+// The dissected value appears three times: the paragraph, the uuid-read annotation and its block.
+eq('page quotes 6 UUIDs', quoted.length, 6);
 for (const u of quoted) eq('page UUID ' + u + ' is v4', V4.test(u), true);
 const dissected = 'd4b151b4-c1d3-41ac-9d4c-d413b112aaa1';
 eq('13th digit', dissected.replace(/-/g, '')[12], '4');
@@ -593,5 +594,72 @@ lifeCheck('EN batch explanation present', page.includes('Every generated batch l
 const featureLayouts = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 if (/'uuid-generator':\s*'generate'/.test(featureLayouts)) lifeCheck('v2 generate registration', true);
 else console.log('PENDING_ROOT uuid-generator generate registration (not counted as PASS)');
-console.log(`FEATURE FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
-process.exitCode = failures + lifecycleFail ? 1 : 0;
+
+// Four-language tool pages (S2): MDX contract and worked examples recomputed from the UUID itself.
+//   {/* uuid-read: {"uuid":"…"} */}  the next code block shows the UUID in 8-4-4-4-12 lowercase form
+//     with carets under the 13th and 17th hex digits (version; variant bits). Any input form that
+//     RFC 9562 §4 allows (upper case, no hyphens, braces, urn:uuid:) is normalized first, and the
+//     input as written must also appear in code. Optional "version" is checked against the digit.
+//   {/* uuid-time: {"uuid":"…","tz":"Asia/Tokyo"} */}  version 1 (RFC 9562 §5.1: 100 ns since
+//     1582-10-15) or version 7 (§5.7: Unix ms); inline code shows `YYYY-MM-DD HH:MM:SS.mmm UTC`
+//     and the same instant in the time zone as `YYYY-MM-DD HH:MM:SS.mmm`.
+//   {/* uuid-p: {"n":1e9} */}  birthday bound for n v4 UUIDs (122 random bits): `p ≈ M × 10^E`.
+import { toolMdxContract, fencedBlocks } from './lib/tool-mdx-contract.mjs';
+let s2Pass = 0, s2Fail = 0;
+function s2Check(name, ok) { if (ok) s2Pass++; else { s2Fail++; console.log('FAIL S2 ' + name); } }
+const codeTexts = (after) => [
+  ...fencedBlocks(after).map((b) => b.text),
+  ...[...after.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]),
+  ...[...after.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)].map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')),
+];
+const shownIn = (after, text) => codeTexts(after).some((t) => t.includes(text));
+const missing = (after, list) => { const gone = list.filter((t) => !shownIn(after, t)); return gone.length ? 'not shown in code after the annotation: ' + gone.map((t) => JSON.stringify(t)).join(', ') : null; };
+function normalizeUuid(text) {
+  const hex = String(text).trim().replace(/^urn:uuid:/i, '').replace(/^\{|\}$/g, '').replace(/-/g, '').toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(hex)) throw Error('not a UUID: ' + text);
+  return hex;
+}
+const hyphenate = (h) => [h.slice(0, 8), h.slice(8, 12), h.slice(12, 16), h.slice(16, 20), h.slice(20)].join('-');
+function readingBlock(text) {
+  const h = normalizeUuid(text);
+  const bin = parseInt(h[16], 16).toString(2).padStart(4, '0');
+  return [hyphenate(h), ' '.repeat(14) + '^' + ' '.repeat(4) + '^', ' '.repeat(14) + h[12] + ' '.repeat(4) + h[16] + ' = ' + bin].join('\n');
+}
+function uuidTimeMs(text) {
+  const h = normalizeUuid(text);
+  if (h[12] === '7') return parseInt(h.slice(0, 12), 16);
+  if (h[12] === '1') {
+    const t = (BigInt('0x' + h.slice(13, 16)) << 48n) | (BigInt('0x' + h.slice(8, 12)) << 32n) | BigInt('0x' + h.slice(0, 8));
+    return Number((t - 0x01B21DD213814000n) / 10000n);
+  }
+  throw Error('no timestamp in version ' + h[12]);
+}
+function wallTime(ms, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}.${String(((ms % 1000) + 1000) % 1000).padStart(3, '0')}`;
+}
+const sciP = (x) => { const [m, e] = x.toExponential(1).split('e'); return `p ≈ ${m} × 10^${Number(e)}`; };
+const s2Contract = toolMdxContract('uuid-generator', {
+  annotations: [
+    { tag: 'uuid-read', min: 1, verify: ({ spec, after }) => {
+      const h = normalizeUuid(spec.uuid);
+      if (spec.version !== undefined && h[12] !== String(spec.version)) return `version digit is ${h[12]}, not ${spec.version}`;
+      return missing(after, [readingBlock(spec.uuid), spec.uuid]);
+    } },
+    { tag: 'uuid-time', verify: ({ spec, after }) => { const ms = uuidTimeMs(spec.uuid); return missing(after, [wallTime(ms, 'UTC') + ' UTC', wallTime(ms, spec.tz)]); } },
+    { tag: 'uuid-p', min: 1, verify: ({ spec, after }) => missing(after, [sciP(-Math.expm1(-spec.n * spec.n / 2 / 2 ** 122))]) },
+  ],
+});
+for (const r of s2Contract.results) s2Check(r.message, r.ok);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const body = s2Contract.docs[lang].body;
+  const n = (tag) => (body.match(new RegExp('\\{/\\*\\s*' + tag + '\\b', 'g')) || []).length;
+  s2Check(lang + ' has at least 2 recomputed examples', n('uuid-read') + n('uuid-time') + n('uuid-p') >= 2);
+}
+// The reading helper agrees with the RFC 9562 test vectors used on the pages and in the guide.
+s2Check('reading: RFC 9562 v7 vector is version 7', readingBlock('017F22E2-79B0-7CC3-98C4-DC0C0C07398F').split('\n')[2].trim() === '7    9 = 1001');
+s2Check('time: RFC 9562 v7 vector', wallTime(uuidTimeMs('017f22e2-79b0-7cc3-98c4-dc0c0c07398f'), 'UTC') === '2022-02-22 19:22:22.000');
+s2Check('time: RFC 9562 v1 vector (2022-02-22 19:22:22 UTC)', wallTime(uuidTimeMs('c232ab00-9414-11ec-b3c8-9f6bdeced846'), 'UTC') === '2022-02-22 19:22:22.000');
+console.log(`S2 CONTENT ${s2Pass} passed, ${s2Fail} failed`);
+console.log(`FEATURE FINAL ${passes + lifecyclePass + s2Pass} passed, ${failures + lifecycleFail + s2Fail} failed`);
+process.exitCode = failures + lifecycleFail + s2Fail ? 1 : 0;
