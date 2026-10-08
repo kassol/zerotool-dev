@@ -133,7 +133,7 @@ eq('page no longer says the Minute box is copied as is', page.includes('without 
 for (const [expr, runs] of [
   ['0 9 * * 1-5', ['2026-10-02 09:00 UTC', '2026-10-05 09:00 UTC', '2026-10-06 09:00 UTC']],
   ['0 0 1,15 * 1', ['2026-10-05 00:00 UTC', '2026-10-12 00:00 UTC', '2026-10-15 00:00 UTC', '2026-10-19 00:00 UTC']],
-  ['0 0 */2 * 1', ['2026-10-05 00:00 UTC', '2026-10-19 00:00 UTC', '2026-11-09 00:00 UTC']],
+  ['0 0 1,15 * */2', ['2026-10-15 00:00 UTC', '2026-11-01 00:00 UTC', '2026-11-15 00:00 UTC', '2026-12-01 00:00 UTC', '2026-12-15 00:00 UTC', '2027-04-01 00:00 UTC']],
 ]) {
   const got = E.nextRuns(expr.split(' '), runs.length, true, FROM).map((d) => d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
   eq('page runs for ' + expr, got, runs);
