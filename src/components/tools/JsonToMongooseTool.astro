@@ -32,6 +32,7 @@ const STRINGS = {
     msgGenOne: 'Generated 1 schema.',
     msgGenMany: 'Generated {n} schemas.',
     msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.',
+    msgSkipped: 'Skipped {n} root array values that are not objects ({types}).',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: 'On',
@@ -64,6 +65,7 @@ const STRINGS = {
     msgGenOne: '已生成 1 个 Schema。',
     msgGenMany: '已生成 {n} 个 Schema。',
     msgIgnored: 'Mongoose 会跳过名为 __proto__、constructor、prototype 的 schema 路径：{keys}。',
+    msgSkipped: '根数组中有 {n} 个值不是对象，未写进 schema（{types}）。',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: '开启',
@@ -96,6 +98,7 @@ const STRINGS = {
     msgGenOne: '1 個のスキーマを生成しました。',
     msgGenMany: '{n} 個のスキーマを生成しました。',
     msgIgnored: 'Mongoose は __proto__・constructor・prototype という名前のスキーマパスを無視します：{keys}。',
+    msgSkipped: 'ルート配列のうちオブジェクトでない {n} 個の値はスキーマに入れていません（{types}）。',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: 'オン',
@@ -128,6 +131,7 @@ const STRINGS = {
     msgGenOne: '스키마 1개를 생성했습니다.',
     msgGenMany: '스키마 {n}개를 생성했습니다.',
     msgIgnored: 'Mongoose는 __proto__, constructor, prototype이라는 스키마 경로를 건너뜁니다: {keys}.',
+    msgSkipped: '루트 배열에서 객체가 아닌 값 {n}개는 스키마에 넣지 않았습니다({types}).',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: '켜짐',
@@ -147,6 +151,7 @@ const L = STRINGS[lang];
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
   data-msg-ignored={L.msgIgnored}
+  data-msg-skipped={L.msgSkipped}
 >
   <div class="jtm-config">
     <div class="jtm-config-row jtm-model-row">
@@ -211,6 +216,7 @@ const L = STRINGS[lang];
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 schema.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} schemas.';
       var MSG_IGNORED = wrap ? wrap.dataset.msgIgnored : 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.';
+      var MSG_SKIPPED = wrap ? wrap.dataset.msgSkipped : 'Skipped {n} root array values that are not objects ({types}).';
 
       var inputEl = document.getElementById('jtm-input');
       var outputCodeEl = document.getElementById('jtm-output-code');
@@ -591,6 +597,7 @@ const L = STRINGS[lang];
         var rawModelName = modelNameEl.value.trim() || 'User';
 
         var schemas = [];
+        var skippedNote = '';
 
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
           buildRootSchema([parsed], rawModelName, schemas);
@@ -600,6 +607,19 @@ const L = STRINGS[lang];
           });
           if (objItems.length > 0) {
             buildRootSchema(objItems, rawModelName, schemas);
+            // A schema describes the objects; report the other values instead of dropping them silently.
+            var skippedTypes = [], skippedCounts = [];
+            parsed.forEach(function (v) {
+              if (objItems.indexOf(v) !== -1) return;
+              var t = v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v;
+              var at = skippedTypes.indexOf(t);
+              if (at === -1) { skippedTypes.push(t); skippedCounts.push(1); } else skippedCounts[at]++;
+            });
+            if (skippedTypes.length) {
+              skippedNote = ' ' + MSG_SKIPPED.replace('{n}', String(parsed.length - objItems.length)).replace('{types}', skippedTypes.map(function (t, i) {
+                return skippedCounts[i] > 1 ? t + ' × ' + skippedCounts[i] : t;
+              }).join(', '));
+            }
           } else {
             showOutput('// Array of primitives — no schema to generate');
             setStatus(MSG_GEN_ONE, false);
@@ -619,7 +639,7 @@ const L = STRINGS[lang];
           return schemas.some(function (s) { return s.fields.some(function (f) { return f.key === k; }); });
         });
         if (ignored.length) msg += ' ' + MSG_IGNORED.replace('{keys}', ignored.join(', '));
-        setStatus(msg, false);
+        setStatus(msg + skippedNote, false);
       }
 
       var _liveTimer = null;

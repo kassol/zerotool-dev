@@ -488,6 +488,9 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     {const w=page(lang,shellFirst);w.input('{"__proto__":{"x":1},"constructor":"c","b":{"prototype":1}}');w.advance(300);
       same(tag+' B1: status names the keys Mongoose ignores',w.get(cfg.status).textContent.includes(String(labels[lang].msgIgnored).replace('{keys}','__proto__, constructor, prototype')),true);
       w.input('{"b":1}');w.advance(300);same(tag+' B1: no notice without such keys',w.get(cfg.status).textContent,labels[lang].msgGenOne);}
+    // B2: values beside the objects of a root array are reported, with their count and JSON types.
+    {const w=page(lang,shellFirst);w.input('[{"a":1},2,"x",null,[1],3]');w.advance(300);
+      same(tag+' B2: status reports the skipped root array values',w.get(cfg.status).textContent.includes(String(labels[lang].msgSkipped).replace('{n}','5').replace('{types}','number × 2, string, null, array')),true);}
     // GA: one generate event per committed action (change, Example, a new option), none on page load or typing pauses.
     {const g=page(lang,shellFirst);same(tag+' GA: page load sends no event',g.tracks.length,0);
       g.input(cfg.sample);g.advance(300);same(tag+' GA: a typing pause regenerates without an event',[g.out().includes('fresh'),g.tracks.length],[true,0]);
