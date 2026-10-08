@@ -8,16 +8,83 @@ steps:
   - "クリアで両方の欄を空にし、待機中の変換を取り消します。ツール内にフォーカスがあれば Ctrl/⌘+L も使えます。"
 faqItems:
   - question: "対応しているHTML要素は？"
-    answer: "主要なHTML要素すべてに対応：h1–h6、p、strong/b、em/i、a、img、code、pre+code（言語クラス対応）、ul、ol、li、blockquote、hr、table（GFM形式）、br。未知の要素はテキストコンテンツにフォールバックします。"
+    id: "elements"
+    answer: "よく使う要素は変換できます。h1–h6、p、strong/b、em/i、a、img、code、pre+code（言語クラスを読み取ります）、ul、ol、li、blockquote、hr、table（GFM 形式）、br です。del、s、mark、フォーム部品などそのほかの要素は、中の文字だけが残ります。"
   - question: "コードブロックはどのように処理されますか？"
-    answer: "インライン<code>はバッククォート形式に変換されます。<pre><code class=\"language-javascript\">ブロックは言語タグを保持したフェンスコードブロックに変換：```javascript。言語クラスがない場合は単純な```フェンスが使用されます。"
+    id: "code-blocks"
+    answer: "インラインの <code> はバッククォートで囲んだコードになります。<pre><code class=\"language-javascript\"> は言語名付きのフェンス ```javascript になります。言語名は <code> 要素の language-* クラスからしか読まないため、このクラスがなければ言語名のない ``` になります。"
   - question: "GFMテーブルはサポートされていますか？"
-    answer: "はい。1 行目が th セルのテーブルは GitHub Flavored Markdown（GFM）のパイプ記法テーブルに変換されます（区切り行あり）。セル内の | は \\| に、<br> は <br> のまま出力します。1 行目に th がないテーブルは HTML のまま出力します（GFM のテーブルには見出し行が必要なため）。"
+    id: "tables"
+    answer: "はい。1 行目が thead の中にあるか、1 行目のセルがすべて th のテーブルは、区切り行付きの GitHub Flavored Markdown（GFM）のパイプ記法テーブルになります。セル内の | は \\| に、<br> は <br> のまま出力します。それ以外のテーブルは HTML のまま出力します（GFM のテーブルには見出し行が必要なため）。"
+  - question: "不正な HTML や閉じタグのない HTML はどうなりますか？"
+    id: "invalid-html"
+    answer: "ブラウザに組み込まれた HTML パーサーで読み込むので、ブラウザがページを表示するときと同じように補正されます。補正できるものは補正したうえで変換するため、思ったとおりにならないこともあります。たとえば閉じていない <b> は次の段落まで太字にします。"
+  - question: "Web ページ全体を変換できますか？"
+    id: "full-page"
+    answer: "できますが、不要な部分は先に取り除いてください。<script>、<style>、<title> を消す規則はないため、その中の文字も Markdown に出てきます。ブラウザの開発者ツールの要素パネルで、本文を囲む要素の outerHTML だけをコピーするのがおすすめです。"
   - question: "HTMLは送信されますか？"
-    answer: "いいえ。すべての変換はturndown.jsライブラリを使用してブラウザ内で完結します。ネットワーク通信は一切ありません。"
+    id: "privacy"
+    answer: "いいえ。ページはブラウザ内の Turndown ライブラリで HTML を変換し、どこにも送信せず、ブラウザのストレージにも保存しません。ページのアクセス解析が記録するのは、入力を編集してフォーカスを外したときと「サンプル」を押したときの利用イベント（ツール名と動作 convert）だけで、HTML や Markdown の内容は含みません。"
 ---
 
-<h2>変換リファレンス</h2>
+## Qiita の記事 HTML を Markdown に戻す
+
+Qiita API v2 の記事データには、Markdown 本文の `body` と、表示用の HTML の `rendered_body` が入っています（[Qiita API v2 ドキュメント](https://qiita.com/api/v2/docs)）。手元に HTML しか残っていない場合を想定して、Qiita 公式の「[Markdown記法 チートシート](https://qiita.com/Qiita/items/c686397e4a0f4f11683d)」の `rendered_body`（2026-10-08 に API で取得）からコードブロック 1 つを取り出して変換してみます。出力は本ツールの変換器（Turndown 7.2.4 と turndown-plugin-gfm 1.0.2 の表の規則）で計算したものです。
+
+{/* htm-check: {"in": "<div class=\"code-frame\" data-lang=\"ruby\">\n<div class=\"code-lang\"><span class=\"bold\">qiita.rb</span></div>\n<div class=\"highlight\"><pre><code><span class=\"nb\">puts</span> <span class=\"s1\">'The best way to log and share programmers knowledge.'</span>\n</code></pre></div>\n</div>"} */}
+
+```html
+<div class="code-frame" data-lang="ruby">
+<div class="code-lang"><span class="bold">qiita.rb</span></div>
+<div class="highlight"><pre><code><span class="nb">puts</span> <span class="s1">'The best way to log and share programmers knowledge.'</span>
+</code></pre></div>
+</div>
+```
+
+変換結果：
+
+````markdown
+qiita.rb
+
+```
+puts 'The best way to log and share programmers knowledge.'
+```
+````
+
+ハイライト用の `span` は外れてコードの文字だけが残りますが、言語名とファイル名は失われます。Qiita の HTML では言語名が外側の `div` の `data-lang` に、ファイル名が `div.code-lang` の文字として入っていて、本ツールは `<code>` の `language-` クラスからしか言語名を読まないためです。ファイル名は普通の段落になってしまいます。
+
+元の記事に戻すなら、フェンスを手で書き直します。チートシートによると Qiita では ` ```ruby:qiita.rb ` のように言語名とファイル名を `:` で区切って書きます。Zenn も「[Markdown記法一覧](https://zenn.dev/zenn/articles/markdown-guide)」で ` ```js:ファイル名 ` の形を案内しています。段落になった `qiita.rb` の行は削除してください。
+
+## 日本語の太字が外れる書き方
+
+HTML では問題なく太字になる書き方でも、Markdown に変換すると太字にならないことがあります。
+
+{/* htm-check: {"in": "<p><strong>注意：</strong>ここは必須です</p>", "bold": false} */}
+
+`<p><strong>注意：</strong>ここは必須です</p>` は `**注意：**ここは必須です` になります。この Markdown を本サイトの [Markdown プレビュー](/ja/tools/markdown-preview/)（micromark と GFM 拡張）に貼ると、太字にならず `**` がそのまま表示されます。CommonMark の規則では、閉じる `**` の直前が全角コロン「：」のような句読点のとき、直後は空白か句読点でなければなりません（[CommonMark 0.31.2 §6.2](https://spec.commonmark.org/0.31.2/#left-flanking-delimiter-run)）。ここでは直後が「こ」なので閉じ記号と認められません。Qiita のチートシートも強調について「前後に 半角スペース か 改行文字 を入れてください」と注意しています。GitHub と Zenn での結果は「[マークダウン記法 一覧](/ja/blog/markdown-cheat-sheet/)」で確かめています。
+
+{/* htm-check: {"in": "<p><strong>注意</strong>：ここは必須です</p>", "bold": true} */}
+
+句読点を太字の外に出して `<p><strong>注意</strong>：ここは必須です</p>` にすると、出力は `**注意**：ここは必須です` で、プレビューでも太字になります。本ツールはこの書き換えをしないので、HTML か変換後の Markdown のどちらかを手で直してください。
+
+## 閉じ忘れたタグの扱い
+
+{/* htm-check: {"in": "<ul><li>東京<li>大阪</ul><p>営業時間：<b>10時〜<p>定休日：水曜"} */}
+
+途中までしかコピーできなかった HTML でも変換はできますが、結果には補正の影響が出ます。`<ul><li>東京<li>大阪</ul><p>営業時間：<b>10時〜<p>定休日：水曜` の出力は次のとおりです。
+
+```markdown
+-   東京
+-   大阪
+
+営業時間：**10時〜**
+
+**定休日：水曜**
+```
+
+`</li>` がなくても次の `<li>` で前の項目が閉じるので、リストは 2 項目のまま正しく変換されます。一方、閉じていない `<b>` は、新しい `<p>` で段落が終わったあと次の段落でもう一度開かれます。これは HTML 標準のパース規則（[アクティブな書式要素の再構築](https://html.spec.whatwg.org/multipage/parsing.html#reconstruct-the-active-formatting-elements)）によるもので、ブラウザで表示しても「定休日：水曜」は太字になります。`</b>` を補ってから変換すれば防げます。
+
+## 変換リファレンス
 
 <table>
   <thead><tr><th>HTML</th><th>Markdown</th></tr></thead>
@@ -26,15 +93,22 @@ faqItems:
     <tr><td><code>&lt;strong&gt;テキスト&lt;/strong&gt;</code></td><td><code>{'**テキスト**'}</code></td></tr>
     <tr><td><code>&lt;em&gt;テキスト&lt;/em&gt;</code></td><td><code>{'*テキスト*'}</code></td></tr>
     <tr><td><code>&lt;a href="url"&gt;リンク&lt;/a&gt;</code></td><td><code>{'[リンク](url)'}</code></td></tr>
+    <tr><td><code>&lt;img src="url" alt="説明"&gt;</code></td><td><code>{'![説明](url)'}</code></td></tr>
     <tr><td><code>&lt;pre&gt;&lt;code class="language-js"&gt;</code></td><td>` ```js ` フェンスブロック</td></tr>
     <tr><td><code>&lt;table&gt;</code></td><td>GFMパイプテーブル</td></tr>
     <tr><td><code>&lt;blockquote&gt;</code></td><td><code>&gt; 引用</code></td></tr>
+    <tr><td><code>&lt;hr&gt;</code></td><td><code>{'* * *'}</code></td></tr>
+    <tr><td><code>&lt;br&gt;</code></td><td>行末の半角スペース 2 つと改行</td></tr>
   </tbody>
 </table>
 
-<h2>主な使用ケース</h2>
-<ul>
-  <li><strong>CMSコンテンツ移行</strong>：WordPressのHTMLコンテンツをMarkdownに変換し、HugoやAstroなどの静的サイトジェネレーターで活用。</li>
-  <li><strong>READMEの整理</strong>：Webページをスクレイピングし、Markdownに変換してGitHub READMEやドキュメントサイトに活用。</li>
-  <li><strong>LLM入力の最適化</strong>：WebページをMarkdown化してトークン数とノイズを削減し、大規模言語モデルへの入力として活用。</li>
-</ul>
+## 制限
+
+- 打ち消し線（`<del>`、`<s>`）、マーカー（`<mark>`）、タスクリストのチェックボックスは変換せず、文字だけを残します。
+- 表の `colspan` と `rowspan` は無視します。GFM のテーブルにはセル結合がありません。
+- `<script>`、`<style>`、`<title>` の中の文字は消えません。必要な部分の HTML だけを貼り付けてください。
+- `src` 属性のない `<img>` は跡形もなく消えます。画像を遅延読み込みするページでは、表示されるまでアドレスを `data-src` に入れていることがよくあります。画像が読み込まれてからコピーするか、属性名を `src` に直してから変換してください。
+- コードの言語名は `<code>` の `language-` クラスからだけ読み取ります。`<pre>` のクラスや `data-lang` 属性にある言語名は使われず、言語名のないフェンスになります。
+- 相対パスのリンクや画像はそのまま残り、公開先のページを基準に解決されます。
+- 1,048,576 文字を超えると「入力が非常に大きいため、変換に時間がかかる場合があります。」と表示されますが、変換はそのままページ内で続きます。
+- 本サイトの Markdown プレビューは生の HTML を文字として表示します。表のセル内の `<br>` や HTML のまま残した表は、プレビューではタグがそのまま見えます。

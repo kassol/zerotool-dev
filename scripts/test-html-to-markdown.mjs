@@ -11,7 +11,14 @@
 // shipped behaviour; ATX headings, `-` bullets, `*` emphasis, `* * *` rules, fenced code with
 // the language from `language-*`; a literal | in a table cell is escaped as \| and a line
 // break in a cell becomes <br> (both used to split the row); tables without a header row are
-// kept as HTML; the examples on the English tool page.
+// kept as HTML; the worked examples on the four tool pages (`htm-check`, below).
+//
+// Annotation {/* htm-check: {"in": "<html>", "bytes"?: n, "bold"?: bool, "preview"?: "text"} */}:
+// the HTML `in` must appear after the annotation (before the next annotation or H2), and the
+// converter's output must be the whole text of a code block or inline code there. `bytes`: the
+// output's UTF-8 length, also shown as inline code. `bold`: whether the site's Markdown Preview
+// (the renderMarkdown engine of MarkdownPreviewTool.astro, micromark + GFM) renders <strong>.
+// `preview`: a string that must occur in that preview HTML. At least 2 per language.
 //
 // Run: node scripts/test-html-to-markdown.mjs
 
@@ -23,7 +30,9 @@ import vm from 'node:vm';
 import { parseFragment } from 'parse5';
 import { createHash } from 'node:crypto';
 import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
+import { micromark } from 'micromark';
+import { gfm, gfmHtml } from 'micromark-extension-gfm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -98,6 +107,46 @@ eq('later TH row alone keeps the table as HTML', md('<table><tr><td>First</td></
 eq('page example: release notes table',
   md('<table><thead><tr><th>Option</th><th>Values</th></tr></thead><tbody><tr><td><code>--format</code></td><td>json | yaml<br>default: json</td></tr></tbody></table>'),
   '| Option | Values |\n| --- | --- |\n| `--format` | json \\| yaml<br>default: json |');
+
+// ---------- tool page examples (htm-check) ----------
+const previewSource = readFileSync(join(root, 'src/components/tools/MarkdownPreviewTool.astro'), 'utf8');
+const previewEngine = previewSource.slice(previewSource.indexOf('/* ── engine:start ── */'), previewSource.indexOf('/* ── engine:end ── */'));
+check('Markdown Preview engine found', previewEngine.includes('function renderMarkdown'));
+const renderMarkdown = new Function(previewEngine + '\nreturn renderMarkdown;')();
+const preview = (text) => renderMarkdown(text, { micromark, gfm, gfmHtml });
+const inlineCodes = (text) => [...text.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
+// The library's `after` stops at any `<h2` (en example 1 has <h2> in its input), so the region
+// is cut here at the next htm-check annotation or at an H2 that starts a line.
+function regionAfter(body, index) {
+  const start = body.indexOf('*/}', index) + 3;
+  let rest = body.slice(start);
+  const next = rest.indexOf('{/* htm-check');
+  if (next >= 0) rest = rest.slice(0, next);
+  const masked = rest.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, (m) => m.replace(/[^\n]/g, ' '));
+  const h2 = masked.search(/^(?:##[ \t]|<h2\b)/m);
+  return h2 < 0 ? rest : rest.slice(0, h2);
+}
+function verifyHtm({ spec, body, index, after: libAfter }) {
+  if (!spec || typeof spec.in !== 'string') return 'annotation needs "in"';
+  const after = body === undefined ? libAfter : regionAfter(body, index);
+  if (!after.includes(spec.in)) return 'input HTML is not shown after the annotation';
+  const out = md(spec.in);
+  if (!fencedBlocks(after).some((b) => b.text === out) && !inlineCodes(after).includes(out)) return 'output not shown: ' + JSON.stringify(out);
+  if (spec.bytes !== undefined) {
+    const bytes = Buffer.byteLength(out, 'utf8');
+    if (bytes !== spec.bytes) return `output is ${bytes} bytes, annotation says ${spec.bytes}`;
+    if (!inlineCodes(after).includes(String(bytes))) return 'byte count is not shown as inline code';
+  }
+  const html = preview(out);
+  if (spec.bold !== undefined && html.includes('<strong>') !== spec.bold) return 'preview bold is ' + html.includes('<strong>') + ': ' + html;
+  if (spec.preview !== undefined && !html.includes(spec.preview)) return 'preview lacks ' + JSON.stringify(spec.preview) + ': ' + html;
+  return null;
+}
+const htmAnnotations = [{ tag: 'htm-check', min: 2, verify: verifyHtm }];
+// Positive and negative controls for the verifier.
+check('verifier accepts a shown output', verifyHtm({ spec: { in: '<h1>T</h1>' }, after: '`<h1>T</h1>`\n\n```markdown\n# T\n```\n' }) === null);
+check('verifier rejects a wrong output', verifyHtm({ spec: { in: '<h1>T</h1>' }, after: '`<h1>T</h1>`\n\n```markdown\n## T\n```\n' }) !== null);
+check('verifier rejects a wrong bold claim', verifyHtm({ spec: { in: '<p><strong>a</strong></p>', bold: false }, after: '<p><strong>a</strong></p> `**a**`' }) !== null);
 
 // ---------- real complete page lifecycle + actual shared shortcut ----------
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
@@ -282,7 +331,7 @@ for(const lang of ['en','zh','ja','ko']){
   const front=content.match(/^---\n([\s\S]*?)\n---/)[1],data=require('js-yaml').load(front);
   check(lang+' v2 four steps before FAQ',data.steps.length===4 && front.indexOf('steps:')<front.indexOf('faqItems:'));
   check(lang+' v2 step bounds',data.steps.every(x=>[...x].length<=280) && data.steps.reduce((n,x)=>n+[...x].length,0)<=1200);
-  eq(lang+' MDX content contract', contractProblems('html-to-markdown', lang), '');
+  eq(lang+' MDX content contract and htm-check examples', contractProblems('html-to-markdown', lang, { annotations: htmAnnotations }), '');
   check(lang+' v2 Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(content));
 }
 const {transform}=await import(require.resolve('@astrojs/compiler',{paths:[require.resolve('astro')]}));
