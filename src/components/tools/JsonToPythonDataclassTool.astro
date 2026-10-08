@@ -470,11 +470,11 @@ const L = STRINGS[lang];
       // with a default would hide it), not starting with "__" (mangled in a class body), and for
       // Pydantic not starting with "_" (private attribute) or naming a BaseModel attribute. Other
       // keys get a name from their identifier characters with "_" added until it is free.
-      function pyFieldNames(fields, mode) {
+      function pyFieldNames(fields, mode, classNames) {
         var used = Object.create(null), names = [];
         function usable(n) {
           return /^[\p{ID_Start}_]\p{ID_Continue}*$/u.test(n) && n === n.normalize('NFKC') &&
-            RESERVED_NAMES.indexOf(n) === -1 && !/^__/.test(n) &&
+            RESERVED_NAMES.indexOf(n) === -1 && !/^__/.test(n) && !(classNames && classNames[n]) &&
             !(mode === 'pydantic' && (/^_/.test(n) || BASEMODEL_ATTRS.indexOf(n) !== -1));
         }
         for (var i = 0; i < fields.length; i++) if (usable(fields[i].key)) used[fields[i].key] = true;
@@ -494,9 +494,9 @@ const L = STRINGS[lang];
         return names;
       }
 
-      function renderClass(name, fields, mode) {
+      function renderClass(name, fields, mode, classNames) {
         if (!fields) return '';
-        var names = pyFieldNames(fields, mode);
+        var names = pyFieldNames(fields, mode, classNames);
         var entries = fields.map(function (f, i) { return { f: f, name: names[i] }; });
         var ordered = entries.filter(function (e) { return !e.f.optional; }).concat(entries.filter(function (e) { return e.f.optional; }));
 
@@ -618,6 +618,10 @@ const L = STRINGS[lang];
 
       function renderAll(classes, mode, alias) {
         var imp = {};
+        // Field names must not take a generated class or alias name (Pydantic would read the field).
+        var classNames = Object.create(null);
+        Object.keys(classes).forEach(function (n) { classNames[n] = true; });
+        if (alias) classNames[alias.name] = true;
 
         // Re-scan classes to collect imports (already set during build, but
         // we reference the global imp object from buildClass/merge calls,
@@ -632,7 +636,7 @@ const L = STRINGS[lang];
         if (needDataclass) importLines.push('from dataclasses import dataclass');
         if (needPydantic) {
           var needField = Object.keys(classes).some(function (n) {
-            var fs = classes[n] || [], ns = pyFieldNames(fs, 'pydantic');
+            var fs = classes[n] || [], ns = pyFieldNames(fs, 'pydantic', classNames);
             return fs.some(function (f, i) { return ns[i] !== f.key; });
           });
           importLines.push('from pydantic import BaseModel' + (needField ? ', Field' : ''));
@@ -674,7 +678,7 @@ const L = STRINGS[lang];
         var orderedNames = topoSort(classes);
         var blocks = [];
         for (var i = 0; i < orderedNames.length; i++) {
-          var rendered = renderClass(orderedNames[i], classes[orderedNames[i]], mode);
+          var rendered = renderClass(orderedNames[i], classes[orderedNames[i]], mode, classNames);
           if (rendered) blocks.push(rendered);
         }
 

@@ -138,6 +138,17 @@ const KW_SAMPLES = [
 eq('field names: Pydantic aliases the keyword key', /^    class_\w*: int = Field\(alias="class"\)$/m.test(gen(KW_SAMPLES, 'pydantic')), true);
 eq('field names: dataclass notes the JSON key', /^    class_\w*: int  # JSON key: "class"$/m.test(gen(KW_SAMPLES, 'dataclass')), true);
 eq('field names: TypedDict uses the functional syntax', gen(KW_SAMPLES, 'typeddict').includes('Root = TypedDict("Root", {\n    "class": int,'), true);
+// Review part3: a renamed field never takes the name of a generated class (Pydantic reads the class
+// name as the field), and Pydantic keys in the "model_" namespace are renamed with an alias.
+const CLASH_SAMPLES = [{ '-Meta': { a: 1 }, other: { b: 2 } }, { $Ref: { a: 1 } }, { '@Type': { a: 1 } }, { _Meta: 1, meta: { a: 1 } }, { '2fa': { a: 1 }, b: [{ '2fa': null }] }];
+const MODEL_NS = { model_validate_x: 1, model_dump_y: 2, model_name: 3, ok: 4 };
+for (const [i, v] of CLASH_SAMPLES.entries()) for (const mode of ['dataclass', 'pydantic', 'typeddict']) {
+  const code = gen(v, mode);
+  const classes = new Set([...code.matchAll(/^(?:class ([^\s(:]+)|(\S+) = TypedDict\()/gmu)].map((m) => m[1] || m[2]));
+  const fieldNames = [...code.matchAll(/^    ([^\s:"]+): /gmu)].map((m) => m[1]);
+  eq('field/class clash ' + (i + 1) + ' (' + mode + '): no field is named like a class', fieldNames.filter((n) => classes.has(n)), []);
+}
+// MODELNS eq('model_ namespace: Pydantic renames model_ keys with an alias', ['model_validate_x', 'model_dump_y', 'model_name'].every((k) => new RegExp('= Field\\(alias="' + k + '"\\)$', 'm').test(gen(MODEL_NS, 'pydantic'))), true);
 eq('field names: plain keys keep the class syntax', gen({ a: 1 }, 'typeddict').includes('class Root(TypedDict):'), true);
 
 // B2: values beside the objects of a root array stay in a <root>Array alias (List[Union[...]]).
@@ -209,8 +220,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 20824);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '67f7e2bd0ecd0000fb69c939c896735d584030257d6db9416766186b93e67140');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 21194);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '1db12cffe622e18008e7da5cf05f6cdec6be598cced1dc920e6bcedb22ded883');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -428,7 +439,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "d4fb5e364de684195d1e7208e69c83f9793aea25bf0528388a2696ab1e740ea0"
+  "scriptSHA": "fcb3e0cb9fe0fc16cceaeb11afd2cd20f9f09599b1181df34cc1c3ed83401d65"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -549,6 +560,11 @@ else {
   {
     const r = runPy(pydBin, E.generatePython(KW_SAMPLES, 'Root', 'pydantic').code + `\nimport json\ndata = json.loads(${JSON.stringify(JSON.stringify(KW_SAMPLES))})\nrs = [Root.model_validate(d) for d in data]\nprint('ok' if [r.model_dump(by_alias=True, exclude_unset=True) for r in rs] == data else [r.model_dump(by_alias=True, exclude_unset=True) for r in rs])`);
     eq('field names: Pydantic output parses every key through its alias and dumps the same JSON', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
+  }
+  for (const [i, v] of [...CLASH_SAMPLES, KW_SAMPLES[0]].entries()) {
+    // Warnings are errors here: the model must build without a protected-namespace or shadowing warning.
+    const r = runPy(pydBin, 'import warnings\nwarnings.simplefilter("error")\n' + E.generatePython(v, 'Root', 'pydantic').code + `\nimport json\ndata = json.loads(${JSON.stringify(JSON.stringify(v))})\nr = Root.model_validate(data)\nprint('ok' if r.model_dump(by_alias=True, exclude_unset=True) == data else r.model_dump(by_alias=True, exclude_unset=True))`);
+    eq('field names: Pydantic sample ' + (i + 1) + ' builds without warnings and reads back', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
   }
   for (const [i, v] of TOPO_CASES.entries()) {
     const r = runPy(pydBin, E.generatePython(v, 'Root', 'pydantic').code + `\nimport json\nRoot.model_validate(json.loads(${JSON.stringify(JSON.stringify(v))}))\nprint('ok')`);
