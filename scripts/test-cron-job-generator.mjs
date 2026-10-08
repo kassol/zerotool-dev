@@ -491,6 +491,41 @@ for(const lang of ['en','zh','ja','ko']){
   }
   process.env.TZ = savedTz;
 }
+// Every Markdown table in the four MDX files is rendered as one table with the same number of
+// body rows (a blank line after the separator row used to end the table, and the rows became a
+// paragraph). Reads the built pages: run after `npm run build`.
+{
+  const { existsSync } = await import('node:fs');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const html = join(root, 'dist', ...(lang === 'en' ? [] : [lang]), 'tools', 'cron-job-generator', 'index.html');
+    if (!existsSync(html)) { assert('built page exists for the table check: ' + lang + ' (run npm run build first)', false, true); continue; }
+    const page = readFileSync(html, 'utf8');
+    const text = readFileSync(join(root, 'src/content/tools/cron-job-generator', lang + '.mdx'), 'utf8');
+    const body = text.slice(text.indexOf('\n---\n', 4) + 5);
+    let heading = '', tables = [];
+    const lines = body.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const h = /^##\s+(.+?)\s*$/.exec(lines[i]) || /^<h2>(.+?)<\/h2>$/.exec(lines[i]);
+      if (h) heading = h[1];
+      if (/^\|/.test(lines[i]) && /^\|[-| :]+\|$/.test(lines[i + 1] || '')) {
+        let rows = 0, j = i + 2;
+        // count data rows up to the first line that is not a table row (blank lines included)
+        for (; j < lines.length && lines[j].trim() !== ''; j++) if (/^\|/.test(lines[j])) rows++;
+        // rows written after a blank line are the defect this check catches
+        let stray = 0;
+        for (let k = j; k < lines.length && !/^##\s|^<h2>/.test(lines[k]); k++) if (/^\| `/.test(lines[k])) stray++;
+        tables.push({ heading, rows: rows + stray });
+        i = j;
+      }
+    }
+    for (const t of tables) {
+      const at = page.indexOf('>' + t.heading + '</h2>');
+      const table = at < 0 ? '' : (page.slice(at).match(/<table[\s\S]*?<\/table>/) || [''])[0];
+      const rendered = (table.match(/<tbody>[\s\S]*?<\/tbody>/) || [''])[0].split('<tr').length - 1;
+      assert('built ' + lang + ' table under "' + t.heading + '" has all ' + t.rows + ' rows', rendered, t.rows);
+    }
+  }
+}
 // The four MDX files compile (an annotation that contains */ ends the MDX comment early).
 {
   const mdx = await import(requireFromRoot.resolve('@mdx-js/mdx'));
