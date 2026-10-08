@@ -526,7 +526,60 @@ v2Check('compiled module retains all HTML tip slots', v2TipKeys.every(k => v2Com
 if (process.env.ZT_B14_REGISTRATION_PENDING === '1') console.log('PENDING_ROOT v2 generate registration');
 else v2Check('generate kind is registered', /['"]nano-id-generator['"]\s*:\s*['"]generate['"]/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 
+// Four-language tool pages (S2): MDX contract and worked examples recomputed with the engine.
+// IDs are random, so a note checks only what the settings decide (S2-PLAN §2.3):
+//   {/* nid-check: {"alphabet":"url-safe|alphanumeric|numbers|hex","size":21,"p":0.01} */}
+//   {/* nid-check: {"custom":"…","size":8,"p":0.01,"symbols":true} */}
+// The alphabet is the page's PRESETS string or the engine's alphabetSymbols(custom). Code after
+// the note must show `${size} × log2(${n}) = ${bits to 1 decimal}`; with "p", `≈ ${count}` for
+// the birthday bound sqrt(2 · n^size · ln(1 / (1 − p))) (below 1,000 rounded to an integer, below
+// 10^6 to 3 significant digits with thousands separators, else `M × 10^E` with 1 decimal); with
+// "symbols", the symbols joined by spaces. A custom alphabet with fewer than 2 symbols must show
+// the page's own error label instead.
+import { toolMdxContract, fencedBlocks } from './lib/tool-mdx-contract.mjs';
+let s2Pass = 0, s2Fail = 0;
+function s2Check(name, ok) { if (ok) s2Pass++; else { s2Fail++; console.log('FAIL S2 ' + name); } }
+const codeTexts = (after) => [
+  ...fencedBlocks(after).map((b) => b.text),
+  ...[...after.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]),
+  ...[...after.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)].map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')),
+];
+const missing = (after, list) => { const gone = list.filter((t) => !codeTexts(after).some((c) => c.includes(t))); return gone.length ? 'not shown in code after the annotation: ' + gone.map((t) => JSON.stringify(t)).join(', ') : null; };
+const presets = vm.runInNewContext('(' + source.match(/var PRESETS = (\{[\s\S]*?\});/)[1] + ')');
+function countText(x) {
+  if (x < 1000) return String(Math.round(x));
+  if (x < 1e6) { const step = 10 ** (Math.floor(Math.log10(x)) - 2); return (Math.round(x / step) * step).toLocaleString('en-US'); }
+  const [m, e] = x.toExponential(1).split('e');
+  return `${m} × 10^${Number(e)}`;
+}
+const s2Contract = toolMdxContract('nano-id-generator', {
+  annotations: [{ tag: 'nid-check', min: 2, verify: ({ spec, after, lang }) => {
+    const symbols = spec.custom !== undefined ? E.alphabetSymbols(spec.custom) : [...(presets[spec.alphabet] ?? '')];
+    if (spec.custom === undefined && !presets[spec.alphabet]) return 'unknown preset ' + spec.alphabet;
+    if (symbols.length < 2) return missing(after, [lifecycleLabels(lang).customAlphabetTooShort]);
+    const n = symbols.length;
+    const want = [`${spec.size} × log2(${n}) = ${(spec.size * Math.log2(n)).toFixed(1)}`];
+    if (spec.p) want.push('≈ ' + countText(Math.sqrt(2 * n ** spec.size * Math.log(1 / (1 - spec.p)))));
+    if (spec.symbols) want.push(symbols.join(' '));
+    if (spec.custom !== undefined) want.push(spec.custom);
+    return missing(after, want);
+  } }],
+});
+for (const r of s2Contract.results) s2Check(r.message, r.ok);
+s2Check('preset sizes are 64 / 62 / 10 / 16', ['url-safe', 'alphanumeric', 'numbers', 'hex'].map((k) => new Set(presets[k]).size).join() === '64,62,10,16');
+// The English page describes how the bundled Nano ID 3.3.11 picks preset symbols; check the
+// statement against the vendor file the page loads (not against the upstream README).
+{
+  const vendor = readFileSync(join(root, 'public/vendor/nanoid.min.js'), 'utf8');
+  const maskOf = (n) => (2 << (Math.log(n - 1) / Math.LN2)) - 1;
+  s2Check('vendor is Nano ID 3.3.11 with the masking customRandom and 6-bit nanoid()', vendor.includes('nanoid 3.3.11') && vendor.includes('var mask = (2 << (Math.log(alphabet.length - 1) / Math.LN2)) - 1;') && vendor.includes("alphabet[bytes[j] & mask] || ''") && vendor.includes('byte &= 63;'));
+  s2Check('vendor masks: 63 for 62 symbols, 15 for 10 and 16', [62, 10, 16].map(maskOf).join() === '63,15,15');
+  s2Check('English page states the masks and does not cite the README for them', page.includes('(63 for 62 symbols, 15 for 10 and 16 symbols)') && !/Nano ID README/.test(page));
+}
+s2Check('count format', [countText(141.77), countText(148663.8), countText(1.3076605e18)].join('|') === '142|149,000|1.3 × 10^18');
+
 process.removeListener('unhandledRejection', onUnhandled);
+console.log(`S2 CONTENT ${s2Pass} passed, ${s2Fail} failed`);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
-console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
-process.exitCode = failures + lifecycleFail ? 1 : 0;
+console.log(`FINAL ${passes + lifecyclePass + s2Pass} passed, ${failures + lifecycleFail + s2Fail} failed`);
+process.exitCode = failures + lifecycleFail + s2Fail ? 1 : 0;
