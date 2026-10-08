@@ -593,6 +593,8 @@ for(const lang of ['en','zh','ja','ko']) {
   const text=readFileSync(join(root,'src/content/tools/sql-formatter',lang+'.mdx'),'utf8');
   const parts=text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/),front=requireRoot('js-yaml').load(parts[1]),body=parts[2];
   same(lang+' six bounded plain steps',front.steps.length===6&&front.steps.every(x=>typeof x==='string'&&[...x].length<=280)&&front.steps.reduce((n,x)=>n+[...x].length,0)<=1200,true);
+  // Minify keeps # and --x comments and ends the line after them (review S2-4 part 3, must-fix 1).
+  same(lang+' Minify tip and step mention the kept # / --x comments',[S.tips.minify.includes('#')&&S.tips.minify.includes('--x'),front.steps[3].includes('#')&&front.steps[3].includes('--x')],[true,true]);
   same(lang+' steps before FAQ',parts[1].indexOf('steps:')<parts[1].indexOf('faqItems:'),true);
   same(lang+' MDX content contract', contractProblems('sql-formatter', lang), '');
   // Worked examples are recomputed with the engine: a block after an unformatted input must be its
