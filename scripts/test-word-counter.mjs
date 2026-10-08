@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/WordCounterTool.astro'), 'utf8');
@@ -35,7 +35,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const E = new Function(block + '\nreturn { stats, formatTime };')();
+const E = new Function(block + "\nreturn { stats, formatTime, readingMinutes: typeof readingMinutes === 'function' ? readingMinutes : null, speakingMinutes: typeof speakingMinutes === 'function' ? speakingMinutes : null };")();
 
 let failures = 0;
 let passes = 0;
@@ -82,7 +82,67 @@ eq('empty', sentences(''), 0);
   eq('words split on whitespace only', s.words, 4);
 }
 eq('ko words = eojeol', E.stats('안녕하세요. 반갑습니다. 좋은 하루예요.').words, 4);
-eq('zh paragraph without spaces is 1 word', E.stats('今天天气很好。明天会下雨！').words, 1);
+// Word count (approved engine change, 2026-10-09): every Han, Hiragana and Katakana character
+// (half-width katakana included) is one word; Hangul and every other script are split on
+// whitespace; mixed text adds the two. Before the fix a Chinese or Japanese paragraph without
+// spaces counted as 1 word.
+const words = (t) => E.stats(t).words;
+eq('zh: each Han character is a word', words('今天天气很好。明天会下雨！'), 11);
+eq('ja: kana and kanji are words, punctuation is not', words('今日は晴れです。'), 7);
+eq('ja: the prolonged sound mark is part of katakana', words('ユーザー名'), 5);
+eq('ja: half-width katakana, voiced marks attach to the letter', words('ｶﾞｲﾄﾞ ガイド'), 6);
+eq('ja: 々 and 〆 are counted', words('時々〆切'), 4);
+eq('ja: astral kanji counts once', words('𠮷野家'), 3);
+eq('mixed: Han next to Latin in one token', words('用户ID 列表'), 5);
+eq('mixed: Latin, digit and Han with full-width spaces', words('使用　Vue 3　开发小程序'), 9);
+eq('mixed: Han between Latin letters splits them', words('A中B'), 3);
+eq('mixed: Hangul word plus kanji', words('한국어와 日本語'), 4);
+eq('emoji next to Han adds no word', words('好吃😋'), 2);
+eq('ko: Hangul is split on whitespace only', words('저는 꼼꼼한 사람입니다.'), 3);
+eq('ko: Hangul with an attached Latin word stays one word', words('회원ID 확인'), 2);
+// Tokens of punctuation only are not words, also when whitespace separates them (review
+// s2-7 part 3, 2026-10-09; before: 'a — b' was 3 and '你好 ， 世界 ！' was 6).
+eq('punctuation-only token: em dash', words('a — b'), 2);
+eq('punctuation-only token: hyphen', words('a - b'), 2);
+eq('punctuation-only token: full-width marks between Han', words('你好 ， 世界 ！'), 4);
+eq('punctuation-only tokens in a list', words('1, 2, 3 — 4... ! ?'), 4);
+eq('punctuation-only token: ellipsis and quotes', words('Well … "yes"'), 2);
+eq('a symbol is still a word', words('a + b'), 3);
+eq('a standalone emoji is still a word', words('I love it 👨‍👩‍👧'), 4);
+eq('punctuation attached to a word is part of it', words('Hello, world!'), 2);
+eq('en unchanged: hyphenated, decimal, URL', words('well-being 3.14 https://example.com/a'), 3);
+eq('whitespace only has no words', words(' \u3000\n '), 0);
+// Reading / speaking minutes (Brysbaert 2019, Table 5, silent / aloud): English and other words
+// 236 / 190 per minute (changed 2026-10-09 from 200 / 130 so every script uses the same table); Korean
+// words 226 / 133 (Brysbaert 2019, Table 5); Chinese characters 390 / 228 per minute (Brysbaert
+// 2019: 260 / 152 wpm with 1.5 characters per word). Text with any kana is Japanese: Table 5 has
+// no Japanese row, so its characters use the English rate, 236 / 190 per minute, as words.
+check('readingMinutes is exported', typeof E.readingMinutes === 'function');
+check('speakingMinutes is exported', typeof E.speakingMinutes === 'function');
+if (E.readingMinutes && E.speakingMinutes) {
+  const t = (fn, text) => E.formatTime(fn(E.stats(text)));
+  eq('zh 390 characters read in 1 min', t(E.readingMinutes, '字'.repeat(390)), '1 min');
+  eq('zh 391 characters read in 2 min', t(E.readingMinutes, '字'.repeat(391)), '2 min');
+  eq('zh 228 characters spoken in 1 min', t(E.speakingMinutes, '字'.repeat(228)), '1 min');
+  eq('zh 229 characters spoken in 2 min', t(E.speakingMinutes, '字'.repeat(229)), '2 min');
+  eq('ja 236 characters read in 1 min', t(E.readingMinutes, 'あ'.repeat(236)), '1 min');
+  eq('ja 237 characters read in 2 min', t(E.readingMinutes, 'あ'.repeat(237)), '2 min');
+  eq('ja kanji in a text with kana use the Japanese rate', t(E.readingMinutes, '字'.repeat(235) + 'あ'), '1 min');
+  eq('ja 190 characters spoken in 1 min', t(E.speakingMinutes, 'あ'.repeat(190)), '1 min');
+  eq('ja 191 characters spoken in 2 min', t(E.speakingMinutes, 'あ'.repeat(191)), '2 min');
+  eq('ko 226 words read in 1 min', t(E.readingMinutes, Array(226).fill('한글').join(' ')), '1 min');
+  eq('ko 227 words read in 2 min', t(E.readingMinutes, Array(227).fill('한글').join(' ')), '2 min');
+  eq('ko 133 words spoken in 1 min', t(E.speakingMinutes, Array(133).fill('한글').join(' ')), '1 min');
+  eq('ko 134 words spoken in 2 min', t(E.speakingMinutes, Array(134).fill('한글').join(' ')), '2 min');
+  eq('en 1,000 words read in 5 min', t(E.readingMinutes, Array(1000).fill('word').join(' ')), '5 min');
+  eq('en 1,000 words spoken in 6 min', t(E.speakingMinutes, Array(1000).fill('word').join(' ')), '6 min');
+  eq('en 236 words read in 1 min', t(E.readingMinutes, Array(236).fill('word').join(' ')), '1 min');
+  eq('en 237 words read in 2 min', t(E.readingMinutes, Array(237).fill('word').join(' ')), '2 min');
+  eq('en 190 words spoken in 1 min', t(E.speakingMinutes, Array(190).fill('word').join(' ')), '1 min');
+  eq('en 191 words spoken in 2 min', t(E.speakingMinutes, Array(191).fill('word').join(' ')), '2 min');
+  eq('mixed adds the parts: 118 en + 195 zh = 0.5 + 0.5 min', E.readingMinutes(E.stats(Array(118).fill('w').join(' ') + ' ' + '字'.repeat(195))), 1);
+  eq('empty text is 0 minutes', [E.readingMinutes(E.stats('')), E.speakingMinutes(E.stats(''))], [0, 0]);
+}
 eq('characters are UTF-16 code units', E.stats('👍 a').chars, 4);
 eq('characters without whitespace', E.stats('a b\tc\nd　e').charsNoSpaces, 5);
 eq('paragraphs split on blank lines', E.stats('one\n\ntwo\nstill two\n\n\nthree').paragraphs, 3);
@@ -101,15 +161,34 @@ eq('59 minutes', E.formatTime(59), '59 min');
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('      // ── Keyboard shortcuts:'), layout.indexOf('      // ── Copy button visual feedback'));
 check('real shared shortcut block is available', shortcut.includes('window.ztPersist.clear(_slug)'));
+// Time units are localized (approved engine change, 2026-10-09): the page passes its language's
+// units to formatTime through data-units. Before the fix every language showed "min" / "hr".
+const UNITS = {
+  en: { zero: '0 min', under: '< 1 min', min: '{m} min', hrMin: '{h} hr {m} min' },
+  zh: { zero: '0 分钟', under: '不足 1 分钟', min: '{m} 分钟', hrMin: '{h} 小时 {m} 分钟' },
+  ja: { zero: '0 分', under: '1 分未満', min: '{m} 分', hrMin: '{h} 時間 {m} 分' },
+  ko: { zero: '0분', under: '1분 미만', min: '{m}분', hrMin: '{h}시간 {m}분' },
+};
+const tm = (lang, m) => UNITS[lang].min.replace('{m}', m);
+const pageStrings = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?);\nconst T/)[1] + ')');
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  eq(lang + ' page passes its own time units', pageStrings[lang].units, UNITS[lang]);
+  eq(lang + ' formatTime 0', E.formatTime(0, UNITS[lang]), UNITS[lang].zero);
+  eq(lang + ' formatTime under a minute', E.formatTime(0.4, UNITS[lang]), UNITS[lang].under);
+  eq(lang + ' formatTime 5 minutes', E.formatTime(5, UNITS[lang]), tm(lang, 5));
+  eq(lang + ' formatTime 90.2 minutes', E.formatTime(90.2, UNITS[lang]), UNITS[lang].hrMin.replace('{h}', 1).replace('{m}', 31));
+}
+check('markup passes the units to the script', /class="wc-wrap" data-empty="true" data-units=\{JSON\.stringify\(T\.units\)\}/.test(source));
+check('markup starts both times at the localized zero', (source.match(/>\{T\.units\.zero\}</g) || []).length === 2);
 function page(lang, sharedFirst) {
   const nodes = new Map(), listeners = [], clears = [], tracks = [];
   for (const [, id] of source.matchAll(/id="(wc-[^"]+)"/g)) {
-    let text = id.includes('time') ? '0 min' : '0';
+    let text = id.includes('time') ? pageStrings[lang].units.zero : '0';
     nodes.set(id, { id, value: '', handlers: {}, get textContent() { return text; }, set textContent(v) { text = String(v); },
       addEventListener(type, fn) { this.handlers[type] = fn; }, focus() { document.activeElement = this; } });
   }
   let empty = 'true';
-  const widget = { dataset: { get empty() { return empty; }, set empty(value) { empty = value; if (value === 'true' && document.activeElement?.id === 'wc-tip-chars') document.activeElement = {}; } }, contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [nodes.get('wc-input')] };
+  const widget = { dataset: { units: JSON.stringify(pageStrings[lang].units), get empty() { return empty; }, set empty(value) { empty = value; if (value === 'true' && document.activeElement?.id === 'wc-tip-chars') document.activeElement = {}; } }, contains: el => [...nodes.values()].includes(el), querySelectorAll: () => [nodes.get('wc-input')] };
   const document = { documentElement: { lang }, activeElement: nodes.get('wc-input'), getElementById: id => nodes.get(id),
     querySelector: s => ['.tool-widget', '.wc-wrap'].includes(s) ? widget : null, querySelectorAll: () => [], addEventListener: (type, fn) => { if (type === 'keydown') listeners.push(fn); } };
   const context = vm.createContext({ document, Intl, _slug: 'word-counter', window: { trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) } } });
@@ -118,27 +197,42 @@ function page(lang, sharedFirst) {
   if (!sharedFirst) vm.runInContext(shortcut, context);
   return { nodes, clears, tracks, widget,
     input(text) { const el = nodes.get('wc-input'); el.value = text; el.handlers.input.call(el); },
+    change() { const el = nodes.get('wc-input'); el.handlers.change?.call(el); },
     key(key, meta = false, inside = true, modifier = true, focusId = 'wc-input') { document.activeElement = inside ? nodes.get(focusId) : {}; let prevented = false; const e = { key, ctrlKey: modifier && !meta, metaKey: modifier && meta, preventDefault() { prevented = true; } }; for (const fn of listeners) fn(e); return prevented; },
     stats() { return ['chars', 'chars-no-spaces', 'words', 'sentences', 'paragraphs', 'read-time', 'speak-time'].map(id => nodes.get('wc-' + id).textContent); }
   };
 }
 for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, true]) {
   const h = page(lang, sharedFirst), prefix = lang + '/sharedFirst=' + sharedFirst + ': ';
-  h.input('One two.'); eq(prefix + 'real full-page statistics', h.stats(), ['8', '7', '2', '1', '1', '< 1 min', '< 1 min']);
+  const U = UNITS[lang];
+  h.input('One two.'); eq(prefix + 'real full-page statistics', h.stats(), ['8', '7', '2', '1', '1', U.under, U.under]);
   for (const meta of [false, true]) for (const key of ['l', 'L']) {
     const before = h.stats();
     check(prefix + 'outside shortcut is inert', !h.key(key, meta, false)); eq(prefix + 'outside retains statistics', h.stats(), before);
     check(prefix + 'unmodified key is inert', !h.key(key, meta, true, false)); eq(prefix + 'unmodified retains statistics', h.stats(), before);
     const n = h.clears.length;
     check(prefix + key + '/' + meta + ' clears the tool', h.key(key, meta));
-    eq(prefix + 'all seven statistics reset with input', [h.nodes.get('wc-input').value, h.stats()], ['', ['0', '0', '0', '0', '0', '0 min', '0 min']]);
+    eq(prefix + 'all seven statistics reset with input', [h.nodes.get('wc-input').value, h.stats()], ['', ['0', '0', '0', '0', '0', U.zero, U.zero]]);
     eq(prefix + 'shared persistence clear runs once', h.clears.slice(n), ['word-counter']);
-    h.input('One two.'); eq(prefix + 'new input recovers', h.stats(), ['8', '7', '2', '1', '1', '< 1 min', '< 1 min']);
+    h.input('One two.'); eq(prefix + 'new input recovers', h.stats(), ['8', '7', '2', '1', '1', U.under, U.under]);
   }
   const beforeTipClear = h.clears.length;
   h.key('l', false, true, true, 'wc-tip-chars');
   eq(prefix + 'clearing from a statistic tip preserves shared persistence cleanup', h.clears.slice(beforeTipClear), ['word-counter']);
-  h.input(''); eq(prefix + 'ordinary empty input resets statistics', h.stats(), ['0', '0', '0', '0', '0', '0 min', '0 min']);
+  h.input(''); eq(prefix + 'ordinary empty input resets statistics', h.stats(), ['0', '0', '0', '0', '0', U.zero, U.zero]);
+}
+
+// ---------- analytics: one event per committed change, not per keystroke ----------
+// Before the fix, update() sent trackTool('word_counter', 'count') on every input event, so
+// typing "hello" sent 5 events. The event is now sent from the textarea change event (focus
+// leaves after an edit) and only when the input is not empty.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const h = page(lang, false), name = lang + ' analytics: ';
+  for (const ch of ['h', 'he', 'hel', 'hell', 'hello']) h.input(ch);
+  eq(name + 'typing sends no event', h.tracks.length, 0);
+  h.change(); eq(name + 'change after an edit sends one count event', h.tracks, [['word_counter', 'count']]);
+  h.input(''); h.change(); eq(name + 'change to empty input sends no event', h.tracks.length, 1);
+  h.input('again'); h.key('l'); eq(name + 'Ctrl+L clear sends no event', h.tracks.length, 1);
 }
 
 // ---------- v2 page layout ----------
@@ -148,8 +242,8 @@ const strings = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = source.split('<style>')[1].split('</style>')[0];
 const script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
-eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [1683, 'ceed0fc51136f9b4b92c36f42207404f9f0554369f3d15712413735d4b1335f1']);
-check('v2 direct flex root', /^<div class="wc-wrap" data-empty="true">/.test(markup) && /\.wc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
+eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [3877, '2f733331d54651d1401203c3f34c2ec294a089b5ff665f61cf23d3097e761f42']); // engine changed with approval 2026-10-09 (word count per script, Table 5 reading rates, localized time units)
+check('v2 direct flex root', /^<div class="wc-wrap" data-empty="true" data-units=\{JSON\.stringify\(T\.units\)\}>/.test(markup) && /\.wc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
 check('v2 registered analyze', /'word-counter':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 check('v2 only actual automatic counting controls', !/<button|btn-primary|btn-copy|download/.test(markup));
 check('v2 runtime language replacement removed', !/data-i18n/.test(source) && !/STRINGS|tips|pageLang/.test(script));
@@ -174,13 +268,46 @@ for (const lang of ['en','zh','ja','ko']) {
   eq(lang + ' MDX content contract', contractProblems('word-counter', lang), '');
   const h = page(lang, false);
   eq(lang + ' v2 initial state is empty', h.widget.dataset.empty, 'true');
-  h.input(' \t\n'); eq(lang + ' v2 whitespace has meaningful character counts', [h.widget.dataset.empty, h.stats()], ['false', ['3','0','0','0','0','0 min','0 min']]);
-  h.input('👍 a'); eq(lang + ' v2 unicode uses the actual engine', h.stats(), ['4','3','2','1','1','< 1 min','< 1 min']);
+  h.input(' \t\n'); eq(lang + ' v2 whitespace has meaningful character counts', [h.widget.dataset.empty, h.stats()], ['false', ['3','0','0','0','0',UNITS[lang].zero,UNITS[lang].zero]]);
+  h.input('👍 a'); eq(lang + ' v2 unicode uses the actual engine', h.stats(), ['4','3','2','1','1',UNITS[lang].under,UNITS[lang].under]);
   const text = Array.from({ length: 1200 }, () => 'Hello world.').join('\n');
-  h.input(text); eq(lang + ' v2 long content keeps every count and minute', h.stats(), ['15599','13200','2400','1200','1','12 min','19 min']);
+  h.input(text); eq(lang + ' v2 long content keeps every count and minute', h.stats(), ['15599','13200','2400','1200','1',tm(lang, 11),tm(lang, 13)]);
   eq(lang + ' v2 long input is preserved', h.nodes.get('wc-input').value, text);
   h.key('l'); eq(lang + ' v2 keyboard clear restores empty layout', h.widget.dataset.empty, 'true');
 }
 console.log('v2 page layout: ' + (passes - v2Start) + ' passed, ' + failures + ' total failures');
+
+// ---------- worked examples on the tool pages (S2-7, 2026-10-08) ----------
+// Annotation {/* wc-check: {"show":["characters","words"]} */} on src/content/tools/word-counter/
+// {lang}.mdx: the first code block after the annotation is the input (or "input" in the JSON
+// when the text cannot be shown as typed, such as decomposed Hangul), and the next code block
+// must be exactly one "Label: value" line per listed stat, with the page's own labels and the
+// values that the real page script shows for that input. "show" defaults to all seven stats.
+{
+  const before = passes, beforeFailures = failures;
+  const STATS = ['characters', 'charsNoSpaces', 'words', 'sentences', 'paragraphs', 'readingTime', 'speakingTime'];
+  const verify = ({ spec, after, lang }) => {
+    const show = spec?.show ?? STATS;
+    if (!Array.isArray(show) || !show.length || show.some((k) => !STATS.includes(k))) return 'bad "show" list ' + JSON.stringify(show);
+    const blocks = fencedBlocks(after).map((b) => b.text);
+    const given = typeof spec?.input === 'string';
+    const input = given ? spec.input : blocks[0];
+    const shown = given ? blocks[0] : blocks[1];
+    if (input === undefined) return 'no input block';
+    if (shown === undefined) return 'no output block';
+    const h = page(lang, false);
+    h.input(input);
+    const values = h.stats();
+    const expected = show.map((k) => strings[lang][k] + ': ' + values[STATS.indexOf(k)]).join('\n');
+    return shown === expected ? null : 'page gives ' + JSON.stringify(expected) + ', MDX shows ' + JSON.stringify(shown);
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' worked examples match the page script', contractProblems('word-counter', lang, { annotations: [{ tag: 'wc-check', min: 2, verify }] }), '');
+  }
+  check('worked example check catches a wrong count', verify({ spec: { show: ['words'] }, after: '\n```text\none two\n```\n\n```text\nWords: 3\n```\n', lang: 'en' }) !== null);
+  check('worked example check accepts the page count', verify({ spec: { show: ['words', 'readingTime'] }, after: '\n```text\none two\n```\n\n```text\nWords: 2\nReading Time: < 1 min\n```\n', lang: 'en' }) === null);
+  check('worked example check reads "input" from the annotation', verify({ spec: { input: 'a\u3000b', show: ['charsNoSpaces'] }, after: '\n```text\nCharacters (no spaces): 2\n```\n', lang: 'en' }) === null);
+  console.log('tool page examples: ' + (passes - before) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
