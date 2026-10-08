@@ -297,9 +297,23 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
     equalLayout(lang+' has JSON → CSV examples',csvPairs.length>0,true);
     equalLayout(lang+' each example input is valid JSON',csvPairs.filter(([a])=>{try{JSON.parse(a.text);return false;}catch{return true;}}).map(([a])=>a.text),[]);
     equalLayout(lang+' each CSV example equals the engine output',csvPairs.filter(([a,b])=>{try{return ![true,false].some(fl=>['off','quote','tab'].some(guard=>conv(JSON.parse(a.text),{flatten:fl,guard}).csv===b.text));}catch{return true;}}).map(([,b])=>b.text),[]);
-    const guardNotes=annotations(body,'jtc-check');
-    equalLayout(lang+' has the formula-guard example marker',guardNotes.length,1);
-    for(const note of guardNotes){const [input,output]=fencedBlocks(note.after);equalLayout(lang+' jtc-check '+JSON.stringify(note.spec)+' equals the engine output',input&&output?conv(JSON.parse(input.text),{guard:note.spec.guard}).csv:null,output?.text);}
+    // {/* jtc-check: {"guard","del","flatten","header","status"} */} (all optional): the first two code blocks after the
+    // marker are the input and its CSV with exactly those options; "status": true also requires the status line
+    // text (rows converted + formula note) to appear after the marker.
+    const notes=annotations(body,'jtc-check');
+    equalLayout(lang+' has at least 2 jtc-check examples',notes.length>=2,true);
+    equalLayout(lang+' has a formula-guard example',notes.some(n=>n.spec?.guard==='quote'||n.spec?.guard==='tab'),true);
+    for(const [i,note] of notes.entries()){
+      const spec=note.spec||{},[input,output]=fencedBlocks(note.after);
+      const res=input&&output?conv(JSON.parse(input.text),{guard:spec.guard,del:spec.del,flatten:spec.flatten,header:spec.header}):null;
+      equalLayout(lang+' jtc-check #'+(i+1)+' '+JSON.stringify(spec)+' equals the engine output',res?.csv,output?.text);
+      if(spec.status){
+        const L=strings[lang],rows=JSON.parse(input.text).length,g=spec.guard||'off';
+        const status=(rows===1?L.msgOneRow:L.msgRows.replace('{n}',String(rows)))+(res.formulaCells?' · '+(g==='off'?L.msgFormulaRisk:L.msgFormulaGuarded).replace('{n}',String(res.formulaCells)):'');
+        equalLayout(lang+' jtc-check #'+(i+1)+' shows the status line '+status,note.after.includes(status),true);
+      }
+    }
+    check(lang+' Limits quote the not-an-array message',body.includes(strings[lang].msgNotArray));
     check(lang+' Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   }
 }
