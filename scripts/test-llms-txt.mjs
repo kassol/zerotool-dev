@@ -104,7 +104,7 @@ const fixture = {
   tools: [
     { slug: 'zeta', category: 'data', translations: tr('Zeta', 'Formats data.') },
     { slug: 'alpha', category: 'data', translations: tr('Alpha', 'Checks data') },
-    { slug: 'net-tool', category: 'api', translations: tr('Net', 'Looks things up.') },
+    { slug: 'net-tool', category: 'web', translations: tr('Net', 'Looks things up.') },
     { slug: 'opt-tool', category: 'text', translations: tr('Opt', 'Converts text.') },
     { slug: 'secret', category: 'security', translations: tr('Secret', 'Handles keys.') },
   ],
@@ -119,7 +119,7 @@ equal('fixture: H1 first', fxLines[0], '# ZeroTool');
 equal('fixture: blockquote from footer.tagline', fxLines[2], '> tagline-en');
 check('fixture: tool count in intro', fx.includes('has 5 free developer tools'));
 check('fixture: tools sorted by slug within a category', fx.indexOf('[Alpha]') < fx.indexOf('[Zeta]'));
-check('fixture: categories in filter order', fx.indexOf('## data-en') < fx.indexOf('## text-en') && fx.indexOf('## text-en') < fx.indexOf('## security-en') && fx.indexOf('## security-en') < fx.indexOf('## api-en'));
+check('fixture: categories in filter order', fx.indexOf('## data-en') < fx.indexOf('## text-en') && fx.indexOf('## text-en') < fx.indexOf('## security-en') && fx.indexOf('## security-en') < fx.indexOf('## web-en'));
 check('fixture: missing period added to description', fx.includes('(https://zerotool.dev/tools/alpha/): Checks data.'));
 check('fixture: network note on the tool line', fx.includes('- [Net](https://zerotool.dev/tools/net-tool/): Looks things up. Network: sends-en.'));
 check('fixture: optional network note on the tool line', fx.includes('Converts text. Network: option-en.'));

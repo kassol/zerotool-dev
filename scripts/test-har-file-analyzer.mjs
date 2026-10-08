@@ -920,8 +920,22 @@ const PAGE_EXAMPLES = {
       addEventListener(t, fn) { (docListeners[t] ||= []).push(fn); }, removeEventListener() {},
       activeElement: null, body: mk('body'), documentElement: mk('html'),
     };
+    const fail = { stringify: false, entry: false };
+    const consoleErrors = [];
+    // fail.entry makes the first entry's request throw on read, as an unexpected engine error
+    // in a slice would; fail.stringify fails the one-piece JSON.stringify of a large export.
+    const trap = (data) => {
+      const e = data && data.log && Array.isArray(data.log.entries) && data.log.entries[0];
+      if (e && typeof e === 'object') {
+        const req = e.request;
+        Object.defineProperty(e, 'request', { enumerable: true, get() { if (fail.entry) throw new TypeError("Cannot read properties of undefined (reading 'url')"); return req; } });
+      }
+      return data;
+    };
+    const pageJSON = { parse: (...a) => trap(JSON.parse(...a)), stringify(...a) { if (fail.stringify) throw new RangeError('Invalid string length'); return JSON.stringify(...a); } };
+    const pageConsole = { log() {}, warn() {}, info() {}, error(...a) { consoleErrors.push(a); } };
     const sandbox = {
-      document, S: STRINGS[lang], pageLang: lang, console, URL, Blob, TextEncoder, TextDecoder, Promise, Date, Math, JSON,
+      document, S: STRINGS[lang], pageLang: lang, console: pageConsole, URL, Blob, structuredClone, TextEncoder, TextDecoder, Promise, Date, Math, JSON: pageJSON,
       TYPE_LABEL: { document: STRINGS[lang].tDocument, fetch: STRINGS[lang].tFetch, js: STRINGS[lang].tJs, css: STRINGS[lang].tCss, img: STRINGS[lang].tImg, font: STRINGS[lang].tFont, media: STRINGS[lang].tMedia, ws: STRINGS[lang].tWs, other: STRINGS[lang].tOther },
       performance: { now: () => performance.now(), measure() {}, mark() {} },
       setTimeout, clearTimeout, requestAnimationFrame: (fn) => setTimeout(fn, 0), cancelAnimationFrame() {},
@@ -933,7 +947,11 @@ const PAGE_EXAMPLES = {
     sandbox.window = sandbox;
     vm.runInContext(scriptMatch[1], vm.createContext(sandbox), { filename: 'HarFileAnalyzerTool.astro' });
     return {
-      get,
+      get, fail, consoleErrors,
+      async status() {
+        for (let k = 0; k < 100 && get('har-status').getAttribute('data-tone') !== 'error'; k++) await new Promise((r) => setTimeout(r, 5));
+        return [get('har-status').textContent, get('har-status').getAttribute('data-tone')];
+      },
       async open(name, text) {
         const file = get('har-file');
         file.files = [{ name, size: Buffer.byteLength(text), text: () => Promise.resolve(text) }];
@@ -960,6 +978,36 @@ const PAGE_EXAMPLES = {
         const [text] = await page.open('html.har', '<!doctype html><html></html>');
         check(lang + ': no English parser message in the status', !/Unexpected|JSON input|token|position/i.test(text) && text === fill(T.errJsonAt, { line: 1, col: 1, reason: fill(T.jsonParse?.unexpectedChar, { ch: '<' }) }), text);
       }
+    }
+    // An exception inside a slice (runJob) or in the one-piece export used to put the raw
+    // JavaScript message ("Cannot read properties of undefined (reading 'url')") in the
+    // status on every page; the raw export left the status at "Exporting…".
+    const sample = JSON.stringify(E.sampleHar());
+    const english = /Cannot read|Invalid string length|undefined/;
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      const T = STRINGS[lang];
+      let page = runPage(lang);
+      page.fail.entry = true;
+      const [loadText, loadTone] = await page.open('broken.har', sample);
+      check(lang + ': slice error while opening is explained in the page language', loadTone === 'error' && loadText === T.errJobLoad && !english.test(loadText), loadText);
+      check(lang + ': the raw error goes to the console', page.consoleErrors.length === 1 && /reading 'url'/.test(String(page.consoleErrors[0].at(-1))));
+      page = runPage(lang);
+      const [okText, okTone] = await page.open('ok.har', sample);
+      check(lang + ': the trap file opens normally', okTone !== 'error', okText);
+      page.fail.stringify = true;
+      page.get('har-export').click();
+      const [exText] = await page.status();
+      check(lang + ': redacted export error is explained', exText === T.errJobExport && !english.test(exText), exText);
+      page.get('har-status').setAttribute('data-tone', '');
+      page.get('har-export-raw').click();
+      const [rawText] = await page.status();
+      check(lang + ': raw export error is explained', rawText === T.errJobExport && !english.test(rawText), rawText);
+      page.fail.stringify = false;
+      page.fail.entry = true;
+      page.get('har-status').setAttribute('data-tone', '');
+      page.get('har-copy-curl').click();
+      const [curlText] = await page.status();
+      check(lang + ': cURL copy error is explained', curlText === T.errJobCurl && !english.test(curlText), curlText);
     }
   }
 }

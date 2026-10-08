@@ -32,6 +32,11 @@ const STRINGS = {
       labelTooLong: 'Label {n} "{label}" has {len} characters. The limit is 63 per label.',
       singleLabel: '"{name}" has only one label. Enter the full name, for example {name}.com.',
       tooLong: 'The name has {len} characters. The limit is 253.',
+      badScheme: 'The "://" at character {pos} does not follow a scheme. Remove that part of the address, or start it with https://.',
+      badPort: 'Port {port} is out of range. Ports go up to 65535; remove the port, it is not needed for a DNS lookup.',
+      numericLast: 'The last label "{label}" is a number, so the address is read as an IPv4 address and is not valid. Check the top-level domain.',
+      badPunycode: 'Label {n} "{label}" starts with "xn--" but is not a valid encoded international name. Enter the name in its own script instead.',
+      otherScheme: '"{scheme}" is not an http or https address, so its host is not converted. Remove "{scheme}" or use https:// instead.',
     },
     netError: 'Network error. Check your connection or try the other resolver.',
     timeout: 'Request timed out after 5s.',
@@ -74,6 +79,11 @@ const STRINGS = {
       labelTooLong: '第 {n} 段「{label}」有 {len} 个字符，每段最多 63 个。',
       singleLabel: '「{name}」只有一段。请输入完整域名，例如 {name}.com。',
       tooLong: '域名共 {len} 个字符，最多 253 个。',
+      badScheme: '第 {pos} 个字符处的「://」前面不是协议名。请删去网址里的这一段，或以 https:// 开头。',
+      badPort: '端口 {port} 超出范围，最大为 65535。查询 DNS 不需要端口，可以删去。',
+      numericLast: '最后一段「{label}」是数字，浏览器把整个地址按 IPv4 地址读取，结果无效。请检查顶级域名。',
+      badPunycode: '第 {n} 段「{label}」以「xn--」开头，但不是有效的国际化域名编码。请直接输入原文字的域名。',
+      otherScheme: '「{scheme}」不是 http 或 https 网址，浏览器不会转换其中的主机名。请删去「{scheme}」或改用 https://。',
     },
     netError: '网络错误。请检查连接或切换解析器。',
     timeout: '请求超过 5 秒已超时。',
@@ -116,6 +126,11 @@ const STRINGS = {
       labelTooLong: '{n} 番目のラベル「{label}」は {len} 文字です。各ラベルは 63 文字以内です。',
       singleLabel: '「{name}」はラベルが 1 つだけです。{name}.com のように完全なドメイン名を入力してください。',
       tooLong: 'ドメイン名が {len} 文字あります。全体で 253 文字以内です。',
+      badScheme: '{pos} 文字目の「://」の前がスキーム名になっていません。アドレスのその部分を削除するか、https:// で始めてください。',
+      badPort: 'ポート {port} は範囲外です（最大 65535）。DNS の照会にポートは不要なので削除してください。',
+      numericLast: '最後のラベル「{label}」が数字のため、アドレス全体が IPv4 アドレスとして読まれ、無効になります。トップレベルドメインを確認してください。',
+      badPunycode: '{n} 番目のラベル「{label}」は「xn--」で始まっていますが、国際化ドメイン名の符号化として無効です。元の文字のまま入力してください。',
+      otherScheme: '「{scheme}」は http / https のアドレスではないため、ホスト名が変換されません。「{scheme}」を削除するか https:// にしてください。',
     },
     netError: 'ネットワークエラー。接続を確認するか別のリゾルバに切り替えてください。',
     timeout: '5 秒でタイムアウトしました。',
@@ -158,6 +173,11 @@ const STRINGS = {
       labelTooLong: '{n}번째 라벨("{label}")은 {len}자입니다. 라벨은 63자 이내여야 합니다.',
       singleLabel: '"{name}"에는 라벨이 하나뿐입니다. {name}.com처럼 전체 도메인을 입력하세요.',
       tooLong: '도메인이 {len}자입니다. 전체 253자 이내여야 합니다.',
+      badScheme: '{pos}번째 문자의 "://" 앞이 스킴 이름이 아닙니다. 주소의 그 부분을 지우거나 https://로 시작하세요.',
+      badPort: '포트 {port}은(는) 범위를 벗어났습니다(최대 65535). DNS 조회에는 포트가 필요 없으니 지우세요.',
+      numericLast: '마지막 라벨 "{label}"이 숫자라서 주소 전체가 IPv4 주소로 읽혀 유효하지 않습니다. 최상위 도메인을 확인하세요.',
+      badPunycode: '{n}번째 라벨("{label}")은 "xn--"로 시작하지만 올바른 국제화 도메인 인코딩이 아닙니다. 원래 문자로 입력하세요.',
+      otherScheme: '"{scheme}"는 http/https 주소가 아니라서 호스트명이 변환되지 않습니다. "{scheme}"를 지우거나 https://를 쓰세요.',
     },
     netError: '네트워크 오류. 연결을 확인하거나 다른 리졸버로 전환해보세요.',
     timeout: '5초 후 타임아웃되었습니다.',
@@ -399,18 +419,26 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       /* ── diagnose:start ── */
       // Runs only after isValidDomain() rejects a name, so it never changes which names are
-      // queried. It returns the first reason the user can fix: no host, a character that is not
-      // allowed (position in code points of the raw input), then the label rules checked on the
-      // ASCII name that would be sent (empty label, hyphen at an edge, 63 per label, two labels,
-      // 253 in total). Null means "no specific reason found".
+      // queried. It returns the first reason the user can fix: "://" without a scheme, no host,
+      // a character that is not allowed (position in code points of the raw input), then the
+      // label rules checked on the ASCII name that would be sent (empty label, hyphen at an edge,
+      // 63 per label, two labels, 253 in total), a numeric last label, a broken "xn--" label,
+      // a port above 65535 and a scheme other than http(s). Null means "no specific reason
+      // found"; a sweep of 40,000 random invalid inputs in test-dns-lookup.mjs finds none.
       function diagnoseDomain(raw) {
         var chars = Array.from(String(raw == null ? '' : raw));
         var a = 0;
         var b = chars.length;
         while (a < b && /\s/.test(chars[a])) a++;
         while (b > a && /\s/.test(chars[b - 1])) b--;
-        var scheme = chars.slice(a, b).join('').match(/^[a-z][a-z0-9+.-]*:\/\//i);
+        var trimmed = chars.slice(a, b).join('');
+        var scheme = trimmed.match(/^[a-z][a-z0-9+.-]*:\/\//i);
         if (scheme) a += scheme[0].length;
+        // normalizeDomain() reads any input that contains "://" as a full URL, so
+        // "example.com/?next=https://x" fails there even though the host is fine.
+        else if (trimmed.indexOf('://') !== -1) {
+          return { code: 'badScheme', pos: a + Array.from(trimmed.slice(0, trimmed.indexOf('://'))).length + 1 };
+        }
         var stop = a;
         while (stop < b && '/?#\\'.indexOf(chars[stop]) === -1) stop++;
         for (var at = stop - 1; at >= a; at--) {
@@ -420,9 +448,14 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var port = host.match(/:\d*$/);
         if (port) host = host.slice(0, host.length - port[0].length);
         if (!host) return { code: 'noHost' };
+        var colon = host.indexOf(':');
+        if (colon !== -1 && host.charAt(0) !== '[') {
+          return { code: 'badChar', ch: ':', cp: 'U+003A', pos: a + Array.from(host.slice(0, colon)).length + 1 };
+        }
 
         var ascii = null;
-        try { ascii = new URL('http://' + host).hostname.replace(/\.$/, '').toLowerCase(); }
+        // The trailing "/" keeps spaces at the end of the host inside it, as in normalizeDomain().
+        try { ascii = new URL('http://' + host + '/').hostname.replace(/\.$/, '').toLowerCase(); }
         catch (e) { ascii = null; }
 
         if (ascii === null || !/^[a-z0-9_.-]*$/.test(ascii)) {
@@ -438,12 +471,14 @@ const { tips: TIPS, ...CLIENT_T } = T;
             var hit = { ch: c, cp: 'U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0'), pos: a + k + 1 };
             if (/^[\x00-\x7f]*$/.test(mapped)) {
               if (!/^[a-z0-9_.-]*$/.test(mapped)) return { code: 'badChar', ch: hit.ch, cp: hit.cp, pos: hit.pos };
+              // NFKC folds "․" (U+2024) to ".", but UTS #46, which the URL parser uses, rejects it.
+              if (c !== mapped && !acceptsChar(c)) return { code: 'badChar', ch: hit.ch, cp: hit.cp, pos: hit.pos };
             } else if (ascii === null && !foreign) {
               foreign = hit;
             }
           }
           if (foreign) return { code: 'idnChar', ch: foreign.ch, cp: foreign.cp, pos: foreign.pos };
-          if (ascii !== null) return null;
+          if (ascii !== null) return portIssue();
           // The parser rejected an all-ASCII name (for example ".0", read as a broken IPv4
           // address); the label rules below still name the problem.
           ascii = folded.replace(/\.$/, '');
@@ -464,8 +499,28 @@ const { tips: TIPS, ...CLIENT_T } = T;
         }
         if (labels.length < 2) return { code: 'singleLabel', name: ascii };
         if (ascii.length > 253) return { code: 'tooLong', len: ascii.length };
-        return null;
+        // The URL Standard reads a host whose last label is a number ("123", "0x1f") as an
+        // IPv4 address; "example.123" with a port, user info or full-width letters fails there.
+        var last = labels[labels.length - 1];
+        if (/^(?:\d+|0x[0-9a-f]*)$/.test(last) && !parses(ascii)) return { code: 'numericLast', label: shortLabel(last) };
+        for (var p = 0; p < labels.length; p++) {
+          if (labels[p].indexOf('xn--') === 0 && !parses(labels[p] + '.com')) return { code: 'badPunycode', n: p + 1, label: shortLabel(labels[p]) };
+        }
+        return portIssue();
+
+        function portIssue() {
+          var digits = port ? port[0].slice(1) : '';
+          if (digits && Number(digits) > 65535) return { code: 'badPort', port: digits };
+          // Other schemes ("dns://", "s3://") keep the host as written: no IDN conversion, and
+          // "\\" is not a separator, so the name that would be sent differs from the one above.
+          if (scheme && !/^(?:https?|ftp|wss?|file):\/\/$/i.test(scheme[0])) return { code: 'otherScheme', scheme: scheme[0] };
+          return null;
+        }
       }
+      function parses(host) {
+        try { new URL('http://' + host); return true; } catch (e) { return false; }
+      }
+      function acceptsChar(c) { return parses('a' + c + 'a.com'); }
       /* ── diagnose:end ── */
 
       // DNS RCODE → friendly label. Only common values; others rendered as "RCODE N".

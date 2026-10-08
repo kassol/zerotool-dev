@@ -11,7 +11,7 @@
 export const SITE = 'https://zerotool.dev';
 export const LLMS_LANGS = ['en', 'zh', 'ja', 'ko'];
 // Same order as the category filter chips (src/components/CategoryFilter.astro).
-export const CATEGORY_ORDER = ['data', 'color', 'encoding', 'text', 'security', 'dev', 'api', 'image'];
+export const CATEGORY_ORDER = ['data', 'code', 'text', 'encoding', 'security', 'web', 'css', 'color', 'image', 'ids', 'devops'];
 export const REPO_URL = 'https://github.com/kassol/zerotool-dev';
 
 // llms-full.txt "How to use" limits.

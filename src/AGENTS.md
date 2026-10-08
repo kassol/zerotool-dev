@@ -42,6 +42,7 @@ src/
 - analyze 类工具的空状态拖放区用共享 `.zt-empty-drop` 填满可用高度；边框、配色、间距与紧凑状态留在各工具组件（HAR、QR Decoder）。
 - generate 类工具的控件栏用共享 `.zt-rail`（flex 列、0.9rem 间距、最小宽高为 0）；面板、滚动与手机顺序留在各工具组件（Color Palette、QR Generator）。
 - 分段控件的容器用 `.zt-segmented`（flex 行、胶囊圆角与内描边）；内边距、背景、按钮或单选语义与选中态留在组件（Color Palette、Sprite Sheet）。
+- `components/ToolDirectory.astro`（首页与 /tools/）→ `ToolSearchBar.astro`（打包脚本，引用 `components/tool-search.mjs` 的分词与排序；卡片的 `data-name` / `data-desc` / `data-alt` 为搜索字段）+ `CategoryFilter.astro`（分类按钮，调用 `window.__ztApply`）；测试 `scripts/test-tool-search.mjs`
 - `BaseLayout.astro` → `i18n/utils.t()`（导航 / footer）
 - `components/SEO.astro` → `getCollection('blog')` 列出可收录（非 draft、非 noindex，判定在 `data/blog-index.mjs`）的语言变体生成 hreflang；noindex 页面不输出 hreflang
 - 工具页 → `data/tools.ts` 取元数据，`data/icons.ts` 取 SVG

@@ -6,7 +6,7 @@ interface Props {
 }
 const { lang } = Astro.props;
 
-const categories = ['all', 'data', 'color', 'encoding', 'text', 'security', 'dev', 'api', 'image'] as const;
+const categories = ['all', 'data', 'code', 'text', 'encoding', 'security', 'web', 'css', 'color', 'image', 'ids', 'devops'] as const;
 const labels = Object.fromEntries(
   categories.map(c => [c, t(lang, `category.${c}`)])
 );
@@ -40,11 +40,9 @@ const recentLabel = t(lang, 'category.recent');
 
 <script is:inline>
   (function () {
-    // Shared filter state — written by both CategoryFilter and ToolSearchBar
-    window.__ztSearch = window.__ztSearch || '';
     window.__ztCat = window.__ztCat || 'all';
 
-    // Read recently-used list from localStorage
+    // Filtering and ordering live in ToolSearchBar.astro (window.__ztApply).
     function getRecent() {
       try {
         return JSON.parse(localStorage.getItem('zt-recent') || '[]');
@@ -52,64 +50,6 @@ const recentLabel = t(lang, 'category.recent');
         return [];
       }
     }
-
-    // Cache original card order on first call so we can restore it later
-    var _ztOriginalOrder = null;
-    function ensureOriginalOrder() {
-      if (_ztOriginalOrder) return;
-      var cards = document.querySelectorAll('.tool-card');
-      _ztOriginalOrder = Array.prototype.slice.call(cards);
-    }
-
-    // Shared apply function — called by both components
-    window.__ztApply = function () {
-      var q = window.__ztSearch || '';
-      var cat = window.__ztCat || 'all';
-      var recent = cat === 'recent' ? getRecent() : null;
-
-      ensureOriginalOrder();
-      var grid = _ztOriginalOrder && _ztOriginalOrder.length > 0 ? _ztOriginalOrder[0].parentNode : null;
-
-      if (grid) {
-        if (cat === 'recent' && !q) {
-          // Reorder cards by recency (most recent first)
-          var sorted = _ztOriginalOrder.slice().sort(function(a, b) {
-            var aIdx = recent.indexOf(a.getAttribute('data-slug') || '');
-            var bIdx = recent.indexOf(b.getAttribute('data-slug') || '');
-            if (aIdx === -1) aIdx = 9999;
-            if (bIdx === -1) bIdx = 9999;
-            return aIdx - bIdx;
-          });
-          sorted.forEach(function(card) { grid.appendChild(card); });
-        } else {
-          // Restore original DOM order
-          _ztOriginalOrder.forEach(function(card) { grid.appendChild(card); });
-        }
-      }
-
-      var cards = document.querySelectorAll('.tool-card');
-      var visible = 0;
-      for (var i = 0; i < cards.length; i++) {
-        var kw = cards[i].getAttribute('data-keywords') || '';
-        var cardCat = cards[i].getAttribute('data-category') || '';
-        var cardSlug = cards[i].getAttribute('data-slug') || '';
-        var matchSearch = !q || kw.indexOf(q) !== -1;
-        var matchCat;
-        if (cat === 'recent') {
-          matchCat = recent.indexOf(cardSlug) !== -1;
-        } else {
-          matchCat = cat === 'all' || cardCat === cat;
-        }
-        if (matchSearch && matchCat) {
-          cards[i].style.display = '';
-          visible++;
-        } else {
-          cards[i].style.display = 'none';
-        }
-      }
-      var noResults = document.getElementById('no-results');
-      if (noResults) noResults.hidden = visible > 0;
-    };
 
     // Show Recently Used chip if localStorage has entries
     var recentChip = document.getElementById('chip-recent');
@@ -136,7 +76,7 @@ const recentLabel = t(lang, 'category.recent');
         chips[i].classList.toggle('chip--active', isActive);
         chips[i].setAttribute('aria-pressed', isActive ? 'true' : 'false');
       }
-      window.__ztApply();
+      if (typeof window.__ztApply === 'function') window.__ztApply();
     });
   })();
 </script>
