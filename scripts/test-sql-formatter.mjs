@@ -191,7 +191,7 @@ eq('minify', E.minifySQL('WITH r AS (\n  SELECT SUM(total) -- c\n  FROM t\n) SEL
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 const requireRoot = createRequire(join(root, 'package.json'));
 const { parseFragment } = requireRoot('parse5');
 const ts = requireRoot('typescript');
@@ -376,6 +376,75 @@ const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'),'utf8');
 same('sql-formatter registered convert', /['"]sql-formatter['"]\s*:\s*['"]convert['"]/.test(registry), true);
 const sharedCss = readFileSync(join(root,'src/styles/tool-common.css'),'utf8');
 same('shared long content filling keeps zero flex basis', /\.zt-io-fill\s*\{[^}]*flex:\s*1 1 0;/.test(sharedCss), true);
+
+// ---------- worked examples with annotations (S2-4, 2026-10-08) ----------
+// {/* sqlf-check: {"op":"format"|"minify","indent":"2"|"4"|"tab","upper":true|false,"in"?:"…"} */}:
+// the input is "in" or the first ```sql block after the annotation; the engine output must equal a
+// later ```sql block or inline code (up to the next sqlf-check or H2). Blocks inside an annotated
+// region are checked here and skipped by the default-option block checks in the loop below.
+// {/* sqlf-sqlite: {"sql":"…","error"?:"…"} */}: the statement runs in SQLite (sql.js, the
+// version recorded below) against SQLITE_SCHEMA; with "error" it must fail with that message, which
+// must appear as inline code after the annotation, and without "error" it must run.
+const SQLITE_SCHEMA = `
+create table orders (id int, name text, total int, status text, created_at text);
+insert into orders values (1, 'a', 10, 'paid', '2026-10-01'), (2, 'a', 20, 'paid', '2026-10-02'), (3, 'b', 5, 'new', '2026-10-03');
+create table 社員 (社員番号 int, 氏名 text, 部署 text);
+insert into 社員 values (1, '山田', '営業　第一部'), (2, '佐藤', '営業部');
+create table 회원 (이름 text, 가입일 text, 등급 text);
+insert into 회원 values ('홍길동', '2026-01-02', 'VIP');`;
+const initSqlJs = requireRoot('sql.js');
+const SQL = await initSqlJs();
+const sqliteVersion = (() => { const db = new SQL.Database(); const v = db.exec('select sqlite_version()')[0].values[0][0]; db.close(); return v; })();
+same('sql.js SQLite version named on the pages', sqliteVersion, '3.49.1');
+function sqliteRun(sql) {
+  const db = new SQL.Database();
+  try { db.run(SQLITE_SCHEMA); db.exec(sql); return null; } catch (e) { return e.message; } finally { db.close(); }
+}
+const INDENTS = { '2': '  ', '4': '    ', tab: '\t' };
+const sqlCodeTexts = after => [
+  ...[...after.matchAll(/```sql\n([\s\S]*?)\n```/g)].map(m => m[1]),
+  ...[...after.replace(/```[\s\S]*?```/g, '').matchAll(/`([^`\n]+)`/g)].map(m => m[1]),
+];
+const sqlfCheck = {
+  tag: 'sqlf-check', min: 2,
+  verify({ spec, after }) {
+    if (!spec || !['format', 'minify'].includes(spec.op)) return 'spec needs op format or minify';
+    const blocks = [...after.matchAll(/```sql\n([\s\S]*?)\n```/g)].map(m => m[1]);
+    const input = spec.in ?? blocks[0];
+    if (input === undefined) return 'no input block after the annotation';
+    const raw = input.trim();
+    const got = spec.op === 'minify' ? E.minifySQL(raw) : E.formatSQL(raw, INDENTS[spec.indent ?? '2'], spec.upper ?? true);
+    const rest = spec.in === undefined ? after.slice(after.indexOf('```sql\n' + input + '\n```') + input.length + 11) : after;
+    return sqlCodeTexts(rest).includes(got) ? null : 'engine output is not shown after the annotation: ' + JSON.stringify(got.slice(0, 80));
+  },
+};
+const sqlfSqlite = {
+  tag: 'sqlf-sqlite',
+  verify({ spec, after }) {
+    if (!spec || typeof spec.sql !== 'string') return 'spec needs sql';
+    const error = sqliteRun(spec.sql);
+    if (spec.error === undefined) return error === null ? null : 'SQLite error: ' + error;
+    if (error !== spec.error) return 'SQLite returned ' + JSON.stringify(error);
+    return sqlCodeTexts(after).includes(spec.error) ? null : 'SQLite message not shown verbatim';
+  },
+};
+const sqlContract = toolMdxContract('sql-formatter', { annotations: [sqlfCheck, sqlfSqlite] });
+for (const r of sqlContract.results.filter(r => /sqlf-(check|sqlite)/.test(r.rule))) check('MDX annotations: ' + r.message, r.ok);
+const annotatedRegions = {};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  annotatedRegions[lang] = annotations(sqlContract.docs[lang].body, 'sqlf-check').map(a => [a.index, a.index + a.raw.length + a.after.length + 20]);
+}
+// ko says the AND of BETWEEN ... AND starts a new line like a condition AND.
+same('BETWEEN ... AND puts AND on a new line', fmt('select * from t where rn between 11 and 20').endsWith('WHERE rn BETWEEN 11\n  AND 20'), true);
+// Pages say a formatted statement with split non-ASCII names fails in SQLite while the input runs.
+for (const [input, message] of [
+  ['select name as 用户名, count(*) as 订单数 from orders group by name;', 'near "户": syntax error'],
+  ["select 社員番号, 氏名 from 社員 where 部署 = '営業部';", 'near "番": syntax error'],
+  ["select 이름, 가입일 from 회원 where 등급 = 'VIP';", 'near "일": syntax error'],
+]) {
+  same('SQLite runs the input ' + input, sqliteRun(input), null);
+  same('SQLite rejects the formatted output of ' + input, sqliteRun(fmt(input)), message);
+}
 const mdxCompiler=await import(requireRoot.resolve('@mdx-js/mdx'));
 for(const lang of ['en','zh','ja','ko']) {
   const S=pageStrings[lang], payload=clientStrings(lang);
@@ -391,9 +460,11 @@ for(const lang of ['en','zh','ja','ko']) {
   same(lang+' MDX content contract', contractProblems('sql-formatter', lang), '');
   // Worked examples are recomputed with the engine: a block after an unformatted input must be its
   // formatted output; every block is an input, an output, a minified output or already formatted.
-  const sqlBlocks=[...body.matchAll(/```sql\n([\s\S]*?)\n```/g)].map(m=>m[1]);
-  same(lang+' has worked SQL examples',sqlBlocks.length>=6,true);
-  const minified=i=>sqlBlocks.slice(0,i).some(x=>E.minifySQL(fmt(x))===sqlBlocks[i]);
+  const allSqlBlocks=[...body.matchAll(/```sql\n([\s\S]*?)\n```/g)];
+  same(lang+' has worked SQL examples',allSqlBlocks.length>=6,true);
+  const sqlBlocks=allSqlBlocks.filter(m=>!annotatedRegions[lang].some(([a,b])=>m.index>a&&m.index<b)).map(m=>m[1]);
+  const minifiedAt=i=>allSqlBlocks.some(x=>x.index<allSqlBlocks.find(m=>m[1]===sqlBlocks[i]).index&&E.minifySQL(fmt(x[1]))===sqlBlocks[i]);
+  const minified=i=>i>=0&&minifiedAt(i);
   same(lang+' each example output equals the engine format of the input before it',sqlBlocks.flatMap((b,i)=>i>0&&fmt(sqlBlocks[i-1])!==sqlBlocks[i-1]&&!minified(i-1)&&fmt(sqlBlocks[i-1])!==b?[b]:[]),[]);
   same(lang+' every SQL block is an input, an engine output, a minified output or already formatted',sqlBlocks.filter((b,i)=>!(fmt(b)===sqlBlocks[i+1]||(i>0&&fmt(sqlBlocks[i-1])===b)||minified(i)||fmt(b)===b)),[]);
   same(lang+' Usage removed',/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body),false);
