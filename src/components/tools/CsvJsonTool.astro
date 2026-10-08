@@ -21,6 +21,7 @@ const STRINGS = {
     "errNotArray": "JSON must be an array of objects.",
     "errEmptyArray": "JSON array is empty.",
     "errItem": "Item {n} must be a plain object.",
+    "numbersAsText": "This browser cannot keep these numbers exactly, so they were written as text: {list}.",
     "tips": {
       "csv": "Paste comma-separated CSV with a header and at least one data row. After 0.3 seconds without typing, JSON updates. Quoted commas, line breaks and doubled quotes are supported.",
       "json": "Paste a non-empty array of JSON objects. After 0.3 seconds without typing, CSV updates. Nested objects become dot-path columns; arrays and empty objects are written as JSON text.",
@@ -47,6 +48,7 @@ const STRINGS = {
     "errNotArray": "JSON 必须是对象数组。",
     "errEmptyArray": "JSON 数组为空。",
     "errItem": "第 {n} 项必须是对象。",
+    "numbersAsText": "此浏览器无法精确保留这些数字，已按文本写出：{list}。",
     "tips": {
       "csv": "粘贴以逗号分隔、带表头且至少有一行数据的 CSV。停止输入 0.3 秒后，JSON 会自动更新。支持引号字段中的逗号、换行和双写引号。",
       "json": "粘贴非空的 JSON 对象数组。停止输入 0.3 秒后，CSV 会自动更新。嵌套对象展开为点路径列；数组和空对象写成 JSON 文本。",
@@ -73,6 +75,7 @@ const STRINGS = {
     "errNotArray": "JSON はオブジェクトの配列である必要があります。",
     "errEmptyArray": "JSON 配列が空です。",
     "errItem": "{n} 番目の要素はオブジェクトである必要があります。",
+    "numbersAsText": "このブラウザーでは次の数値を正確に保持できないため、文字列として書き出しました：{list}。",
     "tips": {
       "csv": "ヘッダーと1行以上のデータを含むカンマ区切りの CSV を貼り付けます。入力を止めて0.3秒後に JSON が更新されます。引用符内のカンマ、改行、二重に書いた引用符に対応します。",
       "json": "空でない JSON オブジェクト配列を貼り付けます。入力を止めて0.3秒後に CSV が更新されます。ネストしたオブジェクトはドット区切りの列に展開し、配列と空のオブジェクトは JSON テキストとして書きます。",
@@ -99,6 +102,7 @@ const STRINGS = {
     "errNotArray": "JSON은 객체 배열이어야 합니다.",
     "errEmptyArray": "JSON 배열이 비어 있습니다.",
     "errItem": "{n}번째 항목은 객체여야 합니다.",
+    "numbersAsText": "이 브라우저는 다음 숫자를 정확히 유지할 수 없어 텍스트로 썼습니다: {list}.",
     "tips": {
       "csv": "헤더와 데이터 행이 하나 이상 있는 쉼표 구분 CSV를 붙여 넣습니다. 입력을 멈추고 0.3초 후 JSON이 갱신됩니다. 따옴표 안의 쉼표, 줄바꿈, 두 번 쓴 따옴표를 지원합니다.",
       "json": "비어 있지 않은 JSON 객체 배열을 붙여 넣습니다. 입력을 멈추고 0.3초 후 CSV가 갱신됩니다. 중첩 객체는 점 경로 열로 펼치고 배열과 빈 객체는 JSON 텍스트로 씁니다.",
@@ -189,7 +193,7 @@ const { tips: TIPS, ...CLIENT } = T;
       }
 
       function isPlainObject(v) {
-        return v !== null && typeof v === 'object' && !Array.isArray(v);
+        return v !== null && typeof v === 'object' && !Array.isArray(v) && !(JSON.isRawJSON && JSON.isRawJSON(v));
       }
 
       /* Nested objects become dot-path columns (user.name); arrays and empty objects stay whole as JSON text. */
@@ -402,6 +406,52 @@ const { tips: TIPS, ...CLIENT } = T;
         return item ? t.errItem.replace('{n}', item[1]) : message;
       }
 
+      /* JSON → CSV: the browser's JSON.parse rounds numbers that a double cannot hold
+         (12345678901234567890, 1e-400, -0). Where JSON.rawJSON and the reviver's source text
+         exist (Chrome 114, Firefox 135, Safari 18.4), such numbers keep their source text.
+         Elsewhere they are quoted before parsing, so they reach the CSV as text, never rounded. */
+      var sourceProbe = false;
+      try { JSON.parse('1', function (k, v, ctx) { if (ctx && ctx.source === '1') sourceProbe = true; return v; }); } catch (e) {}
+      var keepsSource = sourceProbe && typeof JSON.rawJSON === 'function';
+
+      function lossyNumbers(text) {
+        var found = [];
+        var num = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+        for (var i = 0; i < text.length;) {
+          var ch = text[i];
+          if (ch === '"') {
+            for (i++; i < text.length && text[i] !== '"'; i += text[i] === '\\' ? 2 : 1) {}
+            i++;
+          } else if (ch === '-' || (ch >= '0' && ch <= '9')) {
+            num.lastIndex = i;
+            var m = num.exec(text);
+            if (!m) { i++; continue; }
+            if (!isExactNumber(m[0], Number(m[0]))) found.push({ start: i, text: m[0] });
+            i += m[0].length;
+          } else i++;
+        }
+        return found;
+      }
+
+      function parseJsonInput(raw) {
+        var data = JSON.parse(raw);
+        var lossy = lossyNumbers(raw);
+        if (!lossy.length) return { data: data, asText: [] };
+        if (keepsSource) {
+          data = JSON.parse(raw, function (k, v, ctx) {
+            return typeof v === 'number' && ctx && typeof ctx.source === 'string' && !isExactNumber(ctx.source, v) ? JSON.rawJSON(ctx.source) : v;
+          });
+          return { data: data, asText: [] };
+        }
+        var quoted = '';
+        var last = 0;
+        lossy.forEach(function (tok) {
+          quoted += raw.slice(last, tok.start) + '"' + tok.text + '"';
+          last = tok.start + tok.text.length;
+        });
+        return { data: JSON.parse(quoted + raw.slice(last)), asText: lossy.map(function (tok) { return tok.text; }) };
+      }
+
       /* ── Real-time CSV → JSON (debounced 300ms) ── */
       var _csvLiveTimer = null;
       csvEl.addEventListener('input', function () {
@@ -444,10 +494,13 @@ const { tips: TIPS, ...CLIENT } = T;
           var raw = jsonEl.value.trim();
           if (!raw) { csvEl.value = ''; lastValidCsvOutput = ''; clearStatus(); return; }
           try {
-            var data = JSON.parse(raw);
+            var parsedJson = parseJsonInput(raw);
+            var data = parsedJson.data;
             csvEl.value = jsonToCsv(data);
             lastValidCsvOutput = csvEl.value;
-            setStatus(rowMsg(t.convertedToCsv, data.length), false);
+            var csvMsg = rowMsg(t.convertedToCsv, data.length);
+            if (parsedJson.asText.length) csvMsg += ' ' + t.numbersAsText.replace('{list}', parsedJson.asText.join(', '));
+            setStatus(csvMsg, false);
           } catch (e) {
             csvEl.value = '';
             lastValidCsvOutput = '';

@@ -112,9 +112,10 @@ for (const [raw, want] of [
   ['0.30000000000000004', 0.30000000000000004], ['123456789012345.6', 123456789012345.6], ['9007199254740991', 9007199254740991],
 ]) eq('number reading ' + JSON.stringify(raw), iv(raw), want);
 
-// Engine changed with approval (2026-10-08, S2-6d): number reading (RFC 8259 syntax, exact values only).
+// Engine changed with approval (2026-10-08, S2-6d): number reading (RFC 8259 syntax, exact values only)
+// and isPlainObject skips JSON.rawJSON values (JSON → CSV numbers keep their source text).
 
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), 'a989d4fd4ab9d70c076e2ba01eabcd4215b314e692af2ed2b2a7d581b23354e5');
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '4312b4128a38307b27d17f4d555dbd61bed07518b2a9172e3362e43403a2318c');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises and time are controlled boundaries; conversion code is real.
@@ -126,7 +127,7 @@ process.on('unhandledRejection', onUnhandled);
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const copyFailures = { en: 'Copy failed', zh: '复制失败', ja: 'コピー失敗', ko: '복사 실패' };
 const s = {"slug": "csv-json", "file": "CsvJsonTool", "p": "cj", "left": "cj-csv", "right": "cj-json", "input": "n\n1", "expected": "[\n  {\n    \"n\": 1\n  }\n]", "copy": ["cj-copy-csv", "cj-copy-json"], "delay": 300};
-function page(lang='en', order='shared-after') {
+function page(lang='en', order='shared-after', extra={}) {
   const rel='src/components/tools/'+s.file+'.astro', comp=readComponent(rel), source=comp.src;
   const strings=frontmatterStrings(comp.frontmatter)?.[lang];
   const nodes=[], byId=new Map(), docs={}, jobs=new Map(), copies=[], tracks=[], cleared=[];
@@ -158,7 +159,7 @@ function page(lang='en', order='shared-after') {
   if(strings){const root=doc.querySelector('.cj-wrap');const {tips,...client}=strings;root.dataset={strings:JSON.stringify(client),lang};}
   const setTimeout=(fn,ms=0)=>{const id=++seq;jobs.set(id,{id,fn,ms,due:now+ms});return id;};
   const globals={document:doc,Event:class{constructor(type){this.type=type;}},setTimeout,clearTimeout:id=>jobs.delete(id),trackTool:(...a)=>tracks.push(a),ztPersist:{clear:slug=>cleared.push(slug)},
-    navigator:{clipboard:{writeText(text){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});copies.push({text,resolve,reject});return promise;}}}};
+    navigator:{clipboard:{writeText(text){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});copies.push({text,resolve,reject});return promise;}}}};Object.assign(globals,extra);
   const addShared=()=>vm.runInNewContext(shared,{document:doc,window:globals,_slug:s.slug});
   if(order==='shared-before')addShared();loadPage(rel,{lang,globals});if(order==='shared-after')addShared();
   function advance(ms){const end=now+ms;for(let i=0;i<100;i++){const next=[...jobs.values()].filter(j=>j.due<=end).sort((a,b)=>a.due-b.due||a.id-b.id)[0];if(!next)break;jobs.delete(next.id);now=next.due;next.fn();}now=end;}
@@ -288,6 +289,29 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
 }
 
+// ---------- JSON → CSV: numbers JavaScript cannot keep exactly are written as in the source ----------
+// Old browsers (no JSON.rawJSON / reviver source, before Chrome 114, Firefox 135, Safari 18.4) are
+// simulated with a JSON object whose reviver gets no context: the numbers become text, and the
+// status says so, instead of a rounded value.
+const OLD_JSON = { parse: (text, reviver) => JSON.parse(text, reviver ? function (k, v) { return reviver.call(this, k, v); } : undefined), stringify: JSON.stringify };
+const BIG = '[{"id":1830000000000000001,"n":1.0,"tags":[12345678901234567890,1],"o":{"big":9007199254740993,"tiny":1e-400,"z":-0,"inf":1e400},"s":"1830000000000000001 in text","ok":9007199254740992}]';
+const NOTE = {
+  en: 'This browser cannot keep these numbers exactly, so they were written as text: {list}.',
+  zh: '此浏览器无法精确保留这些数字，已按文本写出：{list}。',
+  ja: 'このブラウザーでは次の数値を正確に保持できないため、文字列として書き出しました：{list}。',
+  ko: '이 브라우저는 다음 숫자를 정확히 유지할 수 없어 텍스트로 썼습니다: {list}.',
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  let p = page(lang); p.type(s.right, BIG); p.advance(300);
+  eq(lang + ' modern browser writes source digits', p.get(s.left).value, 'id,n,tags,o.big,o.tiny,o.z,o.inf,s,ok\n1830000000000000001,1,"[12345678901234567890,1]",9007199254740993,1e-400,-0,1e400,1830000000000000001 in text,9007199254740992');
+  eq(lang + ' modern browser adds no note', p.get(s.p + '-status').textContent, frontmatterStrings(readComponent('src/components/tools/CsvJsonTool.astro').frontmatter)[lang].convertedToCsv.replace('{n}', 1).replace('{s}', ''));
+  p = page(lang, 'shared-after', { JSON: OLD_JSON }); p.type(s.right, BIG); p.advance(300);
+  eq(lang + ' old browser keeps text, never a rounded value', p.get(s.left).value, 'id,n,tags,o.big,o.tiny,o.z,o.inf,s,ok\n1830000000000000001,1,"[""12345678901234567890"",1]",9007199254740993,1e-400,-0,1e400,1830000000000000001 in text,9007199254740992');
+  check(lang + ' old browser status explains', p.get(s.p + '-status').textContent.includes(NOTE[lang].replace('{list}', '1830000000000000001, 12345678901234567890, 9007199254740993, 1e-400, -0, 1e400')), p.get(s.p + '-status').textContent);
+  p = page(lang, 'shared-after', { JSON: OLD_JSON }); p.type(s.right, '[{"a":12345678901234567890,}]'); p.advance(300);
+  eq(lang + ' old browser: syntax error still reported, no output', [p.get(s.left).value, p.get(s.p + '-status').classList.contains('error')], ['', true]);
+}
+
 /* ── v2 page layout ── */
 const hash = text => createHash('sha256').update(text).digest('hex');
 const requireRoot = createRequire(join(root, 'package.json'));
@@ -296,7 +320,7 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; the hash pins that reviewed script.
-eq('reviewed page script is unchanged', hash(script), '35a45d7a6820e7f6d0fd8a4229badb2feaef2a72716468da0e5aebcfa01a5d00');
+eq('reviewed page script is unchanged', hash(script), '2f4cc71fe329390cd10ea7217596664ea837bdd057c3c3f6d4ef93505f89c614');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
