@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ChmodCalculatorTool.astro'), 'utf8');
@@ -486,10 +486,82 @@ const t_en = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1])
     same(`${JSON.stringify(bad)} keeps the last valid commands`, s.commands, valid.commands);
     eq(`${JSON.stringify(bad)} is left as typed`, p.get('chmod-numeric').value, bad);
   }
+  // The symbolic field takes ASCII only (the ja page says so): a full-width mode string is an error.
+  p.input('chmod-symbolic', 'ｒｗ－ｒ－－ｒ－－');
+  same('full-width mode string is rejected', [state(p).errors[1][1], state(p).commands[0]], [true, 'chmod 755 filename']);
   const m = source.match(/id="chmod-numeric"[^>]*maxlength="(\d+)"/);
   eq('numeric field accepts a 0o prefix and four digits (maxlength 6)', m && m[1], '6');
 }
 
+
+// ── Tool page worked examples (src/content/tools/chmod-calculator/{lang}.mdx) ───────────────
+// `chmod-page: {"numeric": "755"}` or `{"symbolic": "-rw-r--r--."}` types the text into that
+// field of the real page script (stand-in DOM, page language), then each output listed in "show"
+// must appear in code between the note and the next note or H2: an inline <code> / backtick span
+// equal to it, or a whole token of a code block or <pre>. Outputs: numeric, symbolic, command,
+// sym (the symbolic command), find, description. For command and sym the page may show the
+// command with " filename" replaced by a path, so the text before " filename" is enough.
+// `chmod-sys: {"start": "755", "cmd": "uo+rwx", "mode": "757"}` runs the system chmod on a
+// directory set to "start", then "cmd", and the resulting mode must equal "mode" (and appear in
+// code after the note). Each language needs at least 2 chmod-page examples.
+console.log('\nTool page worked examples');
+{
+  const decode = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  const cut = (after) => { const i = after.indexOf('{/*'); return i < 0 ? after : after.slice(0, i); };
+  function codeParts(text) {
+    const blocks = fencedBlocks(text).map((b) => b.text);
+    const rest = text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, ' ');
+    const inline = [];
+    for (const m of rest.matchAll(/<pre\b[^>]*>\s*<code\b[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/g)) blocks.push(decode(m[1]));
+    const rest2 = rest.replace(/<pre\b[\s\S]*?<\/pre>/g, ' ');
+    for (const m of rest2.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+      const inner = m[1].trim(), lit = /^\{([`'"])([\s\S]*)\1\}$/.exec(inner);
+      inline.push(lit ? lit[2] : decode(inner));
+    }
+    for (const m of rest2.replace(/<code\b[\s\S]*?<\/code>/g, ' ').matchAll(/`([^`\n]+)`/g)) inline.push(m[1]);
+    return { blocks, inline };
+  }
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const shown = (parts, v) => parts.inline.includes(v) || parts.blocks.some((b) => new RegExp('(?<![\\w-])' + esc(v) + '(?![\\w-])').test(b));
+  function outputs(lang, spec) {
+    const q = page({ lang });
+    if (spec.numeric !== undefined) q.input('chmod-numeric', spec.numeric);
+    else q.input('chmod-symbolic', spec.symbolic);
+    const s = state(q);
+    if (s.errors.some(([text]) => text)) return { error: s.errors.map(([text]) => text).join(' ') };
+    return { numeric: s.values[0], symbolic: s.values[1], command: s.commands[0], sym: s.commands[1], find: s.commands[2], description: s.description };
+  }
+  const isGnuChmod = (() => { try { return /GNU coreutils/.test(execFileSync('chmod', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })); } catch { return false; } })();
+  const contract = toolMdxContract(SLUG, { annotations: [
+    { tag: 'chmod-page', min: 2, verify: ({ spec, after, lang }) => {
+      if (!spec || (spec.numeric === undefined) === (spec.symbolic === undefined)) return 'give exactly one of "numeric" and "symbolic"';
+      if (!Array.isArray(spec.show) || !spec.show.length) return '"show" is empty';
+      const out = outputs(lang, spec);
+      if (out.error) return 'the page shows an error: ' + out.error;
+      const parts = codeParts(cut(after));
+      const missing = spec.show.filter((k) => {
+        const v = out[k];
+        if (v === undefined) return true;
+        if ((k === 'command' || k === 'sym') && shown(parts, v.replace(/ filename$/, ''))) return false;
+        return !shown(parts, v);
+      }).map((k) => k + ' ' + JSON.stringify(out[k]));
+      return missing.length ? 'not in code after the note: ' + missing.join(', ') : null;
+    } },
+    { tag: 'chmod-sys', verify: ({ spec, after }) => {
+      if (process.platform === 'win32') return null;
+      if (spec.gnu && !isGnuChmod) return null;
+      const dir = mkdtempSync(join(tmpdir(), 'chmod-page-'));
+      try {
+        const d = join(dir, 'd');
+        execFileSync('mkdir', [d]); execFileSync('chmod', [spec.start, d]); execFileSync('chmod', [spec.cmd, d]);
+        const got = (statSync(d).mode & 0o7777).toString(8);
+        if (got !== spec.mode) return `chmod ${spec.cmd} on ${spec.start} gives ${got}, not ${spec.mode}`;
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+      return shown(codeParts(cut(after)), spec.mode) ? null : spec.mode + ' is not in code after the note';
+    } },
+  ] });
+  for (const r of contract.results) eq('tool MDX: ' + r.message, r.ok, true);
+}
 
 console.log('\nv2 page layout');
 {

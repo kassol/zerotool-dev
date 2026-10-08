@@ -29,7 +29,7 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import domino from '@mixmark-io/domino';
 import { loadPage, frontmatterStrings } from './astro-page-harness.mjs';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/IpSubnetCalculatorTool.astro'), 'utf8');
@@ -432,6 +432,40 @@ for(const lang of ['zh','ja','ko']){
  }
  const q=page(lang,'shared-after');q.type('10.0.0.5／24');q.tick(250);q.select(30);
  eq(lang+' prefix menu rewrites after a full-width slash',[q.input.value,q.cells()[7]],['10.0.0.5/30','10.0.0.4/30']);
+}
+// ---------- tool page worked examples (src/content/tools/ip-subnet-calculator/{lang}.mdx) ----------
+// `isc-page: {"in": "192.168.1.77/26", "prefix"?: 24, "show"?: [...], "copy"?: true}` runs the real
+// page script in the page language: the prefix menu is set first (default 24), the text is typed
+// and the 250 ms pause passes. Each field in "show" (network, broadcast, mask, wildcard, first,
+// last, hosts, cidr; the cell text as the page shows it) must be an inline code span, or a whole
+// token of a code block, between the note and the next note or H2. With "copy": true, the text
+// that Copy writes (eight labelled lines) must equal a code block there. Each language needs at
+// least 2 isc-page examples.
+{
+ const fields=['network','broadcast','mask','wildcard','first','last','hosts','cidr'];
+ const decode=s=>s.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&');
+ const cut=after=>{const i=after.indexOf('{/*');return i<0?after:after.slice(0,i);};
+ function codeParts(text){
+  const blocks=fencedBlocks(text).map(b=>b.text);
+  const rest=text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm,' ').replace(/<pre\b[\s\S]*?<\/pre>/g,' ');
+  const inline=[...rest.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)].map(m=>decode(m[1].trim()));
+  for(const m of rest.replace(/<code\b[\s\S]*?<\/code>/g,' ').matchAll(/`([^`\n]+)`/g))inline.push(m[1]);
+  return{blocks,inline};
+ }
+ const esc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+ const shown=(parts,v)=>parts.inline.includes(v)||parts.blocks.some(b=>new RegExp('(?<![\\w.])'+esc(v)+'(?![\\w.])').test(b));
+ const verify=({spec,after,lang})=>{
+  if(!spec||typeof spec.in!=='string')return 'give "in"';
+  const p=page(lang,'shared-after');p.select(spec.prefix??24);p.type(spec.in);p.tick(250);
+  if(p.result.hidden)return 'the page shows no result: '+p.error.textContent;
+  const cells=p.cells(),parts=codeParts(cut(after)),missing=[];
+  for(const k of spec.show??[]){const i=fields.indexOf(k);if(i<0)return 'unknown field '+k;if(!shown(parts,cells[i]))missing.push(k+' '+JSON.stringify(cells[i]));}
+  if(spec.copy){p.click();const text=p.clipboard.at(-1)?.value;if(!parts.blocks.includes(text))missing.push('copy text '+JSON.stringify(text));}
+  if(!spec.copy&&!(spec.show??[]).length)return 'nothing to check';
+  return missing.length?'not in code after the note: '+missing.join('; '):null;
+ };
+ const contract=toolMdxContract('ip-subnet-calculator',{annotations:[{tag:'isc-page',min:2,verify}]});
+ for(const r of contract.results)check('tool MDX: '+r.message,r.ok);
 }
 process.removeListener('unhandledRejection',onUnhandled);
 const protectedEngine=source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
