@@ -118,6 +118,7 @@ function page(lang, sharedFirst) {
   if (!sharedFirst) vm.runInContext(shortcut, context);
   return { nodes, clears, tracks, widget,
     input(text) { const el = nodes.get('wc-input'); el.value = text; el.handlers.input.call(el); },
+    change() { const el = nodes.get('wc-input'); el.handlers.change?.call(el); },
     key(key, meta = false, inside = true, modifier = true, focusId = 'wc-input') { document.activeElement = inside ? nodes.get(focusId) : {}; let prevented = false; const e = { key, ctrlKey: modifier && !meta, metaKey: modifier && meta, preventDefault() { prevented = true; } }; for (const fn of listeners) fn(e); return prevented; },
     stats() { return ['chars', 'chars-no-spaces', 'words', 'sentences', 'paragraphs', 'read-time', 'speak-time'].map(id => nodes.get('wc-' + id).textContent); }
   };
@@ -139,6 +140,19 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const sharedFirst of [false, t
   h.key('l', false, true, true, 'wc-tip-chars');
   eq(prefix + 'clearing from a statistic tip preserves shared persistence cleanup', h.clears.slice(beforeTipClear), ['word-counter']);
   h.input(''); eq(prefix + 'ordinary empty input resets statistics', h.stats(), ['0', '0', '0', '0', '0', '0 min', '0 min']);
+}
+
+// ---------- analytics: one event per committed change, not per keystroke ----------
+// Before the fix, update() sent trackTool('word_counter', 'count') on every input event, so
+// typing "hello" sent 5 events. The event is now sent from the textarea change event (focus
+// leaves after an edit) and only when the input is not empty.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const h = page(lang, false), name = lang + ' analytics: ';
+  for (const ch of ['h', 'he', 'hel', 'hell', 'hello']) h.input(ch);
+  eq(name + 'typing sends no event', h.tracks.length, 0);
+  h.change(); eq(name + 'change after an edit sends one count event', h.tracks, [['word_counter', 'count']]);
+  h.input(''); h.change(); eq(name + 'change to empty input sends no event', h.tracks.length, 1);
+  h.input('again'); h.key('l'); eq(name + 'Ctrl+L clear sends no event', h.tracks.length, 1);
 }
 
 // ---------- v2 page layout ----------
