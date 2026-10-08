@@ -60,7 +60,7 @@ function gen(json, model, mode, timestamps, required) {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
@@ -85,7 +85,7 @@ function session() {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { get activeElement() { return activeInside ? elements['jtm-input'] : null; }, querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
@@ -204,6 +204,9 @@ for (const [raw, want] of MODEL_NAMES) {
   eq('many root objects with array fields generate', out.includes('  tags: [String],'), true);
 }
 
+// Mongoose 9.10.3 Schema.reserved (lib/schema.js), without prototype (skipped as a special property).
+const MONGOOSE_RESERVED = ['emit', 'listeners', 'removeListener', 'collection', 'errors', 'get', 'init', 'isModified', 'isNew', 'populated', 'remove', 'save', 'toObject', 'validate'];
+
 // B1: a "__proto__" key is written as a computed key, so the object literal gets an own property
 // (a bare `__proto__:` sets the prototype); the TypeScript interface quotes it.
 {
@@ -313,6 +316,19 @@ if (process.env.MONGOOSE_TEST_DIR) {
       const named = { exports: {} };
       new Function('require', 'module', gen('{"a":1}', raw, 'javascript', true, false))(() => new mongoose.Mongoose(), named);
       eq(`Mongoose model name for ${raw}`, named.exports.modelName, want);
+    }
+    // Reserved path names: kept as paths with a warning, and the field value replaces the document
+    // method of the same name (the status line says so).
+    for (const k of MONGOOSE_RESERVED) {
+      const warnings = [];
+      const onWarn = (w) => warnings.push(String(w.message));
+      process.on('warning', onWarn);
+      const r = new mongoose.Mongoose();
+      const R = r.model('R', new r.Schema({ [k]: String }));
+      await new Promise(setImmediate);
+      process.removeListener('warning', onWarn);
+      const d = new R({ [k]: 'v' });
+      eq(`reserved ${k}: kept as a path, warned, document property is the value`, JSON.stringify([Object.hasOwn(R.schema.paths, k), warnings.some((w) => w.includes('`' + k + '` is a reserved schema pathname')), d[k]]), JSON.stringify([true, true, 'v']));
     }
     const pops = new M({ pops: ['0', '10'] });
     eq('Mongoose casts ["0","10"] on a [Number] path to [0,10]', JSON.stringify([pops.validateSync()?.message ?? true, [...pops.pops]]), JSON.stringify([true, [0, 10]]));
@@ -517,6 +533,9 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     {const w=page(lang,shellFirst);w.input('{"__proto__":{"x":1},"constructor":"c","b":{"prototype":1}}');w.advance(300);
       same(tag+' B1: status names the keys Mongoose ignores',w.get(cfg.status).textContent.includes(String(labels[lang].msgIgnored).replace('{keys}','__proto__, constructor, prototype')),true);
       w.input('{"b":1}');w.advance(300);same(tag+' B1: no notice without such keys',w.get(cfg.status).textContent,labels[lang].msgGenOne);}
+    // Reserved path names (Mongoose 9.10.3 lib/schema.js Schema.reserved): the status line names them.
+    {const w=page(lang,shellFirst);w.input('{"save":"s","errors":["e"],"b":{"isNew":true}}');w.advance(300);
+      same(tag+' reserved: status names the reserved path names',w.get(cfg.status).textContent.includes(String(labels[lang].msgReserved).replace('{keys}','errors, isNew, save')),true);}
     // B2: values beside the objects of a root array are reported, with their count and JSON types.
     {const w=page(lang,shellFirst);w.input('[{"a":1},2,"x",null,[1],3]');w.advance(300);
       same(tag+' B2: status reports the skipped root array values',w.get(cfg.status).textContent.includes(String(labels[lang].msgSkipped).replace('{n}','5').replace('{types}','number × 2, string, null, array')),true);}
