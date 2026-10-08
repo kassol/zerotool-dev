@@ -122,6 +122,11 @@ for (const [i, v] of TOPO_CASES.entries()) for (const mode of ['dataclass', 'pyd
   eq('many root objects with array fields generate', out.split('\n').slice(-3), ['class Root:', '    id: int', '    tags: List[str]']);
 }
 
+// Review suggestion 1: objects in nested arrays of one array merge into one class, like other samples.
+eq('nested arrays: objects of all sub-arrays merge', gen({ n: [[{ a: 1 }], [{ b: 2 }]] }, 'typeddict').split('\n'), [
+  'from typing import List, NotRequired, TypedDict', '', 'class NItemItem(TypedDict):', '    a: NotRequired[int]', '    b: NotRequired[int]', '', 'class Root(TypedDict):', '    n: List[List[NItemItem]]',
+]);
+
 // B2: values beside the objects of a root array stay in a <root>Array alias (List[Union[...]]).
 const B2_IN = [{ a: 1 }, 2, 'x', null, [1], { a: 3, b: true }];
 eq('B2: root array keeps non-object values in RootArray', E.generatePython(B2_IN, 'Root', 'dataclass').code.split('\n'), [
@@ -181,8 +186,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 16487);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '00902b9c7435a70a6e0700fa296733e9ab0bcb1bb24f9857c17289a8852c704f');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 17255);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'ce112821ced43d4797b4c9d969521631776c17e180f4146d8fc4890e1f5fc917');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -400,7 +405,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "14dcb59f675e9ab34cd5c1e52f5d47bc6472abd75ffd407972b4a5e853b3c887"
+  "scriptSHA": "8ce85c827d6d836f358c052c979ce4606544f818ff3ab20cf058db9e68f5e1cc"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];

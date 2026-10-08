@@ -341,14 +341,26 @@ const L = STRINGS[lang];
           }
           var objectItems = [];
           var primitiveTypes = [];
+          var subArrays = [], subAt = -1;
           for (var i = 0; i < value.length; i++) {
             var item = value[i];
             if (isPlainObject(item)) {
               objectItems.push(item);
+            } else if (Array.isArray(item)) {
+              // The sub-arrays of one array are samples of one element type: read them together.
+              if (subAt === -1) { subAt = primitiveTypes.length; primitiveTypes.push(null); }
+              subArrays.push(item);
             } else {
               var t = inferPythonType(item, key + 'Item', ctx, imp, parentStem);
               if (primitiveTypes.indexOf(t) === -1) primitiveTypes.push(t);
             }
+          }
+          if (subAt !== -1) {
+            var joinedItems = [];
+            for (var si = 0; si < subArrays.length; si++) for (var sj = 0; sj < subArrays[si].length; sj++) joinedItems.push(subArrays[si][sj]);
+            var subType = inferPythonType(joinedItems, key + 'Item', ctx, imp, parentStem);
+            if (primitiveTypes.indexOf(subType) === -1) primitiveTypes[subAt] = subType;
+            else primitiveTypes.splice(subAt, 1);
           }
           if (objectItems.length > 0) {
             var itemClassName = mergeObjectsToClass(objectItems, toPascalCase(key) + 'Item', parentStem, ctx, imp);
