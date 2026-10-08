@@ -412,6 +412,26 @@ process.removeListener('unhandledRejection', onUnhandled);
   check('escSeg is the same as in json-schema-validator-engine.js', oneLine(source, /^\s*function escSeg\(.*$/m) !== '' && oneLine(source, /^\s*function escSeg\(.*$/m) === oneLine(jsv, /^\s*function escSeg\(.*$/m));
 }
 
+// ---------- input labels (S2-7 review J4) ----------
+// zh 输入前 / 输入后 read as "before typing / after typing", and ko 이전 / 이후 as "previous / next".
+{
+  const S = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?);\n\nconst L/)[1] + ')');
+  const want = {
+    en: ['Before (JSON)', 'After (JSON)', 'Before JSON parse error: ', 'After JSON parse error: ', 'Before', 'After'],
+    zh: ['原 JSON', '新 JSON', '原 JSON 解析错误：', '新 JSON 解析错误：', '原 JSON', '新 JSON'],
+    ja: ['変更前 (JSON)', '変更後 (JSON)', '変更前 JSON の解析エラー：', '変更後 JSON の解析エラー：', '変更前', '変更後'],
+    ko: ['변경 전 (JSON)', '변경 후 (JSON)', '변경 전 JSON 파싱 오류: ', '변경 후 JSON 파싱 오류: ', '변경 전', '변경 후'],
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = S[lang];
+    eq(lang + ' input labels, parse error prefixes and status side names', [L.labelBefore, L.labelAfter, L.msgParseErrorBefore, L.msgParseErrorAfter, L.sideBefore, L.sideAfter], want[lang]);
+  }
+  for (const [lang, old] of [['zh', /输入前|输入后|前 JSON 解析|后 JSON 解析/], ['ko', /이전 \(JSON\)|이후 \(JSON\)|이전 JSON 파싱|\*\*이전|\*\*이후|"이전"|"이후"|이후 문서|이전으로 두고|이후로 둡니다|이후에만|이전에만/]]) {
+    const mdx = readFileSync(join(root, 'src/content/tools/json-diff', lang + '.mdx'), 'utf8');
+    check(lang + ' page no longer uses the old labels', !old.test(mdx) && !old.test(JSON.stringify(S[lang])), (mdx.match(old) || JSON.stringify(S[lang]).match(old) || [''])[0]);
+  }
+}
+
 // ---------- v2 page layout ----------
 const v2Start = passes;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
@@ -451,6 +471,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const steps = (mdx.match(/^steps:\n([\s\S]*?)(?=^faqItems:)/m)?.[1] || '').trim().split('\n').filter(Boolean).map(line => JSON.parse(line.trim().slice(2)));
   eq(lang + ' v2 six steps before FAQ', steps.length, 6);
   check(lang + ' v2 plain steps meet 280/1200 limits', steps.every(step => [...step].length <= 280 && !/[<>]|\]\(|\*\*|`/.test(step)) && steps.reduce((n, step) => n + [...step].length, 0) <= 1200);
+  check(lang + ' steps name the two input labels as shown', steps.join(' ').includes(strings[lang].labelBefore) && steps.join(' ').includes(strings[lang].labelAfter));
   check(lang + ' v2 steps use actual manual controls', ['compare', 'clear', 'swap', 'copy', 'hideInputs', 'showInputs'].every(key => steps.join(' ').includes(strings[lang][key])));
   check(lang + ' v2 Usage is removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
   eq(lang + ' MDX content contract', contractProblems('json-diff', lang), '');

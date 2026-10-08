@@ -2,7 +2,7 @@
 seoTitle: "JSON 差异对比 — 比较 JSON 并生成 RFC 6902 Patch | ZeroTool"
 seoDescription: "比较两个 JSON 对象并可视化差异，输出 RFC 6902 JSON Patch 操作和彩色树形差异视图，在浏览器中运行。"
 steps:
-  - "在「输入前 (JSON)」输入原始 JSON，在「输入后 (JSON)」输入修改后的 JSON。"
+  - "在「原 JSON」输入原始 JSON，在「新 JSON」输入修改后的 JSON。"
   - "点击「比较」或按 Ctrl+Enter（Mac 为 ⌘+Enter）；两侧都必须是合法 JSON。"
   - "查看「可视差异」，点击 JSON Patch (RFC 6902) 旁的「复制」获取完整 Patch。"
   - "有差异时，用「收起输入」腾出结果空间；「展开输入」恢复原有文本。"
@@ -14,7 +14,7 @@ faqItems:
     answer: "RFC 6902 定义了一种 JSON 文档格式，用于表达对 JSON 文档的一系列操作。每个操作是一个包含 'op'（add/remove/replace/move/copy/test）、'path'（RFC 6901 JSON Pointer）和可选 'value' 的对象。本工具只生成 add、remove、replace 三种操作。"
   - id: "visual"
     question: "可视差异是如何工作的？"
-    answer: "工具逐层递归比较。只在「输入后」中存在的键显示为新增（+），只在「输入前」中存在的键显示为删除（−），值发生变化的键显示为修改（~），同时列出旧值和新值。可视差异里的路径用点号连接，只方便阅读；代码里请使用 Patch 中的 JSON Pointer 路径。"
+    answer: "工具逐层递归比较。只在「新 JSON」中存在的键显示为新增（+），只在「原 JSON」中存在的键显示为删除（−），值发生变化的键显示为修改（~），同时列出旧值和新值。可视差异里的路径用点号连接，只方便阅读；代码里请使用 Patch 中的 JSON Pointer 路径。"
   - id: "numbers"
     question: "两个订单号明明不同，为什么显示“未发现差异”？"
     answer: "JavaScript 把 JSON 数字读成 64 位浮点数，超过 2^53 且无法用 double 精确表示的整数和很长的小数会被舍入，1830000000000000001 和 1830000000000000002 都变成 1830000000000000000。工具按读到的值比较，但会扫描两侧原文，把被舍入的数字和同一对象中重复出现的键连同 JSON Pointer 路径写进状态栏（各列出前 10 个，其余写出个数）。"
@@ -41,13 +41,13 @@ faqItems:
 
 ## 示例：一次 API 响应的变化
 
-**输入前：**
+**原 JSON：**
 
 ```json
 {"name":"Alice","status":"pending","legacy_id":12345,"tags":["a","b","c"],"profile":{"age":30,"city":"Paris"}}
 ```
 
-**输入后**（键顺序变了，`status` 改了，删除 `legacy_id`，新增 `role`，去掉第一个标签）：
+**新 JSON**（键顺序变了，`status` 改了，删除 `legacy_id`，新增 `role`，去掉第一个标签）：
 
 ```json
 {"status":"active","name":"Alice","role":"admin","tags":["b","c"],"profile":{"age":31,"city":"Paris"}}
@@ -69,7 +69,7 @@ faqItems:
 ]
 ```
 
-键顺序不影响结果：`name` 换了位置但不会被报告。这个 Patch 用 Python 的 `jsonpatch` 1.33 应用后得到「输入后」的文档。
+键顺序不影响结果：`name` 换了位置但不会被报告。这个 Patch 用 Python 的 `jsonpatch` 1.33 应用后得到「新 JSON」。
 
 ## 示例：雪花 ID 订单为什么显示“未发现差异”
 
@@ -84,7 +84,7 @@ faqItems:
 ```
 
 ```text
-检测到 1 处变更。JavaScript 无法精确保存以下数字，按舍入后的值比较，因此其中的差异可能漏报，Patch 也写入舍入后的值：输入前 /orderId: 1830000000000000001 → 1830000000000000000; 输入后 /orderId: 1830000000000000002 → 1830000000000000000。
+检测到 1 处变更。JavaScript 无法精确保存以下数字，按舍入后的值比较，因此其中的差异可能漏报，Patch 也写入舍入后的值：原 JSON /orderId: 1830000000000000001 → 1830000000000000000; 新 JSON /orderId: 1830000000000000002 → 1830000000000000000。
 ```
 
 两个订单号在 JavaScript 里都变成 `1830000000000000000`，所以 Patch 只有 `status` 一条，订单号的变化被漏掉了；状态栏把两处舍入都列了出来。RFC 8259 指出，只有 [-(2^53)+1, (2^53)-1] 范围内的整数在各实现之间能保证一致（[RFC 8259 第 6 节](https://www.rfc-editor.org/rfc/rfc8259#section-6)）。这类 ID 最好在接口里以字符串输出。
@@ -104,7 +104,7 @@ faqItems:
 ]
 ```
 
-`A1` 那一行其实是被删除了，但工具不按 `sku` 配对，而是把第 0 项改成 `B2` 的内容，再删掉第 1 项。应用这个 Patch 后的结果与「输入后」相同，只是读起来不像“删除一件商品”。
+`A1` 那一行其实是被删除了，但工具不按 `sku` 配对，而是把第 0 项改成 `B2` 的内容，再删掉第 1 项。应用这个 Patch 后的结果与「新 JSON」相同，只是读起来不像“删除一件商品”。
 
 ## 数组如何比较
 
@@ -143,8 +143,8 @@ Patch 里的路径是 JSON Pointer（[RFC 6901](https://www.rfc-editor.org/rfc/r
 
 - 不生成 move、copy 操作；改名的键显示为 `remove` 加 `add`。
 - 对象数组不会按 `id` 或 `sku` 字段配对。
-- 两边都必须是合法 JSON，状态栏会指出哪一边解析失败，例如 `前 JSON 解析错误：Expected double-quoted property name in JSON at position 7`（原因部分是浏览器给出的英文）。
+- 两边都必须是合法 JSON，状态栏会指出哪一边解析失败，例如 `原 JSON 解析错误：Expected double-quoted property name in JSON at position 7`（原因部分是浏览器给出的英文）。
 - 数字按 JavaScript 解析后比较：`1.0` 与 `1` 相同，`-0` 在 Patch 里写成 `0`。超过 2^53 且无法用 double 精确表示的整数（如 `9007199254740993`；`9007199254740994`、`1e20` 能精确表示）和很长的小数会被舍入，`1e400` 这类超出 double 范围的数会变成 Infinity。状态栏列出它们（最多 10 个，其余写出个数），Patch 写入读到的值（`1e400` 写成 `null`）。
 - 同一对象中重复出现的键只保留最后一个值，状态栏会列出。
 - 嵌套约 1,900 层（Node.js 22 中测得，浏览器之间有差异）的文档无法比较，状态栏会给出提示。
-- 工具的测试把每个生成的 Patch 用严格的 RFC 6902 实现（以及已安装时的 Python `jsonpatch`）应用到「输入前」，结果必须等于「输入后」，另跑 3,000 组随机文档。
+- 工具的测试把每个生成的 Patch 用严格的 RFC 6902 实现（以及已安装时的 Python `jsonpatch`）应用到「原 JSON」，结果必须等于「新 JSON」，另跑 3,000 组随机文档。
