@@ -45,7 +45,7 @@ check('sentence pool found', SENTENCES.length > 0, String(SENTENCES.length));
 check('classic paragraph found', CLASSIC.length > 0);
 check('classic paragraph = first five pool sentences', SENTENCES.slice(0, 5).join(' ') === CLASSIC);
 check('paragraph uses 3–6 sentences', source.includes('var count = 3 + Math.floor(Math.random() * 4);'));
-check('count clamped to 1–20, default 5', source.includes("Math.min(20, Math.max(1, parseInt(document.getElementById('li-count').value) || 5))"));
+check('count clamped to 1–20, default 5', source.includes("var count = Math.min(20, Math.max(1, parseInt(typed) || 5));") && source.includes("var typed = countEl.value;"));
 check('Copy All joins paragraphs with a blank line', source.includes("output.dataset.text = paragraphs.join('\\n\\n');"));
 
 const loebSet = new Set(tokens(fx.loeb1914.text));
@@ -502,6 +502,35 @@ for (const lang of ['en', 'zh', 'ja', 'ko'])
             lifeCheck('no native clipboard ever', p.execCalls.length === 0);
         });
 
+// Analytics and the paragraph count (2026-10-08): loading the page generates once without an
+// event; each click on Generate records one `generate`. A count outside 1–20 or not a whole
+// number is still moved into the range (empty or 0 gives 5, as before), but the field then shows
+// the number used and a note says so, in the page language.
+for (const lang of ['en', 'zh', 'ja', 'ko'])
+    await attempt(lang + '/count-and-analytics', async () => {
+        const p = lifecyclePage(lang);
+        const L = lifecycleLabels(lang);
+        lifeCheck(lang + '/load generates without an event', !!fullOutput(p) && p.tracks.length === 0);
+        p.get('li-generate').click();
+        lifeCheck(lang + '/Generate records one event', JSON.stringify(p.tracks) === '[["lorem_ipsum","generate"]]');
+        const note = () => p.get('li-count-note').textContent;
+        lifeCheck(lang + '/note text exists', typeof L.countNote === 'string' && L.countNote.includes('{n}'));
+        for (const [typed, used] of [['0', 5], ['', 5], ['50', 20], ['-3', 1], ['2.5', 2], ['3', 3], ['20', 20], ['1', 1], ['03', 3]]) {
+            p.get('li-count').value = typed;
+            p.get('li-generate').click();
+            const paras = p.get('li-output').children.length;
+            lifeCheck(`${lang}/count "${typed}" gives ${used} paragraphs`, paras === used && fullOutput(p).split('\n\n').length === used);
+            const valid = typed !== '' && Number(typed) === used;
+            lifeCheck(`${lang}/count "${typed}" field shows ${used}`, p.get('li-count').value === (valid ? typed : String(used)));
+            lifeCheck(`${lang}/count "${typed}" note`, note() === (valid ? '' : L.countNote.replace('{n}', String(used))));
+        }
+        p.get('li-count').value = '0';
+        p.get('li-generate').click();
+        lifeCheck(lang + '/note before clear', note() !== '');
+        p.ctrlL('li-generate');
+        lifeCheck(lang + '/Ctrl+L clears the note', note() === '');
+    });
+
 process.removeListener('unhandledRejection', onUnhandled);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
 console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);
@@ -528,7 +557,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     lifeCheck(lang + '/four-language empty sentence', typeof L?.empty === 'string' && L.empty.length > 0 && source.includes('{L.empty}'));
     lifeCheck(lang + '/copy feedback precedes result', p.get('li-copy').closest('.li-status')?.getAttribute('role') === 'status' && p.get('li-copy').closest('.li-rail') !== null);
     const client = JSON.parse(p.doc.querySelector('.li-wrap').dataset.strings);
-    lifeCheck(lang + '/only required dynamic strings sent', Object.keys(client).sort().join(',') === 'copied,copyAll,copyFailed' && !Object.hasOwn(client, 'tips'));
+    lifeCheck(lang + '/only required dynamic strings sent', Object.keys(client).sort().join(',') === 'copied,copyAll,copyFailed,countNote' && !Object.hasOwn(client, 'tips'));
     for (const key of featureTips) {
         lifeCheck(lang + '/tip ' + key + ' is SSR-bound', typeof L?.tips?.[key] === 'string' && L.tips[key].length > 0 && source.includes('id="li-tip-' + key + '"') && source.includes('{L.tips.' + key + '}</Toggletip>'));
     }
