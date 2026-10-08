@@ -154,7 +154,28 @@ function open(s,lang='en',shellFirst=false){
     h=open(spec);const first=await selection(h,'first');const second=await selection(h,'second');second.deliver();first.deliver();check('FileReader newer selection wins',h.el('cfg-preview-img').src,second.result);check('real File bytes preserved',Buffer.from(second.result.split(',')[1],'base64').toString(),'<svg>second</svg>');
     h=open(spec);h.input('cfg-blur',2.5);h.key();h.frames(true);check('queued rAF cannot restore cleared CSS',h.el(spec.output).textContent,'');check('queued rAF cannot save after clear',h.persist.saved.length,0);check('numeric setting retained',h.el('cfg-blur').value,'2.5');h.input('cfg-brightness',0);h.frames();check('numeric change restores default local SVG',h.el('cfg-preview-img').src.startsWith('data:image/svg+xml,'),true);check('zero and prior numeric setting preserved',h.el(spec.output).textContent.includes('blur(2.5px) brightness(0%)'),true);
     h=open(spec);h.input('cfg-blur',3);const reader=await selection(h,'new');reader.deliver();const saves=h.persist.saved.length;h.frames(true);check('new selection invalidates queued save',h.persist.saved.length,saves);check('new selection remains',h.el('cfg-preview-img').src,reader.result);
-    h=open(spec);h.el('cfg-file-input').files=[new File([new Uint8Array(5*1024*1024+1)],'large.png',{type:'image/png'})];h.el('cfg-file-input').dispatch('change');check('same 5MB rejection',h.alerts,['Max file size is 5 MB']);check('5MB rejection skips FileReader',h.readers.length,0);
+    // A rejected file is reported in the status line in the page language (as the color blindness
+    // simulator does), never with alert(); the preview keeps the previous image.
+    const rejected={
+      en:{big:'“large.png” is larger than 5 MB. Choose an image up to 5 MB.',not:'“notes.txt” is not an image file.'},
+      zh:{big:'“large.png”超过 5 MB，请选择 5 MB 以内的图片。',not:'“notes.txt”不是图片文件。'},
+      ja:{big:'「large.png」は 5 MB を超えています。5 MB までの画像を選んでください。',not:'「notes.txt」は画像ファイルではありません。'},
+      ko:{big:'“large.png”은(는) 5 MB를 넘습니다. 5 MB 이하의 이미지를 선택하세요.',not:'“notes.txt”은(는) 이미지 파일이 아닙니다.'},
+    };
+    for(const lang of ['en','zh','ja','ko']){
+      h=open(spec,lang);const before=h.el('cfg-preview-img').src;
+      h.el('cfg-file-input').files=[new File([new Uint8Array(5*1024*1024+1)],'large.png',{type:'image/png'})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' 5MB rejection uses no alert',h.alerts,undefined);check(lang+' 5MB rejection skips FileReader',h.readers.length,0);
+      check(lang+' 5MB rejection in status',[h.el('cfg-status').textContent,h.el('cfg-status').className],[rejected[lang].big,'tool-status error']);
+      check(lang+' 5MB rejection keeps preview',h.el('cfg-preview-img').src,before);
+      h.el('cfg-file-input').files=[new File([new Uint8Array(5*1024*1024)],'edge.png',{type:'image/png'})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' exactly 5MB is read',h.readers.length,1);check(lang+' accepted file clears the rejection',h.el('cfg-status').textContent,'');
+      h=open(spec,lang);h.el('cfg-file-input').files=[new File(['plain text'],'notes.txt',{type:'text/plain'})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' non-image rejection uses no alert',h.alerts,undefined);check(lang+' non-image skips FileReader',h.readers.length,0);
+      check(lang+' non-image rejection in status',[h.el('cfg-status').textContent,h.el('cfg-status').className],[rejected[lang].not,'tool-status error']);
+      h=open(spec,lang);h.el('cfg-file-input').files=[new File(['<svg/>'],'logo.svg',{type:''})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' image recognised by extension when the type is empty',[h.readers.length,h.el('cfg-status').textContent],[1,'']);
+    }
     for(const key of ['blur','brightness','contrast','grayscale','hue-rotate','invert','opacity','saturate','sepia']) {h=open(spec);h.input('cfg-'+key,0);h.frames();check(key+' page preserves zero',h.el('cfg-'+key).value,'0');h.query('.cfg-reset-btn[data-key="'+key+'"]').click();h.frames();check(key+' Reset resumes CSS',h.el(spec.output).textContent,'.element {\n  filter: none;\n}');check(key+' saves numbers only',Object.values(h.persist.saved.at(-1).value).every(v=>typeof v==='number'),true);}
     h=open(spec);h.input('cfg-sepia',50);h.frames();h.click('cfg-reset-all');h.frames();check('Reset All preserves original defaults',h.el(spec.output).textContent,'.element {\n  filter: none;\n}');
   process.removeListener('unhandledRejection',onUnhandled);

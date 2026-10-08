@@ -28,6 +28,8 @@ const STRINGS = {
     pctUnit: '%',
     degUnit: 'deg',
     uploadHint: 'Click to upload (max 5 MB)',
+    tooLarge: '“{name}” is larger than 5 MB. Choose an image up to 5 MB.',
+    notImage: '“{name}” is not an image file.',
     empty: "Adjust a filter or choose a local image to preview it.",
     more: "More filters",
     tips: {
@@ -67,6 +69,8 @@ const STRINGS = {
     pctUnit: '%',
     degUnit: 'deg',
     uploadHint: '点击上传（最大 5 MB）',
+    tooLarge: '“{name}”超过 5 MB，请选择 5 MB 以内的图片。',
+    notImage: '“{name}”不是图片文件。',
     empty: "调整滤镜或选择本地图片即可预览。",
     more: "更多滤镜",
     tips: {
@@ -106,6 +110,8 @@ const STRINGS = {
     pctUnit: '%',
     degUnit: 'deg',
     uploadHint: 'クリックしてアップロード（最大 5 MB）',
+    tooLarge: '「{name}」は 5 MB を超えています。5 MB までの画像を選んでください。',
+    notImage: '「{name}」は画像ファイルではありません。',
     empty: "フィルターを調整するか、ローカル画像を選ぶとプレビューできます。",
     more: "その他のフィルター",
     tips: {
@@ -145,6 +151,8 @@ const STRINGS = {
     pctUnit: '%',
     degUnit: 'deg',
     uploadHint: '클릭하여 업로드 (최대 5 MB)',
+    tooLarge: '“{name}”은(는) 5 MB를 넘습니다. 5 MB 이하의 이미지를 선택하세요.',
+    notImage: '“{name}”은(는) 이미지 파일이 아닙니다.',
     empty: "필터를 조정하거나 로컬 이미지를 선택하면 미리 볼 수 있습니다.",
     more: "추가 필터",
     tips: {
@@ -176,6 +184,8 @@ const DEFAULT_PREVIEW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
   data-copied={L.copied}
   data-copy-failed={L.copyFailed}
   data-upload-hint={L.uploadHint}
+  data-too-large={L.tooLarge}
+  data-not-image={L.notImage}
   data-reset={L.reset}
 >
   <div class="cfg-body">
@@ -420,8 +430,15 @@ const DEFAULT_PREVIEW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
         invalidateCopy();
         var file = fileInput.files && fileInput.files[0];
         if (!file) return;
+        /* Report a rejected file in the status line in the page language, as the color blindness
+           simulator does; the preview keeps the current image. */
+        var name = file.name || '';
+        if (!/^image\//.test(file.type) && !/\.(png|jpe?g|gif|webp|avif|bmp|ico|svg|heic|heif|tiff?)$/i.test(name)) {
+          setStatus(wrap.dataset.notImage.replace('{name}', name), 'error');
+          return;
+        }
         if (file.size > 5 * 1024 * 1024) {
-          alert('Max file size is 5 MB');
+          setStatus(wrap.dataset.tooLarge.replace('{name}', name), 'error');
           return;
         }
         var reader = new FileReader();
@@ -542,7 +559,13 @@ const DEFAULT_PREVIEW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
         copyTimer = 0;
         copyBtn.textContent = COPY_LABEL;
         copyBtn.setAttribute('aria-label', COPY_LABEL);
-        if (statusEl) statusEl.textContent = '';
+        setStatus('');
+      }
+
+      function setStatus(msg, kind) {
+        if (!statusEl) return;
+        statusEl.textContent = msg || '';
+        statusEl.className = 'tool-status' + (msg && kind ? ' ' + kind : '');
       }
 
       copyBtn.addEventListener('click', function () {
