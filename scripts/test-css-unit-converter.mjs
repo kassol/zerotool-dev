@@ -335,6 +335,11 @@ console.log('\nv2 page layout');
     eq(lang + ' MDX content contract', contractProblems('css-unit-converter', lang), '');
   }
   const markup = source.split('---')[2].split('<script')[0];
+  // Root Font Size and Viewport Width accept decimals such as 37.5 (a lib-flexible root on a 375px
+  // screen, used on the zh page) without a step mismatch: step="any" (2026-10-08: they had step="1").
+  for (const id of ['cu-value', 'cu-root-size', 'cu-viewport']) {
+    eq(id + ' allows any decimal step', (new RegExp('<input id="' + id + '"[^>]*\\sstep="([^"]*)"').exec(markup) || [])[1], 'any');
+  }
   eq('direct component root uses cu-wrap', /^\s*<div class="cu-wrap">/.test(markup), true);
   eq('six distinct tips cover controls', new Set([...markup.matchAll(/<Toggletip id="([^"]+)"/g)].map(m => m[1])).size, 6);
   eq('frontmatter removes tips from client strings', source.includes('const { tips: TIPS, ...CLIENT_T } = T;'), true);
