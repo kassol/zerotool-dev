@@ -210,9 +210,60 @@ function open(s,lang='en',shellFirst=false){
     check('uploaded result scrolls on phones',script.includes("scrollIntoView({ block: 'start', behavior: 'smooth' })"));
     check('no empty image address',!markup.includes('src=""'));
     const page=readFileSync(process.env.ZT_B12_MDX_PREFIX?process.env.ZT_B12_MDX_PREFIX+'en.mdx':join(root,'src/content/tools/'+slug+'/en.mdx'),'utf8');
-    const m=page.match(/\{\/\* cfg-check: (\{[^\n]+\}) \*\/\}/);check('worked example annotation',!!m);
+    const m=page.match(/\{\/\* cfg-check: (\{[^\n]*"out"[^\n]*\}) \*\/\}/);check('worked example annotation',!!m);
     if(m) {const c=JSON.parse(m[1]);const block=source.match(/\/\* ── engine:start ── \*\/([\s\S]*?)\/\* ── engine:end ── \*\//)[1];const make=new Function('state',block+';return {DEFAULTS,buildFilter};');const state={};for(const [k,v]of Object.entries(make({}).DEFAULTS))state[k]=v.default;Object.assign(state,c.values);check('actual worked example output',make(state).buildFilter()===c.out);check('worked output shown',page.includes('filter: '+c.out+';'));}
   console.log('V2 '+passes+' passed, '+failures+' failed');
   if(process.env.ZT_B12_LAYOUT_REPORT)(await import('node:fs')).writeFileSync(process.env.ZT_B12_LAYOUT_REPORT,JSON.stringify({node:process.version,passes,failures,tips:tips.length},null,2)+'\n');
   if(failures)process.exitCode=1;
+}
+
+
+// ---------- Worked examples on the four tool pages (`cfg-check`) ----------
+// Each annotation lists the controls that differ from their defaults ({"values": {...}}, the keys
+// of DEFAULTS). The values must be ones the sliders can hold (inside min–max, on the step), and the
+// first code block after the annotation must be the rule renderOutput() writes:
+// `.element {\n  filter: <buildFilter()>;\n}`. An optional "out" must equal buildFilter().
+// Every `.element {` block on a page must carry an annotation.
+{
+  const { toolMdxContract, fencedBlocks, LANGS } = await import('./lib/tool-mdx-contract.mjs');
+  let passes = 0, failures = 0;
+  const check = (name, ok, detail = '') => { if (ok) passes++; else { failures++; console.log('FAIL: examples ' + name + (detail ? ' — ' + detail : '')); } };
+  function rule(spec) {
+    const values = spec?.values;
+    if (!values || typeof values !== 'object' || !Object.keys(values).length) throw new Error('annotation needs "values"');
+    for (const [k, v] of Object.entries(values)) {
+      const d = probe.DEFAULTS[k];
+      if (!d) throw new Error(`unknown control ${k}`);
+      if (typeof v !== 'number' || probe.clampValue(k, String(v)) !== v) throw new Error(`${k} ${v} is outside ${d.min}–${d.max}`);
+      if (Math.abs(Math.round(v / d.step) * d.step - v) > 1e-9) throw new Error(`${k} ${v} is not on the ${d.step} step`);
+      if (v === d.default) throw new Error(`${k} ${v} is the default; leave it out`);
+    }
+    const value = filterOf(values);
+    if (spec.out !== undefined && spec.out !== value) throw new Error(`"out" ${spec.out} differs from the engine ${value}`);
+    return '.element {\n  filter: ' + value + ';\n}';
+  }
+  function verify({ spec, after }) {
+    const want = rule(spec);
+    const block = fencedBlocks(after)[0];
+    if (!block) return 'no code block after the annotation';
+    return block.text === want ? null : `page shows ${JSON.stringify(block.text)}, engine writes ${JSON.stringify(want)}`;
+  }
+  const contract = toolMdxContract('css-filter-generator', { annotations: [{ tag: 'cfg-check', min: 2, verify }] });
+  for (const r of contract.results.filter((r) => r.rule.includes('cfg-check'))) check(r.message, r.ok);
+  for (const lang of LANGS) {
+    const body = contract.docs[lang].body;
+    const blocks = [...body.matchAll(/(\{\/\*\s*cfg-check:[^\n]*\*\/\}[ \t]*\n)?```css\n\.element \{/g)];
+    check(`${lang} has generated .element blocks`, blocks.length >= 2, String(blocks.length));
+    blocks.forEach((m, i) => check(`${lang} .element block #${i + 1} is annotated`, !!m[1]));
+  }
+  // The checker itself: a changed output, an off-step value and a default value are reported.
+  const fake = (spec, text) => verify({ spec, after: '\n```css\n' + text + '\n```\n' });
+  const base = { values: { grayscale: 100, opacity: 60 } };
+  check('checker accepts the engine output', fake(base, rule(base)) === null);
+  check('checker reports a changed output', fake(base, rule(base).replace('60%', '50%')) !== null);
+  let threw = 0;
+  for (const bad of [{ values: { blur: 1.25 } }, { values: { brightness: 100 } }, { values: { contrast: 250 } }, { values: { glow: 1 } }]) { try { rule(bad); } catch { threw++; } }
+  check('checker rejects values the controls cannot hold', threw === 4, String(threw));
+  console.log('EXAMPLES ' + passes + ' passed, ' + failures + ' failed');
+  if (failures) process.exitCode = 1;
 }
