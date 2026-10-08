@@ -473,6 +473,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ' normalization-only pairs are counted', status(), '+2 / -2 ' + T.onlyNormalization?.replace('{n}', '2'));
     await h.compare('one\ntwo ', 'ONE\ntwo');
     eq(lang + ' only qualifying pairs are counted', status(), '+2 / -2 ' + T.onlySpace?.replace('{n}', '1'));
+    await h.compare('\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\nx\u200Cy', '\u{1F468}\u{1F469}\u{1F467}\nxy');
+    eq(lang + ' ZWJ / ZWNJ change the rendering, so they are not counted', status(), '+2 / -2');
     await h.compare('a\nb', 'A\nb');
     eq(lang + ' ordinary change has no note', status(), '+1 / -1');
     await h.compare('a', 'a ');
