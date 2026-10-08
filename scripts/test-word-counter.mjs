@@ -100,7 +100,16 @@ eq('mixed: Hangul word plus kanji', words('한국어와 日本語'), 4);
 eq('emoji next to Han adds no word', words('好吃😋'), 2);
 eq('ko: Hangul is split on whitespace only', words('저는 꼼꼼한 사람입니다.'), 3);
 eq('ko: Hangul with an attached Latin word stays one word', words('회원ID 확인'), 2);
-eq('en unchanged: dash between spaces still a word', words('a — b'), 3);
+// Tokens of punctuation only are not words, also when whitespace separates them (review
+// s2-7 part 3, 2026-10-09; before: 'a — b' was 3 and '你好 ， 世界 ！' was 6).
+eq('punctuation-only token: em dash', words('a — b'), 2);
+eq('punctuation-only token: hyphen', words('a - b'), 2);
+eq('punctuation-only token: full-width marks between Han', words('你好 ， 世界 ！'), 4);
+eq('punctuation-only tokens in a list', words('1, 2, 3 — 4... ! ?'), 4);
+eq('punctuation-only token: ellipsis and quotes', words('Well … "yes"'), 2);
+eq('a symbol is still a word', words('a + b'), 3);
+eq('a standalone emoji is still a word', words('I love it 👨‍👩‍👧'), 4);
+eq('punctuation attached to a word is part of it', words('Hello, world!'), 2);
 eq('en unchanged: hyphenated, decimal, URL', words('well-being 3.14 https://example.com/a'), 3);
 eq('whitespace only has no words', words(' \u3000\n '), 0);
 // Reading / speaking minutes (Brysbaert 2019, Table 5, silent / aloud): English and other words
@@ -233,7 +242,7 @@ const strings = vm.runInNewContext('(' + source.match(/const STRINGS = ([\s\S]*?
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = source.split('<style>')[1].split('</style>')[0];
 const script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
-eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [3794, '8477cdcb4436be51278206dfa1f3c3e363857589d1d61cbc2d87fc80d4de9608']); // engine changed with approval 2026-10-09 (word count per script, Table 5 reading rates, localized time units)
+eq('v2 exact protected engine bytes', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), sha(source.slice(startIndex, endIndex + END_MARK.length))], [3877, '2f733331d54651d1401203c3f34c2ec294a089b5ff665f61cf23d3097e761f42']); // engine changed with approval 2026-10-09 (word count per script, Table 5 reading rates, localized time units)
 check('v2 direct flex root', /^<div class="wc-wrap" data-empty="true" data-units=\{JSON\.stringify\(T\.units\)\}>/.test(markup) && /\.wc-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0/.test(css));
 check('v2 registered analyze', /'word-counter':\s*'analyze'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
 check('v2 only actual automatic counting controls', !/<button|btn-primary|btn-copy|download/.test(markup));
