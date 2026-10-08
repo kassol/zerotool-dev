@@ -9,14 +9,55 @@ steps:
   - "焦点在工具内时按 Ctrl/⌘+L 清空输入和输出，保留所选选项。"
 faqItems:
   - question: "什么是 slug？"
+    id: "what-is"
     answer: "Slug 是从可读文本中提取的 URL 友好字符串，通常只包含小写字母、数字和连字符，例如 'hello-world' 由 'Hello World!' 生成。Slug 常用于 URL 中标识页面或资源。"
   - question: "非 ASCII 字符如何处理？"
-    answer: "带重音的拉丁字母会去掉附加符号（é → e、ź → z，所以 Łódź → lodz），ß、ł、œ、ø 等不能分解的字母按本页表格替换；& @ # % + © ® ™ € £ ¥ ° × ÷ 这些符号会换成单词（& → and）。其他非 ASCII 字符，包括中文、日文、韩文、西里尔字母和阿拉伯字母，会被删除。"
+    id: "non-ascii"
+    answer: "带重音的拉丁字母会去掉附加符号（é → e、ź → z，所以 Łódź → lodz），ß、ł、œ、ø 等不能分解的字母按本页表格替换；全角字母、数字和符号先换成半角（Ｗ → W、％ → %、￥ → ¥）。& @ # % + © ® ™ € £ ¥ ₩ ° × ÷ 这些符号会换成单词（& → and）。其他非 ASCII 字符，包括中文、日文、韩文、西里尔字母和阿拉伯字母，会被删除，删除的位置按空格处理，前后的单词不会连在一起。软连字符、零宽空格这类不可见的格式字符直接删除，不产生分隔符。"
   - question: "可以使用下划线代替连字符吗？"
+    id: "separators"
     answer: "可以。在「分隔符」下拉菜单中选择连字符（-）、下划线（_）或点（.）。"
   - question: "生成结果可以直接用于 URL 路径吗？"
-    answer: "可以。输出内容只包含字母、数字和选定的分隔符，无需百分比编码即可安全用于 URL 路径。"
+    id: "url-safe"
+    answer: "可以。输出只包含 ASCII 字母、数字和所选分隔符，不需要百分号编码。有一个例外：关闭「修剪」并选择点作为分隔符时，没有字母和数字的输入（例如只有标点或只有汉字）会得到一个点（.），浏览器会把它当作点段从路径中去掉。"
+  - question: "改了标题，slug 会跟着变吗？"
+    id: "title-change"
+    answer: "会。工具每次都按输入框里的文字重新生成 slug，不记得之前的结果。文章已经发布的话，请保留原来的 slug，或者把旧地址 301 重定向到新地址；直接换掉已发布的 slug，别处指向旧地址的链接会失效。"
+  - question: "输入的文字会发送到服务器或被保存吗？"
+    id: "privacy"
+    answer: "不会。Slug 在浏览器标签页里生成，输入的文字和结果不会发送到服务器，也不会写入浏览器存储。页面统计只在你改完文字或切换选项时记录工具名和动作（convert），不包含文字本身。"
 ---
+
+## 中文标题会得到什么
+
+工具不做拼音转写。汉字和中文标点会被删掉（删掉的位置按空格处理），留下来的只有标题里的英文、数字，以及下文映射表中的符号；全角字母和数字会先换成半角再保留。以下是默认选项（连字符、小写、修剪）的实际结果：
+
+- {/* slug-check: {"in":"如何用 Python 3.12 解析 JSON"} */}`如何用 Python 3.12 解析 JSON` → `python-3-12-json`
+- {/* slug-check: {"in":"Vue 3 + Vite 项目配置指南"} */}`Vue 3 + Vite 项目配置指南` → `vue-3-plus-vite`（`+` 换成了 plus）
+- {/* slug-check: {"in":"微信小程序 setData 性能优化"} */}`微信小程序 setData 性能优化` → `setdata`
+- {/* slug-check: {"in":"微信小程序 setData 性能优化","lower":false} */}同一个标题关闭「小写」：`微信小程序 setData 性能优化` → `setData`
+- {/* slug-check: {"in":"如何用 Python 3.12 解析 JSON","sep":"_"} */}分隔符选下划线：`如何用 Python 3.12 解析 JSON` → `python_3_12_json`
+
+第三个例子只剩一个词，已经看不出文章讲什么。这时可以先写一个英文标题或拼音，再交给工具。带声调的拼音可以直接粘贴，声调符号在 NFD 分解后会被去掉：
+
+- {/* slug-check: {"in":"Rúhé yòng Python jiěxī JSON"} */}`Rúhé yòng Python jiěxī JSON` → `ruhe-yong-python-jiexi-json`
+
+## ¥ 与全角字符
+
+人民币和日元都写作 `¥`（U+00A5），工具按映射表一律换成单词 `yen`，不会区分货币：
+
+- {/* slug-check: {"in":"价格 ¥99 起"} */}`价格 ¥99 起` → `yen-99`
+
+全角的 `￥`（U+FFE5）、`％` 和全角字母、数字会先按 NFKC 换成半角，再查映射表，所以结果与半角输入相同：
+
+- {/* slug-check: {"in":"价格 ￥99 起"} */}`价格 ￥99 起` → `yen-99`
+- {/* slug-check: {"in":"Ｎｏｄｅ．ｊｓ ２０ 入门"} */}`Ｎｏｄｅ．ｊｓ ２０ 入门` → `node-js-20`
+
+全角空格（U+3000）先换成半角空格，被删掉的汉字也按空格处理，中文夹在英文中间、没有半角空格时，英文单词也会分开：
+
+- {/* slug-check: {"in":"Hello　World"} */}`Hello　World`（中间是全角空格）→ `hello-world`
+- {/* slug-check: {"in":"Vue3入门Vite教程"} */}`Vue3入门Vite教程` → `vue3-vite`
+
 
 <h2>字符映射</h2>
 <p>符号换成独立的单词，Rock &amp; Roll 得到 <code>{"rock-and-roll"}</code>，Tom&amp;Jerry 得到 <code>{"tom-and-jerry"}</code>。带附加符号的字母去掉符号（先做 Unicode NFD 分解，再删去组合附加符号）：é → e、ñ → n、<code>{"Łódź"}</code> → <code>{"lodz"}</code>、<code>{"Tiếng Việt"}</code> → <code>{"tieng-viet"}</code>。不能分解的字母按第二张表替换，取值参考 <a href="https://github.com/sindresorhus/transliterate" rel="noopener">sindresorhus/transliterate</a>。大写字母保持大写（Ø → O、Œ → OE），开启「小写」时再转为小写。</p>
@@ -34,6 +75,7 @@ faqItems:
     <tr><td><code>{"€"}</code></td><td><code>{"euro"}</code></td></tr>
     <tr><td><code>{"£"}</code></td><td><code>{"pound"}</code></td></tr>
     <tr><td><code>{"¥"}</code></td><td><code>{"yen"}</code></td></tr>
+    <tr><td><code>{"₩"}</code></td><td><code>{"won"}</code></td></tr>
     <tr><td><code>{"°"}</code></td><td><code>{"deg"}</code></td></tr>
     <tr><td><code>{"×"}</code></td><td><code>{"x"}</code></td></tr>
     <tr><td><code>{"÷"}</code></td><td><code>{"div"}</code></td></tr>
@@ -59,9 +101,13 @@ faqItems:
 <h2>限制</h2>
 <ul>
   <li>去掉附加符号时不按语言区分：德语 <code>{"ä ö ü"}</code> 变成 <code>{"a o u"}</code>（不是 <code>{"ae oe ue"}</code>），土耳其语 <code>{"İ"}</code> 变成 <code>{"I"}</code>。</li>
-  <li>非拉丁文字会被删除，只输入中文、日文或韩文时结果为空。</li>
-  <li>撇号会被当作分隔符：<code>{"John's Guide"}</code> → <code>{"john-s-guide"}</code>。</li>
+  <li>非拉丁文字会被删除。开启「修剪」时，只输入中文、日文或韩文会得到空结果；关闭「修剪」时只剩一个分隔符：{/* slug-check: {"in":"北京","trim":false} */}<code>{"北京"}</code> → <code>{"-"}</code>。</li>
+  <li>字母或数字后面、字母前面的撇号（<code>{"'"}</code>、<code>{"’"}</code>、<code>{"‘"}</code>、<code>{"ʼ"}</code>、<code>{"ʻ"}</code>、<code>{"´"}</code>、<code>{"′"}</code>）直接删除：{/* slug-check: {"in":"John's Guide"} */}<code>{"John's Guide"}</code> → <code>{"johns-guide"}</code>，{/* slug-check: {"in":"1990's Music"} */}<code>{"1990's Music"}</code> → <code>{"1990s-music"}</code>；旁边是空格，或者在文字开头、结尾时，撇号当作分隔符：{/* slug-check: {"in":"rock 'n' roll"} */}<code>{"rock 'n' roll"}</code> → <code>{"rock-n-roll"}</code>。</li>
   <li>关闭「修剪」时，开头和结尾的分隔符会保留：<code>{"Hello World!"}</code> → <code>{"hello-world-"}</code>。</li>
+  <li>不做拼音转写，也不按汉字读音生成单词。</li>
+  <li>不删除 a、the、of 这类虚词，也没有长度上限，长标题会得到长 slug；如果 CMS 限制 slug 长度，请手动截短。</li>
+  <li>一次只转换一段文字，换行按空格处理，粘贴多行标题会得到一个很长的 slug。</li>
+  <li><code>#</code> 换成单词 <code>hash</code>，所以 <code>{"C#"}</code> 得到 <code>{"c-hash"}</code>，不是 <code>{"c-sharp"}</code>；这类名称请先改写再转换。</li>
 </ul>
 
 <h2>Slug 的使用场景</h2>
@@ -72,5 +118,5 @@ faqItems:
   <li><strong>数据库键：</strong> 无空格的可读唯一标识符。</li>
 </ul>
 <p>
-  一致的 Slug 生成策略可确保 URL 保持稳定且对 SEO 友好，即使原始标题在格式或标点上发生变化也不受影响。
+  同一套规则对只在标点、大小写上不同的标题会给出同一个 slug。
 </p>

@@ -139,9 +139,48 @@ t('Ł', 'L', keep);
 t('ł', 'l');
 t('đ', 'd');
 t('Đ', 'D', keep);
-t("John's Guide", 'john-s-guide');
+t("John's Guide", 'johns-guide');
 t('你好', '');
 t('日本語 Guide', 'guide');
+
+// ---------- format characters (General_Category=Cf) are deleted ----------
+// Soft hyphen, zero-width space / non-joiner / joiner, word joiner, LRM and BOM are invisible and
+// are deleted without a separator, as on master and in WordPress sanitize_title_with_dashes().
+t('hyphen\u00ADation', 'hyphenation');
+t('Java\u200BScript', 'javascript');
+t('co\u200Coperate', 'cooperate');
+t('Ice\u2060cream', 'icecream');
+t('Hello\u200EWorld', 'helloworld');
+t('\uFEFFTitle', 'title');
+t('a\u200Db', 'ab');
+t('Don\u00AD\u2019t stop', 'dont-stop');
+
+// ---------- removed characters split words; full-width forms; won sign ----------
+// A deleted character (CJK, full-width space, other non-ASCII) acts as a separator, so the
+// Latin words around it stay apart; runs merge and Trim removes them at the ends. Before the
+// fix the character was deleted with no separator (Vue3入门Vite教程 → vue3vite).
+t('Vue3入门Vite教程', 'vue3-vite');
+t('Vue3入门Vite教程', 'vue3_vite', { separator: '_' });
+t('Vue3入门Vite教程', 'vue3.vite', { separator: '.' });
+t('Hello\u3000World', 'hello-world');
+t('【2026年版】Next.js 15 入門', '2026-next-js-15');
+t('Next.js로 블로그 만들기', 'next-js');
+t('Vue3와Vite로 시작하기', 'vue3-vite');
+t('東京Tokyo', 'Tokyo', { lowercase: false });
+t('東京 Tokyo', '-tokyo', { trim: false });
+t('I ♥ Dogs', 'i-dogs');
+// Full-width forms (U+3000, U+FF01–FF5E, U+FFE0–FFE6) are NFKC-normalized first, then mapped.
+t('ＷｏｒｄＰｒｅｓｓ入門', 'wordpress');
+t('Ｎｏｄｅ．ｊｓ ２０', 'node-js-20');
+t('100％ 純正', '100-percent');
+t('価格 ￥1,980（税込）', 'yen-1-980');
+t('价格 ￥99 起', 'yen-99');
+t('￦10,000 할인', 'won-10-000');
+// ₩ maps like the other currency signs: the Unicode name without SIGN (WON SIGN → won).
+t('₩10,000 할인 쿠폰', 'won-10-000');
+t('₩', 'won');
+// NFKC is applied only to the full-width forms, so ™ still maps to its own word (NFKC would give TM).
+t('Name™', 'name-tm');
 
 // en tool page: Examples and comparison tables
 t('10 Tips & Tricks for Node.js (2026 Edition)!', '10-tips-and-tricks-for-node-js-2026-edition');
@@ -155,12 +194,38 @@ t('я люблю единорогов', '');
 t('I ♥ Dogs', 'i-dogs');
 t('Fußgängerübergänge', 'fussgangerubergange');
 t('Conway\u2019s Law', 'conways-law');
-t("Conway's Law", 'conway-s-law');
+t("Conway's Law", 'conways-law');
+// An apostrophe (U+0027, U+2019, U+02BC) between two letters is deleted with no separator, as
+// WordPress sanitize_title(), lodash kebabCase and @sindresorhus/slugify do. Before the fix it was a
+// separator (Conway's Law → conway-s-law). An apostrophe next to a space, digit or the text edge
+// stays a separator.
+t("don't stop", 'dont-stop');
+t('Hawai\u02BBi', 'hawaii');
+t('Hawaiʼi', 'hawaii');
+t("Café's Menu", 'cafes-menu');
+t("rock 'n' roll", 'rock-n-roll');
+t("90's music", '90s-music');
+// Apostrophe look-alikes (U+2018, U+02BB okina, U+00B4, U+2032) follow the same rule (master and
+// WordPress delete them), and a digit before the apostrophe counts like a letter (1990's → 1990s,
+// as WordPress and @sindresorhus/slugify do). After the apostrophe a letter is still required.
+t('Ma\u2018ui', 'maui');
+t('rock\u2018n\u2019roll', 'rocknroll');
+t('Don\u00B4t', 'dont');
+t('Don\u2032t', 'dont');
+t("1990's", '1990s');
+t("5'11", '5-11');
+t("the '90s", 'the-90s');
+t("'quoted' word", 'quoted-word');
+t("O’Brien’s Pub", 'obriens-pub');
+t("Conway's Law", 'conways_law', { separator: '_' });
+t('Ｊｏｈｎ＇ｓ', 'johns');
 {
   const got = E.slugify('10 Tips & Tricks for Node.js (2026 Edition)!', { separator: '_', lowercase: false, trim: true });
   check('page example, underscore + case kept', got === '10_Tips_and_Tricks_for_Node_js_2026_Edition', got);
   const dot = E.slugify('..', { separator: '.', lowercase: true, trim: false });
   check('page FAQ: punctuation-only input with Trim off and dot separator gives "."', dot === '.', dot);
+  const cjkDot = E.slugify('世界', { separator: '.', lowercase: true, trim: false });
+  check('page FAQ: CJK-only input with Trim off and dot separator gives "."', cjkDot === '.', cjkDot);
 }
 
 // ---------- guide examples (src/content/blog/slugify-guide/{en,ja}.mdx) ----------
@@ -209,6 +274,20 @@ t("Conway's Law", 'conway-s-law');
   }
 }
 
+// zh / ko guides: the paragraph that describes this tool's output carries sl-check annotations too
+// (same format as above; no runnable code block or heading rules for these two languages).
+for (const lang of ['zh', 'ko']) {
+  const rel = 'src/content/blog/slugify-guide/' + lang + '.mdx';
+  const text = readFileSync(join(root, rel), 'utf8');
+  let count = 0;
+  for (const m of text.matchAll(/\{\/\* sl-check: (\{.*?\}) \*\/\}/g)) {
+    count++;
+    const spec = JSON.parse(m[1]);
+    eq(rel + ' ' + JSON.stringify(spec.input), s(spec.input), spec.slug);
+    if (spec.slug) check(rel + ' quotes ' + spec.slug + ' after the annotation', text.slice(m.index, m.index + 4000).includes('`' + spec.slug + '`'), spec.slug);
+  }
+  check(rel + ' has sl-check annotations', count >= 4, count);
+}
 
 // ---------- actual page lifecycle and shared keyboard handler ----------
 const shell = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
@@ -368,13 +447,13 @@ for(const [lang,labels] of Object.entries(copyLabels)) {
   p.get('sl-lowercase').click();eq(lang+': lowercase change recomputes',p.get('sl-result').textContent,'Creme-and-Go');
   p.input('sl-separator','_','change');eq(lang+': separator change recomputes',p.get('sl-result').textContent,'Creme_and_Go');
   p.get('sl-trim').click();p.input('sl-input',' Hello ');eq(lang+': trim change recomputes',p.get('sl-result').textContent,'_Hello_');
-  p.input('sl-input','世界');eq(lang+': unsupported letters disable copy',p.get('sl-copy').disabled,true);check(lang+': unsupported letters warn',p.get('sl-status').textContent.length>0);
+  p.get('sl-trim').click();p.input('sl-input','世界');eq(lang+': unsupported letters disable copy',p.get('sl-copy').disabled,true);check(lang+': unsupported letters warn',p.get('sl-status').textContent.length>0);
   p.input('sl-input','');eq(lang+': empty input resets warning class',[p.get('sl-status').textContent,p.get('sl-status').className],['','sl-status']);
   for(const order of [false,true])for(const mod of [{ctrlKey:true},{ctrlKey:false,metaKey:true}]) {
-    const q=resultPage(lang,order);q.input('sl-separator','_','change');q.get('sl-lowercase').click();const before=snapshot(q);q.key(q.body);eq(lang+': external CtrlL preserves page',snapshot(q),before);
+    const q=resultPage(lang,order);q.input('sl-separator','_','change');q.get('sl-lowercase').click();const tracked=q.tracks.length;const before=snapshot(q);q.key(q.body);eq(lang+': external CtrlL preserves page',snapshot(q),before);
     q.key('sl-copy',{key:'L',...mod});eq(lang+': CtrlL clears code/status/buttons '+order,snapshot(q),['','',true,labels[0],'','sl-status']);
     eq(lang+': CtrlL keeps options',[q.get('sl-separator').value,q.get('sl-lowercase').checked,q.get('sl-trim').checked],['_',false,true]);
-    q.get('sl-copy').click();eq(lang+': cleared result cannot copy old text',q.copies.length,0);q.advance(1000);eq(lang+': clear cancels queued tracking',q.tracks.length,0);eq(lang+': shared clear storage called once',q.clears,['slugify']);
+    q.get('sl-copy').click();eq(lang+': cleared result cannot copy old text',q.copies.length,0);q.advance(1000);eq(lang+': clear sends no analytics event',q.tracks.length,tracked);eq(lang+': shared clear storage called once',q.clears,['slugify']);
     q.input('sl-input','New Text');eq(lang+': input recovers after shortcut',q.get('sl-result').textContent,'New_Text');
   }
   for(const kind of ['reject','throw','missing']) {
@@ -405,7 +484,53 @@ for(const [lang,labels] of Object.entries(copyLabels)) {
     q.get('sl-copy').click();const oldError=q.copies.at(-1);q.get('sl-copy').click();q.copies.at(-1).resolve();await settle();const success=snapshot(q);oldError.reject(Error('older'));await settle();eq(lang+': old error cannot erase latest success',snapshot(q),success);
   }
 }
-eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'924eade0152ec855fd200dcf14d74a58652a7f9cc8ea9efaf7f1b8f6c7dd1528');
+// ---------- tool page worked examples (src/content/tools/slugify/{lang}.mdx) ----------
+// Annotation {/* slug-check: {"in":"…","sep"?:"_","lower"?:false,"trim"?:false,"empty"?:true} */}
+// runs the engine on "in" with the page's defaults (hyphen, Lowercase on, Trim on) changed by the
+// optional keys. The input must appear in the text after the annotation (up to the next annotation
+// or H2); a non-empty slug must appear there as inline code or in a code block; an empty slug must
+// be declared with "empty": true. Each language needs at least 2 examples.
+function codeSpans(text) {
+  const out = [];
+  for (const m of text.matchAll(/<code>\{"((?:[^"\\]|\\.)*)"\}<\/code>/g)) out.push(JSON.parse('"' + m[1] + '"'));
+  for (const m of text.matchAll(/<code>([^<{]*)<\/code>/g)) out.push(m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+  for (const m of text.replace(/^```[\s\S]*?^```/gm, '').matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+  for (const m of text.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)) out.push(...m[1].split('\n'));
+  return out;
+}
+{
+  const { toolMdxContract } = await import('./lib/tool-mdx-contract.mjs');
+  const contract = toolMdxContract('slugify', { annotations: [{ tag: 'slug-check', min: 2, verify: ({ spec, after }) => {
+    if (!spec || typeof spec.in !== 'string') return 'spec needs "in"';
+    const opts = { separator: spec.sep ?? '-', lowercase: spec.lower ?? true, trim: spec.trim ?? true };
+    const got = E.slugify(spec.in, opts);
+    const codes = codeSpans(after);
+    const plain = after.replace(/&amp;/g, '&');
+    if (!codes.includes(spec.in) && !plain.includes(spec.in)) return 'input ' + JSON.stringify(spec.in) + ' is not on the page after the annotation';
+    if (got === '') return spec.empty === true ? null : 'engine gives an empty slug; declare "empty": true';
+    if (spec.empty) return 'declared empty but the engine gives ' + JSON.stringify(got);
+    return codes.includes(got) ? null : 'engine output ' + JSON.stringify(got) + ' is not shown as code after the annotation';
+  } }] });
+  for (const r of contract.results.filter((r) => /slug-check/.test(r.rule))) check('tool page: ' + r.message, r.ok);
+}
+
+// Analytics: one event per committed change (as in css-triangle-generator), not per pause in typing.
+// Before the fix every input event queued a 500 ms timer, so typing a title with pauses sent
+// several 'convert' events.
+for (const lang of Object.keys(copyLabels)) {
+  const q = pageVM(lang);
+  for (const v of ['R', 'Ro', 'Rock', 'Rock &', 'Rock & Roll']) { q.input('sl-input', v); q.advance(800); }
+  eq(lang + ': typing sends no analytics event', q.tracks.length, 0);
+  q.get('sl-input').dispatch('change');
+  eq(lang + ': committed input sends one event', q.tracks, [['slugify', 'convert']]);
+  q.input('sl-separator', '_', 'change'); q.get('sl-lowercase').click();
+  eq(lang + ': each option change sends one event', q.tracks.length, 3);
+  q.input('sl-input', '世界'); q.get('sl-input').dispatch('change'); q.get('sl-lowercase').click();
+  eq(lang + ': empty result sends no event', q.tracks.length, 3);
+  q.input('sl-input', ''); q.get('sl-input').dispatch('change');
+  eq(lang + ': empty input sends no event', q.tracks.length, 3);
+}
+eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'510fe1861fc09afeede07903a039319d17027867ff53c07de2d70a3f3251ab16');
 eq('no unhandled copy rejections',unhandled,[]);process.off('unhandledRejection',onUnhandled);
 // ---------- v2 page layout ----------
 const v2Start=passes;

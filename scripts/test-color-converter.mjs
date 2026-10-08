@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ColorConverterTool.astro'), 'utf8');
@@ -274,6 +274,125 @@ try {
     check(lang + ' superseded request cannot report failure', !q.get('cc-status').textContent && second.button.textContent === copiedLabel);
     q.flushTimers(); check(lang + ' latest copy feedback returns to base label', second.button.textContent === copyLabel);
   }
+  // Invalid input: the status uses the page language and the other two fields are emptied, so Copy
+  // cannot copy an error text as a color value (before the fix every page showed the English
+  // "Invalid color format" and wrote it into both other fields).
+  const invalidText = { en: 'Invalid color format', zh: '颜色格式无效', ja: '色の形式が正しくありません', ko: '색상 형식이 올바르지 않습니다' };
+  for (const lang of Object.keys(invalidText)) {
+    for (const [id, bad] of [['cc-hex', '#ggg'], ['cc-hex', '#1a73e880'], ['cc-rgb', 'rgb(300, 0, 0)'], ['cc-rgb', 'rgb(26、115、232)'], ['cc-hsl', 'hsl(-30, 50%, 50%)']]) {
+      const p = lifecyclePage(lang); p.input(id, bad); const s = colorSnapshot(p);
+      const others = ['cc-hex', 'cc-rgb', 'cc-hsl'].filter(x => x !== id);
+      check(lang + ' invalid ' + id + ' ' + bad + ': localized status', s.status === invalidText[lang] && s.statusClass === 'cc-status error', s.status);
+      check(lang + ' invalid ' + id + ' ' + bad + ': input kept, other fields empty', p.get(id).value === bad && others.every(x => p.get(x).value === ''), s.fields.join('|'));
+      check(lang + ' invalid ' + id + ' ' + bad + ': swatch and label cleared', !s.swatch && !s.label);
+      for (const x of others) colorCopy(p, x);
+      check(lang + ' invalid ' + id + ' ' + bad + ': emptied fields copy nothing', p.clipboard.length === 0, p.clipboard.map(c => c.value).join('|'));
+      p.input('cc-hex', '#1677ff');
+      check(lang + ' valid input after ' + bad + ' recovers', colorSnapshot(p).fields.join('|') === '#1677ff|rgb(22, 119, 255)|hsl(215, 100%, 54%)' && !p.get('cc-status').textContent);
+    }
+  }
+  // Full-width input is read through NFKC (as color-palette-generator and css-gradient-generator
+  // do), so ＃１Ａ７３Ｅ８ and ｒｇｂ（２６，１１５，２３２） convert. On change (leaving the field) the field's
+  // own text is replaced by its NFKC form when that form is ASCII, so Copy gives a usable value.
+  // Before the fix all of these were rejected as an invalid format.
+  for (const lang of Object.keys(invalidText)) {
+    for (const [id, wide, fields, ascii] of [
+      ['cc-hex', '＃１Ａ７３Ｅ８', '|rgb(26, 115, 232)|hsl(214, 82%, 51%)', '#1A73E8'],
+      ['cc-hex', '１ａ７３ｅ８', '|rgb(26, 115, 232)|hsl(214, 82%, 51%)', '1a73e8'],
+      ['cc-rgb', 'ｒｇｂ（２６，１１５，２３２）', '#1a73e8||hsl(214, 82%, 51%)', 'rgb(26,115,232)'],
+      ['cc-rgb', 'rgb(26，115，232)', '#1a73e8||hsl(214, 82%, 51%)', 'rgb(26,115,232)'],
+      ['cc-hsl', 'ｈｓｌ（２１４，８２％，５１％）', '#1c74e9|rgb(28, 116, 233)|', 'hsl(214,82%,51%)'],
+    ]) {
+      const p = lifecyclePage(lang); p.input(id, wide); const s = colorSnapshot(p);
+      const shown = s.fields.map((v, i) => ['cc-hex', 'cc-rgb', 'cc-hsl'][i] === id ? '' : v).join('|');
+      check(lang + ' full-width ' + wide + ' converts', shown === fields && !s.status, shown + ' ' + s.status);
+      p.get(id).dispatch('change');
+      check(lang + ' full-width ' + wide + ' is rewritten as ASCII on change', p.get(id).value === ascii, p.get(id).value);
+    }
+    const q = lifecyclePage(lang); q.input('cc-hex', '#1ㅁ73ㄷ8'); q.get('cc-hex').dispatch('change');
+    check(lang + ' a value whose NFKC form is not ASCII is left as typed', q.get('cc-hex').value === '#1ㅁ73ㄷ8' && q.get('cc-status').textContent === invalidText[lang]);
+  }
+
+  // The local FAQ and examples describe the input text and the tool's result only; there is no
+  // official source for how an input method types commas or letters, so no page asserts it.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const page = readFileSync(join(root, 'src/content/tools/color-converter', lang + '.mdx'), 'utf8');
+    const claim = page.match(/输入法|IME|두벌식|한\/영|자판|input method/);
+    check(lang + ' page makes no input-method behavior claim', !claim, claim?.[0]);
+  }
+
+  // Text after a complete rgb() / hsl() value is rejected with a localized reason. The engine's
+  // parseRgb / parseHsl match only the start of the text, so before the fix rgb(26, 115, 232)abc
+  // converted as if the extra text were not there. Values still being typed are not rejected.
+  const extraText = { en: 'Invalid color format: remove the extra text after the color values.', zh: '颜色格式无效：请删去颜色值后面多余的文字。', ja: '色の形式が正しくありません。色の値の後ろにある余分な文字を消してください。', ko: '색상 형식이 올바르지 않습니다. 색상 값 뒤의 불필요한 문자를 지우세요.' };
+  for (const lang of Object.keys(extraText)) {
+    for (const [id, bad] of [['cc-rgb', 'rgb(26, 115, 232)abc'], ['cc-rgb', 'rgba(26, 115, 232, 0.5) x'], ['cc-rgb', 'rgb(26, 115, 232))'], ['cc-hsl', 'hsl(214, 82%, 51%)xyz'], ['cc-hsl', 'hsl(214, 82%, 51%); color: red']]) {
+      const p = lifecyclePage(lang); p.input(id, bad); const s = colorSnapshot(p);
+      check(lang + ' trailing text rejected ' + bad, s.status === extraText[lang] && s.statusClass === 'cc-status error' && ['cc-hex', 'cc-rgb', 'cc-hsl'].filter(x => x !== id).every(x => p.get(x).value === '') && !s.label, s.status + ' | ' + s.fields.join('|'));
+    }
+    for (const [id, ok, hex] of [['cc-rgb', 'rgb(26, 115, 232)', '#1a73e8'], ['cc-rgb', 'rgba(26,115,232,.5)', '#1a73e8'], ['cc-rgb', 'rgba(26, 115, 232, 50%)', '#1a73e8'], ['cc-rgb', 'rgb(26, 115, 232', '#1a73e8'], ['cc-rgb', 'rgba(26, 115, 232, ', '#1a73e8'], ['cc-hsl', 'hsl(214, 82%, 51%)', '#1c74e9'], ['cc-hsl', 'hsla(214, 82%, 51%, 0.5)', '#1c74e9'], ['cc-hsl', 'hsl(214, 82, 51', '#1c74e9']]) {
+      const p = lifecyclePage(lang); p.input(id, ok);
+      check(lang + ' complete or partial value still converts ' + ok, p.get('cc-hex').value === hex && !p.get('cc-status').textContent, p.get('cc-hex').value + ' ' + p.get('cc-status').textContent);
+    }
+  }
+  // A value copied from CSS may end with ; or sit in quotes. As in color-palette-generator
+  // (parseColor: NFKC, trim, drop trailing ;, drop matching quotes), these are removed before the
+  // value is read. Before the fix rgb(26, 115, 232); was rejected as extra text and #1a73e8; as invalid.
+  for (const lang of Object.keys(extraText)) {
+    for (const [id, v, hex] of [['cc-hex', '#1a73e8;', '#1a73e8'], ['cc-hex', '"#1a73e8"', '#1a73e8'], ['cc-hex', "'#f53';", '#ff5533'], ['cc-rgb', 'rgb(26, 115, 232);', '#1a73e8'], ['cc-rgb', 'rgb(26, 115, 232);;', '#1a73e8'], ['cc-rgb', "'rgb(26, 115, 232)'", '#1a73e8'], ['cc-hsl', 'hsl(214, 82%, 51%);', '#1c74e9'], ['cc-hsl', '"hsl(214, 82%, 51%)";', '#1c74e9']]) {
+      const p = lifecyclePage(lang); p.input(id, v);
+      const got = id === 'cc-hex' ? p.get('cc-swatch-label').textContent : p.get('cc-hex').value;
+      check(lang + ' trailing ; and quotes are accepted ' + v, got === hex && !p.get('cc-status').textContent, got + ' ' + p.get('cc-status').textContent);
+    }
+    for (const [id, v] of [['cc-rgb', 'rgb(26, 115, 232) !important;'], ['cc-rgb', 'rgb(26, 115, 232); color: red'], ['cc-hsl', 'hsl(214, 82%, 51%) x;']]) {
+      const p = lifecyclePage(lang); p.input(id, v);
+      check(lang + ' other trailing text is still rejected ' + v, p.get('cc-status').textContent === extraText[lang], p.get('cc-status').textContent);
+    }
+  }
+  // A decimal channel (rgb(26, 115, 23.5)) is not "extra text": it gets the general invalid-format
+  // message. CSS function names are case-insensitive, so RGB(…) / HSL(…) are read like rgb(…).
+  for (const lang of Object.keys(extraText)) {
+    for (const [id, v] of [['cc-rgb', 'rgb(26, 115, 23.5)'], ['cc-rgb', 'rgb(26, 115, 232.0)'], ['cc-hsl', 'hsl(214, 82%, 51%2)']]) {
+      const p = lifecyclePage(lang); p.input(id, v);
+      check(lang + ' decimal or digit after the value uses the general message ' + v, p.get('cc-status').textContent === invalidText[lang], p.get('cc-status').textContent);
+    }
+    for (const [id, v, hex] of [['cc-rgb', 'RGB(26, 115, 232)', '#1a73e8'], ['cc-rgb', 'Rgba(26,115,232,.5)', '#1a73e8'], ['cc-hsl', 'HSL(214, 82%, 51%)', '#1c74e9'], ['cc-hsl', 'HSLA(214, 82%, 51%, 1)', '#1c74e9']]) {
+      const p = lifecyclePage(lang); p.input(id, v);
+      check(lang + ' upper-case function name is read ' + v, p.get('cc-hex').value === hex && !p.get('cc-status').textContent, p.get('cc-hex').value + ' ' + p.get('cc-status').textContent);
+    }
+  }
+  {
+    const engine = source.slice(start, end), script = lifecycleScript.slice(lifecycleScript.indexOf('/* ── engine:end ── */'));
+    for (const head of ['/^rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/', '/^hsla?\\(\\s*(\\d+(?:\\.\\d+)?)\\s*,\\s*(\\d+(?:\\.\\d+)?)%?\\s*,\\s*(\\d+(?:\\.\\d+)?)%?/']) {
+      check('trailing-text check uses the engine pattern ' + head, engine.includes(head) && script.includes(head));
+    }
+  }
+
+  // Worked examples on the four tool pages: {/* cc-check: {"field":"hex|rgb|hsl","in":"…","show"?:[…],"error"?:true,"reason"?:"extra"} */}
+  // types "in" into the field on the complete page script (page language of the MDX file). Each
+  // field in "show" (default: the two other fields) must appear as inline code after the annotation
+  // (up to the next annotation or H2). With "error": true the field must be rejected and the page's
+  // localized status text must appear after the annotation. At least 2 examples per language.
+  const ccCodes = text => [...text.matchAll(/`([^`\n]+)`/g)].map(m => m[1]).concat([...text.matchAll(/<code>([^<]*)<\/code>/g)].map(m => m[1]));
+  const ccContract = toolMdxContract('color-converter', { annotations: [{ tag: 'cc-check', min: 2, verify: ({ spec, after, lang }) => {
+    if (!spec || !['hex', 'rgb', 'hsl'].includes(spec.field) || typeof spec.in !== 'string') return 'spec needs field and in';
+    const p = lifecyclePage(lang); p.input('cc-' + spec.field, spec.in);
+    const status = p.get('cc-status').textContent;
+    if (spec.error) {
+      const want = spec.reason === 'extra' ? extraText[lang] : invalidText[lang];
+      if (status !== want) return 'expected ' + JSON.stringify(want) + ', got ' + JSON.stringify(status);
+      return after.includes(status) ? null : 'status text ' + JSON.stringify(status) + ' is not quoted after the annotation';
+    }
+    if (status) return 'page reports ' + JSON.stringify(status);
+    const codes = ccCodes(after);
+    if (!codes.includes(spec.in)) return 'input ' + JSON.stringify(spec.in) + ' is not shown as code after the annotation';
+    for (const f of spec.show ?? ['hex', 'rgb', 'hsl'].filter(x => x !== spec.field)) {
+      const v = p.get('cc-' + f).value;
+      if (!codes.includes(v)) return f + ' value ' + JSON.stringify(v) + ' is not shown as code after the annotation';
+    }
+    return null;
+  } }] });
+  for (const r of ccContract.results.filter(r => /cc-check/.test(r.rule))) check('tool page: ' + r.message, r.ok);
   await settle(); check('all page copy rejections are handled', unhandled.length === 0, unhandled.join('; '));
 } finally { process.off('unhandledRejection', captureUnhandled); }
 
