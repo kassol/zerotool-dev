@@ -483,6 +483,11 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
     ga.example();same(tag+' GA: Example sends one event',ga.tracks.length,3);ga.get(cfg.input).dispatch('change');same(tag+' GA: change on the unchanged example sends nothing',ga.tracks.length,3);
     ga.get(cfg.clear).click();ga.example();same(tag+' GA: the same example after Clear is sent again',ga.tracks.length,4);
     for(const focus of [p.get('ttz-output'),p.document.querySelector('[data-zt-tip="ttz-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output area CtrlL returns to editable input',[p.document.activeElement.id,p.out(),p.get(cfg.input).value,p.get(cfg.status).textContent],[cfg.input,'','','']);}
+    // Error positions count the original input, including leading blank lines and spaces (review s2-6 must-fix 2)
+    const at=(line,col,name)=>labels[lang].msgError+labels[lang].msgNoColon.replace('{line}',line).replace('{col}',col).replace('{name}',name);
+    const lc=page(lang,shellFirst);lc.input('\n\n\n  interface U {\n    name string;\n  }\n\n');lc.advance(300);same(tag+' error position after leading blank lines',lc.get(cfg.status).textContent,at(5,5,'name'));
+    lc.input('   interface U { a b }');lc.advance(300);same(tag+' error column after leading spaces',lc.get(cfg.status).textContent,at(1,18,'a'));
+    lc.input('  \n  ');lc.advance(300);same(tag+' whitespace-only input stays empty',[lc.out(),lc.get(cfg.status).textContent],['','']);
     p.input('interface T { x: string; }');p.advance(79);const beforeHL=p.get('ttz-input-hl-code').textContent;p.advance(1);same(tag+' 80ms highlighting reads current input',p.get('ttz-input-hl-code').textContent,'interface T { x: string; }\n');p.get(cfg.input).scrollTop=21;p.get(cfg.input).scrollLeft=17;p.get(cfg.input).dispatch('scroll');same(tag+' input scroll is mirrored',[p.get('ttz-input-hl-code').parentElement.scrollTop,p.get('ttz-input-hl-code').parentElement.scrollLeft],[21,17]);p.get(cfg.clear).click();p.advance(300);same(tag+' Clear also clears input highlighting',p.get('ttz-input-hl-code').textContent,'');
   }
   await settle();same('no unhandled copy rejection',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
