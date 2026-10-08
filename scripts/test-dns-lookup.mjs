@@ -212,7 +212,7 @@ if (stringsMatch) {
     eq('STRINGS keys ' + lang, Object.keys(STRINGS[lang]).sort().join(','), enKeys);
   }
   check('STRINGS.en has summaryDnssecFailed', 'summaryDnssecFailed' in STRINGS.en);
-  const reasonKeys = ['noHost', 'badChar', 'idnChar', 'emptyLabel', 'hyphenStart', 'hyphenEnd', 'labelTooLong', 'singleLabel', 'tooLong'];
+  const reasonKeys = ['noHost', 'badChar', 'idnChar', 'emptyLabel', 'hyphenStart', 'hyphenEnd', 'labelTooLong', 'singleLabel', 'tooLong', 'badScheme', 'badPort', 'numericLast', 'badPunycode', 'otherScheme'];
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq('domain error reasons ' + lang, Object.keys(STRINGS[lang].domainErrors || {}).sort(), [...reasonKeys].sort());
     const placeholders = (s) => [...String(s).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',');
@@ -249,10 +249,49 @@ const diagCases = [
   ['localhost', { code: 'singleLabel', name: 'localhost' }],
   ['LOCALHOST:8080', { code: 'singleLabel', name: 'localhost' }],
   [Array(64).fill('abc').join('.'), { code: 'tooLong', len: 255 }],
+  // 2026-10-08: inputs that got the generic message before (random sweep below).
+  ['example.com/?next=https://x', { code: 'badScheme', pos: 24 }],
+  ['example.com:99999', { code: 'badPort', port: '99999' }],
+  ['https://example.123/', { code: 'numericLast', label: '123' }],
+  ['ｅｘａｍｐｌｅ．１２３', { code: 'numericLast', label: '123' }],
+  ['user@example.0x1f:8080', { code: 'numericLast', label: '0x1f' }],
+  ['https://xn--zz.com/', { code: 'badPunycode', n: 1, label: 'xn--zz' }],
+  ['a\u2024b.com', { code: 'badChar', ch: '\u2024', cp: 'U+2024', pos: 2 }],
+  ['dns://例え.jp', { code: 'otherScheme', scheme: 'dns://' }],
+  ['example.com::8080', { code: 'badChar', ch: ':', cp: 'U+003A', pos: 12 }],
+  ['example.com /x', { code: 'badChar', ch: ' ', cp: 'U+0020', pos: 12 }],
 ];
 for (const [input, expected] of diagCases) {
   check('isValidDomain rejects ' + JSON.stringify(input), !E.isValidDomain(E.normalizeDomain(input)));
   eq('diagnose ' + JSON.stringify(input), D.diagnoseDomain(input), expected);
+}
+
+// Random sweep: every input that isValidDomain() rejects gets a specific reason with text in
+// all four languages. Before 2026-10-08 about 0.1–3% of these (depending on the alphabet)
+// fell back to the generic "Invalid domain" message: a numeric last label read as IPv4,
+// "://" after a host, a port above 65535, a broken "xn--" label, a space before "/",
+// a second ":", U+2024, and schemes other than http(s).
+{
+  const strings = stringsMatch ? new Function('return ' + stringsMatch[1])() : {};
+  let x = 2463534242;
+  const rnd = () => { x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
+  const plain = 'abcdefghijklmnopqrstuvwxyz0123456789-._ '.split('').concat(['.', '-', 'xn--', '１', 'ｅ', '。', ':', '@', '/', 'é', '中', ':99999']);
+  const wide = ['a', 'z', '0', '9', '-', '.', '_', ' ', 'é', '中', 'ｅ', '．', '。', '@', ':', '/', '?', '#', '%', '!', '\\', 'Ａ', 'ß', 'İ', '\u200b', '\u00ad', '٣', '９', 'xn--', ':99999', ':8080', '0x', 'ﬁ', '①', '²', '\u2024', 'http://', 'dns://'];
+  for (const [name, alpha] of [['plain', plain], ['wide', wide]]) {
+    let rejected = 0; const generic = []; const missing = new Set();
+    for (let i = 0; i < 20000; i++) {
+      let s = ''; const n = 1 + Math.floor(rnd() * 14);
+      for (let k = 0; k < n; k++) s += alpha[Math.floor(rnd() * alpha.length)];
+      const tl = rnd(); if (tl < 0.3) s += '.com'; else if (tl < 0.45) s += '.' + Math.floor(rnd() * 300);
+      if (E.isValidDomain(E.normalizeDomain(s))) continue;
+      rejected++;
+      const r = D.diagnoseDomain(s);
+      if (!r) { generic.push(s); continue; }
+      for (const lang of ['en', 'zh', 'ja', 'ko']) if (!strings[lang]?.domainErrors?.[r.code]) missing.add(lang + ':' + r.code);
+    }
+    check('sweep ' + name + ': ' + rejected + ' rejected inputs all get a specific reason', rejected > 10000 && generic.length === 0, generic.length + ' generic, e.g. ' + JSON.stringify(generic.slice(0, 5)));
+    check('sweep ' + name + ': every reason has text in 4 languages', missing.size === 0, [...missing].join(' '));
+  }
 }
 
 // ---------- real page entry points (no network) ----------
