@@ -8,26 +8,93 @@ steps:
   - "点击“+ 添加 User-agent 块”为其他爬虫配置规则。"
   - "按需输入一个 Sitemap URL。输出实时更新，点击“复制”复制完整文件。"
 faqItems:
-  - question: "robots.txt 是什么？"
-    answer: "robots.txt 是放置于网站根目录（如 https://example.com/robots.txt）的纯文本文件，用于告知网络爬虫哪些页面或目录可以抓取，哪些不可以。它遵循机器人排除协议（Robots Exclusion Protocol）。"
-  - question: "robots.txt 能阻止所有爬虫吗？"
-    answer: "不能。robots.txt 是约定规范，而非安全措施。Googlebot、Bingbot 等合规爬虫会遵守它，但恶意爬虫可能完全无视。如需真正限制内容访问，请使用服务器层面的访问控制。"
-  - question: "'Disallow: /' 是什么意思？"
-    answer: "它告诉指定的 User-agent 不要抓取站点上的任何页面。将 'User-agent: *' 与 'Disallow: /' 组合使用，可阻止所有合规爬虫访问整个站点。"
-  - question: "可以设置多个 User-agent 块吗？"
-    answer: "可以。您可以为不同爬虫定义独立的规则集。点击「+ Add User-agent Block」即可添加更多块，每个块可拥有独立的 Allow/Disallow 规则。"
-  - question: "Sitemap 指令应放在哪里？"
-    answer: "Sitemap 指令通常放在 robots.txt 文件末尾，用于告知搜索引擎 XML Sitemap 的位置，帮助其发现所有待收录页面。"
+  - id: "what-is"
+    question: "robots.txt 是什么？"
+    answer: "robots.txt 是放在网站根目录（如 https://example.com/robots.txt）的纯文本文件，告诉网络爬虫哪些页面或目录可以抓取、哪些不可以。它遵循机器人排除协议（Robots Exclusion Protocol），该协议已标准化为 RFC 9309。"
+  - id: "not-security"
+    question: "robots.txt 能阻止所有爬虫吗？"
+    answer: "不能。robots.txt 是约定，不是安全措施。Googlebot、Baiduspider 等守规矩的爬虫会遵守它，恶意爬虫可能完全无视。要真正限制访问，请在服务器层面做访问控制。"
+  - id: "disallow-root"
+    question: "'Disallow: /' 是什么意思？"
+    answer: "它让对应的 User-agent 不抓取站点上的任何页面。'User-agent: *' 加 'Disallow: /' 会让所有遵守协议的爬虫都不抓取整个站点。这也是工具打开时的初始状态，发布前请改掉。"
+  - id: "multiple-blocks"
+    question: "可以设置多个 User-agent 块吗？"
+    answer: "可以，点击“+ 添加 User-agent 块”即可。爬虫只遵守与自己名字匹配的那一组；给 Baiduspider 单独写一组后，Baiduspider 就不再读 * 组的规则，两组共用的规则要在两组里各写一遍。"
+  - id: "sitemap"
+    question: "Sitemap 指令应放在哪里？"
+    answer: "放在文件中任何位置都可以。Sitemap 行不属于任何 User-agent 组，位置不影响效果；工具把它写在末尾。它告诉爬虫 XML 网站地图的地址，帮助爬虫发现你希望被抓取的页面。"
+  - id: "privacy"
+    question: "我输入的路径和网址会被发送或保存吗？"
+    answer: "不会。文件在你的浏览器页面里生成。工具不会请求你填写的 Sitemap 地址，也不会把路径或爬虫名称发送到服务器或写入浏览器存储，刷新页面后恢复初始的那一组规则。你确认一次修改（离开输入框、选择爬虫、添加或删除规则或块）时，网站统计会记录一次工具名和动作，不记录你输入的内容。"
 ---
+
+<h2>示例：照百度帮助中心的写法屏蔽百度、只放行图片搜索</h2>
+<p>百度帮助中心的「<a href="https://help.baidu.com/question?prod_id=99&class=476&id=2996">Baiduspider 常见问题解答</a>」列出了各产品使用的 user-agent：网页搜索为 <code>Baiduspider</code>，图片搜索为 <code>Baiduspider-image</code>，并给出“禁止所有来自百度的抓取，但允许图片搜索抓取 /image/ 目录”的写法。在工具里删除初始块，添加两个块，分别用“自定义...”填 <code>Baiduspider</code>（禁止 <code>/</code>）和 <code>Baiduspider-image</code>（允许 <code>/image/</code>），输出为：</p>
+
+{/* rtg-tool: {"blocks":[{"custom":"Baiduspider","rules":[["Disallow","/"]]},{"custom":"Baiduspider-image","rules":[["Allow","/image/"]]}],"rfc":[{"ua":"Baiduspider","paths":[["/news/",false]]},{"ua":"Baiduspider-image","paths":[["/image/logo.png",true],["/news/",true]]},{"ua":"Googlebot","paths":[["/news/",true]]}]} */}
+
+```text
+User-agent: Baiduspider
+Disallow: /
+
+User-agent: Baiduspider-image
+Allow: /image/
+```
+
+<p>按 <a href="https://www.rfc-editor.org/rfc/rfc9309">RFC 9309</a> 的规则读这个文件：爬虫按名字（不区分大小写）找到与自己匹配的组，只遵守这一组；组内没有匹配的规则时，网址视为允许。所以 <code>Baiduspider</code> 不能抓 <code>/news/</code>；<code>Baiduspider-image</code> 读自己的组，<code>/image/logo.png</code> 可以抓，而 <code>/news/</code> 没有规则匹配，同样是允许；文件里没有 <code>&#42;</code> 组，Googlebot 等其他爬虫不受任何限制。百度没有公开图片爬虫的解析代码，以上是按标准得出的读法。想让图片爬虫只抓 <code>/image/</code>，在它的组里再加一条“禁止 <code>/</code>”：</p>
+
+{/* rtg-tool: {"blocks":[{"custom":"Baiduspider","rules":[["Disallow","/"]]},{"custom":"Baiduspider-image","rules":[["Disallow","/"],["Allow","/image/"]]}],"rfc":[{"ua":"Baiduspider-image","paths":[["/image/logo.png",true],["/news/",false]]}]} */}
+
+```text
+User-agent: Baiduspider
+Disallow: /
+
+User-agent: Baiduspider-image
+Disallow: /
+Allow: /image/
+```
+
+<p><code>Allow: /image/</code> 比 <code>Disallow: /</code> 长，RFC 9309 规定匹配字节最多的规则生效，与两行的先后无关，因此 <code>/image/</code> 下的文件仍可抓取，其余路径被禁止。同一页帮助还写明 <code>Baiduspider-cpro</code> 与 <code>Baiduspider-ads</code> 不遵守 robots 协议，以及已经建立的索引可能需要数月才会清除。</p>
+
+<h2>示例：Sitemap 要写完整网址</h2>
+<p>工具不检查 Sitemap 地址，填 <code>/sitemap.xml</code> 也会原样写出：</p>
+
+{/* rtg-tool: {"blocks":[{"ua":"*","rules":[["Disallow","/search/"]]}],"sitemap":"/sitemap.xml","rfc":[{"ua":"Baiduspider","paths":[["/search/?q=%E6%89%8B%E6%9C%BA",false],["/product/1001.html",true]]}]} */}
+
+```text
+User-agent: *
+Disallow: /search/
+
+Sitemap: /sitemap.xml
+```
+
+<p><a href="https://www.sitemaps.org/protocol.html#submit_robots">Sitemaps 协议</a>要求在 robots.txt 里写网站地图的完整 URL，所以要填成 <code>https://www.example.cn/sitemap.xml</code> 这样带协议和主机名的地址。上面这个文件里，站内搜索结果 <code>/search/?q=手机</code> 被 <code>Disallow: /search/</code> 禁止，商品页 <code>/product/1001.html</code> 不受影响。</p>
+
+{/* rtg-tool: {"blocks":[{"ua":"*","rules":[["Disallow","/search/"]]}],"sitemap":"https://www.example.cn/sitemap.xml"} */}
+
+```text
+User-agent: *
+Disallow: /search/
+
+Sitemap: https://www.example.cn/sitemap.xml
+```
+
+<p>写好后可以用百度搜索资源平台的 <a href="https://ziyuan.baidu.com/robots/index">Robots 工具</a>检测。该页面说明工具支持 48k 以内的文件内容，目录最长不超过 250 个字符。</p>
 
 <h2>常见 robots.txt 配置</h2>
 <ul>
   <li><strong>屏蔽所有爬虫：</strong><code>User-agent: &#42;</code> + <code>Disallow: /</code></li>
-  <li><strong>允许所有爬虫：</strong><code>User-agent: &#42;</code> + <code>Disallow:</code>（留空）</li>
+  <li><strong>允许所有爬虫：</strong><code>User-agent: &#42;</code> + <code>Disallow:</code>（留空）。工具里一个块没有任何规则时，就会写出这样的空 <code>Disallow:</code>。</li>
   <li><strong>屏蔽特定目录：</strong><code>Disallow: /admin/</code></li>
-  <li><strong>仅允许 Googlebot：</strong>先屏蔽 <code>&#42;</code>，再单独添加 Googlebot 块并设置 <code>Disallow:</code> 为空</li>
+  <li><strong>只允许某一个爬虫：</strong>先用 <code>&#42;</code> 块禁止 <code>/</code>，再为该爬虫单独加一个不含规则的块</li>
 </ul>
-<p>
-  生成文件后，将其上传至 Web 服务器根目录，确保可通过
-  <code>https://yourdomain.com/robots.txt</code> 访问。
-</p>
+
+<h2>工具不做的事与 robots.txt 的边界</h2>
+<ul>
+  <li><strong>不校验：</strong>路径去掉两端空白后原样写出。RFC 9309 的路径以 <code>/</code> 开头，<code>admin/</code> 这样的值不是有效规则；空路径写成空规则。</li>
+  <li><strong>只有一行 Sitemap：</strong>有多个网站地图时，复制这一行手动补上。不生成 <code>Crawl-delay</code> 等非标准指令。</li>
+  <li><strong>通配符：</strong><code>&#42;</code> 和 <code>$</code> 属于 RFC 9309，可以直接写进路径，例如 <code>Disallow: /&#42;?sessionid=</code>，工具不检查写法。</li>
+  <li><strong>禁止抓取不等于从搜索结果删除：</strong>其他页面链接到被禁止的网址时，它仍可能以无摘要的形式出现在结果中。要让页面不出现在结果里，应允许抓取并在页面上发送 <code>noindex</code>，可以用 <a href="/zh/tools/meta-tag-generator/">Meta 标签生成器</a>写出。</li>
+  <li><strong>大小与错误：</strong>RFC 9309 要求爬虫至少解析文件的前 500 KiB。robots.txt 返回 4xx 时爬虫可以抓取全部内容；返回 5xx 或无法访问时，应视为全部禁止。</li>
+  <li><strong>每个主机各一份：</strong>文件上传到网站根目录，使其可以通过 <code>https://你的域名/robots.txt</code> 访问。<code>example.cn</code> 上的规则管不到 <code>m.example.cn</code>，移动站或子域名要各放一份。</li>
+</ul>

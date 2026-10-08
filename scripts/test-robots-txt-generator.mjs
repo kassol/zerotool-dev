@@ -27,6 +27,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import { annotations, fencedBlocks, reportContract } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_TEST_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const requireRoot = createRequire(join(root, 'package.json'));
@@ -320,6 +321,86 @@ for (const lang of ['en', 'ja', 'ko']) {
     else skips++;
   });
 }
+
+// ---------- tool page: `rtg-tool` examples (src/content/tools/robots-txt-generator/{lang}.mdx) ----------
+// `{/* rtg-tool: {"blocks":[…],"sitemap"?:…,"rfc"?:[{"ua":…,"paths":[[path, allowed], …]}]} */}`
+// builds the file like `rtg-build` (the output must appear verbatim in a code block after the
+// annotation, before the next annotation or H2), then reads it with rfcAllowed(), a small
+// reading of RFC 9309 §2.2: groups start at User-agent lines and other records (Sitemap) do not
+// end them; the crawler takes the groups whose product token matches case-insensitively, else
+// the `*` group, else no rules; a rule path must start with "/"; non-ASCII octets are
+// percent-encoded on both sides; `*` and a final `$` are special; the match with the most octets
+// wins, Allow on a tie, and no match means allowed. When python3's urllib.robotparser follows
+// RFC 9309 rules (CPython 3.13.14 / 3.14.5 and later), its answers are compared too.
+function pctNonAscii(s) {
+  return [...s].map((c) => (c.codePointAt(0) < 0x80 ? c : [...new TextEncoder().encode(c)].map((b) => '%' + b.toString(16).toUpperCase().padStart(2, '0')).join(''))).join('');
+}
+function rfcAllowed(txt, ua, path) {
+  if (path === '/robots.txt') return true;
+  const groups = [];
+  let cur = null, lastWasAgent = false;
+  for (const raw of txt.split(/\r?\n/)) {
+    const m = /^\s*([A-Za-z-]+)\s*:\s*(.*?)\s*$/.exec(raw.replace(/#.*$/, ''));
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    if (key === 'user-agent') {
+      if (!cur || !lastWasAgent) groups.push(cur = { agents: [], rules: [] });
+      cur.agents.push(m[2].toLowerCase());
+      lastWasAgent = true;
+    } else if (key === 'allow' || key === 'disallow') {
+      lastWasAgent = false;
+      if (cur && m[2].startsWith('/')) cur.rules.push({ allow: key === 'allow', pattern: pctNonAscii(m[2]) });
+    }
+  }
+  const token = ua.toLowerCase();
+  let chosen = groups.filter((g) => g.agents.includes(token));
+  if (!chosen.length) chosen = groups.filter((g) => g.agents.includes('*'));
+  const target = pctNonAscii(path);
+  let best = null;
+  for (const r of chosen.flatMap((g) => g.rules)) {
+    const anchored = r.pattern.endsWith('$');
+    const body = anchored ? r.pattern.slice(0, -1) : r.pattern;
+    const re = new RegExp('^' + body.split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + (anchored ? '$' : ''));
+    if (!re.test(target)) continue;
+    const len = r.pattern.length;
+    if (!best || len > best.len || (len === best.len && r.allow)) best = { len, allow: r.allow };
+  }
+  return best ? best.allow : true;
+}
+check('rfcAllowed: RFC 9309 §2.2.2 percent-encoding example (/foo/bar/ツ)', rfcAllowed('User-agent: *\nDisallow: /foo/bar/ツ\n', 'x', '/foo/bar/%E3%83%84') === false && rfcAllowed('User-agent: *\nDisallow: /foo/bar/%E3%83%84\n', 'x', '/foo/bar/ツ') === false);
+check('rfcAllowed: longest match wins over line order', rfcAllowed('User-agent: *\nDisallow: /a\nAllow: /a/b\n', 'x', '/a/b') === true && rfcAllowed('User-agent: *\nDisallow: /a\nAllow: /a/b\n', 'x', '/a/c') === false);
+check('rfcAllowed: Allow wins a tie', rfcAllowed('User-agent: *\nDisallow: /p\nAllow: /p\n', 'x', '/p') === true);
+check('rfcAllowed: a named group replaces the * group', rfcAllowed('User-agent: *\nDisallow: /\n\nUser-agent: Googlebot\nDisallow:\n', 'googlebot', '/x') === true);
+check('rfcAllowed: no matching group and no * group means no rules', rfcAllowed('User-agent: Yeti\nDisallow: /\n', 'Bingbot', '/x') === true);
+
+const toolCases = [];
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const toolPath = join(root, 'src/content/tools/robots-txt-generator', lang + '.mdx');
+  const body = readFileSync(toolPath, 'utf8');
+  for (const note of annotations(body, 'rtg-tool')) {
+    for (const r of note.spec?.rfc || []) {
+      const out = build(note.spec);
+      for (const [p, want] of r.paths) toolCases.push({ lang, txt: out, ua: r.ua, path: p, want });
+    }
+  }
+}
+reportContract(check, 'robots-txt-generator', {
+  annotations: [{
+    tag: 'rtg-tool', min: 2,
+    verify({ spec, after }) {
+      const out = build(spec);
+      if (!fencedBlocks(after).some((b) => b.text === out)) return 'generated file not quoted verbatim:\n' + out;
+      for (const r of spec.rfc || []) for (const [p, want] of r.paths) {
+        if (rfcAllowed(out, r.ua, p) !== want) return `RFC 9309 reading of ${r.ua} ${p} is ${!want}`;
+      }
+      return null;
+    },
+  }],
+});
+if (hasPython && urllibMode.rfc && toolCases.length) {
+  const res = JSON.parse(execFileSync(PY, ['-c', PARSE], { input: JSON.stringify(toolCases) }).toString());
+  toolCases.forEach((c, i) => check(`${c.lang} tool page: urllib.robotparser (RFC 9309) agrees for ${c.ua} ${c.path}`, res[i].urllib === c.want, `got ${res[i].urllib}`));
+} else skips += toolCases.length;
 
 // ---------- copy failure and direct retry ----------
 const settleCopy = () => new Promise((resolve) => setImmediate(resolve));
