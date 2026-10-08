@@ -580,7 +580,7 @@ for (const lang of ['en','zh','ja','ko']) {
     h.input('jpt-expr', '$.ok');
     const list = '12345678901234567890 → 12345678901234567000, -0 → 0, 1e400 → null';
     eq(lang+' number note lists the changed numbers', h.get('jpt-count').textContent,
-      L.matchOne.replace('{n}', '1') + ' ' + L.numberNote.replace('{n}', '4').replace('{list}', list));
+      L.matchOne.replace('{n}', '1') + ' · ' + L.numberNote.replace('{n}', '4').replace('{list}', list));
     h.input('jpt-expr', '$.missing');
     eq(lang+' number note also shows when nothing matches', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.numberNote.replace('{n}', '4').replace('{list}', list)]);
     h.input('jpt-json', '{"a":1.50,"b":"12345678901234567890","c":0.1,"d":9007199254740991}'); h.input('jpt-expr', '$.a');
@@ -589,12 +589,20 @@ for (const lang of ['en','zh','ja','ko']) {
     eq(lang+' full-width dot: no match plus a note', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.fullwidthNote.replace('{chars}', '．')]);
     h.input('jpt-expr', '$.store【0】');
     eq(lang+' Chinese-mode brackets: no match plus a note', [h.get('jpt-code').textContent, h.get('jpt-count').textContent], [L.noMatch, L.fullwidthNote.replace('{chars}', '【 】')]);
+    h.input('jpt-expr', '$【0】');
+    check(lang+' full-width character in an error also gets the note', h.get('jpt-count').textContent.endsWith(' · ' + L.fullwidthErrorNote.replace('{chars}', '【 】')) && h.get('jpt-count').textContent === h.get('jpt-code').textContent, h.get('jpt-count').textContent);
     h.input('jpt-expr', "$['ｂｏｏｋ']");
     eq(lang+' full-width text in a quoted name gives no note', h.get('jpt-count').textContent, '');
     h.input('jpt-expr', '$.store.book');
     eq(lang+' half-width query matches', h.get('jpt-count').textContent, L.matchOne.replace('{n}', '1'));
   }
 }
+
+// ---------- status label covers syntax errors too ----------
+// Most engine errors are plain syntax errors (unclosed string, leading zero), not syntax RFC 9535
+// lacks, so the label says both.
+eq('error labels name both cases', ['en','zh','ja','ko'].map(l => labels[l].unsupported),
+  ['Invalid or unsupported syntax', '语法错误或不支持的语法', '構文エラーまたは未対応の構文', '구문 오류 또는 지원하지 않는 구문']);
 
 // ---------- query errors in the page language ----------
 // The status line showed the engine's English detail on zh / ja / ko pages. Every engine
@@ -638,7 +646,7 @@ const UNREACHED = ['expected an index', 'expected a member name or * after "."',
     }
   }
   const h = page('en'); h.input('jpt-json', '{}');
-  for (const d of details) { h.input('jpt-expr', d.q); eq('en keeps the engine text for ' + d.q, h.get('jpt-count').textContent, 'Unsupported syntax: ' + d.message); }
+  for (const d of details) { h.input('jpt-expr', d.q); eq('en keeps the engine text for ' + d.q, h.get('jpt-count').textContent, labels.en.unsupported + ': ' + d.message); }
 }
 
 // ---------- worked examples on the tool pages ({/* jpt-check: {...} */}) ----------
