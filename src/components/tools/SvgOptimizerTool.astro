@@ -1815,15 +1815,18 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
       var name = cb.dataset.plugin;
       if (PRESET_PLUGINS.indexOf(name) >= 0) settings.preset[name] = cb.checked; else settings.extras[name] = cb.checked;
       settingsChanged(true);
+      commitTrack();
     });
   });
-  multipassEl.addEventListener('change', function () { settings.multipass = multipassEl.checked; settingsChanged(true); });
-  prettyEl.addEventListener('change', function () { settings.pretty = prettyEl.checked; settingsChanged(true); });
+  multipassEl.addEventListener('change', function () { settings.multipass = multipassEl.checked; settingsChanged(true); commitTrack(); });
+  prettyEl.addEventListener('change', function () { settings.pretty = prettyEl.checked; settingsChanged(true); commitTrack(); });
+  precisionEl.addEventListener('change', commitTrack);
+  prefixEl.addEventListener('change', commitTrack);
   precisionEl.addEventListener('input', function () { settings.precision = Number(precisionEl.value); settingsChanged(true); });
   prefixEl.addEventListener('input', function () { settings.prefix = cleanPrefix(prefixEl.value); settingsChanged(true); });
   prefixEl.addEventListener('blur', function () { prefixEl.value = settings.prefix; });
   formatEl.addEventListener('change', function () { settings.format = formatEl.value; settingsChanged(false); renderActive(); });
-  resetBtn.addEventListener('click', function () { var f = settings.format; settings = defaultSettings(); settings.format = f; settingsChanged(true); });
+  resetBtn.addEventListener('click', function () { var f = settings.format; settings = defaultSettings(); settings.format = f; settingsChanged(true); commitTrack(); });
 
   // ── SVGO in a worker ──
   var svgoVersion = '';
@@ -1881,7 +1884,20 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
 
   // ── items ──
   // item: { name, text, fromFile, prep, data, error, notes, before, after, gzipBefore, gzipAfter, check }
-  var items = [], active = 0, gen = 0, skipped = [], blobUrls = [], lastTrack = 0;
+  var items = [], active = 0, gen = 0, skipped = [], blobUrls = [];
+  // Analytics: one `optimize` event per committed action (files, Example, paste, Retry, the code
+  // box's change event, a committed setting), sent when that run ends with a result. Input
+  // events while typing or dragging a slider send nothing.
+  var wantTrack = false, running = false;
+  function flushTrack() {
+    if (!wantTrack) return;
+    wantTrack = false;
+    if (window.trackTool && items.some(function (x) { return x.data != null; })) window.trackTool(SLUG, 'optimize');
+  }
+  function commitTrack() {
+    wantTrack = true;
+    if (!running && !typing) flushTrack();
+  }
 
   function itemsFromText(text) {
     items = text.trim() ? [{ name: '', text: text, fromFile: false }] : [];
@@ -1915,6 +1931,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
       skipped = other;
       active = 0;
       inputEl.value = '';
+      wantTrack = true;
       run();
     });
   }
@@ -1923,6 +1940,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   function scheduleRun(delay) {
     clearTimeout(timer);
     if (!items.length) return;
+    running = true;
     timer = setTimeout(run, delay);
   }
 
@@ -1930,6 +1948,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
     clearTimeout(timer);
     retryBtn.hidden = true;
     var my = ++gen;
+    running = true;
     if (Object.keys(pending).length) stopWorker();
     var config = buildConfig(settings);
     var list = items;
@@ -1993,7 +2012,8 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
     batchEl.hidden = items.length < 2;
     configEl.textContent = configSource(settings, svgoVersion);
     renderActive();
-    if (ok.length && window.trackTool && Date.now() - lastTrack > 5000) { lastTrack = Date.now(); window.trackTool(SLUG, 'optimize'); }
+    running = false;
+    flushTrack();
     var r = resultEl.hidden ? statusEl : resultEl;
     var box = r.getBoundingClientRect();
     if (box.top > window.innerHeight - 80) r.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -2241,6 +2261,8 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   function resetView() {
     gen++;
     clearTimeout(timer);
+    running = false;
+    wantTrack = false;
     items = []; skipped = []; active = 0;
     blobUrls.forEach(function (u) { URL.revokeObjectURL(u); });
     blobUrls = [];
@@ -2256,16 +2278,19 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
   inputEl.addEventListener('input', function () {
     clearTimeout(typing);
     typing = setTimeout(function () {
+      typing = null;
       if (!inputEl.value.trim()) { resetView(); return; }
       itemsFromText(inputEl.value);
       run();
     }, 450);
   });
   // A broken worker is not started again by itself; Retry gives it another chance.
-  retryBtn.addEventListener('click', function () { workerBroken = false; run(); });
+  retryBtn.addEventListener('click', function () { workerBroken = false; wantTrack = true; run(); });
+  inputEl.addEventListener('change', function () { if (inputEl.value.trim()) commitTrack(); });
   exampleBtn.addEventListener('click', function () {
     inputEl.value = EXAMPLE;
     itemsFromText(EXAMPLE);
+    wantTrack = true;
     run();
   });
   clearBtn.addEventListener('click', function () { inputEl.value = ''; fileEl.value = ''; resetView(); inputEl.focus(); });
@@ -2295,6 +2320,7 @@ const RISKY = new Set(['removeViewBox', 'removeDimensions', 'removeTitle']);
       e.preventDefault();
       inputEl.value = text;
       itemsFromText(text);
+      wantTrack = true;
       run();
     }
   });
