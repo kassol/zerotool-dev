@@ -200,11 +200,21 @@ t("Conway's Law", 'conways-law');
 // separator (Conway's Law → conway-s-law). An apostrophe next to a space, digit or the text edge
 // stays a separator.
 t("don't stop", 'dont-stop');
-t('Hawai\u02BBi', 'hawai-i');
+t('Hawai\u02BBi', 'hawaii');
 t('Hawaiʼi', 'hawaii');
 t("Café's Menu", 'cafes-menu');
 t("rock 'n' roll", 'rock-n-roll');
-t("90's music", '90-s-music');
+t("90's music", '90s-music');
+// Apostrophe look-alikes (U+2018, U+02BB okina, U+00B4, U+2032) follow the same rule (master and
+// WordPress delete them), and a digit before the apostrophe counts like a letter (1990's → 1990s,
+// as WordPress and @sindresorhus/slugify do). After the apostrophe a letter is still required.
+t('Ma\u2018ui', 'maui');
+t('rock\u2018n\u2019roll', 'rocknroll');
+t('Don\u00B4t', 'dont');
+t('Don\u2032t', 'dont');
+t("1990's", '1990s');
+t("5'11", '5-11');
+t("the '90s", 'the-90s');
 t("'quoted' word", 'quoted-word');
 t("O’Brien’s Pub", 'obriens-pub');
 t("Conway's Law", 'conways_law', { separator: '_' });
@@ -520,7 +530,7 @@ for (const lang of Object.keys(copyLabels)) {
   q.input('sl-input', ''); q.get('sl-input').dispatch('change');
   eq(lang + ': empty input sends no event', q.tracks.length, 3);
 }
-eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'9fb04cf8567cf3d9a59f1a6ced6a5e27e00e8246a6903524ecf9cf7be4592396');
+eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'510fe1861fc09afeede07903a039319d17027867ff53c07de2d70a3f3251ab16');
 eq('no unhandled copy rejections',unhandled,[]);process.off('unhandledRejection',onUnhandled);
 // ---------- v2 page layout ----------
 const v2Start=passes;
