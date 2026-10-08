@@ -473,7 +473,20 @@ const L = STRINGS[lang];
           buildObject(parsed, rootName, '', state, optional, rootName);
         } else if (Array.isArray(parsed) && parsed.some(function (v) { return v !== null && typeof v === 'object' && !Array.isArray(v); })) {
           var objectItems = parsed.filter(function (v) { return v !== null && typeof v === 'object' && !Array.isArray(v); });
+          // Other values beside the objects: <root>Array lists every element type, as for a nested array.
+          var arrayName = objectItems.length < parsed.length ? rootName + 'Array' : null;
+          if (arrayName) state.reserved[arrayName] = true;
           mergeObjects(objectItems, rootName, '', state, optional, rootName);
+          if (arrayName) {
+            var elementTypes = [];
+            parsed.forEach(function (v) {
+              if (v !== null && typeof v === 'object' && !Array.isArray(v)) return;
+              var t = inferType(v, rootName + 'Item', '', state, optional);
+              if (elementTypes.indexOf(t) === -1) elementTypes.push(t);
+            });
+            elementTypes.push(rootName);
+            return { code: 'type ' + arrayName + ' = (' + elementTypes.join(' | ') + ')[];\n\n' + renderDeclarations(state, useType), count: state.list.length };
+          }
         } else {
           return { code: 'type ' + rootName + ' = ' + inferType(parsed, rootName, '', state, optional) + ';', count: 0 };
         }

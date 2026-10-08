@@ -121,8 +121,10 @@ const jttCheck = {
     try { parsed = JSON.parse(input.text); } catch (e) { return 'input is not JSON: ' + e.message; }
     const code = E.generateTypeScript(parsed, spec.root, !!spec.optional, !!spec.useType).code;
     if (!blocks.some((b) => b.lang === 'typescript' && b.text === code)) return 'engine output not shown:\n' + code;
-    const isRootObjects = Array.isArray(parsed) && parsed.some((v) => v !== null && typeof v === 'object' && !Array.isArray(v));
-    const errors = compile(code + '\n\nexport const sample: ' + spec.root + (isRootObjects ? '[]' : '') + ' = ' + input.text + ';\n');
+    const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+    const isRootObjects = Array.isArray(parsed) && parsed.some(isObject);
+    const sampleType = !isRootObjects ? spec.root : parsed.every(isObject) ? spec.root + '[]' : spec.root + 'Array';
+    const errors = compile(code + '\n\nexport const sample: ' + sampleType + ' = ' + input.text + ';\n');
     return errors.length ? 'does not compile with the sample: ' + errors.join('; ') : null;
   },
 };
@@ -133,7 +135,23 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': page states Number.MAX_SAFE_INTEGER', text.includes(String(Number.MAX_SAFE_INTEGER)));
   check(lang + ': page shows the root-array result that drops the string', text.includes('`[{"id": 1}, "x"]`') && text.includes('`interface RootObject { id: number; }`'));
 }
-eq('a root array of an object and a string keeps only the object', E.generateTypeScript([{ id: 1 }, 'x'], 'RootObject', false, false).code, 'interface RootObject {\n  id: number;\n}');
+// A root array that mixes objects with other values: the objects merge into the root interface and
+// a <root>Array alias lists every element type, written like a nested array.
+{
+  const mixed = (json, root = 'RootObject', opts = {}) => {
+    const parsed = JSON.parse(json), r = E.generateTypeScript(parsed, root, !!opts.optional, !!opts.useType);
+    eq('mixed root array ' + json + ' compiles with the sample', compile(r.code + '\n\nexport const sample: ' + root + 'Array = ' + json + ';\n').join('; '), '');
+    return r;
+  };
+  eq('a root array of an object, a string, a number and null', mixed('[{"id":1},"x",2,null]').code,
+    'type RootObjectArray = (string | number | null | RootObject)[];\n\ninterface RootObject {\n  id: number;\n}');
+  eq('the alias does not count as an interface', mixed('[{"id":1},"x"]').count, 1);
+  eq('nested arrays among the objects', mixed('[{"a":1},[1,2]]').code, 'type RootObjectArray = (number[] | RootObject)[];\n\ninterface RootObject {\n  a: number;\n}');
+  eq('type option keeps the alias', mixed('[{"a":1},true]', 'Api', { useType: true }).code, 'type ApiArray = (boolean | Api)[];\n\ntype Api = {\n  a: number;\n}');
+  check('a nested key cannot take the alias name', !/interface RootObjectArray /.test(mixed('[{"rootObjectArray":{"x":1}},1]').code));
+  mixed('[{"id":1,"tags":[{"t":"a"}]},"x",{"id":2}]');
+  eq('a root array of objects only is unchanged', E.generateTypeScript([{ id: 1 }, { id: 2 }], 'RootObject', false, false).code, 'interface RootObject {\n  id: number;\n}');
+}
 eq('JSON.parse rounds the zh snowflake ID', String(JSON.parse('1830000000000000001')), '1830000000000000000');
 {
   const zh = readFileSync(join(root, 'src/content/tools/json-to-typescript/zh.mdx'), 'utf8');
@@ -150,8 +168,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 9781);
-eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'c756c2f142fec2be95b2244216b865d08bfe3ff9cb555c208e786d3a31abf8e2');
+eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 10604);
+eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'be5a3bfd026e952389cf41d79a31a2cf7cff24aec890e42ff41791f2716d284d');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
