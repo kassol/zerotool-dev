@@ -23,7 +23,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TextCaseTool.astro'), 'utf8');
@@ -461,6 +461,49 @@ console.log('page lifecycle: ' + (passes - lifecycleStart.passes) + ' passed, ' 
   await parseJs(compiled.code, { loader: 'ts', format: 'esm' });
   check('v2 generated JS parses and serializes CLIENT_T', compiled.code.includes('$$defineScriptVars({ t: CLIENT_T })'));
   console.log('v2 page layout: ' + (passes - before.passes) + ' passed, ' + (failures - before.failures) + ' failed');
+}
+
+// ---------- worked examples on the tool pages (S2-7, 2026-10-08) ----------
+// Annotation {/* tc-check: {"input":"…","camel":"…",…} */} on src/content/tools/text-case/{lang}.mdx:
+// every listed format must equal the engine output, and the input and each listed output must
+// appear verbatim as code (fenced block, <code>…</code> or `…`) after the annotation, before the
+// next tc-check annotation or H2. "input" can be hidden from the check with "showInput": false.
+{
+  const before = { passes, failures };
+  const decodeEntities = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  const decodeCode = (s) => {
+    const m = /^\{(['"`])([\s\S]*)\1\}$/.exec(s.trim());
+    if (!m) return decodeEntities(s);
+    return m[1] === '"' ? JSON.parse('"' + m[2] + '"') : m[2].replace(/\\([\s\S])/g, '$1');
+  };
+  const codeSegments = (text) => {
+    const segs = fencedBlocks(text).map((b) => b.text);
+    for (const m of text.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) segs.push(decodeCode(m[1]));
+    for (const m of withoutCode(text).replace(/<code\b[^>]*>[\s\S]*?<\/code>/g, '').matchAll(/`([^`\n]+)`/g)) segs.push(m[1]);
+    return segs;
+  };
+  const verify = ({ spec, after }) => {
+    if (!spec || typeof spec.input !== 'string') return 'annotation needs a string "input"';
+    const segs = codeSegments(after);
+    const problems = [];
+    if (spec.showInput !== false && !segs.includes(spec.input)) problems.push('input ' + JSON.stringify(spec.input) + ' is not shown as code');
+    const ids = Object.keys(spec).filter((k) => k !== 'input' && k !== 'showInput');
+    if (!ids.length) problems.push('no format listed');
+    for (const id of ids) {
+      if (!conv[id]) { problems.push('unknown format ' + id); continue; }
+      const got = conv[id](spec.input);
+      if (got !== spec[id]) problems.push(id + ': engine gives ' + JSON.stringify(got) + ', annotation says ' + JSON.stringify(spec[id]));
+      else if (!segs.includes(got)) problems.push(id + ' output ' + JSON.stringify(got) + ' is not shown as code');
+    }
+    return problems.length ? problems.join('; ') : null;
+  };
+  for (const lang of Object.keys(labels)) {
+    eq(lang + ' worked examples match the engine', contractProblems('text-case', lang, { annotations: [{ tag: 'tc-check', min: 2, verify }] }), '');
+  }
+  check('worked example check catches a wrong output', verify({ spec: { input: 'user id', camel: 'userID' }, after: '\n`user id` → `userID`\n' }) !== null);
+  check('worked example check catches an output that is not on the page', verify({ spec: { input: 'user id', camel: 'userId' }, after: '\n`user id` → userId\n' }) !== null);
+  check('worked example check reads <code>{\'…\'}</code>', verify({ spec: { input: 'a b', snake: 'a_b' }, after: "<code>a b</code> <code>{'a_b'}</code>" }) === null);
+  console.log('tool page examples: ' + (passes - before.passes) + ' passed, ' + (failures - before.failures) + ' failed');
 }
 console.log(passes + ' passed, ' + failures + ' failed' + (skips ? ', ' + skips + ' skipped' : ''));
 process.exit(failures ? 1 : 0);
