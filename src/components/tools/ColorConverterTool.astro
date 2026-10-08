@@ -9,6 +9,7 @@ const STRINGS = {
     "copied": "Copied!",
     "copyFail": "Copy failed. Please copy the value manually.",
     "invalid": "Invalid color format",
+    "extra": "Invalid color format: remove the extra text after the color values.",
     "clear": "Clear",
     "pickColor": "Pick Color",
     "hex": "HEX",
@@ -27,6 +28,7 @@ const STRINGS = {
     "copied": "已复制！",
     "copyFail": "复制失败，请手动复制数值。",
     "invalid": "颜色格式无效",
+    "extra": "颜色格式无效：请删去颜色值后面多余的文字。",
     "clear": "清除",
     "pickColor": "选取颜色",
     "hex": "HEX",
@@ -45,6 +47,7 @@ const STRINGS = {
     "copied": "コピー済み！",
     "copyFail": "コピーに失敗しました。値を手動でコピーしてください。",
     "invalid": "色の形式が正しくありません",
+    "extra": "色の形式が正しくありません。色の値の後ろにある余分な文字を消してください。",
     "clear": "クリア",
     "pickColor": "カラーを選択",
     "hex": "HEX",
@@ -63,6 +66,7 @@ const STRINGS = {
     "copied": "복사됨!",
     "copyFail": "복사하지 못했습니다. 값을 직접 복사하세요.",
     "invalid": "색상 형식이 올바르지 않습니다",
+    "extra": "색상 형식이 올바르지 않습니다. 색상 값 뒤의 불필요한 문자를 지우세요.",
     "clear": "지우기",
     "pickColor": "색상 선택",
     "hex": "HEX",
@@ -157,13 +161,13 @@ const { tips: TIPS, ...CLIENT_T } = T;
       }
 
       // The other two fields are emptied: an error text left in them could be copied as a color.
-      function showInvalidState(source) {
+      function showInvalidState(source, message) {
         if (source !== 'hex') hexEl.value = '';
         if (source !== 'rgb') rgbEl.value = '';
         if (source !== 'hsl') hslEl.value = '';
         swatch.style.background = '';
         swatchLabel.textContent = '';
-        setStatus(t.invalid, true);
+        setStatus(message || t.invalid, true);
       }
 
       /* ── engine:start ── */
@@ -245,6 +249,18 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       /* ── engine:end ── */
 
+      /* parseRgb and parseHsl match only the start of the text, so rgb(26, 115, 232)abc would
+         convert. After a match, allow only an optional alpha value, a closing parenthesis and
+         spaces; a value that is still being typed (no closing parenthesis yet) is not rejected.
+         The two patterns are the engine's own. */
+      var RGB_HEAD = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/;
+      var HSL_HEAD = /^hsla?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%?\s*,\s*(\d+(?:\.\d+)?)%?/;
+      var TAIL_OK = /^\s*(?:,\s*(?:[\d.]+%?)?\s*)?\)?\s*$/;
+      function hasExtraText(val, head) {
+        var m = val.match(head);
+        return !!m && !TAIL_OK.test(val.slice(m[0].length));
+      }
+
       function updateAll(hex, source) {
         var rgb = hexToRgb(hex);
         if (!rgb) { setStatus(t.invalid, true); return; }
@@ -279,6 +295,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var val = this.value.trim();
         if (!val) { clearStatus(); return; }
         var rgb = parseRgb(val);
+        if (rgb && hasExtraText(val, RGB_HEAD)) { showInvalidState('rgb', t.extra); return; }
         if (rgb) { updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'rgb'); return; }
         var looksLikeRgb = /^rgba?\s*\(/i.test(val);
         if (!looksLikeRgb || /\)/.test(val)) showInvalidState('rgb');
@@ -289,6 +306,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var val = this.value.trim();
         if (!val) { clearStatus(); return; }
         var hsl = parseHsl(val);
+        if (hsl && hasExtraText(val, HSL_HEAD)) { showInvalidState('hsl', t.extra); return; }
         if (hsl) {
           var rgb = hslToRgb(hsl.h, hsl.s, hsl.l);
           updateAll(rgbToHex(rgb.r, rgb.g, rgb.b), 'hsl');

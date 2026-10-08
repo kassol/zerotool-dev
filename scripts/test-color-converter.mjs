@@ -291,7 +291,28 @@ try {
       check(lang + ' valid input after ' + bad + ' recovers', colorSnapshot(p).fields.join('|') === '#1677ff|rgb(22, 119, 255)|hsl(215, 100%, 54%)' && !p.get('cc-status').textContent);
     }
   }
-  // Worked examples on the four tool pages: {/* cc-check: {"field":"hex|rgb|hsl","in":"…","show"?:[…],"error"?:true} */}
+  // Text after a complete rgb() / hsl() value is rejected with a localized reason. The engine's
+  // parseRgb / parseHsl match only the start of the text, so before the fix rgb(26, 115, 232)abc
+  // converted as if the extra text were not there. Values still being typed are not rejected.
+  const extraText = { en: 'Invalid color format: remove the extra text after the color values.', zh: '颜色格式无效：请删去颜色值后面多余的文字。', ja: '色の形式が正しくありません。色の値の後ろにある余分な文字を消してください。', ko: '색상 형식이 올바르지 않습니다. 색상 값 뒤의 불필요한 문자를 지우세요.' };
+  for (const lang of Object.keys(extraText)) {
+    for (const [id, bad] of [['cc-rgb', 'rgb(26, 115, 232)abc'], ['cc-rgb', 'rgba(26, 115, 232, 0.5) x'], ['cc-rgb', 'rgb(26, 115, 232))'], ['cc-hsl', 'hsl(214, 82%, 51%)xyz'], ['cc-hsl', 'hsl(214, 82%, 51%); color: red']]) {
+      const p = lifecyclePage(lang); p.input(id, bad); const s = colorSnapshot(p);
+      check(lang + ' trailing text rejected ' + bad, s.status === extraText[lang] && s.statusClass === 'cc-status error' && ['cc-hex', 'cc-rgb', 'cc-hsl'].filter(x => x !== id).every(x => p.get(x).value === '') && !s.label, s.status + ' | ' + s.fields.join('|'));
+    }
+    for (const [id, ok, hex] of [['cc-rgb', 'rgb(26, 115, 232)', '#1a73e8'], ['cc-rgb', 'rgba(26,115,232,.5)', '#1a73e8'], ['cc-rgb', 'rgba(26, 115, 232, 50%)', '#1a73e8'], ['cc-rgb', 'rgb(26, 115, 232', '#1a73e8'], ['cc-rgb', 'rgba(26, 115, 232, ', '#1a73e8'], ['cc-hsl', 'hsl(214, 82%, 51%)', '#1c74e9'], ['cc-hsl', 'hsla(214, 82%, 51%, 0.5)', '#1c74e9'], ['cc-hsl', 'hsl(214, 82, 51', '#1c74e9']]) {
+      const p = lifecyclePage(lang); p.input(id, ok);
+      check(lang + ' complete or partial value still converts ' + ok, p.get('cc-hex').value === hex && !p.get('cc-status').textContent, p.get('cc-hex').value + ' ' + p.get('cc-status').textContent);
+    }
+  }
+  {
+    const engine = source.slice(start, end), script = lifecycleScript.slice(lifecycleScript.indexOf('/* ── engine:end ── */'));
+    for (const head of ['/^rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/', '/^hsla?\\(\\s*(\\d+(?:\\.\\d+)?)\\s*,\\s*(\\d+(?:\\.\\d+)?)%?\\s*,\\s*(\\d+(?:\\.\\d+)?)%?/']) {
+      check('trailing-text check uses the engine pattern ' + head, engine.includes(head) && script.includes(head));
+    }
+  }
+
+  // Worked examples on the four tool pages: {/* cc-check: {"field":"hex|rgb|hsl","in":"…","show"?:[…],"error"?:true,"reason"?:"extra"} */}
   // types "in" into the field on the complete page script (page language of the MDX file). Each
   // field in "show" (default: the two other fields) must appear as inline code after the annotation
   // (up to the next annotation or H2). With "error": true the field must be rejected and the page's
@@ -302,7 +323,8 @@ try {
     const p = lifecyclePage(lang); p.input('cc-' + spec.field, spec.in);
     const status = p.get('cc-status').textContent;
     if (spec.error) {
-      if (status !== invalidText[lang]) return 'expected the invalid-format status, got ' + JSON.stringify(status);
+      const want = spec.reason === 'extra' ? extraText[lang] : invalidText[lang];
+      if (status !== want) return 'expected ' + JSON.stringify(want) + ', got ' + JSON.stringify(status);
       return after.includes(status) ? null : 'status text ' + JSON.stringify(status) + ' is not quoted after the annotation';
     }
     if (status) return 'page reports ' + JSON.stringify(status);
