@@ -129,7 +129,50 @@ id,name,email
 ]
 ```
 
-**Type inference.** With **Parse numbers & booleans** ticked (the default), unquoted `true`, `false`, and `null` (any case) become JSON literals and numbers become JSON numbers. Three kinds of values stay strings so that nothing is lost: quoted fields (`"42"`), values with a leading zero (`007`, `0123`), and integers too large for a JavaScript number (above 2^53 − 1), such as long order IDs.
+**Type inference.** With **Parse numbers & booleans** ticked (the default), unquoted `true`, `false`, and `null` (any case) become JSON literals. A value becomes a JSON number only when it is written in the JSON number syntax of [RFC 8259 §6](https://www.rfc-editor.org/rfc/rfc8259#section-6) (an optional minus, no leading zeros, no `+`, digits on both sides of a decimal point) and a JavaScript number keeps it exactly. Everything else stays a string so that nothing is lost: quoted fields (`"42"`), `007`, `+44`, `.5`, integers above 2^53 − 1 such as long order IDs, and values a double cannot hold (`-0`, `1e-400`, decimals with more than about 17 significant digits):
+
+{/* cj-check: {"to":"json"} */}
+
+```csv
+code,value
+plus,+44
+zero,007
+dot,.5
+exp,1e3
+negzero,-0
+tiny,1e-400
+```
+
+```json
+[
+  {
+    "code": "plus",
+    "value": "+44"
+  },
+  {
+    "code": "zero",
+    "value": "007"
+  },
+  {
+    "code": "dot",
+    "value": ".5"
+  },
+  {
+    "code": "exp",
+    "value": 1000
+  },
+  {
+    "code": "negzero",
+    "value": "-0"
+  },
+  {
+    "code": "tiny",
+    "value": "1e-400"
+  }
+]
+```
+
+`1e3` is valid JSON number syntax and becomes `1000`; `1.50` would become `1.5`, because a JSON number has no trailing-zero form.
 
 **Header row.** The first row is always the header. A CSV without one needs a header line added before converting. A repeated name gets a suffix (`sku_2`); a field beyond the last header gets the key `column_N` by position; missing trailing fields are treated as empty.
 
@@ -155,8 +198,18 @@ Converting that CSV back to JSON does not rebuild the nesting: `user.name` stays
 ## Limits
 
 - **Commas only.** Tabs and semicolons are not separators. Tab-separated text, such as cells copied from a spreadsheet, becomes one field per line under a single long key.
-- **A quote in the middle of a field starts a quoted section.** In the row `5" pipe,x` the quote opens a section that only a later quote closes, so the commas and line breaks after it become part of one field. Quote the whole field and double the inner quote: `"5"" pipe"`. A quoted field that is never closed takes the rest of the text, with no error.
-- **Number reading follows JavaScript.** Apart from the three exceptions above, any value that JavaScript's `Number()` accepts becomes a number, so `+81` becomes `81`, `.5` becomes `0.5` and `1.50` becomes `1.5`. Quote a field, or untick **Parse numbers & booleans**, to keep the text.
+- **Quotes count only at the start of a field.** A `"` inside an unquoted field is text, so `5" pipe,x` gives the two fields `5" pipe` and `x`. A quoted field that is never closed stops the conversion with an error that names the line where it starts, and the JSON pane stays empty:
+
+{/* cj-check: {"to":"json","error":true} */}
+
+```csv
+name,price
+"Gadget, large,24.99
+Widget,9.99
+```
+
+  The status line reads `Error: A quoted field that starts on line 2 is never closed. Add the closing " or remove the opening one.`
+- **No other number formats.** Thousands separators, `+` signs, spaces around a number and full-width digits keep the value a string; remove them in the source if you need numbers.
 - **Large JSON numbers keep their digits.** A JSON number that a JavaScript number cannot hold exactly, such as `12345678901234567890`, `1e-400` or `-0`, is written to the CSV as it appears in the JSON. This needs `JSON.rawJSON`, which Chrome 114, Firefox 135 and Safari 18.4 and later have. An older browser writes such a number as text (inside an array cell it gets quotes, `"12345678901234567890"`), and the status line lists those numbers. No number is written rounded.
 - **Key order.** JavaScript lists keys that look like whole numbers (`2024`) before the other keys, in both directions. The values are not affected.
 - **JSON syntax errors** are shown with the browser's own message, which is in English.
