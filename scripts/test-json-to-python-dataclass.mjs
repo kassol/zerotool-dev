@@ -95,6 +95,14 @@ eq('A3: a third shape gets a number when the prefixed name is taken', /class Met
   eq('A3: objects of one key across samples merge into one class', gen([{ u: { a: 1 } }, { u: { b: 'x' } }], 'typeddict').includes('class U(TypedDict):\n    a: NotRequired[int]\n    b: NotRequired[str]'), true);
 }
 
+// B2: values beside the objects of a root array stay in a <root>Array alias (List[Union[...]]).
+const B2_IN = [{ a: 1 }, 2, 'x', null, [1], { a: 3, b: true }];
+eq('B2: root array keeps non-object values in RootArray', E.generatePython(B2_IN, 'Root', 'dataclass').code.split('\n'), [
+  'from dataclasses import dataclass', 'from typing import List, Optional, Union', '', '@dataclass', 'class Root:', '    a: int', '    b: Optional[bool] = None', '',
+  'RootArray = List[Union[int, str, None, List[int], Root]]',
+]);
+eq('B2: a root array of objects only has no alias', /RootArray/.test(E.generatePython([{ a: 1 }], 'Root', 'dataclass').code), false);
+
 // A4: class names follow the Python identifier rules (PEP 3131): Unicode letters are kept, keywords,
 // the typing names the output imports, str / int / float / bool and the JSON keys themselves are not
 // used as class names (a field and its class with one name break Pydantic's Optional default).
@@ -133,8 +141,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 14375);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '5b3a5b83b0c0a507498df3577c18d6049e5ed94e0826727b0fbd5179d6794c73');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 15534);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '4d3ce3a34a7e5aa6007b3f9902f3fa057ae75c10b18a4b40d581cda8b19b6c27');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -352,7 +360,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "000aa5affcd51fcddc382147dc5663b0a1f06dc1f591e4744fc18360ffd31889"
+  "scriptSHA": "a30895b7b3c493c8ce01de73ef4304b2667c684af2840c1c94e6a5e80b46db93"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -466,6 +474,11 @@ const CLAIMS = [
 if (!pydBin) { skips++; console.log('SKIP: Python 3.11+ with Pydantic 2 not available (set PYDANTIC_PYTHON)'); }
 else {
   console.log('Pydantic ' + runPy(pydBin, 'import pydantic; print(pydantic.VERSION)').stdout.trim());
+  for (const mode of ['pydantic', 'dataclass', 'typeddict']) {
+    // B2 with Pydantic: the alias validates the whole root array.
+    const r = runPy(pydBin, E.generatePython(B2_IN, 'Root', mode).code + `\nimport json\nfrom pydantic import TypeAdapter\nprint(len(TypeAdapter(RootArray).validate_python(json.loads(${JSON.stringify(JSON.stringify(B2_IN))}))))`);
+    eq('B2: TypeAdapter(RootArray) validates the whole root array (' + mode + ')', r.stdout.trim() || r.stderr.trim().split('\n').pop(), '6');
+  }
   {
     // A4 with Pydantic: a nested object under a non-ASCII key is parsed into its own class, not shadowed.
     const r = runPy(pydBin, E.generatePython(A4_RUN, 'Root', 'pydantic').code + `\nimport json\nroot = Root.model_validate(json.loads(${JSON.stringify(JSON.stringify(A4_RUN))}))\nprint(type(root.收货地址).__name__, root.收货地址.省, root.发票地址.抬头, root.Address.d)`);

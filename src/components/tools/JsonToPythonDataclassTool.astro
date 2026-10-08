@@ -559,7 +559,7 @@ const L = STRINGS[lang];
         return ordered;
       }
 
-      function renderAll(classes, mode) {
+      function renderAll(classes, mode, alias) {
         var imp = {};
 
         // Re-scan classes to collect imports (already set during build, but
@@ -591,6 +591,11 @@ const L = STRINGS[lang];
             if (t.indexOf('Union[') !== -1) hasUnion = true;
           }
         }
+        if (alias) {
+          hasList = true;
+          if (alias.type.indexOf('Any') !== -1) hasAny = true;
+          if (alias.type.indexOf('Union[') !== -1) hasUnion = true;
+        }
         var typingParts = [];
         if (hasAny) typingParts.push('Any');
         if (hasList) typingParts.push('List');
@@ -612,12 +617,13 @@ const L = STRINGS[lang];
 
         var result = importLines.length > 0 ? importLines.join('\n') + '\n\n' : '';
         result += blocks.join('\n\n');
+        if (alias) result += '\n\n' + alias.name + ' = ' + alias.type;
         return result;
       }
 
       /* Classes for an object or an array of objects; null for other roots. */
       function generatePython(parsed, rootName, mode) {
-        var ctx = { classes: Object.create(null), taken: Object.create(null), shapes: [] }, imp = {};
+        var ctx = { classes: Object.create(null), taken: Object.create(null), shapes: [] }, imp = {}, alias = null;
         reserveNames(ctx.taken, parsed);
         ctx.taken[rootName] = true;
         if (isPlainObject(parsed)) {
@@ -625,11 +631,27 @@ const L = STRINGS[lang];
         } else if (Array.isArray(parsed)) {
           var objectItems = parsed.filter(isPlainObject);
           if (!objectItems.length) return null;
+          // Values beside the objects stay in a module-level alias: <root>Array = List[Union[...]].
+          var others = parsed.filter(function (v) { return !isPlainObject(v); });
+          if (others.length) {
+            var aliasName = rootName + 'Array';
+            for (var n = 2; ctx.taken[aliasName]; n++) aliasName = rootName + 'Array' + n;
+            ctx.taken[aliasName] = true;
+          }
           mergeObjectsToClass(objectItems, rootName, '', ctx, imp, rootName);
+          if (others.length) {
+            var elementTypes = [];
+            for (var oi = 0; oi < others.length; oi++) {
+              var et = others[oi] === null ? 'None' : inferPythonType(others[oi], rootName, ctx, imp, '');
+              if (elementTypes.indexOf(et) === -1) elementTypes.push(et);
+            }
+            elementTypes.push(rootName);
+            alias = { name: aliasName, type: 'List[Union[' + elementTypes.join(', ') + ']]' };
+          }
         } else {
           return null;
         }
-        return { code: renderAll(ctx.classes, mode), count: Object.keys(ctx.classes).length };
+        return { code: renderAll(ctx.classes, mode, alias), count: Object.keys(ctx.classes).length };
       }
       /* ── engine:end ── */
 
