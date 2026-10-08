@@ -9,14 +9,18 @@ steps:
   - "Use Copy for the complete displayed output. If copying fails, select the output and copy it manually."
   - "Swap exchanges the two boxes without changing the mode or converting again. Edit the input or change the mode to continue. Clear removes the text and file result while keeping the selected mode and alphabet."
 faqItems:
-  - question: "What is Base64?"
+  - id: "what-is"
+    question: "What is Base64?"
     answer: "Base64 is an encoding scheme that converts binary data to ASCII text using 64 printable characters. It's commonly used in data URIs, email attachments, and API tokens."
-  - question: "Is my data sent to any server?"
-    answer: "No. Everything runs in your browser using built-in JavaScript APIs (btoa/atob). Nothing leaves your machine."
-  - question: "Can I encode binary files?"
+  - id: "privacy"
+    question: "Is my data sent to any server?"
+    answer: "No. Encoding and decoding run in your browser with the built-in JavaScript functions btoa and atob, and neither the text nor a chosen file is sent anywhere. The last text you typed is kept in this browser's local storage so it is still there when you come back; files are not kept, and Clear removes the saved text."
+  - id: "binary-files"
+    question: "Can I encode binary files?"
     answer: "Yes. In Encode mode, drop a file on the drop zone or click it to choose one. Any file type works: the tool reads the raw bytes, outputs Base64, and can add a data:<mime>;base64, prefix. Decode mode shows the result as UTF-8 text only, so Base64 of an image or other binary data gives an error and cannot be saved as a file. To turn an image into a data URI, use Image to Base64 Converter."
-  - question: "Why does decoding fail?"
-    answer: "There are three causes: a character outside the Base64 alphabet (for example - or _ from URL-safe Base64 while Standard is selected), a truncated string that leaves one extra character after groups of four, or decoded bytes that are not valid UTF-8, such as binary data or Shift_JIS text. A missing = at the end is not a problem."
+  - id: "decode-errors"
+    question: "Why does decoding fail?"
+    answer: "There are three causes: a character outside the Base64 alphabet (for example - or _ from URL-safe Base64 while Standard is selected), a truncated string that leaves one extra character after groups of four, or decoded bytes that are not valid UTF-8, such as binary data or Shift_JIS text. A missing = at the end is not a problem. The status line names the cause and its position: the character position in the input, or the byte number in the decoded data."
 ---
 
 <h2>Examples</h2>
@@ -24,12 +28,12 @@ faqItems:
 <table>
   <thead><tr><th>Mode</th><th>Input</th><th>Output</th></tr></thead>
   <tbody>
-    <tr><td>Encode, Standard</td><td><code>Hello, 世界</code></td><td><code>SGVsbG8sIOS4lueVjA==</code></td></tr>
+    <tr><td>Encode, Standard</td><td>{/* b64-check: {"mode":"encode","in":"Hello, 世界"} */}<code>Hello, 世界</code></td><td><code>SGVsbG8sIOS4lueVjA==</code></td></tr>
     <tr><td>Encode, URL-safe</td><td><code>Hello, 世界</code></td><td><code>SGVsbG8sIOS4lueVjA</code></td></tr>
     <tr><td>Encode, Standard</td><td><code>{'subjects?_d'}</code></td><td><code>c3ViamVjdHM/X2Q=</code></td></tr>
     <tr><td>Encode, URL-safe</td><td><code>{'subjects?_d'}</code></td><td><code>{'c3ViamVjdHM_X2Q'}</code></td></tr>
     <tr><td>Encode, Standard</td><td><code>user:pass</code></td><td><code>dXNlcjpwYXNz</code></td></tr>
-    <tr><td>Decode, URL-safe</td><td><code>eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6Ikpvc8OpIn0</code></td><td><code>{`{"sub":"1234567890","name":"José"}`}</code></td></tr>
+    <tr><td>Decode, URL-safe</td><td>{/* b64-check: {"mode":"decode","variant":"urlsafe","in":"eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6Ikpvc8OpIn0"} */}<code>eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6Ikpvc8OpIn0</code></td><td><code>{`{"sub":"1234567890","name":"José"}`}</code></td></tr>
   </tbody>
 </table>
 <p>Text is encoded as UTF-8 first, so <code>世界</code> takes six bytes and eight Base64 characters. The <code>{'subjects?_d'}</code> row shows the only difference between the two alphabets: Standard uses <code>+</code> and <code>/</code> (<a href="https://www.rfc-editor.org/rfc/rfc4648#section-4" target="_blank" rel="noopener">RFC 4648 §4</a>), URL-safe uses <code>-</code> and <code>{'_'}</code> and drops the <code>=</code> padding (<a href="https://www.rfc-editor.org/rfc/rfc4648#section-5" target="_blank" rel="noopener">RFC 4648 §5</a>). JWT segments use the URL-safe form without padding (<a href="https://www.rfc-editor.org/rfc/rfc7515#section-2" target="_blank" rel="noopener">RFC 7515 §2</a>), which is why the last row decodes a JWT payload in URL-safe mode. The <code>user:pass</code> row is the credential part of an HTTP Basic header (<a href="https://www.rfc-editor.org/rfc/rfc7617#section-2" target="_blank" rel="noopener">RFC 7617 §2</a>); the <a href="/tools/basic-auth-header-generator/">Basic Auth Header Generator</a> builds the whole header.</p>
@@ -37,15 +41,15 @@ faqItems:
 <h2>What the Decoder Accepts</h2>
 <ul>
   <li><strong>Missing padding.</strong> <code>SGVsbG8</code> decodes to <code>Hello</code>. The browser's <code>atob()</code> follows the WHATWG <a href="https://infra.spec.whatwg.org/#forgiving-base64-decode" target="_blank" rel="noopener">forgiving-base64 decode</a>, which does not require <code>=</code>.</li>
-  <li><strong>Line breaks and spaces.</strong> MIME bodies wrap Base64 at 76 characters (<a href="https://www.rfc-editor.org/rfc/rfc2045#section-6.8" target="_blank" rel="noopener">RFC 2045 §6.8</a>). Whitespace is removed before decoding, so wrapped text works as pasted.</li>
-  <li><strong>Standard input in URL-safe mode.</strong> URL-safe mode maps <code>-</code> and <code>{'_'}</code> back to <code>+</code> and <code>/</code>, so a Standard string also decodes there. The reverse fails: <code>{'c3ViamVjdHM_X2Q'}</code> in Standard mode gives the "Invalid Base64 input" error.</li>
+  <li><strong>Line breaks and spaces.</strong> MIME bodies wrap Base64 at 76 characters (<a href="https://www.rfc-editor.org/rfc/rfc2045#section-6.8" target="_blank" rel="noopener">RFC 2045 §6.8</a>). Tabs, line breaks and spaces are removed before decoding in both Standard and URL-safe mode, so wrapped text works as pasted.</li>
+  <li><strong>Standard input in URL-safe mode.</strong> URL-safe mode maps <code>-</code> and <code>{'_'}</code> back to <code>+</code> and <code>/</code>, so a Standard string also decodes there. The reverse fails: {/* b64-check: {"mode":"decode","in":"c3ViamVjdHM_X2Q","error":true} */}<code>{'c3ViamVjdHM_X2Q'}</code> in Standard mode gives <code>{'Position 12: "_" is from the URL-safe alphabet. Select URL-safe to decode this string.'}</code></li>
 </ul>
 
 <h2>Limits</h2>
 <ul>
-  <li>Decode output is UTF-8 text only. Bytes that are not valid UTF-8 give an error. Example: <code>gqCCog==</code> is <code>あい</code> in Shift_JIS (bytes <code>82 A0 82 A2</code>) and is rejected. Use <a href="/tools/text-to-binary/">Text to Binary</a> to inspect raw bytes.</li>
-  <li>A <code>=</code> in the middle of the string, or a length that leaves one character after the last group of four, is an error.</li>
-  <li>File encoding has no fixed size limit. Above 5 MB the tool shows "Large file — encoding may take a few seconds." The whole Base64 string is put into the output box, so very large files can make the page slow.</li>
+  <li>Decode output is UTF-8 text only. Bytes that are not valid UTF-8 give an error. Example: <code>gqCCog==</code> is <code>あい</code> in Shift_JIS (bytes <code>82 A0 82 A2</code>) and is rejected: {/* b64-check: {"mode":"decode","in":"gqCCog==","error":true} */}<code>Byte 1 of the decoded data (82) is not valid UTF-8. Decode shows UTF-8 text only; binary data and text in GBK, Shift_JIS or EUC-KR cannot be shown here.</code> Use <a href="/tools/text-to-binary/">Text to Binary</a> to inspect raw bytes.</li>
+  <li>A <code>=</code> in the middle of the string, or a length that leaves one character after the last group of four, is an error; the status line gives the position of the <code>=</code> or the number of characters.</li>
+  <li>File encoding has no fixed size limit. Above 5 MiB (5,242,880 bytes) the tool shows "Large file — encoding may take a few seconds." The whole Base64 string is put into the output box, so very large files can make the page slow.</li>
   <li>Text with a lone UTF-16 surrogate (half of an emoji, left when a string is cut in the middle of one) cannot be encoded as UTF-8; the tool names its position. Switching Standard / URL-safe converts the current output to the other alphabet.</li>
   <li>Base64 is an encoding, not encryption. Anyone can decode it. For confidential data use <a href="/tools/aes-encrypt-decrypt/">AES Encryption</a>.</li>
 </ul>

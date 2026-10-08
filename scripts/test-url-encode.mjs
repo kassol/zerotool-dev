@@ -11,7 +11,8 @@
 // English "URI malformed"): a bad %, a byte run that is not UTF-8, a lone surrogate; decoding
 // agrees with decodeURIComponent on 3,000 random inputs (same result or both fail); the Space as +
 // option encodes like URLSearchParams and decodes + as a space; 4-language STRINGS share keys;
-// every example row on the English page is the output of the same built-ins.
+// every example row on the English page is the output of the same built-ins; the `ue-check`
+// worked examples in the four tool pages are re-run through the real page script.
 //
 // Run: node scripts/test-url-encode.mjs
 
@@ -21,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/UrlEncodeTool.astro'), 'utf8');
@@ -432,6 +433,42 @@ for(const lang of Object.keys(textLabels)){
  const restored=pageVM(lang,false,'a%20b','decode');eq(lang+': v2 restored mode and input calculate',restored.get('url-output').value,'a b');eq(lang+': v2 restoration adds no writes',restored.saves.length,0);
 }
 console.log('v2 page layout: '+(passes-v2Start)+' passed');
+
+// ---------- worked examples: `ue-check` annotations in the 4 tool pages ----------
+// {/* ue-check: {"mode":"encode"|"decode","plus":true?,"in":"…","error":true?,"controlPictures":true?} */} runs the real page
+// script in the page language (direction, Space as +, input, 300 ms) and requires the output, or the
+// status message when "error" is set, to appear verbatim as an inline code span (exact) or inside a
+// code block between the annotation and the next annotation or H2. "controlPictures" shows C0 control
+// characters as U+2400–U+241F (ja: ISO-2022-JP decodes to ESC sequences).
+function codeSpans(text) {
+  const spans = fencedBlocks(text).map((b) => ({ text: b.text, block: true }));
+  let rest = text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, ' ');
+  for (const m of rest.matchAll(/(`+)([^`][\s\S]*?)\1(?!`)/g)) spans.push({ text: m[2].replace(/^ ([\s\S]*) $/, '$1') });
+  rest = rest.replace(/(`+)([^`][\s\S]*?)\1(?!`)/g, ' ');
+  for (const m of rest.matchAll(/<code>([\s\S]*?)<\/code>/g)) {
+    spans.push({ text: m[1].replace(/\{(['"`])([\s\S]*?)\1\}/g, '$2').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&') });
+  }
+  return spans;
+}
+function ueExample({ spec, after, lang }) {
+  if (!spec || typeof spec.in !== 'string' || !['encode', 'decode'].includes(spec.mode)) return 'annotation needs "mode" and "in"';
+  const q = pageVM(lang);
+  if (spec.mode === 'decode') modeRadio(q, 'decode').click();
+  if (spec.plus) q.get('url-plus').click();
+  q.input('url-input', spec.in); q.advance(300);
+  const status = q.get('url-status'), isError = status.className.includes('error');
+  if (!!spec.error !== isError) return `expected ${spec.error ? 'an error' : 'a result'}, page shows ${JSON.stringify(status.textContent)}`;
+  let shown = isError ? status.textContent : q.get('url-output').value;
+  if (spec.controlPictures) shown = shown.replace(/[\u0000-\u001f]/g, (c) => String.fromCharCode(0x2400 + c.charCodeAt(0)));
+  const found = codeSpans(after).some((c) => (c.block ? c.text.includes(shown) : c.text === shown));
+  return found ? null : `${JSON.stringify(shown)} is not shown as code after the annotation`;
+}
+{
+  const contract = toolMdxContract('url-encode', { annotations: [{ tag: 'ue-check', min: 2, verify: ueExample }] });
+  const rows = contract.results.filter((r) => r.rule.includes('ue-check'));
+  for (const r of rows) eq('worked example: ' + r.message, r.ok, true);
+  eq('worked examples found in all 4 pages', rows.filter((r) => r.rule.includes('matches the engine')).length >= 8, true);
+}
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

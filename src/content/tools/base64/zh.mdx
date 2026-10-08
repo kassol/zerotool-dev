@@ -9,20 +9,74 @@ steps:
   - "点「复制」获取完整的当前输出。复制失败时，请选中输出内容后手动复制。"
   - "「交换」只交换两个框的值，模式保持不变，也不再次转换。编辑输入或切换模式可继续转换。「清除」移除文本和文件结果，保留选中的模式与字母表。"
 faqItems:
-  - question: "什么是 Base64？"
+  - id: "what-is"
+    question: "什么是 Base64？"
     answer: "Base64 是一种将二进制数据转换为 ASCII 文本的编码方案，使用 64 个可打印字符。常用于 Data URI、邮件附件和 API 令牌。"
-  - question: "我的数据会发送到服务器吗？"
-    answer: "不会。所有处理都在浏览器中通过 JavaScript 内置 API（btoa/atob）完成，数据不会离开您的设备。"
-  - question: "可以编码二进制文件吗？"
+  - id: "privacy"
+    question: "我的数据会发送到服务器吗？"
+    answer: "不会。编码和解码都在浏览器里用 JavaScript 内置的 btoa / atob 完成，输入的文本和选择的文件都不会发送出去。最后一次输入的文本会保存在本浏览器的本地存储中，下次打开时恢复；文件不保存，点「清除」会删除已保存的文本。"
+  - id: "binary-files"
+    question: "可以编码二进制文件吗？"
     answer: "可以。在编码模式下，把文件拖到上传区，或点击上传区选择文件。任何类型的文件都会按原始字节编码为 Base64，还可以加上 data:<mime>;base64, 前缀。解码结果只按 UTF-8 文本显示，所以图片等二进制数据的 Base64 会报错，也不能保存为文件。要把图片转成 Data URI，请用图片转 Base64 工具。"
-  - question: "为什么解码失败？"
-    answer: "原因有三种：含有 Base64 字母表以外的字符（例如选择了 Standard 却输入 URL-safe 的 - 或 _）；字符串被截断，按 4 个字符分组后多出 1 个字符；解码出的字节不是有效的 UTF-8，例如二进制数据或 GBK 编码的文本。末尾缺少 = 不影响解码。"
+  - id: "decode-errors"
+    question: "为什么解码失败？"
+    answer: "原因有三种：含有 Base64 字母表以外的字符（例如选择了 Standard 却输入 URL-safe 的 - 或 _）；字符串被截断，按 4 个字符分组后多出 1 个字符；解码出的字节不是有效的 UTF-8，例如二进制数据或 GBK 编码的文本。末尾缺少 = 不影响解码。状态行会写出原因和位置：输入里的第几个字符，或解码结果的第几个字节。"
 ---
 
-<h2>常见使用场景</h2>
-<ul>
-  <li><strong>API 认证：</strong>Basic Auth 请求头使用 Base64 编码的凭据。</li>
-  <li><strong>Data URI：</strong>CSS/HTML 中内联的图片和字体是 Base64 编码的。</li>
-  <li><strong>JWT 令牌：</strong>Header 和 Payload 部分采用 Base64url 编码。</li>
-  <li><strong>邮件：</strong>MIME 附件使用 Base64 编码。</li>
-</ul>
+## 中文文本怎么编码
+
+工具先把文本转成 UTF-8 字节，再做 Base64。常用汉字在 UTF-8 里占 3 个字节，正好对应 4 个 Base64 字符，所以纯中文的结果长度通常是汉字数乘以 4。
+
+{/* b64-check: {"mode":"encode","in":"你好，世界"} */}
+
+输入 `你好，世界`（5 个字符，含一个全角逗号，共 15 字节），Standard 模式输出 `5L2g5aW977yM5LiW55WM`，正好 20 个字符，末尾没有 `=`。
+
+{/* b64-check: {"mode":"encode","in":"Base64 编码"} */}
+
+中英文混排时字节数不一定是 3 的倍数。`Base64 编码` 是 6 个 ASCII 字节、1 个空格和 6 个汉字字节，共 13 字节，输出 `QmFzZTY0IOe8lueggQ==`，末尾补了两个 `=`。
+
+两种字母表只差三个字符。`测试` 在 Standard 模式下是 `5rWL6K+V`，切换到 URL-safe 后：
+
+{/* b64-check: {"mode":"encode","variant":"urlsafe","in":"测试"} */}
+
+输出变成 `5rWL6K-V`，`+` 换成了 `-`。这样的字符串可以直接放进 URL 的查询参数或路径，不用再做百分号编码。反过来，把 `5rWL6K-V` 放回 Standard 模式解码会失败：
+
+{/* b64-check: {"mode":"decode","in":"5rWL6K-V","error":true} */}
+
+状态行显示 `第 7 个字符：“-”属于 URL-safe 字母表，请切换到 URL-safe 再解码。`，切换后即可解出。规则见 [RFC 4648 第 5 节](https://www.rfc-editor.org/rfc/rfc4648#section-5)。
+
+## GBK 系统给的 Base64 为什么解不出来
+
+一些老系统或数据库按 GBK 存文本，再把字节做成 Base64 传过来。同样是“你好”，两种编码的字节不同，Base64 也不同：UTF-8 是 `5L2g5aW9`，GBK 的字节是 `C4 E3 BA C3`，Base64 是 `xOO6ww==`（可以用 Python 的 `base64.b64encode('你好'.encode('gbk'))` 核对）。
+
+{/* b64-check: {"mode":"decode","in":"xOO6ww==","error":true} */}
+
+把 `xOO6ww==` 粘到解码框，工具不会显示乱码，而是报 `解码后的第 1 个字节（C4）不是有效的 UTF-8。解码结果只显示 UTF-8 文本，二进制数据和 GBK 等编码的文本无法在这里显示。`：这串 Base64 本身没错，问题出在解出来的字节。第 1 个字节 C4 在 UTF-8 里是双字节字符的开头，后面应当跟 80–BF 之间的字节，实际跟的是 E3。本工具只按 UTF-8 输出文字，GBK、GB18030 这类[旧编码](https://encoding.spec.whatwg.org/#names-and-labels)需要在你自己的程序里先按原编码解码。
+
+## 被截断的 emoji
+
+前端用 `slice()` 截取字符串时，可能把一个 emoji 从中间切开，只留下一半（孤立的代理项）。这种文本无法转成 UTF-8，工具会指出位置：
+
+{/* b64-check: {"mode":"encode","in":"你好\ud83d","error":true} */}
+
+输入“你好”加半个 emoji，状态行显示 `第 3 个字符：孤立的代理项（emoji 等字符的一半）无法编码为 UTF-8。`。位置按字符计算，一个完整的 emoji 算 1 个字符。
+
+## 解码时可以省略的东西
+
+- 末尾的 `=` 可以不写。{/* b64-check: {"mode":"decode","in":"5L2g5aW977yM5LiW55WMIQ"} */}`5L2g5aW977yM5LiW55WMIQ` 去掉了两个 `=`，照样解出 `你好，世界!`。浏览器的 `atob()` 遵循 WHATWG 的 [forgiving-base64 decode](https://infra.spec.whatwg.org/#forgiving-base64-decode)，不强制填充。
+- 换行、制表符和空格会被忽略，Standard 与 URL-safe 两种模式相同。从邮件原文复制的 Base64 每 76 个字符换一行，可以原样粘贴。{/* b64-check: {"mode":"decode","variant":"urlsafe","in":"5rWL\n6K-V"} */}例如在 URL-safe 模式下，`5rWL` 换行后接 `6K-V`，照样解出 `测试`。
+- URL-safe 模式也能读 Standard 字符串，因为它只是把 `-` 和 `_` 换回 `+` 和 `/`。
+
+## 限制
+
+- 解码结果只显示 UTF-8 文本，不能还原成图片或其他文件。
+- 字符串中间出现 `=`，或者按 4 个字符分组后多出 1 个字符，都会报错，状态行写出 `=` 的位置或字符个数。{/* b64-check: {"mode":"decode","in":"5L2g5","error":true} */}例如复制时少了几个字符的 `5L2g5`，会提示 `共 5 个 Base64 字符，按 4 个一组后多出 1 个。字符串可能被截断，或多了一个字符。`
+- 文件编码没有固定上限。超过 5 MiB（5,242,880 字节）时状态行提示 `文件较大，编码可能需要几秒。`，整个文件和结果都放在内存里，文件太大会让页面变慢。
+- Base64 只是编码，不是加密，任何人都能解开。需要保密的内容请用 [AES 加密工具](/zh/tools/aes-encrypt-decrypt/)。
+
+## 常见使用场景
+
+- **API 认证：** HTTP Basic 认证把 `用户名:密码` 做成 Base64 放进请求头（[RFC 7617](https://www.rfc-editor.org/rfc/rfc7617#section-2)），完整请求头可以用 [Basic Auth 请求头生成器](/zh/tools/basic-auth-header-generator/)生成。
+- **Data URI：** CSS 和 HTML 里内联的图片、字体是 Base64。图片请用[图片转 Base64](/zh/tools/image-to-base64/)，它能按文件内容判断类型。
+- **JWT：** Header 和 Payload 两段是不带填充的 URL-safe Base64，解码时选 URL-safe。
+- **邮件：** MIME 附件用 Base64 传输，非 ASCII 的邮件标题也可以用 Base64（RFC 2047 的 B 编码）。
