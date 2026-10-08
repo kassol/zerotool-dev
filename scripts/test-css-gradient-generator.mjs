@@ -276,6 +276,8 @@ function open(s,lang='en',shellFirst=false){
   check('checker rejects settings the controls cannot hold', threw === 3, String(threw));
   check('readHex reads full-width input', readHex('＃１Ａ７３Ｅ８') === '#1a73e8');
   check('readHex rejects Hangul jamo', readHex('#ㄹㄹㄹㄹㄹㄹ') === null);
+  check('readHex rejects kana from a romaji IME', readHex('＃１あ７３え８') === null);
+  check('ja page shows the kana example', contract.docs.ja.body.includes('＃１あ７３え８'));
   console.log('EXAMPLES ' + passes + ' passed, ' + failures + ' failed');
   if (failures) process.exitCode = 1;
 }
