@@ -123,7 +123,9 @@ function pageVM(lang = 'en', order = 'shared-after', ready = true) {
   }
   const matches = (el, selector) => selector.split(',').some(part => matchesOne(el, part));
   class Element {
-    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attrs: {}, listeners: {}, id: '', className: '', text: '', value: '', disabled: false, hidden: false, clientHeight: 200, scrollTop: 0 }); }
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attrs: {}, listeners: {}, id: '', className: '', text: '', value: '', disabled: false, hidden: false, clientHeight: 200, scrollTop: 0, style: {} }); }
+    select() { doc.activeElement = this; doc.selection = this.value; }
+    removeChild(child) { this.children = this.children.filter(c => c !== child); child.parentNode = null; return child; }
     get parentElement() { return this.parentNode; }
     setAttribute(key, value) { this.attrs[key] = String(value); if (['id', 'class', 'type'].includes(key)) this[key === 'class' ? 'className' : key] = String(value); if (this.id === 'ml-results' && key === 'data-empty' && String(value) === 'true' && doc.querySelector('.ml-results-pane .ml-heading')?.contains(doc.activeElement)) doc.activeElement = doc.body; }
     getAttribute(key) { return key === 'class' ? this.className || null : this.attrs[key] ?? null; }
@@ -235,7 +237,7 @@ for (const lang of ['en','zh','ja','ko']) for (const order of ['shared-before','
   }
   {
     const p = pageVM(lang, order); await p.release(p.jobs[0], true);
-    eq(prefix + 'current failure is visible', p.get('ml-results').textContent, 'Error: Error: controlled lint rejection');
+    eq(prefix + 'current failure is visible', p.get('ml-results').textContent, t.lintFailed + 'controlled lint rejection');
     p.input(safeDoc); p.advance(300); await p.release();
     eq(prefix + 'current failure recovers via real lint', p.get('ml-summary').textContent, t.noIssues);
   }
@@ -323,6 +325,16 @@ for (const lang of ['en','zh','ja','ko']) for (const order of ['shared-before','
   }
 }
 console.log('Page copy checks: ' + (passes - copyStart) + ' passed');
+
+// Lint failure text in the page language.
+const fallbackStart = passes;
+for (const lang of ['en','zh','ja','ko']) {
+  const t = strings[lang];
+  const failed = pageVM(lang); await failed.release(failed.jobs[0], true);
+  eq(lang + ': lint failure text uses the page language', failed.get('ml-results').textContent, (t.lintFailed ?? 'Error: ') + 'controlled lint rejection');
+  eq(lang + ': lint failure text has no fixed English prefix', lang === 'en' || !failed.get('ml-results').textContent.startsWith('Error: '), true);
+}
+console.log('Lint failure checks: ' + (passes - fallbackStart) + ' passed');
 eq('all clipboard Promise rejections are handled', unhandled.length, 0);
 process.off('unhandledRejection', onUnhandled);
 // This component has no engine markers: protect the real library bootstrap, rendering and sample bytes.
