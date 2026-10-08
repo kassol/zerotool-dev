@@ -372,7 +372,7 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   const widget=new Element('section');widget.className='tool-widget';doc.body.appendChild(widget);
   const labels=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
   const escaped=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace('data-strings={JSON.stringify(CLIENT_T)}','data-strings="'+escaped(JSON.stringify({copy:labels[lang].copy,copied:labels[lang].copied,copyFailed:labels[lang].copyFailed,badFrom:labels[lang].badFrom,badFromSpace:labels[lang].badFromSpace,badToSpace:labels[lang].badToSpace}))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
+  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace('data-strings={JSON.stringify(CLIENT_T)}','data-strings="'+escaped(JSON.stringify({copy:labels[lang].copy,copied:labels[lang].copied,copyFailed:labels[lang].copyFailed,badFrom:labels[lang].badFrom,badFromSpace:labels[lang].badFromSpace,badToSpace:labels[lang].badToSpace,badFromUrl:labels[lang].badFromUrl,badFromFullwidth:labels[lang].badFromFullwidth}))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
   doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
@@ -450,6 +450,24 @@ for (const lang of ['en','zh','ja','ko']) {
   }
 }
 
+// Relative From paths of other shapes: a pasted full URL and a full-width "／" get their own hint;
+// "./old-page" gets the general one; a leading space is trimmed and the path is valid.
+{
+  const strings=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
+  for (const lang of ['en','zh','ja','ko']) {
+    const q=ready(lang),from=q.get('hta-redir-from'),status=q.get('hta-status'),S=strings[lang];
+    assert(lang+' has localized URL and full-width hints',[typeof S.badFromUrl,typeof S.badFromFullwidth],['string','string']);
+    q.choose('hta-redir-enable',true);q.input('hta-redir-to','https://example.test/new');
+    for (const [value,key] of [['https://example.com/old-page','badFromUrl'],['HTTP://example.com/old-page','badFromUrl'],['／old-page','badFromFullwidth'],['./old-page','badFrom']]) {
+      q.input('hta-redir-from',value);
+      assert(lang+' From path '+JSON.stringify(value)+' is rejected with '+key,[status.textContent,/^Redirect /m.test(output(q)),from.getAttribute('aria-invalid')],[S[key],false,'true']);
+    }
+    q.input('hta-redir-from',' /old-page');
+    assert(lang+' a leading space before / is trimmed and accepted',[status.textContent,output(q).endsWith('Redirect 301 /old-page https://example.test/new')],['',true]);
+  }
+  assert('ko messages use the section name 리다이렉트',['badFrom','badFromSpace','badToSpace'].every(k=>!strings.ko[k].includes('리디렉션')),true);
+}
+
 // Custom Redirect with a space inside the From path or the To URL: the line gets four arguments,
 // and Apache 2.4.67 answers 500 for the whole directory ("Redirect takes one, two or three
 // arguments", checked with the hta-apache cases on the tool pages). The page leaves the line out
@@ -509,7 +527,7 @@ for(const lang of ['en','zh','ja','ko']){
  q.input(INPUT,'home.html');assert(lang+' real input restores preview',q.doc.querySelector('.hta-wrap').dataset.empty,'false');
  assert(lang+' SSR labels before runtime replacement',q.doc.querySelector('label.hta-toggle').textContent.includes(L.forceHttps),true);
  assert(lang+' seven SSR tip keys',Object.keys(L.tips).sort(),['cache','copy','https','index','redirect','security','www']);
- assert(lang+' client gets copy feedback and the From path error only',Object.keys(JSON.parse(q.doc.querySelector('.hta-wrap').dataset.strings)).sort(),['badFrom','badFromSpace','badToSpace','copied','copy','copyFailed']);
+ assert(lang+' client gets copy feedback and the From path error only',Object.keys(JSON.parse(q.doc.querySelector('.hta-wrap').dataset.strings)).sort(),['badFrom','badFromFullwidth','badFromSpace','badFromUrl','badToSpace','copied','copy','copyFailed']);
  const prefix=process.env.ZT_B13_MDX_PREFIX,mdx=readFileSync(prefix?prefix+'-'+lang+'.mdx':join(root,'src/content/tools/htaccess-generator',lang+'.mdx'),'utf8');const y=requireFromRoot('js-yaml').load(mdx.split('---')[1]);
  assert(lang+' steps limits and position',y.steps.length<=8&&y.steps.every(x=>x.length<=280)&&y.steps.join('').length<=1200&&mdx.indexOf('steps:')<mdx.indexOf('faqItems:'),true);
  assert(lang+' Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);
