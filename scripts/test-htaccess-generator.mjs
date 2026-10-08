@@ -418,6 +418,11 @@ for (const lang of ['en','zh','ja','ko']) {
     assert(lang+' default files '+JSON.stringify(value)+' write a usable DirectoryIndex',line,want);
   }
   assert(lang+' the default files field keeps what was typed',q.get(INPUT).value,'\t');
+  // A full-width space (U+3000, typed with a Chinese, Japanese or Korean IME) is not a separator
+  // for Apache: "DirectoryIndex index.php　index.html" is one file name (403 on Apache 2.4.67).
+  q.input(INPUT,'index.php　index.html');
+  assert(lang+' a full-width space between default files becomes a space',output(q).split('\n').find(l=>l.startsWith('DirectoryIndex')),'DirectoryIndex index.php index.html');
+  assert(lang+' the field still shows the full-width space',q.get(INPUT).value,'index.php　index.html');
 }
 
 // Custom Redirect: the From path must start with "/" (Apache Redirect: "A relative path is not
