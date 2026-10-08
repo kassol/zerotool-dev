@@ -399,6 +399,10 @@ const requireFromRoot = createRequire(join(root, 'package.json'));
 const { parseFragment, defaultTreeAdapter } = requireFromRoot('parse5');
 const labels = vm.runInNewContext(source.slice(source.indexOf('const labels ='), source.indexOf('const L =')) + ';labels;');
 const sampleJson = source.match(/const SAMPLE_JSON = `([\s\S]*?)`;/)[1];
+const errorTables = source.includes('const ERROR_PATTERNS')
+  ? vm.runInNewContext(source.slice(source.indexOf('const ERROR_PATTERNS'), source.indexOf('const ERRORS_JSON')) + ';({ ERROR_PATTERNS, ERROR_TEXT });')
+  : { ERROR_PATTERNS: [], ERROR_TEXT: {} };
+const errorsJson = lang => (lang === 'en' || !errorTables.ERROR_TEXT[lang] ? '' : JSON.stringify({ re: errorTables.ERROR_PATTERNS, ...errorTables.ERROR_TEXT[lang] }));
 const inline = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
@@ -455,7 +459,7 @@ function page(lang, sharedFirst = false) {
   }
   const escape = value => String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const markup = source.replace(/^---\n[\s\S]*?\n---\s*/, '').split('<script')[0].replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
-    .replace(/=\{L\.(\w+)\}/g, (_,key) => '="'+escape(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g, (_,key) => escape(labels[lang][key])).replace('{SAMPLE_JSON}',escape(sampleJson));
+    .replace(/=\{L\.(\w+)\}/g, (_,key) => '="'+escape(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g, (_,key) => escape(labels[lang][key])).replace('{SAMPLE_JSON}',escape(sampleJson)).replace('={ERRORS_JSON}', () => '="'+escape(errorsJson(lang))+'"');
   const body = new Element('body'), widget = body.appendChild(new Element('section')); widget.className = 'tool-widget'; widget.innerHTML = markup;
   const wrap = widget.querySelectorAll('.jpt-wrap')[0], script = wrap.appendChild(new Element('script'));
   const document = { body, activeElement: body, currentScript: script,
@@ -583,6 +587,51 @@ for (const lang of ['en','zh','ja','ko']) {
     h.input('jpt-expr', '$.store.book');
     eq(lang+' half-width query matches', h.get('jpt-count').textContent, L.matchOne.replace('{n}', '1'));
   }
+}
+
+// ---------- query errors in the page language ----------
+// The status line showed the engine's English detail on zh / ja / ko pages. Every engine
+// message now has a pattern with zh / ja / ko text; en pages keep the engine text.
+const ERROR_QUERIES = [
+  '$[?(@.a == 1]', '$[?(@.a == 1', 'store.book', '$.1', '$.', '$..', '$[1 2]', '$[(@.length-1)]', '$[',
+  '$[a]', '$[-]', '$[01]', '$[-0]', '$[9007199254740992]', "$['a", "$['\\uDC00']", "$['\\uD800']",
+  "$['\\uD800\\u0041']", "$['\\x']", "$['a\u0001b']", "$['\\u00']", '$[?!1]', '$[?!@.a == 1]',
+  '$[?@.a == (1)]', '$[?@.a =~ /x/]', '$[?@.a = 1]', '$[?@.a == 01]', '$[?price < 10]', '$[?@.a ==',
+  '$[?@.a == #]', '$[?foo(@)]', '$[?length(@.a, 1) == 1]', '$[?length(@)]', '$[?1]', '$[?@.* == 1]',
+  "$[?match(@.a,'x') == true]", '$[?length(1 == 1) == 1]', '$[?count(1) == 1]', '@.a', '$.a b',
+  '$.store.book[?(@.category in ["fiction"])]', '$[?@.a && 1]', '$[?True]', '$[?@.a == 1 == 2]',
+];
+// Messages no query reaches (the parser checks the same thing earlier); the pattern is checked
+// against the engine text directly.
+const UNREACHED = ['expected an index', 'expected a member name or * after "."', 'only literals, singular queries and functions can be compared'];
+{
+  const details = [];
+  for (const q of ERROR_QUERIES) {
+    let e = null; try { E.jsonpath({}, q); } catch (x) { e = x; }
+    check('error query throws a JsonPathError: ' + q, e && e.name === 'JsonPathError', e && e.message);
+    if (e && e.name === 'JsonPathError') details.push({ q, detail: e.detail, pos: e.pos, message: e.message });
+  }
+  const engineSites = (block.match(/(?:this|p)\.fail\('|throw JsonPathError\('|throw JsonPathError\(e\.name|this\.fail\(name/g) || []).length;
+  eq('engine has 39 error sites (add a pattern when this changes)', engineSites, 39);
+  eq('one pattern per distinct engine message', errorTables.ERROR_PATTERNS.length, 39);
+  const all = details.map(d => d.detail).concat(UNREACHED);
+  const firstMatch = d => errorTables.ERROR_PATTERNS.findIndex(re => new RegExp(re).test(d));
+  for (const d of all) check('error detail has a pattern: ' + d, firstMatch(d) >= 0);
+  errorTables.ERROR_PATTERNS.forEach((re, i) => check('pattern ' + i + ' matches an engine message: ' + re, all.some(d => firstMatch(d) === i)));
+  for (const lang of ['zh', 'ja', 'ko']) {
+    const T = errorTables.ERROR_TEXT[lang];
+    eq(lang + ' one text per pattern', T && T.t.length, 39);
+    const h = page(lang);
+    h.input('jpt-json', '{}');
+    for (const d of details) {
+      h.input('jpt-expr', d.q);
+      const shown = h.get('jpt-count').textContent;
+      check(lang + ' localized error for ' + d.q, shown.startsWith(labels[lang].unsupported + ': ') && !shown.includes(d.detail)
+        && shown.endsWith(T.at.replace('{n}', String(d.pos + 1))) && shown === h.get('jpt-code').textContent, shown);
+    }
+  }
+  const h = page('en'); h.input('jpt-json', '{}');
+  for (const d of details) { h.input('jpt-expr', d.q); eq('en keeps the engine text for ' + d.q, h.get('jpt-count').textContent, 'Unsupported syntax: ' + d.message); }
 }
 
 await settle();eq('no unhandled copy rejections',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);

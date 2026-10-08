@@ -110,6 +110,186 @@ const labels = {
 const L = labels[lang] ?? labels['en'];
 const { tips: TIPS } = L;
 
+// Query error details in the page language. The engine writes them in English; each pattern
+// below matches one engine message (scripts/test-jsonpath-tester.mjs checks that every engine
+// message has a pattern). $1, $2 … are the captured parts. en pages show the engine text.
+const ERROR_PATTERNS = [
+  String.raw`^expected "([\s\S])" but found "([\s\S])"$`,
+  String.raw`^expected "([\s\S])" but found the end$`,
+  String.raw`^a query must start with \$$`,
+  String.raw`^a member name after "(\.\.?)" cannot start with a digit; use \[n\] for an index or \['name'\] for the name$`,
+  String.raw`^expected a member name or \* after "(\.\.?)"$`,
+  String.raw`^expected "," or "\]" in a bracketed selection$`,
+  String.raw`^script expressions such as \[\(@\.length-1\)\] are not part of RFC 9535; use a negative index such as \[-1\]$`,
+  String.raw`^expected an index$`,
+  String.raw`^the bracket is not closed$`,
+  String.raw`^unexpected "([\s\S]+)" in a bracketed selection$`,
+  String.raw`^expected an integer$`,
+  String.raw`^integers cannot be -0 or have leading zeros$`,
+  String.raw`^integer out of range \(±\(2\^53-1\)\)$`,
+  String.raw`^the string is not closed$`,
+  String.raw`^lone low surrogate escape$`,
+  String.raw`^a high surrogate escape must be followed by a low surrogate escape$`,
+  String.raw`^invalid escape "\\([\s\S]*)" in a string$`,
+  String.raw`^control characters must be escaped in a string$`,
+  String.raw`^\\u must be followed by 4 hex digits$`,
+  String.raw`^"!" must be followed by a query, a function or parentheses$`,
+  String.raw`^"!" cannot negate a comparison directly; write !\(a == b\)$`,
+  String.raw`^the right side of a comparison must be a literal, a singular query or a function$`,
+  String.raw`^the =~ operator is not part of RFC 9535; use match\(\) or search\(\)$`,
+  String.raw`^use == for equality$`,
+  String.raw`^invalid number$`,
+  String.raw`^unknown word "([a-z0-9_]+)"; member names inside a filter need @ \(for example @\.([a-z0-9_]+)\)$`,
+  String.raw`^the expression ends too early$`,
+  String.raw`^unexpected "([\s\S]+)" in a filter expression$`,
+  String.raw`^unknown function ([a-z0-9_]+)\(\); supported: length, count, match, search, value$`,
+  String.raw`^([a-z]+)\(\) takes (\d+) arguments?, got (\d+)$`,
+  String.raw`^([a-z]+)\(\) returns a value; compare it, for example ([a-z]+)\(\.\.\.\) > 0$`,
+  String.raw`^a literal cannot be used as a condition on its own; compare it with something$`,
+  String.raw`^only singular queries \(names and indexes, no \.\., \*, slices or filters\) can be compared$`,
+  String.raw`^([a-z]+)\(\) returns true/false and cannot be compared$`,
+  String.raw`^only literals, singular queries and functions can be compared$`,
+  String.raw`^argument of ([a-z]+)\(\) must be a literal, a singular query or a value function$`,
+  String.raw`^argument of ([a-z]+)\(\) must be a query$`,
+  String.raw`^@ is only allowed inside a filter \[\?\.\.\.\]; start the query with \$$`,
+  String.raw`^unexpected "([\s\S]+)"$`,
+];
+const ERROR_TEXT = {
+  zh: {
+    at: '（第 {n} 个字符）',
+    t: [
+      '此处应为「$1」，实际是「$2」',
+      '此处应为「$1」，但表达式已经结束',
+      '查询必须以 $ 开头',
+      '「$1」后的成员名不能以数字开头；取下标请写 [n]，取这个名称请写 [\'name\']',
+      '「$1」后应为成员名或 *',
+      '方括号内此处应为「,」或「]」',
+      'RFC 9535 没有 [(@.length-1)] 这类脚本表达式；请改用 [-1] 这样的负索引',
+      '此处应为索引',
+      '方括号没有闭合',
+      '方括号内不能出现「$1」',
+      '此处应为整数',
+      '整数不能写成 -0，也不能有前导零',
+      '整数超出范围（±(2^53-1)）',
+      '字符串没有闭合',
+      '低位代理项的转义单独出现',
+      '高位代理项的转义后必须紧跟低位代理项的转义',
+      '字符串中的转义「\\$1」无效',
+      '字符串中的控制字符必须转义',
+      '\\u 后必须是 4 位十六进制数',
+      '「!」后必须是查询、函数或括号',
+      '「!」不能直接否定比较；请写成 !(a == b)',
+      '比较的右侧必须是字面量、单值查询或函数',
+      'RFC 9535 没有 =~ 运算符；请改用 match() 或 search()',
+      '判断相等请用 ==',
+      '数字格式无效',
+      '未知的词「$1」；过滤器中的成员名要加 @（例如 @.$2）',
+      '表达式提前结束',
+      '过滤表达式中不能出现「$1」',
+      '未知函数 $1()；支持的函数：length、count、match、search、value',
+      '$1() 需要 $2 个参数，实际有 $3 个',
+      '$1() 返回的是值，需要拿来比较，例如 $2(...) > 0',
+      '字面量不能单独作为条件，需要与其他值比较',
+      '只有单值查询（只含名称和索引，不含 ..、*、切片或过滤器）可以比较',
+      '$1() 返回 true/false，不能用来比较',
+      '只有字面量、单值查询和函数可以比较',
+      '$1() 的参数必须是字面量、单值查询或返回值的函数',
+      '$1() 的参数必须是查询',
+      '@ 只能用在过滤器 [?...] 中；查询请以 $ 开头',
+      '此处不能出现「$1」',
+    ],
+  },
+  ja: {
+    at: '（{n} 文字目）',
+    t: [
+      'ここには「$1」が必要ですが「$2」があります',
+      'ここには「$1」が必要ですが、式が終わっています',
+      'クエリは $ で始めます',
+      '「$1」の後のメンバー名は数字で始められません。添字は [n]、この名前は [\'name\'] と書きます',
+      '「$1」の後にはメンバー名か * が必要です',
+      '角括弧の中のここには「,」か「]」が必要です',
+      '[(@.length-1)] のようなスクリプト式は RFC 9535 にありません。[-1] のような負の添字を使ってください',
+      'ここには添字が必要です',
+      '角括弧が閉じていません',
+      '角括弧の中に「$1」は書けません',
+      'ここには整数が必要です',
+      '整数は -0 にできず、先頭に 0 も付けられません',
+      '整数が範囲外です（±(2^53-1)）',
+      '文字列が閉じていません',
+      '下位サロゲートのエスケープが単独で現れています',
+      '上位サロゲートのエスケープの直後には下位サロゲートのエスケープが必要です',
+      '文字列内のエスケープ「\\$1」は無効です',
+      '文字列内の制御文字はエスケープが必要です',
+      '\\u の後には 16 進数 4 桁が必要です',
+      '「!」の後にはクエリ、関数、括弧のいずれかが必要です',
+      '「!」で比較を直接否定することはできません。!(a == b) と書いてください',
+      '比較の右辺はリテラル、単一ノードのクエリ、関数のいずれかです',
+      '=~ 演算子は RFC 9535 にありません。match() か search() を使ってください',
+      '等しいかどうかは == で比べます',
+      '数値の形式が正しくありません',
+      '「$1」は不明な語です。フィルター内のメンバー名には @ が必要です（例：@.$2）',
+      '式が途中で終わっています',
+      'フィルター式に「$1」は書けません',
+      '$1() は不明な関数です。使える関数：length、count、match、search、value',
+      '$1() の引数は $2 個ですが、$3 個あります',
+      '$1() は値を返すので、比較に使ってください（例：$2(...) > 0）',
+      'リテラルだけでは条件になりません。他の値と比較してください',
+      '比較できるのは単一ノードのクエリ（名前と添字だけで、..、*、スライス、フィルターを含まないもの）です',
+      '$1() は true/false を返すので比較できません',
+      '比較できるのはリテラル、単一ノードのクエリ、関数だけです',
+      '$1() の引数はリテラル、単一ノードのクエリ、値を返す関数のいずれかです',
+      '$1() の引数はクエリでなければなりません',
+      '@ はフィルター [?...] の中でだけ使えます。クエリは $ で始めてください',
+      'ここに「$1」は書けません',
+    ],
+  },
+  ko: {
+    at: ' ({n}번째 문자)',
+    t: [
+      '여기에 필요한 문자: "$1"(실제 문자: "$2")',
+      '여기에 필요한 문자: "$1"(표현식이 이미 끝났습니다)',
+      '쿼리는 $로 시작해야 합니다',
+      '"$1" 뒤의 멤버 이름은 숫자로 시작할 수 없습니다. 인덱스는 [n], 이 이름은 [\'name\']으로 쓰세요',
+      '"$1" 뒤에는 멤버 이름이나 *가 와야 합니다',
+      '대괄호 안의 이 자리에는 ","나 "]"가 와야 합니다',
+      '[(@.length-1)] 같은 스크립트 표현식은 RFC 9535에 없습니다. [-1] 같은 음수 인덱스를 쓰세요',
+      '여기에는 인덱스가 와야 합니다',
+      '대괄호가 닫히지 않았습니다',
+      '대괄호 안에 쓸 수 없는 문자: "$1"',
+      '여기에는 정수가 와야 합니다',
+      '정수는 -0으로 쓸 수 없고 앞에 0을 붙일 수도 없습니다',
+      '정수가 범위를 벗어났습니다(±(2^53-1))',
+      '문자열이 닫히지 않았습니다',
+      '하위 서로게이트 이스케이프가 단독으로 나왔습니다',
+      '상위 서로게이트 이스케이프 바로 뒤에는 하위 서로게이트 이스케이프가 와야 합니다',
+      '문자열 안의 잘못된 이스케이프: "\\$1"',
+      '문자열 안의 제어 문자는 이스케이프해야 합니다',
+      '\\u 뒤에는 16진수 4자리가 와야 합니다',
+      '"!" 뒤에는 쿼리, 함수, 괄호 중 하나가 와야 합니다',
+      '"!"로 비교를 바로 부정할 수 없습니다. !(a == b)로 쓰세요',
+      '비교의 오른쪽은 리터럴, 단일 노드 쿼리, 함수 중 하나여야 합니다',
+      '=~ 연산자는 RFC 9535에 없습니다. match()나 search()를 쓰세요',
+      '같은지 비교하려면 ==를 쓰세요',
+      '숫자 형식이 잘못되었습니다',
+      '알 수 없는 단어: "$1". 필터 안의 멤버 이름에는 @가 필요합니다(예: @.$2)',
+      '표현식이 중간에 끝났습니다',
+      '필터 표현식에 쓸 수 없는 문자: "$1"',
+      '알 수 없는 함수: $1(). 지원 함수: length, count, match, search, value',
+      '$1()의 인수는 $2개여야 하는데 $3개입니다',
+      '$1()의 결과는 값이므로 비교에 써야 합니다(예: $2(...) > 0)',
+      '리터럴만으로는 조건이 될 수 없습니다. 다른 값과 비교하세요',
+      '비교할 수 있는 것은 단일 노드 쿼리(이름과 인덱스만 쓰고 .., *, 슬라이스, 필터가 없는 쿼리)뿐입니다',
+      '$1()의 결과는 true/false이므로 비교할 수 없습니다',
+      '비교할 수 있는 것은 리터럴, 단일 노드 쿼리, 함수뿐입니다',
+      '$1()의 인수는 리터럴, 단일 노드 쿼리, 값을 반환하는 함수 중 하나여야 합니다',
+      '$1()의 인수는 쿼리여야 합니다',
+      '@는 필터 [?...] 안에서만 쓸 수 있습니다. 쿼리는 $로 시작하세요',
+      '여기에 쓸 수 없는 문자: "$1"',
+    ],
+  },
+};
+const ERRORS_JSON = lang === 'en' ? '' : JSON.stringify({ re: ERROR_PATTERNS, ...ERROR_TEXT[lang] });
+
 const SAMPLE_JSON = `{
   "store": {
     "book": [
@@ -137,6 +317,7 @@ const SAMPLE_JSON = `{
   data-match-many={L.matchMany}
   data-number-note={L.numberNote}
   data-fullwidth-note={L.fullwidthNote}
+  data-errors={ERRORS_JSON}
 >
   <div class="jpt-controls">
     <div class="jpt-query">
@@ -202,6 +383,7 @@ const SAMPLE_JSON = `{
       var MATCH_MANY     = wrap.dataset.matchMany;
       var NUMBER_NOTE    = wrap.dataset.numberNote;
       var FULLWIDTH_NOTE = wrap.dataset.fullwidthNote;
+      var ERRORS         = wrap.dataset.errors ? JSON.parse(wrap.dataset.errors) : null;
 
       var jsonEl   = document.getElementById('jpt-json');
       var exprEl   = document.getElementById('jpt-expr');
@@ -835,6 +1017,16 @@ const SAMPLE_JSON = `{
         return found.length ? FULLWIDTH_NOTE.replace('{chars}', found.slice(0, 5).join(' ')) : '';
       }
 
+      // A JsonPathError in the page language (en pages and unknown messages keep the engine text).
+      function errorText(e) {
+        if (!ERRORS) return e.message;
+        for (var k = 0; k < ERRORS.re.length; k++) {
+          var m = new RegExp(ERRORS.re[k]).exec(e.detail);
+          if (m) return ERRORS.t[k].replace(/\$(\d)/g, function (_, d) { return m[d]; }) + ERRORS.at.replace('{n}', String(e.pos + 1));
+        }
+        return e.message;
+      }
+
       function joinNotes(a, b) { return a && b ? a + ' ' + b : a || b; }
 
       /* ── Syntax highlight JSON ── */
@@ -913,7 +1105,7 @@ const SAMPLE_JSON = `{
           }
         } catch (e) {
           var errText = e.name === 'JsonPathError'
-            ? UNSUPPORTED + ': ' + e.message
+            ? UNSUPPORTED + ': ' + errorText(e)
             : ERROR_LABEL + ': ' + e.message;
           codeEl.innerHTML = '<span class="jpt-error"></span>';
           codeEl.firstChild.textContent = errText;
