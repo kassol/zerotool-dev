@@ -8,14 +8,17 @@
 // Covers: for every width / height from 1 to 400, the two transparent borders of the top, bottom,
 // left and right triangles add up to exactly that size (they used to round each half up, so width
 // 25 gave 13px + 13px, a 26px base), and differ by at most 1px; the coloured border keeps the
-// other size; corner triangles are unchanged; the example on the English page.
+// other size; corner triangles are unchanged; the example on the English page; the tool page
+// worked examples in src/content/tools/css-triangle-generator/{en,zh,ja,ko}.mdx (`ctg-check`
+// notes, at least 2 per language, recomputed by running the page script and equal to a code block
+// after the note; every `.triangle {` block on the four pages has a note) and the MDX contract.
 //
 // Run: node scripts/test-css-triangle-generator.mjs
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks, readToolMdx } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_B12_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(process.env.ZT_B12_COMPONENT || join(root, 'src/components/tools/CssTriangleGeneratorTool.astro'), 'utf8');
@@ -116,10 +119,10 @@ function open(s,lang='en',shellFirst=false){
   function query(sel,within){return queryAll(sel,within)[0]||null;}
   const docHandlers={};document={currentScript:null,documentElement:{lang},getElementById:id=>ids.get(id)||null,querySelector:sel=>sel==='.tool-widget'?wrap:sel==='.tool-widget .btn-primary'?query('.btn-primary',wrap):query(sel),querySelectorAll:sel=>queryAll(sel),addEventListener:(k,f)=>(docHandlers[k]??=[]).push(f),dispatch(type,e){for(const f of docHandlers[type]||[])f(e);},body:{appendChild:c=>c},createElement:tag=>{const n=parseFragment('<'+tag+'></'+tag+'>').childNodes[0];adapt(n);return n;},execCommand:()=>false};
   adapt(tree);const wrap=query(s.root);wrap.closest=()=>wrap;
-  const timers=[],requests=[],assertions=[],persist={cleared:[],saved:[]},events={};let now=0,seq=0;
-  const h={s,L,document,ids,timers,requests,assertions,persist,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
+  const timers=[],requests=[],assertions=[],persist={cleared:[],saved:[]},events={},tracks=[];let now=0,seq=0;
+  const h={s,L,document,ids,timers,requests,assertions,persist,tracks,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
   active=h;
-  const globals={document,isSecureContext:true,navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{clear:slug=>persist.cleared.push(slug)},trackTool(){}};
+  const globals={document,isSecureContext:true,navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{clear:slug=>persist.cleared.push(slug)},trackTool(slug,action){tracks.push(slug+':'+action);}};
   globals.window=globals;const ctx=vm.createContext(globals);const shared='var _slug='+JSON.stringify(s.slug)+';\n'+shortcuts;if(shellFirst)vm.runInContext(shared,ctx);for(const m of source.matchAll(/<script is:inline>([\s\S]*?)<\/script>/g))vm.runInContext(m[1],ctx);if(!shellFirst)vm.runInContext(shared,ctx);h.page={run:code=>vm.runInContext(code,ctx)};h.wrap=wrap;
   return h;
 }
@@ -160,6 +163,103 @@ function open(s,lang='en',shellFirst=false){
     h.advance(1499);h.click('ctg-copy-html');h.requests[2].resolve();await settle();h.advance(1);check(lang+' HTML old timer invalid',h.el('ctg-copy-html').textContent,h.L.copied);h.advance(1500);check(lang+' HTML newest timer expires',h.el('ctg-copy-html').textContent,h.L.copy);
     h=open(spec,lang);h.click('ctg-copy-html');h.click('ctg-copy-css');h.requests[1].resolve();await settle();const before=h.state();h.requests[0].reject(new Error('HTML stale after CSS'));await settle();check(lang+' HTML stale rejection after CSS',[h.state(),h.el('ctg-copy-html').textContent,h.unhandled.length],[before,h.L.copy,0]);
     h=open(spec,lang);h.click('ctg-copy-css');h.click('ctg-copy-html');h.requests[1].resolve();await settle();h.requests[0].resolve();await settle();check(lang+' CSS stale success after HTML',[h.el('ctg-copy-css').textContent,h.el('ctg-copy-html').textContent],[h.L.copy,h.L.copied]);
+  }
+  // Analytics: one `generate` event per committed change (change event, direction click), as in
+  // color-palette-generator; none on load and none for each `input` event while typing or dragging.
+  {
+    const g=h=>h.tracks.filter(t=>t==='css-triangle-generator:generate').length;
+    let h=open(spec,'en');
+    check('GA: no generate event on load',g(h),0);
+    for(const v of ['1','12','125'])h.input('ctg-width',v);
+    h.input('ctg-height','40');h.input('ctg-picker','#ff0000');h.input('ctg-hex','#00ff00');
+    check('GA: no generate event per input event',g(h),0);
+    h.el('ctg-width').dispatch('change');
+    check('GA: one generate event on width change',g(h),1);
+    h.el('ctg-height').dispatch('change');h.el('ctg-picker').dispatch('change');h.el('ctg-hex').dispatch('change');
+    check('GA: one generate event per committed height / picker / hex change',g(h),4);
+    h.query('.ctg-dir-btn[data-dir="left"]').click();
+    check('GA: one generate event per direction click',g(h),5);
+    h.input('ctg-width','0');h.el('ctg-width').dispatch('change');
+    check('GA: no generate event for an invalid size',g(h),5);
+    h.input('ctg-hex','#12');h.el('ctg-hex').dispatch('change');
+    check('GA: no generate event for an incomplete hex code',g(h),5);
+  }
+  // Hex field (as in box-shadow-generator): text that cannot become `#rrggbb` shows a hint in the
+  // page language and keeps the color; an incomplete code shows the hint on change; maxlength 16 so
+  // a pasted 8-digit code is not silently cut to a valid 6-digit one.
+  check('triangle hex field allows 16 characters',/id="ctg-hex"[^>]*maxlength="16"/.test(source),true);
+  for (const lang of ['en','zh','ja','ko']) {
+    const hint=open(spec,lang).L.badColor;
+    check(lang+' triangle badColor hint exists',typeof hint==='string'&&hint.length>0,true);
+    for (const bad of ['rgba(0,0,0,.5)','＃ｆｆｆｆｆｆ','red','#00000080']) {
+      const h=open(spec,lang); h.input('ctg-hex',bad);
+      check(lang+' triangle hex '+bad+' hint, color kept',[h.el('ctg-status').textContent,h.el('ctg-status').className,h.el(spec.output).textContent.includes('#3b82f6')],[hint,'tool-status error',true]);
+      h.input('ctg-hex','#ff0000');
+      check(lang+' triangle hex '+bad+' then valid clears hint',[h.el('ctg-status').textContent,h.el(spec.output).textContent.includes('#ff0000')],['',true]);
+    }
+    let h=open(spec,lang); h.input('ctg-hex','#12');
+    check(lang+' triangle incomplete hex while typing: no hint',h.el('ctg-status').textContent,'');
+    h.el('ctg-hex').dispatch('change');
+    check(lang+' triangle incomplete hex on change: hint',h.el('ctg-status').textContent,hint);
+    h=open(spec,lang); h.input('ctg-width','0'); h.input('ctg-hex','red');
+    check(lang+' triangle size error is not replaced by the color hint',h.el('ctg-status').textContent,h.L.badWidth);
+  }
+  // Width and height: whole numbers from 1 to 500 (the inputs' min / max). Empty, 0, negative,
+  // too large or fractional values show an error in the page language, clear the CSS and the
+  // preview, and disable Copy; the next valid value restores them. (Before: empty and 0 became
+  // 100, negatives became 1, values above 500 were used, 12.5 became 12.)
+  for (const lang of ['en','zh','ja','ko']) {
+    for (const field of ['ctg-width','ctg-height']) {
+      const key = field === 'ctg-width' ? 'badWidth' : 'badHeight';
+      // Default direction is top: width n gives border-right ceil(n / 2), height n gives border-bottom n.
+      const shows = (out, n) => out.includes(field === 'ctg-width' ? 'border-right: ' + (n - Math.floor(n / 2)) + 'px solid transparent' : 'border-bottom: ' + n + 'px solid');
+      for (const bad of ['', '0', '-5', '501', '12.5', 'abc']) {
+        const h=open(spec,lang); h.input(field,bad);
+        check(lang+' '+field+'='+JSON.stringify(bad)+' error text',[h.el('ctg-status').textContent,h.el('ctg-status').className],[h.L[key],'tool-status error']);
+        check(lang+' '+field+'='+JSON.stringify(bad)+' clears CSS and disables Copy',[h.el(spec.output).textContent,h.el('ctg-copy-css').disabled,h.el('ctg-preview').hidden,h.wrap.dataset.empty],['',true,true,'true']);
+        h.input(field,'40');
+        check(lang+' '+field+' valid value restores output',[shows(h.el(spec.output).textContent,40),h.el('ctg-copy-css').disabled,h.el('ctg-status').textContent,h.el('ctg-status').className],[true,false,'','tool-status']);
+      }
+      for (const good of ['1','500']) {
+        const h=open(spec,lang); h.input(field,good);
+        check(lang+' '+field+'='+good+' accepted',[shows(h.el(spec.output).textContent,Number(good)),h.el('ctg-status').textContent],[true,'']);
+      }
+    }
+    const strings=open(spec,lang).L;
+    check(lang+' size tips state the 1-500 range',['width','height'].every(k=>/500/.test(strings.tips[k])),true);
+  }
+  // Tool page worked examples: {/* ctg-check: {"dir": …, "w": …, "h": …, "color": "#rrggbb",
+  // "hex"?: "text typed into the hex field"} */}. The page script runs as on load: the direction
+  // button is clicked, the width and height fields get the values, the color picker gets "color"
+  // (lowercase, as a browser reports it), then "hex" is typed into the text field. The whole
+  // .triangle rule must equal a code block after the note (before the next ctg-check note or H2),
+  // and every code block on the page that starts with ".triangle {" must be covered by a note.
+  function triangleOutput(c) {
+    if (!['top','right','bottom','left','top-left','top-right','bottom-left','bottom-right'].includes(c.dir)) throw new Error('unknown direction '+c.dir);
+    if (!/^#[0-9a-f]{6}$/.test(c.color)) throw new Error('color must be lowercase #rrggbb');
+    const h=open(spec,'en');
+    h.query('.ctg-dir-btn[data-dir="'+c.dir+'"]').click();
+    h.input('ctg-width',c.w);h.input('ctg-height',c.h);h.input('ctg-picker',c.color);
+    if(c.hex!==undefined)h.input('ctg-hex',c.hex);
+    return h.el(spec.output).textContent;
+  }
+  const blockAfter=after=>fencedBlocks(after).map(b=>b.text);
+  function verifyTriangle({spec:c,after}){
+    if(!c)return 'empty note';
+    const out=triangleOutput(c);
+    return blockAfter(after).includes(out)?null:'engine result is not shown as a code block: '+JSON.stringify(out);
+  }
+  const triangleAnnotations=[{tag:'ctg-check',min:2,verify:verifyTriangle}];
+  {
+    const docs=readToolMdx('css-triangle-generator',{root});
+    for(const lang of ['en','zh','ja','ko']){
+      check(lang+' MDX contract with worked examples',contractProblems('css-triangle-generator',lang,{annotations:triangleAnnotations}),'');
+      const body=docs[lang].body, notes=annotations(body,'ctg-check');
+      const outs=notes.map(n=>{try{return {after:n.after,out:triangleOutput(n.spec)};}catch{return {after:n.after,out:null};}});
+      for(const b of fencedBlocks(body).filter(b=>b.text.startsWith('.triangle {'))){
+        check(lang+' generator block has a ctg-check note: '+b.text.split('\n').slice(3).join(' '),outs.some(o=>o.out===b.text&&blockAfter(o.after).includes(b.text)),true);
+      }
+    }
   }
   process.removeListener('unhandledRejection',onUnhandled);
   const bad=rows.filter(r=>!r.passed); for(const r of bad)console.log('FAIL: '+r.name+' '+JSON.stringify({actual:r.actual,expected:r.expected}));
@@ -206,6 +306,15 @@ function open(s,lang='en',shellFirst=false){
     const steps=[...fm.matchAll(/^  - ("[^\n]*")$/gm)].map(m=>JSON.parse(m[1]));
     check(snap.lang+' plain bounded steps',steps.length>0&&steps.length<=8&&steps.every(s=>s.length<=280)&&steps.reduce((n,s)=>n+s.length,0)<=1200);
     check(snap.lang+' MDX content contract', !contractProblems('css-triangle-generator', snap.lang), contractProblems('css-triangle-generator', snap.lang));
+    // FAQ: the old second question (border hack) repeated the first; it is now the odd-size question,
+    // whose 25 → 12px + 13px split comes from the engine.
+    {
+      const faq=readToolMdx(slug,{root})[snap.lang].data.faqItems;
+      const ids=JSON.stringify(faq.map(f=>f.id));check(snap.lang+' FAQ id sequence',ids===JSON.stringify(['how-it-works','odd-size','width-height','clip-path-svg','dark-mode','privacy']),ids);
+      const split=E.computeBorders('top',25,10,'#000000').slice(0,2).map(r=>r.match(/\d+px/)[0]);
+      const odd=faq.find(f=>f.id==='odd-size');
+      check(snap.lang+' odd-size answer quotes the engine split',!!odd&&split.every(v=>odd.answer.includes(v))&&odd.answer.includes('25'),split.join('+'));
+    }
     check(snap.lang+' old Usage removed',!/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(page));
   }
   console.log('V2 '+passes+' passed, '+failures+' failed');
