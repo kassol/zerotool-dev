@@ -139,7 +139,7 @@ t('Ł', 'L', keep);
 t('ł', 'l');
 t('đ', 'd');
 t('Đ', 'D', keep);
-t("John's Guide", 'john-s-guide');
+t("John's Guide", 'johns-guide');
 t('你好', '');
 t('日本語 Guide', 'guide');
 
@@ -181,8 +181,22 @@ t('fooBar 123 $#%', 'foobar-123-hash-percent');
 t('я люблю единорогов', '');
 t('I ♥ Dogs', 'i-dogs');
 t('Fußgängerübergänge', 'fussgangerubergange');
-t('Conway\u2019s Law', 'conway-s-law');
-t("Conway's Law", 'conway-s-law');
+t('Conway\u2019s Law', 'conways-law');
+t("Conway's Law", 'conways-law');
+// An apostrophe (U+0027, U+2019, U+02BC) between two letters is deleted with no separator, as
+// WordPress sanitize_title(), lodash kebabCase and @sindresorhus/slugify do. Before the fix it was a
+// separator (Conway's Law → conway-s-law). An apostrophe next to a space, digit or the text edge
+// stays a separator.
+t("don't stop", 'dont-stop');
+t('Hawai\u02BBi', 'hawai-i');
+t('Hawaiʼi', 'hawaii');
+t("Café's Menu", 'cafes-menu');
+t("rock 'n' roll", 'rock-n-roll');
+t("90's music", '90-s-music');
+t("'quoted' word", 'quoted-word');
+t("O’Brien’s Pub", 'obriens-pub');
+t("Conway's Law", 'conways_law', { separator: '_' });
+t('Ｊｏｈｎ＇ｓ', 'johns');
 {
   const got = E.slugify('10 Tips & Tricks for Node.js (2026 Edition)!', { separator: '_', lowercase: false, trim: true });
   check('page example, underscore + case kept', got === '10_Tips_and_Tricks_for_Node_js_2026_Edition', got);
@@ -480,7 +494,7 @@ for (const lang of Object.keys(copyLabels)) {
   q.input('sl-input', ''); q.get('sl-input').dispatch('change');
   eq(lang + ': empty input sends no event', q.tracks.length, 3);
 }
-eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'f3fbd0999d44cefc0223c5a3360c29870beb3f265ab32493044a98050f436def');
+eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'dc8c3bc29ebe074e91fada219c56fca57a7a5f4681c1809ccf215b6ea150ae5c');
 eq('no unhandled copy rejections',unhandled,[]);process.off('unhandledRejection',onUnhandled);
 // ---------- v2 page layout ----------
 const v2Start=passes;
