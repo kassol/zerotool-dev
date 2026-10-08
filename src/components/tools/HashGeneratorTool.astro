@@ -15,6 +15,7 @@ const STRINGS = {
     "hashing": "Hashing...",
     "hashesGenerated": "Hashes generated.",
     "errEmpty": "Please enter some text.",
+    "errHash": "The browser could not calculate the SHA hashes. Click Generate Hashes to try again.",
     "outputLabel": "Hashes",
     "emptyOutput": "Your five hash values will appear here.",
     "tips": {
@@ -35,6 +36,7 @@ const STRINGS = {
     "hashing": "计算中...",
     "hashesGenerated": "哈希已生成。",
     "errEmpty": "请输入文本。",
+    "errHash": "浏览器未能计算 SHA 哈希。请再次点击「生成哈希」。",
     "outputLabel": "哈希值",
     "emptyOutput": "五种哈希值会显示在这里。",
     "tips": {
@@ -55,6 +57,7 @@ const STRINGS = {
     "hashing": "計算中...",
     "hashesGenerated": "ハッシュが生成されました。",
     "errEmpty": "テキストを入力してください。",
+    "errHash": "ブラウザーで SHA ハッシュを計算できませんでした。「ハッシュを生成」で再試行してください。",
     "outputLabel": "ハッシュ値",
     "emptyOutput": "5種類のハッシュ値をここに表示します。",
     "tips": {
@@ -75,6 +78,7 @@ const STRINGS = {
     "hashing": "계산 중...",
     "hashesGenerated": "해시가 생성되었습니다.",
     "errEmpty": "텍스트를 입력해 주세요.",
+    "errHash": "브라우저가 SHA 해시를 계산하지 못했습니다. 해시 생성을 다시 눌러 주세요.",
     "outputLabel": "해시 값",
     "emptyOutput": "다섯 가지 해시 값이 여기에 표시됩니다.",
     "tips": {
@@ -194,6 +198,27 @@ const { tips: TIPS, ...CLIENT_T } = T;
       var running = false;
       var copyRevision = 0;
       var copyErrorBtn = null;
+      // Analytics: one event per distinct text, not per click; Clear starts over.
+      var lastTracked = null;
+
+      // Copy fallback when the Clipboard API is missing or refuses: a hidden textarea and execCommand.
+      function fallbackCopy(text) {
+        var ta;
+        try {
+          ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          return document.execCommand('copy') === true;
+        } catch (e) {
+          return false;
+        } finally {
+          if (ta && ta.parentNode) ta.parentNode.removeChild(ta);
+        }
+      }
 
       function clearStatus() {
         copyErrorBtn = null;
@@ -260,7 +285,10 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
           statusEl.textContent = t.hashesGenerated;
           statusEl.className = 'hg-status success';
-          window.trackTool && window.trackTool('hash_generator', 'generate');
+          if (text !== lastTracked) {
+            lastTracked = text;
+            window.trackTool && window.trackTool('hash_generator', 'generate');
+          }
 
           resultsEl.querySelectorAll('.btn-copy').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -283,20 +311,26 @@ const { tips: TIPS, ...CLIENT_T } = T;
                 statusEl.className = 'hg-status error';
                 copyErrorBtn = btn;
               }
-              try { navigator.clipboard.writeText(val).then(done, failed); }
-              catch (e) { failed(); }
+              function fallback() {
+                if (!current()) return;
+                if (fallbackCopy(val)) done(); else failed();
+              }
+              try { navigator.clipboard.writeText(val).then(done, fallback); }
+              catch (e) { fallback(); }
             });
           });
         } catch (e) {
           if (revision !== runRevision) return;
           running = false;
-          statusEl.textContent = 'Error: ' + e.message;
+          console.error(e);
+          statusEl.textContent = t.errHash;
           statusEl.className = 'hg-status error';
         }
       });
 
       function clearTool() {
         runRevision++;
+        lastTracked = null;
         running = false;
         invalidateCopies();
         inputEl.value = '';

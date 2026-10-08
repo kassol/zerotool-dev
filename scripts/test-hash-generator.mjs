@@ -8,7 +8,10 @@
 // Covers: md5() equals node:crypto MD5 of the TextEncoder bytes for 3,000 random strings that mix
 // ASCII, CJK, emoji and lone surrogates (the old hand-written UTF-8 step encoded a lone surrogate
 // differently from TextEncoder, so the MD5 row and the SHA rows hashed different bytes); RFC 1321
-// test vectors; every hash quoted on the English page, recomputed with node:crypto.
+// test vectors; every hash quoted on the English page, recomputed with node:crypto. Page: a failed SHA
+// digest shows the localized errHash (the browser message goes to the console only); Copy falls
+// back to a hidden textarea + execCommand('copy') when the Clipboard API is missing, throws or
+// refuses; analytics send one event per distinct text (Clear resets).
 //
 // Run: node scripts/test-hash-generator.mjs
 
@@ -147,6 +150,8 @@ function pageVM(lang = 'en', shellFirst = false) {
       for (const node of parseFragment(context, String(v)).childNodes) this.appendChild(fromParse5(node));
     }
     appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { this.children = this.children.filter(c => c !== child); child.parentNode = null; return child; }
+    select() { doc.selected = this; }
     querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
     querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
     contains(el) { return el === this || descendants(this).includes(el); }
@@ -180,9 +185,16 @@ function pageVM(lang = 'en', shellFirst = false) {
   doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
   doc.createElement = tag => new Element(tag);
   doc.activeElement = doc.body;
-  doc.execCommand = () => { throw Error('Forbidden unexpected execCommand'); };
+  // Copy fallback: 'forbidden' (default) throws, 'fail' returns false, 'ok' copies the selected textarea.
+  const exec = { mode: 'forbidden', calls: [] };
+  doc.execCommand = (cmd) => {
+    exec.calls.push({ cmd, value: doc.selected?.value, attached: !!doc.selected && doc.contains(doc.selected) });
+    if (exec.mode === 'forbidden') throw Error('Forbidden unexpected execCommand');
+    return exec.mode === 'ok';
+  };
+  const errors = [];
   const sandbox = {
-    document: doc, console, TextEncoder, TextDecoder, Event: EventStub,
+    document: doc, console: { ...console, error: (...args) => errors.push(args.map(String).join(' ')) }, TextEncoder, TextDecoder, Event: EventStub,
     t: Object.fromEntries(Object.entries(strings[lang]).filter(([key]) => key !== 'tips')),
     _slug: 'hash-generator', ztPersist: { clear() {} }, trackTool(...args) { tracks.push(args); },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
@@ -204,7 +216,7 @@ function pageVM(lang = 'en', shellFirst = false) {
   if (!shellFirst) vm.runInContext(shortcut, context);
   const get = id => { const el = doc.getElementById(id); must(el, key + ' source ID ' + id); return el; };
   return {
-    key, doc, widget, get, clipboard, digests, timers, tracks, context,
+    key, doc, widget, get, clipboard, digests, timers, tracks, context, exec, errors,
     input(id, text) { get(id).value = text; get(id).dispatch('input'); },
     ctrlL(id) { get(id).focus(); get(id).dispatch('keydown', { key: 'l', ctrlKey: true }); },
     advance(ms) { const target = now + ms; for (;;) { const next = [...timers].filter(([,t]) => t.due <= target).sort((a,b) => a[1].due-b[1].due || a[0]-b[0])[0]; if (!next) break; now=next[1].due; timers.delete(next[0]); next[1].fn(); } now=target; },
@@ -238,6 +250,15 @@ for(const [lang,T] of Object.entries(labels)){
   p.input('hg-input','manual');same(lang+': edits preserve completed manual result',rows(p),expected('A世界😀'));eq(lang+': typing does not compute',p.digests.length,4);
   p.get('hg-input').focus();p.get('hg-input').dispatch('keydown',{key:'Enter',ctrlKey:true});await p.finishHash('manual');same(lang+': CtrlEnter generates once',rows(p),expected('manual'));eq(lang+': two requested generations',p.tracks.length,2);
   p.input('hg-input','');p.get('hg-hash').click();same(lang+': empty Generate clears old rows',[rows(p),p.get('hg-status').textContent],[[],T.empty]);
+  {
+    // Analytics: one event per distinct text, not per click; Clear starts over.
+    const g=await generated(lang);g.get('hg-hash').click();await g.finishHash('A世界😀');g.get('hg-input').focus();g.get('hg-input').dispatch('keydown',{key:'Enter',ctrlKey:true});await g.finishHash('A世界😀');
+    eq(lang+': same text generated three times sends one event',g.tracks.length,1);
+    g.input('hg-input','other');g.get('hg-hash').click();await g.finishHash('other');eq(lang+': new text sends a second event',g.tracks.length,2);
+    g.input('hg-input','A世界😀');g.get('hg-hash').click();await g.finishHash('A世界😀');eq(lang+': returning to an earlier text after another one counts again',g.tracks.length,3);
+    g.get('hg-clear').click();g.input('hg-input','A世界😀');g.get('hg-hash').click();await g.finishHash('A世界😀');eq(lang+': Clear resets the duplicate check',g.tracks.length,4);
+    eq(lang+': event names',g.tracks.every(a=>a[0]==='hash_generator'&&a[1]==='generate'),true);
+  }
   for(const order of [false,true]){
     const q=await generated(lang,order);const before=state(q);q.doc.body.dispatch('keydown',{key:'l',ctrlKey:true});same(lang+': outside CtrlL does not change page',state(q),before);q.ctrlL('hg-input');same(lang+': idle CtrlL clears result '+order,[q.get('hg-input').value,rows(q),q.get('hg-status').textContent],['',[],'']);
     for(const kind of ['clear','ctrlL','input','empty','next'])for(const outcome of ['resolve','reject']){
@@ -248,7 +269,9 @@ for(const [lang,T] of Object.entries(labels)){
   for(const algorithm of ['SHA-1','SHA-256','SHA-384','SHA-512']){
     const q=pageVM(lang);q.input('hg-input','failure');q.get('hg-hash').click();
     for(const name of ['SHA-1','SHA-256','SHA-384','SHA-512']){const job=q.digests.find(j=>j.algorithm===name&&!j.released);must(job,'current digest');job.released=true;if(name===algorithm){await job.real;job.reject(Error('digest denied'));await settle();break;}job.resolve(await job.real);await settle();}
-    same(lang+': current '+algorithm+' error clears rows',[rows(q),q.get('hg-status').textContent,q.get('hg-status').className],[[],'Error: digest denied','hg-status error']);
+    same(lang+': current '+algorithm+' error clears rows with a localized message',[rows(q),q.get('hg-status').textContent,q.get('hg-status').className],[[],strings[lang].errHash,'hg-status error']);
+    eq(lang+': '+algorithm+' error keeps the browser message out of the status line',/digest denied|Error:/.test(q.get('hg-status').textContent),false);
+    eq(lang+': '+algorithm+' error is logged to the console',q.errors.some(e=>/digest denied/.test(e)),true);
     q.get('hg-hash').click();await q.finishHash('failure');same(lang+': failed digest retry succeeds',rows(q),expected('failure'));
   }
   for(let index=0;index<5;index++){
@@ -258,6 +281,14 @@ for(const [lang,T] of Object.entries(labels)){
       if(kind==='throw')r.context.navigator.clipboard={writeText(){throw Error('blocked');}};if(kind==='missing')r.context.navigator.clipboard=undefined;
       try{button.click();if(kind==='reject')r.clipboard.at(-1).reject(Error('denied'));}catch(e){thrown=String(e);}await settle();eq(lang+': '+kind+' caught',thrown,null);eq(lang+': '+kind+' localized',r.get('hg-status').textContent,T.failure);
       r.context.navigator.clipboard=original;button.click();r.clipboard.at(-1).resolve();await settle();same(lang+': direct same-result retry',[r.get('hg-status').textContent,button.textContent],['',T.copied]);
+      // The execCommand fallback copies the same value when the Clipboard API is missing or refuses.
+      const f=await generated(lang),fb=buttons(f)[index];f.exec.mode='ok';
+      if(kind==='throw')f.context.navigator.clipboard={writeText(){throw Error('blocked');}};if(kind==='missing')f.context.navigator.clipboard=undefined;
+      fb.click();if(kind==='reject')f.clipboard.at(-1).reject(Error('denied'));await settle();
+      same(`${lang}/${index}: ${kind} falls back to execCommand`,[f.exec.calls.map(c=>[c.cmd,c.value,c.attached]),fb.textContent,f.get('hg-status').textContent],[[['copy',expected('A世界😀')[index][1],true]],T.copied,T.success]);
+      eq(`${lang}/${index}: ${kind} fallback textarea removed`,f.doc.selected ? f.doc.selected.parentNode : 'no fallback textarea',null);
+      const g=await generated(lang),gb=buttons(g)[index];g.exec.mode='fail';g.context.navigator.clipboard=undefined;gb.click();await settle();
+      eq(`${lang}/${index}: ${kind} failed fallback shows the localized failure`,g.get('hg-status').textContent,T.failure);
     }
     for(const kind of ['clear','ctrlL','input','empty','next'])for(const outcome of ['resolve','reject']){
       const r=await generated(lang),button=buttons(r)[index];button.click();const pending=r.clipboard.at(-1);boundary(r,kind);if(kind==='next')await r.finishHash('NEXT');const before=state(r);pending[outcome](outcome==='reject'?Error('late copy'):undefined);await settle();same(`${lang}/${index}: late copy ${outcome}/${kind}`,state(r),before);
