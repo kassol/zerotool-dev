@@ -360,6 +360,19 @@ for (const lang of ['en','zh','ja','ko']) {
   const mdPairs = examplePairs(body, b => b.lang === 'csv', b => b.lang === 'markdown');
   eq(lang+' has CSV → Markdown examples', mdPairs.length > 0, true);
   eq(lang+' each Markdown example equals the engine output for one alignment', mdPairs.filter(([a, b]) => !['left','center','right'].some(al => md(a.text, al).markdown === b.text)).map(([, b]) => b.text), []);
+  // Worked examples, recomputed through the real page script: `{/* cm-check: {"align": …} */}` is
+  // followed by the CSV block and the exact Markdown block; status: true also requires the page's
+  // status line verbatim in the same section.
+  const notes = annotations(body, 'cm-check');
+  check(lang+' at least 2 cm-check examples', notes.length >= 2, String(notes.length));
+  for (const [i, note] of notes.entries()) {
+    const spec = note.spec || {}, blocks = fencedBlocks(note.after);
+    const pg = page(lang); pg.get('cm-align-' + (spec.align || 'left')).click(); pg.type(s.left, blocks[0]?.text ?? ''); pg.advance(300);
+    eq(lang+' cm-check #'+(i+1)+' output', pg.get(s.right).value, blocks[1]?.text);
+    if (spec.status) check(lang+' cm-check #'+(i+1)+' status shown verbatim', note.after.includes(pg.get('cm-status').textContent), pg.get('cm-status').textContent);
+  }
+  const covered = notes.reduce((n, note) => n + fencedBlocks(note.after).filter(b => b.lang === 'csv' || b.lang === 'markdown').length, 0);
+  eq(lang+' every CSV / Markdown example block is recomputed', mdPairs.length * 2, covered);
   check(lang+' Usage removed', !/<h2>(?:How to Use|How to use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
   let error='';try{await mdxCompiler.compile(body);}catch(e){error=String(e);}eq(lang+' MDX compiles',error,'');
 }
