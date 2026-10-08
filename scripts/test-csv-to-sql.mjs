@@ -28,7 +28,7 @@ import { loadPage, readComponent, frontmatterStrings } from './astro-page-harnes
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, annotations, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -211,7 +211,27 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   let m, n = 0;
   while ((m = re.exec(mdx))) {
     n++;
-    eq(lang + ' page example ' + n, tpl(m[3]), conv(tpl(m[2]), JSON.parse(m[1])).sql);
+    const opts = JSON.parse(m[1]), csv = tpl(m[2]), sql = tpl(m[3]);
+    eq(lang + ' page example ' + n, sql, conv(csv, opts).sql);
+    // Execution level (S2-7): every value in the printed SQL reads back as the CSV cell.
+    const rows = E.parseCsv(csv.trim()).filter((r) => r.some((c) => c !== ''));
+    const width = Math.max(...rows.map((r) => r.length));
+    const cells = rows.slice(1).flatMap((r) => Array.from({ length: width }, (_, i) => r[i] ?? ''));
+    const decoded = readLiterals(sql, opts.dialect === 'mysql');
+    eq(lang + ' page example ' + n + ' literals decode to the CSV cells', decoded.map((v) => (v === null ? '' : typeof v === 'object' ? v.num : v)), cells);
+    if (opts.dialect === 'sqlite') {
+      const db = new SQL.Database();
+      let got, err = '';
+      try {
+        // Without CREATE TABLE in the example, create the table the tool would have written.
+        if (!opts.createTable) db.run(conv(csv, { ...opts, createTable: true }).sql.split('\n')[0]);
+        db.run(sql);
+        got = db.exec('SELECT * FROM ' + JSON.stringify(opts.table))[0].values.flat();
+      } catch (e) { err = e.message; }
+      db.close();
+      eq(lang + ' page example ' + n + ' runs in SQLite (sql.js)', err, '');
+      if (!err) check(lang + ' page example ' + n + ' SQLite stores the CSV cells', got.length === cells.length && got.every((v, i) => (v === null ? cells[i] === '' : typeof v === 'number' ? v === Number(cells[i]) : v === cells[i])), JSON.stringify(got));
+    }
   }
   check(lang + ' page has at least 2 checked examples', n >= 2, n);
 }
@@ -442,6 +462,22 @@ try {
   };
   const jf = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
   check('firstBadUtf8 is the same as in json-formatter-engine.js', fnLines(source, 'firstBadUtf8') !== '' && fnLines(source, 'firstBadUtf8') === fnLines(jf, 'firstBadUtf8'));
+
+  // Page examples of a refused file: {/* cts-file: {"hex":"…"} */} followed by a code block that
+  // holds the status line the page shows for those bytes, word for word.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readFileSync(join(root, 'src/content/tools/csv-to-sql', lang + '.mdx'), 'utf8');
+    for (const note of annotations(body, 'cts-file')) {
+      const bytes = Uint8Array.from(note.spec.hex.match(/../g).map((h) => parseInt(h, 16)));
+      const p = page(lang); p.golden(); p.open().finish(bytes);
+      const status = p.get('cts-status').textContent;
+      check(lang + ' cts-file example shows the page status word for word', status !== '' && fencedBlocks(note.after).some((b) => b.text === status), status);
+      if (note.spec.text !== undefined) {
+        const enc = { gbk: 'gbk', shift_jis: 'shift_jis', 'euc-kr': 'euc-kr' }[note.spec.encoding];
+        eq(lang + ' cts-file bytes are ' + note.spec.encoding + ' for the text shown', new TextDecoder(enc).decode(bytes), note.spec.text);
+      }
+    }
+  }
 }
 
 

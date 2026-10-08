@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, annotations, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/JsonDiffTool.astro'), 'utf8');
@@ -385,6 +385,22 @@ process.removeListener('unhandledRejection', onUnhandled);
   const jsv = readFileSync(join(root, 'src/components/tools/json-schema-validator-engine.js'), 'utf8');
   for (const name of ['decimalKey', 'isExactNumber', 'scanJson']) {
     check(name + ' is the same as in json-schema-validator-engine.js', fnLines(source, name) !== '' && fnLines(source, name) === fnLines(jsv, name));
+  }
+  // Page examples run through the real page: {/* jd-page: {"before":"<JSON text>","after":"<JSON text>"} */}
+  // (texts, so that numbers such as 1830000000000000001 keep their digits). The status line must
+  // appear word for word in a ```text block after the note, and the patch (when there is one) in a
+  // ```json block.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const body = readFileSync(join(root, 'src/content/tools/json-diff', lang + '.mdx'), 'utf8');
+    for (const note of annotations(body, 'jd-page')) {
+      const h = pageHarness(lang, false);
+      h.input('jd-left', note.spec.before); h.input('jd-right', note.spec.after); h.nodes.get('jd-run').click();
+      const own = note.after.split(/\{\/\*/)[0];  // up to the next annotation of any kind
+      const snap = h.snap(), blocks = fencedBlocks(own);
+      check(lang + ' jd-page example status appears word for word', blocks.some((b) => b.lang === 'text' && b.text === snap.status), snap.status);
+      if (snap.patch) check(lang + ' jd-page example patch is what the page writes', blocks.some((b) => b.lang === 'json' && JSON.stringify(JSON.parse(b.text)) === JSON.stringify(JSON.parse(snap.patch))), snap.patch);
+      for (const b of blocks.filter((b) => b.lang === 'json')) check(lang + ' jd-page example has no unchecked JSON block', !!snap.patch && JSON.stringify(JSON.parse(b.text)) === JSON.stringify(JSON.parse(snap.patch)), b.text.slice(0, 60));
+    }
   }
   const oneLine = (src, re) => (src.match(re) || [''])[0].trim();
   check('escSeg is the same as in json-schema-validator-engine.js', oneLine(source, /^\s*function escSeg\(.*$/m) !== '' && oneLine(source, /^\s*function escSeg\(.*$/m) === oneLine(jsv, /^\s*function escSeg\(.*$/m));
