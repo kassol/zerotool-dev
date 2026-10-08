@@ -21,6 +21,7 @@ const STRINGS = {
     "errNotArray": "JSON must be an array of objects.",
     "errEmptyArray": "JSON array is empty.",
     "errItem": "Item {n} must be a plain object.",
+    "errUnclosed": "A quoted field that starts on line {line} is never closed. Add the closing \" or remove the opening one.",
     "numbersAsText": "This browser cannot keep these numbers exactly, so they were written as text: {list}.",
     "tips": {
       "csv": "Paste comma-separated CSV with a header and at least one data row. After 0.3 seconds without typing, JSON updates. Quoted commas, line breaks and doubled quotes are supported.",
@@ -48,6 +49,7 @@ const STRINGS = {
     "errNotArray": "JSON 必须是对象数组。",
     "errEmptyArray": "JSON 数组为空。",
     "errItem": "第 {n} 项必须是对象。",
+    "errUnclosed": "第 {line} 行开始的引号字段没有闭合。请补上结尾的 \"，或删掉开头的 \"。",
     "numbersAsText": "此浏览器无法精确保留这些数字，已按文本写出：{list}。",
     "tips": {
       "csv": "粘贴以逗号分隔、带表头且至少有一行数据的 CSV。停止输入 0.3 秒后，JSON 会自动更新。支持引号字段中的逗号、换行和双写引号。",
@@ -75,6 +77,7 @@ const STRINGS = {
     "errNotArray": "JSON はオブジェクトの配列である必要があります。",
     "errEmptyArray": "JSON 配列が空です。",
     "errItem": "{n} 番目の要素はオブジェクトである必要があります。",
+    "errUnclosed": "{line} 行目で始まる引用符付きフィールドが閉じられていません。閉じる \" を追加するか、開始の \" を削除してください。",
     "numbersAsText": "このブラウザーでは次の数値を正確に保持できないため、文字列として書き出しました：{list}。",
     "tips": {
       "csv": "ヘッダーと1行以上のデータを含むカンマ区切りの CSV を貼り付けます。入力を止めて0.3秒後に JSON が更新されます。引用符内のカンマ、改行、二重に書いた引用符に対応します。",
@@ -102,6 +105,7 @@ const STRINGS = {
     "errNotArray": "JSON은 객체 배열이어야 합니다.",
     "errEmptyArray": "JSON 배열이 비어 있습니다.",
     "errItem": "{n}번째 항목은 객체여야 합니다.",
+    "errUnclosed": "{line}행에서 시작한 따옴표 필드가 닫히지 않았습니다. 닫는 \"를 추가하거나 여는 \"를 지우세요.",
     "numbersAsText": "이 브라우저는 다음 숫자를 정확히 유지할 수 없어 텍스트로 썼습니다: {list}.",
     "tips": {
       "csv": "헤더와 데이터 행이 하나 이상 있는 쉼표 구분 CSV를 붙여 넣습니다. 입력을 멈추고 0.3초 후 JSON이 갱신됩니다. 따옴표 안의 쉼표, 줄바꿈, 두 번 쓴 따옴표를 지원합니다.",
@@ -274,6 +278,7 @@ const { tips: TIPS, ...CLIENT } = T;
         var field = '';
         var wasQuoted = false;
         var inQuote = false;
+        var quoteStart = 0;
         var i = 0;
         var len = text.length;
 
@@ -293,9 +298,11 @@ const { tips: TIPS, ...CLIENT } = T;
               i++;
             }
           } else {
-            if (ch === '"') {
+            if (ch === '"' && field === '' && !wasQuoted) {
+              /* a quote opens a quoted field only at the start of the field; elsewhere it is text */
               inQuote = true;
               wasQuoted = true;
+              quoteStart = i;
               i++;
             } else if (ch === ',') {
               row.push(field);
@@ -330,6 +337,8 @@ const { tips: TIPS, ...CLIENT } = T;
             }
           }
         }
+
+        if (inQuote) throw new Error('Unclosed quote starting on line ' + text.slice(0, quoteStart).split(/\r\n|\r|\n/).length + '.');
 
         /* last field / row */
         if (field || row.length > 0) {
@@ -394,12 +403,19 @@ const { tips: TIPS, ...CLIENT } = T;
       }
 
       /* Drop a BOM, leading blank lines and trailing line breaks only, so spaces at the end of the last field stay. */
+      function leadingLines(text) {
+        var lead = /^(?:[ \t]*(?:\r\n|\r|\n))+/.exec(text.replace(/^\uFEFF/, ''));
+        return lead ? lead[0].split(/\r\n|\r|\n/).length - 1 : 0;
+      }
       function csvSource(text) {
         return text.replace(/^\uFEFF/, '').replace(/^(?:[ \t]*(?:\r\n|\r|\n))+/, '').replace(/(?:\r\n|\r|\n)[ \t\r\n]*$/, '');
       }
 
-      /* The engine reports JSON → CSV input errors in English; show them in the page language. */
-      function localError(message) {
+      /* The engine reports input errors in English; show them in the page language. lineOffset is the
+         number of lines removed before the text reached the engine, so the line matches the textarea. */
+      function localError(message, lineOffset) {
+        var unclosed = /^Unclosed quote starting on line (\d+)\.$/.exec(message);
+        if (unclosed) return t.errUnclosed.replace('{line}', String(Number(unclosed[1]) + (lineOffset || 0)));
         if (message === 'JSON must be an array of objects.') return t.errNotArray;
         if (message === 'JSON array is empty.') return t.errEmptyArray;
         var item = /^Item (\d+) must be a plain object\.$/.exec(message);
@@ -471,7 +487,7 @@ const { tips: TIPS, ...CLIENT } = T;
           } catch (e) {
             jsonEl.value = '';
             lastValidJsonOutput = '';
-            setStatus(t.errorPrefix + e.message, true);
+            setStatus(t.errorPrefix + localError(e.message, leadingLines(csvEl.value)), true);
           }
         }, 300);
       });

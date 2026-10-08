@@ -36,7 +36,7 @@ if (startIndex < 0 || endIndex <= startIndex) {
   process.exit(1);
 }
 const block = source.slice(startIndex, endIndex);
-const E = new Function(block + '\nreturn { csvToMarkdown };')();
+const E = new Function(block + '\nreturn { csvToMarkdown, parseCsv };')();
 
 let failures = 0;
 let passes = 0;
@@ -103,7 +103,25 @@ eq('en page example (center)', md('id,city,score\n1,東京,9.5\n2,"Paris, FR",\n
   '| id  | city      | score |', '| :---: | :---------: | :-----: |', '| 1   | 東京        | 9.5   |', '| 2   | Paris, FR |       |', '| 3   | Berlin    |       |',
 ]);
 
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '0075c68c80e8b13b3c831c0cebdc72b80dae651b28ec1ab223bb368b87e3e041');
+// ---------- quotes: only a quote at the start of a field opens a quoted section; an unclosed one stops ----------
+eq('mid-field quote is literal', md('size,note\n5" pipe,x\n6,y').markdown.split('\n').slice(2), ['| 5" pipe | x    |', '| 6       | y    |']);
+let unclosed = '';
+try { md('a,b\n"x,1\n2,3'); } catch (e) { unclosed = e.message; }
+eq('unclosed quote reports its line', unclosed, 'Unclosed quote starting on line 2.');
+// Both tools parse CSV the same way (the parsers differ only in quoted-field flags and the BOM).
+{
+  const cjSource = readFileSync(join(root, 'src/components/tools/CsvJsonTool.astro'), 'utf8');
+  const CJ = new Function(cjSource.slice(cjSource.indexOf(START_MARK), cjSource.indexOf(END_MARK)) + '\nreturn { parseCsv };')();
+  const corpus = ['a,b\n1,2', 'a,b\r\n1,2\r\n', 'a\n"x,y"', 'a\n"say ""hi"""', 'a\n"l1\nl2"', 'a\n"l1\r\nl2"', 'a\n"x"y', 'a\nx"y', 'a,b\n5" pipe,x', 'a\n""', 'a\n"""x"""', 'a,,b\n,,', 'a\n"', 'a\n"x\n', 'h\n1,2,3\n4', 'a\r"b"\rc'];
+  for (let k = 0; k < 400; k++) { let t = ''; const n = 1 + (k * 7) % 25; for (let j = 0; j < n; j++) t += 'ab",\n\r x'[(k * 31 + j * 17 + (j * j) % 11) % 10]; corpus.push(t); }
+  const run = (f) => { try { return { ok: f() }; } catch (e) { return { error: e.message }; } };
+  const diff = corpus.filter(t => JSON.stringify(run(() => CJ.parseCsv(t).rows)) !== JSON.stringify(run(() => E.parseCsv(t))));
+  eq('csv-json and csv-to-markdown parse ' + corpus.length + ' inputs the same way', diff, []);
+}
+
+// Engine changed with approval (2026-10-08, S2-6d): parseCsv opens a quoted field only at the field start
+// and throws on an unclosed quote.
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '805ea3345417c9f6d0606c322a3ad91a5457ca4b5b570ce9d309d12af4bbb18f');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises and time are controlled boundaries; conversion code is real.
@@ -268,6 +286,14 @@ for (const lang of ['en','zh','ja','ko']) {
   eq(lang+' no-data error in page language', p.get('cm-status').textContent, S.errorPrefix + S.errNoData);
 }
 
+// Unclosed quote: the page stops with an error in the page language, using the textarea line.
+const UNCLOSED = { en: 'A quoted field that starts on line {line} is never closed. Add the closing " or remove the opening one.', zh: '第 {line} 行开始的引号字段没有闭合。请补上结尾的 "，或删掉开头的 "。', ja: '{line} 行目で始まる引用符付きフィールドが閉じられていません。閉じる " を追加するか、開始の " を削除してください。', ko: '{line}행에서 시작한 따옴표 필드가 닫히지 않았습니다. 닫는 "를 추가하거나 여는 "를 지우세요.' };
+for (const lang of ['en','zh','ja','ko']) {
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvToMarkdownTool.astro').frontmatter)[lang];
+  const p = page(lang); p.golden(); p.type(s.left, '\n\nname,price\n"Gadget, large,24.99\nWidget,9.99'); p.advance(300);
+  eq(lang+' unclosed quote: error with the textarea line, no output', [p.get(s.right).value, p.get('cm-status').textContent], ['', S.errorPrefix + UNCLOSED[lang].replace('{line}', '4')]);
+}
+
 /* ── v2 page layout ── */
 const hash = text => createHash('sha256').update(text).digest('hex');
 const requireRoot = createRequire(join(root, 'package.json'));
@@ -276,7 +302,7 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // S2-6d (2026-10-08) moved analytics to change / alignment click and localized the no-data error; the hash pins that reviewed script.
-eq('reviewed page script is unchanged', hash(script), '5d375fd5b91f862bf992b5e53d1ff27b2a77dbdf714c05cfc073744581d8dbda');
+eq('reviewed page script is unchanged', hash(script), '7a46bd1f3260ab662b759743781f696f4846a4c01fd5e3a5022e950dc2fa9d39');
 check('direct zero-minimum flex column root', /^\s*<div class="cm-wrap"/.test(markupSource) && /\.cm-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cm-(?:toolbar|controls)"[\s\S]*id="cm-status"[\s\S]*class="cm-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);

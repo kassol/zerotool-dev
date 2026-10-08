@@ -113,9 +113,10 @@ for (const [raw, want] of [
 ]) eq('number reading ' + JSON.stringify(raw), iv(raw), want);
 
 // Engine changed with approval (2026-10-08, S2-6d): number reading (RFC 8259 syntax, exact values only)
-// and isPlainObject skips JSON.rawJSON values (JSON → CSV numbers keep their source text).
+// and isPlainObject skips JSON.rawJSON values (JSON → CSV numbers keep their source text); parseCsv opens a
+// quoted field only at the field start and throws on an unclosed quote.
 
-eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '4312b4128a38307b27d17f4d555dbd61bed07518b2a9172e3362e43403a2318c');
+eq('engine byte protection', createHash('sha256').update(source.slice(source.indexOf('      '+START_MARK), source.indexOf('      '+END_MARK)+'      '.length+END_MARK.length)).digest('hex'), '41774b71a42667e06254c3726ff6dc8fcea536a86e058a7dfb10dff0ac9d2767');
 
 // ---------- full page lifecycle: real IIFE and actual shared keydown ----------
 // DOM, clipboard promises and time are controlled boundaries; conversion code is real.
@@ -289,6 +290,19 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
 }
 
+// ---------- quotes: only a quote at the start of a field opens a quoted section; an unclosed one stops ----------
+eq('mid-field quote is literal', E.parseCsv('size,note\n5" pipe,x\n6,y').rows, [['size', 'note'], ['5" pipe', 'x'], ['6', 'y']]);
+eq('quote after text is literal, quoted field still works', E.parseCsv('a,b\nx"y","p,q"').rows, [['a', 'b'], ['x"y"', 'p,q']]);
+eq('text after a closing quote is kept', E.parseCsv('a\n"x"y').rows, [['a'], ['xy']]);
+throws('unclosed quote reports its line', () => E.parseCsv('a,b\n"x,1\n2,3'), /^Unclosed quote starting on line 2\.$/);
+throws('unclosed quote line counts quoted line breaks', () => E.parseCsv('a\r\n"p\nq"\r\n"r'), /^Unclosed quote starting on line 4\.$/);
+const UNCLOSED = { en: 'A quoted field that starts on line {line} is never closed. Add the closing " or remove the opening one.', zh: '第 {line} 行开始的引号字段没有闭合。请补上结尾的 "，或删掉开头的 "。', ja: '{line} 行目で始まる引用符付きフィールドが閉じられていません。閉じる " を追加するか、開始の " を削除してください。', ko: '{line}행에서 시작한 따옴표 필드가 닫히지 않았습니다. 닫는 "를 추가하거나 여는 "를 지우세요.' };
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const S = frontmatterStrings(readComponent('src/components/tools/CsvJsonTool.astro').frontmatter)[lang];
+  const p = page(lang); p.golden(); p.type(s.left, '\n\nname,price\n"Gadget, large,24.99\nWidget,9.99'); p.advance(300);
+  eq(lang + ' unclosed quote: error with the textarea line, no output', [p.get(s.right).value, p.get(s.p + '-status').textContent], ['', S.errorPrefix + UNCLOSED[lang].replace('{line}', '4')]);
+}
+
 // ---------- JSON → CSV: numbers JavaScript cannot keep exactly are written as in the source ----------
 // Old browsers (no JSON.rawJSON / reviver source, before Chrome 114, Firefox 135, Safari 18.4) are
 // simulated with a JSON object whose reviver gets no context: the numbers become text, and the
@@ -320,7 +334,7 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; the hash pins that reviewed script.
-eq('reviewed page script is unchanged', hash(script), '2f4cc71fe329390cd10ea7217596664ea837bdd057c3c3f6d4ef93505f89c614');
+eq('reviewed page script is unchanged', hash(script), 'a254d92b83fec844b64781fec0409571bb7eec5f7de2e893b8e97aa806f43f54');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
