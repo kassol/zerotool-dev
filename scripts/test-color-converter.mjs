@@ -274,6 +274,23 @@ try {
     check(lang + ' superseded request cannot report failure', !q.get('cc-status').textContent && second.button.textContent === copiedLabel);
     q.flushTimers(); check(lang + ' latest copy feedback returns to base label', second.button.textContent === copyLabel);
   }
+  // Invalid input: the status uses the page language and the other two fields are emptied, so Copy
+  // cannot copy an error text as a color value (before the fix every page showed the English
+  // "Invalid color format" and wrote it into both other fields).
+  const invalidText = { en: 'Invalid color format', zh: '颜色格式无效', ja: '色の形式が正しくありません', ko: '색상 형식이 올바르지 않습니다' };
+  for (const lang of Object.keys(invalidText)) {
+    for (const [id, bad] of [['cc-hex', '#ggg'], ['cc-hex', '#1a73e880'], ['cc-rgb', 'rgb(300, 0, 0)'], ['cc-rgb', 'rgb(26，115，232)'], ['cc-hsl', 'hsl(-30, 50%, 50%)']]) {
+      const p = lifecyclePage(lang); p.input(id, bad); const s = colorSnapshot(p);
+      const others = ['cc-hex', 'cc-rgb', 'cc-hsl'].filter(x => x !== id);
+      check(lang + ' invalid ' + id + ' ' + bad + ': localized status', s.status === invalidText[lang] && s.statusClass === 'cc-status error', s.status);
+      check(lang + ' invalid ' + id + ' ' + bad + ': input kept, other fields empty', p.get(id).value === bad && others.every(x => p.get(x).value === ''), s.fields.join('|'));
+      check(lang + ' invalid ' + id + ' ' + bad + ': swatch and label cleared', !s.swatch && !s.label);
+      for (const x of others) colorCopy(p, x);
+      check(lang + ' invalid ' + id + ' ' + bad + ': emptied fields copy nothing', p.clipboard.length === 0, p.clipboard.map(c => c.value).join('|'));
+      p.input('cc-hex', '#1677ff');
+      check(lang + ' valid input after ' + bad + ' recovers', colorSnapshot(p).fields.join('|') === '#1677ff|rgb(22, 119, 255)|hsl(215, 100%, 54%)' && !p.get('cc-status').textContent);
+    }
+  }
   await settle(); check('all page copy rejections are handled', unhandled.length === 0, unhandled.join('; '));
 } finally { process.off('unhandledRejection', captureUnhandled); }
 
