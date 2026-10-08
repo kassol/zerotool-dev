@@ -247,11 +247,13 @@ const L = STRINGS[lang];
       for (var ti = 0; ti < langTabs.length; ti++) {
         (function (tab) {
           tab.addEventListener('click', function () {
+            var changed = currentLang !== tab.dataset.lang;
             for (var j = 0; j < langTabs.length; j++) { langTabs[j].classList.remove('active'); langTabs[j].setAttribute('aria-pressed', 'false'); }
             tab.classList.add('active');
             tab.setAttribute('aria-pressed', 'true');
             currentLang = tab.dataset.lang;
             convert();
+            if (changed) trackGenerate();
           });
         })(langTabs[ti]);
       }
@@ -260,11 +262,13 @@ const L = STRINGS[lang];
       for (var ti2 = 0; ti2 < tsTabs.length; ti2++) {
         (function (tab) {
           tab.addEventListener('click', function () {
+            var changed = currentTimestamps !== (tab.dataset.ts === 'true');
             for (var j = 0; j < tsTabs.length; j++) { tsTabs[j].classList.remove('active'); tsTabs[j].setAttribute('aria-pressed', 'false'); }
             tab.classList.add('active');
             tab.setAttribute('aria-pressed', 'true');
             currentTimestamps = tab.dataset.ts === 'true';
             convert();
+            if (changed) trackGenerate();
           });
         })(tsTabs[ti2]);
       }
@@ -273,11 +277,13 @@ const L = STRINGS[lang];
       for (var ti3 = 0; ti3 < reqTabs.length; ti3++) {
         (function (tab) {
           tab.addEventListener('click', function () {
+            var changed = currentRequired !== (tab.dataset.req === 'true');
             for (var j = 0; j < reqTabs.length; j++) { reqTabs[j].classList.remove('active'); reqTabs[j].setAttribute('aria-pressed', 'false'); }
             tab.classList.add('active');
             tab.setAttribute('aria-pressed', 'true');
             currentRequired = tab.dataset.req === 'true';
             convert();
+            if (changed) trackGenerate();
           });
         })(reqTabs[ti3]);
       }
@@ -547,8 +553,15 @@ const L = STRINGS[lang];
         copyBtn.disabled = false;
       }
 
+      // Analytics: one event per committed edit (change), Example or new option, only when a
+      // schema is shown; not on page load or after each typing pause.
+      function trackGenerate() {
+        if (outputCodeEl.textContent && !copyBtn.disabled) window.trackTool && window.trackTool('json-to-mongoose', 'generate');
+      }
+
       function convert() {
         clearTimeout(_liveTimer);
+        _liveTimer = null;
         resetCopy();
         inputEl.classList.remove('error');
         var raw = inputEl.value.trim();
@@ -581,13 +594,11 @@ const L = STRINGS[lang];
           } else {
             showOutput('// Array of primitives — no schema to generate');
             setStatus(MSG_GEN_ONE, false);
-            window.trackTool && window.trackTool('json-to-mongoose', 'generate');
             return;
           }
         } else {
           showOutput('// Primitive value — no schema to generate');
           setStatus(MSG_GEN_ONE, false);
-          window.trackTool && window.trackTool('json-to-mongoose', 'generate');
           return;
         }
 
@@ -595,7 +606,6 @@ const L = STRINGS[lang];
         var count = schemas.length;
         var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', String(count));
         setStatus(msg, false);
-        window.trackTool && window.trackTool('json-to-mongoose', 'generate');
       }
 
       var _liveTimer = null;
@@ -609,16 +619,25 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(convert, 300);
       });
+      // A committed edit runs a pending generation first, so the event matches the shown schema.
+      function commitEdit() {
+        if (_liveTimer) convert();
+        trackGenerate();
+      }
+      inputEl.addEventListener('change', commitEdit);
+      modelNameEl.addEventListener('change', commitEdit);
 
       document.getElementById('jtm-example').addEventListener('click', function () {
         inputEl.value = EXAMPLE;
         inputEl.classList.remove('error');
         clearStatus();
         convert();
+        trackGenerate();
       });
 
       function clearAll() {
         clearTimeout(_liveTimer);
+        _liveTimer = null;
         resetCopy();
         inputEl.value = '';
         clearOutput();

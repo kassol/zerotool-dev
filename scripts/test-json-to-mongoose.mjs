@@ -22,6 +22,9 @@
 // and value comes back (keys compared sorted, generated _id dropped only where the sample has
 // none, ISO strings on Date paths compared as toISOString()). Otherwise SKIP; no database.
 // AB_TYPES_EVIDENCE=<dir> writes generated files there.
+// GA (2026-10-08): the page sends one `generate` event per committed action (input or model-name
+// change, Example, an option that changes) and only when a schema is shown; none on page load or
+// after each 300 ms typing pause (before: every generation, including the load).
 // Run: node scripts/test-json-to-mongoose.mjs
 
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
@@ -429,8 +432,17 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     const q=page(lang,shellFirst);q.example();q.copy().resolve();await settle();const old=[...q.timers.values()].filter(t=>t.ms===1500).map(t=>t.fn);same(tag+' real success timer exists',old.length>0,true);q.advance(400);q.copy().resolve();await settle();old.forEach(fn=>fn());same(tag+' old timer cannot reset new Copied',q.get(cfg.copy).textContent,labels[lang].copied);q.advance(1500);same(tag+' latest timer settles',q.get(cfg.copy).textContent,labels[lang].copy);
     const r=page(lang,shellFirst);r.example();const one=r.copy(),two=r.copy();two.resolve();await settle();one.reject(Error('older request'));await settle();same(tag+' older rejection cannot replace new success',r.get(cfg.copy).textContent,labels[lang].copied);
     const queued=page(lang,shellFirst);queued.input(cfg.sample);queued.advance(30);queued.example();const generated=queued.tracks.length;queued.copy().resolve();await settle();queued.advance(300);same(tag+' Example cancels queued conversion before Copy',queued.get(cfg.copy).textContent,labels[lang].copied);same(tag+' Example does not run queued conversion again',queued.tracks.length,generated);
-    queued.input(cfg.sample);const beforeShortcut=queued.tracks.length;queued.key('Enter');same(tag+' no primary means CtrlEnter does not generate',queued.tracks.length,beforeShortcut);queued.advance(300);same(tag+' CtrlEnter preserves the real input debounce',queued.tracks.length,beforeShortcut+1);
-    for(const [id,key]of [['jtm-lang-tabs','lang'],['jtm-ts-tabs','ts'],['jtm-req-tabs','req']]){const tabs=p.get(id).querySelectorAll('.jtm-tab');for(const selected of tabs){const before=p.tracks.length;selected.click();same(tag+' option generates immediately '+id,p.tracks.length,before+1);same(tag+' aria-pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
+    queued.input('{"ctrlEnter": 1}');const beforeShortcut=queued.tracks.length;queued.key('Enter');same(tag+' no primary means CtrlEnter does not generate',[queued.tracks.length,queued.out().includes('ctrlEnter')],[beforeShortcut,false]);queued.advance(300);same(tag+' CtrlEnter preserves the real input debounce',queued.out().includes('ctrlEnter'),true);
+    for(const [id,key]of [['jtm-lang-tabs','lang'],['jtm-ts-tabs','ts'],['jtm-req-tabs','req']]){const tabs=p.get(id).querySelectorAll('.jtm-tab');for(const selected of tabs){const before=p.tracks.length,wasActive=selected.classList.contains('active');p.get(cfg.output).textContent='stale';selected.click();same(tag+' option generates immediately '+id,p.out()!=='stale',true);same(tag+' option sends one GA event only when it changes '+id,p.tracks.length,before+(wasActive?0:1));same(tag+' aria-pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
+    // GA: one generate event per committed action (change, Example, a new option), none on page load or typing pauses.
+    {const g=page(lang,shellFirst);same(tag+' GA: page load sends no event',g.tracks.length,0);
+      g.input(cfg.sample);g.advance(300);same(tag+' GA: a typing pause regenerates without an event',[g.out().includes('fresh'),g.tracks.length],[true,0]);
+      g.get(cfg.input).dispatch('change');same(tag+' GA: change sends one event',g.tracks,[['json-to-mongoose','generate']]);
+      g.input('{"pending": true}');g.get(cfg.input).dispatch('change');same(tag+' GA: change flushes the pending edit first',[g.out().includes('pending'),g.tracks.length],[true,2]);g.advance(300);same(tag+' GA: the flushed edit sends nothing more',g.tracks.length,2);
+      g.input(cfg.invalid);g.advance(300);g.get(cfg.input).dispatch('change');same(tag+' GA: invalid JSON sends no event',g.tracks.length,2);
+      g.input('');g.get(cfg.input).dispatch('change');same(tag+' GA: empty input sends no event',g.tracks.length,2);
+      g.example();same(tag+' GA: Example sends one event',g.tracks.length,3);
+      g.input('Order','jtm-model-name');g.get('jtm-model-name').dispatch('change');same(tag+' GA: model name change sends one event',[g.out().includes("'Order'"),g.tracks.length],[true,4]);}
     for(const focus of [p.get('jtm-output'),p.document.querySelector('[data-zt-tip="jtm-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output CtrlL returns to input',[p.document.activeElement.id,p.out(),p.get(cfg.input).value],[cfg.input,'','']);}
     p.get('jtm-lang-tabs').querySelector('[data-lang="javascript"]').click();p.example();p.input('Renamed','jtm-model-name');p.advance(300);same(tag+' model name re-generates',p.out().includes("mongoose.model('Renamed'"),true);p.get(cfg.clear).click();same(tag+' explicit Clear retains model option',p.get('jtm-model-name').value,'Renamed');
   }
