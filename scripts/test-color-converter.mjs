@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ColorConverterTool.astro'), 'utf8');
@@ -291,6 +291,30 @@ try {
       check(lang + ' valid input after ' + bad + ' recovers', colorSnapshot(p).fields.join('|') === '#1677ff|rgb(22, 119, 255)|hsl(215, 100%, 54%)' && !p.get('cc-status').textContent);
     }
   }
+  // Worked examples on the four tool pages: {/* cc-check: {"field":"hex|rgb|hsl","in":"…","show"?:[…],"error"?:true} */}
+  // types "in" into the field on the complete page script (page language of the MDX file). Each
+  // field in "show" (default: the two other fields) must appear as inline code after the annotation
+  // (up to the next annotation or H2). With "error": true the field must be rejected and the page's
+  // localized status text must appear after the annotation. At least 2 examples per language.
+  const ccCodes = text => [...text.matchAll(/`([^`\n]+)`/g)].map(m => m[1]).concat([...text.matchAll(/<code>([^<]*)<\/code>/g)].map(m => m[1]));
+  const ccContract = toolMdxContract('color-converter', { annotations: [{ tag: 'cc-check', min: 2, verify: ({ spec, after, lang }) => {
+    if (!spec || !['hex', 'rgb', 'hsl'].includes(spec.field) || typeof spec.in !== 'string') return 'spec needs field and in';
+    const p = lifecyclePage(lang); p.input('cc-' + spec.field, spec.in);
+    const status = p.get('cc-status').textContent;
+    if (spec.error) {
+      if (status !== invalidText[lang]) return 'expected the invalid-format status, got ' + JSON.stringify(status);
+      return after.includes(status) ? null : 'status text ' + JSON.stringify(status) + ' is not quoted after the annotation';
+    }
+    if (status) return 'page reports ' + JSON.stringify(status);
+    const codes = ccCodes(after);
+    if (!codes.includes(spec.in)) return 'input ' + JSON.stringify(spec.in) + ' is not shown as code after the annotation';
+    for (const f of spec.show ?? ['hex', 'rgb', 'hsl'].filter(x => x !== spec.field)) {
+      const v = p.get('cc-' + f).value;
+      if (!codes.includes(v)) return f + ' value ' + JSON.stringify(v) + ' is not shown as code after the annotation';
+    }
+    return null;
+  } }] });
+  for (const r of ccContract.results.filter(r => /cc-check/.test(r.rule))) check('tool page: ' + r.message, r.ok);
   await settle(); check('all page copy rejections are handled', unhandled.length === 0, unhandled.join('; '));
 } finally { process.off('unhandledRejection', captureUnhandled); }
 
