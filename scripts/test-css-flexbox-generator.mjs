@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseFragment } from 'parse5';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssFlexboxGeneratorTool.astro'), 'utf8');
@@ -153,6 +153,50 @@ for (const lang of ['en', 'ja']) {
   check(lang + ' guide has grow and shrink checks', /cfg-grow:/.test(guide) && /cfg-shrink:/.test(guide));
 }
 
+// ---------- tool page MDX (src/content/tools/css-flexbox-generator/{lang}.mdx): worked examples ----------
+// `cfg-check` gives the field values (dir, wrap, justify, alignItems, alignContent, gap, items; missing
+// fields take the page defaults) set through the page script; a code block between the annotation and
+// the next cfg-check or H2 must equal the copied CSS. `cfg-justify` recomputes the main-start
+// positions quoted in the prose for fixed-size items in one line (no grow or shrink; free space =
+// container − sizes − gaps, which must not be negative): `out` maps a justify-content value to the
+// positions, by CSS Flexbox Level 1 §8.2 and CSS Box Alignment Level 3 §5.3 (space-evenly); every
+// position must appear in the text that follows (rounded to 2 decimals).
+{
+  const fmt = (x) => String(+x.toFixed(2));
+  const shown = (text, n) => new RegExp('(?<![\\d.])' + n.replace('.', '\\.') + '(?![\\d]|\\.\\d)').test(text);
+  function positions({ container, sizes, gap }, justify) {
+    const n = sizes.length;
+    const free = container - sizes.reduce((a, b) => a + b, 0) - gap * (n - 1);
+    if (free < 0) throw new Error('negative free space');
+    const [start, between] = {
+      normal: [0, 0], 'flex-start': [0, 0], 'flex-end': [free, 0], center: [free / 2, 0],
+      'space-between': [0, n > 1 ? free / (n - 1) : 0],
+      'space-around': [free / n / 2, free / n],
+      'space-evenly': [free / (n + 1), free / (n + 1)],
+    }[justify];
+    const out = [];
+    let x = start;
+    for (const size of sizes) { out.push(x); x += size + gap + between; }
+    return out;
+  }
+  const contract = toolMdxContract('css-flexbox-generator', { annotations: [
+    { tag: 'cfg-check', min: 2, verify: ({ spec, after }) => {
+      const out = generate(spec);
+      return fencedBlocks(after).some((b) => b.text === out) ? null : 'no code block equals ' + JSON.stringify(out);
+    } },
+    { tag: 'cfg-justify', verify: ({ spec, after }) => {
+      for (const [justify, want] of Object.entries(spec.out)) {
+        const got = positions(spec, justify).map(fmt);
+        if (JSON.stringify(got) !== JSON.stringify(want.map(fmt))) return justify + ': computed ' + got.join(', ') + ', annotation says ' + want.join(', ');
+        const missing = got.filter((n) => !shown(after, n));
+        if (missing.length) return justify + ': not shown after the annotation: ' + missing.join(', ');
+      }
+      return null;
+    } },
+  ] });
+  for (const r of contract.results) check('tool MDX: ' + r.message, r.ok, r.message);
+}
+
 // Actual complete script and ToolLayout shortcuts; only browser boundaries are controlled.
 const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
 const shortcuts=layout.slice(layout.indexOf('      // ── Keyboard shortcuts:'),layout.indexOf('      // ── Copy button visual feedback'));
@@ -199,10 +243,10 @@ function open(s,lang='en',order='component-first'){
   const docHandlers={};document={currentScript:null,documentElement:{lang},getElementById:id=>ids.get(id)||null,querySelector:sel=>sel==='.tool-widget'?wrap:sel==='.tool-widget .btn-primary'?query('.btn-primary',wrap):query(sel),querySelectorAll:sel=>queryAll(sel),addEventListener:(k,f)=>(docHandlers[k]??=[]).push(f),dispatch(type,e){for(const f of docHandlers[type]||[])f(e);},body:{appendChild:c=>c},createElement:tag=>{const n=parseFragment('<'+tag+'></'+tag+'>').childNodes[0];adapt(n);return n;},execCommand:()=>false};
   adapt(tree);const wrap=query(s.root);wrap.closest=()=>wrap;
   const timers=[],requests=[],assertions=[],rafs=[],readers=[],persist={cleared:[],saved:[]},events={};let now=0,seq=0;
-  const h={s,L,document,ids,scrolls:0,timers,requests,assertions,persist,readers,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),frames(){for(const f of rafs.splice(0))f();},unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key){this.el(s.input).focus();document.dispatch('keydown',{key,ctrlKey:true,metaKey:false,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label'),disabled:this.el(s.copy).disabled,status:ids.get(s.status)?.textContent||'',preview:s.preview?{html:this.el(s.preview).innerHTML,children:this.el(s.preview).children.length,style:{...this.el(s.preview).style}}:null};}};
+  const h={s,L,document,ids,tracks:[],scrolls:0,timers,requests,assertions,persist,readers,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),frames(){for(const f of rafs.splice(0))f();},unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key){this.el(s.input).focus();document.dispatch('keydown',{key,ctrlKey:true,metaKey:false,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label'),disabled:this.el(s.copy).disabled,status:ids.get(s.status)?.textContent||'',preview:s.preview?{html:this.el(s.preview).innerHTML,children:this.el(s.preview).children.length,style:{...this.el(s.preview).style}}:null};}};
   active=h;
   class LocalReader {constructor(){readers.push(this);}readAsDataURL(file){this.ready=file.arrayBuffer().then(bytes=>{this.result='data:'+file.type+';base64,'+Buffer.from(bytes).toString('base64');});}deliver(){this.onload?.({target:this});}}
-  const globals={document,isSecureContext:true,FileReader:LocalReader,File,Blob,requestAnimationFrame:f=>{rafs.push(f);return rafs.length;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(){}};
+  const globals={document,isSecureContext:true,FileReader:LocalReader,File,Blob,requestAnimationFrame:f=>{rafs.push(f);return rafs.length;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(slug,action){h.tracks.push(slug+':'+action);}};
   globals.window=globals;globals.matchMedia=()=>({matches:false});const ctx=vm.createContext(globals);const page={ctx,run:code=>vm.runInContext(code,ctx)};
   if(order==='shared-first')page.run('var _slug='+JSON.stringify(s.slug)+';\n'+shortcuts);
   page.run(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1]);
@@ -242,6 +286,23 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','s
   h=open(spec,lang,order);h.click();h.requests[0].resolve();await settle();const timer=h.timers.find(t=>t.ms===1500);h.advance(1499);h.click();h.requests[1].resolve();await settle();h.advance(1);assertEq(name+'old deadline keeps newest copied',h.el(spec.copy).textContent,h.L.copied);timer.fn();assertEq(name+'forced old timer is harmless',h.el(spec.copy).textContent,h.L.copied);h.advance(1500);assertEq(name+'latest timer restores original label',h.el(spec.copy).textContent,h.L.copy);
   for(const event of ['input','CtrlL']){h=open(spec,lang,order);h.click();h.requests[0].resolve();await settle();const timer=h.timers.find(t=>t.ms===1500);if(event==='input')changePage(h);else h.key('l');const before=h.state();timer.fn();assertEq(name+'old timer after '+event,h.state(),before);}
   h=open(spec,lang,order);h.key('l');h.click();assertEq(name+'empty result is never copied',h.requests.length,0);
+}
+
+// Analytics: one `generate` event per committed change (change event), as in
+// color-palette-generator; none on load and none for each `input` event while typing or stepping.
+{
+  const g=h=>h.tracks.filter(t=>t==='css-flexbox-generator:generate').length;
+  const h=open(spec,'en');
+  assertEq('GA: no generate event on load',g(h),0);
+  h.input('cfg-gap','1');h.input('cfg-gap','12px');for(const v of [5,6,7])h.input('cfg-items',v);
+  assertEq('GA: no generate event per input event',g(h),0);
+  h.el('cfg-gap').dispatch('change');
+  assertEq('GA: one generate event when gap is committed',g(h),1);
+  h.el('cfg-items').dispatch('change');
+  for(const [id,v] of [['cfg-direction','column'],['cfg-wrap','wrap'],['cfg-justify','center'],['cfg-align-items','center'],['cfg-align-content','center']])h.input(id,v,'change');
+  assertEq('GA: one generate event per committed field or select',g(h),7);
+  h.key('l');h.el('cfg-gap').dispatch('change');
+  assertEq('GA: no generate event after Ctrl/⌘+L cleared the CSS',g(h),7);
 }
 active=null;process.removeListener('unhandledRejection',unhandled);
 

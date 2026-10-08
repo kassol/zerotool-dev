@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseFragment } from 'parse5';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/CssGridGeneratorTool.astro'), 'utf8');
@@ -131,6 +131,44 @@ for (const lang of ['en', 'ja']) {
   }
 }
 
+// ---------- tool page MDX (src/content/tools/css-grid-generator/{lang}.mdx): worked examples ----------
+// `cgg-check` gives the field values (cols, rows, colGap, rowGap, optional tmplCols / tmplRows, set in
+// that order through the page script); a code block between the annotation and the next cgg-check or
+// H2 must equal the copied CSS. `cgg-fr` recomputes the track sizes quoted in the prose with the fr
+// rule of CSS Grid Level 2 §7.2.4 (share = flex × leftover / sum of flex factors, leftover = container
+// − fixed tracks − gutters; content minimums ignored): `out` lists the sizes, and each one must appear
+// in the text that follows (rounded to 2 decimals).
+{
+  const fmt = (x) => String(+x.toFixed(2));
+  const shown = (text, n) => new RegExp('(?<![\\d.])' + n.replace('.', '\\.') + '(?![\\d]|\\.\\d)').test(text);
+  function trackSizes({ container, gap, tracks }) {
+    const parsed = tracks.map((t) => {
+      const fr = /^(?:minmax\(0,\s*)?([\d.]+)fr\)?$/.exec(t), px = /^([\d.]+)px$/.exec(t);
+      if (fr) return { flex: +fr[1] };
+      if (px) return { fixed: +px[1] };
+      throw new Error('unsupported track ' + t);
+    });
+    const leftover = container - parsed.reduce((n, t) => n + (t.fixed ?? 0), 0) - gap * (tracks.length - 1);
+    if (leftover < 0) throw new Error('negative leftover space');
+    const sum = parsed.reduce((n, t) => n + (t.flex ?? 0), 0);
+    return parsed.map((t) => (t.fixed ?? (t.flex * leftover) / sum));
+  }
+  const contract = toolMdxContract('css-grid-generator', { annotations: [
+    { tag: 'cgg-check', min: 2, verify: ({ spec, after }) => {
+      const out = generate(spec);
+      return fencedBlocks(after).some((b) => b.text === out) ? null : 'no code block equals ' + JSON.stringify(out);
+    } },
+    { tag: 'cgg-fr', verify: ({ spec, after }) => {
+      const got = trackSizes(spec).map(fmt);
+      const want = spec.out.map(fmt);
+      if (JSON.stringify([...new Set(got)].sort()) !== JSON.stringify([...new Set(want)].sort())) return 'computed ' + got.join(', ') + ', annotation says ' + want.join(', ');
+      const missing = want.filter((n) => !shown(after, n));
+      return missing.length ? 'not shown after the annotation: ' + missing.join(', ') : null;
+    } },
+  ] });
+  for (const r of contract.results) check('tool MDX: ' + r.message, r.ok, r.message);
+}
+
 // Actual complete script and ToolLayout shortcuts; only browser boundaries are controlled.
 const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
 const shortcuts=layout.slice(layout.indexOf('      // ── Keyboard shortcuts:'),layout.indexOf('      // ── Copy button visual feedback'));
@@ -177,10 +215,10 @@ function open(s,lang='en',order='component-first'){
   const docHandlers={};document={currentScript:null,documentElement:{lang},getElementById:id=>ids.get(id)||null,querySelector:sel=>sel==='.tool-widget'?wrap:sel==='.tool-widget .btn-primary'?query('.btn-primary',wrap):query(sel),querySelectorAll:sel=>queryAll(sel),addEventListener:(k,f)=>(docHandlers[k]??=[]).push(f),dispatch(type,e){for(const f of docHandlers[type]||[])f(e);},body:{appendChild:c=>c},createElement:tag=>{const n=parseFragment('<'+tag+'></'+tag+'>').childNodes[0];adapt(n);return n;},execCommand:()=>false};
   adapt(tree);const wrap=query(s.root);wrap.closest=()=>wrap;
   const timers=[],requests=[],assertions=[],rafs=[],readers=[],persist={cleared:[],saved:[]},events={};let now=0,seq=0;
-  const h={s,L,document,ids,scrolls:0,timers,requests,assertions,persist,readers,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),frames(){for(const f of rafs.splice(0))f();},unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key){this.el(s.input).focus();document.dispatch('keydown',{key,ctrlKey:true,metaKey:false,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label'),disabled:this.el(s.copy).disabled,status:ids.get(s.status)?.textContent||'',preview:s.preview?{html:this.el(s.preview).innerHTML,children:this.el(s.preview).children.length,style:{...this.el(s.preview).style}}:null};}};
+  const h={s,L,document,ids,tracks:[],scrolls:0,timers,requests,assertions,persist,readers,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),frames(){for(const f of rafs.splice(0))f();},unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key){this.el(s.input).focus();document.dispatch('keydown',{key,ctrlKey:true,metaKey:false,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label'),disabled:this.el(s.copy).disabled,status:ids.get(s.status)?.textContent||'',preview:s.preview?{html:this.el(s.preview).innerHTML,children:this.el(s.preview).children.length,style:{...this.el(s.preview).style}}:null};}};
   active=h;
   class LocalReader {constructor(){readers.push(this);}readAsDataURL(file){this.ready=file.arrayBuffer().then(bytes=>{this.result='data:'+file.type+';base64,'+Buffer.from(bytes).toString('base64');});}deliver(){this.onload?.({target:this});}}
-  const globals={document,isSecureContext:true,FileReader:LocalReader,File,Blob,requestAnimationFrame:f=>{rafs.push(f);return rafs.length;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(){}};
+  const globals={document,isSecureContext:true,FileReader:LocalReader,File,Blob,requestAnimationFrame:f=>{rafs.push(f);return rafs.length;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(slug,action){h.tracks.push(slug+':'+action);}};
   globals.window=globals;globals.matchMedia=()=>({matches:false});const ctx=vm.createContext(globals);const page={ctx,run:code=>vm.runInContext(code,ctx)};
   if(order==='shared-first')page.run('var _slug='+JSON.stringify(s.slug)+';\n'+shortcuts);
   page.run(source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1]);
@@ -222,6 +260,24 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['component-first','s
   h=open(spec,lang,order);h.click();h.requests[0].resolve();await settle();const timer=h.timers.find(t=>t.ms===1500);h.advance(1499);h.click();h.requests[1].resolve();await settle();h.advance(1);assertEq(name+'old deadline keeps newest copied',h.el(spec.copy).textContent,h.L.copied);timer.fn();assertEq(name+'forced old timer is harmless',h.el(spec.copy).textContent,h.L.copied);h.advance(1500);assertEq(name+'latest timer restores original label',h.el(spec.copy).textContent,h.L.copy);
   for(const event of ['input','CtrlL']){h=open(spec,lang,order);h.click();h.requests[0].resolve();await settle();const timer=h.timers.find(t=>t.ms===1500);if(event==='input')changePage(h);else h.key('l');const before=h.state();timer.fn();assertEq(name+'old timer after '+event,h.state(),before);}
   h=open(spec,lang,order);h.key('l');h.click();assertEq(name+'empty result is never copied',h.requests.length,0);
+}
+
+// Analytics: one `generate` event per committed change (change event), as in
+// color-palette-generator; none on load and none for each `input` event while typing or stepping.
+{
+  const g=h=>h.tracks.filter(t=>t==='css-grid-generator:generate').length;
+  const h=open(spec,'en');
+  assertEq('GA: no generate event on load',g(h),0);
+  for(const v of [4,5,6])h.input('cgg-cols',v);
+  h.input('cgg-rows',3);h.input('cgg-col-gap','2');h.input('cgg-col-gap','24px');h.input('cgg-row-gap','8px');
+  h.input('cgg-tmpl-cols','200px 1fr');h.input('cgg-tmpl-rows','auto 1fr');
+  assertEq('GA: no generate event per input event',g(h),0);
+  h.el('cgg-cols').dispatch('change');
+  assertEq('GA: one generate event when Columns is committed',g(h),1);
+  for(const id of ['cgg-rows','cgg-col-gap','cgg-row-gap','cgg-tmpl-cols','cgg-tmpl-rows'])h.el(id).dispatch('change');
+  assertEq('GA: one generate event per committed field',g(h),6);
+  h.key('l');h.el('cgg-col-gap').dispatch('change');
+  assertEq('GA: no generate event after Ctrl/⌘+L cleared the CSS',g(h),6);
 }
 active=null;process.removeListener('unhandledRejection',unhandled);
 
