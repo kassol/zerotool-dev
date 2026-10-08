@@ -138,7 +138,22 @@ for (const button of ['clamp-copy-css','clamp-copy-value']) {
     for(const v of c.at||[]){p.input('clamp-preview-width',v);out.at.push(p.text('clamp-live-value').split(' / ')[0]);}
     return out;
   }
-  const contract=toolMdxContract(SLUG,{annotations:[{tag:'ccc-check',min:3,verify:({spec:c,after,lang})=>{
+  // `ccc-flex: {"root","min","max","start","end","widths","out"}` (zh lib-flexible example): the rem
+  // declaration the page generates for these fields is evaluated on a page whose root font size is
+  // viewport ÷ 10 (lib-flexible 2.x `setRemUnit`): px = clamp(lower × r, intercept × r + vw × w ÷ 100,
+  // upper × r) with r = w ÷ 10, using the printed coefficients, rounded to 2 decimals. The results must
+  // equal `out` and each must appear in the text after the annotation.
+  const flex={tag:'ccc-flex',verify:({spec:c,after,lang})=>{
+    const decl=pageResult(lang,{...c,unit:'rem'}).declaration;
+    const m=/clamp\(([\d.]+)rem, ([\d.]+)rem \+ ([\d.]+)vw, ([\d.]+)rem\)/.exec(decl);
+    if(!m)return 'unexpected declaration '+decl;
+    const [l,i,v,u]=m.slice(1).map(Number);
+    const got=c.widths.map(w=>{const r=w/10;return String(+Math.min(Math.max(i*r+v*w/100,l*r),u*r).toFixed(2))+'px';});
+    if(JSON.stringify(got)!==JSON.stringify(c.out))return 'computed '+got.join(', ')+', annotation says '+c.out.join(', ');
+    const missing=got.filter(x=>!shown(after,x));
+    return missing.length?'not shown after the annotation: '+missing.join(', '):null;
+  }};
+  const contract=toolMdxContract(SLUG,{annotations:[flex,{tag:'ccc-check',min:3,verify:({spec:c,after,lang})=>{
     const r=pageResult(lang,c);
     if(!r.declaration)return 'the page shows no declaration for '+JSON.stringify(c);
     if(!codeSpans(after).includes(r.declaration))return 'no code span equals '+JSON.stringify(r.declaration);

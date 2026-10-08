@@ -10,13 +10,13 @@ steps:
 faqItems:
   - question: "CSS Clamp 计算器如何工作？"
     id: "how-it-works"
-    answer: "工具会连接最小视口和最大视口对应的两个数值，得到一条直线，再将它换算为包含 vw 的首选值，并用 clamp() 的上下限包裹。"
+    answer: "工具会连接最小视口和最大视口对应的两个数值，得到一条直线，再将它换算为包含 vw 的首选值，再套上 clamp() 的上下限。"
   - question: "应该选择 px 还是 rem 输出？"
     id: "px-or-rem"
-    answer: "字号以及需要跟随根字体大小的数值通常适合 rem；端点必须保持固定像素尺寸时可选择 px。两种模式中的 vw 部分都会随视口变化。选 rem 时请填项目实际使用的根字号；如果页面用 lib-flexible 这类脚本按屏幕宽度改写根字号，应选 px。"
+    answer: "字号以及需要跟随根字体大小的数值通常适合 rem；端点必须保持固定像素尺寸时可选择 px。两种模式中的 vw 部分都会随视口变化。选 rem 时请填项目实际使用的根字号；如果页面用 lib-flexible 这类脚本按屏幕宽度改写根字号，rem 的换算前提不成立。"
   - question: "数值可以随视口变宽而减小吗？"
     id: "decreasing"
-    answer: "可以。让最小视口对应较大的数值、最大视口对应较小的数值，工具会生成负的 vw 斜率，并保持 clamp() 上下限顺序有效。"
+    answer: "可以。让最小视口对应较大的数值、最大视口对应较小的数值，vw 的系数就会是负数，clamp() 里的上下限仍按从小到大排列。"
   - question: "使用 clamp() 就能保证流体文字无障碍吗？"
     id: "accessibility"
     answer: "不能。仍需在浏览器缩放、窄屏和用户字体设置下测试。字号范围小于二比一时工具会提示，但该提示只是设计建议，不代表合规结论。"
@@ -43,29 +43,33 @@ faqItems:
 截距 = 起始值 - 斜率 × 最小视口
 首选值 = 截距 + (斜率 × 100)vw</code></pre>
 
-<p>视口小于起点时，属性停在对应端点；位于两个端点之间时，数值线性变化；超过终点后，另一侧边界接管。断点切换会造成明显跳变的地方最适合用它，例如标题字号、区块内边距、网格间距和内容宽度；1px 边框这类必须固定的尺寸没有必要用 clamp。</p>
+<p>视口小于起点时，属性停在对应端点；位于两个端点之间时，数值线性变化；超过终点后停在另一端的值。断点切换会造成明显跳变的地方最适合用它，例如标题字号、区块内边距、网格间距和内容宽度；1px 边框这类必须固定的尺寸没有必要用 clamp。</p>
 
 <h2>示例：手机到 PC 的活动页标题</h2>
 
-<p>假设一个活动页的主标题在 375px 宽的手机上是 20px，在 1200px 宽的 PC 版心里是 32px。属性选“字号”，输出单位选 px，视口填 375 和 1200，数值填 20 和 32：</p>
+<p>假设一个活动页的主标题在 375px 宽的手机上是 20px，在 1200px 宽的 PC 版心里是 32px，页面的根字号是浏览器默认的 16px。属性选“字号”，输出单位保持 rem，视口填 375 和 1200，数值填 20 和 32：</p>
 
-{/* ccc-check: {"unit":"px","min":375,"max":1200,"start":20,"end":32,"at":[375,768,1200],"zoom":true} */}
+{/* ccc-check: {"min":375,"max":1200,"start":20,"end":32,"at":[375,768,1200],"zoom":true} */}
 
-<pre><code>font-size: clamp(20px, 14.5455px + 1.4545vw, 32px);</code></pre>
+<pre><code>font-size: clamp(1.25rem, 0.9091rem + 1.4545vw, 2rem);</code></pre>
 
-<p>把预览滑块拖到 768px，标题是 25.7164px；375px 时正好是 20px，1200px 时到达 32px 的上限，再宽也不会变大。32 不到 20 的两倍，所以状态栏会出现缩放提示：浏览器放大到 200% 时，vw 部分按缩小后的 CSS 视口计算，这个标题放大不到两倍。要消除提示，可以把最大值改到 40px 以上，或者接受这个范围、在 200% 缩放下实际检查一遍。</p>
+<p>把预览滑块拖到 768px，标题是 25.7164px；375px 时正好是 20px，1200px 时到达 32px（<code>2rem</code>）的上限，再宽也不会变大。上下限用 rem，用户在浏览器里调大默认字号时标题会跟着变大；如果选 px 输出，上下限会固定在 20px 和 32px。</p>
 
-<h2>用了 lib-flexible 的页面不要选 rem</h2>
+<p>32 不到 20 的两倍，所以状态栏会出现缩放提示：浏览器放大到 200% 时，vw 部分按缩小后的 CSS 视口计算，这个标题放大不到两倍。把最大值改到 40px 以上能让提示消失，但这只是提示消失：宽屏窗口放大到 200% 时 CSS 视口变窄，标题会落回直线中段，仍可能放大不到两倍，还是要在 200% 缩放下实际检查一遍。</p>
 
-<p>不少国内移动端项目用过阿里巴巴 amfe 团队的 lib-flexible。它的脚本里写着 <code>set 1rem = viewWidth / 10</code>，也就是在每次窗口变化时把根字号改成屏幕宽度的十分之一：375px 宽时根字号是 37.5px，1200px 宽时是 120px。它的 <a href="https://github.com/amfe/lib-flexible">README</a> 也已写明这个过渡方案可以放弃，建议改用 viewport 单位。</p>
+<h2>用了 lib-flexible 的页面不要用 rem 输出</h2>
 
-<p>本工具换算 rem 时假定根字号固定不变。在上面的标题例子里把输出单位改成 rem、根字号填 37.5，得到的是：</p>
+<p>不少国内移动端项目用过阿里巴巴 amfe 团队的 lib-flexible。2.x 版本（npm 包 <code>amfe-flexible</code>）的脚本里写着 <code>set 1rem = viewWidth / 10</code>，也就是在每次窗口变化时把根字号改成屏幕宽度的十分之一：375px 宽时根字号是 37.5px，1200px 宽时是 120px。它的 <a href="https://github.com/amfe/lib-flexible">README</a> 也已写明这个过渡方案可以放弃，建议改用 viewport 单位。</p>
+
+<p>本工具换算 rem 时假定根字号固定不变。在上面的标题例子里把根字号改成 375px 屏幕上的 37.5，得到的是：</p>
 
 {/* ccc-check: {"unit":"rem","root":37.5,"min":375,"max":1200,"start":20,"end":32,"zoom":true} */}
 
 <pre><code>font-size: clamp(0.5333rem, 0.3879rem + 1.4545vw, 0.8533rem);</code></pre>
 
-<p>在 375px 的屏幕上它确实是 20px，但到了 1200px，lib-flexible 已经把根字号改成 120px，上限 <code>0.8533rem</code> 变成约 102px，标题比设计稿大了三倍多。这类页面请选 px 输出，或者先去掉 lib-flexible，再用固定的根字号换算。</p>
+{/* ccc-flex: {"root":37.5,"min":375,"max":1200,"start":20,"end":32,"widths":[768,1200],"out":["40.96px","64px"]} */}
+
+<p>在 375px 的屏幕上它确实是 20px。但根字号随屏幕变宽，式子里的每一项都跟着按屏幕宽度等比放大：到了 768px，根字号是 76.8px，下限和首选值都是 40.96px，而不是设计的 25.7164px；到了 1200px，根字号是 120px，下限 <code>0.5333rem</code> 变成 64px、上限 <code>0.8533rem</code> 变成约 102px，标题实际是 64px，是设计稿 32px 的两倍。这类页面要么选 px 输出（上下限就不再随用户的字号设置变化），要么先去掉 lib-flexible，再用固定的根字号换算 rem。</p>
 
 <h2>反向范围与固定值</h2>
 
@@ -76,7 +80,7 @@ faqItems:
 <h2>限制</h2>
 
 <ul>
-  <li><strong>缩放。</strong>MDN 对 <code>clamp()</code> 的<a href="https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/clamp#accessibility">无障碍说明</a>建议，用于字号时最大值至少是最小值的两倍，文字才能放大到 200%（WCAG 1.4.4）。工具只在“字号”属性、最大值小于最小值两倍时提示，这只是提醒，不是合规判断。</li>
+  <li><strong>缩放。</strong>MDN 对 <code>clamp()</code> 的<a href="https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/clamp#accessibility">无障碍说明</a>建议，用于字号时最大值要用 rem 等相对长度单位，并且至少是最小值的两倍，文字才能放大到 200%（WCAG 1.4.4）。工具只在“字号”属性、最大值小于最小值两倍时提示，这只是提醒，不是合规判断。</li>
   <li><strong>vw 包含滚动条。</strong>桌面浏览器显示常规滚动条时，100vw 是含竖向滚动条的窗口宽度，内容区比用来算直线的宽度略窄。</li>
   <li><strong>只用视口单位。</strong>首选值永远写成 <code>vw</code>。组件需要随容器而不是随窗口变化时，要手动把 <code>vw</code> 换成 <code>cqi</code>，并给容器加 <code>container-type: inline-size</code>。</li>
   <li><strong>四位小数。</strong>数值最多保留四位小数，在常见宽度下误差不到百分之一像素。</li>
