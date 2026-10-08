@@ -738,6 +738,7 @@ const L = { ...CLIENT_T, lang };
         use.addEventListener('click', function () {
           fontSel.value = name;
           render();
+          trackGenerate();
           outputBox.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         });
         head.appendChild(title);
@@ -750,15 +751,19 @@ const L = { ...CLIENT_T, lang };
       });
     }
 
+    /* Analytics: one event per committed action (change events, Use, copy, download), none
+       on load and none for input events while typing. */
+    function track(action) { if (window.trackTool) window.trackTool('text_to_ascii_art', action); }
+    function trackGenerate() { if (input.value.trim()) track('generate'); }
+
     var debounce = null;
-    var tracked = false;
     input.addEventListener('input', function () {
       clearTimeout(debounce);
       debounce = setTimeout(render, 120);
-      if (!tracked) { tracked = true; window.trackTool && window.trackTool('text_to_ascii_art', 'generate'); }
     });
-    [fontSel, layoutSel, widthSel].forEach(function (el) { el.addEventListener('change', render); });
-    trimBox.addEventListener('change', function () { setOutput(current); if (!gallery.hidden) renderGallery(); });
+    input.addEventListener('change', trackGenerate);
+    [fontSel, layoutSel, widthSel].forEach(function (el) { el.addEventListener('change', function () { render(); trackGenerate(); }); });
+    trimBox.addEventListener('change', function () { setOutput(current); if (!gallery.hidden) renderGallery(); trackGenerate(); });
 
     // The site-wide Ctrl/⌘+L clears the text box without an input event.
     document.addEventListener('keydown', function (e) {
@@ -769,9 +774,30 @@ const L = { ...CLIENT_T, lang };
       btn.textContent = S.copied;
       setTimeout(function () { btn.textContent = label; }, 1500);
     }
+    // Clipboard API first; when it is missing or rejects, a hidden textarea and
+    // execCommand('copy') (same as ColorPaletteGeneratorTool.astro); both failing shows copyFailed.
     function copyText(text, btn, label) {
-      if (!navigator.clipboard) { setStatus(S.copyFailed, 'error'); return; }
-      navigator.clipboard.writeText(text).then(function () { flash(btn, label); }, function () { setStatus(S.copyFailed, 'error'); });
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        // select() moved focus to the textarea; give it back to the button (keyboard users).
+        if (btn && btn.focus) btn.focus();
+        return ok;
+      }
+      var done = navigator.clipboard && navigator.clipboard.writeText
+        ? navigator.clipboard.writeText(text).then(function () { return true; }, function () { return fallback(); })
+        : Promise.resolve(fallback());
+      done.then(function (ok) {
+        if (ok) { flash(btn, label); track('copy'); } else setStatus(S.copyFailed, 'error');
+      });
     }
     copyBtn.addEventListener('click', function () {
       if (!current) return;
@@ -792,6 +818,7 @@ const L = { ...CLIENT_T, lang };
     txtBtn.addEventListener('click', function () {
       if (!current) return;
       save(new Blob([formatOutput(current.lines, 'plain', trimBox.checked) + '\n'], { type: 'text/plain;charset=utf-8' }), downloadBase(current.text, current.fontName) + '.txt');
+      track('download');
     });
     pngBtn.addEventListener('click', function () {
       if (!current) return;
@@ -821,7 +848,7 @@ const L = { ...CLIENT_T, lang };
         }
       });
       canvas.toBlob(function (blob) {
-        if (blob) save(blob, filename);
+        if (blob) { save(blob, filename); track('download'); }
         else setStatus(S.pngTooLarge, 'error');
       }, 'image/png');
     });

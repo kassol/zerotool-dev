@@ -37,6 +37,11 @@
 // code with text in all four languages. Not copied from svg-to-png-converter: that tool maps
 // the browser's DOMParser (libxml2 / expat) messages, SVGO uses sax.
 //
+// Analytics (2026-10-08, S2-5): the page sent `optimize` after any run with a result, at most
+// once per 5 s, so typing in the code box or dragging the precision slider sent events. It now
+// sends one event per committed action (files, Example, paste, Retry, the code box's change
+// event, a committed setting) when that run ends with a result (checked with the fake DOM).
+//
 // Run: node scripts/test-svg-optimizer.mjs
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -610,7 +615,9 @@ const XP = xpStart > 0 && xpEnd > xpStart
   class FakeImage { set src(v) { setTimeout(() => this.onerror && this.onerror(), 0); } }
   class FailingWorker { constructor() { throw new Error('no worker in test'); } }
   const nav = { clipboard: { writeText(t) { clipboard.push(t); return Promise.resolve(); } } };
-  const win = { innerHeight: 800 };
+  const tracks = [];
+  const win = { innerHeight: 800, trackTool: (slug, action) => tracks.push(slug + ':' + action) };
+  const optimizeEvents = () => tracks.filter((t) => t === 'svg-optimizer:optimize').length;
   const rejections = [];
   const onRejection = (e) => rejections.push(String(e && e.message || e));
   process.on('unhandledRejection', onRejection);
@@ -639,6 +646,10 @@ const XP = xpStart > 0 && xpEnd > xpStart
     $('svgo-retry').click();
     const retried = await wait(() => /^SVG: /.test($('svgo-status').textContent));
     check('page: Retry optimizes the same input and hides itself', retried && $('svgo-retry').hidden === true && $('svgo-result').hidden === false && $('svgo-code').textContent === optimized[1], $('svgo-status').textContent);
+    // Analytics (S2-5, same rule as css-triangle / box-shadow / color-shades): one `optimize`
+    // event per committed action (Retry, files, Example, paste, the code box's change event, a
+    // committed setting), none for each input event while typing or dragging a slider.
+    eq('GA: the failed load sends nothing, Retry sends one optimize event', optimizeEvents(), 1);
     $('svgo-input').value = '<svg xmlns="http://www.w3.org/2000/svg"><g></svg>';
     $('svgo-input').dispatch('input');
     await wait(() => /^Not valid XML/.test($('svgo-status').textContent));
@@ -656,6 +667,7 @@ const XP = xpStart > 0 && xpEnd > xpStart
     $('svgo-file').dispatch('change');
     const done = await wait(() => /^3 files:/.test($('svgo-status').textContent));
     check('page: the batch finishes all 3 files with a refused JSX file active', done && !/failed/.test($('svgo-status').textContent), $('svgo-status').textContent + ' / ' + rejections.join(' | '));
+    eq('GA: typed errors send nothing; a file batch sends one optimize event', optimizeEvents(), 2);
     eq('page: no unhandled rejection or exception', rejections, []);
     const rows = $('svgo-rows').children;
     eq('page: every row has an optimized size', rows.map((r) => r.children[2].textContent !== '—'), [true, true, true]);
@@ -693,11 +705,56 @@ const XP = xpStart > 0 && xpEnd > xpStart
     $('svgo-format').value = 'svg';
     $('svgo-format').dispatch('change');
     check('page: SVG format of the refused file is copyable', $('svgo-copy').disabled === false && refusedEl.hidden === true && $('svgo-code').textContent === optimized[0]);
+    // The copy event is sent only when the copy succeeds (review S2-5 part 3, svg suggestion 1).
+    const copyEvents = () => tracks.filter((t) => t === 'svg-optimizer:copy').length;
+    const copiesBefore = copyEvents();
+    $('svgo-copy').click();
+    await new Promise((r) => setTimeout(r, 0));
+    eq('GA: a successful copy sends one copy event', copyEvents() - copiesBefore, 1);
+    const writeOk = nav.clipboard.writeText;
+    nav.clipboard.writeText = () => Promise.reject(new Error('NotAllowedError'));
+    $('svgo-status').textContent = '';
+    $('svgo-copy').click();
+    await new Promise((r) => setTimeout(r, 0));
+    eq('GA: a failed copy (API rejected, execCommand false) sends no copy event', copyEvents() - copiesBefore, 1);
+    eq('page: a failed copy shows copyFail', $('svgo-status').textContent, T.copyFail);
+    nav.clipboard.writeText = writeOk;
     // No Optimize button (v2 layout): typing in the code box runs SVGO after the 450 ms pause.
     $('svgo-input').value = ok2;
     $('svgo-input').dispatch('input');
     const typed = await wait(() => /^SVG: /.test($('svgo-status').textContent));
     check('page: typed code is optimized without a button', typed && $('svgo-result').hidden === false && $('svgo-batch').hidden === true && $('svgo-code').textContent === optimized[2], $('svgo-status').textContent);
+    const beforeTyping = optimizeEvents();
+    for (const s of [ok1, ok2, ok1]) {
+      $('svgo-input').value = s;
+      $('svgo-input').dispatch('input');
+      await new Promise((r) => setTimeout(r, 600));
+      await wait(() => /^SVG: /.test($('svgo-status').textContent));
+    }
+    eq('GA: typing in the code box sends no optimize event', optimizeEvents() - beforeTyping, 0);
+    $('svgo-input').dispatch('change');
+    eq('GA: the code box change event sends one optimize event', optimizeEvents() - beforeTyping, 1);
+    // Change right after an input event: the event waits for the run and is sent once.
+    $('svgo-input').value = ok2;
+    $('svgo-input').dispatch('input');
+    $('svgo-input').dispatch('change');
+    await new Promise((r) => setTimeout(r, 600));
+    await wait(() => $('svgo-code').textContent === optimized[2] && optimizeEvents() - beforeTyping === 2, 5000);
+    eq('GA: change during a pending run sends one event when the run ends', optimizeEvents() - beforeTyping, 2);
+    // Slider: input events rerun SVGO without an event; the change event sends one.
+    for (const v of ['2', '4', '5']) { $('svgo-precision').value = v; $('svgo-precision').dispatch('input'); }
+    await new Promise((r) => setTimeout(r, 400));
+    await wait(() => /^SVG: /.test($('svgo-status').textContent));
+    eq('GA: dragging the precision slider sends no optimize event', optimizeEvents() - beforeTyping, 2);
+    $('svgo-precision').value = '3'; $('svgo-precision').dispatch('input'); $('svgo-precision').dispatch('change');
+    await new Promise((r) => setTimeout(r, 400));
+    await wait(() => optimizeEvents() - beforeTyping === 3, 5000);
+    eq('GA: the precision change event sends one optimize event', optimizeEvents() - beforeTyping, 3);
+    $('svgo-example').click();
+    await wait(() => optimizeEvents() - beforeTyping === 4, 10000);
+    eq('GA: Example sends one optimize event', optimizeEvents() - beforeTyping, 4);
+    // Put the typed test input back for the Ctrl/Cmd+L check below.
+    $('svgo-input').value = ok2;
     // ToolLayout's Ctrl/Cmd+L empties the text fields without an input event; the page drops the result and the status.
     wrapEl.contains = () => true;
     $('svgo-input').value = '';
@@ -831,7 +888,7 @@ const XP = xpStart > 0 && xpEnd > xpStart
   check('v2: no Optimize button; input, Example, files, paste and settings run SVGO themselves', !markup.includes('svgo-run') && !/runBtn/.test(script) && ['en', 'zh', 'ja', 'ko'].every((l) => !('run' in STRINGS[l])) &&
     !markup.includes('btn-primary') && (script.match(/^\s+run\(\);$/gm) || []).length === 4 && script.includes('if (rerun) scheduleRun(200);'));
   check('v2: the Retry button is hidden in the markup, [hidden] is display: none, and a retry starts the worker again', /<button id="svgo-retry" class="btn-secondary svgo-retry" type="button" hidden>\{T\.retry\}<\/button>/.test(markup) &&
-    source.includes('.svgo-wrap [hidden] { display: none !important; }') && script.includes("retryBtn.addEventListener('click', function () { workerBroken = false; run(); });") && script.includes("retryBtn.hidden = !items.some(function (x) { return x.error && x.error.code === 'load'; });"));
+    source.includes('.svgo-wrap [hidden] { display: none !important; }') && script.includes("retryBtn.addEventListener('click', function () { workerBroken = false; wantTrack = true; run(); });") && script.includes("retryBtn.hidden = !items.some(function (x) { return x.error && x.error.code === 'load'; });"));
   check('v2: the empty hint is in the result box and hides when there is a result', right.includes('<p class="svgo-empty">{T.outEmpty}</p>') && source.includes('.svgo-out:has(.svgo-result:not([hidden])) .svgo-empty { display: none; }') &&
     source.includes('.svgo-pane--out:has(.svgo-result[hidden]) { display: none; }'));
   check('v2: Ctrl/Cmd+L resets the view', /e\.key !== 'l' && e\.key !== 'L'[\s\S]{0,160}resetView\(\);/.test(script));
