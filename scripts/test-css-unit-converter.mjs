@@ -254,6 +254,33 @@ try {
   }
   await settle(); eq('all current and stale clipboard rejections are handled', unhandled.length, 0);
 } finally { process.off('unhandledRejection', onUnhandled); }
+console.log('\nnegative settings');
+// Root Font Size and Viewport Width below zero (2026-10-08: `parseFloat(...) || 16` kept -5 and gave
+// negative results). A negative setting shows the localized error, clears every result (so nothing can
+// be copied) and sends no convert event; an empty field or 0 still falls back to 16px / 1920px as the
+// tips and the four pages say; a positive value restores the results.
+{
+  const strings = JSON.parse(source.match(/const STRINGS = ([\s\S]*?) as const;/)[1]);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const msg = strings[lang].invalidSetting;
+    eq(lang + ' negative-setting message exists', typeof msg === 'string' && msg.length > 0, true);
+    for (const [id, bad, good] of [['cu-root-size', '-5', '20'], ['cu-viewport', '-390', '390']]) {
+      const q = page({ lang });
+      q.input('cu-value', '16');
+      q.input(id, bad);
+      same(lang + ' ' + id + ' negative clears every result', outputs(q), ['', '', '', '']);
+      eq(lang + ' ' + id + ' negative shows the localized error', q.get('cu-status').textContent, msg);
+      eq(lang + ' ' + id + ' negative uses the error style', q.get('cu-status').classList.contains('error'), true);
+      copy(q).click(); eq(lang + ' ' + id + ' negative leaves nothing to copy', q.copies.length, 0);
+      q.get(id).dispatch('change'); eq(lang + ' ' + id + ' negative sends no convert event', q.tracks.filter(x => x.endsWith(':convert')).length, 0);
+      q.input('cu-value', '24'); same(lang + ' ' + id + ' negative stays an error while Value changes', [outputs(q)[0], q.get('cu-status').textContent], ['', msg]);
+      q.input(id, good); eq(lang + ' ' + id + ' a positive value restores the results', outputs(q)[0], '24px');
+      q.input(id, '0'); eq(lang + ' ' + id + ' zero still falls back to the default', outputs(q)[0], '24px');
+      q.input(id, ''); eq(lang + ' ' + id + ' empty still falls back to the default', q.get('cu-status').textContent, strings[lang].converted);
+    }
+  }
+}
+
 console.log('\nanalytics events');
 // One `convert` event per committed change (change event on Value / Root Font Size / Viewport Width,
 // or a unit selection) while a result is shown, as in box-shadow-generator; none on load and none for
