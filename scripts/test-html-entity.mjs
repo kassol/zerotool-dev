@@ -23,6 +23,15 @@
 // mode. The expected text must appear in the page. The JavaScript sample is executed; the Python
 // sample runs when python3 is available (SKIP otherwise).
 //
+// Tool page checks (src/content/tools/html-entity/{en,zh,ja,ko}.mdx, S2): every language has at
+// least 2 examples marked {/* he-check: {"encode": ...} */} or {/* he-check: {"decode": ...} */}
+// (optional "count": n, and "status": true when the English status line is quoted). The encoder
+// runs the engine; decoding runs parse5 with a textarea context, the same RCDATA rules as the
+// page. The input and the result must appear verbatim in a code block or inline code after the
+// note (up to the next he-check or H2). Table rows `| X | names | `&#N;` |` are checked against the
+// WHATWG list: N is the code point of X, each listed name decodes to X, and "none" means the list
+// has no name for X. Quoted byte counts and FAQ references are recomputed.
+//
 // Run: node scripts/test-html-entity.mjs
 
 import { readFileSync } from 'node:fs';
@@ -36,7 +45,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { toolSteps } from '../src/data/llms.mjs';
 import { parseFragment, defaultTreeAdapter } from 'parse5';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks, readToolMdx } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HtmlEntityTool.astro'), 'utf8');
@@ -180,6 +189,89 @@ for (const lang of ['en', 'ja']) {
     if (!/^html\./.test(py[i]) || !/^# /.test(py[i + 1])) continue;
     const out = execFileSync('python3', ['-c', 'import html, sys; sys.stdout.write(repr(' + py[i] + '))'], { encoding: 'utf8' });
     eq(lang + ' Python ' + py[i], out, py[i + 1].slice(2));
+  }
+}
+
+
+// ---------- tool page: worked examples, reference tables and FAQ facts ----------
+const textareaContext = defaultTreeAdapter.createElement('textarea', 'http://www.w3.org/1999/xhtml', []);
+const decodeRcdata = (str) => parseFragment(textareaContext, str).childNodes.map((n) => n.value ?? '').join('');
+const statusText = (mode, n) => mode === 'encode'
+  ? 'Encoded — ' + n + ' character' + (n !== 1 ? 's' : '') + ' converted.'
+  : 'Decoded — ' + n + ' entit' + (n !== 1 ? 'ies' : 'y') + ' converted.';
+// Text that a reader sees as code: fenced and <pre> blocks, Markdown code spans and <code>
+// elements (a string literal in braces is evaluated; other text has its character references
+// decoded, as MDX does).
+function shownCode(text) {
+  const out = fencedBlocks(text).map((b) => b.text);
+  let rest = text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, ' ');
+  for (const m of rest.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+    const inner = m[1].trim();
+    out.push(/^\{\s*(['"`])[\s\S]*\1\s*\}$/.test(inner) ? new Function('return ' + inner.slice(1, -1))() : decodeHTML(inner));
+  }
+  rest = rest.replace(/<code\b[^>]*>[\s\S]*?<\/code>/g, ' ');
+  for (const m of rest.matchAll(/`([^`\n]+)`/g)) out.push(m[1]);
+  return out;
+}
+function verifyExample({ spec, after }) {
+  if (!spec || (spec.encode === undefined) === (spec.decode === undefined)) return 'needs exactly one of encode / decode';
+  const mode = spec.encode !== undefined ? 'encode' : 'decode';
+  const input = spec[mode];
+  const r = mode === 'encode' ? encodeHtml(input) : { text: decodeRcdata(input), count: countReferences(input) };
+  const shown = shownCode(after);
+  if (!shown.some((c) => c.includes(input))) return 'input is not shown as code: ' + JSON.stringify(input);
+  if (!shown.some((c) => c.includes(r.text))) return 'engine result is not shown as code: ' + JSON.stringify(r.text);
+  if (spec.count !== undefined && spec.count !== r.count) return 'count ' + r.count + ', note says ' + spec.count;
+  if (spec.status && !after.includes(statusText(mode, r.count))) return 'status not quoted: ' + statusText(mode, r.count);
+  return null;
+}
+const toolAnnotations = [{ tag: 'he-check', min: 2, verify: verifyExample }];
+{
+  const docs = readToolMdx('html-entity', { root });
+  const noName = { en: 'none', zh: '无', ja: 'なし', ko: '없음' };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const { body, data } = docs[lang];
+    let rows = 0;
+    for (const m of body.matchAll(/^\| (.+?) \| (.+?) \| `&#(\d+);` \|/gm)) {
+      const [, charCell, nameCell, dec] = m;
+      const ch = String.fromCodePoint(Number(dec));
+      const label = lang + ' tool table U+' + Number(dec).toString(16).toUpperCase();
+      const plain = charCell.replace(/^`|`$/g, '');
+      if ([...plain].length === 1) { rows++; eq(label + ' character', plain, ch); }
+      const listed = [...nameCell.matchAll(/`([^`]+)`/g)].map((x) => x[1]);
+      if (nameCell === noName[lang]) eq(label + ' has no WHATWG name', (namesByCp.get(ch.codePointAt(0)) || []).join(' '), '');
+      else for (const n of listed) eq(label + ' ' + n + ' decodes', decodeHTML(n), ch);
+      eq(label + ' decimal decodes', decodeRcdata('&#' + dec + ';'), ch);
+    }
+    // en writes the table in HTML: <tr><td>char</td><td><code>&amp;name;</code></td><td><code>&amp;#N;</code></td>
+    for (const m of body.matchAll(/<tr><td>(.*?)<\/td><td><code>(.*?)<\/code><\/td><td><code>&amp;#(\d+);<\/code><\/td>/g)) {
+      rows++;
+      const ch = String.fromCodePoint(Number(m[3]));
+      const label = lang + ' tool table U+' + Number(m[3]).toString(16).toUpperCase();
+      eq(label + ' character', decodeHTML(m[1].replace(/<\/?code>/g, '')), ch);
+      eq(label + ' name decodes', decodeHTML(decodeHTML(m[2])), ch);
+    }
+    eq(lang + ' tool page has a reference table', rows >= (lang === 'ja' ? 7 : 8), true);
+    const faq = Object.fromEntries((data.faqItems || []).map((f) => [f.id, f.answer]));
+    const local = Object.entries(faq).find(([id]) => id.startsWith('local-'))?.[1] ?? '';
+    if (lang === 'en') eq('en FAQ: apostrophe reference', local.includes(encodeHtml("'").text), true);
+    if (lang === 'zh') {
+      eq('zh FAQ: 你好 reference', local.includes(encodeHtml('你好').text), true);
+      eq('zh: 你好 is 6 UTF-8 bytes', Buffer.byteLength('你好'), 6);
+      eq('zh: encoded 你好 is 16 bytes', Buffer.byteLength(encodeHtml('你好').text), 16);
+      eq('zh body quotes the byte counts', /6 字节[^\n]*16 字节/.test(body), true);
+    }
+    if (lang === 'ja') for (const c of ['〒', '※', '¥']) eq('ja FAQ: ' + c + ' output', local.includes(encodeHtml(c).text), true);
+    if (lang === 'ja') eq('ja FAQ: 〒 and ※ have no name, ¥ has &yen;', [namesByCp.get(0x3012), namesByCp.get(0x203b), namesByCp.get(0xa5)?.join(' ')].join('|'), '||&yen;');
+    if (lang === 'ko') {
+      eq('ko FAQ: ₩ output', local.includes(encodeHtml('₩').text), true);
+      eq('ko FAQ: ₩ has no name', namesByCp.get(0x20a9), undefined);
+      eq('ko: NFC 한 is one reference', encodeHtml('\uD55C').text, '&#54620;');
+    }
+    for (const id of ['what', 'reference-forms']) {
+      const a = faq[id] ?? '';
+      eq(lang + ' FAQ ' + id + ': shows references once escaped', /&amp;(?:lt|amp|#)/.test(a.replace('&amp;)', '')), false);
+    }
   }
 }
 
@@ -453,7 +545,7 @@ process.removeListener('unhandledRejection',onUnhandled);
     const parsed = loadYaml(metadata.slice(4)), { steps } = parsed;
     check(lang + ': five plain steps fit limits', steps.length === 5 && steps.every(step => typeof step === 'string' && step.length <= 280 && !/<[^>]*>/.test(step)) && steps.join('').length <= 1200);
     for (const key of ['encode','decode','copy','clear','refTable']) check(lang + ': steps name ' + key, steps.some(step => step.includes(entry[key])));
-    eq(lang + ': MDX content contract', contractProblems('html-entity', lang), '');
+    eq(lang + ': MDX content contract', contractProblems('html-entity', lang, { annotations: toolAnnotations }), '');
     // Wording that changed with the v2 controls (removed buttons, translated copy error).
     if (lang === 'en') {
       eq('en: two Encode examples select the direction', (body.match(/select <strong>Encode<\/strong>/g) || []).length, 2);
@@ -461,10 +553,7 @@ process.removeListener('unhandledRejection',onUnhandled);
       check('en: limits identify conversion status as English', body.includes('The conversion status messages are in English'));
       check('en: repeat decode uses output as the new input', body.includes('For double-encoded text, put the output back into Input while Decode is selected.'));
     }
-    if (lang === 'zh') {
-      eq('zh: two Encode examples select the direction', (body.match(/选择<strong>编码<\/strong>/g) || []).length, 2);
-      eq('zh: Decode example selects the direction', (body.match(/选择<strong>解码<\/strong>/g) || []).length, 1);
-    }
+    if (lang !== 'en') check(lang + ': examples name the Encode and Decode directions', body.includes('**' + entry.encode + '**') && body.includes('**' + entry.decode + '**'));
     check(lang + ': Usage section removed', !/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(body));
     eq(lang + ': llms receives five steps', toolSteps(parsed).length, 5);
     await compile(body); check(lang + ': preserved MDX body compiles', true);
