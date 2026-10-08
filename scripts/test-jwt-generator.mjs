@@ -546,6 +546,17 @@ const JWT_ANNOTATIONS = { annotations: [
   }
 }
 
+{
+  // Text claims about one Base64URL segment: the characters encode exactly those UTF-8 bytes and
+  // appear in the page's token.
+  const docs = readToolMdx('jwt-generator');
+  for (const [lang, word, seg] of [['zh', '运营', '6L-Q6JCl'], ['ko', '홍길동', '7ZmN6ri464-Z']]) {
+    const body = docs[lang].body;
+    eq(lang + ' segment ' + seg + ' is Base64URL of ' + word, Buffer.from(word).toString('base64url'), seg);
+    check(lang + ' segment ' + seg + ' appears inside a token on the page', fencedBlocks(body).some(b => /^ey|^ew/.test(b.text) && b.text.split('.')[1]?.includes(seg)));
+  }
+}
+
 // ---------- v2 page layout ----------
 const v2Start = passes;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
