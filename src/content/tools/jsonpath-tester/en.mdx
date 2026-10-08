@@ -21,8 +21,8 @@ faqItems:
     question: "What is recursive descent (..) ?"
     answer: "The .. operator recursively searches all descendants of the current node. For example, $..author finds every author field anywhere in the JSON tree, regardless of nesting depth."
   - id: unsupported
-    question: "Why do I see \"Unsupported syntax\"?"
-    answer: "The expression uses syntax that RFC 9535 does not define, so the tool stops and shows the character position instead of returning an empty result. Common cases are script expressions such as [(@.length-1)] (use [-1]), the =~ operator (use match() or search()), and in / nin. \"No matches found\" means the expression is valid but nothing in the JSON matches it; if the expression has full-width characters such as ． or ［, the status line says so, because JSONPath reads them as part of a name."
+    question: "Why do I see \"Invalid or unsupported syntax\"?"
+    answer: "The expression has a syntax error, such as an unclosed string or bracket, or uses syntax that RFC 9535 does not define. The tool stops and shows the reason and the character position instead of returning an empty result. Common cases of syntax outside RFC 9535 are script expressions such as [(@.length-1)] (use [-1]), the =~ operator (use match() or search()), and in / nin. \"No matches found\" means the expression is valid but nothing in the JSON matches it; if the expression has full-width characters such as ． or ［, the status line says so, because JSONPath reads them as part of a name."
   - id: privacy
     question: "Is my JSON sent anywhere or saved?"
     answer: "No. The query runs in the page script on this page; the JSON and the expression are not sent to a server and are not written to browser storage. Analytics records only the tool name and an action: a committed query that finds matches, an example click or a copy. It does not record the JSON or the expression."
@@ -45,12 +45,12 @@ faqItems:
 
 <h2>Limitations</h2>
 <ul>
-  <li>Syntax outside RFC 9535 is rejected with "Unsupported syntax" and the character position: script expressions <code>{"[(...)]"}</code>, <code>{"=~"}</code>, <code>{"in"}</code> / <code>{"nin"}</code>, and extensions such as <code>{"~"}</code> for member names from other libraries.</li>
+  <li>Syntax errors and syntax outside RFC 9535 are rejected with "Invalid or unsupported syntax" and the character position. Syntax outside RFC 9535 includes script expressions <code>{"[(...)]"}</code>, <code>{"=~"}</code>, <code>{"in"}</code> / <code>{"nin"}</code>, and extensions such as <code>{"~"}</code> for member names from other libraries.</li>
   <li><code>{"$.store.book.length"}</code> selects a member named <code>{"length"}</code>, which arrays do not have, so the result is empty. Use <code>{"length()"}</code> inside a filter, for example <code>{"$[?length(@.book) > 3]"}</code>.</li>
   <li>Results list the matched values. Normalized paths (such as <code>{"$['store']['book'][0]"}</code>) are not shown.</li>
   <li>Object members come back in the order JavaScript keeps them: names that are array indexes, such as <code>{'"2"'}</code> or <code>{'"10"'}</code>, first and in ascending order, then the other names in the order of your JSON (<a href="https://tc39.es/ecma262/#sec-ordinaryownpropertykeys" target="_blank" rel="noopener">ECMA-262 OrdinaryOwnPropertyKeys</a>). The pretty-printed Results use the same order. RFC 9535 §2.3.2.2 leaves the order open, so other implementations can differ.</li>
   <li>If an object has the same name twice, <code>{"JSON.parse"}</code> keeps the last value and the query never sees the first one.</li>
-  <li>Member names are compared code point by code point, with no Unicode normalization (RFC 9535 §2.3.1.2): <code>{"é"}</code> typed as one character does not select a name stored as <code>{"e"}</code> plus a combining accent.</li>
+  <li>Member names are compared code point by code point, with no Unicode normalization (RFC 9535 §2.3.1.2 for name selectors; the tool compares strings in filters the same way): <code>{"é"}</code> typed as one character does not select a name stored as <code>{"e"}</code> plus a combining accent.</li>
   <li><code>{"match()"}</code> and <code>{"search()"}</code> run the pattern as a JavaScript regular expression with the <code>{"u"}</code> flag after changing <code>{"."}</code> to <code>{"[^\\n\\r]"}</code> (RFC 9485 §5.3). Patterns that JavaScript rejects give false; JavaScript-only syntax such as <code>{"\\d"}</code> or lookahead is accepted.</li>
   <li>Numbers are JavaScript numbers after <code>{"JSON.parse"}</code>. Integers above 2<sup>53</sup>, very long decimals, <code>{"-0"}</code> and numbers too large for a double change before they are compared and shown; the status line lists them (see the example below).</li>
   <li>The invalid-JSON message is the browser's own JavaScript parser message, so its wording depends on the browser.</li>
@@ -67,7 +67,7 @@ faqItems:
     <tr>{/* jpt-check: {"q":"$.store.book[-1].author","show":["panel"]} */}<td><code>{"$.store.book[-1].author"}</code></td><td><code>{'"J. R. R. Tolkien"'}</code> (1 match, shown as the value itself)</td></tr>
     <tr>{/* jpt-check: {"q":"$..price"} */}<td><code>{"$..price"}</code></td><td><code>{"[8.95,12.99,8.99,22.99,19.95]"}</code>: the four book prices, then the bicycle</td></tr>
     <tr>{/* jpt-check: {"q":"$.store.book[?@.isbn].title","show":["panel"]} */}<td><code>{"$.store.book[?@.isbn].title"}</code></td><td><code>{"No matches found"}</code>: no book in the sample has an <code>{"isbn"}</code> member</td></tr>
-    <tr>{/* jpt-check: {"q":"$.store.book[(@.length-1)]","show":["status"]} */}<td><code>{"$.store.book[(@.length-1)]"}</code></td><td><code>{"Unsupported syntax: script expressions such as [(@.length-1)] are not part of RFC 9535; use a negative index such as [-1] (at character 14)"}</code></td></tr>
+    <tr>{/* jpt-check: {"q":"$.store.book[(@.length-1)]","show":["status"]} */}<td><code>{"$.store.book[(@.length-1)]"}</code></td><td><code>{"Invalid or unsupported syntax: script expressions such as [(@.length-1)] are not part of RFC 9535; use a negative index such as [-1] (at character 14)"}</code></td></tr>
   </tbody>
 </table>
 <h2>Example: an ID Larger Than 2<sup>53</sup></h2>
@@ -85,7 +85,7 @@ faqItems:
   <code>{"$.orders[?@.id == 9007199254740993].total"}</code> returns <code>{"[25,10]"}</code>, and the status line reads
 </p>
 ```text
-2 matches Numbers that JavaScript cannot hold exactly (1): 9007199254740993 → 9007199254740992. Filters and Results use the JavaScript value.
+2 matches · Numbers that JavaScript cannot hold exactly (1): 9007199254740993 → 9007199254740992. Filters and Results use the JavaScript value.
 ```
 <p>
   Both IDs become the same double, so the comparison cannot tell them apart; <code>{"25.0"}</code> is also shown as <code>{"25"}</code>, which is the same value and is not listed.
