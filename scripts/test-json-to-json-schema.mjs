@@ -269,6 +269,12 @@ try {
     run(p); eq(lang + ': real page golden bytes', output(p), goldenCode);
     p.input(nextInput); check(lang + ': input converts immediately', output(p).includes('"next"'));
     const converted = p.tracks.length; p.key('jjs-input', 'Enter'); eq(lang + ': no invented primary action', p.tracks.length, converted);
+    // Analytics: one event per committed change (the textarea change event), not on load or per keystroke.
+    const ga = page(lang); eq(lang + ': GA: page load sends nothing', ga.tracks.length, 0);
+    ga.input('{"a":1}'); ga.input('{"a":12}'); eq(lang + ': GA: input events send nothing', ga.tracks.length, 0);
+    ga.get('jjs-input').dispatch('change'); eq(lang + ': GA: committed change sends one convert event', JSON.stringify(ga.tracks), JSON.stringify([['json-to-json-schema', 'convert']]));
+    ga.input('{'); ga.get('jjs-input').dispatch('change'); eq(lang + ': GA: invalid input change sends nothing', ga.tracks.length, 1);
+    ga.input(''); ga.get('jjs-input').dispatch('change'); eq(lang + ': GA: empty input change sends nothing', ga.tracks.length, 1);
     for (const shellFirst of [false, true]) for (const modifier of ['ctrlKey', 'metaKey']) {
       const q = page(lang, shellFirst); run(q);
       const prefix = lang + ': shared clear ' + shellFirst + '/' + modifier;
