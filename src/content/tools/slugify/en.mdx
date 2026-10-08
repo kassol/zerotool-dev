@@ -13,13 +13,13 @@ faqItems:
     answer: "A slug is a URL-friendly string derived from human-readable text. It typically contains only lowercase letters, numbers, and hyphens — for example 'hello-world' from 'Hello World!'. Slugs are used in URLs to identify pages, posts, or resources."
   - question: "How does the tool handle non-ASCII characters?"
     id: "non-ascii"
-    answer: "Accented Latin letters lose their marks (é → e, ź → z, so Łódź → lodz), and letters that do not decompose, such as ß, ł, œ and ø, are replaced from the table on this page. The symbols & @ # % + © ® ™ € £ ¥ ° × ÷ become words (& → and). Other non-ASCII characters, including Chinese, Japanese, Korean, Cyrillic and Arabic, are removed."
+    answer: "Full-width forms are first converted to ASCII (Ｗ → W, ％ → %, ￥ → ¥). Accented Latin letters lose their marks (é → e, ź → z, so Łódź → lodz), and letters that do not decompose, such as ß, ł, œ and ø, are replaced from the table on this page. The symbols & @ # % + © ® ™ € £ ¥ ₩ ° × ÷ become words (& → and). Other non-ASCII characters, including Chinese, Japanese, Korean, Cyrillic and Arabic, are removed and act as a space, so the words on either side stay apart."
   - question: "Can I use underscores instead of hyphens?"
     id: "separators"
     answer: "Yes. Use the Separator dropdown to choose between hyphen (-), underscore (_), or dot (.)."
   - question: "Is the result safe to use directly in a URL path?"
     id: "url-safe"
-    answer: "Yes. The output contains only ASCII letters, digits and the chosen separator, so it needs no percent-encoding. One edge case: with Trim off and the dot separator, input made only of punctuation can give a single dot, which browsers treat as a dot segment and remove from the path."
+    answer: "Yes. The output contains only ASCII letters, digits and the chosen separator, so it needs no percent-encoding. One edge case: with Trim off and the dot separator, input with no letters or digits (only punctuation or only CJK text, for example) can give a single dot, which browsers treat as a dot segment and remove from the path."
   - question: "Does the slug change if I edit the title later?"
     id: "title-change"
     answer: "Yes, the slug is recomputed from whatever text is in the box. If the old URL is already published, keep the old slug or add a 301 redirect from it; changing a published slug breaks inbound links."
@@ -42,16 +42,20 @@ faqItems:
   </tbody>
 </table>
 <p>
-  What happens in order: the text is decomposed (NFD) and combining marks are dropped; the symbols and letters in the tables below
-  are replaced; any other non-ASCII character is deleted; every remaining character that is not a letter, digit, space,
+  What happens in order: full-width forms such as <code>{"Ｗ"}</code>, <code>{"％"}</code> and the ideographic space are converted to ASCII (NFKC); the text is decomposed (NFD) and combining marks are dropped; the symbols and letters in the tables below
+  are replaced; any other non-ASCII character becomes a space; every remaining character that is not a letter, digit, space,
   hyphen, underscore or dot becomes a space; runs of spaces become one separator; and runs of <code>-</code>, <code>{"_"}</code> and <code>.</code>
   collapse into one separator. That last step is why <code>{"user_profile.v2"}</code> loses its underscore and dot: existing
   separators are normalised to the one you picked. With Lowercase off and the underscore separator, the first example gives
   <code>{"10_Tips_and_Tricks_for_Node_js_2026_Edition"}</code>, a common form for file names and Python identifiers.
 </p>
+<p>
+  Because a removed character counts as a space, words around CJK text stay apart: {/* slug-check: {"in":"Vue3入门Vite教程"} */}<code>{"Vue3入门Vite教程"}</code> gives <code>{"vue3-vite"}</code>,
+  and {/* slug-check: {"in":"Hello　World"} */}<code>{"Hello　World"}</code> with a full-width space gives <code>{"hello-world"}</code>.
+</p>
 
 <h2>Character Mappings</h2>
-<p>Symbols become a separate word, so Rock &amp; Roll gives <code>{"rock-and-roll"}</code> and Tom&amp;Jerry gives <code>{"tom-and-jerry"}</code>. Accented letters lose their marks (Unicode NFD decomposition, then combining marks are removed): é → e, ñ → n, <code>{"Łódź"}</code> → <code>{"lodz"}</code>, <code>{"Tiếng Việt"}</code> → <code>{"tieng-viet"}</code>. Letters that do not decompose use the second table, with values from <a href="https://github.com/sindresorhus/transliterate" rel="noopener">sindresorhus/transliterate</a>. Uppercase letters keep their case (Ø → O, Œ → OE) until Lowercase is applied.</p>
+<p>Symbols become a separate word, so Rock &amp; Roll gives <code>{"rock-and-roll"}</code> and Tom&amp;Jerry gives <code>{"tom-and-jerry"}</code>. Accented letters lose their marks (Unicode NFD decomposition, then combining marks are removed): é → e, ñ → n, <code>{"Łódź"}</code> → <code>{"lodz"}</code>, <code>{"Tiếng Việt"}</code> → <code>{"tieng-viet"}</code>. Letters that do not decompose use the second table, with values from <a href="https://github.com/sindresorhus/transliterate" rel="noopener">sindresorhus/transliterate</a>. Uppercase letters keep their case (Ø → O, Œ → OE) until Lowercase is applied. Currency signs become the word in their Unicode character name (YEN SIGN → <code>yen</code>, WON SIGN → <code>won</code>; see the <a href="https://www.unicode.org/charts/PDF/U20A0.pdf" rel="noopener">Unicode currency symbols chart</a>).</p>
 <table>
   <thead><tr><th>Symbol</th><th>Word</th></tr></thead>
   <tbody>
@@ -66,6 +70,7 @@ faqItems:
     <tr><td><code>{"€"}</code></td><td><code>{"euro"}</code></td></tr>
     <tr><td><code>{"£"}</code></td><td><code>{"pound"}</code></td></tr>
     <tr><td><code>{"¥"}</code></td><td><code>{"yen"}</code></td></tr>
+    <tr><td><code>{"₩"}</code></td><td><code>{"won"}</code></td></tr>
     <tr><td><code>{"°"}</code></td><td><code>{"deg"}</code></td></tr>
     <tr><td><code>{"×"}</code></td><td><code>{"x"}</code></td></tr>
     <tr><td><code>{"÷"}</code></td><td><code>{"div"}</code></td></tr>
@@ -92,7 +97,6 @@ faqItems:
 <ul>
   <li>Marks are removed without language-specific rules: German <code>{"ä ö ü"}</code> become <code>{"a o u"}</code> (not <code>{"ae oe ue"}</code>), and Turkish <code>{"İ"}</code> becomes <code>{"I"}</code>.</li>
   <li>Non-Latin scripts are removed, so input written only in Chinese, Japanese or Korean gives an empty slug.</li>
-  <li>A removed character leaves no separator behind. {/* slug-check: {"in":"Vue3入门Vite教程"} */}<code>{"Vue3入门Vite教程"}</code> gives <code>{"vue3vite"}</code>, and the full-width ideographic space U+3000 is removed rather than treated as a space: {/* slug-check: {"in":"Hello　World"} */}<code>{"Hello　World"}</code> gives <code>{"helloworld"}</code>. Put an ASCII space between words you want to keep apart.</li>
   <li>Apostrophes act as separators: <code>{"John's Guide"}</code> → <code>{"john-s-guide"}</code>.</li>
   <li>With Trim off, separators at the start and end stay: <code>{"Hello World!"}</code> → <code>{"hello-world-"}</code>.</li>
   <li>Words are never shortened and stop words (a, the, of) are kept. There is no length limit, so a long sentence gives a long slug; trim it by hand if your CMS caps slug length.</li>
@@ -115,9 +119,8 @@ faqItems:
 </table>
 <p>
   The package also splits camelCase and, through <a href="https://github.com/sindresorhus/transliterate" rel="noopener">transliterate</a>,
-  turns <code>Fußgängerübergänge</code> into <code>fussgaengeruebergaenge</code>; this tool gives <code>fussgangerubergange</code>. A straight
-  apostrophe is a separator here (<code>{"Conway's Law"}</code> → <code>{"conway-s-law"}</code>), while the curly one is deleted
-  (<code>{"Conway’s Law"}</code> → <code>{"conways-law"}</code>). If your site already has published URLs, match the generator that made them,
+  turns <code>Fußgängerübergänge</code> into <code>fussgaengeruebergaenge</code>; this tool gives <code>fussgangerubergange</code>. Both the straight
+  and the curly apostrophe are separators here (<code>{"Conway's Law"}</code> and <code>{"Conway’s Law"}</code> both give <code>{"conway-s-law"}</code>). If your site already has published URLs, match the generator that made them,
   and use this page for one-off slugs or to check what a title would turn into. To encode a string for a query parameter instead of a path,
   use the <a href="/tools/url-encode/">URL encoder</a>.
 </p>

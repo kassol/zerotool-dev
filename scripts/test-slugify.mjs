@@ -143,6 +143,33 @@ t("John's Guide", 'john-s-guide');
 t('你好', '');
 t('日本語 Guide', 'guide');
 
+// ---------- removed characters split words; full-width forms; won sign ----------
+// A deleted character (CJK, full-width space, other non-ASCII) acts as a separator, so the
+// Latin words around it stay apart; runs merge and Trim removes them at the ends. Before the
+// fix the character was deleted with no separator (Vue3入门Vite教程 → vue3vite).
+t('Vue3入门Vite教程', 'vue3-vite');
+t('Vue3入门Vite教程', 'vue3_vite', { separator: '_' });
+t('Vue3入门Vite教程', 'vue3.vite', { separator: '.' });
+t('Hello\u3000World', 'hello-world');
+t('【2026年版】Next.js 15 入門', '2026-next-js-15');
+t('Next.js로 블로그 만들기', 'next-js');
+t('Vue3와Vite로 시작하기', 'vue3-vite');
+t('東京Tokyo', 'Tokyo', { lowercase: false });
+t('東京 Tokyo', '-tokyo', { trim: false });
+t('I ♥ Dogs', 'i-dogs');
+// Full-width forms (U+3000, U+FF01–FF5E, U+FFE0–FFE6) are NFKC-normalized first, then mapped.
+t('ＷｏｒｄＰｒｅｓｓ入門', 'wordpress');
+t('Ｎｏｄｅ．ｊｓ ２０', 'node-js-20');
+t('100％ 純正', '100-percent');
+t('価格 ￥1,980（税込）', 'yen-1-980');
+t('价格 ￥99 起', 'yen-99');
+t('￦10,000 할인', 'won-10-000');
+// ₩ maps like the other currency signs: the Unicode name without SIGN (WON SIGN → won).
+t('₩10,000 할인 쿠폰', 'won-10-000');
+t('₩', 'won');
+// NFKC is applied only to the full-width forms, so ™ still maps to its own word (NFKC would give TM).
+t('Name™', 'name-tm');
+
 // en tool page: Examples and comparison tables
 t('10 Tips & Tricks for Node.js (2026 Edition)!', '10-tips-and-tricks-for-node-js-2026-edition');
 t('Crème Brûlée: A 30-Minute Recipe', 'creme-brulee-a-30-minute-recipe');
@@ -154,13 +181,15 @@ t('fooBar 123 $#%', 'foobar-123-hash-percent');
 t('я люблю единорогов', '');
 t('I ♥ Dogs', 'i-dogs');
 t('Fußgängerübergänge', 'fussgangerubergange');
-t('Conway\u2019s Law', 'conways-law');
+t('Conway\u2019s Law', 'conway-s-law');
 t("Conway's Law", 'conway-s-law');
 {
   const got = E.slugify('10 Tips & Tricks for Node.js (2026 Edition)!', { separator: '_', lowercase: false, trim: true });
   check('page example, underscore + case kept', got === '10_Tips_and_Tricks_for_Node_js_2026_Edition', got);
   const dot = E.slugify('..', { separator: '.', lowercase: true, trim: false });
   check('page FAQ: punctuation-only input with Trim off and dot separator gives "."', dot === '.', dot);
+  const cjkDot = E.slugify('世界', { separator: '.', lowercase: true, trim: false });
+  check('page FAQ: CJK-only input with Trim off and dot separator gives "."', cjkDot === '.', cjkDot);
 }
 
 // ---------- guide examples (src/content/blog/slugify-guide/{en,ja}.mdx) ----------
@@ -368,7 +397,7 @@ for(const [lang,labels] of Object.entries(copyLabels)) {
   p.get('sl-lowercase').click();eq(lang+': lowercase change recomputes',p.get('sl-result').textContent,'Creme-and-Go');
   p.input('sl-separator','_','change');eq(lang+': separator change recomputes',p.get('sl-result').textContent,'Creme_and_Go');
   p.get('sl-trim').click();p.input('sl-input',' Hello ');eq(lang+': trim change recomputes',p.get('sl-result').textContent,'_Hello_');
-  p.input('sl-input','世界');eq(lang+': unsupported letters disable copy',p.get('sl-copy').disabled,true);check(lang+': unsupported letters warn',p.get('sl-status').textContent.length>0);
+  p.get('sl-trim').click();p.input('sl-input','世界');eq(lang+': unsupported letters disable copy',p.get('sl-copy').disabled,true);check(lang+': unsupported letters warn',p.get('sl-status').textContent.length>0);
   p.input('sl-input','');eq(lang+': empty input resets warning class',[p.get('sl-status').textContent,p.get('sl-status').className],['','sl-status']);
   for(const order of [false,true])for(const mod of [{ctrlKey:true},{ctrlKey:false,metaKey:true}]) {
     const q=resultPage(lang,order);q.input('sl-separator','_','change');q.get('sl-lowercase').click();const tracked=q.tracks.length;const before=snapshot(q);q.key(q.body);eq(lang+': external CtrlL preserves page',snapshot(q),before);
@@ -444,14 +473,14 @@ for (const lang of Object.keys(copyLabels)) {
   eq(lang + ': typing sends no analytics event', q.tracks.length, 0);
   q.get('sl-input').dispatch('change');
   eq(lang + ': committed input sends one event', q.tracks, [['slugify', 'convert']]);
-  q.input('sl-separator', '_', 'change'); q.get('sl-trim').click();
+  q.input('sl-separator', '_', 'change'); q.get('sl-lowercase').click();
   eq(lang + ': each option change sends one event', q.tracks.length, 3);
   q.input('sl-input', '世界'); q.get('sl-input').dispatch('change'); q.get('sl-lowercase').click();
   eq(lang + ': empty result sends no event', q.tracks.length, 3);
   q.input('sl-input', ''); q.get('sl-input').dispatch('change');
   eq(lang + ': empty input sends no event', q.tracks.length, 3);
 }
-eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'924eade0152ec855fd200dcf14d74a58652a7f9cc8ea9efaf7f1b8f6c7dd1528');
+eq('engine bytes preserved',createHash('sha256').update(source.slice(startIndex,endIndex+END_MARK.length)).digest('hex'),'f3fbd0999d44cefc0223c5a3360c29870beb3f265ab32493044a98050f436def');
 eq('no unhandled copy rejections',unhandled,[]);process.off('unhandledRejection',onUnhandled);
 // ---------- v2 page layout ----------
 const v2Start=passes;
