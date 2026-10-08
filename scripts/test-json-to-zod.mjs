@@ -435,6 +435,10 @@ const pageText = Object.fromEntries(['en', 'zh', 'ja', 'ko'].map((l) => [l, read
   eq('root name 天気 keeps its letters', E2.toPascalCase('天気'), '天気');
   eq('root name 회원 keeps its letters', E2.toPascalCase('회원'), '회원');
   eq('root name "user profile" gives UserProfile', E2.toPascalCase('user profile'), 'UserProfile');
+  check('en: page states the root-name rules', pageText.en.includes('`用户` gives `用户Schema`') && pageText.en.includes('`2fa` gives `T2faSchema`'));
+  check('zh: page states the root-name rules', pageText.zh.includes('`用户` 得到 `用户Schema`') && pageText.zh.includes('`2fa` 得到 `T2faSchema`'));
+  check('ja: page states the root-name rules', pageText.ja.includes('`天気` は `天気Schema`') && pageText.ja.includes('`2fa` は `T2faSchema`'));
+  check('ko: page states the root-name rules', pageText.ko.includes('`회원`은 `회원Schema`') && pageText.ko.includes('`2fa`는 `T2faSchema`'));
   eq('the int/float union text', E.buildRootZod([{ p: 128.5 }, { p: 299 }], 'Root', false), 'z.array(z.object({\n    p: z.union([z.number(), z.number().int()]),\n  }))');
   for (const l of ['en', 'zh', 'ja', 'ko']) check(l + ': page shows the int/float union', pageText[l].includes('`z.union([z.number(), z.number().int()])`'));
   const v4Big = zods.v4.number().int().safeParse(JSON.parse('1830000000000000001'));
