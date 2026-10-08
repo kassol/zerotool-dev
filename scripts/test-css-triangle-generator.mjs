@@ -8,14 +8,17 @@
 // Covers: for every width / height from 1 to 400, the two transparent borders of the top, bottom,
 // left and right triangles add up to exactly that size (they used to round each half up, so width
 // 25 gave 13px + 13px, a 26px base), and differ by at most 1px; the coloured border keeps the
-// other size; corner triangles are unchanged; the example on the English page.
+// other size; corner triangles are unchanged; the example on the English page; the tool page
+// worked examples in src/content/tools/css-triangle-generator/{en,zh,ja,ko}.mdx (`ctg-check`
+// notes, at least 2 per language, recomputed by running the page script and equal to a code block
+// after the note; every `.triangle {` block on the four pages has a note) and the MDX contract.
 //
 // Run: node scripts/test-css-triangle-generator.mjs
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks, readToolMdx } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_B12_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(process.env.ZT_B12_COMPONENT || join(root, 'src/components/tools/CssTriangleGeneratorTool.astro'), 'utf8');
@@ -160,6 +163,39 @@ function open(s,lang='en',shellFirst=false){
     h.advance(1499);h.click('ctg-copy-html');h.requests[2].resolve();await settle();h.advance(1);check(lang+' HTML old timer invalid',h.el('ctg-copy-html').textContent,h.L.copied);h.advance(1500);check(lang+' HTML newest timer expires',h.el('ctg-copy-html').textContent,h.L.copy);
     h=open(spec,lang);h.click('ctg-copy-html');h.click('ctg-copy-css');h.requests[1].resolve();await settle();const before=h.state();h.requests[0].reject(new Error('HTML stale after CSS'));await settle();check(lang+' HTML stale rejection after CSS',[h.state(),h.el('ctg-copy-html').textContent,h.unhandled.length],[before,h.L.copy,0]);
     h=open(spec,lang);h.click('ctg-copy-css');h.click('ctg-copy-html');h.requests[1].resolve();await settle();h.requests[0].resolve();await settle();check(lang+' CSS stale success after HTML',[h.el('ctg-copy-css').textContent,h.el('ctg-copy-html').textContent],[h.L.copy,h.L.copied]);
+  }
+  // Tool page worked examples: {/* ctg-check: {"dir": …, "w": …, "h": …, "color": "#rrggbb",
+  // "hex"?: "text typed into the hex field"} */}. The page script runs as on load: the direction
+  // button is clicked, the width and height fields get the values, the color picker gets "color"
+  // (lowercase, as a browser reports it), then "hex" is typed into the text field. The whole
+  // .triangle rule must equal a code block after the note (before the next ctg-check note or H2),
+  // and every code block on the page that starts with ".triangle {" must be covered by a note.
+  function triangleOutput(c) {
+    if (!['top','right','bottom','left','top-left','top-right','bottom-left','bottom-right'].includes(c.dir)) throw new Error('unknown direction '+c.dir);
+    if (!/^#[0-9a-f]{6}$/.test(c.color)) throw new Error('color must be lowercase #rrggbb');
+    const h=open(spec,'en');
+    h.query('.ctg-dir-btn[data-dir="'+c.dir+'"]').click();
+    h.input('ctg-width',c.w);h.input('ctg-height',c.h);h.input('ctg-picker',c.color);
+    if(c.hex!==undefined)h.input('ctg-hex',c.hex);
+    return h.el(spec.output).textContent;
+  }
+  const blockAfter=after=>fencedBlocks(after).map(b=>b.text);
+  function verifyTriangle({spec:c,after}){
+    if(!c)return 'empty note';
+    const out=triangleOutput(c);
+    return blockAfter(after).includes(out)?null:'engine result is not shown as a code block: '+JSON.stringify(out);
+  }
+  const triangleAnnotations=[{tag:'ctg-check',min:2,verify:verifyTriangle}];
+  {
+    const docs=readToolMdx('css-triangle-generator',{root});
+    for(const lang of ['en','zh','ja','ko']){
+      check(lang+' MDX contract with worked examples',contractProblems('css-triangle-generator',lang,{annotations:triangleAnnotations}),'');
+      const body=docs[lang].body, notes=annotations(body,'ctg-check');
+      const outs=notes.map(n=>{try{return {after:n.after,out:triangleOutput(n.spec)};}catch{return {after:n.after,out:null};}});
+      for(const b of fencedBlocks(body).filter(b=>b.text.startsWith('.triangle {'))){
+        check(lang+' generator block has a ctg-check note: '+b.text.split('\n').slice(3).join(' '),outs.some(o=>o.out===b.text&&blockAfter(o.after).includes(b.text)),true);
+      }
+    }
   }
   process.removeListener('unhandledRejection',onUnhandled);
   const bad=rows.filter(r=>!r.passed); for(const r of bad)console.log('FAIL: '+r.name+' '+JSON.stringify({actual:r.actual,expected:r.expected}));
