@@ -273,6 +273,22 @@ for (const lang of ['en','zh','ja','ko']) for (const order of ['shared-before','
   q.ctrlL('tzc-share','L','metaKey');await settle();eq(tag+' MetaL shares same clear behavior',[q.get('tzc-base').value,rows(q).length,q.get('tzc-status').textContent],['',0,'']);
 }
 
+// Typed names: a partial name matches the start of a word in the zone name, so an abbreviation such
+// as EST or IST is rejected with "Unknown timezone." instead of picking America/Creston or
+// America/Boa_Vista (the old substring match); kolkata and kyiv resolve although V8 lists
+// Asia/Calcutta and Europe/Kiev.
+for (const lang of ['en','zh','ja','ko']) {
+  const L = tzLabels(lang);
+  for (const [typed, zone] of [['york','America/New_York'],['los','America/Los_Angeles'],['paulo','America/Sao_Paulo'],['seoul','Asia/Seoul'],['kolkata','Asia/Kolkata'],['kyiv','Europe/Kyiv'],['america/new','America/New_York']]) {
+    const q = pageVM(lang); q.input('tzc-add', typed); q.key('tzc-add', {key:'Enter'});
+    eq(lang+' typed '+typed+' adds '+zone, [rows(q).at(-1)?.[0], q.get('tzc-status').textContent], [zone, '']);
+  }
+  for (const typed of ['EST','IST','PST','CST','北京','東京','서울','est']) {
+    const q = pageVM(lang); const before = rows(q).map(r => r[0]); q.input('tzc-add', typed); q.key('tzc-add', {key:'Enter'});
+    eq(lang+' typed '+typed+' is rejected', [rows(q).map(r => r[0]), q.get('tzc-status').textContent], [before, L.invalidZone]);
+  }
+}
+
 // Copy uses complete real page output; only the clipboard Promise and timer delivery are controlled.
 const failureLabels={en:'Copy failed.',zh:'复制失败。',ja:'コピーに失敗しました。',ko:'복사 실패.'};
 const button=(p,id)=>id==='row'?p.get('tzc-results').querySelector('.tzc-copy'):p.get(id);
@@ -334,7 +350,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 eq('v2 compiled module parses',moduleError,'');
 const style=compiled.css.join('\n');
 const mainScript=source.match(/<script is:inline[^>]*>([\s\S]*?)<\/script>/)[1];
-eq('v2 complete FIX script exact',hash(mainScript),'437bf5664182068212ed2e15fb7cc1f758a12b2092be1fdacd947e6722994089');
+eq('v2 complete FIX script exact',hash(mainScript),'406dda2a4f3f32e494c3482b5d477cb758e11cff99b3e3be9a9cc8fc9a9e27db');
 eq('v2 analyze registry',/['"]timezone-converter['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('v2 outermost root',/^<div class="tzc-wrap">/.test(source.split('\n---\n')[1].trim()),true);
 eq('v2 no runtime i18n',source.includes('data-i18n'),false);
