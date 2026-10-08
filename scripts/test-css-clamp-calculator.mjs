@@ -1,5 +1,7 @@
-// CSS Clamp Calculator — actual page regressions. Read component/harness; write stdout only.
+// CSS Clamp Calculator — actual page regressions. Read component/harness and the four tool page
+// MDX files (`ccc-check` examples recomputed through the page script); write stdout only.
 import { readFileSync } from 'node:fs';
+import { fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const root=process.env.ZEROTOOL_QA_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
@@ -115,6 +117,39 @@ for (const button of ['clamp-copy-css','clamp-copy-value']) {
 {
  const p=open();p.click('clamp-copy-css');const css=p.jobs.at(-1);p.click('clamp-copy-value');p.jobs.at(-1).reject(Error('new'));await settle();css.resolve();await settle();eq('other-button old success retains current error',p.text('clamp-status'),labels.en.copyFailed);
 }
+// ---------- tool page MDX (src/content/tools/css-clamp-calculator/{lang}.mdx): worked examples ----------
+// `ccc-check: {"property"?,"unit"?,"root"?,"min","max","start","end","at"?:[viewport],"zoom"?:bool}` sets
+// the fields through the page script (property and unit with change events, the numbers with input
+// events) on a fresh page. The generated declaration must equal a code element, a code block or an
+// inline code span between the annotation and the next ccc-check or H2. For each `at` viewport the
+// preview slider is moved there and the pixel value of the live preview ("29.8961px") must appear in
+// that text. `zoom` says whether the zoom notice is in the status line. Each language needs at least 3.
+{
+  const decode=t=>t.replace(/<[^>]+>/g,'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&');
+  const codeSpans=text=>[...[...text.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)].map(m=>decode(m[1])),...fencedBlocks(text).map(b=>b.text),...[...text.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm,'').matchAll(/`([^`\n]+)`/g)].map(m=>m[1])];
+  const shown=(text,s)=>new RegExp('(?<![\\d.])'+s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).test(text);
+  function pageResult(lang,c){
+    const p=open(lang),L=labels[lang];
+    if(c.property)p.input('clamp-property',c.property,'change');
+    if(c.unit)p.input('clamp-unit',c.unit,'change');
+    if(c.root!==undefined)p.input('clamp-root',c.root);
+    p.input('clamp-min-viewport',c.min);p.input('clamp-max-viewport',c.max);p.input('clamp-start-value',c.start);p.input('clamp-end-value',c.end);
+    const out={declaration:p.text('clamp-declaration'),zoom:p.text('clamp-status')===L.zoomWarning,at:[]};
+    for(const v of c.at||[]){p.input('clamp-preview-width',v);out.at.push(p.text('clamp-live-value').split(' / ')[0]);}
+    return out;
+  }
+  const contract=toolMdxContract(SLUG,{annotations:[{tag:'ccc-check',min:3,verify:({spec:c,after,lang})=>{
+    const r=pageResult(lang,c);
+    if(!r.declaration)return 'the page shows no declaration for '+JSON.stringify(c);
+    if(!codeSpans(after).includes(r.declaration))return 'no code span equals '+JSON.stringify(r.declaration);
+    const missing=r.at.filter(v=>!shown(after,v));
+    if(missing.length)return 'live preview values not shown after the annotation: '+missing.join(', ');
+    if(c.zoom!==undefined&&c.zoom!==r.zoom)return 'zoom notice is '+(r.zoom?'shown':'not shown');
+    return null;
+  }}]});
+  for(const r of contract.results)check('tool MDX: '+r.message,r.ok,r.message);
+}
+
 check('client self assertions',open().assertions.every(a=>a.ok));
 check('no unhandled promises',asyncErrors.length===0,asyncErrors.join(';'));
 
