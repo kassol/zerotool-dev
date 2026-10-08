@@ -468,14 +468,14 @@ const L = STRINGS[lang];
       // Field name for each key. A key is kept when it is already a usable name: a Python identifier
       // as typed (NFKC leaves it unchanged), not a keyword or a name the annotations use (a field
       // with a default would hide it), not starting with "__" (mangled in a class body), and for
-      // Pydantic not starting with "_" (private attribute) or naming a BaseModel attribute. Other
+      // Pydantic not starting with "_" (private attribute) or "model_", or naming a BaseModel attribute. Other
       // keys get a name from their identifier characters with "_" added until it is free.
       function pyFieldNames(fields, mode, classNames) {
         var used = Object.create(null), names = [];
         function usable(n) {
           return /^[\p{ID_Start}_]\p{ID_Continue}*$/u.test(n) && n === n.normalize('NFKC') &&
             RESERVED_NAMES.indexOf(n) === -1 && !/^__/.test(n) && !(classNames && classNames[n]) &&
-            !(mode === 'pydantic' && (/^_/.test(n) || BASEMODEL_ATTRS.indexOf(n) !== -1));
+            !(mode === 'pydantic' && (/^_|^model_/.test(n) || BASEMODEL_ATTRS.indexOf(n) !== -1));
         }
         for (var i = 0; i < fields.length; i++) if (usable(fields[i].key)) used[fields[i].key] = true;
         for (var i = 0; i < fields.length; i++) {
@@ -485,6 +485,8 @@ const L = STRINGS[lang];
           n = mode === 'pydantic' ? n.replace(/^_+/, '') : n.replace(/^_{2,}/, '_');
           if (!n) n = 'field';
           if (!/^[\p{ID_Start}_]/u.test(n)) n = (mode === 'pydantic' ? 'field_' : '_') + n;
+          // Pydantic names its own members model_…; its protected namespaces warn on such fields.
+          if (mode === 'pydantic' && /^model_/.test(n)) n = 'field_' + n;
           if (!usable(n)) n += '_';
           for (var c = n, k = 2; used[c] || !usable(c); k++) c = n + k;
           n = c;

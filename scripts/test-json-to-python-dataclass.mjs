@@ -148,7 +148,7 @@ for (const [i, v] of CLASH_SAMPLES.entries()) for (const mode of ['dataclass', '
   const fieldNames = [...code.matchAll(/^    ([^\s:"]+): /gmu)].map((m) => m[1]);
   eq('field/class clash ' + (i + 1) + ' (' + mode + '): no field is named like a class', fieldNames.filter((n) => classes.has(n)), []);
 }
-// MODELNS eq('model_ namespace: Pydantic renames model_ keys with an alias', ['model_validate_x', 'model_dump_y', 'model_name'].every((k) => new RegExp('= Field\\(alias="' + k + '"\\)$', 'm').test(gen(MODEL_NS, 'pydantic'))), true);
+eq('model_ namespace: Pydantic renames model_ keys with an alias', ['model_validate_x', 'model_dump_y', 'model_name'].every((k) => new RegExp('= Field\\(alias="' + k + '"\\)$', 'm').test(gen(MODEL_NS, 'pydantic'))), true);
 eq('field names: plain keys keep the class syntax', gen({ a: 1 }, 'typeddict').includes('class Root(TypedDict):'), true);
 
 // B2: values beside the objects of a root array stay in a <root>Array alias (List[Union[...]]).
@@ -220,8 +220,8 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 21194);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '1db12cffe622e18008e7da5cf05f6cdec6be598cced1dc920e6bcedb22ded883');
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 21390);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '95fcb02074fa3c4c13f7e7bc12e04299dc9681d581e433e94a0b919ee257e09a');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -439,7 +439,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "fcb3e0cb9fe0fc16cceaeb11afd2cd20f9f09599b1181df34cc1c3ed83401d65"
+  "scriptSHA": "adf11eb5e7159fc96b0f9691467a9dd81c6b5a74817dd338f282de87a5d86639"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -561,7 +561,7 @@ else {
     const r = runPy(pydBin, E.generatePython(KW_SAMPLES, 'Root', 'pydantic').code + `\nimport json\ndata = json.loads(${JSON.stringify(JSON.stringify(KW_SAMPLES))})\nrs = [Root.model_validate(d) for d in data]\nprint('ok' if [r.model_dump(by_alias=True, exclude_unset=True) for r in rs] == data else [r.model_dump(by_alias=True, exclude_unset=True) for r in rs])`);
     eq('field names: Pydantic output parses every key through its alias and dumps the same JSON', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
   }
-  for (const [i, v] of [...CLASH_SAMPLES, KW_SAMPLES[0]].entries()) {
+  for (const [i, v] of [...CLASH_SAMPLES, MODEL_NS, KW_SAMPLES[0]].entries()) {
     // Warnings are errors here: the model must build without a protected-namespace or shadowing warning.
     const r = runPy(pydBin, 'import warnings\nwarnings.simplefilter("error")\n' + E.generatePython(v, 'Root', 'pydantic').code + `\nimport json\ndata = json.loads(${JSON.stringify(JSON.stringify(v))})\nr = Root.model_validate(data)\nprint('ok' if r.model_dump(by_alias=True, exclude_unset=True) == data else r.model_dump(by_alias=True, exclude_unset=True))`);
     eq('field names: Pydantic sample ' + (i + 1) + ' builds without warnings and reads back', r.stdout.trim() || r.stderr.trim().split('\n').pop(), 'ok');
