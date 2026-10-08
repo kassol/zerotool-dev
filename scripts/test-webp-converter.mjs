@@ -152,7 +152,7 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
   const file = (name) => (typeof name === 'string' ? { name, type: 'image/png', size: 500 } : name);
   function page(lang = 'en') {
     const nodes = [], byId = new Map(), images = [], encodes = [], downloads = [], urls = new Map(), revoked = new Set();
-    let document, wrap, serial = 0, persistenceClears = 0;
+    let document, wrap, serial = 0, persistenceClears = 0; const tracks = [];
     function matches(el, selector) {
       return selector.split(',').some((part) => {
         const attrs = [...part.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
@@ -202,13 +202,13 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
     wrap.querySelectorAll = document.querySelectorAll;
     const sandbox = { document, Blob, console, URL: { createObjectURL(blob) { const url = 'blob:test-' + ++serial; urls.set(url, blob); return url; }, revokeObjectURL(url) { revoked.add(url); } },
       Image: class { constructor() { this.naturalWidth = 64; this.naturalHeight = 48; images.push(this); } },
-      setTimeout() {}, window: { ztPersist: { clear() { persistenceClears++; } } }, _slug: prefix === 'wc' ? 'webp-converter' : 'image-compressor' };
+      setTimeout() {}, window: { ztPersist: { clear() { persistenceClears++; } }, trackTool: (...args) => tracks.push(args) }, _slug: prefix === 'wc' ? 'webp-converter' : 'image-compressor' };
     sandbox.t = new Function(pageSource.slice(pageSource.indexOf('const STRINGS = '), pageSource.indexOf('/* ── strings:end ── */')) + 'return STRINGS[' + JSON.stringify(lang) + '];')();
     const context = createContext(sandbox);
     runInContext(inline[1], context);
     const keyStart = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
     runInContext(layout.slice(keyStart, layout.indexOf('// ── Copy button visual feedback', keyStart)), context);
-    return { get, images, encodes, downloads, urls, revoked, document,
+    return { get, images, encodes, downloads, urls, revoked, document, tracks,
       get persistenceClears() { return persistenceClears; },
       drop(names) { get(prefix + '-drop').dispatch('drop', { dataTransfer: { files: names.map(file) } }); },
       key(target = get(prefix + '-drop')) { target.focus(); return document.dispatch('keydown', { ctrlKey: true, key: 'l' }); },
@@ -298,6 +298,22 @@ check('quality label rendered from STRINGS', /<span>\{T\.qualityLabel\}<\/span>/
       : card.querySelector('.wc-dl').getAttribute('download') + '  ' + decode((card.html || '').match(/wc-card-sizes">([\s\S]*?)<\/div>/)?.[1] ?? ''));
     lines.push(p.get('wc-status').textContent);
     return { text: lines.join('\n'), problems };
+  }
+  // A batch where every file fails: no convert event (it was sent for every batch), and the status line
+  // says that the files failed instead of "0 file(s) converted, N failed". Mixed batches keep both counts.
+  {
+    const allFail = { en: '2 file(s) failed to convert', zh: '2 个文件转换失败', ja: '2 件の変換に失敗しました', ko: '2개 파일 변환 실패' };
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      const p = page(lang);
+      p.drop([{ name: 'a.heic', type: 'image/heic', size: 10 }, { name: 'b.bmp', type: 'image/bmp', size: 10 }]); await flush(); await flush();
+      check(lang + ' all-failed batch: status says the files failed', p.get('wc-status').textContent === allFail[lang], p.get('wc-status').textContent);
+      check(lang + ' all-failed batch: status is styled as an error', p.get('wc-status').className.includes('error'), p.get('wc-status').className);
+      check(lang + ' all-failed batch: no convert event', p.tracks.length === 0, JSON.stringify(p.tracks));
+    }
+    const p = page('en');
+    await p.ready([{ name: 'ok.png', type: 'image/png', size: 500 }, { name: 'bad.heic', type: 'image/heic', size: 10 }]);
+    check('mixed batch: status keeps both counts', p.get('wc-status').textContent === '1 file(s) converted, 1 failed', p.get('wc-status').textContent);
+    check('mixed batch: one convert event', p.tracks.length === 1 && p.tracks[0][0] === 'webp-converter' && p.tracks[0][1] === 'convert', JSON.stringify(p.tracks));
   }
   // A larger output kept one decimal only when it was not .0: Math.abs() on the toFixed(1) string
   // turned "-36.0" into 36, so the card read "+36%" next to "−66.2%".
