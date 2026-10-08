@@ -545,7 +545,12 @@ eq("no declarations message", noDecl, "No interface or type declarations found."
         const schema=S[note.spec?.schema];if(note.spec?.schema&&!schema){eq(tag+' names an exported schema',note.spec.schema,'');continue;}
         for(const value of note.spec?.accepts??[])eq(tag+' '+v+' accepts '+JSON.stringify(value),schema.safeParse(value).success,true);
         for(const value of note.spec?.rejects??[])eq(tag+' '+v+' rejects '+JSON.stringify(value),schema.safeParse(value).success,false);
-        if(note.spec?.drops)eq(tag+' '+v+' drops '+note.spec.drops.join(','),note.spec.drops.filter(k=>k in schema.parse(note.spec.accepts[0])),[]);
+        // drops: a key ("a") or a dotted path ("message.markAsReadToken") present in accepts[0] and absent after parsing
+        if(note.spec?.drops){
+          const parsed=schema.parse(note.spec.accepts[0]),at=(o,path)=>path.split('.').reduce((x,k)=>x==null?undefined:x[k],o);
+          const owns=(o,path)=>{const parts=path.split('.'),parent=at(o,parts.slice(0,-1).join('.')||'');const obj=parts.length>1?parent:o;return obj!=null&&Object.prototype.hasOwnProperty.call(obj,parts.at(-1));};
+          eq(tag+' '+v+' drops '+note.spec.drops.join(','),note.spec.drops.filter(k=>!owns(note.spec.accepts[0],k)||owns(parsed,k)),[]);
+        }
       }
     });
     for(const note of annotations(body,'ttz-error')){
