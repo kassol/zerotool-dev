@@ -291,8 +291,8 @@ function lifecyclePage(lang = 'en', shellFirst = false, preset = {}, active = nu
 
 const protectedCore = pageSource.match(/^[ \t]*\/\* ── engine:start ── \*\/[\s\S]*?\/\* ── engine:end ── \*\//m)[0];
 // Engine block changed with approval on 2026-10-08 (S2-4 engine fixes a–d); see git log.
-same('protected conversion bytes',Buffer.byteLength(protectedCore),17077);
-same('protected conversion SHA256',hash(protectedCore),'c3242498e2a5fe655e2e94aa6ab5f160f0192ca9951b5d6efd14abb210c75324');
+same('protected conversion bytes',Buffer.byteLength(protectedCore),17112);
+same('protected conversion SHA256',hash(protectedCore),'6c072b6d872d3dff119d9f106878f31b79c7c5d1ca9340322aefd6d33a24924b');
 
 const golden = p => { p.input(cfg.input, cfg.raw); p.advance(300); };
 const failureText = { en: 'Copy failed. Please try again.', zh: '复制失败，请重试。', ja: 'コピーに失敗しました。もう一度お試しください。', ko: '복사하지 못했습니다. 다시 시도하세요.' };
@@ -350,7 +350,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
 
 // ---------- v2 page layout ----------
 same('all FIX checks retained', [passes, failures], [598, 0]);
-same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), '348059113776f9b51dde1813eb3c5eb6e1cd6339727e2f92872e4a3c3aa86668');
+same('client handlers and algorithms retain FIX bytes after bindings', hash(pageScript.slice(pageScript.indexOf("      var input = document.getElementById('sf-input');"))), 'bbc29f299a07ab719cd1d4b9f40005fa7b7c9b41302698b096f8c6c4a1603054');
 const markup = pageSource.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = pageSource.match(/<style>([\s\S]*?)<\/style>/)[1];
 same('direct tool root carries client-only strings', /^<div class="sf-wrap" data-strings=\{JSON\.stringify\(CLIENT_T\)\}>/.test(markup), true);
@@ -570,6 +570,25 @@ for (const [name, sql] of [
 ]) {
   sameTokens(name, sql);
   for (const out of [fmt(sql), E.minifySQL(sql)]) check('e: # line kept verbatim: ' + name, out.includes(sql.slice(sql.indexOf('#'), sql.indexOf('\n'))), out);
+}
+
+// f) Multi-character operators stay one token (review S2-4 part 3, must-fix 2).
+eq('f: JSON and comparison operators', E.minifySQL("select data->>'a', data->'b', a <=> b, tags @> '{a}', '{a}' <@ tags, tsv @@ q, x == y from t"),
+  "SELECT data ->> 'a', data -> 'b', a <=> b, tags @> '{a}', '{a}' <@ tags, tsv @@ q, x == y FROM t");
+eq('f: assignment, power, shifts, regex and geometry', E.minifySQL("select @v := 1, 2 ** 3, 1 << 2, 8 >> 1, a ~* 'x', a !~* 'y', a !~ 'z', p <-> q, i <<= j, i >>= j, |/ 25, ||/ 27, r &< s, r &> s, a && b"),
+  "SELECT @v := 1, 2 ** 3, 1 << 2, 8 >> 1, a ~* 'x', a !~* 'y', a !~ 'z', p <-> q, i <<= j, i >>= j, |/ 25, ||/ 27, r &< s, r &> s, a && b");
+for (const [name, sql] of [
+  ['SQLite JSON operators', `select '{"a":{"b":2}}' -> '$.a' as j, '{"a":1}' ->> '$.a' as v from paths;`],
+  ['SQLite comparison and bit operators', 'select 1 << 2, 8 >> 1, 1 == 1, 1 != 2, 1 <> 2, 2 >= 1, 1 <= 2, 3 | 4, 3 & 1, \'a\' || \'b\' from paths;'],
+  ['operators written without spaces', `select '{"a":1}'->>'$.a', 1<<2, 2>=1, 'a'||'b', 1==1 from paths;`],
+]) sameExecution(name, sql);
+for (const [name, sql, want] of [
+  ['PostgreSQL JSON, array and text search operators', "select data->>'a', data->'b', tags @> '{a}', '{a}' <@ tags, tsv @@ q, p <-> q from t where a ~* 'x' and b !~* 'y' and c::int >= 1;", ['->>', '->', '@>', '<@', '@@', '<->', '~*', '!~*', '::', '>=']],
+  ['MySQL null-safe equality and assignment', 'select @v := 1, a <=> b, j->>\'$.x\' from t where a && b;', [':=', '<=>', '->>', '&&']],
+]) {
+  sameTokens(name, sql);
+  const ops = E.tokenize(sql).filter(t => t.type === 'operator').map(t => t.value);
+  for (const op of want) check('f: operator ' + op + ' stays whole: ' + name, ops.includes(op), ops.join(' '));
 }
 
 // d) Minify follows the uppercase option.
