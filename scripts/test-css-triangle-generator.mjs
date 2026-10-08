@@ -164,6 +164,30 @@ function open(s,lang='en',shellFirst=false){
     h=open(spec,lang);h.click('ctg-copy-html');h.click('ctg-copy-css');h.requests[1].resolve();await settle();const before=h.state();h.requests[0].reject(new Error('HTML stale after CSS'));await settle();check(lang+' HTML stale rejection after CSS',[h.state(),h.el('ctg-copy-html').textContent,h.unhandled.length],[before,h.L.copy,0]);
     h=open(spec,lang);h.click('ctg-copy-css');h.click('ctg-copy-html');h.requests[1].resolve();await settle();h.requests[0].resolve();await settle();check(lang+' CSS stale success after HTML',[h.el('ctg-copy-css').textContent,h.el('ctg-copy-html').textContent],[h.L.copy,h.L.copied]);
   }
+  // Width and height: whole numbers from 1 to 500 (the inputs' min / max). Empty, 0, negative,
+  // too large or fractional values show an error in the page language, clear the CSS and the
+  // preview, and disable Copy; the next valid value restores them. (Before: empty and 0 became
+  // 100, negatives became 1, values above 500 were used, 12.5 became 12.)
+  for (const lang of ['en','zh','ja','ko']) {
+    for (const field of ['ctg-width','ctg-height']) {
+      const key = field === 'ctg-width' ? 'badWidth' : 'badHeight';
+      // Default direction is top: width n gives border-right ceil(n / 2), height n gives border-bottom n.
+      const shows = (out, n) => out.includes(field === 'ctg-width' ? 'border-right: ' + (n - Math.floor(n / 2)) + 'px solid transparent' : 'border-bottom: ' + n + 'px solid');
+      for (const bad of ['', '0', '-5', '501', '12.5', 'abc']) {
+        const h=open(spec,lang); h.input(field,bad);
+        check(lang+' '+field+'='+JSON.stringify(bad)+' error text',[h.el('ctg-status').textContent,h.el('ctg-status').className],[h.L[key],'tool-status error']);
+        check(lang+' '+field+'='+JSON.stringify(bad)+' clears CSS and disables Copy',[h.el(spec.output).textContent,h.el('ctg-copy-css').disabled,h.el('ctg-preview').hidden,h.wrap.dataset.empty],['',true,true,'true']);
+        h.input(field,'40');
+        check(lang+' '+field+' valid value restores output',[shows(h.el(spec.output).textContent,40),h.el('ctg-copy-css').disabled,h.el('ctg-status').textContent,h.el('ctg-status').className],[true,false,'','tool-status']);
+      }
+      for (const good of ['1','500']) {
+        const h=open(spec,lang); h.input(field,good);
+        check(lang+' '+field+'='+good+' accepted',[shows(h.el(spec.output).textContent,Number(good)),h.el('ctg-status').textContent],[true,'']);
+      }
+    }
+    const strings=open(spec,lang).L;
+    check(lang+' size tips state the 1-500 range',['width','height'].every(k=>/500/.test(strings.tips[k])),true);
+  }
   // Tool page worked examples: {/* ctg-check: {"dir": …, "w": …, "h": …, "color": "#rrggbb",
   // "hex"?: "text typed into the hex field"} */}. The page script runs as on load: the direction
   // button is clicked, the width and height fields get the values, the color picker gets "color"
