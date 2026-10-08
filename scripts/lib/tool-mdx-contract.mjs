@@ -20,19 +20,17 @@ export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const LANGS = ['en', 'zh', 'ja', 'ko'];
 
 // Tools that have not finished S2: S2-PLAN.md §1.2 table A 32 + table B 15 + §7 29 = 76
-// (S2-evidence/content-stats.py on v1.140.3), plus 3 added by S2-0 = 79. These get only the
-// basic checks: files, steps, nonempty FAQ items, no Usage section, and equal FAQ and step
-// counts (unless listed in FAQ_COUNT_MISMATCH / STEPS_COUNT_MISMATCH).
+// (S2-evidence/content-stats.py on v1.140.3), plus 3 added by S2-0 = 79; S2-1 (2026-10-08)
+// finished 9, so 70 are left. These get only the basic checks: files, steps, nonempty FAQ
+// items, no Usage section, and equal FAQ and step counts (unless listed in FAQ_COUNT_MISMATCH / STEPS_COUNT_MISMATCH).
 export const S2_PENDING = new Set([
-  // §1.2 table A: site self-review, min(zh, ja, ko) < 800 characters (32)
-  'ascii-converter', 'aspect-ratio', 'base64', 'box-shadow-generator', 'chmod-calculator',
-  'cron-job-generator', 'cron-parser', 'css-clamp-calculator', 'css-filter-generator',
-  'css-flexbox-generator', 'css-gradient-generator', 'css-grid-generator', 'css-triangle-generator',
-  'css-unit-converter', 'css-variables-generator', 'htaccess-generator', 'html-entity',
-  'html-to-markdown', 'ip-subnet-calculator', 'jwt-decoder', 'lorem-ipsum', 'meta-tag-generator',
-  'nano-id-generator', 'password-generator', 'robots-txt-generator', 'sql-formatter',
-  'timezone-converter', 'ulid-generator', 'url-encode', 'uuid-generator', 'webp-converter',
-  'xml-formatter',
+  // §1.2 table A: site self-review, min(zh, ja, ko) < 800 characters (32; S2-1 finished 9, 23 left)
+  'aspect-ratio', 'box-shadow-generator', 'chmod-calculator', 'cron-job-generator', 'cron-parser',
+  'css-clamp-calculator', 'css-filter-generator', 'css-flexbox-generator', 'css-gradient-generator',
+  'css-grid-generator', 'css-triangle-generator', 'css-unit-converter', 'css-variables-generator',
+  'htaccess-generator', 'html-to-markdown', 'ip-subnet-calculator', 'lorem-ipsum',
+  'meta-tag-generator', 'robots-txt-generator', 'sql-formatter', 'timezone-converter',
+  'webp-converter', 'xml-formatter',
   // §1.2 table B: FAQ counts differ between languages (15)
   'color-blindness-simulator', 'color-converter', 'color-shades-generator', 'css-clip-path-generator',
   'json-to-csv', 'json-to-go-struct', 'json-to-json-schema', 'line-tools', 'morse-code-translator',
@@ -72,14 +70,14 @@ export const FAQ_IDS_TODO = new Set([
 ]);
 
 // Tools whose four languages have different FAQ counts today (S2-PLAN.md §1.2: 8 in table A,
-// 15 in table B). All of them are in S2_PENDING. Remove a tool when its counts match.
+// 15 in table B; S2-1 aligned password-generator, url-encode and uuid-generator, 20 left).
+// All of them are in S2_PENDING. Remove a tool when its counts match.
 export const FAQ_COUNT_MISMATCH = new Set([
   'box-shadow-generator', 'css-gradient-generator', 'css-unit-converter', 'html-to-markdown',
-  'lorem-ipsum', 'password-generator', 'url-encode', 'uuid-generator',
-  'color-blindness-simulator', 'color-converter', 'color-shades-generator', 'css-clip-path-generator',
-  'json-to-csv', 'json-to-go-struct', 'json-to-json-schema', 'line-tools', 'morse-code-translator',
-  'number-base', 'slugify', 'svg-optimizer', 'text-to-ascii-art', 'wifi-qr-code-generator',
-  'zero-width-character-detector',
+  'lorem-ipsum', 'color-blindness-simulator', 'color-converter', 'color-shades-generator',
+  'css-clip-path-generator', 'json-to-csv', 'json-to-go-struct', 'json-to-json-schema', 'line-tools',
+  'morse-code-translator', 'number-base', 'slugify', 'svg-optimizer', 'text-to-ascii-art',
+  'wifi-qr-code-generator', 'zero-width-character-detector',
 ]);
 
 // Tools whose four languages have different step counts today (S2-PLAN.md §1.1:

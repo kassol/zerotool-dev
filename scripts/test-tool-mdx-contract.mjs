@@ -84,8 +84,8 @@ check('FAQ_ID: local id', FAQ_ID.test('local-fullwidth'));
 check('FAQ_ID: rejects capitals, spaces, empty and trailing hyphen', !['Privacy', 'max size', '', 'limits-', 'local-'].some((id) => FAQ_ID.test(id)));
 
 // ── Lists ───────────────────────────────────────────────────────────────────
-equal('S2_PENDING: 79 tools', S2_PENDING.size, 79);
-equal('FAQ_COUNT_MISMATCH: 23 tools', FAQ_COUNT_MISMATCH.size, 23);
+equal('S2_PENDING: 70 tools (79 after S2-0, minus 9 in S2-1)', S2_PENDING.size, 70);
+equal('FAQ_COUNT_MISMATCH: 20 tools (23 after S2-0, minus 3 in S2-1)', FAQ_COUNT_MISMATCH.size, 20);
 check('FAQ_COUNT_MISMATCH is inside S2_PENDING', [...FAQ_COUNT_MISMATCH].every((s) => S2_PENDING.has(s)));
 check('STEPS_COUNT_MISMATCH is inside S2_PENDING', [...STEPS_COUNT_MISMATCH].every((s) => S2_PENDING.has(s)));
 equal('LIMITS_EXEMPT: the three v2 samples', [...LIMITS_EXEMPT].sort(), ['color-palette-generator', 'har-file-analyzer', 'json-formatter']);
