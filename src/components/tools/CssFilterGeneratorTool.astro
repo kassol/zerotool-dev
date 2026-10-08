@@ -30,6 +30,7 @@ const STRINGS = {
     uploadHint: 'Click to upload (max 5 MB)',
     tooLarge: '“{name}” is larger than 5 MB. Choose an image up to 5 MB.',
     notImage: '“{name}” is not an image file.',
+    imgError: 'This browser cannot decode “{name}”.',
     empty: "Adjust a filter or choose a local image to preview it.",
     more: "More filters",
     tips: {
@@ -71,6 +72,7 @@ const STRINGS = {
     uploadHint: '点击上传（最大 5 MB）',
     tooLarge: '“{name}”超过 5 MB，请选择 5 MB 以内的图片。',
     notImage: '“{name}”不是图片文件。',
+    imgError: '当前浏览器无法解码“{name}”。',
     empty: "调整滤镜或选择本地图片即可预览。",
     more: "更多滤镜",
     tips: {
@@ -112,6 +114,7 @@ const STRINGS = {
     uploadHint: 'クリックしてアップロード（最大 5 MB）',
     tooLarge: '「{name}」は 5 MB を超えています。5 MB までの画像を選んでください。',
     notImage: '「{name}」は画像ファイルではありません。',
+    imgError: 'このブラウザでは「{name}」をデコードできません。',
     empty: "フィルターを調整するか、ローカル画像を選ぶとプレビューできます。",
     more: "その他のフィルター",
     tips: {
@@ -153,6 +156,7 @@ const STRINGS = {
     uploadHint: '클릭하여 업로드 (최대 5 MB)',
     tooLarge: '“{name}”은(는) 5 MB를 넘습니다. 5 MB 이하의 이미지를 선택하세요.',
     notImage: '“{name}”은(는) 이미지 파일이 아닙니다.',
+    imgError: '이 브라우저는 “{name}”을(를) 디코딩할 수 없습니다.',
     empty: "필터를 조정하거나 로컬 이미지를 선택하면 미리 볼 수 있습니다.",
     more: "추가 필터",
     tips: {
@@ -186,6 +190,7 @@ const DEFAULT_PREVIEW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
   data-upload-hint={L.uploadHint}
   data-too-large={L.tooLarge}
   data-not-image={L.notImage}
+  data-img-error={L.imgError}
   data-reset={L.reset}
 >
   <div class="cfg-body">
@@ -433,25 +438,47 @@ const DEFAULT_PREVIEW = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
         /* Report a rejected file in the status line in the page language, as the color blindness
            simulator does; the preview keeps the current image. */
         var name = file.name || '';
+        /* A rejected file is cleared from the input, so choosing it again fires change. */
+        function reject(message) {
+          fileInput.value = '';
+          setStatus(message.replace('{name}', name), 'error');
+        }
         if (!/^image\//.test(file.type) && !/\.(png|jpe?g|gif|webp|avif|bmp|ico|svg|heic|heif|tiff?)$/i.test(name)) {
-          setStatus(wrap.dataset.notImage.replace('{name}', name), 'error');
+          reject(wrap.dataset.notImage);
           return;
         }
         if (file.size > 5 * 1024 * 1024) {
-          setStatus(wrap.dataset.tooLarge.replace('{name}', name), 'error');
+          reject(wrap.dataset.tooLarge);
           return;
         }
         var reader = new FileReader();
         reader.onload = function (e) {
           if (selection !== fileRevision) return;
-          previewImg.src = e.target.result;
-          renderResult();
-          if (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) {
-            wrap.querySelector('#cfg-preview-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
-          }
+          /* Decode before showing it: an empty file, text renamed to .png or a format this browser
+             cannot decode keeps the current preview and is reported (as in the color blindness simulator). */
+          var dataUrl = e.target.result;
+          var probe = new Image();
+          probe.onerror = function () {
+            if (selection !== fileRevision) return;
+            reject(wrap.dataset.imgError);
+          };
+          probe.onload = function () {
+            if (selection !== fileRevision) return;
+            if (!probe.naturalWidth || !probe.naturalHeight) { reject(wrap.dataset.imgError); return; }
+            showFile(dataUrl);
+          };
+          probe.src = dataUrl;
         };
         reader.readAsDataURL(file);
       });
+
+      function showFile(dataUrl) {
+        previewImg.src = dataUrl;
+        renderResult();
+        if (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) {
+          wrap.querySelector('#cfg-preview-section').scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }
+      }
 
       /* ── rAF-gated update ── */
       var rafPending = false;

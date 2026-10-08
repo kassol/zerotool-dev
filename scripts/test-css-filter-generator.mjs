@@ -117,7 +117,10 @@ function open(s,lang='en',shellFirst=false){
   const h={s,L,document,ids,timers,requests,assertions,persist,readers,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),frames(force=false){for(const r of rafs.splice(0))if(force||!r.cancelled)r.fn();},unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
   active=h;
   class LocalReader {constructor(){readers.push(this);}readAsDataURL(file){this.ready=file.arrayBuffer().then(bytes=>{this.result='data:'+file.type+';base64,'+Buffer.from(bytes).toString('base64');});}deliver(){this.onload?.({target:this});}}
-  const globals={document,isSecureContext:true,FileReader:LocalReader,File,Blob,requestAnimationFrame:f=>{const id=++seq;rafs.push({id,fn:f});return id;},cancelAnimationFrame:id=>{const r=rafs.find(r=>r.id===id);if(r)r.cancelled=true;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(){}};
+  // Decodes like a browser for the test files: SVG text or a PNG signature loads, anything else
+  // (an empty file, text renamed to .png) fires error. Synchronous, so delivery order stays explicit.
+  class LocalImage {set src(v){this._src=String(v);const bytes=Buffer.from(this._src.split(',')[1]||'','base64');const ok=bytes.length>0&&(bytes.toString('utf8').startsWith('<svg')||bytes[0]===0x89);if(ok){this.naturalWidth=10;this.naturalHeight=10;}(ok?this.onload:this.onerror)?.call(this,{target:this});}get src(){return this._src||'';}}
+  const globals={document,isSecureContext:true,FileReader:LocalReader,Image:LocalImage,File,Blob,requestAnimationFrame:f=>{const id=++seq;rafs.push({id,fn:f});return id;},cancelAnimationFrame:id=>{const r=rafs.find(r=>r.id===id);if(r)r.cancelled=true;},alert:message=>{h.alerts??=[];h.alerts.push(message);},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{load:()=>null,save:(slug,value)=>persist.saved.push({slug,value}),clear:slug=>persist.cleared.push(slug)},trackTool(){}};
   globals.window=globals;const ctx=vm.createContext(globals);const shared='var _slug='+JSON.stringify(s.slug)+';\n'+shortcuts;if(shellFirst)vm.runInContext(shared,ctx);for(const m of source.matchAll(/<script is:inline>([\s\S]*?)<\/script>/g))vm.runInContext(m[1],ctx);if(!shellFirst)vm.runInContext(shared,ctx);h.page={run:code=>vm.runInContext(code,ctx)};h.wrap=wrap;
   return h;
 }
@@ -157,10 +160,10 @@ function open(s,lang='en',shellFirst=false){
     // A rejected file is reported in the status line in the page language (as the color blindness
     // simulator does), never with alert(); the preview keeps the previous image.
     const rejected={
-      en:{big:'“large.png” is larger than 5 MB. Choose an image up to 5 MB.',not:'“notes.txt” is not an image file.'},
-      zh:{big:'“large.png”超过 5 MB，请选择 5 MB 以内的图片。',not:'“notes.txt”不是图片文件。'},
-      ja:{big:'「large.png」は 5 MB を超えています。5 MB までの画像を選んでください。',not:'「notes.txt」は画像ファイルではありません。'},
-      ko:{big:'“large.png”은(는) 5 MB를 넘습니다. 5 MB 이하의 이미지를 선택하세요.',not:'“notes.txt”은(는) 이미지 파일이 아닙니다.'},
+      en:{decode:'This browser cannot decode “{name}”.',big:'“large.png” is larger than 5 MB. Choose an image up to 5 MB.',not:'“notes.txt” is not an image file.'},
+      zh:{decode:'当前浏览器无法解码“{name}”。',big:'“large.png”超过 5 MB，请选择 5 MB 以内的图片。',not:'“notes.txt”不是图片文件。'},
+      ja:{decode:'このブラウザでは「{name}」をデコードできません。',big:'「large.png」は 5 MB を超えています。5 MB までの画像を選んでください。',not:'「notes.txt」は画像ファイルではありません。'},
+      ko:{decode:'이 브라우저는 “{name}”을(를) 디코딩할 수 없습니다.',big:'“large.png”은(는) 5 MB를 넘습니다. 5 MB 이하의 이미지를 선택하세요.',not:'“notes.txt”은(는) 이미지 파일이 아닙니다.'},
     };
     for(const lang of ['en','zh','ja','ko']){
       h=open(spec,lang);const before=h.el('cfg-preview-img').src;
@@ -175,6 +178,18 @@ function open(s,lang='en',shellFirst=false){
       check(lang+' non-image rejection in status',[h.el('cfg-status').textContent,h.el('cfg-status').className],[rejected[lang].not,'tool-status error']);
       h=open(spec,lang);h.el('cfg-file-input').files=[new File(['<svg/>'],'logo.svg',{type:''})];h.el('cfg-file-input').dispatch('change');
       check(lang+' image recognised by extension when the type is empty',[h.readers.length,h.el('cfg-status').textContent],[1,'']);
+      // A rejected file is cleared from the input, so choosing the same file again fires change.
+      h=open(spec,lang);h.el('cfg-file-input').files=[new File(['plain text'],'notes.txt',{type:'text/plain'})];h.el('cfg-file-input').dispatch('change');
+      check(lang+' rejected file is cleared from the input',[h.el('cfg-file-input').value,h.el('cfg-file-input').files.length],['',0]);
+      // A file that passes the type check but cannot be decoded (0 bytes, text renamed to .png,
+      // HEIC in Chrome) keeps the previous preview and reports why, as the color blindness simulator does.
+      for(const [label,file] of [['empty',new File([],'empty.png',{type:'image/png'})],['renamed',new File(['plain text'],'renamed.png',{type:'image/png'})]]){
+        h=open(spec,lang);const before=h.el('cfg-preview-img').src;
+        h.el('cfg-file-input').files=[file];h.el('cfg-file-input').dispatch('change');const r=h.readers.at(-1);await r.ready;r.deliver();
+        check(lang+' '+label+' file keeps preview',h.el('cfg-preview-img').src,before);
+        check(lang+' '+label+' file reported',[h.el('cfg-status').textContent,h.el('cfg-status').className],[rejected[lang].decode.replace('{name}',file.name),'tool-status error']);
+        check(lang+' '+label+' file is cleared from the input',h.el('cfg-file-input').files.length,0);
+      }
     }
     for(const key of ['blur','brightness','contrast','grayscale','hue-rotate','invert','opacity','saturate','sepia']) {h=open(spec);h.input('cfg-'+key,0);h.frames();check(key+' page preserves zero',h.el('cfg-'+key).value,'0');h.query('.cfg-reset-btn[data-key="'+key+'"]').click();h.frames();check(key+' Reset resumes CSS',h.el(spec.output).textContent,'.element {\n  filter: none;\n}');check(key+' saves numbers only',Object.values(h.persist.saved.at(-1).value).every(v=>typeof v==='number'),true);}
     h=open(spec);h.input('cfg-sepia',50);h.frames();h.click('cfg-reset-all');h.frames();check('Reset All preserves original defaults',h.el(spec.output).textContent,'.element {\n  filter: none;\n}');
