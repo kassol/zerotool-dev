@@ -390,6 +390,16 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const extra of [{}, { JSON: OL
   const tag = lang + (extra.JSON ? ' old browser' : '') + ' JSON syntax error ' + code;
   eq(tag + ' in the page language, CSV pane emptied', [p.get(s.p + '-status').textContent, p.get(s.p + '-status').classList.contains('error'), p.get(s.left).value], [jsonErrorMessage(lang, code, line, col, ch), true, '']);
 }
+// S2-10f review S4: a valid JSON array whose object is nested deeper than the call stack allows (Node 22 runs out well
+// below 20,000 levels; browsers differ). Before, the status was "Error: " plus the browser's English "Maximum call stack
+// size exceeded". The 21-digit number also sends the newer browsers through JSON.parse with a reviver.
+const DEEP_LABELS = frontmatterStrings(readComponent('src/components/tools/CsvJsonTool.astro').frontmatter);
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const extra of [{}, { JSON: OLD_JSON }]) for (const tail of ['1', '123456789012345678901']) {
+  const p = page(lang, 'shared-after', extra); p.golden(); p.type(s.right, '[' + '{"a":'.repeat(20000) + tail + '}'.repeat(20000) + ']'); p.advance(300);
+  const tag = lang + (extra.JSON ? ' old browser' : '') + ' too deep (' + tail.length + ' digits)';
+  eq(tag + ': notice in the page language, CSV pane emptied', [p.get(s.p + '-status').textContent, p.get(s.p + '-status').classList.contains('error'), p.get(s.left).value], [DEEP_LABELS[lang].errTooDeep, true, '']);
+  p.get('cj-copy-csv').click(); eq(tag + ': Copy CSV copies nothing', p.copies.length, 0);
+}
 
 /* ── v2 page layout ── */
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -399,9 +409,9 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; S2-10f (2026-10-09) added
-// the json-reason block and the localized JSON syntax error, and the note for header names with spaces. The hash pins
-// that reviewed script.
-eq('reviewed page script is unchanged', hash(script), '92805044ed03cb873ad89abc40980fc4c16b0f002dce8c364fe2a59888b03bbb');
+// the json-reason block and the localized JSON syntax error, and the note for header names with spaces; its review added
+// the notice for JSON nested too deeply for the call stack. The hash pins that reviewed script.
+eq('reviewed page script is unchanged', hash(script), '66f4e92033e170f10ce7730231b3a68db30cc3305811701add885daf09a93cb3');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);

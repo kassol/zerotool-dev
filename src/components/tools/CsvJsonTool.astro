@@ -23,6 +23,7 @@ const STRINGS = {
     "errEmptyArray": "JSON array is empty.",
     "errItem": "Item {n} must be a plain object.",
     "errUnclosed": "A quoted field that starts on line {line} is never closed. Add the closing \" or remove the opening one.",
+    "errTooDeep": "The JSON is nested too deeply to convert to CSV in this browser (the call stack ran out). Nothing was converted.",
     "numbersAsText": "This browser cannot keep these numbers exactly, so they were written as text: {list}.",
     "numbersMore": " and {n} more",
     "errJson": "This is not valid JSON.",
@@ -74,6 +75,7 @@ const STRINGS = {
     "errEmptyArray": "JSON 数组为空。",
     "errItem": "第 {n} 项必须是对象。",
     "errUnclosed": "第 {line} 行开始的引号字段没有闭合。请补上结尾的 \"，或删掉开头的 \"。",
+    "errTooDeep": "JSON 嵌套层数过深，此浏览器无法转换为 CSV（调用栈耗尽），未转换任何内容。",
     "numbersAsText": "此浏览器无法精确保留这些数字，已按文本写出：{list}。",
     "numbersMore": " 等，共 {total} 个",
     "errJson": "这不是有效的 JSON。",
@@ -125,6 +127,7 @@ const STRINGS = {
     "errEmptyArray": "JSON 配列が空です。",
     "errItem": "{n} 番目の要素はオブジェクトである必要があります。",
     "errUnclosed": "{line} 行目で始まる引用符付きフィールドが閉じられていません。閉じる \" を追加するか、開始の \" を削除してください。",
+    "errTooDeep": "JSON の入れ子が深すぎるため、このブラウザーでは CSV に変換できません（コールスタック不足）。何も変換していません。",
     "numbersAsText": "このブラウザーでは次の数値を正確に保持できないため、文字列として書き出しました：{list}。",
     "numbersMore": " ほか {n} 個",
     "errJson": "有効な JSON ではありません。",
@@ -176,6 +179,7 @@ const STRINGS = {
     "errEmptyArray": "JSON 배열이 비어 있습니다.",
     "errItem": "{n}번째 항목은 객체여야 합니다.",
     "errUnclosed": "{line}행에서 시작한 따옴표 필드가 닫히지 않았습니다. 닫는 \"를 추가하거나 여는 \"를 지우세요.",
+    "errTooDeep": "JSON 중첩이 너무 깊어 이 브라우저에서 CSV로 변환할 수 없습니다(호출 스택 부족). 아무것도 변환하지 않았습니다.",
     "numbersAsText": "이 브라우저는 다음 숫자를 정확히 유지할 수 없어 텍스트로 썼습니다: {list}.",
     "numbersMore": " 외 {n}개",
     "errJson": "올바른 JSON이 아닙니다.",
@@ -735,6 +739,12 @@ const { tips: TIPS, ...CLIENT } = T;
         if (csvEl.value.trim()) csvEl.dispatchEvent(new Event('input'));
       });
 
+      /* A stack overflow while walking very deep JSON: RangeError "Maximum call stack size exceeded" in Chrome
+         and Safari, InternalError "too much recursion" in Firefox (MDN: "Too much recursion"). */
+      function isTooDeep(e) {
+        return !!e && (e.name === 'RangeError' || e.name === 'InternalError') && /call stack|recursion/i.test(String(e.message));
+      }
+
       /* ── Real-time JSON → CSV (debounced 300ms) ── */
       var _jsonLiveTimer = null;
       jsonEl.addEventListener('input', function () {
@@ -761,7 +771,7 @@ const { tips: TIPS, ...CLIENT } = T;
           } catch (e) {
             csvEl.value = '';
             lastValidCsvOutput = '';
-            setStatus(e && e.name === 'SyntaxError' ? jsonErrorText(jsonEl.value) : t.errorPrefix + localError(e.message), true);
+            setStatus(isTooDeep(e) ? t.errTooDeep : e && e.name === 'SyntaxError' ? jsonErrorText(jsonEl.value) : t.errorPrefix + localError(e.message), true);
           }
         }, 300);
       });
