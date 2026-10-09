@@ -9,16 +9,24 @@ steps:
   - "Read the status line above the boxes. It counts characters, explains anything the tool changed (for example removed outer quotes), or names the invalid escape and its position."
   - "Press Copy to copy the result, or Swap to move it back into the input and reverse the direction. The ? buttons explain each control."
 faqItems:
+  - question: "How do I turn \\u00e9-style escapes back into text?"
+    id: "unicode-escapes"
+    answer: "Choose JSON and Unescape, then paste the text: caf\\u00e9 becomes café. Python's json.dumps writes non-ASCII characters this way by default (ensure_ascii=True), and so does PHP's json_encode; the escapes are valid JSON. Java .properties values converted by native2ascii use the same form, so the Java format unescapes them too. To go the other way, turn on Escape non-ASCII as \\uXXXX for JSON Escape; the output matches Python's json.dumps default."
   - question: "Why does JSON unescape say a quote would end the string?"
+    id: "json-quote"
     answer: "Unescape expects the inside of a string literal, where every double quote is written as \\\". If you paste JSON that is already unescaped, such as {\"a\":1}, the first quote is reported because there is nothing left to unescape. If the whole input is one quoted literal, such as \"a\\nb\", the tool removes the outer quotes for you and says so."
-  - question: "What is the difference between the JavaScript and JSON formats?"
-    answer: "JSON (RFC 8259) has only \\\" \\\\ \\/ \\b \\f \\n \\r \\t and \\uXXXX. JavaScript also has \\' \\v \\0 \\xHH, \\u{…} and line continuations, and it turns an unknown escape such as \\d into the letter itself. The tool escapes JSON exactly like JSON.stringify and reports \\' or \\x in JSON input as errors."
-  - question: "Is the SQL format safe against SQL injection?"
-    answer: "No. Doubling single quotes produces a valid string literal, but OWASP lists escaping as strongly discouraged because it depends on the database, its settings and the character set. Use parameterized queries in application code. The SQL format is for writing one-off scripts, fixtures and migration files by hand."
   - question: "Why is my ¥n or ₩n not turned into a line break?"
+    id: "lookalike-backslash"
     answer: "Japanese and Korean Windows fonts draw the backslash (U+005C) as ¥ or ₩. If you retype an escape from such a screen, you may type the real yen sign U+00A5 or won sign U+20A9, which is not an escape character. The tool keeps the text and adds a note naming the character."
+  - question: "Is the SQL format safe against SQL injection?"
+    id: "sql-injection"
+    answer: "No. Doubling single quotes produces a valid string literal, but OWASP lists escaping as strongly discouraged because it depends on the database, its settings and the character set. Use parameterized queries in application code. The SQL format is for writing one-off scripts, fixtures and migration files by hand."
+  - question: "Why does MySQL need different escaping from other databases?"
+    id: "sql-dialects"
+    answer: "Standard SQL only doubles the single quote and treats the backslash as an ordinary character; PostgreSQL (with the default standard_conforming_strings = on), SQLite, SQL Server and Oracle work this way. MySQL and MariaDB treat the backslash as an escape character unless NO_BACKSLASH_ESCAPES is set, so the \\n in C:\\new is read as a line break. Choose the MySQL / MariaDB dialect to escape the backslash too; when you escape in the Standard dialect, the status line warns if the text contains a backslash."
   - question: "Is my text sent to a server?"
-    answer: "No. All 11 formats run in your browser. HTML references are decoded by the browser's own parser in a document that cannot run scripts or load images. Only the selected format, direction and options are remembered on this device."
+    id: "privacy"
+    answer: "No. All 11 formats run in your browser. HTML references are decoded by the browser's own parser in a document that cannot run scripts or load images. Only the selected format, direction and options are saved, in this browser's local storage; the text is not saved. Ctrl/⌘+L keeps the settings, and clearing this site's data in the browser removes them. The page loads Google Analytics and AdSense like other tool pages. Its usage event holds only the tool name and the format and direction, such as json_unescape, and is sent once per page visit for each combination, the first time it gives a result."
 ---
 
 ## Example: an Escaped Log Line
@@ -69,6 +77,8 @@ Each format follows its specification, and `scripts/test-string-escape.mjs` in t
 | Regex | ECMAScript syntax characters plus `/` | `RegExp` with flags none, `u` and `v`; Python `re` |
 | Shell | POSIX quoting, `$'…'` | `shlex.quote`, `/bin/sh`, bash |
 
+JSON and JavaScript escapes look alike but differ. JSON has only `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t` and `\uXXXX`. JavaScript also has `\'`, `\v`, `\0`, `\xHH`, `\u{…}` and line continuations, and it turns an unknown escape such as `\d` into the letter itself. The JSON format escapes exactly like `JSON.stringify` and reports `\'` or `\x` in JSON input as errors.
+
 Three details from these rules are easy to get wrong. A NUL followed by a digit must be written `\x00` in JavaScript: `\0` followed by `1` is the legacy octal escape `\01`, a SyntaxError in strict mode. In Java, a line break must be `\n`, never `\u000a`, because javac replaces Unicode escapes before it reads the string ([JLS §3.10.5](https://docs.oracle.com/javase/specs/jls/se21/html/jls-3.html#jls-3.10.5)). In HTML, an emoji such as 😀 needs one reference, `&#x1F600;`; two references for its UTF-16 halves decode to two replacement characters.
 
 ## Errors and Notes
@@ -100,7 +110,7 @@ We ran the same inputs through four tools that rank for "string escape" and "esc
 - **codertools.net**: JavaScript escape of NUL followed by `1` gives `a\01`, the legacy octal form. Invalid escapes pass through unchanged.
 - **devlab.itlibra.com**: "HTML entities (all non-ASCII)" writes 😀 as `&#55357;&#56832;`.
 
-This tool gives `\x001`, `&#x1F600;` and positioned errors for the same inputs, and never sends text over the network.
+This tool gives `\x001`, `&#x1F600;` and positioned errors for the same inputs, and it does not send the text anywhere.
 
 ## Related Tools
 
