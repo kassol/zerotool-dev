@@ -78,8 +78,8 @@ const render=source.slice(source.indexOf('      function badgeCls'),source.index
 const a=source.indexOf("      searchEl.addEventListener('input'"),b=source.indexOf('\n      });',a)+'\n      });'.length;
 eq('original dictionary/classes bytes',Buffer.byteLength(dictionary),8183);
 eq('original dictionary/classes SHA',sha(dictionary),'138810d8f5551435104d9b00683a01e69541d5ab6cb79b2e143f3aa2dc567d0e');
-eq('original badge/render/initial table SHA',sha(render),'776b117cf099c0e12b7b123c0d5ce500c56654573f4f427cd9d59ee92397321c');
-eq('original input filter SHA',sha(source.slice(a,b)),'58a07e1f882f176d955bb4be178e9d1f292226194032340d80cbf29d0e201368');
+eq('original badge/render/initial table SHA',sha(render),'48181e7afab19a757d75a4ce1da78bd3e203a03387d31a1e63a405d8197e2b64');
+eq('original input filter SHA',sha(source.slice(a,b)),'d0ef652ae2ace149a5f7d2ceeae699a164f1a17f39c660bd3110b5ead17b58d2');
 
 // ---------- v2 page layout ----------
 const require=createRequire(join(root,'package.json'));
@@ -101,8 +101,8 @@ check('v2 640px result and search remain usable',/@media\s*\(max-width:\s*640px\
 check('v2 heading/status/result order',markupTemplate.indexOf('id="hs-search"')<markupTemplate.indexOf('id="hs-status"')&&markupTemplate.indexOf('id="hs-status"')<markupTemplate.indexOf('class="hs-result-section"'));
 check('v2 build-time strings replace runtime i18n',!/data-i18n|document\.documentElement\.lang/.test(source));
 check('v2 zero localization or tip payload in client',!/STRINGS|TIPS|CLIENT_T|define:vars|data-strings/.test(script)&&!source.includes('define:vars'));
-eq('v2 original core and complete FIX tail bytes',Buffer.byteLength(source.slice(source.indexOf('      var CODES ='),source.indexOf('  </script>'))),10392);
-eq('v2 original core and complete FIX tail SHA',sha(source.slice(source.indexOf('      var CODES ='),source.indexOf('  </script>'))),'4472c7d2652f217ecd4c9db870009d52ad6057fa33d10fd09222477bc1efa43e');
+eq('v2 original core and complete FIX tail bytes',Buffer.byteLength(source.slice(source.indexOf('      var CODES ='),source.indexOf('  </script>'))),10703);
+eq('v2 original core and complete FIX tail SHA',sha(source.slice(source.indexOf('      var CODES ='),source.indexOf('  </script>'))),'f20aac70c92cc7e431502c4aa80a021870661652e61a1799bc6c2d2f524a0538');
 const tipBindings=[...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 two literal tip IDs',tipBindings.map(m=>m[1]),['hs-tip-search','hs-tip-results']);
 check('v2 no tip button nested in an input label',!/<label\b[^>]*>[\s\S]*?<Toggletip[\s\S]*?<\/label>/.test(markupTemplate));
@@ -151,6 +151,20 @@ for(const lang of ['en','zh','ja','ko']){
  p.type('x'.repeat(100000));eq('v2 long query has no results',p.rows().length,0);check('v2 long query shows no-match',p.empty());
  p.type('');eq('v2 empty after long query restores every complete row',sha(JSON.stringify(p.rows())),'3bfb32b42e1bfc9553e6c5ef2bec49537ea34bfa4bda44c148bf642ae24e780d');
 }
+// ---------- approved changes to the protected filter (2026-10-09) ----------
+// 8. The search event is sent once per committed change (not on every input event), and the
+// query is NFKC-normalized, so full-width digits and letters from an IME match.
+for(const lang of ['en','zh','ja','ko']){
+ const p=page(lang,'shared-after'),change=()=>{const e=p.document.createEvent('Event');e.initEvent('change',true,true);p.search.dispatchEvent(e);};
+ for(const q of ['4','40','404'])p.type(q);
+ eq(lang+' 8 typing sends no search event',p.tracks.length,0);
+ change();eq(lang+' 8 change sends one search event',p.tracks,[['http-status-codes','search']]);
+ p.type('');change();eq(lang+' 8 change to an empty query sends nothing',p.tracks.length,1);
+ p.type('４０４');eq(lang+' 8 full-width digits match',p.codes(),[404,410]);
+ p.type('ＴｅａＰｏｔ');eq(lang+' 8 full-width letters match',p.codes(),[418]);
+ p.type('\u3000５０３\u3000');eq(lang+' 8 ideographic spaces are trimmed',p.codes(),[503]);
+}
+
 // ---------- IANA registry and worked examples ----------
 // IANA "HTTP Status Code Registry", http-status-codes-1.csv, registry updated 2025-09-15,
 // downloaded 2026-10-09 from https://www.iana.org/assignments/http-status-codes/. Ranges marked
