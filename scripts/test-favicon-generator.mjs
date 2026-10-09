@@ -237,7 +237,7 @@ function page(s,lang='en',order='before'){
    appendChild(n){n.parentNode=this;this.childNodes.push(n);return n;},removeChild(n){this.childNodes=this.childNodes.filter(x=>x!==n);n.parentNode=null;},remove(){this.parentNode?.removeChild(this);},contains(n){for(;n;n=n.parentNode)if(n===this)return true;return false;},
    querySelectorAll(q){return walk(this).filter(e=>matches(e,q));},querySelector(q){return this.querySelectorAll(q)[0]||null;},
    addEventListener(k,f){(listeners[k]||=[]).push(f);},focus(){document.activeElement=this;},select(){selection=this;},dispatch(k,init={}){const e={type:k,target:this,currentTarget:this,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(const f of listeners[k]||[])f.call(this,e);if(!e.cancelBubble)for(const f of docHandlers[k]||[])f.call(document,e);return e;},click(){if(this.tagName==='A'){downloads.push({name:this.download,url:this.href,blob:urls.get(this.href)});return;}if(!this.disabled)this.dispatch('click');},
-  };el.classList={contains:c=>el.className.split(/\s+/).includes(c),add(...c){el.className=[...new Set([...el.className.split(/\s+/).filter(Boolean),...c])].join(' ');},remove(...c){el.className=el.className.split(/\s+/).filter(x=>!c.includes(x)).join(' ');},toggle(c,on){const add=on===undefined?!this.contains(c):on;this[add?'add':'remove'](c);return add;}};if(tag.toLowerCase()==='canvas'){el.width=Number(attrs.width||300);el.height=Number(attrs.height||150);el.ops=[];const ctx={};for(const name of ['save','restore','beginPath','arc','moveTo','lineTo','quadraticCurveTo','closePath','rect','clip'])ctx[name]=(...args)=>el.ops.push({name,args});ctx.clearRect=()=>{el.ops=[];};ctx.fillText=(text,...args)=>el.ops.push({name:'fillText',text,args,font:ctx.font,color:ctx.fillStyle});ctx.fillRect=(...args)=>el.ops.push({name:'fillRect',args,color:ctx.fillStyle});ctx.drawImage=(image,...args)=>el.ops.push({name:'drawImage',image:image.src,args});el.getContext=()=>ctx;el.toBlob=(cb,type)=>{const snapshot={width:el.width,height:el.height,ops:structuredClone(el.ops)};const job={snapshot,type,done:false,deliver(blob){if(this.done)throw Error('duplicate blob delivery');this.done=true;cb(blob===undefined?new Blob([JSON.stringify(snapshot)],{type:type||'image/png'}):blob);}};blobs.push(job);};}return el;
+  };el.classList={contains:c=>el.className.split(/\s+/).includes(c),add(...c){el.className=[...new Set([...el.className.split(/\s+/).filter(Boolean),...c])].join(' ');},remove(...c){el.className=el.className.split(/\s+/).filter(x=>!c.includes(x)).join(' ');},toggle(c,on){const add=on===undefined?!this.contains(c):on;this[add?'add':'remove'](c);return add;}};if(tag.toLowerCase()==='canvas'){el.width=Number(attrs.width||300);el.height=Number(attrs.height||150);el.ops=[];const ctx={};for(const name of ['save','restore','beginPath','arc','moveTo','lineTo','quadraticCurveTo','closePath','rect','clip'])ctx[name]=(...args)=>el.ops.push({name,args});ctx.clearRect=()=>{el.ops=[];};ctx.fillText=(text,...args)=>el.ops.push({name:'fillText',text,args,font:ctx.font,color:ctx.fillStyle});ctx.fillRect=(...args)=>el.ops.push({name:'fillRect',args,color:ctx.fillStyle});ctx.drawImage=(image,...args)=>el.ops.push({name:'drawImage',image:image.src,args});ctx.measureText=(text)=>{const px=Number(/([\d.]+)px/.exec(ctx.font||'')?.[1]||10);let w=0;for(const ch of text)w+=/[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch)?px:0.6*px;return{width:w};};el.getContext=()=>ctx;el.toBlob=(cb,type)=>{const snapshot={width:el.width,height:el.height,ops:structuredClone(el.ops)};const job={snapshot,type,done:false,deliver(blob){if(this.done)throw Error('duplicate blob delivery');this.done=true;cb(blob===undefined?new Blob([JSON.stringify(snapshot)],{type:type||'image/png'}):blob);}};blobs.push(job);};}return el;
  }
  function wrap(n,parent){if(!n.tagName)return{value:n.value||'',parentNode:parent};const e=element(n.tagName,Object.fromEntries((n.attrs||[]).map(a=>[a.name,a.value])));e.parentNode=parent;e.childNodes=(n.childNodes||[]).map(n=>wrap(n,e));if(e.tagName==='TEXTAREA')e.value=e.textContent;return e;}
  const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);
@@ -328,6 +328,35 @@ for(const sourceType of ['image','svg'])for(const phase of ['pending','completed
  checkPage(favicon,sourceType+'/'+phase+'/'+outcome+' preserves active package/result',[p.$('fg-result').hidden,p.$('fg-snippet-code').textContent,packageBlob(p)===before.url],[before.hidden,before.snippet,true]);
  if(phase==='pending'){await p.drain();checkPage(favicon,sourceType+'/'+outcome+' cannot cancel other source generation',p.$('fg-result').hidden,false);const blob=packageBlob(p),entries=blob?await zipEntries(blob):null;checkPage(favicon,sourceType+'/'+outcome+' active generated image stays T',entries?JSON.parse(entries['favicon-16.png']).ops.find(o=>o.name==='fillText').text:null,'T');}
  if(outcome==='deliver'){p.click('#fg-tab-'+sourceType);checkPage(favicon,sourceType+' completed inactive source remains available as cache',p.$('fg-generate').disabled,false);checkPage(favicon,sourceType+' cache renders only after selecting that source',signature(p),[oldImage.src]);}
+}
+
+// ---------- S2-8d: CJK text fits the icon; emoji input keeps whole sequences ----------
+// Before the fix the Text source set the font size from the character count only
+// (2 chars → 0.65 × the inner square). A full-width CJK glyph is about 1 em wide, so
+// two characters were 1.3 × the inner square and were cut off by the canvas. The stub
+// measureText() above gives CJK 1 em and other characters 0.6 em.
+{
+  const fitted = (p, sz) => { const op = p.$('fg-prev-' + sz).ops.find((o) => o.name === 'fillText'); const px = Number(/([\d.]+)px/.exec(op.font)[1]); let w = 0; for (const ch of op.text) w += /[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? px : 0.6 * px; return { px, w, inner: sz - 2 * sz * 0.08 }; };
+  for (const text of ['技術', '日本語', '한국어', '設計図面']) {
+    const p = page(favicon, 'en'); p.click('#fg-tab-text'); p.input('fg-text-input', text);
+    for (const sz of [16, 64, 180]) { const r = fitted(p, sz); check('text ' + text + ' fits the inner square at ' + sz + ' px', r.w <= r.inner + 1e-9, JSON.stringify(r)); }
+  }
+  const p = page(favicon, 'en'); p.click('#fg-tab-text'); p.input('fg-text-input', 'ZT');
+  const r = fitted(p, 180); check('Latin text that already fits keeps its size (0.65 × inner)', Math.abs(r.px - 0.65 * r.inner) < 1e-9, JSON.stringify(r));
+  const emojiInput = /<input[^>]*id="fg-emoji-input"[^>]*>/.exec(source)[0];
+  const max = Number(/maxlength="(\d+)"/.exec(emojiInput)?.[1] || Infinity);
+  check('emoji input does not cut a family ZWJ sequence (11 UTF-16 code units)', max >= '👨‍👩‍👧‍👦'.length, emojiInput);
+  const firstOnly = { en: 'Only the first emoji is used: ', zh: '只使用第一个 emoji：', ja: '最初の絵文字だけを使います：', ko: '첫 번째 이모지만 사용합니다: ' };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const q = page(favicon, lang);
+    q.input('fg-emoji-input', '👨‍👩‍👧‍👦');
+    check(lang + ' ZWJ family emoji is drawn whole', signature(q).join() === '👨‍👩‍👧‍👦', signature(q).join());
+    q.input('fg-emoji-input', '🚀🔥');
+    check(lang + ' two emoji: only the first is drawn', signature(q).join() === '🚀', signature(q).join());
+    check(lang + ' two emoji: the status says so', q.$('fg-status').textContent === firstOnly[lang] + '🚀', q.$('fg-status').textContent);
+    q.input('fg-emoji-input', '⚡');
+    check(lang + ' one emoji: no notice', q.$('fg-status').textContent === '', q.$('fg-status').textContent);
+  }
 }
 
 // v2 generate contract: all original legacy/package and lifecycle assertions remain above.
