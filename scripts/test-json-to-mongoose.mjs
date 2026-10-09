@@ -669,7 +669,11 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
       same(tag+' members: status names the keys that only replace a member',st.includes(String(labels[lang].msgMembers).replace('{keys}','model, set')),true);
       same(tag+' members: a breaking key turns the status amber',w.get(cfg.status).className,'jtm-status warn');
       w.input('{"get":"g"}');w.advance(300);
-      same(tag+' members: a reserved name that breaks a document is named in both notices',[w.get(cfg.status).textContent.includes(String(labels[lang].msgReserved).replace('{keys}','get')),w.get(cfg.status).textContent.includes(String(labels[lang].msgBreaks).replace('{keys}','get')),w.get(cfg.status).className],[true,true,'jtm-status warn']);
+      // S2-10f review S2: get and toObject are reserved and also break a document; the status names them once, in the
+      // breaking group (before, both notices named them with different consequences).
+      same(tag+' members: a reserved name that breaks a document is named once, in the breaking notice',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne+' '+String(labels[lang].msgBreaks).replace('{keys}','get'),'jtm-status warn']);
+      w.input('{"get":1,"save":2,"toObject":3}');w.advance(300);
+      same(tag+' members: other reserved names stay in the reserved notice',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne+' '+String(labels[lang].msgReserved).replace('{keys}','save')+' '+String(labels[lang].msgBreaks).replace('{keys}','get, toObject'),'jtm-status warn']);
       w.input('{"model":"m"}');w.advance(300);
       same(tag+' members: a member name alone keeps the success colour',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne+' '+String(labels[lang].msgMembers).replace('{keys}','model'),'jtm-status success']);
       w.input('{"b":1}');w.advance(300);same(tag+' members: no notice without such keys',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne,'jtm-status success']);}
