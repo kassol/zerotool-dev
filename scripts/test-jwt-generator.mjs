@@ -316,6 +316,18 @@ for (const lang of ['en','zh','ja','ko']) for (const shellFirst of [false, true]
     eq(tag + ' ' + name + ' erases stale token and copy data', [p.snapshot().token,p.snapshot().display,p.copy()], ['', 'none', null]);
   }
   {
+    const p = await populated(), key = Buffer.from('é'.repeat(40)), b64 = key.toString('base64');
+    p.format('base64'); p.input('jg-secret', '  ' + b64.slice(0, 20) + ' \t ' + b64.slice(20) + '  '); p.advance(500); await p.waitJobs(2); await p.finish(1);
+    const s = p.snapshot();
+    check(tag + ' Base64 mode ignores leading, trailing and inner whitespace in the secret', verifies(s.token, 'HS256', key, s.inputs[0], s.inputs[1]) && s.errors[2] === '');
+  }
+  {
+    const p = await populated(), key = 'demo-secret-at-least-32-bytes-long';
+    p.input('jg-secret', ' ' + key); p.advance(500); await p.waitJobs(2); await p.finish(1);
+    const s = p.snapshot();
+    check(tag + ' UTF-8 mode keeps a leading space in the key bytes', verifies(s.token, 'HS256', Buffer.from(' ' + key), s.inputs[0], s.inputs[1]) && !verifies(s.token, 'HS256', Buffer.from(key), s.inputs[0], s.inputs[1]));
+  }
+  {
     const p = await populated(); p.input('jg-payload','{"name": "\\ud83d\\ude00 ok 😀"}'); p.advance(500); await p.waitJobs(2); await p.finish(1);
     const s = p.snapshot();
     check(tag + ' JSON escapes and a paired emoji still sign', verifies(s.token, 'HS256', Buffer.from('your-256-bit-secret'), s.inputs[0], s.inputs[1]) && s.errors[1] === '');
@@ -566,9 +578,21 @@ const addedExample = {
   ja: '<p>例えば、選択を HS256 のままヘッダーの alg を HS512 に変えると、エラーを表示して以前のトークンを消します。</p>',
   ko: '<p>예를 들어 HS256을 선택한 상태에서 헤더의 alg를 HS512로 바꾸면 오류를 표시하고 이전 토큰을 지웁니다.</p>',
 };
+// The secret field is a single-line <input type="text">, so it cannot hold a line break; Base64 mode
+// strips all whitespace before decoding. The Limits sentence must say exactly that in every language.
+const SECRET_WHITESPACE_LIMIT = {
+  en: 'In UTF-8 mode the secret is used exactly as typed, so a leading or trailing space changes the signature; Base64 mode ignores whitespace.',
+  zh: 'UTF-8 模式下密钥按原样使用，首尾多一个空格签名就会不同；Base64 模式忽略空白。',
+  ja: 'UTF-8 モードでは秘密鍵を入力どおりに使うため、前後に空白が 1 つ増えるだけで署名が変わります（Base64 モードでは空白を無視します）。',
+  ko: 'UTF-8 모드에서는 비밀 키를 입력한 그대로 쓰므로 앞뒤 공백 하나로도 서명이 달라집니다(Base64 모드에서는 공백을 무시합니다).',
+};
+const SECRET_LINE_BREAK_CLAIM = {
+  en: /secret[^<]{0,80}line break/i, zh: /密钥[^<]{0,40}换行/, ja: /秘密鍵[^<]{0,40}改行/, ko: /비밀 키[^<]{0,40}줄바꿈/,
+};
 const markup = source.replace(/^---[\s\S]*?---\s*/, '').split('<script')[0];
 const css = source.split('<style>')[1].split('</style>')[0];
 check('v2 direct root is a flex column with zero minimum height', /^<div class="jg-wrap">/.test(markup) && /\.jg-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0/.test(css));
+check('secret field is a single-line text input', /<input id="jg-secret"[^>]*type="text"/.test(markup) && !/<textarea[^>]*id="jg-secret"/.test(markup));
 check('v2 registry is convert', /'jwt-generator':\s*'convert'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
 check('v2 toolbar precedes reserved status and two panes', markup.indexOf('jg-toolbar') < markup.indexOf('id="jg-status"') && markup.indexOf('id="jg-status"') < markup.indexOf('jg-panels zt-io'));
 check('v2 shared two panes', [...markup.matchAll(/zt-io-pane/g)].length === 2 && markup.includes('class="jg-panels zt-io"'));
@@ -609,6 +633,8 @@ for (const lang of ['en','zh','ja','ko']) {
   check(lang+' v2 steps are plain text with current labels',steps.every(step=>!/[<>]|\]\(|\*\*|`/.test(step))&&['algorithm','headerLabel','payloadLabel','secretLabel','copy'].every(key=>steps.join(' ').includes(PAGE_STRINGS[lang][key])));
   check(lang+' v2 usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx));
   check(lang+' v2 new example is present',mdx.includes(addedExample[lang]));
+  check(lang+' limits: secret whitespace rule is scoped to UTF-8 mode and Base64 ignores whitespace',mdx.includes(SECRET_WHITESPACE_LIMIT[lang]));
+  check(lang+' limits: no claim that a line break can be typed into the secret',!SECRET_LINE_BREAK_CLAIM[lang].test(mdx));
   eq(lang+' MDX content contract and worked examples', contractProblems('jwt-generator', lang, JWT_ANNOTATIONS), '');
   const p=pageVM(lang,false),details=p.get('jg-header-details'),pane=p.get('jg-result-pane');
   eq(lang+' v2 Header initially closed and pending token empty',[details.open,pane.getAttribute('data-empty')],[false,'true']);
