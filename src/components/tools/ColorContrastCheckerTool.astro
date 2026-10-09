@@ -701,15 +701,35 @@ const L = STRINGS[lang] ?? STRINGS.en;
       if (!hex) return;
       resetCopyFeedback();
       var request = copyRequest;
+      var text = hex.toUpperCase();
+      /* Hidden textarea + execCommand('copy') when the Clipboard API is missing, throws or
+         rejects (as in color-palette-generator); focus returns to the Copy button. */
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        copyFix.focus();
+        if (!ok) throw new Error('copy fallback failed');
+      }
       var task;
       try {
         task = navigator.clipboard
-          ? navigator.clipboard.writeText(hex.toUpperCase())
+          ? navigator.clipboard.writeText(text)
           : Promise.reject(new Error('clipboard unavailable'));
       } catch (error) {
         task = Promise.reject(error);
       }
-      task.then(function () {
+      task.catch(function (error) {
+        if (request !== copyRequest) throw error;
+        fallback();
+      }).then(function () {
         if (request !== copyRequest) return;
         copyFix.textContent = COPIED;
         copyFix.classList.add('copied');

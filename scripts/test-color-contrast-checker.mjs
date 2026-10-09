@@ -317,6 +317,32 @@ for (const lang of langKeys) {
 }
 check('hex inputs do not truncate pasted text at 7 characters', !/maxlength="7"/.test(source));
 
+// Copy falls back to a hidden textarea + execCommand('copy') when the Clipboard API is
+// missing, throws or rejects (as in color-palette-generator); only when both fail does the
+// failure message show. Focus returns to the Copy button after the fallback.
+for (const lang of langKeys) {
+  const L = labels[lang];
+  for (const mode of ['missing', 'throw', 'reject']) {
+    const p = open(lang); failing(p); p.fallbackOK(true);
+    if (mode !== 'reject') p.mode(mode);
+    const hex = p.el('ccc-copy-fixed').dataset.hex.toUpperCase();
+    p.click('ccc-copy-fixed');
+    if (mode === 'reject') p.jobs.at(-1).reject(Error('denied'));
+    await settle();
+    eq(lang + ' ' + mode + ': fallback copies the suggested HEX', p.fallback.at(-1), hex);
+    eq(lang + ' ' + mode + ': fallback success shows Copied', p.text('ccc-copy-fixed'), L.copied);
+    eq(lang + ' ' + mode + ': no failure message', p.text('ccc-copy-status'), '');
+    eq(lang + ' ' + mode + ': focus back on Copy', p.doc.activeElement?.id, 'ccc-copy-fixed');
+    eq(lang + ' ' + mode + ': fallback success is tracked once', p.tracks.filter(t => t[1] === 'copy_fix').length, 1);
+  }
+  {
+    const p = open(lang); failing(p); p.fallbackOK(false); p.mode('missing');
+    p.click('ccc-copy-fixed'); await settle();
+    eq(lang + ' both fail: failure message', p.text('ccc-copy-status'), L.copyFailed);
+    eq(lang + ' both fail: nothing tracked', p.tracks.filter(t => t[1] === 'copy_fix').length, 0);
+  }
+}
+
 // ---------- worked examples on the four tool pages ----------
 // {/* contrast-check: {"fg":"…","bg":"…"} */} types the two colours into the real page (page language of
 // the MDX file). The displayed ratio (e.g. `4.10 : 1`) must appear as code after the annotation (up to
