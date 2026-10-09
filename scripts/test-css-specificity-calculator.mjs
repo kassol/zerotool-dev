@@ -137,25 +137,31 @@ eq('non-ASCII class', spec('.größe'), [0, 1, 0]);
 eq('& counts as zero', spec('& .x'), [0, 1, 0]);
 eq('combinators without spaces', spec('a>b~c+d'), [0, 0, 4]);
 
-// ---------- CSS Syntax 3 §4.2: whitespace and name characters (S2-9, approved engine change) ----------
-// Whitespace is only space, tab, LF, CR and FF (input preprocessing turns CR / FF into LF);
-// a non-ASCII ident code point is one of the listed ranges, which leave out U+0080-U+00B6,
-// U+00D7, U+00F7, U+3000 and others. Chrome 152 still accepts `div\u3000p` (ego-browser,
-// 2026-10-09) and reads it as one type selector; the tool follows the specification.
-eq('U+3000 between names is an error', spec('div\u3000p'), 'error: Unexpected "\u3000" (position 4)');
-eq('U+3000 at the start of a compound is an error', spec('div >\u3000p'), 'error: Unexpected "\u3000" (position 6)');
-eq('U+00A0 is an error', spec('div\u00a0p'), 'error: Unexpected "\u00a0" (position 4)');
-eq('U+00D7 (×) is an error', spec('.a\u00d7b'), 'error: Unexpected "\u00d7" (position 3)');
-eq('tab is a descendant combinator', spec('div\tp'), [0, 0, 2]);
-eq('form feed is a descendant combinator', spec('div\fp'), [0, 0, 2]);
+// ---------- whitespace and name characters as Chrome reads them (S2-9) ----------
+// Chrome 152 (ego-browser on the local preview, 2026-10-09; querySelector, CSS.supports and the
+// selectorText of an inserted rule) treats only space, tab, LF, CR and FF as whitespace and every
+// other code point at or above U+0080 as part of a name: div<U+3000>p, div<U+00A0>p, div<U+2003>p,
+// div<U+0085>p, div<U+1680>p, div<U+FEFF>p and .a<U+00D7>b are one compound each and none matches a
+// p inside a div; "div <U+3000>" keeps the trailing U+3000 as a second type selector. CSS Syntax 3
+// §4.2 leaves U+3000, U+00A0 and U+2000-U+200B out of the name characters, so by the specification
+// these selectors are invalid; the tool follows Chrome and the card says so (see the note test).
+const CHROME_152 = [
+  ['div\u3000p', [0, 0, 1]], ['div\u00a0p', [0, 0, 1]], ['div\u2003p', [0, 0, 1]],
+  ['div\u0085p', [0, 0, 1]], ['div\u1680p', [0, 0, 1]], ['div\ufeffp', [0, 0, 1]],
+  ['.a\u3000b', [0, 1, 0]], ['.a\u00d7b', [0, 1, 0]],
+  ['div \u3000p', [0, 0, 2]], ['div >\u3000p', [0, 0, 2]], ['div \u3000', [0, 0, 2]],
+  ['div\tp', [0, 0, 2]], ['div\fp', [0, 0, 2]],
+];
+for (const [sel, want] of CHROME_152) eq('Chrome 152: ' + JSON.stringify(sel), spec(sel), want);
+eq('split keeps a trailing U+3000 (Chrome: second type selector)', E.splitSelectorList('div \u3000, a'), ['div \u3000', 'a']);
+eq('split keeps a leading U+3000', E.splitSelectorList('\u3000p'), ['\u3000p']);
+eq('split still trims ASCII whitespace', E.splitSelectorList('\t a \n, b '), ['a', 'b']);
 eq('U+00B7 is a name character', spec('.a\u00b7b'), [0, 1, 0]);
-eq('U+3001 is a name character', spec('.a\u3001b'), [0, 1, 0]);
 eq('Hangul class', spec('.\uba54\uc778 .\ubc84\ud2bc'), [0, 2, 0]);
 eq('full-width forms are name characters', spec('\uff03main\uff0enav'), [0, 0, 1]);
 eq('astral name characters', spec('.\u{1F600}x'), [0, 1, 0]);
-eq('ZWJ inside a name', spec('.a\u200db'), [0, 1, 0]);
 eq('hex escape followed by a tab', spec('#\\31\t23'), [1, 0, 0]);
-eq('hex escape followed by U+3000 is not consumed', spec('#\\31\u300023'), 'error: Unexpected "\u3000" (position 5)');
+eq('hex escape followed by U+3000 keeps U+3000 in the name', spec('#\\31\u300023'), [1, 0, 0]);
 
 // ---------- syntax errors ----------
 for (const bad of ['a(', ':is(.a', '[x', '#', 'a)b', '.', ':', '[x="a]']) {
@@ -306,9 +312,10 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
 }
 process.removeListener('unhandledRejection',onUnhandled);
 const protectedEngine=source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
-// S2-9 (2026-10-09, approved): isIdentChar follows CSS Syntax 3 §4.2 and whitespace is space, tab, LF, CR, FF.
-eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),8285);
-eq('engine exact original SHA256',createHash('sha256').update(protectedEngine).digest('hex'),'9d5533d68c1d88355886584d717b5f3b6c43ce612fe3c1806e518a06ba59a2a5');
+// S2-9 (2026-10-09, approved): whitespace is space, tab, LF, CR, FF as in Chrome 152 (token start, after a hex
+// escape, and when a list item is trimmed); every code point at or above U+0080 stays a name character.
+eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),7723);
+eq('engine exact original SHA256',createHash('sha256').update(protectedEngine).digest('hex'),'40cc782019ac247135f960bf8ca971c03d46ecdf55414fa5993b962bcf21fa97');
 
 
 // ---------- v2 page layout ----------
@@ -319,8 +326,8 @@ check('v2 Astro compilation diagnostics',!compiled.diagnostics.some(d=>d.severit
 let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){moduleError=String(e);}eq('v2 generated module parses',moduleError,'');
 const css=compiled.css.join('\n'),scope=css.match(/data-astro-cid-[\w-]+/)[0];
 const hash=v=>createHash('sha256').update(v).digest('hex');
-// Hash updated by S2-9 (2026-10-09): localized error messages, the full-width note, analytics on change / copy success, and the copy fallback.
-eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'313e73669dbd61f515d888f71323e870c6eec76d1fabf4bdde0795284fe6f013');
+// Hash updated by S2-9 (2026-10-09): localized error messages, the full-width and space-like notes, analytics on change / copy success, and the copy fallback.
+eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'b48e750c2fafc383813ed9c3f89d54e53530b1540e6f8d85d136613822afeb8e');
 check('v2 direct flex root',/^<div class="csc-wrap">/.test(markupTemplate)&&/\.csc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
 check('v2 input before reserved hint/status before results',markupTemplate.indexOf('id="csc-input"')<markupTemplate.indexOf('csc-hint csc-status')&&markupTemplate.indexOf('csc-hint csc-status')<markupTemplate.indexOf('class="csc-result-section"'));
 check('v2 fixed hint/status height',/\.csc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css));
@@ -341,7 +348,7 @@ for(const lang of ['en','zh','ja','ko']){
  const {T,TIPS,CLIENT_T}=locale(lang),p=page(lang,'shared-after');
  eq('v2 '+lang+' four tip keys',Object.keys(TIPS),['input','parsing','results','copy']);
  check('v2 '+lang+' plain bounded tips',Object.values(TIPS).every(t=>typeof t==='string'&&t.length>0&&t.length<=280&&!/[<>\n]|https?:/.test(t)));
- eq('v2 '+lang+' only eleven client keys',Object.keys(CLIENT_T),['id','cls','elem','noInput','copyBtn','copied','copyFailed','note','invalid','errors','fullwidth']);
+ eq('v2 '+lang+' only twelve client keys',Object.keys(CLIENT_T),['id','cls','elem','noInput','copyBtn','copied','copyFailed','note','invalid','errors','fullwidth','spaceAsName']);
  check('v2 '+lang+' serialized strings omit tips',Object.values(TIPS).every(text=>!JSON.stringify(CLIENT_T).includes(text)));
  eq('v2 '+lang+' SSR label',p.document.querySelector('label[for="csc-input"]').textContent,T.inputLabel);
  eq('v2 '+lang+' SSR placeholder',p.input.placeholder,T.inputPlaceholder);
@@ -417,13 +424,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ' localized error for ' + JSON.stringify(sel), p.result.querySelector('.csc-error-msg')?.textContent, want);
     for (const v of Object.values(vars)) check(lang + ' error keeps ' + v + ' for ' + JSON.stringify(sel), want.includes(v), want);
   }
-  // An invisible character (U+3000, U+00A0) is named by its code point instead of being quoted.
-  for (const [sel, code, pos] of [['div\u3000p', 'U+3000', '4'], ['div\u00a0p', 'U+00A0', '4']]) {
-    const p = page(lang, 'shared-after'); p.type(sel); p.tick(200);
-    const tmpl = C.errors?.unexpectedSpace ?? '';
-    check(lang + ' unexpectedSpace template has {code} and {pos}', tmpl.includes('{code}') && tmpl.includes('{pos}'), tmpl);
-    eq(lang + ' localized error names ' + code, p.result.querySelector('.csc-error-msg')?.textContent, t.invalid.replace('{msg}', tmpl.replace('{code}', code).replace('{pos}', pos)));
-  }
   if (lang === 'en') {
     // en keeps the engine wording
     const p = page('en', 'shared-after'); p.type('a)b'); p.tick(200);
@@ -439,6 +439,19 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' full-width tuple as CSS reads it', p.tuples(), ['(0, 0, 1)', '(1, 1, 0)', '(0, 1, 0)']);
   const notes = Array.from(p.result.querySelectorAll('.csc-result-card')).map(c => c.querySelector('.csc-warn')?.textContent ?? '');
   eq(lang + ' full-width note only on the card with full-width syntax', notes, [C.fullwidth, '', '']);
+}
+// A space-like character that Chrome reads as part of a name (U+3000, U+00A0, U+2003 …, outside
+// quotes) gets a note on the card with its code point: not a descendant combinator, and the
+// CSS Syntax 3 / Chrome difference.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const C = locale(lang).CLIENT_T;
+  check(lang + ' spaceAsName note has {code}', typeof C.spaceAsName === 'string' && C.spaceAsName.includes('{code}'), String(C.spaceAsName));
+  for (const [sel, code, tuple] of [['div\u3000p', 'U+3000', '(0, 0, 1)'], ['div\u00a0p', 'U+00A0', '(0, 0, 1)'], ['div\u2003p', 'U+2003', '(0, 0, 1)'], ['div \u3000p', 'U+3000', '(0, 0, 2)']]) {
+    const p = page(lang, 'shared-after'); p.type(sel + ', [title="a\u3000b"]'); p.tick(200);
+    eq(lang + ' ' + code + ' tuple as Chrome reads it: ' + JSON.stringify(sel), p.tuples(), [tuple, '(0, 1, 0)']);
+    const notes = Array.from(p.result.querySelectorAll('.csc-result-card')).map(c => Array.from(c.querySelectorAll('.csc-warn')).map(n => n.textContent));
+    eq(lang + ' ' + code + ' note only on the card with it outside quotes', notes, [[(C.spaceAsName ?? '').replace('{code}', code)], []]);
+  }
 }
 // Analytics: `calc` once per committed change (change event), not after every 200 ms pause;
 // `copy` only after a successful copy.

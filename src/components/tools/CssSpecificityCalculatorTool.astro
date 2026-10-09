@@ -27,9 +27,9 @@ const STRINGS = {
       escapeEnd: 'Escape at end of input (position {pos})',
       expectedName: 'Expected a name (position {pos})',
       emptyArgument: 'Empty argument (position {pos})',
-      emptySelector: 'Empty selector (position {pos})',
-      unexpectedSpace: '{code} at position {pos} is not a CSS space and cannot be part of a name'
+      emptySelector: 'Empty selector (position {pos})'
     },
+    spaceAsName: 'This selector contains {code}, a character that looks like a space. Chrome reads it as part of a name, not as a descendant combinator: placed between div and p it makes one type selector, which does not match a p inside a div. CSS Syntax 3 does not list it as a name character, so by the specification the selector is invalid; the tuple counts it the way Chrome does.',
     fullwidth: 'This selector contains full-width characters such as ＃ ． ： ［. CSS does not read them as # . : [ but as part of a name, and the tuple counts them that way. Type them in half-width form.'
   },
   zh: {
@@ -55,9 +55,9 @@ const STRINGS = {
       escapeEnd: '反斜杠后面没有字符（第 {pos} 个字符）',
       expectedName: '第 {pos} 个字符处缺少名称',
       emptyArgument: '括号里没有选择器（第 {pos} 个字符）',
-      emptySelector: '选择器为空（第 {pos} 个字符）',
-      unexpectedSpace: '第 {pos} 个字符是 {code}，它在 CSS 里不是空格，也不能用在名称里'
+      emptySelector: '选择器为空（第 {pos} 个字符）'
     },
+    spaceAsName: '选择器里有 {code}（全角空格一类看起来像空格的字符）。Chrome 把它当作名称的一部分，不当作后代组合：放在 div 和 p 之间时，整体是一个元素选择器，匹配不到 div 里的 p。CSS Syntax 3 的名称字符不含它，按规范这个选择器无效；元组按 Chrome 的读法计算。',
     fullwidth: '选择器里有全角字符（如 ＃ ． ： ［）。CSS 不把它们当作 # . : [，而是当作名称的一部分，元组也按这种读法计算。请改用半角字符。'
   },
   ja: {
@@ -83,9 +83,9 @@ const STRINGS = {
       escapeEnd: 'バックスラッシュの後に文字がありません（{pos} 文字目）',
       expectedName: '{pos} 文字目に名前がありません',
       emptyArgument: '括弧の中にセレクターがありません（{pos} 文字目）',
-      emptySelector: 'セレクターが空です（{pos} 文字目）',
-      unexpectedSpace: '{pos} 文字目の {code} は CSS の空白ではなく、名前にも使えません'
+      emptySelector: 'セレクターが空です（{pos} 文字目）'
     },
+    spaceAsName: 'セレクターに {code}（全角スペースなど空白に見える文字）が含まれています。Chrome はこれを名前の一部として読み、子孫結合子にはしません。div と p の間にあると全体で 1 つの要素セレクターになり、div の中の p には一致しません。CSS Syntax 3 では名前に使える文字に含まれないため、仕様上このセレクターは無効です。タプルは Chrome の読み方で数えています。',
     fullwidth: 'セレクターに全角文字（＃ ． ： ［ など）が含まれています。CSS はこれらを # . : [ としてではなく名前の一部として読み、タプルもその読み方で数えています。半角で入力してください。'
   },
   ko: {
@@ -111,16 +111,16 @@ const STRINGS = {
       escapeEnd: '백슬래시 뒤에 문자가 없습니다({pos}번째 문자)',
       expectedName: '{pos}번째 문자에 이름이 없습니다',
       emptyArgument: '괄호 안에 선택자가 없습니다({pos}번째 문자)',
-      emptySelector: '선택자가 비어 있습니다({pos}번째 문자)',
-      unexpectedSpace: '{pos}번째 문자({code})는 CSS의 공백이 아니며 이름에도 쓸 수 없는 문자입니다'
+      emptySelector: '선택자가 비어 있습니다({pos}번째 문자)'
     },
+    spaceAsName: '선택자에 {code} 문자(전각 공백처럼 공백으로 보이는 문자)가 들어 있습니다. Chrome은 이 문자를 이름의 일부로 읽고 자손 결합자로 보지 않습니다. div와 p 사이에 있으면 전체가 요소 선택자 하나가 되어 div 안의 p와 일치하지 않습니다. CSS Syntax 3의 이름 문자에는 포함되지 않으므로 사양상 이 선택자는 무효이며, 튜플은 Chrome의 읽기 방식으로 셉니다.',
     fullwidth: '선택자에 전각 문자(＃ ． ： ［ 등)가 들어 있습니다. CSS는 이를 # . : [ 기호로 읽지 않고 이름의 일부로 읽으며, 튜플도 그렇게 셉니다. 반각 문자로 입력하세요.'
   }
 };
 // strings:end
 const T = STRINGS[lang] || STRINGS.en;
 const TIPS = T.tips;
-const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyBtn: T.copyBtn, copied: T.copied, copyFailed: T.copyFailed, note: T.note, invalid: T.invalid, errors: T.errors, fullwidth: T.fullwidth };
+const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyBtn: T.copyBtn, copied: T.copied, copyFailed: T.copyFailed, note: T.note, invalid: T.invalid, errors: T.errors, fullwidth: T.fullwidth, spaceAsName: T.spaceAsName };
 ---
 <div class="csc-wrap">
   <div class="csc-field">
@@ -211,8 +211,8 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
         var parts = [], depth = 0, start = 0;
         function push(end) {
           var raw = text.slice(start, end);
-          var lead = raw.length - raw.replace(/^\s+/, '').length;
-          var trimmed = raw.trim();
+          var lead = raw.length - raw.replace(/^[ \t\n\r\f]+/, '').length;
+          var trimmed = raw.replace(/^[ \t\n\r\f]+|[ \t\n\r\f]+$/g, '');
           if (trimmed) parts.push({ text: trimmed, start: start + lead });
         }
         for (var i = 0; i < text.length; i++) {
@@ -235,15 +235,8 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
         return splitRanges(text).map(function (p) { return p.text; });
       }
 
-      /* Name characters per CSS Syntax 3 §4.2 (non-ASCII ident code point). Surrogate halves
-         belong to code points at or above U+10000, which are name characters. */
       function isIdentChar(ch) {
-        if (/[A-Za-z0-9_-]/.test(ch)) return true;
-        var c = ch.charCodeAt(0);
-        return c === 0xB7 || (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) || (c >= 0xF8 && c <= 0x37D)
-          || (c >= 0x37F && c <= 0x1FFF) || c === 0x200C || c === 0x200D || c === 0x203F || c === 0x2040
-          || (c >= 0x2070 && c <= 0x218F) || (c >= 0x2C00 && c <= 0x2FEF) || (c >= 0x3001 && c <= 0xD7FF)
-          || (c >= 0xD800 && c <= 0xDFFF) || (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFFD);
+        return /[A-Za-z0-9_-]/.test(ch) || ch.charCodeAt(0) >= 0x80;
       }
       /* Read a CSS identifier (with escapes) at i; return the index after it. */
       function readIdent(s, i) {
@@ -348,7 +341,7 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
 
       /* Specificity of one selector (no top-level commas). */
       function specificity(sel) {
-        if (!sel.trim()) throw cssError('Empty selector', 0);
+        if (!/[^ \t\n\r\f]/.test(sel)) throw cssError('Empty selector', 0);
         return complexSpec(sel, 0);
       }
       /* ── engine:end ── */
@@ -368,12 +361,6 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
           var m = ERROR_PATTERNS[i][0].exec(msg);
           if (!m) continue;
           var hasChar = ERROR_PATTERNS[i][2];
-          if (ERROR_PATTERNS[i][1] === 'unexpected' && /\s/.test(m[1])) {
-            var code = m[1].charCodeAt(0).toString(16).toUpperCase();
-            return t.errors.unexpectedSpace
-              .replace('{code}', 'U+' + ('0000' + code).slice(-4))
-              .replace('{pos}', m[2]);
-          }
           return t.errors[ERROR_PATTERNS[i][1]]
             .replace('{char}', hasChar ? m[1] : '')
             .replace('{pos}', hasChar ? m[2] : m[1]);
@@ -385,6 +372,21 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
          ident code point), so ＃ｍａｉｎ is one type selector. Text in quoted strings is not checked. */
       function hasFullwidth(sel) {
         return /[\uFF01-\uFF5E]/.test(sel.replace(/"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'/g, ''));
+      }
+
+      /* Characters that look like a space but are not CSS whitespace: Chrome 152 reads them as part
+         of a name (div<U+3000>p is one type selector), while CSS Syntax 3 §4.2 leaves them out of the
+         name characters. Returns the first one outside quoted strings as U+XXXX, or ''. */
+      function spaceLike(sel) {
+        var m = /[\u0085\u00A0\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/.exec(sel.replace(/"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'/g, ''));
+        return m ? 'U+' + ('0000' + m[0].charCodeAt(0).toString(16).toUpperCase()).slice(-4) : '';
+      }
+      function notes(sel) {
+        var html = '';
+        if (hasFullwidth(sel)) html += '<p class="csc-warn">' + escHtml(t.fullwidth) + '</p>';
+        var code = spaceLike(sel);
+        if (code) html += '<p class="csc-warn">' + escHtml(t.spaceAsName.replace('{code}', code)) + '</p>';
+        return html;
       }
 
       function escHtml(str) {
@@ -423,7 +425,7 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
             html += '<div class="csc-result-card csc-result-error">';
             html += '<code class="csc-selector">' + escHtml(item.sel) + '</code>';
             html += '<p class="csc-error-msg">' + escHtml(t.invalid.replace('{msg}', localizeError(item.error))) + '</p>';
-            if (hasFullwidth(item.sel)) html += '<p class="csc-warn">' + escHtml(t.fullwidth) + '</p>';
+            html += notes(item.sel);
             html += '</div>';
             return;
           }
@@ -435,7 +437,7 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
           html += '<code class="csc-selector">' + escHtml(item.sel) + '</code>';
           html += '<span class="csc-tuple">' + tupleStr + '</span>';
           html += '</div>';
-          if (hasFullwidth(item.sel)) html += '<p class="csc-warn">' + escHtml(t.fullwidth) + '</p>';
+          html += notes(item.sel);
 
           // Breakdown badges
           html += '<div class="csc-badges">';
