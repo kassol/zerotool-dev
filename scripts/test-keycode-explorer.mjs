@@ -282,6 +282,9 @@ for (const lang of ['en', 'ja']) for (const [name, { steps, commits }] of Object
   // A browser that still sends input after compositionend (inputType insertFromComposition) must not capture twice.
   field.value = commits.at(-1); field.dispatch('input', { isComposing: false, inputType: 'insertFromComposition', data: commits.at(-1) });
   eq(lang + ' ' + name + ' late insertFromComposition is not captured again', [p.get('kce-pad-count').textContent, field.value], [String(commits.length), '']);
+  // Review S2-9 part 2 S4: an older event order sends insertCompositionText (isComposing false) after compositionend.
+  field.value = commits.at(-1); field.dispatch('input', { isComposing: false, inputType: 'insertCompositionText', data: commits.at(-1) });
+  eq(lang + ' ' + name + ' late insertCompositionText is not captured again', [p.get('kce-pad-count').textContent, field.value], [String(commits.length), '']);
 }
 {
   const p = pageVM('en'); p.tick(60);
@@ -340,7 +343,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 eq('v2 compiled module parses',moduleError,'');
 const style=compiled.css.join('\n');
 // S2-9b (2026-10-09): updated for the statistics and copy-fallback fixes tested above.
-eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'7f51621b3bfe09fa9bb32f3d9aa30fedc0289163d69bfaf73bab9a090b912c6a');
+eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'b1bc9f526aa32f4f1774bd034a5a037e1da6b8a3c95532e36a50a3ddda0292af');
 eq('v2 analyze registry',/['"]keycode-explorer['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('v2 outermost tool root',/^<div class="kce-wrap">/.test(source.split('\n---\n')[1].trim()),true);
 eq('v2 no runtime i18n',source.includes('data-i18n'),false);
