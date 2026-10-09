@@ -21,7 +21,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { loadPage } from './astro-page-harness.mjs';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, reportContract, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/KeycodeExplorerTool.astro'), 'utf8');
@@ -46,7 +46,7 @@ function runCapture(text) {
   const shown = {};
   const fields = new Proxy({}, { get: (_, k) => k });
   const env = {
-    capturedCount: 0,
+    capturedCount: 0, mobileTracked: false,
     padCount: {}, padKey: {}, padGlyph: { classList: { add() {}, remove() {} } },
     fields,
     setText: (k, v) => { shown[k] = v; },
@@ -227,10 +227,110 @@ for(const lang of ['en','zh','ja','ko']){
  for(const completion of ['resolve','reject']){const r=ready(lang),rb=r.get('kce-copy');rb.click();rb.click();r.clipboard[1].resolve();await settle();const current=getState(r);r.clipboard[0][completion](Error('old'));await settle();eq(tag+'/same-output stale '+completion,getState(r),current);}
  const r=ready(lang),rb=r.get('kce-copy');rb.click();r.get('kce-pad').focus();const focused=r.get('kce-status').textContent;r.clipboard[0].resolve();await settle();eq(tag+' success preserves newer focus status',r.get('kce-status').textContent,focused);
 }
+// ---------- statistics and copy fallback (S2-9b) ----------
+// Every captured key used to send a `keydown` event, and Copy sent `copy_snippet` even when the
+// copy failed. Now one `keydown` per capture run (page load or Clear), and copy_snippet only on a
+// successful copy. A rejected Clipboard API write now tries the textarea fallback.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = pageVM(lang); p.tick(60);
+  for (const k of ['a', 'b', 'c']) p.key('kce-pad', { key: k, code: 'Key' + k.toUpperCase() });
+  eq(lang + ' three keys send one keydown event', p.tracks.filter(a => a[1] === 'keydown').length, 1);
+  p.get('kce-clear').click(); p.key('kce-pad', { key: 'd', code: 'KeyD' });
+  eq(lang + ' a key after Clear sends one more', p.tracks.filter(a => a[1] === 'keydown').length, 2);
+  p.get('kce-copy').click(); p.clipboard[0].reject(Error('denied')); await settle();
+  eq(lang + ' failed copy is not tracked', p.tracks.filter(a => a[1] === 'copy_snippet').length, 0);
+  p.get('kce-copy').click(); p.clipboard[1].resolve(); await settle();
+  eq(lang + ' successful copy is tracked once', p.tracks.filter(a => a[1] === 'copy_snippet').length, 1);
+  const q = ready(lang); q.fallback(true); q.get('kce-copy').click(); q.clipboard[0].reject(Error('denied')); await settle();
+  eq(lang + ' rejected write falls back to the textarea copy', [q.execCalls.length, q.execCalls[0]?.text, q.get('kce-copy').textContent], [1, enterSnippet, keyLabels(lang).copied]);
+  eq(lang + ' fallback success is tracked', q.tracks.filter(a => a[1] === 'copy_snippet').length, 1);
+  // The touch fallback field sent mobile_input for every character (engine change approved 2026-10-09).
+  const m = pageVM(lang); m.tick(60);
+  for (const ch of ['a', 'b', 'c']) m.input('kce-mobile-input', ch);
+  eq(lang + ' three fallback characters send one mobile_input event', m.tracks.filter(a => a[1] === 'mobile_input').length, 1);
+  m.get('kce-clear').click(); m.input('kce-mobile-input', 'd');
+  eq(lang + ' a fallback character after Clear sends one more', m.tracks.filter(a => a[1] === 'mobile_input').length, 2);
+  eq(lang + ' fallback still shows every character', [m.get('kce-pad-count').textContent, m.get('kce-key').textContent], ['1', '"d"']);
+}
+
+// ---------- input method composition in the touch fallback field (S2-9b) ----------
+// The field was cleared and captured on every input event, also while an input method was
+// composing (UI Events: isComposing is true between compositionstart and compositionend), and
+// maxlength="1" (HTML: measured in code units) can stop a committed "東京" or an emoji. Now
+// composing input events are ignored and the committed text (CompositionEvent.data) is captured
+// once at compositionend. Simulated event sequences; not tested on an Android device.
+const COMPOSITIONS = {
+  'ja kana-kanji': { steps: ['と', 'とう', 'とうき', 'とうきょ', 'とうきょう', '東京'], commits: ['東京'] },
+  'ko hangul syllables': { steps: ['ㅎ', '하', '한', '|', '그', '글'], commits: ['한', '글'] },
+  'zh pinyin': { steps: ['b', 'bei', "bei'j", "bei'jing", '北京'], commits: ['北京'] },
+};
+for (const lang of ['en', 'ja']) for (const [name, { steps, commits }] of Object.entries(COMPOSITIONS)) {
+  const p = pageVM(lang); p.tick(60);
+  const field = p.get('kce-mobile-input'); let committed = 0, broken = '';
+  field.dispatch('compositionstart', { data: '' });
+  for (const s of steps) {
+    if (s === '|') { field.dispatch('compositionend', { data: commits[committed++] }); field.dispatch('compositionstart', { data: '' }); field.value = ''; continue; }
+    field.value = s; field.dispatch('input', { isComposing: true, inputType: 'insertCompositionText', data: s });
+    if (field.value !== s && !broken) broken = 'field cleared at ' + s;
+    if (p.get('kce-pad-count').textContent !== String(committed) && !broken) broken = 'captured while composing at ' + s;
+  }
+  field.dispatch('compositionend', { data: commits[committed++] });
+  eq(lang + ' ' + name + ' composing text is not touched', broken, '');
+  eq(lang + ' ' + name + ' each committed string is captured once', [p.get('kce-pad-count').textContent, p.get('kce-key').textContent, p.get('kce-history').textContent], [String(commits.length), JSON.stringify(commits.at(-1)), [...commits].reverse().join('')]);
+  eq(lang + ' ' + name + ' field is empty after the commit', field.value, '');
+  eq(lang + ' ' + name + ' one mobile_input event', p.tracks.filter(a => a[1] === 'mobile_input').length, 1);
+  // A browser that still sends input after compositionend (inputType insertFromComposition) must not capture twice.
+  field.value = commits.at(-1); field.dispatch('input', { isComposing: false, inputType: 'insertFromComposition', data: commits.at(-1) });
+  eq(lang + ' ' + name + ' late insertFromComposition is not captured again', [p.get('kce-pad-count').textContent, field.value], [String(commits.length), '']);
+  // Review S2-9 part 2 S4: an older event order sends insertCompositionText (isComposing false) after compositionend.
+  field.value = commits.at(-1); field.dispatch('input', { isComposing: false, inputType: 'insertCompositionText', data: commits.at(-1) });
+  eq(lang + ' ' + name + ' late insertCompositionText is not captured again', [p.get('kce-pad-count').textContent, field.value], [String(commits.length), '']);
+}
+{
+  const p = pageVM('en'); p.tick(60);
+  p.get('kce-mobile-input').value = 'x'; p.get('kce-mobile-input').dispatch('input', { isComposing: true, data: 'x' });
+  eq('an input event marked isComposing is ignored even without compositionstart', [p.get('kce-pad-count').textContent, p.get('kce-mobile-input').value], ['0', 'x']);
+  p.input('kce-mobile-input', '😀');
+  eq('a plain input after that is still captured', p.get('kce-key').textContent, '"😀"');
+}
+check('fallback field has no maxlength', !/id="kce-mobile-input"[\s\S]*?maxlength/.test(source.slice(source.indexOf('id="kce-mobile-input"'), source.indexOf('/>', source.indexOf('id="kce-mobile-input"')))));
+
+// ---------- worked examples on the tool pages (kce-check) ----------
+// {/* kce-check: {"event": {key, code, keyCode, ctrlKey, ...}} */} The event is dispatched on the
+// real capture pad. Every code block after the note must be either a field table, whose lines are
+// `<label> <value>` with a label from the Event properties grid and the value exactly as the page
+// shows it, or the generated snippet, verbatim. At least one block is required.
+const FIELD_IDS = { 'event.key': 'kce-key', 'event.code': 'kce-code', keyCode: 'kce-keycode', which: 'kce-which', charCode: 'kce-charcode', location: 'kce-location', repeat: 'kce-repeat', isComposing: 'kce-composing' };
+function verifyKey({ spec, after, lang }) {
+  if (!spec || typeof spec.event !== 'object') return 'kce-check needs "event"';
+  const p = pageVM(lang); p.tick(60); p.key('kce-pad', spec.event);
+  const blocks = fencedBlocks(after);
+  if (!blocks.length) return 'no code block after the note';
+  for (const b of blocks) {
+    const lines = b.text.split('\n');
+    const rows = lines.map((l) => l.match(/^(event\.key|event\.code|keyCode|which|charCode|location|repeat|isComposing)\s+(.+)$/));
+    if (rows.every(Boolean)) {
+      for (const [, label, value] of rows) {
+        const shown = p.get(FIELD_IDS[label]).textContent;
+        if (shown !== value.trim()) return label + ' shows ' + shown + ', page says ' + value.trim();
+      }
+    } else if (b.text !== p.get('kce-snippet-code').textContent) {
+      return 'block is neither a field table nor the snippet: ' + JSON.stringify(b.text);
+    }
+  }
+  return null;
+}
+reportContract(check, 'keycode-explorer', { limits: true, requireFaqIds: true, annotations: [{ tag: 'kce-check', min: 2, verify: verifyKey }] });
+check('kce-check rejects a wrong field', verifyKey({ spec: { event: { key: 'a', code: 'KeyQ' } }, after: '```\nevent.code  "KeyA"\n```', lang: 'en' }) !== null);
+check('kce-check rejects a wrong snippet', verifyKey({ spec: { event: { key: 'a', code: 'KeyQ' } }, after: "```js\ndocument.addEventListener('keydown', (e) => {\n  if (e.key === 'q') {\n    // your handler\n  }\n});\n```", lang: 'en' }) !== null);
+check('kce-check accepts the right field', verifyKey({ spec: { event: { key: 'a', code: 'KeyQ' } }, after: '```\nevent.key   "a"\nevent.code  "KeyQ"\n```', lang: 'en' }) === null);
+
 // Preserve both the marked mobile engine and unmarked physical-key/snippet code.
 for(const [name,startMark,endMark,bytes,hash,includeEnd] of [
- ['mobile','      /* ── engine:start ── */','      /* ── engine:end ── */',1412,'eb1b5b7b2298a4583d41e5f2cc74245484ddd3b9c18713100c417f97a0996a10',true],
- ['physical key capture','      function captureFromKeyboardEvent','      /* ── engine:start ── */',990,'03e25ebdd2b5e5e0b4b0e5c49f8e5d52e404bb3e82006f38aa5cbc1248f5da94',false],
+// S2-9b (2026-10-09, approved engine change): mobile_input is sent once per capture run.
+ ['mobile','      /* ── engine:start ── */','      /* ── engine:end ── */',1486,'76a8237c14d44b283fbd153a8a8b10196826ef79ce83f04da5499321c15aa413',true],
+ // S2-9b (2026-10-09): the keydown statistics event is sent once per capture run, not per key.
+ ['physical key capture','      function captureFromKeyboardEvent','      /* ── engine:start ── */',1134,'8b9d72e437ba3f35a301405597009d9661bff6376e4fa1801720a334d9cade5f',false],
  ['snippet/modifiers/history','      function setText','      function captureFromKeyboardEvent',2234,'36ac5072cbfee1018f281161c90ac1f06d13392b4056176c443c2f34b5bb345d',false],
 ]){const block=source.slice(source.indexOf(startMark),source.indexOf(endMark)+(includeEnd?endMark.length:0));eq(name+' protected bytes',Buffer.byteLength(block),bytes);eq(name+' protected SHA',createHash('sha256').update(block).digest('hex'),hash);}
 
@@ -242,7 +342,8 @@ eq('v2 Astro diagnostics',compiled.diagnostics.filter(d=>d.severity===1),[]);
 let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(error){moduleError=String(error);}
 eq('v2 compiled module parses',moduleError,'');
 const style=compiled.css.join('\n');
-eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'e09bf3d1c327e6e8f1c65d8b36afbd684d829a51ea84cf75befbcf7024ecad8f');
+// S2-9b (2026-10-09): updated for the statistics and copy-fallback fixes tested above.
+eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'b1bc9f526aa32f4f1774bd034a5a037e1da6b8a3c95532e36a50a3ddda0292af');
 eq('v2 analyze registry',/['"]keycode-explorer['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('v2 outermost tool root',/^<div class="kce-wrap">/.test(source.split('\n---\n')[1].trim()),true);
 eq('v2 no runtime i18n',source.includes('data-i18n'),false);

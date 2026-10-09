@@ -158,7 +158,6 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         id="kce-mobile-input"
         class="tool-input"
         type="text"
-        maxlength="1"
         autocapitalize="none"
         autocomplete="off"
         spellcheck="false"
@@ -277,6 +276,8 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
 
       var capturedCount = 0;
       var history = [];
+      var keyTracked = false;
+      var mobileTracked = false;
 
       var copyRevision = 0;
       var copyTimer = null;
@@ -389,7 +390,11 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         buildSnippet(e);
         pushHistory(formatKeyLabel(e.key));
 
-        window.trackTool && window.trackTool('keycode-explorer', 'keydown');
+        // One event per capture run (page load or Clear), not one per key.
+        if (!keyTracked) {
+          keyTracked = true;
+          window.trackTool && window.trackTool('keycode-explorer', 'keydown');
+        }
       }
 
       /* ── engine:start ── */
@@ -422,7 +427,10 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
 
         mobileInput.value = '';
 
-        window.trackTool && window.trackTool('keycode-explorer', 'mobile_input');
+        if (!mobileTracked) {
+          mobileTracked = true;
+          window.trackTool && window.trackTool('keycode-explorer', 'mobile_input');
+        }
       }
       /* ── engine:end ── */
 
@@ -447,7 +455,25 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         setStatus(t.padBlurred, 'none');
       });
 
+      // Input method composition (UI Events: isComposing is true from compositionstart to
+      // compositionend). Leave the composing text alone and capture the committed string
+      // (CompositionEvent.data) once at compositionend.
+      var composing = false;
+      mobileInput.addEventListener('compositionstart', function () { composing = true; });
+      mobileInput.addEventListener('compositionend', function (e) {
+        composing = false;
+        invalidateCopy();
+        captureFromMobileInput({ data: e.data });
+      });
       mobileInput.addEventListener('input', function (e) {
+        if (composing || e.isComposing) return;
+        // UI Events says no input event follows compositionend; if a browser sends one (also
+        // insertCompositionText with isComposing false, an older order), the commit was
+        // already captured.
+        if (e.inputType === 'insertFromComposition' || e.inputType === 'deleteCompositionText' || e.inputType === 'insertCompositionText') {
+          mobileInput.value = '';
+          return;
+        }
         invalidateCopy();
         captureFromMobileInput(e);
       });
@@ -458,6 +484,7 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         clearTimeout(copyTimer);
         function done() {
           if (revision !== copyRevision) return;
+          window.trackTool && window.trackTool('keycode-explorer', 'copy_snippet');
           copyBtn.classList.add('copied');
           copyBtn.textContent = t.copied;
           if (copyError && statusEl.textContent === t.copyFailed) setStatus('', '');
@@ -474,23 +501,24 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
           setStatus(t.copyFailed, 'error');
           copyError = true;
         }
-        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-          try { navigator.clipboard.writeText(text).then(done, failed); }
-          catch (err) { failed(); }
-        } else {
+        function fallback() {
+          if (revision !== copyRevision) return;
           var ta = document.createElement('textarea');
           ta.value = text;
           document.body.appendChild(ta);
           ta.select();
-          try {
-            if (document.execCommand('copy')) done();
-            else failed();
-          } catch (err) {
-            failed();
-          }
+          var copied = false;
+          try { copied = document.execCommand('copy'); } catch (err) {}
           document.body.removeChild(ta);
+          if (copied) done();
+          else failed();
         }
-        window.trackTool && window.trackTool('keycode-explorer', 'copy_snippet');
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          try { navigator.clipboard.writeText(text).then(done, fallback); }
+          catch (err) { fallback(); }
+        } else {
+          fallback();
+        }
       });
 
       function clearAll() {
@@ -498,6 +526,8 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         history = [];
         renderHistory();
         capturedCount = 0;
+        keyTracked = false;
+        mobileTracked = false;
         padCount.textContent = '0';
         padKey.textContent = '';
         Object.keys(fields).forEach(function (k) { setText(fields[k], null); });

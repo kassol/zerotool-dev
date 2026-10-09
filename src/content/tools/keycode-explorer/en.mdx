@@ -8,16 +8,24 @@ steps:
   - "Use Copy to copy the complete Ready-to-copy JS snippet, which matches event.key and the captured modifiers."
   - "Recent keys shows the last eight captures. Clear resets fields, count, modifiers, history and the snippet."
 faqItems:
-  - question: "What's the difference between event.key, event.code, and keyCode?"
-    answer: "event.key is the printable character or named key value after the keyboard layout is applied (so the 'A' key on a Dvorak layout reports event.key = 'a' even though the physical position is different). event.code is the physical key position on a standard US QWERTY layout (KeyA, Digit1, ArrowUp) and stays constant regardless of layout. keyCode is the legacy numeric code (e.g. 65 for A) — it's deprecated but still emitted for backward compatibility."
-  - question: "Why are keyCode, which, and charCode deprecated?"
-    answer: "All three are inconsistent across browsers and ambiguous for non-Latin layouts. Modern code should use event.key (semantic) or event.code (physical). The MDN spec marks keyCode and charCode as 'deprecated, not recommended for production' but mainstream browsers still emit them for compatibility — this tool shows the raw values so you can audit legacy code."
-  - question: "How do I check for Shift / Ctrl / Alt / Meta modifier keys?"
-    answer: "Read e.shiftKey, e.ctrlKey, e.altKey, and e.metaKey directly on the KeyboardEvent — each is a boolean reflecting whether the modifier was held while the key fired. Note: e.metaKey is the Windows / Command key. The generated snippet on this page composes the right modifier clause for you."
-  - question: "Does this work on mobile?"
-    answer: "Physical keyboard events differ across mobile platforms — many on-screen keyboards do not emit keydown for individual characters and you only get an 'input' event with the resulting string. This tool is built for desktop browsers where physical key signals are reliable. A mobile fallback input is available for partial readout, but for full event property inspection use a desktop browser. By design, no mobile-keydown emulation is attempted."
-  - question: "Is any keypress data sent to a server?"
-    answer: "No. All event handling runs in your browser via the KeyboardEvent API. Nothing about which key you pressed leaves your device. Open DevTools → Network to confirm."
+  - id: difference
+    question: "What's the difference between event.key, event.code, and keyCode?"
+    answer: "event.key is the character or named key value after the keyboard layout and Shift are applied. event.code names the physical key by its position on a US keyboard (KeyA, Digit1, ArrowUp) and does not change with the layout: the key labelled a on a French AZERTY keyboard reports key \"a\" and code \"KeyQ\". keyCode is the legacy number (65 for A); browsers still send it for old code."
+  - id: deprecated
+    question: "Why are keyCode, which, and charCode deprecated?"
+    answer: "The UI Events specification calls them obsolete, does not define their values, and says authors should use the key attribute instead of charCode and keyCode. Their values differ between browsers, operating systems and keyboard layouts. MDN marks them as deprecated. Browsers still send them for compatibility, and this tool shows the raw values so you can check old handlers."
+  - id: modifiers
+    question: "How do I check for Shift / Ctrl / Alt / Meta modifier keys?"
+    answer: "Read e.shiftKey, e.ctrlKey, e.altKey and e.metaKey on the KeyboardEvent; each is a boolean. e.metaKey is the Windows key on Windows and the Command key on a Mac. The generated snippet adds a clause for each modifier that was held. With Shift held, event.key for a letter is the upper-case letter, so Ctrl+Shift+K gives key \"K\", not \"k\"."
+  - id: ime
+    question: "Why does keyCode show 229, and what is isComposing?"
+    answer: "While an input method (for Japanese, Chinese or Korean, for example) is composing text, isComposing is true. The non-normative legacy section of UI Events says keyCode is 229 on keydown when an input method is processing the key. A handler for Enter should return early in that case, or the Enter that confirms the text will also submit the form. The capture pad is a focusable area, not a text field, so whether an input method composes there depends on your system; test composition in your own input field. The touch fallback field waits for compositionend and reads the committed text then (checked with simulated composition events and Chromium's input-method emulation on a desktop, not on an Android device)."
+  - id: mobile
+    question: "Does this work on mobile?"
+    answer: "Partly. Many on-screen keyboards do not send a keydown for each character; you get an input event with the typed text. On touch devices the tool shows a fallback field below the pad: it shows the typed text as key and leaves code, keyCode, which and charCode empty. While an input method is composing (Japanese kana-kanji conversion, a Korean syllable, Chinese pinyin), the field leaves the text alone and shows the committed text, such as 東京, when composition ends. Some on-screen keyboards also compose Latin text word by word; then a whole word, such as hello, appears at once. This handling was checked with simulated composition events and Chromium's input-method emulation on a desktop, not on an Android device. For full keydown details, use a desktop browser with a physical keyboard."
+  - id: privacy
+    question: "Is any keypress data sent to a server?"
+    answer: "No key values are sent. Events are read in your browser and nothing is saved. The page loads Google Analytics, which records the tool name and an action: keydown once, for the first key after the page loads or after Clear; copy_snippet after a successful copy; and mobile_input once, for the first text entered in the touch fallback field after the page loads or after Clear. It does not record which key you pressed."
 ---
 
 <h2>event.key vs event.code vs keyCode</h2>
@@ -33,13 +41,75 @@ faqItems:
 | which | No | No — deprecated | 65 |
 | charCode | No | No — deprecated, 0 on keydown | 0 |
 
+<h2>Worked examples</h2>
+
+<p>Each block below is what the pad shows for the given key: a few rows from Event properties, then the Ready-to-copy JS snippet.</p>
+
+<h3>Ctrl+Shift+K for a command palette</h3>
+
+<p>With Shift held, the key value of a letter is the upper-case letter. The <a href="https://www.w3.org/TR/uievents-key/" target="_blank" rel="noopener">UI Events KeyboardEvent key Values</a> spec gives the same example: the key labelled Q is <code>"q"</code>, or <code>"Q"</code> with Shift. A handler that compares with <code>'k'</code> never fires.</p>
+
+{/* kce-check: {"event":{"key":"K","code":"KeyK","keyCode":75,"which":75,"ctrlKey":true,"shiftKey":true}} */}
+
+```
+event.key   "K"
+event.code  "KeyK"
+keyCode     75
+```
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'K' && e.ctrlKey && e.shiftKey) {
+    // your handler
+  }
+});
+```
+
+<h3>The letter a on a French AZERTY keyboard</h3>
+
+<p>The key labelled a on AZERTY sits where q is on a US keyboard, so its code is <code>"KeyQ"</code> (from the code values spec). The snippet compares <code>key</code>, so it matches the letter the user typed.</p>
+
+{/* kce-check: {"event":{"key":"a","code":"KeyQ"}} */}
+
+```
+event.key   "a"
+event.code  "KeyQ"
+```
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'a') {
+    // your handler
+  }
+});
+```
+
+<h3>The space bar</h3>
+
+<p>Recent keys and the big label on the pad show <code>Space</code>, but the key value is a single space character, and the code is <code>"Space"</code>. Copy the snippet rather than typing <code>'Space'</code> by hand.</p>
+
+{/* kce-check: {"event":{"key":" ","code":"Space","keyCode":32,"which":32}} */}
+
+```
+event.key   " "
+event.code  "Space"
+```
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.key === ' ') {
+    // your handler
+  }
+});
+```
+
 <h2>Common Use Cases</h2>
 <ul>
   <li><strong>Debugging keyboard handlers</strong> — paste the exact event.key into your conditionals to fix typos.</li>
   <li><strong>Building game controls</strong> — prefer event.code so WASD works on AZERTY layouts.</li>
   <li><strong>Wiring command palettes</strong> — combine event.key with e.ctrlKey / e.metaKey checks.</li>
   <li><strong>Auditing legacy code</strong> — read keyCode / which to map old handlers to event.key.</li>
-  <li><strong>Identifying composing state</strong> — e.isComposing = true means an IME is active, so single-key handlers should bail out.</li>
+  <li><strong>Identifying composing state</strong> — e.isComposing = true means an IME is active, so single-key handlers should return early.</li>
 </ul>
 
 <h2>Preventing Default Behavior</h2>
@@ -52,8 +122,7 @@ faqItems:
 <h2>Keyboard Layouts and Input Methods</h2>
 <p>
   <code>event.code</code> names the physical key after its position on a US keyboard. The <a href="https://www.w3.org/TR/uievents-code/" target="_blank" rel="noopener">UI Events KeyboardEvent code Values</a> spec
-  lists <code>"KeyQ"</code> as the key labelled q on a US keyboard and a on a French AZERTY keyboard. So on
-  AZERTY, typing a gives <code>key: "a"</code> and <code>code: "KeyQ"</code>. Use <code>code</code> for
+  lists <code>"KeyQ"</code> as the key labelled q on a US keyboard and a on a French AZERTY keyboard. Use <code>code</code> for
   shortcuts that depend on where a key is (WASD movement) and <code>key</code> for shortcuts that depend on
   what the key types (Ctrl+Z for undo).
 </p>
@@ -61,16 +130,27 @@ faqItems:
   Japanese and Korean keyboards add keys that a US keyboard does not have: <code>"IntlYen"</code>,
   <code>"IntlRo"</code>, <code>"NonConvert"</code>, <code>"Convert"</code> and <code>"KanaMode"</code> on
   a Japanese 106/109 keyboard, and <code>"Lang1"</code> (한/영) and <code>"Lang2"</code> (한자) on a Korean
-  keyboard. Press them on the pad to see the values your browser reports.
+  keyboard. On a Mac Japanese keyboard, the same two codes are the かな and 英数 keys. Press them on the pad to see the values your browser reports.
 </p>
 <p>
-  While an input method is composing text, <a href="https://www.w3.org/TR/uievents/#determine-keydown-keyup-keyCode" target="_blank" rel="noopener">UI Events</a> sets <code>keyCode</code> to 229 on keydown and the
-  event has <code>isComposing: true</code>. Check <code>isComposing</code> before you act on Enter, or the
-  key that confirms a Japanese or Chinese conversion will also submit your form.
+  While an input method is composing text, <code>isComposing</code> is <code>true</code>, and the non-normative legacy section of <a href="https://www.w3.org/TR/uievents/#determine-keydown-keyup-keyCode" target="_blank" rel="noopener">UI Events</a> says <code>keyCode</code> is 229 on keydown. Check <code>isComposing</code> before you act on Enter, or the
+  key that confirms a Japanese or Chinese conversion will also submit your form. The snippet from this tool does not add that check; add it yourself:
 </p>
+
+```js
+input.addEventListener('keydown', (e) => {
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === 'Enter') {
+    // submit
+  }
+});
+```
 
 <h2>Limits</h2>
 <ul>
-  <li>On phones and tablets, on-screen keyboards usually send an <code>input</code> event with the typed text instead of a full keydown. The fallback field below the pad shows that text as <code>key</code> and leaves <code>code</code>, <code>keyCode</code>, <code>which</code> and <code>charCode</code> empty, because the input event does not say which key was used.</li>
+  <li>On phones and tablets, on-screen keyboards usually send an <code>input</code> event with the typed text instead of a full keydown. The fallback field below the pad shows that text as <code>key</code> and leaves <code>code</code>, <code>keyCode</code>, <code>which</code> and <code>charCode</code> empty, because the input event does not say which key was used. While an input method is composing, the field ignores the intermediate input events and reads the committed text at <code>compositionend</code>. This was checked with simulated composition events (Japanese, Korean, Chinese pinyin) and with Chromium's input-method emulation on a desktop, not on an Android device.</li>
   <li>The browser and operating system keep some shortcuts, such as Ctrl+W or Cmd+Q, so the page never sees them.</li>
+  <li>The pad is a focusable area, not a text field. Whether an input method composes text there depends on the operating system and the input method, so the pad may not show <code>keyCode</code> 229.</li>
+  <li>The snippet compares <code>event.key</code> and the held modifiers only. It does not use <code>event.code</code> and does not check <code>isComposing</code>.</li>
+  <li>Only keydown is captured; keyup and keypress are not shown. Recent keys keeps the last eight captures.</li>
 </ul>

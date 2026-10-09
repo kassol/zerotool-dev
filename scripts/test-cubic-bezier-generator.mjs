@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import yaml from 'js-yaml';
 import { createRequire } from 'node:module';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, reportContract, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 const { transform } = createRequire(import.meta.resolve('astro/package.json'))('@astrojs/compiler');
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -199,6 +199,145 @@ check('failed repeat copy removes previous success feedback', !retry.get('cbg-co
 retry.ctx.navigator.clipboard.writeText = () => Promise.resolve();
 retry.get('cbg-copy').click(); await Promise.resolve();
 check('successful retry clears stale failure feedback', retry.get('cbg-copy').classList.contains('copied') && !retry.get('cbg-status').className.includes('error'));
+
+// ---------- values reach the output unchanged (S2-9b) ----------
+// The output used to round to two decimals, so the Back preset (0.265) and three-decimal design
+// tokens such as Ant Design motionEaseInOut (0.645, 0.045, 0.355, 1) were copied as other curves.
+const CSS = (a) => 'transition-timing-function: cubic-bezier(' + a + ');';
+{
+  const p = loadCubicPage();
+  p.wrap.querySelectorAll('.cbg-preset').find(b => b.dataset.p === '0.68,-0.55,0.265,1.55').click();
+  eq('Back preset copies its own value', p.get('cbg-output-text').textContent, CSS('0.68, -0.55, 0.265, 1.55'));
+  eq('Back preset field shows 0.265', p.get('cbg-p2x').value, '0.265');
+  for (const [id, v] of [['cbg-p1x', '0.645'], ['cbg-p1y', '0.045'], ['cbg-p2x', '0.355'], ['cbg-p2y', '1']]) p.type(id, v);
+  eq('three-decimal values are kept', p.get('cbg-output-text').textContent, CSS('0.645, 0.045, 0.355, 1'));
+  p.type('cbg-p1x', '0.12345');
+  eq('finer values round to three decimals', p.get('cbg-output-text').textContent, CSS('0.123, 0.045, 0.355, 1'));
+}
+// Typing used to rewrite the field on every keystroke: "0.0" became "0", so the next "5" made 5.
+{
+  const p = loadCubicPage();
+  p.type('cbg-p1y', '0.0');
+  eq('field being typed in is not rewritten', p.get('cbg-p1y').value, '0.0');
+  p.type('cbg-p1y', '0.05');
+  eq('typing 0.05 gives 0.05', p.get('cbg-output-text').textContent, CSS('0.42, 0.05, 0.58, 1'));
+  p.get('cbg-p1y').value = '0.050'; p.get('cbg-p1y').dispatch('input'); p.get('cbg-p1y').dispatch('change');
+  eq('field is normalized on change', p.get('cbg-p1y').value, '0.05');
+  p.type('cbg-p2x', '1.5');
+  eq('x above 1 is clamped in the output', p.get('cbg-output-text').textContent, CSS('0.42, 0.05, 1, 1'));
+  check('x clamp shows the x warning', p.get('cbg-status').textContent === p.L.rangeWarn);
+  p.get('cbg-p2x').dispatch('change');
+  eq('clamped x is written back on change', p.get('cbg-p2x').value, '1');
+}
+// y outside -2..2 was clamped with no message.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = loadCubicPage({ lang });
+  p.type('cbg-p1y', '2.05');
+  eq(lang + ' y above 2 is clamped', p.get('cbg-output-text').textContent, CSS('0.42, 2, 0.58, 1'));
+  check(lang + ' y clamp shows a localized warning', typeof p.L.rangeWarnY === 'string' && p.L.rangeWarnY.length > 0 && p.get('cbg-status').textContent === p.L.rangeWarnY && p.get('cbg-status').className.includes('error'), p.get('cbg-status').textContent);
+  p.get('cbg-p1y').dispatch('change');
+  eq(lang + ' clamped y is written back on change', p.get('cbg-p1y').value, '2');
+}
+// Duration below 100 or above 10000 was used as 100 / 10000 while the field kept the typed number.
+{
+  const p = loadCubicPage();
+  p.type('cbg-duration', '50'); p.get('cbg-duration').dispatch('change');
+  eq('duration below 100 is written back as 100', p.get('cbg-duration').value, '100');
+  p.type('cbg-duration', '20000'); p.get('cbg-duration').dispatch('change');
+  eq('duration above 10000 is written back as 10000', p.get('cbg-duration').value, '10000');
+  p.type('cbg-duration', ''); p.get('cbg-duration').dispatch('change');
+  eq('empty duration is written back as 100', p.get('cbg-duration').value, '100');
+}
+// A rejected Clipboard API write used to report failure without trying the textarea fallback.
+for (const exec of [true, false]) {
+  const p = loadCubicPage({ clipboardMode: 'reject', execResult: exec });
+  p.get('cbg-copy').click(); await Promise.resolve(); await Promise.resolve();
+  check('rejected clipboard write falls back to execCommand (' + exec + ')', p.get('cbg-copy').classList.contains('copied') === exec && p.get('cbg-status').className.includes('error') === !exec);
+  check('fallback tracks only a successful copy (' + exec + ')', p.tracks.some(a => a[1] === 'copy_css') === exec);
+}
+
+// Review S2-9 part 2: the fields keep three decimals, so their step must not snap to 0.01, and the
+// copy statistic must name the format that was copied, not the one selected when the copy resolves.
+for (const id of ['cbg-p1x', 'cbg-p1y', 'cbg-p2x', 'cbg-p2y']) {
+  check(id + ' step allows three decimals', new RegExp('id="' + id + '"[^>]*step="0\\.001"').test(source));
+}
+{
+  const p = loadCubicPage();
+  p.get('cbg-copy').click();
+  p.wrap.querySelectorAll('.cbg-format').find((b) => b.dataset.fmt === 'scss').click();
+  await Promise.resolve(); await Promise.resolve();
+  eq('copy statistic names the copied format', p.tracks.map((a) => a[1]), ['copy_css']);
+}
+
+// ---------- worked examples on the tool pages (cbg-check) ----------
+// {/* cbg-check: {"preset": "<data-p>" | "p": ["x1","y1","x2","y2"], "format": "css|scss|tailwind",
+//   "x": ["0.25", ...], "warn": "x|y", "noOutput": true} */}
+// The page is driven like a user: click the preset (or type the four fields in order), click the
+// format. The copied output must appear verbatim as a code block after the note (unless noOutput).
+// For each x, the line `x = <x> → y = <y>` must appear in a code block, where y is the page's own
+// progressAt() for the copied numbers, to three decimals; an independent bisection solver must
+// agree within 0.0005. `warn` requires the page's localized clamp message in the text after the note.
+const pageScript = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const { progressAt } = new Function(pageScript.slice(pageScript.indexOf('function bezierAxis'), pageScript.indexOf('// ── Coord helpers')) + '; return { progressAt };')();
+function exactY(x, p) {
+  const ax = (t, a, b) => 3 * (1 - t) ** 2 * t * a + 3 * (1 - t) * t * t * b + t ** 3;
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 100; i++) { const m = (lo + hi) / 2; if (ax(m, p[0], p[2]) < x) lo = m; else hi = m; }
+  return ax((lo + hi) / 2, p[1], p[3]);
+}
+function verifyCurve({ spec, after, lang }) {
+  if (!spec || (!spec.preset && !spec.p)) return 'cbg-check needs "preset" or "p"';
+  const page = loadCubicPage({ lang });
+  if (spec.preset) {
+    const btn = page.wrap.querySelectorAll('.cbg-preset').find((b) => b.dataset.p === spec.preset);
+    if (!btn) return 'no preset button with data-p ' + spec.preset;
+    btn.click();
+  } else {
+    ['cbg-p1x', 'cbg-p1y', 'cbg-p2x', 'cbg-p2y'].forEach((id, i) => page.type(id, String(spec.p[i])));
+  }
+  if (spec.format) page.wrap.querySelectorAll('.cbg-format').find((b) => b.dataset.fmt === spec.format).click();
+  const output = page.get('cbg-output-text').textContent;
+  const blocks = fencedBlocks(after).map((b) => b.text);
+  if (!spec.noOutput && !blocks.includes(output)) return 'output not shown as a code block: ' + JSON.stringify(output);
+  if (spec.warn) {
+    const msg = spec.warn === 'y' ? page.L.rangeWarnY : page.L.rangeWarn;
+    if (page.get('cbg-status').textContent !== msg) return 'page shows no ' + spec.warn + ' clamp message';
+    if (!after.includes(msg)) return 'clamp message not quoted: ' + msg;
+  }
+  const nums = output.match(/cubic-bezier\(([^)]*)\)/)[1].split(',').map(Number);
+  for (const x of spec.x ?? []) {
+    const y = progressAt(Number(x), { p1x: nums[0], p1y: nums[1], p2x: nums[2], p2y: nums[3] });
+    if (Math.abs(y - exactY(Number(x), nums)) > 5e-4) return 'page solver differs from bisection at x = ' + x;
+    const line = 'x = ' + x + ' → y = ' + y.toFixed(3);
+    if (!blocks.some((b) => b.split('\n').includes(line))) return 'missing sample line: ' + line;
+  }
+  return null;
+}
+// {/* cbg-maxdiff: {"a": [x1,y1,x2,y2], "b": [...], "x": "0.358", "pp": "2.76"} */} compares two curves
+// over x = 0, 0.001, …, 1 with the bisection solver (the page's progressAt() must agree at that x
+// within 0.0005; its own x error flattens the peak): the largest |y_a − y_b| must be at x (three
+// decimals) and equal pp percentage points (two decimals); both must appear as code after the note.
+function verifyMaxDiff({ spec, after }) {
+  const st = (p) => ({ p1x: p[0], p1y: p[1], p2x: p[2], p2y: p[3] });
+  let best = -1, bx = 0;
+  for (let i = 0; i <= 1000; i++) {
+    const x = i / 1000, d = Math.abs(exactY(x, spec.a) - exactY(x, spec.b));
+    if (d > best) { best = d; bx = x; }
+  }
+  const page = Math.abs(progressAt(bx, st(spec.a)) - progressAt(bx, st(spec.b)));
+  if (Math.abs(page - best) > 5e-4) return 'page solver differs from bisection at the maximum';
+  if (bx.toFixed(3) !== spec.x) return 'largest difference is at x = ' + bx.toFixed(3);
+  if ((best * 100).toFixed(2) !== spec.pp) return 'largest difference is ' + (best * 100).toFixed(2) + ' points';
+  for (const s of ['x = ' + spec.x, spec.pp]) if (!after.includes('<code>' + s + '</code>') && !after.includes('`' + s + '`')) return 'not shown as code: ' + s;
+  return null;
+}
+reportContract(check, 'cubic-bezier-generator', { limits: true, requireFaqIds: true, annotations: [{ tag: 'cbg-check', min: 2, verify: verifyCurve }, { tag: 'cbg-maxdiff', verify: verifyMaxDiff }] });
+check('cbg-maxdiff rejects a wrong position', verifyMaxDiff({ spec: { a: [0.4, 0, 0.23, 1], b: [0.4, 0, 0.2, 1], x: '0.5', pp: '2.76' }, after: '<code>x = 0.5</code> <code>2.76</code>' }) !== null);
+check('cbg-maxdiff accepts the right maximum', verifyMaxDiff({ spec: { a: [0.4, 0, 0.23, 1], b: [0.4, 0, 0.2, 1], x: '0.358', pp: '2.76' }, after: '<code>x = 0.358</code> <code>2.76</code>' }) === null);
+// The verifier itself fails on wrong text.
+check('cbg-check rejects a wrong output', verifyCurve({ spec: { preset: '0.2,0,0,1' }, after: '```css\ntransition-timing-function: cubic-bezier(0.2, 0, 0, 0.9);\n```', lang: 'en' }) !== null);
+check('cbg-check rejects a wrong sample', verifyCurve({ spec: { preset: '0.2,0,0,1', x: ['0.5'], noOutput: true }, after: '```\nx = 0.5 → y = 0.879\n```', lang: 'en' }) !== null);
+check('cbg-check accepts the right sample', verifyCurve({ spec: { preset: '0.2,0,0,1', x: ['0.5'], noOutput: true }, after: '```\nx = 0.5 → y = 0.878\n```', lang: 'en' }) === null);
 
 // ---------- v2 page layout ----------
 const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
