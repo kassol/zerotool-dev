@@ -756,6 +756,28 @@ const MARKER_INPUTS = [
   }
 }
 
+/* ── PAGE-TEXT-F ── an integer key outside ±(2^53 − 1) converts with its exact decimal digits
+   (0x20000000000002 → 9007199254740994). The type-mapping answers of yaml-json and yaml-toml say
+   so next to the date-key sentence, so "integers outside ±(2^53 − 1)" in the stop lists reads as
+   values. */
+{
+  const { readFileSync } = await import('node:fs');
+  const jsyaml = (await import('js-yaml')).default;
+  const mdx = (tool, lang) => readFileSync(new URL(`../src/content/tools/${tool}/${lang}.mdx`, import.meta.url), 'utf8');
+  const faq = (text, id) => (jsyaml.load(text.slice(4, text.indexOf('\n---\n', 4))).faqItems.find((f) => f.id === id) || {}).answer || '';
+  const KEYS_IN = '9007199254740993: a\n0x20000000000002: b\n-9007199254740993: c';
+  const WANT = ['9007199254740993', '9007199254740994', '-9007199254740993'];
+  expectConverted('PAGE-TEXT-F', 'yaml-json', 'y2j', KEYS_IN, (o) => deep(Object.keys(JSON.parse(o)), WANT), 'integer keys keep their exact decimal digits');
+  expectConverted('PAGE-TEXT-F', 'yaml-toml', 'y2t', KEYS_IN, (o) => deep(Object.keys(tomlParse(o)), WANT), 'integer keys keep their exact decimal digits');
+  const PHRASE = { en: 'an integer used as a key keeps its exact decimal digits', zh: '作键的整数写成精确的十进制数字', ja: 'キーに使った整数は正確な 10 進数の文字列', ko: '키로 쓴 정수는 정확한 10진수 문자열' };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    for (const tool of ['yaml-json', 'yaml-toml']) {
+      const a = faq(mdx(tool, lang), 'type-mapping');
+      check('PAGE-TEXT-F', `${tool} ${lang} type-mapping says an integer key keeps its exact digits`, a.includes(PHRASE[lang]), a);
+    }
+  }
+}
+
 /* ── Summary per finding ── */
 console.log('\nPer finding:');
 for (const [tag, c] of Object.entries(counts)) console.log(`  ${tag}: ${c.pass} passed, ${c.fail} failed`);
