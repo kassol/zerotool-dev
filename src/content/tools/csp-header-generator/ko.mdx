@@ -4,30 +4,52 @@ seoDescription: "지시문, 해시, nonce로부터 Content-Security-Policy 헤�
 steps:
   - "프리셋과 모드를 선택합니다. Report-Only는 HTTP 헤더와 Express 형식을 바꾸며 HTML &lt;meta&gt;는 보고만 모드를 지원하지 않습니다."
   - "지시문 추가에서 항목을 선택하고 + 추가를 누릅니다. 지시문이나 소스는 ×로 제거합니다."
-  - "키워드 및 스킴 칩을 누르거나 호스트·경로를 입력한 뒤 추가나 Enter를 누릅니다. 세미콜론은 거부됩니다."
+  - "키워드 및 스킴 칩을 누르거나 호스트·경로를 입력한 뒤 추가나 Enter를 누릅니다. 공백으로 구분하면 여러 소스가 되고, ASCII가 아닌 문자가 있는 호스트는 punycode로 바뀌며, 세미콜론은 거부됩니다."
   - "인라인 스크립트 / 스타일 해시 계산기를 열고 정확한 내용, 알고리즘과 추가 대상을 정해 계산 후 추가를 누릅니다. 해시 옆 복사는 해당 해시만 복사합니다."
   - "+ nonce로 자리표시자를 넣습니다. 서버가 응답마다 바꾸고 같은 값을 script 태그에 넣어야 합니다."
   - "HTTP 헤더, HTML &lt;meta&gt;, Express (helmet) 또는 Nginx를 선택하고 복사를 누릅니다. 사용 전에 표시된 경고를 확인합니다."
   - "프리셋으로 재설정으로 해당 설정을 복원합니다. Ctrl/⌘+L은 텍스트와 계산된 해시 피드백을 지우며 정책과 선택은 유지합니다."
 faqItems:
-  - question: "Content Security Policy란 무엇인가요?"
-    answer: "CSP는 브라우저에 스크립트, 스타일, 이미지, 폰트, 프레임 등 신뢰할 수 있는 콘텐츠 출처를 알려주는 HTTP 응답 헤더입니다. 출력 인코딩과 함께 사용하면 XSS, 클릭재킹, 데이터 인젝션 공격에 대한 가장 강력한 브라우저 측 방어선이 됩니다."
-  - question: "Enforce와 Report-Only 중 무엇을 먼저 배포해야 하나요?"
-    answer: "항상 `Content-Security-Policy-Report-Only`와 `report-uri`(또는 `report-to`) 엔드포인트로 시작하세요. 1~2주 동안 실제 트래픽의 위반 사례를 수집해 잘못된 부분을 코드에서 수정한 다음, 강제형 `Content-Security-Policy`로 전환합니다."
-  - question: "인라인 스크립트에 'unsafe-inline'이 꼭 필요한가요?"
+  - id: "what-is"
+    question: "Content Security Policy란 무엇인가요?"
+    answer: "CSP는 브라우저에 스크립트, 스타일, 이미지, 폰트, 프레임 등 신뢰할 수 있는 콘텐츠 출처를 알려 주는 HTTP 응답 헤더입니다. 출력 인코딩을 대신하지는 못하고, 주입이 뚫렸을 때 피해를 줄입니다. 예를 들어 맞는 nonce나 해시가 없는 주입 스크립트를 막고, frame-ancestors로 페이지를 iframe에 넣을 수 있는 곳을 제한합니다."
+  - id: "report-only"
+    question: "Enforce와 Report-Only 중 무엇을 먼저 배포해야 하나요?"
+    answer: "`Content-Security-Policy-Report-Only`와 `report-uri`(또는 `report-to`) 엔드포인트로 시작해 실제 트래픽의 위반 보고를 보고 코드를 고친 다음, 강제형 `Content-Security-Policy`로 바꿉니다. `upgrade-insecure-requests`는 Report-Only 헤더에서는 동작하지 않으므로 강제 모드에서 확인하세요."
+  - id: "unsafe-inline"
+    question: "인라인 스크립트에 'unsafe-inline'이 꼭 필요한가요?"
     answer: "가능한 한 피하세요. 최신 CSP는 콘텐츠 기반 해시(`'sha256-...'`, `'sha384-...'`, `'sha512-...'`)와 요청별 nonce(`'nonce-...'`)를 지원합니다. 이 페이지의 해시 계산기로 특정 스니펫에 맞는 해시를 즉시 만들 수 있습니다."
-  - question: "'strict-dynamic'은 어떤 역할을 하나요?"
+  - id: "strict-dynamic"
+    question: "'strict-dynamic'은 어떤 역할을 하나요?"
     answer: "nonce나 해시로 신뢰된 스크립트가 런타임에 다른 스크립트를 모든 CDN 호스트를 나열하지 않고도 로드할 수 있게 합니다. 모던 앱에서 권장되는 패턴이며, 자식 스크립트에 대해 호스트 기반 허용 목록을 무효화하고 일반적인 우회를 차단합니다."
-  - question: "생성된 헤더는 어디에 배포해야 하나요?"
+  - id: "deploy"
+    question: "생성된 헤더는 어디에 배포해야 하나요?"
     answer: "원본 서버에서 `Content-Security-Policy`를 전송하세요(Nginx `add_header`, Apache `Header set`, Cloudflare Transform Rules, Vercel `headers` 등). HTML `<meta http-equiv>` 형태는 정적 호스트용 대안입니다. CSP Level 3에서는 `<meta>` 안의 `frame-ancestors`, `report-uri`, `sandbox`가 무시되므로 도구는 그 탭에서 이들을 뺍니다. `report-to`는 `<meta>`에서도 동작하지만 엔드포인트는 `Reporting-Endpoints` 헤더로 정의합니다."
+  - id: "privacy"
+    question: "만든 정책이 전송되거나 저장되나요?"
+    answer: "입력한 내용은 서버로 보내지 않습니다. 정책, 각 출력, 해시는 페이지 안에서 만들고 해시는 브라우저의 Web Crypto API로 계산합니다. 정책 자체(프리셋, 모드, 두 전송 스위치, 해시를 포함한 모든 지시문과 소스)는 이 브라우저의 localStorage에 저장되어 다음에 열 때 복원됩니다. Ctrl/⌘+L은 텍스트 입력과 계산한 해시를 지우지만 저장된 정책은 남깁니다. 해시 계산기의 텍스트는 저장하지 않습니다. 다른 도구 페이지처럼 Google Analytics와 AdSense를 불러오며, 정책을 바꿀 때마다 도구 이름과 동작만 담은 `generate` 이벤트를 한 번 기록하고 정책 내용은 기록하지 않습니다."
 ---
 
 <h2>Strict CSP 시작 구성</h2>
 <p>Strict 프리셋은 web.dev에서 설명하는 nonce 기반 <a href="https://web.dev/articles/strict-csp" target="_blank" rel="noopener">strict CSP</a>를 따릅니다. HTTP 헤더 탭의 출력은 다음과 같습니다.</p>
+{/* csp-tool: {"preset":"strict","format":"header","warn":["warnNoncePlaceholder"]} */}
 <pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests`}</code></pre>
 <p><code>{"'nonce-{RANDOM}'"}</code>는 자리표시자이며 그대로는 쓸 수 없습니다. 서버가 응답마다 128비트 이상의 새 무작위 값으로 바꾸고, 렌더링하는 각 <code>&lt;script&gt;</code>의 <code>nonce="…"</code>에 같은 값을 써야 합니다. 정책에 자리표시자가 남아 있는 동안 도구는 경고를 표시합니다. 고정된 nonce 하나를 정적 설정에 붙여 넣지 마세요. 한 번 본 사람은 누구나 주입한 스크립트에서 다시 쓸 수 있습니다.</p>
 <p>이전 버전의 이 프리셋은 <code>'self'</code>를 썼지만 자리표시자로 바꿨습니다. <code>'strict-dynamic'</code>이 있으면 CSP Level 3은 일치하는 nonce나 해시가 없는 한 HTML 파서가 삽입한 스크립트를 모두 차단하고, <code>'self'</code>와 호스트 소스는 더 이상 확인하지 않습니다(<a href="https://www.w3.org/TR/CSP3/#strict-dynamic-usage" target="_blank" rel="noopener">CSP3 §8.2</a>). 그래서 <code>script-src 'self' 'strict-dynamic'</code>만으로는 현재 Chrome, Firefox, Safari에서 스크립트가 하나도 실행되지 않으며, 도구는 이제 이 조합에 경고를 띄웁니다. nonce를 설정할 수 없는 정적 빌드 사이트라면 자리표시자를 지우고 해시 계산기로 인라인 스크립트마다 해시를 추가하거나, '중간' 프리셋에서 시작하세요.</p>
 <p><strong>Express (helmet)</strong> 탭은 응답마다 값을 만드는 부분까지 출력합니다. <code>crypto.randomBytes(16).toString('base64')</code>를 <code>res.locals.cspNonce</code>에 저장하는 미들웨어를 추가하고 <code>script-src</code>에 함수를 넘기는데, <a href="https://github.com/helmetjs/helmet#readme" target="_blank" rel="noopener">helmet README</a>에 나오는 방식입니다. 템플릿에서는 이 값을 각 script 태그에 출력해야 합니다. <strong>Nginx</strong> 탭은 자리표시자를 그대로 두고 주석을 붙입니다. Nginx는 애플리케이션이 렌더링하는 HTML에 같은 nonce를 넣을 수 없기 때문입니다.</p>
+
+<h2>카카오 JavaScript SDK를 쓰는 페이지</h2>
+<p>카카오디벨로퍼스 문서의 JavaScript <a href="https://developers.kakao.com/docs/latest/ko/javascript/getting-started" target="_blank" rel="noopener">시작하기</a> 페이지는 <code>https://t1.kakaocdn.net/kakao_js_sdk/</code> 아래의 <code>kakao.min.js</code>를 script 태그로 넣은 뒤, 인라인 스크립트에서 <code>Kakao.init()</code>을 부르는 예제를 보여 줍니다. 이 구성을 CSP에 옮기려면 두 가지가 필요합니다. SDK 파일이 있는 호스트를 허용하는 것과, 인라인 초기화 코드를 해시로 허용하는 것입니다.</p>
+<p>'중간' 프리셋을 고르고 <code>script-src</code>에 <code>https://t1.kakaocdn.net</code>을 넣습니다. 이어서 해시 계산기에 아래 한 줄을 붙여 넣고 '계산 후 추가'를 누릅니다(예제에서는 앱 키를 <code>JAVASCRIPT_KEY</code>로 적었습니다. 실제 키를 넣으면 해시도 바뀝니다).</p>
+<pre><code>{`Kakao.init("JAVASCRIPT_KEY");`}</code></pre>
+{/* csp-tool: {"preset":"moderate","sources":{"script-src":["https://t1.kakaocdn.net"]},"hash":{"text":"Kakao.init(\"JAVASCRIPT_KEY\");"},"format":"header"} */}
+<pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'self' https://t1.kakaocdn.net 'sha256-bP8OujdNYRJwn379Gq4TPz8e1ii8EsssrENxVJsA3kY='; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; upgrade-insecure-requests`}</code></pre>
+<p>해시는 script 태그 사이의 텍스트와 한 글자도 다르지 않아야 합니다. 예제처럼 <code>Kakao.init()</code> 아래에 <code>console.log(Kakao.isInitialized())</code> 같은 줄을 더 두면, 그 줄까지 포함한 전체 텍스트로 다시 계산하세요. SDK가 실행된 뒤 어떤 호스트에 요청을 보내는지는 이 도구가 알 수 없으니, Report-Only로 먼저 배포해 보고서에서 차단될 요청을 확인하세요.</p>
+
+<h2>한글 도메인은 punycode로</h2>
+<p>CSP Level 3 문법에서 호스트 이름에 쓸 수 있는 문자는 ASCII 영문자, 숫자, 하이픈뿐입니다(<a href="https://www.w3.org/TR/CSP3/#framework-directive-source-list" target="_blank" rel="noopener">§2.3.1</a>). 도구에 한글 도메인을 입력하면 브라우저의 URL 해석 규칙대로 <code>xn--</code> 형식으로 바꾸고, 상태 줄에 바꾼 값을 보여 줍니다. Strict 프리셋의 <code>connect-src</code>에 <code>https://한국인터넷진흥원.한국</code>을 넣은 결과입니다.</p>
+{/* csp-tool: {"preset":"strict","sources":{"connect-src":["https://한국인터넷진흥원.한국"]},"format":"header","status":"converted"} */}
+<pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://xn--3e0bx5e6xzftae3gxzpskhile.xn--3e0b707e; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests`}</code></pre>
 
 <h2>흔한 함정</h2>
 <ul>
@@ -47,6 +69,16 @@ faqItems:
 <ul>
   <li><strong>Nginx</strong>: Nginx 탭 내용을 <code>server</code> 블록에 붙여넣고 reload. <code>always</code> 플래그는 오류 응답에도 헤더를 강제합니다.</li>
   <li><strong>Apache</strong>: <code>.htaccess</code>나 <code>httpd.conf</code>에 <code>Header always set Content-Security-Policy "..."</code>를 작성합니다.</li>
-  <li><strong>Express / Node</strong>: helmet 스니펫을 붙여넣고, <code>useDefaults</code>를 <code>false</code>로 설정해 정책이 helmet 기본값과 조용히 병합되지 않도록 하세요.</li>
+  <li><strong>Express / Node</strong>: helmet 스니펫을 붙여 넣습니다. 스니펫에는 이미 <code>useDefaults: false</code>가 들어 있습니다. 지우면 helmet 기본 지시문이 정책에 더해지므로 그대로 두세요.</li>
   <li><strong>Cloudflare Pages / Vercel / Netlify</strong>: HTTP 헤더 형식을 각 플랫폼의 헤더 설정(<code>_headers</code>, <code>vercel.json</code>, <code>netlify.toml</code>)에 붙여넣습니다.</li>
+</ul>
+
+<h2>도구의 한계</h2>
+<ul>
+  <li><strong>정책을 만들 뿐 검증하지는 않습니다.</strong> 사이트에 접속하거나 기존 헤더를 읽지 않으며, 외부 스크립트가 나중에 어떤 호스트를 불러오는지도 알지 못합니다.</li>
+  <li><strong>소스 검사는 최소한입니다.</strong> 세미콜론을 거부하고, 공백으로 여러 소스를 나누고, ASCII가 아닌 호스트를 punycode로 바꾸는 것이 전부입니다. <code>https//cdn.example.com</code> 같은 오타는 그대로 정책에 들어갑니다. 호스트가 아닌 값은 바꾸지 않습니다. <code>trusted-types</code> 정책 이름은 <a href="https://www.w3.org/TR/trusted-types/#trusted-types-csp-directive" target="_blank" rel="noopener">Trusted Types §4.2.2</a>가 허용하는 문자만, <code>sandbox</code> 토큰과 <code>report-to</code> 엔드포인트 이름은 ASCII만 쓸 수 있으며 그렇지 않으면 거부합니다.</li>
+  <li><strong>해시는 글자 그대로입니다.</strong> 브라우저는 스크립트나 스타일 텍스트를 UTF-8로 인코딩한 바이트로 해시를 비교합니다(<a href="https://www.w3.org/TR/CSP3/#match-element-to-source-list" target="_blank" rel="noopener">CSP3 §6.7.3.3</a>). 공백이나 줄바꿈 하나만 달라도 값이 달라집니다.</li>
+  <li><strong>nonce는 서버가 만들어야 합니다.</strong> 도구는 <code>{"'nonce-{RANDOM}'"}</code> 자리표시자만 쓰며, 응답마다 값을 만드는 출력은 Express 탭뿐입니다.</li>
+  <li><strong>더 이상 쓰이지 않는 지시문.</strong> <code>prefetch-src</code>와 <code>navigate-to</code>는 2026년 9월 16일자 CSP3 초안에 없어 선택지에서 뺐습니다. 예전에 저장한 정책에 들어 있으면 페이지를 열 때 지우고 상태 줄에 한 번 알립니다. <code>block-all-mixed-content</code> 스위치는 남겨 두었지만 <a href="https://www.w3.org/TR/mixed-content/#strict-checking" target="_blank" rel="noopener">Mixed Content §6.1</a>에서 더 이상 쓰이지 않는다고 정한 지시문이라, 켜면 출력 아래에 안내를 표시합니다.</li>
+  <li><strong>Report-Only에서 upgrade-insecure-requests는 동작하지 않습니다</strong>(<a href="https://www.w3.org/TR/upgrade-insecure-requests/#delivery" target="_blank" rel="noopener">Upgrade Insecure Requests §3.1</a>). 도구는 Report-Only 헤더에도 그대로 출력하되, 출력 아래에 안내를 표시합니다.</li>
 </ul>

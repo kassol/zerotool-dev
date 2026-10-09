@@ -33,6 +33,7 @@ import { dirname, join } from 'node:path';
 import { randomBytes, createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import { annotations, fencedBlocks, reportContract } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_TEST_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const { parseFragment } = createRequire(join(root, 'package.json'))('parse5');
@@ -136,6 +137,28 @@ check('moderate preset has no nonce warnings', !keys(stateFor('moderate')).some(
   check('meta notes report-to needs Reporting-Endpoints', k.includes('warnReportToMeta'), JSON.stringify(k));
   const header = E.buildOutput(s, 'header', T);
   check('header keeps report-uri and frame-ancestors', header.includes('report-uri /csp') && header.includes("frame-ancestors 'none'"), header);
+}
+
+// ── 3b. Upgrade Insecure Requests §3.1: "Monitoring the upgrade-insecure-requests directive has
+// no effect: the directive is ignored when sent via a Content-Security-Policy-Report-Only header."
+{
+  const find = (st) => E.validatePolicy(st).find((w) => w.key === 'warnUpgradeReportOnly');
+  const hit = find(stateFor('strict', { mode: 'report-only' }));
+  check('report-only with upgrade-insecure-requests shows an info note', hit && hit.level === 'info', JSON.stringify(E.validatePolicy(stateFor('strict', { mode: 'report-only' }))));
+  check('enforce mode has no upgrade note', !find(stateFor('strict')));
+  check('report-only without upgrade-insecure-requests has no upgrade note', !find(stateFor('strict', { mode: 'report-only', upgrade: false })));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) check(lang + ' upgrade note names UIR §3.1', /§3\.1/.test(E.STRINGS[lang].warnUpgradeReportOnly || '') && /upgrade-insecure-requests/.test(E.STRINGS[lang].warnUpgradeReportOnly || ''));
+}
+
+// ── 3c. Mixed Content §6.1: "An earlier version of this specification defined the
+// block-all-mixed-content CSP directive. It is now obsolete, because all mixed content is now
+// blocked if it can't be autoupgraded."
+{
+  const find = (st) => E.validatePolicy(st).find((w) => w.key === 'warnBlockAllMixedObsolete');
+  const hit = find(stateFor('basic', { block: true }));
+  check('block-all-mixed-content switch shows an "obsolete" note', hit && hit.level === 'info');
+  check('no obsolete note when the switch is off', !find(stateFor('basic')));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) check(lang + ' obsolete note names Mixed Content §6.1', /§6\.1/.test(E.STRINGS[lang].warnBlockAllMixedObsolete || '') && /block-all-mixed-content/.test(E.STRINGS[lang].warnBlockAllMixedObsolete || ''));
 }
 
 // ── 4. Express output: per-response nonce through helmet function directives ──
@@ -301,7 +324,7 @@ function renderMarkup(src,lang='en') {
  markup=markup.replace(/([\w-]+)=\{L\.(\w+)\}/g,(_,key,value)=>key+'="'+escape(L[value])+'"');
  return markup.replace(/\{L\.(?:tips\.)?(\w+)\}/g,(m,key)=>escape(m.includes('.tips.')?L.tips[key]:L[key]));
 }
-function page(s,lang='en',order='before'){
+function page(s,lang='en',order='before',persisted=null){
  const docHandlers={},copies=[],digests=[],exec=[],saved=[],cleared=[],tracks=[];let document,now=0,seq=0,selection=null;const timers=new Map();
  const scrollCalls=[];const walk=n=>n.children.flatMap(c=>[c,...walk(c)]);
  function simple(e,selector){let rest=selector;const tag=rest.match(/^[a-z][a-z0-9-]*/i);if(tag){if(e.tagName!==tag[0].toUpperCase())return false;rest=rest.slice(tag[0].length);}for(const m of rest.matchAll(/([.#])([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]/g)){if(m[1]==='#'&&e.id!==m[2]||m[1]==='.'&&!e.classList.contains(m[2]))return false;if(m[3]&&(e.getAttribute(m[3])===null||m[4]!==undefined&&e.getAttribute(m[3])!==m[4]))return false;}return true;}
@@ -322,7 +345,7 @@ function page(s,lang='en',order='before'){
  const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);const markup=renderMarkup(s.source,lang);widget.childNodes=parseFragment(markup).childNodes.map(n=>wrap(n,widget));
  document={body,documentElement:{lang},activeElement:body,createElement:tag=>element(tag),getElementById(id){const e=walk(body).find(e=>e.id===id);if(!e)throw Error('Missing real DOM '+id);return e;},querySelectorAll:q=>body.querySelectorAll(q),querySelector:q=>body.querySelector(q),addEventListener(k,f){(docHandlers[k]||=[]).push(f);},execCommand(command){exec.push({command,text:selection?.value});return options.fallbackSuccess;}};
  const options={holdDigest:false,fallbackSuccess:false,phone:false};
- const globals={document,TextEncoder,Uint8Array,URL,isSecureContext:true,matchMedia(){return {matches:options.phone};},btoa:bin=>Buffer.from(bin,'binary').toString('base64'),crypto:{subtle:{digest(algo,bytes){const real=webcrypto.subtle.digest(algo,bytes);const job={algo,input:Buffer.from(bytes).toString('utf8'),ready:false};digests.push(job);if(!options.holdDigest)return real;return new Promise((resolve,reject)=>{job.resolve=()=>resolve(job.value);job.reject=()=>reject(Error('controlled digest rejection'));real.then(value=>{job.value=value;job.ready=true;},reject);});}}},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return null;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),fetch(){throw Error('network forbidden');}};
+ const globals={document,TextEncoder,Uint8Array,URL,isSecureContext:true,matchMedia(){return {matches:options.phone};},btoa:bin=>Buffer.from(bin,'binary').toString('base64'),crypto:{subtle:{digest(algo,bytes){const real=webcrypto.subtle.digest(algo,bytes);const job={algo,input:Buffer.from(bytes).toString('utf8'),ready:false};digests.push(job);if(!options.holdDigest)return real;return new Promise((resolve,reject)=>{job.resolve=()=>resolve(job.value);job.reject=()=>reject(Error('controlled digest rejection'));real.then(value=>{job.value=value;job.ready=true;},reject);});}}},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return persisted;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),fetch(){throw Error('network forbidden');}};
  const context={...globals,_slug:s.slug};context.window=context;const ctx=vm.createContext(context);if(order==='before')vm.runInContext(shortcut,ctx);vm.runInContext(s.source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1],ctx,{filename:s.file});if(order==='after')vm.runInContext(shortcut,ctx);
  const $=id=>document.getElementById(id);return{$,document,globals,options,copies,digests,exec,saved,cleared,tracks,timers,scrollCalls,input(id,value,ev='input'){$(id).focus();$(id).value=value;$(id).dispatch(ev);},click:selector=>{const e=selector.startsWith('#')?$(selector.slice(1)):document.querySelector(selector);if(!e)throw Error('No real selector '+selector);e.click();},key(id){$(id).focus();$(id).dispatch('keydown',{key:'l',ctrlKey:true});},advance(ms){const end=now+ms;for(let g=0;;g++){if(g>100)throw Error('timer runaway');const next=[...timers].filter(([,t])=>t.due<=end).sort((a,b)=>a[1].due-b[1].due)[0];if(!next)break;now=next[1].due;timers.delete(next[0]);next[1].fn();}now=end;},async deliver(n){for(let i=0;!digests[n].ready&&i<30;i++)await flushPage();if(!digests[n].ready)throw Error('real digest not ready');digests[n].resolve();await flushPage();}};
 }
@@ -330,6 +353,7 @@ function page(s,lang='en',order='before'){
 const spec = { slug: 'csp-header-generator', file: 'src/components/tools/CspHeaderGeneratorTool.astro', source };
 const normalCopy = { en: 'Copy', zh: '复制', ja: 'コピー', ko: '복사' };
 const copiedLabel = { en: 'Copied!', zh: '已复制！', ja: 'コピーしました！', ko: '복사됨!' };
+const copyFailedText = { en: 'Copy failed.', zh: '复制失败。', ja: 'コピーできませんでした。', ko: '복사하지 못했습니다.' };
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const p = page(spec, lang);
   p.input('csp-preset', 'basic', 'change');
@@ -341,7 +365,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     let n = p.copies.length; p.click('#' + id);
     eq(lang + ' ' + id + ': copies complete actual bytes', p.copies[n].text, value);
     p.copies[n].reject(Error('controlled current refusal')); await flushPage();
-    check(lang + ' ' + id + ': failure keeps original retryable label', p.$(id).textContent === normalCopy[lang] && p.$('csp-status').textContent === 'Copy failed.');
+    check(lang + ' ' + id + ': failure keeps original retryable label', p.$(id).textContent === normalCopy[lang] && p.$('csp-status').textContent === copyFailedText[lang]);
     n = p.copies.length; p.click('#' + id); p.copies[n].resolve(); await flushPage();
     check(lang + ' ' + id + ': direct retry clears failure', p.$(id).textContent === copiedLabel[lang] && p.$('csp-status').textContent === '');
     p.advance(1500);
@@ -408,7 +432,7 @@ for (const older of ['resolve', 'reject']) for (const current of ['resolve', 're
   p.click('#csp-copy'); p.click('#csp-hash-copy'); p.copies[1][current](); await flushPage();
   const label = p.$('csp-hash-copy').textContent, status = p.$('csp-status').textContent;
   p.copies[0][older](); await flushPage();
-  check('cross button ' + older + '/' + current + ': latest request owns status', p.$('csp-copy').textContent === 'Copy' && p.$('csp-hash-copy').textContent === label && p.$('csp-status').textContent === status && p.exec.length === 0);
+  check('cross button ' + older + '/' + current + ': latest request owns status', p.$('csp-copy').textContent === 'Copy' && p.$('csp-hash-copy').textContent === label && p.$('csp-status').textContent === status && p.exec.length === (current === 'reject' ? 1 : 0));
 }
 for (const completion of ['resolve', 'reject']) {
   const p = page(spec); p.click('#csp-copy'); p.input('csp-preset', 'basic', 'change'); p.copies[0][completion](); await flushPage();
@@ -429,8 +453,192 @@ for (const kind of ['missing', 'throw']) {
   Object.setPrototypeOf(p.globals.navigator, proto);
   Object.defineProperty(p.globals.navigator, 'clipboard', { configurable: true, value: kind === 'missing' ? undefined : { writeText() { throw Error('sync failure'); } } });
   p.click('#csp-copy'); await flushPage();
-  check(kind + ': copy failure is visible without native/fallback access', !native && p.exec.length === 0 && p.$('csp-status').textContent === 'Copy failed.' && !p.$('csp-copy').disabled);
+  // 2026-10-09: the hidden-textarea execCommand fallback replaces "no fallback access".
+  check(kind + ': unavailable Clipboard API falls back to execCommand without reading the native clipboard', !native && p.exec.length === 1 && p.exec[0].command === 'copy' && p.exec[0].text === p.$('csp-output').textContent);
+  check(kind + ': fallback failure is visible and retryable', p.$('csp-status').textContent === 'Copy failed.' && !p.$('csp-copy').disabled && p.$('csp-copy').textContent === 'Copy');
 }
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.options.fallbackSuccess = true;
+  p.click('#csp-copy'); p.copies[0].reject(Error('permission denied')); await flushPage();
+  check(lang + ': rejected Clipboard API copies through execCommand', p.exec.length === 1 && p.exec[0].text === p.$('csp-output').textContent, JSON.stringify(p.exec));
+  eq(lang + ': fallback success shows Copied and no error', [p.$('csp-copy').textContent, p.$('csp-status').textContent], [copiedLabel[lang], '']);
+  check(lang + ': focus returns to the Copy button after the fallback', p.document.activeElement === p.$('csp-copy'));
+  check(lang + ': the hidden textarea is removed', !p.document.body.querySelector('textarea[readonly]'));
+}
+{
+  const p = page(spec); p.options.fallbackSuccess = true;
+  p.click('#csp-copy'); p.input('csp-preset', 'basic', 'change'); p.copies[0].reject(Error('late')); await flushPage();
+  eq('a stale rejected copy does not run the fallback', p.exec.length, 0);
+}
+// ---------- S2-8d: first visit, analytics, source input, localized messages ----------
+// Before the fix: ztPersist.load() returns {} on a first visit, and loadPersisted() set
+// upgrade / block to false, so the Strict preset was shown without upgrade-insecure-requests
+// (the checkbox unchecked) until the user picked a preset again, and that state was saved.
+// update(false) at boot also sent a GA `generate` event on every page load.
+const UI_MSG = {
+  en: { copyFailed: 'Copy failed.', converted: 'Converted to ASCII for CSP: ', notAscii: 'CSP sources must be ASCII. This value could not be converted: ' },
+  zh: { copyFailed: '复制失败。', converted: '已转换为 CSP 可用的 ASCII 写法：', notAscii: 'CSP 源只能使用 ASCII 字符，无法转换：' },
+  ja: { copyFailed: 'コピーできませんでした。', converted: 'CSP で使える ASCII 表記に変換しました：', notAscii: 'CSP のソースは ASCII 文字だけです。変換できませんでした：' },
+  ko: { copyFailed: '복사하지 못했습니다.', converted: 'CSP에서 쓸 수 있는 ASCII 표기로 바꿨습니다: ', notAscii: 'CSP 소스는 ASCII 문자만 쓸 수 있습니다. 변환하지 못했습니다: ' },
+};
+function addHost(p, directive, value) {
+  const card = p.document.querySelectorAll('.csp-directive').find((c) => c.dataset.directive === directive);
+  if (!card) throw Error('no directive card ' + directive);
+  const input = card.querySelector('.csp-source-input');
+  input.focus(); input.value = value; input.dispatch('keydown', { key: 'Enter' });
+}
+for (const [persisted, upgrade] of [[null, true], [{}, true], [{ preset: 'strict', upgrade: false, block: false }, false], [{ preset: 'basic', directives: { 'default-src': ["'self'"] }, upgrade: false, block: true }, false]]) {
+  const p = page(spec, 'en', 'before', persisted);
+  check('boot with saved ' + JSON.stringify(persisted) + ': upgrade flag ' + upgrade, p.$('csp-flag-upgrade').checked === upgrade && p.$('csp-output').textContent.includes('upgrade-insecure-requests') === upgrade, p.$('csp-output').textContent);
+  if (persisted && persisted.block) check('boot keeps a saved block flag', p.$('csp-flag-block').checked && p.$('csp-output').textContent.includes('block-all-mixed-content'));
+  eq('boot with saved ' + JSON.stringify(persisted) + ': no GA event on page load', p.tracks.length, 0);
+  p.click('[data-mode="report-only"]');
+  eq('a user change sends one GA event', p.tracks, [['csp-header-generator', 'generate']]);
+  p.click('[data-format="meta"]');
+  eq('switching the output tab sends no GA event', p.tracks.length, 1);
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  p.click('#csp-add-btn'); // first option in the list: script-src
+  addHost(p, 'script-src', 'https://日本語.jp');
+  check(lang + ': non-ASCII host is converted to punycode', p.$('csp-output').textContent.includes("script-src 'self' https://xn--wgv71a119e.jp"), p.$('csp-output').textContent);
+  eq(lang + ': conversion is reported', p.$('csp-status').textContent, UI_MSG[lang].converted + 'https://xn--wgv71a119e.jp');
+  addHost(p, 'script-src', 'https://static.line-scdn.net/liff/　https://res.wx.qq.com');
+  check(lang + ': whitespace (including U+3000) separates sources', p.$('csp-output').textContent.endsWith("script-src 'self' https://xn--wgv71a119e.jp https://static.line-scdn.net/liff/ https://res.wx.qq.com"), p.$('csp-output').textContent);
+  eq(lang + ': each separated source gets its own chip', p.document.querySelectorAll('.csp-directive').find((c) => c.dataset.directive === 'script-src').querySelectorAll('.csp-source-tag').length, 4);
+  addHost(p, 'script-src', 'https://ｃｄｎ．ｅｘａｍｐｌｅ．ｃｏｍ/画像/');
+  check(lang + ': full-width host and non-ASCII path are converted', p.$('csp-output').textContent.endsWith(' https://cdn.example.com/%E7%94%BB%E5%83%8F/'), p.$('csp-output').textContent);
+  const before = p.$('csp-output').textContent;
+  addHost(p, 'script-src', "'nonce-日本'");
+  eq(lang + ': unconvertible non-ASCII source is rejected', [p.$('csp-output').textContent, p.$('csp-status').textContent], [before, UI_MSG[lang].notAscii + "'nonce-日本'"]);
+  p.click('#csp-copy'); p.copies[0].reject(Error('refused')); await flushPage();
+  eq(lang + ': copy failure message is localized', p.$('csp-status').textContent, UI_MSG[lang].copyFailed);
+}
+// prefetch-src and navigate-to are not in the CSP3 Working Draft (2026-09-16): not offered, and
+// dropped from an old saved policy with one status message.
+const REMOVED_MSG = {
+  en: 'Removed directives that CSP Level 3 no longer defines: ',
+  zh: '已删除 CSP Level 3 不再定义的指令：',
+  ja: 'CSP Level 3 で定義されなくなったディレクティブを削除しました：',
+  ko: 'CSP Level 3에서 더 이상 정의하지 않는 지시문을 삭제했습니다: ',
+};
+const STRICT_APPLIED_MSG = {
+  en: 'The saved policy had no other directives, so the Strict preset was applied.',
+  zh: '保存的策略没有其他指令，已改用 Strict 预设。',
+  ja: '保存されたポリシーにほかのディレクティブがなかったため、Strict プリセットを適用しました。',
+  ko: '저장된 정책에 다른 지시문이 없어 Strict 프리셋을 적용했습니다.',
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang);
+  const opts = p.$('csp-add-select').options.map((o) => o.value);
+  check(lang + ': prefetch-src and navigate-to are not offered', !opts.includes('prefetch-src') && !opts.includes('navigate-to') && opts.includes('worker-src'), opts.join(','));
+  const old = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'default-src': ["'self'"], 'prefetch-src': ["'self'"], 'navigate-to': ["'self'"] } });
+  eq(lang + ': old saved directives are dropped', old.$('csp-output').textContent, "Content-Security-Policy: default-src 'self'");
+  eq(lang + ': one status message names them', old.$('csp-status').textContent, REMOVED_MSG[lang] + 'prefetch-src, navigate-to');
+  check(lang + ': the cleaned policy is saved', old.saved.length > 0 && !('prefetch-src' in old.saved.at(-1).value.directives), JSON.stringify(old.saved.at(-1)));
+  const clean = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'default-src': ["'self'"] } });
+  eq(lang + ': no message for a clean saved policy', clean.$('csp-status').textContent, '');
+}
+// Review C-S2: master offered 'script' for trusted-types too. An old saved policy loses it
+// (TT §4.2.2 has no such keyword); if nothing is left, 'none' keeps the meaning of an empty
+// value ("policies may not be created").
+const TT_SCRIPT_MSG = {
+  en: "Removed 'script' from trusted-types: it is valid only in require-trusted-types-for (Trusted Types §4.2).",
+  zh: "已从 trusted-types 中删除 'script'：它只能用于 require-trusted-types-for（Trusted Types §4.2）。",
+  ja: "trusted-types から 'script' を削除しました。'script' は require-trusted-types-for でのみ有効です（Trusted Types §4.2）。",
+  ko: "trusted-types에서 'script'를 삭제했습니다. 'script'는 require-trusted-types-for에서만 유효합니다(Trusted Types §4.2).",
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const base = { preset: 'basic', mode: 'enforce', upgrade: false, block: false };
+  const a = page(spec, lang, 'before', { ...base, directives: { 'default-src': ["'self'"], 'trusted-types': ["'script'", 'app'] } });
+  eq(lang + ": old trusted-types 'script' is removed", [a.$('csp-output').textContent, a.$('csp-status').textContent], ["Content-Security-Policy: default-src 'self'; trusted-types app", TT_SCRIPT_MSG[lang]]);
+  const b = page(spec, lang, 'before', { ...base, directives: { 'default-src': ["'self'"], 'trusted-types': ["'script'"] } });
+  eq(lang + ": trusted-types left empty becomes 'none'", b.$('csp-output').textContent, "Content-Security-Policy: default-src 'self'; trusted-types 'none'");
+  const c = page(spec, lang, 'before', { ...base, directives: { 'default-src': ["'self'"], 'prefetch-src': ["'self'"], 'trusted-types': ["'script'", 'app'] } });
+  eq(lang + ': both notes in one status line', c.$('csp-status').textContent, REMOVED_MSG[lang] + 'prefetch-src ' + TT_SCRIPT_MSG[lang]);
+  // Review C-S5: only removed directives were saved → Strict preset applied, and the status says so.
+  const d = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'prefetch-src': ["'self'"] } });
+  eq(lang + ': only removed directives → Strict applied and announced', [d.$('csp-output').textContent, d.$('csp-status').textContent], [E.buildOutput(stateFor('strict'), 'header', E.STRINGS[lang]), REMOVED_MSG[lang] + 'prefetch-src ' + STRICT_APPLIED_MSG[lang]]);
+}
+
+// Review C-S1: a refused value stays in the box, marked aria-invalid and tied to the status
+// line, so the user can fix it instead of typing it again.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  p.$('csp-add-select').value = 'script-src'; p.click('#csp-add-btn');
+  const box = () => p.document.querySelectorAll('.csp-directive').find((c) => c.dataset.directive === 'script-src').querySelector('.csp-source-input');
+  for (const bad of ['ｈｔｔｐｓ：／／cdn.example.com', 'https://a.example; script-src *']) {
+    addHost(p, 'script-src', bad);
+    eq(lang + ': refused value stays in the box: ' + bad, box().value, bad);
+    eq(lang + ': refused box is aria-invalid and points at the status', [box().getAttribute('aria-invalid'), box().getAttribute('aria-describedby')], ['true', 'csp-status']);
+    check(lang + ': refused box keeps focus', p.document.activeElement === box());
+    check(lang + ': a status message explains the refusal', p.$('csp-status').textContent.length > 0 && p.$('csp-status').className.includes('error'));
+  }
+  box().value = 'https://cdn.example.com'; box().dispatch('input');
+  eq(lang + ': editing clears aria-invalid', box().getAttribute('aria-invalid'), null);
+  addHost(p, 'script-src', 'https://cdn.example.com');
+  eq(lang + ': an accepted value empties the new box', [box().value, box().getAttribute('aria-invalid')], ['', null]);
+  check(lang + ': accepted value is in the policy', p.$('csp-output').textContent.includes("script-src 'self' https://cdn.example.com"));
+}
+
+// Review C-S4: the URL parser would drop a query or fragment and resolve dot segments in a
+// converted value. CSP3 path-part is path-absolute (no query), so such a non-ASCII value is
+// refused instead of changed silently.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  p.$('csp-add-select').value = 'script-src'; p.click('#csp-add-btn');
+  const before = p.$('csp-output').textContent;
+  for (const bad of ['https://example.com/a?q=日本', 'https://日本語.jp/#top', 'https://ex.com/../x/日', 'https://ex.com/./日']) {
+    addHost(p, 'script-src', bad);
+    eq(lang + ': refused, not rewritten: ' + bad, [p.$('csp-output').textContent, p.$('csp-status').textContent], [before, UI_MSG[lang].notAscii + bad]);
+  }
+}
+
+// Review C-M1: punycode is for host sources only. A Trusted Types policy name must match
+// tt-policy-name = 1*( ALPHA / DIGIT / "-" / "#" / "=" / "_" / "/" / "@" / "." / "%" )
+// (TT WD 2026-10-07 §4.2.2); sandbox tokens and report-to endpoint names are not hosts either.
+const TT_INVALID = {
+  en: 'Trusted Types policy names may contain only A–Z a–z 0–9 and - # = _ / @ . % (Trusted Types §4.2.2): ',
+  zh: 'Trusted Types 策略名只能包含 A–Z a–z 0–9 和 - # = _ / @ . %（Trusted Types §4.2.2）：',
+  ja: 'Trusted Types のポリシー名に使えるのは A–Z a–z 0–9 と - # = _ / @ . % だけです（Trusted Types §4.2.2）：',
+  ko: 'Trusted Types 정책 이름에는 A–Z a–z 0–9와 - # = _ / @ . %만 쓸 수 있습니다(Trusted Types §4.2.2): ',
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  for (const d of ['trusted-types', 'sandbox', 'report-to']) { p.$('csp-add-select').value = d; p.click('#csp-add-btn'); }
+  const before = p.$('csp-output').textContent;
+  addHost(p, 'trusted-types', 'ポリシー');
+  eq(lang + ': non-ASCII policy name is rejected, not converted', [p.$('csp-output').textContent, p.$('csp-status').textContent], [before, TT_INVALID[lang] + 'ポリシー']);
+  addHost(p, 'trusted-types', 'my policy!');
+  eq(lang + ': one invalid name rejects the whole entry (nothing added)', [p.$('csp-output').textContent, p.$('csp-status').textContent], [before, TT_INVALID[lang] + 'policy!']);
+  addHost(p, 'trusted-types', 'app#1 lib/x@v2.0 %ok');
+  check(lang + ': names in the grammar are accepted', p.$('csp-output').textContent.includes('app#1 lib/x@v2.0 %ok'), p.$('csp-output').textContent);
+  addHost(p, 'trusted-types', "'script'");
+  check(lang + ": 'script' is not a trusted-types keyword", !p.$('csp-output').textContent.includes("trusted-types 'none' app#1 lib/x@v2.0 %ok 'script'") && p.$('csp-status').textContent === TT_INVALID[lang] + "'script'", p.$('csp-status').textContent);
+  addHost(p, 'report-to', 'エンドポイント');
+  check(lang + ': non-ASCII report-to endpoint name is rejected', !/xn--/.test(p.$('csp-output').textContent) && p.$('csp-status').textContent === UI_MSG[lang].notAscii + 'エンドポイント', p.$('csp-status').textContent);
+  addHost(p, 'sandbox', 'allow-スクリプト');
+  check(lang + ': non-ASCII sandbox token is rejected', !/xn--/.test(p.$('csp-output').textContent) && p.$('csp-status').textContent === UI_MSG[lang].notAscii + 'allow-スクリプト', p.$('csp-status').textContent);
+}
+// Trusted Types (W3C WD 2026-10-07) §4.2.1: require-trusted-types-for takes only 'script';
+// §4.2.2: trusted-types takes policy names, 'none', 'allow-duplicates' and *.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  const card = (d) => p.document.querySelectorAll('.csp-directive').find((c) => c.dataset.directive === d);
+  for (const d of ['require-trusted-types-for', 'trusted-types']) { p.$('csp-add-select').value = d; p.click('#csp-add-btn'); }
+  const chips = (d) => card(d).querySelectorAll('.csp-keyword-chip').map((c) => c.textContent);
+  eq(lang + ': require-trusted-types-for offers only \'script\'', chips('require-trusted-types-for'), ["'script'"]);
+  eq(lang + ': trusted-types offers \'none\', \'allow-duplicates\' and *', chips('trusted-types'), ["'none'", "'allow-duplicates'", '*']);
+  check(lang + ': require-trusted-types-for has no free-text box', !card('require-trusted-types-for').querySelector('.csp-source-input'));
+  addHost(p, 'trusted-types', 'dompurify my-policy');
+  check(lang + ': policy names can be typed into trusted-types', p.$('csp-output').textContent.endsWith("require-trusted-types-for 'script'; trusted-types 'none' dompurify my-policy"), p.$('csp-output').textContent);
+}
+{
+  const src = readFileSync(join(root, 'src/components/tools/CspHeaderGeneratorTool.astro'), 'utf8');
+  const client = src.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+  check('no hard-coded English labels in the client script', !client.includes("? 'sandbox tokens'") && !client.includes("? 'URLs / group'") && !client.includes("showStatus('Hash failed: '") && !client.includes("showStatus('Copy failed.'"));
+}
+
 // ---------- v2 page layout (DESIGN.md, kind: generate) ----------
 {
  const markupStart=source.indexOf('\n---\n',4)+5,markup=source.slice(markupStart,source.indexOf('<style',markupStart));
@@ -451,7 +659,7 @@ for (const kind of ['missing', 'throw']) {
   check(lang+' v2: eight plaintext localized facts',Object.keys(L.tips).sort().join('|')==='copy|directives|flags|format|hash|mode|preset|reset'&&Object.values(L.tips).every(x=>typeof x==='string'&&x.length>20&&!/<\/?[a-z]|https?:\/\//i.test(x)));
   for(const key of Object.keys(L).filter(key=>key in E.STRINGS[lang]))eq(lang+' v2: SSR '+key+' equals protected client wording',L[key],E.STRINGS[lang][key]);
   check(lang+' v2: localized labels exist before client boot',html.includes('>'+L.resetBtn+'</button>')&&html.includes('>'+L.hashAddBtn.replace('&','&amp;')+'</button>')&&html.includes('>'+L.presetLabel+'</label>'));
-  eq(lang+' v2: bootstrap preserves empty-saved-preference transport flags',p.$('csp-output').textContent,E.buildOutput(stateFor('strict',{upgrade:false}),'header',E.STRINGS[lang]));
+  eq(lang+' v2: first visit (nothing saved) shows the Strict preset with its transport flag',p.$('csp-output').textContent,E.buildOutput(stateFor('strict'),'header',E.STRINGS[lang]));
   p.input('csp-preset','strict','change');eq(lang+' v2: selecting Strict uses its actual transport flag',p.$('csp-output').textContent,E.buildOutput(stateFor('strict'),'header',E.STRINGS[lang]));
   check(lang+' v2: nonce consequence stays directly visible',p.$('csp-validation').textContent.includes(E.STRINGS[lang].warnNoncePlaceholder));
   p.options.phone=true;p.input('csp-preset','empty','change');
@@ -474,5 +682,54 @@ for (const kind of ['missing', 'throw']) {
  if(process.env.ZT_B13_REGISTRATION_PENDING==='1')console.log('PENDING: generate registration is reserved for root adoption; not counted as PASS');
  else check('v2: registered with the implemented generate page',layouts.includes("'csp-header-generator': 'generate'"));
 }
+// Review S2-8 part 4 wording (C-S3, C-S6, zh:38, ja step 1): old phrases are gone.
+for (const [lang, old] of [['ko', '보고서에서 막힌 요청'], ['ko', '폐기된 지시문'], ['zh', '早期版本的这个预设'], ['ja', 'Report-Only は HTTP ヘッダーと Express を変更し']]) {
+  check(lang + ' page no longer says: ' + old, !readFileSync(join(root, 'src/content/tools/csp-header-generator', lang + '.mdx'), 'utf8').includes(old));
+}
+
+// ---------- tool page examples (S2 content contract) ----------
+// `{/* csp-tool: {...} */}` drives the real page script: preset → mode → added directives →
+// typed sources (Enter in the directive's source box) → hash calculator → output tab. The
+// output must appear verbatim in a code block before the next annotation or H2. `warn` lists
+// validatePolicy keys whose localized text must be shown; `status` is the UI_STRINGS key of
+// the status line after the sources were typed.
+async function runCspTool(s, lang) {
+  const p = page(spec, lang);
+  if (s.preset) p.input('csp-preset', s.preset, 'change');
+  if (s.mode) p.click('[data-mode="' + s.mode + '"]');
+  for (const d of s.add || []) { p.$('csp-add-select').value = d; p.click('#csp-add-btn'); }
+  let status = '';
+  for (const [d, vals] of Object.entries(s.sources || {})) for (const v of vals) { addHost(p, d, v); status = p.$('csp-status').textContent; }
+  if (s.hash) {
+    p.input('csp-hash-algo', s.hash.algo || 'SHA-256', 'change');
+    p.input('csp-hash-target', s.hash.target || 'script-src', 'change');
+    p.input('csp-hash-input', s.hash.text); p.click('#csp-hash-add');
+    for (let i = 0; i < 30 && p.$('csp-hash-copy').disabled; i++) await flushPage();
+  }
+  if (s.format) p.click('[data-format="' + s.format + '"]');
+  return { out: p.$('csp-output').textContent, validation: p.$('csp-validation').textContent, status };
+}
+const cspRuns = new Map();
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const body = readFileSync(join(root, 'src/content/tools/csp-header-generator', lang + '.mdx'), 'utf8');
+  for (const note of annotations(body, 'csp-tool')) {
+    if (note.spec) cspRuns.set(lang + '\0' + note.raw, await runCspTool(note.spec, lang));
+    if (process.env.CSP_PRINT) console.log('--- ' + lang + ' ' + note.raw + '\n' + cspRuns.get(lang + '\0' + note.raw)?.out + '\n[status] ' + cspRuns.get(lang + '\0' + note.raw)?.status);
+  }
+}
+reportContract(check, 'csp-header-generator', {
+  stepCount: 7,
+  annotations: [{
+    tag: 'csp-tool', min: 2,
+    verify({ spec: s, raw, after, lang }) {
+      const run = cspRuns.get(lang + '\0' + raw);
+      if (!fencedBlocks(after).some((b) => b.text === run.out)) return 'output not quoted verbatim:\n' + run.out;
+      for (const key of s.warn || []) if (!run.validation.includes(E.STRINGS[lang][key])) return 'warning ' + key + ' not shown';
+      if (s.status && !run.status.startsWith(UI_MSG[lang][s.status])) return 'status is ' + JSON.stringify(run.status);
+      return null;
+    },
+  }],
+});
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

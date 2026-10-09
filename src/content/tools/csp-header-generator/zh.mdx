@@ -4,30 +4,51 @@ seoDescription: "通过指令、hash 与 nonce 构建 Content-Security-Policy �
 steps:
   - "选择预设和模式。Report-Only 改变 HTTP 头部和 Express 形式，HTML &lt;meta&gt; 不支持仅上报。"
   - "需要新指令时，在添加指令中选择并点击 + 添加。点击 × 移除指令或源。"
-  - "点击关键字和协议 chip，或输入主机、路径后点击添加或按 Enter。源中不能包含分号。"
+  - "点击关键字和协议 chip，或输入主机、路径后点击添加或按 Enter。空格分隔多个源，含非 ASCII 字符的主机转换为 punycode，源中不能包含分号。"
   - "展开内联脚本 / 样式 hash 计算器，粘贴完整内容，选择算法和加入目标后点击计算并加入。hash 旁的复制只复制该 hash。"
   - "点击 + nonce 加入占位符，服务器必须在每次响应时替换它，并将相同值写入脚本标签。"
   - "选择 HTTP 头部、HTML &lt;meta&gt;、Express (helmet) 或 Nginx 后点击复制。使用前核对显示的警告。"
   - "重置到预设会恢复该预设。Ctrl/⌘+L 清空文本和计算出的 hash 及反馈，保留当前策略和选项。"
 faqItems:
-  - question: "什么是 Content Security Policy？"
-    answer: "CSP 是一类 HTTP 响应头部，用于声明浏览器允许加载的脚本、样式、图片、字体、iframe 等内容来源。结合输出编码，它是抵御 XSS、点击劫持与数据注入的最强浏览器侧防线。"
-  - question: "上线时应该先用 Enforce 还是 Report-Only？"
-    answer: "强烈建议先用 `Content-Security-Policy-Report-Only` 配合 `report-uri`（或 `report-to`）端点。先观察真实流量 1-2 周，把误伤改完，再切到强制生效的 `Content-Security-Policy`。"
-  - question: "我必须用 'unsafe-inline' 才能写 inline script / style 吗？"
+  - id: "what-is"
+    question: "什么是 Content Security Policy？"
+    answer: "CSP 是一类 HTTP 响应头部，用于声明浏览器可以信任的脚本、样式、图片、字体、iframe 等内容来源。它代替不了输出编码，作用是在注入漏洞漏网时减小损失：例如拦下没有匹配 nonce 或 hash 的注入脚本；frame-ancestors 则控制谁能把页面嵌进 iframe。"
+  - id: "report-only"
+    question: "上线时应该先用 Enforce 还是 Report-Only？"
+    answer: "先用 `Content-Security-Policy-Report-Only` 配合 `report-uri`（或 `report-to`）端点，观察真实流量，把误伤改完，再切到强制生效的 `Content-Security-Policy`。注意 `upgrade-insecure-requests` 写在 Report-Only 头部里不起作用，要在强制模式下验证。"
+  - id: "unsafe-inline"
+    question: "我必须用 'unsafe-inline' 才能写 inline script / style 吗？"
     answer: "不必。现代 CSP 支持按内容计算的 hash（`'sha256-...'` 等）以及按请求生成的 nonce（`'nonce-...'`），优先使用这两种方式。直接用页面里的 hash 计算器即可。"
-  - question: "'strict-dynamic' 起什么作用？"
+  - id: "strict-dynamic"
+    question: "'strict-dynamic' 起什么作用？"
     answer: "它允许已经被 nonce 或 hash 信任的脚本在运行时再加载其他脚本，而无需一一列出 CDN 主机。这是现代应用推荐的模式，会覆盖基于主机的白名单，从而堵住绕过路径。"
-  - question: "生成的头部应该部署到哪里？"
+  - id: "deploy"
+    question: "生成的头部应该部署到哪里？"
     answer: "请从源站发出 `Content-Security-Policy`（Nginx `add_header`、Apache `Header set`、Cloudflare Transform Rules、Vercel `headers` 等都可以）。HTML `<meta http-equiv>` 仅作为静态托管的兜底；CSP Level 3 规定 `<meta>` 里的 `frame-ancestors`、`report-uri`、`sandbox` 无效，工具在该页签中会去掉它们。`report-to` 在 `<meta>` 中仍有效，但它的端点要由 `Reporting-Endpoints` 头部定义。"
+  - id: "privacy"
+    question: "我写的策略会被发送或保存吗？"
+    answer: "输入的内容不会发送到服务器：策略、各种输出和 hash 都在页面里生成，hash 用浏览器的 Web Crypto API 计算。策略本身（预设、模式、两个传输开关，以及所有指令和源，包括 hash）会保存在本浏览器的 localStorage，下次打开时恢复；Ctrl/⌘+L 只清空文本框和计算出的 hash，保留已保存的策略。hash 计算器里的文本不保存。与其他工具页一样，本页加载 Google Analytics 和 AdSense；每次修改策略记录一次 `generate` 事件，只含工具名和操作，不含策略内容。"
 ---
 
 <h2>Strict CSP 起步配置</h2>
-<p>Strict 预设采用 web.dev 介绍的基于 nonce 的 <a href="https://web.dev/articles/strict-csp" target="_blank" rel="noopener">strict CSP</a>。HTTP header 页签输出：</p>
+<p>Strict 预设采用 web.dev 介绍的基于 nonce 的 <a href="https://web.dev/articles/strict-csp" target="_blank" rel="noopener">strict CSP</a>。HTTP 头部页签输出：</p>
+{/* csp-tool: {"preset":"strict","format":"header","warn":["warnNoncePlaceholder"]} */}
 <pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests`}</code></pre>
 <p><code>{"'nonce-{RANDOM}'"}</code> 是占位符，不是可用的值。服务器必须在每次响应时把它换成至少 128 位的新随机值，并把同一个值写进它渲染的每个 <code>&lt;script&gt;</code> 的 <code>nonce="…"</code>。只要策略里还有占位符，工具就会显示警告。不要把一个固定的 nonce 写进静态配置：任何人看到一次就能在注入的脚本里重复使用。</p>
-<p>早期版本的这个预设写的是 <code>'self'</code>，现在换成了占位符。原因是有 <code>'strict-dynamic'</code> 时，CSP Level 3 会拦截 HTML 解析器插入的所有脚本，除非带有匹配的 nonce 或 hash，并且不再检查 <code>'self'</code> 和主机源（<a href="https://www.w3.org/TR/CSP3/#strict-dynamic-usage" target="_blank" rel="noopener">CSP3 §8.2</a>）。所以单独的 <code>script-src 'self' 'strict-dynamic'</code> 在当前的 Chrome、Firefox、Safari 里一个脚本都不会执行，工具现在会对这种组合给出警告。如果站点是无法设置 nonce 的静态构建，删掉占位符，用 hash 计算器为每段内联脚本加 hash，或者从「适中」预设开始。</p>
+<p>这个预设早期写的是 <code>'self'</code>，现在换成了占位符。原因是有 <code>'strict-dynamic'</code> 时，CSP Level 3 会拦截 HTML 解析器插入的所有脚本，除非带有匹配的 nonce 或 hash，并且不再检查 <code>'self'</code> 和主机源（<a href="https://www.w3.org/TR/CSP3/#strict-dynamic-usage" target="_blank" rel="noopener">CSP3 §8.2</a>）。所以单独的 <code>script-src 'self' 'strict-dynamic'</code> 在当前的 Chrome、Firefox、Safari 里一个脚本都不会执行，工具现在会对这种组合给出警告。如果站点是无法设置 nonce 的静态构建，删掉占位符，用 hash 计算器为每段内联脚本加 hash，或者从「适中」预设开始。</p>
 <p><strong>Express (helmet)</strong> 页签替你完成按响应生成这一步：它加一个中间件，把 <code>crypto.randomBytes(16).toString('base64')</code> 存进 <code>res.locals.cspNonce</code>，并给 <code>script-src</code> 传一个函数，这是 <a href="https://github.com/helmetjs/helmet#readme" target="_blank" rel="noopener">helmet README</a> 里的写法。模板仍要把这个值输出到每个 script 标签上。<strong>Nginx</strong> 页签保留占位符并加一行注释，因为 Nginx 无法把同一个 nonce 写进应用渲染出的 HTML。</p>
+
+<h2>接入微信 JS-SDK 的页面</h2>
+<p>微信 JS-SDK 文档的「步骤二：引入JS文件」给出的地址是 <code>res.wx.qq.com/open/js/jweixin-1.6.0.js</code>，并写明主地址不可访问时改用 <code>res2.wx.qq.com</code>，两个都支持 https（<a href="https://developers.weixin.qq.com/doc/service/guide/h5/jssdk.html" target="_blank" rel="noopener">JS-SDK 使用说明</a>）。所以 <code>script-src</code> 要同时放行这两个主机。选「适中」预设，在 <code>script-src</code> 的输入框里一次粘贴两个地址，中间用空格隔开，工具会拆成两个源。切到 Nginx 页签：</p>
+{/* csp-tool: {"preset":"moderate","sources":{"script-src":["https://res.wx.qq.com https://res2.wx.qq.com"]},"format":"nginx"} */}
+<pre><code>{`add_header Content-Security-Policy "default-src 'self'; script-src 'self' https://res.wx.qq.com https://res2.wx.qq.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; upgrade-insecure-requests" always;`}</code></pre>
+<p>同一文档的「步骤三」要求页面调用 <code>wx.config</code>，参数里的 <code>timestamp</code>、<code>nonceStr</code>、<code>signature</code> 由服务器生成。如果服务器每次请求都生成新值，这段内联脚本的文本每次都不一样，用 hash 计算器算出的固定 hash 对不上。这种页面要么改用 Strict 预设的 nonce，由服务器在同一次响应里同时写头部和 <code>&lt;script nonce&gt;</code>；要么把配置写成 JSON 数据，由 <code>'self'</code> 下的外部脚本读取。</p>
+
+<h2>中文域名要先转成 punycode</h2>
+<p>CSP Level 3 的源语法里，主机名只能由 ASCII 字母、数字和连字符组成（<a href="https://www.w3.org/TR/CSP3/#framework-directive-source-list" target="_blank" rel="noopener">§2.3.1</a>）。直接把中文域名写进策略，这一项不符合语法。在工具里输入中文域名，会按浏览器的 URL 解析规则转成 <code>xn--</code> 开头的写法，状态栏显示转换结果。下面在「适中」预设的 <code>script-src</code> 里加入 <code>https://静态资源.example</code>（<code>.example</code> 是保留给示例用的顶级域）：</p>
+{/* csp-tool: {"preset":"moderate","sources":{"script-src":["https://静态资源.example"]},"format":"header","status":"converted"} */}
+<pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'self' https://xn--t7tz73ay9w64i.example; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; upgrade-insecure-requests`}</code></pre>
+<p>用中文输入法时容易把冒号、斜杠打成全角（<code>ｈｔｔｐｓ：／／</code>）。这种写法转换不了，工具会拒绝并在状态栏说明，不会写进策略。</p>
 
 <h2>容易踩的坑</h2>
 <ul>
@@ -47,6 +68,16 @@ faqItems:
 <ul>
   <li><strong>Nginx</strong>：把 Nginx 页签的内容粘贴到 <code>server</code> 块并 reload。<code>always</code> 标志让错误响应也带上头部。</li>
   <li><strong>Apache</strong>：在 <code>.htaccess</code> 或 <code>httpd.conf</code> 里写 <code>Header always set Content-Security-Policy "..."</code>。</li>
-  <li><strong>Express / Node</strong>：粘贴 helmet 片段。务必关闭 <code>useDefaults</code>，避免你的策略被 helmet 默认值悄悄合并。</li>
+  <li><strong>Express / Node</strong>：粘贴 helmet 片段。片段里已写 <code>useDefaults: false</code>，请保留，否则 helmet 会把它的默认指令加进你的策略。</li>
   <li><strong>Cloudflare Pages / Vercel / Netlify</strong>：把 HTTP header 写进各自的 headers 配置（<code>_headers</code>、<code>vercel.json</code>、<code>netlify.toml</code>）。</li>
+</ul>
+
+<h2>限制</h2>
+<ul>
+  <li><strong>只生成，不检测。</strong>工具不会访问你的网站，不读取已有的头部，也不知道第三方脚本运行后还会加载哪些主机。缺什么要靠 Report-Only 的报告来找。</li>
+  <li><strong>对源的检查很少。</strong>只拒绝分号；空格拆分多个源；非 ASCII 主机转成 punycode。<code>https//cdn.example.com</code> 这类拼写错误会原样写进策略。不是主机的值不做转换：<code>trusted-types</code> 的策略名只能用 <a href="https://www.w3.org/TR/trusted-types/#trusted-types-csp-directive" target="_blank" rel="noopener">Trusted Types §4.2.2</a> 允许的字符，<code>sandbox</code> 令牌和 <code>report-to</code> 端点名必须是 ASCII，否则会被拒绝。</li>
+  <li><strong>hash 必须逐字一致。</strong>浏览器对脚本或样式文本的 UTF-8 字节计算 hash（<a href="https://www.w3.org/TR/CSP3/#match-element-to-source-list" target="_blank" rel="noopener">CSP3 §6.7.3.3</a>），与页面用什么编码保存无关；多一个空格或换行，hash 就不同。</li>
+  <li><strong>nonce 要靠服务器。</strong>工具只写 <code>{"'nonce-{RANDOM}'"}</code> 占位符，只有 Express 页签会按响应生成新值；HTTP 头部、meta 和 Nginx 输出都要由应用程序替换。</li>
+  <li><strong>过时的指令。</strong><code>prefetch-src</code> 和 <code>navigate-to</code> 不在 2026 年 9 月 16 日的 CSP3 工作草案里，工具已不再提供；以前保存的策略里如果有这两项，打开页面时会去掉，并在状态栏提示一次。<code>block-all-mixed-content</code> 开关仍保留，但这条指令被 <a href="https://www.w3.org/TR/mixed-content/#strict-checking" target="_blank" rel="noopener">Mixed Content §6.1</a> 列为过时，理由是无法自动升级的混合内容现在一律被拦截；打开开关时，输出下方会提示。</li>
+  <li><strong>Report-Only 下的 upgrade-insecure-requests 不起作用</strong>（<a href="https://www.w3.org/TR/upgrade-insecure-requests/#delivery" target="_blank" rel="noopener">Upgrade Insecure Requests §3.1</a>）。工具仍把它写进 Report-Only 头部，同时在输出下方提示这一点。</li>
 </ul>

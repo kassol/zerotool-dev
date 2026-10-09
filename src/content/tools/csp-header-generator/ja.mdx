@@ -2,32 +2,60 @@
 seoTitle: "CSP ヘッダージェネレーター — 無料オンラインツール | ZeroTool"
 seoDescription: "ディレクティブ・hash・nonce から Content-Security-Policy ヘッダーを構築。strict モード・Report-Only テンプレート、Express / Nginx スニペット対応。ブラウザ内で処理。"
 steps:
-  - "プリセットとモードを選びます。Report-Only は HTTP ヘッダーと Express を変更し、HTML &lt;meta&gt; では使えません。"
+  - "プリセットとモードを選びます。Report-Only は HTTP ヘッダー名と Express の reportOnly を切り替えます。HTML &lt;meta&gt; では使えません。"
   - "ディレクティブを追加で項目を選び、+ 追加を押します。ディレクティブやソースは × で削除できます。"
-  - "キーワードとスキームのチップ、またはホスト・パスを入力して追加か Enter でソースを加えます。セミコロンは拒否されます。"
+  - "キーワードとスキームのチップ、またはホスト・パスを入力して追加か Enter でソースを加えます。空白で区切ると複数のソースになり、ASCII 以外の文字を含むホストは punycode に変換、セミコロンは拒否されます。"
   - "インライン script / style ハッシュ計算機を開き、正確な内容とアルゴリズム・追加先を指定して計算して追加を押します。隣のコピーはハッシュだけをコピーします。"
   - "+ nonce はプレースホルダーを追加します。サーバーでレスポンスごとに置き換え、同じ値を script タグに入れてください。"
   - "HTTP ヘッダー、HTML &lt;meta&gt;、Express (helmet)、Nginx を選び、コピーを押します。使用前に表示された警告を確認します。"
   - "プリセットに戻すでその設定を復元します。Ctrl/⌘+L はテキストと計算済みハッシュの表示を消し、ポリシーと選択を保持します。"
 faqItems:
-  - question: "Content Security Policy とは何ですか？"
-    answer: "CSP はブラウザに対して、信頼できるスクリプト・スタイル・画像・フォント・フレームなどの読み込み元を宣言する HTTP レスポンスヘッダーです。出力エスケープと組み合わせることで、XSS・クリックジャッキング・データインジェクションに対する最強のブラウザ側防御になります。"
-  - question: "Enforce と Report-Only、どちらから始めるべきですか？"
-    answer: "まず `Content-Security-Policy-Report-Only` と `report-uri`（または `report-to`）エンドポイントで運用します。1〜2 週間ほど実トラフィックの違反レポートを集めて誤検知を直してから、強制版の `Content-Security-Policy` に切り替えます。"
-  - question: "インラインスクリプトには 'unsafe-inline' が必要ですか？"
+  - id: "what-is"
+    question: "Content Security Policy とは何ですか？"
+    answer: "CSP はブラウザに対して、信頼できるスクリプト・スタイル・画像・フォント・フレームなどの読み込み元を宣言する HTTP レスポンスヘッダーです。出力エスケープの代わりにはなりません。注入をすり抜けられたときの被害を小さくするもので、たとえば一致する nonce やハッシュのない注入スクリプトをブロックし、frame-ancestors でページを iframe に埋め込める相手を制限します。"
+  - id: "report-only"
+    question: "Enforce と Report-Only、どちらから始めるべきですか？"
+    answer: "まず `Content-Security-Policy-Report-Only` と `report-uri`（または `report-to`）エンドポイントで運用し、実トラフィックの違反レポートを見て誤検知を直してから、強制版の `Content-Security-Policy` に切り替えます。`upgrade-insecure-requests` は Report-Only ヘッダーでは効かないので、強制モードで確認してください。"
+  - id: "unsafe-inline"
+    question: "インラインスクリプトには 'unsafe-inline' が必要ですか？"
     answer: "可能な限り避けてください。現代の CSP は内容ベースのハッシュ（`'sha256-...'` ほか）とリクエストごとの nonce（`'nonce-...'`）をサポートします。本ページのハッシュ計算機をそのまま使えます。"
-  - question: "'strict-dynamic' は何を意味しますか？"
+  - id: "strict-dynamic"
+    question: "'strict-dynamic' は何を意味しますか？"
     answer: "nonce か hash で信頼されたスクリプトが、実行時に他のスクリプトを CDN 一覧なしで読み込めるようにします。モダンアプリで推奨される方式で、ホストベースの許可リストを上書きし、典型的なバイパス手段を塞ぎます。"
-  - question: "生成したヘッダーはどこに置けばよいですか？"
+  - id: "deploy"
+    question: "生成したヘッダーはどこに置けばよいですか？"
     answer: "オリジンサーバーから `Content-Security-Policy` を送出します（Nginx `add_header`、Apache `Header set`、Cloudflare Transform Rules、Vercel `headers` など）。HTML `<meta http-equiv>` は静的ホスト向けのフォールバックです。CSP Level 3 では `<meta>` 内の `frame-ancestors`・`report-uri`・`sandbox` は無視されるため、ツールはそのタブから除きます。`report-to` は `<meta>` でも有効ですが、エンドポイントは `Reporting-Endpoints` ヘッダーで定義します。"
+  - id: "privacy"
+    question: "作ったポリシーは送信・保存されますか？"
+    answer: "入力内容はサーバーに送信しません。ポリシー、各出力、ハッシュはページ内で作り、ハッシュはブラウザーの Web Crypto API で計算します。ポリシー自体（プリセット、モード、2 つの通信スイッチ、すべてのディレクティブとソース。ハッシュを含む）はこのブラウザーの localStorage に保存され、次に開いたときに復元されます。Ctrl/⌘+L はテキスト欄と計算済みハッシュを消しますが、保存したポリシーは残ります。ハッシュ計算機のテキストは保存しません。他のツールページと同じく Google Analytics と AdSense を読み込み、ポリシーを変更するたびに `generate` イベントを 1 回記録します。記録するのはツール名と操作だけで、ポリシーの中身は含みません。"
 ---
 
 <h2>Strict CSP のスタート構成</h2>
 <p>Strict プリセットは web.dev で解説されている nonce ベースの <a href="https://web.dev/articles/strict-csp" target="_blank" rel="noopener">strict CSP</a> に沿っています。HTTP ヘッダータブの出力は次のとおりです。</p>
+{/* csp-tool: {"preset":"strict","format":"header","warn":["warnNoncePlaceholder"]} */}
 <pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'nonce-{RANDOM}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests`}</code></pre>
 <p><code>{"'nonce-{RANDOM}'"}</code> はプレースホルダーで、そのままでは使えません。サーバーはレスポンスごとに 128 ビット以上の新しいランダム値に置き換え、同じ値をレンダリングする各 <code>&lt;script&gt;</code> の <code>nonce="…"</code> に書き込む必要があります。ポリシーにプレースホルダーが残っている間、ツールは警告を表示します。固定の nonce を静的な設定に貼り付けないでください。一度見た人なら誰でも、注入したスクリプトで使い回せます。</p>
 <p>以前のこのプリセットは <code>'self'</code> を使っていましたが、プレースホルダーに置き換えました。<code>'strict-dynamic'</code> があると、CSP Level 3 は一致する nonce かハッシュがない限り HTML パーサーが挿入したスクリプトをすべてブロックし、<code>'self'</code> やホストソースを確認しなくなります（<a href="https://www.w3.org/TR/CSP3/#strict-dynamic-usage" target="_blank" rel="noopener">CSP3 §8.2</a>）。そのため <code>script-src 'self' 'strict-dynamic'</code> だけでは、現行の Chrome・Firefox・Safari でスクリプトが 1 つも実行されません。ツールはこの組み合わせに警告を出すようになりました。nonce を設定できない静的ビルドのサイトでは、プレースホルダーを削除してハッシュ計算機で各インラインスクリプトのハッシュを追加するか、「中程度」プリセットから始めてください。</p>
 <p><strong>Express (helmet)</strong> タブはレスポンスごとの処理まで出力します。<code>crypto.randomBytes(16).toString('base64')</code> を <code>res.locals.cspNonce</code> に入れるミドルウェアを追加し、<code>script-src</code> に関数を渡します。<a href="https://github.com/helmetjs/helmet#readme" target="_blank" rel="noopener">helmet の README</a> にある書き方です。テンプレート側では、この値を各 script タグに出力してください。<strong>Nginx</strong> タブはプレースホルダーを残してコメントを付けます。Nginx はアプリケーションが出力する HTML に同じ nonce を書き込めないためです。</p>
+
+<h2>LIFF アプリで SDK の読み込みを許可する</h2>
+<p>LINE の LIFF SDK は CDN から読み込みます。LINE Developers の「<a href="https://developers.line.biz/ja/docs/liff/developing-liff-apps/" target="_blank" rel="noopener">LIFFアプリを開発する</a>」には、メジャーバージョンだけを含むエッジパス（例：<code>https://static.line-scdn.net/liff/edge/2/sdk.js</code>）と、パッチバージョンまで含む固定パス（例：<code>https://static.line-scdn.net/liff/edge/versions/2.31.1/sdk.js</code>）の 2 種類が載っています。</p>
+<p>CSP のパスは、末尾が <code>/</code> なら前方一致、そうでなければ完全一致です（<a href="https://www.w3.org/TR/CSP3/#match-paths" target="_blank" rel="noopener">CSP3 §6.7.2.12</a>）。どちらのパスに切り替えても通るように、「中程度」プリセットの <code>script-src</code> に <code>https://static.line-scdn.net/liff/</code> と入力します。HTTP ヘッダータブの出力：</p>
+{/* csp-tool: {"preset":"moderate","sources":{"script-src":["https://static.line-scdn.net/liff/"]},"format":"header"} */}
+<pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'self' https://static.line-scdn.net/liff/; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; upgrade-insecure-requests`}</code></pre>
+<p><code>https://static.line-scdn.net/liff/edge/2/sdk.js</code> のようにファイル名まで書くと、その 1 ファイルにしか一致しません。固定パスのバージョンを上げたら、ポリシーも書き換える必要があります。</p>
+
+<h2>日本語を含むインラインスクリプトのハッシュ</h2>
+<p>「基本」プリセットでハッシュ計算機に次の 1 行を貼り付け、追加先を <code>script-src</code> のまま「計算して追加」を押します。<code>script-src</code> がないときは <code>'self'</code> を付けて新しく作ります。</p>
+<pre><code>{`document.getElementById("notice").textContent = "本日の受付は終了しました";`}</code></pre>
+{/* csp-tool: {"preset":"basic","hash":{"text":"document.getElementById(\"notice\").textContent = \"本日の受付は終了しました\";"},"format":"header"} */}
+<pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-wMKMWBt3rBQAX8yLf5vT8GI0LdS0dhOZgoYGkXMLw2k='`}</code></pre>
+<p>ブラウザーは、スクリプトのテキストを UTF-8 にエンコードしたバイト列でハッシュを照合します（<a href="https://www.w3.org/TR/CSP3/#match-element-to-source-list" target="_blank" rel="noopener">CSP3 §6.7.3.3</a>）。ページが Shift_JIS で保存されていても同じです。計算機も貼り付けた文字列の UTF-8 バイト列を使うので、上のハッシュは Shift_JIS のページでもそのまま使えます。逆に、Shift_JIS のファイルのバイト列をコマンドラインでハッシュ化すると別の値になります。</p>
+
+<h2>日本語ドメインは punycode で書く</h2>
+<p>CSP Level 3 の構文では、ホスト名に使えるのは ASCII の英数字とハイフンだけです（<a href="https://www.w3.org/TR/CSP3/#framework-directive-source-list" target="_blank" rel="noopener">§2.3.1</a>）。ツールに <code>https://日本語.jp</code> と入力すると、ブラウザーの URL 解析と同じ規則で <code>xn--</code> の形に変換し、ステータス欄に変換結果を表示します。IME の全角英数字で入力したホスト名も半角に直ります。</p>
+{/* csp-tool: {"preset":"moderate","sources":{"script-src":["https://日本語.jp"]},"format":"header","status":"converted"} */}
+<pre><code>{`Content-Security-Policy: default-src 'self'; script-src 'self' https://xn--wgv71a119e.jp; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; upgrade-insecure-requests`}</code></pre>
 
 <h2>よくある落とし穴</h2>
 <ul>
@@ -47,6 +75,15 @@ faqItems:
 <ul>
   <li><strong>Nginx</strong>：Nginx タブの内容を <code>server</code> ブロックに貼って reload。<code>always</code> はエラー応答にもヘッダーを付けます。</li>
   <li><strong>Apache</strong>：<code>.htaccess</code> や <code>httpd.conf</code> に <code>Header always set Content-Security-Policy "..."</code>。</li>
-  <li><strong>Express / Node</strong>：helmet スニペットを貼り付け、<code>useDefaults</code> を必ず <code>false</code> にして自分のポリシーが helmet デフォルトと暗黙にマージされないようにします。</li>
+  <li><strong>Express / Node</strong>：helmet スニペットを貼り付けます。スニペットは <code>useDefaults: false</code> を指定済みです。消すと helmet のデフォルトのディレクティブがポリシーに加わるので、そのまま残してください。</li>
   <li><strong>Cloudflare Pages / Vercel / Netlify</strong>：HTTP ヘッダー欄をそれぞれのヘッダー設定（<code>_headers</code>、<code>vercel.json</code>、<code>netlify.toml</code>）に貼ります。</li>
+</ul>
+
+<h2>このツールの制限</h2>
+<ul>
+  <li><strong>ポリシーを作るだけで、検証はしません。</strong>サイトにアクセスすることも、既存のヘッダーを読み込むこともありません。サードパーティのスクリプトが後から読み込むホストもわからないので、Report-Only のレポートで不足分を探してください。</li>
+  <li><strong>ソースのチェックは最小限です。</strong>セミコロンを拒否し、空白（全角スペースを含む）で複数のソースに分け、ASCII 以外のホストを punycode に変換するだけです。<code>https//cdn.example.com</code> のような書き間違いはそのままポリシーに入ります。ホスト以外の値は変換しません。<code>trusted-types</code> のポリシー名は <a href="https://www.w3.org/TR/trusted-types/#trusted-types-csp-directive" target="_blank" rel="noopener">Trusted Types §4.2.2</a> が認める文字だけ、<code>sandbox</code> のトークンと <code>report-to</code> のエンドポイント名は ASCII だけで書く必要があり、それ以外は拒否します。全角の <code>：／／</code> で入力したスキームは変換できず、拒否されます。</li>
+  <li><strong>nonce はサーバー側の仕事です。</strong>ツールが書くのはプレースホルダー <code>{"'nonce-{RANDOM}'"}</code> だけで、レスポンスごとに値を作るのは Express タブの出力だけです。</li>
+  <li><strong>廃止されたディレクティブ。</strong><code>prefetch-src</code> と <code>navigate-to</code> は 2026 年 9 月 16 日付の CSP3 草案にないため、選択肢から外しました。以前に保存したポリシーに含まれていれば、ページを開いたときに削除し、ステータス欄で一度だけ知らせます。<code>block-all-mixed-content</code> のスイッチは残していますが、<a href="https://www.w3.org/TR/mixed-content/#strict-checking" target="_blank" rel="noopener">Mixed Content §6.1</a> で廃止扱いのため、オンにすると出力の下に注意を表示します。</li>
+  <li><strong>Report-Only の upgrade-insecure-requests は効きません</strong>（<a href="https://www.w3.org/TR/upgrade-insecure-requests/#delivery" target="_blank" rel="noopener">Upgrade Insecure Requests §3.1</a>）。ツールは Report-Only のヘッダーにもそのまま出力し、出力の下に注意を表示します。</li>
 </ul>

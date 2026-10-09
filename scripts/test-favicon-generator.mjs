@@ -35,6 +35,7 @@ import { dirname, join, relative } from 'node:path';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
+import { fencedBlocks, reportContract } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_B13_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(process.env.ZT_B13_SOURCE || join(root, 'src/components/tools/FaviconGeneratorTool.astro'), 'utf8');
@@ -105,6 +106,23 @@ function installProblems(m) {
   }
 }
 
+// Google Search Central, "Define a favicon to show in search results" (last updated
+// 2026-08-28): "we recommend using a favicon that's larger than 48x48px". The snippet links
+// favicon-96.png (larger than 48 and a multiple of 48) after the 16 / 32 / 48 PNGs.
+{
+  const lines = buildHtmlSnippet().split('\n');
+  check('snippet links a PNG larger than 48x48 (96x96)', lines.includes('<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96.png">'), lines.join('\n'));
+  const sizes = lines.map((l) => /sizes="(\d+)x\1"[^>]*href="\/favicon-\1\.png"/.exec(l)?.[1]).filter(Boolean).map(Number);
+  check('linked favicon PNG sizes are 16, 32, 48, 96 in order', JSON.stringify(sizes) === '[16,32,48,96]', JSON.stringify(sizes));
+  check('snippet has eight lines', lines.length === 8, String(lines.length));
+  const tips = [...source.matchAll(/"copy": "([^"]*)"/g)].map((m) => m[1]);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const md = readFileSync(join(root, 'src/content/tools/favicon-generator', lang + '.mdx'), 'utf8');
+    check(lang + ' tool page lists 96 among the linked PNG sizes', /16, 32, 48 and 96|16、32、48、96|16・32・48・96|16·32·48·96/.test(md) && !/64, 96 and 128 px PNGs are in the package|64、96、128 px 的 PNG|64・96・128 px の PNG|64·96·128 px PNG/.test(md));
+  }
+  check('four copy tips say eight lines', tips.length === 4 && /eight-line/.test(tips[0]) && /八行/.test(tips[1]) && /8 行/.test(tips[2]) && /8줄/.test(tips[3]), tips.join(' | '));
+}
+
 // File names in the order runGenerate() pushes them.
 const genBody = extractFunction('runGenerate');
 const names = [];
@@ -153,8 +171,9 @@ if (unzipOk) {
   rmSync(dir, { recursive: true, force: true });
 } else skips += 2;
 
-// Same formula as runGenerate(): files.length + ' files · ' + (bytes / 1024).toFixed(1) + ' KB'
-const statsLine = (sizes) => sizes.length + ' files · ' + (sizes.reduce((a, b) => a + b, 0) / 1024).toFixed(1) + ' KB';
+// Same formula as runGenerate(): the page language's statsTpl with {n} files and {kb} = bytes / 1024 (1 decimal).
+const statsTplOf = (lang) => new RegExp('\\n        ' + lang + ": \\{[\\s\\S]*?statsTpl: '([^']*)'").exec(source)[1];
+const statsLine = (sizes, lang = 'en') => statsTplOf(lang).replace('{n}', sizes.length).replace('{kb}', (sizes.reduce((a, b) => a + b, 0) / 1024).toFixed(1));
 
 for (const lang of ['en', 'ja']) {
   const text = readFileSync(join(root, 'src/content/blog/favicon-generator-guide', lang + '.mdx'), 'utf8');
@@ -192,8 +211,8 @@ for (const lang of ['en', 'ja']) {
     const mBytes = new TextEncoder().encode(guideManifest).length;
     const mi = spec.names.indexOf('site.webmanifest');
     check(lang + ': manifest bytes equal the quoted manifest', spec.letter[mi] === mBytes && spec.emoji[mi] === mBytes, mBytes);
-    check(lang + ': letter stats line', statsLine(spec.letter) === spec.letterStats, statsLine(spec.letter));
-    check(lang + ': emoji stats line', statsLine(spec.emoji) === spec.emojiStats, statsLine(spec.emoji));
+    check(lang + ': letter stats line', statsLine(spec.letter, lang) === spec.letterStats, statsLine(spec.letter, lang));
+    check(lang + ': emoji stats line', statsLine(spec.emoji, lang) === spec.emojiStats, statsLine(spec.emoji, lang));
     check(lang + ': stats lines are quoted', text.includes('「' + spec.emojiStats + '」') || text.includes('"' + spec.emojiStats + '"'));
     const fmt = (n) => n.toLocaleString('en-US') + ' B';
     spec.names.forEach((name, i) => {
@@ -237,7 +256,7 @@ function page(s,lang='en',order='before'){
    appendChild(n){n.parentNode=this;this.childNodes.push(n);return n;},removeChild(n){this.childNodes=this.childNodes.filter(x=>x!==n);n.parentNode=null;},remove(){this.parentNode?.removeChild(this);},contains(n){for(;n;n=n.parentNode)if(n===this)return true;return false;},
    querySelectorAll(q){return walk(this).filter(e=>matches(e,q));},querySelector(q){return this.querySelectorAll(q)[0]||null;},
    addEventListener(k,f){(listeners[k]||=[]).push(f);},focus(){document.activeElement=this;},select(){selection=this;},dispatch(k,init={}){const e={type:k,target:this,currentTarget:this,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(const f of listeners[k]||[])f.call(this,e);if(!e.cancelBubble)for(const f of docHandlers[k]||[])f.call(document,e);return e;},click(){if(this.tagName==='A'){downloads.push({name:this.download,url:this.href,blob:urls.get(this.href)});return;}if(!this.disabled)this.dispatch('click');},
-  };el.classList={contains:c=>el.className.split(/\s+/).includes(c),add(...c){el.className=[...new Set([...el.className.split(/\s+/).filter(Boolean),...c])].join(' ');},remove(...c){el.className=el.className.split(/\s+/).filter(x=>!c.includes(x)).join(' ');},toggle(c,on){const add=on===undefined?!this.contains(c):on;this[add?'add':'remove'](c);return add;}};if(tag.toLowerCase()==='canvas'){el.width=Number(attrs.width||300);el.height=Number(attrs.height||150);el.ops=[];const ctx={};for(const name of ['save','restore','beginPath','arc','moveTo','lineTo','quadraticCurveTo','closePath','rect','clip'])ctx[name]=(...args)=>el.ops.push({name,args});ctx.clearRect=()=>{el.ops=[];};ctx.fillText=(text,...args)=>el.ops.push({name:'fillText',text,args,font:ctx.font,color:ctx.fillStyle});ctx.fillRect=(...args)=>el.ops.push({name:'fillRect',args,color:ctx.fillStyle});ctx.drawImage=(image,...args)=>el.ops.push({name:'drawImage',image:image.src,args});el.getContext=()=>ctx;el.toBlob=(cb,type)=>{const snapshot={width:el.width,height:el.height,ops:structuredClone(el.ops)};const job={snapshot,type,done:false,deliver(blob){if(this.done)throw Error('duplicate blob delivery');this.done=true;cb(blob===undefined?new Blob([JSON.stringify(snapshot)],{type:type||'image/png'}):blob);}};blobs.push(job);};}return el;
+  };el.classList={contains:c=>el.className.split(/\s+/).includes(c),add(...c){el.className=[...new Set([...el.className.split(/\s+/).filter(Boolean),...c])].join(' ');},remove(...c){el.className=el.className.split(/\s+/).filter(x=>!c.includes(x)).join(' ');},toggle(c,on){const add=on===undefined?!this.contains(c):on;this[add?'add':'remove'](c);return add;}};if(tag.toLowerCase()==='canvas'){el.width=Number(attrs.width||300);el.height=Number(attrs.height||150);el.ops=[];const ctx={};for(const name of ['save','restore','beginPath','arc','moveTo','lineTo','quadraticCurveTo','closePath','rect','clip'])ctx[name]=(...args)=>el.ops.push({name,args});ctx.clearRect=()=>{el.ops=[];};ctx.fillText=(text,...args)=>el.ops.push({name:'fillText',text,args,font:ctx.font,color:ctx.fillStyle});ctx.fillRect=(...args)=>el.ops.push({name:'fillRect',args,color:ctx.fillStyle});ctx.drawImage=(image,...args)=>el.ops.push({name:'drawImage',image:image.src,args});ctx.measureText=(text)=>{const px=Number(/([\d.]+)px/.exec(ctx.font||'')?.[1]||10);let w=0;for(const ch of text)w+=/[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch)?px:0.6*px;return{width:w};};el.getContext=()=>ctx;el.toBlob=(cb,type)=>{const snapshot={width:el.width,height:el.height,ops:structuredClone(el.ops)};const job={snapshot,type,done:false,deliver(blob){if(this.done)throw Error('duplicate blob delivery');this.done=true;cb(blob===undefined?new Blob([JSON.stringify(snapshot)],{type:type||'image/png'}):blob);}};blobs.push(job);};}return el;
  }
  function wrap(n,parent){if(!n.tagName)return{value:n.value||'',parentNode:parent};const e=element(n.tagName,Object.fromEntries((n.attrs||[]).map(a=>[a.name,a.value])));e.parentNode=parent;e.childNodes=(n.childNodes||[]).map(n=>wrap(n,e));if(e.tagName==='TEXTAREA')e.value=e.textContent;return e;}
  const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);
@@ -330,6 +349,99 @@ for(const sourceType of ['image','svg'])for(const phase of ['pending','completed
  if(outcome==='deliver'){p.click('#fg-tab-'+sourceType);checkPage(favicon,sourceType+' completed inactive source remains available as cache',p.$('fg-generate').disabled,false);checkPage(favicon,sourceType+' cache renders only after selecting that source',signature(p),[oldImage.src]);}
 }
 
+// ---------- S2-8d: CJK text fits the icon; emoji input keeps whole sequences ----------
+// Before the fix the Text source set the font size from the character count only
+// (2 chars → 0.65 × the inner square). A full-width CJK glyph is about 1 em wide, so
+// two characters were 1.3 × the inner square and were cut off by the canvas. The stub
+// measureText() above gives CJK 1 em and other characters 0.6 em.
+{
+  const fitted = (p, sz) => { const op = p.$('fg-prev-' + sz).ops.find((o) => o.name === 'fillText'); const px = Number(/([\d.]+)px/.exec(op.font)[1]); let w = 0; for (const ch of op.text) w += /[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? px : 0.6 * px; return { px, w, inner: sz - 2 * sz * 0.08 }; };
+  for (const text of ['技術', '日本語', '한국어', '設計図面']) {
+    const p = page(favicon, 'en'); p.click('#fg-tab-text'); p.input('fg-text-input', text);
+    for (const sz of [16, 64, 180]) { const r = fitted(p, sz); check('text ' + text + ' fits the inner square at ' + sz + ' px', r.w <= r.inner + 1e-9, JSON.stringify(r)); }
+  }
+  const p = page(favicon, 'en'); p.click('#fg-tab-text'); p.input('fg-text-input', 'ZT');
+  const r = fitted(p, 180); check('Latin text that already fits keeps its size (0.65 × inner)', Math.abs(r.px - 0.65 * r.inner) < 1e-9, JSON.stringify(r));
+  const emojiInput = /<input[^>]*id="fg-emoji-input"[^>]*>/.exec(source)[0];
+  const max = Number(/maxlength="(\d+)"/.exec(emojiInput)?.[1] || Infinity);
+  check('emoji input does not cut a family ZWJ sequence (11 UTF-16 code units)', max >= '👨‍👩‍👧‍👦'.length, emojiInput);
+  const firstOnly = { en: 'Only the first emoji is used: ', zh: '只使用第一个 emoji：', ja: '最初の絵文字だけを使います：', ko: '첫 번째 이모지만 사용합니다: ' };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const q = page(favicon, lang);
+    q.input('fg-emoji-input', '👨‍👩‍👧‍👦');
+    check(lang + ' ZWJ family emoji is drawn whole', signature(q).join() === '👨‍👩‍👧‍👦', signature(q).join());
+    q.input('fg-emoji-input', '🚀🔥');
+    check(lang + ' two emoji: only the first is drawn', signature(q).join() === '🚀', signature(q).join());
+    check(lang + ' two emoji: the status says so', q.$('fg-status').textContent === firstOnly[lang] + '🚀', q.$('fg-status').textContent);
+    q.input('fg-emoji-input', '⚡');
+    check(lang + ' one emoji: no notice', q.$('fg-status').textContent === '', q.$('fg-status').textContent);
+  }
+}
+
+// ---------- review 2026-10-09: localized stats and failure messages, actual canvas cause ----------
+{
+  const statsRe = { en: /^11 files · \d+\.\d KB$/, zh: /^11 个文件 · \d+\.\d KB$/, ja: /^11 ファイル · \d+\.\d KB$/, ko: /^파일 11개 · \d+\.\d KB$/ };
+  const failMsg = {
+    generic: { en: 'Could not create the PNG files. Try again, or use a smaller image.', zh: '无法生成 PNG 文件。请重试，或换一张较小的图片。', ja: 'PNG ファイルを作成できませんでした。もう一度試すか、小さい画像を使ってください。', ko: 'PNG 파일을 만들지 못했습니다. 다시 시도하거나 더 작은 이미지를 쓰세요.' },
+    foreign: { en: 'This SVG contains <foreignObject>, and the browser does not let the page read back a canvas that drew it. Remove the <foreignObject> element.', zh: '这个 SVG 含有 <foreignObject>，浏览器不允许页面读回绘制了它的 canvas。请删除 <foreignObject> 元素。', ja: 'この SVG には <foreignObject> が含まれており、ブラウザーはそれを描いた canvas の読み出しを許可しません。<foreignObject> 要素を削除してください。', ko: '이 SVG에는 <foreignObject>가 있어, 브라우저가 이를 그린 canvas를 다시 읽지 못하게 합니다. <foreignObject> 요소를 지우세요.' },
+    external: { en: 'SVG references external resources. Inline images first.', zh: 'SVG 引用了外部资源，请先内联图片。', ja: 'SVG が外部リソースを参照しています。画像をインライン化してください。', ko: 'SVG가 외부 리소스를 참조합니다. 이미지를 인라인하세요.' },
+    blocked: { en: 'The browser did not allow reading the drawn icon back, so no package was made.', zh: '浏览器不允许读回绘制好的图标，没有生成图标包。', ja: '描画したアイコンの読み出しをブラウザーが許可しなかったため、パッケージは作られませんでした。', ko: '그린 아이콘을 브라우저가 다시 읽지 못하게 해서 패키지를 만들지 못했습니다.' },
+  };
+  const hostError = console.error; console.error = () => {}; // the page logs each failure with console.error
+  const blockCanvas = (p) => { const orig = p.document.createElement; p.document.createElement = (tag) => { const e = orig(tag); if (tag === 'canvas') e.toBlob = () => { const err = new Error('The canvas has been tainted'); err.name = 'SecurityError'; throw err; }; return e; }; };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const p = page(favicon, lang); await generate(p);
+    check(lang + ' stats line is localized', statsRe[lang].test(p.$('fg-result-stats').textContent), p.$('fg-result-stats').textContent);
+    const q = page(favicon, lang); q.click('#fg-generate'); await flush(); q.blobs[0].deliver(null); await flush();
+    check(lang + ' a failed PNG encode shows the localized message, not the browser text', q.$('fg-status').textContent === failMsg.generic[lang], q.$('fg-status').textContent);
+    for (const [kind, svg] of [['foreign', '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><foreignObject width="32" height="32"><div xmlns="http://www.w3.org/1999/xhtml">A</div></foreignObject></svg>'], ['external', '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><image href="https://example.com/logo.png" width="32" height="32"/></svg>']]) {
+      const r = page(favicon, lang); r.click('#fg-tab-svg'); r.input('fg-svg-input', svg); r.advance(300); r.images.at(-1).deliver();
+      blockCanvas(r); r.click('#fg-generate'); await flush(); await flush();
+      check(lang + ' blocked canvas with ' + kind + ' SVG names that cause', r.$('fg-status').textContent === failMsg[kind][lang], r.$('fg-status').textContent);
+    }
+    const e = page(favicon, lang); blockCanvas(e); e.click('#fg-generate'); await flush(); await flush();
+    check(lang + ' blocked canvas without SVG is not blamed on SVG', e.$('fg-status').textContent === failMsg.blocked[lang], e.$('fg-status').textContent);
+  }
+  console.error = hostError;
+  check('unused emojiFontWarn is removed', !source.includes('emojiFontWarn'));
+  for (const lang of ['ja', 'ko']) {
+    const md = readFileSync(join(root, 'src/content/tools/favicon-generator', lang + '.mdx'), 'utf8');
+    check(lang + ' page quotes the current canvasBlocked text', md.includes(failMsg.blocked[lang]));
+  }
+}
+
+// Review F-M1: the text sources opt out of form-state restoration (HTML autofill "off"),
+// like the two site-name boxes; the privacy answers describe the measured reload and
+// back/forward behaviour.
+for (const id of ['fg-emoji-input', 'fg-text-input', 'fg-svg-input', 'fg-app-name', 'fg-short-name']) {
+  const tag = new RegExp('<(?:input|textarea)[^>]*id="' + id + '"[^>]*>').exec(source)?.[0] || '';
+  check(id + ' has autocomplete="off"', /autocomplete="off"/.test(tag), tag);
+}
+
+// Measured 2026-10-09 (local preview, Ego Chromium 152): Reload resets every source and the
+// package; leaving and coming back with Back / Forward restored the whole page from the
+// back/forward cache (chosen image, typed text, generated package).
+{
+  const want = {
+    en: [/Reloading the page/, /Back or Forward/, /back\/forward cache/],
+    zh: [/刷新页面/, /后退或前进/, /往返缓存/],
+    ja: [/再読み込み/, /「戻る」「進む」/, /バックフォワードキャッシュ/],
+    ko: [/새로 고침/, /뒤로·앞으로/, /뒤로-앞으로 캐시/],
+  };
+  const closeTab = /gone when you close the tab|关闭标签页就没了|タブを閉じれば消えます|탭을 닫으면 사라집니다/;
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const md = readFileSync(join(root, 'src/content/tools/favicon-generator', lang + '.mdx'), 'utf8');
+    const ans = /id: "privacy"\n\s+question: "[^"]*"\n\s+answer: "((?:[^"\\]|\\.)*)"/.exec(md)?.[1] || '';
+    check(lang + ' privacy answer drops the untested close-tab claim', !closeTab.test(ans), ans);
+    check(lang + ' privacy answer states the measured reload and back/forward behaviour', want[lang].every((re) => re.test(ans)), ans);
+  }
+}
+
+// Review S2-8 part 4 wording (F-S1, F-S4, F-S5, zh:88, ko:30): old phrases are gone.
+for (const [lang, old] of [['ja', 'この数字は 512 px の画像を別に作るときの目安です'], ['ko', '이 값은 512 px 이미지를 따로 만들 때 참고하세요'], ['zh', '需要在哪里生成都一样'], ['zh', '这里的数字用于你另外做一张 512 px 图'], ['ko', '빈자리가 생깁니다']]) {
+  check(lang + ' page no longer says: ' + old, !readFileSync(join(root, 'src/content/tools/favicon-generator', lang + '.mdx'), 'utf8').includes(old));
+}
+
 // v2 generate contract: all original legacy/package and lifecycle assertions remain above.
 const SSR=Function(source.split('// strings:start')[1].split('// strings:end')[0]+';return STRINGS;')();
 const markupV2=source.split('<script is:inline')[0],styleV2=source.split('<style')[1]||'';
@@ -359,6 +471,53 @@ for(const lang of ['en','zh','ja','ko']){
  check(lang+' old Usage removed',!/<h2>(How to use|使用方法|使い方|사용 방법)<\/h2>/.test(md));
  if(lang==='en')check('EN at least400 words',md.replace(/^---[\s\S]*?---/,'').replace(/<[^>]*>/g,' ').split(/\s+/).filter(Boolean).length>=400);
 }
+
+// ---------- tool page examples (S2 content contract) ----------
+// `{/* fav-mf: {...} */}`: the fields are applied to the default state (theme #ffffff,
+// transparent background, empty names) and the next json block must equal buildManifest();
+// `bytes` must equal the UTF-8 length, which the package list shows as "N B".
+// `{/* fav-fit: {"w","h","size","padding"} */}`: the real renderToCanvas() draws an image
+// source of w × h into a size × size canvas; the drawn width × height (2 decimals) must be
+// quoted in <code>. With `safe`, the half diagonal of the drawn box and 40 % of the size
+// (web.dev maskable safe zone) are quoted too, and `safe` says whether the box fits.
+const renderFactory = new Function('state', extractFunction('drawShapeClip') + extractFunction('renderToCanvas') + '\nreturn renderToCanvas;');
+const fmt2 = (x) => String(Number(x.toFixed(2)));
+function fitBox(f) {
+  const ops = [];
+  const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => ops.push([k, a])), set: (t, k, v) => { t[k] = v; return true; } });
+  renderFactory({ sourceType: 'image', image: { naturalWidth: f.w, naturalHeight: f.h }, shape: 'square', bgMode: 'transparent', padding: f.padding })({ getContext: () => ctx }, f.size);
+  const d = ops.find((o) => o[0] === 'drawImage')[1];
+  return { x: d[1], y: d[2], w: d[3], h: d[4], half: Math.hypot(d[3], d[4]) / 2, limit: 0.4 * f.size };
+}
+const quoted = (after, text) => after.includes('<code>' + text + '</code>') || after.includes('`' + text + '`');
+reportContract(check, 'favicon-generator', {
+  stepCount: 5,
+  annotations: [
+    {
+      tag: 'fav-mf', min: 1,
+      verify({ spec: s, after }) {
+        const out = buildManifest({ ...state, ...s });
+        if (!fencedBlocks(after).some((b) => b.text === out)) return 'manifest not quoted verbatim:\n' + out;
+        const bytes = new TextEncoder().encode(out).length;
+        if (s.bytes !== undefined && (s.bytes !== bytes || !quoted(after, bytes + ' B'))) return 'manifest is ' + bytes + ' B';
+        return null;
+      },
+    },
+    {
+      tag: 'fav-fit', min: 1,
+      verify({ spec: s, after }) {
+        const b = fitBox(s);
+        const box = fmt2(b.w) + ' × ' + fmt2(b.h);
+        if (!quoted(after, box)) return 'drawn box ' + box + ' not quoted';
+        if (s.safe !== undefined) {
+          if ((b.half <= b.limit) !== s.safe) return 'safe is ' + (b.half <= b.limit);
+          if (!quoted(after, fmt2(b.half)) || !quoted(after, fmt2(b.limit))) return 'half diagonal ' + fmt2(b.half) + ' / limit ' + fmt2(b.limit) + ' not quoted';
+        }
+        return null;
+      },
+    },
+  ],
+});
 
 await flush();
 checkPage(specs[0],'all page async failures handled',unhandled,[]);
