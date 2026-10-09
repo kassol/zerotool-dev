@@ -11,6 +11,9 @@
 // lookup; spaces become "/", do not count as characters and use the localized space label in table rows; full-width letters, digits and the
 // ideographic space (U+3000) match after NFKC; symbols and kana give the unknown marker; an
 // emoji outside the BMP is one row; the ja page examples; 4-language STRINGS have the same keys.
+// S2-9 (2026-10-09): analytics once per textarea change and distinct nonblank text; the
+// execCommand('copy') fallback; the status counts [?] characters apart from converted ones; the
+// nato-check / nato-rows worked examples on the four tool pages (see that section).
 //
 // Run: node scripts/test-nato-phonetic-alphabet.mjs
 
@@ -20,7 +23,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks, readToolMdx, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/NatoPhoneticAlphabetTool.astro'), 'utf8');
@@ -471,6 +474,83 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' status without [?] keeps the short form', status(), { en: 'Converted 5 characters.', zh: '已转换 5 个字符。', ja: '5 文字を変換しました。', ko: '5자를 변환했습니다.' }[lang]);
   p.input('nato-input', 'a b'); p.advance(200);
   eq(lang + ' spaces are neither converted nor [?]', status(), { en: 'Converted 2 characters.', zh: '已转换 2 个字符。', ja: '2 文字を変換しました。', ko: '2자를 변환했습니다.' }[lang]);
+}
+
+// ---------- worked examples on the tool pages (S2-9, 2026-10-09) ----------
+// {/* nato-check: {"in": "x" | ["x", …], "rows"?: true | [i, …], "status"?: true} */} or
+// {/* nato-check: {"cases": [{"in": "x", "rows"?: …, "status"?: true, "word"?: false}, …]} */} on
+// src/content/tools/nato-phonetic-alphabet/{lang}.mdx: the real page script in the page language
+// converts each input. Its Word-mode output must appear as inline code, a <code> element or a
+// code-block line after the annotation (up to the next nato-check or H2). With "rows", the
+// listed Table-mode rows ("character = code" as Copy writes them, with the localized space label;
+// true = all rows) must appear the same way; with "status", the status line text must appear
+// verbatim in that text ("word": false skips the Word-output check for a status-only example).
+// {/* nato-rows: {"in": i, "out": j} */}: in the first Markdown table after it, column j of every
+// body row equals the Word-mode output for column i (the ja page's 変換例 table).
+{
+  const before = passes, beforeFailures = failures;
+  const pageRun = (lang, input) => {
+    const p = pageVM(lang, false); p.input('nato-input', input); p.advance(200);
+    return { word: p.get('nato-output').value, rows: p.rows().map(([ch, code]) => ch + ' = ' + code), status: p.get('nato-status').textContent };
+  };
+  const codeTexts = (after) => {
+    const out = new Set();
+    for (const b of fencedBlocks(after)) { out.add(b.text); for (const line of b.text.split('\n')) out.add(line.trim()); }
+    const prose = withoutCode(after);
+    for (const m of prose.matchAll(/(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/g)) out.add(m[2].replace(/^ ([\s\S]*) $/, '$1'));
+    for (const m of prose.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+      const js = /^\{"((?:[^"\\]|\\[\s\S])*)"\}$/.exec(m[1]);
+      out.add(js ? JSON.parse('"' + js[1] + '"') : m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&'));
+    }
+    return out;
+  };
+  const verifyCheck = ({ spec, after, lang }) => {
+    const cases = Array.isArray(spec?.cases) ? spec.cases
+      : spec && spec.in !== undefined ? [].concat(spec.in).map((input) => ({ in: input, rows: spec.rows, status: spec.status })) : null;
+    if (!cases || !cases.length || cases.some((c) => typeof c?.in !== 'string' || !c.in)) return 'annotation needs "in" or "cases"';
+    const codes = codeTexts(after);
+    for (const c of cases) {
+      const r = pageRun(lang, c.in);
+      if (c.word !== false && !codes.has(r.word)) return JSON.stringify(c.in) + ': Word output ' + JSON.stringify(r.word) + ' is not shown as code';
+      const want = c.rows === true ? r.rows : Array.isArray(c.rows) ? c.rows.map((i) => r.rows[i]) : [];
+      for (const row of want) if (row === undefined || !codes.has(row)) return JSON.stringify(c.in) + ': Table row ' + JSON.stringify(row) + ' is not shown as code';
+      if (c.status && !after.includes(r.status)) return JSON.stringify(c.in) + ': status ' + JSON.stringify(r.status) + ' is not quoted';
+    }
+    return null;
+  };
+  const verifyRows = ({ spec, after, lang }) => {
+    if (!Number.isInteger(spec?.in) || !Number.isInteger(spec?.out)) return 'annotation needs integer "in" and "out" columns';
+    const lines = after.split('\n'), start = lines.findIndex((l) => /^\s*\|/.test(l));
+    if (start < 0) return 'no table after the annotation';
+    const table = [];
+    for (let i = start; i < lines.length && /^\s*\|/.test(lines[i]); i++) table.push(lines[i]);
+    const cells = (line) => line.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((s) => s.trim().replace(/\\\|/g, '|'));
+    const body = table.slice(2).map(cells);
+    if (!body.length) return 'table has no body rows';
+    for (const row of body) {
+      if (!row[spec.in]) return 'empty input cell in ' + JSON.stringify(row);
+      const r = pageRun(lang, row[spec.in]);
+      if (r.word !== row[spec.out]) return JSON.stringify(row[spec.in]) + ': page gives ' + JSON.stringify(r.word) + ', table shows ' + JSON.stringify(row[spec.out]);
+    }
+    return null;
+  };
+  const docs = readToolMdx('nato-phonetic-alphabet');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' worked examples, Limits and FAQ ids pass the S2 contract', contractProblems('nato-phonetic-alphabet', lang, {
+      limits: true, requireFaqIds: true,
+      annotations: [{ tag: 'nato-check', min: 1, verify: verifyCheck }, { tag: 'nato-rows', verify: verifyRows }],
+    }), '');
+    const count = annotations(docs[lang].body, 'nato-check').length + annotations(docs[lang].body, 'nato-rows').length;
+    check(lang + ' has at least 2 recomputed examples', count >= 2, String(count));
+  }
+  check('nato-check catches a wrong Word output', verifyCheck({ spec: { in: 'AB' }, after: '\n`Alfa Charlie`\n', lang: 'en' }) !== null);
+  check('nato-check accepts a JSX string <code> element', verifyCheck({ spec: { in: 'AB' }, after: '\n<code>{"Alfa Bravo"}</code>\n', lang: 'en' }) === null);
+  check('nato-check catches a missing Table row', verifyCheck({ spec: { cases: [{ in: 'A B', rows: true }] }, after: '\n`Alfa / Bravo` `A = Alfa` `B = Bravo`\n', lang: 'en' }) !== null);
+  check('nato-check uses the localized space row', verifyCheck({ spec: { cases: [{ in: 'A B', rows: [1] }] }, after: '\n`Alfa / Bravo`、`（空格） = —`\n', lang: 'zh' }) === null);
+  check('nato-check catches a wrong status', verifyCheck({ spec: { cases: [{ in: 'A-B', status: true }] }, after: '\n`Alfa [?] Bravo` gives “Converted 3 characters.”\n', lang: 'en' }) !== null);
+  check('nato-rows catches a wrong table cell', verifyRows({ spec: { in: 0, out: 1 }, after: '\n| In | Out |\n|---|---|\n| AB | Alfa Charlie |\n', lang: 'en' }) !== null);
+  check('nato-rows accepts the page output', verifyRows({ spec: { in: 0, out: 1 }, after: '\n| In | Out |\n|---|---|\n| K7Q9 X2 | Kilo Seven Quebec Niner / X-ray Two |\n', lang: 'ja' }) === null);
+  console.log('tool page examples: ' + (passes - before) + ' passed, ' + (failures - beforeFailures) + ' failed');
 }
 
 process.removeListener('unhandledRejection', onUnhandled);
