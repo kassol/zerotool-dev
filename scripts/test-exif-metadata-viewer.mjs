@@ -496,6 +496,32 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
       try { p.get('emv-download').click(); } catch (error) { dlErr = error.name; }
       eq(lang + ' malformed EXIF: download works', [dlErr, p.downloads.length], [null, 1]);
     }
+    // A file cut off inside a marker segment (in the APP1, or in a later segment such as DQT):
+    // stripMetadata used to throw a RangeError (or return a 2–38 byte file) and the Download
+    // button did nothing. It now returns null and the page says why in its language.
+    const dqtAt = photo.indexOf(Buffer.from([0xFF, 0xDB]));
+    const truncated = { 'inside APP1': photo.subarray(0, 40), 'in a segment after APP1': photo.subarray(0, dqtAt + 3), 'inside DQT data': photo.subarray(0, dqtAt + 20) };
+    for (const [where, bytes] of Object.entries(truncated)) {
+      let r, err = null;
+      try { r = E.stripMetadata(ab(bytes)); } catch (error) { err = error.name; }
+      eq('truncated ' + where + ': strip does not throw', err, null);
+      eq('truncated ' + where + ': strip returns null', r, null);
+      for (const lang of ['en', 'zh', 'ja', 'ko']) {
+        const p = ui(lang);
+        p.complete(p.input('cut.jpg', 'image/jpeg', bytes.length), bytes);
+        let clickErr = null;
+        try { p.get('emv-download').click(); } catch (error) { clickErr = error.name; }
+        eq(lang + ' truncated ' + where + ': download click does not throw', clickErr, null);
+        eq(lang + ' truncated ' + where + ': nothing downloaded', p.downloads.length, 0);
+        eq(lang + ' truncated ' + where + ': localized notice', [p.get('emv-status').textContent, p.get('emv-status').className.includes('error')], [clientStrings(lang).CLIENT_T.errTruncated, true]);
+      }
+    }
+    // The four pages quote both notices word for word
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      const mdx = readFileSync(join(root, 'src/content/tools/exif-metadata-viewer/' + lang + '.mdx'), 'utf8');
+      const L = clientStrings(lang).CLIENT_T;
+      eq(lang + ' page quotes the malformed and cut-off notices', [mdx.includes(L.errCorrupt), mdx.includes(L.errTruncated)], [true, true]);
+    }
     // Copy: the Clipboard API may be missing (non-secure context) or refuse. The page falls back
     // to a hidden textarea + execCommand('copy') and reports a failure in the page language.
     for (const lang of ['en', 'zh', 'ja', 'ko']) {

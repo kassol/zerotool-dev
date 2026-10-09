@@ -38,6 +38,7 @@ const STRINGS = {
     warnLarge: 'Large file — decoding may be slow.',
     errRead: 'Could not read the file. Please try a different photo.',
     errCorrupt: 'EXIF block looks malformed. Showing what could be parsed.',
+    errTruncated: 'The JPEG file is cut off before the image data, so no cleaned copy can be made.',
   },
   zh: {
     upload: "JPEG 照片",
@@ -72,6 +73,7 @@ const STRINGS = {
     warnLarge: '文件较大，解码可能较慢。',
     errRead: '无法读取该文件，请尝试其他照片。',
     errCorrupt: 'EXIF 块格式异常，仅展示可解析的字段。',
+    errTruncated: 'JPEG 文件在图像数据之前就被截断了，无法生成清理后的副本。',
   },
   ja: {
     upload: "JPEG 写真",
@@ -106,6 +108,7 @@ const STRINGS = {
     warnLarge: 'ファイルが大きいため、解析に時間がかかる場合があります。',
     errRead: 'ファイルを読み取れませんでした。別の写真をお試しください。',
     errCorrupt: 'EXIF ブロックの形式が不正です。解析できた項目のみ表示します。',
+    errTruncated: 'JPEG ファイルが画像データより前で途切れているため、除去済みのコピーを作れません。',
   },
   ko: {
     upload: "JPEG 사진",
@@ -140,6 +143,7 @@ const STRINGS = {
     warnLarge: '파일이 큽니다 — 디코딩이 느릴 수 있습니다.',
     errRead: '파일을 읽을 수 없습니다. 다른 사진을 시도하세요.',
     errCorrupt: 'EXIF 블록 형식이 잘못되었습니다. 파싱 가능한 필드만 표시합니다.',
+    errTruncated: 'JPEG 파일이 이미지 데이터 앞에서 잘려 있어 정리된 사본을 만들 수 없습니다.',
   },
 } as const;
 const T = STRINGS[lang];
@@ -406,7 +410,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
       /* ── Strip APP1 / APP13 segments ── */
       // Orientation 2–8 is written back in a minimal APP1 at the place of the first EXIF APP1:
       // phones store portrait photos sideways and rely on it, and it says nothing about the
-      // person. The pixels are not re-encoded.
+      // person. The pixels are not re-encoded. Returns null when the file is cut off inside a
+      // marker segment or ends before the image data (nothing usable to write).
       function stripMetadata(buf) {
         var view = new DataView(buf);
         if (view.getUint16(0) !== 0xFFD8) return buf;
@@ -415,17 +420,21 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var keepOrientation = typeof orientation === 'number' && orientation >= 2 && orientation <= 8;
         var parts = [new Uint8Array(buf, 0, 2)]; // SOI
         var placed = false;
+        var reachedImage = false;
         var pos = 2;
         while (pos < view.byteLength - 1) {
           var marker = view.getUint16(pos);
           if (marker === 0xFFD9 || marker === 0xFFDA) {
             if (keepOrientation && !placed) { parts.push(orientationApp1(orientation)); placed = true; }
             parts.push(new Uint8Array(buf, pos));
+            reachedImage = true;
             break;
           }
           if ((marker & 0xFF00) !== 0xFF00) break;
+          if (pos + 4 > view.byteLength) break;
           var segLen = view.getUint16(pos + 2);
           var segEnd = pos + 2 + segLen;
+          if (segEnd > view.byteLength) break;
           if (marker === 0xFFE1 || marker === 0xFFED) {
             // Drop APP1 (EXIF/XMP) and APP13 (Photoshop/IPTC). APP14 (Adobe) is kept: it holds
             // only the colour transform flag, and CMYK / YCCK JPEGs decode with wrong colours
@@ -436,6 +445,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           }
           pos = segEnd;
         }
+        if (!reachedImage) return null;
         var totalLen = 0;
         parts.forEach(function (p) { totalLen += p.length; });
         var out = new Uint8Array(totalLen);
@@ -695,6 +705,11 @@ const { tips: TIPS, ...CLIENT_T } = T;
       dlBtn.addEventListener('click', function () {
         if (!currentBuffer) return;
         var stripped = stripMetadata(currentBuffer);
+        if (!stripped) {
+          statusEl.textContent = t.errTruncated;
+          statusEl.className = 'tool-status error';
+          return;
+        }
         var blob = new Blob([stripped], { type: 'image/jpeg' });
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
