@@ -9,16 +9,24 @@ steps:
   - "htpasswd 파일 확인·편집을 열어 내용을 붙여 넣거나 파일 열기를 사용하세요. 사용자 이름과 비밀번호를 입력하고 비밀번호 확인을 누르세요."
   - "사용자 추가·변경 또는 사용자 삭제로 파일을 편집한 뒤 변경한 내용을 복사하거나 다운로드하세요."
 faqItems:
-  - question: "Nginx에서 bcrypt 줄로 로그인이 안 되는 이유는?"
-    answer: "Nginx는 $apr1$, {SHA}, {SSHA}, {PLAIN}만 직접 처리하고 bcrypt는 운영체제의 crypt()에 맡깁니다. 2026-10-01 Docker로 확인한 결과 Ubuntu 18.04와 CentOS 7.9의 crypt()는 bcrypt를 받지 않았고, Ubuntu 20.04 이상, Debian 11 이상, AlmaLinux 9, Alpine은 받았습니다. 지원하지 않는 시스템에서는 SHA-512 crypt나 APR1을 쓰세요."
-  - question: "$2y$와 $2a$는 무엇이 다른가요?"
+  - id: "format"
+    question: "어떤 형식을 골라야 하나요? Nginx에서 bcrypt 해시로 로그인이 안 되면요?"
+    answer: "서버가 읽을 수 있다면 bcrypt $2y$를 쓰세요. Apache 2.4는 어떤 플랫폼에서도 읽습니다. Nginx는 $apr1$, {SHA}, {SSHA}, {PLAIN}만 직접 처리하고 bcrypt는 운영체제의 crypt()에 맡깁니다. 2026-10-01 Docker로 확인한 결과 Ubuntu 18.04와 CentOS 7.9의 crypt()는 bcrypt를 받지 않았고, Ubuntu 20.04 이상, Debian 11 이상, AlmaLinux 9, Alpine은 받았습니다. 지원하지 않는 시스템에서는 SHA-512 crypt를 쓰세요. APR1은 모든 Apache와 Nginx가 읽는 형식입니다."
+  - id: "prefix"
+    question: "$2y$와 $2a$는 무엇이 다른가요?"
     answer: "해시는 같고 접두사만 다릅니다. $2y$는 Apache htpasswd -B가 쓰는 형식이고 Apache Password Formats 문서도 이 형태로 적습니다. OpenBSD의 crypt()는 $2a$와 $2b$만 읽으므로 OpenBSD에서만 $2a$를 고르세요. $2b$는 APR이 직접 처리하지 않고 시스템 crypt()에 넘기므로 macOS와 Windows의 Apache에서 실패합니다."
-  - question: "한글 비밀번호를 써도 되나요?"
-    answer: "됩니다. 이 도구는 UTF-8로 해시하므로 클라이언트도 UTF-8로 보내야 합니다. UTF-8 터미널에서 curl -u로 보낸 한글 비밀번호는 Apache와 Nginx 모두 통과했습니다. 다만 bcrypt는 앞 72바이트만 쓰고 한글 한 글자는 3바이트이므로, 25자 이상이면 도구가 경고합니다."
-  - question: "bcrypt 비용은 얼마로 하나요?"
+  - id: "cost"
+    question: "bcrypt 비용은 얼마로 하나요?"
     answer: "htpasswd 기본값은 5, 범위는 4~17이고 이 도구는 10에서 시작합니다. Basic 인증은 요청마다 비밀번호를 보내므로 서버도 요청마다 bcrypt를 계산합니다. Apple M1 Max에서 htpasswd -v 확인 한 번이 비용 5에서 약 13ms, 10에서 약 72ms, 12에서 약 266ms였습니다."
-  - question: "비밀번호가 서버로 전송되나요?"
+  - id: "non-ascii"
+    question: "한글 비밀번호를 써도 되나요?"
+    answer: "됩니다. 이 도구는 UTF-8로 해시하므로 클라이언트도 UTF-8로 보내야 합니다. UTF-8 터미널에서 curl -u로 보낸 한글 비밀번호는 Apache와 Nginx 모두 통과했습니다. 다만 bcrypt는 앞 72바이트만 쓰고 한글 한 글자는 3바이트이므로, 25자 이상이면 도구가 경고합니다."
+  - id: "privacy"
+    question: "비밀번호가 서버로 전송되나요?"
     answer: "아니요. 해시는 bcrypt.js와 페이지 코드로 이 탭 안에서만 계산하고 저장하지 않습니다. 이 페이지는 분석·광고 스크립트도 불러오지 않습니다. 생성할 때 브라우저 개발자 도구의 Network 패널에서 확인할 수 있습니다."
+  - id: "plain-text"
+    question: "평문 형식을 써도 되나요?"
+    answer: "쓸 수 있는 경우는 많지 않습니다. Apache는 Windows와 NetWare에서만 평문 비밀번호를 받습니다(htpasswd 매뉴얼의 -p). Nginx는 {PLAIN} 접두사가 붙은 평문만 읽는데, 문서에서는 쓰지 말아야 할 예시로 설명합니다. Linux의 Apache에서는 평문 줄이 일치하지 않습니다."
 ---
 
 ## Ubuntu 서버의 Nginx에 Basic 인증 걸기
@@ -42,7 +50,7 @@ location /admin/ {
 | CentOS 7.9 (glibc 2.17) | 안 됨 | 됨 |
 | AlmaLinux 9.8 | 됨 | 됨 |
 
-아직 Ubuntu 18.04를 쓰는 서버라면 bcrypt 줄은 비밀번호가 맞아도 통과하지 않습니다. 이때는 **SHA-512 crypt**를 고르세요. 이 도구로 만든 줄을 실제 Nginx 1.29.8(Debian 13, Alpine 3.23 이미지)과 Apache 2.4.68에 넣고 `curl -u`로 로그인한 결과, bcrypt·SHA-512·SHA-256·APR1·SHA-1·CRYPT는 모두 통과했고, 접두사 없는 평문은 둘 다 실패했으며 `{PLAIN}`은 Nginx만 받았습니다.
+아직 Ubuntu 18.04를 쓰는 서버라면 bcrypt 해시는 비밀번호가 맞아도 통과하지 않습니다. 이때는 **SHA-512 crypt**를 고르세요. 이 도구로 만든 줄을 실제 Nginx 1.29.8(Debian 13, Alpine 3.23 이미지)과 Apache 2.4.68에 넣고 `curl -u`로 로그인한 결과, bcrypt·SHA-512·SHA-256·APR1·SHA-1·CRYPT는 모두 통과했고, 접두사 없는 평문은 둘 다 실패했으며 `{PLAIN}`은 Nginx만 받았습니다.
 
 ## 예시: 한글이 들어간 비밀번호
 
