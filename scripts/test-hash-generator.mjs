@@ -374,6 +374,11 @@ for(const cls of ['hg-row','hg-label','hg-value']){
   eq('registered convert',/['"]hash-generator['"]:\s*['"]convert['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
   eq('labels contain no interactive children',[...markup.matchAll(/<label\b[\s\S]*?<\/label>/g)].every(m=>!/<Toggletip|<button/.test(m[0])),true);
   const ids=[...markup.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);eq('unique markup IDs',new Set(ids).size,ids.length);
+  eq('sensitive policy is disabled (no GA / AdSense, nothing persisted)',/'hash-generator':\s*'disabled'/.test(readFileSync(join(root,'src/data/persistence.ts'),'utf8')),true);
+  eq('component never calls ztPersist save/load and uses no storage',!/ztPersist|localStorage|sessionStorage/.test(source),true);
+  const SENSITIVE_PRIVACY={en:/loads neither Google Analytics nor AdSense/,zh:/不加载 Google Analytics，也不加载 AdSense/,ja:/Google Analytics も AdSense も読み込みません/,ko:/Google Analytics와 AdSense를 불러오지 않습니다/};
+  const LOADS_GA={en:/page loads Google Analytics;/,zh:/页面加载了 Google Analytics/,ja:/Google Analytics を読み込みますが/,ko:/Google Analytics를 불러오며/};
+  const SENSITIVE_SEO={en:/not uploaded or saved, and the page loads no analytics or ads/,zh:/不上传、不保存，页面不加载统计与广告/,ja:/送信も保存もせず、アクセス解析や広告も読み込みません/,ko:/전송·저장하지 않으며 분석 도구와 광고도 불러오지 않습니다/};
   const yaml=require('js-yaml');
   const hash=text=>createHash('sha256').update(text).digest('hex');
   for(const lang of Object.keys(labels)){
@@ -384,6 +389,10 @@ for(const cls of ['hg-row','hg-label','hg-value']){
     eq(lang+': four steps before FAQ',meta.steps.length===4&&fm.indexOf('steps:')<fm.indexOf('faqItems:'),true);
     eq(lang+': bounded plain steps',meta.steps.every(x=>typeof x==='string'&&x.length<=280&&!/[<>]/.test(x))&&meta.steps.join('').length<=1200,true);
     eq(lang+': MDX content contract and hash-check examples', contractProblems('hash-generator', lang, HASH_ANNOTATIONS), '');
+    // Sensitive tool: the privacy answer and seoDescription state that the page saves nothing and loads no GA / AdSense.
+    const privacy=meta.faqItems.find(x=>x.id==='privacy').answer;
+    eq(lang+': privacy answer says neither Google Analytics nor AdSense is loaded',SENSITIVE_PRIVACY[lang].test(privacy)&&!LOADS_GA[lang].test(privacy),true);
+    eq(lang+': seoDescription says nothing is saved and no analytics or ads load',SENSITIVE_SEO[lang].test(meta.seoDescription),true);
     const p=pageVM(lang);eq(lang+': input label is local before IIFE',p.get('hg-input').parentElement.querySelector('label').textContent,strings[lang].inputLabel);eq(lang+': initial output has no rows',rows(p).length,0);eq(lang+': localized empty message',p.widget.querySelector('.hg-empty').textContent,strings[lang].emptyOutput);
   }
   eq('MD5 and SHA helpers unchanged',hash(source.slice(source.indexOf('      // Compact MD5'),source.indexOf('      var inputEl'))),'fa6dbe7d03462cdef083bac56db494bb240a4aa8d110cdec05eedbc7de7ef74f');
