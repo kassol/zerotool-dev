@@ -27,7 +27,8 @@ const STRINGS = {
       escapeEnd: 'Escape at end of input (position {pos})',
       expectedName: 'Expected a name (position {pos})',
       emptyArgument: 'Empty argument (position {pos})',
-      emptySelector: 'Empty selector (position {pos})'
+      emptySelector: 'Empty selector (position {pos})',
+      unexpectedSpace: '{code} at position {pos} is not a CSS space and cannot be part of a name'
     },
     fullwidth: 'This selector contains full-width characters such as ＃ ． ： ［. CSS does not read them as # . : [ but as part of a name, and the tuple counts them that way. Type them in half-width form.'
   },
@@ -54,7 +55,8 @@ const STRINGS = {
       escapeEnd: '反斜杠后面没有字符（第 {pos} 个字符）',
       expectedName: '第 {pos} 个字符处缺少名称',
       emptyArgument: '括号里没有选择器（第 {pos} 个字符）',
-      emptySelector: '选择器为空（第 {pos} 个字符）'
+      emptySelector: '选择器为空（第 {pos} 个字符）',
+      unexpectedSpace: '第 {pos} 个字符是 {code}，它在 CSS 里不是空格，也不能用在名称里'
     },
     fullwidth: '选择器里有全角字符（如 ＃ ． ： ［）。CSS 不把它们当作 # . : [，而是当作名称的一部分，元组也按这种读法计算。请改用半角字符。'
   },
@@ -81,7 +83,8 @@ const STRINGS = {
       escapeEnd: 'バックスラッシュの後に文字がありません（{pos} 文字目）',
       expectedName: '{pos} 文字目に名前がありません',
       emptyArgument: '括弧の中にセレクターがありません（{pos} 文字目）',
-      emptySelector: 'セレクターが空です（{pos} 文字目）'
+      emptySelector: 'セレクターが空です（{pos} 文字目）',
+      unexpectedSpace: '{pos} 文字目の {code} は CSS の空白ではなく、名前にも使えません'
     },
     fullwidth: 'セレクターに全角文字（＃ ． ： ［ など）が含まれています。CSS はこれらを # . : [ としてではなく名前の一部として読み、タプルもその読み方で数えています。半角で入力してください。'
   },
@@ -108,7 +111,8 @@ const STRINGS = {
       escapeEnd: '백슬래시 뒤에 문자가 없습니다({pos}번째 문자)',
       expectedName: '{pos}번째 문자에 이름이 없습니다',
       emptyArgument: '괄호 안에 선택자가 없습니다({pos}번째 문자)',
-      emptySelector: '선택자가 비어 있습니다({pos}번째 문자)'
+      emptySelector: '선택자가 비어 있습니다({pos}번째 문자)',
+      unexpectedSpace: '{pos}번째 문자({code})는 CSS의 공백이 아니며 이름에도 쓸 수 없는 문자입니다'
     },
     fullwidth: '선택자에 전각 문자(＃ ． ： ［ 등)가 들어 있습니다. CSS는 이를 # . : [ 기호로 읽지 않고 이름의 일부로 읽으며, 튜플도 그렇게 셉니다. 반각 문자로 입력하세요.'
   }
@@ -231,8 +235,15 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
         return splitRanges(text).map(function (p) { return p.text; });
       }
 
+      /* Name characters per CSS Syntax 3 §4.2 (non-ASCII ident code point). Surrogate halves
+         belong to code points at or above U+10000, which are name characters. */
       function isIdentChar(ch) {
-        return /[A-Za-z0-9_-]/.test(ch) || ch.charCodeAt(0) >= 0x80;
+        if (/[A-Za-z0-9_-]/.test(ch)) return true;
+        var c = ch.charCodeAt(0);
+        return c === 0xB7 || (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) || (c >= 0xF8 && c <= 0x37D)
+          || (c >= 0x37F && c <= 0x1FFF) || c === 0x200C || c === 0x200D || c === 0x203F || c === 0x2040
+          || (c >= 0x2070 && c <= 0x218F) || (c >= 0x2C00 && c <= 0x2FEF) || (c >= 0x3001 && c <= 0xD7FF)
+          || (c >= 0xD800 && c <= 0xDFFF) || (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFFD);
       }
       /* Read a CSS identifier (with escapes) at i; return the index after it. */
       function readIdent(s, i) {
@@ -244,7 +255,7 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
             if (/[0-9a-fA-F]/.test(s[i])) {
               var n = 0;
               while (n < 6 && i < s.length && /[0-9a-fA-F]/.test(s[i])) { i++; n++; }
-              if (i < s.length && /\s/.test(s[i])) i++;
+              if (i < s.length && /[ \t\n\r\f]/.test(s[i])) i++;
             } else {
               i++;
             }
@@ -281,7 +292,7 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
         try {
           while (i < s.length) {
             var ch = s[i];
-            if (/\s/.test(ch) || ch === '>' || ch === '+' || ch === '~' || ch === '*' || ch === '&') { i++; continue; }
+            if (/[ \t\n\r\f]/.test(ch) || ch === '>' || ch === '+' || ch === '~' || ch === '*' || ch === '&') { i++; continue; }
             if (ch === '|') { i += s[i + 1] === '|' ? 2 : 1; continue; }
             if (ch === '#') { i = readIdent(s, i + 1); a++; continue; }
             if (ch === '.') { i = readIdent(s, i + 1); b++; continue; }
@@ -357,6 +368,12 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
           var m = ERROR_PATTERNS[i][0].exec(msg);
           if (!m) continue;
           var hasChar = ERROR_PATTERNS[i][2];
+          if (ERROR_PATTERNS[i][1] === 'unexpected' && /\s/.test(m[1])) {
+            var code = m[1].charCodeAt(0).toString(16).toUpperCase();
+            return t.errors.unexpectedSpace
+              .replace('{code}', 'U+' + ('0000' + code).slice(-4))
+              .replace('{pos}', m[2]);
+          }
           return t.errors[ERROR_PATTERNS[i][1]]
             .replace('{char}', hasChar ? m[1] : '')
             .replace('{pos}', hasChar ? m[2] : m[1]);

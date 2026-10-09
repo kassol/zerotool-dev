@@ -137,6 +137,26 @@ eq('non-ASCII class', spec('.größe'), [0, 1, 0]);
 eq('& counts as zero', spec('& .x'), [0, 1, 0]);
 eq('combinators without spaces', spec('a>b~c+d'), [0, 0, 4]);
 
+// ---------- CSS Syntax 3 §4.2: whitespace and name characters (S2-9, approved engine change) ----------
+// Whitespace is only space, tab, LF, CR and FF (input preprocessing turns CR / FF into LF);
+// a non-ASCII ident code point is one of the listed ranges, which leave out U+0080-U+00B6,
+// U+00D7, U+00F7, U+3000 and others. Chrome 152 still accepts `div\u3000p` (ego-browser,
+// 2026-10-09) and reads it as one type selector; the tool follows the specification.
+eq('U+3000 between names is an error', spec('div\u3000p'), 'error: Unexpected "\u3000" (position 4)');
+eq('U+3000 at the start of a compound is an error', spec('div >\u3000p'), 'error: Unexpected "\u3000" (position 6)');
+eq('U+00A0 is an error', spec('div\u00a0p'), 'error: Unexpected "\u00a0" (position 4)');
+eq('U+00D7 (×) is an error', spec('.a\u00d7b'), 'error: Unexpected "\u00d7" (position 3)');
+eq('tab is a descendant combinator', spec('div\tp'), [0, 0, 2]);
+eq('form feed is a descendant combinator', spec('div\fp'), [0, 0, 2]);
+eq('U+00B7 is a name character', spec('.a\u00b7b'), [0, 1, 0]);
+eq('U+3001 is a name character', spec('.a\u3001b'), [0, 1, 0]);
+eq('Hangul class', spec('.\uba54\uc778 .\ubc84\ud2bc'), [0, 2, 0]);
+eq('full-width forms are name characters', spec('\uff03main\uff0enav'), [0, 0, 1]);
+eq('astral name characters', spec('.\u{1F600}x'), [0, 1, 0]);
+eq('ZWJ inside a name', spec('.a\u200db'), [0, 1, 0]);
+eq('hex escape followed by a tab', spec('#\\31\t23'), [1, 0, 0]);
+eq('hex escape followed by U+3000 is not consumed', spec('#\\31\u300023'), 'error: Unexpected "\u3000" (position 5)');
+
 // ---------- syntax errors ----------
 for (const bad of ['a(', ':is(.a', '[x', '#', 'a)b', '.', ':', '[x="a]']) {
   check('error for ' + JSON.stringify(bad), typeof spec(bad) === 'string', JSON.stringify(spec(bad)));
@@ -283,8 +303,9 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
 }
 process.removeListener('unhandledRejection',onUnhandled);
 const protectedEngine=source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
-eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),7645);
-eq('engine exact original SHA256',createHash('sha256').update(protectedEngine).digest('hex'),'3a9f29257895fc733bcdb1ee7bde7820985760a4a23c74f8c82a6ebb85609843');
+// S2-9 (2026-10-09, approved): isIdentChar follows CSS Syntax 3 §4.2 and whitespace is space, tab, LF, CR, FF.
+eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),8285);
+eq('engine exact original SHA256',createHash('sha256').update(protectedEngine).digest('hex'),'9d5533d68c1d88355886584d717b5f3b6c43ce612fe3c1806e518a06ba59a2a5');
 
 
 // ---------- v2 page layout ----------
@@ -296,7 +317,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 const css=compiled.css.join('\n'),scope=css.match(/data-astro-cid-[\w-]+/)[0];
 const hash=v=>createHash('sha256').update(v).digest('hex');
 // Hash updated by S2-9 (2026-10-09): localized error messages, the full-width note, and analytics on change / copy success.
-eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'b22bd2fb098a015f2d37c3799b38ddf1e7490a148a7dc55f622ee4d29079eaf8');
+eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'c1feed03cfa48c67114d913a53e8275bd83f0a4beb86f997a7400d9fc46c8d07');
 check('v2 direct flex root',/^<div class="csc-wrap">/.test(markupTemplate)&&/\.csc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
 check('v2 input before reserved hint/status before results',markupTemplate.indexOf('id="csc-input"')<markupTemplate.indexOf('csc-hint csc-status')&&markupTemplate.indexOf('csc-hint csc-status')<markupTemplate.indexOf('class="csc-result-section"'));
 check('v2 fixed hint/status height',/\.csc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css));
@@ -367,6 +388,13 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const want = t.invalid.replace('{msg}', tmpl.replace('{char}', vars.char ?? '').replace('{pos}', vars.pos));
     eq(lang + ' localized error for ' + JSON.stringify(sel), p.result.querySelector('.csc-error-msg')?.textContent, want);
     for (const v of Object.values(vars)) check(lang + ' error keeps ' + v + ' for ' + JSON.stringify(sel), want.includes(v), want);
+  }
+  // An invisible character (U+3000, U+00A0) is named by its code point instead of being quoted.
+  for (const [sel, code, pos] of [['div\u3000p', 'U+3000', '4'], ['div\u00a0p', 'U+00A0', '4']]) {
+    const p = page(lang, 'shared-after'); p.type(sel); p.tick(200);
+    const tmpl = C.errors?.unexpectedSpace ?? '';
+    check(lang + ' unexpectedSpace template has {code} and {pos}', tmpl.includes('{code}') && tmpl.includes('{pos}'), tmpl);
+    eq(lang + ' localized error names ' + code, p.result.querySelector('.csc-error-msg')?.textContent, t.invalid.replace('{msg}', tmpl.replace('{code}', code).replace('{pos}', pos)));
   }
   if (lang === 'en') {
     // en keeps the engine wording
