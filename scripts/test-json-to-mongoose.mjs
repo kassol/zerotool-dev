@@ -42,6 +42,32 @@ const b = source.indexOf('/* ── engine:end ── */');
 if (a < 0 || b <= a) { console.error('FAIL: engine block not found'); process.exit(1); }
 const E = new Function(source.slice(a, b) + '\nreturn { buildRootSchema, renderOutput, toCamelCase, toPascalCase };')();
 
+// JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
+// json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
+// HarFileAnalyzerTool.astro. A syntax error shows line, column and cause in the page language
+// instead of the browser's English message; line and column count from the start of the text box
+// (the tool parses the trimmed text, so leading blank lines are added back).
+const JSON_ENGINE = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+const HAR_SOURCE = readFileSync(join(root, 'src/components/tools/HarFileAnalyzerTool.astro'), 'utf8');
+const HAR_S = new Function('return ' + HAR_SOURCE.slice(HAR_SOURCE.indexOf('const STRINGS = ') + 16, HAR_SOURCE.indexOf('\n};\n', HAR_SOURCE.indexOf('const STRINGS = ')) + 2))();
+function fnSrc(src, name) {
+  const lines = src.split('\n');
+  const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+  if (at < 0) return '';
+  const indent = lines[at].match(/^\s*/)[0];
+  let end = at + 1;
+  while (end < lines.length && lines[end] !== indent + '}') end++;
+  return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+}
+// [input, jsonSyntaxError code, line, column, character]
+const JSON_ERRORS = [
+  ['\n\n{"a":1,}', 'trailingComma', 3, 7],
+  ['{\u201ca\u201d: 1}', 'smartQuote', 1, 2, '\u201c'],
+  ['{"name": "Alice",', 'unexpectedEnd', 1, 18],
+];
+const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
+const FAKE_JSON_DATASET = { errJson: HAR_S.en.errJson, errJsonAt: HAR_S.en.errJsonAt, jsonParse: JSON.stringify(HAR_S.en.jsonParse) };
+
 let passes = 0, failures = 0;
 function eq(name, got, want) {
   if (got === want) { passes++; console.log('PASS ' + name); }
@@ -60,7 +86,7 @@ function gen(json, model, mode, timestamps, required) {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', ...FAKE_JSON_DATASET, msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
@@ -85,7 +111,7 @@ function session() {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', ...FAKE_JSON_DATASET, msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { get activeElement() { return activeInside ? elements['jtm-input'] : null; }, querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
@@ -106,7 +132,7 @@ function session() {
   s.type('{"name": "Alice",');
   const bad = s.state();
   eq('stale output: invalid JSON clears the output', bad.code, '');
-  eq('stale output: invalid JSON shows the error', bad.status.startsWith('Invalid JSON: '), true);
+  eq('stale output: invalid JSON shows line, column and cause', bad.status, jsonErrorMessage('en', 'unexpectedEnd', 1, 18));
   eq('stale output: invalid JSON disables Copy', bad.copyDisabled, true);
   s.type('{"age": 30}');
   eq('stale output: the next valid input renders again', /age: (\{ type: )?Number/.test(s.state().code), true);
@@ -118,7 +144,15 @@ function session() {
   s.type('   ');
   eq('stale output: empty input disables Copy', s.state().code === '' && s.state().copyDisabled, true);
   const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + '\nreturn STRINGS;')();
-  eq('stale output: the error prefix exists in 4 languages', ['en', 'zh', 'ja', 'ko'].every((l) => labels[l] && labels[l].msgInvalidJson && labels[l].msgInvalidJson.trim()), true);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
+    eq(`JSON errors: ${lang} ${key} is the text of HarFileAnalyzerTool.astro`, JSON.stringify(labels[lang][key]), JSON.stringify(HAR_S[lang][key]));
+  }
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  eq('JSON errors: the json-reason block sits outside the engine block', rs > b && re > rs, true);
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = rs > 0 ? fnSrc(source.slice(rs, re), name) : '';
+    eq(`JSON errors: ${name} is the same as in json-formatter-engine.js`, mine !== '' && mine === fnSrc(JSON_ENGINE, name), true);
+  }
 }
 {
   // Ctrl/Cmd+L: ToolLayout empties the fields without input events; the output must not stay.
@@ -480,6 +514,7 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     const markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0]
       .replace(/<Toggletip id="([^"]+)"[^>]*>[\s\S]*?<\/Toggletip>/g,(_,id)=>'<span class="zt-tip"><button type="button" class="zt-tip-btn" data-zt-tip="'+id+'">?</button></span>')
       .replace(/<!--[\s\S]*?-->/g,'').replace(/placeholder=\{`[\s\S]*?`\}/g,'').replace(/placeholder='[^']*'/g,'')
+      .replace(/=\{JSON\.stringify\(L\.(\w+)\)\}/g,(_,key)=>'="'+esc(JSON.stringify(labels[lang][key]))+'"')
       .replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+esc(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>esc(labels[lang][key])).replace(/=\{lang\}/g,'="'+lang+'"');
     const stack=[widget];
     for(const token of markup.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)) { const text=token[0]; if(text.startsWith('</'))stack.pop();else if(text.startsWith('<')){const tag=/^<([\w-]+)/.exec(text)[1],e=new Element(tag);for(const a of text.matchAll(/([\w-]+)="([^"]*)"/g))e.setAttribute(a[1],decode(a[2]));for(const a of ['hidden','disabled','readonly','checked'])if(new RegExp('\\s'+a+'(?=\\s|/?>)').test(text))e.setAttribute(a,'');stack.at(-1).appendChild(e);if(!/\/>$/.test(text)&&!['input','br','hr','img'].includes(tag))stack.push(e);}else{const e=new Element('#text');e.text=decode(text);stack.at(-1).appendChild(e);} }
@@ -536,6 +571,11 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     // Reserved path names (Mongoose 9.10.3 lib/schema.js Schema.reserved): the status line names them.
     {const w=page(lang,shellFirst);w.input('{"save":"s","errors":["e"],"b":{"isNew":true}}');w.advance(300);
       same(tag+' reserved: status names the reserved path names',w.get(cfg.status).textContent.includes(String(labels[lang].msgReserved).replace('{keys}','errors, isNew, save')),true);}
+    // S2-10f: a JSON syntax error names line, column and cause in the page language, clears the output
+    // and disables Copy; before, the status was the prefix plus the browser's English message.
+    {const w=page(lang,shellFirst);w.example();
+      for(const [input,code,line,col,ch] of JSON_ERRORS){w.input(input);w.advance(300);
+        same(tag+' JSON error '+code+' in the page language',[w.get(cfg.status).textContent,w.get(cfg.status).classList.contains('error'),w.out(),w.get('jtm-copy').disabled],[jsonErrorMessage(lang,code,line,col,ch),true,'',true]);}}
     // B2: values beside the objects of a root array are reported, with their count and JSON types.
     {const w=page(lang,shellFirst);w.input('[{"a":1},2,"x",null,[1],3]');w.advance(300);
       same(tag+' B2: status reports the skipped root array values',w.get(cfg.status).textContent.includes(String(labels[lang].msgSkipped).replace('{n}','5').replace('{types}','number × 2, string, null, array')),true);}
