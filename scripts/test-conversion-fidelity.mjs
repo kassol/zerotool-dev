@@ -1,7 +1,8 @@
 // Conversion fidelity — YAML ↔ TOML, TOML ↔ JSON and YAML ↔ JSON through the page entry points
 //
-// Read:  src/components/tools/{YamlToml,TomlJson,YamlJson}Tool.astro (run with
-//        scripts/astro-page-harness.mjs and the npm js-yaml / smol-toml they import)
+// Read:  src/components/tools/{YamlToml,TomlJson,YamlJson,YamlValidator}Tool.astro (run with
+//        scripts/astro-page-harness.mjs and the npm js-yaml / smol-toml they import);
+//        src/content/tools/{yaml-json,yaml-toml,toml-json,yaml-validator}/{en,zh,ja,ko}.mdx
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -310,7 +311,7 @@ expectRejected(YD, 'yaml-json', 'y2j', '2026-02-31', '(root)', '2026-02-31');
       const s = r.note.textContent || '';
       check(VP, `yaml-validator ${lang} ${JSON.stringify(text)}: still valid with a preview`, /\bsuccess\b/.test(r.status.className) && r.preview.textContent !== '', r.status.textContent);
       check(VP, `yaml-validator ${lang} ${JSON.stringify(text)}: note shown and names every path and value`,
-        r.note.hidden === false && items.every(([p, raw]) => s.includes(p) && s.includes(raw)) && s.startsWith(FIDELITY_TEXT[lang].preview.split('{target}')[0]), 'note=' + JSON.stringify(s) + ' hidden=' + r.note.hidden);
+        r.note.hidden === false && items.every(([p, raw]) => s.includes(p) && s.includes(raw)) && s.startsWith(FIDELITY_TEXT[lang].preview.replace('{target}', 'JSON') + (lang === 'zh' || lang === 'ja' ? '：' : ': ')), 'note=' + JSON.stringify(s) + ' hidden=' + r.note.hidden);
     }
     const ok = validate('n: 9007199254740991\nf: 1.5\nd: 2024-02-29\ns: ".inf"', lang);
     check(VP, `yaml-validator ${lang}: values JSON can show need no note`, ok.note.hidden === true && !ok.note.textContent, JSON.stringify(ok.note.textContent));
@@ -447,7 +448,7 @@ expectBinary('yaml-toml', 'y2t', 'b: !!binary aGVsbG8=', '/b', 'ko');
       const note = page.el('yv-preview-note'), want = binItem(lang, path, 'JSON');
       check(BIN, `yaml-validator ${lang} ${JSON.stringify(text)}: still valid, the note names ${path} and says why`,
         /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent !== '' && note.hidden === false &&
-        note.textContent.startsWith(FIDELITY_TEXT[lang].preview.split('{target}')[0]) && want !== null && note.textContent.includes(want),
+        note.textContent.startsWith(FIDELITY_TEXT[lang].preview.replace('{target}', 'JSON') + (lang === 'zh' || lang === 'ja' ? '：' : ': ')) && want !== null && note.textContent.includes(want),
         'note=' + JSON.stringify(note.textContent) + ' hidden=' + note.hidden);
     }
   }
@@ -487,6 +488,14 @@ for (const tool of ['yaml-json', 'yaml-toml']) {
   const r = convert(open(tool), tool, dir, '2026-01-01: a\n2026-01-01: b', 'input');
   check(KEY, `${tool}: the same date twice is still a duplicated mapping key`, r.out.value === '' && r.status.textContent.includes('duplicated mapping key'), 'status=' + JSON.stringify(r.status.textContent));
 }
+// Keys are compared by their text, as js-yaml compares 1 and "1": a quoted and an unquoted date with
+// the same text are one key; the same instant written two ways is two keys.
+{
+  const r = convert(open('yaml-json'), 'yaml-json', 'y2j', '"2026-01-01": a\n2026-01-01: b', 'input');
+  check(KEY, 'yaml-json: a quoted and an unquoted 2026-01-01 are a duplicated mapping key', r.out.value === '' && r.status.textContent.includes('duplicated mapping key'), 'status=' + JSON.stringify(r.status.textContent));
+}
+expectConverted(KEY, 'yaml-json', 'y2j', '2026-01-01: a\n2026-01-01 00:00:00Z: b',
+  (o) => deep(Object.keys(JSON.parse(o)), ['2026-01-01', '2026-01-01 00:00:00Z']), 'the same instant written two ways is two keys');
 {
   const { readFileSync } = await import('node:fs');
   const vm = await import('node:vm');
@@ -497,6 +506,13 @@ for (const tool of ['yaml-json', 'yaml-toml']) {
   page.el('yv-input').value = 'changelog:\n  2026-10-01: first\n  2026-10-08: second'; page.el('yv-validate').click();
   check(KEY, 'yaml-validator: two date keys are valid and the preview keeps their text',
     /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent === JSON.stringify({ changelog: { '2026-10-01': 'first', '2026-10-08': 'second' } }, null, 2) && page.el('yv-preview-note').hidden === true,
+    page.el('yv-status').textContent + ' | ' + page.el('yv-preview-content').textContent);
+  page.el('yv-input').value = '"2026-01-01": a\n2026-01-01: b'; page.el('yv-validate').click();
+  check(KEY, 'yaml-validator: a quoted and an unquoted 2026-01-01 are a duplicated mapping key',
+    /\berror\b/.test(page.el('yv-status').className) && page.el('yv-error-box').innerHTML.includes('duplicated mapping key'), page.el('yv-error-box').innerHTML);
+  page.el('yv-input').value = '2026-01-01: a\n2026-01-01 00:00:00Z: b'; page.el('yv-validate').click();
+  check(KEY, 'yaml-validator: the same instant written two ways is two keys',
+    /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent === JSON.stringify({ '2026-01-01': 'a', '2026-01-01 00:00:00Z': 'b' }, null, 2),
     page.el('yv-status').textContent + ' | ' + page.el('yv-preview-content').textContent);
 }
 
