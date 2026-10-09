@@ -516,6 +516,79 @@ expectConverted(KEY, 'yaml-json', 'y2j', '2026-01-01: a\n2026-01-01 00:00:00Z: b
     page.el('yv-status').textContent + ' | ' + page.el('yv-preview-content').textContent);
 }
 
+/* ── E-YAML-BINARY-KEY ── js-yaml turns a !!binary key into the decimal byte list ("107,49") and a
+   `<<: !!binary` merge into one key per byte index ("0": 104, …). Both stop now, with the mapping's
+   path. The first samples are PyYAML 6.0.3 output (Python 3.14.8, 2026-10-09): yaml.dump of
+   {b'k1': 1, b'k2': 2}, of {b'key': 1, 'a': b'hi'} and of {'m': {b'id': 'x'}}. The validator
+   keeps its preview as js-yaml builds it and lists the keys in the note. */
+const BK = 'E-YAML-BINARY-KEY';
+const stopItem = (lang, kind, path, raw, target) => {
+  const t = FIDELITY_TEXT[lang];
+  const wide = lang === 'zh' || lang === 'ja';
+  return t[kind] ? (path || t.root) + (wide ? '：' : ': ') + t[kind].replace('{raw}', raw).replace('{target}', target) : null;
+};
+const PY_KEYS = '? !!binary |\n  azE=\n: 1\n? !!binary |\n  azI=\n: 2\n';
+const PY_MIXED = '? !!binary |\n  a2V5\n: 1\na: !!binary |\n  aGk=\n';
+const PY_NESTED = 'm:\n  ? !!binary |\n    aWQ=\n  : x\n';
+/* items: [kind, path, raw] in the order the status lists them */
+function expectStops(tag, tool, dir, text, items, lang = 'en') {
+  const target = dir === 'y2t' ? 'TOML' : 'JSON';
+  const [kind0, path0, raw0] = items[0];
+  expectRejected(tag, tool, dir, text, path0 || FIDELITY_TEXT[lang].root, raw0, lang);
+  const r = convert(open(tool, lang), tool, dir, text, 'input');
+  const s = r.status.textContent;
+  const want = items.map(([kind, path, raw]) => stopItem(lang, kind, path, raw, target));
+  let at = 0;
+  const inOrder = want.every((w) => { const i = w === null ? -1 : s.indexOf(w, at); if (i < 0) return false; at = i + w.length; return true; });
+  check(tag, `${tool} ${dir} (${lang}) ${JSON.stringify(text).slice(0, 60)}: lists ${items.map((x) => x[0] + ' ' + (x[1] || '(root)')).join(', ')}`, inOrder,
+    'status=' + JSON.stringify(s) + ' want=' + JSON.stringify(want));
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  expectStops(BK, 'yaml-json', 'y2j', PY_KEYS, [['binaryKey', '', 'azE='], ['binaryKey', '', 'azI=']], lang);
+}
+expectStops(BK, 'yaml-toml', 'y2t', PY_KEYS, [['binaryKey', '', 'azE='], ['binaryKey', '', 'azI=']]);
+expectStops(BK, 'yaml-toml', 'y2t', PY_KEYS, [['binaryKey', '', 'azE='], ['binaryKey', '', 'azI=']], 'ja');
+expectStops(BK, 'yaml-json', 'y2j', PY_MIXED, [['binaryKey', '', 'a2V5'], ['binary', '/a', '!!binary']]);
+expectStops(BK, 'yaml-json', 'y2j', PY_NESTED, [['binaryKey', '/m', 'aWQ=']], 'zh');
+expectStops(BK, 'yaml-toml', 'y2t', PY_NESTED, [['binaryKey', '/m', 'aWQ=']], 'ko');
+expectStops(BK, 'yaml-json', 'y2j', '? !!binary aGk=\n: v', [['binaryKey', '', 'aGk=']]);
+expectStops(BK, 'yaml-json', 'y2j', '"a/b":\n  ? !!binary aGk=\n  : 1', [['binaryKey', '/a~1b', 'aGk=']]);
+expectStops(BK, 'yaml-json', 'y2j', 's: !!set {? !!binary aGk=}', [['binaryKey', '/s', 'aGk=']]);
+expectStops(BK, 'yaml-toml', 'y2t', 's: !!set {? !!binary aGk=}', [['binaryKey', '/s', 'aGk='], ['null', '/s/104,105', 'null']]);
+expectStops(BK, 'yaml-json', 'y2j', 'p: !!pairs\n  - ? !!binary aGk=\n    : 1', [['binaryKey', '/p/0/0', 'aGk=']]);
+expectStops(BK, 'yaml-json', 'y2j', 'm:\n  <<: !!binary aGk=\n  x: 1', [['merge', '/m', '!!binary aGk=']]);
+expectStops(BK, 'yaml-toml', 'y2t', 'm:\n  <<: !!binary aGk=\n  x: 1', [['merge', '/m', '!!binary aGk=']], 'zh');
+for (const tool of ['yaml-json', 'yaml-toml']) {
+  const r = convert(open(tool), tool, tool === 'yaml-json' ? 'y2j' : 'y2t', '? !!binary aGk=\n: 1\n? !!binary aGk=\n: 2', 'input');
+  check(BK, `${tool}: the same !!binary key twice is still a duplicated mapping key`, r.out.value === '' && r.status.textContent.includes('duplicated mapping key'), 'status=' + JSON.stringify(r.status.textContent));
+}
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  const cases = [
+    [PY_KEYS, [['binaryKey', '', 'azE='], ['binaryKey', '', 'azI=']], { '107,49': 1, '107,50': 2 }],
+    [PY_MIXED, [['binaryKey', '', 'a2V5'], ['binary', '/a', '!!binary']], { '107,101,121': 1, a: { 0: 104, 1: 105 } }],
+    ['m:\n  <<: !!binary aGk=\n  x: 1', [['merge', '/m', '!!binary aGk=']], { m: { 0: 104, 1: 105, x: 1 } }],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid, msgValidMulti: L.msgValidMulti } } });
+    const wide = lang === 'zh' || lang === 'ja';
+    for (const [text, items, preview] of cases) {
+      page.el('yv-input').value = text; page.el('yv-validate').click();
+      const note = page.el('yv-preview-note').textContent;
+      const want = items.map(([kind, path, raw]) => stopItem(lang, kind, path, raw, 'JSON'));
+      check(BK, `yaml-validator ${lang} ${JSON.stringify(text).slice(0, 50)}: valid, the preview is js-yaml's, the note lists the keys`,
+        /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent === JSON.stringify(preview, null, 2) &&
+        page.el('yv-preview-note').hidden === false && note.startsWith(FIDELITY_TEXT[lang].preview.replace('{target}', 'JSON') + (wide ? '：' : ': ')) &&
+        want.every((w) => w !== null && note.includes(w)),
+        'note=' + JSON.stringify(note) + ' preview=' + JSON.stringify(page.el('yv-preview-content').textContent));
+    }
+  }
+}
+
 /* ── PAGE-TEXT-D ── the pages quote the !!binary stop and note as the page shows them, the yaml-json
    table rows for !!set, !!pairs and a date key are the page output, and the FAQ answers name
    !!binary where they list what stops (no fixed count of exceptions). */

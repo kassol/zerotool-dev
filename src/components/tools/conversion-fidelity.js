@@ -23,6 +23,8 @@
 //   as an object keyed by byte index ({"0":104,…}) and smol-toml as a table (0 = 104). The other
 //   tags of js-yaml's default schema keep js-yaml's form: !!set is a mapping whose values are
 //   null (TOML then stops on null), !!omap a list of one-key mappings, !!pairs [key, value] lists.
+//   A !!binary key (PyYAML writes bytes keys as `? !!binary`) would become the byte list "107,49",
+//   and `<<: !!binary` would merge one key per byte; both are found through YamlBinary markers.
 // Written correctly instead of refused: -0 going to TOML is -0.0 and a whole YAML float is 1.0
 // (TomlNumberText); -0 going to JSON is -0.0 (stringifyJson); the JSON integer -0 is 0.
 // The YAML validator uses the same walk with `preview` to list what its JSON preview changes.
@@ -55,6 +57,33 @@ export class WholeFloat {
   constructor(value) { this.value = value; }
   get [Symbol.toStringTag]() { return 'WholeFloat'; }
   toString() { return String(this.value); }
+}
+
+// Markers for values that js-yaml turns into keys or merges: a mapping key is String(value), and
+// `<<` copies every enumerable property of its value (loader.js mergeMappings only asks for an
+// object). The NUL keeps them apart from text a person types. findLosses lists them.
+const MERGE_MARK = '\u0000zt-merge';
+const BINARY_KEY = '\u0000zt-binary-key\u0000';
+
+function hide(obj, fields) {
+  Object.keys(fields).forEach(function (k) { Object.defineProperty(obj, k, { value: fields[k], writable: true, configurable: true }); });
+}
+
+// js-yaml's !!binary bytes, with the Base64 text as written (`text`, line breaks removed). As a key
+// it becomes BINARY_KEY + text + NUL + the bytes as js-yaml writes them ("104,105"); as a `<<` value
+// it adds MERGE_MARK next to the byte indexes.
+export class YamlBinary extends Uint8Array {
+  constructor(bytes, text) {
+    super(bytes);
+    hide(this, { text: text });
+    this[MERGE_MARK] = '!!binary ' + text;
+  }
+  toString() { return BINARY_KEY + this.text + '\u0000' + Array.prototype.join.call(this, ','); }
+}
+
+function binaryKeyParts(s) {
+  var rest = s.slice(BINARY_KEY.length), cut = rest.indexOf('\u0000');
+  return { text: rest.slice(0, cut) || '""', bytes: rest.slice(cut + 1) };
 }
 
 /* The exact decimal digits of a YAML int literal. js-yaml 4.3.2 reads an optional sign, then 0b, 0o
@@ -96,7 +125,8 @@ export function parseJsonExact(text) {
    integers outside the safe range and, with `timestamps`, timestamps kept as their text next to
    the Date js-yaml builds (findLosses checks the text, then writes a TomlDate or the Date).
    An integer is never -0 (js-yaml reads -0x0 as -0). With `floats`, a float with a whole value
-   becomes WholeFloat so TOML output keeps it a float. */
+   becomes WholeFloat so TOML output keeps it a float. !!binary builds YamlBinary (an explicit
+   type with the same tag replaces js-yaml's in the extended schema). */
 export function yamlLoadSchema(jsyaml, opts) {
   var intType = jsyaml.types.int;
   var types = [new jsyaml.Type('tag:yaml.org,2002:int', {
@@ -127,7 +157,13 @@ export function yamlLoadSchema(jsyaml, opts) {
       construct: function (data) { return new YamlTimestamp(String(data), ts.construct(data)); },
     }));
   }
-  return jsyaml.DEFAULT_SCHEMA.extend({ implicit: types });
+  var binaryType = jsyaml.types.binary;
+  var binary = new jsyaml.Type('tag:yaml.org,2002:binary', {
+    kind: 'scalar',
+    resolve: binaryType.resolve,
+    construct: function (data) { return new YamlBinary(binaryType.construct(data), String(data).replace(/[\r\n]/g, '')); },
+  });
+  return jsyaml.DEFAULT_SCHEMA.extend({ implicit: types, explicit: [binary] });
 }
 
 const YAML_DATE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
@@ -186,13 +222,32 @@ function isPlainObject(v) {
   return p === Object.prototype || p === null;
 }
 
+/* Renames (or, for null, drops) keys of a mapping in place and keeps the key order. A new name that
+   another key already has keeps the old key. */
+function renameKeys(obj, rename) {
+  var entries = Object.keys(obj).map(function (k) { return [k, obj[k]]; });
+  var names = entries.map(function (e) { return e[0]; });
+  entries.forEach(function (e) { delete obj[e[0]]; });
+  entries.forEach(function (e) {
+    var k = e[0];
+    if (k in rename) {
+      if (rename[k] === null) return;
+      if (names.indexOf(rename[k]) < 0) k = rename[k];
+    }
+    Object.defineProperty(obj, k, { value: e[1], writable: true, enumerable: true, configurable: true });
+  });
+}
+
 /* Walks a parsed value for the target format ('json' | 'toml' | 'yaml'). Returns the losses
    (at most `opts.limit` listed, `count` all) and `value`, the root after replacing in place:
    YAML timestamps become TomlDate (TOML, `opts.TomlDate`) or the Date js-yaml built (JSON / YAML;
    impossible dates and more than millisecond precision are losses there too, since that Date
    rolls 2026-02-31 over to March and keeps milliseconds); for TOML, -0 and WholeFloat become
    TomlNumberText (-0.0, 1.0). With `opts.preview`, a LossyValue is replaced by the value JavaScript holds instead, so
-   a preview can still show the data next to the list of losses. */
+   a preview can still show the data next to the list of losses.
+   For JSON and TOML, a !!binary key is listed with the path of its mapping (and walked on with the
+   key js-yaml writes, "104,105"); a `<<` marker is listed with the mapping's path. With
+   `opts.preview`, these keys become what js-yaml builds without the markers. */
 export function findLosses(root, target, opts) {
   var o = opts || {};
   var max = o.limit || 20;
@@ -208,7 +263,14 @@ export function findLosses(root, target, opts) {
       else if (!r.loss || o.preview) set(v.date);
       return;
     }
-    if (target !== 'yaml' && ArrayBuffer.isView(v)) { add(segs, 'binary', '!!binary'); return; }
+    if (target !== 'yaml' && ArrayBuffer.isView(v)) { add(segs, 'binary', '!!binary'); if (o.preview) set(new Uint8Array(v)); return; }
+    // !!pairs turns each key into the first item of a [key, value] list
+    if (target !== 'yaml' && typeof v === 'string' && v.indexOf(BINARY_KEY) === 0) {
+      var p = binaryKeyParts(v);
+      add(segs, 'binaryKey', p.text);
+      if (o.preview) set(p.bytes);
+      return;
+    }
     if (typeof v === 'number' && !Number.isFinite(v) && target === 'json') {
       add(segs, 'nonFinite', Number.isNaN(v) ? 'nan' : v > 0 ? 'inf' : '-inf');
       return;
@@ -219,7 +281,22 @@ export function findLosses(root, target, opts) {
     if (Array.isArray(v)) {
       for (var i = 0; i < v.length; i++) visit(v[i], segs.concat(i), (function (j) { return function (x) { v[j] = x; }; })(i));
     } else if (isPlainObject(v)) {
-      Object.keys(v).forEach(function (k) { visit(v[k], segs.concat(k), function (x) { v[k] = x; }); });
+      var rename = null;
+      Object.keys(v).forEach(function (k) {
+        var seg = k;
+        if (target !== 'yaml' && k === MERGE_MARK) {
+          add(segs, 'merge', String(v[k]));
+          (rename = rename || Object.create(null))[k] = null;
+          return;
+        }
+        if (target !== 'yaml' && k.indexOf(BINARY_KEY) === 0) {
+          var p = binaryKeyParts(k);
+          add(segs, 'binaryKey', p.text);
+          (rename = rename || Object.create(null))[k] = seg = p.bytes;
+        }
+        visit(v[k], segs.concat(seg), function (x) { v[k] = x; });
+      });
+      if (rename && o.preview) renameKeys(v, rename);
     }
   }
   var out = root;
@@ -313,6 +390,8 @@ const TEXT = {
     timestampInvalid: '{raw} is not a valid date or time',
     localDateTime: '{raw} is a local date-time, and YAML reads a time without an offset as UTC',
     binary: '{raw} value — {target} has no binary type',
+    binaryKey: '!!binary key {raw} — {target} keys can only be text',
+    merge: '{raw} — << can only merge a mapping',
     more: 'and {n} more',
     root: '(root)',
   },
@@ -327,6 +406,8 @@ const TEXT = {
     timestampInvalid: '{raw} 不是有效的日期或时间',
     localDateTime: '{raw} 是本地日期时间，YAML 会把不带偏移的时间读作 UTC',
     binary: '{raw} 二进制值，{target} 没有二进制类型',
+    binaryKey: '!!binary 键 {raw}，{target} 的键只能是文本',
+    merge: '{raw}，<< 只能合并映射',
     more: '另有 {n} 处',
     root: '（根）',
   },
@@ -341,6 +422,8 @@ const TEXT = {
     timestampInvalid: '{raw} は有効な日付・時刻ではありません',
     localDateTime: '{raw} はローカル日時です。YAML はオフセットのない日時を UTC として読みます',
     binary: '{raw} の値 — {target} にはバイナリ型がありません',
+    binaryKey: '!!binary のキー {raw} — {target} のキーは文字列だけです',
+    merge: '{raw} — << でマージできるのはマッピングだけです',
     more: 'ほか {n} 件',
     root: '（ルート）',
   },
@@ -355,6 +438,8 @@ const TEXT = {
     timestampInvalid: '{raw} — 올바른 날짜나 시각이 아닙니다',
     localDateTime: '{raw} — 로컬 날짜·시간입니다. YAML은 오프셋이 없는 시간을 UTC로 읽습니다',
     binary: '{raw} 값 — {target}에는 바이너리 자료형이 없습니다',
+    binaryKey: '!!binary 키 {raw} — {target}의 키는 문자열만 쓸 수 있습니다',
+    merge: '{raw} — <<로는 매핑만 병합할 수 있습니다',
     more: '외 {n}건',
     root: '(루트)',
   },
