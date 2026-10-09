@@ -166,8 +166,10 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 10604);
-eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'be5a3bfd026e952389cf41d79a31a2cf7cff24aec890e42ff41791f2716d284d');
+// S2-10 (approved engine change): LIB_TYPE_NAMES reserves the one-word global type names of
+// lib.esnext.full.d.ts for root and nested names (+14 / -0 lines).
+eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 11907);
+eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '48e4a50c3e2049ddcec92258062635151d8f35547ddaa347ece920356d87050f');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -370,6 +372,77 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   g.input('{'); g.get('jtt-input').dispatch('change'); g.get('jtt-convert').click();
   eq(lang + ': analytics: invalid JSON sends nothing', g.tracks.length, 6);
   g.input(''); g.get('jtt-input').dispatch('change'); eq(lang + ': analytics: empty input sends nothing', g.tracks.length, 6);
+}
+
+// ---------- names that TypeScript's library declares as global types (S2-10) ----------
+// Before S2-10 the keys "promise", "date" or "response" gave `interface Promise`, `interface Date`
+// and `interface Response`, and the root name Map gave `interface Map`. In a file without import
+// or export such a declaration merges with the global type of TypeScript's default library or
+// conflicts with it ("All declarations of 'Promise' must have identical type parameters"), and in
+// a module it hides the global type. The engine reserves every global type name of
+// lib.esnext.full.d.ts that is one capitalized word: a nested name gets the parent prefix
+// (RootObjectDate), a root name gets "_" (Map_). Checked by compiling the page output as a script
+// file with the ESNext default library (DOM included).
+{
+  const libOptions = { strict: true, noEmit: true, skipLibCheck: true, target: ts.ScriptTarget.ESNext, lib: ['lib.esnext.full.d.ts'], types: [] };
+  const libCache = new Map();
+  function scriptErrors(code) {
+    const fileName = 'script.ts';
+    const host = ts.createCompilerHost(libOptions);
+    const orig = host.getSourceFile;
+    host.getSourceFile = (name, lang) => {
+      if (name === fileName) return ts.createSourceFile(name, code, lang);
+      if (!libCache.has(name)) libCache.set(name, orig.call(host, name, lang));
+      return libCache.get(name);
+    };
+    const program = ts.createProgram([fileName], libOptions, host);
+    const sf = program.getSourceFile(fileName);
+    return [...program.getSyntacticDiagnostics(sf), ...program.getSemanticDiagnostics(sf), ...program.getGlobalDiagnostics()]
+      .map((d) => ts.flattenDiagnosticMessageText(d.messageText, ' '));
+  }
+  // One-word global type names of the installed TypeScript's default ESNext library.
+  const libNames = (() => {
+    const host = ts.createCompilerHost(libOptions);
+    const orig = host.getSourceFile;
+    host.getSourceFile = (name, lang) => (name === 'x.ts' ? ts.createSourceFile(name, '', lang) : orig.call(host, name, lang));
+    const program = ts.createProgram(['x.ts'], libOptions, host);
+    return program.getTypeChecker().getSymbolsInScope(program.getSourceFile('x.ts'), ts.SymbolFlags.Type)
+      .map((s) => s.name).filter((n) => /^[A-Z][a-z0-9]*$/.test(n)).sort();
+  })();
+  check('TypeScript ' + ts.version + ' has one-word global types (Promise, Date, Response)', ['Promise', 'Date', 'Response'].every((n) => libNames.includes(n)), libNames.join(' '));
+  let engineNames = [];
+  try { engineNames = new Function(block + '\nreturn LIB_TYPE_NAMES;')(); } catch { engineNames = []; }
+  eq('the reserved names are the one-word global types of lib.esnext.full.d.ts', JSON.stringify([...engineNames].sort()), JSON.stringify(libNames));
+  const outputFor = (json, root, useType) => {
+    const p = page('en');
+    p.get('jtt-root-name').value = root; p.get('jtt-use-type').checked = useType; p.input(json); p.get('jtt-convert').click();
+    return p.get('jtt-output-code').textContent;
+  };
+  const cases = [
+    ['{"promise":{"y":1}}', 'RootObject'],
+    ['{"date":{"year":2026},"response":{"status":200}}', 'RootObject'],
+    ['{"body":{"text":"hi"},"event":{"type":"click"},"location":{"lat":1.5},"parameters":{"q":"x"},"record":{"id":1},"map":{"k":"v"},"error":{"code":1}}', 'Order'],
+    ['[{"date":{"y":1}},{"date":{"y":2},"node":{"id":"n"}}]', 'Api'],
+    ['{"a":1}', 'Map'], ['{"a":1}', 'Date'], ['{"a":1}', 'Array'], ['{"a":1}', 'Response'], ['{"a":1}', 'Record'],
+  ];
+  for (const [json, root] of cases) for (const useType of [false, true]) {
+    const code = outputFor(json, root, useType);
+    const name = /^(?:interface|type) ([^\s={]+)/.exec(code)?.[1];
+    const arrayOfObjects = Array.isArray(JSON.parse(json));
+    const errors = scriptErrors(code + '\n\nconst sample: ' + name + (arrayOfObjects ? '[]' : '') + ' = ' + json + ';\n');
+    check('script file compiles with the global library: ' + json + ' / ' + root + (useType ? ' / type' : ''), errors.length === 0, errors.join('; ') + '\n' + code);
+    check('no declaration takes a reserved global name: ' + json + ' / ' + root, ![...code.matchAll(/^(?:interface|type) ([^\s={]+)/gm)].some((m) => libNames.includes(m[1])), code);
+  }
+  eq('date and response under RootObject', E.generateTypeScript(JSON.parse('{"date":{"year":2026},"response":{"status":200}}'), 'RootObject', false, false).code,
+    'interface RootObject {\n  date: RootObjectDate;\n  response: RootObjectResponse;\n}\n\ninterface RootObjectDate {\n  year: number;\n}\n\ninterface RootObjectResponse {\n  status: number;\n}');
+  eq('the root name Map gives Map_', outputFor('{"a":1}', 'Map', false).split('\n')[0], 'interface Map_ {');
+  eq('formData keeps FormData (more than one word)', /interface FormData \{/.test(E.generateTypeScript(JSON.parse('{"formData":{"a":1}}'), 'RootObject', false, false).code), true);
+  // Names that are not one-word global types keep their PascalCase form.
+  eq('meta, user and payment keep their names', /interface Meta \{/.test(E.generateTypeScript(JSON.parse('{"meta":{"a":1}}'), 'RootObject', false, false).code), true);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const text = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
+    check(lang + ': page states the global-name rule with its examples', text.includes('`RootObjectDate`') && text.includes('`Map_`') && text.includes('`FormData`'));
+  }
 }
 
 // ---------- invalid JSON: line, column and cause in the page language (S2-10) ----------
