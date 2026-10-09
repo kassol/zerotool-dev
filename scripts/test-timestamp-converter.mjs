@@ -340,6 +340,36 @@ try {
     }
   }
 
+  // ---------- full-width input and the invalid-timestamp message (S2-9) ----------
+  // Full-width digits, ＋, － and ． (U+FF10–FF19, U+FF0B, U+FF0D, U+FF0E) typed with a CJK input
+  // method are read as ASCII before the engine runs; the field keeps what was typed. The error
+  // message used to say "or date" although this field rejects dates.
+  const ERR_NUM = {
+    en: 'Invalid timestamp. Enter digits with an optional sign and decimal point. For a date, use Date → Timestamp.',
+    zh: '无效的时间戳。请输入数字，可带正负号和小数点；日期请在「日期 → 时间戳」中选择。',
+    ja: '無効なタイムスタンプです。数字を入力してください（符号と小数点を使えます）。日付は「日付 → タイムスタンプ」で選びます。',
+    ko: '잘못된 타임스탬프입니다. 숫자를 입력하세요(부호와 소수점 사용 가능). 날짜는 ‘날짜 → 타임스탬프’에서 고르세요.',
+  };
+  for (const lang of Object.keys(languageText)) {
+    const prefix = 'full-width/' + lang + ': ', client = clientFor(lang), p = lifecyclePage(lang);
+    for (const [input, unit, iso] of [
+      ['１７００００００００', 'auto', '2023-11-14T22:13:20.000Z'],
+      ['\u3000１７００００００００１２３\u3000', 'auto', '2023-11-14T22:13:20.123Z'],
+      ['－１．５', 'auto', '1969-12-31T23:59:58.500Z'],
+      ['＋1700000000', 'auto', '2023-11-14T22:13:20.000Z'],
+      ['１７００００００００１２３', 'ms', '2023-11-14T22:13:20.123Z'],
+    ]) {
+      p.input('tc-unit', unit, 'change'); convertTimestamp(p, input);
+      eq(prefix + JSON.stringify(input) + ' reads full-width digits, sign and point', [rows(p, upper)[2], p.get('tc-ts-input').value], [iso, input]);
+    }
+    p.input('tc-unit', 'auto', 'change'); convertTimestamp(p, '１７００００００００');
+    eq(prefix + 'the status counts full-width digits', p.get('tc-ts-status').textContent, client.readAs.replace('{unit}', client.unitS).replace('{n}', '10'));
+    for (const bad of ['abc', '2024-05-01', '1e9', '1,700,000,000', '١٧٠٠', 'ｅ', '1700000000ー', '−1']) {
+      convertTimestamp(p, bad);
+      eq(prefix + JSON.stringify(bad) + ' is rejected with the page-language message', [rows(p, upper), p.get('tc-ts-status').textContent, p.get('tc-ts-status').className], [[], ERR_NUM[lang], 'tc-status error']);
+    }
+    eq(prefix + 'the message no longer offers dates in this field', /or date|或日期|または日付|나 날짜/.test(client.errNum), false);
+  }
   await settle(); eq('all timestamp copy rejection promises are handled', unhandled, []);
 } finally {
   if (originalTimezone === undefined) delete process.env.TZ; else process.env.TZ = originalTimezone;
