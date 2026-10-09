@@ -27,6 +27,8 @@ const STRINGS = {
     catContent: 'Content', catCors: 'CORS', catAuth: 'Auth', catCookie: 'Cookie',
     catRange: 'Range', catTransport: 'Transport', catProxy: 'Proxy', catCustom: 'Custom / Other',
     hintWarn: 'Warning', hintInfo: 'Note', hintOk: 'OK',
+    noteSep: ' ',
+    bodyStop: 'The header section ended at the empty line {line}; the {n} line(s) after it were not read.',
   },
   zh: {
     views: "视图",
@@ -52,6 +54,8 @@ const STRINGS = {
     catContent: '内容', catCors: 'CORS', catAuth: '鉴权', catCookie: 'Cookie',
     catRange: '范围', catTransport: '传输', catProxy: '代理', catCustom: '自定义 / 其他',
     hintWarn: '警告', hintInfo: '提示', hintOk: '正常',
+    noteSep: '',
+    bodyStop: '头部在第 {line} 行的空行处结束，后面的 {n} 行未读取。',
   },
   ja: {
     views: "表示",
@@ -77,6 +81,8 @@ const STRINGS = {
     catContent: 'コンテンツ', catCors: 'CORS', catAuth: '認証', catCookie: 'Cookie',
     catRange: 'レンジ', catTransport: '転送', catProxy: 'プロキシ', catCustom: 'カスタム / その他',
     hintWarn: '警告', hintInfo: '注意', hintOk: 'OK',
+    noteSep: '',
+    bodyStop: '{line} 行目の空行でヘッダーが終わったと判断し、その後の {n} 行は読み込んでいません。',
   },
   ko: {
     views: "보기",
@@ -102,6 +108,8 @@ const STRINGS = {
     catContent: '콘텐츠', catCors: 'CORS', catAuth: '인증', catCookie: '쿠키',
     catRange: '범위', catTransport: '전송', catProxy: '프록시', catCustom: '사용자 정의 / 기타',
     hintWarn: '경고', hintInfo: '참고', hintOk: 'OK',
+    noteSep: ' ',
+    bodyStop: '{line}번째 줄의 빈 줄에서 헤더가 끝난 것으로 보고, 그 뒤의 {n}줄은 읽지 않았습니다.',
   },
 } as const;
 const T = STRINGS[lang];
@@ -358,18 +366,29 @@ const { tips: TIPS, ...CLIENT_T } = T;
       }
 
       function unfoldHeaders(rawText) {
+        // curl -v output: skip "* " information lines and "{ [n bytes data]" lines, and remove
+        // the "> " / "< " prefixes. The header section ends at the first empty line after a
+        // header line (RFC 9112 §2.1); stop.rest counts the non-empty lines after it.
         // HTTP/1.1 obs-fold: lines starting with space/tab continue the previous header.
         var lines = rawText.split(/\r?\n/);
         var out = [];
         for (var i = 0; i < lines.length; i++) {
           var line = lines[i];
+          if (/^\*( |$)/.test(line) || /^[{}] \[\d+ bytes data\]$/.test(line)) continue;
+          line = line.replace(/^[<>]( |$)/, '');
+          if (!line.trim()) {
+            if (!out.length) continue;
+            var rest = 0;
+            for (var j = i + 1; j < lines.length; j++) if (lines[j].trim()) rest++;
+            return { lines: out, stop: { line: i + 1, rest: rest } };
+          }
           if (out.length && /^[ \t]/.test(line)) {
-            out[out.length - 1] += ' ' + line.replace(/^[ \t]+/, '');
+            out[out.length - 1].text += ' ' + line.replace(/^[ \t]+/, '');
           } else {
-            out.push(line);
+            out.push({ text: line, line: i + 1 });
           }
         }
-        return out;
+        return { lines: out, stop: null };
       }
 
       // HTTP/2 and HTTP/3 pseudo-headers, as browser developer tools copy them (":status: 200")
@@ -383,8 +402,9 @@ const { tips: TIPS, ...CLIENT_T } = T;
       };
 
       function parseHeaders(rawText) {
-        var lines = unfoldHeaders(rawText).filter(function (l) { return l.trim().length > 0; });
-        if (lines.length === 0) return { type: 'unknown', statusLine: null, headers: [] };
+        var unfolded = unfoldHeaders(rawText);
+        var lines = unfolded.lines.map(function (l) { return l.text; });
+        if (lines.length === 0) return { type: 'unknown', statusLine: null, headers: [], stop: null };
 
         var type = detectType(lines[0]);
         var statusLine = null;
@@ -446,7 +466,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           });
         }
 
-        return { type: type, statusLine: statusLine, headers: headers };
+        return { type: type, statusLine: statusLine, headers: headers, stop: unfolded.stop };
       }
 
       function applyHints(name, value, type) {
@@ -626,7 +646,9 @@ const { tips: TIPS, ...CLIENT_T } = T;
         renderJson(parsed);
         resultEl.hidden = false;
         var n = parsed.headers.length;
-        setStatus(t.analyzed.replace('{n}', n).replace('{s}', n === 1 ? '' : 's'), 'success');
+        var message = t.analyzed.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
+        if (parsed.stop && parsed.stop.rest > 0) message += t.noteSep + t.bodyStop.replace('{line}', parsed.stop.line).replace('{n}', parsed.stop.rest);
+        setStatus(message, 'success');
         if (text !== lastTracked) {
           lastTracked = text;
           window.trackTool && window.trackTool('http-header-analyzer', 'analyze');

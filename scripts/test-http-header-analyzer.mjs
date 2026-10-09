@@ -301,7 +301,7 @@ for(const lang of ['en','zh','ja','ko']){
   analyze(h,'unparseable');eq(lang+' invalid Analyze prompt and no result',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty,true]);
 }
 await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
-const protectedBytes={"dictionary": {"bytes": 10097, "sha256": "fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"}, "parser": {"bytes": 7383, "sha256": "1dbae91a9c7eacf41981e2a339522352fe9f1306b7b27661d3f744a235902f86"}};
+const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":8166,"sha256":"82cd57edf5cd46bdc40e98a3c71a8b0116f98ea6a6661db2636428b24874e4cf"}};
 for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
@@ -418,13 +418,41 @@ for(const lang of ['en','zh','ja','ko']){
 }
 console.log('JSON keys and analytics: '+(passes-fixStart)+' passed, '+failures+' total failures');
 
+// ---------- RFC parsing fixes (approved changes to the protected parser, 2026-10-09) ----------
+const rfcStart=passes;
+const names=p=>p.headers.map(h=>h.name);
+// 1. The header section ends at the first empty line after a header line (RFC 9112 §2.1);
+// curl -v "* " lines and "{ [n bytes data]" lines are skipped and "> " / "< " prefixes removed.
+{
+  const body=E.parseHeaders('HTTP/1.1 200 OK\nContent-Type: application/json\nContent-Length: 61\n\n{"code":0,"msg":"ok"}\n{\n  "name": "x"\n}');
+  eq('1 body after the empty line is not read',[body.type,body.statusLine,names(body)],['response','HTTP/1.1 200 OK',['Content-Type','Content-Length']]);
+  eq('1 stop line and lines left',body.stop,{line:4,rest:4});
+  const lead=E.parseHeaders('\n\n  \nHTTP/1.1 204 No Content\nX-A: 1\n');
+  eq('1 leading empty lines are skipped, trailing one leaves nothing',[lead.statusLine,names(lead),lead.stop],['HTTP/1.1 204 No Content',['X-A'],{line:6,rest:0}]);
+  const verbose=E.parseHeaders('*   Trying 93.184.215.14:443...\n* Connected to example.com (93.184.215.14) port 443\n} [5 bytes data]\n> GET / HTTP/2\n> Host: example.com\n> user-agent: curl/8.7.1\n>\n* Request completely sent off\n< HTTP/2 200\n< content-type: text/html\n<\n<!doctype html>');
+  eq('1 curl -v request part',[verbose.type,verbose.statusLine,names(verbose)],['request','GET / HTTP/2',['Host','user-agent']]);
+  eq('1 curl -v stops at the bare > line',verbose.stop,{line:7,rest:5});
+  const response=E.parseHeaders('< HTTP/1.1 200 OK\n< Server: nginx\n< Content-Type: text/xml;charset=utf-8\n<\n<?xml version="1.0"?>');
+  eq('1 curl -v response part',[response.type,response.statusLine,names(response),hintsOf(response,'server').length],['response','HTTP/1.1 200 OK',['Server','Content-Type'],1]);
+  eq('1 obs-fold still joins',E.parseHeaders('X-Long: a\n\tb\n  c').headers[0].value,'a b c');
+  eq('1 no stop when no empty line',E.parseHeaders('X-A: 1').stop,null);
+  for(const lang of ['en','zh','ja','ko']){
+    const h=page(lang);analyze(h,'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{"code":0}\n{"next":1}');
+    eq(lang+' 1 status names the stop line and the lines left',h.get('hha-status').textContent,strings[lang].analyzed.replace('{n}','1').replace('{s}','')+strings[lang].noteSep+strings[lang].bodyStop.replace('{line}','3').replace('{n}','2'));
+    eq(lang+' 1 JSON has no body key',JSON.parse(h.get('hha-json-output').textContent),{_status:'HTTP/1.1 200 OK','content-type':'application/json'});
+    analyze(h,'HTTP/1.1 200 OK\nContent-Type: application/json\n');
+    eq(lang+' 1 no note without lines after the empty line',h.get('hha-status').textContent,strings[lang].analyzed.replace('{n}','1').replace('{s}',''));
+  }
+}
+console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total failures');
+
 // ---------- worked examples on the four pages ----------
 // {/* hha-check: {"view":"json"|"raw"|"hints"|"cards"|"summary"} */} is followed by two code
 // blocks: the input pasted into the tool and the output of the real page script for that view,
 // in the page language. hints = every card with hints, in page order: the header name, then
 // "  <label>: <hint>" lines. cards = each category heading, then "  <header name>" lines (the
 // status section shows the first line).
-// summary = the visible summary pills, one per line. The input is pasted as written; nothing
+// summary = the visible summary pills, one per line. status = the status line under the buttons. The input is pasted as written; nothing
 // in the examples is a real credential.
 const exampleStart=passes;
 function rendered(lang,input,view){
@@ -432,6 +460,7 @@ function rendered(lang,input,view){
   const panel=h.get('hha-panel-cat');
   if(view==='json')return h.get('hha-json-output').textContent;
   if(view==='raw')return h.get('hha-raw-output').textContent;
+  if(view==='status')return h.get('hha-status').textContent;
   if(view==='summary')return ['hha-summary-type','hha-summary-status','hha-summary-count','hha-summary-security'].map(id=>h.get(id)).filter(el=>!el.hidden).map(el=>el.textContent).join('\n');
   if(view==='hints')return panel.querySelectorAll('.hha-card').filter(c=>c.querySelectorAll('.hha-hint').length).map(c=>[c.querySelector('.hha-h-name').textContent,...c.querySelectorAll('.hha-hint').map(x=>'  '+x.textContent)].join('\n')).join('\n');
   if(view==='cards')return panel.querySelectorAll('section').map(s=>[s.querySelector('.hha-cat-title').textContent,...s.querySelectorAll('.hha-h-name, .hha-status-line').map(x=>'  '+x.textContent)].join('\n')).join('\n');

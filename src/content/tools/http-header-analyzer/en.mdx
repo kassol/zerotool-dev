@@ -13,7 +13,7 @@ faqItems:
     answer: "No. The headers are parsed by the page script in your browser and are not uploaded or saved. Because pasted headers often hold cookies and tokens, this page does not load Google Analytics or AdSense. The result and Copy JSON keep Authorization and Cookie values as pasted, so check them before you share the output."
   - id: fetch-url
     question: "Can it fetch headers from a URL?"
-    answer: "No. Nothing is fetched; the tool reads only what you paste. Copy the header lines from curl -sS -D - -o /dev/null URL, curl -i (delete the body after the empty line), or the Raw view of the browser DevTools Network panel. Output of curl -v keeps the > and < prefixes, which the tool does not remove."
+    answer: "No. Nothing is fetched; the tool reads only what you paste. Copy the headers from curl -sS -D - -o /dev/null URL, curl -i, curl -v or the Raw view of the browser DevTools Network panel. The tool stops at the empty line that ends the headers, skips the * lines of curl -v and removes its > and < prefixes; with curl -v, paste the request or the response, because only the part before the first empty line is read."
   - id: detect-type
     question: "How does it detect request vs response?"
     answer: "It reads the first line. HTTP/x.x at the start is a response. One of GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD, TRACE or CONNECT followed by a target and HTTP/x.x is a request. Otherwise a :status pseudo-header makes it a response and :method a request; if there is neither, the input is treated as header lines only."
@@ -144,7 +144,7 @@ server
 
 <h2>Where to copy headers from</h2>
 <ul>
-  <li><strong>curl</strong>: <code>curl -sS -D - -o /dev/null https://example.com/</code> prints the response headers of a normal GET. <code>curl -i</code> prints the body after them; delete it before you paste. <code>curl -I</code> sends a HEAD request, which some servers answer with different headers.</li>
+  <li><strong>curl</strong>: <code>curl -sS -D - -o /dev/null https://example.com/</code> prints the response headers of a normal GET. <code>curl -i</code> prints the body after them; you can paste it as it is, because the tool stops at the empty line. <code>curl -I</code> sends a HEAD request, which some servers answer with different headers.</li>
   <li><strong>Chrome or Edge DevTools</strong>: Network panel → select the request → Headers → turn on <strong>Raw</strong> next to Response Headers or Request Headers, then copy.</li>
   <li><strong>Firefox DevTools</strong>: Network panel → select the request → Headers → turn on the <strong>Raw</strong> switch.</li>
 </ul>
@@ -155,8 +155,7 @@ server
   <li>The descriptions and hint texts are in English on every language version of this page. 88 headers have a description; any other header is listed under Custom / Other without one.</li>
   <li>HTTP/2 and HTTP/3 pseudo-headers such as <code>:status</code> and <code>:path</code>, which browser developer tools copy as the first lines, are listed in their own group with a short description (RFC 9113 §8.3, RFC 8441 for <code>:protocol</code>). Without a status line, <code>:status</code> marks the input as a response and <code>:method</code> as a request.</li>
   <li>The first line is recognized as a request only for GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD, TRACE and CONNECT, in any letter case (RFC 9110 section 9.1 makes method names case-sensitive).</li>
-  <li>Paste only the header section. The tool does not stop at the empty line that ends the headers (RFC 9112 section 2.1): a body line that contains a colon becomes an extra header, so <code>{'{"code":0}'}</code> is listed as a header named <code>{'{"code"'}</code>, and an indented body line is joined to the line above it.</li>
-  <li>Output of <code>curl -v</code> keeps the <code>&gt;</code>, <code>&lt;</code> and <code>*</code> prefixes. The tool reads them as part of the header names, so every line with a colon lands under Custom / Other, no hints apply, and the message type is not detected. Delete the prefixes first.</li>
+  <li>Only one message is read. The header section ends at the first empty line after a header line (RFC 9112 section 2.1); the status line says how many lines after it were not read. For <code>curl -v</code> output, which has the request, an empty <code>&gt;</code> line and then the response, paste the request or the response on its own. The tool skips the <code>*</code> lines and data lines such as <code>{'} [5 bytes data]'}</code>, and removes a leading <code>&gt; </code> or <code>&lt; </code>.</li>
   <li>A line without an ASCII colon is skipped without a message, for example <code>Content-Type：text/html</code> with a full-width colon. Spaces between a name and the colon are removed without a note, although RFC 9112 section 5.1 tells a server to reject such a request with 400.</li>
   <li>The HSTS check reads <code>max-age</code> only as plain digits. <code>max-age="31536000"</code> in quotes, which RFC 6797 section 6.1 allows, is read as 0 and gets the one-year warning. A browser uses only the first of two Strict-Transport-Security headers (RFC 6797 section 8.1); the tool checks both.</li>
   <li>The <code>'unsafe-inline'</code> warning looks at the whole policy. It also appears for <code>style-src 'unsafe-inline'</code>, and when the same directive has a nonce or hash, in which case CSP Level 3 (section 6.7.3.2) tells browsers to ignore <code>'unsafe-inline'</code>; a strict policy that keeps it as a fallback for old browsers still gets the warning.</li>

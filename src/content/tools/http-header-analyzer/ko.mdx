@@ -13,7 +13,7 @@ faqItems:
     answer: "아니요. 헤더는 브라우저의 페이지 스크립트가 분석하며, 업로드하지도 저장하지도 않습니다. 붙여넣는 헤더에는 쿠키나 토큰이 들어 있는 경우가 많아서 이 페이지는 Google Analytics와 AdSense를 불러오지 않습니다. 다만 분석 결과와 ‘JSON 복사’에는 Authorization, Cookie 값이 그대로 남으므로 공유하기 전에 직접 확인하세요."
   - id: fetch-url
     question: "URL에서 직접 헤더를 가져올 수 있나요?"
-    answer: "아니요. 도구는 요청을 보내지 않고 붙여넣은 텍스트만 읽습니다. curl -sS -D - -o /dev/null URL, curl -i(빈 줄 뒤의 본문은 삭제), 또는 브라우저 개발자 도구 Network 패널의 Raw 보기에서 헤더를 복사하세요. curl -v 출력의 > 와 < 기호는 도구가 지워 주지 않습니다."
+    answer: "아니요. 도구는 요청을 보내지 않고 붙여넣은 텍스트만 읽습니다. curl -sS -D - -o /dev/null URL, curl -i, curl -v, 또는 브라우저 개발자 도구 Network 패널의 Raw 보기에서 복사하세요. 도구는 헤더가 끝나는 빈 줄에서 멈추고, curl -v의 * 줄은 건너뛰며 줄 앞의 >와 <는 떼어 냅니다. curl -v 출력은 첫 빈 줄 앞까지만 읽으므로 요청과 응답을 따로 붙여넣으세요."
   - id: detect-type
     question: "요청과 응답을 어떻게 구별하나요?"
     answer: "첫 줄을 봅니다. HTTP/x.x로 시작하면 응답이고, GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD, TRACE, CONNECT 중 하나 뒤에 경로와 HTTP/x.x가 오면 요청입니다. 둘 다 아니면 :status 의사 헤더가 있을 때 응답, :method가 있을 때 요청으로 보고, 둘 다 없으면 헤더 줄만 있는 입력으로 처리합니다."
@@ -28,9 +28,9 @@ faqItems:
     answer: "네. ‘JSON 복사’는 어떤 보기를 열어 두었든 마지막으로 분석한 결과를 복사합니다. 키는 소문자 헤더 이름이고, 한 번만 나온 헤더는 문자열, 반복된 헤더는 배열이며, 첫 줄은 _status 키에 들어갑니다."
 ---
 
-<h2>예시: 네이버 개발자 문서의 curl -v 응답을 그대로 붙여넣으면</h2>
+<h2>예시: 네이버 개발자 문서의 curl -v 출력을 그대로 붙여넣기</h2>
 
-<p>네이버 검색 API 문서(<a href="https://developers.naver.com/docs/serviceapi/search/blog/blog.md">블로그 검색</a>)는 요청과 응답 예를 <code>curl -v</code> 출력 형태로 보여 줍니다. 응답 헤더 줄마다 앞에 <code>&lt; </code>가 붙어 있습니다. 문서의 응답 예에서 본문 앞까지를 그대로 붙여넣으면 요약은 다음과 같습니다.</p>
+<p>네이버 검색 API 문서(<a href="https://developers.naver.com/docs/serviceapi/search/blog/blog.md">블로그 검색</a>)는 요청과 응답 예를 <code>curl -v</code> 출력 형태로 보여 줍니다. 응답 헤더 줄마다 앞에 <code>&lt; </code>가 붙어 있고, 헤더가 끝나는 자리에는 <code>&lt;</code>만 있는 줄이 있으며, 그 뒤로 XML 본문이 이어집니다. 이 도구는 줄 앞의 <code>&lt; </code>를 떼어 내고, 헤더 뒤의 첫 빈 줄(여기서는 <code>&lt;</code>만 남은 줄)에서 읽기를 멈춥니다(RFC 9112 2.1절). 문서의 응답 예를 본문 첫 줄까지 그대로 붙여넣은 요약입니다.</p>
 
 {/* hha-check: {"view":"summary"} */}
 ```
@@ -46,28 +46,7 @@ faqItems:
 < Cache-Control: no-cache, no-store, must-revalidate
 < Pragma: no-cache
 <
-```
-
-```text
-헤더
-10 개 헤더
-```
-
-<p>첫 줄 <code>&lt; HTTP/1.1 200 OK</code>를 상태 줄로 알아보지 못해 응답이 아니라 ‘헤더’로 표시되고, 헤더 이름이 모두 <code>&lt; Server</code>처럼 기호까지 포함한 채 ‘사용자 정의 / 기타’로 들어갑니다. 그래서 Server에 대한 힌트도 나오지 않습니다. 줄 앞의 <code>&lt; </code>를 지우고 다시 분석하면 다음과 같습니다.</p>
-
-{/* hha-check: {"view":"summary"} */}
-```
-HTTP/1.1 200 OK
-Server: nginx
-Date: Mon, 26 Sep 2016 01:39:37 GMT
-Content-Type: text/xml;charset=utf-8
-Transfer-Encoding: chunked
-Connection: keep-alive
-Keep-Alive: timeout=5
-Vary: Accept-Encoding
-X-Powered-By: Naver
-Cache-Control: no-cache, no-store, must-revalidate
-Pragma: no-cache
+<?xml version="1.0" encoding="UTF-8"?>
 ```
 
 ```text
@@ -77,7 +56,22 @@ HTTP/1.1 200 OK
 보안 헤더 없음 ⚠
 ```
 
-<p>이제 응답으로 인식되고, 보안 헤더가 하나도 없다는 경고가 요약에 나타납니다. 분류별 보기에서는 Server 카드에 서버 소프트웨어 노출에 관한 참고가 붙습니다. 편집기의 열 선택 기능이나 <code>sed 's/^[&lt;&gt;] //'</code>로 기호를 한꺼번에 지울 수 있습니다.</p>
+<p>응답으로 인식되고, 보안 헤더가 하나도 없다는 경고가 요약에 나타납니다. 분류별 보기에서는 Server 카드에 서버 소프트웨어 노출에 관한 참고가 붙습니다. 같은 문서의 요청 예(<code>&gt; </code>로 시작하는 줄)도 같은 방식으로 읽습니다. 다만 요청과 응답을 한꺼번에 붙여넣으면 요청 끝의 <code>&gt;</code> 줄에서 멈추므로 요청만 분석됩니다. 버튼 아래 상태 표시에는 멈춘 줄과 남은 줄 수가 나옵니다.</p>
+
+{/* hha-check: {"view":"status"} */}
+```
+> GET /v1/search/blog.xml?query=%EB%A6%AC%EB%B7%B0&display=10&start=1&sort=sim HTTP/1.1
+> Host: openapi.naver.com
+> User-Agent: curl/7.49.1
+> Accept: */*
+>
+< HTTP/1.1 200 OK
+< Server: nginx
+```
+
+```text
+3 개의 헤더를 분석했습니다. 5번째 줄의 빈 줄에서 헤더가 끝난 것으로 보고, 그 뒤의 2줄은 읽지 않았습니다.
+```
 
 <h2>예시: 클라이언트 아이디가 들어간 요청 헤더</h2>
 
@@ -136,7 +130,7 @@ X-Naver-Client-Secret: {클라이언트 시크릿}
 <h2>제한 사항</h2>
 <ul>
   <li>요청 줄로 인식하는 메서드는 위의 9개뿐이며 대소문자를 구분하지 않습니다(RFC 9110 9.1절은 메서드 이름의 대소문자를 구분합니다).</li>
-  <li>헤더 구간이 끝나는 빈 줄에서 멈추지 않습니다. <code>curl -i</code> 출력을 본문까지 붙여넣으면 본문 중 콜론이 있는 줄이 헤더로 추가되므로, 빈 줄 아래는 지우고 붙여넣으세요.</li>
+  <li>한 번에 메시지 하나만 읽습니다. 헤더 뒤의 첫 빈 줄에서 멈추므로 <code>curl -i</code>의 본문은 헤더로 읽지 않지만, 요청과 응답이 이어진 <code>curl -v</code> 출력은 요청만 읽습니다. <code>*</code>로 시작하는 줄과 <code>{'} [5 bytes data]'}</code> 같은 데이터 줄은 건너뜁니다.</li>
   <li>반각 콜론(:)이 없는 줄은 아무 안내 없이 건너뜁니다. 헤더 이름과 콜론 사이의 공백도 조용히 지우는데, RFC 9112 5.1절에 따르면 서버는 이런 요청을 400으로 거부해야 합니다.</li>
   <li>HSTS의 <code>max-age</code>는 숫자만 읽습니다. RFC 6797 6.1절이 허용하는 <code>max-age="31536000"</code>처럼 따옴표가 붙은 값은 0으로 읽혀 ‘1년 미만’ 경고가 나옵니다. Strict-Transport-Security가 두 개면 브라우저는 첫 번째만 사용하지만(RFC 6797 8.1절) 도구는 둘 다 점검합니다.</li>
   <li><code>'unsafe-inline'</code> 경고는 정책 전체를 보고 판단합니다. <code>style-src 'unsafe-inline'</code>에도 나오고, 같은 지시어에 nonce나 해시가 있어 CSP Level 3(6.7.3.2절)에 따라 브라우저가 <code>'unsafe-inline'</code>을 무시하는 경우에도 나옵니다.</li>

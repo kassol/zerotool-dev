@@ -13,7 +13,7 @@ faqItems:
     answer: "不会。头部由页面脚本在浏览器里解析，不上传，也不保存。粘贴的头部里常有 Cookie 和令牌，所以本页不加载 Google Analytics 和 AdSense。分析结果和「复制 JSON」会原样保留 Authorization、Cookie 的值，分享前请先自己检查一遍。"
   - id: fetch-url
     question: "可以直接从 URL 抓取头部吗？"
-    answer: "不可以。工具不发任何请求，只读你粘贴的文本。可以从 curl -sS -D - -o /dev/null 网址、curl -i（删掉空行后面的响应体）或浏览器开发者工具 Network 面板的 Raw 视图复制头部。curl -v 的输出带 > 和 < 前缀，工具不会替你去掉。"
+    answer: "不可以。工具不发任何请求，只读你粘贴的文本。可以从 curl -sS -D - -o /dev/null 网址、curl -i、curl -v 或浏览器开发者工具 Network 面板的 Raw 视图复制。工具在头部结束的空行处停下，会跳过 curl -v 的 * 行并去掉 > 和 < 前缀；curl -v 的输出请只贴请求或只贴响应，因为只读第一个空行之前的部分。"
   - id: detect-type
     question: "如何区分请求和响应？"
     answer: "看第一行。以 HTTP/x.x 开头的是响应；GET、POST、PUT、DELETE、PATCH、OPTIONS、HEAD、TRACE、CONNECT 之一后跟路径和 HTTP/x.x 的是请求。第一行都不符合时，有 :status 伪首部算响应，有 :method 算请求，两者都没有就当作只有头部行。"
@@ -96,9 +96,9 @@ Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Strict; Path=/
 
 <h2>示例：把 curl -i 的响应体也贴进来了</h2>
 
-<p><code>curl -i</code> 会在头部后面接一个空行，再输出响应体。工具不会在空行处停下，响应体里带冒号的行会被当成头部。下面是一个下单接口的返回，原文视图的结果是：</p>
+<p><code>curl -i</code> 会在头部后面接一个空行，再输出响应体。按 RFC 9112 第 2.1 节，这个空行就是头部的结尾，工具读到这里就停下，后面的响应体不当成头部。下面是一个下单接口的返回，整段贴进去后，按钮下方的状态行是：</p>
 
-{/* hha-check: {"view":"raw"} */}
+{/* hha-check: {"view":"status"} */}
 ```
 HTTP/1.1 200 OK
 Content-Type: application/json;charset=UTF-8
@@ -108,13 +108,10 @@ Content-Length: 61
 ```
 
 ```text
-HTTP/1.1 200 OK
-Content-Type: application/json;charset=UTF-8
-Content-Length: 61
-{"code": 0,"msg":"成功","data":{"orderNo":"20261009000123"}}
+已解析 2 个标头。头部在第 4 行的空行处结束，后面的 1 行未读取。
 ```
 
-<p>最后一行多出了一个名为 <code>{'{"code"'}</code> 的头部，摘要里的标头数也随之多 1。粘贴前把空行以下的内容删掉，或者改用 <code>curl -sS -D - -o /dev/null 网址</code>，它只输出头部。</p>
+<p>只算了 Content-Type 和 Content-Length 两个头部，JSON 结果里也没有响应体的内容。状态行会写明在第几行停下、后面还有几行没读，方便确认没有漏贴头部。</p>
 
 <h2>类别一览</h2>
 <ul>
@@ -145,7 +142,7 @@ Content-Length: 61
 <h2>限制</h2>
 <ul>
   <li>只有上面列出的 9 个方法会被识别为请求行，而且不区分大小写（RFC 9110 第 9.1 节规定方法名区分大小写）。</li>
-  <li><code>curl -v</code> 的输出保留 <code>&gt;</code>、<code>&lt;</code>、<code>*</code> 前缀，工具会把前缀当成名称的一部分，带冒号的行全部进入「自定义 / 其他」，也识别不出请求还是响应。请先删掉前缀。</li>
+  <li>一次只读一条报文：读到头部之后的第一个空行就停下。<code>curl -v</code> 的输出依次是请求、一个只有 <code>&gt;</code> 的行、响应，整段贴进去只会读到请求，要看响应请单独贴响应部分。<code>*</code> 开头的行和 <code>{'} [5 bytes data]'}</code> 这样的数据行会被跳过，行首的 <code>&gt; </code>、<code>&lt; </code> 会被去掉。</li>
   <li>没有半角冒号的行会被直接跳过、不提示，例如用中文输入法打出的 <code>Content-Type：text/html</code>。名称和冒号之间的空格会被悄悄去掉，而 RFC 9112 第 5.1 节要求服务器对这样的请求返回 400。</li>
   <li>HSTS 的 <code>max-age</code> 只认纯数字。RFC 6797 第 6.1 节允许写成带引号的 <code>max-age="31536000"</code>，工具会按 0 处理并给出「不足 1 年」的警告。响应里有两个 Strict-Transport-Security 时，浏览器只用第一个（RFC 6797 第 8.1 节），工具两个都检查。</li>
   <li><code>'unsafe-inline'</code> 警告看的是整条策略：<code>style-src 'unsafe-inline'</code> 也会触发；同一指令里已有 nonce 或 hash 时，CSP Level 3 第 6.7.3.2 节规定浏览器忽略 <code>'unsafe-inline'</code>，工具仍然给出警告。</li>
