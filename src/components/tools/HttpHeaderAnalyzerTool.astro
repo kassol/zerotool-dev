@@ -32,6 +32,7 @@ const STRINGS = {
     problems: {
       noColon: 'No colon (:), so this is not a header field line (RFC 9112 section 5). It is not counted as a header.',
       fullwidthColon: 'This line uses a full-width colon (：). HTTP accepts only the ASCII colon (:), so it is not a header field line. Retype the colon as ASCII.',
+      spaceBeforeColon: 'Whitespace between the field name and the colon. RFC 9112 section 5.1 does not allow it: a server must reject such a request with 400, and a proxy must remove the whitespace from a response before forwarding it. It is not counted as a header.',
       noName: 'The line starts with a colon, so the field name is empty. It is not counted as a header.',
     },
     noteSep: ' ',
@@ -66,6 +67,7 @@ const STRINGS = {
     problems: {
       noColon: '没有冒号（:），不是头部字段行（RFC 9112 第 5 节），不计入头部。',
       fullwidthColon: '这一行用的是全角冒号（：）。HTTP 只认半角冒号（:），所以它不算头部字段行，请改成半角冒号。',
+      spaceBeforeColon: '字段名和冒号之间有空白。RFC 9112 第 5.1 节不允许这样写：服务器必须以 400 拒绝这样的请求，代理转发响应前必须去掉这段空白。不计入头部。',
       noName: '这一行以冒号开头，字段名为空，不计入头部。',
     },
     noteSep: '',
@@ -100,6 +102,7 @@ const STRINGS = {
     problems: {
       noColon: 'コロン（:）がないため、ヘッダーフィールドの行ではありません（RFC 9112 5 節）。ヘッダーには数えません。',
       fullwidthColon: '全角コロン（：）が使われています。HTTP で区切りになるのは半角コロン（:）だけなので、この行はヘッダーフィールドとして読めません。半角で入力し直してください。',
+      spaceBeforeColon: 'フィールド名とコロンの間に空白があります。RFC 9112 5.1 節はこれを認めておらず、サーバーはこのようなリクエストを 400 で拒否し、プロキシはレスポンスを転送する前に空白を取り除かなければなりません。ヘッダーには数えません。',
       noName: 'コロンで始まっていて、フィールド名が空です。ヘッダーには数えません。',
     },
     noteSep: '',
@@ -134,6 +137,7 @@ const STRINGS = {
     problems: {
       noColon: '콜론(:)이 없어 헤더 필드 줄이 아닙니다(RFC 9112 5절). 헤더 수에 넣지 않습니다.',
       fullwidthColon: '전각 콜론(：)을 썼습니다. HTTP는 반각 콜론(:)만 구분자로 인식하므로 이 줄은 헤더 필드로 읽을 수 없습니다. 반각으로 다시 입력하세요.',
+      spaceBeforeColon: '필드 이름과 콜론 사이에 공백이 있습니다. RFC 9112 5.1절은 이를 허용하지 않으며, 서버는 이런 요청을 400으로 거부해야 하고 프록시는 응답을 전달하기 전에 공백을 없애야 합니다. 헤더 수에 넣지 않습니다.',
       noName: '콜론으로 시작해 필드 이름이 비어 있습니다. 헤더 수에 넣지 않습니다.',
     },
     noteSep: ' ',
@@ -477,6 +481,11 @@ const { tips: TIPS, ...CLIENT_T } = T;
           var value = line.slice(idx + 1).trim();
           if (!name) {
             invalid.push({ line: lineNo, text: line, problem: 'noName' });
+            continue;
+          }
+          // RFC 9112 §5.1: no whitespace is allowed between the field name and the colon.
+          if (/[ \t]$/.test(line.slice(0, idx))) {
+            invalid.push({ line: lineNo, text: line, problem: 'spaceBeforeColon' });
             continue;
           }
           var lower = name.toLowerCase();

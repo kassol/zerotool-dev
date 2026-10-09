@@ -301,7 +301,7 @@ for(const lang of ['en','zh','ja','ko']){
   analyze(h,'unparseable');eq(lang+' input with no header line lists the line',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty+T.noteSep+T.invalidLines.replace('{n}','1'),false]);
 }
 await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
-const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":8753,"sha256":"297d1b47bae4fa812b6ea54bf209191902ff999caa4368232d2723721d69801c"}};
+const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":9015,"sha256":"2e4044fd5545fa9c052834baa9bbbd1d2830c25bf977ae1c60aa4cc111ebe763"}};
 for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
@@ -476,6 +476,17 @@ const names=p=>p.headers.map(h=>h.name);
     analyze(h,'only text\nmore text');
     eq(lang+' 3 nothing read: result shows the lines',[h.get('hha-status').textContent,h.get('hha-result').hidden,h.get('hha-panel-cat').querySelectorAll('.hha-card').length],[T.empty+T.noteSep+T.invalidLines.replace('{n}','2'),false,2]);
     eq(lang+' 3 problem texts are nonempty',['noColon','fullwidthColon','noName'].every(k=>typeof T.problems?.[k]==='string'&&T.problems[k].length>0),true);
+  }
+}
+// 4. Whitespace between the field name and the colon makes the line invalid (RFC 9112 §5.1).
+{
+  const p=E.parseHeaders('HTTP/1.1 200 OK\nContent-Type : text/html\nX-Tab\t: 1\nX-Ok: 2\nX-Space-After:  3');
+  eq('4 only lines without whitespace before the colon are headers',[names(p),p.headers.map(h=>h.value)],[['X-Ok','X-Space-After'],['2','3']]);
+  eq('4 invalid lines',p.invalid,[{line:2,text:'Content-Type : text/html',problem:'spaceBeforeColon'},{line:3,text:'X-Tab\t: 1',problem:'spaceBeforeColon'}]);
+  for(const lang of ['en','zh','ja','ko']){
+    const T=strings[lang],h=page(lang);analyze(h,'GET / HTTP/1.1\nHost : example.com');
+    eq(lang+' 4 note',h.get('hha-panel-cat').querySelector('.hha-card-invalid .hha-hint')?.textContent,T.hintWarn+': '+T.problems?.spaceBeforeColon);
+    eq(lang+' 4 note names the RFC rule',/9112/.test(T.problems?.spaceBeforeColon??''),true);
   }
 }
 console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total failures');
