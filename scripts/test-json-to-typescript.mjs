@@ -157,9 +157,6 @@ eq('JSON.parse rounds the zh snowflake ID', String(JSON.parse('18300000000000000
 {
   const zh = readFileSync(join(root, 'src/content/tools/json-to-typescript/zh.mdx'), 'utf8');
   check('zh: page shows the rounded ID', zh.includes('`1830000000000000000`'));
-  let message = '';
-  try { JSON.parse('{"a":1,}'); } catch (e) { message = e.message; }
-  check('zh: page quotes the V8 trailing-comma message', zh.includes('`' + message + '`'), message);
 }
 
 // ---------- complete page lifecycle: real script/shortcuts, controlled DOM/clipboard/time ----------
@@ -175,7 +172,7 @@ const settle = async () => { await new Promise(setImmediate); await new Promise(
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
 process.on('unhandledRejection', onUnhandled);
-function page(lang, shellFirst = false) {
+function page(lang, shellFirst = false, extra = {}) {
   const copies = [], tracks = [], clears = [], timers = new Map(), docEvents = {};
   let now = 0, timerId = 0, doc;
   const decode = s => s.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
@@ -219,6 +216,7 @@ function page(lang, shellFirst = false) {
   const markup = source.split('\n---')[1].split('<script')[0]
     .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
       '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '" aria-label="' + escape(tipAbout.replace('{name}', pageLabels[lang][about])) + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{JSON\.stringify\(L\.(\w+)\)\}/g, (_, key) => '="' + escape(JSON.stringify(pageLabels[lang][key])) + '"')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -236,6 +234,7 @@ function page(lang, shellFirst = false) {
     trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); copies.push({ value, resolve, reject }); return promise; } } },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+    ...extra,
   };
   context.window = context; vm.createContext(context);
   if (shellFirst) vm.runInContext(shortcut, context);
@@ -373,6 +372,86 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   g.input(''); g.get('jtt-input').dispatch('change'); eq(lang + ': analytics: empty input sends nothing', g.tracks.length, 6);
 }
 
+// ---------- invalid JSON: line, column and cause in the page language (S2-10) ----------
+// Before S2-10 the status line showed "Invalid JSON: " and the browser's own parser message, in
+// English on every page (Chrome: "Expected double-quoted property name in JSON at position 7
+// (line 1 column 8)"), with the position counted in the trimmed input. lineCol and
+// jsonSyntaxError are copied verbatim from json-formatter-engine.js; the cause texts are the
+// jsonParse texts of HarFileAnalyzerTool.astro and MarkdownTableGeneratorTool.astro (both compared).
+{
+  const fnSrc = (src, name) => {
+    const lines = src.split('\n');
+    const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+    if (at < 0) return '';
+    const indent = lines[at].match(/^\s*/)[0];
+    let end = at + 1;
+    while (end < lines.length && lines[end] !== indent + '}') end++;
+    return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+  };
+  const stringsOf = (file, from = 0) => {
+    const text = readFileSync(join(root, 'src/components/tools/' + file), 'utf8');
+    const s0 = text.indexOf('const STRINGS = ', from);
+    return new Function('return ' + text.slice(s0 + 'const STRINGS = '.length, text.indexOf('\n};', s0) + 2))();
+  };
+  const jsonEngine = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  check('json-reason block sits outside the engine block', rs > endIndex && re > rs);
+  const reasonSrc = rs > 0 ? source.slice(rs, re) : '';
+  for (const name of ['lineCol', 'jsonSyntaxError']) check(name + ' is the same as in json-formatter-engine.js', fnSrc(reasonSrc, name) !== '' && fnSrc(reasonSrc, name) === fnSrc(jsonEngine, name));
+  const codes = [...new Set([...fnSrc(jsonEngine, 'jsonSyntaxError').matchAll(/fail\('(\w+)'/g)].map((m) => m[1]))];
+  const harStrings = stringsOf('HarFileAnalyzerTool.astro');
+  const mtgSource = readFileSync(join(root, 'src/components/tools/MarkdownTableGeneratorTool.astro'), 'utf8');
+  const mtgStrings = stringsOf('MarkdownTableGeneratorTool.astro', mtgSource.indexOf('strings:start'));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    eq(lang + ': jsonParse texts equal HarFileAnalyzerTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(harStrings[lang].jsonParse));
+    eq(lang + ': jsonParse texts equal MarkdownTableGeneratorTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(mtgStrings[lang].jsonParse));
+    check(lang + ': a jsonParse text for every jsonSyntaxError code', codes.length > 10 && codes.every((c) => typeof L.jsonParse?.[c] === 'string'));
+    check(lang + ': msgInvalidAt starts with msgInvalidJson and has {line}, {col} and {reason}', typeof L.msgInvalidAt === 'string' && L.msgInvalidAt.startsWith(L.msgInvalidJson) && ['{line}', '{col}', '{reason}'].every((k) => L.msgInvalidAt.includes(k)));
+  }
+  const fill = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v[k] != null ? String(v[k]) : m));
+  // [name, input as typed, line, column, cause, character]; positions counted by hand in the input as typed.
+  const SAMPLES = [
+    ['trailing comma', '{"a":1,}', 1, 7, 'trailingComma'],
+    ['leading blank lines and spaces are counted', '\n\n  {"a": 1,\n}', 3, 10, 'trailingComma'],
+    ['full-width colon', '{"a"：1}', 1, 5, 'fullWidth', '：'],
+    ['curly quotes', '{“a”:1}', 1, 2, 'smartQuote', '“'],
+    ['single quotes', "{'a': 1}", 1, 2, 'singleQuote'],
+    ['cut off', '{"a": 1', 1, 8, 'unexpectedEnd'],
+    ['Python True', '{"a": True}', 1, 7, 'badLiteral'],
+    ['comment', '{"a": 1 // note\n}', 1, 9, 'comment'],
+    ['two documents', '{"a":1}\n{"a":2}', 2, 1, 'extraData'],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    for (const [name, input, line, col, code, ch] of SAMPLES) {
+      const p = page(lang); golden(p);
+      p.input(input); p.advance(300);
+      const status = p.get('jtt-status').textContent;
+      eq(lang + ': ' + name + ': line, column and cause', status, fill(L.msgInvalidAt, { line, col, reason: fill(L.jsonParse?.[code], { ch: ch ?? '' }) }));
+      check(lang + ': ' + name + ': output cleared, Copy disabled, input marked', p.get('jtt-output-code').textContent === '' && p.get('jtt-copy').disabled === true && p.get('jtt-input').classList.contains('error') && p.get('jtt-status').className.includes('error'));
+      if (lang !== 'en') check(lang + ': ' + name + ': no English parser message', !/Unexpected|Expected|position|JSON input|token/.test(status), status);
+    }
+    // A failure that is not a SyntaxError (a browser limit, for example) keeps the browser's message.
+    const fake = { parse: (s, r) => { if (s === '[[[') throw new RangeError('Maximum call stack size exceeded'); return JSON.parse(s, r); }, stringify: JSON.stringify };
+    const f = page(lang, false, { JSON: fake }); f.input('[[['); f.advance(300);
+    eq(lang + ': a RangeError from JSON.parse keeps the browser message', f.get('jtt-status').textContent, L.msgInvalidJson + 'Maximum call stack size exceeded');
+  }
+  // {/* jtt-error: {"input": "…"} */}: the status line for that input appears as inline code after it.
+  const jttError = {
+    tag: 'jtt-error',
+    min: 1,
+    verify({ spec, after, lang }) {
+      if (!spec || typeof spec.input !== 'string') return 'annotation needs {"input": "<text>"}';
+      const p = page(lang); p.input(spec.input); p.advance(300);
+      const status = p.get('jtt-status').textContent;
+      if (!p.get('jtt-status').className.includes('error')) return 'not an error: ' + status;
+      return after.includes('`' + status + '`') ? null : 'status line not shown: ' + status;
+    },
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ': jtt-error examples show the page status line', contractProblems('json-to-typescript', lang, { annotations: [jttError] }), '');
+}
+
 // ---------- v2 page layout ----------
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
@@ -404,7 +483,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ': v2 same eight tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
   for (const [id, about, key] of tipMap) check(lang + ': v2 plain localized tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]));
   check(lang + ': v2 localized empty hint', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'));
-  eq(lang + ': v2 only runtime feedback data is forwarded', Object.keys(rootEl.dataset).sort().join(','), 'copied,copy,copyFailed,msgFailed,msgGenMany,msgGenOne,msgGenerated,msgInvalidJson');
+  eq(lang + ': v2 only runtime feedback data is forwarded', Object.keys(rootEl.dataset).sort().join(','), 'copied,copy,copyFailed,jsonParse,msgFailed,msgGenMany,msgGenOne,msgGenerated,msgInvalidAt,msgInvalidJson');
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
   const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
