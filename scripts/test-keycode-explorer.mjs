@@ -227,10 +227,30 @@ for(const lang of ['en','zh','ja','ko']){
  for(const completion of ['resolve','reject']){const r=ready(lang),rb=r.get('kce-copy');rb.click();rb.click();r.clipboard[1].resolve();await settle();const current=getState(r);r.clipboard[0][completion](Error('old'));await settle();eq(tag+'/same-output stale '+completion,getState(r),current);}
  const r=ready(lang),rb=r.get('kce-copy');rb.click();r.get('kce-pad').focus();const focused=r.get('kce-status').textContent;r.clipboard[0].resolve();await settle();eq(tag+' success preserves newer focus status',r.get('kce-status').textContent,focused);
 }
+// ---------- statistics and copy fallback (S2-9b) ----------
+// Every captured key used to send a `keydown` event, and Copy sent `copy_snippet` even when the
+// copy failed. Now one `keydown` per capture run (page load or Clear), and copy_snippet only on a
+// successful copy. A rejected Clipboard API write now tries the textarea fallback.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = pageVM(lang); p.tick(60);
+  for (const k of ['a', 'b', 'c']) p.key('kce-pad', { key: k, code: 'Key' + k.toUpperCase() });
+  eq(lang + ' three keys send one keydown event', p.tracks.filter(a => a[1] === 'keydown').length, 1);
+  p.get('kce-clear').click(); p.key('kce-pad', { key: 'd', code: 'KeyD' });
+  eq(lang + ' a key after Clear sends one more', p.tracks.filter(a => a[1] === 'keydown').length, 2);
+  p.get('kce-copy').click(); p.clipboard[0].reject(Error('denied')); await settle();
+  eq(lang + ' failed copy is not tracked', p.tracks.filter(a => a[1] === 'copy_snippet').length, 0);
+  p.get('kce-copy').click(); p.clipboard[1].resolve(); await settle();
+  eq(lang + ' successful copy is tracked once', p.tracks.filter(a => a[1] === 'copy_snippet').length, 1);
+  const q = ready(lang); q.fallback(true); q.get('kce-copy').click(); q.clipboard[0].reject(Error('denied')); await settle();
+  eq(lang + ' rejected write falls back to the textarea copy', [q.execCalls.length, q.execCalls[0]?.text, q.get('kce-copy').textContent], [1, enterSnippet, keyLabels(lang).copied]);
+  eq(lang + ' fallback success is tracked', q.tracks.filter(a => a[1] === 'copy_snippet').length, 1);
+}
+
 // Preserve both the marked mobile engine and unmarked physical-key/snippet code.
 for(const [name,startMark,endMark,bytes,hash,includeEnd] of [
  ['mobile','      /* ── engine:start ── */','      /* ── engine:end ── */',1412,'eb1b5b7b2298a4583d41e5f2cc74245484ddd3b9c18713100c417f97a0996a10',true],
- ['physical key capture','      function captureFromKeyboardEvent','      /* ── engine:start ── */',990,'03e25ebdd2b5e5e0b4b0e5c49f8e5d52e404bb3e82006f38aa5cbc1248f5da94',false],
+ // S2-9b (2026-10-09): the keydown statistics event is sent once per capture run, not per key.
+ ['physical key capture','      function captureFromKeyboardEvent','      /* ── engine:start ── */',1134,'8b9d72e437ba3f35a301405597009d9661bff6376e4fa1801720a334d9cade5f',false],
  ['snippet/modifiers/history','      function setText','      function captureFromKeyboardEvent',2234,'36ac5072cbfee1018f281161c90ac1f06d13392b4056176c443c2f34b5bb345d',false],
 ]){const block=source.slice(source.indexOf(startMark),source.indexOf(endMark)+(includeEnd?endMark.length:0));eq(name+' protected bytes',Buffer.byteLength(block),bytes);eq(name+' protected SHA',createHash('sha256').update(block).digest('hex'),hash);}
 
@@ -242,7 +262,8 @@ eq('v2 Astro diagnostics',compiled.diagnostics.filter(d=>d.severity===1),[]);
 let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(error){moduleError=String(error);}
 eq('v2 compiled module parses',moduleError,'');
 const style=compiled.css.join('\n');
-eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'e09bf3d1c327e6e8f1c65d8b36afbd684d829a51ea84cf75befbcf7024ecad8f');
+// S2-9b (2026-10-09): updated for the statistics and copy-fallback fixes tested above.
+eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'bd2526348e3811a16237d192e843d0314f7f36576d23629dd6a5d9a6454aaa71');
 eq('v2 analyze registry',/['"]keycode-explorer['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('v2 outermost tool root',/^<div class="kce-wrap">/.test(source.split('\n---\n')[1].trim()),true);
 eq('v2 no runtime i18n',source.includes('data-i18n'),false);

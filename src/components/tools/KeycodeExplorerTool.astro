@@ -277,6 +277,7 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
 
       var capturedCount = 0;
       var history = [];
+      var keyTracked = false;
 
       var copyRevision = 0;
       var copyTimer = null;
@@ -389,7 +390,11 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         buildSnippet(e);
         pushHistory(formatKeyLabel(e.key));
 
-        window.trackTool && window.trackTool('keycode-explorer', 'keydown');
+        // One event per capture run (page load or Clear), not one per key.
+        if (!keyTracked) {
+          keyTracked = true;
+          window.trackTool && window.trackTool('keycode-explorer', 'keydown');
+        }
       }
 
       /* ── engine:start ── */
@@ -458,6 +463,7 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         clearTimeout(copyTimer);
         function done() {
           if (revision !== copyRevision) return;
+          window.trackTool && window.trackTool('keycode-explorer', 'copy_snippet');
           copyBtn.classList.add('copied');
           copyBtn.textContent = t.copied;
           if (copyError && statusEl.textContent === t.copyFailed) setStatus('', '');
@@ -474,23 +480,24 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
           setStatus(t.copyFailed, 'error');
           copyError = true;
         }
-        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-          try { navigator.clipboard.writeText(text).then(done, failed); }
-          catch (err) { failed(); }
-        } else {
+        function fallback() {
+          if (revision !== copyRevision) return;
           var ta = document.createElement('textarea');
           ta.value = text;
           document.body.appendChild(ta);
           ta.select();
-          try {
-            if (document.execCommand('copy')) done();
-            else failed();
-          } catch (err) {
-            failed();
-          }
+          var copied = false;
+          try { copied = document.execCommand('copy'); } catch (err) {}
           document.body.removeChild(ta);
+          if (copied) done();
+          else failed();
         }
-        window.trackTool && window.trackTool('keycode-explorer', 'copy_snippet');
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          try { navigator.clipboard.writeText(text).then(done, fallback); }
+          catch (err) { fallback(); }
+        } else {
+          fallback();
+        }
       });
 
       function clearAll() {
@@ -498,6 +505,7 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         history = [];
         renderHistory();
         capturedCount = 0;
+        keyTracked = false;
         padCount.textContent = '0';
         padKey.textContent = '';
         Object.keys(fields).forEach(function (k) { setText(fields[k], null); });
