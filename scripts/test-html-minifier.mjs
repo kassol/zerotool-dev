@@ -18,7 +18,8 @@
 //     before body content (the parser puts them in <head>) were dropped;
 //   - <pre> / <textarea> content was written with innerHTML only: the parser ignores one LF
 //     after the start tag and the serializer does not write it back, so a leading blank line
-//     was lost on the next parse (the text and the display changed).
+//     was lost on the next parse (the text and the display changed); the same happened to a
+//     pre / textarea inside code, samp, kbd or another pre, which that element's innerHTML writes.
 // Also: the page's "before / after minify" example is the engine output.
 // Full page + shared keyboard events cover modes, clear, and controlled clipboard/timer lifetimes.
 //
@@ -66,7 +67,8 @@ function toDom(node) {
       return { nodeType: 9, childNodes: kids, doctype: kids.find((k) => k.nodeType === 10) || null, documentElement: kids.find((k) => k.nodeType === 1) || null };
     }
     case '#documentType': return { nodeType: 10, name: node.name };
-    case '#text': return { nodeType: 3, data: node.value };
+    // Like a browser Text node, `data` can be written and innerHTML then shows the new text.
+    case '#text': return { nodeType: 3, get data() { return node.value; }, set data(v) { node.value = v; } };
     case '#comment': return { nodeType: 8, data: node.data };
     default: {
       const content = node.content || node;
@@ -143,6 +145,44 @@ eq('pre leading blank line: one LF is written back', run('<pre>\n\nfoo</pre>'), 
 eq('pre authoring newline: nothing is added', run('<pre>\nfoo</pre>'), '<pre>foo</pre>');
 eq('textarea leading blank line: one LF is written back', run('<textarea>\n\nbar</textarea>'), '<textarea>\n\nbar</textarea>');
 
+// A pre / textarea inside another kept element (code, samp, kbd, pre) is written by that
+// element's innerHTML, so the same LF was lost there too (before the fix). Every pre and
+// textarea must have the same text after a reparse; the parse5 tree is restored afterwards.
+function allTexts(html) {
+  const out = [];
+  const text = (n) => n.nodeName === '#text' ? n.value : ((n.content || n).childNodes || []).map(text).join('');
+  (function walk(n) {
+    if (n.tagName === 'pre' || n.tagName === 'textarea') out.push(n.tagName + ':' + JSON.stringify(text(n)));
+    for (const c of (n.content || n).childNodes || []) walk(c);
+  })(parse5.parse(html));
+  return out.join(' | ');
+}
+for (const [name, html] of [
+  ['pre in code', '<code><pre>\n\nfoo</pre></code>'],
+  ['textarea in pre', '<pre><textarea>\n\nx</textarea></pre>'],
+  ['pre in kbd', '<kbd><pre>\n\nk</pre></kbd>'],
+  ['textarea in samp', '<samp><textarea>\n\ns</textarea></samp>'],
+  ['pre in pre', '<pre><pre>\n\nfoo</pre></pre>'],
+  ['pre deeper in code', '<code><span><pre>\n\ndeep</pre></span></code>'],
+  ['blank lines in pre and in its textarea', '<pre>\n\n<textarea>\n\nx</textarea></pre>'],
+  ['two textareas in pre', '<pre><textarea>\n\na</textarea><textarea>\nb</textarea></pre>'],
+  ['nested pre with one authoring newline', '<code><pre>\nfoo</pre></code>'],
+]) {
+  for (const mode of ['minify', 'beautify']) {
+    eq(name + ' (' + mode + ') keeps every pre / textarea text after a reparse', allTexts(run(html, mode)), allTexts(html));
+  }
+}
+eq('pre in code: one LF is written back', run('<code><pre>\n\nfoo</pre></code>'), '<code><pre>\n\nfoo</pre></code>');
+eq('textarea in pre: one LF is written back', run('<pre><textarea>\n\nx</textarea></pre>'), '<pre><textarea>\n\nx</textarea></pre>');
+eq('nested pre with one authoring newline: nothing is added', run('<code><pre>\nfoo</pre></code>'), '<code><pre>foo</pre></code>');
+{
+  // The added LF is only for the innerHTML call; the tree the engine was given is unchanged.
+  const doc = toDom(parse5.parse('<pre><textarea>\n\nx</textarea></pre>'));
+  E.processDoc(doc, '<pre><textarea>\n\nx</textarea></pre>', 'minify', '  ');
+  const pre = doc.documentElement.childNodes[1].childNodes[0];
+  eq('nested textarea text is restored after the call', pre.childNodes[0].childNodes[0].data, '\nx');
+}
+
 // ── tool pages: before / after example ──
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/html-minifier', lang + '.mdx'), 'utf8');
@@ -152,8 +192,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': page no longer says inline spaces / nbsp / leading comments are lost', !/Note:read this|Price: 10 EUR|Note:</.test(mdx), lang);
 }
 
-// Updated with each approved engine change (2026-10-09: <pre> / <textarea> leading LF written back).
-eq('engine bytes unchanged', createHash('sha256').update(source.slice(startIndex, endIndex + END_MARK.length)).digest('hex'), 'b371c5205b7d93e25805aa34c4a6e55c43f84510f577fefa38d43e1a6e45f8f4');
+// Updated with each approved engine change (2026-10-09: <pre> / <textarea> leading LF written back,
+// also for a pre / textarea inside another kept element).
+eq('engine bytes unchanged', createHash('sha256').update(source.slice(startIndex, endIndex + END_MARK.length)).digest('hex'), '51ee92d34befd89dfd97240382bed6d4ab11804969711db03bcf4ba6f6982152');
 
 // Complete page events + actual shared shortcut. Parsing uses the same parse5 boundary above.
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
