@@ -6,7 +6,7 @@ interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 const STRINGS = {
   en: {
-    labelInput:'Text', labelOutput:'NATO Codes', clear:'Clear', copy:'Copy', copied:'Copied!', copyFail:'Could not copy. Try again or copy the output manually.', modeLabel:'Output Mode', modeWord:'Word', modeTable:'Table', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'Char', thCode:'NATO Code', converted:'Converted {n} character{s}.', unknown:'[?]', space:'(space)',
+    labelInput:'Text', labelOutput:'NATO Codes', clear:'Clear', copy:'Copy', copied:'Copied!', copyFail:'Could not copy. Try again or copy the output manually.', modeLabel:'Output Mode', modeWord:'Word', modeTable:'Table', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'Char', thCode:'NATO Code', converted:'Converted {n} character{s}.', unknownNote:' No code word for {m} character{s}, shown as [?].', unknown:'[?]', space:'(space)',
     empty: 'Enter text to see NATO code words or a character table.',
     tips: {
       input: 'Text converts automatically 0.2 seconds after your last edit. A–Z and digits have codes; full-width forms are normalized. Spaces become / in Word mode. Punctuation, line breaks and other characters without codes become [?].',
@@ -16,7 +16,7 @@ const STRINGS = {
     },
   },
   zh: {
-    labelInput:'文本', labelOutput:'NATO 音标', clear:'清除', copy:'复制', copied:'已复制！', copyFail:'复制失败。请重试，或选中输出后手动复制。', modeLabel:'输出模式', modeWord:'单词', modeTable:'表格', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'字符', thCode:'NATO 代号', converted:'已转换 {n} 个字符。', unknown:'[?]', space:'（空格）',
+    labelInput:'文本', labelOutput:'NATO 音标', clear:'清除', copy:'复制', copied:'已复制！', copyFail:'复制失败。请重试，或选中输出后手动复制。', modeLabel:'输出模式', modeWord:'单词', modeTable:'表格', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'字符', thCode:'NATO 代号', converted:'已转换 {n} 个字符。', unknownNote:'{m} 个字符没有代号，显示为 [?]。', unknown:'[?]', space:'（空格）',
     empty: '输入文本后，这里会显示 NATO 代号或逐字符表格。',
     tips: {
       input: '停止输入 0.2 秒后自动转换。A–Z 和数字有对应代号，全角形式会规范化。单词模式中空格变为 /。标点、换行和其他没有代号的字符显示为 [?]。',
@@ -26,7 +26,7 @@ const STRINGS = {
     },
   },
   ja: {
-    labelInput:'テキスト', labelOutput:'NATO コード', clear:'クリア', copy:'コピー', copied:'コピー済み！', copyFail:'コピーできませんでした。再試行するか、出力を選択して手動でコピーしてください。', modeLabel:'出力モード', modeWord:'単語', modeTable:'テーブル', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'文字', thCode:'NATOコード', converted:'{n} 文字を変換しました。', unknown:'[?]', space:'（スペース）',
+    labelInput:'テキスト', labelOutput:'NATO コード', clear:'クリア', copy:'コピー', copied:'コピー済み！', copyFail:'コピーできませんでした。再試行するか、出力を選択して手動でコピーしてください。', modeLabel:'出力モード', modeWord:'単語', modeTable:'テーブル', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'文字', thCode:'NATOコード', converted:'{n} 文字を変換しました。', unknownNote:'コードのない {m} 文字は [?] と表示しました。', unknown:'[?]', space:'（スペース）',
     empty: 'テキストを入力すると、NATO コードまたは文字別の表を表示します。',
     tips: {
       input: '入力を止めてから 0.2 秒後に自動変換します。A–Z と数字に対応し、全角は正規化します。単語モードでは空白が / になります。記号、改行などコードのない文字は [?] になります。',
@@ -36,7 +36,7 @@ const STRINGS = {
     },
   },
   ko: {
-    labelInput:'텍스트', labelOutput:'NATO 코드', clear:'지우기', copy:'복사', copied:'복사됨!', copyFail:'복사하지 못했습니다. 다시 시도하거나 출력을 선택하여 직접 복사하세요.', modeLabel:'출력 모드', modeWord:'단어', modeTable:'표', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'문자', thCode:'NATO 코드', converted:'{n}자를 변환했습니다.', unknown:'[?]', space:'(공백)',
+    labelInput:'텍스트', labelOutput:'NATO 코드', clear:'지우기', copy:'복사', copied:'복사됨!', copyFail:'복사하지 못했습니다. 다시 시도하거나 출력을 선택하여 직접 복사하세요.', modeLabel:'출력 모드', modeWord:'단어', modeTable:'표', placeholder:'Hello', outputPlaceholder:'Hotel Echo Lima Lima Oscar', thChar:'문자', thCode:'NATO 코드', converted:'{n}자를 변환했습니다.', unknownNote:' 코드가 없는 {m}자는 [?]로 표시했습니다.', unknown:'[?]', space:'(공백)',
     empty: '텍스트를 입력하면 NATO 코드 또는 문자별 표가 여기에 표시됩니다.',
     tips: {
       input: '입력을 멈춘 뒤 0.2초 후 자동으로 변환합니다. A–Z와 숫자에 코드가 있으며 전각 문자는 정규화합니다. 단어 모드에서 공백은 /가 됩니다. 문장 부호, 줄바꿈 등 코드가 없는 문자는 [?]로 표시됩니다.',
@@ -141,8 +141,12 @@ const { tips: TIPS, ...CLIENT_T } = T;
       var copyError = false;
       var renderedStatus = '';
 
-      function charMsg(n) {
-        return t.converted.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
+      // n counts characters that got a code word; m counts those shown as the unknown marker
+      // (no code word equals it, so the codes array tells them apart). Spaces are in neither.
+      function charMsg(n, m) {
+        var msg = t.converted.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
+        if (m > 0) msg += t.unknownNote.replace('{m}', m).replace('{s}', m === 1 ? '' : 's');
+        return msg;
       }
 
       function invalidateCopy() {
@@ -179,8 +183,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
           tableBody.appendChild(tr);
         });
 
-        statusEl.textContent = renderedStatus = charMsg(result.chars);
-        window.trackTool && window.trackTool('nato_phonetic_alphabet', 'convert');
+        var unknownCount = result.codes.filter(function(code) { return code === t.unknown; }).length;
+        statusEl.textContent = renderedStatus = charMsg(result.chars - unknownCount, unknownCount);
       }
 
       /* mode toggle */
@@ -212,8 +216,19 @@ const { tips: TIPS, ...CLIENT_T } = T;
         _timer = setTimeout(render, 200);
       });
 
+      /* Analytics: one event per committed change (focus leaves after an edit), once per
+         distinct nonblank text, not after every pause in typing. */
+      var trackedText = null;
+      inputEl.addEventListener('change', function() {
+        var text = inputEl.value;
+        if (!text.trim() || text === trackedText) return;
+        trackedText = text;
+        window.trackTool && window.trackTool('nato_phonetic_alphabet', 'convert');
+      });
+
       function clearAll() {
         clearTimeout(_timer);
+        trackedText = null;
         inputEl.value = '';
         render();
       }
@@ -246,9 +261,30 @@ const { tips: TIPS, ...CLIENT_T } = T;
           statusEl.textContent = t.copyFail;
           copyError = true;
         }
-        try {
-          navigator.clipboard.writeText(text).then(done, failed);
-        } catch (e) { failed(); }
+        // Clipboard API first; when it is missing, throws or rejects, a hidden textarea and
+        // execCommand('copy') (same as MarkdownLinterTool.astro); both failing shows copyFail.
+        // A copy that is no longer current does not fall back.
+        function fallback() {
+          if (revision !== copyRevision) return;
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+          document.body.removeChild(ta);
+          // select() moved focus to the textarea; give it back to the button (keyboard users).
+          copyBtn.focus();
+          if (ok) done(); else failed();
+        }
+        var pending;
+        try { pending = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(text) : null; }
+        catch (e) { pending = null; }
+        if (pending) Promise.resolve(pending).then(done, fallback);
+        else fallback();
       });
     })();
   </script>

@@ -14,6 +14,13 @@
 // can be read; nanosecond values beyond 2^53 keep their millisecond part (BigInt); negative values
 // and fractions round like Date (toward zero); invalid text and out-of-range values; the examples
 // on the English page; 4-language STRINGS share the same keys.
+// S2-9 (2026-10-09): the execCommand('copy') fallback of the result rows; full-width digits, signs
+// and points read as ASCII; the four-language invalid-timestamp message; the tsc-check worked
+// examples on the four tool pages (with process.env.TZ per example) and the local FAQ answers;
+// decimal seconds and milliseconds read exactly from the digits (8,000 seeded random values
+// compared with BigInt arithmetic on the decimal string; 1085157552.978 used to give …977).
+// S2-9 review: one ts_to_date event per new Timestamp → Date result on every path (the button
+// used to send one per click and Enter none); the ko status particle; ko quotes; FAQ offsets.
 //
 // Run: node scripts/test-timestamp-converter.mjs
 
@@ -24,7 +31,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks, readToolMdx, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TimestampConverterTool.astro'), 'utf8');
@@ -76,6 +83,49 @@ eq('µs negative', iso('-1500', 'us'), ['1969-12-31T23:59:59.999Z', 'us']);
 // ---------- errors ----------
 for (const bad of ['', 'abc', '1e10', '0x10', '1.2.3', '12 34', '١٢٣']) eq('invalid ' + JSON.stringify(bad), E.readTimestamp(bad, 'auto').error, bad.trim() === '' ? 'empty' : 'num');
 eq('too many seconds', E.readTimestamp('9999999999999999', 's').error, 'range');
+
+// ---------- decimal fractions are exact (S2-9, 2026-10-09) ----------
+// Seconds and milliseconds used to go through Number(text) × 1000 and Math.trunc, so binary
+// rounding moved some values by 1 ms: 1085157552.978 s read as 1085157552977 and
+// 1712160000123.99999 ms as 1712160000124. The expected value is computed from the decimal digits
+// with BigInt (digits × 1000 / 10^decimals for seconds, digits / 10^decimals for milliseconds, cut
+// toward zero), independently of how the engine computes it.
+{
+  const exactMs = (sign, int, frac, unit) => {
+    const ms = BigInt(int + frac) * (unit === 's' ? 1000n : 1n) / 10n ** BigInt(frac.length);
+    return Number(sign === '-' ? -ms : ms);
+  };
+  const msOf = (text, unit = 'auto') => { const r = E.readTimestamp(text, unit); return r.error ? r.error : [r.ms, r.unit]; };
+  eq('1085157552.978 s gives exactly 1085157552978 ms', msOf('1085157552.978'), [1085157552978, 's']);
+  eq('-1085157552.978 s gives exactly -1085157552978 ms', msOf('-1085157552.978'), [-1085157552978, 's']);
+  eq('1712160000123.99999 ms is cut toward zero, not rounded up', msOf('1712160000123.99999'), [1712160000123, 'ms']);
+  eq('digits after the third decimal of a second are dropped', msOf('1700000000.123999'), [1700000000123, 's']);
+  eq('a trailing point reads as whole seconds', msOf('1700000000.'), [1700000000000, 's']);
+  eq('the maximum date in seconds', msOf('8640000000000', 's'), [8640000000000000, 's']);
+  eq('1 ms past the maximum date in seconds is out of range', E.readTimestamp('8640000000000.001', 's').error, 'range');
+  let seed = 20261009;
+  const rand = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const between = (lo, hi) => lo + BigInt(Math.floor(rand() * Number(hi - lo)));
+  const digits = (n) => Array.from({ length: n }, () => Math.floor(rand() * 10)).join('');
+  const groups = [
+    { name: '3-decimal seconds in 1e9–2^31', n: 2000, int: () => between(1000000000n, 2147483648n), frac: () => digits(3), unit: 'auto', read: 's' },
+    { name: '3-decimal seconds in 2^33–1e10', n: 2000, int: () => between(8589934592n, 10000000000n), frac: () => digits(3), unit: 'auto', read: 's' },
+    { name: 'signed seconds below 1e12 with 1–9 decimals', n: 2000, sign: true, int: () => between(0n, 1000000000000n), frac: () => digits(1 + Math.floor(rand() * 9)), unit: 'auto', read: 's' },
+    { name: 'chosen-unit 13-digit seconds with 1–6 decimals', n: 1000, int: () => between(1000000000000n, 8640000000000n), frac: () => digits(1 + Math.floor(rand() * 6)), unit: 's', read: 's' },
+    { name: '13-digit milliseconds whose decimals end in nines', n: 1000, int: () => between(1000000000000n, 10000000000000n), frac: () => digits(Math.floor(rand() * 4)) + '9'.repeat(4 + Math.floor(rand() * 6)), unit: 'auto', read: 'ms' },
+  ];
+  for (const g of groups) {
+    const wrong = [], oldWrong = [];
+    for (let i = 0; i < g.n; i++) {
+      const sign = g.sign && rand() < 0.5 ? '-' : '', int = String(g.int()), frac = g.frac(), text = sign + int + '.' + frac;
+      const want = exactMs(sign, int, frac, g.read), r = E.readTimestamp(text, g.unit);
+      if (r.error || r.ms !== want || r.unit !== g.read) wrong.push(text + ' → ' + (r.error || r.ms) + ', want ' + want);
+      if (Math.trunc(Number(int + '.' + frac) * (g.read === 's' ? 1000 : 1)) !== Math.abs(want)) oldWrong.push(text);
+    }
+    eq('random ' + g.name + ' (' + g.n + ' values) equal the decimal-string result', wrong.slice(0, 5), []);
+    eq('random ' + g.name + ' include values that Number(text) × 1000 reads wrongly', oldWrong.length > 0, true);
+  }
+}
 
 // ---------- page ----------
 const page = readFileSync(join(root, 'src/content/tools/timestamp-converter/en.mdx'), 'utf8');
@@ -135,6 +185,8 @@ function lifecyclePage(lang = 'en', shellFirst = false) {
     detachChildren() { for (const c of this.children) c.parentNode = null; this.children = []; this.text = ''; }
     set innerHTML(v) { this.htmlWrites++; this.detachChildren(); parse(String(v), this); }
     appendChild(child) { this.appendWrites++; this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { this.children = this.children.filter(c => c !== child); child.parentNode = null; return child; }
+    select() { this.selected = true; }
     querySelectorAll(s) { return descendants(this).filter(el => matches(el, s)); }
     querySelector(s) { return this.querySelectorAll(s)[0] ?? null; }
     contains(el) { return el === this || descendants(this).includes(el); }
@@ -175,9 +227,11 @@ function lifecyclePage(lang = 'en', shellFirst = false) {
   doc.createElement = tag => new Element(tag);
   for (const select of doc.querySelectorAll('select')) select.value = select.querySelector('option').value;
   doc.activeElement = doc.body;
+  let throwOnWrite = false;
+  const clipboardApi = { writeText(value) { if (throwOnWrite) throw Error('Controlled synchronous clipboard failure'); let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value, resolve, reject }); return promise; } };
   const sandbox = {
     document: doc, console, t: clientFor(lang), _slug: 'timestamp-converter', ztPersist: { clear() {} },
-    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value, resolve, reject }); return promise; } } },
+    navigator: { clipboard: clipboardApi },
     trackTool: (...args) => tracks.push(args),
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms }); return timerId; }, clearTimeout: id => timers.delete(id),
   };
@@ -192,6 +246,11 @@ function lifecyclePage(lang = 'en', shellFirst = false) {
     input(id, value, event = 'input') { get(id).value = value; get(id).dispatch(event); },
     key(id, key = 'l', modifier = 'ctrlKey') { const el = id ? get(id) : doc.body; el.focus(); return el.dispatch('keydown', { key, ...(modifier ? { [modifier]: true } : {}) }); },
     flushTimers() { for (let i = 0; i < 5 && timers.size; i++) { const jobs = [...timers.values()]; timers.clear(); jobs.forEach(j => j.fn()); } },
+    // execCommand('copy') fallback: absent by default (calling it throws).
+    setExec(fn) { doc.execCommand = fn; },
+    setClipboard(present) { sandbox.navigator.clipboard = present ? clipboardApi : undefined; },
+    setThrowOnWrite(value) { throwOnWrite = value; },
+    bodyTextareas() { return doc.body.children.filter(c => c.tagName === 'TEXTAREA'); },
   };
 }
 
@@ -234,7 +293,8 @@ try {
         const before = p.get(upper).htmlWrites; p.key('tc-ts-input', 'Enter', modifier);
         eq(prefix + 'Enter performs one DOM render ' + shellFirst + '/' + modifier, p.get(upper).htmlWrites - before, 1);
         eq(prefix + 'Enter keeps the actual timestamp value ' + shellFirst + '/' + modifier, rows(p, upper)[2], '2023-11-14T22:13:20.000Z');
-        eq(prefix + 'shared primary action tracks once ' + shellFirst + '/' + modifier, p.tracks.length, modifier ? 1 : 0);
+        // S2-9 review: plain Enter now counts like the button (one ts_to_date per new result).
+        eq(prefix + 'Enter and Ctrl/⌘+Enter track one conversion ' + shellFirst + '/' + modifier, p.tracks.length, 1);
       }
       for (const shellFirst of [false, true]) for (const modifier of ['ctrlKey', 'metaKey']) {
         const p = lifecyclePage(lang, shellFirst); p.input('tc-unit', 'ms', 'change'); convertTimestamp(p); convertDate(p);
@@ -287,6 +347,218 @@ try {
       q.flushTimers(); eq(prefix + 'latest copy timer restores base label', latest.button.textContent, copyLabel);
     }
   }
+
+  // ---------- copy fallback: hidden textarea + execCommand('copy') (S2-9, 2026-10-09) ----------
+  process.env.TZ = 'UTC';
+  for (const lang of Object.keys(languageText)) {
+    const [, copiedLabel, copyError] = languageText[lang], prefix = 'copy fallback/' + lang + ': ';
+    for (const id of [upper, lower]) {
+      const status = p => p.get(id === upper ? 'tc-ts-status' : 'tc-date-status');
+      const ready = () => { const p = lifecyclePage(lang); convertTimestamp(p, '1700000000'); convertDate(p); return p; };
+      {
+        const p = ready(), seen = [];
+        p.setExec(cmd => { const ta = p.bodyTextareas()[0]; seen.push([cmd, ta?.value, ta?.selected, ta?.getAttribute('readonly'), ta?.style.position]); return true; });
+        const before = [status(p).textContent, status(p).className];
+        const { button, job } = timestampCopy(p, id, 2); unhandled.length = 0; job.reject(Error('controlled denial')); await settle();
+        eq(prefix + id + ' rejected Clipboard API falls back with the exact row value', seen, [['copy', rows(p, id)[2], true, '', 'fixed']]);
+        eq(prefix + id + ' fallback success shows Copied and keeps the status', [button.textContent, status(p).textContent, status(p).className], [copiedLabel, ...before]);
+        eq(prefix + id + ' fallback removes its textarea and returns focus to the button', [p.bodyTextareas().length, p.doc.activeElement === button], [0, true]);
+        eq(prefix + id + ' fallback rejection is handled', unhandled, []);
+      }
+      {
+        const p = ready(), seen = []; p.setClipboard(false); p.setExec(cmd => { seen.push(cmd); return true; });
+        const button = p.get(id).querySelectorAll('.btn-copy')[0]; let thrown = '';
+        try { button.click(); } catch (e) { thrown = String(e); }
+        eq(prefix + id + ' missing Clipboard API copies through execCommand at once', [thrown, seen, button.textContent], ['', ['copy'], copiedLabel]);
+      }
+      {
+        const p = ready(); p.setThrowOnWrite(true); p.setExec(() => true);
+        const button = p.get(id).querySelectorAll('.btn-copy')[1]; let thrown = '';
+        try { button.click(); } catch (e) { thrown = String(e); }
+        eq(prefix + id + ' throwing Clipboard API copies through execCommand', [thrown, button.textContent], ['', copiedLabel]);
+      }
+      for (const [name, exec] of [['returns false', () => false], ['throws', () => { throw Error('blocked'); }], ['is missing', null]]) {
+        const p = ready(); if (exec) p.setExec(exec);
+        const { job } = timestampCopy(p, id); job.reject(Error('denied')); await settle();
+        eq(prefix + id + ' execCommand ' + name + ': the localized failure stays visible', [status(p).textContent, status(p).className, p.bodyTextareas().length], [copyError, 'tc-status error', 0]);
+      }
+      {
+        const p = ready(); let calls = 0; p.setExec(() => { calls++; return true; });
+        const { job } = timestampCopy(p, id); if (id === upper) convertTimestamp(p, '1'); else convertDate(p, '2001-01-01T00:00:00');
+        const state = timestampSnapshot(p); job.reject(Error('old')); await settle();
+        eq(prefix + id + ' a stale rejection does not fall back', [calls, timestampSnapshot(p)], [0, state]);
+      }
+    }
+  }
+
+  // ---------- full-width input and the invalid-timestamp message (S2-9) ----------
+  // Full-width digits, ＋, － and ． (U+FF10–FF19, U+FF0B, U+FF0D, U+FF0E) typed with a CJK input
+  // method are read as ASCII before the engine runs; the field keeps what was typed. The error
+  // message used to say "or date" although this field rejects dates.
+  const ERR_NUM = {
+    en: 'Invalid timestamp. Enter digits with an optional sign and decimal point. For a date, use Date → Timestamp.',
+    zh: '无效的时间戳。请输入数字，可带正负号和小数点；日期请在「日期 → 时间戳」中选择。',
+    ja: '無効なタイムスタンプです。数字を入力してください（符号と小数点を使えます）。日付は「日付 → タイムスタンプ」で選びます。',
+    ko: '잘못된 타임스탬프입니다. 숫자를 입력하세요(부호와 소수점 사용 가능). 날짜는 ‘날짜 → 타임스탬프’에서 고르세요.',
+  };
+  for (const lang of Object.keys(languageText)) {
+    const prefix = 'full-width/' + lang + ': ', client = clientFor(lang), p = lifecyclePage(lang);
+    for (const [input, unit, iso] of [
+      ['１７００００００００', 'auto', '2023-11-14T22:13:20.000Z'],
+      ['\u3000１７００００００００１２３\u3000', 'auto', '2023-11-14T22:13:20.123Z'],
+      ['－１．５', 'auto', '1969-12-31T23:59:58.500Z'],
+      ['＋1700000000', 'auto', '2023-11-14T22:13:20.000Z'],
+      ['１７００００００００１２３', 'ms', '2023-11-14T22:13:20.123Z'],
+    ]) {
+      p.input('tc-unit', unit, 'change'); convertTimestamp(p, input);
+      eq(prefix + JSON.stringify(input) + ' reads full-width digits, sign and point', [rows(p, upper)[2], p.get('tc-ts-input').value], [iso, input]);
+    }
+    p.input('tc-unit', 'auto', 'change'); convertTimestamp(p, '１７００００００００');
+    eq(prefix + 'the status counts full-width digits', p.get('tc-ts-status').textContent, client.readAs.replace('{unit}', client.unitS).replace('{n}', '10'));
+    for (const bad of ['abc', '2024-05-01', '1e9', '1,700,000,000', '١٧٠٠', 'ｅ', '1700000000ー', '−1']) {
+      convertTimestamp(p, bad);
+      eq(prefix + JSON.stringify(bad) + ' is rejected with the page-language message', [rows(p, upper), p.get('tc-ts-status').textContent, p.get('tc-ts-status').className], [[], ERR_NUM[lang], 'tc-status error']);
+    }
+    eq(prefix + 'the message no longer offers dates in this field', /or date|或日期|または日付|나 날짜/.test(client.errNum), false);
+  }
+
+  // ---------- usage statistics: one ts_to_date per new result (S2-9 review) ----------
+  // Every Timestamp → Date path (Convert, Enter, Ctrl/⌘+Enter, Now, a unit change) sends one event
+  // when the result (unit and millisecond) differs from the last one sent. Invalid values and
+  // Date → Timestamp send nothing; clearing the field (Ctrl/⌘+L or an empty conversion) resets it.
+  process.env.TZ = 'UTC';
+  for (const lang of Object.keys(languageText)) {
+    const prefix = 'analytics/' + lang + ': ', p = lifecyclePage(lang), count = () => p.tracks.length;
+    convertTimestamp(p, '1700000000');
+    eq(prefix + 'Convert sends one event without the value', p.tracks, [['timestamp_converter', 'ts_to_date']]);
+    p.get('tc-ts-convert').click(); eq(prefix + 'the same result again sends nothing', count(), 1);
+    p.input('tc-ts-input', ' 1700000000 '); p.key('tc-ts-input', 'Enter', null); eq(prefix + 'Enter with the same result sends nothing', count(), 1);
+    p.input('tc-ts-input', '1700000001'); p.key('tc-ts-input', 'Enter', null); eq(prefix + 'Enter with a new result sends one event', count(), 2);
+    p.input('tc-unit', 'ms', 'change'); eq(prefix + 'a unit change that gives a new result sends one event', count(), 3);
+    p.input('tc-unit', 'auto', 'change'); eq(prefix + 'the unit change back gives a new result again', count(), 4);
+    convertTimestamp(p, 'abc'); eq(prefix + 'an invalid value sends nothing', count(), 4);
+    p.get('tc-ts-now').click(); eq(prefix + 'Now sends one event', count(), 5);
+    convertDate(p); eq(prefix + 'Date → Timestamp sends nothing', count(), 5);
+    eq(prefix + 'every event names only the tool and the action', p.tracks.every((args) => JSON.stringify(args) === '["timestamp_converter","ts_to_date"]'), true);
+    const q = lifecyclePage(lang);
+    convertTimestamp(q, '1700000000'); q.key('tc-ts-input', 'l', 'ctrlKey'); q.flushTimers(); convertTimestamp(q, '1700000000');
+    eq(prefix + 'Ctrl/⌘+L resets the last result', q.tracks.length, 2);
+    convertTimestamp(q, ''); convertTimestamp(q, '1700000000');
+    eq(prefix + 'an empty conversion resets the last result', q.tracks.length, 3);
+    const answer = readToolMdx('timestamp-converter')[lang].data.faqItems.find((f) => f.id === 'privacy').answer, client = clientFor(lang);
+    eq(prefix + 'the privacy answer names every path that sends the event', [client.convert, 'Enter', 'Ctrl/⌘+Enter', client.now].filter((word) => !answer.includes(word)), []);
+  }
+
+  // ---------- ko status particle (S2-9 review) ----------
+  // The four ko unit names end in 초 (a vowel), so the status line takes 로, not (으)로.
+  {
+    const p = lifecyclePage('ko'), seen = [];
+    for (const value of ['1700000000', '1700000000123', '1700000000123456', '1700000000123456789']) { convertTimestamp(p, value); seen.push(p.get('tc-ts-status').textContent); }
+    eq('ko status uses 로 after each unit name', seen, ['초로 읽었습니다(10자리). 틀리면 단위를 고르세요.', '밀리초로 읽었습니다(13자리). 틀리면 단위를 고르세요.', '마이크로초로 읽었습니다(16자리). 틀리면 단위를 고르세요.', '나노초로 읽었습니다(19자리). 틀리면 단위를 고르세요.']);
+  }
+
+  // ---------- a fractional second keeps its exact millisecond on the page (S2-9) ----------
+  process.env.TZ = 'UTC';
+  for (const lang of Object.keys(languageText)) {
+    const p = lifecyclePage(lang); convertTimestamp(p, '1085157552.978');
+    eq('decimal/' + lang + ': the page shows the exact millisecond of 1085157552.978', rows(p, upper).slice(0, 3), ['1085157552', '1085157552978', '2004-05-21T16:39:12.978Z']);
+  }
+
+  // ---------- worked examples on the tool pages (S2-9, 2026-10-09) ----------
+  // {/* tsc-check: {"in": "x" | ["x", …], "unit"?: "auto"|"s"|"ms"|"us"|"ns", "tz"?: "Zone" | ["Zone", …],
+  //   "show"?: ["s", "ms", "iso", "utc", "local"], "label"?: true, "status"?: true, "error"?: true} */},
+  // the same with "date": "YYYY-MM-DDTHH:MM:SS" for Date → Timestamp, or {"cases": [ … ]} on
+  // src/content/tools/timestamp-converter/{lang}.mdx: the real page script in the page language runs
+  // with process.env.TZ = tz (default UTC), converts the value, and every listed row value (default
+  // "iso") must appear as inline code, a <code> element or a code-block line after the annotation
+  // (up to the next tsc-check or H2). "label" requires the Local row label (such as
+  // "Local (UTC+08:00)") and "status" the status line text verbatim in that text; "error" requires
+  // an error status, no result rows and the error text verbatim in that text.
+  {
+    const before = passes, beforeFailures = failures;
+    const ROW = { s: 0, ms: 1, iso: 2, utc: 3, local: 4 };
+    const codeTexts = (after) => {
+      const out = new Set();
+      for (const b of fencedBlocks(after)) { out.add(b.text); for (const line of b.text.split('\n')) out.add(line.trim()); }
+      const prose = withoutCode(after);
+      for (const m of prose.matchAll(/(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/g)) out.add(m[2].replace(/^ ([\s\S]*) $/, '$1'));
+      for (const m of prose.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+        const js = /^\{"((?:[^"\\]|\\[\s\S])*)"\}$/.exec(m[1]);
+        out.add(js ? JSON.parse('"' + js[1] + '"') : m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&'));
+      }
+      return out;
+    };
+    const run = (lang, c, tz) => {
+      process.env.TZ = tz;
+      const p = lifecyclePage(lang), dateMode = c.date !== undefined, id = dateMode ? lower : upper;
+      if (dateMode) convertDate(p, c.date);
+      else { p.input('tc-unit', c.unit ?? 'auto', 'change'); convertTimestamp(p, c.in); }
+      const status = p.get(dateMode ? 'tc-date-status' : 'tc-ts-status');
+      return { values: rows(p, id), label: p.get(id).querySelectorAll('.tc-label')[4]?.textContent, status: status.textContent, error: status.className === 'tc-status error' };
+    };
+    const verify = ({ spec, after, lang }) => {
+      const list = Array.isArray(spec?.cases) ? spec.cases : [spec];
+      const cases = list.flatMap((c) => (c?.date !== undefined ? [{ ...c }] : [].concat(c?.in ?? []).map((value) => ({ ...c, in: value }))));
+      if (!cases.length || cases.some((c) => typeof (c.date ?? c.in) !== 'string')) return 'annotation needs "in", "date" or "cases"';
+      const codes = codeTexts(after);
+      for (const c of cases) {
+        for (const tz of [].concat(c.tz ?? 'UTC')) {
+          const r = run(lang, c, tz), what = JSON.stringify(c.date ?? c.in) + ' in ' + tz;
+          if (c.error) {
+            if (!r.error || r.values.length) return what + ': expected an error, page gives ' + JSON.stringify(r.values);
+            if (!after.includes(r.status)) return what + ': error ' + JSON.stringify(r.status) + ' is not quoted';
+            continue;
+          }
+          if (r.error || r.values.length !== 5) return what + ': page gives the error ' + JSON.stringify(r.status);
+          for (const key of c.show ?? ['iso']) {
+            if (!(key in ROW)) return 'unknown "show" key ' + key;
+            if (!codes.has(r.values[ROW[key]])) return what + ': ' + key + ' ' + JSON.stringify(r.values[ROW[key]]) + ' is not shown as code';
+          }
+          if (c.label && !after.includes(r.label)) return what + ': label ' + JSON.stringify(r.label) + ' is not shown';
+          if (c.status && !after.includes(r.status)) return what + ': status ' + JSON.stringify(r.status) + ' is not quoted';
+        }
+      }
+      return null;
+    };
+    const docs = readToolMdx('timestamp-converter');
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      eq(lang + ' worked examples, Limits and FAQ ids pass the S2 contract',
+        contractProblems('timestamp-converter', lang, { limits: true, requireFaqIds: true, annotations: [{ tag: 'tsc-check', min: 2, verify }] }), '');
+      eq(lang + ' every result-table input on the page is recomputed', annotations(docs[lang].body, 'tsc-check').length >= 2, true);
+    }
+    eq('tsc-check catches a wrong ISO value', verify({ spec: { in: '1700000000' }, after: '\n`2023-11-14T22:13:21.000Z`\n', lang: 'en' }) !== null, true);
+    eq('tsc-check accepts the page value in a table cell', verify({ spec: { in: '1700000000', show: ['iso', 's'] }, after: '\n| `1700000000` | `2023-11-14T22:13:20.000Z` |\n', lang: 'en' }), null);
+    eq('tsc-check reads the zone', verify({ spec: { in: '1700000000', tz: 'Asia/Tokyo', show: ['local'], label: true }, after: '\nLocal (UTC+09:00) `2023-11-15 07:13:20`\n', lang: 'en' }), null);
+    eq('tsc-check catches a wrong zone label', verify({ spec: { in: '1700000000', tz: 'Asia/Seoul', label: true }, after: '\n`2023-11-14T22:13:20.000Z` Local (UTC+08:00)\n', lang: 'en' }) !== null, true);
+    eq('tsc-check catches an error that is not quoted', verify({ spec: { in: '1e9', error: true }, after: '\nInvalid timestamp.\n', lang: 'en' }) !== null, true);
+    eq('tsc-check catches a value that is not an error', verify({ spec: { in: '1700000000', error: true }, after: '\nInvalid timestamp.\n', lang: 'en' }) !== null, true);
+    // The local FAQ answers quote page results too (FAQ text is frontmatter, so no annotation).
+    const faq = (lang, id) => docs[lang].data.faqItems.find((f) => f.id === id)?.answer ?? '';
+    const quoted = (answer, r, keys) => keys.every((k) => answer.includes(k === 'label' ? r.label.replace(/^Local \((.*)\)$/, '$1') : r.values[ROW[k]]));
+    {
+      const gap = run('en', { date: '2026-03-08T02:30:00' }, 'America/New_York'), twice = run('en', { date: '2026-11-01T01:30:00' }, 'America/New_York');
+      eq('en FAQ local-dst-gap quotes the page results', [quoted(faq('en', 'local-dst-gap'), gap, ['s', 'local']), quoted(faq('en', 'local-dst-gap'), twice, ['s']), twice.values[2]], [true, true, '2026-11-01T05:30:00.000Z']);
+    }
+    for (const [lang, value, tz] of [['zh', '583718400', 'Asia/Shanghai'], ['ja', '-647049600', 'Asia/Tokyo'], ['ko', '583718400', 'Asia/Seoul']]) {
+      const r = run(lang, { in: value }, tz);
+      eq(lang + ' FAQ local-summer-time quotes the page results', quoted(faq(lang, 'local-summer-time'), r, ['iso', 'local', 'label']) && faq(lang, 'local-summer-time').includes(value), true);
+    }
+    // ko quotes UI text and messages with ‘…’ (S2-9 review): master no longer curls straight
+    // quotes (smartypants is off), so a straight ' in prose or in a FAQ answer would show as typed.
+    {
+      const prose = withoutCode(docs.ko.body).replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/`[^`\n]*`/g, '');
+      const straight = [prose, ...docs.ko.data.faqItems.map((f) => f.question + ' ' + f.answer)].flatMap((text) => text.split('\n').filter((line) => line.includes("'")));
+      eq('ko prose and FAQ quote with ‘…’, not straight quotes', straight, []);
+    }
+    // The time-zone answer gives today's offset and the summer-time offset of the next question
+    // (S2-9 review): the page labels for 2026-01-01 and for the summer-time example, and its years.
+    for (const [lang, value, tz, years] of [['zh', '583718400', 'Asia/Shanghai', '1986–1991'], ['ja', '-647049600', 'Asia/Tokyo', '1948〜1951'], ['ko', '583718400', 'Asia/Seoul', '1987–1988']]) {
+      const offset = (r) => r.label.replace(/^Local \((.*)\)$/, '$1'), answer = faq(lang, 'time-zone');
+      const today = offset(run(lang, { in: '1767225600' }, tz)), summer = offset(run(lang, { in: value }, tz));
+      eq(lang + ' FAQ time-zone gives the current and the summer-time offset', [today, summer, answer.includes(today), answer.includes(summer), answer.includes(years)], [today, summer, true, true, true]);
+    }
+    console.log('tool page examples: ' + (passes - before) + ' passed, ' + (failures - beforeFailures) + ' failed');
+  }
   await settle(); eq('all timestamp copy rejection promises are handled', unhandled, []);
 } finally {
   if (originalTimezone === undefined) delete process.env.TZ; else process.env.TZ = originalTimezone;
@@ -320,7 +592,8 @@ try {
   for (const tip of tips) check('tip uses build-time language and matching content', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2] === '{TIPS.' + /id="tc-tip-([^"]+)"/.exec(tip[1])[1] + '}');
   check('runtime i18n removed and only client strings serialized', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/data-i18n|STRINGS|TIPS/.test(lifecycleScript));
   const engine = source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
-  check('exact engine bytes protected', sha(engine) === '478ed4b2739a9d8a0ddb6b24247629961e1988e624e7446675df6680c40f628e');
+  // S2-9 (2026-10-09, approved): seconds and milliseconds are read from the decimal digits with BigInt.
+  check('exact engine bytes protected', sha(engine) === 'dd4b42189023946b70c9dc958611b6038847d74b55e99f920408baddee50dd45');
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const entry = lifecycleStrings[lang], client = clientFor(lang);
     check(lang + ' all four languages share string keys', JSON.stringify(Object.keys(entry).sort()) === JSON.stringify(Object.keys(lifecycleStrings.en).sort()));

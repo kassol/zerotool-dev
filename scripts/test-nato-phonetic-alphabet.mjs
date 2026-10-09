@@ -11,6 +11,11 @@
 // lookup; spaces become "/", do not count as characters and use the localized space label in table rows; full-width letters, digits and the
 // ideographic space (U+3000) match after NFKC; symbols and kana give the unknown marker; an
 // emoji outside the BMP is one row; the ja page examples; 4-language STRINGS have the same keys.
+// S2-9 (2026-10-09): analytics once per textarea change and distinct nonblank text; the
+// execCommand('copy') fallback; the status counts [?] characters apart from converted ones; the
+// nato-check / nato-rows worked examples on the four tool pages (see that section); the four MDX
+// bodies rendered with @mdx-js/mdx: no code element with unpaired brackets, and the ja Limits item
+// shows [?] as one code element (it used to render "[?" in code and a plain "]").
 //
 // Run: node scripts/test-nato-phonetic-alphabet.mjs
 
@@ -20,7 +25,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks, readToolMdx, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/NatoPhoneticAlphabetTool.astro'), 'utf8');
@@ -163,7 +168,9 @@ function pageVM(lang, shellFirst) {
     });
   }
   class Element {
-    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', text: '', _value: '', hidden: false, disabled: false }); }
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', text: '', _value: '', hidden: false, disabled: false, style: {}, selected: false }); }
+    select() { this.selected = true; }
+    removeChild(e) { this.children = this.children.filter(c => c !== e); e.parentNode = null; return e; }
     get cells() { return this.children.filter(c => c.tagName === 'TD' || c.tagName === 'TH'); }
     get classList() { const e = this; return { add(c) { if (!e.className.split(/\s+/).includes(c)) e.className = (e.className + ' ' + c).trim(); }, remove(c) { e.className = e.className.split(/\s+/).filter(x => x !== c).join(' '); } }; }
     closest(selector) { for (let e = this; e; e = e.parentNode) if (matches(e, selector)) return e; return null; }
@@ -215,14 +222,15 @@ function pageVM(lang, shellFirst) {
   document.createElement = tag => new Element(tag);
   document.getElementById = id => descendants(document).find(e => e.id === id) ?? null;
   const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing actual source ID ' + id); return e; };
+  const clipboard = { writeText(value) {
+    if (copyThrows) throw Error('Controlled synchronous clipboard failure');
+    let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    copies.push({ value: String(value), resolve, reject }); return promise;
+  } };
   const context = {
     document, console, _slug: 'nato-phonetic-alphabet',
     t: Object.fromEntries(Object.entries(STRINGS[lang]).filter(([key]) => key !== 'tips')),
-    navigator: { clipboard: { writeText(value) {
-      if (copyThrows) throw Error('Controlled synchronous clipboard failure');
-      let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-      copies.push({ value: String(value), resolve, reject }); return promise;
-    } } },
+    navigator: { clipboard },
     setTimeout(fn, ms = 0) { const id = ++timerID; timers.set(id, { fn, due: now + ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
     ztPersist: { clear(slug) { clears.push(slug); } }, trackTool(...args) { tracks.push(args); },
@@ -247,6 +255,10 @@ function pageVM(lang, shellFirst) {
     key(key = 'l', modifier = 'ctrlKey', target = 'nato-input') { (target ? get(target) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
     copy() { get('nato-copy').click(); return copies.at(-1); },
     setCopyThrows(value) { copyThrows = value; },
+    // execCommand('copy') fallback: absent by default (calling it throws, as in the old harness).
+    setExec(fn) { document.execCommand = fn; },
+    setClipboard(present) { context.navigator.clipboard = present ? clipboard : undefined; },
+    bodyTextareas() { return document.body.children.filter(c => c.tagName === 'TEXTAREA'); },
     mode(mode) { document.querySelector('[data-mode="' + mode + '"]').click(); },
     rows() { return get('nato-table-body').querySelectorAll('tr').map(tr => tr.cells.map(td => td.textContent)); },
     snapshot() { return { input: get('nato-input').value, output: get('nato-output').value, rows: this.rows(), status: get('nato-status').textContent, copy: get('nato-copy').textContent }; },
@@ -390,6 +402,186 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
   eq(tag + ' empty Word and Table never call clipboard', p.copies.length, 0);
 }
 
+// ---------- analytics: one event per committed change (S2-9, 2026-10-09) ----------
+// render() used to call trackTool after every 200 ms pause in typing. Now only the textarea
+// change event sends it, once per distinct nonblank text; Clear and Ctrl/⌘+L reset that.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = pageVM(lang, false), input = p.get('nato-input'), commit = () => input.dispatch('change');
+  p.input('nato-input', 'A'); p.advance(200); p.input('nato-input', 'AB'); p.advance(200);
+  eq(lang + ' GA: typing and rendering send nothing', p.tracks, []);
+  commit();
+  eq(lang + ' GA: change sends one convert event', p.tracks, [['nato_phonetic_alphabet', 'convert']]);
+  commit(); p.mode('table'); p.mode('word');
+  eq(lang + ' GA: same text and mode switches send nothing more', p.tracks.length, 1);
+  p.input('nato-input', 'ABC'); commit();
+  eq(lang + ' GA: an edited text is sent again, even before the debounce', p.tracks.length, 2);
+  p.get('nato-clear').click(); p.input('nato-input', 'ABC'); commit();
+  eq(lang + ' GA: Clear lets the same text count again', p.tracks.length, 3);
+  p.key('l', 'ctrlKey'); p.input('nato-input', 'ABC'); commit();
+  eq(lang + ' GA: Ctrl+L lets the same text count again', p.tracks.length, 4);
+  for (const blank of ['   ', '\u3000', '']) { p.input('nato-input', blank); commit(); }
+  eq(lang + ' GA: blank text sends nothing', p.tracks.length, 4);
+}
+
+// ---------- copy fallback: hidden textarea + execCommand('copy') (S2-9) ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const [, copiedLabel, copyFailure] = COPY_TEXT[lang];
+  const populated = (mode = 'word') => { const p = pageVM(lang, false); p.input('nato-input', 'AB'); p.advance(200); p.mode(mode); return p; };
+  for (const [mode, text] of [['word', 'Alfa Bravo'], ['table', 'A = Alfa\nB = Bravo']]) {
+    const p = populated(mode), seen = [];
+    p.setExec(cmd => { const ta = p.bodyTextareas()[0]; seen.push([cmd, ta?.value, ta?.selected, ta?.getAttribute('readonly'), ta?.style.position]); return true; });
+    const job = p.copy(); unhandled.length = 0; job.reject(Error('controlled denial')); await settle();
+    eq(lang + ' ' + mode + ' rejected Clipboard API falls back to execCommand with the exact text', seen, [['copy', text, true, '', 'fixed']]);
+    eq(lang + ' ' + mode + ' fallback success shows Copied and keeps the summary', [p.get('nato-copy').textContent, p.get('nato-status').textContent], [copiedLabel, STATUS[lang]]);
+    eq(lang + ' ' + mode + ' fallback removes its textarea and returns focus to Copy', [p.bodyTextareas().length, p.document.activeElement === p.get('nato-copy')], [0, true]);
+    eq(lang + ' ' + mode + ' fallback rejection is handled', unhandled, []);
+  }
+  {
+    const p = populated(), seen = []; p.setClipboard(false); p.setExec(cmd => { seen.push(cmd); return true; });
+    p.get('nato-copy').click();
+    eq(lang + ' missing Clipboard API copies through execCommand at once', [p.copies.length, seen, p.get('nato-copy').textContent], [0, ['copy'], copiedLabel]);
+  }
+  {
+    const p = populated(); p.setCopyThrows(true); p.setExec(() => true); p.get('nato-copy').click();
+    eq(lang + ' throwing Clipboard API copies through execCommand', p.get('nato-copy').textContent, copiedLabel);
+  }
+  for (const [name, exec] of [['returns false', () => false], ['throws', () => { throw Error('blocked'); }]]) {
+    const p = populated(); p.setExec(exec); const job = p.copy(); job.reject(Error('denied')); await settle();
+    eq(lang + ' execCommand ' + name + ': failure stays visible', [p.get('nato-status').textContent, p.bodyTextareas().length], [copyFailure, 0]);
+  }
+  for (const [name, action] of Object.entries(actions)) {
+    const p = populated(); let calls = 0; p.setExec(() => { calls++; return true; });
+    const job = p.copy(); action(p); const before = p.snapshot();
+    job.reject(Error('old')); await settle();
+    eq(lang + ' ' + name + ': a stale rejection does not fall back', [calls, p.snapshot()], [0, before]);
+  }
+}
+
+// ---------- status separates characters without a code word (S2-9) ----------
+// The summary used to count every nonspace character as converted ("Converted 6 characters."
+// for G-ABCD, whose "-" is shown as [?]); now [?] characters are counted separately.
+const UNKNOWN_STATUS = {
+  en: ['Converted 5 characters. No code word for 1 character, shown as [?].', 'Converted 0 characters. No code word for 2 characters, shown as [?].'],
+  zh: ['已转换 5 个字符。1 个字符没有代号，显示为 [?]。', '已转换 0 个字符。2 个字符没有代号，显示为 [?]。'],
+  ja: ['5 文字を変換しました。コードのない 1 文字は [?] と表示しました。', '0 文字を変換しました。コードのない 2 文字は [?] と表示しました。'],
+  ko: ['5자를 변환했습니다. 코드가 없는 1자는 [?]로 표시했습니다.', '0자를 변환했습니다. 코드가 없는 2자는 [?]로 표시했습니다.'],
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = pageVM(lang, false), status = () => p.get('nato-status').textContent;
+  p.input('nato-input', 'G-ABCD'); p.advance(200);
+  eq(lang + ' status counts [?] characters separately', status(), UNKNOWN_STATUS[lang][0]);
+  p.input('nato-input', 'あ\n'); p.advance(200);
+  eq(lang + ' status when no character has a code word', status(), UNKNOWN_STATUS[lang][1]);
+  p.input('nato-input', 'LH 400'); p.advance(200);
+  eq(lang + ' status without [?] keeps the short form', status(), { en: 'Converted 5 characters.', zh: '已转换 5 个字符。', ja: '5 文字を変換しました。', ko: '5자를 변환했습니다.' }[lang]);
+  p.input('nato-input', 'a b'); p.advance(200);
+  eq(lang + ' spaces are neither converted nor [?]', status(), { en: 'Converted 2 characters.', zh: '已转换 2 个字符。', ja: '2 文字を変換しました。', ko: '2자를 변환했습니다.' }[lang]);
+}
+
+// ---------- worked examples on the tool pages (S2-9, 2026-10-09) ----------
+// {/* nato-check: {"in": "x" | ["x", …], "rows"?: true | [i, …], "status"?: true} */} or
+// {/* nato-check: {"cases": [{"in": "x", "rows"?: …, "status"?: true, "word"?: false}, …]} */} on
+// src/content/tools/nato-phonetic-alphabet/{lang}.mdx: the real page script in the page language
+// converts each input. Its Word-mode output must appear as inline code, a <code> element or a
+// code-block line after the annotation (up to the next nato-check or H2). With "rows", the
+// listed Table-mode rows ("character = code" as Copy writes them, with the localized space label;
+// true = all rows) must appear the same way; with "status", the status line text must appear
+// verbatim in that text ("word": false skips the Word-output check for a status-only example).
+// {/* nato-rows: {"in": i, "out": j} */}: in the first Markdown table after it, column j of every
+// body row equals the Word-mode output for column i (the ja page's 変換例 table).
+{
+  const before = passes, beforeFailures = failures;
+  const pageRun = (lang, input) => {
+    const p = pageVM(lang, false); p.input('nato-input', input); p.advance(200);
+    return { word: p.get('nato-output').value, rows: p.rows().map(([ch, code]) => ch + ' = ' + code), status: p.get('nato-status').textContent };
+  };
+  const codeTexts = (after) => {
+    const out = new Set();
+    for (const b of fencedBlocks(after)) { out.add(b.text); for (const line of b.text.split('\n')) out.add(line.trim()); }
+    const prose = withoutCode(after);
+    for (const m of prose.matchAll(/(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/g)) out.add(m[2].replace(/^ ([\s\S]*) $/, '$1'));
+    for (const m of prose.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+      const js = /^\{"((?:[^"\\]|\\[\s\S])*)"\}$/.exec(m[1]);
+      out.add(js ? JSON.parse('"' + js[1] + '"') : m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&'));
+    }
+    return out;
+  };
+  const verifyCheck = ({ spec, after, lang }) => {
+    const cases = Array.isArray(spec?.cases) ? spec.cases
+      : spec && spec.in !== undefined ? [].concat(spec.in).map((input) => ({ in: input, rows: spec.rows, status: spec.status })) : null;
+    if (!cases || !cases.length || cases.some((c) => typeof c?.in !== 'string' || !c.in)) return 'annotation needs "in" or "cases"';
+    const codes = codeTexts(after);
+    for (const c of cases) {
+      const r = pageRun(lang, c.in);
+      if (c.word !== false && !codes.has(r.word)) return JSON.stringify(c.in) + ': Word output ' + JSON.stringify(r.word) + ' is not shown as code';
+      const want = c.rows === true ? r.rows : Array.isArray(c.rows) ? c.rows.map((i) => r.rows[i]) : [];
+      for (const row of want) if (row === undefined || !codes.has(row)) return JSON.stringify(c.in) + ': Table row ' + JSON.stringify(row) + ' is not shown as code';
+      if (c.status && !after.includes(r.status)) return JSON.stringify(c.in) + ': status ' + JSON.stringify(r.status) + ' is not quoted';
+    }
+    return null;
+  };
+  const verifyRows = ({ spec, after, lang }) => {
+    if (!Number.isInteger(spec?.in) || !Number.isInteger(spec?.out)) return 'annotation needs integer "in" and "out" columns';
+    const lines = after.split('\n'), start = lines.findIndex((l) => /^\s*\|/.test(l));
+    if (start < 0) return 'no table after the annotation';
+    const table = [];
+    for (let i = start; i < lines.length && /^\s*\|/.test(lines[i]); i++) table.push(lines[i]);
+    const cells = (line) => line.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((s) => s.trim().replace(/\\\|/g, '|'));
+    const body = table.slice(2).map(cells);
+    if (!body.length) return 'table has no body rows';
+    for (const row of body) {
+      if (!row[spec.in]) return 'empty input cell in ' + JSON.stringify(row);
+      const r = pageRun(lang, row[spec.in]);
+      if (r.word !== row[spec.out]) return JSON.stringify(row[spec.in]) + ': page gives ' + JSON.stringify(r.word) + ', table shows ' + JSON.stringify(row[spec.out]);
+    }
+    return null;
+  };
+  const docs = readToolMdx('nato-phonetic-alphabet');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    eq(lang + ' worked examples, Limits and FAQ ids pass the S2 contract', contractProblems('nato-phonetic-alphabet', lang, {
+      limits: true, requireFaqIds: true,
+      annotations: [{ tag: 'nato-check', min: 1, verify: verifyCheck }, { tag: 'nato-rows', verify: verifyRows }],
+    }), '');
+    const count = annotations(docs[lang].body, 'nato-check').length + annotations(docs[lang].body, 'nato-rows').length;
+    check(lang + ' has at least 2 recomputed examples', count >= 2, String(count));
+  }
+  check('nato-check catches a wrong Word output', verifyCheck({ spec: { in: 'AB' }, after: '\n`Alfa Charlie`\n', lang: 'en' }) !== null);
+  check('nato-check accepts a JSX string <code> element', verifyCheck({ spec: { in: 'AB' }, after: '\n<code>{"Alfa Bravo"}</code>\n', lang: 'en' }) === null);
+  check('nato-check catches a missing Table row', verifyCheck({ spec: { cases: [{ in: 'A B', rows: true }] }, after: '\n`Alfa / Bravo` `A = Alfa` `B = Bravo`\n', lang: 'en' }) !== null);
+  check('nato-check uses the localized space row', verifyCheck({ spec: { cases: [{ in: 'A B', rows: [1] }] }, after: '\n`Alfa / Bravo`、`（空格） = —`\n', lang: 'zh' }) === null);
+  check('nato-check catches a wrong status', verifyCheck({ spec: { cases: [{ in: 'A-B', status: true }] }, after: '\n`Alfa [?] Bravo` gives “Converted 3 characters.”\n', lang: 'en' }) !== null);
+  check('nato-rows catches a wrong table cell', verifyRows({ spec: { in: 0, out: 1 }, after: '\n| In | Out |\n|---|---|\n| AB | Alfa Charlie |\n', lang: 'en' }) !== null);
+  check('nato-rows accepts the page output', verifyRows({ spec: { in: 0, out: 1 }, after: '\n| In | Out |\n|---|---|\n| K7Q9 X2 | Kilo Seven Quebec Niner / X-ray Two |\n', lang: 'ja' }) === null);
+  console.log('tool page examples: ' + (passes - before) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
+
+// ---------- rendered <code> elements around [?] (S2-9 review, 2026-10-09) ----------
+// The ja Limits list wrote <code>{"[?"}</code>], so the page showed a code element "[?" and a plain
+// "]". The four MDX bodies are rendered with @mdx-js/mdx and a minimal JSX runtime: that item must
+// render [?] as one code element, and no page may render a code element whose brackets do not pair.
+{
+  const { evaluate } = await import(require.resolve('@mdx-js/mdx'));
+  const Fragment = Symbol('Fragment');
+  const node = (type, props) => ({ type, props });
+  const esc = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const html = (n) => n == null || typeof n === 'boolean' ? '' : Array.isArray(n) ? n.map(html).join('')
+    : typeof n !== 'object' ? esc(String(n))
+      : n.type === Fragment ? html(n.props.children)
+        : typeof n.type === 'function' ? html(n.type(n.props))
+          : '<' + n.type + '>' + html(n.props.children) + '</' + n.type + '>';
+  const docs = readToolMdx('nato-phonetic-alphabet'), rendered = {};
+  const count = (text, ch) => text.split(ch).length - 1;
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const { default: Content } = await evaluate(docs[lang].body, { Fragment, jsx: node, jsxs: node });
+    rendered[lang] = html(Content({}));
+    const codes = [...rendered[lang].matchAll(/<code>([^<]*)<\/code>/g)].map((m) => m[1]);
+    check(lang + ' MDX renders code elements', codes.length > 0);
+    eq(lang + ' no rendered code element leaves a bracket unpaired', codes.filter((text) => count(text, '[') !== count(text, ']')), []);
+  }
+  eq('ja Limits item renders [?] as one code element', rendered.ja.match(/<li>ICAO のフォネティックコードには記号の単語がないため[^]*?<\/li>/)?.[0],
+    '<li>ICAO のフォネティックコードには記号の単語がないため、<code>-</code>、<code>_</code>、<code>.</code> などは <code>[?]</code> になります。「ハイフン」「アンダースコア」「ドット」と名前で伝えます。</li>');
+}
+
 process.removeListener('unhandledRejection', onUnhandled);
 
 // ---------- v2 page layout ----------
@@ -428,8 +620,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' v2 recursive keys match', Object.keys(local).sort(), Object.keys(enLeaves).sort());
   for (const [key, value] of Object.entries(local)) {
     check(lang + ' v2 nonempty ' + key, typeof value === 'string' && value.trim().length > 0);
-    // {s} is the existing English-only plural suffix in the converted summary.
-    const placeholders = text => [...text.matchAll(/\{[^}]+\}/g)].map(m => m[0]).filter(p => key !== 'converted' || p !== '{s}').sort();
+    // {s} is the English-only plural suffix in the converted summary and the [?] note.
+    const placeholders = text => [...text.matchAll(/\{[^}]+\}/g)].map(m => m[0]).filter(p => !['converted', 'unknownNote'].includes(key) || p !== '{s}').sort();
     eq(lang + ' v2 placeholders ' + key, placeholders(value), placeholders(enLeaves[key]));
   }
   const mdx = readFileSync(join(root, 'src/content/tools/nato-phonetic-alphabet', lang + '.mdx'), 'utf8');
