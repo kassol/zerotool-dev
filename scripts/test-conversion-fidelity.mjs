@@ -719,6 +719,43 @@ const MARKER_INPUTS = [
   }
 }
 
+/* ── PAGE-TEXT-E ── the pages show the PyYAML 6.0.3 output for yaml.dump({b'k1': 1}), name the
+   byte list js-yaml would make of its key (107,49), and quote the stop (converters) or the note
+   (validator) for that key and for `m: {<<: !!binary aGk=}` as the page shows them. */
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const mdx = (tool, lang) => readFileSync(new URL(`../src/content/tools/${tool}/${lang}.mdx`, import.meta.url), 'utf8');
+  const vsrc = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(vsrc.slice(vsrc.indexOf('const labels = '), vsrc.indexOf('const L = labels')) + '\n;labels');
+  const PY_ONE = '? !!binary |\n  azE=\n: 1\n';
+  const MERGE_IN = 'm: {<<: !!binary aGk=}';
+  // the YAML block may be indented inside a list item
+  const hasBlock = (text) => /(^|\n)( *)\? !!binary \|\n\2 {2}azE=\n\2: 1\n/.test(text);
+  const md = (s) => '`' + s + '`';
+  const html = (s) => '<code>' + s + '</code>';
+  const expr = (s) => "<code>{'" + s + "'}</code>";
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    for (const [tool, dir, quote, quoteCode] of [['yaml-json', 'y2j', md, md], ['yaml-toml', 'y2t', html, expr]]) {
+      const page = mdx(tool, lang);
+      const key = convert(open(tool, lang), tool, dir, PY_ONE, 'input').status.textContent;
+      check('PAGE-TEXT-E', `${tool} ${lang} shows the PyYAML sample, the byte list and the key stop`,
+        key.includes('azE=') && hasBlock(page) && page.includes("yaml.dump({b'k1': 1})") && page.includes('107,49') && page.includes(quote(key)), key);
+      const merge = convert(open(tool, lang), tool, dir, MERGE_IN, 'input').status.textContent;
+      const item = merge.slice(merge.indexOf('/m'));
+      check('PAGE-TEXT-E', `${tool} ${lang} quotes the << merge stop`, merge.indexOf('/m') > 0 && page.includes(quoteCode(MERGE_IN)) && page.includes(quoteCode(item)), item);
+    }
+    const yv = mdx('yaml-validator', lang);
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid } } });
+    page.el('yv-input').value = PY_ONE; page.el('yv-validate').click();
+    const note = page.el('yv-preview-note').textContent;
+    const preview = page.el('yv-preview-content').textContent;
+    check('PAGE-TEXT-E', `yaml-validator ${lang} quotes the note for a !!binary key and the preview key`,
+      note.includes('azE=') && preview.includes('"107,49"') && yv.includes("yaml.dump({b'k1': 1})") && yv.includes(md(note)) && yv.includes('`"107,49"`'), note);
+  }
+}
+
 /* ── Summary per finding ── */
 console.log('\nPer finding:');
 for (const [tag, c] of Object.entries(counts)) console.log(`  ${tag}: ${c.pass} passed, ${c.fail} failed`);
