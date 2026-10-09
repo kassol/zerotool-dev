@@ -65,6 +65,8 @@ const JSON_ERRORS = [
   ['{\u201cname\u201d: "Alice"}', 'smartQuote', 1, 2, '\u201c'],
   ['{"name": "Alice"} // sample\n', 'comment', 1, 19],
   ["  {'name': 'Alice'}", 'singleQuote', 1, 4],
+  // S2-10f review S3: a leading byte order mark (U+FEFF) is invisible in the text box, so it is not counted as a column.
+  ['\uFEFF{"a":1,}', 'trailingComma', 1, 7],
 ];
 // S2-10f review S4: valid JSON nested deeper than the call stack allows (Node 22 runs out well below 20,000 levels;
 // browsers differ). The page shows a four-language notice, not "Invalid JSON" plus the browser's English message.

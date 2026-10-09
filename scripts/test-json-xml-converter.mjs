@@ -209,6 +209,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     ['{\u201cname\u201d: "Alice"}', 'smartQuote', 1, 2, '\u201c'],
     ['  {"a": 1} // note', 'comment', 1, 12],
     ['{"a": 1 "b": 2}', 'missingComma', 1, 9],
+  // S2-10f review S3: a leading byte order mark (U+FEFF) is invisible in the text box, so it is not counted as a column.
+    ['\uFEFF{"a":1,}', 'trailingComma', 1, 7],
   ]) await test(lang + ' JSON syntax error ' + code + ' in the page language; old XML cleared', () => {
     const p = page(lang); p.get('jx-json').value = '{"ok":1}'; p.get('jx-to-xml').click();
     p.get('jx-json').value = raw; p.get('jx-to-xml').click();
@@ -462,8 +464,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 // S2-10f (2026-10-09) added the json-reason block and parses JSON in its own try for the localized syntax error;
 // analytics records only successful conversions, the same one once. Its review added the notices for JSON or XML
-// nested too deeply for the call stack.
-check('client script only removes runtime STRINGS and localization', hash(js), '2fa9b1817fb16e88f91d85bec8b93d00a23df25728a3a861a0027faa85308765');
+// nested too deeply for the call stack and stopped counting a leading byte order mark as a column.
+check('client script only removes runtime STRINGS and localization', hash(js), '4700e5bdee25b358c961bc838829f4402922ebe2c508e530cdf2b3a466b7496c');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jx-wrap"/.test(markup), true);

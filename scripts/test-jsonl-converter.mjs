@@ -247,6 +247,14 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
       ]);
       assert.equal(p.get('jlc-error-lines').textContent, '4');
     });
+    // S2-10f review S3: a byte order mark (U+FEFF) at the start of a line or of the JSON panel is invisible in the text
+    // box, so it is not counted as a column.
+    await test(lang + ' a leading byte order mark is not counted as a column', () => {
+      const p = page(lang); p.get('jlc-jsonl').value = '\uFEFF{"a":1,}\n{"b":2}'; p.get('jlc-jsonl').fire('input'); p.flush();
+      assert.deepEqual(p.get('jlc-issues-list').children.filter((r) => r.className === 'jlc-issue-row').map((r) => [r.children[0].textContent, r.children[1].textContent]), [[S.line + ' 1', issue(lang, 'trailingComma', 7)]]);
+      const q = page(lang); q.get('jlc-json').value = '\uFEFF[{"a":1},]'; q.get('jlc-to-jsonl').click();
+      assert.equal(q.get('jlc-status').textContent, errAt(lang, 'trailingComma', 1, 9));
+    });
     await test(lang + ' JSON → JSONL syntax error names line, column and cause; old JSONL cleared', () => {
       const p = page(lang); p.get('jlc-json').value = '[1]'; p.get('jlc-to-jsonl').click();
       p.get('jlc-json').value = '\n[\n  {"a":1},\n  {"b":2},\n]'; p.get('jlc-to-jsonl').click();
@@ -523,8 +531,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 // S2-10f (2026-10-09) added the json-reason block and the localized JSON syntax errors, and sends the same
 // conversion to analytics once. Its review added the notice for pretty-printed JSON longer than the browser allows
-// and dropped the "Invalid JSON" prefix from the message for JSON that is not an array.
-check('client script only loses runtime localization and redundant Validate listener', hash(js), '9e5465d94c088980c931ce1861bd02e003bcac8d158b1be36ed6ff437dea29f0');
+// and dropped the "Invalid JSON" prefix from the message for JSON that is not an array; a leading byte order mark is
+// no longer counted as a column.
+check('client script only loses runtime localization and redundant Validate listener', hash(js), 'da9a6a815445629b7757f49812374a9ae43e595b87ecd2a0ecdba7af6064b96c');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jlc-wrap"/.test(markup), true);

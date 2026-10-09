@@ -63,6 +63,8 @@ const JSON_ERRORS = [
   ['\n\n{"a":1,}', 'trailingComma', 3, 7],
   ['{\u201ca\u201d: 1}', 'smartQuote', 1, 2, '\u201c'],
   ['{"is_active": True}', 'badLiteral', 1, 15],
+  // S2-10f review S3: a leading byte order mark (U+FEFF) is invisible in the text box, so it is not counted as a column.
+  ['\uFEFF{"a":1,}', 'trailingComma', 1, 7],
 ];
 const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
 
@@ -482,7 +484,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "7a9b5fb7073457eaf4ef56070dde4d1fc7ef7e8ad3d881d306f24cb8a7ce07cb"
+  "scriptSHA": "ad916c49b465ab4c64276631f48de4471b82530ca393a5707271387e64923a17"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -490,7 +492,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 page script hash (2026-10-09: JSON syntax errors in the page language; GA sends the same JSON, root name and mode once; JSON too deep for the call stack)', hash(pageScript), V2.scriptSHA);
+eq('v2 page script hash (2026-10-09: JSON syntax errors in the page language; GA sends the same JSON, root name and mode once; JSON too deep for the call stack; a leading byte order mark is not a column)', hash(pageScript), V2.scriptSHA);
 {
   for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
     eq(`JSON errors: ${lang} ${key} is the text of HarFileAnalyzerTool.astro`, JSON.stringify(pageLabels[lang][key]), JSON.stringify(HAR_S[lang][key]));

@@ -64,6 +64,8 @@ const JSON_ERRORS = [
   ['[{\u201cid\u201d: 1}]', 'smartQuote', 1, 3, '\u201c'],
   ['[{"id": 1} // first row\n]', 'comment', 1, 12],
   ['  [{"a":1}\n  {"a":2}]', 'missingComma', 2, 3],
+  // S2-10f review S3: a leading byte order mark (U+FEFF) is invisible in the text box, so it is not counted as a column.
+  ['\uFEFF[{"a":1,}]', 'trailingComma', 1, 8],
 ];
 const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
 
@@ -410,8 +412,9 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; S2-10f (2026-10-09) added
 // the json-reason block and the localized JSON syntax error, and the note for header names with spaces; its review added
-// the notice for JSON nested too deeply for the call stack. The hash pins that reviewed script.
-eq('reviewed page script is unchanged', hash(script), '66f4e92033e170f10ce7730231b3a68db30cc3305811701add885daf09a93cb3');
+// the notice for JSON nested too deeply for the call stack and stopped counting a leading byte order mark as a column.
+// The hash pins that reviewed script.
+eq('reviewed page script is unchanged', hash(script), '2dd937af935e46d8f7a0016038a4029a2ebebb9238a4eb8695746a9b76d7ab08');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);

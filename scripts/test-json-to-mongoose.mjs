@@ -64,6 +64,8 @@ const JSON_ERRORS = [
   ['\n\n{"a":1,}', 'trailingComma', 3, 7],
   ['{\u201ca\u201d: 1}', 'smartQuote', 1, 2, '\u201c'],
   ['{"name": "Alice",', 'unexpectedEnd', 1, 18],
+  // S2-10f review S3: a leading byte order mark (U+FEFF) is invisible in the text box, so it is not counted as a column.
+  ['\uFEFF{"a":1,}', 'trailingComma', 1, 7],
 ];
 // S2-10f review S4: valid JSON nested deeper than the call stack allows (Node 22 runs out well below 20,000 levels;
 // browsers differ). The page shows a four-language notice instead of leaving the previous schema on screen.
