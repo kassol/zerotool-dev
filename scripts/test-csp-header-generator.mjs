@@ -150,6 +150,17 @@ check('moderate preset has no nonce warnings', !keys(stateFor('moderate')).some(
   for (const lang of ['en', 'zh', 'ja', 'ko']) check(lang + ' upgrade note names UIR §3.1', /§3\.1/.test(E.STRINGS[lang].warnUpgradeReportOnly || '') && /upgrade-insecure-requests/.test(E.STRINGS[lang].warnUpgradeReportOnly || ''));
 }
 
+// ── 3c. Mixed Content §6.1: "An earlier version of this specification defined the
+// block-all-mixed-content CSP directive. It is now obsolete, because all mixed content is now
+// blocked if it can't be autoupgraded."
+{
+  const find = (st) => E.validatePolicy(st).find((w) => w.key === 'warnBlockAllMixedObsolete');
+  const hit = find(stateFor('basic', { block: true }));
+  check('block-all-mixed-content switch shows an "obsolete" note', hit && hit.level === 'info');
+  check('no obsolete note when the switch is off', !find(stateFor('basic')));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) check(lang + ' obsolete note names Mixed Content §6.1', /§6\.1/.test(E.STRINGS[lang].warnBlockAllMixedObsolete || '') && /block-all-mixed-content/.test(E.STRINGS[lang].warnBlockAllMixedObsolete || ''));
+}
+
 // ── 4. Express output: per-response nonce through helmet function directives ──
 function runExpress(code) {
   let options = null;
@@ -487,6 +498,25 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ': unconvertible non-ASCII source is rejected', [p.$('csp-output').textContent, p.$('csp-status').textContent], [before, UI_MSG[lang].notAscii + "'nonce-日本'"]);
   p.click('#csp-copy'); p.copies[0].reject(Error('refused')); await flushPage();
   eq(lang + ': copy failure message is localized', p.$('csp-status').textContent, UI_MSG[lang].copyFailed);
+}
+// prefetch-src and navigate-to are not in the CSP3 Working Draft (2026-09-16): not offered, and
+// dropped from an old saved policy with one status message.
+const REMOVED_MSG = {
+  en: 'Removed directives that CSP Level 3 no longer defines: ',
+  zh: '已删除 CSP Level 3 不再定义的指令：',
+  ja: 'CSP Level 3 で定義されなくなったディレクティブを削除しました：',
+  ko: 'CSP Level 3에서 더 이상 정의하지 않는 지시문을 삭제했습니다: ',
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang);
+  const opts = p.$('csp-add-select').options.map((o) => o.value);
+  check(lang + ': prefetch-src and navigate-to are not offered', !opts.includes('prefetch-src') && !opts.includes('navigate-to') && opts.includes('worker-src'), opts.join(','));
+  const old = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'default-src': ["'self'"], 'prefetch-src': ["'self'"], 'navigate-to': ["'self'"] } });
+  eq(lang + ': old saved directives are dropped', old.$('csp-output').textContent, "Content-Security-Policy: default-src 'self'");
+  eq(lang + ': one status message names them', old.$('csp-status').textContent, REMOVED_MSG[lang] + 'prefetch-src, navigate-to');
+  check(lang + ': the cleaned policy is saved', old.saved.length > 0 && !('prefetch-src' in old.saved.at(-1).value.directives), JSON.stringify(old.saved.at(-1)));
+  const clean = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'default-src': ["'self'"] } });
+  eq(lang + ': no message for a clean saved policy', clean.$('csp-status').textContent, '');
 }
 {
   const src = readFileSync(join(root, 'src/components/tools/CspHeaderGeneratorTool.astro'), 'utf8');
