@@ -406,6 +406,14 @@ for(const sourceType of ['image','svg'])for(const phase of ['pending','completed
   check('unused emojiFontWarn is removed', !source.includes('emojiFontWarn'));
 }
 
+// Review F-M1: the text sources opt out of form-state restoration (HTML autofill "off"),
+// like the two site-name boxes; the privacy answers describe the measured reload and
+// back/forward behaviour.
+for (const id of ['fg-emoji-input', 'fg-text-input', 'fg-svg-input', 'fg-app-name', 'fg-short-name']) {
+  const tag = new RegExp('<(?:input|textarea)[^>]*id="' + id + '"[^>]*>').exec(source)?.[0] || '';
+  check(id + ' has autocomplete="off"', /autocomplete="off"/.test(tag), tag);
+}
+
 // v2 generate contract: all original legacy/package and lifecycle assertions remain above.
 const SSR=Function(source.split('// strings:start')[1].split('// strings:end')[0]+';return STRINGS;')();
 const markupV2=source.split('<script is:inline')[0],styleV2=source.split('<style')[1]||'';
