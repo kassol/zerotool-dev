@@ -505,6 +505,13 @@ try {
       const r = run(lang, { in: value }, tz);
       eq(lang + ' FAQ local-summer-time quotes the page results', quoted(faq(lang, 'local-summer-time'), r, ['iso', 'local', 'label']) && faq(lang, 'local-summer-time').includes(value), true);
     }
+    // ko quotes UI text and messages with ‘…’ (S2-9 review): master no longer curls straight
+    // quotes (smartypants is off), so a straight ' in prose or in a FAQ answer would show as typed.
+    {
+      const prose = withoutCode(docs.ko.body).replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/`[^`\n]*`/g, '');
+      const straight = [prose, ...docs.ko.data.faqItems.map((f) => f.question + ' ' + f.answer)].flatMap((text) => text.split('\n').filter((line) => line.includes("'")));
+      eq('ko prose and FAQ quote with ‘…’, not straight quotes', straight, []);
+    }
     // The time-zone answer gives today's offset and the summer-time offset of the next question
     // (S2-9 review): the page labels for 2026-01-01 and for the summer-time example, and its years.
     for (const [lang, value, tz, years] of [['zh', '583718400', 'Asia/Shanghai', '1986–1991'], ['ja', '-647049600', 'Asia/Tokyo', '1948〜1951'], ['ko', '583718400', 'Asia/Seoul', '1987–1988']]) {
