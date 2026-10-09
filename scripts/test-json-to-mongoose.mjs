@@ -267,6 +267,10 @@ const DOC_MEMBERS = ['$__delta', '$__dirty', '$__fullPath', '$__fullPathWithInde
     eq(`S2-10f: ${lang} ${key} names the keys`, typeof labels[lang][key] === 'string' && labels[lang][key].split('{keys}').length === 2, true);
   }
   eq('S2-10f: the breaking-name notice names the Mongoose version', ['en', 'zh', 'ja', 'ko'].every((lang) => String(labels[lang].msgBreaks ?? '').includes('Mongoose 9.10.3')), true);
+  // S2-10f review S1: about half of DOC_BREAKS are properties (_doc, $__, schema, $parent, $session, __index), so the
+  // notice says document members (methods and properties), not document methods.
+  const MEMBER_WORDS = { en: 'document members (methods and properties)', zh: '文档成员（方法或属性）', ja: 'ドキュメントメンバー（メソッドやプロパティ）', ko: '문서 멤버(메서드·속성)' };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) eq(`S2-10f review S1: ${lang} msgBreaks says document members, methods and properties`, String(labels[lang].msgBreaks).includes(MEMBER_WORDS[lang]), true);
 }
 
 // B1: a "__proto__" key is written as a computed key, so the object literal gets an own property
