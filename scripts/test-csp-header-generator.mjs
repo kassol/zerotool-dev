@@ -301,7 +301,7 @@ function renderMarkup(src,lang='en') {
  markup=markup.replace(/([\w-]+)=\{L\.(\w+)\}/g,(_,key,value)=>key+'="'+escape(L[value])+'"');
  return markup.replace(/\{L\.(?:tips\.)?(\w+)\}/g,(m,key)=>escape(m.includes('.tips.')?L.tips[key]:L[key]));
 }
-function page(s,lang='en',order='before'){
+function page(s,lang='en',order='before',persisted=null){
  const docHandlers={},copies=[],digests=[],exec=[],saved=[],cleared=[],tracks=[];let document,now=0,seq=0,selection=null;const timers=new Map();
  const scrollCalls=[];const walk=n=>n.children.flatMap(c=>[c,...walk(c)]);
  function simple(e,selector){let rest=selector;const tag=rest.match(/^[a-z][a-z0-9-]*/i);if(tag){if(e.tagName!==tag[0].toUpperCase())return false;rest=rest.slice(tag[0].length);}for(const m of rest.matchAll(/([.#])([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]/g)){if(m[1]==='#'&&e.id!==m[2]||m[1]==='.'&&!e.classList.contains(m[2]))return false;if(m[3]&&(e.getAttribute(m[3])===null||m[4]!==undefined&&e.getAttribute(m[3])!==m[4]))return false;}return true;}
@@ -322,7 +322,7 @@ function page(s,lang='en',order='before'){
  const body=element('body'),widget=element('section',{class:'tool-widget'});body.appendChild(widget);const markup=renderMarkup(s.source,lang);widget.childNodes=parseFragment(markup).childNodes.map(n=>wrap(n,widget));
  document={body,documentElement:{lang},activeElement:body,createElement:tag=>element(tag),getElementById(id){const e=walk(body).find(e=>e.id===id);if(!e)throw Error('Missing real DOM '+id);return e;},querySelectorAll:q=>body.querySelectorAll(q),querySelector:q=>body.querySelector(q),addEventListener(k,f){(docHandlers[k]||=[]).push(f);},execCommand(command){exec.push({command,text:selection?.value});return options.fallbackSuccess;}};
  const options={holdDigest:false,fallbackSuccess:false,phone:false};
- const globals={document,TextEncoder,Uint8Array,URL,isSecureContext:true,matchMedia(){return {matches:options.phone};},btoa:bin=>Buffer.from(bin,'binary').toString('base64'),crypto:{subtle:{digest(algo,bytes){const real=webcrypto.subtle.digest(algo,bytes);const job={algo,input:Buffer.from(bytes).toString('utf8'),ready:false};digests.push(job);if(!options.holdDigest)return real;return new Promise((resolve,reject)=>{job.resolve=()=>resolve(job.value);job.reject=()=>reject(Error('controlled digest rejection'));real.then(value=>{job.value=value;job.ready=true;},reject);});}}},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return null;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),fetch(){throw Error('network forbidden');}};
+ const globals={document,TextEncoder,Uint8Array,URL,isSecureContext:true,matchMedia(){return {matches:options.phone};},btoa:bin=>Buffer.from(bin,'binary').toString('base64'),crypto:{subtle:{digest(algo,bytes){const real=webcrypto.subtle.digest(algo,bytes);const job={algo,input:Buffer.from(bytes).toString('utf8'),ready:false};digests.push(job);if(!options.holdDigest)return real;return new Promise((resolve,reject)=>{job.resolve=()=>resolve(job.value);job.reject=()=>reject(Error('controlled digest rejection'));real.then(value=>{job.value=value;job.ready=true;},reject);});}}},navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>copies.push({text,resolve,reject})),write(){throw Error('unexpected native clipboard');}}},setTimeout(fn,delay){const id=++seq;timers.set(id,{fn,due:now+delay,delay});return id;},clearTimeout:id=>timers.delete(id),ztPersist:{load(){return persisted;},save:(slug,v)=>saved.push({slug,value:JSON.parse(JSON.stringify(v))}),clear:slug=>cleared.push(slug)},trackTool:(...x)=>tracks.push(x),fetch(){throw Error('network forbidden');}};
  const context={...globals,_slug:s.slug};context.window=context;const ctx=vm.createContext(context);if(order==='before')vm.runInContext(shortcut,ctx);vm.runInContext(s.source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1],ctx,{filename:s.file});if(order==='after')vm.runInContext(shortcut,ctx);
  const $=id=>document.getElementById(id);return{$,document,globals,options,copies,digests,exec,saved,cleared,tracks,timers,scrollCalls,input(id,value,ev='input'){$(id).focus();$(id).value=value;$(id).dispatch(ev);},click:selector=>{const e=selector.startsWith('#')?$(selector.slice(1)):document.querySelector(selector);if(!e)throw Error('No real selector '+selector);e.click();},key(id){$(id).focus();$(id).dispatch('keydown',{key:'l',ctrlKey:true});},advance(ms){const end=now+ms;for(let g=0;;g++){if(g>100)throw Error('timer runaway');const next=[...timers].filter(([,t])=>t.due<=end).sort((a,b)=>a[1].due-b[1].due)[0];if(!next)break;now=next[1].due;timers.delete(next[0]);next[1].fn();}now=end;},async deliver(n){for(let i=0;!digests[n].ready&&i<30;i++)await flushPage();if(!digests[n].ready)throw Error('real digest not ready');digests[n].resolve();await flushPage();}};
 }
@@ -330,6 +330,7 @@ function page(s,lang='en',order='before'){
 const spec = { slug: 'csp-header-generator', file: 'src/components/tools/CspHeaderGeneratorTool.astro', source };
 const normalCopy = { en: 'Copy', zh: '复制', ja: 'コピー', ko: '복사' };
 const copiedLabel = { en: 'Copied!', zh: '已复制！', ja: 'コピーしました！', ko: '복사됨!' };
+const copyFailedText = { en: 'Copy failed.', zh: '复制失败。', ja: 'コピーできませんでした。', ko: '복사하지 못했습니다.' };
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const p = page(spec, lang);
   p.input('csp-preset', 'basic', 'change');
@@ -341,7 +342,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     let n = p.copies.length; p.click('#' + id);
     eq(lang + ' ' + id + ': copies complete actual bytes', p.copies[n].text, value);
     p.copies[n].reject(Error('controlled current refusal')); await flushPage();
-    check(lang + ' ' + id + ': failure keeps original retryable label', p.$(id).textContent === normalCopy[lang] && p.$('csp-status').textContent === 'Copy failed.');
+    check(lang + ' ' + id + ': failure keeps original retryable label', p.$(id).textContent === normalCopy[lang] && p.$('csp-status').textContent === copyFailedText[lang]);
     n = p.copies.length; p.click('#' + id); p.copies[n].resolve(); await flushPage();
     check(lang + ' ' + id + ': direct retry clears failure', p.$(id).textContent === copiedLabel[lang] && p.$('csp-status').textContent === '');
     p.advance(1500);
@@ -431,6 +432,56 @@ for (const kind of ['missing', 'throw']) {
   p.click('#csp-copy'); await flushPage();
   check(kind + ': copy failure is visible without native/fallback access', !native && p.exec.length === 0 && p.$('csp-status').textContent === 'Copy failed.' && !p.$('csp-copy').disabled);
 }
+// ---------- S2-8d: first visit, analytics, source input, localized messages ----------
+// Before the fix: ztPersist.load() returns {} on a first visit, and loadPersisted() set
+// upgrade / block to false, so the Strict preset was shown without upgrade-insecure-requests
+// (the checkbox unchecked) until the user picked a preset again, and that state was saved.
+// update(false) at boot also sent a GA `generate` event on every page load.
+const UI_MSG = {
+  en: { copyFailed: 'Copy failed.', converted: 'Converted to ASCII for CSP: ', notAscii: 'CSP sources must be ASCII. This value could not be converted: ' },
+  zh: { copyFailed: '复制失败。', converted: '已转换为 CSP 可用的 ASCII 写法：', notAscii: 'CSP 源只能使用 ASCII 字符，无法转换：' },
+  ja: { copyFailed: 'コピーできませんでした。', converted: 'CSP で使える ASCII 表記に変換しました：', notAscii: 'CSP のソースは ASCII 文字だけです。変換できませんでした：' },
+  ko: { copyFailed: '복사하지 못했습니다.', converted: 'CSP에서 쓸 수 있는 ASCII 표기로 바꿨습니다: ', notAscii: 'CSP 소스는 ASCII 문자만 쓸 수 있습니다. 변환하지 못했습니다: ' },
+};
+function addHost(p, directive, value) {
+  const card = p.document.querySelectorAll('.csp-directive').find((c) => c.dataset.directive === directive);
+  if (!card) throw Error('no directive card ' + directive);
+  const input = card.querySelector('.csp-source-input');
+  input.focus(); input.value = value; input.dispatch('keydown', { key: 'Enter' });
+}
+for (const [persisted, upgrade] of [[null, true], [{}, true], [{ preset: 'strict', upgrade: false, block: false }, false], [{ preset: 'basic', directives: { 'default-src': ["'self'"] }, upgrade: false, block: true }, false]]) {
+  const p = page(spec, 'en', 'before', persisted);
+  check('boot with saved ' + JSON.stringify(persisted) + ': upgrade flag ' + upgrade, p.$('csp-flag-upgrade').checked === upgrade && p.$('csp-output').textContent.includes('upgrade-insecure-requests') === upgrade, p.$('csp-output').textContent);
+  if (persisted && persisted.block) check('boot keeps a saved block flag', p.$('csp-flag-block').checked && p.$('csp-output').textContent.includes('block-all-mixed-content'));
+  eq('boot with saved ' + JSON.stringify(persisted) + ': no GA event on page load', p.tracks.length, 0);
+  p.click('[data-mode="report-only"]');
+  eq('a user change sends one GA event', p.tracks, [['csp-header-generator', 'generate']]);
+  p.click('[data-format="meta"]');
+  eq('switching the output tab sends no GA event', p.tracks.length, 1);
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  p.click('#csp-add-btn'); // first option in the list: script-src
+  addHost(p, 'script-src', 'https://日本語.jp');
+  check(lang + ': non-ASCII host is converted to punycode', p.$('csp-output').textContent.includes("script-src 'self' https://xn--wgv71a119e.jp"), p.$('csp-output').textContent);
+  eq(lang + ': conversion is reported', p.$('csp-status').textContent, UI_MSG[lang].converted + 'https://xn--wgv71a119e.jp');
+  addHost(p, 'script-src', 'https://static.line-scdn.net/liff/　https://res.wx.qq.com');
+  check(lang + ': whitespace (including U+3000) separates sources', p.$('csp-output').textContent.endsWith("script-src 'self' https://xn--wgv71a119e.jp https://static.line-scdn.net/liff/ https://res.wx.qq.com"), p.$('csp-output').textContent);
+  eq(lang + ': each separated source gets its own chip', p.document.querySelectorAll('.csp-directive').find((c) => c.dataset.directive === 'script-src').querySelectorAll('.csp-source-tag').length, 4);
+  addHost(p, 'script-src', 'https://ｃｄｎ．ｅｘａｍｐｌｅ．ｃｏｍ/画像/');
+  check(lang + ': full-width host and non-ASCII path are converted', p.$('csp-output').textContent.endsWith(' https://cdn.example.com/%E7%94%BB%E5%83%8F/'), p.$('csp-output').textContent);
+  const before = p.$('csp-output').textContent;
+  addHost(p, 'script-src', "'nonce-日本'");
+  eq(lang + ': unconvertible non-ASCII source is rejected', [p.$('csp-output').textContent, p.$('csp-status').textContent], [before, UI_MSG[lang].notAscii + "'nonce-日本'"]);
+  p.click('#csp-copy'); p.copies[0].reject(Error('refused')); await flushPage();
+  eq(lang + ': copy failure message is localized', p.$('csp-status').textContent, UI_MSG[lang].copyFailed);
+}
+{
+  const src = readFileSync(join(root, 'src/components/tools/CspHeaderGeneratorTool.astro'), 'utf8');
+  const client = src.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+  check('no hard-coded English labels in the client script', !client.includes("? 'sandbox tokens'") && !client.includes("? 'URLs / group'") && !client.includes("showStatus('Hash failed: '") && !client.includes("showStatus('Copy failed.'"));
+}
+
 // ---------- v2 page layout (DESIGN.md, kind: generate) ----------
 {
  const markupStart=source.indexOf('\n---\n',4)+5,markup=source.slice(markupStart,source.indexOf('<style',markupStart));
@@ -451,7 +502,7 @@ for (const kind of ['missing', 'throw']) {
   check(lang+' v2: eight plaintext localized facts',Object.keys(L.tips).sort().join('|')==='copy|directives|flags|format|hash|mode|preset|reset'&&Object.values(L.tips).every(x=>typeof x==='string'&&x.length>20&&!/<\/?[a-z]|https?:\/\//i.test(x)));
   for(const key of Object.keys(L).filter(key=>key in E.STRINGS[lang]))eq(lang+' v2: SSR '+key+' equals protected client wording',L[key],E.STRINGS[lang][key]);
   check(lang+' v2: localized labels exist before client boot',html.includes('>'+L.resetBtn+'</button>')&&html.includes('>'+L.hashAddBtn.replace('&','&amp;')+'</button>')&&html.includes('>'+L.presetLabel+'</label>'));
-  eq(lang+' v2: bootstrap preserves empty-saved-preference transport flags',p.$('csp-output').textContent,E.buildOutput(stateFor('strict',{upgrade:false}),'header',E.STRINGS[lang]));
+  eq(lang+' v2: first visit (nothing saved) shows the Strict preset with its transport flag',p.$('csp-output').textContent,E.buildOutput(stateFor('strict'),'header',E.STRINGS[lang]));
   p.input('csp-preset','strict','change');eq(lang+' v2: selecting Strict uses its actual transport flag',p.$('csp-output').textContent,E.buildOutput(stateFor('strict'),'header',E.STRINGS[lang]));
   check(lang+' v2: nonce consequence stays directly visible',p.$('csp-validation').textContent.includes(E.STRINGS[lang].warnNoncePlaceholder));
   p.options.phone=true;p.input('csp-preset','empty','change');
