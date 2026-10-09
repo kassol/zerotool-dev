@@ -42,6 +42,30 @@ if (startIndex < 0 || endIndex <= startIndex) {
 }
 const E = new Function(source.slice(startIndex, endIndex) + '\nreturn { generatePython };')();
 
+// JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
+// json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
+// HarFileAnalyzerTool.astro. A syntax error shows line, column and cause in the page language
+// instead of the browser's English message; line and column count from the start of the text box.
+const JSON_ENGINE = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+const HAR_SOURCE = readFileSync(join(root, 'src/components/tools/HarFileAnalyzerTool.astro'), 'utf8');
+const HAR_S = new Function('return ' + HAR_SOURCE.slice(HAR_SOURCE.indexOf('const STRINGS = ') + 16, HAR_SOURCE.indexOf('\n};\n', HAR_SOURCE.indexOf('const STRINGS = ')) + 2))();
+function fnSrc(src, name) {
+  const lines = src.split('\n');
+  const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+  if (at < 0) return '';
+  const indent = lines[at].match(/^\s*/)[0];
+  let end = at + 1;
+  while (end < lines.length && lines[end] !== indent + '}') end++;
+  return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+}
+// [input, jsonSyntaxError code, line, column, character]
+const JSON_ERRORS = [
+  ['\n\n{"a":1,}', 'trailingComma', 3, 7],
+  ['{\u201ca\u201d: 1}', 'smartQuote', 1, 2, '\u201c'],
+  ['{"is_active": True}', 'badLiteral', 1, 15],
+];
+const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
+
 let failures = 0, passes = 0, skips = 0;
 function check(name, ok, detail) {
   if (ok) { passes++; return; }
@@ -270,6 +294,7 @@ function lifecyclePage(lang, shellFirst = false) {
   const markup = source.split('\n---')[1].split('<script')[0]
     .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
       '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{JSON\.stringify\(L\.(\w+)\)\}/g, (_, key) => '="' + escape(JSON.stringify(pageLabels[lang][key])) + '"')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -374,6 +399,15 @@ try {
       a.input('{"b": 2}'); a.advance(300);
       eq(lang + ': the next input generates again and enables Copy', [a.get('jpdc-output-code').textContent.includes('b: int'), !!a.get('jpdc-copy').disabled], [true, false]);
     }
+    // S2-10f: a JSON syntax error names line, column and cause in the page language, clears the output
+    // and disables Copy; before, the status was the prefix plus the browser's English message.
+    {
+      const w = lifecyclePage(lang); golden(w);
+      for (const [input, code, line, col, ch] of JSON_ERRORS) {
+        w.input(input); w.advance(300);
+        eq(lang + ': JSON error ' + code + ' in the page language', [w.get('jpdc-status').textContent, w.get('jpdc-status').className.includes('error'), w.get('jpdc-output-code').textContent, !!w.get('jpdc-copy').disabled], [jsonErrorMessage(lang, code, line, col, ch), true, '', true]);
+      }
+    }
     // GA: one generate event per committed action (change, Example, a new mode), none on page load or typing pauses.
     const g = lifecyclePage(lang);
     eq(lang + ': GA page load sends no event', g.tracks.length, 0);
@@ -439,7 +473,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "adf11eb5e7159fc96b0f9691467a9dd81c6b5a74817dd338f282de87a5d86639"
+  "scriptSHA": "b389533de23cefde33fd64d6676e2b6b38f58641c1757c452d08fc8280ebdd6c"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -447,7 +481,18 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 page script hash (2026-10-08: GA only on change, Example and a new mode)', hash(pageScript), V2.scriptSHA);
+eq('v2 page script hash (2026-10-09: JSON syntax errors in the page language)', hash(pageScript), V2.scriptSHA);
+{
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
+    eq(`JSON errors: ${lang} ${key} is the text of HarFileAnalyzerTool.astro`, JSON.stringify(pageLabels[lang][key]), JSON.stringify(HAR_S[lang][key]));
+  }
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  eq('JSON errors: the json-reason block sits outside the engine block', rs > endIndex && re > rs, true);
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = rs > 0 ? fnSrc(source.slice(rs, re), name) : '';
+    eq(`JSON errors: ${name} is the same as in json-formatter-engine.js`, mine !== '' && mine === fnSrc(JSON_ENGINE, name), true);
+  }
+}
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
@@ -476,7 +521,7 @@ for (const lang of ['en','zh','ja','ko']) {
   for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
   eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
   const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
-  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgFailed','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','errJson','errJsonAt','jsonParse','msgFailed','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
   const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
   const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
