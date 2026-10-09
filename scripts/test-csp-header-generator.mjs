@@ -522,6 +522,12 @@ const REMOVED_MSG = {
   ja: 'CSP Level 3 で定義されなくなったディレクティブを削除しました：',
   ko: 'CSP Level 3에서 더 이상 정의하지 않는 지시문을 삭제했습니다: ',
 };
+const STRICT_APPLIED_MSG = {
+  en: 'The saved policy had no other directives, so the Strict preset was applied.',
+  zh: '保存的策略没有其他指令，已改用 Strict 预设。',
+  ja: '保存されたポリシーにほかのディレクティブがなかったため、Strict プリセットを適用しました。',
+  ko: '저장된 정책에 다른 지시문이 없어 Strict 프리셋을 적용했습니다.',
+};
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const p = page(spec, lang);
   const opts = p.$('csp-add-select').options.map((o) => o.value);
@@ -533,6 +539,25 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const clean = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'default-src': ["'self'"] } });
   eq(lang + ': no message for a clean saved policy', clean.$('csp-status').textContent, '');
 }
+// Review C-S2: master offered 'script' for trusted-types too. An old saved policy loses it
+// (TT §4.2.2 has no such keyword); if nothing is left, 'none' keeps the meaning of an empty
+// value ("policies may not be created").
+const TT_SCRIPT_MSG = {
+  en: "Removed 'script' from trusted-types: it is valid only in require-trusted-types-for (Trusted Types §4.2).",
+  zh: "已从 trusted-types 中删除 'script'：它只能用于 require-trusted-types-for（Trusted Types §4.2）。",
+  ja: "trusted-types から 'script' を削除しました。'script' は require-trusted-types-for でのみ有効です（Trusted Types §4.2）。",
+  ko: "trusted-types에서 'script'를 삭제했습니다. 'script'는 require-trusted-types-for에서만 유효합니다(Trusted Types §4.2).",
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const base = { preset: 'basic', mode: 'enforce', upgrade: false, block: false };
+  const a = page(spec, lang, 'before', { ...base, directives: { 'default-src': ["'self'"], 'trusted-types': ["'script'", 'app'] } });
+  eq(lang + ": old trusted-types 'script' is removed", [a.$('csp-output').textContent, a.$('csp-status').textContent], ["Content-Security-Policy: default-src 'self'; trusted-types app", TT_SCRIPT_MSG[lang]]);
+  const b = page(spec, lang, 'before', { ...base, directives: { 'default-src': ["'self'"], 'trusted-types': ["'script'"] } });
+  eq(lang + ": trusted-types left empty becomes 'none'", b.$('csp-output').textContent, "Content-Security-Policy: default-src 'self'; trusted-types 'none'");
+  const c = page(spec, lang, 'before', { ...base, directives: { 'default-src': ["'self'"], 'prefetch-src': ["'self'"], 'trusted-types': ["'script'", 'app'] } });
+  eq(lang + ': both notes in one status line', c.$('csp-status').textContent, REMOVED_MSG[lang] + 'prefetch-src ' + TT_SCRIPT_MSG[lang]);
+}
+
 // Review C-S1: a refused value stays in the box, marked aria-invalid and tied to the status
 // line, so the user can fix it instead of typing it again.
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
