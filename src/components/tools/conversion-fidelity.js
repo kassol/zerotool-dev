@@ -28,19 +28,42 @@
 // The YAML validator uses the same walk with `preview` to list what its JSON preview changes.
 // Paths are JSON Pointers (RFC 6901). Nothing here touches the DOM, storage or network.
 
+// Mapping keys: js-yaml turns a key into String(key), but an object whose
+// Object.prototype.toString gives '[object Object]' becomes the text '[object Object]'
+// (loader.js storeMappingPair, which uses the object's own toString when it has a
+// Symbol.toStringTag). The three classes below carry a tag and a toString, so a YAML key keeps its
+// text: a timestamp key as written, a lossy integer key as its exact decimal digits, a whole float
+// as the number (1.0 → "1", as js-yaml gives without these classes).
+
 // `value` is what JavaScript would hold instead (the rounded number), for previews that show it.
+// `text` is the key text (default: `raw`).
 export class LossyValue {
-  constructor(kind, raw, value) { this.kind = kind; this.raw = raw; this.value = value; }
+  constructor(kind, raw, value, text) { this.kind = kind; this.raw = raw; this.value = value; this.text = text === undefined ? raw : text; }
+  get [Symbol.toStringTag]() { return 'LossyValue'; }
+  toString() { return this.text; }
 }
 // `date` is the Date js-yaml builds (Date.UTC, so 2026-02-31 becomes 2026-03-03).
 export class YamlTimestamp {
   constructor(raw, date) { this.raw = raw; this.date = date; }
+  get [Symbol.toStringTag]() { return 'YamlTimestamp'; }
+  toString() { return this.raw; }
 }
 
 // A YAML float whose value is a whole number (1.0, 1e3): JavaScript keeps no float type, so
 // smol-toml would write it as the TOML integer 1. Only made with yamlLoadSchema `floats`.
 export class WholeFloat {
   constructor(value) { this.value = value; }
+  get [Symbol.toStringTag]() { return 'WholeFloat'; }
+  toString() { return String(this.value); }
+}
+
+/* The exact decimal digits of a YAML int literal. js-yaml 4.3.2 reads an optional sign, then 0b, 0o
+   or 0x digits or decimal digits (int.js); BigInt reads the same prefixes once the sign is off. */
+function yamlIntText(data) {
+  var s = String(data);
+  var neg = s.charAt(0) === '-';
+  if (neg || s.charAt(0) === '+') s = s.slice(1);
+  return (neg ? '-' : '') + BigInt(s).toString();
 }
 
 /* A TOML number written as `text`. smol-toml's stringify writes numbers through Number#toString,
@@ -82,7 +105,7 @@ export function yamlLoadSchema(jsyaml, opts) {
     construct: function (data) {
       var v = intType.construct(data);
       if (v === 0) return 0;
-      return Number.isSafeInteger(v) ? v : new LossyValue('unsafeInteger', String(data), v);
+      return Number.isSafeInteger(v) ? v : new LossyValue('unsafeInteger', String(data), v, yamlIntText(data));
     },
   })];
   if (opts && opts.floats) {

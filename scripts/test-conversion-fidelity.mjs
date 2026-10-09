@@ -463,6 +463,43 @@ expectConverted(OT, 'yaml-toml', 'y2t', 'o: !!omap [a: 1, b: 2]\np: !!pairs [a: 
   (o) => { const d = JSON.parse(JSON.stringify(tomlParse(o))); return deep(d.o, [{ a: 1 }, { b: 2 }]) && deep(d.p, [['a', 1], ['a', 2]]); }, 'omap and pairs become TOML arrays');
 expectRejected(OT, 'yaml-toml', 'y2t', 's: !!set {a, b}', '/s/a', 'null');
 
+/* ── D-YAML-KEYS ── js-yaml turns a mapping key into String(key), except that an object whose
+   Object.prototype.toString is '[object Object]' becomes the text '[object Object]'
+   (loader.js storeMappingPair). The page schema builds YamlTimestamp, LossyValue and WholeFloat
+   objects, so a date key became '[object Object]' and two date keys were a duplicated mapping key.
+   A timestamp key keeps its text, an integer key outside ±(2^53 − 1) its exact decimal digits, and a
+   whole-float key reads like the number (1.0 → "1", as js-yaml gives without the page schema). */
+const KEY = 'D-YAML-KEYS';
+expectConverted(KEY, 'yaml-json', 'y2j', "holidays:\n  2026-01-01: New Year\n  2026-05-05: Children's Day",
+  (o) => o === JSON.stringify({ holidays: { '2026-01-01': 'New Year', '2026-05-05': "Children's Day" } }, null, 2), 'date keys keep their text, and two of them are not a duplicate');
+expectConverted(KEY, 'yaml-json', 'y2j', '2026-10-01T09:30:00+09:00: start\n2001-12-14 21:59:43.10 -5: old\n2026-02-31: not a date',
+  (o) => deep(Object.keys(JSON.parse(o)), ['2026-10-01T09:30:00+09:00', '2001-12-14 21:59:43.10 -5', '2026-02-31']), 'timestamp keys keep their text, also one that is not a real date');
+expectConverted(KEY, 'yaml-json', 'y2j', '9007199254740993: a\n0x20000000000002: b\n-9007199254740993: c\n0x1F: d',
+  (o) => deep(JSON.parse(o), { '31': 'd', '9007199254740993': 'a', '9007199254740994': 'b', '-9007199254740993': 'c' }), 'integer keys outside ±(2^53 − 1) keep their exact decimal digits; 0x1F is still 31');
+expectConverted(KEY, 'yaml-json', 'y2j', 'base: &b\n  2026-01-01: x\nm:\n  <<: *b\n  2026-02-01: y',
+  (o) => deep(JSON.parse(o).m, { '2026-01-01': 'x', '2026-02-01': 'y' }), 'date keys through a << merge');
+expectConverted(KEY, 'yaml-toml', 'y2t', 'holidays:\n  2026-01-01: New Year\n  2026-05-05: Children',
+  (o) => deep(JSON.parse(JSON.stringify(tomlParse(o))), { holidays: { '2026-01-01': 'New Year', '2026-05-05': 'Children' } }), 'date keys keep their text in TOML');
+expectConverted(KEY, 'yaml-toml', 'y2t', '1.0: a\n9007199254740993: b',
+  (o) => deep(Object.keys(tomlParse(o)), ['1', '9007199254740993']), 'whole-float and large-integer keys');
+for (const tool of ['yaml-json', 'yaml-toml']) {
+  const dir = tool === 'yaml-json' ? 'y2j' : 'y2t';
+  const r = convert(open(tool), tool, dir, '2026-01-01: a\n2026-01-01: b', 'input');
+  check(KEY, `${tool}: the same date twice is still a duplicated mapping key`, r.out.value === '' && r.status.textContent.includes('duplicated mapping key'), 'status=' + JSON.stringify(r.status.textContent));
+}
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const L = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels').en;
+  const dataset = { lang: 'en', msgEmpty: L.msgEmpty, msgValid: L.msgValid, msgInvalid: L.msgInvalid, msgValidMulti: L.msgValidMulti, msgInvalidMulti: L.msgInvalidMulti, docTitle: L.docTitle, docLines: L.docLines, docValid: L.docValid, copyJson: L.copyJson, copied: L.copied, errTitle: L.errTitle, errLine: L.errLine, errLineCol: L.errLineCol };
+  const page = loadPage('src/components/tools/YamlValidatorTool.astro', { dataset: { '.yv-wrap': dataset } });
+  page.el('yv-input').value = 'changelog:\n  2026-10-01: first\n  2026-10-08: second'; page.el('yv-validate').click();
+  check(KEY, 'yaml-validator: two date keys are valid and the preview keeps their text',
+    /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent === JSON.stringify({ changelog: { '2026-10-01': 'first', '2026-10-08': 'second' } }, null, 2) && page.el('yv-preview-note').hidden === true,
+    page.el('yv-status').textContent + ' | ' + page.el('yv-preview-content').textContent);
+}
+
 /* ── Summary per finding ── */
 console.log('\nPer finding:');
 for (const [tag, c] of Object.entries(counts)) console.log(`  ${tag}: ${c.pass} passed, ${c.fail} failed`);
