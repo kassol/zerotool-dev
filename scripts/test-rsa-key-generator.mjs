@@ -1,6 +1,7 @@
 // Read: src/components/tools/RsaKeyGeneratorTool.astro, src/layouts/ToolLayout.astro,
 //       scripts/astro-page-harness.mjs and installed parse5.
-// Write: stdout/stderr only; clipboard, downloads and timers stay in memory.
+// Write: stdout/stderr; clipboard, downloads and timers stay in memory. The rkg-check examples
+//        run ssh-keygen (when installed) on public keys written to os.tmpdir(), removed after use.
 // Exit: 0 when all checks pass, 1 when any check fails.
 import {readFileSync} from 'node:fs';
 import {dirname,join} from 'node:path';
@@ -545,6 +546,123 @@ await attempt('v2 real 2048 export reference example', async () => {
     const english = readFileSync(join(root, 'src/content/tools/rsa-key-generator/en.mdx'), 'utf8');
     v2Check('the verified example is documented', english.includes('## Check a Generated Export Pair') && english.includes('ZeroTool RSA export example') && english.includes('ZeroTool RSA export changed'));
 });
+
+// Worked examples: {/* rkg-check: {...} */} in the four tool pages (S2-8). Keys are random, so
+// each example states only the parts that every key of that size has. The spec names the options
+// (size, algo, format, part) and the claimed facts; the real component generates three keys with
+// those options and every claimed fact must hold for all three. Every claimed value must also be
+// shown on the page after the annotation: exactly as inline code, or inside a code block.
+// - PEM: header, footer, oneLine (Base64 length without line breaks), lines (Base64 lines),
+//   lastLine (length of the last Base64 line), start, end.
+// - JWK: the next code block equals the output with sorted keys (Chrome's order; see the LINE
+//   example in ja) and `n` replaced by mask with {n} = its length; nLength is that length.
+// - OpenSSH: sshPrefix / sshLength of the authorized_keys line built from the public key,
+//   fpLength of the SHA256 fingerprint. When ssh-keygen is installed, `ssh-keygen -i -m PKCS8`
+//   must print the same line and `ssh-keygen -l` must print "<bits> SHA256:<fp> <keygenTail>"
+//   (temporary files in os.tmpdir(), removed after use); otherwise those two checks are skipped.
+{
+    const { toolMdxContract, annotations, fencedBlocks } = await import('./lib/tool-mdx-contract.mjs');
+    const { execFileSync } = await import('node:child_process');
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    let sshKeygen = true;
+    try { execFileSync('ssh-keygen', ['-?'], { stdio: 'ignore' }); } catch (e) { sshKeygen = e.code !== 'ENOENT'; }
+    if (!sshKeygen) console.log('SKIP rkg-check ssh-keygen comparison (ssh-keygen not installed)');
+    const exampleRuns = new Map();
+    async function runsFor(spec) {
+        const key = [spec.size, spec.algo, spec.format].join('/');
+        if (!exampleRuns.has(key)) {
+            const runs = [];
+            for (let i = 0; i < 3; i++) {
+                const p = lifecyclePage('en');
+                p.change('rkg-keysize', String(spec.size));
+                p.change('rkg-algo', spec.algo);
+                p.change('rkg-format', spec.format);
+                await generateReady(p);
+                runs.push({ public: p.get('rkg-pub-out').value, private: p.get('rkg-priv-out').value });
+            }
+            exampleRuns.set(key, runs);
+        }
+        return exampleRuns.get(key);
+    }
+    const sshString = b => { const h = Buffer.alloc(4); h.writeUInt32BE(b.length); return Buffer.concat([h, b]); };
+    const mpint = b => (b[0] & 0x80 ? Buffer.concat([Buffer.from([0]), b]) : b);
+    function sshLine(pem) {
+        const jwk = cryptoProof.createPublicKey(pem).export({ format: 'jwk' });
+        const blob = Buffer.concat([sshString(Buffer.from('ssh-rsa')), sshString(mpint(Buffer.from(jwk.e, 'base64url'))), sshString(mpint(Buffer.from(jwk.n, 'base64url')))]);
+        return { line: 'ssh-rsa ' + blob.toString('base64'), fp: 'SHA256:' + cryptoProof.createHash('sha256').update(blob).digest('base64').replace(/=+$/, '') };
+    }
+    const OPTION_KEYS = ['size', 'algo', 'format', 'part', 'mask'];
+    async function verify({ spec, after }) {
+        if (!spec) return 'annotation needs a JSON spec';
+        const runs = await runsFor(spec);
+        const texts = runs.map(r => r[spec.part === 'private' ? 'private' : 'public']);
+        const blocks = fencedBlocks(after).map(b => b.text);
+        const inline = [...after.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').matchAll(/`([^`\n]+)`/g)].map(m => m[1]);
+        const problems = [];
+        const same = (name, f) => { const values = texts.map(f); if (!values.every(v => v === spec[name])) problems.push(`${name}: claimed ${JSON.stringify(spec[name])}, generated ${JSON.stringify(values)}`); };
+        if (spec.format === 'pem') {
+            const parts = texts.map(t => { const l = t.split('\n'); return { header: l[0], footer: l.at(-1), body: l.slice(1, -1) }; });
+            if (!parts.every(x => x.body.every(line => line.length <= 64))) problems.push('a PEM line is longer than 64 characters');
+            for (const [name, f] of Object.entries({
+                header: (_, i) => parts[i].header, footer: (_, i) => parts[i].footer, oneLine: (_, i) => parts[i].body.join('').length,
+                lines: (_, i) => parts[i].body.length, lastLine: (_, i) => parts[i].body.at(-1).length,
+            })) if (name in spec) same(name, f);
+            if ('start' in spec && !parts.every(x => x.body.join('').startsWith(spec.start))) problems.push('start is not shared by every key');
+            if ('end' in spec && !parts.every(x => x.body.join('').endsWith(spec.end))) problems.push('end is not shared by every key');
+            if ('sshPrefix' in spec || 'sshLength' in spec || 'fpLength' in spec) {
+                for (const pem of texts) {
+                    const { line, fp } = sshLine(pem);
+                    if ('sshPrefix' in spec && !line.startsWith(spec.sshPrefix)) problems.push('sshPrefix differs: ' + line.slice(0, 40));
+                    if ('sshLength' in spec && line.length !== spec.sshLength) problems.push('sshLength ' + line.length);
+                    if ('fpLength' in spec && fp.length - 'SHA256:'.length !== spec.fpLength) problems.push('fpLength ' + (fp.length - 7));
+                    if (sshKeygen && 'keygenTail' in spec) {
+                        const dir = mkdtempSync(join(tmpdir(), 'rkg-check-'));
+                        try {
+                            writeFileSync(join(dir, 'public-key.pem'), pem + '\n');
+                            const converted = execFileSync('ssh-keygen', ['-i', '-m', 'PKCS8', '-f', join(dir, 'public-key.pem')]).toString().trim();
+                            if (converted !== line) problems.push('ssh-keygen -i prints a different line');
+                            writeFileSync(join(dir, 'public-key.pub'), converted + '\n');
+                            const listed = execFileSync('ssh-keygen', ['-l', '-f', join(dir, 'public-key.pub')]).toString().trim();
+                            if (listed !== `${spec.size} ${fp} ${spec.keygenTail}`) problems.push('ssh-keygen -l prints ' + listed);
+                        } finally { rmSync(dir, { recursive: true, force: true }); }
+                    }
+                }
+            }
+        } else {
+            const masked = texts.map(t => {
+                const jwk = JSON.parse(t);
+                const sorted = Object.fromEntries(Object.keys(jwk).sort().map(k => [k, k === 'n' ? spec.mask.replace('{n}', String(jwk.n.length)) : jwk[k]]));
+                return JSON.stringify(sorted, null, 2);
+            });
+            if ('nLength' in spec) same('nLength', t => JSON.parse(t).n.length);
+            if (!masked.every(m => m === masked[0])) problems.push('masked JWK differs between keys');
+            if (blocks[0] !== masked[0]) problems.push('JWK block differs from the output:\n' + masked[0]);
+        }
+        for (const [k, v] of Object.entries(spec)) {
+            if (OPTION_KEYS.includes(k)) continue;
+            const s = String(v);
+            if (!inline.includes(s) && !blocks.some(b => b.includes(s))) problems.push(`${k} value ${s} is not shown as code after the annotation`);
+        }
+        return problems.length ? problems.join('; ') : null;
+    }
+    // The contract (with at least 2 rkg-check examples per language); the examples themselves are
+    // checked below because generating keys is asynchronous.
+    const contract = toolMdxContract('rsa-key-generator', { annotations: [{ tag: 'rkg-check', min: 2, verify: () => null }] });
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+        const own = contract.results.filter(r => !r.ok && (r.rule.startsWith(lang + ' ') || !['en', 'zh', 'ja', 'ko'].some(l => r.rule.startsWith(l + ' '))));
+        v2Check(lang + ' MDX content contract' + (own.length ? ': ' + own.map(r => r.message).join('; ') : ''), own.length === 0);
+        const notes = annotations(contract.docs[lang].body, 'rkg-check');
+        for (const [i, note] of notes.entries()) {
+            const problem = note.spec === undefined ? 'annotation JSON does not parse' : await verify(note);
+            v2Check(`${lang} rkg-check #${i + 1} matches generated keys${problem ? ': ' + problem : ''}`, !problem);
+        }
+    }
+    // The en page says the algorithm setting does not change the fixed SPKI bytes.
+    const [oaep, pkcs] = [await runsFor({ size: 2048, algo: 'RSA-OAEP', format: 'pem' }), await runsFor({ size: 2048, algo: 'RSASSA-PKCS1-v1_5', format: 'pem' })];
+    const head = t => t.split('\n').slice(1, -1).join('').slice(0, 44);
+    v2Check('SPKI prefix is the same for both algorithms', [...oaep, ...pkcs].every(r => head(r.public) === 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA'));
+}
 
 process.removeListener('unhandledRejection', onUnhandled);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);

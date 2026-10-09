@@ -1,6 +1,6 @@
 ---
 seoTitle: "RSA Key Pair Generator — Free Online | ZeroTool"
-seoDescription: "Generate RSA key pairs (2048/4096-bit) in PEM or JWK format directly in your browser. Private keys never leave your machine."
+seoDescription: "Generate RSA key pairs (2048/4096-bit) in PEM or JWK format with your browser's Web Crypto API. Keys are not uploaded or stored by the page."
 steps:
   - "Select Key Size: 2048-bit or 4096-bit."
   - "Select Algorithm: RSA-OAEP for encryption or RSASSA-PKCS1-v1_5 for signing."
@@ -8,16 +8,24 @@ steps:
   - "Click Generate Key Pair and wait for both keys."
   - "Copy or download each key separately. Keep the private key secret."
 faqItems:
-  - question: "Are my keys sent to any server?"
-    answer: "No. Key generation uses the browser's built-in Web Crypto API (crypto.subtle.generateKey). Nothing ever leaves your machine. The 'Your keys never leave this browser' badge is a hard guarantee."
-  - question: "What is the difference between RSA-OAEP and RSASSA-PKCS1-v1_5?"
-    answer: "RSA-OAEP is used for asymmetric encryption (encrypt data with public key, decrypt with private key). RSASSA-PKCS1-v1_5 is used for digital signing (sign with private key, verify with public key)."
-  - question: "Which key size should I choose?"
-    answer: "2048-bit is the current industry minimum and is sufficient for most use cases. Choose 4096-bit for long-lived keys or when regulations require higher security margins. 4096-bit generation takes noticeably longer."
-  - question: "What is the PEM format?"
-    answer: "PEM (Privacy Enhanced Mail) is Base64-encoded DER data wrapped in -----BEGIN/END----- lines; the label says what is inside (PUBLIC KEY, PRIVATE KEY, CERTIFICATE). It is the usual format for keys and certificates in OpenSSL, nginx, and most TLS software."
-  - question: "What is the JWK format?"
-    answer: "JWK (JSON Web Key) is a JSON representation of cryptographic keys defined by RFC 7517. It is commonly used in OAuth 2.0, OIDC, and JWT authentication flows."
+  - id: privacy
+    question: "Are my keys sent to any server?"
+    answer: "No. The page calls the browser's Web Crypto API (crypto.subtle.generateKey) and makes no network request with the keys. It does not write them to localStorage or cookies, and because this page handles private keys it does not load Google Analytics or AdSense. The keys stay in the page until you press Ctrl or Command + L in the tool, generate again or close the tab. Copy puts a key on your system clipboard and Download writes a file, so delete those copies when you no longer need them."
+  - id: algorithm
+    question: "What is the difference between RSA-OAEP and RSASSA-PKCS1-v1_5?"
+    answer: "RSA-OAEP is used for asymmetric encryption (encrypt data with public key, decrypt with private key). RSASSA-PKCS1-v1_5 is used for digital signing (sign with private key, verify with public key). The choice changes the JWK fields alg and key_ops; the PEM files are the same kind of key for both."
+  - id: key-size
+    question: "Which key size should I choose?"
+    answer: "A 2048-bit key gives 112 bits of security strength (NIST SP 800-57 Part 1 Rev. 5, Table 2), and 2048 bits is the smallest RSA modulus the CA/Browser Forum Baseline Requirements (section 6.1.5) allow for TLS certificates. A 4096-bit key gives between 128 and 192 bits, takes longer to generate, and makes every signature 512 bytes instead of 256. Use what the system that will read the key asks for."
+  - id: pem
+    question: "What is the PEM format?"
+    answer: "PEM (Privacy Enhanced Mail) is Base64-encoded DER data wrapped in -----BEGIN/END----- lines; the label says what is inside (PUBLIC KEY, PRIVATE KEY, CERTIFICATE). It is the usual format for keys and certificates in OpenSSL, nginx, and most TLS software. This tool writes 64 characters per line."
+  - id: jwk
+    question: "What is the JWK format?"
+    answer: "JWK (JSON Web Key) is a JSON representation of cryptographic keys defined by RFC 7517. It is commonly used in OAuth 2.0, OIDC, and JWT authentication flows. The exported JWK has no kid or use field."
+  - id: local-ssh
+    question: "Can I use the key for SSH?"
+    answer: "Yes, after a conversion. ssh-keygen -y -f private-key.pem prints the ssh-rsa line for ~/.ssh/authorized_keys, and ssh-keygen -i -m PKCS8 -f public-key.pem gives the same line from the public key. ssh-keygen refuses the private key file until only you can read it (chmod 600). The tool cannot write the OpenSSH private key format; use ssh-keygen -t rsa for that."
 ---
 
 <h2>Security Notes</h2>
@@ -31,20 +39,48 @@ faqItems:
 
 **PEM** gives the public key as SubjectPublicKeyInfo (`-----BEGIN PUBLIC KEY-----`) and the private key as unencrypted PKCS#8 (`-----BEGIN PRIVATE KEY-----`). OpenSSL 3.6 reads both directly (`Private-Key: (2048 bit, 2 primes)`). Older software that expects PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`) needs a conversion; see the commands below.
 
-**JWK** ([RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) is what the browser's Web Crypto API exports. A public key generated with RSA-OAEP looks like this (modulus shortened):
+**JWK** ([RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) is what the browser's Web Crypto API exports. A 2048-bit public key generated with RSA-OAEP has these fields; the modulus `n` changes on every run and is shown here by its length:
 
+{/* rkg-check: {"size":2048,"algo":"RSA-OAEP","format":"jwk","part":"public","mask":"<{n} characters>","nLength":342} */}
 ```json
 {
   "alg": "RSA-OAEP-256",
   "e": "AQAB",
   "ext": true,
-  "key_ops": ["encrypt"],
+  "key_ops": [
+    "encrypt"
+  ],
   "kty": "RSA",
-  "n": "6mqtvNrIisYdKt30jcmQN_za5t3OYQJ-8uhu_DkGEF5iZE4SrseP1CkxnD1yDEdgdD3E…"
+  "n": "<342 characters>"
 }
 ```
 
-With RSASSA-PKCS1-v1_5 the public JWK has `"alg": "RS256"` and `"key_ops": ["verify"]`. The output has no `kid` or `use`; add a `kid` before publishing the key in a JWKS endpoint, because JWT headers refer to keys by `kid`.
+The modulus of a 2048-bit key is 256 bytes, so `n` is always `342` base64url characters. With RSASSA-PKCS1-v1_5 the public JWK has `"alg": "RS256"` and `"key_ops": ["verify"]`. The output has no `kid` or `use`; add a `kid` before publishing the key in a JWKS endpoint, because JWT headers refer to keys by `kid`.
+
+## What Stays the Same in Every Key
+
+The random part of a key is its modulus, but the bytes around it are fixed by the key size. That is useful when a form asks you to paste a public key and you want to check that you copied all of it.
+
+{/* rkg-check: {"size":2048,"algo":"RSASSA-PKCS1-v1_5","format":"pem","part":"public","header":"-----BEGIN PUBLIC KEY-----","footer":"-----END PUBLIC KEY-----","oneLine":392,"lines":7,"lastLine":8,"start":"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA","end":"IDAQAB"} */}
+For a 2048-bit public key in PEM, the Base64 text between the two header lines is always `392` characters on `7` lines (the last line has `8`). It begins with `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA`, which encodes the key type and lengths, and ends with `IDAQAB`, which contains the exponent 65537:
+
+```
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA…
+…
+-----END PUBLIC KEY-----
+```
+
+{/* rkg-check: {"size":4096,"algo":"RSA-OAEP","format":"pem","part":"public","oneLine":736,"lines":12,"start":"MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA","end":"AwEAAQ=="} */}
+A 4096-bit public key is `736` characters on `12` lines, starts with `MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA` and ends with `AwEAAQ==`. The algorithm setting does not change these bytes. If a pasted key is shorter, or ends differently, part of it was lost while copying.
+
+{/* rkg-check: {"size":2048,"algo":"RSASSA-PKCS1-v1_5","format":"pem","part":"public","sshPrefix":"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ","sshLength":380,"fpLength":43,"keygenTail":"no comment (RSA)"} */}
+After converting a 2048-bit public key with `ssh-keygen -i -m PKCS8 -f public-key.pem`, the line always starts with `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ` and is `380` characters long, with no comment at the end. Saved as `public-key.pub`, `ssh-keygen -l` prints the key size, `SHA256:` followed by `43` characters, and `no comment (RSA)`:
+
+```
+$ ssh-keygen -l -f public-key.pub
+2048 SHA256:… no comment (RSA)
+```
 
 ## Use the Keys With OpenSSH and OpenSSL
 
@@ -80,7 +116,8 @@ The algorithm setting decides what the browser lets the key do and what the JWK 
 - Key sizes 2048 and 4096 only; the public exponent is always 65537 (`AQAB`).
 - The private key PEM is not encrypted with a passphrase. Store the file somewhere protected, or encrypt it with `openssl pkcs8 -topk8 -in private-key.pem -out encrypted.pem`.
 - No OpenSSH private key format and no certificate or CSR output; use `ssh-keygen` and `openssl req` for those.
-- Generation runs on the main thread; 4096-bit keys take noticeably longer than 2048-bit keys.
+- 4096-bit keys take noticeably longer to generate than 2048-bit keys. The page waits for `crypto.subtle.generateKey`, which returns a Promise; Chromium runs Web Crypto work on a separate thread named "WebCrypto" ([source](https://chromium.googlesource.com/chromium/src/+/main/components/webcrypto/webcrypto_impl.cc)), so the page does not freeze while it waits.
+- There is no Clear button. Press Ctrl or Command + L inside the tool to empty both outputs.
 
 ## Check a Generated Export Pair
 
