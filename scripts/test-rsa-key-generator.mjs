@@ -506,6 +506,7 @@ v2Check('status has a stable two-line reservation', /\.rkg-status\s*\{[^}]*min-h
 v2Check('desktop empty sentence is driven by actual output visibility', /\.rkg-results:has\(#rkg-pub-block\[style\*="none"\]\) > \.rkg-empty/.test(source));
 v2Check('stacked empty pane is hidden and the grid stacks at 860', /@media \(max-width: 860px\)[\s\S]*\.rkg-main\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(source) && /\.rkg-results:has\(#rkg-pub-block\[style\*="none"\]\)\s*\{\s*display:\s*none/.test(source));
 v2Check('phone main controls have 44px targets and tips have 24px targets', /@media \(max-width: 640px\)[\s\S]*min-height:\s*44px[\s\S]*min-width:\s*24px;\s*min-height:\s*24px/.test(source));
+v2Check('key outputs opt out of autofill and spellcheck', ['rkg-pub-out', 'rkg-priv-out'].every(id => new RegExp(`<textarea id="${id}"[^>]*\\bautocomplete="off"[^>]*\\bspellcheck="false"`).test(source)));
 v2Check('all five business buttons are retained', ['rkg-generate','rkg-pub-copy','rkg-pub-dl','rkg-priv-copy','rkg-priv-dl'].every(id => source.includes(`id="${id}"`)));
 v2Check('tips are HTML slots with unique stable IDs', v2TipKeys.every(k => source.includes(`id="rkg-tip-${k}"`) && source.includes(`>{U.tips.${k}}</Toggletip>`)) && (source.match(/<Toggletip\b/g) || []).length === 6);
 v2Check('new UI strings are absent from the complete client scripts', !/\b(?:U|STRINGS)\b|rkg-tip-/.test(v2Scripts) && !source.includes('data-strings='));

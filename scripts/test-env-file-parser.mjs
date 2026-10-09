@@ -456,6 +456,8 @@ console.log('Page lifecycle: '+(passes-lifecycleStart)+' passed, '+failures+' to
 // ---------- v2 page layout ----------
 const v2Start=passes;
 const markup=source.replace(/^---\n[\s\S]*?\n---\s*/,'').split('<script')[0],css=source.split('<style>')[1].split('</style>')[0];
+// The .env text holds secrets: no autofill state and no spelling service for the input.
+eq('env input opts out of autofill and spellcheck',/<textarea id="efp-input"[^>]*\bautocomplete="off"[^>]*\bspellcheck="false"/.test(markup.replace(/\n\s*/g,' ')),true);
 eq('analyze registry',/'env-file-parser':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('direct root',markup.trim().startsWith('<div class="efp-wrap">'),true);
 eq('zero-minimum flex root',/\.efp-wrap\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-width:\s*0;[^}]*min-height:\s*0/.test(css),true);
