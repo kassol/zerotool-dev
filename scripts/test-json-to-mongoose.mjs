@@ -308,13 +308,14 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(`${lang} page names the three keys Mongoose skips`, ['<code>{"__proto__"}</code>', '<code>constructor</code>', '<code>prototype</code>', `<code>{'["__proto__"]'}</code>`].every((k) => mdx.includes(k)), true);
   eq(`${lang} page no longer says the first value decides`, /first value wins|首个值|最初の値|첫 값/.test(mdx), false);
   // S2-10f: the limits quote the Mongoose 9.10.3 errors for document member names (checked below with MONGOOSE_TEST_DIR).
-  eq(`${lang} page quotes the Mongoose errors for document member names`, ['<code>markModified</code>', '<code>this.markModified is not a function</code>', '<code>_doc</code>', '<code>Maximum call stack size exceeded</code>', '<code>schema</code>', "<code>Cannot read properties of undefined (reading 'discriminatorKey')</code>", '<code>toJSON</code>', '<code>model</code>', '<code>set</code>'].filter((k) => !mdx.includes(k)).join(', '), '');
+  // Names with _ are MDX expressions ({"_doc"}): MDX reads _ and __ inside <code> as emphasis.
+  eq(`${lang} page quotes the Mongoose errors for document member names`, ['<code>markModified</code>', '<code>this.markModified is not a function</code>', '<code>{"_doc"}</code>', '<code>Maximum call stack size exceeded</code>', '<code>schema</code>', "<code>Cannot read properties of undefined (reading 'discriminatorKey')</code>", '<code>toJSON</code>', '<code>model</code>', '<code>set</code>'].filter((k) => !mdx.includes(k)).join(', '), '');
   {
     // The page names the breaking names that do not start with $, and how many do and how many members only replace a member.
     const plain = DOC_BREAKS.filter((k) => !k.startsWith('$'));
     const bullet = mdx.split('\n').find((l) => l.includes('this.markModified is not a function')) || '';
     const count = (n) => new RegExp('(^|[^0-9])' + n + '([^0-9]|$)').test(bullet);
-    eq(`${lang} page lists the breaking names without $ and the counts`, JSON.stringify([plain.filter((k) => !bullet.includes('<code>' + k + '</code>')), count(DOC_BREAKS.length - plain.length), count(DOC_MEMBERS.length)]), JSON.stringify([[], true, true]));
+    eq(`${lang} page lists the breaking names without $ and the counts`, JSON.stringify([plain.filter((k) => !bullet.includes('<code>' + k + '</code>') && !bullet.includes('<code>{"' + k + '"}</code>')), count(DOC_BREAKS.length - plain.length), count(DOC_MEMBERS.length)]), JSON.stringify([[], true, true]));
   }
   // {/* jtm-date: {"in", "iso"} */}: the value a Date path stores for `in`, as toISOString(), must be shown
   // in inline code before the next jtm-date note or heading. Mongoose casts a string with the Date
