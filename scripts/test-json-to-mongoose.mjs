@@ -42,6 +42,37 @@ const b = source.indexOf('/* ── engine:end ── */');
 if (a < 0 || b <= a) { console.error('FAIL: engine block not found'); process.exit(1); }
 const E = new Function(source.slice(a, b) + '\nreturn { buildRootSchema, renderOutput, toCamelCase, toPascalCase };')();
 
+// JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
+// json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
+// HarFileAnalyzerTool.astro. A syntax error shows line, column and cause in the page language
+// instead of the browser's English message; line and column count from the start of the text box
+// (the tool parses the trimmed text, so leading blank lines are added back).
+const JSON_ENGINE = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+const HAR_SOURCE = readFileSync(join(root, 'src/components/tools/HarFileAnalyzerTool.astro'), 'utf8');
+const HAR_S = new Function('return ' + HAR_SOURCE.slice(HAR_SOURCE.indexOf('const STRINGS = ') + 16, HAR_SOURCE.indexOf('\n};\n', HAR_SOURCE.indexOf('const STRINGS = ')) + 2))();
+function fnSrc(src, name) {
+  const lines = src.split('\n');
+  const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+  if (at < 0) return '';
+  const indent = lines[at].match(/^\s*/)[0];
+  let end = at + 1;
+  while (end < lines.length && lines[end] !== indent + '}') end++;
+  return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+}
+// [input, jsonSyntaxError code, line, column, character]
+const JSON_ERRORS = [
+  ['\n\n{"a":1,}', 'trailingComma', 3, 7],
+  ['{\u201ca\u201d: 1}', 'smartQuote', 1, 2, '\u201c'],
+  ['{"name": "Alice",', 'unexpectedEnd', 1, 18],
+  // S2-10f review S3: a leading byte order mark (U+FEFF) is invisible in the text box, so it is not counted as a column.
+  ['\uFEFF{"a":1,}', 'trailingComma', 1, 7],
+];
+// S2-10f review S4: valid JSON nested deeper than the call stack allows (Node 22 runs out well below 20,000 levels;
+// browsers differ). The page shows a four-language notice instead of leaving the previous schema on screen.
+const DEEP_JSON = '{"a":'.repeat(20000) + '1' + '}'.repeat(20000);
+const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
+const FAKE_JSON_DATASET = { errJson: HAR_S.en.errJson, errJsonAt: HAR_S.en.errJsonAt, jsonParse: JSON.stringify(HAR_S.en.jsonParse) };
+
 let passes = 0, failures = 0;
 function eq(name, got, want) {
   if (got === want) { passes++; console.log('PASS ' + name); }
@@ -60,7 +91,7 @@ function gen(json, model, mode, timestamps, required) {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { dataset: { copy: 'Copy', copied: 'Copied', ...FAKE_JSON_DATASET, msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
@@ -85,7 +116,7 @@ function session() {
     '#jtm-ts-tabs .jtm-tab': [true, false].map((ts) => element({ ts: String(ts) })),
     '#jtm-req-tabs .jtm-tab': [false, true].map((req) => element({ req: String(req) }))
   };
-  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
+  const wrap = { contains: (e) => e === elements['jtm-input'], dataset: { copy: 'Copy', copied: 'Copied', ...FAKE_JSON_DATASET, msgGenOne: 'Generated 1 schema.', msgGenMany: 'Generated {n} schemas.', msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.', msgSkipped: 'Skipped {n} root array values that are not objects ({types}).', msgReserved: '{keys}' }, querySelectorAll: (selector) => groups[selector] };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { get activeElement() { return activeInside ? elements['jtm-input'] : null; }, querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
@@ -106,7 +137,7 @@ function session() {
   s.type('{"name": "Alice",');
   const bad = s.state();
   eq('stale output: invalid JSON clears the output', bad.code, '');
-  eq('stale output: invalid JSON shows the error', bad.status.startsWith('Invalid JSON: '), true);
+  eq('stale output: invalid JSON shows line, column and cause', bad.status, jsonErrorMessage('en', 'unexpectedEnd', 1, 18));
   eq('stale output: invalid JSON disables Copy', bad.copyDisabled, true);
   s.type('{"age": 30}');
   eq('stale output: the next valid input renders again', /age: (\{ type: )?Number/.test(s.state().code), true);
@@ -118,7 +149,15 @@ function session() {
   s.type('   ');
   eq('stale output: empty input disables Copy', s.state().code === '' && s.state().copyDisabled, true);
   const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + '\nreturn STRINGS;')();
-  eq('stale output: the error prefix exists in 4 languages', ['en', 'zh', 'ja', 'ko'].every((l) => labels[l] && labels[l].msgInvalidJson && labels[l].msgInvalidJson.trim()), true);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
+    eq(`JSON errors: ${lang} ${key} is the text of HarFileAnalyzerTool.astro`, JSON.stringify(labels[lang][key]), JSON.stringify(HAR_S[lang][key]));
+  }
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  eq('JSON errors: the json-reason block sits outside the engine block', rs > b && re > rs, true);
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = rs > 0 ? fnSrc(source.slice(rs, re), name) : '';
+    eq(`JSON errors: ${name} is the same as in json-formatter-engine.js`, mine !== '' && mine === fnSrc(JSON_ENGINE, name), true);
+  }
 }
 {
   // Ctrl/Cmd+L: ToolLayout empties the fields without input events; the output must not stay.
@@ -207,6 +246,36 @@ for (const [raw, want] of MODEL_NAMES) {
 // Mongoose 9.10.3 Schema.reserved (lib/schema.js), without prototype (skipped as a special property).
 const MONGOOSE_RESERVED = ['emit', 'listeners', 'removeListener', 'collection', 'errors', 'get', 'init', 'isModified', 'isNew', 'populated', 'remove', 'save', 'toObject', 'validate'];
 
+// S2-10f (2026-10-09): Mongoose 9.10.3 warns only about Schema.reserved, but a document has many more
+// members (a model document, a single nested subdocument and a document array element). DOC_BREAKS: a
+// field with this name makes model(), new Model(), validateSync(), toObject() or JSON.stringify() fail or
+// change in at least one of seven layouts (the name as a string path, as a nested schema, beside a nested
+// schema, beside a document array, inside a nested schema, inside a document array, and with an input key
+// that is not in the schema); get and toObject are also reserved. DOC_MEMBERS: the other members outside
+// Schema.reserved, where the field value only replaces the member on the document. constructor, _id, __v
+// and id are left out (never a path, or a real path: Mongoose skips its id getter when the schema has an
+// id path, lib/helpers/schema/idGetter.js). With MONGOOSE_TEST_DIR both lists are rebuilt below.
+const DOC_BREAKS = ['$__', '$__buildDoc', '$__getValue', '$__hasOnlyPrimitiveValues', '$__init', '$__middleware', '$__parent', '$__path', '$__pathRelativeToParent', '$__saveInitialState', '$__schema', '$__schemaTypeOptions', '$__set', '$__setSchema', '$__toObjectShallow', '$__validateSync', '$basePath', '$emit', '$get', '$isDefault', '$isModified', '$isSingleNested', '$isValid', '$markValid', '$parent', '$session', '$set', '$setIndex', '$toObject', '__index', '__parentArray', '_doc', 'get', 'isDirectModified', 'markModified', 'modifiedPaths', 'schema', 'toBSON', 'toJSON', 'toObject', 'validateSync'];
+const DOC_MEMBERS = ['$__delta', '$__dirty', '$__fullPath', '$__fullPathWithIndexes', '$__getArrayPathsToValidate', '$__handleReject', '$__isSelected', '$__removeFromParent', '$__reset', '$__resetAtomics', '$__save', '$__setParent', '$__setValue', '$__shouldModify', '$__undoReset', '$__version', '$__where', '$addListener', '$assertPopulated', '$clearModifiedPaths', '$clone', '$collection', '$createModifiedPathsSnapshot', '$getAllSubdocs', '$getChanges', '$getPopulatedDocs', '$ignore', '$inc', '$init', '$isDeleted', '$isDocumentArrayElement', '$isEmpty', '$isMongooseDocumentPrototype', '$isMongooseModelPrototype', '$isNew', '$isSubdocument', '$listeners', '$locals', '$model', '$on', '$once', '$op', '$populated', '$removeAllListeners', '$removeListener', '$restoreModifiedPathsSnapshot', '$save', '$setMaxListeners', '$timestamps', '$validate', '$where', '_applyVersionIncrement', '_execDocumentPostHooks', '_execDocumentPreHooks', 'addListener', 'db', 'deleteOne', 'depopulate', 'directModifiedPaths', 'discriminators', 'equals', 'getChanges', 'increment', 'inspect', 'invalidate', 'isDirectSelected', 'isInit', 'isSelected', 'model', 'on', 'once', 'overwrite', 'ownerDocument', 'parent', 'parentArray', 'populate', 'removeAllListeners', 'replaceOne', 'set', 'setMaxListeners', 'toString', 'unmarkModified', 'updateOne'];
+{
+  const listOf = (name) => { const m = source.match(new RegExp('var ' + name + ' = (\\[[^\\]]*\\]);')); return m ? JSON.parse(m[1].replace(/'/g, '"')) : null; };
+  eq('S2-10f: the page lists the Mongoose names that break a document', JSON.stringify(listOf('DOC_BREAKS')), JSON.stringify(DOC_BREAKS));
+  eq('S2-10f: the page lists the Mongoose names that only replace a member', JSON.stringify(listOf('DOC_MEMBERS')), JSON.stringify(DOC_MEMBERS));
+  eq('S2-10f: list sizes', JSON.stringify([DOC_BREAKS.length, DOC_MEMBERS.length]), JSON.stringify([41, 83]));
+  eq('S2-10f: DOC_MEMBERS has no reserved, breaking, skipped or id name', JSON.stringify(DOC_MEMBERS.filter((k) => MONGOOSE_RESERVED.includes(k) || DOC_BREAKS.includes(k) || ['constructor', 'prototype', '_id', '__v', 'id'].includes(k))), '[]');
+  eq('S2-10f: DOC_BREAKS overlaps Schema.reserved only in get and toObject', JSON.stringify(DOC_BREAKS.filter((k) => MONGOOSE_RESERVED.includes(k))), JSON.stringify(['get', 'toObject']));
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + '\nreturn STRINGS;')();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['msgBreaks', 'msgMembers']) {
+    eq(`S2-10f: ${lang} ${key} names the keys`, typeof labels[lang][key] === 'string' && labels[lang][key].split('{keys}').length === 2, true);
+  }
+  eq('S2-10f: the breaking-name notice names the Mongoose version', ['en', 'zh', 'ja', 'ko'].every((lang) => String(labels[lang].msgBreaks ?? '').includes('Mongoose 9.10.3')), true);
+  // S2-10f review S1: 11 of the 41 DOC_BREAKS names are properties on Mongoose 9.10.3 documents (_doc, $__, schema,
+  // __index, __parentArray and others; checked below with MONGOOSE_TEST_DIR), so the notice says document members
+  // (methods and properties), not document methods.
+  const MEMBER_WORDS = { en: 'document members (methods and properties)', zh: '文档成员（方法或属性）', ja: 'ドキュメントメンバー（メソッドやプロパティ）', ko: '문서 멤버(메서드·속성)' };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) eq(`S2-10f review S1: ${lang} msgBreaks says document members, methods and properties`, String(labels[lang].msgBreaks).includes(MEMBER_WORDS[lang]), true);
+}
+
 // B1: a "__proto__" key is written as a computed key, so the object literal gets an own property
 // (a bare `__proto__:` sets the prototype); the TypeScript interface quotes it.
 {
@@ -248,6 +317,16 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(`${lang} page quotes the skipped-values status as the page shows it`, mdx.includes(pageLabels[lang].msgSkipped.replace('{n}', '5').replace('{types}', 'number × 2, string, null, array')), true);
   eq(`${lang} page names the three keys Mongoose skips`, ['<code>{"__proto__"}</code>', '<code>constructor</code>', '<code>prototype</code>', `<code>{'["__proto__"]'}</code>`].every((k) => mdx.includes(k)), true);
   eq(`${lang} page no longer says the first value decides`, /first value wins|首个值|最初の値|첫 값/.test(mdx), false);
+  // S2-10f: the limits quote the Mongoose 9.10.3 errors for document member names (checked below with MONGOOSE_TEST_DIR).
+  // Names with _ are MDX expressions ({"_doc"}): MDX reads _ and __ inside <code> as emphasis.
+  eq(`${lang} page quotes the Mongoose errors for document member names`, ['<code>markModified</code>', '<code>this.markModified is not a function</code>', '<code>{"_doc"}</code>', '<code>Maximum call stack size exceeded</code>', '<code>schema</code>', "<code>Cannot read properties of undefined (reading 'discriminatorKey')</code>", '<code>toJSON</code>', '<code>model</code>', '<code>set</code>'].filter((k) => !mdx.includes(k)).join(', '), '');
+  {
+    // The page names the breaking names that do not start with $, and how many do and how many members only replace a member.
+    const plain = DOC_BREAKS.filter((k) => !k.startsWith('$'));
+    const bullet = mdx.split('\n').find((l) => l.includes('this.markModified is not a function')) || '';
+    const count = (n) => new RegExp('(^|[^0-9])' + n + '([^0-9]|$)').test(bullet);
+    eq(`${lang} page lists the breaking names without $ and the counts`, JSON.stringify([plain.filter((k) => !bullet.includes('<code>' + k + '</code>') && !bullet.includes('<code>{"' + k + '"}</code>')), count(DOC_BREAKS.length - plain.length), count(DOC_MEMBERS.length)]), JSON.stringify([[], true, true]));
+  }
   // {/* jtm-date: {"in", "iso"} */}: the value a Date path stores for `in`, as toISOString(), must be shown
   // in inline code before the next jtm-date note or heading. Mongoose casts a string with the Date
   // constructor, except numeric strings outside the Date year range, which it reads as milliseconds
@@ -332,6 +411,59 @@ if (process.env.MONGOOSE_TEST_DIR) {
     }
     const pops = new M({ pops: ['0', '10'] });
     eq('Mongoose casts ["0","10"] on a [Number] path to [0,10]', JSON.stringify([pops.validateSync()?.message ?? true, [...pops.pops]]), JSON.stringify([true, [0, 10]]));
+  }
+  {
+    // S2-10f: rebuild DOC_BREAKS and DOC_MEMBERS from the members of real Mongoose 9.10.3 documents.
+    const warningListeners = process.listeners('warning');
+    process.removeAllListeners('warning'); process.on('warning', () => {});
+    try {
+      const chain = (o) => { const names = new Set(); for (let p = o; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) for (const n of Object.getOwnPropertyNames(p)) names.add(n); return [...names]; };
+      const m0 = new mongoose.Mongoose();
+      const M0 = m0.model('Probe0', new m0.Schema({ label: String, sub: new m0.Schema({ a: Number }), list: [new m0.Schema({ a: Number })] }));
+      const inst = new M0({ label: 'x', sub: { a: 1 }, list: [{ a: 1 }] }); inst.validateSync(); inst.toObject(); JSON.stringify(inst);
+      const members = [...new Set([inst, inst.sub, inst.list[0]].flatMap((o) => [...chain(Object.getPrototypeOf(o)), ...Object.getOwnPropertyNames(o)]))].filter((n) => !['label', 'sub', 'list', 'a'].includes(n)).sort();
+      const layouts = {
+        string: (mg, n) => [{ [n]: { type: String }, label: String }, { [n]: 'v', label: 'x' }],
+        object: (mg, n) => [{ [n]: new mg.Schema({ a: Number }), label: String }, { [n]: { a: 1 }, label: 'x' }],
+        siblingSub: (mg, n) => [{ [n]: { type: String }, sub: new mg.Schema({ a: Number }) }, { [n]: 'v', sub: { a: 1 } }],
+        siblingArr: (mg, n) => [{ [n]: { type: String }, list: [new mg.Schema({ a: Number })] }, { [n]: 'v', list: [{ a: 1 }] }],
+        inSub: (mg, n) => [{ sub: new mg.Schema({ [n]: { type: String }, b: Number }) }, { sub: { [n]: 'v', b: 1 } }],
+        inArr: (mg, n) => [{ list: [new mg.Schema({ [n]: { type: String }, b: Number })] }, { list: [{ [n]: 'v', b: 1 }] }],
+        extraKey: (mg, n) => [{ [n]: { type: String }, label: String }, { [n]: 'v', label: 'x', extra: 1 }],
+      };
+      const keysDeep = (v) => JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, typeof x[key] === 'object' ? x[key] : 0])) : x);
+      const fine = (name, layout) => {
+        const mg = new mongoose.Mongoose();
+        try {
+          const [def, sample] = layouts[layout](mg, name);
+          const doc = new (mg.model('P', new mg.Schema(def)))(sample);
+          if (doc.validateSync()) return false;
+          return keysDeep(JSON.parse(JSON.stringify(doc))) === keysDeep(JSON.parse(JSON.stringify(doc.toObject())));
+        } catch { return false; }
+      };
+      const left = members.filter((n) => !['constructor', '_id', '__v', 'id'].includes(n));
+      const breaks = left.filter((n) => Object.keys(layouts).some((layout) => !fine(n, layout)));
+      const reserved = Object.keys(mongoose.Schema.reserved);
+      eq('Mongoose 9.10.3 members rebuild DOC_BREAKS', JSON.stringify(breaks), JSON.stringify(DOC_BREAKS));
+      eq('Mongoose 9.10.3 members rebuild DOC_MEMBERS', JSON.stringify(left.filter((n) => !breaks.includes(n) && !reserved.includes(n))), JSON.stringify(DOC_MEMBERS));
+      // S2-10f review S1: the first group holds methods and properties, so the notice says document members.
+      const kindOf = (n) => [...new Set([inst, inst.sub, inst.list[0]].filter((o) => n in o).map((o) => { try { return typeof o[n] === 'function' ? 'method' : 'property'; } catch { return 'property'; } }))].join('/');
+      eq('S2-10f review S1: DOC_BREAKS names that are properties on Mongoose 9.10.3 documents', JSON.stringify(DOC_BREAKS.filter((n) => kindOf(n) === 'property')), JSON.stringify(['$__', '$__middleware', '$__parent', '$__schema', '$__schemaTypeOptions', '$basePath', '$isSingleNested', '__index', '__parentArray', '_doc', 'schema']));
+      eq('S2-10f review S1: the other 30 DOC_BREAKS names are methods', DOC_BREAKS.filter((n) => kindOf(n) === 'method').length, 30);
+      // The limits quote these results; each runs generated code with the real library.
+      const run = (json, sample) => { const iso = new mongoose.Mongoose(); const mod = { exports: {} }; new Function('require', 'module', gen(json, 'Sample', 'javascript', false, false))(() => iso, mod); return new mod.exports(sample); };
+      const error = (fn) => { try { fn(); return ''; } catch (e) { return e.message; } };
+      eq('page claim: a markModified field breaks new Model()', error(() => run('{"markModified":"x","label":"y"}', { markModified: 'x', label: 'y' })), 'this.markModified is not a function');
+      eq('page claim: a _doc field overflows the stack', error(() => run('{"_doc":"x","label":"y"}', { _doc: 'x', label: 'y' })), 'Maximum call stack size exceeded');
+      eq('page claim: a schema field works while the input has only schema keys', error(() => { if (run('{"schema":"x","label":"y"}', { schema: 'x', label: 'y' }).validateSync()) throw Error('invalid'); }), '');
+      eq('page claim: a schema field breaks on a key outside the schema', error(() => run('{"schema":"x","label":"y"}', { schema: 'x', label: 'y', extra: 1 })), "Cannot read properties of undefined (reading 'discriminatorKey')");
+      { const s = JSON.stringify(run('{"toJSON":"x","label":"y"}', { toJSON: 'x', label: 'y' })); eq('page claim: a toJSON field makes JSON.stringify print internals', JSON.stringify([s.includes('"$__"'), s.includes('"_doc"')]), JSON.stringify([true, true])); }
+      { const d = run('{"model":"m","set":"s","label":"y"}', { model: 'm', set: 's', label: 'y' }); eq('page claim: doc.model and doc.set are the field values', JSON.stringify([d.model, d.set, d.validateSync() ? 'invalid' : 'valid']), JSON.stringify(['m', 's', 'valid'])); }
+      await new Promise(setImmediate);
+    } finally {
+      process.removeAllListeners('warning');
+      for (const listener of warningListeners) process.on('warning', listener);
+    }
   }
   for (const [name, json] of RUNTIME) {
     try {
@@ -480,6 +612,7 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     const markup=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0]
       .replace(/<Toggletip id="([^"]+)"[^>]*>[\s\S]*?<\/Toggletip>/g,(_,id)=>'<span class="zt-tip"><button type="button" class="zt-tip-btn" data-zt-tip="'+id+'">?</button></span>')
       .replace(/<!--[\s\S]*?-->/g,'').replace(/placeholder=\{`[\s\S]*?`\}/g,'').replace(/placeholder='[^']*'/g,'')
+      .replace(/=\{JSON\.stringify\(L\.(\w+)\)\}/g,(_,key)=>'="'+esc(JSON.stringify(labels[lang][key]))+'"')
       .replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+esc(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>esc(labels[lang][key])).replace(/=\{lang\}/g,'="'+lang+'"');
     const stack=[widget];
     for(const token of markup.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)) { const text=token[0]; if(text.startsWith('</'))stack.pop();else if(text.startsWith('<')){const tag=/^<([\w-]+)/.exec(text)[1],e=new Element(tag);for(const a of text.matchAll(/([\w-]+)="([^"]*)"/g))e.setAttribute(a[1],decode(a[2]));for(const a of ['hidden','disabled','readonly','checked'])if(new RegExp('\\s'+a+'(?=\\s|/?>)').test(text))e.setAttribute(a,'');stack.at(-1).appendChild(e);if(!/\/>$/.test(text)&&!['input','br','hr','img'].includes(tag))stack.push(e);}else{const e=new Element('#text');e.text=decode(text);stack.at(-1).appendChild(e);} }
@@ -536,6 +669,32 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     // Reserved path names (Mongoose 9.10.3 lib/schema.js Schema.reserved): the status line names them.
     {const w=page(lang,shellFirst);w.input('{"save":"s","errors":["e"],"b":{"isNew":true}}');w.advance(300);
       same(tag+' reserved: status names the reserved path names',w.get(cfg.status).textContent.includes(String(labels[lang].msgReserved).replace('{keys}','errors, isNew, save')),true);}
+    // S2-10f: other Mongoose 9.10.3 document members, in nested schemas too; a name that breaks a document turns the status amber.
+    {const w=page(lang,shellFirst);w.input('{"markModified":1,"model":"m","b":{"set":true,"_doc":"d"},"label":"x"}');w.advance(300);
+      const st=w.get(cfg.status).textContent;
+      same(tag+' members: status names the keys that break a document',st.includes(String(labels[lang].msgBreaks).replace('{keys}','_doc, markModified')),true);
+      same(tag+' members: status names the keys that only replace a member',st.includes(String(labels[lang].msgMembers).replace('{keys}','model, set')),true);
+      same(tag+' members: a breaking key turns the status amber',w.get(cfg.status).className,'jtm-status warn');
+      w.input('{"get":"g"}');w.advance(300);
+      // S2-10f review S2: get and toObject are reserved and also break a document; the status names them once, in the
+      // breaking group (before, both notices named them with different consequences).
+      same(tag+' members: a reserved name that breaks a document is named once, in the breaking notice',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne+' '+String(labels[lang].msgBreaks).replace('{keys}','get'),'jtm-status warn']);
+      w.input('{"get":1,"save":2,"toObject":3}');w.advance(300);
+      same(tag+' members: other reserved names stay in the reserved notice',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne+' '+String(labels[lang].msgReserved).replace('{keys}','save')+' '+String(labels[lang].msgBreaks).replace('{keys}','get, toObject'),'jtm-status warn']);
+      w.input('{"model":"m"}');w.advance(300);
+      same(tag+' members: a member name alone keeps the success colour',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne+' '+String(labels[lang].msgMembers).replace('{keys}','model'),'jtm-status success']);
+      w.input('{"b":1}');w.advance(300);same(tag+' members: no notice without such keys',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne,'jtm-status success']);}
+    // S2-10f: a JSON syntax error names line, column and cause in the page language, clears the output
+    // and disables Copy; before, the status was the prefix plus the browser's English message.
+    {const w=page(lang,shellFirst);w.example();
+      for(const [input,code,line,col,ch] of JSON_ERRORS){w.input(input);w.advance(300);
+        same(tag+' JSON error '+code+' in the page language',[w.get(cfg.status).textContent,w.get(cfg.status).classList.contains('error'),w.out(),w.get('jtm-copy').disabled],[jsonErrorMessage(lang,code,line,col,ch),true,'',true]);}}
+    // S2-10f review S4: too deep for the call stack. Before, the exception escaped the timer and the old schema and status stayed.
+    {const w=page(lang,shellFirst);w.example();w.input(DEEP_JSON);let thrown;try{w.advance(300);}catch(e){thrown=e.name;}
+      same(tag+' too deep: no uncaught error',thrown,undefined);
+      same(tag+' too deep: notice in the page language, old schema cleared, Copy off',[w.get(cfg.status).textContent,w.get(cfg.status).classList.contains('error'),w.out(),w.get('jtm-copy').disabled,w.get(cfg.input).classList.contains('error')],[labels[lang].msgTooDeep,true,'',true,false]);
+      w.get(cfg.input).dispatch('change');same(tag+' too deep: no usage event',w.tracks.length,1);
+      w.input('{"b":1}');w.advance(300);same(tag+' too deep: the next input generates again',[w.get(cfg.status).textContent,w.get('jtm-copy').disabled],[labels[lang].msgGenOne,false]);}
     // B2: values beside the objects of a root array are reported, with their count and JSON types.
     {const w=page(lang,shellFirst);w.input('[{"a":1},2,"x",null,[1],3]');w.advance(300);
       same(tag+' B2: status reports the skipped root array values',w.get(cfg.status).textContent.includes(String(labels[lang].msgSkipped).replace('{n}','5').replace('{types}','number × 2, string, null, array')),true);}
@@ -547,7 +706,15 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
       g.input(cfg.invalid);g.advance(300);g.get(cfg.input).dispatch('change');same(tag+' GA: invalid JSON sends no event',g.tracks.length,2);
       g.input('');g.get(cfg.input).dispatch('change');same(tag+' GA: empty input sends no event',g.tracks.length,2);
       g.example();same(tag+' GA: Example sends one event',g.tracks.length,3);
-      g.input('Order','jtm-model-name');g.get('jtm-model-name').dispatch('change');same(tag+' GA: model name change sends one event',[g.out().includes("'Order'"),g.tracks.length],[true,4]);}
+      g.input('Order','jtm-model-name');g.get('jtm-model-name').dispatch('change');same(tag+' GA: model name change sends one event',[g.out().includes("'Order'"),g.tracks.length],[true,4]);
+      // S2-10f: an event that repeats the previous JSON, model name and options is skipped; Clear and Ctrl/⌘+L start over.
+      g.example();same(tag+' GA: Example again with nothing changed sends nothing',g.tracks.length,4);
+      g.get(cfg.input).dispatch('change');same(tag+' GA: a change with the sent JSON, model name and options sends nothing',g.tracks.length,4);
+      g.get('jtm-ts-tabs').querySelectorAll('.jtm-tab').find(t=>!t.classList.contains('active')).click();same(tag+' GA: a new option still sends one',g.tracks.length,5);
+      // S2-10f review M1: only a repeat of the previous event is skipped, so switching back to the earlier option sends again.
+      g.get('jtm-ts-tabs').querySelectorAll('.jtm-tab').find(t=>!t.classList.contains('active')).click();same(tag+' GA: switching back to the earlier option sends again',g.tracks.length,6);
+      g.get(cfg.clear).click();g.example();same(tag+' GA: after Clear the same Example sends again',g.tracks.length,7);
+      g.key('l','ctrlKey',cfg.input);g.get('jtm-model-name').value='Order';g.example();same(tag+' GA: after Ctrl+L the same Example sends again',g.tracks.length,8);}
     for(const focus of [p.get('jtm-output'),p.document.querySelector('[data-zt-tip="jtm-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output CtrlL returns to input',[p.document.activeElement.id,p.out(),p.get(cfg.input).value],[cfg.input,'','']);}
     p.get('jtm-lang-tabs').querySelector('[data-lang="javascript"]').click();p.example();p.input('Renamed','jtm-model-name');p.advance(300);same(tag+' model name re-generates',p.out().includes("mongoose.model('Renamed'"),true);p.get(cfg.clear).click();same(tag+' explicit Clear retains model option',p.get('jtm-model-name').value,'Renamed');
   }

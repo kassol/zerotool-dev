@@ -36,6 +36,35 @@ if (s < 0 || e <= s) {
 }
 const E = new Function(source.slice(s, e) + '\nreturn { toRows, buildCsv, withBom, FORMULA_START };')();
 
+// JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
+// json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
+// HarFileAnalyzerTool.astro. A syntax error shows line, column and cause in the page language
+// instead of the browser's English message; line and column count from the start of the text box.
+const JSON_ENGINE = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+const HAR_SOURCE = readFileSync(join(root, 'src/components/tools/HarFileAnalyzerTool.astro'), 'utf8');
+const HAR_S = new Function('return ' + HAR_SOURCE.slice(HAR_SOURCE.indexOf('const STRINGS = ') + 16, HAR_SOURCE.indexOf('\n};\n', HAR_SOURCE.indexOf('const STRINGS = ')) + 2))();
+function fnSrc(src, name) {
+  const lines = src.split('\n');
+  const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+  if (at < 0) return '';
+  const indent = lines[at].match(/^\s*/)[0];
+  let end = at + 1;
+  while (end < lines.length && lines[end] !== indent + '}') end++;
+  return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+}
+// [input, jsonSyntaxError code, line, column, character]
+const JSON_ERRORS = [
+  ['\n\n[{"a":1,}]', 'trailingComma', 3, 8],
+  ['[{\u201cid\u201d: 1}]', 'smartQuote', 1, 3, '\u201c'],
+  ['[{"id": 1} // first row\n]', 'comment', 1, 12],
+  // S2-10f review S3: a leading byte order mark (U+FEFF) is invisible in the text box, so it is not counted as a column.
+  ['\uFEFF[{"a":1,}]', 'trailingComma', 1, 8],
+];
+// S2-10f review S4: valid JSON nested deeper than the call stack allows (Node 22 runs out well below 20,000 levels;
+// browsers differ). The page shows a four-language notice instead of leaving the previous CSV on screen.
+const DEEP_JSON = '[' + '{"a":'.repeat(20000) + '1' + '}'.repeat(20000) + ']';
+const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
+
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail) {
@@ -123,6 +152,18 @@ const keysOf = (lang) => {
 const enKeys = keysOf('en');
 for (const k of ['formula', 'guardOff', 'guardQuote', 'guardTab', 'bom', 'msgFormulaRisk', 'msgFormulaGuarded']) check('en label ' + k, enKeys.includes(k));
 for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang), enKeys);
+{
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + ';return STRINGS;')();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
+    eq(`JSON errors: ${lang} ${key} is the text of HarFileAnalyzerTool.astro`, labels[lang][key], HAR_S[lang][key]);
+  }
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  eq('JSON errors: the json-reason block sits outside the engine block', rs > e && re > rs, true);
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = rs > 0 ? fnSrc(source.slice(rs, re), name) : '';
+    eq(`JSON errors: ${name} is the same as in json-formatter-engine.js`, mine !== '' && mine === fnSrc(JSON_ENGINE, name), true);
+  }
+}
 
 // ---------- real page lifecycle ----------
 // Execute the complete production script and actual shared keyboard listener.
@@ -193,6 +234,7 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
       .replace(/<Toggletip id="([^"]+)"[^>]*>[\s\S]*?<\/Toggletip>/g,(_,id)=>'<span class="zt-tip"><button type="button" class="zt-tip-btn" data-zt-tip="'+id+'">?</button></span>')
       .replace("data-del={'\\t'}", 'data-del="\t"')
       .replace(/<!--[\s\S]*?-->/g,'').replace(/placeholder=\{`[\s\S]*?`\}/g,'').replace(/placeholder='[^']*'/g,'')
+      .replace(/=\{JSON\.stringify\(L\.(\w+)\)\}/g,(_,key)=>'="'+esc(JSON.stringify(labels[lang][key]))+'"')
       .replace(/=\{L\.(\w+)\}/g,(_,key)=>'="'+esc(labels[lang][key])+'"').replace(/\{L\.(\w+)\}/g,(_,key)=>esc(labels[lang][key])).replace(/=\{lang\}/g,'="'+lang+'"');
     const stack=[widget];
     for(const token of markup.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)) { const text=token[0]; if(text.startsWith('</'))stack.pop();else if(text.startsWith('<')){const tag=/^<([\w-]+)/.exec(text)[1],e=new Element(tag);for(const a of text.matchAll(/([\w-]+)="([^"]*)"/g))e.setAttribute(a[1],decode(a[2]));for(const a of ['hidden','disabled','readonly','checked'])if(new RegExp('\\s'+a+'(?=\\s|/?>)').test(text))e.setAttribute(a,'');stack.at(-1).appendChild(e);if(!/\/>$/.test(text)&&!['input','br','hr','img'].includes(tag))stack.push(e);}else{const e=new Element('#text');e.text=decode(text);stack.at(-1).appendChild(e);} }
@@ -245,6 +287,19 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
     for(const focus of [layout.get(cfg.output),layout.document.querySelector('[data-zt-tip="jtc-tip-copy"]')]){layout.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output shortcut focuses input before hiding',[layout.document.activeElement.id,layout.out(),layout.get(cfg.output).dataset.empty],[cfg.input,'','true']);}
     layout.example();for(const id of ['jtc-del-tabs','jtc-flatten-tabs','jtc-header-tabs','jtc-guard-tabs','jtc-bom-tabs']){const tabs=layout.get(id).querySelectorAll('.jtc-tab');for(const selected of tabs){const before=layout.tracks.length,wasActive=selected.classList.contains('active');selected.click();same(tag+' option sends one event only when the selection changes '+id,layout.tracks.length,before+(wasActive?0:1));same(tag+' aria pressed matches active '+id,tabs.map(t=>[t.classList.contains('active'),t.getAttribute('aria-pressed')]),tabs.map(t=>[t===selected,t===selected?'true':'false']));}}
     layout.input(cfg.sample);const beforeEnter=layout.tracks.length;layout.key('Enter');same(tag+' no Generate means CtrlEnter has no primary action',layout.tracks.length,beforeEnter);layout.advance(300);same(tag+' CtrlEnter retains normal debounce (header is off after the option loop)',[layout.out(),layout.tracks.length],['true',beforeEnter]);
+    // S2-10f: a JSON syntax error names line, column and cause in the page language and clears the
+    // output; before, the status was the prefix plus the browser's English message.
+    {const w=page(lang,shellFirst);w.example();
+      for(const [input,code,line,col,ch] of JSON_ERRORS){w.input(input);w.advance(300);
+        same(tag+' JSON error '+code+' in the page language',[w.get(cfg.status).textContent,w.get(cfg.status).classList.contains('error'),w.out(),w.get(cfg.output).dataset.empty],[jsonErrorMessage(lang,code,line,col,ch),true,'','true']);}}
+    // S2-10f review S4: too deep for the call stack (flatten on and off). Before, the exception escaped the timer and the
+    // old CSV and status stayed; Copy and Download then saved that old CSV.
+    for(const flat of ['true','false']){const w=page(lang,shellFirst);w.example();w.get('jtc-flatten-tabs').querySelector('[data-flatten="'+flat+'"]').click();const before=w.tracks.length;
+      w.input(DEEP_JSON);let thrown;try{w.advance(300);}catch(e){thrown=e.name;}
+      same(tag+' too deep (flatten '+flat+'): no uncaught error',thrown,undefined);
+      same(tag+' too deep (flatten '+flat+'): notice in the page language, old CSV cleared',[w.get(cfg.status).textContent,w.get(cfg.status).classList.contains('error'),w.out(),w.get(cfg.output).dataset.empty],[labels[lang].msgTooDeep,true,'','true']);
+      w.get(cfg.copy).click();w.get('jtc-download').click();w.get(cfg.input).dispatch('change');
+      same(tag+' too deep (flatten '+flat+'): Copy and Download save nothing, no usage event',[w.copies.length,w.blobs.length,w.tracks.length],[0,0,before]);}
     // Analytics: one event per committed change (input change event, option click, Example), not on load or per typing pause.
     const ga=page(lang,shellFirst);same(tag+' GA: page load sends nothing',ga.tracks.length,0);
     ga.input('[{"a":1}]');ga.advance(300);same(tag+' GA: typing pause sends nothing',ga.tracks.length,0);

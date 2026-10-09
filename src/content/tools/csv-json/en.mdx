@@ -13,7 +13,7 @@ faqItems:
     answer: "Comma-separated values with RFC 4180 quoting: a field wrapped in double quotes may contain commas, line breaks and doubled quotes (\"\"). Rows may end with LF, CRLF or CR. Only the comma separates fields; tabs and semicolons stay inside the field."
   - id: "header"
     question: "How are headers handled?"
-    answer: "The first row is always the header, and each later row becomes one JSON object with those names as keys. No value is dropped: a repeated name gets _2, _3 and so on (sku, sku_2), fields beyond the last header get keys named column_N by position, and the status line lists both. A row with fewer fields gets empty values."
+    answer: "The first row is always the header, and each later row becomes one JSON object with those names as keys. No value is dropped: a repeated name gets _2, _3 and so on (sku, sku_2), fields beyond the last header get keys named column_N by position, and the status line lists both. A row with fewer fields gets empty values. Spaces around a header name stay part of the key, because RFC 4180 counts them as part of the field: name, age gives the key \" age\". The status line lists such names."
   - id: "json-to-csv"
     question: "Can I convert JSON back to CSV?"
     answer: "Yes. Paste an array of objects into the JSON pane. The columns are every key found in any object, in first-seen order; nested objects become dot-path columns such as user.name, arrays and empty objects are written as JSON text, and null becomes an empty field. The nesting is not rebuilt when you convert that CSV back."
@@ -129,7 +129,7 @@ id,name,email
 ]
 ```
 
-**Type inference.** With **Parse numbers & booleans** ticked (the default), unquoted `true`, `false`, and `null` (any case) become JSON literals. A value becomes a JSON number only when it is written in the JSON number syntax of [RFC 8259 §6](https://www.rfc-editor.org/rfc/rfc8259#section-6) (an optional minus, no leading zeros, no `+`, digits on both sides of a decimal point) and a JavaScript number keeps it exactly. Everything else stays a string so that nothing is lost: quoted fields (`"42"`), `007`, `+44`, `.5`, integers above 2^53 − 1 such as long order IDs, and values a double cannot hold (`-0`, `1e-400`, decimals with more than about 17 significant digits):
+**Type inference.** With **Parse numbers & booleans** ticked (the default), unquoted `true`, `false`, and `null` (any case) become JSON literals. A value becomes a JSON number only when it is written in the JSON number syntax of [RFC 8259 §6](https://www.rfc-editor.org/rfc/rfc8259#section-6) (an optional minus, no leading zeros, no `+`, digits on both sides of a decimal point) and a JavaScript number keeps it exactly. Everything else stays a string so that nothing is lost: quoted fields (`"42"`), `007`, `+44`, `.5`, integers above 2^53 − 1 such as long order IDs, in any form (`1e21` stays the string `"1e21"`, and an ID that a spreadsheet already wrote as `1.83E+18` stays visible as text instead of becoming `1830000000000000000`), and values a double cannot hold (`-0`, `1e-400`, decimals with more than about 17 significant digits):
 
 {/* cj-check: {"to":"json"} */}
 
@@ -210,6 +210,44 @@ Widget,9.99
 
   The status line reads `Error: A quoted field that starts on line 2 is never closed. Add the closing " or remove the opening one.`
 - **No other number formats.** Thousands separators, `+` signs, spaces around a number and full-width digits keep the value a string; remove them in the source if you need numbers.
-- **Large JSON numbers keep their digits.** A JSON number that a JavaScript number cannot hold exactly, such as `12345678901234567890`, `1e-400` or `-0`, is written to the CSV as it appears in the JSON. This needs `JSON.rawJSON`, which Chrome 114, Firefox 135 and Safari 18.4 and later have. An older browser writes such a number as text (inside an array cell it gets quotes, `"12345678901234567890"`), and the status line lists those numbers. No number is written rounded.
+- **Large JSON numbers keep their digits.** A JSON number that a JavaScript number cannot hold exactly, such as `12345678901234567890`, `1e-400` or `-0`, is written to the CSV as it appears in the JSON. This needs `JSON.rawJSON`, which Chrome 114, Firefox 135 and Safari 18.4 and later have. An older browser writes such a number as text (inside an array cell it gets quotes, `"12345678901234567890"`), and the status line lists those numbers. No number is written rounded. A number that a JavaScript number holds exactly is written as JavaScript writes it ([ECMA-262 Number::toString](https://tc39.es/ecma262/#sec-numeric-types-number-tostring)), so `1.50` becomes `1.5` and `1e21` becomes `1e+21`. Converting that CSV back to JSON gives `1.5` and the string `"1e+21"`, because whole numbers above 2^53 − 1 stay text:
+
+{/* cj-check: {"to":"csv"} */}
+
+```json
+[{ "price": 1.50, "views": 1e21 }]
+```
+
+```csv
+price,views
+1.5,1e+21
+```
+- **Spaces in the header stay in the keys.** [RFC 4180 §2](https://www.rfc-editor.org/rfc/rfc4180#section-2) counts spaces as part of a field, so `name, age` gives the keys `"name"` and `" age"`, and the value `" 30"` stays a string. The status line lists the header names that begin or end with whitespace (a full-width space counts too); remove the spaces in the source if you do not want them:
+
+{/* cj-check: {"to":"json","status":true} */}
+
+```csv
+name, age
+Alice, 30
+```
+
+```json
+[
+  {
+    "name": "Alice",
+    " age": " 30"
+  }
+]
+```
+
+  The status line reads `Converted 1 row to JSON. These header names begin or end with whitespace, which stays part of the key: " age".`
 - **Key order.** JavaScript lists keys that look like whole numbers (`2024`) before the other keys, in both directions. The values are not affected.
-- **JSON syntax errors** are shown with the browser's own message, which is in English.
+- **JSON syntax errors** stop the conversion and leave the CSV pane empty. The status line names the line, the column and the cause in the page language; line and column count from the start of the JSON pane:
+
+{/* cj-check: {"to":"csv","error":true} */}
+
+```json
+[{"id": 1, "name": "Alice",}]
+```
+
+  The status line reads `This is not valid JSON: line 1, column 27, trailing comma before the closing bracket.`

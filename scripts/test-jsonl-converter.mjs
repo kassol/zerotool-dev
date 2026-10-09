@@ -14,7 +14,8 @@ async function test(name, run) {
   try { await run(); passed++; }
   catch (e) { failed++; console.log('FAIL ' + name + ': ' + e.message); }
 }
-function page(lang = 'en') {
+// prelude: code run in the page realm before the script (used to stand in for browser limits).
+function page(lang = 'en', prelude = '') {
   const elements = new Map(), copied = [], downloads = [], timers = new Map(), readers = [], docEvents = {};
   let timerId = 0, document;
   function element() {
@@ -27,7 +28,7 @@ function page(lang = 'en') {
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   get('jlc-ignore-empty').checked = get('jlc-pretty-json').checked = true;
   document = { documentElement: { lang }, activeElement: get('jlc-jsonl'), getElementById: get, querySelectorAll: () => [], querySelector: () => ({ contains: el => [...elements.values()].includes(el) }), createElement: element, body: element(), addEventListener(k, fn) { docEvents[k] = fn; } };
-  vm.runInNewContext(source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1], {
+  const realm = vm.createContext({
     document, t: clientStrings(lang),
     window: {}, navigator: { clipboard: { writeText: async text => copied.push(text) } }, Blob,
     URL: { createObjectURL: blob => blob, revokeObjectURL() {} },
@@ -35,6 +36,8 @@ function page(lang = 'en') {
       finish(text) { this.result = text; this.onload(); } fail() { this.onerror(); } },
     setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id)
   });
+  if (prelude) vm.runInContext(prelude, realm);
+  vm.runInContext(source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1], realm);
   return { get, copied, downloads, readers, docKey(ev) { docEvents.keydown?.({ preventDefault() {}, ...ev }); }, open(target) { get('jlc-open-' + target).click(); get('jlc-file').files = [{ name: 'sample.txt' }]; get('jlc-file').fire('change'); return readers.at(-1); },
     flush() { const tasks = [...timers.values()]; timers.clear(); tasks.forEach(fn => fn()); } };
 }
@@ -152,13 +155,124 @@ await test('Ctrl+L drops cached copy/download output', async () => {
   assert.equal(p.get('jlc-total-lines').textContent, '0'); assert.equal(p.get('jlc-status').textContent, '');
 });
 
+// S2-10f review S4: the parser and the serializer are iterative, so deep JSON does not run out of call stack (20,000
+// levels convert in Node 22). Pretty-printed indentation grows with the square of the depth, though: from about 16,000
+// levels the text is longer than V8 allows (2^29 − 24 characters), and the browser throws while joining it. Before, JSONL
+// → JSON left the previous status on screen with an uncaught error, and JSON → JSONL showed the new JSONL with Copy off
+// and "Invalid JSON: Invalid string length". The prelude stands in for that browser limit at a depth a test can afford.
+const STRING_LIMIT = "const realRepeat = String.prototype.repeat; String.prototype.repeat = function (n) { if (n > 500) throw new RangeError('Invalid string length'); return realRepeat.call(this, n); };";
+const DEEP_LINE = '{"a":'.repeat(600) + '1' + '}'.repeat(600);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  await test(lang + ' pretty JSON too long for the browser: JSONL → JSON names it and keeps outputs off', () => {
+    const p = page(lang, STRING_LIMIT); p.get('jlc-jsonl').value = '{"ok":1}'; p.get('jlc-to-json').click();
+    p.get('jlc-jsonl').value = DEEP_LINE; p.get('jlc-to-json').click();
+    assert.deepEqual([p.get('jlc-status').textContent, /error/.test(p.get('jlc-status').className), p.get('jlc-json').value], [STR[lang].prettyTooLong, true, '']);
+    for (const id of ['jlc-copy-json', 'jlc-copy-jsonl', 'jlc-download-json', 'jlc-download-jsonl']) assert.equal(p.get(id).disabled, true, id);
+    p.get('jlc-pretty-json').checked = false; p.get('jlc-to-json').click();
+    assert.equal(p.get('jlc-json').value, '[' + DEEP_LINE + ']');
+  });
+  await test(lang + ' pretty JSON too long for the browser: JSON → JSONL names it and writes no JSONL', () => {
+    const p = page(lang, STRING_LIMIT); p.get('jlc-json').value = '[1]'; p.get('jlc-to-jsonl').click();
+    p.get('jlc-json').value = '[' + DEEP_LINE + ']'; p.get('jlc-to-jsonl').click();
+    assert.deepEqual([p.get('jlc-status').textContent, /error/.test(p.get('jlc-status').className), p.get('jlc-jsonl').value], [STR[lang].prettyTooLong, true, '']);
+    for (const id of ['jlc-copy-json', 'jlc-copy-jsonl', 'jlc-download-json', 'jlc-download-jsonl']) assert.equal(p.get(id).disabled, true, id);
+    p.get('jlc-pretty-json').checked = false; p.get('jlc-to-jsonl').click();
+    assert.equal(p.get('jlc-jsonl').value, DEEP_LINE);
+  });
+}
+
+// S2-10f review S5: valid JSON that is not an array. Before, the status read "Invalid JSON: JSON input must be an array."
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  await test(lang + ' non-array JSON names the problem without "Invalid JSON"', () => {
+    for (const raw of ['{}', '{"a":[1]}', '1', '"x"', 'null']) {
+      const p = page(lang); p.get('jlc-json').value = raw; p.get('jlc-to-jsonl').click();
+      assert.deepEqual([p.get('jlc-status').textContent, /error/.test(p.get('jlc-status').className), p.get('jlc-jsonl').value], [STR[lang].jsonArrayRequired, true, ''], raw);
+    }
+  });
+}
+
+// JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
+// json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
+// HarFileAnalyzerTool.astro. Each bad JSONL line lists its column and cause in the page language
+// (the line number is in the row's first cell); a JSON → JSONL syntax error names line, column and
+// cause. Before, both showed the browser's English message. Columns count from the start of the line
+// as typed, lines from the start of the JSON panel.
+{
+  const root = new URL('..', import.meta.url);
+  const JSON_ENGINE = readFileSync(new URL('src/components/tools/json-formatter-engine.js', root), 'utf8');
+  const HAR_SOURCE = readFileSync(new URL('src/components/tools/HarFileAnalyzerTool.astro', root), 'utf8');
+  const HAR_S = new Function('return ' + HAR_SOURCE.slice(HAR_SOURCE.indexOf('const STRINGS = ') + 16, HAR_SOURCE.indexOf('\n};\n', HAR_SOURCE.indexOf('const STRINGS = ')) + 2))();
+  const fnSrc = (src, name) => {
+    const lines = src.split('\n');
+    const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+    if (at < 0) return '';
+    const indent = lines[at].match(/^\s*/)[0];
+    let end = at + 1;
+    while (end < lines.length && lines[end] !== indent + '}') end++;
+    return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+  };
+  const ISSUE_AT = { en: 'Column {col}, {reason}.', zh: '第 {col} 列，{reason}。', ja: '{col} 列目、{reason}。', ko: '{col}열, {reason}.' };
+  const reason = (lang, code, ch) => HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? '');
+  const issue = (lang, code, col, ch) => ISSUE_AT[lang].replace('{col}', col).replace('{reason}', reason(lang, code, ch));
+  const errAt = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', reason(lang, code, ch));
+  await test('JSON errors: reasons are the text of HarFileAnalyzerTool.astro and reach the script', () => {
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      // JSON text: STRINGS comes from another vm realm, whose objects have a different prototype.
+      for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
+        assert.equal(JSON.stringify(STR[lang][key]), JSON.stringify(HAR_S[lang][key]), lang + ' ' + key);
+        assert.equal(JSON.stringify(clientStrings(lang)[key]), JSON.stringify(HAR_S[lang][key]), lang + ' client ' + key);
+      }
+      assert.equal(STR[lang].issueAt, ISSUE_AT[lang], lang + ' issueAt');
+    }
+  });
+  await test('JSON errors: lineCol and jsonSyntaxError are copied verbatim, outside the protected parsers', () => {
+    const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+    assert.ok(rs > source.indexOf('      function enableOutput') && re > rs && re < source.indexOf('      function parseJsonl'), 'block position');
+    for (const name of ['lineCol', 'jsonSyntaxError']) {
+      const mine = fnSrc(source.slice(rs, re), name);
+      assert.ok(mine !== '' && mine === fnSrc(JSON_ENGINE, name), name);
+    }
+  });
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const S = STR[lang];
+    await test(lang + ' line issues name the column and cause in the page language', () => {
+      const p = page(lang);
+      p.get('jlc-jsonl').value = '{"ok":1}\n   {"a":1,}\n{\u201cid\u201d: 1}\r\n{"a":1} // note\n{"id":2,"event":"purchase",}';
+      p.get('jlc-jsonl').fire('input'); p.flush();
+      assert.deepEqual(p.get('jlc-issues-list').children.filter((r) => r.className === 'jlc-issue-row').map((r) => [r.children[0].textContent, r.children[1].textContent]), [
+        [S.line + ' 2', issue(lang, 'trailingComma', 10)],
+        [S.line + ' 3', issue(lang, 'smartQuote', 2, '\u201c')],
+        [S.line + ' 4', issue(lang, 'comment', 9)],
+        [S.line + ' 5', issue(lang, 'trailingComma', 27)],
+      ]);
+      assert.equal(p.get('jlc-error-lines').textContent, '4');
+    });
+    // S2-10f review S3: a byte order mark (U+FEFF) at the start of a line or of the JSON panel is invisible in the text
+    // box, so it is not counted as a column.
+    await test(lang + ' a leading byte order mark is not counted as a column', () => {
+      const p = page(lang); p.get('jlc-jsonl').value = '\uFEFF{"a":1,}\n{"b":2}'; p.get('jlc-jsonl').fire('input'); p.flush();
+      assert.deepEqual(p.get('jlc-issues-list').children.filter((r) => r.className === 'jlc-issue-row').map((r) => [r.children[0].textContent, r.children[1].textContent]), [[S.line + ' 1', issue(lang, 'trailingComma', 7)]]);
+      const q = page(lang); q.get('jlc-json').value = '\uFEFF[{"a":1},]'; q.get('jlc-to-jsonl').click();
+      assert.equal(q.get('jlc-status').textContent, errAt(lang, 'trailingComma', 1, 9));
+    });
+    await test(lang + ' JSON → JSONL syntax error names line, column and cause; old JSONL cleared', () => {
+      const p = page(lang); p.get('jlc-json').value = '[1]'; p.get('jlc-to-jsonl').click();
+      p.get('jlc-json').value = '\n[\n  {"a":1},\n  {"b":2},\n]'; p.get('jlc-to-jsonl').click();
+      assert.equal(p.get('jlc-status').textContent, errAt(lang, 'trailingComma', 4, 10));
+      assert.equal(p.get('jlc-jsonl').value, ''); assert.equal(p.get('jlc-copy-jsonl').disabled, true); assert.equal(p.get('jlc-download-jsonl').disabled, true);
+      p.get('jlc-json').value = '[{\u201cid\u201d: 1}]'; p.get('jlc-to-jsonl').click();
+      assert.equal(p.get('jlc-status').textContent, errAt(lang, 'smartQuote', 1, 3, '\u201c'));
+    });
+  }
+}
+
 // Tool pages (src/content/tools/jsonl-converter/{lang}.mdx):
 // {/* jlc-check: {"dir","validOnly","pretty","out","status"} */} → the next fenced block is the input of
 // the dir panel ("jsonl" / "json"); after the conversion, out ("json" / "jsonl" panel, or
 // "download-json" / "download-jsonl" / "copy-jsonl" / "copy-json") must equal the following block,
 // and status (optional) must be the status line. {/* jlc-validate: {"counts","line","message"} */} →
 // Automatic validation after input on the next block gives these counters (lines, valid, errors, empty) and this message
-// for that line (V8 wording, the same engine as Chrome).
+// for that line (column and cause in the page language, S2-10f; before, V8 wording).
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const rel = `src/content/tools/jsonl-converter/${lang}.mdx`;
   const mdx = readFileSync(new URL('../' + rel, import.meta.url), 'utf8');
@@ -304,7 +418,8 @@ const JSON_OUT = '[\n  {\n    "n": 9007199254740993\n  },\n  1e400\n]';
 const golden = p => { p.input('jlc-jsonl', JSONL); p.get('jlc-to-json').click(); };
 for (const [name, begin, end, expected] of [
   ['lossless token core', '      // JSON.parse validates', '      function invalidateOutput', 'dbd54ec4bc34a044902843557a0a912e835ffe2f504ff82e34a3b02fe0f35f07'],
-  ['line parser', '      function parseJsonl', '      function updateStats', '9923cc6ddc4a79c67b8173d9f44d5ed2b85fc7414ace5c9e9d79f5073c65ac28'],
+  // S2-10f (2026-10-09): a bad line's message is the column and cause in the page language (lineIssueText).
+  ['line parser', '      function parseJsonl', '      function updateStats', 'e1b5e6cf468d8b66807897e17854f94a485960d108161b030fccb306f7de3e51'],
   ['JSONL formatting', '      function compactJsonlFromValues', '      function convertJsonlToJson', '0051f32080d31dc299a7bfbbd1cd5500b28704547b9fe1fd075327644cb3fe78'],
   ['download bytes', '      function downloadText', '      function openFile', '3a1e722365c31bebb902c0cfaad017e50cd6397b942c26ead6972516d45ec15b']
 ]) check(name + ' byte-exact', hash(source.slice(source.indexOf(begin), source.indexOf(end))), expected);
@@ -397,7 +512,33 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 /* ── v2 page layout ── */
 check('all FIX behavior checks retained', checks.length, 884);
-check('client script only loses runtime localization and redundant Validate listener', hash(js), 'a771d59cb884172a48557c36fcbe77441cf36654f4b54b16752d0aa53ae24e90');
+// S2-10f GA: one event per successful conversion (button, Ctrl/⌘+Enter, Sample, pretty-print change, JSON file);
+// an event that repeats the previous direction, input and options is skipped; failed conversions send nothing; Clear
+// and Ctrl/⌘+L start over.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const g = page(lang), tag = lang + ' GA';
+  check(tag + ' page load sends nothing', g.tracks.length, 0);
+  g.input('jlc-jsonl', '1\n2'); g.advance(350); check(tag + ' automatic validation sends nothing', g.tracks.length, 0);
+  g.get('jlc-to-json').click(); check(tag + ' JSONL → JSON sends one event', g.tracks, [['jsonl-converter', 'jsonl_to_json']]);
+  g.get('jlc-to-json').click(); g.key('jlc-jsonl', 'Enter'); check(tag + ' the same JSONL and options send nothing more', g.tracks.length, 1);
+  g.get('jlc-pretty-json').checked = false; g.get('jlc-pretty-json').dispatch('change'); check(tag + ' a new option converts and sends one', g.tracks.length, 2);
+  g.input('jlc-jsonl', '1\n{bad}'); g.get('jlc-to-json').click(); check(tag + ' a failed conversion sends nothing', g.tracks.length, 2);
+  g.input('jlc-json', '[1, 2]'); g.get('jlc-to-jsonl').click(); g.get('jlc-to-jsonl').click();
+  check(tag + ' JSON → JSONL sends one event for the same JSON', g.tracks.map(t => t[1]), ['jsonl_to_json', 'jsonl_to_json', 'json_to_jsonl']);
+  g.get('jlc-load-sample').click(); g.get('jlc-load-sample').click(); check(tag + ' Sample twice sends one event', g.tracks.length, 4);
+  g.get('jlc-clear').click(); g.get('jlc-load-sample').click(); check(tag + ' after Clear the same Sample sends again', g.tracks.length, 5);
+  g.key('jlc-jsonl'); g.get('jlc-load-sample').click(); check(tag + ' after Ctrl+L the same Sample sends again', g.tracks.length, 6);
+  const f = page(lang); f.open('json').finish('[1]'); f.open('json').finish('[1]'); check(tag + ' the same JSON file twice sends one event', f.tracks.map(t => t[1]), ['json_to_jsonl']);
+  // S2-10f review M1: only a repeat of the previous event is skipped, so switching an option back sends again.
+  const b = page(lang); b.input('jlc-jsonl', '1'); b.get('jlc-to-json').click();
+  for (const pretty of [false, true]) { b.get('jlc-pretty-json').checked = pretty; b.get('jlc-pretty-json').dispatch('change'); }
+  check(tag + ' switching an option back sends again', b.tracks.length, 3);
+}
+// S2-10f (2026-10-09) added the json-reason block and the localized JSON syntax errors, and skips an analytics event
+// that repeats the previous conversion. Its review added the notice for pretty-printed JSON longer than the browser allows
+// and dropped the "Invalid JSON" prefix from the message for JSON that is not an array; a leading byte order mark is
+// no longer counted as a column.
+check('client script only loses runtime localization and redundant Validate listener', hash(js), 'b3dc295a8dc0785ff44c06864ef9ec57f5c7b23d1ffac963fa1f2b28f122b2a1');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jlc-wrap"/.test(markup), true);

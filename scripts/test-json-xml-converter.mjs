@@ -15,6 +15,24 @@ const STR = vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ 
 const clientStrings = lang => vm.runInNewContext(source.slice(source.indexOf('// strings:end') + '// strings:end'.length, source.indexOf('\n---', source.indexOf('// strings:end'))) + ';CLIENT_T', { STRINGS: STR, lang });
 let passed = 0, failed = 0;
 async function test(name, fn) { try { await fn(); passed++; } catch (e) { failed++; console.log('FAIL ' + name + ': ' + e.message); } }
+// JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
+// json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
+// HarFileAnalyzerTool.astro. A JSON syntax error shows line, column and cause in the page language
+// instead of "Invalid JSON: " plus the browser's English message; line and column count from the
+// start of the JSON pane. XML syntax errors still use the browser's message.
+const JSON_ENGINE = readFileSync(new URL('../src/components/tools/json-formatter-engine.js', import.meta.url), 'utf8');
+const HAR_SOURCE = readFileSync(new URL('../src/components/tools/HarFileAnalyzerTool.astro', import.meta.url), 'utf8');
+const HAR_S = new Function('return ' + HAR_SOURCE.slice(HAR_SOURCE.indexOf('const STRINGS = ') + 16, HAR_SOURCE.indexOf('\n};\n', HAR_SOURCE.indexOf('const STRINGS = ')) + 2))();
+function fnSrc(src, name) {
+  const lines = src.split('\n');
+  const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+  if (at < 0) return '';
+  const indent = lines[at].match(/^\s*/)[0];
+  let end = at + 1;
+  while (end < lines.length && lines[end] !== indent + '}') end++;
+  return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+}
+const errAt = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
 function text(value, type = 3) { return { nodeType: type, nodeValue: value, textContent: value }; }
 function node(name, children = [], attrs = []) {
   return { nodeType: 1, tagName: name, attributes: attrs, childNodes: children,
@@ -161,12 +179,63 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const p = page(lang, 'sax');
     p.get('jx-json').value = '{"2026":1}'; p.get('jx-to-xml').click();
     assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].cannotToXml + ': '), p.get('jx-status').textContent);
+    // S2-10f: a JSON syntax error names line, column and cause in the page language (see below).
     p.get('jx-json').value = '{"a":1,}'; p.get('jx-to-xml').click();
-    assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].invalidJson + ': '), p.get('jx-status').textContent);
+    assert.equal(p.get('jx-status').textContent, HAR_S[lang].errJsonAt.replace('{line}', 1).replace('{col}', 7).replace('{reason}', HAR_S[lang].jsonParse.trailingComma));
     p.get('jx-xml').value = '<r id="1"/>'; p.get('jx-to-json').click();
     assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].cannotToJson + ': '), p.get('jx-status').textContent);
     p.get('jx-xml').value = '<r>'; p.get('jx-to-json').click();
     assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].invalidXml + ': '), p.get('jx-status').textContent);
+  });
+}
+await test('JSON errors: reasons are the text of HarFileAnalyzerTool.astro and reach the script', () => {
+  // JSON text: STRINGS comes from another vm realm, whose objects have a different prototype.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
+    assert.equal(JSON.stringify(STR[lang][key]), JSON.stringify(HAR_S[lang][key]), lang + ' ' + key);
+    assert.equal(JSON.stringify(clientStrings(lang)[key]), JSON.stringify(HAR_S[lang][key]), lang + ' client ' + key);
+  }
+});
+await test('JSON errors: lineCol and jsonSyntaxError are copied verbatim, outside the engine block', () => {
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  assert.ok(rs > source.indexOf('/* ── engine:end ── */') && re > rs, 'block position');
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = fnSrc(source.slice(rs, re), name);
+    assert.ok(mine !== '' && mine === fnSrc(JSON_ENGINE, name), name);
+  }
+});
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  for (const [raw, code, line, col, ch] of [
+    ['\n{\n  "name": "Alice",\n  "age": 30,\n}', 'trailingComma', 4, 12],
+    ['{\u201cname\u201d: "Alice"}', 'smartQuote', 1, 2, '\u201c'],
+    ['  {"a": 1} // note', 'comment', 1, 12],
+    ['{"a": 1 "b": 2}', 'missingComma', 1, 9],
+  // S2-10f review S3: a leading byte order mark (U+FEFF) is invisible in the text box, so it is not counted as a column.
+    ['\uFEFF{"a":1,}', 'trailingComma', 1, 7],
+  ]) await test(lang + ' JSON syntax error ' + code + ' in the page language; old XML cleared', () => {
+    const p = page(lang); p.get('jx-json').value = '{"ok":1}'; p.get('jx-to-xml').click();
+    p.get('jx-json').value = raw; p.get('jx-to-xml').click();
+    assert.equal(p.get('jx-status').textContent, errAt(lang, code, line, col, ch));
+    assert.equal(p.get('jx-xml').value, ''); assert.equal(p.get('jx-copy-xml').disabled, true);
+  });
+}
+// S2-10f review S4: valid JSON or XML nested deeper than the call stack allows (Node 22 runs out well below 20,000
+// levels; browsers differ, and their XML parsers have depth limits of their own). Before, the status was "Invalid JSON"
+// or "Invalid XML" plus the browser's English "Maximum call stack size exceeded".
+const DEEP_JSON = '{"a":'.repeat(20000) + '1' + '}'.repeat(20000);
+function deepXml(levels) { let el = node('a', [text('1')]); for (let i = 1; i < levels; i++) el = node('a', [el]); return node('root', [el]); }
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  await test(lang + ' JSON too deep: notice in the page language, old XML cleared, Copy off', () => {
+    const p = page(lang); p.get('jx-json').value = '{"ok":1}'; p.get('jx-to-xml').click();
+    p.get('jx-json').value = DEEP_JSON; p.get('jx-to-xml').click();
+    assert.equal(p.get('jx-status').textContent, STR[lang].tooDeepJson);
+    assert.equal(p.get('jx-xml').value, ''); assert.equal(p.get('jx-copy-xml').disabled, true);
+    p.get('jx-copy-xml').click(); assert.equal(p.copied.length, 0);
+  });
+  await test(lang + ' XML too deep: notice in the page language, old JSON cleared, Copy off', () => {
+    const p = page(lang, deepXml(20000)); p.get('jx-json').value = '{"stale":1}'; p.get('jx-xml').value = '<root/>';
+    p.get('jx-to-json').click();
+    assert.equal(p.get('jx-status').textContent, STR[lang].tooDeepXml);
+    assert.equal(p.get('jx-json').value, ''); assert.equal(p.get('jx-copy-json').disabled, true);
   });
 }
 
@@ -375,7 +444,33 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 /* ── v2 page layout ── */
 check('all FIX behavior checks retained', checks.length, 642);
-check('client script only removes runtime STRINGS and localization', hash(js), '95b8c2313ea150e4a38772d3c6ffd5a30090611cc2d7bccd4720f219a3a74a70');
+// S2-10f GA: one event per successful conversion (button or Ctrl/⌘+Enter); an event that repeats the previous
+// direction, input, root element and pretty print is skipped; failed and empty conversions send nothing; Clear and
+// Ctrl/⌘+L start over.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const g = page(lang), tag = lang + ' GA';
+  check(tag + ' page load sends nothing', g.tracks.length, 0);
+  g.input('jx-json', JSON_TEXT); g.advance(400); check(tag + ' automatic conversion sends nothing', g.tracks.length, 0);
+  g.get('jx-to-xml').click(); check(tag + ' JSON → XML sends one event', g.tracks, [['json-xml-converter', 'json_to_xml']]);
+  g.get('jx-to-xml').click(); g.key('jx-json', 'Enter'); check(tag + ' the same JSON, root and pretty print send nothing more', g.tracks.length, 1);
+  g.get('jx-root').value = 'config'; g.get('jx-to-xml').click(); check(tag + ' a new root element sends one', g.tracks.length, 2);
+  g.get('jx-json').value = '{"a":1,}'; g.get('jx-to-xml').click(); check(tag + ' a syntax error sends nothing', g.tracks.length, 2);
+  g.get('jx-json').value = '{"2026":1}'; g.get('jx-to-xml').click(); check(tag + ' a mapping limit sends nothing', g.tracks.length, 2);
+  g.get('jx-json').value = ''; g.get('jx-to-xml').click(); check(tag + ' empty input sends nothing', g.tracks.length, 2);
+  g.get('jx-xml').value = '<root><name>demo</name></root>'; g.get('jx-to-json').click(); g.get('jx-to-json').click();
+  check(tag + ' XML → JSON sends one event for the same XML', g.tracks.map(t => t[1]), ['json_to_xml', 'json_to_xml', 'xml_to_json']);
+  g.get('jx-xml').value = '<r>'; g.get('jx-to-json').click(); check(tag + ' invalid XML sends nothing', g.tracks.length, 3);
+  g.get('jx-clear').click(); g.get('jx-json').value = JSON_TEXT; g.get('jx-root').value = 'config'; g.get('jx-to-xml').click(); check(tag + ' after Clear the same conversion sends again', g.tracks.length, 4);
+  g.key('jx-json'); g.get('jx-json').value = JSON_TEXT; g.get('jx-root').value = 'config'; g.get('jx-to-xml').click(); check(tag + ' after Ctrl+L the same conversion sends again', g.tracks.length, 5);
+  // S2-10f review M1: only a repeat of the previous event is skipped, so switching the root element back sends again.
+  const b = page(lang); b.get('jx-json').value = JSON_TEXT;
+  for (const root of ['root', 'config', 'root']) { b.get('jx-root').value = root; b.get('jx-to-xml').click(); }
+  check(tag + ' switching the root element back sends again', b.tracks.length, 3);
+}
+// S2-10f (2026-10-09) added the json-reason block and parses JSON in its own try for the localized syntax error;
+// analytics records only successful conversions and skips a repeat of the previous one. Its review added the notices for JSON or XML
+// nested too deeply for the call stack and stopped counting a leading byte order mark as a column.
+check('client script only removes runtime STRINGS and localization', hash(js), 'e32b49e1c5a14fae5dadae11b67a401b17081fce87999c77d661cdc42ed556db');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jx-wrap"/.test(markup), true);
