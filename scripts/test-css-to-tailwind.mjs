@@ -85,6 +85,13 @@ eq('a comment with braces does not break parsing', c('/* { not a rule } */ .a { 
 eq('flexbox card', c('.card {\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 1rem;\n  padding: 1.5rem;\n  border-radius: 0.5rem;\n}'),
   '/* .card */\nflex flex-col items-center gap-4 p-6 rounded-lg');
 
+// ---------- keep comments show the declaration as typed (before: lowercased) ----------
+eq('keep comment keeps the case of a string', c('content: "Hello";'), '/* keep: content: "Hello" */');
+eq('keep comment keeps a URL as typed', c('background-image: url("/img/Hero.PNG");'), '/* keep: background-image: url("/img/Hero.PNG") */');
+eq('keep comment keeps a custom property name', c('--Brand-Color: #FF6600;'), '/* keep: --Brand-Color: #FF6600 */');
+eq('keep comment inside a rule keeps the case', c('.a { font-family: "Noto Sans JP", sans-serif; }'), '/* .a */\n/* keep: font-family: "Noto Sans JP", sans-serif */');
+eq('matching still ignores case', c('DISPLAY: FLEX; color: #3B82F6;'), 'flex text-blue-500');
+
 // ---------- the examples on the tool pages ----------
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/css-to-tailwind/' + lang + '.mdx'), 'utf8');
@@ -262,7 +269,8 @@ const { compile: compileMdx } = await import('@mdx-js/mdx');
 const { default: yaml } = await import('js-yaml');
 const sha = text => createHash('sha256').update(text).digest('hex');
 const fullEngine = source.match(/^ *\/\* ── engine:start ── \*\/[\s\S]*?^ *\/\* ── engine:end ── \*\//m)[0];
-same('v2 exact engine bytes', sha(fullEngine), '376008778596974ac85ede4f14824d2d2fffd7766a28f29ecdb888bdffb5a7fa');
+// Updated with each approved engine change (2026-10-09: keep comments keep the typed case).
+same('v2 exact engine bytes', sha(fullEngine), '2fad1676eee72bf9bf103ca8353f8c4c5ee9ac25b83defa56d8d122334dadff1');
 const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
