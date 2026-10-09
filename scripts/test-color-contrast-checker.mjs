@@ -273,4 +273,47 @@ check('main HEX44 phone',source.includes('.ccc-hex-input { min-height: 44px;'));
 check('sample internally scrolls at fixed height',source.includes('.ccc-preview { height: 160px; min-height: 0; overflow: auto;'));check('summary internally scrolls',source.includes('.ccc-summary { max-height: 24rem; overflow: auto; }'));
 const p=open();eq('three independent buttons retained',p.doc.querySelectorAll('#ccc-swap,#ccc-apply-btn,#ccc-copy-fixed').length,3);p.key('ccc-fg-hex');eq('clear empty signal',p.el('ccc-result').dataset.empty,'true');check('clear explanation visible',!p.el('ccc-empty').hidden);p.input('ccc-fg-hex','#000000');p.input('ccc-bg-hex','#ffffff');eq('new input restores preview',p.el('ccc-result').dataset.empty,'false');check('real result content restored',!p.el('ccc-result-content').hidden);
 check('registered generate layout',readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8').includes("  'color-contrast-checker': 'generate',"));
+
+// ---------- S2-9 fixes outside the engine ----------
+// Analytics: one `check` event per committed change (as in css-triangle-generator / box-shadow-generator),
+// not on page load and not on every input event or colour-picker drag step.
+for (const lang of langKeys) {
+  const p = open(lang), checks = () => p.tracks.filter(t => t[1] === 'check').length;
+  eq(lang + ' GA: page load sends no check', checks(), 0);
+  p.input('ccc-fg-hex', '#7'); p.input('ccc-fg-hex', '#77'); p.input('ccc-fg-hex', '#777'); p.input('ccc-fg-hex', '#777777');
+  eq(lang + ' GA: input events send no check', checks(), 0);
+  p.input('ccc-fg-hex', '#777777', 'change');
+  eq(lang + ' GA: committed hex change sends one check', checks(), 1);
+  p.input('ccc-fg-hex', '#77', 'change');
+  eq(lang + ' GA: committed invalid hex sends nothing', checks(), 1);
+  for (const v of ['#101010', '#202020', '#303030']) p.input('ccc-bg-picker', v);
+  eq(lang + ' GA: picker drag sends nothing', checks(), 1);
+  p.input('ccc-bg-picker', '#303030', 'change');
+  eq(lang + ' GA: picker commit sends one check', checks(), 2);
+  p.key('ccc-fg-hex'); p.input('ccc-fg-hex', '#000000'); p.input('ccc-fg-hex', '#000000', 'change');
+  eq(lang + ' GA: after Ctrl+L one colour alone sends nothing', checks(), 2);
+}
+// Full-width input from an IME is read through NFKC; maxlength no longer truncates pasted text.
+for (const lang of langKeys) {
+  const p = open(lang), L = labels[lang];
+  p.input('ccc-bg-hex', '#ffffff');
+  p.input('ccc-fg-hex', '＃７６７６７６');
+  eq(lang + ' full-width hex is read', p.el('ccc-fg-picker').value, '#767676');
+  eq(lang + ' full-width hex gives the ratio', p.text('ccc-ratio-value'), '4.54 : 1');
+  eq(lang + ' full-width hex shows no error', p.text('ccc-fg-error'), '');
+  p.input('ccc-fg-hex', '＃９４９４９４');
+  check(lang + ' full-width failing colour keeps Apply and Copy usable', !p.el('ccc-apply-btn').disabled && !p.el('ccc-copy-fixed').disabled);
+  p.input('ccc-fg-hex', '  #1F2937  ');
+  eq(lang + ' pasted hex with spaces is read', p.text('ccc-ratio-value'), '14.67 : 1');
+  const ratio = p.text('ccc-ratio-value');
+  for (const alpha of ['#1f2937cc', '1f2937cc', '#000a']) {
+    p.input('ccc-fg-hex', alpha);
+    eq(lang + ' ' + alpha + ' gives the transparency message', p.text('ccc-fg-error'), L.noAlpha);
+    eq(lang + ' ' + alpha + ' keeps the last ratio', p.text('ccc-ratio-value'), ratio);
+  }
+  check(lang + ' noAlpha string', typeof L.noAlpha === 'string' && L.noAlpha.trim().length > 0 && L.noAlpha !== L.invalidHex);
+  // Large text is 18pt (24px) or 14pt bold (18.66px) (WCAG 2.2 "large scale"); body text is the rest.
+  check(lang + ' body-text hint is the complement of large text', L.bodyHint.includes('24px') && L.bodyHint.includes('18.66px'), L.bodyHint);
+}
+check('hex inputs do not truncate pasted text at 7 characters', !/maxlength="7"/.test(source));
 console.log(`\n${passes} passed, ${failures} failed`);process.exit(failures?1:0);

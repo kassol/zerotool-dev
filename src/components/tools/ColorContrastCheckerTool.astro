@@ -11,7 +11,7 @@ const STRINGS = {
     swapAria: 'Swap foreground and background',
     contrastRatio: 'Contrast Ratio',
     bodyText: 'Body text',
-    bodyHint: '< 18px, or < 14px bold',
+    bodyHint: '< 24px, or < 18.66px bold',
     largeText: 'Large text',
     largeHint: '≥ 18.66px bold or ≥ 24px',
     uiComponent: 'UI components & graphics',
@@ -26,6 +26,7 @@ const STRINGS = {
     apply: 'Apply suggestion',
     copyFixed: 'Copy HEX',
     invalidHex: 'Invalid hex color',
+    noAlpha: 'Transparency is not supported. Enter an opaque 3- or 6-digit HEX.',
     sampleText: 'The quick brown fox jumps over the lazy dog — 0123456789',
     copied: 'Copied!',
     copyFailed: 'Copy failed. Try again or copy the suggested HEX manually.',
@@ -45,7 +46,7 @@ const STRINGS = {
     swapAria: '交换前景与背景色',
     contrastRatio: '对比度',
     bodyText: '正文',
-    bodyHint: '< 18px 或 < 14px 粗体',
+    bodyHint: '< 24px 或 < 18.66px 粗体',
     largeText: '大号文字',
     largeHint: '≥ 18.66px 粗体或 ≥ 24px',
     uiComponent: 'UI 组件 & 图形',
@@ -60,6 +61,7 @@ const STRINGS = {
     apply: '应用修正',
     copyFixed: '复制 HEX',
     invalidHex: '无效的 HEX 颜色',
+    noAlpha: '不支持透明度，请输入不透明的 3 位或 6 位 HEX。',
     sampleText: '永和九年岁在癸丑 The quick brown fox 0123456789',
     copied: '已复制！',
     copyFailed: '复制失败，请重试或手动复制建议 HEX。',
@@ -79,7 +81,7 @@ const STRINGS = {
     swapAria: '前景と背景を入れ替える',
     contrastRatio: 'コントラスト比',
     bodyText: '本文',
-    bodyHint: '< 18px / < 14px 太字',
+    bodyHint: '< 24px / < 18.66px 太字',
     largeText: '大きな文字',
     largeHint: '≥ 18.66px 太字 / ≥ 24px',
     uiComponent: 'UI コンポーネント・図形',
@@ -94,6 +96,7 @@ const STRINGS = {
     apply: '修正案を適用',
     copyFixed: 'HEX をコピー',
     invalidHex: '不正な HEX カラー',
+    noAlpha: '透明度には対応していません。不透明な 3 桁または 6 桁の HEX を入力してください。',
     sampleText: 'いろはにほへと The quick brown fox 0123456789',
     copied: 'コピーしました！',
     copyFailed: 'コピーに失敗しました。再試行するか、修正案の HEX を手動でコピーしてください。',
@@ -113,7 +116,7 @@ const STRINGS = {
     swapAria: '전경과 배경 교환',
     contrastRatio: '대비비',
     bodyText: '본문',
-    bodyHint: '< 18px 또는 < 14px 굵게',
+    bodyHint: '< 24px 또는 < 18.66px 굵게',
     largeText: '큰 글자',
     largeHint: '≥ 18.66px 굵게 또는 ≥ 24px',
     uiComponent: 'UI 구성요소 · 그래픽',
@@ -128,6 +131,7 @@ const STRINGS = {
     apply: '제안 적용',
     copyFixed: 'HEX 복사',
     invalidHex: '잘못된 HEX 색상',
+    noAlpha: '투명도는 지원하지 않습니다. 불투명한 3자리 또는 6자리 HEX를 입력하세요.',
     sampleText: '동해 물과 백두산이 The quick brown fox 0123456789',
     copied: '복사됨!',
     copyFailed: '복사에 실패했습니다. 다시 시도하거나 제안 HEX를 직접 복사하세요.',
@@ -152,6 +156,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
   data-copied={L.copied}
   data-copy-failed={L.copyFailed}
   data-invalid-hex={L.invalidHex}
+  data-no-alpha={L.noAlpha}
   data-pass={L.pass}
   data-fail={L.fail}
 >
@@ -178,7 +183,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
             class="ccc-hex-input"
             type="text"
             value="#1f2937"
-            maxlength="7"
+            maxlength="16"
             autocomplete="off"
             spellcheck="false"
             aria-describedby="ccc-fg-error"
@@ -200,7 +205,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
             class="ccc-hex-input"
             type="text"
             value="#f9fafb"
-            maxlength="7"
+            maxlength="16"
             autocomplete="off"
             spellcheck="false"
             aria-describedby="ccc-bg-error"
@@ -296,6 +301,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
     var COPIED  = wrap.dataset.copied;
     var COPY_FAILED = wrap.dataset.copyFailed;
     var INVALID = wrap.dataset.invalidHex;
+    var NO_ALPHA = wrap.dataset.noAlpha;
     var PASS    = wrap.dataset.pass;
     var FAIL    = wrap.dataset.fail;
 
@@ -352,7 +358,7 @@ const L = STRINGS[lang] ?? STRINGS.en;
     function suggestionHex(button) {
       var hex = button.dataset.hex;
       if (sugWrap.hidden || !isValidHex(hex)
-        || !isValidHex(normalizeHex(fgInput.value)) || !isValidHex(normalizeHex(bgInput.value))) return '';
+        || !isValidHex(normalizeHex(readText(fgInput.value))) || !isValidHex(normalizeHex(readText(bgInput.value)))) return '';
       return hex;
     }
 
@@ -608,14 +614,21 @@ const L = STRINGS[lang] ?? STRINGS.en;
         clearSuggestion();
       }
       refreshSuggestionActions();
-
-      window.trackTool && window.trackTool('color-contrast-checker', 'check');
     }
 
     /* ── Wiring ── */
+    /* Text as the HEX fields read it: NFKC turns IME full-width input (＃１Ｆ２９３７) into ASCII. */
+    function readText(value) {
+      return String(value || '').normalize('NFKC');
+    }
+    function isAlphaHex(text) {
+      return /^#?(?:[0-9a-fA-F]{4}|[0-9a-fA-F]{8})$/.test(text.trim());
+    }
+
     function setSide(side, value, source) {
       resetCopyFeedback();
-      var v = normalizeHex(value);
+      var text = readText(value);
+      var v = normalizeHex(text);
       var picker = side === 'fg' ? fgPicker : bgPicker;
       var input  = side === 'fg' ? fgInput  : bgInput;
       var errEl  = side === 'fg' ? fgErr    : bgErr;
@@ -627,7 +640,10 @@ const L = STRINGS[lang] ?? STRINGS.en;
         input.classList.remove('ccc-error');
         errEl.textContent = '';
         update();
-      } else if (source === 'input' && (input.value || '').trim().replace(/^#/, '').length >= 3) {
+      } else if (source === 'input' && isAlphaHex(text)) {
+        input.classList.add('ccc-error');
+        errEl.textContent = NO_ALPHA;
+      } else if (source === 'input' && text.trim().replace(/^#/, '').length >= 3) {
         input.classList.add('ccc-error');
         errEl.textContent = INVALID;
       } else if (source === 'input') {
@@ -641,6 +657,15 @@ const L = STRINGS[lang] ?? STRINGS.en;
     bgPicker.addEventListener('input', function () { setSide('bg', bgPicker.value, 'picker'); });
     fgInput.addEventListener('input',  function () { setSide('fg', fgInput.value,  'input');  });
     bgInput.addEventListener('input',  function () { setSide('bg', bgInput.value,  'input');  });
+
+    /* Analytics: one event per committed change (as in css-triangle-generator), not per input event. */
+    function trackCheck() {
+      if (isValidHex(fg) && isValidHex(bg)) window.trackTool && window.trackTool('color-contrast-checker', 'check');
+    }
+    fgPicker.addEventListener('change', trackCheck);
+    bgPicker.addEventListener('change', trackCheck);
+    fgInput.addEventListener('change', function () { if (isValidHex(normalizeHex(readText(fgInput.value)))) trackCheck(); });
+    bgInput.addEventListener('change', function () { if (isValidHex(normalizeHex(readText(bgInput.value)))) trackCheck(); });
 
     swapBtn.addEventListener('click', function () {
       if (!isValidHex(fg) || !isValidHex(bg)) return;
