@@ -23,45 +23,24 @@ export const LANGS = ['en', 'zh', 'ja', 'ko'];
 // (S2-evidence/content-stats.py on v1.140.3), plus 3 added by S2-0 = 79; S2-1 (2026-10-08)
 // finished 9, S2-2 (2026-10-08) finished 9, S2-3 (2026-10-08) finished 8, S2-4 (2026-10-08)
 // finished 8, S2-5 (2026-10-08) finished 13, S2-6 (2026-10-08) finished 8, S2-7 (2026-10-09)
-// finished 8 and S2-8 (2026-10-09) finished 8, so 8 are left.
-// These get only the basic checks:
+// finished 8, S2-8 (2026-10-09) finished 8 and S2-9 (2026-10-09) finished the last 8, so the
+// list is empty. A tool in this set would get only the basic checks:
 // files, steps, nonempty FAQ items, no Usage section, and equal FAQ and step counts (unless
 // listed in FAQ_COUNT_MISMATCH / STEPS_COUNT_MISMATCH).
 export const S2_PENDING = new Set([
   // §1.2 table A: site self-review, min(zh, ja, ko) < 800 characters (32; S2-1 to S2-4 finished all 32)
   // §1.2 table B: FAQ counts differ between languages (15; S2-4 finished 2 and S2-5 finished 13)
   // §7 / §8.2: other non-premium tools below the body floor in at least one language (29; S2-6 finished 8,
-  // S2-7 finished 8 and S2-8 finished 6)
-  'color-contrast-checker', 'css-specificity-calculator',
-  'exif-metadata-viewer', 'fake-data-generator',
-  'keycode-explorer', 'nato-phonetic-alphabet',
-  'timestamp-converter',
-  // Added by S2-0 (2026-10-08): the parity test found no Limits section in any of the four
-  // languages. The text is unchanged; an S2 batch adds the section (S2-8 finished
-  // csp-header-generator and favicon-generator).
-  'cubic-bezier-generator',
+  // S2-7 finished 8, S2-8 finished 6 and S2-9 finished 7)
+  // Added by S2-0 (2026-10-08): no Limits section in any of the four languages (3; S2-8 finished
+  // csp-header-generator and favicon-generator, S2-9 finished cubic-bezier-generator)
 ]);
 
 // Tools that pass every S2 rule except FAQ ids: they were outside the S2 scope, and S2-0
-// adds no ids (S2-PLAN.md §8.1). All tools not in S2_PENDING on 2026-10-08 (62). Remove a
-// tool when its four MDX files get FAQ ids.
-export const FAQ_IDS_TODO = new Set([
-  'aes-encrypt-decrypt', 'ai-token-counter', 'barcode-generator', 'basic-auth-header-generator',
-  'bcrypt-generator', 'color-palette-generator', 'cookie-parser', 'csr-decoder', 'css-to-tailwind',
-  'curl-to-code', 'dns-lookup', 'docker-to-compose', 'eyedropper-color-picker',
-  'file-hash-checker', 'gif-compressor', 'gif-splitter', 'gitignore-generator',
-  'glassmorphism-generator', 'graphql-formatter', 'har-file-analyzer', 'hmac-generator',
-  'html-minifier', 'html-to-jsx', 'htpasswd-generator', 'iban-validator-parser',
-  'image-color-palette', 'image-compressor', 'image-splitter', 'image-to-base64', 'jq-playground',
-  'json-formatter', 'json-schema-validator', 'json-to-java-pojo', 'json-xml-converter',
-  'jsonl-converter', 'markdown-preview', 'markdown-table-generator', 'markdown-to-word',
-  'markdown-toc-generator', 'mime-type-lookup', 'openapi-to-typescript', 'openapi-validator',
-  'pixelate-image', 'pkce-generator', 'protobuf-to-json', 'qr-code-decoder', 'qr-code-generator',
-  'secret-redactor', 'sprite-sheet-generator', 'sqlite-viewer', 'ssl-certificate-decoder',
-  'string-escape', 'svg-to-jsx', 'svg-to-png-converter', 'text-to-binary', 'toml-json',
-  'totp-generator', 'unicode-text-converter', 'url-parser', 'yaml-json', 'yaml-toml',
-  'yaml-validator',
-]);
+// adds no ids (S2-PLAN.md §8.1). All tools not in S2_PENDING on 2026-10-08 (62). S2-10
+// (2026-10-09) added ids to all 62, so the list is empty. Add a tool only while its four MDX
+// files have no FAQ ids.
+export const FAQ_IDS_TODO = new Set([]);
 
 // Tools whose four languages have different FAQ counts today (S2-PLAN.md §1.2: 8 in table A,
 // 15 in table B; S2-1 aligned password-generator, url-encode and uuid-generator, S2-2 aligned

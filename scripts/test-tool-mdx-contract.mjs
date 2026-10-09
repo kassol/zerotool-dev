@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  FAQ_COUNT_MISMATCH, FAQ_ID, LANGS, LIMITS_EXEMPT, S2_PENDING, STEPS_COUNT_MISMATCH,
+  FAQ_COUNT_MISMATCH, FAQ_ID, FAQ_IDS_TODO, LANGS, LIMITS_EXEMPT, S2_PENDING, STEPS_COUNT_MISMATCH,
   annotations, bodySize, contractProblems, examplePairs, fencedBlocks, headings, isLimitsHeading, isUsageHeading, proseText, splitToolMdx, toolMdxContract,
 } from './lib/tool-mdx-contract.mjs';
 
@@ -84,7 +84,8 @@ check('FAQ_ID: local id', FAQ_ID.test('local-fullwidth'));
 check('FAQ_ID: rejects capitals, spaces, empty and trailing hyphen', !['Privacy', 'max size', '', 'limits-', 'local-'].some((id) => FAQ_ID.test(id)));
 
 // ── Lists ───────────────────────────────────────────────────────────────────
-equal('S2_PENDING: 8 tools (79 after S2-0, minus 9 in S2-1, 9 in S2-2, 8 in S2-3, 8 in S2-4, 13 in S2-5, 8 in S2-6, 8 in S2-7 and 8 in S2-8)', S2_PENDING.size, 8);
+equal('S2_PENDING: empty (79 after S2-0, minus 9 in S2-1, 9 in S2-2, 8 in S2-3, 8 in S2-4, 13 in S2-5, 8 in S2-6, 8 in S2-7, 8 in S2-8 and 8 in S2-9)', S2_PENDING.size, 0);
+equal('FAQ_IDS_TODO: empty (62 after S2-0; S2-10 added ids to all 62)', FAQ_IDS_TODO.size, 0);
 equal('FAQ_COUNT_MISMATCH: empty (23 after S2-0, minus 3 in S2-1, 3 in S2-2, 4 in S2-4 and 13 in S2-5; S2-3 had none)', FAQ_COUNT_MISMATCH.size, 0);
 equal('STEPS_COUNT_MISMATCH: empty (htaccess-generator aligned in S2-3)', STEPS_COUNT_MISMATCH.size, 0);
 check('FAQ_COUNT_MISMATCH is inside S2_PENDING', [...FAQ_COUNT_MISMATCH].every((s) => S2_PENDING.has(s)));
