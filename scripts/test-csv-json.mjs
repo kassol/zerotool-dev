@@ -41,6 +41,32 @@ if (startIndex < 0 || endIndex <= startIndex) {
 const block = source.slice(startIndex, endIndex);
 const E = new Function(block + '\nreturn { jsonToCsv, parseCsv, inferValue, escapeCsvField };')();
 
+// JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
+// json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
+// HarFileAnalyzerTool.astro. A JSON → CSV syntax error shows line, column and cause in the page
+// language instead of "Error: " plus the browser's English message; line and column count from the
+// start of the JSON pane.
+const JSON_ENGINE = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+const HAR_SOURCE = readFileSync(join(root, 'src/components/tools/HarFileAnalyzerTool.astro'), 'utf8');
+const HAR_S = new Function('return ' + HAR_SOURCE.slice(HAR_SOURCE.indexOf('const STRINGS = ') + 16, HAR_SOURCE.indexOf('\n};\n', HAR_SOURCE.indexOf('const STRINGS = ')) + 2))();
+function fnSrc(src, name) {
+  const lines = src.split('\n');
+  const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+  if (at < 0) return '';
+  const indent = lines[at].match(/^\s*/)[0];
+  let end = at + 1;
+  while (end < lines.length && lines[end] !== indent + '}') end++;
+  return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+}
+// [input, jsonSyntaxError code, line, column, character]
+const JSON_ERRORS = [
+  ['\n\n[{"a":1,}]', 'trailingComma', 3, 8],
+  ['[{\u201cid\u201d: 1}]', 'smartQuote', 1, 3, '\u201c'],
+  ['[{"id": 1} // first row\n]', 'comment', 1, 12],
+  ['  [{"a":1}\n  {"a":2}]', 'missingComma', 2, 3],
+];
+const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
+
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail) {
@@ -289,6 +315,18 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ' JSON → CSV error in page language: ' + input, p.get(s.p + '-status').textContent, S.errorPrefix + msg);
   }
 }
+{
+  const labels = frontmatterStrings(readComponent('src/components/tools/CsvJsonTool.astro').frontmatter);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
+    eq(`JSON errors: ${lang} ${key} is the text of HarFileAnalyzerTool.astro`, labels[lang][key], HAR_S[lang][key]);
+  }
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  eq('JSON errors: the json-reason block sits outside the engine block', rs > endIndex && re > rs, true);
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = rs > 0 ? fnSrc(source.slice(rs, re), name) : '';
+    eq(`JSON errors: ${name} is the same as in json-formatter-engine.js`, mine !== '' && mine === fnSrc(JSON_ENGINE, name), true);
+  }
+}
 
 // ---------- quotes: only a quote at the start of a field opens a quoted section; an unclosed one stops ----------
 eq('mid-field quote is literal', E.parseCsv('size,note\n5" pipe,x\n6,y').rows, [['size', 'note'], ['5" pipe', 'x'], ['6', 'y']]);
@@ -331,6 +369,13 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   p = page(lang, 'shared-after', { JSON: OLD_JSON }); p.type(s.right, '[{"a":12345678901234567890,}]'); p.advance(300);
   eq(lang + ' old browser: syntax error still reported, no output', [p.get(s.left).value, p.get(s.p + '-status').classList.contains('error')], ['', true]);
 }
+// S2-10f: syntax errors name line, column and cause in the page language, without the "Error: " prefix;
+// before, the status was the prefix plus the browser's English message. Old browsers take the same path.
+for (const lang of ['en', 'zh', 'ja', 'ko']) for (const extra of [{}, { JSON: OLD_JSON }]) for (const [input, code, line, col, ch] of JSON_ERRORS) {
+  const p = page(lang, 'shared-after', extra); p.golden(); p.type(s.right, input); p.advance(300);
+  const tag = lang + (extra.JSON ? ' old browser' : '') + ' JSON syntax error ' + code;
+  eq(tag + ' in the page language, CSV pane emptied', [p.get(s.p + '-status').textContent, p.get(s.p + '-status').classList.contains('error'), p.get(s.left).value], [jsonErrorMessage(lang, code, line, col, ch), true, '']);
+}
 
 /* ── v2 page layout ── */
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -339,8 +384,9 @@ const allStrings = frontmatterStrings(readComponent('src/components/tools/CsvJso
 const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
-// S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; the hash pins that reviewed script.
-eq('reviewed page script is unchanged', hash(script), '0b5f3999caab4771a0d38cea46246a65bef94b1db7f33609906314aea0a6eedd');
+// S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; S2-10f (2026-10-09) added
+// the json-reason block and the localized JSON syntax error. The hash pins that reviewed script.
+eq('reviewed page script is unchanged', hash(script), 'cfb1a5bb53022fda90b390b5b1924d995841bf051e524e44e82f0bf3cf52209f');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
@@ -427,13 +473,18 @@ for (const lang of ['en','zh','ja','ko']) {
   // page's status line verbatim in the same section, and error: true expects an empty output).
   const notes = annotations(body, 'cj-check');
   check(lang+' at least 2 cj-check examples', notes.length >= 2, String(notes.length));
+  const statuses = [];
   for (const [i, note] of notes.entries()) {
     const spec = note.spec || {}, blocks = fencedBlocks(note.after);
     const r = runPage(lang, spec, spec.in ?? blocks[0]?.text ?? '');
     const want = spec.error ? '' : blocks[1]?.text;
     eq(lang+' cj-check #'+(i+1)+' output', r.out, want);
     if (spec.status || spec.error) check(lang+' cj-check #'+(i+1)+' status shown verbatim', note.after.includes(r.status), r.status);
+    statuses.push(r.status);
   }
+  // S2-10f: the limits section shows a JSON syntax error as the page now reports it.
+  check(lang+' shows a JSON syntax error example', statuses.some(st => st.startsWith(HAR_S[lang].errJsonAt.slice(0, HAR_S[lang].errJsonAt.indexOf('{line}')))), JSON.stringify(statuses));
+  check(lang+' no longer says JSON errors are in English', !/browser's own message|浏览器自带的英文|英語のメッセージ|영어 메시지/.test(body));
   // Every CSV / JSON code block on the page belongs to a cj-check example, and both directions appear.
   const covered = notes.reduce((n, note) => n + fencedBlocks(note.after).filter(b => b.lang === 'csv' || b.lang === 'json').length, 0);
   eq(lang+' every CSV / JSON block is a recomputed example', fencedBlocks(body).filter(b => b.lang === 'csv' || b.lang === 'json').length, covered);
