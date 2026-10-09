@@ -13,7 +13,9 @@
 // emoji outside the BMP is one row; the ja page examples; 4-language STRINGS have the same keys.
 // S2-9 (2026-10-09): analytics once per textarea change and distinct nonblank text; the
 // execCommand('copy') fallback; the status counts [?] characters apart from converted ones; the
-// nato-check / nato-rows worked examples on the four tool pages (see that section).
+// nato-check / nato-rows worked examples on the four tool pages (see that section); the four MDX
+// bodies rendered with @mdx-js/mdx: no code element with unpaired brackets, and the ja Limits item
+// shows [?] as one code element (it used to render "[?" in code and a plain "]").
 //
 // Run: node scripts/test-nato-phonetic-alphabet.mjs
 
@@ -551,6 +553,33 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check('nato-rows catches a wrong table cell', verifyRows({ spec: { in: 0, out: 1 }, after: '\n| In | Out |\n|---|---|\n| AB | Alfa Charlie |\n', lang: 'en' }) !== null);
   check('nato-rows accepts the page output', verifyRows({ spec: { in: 0, out: 1 }, after: '\n| In | Out |\n|---|---|\n| K7Q9 X2 | Kilo Seven Quebec Niner / X-ray Two |\n', lang: 'ja' }) === null);
   console.log('tool page examples: ' + (passes - before) + ' passed, ' + (failures - beforeFailures) + ' failed');
+}
+
+// ---------- rendered <code> elements around [?] (S2-9 review, 2026-10-09) ----------
+// The ja Limits list wrote <code>{"[?"}</code>], so the page showed a code element "[?" and a plain
+// "]". The four MDX bodies are rendered with @mdx-js/mdx and a minimal JSX runtime: that item must
+// render [?] as one code element, and no page may render a code element whose brackets do not pair.
+{
+  const { evaluate } = await import(require.resolve('@mdx-js/mdx'));
+  const Fragment = Symbol('Fragment');
+  const node = (type, props) => ({ type, props });
+  const esc = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const html = (n) => n == null || typeof n === 'boolean' ? '' : Array.isArray(n) ? n.map(html).join('')
+    : typeof n !== 'object' ? esc(String(n))
+      : n.type === Fragment ? html(n.props.children)
+        : typeof n.type === 'function' ? html(n.type(n.props))
+          : '<' + n.type + '>' + html(n.props.children) + '</' + n.type + '>';
+  const docs = readToolMdx('nato-phonetic-alphabet'), rendered = {};
+  const count = (text, ch) => text.split(ch).length - 1;
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const { default: Content } = await evaluate(docs[lang].body, { Fragment, jsx: node, jsxs: node });
+    rendered[lang] = html(Content({}));
+    const codes = [...rendered[lang].matchAll(/<code>([^<]*)<\/code>/g)].map((m) => m[1]);
+    check(lang + ' MDX renders code elements', codes.length > 0);
+    eq(lang + ' no rendered code element leaves a bracket unpaired', codes.filter((text) => count(text, '[') !== count(text, ']')), []);
+  }
+  eq('ja Limits item renders [?] as one code element', rendered.ja.match(/<li>ICAO のフォネティックコードには記号の単語がないため[^]*?<\/li>/)?.[0],
+    '<li>ICAO のフォネティックコードには記号の単語がないため、<code>-</code>、<code>_</code>、<code>.</code> などは <code>[?]</code> になります。「ハイフン」「アンダースコア」「ドット」と名前で伝えます。</li>');
 }
 
 process.removeListener('unhandledRejection', onUnhandled);
