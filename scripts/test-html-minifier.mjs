@@ -175,6 +175,9 @@ for (const [name, html] of [
 eq('pre in code: one LF is written back', run('<code><pre>\n\nfoo</pre></code>'), '<code><pre>\n\nfoo</pre></code>');
 eq('textarea in pre: one LF is written back', run('<pre><textarea>\n\nx</textarea></pre>'), '<pre><textarea>\n\nx</textarea></pre>');
 eq('nested pre with one authoring newline: nothing is added', run('<code><pre>\nfoo</pre></code>'), '<code><pre>foo</pre></code>');
+// Stated on the tool pages as the one exception: &#13; in a pre is written as a raw CR, which the
+// next parse reads as LF (a pre shows a CR as a space, CSS Text 3).
+eq('&#13; in a pre is written as the character itself', run('<pre>a&#13;b</pre>'), '<pre>a\rb</pre>');
 {
   // The added LF is only for the innerHTML call; the tree the engine was given is unchanged.
   const doc = toDom(parse5.parse('<pre><textarea>\n\nx</textarea></pre>'));
@@ -190,6 +193,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': page has the before / after blocks', blocks.length >= 2, String(blocks.length));
   if (blocks.length >= 2) eq(lang + ': after-minify block is the engine output', blocks[1], run(blocks[0]));
   check(lang + ': page no longer says inline spaces / nbsp / leading comments are lost', !/Note:read this|Price: 10 EUR|Note:</.test(mdx), lang);
+  check(lang + ': FAQ and body state the &#13; exception', mdx.includes('&#13;') && mdx.includes('<code>&amp;#13;</code>'), lang);
 }
 
 // Updated with each approved engine change (2026-10-09: <pre> / <textarea> leading LF written back,
