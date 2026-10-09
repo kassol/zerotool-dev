@@ -10,16 +10,16 @@ steps:
 faqItems:
   - question: "すべてのCSSプロパティに対応していますか？"
     id: "supported"
-    answer: "いいえ。内蔵の対応表が扱うのは主要なプロパティです。display、position、overflow、フレックスボックス、グリッド、配置、余白（margin・padding・gap）、サイズ（width・height）、文字（フォントサイズと太さ、行の高さ、字間、文字揃え）、デフォルトパレットと一致する色、ボーダー、border-radius、opacity、z-index、cursor、transition です。表にある値だけを変換し、それ以外の値はコメントとして残します。"
+    answer: "いいえ。内蔵の対応表が扱うのは主要なプロパティです。display、position、overflow、フレックスボックス、グリッド、配置、余白（margin・padding・gap）、サイズ（width・height）、文字（フォントサイズと太さ、行の高さ、字間、文字揃え）、デフォルトパレットと一致する色、ボーダー、border-radius、box-shadow、opacity、z-index、cursor、transition です。表にある値だけを変換し、それ以外の値はコメントとして残します。たとえば box-shadow は Tailwind のデフォルトの影と同じ値のときだけ、grid-template-columns は N 等分の列（repeat(N, 1fr) または repeat(N, minmax(0, 1fr))）のときだけ変換します。"
   - question: "対応するTailwindクラスがない場合はどうなりますか？"
     id: "unmapped"
-    answer: "/* keep: property: value */ というコメントとして出力し、手で直すべき宣言が分かるようにします。p-[13px] のような任意値の構文は生成しません。コメント内の宣言は小文字に変換されるので、文字列や URL の大文字・小文字は自分で戻してください。例外として、box-shadow は none 以外の値がすべて shadow クラスになるため、影は手で確認してください。"
+    answer: "/* keep: property: value */ というコメントとして、入力したときの大文字・小文字のまま出力し、手で直すべき宣言が分かるようにします。p-[13px] のような任意値の構文は生成しません。等価ではないのにコメントを残さない変換が 1 つあります。grid-column や grid-row で span の後に終了線を書いた値（span 2 / 4 など）は col-span-2 や row-span-2 になり、終了線が失われます。これは手で確認してください。"
   - question: "セレクター付きの CSS 規則をそのまま貼り付けられますか？"
     id: "selectors"
     answer: "貼り付けられます。.card { ... } のような規則を 1 つでも複数でも貼り付けると、セレクターごとにクラスをまとめ、セレクター名をコメントで示します。セレクターのない宣言だけを貼り付けることもできます。"
   - question: "Tailwind v3とv4のどちらに対応していますか？"
     id: "tailwind-v4"
-    answer: "対応表は Tailwind v3 のクラス名とデフォルトパレットに基づいています。v4 でもクラス名の大半はそのままですが、このツールの出力に影響する違いが 2 つあります。v4 のデフォルトカラーは OKLCH で定義し直されたため、#3b82f6 に対応させた text-blue-500 は v4 では少し違う青になります。また角丸のスケールが変わり、2px に対して出力する rounded-sm は v4 では 0.25rem です（v4 で 0.125rem は rounded-xs）。v4 を使う場合は、アップグレードガイドで色と角丸を確認してください。"
+    answer: "対応表は Tailwind v3 のクラス名とデフォルトパレットに基づいています。v4 でもクラス名の大半はそのままですが、このツールの出力に影響する違いが 3 つあります。v4 のデフォルトカラーは OKLCH で定義し直されたため、#3b82f6 に対応させた text-blue-500 は v4 では少し違う青になります。角丸のスケールが変わり、2px に対して出力する rounded-sm は v4 では 0.25rem です（v4 で 0.125rem は rounded-xs）。影のスケールも変わり、0 1px 2px 0 rgb(0 0 0 / 0.05) に対して出力する shadow-sm は v4 ではより大きな影になります（この値は v4 では shadow-xs で、接尾辞のない shadow は変わりません）。v4 を使う場合は、アップグレードガイドで色・角丸・影を確認してください。"
   - question: "データはサーバーに送信されますか？"
     id: "privacy"
     answer: "いいえ。変換はこのタブの中で内蔵の対応表を使って行い、CSS をサーバーに送ることも、ブラウザーのストレージに保存することもありません。「Tailwind に変換」を押したとき（または Ctrl/⌘+Enter）に、ページのアクセス解析がツール名と操作 convert を記録しますが、CSS の内容は含みません。"
@@ -112,6 +112,9 @@ py-2 px-4 m-0 top-0 z-10 overflow-hidden sticky opacity-50 cursor-pointer grid-c
 ## 制限
 
 - 値は対応表で引くだけで計算はしません。表にない値は、対応するクラスがあってもコメントとして残ります（上の `max-width`）。
+- `box-shadow` は Tailwind のデフォルトの影（`shadow-sm`〜`shadow-2xl` と `shadow-inner`、Tailwind のテーマと同じ書き方）だけを変換します。それ以外の影は、同じ影を `rgba(0, 0, 0, 0.05)` と書いた場合も含めてコメントとして残ります。
+- `grid-template-columns` と `grid-template-rows` は `repeat(N, 1fr)` と `repeat(N, minmax(0, 1fr))` だけを変換します。Tailwind の `grid-cols-N` は `repeat(N, minmax(0, 1fr))` なので、等分の幅より広い内容がある列は、`1fr` では広がりますが、クラスでは等幅のまま内容がはみ出します。
+- `grid-column: span 2 / 4` のように span の後に終了線を書いた値は `col-span-2` になり、終了線が失われます。`grid-row` も同じなので、手で確認してください。
 - 疑似クラス付きのセレクターは別グループになり、`hover:`・`focus:` の接頭辞は出力されません。
 - 接頭辞になるのは、幅がデフォルトのブレークポイント（640px、768px、1024px、1280px、1536px または同じ値の rem）の `@media (min-width: …)` だけです。他のメディアクエリ、`@supports`、コンテナクエリはグループのコメントに書くだけです。
 - カンマで区切った複数の transition、`cubic-bezier()`、スケール外の時間（0、75、100、150、200、300、500、700、1000 ms 以外）はコメントとして残ります。
