@@ -139,6 +139,17 @@ check('moderate preset has no nonce warnings', !keys(stateFor('moderate')).some(
   check('header keeps report-uri and frame-ancestors', header.includes('report-uri /csp') && header.includes("frame-ancestors 'none'"), header);
 }
 
+// ── 3b. Upgrade Insecure Requests §3.1: "Monitoring the upgrade-insecure-requests directive has
+// no effect: the directive is ignored when sent via a Content-Security-Policy-Report-Only header."
+{
+  const find = (st) => E.validatePolicy(st).find((w) => w.key === 'warnUpgradeReportOnly');
+  const hit = find(stateFor('strict', { mode: 'report-only' }));
+  check('report-only with upgrade-insecure-requests shows an info note', hit && hit.level === 'info', JSON.stringify(E.validatePolicy(stateFor('strict', { mode: 'report-only' }))));
+  check('enforce mode has no upgrade note', !find(stateFor('strict')));
+  check('report-only without upgrade-insecure-requests has no upgrade note', !find(stateFor('strict', { mode: 'report-only', upgrade: false })));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) check(lang + ' upgrade note names UIR §3.1', /§3\.1/.test(E.STRINGS[lang].warnUpgradeReportOnly || '') && /upgrade-insecure-requests/.test(E.STRINGS[lang].warnUpgradeReportOnly || ''));
+}
+
 // ── 4. Express output: per-response nonce through helmet function directives ──
 function runExpress(code) {
   let options = null;
