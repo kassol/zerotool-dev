@@ -1491,26 +1491,50 @@ const L = STRINGS[lang] || STRINGS.en;
         }
       });
 
+      function fallbackCopy(text, btn) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        /* select() moved focus to the textarea; give it back to the button. */
+        if (btn && btn.focus) btn.focus();
+        return !!ok;
+      }
+
       function attachCopy(btn, getter) {
         btn.addEventListener('click', async function () {
           var value = getter();
           if (btn.disabled || !value) return;
           resetCopies();
           var request = copyRequest;
+          var ok;
           try {
             await navigator.clipboard.writeText(value);
-            if (request !== copyRequest) return;
-            btn.classList.add('copied');
-            btn.textContent = T.copied;
-            copyTimers.push(window.setTimeout(function () {
-              if (request !== copyRequest) return;
-              btn.classList.remove('copied');
-              btn.textContent = T.copy;
-            }, 1500));
+            ok = true;
           } catch (e) {
-            if (request !== copyRequest) return;
-            showStatus(U.copyFailed, 'error', true);
+            ok = false;
           }
+          if (request !== copyRequest) return;
+          /* Clipboard API missing or refused: hidden textarea + execCommand('copy'), as in
+             ColorPaletteGeneratorTool.astro; both failing shows the copy failure. */
+          if (!ok) ok = fallbackCopy(value, btn);
+          if (!ok) {
+            showStatus(U.copyFailed, 'error', true);
+            return;
+          }
+          btn.classList.add('copied');
+          btn.textContent = T.copied;
+          copyTimers.push(window.setTimeout(function () {
+            if (request !== copyRequest) return;
+            btn.classList.remove('copied');
+            btn.textContent = T.copy;
+          }, 1500));
         });
       }
 

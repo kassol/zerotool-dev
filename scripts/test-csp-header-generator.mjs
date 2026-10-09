@@ -432,7 +432,7 @@ for (const older of ['resolve', 'reject']) for (const current of ['resolve', 're
   p.click('#csp-copy'); p.click('#csp-hash-copy'); p.copies[1][current](); await flushPage();
   const label = p.$('csp-hash-copy').textContent, status = p.$('csp-status').textContent;
   p.copies[0][older](); await flushPage();
-  check('cross button ' + older + '/' + current + ': latest request owns status', p.$('csp-copy').textContent === 'Copy' && p.$('csp-hash-copy').textContent === label && p.$('csp-status').textContent === status && p.exec.length === 0);
+  check('cross button ' + older + '/' + current + ': latest request owns status', p.$('csp-copy').textContent === 'Copy' && p.$('csp-hash-copy').textContent === label && p.$('csp-status').textContent === status && p.exec.length === (current === 'reject' ? 1 : 0));
 }
 for (const completion of ['resolve', 'reject']) {
   const p = page(spec); p.click('#csp-copy'); p.input('csp-preset', 'basic', 'change'); p.copies[0][completion](); await flushPage();
@@ -453,7 +453,22 @@ for (const kind of ['missing', 'throw']) {
   Object.setPrototypeOf(p.globals.navigator, proto);
   Object.defineProperty(p.globals.navigator, 'clipboard', { configurable: true, value: kind === 'missing' ? undefined : { writeText() { throw Error('sync failure'); } } });
   p.click('#csp-copy'); await flushPage();
-  check(kind + ': copy failure is visible without native/fallback access', !native && p.exec.length === 0 && p.$('csp-status').textContent === 'Copy failed.' && !p.$('csp-copy').disabled);
+  // 2026-10-09: the hidden-textarea execCommand fallback replaces "no fallback access".
+  check(kind + ': unavailable Clipboard API falls back to execCommand without reading the native clipboard', !native && p.exec.length === 1 && p.exec[0].command === 'copy' && p.exec[0].text === p.$('csp-output').textContent);
+  check(kind + ': fallback failure is visible and retryable', p.$('csp-status').textContent === 'Copy failed.' && !p.$('csp-copy').disabled && p.$('csp-copy').textContent === 'Copy');
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.options.fallbackSuccess = true;
+  p.click('#csp-copy'); p.copies[0].reject(Error('permission denied')); await flushPage();
+  check(lang + ': rejected Clipboard API copies through execCommand', p.exec.length === 1 && p.exec[0].text === p.$('csp-output').textContent, JSON.stringify(p.exec));
+  eq(lang + ': fallback success shows Copied and no error', [p.$('csp-copy').textContent, p.$('csp-status').textContent], [copiedLabel[lang], '']);
+  check(lang + ': focus returns to the Copy button after the fallback', p.document.activeElement === p.$('csp-copy'));
+  check(lang + ': the hidden textarea is removed', !p.document.body.querySelector('textarea[readonly]'));
+}
+{
+  const p = page(spec); p.options.fallbackSuccess = true;
+  p.click('#csp-copy'); p.input('csp-preset', 'basic', 'change'); p.copies[0].reject(Error('late')); await flushPage();
+  eq('a stale rejected copy does not run the fallback', p.exec.length, 0);
 }
 // ---------- S2-8d: first visit, analytics, source input, localized messages ----------
 // Before the fix: ztPersist.load() returns {} on a first visit, and loadPersisted() set
