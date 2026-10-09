@@ -389,5 +389,17 @@ eq('long result JSON complete',longPage.get('hha-json-output').textContent,longJ
 longPage.get('hha-copy-json').click();eq('long copy never truncates',longPage.clipboard.at(-1).value,longJSON);longPage.clipboard.at(-1).resolve();await settle();
 console.log('v2 page layout: '+(passes-v2Start)+' passed, '+failures+' total failures');
 
+// ---------- JSON view keys ----------
+// The JSON view used a plain object: a header named __proto__ was dropped and a header named
+// constructor became [null, value].
+const fixStart=passes;
+for(const lang of ['en','zh','ja','ko']){
+  const h=page(lang);
+  analyze(h,'HTTP/1.1 200 OK\nconstructor: a\n__proto__: b\nToString: c\nhasOwnProperty: d\nX-A: 1\nx-a: 2');
+  eq(lang+' JSON keeps every header name',h.get('hha-json-output').textContent,
+    '{\n  "_status": "HTTP/1.1 200 OK",\n  "constructor": "a",\n  "__proto__": "b",\n  "tostring": "c",\n  "hasownproperty": "d",\n  "x-a": [\n    "1",\n    "2"\n  ]\n}');
+}
+console.log('JSON keys: '+(passes-fixStart)+' passed, '+failures+' total failures');
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
