@@ -459,6 +459,8 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     // Bytes that are not valid UTF-8 keep the old one-byte-per-character reading (Latin-1)
     const latin = withApp1(photo, tiff({ ifd0: { Software: { bytes: [0x83, 0x65, 0x83, 0x58, 0x83, 0x67] } } }));
     eq('non-UTF-8 bytes stay Latin-1', E.parseExif(ab(latin)).exif.ifd0.Software, '\u0083e\u0083X\u0083g');
+    // A leading UTF-8 BOM (EF BB BF) is kept as U+FEFF, not dropped silently
+    eq('UTF-8 BOM in an ASCII tag is kept', E.parseExif(ab(withApp1(photo, tiff({ ifd0: { Software: { bytes: [0xEF, 0xBB, 0xBF, 0x41, 0] } } })))).exif.ifd0.Software, '\uFEFFA');
     // The zh / ja / ko limits say GBK, Shift_JIS and EUC-KR text shows garbled
     for (const [label, bytes, text] of [['GBK 中文', [0xD6, 0xD0, 0xCE, 0xC4], '中文'], ['Shift_JIS 日本語', [0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA], '日本語'], ['EUC-KR 한글', [0xC7, 0xD1, 0xB1, 0xDB], '한글']]) {
       const got = E.parseExif(ab(withApp1(photo, tiff({ ifd0: { Software: { bytes: [...bytes, 0] } } })))).exif.ifd0.Software;
