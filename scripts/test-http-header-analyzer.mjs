@@ -301,7 +301,7 @@ for(const lang of ['en','zh','ja','ko']){
   analyze(h,'unparseable');eq(lang+' input with no header line lists the line',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty+T.noteSep+T.invalidLines.replace('{n}','1'),false]);
 }
 await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
-const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":10676,"sha256":"930f8cffdeab31ce53bab7305e929c19bd116ca6332700d77a6a1fd9fd3e8514"}};
+const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":11960,"sha256":"1825140ab9007b5fc4539b4e02439a94d2bf6b5b33cbbfa85ae1f3c0a9cab8d8"}};
 for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
@@ -430,8 +430,8 @@ const names=p=>p.headers.map(h=>h.name);
   const lead=E.parseHeaders('\n\n  \nHTTP/1.1 204 No Content\nX-A: 1\n');
   eq('1 leading empty lines are skipped, trailing one leaves nothing',[lead.statusLine,names(lead),lead.stop],['HTTP/1.1 204 No Content',['X-A'],{line:6,rest:0}]);
   const verbose=E.parseHeaders('*   Trying 93.184.215.14:443...\n* Connected to example.com (93.184.215.14) port 443\n} [5 bytes data]\n> GET / HTTP/2\n> Host: example.com\n> user-agent: curl/8.7.1\n>\n* Request completely sent off\n< HTTP/2 200\n< content-type: text/html\n<\n<!doctype html>');
-  eq('1 curl -v request part',[verbose.type,verbose.statusLine,names(verbose)],['request','GET / HTTP/2',['Host','user-agent']]);
-  eq('1 curl -v stops at the bare > line',verbose.stop,{line:7,rest:5});
+  eq('1 curl -v: the response is analyzed',[verbose.type,verbose.statusLine,names(verbose)],['response','HTTP/2 200',['content-type']]);
+  eq('1 curl -v stops at the bare < line before the body',verbose.stop,{line:11,rest:1});
   const response=E.parseHeaders('< HTTP/1.1 200 OK\n< Server: nginx\n< Content-Type: text/xml;charset=utf-8\n<\n<?xml version="1.0"?>');
   eq('1 curl -v response part',[response.type,response.statusLine,names(response),hintsOf(response,'server').length],['response','HTTP/1.1 200 OK',['Server','Content-Type'],1]);
   eq('1 obs-fold still joins',E.parseHeaders('X-Long: a\n\tb\n  c').headers[0].value,'a b c');
@@ -524,6 +524,37 @@ const names=p=>p.headers.map(h=>h.name);
   const first=E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: max-age=0\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload');
   eq('7 a short first header still warns',first.headers[0].hints.length,3);
   eq('7 one header unchanged',E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload').headers[0].hints,[]);
+}
+// Review S2-8 S1 / S2: inputs with two messages. A start line (status line or request line) after
+// the empty line starts the next message; the last response is analyzed and the other messages
+// are listed. Lines after the stop that would be skipped (* and data lines) are not counted.
+{
+  const kinds=p=>p.other.map(o=>[o.kind,o.line,o.text]);
+  const v=E.parseHeaders('*   Trying 93.184.215.14:443...\n* Connected to example.com (93.184.215.14) port 443\n} [318 bytes data]\n> GET / HTTP/2\n> Host: example.com\n> User-Agent: curl/8.7.1\n> Accept: */*\n>\n* Request completely sent off\n{ [1256 bytes data]\n< HTTP/2 200\n< content-type: text/html\n< strict-transport-security: max-age=63072000\n<\n<!doctype html>\n<html>\n* Connection #0 to host example.com left intact');
+  eq('S1 curl -v: response analyzed',[v.type,v.statusLine,names(v)],['response','HTTP/2 200',['content-type','strict-transport-security']]);
+  eq('S1 curl -v: request listed',kinds(v),[['request',4,'GET / HTTP/2\nHost: example.com\nUser-Agent: curl/8.7.1\nAccept: */*']]);
+  eq('S2 curl -v: stop and lines left without * lines',v.stop,{line:14,rest:2});
+  const l=E.parseHeaders('HTTP/1.1 301 Moved Permanently\nLocation: https://example.com/\nContent-Length: 0\n\nHTTP/2 200\ncontent-type: text/html\n\n<!doctype html>');
+  eq('S1 curl -iL: last response analyzed',[l.statusLine,names(l)],['HTTP/2 200',['content-type']]);
+  eq('S1 curl -iL: redirect listed',kinds(l),[['response',1,'HTTP/1.1 301 Moved Permanently\nLocation: https://example.com/\nContent-Length: 0']]);
+  eq('S1 curl -iL: stop',l.stop,{line:7,rest:1});
+  const vl=E.parseHeaders('> GET /a HTTP/1.1\n> Host: example.com\n>\n< HTTP/1.1 302 Found\n< Location: /b\n<\n> GET /b HTTP/1.1\n> Host: example.com\n>\n< HTTP/1.1 200 OK\n< X-A: 1\n<');
+  eq('S1 curl -vL: last response analyzed, three others listed',[vl.statusLine,names(vl),vl.other.map(o=>o.kind+'@'+o.line)],['HTTP/1.1 200 OK',['X-A'],['request@1','response@4','request@7']]);
+  const rr=E.parseHeaders('GET / HTTP/1.1\nHost: example.com\n\nHTTP/1.1 200 OK\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload');
+  eq('S1 request then response: response analyzed',[rr.type,names(rr),kinds(rr).map(k=>k[0]+'@'+k[1]),rr.stop],['response',['Strict-Transport-Security'],['request@1'],null]);
+  const g=E.parseHeaders('X-A: 1\n\nX-B: 2');
+  eq('S1 groups without a start line: first group, rest reported',[names(g),g.other,g.stop],[['X-A'],[],{line:2,rest:1}]);
+  eq('S1 one message: no other messages',E.parseHeaders('HTTP/1.1 200 OK\nX-A: 1').other,[]);
+  for(const lang of ['en','zh','ja','ko']){
+    const T=strings[lang],h=page(lang);
+    analyze(h,'> GET / HTTP/2\n> Host: example.com\n>\n< HTTP/2 200\n< content-type: text/html\n<\n<!doctype html>');
+    eq(lang+' S1 status names the analyzed message and the others',h.get('hha-status').textContent,
+      T.analyzed.replace('{n}','1').replace('{s}','')+T.noteSep+(T.otherMessages??'').replace('{n}','1').replace('{line}','4')+T.noteSep+T.bodyStop.replace('{line}','6').replace('{n}','1'));
+    const sec=h.get('hha-panel-cat').querySelector('.hha-cat-other');
+    eq(lang+' S1 other messages section',[sec?.querySelector('.hha-cat-title').textContent,sec?.querySelectorAll('.hha-card').map(c=>[c.querySelector('.hha-line-no').textContent,c.querySelector('.hha-pre').textContent])],
+      [T.catOther+' 1',[[T.lineLabel.replace('{n}','1')+' · '+T.summaryRequest,'GET / HTTP/2\nHost: example.com']]]);
+    eq(lang+' S1 JSON is the response',JSON.parse(h.get('hha-json-output').textContent),{_status:'HTTP/2 200','content-type':'text/html'});
+  }
 }
 console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total failures');
 

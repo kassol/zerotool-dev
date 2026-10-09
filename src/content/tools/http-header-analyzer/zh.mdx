@@ -13,7 +13,7 @@ faqItems:
     answer: "不会。头部由页面脚本在浏览器里解析，不上传，也不保存。粘贴的头部里常有 Cookie 和令牌，所以本页不加载 Google Analytics 和 AdSense。分析结果和「复制 JSON」会原样保留 Authorization、Cookie 的值，分享前请先自己检查一遍。"
   - id: fetch-url
     question: "可以直接从 URL 抓取头部吗？"
-    answer: "不可以。工具不发任何请求，只读你粘贴的文本。可以从 curl -sS -D - -o /dev/null 网址、curl -i、curl -v 或浏览器开发者工具 Network 面板的 Raw 视图复制。工具在头部结束的空行处停下，会跳过 curl -v 的 * 行并去掉 > 和 < 前缀；curl -v 的输出请只贴请求或只贴响应，因为只读第一个空行之前的部分。"
+    answer: "不可以。工具不发任何请求，只读你粘贴的文本。可以从 curl -sS -D - -o /dev/null 网址、curl -i、curl -v 或浏览器开发者工具 Network 面板的 Raw 视图复制。工具会跳过 curl -v 的 * 行、去掉 > 和 < 前缀，并在响应体前的空行处停下。输入里有多条报文时（curl -v 的请求和响应，或 curl -iL 每次跳转的响应），分析最后一条响应，其余列出来。"
   - id: detect-type
     question: "如何区分请求和响应？"
     answer: "看第一行。以 HTTP/x.x 开头的是响应；GET、POST、PUT、DELETE、PATCH、OPTIONS、HEAD、TRACE、CONNECT 之一（须大写）后跟路径和 HTTP/x.x 的是请求。第一行都不符合时，有 :status 伪首部算响应，有 :method 算请求，两者都没有就当作只有头部行。"
@@ -143,7 +143,7 @@ Content-Length: 61
 <h2>限制</h2>
 <ul>
   <li>只有 GET、POST、PUT、DELETE、PATCH、OPTIONS、HEAD、TRACE、CONNECT 这 9 个大写方法会被识别为请求行。方法名区分大小写（RFC 9110 第 9.1 节），<code>get / HTTP/1.1</code> 会列在「未作为头部读取的行」里并附说明；PROPFIND 等其他方法的请求行会按「没有冒号」列出。</li>
-  <li>一次只读一条报文：读到头部之后的第一个空行就停下。<code>curl -v</code> 的输出依次是请求、一个只有 <code>&gt;</code> 的行、响应，整段贴进去只会读到请求，要看响应请单独贴响应部分。<code>*</code> 开头的行和 <code>{'} [5 bytes data]'}</code> 这样的数据行会被跳过，行首的 <code>&gt; </code>、<code>&lt; </code> 会被去掉。</li>
+  <li>每次只分析一条报文。头部在空行处结束（RFC 9112 第 2.1 节）；空行后如果是状态行或请求行，就算下一条报文：<code>curl -v</code> 先是请求再是响应，<code>curl -iL</code> 每次跳转一条响应。工具分析最后一条响应，其余列在「输入中的其他报文」里，状态行也会说明。空行后是其他内容时就停止读取，状态行写明还有几行没读。<code>*</code> 开头的行和 <code>{'} [5 bytes data]'}</code> 这样的数据行会被跳过，行首的 <code>&gt; </code>、<code>&lt; </code> 会被去掉。</li>
   <li>不是头部字段行的行（没有半角冒号，或者像中文输入法打出的 <code>Content-Type：text/html</code> 那样用了全角冒号）不计入头部，列在「未作为头部读取的行」里，并写明行号和原因；状态行也会给出行数。名称和冒号之间有空白的行也列在这里，因为 RFC 9112 第 5.1 节不允许这样写（服务器必须以 400 拒绝这样的请求）。</li>
   <li>HSTS 的 <code>max-age</code> 既可以是纯数字，也可以按 RFC 6797 第 6.1 节写成带引号的 <code>max-age="31536000"</code>，两种都能读出。响应里有多个 Strict-Transport-Security 时只检查第一个，其余的附一条说明，指出浏览器会忽略它们（RFC 6797 第 8.1 节）。</li>
   <li><code>'unsafe-inline'</code> 按指令逐条检查。同一指令里已有 nonce 或 hash 时，支持 CSP Level 2 及以上的浏览器会忽略 <code>'unsafe-inline'</code>（CSP Level 3 第 6.7.3.2 节），工具改为给出说明而不是警告——严格策略常这样写来照顾旧浏览器。没有 nonce 或 hash 的 <code>style-src 'unsafe-inline'</code> 仍会触发警告，而警告文字讲的是脚本。只写 <code>'strict-dynamic'</code> 的情况不在判断之内。</li>
