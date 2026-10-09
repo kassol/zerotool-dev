@@ -316,4 +316,34 @@ for (const lang of langKeys) {
   check(lang + ' body-text hint is the complement of large text', L.bodyHint.includes('24px') && L.bodyHint.includes('18.66px'), L.bodyHint);
 }
 check('hex inputs do not truncate pasted text at 7 characters', !/maxlength="7"/.test(source));
+
+// ---------- worked examples on the four tool pages ----------
+// {/* ccc-check: {"fg":"…","bg":"…"} */} types the two colours into the real page (page language of
+// the MDX file). The displayed ratio (e.g. `4.10 : 1`) must appear as code after the annotation (up to
+// the next annotation or H2); when body AA fails, the suggested HEX and its ratio must appear too.
+// With "error": true the foreground must be rejected and the page's error text must appear verbatim.
+{
+  const { toolMdxContract } = await import(pathToFileURL(join(root, 'scripts/lib/tool-mdx-contract.mjs')));
+  const codes = text => [...text.matchAll(/`([^`\n]+)`/g)].map(m => m[1]).concat([...text.matchAll(/<code>([^<]*)<\/code>/g)].map(m => m[1]));
+  const contract = toolMdxContract(SLUG, { annotations: [{ tag: 'ccc-check', min: 2, verify: ({ spec, after, lang }) => {
+    if (!spec || typeof spec.fg !== 'string' || typeof spec.bg !== 'string') return 'spec needs fg and bg';
+    const p = open(lang);
+    p.input('ccc-bg-hex', spec.bg); p.input('ccc-fg-hex', spec.fg);
+    const err = p.text('ccc-fg-error') || p.text('ccc-bg-error');
+    if (spec.error) {
+      if (!err) return 'expected an input error';
+      return after.includes(err) ? null : 'error text ' + JSON.stringify(err) + ' is not quoted after the annotation';
+    }
+    if (err) return 'page reports ' + JSON.stringify(err);
+    const c = codes(after), ratio = p.text('ccc-ratio-value');
+    if (!c.includes(ratio)) return 'ratio ' + JSON.stringify(ratio) + ' is not shown as code';
+    if (!p.el('ccc-suggestion').hidden) {
+      const hex = p.text('ccc-suggestion-hex'), sr = p.text('ccc-suggestion-ratio').replace(/^→ /, '');
+      if (!c.includes(hex)) return 'suggestion ' + JSON.stringify(hex) + ' is not shown as code';
+      if (!c.includes(sr)) return 'suggestion ratio ' + JSON.stringify(sr) + ' is not shown as code';
+    } else if (spec.sug) return 'expected a suggestion';
+    return null;
+  } }] });
+  for (const r of contract.results) check('MDX contract: ' + r.message, r.ok);
+}
 console.log(`\n${passes} passed, ${failures} failed`);process.exit(failures?1:0);
