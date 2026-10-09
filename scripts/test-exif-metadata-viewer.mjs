@@ -65,6 +65,86 @@ function markers(buf) {
 // Insert a segment right after SOI
 const insert = (jpeg, seg) => Buffer.concat([jpeg.subarray(0, 2), seg, jpeg.subarray(2)]);
 const segment = (marker, payload) => Buffer.concat([Buffer.from([0xFF, marker, (payload.length + 2) >> 8, (payload.length + 2) & 255]), payload]);
+// ---------- a small big-endian TIFF writer for test files with known fields ----------
+// spec: { ifd0: {...}, exif: {...}, gps: {...} } with tag names below. A string value is written
+// as UTF-8 bytes in an ASCII-type field (what ExifTool 13.55 does for non-ASCII text); an object
+// { utf8: 'text' } uses the Exif 3.0 UTF-8 type (129); { bytes: [...] } writes raw ASCII-type bytes
+// (add `offset` to point the value somewhere else). Rationals are 'num/den' strings or arrays of
+// them. opts.ifd0Offset overrides the IFD0 pointer in the header.
+const TAGS = {
+  ifd0: { Make: [0x010F, 2], Model: [0x0110, 2], Orientation: [0x0112, 3], Software: [0x0131, 2], DateTime: [0x0132, 2] },
+  exif: { ExposureTime: [0x829A, 5], FNumber: [0x829D, 5], ISOSpeedRatings: [0x8827, 3], DateTimeOriginal: [0x9003, 2], OffsetTimeOriginal: [0x9011, 2], FocalLength: [0x920A, 5], LensModel: [0xA434, 2] },
+  gps: { GPSLatitudeRef: [0x0001, 2], GPSLatitude: [0x0002, 5], GPSLongitudeRef: [0x0003, 2], GPSLongitude: [0x0004, 5], GPSAltitudeRef: [0x0005, 1], GPSAltitude: [0x0006, 5], GPSMapDatum: [0x0012, 2] },
+};
+function tiff(spec, opts = {}) {
+  const chunks = [];
+  let size = 8;
+  const header = Buffer.alloc(8);
+  header.write('MM', 0, 'latin1'); header.writeUInt16BE(42, 2);
+  chunks.push(header);
+  function encode(type, value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (value.utf8 !== undefined) return { type: 129, data: Buffer.concat([Buffer.from(value.utf8, 'utf8'), Buffer.from([0])]), count: Buffer.byteLength(value.utf8) + 1 };
+      return { type: 2, data: Buffer.from(value.bytes), count: value.bytes.length, offset: value.offset };
+    }
+    if (type === 2) { const d = Buffer.concat([Buffer.from(String(value), 'utf8'), Buffer.from([0])]); return { type, data: d, count: d.length }; }
+    if (type === 1) return { type, data: Buffer.from([Number(value)]), count: 1 };
+    if (type === 3) { const d = Buffer.alloc(2); d.writeUInt16BE(Number(value)); return { type, data: d, count: 1 }; }
+    if (type === 4) { const d = Buffer.alloc(4); d.writeUInt32BE(Number(value)); return { type, data: d, count: 1 }; }
+    const list = Array.isArray(value) ? value : [value];
+    const d = Buffer.alloc(8 * list.length);
+    list.forEach((r, i) => { const [n, den] = String(r).split('/').map(Number); d.writeUInt32BE(n, i * 8); d.writeUInt32BE(den ?? 1, i * 8 + 4); });
+    return { type: 5, data: d, count: list.length };
+  }
+  function writeIfd(fields, table, extra = []) {
+    const entries = Object.entries(fields || {}).map(([name, value]) => [table[name][0], encode(table[name][1], value)]);
+    for (const [tag, e] of extra) entries.push([tag, e]);
+    entries.sort((a, b) => a[0] - b[0]);
+    const start = size;
+    const ifd = Buffer.alloc(2 + entries.length * 12 + 4);
+    ifd.writeUInt16BE(entries.length, 0);
+    let dataAt = start + ifd.length;
+    const data = [];
+    entries.forEach(([tag, e], i) => {
+      const o = 2 + i * 12;
+      ifd.writeUInt16BE(tag, o); ifd.writeUInt16BE(e.type, o + 2); ifd.writeUInt32BE(e.count, o + 4);
+      if (e.data.length <= 4 && e.offset === undefined) e.data.copy(ifd, o + 8);
+      else { ifd.writeUInt32BE(e.offset ?? dataAt, o + 8); const padded = e.data.length % 2 ? Buffer.concat([e.data, Buffer.from([0])]) : e.data; data.push(padded); dataAt += padded.length; }
+      e.at = o + 8; e.ifd = ifd;
+    });
+    chunks.push(ifd, ...data);
+    size = dataAt;
+    return { start, entries };
+  }
+  const pointer = (tag) => [tag, { type: 4, data: Buffer.alloc(4), count: 1 }];
+  const sub = [];
+  if (spec.exif) sub.push(pointer(0x8769));
+  if (spec.gps) sub.push(pointer(0x8825));
+  const ifd0 = writeIfd(spec.ifd0, TAGS.ifd0, sub);
+  header.writeUInt32BE(opts.ifd0Offset ?? ifd0.start, 4);
+  for (const [key, tag] of [['exif', 0x8769], ['gps', 0x8825]]) {
+    if (!spec[key]) continue;
+    const at = writeIfd(spec[key], TAGS[key]).start;
+    const e = ifd0.entries.find(([t]) => t === tag)[1];
+    e.ifd.writeUInt32BE(at, e.at);
+  }
+  return Buffer.concat(chunks);
+}
+// Put an EXIF APP1 holding `tiffBytes` right after SOI, replacing any APP1 already there.
+function withApp1(jpeg, tiffBytes) {
+  const app1 = segment(0xE1, Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiffBytes]));
+  const parts = [jpeg.subarray(0, 2), app1];
+  let pos = 2;
+  while (pos < jpeg.length) {
+    const m = jpeg.readUInt16BE(pos);
+    if (m === 0xFFDA) { parts.push(jpeg.subarray(pos)); break; }
+    const end = pos + 2 + jpeg.readUInt16BE(pos + 2);
+    if (m !== 0xFFE1) parts.push(jpeg.subarray(pos, end));
+    pos = end;
+  }
+  return Buffer.concat(parts);
+}
+
 // Replace the APP1 of a JPEG with a little-endian (II) one: IFD0 = Make ("Canon") + Orientation,
 // laid out by hand so the test does not rely on the tool's own writer
 function withLittleEndianExif(jpeg, orientation) {
@@ -195,9 +275,12 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
   const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
-  const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
-  function ui(lang = 'en', shellFirst = false) {
-    const ids = new Map(), readers = [], images = [], downloads = [], copied = [], revoked = [], urls = new Map(), timers = [], clears = [];
+  const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); await new Promise((r) => setImmediate(r)); };
+  const unhandledAll = [];
+  process.on('unhandledRejection', (e) => unhandledAll.push(e));
+  function ui(lang = 'en', shellFirst = false, opts = {}) {
+    const ids = new Map(), readers = [], images = [], downloads = [], copied = [], revoked = [], urls = new Map(), timers = [], clears = [], execCalls = [];
+    const unhandledFrom = unhandledAll.length;
     let document, urlId = 0;
     function matches(n, selector) {
       return selector.split(',').some(s => {
@@ -227,6 +310,7 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
       dispatch(type, extra = {}) { const e = { target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() {}, ...extra }; for (const fn of this.listeners[type] || []) fn(e); return e; }
       click() { if (this.disabled) return; if (this.tagName === 'A' && this.download) downloads.push({ name: this.download, blob: urls.get(this.href) }); this.dispatch('click'); }
       focus() { document.activeElement = this; }
+      select() { document.selected = this; document.activeElement = this; }
     }
     const body = new Element('body'), widget = new Element('div'); widget.className = 'tool-widget'; body.appendChild(widget);
     const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
@@ -239,10 +323,16 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
       stack.at(-1).appendChild(n); if (n.id) ids.set(n.id, n); if (!voids.has(m[1]) && !m[2].endsWith('/')) stack.push(n);
     }
     const get = id => { if (!ids.has(id)) throw new Error('Missing real element ' + id); return ids.get(id); };
-    document = new Element('document'); Object.assign(document, { body, documentElement: { lang }, activeElement: body, getElementById: get, createElement: tag => new Element(tag), querySelector: s => s === '.tool-widget' ? widget : widget.querySelector(s), querySelectorAll: s => widget.querySelectorAll(s) });
+    document = new Element('document'); Object.assign(document, { body, documentElement: { lang }, activeElement: body, getElementById: get, createElement: tag => new Element(tag), querySelector: s => s === '.tool-widget' ? widget : widget.querySelector(s), querySelectorAll: s => widget.querySelectorAll(s), execCommand(cmd) { execCalls.push({ cmd, text: document.selected?.value ?? '' }); if (opts.exec === 'throw') throw new Error('execCommand'); return opts.exec ?? false; } });
     class Reader { constructor() { readers.push(this); } readAsArrayBuffer(file) { this.file = file; } }
     class Image { constructor() { images.push(this); } }
-    const sandbox = { t: clientStrings(lang).CLIENT_T, document, FileReader: Reader, Image, Blob, ArrayBuffer, DataView, Uint8Array, console, navigator: { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } }, URL: { createObjectURL(b) { const u = 'blob:test-' + ++urlId; urls.set(u, b); return u; }, revokeObjectURL(u) { revoked.push(u); } }, setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout() {}, _slug: 'exif-metadata-viewer', window: { ztPersist: { clear: slug => clears.push(slug) } } };
+    const clipboardModes = {
+      ok: { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } },
+      missing: {},
+      reject: { clipboard: { writeText() { return Promise.reject(new Error('NotAllowedError')); } } },
+      throw: { clipboard: { writeText() { throw new Error('writeText'); } } },
+    };
+    const sandbox = { t: clientStrings(lang).CLIENT_T, document, FileReader: Reader, Image, Blob, ArrayBuffer, DataView, Uint8Array, TextDecoder, console, navigator: clipboardModes[opts.clipboard ?? 'ok'], URL: { createObjectURL(b) { const u = 'blob:test-' + ++urlId; urls.set(u, b); return u; }, revokeObjectURL(u) { revoked.push(u); } }, setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout() {}, _slug: 'exif-metadata-viewer', window: { ztPersist: { clear: slug => clears.push(slug) } } };
     const context = vm.createContext(sandbox);
     if (shellFirst) vm.runInContext(shortcut, context);
     vm.runInContext(script, context, { filename: 'ExifMetadataViewerTool.astro' });
@@ -257,7 +347,7 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     function complete(reader, bytes = photo) { reader.onload({ target: { result: ab(bytes) } }); }
     function clear() { get('emv-reset').focus(); return document.dispatch('keydown', { ctrlKey: true, key: 'l' }); }
     function state() { return { preview: get('emv-preview-img').src, name: get('emv-filename').textContent, dims: get('emv-dimensions').textContent, result: get('emv-result-area').style.display, actions: get('emv-actions').style.display, status: get('emv-status').textContent }; }
-    return { get, readers, images, downloads, copied, revoked, clears, complete, input, clear, state, document, timers };
+    return { get, readers, images, downloads, copied, revoked, clears, complete, input, clear, state, document, timers, execCalls, get unhandled() { return unhandledAll.slice(unhandledFrom); } };
   }
   function visible(node) { for (; node; node = node.parentElement) if (node.hidden || node.style.display === 'none') return false; return true; }
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
@@ -354,6 +444,68 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     eq('current cleaned export retains exact expected bytes', Buffer.from(await p.downloads.at(-1).blob.arrayBuffer()).equals(cleaned), true);
   }
   console.log(`Page lifecycle: ${passes - base.passes} passed, ${failures - base.failures} failed`);
+
+  // ---------- S2-9c fixes: text decoding, malformed offsets, copy fallback ----------
+  {
+    const base2 = { passes, failures };
+    // Text tags written as UTF-8 bytes in an ASCII-type field (ExifTool 13.55 writes non-ASCII
+    // text this way) used to be read one byte per character: 微信 showed as å¾®ä¿¡.
+    const textJpeg = withApp1(photo, tiff({ ifd0: { Make: 'Xiaomi', Model: 'テスト機', Software: '相册编辑 3.2' } }));
+    const textExif = E.parseExif(ab(textJpeg)).exif;
+    eq('UTF-8 bytes in ASCII tags are decoded', [textExif.ifd0.Make, textExif.ifd0.Model, textExif.ifd0.Software], ['Xiaomi', 'テスト機', '相册编辑 3.2']);
+    // Bytes that are not valid UTF-8 keep the old one-byte-per-character reading (Latin-1)
+    const latin = withApp1(photo, tiff({ ifd0: { Software: { bytes: [0x83, 0x65, 0x83, 0x58, 0x83, 0x67] } } }));
+    eq('non-UTF-8 bytes stay Latin-1', E.parseExif(ab(latin)).exif.ifd0.Software, '\u0083e\u0083X\u0083g');
+    // An IFD offset past the end of the file used to throw a RangeError out of parseExif and
+    // stripMetadata: the page stayed on "Reading metadata…" and Download threw.
+    // The offset is inside the file when counted from its start but past the end when counted
+    // from the TIFF header, which is where IFD offsets count from.
+    const badLength = withApp1(photo, tiff({ ifd0: { Make: 'Apple' } })).length;
+    const bad = withApp1(photo, tiff({ ifd0: { Make: 'Apple' } }, { ifd0Offset: badLength - 6 }));
+    let threw = null, parsedBad = null;
+    try { parsedBad = E.parseExif(ab(bad)); } catch (error) { threw = error.name; }
+    eq('bad IFD offset does not throw', threw, null);
+    eq('bad IFD offset is flagged', parsedBad && parsedBad.corrupt, true);
+    let stripThrew = null;
+    try { E.stripMetadata(ab(bad)); } catch (error) { stripThrew = error.name; }
+    eq('strip with a bad IFD offset does not throw', stripThrew, null);
+    // A value offset past the end: the other tags are still read
+    const badValue = withApp1(photo, tiff({ ifd0: { Make: 'Apple', Model: { bytes: [65, 66, 67, 68, 69, 70, 71, 0], offset: 0x7FFFFF00 } } }));
+    const pv = E.parseExif(ab(badValue));
+    eq('bad value offset keeps the other tags', [pv.exif && pv.exif.ifd0.Make, pv.corrupt], ['Apple', true]);
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      const p = ui(lang);
+      let err = null;
+      try { p.complete(p.input('broken.jpg'), bad); } catch (error) { err = error.name; }
+      eq(lang + ' malformed EXIF: page does not throw', err, null);
+      eq(lang + ' malformed EXIF: localized notice', p.get('emv-status').textContent, clientStrings(lang).CLIENT_T.errCorrupt);
+      eq(lang + ' malformed EXIF: result and actions shown', [visible(p.get('emv-result-area')), visible(p.get('emv-actions'))], [true, true]);
+      let dlErr = null;
+      try { p.get('emv-download').click(); } catch (error) { dlErr = error.name; }
+      eq(lang + ' malformed EXIF: download works', [dlErr, p.downloads.length], [null, 1]);
+    }
+    // Copy: the Clipboard API may be missing (non-secure context) or refuse. The page falls back
+    // to a hidden textarea + execCommand('copy') and reports a failure in the page language.
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      const L = clientStrings(lang).CLIENT_T;
+      for (const mode of ['missing', 'reject', 'throw']) for (const exec of [true, false]) {
+        const p = ui(lang, false, { clipboard: mode, exec });
+        p.complete(p.input('photo.jpg'));
+        const btn = p.get('emv-copy-json');
+        let clickError = null;
+        try { btn.click(); } catch (error) { clickError = error.name; }
+        await settle();
+        const label = lang + ' copy ' + mode + ' execCommand=' + exec;
+        eq(label + ': click does not throw', clickError, null);
+        eq(label + ': fallback tried with the JSON', p.execCalls.map((c) => c.text.slice(0, 20)), [JSON.stringify(E.parseExif(ab(photo)).exif, null, 2).slice(0, 20)]);
+        eq(label + ': button text', btn.textContent, exec ? L.copied : L.copyFailed);
+        eq(label + ': helper textarea removed', p.document.body.children.filter((n) => n.tagName === 'TEXTAREA').length, 0);
+        eq(label + ': focus back on the button', p.document.activeElement === btn, true);
+        eq(label + ': no unhandled rejection', p.unhandled.length, 0);
+      }
+    }
+    console.log(`S2-9c fixes: ${passes - base2.passes} passed, ${failures - base2.failures} failed`);
+  }
 }
 
 
