@@ -301,7 +301,7 @@ for(const lang of ['en','zh','ja','ko']){
   analyze(h,'unparseable');eq(lang+' input with no header line lists the line',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty+T.noteSep+T.invalidLines.replace('{n}','1'),false]);
 }
 await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
-const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":9015,"sha256":"2e4044fd5545fa9c052834baa9bbbd1d2830c25bf977ae1c60aa4cc111ebe763"}};
+const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":9461,"sha256":"4551c1876c8a05ac4821573c8c4a96b666bfada32558f50e751b8f174e8dfb8e"}};
 for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
@@ -487,6 +487,21 @@ const names=p=>p.headers.map(h=>h.name);
     const T=strings[lang],h=page(lang);analyze(h,'GET / HTTP/1.1\nHost : example.com');
     eq(lang+' 4 note',h.get('hha-panel-cat').querySelector('.hha-card-invalid .hha-hint')?.textContent,T.hintWarn+': '+T.problems?.spaceBeforeColon);
     eq(lang+' 4 note names the RFC rule',/9112/.test(T.problems?.spaceBeforeColon??''),true);
+  }
+}
+// 5. Method names are case-sensitive (RFC 9110 §9.1): "get" is not GET.
+{
+  const p=E.parseHeaders('get /api HTTP/1.1\nHost: example.com');
+  eq('5 lowercase method is not a request line',[p.type,p.statusLine,names(p)],['unknown',null,['Host']]);
+  eq('5 lowercase method listed with its own reason',p.invalid,[{line:1,text:'get /api HTTP/1.1',problem:'methodCase',method:'get',upper:'GET'}]);
+  const abs=E.parseHeaders('Post https://example.com:8443/a HTTP/1.1\nHost: example.com');
+  eq('5 absolute-form target with a colon is not read as a header',[abs.statusLine,names(abs),abs.invalid.map(x=>x.problem)],[null,['Host'],['methodCase']]);
+  eq('5 uppercase still a request',E.parseHeaders('GET https://example.com:8443/a HTTP/1.1\nHost: a').type,'request');
+  eq('5 lowercase line later is just a line without a colon',E.parseHeaders('X-A: 1\nget / HTTP/1.1').invalid.map(x=>x.problem),['noColon']);
+  for(const lang of ['en','zh','ja','ko']){
+    const T=strings[lang],h=page(lang);analyze(h,'get /api HTTP/1.1\nHost: example.com');
+    eq(lang+' 5 note names the method',h.get('hha-panel-cat').querySelector('.hha-card-invalid .hha-hint')?.textContent,T.hintWarn+': '+(T.problems?.methodCase??'').replace('{method}','get').replace('{upper}','GET'));
+    eq(lang+' 5 note has placeholders',/\{method\}/.test(T.problems?.methodCase??'')&&/\{upper\}/.test(T.problems.methodCase),true);
   }
 }
 console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total failures');

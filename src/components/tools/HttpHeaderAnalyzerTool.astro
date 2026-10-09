@@ -33,6 +33,7 @@ const STRINGS = {
       noColon: 'No colon (:), so this is not a header field line (RFC 9112 section 5). It is not counted as a header.',
       fullwidthColon: 'This line uses a full-width colon (：). HTTP accepts only the ASCII colon (:), so it is not a header field line. Retype the colon as ASCII.',
       spaceBeforeColon: 'Whitespace between the field name and the colon. RFC 9112 section 5.1 does not allow it: a server must reject such a request with 400, and a proxy must remove the whitespace from a response before forwarding it. It is not counted as a header.',
+      methodCase: 'Method names are case-sensitive (RFC 9110 section 9.1), so “{method}” is not the {upper} method. This line is not read as a request line; an origin server that does not recognize a method should answer 501 (Not Implemented).',
       noName: 'The line starts with a colon, so the field name is empty. It is not counted as a header.',
     },
     noteSep: ' ',
@@ -68,6 +69,7 @@ const STRINGS = {
       noColon: '没有冒号（:），不是头部字段行（RFC 9112 第 5 节），不计入头部。',
       fullwidthColon: '这一行用的是全角冒号（：）。HTTP 只认半角冒号（:），所以它不算头部字段行，请改成半角冒号。',
       spaceBeforeColon: '字段名和冒号之间有空白。RFC 9112 第 5.1 节不允许这样写：服务器必须以 400 拒绝这样的请求，代理转发响应前必须去掉这段空白。不计入头部。',
+      methodCase: '方法名区分大小写（RFC 9110 第 9.1 节），「{method}」不是 {upper} 方法，所以这一行不按请求行读取。源服务器遇到不认识的方法时，应返回 501（Not Implemented）。',
       noName: '这一行以冒号开头，字段名为空，不计入头部。',
     },
     noteSep: '',
@@ -103,6 +105,7 @@ const STRINGS = {
       noColon: 'コロン（:）がないため、ヘッダーフィールドの行ではありません（RFC 9112 5 節）。ヘッダーには数えません。',
       fullwidthColon: '全角コロン（：）が使われています。HTTP で区切りになるのは半角コロン（:）だけなので、この行はヘッダーフィールドとして読めません。半角で入力し直してください。',
       spaceBeforeColon: 'フィールド名とコロンの間に空白があります。RFC 9112 5.1 節はこれを認めておらず、サーバーはこのようなリクエストを 400 で拒否し、プロキシはレスポンスを転送する前に空白を取り除かなければなりません。ヘッダーには数えません。',
+      methodCase: 'メソッド名は大文字・小文字を区別するため（RFC 9110 9.1 節）、「{method}」は {upper} メソッドではありません。この行はリクエスト行として読みません。オリジンサーバーは認識できないメソッドに 501（Not Implemented）を返すべきとされています。',
       noName: 'コロンで始まっていて、フィールド名が空です。ヘッダーには数えません。',
     },
     noteSep: '',
@@ -138,6 +141,7 @@ const STRINGS = {
       noColon: '콜론(:)이 없어 헤더 필드 줄이 아닙니다(RFC 9112 5절). 헤더 수에 넣지 않습니다.',
       fullwidthColon: '전각 콜론(：)을 썼습니다. HTTP는 반각 콜론(:)만 구분자로 인식하므로 이 줄은 헤더 필드로 읽을 수 없습니다. 반각으로 다시 입력하세요.',
       spaceBeforeColon: '필드 이름과 콜론 사이에 공백이 있습니다. RFC 9112 5.1절은 이를 허용하지 않으며, 서버는 이런 요청을 400으로 거부해야 하고 프록시는 응답을 전달하기 전에 공백을 없애야 합니다. 헤더 수에 넣지 않습니다.',
+      methodCase: '메서드 이름은 대소문자를 구분하므로(RFC 9110 9.1절) 이 줄의 ‘{method}’ 메서드는 {upper} 메서드와 다릅니다. 이 줄은 요청 줄로 읽지 않습니다. 오리진 서버는 알 수 없는 메서드에 501(Not Implemented)로 응답해야 합니다.',
       noName: '콜론으로 시작해 필드 이름이 비어 있습니다. 헤더 수에 넣지 않습니다.',
     },
     noteSep: ' ',
@@ -392,7 +396,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       function detectType(firstLine) {
         if (/^HTTP\/\d/.test(firstLine)) return 'response';
-        if (/^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|TRACE|CONNECT)\s+\S+\s+HTTP\/\d/i.test(firstLine)) return 'request';
+        // RFC 9110 §9.1: method names are case-sensitive.
+        if (/^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|TRACE|CONNECT)\s+\S+\s+HTTP\/\d/.test(firstLine)) return 'request';
         if (/:\s*/.test(firstLine)) return 'unknown';
         return 'unknown';
       }
@@ -455,6 +460,11 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var headers = [];
         // Lines that are not header field lines (RFC 9112 §5), with the input line number.
         var invalid = [];
+        var methodCase = type === 'unknown' && /^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|TRACE|CONNECT)\s+\S+\s+HTTP\/\d/i.exec(lines[0].text);
+        if (methodCase) {
+          invalid.push({ line: lines[0].line, text: lines[0].text, problem: 'methodCase', method: lines[0].text.split(/\s/)[0], upper: methodCase[1].toUpperCase() });
+          headerLines = lines.slice(1);
+        }
         for (var i = 0; i < headerLines.length; i++) {
           var line = headerLines[i].text;
           var lineNo = headerLines[i].line;
@@ -576,7 +586,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
       }
 
       function problemText(bad) {
-        return t.problems[bad.problem] || t.problems.noColon;
+        var text = t.problems[bad.problem] || t.problems.noColon;
+        return text.replace('{method}', bad.method || '').replace('{upper}', bad.upper || '');
       }
 
       function renderCategorized(parsed) {
