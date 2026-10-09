@@ -15,7 +15,10 @@
 //     space; only HTML ASCII whitespace (tab, LF, FF, CR, space) is collapsed now;
 //   - in fragment mode only <body> children were written, so a comment before the first
 //     element (the parser puts it on the Document) and <title> / <link> / <meta> / <style>
-//     before body content (the parser puts them in <head>) were dropped.
+//     before body content (the parser puts them in <head>) were dropped;
+//   - <pre> / <textarea> content was written with innerHTML only: the parser ignores one LF
+//     after the start tag and the serializer does not write it back, so a leading blank line
+//     was lost on the next parse (the text and the display changed).
 // Also: the page's "before / after minify" example is the engine output.
 // Full page + shared keyboard events cover modes, clear, and controlled clipboard/timer lifetimes.
 //
@@ -108,6 +111,38 @@ eq('whitespace-only text between inline elements stays a space', run('<p><span>A
 eq('boolean attribute', run('<input disabled="">'), '<input disabled>');
 eq('full document', run('<!DOCTYPE html><html><head><title>t</title></head><body><p> a </p></body></html>'), '<!doctype html><html><head><title>t</title></head><body><p>a</p></body></html>');
 
+// ── <pre> / <textarea> leading blank line ──
+// HTML Standard: the parser ignores one LF right after <pre> / <textarea> ("Newlines at the
+// start of pre blocks are ignored as an authoring convenience"), and the fragment serializer
+// "does not roundtrip an initial U+000A (LF) character in pre, textarea, or listing elements".
+// innerHTML alone therefore lost a leading blank line on the next parse (before the fix).
+function textOf(html, tag) {
+  const find = (n) => {
+    if (n.tagName === tag) return n;
+    for (const c of (n.content || n).childNodes || []) { const f = find(c); if (f) return f; }
+    return null;
+  };
+  const text = (n) => n.nodeName === '#text' ? n.value : ((n.content || n).childNodes || []).map(text).join('');
+  const el = find(parse5.parse(html));
+  return el ? text(el) : null;
+}
+for (const [name, html, tag] of [
+  ['pre with a leading blank line', '<pre>\n\nfoo</pre>', 'pre'],
+  ['pre with two leading blank lines', '<pre>\n\n\nfoo\n</pre>', 'pre'],
+  ['pre with newline character references', '<pre>&#10;&#10;foo</pre>', 'pre'],
+  ['textarea with a leading blank line', '<textarea>\n\nbar</textarea>', 'textarea'],
+  ['pre with one authoring newline', '<pre>\nfoo</pre>', 'pre'],
+  ['pre that starts with an element', '<pre><code>\nx</code></pre>', 'pre'],
+  ['pre that is only newlines', '<pre>\n\n</pre>', 'pre'],
+]) {
+  for (const mode of ['minify', 'beautify']) {
+    eq(name + ' (' + mode + ') has the same text after a reparse', textOf(run(html, mode), tag), textOf(html, tag));
+  }
+}
+eq('pre leading blank line: one LF is written back', run('<pre>\n\nfoo</pre>'), '<pre>\n\nfoo</pre>');
+eq('pre authoring newline: nothing is added', run('<pre>\nfoo</pre>'), '<pre>foo</pre>');
+eq('textarea leading blank line: one LF is written back', run('<textarea>\n\nbar</textarea>'), '<textarea>\n\nbar</textarea>');
+
 // ── tool pages: before / after example ──
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/html-minifier', lang + '.mdx'), 'utf8');
@@ -117,7 +152,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': page no longer says inline spaces / nbsp / leading comments are lost', !/Note:read this|Price: 10 EUR|Note:</.test(mdx), lang);
 }
 
-eq('engine bytes unchanged', createHash('sha256').update(source.slice(startIndex, endIndex + END_MARK.length)).digest('hex'), 'd448bd9c8374c23bf22e92a9e5b2340f99124cb96d651a7b2d8e95d09fe47c09');
+// Updated with each approved engine change (2026-10-09: <pre> / <textarea> leading LF written back).
+eq('engine bytes unchanged', createHash('sha256').update(source.slice(startIndex, endIndex + END_MARK.length)).digest('hex'), 'b371c5205b7d93e25805aa34c4a6e55c43f84510f577fefa38d43e1a6e45f8f4');
 
 // Complete page events + actual shared shortcut. Parsing uses the same parse5 boundary above.
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
