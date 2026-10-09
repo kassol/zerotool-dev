@@ -159,6 +159,18 @@ for (const key of ['outOfRange', 'overflow']) {
   eq('label ' + key + ' in 4 languages', n, 4);
 }
 check('labels passed to the script', /data-out-of-range=\{L\.outOfRange\}/.test(source) && /data-overflow=\{L\.overflow\}/.test(source));
+// ko: the ko tool page calls the 80-bit part 무작위 부분; the column label and the tools.ts
+// description use the same term (the label was 랜덤 컴포넌트, S2-FOLLOWUPS s2-1d).
+{
+  const koLabel = (source.match(/\n  ko: \{[\s\S]*?\n    colRandom: '([^']+)'/) || [])[1];
+  const koPage = readFileSync(join(root, 'src/content/tools/ulid-generator/ko.mdx'), 'utf8');
+  const toolsTs = readFileSync(join(root, 'src/data/tools.ts'), 'utf8');
+  const koDesc = (toolsTs.match(/slug: 'ulid-generator'[\s\S]*?ko: \{ name: '[^']*', description: '([^']*)'/) || [])[1] || '';
+  eq('ko random-part column label', koLabel, '무작위 부분');
+  check('ko tool page uses the column label', koPage.includes(koLabel));
+  check('ko tools.ts description uses the column label', koDesc.includes(koLabel), koDesc);
+  check('ko label, tool page and tools.ts do not say 랜덤 컴포넌트', ![koLabel, koPage, koDesc].some((text) => String(text).includes('랜덤 컴포넌트')));
+}
 
 // Examples on the English tool page are engine output
 {

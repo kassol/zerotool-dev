@@ -555,6 +555,32 @@ const utf8hex = (s) => [...Buffer.from(s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDF
   check('no note for ¥100 or ¥0', !hasNote(une('json', '¥100 ¥0'), 'backslashLookalike'));
 }
 
+// ── Full-width look-alikes ─────────────────────────────────────────────────────
+// ＼ (U+FF3C), ￥ (U+FFE5) and ￦ (U+FFE6) are full-width forms. They come from full-width
+// input, not from the Windows fonts that draw the backslash as ¥ or ₩, so the page shows a
+// different note for them (S2-FOLLOWUPS s2-10d). The engine still reports one note key; the
+// page script picks the message with noteKey(), outside the engine block.
+{
+  const fn = source.match(/\n      function noteKey\(n\) \{[\s\S]*?\n      \}\n/);
+  check('page script defines noteKey() outside the engine block', !!fn && source.indexOf(fn[0]) > endIndex);
+  const noteKey = fn ? new Function(fn[0] + '\nreturn noteKey;')() : () => undefined;
+  const keyFor = (mode, text) => {
+    const n = une(mode, text).notes.find((x) => x.key === 'backslashLookalike');
+    return n ? noteKey(n) : null;
+  };
+  eq('full-width ＼ ￥ ￦ get the full-width note', [keyFor('json', 'a＼nb'), keyFor('java', 'a￥nb'), keyFor('python', 'a￦nb')], ['backslashFullwidth', 'backslashFullwidth', 'backslashFullwidth']);
+  eq('¥ and ₩ keep the Windows font note', [keyFor('json', 'C:¥new'), keyFor('java', 'a₩nb')], ['backslashLookalike', 'backslashLookalike']);
+  eq('other notes keep their key', noteKey({ key: 'unwrapped', quote: '"' }), 'unwrapped');
+  check('the status line takes the note text from noteKey()', source.includes('t.note[noteKey(n)]'));
+  const fullwidth = { en: /full-width/, zh: /全角/, ja: /全角/, ko: /전각/ };
+  for (const l of ['en', 'zh', 'ja', 'ko']) {
+    const note = (STRINGS && STRINGS[l].note) || {};
+    check(l + ': full-width note names full-width input', fullwidth[l].test(note.backslashFullwidth || ''), note.backslashFullwidth);
+    check(l + ': full-width note does not blame Windows fonts', !!note.backslashFullwidth && !/Windows/.test(note.backslashFullwidth));
+    check(l + ': yen / won note keeps the Windows font explanation', /Windows/.test(note.backslashLookalike || ''));
+  }
+}
+
 // ── Positions ──────────────────────────────────────────────────────────────────
 {
   const r = une('json', '😀😀\\q');
