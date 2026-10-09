@@ -518,6 +518,19 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const clean = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'default-src': ["'self'"] } });
   eq(lang + ': no message for a clean saved policy', clean.$('csp-status').textContent, '');
 }
+// Trusted Types (W3C WD 2026-10-07) §4.2.1: require-trusted-types-for takes only 'script';
+// §4.2.2: trusted-types takes policy names, 'none', 'allow-duplicates' and *.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  const card = (d) => p.document.querySelectorAll('.csp-directive').find((c) => c.dataset.directive === d);
+  for (const d of ['require-trusted-types-for', 'trusted-types']) { p.$('csp-add-select').value = d; p.click('#csp-add-btn'); }
+  const chips = (d) => card(d).querySelectorAll('.csp-keyword-chip').map((c) => c.textContent);
+  eq(lang + ': require-trusted-types-for offers only \'script\'', chips('require-trusted-types-for'), ["'script'"]);
+  eq(lang + ': trusted-types offers \'none\', \'allow-duplicates\' and *', chips('trusted-types'), ["'none'", "'allow-duplicates'", '*']);
+  check(lang + ': require-trusted-types-for has no free-text box', !card('require-trusted-types-for').querySelector('.csp-source-input'));
+  addHost(p, 'trusted-types', 'dompurify my-policy');
+  check(lang + ': policy names can be typed into trusted-types', p.$('csp-output').textContent.endsWith("require-trusted-types-for 'script'; trusted-types 'none' dompurify my-policy"), p.$('csp-output').textContent);
+}
 {
   const src = readFileSync(join(root, 'src/components/tools/CspHeaderGeneratorTool.astro'), 'utf8');
   const client = src.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
