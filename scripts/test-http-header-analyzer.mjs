@@ -23,7 +23,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HttpHeaderAnalyzerTool.astro'), 'utf8');
@@ -298,10 +298,10 @@ for(const lang of ['en','zh','ja','ko']){
   }
   const h=page(lang);analyze(h);h.input('hha-input','X-New: pending');eq(lang+' manual editing preserves displayed results',h.get('hha-json-output').textContent,JSON.stringify(expected,null,2));h.get('hha-copy-json').click();eq(lang+' new Copy exports displayed last analyzed result',h.clipboard.at(-1).value,JSON.stringify(expected,null,2));h.clipboard.at(-1).resolve();await settle();
   analyze(h,'');eq(lang+' empty Analyze prompt and no result',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.pastePrompt,true]);
-  analyze(h,'unparseable');eq(lang+' invalid Analyze prompt and no result',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty,true]);
+  analyze(h,'unparseable');eq(lang+' input with no header line lists the line',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty+T.noteSep+T.invalidLines.replace('{n}','1'),false]);
 }
 await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
-const protectedBytes={"dictionary": {"bytes": 10097, "sha256": "fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"}, "parser": {"bytes": 7383, "sha256": "1dbae91a9c7eacf41981e2a339522352fe9f1306b7b27661d3f744a235902f86"}};
+const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":11960,"sha256":"1825140ab9007b5fc4539b4e02439a94d2bf6b5b33cbbfa85ae1f3c0a9cab8d8"}};
 for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
@@ -388,6 +388,207 @@ const longJSON=JSON.stringify(Object.fromEntries([['_status','HTTP/1.1 200 OK'],
 eq('long result JSON complete',longPage.get('hha-json-output').textContent,longJSON);
 longPage.get('hha-copy-json').click();eq('long copy never truncates',longPage.clipboard.at(-1).value,longJSON);longPage.clipboard.at(-1).resolve();await settle();
 console.log('v2 page layout: '+(passes-v2Start)+' passed, '+failures+' total failures');
+
+// ---------- JSON view keys and analytics ----------
+// The JSON view used a plain object: a header named __proto__ was dropped and names such as
+// constructor or toString became [null, value]. Analyze sent an event on every click (also for
+// the same input), and Copy JSON sent copy_json even when copying failed.
+const fixStart=passes;
+for(const lang of ['en','zh','ja','ko']){
+  const h=page(lang);
+  analyze(h,'HTTP/1.1 200 OK\nconstructor: a\n__proto__: b\nToString: c\nhasOwnProperty: d\nX-A: 1\nx-a: 2');
+  eq(lang+' JSON keeps every header name',h.get('hha-json-output').textContent,
+    '{\n  "_status": "HTTP/1.1 200 OK",\n  "constructor": "a",\n  "__proto__": "b",\n  "tostring": "c",\n  "hasownproperty": "d",\n  "x-a": [\n    "1",\n    "2"\n  ]\n}');
+  const a=page(lang),count=name=>a.tracks.filter(t=>t[1]===name).length;
+  analyze(a);analyze(a);a.get('hha-analyze').click();
+  eq(lang+' same input analyzed again sends one event',count('analyze'),1);
+  analyze(a,'HTTP/1.1 204 No Content\nX-Probe: new');eq(lang+' new input sends one more event',count('analyze'),2);
+  a.get('hha-example').value='response-basic';a.get('hha-example').dispatch('change');eq(lang+' example sends an event',count('analyze'),3);
+  a.get('hha-clear').click();analyze(a,'HTTP/1.1 204 No Content\nX-Probe: new');eq(lang+' clear resets the last tracked input',count('analyze'),4);
+  analyze(a,'');analyze(a,'unparseable');eq(lang+' empty or invalid input sends no event',count('analyze'),4);
+  analyze(a,'HTTP/1.1 204 No Content\nX-Probe: new');eq(lang+' input tracked last stays deduplicated',count('analyze'),4);
+  a.get('hha-copy-json').click();eq(lang+' copy is not tracked before it succeeds',count('copy_json'),0);
+  a.clipboard.at(-1).resolve();await settle();eq(lang+' successful copy tracked once',count('copy_json'),1);
+  a.copyMode('reject');a.execMode('false');a.get('hha-copy-json').click();a.clipboard.at(-1).reject(Error('Denied'));await settle();
+  eq(lang+' failed copy is not tracked',count('copy_json'),1);
+  a.execMode('true');a.get('hha-copy-json').click();a.clipboard.at(-1).reject(Error('Denied'));await settle();
+  eq(lang+' fallback copy success is tracked',count('copy_json'),2);
+  a.copyMode('missing');a.execMode('true');a.get('hha-copy-json').click();eq(lang+' copy without Clipboard API tracked on success',count('copy_json'),3);
+  a.execMode('false');a.get('hha-copy-json').click();eq(lang+' copy without Clipboard API not tracked on failure',count('copy_json'),3);
+}
+console.log('JSON keys and analytics: '+(passes-fixStart)+' passed, '+failures+' total failures');
+
+// ---------- RFC parsing fixes (approved changes to the protected parser, 2026-10-09) ----------
+const rfcStart=passes;
+const names=p=>p.headers.map(h=>h.name);
+// 1. The header section ends at the first empty line after a header line (RFC 9112 §2.1);
+// curl -v "* " lines and "{ [n bytes data]" lines are skipped and "> " / "< " prefixes removed.
+{
+  const body=E.parseHeaders('HTTP/1.1 200 OK\nContent-Type: application/json\nContent-Length: 61\n\n{"code":0,"msg":"ok"}\n{\n  "name": "x"\n}');
+  eq('1 body after the empty line is not read',[body.type,body.statusLine,names(body)],['response','HTTP/1.1 200 OK',['Content-Type','Content-Length']]);
+  eq('1 stop line and lines left',body.stop,{line:4,rest:4});
+  const lead=E.parseHeaders('\n\n  \nHTTP/1.1 204 No Content\nX-A: 1\n');
+  eq('1 leading empty lines are skipped, trailing one leaves nothing',[lead.statusLine,names(lead),lead.stop],['HTTP/1.1 204 No Content',['X-A'],{line:6,rest:0}]);
+  const verbose=E.parseHeaders('*   Trying 93.184.215.14:443...\n* Connected to example.com (93.184.215.14) port 443\n} [5 bytes data]\n> GET / HTTP/2\n> Host: example.com\n> user-agent: curl/8.7.1\n>\n* Request completely sent off\n< HTTP/2 200\n< content-type: text/html\n<\n<!doctype html>');
+  eq('1 curl -v: the response is analyzed',[verbose.type,verbose.statusLine,names(verbose)],['response','HTTP/2 200',['content-type']]);
+  eq('1 curl -v stops at the bare < line before the body',verbose.stop,{line:11,rest:1});
+  const response=E.parseHeaders('< HTTP/1.1 200 OK\n< Server: nginx\n< Content-Type: text/xml;charset=utf-8\n<\n<?xml version="1.0"?>');
+  eq('1 curl -v response part',[response.type,response.statusLine,names(response),hintsOf(response,'server').length],['response','HTTP/1.1 200 OK',['Server','Content-Type'],1]);
+  eq('1 obs-fold still joins',E.parseHeaders('X-Long: a\n\tb\n  c').headers[0].value,'a b c');
+  eq('1 no stop when no empty line',E.parseHeaders('X-A: 1').stop,null);
+  for(const lang of ['en','zh','ja','ko']){
+    const h=page(lang);analyze(h,'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{"code":0}\n{"next":1}');
+    eq(lang+' 1 status names the stop line and the lines left',h.get('hha-status').textContent,strings[lang].analyzed.replace('{n}','1').replace('{s}','')+strings[lang].noteSep+strings[lang].bodyStop.replace('{line}','3').replace('{n}','2'));
+    eq(lang+' 1 JSON has no body key',JSON.parse(h.get('hha-json-output').textContent),{_status:'HTTP/1.1 200 OK','content-type':'application/json'});
+    analyze(h,'HTTP/1.1 200 OK\nContent-Type: application/json\n');
+    eq(lang+' 1 no note without lines after the empty line',h.get('hha-status').textContent,strings[lang].analyzed.replace('{n}','1').replace('{s}',''));
+  }
+}
+// 2. The HSTS max-age value may be a quoted-string (RFC 6797 §6.1, §6.1.1).
+{
+  const sts=v=>hintsOf(E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: '+v),'strict-transport-security');
+  eq('2 quoted max-age of one year has no warning',sts('max-age="31536000"; includeSubDomains; preload'),[]);
+  eq('2 quoted max-age with spaces',sts('max-age = "63072000" ; includeSubDomains; preload'),[]);
+  eq('2 quoted short max-age still warns',sts('max-age="86400"; includeSubDomains; preload'),['warn: max-age < 1 year (31536000s). Many preload lists require ≥ 1 year.']);
+  eq('2 plain max-age unchanged',sts('max-age=31536000; includeSubDomains; preload'),[]);
+}
+// 3. A line without an ASCII colon (or with an empty name) is listed as not read, with the
+// original line number; a full-width colon (U+FF1A) has its own note.
+{
+  const p=E.parseHeaders('HTTP/1.1 200 OK\nContent-Type：text/html\nX-A: 1\njust text\n: no-name\nX-Wide：a: b');
+  eq('3 only valid lines are headers',names(p),['X-A']);
+  eq('3 invalid lines with line numbers and reasons',p.invalid,[
+    {line:2,text:'Content-Type：text/html',problem:'fullwidthColon'},
+    {line:4,text:'just text',problem:'noColon'},
+    {line:5,text:': no-name',problem:'noName'},
+    {line:6,text:'X-Wide：a: b',problem:'fullwidthColon'}]);
+  eq('3 obs-fold keeps the first line number',E.parseHeaders('X-A: 1\nbad line\n  continued').invalid,[{line:2,text:'bad line continued',problem:'noColon'}]);
+  eq('3 no invalid lines',E.parseHeaders('X-A: 1').invalid,[]);
+  for(const lang of ['en','zh','ja','ko']){
+    const T=strings[lang],h=page(lang);
+    analyze(h,'HTTP/1.1 200 OK\nContent-Type：text/html\nX-A: 1\njust text');
+    eq(lang+' 3 status counts the lines not read',h.get('hha-status').textContent,T.analyzed.replace('{n}','1').replace('{s}','')+T.noteSep+T.invalidLines.replace('{n}','2'));
+    const section=h.get('hha-panel-cat').querySelector('.hha-cat-invalid');
+    eq(lang+' 3 section heading',section?.querySelector('.hha-cat-title').textContent,T.catInvalid+' 2');
+    eq(lang+' 3 cards list line, text and note',section?.querySelectorAll('.hha-card').map(c=>[c.querySelector('.hha-line-no').textContent,c.querySelector('.hha-h-value').textContent,c.querySelector('.hha-hint').textContent]),
+      [[T.lineLabel.replace('{n}','2'),'Content-Type：text/html',T.hintWarn+': '+T.problems.fullwidthColon],[T.lineLabel.replace('{n}','4'),'just text',T.hintWarn+': '+T.problems.noColon]]);
+    eq(lang+' 3 JSON and raw keep only header fields',[JSON.parse(h.get('hha-json-output').textContent),h.get('hha-raw-output').textContent],[{_status:'HTTP/1.1 200 OK','x-a':'1'},'HTTP/1.1 200 OK\nX-A: 1']);
+    analyze(h,'only text\nmore text');
+    eq(lang+' 3 nothing read: result shows the lines',[h.get('hha-status').textContent,h.get('hha-result').hidden,h.get('hha-panel-cat').querySelectorAll('.hha-card').length],[T.empty+T.noteSep+T.invalidLines.replace('{n}','2'),false,2]);
+    eq(lang+' 3 problem texts are nonempty',['noColon','fullwidthColon','noName'].every(k=>typeof T.problems?.[k]==='string'&&T.problems[k].length>0),true);
+  }
+}
+// 4. Whitespace between the field name and the colon makes the line invalid (RFC 9112 §5.1).
+{
+  const p=E.parseHeaders('HTTP/1.1 200 OK\nContent-Type : text/html\nX-Tab\t: 1\nX-Ok: 2\nX-Space-After:  3');
+  eq('4 only lines without whitespace before the colon are headers',[names(p),p.headers.map(h=>h.value)],[['X-Ok','X-Space-After'],['2','3']]);
+  eq('4 invalid lines',p.invalid,[{line:2,text:'Content-Type : text/html',problem:'spaceBeforeColon'},{line:3,text:'X-Tab\t: 1',problem:'spaceBeforeColon'}]);
+  for(const lang of ['en','zh','ja','ko']){
+    const T=strings[lang],h=page(lang);analyze(h,'GET / HTTP/1.1\nHost : example.com');
+    eq(lang+' 4 note',h.get('hha-panel-cat').querySelector('.hha-card-invalid .hha-hint')?.textContent,T.hintWarn+': '+T.problems?.spaceBeforeColon);
+    eq(lang+' 4 note names the RFC rule',/9112/.test(T.problems?.spaceBeforeColon??''),true);
+  }
+}
+// 5. Method names are case-sensitive (RFC 9110 §9.1): "get" is not GET.
+{
+  const p=E.parseHeaders('get /api HTTP/1.1\nHost: example.com');
+  eq('5 lowercase method is not a request line',[p.type,p.statusLine,names(p)],['unknown',null,['Host']]);
+  eq('5 lowercase method listed with its own reason',p.invalid,[{line:1,text:'get /api HTTP/1.1',problem:'methodCase',method:'get',upper:'GET'}]);
+  const abs=E.parseHeaders('Post https://example.com:8443/a HTTP/1.1\nHost: example.com');
+  eq('5 absolute-form target with a colon is not read as a header',[abs.statusLine,names(abs),abs.invalid.map(x=>x.problem)],[null,['Host'],['methodCase']]);
+  eq('5 uppercase still a request',E.parseHeaders('GET https://example.com:8443/a HTTP/1.1\nHost: a').type,'request');
+  eq('5 lowercase line later is just a line without a colon',E.parseHeaders('X-A: 1\nget / HTTP/1.1').invalid.map(x=>x.problem),['noColon']);
+  for(const lang of ['en','zh','ja','ko']){
+    const T=strings[lang],h=page(lang);analyze(h,'get /api HTTP/1.1\nHost: example.com');
+    eq(lang+' 5 note names the method',h.get('hha-panel-cat').querySelector('.hha-card-invalid .hha-hint')?.textContent,T.hintWarn+': '+(T.problems?.methodCase??'').replace('{method}','get').replace('{upper}','GET'));
+    eq(lang+' 5 note has placeholders',/\{method\}/.test(T.problems?.methodCase??'')&&/\{upper\}/.test(T.problems.methodCase),true);
+  }
+}
+// 6. 'unsafe-inline' next to a nonce or hash in the same directive is ignored by CSP2+ browsers
+// (CSP3 §6.7.3.2; CSP2 script-src / style-src): a note, not the warning.
+{
+  const csp=v=>hintsOf(E.parseHeaders('HTTP/1.1 200 OK\nContent-Security-Policy: '+v),'content-security-policy');
+  const ignored=d=>"info: 'unsafe-inline' in "+d+" is ignored by browsers that support CSP Level 2 or later, because the same directive has a nonce or hash (CSP3 section 6.7.3.2). Only older browsers use it.";
+  const warn="warn: 'unsafe-inline' defeats most XSS protection. Use nonces or hashes instead.";
+  eq('6 nonce in the same directive',csp("script-src 'nonce-r4nd0m' 'strict-dynamic' 'unsafe-inline' https:; object-src 'none'; base-uri 'none'"),[ignored('script-src'),'info: No default-src — define one as a safety net.']);
+  eq('6 hash in one directive, none in another',csp("default-src 'self'; style-src 'unsafe-inline'; script-src 'sha256-AbC123+/=' 'unsafe-inline'"),[warn,ignored('script-src')]);
+  eq('6 nonce in another directive does not help',csp("default-src 'self'; script-src 'nonce-a'; style-src 'unsafe-inline'"),[warn]);
+  eq('6 case-insensitive keyword and directive',csp("Default-Src 'self'; Script-Src 'NONCE-a' 'UNSAFE-INLINE'"),[ignored('script-src')]);
+  eq('6 plain unsafe-inline still warns',csp("default-src 'self' 'unsafe-inline'"),[warn]);
+}
+// 7. Only the first Strict-Transport-Security header is processed (RFC 6797 §8.1).
+{
+  const p=E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload\nstrict-transport-security: max-age=0\nSTRICT-TRANSPORT-SECURITY: max-age=10');
+  const ignored='info: Ignored: a browser processes only the first Strict-Transport-Security header in a response (RFC 6797 section 8.1).';
+  eq('7 first header checked, the rest ignored',p.headers.map(h=>h.hints.map(x=>x.sev+': '+x.text)),[[],[ignored],[ignored]]);
+  const first=E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: max-age=0\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload');
+  eq('7 a short first header still warns',first.headers[0].hints.length,3);
+  eq('7 one header unchanged',E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload').headers[0].hints,[]);
+}
+// Review S2-8 S1 / S2: inputs with two messages. A start line (status line or request line) after
+// the empty line starts the next message; the last response is analyzed and the other messages
+// are listed. Lines after the stop that would be skipped (* and data lines) are not counted.
+{
+  const kinds=p=>p.other.map(o=>[o.kind,o.line,o.text]);
+  const v=E.parseHeaders('*   Trying 93.184.215.14:443...\n* Connected to example.com (93.184.215.14) port 443\n} [318 bytes data]\n> GET / HTTP/2\n> Host: example.com\n> User-Agent: curl/8.7.1\n> Accept: */*\n>\n* Request completely sent off\n{ [1256 bytes data]\n< HTTP/2 200\n< content-type: text/html\n< strict-transport-security: max-age=63072000\n<\n<!doctype html>\n<html>\n* Connection #0 to host example.com left intact');
+  eq('S1 curl -v: response analyzed',[v.type,v.statusLine,names(v)],['response','HTTP/2 200',['content-type','strict-transport-security']]);
+  eq('S1 curl -v: request listed',kinds(v),[['request',4,'GET / HTTP/2\nHost: example.com\nUser-Agent: curl/8.7.1\nAccept: */*']]);
+  eq('S2 curl -v: stop and lines left without * lines',v.stop,{line:14,rest:2});
+  const l=E.parseHeaders('HTTP/1.1 301 Moved Permanently\nLocation: https://example.com/\nContent-Length: 0\n\nHTTP/2 200\ncontent-type: text/html\n\n<!doctype html>');
+  eq('S1 curl -iL: last response analyzed',[l.statusLine,names(l)],['HTTP/2 200',['content-type']]);
+  eq('S1 curl -iL: redirect listed',kinds(l),[['response',1,'HTTP/1.1 301 Moved Permanently\nLocation: https://example.com/\nContent-Length: 0']]);
+  eq('S1 curl -iL: stop',l.stop,{line:7,rest:1});
+  const vl=E.parseHeaders('> GET /a HTTP/1.1\n> Host: example.com\n>\n< HTTP/1.1 302 Found\n< Location: /b\n<\n> GET /b HTTP/1.1\n> Host: example.com\n>\n< HTTP/1.1 200 OK\n< X-A: 1\n<');
+  eq('S1 curl -vL: last response analyzed, three others listed',[vl.statusLine,names(vl),vl.other.map(o=>o.kind+'@'+o.line)],['HTTP/1.1 200 OK',['X-A'],['request@1','response@4','request@7']]);
+  const rr=E.parseHeaders('GET / HTTP/1.1\nHost: example.com\n\nHTTP/1.1 200 OK\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload');
+  eq('S1 request then response: response analyzed',[rr.type,names(rr),kinds(rr).map(k=>k[0]+'@'+k[1]),rr.stop],['response',['Strict-Transport-Security'],['request@1'],null]);
+  const g=E.parseHeaders('X-A: 1\n\nX-B: 2');
+  eq('S1 groups without a start line: first group, rest reported',[names(g),g.other,g.stop],[['X-A'],[],{line:2,rest:1}]);
+  eq('S1 one message: no other messages',E.parseHeaders('HTTP/1.1 200 OK\nX-A: 1').other,[]);
+  for(const lang of ['en','zh','ja','ko']){
+    const T=strings[lang],h=page(lang);
+    analyze(h,'> GET / HTTP/2\n> Host: example.com\n>\n< HTTP/2 200\n< content-type: text/html\n<\n<!doctype html>');
+    eq(lang+' S1 status names the analyzed message and the others',h.get('hha-status').textContent,
+      T.analyzed.replace('{n}','1').replace('{s}','')+T.noteSep+(T.otherMessages??'').replace('{n}','1').replace('{line}','4')+T.noteSep+T.bodyStop.replace('{line}','6').replace('{n}','1'));
+    const sec=h.get('hha-panel-cat').querySelector('.hha-cat-other');
+    eq(lang+' S1 other messages section',[sec?.querySelector('.hha-cat-title').textContent,sec?.querySelectorAll('.hha-card').map(c=>[c.querySelector('.hha-line-no').textContent,c.querySelector('.hha-pre').textContent])],
+      [T.catOther+' 1',[[T.lineLabel.replace('{n}','1')+' · '+T.summaryRequest,'GET / HTTP/2\nHost: example.com']]]);
+    eq(lang+' S1 JSON is the response',JSON.parse(h.get('hha-json-output').textContent),{_status:'HTTP/2 200','content-type':'text/html'});
+  }
+}
+console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total failures');
+
+// ---------- worked examples on the four pages ----------
+// {/* hha-check: {"view":"json"|"raw"|"hints"|"cards"|"summary"} */} is followed by two code
+// blocks: the input pasted into the tool and the output of the real page script for that view,
+// in the page language. hints = every card with hints, in page order: the header name, then
+// "  <label>: <hint>" lines. cards = each category heading, then "  <header name>" lines (the
+// status section shows the first line).
+// summary = the visible summary pills, one per line. status = the status line under the buttons.
+// invalid = each line not read as a header: "<line label>: <text>", then "  <label>: <reason>". The input is pasted as written; nothing
+// in the examples is a real credential.
+const exampleStart=passes;
+function rendered(lang,input,view){
+  const h=page(lang);analyze(h,input);
+  const panel=h.get('hha-panel-cat');
+  if(view==='json')return h.get('hha-json-output').textContent;
+  if(view==='raw')return h.get('hha-raw-output').textContent;
+  if(view==='status')return h.get('hha-status').textContent;
+  if(view==='summary')return ['hha-summary-type','hha-summary-status','hha-summary-count','hha-summary-security'].map(id=>h.get(id)).filter(el=>!el.hidden).map(el=>el.textContent).join('\n');
+  if(view==='invalid')return panel.querySelectorAll('.hha-card-invalid').map(c=>c.querySelector('.hha-line-no').textContent+': '+c.querySelector('.hha-h-value').textContent+'\n  '+c.querySelector('.hha-hint').textContent).join('\n');
+  if(view==='hints')return panel.querySelectorAll('.hha-card').filter(c=>c.querySelector('.hha-h-name')&&c.querySelectorAll('.hha-hint').length).map(c=>[c.querySelector('.hha-h-name').textContent,...c.querySelectorAll('.hha-hint').map(x=>'  '+x.textContent)].join('\n')).join('\n');
+  if(view==='cards')return panel.querySelectorAll('section').map(s=>[s.querySelector('.hha-cat-title').textContent,...s.querySelectorAll('.hha-h-name, .hha-status-line').map(x=>'  '+x.textContent)].join('\n')).join('\n');
+  throw Error('unknown view '+view);
+}
+const hhaVerify=({spec,after,lang})=>{
+  const blocks=fencedBlocks(after);
+  if(blocks.length<2)return 'needs an input block and an output block';
+  const got=rendered(lang,blocks[0].text,spec.view);
+  return got===blocks[1].text?null:'output differs; the page shows:\n'+got;
+};
+const exampleOpts={annotations:[{tag:'hha-check',min:2,verify:hhaVerify}]};
+for(const lang of ['en','zh','ja','ko'])eq(lang+' worked examples match the page script',contractProblems('http-header-analyzer',lang,exampleOpts),'');
+console.log('Worked examples: '+(passes-exampleStart)+' passed, '+failures+' total failures');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
