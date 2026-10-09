@@ -132,6 +132,14 @@ eq('repeat() followed by another track is kept', c('grid-template-columns: repea
 eq('repeat(0, 1fr) is kept', c('grid-template-columns: repeat(0, 1fr);'), '/* keep: grid-template-columns: repeat(0, 1fr) */');
 eq('auto-fill is kept', c('grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));'), '/* keep: grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)) */');
 eq('repeat(N, 1fr) rows', c('grid-template-rows: repeat(2, 1fr);'), 'grid-rows-2');
+// Tailwind v3.4.17 has grid-cols-1 … grid-cols-12 and grid-rows-1 … grid-rows-12 only
+// (v3.tailwindcss.com/docs/grid-template-columns, …/grid-template-rows); a larger N is kept.
+eq('12 columns', c('grid-template-columns: repeat(12, 1fr);'), 'grid-cols-12');
+eq('13 columns are kept', c('grid-template-columns: repeat(13, 1fr);'), '/* keep: grid-template-columns: repeat(13, 1fr) */');
+eq('100 columns are kept', c('grid-template-columns: repeat(100, minmax(0, 1fr));'), '/* keep: grid-template-columns: repeat(100, minmax(0, 1fr)) */');
+eq('12 rows', c('grid-template-rows: repeat(12, minmax(0, 1fr));'), 'grid-rows-12');
+eq('13 rows are kept', c('grid-template-rows: repeat(13, 1fr);'), '/* keep: grid-template-rows: repeat(13, 1fr) */');
+eq('a leading zero is kept', c('grid-template-columns: repeat(012, 1fr);'), '/* keep: grid-template-columns: repeat(012, 1fr) */');
 eq('fixed rows are kept', c('grid-template-rows: repeat(3, 100px);'), '/* keep: grid-template-rows: repeat(3, 100px) */');
 // Stated on the tool pages: an end line after the span is not kept (col-span-N is span N / span N).
 eq('span N / end line keeps only the span', c('grid-column: span 2 / 4;'), 'col-span-2');
@@ -314,8 +322,9 @@ const { default: yaml } = await import('js-yaml');
 const sha = text => createHash('sha256').update(text).digest('hex');
 const fullEngine = source.match(/^ *\/\* ── engine:start ── \*\/[\s\S]*?^ *\/\* ── engine:end ── \*\//m)[0];
 // Updated with each approved engine change (2026-10-09: keep comments keep the typed case;
-// box-shadow maps only Tailwind's default shadows; grid templates map only N equal tracks).
-same('v2 exact engine bytes', sha(fullEngine), '3e39cbd92f7026a7ad2356825a4c5d73009a3019c8a7070ae6c0451cb95f5f3c');
+// box-shadow maps only Tailwind's default shadows; grid templates map only N equal tracks,
+// N = 1 to 12).
+same('v2 exact engine bytes', sha(fullEngine), '0553daa25405eef04a22632797f772bdf7bdcabcdd4a7e49992b33880ba1a771');
 const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
