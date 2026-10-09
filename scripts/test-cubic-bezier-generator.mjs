@@ -200,6 +200,62 @@ retry.ctx.navigator.clipboard.writeText = () => Promise.resolve();
 retry.get('cbg-copy').click(); await Promise.resolve();
 check('successful retry clears stale failure feedback', retry.get('cbg-copy').classList.contains('copied') && !retry.get('cbg-status').className.includes('error'));
 
+// ---------- values reach the output unchanged (S2-9b) ----------
+// The output used to round to two decimals, so the Back preset (0.265) and three-decimal design
+// tokens such as Ant Design motionEaseInOut (0.645, 0.045, 0.355, 1) were copied as other curves.
+const CSS = (a) => 'transition-timing-function: cubic-bezier(' + a + ');';
+{
+  const p = loadCubicPage();
+  p.wrap.querySelectorAll('.cbg-preset').find(b => b.dataset.p === '0.68,-0.55,0.265,1.55').click();
+  eq('Back preset copies its own value', p.get('cbg-output-text').textContent, CSS('0.68, -0.55, 0.265, 1.55'));
+  eq('Back preset field shows 0.265', p.get('cbg-p2x').value, '0.265');
+  for (const [id, v] of [['cbg-p1x', '0.645'], ['cbg-p1y', '0.045'], ['cbg-p2x', '0.355'], ['cbg-p2y', '1']]) p.type(id, v);
+  eq('three-decimal values are kept', p.get('cbg-output-text').textContent, CSS('0.645, 0.045, 0.355, 1'));
+  p.type('cbg-p1x', '0.12345');
+  eq('finer values round to three decimals', p.get('cbg-output-text').textContent, CSS('0.123, 0.045, 0.355, 1'));
+}
+// Typing used to rewrite the field on every keystroke: "0.0" became "0", so the next "5" made 5.
+{
+  const p = loadCubicPage();
+  p.type('cbg-p1y', '0.0');
+  eq('field being typed in is not rewritten', p.get('cbg-p1y').value, '0.0');
+  p.type('cbg-p1y', '0.05');
+  eq('typing 0.05 gives 0.05', p.get('cbg-output-text').textContent, CSS('0.42, 0.05, 0.58, 1'));
+  p.get('cbg-p1y').value = '0.050'; p.get('cbg-p1y').dispatch('input'); p.get('cbg-p1y').dispatch('change');
+  eq('field is normalized on change', p.get('cbg-p1y').value, '0.05');
+  p.type('cbg-p2x', '1.5');
+  eq('x above 1 is clamped in the output', p.get('cbg-output-text').textContent, CSS('0.42, 0.05, 1, 1'));
+  check('x clamp shows the x warning', p.get('cbg-status').textContent === p.L.rangeWarn);
+  p.get('cbg-p2x').dispatch('change');
+  eq('clamped x is written back on change', p.get('cbg-p2x').value, '1');
+}
+// y outside -2..2 was clamped with no message.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = loadCubicPage({ lang });
+  p.type('cbg-p1y', '2.05');
+  eq(lang + ' y above 2 is clamped', p.get('cbg-output-text').textContent, CSS('0.42, 2, 0.58, 1'));
+  check(lang + ' y clamp shows a localized warning', typeof p.L.rangeWarnY === 'string' && p.L.rangeWarnY.length > 0 && p.get('cbg-status').textContent === p.L.rangeWarnY && p.get('cbg-status').className.includes('error'), p.get('cbg-status').textContent);
+  p.get('cbg-p1y').dispatch('change');
+  eq(lang + ' clamped y is written back on change', p.get('cbg-p1y').value, '2');
+}
+// Duration below 100 or above 10000 was used as 100 / 10000 while the field kept the typed number.
+{
+  const p = loadCubicPage();
+  p.type('cbg-duration', '50'); p.get('cbg-duration').dispatch('change');
+  eq('duration below 100 is written back as 100', p.get('cbg-duration').value, '100');
+  p.type('cbg-duration', '20000'); p.get('cbg-duration').dispatch('change');
+  eq('duration above 10000 is written back as 10000', p.get('cbg-duration').value, '10000');
+  p.type('cbg-duration', ''); p.get('cbg-duration').dispatch('change');
+  eq('empty duration is written back as 100', p.get('cbg-duration').value, '100');
+}
+// A rejected Clipboard API write used to report failure without trying the textarea fallback.
+for (const exec of [true, false]) {
+  const p = loadCubicPage({ clipboardMode: 'reject', execResult: exec });
+  p.get('cbg-copy').click(); await Promise.resolve(); await Promise.resolve();
+  check('rejected clipboard write falls back to execCommand (' + exec + ')', p.get('cbg-copy').classList.contains('copied') === exec && p.get('cbg-status').className.includes('error') === !exec);
+  check('fallback tracks only a successful copy (' + exec + ')', p.tracks.some(a => a[1] === 'copy_css') === exec);
+}
+
 // ---------- v2 page layout ----------
 const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
 const styles = source.match(/<style is:global>([\s\S]*?)<\/style>/)[1];
