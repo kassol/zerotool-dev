@@ -219,5 +219,89 @@ assert('all three business actions retained', ['fdg-generate','fdg-copy','fdg-do
 assert('status before settings and minimum 2.8em',source.indexOf('id="fdg-status"')<source.indexOf('id="fdg-count"')&&source.includes('min-height: 2.8em'),true);
 assert('stacked empty result hidden/phone targets',source.includes('@media (max-width: 860px)')&&source.includes('@media (max-width: 640px)')&&source.includes('min-height: 44px')&&source.includes('min-height: 24px')&&source.includes('.fdg-wrap[data-empty="true"] .fdg-result { display: none; }'),true);
 if(!/['"]fake-data-generator['"]\s*:\s*['"]generate['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')))console.log('PENDING: root generate registration, compile and native layout acceptance');
+// ---------- Worked examples on the four tool pages (S2-9c) ----------
+// The output is random, so a sample is checked for what is fixed (S2-PLAN §2.3): the selected
+// fields in order, the record count, the JSON / CSV shape, and that every value is one the
+// generator code can produce (its word lists and number ranges). Count notes come from the real
+// page; duplicate probabilities are computed from the sizes of the word lists.
+// Annotations: {/* fdg-check: {"fields":[...],"count":n,"format":"json"|"csv"} */} before a code
+// block; {/* fdg-count: {"count":"150"} */} before inline code holding the status note and the
+// number of records; {/* fdg-dup: {"field":"fullName","n":100,"digits":1} */} before inline code
+// holding the probability that n records contain a repeated value.
+{
+  const { reportContract, fencedBlocks } = await import(pathToFileURL(join(root, 'scripts/lib/tool-mdx-contract.mjs')));
+  const code = source.slice(source.indexOf('  var FIRST'), source.indexOf('  var currentFmt'));
+  const G = new Function('crypto', code + '\nreturn { FIRST, LAST, DOMAINS, COMPANIES, STREETS, CITIES, STATES, COUNTRIES, TLDS, PATHS, LOREM_WORDS, generators };')(webcrypto);
+  const lower = (a) => a.map((x) => x.toLowerCase());
+  const int = (s, lo, hi) => /^\d+$/.test(s) && +s >= lo && +s <= hi;
+  const VALID = {
+    fullName: (v) => { const m = /^(\S+) (\S+)$/.exec(v); return !!m && G.FIRST.includes(m[1]) && G.LAST.includes(m[2]); },
+    firstName: (v) => G.FIRST.includes(v), lastName: (v) => G.LAST.includes(v),
+    email: (v) => { const m = /^([a-z]+)\.([a-z]+)(\d{2})@(.+)$/.exec(v); return !!m && lower(G.FIRST).includes(m[1]) && lower(G.LAST).includes(m[2]) && int(m[3], 10, 99) && G.DOMAINS.includes(m[4]); },
+    phone: (v) => { const m = /^\((\d{3})\) (\d{3})-(\d{4})$/.exec(v); return !!m && int(m[1], 200, 999) && int(m[2], 200, 999); },
+    company: (v) => G.COMPANIES.includes(v),
+    street: (v) => { const m = /^(\d+) (.+)$/.exec(v); return !!m && int(m[1], 1, 9999) && G.STREETS.includes(m[2]); },
+    city: (v) => G.CITIES.includes(v), state: (v) => G.STATES.includes(v), country: (v) => G.COUNTRIES.includes(v),
+    zip: (v) => /^\d{5}$/.test(v) && int(v, 10000, 99999),
+    uuid: (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v),
+    date: (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v); return !!m && int(m[1], 2020, 2026) && int(m[2], 1, 12) && int(m[3], 1, 28); },
+    ip: (v) => { const o = v.split('.'); return o.length === 4 && int(o[0], 1, 254) && int(o[1], 0, 255) && int(o[2], 0, 255) && int(o[3], 1, 254); },
+    url: (v) => { const m = /^https:\/\/([a-z]+)\.([a-z]+)\/([a-z]+)$/.exec(v); return !!m && G.TLDS.includes(m[2]) && G.PATHS.includes(m[3]) && G.FIRST.some((f) => m[1].startsWith(f.toLowerCase()) && lower(G.LAST).includes(m[1].slice(f.length))); },
+    color: (v) => /^#[0-9a-f]{6}$/.test(v),
+    lorem: (v) => { const w = v.replace(/\.$/, '').split(' '); return v.endsWith('.') && w.length >= 6 && w.length <= 14 && w.every((x, i) => G.LOREM_WORDS.includes(i ? x : x.charAt(0).toLowerCase() + x.slice(1))) && /^[A-Z]/.test(v); },
+  };
+  assert('every field has a validator', Object.keys(G.generators).sort(), Object.keys(VALID).sort());
+  for (const f of Object.keys(G.generators)) for (let i = 0; i < 300; i++) { const v = G.generators[f](); if (!VALID[f](v)) { assert('validator accepts generated ' + f, v, 'a valid value'); break; } }
+  // Number of distinct values a field can take (from the word lists and ranges above)
+  const SIZE = { fullName: G.FIRST.length * G.LAST.length, email: G.FIRST.length * G.LAST.length * 90 * G.DOMAINS.length, phone: 800 * 800 * 10000, company: G.COMPANIES.length };
+  const dup = (N, n) => { let q = 1; for (let i = 0; i < n; i++) q *= 1 - i / N; return 1 - q; };
+  const inlineCode = (text) => [...text.matchAll(/`([^`\n]+)`|<code>([^<]*)<\/code>/g)].map((m) => m[1] ?? m[2]);
+  function sample(spec, after) {
+    const block = fencedBlocks(after)[0];
+    if (!block) return 'no code block after the annotation';
+    let rows;
+    if (spec.format === 'csv') {
+      const lines = block.text.split('\n');
+      if (lines[0] !== spec.fields.join(',')) return 'CSV header ' + JSON.stringify(lines[0]);
+      rows = lines.slice(1).map((l) => Object.fromEntries(l.split(',').map((v, i) => [spec.fields[i], v])));
+      if (lines.slice(1).some((l) => l.split(',').length !== spec.fields.length)) return 'CSV row has the wrong number of fields';
+    } else {
+      try { rows = JSON.parse(block.text); } catch { return 'JSON does not parse'; }
+      if (block.text !== JSON.stringify(rows, null, 2)) return 'JSON is not written the way the tool writes it (2-space indent)';
+    }
+    if (rows.length !== spec.count) return rows.length + ' records, not ' + spec.count;
+    for (const r of rows) {
+      if (JSON.stringify(Object.keys(r)) !== JSON.stringify(spec.fields)) return 'fields ' + Object.keys(r).join(',');
+      for (const f of spec.fields) if (!VALID[f](r[f])) return f + ' value ' + JSON.stringify(r[f]) + ' cannot come from the generator';
+    }
+    return null;
+  }
+  function countNote(spec, after, lang) {
+    const p = lifecyclePage(lang);
+    p.get('fdg-count').value = spec.count;
+    p.get('fdg-generate').click();
+    const n = JSON.parse(output(p)).length, note = p.get('fdg-status').textContent;
+    const codes = inlineCode(after);
+    if (note && !codes.includes(note)) return 'status note ' + JSON.stringify(note) + ' not shown';
+    if (!codes.includes(String(n))) return 'record count ' + n + ' not shown';
+    return null;
+  }
+  function dupNote(spec, after) {
+    const want = (dup(SIZE[spec.field], spec.n) * 100).toFixed(spec.digits) + '%';
+    return inlineCode(after).includes(want) ? null : want + ' not shown';
+  }
+  reportContract((name, ok) => assert(name, ok, true), SLUG, { annotations: [
+    { tag: 'fdg-check', min: 1, verify: ({ spec, after }) => sample(spec, after) },
+    { tag: 'fdg-count', min: 1, verify: ({ spec, after, lang }) => countNote(spec, after, lang) },
+    { tag: 'fdg-dup', verify: ({ spec, after }) => dupNote(spec, after) },
+  ] });
+  // Each language has at least two annotated examples in total
+  const { readToolMdx, annotations } = await import(pathToFileURL(join(root, 'scripts/lib/tool-mdx-contract.mjs')));
+  const docs = readToolMdx(SLUG);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const n = ['fdg-check', 'fdg-count', 'fdg-dup'].reduce((s, tag) => s + annotations(docs[lang].body, tag).length, 0);
+    assert(lang + ' has at least 2 worked examples', n >= 2, true);
+  }
+}
 process.removeListener('unhandledRejection',onUnhandled);
 console.log(passes+' passed, '+failures+' failed');process.exitCode=failures?1:0;
