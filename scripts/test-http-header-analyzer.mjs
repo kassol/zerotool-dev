@@ -301,7 +301,7 @@ for(const lang of ['en','zh','ja','ko']){
   analyze(h,'unparseable');eq(lang+' input with no header line lists the line',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty+T.noteSep+T.invalidLines.replace('{n}','1'),false]);
 }
 await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
-const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":9461,"sha256":"4551c1876c8a05ac4821573c8c4a96b666bfada32558f50e751b8f174e8dfb8e"}};
+const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":10234,"sha256":"40b80e82d93b0a8817387f3e5433b0436df1897affb81b3f5b1be7c33f84a328"}};
 for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
@@ -503,6 +503,18 @@ const names=p=>p.headers.map(h=>h.name);
     eq(lang+' 5 note names the method',h.get('hha-panel-cat').querySelector('.hha-card-invalid .hha-hint')?.textContent,T.hintWarn+': '+(T.problems?.methodCase??'').replace('{method}','get').replace('{upper}','GET'));
     eq(lang+' 5 note has placeholders',/\{method\}/.test(T.problems?.methodCase??'')&&/\{upper\}/.test(T.problems.methodCase),true);
   }
+}
+// 6. 'unsafe-inline' next to a nonce or hash in the same directive is ignored by CSP2+ browsers
+// (CSP3 §6.7.3.2; CSP2 script-src / style-src): a note, not the warning.
+{
+  const csp=v=>hintsOf(E.parseHeaders('HTTP/1.1 200 OK\nContent-Security-Policy: '+v),'content-security-policy');
+  const ignored=d=>"info: 'unsafe-inline' in "+d+" is ignored by browsers that support CSP Level 2 or later, because the same directive has a nonce or hash (CSP3 section 6.7.3.2). Only older browsers use it.";
+  const warn="warn: 'unsafe-inline' defeats most XSS protection. Use nonces or hashes instead.";
+  eq('6 nonce in the same directive',csp("script-src 'nonce-r4nd0m' 'strict-dynamic' 'unsafe-inline' https:; object-src 'none'; base-uri 'none'"),[ignored('script-src'),'info: No default-src — define one as a safety net.']);
+  eq('6 hash in one directive, none in another',csp("default-src 'self'; style-src 'unsafe-inline'; script-src 'sha256-AbC123+/=' 'unsafe-inline'"),[warn,ignored('script-src')]);
+  eq('6 nonce in another directive does not help',csp("default-src 'self'; script-src 'nonce-a'; style-src 'unsafe-inline'"),[warn]);
+  eq('6 case-insensitive keyword and directive',csp("Default-Src 'self'; Script-Src 'NONCE-a' 'UNSAFE-INLINE'"),[ignored('script-src')]);
+  eq('6 plain unsafe-inline still warns',csp("default-src 'self' 'unsafe-inline'"),[warn]);
 }
 console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total failures');
 

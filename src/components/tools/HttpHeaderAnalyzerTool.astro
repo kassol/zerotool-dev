@@ -538,7 +538,19 @@ const { tips: TIPS, ...CLIENT_T } = T;
           if (v.indexOf('preload') === -1) hints.push({ sev: 'info', text: 'Add preload and submit to hstspreload.org.' });
         }
         if (name === 'content-security-policy') {
-          if (v.indexOf("'unsafe-inline'") !== -1) hints.push({ sev: 'warn', text: "'unsafe-inline' defeats most XSS protection. Use nonces or hashes instead." });
+          // CSP3 §6.7.3.2 (CSP2 for script-src and style-src): a nonce-source or hash-source in the
+          // same directive makes browsers ignore 'unsafe-inline'.
+          var unsafeWarn = false;
+          v.split(/[;,]/).forEach(function (d) {
+            var tokens = d.trim().split(/\s+/);
+            if (tokens.indexOf("'unsafe-inline'") === -1) return;
+            if (tokens.some(function (x) { return /^'(nonce-|sha(256|384|512)-)/.test(x); })) {
+              hints.push({ sev: 'info', text: "'unsafe-inline' in " + tokens[0] + " is ignored by browsers that support CSP Level 2 or later, because the same directive has a nonce or hash (CSP3 section 6.7.3.2). Only older browsers use it." });
+            } else if (!unsafeWarn) {
+              unsafeWarn = true;
+              hints.unshift({ sev: 'warn', text: "'unsafe-inline' defeats most XSS protection. Use nonces or hashes instead." });
+            }
+          });
           if (v.indexOf("'unsafe-eval'") !== -1) hints.push({ sev: 'warn', text: "'unsafe-eval' allows arbitrary code execution. Remove unless absolutely required." });
           if (v.indexOf('default-src') === -1) hints.push({ sev: 'info', text: 'No default-src — define one as a safety net.' });
         }
