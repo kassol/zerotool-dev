@@ -249,15 +249,41 @@ const { tips: TIPS, ...CLIENT_T } = T;
             var el = btn.parentElement.querySelector('.tc-value');
             if (!el) return;
             var revision = copyRevision, request = ++requestId, failure = copyFailures[container.id] || 0;
+            var text = el.textContent;
             clearTimeout(feedbackTimer);
             btn.textContent = t.copy;
             function isCurrent() { return revision === copyRevision && request === requestId && container.contains(btn); }
-            navigator.clipboard.writeText(el.textContent).then(function () {
+            function copied() {
               if (!isCurrent()) return;
               if (failure === (copyFailures[container.id] || 0) && status.textContent === t.copyFail) { status.textContent = ''; status.className = 'tc-status'; }
               btn.textContent = t.copied;
               feedbackTimer = setTimeout(function () { if (isCurrent()) btn.textContent = t.copy; }, 1500);
-            }, function () { if (isCurrent()) { copyFailures[container.id] = (copyFailures[container.id] || 0) + 1; setStatus(status, t.copyFail, true); } });
+            }
+            function failed() { if (isCurrent()) { copyFailures[container.id] = (copyFailures[container.id] || 0) + 1; setStatus(status, t.copyFail, true); } }
+            // Clipboard API first; when it is missing, throws or rejects, a hidden textarea and
+            // execCommand('copy') (same as MarkdownLinterTool.astro); both failing shows copyFail.
+            // A copy that is no longer current does not fall back.
+            function fallback() {
+              if (!isCurrent()) return;
+              var ta = document.createElement('textarea');
+              ta.value = text;
+              ta.setAttribute('readonly', '');
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.select();
+              var ok = false;
+              try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+              document.body.removeChild(ta);
+              // select() moved focus to the textarea; give it back to the button (keyboard users).
+              btn.focus();
+              if (ok) copied(); else failed();
+            }
+            var pending;
+            try { pending = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(text) : null; }
+            catch (e) { pending = null; }
+            if (pending) Promise.resolve(pending).then(copied, fallback);
+            else fallback();
           });
         });
       }

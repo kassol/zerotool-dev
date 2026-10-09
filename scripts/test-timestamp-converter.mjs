@@ -135,6 +135,8 @@ function lifecyclePage(lang = 'en', shellFirst = false) {
     detachChildren() { for (const c of this.children) c.parentNode = null; this.children = []; this.text = ''; }
     set innerHTML(v) { this.htmlWrites++; this.detachChildren(); parse(String(v), this); }
     appendChild(child) { this.appendWrites++; this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { this.children = this.children.filter(c => c !== child); child.parentNode = null; return child; }
+    select() { this.selected = true; }
     querySelectorAll(s) { return descendants(this).filter(el => matches(el, s)); }
     querySelector(s) { return this.querySelectorAll(s)[0] ?? null; }
     contains(el) { return el === this || descendants(this).includes(el); }
@@ -175,9 +177,11 @@ function lifecyclePage(lang = 'en', shellFirst = false) {
   doc.createElement = tag => new Element(tag);
   for (const select of doc.querySelectorAll('select')) select.value = select.querySelector('option').value;
   doc.activeElement = doc.body;
+  let throwOnWrite = false;
+  const clipboardApi = { writeText(value) { if (throwOnWrite) throw Error('Controlled synchronous clipboard failure'); let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value, resolve, reject }); return promise; } };
   const sandbox = {
     document: doc, console, t: clientFor(lang), _slug: 'timestamp-converter', ztPersist: { clear() {} },
-    navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); clipboard.push({ value, resolve, reject }); return promise; } } },
+    navigator: { clipboard: clipboardApi },
     trackTool: (...args) => tracks.push(args),
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms }); return timerId; }, clearTimeout: id => timers.delete(id),
   };
@@ -192,6 +196,11 @@ function lifecyclePage(lang = 'en', shellFirst = false) {
     input(id, value, event = 'input') { get(id).value = value; get(id).dispatch(event); },
     key(id, key = 'l', modifier = 'ctrlKey') { const el = id ? get(id) : doc.body; el.focus(); return el.dispatch('keydown', { key, ...(modifier ? { [modifier]: true } : {}) }); },
     flushTimers() { for (let i = 0; i < 5 && timers.size; i++) { const jobs = [...timers.values()]; timers.clear(); jobs.forEach(j => j.fn()); } },
+    // execCommand('copy') fallback: absent by default (calling it throws).
+    setExec(fn) { doc.execCommand = fn; },
+    setClipboard(present) { sandbox.navigator.clipboard = present ? clipboardApi : undefined; },
+    setThrowOnWrite(value) { throwOnWrite = value; },
+    bodyTextareas() { return doc.body.children.filter(c => c.tagName === 'TEXTAREA'); },
   };
 }
 
@@ -287,6 +296,50 @@ try {
       q.flushTimers(); eq(prefix + 'latest copy timer restores base label', latest.button.textContent, copyLabel);
     }
   }
+
+  // ---------- copy fallback: hidden textarea + execCommand('copy') (S2-9, 2026-10-09) ----------
+  process.env.TZ = 'UTC';
+  for (const lang of Object.keys(languageText)) {
+    const [, copiedLabel, copyError] = languageText[lang], prefix = 'copy fallback/' + lang + ': ';
+    for (const id of [upper, lower]) {
+      const status = p => p.get(id === upper ? 'tc-ts-status' : 'tc-date-status');
+      const ready = () => { const p = lifecyclePage(lang); convertTimestamp(p, '1700000000'); convertDate(p); return p; };
+      {
+        const p = ready(), seen = [];
+        p.setExec(cmd => { const ta = p.bodyTextareas()[0]; seen.push([cmd, ta?.value, ta?.selected, ta?.getAttribute('readonly'), ta?.style.position]); return true; });
+        const before = [status(p).textContent, status(p).className];
+        const { button, job } = timestampCopy(p, id, 2); unhandled.length = 0; job.reject(Error('controlled denial')); await settle();
+        eq(prefix + id + ' rejected Clipboard API falls back with the exact row value', seen, [['copy', rows(p, id)[2], true, '', 'fixed']]);
+        eq(prefix + id + ' fallback success shows Copied and keeps the status', [button.textContent, status(p).textContent, status(p).className], [copiedLabel, ...before]);
+        eq(prefix + id + ' fallback removes its textarea and returns focus to the button', [p.bodyTextareas().length, p.doc.activeElement === button], [0, true]);
+        eq(prefix + id + ' fallback rejection is handled', unhandled, []);
+      }
+      {
+        const p = ready(), seen = []; p.setClipboard(false); p.setExec(cmd => { seen.push(cmd); return true; });
+        const button = p.get(id).querySelectorAll('.btn-copy')[0]; let thrown = '';
+        try { button.click(); } catch (e) { thrown = String(e); }
+        eq(prefix + id + ' missing Clipboard API copies through execCommand at once', [thrown, seen, button.textContent], ['', ['copy'], copiedLabel]);
+      }
+      {
+        const p = ready(); p.setThrowOnWrite(true); p.setExec(() => true);
+        const button = p.get(id).querySelectorAll('.btn-copy')[1]; let thrown = '';
+        try { button.click(); } catch (e) { thrown = String(e); }
+        eq(prefix + id + ' throwing Clipboard API copies through execCommand', [thrown, button.textContent], ['', copiedLabel]);
+      }
+      for (const [name, exec] of [['returns false', () => false], ['throws', () => { throw Error('blocked'); }], ['is missing', null]]) {
+        const p = ready(); if (exec) p.setExec(exec);
+        const { job } = timestampCopy(p, id); job.reject(Error('denied')); await settle();
+        eq(prefix + id + ' execCommand ' + name + ': the localized failure stays visible', [status(p).textContent, status(p).className, p.bodyTextareas().length], [copyError, 'tc-status error', 0]);
+      }
+      {
+        const p = ready(); let calls = 0; p.setExec(() => { calls++; return true; });
+        const { job } = timestampCopy(p, id); if (id === upper) convertTimestamp(p, '1'); else convertDate(p, '2001-01-01T00:00:00');
+        const state = timestampSnapshot(p); job.reject(Error('old')); await settle();
+        eq(prefix + id + ' a stale rejection does not fall back', [calls, timestampSnapshot(p)], [0, state]);
+      }
+    }
+  }
+
   await settle(); eq('all timestamp copy rejection promises are handled', unhandled, []);
 } finally {
   if (originalTimezone === undefined) delete process.env.TZ; else process.env.TZ = originalTimezone;
