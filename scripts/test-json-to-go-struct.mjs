@@ -187,7 +187,7 @@ const settle = async () => { await new Promise(setImmediate); await new Promise(
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
 process.on('unhandledRejection', onUnhandled);
-function lifecyclePage(lang, shellFirst = false) {
+function lifecyclePage(lang, shellFirst = false, extra = {}) {
   const copies = [], tracks = [], clears = [], downloads = [], blobs = new Map(), timers = new Map(), docEvents = {};
   let now = 0, timerId = 0, doc;
   const decode = s => s.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
@@ -230,6 +230,7 @@ function lifecyclePage(lang, shellFirst = false) {
   const markup = source.split('\n---')[1].split('<script')[0]
     .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
       '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{JSON\.stringify\(L\.(\w+)\)\}/g, (_, key) => '="' + escape(JSON.stringify(pageLabels[lang][key])) + '"')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -248,6 +249,7 @@ function lifecyclePage(lang, shellFirst = false) {
     trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); copies.push({ value, resolve, reject }); return promise; } } },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+    ...extra,
   };
   context.window = context; vm.createContext(context);
   if (shellFirst) vm.runInContext(shortcut, context);
@@ -364,7 +366,7 @@ const V2 = {
       "generate"
     ]
   ],
-  "scriptSHA": "a4ff11558a21284172565af0c6f38d09b079dbf3b4fe4c8493d24b0ab6c33bfa"
+  "scriptSHA": "90b129736ab33a396071d9ab8b7a0754adca663f8bd1dc49dd03235fbb6dd9d4"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -372,7 +374,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 original script preserved except removed redundant Generate listener and change-based analytics sent once per JSON and root name (S2-5)', hash(pageScript), V2.scriptSHA);
+eq('v2 original script preserved except removed redundant Generate listener and change-based analytics sent once per JSON and root name (S2-5), JSON errors in the page language and Copy disabled without output (S2-10)', hash(pageScript), V2.scriptSHA);
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
@@ -401,7 +403,7 @@ for (const lang of ['en','zh','ja','ko']) {
   for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
   eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
   const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
-  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','jsonParse','msgInvalidAt','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
   const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
   const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
@@ -430,6 +432,93 @@ for (const lang of ['en','zh','ja','ko']) {
   once.input('{"d":2}');once.key('jgs-input','Enter');once.get('jgs-input').dispatch('change');eq(lang + ': GA: Ctrl+Enter then change sends one event',once.tracks.length,2);
   once.get('jgs-root-name').value='Api';once.get('jgs-convert').click();eq(lang + ': GA: a new root name then Generate sends one event',once.tracks.length,3);
   once.get('jgs-clear').click();once.input('{"d":2}');once.get('jgs-root-name').value='Api';once.get('jgs-convert').click();eq(lang + ': GA: the same input after Clear sends again',once.tracks.length,4);
+}
+
+
+// ---------- invalid JSON: line, column and cause in the page language (S2-10) ----------
+// Before S2-10 the status line showed "Invalid JSON: " and the browser's own parser message, in
+// English on every page, with the position counted in the trimmed input. lineCol and
+// jsonSyntaxError are copied verbatim from json-formatter-engine.js; the cause texts are the
+// jsonParse texts of HarFileAnalyzerTool.astro and MarkdownTableGeneratorTool.astro (both compared).
+// Copy is disabled whenever there is no output (before S2-10 it stayed enabled and did nothing).
+{
+  const fnSrc = (src, name) => {
+    const lines = src.split('\n');
+    const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+    if (at < 0) return '';
+    const indent = lines[at].match(/^\s*/)[0];
+    let end = at + 1;
+    while (end < lines.length && lines[end] !== indent + '}') end++;
+    return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+  };
+  const stringsOf = (file, from = 0) => {
+    const text = readFileSync(join(root, 'src/components/tools/' + file), 'utf8');
+    const s0 = text.indexOf('const STRINGS = ', from);
+    return new Function('return ' + text.slice(s0 + 'const STRINGS = '.length, text.indexOf('\n};', s0) + 2))();
+  };
+  const engineEnd = source.indexOf('/* ── engine:end ── */');
+  const jsonEngine = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  eq('json-reason block sits outside the engine block', rs > engineEnd && re > rs, true);
+  const reasonSrc = rs > 0 ? source.slice(rs, re) : '';
+  for (const name of ['lineCol', 'jsonSyntaxError']) eq(name + ' is the same as in json-formatter-engine.js', fnSrc(reasonSrc, name) !== '' && fnSrc(reasonSrc, name) === fnSrc(jsonEngine, name), true);
+  const codes = [...new Set([...fnSrc(jsonEngine, 'jsonSyntaxError').matchAll(/fail\('(\w+)'/g)].map((m) => m[1]))];
+  const harStrings = stringsOf('HarFileAnalyzerTool.astro');
+  const mtgSource = readFileSync(join(root, 'src/components/tools/MarkdownTableGeneratorTool.astro'), 'utf8');
+  const mtgStrings = stringsOf('MarkdownTableGeneratorTool.astro', mtgSource.indexOf('strings:start'));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    eq(lang + ': jsonParse texts equal HarFileAnalyzerTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(harStrings[lang].jsonParse));
+    eq(lang + ': jsonParse texts equal MarkdownTableGeneratorTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(mtgStrings[lang].jsonParse));
+    eq(lang + ': a jsonParse text for every jsonSyntaxError code', codes.length > 10 && codes.every((c) => typeof L.jsonParse?.[c] === 'string'), true);
+    eq(lang + ': msgInvalidAt starts with msgInvalidJson and has {line}, {col} and {reason}', typeof L.msgInvalidAt === 'string' && L.msgInvalidAt.startsWith(L.msgInvalidJson) && ['{line}', '{col}', '{reason}'].every((k) => L.msgInvalidAt.includes(k)), true);
+  }
+  const fill = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v[k] != null ? String(v[k]) : m));
+  // [name, input as typed, line, column, cause, character]; positions counted by hand in the input as typed.
+  const SAMPLES = [
+    ['trailing comma', '{"a":1,}', 1, 7, 'trailingComma'],
+    ['leading blank lines and spaces are counted', '\n\n  {"a": 1,\n}', 3, 10, 'trailingComma'],
+    ['full-width colon', '{"a"：1}', 1, 5, 'fullWidth', '：'],
+    ['curly quotes', '{“a”:1}', 1, 2, 'smartQuote', '“'],
+    ['single quotes', "{'a': 1}", 1, 2, 'singleQuote'],
+    ['cut off', '{"a": 1', 1, 8, 'unexpectedEnd'],
+    ['Python True', '{"a": True}', 1, 7, 'badLiteral'],
+    ['comment', '{"a": 1 // note\n}', 1, 9, 'comment'],
+    ['two documents', '{"a":1}\n{"a":2}', 2, 1, 'extraData'],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    const fresh = lifecyclePage(lang);
+    eq(lang + ': Copy is disabled before there is output', fresh.get('jgs-output-code').textContent === '' ? fresh.get('jgs-copy').disabled === true : true, true);
+    for (const [name, input, line, col, code, ch] of SAMPLES) {
+      const p = lifecyclePage(lang); golden(p);
+      eq(lang + ': ' + name + ': Copy is enabled with output', p.get('jgs-copy').disabled, false);
+      p.input(input); p.advance(300);
+      const status = p.get('jgs-status').textContent;
+      eq(lang + ': ' + name + ': line, column and cause', status, fill(L.msgInvalidAt, { line, col, reason: fill(L.jsonParse?.[code], { ch: ch ?? '' }) }));
+      eq(lang + ': ' + name + ': output cleared, Copy disabled, input marked', p.get('jgs-output-code').textContent === '' && p.get('jgs-copy').disabled === true && p.get('jgs-input').classList.contains('error') && p.get('jgs-status').className.includes('error'), true);
+      if (lang !== 'en') eq(lang + ': ' + name + ': no English parser message', /Unexpected|Expected|position|JSON input|token/.test(status), false);
+    }
+    const c = lifecyclePage(lang); golden(c); c.get('jgs-clear').click();
+    eq(lang + ': Clear disables Copy', c.get('jgs-copy').disabled, true);
+    // A failure that is not a SyntaxError (a browser limit, for example) keeps the browser's message.
+    const fake = { parse: (s, r) => { if (s === '[[[') throw new RangeError('Maximum call stack size exceeded'); return JSON.parse(s, r); }, stringify: JSON.stringify };
+    const f = lifecyclePage(lang, false, { JSON: fake }); f.input('[[['); f.advance(300);
+    eq(lang + ': a RangeError from JSON.parse keeps the browser message', f.get('jgs-status').textContent, L.msgInvalidJson + 'Maximum call stack size exceeded');
+  }
+  // {/* jgs-error: {"input": "…"} */}: the status line for that input appears as inline code after it.
+  const errorNote = {
+    tag: 'jgs-error',
+    min: 1,
+    verify({ spec, after, lang }) {
+      if (!spec || typeof spec.input !== 'string') return 'annotation needs {"input": "<text>"}';
+      const p = lifecyclePage(lang); p.input(spec.input); p.advance(300);
+      const status = p.get('jgs-status').textContent;
+      if (!p.get('jgs-status').className.includes('error')) return 'not an error: ' + status;
+      return after.includes('`' + status + '`') ? null : 'status line not shown: ' + status;
+    },
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ': jgs-error examples show the page status line', contractProblems('json-to-go-struct', lang, { annotations: [errorNote] }), '');
 }
 
 console.log(`\n${passes} passed, ${failures} failed` + (skips ? `, ${skips} skipped` : ''));
