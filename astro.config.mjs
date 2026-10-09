@@ -109,6 +109,13 @@ export default defineConfig({
   build: {
     inlineStylesheets: 'never',
   },
+  // smartypants rewrites straight quotes, -- and ... in every text node, including
+  // the text inside HTML <code> / <pre> written in MDX, so copied code was wrong.
+  // The MDX integration extends this config (extendMarkdownConfig defaults to true).
+  // scripts/test-mdx-code-literal.mjs checks the built pages.
+  markdown: {
+    smartypants: false,
+  },
 
   integrations: [
     toolRoutes(),

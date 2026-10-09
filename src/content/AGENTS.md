@@ -127,6 +127,7 @@ faqItems:                # 可选，结构化 FAQ
 - **不要在 `src/content/blog/` 或 `src/content/tools/` 下放 `.md/.mdx` 之外的辅助文件**：会被 collection 当成数据条目，schema 校验失败 build 挂掉
 - 若需要补充元数据/工具脚本，放 `scripts/` 或更上层目录
 - Astro 5 的 `type: 'content'` 是 legacy API，未来可能迁移到 `loader: glob({ pattern: '**/*.mdx' })`，迁移时需把所有 `entry.slug` 改为 `entry.id`
+- **不做排版替换**：`astro.config.mjs` 关闭了 smartypants，MDX 里的 `"` `'` `--` `...` 原样输出（`<code>` / `<pre>` 里的代码因此可以照抄）。正文要用弯引号、破折号、省略号时直接写 Unicode（`“ ” ‘ ’ — …`）；代码里不要写这些字符，除非示例本来就是它们（如 `…` 占位）。`scripts/test-mdx-code-literal.mjs` 检查构建产物
 
 ## 依赖关系
 
@@ -141,6 +142,7 @@ faqItems:                # 可选，结构化 FAQ
 
 ## 变更日志
 
+- 2026-10-09 — 关闭 smartypants（见上文「共同约束」与根 AGENTS.md 同日条目）。此前 MDX 中 HTML `<code>` / `<pre>` 里的直引号、`--`、`...` 被改成弯引号、破折号、省略号；正文里写成 `"` `'` 的引号此后显示为直引号，没有改源文件。
 - 2026-10-08 — S2-0：tools schema 的 `faqItems` 新增可选字段 `id`（命名规则见上文「FAQ id」），本批不给任何 MDX 加 id；有无 id 不改页面 HTML 与 FAQPage JSON-LD（`ToolLayout.astro` 只取 question / answer，全部 564 个工具页与同一提交的另一次构建逐字节相同）。工具测试不再对 MDX、FAQ、SEO 求字节哈希，改为 `scripts/lib/tool-mdx-contract.mjs` 的结构断言加引擎复算示例，所以改写正文与 FAQ 不需要改测试里的哈希；四语一致由 `scripts/test-tool-content-parity.mjs` 检查（详见 scripts/AGENTS.md）。同日修正 json-to-csv 四语公式防护示例：`<pre><code>{`…`}` 模板字面量里的 `\"` 会被吃掉反斜杠，页面曾显示无效 JSON；要显示 `\"` 须写 `\\"`。
 - 2026-10-06 — B13九个生成工具（清单见根AGENTS.md同日条目）的36份四语MDX将用法写入steps；限制、其余正文、FAQ与SEO保持。本批77个控件说明按实际行为分别绑定四语气泡；全部原业务按钮保留，用法不引用额外自动执行。完整构建、工具正文与步骤回归通过，薄页80/80、精品40/40保持。
 
