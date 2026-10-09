@@ -121,6 +121,21 @@ eq('a colored default shadow is kept', c('box-shadow: 0 25px 50px -12px rgb(59 1
   }
 }
 
+// ---------- grid templates: only N equal tracks (before: repeat(3, 200px) became grid-cols-3) ----------
+// Tailwind's grid-cols-N / grid-rows-N are repeat(N, minmax(0, 1fr)).
+eq('repeat(N, 1fr) columns', c('grid-template-columns: repeat(3, 1fr);'), 'grid-cols-3');
+eq('repeat(N, minmax(0, 1fr)) columns', c('grid-template-columns: repeat(4, minmax(0, 1fr));'), 'grid-cols-4');
+eq('white space inside repeat()', c('grid-template-columns: repeat( 2 ,minmax( 0 , 1fr ) );'), 'grid-cols-2');
+eq('fixed columns are kept', c('grid-template-columns: repeat(3, 200px);'), '/* keep: grid-template-columns: repeat(3, 200px) */');
+eq('minmax with another minimum is kept', c('grid-template-columns: repeat(2, minmax(100px, 300px));'), '/* keep: grid-template-columns: repeat(2, minmax(100px, 300px)) */');
+eq('repeat() followed by another track is kept', c('grid-template-columns: repeat(2, 1fr) 200px;'), '/* keep: grid-template-columns: repeat(2, 1fr) 200px */');
+eq('repeat(0, 1fr) is kept', c('grid-template-columns: repeat(0, 1fr);'), '/* keep: grid-template-columns: repeat(0, 1fr) */');
+eq('auto-fill is kept', c('grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));'), '/* keep: grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)) */');
+eq('repeat(N, 1fr) rows', c('grid-template-rows: repeat(2, 1fr);'), 'grid-rows-2');
+eq('fixed rows are kept', c('grid-template-rows: repeat(3, 100px);'), '/* keep: grid-template-rows: repeat(3, 100px) */');
+// Stated on the tool pages: an end line after the span is not kept (col-span-N is span N / span N).
+eq('span N / end line keeps only the span', c('grid-column: span 2 / 4;'), 'col-span-2');
+
 // ---------- the examples on the tool pages ----------
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/css-to-tailwind/' + lang + '.mdx'), 'utf8');
@@ -299,8 +314,8 @@ const { default: yaml } = await import('js-yaml');
 const sha = text => createHash('sha256').update(text).digest('hex');
 const fullEngine = source.match(/^ *\/\* ── engine:start ── \*\/[\s\S]*?^ *\/\* ── engine:end ── \*\//m)[0];
 // Updated with each approved engine change (2026-10-09: keep comments keep the typed case;
-// box-shadow maps only Tailwind's default shadows).
-same('v2 exact engine bytes', sha(fullEngine), '709aca6bbfddbd10017def7444a608e41a64298e502b75ec3442253092a77230');
+// box-shadow maps only Tailwind's default shadows; grid templates map only N equal tracks).
+same('v2 exact engine bytes', sha(fullEngine), '3e39cbd92f7026a7ad2356825a4c5d73009a3019c8a7070ae6c0451cb95f5f3c');
 const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
