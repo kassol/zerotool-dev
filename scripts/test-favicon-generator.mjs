@@ -414,6 +414,25 @@ for (const id of ['fg-emoji-input', 'fg-text-input', 'fg-svg-input', 'fg-app-nam
   check(id + ' has autocomplete="off"', /autocomplete="off"/.test(tag), tag);
 }
 
+// Measured 2026-10-09 (local preview, Ego Chromium 152): Reload resets every source and the
+// package; leaving and coming back with Back / Forward restored the whole page from the
+// back/forward cache (chosen image, typed text, generated package).
+{
+  const want = {
+    en: [/Reloading the page/, /Back or Forward/, /back\/forward cache/],
+    zh: [/刷新页面/, /后退或前进/, /往返缓存/],
+    ja: [/再読み込み/, /「戻る」「進む」/, /バックフォワードキャッシュ/],
+    ko: [/새로 고침/, /뒤로·앞으로/, /뒤로-앞으로 캐시/],
+  };
+  const closeTab = /gone when you close the tab|关闭标签页就没了|タブを閉じれば消えます|탭을 닫으면 사라집니다/;
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const md = readFileSync(join(root, 'src/content/tools/favicon-generator', lang + '.mdx'), 'utf8');
+    const ans = /id: "privacy"\n\s+question: "[^"]*"\n\s+answer: "((?:[^"\\]|\\.)*)"/.exec(md)?.[1] || '';
+    check(lang + ' privacy answer drops the untested close-tab claim', !closeTab.test(ans), ans);
+    check(lang + ' privacy answer states the measured reload and back/forward behaviour', want[lang].every((re) => re.test(ans)), ans);
+  }
+}
+
 // v2 generate contract: all original legacy/package and lifecycle assertions remain above.
 const SSR=Function(source.split('// strings:start')[1].split('// strings:end')[0]+';return STRINGS;')();
 const markupV2=source.split('<script is:inline')[0],styleV2=source.split('<style')[1]||'';
