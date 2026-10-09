@@ -42,6 +42,32 @@ if (startIndex < 0 || endIndex <= startIndex) {
 const block = source.slice(startIndex, endIndex);
 const E = new Function(block + '\nreturn { inferSchema };')();
 
+// JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
+// json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
+// HarFileAnalyzerTool.astro. A syntax error shows line, column and cause in the page language
+// instead of "Invalid JSON: " plus the browser's English message; line and column count from the
+// start of the text box.
+const JSON_ENGINE = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+const HAR_SOURCE = readFileSync(join(root, 'src/components/tools/HarFileAnalyzerTool.astro'), 'utf8');
+const HAR_S = new Function('return ' + HAR_SOURCE.slice(HAR_SOURCE.indexOf('const STRINGS = ') + 16, HAR_SOURCE.indexOf('\n};\n', HAR_SOURCE.indexOf('const STRINGS = ')) + 2))();
+function fnSrc(src, name) {
+  const lines = src.split('\n');
+  const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+  if (at < 0) return '';
+  const indent = lines[at].match(/^\s*/)[0];
+  let end = at + 1;
+  while (end < lines.length && lines[end] !== indent + '}') end++;
+  return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+}
+// [input, jsonSyntaxError code, line, column, character]
+const JSON_ERRORS = [
+  ['\n\n{"a":1,}', 'trailingComma', 3, 7],
+  ['{\u201cname\u201d: "Alice"}', 'smartQuote', 1, 2, '\u201c'],
+  ['{"name": "Alice"} // sample\n', 'comment', 1, 19],
+  ["  {'name': 'Alice'}", 'singleQuote', 1, 4],
+];
+const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
+
 let failures = 0;
 let passes = 0;
 function check(name, ok, detail) {
@@ -186,6 +212,18 @@ eq('null value not required', E.inferSchema({ a: null }), { type: 'object', prop
 const pageScript = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)[1];
 const pageLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')');
 const runtimeLabels = lang => vm.runInNewContext('(' + source.match(/const CLIENT_T = (\{[\s\S]*?\n\});/)[1] + ')', { L: pageLabels[lang] });
+{
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
+    eq(`JSON errors: ${lang} ${key} is the text of HarFileAnalyzerTool.astro`, pageLabels[lang][key], HAR_S[lang][key]);
+    eq(`JSON errors: ${lang} ${key} reaches the page script`, runtimeLabels(lang)[key], HAR_S[lang][key]);
+  }
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  eq('JSON errors: the json-reason block sits outside the engine block', rs > endIndex && re > rs, true);
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = rs > 0 ? fnSrc(source.slice(rs, re), name) : '';
+    eq(`JSON errors: ${name} is the same as in json-formatter-engine.js`, mine !== '' && mine === fnSrc(JSON_ENGINE, name), true);
+  }
+}
 const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
@@ -313,6 +351,12 @@ try {
     const invalid = page(lang); run(invalid); run(invalid, invalidInput);
     check(lang + ': invalid input positive control', !!status(invalid).textContent && !status(invalid).hidden);
     eq(lang + ': invalid input clears previous output', output(invalid), '');
+    // S2-10f: line, column and cause in the page language; before, "Invalid JSON: " plus the browser's English message.
+    eq(lang + ': unclosed object names the early end', status(invalid).textContent, jsonErrorMessage(lang, 'unexpectedEnd', 1, 2));
+    for (const [input, code, line, col, ch] of JSON_ERRORS) {
+      const w = page(lang); run(w); run(w, input);
+      eq(lang + ': JSON error ' + code + ' in the page language', [status(w).textContent, status(w).hidden, output(w), w.doc.querySelector('.jjs-wrap').dataset.empty], [jsonErrorMessage(lang, code, line, col, ch), false, '', 'true']);
+    }
     run(invalid, '');
     check(lang + ': empty removes error/output/status', !invalid.get('jjs-input').classList.contains('error') && !output(invalid) && !status(invalid).textContent);
     run(invalid, invalidInput); invalid.get('jjs-clear').click();
