@@ -589,7 +589,7 @@ for (const lang of ['en','zh','ja','ko']) {
 // English on every page, with the position counted in the trimmed input. lineCol and
 // jsonSyntaxError are copied verbatim from json-formatter-engine.js; the cause texts are the
 // jsonParse texts of HarFileAnalyzerTool.astro and MarkdownTableGeneratorTool.astro (both compared).
-// Copy is disabled whenever there is no output (before S2-10 it stayed enabled and did nothing).
+// Copy stays disabled whenever there is no output (the page does this since 2026-10-03).
 {
   const fnSrc = (src, name) => {
     const lines = src.split('\n');
