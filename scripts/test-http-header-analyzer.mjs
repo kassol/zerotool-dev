@@ -301,7 +301,7 @@ for(const lang of ['en','zh','ja','ko']){
   analyze(h,'unparseable');eq(lang+' invalid Analyze prompt and no result',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty,true]);
 }
 await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
-const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":8166,"sha256":"82cd57edf5cd46bdc40e98a3c71a8b0116f98ea6a6661db2636428b24874e4cf"}};
+const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":8264,"sha256":"31b5e1e8cecff2bb57bd4b460a42d921cae6eb6614914cee26c9530e15ada691"}};
 for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
@@ -443,6 +443,14 @@ const names=p=>p.headers.map(h=>h.name);
     analyze(h,'HTTP/1.1 200 OK\nContent-Type: application/json\n');
     eq(lang+' 1 no note without lines after the empty line',h.get('hha-status').textContent,strings[lang].analyzed.replace('{n}','1').replace('{s}',''));
   }
+}
+// 2. The HSTS max-age value may be a quoted-string (RFC 6797 §6.1, §6.1.1).
+{
+  const sts=v=>hintsOf(E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: '+v),'strict-transport-security');
+  eq('2 quoted max-age of one year has no warning',sts('max-age="31536000"; includeSubDomains; preload'),[]);
+  eq('2 quoted max-age with spaces',sts('max-age = "63072000" ; includeSubDomains; preload'),[]);
+  eq('2 quoted short max-age still warns',sts('max-age="86400"; includeSubDomains; preload'),['warn: max-age < 1 year (31536000s). Many preload lists require ≥ 1 year.']);
+  eq('2 plain max-age unchanged',sts('max-age=31536000; includeSubDomains; preload'),[]);
 }
 console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total failures');
 
