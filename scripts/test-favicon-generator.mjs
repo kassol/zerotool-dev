@@ -437,6 +437,11 @@ for (const id of ['fg-emoji-input', 'fg-text-input', 'fg-svg-input', 'fg-app-nam
   }
 }
 
+// Review S2-8 part 4 wording (F-S1, F-S4, F-S5, zh:88, ko:30): old phrases are gone.
+for (const [lang, old] of [['ja', 'この数字は 512 px の画像を別に作るときの目安です'], ['ko', '이 값은 512 px 이미지를 따로 만들 때 참고하세요'], ['zh', '需要在哪里生成都一样'], ['zh', '这里的数字用于你另外做一张 512 px 图'], ['ko', '빈자리가 생깁니다']]) {
+  check(lang + ' page no longer says: ' + old, !readFileSync(join(root, 'src/content/tools/favicon-generator', lang + '.mdx'), 'utf8').includes(old));
+}
+
 // v2 generate contract: all original legacy/package and lifecycle assertions remain above.
 const SSR=Function(source.split('// strings:start')[1].split('// strings:end')[0]+';return STRINGS;')();
 const markupV2=source.split('<script is:inline')[0],styleV2=source.split('<style')[1]||'';
