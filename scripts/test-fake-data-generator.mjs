@@ -188,11 +188,11 @@ for(const lang of ['en','zh','ja','ko'])for(const mode of ['absent','reject','sy
  assert(id+' fallback copies the output',p.execCalls.map(c=>c.text),[output(p)]);assert(id+' shows copied',p.get(COPY).textContent,LABELS[lang].copied);assert(id+' textarea removed',p.doc.body.children.filter(c=>c.tagName==='TEXTAREA').length,0);assert(id+' focus back',p.doc.activeElement===p.get(COPY),true);assert(id+' no unhandled',p.errors,[]);
 }
 for(const lang of ['en','zh','ja','ko']){
- for(const [value,count,note] of [['1e1',10,false],['10',10,false],['2.9',2,true],['150',100,true],['-3',1,true],['',10,true],['0',10,true],['100',100,false]]){
+ for(const [value,count,note] of [['1e1',10,false],['007',7,false],['10',10,false],['2.9',2,true],['150',100,true],['-3',1,true],['',10,true],['0',10,true],['100',100,false]]){
   const p=lifecyclePage(lang);p.get('fdg-count').value=value;p.get('fdg-generate').click();
   const id=SLUG+'/'+lang+' count '+JSON.stringify(value);
   assert(id+' records',JSON.parse(output(p)).length,count);
-  assert(id+' field shows the number used',p.get('fdg-count').value,String(note||value===''?count:value));
+  assert(id+' field shows the number used',p.get('fdg-count').value,String(count));
   assert(id+' note',p.get('fdg-status').textContent,note?NOTE[lang].replace('{n}',String(count)):'');
  }
  const p=lifecyclePage(lang);p.get('fdg-count').value='150';p.get('fdg-generate').click();p.get('fdg-generate').click();
