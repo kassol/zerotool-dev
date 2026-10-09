@@ -203,8 +203,13 @@ for(const lang of langKeys){
   const stable=p.el('ccc-fg-hex').value;p.key('ccc-fg-hex','Enter');eq(lang+' hidden suggestion CtrlEnter inert',p.el('ccc-fg-hex').value,stable);eq(lang+' hidden suggestion cache removed',p.el('ccc-apply-btn').dataset.hex,'');
   failing(p);const ratio=p.text('ccc-ratio-value');p.input('ccc-fg-hex','#x');eq(lang+' partial input keeps ratio',p.text('ccc-ratio-value'),ratio);eq(lang+' partial no error',p.text('ccc-fg-error'),'');
   p.click('ccc-apply-btn');eq(lang+' invalid input cannot apply',p.el('ccc-fg-hex').value,'#x');p.click('ccc-copy-fixed');eq(lang+' invalid input cannot copy',p.jobs.length,0);
-  p.input('ccc-fg-hex','#xyz');eq(lang+' invalid error',p.text('ccc-fg-error'),L.invalidHex);eq(lang+' invalid keeps ratio',p.text('ccc-ratio-value'),ratio);
-  p.click('ccc-swap');eq(lang+' ordinary swap clears invalid',p.text('ccc-fg-error'),'');eq(lang+' ordinary swap cached background',p.el('ccc-fg-hex').value,'#FFFFFF');
+  p.input('ccc-fg-hex','#xyz');eq(lang+' invalid error',p.text('ccc-fg-error'),L.invalidHex);
+  // Review S2-9 M1: an invalid colour clears the old ratio, badges, preview and suggestion.
+  eq(lang+' invalid clears ratio and badges',['ccc-ratio-value','ccc-ratio-headline',...statusIDs].map(id=>p.text(id)),Array(7).fill(''));
+  check(lang+' invalid hides preview and result',p.el('ccc-preview').hidden&&p.el('ccc-result-content').hidden&&!p.el('ccc-empty').hidden);
+  check(lang+' invalid hides the suggestion',p.el('ccc-suggestion').hidden&&p.el('ccc-apply-btn').disabled&&p.el('ccc-copy-fixed').disabled);
+  p.click('ccc-swap');eq(lang+' swap is inert after invalid',[p.text('ccc-fg-error'),p.el('ccc-fg-hex').value],[L.invalidHex,'#xyz']);
+  p.input('ccc-fg-hex','#777777');eq(lang+' a valid colour restores the result',p.text('ccc-ratio-value'),'4.47 : 1');
   failing(p);p.click('ccc-copy-fixed');eq(lang+' whole suggested HEX copied',p.jobs.at(-1).value,p.el('ccc-copy-fixed').dataset.hex.toUpperCase());p.jobs.at(-1).reject(Error('denial'));await settle();eq(lang+' visible rejection',p.text('ccc-copy-status'),L.copyFailed);
   p.click('ccc-copy-fixed');p.jobs.at(-1).resolve();await settle();eq(lang+' same-result retry',p.text('ccc-copy-fixed'),L.copied);eq(lang+' retry clears rejection',p.text('ccc-copy-status'),'');p.expire();eq(lang+' stable copy label',p.text('ccc-copy-fixed'),L.copyFixed);
   for(const mode of ['throw','missing']){p.mode(mode);p.click('ccc-copy-fixed');await settle();eq(lang+mode+' visible failure',p.text('ccc-copy-status'),L.copyFailed);p.mode('pending');p.click('ccc-copy-fixed');p.jobs.at(-1).resolve();await settle();p.expire();eq(lang+mode+' retry original label',p.text('ccc-copy-fixed'),L.copyFixed);}
@@ -286,6 +291,7 @@ for (const lang of langKeys) {
   eq(lang + ' GA: committed hex change sends one check', checks(), 1);
   p.input('ccc-fg-hex', '#77', 'change');
   eq(lang + ' GA: committed invalid hex sends nothing', checks(), 1);
+  p.input('ccc-fg-hex', '#777777');
   for (const v of ['#101010', '#202020', '#303030']) p.input('ccc-bg-picker', v);
   eq(lang + ' GA: picker drag sends nothing', checks(), 1);
   p.input('ccc-bg-picker', '#303030', 'change');
@@ -306,10 +312,22 @@ for (const lang of langKeys) {
   p.input('ccc-fg-hex', '  #1F2937  ');
   eq(lang + ' pasted hex with spaces is read', p.text('ccc-ratio-value'), '14.67 : 1');
   const ratio = p.text('ccc-ratio-value');
-  for (const alpha of ['#1f2937cc', '1f2937cc', '#000a']) {
+  for (const alpha of ['#1f2937cc', '1f2937cc']) {
+    p.input('ccc-fg-hex', '#1F2937');
     p.input('ccc-fg-hex', alpha);
     eq(lang + ' ' + alpha + ' gives the transparency message', p.text('ccc-fg-error'), L.noAlpha);
-    eq(lang + ' ' + alpha + ' keeps the last ratio', p.text('ccc-ratio-value'), ratio);
+    eq(lang + ' ' + alpha + ' clears the old ratio', p.text('ccc-ratio-value'), '');
+  }
+  // 4, 5 and 7 hex digits are partial while typing: no message, last preview kept (review S2-9 S2);
+  // on change they are judged: 4 digits = transparency, 5 / 7 = invalid, and the result clears.
+  for (const [partial, msg] of [['#000a', L.noAlpha], ['#1f293', L.invalidHex], ['#1f2937c', L.invalidHex]]) {
+    p.input('ccc-fg-hex', '#1F2937');
+    p.input('ccc-fg-hex', partial);
+    eq(lang + ' ' + partial + ' while typing: no message', p.text('ccc-fg-error'), '');
+    eq(lang + ' ' + partial + ' while typing: last ratio kept', p.text('ccc-ratio-value'), ratio);
+    p.input('ccc-fg-hex', partial, 'change');
+    eq(lang + ' ' + partial + ' on change: message', p.text('ccc-fg-error'), msg);
+    eq(lang + ' ' + partial + ' on change: ratio cleared', p.text('ccc-ratio-value'), '');
   }
   check(lang + ' noAlpha string', typeof L.noAlpha === 'string' && L.noAlpha.trim().length > 0 && L.noAlpha !== L.invalidHex);
   // Large text is 18pt (24px) or 14pt bold (18.66px) (WCAG 2.2 "large scale"); body text is the rest.
