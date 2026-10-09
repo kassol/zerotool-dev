@@ -56,6 +56,7 @@ const STRINGS = {
     msgReserved: 'Mongoose keeps reserved path names as paths but warns: {keys}. On a document the field value replaces the method or property of the same name (a field named save makes doc.save() unusable).',
     msgBreaks: 'Mongoose 9.10.3 calls document methods with these names itself, so such a field can make building, validating or serializing a document fail: {keys}. Rename these keys.',
     msgMembers: 'Mongoose does not warn about these names, but on a document the field value replaces the Mongoose method or property of the same name: {keys}.',
+    msgTooDeep: 'The JSON is nested too deeply to generate a schema in this browser (the call stack ran out). Nothing was generated.',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: 'On',
@@ -112,6 +113,7 @@ const STRINGS = {
     msgReserved: 'Mongoose 会保留这些保留路径名但打印警告：{keys}。在文档上，字段值会取代同名的方法或属性（字段名为 save 时 doc.save() 无法调用）。',
     msgBreaks: 'Mongoose 9.10.3 自己会调用这些名称的文档方法，用作字段名会让创建、校验或序列化文档时出错：{keys}。请改名。',
     msgMembers: 'Mongoose 不会对这些名称发出警告，但在文档上，字段值会取代同名的 Mongoose 方法或属性：{keys}。',
+    msgTooDeep: 'JSON 嵌套层数过深，此浏览器无法生成 Schema（调用栈耗尽），未生成任何内容。',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: '开启',
@@ -168,6 +170,7 @@ const STRINGS = {
     msgReserved: 'Mongoose は予約済みのパス名もパスとして残しますが、警告を出します：{keys}。ドキュメントでは同名のメソッドやプロパティの代わりにフィールドの値が返ります（save というフィールドがあると doc.save() を呼べません）。',
     msgBreaks: 'これらの名前のドキュメントメソッドは Mongoose 9.10.3 自身が呼び出すため、フィールド名に使うとドキュメントの作成・検証・シリアライズが失敗することがあります：{keys}。キー名を変更してください。',
     msgMembers: 'Mongoose はこれらの名前に警告を出しませんが、ドキュメントでは同名の Mongoose メソッドやプロパティの代わりにフィールドの値が返ります：{keys}。',
+    msgTooDeep: 'JSON の入れ子が深すぎるため、このブラウザではスキーマを生成できません（コールスタック不足）。何も生成していません。',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: 'オン',
@@ -224,6 +227,7 @@ const STRINGS = {
     msgReserved: 'Mongoose는 예약된 경로 이름도 경로로 남기지만 경고를 출력합니다: {keys}. 문서에서는 같은 이름의 메서드나 속성 대신 필드 값이 반환됩니다(save라는 필드가 있으면 doc.save()를 호출할 수 없음).',
     msgBreaks: 'Mongoose 9.10.3은 이 이름의 문서 메서드를 직접 호출하므로, 필드 이름으로 쓰면 문서를 만들거나 검증하거나 직렬화할 때 실패할 수 있습니다: {keys}. 키 이름을 바꾸세요.',
     msgMembers: 'Mongoose는 이 이름들에 경고를 내지 않지만, 문서에서는 같은 이름의 Mongoose 메서드나 속성 대신 필드 값이 반환됩니다: {keys}.',
+    msgTooDeep: 'JSON 중첩이 너무 깊어 이 브라우저에서 스키마를 생성할 수 없습니다(호출 스택 부족). 아무것도 생성하지 않았습니다.',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: '켜짐',
@@ -249,6 +253,7 @@ const L = STRINGS[lang];
   data-msg-reserved={L.msgReserved}
   data-msg-breaks={L.msgBreaks}
   data-msg-members={L.msgMembers}
+  data-msg-too-deep={L.msgTooDeep}
 >
   <div class="jtm-config">
     <div class="jtm-config-row jtm-model-row">
@@ -320,6 +325,7 @@ const L = STRINGS[lang];
       var MSG_RESERVED = wrap ? wrap.dataset.msgReserved : '{keys}';
       var MSG_BREAKS = wrap && wrap.dataset.msgBreaks || '{keys}';
       var MSG_MEMBERS = wrap && wrap.dataset.msgMembers || '{keys}';
+      var MSG_TOO_DEEP = wrap && wrap.dataset.msgTooDeep || 'The JSON is nested too deeply to generate a schema in this browser (the call stack ran out). Nothing was generated.';
 
       var inputEl = document.getElementById('jtm-input');
       var outputCodeEl = document.getElementById('jtm-output-code');
@@ -850,7 +856,23 @@ const L = STRINGS[lang];
         'removeAllListeners', 'replaceOne', 'set', 'setMaxListeners', 'toString', 'unmarkModified', 'updateOne'
       ];
 
+      // A stack overflow while walking very deep JSON: RangeError "Maximum call stack size exceeded" in Chrome
+      // and Safari, InternalError "too much recursion" in Firefox (MDN: "Too much recursion"). The generator
+      // recurses per nesting level, so valid JSON can be too deep for it; never leave the previous schema then.
+      function isTooDeep(e) {
+        return !!e && (e.name === 'RangeError' || e.name === 'InternalError') && /call stack|recursion/i.test(String(e.message));
+      }
       function convert() {
+        try {
+          convertNow();
+        } catch (e) {
+          if (!isTooDeep(e)) throw e;
+          clearOutput();
+          setStatus(MSG_TOO_DEEP, true);
+        }
+      }
+
+      function convertNow() {
         clearTimeout(_liveTimer);
         _liveTimer = null;
         resetCopy();

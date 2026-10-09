@@ -65,6 +65,9 @@ const JSON_ERRORS = [
   ['{\u201ca\u201d: 1}', 'smartQuote', 1, 2, '\u201c'],
   ['{"name": "Alice",', 'unexpectedEnd', 1, 18],
 ];
+// S2-10f review S4: valid JSON nested deeper than the call stack allows (Node 22 runs out well below 20,000 levels;
+// browsers differ). The page shows a four-language notice instead of leaving the previous schema on screen.
+const DEEP_JSON = '{"a":'.repeat(20000) + '1' + '}'.repeat(20000);
 const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
 const FAKE_JSON_DATASET = { errJson: HAR_S.en.errJson, errJsonAt: HAR_S.en.errJsonAt, jsonParse: JSON.stringify(HAR_S.en.jsonParse) };
 
@@ -671,6 +674,12 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     {const w=page(lang,shellFirst);w.example();
       for(const [input,code,line,col,ch] of JSON_ERRORS){w.input(input);w.advance(300);
         same(tag+' JSON error '+code+' in the page language',[w.get(cfg.status).textContent,w.get(cfg.status).classList.contains('error'),w.out(),w.get('jtm-copy').disabled],[jsonErrorMessage(lang,code,line,col,ch),true,'',true]);}}
+    // S2-10f review S4: too deep for the call stack. Before, the exception escaped the timer and the old schema and status stayed.
+    {const w=page(lang,shellFirst);w.example();w.input(DEEP_JSON);let thrown;try{w.advance(300);}catch(e){thrown=e.name;}
+      same(tag+' too deep: no uncaught error',thrown,undefined);
+      same(tag+' too deep: notice in the page language, old schema cleared, Copy off',[w.get(cfg.status).textContent,w.get(cfg.status).classList.contains('error'),w.out(),w.get('jtm-copy').disabled,w.get(cfg.input).classList.contains('error')],[labels[lang].msgTooDeep,true,'',true,false]);
+      w.get(cfg.input).dispatch('change');same(tag+' too deep: no usage event',w.tracks.length,1);
+      w.input('{"b":1}');w.advance(300);same(tag+' too deep: the next input generates again',[w.get(cfg.status).textContent,w.get('jtm-copy').disabled],[labels[lang].msgGenOne,false]);}
     // B2: values beside the objects of a root array are reported, with their count and JSON types.
     {const w=page(lang,shellFirst);w.input('[{"a":1},2,"x",null,[1],3]');w.advance(300);
       same(tag+' B2: status reports the skipped root array values',w.get(cfg.status).textContent.includes(String(labels[lang].msgSkipped).replace('{n}','5').replace('{types}','number × 2, string, null, array')),true);}
