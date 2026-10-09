@@ -490,6 +490,8 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
       eq(lang + ' malformed EXIF: page does not throw', err, null);
       eq(lang + ' malformed EXIF: localized notice', p.get('emv-status').textContent, clientStrings(lang).CLIENT_T.errCorrupt);
       eq(lang + ' malformed EXIF: result and actions shown', [visible(p.get('emv-result-area')), visible(p.get('emv-actions'))], [true, true]);
+      // Only the malformed notice: "no EXIF found" would contradict it (review S2-9 part3 M2)
+      eq(lang + ' malformed EXIF: "no EXIF" note hidden', visible(p.get('emv-no-meta')), false);
       let dlErr = null;
       try { p.get('emv-download').click(); } catch (error) { dlErr = error.name; }
       eq(lang + ' malformed EXIF: download works', [dlErr, p.downloads.length], [null, 1]);
