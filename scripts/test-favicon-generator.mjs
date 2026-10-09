@@ -171,8 +171,9 @@ if (unzipOk) {
   rmSync(dir, { recursive: true, force: true });
 } else skips += 2;
 
-// Same formula as runGenerate(): files.length + ' files · ' + (bytes / 1024).toFixed(1) + ' KB'
-const statsLine = (sizes) => sizes.length + ' files · ' + (sizes.reduce((a, b) => a + b, 0) / 1024).toFixed(1) + ' KB';
+// Same formula as runGenerate(): the page language's statsTpl with {n} files and {kb} = bytes / 1024 (1 decimal).
+const statsTplOf = (lang) => new RegExp('\\n        ' + lang + ": \\{[\\s\\S]*?statsTpl: '([^']*)'").exec(source)[1];
+const statsLine = (sizes, lang = 'en') => statsTplOf(lang).replace('{n}', sizes.length).replace('{kb}', (sizes.reduce((a, b) => a + b, 0) / 1024).toFixed(1));
 
 for (const lang of ['en', 'ja']) {
   const text = readFileSync(join(root, 'src/content/blog/favicon-generator-guide', lang + '.mdx'), 'utf8');
@@ -210,8 +211,8 @@ for (const lang of ['en', 'ja']) {
     const mBytes = new TextEncoder().encode(guideManifest).length;
     const mi = spec.names.indexOf('site.webmanifest');
     check(lang + ': manifest bytes equal the quoted manifest', spec.letter[mi] === mBytes && spec.emoji[mi] === mBytes, mBytes);
-    check(lang + ': letter stats line', statsLine(spec.letter) === spec.letterStats, statsLine(spec.letter));
-    check(lang + ': emoji stats line', statsLine(spec.emoji) === spec.emojiStats, statsLine(spec.emoji));
+    check(lang + ': letter stats line', statsLine(spec.letter, lang) === spec.letterStats, statsLine(spec.letter, lang));
+    check(lang + ': emoji stats line', statsLine(spec.emoji, lang) === spec.emojiStats, statsLine(spec.emoji, lang));
     check(lang + ': stats lines are quoted', text.includes('「' + spec.emojiStats + '」') || text.includes('"' + spec.emojiStats + '"'));
     const fmt = (n) => n.toLocaleString('en-US') + ' B';
     spec.names.forEach((name, i) => {
@@ -375,6 +376,32 @@ for(const sourceType of ['image','svg'])for(const phase of ['pending','completed
     q.input('fg-emoji-input', '⚡');
     check(lang + ' one emoji: no notice', q.$('fg-status').textContent === '', q.$('fg-status').textContent);
   }
+}
+
+// ---------- review 2026-10-09: localized stats and failure messages, actual canvas cause ----------
+{
+  const statsRe = { en: /^11 files · \d+\.\d KB$/, zh: /^11 个文件 · \d+\.\d KB$/, ja: /^11 ファイル · \d+\.\d KB$/, ko: /^파일 11개 · \d+\.\d KB$/ };
+  const failMsg = {
+    generic: { en: 'Could not create the PNG files. Try again, or use a smaller image.', zh: '无法生成 PNG 文件。请重试，或换一张较小的图片。', ja: 'PNG ファイルを作成できませんでした。もう一度試すか、小さい画像を使ってください。', ko: 'PNG 파일을 만들지 못했습니다. 다시 시도하거나 더 작은 이미지를 쓰세요.' },
+    foreign: { en: 'This SVG contains <foreignObject>, and the browser does not let the page read back a canvas that drew it. Remove the <foreignObject> element.', zh: '这个 SVG 含有 <foreignObject>，浏览器不允许页面读回绘制了它的 canvas。请删除 <foreignObject> 元素。', ja: 'この SVG には <foreignObject> が含まれており、ブラウザーはそれを描いた canvas の読み出しを許可しません。<foreignObject> 要素を削除してください。', ko: '이 SVG에는 <foreignObject>가 있어, 브라우저가 이를 그린 canvas를 다시 읽지 못하게 합니다. <foreignObject> 요소를 지우세요.' },
+    external: { en: 'SVG references external resources. Inline images first.', zh: 'SVG 引用了外部资源，请先内联图片。', ja: 'SVG が外部リソースを参照しています。画像をインライン化してください。', ko: 'SVG가 외부 리소스를 참조합니다. 이미지를 인라인하세요.' },
+    blocked: { en: 'The browser did not allow reading the drawn icon back, so no package was made.', zh: '浏览器不允许读回绘制好的图标，没有生成图标包。', ja: 'ブラウザーが描いたアイコンの読み出しを許可しなかったため、パッケージは作られませんでした。', ko: '브라우저가 그린 아이콘을 다시 읽도록 허용하지 않아 패키지를 만들지 못했습니다.' },
+  };
+  const blockCanvas = (p) => { const orig = p.document.createElement; p.document.createElement = (tag) => { const e = orig(tag); if (tag === 'canvas') e.toBlob = () => { const err = new Error('The canvas has been tainted'); err.name = 'SecurityError'; throw err; }; return e; }; };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const p = page(favicon, lang); await generate(p);
+    check(lang + ' stats line is localized', statsRe[lang].test(p.$('fg-result-stats').textContent), p.$('fg-result-stats').textContent);
+    const q = page(favicon, lang); q.click('#fg-generate'); await flush(); q.blobs[0].deliver(null); await flush();
+    check(lang + ' a failed PNG encode shows the localized message, not the browser text', q.$('fg-status').textContent === failMsg.generic[lang], q.$('fg-status').textContent);
+    for (const [kind, svg] of [['foreign', '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><foreignObject width="32" height="32"><div xmlns="http://www.w3.org/1999/xhtml">A</div></foreignObject></svg>'], ['external', '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><image href="https://example.com/logo.png" width="32" height="32"/></svg>']]) {
+      const r = page(favicon, lang); r.click('#fg-tab-svg'); r.input('fg-svg-input', svg); r.advance(300); r.images.at(-1).deliver();
+      blockCanvas(r); r.click('#fg-generate'); await flush(); await flush();
+      check(lang + ' blocked canvas with ' + kind + ' SVG names that cause', r.$('fg-status').textContent === failMsg[kind][lang], r.$('fg-status').textContent);
+    }
+    const e = page(favicon, lang); blockCanvas(e); e.click('#fg-generate'); await flush(); await flush();
+    check(lang + ' blocked canvas without SVG is not blamed on SVG', e.$('fg-status').textContent === failMsg.blocked[lang], e.$('fg-status').textContent);
+  }
+  check('unused emojiFontWarn is removed', !source.includes('emojiFontWarn'));
 }
 
 // v2 generate contract: all original legacy/package and lifecycle assertions remain above.
