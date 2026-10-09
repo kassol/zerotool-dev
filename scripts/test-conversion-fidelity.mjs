@@ -1,7 +1,8 @@
 // Conversion fidelity — YAML ↔ TOML, TOML ↔ JSON and YAML ↔ JSON through the page entry points
 //
-// Read:  src/components/tools/{YamlToml,TomlJson,YamlJson}Tool.astro (run with
-//        scripts/astro-page-harness.mjs and the npm js-yaml / smol-toml they import)
+// Read:  src/components/tools/{YamlToml,TomlJson,YamlJson,YamlValidator}Tool.astro (run with
+//        scripts/astro-page-harness.mjs and the npm js-yaml / smol-toml they import);
+//        src/content/tools/{yaml-json,yaml-toml,toml-json,yaml-validator}/{en,zh,ja,ko}.mdx
 // Write: stdout only
 // Exit:  0 if all PASS, 1 if any FAIL
 //
@@ -310,7 +311,7 @@ expectRejected(YD, 'yaml-json', 'y2j', '2026-02-31', '(root)', '2026-02-31');
       const s = r.note.textContent || '';
       check(VP, `yaml-validator ${lang} ${JSON.stringify(text)}: still valid with a preview`, /\bsuccess\b/.test(r.status.className) && r.preview.textContent !== '', r.status.textContent);
       check(VP, `yaml-validator ${lang} ${JSON.stringify(text)}: note shown and names every path and value`,
-        r.note.hidden === false && items.every(([p, raw]) => s.includes(p) && s.includes(raw)) && s.startsWith(FIDELITY_TEXT[lang].preview.split('{target}')[0]), 'note=' + JSON.stringify(s) + ' hidden=' + r.note.hidden);
+        r.note.hidden === false && items.every(([p, raw]) => s.includes(p) && s.includes(raw)) && s.startsWith(FIDELITY_TEXT[lang].preview.replace('{target}', 'JSON') + (lang === 'zh' || lang === 'ja' ? '：' : ': ')), 'note=' + JSON.stringify(s) + ' hidden=' + r.note.hidden);
     }
     const ok = validate('n: 9007199254740991\nf: 1.5\nd: 2024-02-29\ns: ".inf"', lang);
     check(VP, `yaml-validator ${lang}: values JSON can show need no note`, ok.note.hidden === true && !ok.note.textContent, JSON.stringify(ok.note.textContent));
@@ -403,6 +404,400 @@ expectRejected(YD, 'yaml-json', 'y2j', '2026-02-31', '(root)', '2026-02-31');
   const page = loadPage('src/components/tools/YamlValidatorTool.astro', { dataset: { '.yv-wrap': { lang: 'en', msgValid: 'Valid' } } });
   page.el('yv-input').value = 'at: 2026-10-01T09:30:00+09:00'; page.el('yv-validate').click();
   check('PAGE-TEXT-C', 'yaml-validator preview shows the offset example in UTC', page.el('yv-preview-content').textContent === '{\n  "at": "2026-10-01T00:30:00.000Z"\n}');
+}
+
+/* ── D-YAML-BINARY ── js-yaml's !!binary builds a Uint8Array, which JSON.stringify writes as an
+   object keyed by byte index ({"0":104,…}) and smol-toml as a table (0 = 104), so YAML → JSON and
+   YAML → TOML stop and name the field; the validator lists it under the JSON preview. */
+const BIN = 'D-YAML-BINARY';
+const binItem = (lang, path, target) => {
+  const t = FIDELITY_TEXT[lang];
+  const wide = lang === 'zh' || lang === 'ja';
+  return t.binary ? (path || t.root) + (wide ? '：' : ': ') + t.binary.replace('{raw}', '!!binary').replace('{target}', target) : null;
+};
+function expectBinary(tool, dir, text, path, lang = 'en') {
+  expectRejected(BIN, tool, dir, text, path || FIDELITY_TEXT[lang].root, '!!binary', lang);
+  const r = convert(open(tool, lang), tool, dir, text, 'input');
+  const want = binItem(lang, path, dir === 'y2t' ? 'TOML' : 'JSON');
+  check(BIN, `${tool} ${dir} (${lang}) ${JSON.stringify(text).slice(0, 50)}: names ${path || 'the root'} and says why`,
+    want !== null && r.status.textContent.includes(want), 'status=' + JSON.stringify(r.status.textContent) + ' want=' + JSON.stringify(want));
+}
+expectBinary('yaml-json', 'y2j', 'b: !!binary aGVsbG8=', '/b');
+expectBinary('yaml-json', 'y2j', 'b: !!binary |\n  aGVs\n  bG8=', '/b');
+expectBinary('yaml-json', 'y2j', 'files:\n  - name: a.png\n    data: !!binary iVBORw0KGgo=', '/files/0/data');
+expectBinary('yaml-json', 'y2j', '!!binary aGk=', '');
+// js-yaml 4.3.2 decodes an empty !!binary as three zero bytes; it stops like any other.
+expectBinary('yaml-json', 'y2j', 'empty: !!binary ""', '/empty');
+expectBinary('yaml-json', 'y2j', 'b: !!binary aGVsbG8=', '/b', 'zh');
+expectBinary('yaml-json', 'y2j', 'b: !!binary aGVsbG8=', '/b', 'ja');
+expectBinary('yaml-json', 'y2j', 'b: !!binary aGVsbG8=', '/b', 'ko');
+expectBinary('yaml-toml', 'y2t', 'b: !!binary aGVsbG8=', '/b');
+expectBinary('yaml-toml', 'y2t', 'asset:\n  icon: !!binary aGk=', '/asset/icon', 'zh');
+expectBinary('yaml-toml', 'y2t', 'list:\n  - !!binary aGk=', '/list/0', 'ja');
+expectBinary('yaml-toml', 'y2t', 'b: !!binary aGVsbG8=', '/b', 'ko');
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid, msgValidMulti: L.msgValidMulti } } });
+    for (const [text, path] of [['b: !!binary aGVsbG8=', '/b'], ['a: 1\n---\nb: !!binary aGk=', '/1/b']]) {
+      page.el('yv-input').value = text; page.el('yv-validate').click();
+      const note = page.el('yv-preview-note'), want = binItem(lang, path, 'JSON');
+      check(BIN, `yaml-validator ${lang} ${JSON.stringify(text)}: still valid, the note names ${path} and says why`,
+        /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent !== '' && note.hidden === false &&
+        note.textContent.startsWith(FIDELITY_TEXT[lang].preview.replace('{target}', 'JSON') + (lang === 'zh' || lang === 'ja' ? '：' : ': ')) && want !== null && note.textContent.includes(want),
+        'note=' + JSON.stringify(note.textContent) + ' hidden=' + note.hidden);
+    }
+  }
+}
+
+/* ── D-YAML-OTHER-TYPES ── js-yaml's other default-schema tags keep js-yaml's representation:
+   !!set is a mapping whose values are null (the YAML set type), !!omap a sequence of one-key
+   mappings and !!pairs a list of [key, value] pairs; TOML has no null, so a set stops there. */
+const OT = 'D-YAML-OTHER-TYPES';
+expectConverted(OT, 'yaml-json', 'y2j', 's: !!set {a, b}\no: !!omap [a: 1, b: 2]\np: !!pairs [a: 1, a: 2]',
+  (o) => o === JSON.stringify({ s: { a: null, b: null }, o: [{ a: 1 }, { b: 2 }], p: [['a', 1], ['a', 2]] }, null, 2), 'set, omap and pairs keep js-yaml\'s representation');
+expectConverted(OT, 'yaml-toml', 'y2t', 'o: !!omap [a: 1, b: 2]\np: !!pairs [a: 1, a: 2]',
+  (o) => { const d = JSON.parse(JSON.stringify(tomlParse(o))); return deep(d.o, [{ a: 1 }, { b: 2 }]) && deep(d.p, [['a', 1], ['a', 2]]); }, 'omap and pairs become TOML arrays');
+expectRejected(OT, 'yaml-toml', 'y2t', 's: !!set {a, b}', '/s/a', 'null');
+
+/* ── D-YAML-KEYS ── js-yaml turns a mapping key into String(key), except that an object whose
+   Object.prototype.toString is '[object Object]' becomes the text '[object Object]'
+   (loader.js storeMappingPair). The page schema builds YamlTimestamp, LossyValue and WholeFloat
+   objects, so a date key became '[object Object]' and two date keys were a duplicated mapping key.
+   A timestamp key keeps its text, an integer key outside ±(2^53 − 1) its exact decimal digits, and a
+   whole-float key reads like the number (1.0 → "1", as js-yaml gives without the page schema). */
+const KEY = 'D-YAML-KEYS';
+expectConverted(KEY, 'yaml-json', 'y2j', "holidays:\n  2026-01-01: New Year\n  2026-05-05: Children's Day",
+  (o) => o === JSON.stringify({ holidays: { '2026-01-01': 'New Year', '2026-05-05': "Children's Day" } }, null, 2), 'date keys keep their text, and two of them are not a duplicate');
+expectConverted(KEY, 'yaml-json', 'y2j', '2026-10-01T09:30:00+09:00: start\n2001-12-14 21:59:43.10 -5: old\n2026-02-31: not a date',
+  (o) => deep(Object.keys(JSON.parse(o)), ['2026-10-01T09:30:00+09:00', '2001-12-14 21:59:43.10 -5', '2026-02-31']), 'timestamp keys keep their text, also one that is not a real date');
+expectConverted(KEY, 'yaml-json', 'y2j', '9007199254740993: a\n0x20000000000002: b\n-9007199254740993: c\n0x1F: d',
+  (o) => deep(JSON.parse(o), { '31': 'd', '9007199254740993': 'a', '9007199254740994': 'b', '-9007199254740993': 'c' }), 'integer keys outside ±(2^53 − 1) keep their exact decimal digits; 0x1F is still 31');
+expectConverted(KEY, 'yaml-json', 'y2j', 'base: &b\n  2026-01-01: x\nm:\n  <<: *b\n  2026-02-01: y',
+  (o) => deep(JSON.parse(o).m, { '2026-01-01': 'x', '2026-02-01': 'y' }), 'date keys through a << merge');
+expectConverted(KEY, 'yaml-toml', 'y2t', 'holidays:\n  2026-01-01: New Year\n  2026-05-05: Children',
+  (o) => deep(JSON.parse(JSON.stringify(tomlParse(o))), { holidays: { '2026-01-01': 'New Year', '2026-05-05': 'Children' } }), 'date keys keep their text in TOML');
+expectConverted(KEY, 'yaml-toml', 'y2t', '1.0: a\n9007199254740993: b',
+  (o) => deep(Object.keys(tomlParse(o)), ['1', '9007199254740993']), 'whole-float and large-integer keys');
+for (const tool of ['yaml-json', 'yaml-toml']) {
+  const dir = tool === 'yaml-json' ? 'y2j' : 'y2t';
+  const r = convert(open(tool), tool, dir, '2026-01-01: a\n2026-01-01: b', 'input');
+  check(KEY, `${tool}: the same date twice is still a duplicated mapping key`, r.out.value === '' && r.status.textContent.includes('duplicated mapping key'), 'status=' + JSON.stringify(r.status.textContent));
+}
+// Keys are compared by their text, as js-yaml compares 1 and "1": a quoted and an unquoted date with
+// the same text are one key; the same instant written two ways is two keys.
+{
+  const r = convert(open('yaml-json'), 'yaml-json', 'y2j', '"2026-01-01": a\n2026-01-01: b', 'input');
+  check(KEY, 'yaml-json: a quoted and an unquoted 2026-01-01 are a duplicated mapping key', r.out.value === '' && r.status.textContent.includes('duplicated mapping key'), 'status=' + JSON.stringify(r.status.textContent));
+}
+expectConverted(KEY, 'yaml-json', 'y2j', '2026-01-01: a\n2026-01-01 00:00:00Z: b',
+  (o) => deep(Object.keys(JSON.parse(o)), ['2026-01-01', '2026-01-01 00:00:00Z']), 'the same instant written two ways is two keys');
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const L = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels').en;
+  const dataset = { lang: 'en', msgEmpty: L.msgEmpty, msgValid: L.msgValid, msgInvalid: L.msgInvalid, msgValidMulti: L.msgValidMulti, msgInvalidMulti: L.msgInvalidMulti, docTitle: L.docTitle, docLines: L.docLines, docValid: L.docValid, copyJson: L.copyJson, copied: L.copied, errTitle: L.errTitle, errLine: L.errLine, errLineCol: L.errLineCol };
+  const page = loadPage('src/components/tools/YamlValidatorTool.astro', { dataset: { '.yv-wrap': dataset } });
+  page.el('yv-input').value = 'changelog:\n  2026-10-01: first\n  2026-10-08: second'; page.el('yv-validate').click();
+  check(KEY, 'yaml-validator: two date keys are valid and the preview keeps their text',
+    /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent === JSON.stringify({ changelog: { '2026-10-01': 'first', '2026-10-08': 'second' } }, null, 2) && page.el('yv-preview-note').hidden === true,
+    page.el('yv-status').textContent + ' | ' + page.el('yv-preview-content').textContent);
+  page.el('yv-input').value = '"2026-01-01": a\n2026-01-01: b'; page.el('yv-validate').click();
+  check(KEY, 'yaml-validator: a quoted and an unquoted 2026-01-01 are a duplicated mapping key',
+    /\berror\b/.test(page.el('yv-status').className) && page.el('yv-error-box').innerHTML.includes('duplicated mapping key'), page.el('yv-error-box').innerHTML);
+  page.el('yv-input').value = '2026-01-01: a\n2026-01-01 00:00:00Z: b'; page.el('yv-validate').click();
+  check(KEY, 'yaml-validator: the same instant written two ways is two keys',
+    /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent === JSON.stringify({ '2026-01-01': 'a', '2026-01-01 00:00:00Z': 'b' }, null, 2),
+    page.el('yv-status').textContent + ' | ' + page.el('yv-preview-content').textContent);
+}
+
+/* ── E-YAML-BINARY-KEY ── js-yaml turns a !!binary key into the decimal byte list ("107,49") and a
+   `<<: !!binary` merge into one key per byte index ("0": 104, …). Both stop now, with the mapping's
+   path. The first samples are PyYAML 6.0.3 output (Python 3.14.8, 2026-10-09): yaml.dump of
+   {b'k1': 1, b'k2': 2}, of {b'key': 1, 'a': b'hi'} and of {'m': {b'id': 'x'}}. The validator
+   keeps its preview as js-yaml builds it and lists the keys in the note. */
+const BK = 'E-YAML-BINARY-KEY';
+const stopItem = (lang, kind, path, raw, target) => {
+  const t = FIDELITY_TEXT[lang];
+  const wide = lang === 'zh' || lang === 'ja';
+  return t[kind] ? (path || t.root) + (wide ? '：' : ': ') + t[kind].replace('{raw}', raw).replace('{target}', target) : null;
+};
+const PY_KEYS = '? !!binary |\n  azE=\n: 1\n? !!binary |\n  azI=\n: 2\n';
+const PY_MIXED = '? !!binary |\n  a2V5\n: 1\na: !!binary |\n  aGk=\n';
+const PY_NESTED = 'm:\n  ? !!binary |\n    aWQ=\n  : x\n';
+/* items: [kind, path, raw] in the order the status lists them */
+function expectStops(tag, tool, dir, text, items, lang = 'en') {
+  const target = dir === 'y2t' ? 'TOML' : 'JSON';
+  const [kind0, path0, raw0] = items[0];
+  expectRejected(tag, tool, dir, text, path0 || FIDELITY_TEXT[lang].root, raw0, lang);
+  const r = convert(open(tool, lang), tool, dir, text, 'input');
+  const s = r.status.textContent;
+  const want = items.map(([kind, path, raw]) => stopItem(lang, kind, path, raw, target));
+  let at = 0;
+  const inOrder = want.every((w) => { const i = w === null ? -1 : s.indexOf(w, at); if (i < 0) return false; at = i + w.length; return true; });
+  check(tag, `${tool} ${dir} (${lang}) ${JSON.stringify(text).slice(0, 60)}: lists ${items.map((x) => x[0] + ' ' + (x[1] || '(root)')).join(', ')}`, inOrder,
+    'status=' + JSON.stringify(s) + ' want=' + JSON.stringify(want));
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  expectStops(BK, 'yaml-json', 'y2j', PY_KEYS, [['binaryKey', '', 'azE='], ['binaryKey', '', 'azI=']], lang);
+}
+expectStops(BK, 'yaml-toml', 'y2t', PY_KEYS, [['binaryKey', '', 'azE='], ['binaryKey', '', 'azI=']]);
+expectStops(BK, 'yaml-toml', 'y2t', PY_KEYS, [['binaryKey', '', 'azE='], ['binaryKey', '', 'azI=']], 'ja');
+expectStops(BK, 'yaml-json', 'y2j', PY_MIXED, [['binaryKey', '', 'a2V5'], ['binary', '/a', '!!binary']]);
+expectStops(BK, 'yaml-json', 'y2j', PY_NESTED, [['binaryKey', '/m', 'aWQ=']], 'zh');
+expectStops(BK, 'yaml-toml', 'y2t', PY_NESTED, [['binaryKey', '/m', 'aWQ=']], 'ko');
+expectStops(BK, 'yaml-json', 'y2j', '? !!binary aGk=\n: v', [['binaryKey', '', 'aGk=']]);
+expectStops(BK, 'yaml-json', 'y2j', '"a/b":\n  ? !!binary aGk=\n  : 1', [['binaryKey', '/a~1b', 'aGk=']]);
+expectStops(BK, 'yaml-json', 'y2j', 's: !!set {? !!binary aGk=}', [['binaryKey', '/s', 'aGk=']]);
+expectStops(BK, 'yaml-toml', 'y2t', 's: !!set {? !!binary aGk=}', [['binaryKey', '/s', 'aGk='], ['null', '/s/104,105', 'null']]);
+expectStops(BK, 'yaml-json', 'y2j', 'p: !!pairs\n  - ? !!binary aGk=\n    : 1', [['binaryKey', '/p/0/0', 'aGk=']]);
+expectStops(BK, 'yaml-json', 'y2j', 'm:\n  <<: !!binary aGk=\n  x: 1', [['merge', '/m', '!!binary aGk=']]);
+expectStops(BK, 'yaml-toml', 'y2t', 'm:\n  <<: !!binary aGk=\n  x: 1', [['merge', '/m', '!!binary aGk=']], 'zh');
+for (const tool of ['yaml-json', 'yaml-toml']) {
+  const r = convert(open(tool), tool, tool === 'yaml-json' ? 'y2j' : 'y2t', '? !!binary aGk=\n: 1\n? !!binary aGk=\n: 2', 'input');
+  check(BK, `${tool}: the same !!binary key twice is still a duplicated mapping key`, r.out.value === '' && r.status.textContent.includes('duplicated mapping key'), 'status=' + JSON.stringify(r.status.textContent));
+}
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  const cases = [
+    [PY_KEYS, [['binaryKey', '', 'azE='], ['binaryKey', '', 'azI=']], { '107,49': 1, '107,50': 2 }],
+    [PY_MIXED, [['binaryKey', '', 'a2V5'], ['binary', '/a', '!!binary']], { '107,101,121': 1, a: { 0: 104, 1: 105 } }],
+    ['m:\n  <<: !!binary aGk=\n  x: 1', [['merge', '/m', '!!binary aGk=']], { m: { 0: 104, 1: 105, x: 1 } }],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid, msgValidMulti: L.msgValidMulti } } });
+    const wide = lang === 'zh' || lang === 'ja';
+    for (const [text, items, preview] of cases) {
+      page.el('yv-input').value = text; page.el('yv-validate').click();
+      const note = page.el('yv-preview-note').textContent;
+      const want = items.map(([kind, path, raw]) => stopItem(lang, kind, path, raw, 'JSON'));
+      check(BK, `yaml-validator ${lang} ${JSON.stringify(text).slice(0, 50)}: valid, the preview is js-yaml's, the note lists the keys`,
+        /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent === JSON.stringify(preview, null, 2) &&
+        page.el('yv-preview-note').hidden === false && note.startsWith(FIDELITY_TEXT[lang].preview.replace('{target}', 'JSON') + (wide ? '：' : ': ')) &&
+        want.every((w) => w !== null && note.includes(w)),
+        'note=' + JSON.stringify(note) + ' preview=' + JSON.stringify(page.el('yv-preview-content').textContent));
+    }
+  }
+}
+
+/* ── E-YAML-MERGE ── `<<` merges every enumerable property of its value (js-yaml mergeMappings
+   only asks for an object). The page's YamlTimestamp, LossyValue and WholeFloat objects therefore
+   merged their inner fields (raw, date, kind, value, text) into the mapping. A merge of such a
+   scalar now stops with the mapping's path; the validator preview gets nothing from it, as js-yaml
+   does with a Date. yaml-json builds no WholeFloat, so `<<: 1.0` keeps js-yaml's own error. */
+const MG = 'E-YAML-MERGE';
+expectStops(MG, 'yaml-json', 'y2j', 'm:\n  <<: 2026-01-01\n  x: 1', [['merge', '/m', '2026-01-01']]);
+expectStops(MG, 'yaml-json', 'y2j', 'm:\n  <<: 9007199254740993', [['merge', '/m', '9007199254740993']], 'ja');
+expectStops(MG, 'yaml-toml', 'y2t', 'm:\n  <<: 1.0', [['merge', '/m', '1.0']]);
+expectStops(MG, 'yaml-toml', 'y2t', 'm:\n  <<: [2026-01-01]\n  x: 1', [['merge', '/m', '2026-01-01']], 'ko');
+{
+  const r = convert(open('yaml-json'), 'yaml-json', 'y2j', 'm:\n  <<: 1.0', 'input');
+  check(MG, 'yaml-json: <<: 1.0 keeps js-yaml\'s "cannot merge mappings" error', r.out.value === '' && r.status.textContent.includes('cannot merge mappings'), 'status=' + JSON.stringify(r.status.textContent));
+}
+for (const [tool, dir, text] of [['yaml-json', 'y2j', 'm:\n  <<: 2026-01-01\n  x: 1'], ['yaml-json', 'y2j', 'm:\n  <<: 9007199254740993'], ['yaml-toml', 'y2t', 'm:\n  <<: 1.0']]) {
+  const r = convert(open(tool), tool, dir, text, 'input');
+  check(MG, `${tool} ${JSON.stringify(text)}: no inner field reaches the status or the output`, !/\b(raw|date|kind|value|text)\b/.test(r.status.textContent) && r.out.value === '', 'status=' + JSON.stringify(r.status.textContent));
+}
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  for (const lang of ['en', 'zh']) {
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid } } });
+    for (const [text, raw, preview] of [['m:\n  <<: 2026-01-01\n  x: 1', '2026-01-01', { m: { x: 1 } }], ['m:\n  <<: 9007199254740993', '9007199254740993', { m: {} }]]) {
+      page.el('yv-input').value = text; page.el('yv-validate').click();
+      const note = page.el('yv-preview-note').textContent, want = stopItem(lang, 'merge', '/m', raw, 'JSON');
+      check(MG, `yaml-validator ${lang} ${JSON.stringify(text)}: preview without inner fields, note names /m`,
+        /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent === JSON.stringify(preview, null, 2) && want !== null && note.includes(want),
+        'note=' + JSON.stringify(note) + ' preview=' + JSON.stringify(page.el('yv-preview-content').textContent));
+    }
+  }
+}
+
+/* ── E-YAML-KEY-MARKER ── a sequence key joins its items with commas, so a !!binary item can sit
+   anywhere in the key text, more than once, and !!pairs moves such a key into a list. Every one
+   stops; the validator preview shows the key as js-yaml writes it. The markers the page puts in
+   these keys never reach an output, a status, a preview or a note. */
+const KM = 'E-YAML-KEY-MARKER';
+expectStops(KM, 'yaml-json', 'y2j', '? [x, !!binary aGk=]\n: 1', [['binaryKey', '', 'aGk=']]);
+expectStops(KM, 'yaml-toml', 'y2t', '? [x, !!binary aGk=]\n: 1', [['binaryKey', '', 'aGk=']], 'ko');
+expectStops(KM, 'yaml-json', 'y2j', '? [!!binary aGk=, !!binary YQ==]\n: 1', [['binaryKey', '', 'aGk='], ['binaryKey', '', 'YQ==']]);
+expectStops(KM, 'yaml-json', 'y2j', 'p: !!pairs\n  - ? [x, !!binary aGk=]\n    : 1', [['binaryKey', '/p/0/0', 'aGk=']], 'ja');
+expectStops(KM, 'yaml-json', 'y2j', '"104,105": a\n? !!binary aGk=\n: b', [['binaryKey', '', 'aGk=']]);
+expectStops(KM, 'yaml-json', 'y2j', '? !!binary ""\n: 1', [['binaryKey', '', '""']]);
+expectStops(KM, 'yaml-json', 'y2j', 'm:\n  <<: !!binary ""', [['merge', '/m', '!!binary ""']]);
+const MARKER_INPUTS = [
+  '? [x, !!binary aGk=]\n: 1',
+  '? [!!binary aGk=, !!binary YQ==]\n: 1',
+  'p: !!pairs\n  - ? [x, !!binary aGk=]\n    : 1',
+  'o: !!omap [? [x, !!binary aGk=] : 1]',
+  '"104,105": a\n? !!binary aGk=\n: b',
+  '? !!binary aGk=\n: a\n"104,105": b',
+  '? !!binary ""\n: 1',
+  'm:\n  <<: !!binary ""',
+  'base: &b\n  <<: 2026-01-01\nm:\n  <<: *b\n  x: 1',
+  'm:\n  <<: [{a: 1}, !!binary aGk=, 2026-01-01]',
+];
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  const L = labels.en;
+  const vpage = loadPage('src/components/tools/YamlValidatorTool.astro', { dataset: { '.yv-wrap': { lang: 'en', msgValid: L.msgValid, msgValidMulti: L.msgValidMulti } } });
+  const validate = (text) => {
+    vpage.el('yv-input').value = text; vpage.el('yv-validate').click();
+    return { status: vpage.el('yv-status'), preview: vpage.el('yv-preview-content').textContent, note: vpage.el('yv-preview-note').textContent };
+  };
+  for (const text of MARKER_INPUTS) {
+    const seen = [];
+    for (const [tool, dir] of [['yaml-json', 'y2j'], ['yaml-toml', 'y2t']]) {
+      const r = convert(open(tool), tool, dir, text, 'input');
+      seen.push(r.out.value, r.status.textContent);
+    }
+    const v = validate(text);
+    seen.push(v.preview, v.note, v.status.textContent);
+    check(KM, `${JSON.stringify(text).slice(0, 60)}: no marker in any output, status, preview or note`, seen.every((s) => !s.includes('\u0000') && !s.includes('zt-')), JSON.stringify(seen));
+  }
+  for (const [text, preview] of [
+    ['? [x, !!binary aGk=]\n: 1', { 'x,104,105': 1 }],
+    ['? [!!binary aGk=, !!binary YQ==]\n: 1', { '104,105,97': 1 }],
+    ['p: !!pairs\n  - ? [x, !!binary aGk=]\n    : 1', { p: [['x,104,105', 1]] }],
+    ['"104,105": a\n? !!binary aGk=\n: b', { '104,105': 'b' }],
+    ['? !!binary aGk=\n: a\n"104,105": b', { '104,105': 'b' }],
+  ]) {
+    const v = validate(text);
+    check(KM, `yaml-validator ${JSON.stringify(text).slice(0, 50)}: valid, the preview writes the key as js-yaml does, the note names it`,
+      /\bsuccess\b/.test(v.status.className) && v.preview === JSON.stringify(preview, null, 2) && v.note.includes('!!binary key aGk='),
+      'preview=' + JSON.stringify(v.preview) + ' note=' + JSON.stringify(v.note));
+  }
+}
+
+/* ── PAGE-TEXT-D ── the pages quote the !!binary stop and note as the page shows them, the yaml-json
+   table rows for !!set, !!pairs and a date key are the page output, and the FAQ answers name
+   !!binary where they list what stops (no fixed count of exceptions). */
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const jsyaml = (await import('js-yaml')).default;
+  const mdx = (tool, lang) => readFileSync(new URL(`../src/content/tools/${tool}/${lang}.mdx`, import.meta.url), 'utf8');
+  const faq = (text, id) => (jsyaml.load(text.slice(4, text.indexOf('\n---\n', 4))).faqItems.find((f) => f.id === id) || {}).answer || '';
+  const vsrc = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(vsrc.slice(vsrc.indexOf('const labels = '), vsrc.indexOf('const L = labels')) + '\n;labels');
+  const rows = [['roles: !!set {admin, editor}', (d) => d.roles], ['steps: !!pairs [run: build, run: test]', (d) => d.steps], ['2026-01-01: New Year', (d) => d]];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const yj = mdx('yaml-json', lang), yt = mdx('yaml-toml', lang), yv = mdx('yaml-validator', lang);
+    const a = convert(open('yaml-json', lang), 'yaml-json', 'y2j', 'photo: !!binary aGVsbG8=', 'input').status.textContent;
+    check('PAGE-TEXT-D', `yaml-json ${lang} quotes the !!binary stop`, a.includes('/photo') && yj.includes('`' + a + '`') && yj.includes('`photo: !!binary aGVsbG8=`'), a);
+    for (const [text, pick] of rows) {
+      const out = convert(open('yaml-json', lang), 'yaml-json', 'y2j', text, 'input').out.value;
+      const cell = '| `' + text + '` | `' + JSON.stringify(pick(JSON.parse(out))) + '` |';
+      check('PAGE-TEXT-D', `yaml-json ${lang} table row for ${text} is the page output`, yj.includes(cell), cell);
+    }
+    check('PAGE-TEXT-D', `yaml-json ${lang} names the default schema tags and no fixed count of exceptions`,
+      ['`<<`', '`!!binary`', '`!!set`', '`!!omap`', '`!!pairs`'].every((t) => yj.includes(t)) &&
+      ['!!binary', '!!set', '!!omap', '!!pairs'].every((t) => faq(yj, 'features').includes(t)) && faq(yj, 'type-mapping').includes('!!binary') &&
+      !/Two exceptions|两处例外|例外は 2 つ|예외는 두 가지/.test(faq(yj, 'features')), faq(yj, 'features'));
+    const b = convert(open('yaml-toml', lang), 'yaml-toml', 'y2t', 'photo: !!binary aGVsbG8=', 'input').status.textContent;
+    check('PAGE-TEXT-D', `yaml-toml ${lang} quotes the !!binary stop and lists it in the FAQ`, b.includes('/photo') && yt.includes('<code>' + b + '</code>') && faq(yt, 'conversion-errors').includes('!!binary'), b);
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid } } });
+    page.el('yv-input').value = 'photo: !!binary aGVsbG8='; page.el('yv-validate').click();
+    const note = page.el('yv-preview-note').textContent;
+    check('PAGE-TEXT-D', `yaml-validator ${lang} quotes the !!binary note and lists it in the FAQ`, note.includes('/photo') && yv.includes('`' + note + '`') && faq(yv, 'preview').includes('!!binary'), note);
+  }
+}
+
+/* ── PAGE-TEXT-E ── the pages show the PyYAML 6.0.3 output for yaml.dump({b'k1': 1}), name the
+   byte list js-yaml would make of its key (107,49), and quote the stop (converters) or the note
+   (validator) for that key and for `m: {<<: !!binary aGk=}` as the page shows them. */
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const mdx = (tool, lang) => readFileSync(new URL(`../src/content/tools/${tool}/${lang}.mdx`, import.meta.url), 'utf8');
+  const vsrc = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(vsrc.slice(vsrc.indexOf('const labels = '), vsrc.indexOf('const L = labels')) + '\n;labels');
+  const PY_ONE = '? !!binary |\n  azE=\n: 1\n';
+  const MERGE_IN = 'm: {<<: !!binary aGk=}';
+  // the YAML block may be indented inside a list item
+  const hasBlock = (text) => /(^|\n)( *)\? !!binary \|\n\2 {2}azE=\n\2: 1\n/.test(text);
+  const md = (s) => '`' + s + '`';
+  const html = (s) => '<code>' + s + '</code>';
+  const expr = (s) => "<code>{'" + s + "'}</code>";
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    for (const [tool, dir, quote, quoteCode] of [['yaml-json', 'y2j', md, md], ['yaml-toml', 'y2t', html, expr]]) {
+      const page = mdx(tool, lang);
+      const key = convert(open(tool, lang), tool, dir, PY_ONE, 'input').status.textContent;
+      check('PAGE-TEXT-E', `${tool} ${lang} shows the PyYAML sample, the byte list and the key stop`,
+        key.includes('azE=') && hasBlock(page) && page.includes("yaml.dump({b'k1': 1})") && page.includes('107,49') && page.includes(quote(key)), key);
+      const merge = convert(open(tool, lang), tool, dir, MERGE_IN, 'input').status.textContent;
+      const item = merge.slice(merge.indexOf('/m'));
+      check('PAGE-TEXT-E', `${tool} ${lang} quotes the << merge stop`, merge.indexOf('/m') > 0 && page.includes(quoteCode(MERGE_IN)) && page.includes(quoteCode(item)), item);
+      if (tool === 'yaml-toml') {
+        // MDX wraps the lines of a multi-line <p> in a second <p> (<p><p>…</p></p> in the HTML)
+        const lines = page.split('\n').filter((l) => l.includes(html(key)) || l.includes("yaml.dump({b'k1': 1})"));
+        check('PAGE-TEXT-E', `yaml-toml ${lang}: the new paragraphs are one-line <p> elements`, lines.length === 2 && lines.every((l) => /^<p>.*<\/p>$/.test(l)), JSON.stringify(lines));
+      }
+    }
+    const yv = mdx('yaml-validator', lang);
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid } } });
+    page.el('yv-input').value = PY_ONE; page.el('yv-validate').click();
+    const note = page.el('yv-preview-note').textContent;
+    const preview = page.el('yv-preview-content').textContent;
+    check('PAGE-TEXT-E', `yaml-validator ${lang} quotes the note for a !!binary key and the preview key`,
+      note.includes('azE=') && preview.includes('"107,49"') && yv.includes("yaml.dump({b'k1': 1})") && yv.includes(md(note)) && yv.includes('`"107,49"`'), note);
+  }
+}
+
+/* ── PAGE-TEXT-F ── an integer key outside ±(2^53 − 1) converts with its exact decimal digits
+   (0x20000000000002 → 9007199254740994). The type-mapping answers of yaml-json and yaml-toml say
+   so next to the date-key sentence, so "integers outside ±(2^53 − 1)" in the stop lists reads as
+   values. */
+{
+  const { readFileSync } = await import('node:fs');
+  const jsyaml = (await import('js-yaml')).default;
+  const mdx = (tool, lang) => readFileSync(new URL(`../src/content/tools/${tool}/${lang}.mdx`, import.meta.url), 'utf8');
+  const faq = (text, id) => (jsyaml.load(text.slice(4, text.indexOf('\n---\n', 4))).faqItems.find((f) => f.id === id) || {}).answer || '';
+  const KEYS_IN = '9007199254740993: a\n0x20000000000002: b\n-9007199254740993: c';
+  const WANT = ['9007199254740993', '9007199254740994', '-9007199254740993'];
+  expectConverted('PAGE-TEXT-F', 'yaml-json', 'y2j', KEYS_IN, (o) => deep(Object.keys(JSON.parse(o)), WANT), 'integer keys keep their exact decimal digits');
+  expectConverted('PAGE-TEXT-F', 'yaml-toml', 'y2t', KEYS_IN, (o) => deep(Object.keys(tomlParse(o)), WANT), 'integer keys keep their exact decimal digits');
+  const PHRASE = { en: 'an integer used as a key keeps its exact decimal digits', zh: '作键的整数写成精确的十进制数字', ja: 'キーに使った整数は正確な 10 進数の文字列', ko: '키로 쓴 정수는 정확한 10진수 문자열' };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    for (const tool of ['yaml-json', 'yaml-toml']) {
+      const a = faq(mdx(tool, lang), 'type-mapping');
+      check('PAGE-TEXT-F', `${tool} ${lang} type-mapping says an integer key keeps its exact digits`, a.includes(PHRASE[lang]), a);
+    }
+  }
+}
+
+/* ── E-ZH-BINARY-TEXT ── the zh reason for a !!binary value says 值 once, like value / の値 / 값
+   in the other languages ("!!binary 二进制值" said binary twice). */
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const vsrc = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const L = vm.runInNewContext(vsrc.slice(vsrc.indexOf('const labels = '), vsrc.indexOf('const L = labels')) + '\n;labels').zh;
+  const a = convert(open('yaml-json', 'zh'), 'yaml-json', 'y2j', 'photo: !!binary aGVsbG8=', 'input').status.textContent;
+  check('E-ZH-BINARY-TEXT', 'yaml-json zh: the !!binary stop', a === '未转换：JSON 无法原样保存下列值：/photo：!!binary 值，JSON 没有二进制类型', a);
+  const b = convert(open('yaml-toml', 'zh'), 'yaml-toml', 'y2t', 'photo: !!binary aGVsbG8=', 'input').status.textContent;
+  check('E-ZH-BINARY-TEXT', 'yaml-toml zh: the !!binary stop', b === '未转换：TOML 无法原样保存下列值：/photo：!!binary 值，TOML 没有二进制类型', b);
+  const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang: 'zh', dataset: { '.yv-wrap': { lang: 'zh', msgValid: L.msgValid } } });
+  page.el('yv-input').value = 'photo: !!binary aGVsbG8='; page.el('yv-validate').click();
+  const note = page.el('yv-preview-note').textContent;
+  check('E-ZH-BINARY-TEXT', 'yaml-validator zh: the !!binary note', note === 'JSON 预览没有按原样显示下列值：/photo：!!binary 值，JSON 没有二进制类型', note);
 }
 
 /* ── Summary per finding ── */

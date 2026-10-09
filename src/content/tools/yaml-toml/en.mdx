@@ -9,14 +9,18 @@ steps:
   - "Use Copy beside either format to copy that pane’s current text."
   - "Use Clear, or Ctrl+L / ⌘+L while focused inside the tool, to empty both panes and the status."
 faqItems:
-  - question: "What data types are supported?"
-    answer: "Strings, integers, floats (including inf and nan), booleans, arrays, nested objects and dates are supported in both directions. A YAML date such as 2026-10-01 becomes a TOML local date, and a YAML date-time keeps its offset. YAML anchors and aliases are resolved before conversion, so each alias becomes a full copy. TOML date-times are written to YAML as unquoted ISO 8601 values (2026-10-01T09:30:00.000+09:00), which YAML parsers usually read back as timestamps."
-  - question: "Why does my YAML fail to convert to TOML?"
-    answer: "TOML requires the root document to be a key-value mapping, so a YAML list or scalar at the root cannot be converted. The tool also stops, and lists each field by its path (such as /service/owner), when a value would change on the way: null (TOML has no null), integers outside ±(2^53 − 1), timestamps with more than millisecond precision, and impossible dates. The TOML panel is cleared and its Copy button is disabled until the input converts."
-  - question: "Are YAML multi-document streams supported?"
+  - id: "type-mapping"
+    question: "What data types are supported?"
+    answer: "Strings, integers, floats (including inf and nan), booleans, arrays, nested objects and dates are supported in both directions. A YAML date such as 2026-10-01 becomes a TOML local date and a YAML date-time keeps its offset. A date used as a key keeps its text, and an integer used as a key keeps its exact decimal digits. YAML anchors and aliases are resolved before conversion, so each alias becomes a full copy. TOML date-times with an offset are written to YAML as unquoted ISO 8601 values (2026-10-01T09:30:00.000+09:00), which YAML parsers usually read back as timestamps; a local date-time without an offset stops the conversion, because YAML would read it as UTC."
+  - id: "conversion-errors"
+    question: "Why does my YAML fail to convert to TOML?"
+    answer: "TOML requires the root document to be a key-value mapping, so a YAML list or scalar at the root cannot be converted. The tool also stops, and lists each field by its path (such as /service/owner), when a value would change on the way: null (TOML has no null), integers outside ±(2^53 − 1), timestamps with more than millisecond precision, impossible dates, and !!binary data (TOML has no binary type). The TOML panel is cleared and its Copy button is disabled until the input converts."
+  - id: "multi-document"
+    question: "Are YAML multi-document streams supported?"
     answer: "No. Only single-document YAML is supported. Input with several documents separated by --- shows the error 'expected a single document in the stream'; convert one document at a time. The YAML validator on this site can check multi-document files."
-  - question: "Is my data sent anywhere?"
-    answer: "No. All conversion runs in your browser. Your data never leaves your machine."
+  - id: "privacy"
+    question: "Is my data sent anywhere?"
+    answer: "No. The conversion runs in this page's JavaScript, and the YAML and the TOML are not sent to a server or saved in browser storage. The page's analytics records the page view and, when you press Swap, the tool name and that action; it does not include your text."
 ---
 
 <h2>Worked Example</h2>
@@ -156,6 +160,16 @@ service:
   (<code>{'id: "9007199254740993"'}</code>) and replace or remove nulls, then convert again. Integers from −(2<sup>53</sup> − 1) to
   2<sup>53</sup> − 1 convert unchanged.
 </p>
+<p><code>!!binary</code> data stops the conversion too, because TOML has no binary type: <code>photo: !!binary aGVsbG8=</code> gives <code>Not converted: TOML cannot hold these values without changing them: /photo: !!binary value — TOML has no binary type</code>.</p>
+<p>A <code>!!binary</code> key stops the conversion as well: js-yaml would turn the key into its byte values (<code>107,49</code> below). PyYAML 6.0.3 writes <code>bytes</code> keys this way; <code>{"yaml.dump({b'k1': 1})"}</code> gives:</p>
+
+```yaml
+? !!binary |
+  azE=
+: 1
+```
+
+<p>The tool gives <code>Not converted: TOML cannot hold these values without changing them: (root): !!binary key azE= — TOML keys can only be text</code>. A merge such as <code>{'m: {<<: !!binary aGk=}'}</code> stops with <code>{'/m: !!binary aGk= — << can only merge a mapping'}</code>.</p>
 
 <h2>Limits and Error Messages</h2>
 <ul>

@@ -19,24 +19,94 @@
 // - TOML date-times and times with more than millisecond precision going to JSON or YAML
 //   (markTomlTimes): smol-toml drops the digits after milliseconds. TOML local date-times going
 //   to YAML, which reads a timestamp without an offset as UTC.
+// - YAML !!binary going to JSON or TOML: js-yaml builds a Uint8Array, which JSON.stringify writes
+//   as an object keyed by byte index ({"0":104,…}) and smol-toml as a table (0 = 104). The other
+//   tags of js-yaml's default schema keep js-yaml's form: !!set is a mapping whose values are
+//   null (TOML then stops on null), !!omap a list of one-key mappings, !!pairs [key, value] lists.
+//   A !!binary key (PyYAML writes bytes keys as `? !!binary`) would become the byte list "107,49",
+//   and `<<: !!binary` would merge one key per byte; both are found through YamlBinary markers.
 // Written correctly instead of refused: -0 going to TOML is -0.0 and a whole YAML float is 1.0
 // (TomlNumberText); -0 going to JSON is -0.0 (stringifyJson); the JSON integer -0 is 0.
 // The YAML validator uses the same walk with `preview` to list what its JSON preview changes.
 // Paths are JSON Pointers (RFC 6901). Nothing here touches the DOM, storage or network.
 
+// Markers for values that js-yaml turns into keys or merges: a mapping key is String(value), and
+// `<<` copies every enumerable property of its value (loader.js mergeMappings only asks for an
+// object). The NUL keeps them apart from text a person types. findLosses lists them.
+const MERGE_MARK = '\u0000zt-merge';
+const BINARY_KEY = '\u0000zt-binary-key\u0000';
+
+function hide(obj, fields) {
+  Object.keys(fields).forEach(function (k) { Object.defineProperty(obj, k, { value: fields[k], writable: true, configurable: true }); });
+}
+
+// The value classes below keep their fields out of enumeration, so a `<<` merge of one copies only
+// MERGE_MARK (its text) instead of fields such as raw and date.
+// Mapping keys: js-yaml turns a key into String(key), but an object whose
+// Object.prototype.toString gives '[object Object]' becomes the text '[object Object]'
+// (loader.js storeMappingPair, which uses the object's own toString when it has a
+// Symbol.toStringTag). The three classes below carry a tag and a toString, so a YAML key keeps its
+// text: a timestamp key as written, a lossy integer key as its exact decimal digits, a whole float
+// as the number (1.0 → "1", as js-yaml gives without these classes).
+
 // `value` is what JavaScript would hold instead (the rounded number), for previews that show it.
+// `text` is the key text (default: `raw`).
 export class LossyValue {
-  constructor(kind, raw, value) { this.kind = kind; this.raw = raw; this.value = value; }
+  constructor(kind, raw, value, text) {
+    hide(this, { kind: kind, raw: raw, value: value, text: text === undefined ? raw : text });
+    this[MERGE_MARK] = raw;
+  }
+  get [Symbol.toStringTag]() { return 'LossyValue'; }
+  toString() { return this.text; }
 }
 // `date` is the Date js-yaml builds (Date.UTC, so 2026-02-31 becomes 2026-03-03).
 export class YamlTimestamp {
-  constructor(raw, date) { this.raw = raw; this.date = date; }
+  constructor(raw, date) { hide(this, { raw: raw, date: date }); this[MERGE_MARK] = raw; }
+  get [Symbol.toStringTag]() { return 'YamlTimestamp'; }
+  toString() { return this.raw; }
 }
 
 // A YAML float whose value is a whole number (1.0, 1e3): JavaScript keeps no float type, so
 // smol-toml would write it as the TOML integer 1. Only made with yamlLoadSchema `floats`.
+// `raw` is the text as written.
 export class WholeFloat {
-  constructor(value) { this.value = value; }
+  constructor(value, raw) {
+    hide(this, { value: value, raw: raw === undefined ? String(value) : raw });
+    this[MERGE_MARK] = this.raw;
+  }
+  get [Symbol.toStringTag]() { return 'WholeFloat'; }
+  toString() { return String(this.value); }
+}
+
+// js-yaml's !!binary bytes, with the Base64 text as written (`text`, line breaks removed). As a key
+// it becomes BINARY_KEY + text + NUL + the bytes as js-yaml writes them ("104,105"); as a `<<` value
+// it adds MERGE_MARK next to the byte indexes.
+export class YamlBinary extends Uint8Array {
+  constructor(bytes, text) {
+    super(bytes);
+    hide(this, { text: text });
+    this[MERGE_MARK] = '!!binary ' + (text || '""');
+  }
+  toString() { return BINARY_KEY + this.text + '\u0000' + Array.prototype.join.call(this, ','); }
+}
+
+// The !!binary items of a key text. A sequence key joins its items with commas, so a marker can sit
+// anywhere in the text, more than once. `plain` is the key js-yaml writes ("x,104,105"). js-yaml's
+// binary type only takes Base64 letters, "=" and line breaks, so the text never holds a NUL.
+var BINARY_KEY_RE = /\u0000zt-binary-key\u0000([A-Za-z0-9+\/=]*)\u0000/g;
+function binaryKeys(s) {
+  var texts = [];
+  var plain = s.replace(BINARY_KEY_RE, function (m, text) { texts.push(text || '""'); return ''; });
+  return { texts: texts, plain: plain };
+}
+
+/* The exact decimal digits of a YAML int literal. js-yaml 4.3.2 reads an optional sign, then 0b, 0o
+   or 0x digits or decimal digits (int.js); BigInt reads the same prefixes once the sign is off. */
+function yamlIntText(data) {
+  var s = String(data);
+  var neg = s.charAt(0) === '-';
+  if (neg || s.charAt(0) === '+') s = s.slice(1);
+  return (neg ? '-' : '') + BigInt(s).toString();
 }
 
 /* A TOML number written as `text`. smol-toml's stringify writes numbers through Number#toString,
@@ -69,7 +139,8 @@ export function parseJsonExact(text) {
    integers outside the safe range and, with `timestamps`, timestamps kept as their text next to
    the Date js-yaml builds (findLosses checks the text, then writes a TomlDate or the Date).
    An integer is never -0 (js-yaml reads -0x0 as -0). With `floats`, a float with a whole value
-   becomes WholeFloat so TOML output keeps it a float. */
+   becomes WholeFloat so TOML output keeps it a float. !!binary builds YamlBinary (an explicit
+   type with the same tag replaces js-yaml's in the extended schema). */
 export function yamlLoadSchema(jsyaml, opts) {
   var intType = jsyaml.types.int;
   var types = [new jsyaml.Type('tag:yaml.org,2002:int', {
@@ -78,7 +149,7 @@ export function yamlLoadSchema(jsyaml, opts) {
     construct: function (data) {
       var v = intType.construct(data);
       if (v === 0) return 0;
-      return Number.isSafeInteger(v) ? v : new LossyValue('unsafeInteger', String(data), v);
+      return Number.isSafeInteger(v) ? v : new LossyValue('unsafeInteger', String(data), v, yamlIntText(data));
     },
   })];
   if (opts && opts.floats) {
@@ -88,7 +159,7 @@ export function yamlLoadSchema(jsyaml, opts) {
       resolve: floatType.resolve,
       construct: function (data) {
         var v = floatType.construct(data);
-        return Number.isInteger(v) && !Object.is(v, -0) ? new WholeFloat(v) : v;
+        return Number.isInteger(v) && !Object.is(v, -0) ? new WholeFloat(v, String(data)) : v;
       },
     }));
   }
@@ -100,7 +171,13 @@ export function yamlLoadSchema(jsyaml, opts) {
       construct: function (data) { return new YamlTimestamp(String(data), ts.construct(data)); },
     }));
   }
-  return jsyaml.DEFAULT_SCHEMA.extend({ implicit: types });
+  var binaryType = jsyaml.types.binary;
+  var binary = new jsyaml.Type('tag:yaml.org,2002:binary', {
+    kind: 'scalar',
+    resolve: binaryType.resolve,
+    construct: function (data) { return new YamlBinary(binaryType.construct(data), String(data).replace(/[\r\n]/g, '')); },
+  });
+  return jsyaml.DEFAULT_SCHEMA.extend({ implicit: types, explicit: [binary] });
 }
 
 const YAML_DATE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
@@ -159,13 +236,32 @@ function isPlainObject(v) {
   return p === Object.prototype || p === null;
 }
 
+/* Renames (or, for null, drops) keys of a mapping in place and keeps the key order. When a new name
+   is also the name of another key (js-yaml would have stopped on the duplicate), the later of the
+   two in key order gives the value. */
+function renameKeys(obj, rename) {
+  var entries = Object.keys(obj).map(function (k) { return [k, obj[k]]; });
+  entries.forEach(function (e) { delete obj[e[0]]; });
+  entries.forEach(function (e) {
+    var k = e[0];
+    if (k in rename) {
+      if (rename[k] === null) return;
+      k = rename[k];
+    }
+    Object.defineProperty(obj, k, { value: e[1], writable: true, enumerable: true, configurable: true });
+  });
+}
+
 /* Walks a parsed value for the target format ('json' | 'toml' | 'yaml'). Returns the losses
    (at most `opts.limit` listed, `count` all) and `value`, the root after replacing in place:
    YAML timestamps become TomlDate (TOML, `opts.TomlDate`) or the Date js-yaml built (JSON / YAML;
    impossible dates and more than millisecond precision are losses there too, since that Date
    rolls 2026-02-31 over to March and keeps milliseconds); for TOML, -0 and WholeFloat become
    TomlNumberText (-0.0, 1.0). With `opts.preview`, a LossyValue is replaced by the value JavaScript holds instead, so
-   a preview can still show the data next to the list of losses. */
+   a preview can still show the data next to the list of losses.
+   For JSON and TOML, each !!binary item of a key is listed with the path of its mapping (and the
+   walk goes on with the key js-yaml writes, "104,105"); a `<<` marker is listed with the mapping's
+   path. With `opts.preview`, these keys become what js-yaml builds without the markers. */
 export function findLosses(root, target, opts) {
   var o = opts || {};
   var max = o.limit || 20;
@@ -181,6 +277,14 @@ export function findLosses(root, target, opts) {
       else if (!r.loss || o.preview) set(v.date);
       return;
     }
+    if (target !== 'yaml' && ArrayBuffer.isView(v)) { add(segs, 'binary', '!!binary'); if (o.preview) set(new Uint8Array(v)); return; }
+    // !!pairs turns each key into the first item of a [key, value] list
+    if (target !== 'yaml' && typeof v === 'string' && v.indexOf(BINARY_KEY) >= 0) {
+      var p = binaryKeys(v);
+      p.texts.forEach(function (t) { add(segs, 'binaryKey', t); });
+      if (o.preview) set(p.plain);
+      return;
+    }
     if (typeof v === 'number' && !Number.isFinite(v) && target === 'json') {
       add(segs, 'nonFinite', Number.isNaN(v) ? 'nan' : v > 0 ? 'inf' : '-inf');
       return;
@@ -191,7 +295,22 @@ export function findLosses(root, target, opts) {
     if (Array.isArray(v)) {
       for (var i = 0; i < v.length; i++) visit(v[i], segs.concat(i), (function (j) { return function (x) { v[j] = x; }; })(i));
     } else if (isPlainObject(v)) {
-      Object.keys(v).forEach(function (k) { visit(v[k], segs.concat(k), function (x) { v[k] = x; }); });
+      var rename = null;
+      Object.keys(v).forEach(function (k) {
+        var seg = k;
+        if (target !== 'yaml' && k === MERGE_MARK) {
+          add(segs, 'merge', String(v[k]));
+          (rename = rename || Object.create(null))[k] = null;
+          return;
+        }
+        if (target !== 'yaml' && k.indexOf(BINARY_KEY) >= 0) {
+          var b = binaryKeys(k);
+          b.texts.forEach(function (t) { add(segs, 'binaryKey', t); });
+          (rename = rename || Object.create(null))[k] = seg = b.plain;
+        }
+        visit(v[k], segs.concat(seg), function (x) { v[k] = x; });
+      });
+      if (rename && o.preview) renameKeys(v, rename);
     }
   }
   var out = root;
@@ -284,6 +403,9 @@ const TEXT = {
     timestampPrecision: '{raw} has more than millisecond precision',
     timestampInvalid: '{raw} is not a valid date or time',
     localDateTime: '{raw} is a local date-time, and YAML reads a time without an offset as UTC',
+    binary: '{raw} value — {target} has no binary type',
+    binaryKey: '!!binary key {raw} — {target} keys can only be text',
+    merge: '{raw} — << can only merge a mapping',
     more: 'and {n} more',
     root: '(root)',
   },
@@ -297,6 +419,9 @@ const TEXT = {
     timestampPrecision: '{raw} 的精度超过毫秒',
     timestampInvalid: '{raw} 不是有效的日期或时间',
     localDateTime: '{raw} 是本地日期时间，YAML 会把不带偏移的时间读作 UTC',
+    binary: '{raw} 值，{target} 没有二进制类型',
+    binaryKey: '!!binary 键 {raw}，{target} 的键只能是文本',
+    merge: '{raw}，<< 只能合并映射',
     more: '另有 {n} 处',
     root: '（根）',
   },
@@ -310,6 +435,9 @@ const TEXT = {
     timestampPrecision: '{raw} はミリ秒より細かい精度を持っています',
     timestampInvalid: '{raw} は有効な日付・時刻ではありません',
     localDateTime: '{raw} はローカル日時です。YAML はオフセットのない日時を UTC として読みます',
+    binary: '{raw} の値 — {target} にはバイナリ型がありません',
+    binaryKey: '!!binary のキー {raw} — {target} のキーは文字列だけです',
+    merge: '{raw} — << でマージできるのはマッピングだけです',
     more: 'ほか {n} 件',
     root: '（ルート）',
   },
@@ -323,6 +451,9 @@ const TEXT = {
     timestampPrecision: '{raw} — 밀리초보다 정밀합니다',
     timestampInvalid: '{raw} — 올바른 날짜나 시각이 아닙니다',
     localDateTime: '{raw} — 로컬 날짜·시간입니다. YAML은 오프셋이 없는 시간을 UTC로 읽습니다',
+    binary: '{raw} 값 — {target}에는 바이너리 자료형이 없습니다',
+    binaryKey: '!!binary 키 {raw} — {target}의 키는 문자열만 쓸 수 있습니다',
+    merge: '{raw} — <<로는 매핑만 병합할 수 있습니다',
     more: '외 {n}건',
     root: '(루트)',
   },
@@ -337,7 +468,7 @@ export function formatLosses(result, target, lang, titleKey) {
   var sep = wide ? '；' : '; ';
   var colon = wide ? '：' : ': ';
   var items = result.losses.map(function (l) {
-    return (l.path || t.root) + colon + t[l.kind].replace('{raw}', l.raw);
+    return (l.path || t.root) + colon + t[l.kind].replace('{raw}', l.raw).replace('{target}', target);
   });
   if (result.count > result.losses.length) items.push(t.more.replace('{n}', String(result.count - result.losses.length)));
   return t[titleKey || 'title'].replace('{target}', target) + colon + items.join(sep);
