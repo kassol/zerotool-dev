@@ -15,6 +15,24 @@ const STR = vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ 
 const clientStrings = lang => vm.runInNewContext(source.slice(source.indexOf('// strings:end') + '// strings:end'.length, source.indexOf('\n---', source.indexOf('// strings:end'))) + ';CLIENT_T', { STRINGS: STR, lang });
 let passed = 0, failed = 0;
 async function test(name, fn) { try { await fn(); passed++; } catch (e) { failed++; console.log('FAIL ' + name + ': ' + e.message); } }
+// JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
+// json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
+// HarFileAnalyzerTool.astro. A JSON syntax error shows line, column and cause in the page language
+// instead of "Invalid JSON: " plus the browser's English message; line and column count from the
+// start of the JSON pane. XML syntax errors still use the browser's message.
+const JSON_ENGINE = readFileSync(new URL('../src/components/tools/json-formatter-engine.js', import.meta.url), 'utf8');
+const HAR_SOURCE = readFileSync(new URL('../src/components/tools/HarFileAnalyzerTool.astro', import.meta.url), 'utf8');
+const HAR_S = new Function('return ' + HAR_SOURCE.slice(HAR_SOURCE.indexOf('const STRINGS = ') + 16, HAR_SOURCE.indexOf('\n};\n', HAR_SOURCE.indexOf('const STRINGS = ')) + 2))();
+function fnSrc(src, name) {
+  const lines = src.split('\n');
+  const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+  if (at < 0) return '';
+  const indent = lines[at].match(/^\s*/)[0];
+  let end = at + 1;
+  while (end < lines.length && lines[end] !== indent + '}') end++;
+  return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+}
+const errAt = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
 function text(value, type = 3) { return { nodeType: type, nodeValue: value, textContent: value }; }
 function node(name, children = [], attrs = []) {
   return { nodeType: 1, tagName: name, attributes: attrs, childNodes: children,
@@ -161,12 +179,41 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const p = page(lang, 'sax');
     p.get('jx-json').value = '{"2026":1}'; p.get('jx-to-xml').click();
     assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].cannotToXml + ': '), p.get('jx-status').textContent);
+    // S2-10f: a JSON syntax error names line, column and cause in the page language (see below).
     p.get('jx-json').value = '{"a":1,}'; p.get('jx-to-xml').click();
-    assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].invalidJson + ': '), p.get('jx-status').textContent);
+    assert.equal(p.get('jx-status').textContent, HAR_S[lang].errJsonAt.replace('{line}', 1).replace('{col}', 7).replace('{reason}', HAR_S[lang].jsonParse.trailingComma));
     p.get('jx-xml').value = '<r id="1"/>'; p.get('jx-to-json').click();
     assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].cannotToJson + ': '), p.get('jx-status').textContent);
     p.get('jx-xml').value = '<r>'; p.get('jx-to-json').click();
     assert.ok(p.get('jx-status').textContent.startsWith(STR[lang].invalidXml + ': '), p.get('jx-status').textContent);
+  });
+}
+await test('JSON errors: reasons are the text of HarFileAnalyzerTool.astro and reach the script', () => {
+  // JSON text: STRINGS comes from another vm realm, whose objects have a different prototype.
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
+    assert.equal(JSON.stringify(STR[lang][key]), JSON.stringify(HAR_S[lang][key]), lang + ' ' + key);
+    assert.equal(JSON.stringify(clientStrings(lang)[key]), JSON.stringify(HAR_S[lang][key]), lang + ' client ' + key);
+  }
+});
+await test('JSON errors: lineCol and jsonSyntaxError are copied verbatim, outside the engine block', () => {
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  assert.ok(rs > source.indexOf('/* ── engine:end ── */') && re > rs, 'block position');
+  for (const name of ['lineCol', 'jsonSyntaxError']) {
+    const mine = fnSrc(source.slice(rs, re), name);
+    assert.ok(mine !== '' && mine === fnSrc(JSON_ENGINE, name), name);
+  }
+});
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  for (const [raw, code, line, col, ch] of [
+    ['\n{\n  "name": "Alice",\n  "age": 30,\n}', 'trailingComma', 4, 12],
+    ['{\u201cname\u201d: "Alice"}', 'smartQuote', 1, 2, '\u201c'],
+    ['  {"a": 1} // note', 'comment', 1, 12],
+    ['{"a": 1 "b": 2}', 'missingComma', 1, 9],
+  ]) await test(lang + ' JSON syntax error ' + code + ' in the page language; old XML cleared', () => {
+    const p = page(lang); p.get('jx-json').value = '{"ok":1}'; p.get('jx-to-xml').click();
+    p.get('jx-json').value = raw; p.get('jx-to-xml').click();
+    assert.equal(p.get('jx-status').textContent, errAt(lang, code, line, col, ch));
+    assert.equal(p.get('jx-xml').value, ''); assert.equal(p.get('jx-copy-xml').disabled, true);
   });
 }
 
@@ -375,7 +422,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 /* ── v2 page layout ── */
 check('all FIX behavior checks retained', checks.length, 642);
-check('client script only removes runtime STRINGS and localization', hash(js), '95b8c2313ea150e4a38772d3c6ffd5a30090611cc2d7bccd4720f219a3a74a70');
+// S2-10f (2026-10-09) added the json-reason block and parses JSON in its own try for the localized syntax error.
+check('client script only removes runtime STRINGS and localization', hash(js), 'd24bb5873f3a82aaf50b4f451d6107242fed0c7c50392a4b5b8dfb8194394225');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jx-wrap"/.test(markup), true);
