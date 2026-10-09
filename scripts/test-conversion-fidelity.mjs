@@ -405,6 +405,64 @@ expectRejected(YD, 'yaml-json', 'y2j', '2026-02-31', '(root)', '2026-02-31');
   check('PAGE-TEXT-C', 'yaml-validator preview shows the offset example in UTC', page.el('yv-preview-content').textContent === '{\n  "at": "2026-10-01T00:30:00.000Z"\n}');
 }
 
+/* ── D-YAML-BINARY ── js-yaml's !!binary builds a Uint8Array, which JSON.stringify writes as an
+   object keyed by byte index ({"0":104,…}) and smol-toml as a table (0 = 104), so YAML → JSON and
+   YAML → TOML stop and name the field; the validator lists it under the JSON preview. */
+const BIN = 'D-YAML-BINARY';
+const binItem = (lang, path, target) => {
+  const t = FIDELITY_TEXT[lang];
+  const wide = lang === 'zh' || lang === 'ja';
+  return t.binary ? (path || t.root) + (wide ? '：' : ': ') + t.binary.replace('{raw}', '!!binary').replace('{target}', target) : null;
+};
+function expectBinary(tool, dir, text, path, lang = 'en') {
+  expectRejected(BIN, tool, dir, text, path || FIDELITY_TEXT[lang].root, '!!binary', lang);
+  const r = convert(open(tool, lang), tool, dir, text, 'input');
+  const want = binItem(lang, path, dir === 'y2t' ? 'TOML' : 'JSON');
+  check(BIN, `${tool} ${dir} (${lang}) ${JSON.stringify(text).slice(0, 50)}: names ${path || 'the root'} and says why`,
+    want !== null && r.status.textContent.includes(want), 'status=' + JSON.stringify(r.status.textContent) + ' want=' + JSON.stringify(want));
+}
+expectBinary('yaml-json', 'y2j', 'b: !!binary aGVsbG8=', '/b');
+expectBinary('yaml-json', 'y2j', 'b: !!binary |\n  aGVs\n  bG8=', '/b');
+expectBinary('yaml-json', 'y2j', 'files:\n  - name: a.png\n    data: !!binary iVBORw0KGgo=', '/files/0/data');
+expectBinary('yaml-json', 'y2j', '!!binary aGk=', '');
+// js-yaml 4.3.2 decodes an empty !!binary as three zero bytes; it stops like any other.
+expectBinary('yaml-json', 'y2j', 'empty: !!binary ""', '/empty');
+expectBinary('yaml-json', 'y2j', 'b: !!binary aGVsbG8=', '/b', 'zh');
+expectBinary('yaml-json', 'y2j', 'b: !!binary aGVsbG8=', '/b', 'ja');
+expectBinary('yaml-json', 'y2j', 'b: !!binary aGVsbG8=', '/b', 'ko');
+expectBinary('yaml-toml', 'y2t', 'b: !!binary aGVsbG8=', '/b');
+expectBinary('yaml-toml', 'y2t', 'asset:\n  icon: !!binary aGk=', '/asset/icon', 'zh');
+expectBinary('yaml-toml', 'y2t', 'list:\n  - !!binary aGk=', '/list/0', 'ja');
+expectBinary('yaml-toml', 'y2t', 'b: !!binary aGVsbG8=', '/b', 'ko');
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid, msgValidMulti: L.msgValidMulti } } });
+    for (const [text, path] of [['b: !!binary aGVsbG8=', '/b'], ['a: 1\n---\nb: !!binary aGk=', '/1/b']]) {
+      page.el('yv-input').value = text; page.el('yv-validate').click();
+      const note = page.el('yv-preview-note'), want = binItem(lang, path, 'JSON');
+      check(BIN, `yaml-validator ${lang} ${JSON.stringify(text)}: still valid, the note names ${path} and says why`,
+        /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent !== '' && note.hidden === false &&
+        note.textContent.startsWith(FIDELITY_TEXT[lang].preview.split('{target}')[0]) && want !== null && note.textContent.includes(want),
+        'note=' + JSON.stringify(note.textContent) + ' hidden=' + note.hidden);
+    }
+  }
+}
+
+/* ── D-YAML-OTHER-TYPES ── js-yaml's other default-schema tags keep js-yaml's representation:
+   !!set is a mapping whose values are null (the YAML set type), !!omap a sequence of one-key
+   mappings and !!pairs a list of [key, value] pairs; TOML has no null, so a set stops there. */
+const OT = 'D-YAML-OTHER-TYPES';
+expectConverted(OT, 'yaml-json', 'y2j', 's: !!set {a, b}\no: !!omap [a: 1, b: 2]\np: !!pairs [a: 1, a: 2]',
+  (o) => o === JSON.stringify({ s: { a: null, b: null }, o: [{ a: 1 }, { b: 2 }], p: [['a', 1], ['a', 2]] }, null, 2), 'set, omap and pairs keep js-yaml\'s representation');
+expectConverted(OT, 'yaml-toml', 'y2t', 'o: !!omap [a: 1, b: 2]\np: !!pairs [a: 1, a: 2]',
+  (o) => { const d = JSON.parse(JSON.stringify(tomlParse(o))); return deep(d.o, [{ a: 1 }, { b: 2 }]) && deep(d.p, [['a', 1], ['a', 2]]); }, 'omap and pairs become TOML arrays');
+expectRejected(OT, 'yaml-toml', 'y2t', 's: !!set {a, b}', '/s/a', 'null');
+
 /* ── Summary per finding ── */
 console.log('\nPer finding:');
 for (const [tag, c] of Object.entries(counts)) console.log(`  ${tag}: ${c.pass} passed, ${c.fail} failed`);

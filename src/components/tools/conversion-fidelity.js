@@ -19,6 +19,10 @@
 // - TOML date-times and times with more than millisecond precision going to JSON or YAML
 //   (markTomlTimes): smol-toml drops the digits after milliseconds. TOML local date-times going
 //   to YAML, which reads a timestamp without an offset as UTC.
+// - YAML !!binary going to JSON or TOML: js-yaml builds a Uint8Array, which JSON.stringify writes
+//   as an object keyed by byte index ({"0":104,…}) and smol-toml as a table (0 = 104). The other
+//   tags of js-yaml's default schema keep js-yaml's form: !!set is a mapping whose values are
+//   null (TOML then stops on null), !!omap a list of one-key mappings, !!pairs [key, value] lists.
 // Written correctly instead of refused: -0 going to TOML is -0.0 and a whole YAML float is 1.0
 // (TomlNumberText); -0 going to JSON is -0.0 (stringifyJson); the JSON integer -0 is 0.
 // The YAML validator uses the same walk with `preview` to list what its JSON preview changes.
@@ -181,6 +185,7 @@ export function findLosses(root, target, opts) {
       else if (!r.loss || o.preview) set(v.date);
       return;
     }
+    if (target !== 'yaml' && ArrayBuffer.isView(v)) { add(segs, 'binary', '!!binary'); return; }
     if (typeof v === 'number' && !Number.isFinite(v) && target === 'json') {
       add(segs, 'nonFinite', Number.isNaN(v) ? 'nan' : v > 0 ? 'inf' : '-inf');
       return;
@@ -284,6 +289,7 @@ const TEXT = {
     timestampPrecision: '{raw} has more than millisecond precision',
     timestampInvalid: '{raw} is not a valid date or time',
     localDateTime: '{raw} is a local date-time, and YAML reads a time without an offset as UTC',
+    binary: '{raw} value — {target} has no binary type',
     more: 'and {n} more',
     root: '(root)',
   },
@@ -297,6 +303,7 @@ const TEXT = {
     timestampPrecision: '{raw} 的精度超过毫秒',
     timestampInvalid: '{raw} 不是有效的日期或时间',
     localDateTime: '{raw} 是本地日期时间，YAML 会把不带偏移的时间读作 UTC',
+    binary: '{raw} 二进制值，{target} 没有二进制类型',
     more: '另有 {n} 处',
     root: '（根）',
   },
@@ -310,6 +317,7 @@ const TEXT = {
     timestampPrecision: '{raw} はミリ秒より細かい精度を持っています',
     timestampInvalid: '{raw} は有効な日付・時刻ではありません',
     localDateTime: '{raw} はローカル日時です。YAML はオフセットのない日時を UTC として読みます',
+    binary: '{raw} の値 — {target} にはバイナリ型がありません',
     more: 'ほか {n} 件',
     root: '（ルート）',
   },
@@ -323,6 +331,7 @@ const TEXT = {
     timestampPrecision: '{raw} — 밀리초보다 정밀합니다',
     timestampInvalid: '{raw} — 올바른 날짜나 시각이 아닙니다',
     localDateTime: '{raw} — 로컬 날짜·시간입니다. YAML은 오프셋이 없는 시간을 UTC로 읽습니다',
+    binary: '{raw} 값 — {target}에는 바이너리 자료형이 없습니다',
     more: '외 {n}건',
     root: '(루트)',
   },
@@ -337,7 +346,7 @@ export function formatLosses(result, target, lang, titleKey) {
   var sep = wide ? '；' : '; ';
   var colon = wide ? '：' : ': ';
   var items = result.losses.map(function (l) {
-    return (l.path || t.root) + colon + t[l.kind].replace('{raw}', l.raw);
+    return (l.path || t.root) + colon + t[l.kind].replace('{raw}', l.raw).replace('{target}', target);
   });
   if (result.count > result.losses.length) items.push(t.more.replace('{n}', String(result.count - result.losses.length)));
   return t[titleKey || 'title'].replace('{target}', target) + colon + items.join(sep);
