@@ -310,6 +310,20 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' BOM and trailing blank lines dropped', JSON.parse(r.json), [{ a: 1, b: 2 }]);
   r = run('a,b');
   eq(lang + ' header-only error in page language', [r.error, r.status], [true, S.errorPrefix + N.needRows]);
+  // S2-10f: spaces around a header name stay part of the key (RFC 4180 §2 rule 4); the status line names those headers.
+  const SPACED = { en: 'These header names begin or end with whitespace, which stays part of the key: {list}.', zh: '这些表头名开头或结尾有空白，空白会留在键名里：{list}。', ja: '次のヘッダー名は先頭か末尾に空白があり、その空白もキーに含まれます：{list}。', ko: '다음 헤더 이름은 앞이나 뒤에 공백이 있어, 그 공백도 키에 포함됩니다: {list}.' };
+  const SPACED_MORE = { en: ' and {n} more', zh: ' 等，共 {total} 个', ja: ' ほか {n} 個', ko: ' 외 {n}개' };
+  r = run('name, age,city \nAlice, 30,Paris');
+  eq(lang + ' header spaces stay in the keys', JSON.parse(r.json), [{ name: 'Alice', ' age': ' 30', 'city ': 'Paris' }]);
+  eq(lang + ' spaced headers named in the page language', r.status, S.convertedToJson.replace('{n}', 1).replace('{s}', '') + ' ' + SPACED[lang].replace('{list}', '" age", "city "'));
+  r = run('\u3000名前,a\nx,1');
+  check(lang + ' a full-width space counts as whitespace', r.status.endsWith(' ' + SPACED[lang].replace('{list}', '"\u3000名前"')), r.status);
+  r = run(' a, a\n1,2');
+  check(lang + ' renamed spaced headers keep their new names', r.status.endsWith(' ' + SPACED[lang].replace('{list}', '" a", " a_2"')), r.status);
+  r = run(Array.from({ length: 12 }, (_, i) => ' h' + i).join(',') + '\n' + Array(12).fill('1').join(','));
+  check(lang + ' a long spaced list stops after 10 names', r.status.endsWith(' ' + SPACED[lang].replace('{list}', Array.from({ length: 10 }, (_, i) => '" h' + i + '"').join(', ') + SPACED_MORE[lang].replace('{n}', 2).replace('{total}', 12))), r.status);
+  r = run('a,column_3\n1,2,3');
+  eq(lang + ' no spaced-header note without such headers', r.status.includes(SPACED[lang].split('{list}')[0]), false);
   for (const [input, msg] of [['{"a":1}', N.notArray], ['[]', N.emptyArray], ['[{"a":1},2]', N.item.replace('{n}', '2')]]) {
     const p = page(lang); p.type(s.right, input); p.advance(300);
     eq(lang + ' JSON → CSV error in page language: ' + input, p.get(s.p + '-status').textContent, S.errorPrefix + msg);
@@ -385,8 +399,9 @@ const markupSource = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.slice(source.indexOf('<script is:inline>') + '<script is:inline>'.length, source.indexOf('</script>'));
 // S2-6d (2026-10-08) changed buildJsonFromCsv (no lost keys), csvSource and localError; S2-10f (2026-10-09) added
-// the json-reason block and the localized JSON syntax error. The hash pins that reviewed script.
-eq('reviewed page script is unchanged', hash(script), 'cfb1a5bb53022fda90b390b5b1924d995841bf051e524e44e82f0bf3cf52209f');
+// the json-reason block and the localized JSON syntax error, and the note for header names with spaces. The hash pins
+// that reviewed script.
+eq('reviewed page script is unchanged', hash(script), '92805044ed03cb873ad89abc40980fc4c16b0f002dce8c364fe2a59888b03bbb');
 check('direct zero-minimum flex column root', /^\s*<div class="cj-wrap"/.test(markupSource) && /\.cj-wrap\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-width: 0;[^}]*min-height: 0;/.test(css));
 check('controls then reserved status then panels', /class="cj-(?:toolbar|controls)"[\s\S]*id="cj-status"[\s\S]*class="cj-panels zt-io"/.test(markupSource));
 eq('two shared panes', (markupSource.match(/zt-io-pane/g)||[]).length, 2);
@@ -485,6 +500,8 @@ for (const lang of ['en','zh','ja','ko']) {
   // S2-10f: the limits section shows a JSON syntax error as the page now reports it.
   check(lang+' shows a JSON syntax error example', statuses.some(st => st.startsWith(HAR_S[lang].errJsonAt.slice(0, HAR_S[lang].errJsonAt.indexOf('{line}')))), JSON.stringify(statuses));
   check(lang+' no longer says JSON errors are in English', !/browser's own message|浏览器自带的英文|英語のメッセージ|영어 메시지/.test(body));
+  // S2-10f: the limits show the spaced-header note as the page reports it.
+  check(lang+' shows a spaced-header example', typeof S.spacedHeaders === 'string' && statuses.some(st => st.includes(S.spacedHeaders.split('{list}')[0])), JSON.stringify(statuses));
   // Every CSV / JSON code block on the page belongs to a cj-check example, and both directions appear.
   const covered = notes.reduce((n, note) => n + fencedBlocks(note.after).filter(b => b.lang === 'csv' || b.lang === 'json').length, 0);
   eq(lang+' every CSV / JSON block is a recomputed example', fencedBlocks(body).filter(b => b.lang === 'csv' || b.lang === 'json').length, covered);
