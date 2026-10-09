@@ -106,6 +106,23 @@ function installProblems(m) {
   }
 }
 
+// Google Search Central, "Define a favicon to show in search results" (last updated
+// 2026-08-28): "we recommend using a favicon that's larger than 48x48px". The snippet links
+// favicon-96.png (larger than 48 and a multiple of 48) after the 16 / 32 / 48 PNGs.
+{
+  const lines = buildHtmlSnippet().split('\n');
+  check('snippet links a PNG larger than 48x48 (96x96)', lines.includes('<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96.png">'), lines.join('\n'));
+  const sizes = lines.map((l) => /sizes="(\d+)x\1"[^>]*href="\/favicon-\1\.png"/.exec(l)?.[1]).filter(Boolean).map(Number);
+  check('linked favicon PNG sizes are 16, 32, 48, 96 in order', JSON.stringify(sizes) === '[16,32,48,96]', JSON.stringify(sizes));
+  check('snippet has eight lines', lines.length === 8, String(lines.length));
+  const tips = [...source.matchAll(/"copy": "([^"]*)"/g)].map((m) => m[1]);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const md = readFileSync(join(root, 'src/content/tools/favicon-generator', lang + '.mdx'), 'utf8');
+    check(lang + ' tool page lists 96 among the linked PNG sizes', /16, 32, 48 and 96|16、32、48、96|16・32・48・96|16·32·48·96/.test(md) && !/64, 96 and 128 px PNGs are in the package|64、96、128 px 的 PNG|64・96・128 px の PNG|64·96·128 px PNG/.test(md));
+  }
+  check('four copy tips say eight lines', tips.length === 4 && /eight-line/.test(tips[0]) && /八行/.test(tips[1]) && /8 行/.test(tips[2]) && /8줄/.test(tips[3]), tips.join(' | '));
+}
+
 // File names in the order runGenerate() pushes them.
 const genBody = extractFunction('runGenerate');
 const names = [];
