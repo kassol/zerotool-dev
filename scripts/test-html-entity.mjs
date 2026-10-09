@@ -55,7 +55,8 @@ const escapeHTML = value => String(value).replaceAll('&', '&amp;').replaceAll('<
 function pageMarkup(lang) {
   return markup.replace(/<Toggletip\b[\s\S]*?<\/Toggletip>/g, '')
     .replace(/=\{T\.(\w+)\}/g, (_, key) => '="' + escapeHTML(strings[lang][key]) + '"')
-    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(strings[lang][key]));
+    .replace(/\{T\.(\w+)\}/g, (_, key) => escapeHTML(strings[lang][key]))
+    .replace(/\{TABLE\.(\w+)\}/g, (_, key) => escapeHTML((strings[lang].table || {})[key]));
 }
 const startIndex = source.indexOf('/* ── engine:start ── */');
 const endIndex = source.indexOf('/* ── engine:end ── */');
@@ -353,7 +354,7 @@ function pageVM(lang = 'en', shellFirst = false) {
   widget.innerHTML = pageMarkup(lang);
   document.getElementById = id => descendants(document).find(el => el.id === id) || null;
   document.createElement = tag => new Element(tag);
-  const { tips, ...client } = strings[lang];
+  const { tips, table, ...client } = strings[lang];
   const context = { document, console, Event: PageEvent, t: client, _slug: 'html-entity',
     ztPersist: { clear: slug => cleared.push(slug) }, trackTool: (...args) => tracked.push(args),
     setTimeout(fn, delay = 0) { const id = ++timerID; timers.set(id, { fn, due: now + delay, delay }); return id; },
@@ -527,15 +528,37 @@ process.removeListener('unhandledRejection',onUnhandled);
   check('only the empty result is hidden at 860px', /@media \(max-width: 860px\)\s*\{\s*#he-output-pane\[data-empty="true"\]\s*\{ display: none; \}\s*\.he-box\s*\{ height: 160px/.test(css));
   check('phone radio labels are 44px with fixed editor/status heights', /@media \(max-width: 640px\)/.test(css) && /\.he-modes label\s*\{[^}]*min-height: 44px/.test(css) && /\.he-box\s*\{ height: 120px/.test(css) && /\.he-status\s*\{ height: 4\.2em/.test(css));
   check('reference scroll region is bounded', /\.he-ref-table-wrap\s*\{[^}]*max-height: 320px;[^}]*overflow: auto/.test(css));
-  check('client strings exclude tips', /const \{ tips: TIPS, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
+  check('client strings exclude tips and the reference table', /const \{ tips: TIPS, table: TABLE, \.\.\.CLIENT_T \} = T;/.test(source) && /define:vars=\{\{ t: CLIENT_T \}\}/.test(source));
   check('no runtime language DOM replacement', !/data-i18n|document\.documentElement\.lang/.test(source));
   check('registered as convert', /'html-entity':\s*'convert'/.test(readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8')));
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
   eq('markup IDs are unique', new Set(ids).size, ids.length);
   const require = createRequire(import.meta.url);
   const { compile } = await import(require.resolve('@mdx-js/mdx'));
+  // Reference table (S2-FOLLOWUPS s2-1b: the header was English on every page). The header
+  // labels and the character names come from STRINGS[lang].table; the character, entity,
+  // decimal and hex cells are the same on every page.
+  const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+  const refKeys = ['amp', 'lt', 'gt', 'quot', 'apos', 'nbsp', 'copy', 'reg', 'trade', 'mdash', 'ndash', 'laquo', 'raquo'];
+  const refTable = (lang) => {
+    const doc = pageVM(lang).document;
+    return {
+      head: doc.querySelectorAll('.he-ref-table thead th').map(th => th.textContent),
+      rows: doc.querySelectorAll('.he-ref-table tbody tr').map(tr => tr.children.filter(c => c.tagName === 'TD').map(td => td.textContent)),
+    };
+  };
+  const enRef = refTable('en');
+  samePage('en: reference header text is unchanged', enRef.head, ['Character', 'Name', 'Entity', 'Decimal', 'Hex']);
   for (const lang of Object.keys(localized)) {
     const entry = strings[lang], { tips, ...client } = entry;
+    const ref = refTable(lang), table = entry.table || {};
+    samePage(lang + ': reference header uses the page language', ref.head, [table.char, table.name, table.entity, table.decimal, table.hex]);
+    samePage(lang + ': character names use the page language', ref.rows.map(r => r[1]), refKeys.map(k => table[k]));
+    samePage(lang + ': character, entity, decimal and hex cells match the English page', ref.rows.map(r => [r[0], r[2], r[3], r[4]]), enRef.rows.map(r => [r[0], r[2], r[3], r[4]]));
+    if (lang !== 'en') {
+      check(lang + ': reference header is translated', ref.head.length === 5 && ref.head.every((h, i) => h !== enRef.head[i] && cjk.test(h)));
+      check(lang + ': character names are translated', ref.rows.length === 13 && ref.rows.every((r, i) => r[1] !== enRef.rows[i][1] && cjk.test(r[1])));
+    }
     samePage(lang + ': translation keys match', Object.keys(entry).sort(), Object.keys(strings.en).sort());
     samePage(lang + ': five tip facts match', Object.keys(tips).sort(), tipKeys.slice().sort());
     for (const key of tipKeys) check(lang + '/' + key + ': tip is nonempty text', typeof tips[key] === 'string' && tips[key].trim().length > 0 && !tips[key].includes('\n'));

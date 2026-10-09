@@ -183,6 +183,28 @@ let skips = 0;
     const tpl = [/^## What (is|are) /mi, /^## .*Online/mi, /^## .* in Code$/mi, /^## (Summary|Conclusion|まとめ)/mi].filter((re) => re.test(text));
     check(rel + ' has no template headings', tpl.length === 0, tpl.map(String));
   }
+  // zh / ko guides (noindex): their converter notes described the engine before 2026-09-30
+  // (userID gave userid, camelCase was not split, café lost its accent). Each tc-check
+  // annotation must match the engine, and the value must appear in backticks after it
+  // (S2-FOLLOWUPS s2-7c).
+  for (const lang of ['zh', 'ko']) {
+    const rel = 'src/content/blog/text-case-guide/' + lang + '.mdx';
+    const text = readFileSync(join(root, rel), 'utf8');
+    let count = 0;
+    for (const m of text.matchAll(/\{\/\* tc-check: (\{.*?\}) \*\/\}/g)) {
+      count++;
+      const spec = JSON.parse(m[1]);
+      const after = text.slice(m.index + m[0].length, m.index + 1500);
+      for (const id of Object.keys(spec)) {
+        if (id === 'input') continue;
+        eq(rel + ' ' + id + '(' + JSON.stringify(spec.input) + ')', conv[id](spec.input), spec[id]);
+        check(rel + ' quotes `' + spec[id] + '` after the annotation', after.includes('`' + spec[id] + '`'), spec[id]);
+      }
+    }
+    check(rel + ' has tc-check annotations', count >= 10, count);
+    check(rel + ' no longer says userID gives userid', !/`userid`/.test(text));
+    check(rel + ' no longer says camelCase is not split', !/不拆分 camelCase|\*\*不会\*\*被拆开|camelCase를 나누지 않|\*\*나뉘지 않습니다\*\*/.test(text));
+  }
   const ja = join(root, 'src/content/blog/text-case-guide/ja.mdx');
   if (existsSync(ja)) {
     const text = readFileSync(ja, 'utf8');

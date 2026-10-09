@@ -2,7 +2,7 @@
 title: "命名风格转换指南：camelCase、snake_case、PascalCase 一键互转"
 description: "在 camelCase、snake_case、PascalCase、kebab-case、SCREAMING_SNAKE_CASE 之间快速转换。掌握各编程语言的命名惯例，告别手动改名。"
 pubDate: 2026-04-06
-updatedDate: 2026-09-30
+updatedDate: 2026-10-09
 lang: "zh"
 noindex: true
 tags: ["命名风格", "camelcase", "snake-case", "命名规范", "开发工具"]
@@ -104,7 +104,7 @@ Is Authenticated
 
 ### REST API 响应 → 后端模型字段
 
-API 返回 camelCase，Python 代码用 snake_case。以前要逐个手改，现在批量粘贴进转换器：
+API 返回 camelCase，Python 代码用 snake_case。把字段名逐个粘进转换器，复制 snake_case 一行即可：
 
 API 返回：
 ```json
@@ -118,11 +118,18 @@ first_name: str
 created_at: datetime
 ```
 
-转换器不拆分 camelCase，直接粘 `userId` 会得到 `userid`。先把词用空格隔开（`user id`、`first name`、`created at`），再复制 snake_case 一行，得到 `user_id`、`first_name`、`created_at`。
+{/* tc-check: {"input":"userId","snake":"user_id"} */}
+{/* tc-check: {"input":"firstName","snake":"first_name"} */}
+{/* tc-check: {"input":"createdAt","snake":"created_at"} */}
+{/* tc-check: {"input":"userId firstName createdAt","snake":"user_id_first_name_created_at"} */}
+{/* tc-check: {"input":"userId,firstName,createdAt","snake":"user_id_first_name_created_at"} */}
+{/* tc-check: {"input":"userId\nfirstName\ncreatedAt","snake":"user_id_first_name_created_at"} */}
+
+转换器在 camelCase 的大小写交界处拆词，直接粘贴 `userId`、`firstName`、`createdAt`，snake_case 一行就是 `user_id`、`first_name`、`created_at`。一次只粘一个字段名：空格、逗号和换行都是分隔符，三个名字一起粘会合成一个 `user_id_first_name_created_at`。
 
 ### 数据库列名 → 代码变量
 
-PostgreSQL 用 snake_case。把一批列名粘进去，选 camelCase，一次转换出 TypeScript interface 的字段名，不用逐个敲。
+PostgreSQL 用 snake_case。把列名逐个粘进去，复制 camelCase 一行，就是 TypeScript interface 的字段名，不用自己改大小写。
 
 ### URL Slug 生成
 
@@ -139,24 +146,44 @@ PostgreSQL 用 snake_case。把一批列名粘进去，选 camelCase，一次转
 
 ### 重构时批量改名
 
-重构旧代码，需要把一批 camelCase 函数名改成 snake_case。先用转换器把所有名字转好，再用编辑器的批量替换。
+重构旧代码，需要把一批 camelCase 函数名改成 snake_case。先用转换器逐个转好，再用编辑器的批量替换。
 
 ## 转换器的工作原理
 
-转换器先把输入转成小写，再按所有非 ASCII 字母、非数字的字符拆分：空格、下划线、连字符和标点。所有目标风格同时输出：
-- `my_variable_name`、`my-variable-name`、`MY VARIABLE NAME` 都能得到 `myVariableName`、`my_variable_name`、`my-variable-name`
-- `myVariableName` **不会**被拆开：snake_case 得到 `myvariablename`
-- A–Z 以外的字母在代码类风格里会被当作分隔符：`café au lait` 得到 `caf_au_lait`，中文会被整体去掉
+{/* tc-check: {"input":"XMLHttpRequest","snake":"xml_http_request"} */}
+{/* tc-check: {"input":"base64","snake":"base_64"} */}
+{/* tc-check: {"input":"don't","snake":"dont"} */}
 
-要从 camelCase 或 PascalCase 转换，先在词之间加空格。
+camelCase、PascalCase、kebab-case、snake_case 和 CONSTANT_CASE 这五种代码类风格先把输入拆成单词，再按各自的规则拼起来。拆词的位置有四种：小写字母或数字后面跟大写字母（`userId` 拆成 user、Id），连续大写后面跟一个新单词（`XMLHttpRequest` 拆成 XML、Http、Request，snake_case 是 `xml_http_request`），字母和数字之间（`base64` 拆成 base、64，snake_case 是 `base_64`），以及空格、下划线、连字符、标点这类既不是字母也不是数字的字符。撇号先删掉，所以 `don't` 仍是一个词，snake_case 是 `dont`。
+
+{/* tc-check: {"input":"userLoginCount","title":"Userlogincount","sentence":"Userlogincount"} */}
+{/* tc-check: {"input":"my_variable_name","title":"My_variable_name"} */}
+
+UPPER CASE、lower case、Title Case 和 Sentence case 这四行不拆词，只改字母的大小写。Title Case 把每个以空格隔开的词改成首字母大写、其余小写，所以 `userLoginCount` 的 Title Case 和 Sentence case 都是 `Userlogincount`，`my_variable_name` 的 Title Case 是 `My_variable_name`。
+
+{/* tc-check: {"input":"myVariableName","camel":"myVariableName","snake":"my_variable_name","kebab":"my-variable-name"} */}
+{/* tc-check: {"input":"MY VARIABLE NAME","camel":"myVariableName","snake":"my_variable_name","kebab":"my-variable-name"} */}
+{/* tc-check: {"input":"café au lait","snake":"café_au_lait"} */}
+{/* tc-check: {"input":"用户 登录","snake":"用户_登录"} */}
+
+- `my_variable_name`、`my-variable-name`、`MY VARIABLE NAME`、`myVariableName` 都得到 `myVariableName`、`my_variable_name`、`my-variable-name`
+- 带重音的字母保留：`café au lait` 的 snake_case 是 `café_au_lait`
+- 汉字没有大小写，原样保留：`用户 登录` 的 snake_case 是 `用户_登录`
 
 ## 几个需要注意的边界情况
 
-**缩写词**：`userId` 还是 `userID`？两种写法都有人用。团队内统一就好。输入 `user ID` 时转换器输出 `userId`；输入 `userID` 则得到 `userid`，因为它不按大写字母拆分。
+{/* tc-check: {"input":"userID","camel":"userId","snake":"user_id"} */}
+{/* tc-check: {"input":"user ID","camel":"userId","snake":"user_id"} */}
 
-**数字**：`item3d` 还是 `item_3d`？习惯不一，转换器通常把数字当作单词的延续。
+**缩写词**：`userId` 还是 `userID`？两种写法都有人用，团队内统一就好。转换器把 `ID` 当成一个词，camelCase 里只保留首字母大写：输入 `userID` 或 `user ID`，camelCase 都是 `userId`，snake_case 都是 `user_id`。团队选了 `userID` 的写法，转换后要手动改回。
 
-**前导下划线**：Python 的 `_private` 约定表示私有属性，本转换器会去掉它：snake_case 和 kebab-case 得到 `private`，camelCase 得到 `Private`。
+{/* tc-check: {"input":"item3d","camel":"item3D","snake":"item_3_d"} */}
+
+**数字**：`item3d` 还是 `item_3d`？习惯不一。转换器把数字当作单独的词：`item3d` 的 snake_case 是 `item_3_d`，camelCase 是 `item3D`。想要 `item_3d` 就得转换后手动改。
+
+{/* tc-check: {"input":"_private","camel":"private","snake":"private","kebab":"private"} */}
+
+**前导下划线**：Python 的 `_private` 约定表示私有属性，本转换器会去掉开头的下划线：snake_case、kebab-case 和 camelCase 都得到 `private`。
 
 ---
 

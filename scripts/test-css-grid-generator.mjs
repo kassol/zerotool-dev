@@ -128,6 +128,9 @@ for (const lang of ['en', 'ja']) {
   for (const lang of ['en', 'ja']) {
     const g = readFileSync(join(root, `src/content/blog/css-grid-generator-guide/${lang}.mdx`), 'utf8');
     for (const s of ['187.2', '492', '322.67', '203.2']) check(`${lang} guide quotes ${s}`, g.includes(s));
+    // CSS Grid Level 2 states the automatic minimum of a flexible track in §7.2.1 (Track Sizes,
+    // under <flex>); §7.2.4 is the fr unit section (S2-FOLLOWUPS s2-2a).
+    check(`${lang} guide cites §7.2.1 for minmax(auto, <flex>)`, /7\.2\.1[^\n]*minmax\(auto, <flex>\)/.test(g) && !/7\.2\.4[^\n]*minmax\(auto/.test(g));
   }
 }
 
