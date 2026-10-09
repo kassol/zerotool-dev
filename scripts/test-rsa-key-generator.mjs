@@ -509,6 +509,18 @@ v2Check('phone main controls have 44px targets and tips have 24px targets', /@me
 v2Check('all five business buttons are retained', ['rkg-generate','rkg-pub-copy','rkg-pub-dl','rkg-priv-copy','rkg-priv-dl'].every(id => source.includes(`id="${id}"`)));
 v2Check('tips are HTML slots with unique stable IDs', v2TipKeys.every(k => source.includes(`id="rkg-tip-${k}"`) && source.includes(`>{U.tips.${k}}</Toggletip>`)) && (source.match(/<Toggletip\b/g) || []).length === 6);
 v2Check('new UI strings are absent from the complete client scripts', !/\b(?:U|STRINGS)\b|rkg-tip-/.test(v2Scripts) && !source.includes('data-strings='));
+// The privacy badge says what the page does (same facts as the FAQ privacy answer), not an absolute
+// claim: copy and download leave copies outside the page.
+const badgeText = {
+    en: 'Keys are generated in this browser and are not uploaded or stored',
+    zh: '密钥在浏览器中生成，不上传、不保存',
+    ja: '鍵はブラウザ内で生成し、アップロードも保存もしません',
+    ko: '키는 브라우저에서 생성되며 업로드하거나 저장하지 않습니다',
+};
+for (const lang of ['en','zh','ja','ko']) {
+    const badge = lifecycleLabels(lang).badge;
+    v2Check(lang + ' privacy badge states the concrete behaviour', badge === badgeText[lang] && !/never|不会离开|出ません|벗어나지/.test(badge));
+}
 for (const lang of ['en','zh','ja','ko']) {
     const labels = lifecycleLabels(lang), strings = v2Strings[lang];
     v2Check(lang + ' has a nonempty server-rendered empty sentence and six tips', !!strings?.empty && v2TipKeys.every(k => typeof strings?.tips?.[k] === 'string' && strings.tips[k].length > 0) && Object.keys(strings?.tips || {}).length === 6);
