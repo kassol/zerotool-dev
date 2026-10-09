@@ -15,7 +15,11 @@
 //     space; only HTML ASCII whitespace (tab, LF, FF, CR, space) is collapsed now;
 //   - in fragment mode only <body> children were written, so a comment before the first
 //     element (the parser puts it on the Document) and <title> / <link> / <meta> / <style>
-//     before body content (the parser puts them in <head>) were dropped.
+//     before body content (the parser puts them in <head>) were dropped;
+//   - <pre> / <textarea> content was written with innerHTML only: the parser ignores one LF
+//     after the start tag and the serializer does not write it back, so a leading blank line
+//     was lost on the next parse (the text and the display changed); the same happened to a
+//     pre / textarea inside code, samp, kbd or another pre, which that element's innerHTML writes.
 // Also: the page's "before / after minify" example is the engine output.
 // Full page + shared keyboard events cover modes, clear, and controlled clipboard/timer lifetimes.
 //
@@ -63,7 +67,8 @@ function toDom(node) {
       return { nodeType: 9, childNodes: kids, doctype: kids.find((k) => k.nodeType === 10) || null, documentElement: kids.find((k) => k.nodeType === 1) || null };
     }
     case '#documentType': return { nodeType: 10, name: node.name };
-    case '#text': return { nodeType: 3, data: node.value };
+    // Like a browser Text node, `data` can be written and innerHTML then shows the new text.
+    case '#text': return { nodeType: 3, get data() { return node.value; }, set data(v) { node.value = v; } };
     case '#comment': return { nodeType: 8, data: node.data };
     default: {
       const content = node.content || node;
@@ -108,6 +113,79 @@ eq('whitespace-only text between inline elements stays a space', run('<p><span>A
 eq('boolean attribute', run('<input disabled="">'), '<input disabled>');
 eq('full document', run('<!DOCTYPE html><html><head><title>t</title></head><body><p> a </p></body></html>'), '<!doctype html><html><head><title>t</title></head><body><p>a</p></body></html>');
 
+// ── <pre> / <textarea> leading blank line ──
+// HTML Standard: the parser ignores one LF right after <pre> / <textarea> ("Newlines at the
+// start of pre blocks are ignored as an authoring convenience"), and the fragment serializer
+// "does not roundtrip an initial U+000A (LF) character in pre, textarea, or listing elements".
+// innerHTML alone therefore lost a leading blank line on the next parse (before the fix).
+function textOf(html, tag) {
+  const find = (n) => {
+    if (n.tagName === tag) return n;
+    for (const c of (n.content || n).childNodes || []) { const f = find(c); if (f) return f; }
+    return null;
+  };
+  const text = (n) => n.nodeName === '#text' ? n.value : ((n.content || n).childNodes || []).map(text).join('');
+  const el = find(parse5.parse(html));
+  return el ? text(el) : null;
+}
+for (const [name, html, tag] of [
+  ['pre with a leading blank line', '<pre>\n\nfoo</pre>', 'pre'],
+  ['pre with two leading blank lines', '<pre>\n\n\nfoo\n</pre>', 'pre'],
+  ['pre with newline character references', '<pre>&#10;&#10;foo</pre>', 'pre'],
+  ['textarea with a leading blank line', '<textarea>\n\nbar</textarea>', 'textarea'],
+  ['pre with one authoring newline', '<pre>\nfoo</pre>', 'pre'],
+  ['pre that starts with an element', '<pre><code>\nx</code></pre>', 'pre'],
+  ['pre that is only newlines', '<pre>\n\n</pre>', 'pre'],
+]) {
+  for (const mode of ['minify', 'beautify']) {
+    eq(name + ' (' + mode + ') has the same text after a reparse', textOf(run(html, mode), tag), textOf(html, tag));
+  }
+}
+eq('pre leading blank line: one LF is written back', run('<pre>\n\nfoo</pre>'), '<pre>\n\nfoo</pre>');
+eq('pre authoring newline: nothing is added', run('<pre>\nfoo</pre>'), '<pre>foo</pre>');
+eq('textarea leading blank line: one LF is written back', run('<textarea>\n\nbar</textarea>'), '<textarea>\n\nbar</textarea>');
+
+// A pre / textarea inside another kept element (code, samp, kbd, pre) is written by that
+// element's innerHTML, so the same LF was lost there too (before the fix). Every pre and
+// textarea must have the same text after a reparse; the parse5 tree is restored afterwards.
+function allTexts(html) {
+  const out = [];
+  const text = (n) => n.nodeName === '#text' ? n.value : ((n.content || n).childNodes || []).map(text).join('');
+  (function walk(n) {
+    if (n.tagName === 'pre' || n.tagName === 'textarea') out.push(n.tagName + ':' + JSON.stringify(text(n)));
+    for (const c of (n.content || n).childNodes || []) walk(c);
+  })(parse5.parse(html));
+  return out.join(' | ');
+}
+for (const [name, html] of [
+  ['pre in code', '<code><pre>\n\nfoo</pre></code>'],
+  ['textarea in pre', '<pre><textarea>\n\nx</textarea></pre>'],
+  ['pre in kbd', '<kbd><pre>\n\nk</pre></kbd>'],
+  ['textarea in samp', '<samp><textarea>\n\ns</textarea></samp>'],
+  ['pre in pre', '<pre><pre>\n\nfoo</pre></pre>'],
+  ['pre deeper in code', '<code><span><pre>\n\ndeep</pre></span></code>'],
+  ['blank lines in pre and in its textarea', '<pre>\n\n<textarea>\n\nx</textarea></pre>'],
+  ['two textareas in pre', '<pre><textarea>\n\na</textarea><textarea>\nb</textarea></pre>'],
+  ['nested pre with one authoring newline', '<code><pre>\nfoo</pre></code>'],
+]) {
+  for (const mode of ['minify', 'beautify']) {
+    eq(name + ' (' + mode + ') keeps every pre / textarea text after a reparse', allTexts(run(html, mode)), allTexts(html));
+  }
+}
+eq('pre in code: one LF is written back', run('<code><pre>\n\nfoo</pre></code>'), '<code><pre>\n\nfoo</pre></code>');
+eq('textarea in pre: one LF is written back', run('<pre><textarea>\n\nx</textarea></pre>'), '<pre><textarea>\n\nx</textarea></pre>');
+eq('nested pre with one authoring newline: nothing is added', run('<code><pre>\nfoo</pre></code>'), '<code><pre>foo</pre></code>');
+// Stated on the tool pages as the one exception: &#13; in a pre is written as a raw CR, which the
+// next parse reads as LF (a pre shows a CR as a space, CSS Text 3).
+eq('&#13; in a pre is written as the character itself', run('<pre>a&#13;b</pre>'), '<pre>a\rb</pre>');
+{
+  // The added LF is only for the innerHTML call; the tree the engine was given is unchanged.
+  const doc = toDom(parse5.parse('<pre><textarea>\n\nx</textarea></pre>'));
+  E.processDoc(doc, '<pre><textarea>\n\nx</textarea></pre>', 'minify', '  ');
+  const pre = doc.documentElement.childNodes[1].childNodes[0];
+  eq('nested textarea text is restored after the call', pre.childNodes[0].childNodes[0].data, '\nx');
+}
+
 // ── tool pages: before / after example ──
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/html-minifier', lang + '.mdx'), 'utf8');
@@ -115,9 +193,12 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': page has the before / after blocks', blocks.length >= 2, String(blocks.length));
   if (blocks.length >= 2) eq(lang + ': after-minify block is the engine output', blocks[1], run(blocks[0]));
   check(lang + ': page no longer says inline spaces / nbsp / leading comments are lost', !/Note:read this|Price: 10 EUR|Note:</.test(mdx), lang);
+  check(lang + ': FAQ and body state the &#13; exception', mdx.includes('&#13;') && mdx.includes('<code>&amp;#13;</code>'), lang);
 }
 
-eq('engine bytes unchanged', createHash('sha256').update(source.slice(startIndex, endIndex + END_MARK.length)).digest('hex'), 'd448bd9c8374c23bf22e92a9e5b2340f99124cb96d651a7b2d8e95d09fe47c09');
+// Updated with each approved engine change (2026-10-09: <pre> / <textarea> leading LF written back,
+// also for a pre / textarea inside another kept element).
+eq('engine bytes unchanged', createHash('sha256').update(source.slice(startIndex, endIndex + END_MARK.length)).digest('hex'), '51ee92d34befd89dfd97240382bed6d4ab11804969711db03bcf4ba6f6982152');
 
 // Complete page events + actual shared shortcut. Parsing uses the same parse5 boundary above.
 const layoutSource = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');

@@ -85,6 +85,67 @@ eq('a comment with braces does not break parsing', c('/* { not a rule } */ .a { 
 eq('flexbox card', c('.card {\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 1rem;\n  padding: 1.5rem;\n  border-radius: 0.5rem;\n}'),
   '/* .card */\nflex flex-col items-center gap-4 p-6 rounded-lg');
 
+// ---------- keep comments show the declaration as typed (before: lowercased) ----------
+eq('keep comment keeps the case of a string', c('content: "Hello";'), '/* keep: content: "Hello" */');
+eq('keep comment keeps a URL as typed', c('background-image: url("/img/Hero.PNG");'), '/* keep: background-image: url("/img/Hero.PNG") */');
+eq('keep comment keeps a custom property name', c('--Brand-Color: #FF6600;'), '/* keep: --Brand-Color: #FF6600 */');
+eq('keep comment inside a rule keeps the case', c('.a { font-family: "Noto Sans JP", sans-serif; }'), '/* .a */\n/* keep: font-family: "Noto Sans JP", sans-serif */');
+eq('matching still ignores case', c('DISPLAY: FLEX; color: #3B82F6;'), 'flex text-blue-500');
+
+// ---------- box-shadow: only Tailwind's default shadows (before: any value became `shadow`) ----------
+// Values from the Tailwind v3 box-shadow docs (v3.tailwindcss.com/docs/box-shadow, v3.4.17).
+eq('shadow-sm', c('box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);'), 'shadow-sm');
+eq('shadow', c('box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);'), 'shadow');
+eq('shadow-md', c('box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);'), 'shadow-md');
+eq('shadow-lg', c('box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);'), 'shadow-lg');
+eq('shadow-xl', c('box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);'), 'shadow-xl');
+eq('shadow-2xl', c('box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);'), 'shadow-2xl');
+eq('shadow-inner', c('box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.05);'), 'shadow-inner');
+eq('box-shadow: none', c('box-shadow: none;'), 'shadow-none');
+eq('white space inside the value does not matter', c('box-shadow:\n  0 4px 6px -1px rgb(0 0 0/0.1),\n  0 2px 4px -2px rgb( 0 0 0 / 0.1 );'), 'shadow-md');
+eq('a custom shadow is kept', c('box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);'), '/* keep: box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) */');
+// "rgb (" with a space is not a function call in CSS, so the value is invalid, not a default shadow.
+eq('a space before ( is kept as written', c('box-shadow: 0 1px 2px 0 rgb (0 0 0 / 0.05);'), '/* keep: box-shadow: 0 1px 2px 0 rgb (0 0 0 / 0.05) */');
+eq('the same shadow written with rgba() is kept', c('box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);'), '/* keep: box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) */');
+eq('a colored default shadow is kept', c('box-shadow: 0 25px 50px -12px rgb(59 130 246 / 0.25);'), '/* keep: box-shadow: 0 25px 50px -12px rgb(59 130 246 / 0.25) */');
+{
+  // Cross-check against the installed Tailwind's own theme: v4 keeps every v3 default shadow
+  // value, some under new names (shadow-xs is v3's shadow-sm; the bare shadow and shadow-inner
+  // are in its "Deprecated" theme block).
+  const { createRequire: req } = await import('node:module');
+  const twDir = dirname(req(join(root, 'package.json')).resolve('tailwindcss/package.json'));
+  const theme = readFileSync(join(twDir, 'theme.css'), 'utf8');
+  const vars = Object.fromEntries([...theme.matchAll(/--(shadow(?:-\w+)?):\s*([^;]+);/g)].map(m => [m[1], m[2].trim()]));
+  const v3Class = { 'shadow-2xs': null, 'shadow-xs': 'shadow-sm', 'shadow-sm': 'shadow', 'shadow-md': 'shadow-md', 'shadow-lg': 'shadow-lg', 'shadow-xl': 'shadow-xl', 'shadow-2xl': 'shadow-2xl', 'shadow': 'shadow', 'shadow-inner': 'shadow-inner' };
+  same('tailwindcss theme.css shadow variables', Object.keys(vars).sort(), Object.keys(v3Class).sort());
+  for (const [name, cls] of Object.entries(v3Class)) {
+    eq('theme.css --' + name + ' converts to ' + (cls || 'a keep comment'), c('box-shadow: ' + vars[name] + ';'), cls || '/* keep: box-shadow: ' + vars[name] + ' */');
+  }
+}
+
+// ---------- grid templates: only N equal tracks (before: repeat(3, 200px) became grid-cols-3) ----------
+// Tailwind's grid-cols-N / grid-rows-N are repeat(N, minmax(0, 1fr)).
+eq('repeat(N, 1fr) columns', c('grid-template-columns: repeat(3, 1fr);'), 'grid-cols-3');
+eq('repeat(N, minmax(0, 1fr)) columns', c('grid-template-columns: repeat(4, minmax(0, 1fr));'), 'grid-cols-4');
+eq('white space inside repeat()', c('grid-template-columns: repeat( 2 ,minmax( 0 , 1fr ) );'), 'grid-cols-2');
+eq('fixed columns are kept', c('grid-template-columns: repeat(3, 200px);'), '/* keep: grid-template-columns: repeat(3, 200px) */');
+eq('minmax with another minimum is kept', c('grid-template-columns: repeat(2, minmax(100px, 300px));'), '/* keep: grid-template-columns: repeat(2, minmax(100px, 300px)) */');
+eq('repeat() followed by another track is kept', c('grid-template-columns: repeat(2, 1fr) 200px;'), '/* keep: grid-template-columns: repeat(2, 1fr) 200px */');
+eq('repeat(0, 1fr) is kept', c('grid-template-columns: repeat(0, 1fr);'), '/* keep: grid-template-columns: repeat(0, 1fr) */');
+eq('auto-fill is kept', c('grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));'), '/* keep: grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)) */');
+eq('repeat(N, 1fr) rows', c('grid-template-rows: repeat(2, 1fr);'), 'grid-rows-2');
+// Tailwind v3.4.17 has grid-cols-1 … grid-cols-12 and grid-rows-1 … grid-rows-12 only
+// (v3.tailwindcss.com/docs/grid-template-columns, …/grid-template-rows); a larger N is kept.
+eq('12 columns', c('grid-template-columns: repeat(12, 1fr);'), 'grid-cols-12');
+eq('13 columns are kept', c('grid-template-columns: repeat(13, 1fr);'), '/* keep: grid-template-columns: repeat(13, 1fr) */');
+eq('100 columns are kept', c('grid-template-columns: repeat(100, minmax(0, 1fr));'), '/* keep: grid-template-columns: repeat(100, minmax(0, 1fr)) */');
+eq('12 rows', c('grid-template-rows: repeat(12, minmax(0, 1fr));'), 'grid-rows-12');
+eq('13 rows are kept', c('grid-template-rows: repeat(13, 1fr);'), '/* keep: grid-template-rows: repeat(13, 1fr) */');
+eq('a leading zero is kept', c('grid-template-columns: repeat(012, 1fr);'), '/* keep: grid-template-columns: repeat(012, 1fr) */');
+eq('fixed rows are kept', c('grid-template-rows: repeat(3, 100px);'), '/* keep: grid-template-rows: repeat(3, 100px) */');
+// Stated on the tool pages: an end line after the span is not kept (col-span-N is span N / span N).
+eq('span N / end line keeps only the span', c('grid-column: span 2 / 4;'), 'col-span-2');
+
 // ---------- the examples on the tool pages ----------
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/css-to-tailwind/' + lang + '.mdx'), 'utf8');
@@ -262,7 +323,10 @@ const { compile: compileMdx } = await import('@mdx-js/mdx');
 const { default: yaml } = await import('js-yaml');
 const sha = text => createHash('sha256').update(text).digest('hex');
 const fullEngine = source.match(/^ *\/\* ── engine:start ── \*\/[\s\S]*?^ *\/\* ── engine:end ── \*\//m)[0];
-same('v2 exact engine bytes', sha(fullEngine), '376008778596974ac85ede4f14824d2d2fffd7766a28f29ecdb888bdffb5a7fa');
+// Updated with each approved engine change (2026-10-09: keep comments keep the typed case;
+// box-shadow maps only Tailwind's default shadows, and a space before ( does not match;
+// grid templates map only N equal tracks, N = 1 to 12).
+same('v2 exact engine bytes', sha(fullEngine), '3a9d7a56fad7779ac15a0279c82719e6b9a3726133411c4177a63ab049d5d0b7');
 const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];

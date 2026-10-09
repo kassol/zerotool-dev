@@ -248,7 +248,29 @@ const { tips: TIPS, ...CLIENT_T } = T;
               return;
             }
             if (PRESERVE_ELEMENTS[tag]) {
+              /* A pre / textarea inside this element is written by this innerHTML call too; its
+                 text gets the LF described below only for the call. */
+              var lfTexts = [];
+              (function findLF(el) {
+                for (var i = 0; i < el.childNodes.length; i++) {
+                  var c = el.childNodes[i];
+                  if (c.nodeType !== 1) continue;
+                  var ct = c.tagName.toLowerCase(), cf = c.childNodes[0];
+                  if ((ct === 'pre' || ct === 'textarea') && cf && cf.nodeType === 3 && cf.data.charAt(0) === '\n') lfTexts.push(cf);
+                  findLF(c);
+                }
+              })(node);
+              for (var k = 0; k < lfTexts.length; k++) lfTexts[k].data = '\n' + lfTexts[k].data;
               var inner = node.innerHTML;
+              for (k = 0; k < lfTexts.length; k++) lfTexts[k].data = lfTexts[k].data.slice(1);
+              /* The parser ignores one LF right after <pre> / <textarea> and innerHTML does not
+                 write it back (HTML Standard), so text that starts with a newline would lose its
+                 first blank line on the next parse: write that LF back. */
+              var first = node.childNodes[0];
+              if ((tag === 'pre' || tag === 'textarea') && first && first.nodeType === 3 && first.data.charAt(0) === '\n' &&
+                  inner.search(/[^\n]|$/) === first.data.search(/[^\n]|$/)) {
+                inner = '\n' + inner;
+              }
               if (mode === 'minify') {
                 parts.push('<' + tag + attrs + '>' + inner + '</' + tag + '>');
               } else {

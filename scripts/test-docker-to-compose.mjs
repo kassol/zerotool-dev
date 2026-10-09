@@ -427,6 +427,13 @@ eq('v2 original action buttons retained', [...layoutMarkup.matchAll(/<button\b[^
 const tipMap = [["convert", "convert", "convert"], ["example", "example", "example"], ["clear", "clear", "clear"], ["input", "inputLabel", "input"], ["copy", "copy", "copy"]];
 eq('v2 actual Toggletip count', (layoutMarkup.match(/<Toggletip\b/g) || []).length, tipMap.length);
 for (const [id, about, key] of tipMap) check('v2 tip binding ' + id, layoutMarkup.includes('<Toggletip id="dtc-tip-' + id + '" lang={lang} about={L.' + about + '}>{L.tips.' + key + '}</Toggletip>'));
+// Sensitive tool (decision 2026-10-09): docker run often passes passwords or tokens with -e,
+// so the page loads no GA / AdSense and keeps nothing, like curl-to-code.
+check('sensitive policy is disabled (no GA / AdSense, nothing persisted)', /'docker-to-compose':\s*'disabled'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
+check('component never calls ztPersist and uses no storage', !/ztPersist|localStorage|sessionStorage/.test(source));
+const SENSITIVE_PRIVACY = { en: /loads neither Google Analytics nor AdSense/, zh: /不加载 Google Analytics，也不加载 AdSense/, ja: /Google Analytics も AdSense も読み込みません/, ko: /Google Analytics와 AdSense를 불러오지 않습니다/ };
+const PRIVACY_WIPE = { en: /deleted each time it loads/, zh: /每次加载时/, ja: /読み込むたびに削除/, ko: /열 때마다 지웁니다/ };
+const PRIVACY_ANALYTICS = { en: /analytics record/, zh: /页面统计记录/, ja: /アクセス解析が/, ko: /페이지 통계에/ };
 // Hashes captured before migrating Usage; all other frontmatter and body are protected.
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const L = pageLabels[lang], p = page(lang);
@@ -444,6 +451,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': v2 steps bounds/order', steps.length > 0 && steps.length <= 8 && steps.every(x => [...x].length <= 280 && !/[<>]/.test(x)) && steps.reduce((n, x) => n + [...x].length, 0) <= 1200 && fm.indexOf('steps:') < fm.indexOf('faqItems:'));
   for (const key of ["inputLabel", "convert", "example", "clear", "copy"]) check(lang + ': v2 steps use actual ' + key, steps.join('\n').includes(L[key]));
   eq(lang + ': MDX content contract', contractProblems('docker-to-compose', lang), '');
+  const privacy = (yaml.load(fm).faqItems.find(x => x.id === 'privacy') || {}).answer || '';
+  check(lang + ': privacy answer says neither Google Analytics nor AdSense is loaded', SENSITIVE_PRIVACY[lang].test(privacy) && !PRIVACY_ANALYTICS[lang].test(privacy), privacy);
+  check(lang + ': privacy answer says stored values are deleted on load', PRIVACY_WIPE[lang].test(privacy), privacy);
   check(lang + ': v2 no duplicate Usage', !/<h2>(How to Use|使用方法|使い方|사용 방법)<\/h2>|^## How to/m.test(body));
   try { await compileMdx(body); check(lang + ': v2 MDX compiles', true); } catch (e) { check(lang + ': v2 MDX compiles', false, e.message); }
   for (const shellFirst of [false, true]) for (const focus of ['output', 'copy-tip']) {

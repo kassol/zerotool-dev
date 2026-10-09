@@ -581,9 +581,10 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, con
           if (!line) return;
           var colon = line.indexOf(':');
           if (colon < 0) return;
-          var prop = line.slice(0, colon).trim().toLowerCase();
-          var val = line.slice(colon + 1).trim().toLowerCase();
-          results.push([prop, val]);
+          var rawProp = line.slice(0, colon).trim();
+          var rawVal = line.slice(colon + 1).trim();
+          /* lower case for matching; the keep comment shows the declaration as typed */
+          results.push([rawProp.toLowerCase(), rawVal.toLowerCase(), rawProp + ': ' + rawVal]);
         });
         return results;
       }
@@ -622,6 +623,29 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, con
         }
         return out;
       }
+
+      /* Tailwind v3 default box-shadow theme (v3.tailwindcss.com/docs/box-shadow). A value maps
+         only when it equals one of these, white space aside; any other shadow is kept. */
+      var SHADOW_SCALE = [
+        ['0 1px 2px 0 rgb(0 0 0 / 0.05)', 'shadow-sm'],
+        ['0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)', 'shadow'],
+        ['0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)', 'shadow-md'],
+        ['0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)', 'shadow-lg'],
+        ['0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)', 'shadow-xl'],
+        ['0 25px 50px -12px rgb(0 0 0 / 0.25)', 'shadow-2xl'],
+        ['inset 0 2px 4px 0 rgb(0 0 0 / 0.05)', 'shadow-inner'],
+      ];
+      function shadowKey(v) { return v.replace(/\(\s*/g, '(').replace(/\s*([),/])\s*/g, '$1').replace(/\s+/g, ' ').trim(); }
+      function shadowClass(val) {
+        for (var i = 0; i < SHADOW_SCALE.length; i++) {
+          if (shadowKey(SHADOW_SCALE[i][0]) === shadowKey(val)) return SHADOW_SCALE[i][1];
+        }
+        return null;
+      }
+
+      /* grid-cols-N / grid-rows-N are repeat(N, minmax(0, 1fr)): only N equal tracks map,
+         and Tailwind v3 has them for N = 1 to 12. */
+      var EQUAL_TRACKS = /^repeat\(\s*([1-9]|1[0-2])\s*,\s*(?:1fr|minmax\(\s*0\s*,\s*1fr\s*\))\s*\)$/;
 
       function convertDeclarations(decls) {
         var classes = [];
@@ -758,12 +782,12 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, con
               cls = spacingClass('inset', val);
               break;
             case 'grid-template-columns': {
-              var repMatch = val.match(/^repeat\((\d+),/);
+              var repMatch = val.match(EQUAL_TRACKS);
               if (repMatch) { cls = 'grid-cols-' + repMatch[1]; }
               break;
             }
             case 'grid-template-rows': {
-              var repRowMatch = val.match(/^repeat\((\d+),/);
+              var repRowMatch = val.match(EQUAL_TRACKS);
               if (repRowMatch) { cls = 'grid-rows-' + repRowMatch[1]; }
               break;
             }
@@ -787,7 +811,7 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, con
             }
             case 'box-shadow':
               if (val === 'none') { cls = 'shadow-none'; }
-              else { cls = 'shadow'; }
+              else { cls = shadowClass(val); }
               break;
             case 'outline':
               if (val === 'none' || val === '0') { cls = 'outline-none'; }
@@ -807,7 +831,7 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, con
           }
 
           if (cls) { classes.push(cls); }
-          else { unmapped.push(prop + ': ' + val); }
+          else { unmapped.push(pair[2]); }
         });
 
         return { classes: classes, unmapped: unmapped };

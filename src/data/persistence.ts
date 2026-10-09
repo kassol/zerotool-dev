@@ -44,6 +44,7 @@ export const toolPersistencePolicy = {
   'cookie-parser': 'disabled',
   'http-header-analyzer': 'disabled',
   'curl-to-code': 'disabled',
+  'docker-to-compose': 'disabled',
   'iban-validator-parser': 'disabled',
   'exif-metadata-viewer': 'disabled',
   'gif-splitter': 'preference',

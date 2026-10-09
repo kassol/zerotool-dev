@@ -9,13 +9,20 @@ steps:
   - "点击“清除”，或在焦点位于工具内时按 Ctrl/⌘+L，清空两栏与状态。"
 faqItems:
   - question: "支持哪些 CSS 属性？"
-    answer: "工具覆盖最常用的 CSS 属性：display、position、overflow、Flexbox、Grid、对齐、间距（margin/padding/gap）、尺寸（width/height）、排版（font-size、font-weight、text-align）、边框、border-radius、opacity、z-index、cursor 和 transition。"
+    id: "supported"
+    answer: "内置映射表覆盖常用属性：display、position、overflow、Flexbox、Grid、对齐、间距（margin、padding、gap）、尺寸（width、height）、排版（字号、字重、行高、字间距、文字对齐）、与默认调色板一致的颜色、边框、border-radius、box-shadow、opacity、z-index、cursor 和 transition。只有表里列出的值才会转换，其他值保留为注释。例如 box-shadow 只有等于 Tailwind v3.4.17 文档里的默认阴影时才转换，grid-template-columns 只有写成 repeat(N, 1fr) 或 repeat(N, minmax(0, 1fr)) 且 N 为 1 到 12 时才转换。"
   - question: "无法映射的属性如何处理？"
-    answer: "无法映射的属性会以 /* keep: property: value */ 注释形式输出，您可以清楚地知道哪些样式需要手动处理，而不会丢失任何信息。"
+    id: "unmapped"
+    answer: "以 /* keep: property: value */ 注释输出，并保留输入时的大小写，方便看出哪些声明需要手动处理；工具不会生成 p-[13px] 这类任意值写法。有些类名并不完全等价，也不留注释，例如：text-lg 还会设置行高；transition-* 类还会设置 Tailwind 的时间曲线，transition-colors 会同时过渡多个颜色属性；repeat(N, 1fr) 会写成 grid-cols-N，即 repeat(N, minmax(0, 1fr))，内容较宽的列不再变宽；grid-column: span 2 / 4 会写成 col-span-2，结束线丢失。这些请手动核对。"
   - question: "可以粘贴带选择器的完整 CSS 规则吗？"
-    answer: "可以。您可以粘贴一个或多个 CSS 规则块（如 .card { ... }）。转换器会为每个选择器的类名分组，并用注释标注选择器名称。也支持粘贴不带选择器的纯声明。"
+    id: "selectors"
+    answer: "可以。粘贴一个或多个 CSS 规则块（如 .card { ... }）即可，转换器会为每个选择器的类名分组，并用注释标注选择器名称。也支持粘贴不带选择器的纯声明。"
   - question: "输出与 Tailwind v4 兼容吗？"
-    answer: "输出使用标准 Tailwind 工具类名，与 Tailwind v3 和 v4 均兼容。工具不生成任意值语法（如 p-[13px]），不在映射表中的值需要您手动添加。"
+    id: "tailwind-v4"
+    answer: "映射表用的是 Tailwind v3 的类名和默认调色板。Tailwind v4 保留了其中大部分类名，但有三点会影响结果：v4 的默认颜色改用 OKLCH 定义，所以工具为 #3b82f6 匹配的 text-blue-500 在 v4 里颜色会略有不同；v4 的圆角刻度调整了，工具为 2px 写出的 rounded-sm 在 v4 中是 0.25rem（0.125rem 在 v4 叫 rounded-xs）；阴影刻度也调整了，工具为 0 1px 2px 0 rgb(0 0 0 / 0.05) 写出的 shadow-sm 在 v4 中是更大的阴影（这个值在 v4 叫 shadow-xs，不带后缀的 shadow 不变）。用 v4 时，请对照官方升级指南检查颜色、圆角和阴影。"
+  - question: "CSS 会发送到服务器吗？"
+    id: "privacy"
+    answer: "不会。转换在当前标签页里按内置映射表完成，CSS 不会发送到服务器，也不保存到浏览器存储。点击「转换为 Tailwind」（或按 Ctrl/⌘+Enter）时，页面统计记录工具名和动作 convert，不包含 CSS 内容。"
 ---
 
 
@@ -149,6 +156,10 @@ py-2 px-4 m-0 top-0 z-10 overflow-hidden sticky opacity-50 cursor-pointer grid-c
 ## 限制
 
 - 值是查映射表得到的，不做计算：表外的值即使有对应类名也会保留为注释（见上面的 `max-width`）。
+- `box-shadow` 只转换 Tailwind v3 的默认阴影（`shadow-sm` 到 `shadow-2xl` 以及 `shadow-inner`，值的写法与 v3.4.17 文档相同）。其他阴影保留为注释，同一个阴影的颜色写成 `rgba(0, 0, 0, 0.05)` 也会保留。
+- `grid-template-columns`、`grid-template-rows` 只转换 `repeat(N, 1fr)` 和 `repeat(N, minmax(0, 1fr))`，且 N 为 1 到 12（Tailwind v3 的 `grid-cols-*`、`grid-rows-*` 只有这个范围），更大的 N 保留为注释。Tailwind 把 `grid-cols-N` 定义为 `repeat(N, minmax(0, 1fr))`：列里的内容比等分宽度更宽时，`1fr` 列会被撑宽，换成类名后各列仍然等宽，内容溢出。
+- `grid-column: span 2 / 4` 这类在 span 后写了结束线的值会写成 `col-span-2`，结束线丢失；`grid-row` 同理，请手动核对。
+- 字号类同时设置行高：`text-lg` 是 `font-size: 1.125rem; line-height: 1.75rem`，转换后请检查行高。
 - 带伪类的选择器会单独分组，不会写出 `hover:`、`focus:` 前缀。
 - 只有宽度是默认断点（640px、768px、1024px、1280px、1536px 或等值的 rem）的 `@media (min-width: …)` 会变成前缀；其他媒体查询、`@supports`、容器查询只标在分组注释里。
 - 带逗号的多个 transition、`cubic-bezier()`、不在刻度内的时长（0、75、100、150、200、300、500、700、1000 ms 之外）保留为注释。
