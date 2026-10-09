@@ -34,6 +34,7 @@ export const toolPersistencePolicy = {
   'totp-generator': 'disabled',
   'aes-encrypt-decrypt': 'disabled',
   'hmac-generator': 'disabled',
+  'hash-generator': 'disabled',
   'bcrypt-generator': 'disabled',
   'password-generator': 'disabled',
   'htpasswd-generator': 'disabled',

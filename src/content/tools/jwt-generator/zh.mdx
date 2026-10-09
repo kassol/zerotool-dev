@@ -3,21 +3,29 @@ seoTitle: "JWT 生成器 / 签名器 — HS256 / HS512 在线工具 | ZeroTool"
 seoDescription: "在浏览器中生成并签名 JWT Token（HS256、HS384、HS512）。编辑 Header 和 Payload JSON，设置密钥，复制签名后的 Token，数据不上传服务器。"
 steps:
   - "选择「算法」HS256、HS384 或 HS512；所选算法会同步到有效 JSON 对象 Header 的 alg。"
-  - "编辑 Payload JSON 并输入测试「密钥」，按密钥的保存方式选择 UTF-8 或 Base64。"
+  - "编辑 Payload JSON 对象并输入测试「密钥」，按密钥的保存方式选择 UTF-8 或 Base64。"
   - "展开 Header 可编辑 JSON。alg 必须与所选算法一致；不一致时会自动展开并显示错误。"
   - "停止修改 0.5 秒后，「生成的 Token」会更新。较短的密钥仍会签名，并直接显示警告。"
   - "点击「复制」取得完整 Token。在工具内按 Ctrl+L（Mac 为 ⌘+L）可清空三个字段和结果，保留算法与密钥格式。"
 faqItems:
-  - question: "什么是 JWT？"
-    answer: "JSON Web Token（JWT）是 RFC 7519 定义的一种紧凑型 URL 安全令牌格式。它由三个 Base64URL 编码的部分组成，以点号分隔：Header（算法和类型）、Payload（声明）和 Signature（签名）。JWT 常用于身份认证和信息交换。"
-  - question: "我的密钥会发送到服务器吗？"
-    answer: "不会。所有签名操作均使用浏览器内置的 Web Crypto API（SubtleCrypto）完成。你的 Header、Payload 和密钥不会离开浏览器。"
-  - question: "应该选择哪种算法？"
-    answer: "HS256（HMAC-SHA256）是最广泛使用的算法，适合大多数场景。HS384 和 HS512 输出更大的哈希值，适用于需要更高安全余量的场景。三者均为对称算法——使用相同的密钥进行签名和验证。"
-  - question: "可以在 jwt.io 上验证这里生成的 Token 吗？"
-    answer: "可以。复制生成的 Token 粘贴到 jwt.io，输入相同的密钥并选择对应算法即可验证签名。"
-  - question: "Base64 密钥格式选项是什么？"
-    answer: "某些服务提供预先经过 Base64（或 Base64URL）编码的密钥。当你的密钥已是这种形式时，选择 Base64 选项——工具会在签名前先解码，从而生成正确的签名。"
+  - id: what-is
+    question: "什么是 JWT？"
+    answer: "JSON Web Token（JWT）是 RFC 7519 定义的一种紧凑、可放进 URL 的 Token 格式。它由三个 Base64URL 编码的部分组成，以点号分隔：Header（算法和类型）、Payload（声明）和 Signature（签名）。JWT 常用于身份认证和信息交换。"
+  - id: privacy
+    question: "我的密钥会发送到服务器吗？"
+    answer: "不会。签名由浏览器内置的 Web Crypto API（SubtleCrypto）完成，Header、Payload 和密钥都不会发送出去。工具不保存这些内容，本页每次加载时还会删除浏览器里为它保存过的值。因为本页处理密钥，所以不加载 Google Analytics，也不加载 AdSense。"
+  - id: algorithm
+    question: "应该选择哪种算法？"
+    answer: "HS256（HMAC-SHA256）用得最广，适合大多数场景；HS384 和 HS512 的哈希更长。三者都是对称算法，签名和验证用同一个密钥。无论选哪种，RFC 7518 都要求密钥不短于哈希输出，分别是 32、48、64 字节。"
+  - id: verify
+    question: "怎么确认这里生成的 Token 能通过验证？"
+    answer: "用任意支持 HMAC 的 JWT 库，按相同算法和相同的密钥字节验证即可。例如 PyJWT 2.10.1 的写法是 jwt.decode(token, key, algorithms=[\"HS256\"])。Base64 模式下要传入解码后的字节，而不是 Base64 文本。本站的 JWT 解码器只显示声明内容，不校验签名。"
+  - id: base64-secret
+    question: "Base64 密钥格式选项是什么？"
+    answer: "有些服务给出的密钥已经是 Base64（或 Base64URL）编码。密钥是这种形式时选 Base64，工具会先解码再签名，签名才能对上。计算密钥长度时看的是解码后的字节数：44 个 Base64 字符解码后是 32 字节。"
+  - id: whitespace
+    question: "同样的声明，为什么这里生成的 Token 比程序库生成的长？"
+    answer: "工具按输入框里的原文签名 Header 和 Payload，换行和缩进都会编码进去，只去掉首尾空白。程序库通常输出压缩后的 JSON。两种 Token 都合法，用同一个密钥都能验证。想得到压缩形式，就粘贴压缩后的 JSON，例如 {\"alg\":\"HS256\",\"typ\":\"JWT\"}。"
 ---
 
 <h2>常见使用场景</h2>
@@ -28,9 +36,11 @@ faqItems:
   <li><strong>学习：</strong>理解 JWT 的结构和签名原理。</li>
 </ul>
 
-<h2>示例：给本地 API 测试生成令牌</h2>
+<h2>示例：中文声明与北京时间</h2>
 
-<p>头部（默认值未改）和载荷按下面的文字输入，UTF-8 密钥为 <code>{"dev-secret-at-least-32-bytes-long!!"}</code>：</p>
+{/* jwt-check: {"algo":"HS256","fmt":"utf8","secret":"zerotool-demo-secret-0123456789abcdef","header":"{\n  \"alg\": \"HS256\",\n  \"typ\": \"JWT\"\n}","payload":"{\n  \"sub\": \"10086\",\n  \"name\": \"张三\",\n  \"role\": \"运营\",\n  \"iat\": 1791507600,\n  \"exp\": 1791514800\n}","inputLen":185} */}
+
+<p>为本地后台接口生成一个运营账号的测试 Token。Header 保持默认，UTF-8 密钥用演示值 <code>{"zerotool-demo-secret-0123456789abcdef"}</code>（37 字节，满足 HS256 的 32 字节下限，不会出现警告）：</p>
 
 <pre><code>{`{
   "alg": "HS256",
@@ -38,36 +48,68 @@ faqItems:
 }`}</code></pre>
 
 <pre><code>{`{
-  "sub": "user-42",
-  "role": "admin",
-  "iat": 1767225600,
-  "exp": 1767229200
+  "sub": "10086",
+  "name": "张三",
+  "role": "运营",
+  "iat": 1791507600,
+  "exp": 1791514800
 }`}</code></pre>
 
-<p>生成的 HS256 令牌：</p>
+<p>生成的 HS256 Token：</p>
 
-<pre><code>{`ewogICJhbGciOiAiSFMyNTYiLAogICJ0eXAiOiAiSldUIgp9.ewogICJzdWIiOiAidXNlci00MiIsCiAgInJvbGUiOiAiYWRtaW4iLAogICJpYXQiOiAxNzY3MjI1NjAwLAogICJleHAiOiAxNzY3MjI5MjAwCn0.Bv_t0OCTXuNeir4XkkMmC0CJs8jGuy1knb6zZGgSRTs`}</code></pre>
+<pre><code>{`ewogICJhbGciOiAiSFMyNTYiLAogICJ0eXAiOiAiSldUIgp9.ewogICJzdWIiOiAiMTAwODYiLAogICJuYW1lIjogIuW8oOS4iSIsCiAgInJvbGUiOiAi6L-Q6JClIiwKICAiaWF0IjogMTc5MTUwNzYwMCwKICAiZXhwIjogMTc5MTUxNDgwMAp9.MxlA4RZOOM5N8lZ2tDYXh0jggy2PJ-wFnVw7XXxGT8g`}</code></pre>
 
-<p>工具按输入框里的原文编码头部和载荷，包括换行和缩进，所以这个令牌比用压缩 JSON 生成的长（签名前 160 个字符，压缩后 125 个），但仍是合法的 JWS。用 PyJWT 验证：</p>
+<p>中文先按 UTF-8 编码再做 Base64URL：「运营」的 6 个字节变成 <code>{"6L-Q6JCl"}</code>，其中的 <code>-</code> 来自 URL 安全字母表（标准 Base64 在这里是 <code>+</code>）。签名前的部分有 185 个字符，因为输入框里的换行和缩进也被编码进去了。</p>
 
-<pre><code>{`import jwt  # PyJWT 2.10
+{/* jwt-time: {"iso":"2026-10-09T09:00:00+08:00","unix":1791507600} */}
 
-jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"],
-           options={"verify_exp": False})
-# {'sub': 'user-42', 'role': 'admin', 'iat': 1767225600, 'exp': 1767229200}
+<p>声明里的时间是 Unix 秒，不带时区。北京时间 2026-10-09 09:00 是 <code>1791507600</code>：</p>
 
-jwt.decode(token, "dev-secret-at-least-32-bytes-long!!", algorithms=["HS256"])
-# jwt.exceptions.ExpiredSignatureError: Signature has expired`}</code></pre>
+{/* jwt-time: {"iso":"2026-10-09T11:00:00+08:00","unix":1791514800} */}
 
-<p><code>{"iat"}</code> 1767225600 是 2026-01-01 00:00:00 UTC，<code>{"exp"}</code> 晚一小时，所以检查过期时间的库今天会拒绝这个令牌。工具不会添加或检查 <code>{"iat"}</code>、<code>{"exp"}</code>、<code>{"nbf"}</code>，需要的时间戳请自己写（Unix 秒，<a href="https://www.rfc-editor.org/rfc/rfc7519#section-4.1" target="_blank" rel="noopener">RFC 7519 §4.1</a>）。</p>
+<p>两小时后的 11:00 是 <code>1791514800</code>，写进 <code>{"exp"}</code>。工具不会替你填 <code>{"iat"}</code>、<code>{"exp"}</code>、<code>{"nbf"}</code>，也不检查它们是否过期；按北京时间换算时别忘了时区是 UTC+8，直接把「2026-10-09 09:00」当 UTC 算会差 8 小时（<a href="https://www.rfc-editor.org/rfc/rfc7519#section-4.1" target="_blank" rel="noopener">RFC 7519 §4.1</a>）。</p>
 
 <p>例如，所选算法仍为 HS256 时，把 Header 的 alg 改为 HS512，会显示错误并清除旧 Token。</p>
+
+<h2>示例：jjwt 0.9 的字符串密钥要选 Base64</h2>
+
+<p>jjwt 0.9.x 的签名可以这样写：<code>{"Jwts.builder()...signWith(SignatureAlgorithm.HS512, secret)"}</code>。按 jjwt 0.9.1 源码中该方法的 <a href="https://github.com/jwtk/jjwt/blob/0.9.1/src/main/java/io/jsonwebtoken/JwtBuilder.java" target="_blank" rel="noopener">Javadoc</a>，传入字符串的这个重载会先把字符串按 Base64 解码，再用得到的字节签名。所以配置文件里的密钥文本，在本工具里要选 Base64，签名用的才是同一组字节。下面用一个演示密钥（64 个字母和数字）对比两种模式：</p>
+
+<pre><code>{`ZeroToolDemoKeyForJjwtBase64ModeTestOnly0123456789abcdefghijkLMN`}</code></pre>
+
+<pre><code>{`{"alg":"HS512"}`}</code></pre>
+
+<pre><code>{`{"sub":"admin","iat":1791507600}`}</code></pre>
+
+{/* jwt-check: {"algo":"HS512","fmt":"base64","secret":"ZeroToolDemoKeyForJjwtBase64ModeTestOnly0123456789abcdefghijkLMN","header":"{\"alg\":\"HS512\"}","payload":"{\"sub\":\"admin\",\"iat\":1791507600}","warn":48} */}
+
+<p>选 Base64 时，64 个字符解码成 48 字节，工具照常签名，同时提示：「密钥只有 48 字节；RFC 7518 要求 HS512 至少 64 字节。Token 照常签名，但这个密钥太短，不宜使用。」得到：</p>
+
+<pre><code>{`eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJhZG1pbiIsImlhdCI6MTc5MTUwNzYwMH0.69irj4xwzk9LYkoJ3CtFhePoNKAIuptKCu2H_AjCOpBWU9AKpeLVRiCkP5otl3Ml7uVKcufRVh_oxltQMHh4-Q`}</code></pre>
+
+{/* jwt-check: {"algo":"HS512","fmt":"utf8","secret":"ZeroToolDemoKeyForJjwtBase64ModeTestOnly0123456789abcdefghijkLMN","header":"{\"alg\":\"HS512\"}","payload":"{\"sub\":\"admin\",\"iat\":1791507600}"} */}
+
+<p>选 UTF-8 时，同一段文本是 64 字节，不再提示，但签名完全不同：</p>
+
+<pre><code>{`eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJhZG1pbiIsImlhdCI6MTc5MTUwNzYwMH0.vXYdQdL45dQ4z1XwnL3Su3s9weElKp908cH_-V6fbvCT54rq5s30ud6D27xzGCHrcWq-F_hLrK9hBuuVoKz1pA`}</code></pre>
+
+<p>「没有警告」不代表选对了模式。服务端报签名不匹配时，先确认它把密钥当作文本还是当作 Base64；本例中，服务端按 Base64 解码后只有 48 字节，正好是需要换一个更长密钥的信号。</p>
+
+<h2>选择密钥</h2>
+
+<p>HMAC 签名的强度取决于密钥。拿到一个 Token 的人可以离线尝试候选密钥，直到签名对上；<a href="https://www.rfc-editor.org/rfc/rfc8725#section-3.5" target="_blank" rel="noopener">RFC 8725 §3.5</a> 明确说人能记住的口令不能用作 HMAC 密钥。用随机字节生成密钥，再用 Base64 模式粘贴：</p>
+
+<pre><code>{`openssl rand -base64 32   # HS256
+openssl rand -base64 64   # HS512`}</code></pre>
 
 <h2>限制</h2>
 
 <ul>
   <li>只支持 HMAC 算法（HS256、HS384、HS512）。RS256、ES256 需要私钥，不支持。</li>
   <li><a href="https://www.rfc-editor.org/rfc/rfc7518#section-3.2" target="_blank" rel="noopener">RFC 7518 §3.2</a> 要求密钥长度不少于哈希输出：HS256 为 32 字节、HS384 为 48、HS512 为 64。密钥更短时工具照常签名，但会显示字节数并提示；默认示例密钥 <code>your-256-bit-secret</code> 只有 19 字节，会触发提示。</li>
-  <li>Base64 模式下会先解码密钥（标准或 URL 安全字母表，填充可省略）。服务端以 Base64 保存密钥时用这个模式，否则签名对不上。</li>
+  <li>Base64 模式下会先解码密钥（标准或 URL 安全字母表，填充可省略，空白忽略）；解码后为 0 字节（例如只填了空格）时报错。</li>
+  <li>Payload 必须是 JSON 对象。数组、字符串、数字或 <code>{"null"}</code> 会报错而不生成 Token：<a href="https://www.rfc-editor.org/rfc/rfc7519#section-7.2" target="_blank" rel="noopener">RFC 7519 §7.2</a> 要求声明集是 JSON 对象，PyJWT 等库也会拒绝其他形式。</li>
+  <li>Header 和 Payload 只去掉首尾空白；UTF-8 模式下密钥按原样使用，首尾多一个空格签名就会不同；Base64 模式忽略空白。</li>
+  <li>Header、Payload 和 UTF-8 模式的密钥里如果有 emoji 的一半（落单的 UTF-16 代理项），会报出位置，因为 UTF-8 无法编码它；Base64 模式下它会被报为无效的 Base64。</li>
   <li>不要把生产环境的签名密钥粘贴到任何网页里，请用专门的测试密钥。</li>
 </ul>

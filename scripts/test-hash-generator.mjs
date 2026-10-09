@@ -8,7 +8,10 @@
 // Covers: md5() equals node:crypto MD5 of the TextEncoder bytes for 3,000 random strings that mix
 // ASCII, CJK, emoji and lone surrogates (the old hand-written UTF-8 step encoded a lone surrogate
 // differently from TextEncoder, so the MD5 row and the SHA rows hashed different bytes); RFC 1321
-// test vectors; every hash quoted on the English page, recomputed with node:crypto.
+// test vectors; every hash quoted on the English page, recomputed with node:crypto. Page: a failed SHA
+// digest shows the localized errHash (the browser message goes to the console only); Copy falls
+// back to a hidden textarea + execCommand('copy') when the Clipboard API is missing, throws or
+// refuses; analytics send one event per distinct text (Clear resets).
 //
 // Run: node scripts/test-hash-generator.mjs
 
@@ -18,7 +21,7 @@ import { dirname, join } from 'node:path';
 import { createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HashGeneratorTool.astro'), 'utf8');
@@ -80,6 +83,45 @@ eq('page: 你好 GBK md5', quoted(hex('md5', [0xc4, 0xe3, 0xba, 0xc3])), true);
 eq('page: hello with BOM', quoted(hex('sha256', [0xef, 0xbb, 0xbf, ...utf8('hello')])), true);
 eq('page: git blob id', quoted(hex('sha1', utf8('blob 6\0hello\n'))), true);
 eq('page: plain sha1 of hello + LF', quoted(hex('sha1', utf8('hello\n'))), true);
+
+// Worked examples on the four pages: {/* hash-check: {...} */} before the output.
+//   {"in": text, "algos": [...]}           what the tool prints for that text (MD5 from the page's
+//                                          md5(), SHA from node:crypto = Web Crypto), lowercase hex
+//   {"hex": "…", "enc": "gbk", "text": …}  the same characters in another encoding (reference, not
+//                                          tool output): TextDecoder(enc) must turn the bytes into text
+//   "bytes": true                          the bytes must be shown as spaced lowercase hex
+//   "upper": ["md5"]                       those digests must also be shown in uppercase
+// Each value must appear in inline code or a code block after the note, before the next note or H2.
+const ALGO = { md5: 'md5', sha1: 'sha1', sha256: 'sha256', sha384: 'sha384', sha512: 'sha512' };
+function shownCode(after) {
+  const inline = [...after.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').matchAll(/`([^`\n]+)`/g)].map(m => m[1]);
+  return [...inline, ...fencedBlocks(after).map(b => b.text)];
+}
+function verifyHashExample({ spec, after }) {
+  if (!spec || !Array.isArray(spec.algos) || !spec.algos.length) return 'annotation needs algos';
+  let bytes;
+  if (typeof spec.in === 'string') bytes = utf8(spec.in);
+  else {
+    if (!/^[0-9a-f]+$/.test(spec.hex || '') || !spec.enc || typeof spec.text !== 'string') return 'annotation needs in, or hex + enc + text';
+    bytes = Uint8Array.from(Buffer.from(spec.hex, 'hex'));
+    const decoded = new TextDecoder(spec.enc).decode(bytes);
+    if (decoded !== spec.text) return `hex is not ${JSON.stringify(spec.text)} in ${spec.enc} (decodes to ${JSON.stringify(decoded)})`;
+  }
+  const codes = shownCode(after), has = v => codes.some(c => c === v || c.includes(v));
+  for (const algo of spec.algos) {
+    if (!ALGO[algo]) return 'unknown algo ' + algo;
+    const want = hex(ALGO[algo], bytes);
+    if (algo === 'md5' && typeof spec.in === 'string' && md5(spec.in) !== want) return 'page md5() differs from node:crypto';
+    if (!has(want)) return `${algo} ${want} not shown`;
+    if ((spec.upper || []).includes(algo) && !has(want.toUpperCase())) return `${algo} ${want.toUpperCase()} not shown`;
+  }
+  if (spec.bytes) {
+    const spaced = Buffer.from(bytes).toString('hex').match(/../g).join(' ');
+    if (!has(spaced)) return `bytes ${spaced} not shown`;
+  }
+  return null;
+}
+const HASH_ANNOTATIONS = { annotations: [{ tag: 'hash-check', min: 3, verify: verifyHashExample }] };
 
 // Actual page lifecycle: native WebCrypto bytes with controlled promise delivery.
 const require = createRequire(import.meta.url);
@@ -147,6 +189,8 @@ function pageVM(lang = 'en', shellFirst = false) {
       for (const node of parseFragment(context, String(v)).childNodes) this.appendChild(fromParse5(node));
     }
     appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { this.children = this.children.filter(c => c !== child); child.parentNode = null; return child; }
+    select() { doc.selected = this; doc.activeElement = this; }
     querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
     querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
     contains(el) { return el === this || descendants(this).includes(el); }
@@ -180,9 +224,16 @@ function pageVM(lang = 'en', shellFirst = false) {
   doc.getElementById = id => descendants(doc).find(el => el.id === id) ?? null;
   doc.createElement = tag => new Element(tag);
   doc.activeElement = doc.body;
-  doc.execCommand = () => { throw Error('Forbidden unexpected execCommand'); };
+  // Copy fallback: 'forbidden' (default) throws, 'fail' returns false, 'ok' copies the selected textarea.
+  const exec = { mode: 'forbidden', calls: [] };
+  doc.execCommand = (cmd) => {
+    exec.calls.push({ cmd, value: doc.selected?.value, attached: !!doc.selected && doc.contains(doc.selected) });
+    if (exec.mode === 'forbidden') throw Error('Forbidden unexpected execCommand');
+    return exec.mode === 'ok';
+  };
+  const errors = [];
   const sandbox = {
-    document: doc, console, TextEncoder, TextDecoder, Event: EventStub,
+    document: doc, console: { ...console, error: (...args) => errors.push(args.map(String).join(' ')) }, TextEncoder, TextDecoder, Event: EventStub,
     t: Object.fromEntries(Object.entries(strings[lang]).filter(([key]) => key !== 'tips')),
     _slug: 'hash-generator', ztPersist: { clear() {} }, trackTool(...args) { tracks.push(args); },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, ms, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
@@ -204,7 +255,7 @@ function pageVM(lang = 'en', shellFirst = false) {
   if (!shellFirst) vm.runInContext(shortcut, context);
   const get = id => { const el = doc.getElementById(id); must(el, key + ' source ID ' + id); return el; };
   return {
-    key, doc, widget, get, clipboard, digests, timers, tracks, context,
+    key, doc, widget, get, clipboard, digests, timers, tracks, context, exec, errors,
     input(id, text) { get(id).value = text; get(id).dispatch('input'); },
     ctrlL(id) { get(id).focus(); get(id).dispatch('keydown', { key: 'l', ctrlKey: true }); },
     advance(ms) { const target = now + ms; for (;;) { const next = [...timers].filter(([,t]) => t.due <= target).sort((a,b) => a[1].due-b[1].due || a[0]-b[0])[0]; if (!next) break; now=next[1].due; timers.delete(next[0]); next[1].fn(); } now=target; },
@@ -238,6 +289,15 @@ for(const [lang,T] of Object.entries(labels)){
   p.input('hg-input','manual');same(lang+': edits preserve completed manual result',rows(p),expected('A世界😀'));eq(lang+': typing does not compute',p.digests.length,4);
   p.get('hg-input').focus();p.get('hg-input').dispatch('keydown',{key:'Enter',ctrlKey:true});await p.finishHash('manual');same(lang+': CtrlEnter generates once',rows(p),expected('manual'));eq(lang+': two requested generations',p.tracks.length,2);
   p.input('hg-input','');p.get('hg-hash').click();same(lang+': empty Generate clears old rows',[rows(p),p.get('hg-status').textContent],[[],T.empty]);
+  {
+    // Analytics: one event per distinct text, not per click; Clear starts over.
+    const g=await generated(lang);g.get('hg-hash').click();await g.finishHash('A世界😀');g.get('hg-input').focus();g.get('hg-input').dispatch('keydown',{key:'Enter',ctrlKey:true});await g.finishHash('A世界😀');
+    eq(lang+': same text generated three times sends one event',g.tracks.length,1);
+    g.input('hg-input','other');g.get('hg-hash').click();await g.finishHash('other');eq(lang+': new text sends a second event',g.tracks.length,2);
+    g.input('hg-input','A世界😀');g.get('hg-hash').click();await g.finishHash('A世界😀');eq(lang+': returning to an earlier text after another one counts again',g.tracks.length,3);
+    g.get('hg-clear').click();g.input('hg-input','A世界😀');g.get('hg-hash').click();await g.finishHash('A世界😀');eq(lang+': Clear resets the duplicate check',g.tracks.length,4);
+    eq(lang+': event names',g.tracks.every(a=>a[0]==='hash_generator'&&a[1]==='generate'),true);
+  }
   for(const order of [false,true]){
     const q=await generated(lang,order);const before=state(q);q.doc.body.dispatch('keydown',{key:'l',ctrlKey:true});same(lang+': outside CtrlL does not change page',state(q),before);q.ctrlL('hg-input');same(lang+': idle CtrlL clears result '+order,[q.get('hg-input').value,rows(q),q.get('hg-status').textContent],['',[],'']);
     for(const kind of ['clear','ctrlL','input','empty','next'])for(const outcome of ['resolve','reject']){
@@ -248,7 +308,9 @@ for(const [lang,T] of Object.entries(labels)){
   for(const algorithm of ['SHA-1','SHA-256','SHA-384','SHA-512']){
     const q=pageVM(lang);q.input('hg-input','failure');q.get('hg-hash').click();
     for(const name of ['SHA-1','SHA-256','SHA-384','SHA-512']){const job=q.digests.find(j=>j.algorithm===name&&!j.released);must(job,'current digest');job.released=true;if(name===algorithm){await job.real;job.reject(Error('digest denied'));await settle();break;}job.resolve(await job.real);await settle();}
-    same(lang+': current '+algorithm+' error clears rows',[rows(q),q.get('hg-status').textContent,q.get('hg-status').className],[[],'Error: digest denied','hg-status error']);
+    same(lang+': current '+algorithm+' error clears rows with a localized message',[rows(q),q.get('hg-status').textContent,q.get('hg-status').className],[[],strings[lang].errHash,'hg-status error']);
+    eq(lang+': '+algorithm+' error keeps the browser message out of the status line',/digest denied|Error:/.test(q.get('hg-status').textContent),false);
+    eq(lang+': '+algorithm+' error is logged to the console',q.errors.some(e=>/digest denied/.test(e)),true);
     q.get('hg-hash').click();await q.finishHash('failure');same(lang+': failed digest retry succeeds',rows(q),expected('failure'));
   }
   for(let index=0;index<5;index++){
@@ -258,6 +320,15 @@ for(const [lang,T] of Object.entries(labels)){
       if(kind==='throw')r.context.navigator.clipboard={writeText(){throw Error('blocked');}};if(kind==='missing')r.context.navigator.clipboard=undefined;
       try{button.click();if(kind==='reject')r.clipboard.at(-1).reject(Error('denied'));}catch(e){thrown=String(e);}await settle();eq(lang+': '+kind+' caught',thrown,null);eq(lang+': '+kind+' localized',r.get('hg-status').textContent,T.failure);
       r.context.navigator.clipboard=original;button.click();r.clipboard.at(-1).resolve();await settle();same(lang+': direct same-result retry',[r.get('hg-status').textContent,button.textContent],['',T.copied]);
+      // The execCommand fallback copies the same value when the Clipboard API is missing or refuses.
+      const f=await generated(lang),fb=buttons(f)[index];f.exec.mode='ok';
+      if(kind==='throw')f.context.navigator.clipboard={writeText(){throw Error('blocked');}};if(kind==='missing')f.context.navigator.clipboard=undefined;
+      fb.click();if(kind==='reject')f.clipboard.at(-1).reject(Error('denied'));await settle();
+      same(`${lang}/${index}: ${kind} falls back to execCommand`,[f.exec.calls.map(c=>[c.cmd,c.value,c.attached]),fb.textContent,f.get('hg-status').textContent],[[['copy',expected('A世界😀')[index][1],true]],T.copied,T.success]);
+      eq(`${lang}/${index}: ${kind} fallback textarea removed`,f.doc.selected ? f.doc.selected.parentNode : 'no fallback textarea',null);
+      eq(`${lang}/${index}: ${kind} fallback returns focus to the copy button`,f.doc.activeElement===fb,true);
+      const g=await generated(lang),gb=buttons(g)[index];g.exec.mode='fail';g.context.navigator.clipboard=undefined;gb.click();await settle();
+      eq(`${lang}/${index}: ${kind} failed fallback shows the localized failure`,g.get('hg-status').textContent,T.failure);
     }
     for(const kind of ['clear','ctrlL','input','empty','next'])for(const outcome of ['resolve','reject']){
       const r=await generated(lang),button=buttons(r)[index];button.click();const pending=r.clipboard.at(-1);boundary(r,kind);if(kind==='next')await r.finishHash('NEXT');const before=state(r);pending[outcome](outcome==='reject'?Error('late copy'):undefined);await settle();same(`${lang}/${index}: late copy ${outcome}/${kind}`,state(r),before);
@@ -304,6 +375,11 @@ for(const cls of ['hg-row','hg-label','hg-value']){
   eq('registered convert',/['"]hash-generator['"]:\s*['"]convert['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
   eq('labels contain no interactive children',[...markup.matchAll(/<label\b[\s\S]*?<\/label>/g)].every(m=>!/<Toggletip|<button/.test(m[0])),true);
   const ids=[...markup.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);eq('unique markup IDs',new Set(ids).size,ids.length);
+  eq('sensitive policy is disabled (no GA / AdSense, nothing persisted)',/'hash-generator':\s*'disabled'/.test(readFileSync(join(root,'src/data/persistence.ts'),'utf8')),true);
+  eq('component never calls ztPersist save/load and uses no storage',!/ztPersist|localStorage|sessionStorage/.test(source),true);
+  const SENSITIVE_PRIVACY={en:/loads neither Google Analytics nor AdSense/,zh:/不加载 Google Analytics，也不加载 AdSense/,ja:/Google Analytics も AdSense も読み込みません/,ko:/Google Analytics와 AdSense를 불러오지 않습니다/};
+  const LOADS_GA={en:/page loads Google Analytics;/,zh:/页面加载了 Google Analytics/,ja:/Google Analytics を読み込みますが/,ko:/Google Analytics를 불러오며/};
+  const SENSITIVE_SEO={en:/not uploaded or saved, and the page loads no analytics or ads/,zh:/不上传、不保存，页面不加载统计与广告/,ja:/送信も保存もせず、アクセス解析や広告も読み込みません/,ko:/전송·저장하지 않으며 분석 도구와 광고도 불러오지 않습니다/};
   const yaml=require('js-yaml');
   const hash=text=>createHash('sha256').update(text).digest('hex');
   for(const lang of Object.keys(labels)){
@@ -313,7 +389,11 @@ for(const cls of ['hg-row','hg-label','hg-value']){
     const doc=readFileSync(join(root,'src/content/tools/hash-generator/'+lang+'.mdx'),'utf8'),fm=doc.match(/^---\n([\s\S]*?)\n---/)[1],meta=yaml.load(fm);
     eq(lang+': four steps before FAQ',meta.steps.length===4&&fm.indexOf('steps:')<fm.indexOf('faqItems:'),true);
     eq(lang+': bounded plain steps',meta.steps.every(x=>typeof x==='string'&&x.length<=280&&!/[<>]/.test(x))&&meta.steps.join('').length<=1200,true);
-    eq(lang+': MDX content contract', contractProblems('hash-generator', lang), '');
+    eq(lang+': MDX content contract and hash-check examples', contractProblems('hash-generator', lang, HASH_ANNOTATIONS), '');
+    // Sensitive tool: the privacy answer and seoDescription state that the page saves nothing and loads no GA / AdSense.
+    const privacy=meta.faqItems.find(x=>x.id==='privacy').answer;
+    eq(lang+': privacy answer says neither Google Analytics nor AdSense is loaded',SENSITIVE_PRIVACY[lang].test(privacy)&&!LOADS_GA[lang].test(privacy),true);
+    eq(lang+': seoDescription says nothing is saved and no analytics or ads load',SENSITIVE_SEO[lang].test(meta.seoDescription),true);
     const p=pageVM(lang);eq(lang+': input label is local before IIFE',p.get('hg-input').parentElement.querySelector('label').textContent,strings[lang].inputLabel);eq(lang+': initial output has no rows',rows(p).length,0);eq(lang+': localized empty message',p.widget.querySelector('.hg-empty').textContent,strings[lang].emptyOutput);
   }
   eq('MD5 and SHA helpers unchanged',hash(source.slice(source.indexOf('      // Compact MD5'),source.indexOf('      var inputEl'))),'fa6dbe7d03462cdef083bac56db494bb240a4aa8d110cdec05eedbc7de7ef74f');
