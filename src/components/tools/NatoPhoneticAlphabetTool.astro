@@ -180,7 +180,6 @@ const { tips: TIPS, ...CLIENT_T } = T;
         });
 
         statusEl.textContent = renderedStatus = charMsg(result.chars);
-        window.trackTool && window.trackTool('nato_phonetic_alphabet', 'convert');
       }
 
       /* mode toggle */
@@ -212,8 +211,19 @@ const { tips: TIPS, ...CLIENT_T } = T;
         _timer = setTimeout(render, 200);
       });
 
+      /* Analytics: one event per committed change (focus leaves after an edit), once per
+         distinct nonblank text, not after every pause in typing. */
+      var trackedText = null;
+      inputEl.addEventListener('change', function() {
+        var text = inputEl.value;
+        if (!text.trim() || text === trackedText) return;
+        trackedText = text;
+        window.trackTool && window.trackTool('nato_phonetic_alphabet', 'convert');
+      });
+
       function clearAll() {
         clearTimeout(_timer);
+        trackedText = null;
         inputEl.value = '';
         render();
       }
@@ -246,9 +256,30 @@ const { tips: TIPS, ...CLIENT_T } = T;
           statusEl.textContent = t.copyFail;
           copyError = true;
         }
-        try {
-          navigator.clipboard.writeText(text).then(done, failed);
-        } catch (e) { failed(); }
+        // Clipboard API first; when it is missing, throws or rejects, a hidden textarea and
+        // execCommand('copy') (same as MarkdownLinterTool.astro); both failing shows copyFail.
+        // A copy that is no longer current does not fall back.
+        function fallback() {
+          if (revision !== copyRevision) return;
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+          document.body.removeChild(ta);
+          // select() moved focus to the textarea; give it back to the button (keyboard users).
+          copyBtn.focus();
+          if (ok) done(); else failed();
+        }
+        var pending;
+        try { pending = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(text) : null; }
+        catch (e) { pending = null; }
+        if (pending) Promise.resolve(pending).then(done, fallback);
+        else fallback();
       });
     })();
   </script>

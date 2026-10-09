@@ -163,7 +163,9 @@ function pageVM(lang, shellFirst) {
     });
   }
   class Element {
-    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', text: '', _value: '', hidden: false, disabled: false }); }
+    constructor(tag) { Object.assign(this, { tagName: tag.toUpperCase(), children: [], parentNode: null, attributes: {}, listeners: {}, id: '', className: '', text: '', _value: '', hidden: false, disabled: false, style: {}, selected: false }); }
+    select() { this.selected = true; }
+    removeChild(e) { this.children = this.children.filter(c => c !== e); e.parentNode = null; return e; }
     get cells() { return this.children.filter(c => c.tagName === 'TD' || c.tagName === 'TH'); }
     get classList() { const e = this; return { add(c) { if (!e.className.split(/\s+/).includes(c)) e.className = (e.className + ' ' + c).trim(); }, remove(c) { e.className = e.className.split(/\s+/).filter(x => x !== c).join(' '); } }; }
     closest(selector) { for (let e = this; e; e = e.parentNode) if (matches(e, selector)) return e; return null; }
@@ -215,14 +217,15 @@ function pageVM(lang, shellFirst) {
   document.createElement = tag => new Element(tag);
   document.getElementById = id => descendants(document).find(e => e.id === id) ?? null;
   const get = id => { const e = document.getElementById(id); if (!e) throw Error('Missing actual source ID ' + id); return e; };
+  const clipboard = { writeText(value) {
+    if (copyThrows) throw Error('Controlled synchronous clipboard failure');
+    let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    copies.push({ value: String(value), resolve, reject }); return promise;
+  } };
   const context = {
     document, console, _slug: 'nato-phonetic-alphabet',
     t: Object.fromEntries(Object.entries(STRINGS[lang]).filter(([key]) => key !== 'tips')),
-    navigator: { clipboard: { writeText(value) {
-      if (copyThrows) throw Error('Controlled synchronous clipboard failure');
-      let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-      copies.push({ value: String(value), resolve, reject }); return promise;
-    } } },
+    navigator: { clipboard },
     setTimeout(fn, ms = 0) { const id = ++timerID; timers.set(id, { fn, due: now + ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
     ztPersist: { clear(slug) { clears.push(slug); } }, trackTool(...args) { tracks.push(args); },
@@ -247,6 +250,10 @@ function pageVM(lang, shellFirst) {
     key(key = 'l', modifier = 'ctrlKey', target = 'nato-input') { (target ? get(target) : document.body).focus(); return document.activeElement.dispatch('keydown', { key, [modifier]: true }); },
     copy() { get('nato-copy').click(); return copies.at(-1); },
     setCopyThrows(value) { copyThrows = value; },
+    // execCommand('copy') fallback: absent by default (calling it throws, as in the old harness).
+    setExec(fn) { document.execCommand = fn; },
+    setClipboard(present) { context.navigator.clipboard = present ? clipboard : undefined; },
+    bodyTextareas() { return document.body.children.filter(c => c.tagName === 'TEXTAREA'); },
     mode(mode) { document.querySelector('[data-mode="' + mode + '"]').click(); },
     rows() { return get('nato-table-body').querySelectorAll('tr').map(tr => tr.cells.map(td => td.textContent)); },
     snapshot() { return { input: get('nato-input').value, output: get('nato-output').value, rows: this.rows(), status: get('nato-status').textContent, copy: get('nato-copy').textContent }; },
@@ -388,6 +395,61 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) for (const shellFirst of [false, tr
   }
   const p = populated(); p.get('nato-clear').click(); p.copy(); p.mode('table'); p.copy();
   eq(tag + ' empty Word and Table never call clipboard', p.copies.length, 0);
+}
+
+// ---------- analytics: one event per committed change (S2-9, 2026-10-09) ----------
+// render() used to call trackTool after every 200 ms pause in typing. Now only the textarea
+// change event sends it, once per distinct nonblank text; Clear and Ctrl/⌘+L reset that.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = pageVM(lang, false), input = p.get('nato-input'), commit = () => input.dispatch('change');
+  p.input('nato-input', 'A'); p.advance(200); p.input('nato-input', 'AB'); p.advance(200);
+  eq(lang + ' GA: typing and rendering send nothing', p.tracks, []);
+  commit();
+  eq(lang + ' GA: change sends one convert event', p.tracks, [['nato_phonetic_alphabet', 'convert']]);
+  commit(); p.mode('table'); p.mode('word');
+  eq(lang + ' GA: same text and mode switches send nothing more', p.tracks.length, 1);
+  p.input('nato-input', 'ABC'); commit();
+  eq(lang + ' GA: an edited text is sent again, even before the debounce', p.tracks.length, 2);
+  p.get('nato-clear').click(); p.input('nato-input', 'ABC'); commit();
+  eq(lang + ' GA: Clear lets the same text count again', p.tracks.length, 3);
+  p.key('l', 'ctrlKey'); p.input('nato-input', 'ABC'); commit();
+  eq(lang + ' GA: Ctrl+L lets the same text count again', p.tracks.length, 4);
+  for (const blank of ['   ', '\u3000', '']) { p.input('nato-input', blank); commit(); }
+  eq(lang + ' GA: blank text sends nothing', p.tracks.length, 4);
+}
+
+// ---------- copy fallback: hidden textarea + execCommand('copy') (S2-9) ----------
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const [, copiedLabel, copyFailure] = COPY_TEXT[lang];
+  const populated = (mode = 'word') => { const p = pageVM(lang, false); p.input('nato-input', 'AB'); p.advance(200); p.mode(mode); return p; };
+  for (const [mode, text] of [['word', 'Alfa Bravo'], ['table', 'A = Alfa\nB = Bravo']]) {
+    const p = populated(mode), seen = [];
+    p.setExec(cmd => { const ta = p.bodyTextareas()[0]; seen.push([cmd, ta?.value, ta?.selected, ta?.getAttribute('readonly'), ta?.style.position]); return true; });
+    const job = p.copy(); unhandled.length = 0; job.reject(Error('controlled denial')); await settle();
+    eq(lang + ' ' + mode + ' rejected Clipboard API falls back to execCommand with the exact text', seen, [['copy', text, true, '', 'fixed']]);
+    eq(lang + ' ' + mode + ' fallback success shows Copied and keeps the summary', [p.get('nato-copy').textContent, p.get('nato-status').textContent], [copiedLabel, STATUS[lang]]);
+    eq(lang + ' ' + mode + ' fallback removes its textarea and returns focus to Copy', [p.bodyTextareas().length, p.document.activeElement === p.get('nato-copy')], [0, true]);
+    eq(lang + ' ' + mode + ' fallback rejection is handled', unhandled, []);
+  }
+  {
+    const p = populated(), seen = []; p.setClipboard(false); p.setExec(cmd => { seen.push(cmd); return true; });
+    p.get('nato-copy').click();
+    eq(lang + ' missing Clipboard API copies through execCommand at once', [p.copies.length, seen, p.get('nato-copy').textContent], [0, ['copy'], copiedLabel]);
+  }
+  {
+    const p = populated(); p.setCopyThrows(true); p.setExec(() => true); p.get('nato-copy').click();
+    eq(lang + ' throwing Clipboard API copies through execCommand', p.get('nato-copy').textContent, copiedLabel);
+  }
+  for (const [name, exec] of [['returns false', () => false], ['throws', () => { throw Error('blocked'); }]]) {
+    const p = populated(); p.setExec(exec); const job = p.copy(); job.reject(Error('denied')); await settle();
+    eq(lang + ' execCommand ' + name + ': failure stays visible', [p.get('nato-status').textContent, p.bodyTextareas().length], [copyFailure, 0]);
+  }
+  for (const [name, action] of Object.entries(actions)) {
+    const p = populated(); let calls = 0; p.setExec(() => { calls++; return true; });
+    const job = p.copy(); action(p); const before = p.snapshot();
+    job.reject(Error('old')); await settle();
+    eq(lang + ' ' + name + ': a stale rejection does not fall back', [calls, p.snapshot()], [0, before]);
+  }
 }
 
 process.removeListener('unhandledRejection', onUnhandled);
