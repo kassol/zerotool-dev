@@ -682,6 +682,11 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
  if(process.env.ZT_B13_REGISTRATION_PENDING==='1')console.log('PENDING: generate registration is reserved for root adoption; not counted as PASS');
  else check('v2: registered with the implemented generate page',layouts.includes("'csp-header-generator': 'generate'"));
 }
+// Review S2-8 part 4 wording (C-S3, C-S6, zh:38, ja step 1): old phrases are gone.
+for (const [lang, old] of [['ko', '보고서에서 막힌 요청'], ['ko', '폐기된 지시문'], ['zh', '早期版本的这个预设'], ['ja', 'Report-Only は HTTP ヘッダーと Express を変更し']]) {
+  check(lang + ' page no longer says: ' + old, !readFileSync(join(root, 'src/content/tools/csp-header-generator', lang + '.mdx'), 'utf8').includes(old));
+}
+
 // ---------- tool page examples (S2 content contract) ----------
 // `{/* csp-tool: {...} */}` drives the real page script: preset → mode → added directives →
 // typed sources (Enter in the directive's source box) → hash calculator → output tab. The
