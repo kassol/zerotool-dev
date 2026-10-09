@@ -216,6 +216,30 @@ const EXAMPLE = JSON.stringify({
   lacks('zh prose: no @SerialName for a Chinese key', zhKeys.code, /SerialName/);
 }
 
+// ---------- keys without a letter or digit (S2-10) ----------
+// Before S2-10 the keys "", "-" and "__" gave the property `_` (then `_2`, …). kotlinc 2.4.20 rejects
+// `val _` ("names _, __, ___, ... are reserved in Kotlin"), so the whole output did not compile.
+// Now such a key becomes `field` (then field2, …) and keeps the key in @SerialName; `field` is a
+// soft keyword that the Kotlin specification allows as a property name ("val field = 2").
+{
+  const r = add('keys without a letter or digit', '{"": 1, "-": 2, "__": 3, "a": 4}', null, true);
+  has('empty key keeps @SerialName("")', r.code, '    @SerialName("")');
+  has('empty key → field', r.code, '    val field: Int = 0,');
+  has('"-" keeps @SerialName("-")', r.code, '    @SerialName("-")');
+  has('"-" → field2', r.code, '    val field2: Int = 0,');
+  has('"__" → field3', r.code, '    val field3: Int = 0,');
+  lacks('no property made only of underscores', r.code, /val _+:/);
+  const nested = add('object under an empty key', '{"": {"x": 1}, "field": 2}', null, true);
+  has('object under an empty key → field: X', nested.code, '    val field: X = X(),');
+  has('a real "field" key after it → field2', nested.code, '    val field2: Int = 0');
+  has('the "field" key keeps @SerialName("field")', nested.code, '    @SerialName("field")');
+  has('the leading digit rule is unchanged', gen('{"2fa": 1}').code, '    val _2fa: Int = 0');
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const text = readFileSync(join(root, 'src/content/tools/json-to-kotlin', lang + '.mdx'), 'utf8');
+    check(lang + ': page states the empty-key rule', text.includes('<code>field</code>') && text.includes('<code>field2</code>') && text.includes('<code>{\'""\'}</code>') && text.includes('<code>{\'"-"\'}</code>'));
+  }
+}
+
 // ---------- examples on the tool pages ----------
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-kotlin', lang + '.mdx'), 'utf8');
@@ -339,8 +363,9 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12253);
-eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'c9f8a7e4a45531a3206bc69e9bcbce3c5bfc87a2be08db5093a1fe35e4d34106');
+// S2-10 (approved engine change): toCamelCase returns field for a key with no letter or digit (+2 / -0 lines).
+eq('page engine bytes including marker indentation', Buffer.byteLength(engineLines), 12388);
+eq('page immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '7f1421c00b348e82c3174276a53655475af9d1c54d732532cd7ad76c9dcf1695');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -524,7 +549,7 @@ const V2 = {
       "generate"
     ]
   ],
-  "scriptSHA": "ce194a6a66904e52dd1a50d120bb521cc2510f978d952feb526d68e66873a352"
+  "scriptSHA": "0ac798e18e419dd5abaf151b9014ec198dc3a59f1ec5099d1d95b44cfc1413a7"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -532,7 +557,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 original script preserved except removed redundant Generate listener and change-based analytics sent once per JSON and root name (S2-6), JSON errors in the page language and Copy disabled without output (S2-10)', hash(pageScript), V2.scriptSHA);
+eq('v2 original script preserved except removed redundant Generate listener and change-based analytics sent once per JSON and root name (S2-6), JSON errors in the page language, Copy disabled without output and the field name for keys without letters or digits (S2-10)', hash(pageScript), V2.scriptSHA);
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
