@@ -340,7 +340,7 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
 {
   const STR = pageStrings;
   const enKeys = Object.keys(STR.en.notes || {}).sort();
-  eq('en notes keys', enKeys, ['afterQuote', 'colonForm', 'duplicate', 'emptyKey', 'emptyValue', 'hashComment', 'missingEq', 'multiline', 'nonStandard', 'unclosed']);
+  eq('en notes keys', enKeys, ['afterQuote', 'colonForm', 'duplicate', 'emptyKey', 'emptyValue', 'fullwidthSep', 'hashComment', 'missingEq', 'multiline', 'nonStandard', 'unclosed']);
   for (const lang of ['zh', 'ja', 'ko']) {
     eq(lang + ' notes keys', Object.keys(STR[lang].notes || {}).sort(), enKeys);
     eq(lang + ' top-level keys', Object.keys(STR[lang]).sort(), Object.keys(STR.en).sort());
@@ -352,6 +352,15 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
   eq('zh missing =', zh[2].error, STR.zh.notes.missingEq);
   eq('English stays the default', E.parseEnv('A=')[0].notes, ['Empty value']);
   check('status line built from STRINGS', /t\.stValid/.test(source) && !/' valid'/.test(source));
+  // Full-width ＝ / ： before any ASCII separator get their own note (dotenv still skips the line).
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const notes = STR[lang].notes;
+    const got = E.parseEnv('DB_HOST＝127.0.0.1\nREDIS_PORT：6379\nMY KEY=a＝b\nNOEQ\nA=x＝y', notes);
+    eq(lang + ' full-width separators', got.map((e) => e.error || e.type), [notes.fullwidthSep, notes.fullwidthSep, notes.nonStandard, notes.missingEq, 'ok']);
+    check(lang + ' fullwidthSep names both characters', /＝/.test(notes.fullwidthSep || '') && /：/.test(notes.fullwidthSep || ''));
+  }
+  eq('full-width lines stay out of the export like dotenv', { ...exported('DB_HOST＝127.0.0.1\nREDIS_PORT：6379\nA=1') }, dotenv.parse('DB_HOST＝127.0.0.1\nREDIS_PORT：6379\nA=1'));
+  eq('English fullwidthSep is the default', E.parseEnv('DB_HOST＝x')[0].error, STR.en.notes.fullwidthSep);
   // FAQ local-crlf (en): CRLF and a lone CR read the same as LF (values and line numbers).
   const lfText = 'A=1\nB="two\nlines"\nC=3 # c\n';
   for (const [name, eol] of [['CRLF', '\r\n'], ['CR', '\r']]) {
@@ -440,7 +449,8 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
   h.input('C=recovered');h.get('efp-parse').click();h.get('efp-export-json').click();eq(prefix+'valid recovery exports no old keys',await h.downloads.at(-1).blob.text(),'{\n  "C": "recovered"\n}');
 }
 const fullEngine=source.slice(startIndex,endIndex+END_MARK.length);
-eq('engine byte-exact',[Buffer.byteLength(fullEngine),createHash('sha256').update(fullEngine).digest('hex')],[5008, "3531606be715b93b36c21593441c8ef399bd9248c0e99d598532b1f28f4bd4d7"]);
+// Updated 2026-10-09 (S2-8b, approved engine change): full-width ＝ / ： get the fullwidthSep note.
+eq('engine byte-exact',[Buffer.byteLength(fullEngine),createHash('sha256').update(fullEngine).digest('hex')],[5209, "0d4b8e11acee3c50dbd2c73943ad24c46d1296262eacb693feec548fb9f9d030"]);
 console.log('Page lifecycle: '+(passes-lifecycleStart)+' passed, '+failures+' total failures');
 
 // ---------- v2 page layout ----------
