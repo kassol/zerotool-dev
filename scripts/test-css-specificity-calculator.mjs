@@ -1,4 +1,4 @@
-// CSS Specificity Calculator — specificity per Selectors Level 4 §17
+// CSS Specificity Calculator — specificity per Selectors Level 4 §15
 //
 // Read:  src/components/tools/CssSpecificityCalculatorTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers, so this test cannot drift
@@ -6,8 +6,8 @@
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Expected values are the examples in Selectors Level 4 §17 and the MDN "Specificity" page,
-// plus values worked out by hand from the §17 rules. Covers the reported defects: class
+// Expected values are the examples in Selectors Level 4 §15 and the MDN "Specificity" page,
+// plus values worked out by hand from the §15 rules. Covers the reported defects: class
 // selectors were stripped before functional pseudo-classes, so `:where(.active, p)` gave (0,1,0);
 // `:is()` / `:not()` / `:has()` summed their arguments instead of taking the most specific one;
 // `:nth-child(2n+1)` counted `n` as a type selector; `#top` inside an attribute value counted as
@@ -58,7 +58,7 @@ function spec(sel) {
   try { const s = E.specificity(sel); return [s.a, s.b, s.c]; } catch (e) { return 'error: ' + e.message; }
 }
 
-// ---------- Selectors Level 4 §17 examples ----------
+// ---------- Selectors Level 4 §15 examples ----------
 const SPEC_EXAMPLES = [
   ['*', [0, 0, 0]],
   ['LI', [0, 0, 1]],
@@ -71,7 +71,7 @@ const SPEC_EXAMPLES = [
   ['#s12:not(FOO)', [1, 0, 1]],
   ['.foo :is(.bar, #baz)', [1, 1, 0]],
 ];
-for (const [sel, exp] of SPEC_EXAMPLES) eq('Selectors 4 §17: ' + sel, spec(sel), exp);
+for (const [sel, exp] of SPEC_EXAMPLES) eq('Selectors 4 §15: ' + sel, spec(sel), exp);
 
 // ---------- MDN Specificity examples ----------
 const MDN_EXAMPLES = [
@@ -136,6 +136,32 @@ eq('escaped digit in an ID', spec('#\\31 23'), [1, 0, 0]);
 eq('non-ASCII class', spec('.größe'), [0, 1, 0]);
 eq('& counts as zero', spec('& .x'), [0, 1, 0]);
 eq('combinators without spaces', spec('a>b~c+d'), [0, 0, 4]);
+
+// ---------- whitespace and name characters as Chrome reads them (S2-9) ----------
+// Chrome 152 (ego-browser on the local preview, 2026-10-09; querySelector, CSS.supports and the
+// selectorText of an inserted rule) treats only space, tab, LF, CR and FF as whitespace and every
+// other code point at or above U+0080 as part of a name: div<U+3000>p, div<U+00A0>p, div<U+2003>p,
+// div<U+0085>p, div<U+1680>p, div<U+FEFF>p and .a<U+00D7>b are one compound each and none matches a
+// p inside a div; "div <U+3000>" keeps the trailing U+3000 as a second type selector. CSS Syntax 3
+// §4.2 leaves U+3000, U+00A0 and U+2000-U+200B out of the name characters, so by the specification
+// these selectors are invalid; the tool follows Chrome and the card says so (see the note test).
+const CHROME_152 = [
+  ['div\u3000p', [0, 0, 1]], ['div\u00a0p', [0, 0, 1]], ['div\u2003p', [0, 0, 1]],
+  ['div\u0085p', [0, 0, 1]], ['div\u1680p', [0, 0, 1]], ['div\ufeffp', [0, 0, 1]],
+  ['.a\u3000b', [0, 1, 0]], ['.a\u00d7b', [0, 1, 0]],
+  ['div \u3000p', [0, 0, 2]], ['div >\u3000p', [0, 0, 2]], ['div \u3000', [0, 0, 2]],
+  ['div\tp', [0, 0, 2]], ['div\fp', [0, 0, 2]],
+];
+for (const [sel, want] of CHROME_152) eq('Chrome 152: ' + JSON.stringify(sel), spec(sel), want);
+eq('split keeps a trailing U+3000 (Chrome: second type selector)', E.splitSelectorList('div \u3000, a'), ['div \u3000', 'a']);
+eq('split keeps a leading U+3000', E.splitSelectorList('\u3000p'), ['\u3000p']);
+eq('split still trims ASCII whitespace', E.splitSelectorList('\t a \n, b '), ['a', 'b']);
+eq('U+00B7 is a name character', spec('.a\u00b7b'), [0, 1, 0]);
+eq('Hangul class', spec('.\uba54\uc778 .\ubc84\ud2bc'), [0, 2, 0]);
+eq('full-width forms are name characters', spec('\uff03main\uff0enav'), [0, 0, 1]);
+eq('astral name characters', spec('.\u{1F600}x'), [0, 1, 0]);
+eq('hex escape followed by a tab', spec('#\\31\t23'), [1, 0, 0]);
+eq('hex escape followed by U+3000 keeps U+3000 in the name', spec('#\\31\u300023'), [1, 0, 0]);
 
 // ---------- syntax errors ----------
 for (const bad of ['a(', ':is(.a', '[x', '#', 'a)b', '.', ':', '[x="a]']) {
@@ -203,12 +229,15 @@ function page(lang,order){
  focus(input);
  const navigator={clipboard:{writeText(value){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});clipboard.push({value,promise,resolve,reject});return promise;}}};
  const globals={document,navigator,t:locale(lang).CLIENT_T,_slug:'css-specificity-calculator',ztPersist:{clear:slug=>clears.push(slug)},trackTool:(...args)=>tracks.push(args),fetch(){effects.push('network');throw Error('Unexpected network');},setTimeout(fn,ms){timers.set(++seq,{fn,ms,due:clock+ms});return seq;},clearTimeout(id){timers.delete(id);}};
- document.execCommand=()=>{effects.push('fallback');throw Error('Unexpected fallback');};
+ let fallbackOK=false;
+ {const create=document.createElement.bind(document);document.createElement=tag=>{const el=create(tag);if(tag==='textarea'&&typeof el.select!=='function')Object.defineProperty(el,'select',{value(){},configurable:true});return el;};}
+ document.execCommand=command=>{effects.push('fallback:'+command);if(fallbackOK)return true;throw Error('controlled fallback failure');};
  if(order==='shared-before'){const ctx=vm.createContext(globals);ctx.window=ctx;vm.runInContext(shortcut,ctx);}
  const real=loadPage('src/components/tools/CssSpecificityCalculatorTool.astro',{lang,globals});
  if(order==='shared-after')real.run(shortcut);
  function event(el,type,values={}){const e=document.createEvent('Event');e.initEvent(type,true,true);Object.assign(e,values);try{el.dispatchEvent(e);}catch(error){errors.push(String(error));}return e;}
  return{document,input,result,clipboard,clears,tracks,errors,effects,timers,navigator,
+  fallbackOK(v){fallbackOK=v;},
   type(value){input.value=value;event(input,'input');},
   tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
   key(el,values){focus(el);return event(el,'keydown',{ctrlKey:false,metaKey:false,...values});},
@@ -252,7 +281,7 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  for(const unavailable of ['absent','throw']){
   const p=prepared(lang,order),btn=p.buttons()[0];
   if(unavailable==='absent')delete p.navigator.clipboard;else p.navigator.clipboard.writeText=()=>{throw Error('controlled synchronous failure');};
-  p.click(btn);await settle();eq(tag+'/'+unavailable+' API failure handled',p.errors,[]);eq(tag+'/'+unavailable+' failure visible',btn.textContent,copyFailed[lang]);eq(tag+'/'+unavailable+' no fallback invented',p.effects,[]);
+  p.click(btn);await settle();eq(tag+'/'+unavailable+' API failure handled',p.errors,[]);eq(tag+'/'+unavailable+' failure visible',btn.textContent,copyFailed[lang]);eq(tag+'/'+unavailable+' fallback tried once',p.effects,['fallback:copy']);
  }
  for(const transition of ['clear','new-valid','new-invalid','input-only','same-input'])for(const completion of ['resolve','reject']){
   const p=prepared(lang,order),btn=p.buttons()[0],u=unhandled.length;p.click(btn);
@@ -278,13 +307,15 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  }
  {
   const p=prepared(lang,order),[a,b]=p.buttons(),u=unhandled.length;p.click(a);p.click(b);p.clipboard[1].reject(Error('second button denied'));await settle();p.clipboard[0].resolve();await settle();
-  eq(tag+' two buttons retain independent feedback',[a.textContent,b.textContent],[t.copied,copyFailed[lang]]);eq(tag+' both real values copied',p.clipboard.map(c=>c.value),['(1, 2, 0)','(0, 1, 1)']);eq(tag+' independent rejection handled',unhandled.length,u);eq(tag+' no network/fallback effects',p.effects,[]);
+  eq(tag+' two buttons retain independent feedback',[a.textContent,b.textContent],[t.copied,copyFailed[lang]]);eq(tag+' both real values copied',p.clipboard.map(c=>c.value),['(1, 2, 0)','(0, 1, 1)']);eq(tag+' independent rejection handled',unhandled.length,u);eq(tag+' only the rejected copy tries the fallback, no network',p.effects,['fallback:copy']);
  }
 }
 process.removeListener('unhandledRejection',onUnhandled);
 const protectedEngine=source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
-eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),7645);
-eq('engine exact original SHA256',createHash('sha256').update(protectedEngine).digest('hex'),'3a9f29257895fc733bcdb1ee7bde7820985760a4a23c74f8c82a6ebb85609843');
+// S2-9 (2026-10-09, approved): whitespace is space, tab, LF, CR, FF as in Chrome 152 (token start, after a hex
+// escape, and when a list item is trimmed); every code point at or above U+0080 stays a name character.
+eq('engine exact original bytes including indentation',Buffer.byteLength(protectedEngine),7723);
+eq('engine exact original SHA256',createHash('sha256').update(protectedEngine).digest('hex'),'40cc782019ac247135f960bf8ca971c03d46ecdf55414fa5993b962bcf21fa97');
 
 
 // ---------- v2 page layout ----------
@@ -295,7 +326,8 @@ check('v2 Astro compilation diagnostics',!compiled.diagnostics.some(d=>d.severit
 let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){moduleError=String(e);}eq('v2 generated module parses',moduleError,'');
 const css=compiled.css.join('\n'),scope=css.match(/data-astro-cid-[\w-]+/)[0];
 const hash=v=>createHash('sha256').update(v).digest('hex');
-eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'debacaebf3a0e3e27e724551beee6ec9df7cd0d05b291fdb3c5011079f0181c1');
+// Hash updated by S2-9 (2026-10-09): localized error messages, the full-width and space-like notes, analytics on change / copy success, and the copy fallback.
+eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'cbe079498a370b86fcdd29f9144272460ebde09dfdf4053e1045d095d7974224');
 check('v2 direct flex root',/^<div class="csc-wrap">/.test(markupTemplate)&&/\.csc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
 check('v2 input before reserved hint/status before results',markupTemplate.indexOf('id="csc-input"')<markupTemplate.indexOf('csc-hint csc-status')&&markupTemplate.indexOf('csc-hint csc-status')<markupTemplate.indexOf('class="csc-result-section"'));
 check('v2 fixed hint/status height',/\.csc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css));
@@ -316,7 +348,7 @@ for(const lang of ['en','zh','ja','ko']){
  const {T,TIPS,CLIENT_T}=locale(lang),p=page(lang,'shared-after');
  eq('v2 '+lang+' four tip keys',Object.keys(TIPS),['input','parsing','results','copy']);
  check('v2 '+lang+' plain bounded tips',Object.values(TIPS).every(t=>typeof t==='string'&&t.length>0&&t.length<=280&&!/[<>\n]|https?:/.test(t)));
- eq('v2 '+lang+' only nine client keys',Object.keys(CLIENT_T),['id','cls','elem','noInput','copyBtn','copied','copyFailed','note','invalid']);
+ eq('v2 '+lang+' only twelve client keys',Object.keys(CLIENT_T),['id','cls','elem','noInput','copyBtn','copied','copyFailed','note','invalid','errors','fullwidth','spaceAsName']);
  check('v2 '+lang+' serialized strings omit tips',Object.values(TIPS).every(text=>!JSON.stringify(CLIENT_T).includes(text)));
  eq('v2 '+lang+' SSR label',p.document.querySelector('label[for="csc-input"]').textContent,T.inputLabel);
  eq('v2 '+lang+' SSR placeholder',p.input.placeholder,T.inputPlaceholder);
@@ -344,6 +376,138 @@ for(const lang of ['en','zh','ja','ko']){
  const long=Array.from({length:240},(_,i)=>'#id'+i+' .item:hover').join(', ');p.type(long);p.tick(200);
  eq('v2 long result retains every selector',Array.from(p.result.querySelectorAll('.csc-selector')).map(e=>e.textContent),long.split(', '));eq('v2 long result preserves every tuple',p.tuples(),Array.from({length:240},()=>'(1, 2, 0)'));
  const last=p.buttons().at(-1);p.click(last);eq('v2 last long result copies complete tuple',p.clipboard.at(-1).value,'(1, 2, 0)');p.clipboard.at(-1).resolve();await settle();eq('v2 long result copy success',last.textContent,pageStrings.en.copied);
+}
+// ---------- copy fallback (S2-9) ----------
+// When the Clipboard API is missing, throws or rejects, the tuple is copied through a hidden
+// textarea + execCommand('copy') (as in color-palette-generator) and focus returns to the
+// button; the failure text shows only when both fail. Stale copies do not fall back.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const t = pageStrings[lang];
+  for (const mode of ['absent', 'throw', 'reject']) {
+    const p = prepared(lang, 'shared-after'), btn = p.buttons()[0];
+    p.fallbackOK(true);
+    let selected = '';
+    const create = p.document.createElement.bind(p.document);
+    p.document.createElement = tag => { const el = create(tag); if (tag === 'textarea') Object.defineProperty(el, 'select', { value: () => { selected = el.value; }, configurable: true }); return el; };
+    if (mode === 'absent') delete p.navigator.clipboard;
+    if (mode === 'throw') p.navigator.clipboard.writeText = () => { throw Error('sync'); };
+    p.click(btn); p.document.activeElement = p.document.body;
+    if (mode === 'reject') p.clipboard[0].reject(Error('denied'));
+    await settle();
+    eq(lang + '/' + mode + ' fallback copies the tuple', selected, '(1, 2, 0)');
+    eq(lang + '/' + mode + ' fallback success shows Copied', btn.textContent, t.copied);
+    check(lang + '/' + mode + ' focus back on the Copy button', p.document.activeElement === btn);
+    eq(lang + '/' + mode + ' fallback success tracked once', p.tracks.filter(x => x[1] === 'copy').length, 1);
+    eq(lang + '/' + mode + ' textarea removed', p.document.querySelectorAll('textarea').length, 0);
+  }
+}
+
+// ---------- S2-9 fixes outside the engine ----------
+// Error messages in the page language: the engine's English message is mapped by pattern,
+// with the same position. Unknown messages are shown unchanged.
+const errorCases = [
+  ['a(', 'unexpected', { char: '(', pos: '2' }],
+  [':is(.a', 'missing', { char: ')', pos: '4' }],
+  ['[x', 'missing', { char: ']', pos: '1' }],
+  ['#', 'expectedName', { pos: '2' }],
+  ['[x="a]', 'unclosedString', { pos: '6' }],
+  [':is()', 'emptyArgument', { pos: '5' }],
+  ['a\\', 'escapeEnd', { pos: '2' }],
+];
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const t = pageStrings[lang], C = locale(lang).CLIENT_T;
+  check(lang + ' error templates exist', C.errors && typeof C.errors === 'object', JSON.stringify(Object.keys(C)));
+  for (const [sel, key, vars] of errorCases) {
+    const p = page(lang, 'shared-after'); p.type(sel); p.tick(200);
+    const tmpl = C.errors?.[key] ?? '';
+    const want = t.invalid.replace('{msg}', tmpl.replace('{char}', vars.char ?? '').replace('{pos}', vars.pos));
+    eq(lang + ' localized error for ' + JSON.stringify(sel), p.result.querySelector('.csc-error-msg')?.textContent, want);
+    for (const v of Object.values(vars)) check(lang + ' error keeps ' + v + ' for ' + JSON.stringify(sel), want.includes(v), want);
+  }
+  if (lang === 'en') {
+    // en keeps the engine wording
+    const p = page('en', 'shared-after'); p.type('a)b'); p.tick(200);
+    eq('en error text unchanged', p.result.querySelector('.csc-error-msg').textContent, 'Not a valid selector: Unexpected ")" (position 2)');
+  }
+}
+// Full-width ＃ ． ： ［ (U+FF01-FF5E) are name characters in CSS (CSS Syntax 3), so the tuple counts
+// them as part of a name; the card says so in the page language.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const C = locale(lang).CLIENT_T;
+  check(lang + ' full-width note text', typeof C.fullwidth === 'string' && C.fullwidth.length > 0);
+  const p = page(lang, 'shared-after'); p.type('＃ｍａｉｎ．ｎａｖ, #main.nav, [title="Ｑ＆Ａ"]'); p.tick(200);
+  eq(lang + ' full-width tuple as CSS reads it', p.tuples(), ['(0, 0, 1)', '(1, 1, 0)', '(0, 1, 0)']);
+  const notes = Array.from(p.result.querySelectorAll('.csc-result-card')).map(c => c.querySelector('.csc-warn')?.textContent ?? '');
+  eq(lang + ' full-width note only on the card with full-width syntax', notes, [C.fullwidth, '', '']);
+}
+// A space-like character that Chrome reads as part of a name (U+3000, U+00A0, U+2003 …, outside
+// quotes) gets a note on the card with its code point: not a descendant combinator, and the
+// CSS Syntax 3 / Chrome difference.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const C = locale(lang).CLIENT_T;
+  check(lang + ' spaceAsName note has {code}', typeof C.spaceAsName === 'string' && C.spaceAsName.includes('{code}'), String(C.spaceAsName));
+  for (const [sel, code, tuple] of [['div\u3000p', 'U+3000', '(0, 0, 1)'], ['div\u00a0p', 'U+00A0', '(0, 0, 1)'], ['div\u2003p', 'U+2003', '(0, 0, 1)'], ['div \u3000p', 'U+3000', '(0, 0, 2)']]) {
+    const p = page(lang, 'shared-after'); p.type(sel + ', [title="a\u3000b"]'); p.tick(200);
+    eq(lang + ' ' + code + ' tuple as Chrome reads it: ' + JSON.stringify(sel), p.tuples(), [tuple, '(0, 1, 0)']);
+    const notes = Array.from(p.result.querySelectorAll('.csc-result-card')).map(c => Array.from(c.querySelectorAll('.csc-warn')).map(n => n.textContent));
+    eq(lang + ' ' + code + ' note only on the card with it outside quotes', notes, [[(C.spaceAsName ?? '').replace('{code}', code)], []]);
+  }
+}
+// Review S2-9 S6: the full-width note is about full-width syntax characters (＃ ． ： ［ ］ （ ） ，
+// ＞ ＋ ～ ＊ ｜ ＝ ＂ ＇ ＾ ＄ ＆) only; full-width letters and digits in a class name such as
+// .ボタンＡ are ordinary name characters and get no note.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const C = locale(lang).CLIENT_T;
+  const p = page(lang, 'shared-after'); p.type('.ボタンＡ, .ｂｔｎ１, .btn：hover, ＃main'); p.tick(200);
+  eq(lang + ' full-width note only for syntax characters', Array.from(p.result.querySelectorAll('.csc-result-card')).map(c => c.querySelector('.csc-warn')?.textContent ?? ''), ['', '', C.fullwidth, C.fullwidth]);
+}
+// Review S2-9 zh S4 / ja 5 / ko 4: wording of the space-like note.
+check('zh note says 后代组合器', locale('zh').CLIENT_T.spaceAsName.includes('后代组合器'));
+check('ja note says 子孫結合子としては扱いません', locale('ja').CLIENT_T.spaceAsName.includes('子孫結合子としては扱いません'));
+check('ko note says Chrome이 읽는 방식대로', locale('ko').CLIENT_T.spaceAsName.includes('Chrome이 읽는 방식대로'));
+// Analytics: `calc` once per committed change (change event), not after every 200 ms pause;
+// `copy` only after a successful copy.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(lang, 'shared-after'), calcs = () => p.tracks.filter(x => x[1] === 'calc').length, copies = () => p.tracks.filter(x => x[1] === 'copy').length;
+  p.type('#a'); p.tick(200); p.type('#a .b'); p.tick(200); p.type('#a .b:hover'); p.tick(200);
+  eq(lang + ' GA: typing pauses send no calc', calcs(), 0);
+  const ev = p.document.createEvent('Event'); ev.initEvent('change', true, true); p.input.dispatchEvent(ev);
+  eq(lang + ' GA: committed change sends one calc', calcs(), 1);
+  p.input.value = ''; const ev2 = p.document.createEvent('Event'); ev2.initEvent('change', true, true); p.input.dispatchEvent(ev2);
+  eq(lang + ' GA: empty change sends nothing', calcs(), 1);
+  p.type('#a .b:hover'); p.tick(200);
+  const btn = p.buttons()[0]; p.click(btn); eq(lang + ' GA: copy request alone sends nothing', copies(), 0);
+  p.clipboard[0].reject(Error('denied')); await settle(); eq(lang + ' GA: failed copy sends nothing', copies(), 0);
+  p.click(btn); p.clipboard[1].resolve(); await settle(); eq(lang + ' GA: successful copy sends one', copies(), 1);
+}
+// ---------- worked examples on the four tool pages ----------
+// {/* csc-check: {"in":"…"} */} types the input into the real page (page language of the MDX
+// file). The input (whole, or each of its selectors) and every tuple the page shows must appear as code after the
+// annotation (up to the next csc-check or H2); for an error card the page's localized message
+// (without the "Not a valid selector:" prefix) must appear verbatim; with "fullwidth": true the
+// page must show the full-width note on the first card, and with "space": true the note about a
+// space-like character that Chrome reads as part of a name.
+{
+  const { toolMdxContract } = await import('./lib/tool-mdx-contract.mjs');
+  const codes = text => [...text.matchAll(/`([^`\n]+)`/g)].map(m => m[1]).concat([...text.matchAll(/<code>([^<]*)<\/code>/g)].map(m => m[1].replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&quot;/g, '"').replace(/&amp;/g, '&')));
+  const contract = toolMdxContract('css-specificity-calculator', { annotations: [{ tag: 'csc-check', min: 2, verify: ({ spec, after, lang }) => {
+    if (!spec || typeof spec.in !== 'string') return 'spec needs in';
+    const p = page(lang, 'shared-after'); p.type(spec.in); p.tick(200);
+    const c = codes(after), C = locale(lang).CLIENT_T, T = pageStrings[lang];
+    if (!c.includes(spec.in)) for (const sel of E.splitSelectorList(spec.in)) if (!c.includes(sel)) return 'selector ' + JSON.stringify(sel) + ' is not shown as code';
+    for (const tuple of p.tuples()) if (!c.includes(tuple)) return 'tuple ' + tuple + ' is not shown as code';
+    const prefix = T.invalid.split('{msg}')[0];
+    for (const el of p.result.querySelectorAll('.csc-error-msg')) {
+      const msg = el.textContent.slice(prefix.length);
+      if (!after.includes(msg)) return 'error ' + JSON.stringify(msg) + ' is not quoted after the annotation';
+    }
+    const shown = Array.from(p.result.querySelectorAll('.csc-result-card:first-child .csc-warn')).map(n => n.textContent);
+    const fw = shown.includes(C.fullwidth), sp = shown.some(n => n !== C.fullwidth);
+    if (!!spec.fullwidth !== fw) return 'full-width note ' + (fw ? 'shown but not expected' : 'expected but not shown');
+    if (!!spec.space !== sp) return 'space-like note ' + (sp ? 'shown but not expected' : 'expected but not shown');
+    return null;
+  } }] });
+  for (const r of contract.results.filter(r => /csc-check/.test(r.rule))) check('tool page: ' + r.message, r.ok);
 }
 check('v2 registered as analyze',/'css-specificity-calculator':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
 

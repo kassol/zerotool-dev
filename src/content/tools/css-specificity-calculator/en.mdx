@@ -9,15 +9,23 @@ steps:
   - "For an error card, correct the syntax at the reported position. Empty the input or press Ctrl/⌘+L to clear results."
 faqItems:
   - question: "What is CSS specificity?"
+    id: "what-is"
     answer: "CSS specificity determines which style rule wins when multiple rules target the same element. It is expressed as a three-part tuple (a, b, c) where a counts ID selectors, b counts class/attribute/pseudo-class selectors, and c counts element type and pseudo-element selectors."
   - question: "How is specificity calculated?"
+    id: "calculation"
     answer: "a = number of ID selectors (#id). b = number of class (.class), attribute ([attr]), and pseudo-class (:hover) selectors. c = number of element type (div, span) and pseudo-element (::before) selectors. The universal selector (*) and combinators (space, >, +, ~) contribute nothing."
   - question: "How do I compare two selectors?"
+    id: "compare"
     answer: "Enter both selectors separated by a comma. Commas inside :is(), :where() or an attribute value do not split the input. Compare the tuples column by column from the left; the first column that differs decides."
   - question: "What about :not(), :is(), :has() and :where()?"
-    answer: ":is(), :not() and :has() take the specificity of the most specific selector in their argument list, so :is(.a, #b) counts as (1, 0, 0). :where() always counts zero. :nth-child(An+B of S) counts one pseudo-class plus the most specific selector in S. These are the rules of Selectors Level 4 §17."
+    id: "functional"
+    answer: ":is(), :not() and :has() take the specificity of the most specific selector in their argument list, so :is(.a, #b) counts as (1, 0, 0). :where() always counts zero. :nth-child(An+B of S) counts one pseudo-class plus the most specific selector in S. These are the rules of Selectors Level 4 §15."
   - question: "Does inline style or !important count?"
+    id: "cascade"
     answer: "No. Specificity is only one step of the cascade. Origin and importance (!important), cascade layers (@layer) and the style attribute are compared before specificity (CSS Cascade 5 §6), so this tool's result only decides between rules that tie on those steps."
+  - question: "Are my selectors sent anywhere?"
+    id: "privacy"
+    answer: "No. The tuples are calculated in your browser, and the selectors are not sent or saved in browser storage. The page's analytics records only the tool name and an action: calc when you leave the input after changing it, and copy after a successful copy. The selectors are not part of it."
 ---
 
 <h2>Reading the (a, b, c) Tuple</h2>
@@ -40,7 +48,7 @@ faqItems:
 </ul>
 
 <h2>Functional Pseudo-classes</h2>
-<p>Selectors Level 4 §17 gives these pseudo-classes their own rules, and they are where hand counting usually goes wrong:</p>
+<p>Selectors Level 4 §15 gives these pseudo-classes their own rules, and they are where hand counting usually goes wrong:</p>
 <ul>
   <li><code>:is(.a, #b)</code> → <code>(1, 0, 0)</code> — the most specific argument counts, even if the element matched <code>.a</code>.</li>
   <li><code>:not(.a, .b.c)</code> → <code>(0, 2, 0)</code> — the arguments are compared, never added up.</li>
@@ -51,8 +59,19 @@ faqItems:
   <li><code>::slotted(span.note)</code> → <code>(0, 1, 2)</code> and <code>:host(.dark)</code> → <code>(0, 2, 0)</code> — CSS Scoping adds the argument to the pseudo-element or pseudo-class.</li>
 </ul>
 
-<h2>A Worked Example</h2>
-<p>A component library ships <code>:where(.btn) {'{'} color: gray {'}'}</code> and your app adds <code>.btn {'{'} color: navy {'}'}</code>. The library rule is <code>(0, 0, 0)</code> and yours is <code>(0, 1, 0)</code>, so navy wins no matter which file loads last. If the library had written <code>.ui .btn</code> instead, it would be <code>(0, 2, 0)</code> and you would need a second class or a cascade layer to override it.</p>
+## Worked Examples
+
+{/* csc-check: {"in":":where(.btn), .btn, .ui .btn"} */}
+
+A component library ships `:where(.btn) { color: gray }` and your app adds `.btn { color: navy }`. Enter `:where(.btn), .btn, .ui .btn` to compare the three forms: `(0, 0, 0)`, `(0, 1, 0)` and `(0, 2, 0)`. The library rule loses to yours no matter which file loads last. If the library had written `.ui .btn` instead, you would need a second class or a cascade layer to override it.
+
+{/* csc-check: {"in":"#nav a:hover, nav .nav-link.active"} */}
+
+A navigation link stays red on hover even though the active state sets it blue. Compare `#nav a:hover` and `nav .nav-link.active`: `(1, 1, 1)` against `(0, 2, 1)`. The first column decides, so the ID wins even with fewer classes. Lowering the first rule to `.nav a:hover` would make it `(0, 2, 1)` as well, and then the later rule wins.
+
+{/* csc-check: {"in":".card:not(.featured"} */}
+
+Pasting `.card:not(.featured` with the closing bracket missing gives an error card instead of a tuple: `Missing ")" (position 10)`. Position 10 is the `(` that is never closed; the browser would drop the whole rule.
 
 <h2>Where Specificity Sits in the Cascade</h2>
 <p>CSS Cascade Level 5 §6 sorts declarations by origin and importance, then by context, then the <code>style</code> attribute, then cascade layer, and only then by specificity and order of appearance. A declaration marked <code>!important</code> or placed in a later <code>@layer</code> can beat a selector with a higher tuple. This tool calculates the specificity step only.</p>
@@ -62,12 +81,19 @@ faqItems:
   <li>The nesting selector <code>&amp;</code> counts as zero here. In real CSS it has the specificity of the parent rule's most specific selector (CSS Nesting §4), which a single selector on its own does not show.</li>
   <li>The tool checks the structure of the selector, not whether a pseudo-class name exists. An unknown name such as <code>:hovr</code> still counts as one pseudo-class, while a browser would drop the whole rule.</li>
   <li>Inline styles, <code>!important</code> and <code>@layer</code> are outside the calculation, as described above.</li>
+  <li>Full-width characters such as <code>＃</code>, <code>．</code> and <code>：</code> are name characters in CSS, not <code>#</code>, <code>.</code> or <code>:</code>. <code>＃ｍａｉｎ</code> is one type selector, <code>(0, 0, 1)</code>, and the card adds a note when it sees them.</li>
+  <li>The order inside a compound selector is not checked. <code>[x]p</code> counts as <code>(0, 1, 1)</code>, although a browser rejects a type selector after an attribute selector.</li>
 </ul>
+
+{/* csc-check: {"in":"div　p","space":true} */}
+
+An ideographic space (U+3000) or a no-break space (U+00A0) between two names does not make a descendant combinator. Chrome 152 reads it as part of a name (tested 2026-10-09 with `document.querySelector()` and the `selectorText` of an inserted rule), so `div　p` is one type selector named "div　p", `(0, 0, 1)`, and it never matches a `p` inside a `div`. The tool counts it the same way and adds a note to the card. The specification differs: [CSS Syntax 3 §4.2](https://www.w3.org/TR/css-syntax-3/#non-ascii-ident-code-point) defines whitespace as a newline, tab or space, and its list of non-ASCII name characters leaves out U+00A0 and U+3000 (it resumes at U+3001), so by the specification the selector is invalid.
 
 <h2>Sources</h2>
 <ul>
-  <li><a href="https://www.w3.org/TR/selectors-4/#specificity-rules" target="_blank" rel="noopener">Selectors Level 4 §17, Calculating a selector's specificity</a></li>
+  <li><a href="https://www.w3.org/TR/selectors-4/#specificity-rules" target="_blank" rel="noopener">Selectors Level 4 §15, Calculating a selector's specificity</a></li>
   <li><a href="https://www.w3.org/TR/css-cascade-5/#cascade-sort" target="_blank" rel="noopener">CSS Cascading and Inheritance Level 5 §6.1, Cascade sorting order</a></li>
+  <li><a href="https://www.w3.org/TR/css-syntax-3/#non-ascii-ident-code-point" target="_blank" rel="noopener">CSS Syntax Module Level 3 §4.2, whitespace and non-ASCII ident code points</a></li>
   <li><a href="https://www.w3.org/TR/css-nesting-1/#nest-selector" target="_blank" rel="noopener">CSS Nesting Module §4, the nesting selector</a></li>
   <li><a href="https://developer.mozilla.org/en-US/docs/Web/CSS/Specificity" target="_blank" rel="noopener">MDN: Specificity</a></li>
 </ul>

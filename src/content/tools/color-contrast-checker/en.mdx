@@ -9,15 +9,23 @@ steps:
   - "When body AA fails, inspect the suggested HEX and click Apply suggestion to set the foreground to that displayed color. The search adjusts lightness and may fall back to black or white."
 faqItems:
   - question: "Which WCAG version does this tool follow?"
-    answer: "WCAG 2.1 / 2.2 contrast ratio formula based on relative luminance. The thresholds are 4.5:1 for body text AA, 7:1 for AAA, 3:1 for large text AA, 4.5:1 for large text AAA, and 3:1 for UI components and graphical objects (Success Criterion 1.4.11)."
+    id: "wcag-version"
+    answer: "WCAG 2.1 / 2.2 contrast ratio formula based on relative luminance. The thresholds are 4.5:1 for body text AA, 7:1 for AAA, 3:1 for large text AA, 4.5:1 for large text AAA, and 3:1 for UI components and graphical objects (Success Criterion 1.4.11). WCAG 2.2 changed the linearization threshold from 0.03928 to 0.04045 in 2021; no 8-bit channel value lies between the two, so the ratio of a HEX pair is the same either way."
   - question: "What input formats are accepted?"
-    answer: "Six-digit hex with or without leading hash (e.g. #1f2937 or 1f2937). The native color picker is also available next to each input. Three-digit shorthand like #abc is auto-expanded to six digits."
+    id: "formats"
+    answer: "Three- or six-digit hex, with or without the leading hash, in either case (#1f2937, 1F2937 and #abc all work; #abc expands to #aabbcc). Full-width characters typed with an East Asian input method are read as half-width. Four- and eight-digit hex with an alpha channel gets a transparency message, because a semi-transparent color has no single contrast ratio. The native color picker next to each field sets the same value."
   - question: "How is the suggested fix calculated?"
-    answer: "When body text AA (4.5:1) fails, the tool keeps the foreground hue and chroma in OKLCH and binary-searches for the nearest lightness value that meets 4.5:1 against the current background. Each candidate is rounded to the 8-bit HEX that is shown and copied, and the ratio is measured on that HEX, so the suggestion passes as written (for #D97706 on #FFF7ED it is #B75700 at 4.51:1). If the foreground hue cannot reach 4.5:1 within the sRGB gamut, the tool falls back to flat black or white — whichever passes."
+    id: "suggestion"
+    answer: "When body text AA (4.5:1) fails, the tool keeps the foreground hue and chroma in OKLCH and binary-searches for the nearest lightness value that meets 4.5:1 against the current background. Each candidate is rounded to the 8-bit HEX that is shown and copied, and the ratio is measured on that HEX, so the suggestion passes as written (for #D97706 on #FFF7ED it is #B75700 at 4.51:1). If the foreground hue cannot reach 4.5:1 within the sRGB gamut, the tool falls back to flat black or white — whichever passes. Only the foreground changes; swap the two colors first if you want to adjust the background."
   - question: "Does this tool send my colors anywhere?"
-    answer: "No. All calculation runs in your browser. Inputs and results are never uploaded."
+    id: "privacy"
+    answer: "No. The ratio and the suggestion are calculated in your browser, and the colors are not sent or saved in browser storage. The page's analytics records only the tool name and an action (check, swap, apply, copy_fix), not the colors."
   - question: "What about APCA, the proposed WCAG 3 method?"
+    id: "apca"
     answer: "This tool reports the WCAG 2.x ratio, which is the legally referenced standard today. APCA is still draft. For APCA-specific work use the official Myndex tools."
+  - question: "Does Section 508 require the 3:1 check for UI components?"
+    id: "local-section508"
+    answer: "Not by itself. The Revised 508 Standards (E205.4) require WCAG 2.0 Level A and AA, and Non-text Contrast (1.4.11) was added in WCAG 2.1. A review against 508 alone uses the body and large-text columns; the UI-component card shows the WCAG 2.1 / 2.2 requirement, which many organizations also adopt."
 ---
 
 
@@ -28,16 +36,37 @@ faqItems:
 <h2>Body, Large, UI — Three Tiers</h2>
 <p>WCAG 2 splits contrast targets by use case:</p>
 <ul>
-  <li><strong>Body text (Success Criterion 1.4.3)</strong> — at least <code>4.5 : 1</code> for AA and <code>7 : 1</code> for AAA. Counts text below 18&nbsp;px regular or below 14&nbsp;px bold.</li>
-  <li><strong>Large text</strong> — at least <code>3 : 1</code> for AA and <code>4.5 : 1</code> for AAA. Counts text 18.66&nbsp;px bold or larger, or 24&nbsp;px regular and larger.</li>
+  <li><strong>Body text (Success Criterion 1.4.3)</strong> — at least <code>4.5 : 1</code> for AA and <code>7 : 1</code> for AAA. Counts text below 24&nbsp;px regular or below 18.66&nbsp;px bold.</li>
+  <li><strong>Large text</strong> — at least <code>3 : 1</code> for AA and <code>4.5 : 1</code> for AAA. Counts text 18.66&nbsp;px bold or larger, or 24&nbsp;px regular and larger. WCAG writes this as 18 point or 14 point bold; one CSS point is 4/3 px.</li>
   <li><strong>UI components and graphical objects (Success Criterion 1.4.11)</strong> — at least <code>3 : 1</code>. Covers borders, focus indicators, icons, chart strokes, and similar non-text visual elements. WCAG 2 does not specify an AAA target here.</li>
 </ul>
 
-<h2>Why "Keep Hue, Adjust Lightness"</h2>
+## Worked Examples
+
+{/* contrast-check: {"fg":"#777777","bg":"#ffffff"} */}
+
+**The gray that just misses.** `#777777` on white gives `4.47 : 1`. Body AA fails, large-text AA and UI-component AA pass. The suggestion is `#767676` at `4.54 : 1`, one step darker on each channel.
+
+{/* contrast-check: {"fg":"#d97706","bg":"#fff7ed"} */}
+
+**A warning badge.** Amber text `#d97706` on a pale cream `#fff7ed` gives `3.00 : 1`, which is only just enough for large text (the exact value is 3.0006). For body text the tool keeps the hue and suggests `#B75700` at `4.51 : 1`, a darker amber, not brown or black.
+
+{/* contrast-check: {"fg":"#1f2937cc","bg":"#ffffff","error":true} */}
+
+**A color token with alpha.** Pasting `#1F2937CC` from a design tool shows "Transparency is not supported. Enter an opaque 3- or 6-digit HEX." The text under it depends on what shows through, so blend the color with its background first and check the opaque result.
+
+## Why "Keep Hue, Adjust Lightness"
 <p>Brand colors and design tokens are usually picked for hue identity, not luminance. When contrast fails, blindly switching to black or white can break the visual language. This tool walks the foreground along its OKLCH lightness axis (perceptually uniform), keeps the original hue and chroma, and stops at the first lightness that satisfies <code>4.5 : 1</code> against the current background. Every candidate is rounded to an 8-bit HEX before its ratio is checked, so the HEX you copy passes on its own. The result is the color closest to your original that still passes body AA. If your hue cannot reach the target within the sRGB gamut, the tool falls back to flat black or white.</p>
 
+## Limits
+
+- Only opaque HEX colors. `rgb()`, `hsl()`, color names and alpha are not read; convert them with the [Color Converter](/tools/color-converter/) first.
+- One pair at a time. Text over images, gradients or video has no single background color; check the lightest and darkest spots behind the text separately.
+- The suggestion changes only the foreground and targets body AA (4.5 : 1). It does not aim at AAA (7 : 1).
+- The thresholds are fixed by WCAG. The tool does not know your font size or weight; you pick the column that matches the text.
+
 <h2>Privacy</h2>
-<p>Every calculation — hex parsing, OKLCH conversion, contrast ratio, suggestion search — runs locally in your browser. No color, no preference, no analytics about your input is uploaded.</p>
+<p>Every calculation — hex parsing, OKLCH conversion, contrast ratio, suggestion search — runs locally in your browser. Colors are not uploaded or stored; the page's analytics records only the tool name and an action such as <code>check</code>.</p>
 
 <h2>Related Tools</h2>
 <ul>

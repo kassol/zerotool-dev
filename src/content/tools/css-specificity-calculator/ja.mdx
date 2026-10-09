@@ -9,15 +9,23 @@ steps:
   - "エラーカードの位置を確認して構文を修正します。入力を空にするか Ctrl/⌘+L で結果を消去します。"
 faqItems:
   - question: "CSS詳細度とは何ですか？"
+    id: "what-is"
     answer: "CSS詳細度とは、同じ要素に複数のルールが適用された場合にどのルールが優先されるかを決定する仕組みです。(a, b, c)の3要素で表し、aはIDセレクター数、bはクラス・属性・疑似クラス数、cは要素型・疑似要素数を表します。"
   - question: "詳細度はどのように計算されますか？"
-    answer: "a = IDセレクター数(#id)。b = クラス(.class)・属性([attr])・疑似クラス(:hover)の数。c = 要素型(div, span)・疑似要素(::before)の数。ユニバーサルセレクター(*)とコンビネータ(+, >, ~)は0です。"
+    id: "calculation"
+    answer: "a = IDセレクター数(#id)。b = クラス(.class)・属性([attr])・疑似クラス(:hover)の数。c = 要素型(div, span)・疑似要素(::before)の数。ユニバーサルセレクター(*)と結合子(空白, >, +, ~)は0です。"
   - question: "複数のセレクターを比較するには？"
+    id: "compare"
     answer: "2 つのセレクターをカンマ区切りで入力します。:is()・:where() の括弧内や属性値の引用符内のカンマでは分割しません。左の列から比較し、最初に異なる列で決まります。"
   - question: ":not()・:is()・:has()はどう扱われますか？"
-    answer: ":is()・:not()・:has() は引数リストのうち最も詳細度が高いものを使うため、:is(.a, #b) は (1, 0, 0) です。:where() は常に 0。:nth-child(An+B of S) は疑似クラス 1 つに S の最大値を加えます。根拠は Selectors Level 4 §17 です。"
+    id: "functional"
+    answer: ":is()・:not()・:has() は引数リストのうち最も詳細度が高いものを使うため、:is(.a, #b) は (1, 0, 0) です。:where() は常に 0。:nth-child(An+B of S) は疑似クラス 1 つに S の最大値を加えます。根拠は Selectors Level 4 §15 です。"
   - question: "インラインスタイルや!importantは含まれますか？"
+    id: "cascade"
     answer: "含みません。詳細度はカスケードの 1 段階にすぎず、オリジンと重要度（!important）、カスケードレイヤー（@layer）、style 属性が先に比較されます（CSS Cascade 5 §6）。本ツールの結果は、それらが同じ場合の勝敗だけを決めます。"
+  - question: "入力したセレクターは送信されますか？"
+    id: "privacy"
+    answer: "いいえ。タプルはブラウザー内で計算し、セレクターをサーバーに送ることも、ブラウザーのストレージに保存することもありません。ページの解析ツールが記録するのはツール名と操作名だけで、入力を変更して入力欄から離れたときに calc、コピーに成功したときに copy を記録します。セレクターそのものは含みません。"
 ---
 
 <h2>(a, b, c) タプルの読み方</h2>
@@ -39,7 +47,7 @@ faqItems:
 </ul>
 
 <h2>関数型の疑似クラス</h2>
-<p>Selectors Level 4 §17 は次の疑似クラスに個別の規則を定めています。手計算で間違えやすいところです。</p>
+<p>Selectors Level 4 §15 は次の疑似クラスに個別の規則を定めています。手計算で間違えやすいところです。</p>
 <ul>
   <li><code>:is(.a, #b)</code> → <code>(1, 0, 0)</code>：要素が実際に <code>.a</code> に一致しても、引数のうち最も詳細度が高いものを使います。</li>
   <li><code>:not(.a, .b.c)</code> → <code>(0, 2, 0)</code>：引数どうしは足さずに最大値を取ります。</li>
@@ -50,12 +58,38 @@ faqItems:
   <li><code>a[href="#top"]</code> → <code>(0, 1, 1)</code>：引用符内の <code>#</code> は ID ではありません。</li>
 </ul>
 
+## WordPress 6.6 のブロックスタイルと :root :where()
+
+WordPress 6.6 の開発者ノート「WordPress 6.6 CSS Specificity」によると、theme.json とグローバルスタイルが出力するブロックのスタイルは詳細度 0-1-0 にそろえられ、それより高いセレクターは `:root :where(...)` で包む形に変わりました。ノートの例では、画像ブロックの角丸スタイル `.wp-block-image.is-style-rounded img` が `:root :where(.wp-block-image.is-style-rounded img)` になっています。
+
+{/* csc-check: {"in":".wp-block-image.is-style-rounded img, :root :where(.wp-block-image.is-style-rounded img)"} */}
+
+2 つを並べて `.wp-block-image.is-style-rounded img, :root :where(.wp-block-image.is-style-rounded img)` と入力すると、`(0, 2, 1)` と `(0, 1, 0)` です。`:root` は疑似クラスなので 1 つ数え、`:where()` の中身は数えません。テーマが従来どおり `.wp-block-image.is-style-rounded img` で角丸を書くと、サイトエディターのグローバルスタイルで変えた値より強くなってしまうため、ノートはテーマ側も `:root :where()` で包むよう勧めています。
+
+{/* csc-check: {"in":"body, :root :where(body)"} */}
+
+逆に詳細度が上がりすぎた例もあります。6.6 では body のスタイルが `:root :where(body)` として出力され、従来の `body` の `(0, 0, 1)` から `(0, 1, 0)` になりました。テーマの指定が効かなくなるとして Trac チケット #61704 で報告され、changeset 58874 で 6.6 ブランチの出力は `body` に戻されています。
+
+## 全角で入力されたセレクター
+
+{/* csc-check: {"in":"＃ｍａｉｎ．ｎａｖ, #main.nav","fullwidth":true} */}
+
+全角のまま入力された `＃ｍａｉｎ．ｎａｖ` は、CSS では ID とクラスにはなりません。全角の「＃」「．」は名前に使える文字なので、全体が「＃ｍａｉｎ．ｎａｖ」という名前の要素セレクター 1 つとして読まれます。結果は `(0, 0, 1)` で、カードには全角文字を含むという注意が出ます。半角の `#main.nav` なら `(1, 1, 0)` です。全角の「：」「［」も同じで、`:` や `[` としては働きません。
+
 <h2>カスケードの中での詳細度</h2>
 <p>CSS Cascade Level 5 §6 では、オリジンと重要度、コンテキスト、style 属性、カスケードレイヤーの順に比べ、その後で詳細度と出現順を比べます。<code>!important</code> 付きの宣言や後ろの <code>@layer</code> にある宣言は、詳細度が高いセレクターにも勝ちます。</p>
 
 <h2>制限事項</h2>
+
+{/* csc-check: {"in":".card:not(.featured"} */}
+
 <ul>
   <li>ネストセレクター <code>&amp;</code> はここでは 0 として数えます。実際の CSS では親ルールのセレクターリストの最大値になります（CSS Nesting §4）が、セレクター単体からは親ルールがわかりません。</li>
   <li>構文だけを確認し、疑似クラス名が存在するかは確認しません。綴りを誤った <code>:hovr</code> も疑似クラス 1 つとして数えますが、ブラウザーはルール全体を無視します。</li>
-  <li>解析できない入力（閉じていない括弧や引用符、単独の <code>#</code> や <code>.</code>）は、理由と位置を結果カードに表示します。</li>
+  <li>解析できない入力（閉じていない括弧や引用符、単独の <code>#</code> や <code>.</code>）は、理由と位置を結果カードに表示します。たとえば <code>.card:not(.featured</code> には <code>10 文字目の括弧に対応する「)」がありません</code> と表示されます。</li>
+  <li>複合セレクター内の順序は確認しません。<code>[x]p</code> は <code>(0, 1, 1)</code> と数えますが、ブラウザーは属性セレクターの後ろに置いた要素セレクターを受け付けません。</li>
 </ul>
+
+{/* csc-check: {"in":"div　p","space":true} */}
+
+名前の間に全角スペース（U+3000）やノーブレークスペース（U+00A0）が入っても、子孫結合子にはなりません。2026-10-09 に Chrome 152 で `document.querySelector()` と、ルールを挿入した後の `selectorText` を確かめると、この文字は名前の一部として読まれました。`div　p` は「div　p」という名前の要素セレクター 1 つで `(0, 0, 1)` となり、`div` の中の `p` には一致しません。本ツールも同じ読み方で数え、結果カードに注意を表示します。仕様は異なります。[CSS Syntax 3 §4.2](https://www.w3.org/TR/css-syntax-3/#non-ascii-ident-code-point) では空白は改行・タブ・スペースだけで、名前に使える非 ASCII 文字の一覧にも U+00A0 と U+3000 は含まれません（U+3001 から再開）。仕様上はこのセレクターは無効です。

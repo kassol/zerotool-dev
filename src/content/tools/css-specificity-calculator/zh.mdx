@@ -9,15 +9,23 @@ steps:
   - "遇到错误卡片时，按提示位置修正语法。清空输入或按 Ctrl/⌘+L 可清除结果。"
 faqItems:
   - question: "什么是 CSS 优先级？"
+    id: "what-is"
     answer: "CSS 优先级决定当多条规则作用于同一元素时哪条规则生效。用三元组 (a, b, c) 表示：a 计算 ID 选择器数量，b 计算类/属性/伪类选择器数量，c 计算元素类型和伪元素选择器数量。"
   - question: "优先级如何计算？"
-    answer: "a = ID 选择器数量（#id）。b = 类（.class）、属性（[attr]）、伪类（:hover）选择器数量。c = 元素类型（div、span）和伪元素（::before）选择器数量。通配符（*）和连接符（+、>、~）不计入优先级。"
+    id: "calculation"
+    answer: "a = ID 选择器数量（#id）。b = 类（.class）、属性（[attr]）、伪类（:hover）选择器数量。c = 元素类型（div、span）和伪元素（::before）选择器数量。通配符（*）和组合器（空格、>、+、~）不计入优先级。"
   - question: "如何对比两个选择器的优先级？"
+    id: "compare"
     answer: "用逗号分隔两个选择器输入。:is()、:where() 括号里或属性值引号里的逗号不会拆分输入。工具并排显示各自的元组，从左到右逐列对比，第一个不同的列决定胜负。"
   - question: ":not()、:is()、:has() 如何计算？"
-    answer: ":is()、:not()、:has() 取参数列表中优先级最高的一项，所以 :is(.a, #b) 计为 (1, 0, 0)。:where() 始终计 0。:nth-child(An+B of S) 计一个伪类，再加上 S 中优先级最高的一项。规则出自 Selectors Level 4 §17。"
+    id: "functional"
+    answer: ":is()、:not()、:has() 取参数列表中优先级最高的一项，所以 :is(.a, #b) 计为 (1, 0, 0)。:where() 始终计 0。:nth-child(An+B of S) 计一个伪类，再加上 S 中优先级最高的一项。规则出自 Selectors Level 4 §15。"
   - question: "行内样式和 !important 算入其中吗？"
+    id: "cascade"
     answer: "不算。优先级只是层叠中的一步：来源与重要性（!important）、层叠层（@layer）和 style 属性都比优先级先比较（CSS Cascade 5 §6），本工具的结果只在这些步骤打平时决定胜负。"
+  - question: "输入的选择器会被上传吗？"
+    id: "privacy"
+    answer: "不会。元组在浏览器里计算，选择器不会发送到服务器，也不会写入浏览器存储。页面统计只记录工具名和动作：修改输入后离开输入框时记一次 calc，复制成功时记一次 copy，不包含选择器本身。"
 ---
 
 <h2>理解 (a, b, c) 元组</h2>
@@ -39,7 +47,7 @@ faqItems:
 </ul>
 
 <h2>函数式伪类</h2>
-<p>Selectors Level 4 §17 为下面这些伪类单独规定了算法，手算最容易出错：</p>
+<p>Selectors Level 4 §15 为下面这些伪类单独规定了算法，手算最容易出错：</p>
 <ul>
   <li><code>:is(.a, #b)</code> → <code>(1, 0, 0)</code>：取参数中优先级最高的一项，即使元素实际匹配的是 <code>.a</code>。</li>
   <li><code>:not(.a, .b.c)</code> → <code>(0, 2, 0)</code>：参数之间取最大值，不相加。</li>
@@ -50,12 +58,38 @@ faqItems:
   <li><code>a[href="#top"]</code> → <code>(0, 1, 1)</code>：引号里的 <code>#</code> 不是 ID。</li>
 </ul>
 
+## Ant Design 为什么用 :where() 包住类名
+
+Ant Design 文档的「样式兼容」一页写道：「Ant Design 的 CSS-in-JS 默认通过 :where 选择器降低 CSS Selector 优先级，以减少用户升级时额外调整自定义样式的成本」。同一页给出了生成结果的对比：默认是 `:where(.css-bAMboO).ant-btn`，在 `StyleProvider` 上设置 `hashPriority="high"` 后变成 `.css-bAMboO.ant-btn`。
+
+{/* csc-check: {"in":":where(.css-bAMboO).ant-btn, .css-bAMboO.ant-btn"} */}
+
+把这两个选择器一起输入 `:where(.css-bAMboO).ant-btn, .css-bAMboO.ant-btn`，得到 `(0, 1, 0)` 和 `(0, 2, 0)`。哈希类名被 `:where()` 包住后不计分，只剩 `.ant-btn` 这一个类。
+
+{/* csc-check: {"in":".my-btn, #root .my-btn"} */}
+
+再看自己写的覆盖样式。`.my-btn` 是 `(0, 1, 0)`，和默认的组件样式打平，这时按出现顺序，后出现的规则生效。设置 `hashPriority="high"` 后组件样式变成 `(0, 2, 0)`，`.my-btn` 就压不住了；文档举的提升写法是 `#root .my-btn`，即 `(1, 1, 0)`。
+
+## 全角冒号让伪类变成了类名
+
+{/* csc-check: {"in":".btn：hover, .btn:hover","fullwidth":true} */}
+
+从中文文档或聊天记录里复制选择器时，冒号偶尔会是全角的「：」（U+FF01–FF5E 区的字符）。CSS 不把全角字符当作 `:`，而是当作名称的一部分，所以 `.btn：hover` 是一个名为「btn：hover」的类，工具算出 `(0, 1, 0)`，并在卡片上提示含有全角字符。改回半角的 `.btn:hover` 才是类加伪类，`(0, 2, 0)`。全角的 `＃`、`．`、`［` 也是同样的情况。
+
 <h2>优先级在层叠中的位置</h2>
 <p>CSS Cascade Level 5 §6 先按来源与重要性、上下文、style 属性、层叠层排序，最后才比较优先级和出现顺序。带 <code>!important</code> 的声明或位于更靠后 <code>@layer</code> 的声明，可以胜过元组更大的选择器。</p>
 
 <h2>限制</h2>
+
+{/* csc-check: {"in":".card:not(.featured"} */}
+
 <ul>
   <li>嵌套选择器 <code>&amp;</code> 在这里计 0。实际 CSS 中它等于父规则选择器列表里优先级最高的一项（CSS Nesting §4），单独一个选择器看不出父规则。</li>
   <li>工具只检查选择器结构，不检查伪类名称是否存在。拼错的 <code>:hovr</code> 仍计为一个伪类，浏览器则会丢弃整条规则。</li>
-  <li>无法解析的输入（括号或引号未闭合、单独的 <code>#</code> 或 <code>.</code>）会在结果卡片里写明原因与位置。</li>
+  <li>无法解析的输入（括号或引号未闭合、单独的 <code>#</code> 或 <code>.</code>）会在结果卡片里写明原因与位置，例如 <code>.card:not(.featured</code> 显示 <code>第 10 个字符处的括号缺少对应的「)」</code>。</li>
+  <li>不检查复合选择器内部的顺序。<code>[x]p</code> 计为 <code>(0, 1, 1)</code>，但浏览器不接受写在属性选择器后面的元素选择器。</li>
 </ul>
+
+{/* csc-check: {"in":"div　p","space":true} */}
+
+两个名称之间夹着全角空格（U+3000）或不换行空格（U+00A0）时，并不构成后代组合器。2026-10-09 用 Chrome 152 实测（`document.querySelector()` 与插入规则后的 `selectorText`），它把这个字符当作名称的一部分：`div　p` 是一个名为「div　p」的元素选择器，`(0, 0, 1)`，匹配不到 `div` 里的 `p`。工具按同样的读法计算，并在结果卡片上提示。规范的规定不同：[CSS Syntax 3 §4.2](https://www.w3.org/TR/css-syntax-3/#non-ascii-ident-code-point) 的空白只有换行、制表符和空格，非 ASCII 名称字符的列表也不含 U+00A0 和 U+3000（从 U+3001 起才算），按规范这个选择器无效。
