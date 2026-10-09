@@ -1,4 +1,4 @@
-// CSS Specificity Calculator — specificity per Selectors Level 4 §17
+// CSS Specificity Calculator — specificity per Selectors Level 4 §15
 //
 // Read:  src/components/tools/CssSpecificityCalculatorTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers, so this test cannot drift
@@ -6,8 +6,8 @@
 // Write: stdout only (test results)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
-// Expected values are the examples in Selectors Level 4 §17 and the MDN "Specificity" page,
-// plus values worked out by hand from the §17 rules. Covers the reported defects: class
+// Expected values are the examples in Selectors Level 4 §15 and the MDN "Specificity" page,
+// plus values worked out by hand from the §15 rules. Covers the reported defects: class
 // selectors were stripped before functional pseudo-classes, so `:where(.active, p)` gave (0,1,0);
 // `:is()` / `:not()` / `:has()` summed their arguments instead of taking the most specific one;
 // `:nth-child(2n+1)` counted `n` as a type selector; `#top` inside an attribute value counted as
@@ -58,7 +58,7 @@ function spec(sel) {
   try { const s = E.specificity(sel); return [s.a, s.b, s.c]; } catch (e) { return 'error: ' + e.message; }
 }
 
-// ---------- Selectors Level 4 §17 examples ----------
+// ---------- Selectors Level 4 §15 examples ----------
 const SPEC_EXAMPLES = [
   ['*', [0, 0, 0]],
   ['LI', [0, 0, 1]],
@@ -71,7 +71,7 @@ const SPEC_EXAMPLES = [
   ['#s12:not(FOO)', [1, 0, 1]],
   ['.foo :is(.bar, #baz)', [1, 1, 0]],
 ];
-for (const [sel, exp] of SPEC_EXAMPLES) eq('Selectors 4 §17: ' + sel, spec(sel), exp);
+for (const [sel, exp] of SPEC_EXAMPLES) eq('Selectors 4 §15: ' + sel, spec(sel), exp);
 
 // ---------- MDN Specificity examples ----------
 const MDN_EXAMPLES = [
