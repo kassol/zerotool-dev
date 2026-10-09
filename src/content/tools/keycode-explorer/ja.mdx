@@ -19,13 +19,13 @@ faqItems:
     answer: "KeyboardEvent の e.shiftKey、e.ctrlKey、e.altKey、e.metaKey を読みます。どれも真偽値です。e.metaKey は Windows では Windows キー、Mac では Command キーです。生成されるスニペットは、押されていた修飾キーごとに条件を加えます。Shift を押したまま英字キーを押すと event.key は大文字になるので、Ctrl+Shift+K は \"k\" ではなく \"K\" です。"
   - id: ime
     question: "keyCode が 229 になるのはなぜ？isComposing とは？"
-    answer: "IME で変換中（未確定の文字があるあいだ）は isComposing が true になります。UI Events の非規範的な旧キーコードの節には、IME がキー入力を処理しているときの keydown では keyCode に 229 を返すと書かれています。Enter を処理するコードはこのとき早めに return しないと、変換を確定する Enter でフォームまで送信されます。キャプチャパッドはフォーカスできる領域で、テキスト入力欄ではないため、ここで IME が変換を始めるかどうかは環境によります。変換中の動きは自分の入力欄で確かめてください。"
+    answer: "IME で変換中（未確定の文字があるあいだ）は isComposing が true になります。UI Events の非規範的な旧キーコードの節には、IME がキー入力を処理しているときの keydown では keyCode に 229 を返すと書かれています。Enter を処理するコードはこのとき早めに return しないと、変換を確定する Enter でフォームまで送信されます。キャプチャパッドはフォーカスできる領域で、テキスト入力欄ではないため、ここで IME が変換を始めるかどうかは環境によります。変換中の動きは自分の入力欄で確かめてください。タッチ端末用の代替入力欄は compositionend を待ってから確定文字列を読み取ります（模擬イベントでのみ確認、Android 実機では未確認）。"
   - id: mobile
     question: "モバイルで動作する？"
-    answer: "一部だけです。多くのソフトウェアキーボードは 1 文字ごとの keydown を送らず、入力した文字を持つ input イベントだけを送ります。タッチ端末ではパッドの下に 1 文字用の代替入力欄が出て、その文字を key として表示し、code・keyCode・which・charCode は空欄にします。keydown の詳細を見るには、物理キーボードをつないだデスクトップのブラウザーを使ってください。"
+    answer: "一部だけです。多くのソフトウェアキーボードは 1 文字ごとの keydown を送らず、入力した文字を持つ input イベントだけを送ります。タッチ端末ではパッドの下に代替入力欄が出て、入力した文字を key として表示し、code・keyCode・which・charCode は空欄にします。IME で変換中（かな漢字変換、ハングルの組み立て、ピンインなど）は入力欄の文字に手を付けず、確定したとき「東京」のような確定文字列を表示します。この動きは模擬したイベントで確認しただけで、Android の実機では試していません。keydown の詳細を見るには、物理キーボードをつないだデスクトップのブラウザーを使ってください。"
   - id: privacy
     question: "キー入力データはサーバーに送信される？"
-    answer: "キーの値は送信しません。イベントはブラウザー内で読み取り、何も保存しません。ページは Google Analytics を読み込み、ツール名と操作だけを記録します。ページの読み込み後または「クリア」後の最初のキーで keydown を 1 回、コピーに成功したときに copy_snippet、タッチ端末の代替入力欄では 1 文字ごとに mobile_input です。どのキーを押したかは記録しません。"
+    answer: "キーの値は送信しません。イベントはブラウザー内で読み取り、何も保存しません。ページは Google Analytics を読み込み、ツール名と操作だけを記録します。ページの読み込み後または「クリア」後の最初のキーで keydown を 1 回、コピーに成功したときに copy_snippet、ページの読み込み後または「クリア」後にタッチ端末の代替入力欄へ最初に入力したとき mobile_input を 1 回です。どのキーを押したかは記録しません。"
 ---
 
 <h2>event.key vs event.code vs keyCode</h2>
@@ -126,7 +126,7 @@ input.addEventListener('keydown', (e) => {
 
 <h2>制限</h2>
 <ul>
-  <li>スマートフォンやタブレットのソフトウェアキーボードは、完全な keydown ではなく入力した文字を持つ <code>input</code> イベントを送るのが普通です。パッドの下の代替入力欄はその文字を <code>key</code> として表示し、<code>code</code>・<code>keyCode</code>・<code>which</code>・<code>charCode</code> は空欄にします。input イベントはどのキーを押したかを伝えないためです。</li>
+  <li>スマートフォンやタブレットのソフトウェアキーボードは、完全な keydown ではなく入力した文字を持つ <code>input</code> イベントを送るのが普通です。パッドの下の代替入力欄はその文字を <code>key</code> として表示し、<code>code</code>・<code>keyCode</code>・<code>which</code>・<code>charCode</code> は空欄にします。input イベントはどのキーを押したかを伝えないためです。IME で変換中は途中の input イベントを無視し、<code>compositionend</code> の時点で確定文字列を読み取ります。これは模擬した変換イベント（日本語・韓国語・中国語ピンイン）とデスクトップの Chromium の IME エミュレーションで確認したもので、Android の実機では試していません。</li>
   <li>Ctrl+W や Cmd+Q などはブラウザーと OS が処理するため、ページには届きません。</li>
   <li>キャプチャパッドはテキスト入力欄ではないので、IME がここで変換を始めるかどうかは環境によります。<code>keyCode</code> 229 が表示されないこともあります。</li>
   <li>スニペットは <code>event.key</code> と押されていた修飾キーだけで判定し、<code>event.code</code> も <code>isComposing</code> も見ません。</li>
