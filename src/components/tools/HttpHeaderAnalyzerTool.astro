@@ -336,6 +336,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       var lastParsed = null;
       var copyRevision = 0;
+      // Input of the last analyze event; one event per new input, reset by Clear.
+      var lastTracked = null;
 
       function setStatus(msg, type) {
         statusEl.textContent = msg;
@@ -625,7 +627,10 @@ const { tips: TIPS, ...CLIENT_T } = T;
         resultEl.hidden = false;
         var n = parsed.headers.length;
         setStatus(t.analyzed.replace('{n}', n).replace('{s}', n === 1 ? '' : 's'), 'success');
-        window.trackTool && window.trackTool('http-header-analyzer', 'analyze');
+        if (text !== lastTracked) {
+          lastTracked = text;
+          window.trackTool && window.trackTool('http-header-analyzer', 'analyze');
+        }
       }
 
       analyzeBtn.addEventListener('click', analyze);
@@ -635,6 +640,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         inputEl.value = '';
         resultEl.hidden = true;
         lastParsed = null;
+        lastTracked = null;
         setStatus('', '');
       }
 
@@ -664,7 +670,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         try {
           if (navigator.clipboard) {
             navigator.clipboard.writeText(json).then(
-              function () { if (revision === copyRevision) setStatus(t.copied, 'success'); },
+              function () { if (revision === copyRevision) { setStatus(t.copied, 'success'); trackCopy(); } },
               function () { if (revision === copyRevision) fallbackCopy(json); }
             );
           } else {
@@ -673,8 +679,11 @@ const { tips: TIPS, ...CLIENT_T } = T;
         } catch (e) {
           fallbackCopy(json);
         }
-        window.trackTool && window.trackTool('http-header-analyzer', 'copy_json');
       });
+
+      function trackCopy() {
+        window.trackTool && window.trackTool('http-header-analyzer', 'copy_json');
+      }
 
       function fallbackCopy(text) {
         var ta = document.createElement('textarea');
@@ -683,6 +692,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         try {
           var copied = document.execCommand('copy');
           setStatus(copied ? t.copied : t.copyFailed, copied ? 'success' : 'error');
+          if (copied) trackCopy();
         }
         catch (e) { setStatus(t.copyFailed, 'error'); }
         document.body.removeChild(ta);

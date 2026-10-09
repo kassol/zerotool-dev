@@ -389,17 +389,34 @@ eq('long result JSON complete',longPage.get('hha-json-output').textContent,longJ
 longPage.get('hha-copy-json').click();eq('long copy never truncates',longPage.clipboard.at(-1).value,longJSON);longPage.clipboard.at(-1).resolve();await settle();
 console.log('v2 page layout: '+(passes-v2Start)+' passed, '+failures+' total failures');
 
-// ---------- JSON view keys ----------
-// The JSON view used a plain object: a header named __proto__ was dropped and a header named
-// constructor became [null, value].
+// ---------- JSON view keys and analytics ----------
+// The JSON view used a plain object: a header named __proto__ was dropped and names such as
+// constructor or toString became [null, value]. Analyze sent an event on every click (also for
+// the same input), and Copy JSON sent copy_json even when copying failed.
 const fixStart=passes;
 for(const lang of ['en','zh','ja','ko']){
   const h=page(lang);
   analyze(h,'HTTP/1.1 200 OK\nconstructor: a\n__proto__: b\nToString: c\nhasOwnProperty: d\nX-A: 1\nx-a: 2');
   eq(lang+' JSON keeps every header name',h.get('hha-json-output').textContent,
     '{\n  "_status": "HTTP/1.1 200 OK",\n  "constructor": "a",\n  "__proto__": "b",\n  "tostring": "c",\n  "hasownproperty": "d",\n  "x-a": [\n    "1",\n    "2"\n  ]\n}');
+  const a=page(lang),count=name=>a.tracks.filter(t=>t[1]===name).length;
+  analyze(a);analyze(a);a.get('hha-analyze').click();
+  eq(lang+' same input analyzed again sends one event',count('analyze'),1);
+  analyze(a,'HTTP/1.1 204 No Content\nX-Probe: new');eq(lang+' new input sends one more event',count('analyze'),2);
+  a.get('hha-example').value='response-basic';a.get('hha-example').dispatch('change');eq(lang+' example sends an event',count('analyze'),3);
+  a.get('hha-clear').click();analyze(a,'HTTP/1.1 204 No Content\nX-Probe: new');eq(lang+' clear resets the last tracked input',count('analyze'),4);
+  analyze(a,'');analyze(a,'unparseable');eq(lang+' empty or invalid input sends no event',count('analyze'),4);
+  analyze(a,'HTTP/1.1 204 No Content\nX-Probe: new');eq(lang+' input tracked last stays deduplicated',count('analyze'),4);
+  a.get('hha-copy-json').click();eq(lang+' copy is not tracked before it succeeds',count('copy_json'),0);
+  a.clipboard.at(-1).resolve();await settle();eq(lang+' successful copy tracked once',count('copy_json'),1);
+  a.copyMode('reject');a.execMode('false');a.get('hha-copy-json').click();a.clipboard.at(-1).reject(Error('Denied'));await settle();
+  eq(lang+' failed copy is not tracked',count('copy_json'),1);
+  a.execMode('true');a.get('hha-copy-json').click();a.clipboard.at(-1).reject(Error('Denied'));await settle();
+  eq(lang+' fallback copy success is tracked',count('copy_json'),2);
+  a.copyMode('missing');a.execMode('true');a.get('hha-copy-json').click();eq(lang+' copy without Clipboard API tracked on success',count('copy_json'),3);
+  a.execMode('false');a.get('hha-copy-json').click();eq(lang+' copy without Clipboard API not tracked on failure',count('copy_json'),3);
 }
-console.log('JSON keys: '+(passes-fixStart)+' passed, '+failures+' total failures');
+console.log('JSON keys and analytics: '+(passes-fixStart)+' passed, '+failures+' total failures');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
