@@ -92,6 +92,35 @@ eq('keep comment keeps a custom property name', c('--Brand-Color: #FF6600;'), '/
 eq('keep comment inside a rule keeps the case', c('.a { font-family: "Noto Sans JP", sans-serif; }'), '/* .a */\n/* keep: font-family: "Noto Sans JP", sans-serif */');
 eq('matching still ignores case', c('DISPLAY: FLEX; color: #3B82F6;'), 'flex text-blue-500');
 
+// ---------- box-shadow: only Tailwind's default shadows (before: any value became `shadow`) ----------
+// Values from the Tailwind v3 box-shadow docs (v3.tailwindcss.com/docs/box-shadow, v3.4.17).
+eq('shadow-sm', c('box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);'), 'shadow-sm');
+eq('shadow', c('box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);'), 'shadow');
+eq('shadow-md', c('box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);'), 'shadow-md');
+eq('shadow-lg', c('box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);'), 'shadow-lg');
+eq('shadow-xl', c('box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);'), 'shadow-xl');
+eq('shadow-2xl', c('box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);'), 'shadow-2xl');
+eq('shadow-inner', c('box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.05);'), 'shadow-inner');
+eq('box-shadow: none', c('box-shadow: none;'), 'shadow-none');
+eq('white space inside the value does not matter', c('box-shadow:\n  0 4px 6px -1px rgb(0 0 0/0.1),\n  0 2px 4px -2px rgb( 0 0 0 / 0.1 );'), 'shadow-md');
+eq('a custom shadow is kept', c('box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);'), '/* keep: box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) */');
+eq('the same shadow written with rgba() is kept', c('box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);'), '/* keep: box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) */');
+eq('a colored default shadow is kept', c('box-shadow: 0 25px 50px -12px rgb(59 130 246 / 0.25);'), '/* keep: box-shadow: 0 25px 50px -12px rgb(59 130 246 / 0.25) */');
+{
+  // Cross-check against the installed Tailwind's own theme: v4 keeps every v3 default shadow
+  // value, some under new names (shadow-xs is v3's shadow-sm; the bare shadow and shadow-inner
+  // are in its "Deprecated" theme block).
+  const { createRequire: req } = await import('node:module');
+  const twDir = dirname(req(join(root, 'package.json')).resolve('tailwindcss/package.json'));
+  const theme = readFileSync(join(twDir, 'theme.css'), 'utf8');
+  const vars = Object.fromEntries([...theme.matchAll(/--(shadow(?:-\w+)?):\s*([^;]+);/g)].map(m => [m[1], m[2].trim()]));
+  const v3Class = { 'shadow-2xs': null, 'shadow-xs': 'shadow-sm', 'shadow-sm': 'shadow', 'shadow-md': 'shadow-md', 'shadow-lg': 'shadow-lg', 'shadow-xl': 'shadow-xl', 'shadow-2xl': 'shadow-2xl', 'shadow': 'shadow', 'shadow-inner': 'shadow-inner' };
+  same('tailwindcss theme.css shadow variables', Object.keys(vars).sort(), Object.keys(v3Class).sort());
+  for (const [name, cls] of Object.entries(v3Class)) {
+    eq('theme.css --' + name + ' converts to ' + (cls || 'a keep comment'), c('box-shadow: ' + vars[name] + ';'), cls || '/* keep: box-shadow: ' + vars[name] + ' */');
+  }
+}
+
 // ---------- the examples on the tool pages ----------
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const mdx = readFileSync(join(root, 'src/content/tools/css-to-tailwind/' + lang + '.mdx'), 'utf8');
@@ -269,8 +298,9 @@ const { compile: compileMdx } = await import('@mdx-js/mdx');
 const { default: yaml } = await import('js-yaml');
 const sha = text => createHash('sha256').update(text).digest('hex');
 const fullEngine = source.match(/^ *\/\* ── engine:start ── \*\/[\s\S]*?^ *\/\* ── engine:end ── \*\//m)[0];
-// Updated with each approved engine change (2026-10-09: keep comments keep the typed case).
-same('v2 exact engine bytes', sha(fullEngine), '2fad1676eee72bf9bf103ca8353f8c4c5ee9ac25b83defa56d8d122334dadff1');
+// Updated with each approved engine change (2026-10-09: keep comments keep the typed case;
+// box-shadow maps only Tailwind's default shadows).
+same('v2 exact engine bytes', sha(fullEngine), '709aca6bbfddbd10017def7444a608e41a64298e502b75ec3442253092a77230');
 const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
