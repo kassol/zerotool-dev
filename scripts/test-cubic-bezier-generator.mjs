@@ -300,7 +300,27 @@ function verifyCurve({ spec, after, lang }) {
   }
   return null;
 }
-reportContract(check, 'cubic-bezier-generator', { limits: true, requireFaqIds: true, annotations: [{ tag: 'cbg-check', min: 2, verify: verifyCurve }] });
+// {/* cbg-maxdiff: {"a": [x1,y1,x2,y2], "b": [...], "x": "0.358", "pp": "2.76"} */} compares two curves
+// over x = 0, 0.001, …, 1 with the bisection solver (the page's progressAt() must agree at that x
+// within 0.0005; its own x error flattens the peak): the largest |y_a − y_b| must be at x (three
+// decimals) and equal pp percentage points (two decimals); both must appear as code after the note.
+function verifyMaxDiff({ spec, after }) {
+  const st = (p) => ({ p1x: p[0], p1y: p[1], p2x: p[2], p2y: p[3] });
+  let best = -1, bx = 0;
+  for (let i = 0; i <= 1000; i++) {
+    const x = i / 1000, d = Math.abs(exactY(x, spec.a) - exactY(x, spec.b));
+    if (d > best) { best = d; bx = x; }
+  }
+  const page = Math.abs(progressAt(bx, st(spec.a)) - progressAt(bx, st(spec.b)));
+  if (Math.abs(page - best) > 5e-4) return 'page solver differs from bisection at the maximum';
+  if (bx.toFixed(3) !== spec.x) return 'largest difference is at x = ' + bx.toFixed(3);
+  if ((best * 100).toFixed(2) !== spec.pp) return 'largest difference is ' + (best * 100).toFixed(2) + ' points';
+  for (const s of ['x = ' + spec.x, spec.pp]) if (!after.includes('<code>' + s + '</code>') && !after.includes('`' + s + '`')) return 'not shown as code: ' + s;
+  return null;
+}
+reportContract(check, 'cubic-bezier-generator', { limits: true, requireFaqIds: true, annotations: [{ tag: 'cbg-check', min: 2, verify: verifyCurve }, { tag: 'cbg-maxdiff', verify: verifyMaxDiff }] });
+check('cbg-maxdiff rejects a wrong position', verifyMaxDiff({ spec: { a: [0.4, 0, 0.23, 1], b: [0.4, 0, 0.2, 1], x: '0.5', pp: '2.76' }, after: '<code>x = 0.5</code> <code>2.76</code>' }) !== null);
+check('cbg-maxdiff accepts the right maximum', verifyMaxDiff({ spec: { a: [0.4, 0, 0.23, 1], b: [0.4, 0, 0.2, 1], x: '0.358', pp: '2.76' }, after: '<code>x = 0.358</code> <code>2.76</code>' }) === null);
 // The verifier itself fails on wrong text.
 check('cbg-check rejects a wrong output', verifyCurve({ spec: { preset: '0.2,0,0,1' }, after: '```css\ntransition-timing-function: cubic-bezier(0.2, 0, 0, 0.9);\n```', lang: 'en' }) !== null);
 check('cbg-check rejects a wrong sample', verifyCurve({ spec: { preset: '0.2,0,0,1', x: ['0.5'], noOutput: true }, after: '```\nx = 0.5 → y = 0.879\n```', lang: 'en' }) !== null);
