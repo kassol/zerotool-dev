@@ -1,6 +1,6 @@
 ---
 seoTitle: "RSA 鍵ペアジェネレーター — 無料オンラインツール | ZeroTool"
-seoDescription: "ブラウザ内でRSA鍵ペア（2048/4096ビット）をPEM/JWK形式で生成。秘密鍵はブラウザ外に出ません。"
+seoDescription: "ブラウザの Web Crypto API で RSA 鍵ペア（2048/4096 ビット）を PEM/JWK 形式で生成。ページは鍵をアップロードも保存もしません。"
 steps:
   - "鍵のサイズを選びます：2048 ビットまたは 4096 ビット。"
   - "アルゴリズムを選びます：暗号化は RSA-OAEP、署名は RSASSA-PKCS1-v1_5。"
@@ -8,16 +8,24 @@ steps:
   - "鍵ペアを生成を押し、両方の鍵が表示されるまで待ちます。"
   - "公開鍵と秘密鍵を別々にコピーまたはダウンロードし、秘密鍵を安全に保管します。"
 faqItems:
-  - question: "鍵はサーバーに送信されますか？"
-    answer: "いいえ。ブラウザ内蔵のWeb Crypto API（crypto.subtle.generateKey）を使って生成するため、データは一切外部に送信されません。「鍵はこのブラウザから出ません」バッジは技術的な保証です。"
-  - question: "RSA-OAEPとRSASSA-PKCS1-v1_5の違いは？"
-    answer: "RSA-OAEPは非対称暗号化（公開鍵でデータを暗号化、秘密鍵で復号）に使います。RSASSA-PKCS1-v1_5はデジタル署名（秘密鍵で署名、公開鍵で検証）に使います。"
-  - question: "どのキーサイズを選ぶべきですか？"
-    answer: "2048ビットは現在の業界最低基準で、ほとんどの用途に十分です。長期利用や高いセキュリティが求められる場合は4096ビットを選んでください。生成には少し時間がかかります。"
-  - question: "PEM形式とは何ですか？"
-    answer: "PEM（Privacy Enhanced Mail）は Base64 でエンコードした DER データを -----BEGIN/END----- の行で囲んだ形式で、ラベルが中身（PUBLIC KEY、PRIVATE KEY、CERTIFICATE）を示します。OpenSSL、nginx、多くの TLS ソフトウェアが鍵と証明書をこの形式で扱います。"
-  - question: "JWK形式とは何ですか？"
-    answer: "JWK（JSON Web Key）はRFC 7517で定義された鍵のJSON表現です。OAuth 2.0・OIDC・JWT認証フローで広く使われています。"
+  - id: privacy
+    question: "鍵はサーバーに送信されますか？"
+    answer: "いいえ。ページはブラウザの Web Crypto API（crypto.subtle.generateKey）で鍵を作り、鍵を含むネットワーク通信は行いません。localStorage や Cookie にも書き込みません。秘密鍵を扱うページなので、Google Analytics と AdSense も読み込みません。鍵はツール内で Ctrl または Command + L を押すか、もう一度生成するか、タブを閉じるまでページに残ります。コピーするとシステムのクリップボードに、ダウンロードするとファイルとして残るので、不要になったら削除してください。"
+  - id: algorithm
+    question: "RSA-OAEPとRSASSA-PKCS1-v1_5の違いは？"
+    answer: "RSA-OAEPは非対称暗号化（公開鍵でデータを暗号化、秘密鍵で復号）に使います。RSASSA-PKCS1-v1_5はデジタル署名（秘密鍵で署名、公開鍵で検証）に使います。この選択で JWK の alg と key_ops が変わります。PEM ファイルはどちらを選んでも同じ種類の鍵です。"
+  - id: key-size
+    question: "どの鍵長を選ぶべきですか？"
+    answer: "2048 ビットの鍵のセキュリティ強度は 112 ビット（NIST SP 800-57 Part 1 Rev. 5 の表 2）で、CA/Browser Forum の Baseline Requirements（6.1.5 節）が TLS 証明書に認める RSA の最小サイズでもあります。4096 ビットは 128〜192 ビットの間で、生成に時間がかかり、署名も 256 バイトから 512 バイトになります。鍵を読み込む側のシステムが求めるサイズを選んでください。"
+  - id: pem
+    question: "PEM形式とは何ですか？"
+    answer: "PEM（Privacy Enhanced Mail）は Base64 でエンコードした DER データを -----BEGIN/END----- の行で囲んだ形式で、ラベルが中身（PUBLIC KEY、PRIVATE KEY、CERTIFICATE）を示します。OpenSSL、nginx、多くの TLS ソフトウェアが鍵と証明書をこの形式で扱います。このツールは 1 行 64 文字で出力します。"
+  - id: jwk
+    question: "JWK形式とは何ですか？"
+    answer: "JWK（JSON Web Key）はRFC 7517で定義された鍵のJSON表現です。OAuth 2.0・OIDC・JWT認証フローで広く使われています。出力される JWK には kid と use がありません。"
+  - id: local-line
+    question: "LINE のアサーション署名キーに使えますか？"
+    answer: "使えます。2048 ビット、RSASSA-PKCS1-v1_5、JWK を選ぶと、公開鍵は kty が RSA、alg が RS256、key_ops が [\"verify\"] で、kid を含みません。LINE Developers のドキュメントが挙げる条件をすべて満たします。公開鍵の JWK を LINE Developers コンソールに登録して kid を受け取り、秘密鍵の JWK で JWT に署名します。"
 ---
 
 <h2>セキュリティに関する注意</h2>
@@ -31,20 +39,38 @@ faqItems:
 
 **PEM** では、公開鍵は SubjectPublicKeyInfo（`-----BEGIN PUBLIC KEY-----`）、秘密鍵は暗号化なしの PKCS#8（`-----BEGIN PRIVATE KEY-----`）で出力されます。OpenSSL 3.6 はどちらもそのまま読めます（`Private-Key: (2048 bit, 2 primes)`）。PKCS#1（`-----BEGIN RSA PRIVATE KEY-----`）しか受け付けない古いソフトウェアでは変換が必要です。コマンドは下にあります。
 
-**JWK**（[RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)）はブラウザの Web Crypto API がエクスポートする形式です。RSA-OAEP で生成した公開鍵は次のとおりです（モジュラスは省略）：
+**JWK**（[RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)）はブラウザの Web Crypto API がエクスポートする形式です。RSA-OAEP なら `"alg": "RSA-OAEP-256"` と `"key_ops": ["encrypt"]`、RSASSA-PKCS1-v1_5 なら `"alg": "RS256"` と `"key_ops": ["verify"]` になります。出力に `kid` と `use` はありません。次の LINE の例で、実際の出力を全項目見られます。
 
+## 例：LINE のアサーション署名キーを作る
+
+Messaging API のチャネルアクセストークン v2.1 を発行するには、JWT に署名するアサーション署名キーが必要です。LINE Developers の「[チャネルアクセストークンv2.1を発行する](https://developers.line.biz/ja/docs/messaging-api/generate-json-web-token/)」は、公開鍵の条件として、`kty` が `RSA`、鍵長 2048 ビット、`alg` が `RS256`、`use` が `sig` か `key_ops` が `["verify"]` のどちらかを挙げ、`kid` があると登録時にエラーになると書いています。
+
+このツールでは 2048 ビット、RSASSA-PKCS1-v1_5、JWK を選びます。公開鍵の出力は次のとおりです。モジュラス `n` は毎回変わるので、長さだけを書いています。
+
+{/* rkg-check: {"size":2048,"algo":"RSASSA-PKCS1-v1_5","format":"jwk","part":"public","mask":"<{n} 文字>","nLength":342} */}
 ```json
 {
-  "alg": "RSA-OAEP-256",
+  "alg": "RS256",
   "e": "AQAB",
   "ext": true,
-  "key_ops": ["encrypt"],
+  "key_ops": [
+    "verify"
+  ],
   "kty": "RSA",
-  "n": "6mqtvNrIisYdKt30jcmQN_za5t3OYQJ-8uhu_DkGEF5iZE4SrseP1CkxnD1yDEdgdD3E…"
+  "n": "<342 文字>"
 }
 ```
 
-RSASSA-PKCS1-v1_5 を選ぶと公開鍵の JWK は `"alg": "RS256"`、`"key_ops": ["verify"]` になります。出力に `kid` と `use` はありません。JWT のヘッダーは `kid` で鍵を指すため、JWKS エンドポイントで公開する前に `kid` を追加してください。
+`key_ops` が `["verify"]` で `kid` がないので、条件を満たします。`n` は 2048 ビット（256 バイト）を base64url にしたもので、いつも `342` 文字です。`ext` は Web Crypto API が付ける項目で、同じドキュメントにある Chrome のコンソールで生成する例の出力にも入っています。
+
+この公開鍵を LINE Developers コンソールの［チャネル基本設定］タブ、アサーション署名キーの［公開鍵を登録する］に貼り付けると `kid` が発行されます。JWT の署名には秘密鍵の JWK（`d`・`p`・`q` などを含む方）を使い、ヘッダーにはその `kid` を入れます。秘密鍵はサーバー側だけに置き、コンソールには貼らないでください。
+
+## 公開鍵を最後までコピーできたか確かめる
+
+フォームに PEM の公開鍵を貼り付けるとき、末尾が欠けていないかは長さと両端で確かめられます。乱数で決まるのは中ほどのモジュラスだけで、前後のバイトは鍵長で決まっています。
+
+{/* rkg-check: {"size":2048,"algo":"RSA-OAEP","format":"pem","part":"public","header":"-----BEGIN PUBLIC KEY-----","footer":"-----END PUBLIC KEY-----","oneLine":392,"lines":7,"lastLine":8,"start":"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA","end":"IDAQAB"} */}
+2048 ビットの公開鍵は、`-----BEGIN PUBLIC KEY-----` と `-----END PUBLIC KEY-----` の間が `7` 行です。64 文字の行が 6 行続き、最後の行は `8` 文字で、合計 `392` 文字になります。先頭は `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA`、末尾は公開指数 65537 を含む `IDAQAB` で、アルゴリズムの選択に関係なく同じです。
 
 ## OpenSSH と OpenSSL で使う
 
@@ -73,11 +99,13 @@ openssl pkey -in private-key.pem -noout -text
 | 3072 ビット | 128 ビット（このツールにはなし） |
 | 4096 ビット | 128 と 192 ビットの間 |
 
-アルゴリズムの設定は、ブラウザが鍵に許す用途と JWK の記載を決めます。**RSA-OAEP**（SHA-256）は暗号化用、**RSASSA-PKCS1-v1_5**（SHA-256、JWT の `RS256`）は署名用です。PEM ファイルにはアルゴリズムの情報がないため、OpenSSL では同じ PEM 鍵をどちらの用途にも使えます。
+アルゴリズムの設定は、ブラウザが鍵に許す用途と JWK の記載を決めます。**RSA-OAEP**（SHA-256）は暗号化用、**RSASSA-PKCS1-v1_5**（SHA-256、JWT の `RS256`）は署名用です。PEM ファイルにはアルゴリズムの情報がないため、OpenSSL では同じ PEM 鍵をどちらの用途にも使えます。LINE のように鍵長が 2048 ビットと決まっている場合は、4096 ビットを選ばないでください。
 
 ## 制限
 
 - 鍵長は 2048 と 4096 のみで、公開指数は常に 65537（`AQAB`）です。
 - 秘密鍵の PEM はパスフレーズで暗号化されません。保護された場所に保存するか、`openssl pkcs8 -topk8 -in private-key.pem -out encrypted.pem` で暗号化してください。
 - OpenSSH 形式の秘密鍵、証明書、CSR は出力しません。`ssh-keygen` と `openssl req` を使ってください。
-- 生成はメインスレッドで行われ、4096 ビットは 2048 ビットより明らかに時間がかかります。
+- JWK に `kid` や `use` を付ける機能はありません。必要なら出力した JSON に手で追加します（LINE のアサーション署名キーには `kid` を付けません）。`use` を付ける場合は `key_ops` を削除してください。[RFC 7517 の 4.3 節](https://www.rfc-editor.org/rfc/rfc7517#section-4.3)は `use` と `key_ops` を同時に使わないよう求めています（SHOULD NOT）。
+- 4096 ビットは 2048 ビットより明らかに時間がかかります。ページは `crypto.subtle.generateKey` が返す Promise を待つだけで、Chromium はこの処理を「WebCrypto」という別スレッドで実行するため（[ソースコード](https://chromium.googlesource.com/chromium/src/+/main/components/webcrypto/webcrypto_impl.cc)）、待っている間も画面は固まりません。
+- クリアボタンはありません。ツール内で Ctrl または Command + L を押すと両方の結果が消えます。

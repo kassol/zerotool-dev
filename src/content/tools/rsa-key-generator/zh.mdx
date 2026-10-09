@@ -1,6 +1,6 @@
 ---
 seoTitle: "RSA 密钥对生成器 — 免费在线工具 | ZeroTool"
-seoDescription: "在浏览器中生成 RSA 密钥对（2048/4096位），支持 PEM 和 JWK 格式，私钥永不离开本机。"
+seoDescription: "用浏览器的 Web Crypto API 生成 RSA 密钥对（2048/4096 位），支持 PEM 和 JWK 格式。页面不上传、不保存密钥。"
 steps:
   - "选择密钥长度：2048 位或 4096 位。"
   - "选择算法：RSA-OAEP 用于加密，RSASSA-PKCS1-v1_5 用于签名。"
@@ -8,16 +8,24 @@ steps:
   - "点击生成密钥对，等待两个密钥显示。"
   - "分别复制或下载公钥与私钥，并妥善保管私钥。"
 faqItems:
-  - question: "我的密钥会被发送到服务器吗？"
-    answer: "不会。密钥生成使用浏览器内置的 Web Crypto API（crypto.subtle.generateKey），任何数据都不会离开你的本机。工具上的「密钥不离开此浏览器」徽章是硬性保证。"
-  - question: "RSA-OAEP 和 RSASSA-PKCS1-v1_5 有什么区别？"
-    answer: "RSA-OAEP 用于非对称加密（用公钥加密数据，用私钥解密）。RSASSA-PKCS1-v1_5 用于数字签名（用私钥签名，用公钥验证）。"
-  - question: "应该选择哪种密钥长度？"
-    answer: "2048 位是当前行业最低标准，足以应对大多数场景。4096 位适合长期使用的密钥或有更高安全要求的场景，但生成耗时明显更长。"
-  - question: "PEM 格式是什么？"
-    answer: "PEM（Privacy Enhanced Mail）是用 -----BEGIN/END----- 行包裹的 Base64 编码 DER 数据，标签写明里面是什么（PUBLIC KEY、PRIVATE KEY、CERTIFICATE）。OpenSSL、nginx 和大多数 TLS 软件都用这种格式保存密钥和证书。"
-  - question: "JWK 格式是什么？"
-    answer: "JWK（JSON Web Key）是 RFC 7517 定义的密钥 JSON 表示格式，常用于 OAuth 2.0、OIDC 和 JWT 认证流程。"
+  - id: privacy
+    question: "我的密钥会被发送到服务器吗？"
+    answer: "不会。页面调用浏览器的 Web Crypto API（crypto.subtle.generateKey）生成密钥，不会带着密钥发出任何网络请求，也不写入 localStorage 或 Cookie。本页处理私钥，所以不加载 Google Analytics 和 AdSense。密钥只留在页面里，直到你在工具内按 Ctrl 或 Command + L、重新生成或关闭标签页。复制会把密钥放进系统剪贴板，下载会写出文件，用完请自行删除这些副本。"
+  - id: algorithm
+    question: "RSA-OAEP 和 RSASSA-PKCS1-v1_5 有什么区别？"
+    answer: "RSA-OAEP 用于非对称加密（用公钥加密数据，用私钥解密）。RSASSA-PKCS1-v1_5 用于数字签名（用私钥签名，用公钥验证）。这个选项会改变 JWK 里的 alg 和 key_ops；两种选项得到的 PEM 文件是同一类密钥。"
+  - id: key-size
+    question: "应该选择哪种密钥长度？"
+    answer: "2048 位密钥的安全强度是 112 位（NIST SP 800-57 Part 1 Rev. 5 表 2），也是 CA/Browser Forum 基线要求（6.1.5 节）允许 TLS 证书使用的最小 RSA 模数。4096 位的安全强度介于 128 与 192 位之间，生成更慢，每个签名也从 256 字节变成 512 字节。按读取这个密钥的系统要求来选。"
+  - id: pem
+    question: "PEM 格式是什么？"
+    answer: "PEM（Privacy Enhanced Mail）是用 -----BEGIN/END----- 行包裹的 Base64 编码 DER 数据，标签写明里面是什么（PUBLIC KEY、PRIVATE KEY、CERTIFICATE）。OpenSSL、nginx 和大多数 TLS 软件都用这种格式保存密钥和证书。本工具每行写 64 个字符。"
+  - id: jwk
+    question: "JWK 格式是什么？"
+    answer: "JWK（JSON Web Key）是 RFC 7517 定义的密钥 JSON 表示格式，常用于 OAuth 2.0、OIDC 和 JWT 认证流程。导出的 JWK 里没有 kid 和 use 字段。"
+  - id: local-alipay
+    question: "生成的密钥能直接配置到支付宝开放平台吗？"
+    answer: "选 2048 位、RSASSA-PKCS1-v1_5、PEM 即可得到支付宝称为 RSA2 的密钥。上传应用公钥时，按支付宝文档去掉公钥文件的头尾和换行，得到一行 392 个字符。私钥是 PKCS8 格式，Java 可以去掉头尾和换行后直接用；PHP、.NET 按文档使用以 -----BEGIN RSA PRIVATE KEY----- 开头的标准私钥文件，可先用 openssl rsa -in private-key.pem -traditional 转换。"
 ---
 
 <h2>安全注意事项</h2>
@@ -31,20 +39,38 @@ faqItems:
 
 **PEM** 输出的公钥是 SubjectPublicKeyInfo（`-----BEGIN PUBLIC KEY-----`），私钥是未加密的 PKCS#8（`-----BEGIN PRIVATE KEY-----`）。OpenSSL 3.6 可以直接读取（`Private-Key: (2048 bit, 2 primes)`）。只认 PKCS#1（`-----BEGIN RSA PRIVATE KEY-----`）的旧软件需要先转换，命令见下文。
 
-**JWK**（[RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)）是浏览器 Web Crypto API 导出的格式。用 RSA-OAEP 生成的公钥如下（模数已截短）：
+**JWK**（[RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)）是浏览器 Web Crypto API 导出的格式。用 RSA-OAEP 生成的 2048 位公钥有下面这些字段。模数 `n` 每次都不同，这里只写它的长度：
 
+{/* rkg-check: {"size":2048,"algo":"RSA-OAEP","format":"jwk","part":"public","mask":"<{n} 个字符>","nLength":342} */}
 ```json
 {
   "alg": "RSA-OAEP-256",
   "e": "AQAB",
   "ext": true,
-  "key_ops": ["encrypt"],
+  "key_ops": [
+    "encrypt"
+  ],
   "kty": "RSA",
-  "n": "6mqtvNrIisYdKt30jcmQN_za5t3OYQJ-8uhu_DkGEF5iZE4SrseP1CkxnD1yDEdgdD3E…"
+  "n": "<342 个字符>"
 }
 ```
 
-选 RSASSA-PKCS1-v1_5 时，公钥 JWK 为 `"alg": "RS256"`、`"key_ops": ["verify"]`。输出里没有 `kid` 和 `use`；放到 JWKS 端点前请加上 `kid`，因为 JWT 头部按 `kid` 查找公钥。
+2048 位的模数是 256 字节，所以 `n` 总是 `342` 个 base64url 字符。选 RSASSA-PKCS1-v1_5 时，公钥 JWK 为 `"alg": "RS256"`、`"key_ops": ["verify"]`。输出里没有 `kid` 和 `use`；放到 JWKS 端点前请加上 `kid`，因为 JWT 头部按 `kid` 查找公钥。
+
+## 示例：给支付宝开放平台准备 RSA2 密钥
+
+支付宝把长度为 2048 位的密钥称为 RSA2 密钥，签名方式是 RSA(SHA256)（[如何从 RSA1 升级到 RSA2](https://opendoc.alipay.com/support/01raus)）。在本工具里对应的选项是 2048 位、RSASSA-PKCS1-v1_5、PEM。
+
+支付宝的《[使用 OpenSSL 工具生成密钥](https://opendoc.alipay.com/common/02khjt)》要求把应用公钥文件去掉头尾、换行和空格，转成一行字符串再上传。下载的 `public-key.pem` 可以这样处理：
+
+```bash
+grep -v -- '-----' public-key.pem | tr -d '\n'
+```
+
+{/* rkg-check: {"size":2048,"algo":"RSASSA-PKCS1-v1_5","format":"pem","part":"public","oneLine":392,"start":"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA","end":"IDAQAB"} */}
+得到的一行总是 `392` 个字符，以 `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA` 开头、以 `IDAQAB` 结尾。前面这段记录的是密钥类型和长度，结尾一段包含公钥指数 65537，每把 2048 位公钥都一样，中间才是随机的模数。粘贴到开放平台之前数一下长度、看一眼开头结尾，就能发现复制时漏掉了一截。
+
+私钥的处理按开发语言分开。同一篇文档说明：Java 使用 PKCS8 格式的私钥，同样去掉头尾、换行和空格后填进代码；PHP、.NET 使用标准私钥文件，文档里的示例以 `-----BEGIN RSA PRIVATE KEY-----` 开头，也就是 PKCS1 格式。本工具的私钥就是 PKCS8（`-----BEGIN PRIVATE KEY-----`），Java 可以直接用；PHP、.NET 先用下一节的 `openssl rsa … -traditional` 转成 `-----BEGIN RSA PRIVATE KEY-----`。私钥只配置在自己的服务端，不要上传到开放平台。
 
 ## 配合 OpenSSH 与 OpenSSL 使用
 
@@ -75,9 +101,13 @@ openssl pkey -in private-key.pem -noout -text
 
 算法选项决定浏览器允许密钥做什么，也决定 JWK 里的声明：**RSA-OAEP**（SHA-256）用于加密，**RSASSA-PKCS1-v1_5**（SHA-256，对应 JWT 的 `RS256`）用于签名。PEM 文件不携带算法信息，OpenSSL 可以把同一个 PEM 密钥用于两种用途。
 
+{/* rkg-check: {"size":4096,"algo":"RSA-OAEP","format":"pem","part":"public","oneLine":736,"lines":12,"start":"MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA","end":"AwEAAQ=="} */}
+选 4096 位时公钥也会变长：Base64 部分是 `736` 个字符、`12` 行，以 `MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA` 开头、以 `AwEAAQ==` 结尾。支付宝文档把 RSA2 定义为 2048 位密钥，给支付宝配置时请选 2048 位；其他平台先查清它要求的长度再选。
+
 ## 限制
 
 - 只有 2048 和 4096 位；公钥指数固定为 65537（`AQAB`）。
 - 私钥 PEM 没有用口令加密。请把文件放在受保护的位置，或用 `openssl pkcs8 -topk8 -in private-key.pem -out encrypted.pem` 加密。
-- 不输出 OpenSSH 私钥格式，也不生成证书或 CSR；这些请用 `ssh-keygen` 和 `openssl req`。
-- 生成在主线程进行，4096 位明显比 2048 位慢。
+- 不输出 OpenSSH 私钥格式，也不生成证书或 CSR；这些请用 `ssh-keygen` 和 `openssl req`。支付宝的公钥证书模式需要 CSR，本工具做不到。
+- 4096 位明显比 2048 位慢。页面等待 `crypto.subtle.generateKey` 返回的 Promise；Chromium 在名为 “WebCrypto” 的单独线程上执行这些运算（[源码](https://chromium.googlesource.com/chromium/src/+/main/components/webcrypto/webcrypto_impl.cc)），等待期间页面不会卡住。
+- 没有清除按钮。在工具内按 Ctrl 或 Command + L 可以清空两个结果。
