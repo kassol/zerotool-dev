@@ -256,6 +256,19 @@ for (const exec of [true, false]) {
   check('fallback tracks only a successful copy (' + exec + ')', p.tracks.some(a => a[1] === 'copy_css') === exec);
 }
 
+// Review S2-9 part 2: the fields keep three decimals, so their step must not snap to 0.01, and the
+// copy statistic must name the format that was copied, not the one selected when the copy resolves.
+for (const id of ['cbg-p1x', 'cbg-p1y', 'cbg-p2x', 'cbg-p2y']) {
+  check(id + ' step allows three decimals', new RegExp('id="' + id + '"[^>]*step="0\\.001"').test(source));
+}
+{
+  const p = loadCubicPage();
+  p.get('cbg-copy').click();
+  p.wrap.querySelectorAll('.cbg-format').find((b) => b.dataset.fmt === 'scss').click();
+  await Promise.resolve(); await Promise.resolve();
+  eq('copy statistic names the copied format', p.tracks.map((a) => a[1]), ['copy_css']);
+}
+
 // ---------- worked examples on the tool pages (cbg-check) ----------
 // {/* cbg-check: {"preset": "<data-p>" | "p": ["x1","y1","x2","y2"], "format": "css|scss|tailwind",
 //   "x": ["0.25", ...], "warn": "x|y", "noOutput": true} */}
