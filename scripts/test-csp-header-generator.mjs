@@ -581,6 +581,19 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check(lang + ': accepted value is in the policy', p.$('csp-output').textContent.includes("script-src 'self' https://cdn.example.com"));
 }
 
+// Review C-S4: the URL parser would drop a query or fragment and resolve dot segments in a
+// converted value. CSP3 path-part is path-absolute (no query), so such a non-ASCII value is
+// refused instead of changed silently.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  p.$('csp-add-select').value = 'script-src'; p.click('#csp-add-btn');
+  const before = p.$('csp-output').textContent;
+  for (const bad of ['https://example.com/a?q=日本', 'https://日本語.jp/#top', 'https://ex.com/../x/日', 'https://ex.com/./日']) {
+    addHost(p, 'script-src', bad);
+    eq(lang + ': refused, not rewritten: ' + bad, [p.$('csp-output').textContent, p.$('csp-status').textContent], [before, UI_MSG[lang].notAscii + bad]);
+  }
+}
+
 // Review C-M1: punycode is for host sources only. A Trusted Types policy name must match
 // tt-policy-name = 1*( ALPHA / DIGIT / "-" / "#" / "=" / "_" / "/" / "@" / "." / "%" )
 // (TT WD 2026-10-07 §4.2.2); sandbox tokens and report-to endpoint names are not hosts either.
