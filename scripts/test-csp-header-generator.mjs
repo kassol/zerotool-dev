@@ -556,6 +556,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ": trusted-types left empty becomes 'none'", b.$('csp-output').textContent, "Content-Security-Policy: default-src 'self'; trusted-types 'none'");
   const c = page(spec, lang, 'before', { ...base, directives: { 'default-src': ["'self'"], 'prefetch-src': ["'self'"], 'trusted-types': ["'script'", 'app'] } });
   eq(lang + ': both notes in one status line', c.$('csp-status').textContent, REMOVED_MSG[lang] + 'prefetch-src ' + TT_SCRIPT_MSG[lang]);
+  // Review C-S5: only removed directives were saved → Strict preset applied, and the status says so.
+  const d = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'prefetch-src': ["'self'"] } });
+  eq(lang + ': only removed directives → Strict applied and announced', [d.$('csp-output').textContent, d.$('csp-status').textContent], [E.buildOutput(stateFor('strict'), 'header', E.STRINGS[lang]), REMOVED_MSG[lang] + 'prefetch-src ' + STRICT_APPLIED_MSG[lang]]);
 }
 
 // Review C-S1: a refused value stays in the box, marked aria-invalid and tied to the status
