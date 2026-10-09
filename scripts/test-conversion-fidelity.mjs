@@ -744,6 +744,11 @@ const MARKER_INPUTS = [
       const merge = convert(open(tool, lang), tool, dir, MERGE_IN, 'input').status.textContent;
       const item = merge.slice(merge.indexOf('/m'));
       check('PAGE-TEXT-E', `${tool} ${lang} quotes the << merge stop`, merge.indexOf('/m') > 0 && page.includes(quoteCode(MERGE_IN)) && page.includes(quoteCode(item)), item);
+      if (tool === 'yaml-toml') {
+        // MDX wraps the lines of a multi-line <p> in a second <p> (<p><p>…</p></p> in the HTML)
+        const lines = page.split('\n').filter((l) => l.includes(html(key)) || l.includes("yaml.dump({b'k1': 1})"));
+        check('PAGE-TEXT-E', `yaml-toml ${lang}: the new paragraphs are one-line <p> elements`, lines.length === 2 && lines.every((l) => /^<p>.*<\/p>$/.test(l)), JSON.stringify(lines));
+      }
     }
     const yv = mdx('yaml-validator', lang);
     const L = labels[lang];
