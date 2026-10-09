@@ -104,6 +104,8 @@ eq('shadow-inner', c('box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.05);'), 'shado
 eq('box-shadow: none', c('box-shadow: none;'), 'shadow-none');
 eq('white space inside the value does not matter', c('box-shadow:\n  0 4px 6px -1px rgb(0 0 0/0.1),\n  0 2px 4px -2px rgb( 0 0 0 / 0.1 );'), 'shadow-md');
 eq('a custom shadow is kept', c('box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);'), '/* keep: box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) */');
+// "rgb (" with a space is not a function call in CSS, so the value is invalid, not a default shadow.
+eq('a space before ( is kept as written', c('box-shadow: 0 1px 2px 0 rgb (0 0 0 / 0.05);'), '/* keep: box-shadow: 0 1px 2px 0 rgb (0 0 0 / 0.05) */');
 eq('the same shadow written with rgba() is kept', c('box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);'), '/* keep: box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) */');
 eq('a colored default shadow is kept', c('box-shadow: 0 25px 50px -12px rgb(59 130 246 / 0.25);'), '/* keep: box-shadow: 0 25px 50px -12px rgb(59 130 246 / 0.25) */');
 {
@@ -322,9 +324,9 @@ const { default: yaml } = await import('js-yaml');
 const sha = text => createHash('sha256').update(text).digest('hex');
 const fullEngine = source.match(/^ *\/\* ── engine:start ── \*\/[\s\S]*?^ *\/\* ── engine:end ── \*\//m)[0];
 // Updated with each approved engine change (2026-10-09: keep comments keep the typed case;
-// box-shadow maps only Tailwind's default shadows; grid templates map only N equal tracks,
-// N = 1 to 12).
-same('v2 exact engine bytes', sha(fullEngine), '0553daa25405eef04a22632797f772bdf7bdcabcdd4a7e49992b33880ba1a771');
+// box-shadow maps only Tailwind's default shadows, and a space before ( does not match;
+// grid templates map only N equal tracks, N = 1 to 12).
+same('v2 exact engine bytes', sha(fullEngine), '3a9d7a56fad7779ac15a0279c82719e6b9a3726133411c4177a63ab049d5d0b7');
 const markup = source.slice(source.indexOf('---', 3) + 3, source.indexOf('<script'));
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const script = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
