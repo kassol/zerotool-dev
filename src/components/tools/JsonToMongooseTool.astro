@@ -54,6 +54,8 @@ const STRINGS = {
     msgIgnored: 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.',
     msgSkipped: 'Skipped {n} root array values that are not objects ({types}).',
     msgReserved: 'Mongoose keeps reserved path names as paths but warns: {keys}. On a document the field value replaces the method or property of the same name (a field named save makes doc.save() unusable).',
+    msgBreaks: 'Mongoose 9.10.3 calls document methods with these names itself, so such a field can make building, validating or serializing a document fail: {keys}. Rename these keys.',
+    msgMembers: 'Mongoose does not warn about these names, but on a document the field value replaces the Mongoose method or property of the same name: {keys}.',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: 'On',
@@ -108,6 +110,8 @@ const STRINGS = {
     msgIgnored: 'Mongoose 会跳过名为 __proto__、constructor、prototype 的 schema 路径：{keys}。',
     msgSkipped: '根数组中有 {n} 个值不是对象，未写进 schema（{types}）。',
     msgReserved: 'Mongoose 会保留这些保留路径名但打印警告：{keys}。在文档上，字段值会取代同名的方法或属性（字段名为 save 时 doc.save() 无法调用）。',
+    msgBreaks: 'Mongoose 9.10.3 自己会调用这些名称的文档方法，用作字段名会让创建、校验或序列化文档时出错：{keys}。请改名。',
+    msgMembers: 'Mongoose 不会对这些名称发出警告，但在文档上，字段值会取代同名的 Mongoose 方法或属性：{keys}。',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: '开启',
@@ -162,6 +166,8 @@ const STRINGS = {
     msgIgnored: 'Mongoose は __proto__・constructor・prototype という名前のスキーマパスを無視します：{keys}。',
     msgSkipped: 'ルート配列のうちオブジェクトでない {n} 個の値はスキーマに入れていません（{types}）。',
     msgReserved: 'Mongoose は予約済みのパス名もパスとして残しますが、警告を出します：{keys}。ドキュメントでは同名のメソッドやプロパティの代わりにフィールドの値が返ります（save というフィールドがあると doc.save() を呼べません）。',
+    msgBreaks: 'これらの名前のドキュメントメソッドは Mongoose 9.10.3 自身が呼び出すため、フィールド名に使うとドキュメントの作成・検証・シリアライズが失敗することがあります：{keys}。キー名を変更してください。',
+    msgMembers: 'Mongoose はこれらの名前に警告を出しませんが、ドキュメントでは同名の Mongoose メソッドやプロパティの代わりにフィールドの値が返ります：{keys}。',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: 'オン',
@@ -216,6 +222,8 @@ const STRINGS = {
     msgIgnored: 'Mongoose는 __proto__, constructor, prototype이라는 스키마 경로를 건너뜁니다: {keys}.',
     msgSkipped: '루트 배열에서 객체가 아닌 값 {n}개는 스키마에 넣지 않았습니다({types}).',
     msgReserved: 'Mongoose는 예약된 경로 이름도 경로로 남기지만 경고를 출력합니다: {keys}. 문서에서는 같은 이름의 메서드나 속성 대신 필드 값이 반환됩니다(save라는 필드가 있으면 doc.save()를 호출할 수 없음).',
+    msgBreaks: 'Mongoose 9.10.3은 이 이름의 문서 메서드를 직접 호출하므로, 필드 이름으로 쓰면 문서를 만들거나 검증하거나 직렬화할 때 실패할 수 있습니다: {keys}. 키 이름을 바꾸세요.',
+    msgMembers: 'Mongoose는 이 이름들에 경고를 내지 않지만, 문서에서는 같은 이름의 Mongoose 메서드나 속성 대신 필드 값이 반환됩니다: {keys}.',
     langJs: 'JavaScript',
     langTs: 'TypeScript',
     on: '켜짐',
@@ -239,6 +247,8 @@ const L = STRINGS[lang];
   data-msg-ignored={L.msgIgnored}
   data-msg-skipped={L.msgSkipped}
   data-msg-reserved={L.msgReserved}
+  data-msg-breaks={L.msgBreaks}
+  data-msg-members={L.msgMembers}
 >
   <div class="jtm-config">
     <div class="jtm-config-row jtm-model-row">
@@ -308,6 +318,8 @@ const L = STRINGS[lang];
       var MSG_IGNORED = wrap ? wrap.dataset.msgIgnored : 'Mongoose skips schema paths named __proto__, constructor or prototype: {keys}.';
       var MSG_SKIPPED = wrap ? wrap.dataset.msgSkipped : 'Skipped {n} root array values that are not objects ({types}).';
       var MSG_RESERVED = wrap ? wrap.dataset.msgReserved : '{keys}';
+      var MSG_BREAKS = wrap && wrap.dataset.msgBreaks || '{keys}';
+      var MSG_MEMBERS = wrap && wrap.dataset.msgMembers || '{keys}';
 
       var inputEl = document.getElementById('jtm-input');
       var outputCodeEl = document.getElementById('jtm-output-code');
@@ -802,6 +814,36 @@ const L = STRINGS[lang];
         if (outputCodeEl.textContent && !copyBtn.disabled) window.trackTool && window.trackTool('json-to-mongoose', 'generate');
       }
 
+      // Mongoose 9.10.3 members of a model document, a single nested subdocument and a document array
+      // element that are not in Schema.reserved (lib/document.js, lib/model.js, lib/types/subdocument.js,
+      // lib/types/arraySubdocument.js; the test rebuilds both lists with Mongoose 9.10.3). A field named as
+      // in DOC_BREAKS makes model(), new Model(), validateSync(), toObject() or JSON.stringify() fail or
+      // change; one named as in DOC_MEMBERS only replaces the member on the document. _id, __v and id are
+      // real paths (Mongoose skips its id getter when the schema has an id path), constructor never is.
+      var DOC_BREAKS = [
+        '$__', '$__buildDoc', '$__getValue', '$__hasOnlyPrimitiveValues', '$__init', '$__middleware', '$__parent',
+        '$__path', '$__pathRelativeToParent', '$__saveInitialState', '$__schema', '$__schemaTypeOptions', '$__set',
+        '$__setSchema', '$__toObjectShallow', '$__validateSync', '$basePath', '$emit', '$get', '$isDefault',
+        '$isModified', '$isSingleNested', '$isValid', '$markValid', '$parent', '$session', '$set', '$setIndex',
+        '$toObject', '__index', '__parentArray', '_doc', 'get', 'isDirectModified', 'markModified', 'modifiedPaths',
+        'schema', 'toBSON', 'toJSON', 'toObject', 'validateSync'
+      ];
+      var DOC_MEMBERS = [
+        '$__delta', '$__dirty', '$__fullPath', '$__fullPathWithIndexes', '$__getArrayPathsToValidate',
+        '$__handleReject', '$__isSelected', '$__removeFromParent', '$__reset', '$__resetAtomics', '$__save',
+        '$__setParent', '$__setValue', '$__shouldModify', '$__undoReset', '$__version', '$__where', '$addListener',
+        '$assertPopulated', '$clearModifiedPaths', '$clone', '$collection', '$createModifiedPathsSnapshot',
+        '$getAllSubdocs', '$getChanges', '$getPopulatedDocs', '$ignore', '$inc', '$init', '$isDeleted',
+        '$isDocumentArrayElement', '$isEmpty', '$isMongooseDocumentPrototype', '$isMongooseModelPrototype', '$isNew',
+        '$isSubdocument', '$listeners', '$locals', '$model', '$on', '$once', '$op', '$populated',
+        '$removeAllListeners', '$removeListener', '$restoreModifiedPathsSnapshot', '$save', '$setMaxListeners',
+        '$timestamps', '$validate', '$where', '_applyVersionIncrement', '_execDocumentPostHooks',
+        '_execDocumentPreHooks', 'addListener', 'db', 'deleteOne', 'depopulate', 'directModifiedPaths',
+        'discriminators', 'equals', 'getChanges', 'increment', 'inspect', 'invalidate', 'isDirectSelected', 'isInit',
+        'isSelected', 'model', 'on', 'once', 'overwrite', 'ownerDocument', 'parent', 'parentArray', 'populate',
+        'removeAllListeners', 'replaceOne', 'set', 'setMaxListeners', 'toString', 'unmarkModified', 'updateOne'
+      ];
+
       function convert() {
         clearTimeout(_liveTimer);
         _liveTimer = null;
@@ -873,7 +915,13 @@ const L = STRINGS[lang];
           return schemas.some(function (s) { return s.fields.some(function (f) { return f.key === k; }); });
         });
         if (reservedKeys.length) msg += ' ' + MSG_RESERVED.replace('{keys}', reservedKeys.join(', '));
+        var hasField = function (k) { return schemas.some(function (s) { return s.fields.some(function (f) { return f.key === k; }); }); };
+        var breakKeys = DOC_BREAKS.filter(hasField);
+        var memberKeys = DOC_MEMBERS.filter(hasField);
+        if (breakKeys.length) msg += ' ' + MSG_BREAKS.replace('{keys}', breakKeys.join(', '));
+        if (memberKeys.length) msg += ' ' + MSG_MEMBERS.replace('{keys}', memberKeys.join(', '));
         setStatus(msg + skippedNote, false);
+        if (breakKeys.length) statusEl.className = 'jtm-status warn';
       }
 
       var _liveTimer = null;
@@ -972,6 +1020,7 @@ const L = STRINGS[lang];
   .jtm-status { font-size: 0.85rem; line-height: 1.4; height: 2.4rem; flex: none; overflow: auto; overflow-wrap: anywhere; }
   .jtm-status.success { color: #057a55; }
   .jtm-status.error { color: #c0392b; }
+  .jtm-status.warn { color: #b45309; }
   #jtm-copy:disabled { opacity: 0.45; cursor: not-allowed; }
   @media (max-width: 860px) {
     .jtm-wrap { gap: 0.5rem; }
@@ -992,11 +1041,13 @@ const L = STRINGS[lang];
   @media (prefers-color-scheme: dark) {
     :global(:root:not([data-theme="light"])) .jtm-status.success { color: #34d399; }
     :global(:root:not([data-theme="light"])) .jtm-status.error { color: #f87171; }
+    :global(:root:not([data-theme="light"])) .jtm-status.warn { color: #fbbf24; }
     :global(:root:not([data-theme="light"])) .jtm-panel textarea.error { border-color: #f87171; }
     :global(:root:not([data-theme="light"])) .jtm-tab.active { background: var(--color-text); color: var(--color-bg); }
   }
   :global([data-theme="dark"]) .jtm-status.success { color: #34d399; }
   :global([data-theme="dark"]) .jtm-status.error { color: #f87171; }
+  :global([data-theme="dark"]) .jtm-status.warn { color: #fbbf24; }
   :global([data-theme="dark"]) .jtm-panel textarea.error { border-color: #f87171; }
   :global([data-theme="dark"]) .jtm-tab.active { background: var(--color-text); color: var(--color-bg); }
 </style>

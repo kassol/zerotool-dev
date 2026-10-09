@@ -241,6 +241,31 @@ for (const [raw, want] of MODEL_NAMES) {
 // Mongoose 9.10.3 Schema.reserved (lib/schema.js), without prototype (skipped as a special property).
 const MONGOOSE_RESERVED = ['emit', 'listeners', 'removeListener', 'collection', 'errors', 'get', 'init', 'isModified', 'isNew', 'populated', 'remove', 'save', 'toObject', 'validate'];
 
+// S2-10f (2026-10-09): Mongoose 9.10.3 warns only about Schema.reserved, but a document has many more
+// members (a model document, a single nested subdocument and a document array element). DOC_BREAKS: a
+// field with this name makes model(), new Model(), validateSync(), toObject() or JSON.stringify() fail or
+// change in at least one of seven layouts (the name as a string path, as a nested schema, beside a nested
+// schema, beside a document array, inside a nested schema, inside a document array, and with an input key
+// that is not in the schema); get and toObject are also reserved. DOC_MEMBERS: the other members outside
+// Schema.reserved, where the field value only replaces the member on the document. constructor, _id, __v
+// and id are left out (never a path, or a real path: Mongoose skips its id getter when the schema has an
+// id path, lib/helpers/schema/idGetter.js). With MONGOOSE_TEST_DIR both lists are rebuilt below.
+const DOC_BREAKS = ['$__', '$__buildDoc', '$__getValue', '$__hasOnlyPrimitiveValues', '$__init', '$__middleware', '$__parent', '$__path', '$__pathRelativeToParent', '$__saveInitialState', '$__schema', '$__schemaTypeOptions', '$__set', '$__setSchema', '$__toObjectShallow', '$__validateSync', '$basePath', '$emit', '$get', '$isDefault', '$isModified', '$isSingleNested', '$isValid', '$markValid', '$parent', '$session', '$set', '$setIndex', '$toObject', '__index', '__parentArray', '_doc', 'get', 'isDirectModified', 'markModified', 'modifiedPaths', 'schema', 'toBSON', 'toJSON', 'toObject', 'validateSync'];
+const DOC_MEMBERS = ['$__delta', '$__dirty', '$__fullPath', '$__fullPathWithIndexes', '$__getArrayPathsToValidate', '$__handleReject', '$__isSelected', '$__removeFromParent', '$__reset', '$__resetAtomics', '$__save', '$__setParent', '$__setValue', '$__shouldModify', '$__undoReset', '$__version', '$__where', '$addListener', '$assertPopulated', '$clearModifiedPaths', '$clone', '$collection', '$createModifiedPathsSnapshot', '$getAllSubdocs', '$getChanges', '$getPopulatedDocs', '$ignore', '$inc', '$init', '$isDeleted', '$isDocumentArrayElement', '$isEmpty', '$isMongooseDocumentPrototype', '$isMongooseModelPrototype', '$isNew', '$isSubdocument', '$listeners', '$locals', '$model', '$on', '$once', '$op', '$populated', '$removeAllListeners', '$removeListener', '$restoreModifiedPathsSnapshot', '$save', '$setMaxListeners', '$timestamps', '$validate', '$where', '_applyVersionIncrement', '_execDocumentPostHooks', '_execDocumentPreHooks', 'addListener', 'db', 'deleteOne', 'depopulate', 'directModifiedPaths', 'discriminators', 'equals', 'getChanges', 'increment', 'inspect', 'invalidate', 'isDirectSelected', 'isInit', 'isSelected', 'model', 'on', 'once', 'overwrite', 'ownerDocument', 'parent', 'parentArray', 'populate', 'removeAllListeners', 'replaceOne', 'set', 'setMaxListeners', 'toString', 'unmarkModified', 'updateOne'];
+{
+  const listOf = (name) => { const m = source.match(new RegExp('var ' + name + ' = (\\[[^\\]]*\\]);')); return m ? JSON.parse(m[1].replace(/'/g, '"')) : null; };
+  eq('S2-10f: the page lists the Mongoose names that break a document', JSON.stringify(listOf('DOC_BREAKS')), JSON.stringify(DOC_BREAKS));
+  eq('S2-10f: the page lists the Mongoose names that only replace a member', JSON.stringify(listOf('DOC_MEMBERS')), JSON.stringify(DOC_MEMBERS));
+  eq('S2-10f: list sizes', JSON.stringify([DOC_BREAKS.length, DOC_MEMBERS.length]), JSON.stringify([41, 83]));
+  eq('S2-10f: DOC_MEMBERS has no reserved, breaking, skipped or id name', JSON.stringify(DOC_MEMBERS.filter((k) => MONGOOSE_RESERVED.includes(k) || DOC_BREAKS.includes(k) || ['constructor', 'prototype', '_id', '__v', 'id'].includes(k))), '[]');
+  eq('S2-10f: DOC_BREAKS overlaps Schema.reserved only in get and toObject', JSON.stringify(DOC_BREAKS.filter((k) => MONGOOSE_RESERVED.includes(k))), JSON.stringify(['get', 'toObject']));
+  const labels = new Function(source.slice(source.indexOf('const STRINGS'), source.indexOf('const L = STRINGS')) + '\nreturn STRINGS;')();
+  for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['msgBreaks', 'msgMembers']) {
+    eq(`S2-10f: ${lang} ${key} names the keys`, typeof labels[lang][key] === 'string' && labels[lang][key].split('{keys}').length === 2, true);
+  }
+  eq('S2-10f: the breaking-name notice names the Mongoose version', ['en', 'zh', 'ja', 'ko'].every((lang) => String(labels[lang].msgBreaks ?? '').includes('Mongoose 9.10.3')), true);
+}
+
 // B1: a "__proto__" key is written as a computed key, so the object literal gets an own property
 // (a bare `__proto__:` sets the prototype); the TypeScript interface quotes it.
 {
@@ -282,6 +307,15 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(`${lang} page quotes the skipped-values status as the page shows it`, mdx.includes(pageLabels[lang].msgSkipped.replace('{n}', '5').replace('{types}', 'number × 2, string, null, array')), true);
   eq(`${lang} page names the three keys Mongoose skips`, ['<code>{"__proto__"}</code>', '<code>constructor</code>', '<code>prototype</code>', `<code>{'["__proto__"]'}</code>`].every((k) => mdx.includes(k)), true);
   eq(`${lang} page no longer says the first value decides`, /first value wins|首个值|最初の値|첫 값/.test(mdx), false);
+  // S2-10f: the limits quote the Mongoose 9.10.3 errors for document member names (checked below with MONGOOSE_TEST_DIR).
+  eq(`${lang} page quotes the Mongoose errors for document member names`, ['<code>markModified</code>', '<code>this.markModified is not a function</code>', '<code>_doc</code>', '<code>Maximum call stack size exceeded</code>', '<code>schema</code>', "<code>Cannot read properties of undefined (reading 'discriminatorKey')</code>", '<code>toJSON</code>', '<code>model</code>', '<code>set</code>'].filter((k) => !mdx.includes(k)).join(', '), '');
+  {
+    // The page names the breaking names that do not start with $, and how many do and how many members only replace a member.
+    const plain = DOC_BREAKS.filter((k) => !k.startsWith('$'));
+    const bullet = mdx.split('\n').find((l) => l.includes('this.markModified is not a function')) || '';
+    const count = (n) => new RegExp('(^|[^0-9])' + n + '([^0-9]|$)').test(bullet);
+    eq(`${lang} page lists the breaking names without $ and the counts`, JSON.stringify([plain.filter((k) => !bullet.includes('<code>' + k + '</code>')), count(DOC_BREAKS.length - plain.length), count(DOC_MEMBERS.length)]), JSON.stringify([[], true, true]));
+  }
   // {/* jtm-date: {"in", "iso"} */}: the value a Date path stores for `in`, as toISOString(), must be shown
   // in inline code before the next jtm-date note or heading. Mongoose casts a string with the Date
   // constructor, except numeric strings outside the Date year range, which it reads as milliseconds
@@ -366,6 +400,55 @@ if (process.env.MONGOOSE_TEST_DIR) {
     }
     const pops = new M({ pops: ['0', '10'] });
     eq('Mongoose casts ["0","10"] on a [Number] path to [0,10]', JSON.stringify([pops.validateSync()?.message ?? true, [...pops.pops]]), JSON.stringify([true, [0, 10]]));
+  }
+  {
+    // S2-10f: rebuild DOC_BREAKS and DOC_MEMBERS from the members of real Mongoose 9.10.3 documents.
+    const warningListeners = process.listeners('warning');
+    process.removeAllListeners('warning'); process.on('warning', () => {});
+    try {
+      const chain = (o) => { const names = new Set(); for (let p = o; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) for (const n of Object.getOwnPropertyNames(p)) names.add(n); return [...names]; };
+      const m0 = new mongoose.Mongoose();
+      const M0 = m0.model('Probe0', new m0.Schema({ label: String, sub: new m0.Schema({ a: Number }), list: [new m0.Schema({ a: Number })] }));
+      const inst = new M0({ label: 'x', sub: { a: 1 }, list: [{ a: 1 }] }); inst.validateSync(); inst.toObject(); JSON.stringify(inst);
+      const members = [...new Set([inst, inst.sub, inst.list[0]].flatMap((o) => [...chain(Object.getPrototypeOf(o)), ...Object.getOwnPropertyNames(o)]))].filter((n) => !['label', 'sub', 'list', 'a'].includes(n)).sort();
+      const layouts = {
+        string: (mg, n) => [{ [n]: { type: String }, label: String }, { [n]: 'v', label: 'x' }],
+        object: (mg, n) => [{ [n]: new mg.Schema({ a: Number }), label: String }, { [n]: { a: 1 }, label: 'x' }],
+        siblingSub: (mg, n) => [{ [n]: { type: String }, sub: new mg.Schema({ a: Number }) }, { [n]: 'v', sub: { a: 1 } }],
+        siblingArr: (mg, n) => [{ [n]: { type: String }, list: [new mg.Schema({ a: Number })] }, { [n]: 'v', list: [{ a: 1 }] }],
+        inSub: (mg, n) => [{ sub: new mg.Schema({ [n]: { type: String }, b: Number }) }, { sub: { [n]: 'v', b: 1 } }],
+        inArr: (mg, n) => [{ list: [new mg.Schema({ [n]: { type: String }, b: Number })] }, { list: [{ [n]: 'v', b: 1 }] }],
+        extraKey: (mg, n) => [{ [n]: { type: String }, label: String }, { [n]: 'v', label: 'x', extra: 1 }],
+      };
+      const keysDeep = (v) => JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, typeof x[key] === 'object' ? x[key] : 0])) : x);
+      const fine = (name, layout) => {
+        const mg = new mongoose.Mongoose();
+        try {
+          const [def, sample] = layouts[layout](mg, name);
+          const doc = new (mg.model('P', new mg.Schema(def)))(sample);
+          if (doc.validateSync()) return false;
+          return keysDeep(JSON.parse(JSON.stringify(doc))) === keysDeep(JSON.parse(JSON.stringify(doc.toObject())));
+        } catch { return false; }
+      };
+      const left = members.filter((n) => !['constructor', '_id', '__v', 'id'].includes(n));
+      const breaks = left.filter((n) => Object.keys(layouts).some((layout) => !fine(n, layout)));
+      const reserved = Object.keys(mongoose.Schema.reserved);
+      eq('Mongoose 9.10.3 members rebuild DOC_BREAKS', JSON.stringify(breaks), JSON.stringify(DOC_BREAKS));
+      eq('Mongoose 9.10.3 members rebuild DOC_MEMBERS', JSON.stringify(left.filter((n) => !breaks.includes(n) && !reserved.includes(n))), JSON.stringify(DOC_MEMBERS));
+      // The limits quote these results; each runs generated code with the real library.
+      const run = (json, sample) => { const iso = new mongoose.Mongoose(); const mod = { exports: {} }; new Function('require', 'module', gen(json, 'Sample', 'javascript', false, false))(() => iso, mod); return new mod.exports(sample); };
+      const error = (fn) => { try { fn(); return ''; } catch (e) { return e.message; } };
+      eq('page claim: a markModified field breaks new Model()', error(() => run('{"markModified":"x","label":"y"}', { markModified: 'x', label: 'y' })), 'this.markModified is not a function');
+      eq('page claim: a _doc field overflows the stack', error(() => run('{"_doc":"x","label":"y"}', { _doc: 'x', label: 'y' })), 'Maximum call stack size exceeded');
+      eq('page claim: a schema field works while the input has only schema keys', error(() => { if (run('{"schema":"x","label":"y"}', { schema: 'x', label: 'y' }).validateSync()) throw Error('invalid'); }), '');
+      eq('page claim: a schema field breaks on a key outside the schema', error(() => run('{"schema":"x","label":"y"}', { schema: 'x', label: 'y', extra: 1 })), "Cannot read properties of undefined (reading 'discriminatorKey')");
+      { const s = JSON.stringify(run('{"toJSON":"x","label":"y"}', { toJSON: 'x', label: 'y' })); eq('page claim: a toJSON field makes JSON.stringify print internals', JSON.stringify([s.includes('"$__"'), s.includes('"_doc"')]), JSON.stringify([true, true])); }
+      { const d = run('{"model":"m","set":"s","label":"y"}', { model: 'm', set: 's', label: 'y' }); eq('page claim: doc.model and doc.set are the field values', JSON.stringify([d.model, d.set, d.validateSync() ? 'invalid' : 'valid']), JSON.stringify(['m', 's', 'valid'])); }
+      await new Promise(setImmediate);
+    } finally {
+      process.removeAllListeners('warning');
+      for (const listener of warningListeners) process.on('warning', listener);
+    }
   }
   for (const [name, json] of RUNTIME) {
     try {
@@ -571,6 +654,17 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
     // Reserved path names (Mongoose 9.10.3 lib/schema.js Schema.reserved): the status line names them.
     {const w=page(lang,shellFirst);w.input('{"save":"s","errors":["e"],"b":{"isNew":true}}');w.advance(300);
       same(tag+' reserved: status names the reserved path names',w.get(cfg.status).textContent.includes(String(labels[lang].msgReserved).replace('{keys}','errors, isNew, save')),true);}
+    // S2-10f: other Mongoose 9.10.3 document members, in nested schemas too; a name that breaks a document turns the status amber.
+    {const w=page(lang,shellFirst);w.input('{"markModified":1,"model":"m","b":{"set":true,"_doc":"d"},"label":"x"}');w.advance(300);
+      const st=w.get(cfg.status).textContent;
+      same(tag+' members: status names the keys that break a document',st.includes(String(labels[lang].msgBreaks).replace('{keys}','_doc, markModified')),true);
+      same(tag+' members: status names the keys that only replace a member',st.includes(String(labels[lang].msgMembers).replace('{keys}','model, set')),true);
+      same(tag+' members: a breaking key turns the status amber',w.get(cfg.status).className,'jtm-status warn');
+      w.input('{"get":"g"}');w.advance(300);
+      same(tag+' members: a reserved name that breaks a document is named in both notices',[w.get(cfg.status).textContent.includes(String(labels[lang].msgReserved).replace('{keys}','get')),w.get(cfg.status).textContent.includes(String(labels[lang].msgBreaks).replace('{keys}','get')),w.get(cfg.status).className],[true,true,'jtm-status warn']);
+      w.input('{"model":"m"}');w.advance(300);
+      same(tag+' members: a member name alone keeps the success colour',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne+' '+String(labels[lang].msgMembers).replace('{keys}','model'),'jtm-status success']);
+      w.input('{"b":1}');w.advance(300);same(tag+' members: no notice without such keys',[w.get(cfg.status).textContent,w.get(cfg.status).className],[labels[lang].msgGenOne,'jtm-status success']);}
     // S2-10f: a JSON syntax error names line, column and cause in the page language, clears the output
     // and disables Copy; before, the status was the prefix plus the browser's English message.
     {const w=page(lang,shellFirst);w.example();
