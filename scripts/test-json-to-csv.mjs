@@ -58,6 +58,9 @@ const JSON_ERRORS = [
   ['[{\u201cid\u201d: 1}]', 'smartQuote', 1, 3, '\u201c'],
   ['[{"id": 1} // first row\n]', 'comment', 1, 12],
 ];
+// S2-10f review S4: valid JSON nested deeper than the call stack allows (Node 22 runs out well below 20,000 levels;
+// browsers differ). The page shows a four-language notice instead of leaving the previous CSV on screen.
+const DEEP_JSON = '[' + '{"a":'.repeat(20000) + '1' + '}'.repeat(20000) + ']';
 const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
 
 let failures = 0;
@@ -287,6 +290,14 @@ for (const lang of ['zh', 'ja', 'ko']) eq(lang + ' labels match en', keysOf(lang
     {const w=page(lang,shellFirst);w.example();
       for(const [input,code,line,col,ch] of JSON_ERRORS){w.input(input);w.advance(300);
         same(tag+' JSON error '+code+' in the page language',[w.get(cfg.status).textContent,w.get(cfg.status).classList.contains('error'),w.out(),w.get(cfg.output).dataset.empty],[jsonErrorMessage(lang,code,line,col,ch),true,'','true']);}}
+    // S2-10f review S4: too deep for the call stack (flatten on and off). Before, the exception escaped the timer and the
+    // old CSV and status stayed; Copy and Download then saved that old CSV.
+    for(const flat of ['true','false']){const w=page(lang,shellFirst);w.example();w.get('jtc-flatten-tabs').querySelector('[data-flatten="'+flat+'"]').click();const before=w.tracks.length;
+      w.input(DEEP_JSON);let thrown;try{w.advance(300);}catch(e){thrown=e.name;}
+      same(tag+' too deep (flatten '+flat+'): no uncaught error',thrown,undefined);
+      same(tag+' too deep (flatten '+flat+'): notice in the page language, old CSV cleared',[w.get(cfg.status).textContent,w.get(cfg.status).classList.contains('error'),w.out(),w.get(cfg.output).dataset.empty],[labels[lang].msgTooDeep,true,'','true']);
+      w.get(cfg.copy).click();w.get('jtc-download').click();w.get(cfg.input).dispatch('change');
+      same(tag+' too deep (flatten '+flat+'): Copy and Download save nothing, no usage event',[w.copies.length,w.blobs.length,w.tracks.length],[0,0,before]);}
     // Analytics: one event per committed change (input change event, option click, Example), not on load or per typing pause.
     const ga=page(lang,shellFirst);same(tag+' GA: page load sends nothing',ga.tracks.length,0);
     ga.input('[{"a":1}]');ga.advance(300);same(tag+' GA: typing pause sends nothing',ga.tracks.length,0);

@@ -40,6 +40,7 @@ const STRINGS = {
     msgOneRow: '1 row converted',
     msgEmptyArray: 'Empty array — nothing to convert',
     msgNotArray: 'Input must be a JSON array of objects',
+    msgTooDeep: 'The JSON is nested too deeply to convert in this browser (the call stack ran out). Nothing was converted.',
     errJson: 'This is not valid JSON.',
     errJsonAt: 'This is not valid JSON: line {line}, column {col}, {reason}.',
     jsonParse: {
@@ -104,6 +105,7 @@ const STRINGS = {
     msgOneRow: '已转换 1 行',
     msgEmptyArray: '空数组——无内容可转换',
     msgNotArray: '输入必须是 JSON 对象数组',
+    msgTooDeep: 'JSON 嵌套层数过深，此浏览器无法转换（调用栈耗尽），未转换任何内容。',
     errJson: '这不是有效的 JSON。',
     errJsonAt: '这不是有效的 JSON：第 {line} 行第 {col} 列，{reason}。',
     jsonParse: {
@@ -168,6 +170,7 @@ const STRINGS = {
     msgOneRow: '1 行を変換しました',
     msgEmptyArray: '空の配列 — 変換するデータがありません',
     msgNotArray: '入力はオブジェクトの JSON 配列である必要があります',
+    msgTooDeep: 'JSON の入れ子が深すぎるため、このブラウザでは変換できません（コールスタック不足）。何も変換していません。',
     errJson: '有効な JSON ではありません。',
     errJsonAt: '有効な JSON ではありません：{line} 行 {col} 列目、{reason}。',
     jsonParse: {
@@ -232,6 +235,7 @@ const STRINGS = {
     msgOneRow: '1행 변환됨',
     msgEmptyArray: '빈 배열 — 변환할 데이터가 없습니다',
     msgNotArray: '입력은 객체의 JSON 배열이어야 합니다',
+    msgTooDeep: 'JSON 중첩이 너무 깊어 이 브라우저에서 변환할 수 없습니다(호출 스택 부족). 아무것도 변환하지 않았습니다.',
     errJson: '올바른 JSON이 아닙니다.',
     errJsonAt: '올바른 JSON이 아닙니다: {line}행 {col}열, {reason}.',
     jsonParse: {
@@ -275,6 +279,7 @@ const L = STRINGS[lang];
   data-msg-one-row={L.msgOneRow}
   data-msg-empty-array={L.msgEmptyArray}
   data-msg-not-array={L.msgNotArray}
+  data-msg-too-deep={L.msgTooDeep}
   data-err-json={L.errJson}
   data-err-json-at={L.errJsonAt}
   data-json-parse={JSON.stringify(L.jsonParse)}
@@ -362,6 +367,7 @@ const L = STRINGS[lang];
       var MSG_ONE_ROW = wrap.dataset.msgOneRow || '1 row converted';
       var MSG_EMPTY = wrap.dataset.msgEmptyArray || 'Empty array — nothing to convert';
       var MSG_NOT_ARRAY = wrap.dataset.msgNotArray || 'Input must be a JSON array of objects';
+      var MSG_TOO_DEEP = wrap.dataset.msgTooDeep || 'The JSON is nested too deeply to convert in this browser (the call stack ran out). Nothing was converted.';
       var ERR_JSON = wrap.dataset.errJson || 'This is not valid JSON.';
       var ERR_JSON_AT = wrap.dataset.errJsonAt || 'This is not valid JSON: line {line}, column {col}, {reason}.';
       var JSON_PARSE: Record<string, string> = {};
@@ -633,6 +639,13 @@ const L = STRINGS[lang];
       }
       /* ── json-reason:end ── */
 
+      // A stack overflow while walking very deep JSON: RangeError "Maximum call stack size exceeded" in Chrome
+      // and Safari, InternalError "too much recursion" in Firefox (MDN: "Too much recursion").
+      function isTooDeep(e: unknown) {
+        var err = e as { name?: string; message?: string } | null;
+        return !!err && (err.name === 'RangeError' || err.name === 'InternalError') && /call stack|recursion/i.test(String(err.message));
+      }
+
       function convert() {
         clearTimeout(_liveTimer!);
         resetCopy();
@@ -673,8 +686,17 @@ const L = STRINGS[lang];
           return;
         }
 
-        var rows = toRows(parsed, flatten);
-        var result = buildCsv(rows, delimiter, includeHeader, guard);
+        var rows, result;
+        try {
+          rows = toRows(parsed, flatten);
+          result = buildCsv(rows, delimiter, includeHeader, guard);
+        } catch (e: unknown) {
+          if (!isTooDeep(e)) throw e;
+          outputEl.value = '';
+          outputEl.dataset.empty = 'true';
+          setStatus(MSG_TOO_DEEP, true);
+          return;
+        }
         outputEl.value = result.csv;
         outputEl.dataset.empty = String(!result.csv);
         var msg = rows.length === 1 ? MSG_ONE_ROW : MSG_ROWS.replace('{n}', String(rows.length));
