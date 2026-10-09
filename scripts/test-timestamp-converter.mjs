@@ -19,6 +19,8 @@
 // examples on the four tool pages (with process.env.TZ per example) and the local FAQ answers;
 // decimal seconds and milliseconds read exactly from the digits (8,000 seeded random values
 // compared with BigInt arithmetic on the decimal string; 1085157552.978 used to give …977).
+// S2-9 review: one ts_to_date event per new Timestamp → Date result on every path (the button
+// used to send one per click and Enter none); the ko status particle; ko quotes; FAQ offsets.
 //
 // Run: node scripts/test-timestamp-converter.mjs
 
@@ -291,7 +293,8 @@ try {
         const before = p.get(upper).htmlWrites; p.key('tc-ts-input', 'Enter', modifier);
         eq(prefix + 'Enter performs one DOM render ' + shellFirst + '/' + modifier, p.get(upper).htmlWrites - before, 1);
         eq(prefix + 'Enter keeps the actual timestamp value ' + shellFirst + '/' + modifier, rows(p, upper)[2], '2023-11-14T22:13:20.000Z');
-        eq(prefix + 'shared primary action tracks once ' + shellFirst + '/' + modifier, p.tracks.length, modifier ? 1 : 0);
+        // S2-9 review: plain Enter now counts like the button (one ts_to_date per new result).
+        eq(prefix + 'Enter and Ctrl/⌘+Enter track one conversion ' + shellFirst + '/' + modifier, p.tracks.length, 1);
       }
       for (const shellFirst of [false, true]) for (const modifier of ['ctrlKey', 'metaKey']) {
         const p = lifecyclePage(lang, shellFirst); p.input('tc-unit', 'ms', 'change'); convertTimestamp(p); convertDate(p);
@@ -417,6 +420,33 @@ try {
       eq(prefix + JSON.stringify(bad) + ' is rejected with the page-language message', [rows(p, upper), p.get('tc-ts-status').textContent, p.get('tc-ts-status').className], [[], ERR_NUM[lang], 'tc-status error']);
     }
     eq(prefix + 'the message no longer offers dates in this field', /or date|或日期|または日付|나 날짜/.test(client.errNum), false);
+  }
+
+  // ---------- usage statistics: one ts_to_date per new result (S2-9 review) ----------
+  // Every Timestamp → Date path (Convert, Enter, Ctrl/⌘+Enter, Now, a unit change) sends one event
+  // when the result (unit and millisecond) differs from the last one sent. Invalid values and
+  // Date → Timestamp send nothing; clearing the field (Ctrl/⌘+L or an empty conversion) resets it.
+  process.env.TZ = 'UTC';
+  for (const lang of Object.keys(languageText)) {
+    const prefix = 'analytics/' + lang + ': ', p = lifecyclePage(lang), count = () => p.tracks.length;
+    convertTimestamp(p, '1700000000');
+    eq(prefix + 'Convert sends one event without the value', p.tracks, [['timestamp_converter', 'ts_to_date']]);
+    p.get('tc-ts-convert').click(); eq(prefix + 'the same result again sends nothing', count(), 1);
+    p.input('tc-ts-input', ' 1700000000 '); p.key('tc-ts-input', 'Enter', null); eq(prefix + 'Enter with the same result sends nothing', count(), 1);
+    p.input('tc-ts-input', '1700000001'); p.key('tc-ts-input', 'Enter', null); eq(prefix + 'Enter with a new result sends one event', count(), 2);
+    p.input('tc-unit', 'ms', 'change'); eq(prefix + 'a unit change that gives a new result sends one event', count(), 3);
+    p.input('tc-unit', 'auto', 'change'); eq(prefix + 'the unit change back gives a new result again', count(), 4);
+    convertTimestamp(p, 'abc'); eq(prefix + 'an invalid value sends nothing', count(), 4);
+    p.get('tc-ts-now').click(); eq(prefix + 'Now sends one event', count(), 5);
+    convertDate(p); eq(prefix + 'Date → Timestamp sends nothing', count(), 5);
+    eq(prefix + 'every event names only the tool and the action', p.tracks.every((args) => JSON.stringify(args) === '["timestamp_converter","ts_to_date"]'), true);
+    const q = lifecyclePage(lang);
+    convertTimestamp(q, '1700000000'); q.key('tc-ts-input', 'l', 'ctrlKey'); q.flushTimers(); convertTimestamp(q, '1700000000');
+    eq(prefix + 'Ctrl/⌘+L resets the last result', q.tracks.length, 2);
+    convertTimestamp(q, ''); convertTimestamp(q, '1700000000');
+    eq(prefix + 'an empty conversion resets the last result', q.tracks.length, 3);
+    const answer = readToolMdx('timestamp-converter')[lang].data.faqItems.find((f) => f.id === 'privacy').answer, client = clientFor(lang);
+    eq(prefix + 'the privacy answer names every path that sends the event', [client.convert, 'Enter', 'Ctrl/⌘+Enter', client.now].filter((word) => !answer.includes(word)), []);
   }
 
   // ---------- ko status particle (S2-9 review) ----------

@@ -299,12 +299,16 @@ const { tips: TIPS, ...CLIENT_T } = T;
         return s.replace(/[\uFF0B\uFF0D\uFF0E\uFF10-\uFF19]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
       }
 
+      // Usage statistics: one ts_to_date for each new result (Convert, Enter, Ctrl/⌘+Enter, Now or a
+      // unit change); the same unit and millisecond are not sent again until the field is cleared.
+      var lastTracked = null;
+
       // Timestamp -> Date
       function convertTs() {
         invalidateCopies();
         var raw = halfWidth(tsInput.value).trim();
         tsResults.innerHTML = '';
-        if (!raw) { tsStatus.textContent = ''; tsStatus.className = 'tc-status'; return; }
+        if (!raw) { tsStatus.textContent = ''; tsStatus.className = 'tc-status'; lastTracked = null; return; }
         var read = readTimestamp(raw, unitSel.value);
         if (read.error === 'num') { setStatus(tsStatus, t.errNum, true); return; }
         if (read.error === 'range') { setStatus(tsStatus, t.errRange, true); return; }
@@ -332,12 +336,14 @@ const { tips: TIPS, ...CLIENT_T } = T;
           tsResults.appendChild(makeResultRow(pair[0], pair[1]));
         });
         attachCopyListeners(tsResults);
+        var key = read.unit + ' ' + ms;
+        if (key !== lastTracked) {
+          lastTracked = key;
+          window.trackTool && window.trackTool('timestamp_converter', 'ts_to_date');
+        }
       }
 
-      document.getElementById('tc-ts-convert').addEventListener('click', function () {
-        convertTs();
-        window.trackTool && window.trackTool('timestamp_converter', 'ts_to_date');
-      });
+      document.getElementById('tc-ts-convert').addEventListener('click', function () { convertTs(); });
       tsInput.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) convertTs(); });
       tsInput.addEventListener('input', invalidateCopies);
       dateInput.addEventListener('input', invalidateCopies);
