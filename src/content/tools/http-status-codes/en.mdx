@@ -6,14 +6,21 @@ steps:
   - "Read matching codes and descriptions; the list filters as you type without regard to letter case."
   - "Empty Search to browse all 61 listed codes by category."
 faqItems:
-  - question: "What do the different HTTP status code ranges mean?"
+  - id: ranges
+    question: "What do the different HTTP status code ranges mean?"
     answer: "1xx = Informational (request received, continuing). 2xx = Success (request completed). 3xx = Redirection (further action needed). 4xx = Client error (bad request, not found, unauthorized). 5xx = Server error (the server failed to handle a valid request)."
-  - question: "What is the difference between 301 and 302?"
-    answer: "301 Moved Permanently tells browsers and search engines to update their records — the resource has moved for good. 302 Found is a temporary redirect; clients should keep using the original URL for future requests."
-  - question: "When should I use 404 vs 410?"
-    answer: "Use 404 Not Found when the resource doesn't exist and you're unsure if it will return. Use 410 Gone when you're certain the resource is permanently removed and will never return — this signals search engines to deindex it."
-  - question: "Why does 429 matter for APIs?"
-    answer: "429 Too Many Requests is the standard response for rate limiting. Clients should respect Retry-After headers and implement exponential backoff to avoid hammering the server."
+  - id: redirect-301-302
+    question: "What is the difference between 301 and 302?"
+    answer: "301 Moved Permanently says the resource has a new permanent URI and future references ought to use it (RFC 9110 section 15.4.2). 302 Found says the move is temporary, so clients ought to keep using the original URI (section 15.4.3). Google's crawlers treat a 301 as a strong signal and a 302 as a weak signal that the redirect target should be processed. A browser may change POST to GET when it follows either one; 308 and 307 keep the method."
+  - id: gone-404-410
+    question: "When should I use 404 vs 410?"
+    answer: "Use 410 Gone when the server knows the resource was removed on purpose and the condition is likely permanent; if the server cannot tell, RFC 9110 section 15.5.11 says to use 404. For Google Search the choice makes no difference: Google treats every 4xx code except 429 the same and drops the URL from the index."
+  - id: rate-limit-429
+    question: "Why does 429 matter for APIs?"
+    answer: "429 Too Many Requests is the status code for rate limiting (RFC 6585 section 4). The response may include Retry-After with the number of seconds to wait; clients should wait at least that long and back off further on repeated 429s. Google's crawlers treat 429 like a server error and slow down."
+  - id: privacy
+    question: "Is my search sent anywhere?"
+    answer: "No. The 61 codes are part of the page, and the search filters them in your browser. The search text is not sent or saved. When analytics is on, a search event records only the tool name and the action, not what you typed."
 ---
 
 <h2>Status Code Categories</h2>
@@ -39,6 +46,31 @@ faqItems:
   <li><strong>500 Internal Server Error</strong> — Unexpected server failure.</li>
   <li><strong>503 Service Unavailable</strong> — Server down or overloaded.</li>
 </ul>
+
+## Searching the List
+
+The search matches part of the code, the name or the English description, so a word can find fewer or more codes than you expect. `redirect` finds only 307 and 308, because the descriptions of 301 and 302 say "moved" instead; `moved` finds those two and 308:
+
+{/* hsc-check: {"q":"redirect"} */}
+```text
+307 Temporary Redirect
+308 Permanent Redirect
+```
+
+{/* hsc-check: {"q":"moved"} */}
+```text
+301 Moved Permanently
+302 Found
+308 Permanent Redirect
+```
+
+A number matches any code that contains it, so `50` lists 500 to 508. A short word also matches inside longer words: `rate` finds 429 and also 208, whose description contains the word "enumerated".
+
+{/* hsc-check: {"q":"rate"} */}
+```text
+208 Already Reported
+429 Too Many Requests
+```
 
 ## Choosing a Status Code for an API
 
@@ -87,6 +119,7 @@ const order = await res.json();
 
 ## Limits
 
-- **61 registered codes.** The list follows the IANA registry. Codes that only one product uses, such as nginx 499 or Cloudflare 520–526, are not in the list.
-- **Older names for two codes.** The list uses 413 Payload Too Large and 422 Unprocessable Entity. [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110#section-15.5) renamed them to Content Too Large and Unprocessable Content.
-- **English only.** Names and descriptions are in English on every language version of this page. The search matches the code, the name, or words in the English description.
+{/* hsc-iana */}
+- **61 codes, compared with the IANA registry.** Checked against the [IANA HTTP Status Code Registry](https://www.iana.org/assignments/http-status-codes/) (last updated 2025-09-15): every listed code has an entry there. The registry also has 104 (a temporary registration that expires on 2026-11-13), 305 Use Proxy (deprecated) and 306 (unused), which the list leaves out. Codes that only one product uses, such as nginx 499 or Cloudflare 520–526, are not in the registry or the list.
+- **Four names differ from the registry.** The list uses 413 Payload Too Large and 422 Unprocessable Entity; [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110#section-15.5) renamed them to Content Too Large and Unprocessable Content. It calls 418 "I'm a Teapot", which the registry lists as (Unused): RFC 9110 section 15.5.19 reserves the code because the April Fools' RFC 2324 used it. 510 Not Extended is marked OBSOLETED in the registry.
+- **English only.** Names and descriptions are in English on every language version of this page. The search matches the code, the name, or words in the English description. Full-width digits such as `４０４` find nothing.

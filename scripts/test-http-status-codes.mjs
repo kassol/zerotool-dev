@@ -10,7 +10,7 @@ import {createRequire} from 'node:module';
 import vm from 'node:vm';
 import domino from '@mixmark-io/domino';
 import {loadPage,frontmatterStrings} from './astro-page-harness.mjs';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const source=readFileSync(join(root,'src/components/tools/HttpStatusCodesTool.astro'),'utf8');
 const layout=readFileSync(join(root,'src/layouts/ToolLayout.astro'),'utf8');
@@ -128,7 +128,8 @@ for(const lang of ['en','zh','ja','ko']){
  check('v2 '+lang+' steps before FAQ',content.indexOf('steps:')<content.indexOf('faqItems:'));
  check('v2 '+lang+' Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(content));
  eq('v2 '+lang+' MDX content contract', contractProblems('http-status-codes', lang), '');
- eq('v2 '+lang+' JavaScript example protected',sha((content.match(/```[\s\S]*?```/g)||[]).join('\n')),'72144a96b2523d315c9c4a21391e9ad92c36bae19e8ddd9610dc6a6242f3a92a');
+ const jsBlock=c=>fencedBlocks(c).find(b=>b.lang==='javascript')?.text;
+ eq('v2 '+lang+' JavaScript example same as the English page',jsBlock(content),jsBlock(readFileSync(join(root,'src/content/tools/http-status-codes/en.mdx'),'utf8')));
  let error='';try{await compile(content.replace(/^---\n[\s\S]*?\n---/,''));}catch(e){error=String(e);}
  eq('v2 '+lang+' real MDX compiles',error,'');
  for(const order of ['shared-before','shared-after'])for(const focus of ['[data-zt-tip="hs-tip-search"]','[data-zt-tip="hs-tip-results"]','#hs-list']){
@@ -150,6 +151,35 @@ for(const lang of ['en','zh','ja','ko']){
  p.type('x'.repeat(100000));eq('v2 long query has no results',p.rows().length,0);check('v2 long query shows no-match',p.empty());
  p.type('');eq('v2 empty after long query restores every complete row',sha(JSON.stringify(p.rows())),'3bfb32b42e1bfc9553e6c5ef2bec49537ea34bfa4bda44c148bf642ae24e780d');
 }
+// ---------- IANA registry and worked examples ----------
+// IANA "HTTP Status Code Registry", http-status-codes-1.csv, registry updated 2025-09-15,
+// downloaded 2026-10-09 from https://www.iana.org/assignments/http-status-codes/. Ranges marked
+// Unassigned are left out.
+const IANA_UPDATED='2025-09-15';
+const IANA=Object.fromEntries(`100 Continue|101 Switching Protocols|102 Processing|103 Early Hints|104 Upload Resumption Supported (TEMPORARY - registered 2024-11-13, extension registered 2025-09-15, expires 2026-11-13)|200 OK|201 Created|202 Accepted|203 Non-Authoritative Information|204 No Content|205 Reset Content|206 Partial Content|207 Multi-Status|208 Already Reported|226 IM Used|300 Multiple Choices|301 Moved Permanently|302 Found|303 See Other|304 Not Modified|305 Use Proxy|306 (Unused)|307 Temporary Redirect|308 Permanent Redirect|400 Bad Request|401 Unauthorized|402 Payment Required|403 Forbidden|404 Not Found|405 Method Not Allowed|406 Not Acceptable|407 Proxy Authentication Required|408 Request Timeout|409 Conflict|410 Gone|411 Length Required|412 Precondition Failed|413 Content Too Large|414 URI Too Long|415 Unsupported Media Type|416 Range Not Satisfiable|417 Expectation Failed|418 (Unused)|421 Misdirected Request|422 Unprocessable Content|423 Locked|424 Failed Dependency|425 Too Early|426 Upgrade Required|428 Precondition Required|429 Too Many Requests|431 Request Header Fields Too Large|451 Unavailable For Legal Reasons|500 Internal Server Error|501 Not Implemented|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|505 HTTP Version Not Supported|506 Variant Also Negotiates|507 Insufficient Storage|508 Loop Detected|510 Not Extended (OBSOLETED)|511 Network Authentication Required`.split('|').map(x=>[+x.slice(0,3),x.slice(4)]));
+{
+ const rows=page('en','shared-after').rows(),list=Object.fromEntries(rows.map(r=>[+r.code,r.name]));
+ eq('IANA: every listed code is an IANA entry',Object.keys(list).filter(c=>!IANA[c]).map(Number),[]);
+ eq('IANA: entries not in the list',Object.keys(IANA).filter(c=>!list[c]).map(Number),[104,305,306]);
+ eq('IANA: listed names that differ from the registry',Object.keys(list).filter(c=>list[c]!==IANA[c]).map(c=>[+c,list[c],IANA[c]]),
+  [[413,'Payload Too Large','Content Too Large'],[418,"I'm a Teapot",'(Unused)'],[422,'Unprocessable Entity','Unprocessable Content'],[510,'Not Extended','Not Extended (OBSOLETED)']]);
+}
+// {/* hsc-check: {"q":"..."} */} is followed by a code block with the rows the real page shows
+// for that search, one "code name" per line, or the page's no-match text.
+// {/* hsc-iana */} marks the Limits text that compares the list with the registry.
+const hscVerify=({spec,after,lang})=>{
+ const block=fencedBlocks(after)[0];if(!block)return 'no output block';
+ const p=page(lang,'shared-after');p.type(spec.q);
+ const got=p.rows().length?p.rows().map(r=>r.code+' '+r.name).join('\n'):STRINGS[lang].noMatch;
+ return got===block.text?null:'the page shows:\n'+got;
+};
+const ianaVerify=({after})=>{
+ const missing=['61','104','305','306','413','418','422','510',IANA_UPDATED].filter(x=>!after.includes(x));
+ return missing.length?'Limits text does not mention '+missing.join(', '):null;
+};
+const exampleOpts={annotations:[{tag:'hsc-check',min:2,verify:hscVerify},{tag:'hsc-iana',min:1,verify:ianaVerify}]};
+for(const lang of ['en','zh','ja','ko'])eq(lang+' worked examples and registry note match the page',contractProblems('http-status-codes',lang,exampleOpts),'');
+
 check('v2 registered as analyze',/'http-status-codes':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
 
 console.log('\n'+passes+' passed, '+failures+' failed');
