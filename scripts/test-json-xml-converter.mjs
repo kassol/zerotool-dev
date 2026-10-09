@@ -444,8 +444,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 /* ── v2 page layout ── */
 check('all FIX behavior checks retained', checks.length, 642);
-// S2-10f GA: one event per successful conversion (button or Ctrl/⌘+Enter); the same direction, input, root
-// element and pretty print are sent once; failed and empty conversions send nothing; Clear and Ctrl/⌘+L start over.
+// S2-10f GA: one event per successful conversion (button or Ctrl/⌘+Enter); an event that repeats the previous
+// direction, input, root element and pretty print is skipped; failed and empty conversions send nothing; Clear and
+// Ctrl/⌘+L start over.
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const g = page(lang), tag = lang + ' GA';
   check(tag + ' page load sends nothing', g.tracks.length, 0);
@@ -461,11 +462,15 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   g.get('jx-xml').value = '<r>'; g.get('jx-to-json').click(); check(tag + ' invalid XML sends nothing', g.tracks.length, 3);
   g.get('jx-clear').click(); g.get('jx-json').value = JSON_TEXT; g.get('jx-root').value = 'config'; g.get('jx-to-xml').click(); check(tag + ' after Clear the same conversion sends again', g.tracks.length, 4);
   g.key('jx-json'); g.get('jx-json').value = JSON_TEXT; g.get('jx-root').value = 'config'; g.get('jx-to-xml').click(); check(tag + ' after Ctrl+L the same conversion sends again', g.tracks.length, 5);
+  // S2-10f review M1: only a repeat of the previous event is skipped, so switching the root element back sends again.
+  const b = page(lang); b.get('jx-json').value = JSON_TEXT;
+  for (const root of ['root', 'config', 'root']) { b.get('jx-root').value = root; b.get('jx-to-xml').click(); }
+  check(tag + ' switching the root element back sends again', b.tracks.length, 3);
 }
 // S2-10f (2026-10-09) added the json-reason block and parses JSON in its own try for the localized syntax error;
-// analytics records only successful conversions, the same one once. Its review added the notices for JSON or XML
+// analytics records only successful conversions and skips a repeat of the previous one. Its review added the notices for JSON or XML
 // nested too deeply for the call stack and stopped counting a leading byte order mark as a column.
-check('client script only removes runtime STRINGS and localization', hash(js), '4700e5bdee25b358c961bc838829f4402922ebe2c508e530cdf2b3a466b7496c');
+check('client script only removes runtime STRINGS and localization', hash(js), 'e32b49e1c5a14fae5dadae11b67a401b17081fce87999c77d661cdc42ed556db');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jx-wrap"/.test(markup), true);

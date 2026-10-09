@@ -702,12 +702,14 @@ if (process.env.MONGOOSE_TEST_DIR && ts.version === '5.9.3') {
       g.input('');g.get(cfg.input).dispatch('change');same(tag+' GA: empty input sends no event',g.tracks.length,2);
       g.example();same(tag+' GA: Example sends one event',g.tracks.length,3);
       g.input('Order','jtm-model-name');g.get('jtm-model-name').dispatch('change');same(tag+' GA: model name change sends one event',[g.out().includes("'Order'"),g.tracks.length],[true,4]);
-      // S2-10f: the same JSON, model name and options are sent once; Clear and Ctrl/⌘+L start over.
+      // S2-10f: an event that repeats the previous JSON, model name and options is skipped; Clear and Ctrl/⌘+L start over.
       g.example();same(tag+' GA: Example again with nothing changed sends nothing',g.tracks.length,4);
       g.get(cfg.input).dispatch('change');same(tag+' GA: a change with the sent JSON, model name and options sends nothing',g.tracks.length,4);
       g.get('jtm-ts-tabs').querySelectorAll('.jtm-tab').find(t=>!t.classList.contains('active')).click();same(tag+' GA: a new option still sends one',g.tracks.length,5);
-      g.get(cfg.clear).click();g.example();same(tag+' GA: after Clear the same Example sends again',g.tracks.length,6);
-      g.key('l','ctrlKey',cfg.input);g.get('jtm-model-name').value='Order';g.example();same(tag+' GA: after Ctrl+L the same Example sends again',g.tracks.length,7);}
+      // S2-10f review M1: only a repeat of the previous event is skipped, so switching back to the earlier option sends again.
+      g.get('jtm-ts-tabs').querySelectorAll('.jtm-tab').find(t=>!t.classList.contains('active')).click();same(tag+' GA: switching back to the earlier option sends again',g.tracks.length,6);
+      g.get(cfg.clear).click();g.example();same(tag+' GA: after Clear the same Example sends again',g.tracks.length,7);
+      g.key('l','ctrlKey',cfg.input);g.get('jtm-model-name').value='Order';g.example();same(tag+' GA: after Ctrl+L the same Example sends again',g.tracks.length,8);}
     for(const focus of [p.get('jtm-output'),p.document.querySelector('[data-zt-tip="jtm-tip-copy"]')]){p.example();focus.focus();focus.dispatch('keydown',{key:'L',metaKey:true});same(tag+' output CtrlL returns to input',[p.document.activeElement.id,p.out(),p.get(cfg.input).value],[cfg.input,'','']);}
     p.get('jtm-lang-tabs').querySelector('[data-lang="javascript"]').click();p.example();p.input('Renamed','jtm-model-name');p.advance(300);same(tag+' model name re-generates',p.out().includes("mongoose.model('Renamed'"),true);p.get(cfg.clear).click();same(tag+' explicit Clear retains model option',p.get('jtm-model-name').value,'Renamed');
   }

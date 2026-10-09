@@ -430,12 +430,14 @@ try {
     g.doc.querySelector('[data-mode="typeddict"]').click(); eq(lang + ': GA the same mode sends none', g.tracks.length, 4);
     g.get('jpdc-root-name').value = 'Order'; g.get('jpdc-root-name').dispatch('input'); g.get('jpdc-root-name').dispatch('change');
     eq(lang + ': GA root name change sends one event', [g.get('jpdc-output-code').textContent.includes('class Order('), g.tracks.length], [true, 5]);
-    // S2-10f: the same JSON, root name and mode are sent once; Clear and Ctrl/⌘+L start over.
+    // S2-10f: an event that repeats the previous JSON, root name and mode is skipped; Clear and Ctrl/⌘+L start over.
     g.get('jpdc-example').click(); eq(lang + ': GA Example again with nothing changed sends nothing', g.tracks.length, 5);
     g.get('jpdc-input').dispatch('change'); eq(lang + ': GA a change with the sent JSON, root name and mode sends nothing', g.tracks.length, 5);
     g.doc.querySelector('[data-mode="pydantic"]').click(); eq(lang + ': GA a new mode still sends one', g.tracks.length, 6);
-    g.get('jpdc-clear').click(); g.get('jpdc-example').click(); eq(lang + ': GA after Clear the same Example sends again', g.tracks.length, 7);
-    g.key('jpdc-input'); g.get('jpdc-root-name').value = 'Order'; g.get('jpdc-example').click(); eq(lang + ': GA after Ctrl+L the same Example sends again', g.tracks.length, 8);
+    // S2-10f review M1: only a repeat of the previous event is skipped, so switching back to the earlier mode sends again.
+    g.doc.querySelector('[data-mode="dataclass"]').click(); eq(lang + ': GA switching back to the earlier mode sends again', g.tracks.length, 7);
+    g.get('jpdc-clear').click(); g.get('jpdc-example').click(); eq(lang + ': GA after Clear the same Example sends again', g.tracks.length, 8);
+    g.key('jpdc-input'); g.get('jpdc-root-name').value = 'Order'; g.get('jpdc-example').click(); eq(lang + ': GA after Ctrl+L the same Example sends again', g.tracks.length, 9);
     const d = lifecyclePage(lang); golden(d); d.get('jpdc-download').click(); eq(lang + ': current download filename', d.downloads[0].name, 'root.py'); eq(lang + ': actual Blob full bytes', await d.downloads[0].blob.text(), goldenCode); d.doc.querySelector('[data-mode="typeddict"]').click(); eq(lang + ': mode click converts immediately', d.get('jpdc-output-code').textContent, 'from typing import TypedDict\n\nclass Root(TypedDict):\n    pass');
   }
 } finally { await settle(); process.removeListener('unhandledRejection', onUnhandled); }
@@ -484,7 +486,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "ad916c49b465ab4c64276631f48de4471b82530ca393a5707271387e64923a17"
+  "scriptSHA": "d79f84305230251d9379d5ec3976168e5df7c4d5b21eb5c17f276e36d7f9af3c"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -492,7 +494,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 page script hash (2026-10-09: JSON syntax errors in the page language; GA sends the same JSON, root name and mode once; JSON too deep for the call stack; a leading byte order mark is not a column)', hash(pageScript), V2.scriptSHA);
+eq('v2 page script hash (2026-10-09: JSON syntax errors in the page language; GA skips a repeat of the previous JSON, root name and mode; JSON too deep for the call stack; a leading byte order mark is not a column)', hash(pageScript), V2.scriptSHA);
 {
   for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
     eq(`JSON errors: ${lang} ${key} is the text of HarFileAnalyzerTool.astro`, JSON.stringify(pageLabels[lang][key]), JSON.stringify(HAR_S[lang][key]));

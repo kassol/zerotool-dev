@@ -513,7 +513,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 /* ── v2 page layout ── */
 check('all FIX behavior checks retained', checks.length, 884);
 // S2-10f GA: one event per successful conversion (button, Ctrl/⌘+Enter, Sample, pretty-print change, JSON file);
-// the same direction, input and options are sent once; failed conversions send nothing; Clear and Ctrl/⌘+L start over.
+// an event that repeats the previous direction, input and options is skipped; failed conversions send nothing; Clear
+// and Ctrl/⌘+L start over.
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const g = page(lang), tag = lang + ' GA';
   check(tag + ' page load sends nothing', g.tracks.length, 0);
@@ -528,12 +529,16 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   g.get('jlc-clear').click(); g.get('jlc-load-sample').click(); check(tag + ' after Clear the same Sample sends again', g.tracks.length, 5);
   g.key('jlc-jsonl'); g.get('jlc-load-sample').click(); check(tag + ' after Ctrl+L the same Sample sends again', g.tracks.length, 6);
   const f = page(lang); f.open('json').finish('[1]'); f.open('json').finish('[1]'); check(tag + ' the same JSON file twice sends one event', f.tracks.map(t => t[1]), ['json_to_jsonl']);
+  // S2-10f review M1: only a repeat of the previous event is skipped, so switching an option back sends again.
+  const b = page(lang); b.input('jlc-jsonl', '1'); b.get('jlc-to-json').click();
+  for (const pretty of [false, true]) { b.get('jlc-pretty-json').checked = pretty; b.get('jlc-pretty-json').dispatch('change'); }
+  check(tag + ' switching an option back sends again', b.tracks.length, 3);
 }
-// S2-10f (2026-10-09) added the json-reason block and the localized JSON syntax errors, and sends the same
-// conversion to analytics once. Its review added the notice for pretty-printed JSON longer than the browser allows
+// S2-10f (2026-10-09) added the json-reason block and the localized JSON syntax errors, and skips an analytics event
+// that repeats the previous conversion. Its review added the notice for pretty-printed JSON longer than the browser allows
 // and dropped the "Invalid JSON" prefix from the message for JSON that is not an array; a leading byte order mark is
 // no longer counted as a column.
-check('client script only loses runtime localization and redundant Validate listener', hash(js), 'da9a6a815445629b7757f49812374a9ae43e595b87ecd2a0ecdba7af6064b96c');
+check('client script only loses runtime localization and redundant Validate listener', hash(js), 'b3dc295a8dc0785ff44c06864ef9ec57f5c7b23d1ffac963fa1f2b28f122b2a1');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jlc-wrap"/.test(markup), true);
