@@ -181,6 +181,16 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   });
 }
 
+// S2-10f review S5: valid JSON that is not an array. Before, the status read "Invalid JSON: JSON input must be an array."
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  await test(lang + ' non-array JSON names the problem without "Invalid JSON"', () => {
+    for (const raw of ['{}', '{"a":[1]}', '1', '"x"', 'null']) {
+      const p = page(lang); p.get('jlc-json').value = raw; p.get('jlc-to-jsonl').click();
+      assert.deepEqual([p.get('jlc-status').textContent, /error/.test(p.get('jlc-status').className), p.get('jlc-jsonl').value], [STR[lang].jsonArrayRequired, true, ''], raw);
+    }
+  });
+}
+
 // JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
 // json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
 // HarFileAnalyzerTool.astro. Each bad JSONL line lists its column and cause in the page language
@@ -512,8 +522,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const f = page(lang); f.open('json').finish('[1]'); f.open('json').finish('[1]'); check(tag + ' the same JSON file twice sends one event', f.tracks.map(t => t[1]), ['json_to_jsonl']);
 }
 // S2-10f (2026-10-09) added the json-reason block and the localized JSON syntax errors, and sends the same
-// conversion to analytics once. Its review added the notice for pretty-printed JSON longer than the browser allows.
-check('client script only loses runtime localization and redundant Validate listener', hash(js), '5cd6c3fa0fab2ef4f7ef392cbf5c44f86d622773b1c0aaf92695d24b5633850a');
+// conversion to analytics once. Its review added the notice for pretty-printed JSON longer than the browser allows
+// and dropped the "Invalid JSON" prefix from the message for JSON that is not an array.
+check('client script only loses runtime localization and redundant Validate listener', hash(js), '9e5465d94c088980c931ce1861bd02e003bcac8d158b1be36ed6ff437dea29f0');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jlc-wrap"/.test(markup), true);
