@@ -167,9 +167,9 @@ const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), l
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
 // S2-10 (approved engine change): LIB_TYPE_NAMES reserves the one-word global type names of
-// lib.esnext.full.d.ts for root and nested names (+14 / -0 lines).
-eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 11907);
-eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '48e4a50c3e2049ddcec92258062635151d8f35547ddaa347ece920356d87050f');
+// lib.esnext.full.d.ts for root and nested names (+16 / -0 lines against v1.140.11).
+eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 12033);
+eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'e6f9ff18e491a3441fd69b1d51247ce385304b50e12ef454a8a425fc78634794');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
