@@ -533,6 +533,26 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const clean = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'default-src': ["'self'"] } });
   eq(lang + ': no message for a clean saved policy', clean.$('csp-status').textContent, '');
 }
+// Review C-S1: a refused value stays in the box, marked aria-invalid and tied to the status
+// line, so the user can fix it instead of typing it again.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  p.$('csp-add-select').value = 'script-src'; p.click('#csp-add-btn');
+  const box = () => p.document.querySelectorAll('.csp-directive').find((c) => c.dataset.directive === 'script-src').querySelector('.csp-source-input');
+  for (const bad of ['ｈｔｔｐｓ：／／cdn.example.com', 'https://a.example; script-src *']) {
+    addHost(p, 'script-src', bad);
+    eq(lang + ': refused value stays in the box: ' + bad, box().value, bad);
+    eq(lang + ': refused box is aria-invalid and points at the status', [box().getAttribute('aria-invalid'), box().getAttribute('aria-describedby')], ['true', 'csp-status']);
+    check(lang + ': refused box keeps focus', p.document.activeElement === box());
+    check(lang + ': a status message explains the refusal', p.$('csp-status').textContent.length > 0 && p.$('csp-status').className.includes('error'));
+  }
+  box().value = 'https://cdn.example.com'; box().dispatch('input');
+  eq(lang + ': editing clears aria-invalid', box().getAttribute('aria-invalid'), null);
+  addHost(p, 'script-src', 'https://cdn.example.com');
+  eq(lang + ': an accepted value empties the new box', [box().value, box().getAttribute('aria-invalid')], ['', null]);
+  check(lang + ': accepted value is in the policy', p.$('csp-output').textContent.includes("script-src 'self' https://cdn.example.com"));
+}
+
 // Review C-M1: punycode is for host sources only. A Trusted Types policy name must match
 // tt-policy-name = 1*( ALPHA / DIGIT / "-" / "#" / "=" / "_" / "/" / "@" / "." / "%" )
 // (TT WD 2026-10-07 §4.2.2); sandbox tokens and report-to endpoint names are not hosts either.

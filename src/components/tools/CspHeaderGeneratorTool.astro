@@ -1278,10 +1278,17 @@ const L = STRINGS[lang] || STRINGS.en;
             addHostBtn.textContent = T.addBtn;
             addHostBtn.addEventListener('click', function () {
               if (!input.value.trim()) return;
-              addSource(name, input.value.trim());
+              /* A refused value stays in the box so it can be fixed; the status line says why. */
+              if (!addSource(name, input.value.trim())) {
+                input.setAttribute('aria-invalid', 'true');
+                input.focus();
+                return;
+              }
               input.value = '';
               input.focus();
             });
+            input.setAttribute('aria-describedby', 'csp-status');
+            input.addEventListener('input', function () { input.removeAttribute('aria-invalid'); });
             input.addEventListener('keydown', function (ev) {
               if (ev.key === 'Enter') {
                 ev.preventDefault();
@@ -1329,10 +1336,10 @@ const L = STRINGS[lang] || STRINGS.en;
 
       function addSource(name, value) {
         var raw = String(value).trim();
-        if (!raw) return;
+        if (!raw) return true;
         if (raw.indexOf(';') >= 0) {
           showStatus(T.warnSemicolon, 'error');
-          return;
+          return false;
         }
         /* Whitespace (including U+3000 from an IME) separates sources in a policy. */
         var parts = raw.split(/\s+/), clean = [], converted = [];
@@ -1345,12 +1352,12 @@ const L = STRINGS[lang] || STRINGS.en;
         for (var i = 0; i < parts.length; i++) {
           if (kind === 'tt' && KEYWORDS_BY_KIND.tt.indexOf(parts[i]) < 0 && !TT_POLICY_NAME.test(parts[i])) {
             showStatus(U.ttNameInvalid + parts[i], 'error');
-            return;
+            return false;
           }
           var src = hostLike ? asciiSource(parts[i]) : (/[^\x00-\x7f]/.test(parts[i]) ? null : parts[i]);
           if (src === null) {
             showStatus(U.srcNotAscii + parts[i], 'error');
-            return;
+            return false;
           }
           if (src !== parts[i]) converted.push(src);
           clean.push(src);
@@ -1363,10 +1370,11 @@ const L = STRINGS[lang] || STRINGS.en;
           added = true;
         });
         if (converted.length) showStatus(U.srcConverted + converted.join(' '), 'info');
-        if (!added) return;
+        if (!added) return true;
         renderDirectives();
         renderAddSelect();
         update();
+        return true;
       }
 
 
