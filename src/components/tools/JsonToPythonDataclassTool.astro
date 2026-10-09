@@ -51,6 +51,7 @@ const STRINGS = {
       unexpectedChar: 'unexpected character {ch}',
     },
     msgFailed: 'Could not generate Python: ',
+    msgTooDeep: 'The JSON is nested too deeply to generate Python in this browser (the call stack ran out). Nothing was generated.',
     msgGenerated: 'Generated.',
     msgGenOne: 'Generated 1 class.',
     msgGenMany: 'Generated {n} classes.',
@@ -101,6 +102,7 @@ const STRINGS = {
       unexpectedChar: '意外的字符 {ch}',
     },
     msgFailed: '无法生成 Python：',
+    msgTooDeep: 'JSON 嵌套层数过深，此浏览器无法生成 Python（调用栈耗尽），未生成任何内容。',
     msgGenerated: '已生成。',
     msgGenOne: '已生成 1 个类。',
     msgGenMany: '已生成 {n} 个类。',
@@ -151,6 +153,7 @@ const STRINGS = {
       unexpectedChar: '予期しない文字 {ch}',
     },
     msgFailed: 'Python を生成できませんでした：',
+    msgTooDeep: 'JSON の入れ子が深すぎるため、このブラウザでは Python を生成できません（コールスタック不足）。何も生成していません。',
     msgGenerated: '生成しました。',
     msgGenOne: '1 個のクラスを生成しました。',
     msgGenMany: '{n} 個のクラスを生成しました。',
@@ -201,6 +204,7 @@ const STRINGS = {
       unexpectedChar: '예상하지 못한 문자 {ch}',
     },
     msgFailed: 'Python 코드를 생성하지 못했습니다: ',
+    msgTooDeep: 'JSON 중첩이 너무 깊어 이 브라우저에서 Python 코드를 생성할 수 없습니다(호출 스택 부족). 아무것도 생성하지 않았습니다.',
     msgGenerated: '생성 완료.',
     msgGenOne: '클래스 1개를 생성했습니다.',
     msgGenMany: '클래스 {n}개를 생성했습니다.',
@@ -220,6 +224,7 @@ const L = STRINGS[lang];
   data-err-json-at={L.errJsonAt}
   data-json-parse={JSON.stringify(L.jsonParse)}
   data-msg-failed={L.msgFailed}
+  data-msg-too-deep={L.msgTooDeep}
   data-msg-generated={L.msgGenerated}
   data-msg-gen-one={L.msgGenOne}
   data-msg-gen-many={L.msgGenMany}
@@ -296,6 +301,7 @@ const L = STRINGS[lang];
       var JSON_PARSE = {};
       try { JSON_PARSE = JSON.parse(wrap && wrap.dataset.jsonParse || '{}'); } catch (e) {}
       var MSG_FAILED = wrap ? wrap.dataset.msgFailed : 'Could not generate Python: ';
+      var MSG_TOO_DEEP = wrap && wrap.dataset.msgTooDeep || 'The JSON is nested too deeply to generate Python in this browser (the call stack ran out). Nothing was generated.';
       var MSG_GENERATED = wrap ? wrap.dataset.msgGenerated : 'Generated.';
       var MSG_GEN_ONE = wrap ? wrap.dataset.msgGenOne : 'Generated 1 class.';
       var MSG_GEN_MANY = wrap ? wrap.dataset.msgGenMany : 'Generated {n} classes.';
@@ -957,6 +963,12 @@ const L = STRINGS[lang];
       }
       /* ── json-reason:end ── */
 
+      // A stack overflow while walking very deep JSON: RangeError "Maximum call stack size exceeded" in Chrome
+      // and Safari, InternalError "too much recursion" in Firefox (MDN: "Too much recursion").
+      function isTooDeep(e) {
+        return !!e && (e.name === 'RangeError' || e.name === 'InternalError') && /call stack|recursion/i.test(String(e.message));
+      }
+
       function convert() {
         invalidateCopy();
         clearTimeout(_liveTimer);
@@ -983,7 +995,7 @@ const L = STRINGS[lang];
         } catch (e) {
           // For example a stack overflow on very deep nesting: never leave the previous output.
           setOutput('');
-          setStatus(MSG_FAILED + (e && e.message ? e.message : String(e)), true);
+          setStatus(isTooDeep(e) ? MSG_TOO_DEEP : MSG_FAILED + (e && e.message ? e.message : String(e)), true);
           return;
         }
         if (!r) {

@@ -395,7 +395,10 @@ try {
       eq(lang + ': A2 root name toString generates its class', a.get('jpdc-output-code').textContent.includes('class toString:') && a.get('jpdc-status').textContent === pageLabels[lang].msgGenOne, true);
       a.get('jpdc-root-name').value = 'Root'; a.input('{"a": 1}'); a.advance(300);
       a.input(Array.from({ length: 50000 }, (_, i) => '{"k' + i + '":').join('') + '1' + '}'.repeat(50000)); a.advance(300);
-      eq(lang + ': a failed generation clears the old output and disables Copy', [a.get('jpdc-output-code').textContent, !!a.get('jpdc-copy').disabled, a.get('jpdc-status').textContent.startsWith(pageLabels[lang].msgFailed || '\u0000')], ['', true, true]);
+      // S2-10f review S4: this is a stack overflow (valid JSON, 50,000 levels); the status names it in the page language
+      // instead of msgFailed plus the browser's English "Maximum call stack size exceeded".
+      eq(lang + ': a failed generation clears the old output and disables Copy', [a.get('jpdc-output-code').textContent, !!a.get('jpdc-copy').disabled, a.get('jpdc-status').textContent, a.get('jpdc-status').className.includes('error')], ['', true, pageLabels[lang].msgTooDeep, true]);
+      a.get('jpdc-download').click(); eq(lang + ': too deep: Download saves nothing', a.downloads.length, 0);
       a.input('{"b": 2}'); a.advance(300);
       eq(lang + ': the next input generates again and enables Copy', [a.get('jpdc-output-code').textContent.includes('b: int'), !!a.get('jpdc-copy').disabled], [true, false]);
     }
@@ -479,7 +482,7 @@ const V2 = {
       "download"
     ]
   ],
-  "scriptSHA": "cbf0f7dd669f4b3fd688569ab57053a9850dc31d8a973bd862d8f8656508dce9"
+  "scriptSHA": "7a9b5fb7073457eaf4ef56070dde4d1fc7ef7e8ad3d881d306f24cb8a7ce07cb"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -487,7 +490,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 page script hash (2026-10-09: JSON syntax errors in the page language; GA sends the same JSON, root name and mode once)', hash(pageScript), V2.scriptSHA);
+eq('v2 page script hash (2026-10-09: JSON syntax errors in the page language; GA sends the same JSON, root name and mode once; JSON too deep for the call stack)', hash(pageScript), V2.scriptSHA);
 {
   for (const lang of ['en', 'zh', 'ja', 'ko']) for (const key of ['errJson', 'errJsonAt', 'jsonParse']) {
     eq(`JSON errors: ${lang} ${key} is the text of HarFileAnalyzerTool.astro`, JSON.stringify(pageLabels[lang][key]), JSON.stringify(HAR_S[lang][key]));
@@ -527,7 +530,7 @@ for (const lang of ['en','zh','ja','ko']) {
   for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
   eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
   const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
-  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','errJson','errJsonAt','jsonParse','msgFailed','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','errJson','errJsonAt','jsonParse','msgFailed','msgTooDeep','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
   const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
   const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
