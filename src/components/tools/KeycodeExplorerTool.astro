@@ -158,7 +158,6 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         id="kce-mobile-input"
         class="tool-input"
         type="text"
-        maxlength="1"
         autocapitalize="none"
         autocomplete="off"
         spellcheck="false"
@@ -456,7 +455,24 @@ const { tips: TIPS, capturePad, mobileNote, ...CLIENT_T } = T;
         setStatus(t.padBlurred, 'none');
       });
 
+      // Input method composition (UI Events: isComposing is true from compositionstart to
+      // compositionend). Leave the composing text alone and capture the committed string
+      // (CompositionEvent.data) once at compositionend.
+      var composing = false;
+      mobileInput.addEventListener('compositionstart', function () { composing = true; });
+      mobileInput.addEventListener('compositionend', function (e) {
+        composing = false;
+        invalidateCopy();
+        captureFromMobileInput({ data: e.data });
+      });
       mobileInput.addEventListener('input', function (e) {
+        if (composing || e.isComposing) return;
+        // UI Events says no input event follows compositionend; if a browser sends one, the
+        // commit was already captured.
+        if (e.inputType === 'insertFromComposition' || e.inputType === 'deleteCompositionText') {
+          mobileInput.value = '';
+          return;
+        }
         invalidateCopy();
         captureFromMobileInput(e);
       });

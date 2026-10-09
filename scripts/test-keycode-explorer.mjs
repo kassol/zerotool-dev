@@ -253,6 +253,45 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' fallback still shows every character', [m.get('kce-pad-count').textContent, m.get('kce-key').textContent], ['1', '"d"']);
 }
 
+// ---------- input method composition in the touch fallback field (S2-9b) ----------
+// The field was cleared and captured on every input event, also while an input method was
+// composing (UI Events: isComposing is true between compositionstart and compositionend), and
+// maxlength="1" (HTML: measured in code units) can stop a committed "東京" or an emoji. Now
+// composing input events are ignored and the committed text (CompositionEvent.data) is captured
+// once at compositionend. Simulated event sequences; not tested on an Android device.
+const COMPOSITIONS = {
+  'ja kana-kanji': { steps: ['と', 'とう', 'とうき', 'とうきょ', 'とうきょう', '東京'], commits: ['東京'] },
+  'ko hangul syllables': { steps: ['ㅎ', '하', '한', '|', '그', '글'], commits: ['한', '글'] },
+  'zh pinyin': { steps: ['b', 'bei', "bei'j", "bei'jing", '北京'], commits: ['北京'] },
+};
+for (const lang of ['en', 'ja']) for (const [name, { steps, commits }] of Object.entries(COMPOSITIONS)) {
+  const p = pageVM(lang); p.tick(60);
+  const field = p.get('kce-mobile-input'); let committed = 0, broken = '';
+  field.dispatch('compositionstart', { data: '' });
+  for (const s of steps) {
+    if (s === '|') { field.dispatch('compositionend', { data: commits[committed++] }); field.dispatch('compositionstart', { data: '' }); field.value = ''; continue; }
+    field.value = s; field.dispatch('input', { isComposing: true, inputType: 'insertCompositionText', data: s });
+    if (field.value !== s && !broken) broken = 'field cleared at ' + s;
+    if (p.get('kce-pad-count').textContent !== String(committed) && !broken) broken = 'captured while composing at ' + s;
+  }
+  field.dispatch('compositionend', { data: commits[committed++] });
+  eq(lang + ' ' + name + ' composing text is not touched', broken, '');
+  eq(lang + ' ' + name + ' each committed string is captured once', [p.get('kce-pad-count').textContent, p.get('kce-key').textContent, p.get('kce-history').textContent], [String(commits.length), JSON.stringify(commits.at(-1)), [...commits].reverse().join('')]);
+  eq(lang + ' ' + name + ' field is empty after the commit', field.value, '');
+  eq(lang + ' ' + name + ' one mobile_input event', p.tracks.filter(a => a[1] === 'mobile_input').length, 1);
+  // A browser that still sends input after compositionend (inputType insertFromComposition) must not capture twice.
+  field.value = commits.at(-1); field.dispatch('input', { isComposing: false, inputType: 'insertFromComposition', data: commits.at(-1) });
+  eq(lang + ' ' + name + ' late insertFromComposition is not captured again', [p.get('kce-pad-count').textContent, field.value], [String(commits.length), '']);
+}
+{
+  const p = pageVM('en'); p.tick(60);
+  p.get('kce-mobile-input').value = 'x'; p.get('kce-mobile-input').dispatch('input', { isComposing: true, data: 'x' });
+  eq('an input event marked isComposing is ignored even without compositionstart', [p.get('kce-pad-count').textContent, p.get('kce-mobile-input').value], ['0', 'x']);
+  p.input('kce-mobile-input', '😀');
+  eq('a plain input after that is still captured', p.get('kce-key').textContent, '"😀"');
+}
+check('fallback field has no maxlength', !/id="kce-mobile-input"[\s\S]*?maxlength/.test(source.slice(source.indexOf('id="kce-mobile-input"'), source.indexOf('/>', source.indexOf('id="kce-mobile-input"')))));
+
 // ---------- worked examples on the tool pages (kce-check) ----------
 // {/* kce-check: {"event": {key, code, keyCode, ctrlKey, ...}} */} The event is dispatched on the
 // real capture pad. Every code block after the note must be either a field table, whose lines are
@@ -301,7 +340,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 eq('v2 compiled module parses',moduleError,'');
 const style=compiled.css.join('\n');
 // S2-9b (2026-10-09): updated for the statistics and copy-fallback fixes tested above.
-eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'b72c8d4c15384d4fb35907eb6f1c0ad3a72ce2f9cacd51c010e229aa6653f132');
+eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'7f51621b3bfe09fa9bb32f3d9aa30fedc0289163d69bfaf73bab9a090b912c6a');
 eq('v2 analyze registry',/['"]keycode-explorer['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('v2 outermost tool root',/^<div class="kce-wrap">/.test(source.split('\n---\n')[1].trim()),true);
 eq('v2 no runtime i18n',source.includes('data-i18n'),false);
