@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import yaml from 'js-yaml';
 import { createRequire } from 'node:module';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, reportContract, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 const { transform } = createRequire(import.meta.resolve('astro/package.json'))('@astrojs/compiler');
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -255,6 +255,56 @@ for (const exec of [true, false]) {
   check('rejected clipboard write falls back to execCommand (' + exec + ')', p.get('cbg-copy').classList.contains('copied') === exec && p.get('cbg-status').className.includes('error') === !exec);
   check('fallback tracks only a successful copy (' + exec + ')', p.tracks.some(a => a[1] === 'copy_css') === exec);
 }
+
+// ---------- worked examples on the tool pages (cbg-check) ----------
+// {/* cbg-check: {"preset": "<data-p>" | "p": ["x1","y1","x2","y2"], "format": "css|scss|tailwind",
+//   "x": ["0.25", ...], "warn": "x|y", "noOutput": true} */}
+// The page is driven like a user: click the preset (or type the four fields in order), click the
+// format. The copied output must appear verbatim as a code block after the note (unless noOutput).
+// For each x, the line `x = <x> → y = <y>` must appear in a code block, where y is the page's own
+// progressAt() for the copied numbers, to three decimals; an independent bisection solver must
+// agree within 0.0005. `warn` requires the page's localized clamp message in the text after the note.
+const pageScript = source.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
+const { progressAt } = new Function(pageScript.slice(pageScript.indexOf('function bezierAxis'), pageScript.indexOf('// ── Coord helpers')) + '; return { progressAt };')();
+function exactY(x, p) {
+  const ax = (t, a, b) => 3 * (1 - t) ** 2 * t * a + 3 * (1 - t) * t * t * b + t ** 3;
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 100; i++) { const m = (lo + hi) / 2; if (ax(m, p[0], p[2]) < x) lo = m; else hi = m; }
+  return ax((lo + hi) / 2, p[1], p[3]);
+}
+function verifyCurve({ spec, after, lang }) {
+  if (!spec || (!spec.preset && !spec.p)) return 'cbg-check needs "preset" or "p"';
+  const page = loadCubicPage({ lang });
+  if (spec.preset) {
+    const btn = page.wrap.querySelectorAll('.cbg-preset').find((b) => b.dataset.p === spec.preset);
+    if (!btn) return 'no preset button with data-p ' + spec.preset;
+    btn.click();
+  } else {
+    ['cbg-p1x', 'cbg-p1y', 'cbg-p2x', 'cbg-p2y'].forEach((id, i) => page.type(id, String(spec.p[i])));
+  }
+  if (spec.format) page.wrap.querySelectorAll('.cbg-format').find((b) => b.dataset.fmt === spec.format).click();
+  const output = page.get('cbg-output-text').textContent;
+  const blocks = fencedBlocks(after).map((b) => b.text);
+  if (!spec.noOutput && !blocks.includes(output)) return 'output not shown as a code block: ' + JSON.stringify(output);
+  if (spec.warn) {
+    const msg = spec.warn === 'y' ? page.L.rangeWarnY : page.L.rangeWarn;
+    if (page.get('cbg-status').textContent !== msg) return 'page shows no ' + spec.warn + ' clamp message';
+    if (!after.includes(msg)) return 'clamp message not quoted: ' + msg;
+  }
+  const nums = output.match(/cubic-bezier\(([^)]*)\)/)[1].split(',').map(Number);
+  for (const x of spec.x ?? []) {
+    const y = progressAt(Number(x), { p1x: nums[0], p1y: nums[1], p2x: nums[2], p2y: nums[3] });
+    if (Math.abs(y - exactY(Number(x), nums)) > 5e-4) return 'page solver differs from bisection at x = ' + x;
+    const line = 'x = ' + x + ' → y = ' + y.toFixed(3);
+    if (!blocks.some((b) => b.split('\n').includes(line))) return 'missing sample line: ' + line;
+  }
+  return null;
+}
+reportContract(check, 'cubic-bezier-generator', { limits: true, requireFaqIds: true, annotations: [{ tag: 'cbg-check', min: 2, verify: verifyCurve }] });
+// The verifier itself fails on wrong text.
+check('cbg-check rejects a wrong output', verifyCurve({ spec: { preset: '0.2,0,0,1' }, after: '```css\ntransition-timing-function: cubic-bezier(0.2, 0, 0, 0.9);\n```', lang: 'en' }) !== null);
+check('cbg-check rejects a wrong sample', verifyCurve({ spec: { preset: '0.2,0,0,1', x: ['0.5'], noOutput: true }, after: '```\nx = 0.5 → y = 0.879\n```', lang: 'en' }) !== null);
+check('cbg-check accepts the right sample', verifyCurve({ spec: { preset: '0.2,0,0,1', x: ['0.5'], noOutput: true }, after: '```\nx = 0.5 → y = 0.878\n```', lang: 'en' }) === null);
 
 // ---------- v2 page layout ----------
 const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
