@@ -419,7 +419,7 @@ const TEXT = {
     timestampPrecision: '{raw} 的精度超过毫秒',
     timestampInvalid: '{raw} 不是有效的日期或时间',
     localDateTime: '{raw} 是本地日期时间，YAML 会把不带偏移的时间读作 UTC',
-    binary: '{raw} 二进制值，{target} 没有二进制类型',
+    binary: '{raw} 值，{target} 没有二进制类型',
     binaryKey: '!!binary 键 {raw}，{target} 的键只能是文本',
     merge: '{raw}，<< 只能合并映射',
     more: '另有 {n} 处',

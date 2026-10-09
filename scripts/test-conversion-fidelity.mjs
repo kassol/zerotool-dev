@@ -778,6 +778,23 @@ const MARKER_INPUTS = [
   }
 }
 
+/* ── E-ZH-BINARY-TEXT ── the zh reason for a !!binary value says 值 once, like value / の値 / 값
+   in the other languages ("!!binary 二进制值" said binary twice). */
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const vsrc = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const L = vm.runInNewContext(vsrc.slice(vsrc.indexOf('const labels = '), vsrc.indexOf('const L = labels')) + '\n;labels').zh;
+  const a = convert(open('yaml-json', 'zh'), 'yaml-json', 'y2j', 'photo: !!binary aGVsbG8=', 'input').status.textContent;
+  check('E-ZH-BINARY-TEXT', 'yaml-json zh: the !!binary stop', a === '未转换：JSON 无法原样保存下列值：/photo：!!binary 值，JSON 没有二进制类型', a);
+  const b = convert(open('yaml-toml', 'zh'), 'yaml-toml', 'y2t', 'photo: !!binary aGVsbG8=', 'input').status.textContent;
+  check('E-ZH-BINARY-TEXT', 'yaml-toml zh: the !!binary stop', b === '未转换：TOML 无法原样保存下列值：/photo：!!binary 值，TOML 没有二进制类型', b);
+  const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang: 'zh', dataset: { '.yv-wrap': { lang: 'zh', msgValid: L.msgValid } } });
+  page.el('yv-input').value = 'photo: !!binary aGVsbG8='; page.el('yv-validate').click();
+  const note = page.el('yv-preview-note').textContent;
+  check('E-ZH-BINARY-TEXT', 'yaml-validator zh: the !!binary note', note === 'JSON 预览没有按原样显示下列值：/photo：!!binary 值，JSON 没有二进制类型', note);
+}
+
 /* ── Summary per finding ── */
 console.log('\nPer finding:');
 for (const [tag, c] of Object.entries(counts)) console.log(`  ${tag}: ${c.pass} passed, ${c.fail} failed`);
