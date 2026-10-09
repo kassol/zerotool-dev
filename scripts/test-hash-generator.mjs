@@ -190,7 +190,7 @@ function pageVM(lang = 'en', shellFirst = false) {
     }
     appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
     removeChild(child) { this.children = this.children.filter(c => c !== child); child.parentNode = null; return child; }
-    select() { doc.selected = this; }
+    select() { doc.selected = this; doc.activeElement = this; }
     querySelectorAll(selector) { return descendants(this).filter(el => matches(el, selector)); }
     querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
     contains(el) { return el === this || descendants(this).includes(el); }
@@ -326,6 +326,7 @@ for(const [lang,T] of Object.entries(labels)){
       fb.click();if(kind==='reject')f.clipboard.at(-1).reject(Error('denied'));await settle();
       same(`${lang}/${index}: ${kind} falls back to execCommand`,[f.exec.calls.map(c=>[c.cmd,c.value,c.attached]),fb.textContent,f.get('hg-status').textContent],[[['copy',expected('A世界😀')[index][1],true]],T.copied,T.success]);
       eq(`${lang}/${index}: ${kind} fallback textarea removed`,f.doc.selected ? f.doc.selected.parentNode : 'no fallback textarea',null);
+      eq(`${lang}/${index}: ${kind} fallback returns focus to the copy button`,f.doc.activeElement===fb,true);
       const g=await generated(lang),gb=buttons(g)[index];g.exec.mode='fail';g.context.navigator.clipboard=undefined;gb.click();await settle();
       eq(`${lang}/${index}: ${kind} failed fallback shows the localized failure`,g.get('hg-status').textContent,T.failure);
     }

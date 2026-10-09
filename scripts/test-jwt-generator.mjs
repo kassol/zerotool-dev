@@ -156,7 +156,7 @@ function pageVM(lang, shellFirst) {
     set textContent(value) { this.text = String(value); this.children = []; }
     appendChild(e) { this.children.push(e); e.parentNode = this; return e; }
     removeChild(e) { this.children = this.children.filter(c => c !== e); e.parentNode = null; return e; }
-    select() { document.selected = this; }
+    select() { document.selected = this; document.activeElement = this; }
     contains(e) { return this === e || descendants(this).includes(e); }
     querySelectorAll(selector) { return descendants(this).filter(e => matches(e, selector)); }
     querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
@@ -423,6 +423,7 @@ for (const lang of ['en','zh','ja','ko']) {
       await settle();
       eq(lang + ' copy ' + kind + ' tries execCommand with the full token in an attached textarea', p.exec.calls.map(c => [c.cmd, c.value, c.attached]), [['copy', token, true]]);
       eq(lang + ' copy ' + kind + ' fallback textarea is removed', p.document.selected ? p.document.selected.parentNode : 'no fallback textarea', null);
+      eq(lang + ' copy ' + kind + ' fallback ' + mode + ' returns focus to the copy button', p.document.activeElement.id, 'jg-copy');
       eq(lang + ' copy ' + kind + ' fallback ' + mode, [p.snapshot().copy, p.snapshot().status], mode === 'ok' ? [t.copied, t.generated] : [t.copy, COPY_FAILURE[lang]]);
     }
   }
