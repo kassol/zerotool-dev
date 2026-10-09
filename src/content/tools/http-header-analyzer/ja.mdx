@@ -8,68 +8,123 @@ steps:
   - "セキュリティヘッダーのインラインヒントを確認 — 設定ミスは警告、強化機会は注意として表示されます。"
   - "JSONコピーで解析結果をエクスポートし、後続の自動化処理に利用できます。"
 faqItems:
-  - question: "ヘッダーがサーバーに送信されますか?"
-    answer: "いいえ。解析と分析はすべてブラウザ内のインラインJavaScriptで完結し、アップロードはありません。Authorizationトークン、Set-Cookie文字列、本番ヘッダーなどの機密情報も安心して貼り付けられます。"
-  - question: "URLから直接ヘッダーを取得できますか?"
-    answer: "設計上できません。URLフェッチにはバックエンドが必要で、悪用されるリスクもあります。curl -i、curl -v、ブラウザDevToolsのネットワークパネル、その他HTTPクライアントからヘッダーをコピーして貼り付けてください。本ツールは解析のみを担当します。"
-  - question: "リクエストとレスポンスの判別方法は?"
-    answer: "最初の行を読みます。HTTP/x.x のあとにステータスコードが続けばレスポンス、メソッド(GET、POSTなど)+パス+HTTP/x.xならリクエストです。どちらにも一致しない場合はヘッダーのみとして全行をヘッダーとして解析します。"
-  - question: "どのセキュリティヘッダーをチェックしますか?"
-    answer: "Strict-Transport-Security、Content-Security-Policy、X-Frame-Options、X-Content-Type-Options、Referrer-Policy、Permissions-Policy、Set-Cookieフラグ、Cross-Origin-*ファミリー、CORSのAllow-Origin / Allow-Credentials組み合わせなどの存在と構成を検証します。"
-  - question: "重複ヘッダーや折りたたみ行の扱いは?"
-    answer: "同名の重複ヘッダーはカテゴリビューで個別エントリとして保持され、JSONビューでは配列にまとめられます(順序保持)。HTTP/1.1のobs-fold(空白で始まる行)はRFC 7230に従って前のヘッダーに結合されます。"
-  - question: "解析結果をエクスポートできますか?"
-    answer: "はい。JSONコピーで正規化されたオブジェクトをコピーできます。単一値ヘッダーは文字列、重複ヘッダーは順序を保持した配列になります。ステータス行は_statusキーに収録されます。"
+  - id: privacy
+    question: "ヘッダーがサーバーに送信されますか？"
+    answer: "いいえ。ヘッダーはブラウザ上のページスクリプトが解析し、アップロードも保存もしません。貼り付けるヘッダーには Cookie やトークンが含まれることが多いため、このページは Google Analytics と AdSense を読み込みません。なお、分析結果と「JSON コピー」には Authorization や Cookie の値がそのまま残ります。共有する前に中身を確認してください。"
+  - id: fetch-url
+    question: "URLから直接ヘッダーを取得できますか？"
+    answer: "できません。ツールはリクエストを送らず、貼り付けたテキストだけを読みます。curl -sS -D - -o /dev/null URL、curl -i（空行のあとの本文は削除）、またはブラウザの開発者ツールの Network パネルの Raw 表示からヘッダーをコピーしてください。curl -v の出力には > や < が行頭に付きますが、ツールはこれを取り除きません。"
+  - id: detect-type
+    question: "リクエストとレスポンスの判別方法は？"
+    answer: "1 行目を見ます。HTTP/x.x で始まればレスポンス、GET・POST・PUT・DELETE・PATCH・OPTIONS・HEAD・TRACE・CONNECT のどれかにパスと HTTP/x.x が続けばリクエストです。どちらでもなければ、:status 疑似ヘッダーがあればレスポンス、:method があればリクエストとし、どちらもなければヘッダー行だけの入力として扱います。"
+  - id: security-checks
+    question: "どのセキュリティヘッダーをチェックしますか？"
+    answer: "値までチェックするのは Strict-Transport-Security、Content-Security-Policy、Set-Cookie（HttpOnly・Secure・SameSite）、X-Frame-Options、X-XSS-Protection と、CORS の Allow-Origin / Allow-Credentials の組み合わせです。X-Content-Type-Options、Referrer-Policy、Permissions-Policy、Cross-Origin-* 系、Fetch metadata は説明を表示してサマリーのセキュリティ件数に数えますが、値は検査しません。"
+  - id: duplicates
+    question: "重複ヘッダーや折りたたみ行の扱いは？"
+    answer: "カテゴリ別表示では 1 行ごとに別のカード、生データ表示でも 1 行ずつ残ります。JSON 表示では同じ名前のヘッダーを入力順の配列にまとめ、名前の大文字・小文字は区別しません。行頭がスペースかタブの行（obs-fold、RFC 9112 5.2 節）は、スペース 1 つを挟んで前のヘッダーにつなげます。"
+  - id: export
+    question: "解析結果をエクスポートできますか？"
+    answer: "はい。「JSON コピー」は表示中のタブに関係なく、最後に分析した結果をコピーします。キーは小文字のヘッダー名で、1 回だけのヘッダーは文字列、重複したヘッダーは配列になり、1 行目は _status キーに入ります。"
 ---
 
-<h2>例: セキュリティヘッダー付きレスポンス</h2>
+<h2>例：LINE Messaging API の 409 レスポンス</h2>
 
+<p>LINE Messaging API で <code>X-Line-Retry-Key</code> を付けてプッシュメッセージを再送すると、同じキーのリクエストがすでに受理されていれば <code>409 Conflict</code> が返ります（<a href="https://developers.line.biz/ja/reference/messaging-api/#status-codes">Messaging API リファレンス「ステータスコード」</a>）。そのとき元のリクエストの ID は <code>X-Line-Accepted-Request-Id</code> に入ります。</p>
+
+<p>リファレンスでは、レスポンスヘッダーの表が <code>X-Line-Request-Id</code>、レスポンス例が <code>x-line-request-id</code> と、大文字・小文字の書き方が異なります。Webhook の説明でも、ヘッダー名の大文字・小文字は予告なく変わることがあるので区別せずに扱うよう書かれています。HTTP のフィールド名はもともと大文字・小文字を区別しない（RFC 9110 5.1 節）ので、本ツールの JSON は名前を小文字にそろえます。2 つの書き方を混ぜて貼り付けると、JSON 表示は次のとおりです。</p>
+
+{/* hha-check: {"view":"json"} */}
 ```
-HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
-Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
-Content-Security-Policy: default-src 'self'; script-src 'self'
-X-Content-Type-Options: nosniff
-Referrer-Policy: strict-origin-when-cross-origin
-Cache-Control: no-store
-Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Strict; Path=/
-```
-
-<p>アナライザーはStrict-Transport-Security、Content-Security-Policy、X-Content-Type-Options、Referrer-Policyを<strong>セキュリティ</strong>に分類します。Cache-Controlは<strong>キャッシュ</strong>、Content-Typeは<strong>コンテンツ</strong>、Set-Cookieは<strong>Cookie</strong>に入ります。各カードには一行解説とヒント(例: HttpOnlyなしのSet-Cookieは警告表示)が付きます。</p>
-
-<h2>例: CORSプリフライト</h2>
-
-```
-OPTIONS /api/v1/orders HTTP/1.1
-Host: api.example.com
-Origin: https://app.example.com
-Access-Control-Request-Method: POST
-Access-Control-Request-Headers: Authorization, Content-Type
+HTTP/1.1 409 Conflict
+X-Line-Request-Id: 123e4567-e89b-12d3-a456-426655440002
+x-line-accepted-request-id: 123e4567-e89b-12d3-a456-426655440001
 ```
 
-<p>これはリクエストとして認識されます。Access-Control-Request-*ペアはプリフライトの印。アナライザーはOriginを強調し、要求メソッドとヘッダーをリスト化します。レスポンス側と組み合わせれば、CORSハンドシェイクを端から端まで追跡できます。</p>
+```json
+{
+  "_status": "HTTP/1.1 409 Conflict",
+  "x-line-request-id": "123e4567-e89b-12d3-a456-426655440002",
+  "x-line-accepted-request-id": "123e4567-e89b-12d3-a456-426655440001"
+}
+```
+
+<p>リファレンスのレスポンス例は、空行のあとに JSON の本文まで続いています。これをそのまま貼ると、ツールは空行で止まらず、本文も読んでしまいます。インデントされた行は 1 行目の <code>{'{'}</code> につながり、コロンを含む 1 本のヘッダーになります。生データ表示は次のとおりです。</p>
+
+{/* hha-check: {"view":"raw"} */}
+```
+HTTP/1.1 409 Conflict
+x-line-request-id: 123e4567-e89b-12d3-a456-426655440002
+x-line-accepted-request-id: 123e4567-e89b-12d3-a456-426655440001
+
+{
+  "message": "The retry key is already accepted"
+}
+```
+
+```text
+HTTP/1.1 409 Conflict
+x-line-request-id: 123e4567-e89b-12d3-a456-426655440002
+x-line-accepted-request-id: 123e4567-e89b-12d3-a456-426655440001
+{ "message": "The retry key is already accepted"
+```
+
+<p>ヘッダーの件数も 1 件増えるので、貼り付ける前に空行から下を削除してください。</p>
+
+<h2>例：仕様書からコピーした全角コロン</h2>
+
+<p>Excel や Word の API 仕様書では、日本語入力のまま <code>Content-Type：application/json</code> のように全角コロン（：）で書かれていることがあります。ツールが区切りとして認めるのは半角コロンだけで、半角コロンのない行は何も表示せずに読み飛ばします。LINE のプッシュメッセージ送信のリクエストを、2 行だけ全角コロンにして貼った場合の生データ表示です（トークンと UUID はリファレンスの書式どおりのプレースホルダーです）。</p>
+
+{/* hha-check: {"view":"raw"} */}
+```
+POST /v2/bot/message/push HTTP/1.1
+Host: api.line.me
+Content-Type：application/json
+Authorization：Bearer {channel access token}
+X-Line-Retry-Key: {UUID}
+```
+
+```text
+POST /v2/bot/message/push HTTP/1.1
+Host: api.line.me
+X-Line-Retry-Key: {UUID}
+```
+
+<p>Content-Type と Authorization が結果から消えていますが、エラーにはなりません。件数が貼った行数より少ないときは、全角コロンや全角スペースが混じっていないか確認してください。</p>
 
 <h2>カテゴリ一覧</h2>
 <ul>
-  <li><strong>ステータス</strong> — 最初の行(ステータス行またはメソッド行)。</li>
+  <li><strong>ステータス</strong> — 1 行目（ステータス行またはメソッド行）。</li>
   <li><strong>セキュリティ</strong> — HSTS、CSP、X-Frame-Options、COOP/COEP/CORP、Permissions-Policy、Fetch metadata。</li>
   <li><strong>キャッシュ</strong> — Cache-Control、ETag、Vary、Expires、Last-Modified、条件付きリクエストヘッダー。</li>
   <li><strong>コンテンツ</strong> — Content-Type、Content-Encoding、Accept-\*、Content-Disposition。</li>
-  <li><strong>CORS</strong> — Access-Control-\*とOrigin。</li>
+  <li><strong>CORS</strong> — Access-Control-\* と Origin。</li>
   <li><strong>認証</strong> — Authorization、WWW-Authenticate、Proxy-Authenticate。</li>
-  <li><strong>Cookie</strong> — CookieとSet-Cookie。</li>
-  <li><strong>転送 / レンジ / プロキシ / 一般 / カスタム</strong> — その他のカテゴリ。X-\*未知ヘッダーはカスタムに入ります。</li>
+  <li><strong>Cookie</strong> — Cookie と Set-Cookie。</li>
+  <li><strong>転送 / レンジ / プロキシ / 一般 / カスタム</strong> — 残りのヘッダー。88 種類に入っていないヘッダー（上の <code>X-Line-*</code> など）は「カスタム / その他」に入り、説明は付きません。</li>
   <li><strong>HTTP/2 · HTTP/3 疑似ヘッダー</strong> — ブラウザの開発者ツールがコピーする <code>:status</code>、<code>:method</code>、<code>:path</code> などは別のグループに説明付きで表示します（RFC 9113 §8.3）。ステータス行がなければ、<code>:status</code> でレスポンス、<code>:method</code> でリクエストと判定します。</li>
 </ul>
 
-<h2>合規ヒントの基準</h2>
-<p>ヒントは保守的で、明らかな設定ミスのみを指摘し、主観的なスタイル評価はしません。例:</p>
+<h2>ヒントが出る条件</h2>
 <ul>
-  <li>HSTS max-ageが1年未満、またはincludeSubDomains / preload不足。</li>
-  <li>CSPに<code>'unsafe-inline'</code>または<code>'unsafe-eval'</code>が含まれる。</li>
-  <li>Set-CookieにHttpOnlyまたはSecureが欠落。</li>
-  <li>Access-Control-Allow-Credentials: trueとワイルドカードOriginの組み合わせ(仕様違反)。</li>
-  <li>Cache-Controlにno-storeとmax-ageが共存(max-age実質無効)。</li>
+  <li>HSTS の max-age が 1 年未満、または includeSubDomains / preload がない。</li>
+  <li>CSP に <code>'unsafe-inline'</code> か <code>'unsafe-eval'</code> がある、または <code>default-src</code> がない。</li>
+  <li>Set-Cookie に HttpOnly、Secure、SameSite のどれかがない。</li>
+  <li>Access-Control-Allow-Credentials: true なのに、貼り付けたヘッダーに具体的な Allow-Origin がない（<code>*</code> だけ、または Allow-Origin なし）。</li>
+  <li>Cache-Control に no-store と max-age が両方ある。</li>
+  <li>X-Frame-Options が DENY・SAMEORIGIN・ALLOW-FROM 以外、X-XSS-Protection が 1 で始まる。</li>
+  <li>レスポンスに Server ヘッダーがある。</li>
+</ul>
+<p>ヘッダーの説明文とヒントは、どの言語のページでも英語で表示されます。</p>
+
+<h2>制限事項</h2>
+<ul>
+  <li>リクエスト行として認識するのは上の 9 メソッドだけで、大文字・小文字を区別しません（RFC 9110 9.1 節ではメソッド名は大文字・小文字を区別します）。</li>
+  <li><code>curl -v</code> の出力は行頭の <code>&gt;</code>、<code>&lt;</code>、<code>*</code> もヘッダー名の一部として読むため、コロンのある行はすべて「カスタム / その他」に入り、リクエストかレスポンスかも判別できません。先に記号を消してください。</li>
+  <li>ヘッダー名とコロンの間のスペースは何も言わずに取り除きます。RFC 9112 5.1 節では、このようなリクエストをサーバーは 400 で拒否しなければなりません。</li>
+  <li>HSTS の <code>max-age</code> は数字だけの形式しか読みません。RFC 6797 6.1 節が認める <code>max-age="31536000"</code> のような引用符付きの値は 0 として扱われ、「1 年未満」の警告が出ます。Strict-Transport-Security が 2 つあるとブラウザーは最初の 1 つだけを使います（RFC 6797 8.1 節）が、ツールは両方をチェックします。</li>
+  <li><code>'unsafe-inline'</code> の警告はポリシー全体を見て出します。<code>style-src 'unsafe-inline'</code> でも出ますし、同じディレクティブに nonce やハッシュがあって CSP Level 3（6.7.3.2 節）によりブラウザーが <code>'unsafe-inline'</code> を無視する場合でも出ます。</li>
+  <li>URL からは取得しないので、リダイレクトや貼り付けていないヘッダーは見えません。</li>
 </ul>
 
 <h2>関連ツール</h2>

@@ -23,7 +23,7 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/HttpHeaderAnalyzerTool.astro'), 'utf8');
@@ -417,6 +417,35 @@ for(const lang of ['en','zh','ja','ko']){
   a.execMode('false');a.get('hha-copy-json').click();eq(lang+' copy without Clipboard API not tracked on failure',count('copy_json'),3);
 }
 console.log('JSON keys and analytics: '+(passes-fixStart)+' passed, '+failures+' total failures');
+
+// ---------- worked examples on the four pages ----------
+// {/* hha-check: {"view":"json"|"raw"|"hints"|"cards"|"summary"} */} is followed by two code
+// blocks: the input pasted into the tool and the output of the real page script for that view,
+// in the page language. hints = every card with hints, in page order: the header name, then
+// "  <label>: <hint>" lines. cards = each category heading, then "  <header name>" lines (the
+// status section shows the first line).
+// summary = the visible summary pills, one per line. The input is pasted as written; nothing
+// in the examples is a real credential.
+const exampleStart=passes;
+function rendered(lang,input,view){
+  const h=page(lang);analyze(h,input);
+  const panel=h.get('hha-panel-cat');
+  if(view==='json')return h.get('hha-json-output').textContent;
+  if(view==='raw')return h.get('hha-raw-output').textContent;
+  if(view==='summary')return ['hha-summary-type','hha-summary-status','hha-summary-count','hha-summary-security'].map(id=>h.get(id)).filter(el=>!el.hidden).map(el=>el.textContent).join('\n');
+  if(view==='hints')return panel.querySelectorAll('.hha-card').filter(c=>c.querySelectorAll('.hha-hint').length).map(c=>[c.querySelector('.hha-h-name').textContent,...c.querySelectorAll('.hha-hint').map(x=>'  '+x.textContent)].join('\n')).join('\n');
+  if(view==='cards')return panel.querySelectorAll('section').map(s=>[s.querySelector('.hha-cat-title').textContent,...s.querySelectorAll('.hha-h-name, .hha-status-line').map(x=>'  '+x.textContent)].join('\n')).join('\n');
+  throw Error('unknown view '+view);
+}
+const hhaVerify=({spec,after,lang})=>{
+  const blocks=fencedBlocks(after);
+  if(blocks.length<2)return 'needs an input block and an output block';
+  const got=rendered(lang,blocks[0].text,spec.view);
+  return got===blocks[1].text?null:'output differs; the page shows:\n'+got;
+};
+const exampleOpts={annotations:[{tag:'hha-check',min:2,verify:hhaVerify}]};
+for(const lang of ['en','zh','ja','ko'])eq(lang+' worked examples match the page script',contractProblems('http-header-analyzer',lang,exampleOpts),'');
+console.log('Worked examples: '+(passes-exampleStart)+' passed, '+failures+' total failures');
 
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

@@ -6,21 +6,78 @@ steps:
   - "点击分析。工具自动识别请求 / 响应，并按类别分组展示。"
   - "在分类、原文、JSON 三个标签之间切换视图。"
   - "留意安全头部下的提示——配置错误显示警告，加固建议显示备注。"
-  - "复制 JSON导出结构化结果，便于后续自动化处理。"
+  - "点击复制 JSON 导出结构化结果，便于后续自动化处理。"
 faqItems:
-  - question: "工具会把头部发送到服务器吗？"
-    answer: "不会。所有解析与分析都在浏览器内通过内联 JavaScript 完成，不上传任何内容。可以放心粘贴 Authorization、Set-Cookie 等敏感生产头部。"
-  - question: "可以直接从 URL 抓取头部吗？"
-    answer: "按设计不可以。抓取 URL 需要后端，并且容易被滥用。请从 curl -i、curl -v、浏览器 DevTools 网络面板或任意 HTTP 客户端复制头部后再粘贴。本工具承担分析这一步，抓取是上一步。"
-  - question: "如何区分请求和响应？"
-    answer: "读取首行。HTTP/x.x 后跟状态码 → 响应；方法（GET、POST 等）+ 路径 + HTTP/x.x → 请求。两者都不匹配时按纯头部处理，全部行解析为头部。"
-  - question: "会检查哪些安全头？"
-    answer: "覆盖 Strict-Transport-Security、Content-Security-Policy、X-Frame-Options、X-Content-Type-Options、Referrer-Policy、Permissions-Policy、Set-Cookie 标志、Cross-Origin-* 系列以及 CORS Allow-Origin / Allow-Credentials 组合的存在与配置。"
-  - question: "如何处理重复头部和折行？"
-    answer: "重复同名头部在分类视图中保留为独立条目，JSON 视图中折叠为数组（保留顺序）。HTTP/1.1 obs-fold 折行（以空白开头的行）按 RFC 7230 并入上一条头部。"
-  - question: "解析结果可以导出吗？"
-    answer: "点击复制 JSON 即可。单值头部为字符串，重复头部为数组（保留顺序）。状态行收录在 _status 键下。"
+  - id: privacy
+    question: "工具会把头部发送到服务器吗？"
+    answer: "不会。头部由页面脚本在浏览器里解析，不上传，也不保存。粘贴的头部里常有 Cookie 和令牌，所以本页不加载 Google Analytics 和 AdSense。分析结果和「复制 JSON」会原样保留 Authorization、Cookie 的值，分享前请先自己检查一遍。"
+  - id: fetch-url
+    question: "可以直接从 URL 抓取头部吗？"
+    answer: "不可以。工具不发任何请求，只读你粘贴的文本。可以从 curl -sS -D - -o /dev/null 网址、curl -i（删掉空行后面的响应体）或浏览器开发者工具 Network 面板的 Raw 视图复制头部。curl -v 的输出带 > 和 < 前缀，工具不会替你去掉。"
+  - id: detect-type
+    question: "如何区分请求和响应？"
+    answer: "看第一行。以 HTTP/x.x 开头的是响应；GET、POST、PUT、DELETE、PATCH、OPTIONS、HEAD、TRACE、CONNECT 之一后跟路径和 HTTP/x.x 的是请求。第一行都不符合时，有 :status 伪首部算响应，有 :method 算请求，两者都没有就当作只有头部行。"
+  - id: security-checks
+    question: "会检查哪些安全头？"
+    answer: "提示会检查这些头的取值：Strict-Transport-Security、Content-Security-Policy、Set-Cookie（HttpOnly、Secure、SameSite）、X-Frame-Options、X-XSS-Protection，以及 CORS 的 Allow-Origin 与 Allow-Credentials 组合。X-Content-Type-Options、Referrer-Policy、Permissions-Policy、Cross-Origin-* 和 Fetch metadata 只给说明并计入摘要里的安全标头数，取值不检查。"
+  - id: duplicates
+    question: "如何处理重复头部和折行？"
+    answer: "分类视图里每一行都是一张单独的卡片，原文视图里也逐行保留。JSON 视图把同名头部合成数组并保持输入顺序，名称比较不区分大小写。以空格或制表符开头的行（obs-fold，RFC 9112 第 5.2 节）用一个空格接到上一条头部后面。"
+  - id: export
+    question: "解析结果可以导出吗？"
+    answer: "可以。「复制 JSON」复制的是最近一次分析的结果，与当前打开哪个视图无关。键是小写的头部名称，只出现一次的头部是字符串，重复的头部是数组，第一行放在 _status 键下。"
 ---
+
+<h2>示例：检查微信支付应答头有没有被代理去掉</h2>
+
+<p>微信支付 APIv3 的应答把签名放在 <code>Wechatpay-Signature</code>、<code>Wechatpay-Timestamp</code>、<code>Wechatpay-Nonce</code>、<code>Wechatpay-Serial</code> 这几个头里。官方文档《<a href="https://pay.weixin.qq.com/doc/v3/merchant/4013053249">如何使用微信支付公钥验签</a>》提醒：某些代理服务器或 CDN 在转发时可能会过滤这些扩展头，导致应用层拿不到签名。验签失败时，可以把服务端实际收到的应答头贴进来，看这几个头还在不在。</p>
+
+<p>下面的输入是该文档里 Native 下单应答的头部，签名值较长，这里截短了；第一行的状态行是为了让工具按响应处理而补上的。</p>
+
+{/* hha-check: {"view":"cards"} */}
+```
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 52
+Connection: keep-alive
+Keep-Alive: timeout=8
+Cache-Control: no-cache, must-revalidate
+X-Content-Type-Options: nosniff
+Request-ID: 08F5B8C2B506102C18FDDFEEA30620BE821E28EDC405-0
+Content-Language: zh-CN
+Wechatpay-Nonce: d824f2e086d3c1df967785d13fcd22ef
+Wechatpay-Signature: mfI1CPqvBrgcXfgXMFjdNIhBf27ACE2Y
+Wechatpay-Timestamp: 1722850421
+Wechatpay-Serial: PUB_KEY_ID_0000000000000024101100397200000006
+Wechatpay-Signature-Type: WECHATPAY2-SHA256-RSA2048
+```
+
+<p>分类视图的分组如下（每组标题后的数字是条数）：</p>
+
+```text
+状态行
+  HTTP/1.1 200 OK
+安全 1
+  X-Content-Type-Options
+缓存 1
+  Cache-Control
+内容 3
+  Content-Type
+  Content-Length
+  Content-Language
+通用 2
+  Connection
+  Keep-Alive
+自定义 / 其他 6
+  Request-ID
+  Wechatpay-Nonce
+  Wechatpay-Signature
+  Wechatpay-Timestamp
+  Wechatpay-Serial
+  Wechatpay-Signature-Type
+```
+
+<p>5 个 <code>Wechatpay-*</code> 和 <code>Request-ID</code> 都在「自定义 / 其他」组里，没有说明文字——工具只认识 88 个常见标头，平台自己的头不在其中。工具也不做验签，只用来确认头有没有到达；验签串怎么拼、用哪把公钥，以上面的文档为准。</p>
 
 <h2>示例：带安全头的响应</h2>
 
@@ -35,19 +92,29 @@ Cache-Control: no-store
 Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Strict; Path=/
 ```
 
-<p>分析器把 Strict-Transport-Security、Content-Security-Policy、X-Content-Type-Options、Referrer-Policy 归入<strong>安全</strong>类；Cache-Control 落入<strong>缓存</strong>，Content-Type 落入<strong>内容</strong>，Set-Cookie 落入 <strong>Cookie</strong>。每张卡片含一行说明与若干提示——例如 Set-Cookie 缺少 HttpOnly 时会触发警告。</p>
+<p>这是工具「示例」菜单里的「响应 · 安全」。Strict-Transport-Security、Content-Security-Policy、X-Content-Type-Options、Referrer-Policy 归入<strong>安全</strong>组，Cache-Control 在<strong>缓存</strong>，Content-Type 在<strong>内容</strong>，Set-Cookie 在 <strong>Cookie</strong>。这一组配置不会触发任何警告；把 Set-Cookie 里的 HttpOnly 删掉再分析，就会出现「Missing HttpOnly」警告。</p>
 
-<h2>示例：CORS 预检</h2>
+<h2>示例：把 curl -i 的响应体也贴进来了</h2>
 
+<p><code>curl -i</code> 会在头部后面接一个空行，再输出响应体。工具不会在空行处停下，响应体里带冒号的行会被当成头部。下面是一个下单接口的返回，原文视图的结果是：</p>
+
+{/* hha-check: {"view":"raw"} */}
 ```
-OPTIONS /api/v1/orders HTTP/1.1
-Host: api.example.com
-Origin: https://app.example.com
-Access-Control-Request-Method: POST
-Access-Control-Request-Headers: Authorization, Content-Type
+HTTP/1.1 200 OK
+Content-Type: application/json;charset=UTF-8
+Content-Length: 61
+
+{"code":0,"msg":"成功","data":{"orderNo":"20261009000123"}}
 ```
 
-<p>识别为请求。Access-Control-Request-* 是预检标志，分析器突出显示 Origin，并列出请求的方法与头部。配合响应端使用，可端到端定位 CORS 握手问题。</p>
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json;charset=UTF-8
+Content-Length: 61
+{"code": 0,"msg":"成功","data":{"orderNo":"20261009000123"}}
+```
+
+<p>最后一行多出了一个名为 <code>{'{"code"'}</code> 的头部，摘要里的标头数也随之多 1。粘贴前把空行以下的内容删掉，或者改用 <code>curl -sS -D - -o /dev/null 网址</code>，它只输出头部。</p>
 
 <h2>类别一览</h2>
 <ul>
@@ -58,18 +125,31 @@ Access-Control-Request-Headers: Authorization, Content-Type
   <li><strong>CORS</strong> — Access-Control-\* 与 Origin。</li>
   <li><strong>鉴权</strong> — Authorization、WWW-Authenticate、Proxy-Authenticate。</li>
   <li><strong>Cookie</strong> — Cookie 与 Set-Cookie。</li>
-  <li><strong>传输 / 范围 / 代理 / 通用 / 自定义</strong> — 其他类别；X-\* 未知头部归入自定义。</li>
+  <li><strong>传输 / 范围 / 代理 / 通用 / 自定义</strong> — 其他类别；不在 88 个标头之内的头部都归入「自定义 / 其他」。</li>
   <li><strong>HTTP/2 · HTTP/3 伪首部</strong> — 浏览器开发者工具复制出的 <code>:status</code>、<code>:method</code>、<code>:path</code> 等单独成组并附说明（RFC 9113 §8.3）；没有状态行时，<code>:status</code> 表示响应，<code>:method</code> 表示请求。</li>
 </ul>
 
-<h2>合规提示规则</h2>
-<p>提示保守，只标出明显的配置错误，不做主观风格点评。例如：</p>
+<h2>提示规则</h2>
+<p>提示只标出明显的配置问题：</p>
 <ul>
   <li>HSTS max-age 小于 1 年，或缺少 includeSubDomains / preload。</li>
-  <li>CSP 含 <code>'unsafe-inline'</code> 或 <code>'unsafe-eval'</code>。</li>
-  <li>Set-Cookie 缺少 HttpOnly 或 Secure。</li>
-  <li>Access-Control-Allow-Credentials: true 配 * 通配 Origin（规范禁止）。</li>
-  <li>Cache-Control 同时含 no-store 与 max-age（max-age 实际无效）。</li>
+  <li>CSP 含 <code>'unsafe-inline'</code> 或 <code>'unsafe-eval'</code>，或没有 <code>default-src</code>。</li>
+  <li>Set-Cookie 缺少 HttpOnly、Secure 或 SameSite。</li>
+  <li>Access-Control-Allow-Credentials: true，而粘贴的头部里没有具体的 Allow-Origin（只有 <code>*</code> 或没有）。</li>
+  <li>Cache-Control 同时含 no-store 与 max-age。</li>
+  <li>X-Frame-Options 不是 DENY、SAMEORIGIN 或 ALLOW-FROM；X-XSS-Protection 以 1 开头。</li>
+  <li>响应里有 Server 头。</li>
+</ul>
+<p>说明文字和提示在所有语言页面上都是英文。</p>
+
+<h2>限制</h2>
+<ul>
+  <li>只有上面列出的 9 个方法会被识别为请求行，而且不区分大小写（RFC 9110 第 9.1 节规定方法名区分大小写）。</li>
+  <li><code>curl -v</code> 的输出保留 <code>&gt;</code>、<code>&lt;</code>、<code>*</code> 前缀，工具会把前缀当成名称的一部分，带冒号的行全部进入「自定义 / 其他」，也识别不出请求还是响应。请先删掉前缀。</li>
+  <li>没有半角冒号的行会被直接跳过、不提示，例如用中文输入法打出的 <code>Content-Type：text/html</code>。名称和冒号之间的空格会被悄悄去掉，而 RFC 9112 第 5.1 节要求服务器对这样的请求返回 400。</li>
+  <li>HSTS 的 <code>max-age</code> 只认纯数字。RFC 6797 第 6.1 节允许写成带引号的 <code>max-age="31536000"</code>，工具会按 0 处理并给出「不足 1 年」的警告。响应里有两个 Strict-Transport-Security 时，浏览器只用第一个（RFC 6797 第 8.1 节），工具两个都检查。</li>
+  <li><code>'unsafe-inline'</code> 警告看的是整条策略：<code>style-src 'unsafe-inline'</code> 也会触发；同一指令里已有 nonce 或 hash 时，CSP Level 3 第 6.7.3.2 节规定浏览器忽略 <code>'unsafe-inline'</code>，工具仍然给出警告。</li>
+  <li>不抓取网址，看不到重定向，也看不到你没贴进来的头部。</li>
 </ul>
 
 <h2>相关工具</h2>
