@@ -269,8 +269,9 @@ const DOC_MEMBERS = ['$__delta', '$__dirty', '$__fullPath', '$__fullPathWithInde
     eq(`S2-10f: ${lang} ${key} names the keys`, typeof labels[lang][key] === 'string' && labels[lang][key].split('{keys}').length === 2, true);
   }
   eq('S2-10f: the breaking-name notice names the Mongoose version', ['en', 'zh', 'ja', 'ko'].every((lang) => String(labels[lang].msgBreaks ?? '').includes('Mongoose 9.10.3')), true);
-  // S2-10f review S1: about half of DOC_BREAKS are properties (_doc, $__, schema, $parent, $session, __index), so the
-  // notice says document members (methods and properties), not document methods.
+  // S2-10f review S1: 11 of the 41 DOC_BREAKS names are properties on Mongoose 9.10.3 documents (_doc, $__, schema,
+  // __index, __parentArray and others; checked below with MONGOOSE_TEST_DIR), so the notice says document members
+  // (methods and properties), not document methods.
   const MEMBER_WORDS = { en: 'document members (methods and properties)', zh: '文档成员（方法或属性）', ja: 'ドキュメントメンバー（メソッドやプロパティ）', ko: '문서 멤버(메서드·속성)' };
   for (const lang of ['en', 'zh', 'ja', 'ko']) eq(`S2-10f review S1: ${lang} msgBreaks says document members, methods and properties`, String(labels[lang].msgBreaks).includes(MEMBER_WORDS[lang]), true);
 }
@@ -445,6 +446,10 @@ if (process.env.MONGOOSE_TEST_DIR) {
       const reserved = Object.keys(mongoose.Schema.reserved);
       eq('Mongoose 9.10.3 members rebuild DOC_BREAKS', JSON.stringify(breaks), JSON.stringify(DOC_BREAKS));
       eq('Mongoose 9.10.3 members rebuild DOC_MEMBERS', JSON.stringify(left.filter((n) => !breaks.includes(n) && !reserved.includes(n))), JSON.stringify(DOC_MEMBERS));
+      // S2-10f review S1: the first group holds methods and properties, so the notice says document members.
+      const kindOf = (n) => [...new Set([inst, inst.sub, inst.list[0]].filter((o) => n in o).map((o) => { try { return typeof o[n] === 'function' ? 'method' : 'property'; } catch { return 'property'; } }))].join('/');
+      eq('S2-10f review S1: DOC_BREAKS names that are properties on Mongoose 9.10.3 documents', JSON.stringify(DOC_BREAKS.filter((n) => kindOf(n) === 'property')), JSON.stringify(['$__', '$__middleware', '$__parent', '$__schema', '$__schemaTypeOptions', '$basePath', '$isSingleNested', '__index', '__parentArray', '_doc', 'schema']));
+      eq('S2-10f review S1: the other 30 DOC_BREAKS names are methods', DOC_BREAKS.filter((n) => kindOf(n) === 'method').length, 30);
       // The limits quote these results; each runs generated code with the real library.
       const run = (json, sample) => { const iso = new mongoose.Mongoose(); const mod = { exports: {} }; new Function('require', 'module', gen(json, 'Sample', 'javascript', false, false))(() => iso, mod); return new mod.exports(sample); };
       const error = (fn) => { try { fn(); return ''; } catch (e) { return e.message; } };
