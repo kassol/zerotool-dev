@@ -33,6 +33,7 @@ import { dirname, join } from 'node:path';
 import { randomBytes, createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import { annotations, fencedBlocks, reportContract } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_TEST_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const { parseFragment } = createRequire(join(root, 'package.json'))('parse5');
@@ -525,5 +526,49 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
  if(process.env.ZT_B13_REGISTRATION_PENDING==='1')console.log('PENDING: generate registration is reserved for root adoption; not counted as PASS');
  else check('v2: registered with the implemented generate page',layouts.includes("'csp-header-generator': 'generate'"));
 }
+// ---------- tool page examples (S2 content contract) ----------
+// `{/* csp-tool: {...} */}` drives the real page script: preset → mode → added directives →
+// typed sources (Enter in the directive's source box) → hash calculator → output tab. The
+// output must appear verbatim in a code block before the next annotation or H2. `warn` lists
+// validatePolicy keys whose localized text must be shown; `status` is the UI_STRINGS key of
+// the status line after the sources were typed.
+async function runCspTool(s, lang) {
+  const p = page(spec, lang);
+  if (s.preset) p.input('csp-preset', s.preset, 'change');
+  if (s.mode) p.click('[data-mode="' + s.mode + '"]');
+  for (const d of s.add || []) { p.$('csp-add-select').value = d; p.click('#csp-add-btn'); }
+  let status = '';
+  for (const [d, vals] of Object.entries(s.sources || {})) for (const v of vals) { addHost(p, d, v); status = p.$('csp-status').textContent; }
+  if (s.hash) {
+    p.input('csp-hash-algo', s.hash.algo || 'SHA-256', 'change');
+    p.input('csp-hash-target', s.hash.target || 'script-src', 'change');
+    p.input('csp-hash-input', s.hash.text); p.click('#csp-hash-add');
+    for (let i = 0; i < 30 && p.$('csp-hash-copy').disabled; i++) await flushPage();
+  }
+  if (s.format) p.click('[data-format="' + s.format + '"]');
+  return { out: p.$('csp-output').textContent, validation: p.$('csp-validation').textContent, status };
+}
+const cspRuns = new Map();
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const body = readFileSync(join(root, 'src/content/tools/csp-header-generator', lang + '.mdx'), 'utf8');
+  for (const note of annotations(body, 'csp-tool')) {
+    if (note.spec) cspRuns.set(lang + '\0' + note.raw, await runCspTool(note.spec, lang));
+    if (process.env.CSP_PRINT) console.log('--- ' + lang + ' ' + note.raw + '\n' + cspRuns.get(lang + '\0' + note.raw)?.out + '\n[status] ' + cspRuns.get(lang + '\0' + note.raw)?.status);
+  }
+}
+reportContract(check, 'csp-header-generator', {
+  stepCount: 7,
+  annotations: [{
+    tag: 'csp-tool', min: 2,
+    verify({ spec: s, raw, after, lang }) {
+      const run = cspRuns.get(lang + '\0' + raw);
+      if (!fencedBlocks(after).some((b) => b.text === run.out)) return 'output not quoted verbatim:\n' + run.out;
+      for (const key of s.warn || []) if (!run.validation.includes(E.STRINGS[lang][key])) return 'warning ' + key + ' not shown';
+      if (s.status && !run.status.startsWith(UI_MSG[lang][s.status])) return 'status is ' + JSON.stringify(run.status);
+      return null;
+    },
+  }],
+});
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
