@@ -14,6 +14,9 @@
 // can be read; nanosecond values beyond 2^53 keep their millisecond part (BigInt); negative values
 // and fractions round like Date (toward zero); invalid text and out-of-range values; the examples
 // on the English page; 4-language STRINGS share the same keys.
+// S2-9 (2026-10-09): the execCommand('copy') fallback of the result rows; full-width digits, signs
+// and points read as ASCII; the four-language invalid-timestamp message; the tsc-check worked
+// examples on the four tool pages (with process.env.TZ per example) and the local FAQ answers.
 //
 // Run: node scripts/test-timestamp-converter.mjs
 
@@ -24,7 +27,7 @@ import { createRequire } from 'node:module';
 import { load as loadYaml } from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { annotations, contractProblems, fencedBlocks, readToolMdx, withoutCode } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/TimestampConverterTool.astro'), 'utf8');
@@ -369,6 +372,88 @@ try {
       eq(prefix + JSON.stringify(bad) + ' is rejected with the page-language message', [rows(p, upper), p.get('tc-ts-status').textContent, p.get('tc-ts-status').className], [[], ERR_NUM[lang], 'tc-status error']);
     }
     eq(prefix + 'the message no longer offers dates in this field', /or date|或日期|または日付|나 날짜/.test(client.errNum), false);
+  }
+
+  // ---------- worked examples on the tool pages (S2-9, 2026-10-09) ----------
+  // {/* tsc-check: {"in": "x" | ["x", …], "unit"?: "auto"|"s"|"ms"|"us"|"ns", "tz"?: "Zone" | ["Zone", …],
+  //   "show"?: ["s", "ms", "iso", "utc", "local"], "label"?: true, "status"?: true, "error"?: true} */},
+  // the same with "date": "YYYY-MM-DDTHH:MM:SS" for Date → Timestamp, or {"cases": [ … ]} on
+  // src/content/tools/timestamp-converter/{lang}.mdx: the real page script in the page language runs
+  // with process.env.TZ = tz (default UTC), converts the value, and every listed row value (default
+  // "iso") must appear as inline code, a <code> element or a code-block line after the annotation
+  // (up to the next tsc-check or H2). "label" requires the Local row label (such as
+  // "Local (UTC+08:00)") and "status" the status line text verbatim in that text; "error" requires
+  // an error status, no result rows and the error text verbatim in that text.
+  {
+    const before = passes, beforeFailures = failures;
+    const ROW = { s: 0, ms: 1, iso: 2, utc: 3, local: 4 };
+    const codeTexts = (after) => {
+      const out = new Set();
+      for (const b of fencedBlocks(after)) { out.add(b.text); for (const line of b.text.split('\n')) out.add(line.trim()); }
+      const prose = withoutCode(after);
+      for (const m of prose.matchAll(/(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/g)) out.add(m[2].replace(/^ ([\s\S]*) $/, '$1'));
+      for (const m of prose.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/g)) {
+        const js = /^\{"((?:[^"\\]|\\[\s\S])*)"\}$/.exec(m[1]);
+        out.add(js ? JSON.parse('"' + js[1] + '"') : m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&'));
+      }
+      return out;
+    };
+    const run = (lang, c, tz) => {
+      process.env.TZ = tz;
+      const p = lifecyclePage(lang), dateMode = c.date !== undefined, id = dateMode ? lower : upper;
+      if (dateMode) convertDate(p, c.date);
+      else { p.input('tc-unit', c.unit ?? 'auto', 'change'); convertTimestamp(p, c.in); }
+      const status = p.get(dateMode ? 'tc-date-status' : 'tc-ts-status');
+      return { values: rows(p, id), label: p.get(id).querySelectorAll('.tc-label')[4]?.textContent, status: status.textContent, error: status.className === 'tc-status error' };
+    };
+    const verify = ({ spec, after, lang }) => {
+      const list = Array.isArray(spec?.cases) ? spec.cases : [spec];
+      const cases = list.flatMap((c) => (c?.date !== undefined ? [{ ...c }] : [].concat(c?.in ?? []).map((value) => ({ ...c, in: value }))));
+      if (!cases.length || cases.some((c) => typeof (c.date ?? c.in) !== 'string')) return 'annotation needs "in", "date" or "cases"';
+      const codes = codeTexts(after);
+      for (const c of cases) {
+        for (const tz of [].concat(c.tz ?? 'UTC')) {
+          const r = run(lang, c, tz), what = JSON.stringify(c.date ?? c.in) + ' in ' + tz;
+          if (c.error) {
+            if (!r.error || r.values.length) return what + ': expected an error, page gives ' + JSON.stringify(r.values);
+            if (!after.includes(r.status)) return what + ': error ' + JSON.stringify(r.status) + ' is not quoted';
+            continue;
+          }
+          if (r.error || r.values.length !== 5) return what + ': page gives the error ' + JSON.stringify(r.status);
+          for (const key of c.show ?? ['iso']) {
+            if (!(key in ROW)) return 'unknown "show" key ' + key;
+            if (!codes.has(r.values[ROW[key]])) return what + ': ' + key + ' ' + JSON.stringify(r.values[ROW[key]]) + ' is not shown as code';
+          }
+          if (c.label && !after.includes(r.label)) return what + ': label ' + JSON.stringify(r.label) + ' is not shown';
+          if (c.status && !after.includes(r.status)) return what + ': status ' + JSON.stringify(r.status) + ' is not quoted';
+        }
+      }
+      return null;
+    };
+    const docs = readToolMdx('timestamp-converter');
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      eq(lang + ' worked examples, Limits and FAQ ids pass the S2 contract',
+        contractProblems('timestamp-converter', lang, { limits: true, requireFaqIds: true, annotations: [{ tag: 'tsc-check', min: 2, verify }] }), '');
+      eq(lang + ' every result-table input on the page is recomputed', annotations(docs[lang].body, 'tsc-check').length >= 2, true);
+    }
+    eq('tsc-check catches a wrong ISO value', verify({ spec: { in: '1700000000' }, after: '\n`2023-11-14T22:13:21.000Z`\n', lang: 'en' }) !== null, true);
+    eq('tsc-check accepts the page value in a table cell', verify({ spec: { in: '1700000000', show: ['iso', 's'] }, after: '\n| `1700000000` | `2023-11-14T22:13:20.000Z` |\n', lang: 'en' }), null);
+    eq('tsc-check reads the zone', verify({ spec: { in: '1700000000', tz: 'Asia/Tokyo', show: ['local'], label: true }, after: '\nLocal (UTC+09:00) `2023-11-15 07:13:20`\n', lang: 'en' }), null);
+    eq('tsc-check catches a wrong zone label', verify({ spec: { in: '1700000000', tz: 'Asia/Seoul', label: true }, after: '\n`2023-11-14T22:13:20.000Z` Local (UTC+08:00)\n', lang: 'en' }) !== null, true);
+    eq('tsc-check catches an error that is not quoted', verify({ spec: { in: '1e9', error: true }, after: '\nInvalid timestamp.\n', lang: 'en' }) !== null, true);
+    eq('tsc-check catches a value that is not an error', verify({ spec: { in: '1700000000', error: true }, after: '\nInvalid timestamp.\n', lang: 'en' }) !== null, true);
+    // The local FAQ answers quote page results too (FAQ text is frontmatter, so no annotation).
+    const faq = (lang, id) => docs[lang].data.faqItems.find((f) => f.id === id)?.answer ?? '';
+    const quoted = (answer, r, keys) => keys.every((k) => answer.includes(k === 'label' ? r.label.replace(/^Local \((.*)\)$/, '$1') : r.values[ROW[k]]));
+    {
+      const gap = run('en', { date: '2026-03-08T02:30:00' }, 'America/New_York'), twice = run('en', { date: '2026-11-01T01:30:00' }, 'America/New_York');
+      eq('en FAQ local-dst-gap quotes the page results', [quoted(faq('en', 'local-dst-gap'), gap, ['s', 'local']), quoted(faq('en', 'local-dst-gap'), twice, ['s']), twice.values[2]], [true, true, '2026-11-01T05:30:00.000Z']);
+    }
+    for (const [lang, value, tz] of [['zh', '583718400', 'Asia/Shanghai'], ['ja', '-647049600', 'Asia/Tokyo'], ['ko', '583718400', 'Asia/Seoul']]) {
+      const r = run(lang, { in: value }, tz);
+      eq(lang + ' FAQ local-summer-time quotes the page results', quoted(faq(lang, 'local-summer-time'), r, ['iso', 'local', 'label']) && faq(lang, 'local-summer-time').includes(value), true);
+    }
+    console.log('tool page examples: ' + (passes - before) + ' passed, ' + (failures - beforeFailures) + ' failed');
   }
   await settle(); eq('all timestamp copy rejection promises are handled', unhandled, []);
 } finally {

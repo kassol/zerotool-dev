@@ -9,13 +9,20 @@ steps:
   - "Click Copy beside the result you need. Ctrl/⌘+L while focus is in this tool clears both inputs, results and status while keeping the selected unit."
 faqItems:
   - question: "What is a Unix timestamp?"
-    answer: "A Unix timestamp (also called Epoch time) is the number of seconds elapsed since January 1, 1970 00:00:00 UTC. It is the universal time reference in computing."
+    answer: "A Unix timestamp (also called Epoch time) is the number of seconds elapsed since January 1, 1970 00:00:00 UTC. Many systems count milliseconds instead, such as JavaScript's Date.now(), and some count microseconds or nanoseconds."
+    id: "what-is"
   - question: "Seconds or milliseconds — how do I tell?"
-    answer: "A 10-digit number is almost certainly seconds (valid until 2286). A 13-digit number is milliseconds, 16 digits microseconds and 19 digits nanoseconds. This tool picks the unit from the digit count and shows which one it used; you can also choose the unit."
-  - question: "Why does local time differ from UTC?"
-    answer: "UTC is the global reference point. Local time is UTC adjusted for your browser's timezone offset."
-  - question: "Is this tool accurate for all timezones?"
-    answer: "Yes. The JavaScript Date API uses your system's timezone data for the local time display."
+    answer: "A 10-digit number is almost certainly seconds (valid until 2286). A 13-digit number is milliseconds, 16 digits microseconds and 19 digits nanoseconds. This tool counts the digits before any decimal point (up to 12 means seconds), shows which unit it used, and lets you choose the unit."
+    id: "unit"
+  - question: "Which time zone does the local result use? Can I pick another?"
+    answer: "Your browser's time zone. The ISO 8601 and UTC rows show the instant in UTC; the Local row shows it in your zone, and its label gives that zone's offset on that date, including daylight saving time, from the browser's time zone data. Date → Timestamp reads the picked date and time in the same zone. There is no zone selector; to convert between other zones, use the Timezone Converter."
+    id: "time-zone"
+  - question: "What happens to a time that daylight saving time skips?"
+    answer: "Date → Timestamp reads a skipped local time with the offset in force before the change, as the UTC(t) operation of ECMAScript specifies. On a computer set to America/New_York, 2026-03-08 02:30:00 gives 1772955000, and the Local row shows 2026-03-08 03:30:00. A time that occurs twice when clocks go back, such as 2026-11-01 01:30:00, is read as the earlier instant, 1793511000."
+    id: "local-dst-gap"
+  - question: "Is any data sent or saved?"
+    answer: "No. Timestamps and dates are converted in your browser; they are not uploaded and not saved in browser storage. Usage statistics record only the tool name and the action when you click Convert (Ctrl/⌘+Enter also clicks it). They do not include the value."
+    id: "privacy"
 ---
 
 <h2>About Unix Timestamps</h2>
@@ -32,6 +39,8 @@ faqItems:
 
 With the unit set to <strong>Auto unit</strong>, the converter counts the digits before any decimal point: up to 12 digits are seconds, 13–15 milliseconds, 16–18 microseconds, and 19 or more nanoseconds. Present-day values have 10, 13, 16 and 19 digits. The status line says which unit it used; choose a unit from the list to override it.
 
+{/* tsc-check: {"in": ["1700000000", "1700000000123", "2147483647", "1700000000123456", "1700000000123456789"]} */}
+
 | Input | Read as | ISO 8601 (UTC) |
 |---|---|---|
 | `1700000000` | seconds | `2023-11-14T22:13:20.000Z` |
@@ -43,6 +52,8 @@ With the unit set to <strong>Auto unit</strong>, the converter counts the digits
 `2147483647` is the largest value a signed 32-bit integer can hold, which is where the Year 2038 problem starts. The last two rows are a microsecond timestamp (Python `time.time_ns() // 1000`, PostgreSQL internals) and a nanosecond one (Go `time.Now().UnixNano()`, `date +%s%N`); digits below the millisecond are dropped, because a JavaScript date holds whole milliseconds. Nanosecond values are larger than 2<sup>53</sup>, so the tool reads them as big integers instead of floating-point numbers.
 
 ### What each result row means
+
+{/* tsc-check: {"in": "1700000000", "tz": "Asia/Tokyo", "show": ["s", "ms", "iso", "utc", "local"], "label": true} */}
 
 Converting `1700000000` gives five rows:
 
@@ -56,16 +67,25 @@ Converting `1700000000` gives five rows:
 
 ### Date to Timestamp across time zones
 
+{/* tsc-check: {"date": "2026-01-01T09:00:00", "tz": ["Asia/Tokyo", "America/New_York"], "show": ["s", "iso"]} */}
+
 The date picker has no time zone field, so the same wall-clock time gives different timestamps on different computers. Picking 2026-01-01 09:00:00 returns `1767225600` (`2026-01-01T00:00:00.000Z`) on a computer set to Asia/Tokyo, and `1767276000` (`2026-01-01T14:00:00.000Z`) on one set to America/New_York. The ISO 8601 row shows which instant you actually selected. To work with a zone other than your own, use the [Timezone Converter](/tools/timezone-converter/).
+
+{/* tsc-check: {"date": "2026-03-08T02:30:00", "tz": "America/New_York", "show": ["s", "iso", "local"], "label": true} */}
+
+Daylight saving time skips an hour in some zones. In America/New_York, clocks jump from 02:00 to 03:00 on the second Sunday in March (`Rule US 2007 max Mar Sun>=8 2:00` in the [tz database](https://github.com/eggert/tz/blob/main/northamerica)), so 02:30 on 2026-03-08 does not exist there. Picking 2026-03-08 02:30:00 on a computer set to that zone still converts, using the offset from before the jump: the result is `1772955000` (`2026-03-08T07:30:00.000Z`), and the Local (UTC-04:00) row shows `2026-03-08 03:30:00`, not the time you picked. That reading follows the UTC(t) operation in [ECMA-262 §21.4.1.26](https://tc39.es/ecma262/#sec-utc-t).
 
 ### Accepted input
 
-The timestamp field takes anything JavaScript's `Number()` reads as a number. Spaces around the value are ignored.
+The timestamp field takes decimal digits with an optional `+` or `-` sign and an optional decimal part. Spaces around the value are ignored, and full-width digits, signs and decimal points typed with a Chinese, Japanese or Korean input method are read as ASCII; the field keeps what you typed.
+
+{/* tsc-check: {"cases": [{"in": "-86400"}, {"in": "1700000000.5", "show": ["ms"]}, {"in": "１７００００００００"}, {"in": "1e9", "error": true}, {"in": "2024-05-01", "error": true}]} */}
 
 - Negative values are dates before 1970: `-86400` is `1969-12-31T00:00:00.000Z`.
-- Fractions of a second are kept in the millisecond row: `1700000000.5` gives `1700000000500`.
-- Exponent notation counts as a short number: `1e9` is read as seconds, giving `2001-09-09T01:46:40.000Z`.
-- Dates as text, such as `2024-05-01`, are rejected with "Invalid timestamp". Use the date picker for those.
+- A decimal part adds milliseconds: `1700000000.5` gives `1700000000500`.
+- The full-width `１７００００００００` gives the same `2023-11-14T22:13:20.000Z` as `1700000000`.
+- Exponent notation is rejected: `1e9` gives “Invalid timestamp. Enter digits with an optional sign and decimal point. For a date, use Date → Timestamp.”
+- Dates as text, such as `2024-05-01`, get the same message. Use the date picker for those.
 
 ## Do It in Code
 
@@ -88,8 +108,10 @@ datetime.datetime.fromtimestamp(1700000000, datetime.timezone.utc)  # 2023-11-14
 
 ## Limits
 
+{/* tsc-check: {"cases": [{"in": "8640000000000000", "unit": "ms"}, {"in": "8640000000000001", "unit": "ms", "error": true}]} */}
+
 - **Automatic unit by length only.** A millisecond value from before 2001-09-09 has 12 digits and is read as seconds, and a seconds value of 13 digits or more (after year 33658) is read as milliseconds. Choose the unit in those cases.
-- **Digits only.** Exponents (`1e10`), hexadecimal and thousands separators are rejected; a decimal part is accepted.
+- **Digits only.** Exponents (`1e10`), hexadecimal and thousands separators are rejected; a decimal part is accepted. Full-width digits are read as ASCII, but other digit sets, such as Arabic-Indic digits, are rejected.
 - **Date to Timestamp uses your local time zone.** The date picker value is read in your browser's time zone, so the same picker value gives different timestamps on computers set to different zones.
 - **No leap seconds.** Unix time ignores leap seconds, as does JavaScript's `Date`.
 - **Range.** JavaScript dates cover ±8,640,000,000,000,000 ms from the epoch, about 273,790 years each way ([ECMA-262 §21.4.1.1](https://tc39.es/ecma262/#sec-time-values-and-time-range)). With the unit set to milliseconds, `8640000000000000` converts to `+275760-09-13T00:00:00.000Z`; one more millisecond gives "Timestamp out of range."
