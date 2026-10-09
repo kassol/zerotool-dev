@@ -13,6 +13,9 @@
 // be removed, so portrait phone photos were shown sideways), checked for all 8 values in big- and
 // little-endian files with sharp and, when installed, exiftool; the drop-zone text states
 // the same 100 MB limit the code enforces (it used to say 25 MB); the page stays `disabled`.
+// S2-9c: UTF-8 text in ASCII-type tags, Latin-1 fallback for GBK / Shift_JIS / EUC-KR bytes, the
+// Exif 3.0 UTF-8 type left undecoded, bad IFD offsets (no throw, localized notice), the copy
+// fallback, and the emv-check worked examples on the four pages (test JPEGs written by tiff()).
 //
 // Run: node scripts/test-exif-metadata-viewer.mjs
 
@@ -456,6 +459,13 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
     // Bytes that are not valid UTF-8 keep the old one-byte-per-character reading (Latin-1)
     const latin = withApp1(photo, tiff({ ifd0: { Software: { bytes: [0x83, 0x65, 0x83, 0x58, 0x83, 0x67] } } }));
     eq('non-UTF-8 bytes stay Latin-1', E.parseExif(ab(latin)).exif.ifd0.Software, '\u0083e\u0083X\u0083g');
+    // The zh / ja / ko limits say GBK, Shift_JIS and EUC-KR text shows garbled
+    for (const [label, bytes, text] of [['GBK 中文', [0xD6, 0xD0, 0xCE, 0xC4], '中文'], ['Shift_JIS 日本語', [0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA], '日本語'], ['EUC-KR 한글', [0xC7, 0xD1, 0xB1, 0xDB], '한글']]) {
+      const got = E.parseExif(ab(withApp1(photo, tiff({ ifd0: { Software: { bytes: [...bytes, 0] } } })))).exif.ifd0.Software;
+      eq(label + ' is shown one byte per character, not as ' + text, got, String.fromCharCode(...bytes));
+    }
+    // Exif 3.0 UTF-8 type (129) is not decoded: the value is null
+    eq('UTF-8 type (129) is not decoded', E.parseExif(ab(withApp1(photo, tiff({ ifd0: { Make: { utf8: '한글' } } })))).exif.ifd0.Make, null);
     // An IFD offset past the end of the file used to throw a RangeError out of parseExif and
     // stripMetadata: the page stayed on "Reading metadata…" and Download threw.
     // The offset is inside the file when counted from its start but past the end when counted
@@ -505,6 +515,84 @@ eq('script stores nothing', /localStorage|sessionStorage|ztPersist/.test(source)
       }
     }
     console.log(`S2-9c fixes: ${passes - base2.passes} passed, ${failures - base2.failures} failed`);
+  }
+
+  // ---------- Worked examples on the four tool pages (S2-9c) ----------
+  // {/* emv-check: {"mode": "rows" | "json" | "clean" | "map", "file": <tiff() spec>} */}
+  // The test writes a JPEG with exactly those fields (tiff() above; read back with ExifTool when
+  // installed), loads it into the real page script and compares:
+  //   rows  — the visible rows as "label: value" lines, equal to the next code block
+  //   json  — the text Copy EXIF JSON puts on the clipboard, equal to the next code block
+  //   clean — EXIF left in the Download cleaned JPEG file (compact JSON, or null), in inline code
+  //   map   — the Open in Google Maps link in inline code; with "amap": true also the
+  //           longitude,latitude pair (6 decimals) that AMap's coordinate API takes
+  {
+    const base3 = { passes, failures };
+    const ROW_LABEL = { Make: 'kMake', Model: 'kModel', LensModel: 'kLens', DateTimeOriginal: 'kDateOriginal', DateTime: 'kDateModified', FNumber: 'kAperture', ExposureTime: 'kShutter', ISOSpeedRatings: 'kISO', FocalLength: 'kFocal', GPSLatitude: 'kLatitude', GPSLongitude: 'kLongitude', GPSAltitude: 'kAltitude', Software: 'kSoftware' };
+    // Inline code: Markdown `…`, <code>…</code>, or <code>{'…'}</code> (an MDX string expression,
+    // needed when the code holds braces)
+    const inlineCode = (text) => [...text.matchAll(/`([^`\n]+)`|<code>\{'([^'\n]*)'\}<\/code>|<code>([^<]*)<\/code>/g)].map((m) => m[1] ?? m[2] ?? m[3]);
+    const { fencedBlocks, annotations: notes, readToolMdx } = await import('./lib/tool-mdx-contract.mjs');
+    const exifRead = (bytes) => {
+      if (!hasExiftool) return null;
+      const dir = mkdtempSync(join(tmpdir(), 'emv-'));
+      const f = join(dir, 'x.jpg');
+      writeFileSync(f, bytes);
+      const r = spawnSync('exiftool', ['-j', '-n', '-EXIF:all', f], { encoding: 'utf8' });
+      rmSync(dir, { recursive: true, force: true });
+      return JSON.parse(r.stdout)[0];
+    };
+    async function verify(spec, after, lang) {
+      const bytes = withApp1(photo, tiff(spec.file));
+      const tags = exifRead(bytes);
+      if (tags) {
+        for (const group of ['ifd0', 'exif', 'gps']) for (const [k, v] of Object.entries(spec.file[group] || {})) {
+          const want = typeof v === 'string' && !/^\d+\/\d+/.test(v) ? v : v && v.utf8 !== undefined ? v.utf8 : undefined;
+          const name = { DateTime: 'ModifyDate' }[k] ?? k; // ExifTool's name for IFD0 0x0132
+          if (want !== undefined && String(tags[name]) !== want) return 'ExifTool reads ' + name + ' as ' + JSON.stringify(tags[name]);
+        }
+      }
+      const p = ui(lang);
+      p.complete(p.input('test.jpg', 'image/jpeg', bytes.length), bytes);
+      const L = STRINGS[lang];
+      if (spec.mode === 'rows') {
+        const rows = p.document.querySelectorAll('.emv-kv-row').filter((r) => visible(r)).map((r) => L[ROW_LABEL[r.getAttribute('data-key')]] + ': ' + p.get('emv-' + r.getAttribute('data-key')).textContent);
+        const want = rows.join('\n');
+        return fencedBlocks(after).some((b) => b.text === want) ? null : 'rows ' + JSON.stringify(want) + ' not in a code block';
+      }
+      if (spec.mode === 'json') {
+        p.get('emv-copy-json').click(); await settle();
+        const want = p.copied.at(-1);
+        return fencedBlocks(after).some((b) => b.text === want) ? null : 'copied JSON ' + JSON.stringify(want) + ' not in a code block';
+      }
+      if (spec.mode === 'clean') {
+        p.get('emv-download').click();
+        const out = await p.downloads.at(-1).blob.arrayBuffer();
+        const want = JSON.stringify(E.parseExif(out).exif);
+        return inlineCode(after).includes(want) ? null : 'cleaned EXIF ' + want + ' not in inline code';
+      }
+      if (spec.mode === 'map') {
+        const href = p.get('emv-gps-map').href;
+        if (!inlineCode(after).includes(href)) return 'map link ' + href + ' not in inline code';
+        if (spec.amap) {
+          const [lat, lon] = href.split('q=')[1].split(',');
+          if (!inlineCode(after).includes(lon + ',' + lat)) return 'longitude,latitude ' + lon + ',' + lat + ' not in inline code';
+        }
+        return null;
+      }
+      return 'unknown mode';
+    }
+    const docs = readToolMdx('exif-metadata-viewer');
+    for (const lang of ['en', 'zh', 'ja', 'ko']) {
+      const found = notes(docs[lang].body, 'emv-check');
+      eq(lang + ' has at least 2 emv-check examples', found.length >= 2, true);
+      for (const [i, n] of found.entries()) {
+        let problem;
+        try { problem = n.spec ? await verify(n.spec, n.after, lang) : 'annotation JSON does not parse'; } catch (error) { problem = error.message; }
+        eq(lang + ' emv-check #' + (i + 1) + ' matches the page', problem, null);
+      }
+    }
+    console.log(`Worked examples: ${passes - base3.passes} passed, ${failures - base3.failures} failed`);
   }
 }
 
