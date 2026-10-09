@@ -589,6 +589,42 @@ for (const tool of ['yaml-json', 'yaml-toml']) {
   }
 }
 
+/* ── E-YAML-MERGE ── `<<` merges every enumerable property of its value (js-yaml mergeMappings
+   only asks for an object). The page's YamlTimestamp, LossyValue and WholeFloat objects therefore
+   merged their inner fields (raw, date, kind, value, text) into the mapping. A merge of such a
+   scalar now stops with the mapping's path; the validator preview gets nothing from it, as js-yaml
+   does with a Date. yaml-json builds no WholeFloat, so `<<: 1.0` keeps js-yaml's own error. */
+const MG = 'E-YAML-MERGE';
+expectStops(MG, 'yaml-json', 'y2j', 'm:\n  <<: 2026-01-01\n  x: 1', [['merge', '/m', '2026-01-01']]);
+expectStops(MG, 'yaml-json', 'y2j', 'm:\n  <<: 9007199254740993', [['merge', '/m', '9007199254740993']], 'ja');
+expectStops(MG, 'yaml-toml', 'y2t', 'm:\n  <<: 1.0', [['merge', '/m', '1.0']]);
+expectStops(MG, 'yaml-toml', 'y2t', 'm:\n  <<: [2026-01-01]\n  x: 1', [['merge', '/m', '2026-01-01']], 'ko');
+{
+  const r = convert(open('yaml-json'), 'yaml-json', 'y2j', 'm:\n  <<: 1.0', 'input');
+  check(MG, 'yaml-json: <<: 1.0 keeps js-yaml\'s "cannot merge mappings" error', r.out.value === '' && r.status.textContent.includes('cannot merge mappings'), 'status=' + JSON.stringify(r.status.textContent));
+}
+for (const [tool, dir, text] of [['yaml-json', 'y2j', 'm:\n  <<: 2026-01-01\n  x: 1'], ['yaml-json', 'y2j', 'm:\n  <<: 9007199254740993'], ['yaml-toml', 'y2t', 'm:\n  <<: 1.0']]) {
+  const r = convert(open(tool), tool, dir, text, 'input');
+  check(MG, `${tool} ${JSON.stringify(text)}: no inner field reaches the status or the output`, !/\b(raw|date|kind|value|text)\b/.test(r.status.textContent) && r.out.value === '', 'status=' + JSON.stringify(r.status.textContent));
+}
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  for (const lang of ['en', 'zh']) {
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid } } });
+    for (const [text, raw, preview] of [['m:\n  <<: 2026-01-01\n  x: 1', '2026-01-01', { m: { x: 1 } }], ['m:\n  <<: 9007199254740993', '9007199254740993', { m: {} }]]) {
+      page.el('yv-input').value = text; page.el('yv-validate').click();
+      const note = page.el('yv-preview-note').textContent, want = stopItem(lang, 'merge', '/m', raw, 'JSON');
+      check(MG, `yaml-validator ${lang} ${JSON.stringify(text)}: preview without inner fields, note names /m`,
+        /\bsuccess\b/.test(page.el('yv-status').className) && page.el('yv-preview-content').textContent === JSON.stringify(preview, null, 2) && want !== null && note.includes(want),
+        'note=' + JSON.stringify(note) + ' preview=' + JSON.stringify(page.el('yv-preview-content').textContent));
+    }
+  }
+}
+
 /* ── PAGE-TEXT-D ── the pages quote the !!binary stop and note as the page shows them, the yaml-json
    table rows for !!set, !!pairs and a date key are the page output, and the FAQ answers name
    !!binary where they list what stops (no fixed count of exceptions). */

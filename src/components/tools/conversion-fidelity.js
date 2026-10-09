@@ -30,6 +30,18 @@
 // The YAML validator uses the same walk with `preview` to list what its JSON preview changes.
 // Paths are JSON Pointers (RFC 6901). Nothing here touches the DOM, storage or network.
 
+// Markers for values that js-yaml turns into keys or merges: a mapping key is String(value), and
+// `<<` copies every enumerable property of its value (loader.js mergeMappings only asks for an
+// object). The NUL keeps them apart from text a person types. findLosses lists them.
+const MERGE_MARK = '\u0000zt-merge';
+const BINARY_KEY = '\u0000zt-binary-key\u0000';
+
+function hide(obj, fields) {
+  Object.keys(fields).forEach(function (k) { Object.defineProperty(obj, k, { value: fields[k], writable: true, configurable: true }); });
+}
+
+// The value classes below keep their fields out of enumeration, so a `<<` merge of one copies only
+// MERGE_MARK (its text) instead of fields such as raw and date.
 // Mapping keys: js-yaml turns a key into String(key), but an object whose
 // Object.prototype.toString gives '[object Object]' becomes the text '[object Object]'
 // (loader.js storeMappingPair, which uses the object's own toString when it has a
@@ -40,33 +52,30 @@
 // `value` is what JavaScript would hold instead (the rounded number), for previews that show it.
 // `text` is the key text (default: `raw`).
 export class LossyValue {
-  constructor(kind, raw, value, text) { this.kind = kind; this.raw = raw; this.value = value; this.text = text === undefined ? raw : text; }
+  constructor(kind, raw, value, text) {
+    hide(this, { kind: kind, raw: raw, value: value, text: text === undefined ? raw : text });
+    this[MERGE_MARK] = raw;
+  }
   get [Symbol.toStringTag]() { return 'LossyValue'; }
   toString() { return this.text; }
 }
 // `date` is the Date js-yaml builds (Date.UTC, so 2026-02-31 becomes 2026-03-03).
 export class YamlTimestamp {
-  constructor(raw, date) { this.raw = raw; this.date = date; }
+  constructor(raw, date) { hide(this, { raw: raw, date: date }); this[MERGE_MARK] = raw; }
   get [Symbol.toStringTag]() { return 'YamlTimestamp'; }
   toString() { return this.raw; }
 }
 
 // A YAML float whose value is a whole number (1.0, 1e3): JavaScript keeps no float type, so
 // smol-toml would write it as the TOML integer 1. Only made with yamlLoadSchema `floats`.
+// `raw` is the text as written.
 export class WholeFloat {
-  constructor(value) { this.value = value; }
+  constructor(value, raw) {
+    hide(this, { value: value, raw: raw === undefined ? String(value) : raw });
+    this[MERGE_MARK] = this.raw;
+  }
   get [Symbol.toStringTag]() { return 'WholeFloat'; }
   toString() { return String(this.value); }
-}
-
-// Markers for values that js-yaml turns into keys or merges: a mapping key is String(value), and
-// `<<` copies every enumerable property of its value (loader.js mergeMappings only asks for an
-// object). The NUL keeps them apart from text a person types. findLosses lists them.
-const MERGE_MARK = '\u0000zt-merge';
-const BINARY_KEY = '\u0000zt-binary-key\u0000';
-
-function hide(obj, fields) {
-  Object.keys(fields).forEach(function (k) { Object.defineProperty(obj, k, { value: fields[k], writable: true, configurable: true }); });
 }
 
 // js-yaml's !!binary bytes, with the Base64 text as written (`text`, line breaks removed). As a key
@@ -145,7 +154,7 @@ export function yamlLoadSchema(jsyaml, opts) {
       resolve: floatType.resolve,
       construct: function (data) {
         var v = floatType.construct(data);
-        return Number.isInteger(v) && !Object.is(v, -0) ? new WholeFloat(v) : v;
+        return Number.isInteger(v) && !Object.is(v, -0) ? new WholeFloat(v, String(data)) : v;
       },
     }));
   }
