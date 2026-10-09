@@ -56,7 +56,7 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  eq(tag+' original dictionary names/descriptions',sha(JSON.stringify(all)),'28523eb99f150ee6b560ffe7aa35ea5da844f85740e9b5fad2e126ed2397c7d2');
  eq(tag+' original five category headings',[...p.document.querySelectorAll('.hs-cat-hdr')].map(e=>e.textContent),['1xx Informational','2xx Success','3xx Redirection','4xx Client Error','5xx Server Error']);
  eq(tag+' localized placeholder',p.search.placeholder,STRINGS[lang].searchPlaceholder);
- p.type('404');eq(tag+' numeric search also matches description',p.codes(),[404,410]);
+ p.type('404');eq(tag+' numeric search matches codes only',p.codes(),[404]);
  p.type('  tEaPoT  ');eq(tag+' trim/case-insensitive name search',p.codes(),[418]);
  p.type('websocket');eq(tag+' description search',p.codes(),[101]);
  p.type('xx_no_status_xx');eq(tag+' unmatched search has zero rows',p.codes(),[]);check(tag+' unmatched message visible',p.empty());eq(tag+' localized no-match text',p.document.getElementById('hs-empty').textContent,STRINGS[lang].noMatch);
@@ -80,7 +80,7 @@ const a=source.indexOf("      searchEl.addEventListener('input'"),b=source.index
 eq('original dictionary/classes bytes',Buffer.byteLength(dictionary),9005);
 eq('original dictionary/classes SHA',sha(dictionary),'2f358a8ac599fab1bdb90c406ab0bd5d095b4cff2169cccab049e6014dd7e275');
 eq('original badge/render/initial table SHA',sha(render),'48181e7afab19a757d75a4ce1da78bd3e203a03387d31a1e63a405d8197e2b64');
-eq('original input filter SHA',sha(source.slice(a,b)),'d0ef652ae2ace149a5f7d2ceeae699a164f1a17f39c660bd3110b5ead17b58d2');
+eq('original input filter SHA',sha(source.slice(a,b)),'8d3e51db51bb90a5d411b98c22cb99cf0be7b29e9f900725d87a90be6cb8592e');
 
 // ---------- v2 page layout ----------
 const require=createRequire(join(root,'package.json'));
@@ -102,8 +102,8 @@ check('v2 640px result and search remain usable',/@media\s*\(max-width:\s*640px\
 check('v2 heading/status/result order',markupTemplate.indexOf('id="hs-search"')<markupTemplate.indexOf('id="hs-status"')&&markupTemplate.indexOf('id="hs-status"')<markupTemplate.indexOf('class="hs-result-section"'));
 check('v2 build-time strings replace runtime i18n',!/data-i18n|document\.documentElement\.lang/.test(source));
 check('v2 zero localization or tip payload in client',!/STRINGS|TIPS|CLIENT_T|define:vars|data-strings/.test(script)&&!source.includes('define:vars'));
-eq('v2 original core and complete FIX tail bytes',Buffer.byteLength(source.slice(source.indexOf('      var CODES ='),source.indexOf('  </script>'))),11525);
-eq('v2 original core and complete FIX tail SHA',sha(source.slice(source.indexOf('      var CODES ='),source.indexOf('  </script>'))),'bbd1885e4dfb2b872a74c5886844054af7fe31a0d25ba37ee12e6215dd017dd9');
+eq('v2 original core and complete FIX tail bytes',Buffer.byteLength(source.slice(source.indexOf('      var CODES ='),source.indexOf('  </script>'))),11765);
+eq('v2 original core and complete FIX tail SHA',sha(source.slice(source.indexOf('      var CODES ='),source.indexOf('  </script>'))),'9c0df4915face2709c0003e4ab20817c0d4826fa0a96a887d77b4ef4d263d7bd');
 const tipBindings=[...markupTemplate.matchAll(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{T\.(\w+)\}>\{TIPS\.(\w+)\}<\/Toggletip>/g)];
 eq('v2 two literal tip IDs',tipBindings.map(m=>m[1]),['hs-tip-search','hs-tip-results']);
 check('v2 no tip button nested in an input label',!/<label\b[^>]*>[\s\S]*?<Toggletip[\s\S]*?<\/label>/.test(markupTemplate));
@@ -161,9 +161,24 @@ for(const lang of ['en','zh','ja','ko']){
  eq(lang+' 8 typing sends no search event',p.tracks.length,0);
  change();eq(lang+' 8 change sends one search event',p.tracks,[['http-status-codes','search']]);
  p.type('');change();eq(lang+' 8 change to an empty query sends nothing',p.tracks.length,1);
- p.type('４０４');eq(lang+' 8 full-width digits match',p.codes(),[404,410]);
+ p.type('４０４');eq(lang+' 8 full-width digits match',p.codes(),[404]);
  p.type('ＴｅａＰｏｔ');eq(lang+' 8 full-width letters match',p.codes(),[418]);
  p.type('\u3000５０３\u3000');eq(lang+' 8 ideographic spaces are trimmed',p.codes(),[503]);
+}
+
+// 9b. (review S2-8 M1) A query of digits only matches status codes by prefix, not digits in names
+// or descriptions (the 104 name has dates and some descriptions cite RFC sections).
+for(const lang of ['en','zh','ja','ko']){
+ const p=page(lang,'shared-after');
+ p.type('202');eq(lang+' M1 202 lists only 202',p.codes(),[202]);
+ p.type('20');eq(lang+' M1 20 lists codes that start with 20',p.codes(),[200,201,202,203,204,205,206,207,208]);
+ p.type('4');eq(lang+' M1 4 lists every 4xx code',p.codes(),EXPECTED_CODES.filter(c=>c>=400&&c<500));
+ p.type('15');eq(lang+' M1 15 is not a code prefix',[p.codes(),p.empty()],[[],true]);
+ p.type('11');eq(lang+' M1 11 is not a code prefix',p.codes(),[]);
+ p.type(' 1 ');eq(lang+' M1 1 lists the 1xx codes',p.codes(),[100,101,102,103,104]);
+ p.type('2026');eq(lang+' M1 a year finds nothing',p.codes(),[]);
+ p.type('http/3');eq(lang+' M1 text with digits still searches descriptions',p.codes(),[426]);
+ p.type('15.4.7');eq(lang+' M1 a section number is not digits only',p.codes(),[306]);
 }
 
 // ---------- IANA registry and worked examples ----------
