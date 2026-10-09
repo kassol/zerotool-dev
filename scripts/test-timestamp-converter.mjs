@@ -505,6 +505,13 @@ try {
       const r = run(lang, { in: value }, tz);
       eq(lang + ' FAQ local-summer-time quotes the page results', quoted(faq(lang, 'local-summer-time'), r, ['iso', 'local', 'label']) && faq(lang, 'local-summer-time').includes(value), true);
     }
+    // The time-zone answer gives today's offset and the summer-time offset of the next question
+    // (S2-9 review): the page labels for 2026-01-01 and for the summer-time example, and its years.
+    for (const [lang, value, tz, years] of [['zh', '583718400', 'Asia/Shanghai', '1986–1991'], ['ja', '-647049600', 'Asia/Tokyo', '1948〜1951'], ['ko', '583718400', 'Asia/Seoul', '1987–1988']]) {
+      const offset = (r) => r.label.replace(/^Local \((.*)\)$/, '$1'), answer = faq(lang, 'time-zone');
+      const today = offset(run(lang, { in: '1767225600' }, tz)), summer = offset(run(lang, { in: value }, tz));
+      eq(lang + ' FAQ time-zone gives the current and the summer-time offset', [today, summer, answer.includes(today), answer.includes(summer), answer.includes(years)], [today, summer, true, true, true]);
+    }
     console.log('tool page examples: ' + (passes - before) + ' passed, ' + (failures - beforeFailures) + ' failed');
   }
   await settle(); eq('all timestamp copy rejection promises are handled', unhandled, []);
