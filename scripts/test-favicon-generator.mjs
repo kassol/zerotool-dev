@@ -387,6 +387,7 @@ for(const sourceType of ['image','svg'])for(const phase of ['pending','completed
     external: { en: 'SVG references external resources. Inline images first.', zh: 'SVG 引用了外部资源，请先内联图片。', ja: 'SVG が外部リソースを参照しています。画像をインライン化してください。', ko: 'SVG가 외부 리소스를 참조합니다. 이미지를 인라인하세요.' },
     blocked: { en: 'The browser did not allow reading the drawn icon back, so no package was made.', zh: '浏览器不允许读回绘制好的图标，没有生成图标包。', ja: 'ブラウザーが描いたアイコンの読み出しを許可しなかったため、パッケージは作られませんでした。', ko: '브라우저가 그린 아이콘을 다시 읽도록 허용하지 않아 패키지를 만들지 못했습니다.' },
   };
+  const hostError = console.error; console.error = () => {}; // the page logs each failure with console.error
   const blockCanvas = (p) => { const orig = p.document.createElement; p.document.createElement = (tag) => { const e = orig(tag); if (tag === 'canvas') e.toBlob = () => { const err = new Error('The canvas has been tainted'); err.name = 'SecurityError'; throw err; }; return e; }; };
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const p = page(favicon, lang); await generate(p);
@@ -401,6 +402,7 @@ for(const sourceType of ['image','svg'])for(const phase of ['pending','completed
     const e = page(favicon, lang); blockCanvas(e); e.click('#fg-generate'); await flush(); await flush();
     check(lang + ' blocked canvas without SVG is not blamed on SVG', e.$('fg-status').textContent === failMsg.blocked[lang], e.$('fg-status').textContent);
   }
+  console.error = hostError;
   check('unused emojiFontWarn is removed', !source.includes('emojiFontWarn'));
 }
 
