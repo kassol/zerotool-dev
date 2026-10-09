@@ -452,6 +452,27 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   }
 }
 
+// ---------- status separates characters without a code word (S2-9) ----------
+// The summary used to count every nonspace character as converted ("Converted 6 characters."
+// for G-ABCD, whose "-" is shown as [?]); now [?] characters are counted separately.
+const UNKNOWN_STATUS = {
+  en: ['Converted 5 characters. No code word for 1 character, shown as [?].', 'Converted 0 characters. No code word for 2 characters, shown as [?].'],
+  zh: ['已转换 5 个字符。1 个字符没有代号，显示为 [?]。', '已转换 0 个字符。2 个字符没有代号，显示为 [?]。'],
+  ja: ['5 文字を変換しました。コードのない 1 文字は [?] と表示しました。', '0 文字を変換しました。コードのない 2 文字は [?] と表示しました。'],
+  ko: ['5자를 변환했습니다. 코드가 없는 1자는 [?]로 표시했습니다.', '0자를 변환했습니다. 코드가 없는 2자는 [?]로 표시했습니다.'],
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = pageVM(lang, false), status = () => p.get('nato-status').textContent;
+  p.input('nato-input', 'G-ABCD'); p.advance(200);
+  eq(lang + ' status counts [?] characters separately', status(), UNKNOWN_STATUS[lang][0]);
+  p.input('nato-input', 'あ\n'); p.advance(200);
+  eq(lang + ' status when no character has a code word', status(), UNKNOWN_STATUS[lang][1]);
+  p.input('nato-input', 'LH 400'); p.advance(200);
+  eq(lang + ' status without [?] keeps the short form', status(), { en: 'Converted 5 characters.', zh: '已转换 5 个字符。', ja: '5 文字を変換しました。', ko: '5자를 변환했습니다.' }[lang]);
+  p.input('nato-input', 'a b'); p.advance(200);
+  eq(lang + ' spaces are neither converted nor [?]', status(), { en: 'Converted 2 characters.', zh: '已转换 2 个字符。', ja: '2 文字を変換しました。', ko: '2자를 변환했습니다.' }[lang]);
+}
+
 process.removeListener('unhandledRejection', onUnhandled);
 
 // ---------- v2 page layout ----------
@@ -490,8 +511,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' v2 recursive keys match', Object.keys(local).sort(), Object.keys(enLeaves).sort());
   for (const [key, value] of Object.entries(local)) {
     check(lang + ' v2 nonempty ' + key, typeof value === 'string' && value.trim().length > 0);
-    // {s} is the existing English-only plural suffix in the converted summary.
-    const placeholders = text => [...text.matchAll(/\{[^}]+\}/g)].map(m => m[0]).filter(p => key !== 'converted' || p !== '{s}').sort();
+    // {s} is the English-only plural suffix in the converted summary and the [?] note.
+    const placeholders = text => [...text.matchAll(/\{[^}]+\}/g)].map(m => m[0]).filter(p => !['converted', 'unknownNote'].includes(key) || p !== '{s}').sort();
     eq(lang + ' v2 placeholders ' + key, placeholders(value), placeholders(enLeaves[key]));
   }
   const mdx = readFileSync(join(root, 'src/content/tools/nato-phonetic-alphabet', lang + '.mdx'), 'utf8');
