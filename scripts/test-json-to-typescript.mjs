@@ -167,9 +167,11 @@ const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), l
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
 // S2-10 (approved engine change): LIB_TYPE_NAMES reserves the one-word global type names of
-// lib.esnext.full.d.ts for root and nested names (+16 / -0 lines against v1.140.11).
-eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 12033);
-eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'e6f9ff18e491a3441fd69b1d51247ce385304b50e12ef454a8a425fc78634794');
+// lib.esnext.full.d.ts for root and nested names (+16 / -0 lines against v1.140.11). After the
+// S2-10e review it also holds JSON and URL, and globalThis is a reserved root name (5 lines
+// changed; +19 / -3 lines against v1.140.11).
+eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 12096);
+eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '478afa70c3f6a83f2aba02bf59786b75bdea8917a0e234547ec9d8e077b46aed');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
@@ -380,9 +382,13 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 // or export such a declaration merges with the global type of TypeScript's default library or
 // conflicts with it ("All declarations of 'Promise' must have identical type parameters"), and in
 // a module it hides the global type. The engine reserves every global type name of
-// lib.esnext.full.d.ts that is one capitalized word: a nested name gets the parent prefix
-// (RootObjectDate), a root name gets "_" (Map_). Checked by compiling the page output as a script
-// file with the ESNext default library (DOM included).
+// lib.esnext.full.d.ts that is one word, capitalized or in capitals (JSON and URL, added after the
+// S2-10e review): a nested name gets the parent prefix (RootObjectDate, RootObjectURL), a root
+// name gets "_" (Map_, JSON_). Names that exist only as global values (Image, Intl, Proxy, ...) do
+// not conflict with an interface or a type alias and are kept, except globalThis ("Declaration name
+// conflicts with built-in global identifier 'globalThis'"), which a root name can give and which
+// gets "_" as well. Checked by compiling the page output as a script file with the ESNext default
+// library (DOM included).
 {
   const libOptions = { strict: true, noEmit: true, skipLibCheck: true, target: ts.ScriptTarget.ESNext, lib: ['lib.esnext.full.d.ts'], types: [] };
   const libCache = new Map();
@@ -400,16 +406,23 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     return [...program.getSyntacticDiagnostics(sf), ...program.getSemanticDiagnostics(sf), ...program.getGlobalDiagnostics()]
       .map((d) => ts.flattenDiagnosticMessageText(d.messageText, ' '));
   }
-  // One-word global type names of the installed TypeScript's default ESNext library.
-  const libNames = (() => {
+  // Global names of the installed TypeScript's default ESNext library: type space, and names that
+  // exist only as values or namespaces.
+  const globalNames = (() => {
     const host = ts.createCompilerHost(libOptions);
     const orig = host.getSourceFile;
     host.getSourceFile = (name, lang) => (name === 'x.ts' ? ts.createSourceFile(name, '', lang) : orig.call(host, name, lang));
     const program = ts.createProgram(['x.ts'], libOptions, host);
-    return program.getTypeChecker().getSymbolsInScope(program.getSourceFile('x.ts'), ts.SymbolFlags.Type)
-      .map((s) => s.name).filter((n) => /^[A-Z][a-z0-9]*$/.test(n)).sort();
+    const sf = program.getSourceFile('x.ts');
+    const checker = program.getTypeChecker();
+    const types = new Set(checker.getSymbolsInScope(sf, ts.SymbolFlags.Type).map((s) => s.name));
+    const values = checker.getSymbolsInScope(sf, ts.SymbolFlags.Value | ts.SymbolFlags.Namespace).map((s) => s.name)
+      .filter((n) => /^[A-Za-z_$][\w$]*$/.test(n) && !types.has(n));
+    return { types: [...types], valueOnly: [...new Set(values)].sort() };
   })();
-  check('TypeScript ' + ts.version + ' has one-word global types (Promise, Date, Response)', ['Promise', 'Date', 'Response'].every((n) => libNames.includes(n)), libNames.join(' '));
+  // One-word global type names: one capitalized word (Date) or one word in capitals (JSON, URL).
+  const libNames = globalNames.types.filter((n) => /^[A-Z](?:[a-z0-9]*|[A-Z0-9]*)$/.test(n)).sort();
+  check('TypeScript ' + ts.version + ' has one-word global types (Promise, Date, Response, JSON, URL)', ['Promise', 'Date', 'Response', 'JSON', 'URL'].every((n) => libNames.includes(n)), libNames.join(' '));
   let engineNames = [];
   try { engineNames = new Function(block + '\nreturn LIB_TYPE_NAMES;')(); } catch { engineNames = []; }
   eq('the reserved names are the one-word global types of lib.esnext.full.d.ts', JSON.stringify([...engineNames].sort()), JSON.stringify(libNames));
@@ -424,6 +437,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     ['{"body":{"text":"hi"},"event":{"type":"click"},"location":{"lat":1.5},"parameters":{"q":"x"},"record":{"id":1},"map":{"k":"v"},"error":{"code":1}}', 'Order'],
     ['[{"date":{"y":1}},{"date":{"y":2},"node":{"id":"n"}}]', 'Api'],
     ['{"a":1}', 'Map'], ['{"a":1}', 'Date'], ['{"a":1}', 'Array'], ['{"a":1}', 'Response'], ['{"a":1}', 'Record'],
+    ['{"JSON":{"a":1},"URL":{"href":"https://example.com/"}}', 'RootObject'],
+    ['{"a":1}', 'JSON'], ['{"a":1}', 'URL'], ['{"a":1}', 'globalThis'],
   ];
   for (const [json, root] of cases) for (const useType of [false, true]) {
     const code = outputFor(json, root, useType);
@@ -439,9 +454,51 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq('formData keeps FormData (more than one word)', /interface FormData \{/.test(E.generateTypeScript(JSON.parse('{"formData":{"a":1}}'), 'RootObject', false, false).code), true);
   // Names that are not one-word global types keep their PascalCase form.
   eq('meta, user and payment keep their names', /interface Meta \{/.test(E.generateTypeScript(JSON.parse('{"meta":{"a":1}}'), 'RootObject', false, false).code), true);
+  // One word in capitals (S2-10e review): the keys "JSON" and "URL" and the root names JSON and URL.
+  eq('JSON and URL keys under RootObject', E.generateTypeScript(JSON.parse('{"JSON":{"a":1},"URL":{"href":"x"}}'), 'RootObject', false, false).code,
+    'interface RootObject {\n  JSON: RootObjectJSON;\n  URL: RootObjectURL;\n}\n\ninterface RootObjectJSON {\n  a: number;\n}\n\ninterface RootObjectURL {\n  href: string;\n}');
+  for (const [rootName, expected] of [['JSON', 'JSON_'], ['URL', 'URL_'], ['globalThis', 'globalThis_']]) {
+    eq('the root name ' + rootName + ' gives ' + expected, outputFor('{"a":1}', rootName, false).split('\n')[0], 'interface ' + expected + ' {');
+  }
+  // json and url keys give Json and Url, which are not global names.
+  eq('json and url keys keep Json and Url', E.generateTypeScript(JSON.parse('{"json":{"a":1},"url":{"b":2}}'), 'RootObject', false, false).code.split('\n').slice(0, 4).join('\n'),
+    'interface RootObject {\n  json: Json;\n  url: Url;\n}');
+  // Names that exist only as global values or namespaces. An interface or a type alias of the same
+  // name conflicts with none of them in a script file except globalThis (and undefined, already a
+  // reserved type name); every other one is kept as a root name.
+  {
+    // The page passes the root name through safeIdentifier before generating (convert()).
+    const { safeIdentifier } = new Function(block + '\nreturn { safeIdentifier };')();
+    const conflicting = [], keptWrong = [], renamedWrong = [], renamedErrors = [];
+    for (const v of globalNames.valueOnly) {
+      const conflict = scriptErrors('interface ' + v + ' { a: number; }\nconst sample: ' + v + ' = {"a":1};\n').length > 0
+        || scriptErrors('type ' + v + ' = { a: number; };\nconst sample: ' + v + ' = {"a":1};\n').length > 0;
+      if (conflict) conflicting.push(v);
+      for (const useType of [false, true]) {
+        const code = E.generateTypeScript({ a: 1 }, safeIdentifier(v) || 'RootObject', false, useType).code;
+        const name = /^(?:interface|type) ([^\s={]+)/.exec(code)?.[1];
+        if (!conflict && name !== v) keptWrong.push(v + ' → ' + name);
+        if (conflict && name !== v + '_') renamedWrong.push(v + ' → ' + name);
+        if (conflict) {
+          const errors = scriptErrors(code + '\n\nconst sample: ' + name + ' = {"a":1};\n');
+          if (errors.length) renamedErrors.push(v + ': ' + errors.join('; '));
+        }
+      }
+    }
+    check('value-only global names: TypeScript ' + ts.version + ' has more than 200, among them Image, Intl, Proxy and globalThis',
+      globalNames.valueOnly.length > 200 && ['Image', 'Intl', 'Proxy', 'globalThis'].every((n) => globalNames.valueOnly.includes(n)), String(globalNames.valueOnly.length));
+    eq('value-only global names that an interface or type alias conflicts with', conflicting.join(' '), 'globalThis undefined');
+    eq('value-only names without a conflict are kept as root names', keptWrong.join(', '), '');
+    eq('value-only names with a conflict get _', renamedWrong.join(', '), '');
+    eq('renamed value-only root names compile as a script file', renamedErrors.join(' | '), '');
+    const nested = E.generateTypeScript(JSON.parse('{"Image":{"a":1},"Intl":{"b":2},"Proxy":{"c":3}}'), 'RootObject', false, false).code;
+    check('Image, Intl and Proxy keys keep their names', /interface Image \{/.test(nested) && /interface Intl \{/.test(nested) && /interface Proxy \{/.test(nested), nested);
+    eq('Image, Intl and Proxy keys compile as a script file', scriptErrors(nested + '\n\nconst sample: RootObject = {"Image":{"a":1},"Intl":{"b":2},"Proxy":{"c":3}};\n').join('; '), '');
+  }
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const text = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
     check(lang + ': page states the global-name rule with its examples', text.includes('`RootObjectDate`') && text.includes('`Map_`') && text.includes('`FormData`'));
+    check(lang + ': page states JSON, URL, globalThis and the value-only names', ['`JSON`', '`URL`', '`RootObjectURL`', '`globalThis_`', '`Image`', '`Intl`'].every((s) => text.includes(s)));
   }
 }
 
