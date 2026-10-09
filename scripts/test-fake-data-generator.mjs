@@ -26,7 +26,7 @@ let activePage;const onUnhandled=e=>activePage?.errors.push(String(e));process.o
 const SLUG='fake-data-generator',component=process.env.ZT_B13_SOURCE?relative(root,process.env.ZT_B13_SOURCE):'src/components/tools/FakeDataGeneratorTool.astro';
 const templates={};
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
-function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}){
+function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={},opts={}){
   const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map();let stored=structuredClone(saved);
   let timerId=0,clock=0,doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
@@ -117,10 +117,10 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   const fm=/^---\n([\s\S]*?)\n---/.exec(source)?.[1]||'';
   const labels=vm.runInNewContext(fm.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
   const escaped=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/data-strings=\{JSON.stringify\(CLIENT_T\)\}/g,()=> 'data-strings="'+escaped(JSON.stringify(Object.fromEntries(['copy','download','copied','downloaded','noField','copyFailed'].map(key=>[key,labels[lang][key]]))))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
+  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/data-strings=\{JSON.stringify\(CLIENT_T\)\}/g,()=> 'data-strings="'+escaped(JSON.stringify(Object.fromEntries(['copy','download','copied','downloaded','noField','copyFailed','countNote'].map(key=>[key,labels[lang][key]]))))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
-  doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
+  doc.execCommand=command=>{execCalls.push({command,text:doc.selectedElement?.value});if(opts.exec===undefined)throw Error('Native clipboard prohibited');return opts.exec;};
   const persist={clear(slug){if(slug!=='cron-job-generator')stored={};persistCalls.push(['clear',slug]);},save(slug,data){stored=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,stored]);},load(){return structuredClone(stored);}};
   const globals={document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
     _slug:SLUG,ztPersist:persist,trackTool(){},
@@ -144,7 +144,7 @@ const LABELS={en:{copy:'Copy',copied:'Copied!',failed:'Copy failed',download:'Do
 const COPY='fdg-copy',INPUT='fdg-output',DELAY=1500,CLEAR_STORE={},ACTIONS=['CtrlL','new result','no fields'];
 const output=p=>p.get('fdg-output').value;
 const settings=p=>[p.get('fdg-count').value,p.doc.querySelector('.fdg-fmt.active').dataset.fmt,p.get('fdg-fields').querySelectorAll('input:checked').map(c=>c.value)];
-function ready(lang='en',order='shared-after',noClipboard=false){const p=lifecyclePage(lang,order,noClipboard);p.get('fdg-count').value='2';p.get('fdg-generate').click();return p;}
+function ready(lang='en',order='shared-after',noClipboard=false,opts={}){const p=lifecyclePage(lang,order,noClipboard,{},opts);p.get('fdg-count').value='2';p.get('fdg-generate').click();return p;}
 function fields(p,names){for(const c of p.get('fdg-fields').querySelectorAll('input'))c.checked=names.includes(c.value);}
 function act(p,action){if(action==='CtrlL')p.ctrlL(INPUT);else{if(action==='no fields')fields(p,[]);p.get('fdg-generate').click();}}
 const feedbackState=p=>[output(p),p.get(COPY).textContent,p.get(COPY).disabled,p.get('fdg-download').textContent,p.get('fdg-download').disabled];
@@ -168,7 +168,7 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  p=ready(lang,order);const old=output(p);p.doc.body.focus();p.doc.body.dispatch('keydown',{key:'l',ctrlKey:true});assert(id+' outside tool unchanged',output(p),old);assert(id+' outside tool no persistence clear',p.persistCalls.filter(c=>c[0]==='clear').length,0);p.get(INPUT).dispatch('keydown',{key:'l'});assert(id+' unmodified L unchanged',output(p),old);
  p=ready(lang,order);const beforeReject=output(p);p.get(COPY).click();p.clipboard.at(-1)?.reject(Error('controlled rejection'));await settle();assert(id+' reject handled',p.errors,[]);assert(id+' localized failure',p.get(COPY).textContent,LABELS[lang].failed);assert(id+' rejected result intact',output(p),beforeReject);p.get(COPY).click();p.clipboard.at(-1)?.resolve();await settle();assert(id+' retry succeeds',p.get(COPY).textContent,LABELS[lang].copied);
  for(const mode of ['absent','own undefined','sync throw']){
-  p=ready(lang,order,mode==='absent');if(mode==='own undefined'){Object.defineProperty(p.actual.ctx.navigator,'clipboard',{value:undefined,writable:true,configurable:true});}if(mode==='sync throw')p.actual.ctx.navigator.clipboard.writeText=()=>{throw Error('controlled synchronous throw');};let thrown='';try{p.get(COPY).click();}catch(e){thrown=e.name;}await settle();assert(id+'/'+mode+' handled',thrown,'');assert(id+'/'+mode+' visible',p.get(COPY).textContent,LABELS[lang].failed);assert(id+'/'+mode+' no native clipboard',p.execCalls,[]);assert(id+'/'+mode+' no unhandled',p.errors,[]);p.actual.ctx.navigator.clipboard={writeText(value){const d=deferred();p.clipboard.push({...d,value:String(value)});return d.promise;}};p.get(COPY).click();assert(id+'/'+mode+' retry copies intact output',p.clipboard.at(-1)?.value,output(p));p.clipboard.at(-1)?.resolve();await settle();assert(id+'/'+mode+' same-result retry succeeds',p.get(COPY).textContent,LABELS[lang].copied);
+  p=ready(lang,order,mode==='absent');if(mode==='own undefined'){Object.defineProperty(p.actual.ctx.navigator,'clipboard',{value:undefined,writable:true,configurable:true});}if(mode==='sync throw')p.actual.ctx.navigator.clipboard.writeText=()=>{throw Error('controlled synchronous throw');};let thrown='';try{p.get(COPY).click();}catch(e){thrown=e.name;}await settle();assert(id+'/'+mode+' handled',thrown,'');assert(id+'/'+mode+' visible',p.get(COPY).textContent,LABELS[lang].failed);assert(id+'/'+mode+' fallback tried once with the output',p.execCalls.map(c=>[c.command,c.text]),[['copy',output(p)]]);assert(id+'/'+mode+' helper textarea removed',p.doc.body.children.filter(c=>c.tagName==='TEXTAREA').length,0);assert(id+'/'+mode+' focus back on Copy',p.doc.activeElement===p.get(COPY),true);assert(id+'/'+mode+' no unhandled',p.errors,[]);p.actual.ctx.navigator.clipboard={writeText(value){const d=deferred();p.clipboard.push({...d,value:String(value)});return d.promise;}};p.get(COPY).click();assert(id+'/'+mode+' retry copies intact output',p.clipboard.at(-1)?.value,output(p));p.clipboard.at(-1)?.resolve();await settle();assert(id+'/'+mode+' same-result retry succeeds',p.get(COPY).textContent,LABELS[lang].copied);
  }
  for(const action of ACTIONS)for(const outcome of ['resolve','reject']){
   p=ready(lang,order);p.get(COPY).click();const job=p.clipboard.at(-1);act(p,action);const state=feedbackState(p);job?.[outcome](outcome==='reject'?Error('controlled late rejection'):undefined);await settle();assert(id+'/'+action+'/'+outcome+' old callback inert',feedbackState(p),state);assert(id+'/'+action+'/'+outcome+' handled',p.errors,[]);
@@ -179,6 +179,25 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  p=ready(lang,order);p.get(COPY).click();p.clipboard.at(-1)?.resolve();await settle();const stale=[...p.timers.values()].find(t=>t.ms===DELAY)?.fn;p.tick(100);p.get(COPY).click();p.clipboard.at(-1)?.resolve();await settle();stale?.();assert(id+' forced old timer inert',p.get(COPY).textContent,LABELS[lang].copied);p.tick(DELAY-100);assert(id+' old deadline inert',p.get(COPY).textContent,LABELS[lang].copied);p.tick(100);assert(id+' newest timer restores',p.get(COPY).textContent,LABELS[lang].copy);
  p=ready(lang,order);p.ctrlL(INPUT);restoreResult(p);assert(id+' real input recovers result',recover(p),true);assert(id+' recovery copy enabled',p.get(COPY).disabled,false);
 }
+// ---------- S2-9c: copy fallback succeeds; Count is read as a number and shown ----------
+const NOTE={en:'Enter a whole number from 1 to 100. Records generated: {n}.',zh:'数量须为 1–100 的整数，本次生成了 {n} 条。',ja:'件数は 1〜100 の整数で指定してください。今回は {n} 件を生成しました。',ko:'개수는 1~100 사이의 정수로 입력하세요. 이번에는 {n}개를 생성했습니다.'};
+for(const lang of ['en','zh','ja','ko'])for(const mode of ['absent','reject','sync throw']){
+ const id=SLUG+'/'+lang+'/fallback '+mode;
+ const p=ready(lang,'shared-after',mode==='absent',{exec:true});if(mode==='sync throw')p.actual.ctx.navigator.clipboard.writeText=()=>{throw Error('controlled synchronous throw');};
+ p.get(COPY).click();if(mode==='reject')p.clipboard.at(-1)?.reject(Error('controlled rejection'));await settle();
+ assert(id+' fallback copies the output',p.execCalls.map(c=>c.text),[output(p)]);assert(id+' shows copied',p.get(COPY).textContent,LABELS[lang].copied);assert(id+' textarea removed',p.doc.body.children.filter(c=>c.tagName==='TEXTAREA').length,0);assert(id+' focus back',p.doc.activeElement===p.get(COPY),true);assert(id+' no unhandled',p.errors,[]);
+}
+for(const lang of ['en','zh','ja','ko']){
+ for(const [value,count,note] of [['1e1',10,false],['007',7,false],['10',10,false],['2.9',2,true],['150',100,true],['-3',1,true],['',10,true],['0',10,true],['100',100,false]]){
+  const p=lifecyclePage(lang);p.get('fdg-count').value=value;p.get('fdg-generate').click();
+  const id=SLUG+'/'+lang+' count '+JSON.stringify(value);
+  assert(id+' records',JSON.parse(output(p)).length,count);
+  assert(id+' field shows the number used',p.get('fdg-count').value,String(count));
+  assert(id+' note',p.get('fdg-status').textContent,note?NOTE[lang].replace('{n}',String(count)):'');
+ }
+ const p=lifecyclePage(lang);p.get('fdg-count').value='150';p.get('fdg-generate').click();p.get('fdg-generate').click();
+ assert(SLUG+'/'+lang+' note cleared once the field holds a valid count',p.get('fdg-status').textContent,'');
+}
 // ---------- v2 page layout ----------
 const ssr=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
 for(const lang of ['en','zh','ja','ko']){
@@ -188,7 +207,7 @@ for(const lang of ['en','zh','ja','ko']){
  q.ctrlL(INPUT);assert(lang+' real CtrlL restores empty marker',q.doc.querySelector('.fdg-wrap').dataset.empty,'true');
  assert(lang+' SSR labels present before runtime replacement',q.get('fdg-generate').textContent,L.generate);
  assert(lang+' five SSR tip keys',Object.keys(L.tips).sort(),['count','export','fields','format','generate']);
- assert(lang+' client only six original feedback strings',Object.keys(JSON.parse(q.doc.querySelector('.fdg-wrap').dataset.strings)).sort(),['copied','copy','copyFailed','download','downloaded','noField']);
+ assert(lang+' client only the feedback strings',Object.keys(JSON.parse(q.doc.querySelector('.fdg-wrap').dataset.strings)).sort(),['copied','copy','copyFailed','countNote','download','downloaded','noField']);
  const prefix=process.env.ZT_B13_MDX_PREFIX,mdx=readFileSync(prefix?prefix+'-'+lang+'.mdx':join(root,'src/content/tools/fake-data-generator',lang+'.mdx'),'utf8');const y=requireFromRoot('js-yaml').load(mdx.split('---')[1]);
  assert(lang+' steps limits and position',y.steps.length<=8&&y.steps.every(x=>x.length<=280)&&y.steps.join('').length<=1200&&mdx.indexOf('steps:')<mdx.indexOf('faqItems:'),true);
  assert(lang+' Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);
@@ -200,5 +219,89 @@ assert('all three business actions retained', ['fdg-generate','fdg-copy','fdg-do
 assert('status before settings and minimum 2.8em',source.indexOf('id="fdg-status"')<source.indexOf('id="fdg-count"')&&source.includes('min-height: 2.8em'),true);
 assert('stacked empty result hidden/phone targets',source.includes('@media (max-width: 860px)')&&source.includes('@media (max-width: 640px)')&&source.includes('min-height: 44px')&&source.includes('min-height: 24px')&&source.includes('.fdg-wrap[data-empty="true"] .fdg-result { display: none; }'),true);
 if(!/['"]fake-data-generator['"]\s*:\s*['"]generate['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')))console.log('PENDING: root generate registration, compile and native layout acceptance');
+// ---------- Worked examples on the four tool pages (S2-9c) ----------
+// The output is random, so a sample is checked for what is fixed (S2-PLAN §2.3): the selected
+// fields in order, the record count, the JSON / CSV shape, and that every value is one the
+// generator code can produce (its word lists and number ranges). Count notes come from the real
+// page; duplicate probabilities are computed from the sizes of the word lists.
+// Annotations: {/* fdg-check: {"fields":[...],"count":n,"format":"json"|"csv"} */} before a code
+// block; {/* fdg-count: {"count":"150"} */} before inline code holding the status note and the
+// number of records; {/* fdg-dup: {"field":"fullName","n":100,"digits":1} */} before inline code
+// holding the probability that n records contain a repeated value.
+{
+  const { reportContract, fencedBlocks } = await import(pathToFileURL(join(root, 'scripts/lib/tool-mdx-contract.mjs')));
+  const code = source.slice(source.indexOf('  var FIRST'), source.indexOf('  var currentFmt'));
+  const G = new Function('crypto', code + '\nreturn { FIRST, LAST, DOMAINS, COMPANIES, STREETS, CITIES, STATES, COUNTRIES, TLDS, PATHS, LOREM_WORDS, generators };')(webcrypto);
+  const lower = (a) => a.map((x) => x.toLowerCase());
+  const int = (s, lo, hi) => /^\d+$/.test(s) && +s >= lo && +s <= hi;
+  const VALID = {
+    fullName: (v) => { const m = /^(\S+) (\S+)$/.exec(v); return !!m && G.FIRST.includes(m[1]) && G.LAST.includes(m[2]); },
+    firstName: (v) => G.FIRST.includes(v), lastName: (v) => G.LAST.includes(v),
+    email: (v) => { const m = /^([a-z]+)\.([a-z]+)(\d{2})@(.+)$/.exec(v); return !!m && lower(G.FIRST).includes(m[1]) && lower(G.LAST).includes(m[2]) && int(m[3], 10, 99) && G.DOMAINS.includes(m[4]); },
+    phone: (v) => { const m = /^\((\d{3})\) (\d{3})-(\d{4})$/.exec(v); return !!m && int(m[1], 200, 999) && int(m[2], 200, 999); },
+    company: (v) => G.COMPANIES.includes(v),
+    street: (v) => { const m = /^(\d+) (.+)$/.exec(v); return !!m && int(m[1], 1, 9999) && G.STREETS.includes(m[2]); },
+    city: (v) => G.CITIES.includes(v), state: (v) => G.STATES.includes(v), country: (v) => G.COUNTRIES.includes(v),
+    zip: (v) => /^\d{5}$/.test(v) && int(v, 10000, 99999),
+    uuid: (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v),
+    date: (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v); return !!m && int(m[1], 2020, 2026) && int(m[2], 1, 12) && int(m[3], 1, 28); },
+    ip: (v) => { const o = v.split('.'); return o.length === 4 && int(o[0], 1, 254) && int(o[1], 0, 255) && int(o[2], 0, 255) && int(o[3], 1, 254); },
+    url: (v) => { const m = /^https:\/\/([a-z]+)\.([a-z]+)\/([a-z]+)$/.exec(v); return !!m && G.TLDS.includes(m[2]) && G.PATHS.includes(m[3]) && G.FIRST.some((f) => m[1].startsWith(f.toLowerCase()) && lower(G.LAST).includes(m[1].slice(f.length))); },
+    color: (v) => /^#[0-9a-f]{6}$/.test(v),
+    lorem: (v) => { const w = v.replace(/\.$/, '').split(' '); return v.endsWith('.') && w.length >= 6 && w.length <= 14 && w.every((x, i) => G.LOREM_WORDS.includes(i ? x : x.charAt(0).toLowerCase() + x.slice(1))) && /^[A-Z]/.test(v); },
+  };
+  assert('every field has a validator', Object.keys(G.generators).sort(), Object.keys(VALID).sort());
+  for (const f of Object.keys(G.generators)) for (let i = 0; i < 300; i++) { const v = G.generators[f](); if (!VALID[f](v)) { assert('validator accepts generated ' + f, v, 'a valid value'); break; } }
+  // Number of distinct values a field can take (from the word lists and ranges above)
+  const SIZE = { fullName: G.FIRST.length * G.LAST.length, email: G.FIRST.length * G.LAST.length * 90 * G.DOMAINS.length, phone: 800 * 800 * 10000, company: G.COMPANIES.length };
+  const dup = (N, n) => { let q = 1; for (let i = 0; i < n; i++) q *= 1 - i / N; return 1 - q; };
+  const inlineCode = (text) => [...text.matchAll(/`([^`\n]+)`|<code>([^<]*)<\/code>/g)].map((m) => m[1] ?? m[2]);
+  function sample(spec, after) {
+    const block = fencedBlocks(after)[0];
+    if (!block) return 'no code block after the annotation';
+    let rows;
+    if (spec.format === 'csv') {
+      const lines = block.text.split('\n');
+      if (lines[0] !== spec.fields.join(',')) return 'CSV header ' + JSON.stringify(lines[0]);
+      rows = lines.slice(1).map((l) => Object.fromEntries(l.split(',').map((v, i) => [spec.fields[i], v])));
+      if (lines.slice(1).some((l) => l.split(',').length !== spec.fields.length)) return 'CSV row has the wrong number of fields';
+    } else {
+      try { rows = JSON.parse(block.text); } catch { return 'JSON does not parse'; }
+      if (block.text !== JSON.stringify(rows, null, 2)) return 'JSON is not written the way the tool writes it (2-space indent)';
+    }
+    if (rows.length !== spec.count) return rows.length + ' records, not ' + spec.count;
+    for (const r of rows) {
+      if (JSON.stringify(Object.keys(r)) !== JSON.stringify(spec.fields)) return 'fields ' + Object.keys(r).join(',');
+      for (const f of spec.fields) if (!VALID[f](r[f])) return f + ' value ' + JSON.stringify(r[f]) + ' cannot come from the generator';
+    }
+    return null;
+  }
+  function countNote(spec, after, lang) {
+    const p = lifecyclePage(lang);
+    p.get('fdg-count').value = spec.count;
+    p.get('fdg-generate').click();
+    const n = JSON.parse(output(p)).length, note = p.get('fdg-status').textContent;
+    const codes = inlineCode(after);
+    if (note && !codes.includes(note)) return 'status note ' + JSON.stringify(note) + ' not shown';
+    if (!codes.includes(String(n))) return 'record count ' + n + ' not shown';
+    return null;
+  }
+  function dupNote(spec, after) {
+    const want = (dup(SIZE[spec.field], spec.n) * 100).toFixed(spec.digits) + '%';
+    return inlineCode(after).includes(want) ? null : want + ' not shown';
+  }
+  reportContract((name, ok) => assert(name, ok, true), SLUG, { annotations: [
+    { tag: 'fdg-check', min: 1, verify: ({ spec, after }) => sample(spec, after) },
+    { tag: 'fdg-count', min: 1, verify: ({ spec, after, lang }) => countNote(spec, after, lang) },
+    { tag: 'fdg-dup', verify: ({ spec, after }) => dupNote(spec, after) },
+  ] });
+  // Each language has at least two annotated examples in total
+  const { readToolMdx, annotations } = await import(pathToFileURL(join(root, 'scripts/lib/tool-mdx-contract.mjs')));
+  const docs = readToolMdx(SLUG);
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const n = ['fdg-check', 'fdg-count', 'fdg-dup'].reduce((s, tag) => s + annotations(docs[lang].body, tag).length, 0);
+    assert(lang + ' has at least 2 worked examples', n >= 2, true);
+  }
+}
 process.removeListener('unhandledRejection',onUnhandled);
 console.log(passes+' passed, '+failures+' failed');process.exitCode=failures?1:0;

@@ -29,6 +29,7 @@ const STRINGS = {
     downloadClean: 'Download cleaned JPEG',
     copyJson: 'Copy EXIF JSON',
     copied: 'Copied!',
+    copyFailed: 'Copy failed',
     noMeta: 'No EXIF metadata found in this photo. Downloading will still strip XMP / IPTC marker segments if present.',
     privacy: 'Runs in your browser — the file is not uploaded',
     decoding: 'Reading metadata…',
@@ -37,6 +38,7 @@ const STRINGS = {
     warnLarge: 'Large file — decoding may be slow.',
     errRead: 'Could not read the file. Please try a different photo.',
     errCorrupt: 'EXIF block looks malformed. Showing what could be parsed.',
+    errTruncated: 'The JPEG file is cut off before the image data, so no cleaned copy can be made.',
   },
   zh: {
     upload: "JPEG 照片",
@@ -62,6 +64,7 @@ const STRINGS = {
     downloadClean: '下载剥离元数据后的 JPEG',
     copyJson: '复制 EXIF JSON',
     copied: '已复制！',
+    copyFailed: '复制失败',
     noMeta: '该照片未包含 EXIF 元数据。下载按钮仍会移除可能存在的 XMP / IPTC 标记段。',
     privacy: '在浏览器中处理——文件不会上传',
     decoding: '正在读取元数据…',
@@ -70,6 +73,7 @@ const STRINGS = {
     warnLarge: '文件较大，解码可能较慢。',
     errRead: '无法读取该文件，请尝试其他照片。',
     errCorrupt: 'EXIF 块格式异常，仅展示可解析的字段。',
+    errTruncated: 'JPEG 文件在图像数据之前就被截断了，无法生成清理后的副本。',
   },
   ja: {
     upload: "JPEG 写真",
@@ -95,6 +99,7 @@ const STRINGS = {
     downloadClean: 'メタデータ除去済み JPEG をダウンロード',
     copyJson: 'EXIF JSON をコピー',
     copied: 'コピーしました！',
+    copyFailed: 'コピーに失敗しました',
     noMeta: 'この写真に EXIF メタデータは見つかりませんでした。ダウンロードボタンは XMP / IPTC マーカーがある場合も除去します。',
     privacy: 'ブラウザ内で処理 — ファイルはアップロードしません',
     decoding: 'メタデータを読み込み中…',
@@ -103,6 +108,7 @@ const STRINGS = {
     warnLarge: 'ファイルが大きいため、解析に時間がかかる場合があります。',
     errRead: 'ファイルを読み取れませんでした。別の写真をお試しください。',
     errCorrupt: 'EXIF ブロックの形式が不正です。解析できた項目のみ表示します。',
+    errTruncated: 'JPEG ファイルが画像データより前で途切れているため、除去済みのコピーを作れません。',
   },
   ko: {
     upload: "JPEG 사진",
@@ -128,6 +134,7 @@ const STRINGS = {
     downloadClean: '메타데이터 제거된 JPEG 다운로드',
     copyJson: 'EXIF JSON 복사',
     copied: '복사됨!',
+    copyFailed: '복사 실패',
     noMeta: '이 사진에 EXIF 메타데이터가 없습니다. 다운로드 버튼은 XMP / IPTC 마커가 있을 경우 함께 제거합니다.',
     privacy: '브라우저에서 처리 — 파일은 업로드하지 않습니다',
     decoding: '메타데이터 읽는 중…',
@@ -136,6 +143,7 @@ const STRINGS = {
     warnLarge: '파일이 큽니다 — 디코딩이 느릴 수 있습니다.',
     errRead: '파일을 읽을 수 없습니다. 다른 사진을 시도하세요.',
     errCorrupt: 'EXIF 블록 형식이 잘못되었습니다. 파싱 가능한 필드만 표시합니다.',
+    errTruncated: 'JPEG 파일이 이미지 데이터 앞에서 잘려 있어 정리된 사본을 만들 수 없습니다.',
   },
 } as const;
 const T = STRINGS[lang];
@@ -259,14 +267,19 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var dataStart = totalSize > 4 ? tiffStart + view.getUint32(valueOffset, le) : valueOffset;
 
         if (type === 2) {
-          // ASCII
-          var s = '';
+          // ASCII. Exif allows only 7-bit ASCII here, but ExifTool and many apps write
+          // non-ASCII text as UTF-8 bytes in this type; read it as UTF-8 when the bytes are
+          // valid UTF-8, otherwise one character per byte (Latin-1).
+          var bytes = [];
           for (var i = 0; i < count; i++) {
             var c = view.getUint8(dataStart + i);
             if (c === 0) break;
-            s += String.fromCharCode(c);
+            bytes.push(c);
           }
-          return s;
+          if (typeof TextDecoder === 'function') {
+            try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(new Uint8Array(bytes)); } catch (e) { /* not UTF-8 */ }
+          }
+          return String.fromCharCode.apply(null, bytes);
         }
         if (type === 1 || type === 7) {
           var arr = [];
@@ -303,13 +316,15 @@ const { tips: TIPS, ...CLIENT_T } = T;
         return null;
       }
 
-      function readIFD(view, tiffStart, ifdOffset, le, tagMap) {
+      // `state.corrupt` is set when an offset points outside the file or a value cannot be read;
+      // the tags that could be read are still returned.
+      function readIFD(view, tiffStart, ifdOffset, le, tagMap, state) {
         var entries = {};
-        if (ifdOffset + 2 > view.byteLength) return entries;
+        if (typeof ifdOffset !== 'number' || tiffStart + ifdOffset + 2 > view.byteLength) { state.corrupt = true; return entries; }
         var entryCount = view.getUint16(tiffStart + ifdOffset, le);
         for (var i = 0; i < entryCount; i++) {
           var entryStart = tiffStart + ifdOffset + 2 + i * 12;
-          if (entryStart + 12 > view.byteLength) break;
+          if (entryStart + 12 > view.byteLength) { state.corrupt = true; break; }
           var tag = view.getUint16(entryStart, le);
           var type = view.getUint16(entryStart + 2, le);
           var count = view.getUint32(entryStart + 4, le);
@@ -321,12 +336,23 @@ const { tips: TIPS, ...CLIENT_T } = T;
             if (name) entries[name] = value;
             else if (tag === 0x8769) entries.ExifIFDPointer = value;
             else if (tag === 0x8825) entries.GPSIFDPointer = value;
-          } catch (e) { /* skip bad entry */ }
+          } catch (e) { state.corrupt = true; }
         }
         return entries;
       }
 
+      // Returns { exif, corrupt } or { exif: null, error }. A malformed EXIF block never throws:
+      // the tags read so far are kept and `corrupt` is true.
       function parseExif(buf) {
+        var state = { corrupt: false };
+        var result;
+        try { result = parseExifBlock(buf, state); }
+        catch (e) { result = { exif: null }; state.corrupt = true; }
+        if (state.corrupt) result.corrupt = true;
+        return result;
+      }
+
+      function parseExifBlock(buf, state) {
         var view = new DataView(buf);
         if (view.byteLength < 4) return { exif: null, error: 'too_small' };
         if (view.getUint16(0) !== 0xFFD8) return { exif: null, error: 'not_jpeg' };
@@ -350,9 +376,9 @@ const { tips: TIPS, ...CLIENT_T } = T;
               if (view.getUint16(tiffStart + 2, le) !== 0x002A) { pos += 2 + segLen; continue; }
               var ifd0Offset = view.getUint32(tiffStart + 4, le);
 
-              var ifd0 = readIFD(view, tiffStart, ifd0Offset, le, TAG_NAMES);
-              var exif = ifd0.ExifIFDPointer ? readIFD(view, tiffStart, ifd0.ExifIFDPointer, le, EXIF_TAG_NAMES) : {};
-              var gps = ifd0.GPSIFDPointer ? readIFD(view, tiffStart, ifd0.GPSIFDPointer, le, GPS_TAG_NAMES) : {};
+              var ifd0 = readIFD(view, tiffStart, ifd0Offset, le, TAG_NAMES, state);
+              var exif = ifd0.ExifIFDPointer ? readIFD(view, tiffStart, ifd0.ExifIFDPointer, le, EXIF_TAG_NAMES, state) : {};
+              var gps = ifd0.GPSIFDPointer ? readIFD(view, tiffStart, ifd0.GPSIFDPointer, le, GPS_TAG_NAMES, state) : {};
               return { exif: { ifd0: ifd0, exif: exif, gps: gps } };
             }
           }
@@ -384,7 +410,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
       /* ── Strip APP1 / APP13 segments ── */
       // Orientation 2–8 is written back in a minimal APP1 at the place of the first EXIF APP1:
       // phones store portrait photos sideways and rely on it, and it says nothing about the
-      // person. The pixels are not re-encoded.
+      // person. The pixels are not re-encoded. Returns null when the file is cut off inside a
+      // marker segment or ends before the image data (nothing usable to write).
       function stripMetadata(buf) {
         var view = new DataView(buf);
         if (view.getUint16(0) !== 0xFFD8) return buf;
@@ -393,17 +420,21 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var keepOrientation = typeof orientation === 'number' && orientation >= 2 && orientation <= 8;
         var parts = [new Uint8Array(buf, 0, 2)]; // SOI
         var placed = false;
+        var reachedImage = false;
         var pos = 2;
         while (pos < view.byteLength - 1) {
           var marker = view.getUint16(pos);
           if (marker === 0xFFD9 || marker === 0xFFDA) {
             if (keepOrientation && !placed) { parts.push(orientationApp1(orientation)); placed = true; }
             parts.push(new Uint8Array(buf, pos));
+            reachedImage = true;
             break;
           }
           if ((marker & 0xFF00) !== 0xFF00) break;
+          if (pos + 4 > view.byteLength) break;
           var segLen = view.getUint16(pos + 2);
           var segEnd = pos + 2 + segLen;
+          if (segEnd > view.byteLength) break;
           if (marker === 0xFFE1 || marker === 0xFFED) {
             // Drop APP1 (EXIF/XMP) and APP13 (Photoshop/IPTC). APP14 (Adobe) is kept: it holds
             // only the colour transform flag, and CMYK / YCCK JPEGs decode with wrong colours
@@ -414,6 +445,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           }
           pos = segEnd;
         }
+        if (!reachedImage) return null;
         var totalLen = 0;
         parts.forEach(function (p) { totalLen += p.length; });
         var out = new Uint8Array(totalLen);
@@ -480,12 +512,42 @@ const { tips: TIPS, ...CLIENT_T } = T;
       var currentExif   = null;
       var loadGen = 0;
 
+      // Copy with the Clipboard API; when it is missing (non-secure context) or refuses, fall back
+      // to a hidden textarea and execCommand('copy'). Focus goes back to the button afterwards.
+      var copyLabel = null;
+      var copyTimer = null;
+      function fallbackCopy(text, btn) {
+        var ta;
+        try {
+          ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          return document.execCommand('copy') === true;
+        } catch (e) {
+          return false;
+        } finally {
+          if (ta) { try { document.body.removeChild(ta); } catch (e) { /* already gone */ } }
+          if (btn && typeof btn.focus === 'function') btn.focus();
+        }
+      }
       function copyText(text, btn) {
-        navigator.clipboard.writeText(text).then(function () {
-          var orig = btn.textContent;
-          btn.textContent = t.copied;
-          setTimeout(function () { btn.textContent = orig; }, 1500);
-        });
+        if (copyLabel === null) copyLabel = btn.textContent;
+        var gen = loadGen;
+        function show(msg) {
+          if (gen !== loadGen) return;
+          btn.textContent = msg;
+          clearTimeout(copyTimer);
+          copyTimer = setTimeout(function () { btn.textContent = copyLabel; }, 1500);
+        }
+        function viaFallback() { if (gen !== loadGen) return; show(fallbackCopy(text, btn) ? t.copied : t.copyFailed); }
+        try {
+          if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') { viaFallback(); return; }
+          navigator.clipboard.writeText(text).then(function () { show(t.copied); }, viaFallback);
+        } catch (e) { viaFallback(); }
       }
 
       function fmtBytes(n) {
@@ -594,17 +656,10 @@ const { tips: TIPS, ...CLIENT_T } = T;
           currentExif = parsed.exif;
           var hasMeta = displayExif(parsed.exif);
 
-          if (hasMeta) {
-            metaBlock.style.display = '';
-            noMetaEl.style.display = 'none';
-            statusEl.textContent = '';
-            statusEl.className = 'tool-status';
-          } else {
-            metaBlock.style.display = 'none';
-            noMetaEl.style.display = '';
-            statusEl.textContent = '';
-            statusEl.className = 'tool-status';
-          }
+          metaBlock.style.display = hasMeta ? '' : 'none';
+          noMetaEl.style.display = hasMeta || parsed.corrupt ? 'none' : '';
+          statusEl.textContent = parsed.corrupt ? t.errCorrupt : '';
+          statusEl.className = parsed.corrupt ? 'tool-status error' : 'tool-status';
           actionsEl.style.display = '';
           window.trackTool && window.trackTool('exif-metadata-viewer', hasMeta ? 'parsed_with_exif' : 'parsed_no_exif');
         };
@@ -650,6 +705,11 @@ const { tips: TIPS, ...CLIENT_T } = T;
       dlBtn.addEventListener('click', function () {
         if (!currentBuffer) return;
         var stripped = stripMetadata(currentBuffer);
+        if (!stripped) {
+          statusEl.textContent = t.errTruncated;
+          statusEl.className = 'tool-status error';
+          return;
+        }
         var blob = new Blob([stripped], { type: 'image/jpeg' });
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
@@ -695,6 +755,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
         currentBuffer = null;
         currentExif = null;
         currentName = '';
+        clearTimeout(copyTimer);
+        if (copyLabel !== null) copyJsonBtn.textContent = copyLabel;
       }
       resetBtn.addEventListener('click', resetAll);
       document.addEventListener('keydown', function (e) {

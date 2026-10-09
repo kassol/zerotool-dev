@@ -7,21 +7,29 @@ steps:
   - "Click Download cleaned JPEG to remove EXIF / XMP / IPTC marker segments without re-encoding image data. Orientation values 2–8 are kept."
   - "Click Copy EXIF JSON to keep the parsed original metadata, or Load another photo to clear the current result."
 faqItems:
-  - question: "What is EXIF metadata and why does it matter?"
-    answer: "EXIF (Exchangeable Image File Format) is data your camera or phone embeds inside every photo: exact GPS coordinates, camera make and model, lens, shutter speed, ISO, and timestamps. Sharing a photo without stripping EXIF can expose your home location to within a few meters."
-  - question: "Are my photos uploaded to any server?"
-    answer: "No. ZeroTool reads each file with the browser's FileReader and ArrayBuffer APIs and parses EXIF in JavaScript. Bytes never leave your device — open the network tab and you will see zero upload requests."
-  - question: "Which formats are supported?"
-    answer: "This tool is JPEG-only by design — JPEG carries the EXIF that almost every camera and phone produces. For PNG, HEIC, or TIFF use `exiftool -all=` locally; it handles every format, runs offline, and processes batches."
-  - question: "Will the cleaned image lose quality?"
+  - id: what-is
+    question: "What is EXIF metadata and why does it matter?"
+    answer: "EXIF (Exchangeable Image File Format) is data a camera or phone writes into a photo: camera make and model, lens, shutter speed, ISO, the capture time and, when location is turned on, GPS coordinates. Sharing a photo without stripping EXIF can show where it was taken, often to within a few meters."
+  - id: privacy
+    question: "Are my photos uploaded or saved anywhere?"
+    answer: "No. The file is read with the browser's FileReader and parsed by JavaScript in the tab; no request carries the photo or its metadata. Because photos can reveal where you live, this page loads neither Google Analytics nor AdSense, so the tool's usage events (photo read, download, copy) stay in the page and are not sent. Nothing is saved in browser storage, and the cleaned JPEG is built in memory. The Open in Google Maps link sends the coordinates to Google only when you click it."
+  - id: formats
+    question: "Which formats are supported?"
+    answer: "JPEG only (.jpg, .jpeg), up to 100 MB; JPEG carries the EXIF that most cameras and phones write. For PNG, HEIC, WebP or TIFF use ExifTool locally (exiftool -all= photo.heic); it handles these formats, runs offline and processes batches."
+  - id: quality
+    question: "Will the cleaned image lose quality?"
     answer: "No. The tool removes the EXIF, XMP and IPTC segments from the original JPEG byte stream without re-encoding pixels; the compressed image data is copied byte for byte. The Orientation tag is the one exception: it is written back in a new 36-byte EXIF block that holds nothing else, so a portrait photo still displays upright."
-  - question: "Can I see the GPS location on a map?"
-    answer: "When EXIF includes GPS coordinates the tool decodes them to decimal degrees and provides a one-click Google Maps link. The link is built locally — no third-party request runs until you click."
+  - id: gps-map
+    question: "Can I see the GPS location on a map?"
+    answer: "When EXIF includes GPS coordinates the tool converts them to decimal degrees (6 decimals) and builds a Google Maps link from them. The link is built locally; no request runs until you click it. The tool does not read GPSMapDatum, so coordinates recorded in another datum (Exif allows 'TOKYO') are shown as they are, without conversion."
+  - id: time-zone
+    question: "Does the tool show the time zone of the photo?"
+    answer: "No. DateTimeOriginal has no time zone; Exif 2.31 added OffsetTimeOriginal for the offset from UTC (for example +09:00). The tool does not show that tag and Copy EXIF JSON does not include it, so read the time as the camera's local time. Download cleaned JPEG removes it with the rest of the EXIF block."
 ---
 
 <h2>Why strip EXIF before sharing photos</h2>
 
-<p>Most phones and cameras silently embed precise GPS coordinates, camera serial numbers, and timestamps in every photo. When you share that photo on a forum, blog, or chat that does not strip metadata, anyone with a free EXIF tool can pinpoint where the picture was taken — often to within a few meters of your house, office, or hotel.</p>
+<p>Phones and cameras with location turned on write precise GPS coordinates, the camera model and the capture time into each photo. When you share such a photo on a forum, blog, or chat that does not strip metadata, anyone with a free EXIF tool can pinpoint where the picture was taken — often to within a few meters of your house, office, or hotel.</p>
 
 <p>This tool gives you a fast way to inspect what a photo reveals and to download a clean copy with the metadata blocks removed. Everything happens inside your browser tab.</p>
 
@@ -61,6 +69,30 @@ faqItems:
   The tool rounds for display (f/1.8 for 1.78, 7 mm for 6.86); <strong>Copy EXIF JSON</strong> gives the unrounded values.
 </p>
 
+<h2>Two more examples</h2>
+
+<p>Both files below were written by the test suite with exactly the fields listed (and read back with ExifTool 13.55); they contain no real photo or location of a person.</p>
+
+<p><strong>A text tag in the Exif 3.0 UTF-8 type.</strong> Make is <code>Example Co</code> in the ASCII type; Model is <code>Café Cam</code> in the UTF-8 type (129). The Camera group shows only the Make row, and Copy EXIF JSON gives:</p>
+
+{/* emv-check: {"mode":"json","file":{"ifd0":{"Make":"Example Co","Model":{"utf8":"Café Cam"}}}} */}
+
+```json
+{
+  "ifd0": {
+    "Make": "Example Co",
+    "Model": null
+  },
+  "exif": {},
+  "gps": {}
+}
+```
+
+{/* emv-check: {"mode":"clean","file":{"ifd0":{"Make":"Example Co","Orientation":6},"gps":{"GPSLatitudeRef":"N","GPSLatitude":["48/1","51/1","2964/100"],"GPSLongitudeRef":"E","GPSLongitude":["2/1","17/1","4020/100"]}}} */}
+
+<p><strong>A portrait photo with a location.</strong> Orientation 6 (rotate 90° clockwise to display), Make, and GPS coordinates. After Download cleaned JPEG, reading the new file finds only <code>{'{"ifd0":{"Orientation":6},"exif":{},"gps":{}}'}</code>: the location and camera are gone, and the photo still displays upright.</p>
+
+
 <h2>What EXIF fields you may see</h2>
 
 <ul>
@@ -76,7 +108,9 @@ faqItems:
 <ul>
   <li><strong>Orientation is kept.</strong> It is the only tag left in the cleaned copy (see above). Value 1 (upright) and values outside 1–8 are not written back. An orientation stored only in XMP is removed with the XMP block.</li>
   <li><strong>JPEG only, up to 100 MB.</strong> PNG, HEIC, WebP and TIFF are rejected. Pasting works only when the clipboard holds a JPEG; screenshots are usually PNG.</li>
-  <li><strong>The viewer shows a fixed set of fields:</strong> the ones in the table above. Other tags, such as the camera serial number or the time zone offset (OffsetTimeOriginal), are not listed but are removed by the download. Text tags stored with the UTF-8 type added in EXIF 3.0 are not decoded.</li>
+  <li><strong>The viewer shows a fixed set of fields:</strong> the ones in the table above. Other tags, such as the camera serial number, the time zone offset (OffsetTimeOriginal) or the GPS datum (GPSMapDatum), are not listed and are not in Copy EXIF JSON, but are removed by the download.</li>
+  <li><strong>Text encoding.</strong> Text tags of the ASCII type are read as UTF-8 when the bytes are valid UTF-8 (ExifTool writes non-ASCII text this way), otherwise one character per byte. Text tags stored with the UTF-8 type added in Exif 3.0 are not decoded: the row is hidden and Copy EXIF JSON shows <code>null</code> (example above).</li>
+  <li><strong>Damaged or cut-off files.</strong> When an offset in the EXIF block points outside the file, the tool shows the fields it could read with the notice "EXIF block looks malformed. Showing what could be parsed." Download still works. When the file itself ends inside a marker segment, before the image data, there is nothing to clean: Download saves no file and shows "The JPEG file is cut off before the image data, so no cleaned copy can be made."</li>
   <li><strong>Only APP1 and APP13 are removed.</strong> Comment segments (COM), other application segments (APP3–APP12, APP15) and any data after the end-of-image marker, such as the extra images that some phones append for HDR or depth, are kept. For a full clean, run <code>{"exiftool -all= photo.jpg"}</code> or re-save the image in an editor.</li>
 </ul>
 
