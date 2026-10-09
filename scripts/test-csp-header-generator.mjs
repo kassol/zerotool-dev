@@ -533,6 +533,32 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const clean = page(spec, lang, 'before', { preset: 'basic', mode: 'enforce', upgrade: false, block: false, directives: { 'default-src': ["'self'"] } });
   eq(lang + ': no message for a clean saved policy', clean.$('csp-status').textContent, '');
 }
+// Review C-M1: punycode is for host sources only. A Trusted Types policy name must match
+// tt-policy-name = 1*( ALPHA / DIGIT / "-" / "#" / "=" / "_" / "/" / "@" / "." / "%" )
+// (TT WD 2026-10-07 §4.2.2); sandbox tokens and report-to endpoint names are not hosts either.
+const TT_INVALID = {
+  en: 'Trusted Types policy names may contain only A–Z a–z 0–9 and - # = _ / @ . % (Trusted Types §4.2.2): ',
+  zh: 'Trusted Types 策略名只能包含 A–Z a–z 0–9 和 - # = _ / @ . %（Trusted Types §4.2.2）：',
+  ja: 'Trusted Types のポリシー名に使えるのは A–Z a–z 0–9 と - # = _ / @ . % だけです（Trusted Types §4.2.2）：',
+  ko: 'Trusted Types 정책 이름에는 A–Z a–z 0–9와 - # = _ / @ . %만 쓸 수 있습니다(Trusted Types §4.2.2): ',
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(spec, lang); p.input('csp-preset', 'basic', 'change');
+  for (const d of ['trusted-types', 'sandbox', 'report-to']) { p.$('csp-add-select').value = d; p.click('#csp-add-btn'); }
+  const before = p.$('csp-output').textContent;
+  addHost(p, 'trusted-types', 'ポリシー');
+  eq(lang + ': non-ASCII policy name is rejected, not converted', [p.$('csp-output').textContent, p.$('csp-status').textContent], [before, TT_INVALID[lang] + 'ポリシー']);
+  addHost(p, 'trusted-types', 'my policy!');
+  eq(lang + ': one invalid name rejects the whole entry (nothing added)', [p.$('csp-output').textContent, p.$('csp-status').textContent], [before, TT_INVALID[lang] + 'policy!']);
+  addHost(p, 'trusted-types', 'app#1 lib/x@v2.0 %ok');
+  check(lang + ': names in the grammar are accepted', p.$('csp-output').textContent.includes('app#1 lib/x@v2.0 %ok'), p.$('csp-output').textContent);
+  addHost(p, 'trusted-types', "'script'");
+  check(lang + ": 'script' is not a trusted-types keyword", !p.$('csp-output').textContent.includes("trusted-types 'none' app#1 lib/x@v2.0 %ok 'script'") && p.$('csp-status').textContent === TT_INVALID[lang] + "'script'", p.$('csp-status').textContent);
+  addHost(p, 'report-to', 'エンドポイント');
+  check(lang + ': non-ASCII report-to endpoint name is rejected', !/xn--/.test(p.$('csp-output').textContent) && p.$('csp-status').textContent === UI_MSG[lang].notAscii + 'エンドポイント', p.$('csp-status').textContent);
+  addHost(p, 'sandbox', 'allow-スクリプト');
+  check(lang + ': non-ASCII sandbox token is rejected', !/xn--/.test(p.$('csp-output').textContent) && p.$('csp-status').textContent === UI_MSG[lang].notAscii + 'allow-スクリプト', p.$('csp-status').textContent);
+}
 // Trusted Types (W3C WD 2026-10-07) §4.2.1: require-trusted-types-for takes only 'script';
 // §4.2.2: trusted-types takes policy names, 'none', 'allow-duplicates' and *.
 for (const lang of ['en', 'zh', 'ja', 'ko']) {

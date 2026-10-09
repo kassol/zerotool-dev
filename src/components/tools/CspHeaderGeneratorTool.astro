@@ -1036,16 +1036,20 @@ const L = STRINGS[lang] || STRINGS.en;
       var UI_STRINGS = {
         en: { copyFailed: 'Copy failed.', hashFailed: 'Hash failed: ', sandboxTokens: 'sandbox tokens', reportTargets: 'URLs / group',
           srcConverted: 'Converted to ASCII for CSP: ', srcNotAscii: 'CSP sources must be ASCII. This value could not be converted: ',
-          removedDirectives: 'Removed directives that CSP Level 3 no longer defines: ', ttPolicies: 'Policy names' },
+          removedDirectives: 'Removed directives that CSP Level 3 no longer defines: ', ttPolicies: 'Policy names',
+          ttNameInvalid: 'Trusted Types policy names may contain only A–Z a–z 0–9 and - # = _ / @ . % (Trusted Types §4.2.2): ' },
         zh: { copyFailed: '复制失败。', hashFailed: '计算 hash 失败：', sandboxTokens: 'sandbox 令牌', reportTargets: 'URL / 端点名',
           srcConverted: '已转换为 CSP 可用的 ASCII 写法：', srcNotAscii: 'CSP 源只能使用 ASCII 字符，无法转换：',
-          removedDirectives: '已删除 CSP Level 3 不再定义的指令：', ttPolicies: '策略名' },
+          removedDirectives: '已删除 CSP Level 3 不再定义的指令：', ttPolicies: '策略名',
+          ttNameInvalid: 'Trusted Types 策略名只能包含 A–Z a–z 0–9 和 - # = _ / @ . %（Trusted Types §4.2.2）：' },
         ja: { copyFailed: 'コピーできませんでした。', hashFailed: 'ハッシュを計算できませんでした：', sandboxTokens: 'sandbox トークン', reportTargets: 'URL / エンドポイント名',
           srcConverted: 'CSP で使える ASCII 表記に変換しました：', srcNotAscii: 'CSP のソースは ASCII 文字だけです。変換できませんでした：',
-          removedDirectives: 'CSP Level 3 で定義されなくなったディレクティブを削除しました：', ttPolicies: 'ポリシー名' },
+          removedDirectives: 'CSP Level 3 で定義されなくなったディレクティブを削除しました：', ttPolicies: 'ポリシー名',
+          ttNameInvalid: 'Trusted Types のポリシー名に使えるのは A–Z a–z 0–9 と - # = _ / @ . % だけです（Trusted Types §4.2.2）：' },
         ko: { copyFailed: '복사하지 못했습니다.', hashFailed: '해시를 계산하지 못했습니다: ', sandboxTokens: 'sandbox 토큰', reportTargets: 'URL / 엔드포인트 이름',
           srcConverted: 'CSP에서 쓸 수 있는 ASCII 표기로 바꿨습니다: ', srcNotAscii: 'CSP 소스는 ASCII 문자만 쓸 수 있습니다. 변환하지 못했습니다: ',
-          removedDirectives: 'CSP Level 3에서 더 이상 정의하지 않는 지시문을 삭제했습니다: ', ttPolicies: '정책 이름' }
+          removedDirectives: 'CSP Level 3에서 더 이상 정의하지 않는 지시문을 삭제했습니다: ', ttPolicies: '정책 이름',
+          ttNameInvalid: 'Trusted Types 정책 이름에는 A–Z a–z 0–9와 - # = _ / @ . %만 쓸 수 있습니다(Trusted Types §4.2.2): ' }
       };
       var U = UI_STRINGS[pageLang] || UI_STRINGS.en;
       // ── State ─────────────────────────────────────────────────────────
@@ -1321,6 +1325,8 @@ const L = STRINGS[lang] || STRINGS.en;
         } catch (e) { return null; }
       }
 
+      var TT_POLICY_NAME = /^[A-Za-z0-9\-#=_\/@.%]+$/;
+
       function addSource(name, value) {
         var raw = String(value).trim();
         if (!raw) return;
@@ -1330,8 +1336,18 @@ const L = STRINGS[lang] || STRINGS.en;
         }
         /* Whitespace (including U+3000 from an IME) separates sources in a policy. */
         var parts = raw.split(/\s+/), clean = [], converted = [];
+        var kind = (DIRECTIVE_INDEX[name] || { kind: 'fetch' }).kind;
+        /* Only host sources (fetch / navigation / document directives and report-uri URLs)
+           are converted to punycode. Trusted Types policy names follow tt-policy-name
+           (Trusted Types §4.2.2); sandbox tokens and report-to endpoint names stay as typed
+           and must be ASCII. */
+        var hostLike = kind === 'fetch' || kind === 'navigation' || kind === 'document' || name === 'report-uri';
         for (var i = 0; i < parts.length; i++) {
-          var src = asciiSource(parts[i]);
+          if (kind === 'tt' && KEYWORDS_BY_KIND.tt.indexOf(parts[i]) < 0 && !TT_POLICY_NAME.test(parts[i])) {
+            showStatus(U.ttNameInvalid + parts[i], 'error');
+            return;
+          }
+          var src = hostLike ? asciiSource(parts[i]) : (/[^\x00-\x7f]/.test(parts[i]) ? null : parts[i]);
           if (src === null) {
             showStatus(U.srcNotAscii + parts[i], 'error');
             return;
