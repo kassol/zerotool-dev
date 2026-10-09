@@ -326,6 +326,7 @@ const L = STRINGS[lang];
             tab.setAttribute('aria-pressed', 'true');
             currentAnn = tab.dataset.ann;
             convert();
+            trackGenerate();
           });
         })(tabs[ti]);
       }
@@ -827,13 +828,11 @@ const L = STRINGS[lang];
           } else {
             showOutput('// Array of primitives — no class to generate');
             setStatus(MSG_GENERATED, false);
-            window.trackTool && window.trackTool('json-to-java-pojo', 'generate');
             return;
           }
         } else {
           showOutput('// Primitive value — no class to generate');
           setStatus(MSG_GENERATED, false);
-          window.trackTool && window.trackTool('json-to-java-pojo', 'generate');
           return;
         }
 
@@ -841,6 +840,17 @@ const L = STRINGS[lang];
         var count = Object.keys(classes).length;
         var msg = count === 1 ? MSG_GEN_ONE : MSG_GEN_MANY.replace('{n}', count);
         setStatus(msg, false);
+      }
+
+      /* Analytics: one event per committed change of the JSON or root-name field, annotation click or
+         Example, not on page load or per typing pause. The same JSON, root name and annotation are
+         sent once, and nothing is sent without output. */
+      var lastTracked = null;
+      function trackGenerate() {
+        if (!outputCodeEl.textContent) return;
+        var key = inputEl.value + '\u0000' + (rootNameEl.value.trim() || 'RootObject') + '\u0000' + currentAnn;
+        if (key === lastTracked) return;
+        lastTracked = key;
         window.trackTool && window.trackTool('json-to-java-pojo', 'generate');
       }
 
@@ -855,16 +865,27 @@ const L = STRINGS[lang];
         clearTimeout(_liveTimer);
         _liveTimer = setTimeout(convert, 300);
       });
+      // A committed edit runs the pending conversion first, so the event matches the output.
+      inputEl.addEventListener('change', function () {
+        if (_liveTimer) convert();
+        trackGenerate();
+      });
+      rootNameEl.addEventListener('change', function () {
+        if (_liveTimer) convert();
+        trackGenerate();
+      });
 
       document.getElementById('jjp-example').addEventListener('click', function () {
         inputEl.value = EXAMPLE;
         inputEl.classList.remove('error');
         clearStatus();
         convert();
+        trackGenerate();
       });
 
       document.getElementById('jjp-clear').addEventListener('click', function () {
         invalidateCopy();
+        lastTracked = null;
         clearTimeout(_liveTimer);
         _liveTimer = null;
         inputEl.value = '';

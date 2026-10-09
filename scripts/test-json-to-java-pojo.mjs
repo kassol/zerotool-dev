@@ -451,6 +451,42 @@ try {
 eq('no unhandled clipboard rejections', unhandled.length, 0);
 
 
+// ---------- analytics: one event per committed change or explicit action (S2-10) ----------
+// Before S2-10 every successful conversion sent `generate`: the example seeded on page load, every
+// 300 ms typing pause in the JSON or root-name field and every annotation click. Now an event is
+// sent on a committed change of the JSON or root-name field (the pending conversion runs first), an
+// annotation click and Example, once per JSON + root name + annotation, and only with output.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const ga = lifecyclePage(lang);
+  const sent = () => ga.tracks.length;
+  eq(lang + ': GA: page load with the seeded example sends nothing', sent(), 0);
+  ga.input('{"a":1}'); ga.advance(300);
+  eq(lang + ': GA: typing pause sends nothing', sent(), 0);
+  ga.get('jjp-input').dispatch('change');
+  eq(lang + ': GA: committed change sends one generate', JSON.stringify(ga.tracks), JSON.stringify([['json-to-java-pojo', 'generate']]));
+  ga.input('{"b":"x"}'); ga.get('jjp-input').dispatch('change');
+  eq(lang + ': GA: change before the debounce converts the new input first', [ga.get('jjp-output-code').textContent.includes('private String b;'), sent()].join(), 'true,2');
+  ga.advance(300); eq(lang + ': GA: no second event after the debounce', sent(), 2);
+  ga.get('jjp-input').dispatch('change'); eq(lang + ': GA: change with the same input sends nothing', sent(), 2);
+  ga.get('jjp-root-name').value = 'Api'; ga.get('jjp-root-name').dispatch('input'); ga.advance(300);
+  eq(lang + ': GA: root-name typing pause sends nothing', sent(), 2);
+  ga.get('jjp-root-name').dispatch('change'); eq(lang + ': GA: root-name change sends one', sent(), 3);
+  ga.doc.querySelector('[data-ann="lombok"]').click(); eq(lang + ': GA: annotation click sends one', sent(), 4);
+  ga.doc.querySelector('[data-ann="lombok"]').click(); eq(lang + ': GA: clicking the selected annotation again sends nothing', sent(), 4);
+  ga.get('jjp-example').click(); eq(lang + ': GA: Example sends one', sent(), 5);
+  ga.get('jjp-example').click(); eq(lang + ': GA: Example again with the same settings sends nothing', sent(), 5);
+  ga.input('{'); ga.get('jjp-input').dispatch('change'); eq(lang + ': GA: invalid JSON sends nothing', sent(), 5);
+  ga.doc.querySelector('[data-ann="gson"]').click(); ga.doc.querySelector('[data-ann="lombok"]').click();
+  eq(lang + ': GA: annotation clicks with invalid JSON send nothing', sent(), 5);
+  ga.get('jjp-clear').click(); ga.get('jjp-example').click(); eq(lang + ': GA: Clear resets the last sent input', sent(), 6);
+  const r = lifecyclePage(lang);
+  r.get('jjp-root-name').value = 'Shop'; r.get('jjp-root-name').dispatch('input'); r.get('jjp-root-name').dispatch('change');
+  eq(lang + ': GA: a root-name change runs the pending conversion and sends once', [r.get('jjp-output-code').textContent.includes('public class Shop'), r.tracks.length].join(), 'true,1');
+  const k = lifecyclePage(lang);
+  k.get('jjp-example').click(); k.key('jjp-input', 'l'); k.get('jjp-example').click();
+  eq(lang + ': GA: Ctrl/⌘+L resets the last sent input', k.tracks.length, 2);
+}
+
 // ---------- v2 page layout ----------
 const V2 = {
   "slug": "json-to-java-pojo",
@@ -488,7 +524,7 @@ const V2 = {
       "annotation"
     ]
   ],
-  "scriptSHA": "f93716b1b344857a6627256e81f4562a114377b2fd547f47c37830ab6abdb32b"
+  "scriptSHA": "97bc616e4fe349740fcbd2b0d4a7c954e612355575db71aa7331013aded222b9"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -496,7 +532,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 original script preserved except removed redundant Generate listener and JSON errors in the page language (S2-10)', hash(pageScript), V2.scriptSHA);
+eq('v2 original script preserved except removed redundant Generate listener, JSON errors in the page language and analytics sent once per committed change (S2-10)', hash(pageScript), V2.scriptSHA);
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
