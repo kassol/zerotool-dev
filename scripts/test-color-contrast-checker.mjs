@@ -318,14 +318,14 @@ for (const lang of langKeys) {
 check('hex inputs do not truncate pasted text at 7 characters', !/maxlength="7"/.test(source));
 
 // ---------- worked examples on the four tool pages ----------
-// {/* ccc-check: {"fg":"…","bg":"…"} */} types the two colours into the real page (page language of
+// {/* contrast-check: {"fg":"…","bg":"…"} */} types the two colours into the real page (page language of
 // the MDX file). The displayed ratio (e.g. `4.10 : 1`) must appear as code after the annotation (up to
 // the next annotation or H2); when body AA fails, the suggested HEX and its ratio must appear too.
 // With "error": true the foreground must be rejected and the page's error text must appear verbatim.
 {
   const { toolMdxContract } = await import(pathToFileURL(join(root, 'scripts/lib/tool-mdx-contract.mjs')));
   const codes = text => [...text.matchAll(/`([^`\n]+)`/g)].map(m => m[1]).concat([...text.matchAll(/<code>([^<]*)<\/code>/g)].map(m => m[1]));
-  const contract = toolMdxContract(SLUG, { annotations: [{ tag: 'ccc-check', min: 2, verify: ({ spec, after, lang }) => {
+  const contract = toolMdxContract(SLUG, { annotations: [{ tag: 'contrast-check', min: 2, verify: ({ spec, after, lang }) => {
     if (!spec || typeof spec.fg !== 'string' || typeof spec.bg !== 'string') return 'spec needs fg and bg';
     const p = open(lang);
     p.input('ccc-bg-hex', spec.bg); p.input('ccc-fg-hex', spec.fg);
