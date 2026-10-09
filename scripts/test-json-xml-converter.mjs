@@ -422,8 +422,27 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 /* ── v2 page layout ── */
 check('all FIX behavior checks retained', checks.length, 642);
-// S2-10f (2026-10-09) added the json-reason block and parses JSON in its own try for the localized syntax error.
-check('client script only removes runtime STRINGS and localization', hash(js), 'd24bb5873f3a82aaf50b4f451d6107242fed0c7c50392a4b5b8dfb8194394225');
+// S2-10f GA: one event per successful conversion (button or Ctrl/⌘+Enter); the same direction, input, root
+// element and pretty print are sent once; failed and empty conversions send nothing; Clear and Ctrl/⌘+L start over.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const g = page(lang), tag = lang + ' GA';
+  check(tag + ' page load sends nothing', g.tracks.length, 0);
+  g.input('jx-json', JSON_TEXT); g.advance(400); check(tag + ' automatic conversion sends nothing', g.tracks.length, 0);
+  g.get('jx-to-xml').click(); check(tag + ' JSON → XML sends one event', g.tracks, [['json-xml-converter', 'json_to_xml']]);
+  g.get('jx-to-xml').click(); g.key('jx-json', 'Enter'); check(tag + ' the same JSON, root and pretty print send nothing more', g.tracks.length, 1);
+  g.get('jx-root').value = 'config'; g.get('jx-to-xml').click(); check(tag + ' a new root element sends one', g.tracks.length, 2);
+  g.get('jx-json').value = '{"a":1,}'; g.get('jx-to-xml').click(); check(tag + ' a syntax error sends nothing', g.tracks.length, 2);
+  g.get('jx-json').value = '{"2026":1}'; g.get('jx-to-xml').click(); check(tag + ' a mapping limit sends nothing', g.tracks.length, 2);
+  g.get('jx-json').value = ''; g.get('jx-to-xml').click(); check(tag + ' empty input sends nothing', g.tracks.length, 2);
+  g.get('jx-xml').value = '<root><name>demo</name></root>'; g.get('jx-to-json').click(); g.get('jx-to-json').click();
+  check(tag + ' XML → JSON sends one event for the same XML', g.tracks.map(t => t[1]), ['json_to_xml', 'json_to_xml', 'xml_to_json']);
+  g.get('jx-xml').value = '<r>'; g.get('jx-to-json').click(); check(tag + ' invalid XML sends nothing', g.tracks.length, 3);
+  g.get('jx-clear').click(); g.get('jx-json').value = JSON_TEXT; g.get('jx-root').value = 'config'; g.get('jx-to-xml').click(); check(tag + ' after Clear the same conversion sends again', g.tracks.length, 4);
+  g.key('jx-json'); g.get('jx-json').value = JSON_TEXT; g.get('jx-root').value = 'config'; g.get('jx-to-xml').click(); check(tag + ' after Ctrl+L the same conversion sends again', g.tracks.length, 5);
+}
+// S2-10f (2026-10-09) added the json-reason block and parses JSON in its own try for the localized syntax error;
+// analytics records only successful conversions, the same one once.
+check('client script only removes runtime STRINGS and localization', hash(js), '7771b0e6b4c4fb4dd3e249b1a3fc478de597c829e265399d2c85dfc534b52266');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jx-wrap"/.test(markup), true);

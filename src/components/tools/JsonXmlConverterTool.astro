@@ -501,6 +501,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           xmlEl.value = buildXml(data, rootEl.value, prettyEl.checked);
           copyXmlBtn.disabled = false;
           setStatus(t.convertedToXml, false);
+          return true;
         } catch (e) {
           setStatus((e.loss ? t.cannotToXml : t.invalidJson) + ': ' + e.message, true);
         }
@@ -552,6 +553,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           jsonEl.value = JSON.stringify(result, null, pretty ? 2 : undefined);
           copyJsonBtn.disabled = false;
           setStatus(t.convertedToJson, false);
+          return true;
         } catch (e) {
           setStatus((e.loss ? t.cannotToJson : t.invalidXml) + ': ' + e.message, true);
         }
@@ -584,18 +586,27 @@ const { tips: TIPS, ...CLIENT_T } = T;
       });
 
       /* ── Buttons ── */
+      // Analytics: one event per successful conversion from a button (or Ctrl/⌘+Enter); empty input and
+      // failed conversions send nothing. The same direction, input, root element and pretty print are
+      // sent once (the root element only applies to JSON → XML). Clear starts over.
+      var lastTracked = null;
+      function trackConversion(action, parts) {
+        var key = [action].concat(parts).join('\u0000');
+        if (key === lastTracked) return;
+        lastTracked = key;
+        window.trackTool && window.trackTool('json-xml-converter', action);
+      }
       document.getElementById('jx-to-xml').addEventListener('click', function () {
-        convertJsonToXml();
-        window.trackTool && window.trackTool('json-xml-converter', 'json_to_xml');
+        if (convertJsonToXml()) trackConversion('json_to_xml', [jsonEl.value, rootEl.value.trim() || 'root', prettyEl.checked]);
       });
 
       document.getElementById('jx-to-json').addEventListener('click', function () {
-        convertXmlToJson();
-        window.trackTool && window.trackTool('json-xml-converter', 'xml_to_json');
+        if (convertXmlToJson()) trackConversion('xml_to_json', [xmlEl.value, prettyEl.checked]);
       });
 
       function clearAll() {
         cancelPending();
+        lastTracked = null;
         jsonEl.value = '';
         xmlEl.value = '';
         copyJsonBtn.disabled = true;
