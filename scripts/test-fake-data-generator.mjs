@@ -26,7 +26,7 @@ let activePage;const onUnhandled=e=>activePage?.errors.push(String(e));process.o
 const SLUG='fake-data-generator',component=process.env.ZT_B13_SOURCE?relative(root,process.env.ZT_B13_SOURCE):'src/components/tools/FakeDataGeneratorTool.astro';
 const templates={};
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};}
-function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}){
+function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={},opts={}){
   const clipboard=[],timers=new Map(),persistCalls=[],execCalls=[],downloads=[],urls=new Map();let stored=structuredClone(saved);
   let timerId=0,clock=0,doc;
   const descendants = el => el.children.flatMap(child => [child, ...descendants(child)]);
@@ -117,10 +117,10 @@ function lifecyclePage(lang='en',order='shared-after',noClipboard=false,saved={}
   const fm=/^---\n([\s\S]*?)\n---/.exec(source)?.[1]||'';
   const labels=vm.runInNewContext(fm.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
   const escaped=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/data-strings=\{JSON.stringify\(CLIENT_T\)\}/g,()=> 'data-strings="'+escaped(JSON.stringify(Object.fromEntries(['copy','download','copied','downloaded','noField','copyFailed'].map(key=>[key,labels[lang][key]]))))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
+  widget.innerHTML=source.replace(/^---[\s\S]*?---\s*/,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').split('<style')[0].replace(/data-strings=\{JSON.stringify\(CLIENT_T\)\}/g,()=> 'data-strings="'+escaped(JSON.stringify(Object.fromEntries(['copy','download','copied','downloaded','noField','copyFailed','countNote'].map(key=>[key,labels[lang][key]]))))+'"').replace(/\{L\.(\w+)\}/g,(_,k)=>escaped(labels?.[lang]?.[k]??''));
   doc.getElementById=id=>descendants(doc).find(el=>el.id===id)??null;
   doc.createElement=tag=>new Element(tag);doc.createDocumentFragment=()=>new Element('#document-fragment');doc.activeElement=doc.body;
-  doc.execCommand=command=>{execCalls.push(command);throw Error('Native clipboard prohibited');};
+  doc.execCommand=command=>{execCalls.push({command,text:doc.selectedElement?.value});if(opts.exec===undefined)throw Error('Native clipboard prohibited');return opts.exec;};
   const persist={clear(slug){if(slug!=='cron-job-generator')stored={};persistCalls.push(['clear',slug]);},save(slug,data){stored=JSON.parse(JSON.stringify(data));persistCalls.push(['save',slug,stored]);},load(){return structuredClone(stored);}};
   const globals={document:doc,Date:class extends Date{constructor(...a){super(...(a.length?a:['2026-10-05T08:00:00Z']));}static now(){return Date.parse('2026-10-05T08:00:00Z');}},Blob,crypto:webcrypto,URL:{createObjectURL(blob){const url='blob:probe-'+urls.size;urls.set(url,blob);return url;},revokeObjectURL(url){urls.delete(url);}},require(name){if(name==='../../data/gitignore-templates')return templates;throw Error('Unreviewed import '+name);},fetch(){throw Error('Network prohibited');},
     _slug:SLUG,ztPersist:persist,trackTool(){},
@@ -144,7 +144,7 @@ const LABELS={en:{copy:'Copy',copied:'Copied!',failed:'Copy failed',download:'Do
 const COPY='fdg-copy',INPUT='fdg-output',DELAY=1500,CLEAR_STORE={},ACTIONS=['CtrlL','new result','no fields'];
 const output=p=>p.get('fdg-output').value;
 const settings=p=>[p.get('fdg-count').value,p.doc.querySelector('.fdg-fmt.active').dataset.fmt,p.get('fdg-fields').querySelectorAll('input:checked').map(c=>c.value)];
-function ready(lang='en',order='shared-after',noClipboard=false){const p=lifecyclePage(lang,order,noClipboard);p.get('fdg-count').value='2';p.get('fdg-generate').click();return p;}
+function ready(lang='en',order='shared-after',noClipboard=false,opts={}){const p=lifecyclePage(lang,order,noClipboard,{},opts);p.get('fdg-count').value='2';p.get('fdg-generate').click();return p;}
 function fields(p,names){for(const c of p.get('fdg-fields').querySelectorAll('input'))c.checked=names.includes(c.value);}
 function act(p,action){if(action==='CtrlL')p.ctrlL(INPUT);else{if(action==='no fields')fields(p,[]);p.get('fdg-generate').click();}}
 const feedbackState=p=>[output(p),p.get(COPY).textContent,p.get(COPY).disabled,p.get('fdg-download').textContent,p.get('fdg-download').disabled];
@@ -168,7 +168,7 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  p=ready(lang,order);const old=output(p);p.doc.body.focus();p.doc.body.dispatch('keydown',{key:'l',ctrlKey:true});assert(id+' outside tool unchanged',output(p),old);assert(id+' outside tool no persistence clear',p.persistCalls.filter(c=>c[0]==='clear').length,0);p.get(INPUT).dispatch('keydown',{key:'l'});assert(id+' unmodified L unchanged',output(p),old);
  p=ready(lang,order);const beforeReject=output(p);p.get(COPY).click();p.clipboard.at(-1)?.reject(Error('controlled rejection'));await settle();assert(id+' reject handled',p.errors,[]);assert(id+' localized failure',p.get(COPY).textContent,LABELS[lang].failed);assert(id+' rejected result intact',output(p),beforeReject);p.get(COPY).click();p.clipboard.at(-1)?.resolve();await settle();assert(id+' retry succeeds',p.get(COPY).textContent,LABELS[lang].copied);
  for(const mode of ['absent','own undefined','sync throw']){
-  p=ready(lang,order,mode==='absent');if(mode==='own undefined'){Object.defineProperty(p.actual.ctx.navigator,'clipboard',{value:undefined,writable:true,configurable:true});}if(mode==='sync throw')p.actual.ctx.navigator.clipboard.writeText=()=>{throw Error('controlled synchronous throw');};let thrown='';try{p.get(COPY).click();}catch(e){thrown=e.name;}await settle();assert(id+'/'+mode+' handled',thrown,'');assert(id+'/'+mode+' visible',p.get(COPY).textContent,LABELS[lang].failed);assert(id+'/'+mode+' no native clipboard',p.execCalls,[]);assert(id+'/'+mode+' no unhandled',p.errors,[]);p.actual.ctx.navigator.clipboard={writeText(value){const d=deferred();p.clipboard.push({...d,value:String(value)});return d.promise;}};p.get(COPY).click();assert(id+'/'+mode+' retry copies intact output',p.clipboard.at(-1)?.value,output(p));p.clipboard.at(-1)?.resolve();await settle();assert(id+'/'+mode+' same-result retry succeeds',p.get(COPY).textContent,LABELS[lang].copied);
+  p=ready(lang,order,mode==='absent');if(mode==='own undefined'){Object.defineProperty(p.actual.ctx.navigator,'clipboard',{value:undefined,writable:true,configurable:true});}if(mode==='sync throw')p.actual.ctx.navigator.clipboard.writeText=()=>{throw Error('controlled synchronous throw');};let thrown='';try{p.get(COPY).click();}catch(e){thrown=e.name;}await settle();assert(id+'/'+mode+' handled',thrown,'');assert(id+'/'+mode+' visible',p.get(COPY).textContent,LABELS[lang].failed);assert(id+'/'+mode+' fallback tried once with the output',p.execCalls.map(c=>[c.command,c.text]),[['copy',output(p)]]);assert(id+'/'+mode+' helper textarea removed',p.doc.body.children.filter(c=>c.tagName==='TEXTAREA').length,0);assert(id+'/'+mode+' focus back on Copy',p.doc.activeElement===p.get(COPY),true);assert(id+'/'+mode+' no unhandled',p.errors,[]);p.actual.ctx.navigator.clipboard={writeText(value){const d=deferred();p.clipboard.push({...d,value:String(value)});return d.promise;}};p.get(COPY).click();assert(id+'/'+mode+' retry copies intact output',p.clipboard.at(-1)?.value,output(p));p.clipboard.at(-1)?.resolve();await settle();assert(id+'/'+mode+' same-result retry succeeds',p.get(COPY).textContent,LABELS[lang].copied);
  }
  for(const action of ACTIONS)for(const outcome of ['resolve','reject']){
   p=ready(lang,order);p.get(COPY).click();const job=p.clipboard.at(-1);act(p,action);const state=feedbackState(p);job?.[outcome](outcome==='reject'?Error('controlled late rejection'):undefined);await settle();assert(id+'/'+action+'/'+outcome+' old callback inert',feedbackState(p),state);assert(id+'/'+action+'/'+outcome+' handled',p.errors,[]);
@@ -179,6 +179,25 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  p=ready(lang,order);p.get(COPY).click();p.clipboard.at(-1)?.resolve();await settle();const stale=[...p.timers.values()].find(t=>t.ms===DELAY)?.fn;p.tick(100);p.get(COPY).click();p.clipboard.at(-1)?.resolve();await settle();stale?.();assert(id+' forced old timer inert',p.get(COPY).textContent,LABELS[lang].copied);p.tick(DELAY-100);assert(id+' old deadline inert',p.get(COPY).textContent,LABELS[lang].copied);p.tick(100);assert(id+' newest timer restores',p.get(COPY).textContent,LABELS[lang].copy);
  p=ready(lang,order);p.ctrlL(INPUT);restoreResult(p);assert(id+' real input recovers result',recover(p),true);assert(id+' recovery copy enabled',p.get(COPY).disabled,false);
 }
+// ---------- S2-9c: copy fallback succeeds; Count is read as a number and shown ----------
+const NOTE={en:'Enter a whole number from 1 to 100. Records generated: {n}.',zh:'数量须为 1–100 的整数，本次生成了 {n} 条。',ja:'件数は 1〜100 の整数で指定してください。今回は {n} 件を生成しました。',ko:'개수는 1~100 사이의 정수로 입력하세요. 이번에는 {n}개를 생성했습니다.'};
+for(const lang of ['en','zh','ja','ko'])for(const mode of ['absent','reject','sync throw']){
+ const id=SLUG+'/'+lang+'/fallback '+mode;
+ const p=ready(lang,'shared-after',mode==='absent',{exec:true});if(mode==='sync throw')p.actual.ctx.navigator.clipboard.writeText=()=>{throw Error('controlled synchronous throw');};
+ p.get(COPY).click();if(mode==='reject')p.clipboard.at(-1)?.reject(Error('controlled rejection'));await settle();
+ assert(id+' fallback copies the output',p.execCalls.map(c=>c.text),[output(p)]);assert(id+' shows copied',p.get(COPY).textContent,LABELS[lang].copied);assert(id+' textarea removed',p.doc.body.children.filter(c=>c.tagName==='TEXTAREA').length,0);assert(id+' focus back',p.doc.activeElement===p.get(COPY),true);assert(id+' no unhandled',p.errors,[]);
+}
+for(const lang of ['en','zh','ja','ko']){
+ for(const [value,count,note] of [['1e1',10,false],['10',10,false],['2.9',2,true],['150',100,true],['-3',1,true],['',10,true],['0',10,true],['100',100,false]]){
+  const p=lifecyclePage(lang);p.get('fdg-count').value=value;p.get('fdg-generate').click();
+  const id=SLUG+'/'+lang+' count '+JSON.stringify(value);
+  assert(id+' records',JSON.parse(output(p)).length,count);
+  assert(id+' field shows the number used',p.get('fdg-count').value,String(note||value===''?count:value));
+  assert(id+' note',p.get('fdg-status').textContent,note?NOTE[lang].replace('{n}',String(count)):'');
+ }
+ const p=lifecyclePage(lang);p.get('fdg-count').value='150';p.get('fdg-generate').click();p.get('fdg-generate').click();
+ assert(SLUG+'/'+lang+' note cleared once the field holds a valid count',p.get('fdg-status').textContent,'');
+}
 // ---------- v2 page layout ----------
 const ssr=vm.runInNewContext(source.match(/\/\/ strings:start\n([\s\S]*?)\/\/ strings:end/)[1]+';STRINGS');
 for(const lang of ['en','zh','ja','ko']){
@@ -188,7 +207,7 @@ for(const lang of ['en','zh','ja','ko']){
  q.ctrlL(INPUT);assert(lang+' real CtrlL restores empty marker',q.doc.querySelector('.fdg-wrap').dataset.empty,'true');
  assert(lang+' SSR labels present before runtime replacement',q.get('fdg-generate').textContent,L.generate);
  assert(lang+' five SSR tip keys',Object.keys(L.tips).sort(),['count','export','fields','format','generate']);
- assert(lang+' client only six original feedback strings',Object.keys(JSON.parse(q.doc.querySelector('.fdg-wrap').dataset.strings)).sort(),['copied','copy','copyFailed','download','downloaded','noField']);
+ assert(lang+' client only the feedback strings',Object.keys(JSON.parse(q.doc.querySelector('.fdg-wrap').dataset.strings)).sort(),['copied','copy','copyFailed','countNote','download','downloaded','noField']);
  const prefix=process.env.ZT_B13_MDX_PREFIX,mdx=readFileSync(prefix?prefix+'-'+lang+'.mdx':join(root,'src/content/tools/fake-data-generator',lang+'.mdx'),'utf8');const y=requireFromRoot('js-yaml').load(mdx.split('---')[1]);
  assert(lang+' steps limits and position',y.steps.length<=8&&y.steps.every(x=>x.length<=280)&&y.steps.join('').length<=1200&&mdx.indexOf('steps:')<mdx.indexOf('faqItems:'),true);
  assert(lang+' Usage removed',!/<h2>(?:How to Use|使用方法|使い方|사용 방법)<\/h2>/.test(mdx),true);
