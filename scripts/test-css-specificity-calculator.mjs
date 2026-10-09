@@ -296,7 +296,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 const css=compiled.css.join('\n'),scope=css.match(/data-astro-cid-[\w-]+/)[0];
 const hash=v=>createHash('sha256').update(v).digest('hex');
 // Hash updated by S2-9 (2026-10-09): localized error messages, the full-width note, and analytics on change / copy success.
-eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'f175f3bc6aa936e396e230b21de8bab7e531b24f17e96af06924bfac2f7c36c3');
+eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'b22bd2fb098a015f2d37c3799b38ddf1e7490a148a7dc55f622ee4d29079eaf8');
 check('v2 direct flex root',/^<div class="csc-wrap">/.test(markupTemplate)&&/\.csc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
 check('v2 input before reserved hint/status before results',markupTemplate.indexOf('id="csc-input"')<markupTemplate.indexOf('csc-hint csc-status')&&markupTemplate.indexOf('csc-hint csc-status')<markupTemplate.indexOf('class="csc-result-section"'));
 check('v2 fixed hint/status height',/\.csc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css));
@@ -374,7 +374,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq('en error text unchanged', p.result.querySelector('.csc-error-msg').textContent, 'Not a valid selector: Unexpected ")" (position 2)');
   }
 }
-// Full-width ＃ ． ： and the ideographic space are name characters in CSS, so the tuple counts
+// Full-width ＃ ． ： ［ (U+FF01-FF5E) are name characters in CSS (CSS Syntax 3), so the tuple counts
 // them as part of a name; the card says so in the page language.
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const C = locale(lang).CLIENT_T;
@@ -383,8 +383,6 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' full-width tuple as CSS reads it', p.tuples(), ['(0, 0, 1)', '(1, 1, 0)', '(0, 1, 0)']);
   const notes = Array.from(p.result.querySelectorAll('.csc-result-card')).map(c => c.querySelector('.csc-warn')?.textContent ?? '');
   eq(lang + ' full-width note only on the card with full-width syntax', notes, [C.fullwidth, '', '']);
-  const q = page(lang, 'shared-after'); q.type('div　p'); q.tick(200);
-  eq(lang + ' ideographic space note', q.result.querySelector('.csc-warn')?.textContent, C.fullwidth);
 }
 // Analytics: `calc` once per committed change (change event), not after every 200 ms pause;
 // `copy` only after a successful copy.
@@ -400,6 +398,33 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const btn = p.buttons()[0]; p.click(btn); eq(lang + ' GA: copy request alone sends nothing', copies(), 0);
   p.clipboard[0].reject(Error('denied')); await settle(); eq(lang + ' GA: failed copy sends nothing', copies(), 0);
   p.click(btn); p.clipboard[1].resolve(); await settle(); eq(lang + ' GA: successful copy sends one', copies(), 1);
+}
+// ---------- worked examples on the four tool pages ----------
+// {/* csc-check: {"in":"…"} */} types the input into the real page (page language of the MDX
+// file). The input (whole, or each of its selectors) and every tuple the page shows must appear as code after the
+// annotation (up to the next csc-check or H2); for an error card the page's localized message
+// (without the "Not a valid selector:" prefix) must appear verbatim; with "fullwidth": true the
+// page must show the full-width note on the first card.
+{
+  const { toolMdxContract } = await import('./lib/tool-mdx-contract.mjs');
+  const codes = text => [...text.matchAll(/`([^`\n]+)`/g)].map(m => m[1]).concat([...text.matchAll(/<code>([^<]*)<\/code>/g)].map(m => m[1].replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&quot;/g, '"').replace(/&amp;/g, '&')));
+  const contract = toolMdxContract('css-specificity-calculator', { annotations: [{ tag: 'csc-check', min: 2, verify: ({ spec, after, lang }) => {
+    if (!spec || typeof spec.in !== 'string') return 'spec needs in';
+    const p = page(lang, 'shared-after'); p.type(spec.in); p.tick(200);
+    const c = codes(after), C = locale(lang).CLIENT_T, T = pageStrings[lang];
+    if (!c.includes(spec.in)) for (const sel of E.splitSelectorList(spec.in)) if (!c.includes(sel)) return 'selector ' + JSON.stringify(sel) + ' is not shown as code';
+    for (const tuple of p.tuples()) if (!c.includes(tuple)) return 'tuple ' + tuple + ' is not shown as code';
+    const prefix = T.invalid.split('{msg}')[0];
+    for (const el of p.result.querySelectorAll('.csc-error-msg')) {
+      const msg = el.textContent.slice(prefix.length);
+      if (!after.includes(msg)) return 'error ' + JSON.stringify(msg) + ' is not quoted after the annotation';
+    }
+    const note = p.result.querySelector('.csc-result-card .csc-warn');
+    if (!!spec.fullwidth !== !!note) return 'full-width note ' + (note ? 'shown but not expected' : 'expected but not shown');
+    if (spec.fullwidth && note.textContent !== C.fullwidth) return 'unexpected note text';
+    return null;
+  } }] });
+  for (const r of contract.results.filter(r => /csc-check/.test(r.rule))) check('tool page: ' + r.message, r.ok);
 }
 check('v2 registered as analyze',/'css-specificity-calculator':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
 
