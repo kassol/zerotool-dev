@@ -295,7 +295,8 @@ check('v2 Astro compilation diagnostics',!compiled.diagnostics.some(d=>d.severit
 let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){moduleError=String(e);}eq('v2 generated module parses',moduleError,'');
 const css=compiled.css.join('\n'),scope=css.match(/data-astro-cid-[\w-]+/)[0];
 const hash=v=>createHash('sha256').update(v).digest('hex');
-eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'debacaebf3a0e3e27e724551beee6ec9df7cd0d05b291fdb3c5011079f0181c1');
+// Hash updated by S2-9 (2026-10-09): localized error messages, the full-width note, and analytics on change / copy success.
+eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'f175f3bc6aa936e396e230b21de8bab7e531b24f17e96af06924bfac2f7c36c3');
 check('v2 direct flex root',/^<div class="csc-wrap">/.test(markupTemplate)&&/\.csc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
 check('v2 input before reserved hint/status before results',markupTemplate.indexOf('id="csc-input"')<markupTemplate.indexOf('csc-hint csc-status')&&markupTemplate.indexOf('csc-hint csc-status')<markupTemplate.indexOf('class="csc-result-section"'));
 check('v2 fixed hint/status height',/\.csc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css));
@@ -316,7 +317,7 @@ for(const lang of ['en','zh','ja','ko']){
  const {T,TIPS,CLIENT_T}=locale(lang),p=page(lang,'shared-after');
  eq('v2 '+lang+' four tip keys',Object.keys(TIPS),['input','parsing','results','copy']);
  check('v2 '+lang+' plain bounded tips',Object.values(TIPS).every(t=>typeof t==='string'&&t.length>0&&t.length<=280&&!/[<>\n]|https?:/.test(t)));
- eq('v2 '+lang+' only nine client keys',Object.keys(CLIENT_T),['id','cls','elem','noInput','copyBtn','copied','copyFailed','note','invalid']);
+ eq('v2 '+lang+' only eleven client keys',Object.keys(CLIENT_T),['id','cls','elem','noInput','copyBtn','copied','copyFailed','note','invalid','errors','fullwidth']);
  check('v2 '+lang+' serialized strings omit tips',Object.values(TIPS).every(text=>!JSON.stringify(CLIENT_T).includes(text)));
  eq('v2 '+lang+' SSR label',p.document.querySelector('label[for="csc-input"]').textContent,T.inputLabel);
  eq('v2 '+lang+' SSR placeholder',p.input.placeholder,T.inputPlaceholder);
@@ -344,6 +345,61 @@ for(const lang of ['en','zh','ja','ko']){
  const long=Array.from({length:240},(_,i)=>'#id'+i+' .item:hover').join(', ');p.type(long);p.tick(200);
  eq('v2 long result retains every selector',Array.from(p.result.querySelectorAll('.csc-selector')).map(e=>e.textContent),long.split(', '));eq('v2 long result preserves every tuple',p.tuples(),Array.from({length:240},()=>'(1, 2, 0)'));
  const last=p.buttons().at(-1);p.click(last);eq('v2 last long result copies complete tuple',p.clipboard.at(-1).value,'(1, 2, 0)');p.clipboard.at(-1).resolve();await settle();eq('v2 long result copy success',last.textContent,pageStrings.en.copied);
+}
+// ---------- S2-9 fixes outside the engine ----------
+// Error messages in the page language: the engine's English message is mapped by pattern,
+// with the same position. Unknown messages are shown unchanged.
+const errorCases = [
+  ['a(', 'unexpected', { char: '(', pos: '2' }],
+  [':is(.a', 'missing', { char: ')', pos: '4' }],
+  ['[x', 'missing', { char: ']', pos: '1' }],
+  ['#', 'expectedName', { pos: '2' }],
+  ['[x="a]', 'unclosedString', { pos: '6' }],
+  [':is()', 'emptyArgument', { pos: '5' }],
+  ['a\\', 'escapeEnd', { pos: '2' }],
+];
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const t = pageStrings[lang], C = locale(lang).CLIENT_T;
+  check(lang + ' error templates exist', C.errors && typeof C.errors === 'object', JSON.stringify(Object.keys(C)));
+  for (const [sel, key, vars] of errorCases) {
+    const p = page(lang, 'shared-after'); p.type(sel); p.tick(200);
+    const tmpl = C.errors?.[key] ?? '';
+    const want = t.invalid.replace('{msg}', tmpl.replace('{char}', vars.char ?? '').replace('{pos}', vars.pos));
+    eq(lang + ' localized error for ' + JSON.stringify(sel), p.result.querySelector('.csc-error-msg')?.textContent, want);
+    for (const v of Object.values(vars)) check(lang + ' error keeps ' + v + ' for ' + JSON.stringify(sel), want.includes(v), want);
+  }
+  if (lang === 'en') {
+    // en keeps the engine wording
+    const p = page('en', 'shared-after'); p.type('a)b'); p.tick(200);
+    eq('en error text unchanged', p.result.querySelector('.csc-error-msg').textContent, 'Not a valid selector: Unexpected ")" (position 2)');
+  }
+}
+// Full-width ＃ ． ： and the ideographic space are name characters in CSS, so the tuple counts
+// them as part of a name; the card says so in the page language.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const C = locale(lang).CLIENT_T;
+  check(lang + ' full-width note text', typeof C.fullwidth === 'string' && C.fullwidth.length > 0);
+  const p = page(lang, 'shared-after'); p.type('＃ｍａｉｎ．ｎａｖ, #main.nav, [title="Ｑ＆Ａ"]'); p.tick(200);
+  eq(lang + ' full-width tuple as CSS reads it', p.tuples(), ['(0, 0, 1)', '(1, 1, 0)', '(0, 1, 0)']);
+  const notes = Array.from(p.result.querySelectorAll('.csc-result-card')).map(c => c.querySelector('.csc-warn')?.textContent ?? '');
+  eq(lang + ' full-width note only on the card with full-width syntax', notes, [C.fullwidth, '', '']);
+  const q = page(lang, 'shared-after'); q.type('div　p'); q.tick(200);
+  eq(lang + ' ideographic space note', q.result.querySelector('.csc-warn')?.textContent, C.fullwidth);
+}
+// Analytics: `calc` once per committed change (change event), not after every 200 ms pause;
+// `copy` only after a successful copy.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = page(lang, 'shared-after'), calcs = () => p.tracks.filter(x => x[1] === 'calc').length, copies = () => p.tracks.filter(x => x[1] === 'copy').length;
+  p.type('#a'); p.tick(200); p.type('#a .b'); p.tick(200); p.type('#a .b:hover'); p.tick(200);
+  eq(lang + ' GA: typing pauses send no calc', calcs(), 0);
+  const ev = p.document.createEvent('Event'); ev.initEvent('change', true, true); p.input.dispatchEvent(ev);
+  eq(lang + ' GA: committed change sends one calc', calcs(), 1);
+  p.input.value = ''; const ev2 = p.document.createEvent('Event'); ev2.initEvent('change', true, true); p.input.dispatchEvent(ev2);
+  eq(lang + ' GA: empty change sends nothing', calcs(), 1);
+  p.type('#a .b:hover'); p.tick(200);
+  const btn = p.buttons()[0]; p.click(btn); eq(lang + ' GA: copy request alone sends nothing', copies(), 0);
+  p.clipboard[0].reject(Error('denied')); await settle(); eq(lang + ' GA: failed copy sends nothing', copies(), 0);
+  p.click(btn); p.clipboard[1].resolve(); await settle(); eq(lang + ' GA: successful copy sends one', copies(), 1);
 }
 check('v2 registered as analyze',/'css-specificity-calculator':\s*'analyze'/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')));
 
