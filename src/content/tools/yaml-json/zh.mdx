@@ -13,10 +13,10 @@ faqItems:
     answer: "YAML 用缩进表示结构，支持注释、多行字符串、锚点和别名，适合手写配置；JSON 语法更严格，键必须加双引号，也不能写注释。Docker Compose、Kubernetes、GitHub Actions 等配置文件多用 YAML，接口数据多用 JSON。"
   - id: "features"
     question: "支持哪些 YAML 特性？"
-    answer: "本工具使用 js-yaml 4.3.2，按 YAML 1.2 的 core schema（另加时间戳）解析：块式和流式的嵌套映射与序列、多行字符串（字面量 | 和折叠式 >）、锚点、别名和 << 合并键，以及字符串、数字、布尔值、null 和日期。有两处例外：每次只能转换一个文档；CloudFormation 的 !Ref 这类自定义标签会以 unknown tag 报错并停止转换。"
+    answer: "本工具使用 js-yaml 4.3.2 的默认 schema：YAML 1.2 core schema，加上时间戳、<< 合并键和 !!binary、!!set、!!omap、!!pairs 标签。它能读取块式和流式的嵌套映射与序列、多行字符串（字面量 | 和折叠式 >）、锚点和别名，以及字符串、数字、布尔值、null 和日期。每次只转换一个文档。CloudFormation 的 !Ref 这类自定义标签会以 unknown tag 报错并停止转换；!!binary 数据也会停止转换，因为 JSON 没有二进制类型。!!set 变成值为 null 的对象，!!omap 变成单键对象组成的数组，!!pairs 变成由 [键, 值] 组成的数组。"
   - id: "type-mapping"
     question: "YAML 数据类型如何映射到 JSON？"
-    answer: "YAML 字符串映射为 JSON 字符串，数字保持不变，布尔值映射为 true/false，null 映射为 null，日期映射为 UTC 的 ISO 8601 字符串（+08:00 这类偏移不保留），序列/映射映射为数组/对象。.inf、.nan、超出 ±(2^53 − 1) 的整数、2026-02-31 这类不存在的日期和精度超过毫秒的时间无法原样写入 JSON，工具会停止转换并列出这些字段。"
+    answer: "YAML 字符串变成 JSON 字符串，数字保持不变，布尔值变成 true/false，null 仍是 null，序列和映射分别变成数组和对象。日期变成 UTC 的 ISO 8601 字符串（+08:00 这类偏移不保留）；作键的日期保留原文，因为 JSON 的键都是字符串。.inf、.nan、超出 ±(2^53 − 1) 的整数、2026-02-31 这类不存在的日期、精度超过毫秒的时间和 !!binary 数据无法原样写入 JSON，工具会停止转换并列出这些字段。"
   - id: "multi-document"
     question: "可以转换多文档 YAML 吗？"
     answer: "不能。含 --- 分隔的多个文档时会报错 expected a single document in the stream, but found more。请一次转换一个文档，或用 YAML 验证器逐个检查文档。"
@@ -68,7 +68,7 @@ server:
 
 ## 类型会变的值
 
-本工具使用 js-yaml 4.3.2，遵循 [YAML 1.2](https://yaml.org/spec/1.2.2/) core schema，并支持时间戳。下列输入的转换结果如下：
+本工具使用 js-yaml 4.3.2 的默认 schema：[YAML 1.2](https://yaml.org/spec/1.2.2/) core schema，加上时间戳、`<<` 合并键和 `!!binary`、`!!set`、`!!omap`、`!!pairs` 标签。下列输入的转换结果如下：
 
 | YAML | JSON | 说明 |
 |---|---|---|
@@ -81,6 +81,9 @@ server:
 | `at: 2026-10-01T09:30:00+09:00` | `"2026-10-01T00:30:00.000Z"` | 偏移换成 UTC。JSON 没有日期类型，输出 UTC 的 ISO 8601 文本：时刻相同，但原来写的 `+09:00` 不保留 |
 | `zero: -0.0` | `-0.0` | 负零保留负号（只用 `JSON.stringify` 会写成 `0`） |
 | `empty:` | `null` | 没有值的键是 null |
+| `roles: !!set {admin, editor}` | `{"admin":null,"editor":null}` | js-yaml 把 set 读成值为 null 的映射 |
+| `steps: !!pairs [run: build, run: test]` | `[["run","build"],["run","test"]]` | pairs 变成 [键, 值] 数组，重复的键保留 |
+| `2026-01-01: New Year` | `{"2026-01-01":"New Year"}` | 作键的日期保留原文；JSON 的键都是字符串 |
 
 ## 限制
 
@@ -101,6 +104,7 @@ server:
   ```
 
   得到 `未转换：JSON 无法原样保存下列值：/due：2026-02-31 不是有效的日期或时间；/at：2026-10-01T09:30:00.123456Z 的精度超过毫秒`。本意是文本的值请加引号（`due: "2026-02-31"`）。有效的日期时间按上表转换成 UTC。
+- **`!!binary` 数据同样会停止转换。** js-yaml 把它读成字节，而 JSON 没有二进制类型（`JSON.stringify` 会写成以字节序号为键的对象）。`photo: !!binary aGVsbG8=` 得到 `未转换：JSON 无法原样保存下列值：/photo：!!binary 二进制值，JSON 没有二进制类型`。去掉 `!!binary` 标签，Base64 文本就作为字符串转换。
 - **js-yaml 的处理上限。** js-yaml 4.3.2 遇到嵌套超过 100 层、合并键（`<<`）累计处理的映射和键超过 10,000 个、一个合并键列出超过 100 个映射的文档会停止，例如 `无效 YAML: 集合嵌套超过 100 层（js-yaml 默认上限） (1:103)`。
 - **重复的键会报错**（`duplicated mapping key`），不会静默覆盖。
 - **注释和锚点不保留。** 锚点和 `<<` 合并键会展开成普通的副本。

@@ -500,6 +500,41 @@ for (const tool of ['yaml-json', 'yaml-toml']) {
     page.el('yv-status').textContent + ' | ' + page.el('yv-preview-content').textContent);
 }
 
+/* ── PAGE-TEXT-D ── the pages quote the !!binary stop and note as the page shows them, the yaml-json
+   table rows for !!set, !!pairs and a date key are the page output, and the FAQ answers name
+   !!binary where they list what stops (no fixed count of exceptions). */
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const jsyaml = (await import('js-yaml')).default;
+  const mdx = (tool, lang) => readFileSync(new URL(`../src/content/tools/${tool}/${lang}.mdx`, import.meta.url), 'utf8');
+  const faq = (text, id) => (jsyaml.load(text.slice(4, text.indexOf('\n---\n', 4))).faqItems.find((f) => f.id === id) || {}).answer || '';
+  const vsrc = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(vsrc.slice(vsrc.indexOf('const labels = '), vsrc.indexOf('const L = labels')) + '\n;labels');
+  const rows = [['roles: !!set {admin, editor}', (d) => d.roles], ['steps: !!pairs [run: build, run: test]', (d) => d.steps], ['2026-01-01: New Year', (d) => d]];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const yj = mdx('yaml-json', lang), yt = mdx('yaml-toml', lang), yv = mdx('yaml-validator', lang);
+    const a = convert(open('yaml-json', lang), 'yaml-json', 'y2j', 'photo: !!binary aGVsbG8=', 'input').status.textContent;
+    check('PAGE-TEXT-D', `yaml-json ${lang} quotes the !!binary stop`, a.includes('/photo') && yj.includes('`' + a + '`') && yj.includes('`photo: !!binary aGVsbG8=`'), a);
+    for (const [text, pick] of rows) {
+      const out = convert(open('yaml-json', lang), 'yaml-json', 'y2j', text, 'input').out.value;
+      const cell = '| `' + text + '` | `' + JSON.stringify(pick(JSON.parse(out))) + '` |';
+      check('PAGE-TEXT-D', `yaml-json ${lang} table row for ${text} is the page output`, yj.includes(cell), cell);
+    }
+    check('PAGE-TEXT-D', `yaml-json ${lang} names the default schema tags and no fixed count of exceptions`,
+      ['`<<`', '`!!binary`', '`!!set`', '`!!omap`', '`!!pairs`'].every((t) => yj.includes(t)) &&
+      ['!!binary', '!!set', '!!omap', '!!pairs'].every((t) => faq(yj, 'features').includes(t)) && faq(yj, 'type-mapping').includes('!!binary') &&
+      !/Two exceptions|两处例外|例外は 2 つ|예외는 두 가지/.test(faq(yj, 'features')), faq(yj, 'features'));
+    const b = convert(open('yaml-toml', lang), 'yaml-toml', 'y2t', 'photo: !!binary aGVsbG8=', 'input').status.textContent;
+    check('PAGE-TEXT-D', `yaml-toml ${lang} quotes the !!binary stop and lists it in the FAQ`, b.includes('/photo') && yt.includes('<code>' + b + '</code>') && faq(yt, 'conversion-errors').includes('!!binary'), b);
+    const L = labels[lang];
+    const page = loadPage('src/components/tools/YamlValidatorTool.astro', { lang, dataset: { '.yv-wrap': { lang, msgValid: L.msgValid } } });
+    page.el('yv-input').value = 'photo: !!binary aGVsbG8='; page.el('yv-validate').click();
+    const note = page.el('yv-preview-note').textContent;
+    check('PAGE-TEXT-D', `yaml-validator ${lang} quotes the !!binary note and lists it in the FAQ`, note.includes('/photo') && yv.includes('`' + note + '`') && faq(yv, 'preview').includes('!!binary'), note);
+  }
+}
+
 /* ── Summary per finding ── */
 console.log('\nPer finding:');
 for (const [tag, c] of Object.entries(counts)) console.log(`  ${tag}: ${c.pass} passed, ${c.fail} failed`);

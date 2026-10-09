@@ -13,10 +13,10 @@ faqItems:
     answer: "YAML marks structure with indentation and adds comments, multi-line strings, anchors and aliases, which makes it easier to write by hand. JSON is stricter: keys are in double quotes and there are no comments. Configuration files such as Docker Compose, Kubernetes and GitHub Actions workflows use YAML; APIs mostly use JSON."
   - id: "features"
     question: "What YAML features are supported?"
-    answer: "The tool uses js-yaml 4.3.2, which reads YAML 1.2 with the core schema plus timestamps: nested mappings and sequences in block or flow style, multi-line strings (literal | and folded >), anchors, aliases and << merge keys, and strings, numbers, booleans, null and dates. Two exceptions: one conversion takes only one document, and custom tags such as CloudFormation's !Ref stop the conversion with an \"unknown tag\" error."
+    answer: "The tool uses js-yaml 4.3.2 with its default schema: the YAML 1.2 core schema plus timestamps, << merge keys and the !!binary, !!set, !!omap and !!pairs tags. It reads nested mappings and sequences in block or flow style, multi-line strings (literal | and folded >), anchors and aliases, and strings, numbers, booleans, null and dates. One conversion takes one document. A custom tag such as CloudFormation's !Ref stops the conversion with an \"unknown tag\" error, and !!binary data stops it because JSON has no binary type. !!set becomes an object whose values are null, !!omap a list of one-key objects and !!pairs a list of [key, value] lists."
   - id: "type-mapping"
     question: "How are YAML data types mapped to JSON?"
-    answer: "YAML strings become JSON strings, numbers stay numbers, booleans become true/false, null becomes null, dates become ISO 8601 strings in UTC (an offset such as +09:00 is not kept), and sequences/mappings become arrays/objects. .inf, .nan, integers outside ±(2^53 − 1), impossible dates such as 2026-02-31 and times finer than milliseconds cannot be written to JSON unchanged, so the conversion stops and names those fields."
+    answer: "YAML strings become JSON strings, numbers stay numbers, booleans become true/false, null becomes null, and sequences and mappings become arrays and objects. Dates become ISO 8601 strings in UTC (an offset such as +09:00 is not kept); a date used as a key keeps its text, because JSON keys are strings. .inf, .nan, integers outside ±(2^53 − 1), impossible dates such as 2026-02-31, times finer than milliseconds and !!binary data cannot be written to JSON unchanged, so the conversion stops and names those fields."
   - id: "multi-document"
     question: "Can I convert multi-document YAML?"
     answer: "No. Input with several documents separated by --- shows the error 'expected a single document in the stream, but found more'. Convert one document at a time, or check the file with the YAML Validator, which reports each document separately."
@@ -133,7 +133,7 @@ web:
 
 ## Values That Change Type
 
-The tool uses js-yaml 4.3.2, which follows the [YAML 1.2](https://yaml.org/spec/1.2.2/) core schema plus timestamps. These inputs convert as shown:
+The tool uses js-yaml 4.3.2 with its default schema: the [YAML 1.2](https://yaml.org/spec/1.2.2/) core schema plus timestamps, `<<` merge keys and the `!!binary`, `!!set`, `!!omap` and `!!pairs` tags. These inputs convert as shown:
 
 | YAML | JSON | Note |
 |---|---|---|
@@ -146,6 +146,9 @@ The tool uses js-yaml 4.3.2, which follows the [YAML 1.2](https://yaml.org/spec/
 | `at: 2026-10-01T09:30:00+09:00` | `"2026-10-01T00:30:00.000Z"` | Offsets become UTC. JSON has no date type, so the text is ISO 8601 in UTC: the same instant, but the written `+09:00` is not kept |
 | `zero: -0.0` | `-0.0` | Negative zero keeps its sign (`JSON.stringify` alone would write `0`) |
 | `empty:` | `null` | A key with no value is null |
+| `roles: !!set {admin, editor}` | `{"admin":null,"editor":null}` | js-yaml reads a set as a mapping whose values are null |
+| `steps: !!pairs [run: build, run: test]` | `[["run","build"],["run","test"]]` | Pairs become [key, value] lists; a repeated key is kept |
+| `2026-01-01: New Year` | `{"2026-01-01":"New Year"}` | A date used as a key keeps its text; JSON keys are strings |
 
 ## Limits
 
@@ -166,6 +169,7 @@ The tool uses js-yaml 4.3.2, which follows the [YAML 1.2](https://yaml.org/spec/
   ```
 
   gives `Not converted: JSON cannot hold these values without changing them: /due: 2026-02-31 is not a valid date or time; /at: 2026-10-01T09:30:00.123456Z has more than millisecond precision`. Quote a value that is meant as text (`due: "2026-02-31"`). Valid dates and times convert to UTC as shown in the table above.
+- **`!!binary` data stops the conversion too.** js-yaml reads it as bytes, and JSON has no binary type (`JSON.stringify` would write an object keyed by byte index). `photo: !!binary aGVsbG8=` gives `Not converted: JSON cannot hold these values without changing them: /photo: !!binary value — JSON has no binary type`. Without the `!!binary` tag, the Base64 text converts as a string.
 - **js-yaml work limits.** js-yaml 4.3.2 stops a document whose collections are nested more than 100 levels deep, whose merge keys (`<<`) handle more than 10,000 mappings and keys in total, or that lists more than 100 mappings in one merge key, for example `Invalid YAML: collections are nested more than 100 levels deep (the js-yaml default limit) (1:103)`.
 - **Duplicate keys are an error** (`duplicated mapping key`), not a silent overwrite.
 - **Errors show line and column.** A key indented one space too far gives `Invalid YAML: bad indentation of a mapping entry (2:3)` with the offending line marked; an unclosed `[` gives `unexpected end of the stream within a flow collection`. To check a file with several `---` documents, use the [YAML Validator](/tools/yaml-validator/), which reports each document separately.
