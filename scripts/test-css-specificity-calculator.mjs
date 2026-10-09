@@ -223,12 +223,15 @@ function page(lang,order){
  focus(input);
  const navigator={clipboard:{writeText(value){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});clipboard.push({value,promise,resolve,reject});return promise;}}};
  const globals={document,navigator,t:locale(lang).CLIENT_T,_slug:'css-specificity-calculator',ztPersist:{clear:slug=>clears.push(slug)},trackTool:(...args)=>tracks.push(args),fetch(){effects.push('network');throw Error('Unexpected network');},setTimeout(fn,ms){timers.set(++seq,{fn,ms,due:clock+ms});return seq;},clearTimeout(id){timers.delete(id);}};
- document.execCommand=()=>{effects.push('fallback');throw Error('Unexpected fallback');};
+ let fallbackOK=false;
+ {const create=document.createElement.bind(document);document.createElement=tag=>{const el=create(tag);if(tag==='textarea'&&typeof el.select!=='function')Object.defineProperty(el,'select',{value(){},configurable:true});return el;};}
+ document.execCommand=command=>{effects.push('fallback:'+command);if(fallbackOK)return true;throw Error('controlled fallback failure');};
  if(order==='shared-before'){const ctx=vm.createContext(globals);ctx.window=ctx;vm.runInContext(shortcut,ctx);}
  const real=loadPage('src/components/tools/CssSpecificityCalculatorTool.astro',{lang,globals});
  if(order==='shared-after')real.run(shortcut);
  function event(el,type,values={}){const e=document.createEvent('Event');e.initEvent(type,true,true);Object.assign(e,values);try{el.dispatchEvent(e);}catch(error){errors.push(String(error));}return e;}
  return{document,input,result,clipboard,clears,tracks,errors,effects,timers,navigator,
+  fallbackOK(v){fallbackOK=v;},
   type(value){input.value=value;event(input,'input');},
   tick(ms){clock+=ms;for(;;){const ready=[...timers].filter(([,t])=>t.due<=clock).sort((a,b)=>a[1].due-b[1].due)[0];if(!ready)break;timers.delete(ready[0]);ready[1].fn();}},
   key(el,values){focus(el);return event(el,'keydown',{ctrlKey:false,metaKey:false,...values});},
@@ -272,7 +275,7 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  for(const unavailable of ['absent','throw']){
   const p=prepared(lang,order),btn=p.buttons()[0];
   if(unavailable==='absent')delete p.navigator.clipboard;else p.navigator.clipboard.writeText=()=>{throw Error('controlled synchronous failure');};
-  p.click(btn);await settle();eq(tag+'/'+unavailable+' API failure handled',p.errors,[]);eq(tag+'/'+unavailable+' failure visible',btn.textContent,copyFailed[lang]);eq(tag+'/'+unavailable+' no fallback invented',p.effects,[]);
+  p.click(btn);await settle();eq(tag+'/'+unavailable+' API failure handled',p.errors,[]);eq(tag+'/'+unavailable+' failure visible',btn.textContent,copyFailed[lang]);eq(tag+'/'+unavailable+' fallback tried once',p.effects,['fallback:copy']);
  }
  for(const transition of ['clear','new-valid','new-invalid','input-only','same-input'])for(const completion of ['resolve','reject']){
   const p=prepared(lang,order),btn=p.buttons()[0],u=unhandled.length;p.click(btn);
@@ -298,7 +301,7 @@ for(const lang of ['en','zh','ja','ko'])for(const order of ['shared-before','sha
  }
  {
   const p=prepared(lang,order),[a,b]=p.buttons(),u=unhandled.length;p.click(a);p.click(b);p.clipboard[1].reject(Error('second button denied'));await settle();p.clipboard[0].resolve();await settle();
-  eq(tag+' two buttons retain independent feedback',[a.textContent,b.textContent],[t.copied,copyFailed[lang]]);eq(tag+' both real values copied',p.clipboard.map(c=>c.value),['(1, 2, 0)','(0, 1, 1)']);eq(tag+' independent rejection handled',unhandled.length,u);eq(tag+' no network/fallback effects',p.effects,[]);
+  eq(tag+' two buttons retain independent feedback',[a.textContent,b.textContent],[t.copied,copyFailed[lang]]);eq(tag+' both real values copied',p.clipboard.map(c=>c.value),['(1, 2, 0)','(0, 1, 1)']);eq(tag+' independent rejection handled',unhandled.length,u);eq(tag+' only the rejected copy tries the fallback, no network',p.effects,['fallback:copy']);
  }
 }
 process.removeListener('unhandledRejection',onUnhandled);
@@ -316,8 +319,8 @@ check('v2 Astro compilation diagnostics',!compiled.diagnostics.some(d=>d.severit
 let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:'ts',format:'esm'});}catch(e){moduleError=String(e);}eq('v2 generated module parses',moduleError,'');
 const css=compiled.css.join('\n'),scope=css.match(/data-astro-cid-[\w-]+/)[0];
 const hash=v=>createHash('sha256').update(v).digest('hex');
-// Hash updated by S2-9 (2026-10-09): localized error messages, the full-width note, and analytics on change / copy success.
-eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'c1feed03cfa48c67114d913a53e8275bd83f0a4beb86f997a7400d9fc46c8d07');
+// Hash updated by S2-9 (2026-10-09): localized error messages, the full-width note, analytics on change / copy success, and the copy fallback.
+eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'313e73669dbd61f515d888f71323e870c6eec76d1fabf4bdde0795284fe6f013');
 check('v2 direct flex root',/^<div class="csc-wrap">/.test(markupTemplate)&&/\.csc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
 check('v2 input before reserved hint/status before results',markupTemplate.indexOf('id="csc-input"')<markupTemplate.indexOf('csc-hint csc-status')&&markupTemplate.indexOf('csc-hint csc-status')<markupTemplate.indexOf('class="csc-result-section"'));
 check('v2 fixed hint/status height',/\.csc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css));
@@ -367,6 +370,31 @@ for(const lang of ['en','zh','ja','ko']){
  eq('v2 long result retains every selector',Array.from(p.result.querySelectorAll('.csc-selector')).map(e=>e.textContent),long.split(', '));eq('v2 long result preserves every tuple',p.tuples(),Array.from({length:240},()=>'(1, 2, 0)'));
  const last=p.buttons().at(-1);p.click(last);eq('v2 last long result copies complete tuple',p.clipboard.at(-1).value,'(1, 2, 0)');p.clipboard.at(-1).resolve();await settle();eq('v2 long result copy success',last.textContent,pageStrings.en.copied);
 }
+// ---------- copy fallback (S2-9) ----------
+// When the Clipboard API is missing, throws or rejects, the tuple is copied through a hidden
+// textarea + execCommand('copy') (as in color-palette-generator) and focus returns to the
+// button; the failure text shows only when both fail. Stale copies do not fall back.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const t = pageStrings[lang];
+  for (const mode of ['absent', 'throw', 'reject']) {
+    const p = prepared(lang, 'shared-after'), btn = p.buttons()[0];
+    p.fallbackOK(true);
+    let selected = '';
+    const create = p.document.createElement.bind(p.document);
+    p.document.createElement = tag => { const el = create(tag); if (tag === 'textarea') Object.defineProperty(el, 'select', { value: () => { selected = el.value; }, configurable: true }); return el; };
+    if (mode === 'absent') delete p.navigator.clipboard;
+    if (mode === 'throw') p.navigator.clipboard.writeText = () => { throw Error('sync'); };
+    p.click(btn); p.document.activeElement = p.document.body;
+    if (mode === 'reject') p.clipboard[0].reject(Error('denied'));
+    await settle();
+    eq(lang + '/' + mode + ' fallback copies the tuple', selected, '(1, 2, 0)');
+    eq(lang + '/' + mode + ' fallback success shows Copied', btn.textContent, t.copied);
+    check(lang + '/' + mode + ' focus back on the Copy button', p.document.activeElement === btn);
+    eq(lang + '/' + mode + ' fallback success tracked once', p.tracks.filter(x => x[1] === 'copy').length, 1);
+    eq(lang + '/' + mode + ' textarea removed', p.document.querySelectorAll('textarea').length, 0);
+  }
+}
+
 // ---------- S2-9 fixes outside the engine ----------
 // Error messages in the page language: the engine's English message is mapped by pattern,
 // with the same position. Unknown messages are shown unchanged.

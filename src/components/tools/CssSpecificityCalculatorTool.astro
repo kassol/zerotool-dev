@@ -496,11 +496,30 @@ const CLIENT_T = { id: T.id, cls: T.cls, elem: T.elem, noInput: T.noInput, copyB
             function failed() {
               if (current()) btn.textContent = t.copyFailed;
             }
-            try {
-              Promise.resolve(navigator.clipboard.writeText(val)).then(copied, failed);
-            } catch (e) {
-              failed();
+            /* Hidden textarea + execCommand('copy') when the Clipboard API is missing, throws or
+               rejects (as in color-palette-generator); focus returns to the button. */
+            function viaFallback() {
+              if (!current()) return;
+              var ta = document.createElement('textarea');
+              ta.value = val;
+              ta.setAttribute('readonly', '');
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.select();
+              var ok = false;
+              try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+              document.body.removeChild(ta);
+              btn.focus();
+              if (ok) copied(); else failed();
             }
+            var task;
+            try {
+              task = Promise.resolve(navigator.clipboard.writeText(val));
+            } catch (e) {
+              task = Promise.reject(e);
+            }
+            task.then(copied, viaFallback);
           });
         });
       }
