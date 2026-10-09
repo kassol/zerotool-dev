@@ -46,7 +46,7 @@ function runCapture(text) {
   const shown = {};
   const fields = new Proxy({}, { get: (_, k) => k });
   const env = {
-    capturedCount: 0,
+    capturedCount: 0, mobileTracked: false,
     padCount: {}, padKey: {}, padGlyph: { classList: { add() {}, remove() {} } },
     fields,
     setText: (k, v) => { shown[k] = v; },
@@ -244,6 +244,13 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const q = ready(lang); q.fallback(true); q.get('kce-copy').click(); q.clipboard[0].reject(Error('denied')); await settle();
   eq(lang + ' rejected write falls back to the textarea copy', [q.execCalls.length, q.execCalls[0]?.text, q.get('kce-copy').textContent], [1, enterSnippet, keyLabels(lang).copied]);
   eq(lang + ' fallback success is tracked', q.tracks.filter(a => a[1] === 'copy_snippet').length, 1);
+  // The touch fallback field sent mobile_input for every character (engine change approved 2026-10-09).
+  const m = pageVM(lang); m.tick(60);
+  for (const ch of ['a', 'b', 'c']) m.input('kce-mobile-input', ch);
+  eq(lang + ' three fallback characters send one mobile_input event', m.tracks.filter(a => a[1] === 'mobile_input').length, 1);
+  m.get('kce-clear').click(); m.input('kce-mobile-input', 'd');
+  eq(lang + ' a fallback character after Clear sends one more', m.tracks.filter(a => a[1] === 'mobile_input').length, 2);
+  eq(lang + ' fallback still shows every character', [m.get('kce-pad-count').textContent, m.get('kce-key').textContent], ['1', '"d"']);
 }
 
 // ---------- worked examples on the tool pages (kce-check) ----------
@@ -278,7 +285,8 @@ check('kce-check accepts the right field', verifyKey({ spec: { event: { key: 'a'
 
 // Preserve both the marked mobile engine and unmarked physical-key/snippet code.
 for(const [name,startMark,endMark,bytes,hash,includeEnd] of [
- ['mobile','      /* ── engine:start ── */','      /* ── engine:end ── */',1412,'eb1b5b7b2298a4583d41e5f2cc74245484ddd3b9c18713100c417f97a0996a10',true],
+// S2-9b (2026-10-09, approved engine change): mobile_input is sent once per capture run.
+ ['mobile','      /* ── engine:start ── */','      /* ── engine:end ── */',1486,'76a8237c14d44b283fbd153a8a8b10196826ef79ce83f04da5499321c15aa413',true],
  // S2-9b (2026-10-09): the keydown statistics event is sent once per capture run, not per key.
  ['physical key capture','      function captureFromKeyboardEvent','      /* ── engine:start ── */',1134,'8b9d72e437ba3f35a301405597009d9661bff6376e4fa1801720a334d9cade5f',false],
  ['snippet/modifiers/history','      function setText','      function captureFromKeyboardEvent',2234,'36ac5072cbfee1018f281161c90ac1f06d13392b4056176c443c2f34b5bb345d',false],
@@ -293,7 +301,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 eq('v2 compiled module parses',moduleError,'');
 const style=compiled.css.join('\n');
 // S2-9b (2026-10-09): updated for the statistics and copy-fallback fixes tested above.
-eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'bd2526348e3811a16237d192e843d0314f7f36576d23629dd6a5d9a6454aaa71');
+eq('v2 complete logic after localization unchanged',hash(source.slice(source.indexOf('      var pad = document.getElementById'),source.indexOf('  </script>'))),'b72c8d4c15384d4fb35907eb6f1c0ad3a72ce2f9cacd51c010e229aa6653f132');
 eq('v2 analyze registry',/['"]keycode-explorer['"]\s*:\s*['"]analyze['"]/.test(readFileSync(join(root,'src/data/tool-layouts.ts'),'utf8')),true);
 eq('v2 outermost tool root',/^<div class="kce-wrap">/.test(source.split('\n---\n')[1].trim()),true);
 eq('v2 no runtime i18n',source.includes('data-i18n'),false);
