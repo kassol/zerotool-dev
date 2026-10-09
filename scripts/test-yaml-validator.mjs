@@ -258,6 +258,32 @@ process.removeListener('unhandledRejection', onUnhandled);
 eq('protected YAML engine bytes unchanged', [Buffer.byteLength(source.slice(startIndex, endIndex + END_MARK.length)), createHash('sha256').update(source.slice(startIndex, endIndex + END_MARK.length)).digest('hex')], [3000, 'bd985c6c5584fcb337eef79182a2b25a079136fdf649451580a77801b6e4c76b']);
 console.log('Page lifecycle: ' + (passes - pageStart) + ' passed, ' + failures + ' total failures');
 
+// ---------- what js-yaml 4.3.2 accepts (FAQ "validate" and "version") ----------
+// scripts/test-yaml-validator.fixtures.json: in.yaml of each yaml-test-suite case that has an
+// `error` file (github.com/yaml/yaml-test-suite, branch data, commit 6ad3d2c, 2022-01-17, MIT).
+const suiteStart = passes;
+{
+  const suite = JSON.parse(readFileSync(join(root, 'scripts/test-yaml-validator.fixtures.json'), 'utf8'));
+  const ids = Object.keys(suite.invalid);
+  eq('yaml-test-suite invalid inputs in the fixture', [ids.length, suite.commit.slice(0, 7), suite.date], [94, '6ad3d2c', '2022-01-17']);
+  const accepted = ids.filter(id => { const h = page('en'); h.validate(suite.invalid[id]); return /\bsuccess\b/.test(h.get('yv-status').className); });
+  eq('the page reports these 14 invalid inputs as valid', accepted, ['3HFZ', '4JVG', '9C9N', '9JBA', '9KBC', 'CVW2', 'CXX2', 'DK95/01', 'H7J7', 'QB6E', 'S98Z', 'SU5Z', 'Y79Y/000', 'Y79Y/003']);
+  eq('the two FAQ examples are CXX2 and QB6E', [suite.invalid.CXX2, suite.invalid.QB6E], ['--- &anchor a: b\n', '---\nquoted: "a\nb\nc"\n']);
+  const tag = page('en'); tag.validate('Bucket: !Ref MyBucket');
+  check('a tag js-yaml does not know is reported as an error', /\berror\b/.test(tag.get('yv-status').className) && tag.get('yv-error-box').innerHTML.includes('unknown tag'), tag.get('yv-error-box').innerHTML);
+  for (const lang of Object.keys(labels)) {
+    const mdx = readFileSync(join(root, 'src/content/tools/yaml-validator', lang + '.mdx'), 'utf8');
+    const items = yaml.load(mdx.slice(4, mdx.indexOf('\n---\n', 4))).faqItems;
+    const answer = id => (items.find(f => f.id === id) || {}).answer || '';
+    const v = answer('validate');
+    check(lang + ' FAQ validate: js-yaml 4.3.2, 14 of 94, both examples and !Ref, no claim to catch all invalid YAML',
+      ['js-yaml 4.3.2', '14', '94', '2022-01-17', '--- &anchor a: b', 'quoted: "a', '!Ref', 'unknown tag'].every(s => v.includes(s)) &&
+      !/YAML 1\.2 compliant|Any malformed|符合 YAML 1\.2|均可捕获|準拠|あらゆる|준수|모든 잘못된/.test(v), v);
+    check(lang + ' FAQ version: js-yaml 4.3.2, no compliance claim', answer('version').includes('js-yaml 4.3.2') && !/implements|实现|準拠|구현/.test(answer('version')), answer('version'));
+  }
+}
+console.log('yaml-test-suite and FAQ: ' + (passes - suiteStart) + ' passed, ' + failures + ' total failures');
+
 // ---------- v2 page layout ----------
 const v2Start = passes;
 const markup = source.replace(/^---\n[\s\S]*?\n---\s*/, '').split('<script>')[0];
