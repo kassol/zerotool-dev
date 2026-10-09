@@ -14,7 +14,8 @@ async function test(name, run) {
   try { await run(); passed++; }
   catch (e) { failed++; console.log('FAIL ' + name + ': ' + e.message); }
 }
-function page(lang = 'en') {
+// prelude: code run in the page realm before the script (used to stand in for browser limits).
+function page(lang = 'en', prelude = '') {
   const elements = new Map(), copied = [], downloads = [], timers = new Map(), readers = [], docEvents = {};
   let timerId = 0, document;
   function element() {
@@ -27,7 +28,7 @@ function page(lang = 'en') {
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   get('jlc-ignore-empty').checked = get('jlc-pretty-json').checked = true;
   document = { documentElement: { lang }, activeElement: get('jlc-jsonl'), getElementById: get, querySelectorAll: () => [], querySelector: () => ({ contains: el => [...elements.values()].includes(el) }), createElement: element, body: element(), addEventListener(k, fn) { docEvents[k] = fn; } };
-  vm.runInNewContext(source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1], {
+  const realm = vm.createContext({
     document, t: clientStrings(lang),
     window: {}, navigator: { clipboard: { writeText: async text => copied.push(text) } }, Blob,
     URL: { createObjectURL: blob => blob, revokeObjectURL() {} },
@@ -35,6 +36,8 @@ function page(lang = 'en') {
       finish(text) { this.result = text; this.onload(); } fail() { this.onerror(); } },
     setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id)
   });
+  if (prelude) vm.runInContext(prelude, realm);
+  vm.runInContext(source.match(/<script is:inline(?:\s[^>]*)?>([\s\S]*?)<\/script>/)[1], realm);
   return { get, copied, downloads, readers, docKey(ev) { docEvents.keydown?.({ preventDefault() {}, ...ev }); }, open(target) { get('jlc-open-' + target).click(); get('jlc-file').files = [{ name: 'sample.txt' }]; get('jlc-file').fire('change'); return readers.at(-1); },
     flush() { const tasks = [...timers.values()]; timers.clear(); tasks.forEach(fn => fn()); } };
 }
@@ -151,6 +154,32 @@ await test('Ctrl+L drops cached copy/download output', async () => {
   assert.equal(p.copied.length, 0); assert.equal(p.downloads.length, 0);
   assert.equal(p.get('jlc-total-lines').textContent, '0'); assert.equal(p.get('jlc-status').textContent, '');
 });
+
+// S2-10f review S4: the parser and the serializer are iterative, so deep JSON does not run out of call stack (20,000
+// levels convert in Node 22). Pretty-printed indentation grows with the square of the depth, though: from about 16,000
+// levels the text is longer than V8 allows (2^29 − 24 characters), and the browser throws while joining it. Before, JSONL
+// → JSON left the previous status on screen with an uncaught error, and JSON → JSONL showed the new JSONL with Copy off
+// and "Invalid JSON: Invalid string length". The prelude stands in for that browser limit at a depth a test can afford.
+const STRING_LIMIT = "const realRepeat = String.prototype.repeat; String.prototype.repeat = function (n) { if (n > 500) throw new RangeError('Invalid string length'); return realRepeat.call(this, n); };";
+const DEEP_LINE = '{"a":'.repeat(600) + '1' + '}'.repeat(600);
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  await test(lang + ' pretty JSON too long for the browser: JSONL → JSON names it and keeps outputs off', () => {
+    const p = page(lang, STRING_LIMIT); p.get('jlc-jsonl').value = '{"ok":1}'; p.get('jlc-to-json').click();
+    p.get('jlc-jsonl').value = DEEP_LINE; p.get('jlc-to-json').click();
+    assert.deepEqual([p.get('jlc-status').textContent, /error/.test(p.get('jlc-status').className), p.get('jlc-json').value], [STR[lang].prettyTooLong, true, '']);
+    for (const id of ['jlc-copy-json', 'jlc-copy-jsonl', 'jlc-download-json', 'jlc-download-jsonl']) assert.equal(p.get(id).disabled, true, id);
+    p.get('jlc-pretty-json').checked = false; p.get('jlc-to-json').click();
+    assert.equal(p.get('jlc-json').value, '[' + DEEP_LINE + ']');
+  });
+  await test(lang + ' pretty JSON too long for the browser: JSON → JSONL names it and writes no JSONL', () => {
+    const p = page(lang, STRING_LIMIT); p.get('jlc-json').value = '[1]'; p.get('jlc-to-jsonl').click();
+    p.get('jlc-json').value = '[' + DEEP_LINE + ']'; p.get('jlc-to-jsonl').click();
+    assert.deepEqual([p.get('jlc-status').textContent, /error/.test(p.get('jlc-status').className), p.get('jlc-jsonl').value], [STR[lang].prettyTooLong, true, '']);
+    for (const id of ['jlc-copy-json', 'jlc-copy-jsonl', 'jlc-download-json', 'jlc-download-jsonl']) assert.equal(p.get(id).disabled, true, id);
+    p.get('jlc-pretty-json').checked = false; p.get('jlc-to-jsonl').click();
+    assert.equal(p.get('jlc-jsonl').value, DEEP_LINE);
+  });
+}
 
 // JSON syntax errors (S2-10f, 2026-10-09): lineCol and jsonSyntaxError are copied verbatim from
 // json-formatter-engine.js, and errJson, errJsonAt and the jsonParse reasons verbatim from
@@ -483,8 +512,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   const f = page(lang); f.open('json').finish('[1]'); f.open('json').finish('[1]'); check(tag + ' the same JSON file twice sends one event', f.tracks.map(t => t[1]), ['json_to_jsonl']);
 }
 // S2-10f (2026-10-09) added the json-reason block and the localized JSON syntax errors, and sends the same
-// conversion to analytics once.
-check('client script only loses runtime localization and redundant Validate listener', hash(js), '865e2705f39c494fe6ba97920f109ed529b5f77f08fa802b348b77d388924ea0');
+// conversion to analytics once. Its review added the notice for pretty-printed JSON longer than the browser allows.
+check('client script only loses runtime localization and redundant Validate listener', hash(js), '5cd6c3fa0fab2ef4f7ef392cbf5c44f86d622773b1c0aaf92695d24b5633850a');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jlc-wrap"/.test(markup), true);

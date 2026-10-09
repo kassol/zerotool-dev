@@ -45,6 +45,7 @@ const STRINGS = {
     convertedToJson: 'Converted {n} JSONL record{s} to a JSON array.',
     convertedToJsonl: 'Converted {n} JSON array item{s} to JSONL.',
     jsonArrayRequired: 'JSON input must be an array.',
+    prettyTooLong: "The pretty-printed JSON would be longer than this browser allows (indentation grows quickly with deep nesting). Turn off Pretty JSON output and convert again.",
     invalidJson: 'Invalid JSON',
     validJsonl: 'JSONL validation complete.',
     downloadReady: 'Download ready.',
@@ -117,6 +118,7 @@ const STRINGS = {
     convertedToJson: '已将 {n} 条 JSONL 记录转换为 JSON 数组。',
     convertedToJsonl: '已将 {n} 个 JSON 数组项转换为 JSONL。',
     jsonArrayRequired: 'JSON 输入必须是数组。',
+    prettyTooLong: "格式化后的 JSON 会超出此浏览器允许的长度（嵌套很深时缩进增长很快）。请关闭“格式化 JSON 输出”后重新转换。",
     invalidJson: '无效 JSON',
     validJsonl: 'JSONL 校验完成。',
     downloadReady: '下载已准备好。',
@@ -189,6 +191,7 @@ const STRINGS = {
     convertedToJson: '{n} 件の JSONL レコードを JSON 配列に変換しました。',
     convertedToJsonl: '{n} 件の JSON 配列アイテムを JSONL に変換しました。',
     jsonArrayRequired: 'JSON 入力は配列である必要があります。',
+    prettyTooLong: "整形した JSON がこのブラウザで扱える長さを超えます（入れ子が深いとインデントが急に増えます）。「JSON を整形」をオフにしてもう一度変換してください。",
     invalidJson: '無効な JSON',
     validJsonl: 'JSONL 検証が完了しました。',
     downloadReady: '保存データを作成しました。',
@@ -261,6 +264,7 @@ const STRINGS = {
     convertedToJson: 'JSONL 레코드 {n}개를 JSON 배열로 변환했습니다.',
     convertedToJsonl: 'JSON 배열 항목 {n}개를 JSONL로 변환했습니다.',
     jsonArrayRequired: 'JSON 입력은 배열이어야 합니다.',
+    prettyTooLong: "보기 좋게 출력한 JSON이 이 브라우저가 처리할 수 있는 길이를 넘습니다(중첩이 깊으면 들여쓰기가 빠르게 늘어납니다). 'JSON 보기 좋게 출력'을 끄고 다시 변환하세요.",
     invalidJson: '유효하지 않은 JSON',
     validJsonl: 'JSONL 검증이 완료되었습니다.',
     downloadReady: '저장 파일을 준비했습니다.',
@@ -726,6 +730,18 @@ const { tips: TIPS, ...CLIENT_T } = T;
         return result;
       }
 
+      // The serializer is iterative, so it fails only when the text is longer than the browser allows (RangeError
+      // "Invalid string length" in Chrome; other engines name it differently). Pretty-printed indentation grows with
+      // the square of the nesting depth, so very deep JSON reaches that limit; compact output does not.
+      function prettyJson(node) {
+        try {
+          return stringifyLossless(node, prettyJsonEl.checked);
+        } catch (e) {
+          if (!prettyJsonEl.checked) throw e;
+          return null;
+        }
+      }
+
       function compactJsonlFromValues(values) {
         return values.map(function (record) {
           return stringifyLossless(record.value, false);
@@ -750,7 +766,11 @@ const { tips: TIPS, ...CLIENT_T } = T;
         }
 
         var values = result.values.map(function (record) { return record.value; });
-        var json = stringifyLossless({ kind: 'array', values: values }, prettyJsonEl.checked);
+        var json = prettyJson({ kind: 'array', values: values });
+        if (json === null) {
+          setStatus(t.prettyTooLong, 'error');
+          return;
+        }
         var jsonl = compactJsonlFromValues(result.values);
         jsonEl.value = json;
         lastJsonOutput = json;
@@ -779,9 +799,15 @@ const { tips: TIPS, ...CLIENT_T } = T;
             return stringifyLossless(item, false);
           });
           var jsonl = lines.join('\n');
+          var json = prettyJson(parsed);
+          if (json === null) {
+            setInputError(jsonEl, false);
+            setStatus(t.prettyTooLong, 'error');
+            return;
+          }
           jsonlEl.value = jsonl;
           lastJsonlOutput = jsonl;
-          lastJsonOutput = stringifyLossless(parsed, prettyJsonEl.checked);
+          lastJsonOutput = json;
           enableOutput();
           setInputError(jsonEl, false);
           var result = parseJsonl(jsonl, true);
