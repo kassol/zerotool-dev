@@ -366,7 +366,7 @@ const V2 = {
       "generate"
     ]
   ],
-  "scriptSHA": "90b129736ab33a396071d9ab8b7a0754adca663f8bd1dc49dd03235fbb6dd9d4"
+  "scriptSHA": "44515e40ae2995f2207878f7a878792eebebc412d01b414b48513ad680eb2119"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -478,6 +478,7 @@ for (const lang of ['en','zh','ja','ko']) {
   const SAMPLES = [
     ['trailing comma', '{"a":1,}', 1, 7, 'trailingComma'],
     ['leading blank lines and spaces are counted', '\n\n  {"a": 1,\n}', 3, 10, 'trailingComma'],
+    ['a byte order mark at the start is invisible and not counted', '\uFEFF{"a":1,}', 1, 7, 'trailingComma'],
     ['full-width colon', '{"a"：1}', 1, 5, 'fullWidth', '：'],
     ['curly quotes', '{“a”:1}', 1, 2, 'smartQuote', '“'],
     ['single quotes', "{'a': 1}", 1, 2, 'singleQuote'],

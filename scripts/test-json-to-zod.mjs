@@ -540,6 +540,7 @@ for (const [name, typeName] of [['用户', '用户'], ['2fa', 'T2fa'], ['class',
   const SAMPLES = [
     ['trailing comma', '{"a":1,}', 1, 7, 'trailingComma'],
     ['leading blank lines and spaces are counted', '\n\n  {"a": 1,\n}', 3, 10, 'trailingComma'],
+    ['a byte order mark at the start is invisible and not counted', '\uFEFF{"a":1,}', 1, 7, 'trailingComma'],
     ['full-width colon', '{"a"：1}', 1, 5, 'fullWidth', '：'],
     ['curly quotes', '{“a”:1}', 1, 2, 'smartQuote', '“'],
     ['single quotes', "{'a': 1}", 1, 2, 'singleQuote'],
