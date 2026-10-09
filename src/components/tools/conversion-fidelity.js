@@ -85,14 +85,19 @@ export class YamlBinary extends Uint8Array {
   constructor(bytes, text) {
     super(bytes);
     hide(this, { text: text });
-    this[MERGE_MARK] = '!!binary ' + text;
+    this[MERGE_MARK] = '!!binary ' + (text || '""');
   }
   toString() { return BINARY_KEY + this.text + '\u0000' + Array.prototype.join.call(this, ','); }
 }
 
-function binaryKeyParts(s) {
-  var rest = s.slice(BINARY_KEY.length), cut = rest.indexOf('\u0000');
-  return { text: rest.slice(0, cut) || '""', bytes: rest.slice(cut + 1) };
+// The !!binary items of a key text. A sequence key joins its items with commas, so a marker can sit
+// anywhere in the text, more than once. `plain` is the key js-yaml writes ("x,104,105"). js-yaml's
+// binary type only takes Base64 letters, "=" and line breaks, so the text never holds a NUL.
+var BINARY_KEY_RE = /\u0000zt-binary-key\u0000([A-Za-z0-9+\/=]*)\u0000/g;
+function binaryKeys(s) {
+  var texts = [];
+  var plain = s.replace(BINARY_KEY_RE, function (m, text) { texts.push(text || '""'); return ''; });
+  return { texts: texts, plain: plain };
 }
 
 /* The exact decimal digits of a YAML int literal. js-yaml 4.3.2 reads an optional sign, then 0b, 0o
@@ -231,17 +236,17 @@ function isPlainObject(v) {
   return p === Object.prototype || p === null;
 }
 
-/* Renames (or, for null, drops) keys of a mapping in place and keeps the key order. A new name that
-   another key already has keeps the old key. */
+/* Renames (or, for null, drops) keys of a mapping in place and keeps the key order. When a new name
+   is also the name of another key (js-yaml would have stopped on the duplicate), the later of the
+   two in key order gives the value. */
 function renameKeys(obj, rename) {
   var entries = Object.keys(obj).map(function (k) { return [k, obj[k]]; });
-  var names = entries.map(function (e) { return e[0]; });
   entries.forEach(function (e) { delete obj[e[0]]; });
   entries.forEach(function (e) {
     var k = e[0];
     if (k in rename) {
       if (rename[k] === null) return;
-      if (names.indexOf(rename[k]) < 0) k = rename[k];
+      k = rename[k];
     }
     Object.defineProperty(obj, k, { value: e[1], writable: true, enumerable: true, configurable: true });
   });
@@ -254,9 +259,9 @@ function renameKeys(obj, rename) {
    rolls 2026-02-31 over to March and keeps milliseconds); for TOML, -0 and WholeFloat become
    TomlNumberText (-0.0, 1.0). With `opts.preview`, a LossyValue is replaced by the value JavaScript holds instead, so
    a preview can still show the data next to the list of losses.
-   For JSON and TOML, a !!binary key is listed with the path of its mapping (and walked on with the
-   key js-yaml writes, "104,105"); a `<<` marker is listed with the mapping's path. With
-   `opts.preview`, these keys become what js-yaml builds without the markers. */
+   For JSON and TOML, each !!binary item of a key is listed with the path of its mapping (and the
+   walk goes on with the key js-yaml writes, "104,105"); a `<<` marker is listed with the mapping's
+   path. With `opts.preview`, these keys become what js-yaml builds without the markers. */
 export function findLosses(root, target, opts) {
   var o = opts || {};
   var max = o.limit || 20;
@@ -274,10 +279,10 @@ export function findLosses(root, target, opts) {
     }
     if (target !== 'yaml' && ArrayBuffer.isView(v)) { add(segs, 'binary', '!!binary'); if (o.preview) set(new Uint8Array(v)); return; }
     // !!pairs turns each key into the first item of a [key, value] list
-    if (target !== 'yaml' && typeof v === 'string' && v.indexOf(BINARY_KEY) === 0) {
-      var p = binaryKeyParts(v);
-      add(segs, 'binaryKey', p.text);
-      if (o.preview) set(p.bytes);
+    if (target !== 'yaml' && typeof v === 'string' && v.indexOf(BINARY_KEY) >= 0) {
+      var p = binaryKeys(v);
+      p.texts.forEach(function (t) { add(segs, 'binaryKey', t); });
+      if (o.preview) set(p.plain);
       return;
     }
     if (typeof v === 'number' && !Number.isFinite(v) && target === 'json') {
@@ -298,10 +303,10 @@ export function findLosses(root, target, opts) {
           (rename = rename || Object.create(null))[k] = null;
           return;
         }
-        if (target !== 'yaml' && k.indexOf(BINARY_KEY) === 0) {
-          var p = binaryKeyParts(k);
-          add(segs, 'binaryKey', p.text);
-          (rename = rename || Object.create(null))[k] = seg = p.bytes;
+        if (target !== 'yaml' && k.indexOf(BINARY_KEY) >= 0) {
+          var b = binaryKeys(k);
+          b.texts.forEach(function (t) { add(segs, 'binaryKey', t); });
+          (rename = rename || Object.create(null))[k] = seg = b.plain;
         }
         visit(v[k], segs.concat(seg), function (x) { v[k] = x; });
       });

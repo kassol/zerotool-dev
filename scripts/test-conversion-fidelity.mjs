@@ -625,6 +625,65 @@ for (const [tool, dir, text] of [['yaml-json', 'y2j', 'm:\n  <<: 2026-01-01\n  x
   }
 }
 
+/* ── E-YAML-KEY-MARKER ── a sequence key joins its items with commas, so a !!binary item can sit
+   anywhere in the key text, more than once, and !!pairs moves such a key into a list. Every one
+   stops; the validator preview shows the key as js-yaml writes it. The markers the page puts in
+   these keys never reach an output, a status, a preview or a note. */
+const KM = 'E-YAML-KEY-MARKER';
+expectStops(KM, 'yaml-json', 'y2j', '? [x, !!binary aGk=]\n: 1', [['binaryKey', '', 'aGk=']]);
+expectStops(KM, 'yaml-toml', 'y2t', '? [x, !!binary aGk=]\n: 1', [['binaryKey', '', 'aGk=']], 'ko');
+expectStops(KM, 'yaml-json', 'y2j', '? [!!binary aGk=, !!binary YQ==]\n: 1', [['binaryKey', '', 'aGk='], ['binaryKey', '', 'YQ==']]);
+expectStops(KM, 'yaml-json', 'y2j', 'p: !!pairs\n  - ? [x, !!binary aGk=]\n    : 1', [['binaryKey', '/p/0/0', 'aGk=']], 'ja');
+expectStops(KM, 'yaml-json', 'y2j', '"104,105": a\n? !!binary aGk=\n: b', [['binaryKey', '', 'aGk=']]);
+expectStops(KM, 'yaml-json', 'y2j', '? !!binary ""\n: 1', [['binaryKey', '', '""']]);
+expectStops(KM, 'yaml-json', 'y2j', 'm:\n  <<: !!binary ""', [['merge', '/m', '!!binary ""']]);
+const MARKER_INPUTS = [
+  '? [x, !!binary aGk=]\n: 1',
+  '? [!!binary aGk=, !!binary YQ==]\n: 1',
+  'p: !!pairs\n  - ? [x, !!binary aGk=]\n    : 1',
+  'o: !!omap [? [x, !!binary aGk=] : 1]',
+  '"104,105": a\n? !!binary aGk=\n: b',
+  '? !!binary aGk=\n: a\n"104,105": b',
+  '? !!binary ""\n: 1',
+  'm:\n  <<: !!binary ""',
+  'base: &b\n  <<: 2026-01-01\nm:\n  <<: *b\n  x: 1',
+  'm:\n  <<: [{a: 1}, !!binary aGk=, 2026-01-01]',
+];
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = readFileSync(new URL('../src/components/tools/YamlValidatorTool.astro', import.meta.url), 'utf8');
+  const labels = vm.runInNewContext(src.slice(src.indexOf('const labels = '), src.indexOf('const L = labels')) + '\n;labels');
+  const L = labels.en;
+  const vpage = loadPage('src/components/tools/YamlValidatorTool.astro', { dataset: { '.yv-wrap': { lang: 'en', msgValid: L.msgValid, msgValidMulti: L.msgValidMulti } } });
+  const validate = (text) => {
+    vpage.el('yv-input').value = text; vpage.el('yv-validate').click();
+    return { status: vpage.el('yv-status'), preview: vpage.el('yv-preview-content').textContent, note: vpage.el('yv-preview-note').textContent };
+  };
+  for (const text of MARKER_INPUTS) {
+    const seen = [];
+    for (const [tool, dir] of [['yaml-json', 'y2j'], ['yaml-toml', 'y2t']]) {
+      const r = convert(open(tool), tool, dir, text, 'input');
+      seen.push(r.out.value, r.status.textContent);
+    }
+    const v = validate(text);
+    seen.push(v.preview, v.note, v.status.textContent);
+    check(KM, `${JSON.stringify(text).slice(0, 60)}: no marker in any output, status, preview or note`, seen.every((s) => !s.includes('\u0000') && !s.includes('zt-')), JSON.stringify(seen));
+  }
+  for (const [text, preview] of [
+    ['? [x, !!binary aGk=]\n: 1', { 'x,104,105': 1 }],
+    ['? [!!binary aGk=, !!binary YQ==]\n: 1', { '104,105,97': 1 }],
+    ['p: !!pairs\n  - ? [x, !!binary aGk=]\n    : 1', { p: [['x,104,105', 1]] }],
+    ['"104,105": a\n? !!binary aGk=\n: b', { '104,105': 'b' }],
+    ['? !!binary aGk=\n: a\n"104,105": b', { '104,105': 'b' }],
+  ]) {
+    const v = validate(text);
+    check(KM, `yaml-validator ${JSON.stringify(text).slice(0, 50)}: valid, the preview writes the key as js-yaml does, the note names it`,
+      /\bsuccess\b/.test(v.status.className) && v.preview === JSON.stringify(preview, null, 2) && v.note.includes('!!binary key aGk='),
+      'preview=' + JSON.stringify(v.preview) + ' note=' + JSON.stringify(v.note));
+  }
+}
+
 /* ── PAGE-TEXT-D ── the pages quote the !!binary stop and note as the page shows them, the yaml-json
    table rows for !!set, !!pairs and a date key are the page output, and the FAQ answers name
    !!binary where they list what stops (no fixed count of exceptions). */
