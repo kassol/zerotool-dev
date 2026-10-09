@@ -21,7 +21,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { loadPage } from './astro-page-harness.mjs';
-import { contractProblems } from './lib/tool-mdx-contract.mjs';
+import { contractProblems, reportContract, fencedBlocks } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/KeycodeExplorerTool.astro'), 'utf8');
@@ -245,6 +245,36 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' rejected write falls back to the textarea copy', [q.execCalls.length, q.execCalls[0]?.text, q.get('kce-copy').textContent], [1, enterSnippet, keyLabels(lang).copied]);
   eq(lang + ' fallback success is tracked', q.tracks.filter(a => a[1] === 'copy_snippet').length, 1);
 }
+
+// ---------- worked examples on the tool pages (kce-check) ----------
+// {/* kce-check: {"event": {key, code, keyCode, ctrlKey, ...}} */} The event is dispatched on the
+// real capture pad. Every code block after the note must be either a field table, whose lines are
+// `<label> <value>` with a label from the Event properties grid and the value exactly as the page
+// shows it, or the generated snippet, verbatim. At least one block is required.
+const FIELD_IDS = { 'event.key': 'kce-key', 'event.code': 'kce-code', keyCode: 'kce-keycode', which: 'kce-which', charCode: 'kce-charcode', location: 'kce-location', repeat: 'kce-repeat', isComposing: 'kce-composing' };
+function verifyKey({ spec, after, lang }) {
+  if (!spec || typeof spec.event !== 'object') return 'kce-check needs "event"';
+  const p = pageVM(lang); p.tick(60); p.key('kce-pad', spec.event);
+  const blocks = fencedBlocks(after);
+  if (!blocks.length) return 'no code block after the note';
+  for (const b of blocks) {
+    const lines = b.text.split('\n');
+    const rows = lines.map((l) => l.match(/^(event\.key|event\.code|keyCode|which|charCode|location|repeat|isComposing)\s+(.+)$/));
+    if (rows.every(Boolean)) {
+      for (const [, label, value] of rows) {
+        const shown = p.get(FIELD_IDS[label]).textContent;
+        if (shown !== value.trim()) return label + ' shows ' + shown + ', page says ' + value.trim();
+      }
+    } else if (b.text !== p.get('kce-snippet-code').textContent) {
+      return 'block is neither a field table nor the snippet: ' + JSON.stringify(b.text);
+    }
+  }
+  return null;
+}
+reportContract(check, 'keycode-explorer', { limits: true, requireFaqIds: true, annotations: [{ tag: 'kce-check', min: 2, verify: verifyKey }] });
+check('kce-check rejects a wrong field', verifyKey({ spec: { event: { key: 'a', code: 'KeyQ' } }, after: '```\nevent.code  "KeyA"\n```', lang: 'en' }) !== null);
+check('kce-check rejects a wrong snippet', verifyKey({ spec: { event: { key: 'a', code: 'KeyQ' } }, after: "```js\ndocument.addEventListener('keydown', (e) => {\n  if (e.key === 'q') {\n    // your handler\n  }\n});\n```", lang: 'en' }) !== null);
+check('kce-check accepts the right field', verifyKey({ spec: { event: { key: 'a', code: 'KeyQ' } }, after: '```\nevent.key   "a"\nevent.code  "KeyQ"\n```', lang: 'en' }) === null);
 
 // Preserve both the marked mobile engine and unmarked physical-key/snippet code.
 for(const [name,startMark,endMark,bytes,hash,includeEnd] of [

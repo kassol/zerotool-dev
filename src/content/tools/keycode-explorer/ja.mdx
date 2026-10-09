@@ -8,60 +8,127 @@ steps:
   - "「コピー」で「コピー可能な JS スニペット」全体をコピーします。event.key と捕捉した修飾キーに一致する条件です。"
   - "「最近のキー」は直近八回の入力を表示します。「クリア」で値、件数、修飾キー、履歴、スニペットをリセットします。"
 faqItems:
-  - question: "event.key、event.code、keyCode の違いは？"
-    answer: "event.key はキーボードレイアウト適用後の文字または名前付きキー値（Dvorak レイアウトで物理 A 位置を押すと 'a' になる）。event.code は US QWERTY ベースの物理キー位置（KeyA、Digit1、ArrowUp）でレイアウトに依存しない。keyCode はレガシーな数値コード（A は 65）で仕様上は非推奨だが、互換性のため主要ブラウザは現在も発火する。"
-  - question: "なぜ keyCode・which・charCode は非推奨なのか？"
-    answer: "3つともブラウザ間で値が一貫せず、非ラテン系レイアウトでは曖昧。モダンコードは event.key（セマンティック）または event.code（物理位置）を使うべき。MDN は keyCode と charCode を「deprecated, not recommended for production」と明記しているが、主要ブラウザは互換性のため出力を継続している。本ツールは生の値を表示するのでレガシーコードの監査に使える。"
-  - question: "Shift / Ctrl / Alt / Meta 修飾キーをどう判定する？"
-    answer: "KeyboardEvent の e.shiftKey、e.ctrlKey、e.altKey、e.metaKey を直接読めばよい。それぞれ boolean。注意：e.metaKey は Windows では Win キー、Mac では Command キー。本ページで生成されるスニペットは現在の修飾キー状態を反映して判定式を自動組み立てする。"
-  - question: "モバイルで動作する？"
-    answer: "モバイル端末の物理キーボードイベントはプラットフォーム間で一貫しない——多くのソフトキーボードは文字単位の keydown を発火せず、結果文字列だけが input イベントとして届く。本ツールはデスクトップブラウザを前提に設計しており、デスクトップ環境で物理キー信号が最も完全に取得できる。モバイルでは部分情報のみ取得できる降格用シングル文字入力欄を提供するが、フル機能のイベントプロパティ検査にはデスクトップブラウザを使用すること。設計上、モバイル keydown のエミュレーションは行わない。"
-  - question: "キー入力データはサーバーに送信される？"
-    answer: "送信されない。すべてブラウザネイティブの KeyboardEvent API でローカル処理されるため、押したキーは端末から出ない。DevTools → Network で確認可能。"
+  - id: difference
+    question: "event.key、event.code、keyCode の違いは？"
+    answer: "event.key はキーボード配列と Shift を反映したあとの文字、またはキーの名前です。event.code は US キーボード上の位置で物理キーを名付けたもの（KeyA、Digit1、ArrowUp）で、配列を変えても変わりません。たとえばフランス語 AZERTY キーボードで a と刻印されたキーは、key が \"a\"、code が \"KeyQ\" です。keyCode は古い数値コード（A は 65）で、互換性のためにブラウザが今も送っています。"
+  - id: deprecated
+    question: "なぜ keyCode・which・charCode は非推奨なのか？"
+    answer: "UI Events 仕様はこれらを廃止された属性と呼び、値を定義せず、charCode と keyCode の代わりに key 属性を使うよう求めています。値はブラウザ、OS、キーボード配列によって異なります。MDN も非推奨としています。ブラウザは互換性のために今も出力しており、本ツールは生の値を表示するので古いハンドラーの確認に使えます。"
+  - id: modifiers
+    question: "Shift / Ctrl / Alt / Meta 修飾キーをどう判定する？"
+    answer: "KeyboardEvent の e.shiftKey、e.ctrlKey、e.altKey、e.metaKey を読みます。どれも真偽値です。e.metaKey は Windows では Windows キー、Mac では Command キーです。生成されるスニペットは、押されていた修飾キーごとに条件を加えます。Shift を押したまま英字キーを押すと event.key は大文字になるので、Ctrl+Shift+K は \"k\" ではなく \"K\" です。"
+  - id: ime
+    question: "keyCode が 229 になるのはなぜ？isComposing とは？"
+    answer: "IME で変換中（未確定の文字があるあいだ）は isComposing が true になります。UI Events の非規範的な旧キーコードの節には、IME がキー入力を処理しているときの keydown では keyCode に 229 を返すと書かれています。Enter を処理するコードはこのとき早めに return しないと、変換を確定する Enter でフォームまで送信されます。キャプチャパッドはフォーカスできる領域で、テキスト入力欄ではないため、ここで IME が変換を始めるかどうかは環境によります。変換中の動きは自分の入力欄で確かめてください。"
+  - id: mobile
+    question: "モバイルで動作する？"
+    answer: "一部だけです。多くのソフトウェアキーボードは 1 文字ごとの keydown を送らず、入力した文字を持つ input イベントだけを送ります。タッチ端末ではパッドの下に 1 文字用の代替入力欄が出て、その文字を key として表示し、code・keyCode・which・charCode は空欄にします。keydown の詳細を見るには、物理キーボードをつないだデスクトップのブラウザーを使ってください。"
+  - id: privacy
+    question: "キー入力データはサーバーに送信される？"
+    answer: "キーの値は送信しません。イベントはブラウザー内で読み取り、何も保存しません。ページは Google Analytics を読み込み、ツール名と操作だけを記録します。ページの読み込み後または「クリア」後の最初のキーで keydown を 1 回、コピーに成功したときに copy_snippet、タッチ端末の代替入力欄では 1 文字ごとに mobile_input です。どのキーを押したかは記録しません。"
 ---
 
 <h2>event.key vs event.code vs keyCode</h2>
 <p>
-  フロントエンドのキーボードバグの多くはこの3つの混在が原因。リファレンス対応表：
+  フロントエンドのキーボード関連のバグの多くは、この 3 つを混同することから起きます。対応表は次のとおりです。
 </p>
 
 | プロパティ | レイアウト依存 | 推奨 | QWERTY で A を押した時の値 |
 |---|---|---|---|
-| event.key | あり（現在のレイアウト反映） | 推奨——セマンティック判定 | "a" または Shift で "A" |
+| event.key | あり（現在のレイアウト反映） | 推奨——意味で判定 | "a" または Shift で "A" |
 | event.code | なし（物理位置） | 推奨——ゲーム・ショートカット | "KeyA" |
 | keyCode | なし | 非推奨 | 65 |
 | which | なし | 非推奨 | 65 |
-| charCode | なし | 非推奨——keydown 時は常に 0 | 0 |
+| charCode | なし | 非推奨——keydown では 0 | 0 |
+
+<h2>JIS 配列のキーで試す</h2>
+
+<p>以下のコードブロックは、指定したキーをパッドで押したときにツールが表示する値です。「イベントプロパティ」の一部の行と、「コピー可能な JS スニペット」を載せています。</p>
+
+<h3>半角/全角キーの code は "Backquote"</h3>
+
+<p><a href="https://www.w3.org/TR/uievents-code/" target="_blank" rel="noopener">UI Events KeyboardEvent code Values</a> 仕様は、<code>"Backquote"</code> を US キーボードの <code>{'`~'}</code> キーとし、日本語キーボードでは半角/全角/漢字キーがこれにあたると書いています。</p>
+
+{/* kce-check: {"event":{"key":"Unidentified","code":"Backquote"}} */}
+
+```
+event.code  "Backquote"
+```
+
+<p>つまり、<code>code === 'Backquote'</code> で判定するショートカット（US 配列の <code>{'`'}</code> キーを想定したもの）は、JIS 配列では半角/全角キーに当たります。JIS 配列の利用者を想定するなら、入力される文字（<code>event.key</code>）で判定するか、別のキーを割り当ててください。</p>
+
+<h3>Mac の「かな」キーは "Lang1"</h3>
+
+<p>同じ仕様では、Mac の日本語キーボードの「かな」キーが <code>"Lang1"</code>、「英数」キーが <code>"Lang2"</code> です。韓国語キーボードの 한/영 キーと 한자 キーも同じ <code>"Lang1"</code>・<code>"Lang2"</code> なので、<code>code</code> だけでは日本語用か韓国語用かは区別できません。</p>
+
+{/* kce-check: {"event":{"key":"Unidentified","code":"Lang1"}} */}
+
+```
+event.code  "Lang1"
+```
+
+<h3>Enter で送信するフォーム</h3>
+
+<p>Enter をパッドで押すと、次の値とスニペットになります。</p>
+
+{/* kce-check: {"event":{"key":"Enter","code":"Enter","keyCode":13,"which":13}} */}
+
+```
+event.key   "Enter"
+event.code  "Enter"
+keyCode     13
+```
+
+```js
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    // your handler
+  }
+});
+```
+
+<h2>変換中の Enter に注意する</h2>
+
+<p><a href="https://support.microsoft.com/ja-jp/windows/hardware/input-devices/microsoft-japanese-ime" target="_blank" rel="noopener">Microsoft 日本語 IME</a> のサポートページは、候補ウィンドウにフォーカスがある状態で Enter キーを押すと、フォーカスされている候補を選ぶと説明しています。つまり、その Enter は変換を確定するためのもので、フォームを送信するためのものではありません。上のスニペットは <code>event.key</code> と修飾キーしか見ないので、入力欄で使うなら次のように 1 行足してください。</p>
+
+```js
+input.addEventListener('keydown', (e) => {
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === 'Enter') {
+    // 送信
+  }
+});
+```
+
+<p>変換中は <code>isComposing</code> が <code>true</code> です。<a href="https://www.w3.org/TR/uievents/#determine-keydown-keyup-keyCode" target="_blank" rel="noopener">UI Events</a> の非規範的な旧キーコードの節には、IME がキー入力を処理しているときの keydown では <code>keyCode</code> に 229 を返すとあります。キャプチャパッドはテキスト入力欄ではないので、ここで IME が変換を始めるかどうかは環境しだいです。この 1 行の効果は、自分の入力欄で IME をオンにして確かめてください。</p>
 
 <h2>よくある用途</h2>
 <ul>
-  <li><strong>キーボードハンドラのデバッグ</strong>——実際の event.key を if 条件に貼ってタイポを直す。</li>
-  <li><strong>ゲームコントロール構築</strong>——event.code を使えば AZERTY でも WASD が機能する。</li>
-  <li><strong>コマンドパレット実装</strong>——event.key と e.ctrlKey / e.metaKey を組み合わせる。</li>
-  <li><strong>レガシーコード監査</strong>——keyCode / which を読み、旧ハンドラを event.key に移行する。</li>
-  <li><strong>IME 入力中の判定</strong>——e.isComposing = true は IME 変換中。単一キーハンドラは早期 return すべき。</li>
+  <li><strong>キーボードハンドラーのデバッグ</strong>——実際の event.key を if 条件に貼って、つづりの誤りを直す。</li>
+  <li><strong>ゲームの操作</strong>——event.code を使えば AZERTY でも WASD が同じ位置で使える。</li>
+  <li><strong>コマンドパレット</strong>——event.key と e.ctrlKey / e.metaKey を組み合わせる。</li>
+  <li><strong>古いコードの確認</strong>——keyCode / which を読み、古いハンドラーを event.key に移す。</li>
 </ul>
 
 <h2>preventDefault の挙動</h2>
 <p>
-  キャプチャパッドは Tab、Space、Backspace、矢印キー、F1-F12 のみ <code>preventDefault()</code> を呼び出す——
-  ブラウザがナビゲーション・ページ操作で消費するキー。Ctrl+W / Cmd+Q などのシステムショートカットは
-  傍受せずブラウザのデフォルト動作を維持する。
+  キャプチャパッドが <code>preventDefault()</code> を呼ぶのは Tab、Space、Backspace、矢印キー、F1-F12 だけです。どれもブラウザーが移動やページ操作に使うキーです。
+  Ctrl+W / Cmd+Q などのシステムショートカットは止めず、ブラウザーの既定動作のままです。
 </p>
 
 <h2>キーボード配列と IME</h2>
 <p>
-  <code>event.code</code> は物理キーを US キーボード上の位置で名付けます。<a href="https://www.w3.org/TR/uievents-code/" target="_blank" rel="noopener">UI Events KeyboardEvent code Values</a> 仕様では、<code>"KeyQ"</code> は US キーボードで q、フランス語 AZERTY キーボードで a と刻印されたキーです。AZERTY で a を打つと <code>key: "a"</code>、<code>code: "KeyQ"</code> になります。キーの位置に意味があるショートカット（WASD 移動）は <code>code</code>、入力される文字に意味があるショートカット（Ctrl+Z で元に戻す）は <code>key</code> で判定してください。
+  <code>event.code</code> は物理キーを US キーボード上の位置で名付けます。同じ仕様では、<code>"KeyQ"</code> は US キーボードで q、フランス語 AZERTY キーボードで a と刻印されたキーです。キーの位置に意味があるショートカット（WASD 移動）は <code>code</code>、入力される文字に意味があるショートカット（Ctrl+Z で元に戻す）は <code>key</code> で判定してください。
 </p>
 <p>
-  JIS 配列（106/109 キーボード）には US 配列にないキーがあり、<code>"IntlYen"</code>（¥）、<code>"IntlRo"</code>（ろ）、<code>"NonConvert"</code>（無変換）、<code>"Convert"</code>（変換）、<code>"KanaMode"</code>（カタカナ/ひらがな/ローマ字）です。パッド上で押すと、ブラウザーが返す値を確認できます。
-</p>
-<p>
-  IME で変換中は、<a href="https://www.w3.org/TR/uievents/#determine-keydown-keyup-keyCode" target="_blank" rel="noopener">UI Events</a> の規定により keydown の <code>keyCode</code> が 229 になり、<code>isComposing</code> が <code>true</code> になります。Enter を処理する前に <code>isComposing</code> を確認しないと、変換を確定する Enter でフォームも送信されてしまいます。
+  JIS 配列（106/109 キーボード）には US 配列にないキーがあり、<code>"IntlYen"</code>（¥）、<code>"IntlRo"</code>（ろ）、<code>"NonConvert"</code>（無変換）、<code>"Convert"</code>（変換）、<code>"KanaMode"</code>（カタカナ/ひらがな/ローマ字）です。パッドで押すと、ブラウザーが返す値を確認できます。
 </p>
 
 <h2>制限</h2>
 <ul>
-  <li>スマートフォンやタブレットのソフトキーボードは、完全な keydown ではなく入力した文字を持つ <code>input</code> イベントを送るのが普通です。パッドの下の代替入力欄はその文字を <code>key</code> として表示し、<code>code</code>・<code>keyCode</code>・<code>which</code>・<code>charCode</code> は空欄にします。input イベントはどのキーを押したかを伝えないためです。</li>
+  <li>スマートフォンやタブレットのソフトウェアキーボードは、完全な keydown ではなく入力した文字を持つ <code>input</code> イベントを送るのが普通です。パッドの下の代替入力欄はその文字を <code>key</code> として表示し、<code>code</code>・<code>keyCode</code>・<code>which</code>・<code>charCode</code> は空欄にします。input イベントはどのキーを押したかを伝えないためです。</li>
   <li>Ctrl+W や Cmd+Q などはブラウザーと OS が処理するため、ページには届きません。</li>
+  <li>キャプチャパッドはテキスト入力欄ではないので、IME がここで変換を始めるかどうかは環境によります。<code>keyCode</code> 229 が表示されないこともあります。</li>
+  <li>スニペットは <code>event.key</code> と押されていた修飾キーだけで判定し、<code>event.code</code> も <code>isComposing</code> も見ません。</li>
+  <li>捕捉するのは keydown だけで、keyup と keypress は表示しません。「最近のキー」は直近 8 回分です。</li>
 </ul>
