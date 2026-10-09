@@ -301,7 +301,7 @@ for(const lang of ['en','zh','ja','ko']){
   analyze(h,'unparseable');eq(lang+' input with no header line lists the line',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty+T.noteSep+T.invalidLines.replace('{n}','1'),false]);
 }
 await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
-const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":10234,"sha256":"40b80e82d93b0a8817387f3e5433b0436df1897affb81b3f5b1be7c33f84a328"}};
+const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":10676,"sha256":"930f8cffdeab31ce53bab7305e929c19bd116ca6332700d77a6a1fd9fd3e8514"}};
 for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
@@ -515,6 +515,15 @@ const names=p=>p.headers.map(h=>h.name);
   eq('6 nonce in another directive does not help',csp("default-src 'self'; script-src 'nonce-a'; style-src 'unsafe-inline'"),[warn]);
   eq('6 case-insensitive keyword and directive',csp("Default-Src 'self'; Script-Src 'NONCE-a' 'UNSAFE-INLINE'"),[ignored('script-src')]);
   eq('6 plain unsafe-inline still warns',csp("default-src 'self' 'unsafe-inline'"),[warn]);
+}
+// 7. Only the first Strict-Transport-Security header is processed (RFC 6797 §8.1).
+{
+  const p=E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload\nstrict-transport-security: max-age=0\nSTRICT-TRANSPORT-SECURITY: max-age=10');
+  const ignored='info: Ignored: a browser processes only the first Strict-Transport-Security header in a response (RFC 6797 section 8.1).';
+  eq('7 first header checked, the rest ignored',p.headers.map(h=>h.hints.map(x=>x.sev+': '+x.text)),[[],[ignored],[ignored]]);
+  const first=E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: max-age=0\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload');
+  eq('7 a short first header still warns',first.headers[0].hints.length,3);
+  eq('7 one header unchanged',E.parseHeaders('HTTP/1.1 200 OK\nStrict-Transport-Security: max-age=63072000; includeSubDomains; preload').headers[0].hints,[]);
 }
 console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total failures');
 
