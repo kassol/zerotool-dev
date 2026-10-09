@@ -66,6 +66,9 @@ const JSON_ERRORS = [
   ['{"name": "Alice"} // sample\n', 'comment', 1, 19],
   ["  {'name': 'Alice'}", 'singleQuote', 1, 4],
 ];
+// S2-10f review S4: valid JSON nested deeper than the call stack allows (Node 22 runs out well below 20,000 levels;
+// browsers differ). The page shows a four-language notice, not "Invalid JSON" plus the browser's English message.
+const DEEP_JSON = '{"a":'.repeat(20000) + '1' + '}'.repeat(20000);
 const jsonErrorMessage = (lang, code, line, col, ch) => HAR_S[lang].errJsonAt.replace('{line}', line).replace('{col}', col).replace('{reason}', HAR_S[lang].jsonParse[code].replace('{ch}', ch ?? ''));
 
 let failures = 0;
@@ -356,6 +359,14 @@ try {
     for (const [input, code, line, col, ch] of JSON_ERRORS) {
       const w = page(lang); run(w); run(w, input);
       eq(lang + ': JSON error ' + code + ' in the page language', [status(w).textContent, status(w).hidden, output(w), w.doc.querySelector('.jjs-wrap').dataset.empty], [jsonErrorMessage(lang, code, line, col, ch), false, '', 'true']);
+    }
+    // S2-10f review S4: valid JSON too deep for the call stack; before, "Invalid JSON: Maximum call stack size exceeded".
+    {
+      const w = page(lang); run(w); run(w, DEEP_JSON);
+      eq(lang + ': too deep: notice in the page language, old schema cleared', [status(w).textContent, status(w).hidden, output(w), w.doc.querySelector('.jjs-wrap').dataset.empty], [L.msgTooDeep, false, '', 'true']);
+      w.get('jjs-copy').click(); w.get('jjs-input').dispatch('change');
+      eq(lang + ': too deep: Copy copies nothing, no usage event', [w.copies.length, w.tracks.length], [0, 0]);
+      run(w, nextInput); eq(lang + ': too deep: the next input converts again', [status(w).hidden, output(w).includes('"next"')], [true, true]);
     }
     run(invalid, '');
     check(lang + ': empty removes error/output/status', !invalid.get('jjs-input').classList.contains('error') && !output(invalid) && !status(invalid).textContent);

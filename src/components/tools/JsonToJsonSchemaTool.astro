@@ -13,6 +13,7 @@ const STRINGS = {
       "copy": "Copy the complete generated schema. The output is read-only; paste it into an editor to refine constraints or required fields. Empty output is not copied."
     },
     inputJson: 'JSON Input', clear: 'Clear', copy: 'Copy', copied: 'Copied!', copyFailed: 'Copy failed. Please copy the output manually.', invalidJson: 'Invalid JSON',
+    msgTooDeep: 'The JSON is nested too deeply to generate a schema in this browser (the call stack ran out). Nothing was generated.',
     errJson: 'This is not valid JSON.',
     errJsonAt: 'This is not valid JSON: line {line}, column {col}, {reason}.',
     jsonParse: {
@@ -43,6 +44,7 @@ const STRINGS = {
       "copy": "复制完整生成的 Schema。输出为只读；请粘贴到编辑器中调整约束或必填字段。输出为空时不复制。"
     },
     inputJson: '输入 JSON', clear: '清除', copy: '复制', copied: '已复制！', copyFailed: '复制失败，请手动复制输出。', invalidJson: '无效 JSON',
+    msgTooDeep: 'JSON 嵌套层数过深，此浏览器无法生成 Schema（调用栈耗尽），未生成任何内容。',
     errJson: '这不是有效的 JSON。',
     errJsonAt: '这不是有效的 JSON：第 {line} 行第 {col} 列，{reason}。',
     jsonParse: {
@@ -73,6 +75,7 @@ const STRINGS = {
       "copy": "生成したスキーマ全文をコピーします。出力は読み取り専用です。エディターに貼り付けて制約や必須フィールドを調整してください。空の出力はコピーしません。"
     },
     inputJson: 'JSON 入力', clear: 'クリア', copy: 'コピー', copied: 'コピー済み！', copyFailed: 'コピーに失敗しました。出力を手動でコピーしてください。', invalidJson: '無効な JSON',
+    msgTooDeep: 'JSON の入れ子が深すぎるため、このブラウザではスキーマを生成できません（コールスタック不足）。何も生成していません。',
     errJson: '有効な JSON ではありません。',
     errJsonAt: '有効な JSON ではありません：{line} 行 {col} 列目、{reason}。',
     jsonParse: {
@@ -103,6 +106,7 @@ const STRINGS = {
       "copy": "생성된 스키마 전체를 복사합니다. 출력은 읽기 전용입니다. 편집기에 붙여넣어 제약 조건이나 필수 필드를 조정하세요. 빈 출력은 복사하지 않습니다."
     },
     inputJson: 'JSON 입력', clear: '지우기', copy: '복사', copied: '복사됨!', copyFailed: '복사하지 못했습니다. 출력을 직접 복사하세요.', invalidJson: '유효하지 않은 JSON',
+    msgTooDeep: 'JSON 중첩이 너무 깊어 이 브라우저에서 스키마를 생성할 수 없습니다(호출 스택 부족). 아무것도 생성하지 않았습니다.',
     errJson: '올바른 JSON이 아닙니다.',
     errJsonAt: '올바른 JSON이 아닙니다: {line}행 {col}열, {reason}.',
     jsonParse: {
@@ -132,6 +136,7 @@ const CLIENT_T = {
   copied: L.copied,
   copyFailed: L.copyFailed,
   invalidJson: L.invalidJson,
+  msgTooDeep: L.msgTooDeep,
   errJson: L.errJson,
   errJsonAt: L.errJsonAt,
   jsonParse: L.jsonParse,
@@ -406,6 +411,12 @@ const CLIENT_T = {
       }
       /* ── json-reason:end ── */
 
+      // A stack overflow while walking very deep JSON: RangeError "Maximum call stack size exceeded" in Chrome
+      // and Safari, InternalError "too much recursion" in Firefox (MDN: "Too much recursion").
+      function isTooDeep(e) {
+        return !!e && (e.name === 'RangeError' || e.name === 'InternalError') && /call stack|recursion/i.test(String(e.message));
+      }
+
       function convert() {
         invalidateCopy();
         clearError();
@@ -424,7 +435,7 @@ const CLIENT_T = {
           outputEl.value = JSON.stringify(schema, null, 2);
         } catch (e) {
           outputEl.value = '';
-          errorEl.textContent = e && e.name === 'SyntaxError' ? jsonErrorText(inputEl.value) : t.invalidJson + ': ' + e.message;
+          errorEl.textContent = isTooDeep(e) ? t.msgTooDeep : e && e.name === 'SyntaxError' ? jsonErrorText(inputEl.value) : t.invalidJson + ': ' + e.message;
           errorEl.hidden = false;
         }
         wrap.dataset.empty = String(!outputEl.value);
