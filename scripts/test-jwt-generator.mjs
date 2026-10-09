@@ -308,8 +308,9 @@ for (const lang of ['en','zh','ja','ko']) for (const shellFirst of [false, true]
     ['lone surrogate in payload','jg-payload','{"name": "a\ud83d"}','jg-payload-err',t.errSurrogate.replace('{pos}', 12)],
     ['lone surrogate in header','jg-header','{"alg":"HS256","x":"\udc00"}','jg-header-err',t.errSurrogate.replace('{pos}', 21)],
     ['lone surrogate in UTF-8 secret','jg-secret','key-\ud800-more','jg-secret-warn',t.errSurrogate.replace('{pos}', 5)],
+    ['lone surrogate in Base64 secret has no position','jg-secret','c2Vj\ud800cmV0','jg-secret-warn',t.errBase64Secret],
   ]) {
-    const p = await populated(); if (name === 'invalid Base64' || name === 'whitespace-only Base64 key') p.format('base64'); p.input(id,value); p.advance(500); await settle();
+    const p = await populated(); if (name === 'invalid Base64' || name === 'whitespace-only Base64 key' || name.includes('Base64 secret')) p.format('base64'); p.input(id,value); p.advance(500); await settle();
     eq(tag + ' ' + name + ' visible localized validation', p.get(errorId).textContent, error);
     eq(tag + ' ' + name + ' never starts another signing job', p.jobs.length, 1);
     eq(tag + ' ' + name + ' preserves typed text', p.get(id).value, value);
@@ -586,6 +587,15 @@ const SECRET_WHITESPACE_LIMIT = {
   ja: 'UTF-8 モードでは秘密鍵を入力どおりに使うため、前後に空白が 1 つ増えるだけで署名が変わります（Base64 モードでは空白を無視します）。',
   ko: 'UTF-8 모드에서는 비밀 키를 입력한 그대로 쓰므로 앞뒤 공백 하나로도 서명이 달라집니다(Base64 모드에서는 공백을 무시합니다).',
 };
+// An unpaired surrogate is reported with its position only in Header, Payload and a UTF-8 secret;
+// in Base64 mode atob fails first and the page shows errBase64Secret without a position.
+const SURROGATE_LIMIT = {
+  en: 'Half of an emoji (an unpaired UTF-16 surrogate) in the Header, the Payload or a UTF-8 secret is rejected with its position, because UTF-8 cannot encode it. In Base64 mode it is reported as invalid Base64.',
+  zh: 'Header、Payload 和 UTF-8 模式的密钥里如果有 emoji 的一半（落单的 UTF-16 代理项），会报出位置，因为 UTF-8 无法编码它；Base64 模式下它会被报为无效的 Base64。',
+  ja: '絵文字の片割れ（対になっていない UTF-16 サロゲート）がヘッダー・ペイロード・UTF-8 モードの秘密鍵にあると、UTF-8 で表せないため位置を示してエラーにします。Base64 モードでは無効な Base64 としてエラーになります。',
+  ko: '헤더, 페이로드, UTF-8 모드의 비밀 키에 이모지의 반쪽(짝이 없는 UTF-16 서로게이트)이 있으면 UTF-8로 인코딩할 수 없어 위치를 알려 주고 오류로 처리합니다. Base64 모드에서는 유효하지 않은 Base64로 오류를 표시합니다.',
+};
+const ANY_FIELD_SURROGATE_CLAIM = { en: /in any field is rejected/, zh: /任何字段里如果有 emoji/, ja: /どの欄にあっても/, ko: /어느 필드든 이모지/ };
 const SECRET_LINE_BREAK_CLAIM = {
   en: /secret[^<]{0,80}line break/i, zh: /密钥[^<]{0,40}换行/, ja: /秘密鍵[^<]{0,40}改行/, ko: /비밀 키[^<]{0,40}줄바꿈/,
 };
@@ -635,6 +645,7 @@ for (const lang of ['en','zh','ja','ko']) {
   check(lang+' v2 new example is present',mdx.includes(addedExample[lang]));
   check(lang+' limits: secret whitespace rule is scoped to UTF-8 mode and Base64 ignores whitespace',mdx.includes(SECRET_WHITESPACE_LIMIT[lang]));
   check(lang+' limits: no claim that a line break can be typed into the secret',!SECRET_LINE_BREAK_CLAIM[lang].test(mdx));
+  check(lang+' limits: surrogate position claim is scoped to the fields that report it',mdx.includes(SURROGATE_LIMIT[lang])&&!ANY_FIELD_SURROGATE_CLAIM[lang].test(mdx));
   eq(lang+' MDX content contract and worked examples', contractProblems('jwt-generator', lang, JWT_ANNOTATIONS), '');
   const p=pageVM(lang,false),details=p.get('jg-header-details'),pane=p.get('jg-result-pane');
   eq(lang+' v2 Header initially closed and pending token empty',[details.open,pane.getAttribute('data-empty')],[false,'true']);
