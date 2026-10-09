@@ -473,7 +473,8 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 // file). The input (whole, or each of its selectors) and every tuple the page shows must appear as code after the
 // annotation (up to the next csc-check or H2); for an error card the page's localized message
 // (without the "Not a valid selector:" prefix) must appear verbatim; with "fullwidth": true the
-// page must show the full-width note on the first card.
+// page must show the full-width note on the first card, and with "space": true the note about a
+// space-like character that Chrome reads as part of a name.
 {
   const { toolMdxContract } = await import('./lib/tool-mdx-contract.mjs');
   const codes = text => [...text.matchAll(/`([^`\n]+)`/g)].map(m => m[1]).concat([...text.matchAll(/<code>([^<]*)<\/code>/g)].map(m => m[1].replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&quot;/g, '"').replace(/&amp;/g, '&')));
@@ -488,9 +489,10 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
       const msg = el.textContent.slice(prefix.length);
       if (!after.includes(msg)) return 'error ' + JSON.stringify(msg) + ' is not quoted after the annotation';
     }
-    const note = p.result.querySelector('.csc-result-card .csc-warn');
-    if (!!spec.fullwidth !== !!note) return 'full-width note ' + (note ? 'shown but not expected' : 'expected but not shown');
-    if (spec.fullwidth && note.textContent !== C.fullwidth) return 'unexpected note text';
+    const shown = Array.from(p.result.querySelectorAll('.csc-result-card:first-child .csc-warn')).map(n => n.textContent);
+    const fw = shown.includes(C.fullwidth), sp = shown.some(n => n !== C.fullwidth);
+    if (!!spec.fullwidth !== fw) return 'full-width note ' + (fw ? 'shown but not expected' : 'expected but not shown');
+    if (!!spec.space !== sp) return 'space-like note ' + (sp ? 'shown but not expected' : 'expected but not shown');
     return null;
   } }] });
   for (const r of contract.results.filter(r => /csc-check/.test(r.rule))) check('tool page: ' + r.message, r.ok);
