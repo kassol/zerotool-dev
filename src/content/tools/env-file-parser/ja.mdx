@@ -8,16 +8,24 @@ steps:
   - "JSON エクスポートをクリックすると、結果を env.json としてダウンロードします。"
   - "入力の編集、クリア、ツール内での Ctrl/Command + L はテーブルを隠し、エクスポートを無効にします。新しい内容は再解析してからエクスポートしてください。"
 faqItems:
-  - question: "どの .env 構文に対応していますか？"
+  - id: syntax
+    question: "どの .env 構文に対応していますか？"
     answer: "dotenv 16.6.1（Node.js 用の dotenv パッケージ）の解析ルールに従います。1 行に 1 つの KEY=VALUE、またはコロンの後に空白を入れた KEY: value で、先頭に export を付けられます。キーには英数字・_・.・- を使えます。# で始まる行はコメントです。引用符なしの値の後ろにある # から行内コメントになるので、PORT=5432 # default は 5432 になり、引用符内の # は残ります。引用符で囲んだ値は複数行にまたがれます。"
-  - question: "クォートで囲まれた値はどう処理されますか？"
+  - id: quotes
+    question: "クォートで囲まれた値はどう処理されますか？"
     answer: "値を囲むシングルクォート、ダブルクォート、バッククォートは外し、中の空白は残します。\\n を改行にするのはダブルクォートの値だけです。閉じていない引用符は値に残り、備考列に表示します。"
-  - question: "エラーとして検出されるのはどんなケースですか？"
+  - id: errors
+    question: "エラーとして検出されるのはどんなケースですか？"
     answer: "dotenv が読み飛ばす行はエラーになり、エクスポートされません。= もコロンもない行（= がありません）、空のキー、MY KEY=1 のように空白など dotenv が許さない文字を含むキー（一般的でないキー名）、PORT:8080 のようにコロンの後に空白がない・前に空白がある行です。空の値・重複キー、そして dotenv は受け付けるが [A-Za-z_][A-Za-z0-9_]* に一致しないキー（my.key、9KEY など）は警告で、エクスポートには含まれます。"
-  - question: ".env ファイルはサーバーに送信されますか？"
-    answer: "いいえ。すべての解析処理はブラウザ内の JavaScript で完結し、テキストは保存されません。.env にはシークレットが入るため、このページでは Google Analytics と AdSense も読み込みません。"
-  - question: "JSON エクスポートで何が出力されますか？"
+  - id: privacy
+    question: ".env ファイルはサーバーに送信されますか？"
+    answer: "いいえ。解析はこのページの JavaScript で行い、テキストはどこにも送信されず、localStorage や Cookie にも書き込まれないので、タブを閉じれば残りません。.env にはシークレットが入るため、このページでは Google Analytics と AdSense を読み込みません。テーブルとダウンロードした env.json には値が平文で表示されます。"
+  - id: export
+    question: "JSON エクスポートで何が出力されますか？"
     answer: "テーブルでエラーにならなかったすべてのキーを含む JSON オブジェクトで、dotenv.parse() の結果と同じです。コメント行とエラー行は含まれません。重複キーは dotenv と同じく最後の値になり、テーブルでは出現ごとに警告が付きます。違いは __proto__ という名前のキーだけで、このツールは通常のプロパティとして出力し、dotenv.parse() は取り除きます。JSON エクスポートは解析の後、エクスポートできるキーが 1 つ以上あるときだけ使えます。"
+  - id: local-fullwidth
+    question: "全角の ＝ や全角スペースが混じるとどうなりますか？"
+    answer: "dotenv が区切りとして認めるのは半角の = と、後ろに空白がある半角コロンだけです。SMTP_HOST＝smtp.example.jp のような行は読み飛ばされ、テーブルではエラー「= がありません」になり、エクスポートされません。値の中の全角スペースや全角英数字はそのまま残り、値の両端にある全角スペースは半角スペースと同じく取り除かれます。Node.js 22.23.3 の util.parseEnv() は末尾の全角スペースを残すので、結果が変わります。"
 ---
 
 <h2>入力例</h2>
@@ -91,6 +99,32 @@ A=1
 }
 ```
 
+<h2>全角の ＝ と全角スペース</h2>
+<p>日本語の資料やチャットから設定をコピーすると、<code>＝</code> が全角になっていたり、値に全角スペースが入っていたりします。次の例では 2 行目の <code>＝</code> が全角で、3 行目の値の末尾に全角スペースがあります。</p>
+
+{/* efp-check: {"status":"有効 3 件、エラー 1 件。","rows":[[1,"ok","SHOP_NAME",""],[2,"error","","= がありません"],[3,"ok","MAIL_FROM_NAME",""],[4,"ok","COUPON_CODE",""]],"node":{"COUPON_CODE":"ＳＡＬＥ２０２６","MAIL_FROM_NAME":"山田　太郎　","SHOP_NAME":"山田商店"}} */}
+```
+SHOP_NAME=山田商店
+SMTP_HOST＝smtp.example.jp
+MAIL_FROM_NAME=山田　太郎　
+COUPON_CODE=ＳＡＬＥ２０２６
+```
+
+```json
+{
+  "SHOP_NAME": "山田商店",
+  "MAIL_FROM_NAME": "山田　太郎",
+  "COUPON_CODE": "ＳＡＬＥ２０２６"
+}
+```
+
+<p>
+  ステータスは「有効 3 件、エラー 1 件。」です。2 行目には半角の <code>=</code> がないので dotenv は読み飛ばし、備考は「= がありません」になります。
+  <code>MAIL_FROM_NAME</code> の名前の間の全角スペースは残りますが、末尾の全角スペースは半角スペースと同じく取り除かれ、<code>山田　太郎</code> になります。
+  全角英数字の <code>ＳＡＬＥ２０２６</code> も変換されずにそのまま出力されるので、半角のクーポンコードと照合するアプリでは一致しません。
+  Node.js 22.23.3 の <code>util.parseEnv()</code> はこの末尾の全角スペースを取り除かず、<code>山田　太郎　</code> を返します。dotenv と Node.js の <code>--env-file</code> を併用している場合は、値の端に全角スペースを残さないでください。
+</p>
+
 <h2>検出される一般的な .env の問題</h2>
 <ul>
   <li><strong>= 記号がない</strong>——<code>=</code> もコロンもなく、キーと値のペアとして解析できない行。</li>
@@ -106,4 +140,5 @@ A=1
   <li><strong>変数は展開しません。</strong><code>{'${HOME}/data'}</code> はそのまま残ります。dotenv-expand、Docker Compose、一部のフレームワークはこうした参照を展開します。</li>
   <li><strong>dotenv のルールだけです。</strong>Node.js の <code>--env-file</code>、Docker Compose の <code>{'env_file'}</code>、Python の python-dotenv、シェルの <code>source</code> は、引用符・コロン・<code>export</code>・<code>#</code> の扱いがそれぞれ異なります。実際に使うローダーで確認してください。</li>
   <li><strong>値は平文で表示されます。</strong>テーブルはシークレットを隠さないので画面共有に注意してください。ファイルを共有する前に <a href="/ja/tools/secret-redactor/">APIキーマスキング</a>で値を置き換えられます。</li>
+  <li><strong>出力は JSON だけです。</strong>YAML、シェルの <code>export</code> 行、Kubernetes Secret には出力できず、ダウンロードするファイル名は常に <code>env.json</code> です。</li>
 </ul>

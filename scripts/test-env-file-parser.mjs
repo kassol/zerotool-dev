@@ -352,6 +352,12 @@ eq('spaces around =', exported('A = 1'), { A: '1' });
   eq('zh missing =', zh[2].error, STR.zh.notes.missingEq);
   eq('English stays the default', E.parseEnv('A=')[0].notes, ['Empty value']);
   check('status line built from STRINGS', /t\.stValid/.test(source) && !/' valid'/.test(source));
+  // FAQ local-crlf (en): CRLF and a lone CR read the same as LF (values and line numbers).
+  const lfText = 'A=1\nB="two\nlines"\nC=3 # c\n';
+  for (const [name, eol] of [['CRLF', '\r\n'], ['CR', '\r']]) {
+    eq(name + ' input parses like LF', E.parseEnv(lfText.replace(/\n/g, eol)), E.parseEnv(lfText));
+    sameAsDotenv(name + ' input', lfText.replace(/\n/g, eol));
+  }
   check('page no longer says messages are English', !readFileSync(join(root, 'src/content/tools/env-file-parser/en.mdx'), 'utf8').includes('Messages are in English'));
 }
 
