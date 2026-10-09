@@ -216,6 +216,26 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     assert.equal(p.get('jx-xml').value, ''); assert.equal(p.get('jx-copy-xml').disabled, true);
   });
 }
+// S2-10f review S4: valid JSON or XML nested deeper than the call stack allows (Node 22 runs out well below 20,000
+// levels; browsers differ, and their XML parsers have depth limits of their own). Before, the status was "Invalid JSON"
+// or "Invalid XML" plus the browser's English "Maximum call stack size exceeded".
+const DEEP_JSON = '{"a":'.repeat(20000) + '1' + '}'.repeat(20000);
+function deepXml(levels) { let el = node('a', [text('1')]); for (let i = 1; i < levels; i++) el = node('a', [el]); return node('root', [el]); }
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  await test(lang + ' JSON too deep: notice in the page language, old XML cleared, Copy off', () => {
+    const p = page(lang); p.get('jx-json').value = '{"ok":1}'; p.get('jx-to-xml').click();
+    p.get('jx-json').value = DEEP_JSON; p.get('jx-to-xml').click();
+    assert.equal(p.get('jx-status').textContent, STR[lang].tooDeepJson);
+    assert.equal(p.get('jx-xml').value, ''); assert.equal(p.get('jx-copy-xml').disabled, true);
+    p.get('jx-copy-xml').click(); assert.equal(p.copied.length, 0);
+  });
+  await test(lang + ' XML too deep: notice in the page language, old JSON cleared, Copy off', () => {
+    const p = page(lang, deepXml(20000)); p.get('jx-json').value = '{"stale":1}'; p.get('jx-xml').value = '<root/>';
+    p.get('jx-to-json').click();
+    assert.equal(p.get('jx-status').textContent, STR[lang].tooDeepXml);
+    assert.equal(p.get('jx-json').value, ''); assert.equal(p.get('jx-copy-json').disabled, true);
+  });
+}
 
 // Pretty print used to write a scalar root as <root>\n  hello\n</root>: the indentation became
 // part of the root text, so pretty and compact output read back as different values.
@@ -441,8 +461,9 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   g.key('jx-json'); g.get('jx-json').value = JSON_TEXT; g.get('jx-root').value = 'config'; g.get('jx-to-xml').click(); check(tag + ' after Ctrl+L the same conversion sends again', g.tracks.length, 5);
 }
 // S2-10f (2026-10-09) added the json-reason block and parses JSON in its own try for the localized syntax error;
-// analytics records only successful conversions, the same one once.
-check('client script only removes runtime STRINGS and localization', hash(js), '7771b0e6b4c4fb4dd3e249b1a3fc478de597c829e265399d2c85dfc534b52266');
+// analytics records only successful conversions, the same one once. Its review added the notices for JSON or XML
+// nested too deeply for the call stack.
+check('client script only removes runtime STRINGS and localization', hash(js), '2fa9b1817fb16e88f91d85bec8b93d00a23df25728a3a861a0027faa85308765');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jx-wrap"/.test(markup), true);
