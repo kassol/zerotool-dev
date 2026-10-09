@@ -419,6 +419,14 @@ try {
     eq(prefix + 'the message no longer offers dates in this field', /or date|或日期|または日付|나 날짜/.test(client.errNum), false);
   }
 
+  // ---------- ko status particle (S2-9 review) ----------
+  // The four ko unit names end in 초 (a vowel), so the status line takes 로, not (으)로.
+  {
+    const p = lifecyclePage('ko'), seen = [];
+    for (const value of ['1700000000', '1700000000123', '1700000000123456', '1700000000123456789']) { convertTimestamp(p, value); seen.push(p.get('tc-ts-status').textContent); }
+    eq('ko status uses 로 after each unit name', seen, ['초로 읽었습니다(10자리). 틀리면 단위를 고르세요.', '밀리초로 읽었습니다(13자리). 틀리면 단위를 고르세요.', '마이크로초로 읽었습니다(16자리). 틀리면 단위를 고르세요.', '나노초로 읽었습니다(19자리). 틀리면 단위를 고르세요.']);
+  }
+
   // ---------- a fractional second keeps its exact millisecond on the page (S2-9) ----------
   process.env.TZ = 'UTC';
   for (const lang of Object.keys(languageText)) {
