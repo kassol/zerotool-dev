@@ -114,7 +114,7 @@ const settle = async () => { await new Promise(setImmediate); await new Promise(
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
 process.on('unhandledRejection', onUnhandled);
-function page(lang, shellFirst = false) {
+function page(lang, shellFirst = false, extra = {}) {
   const copies = [], tracks = [], clears = [], timers = new Map(), docEvents = {};
   let now = 0, timerId = 0, doc;
   const decode = s => s.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
@@ -163,6 +163,7 @@ function page(lang, shellFirst = false) {
   const markup = source.split('\n---')[1].split('<script')[0]
     .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
       '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '" aria-label="' + escape(tipAbout.replace('{name}', pageLabels[lang][about])) + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{JSON\.stringify\(L\.(\w+)\)\}/g, (_, key) => '="' + escape(JSON.stringify(pageLabels[lang][key])) + '"')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -181,6 +182,7 @@ function page(lang, shellFirst = false) {
     trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); copies.push({ value, resolve, reject }); return promise; } } },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+    ...extra,
   };
   context.window = context; vm.createContext(context);
   if (shellFirst) vm.runInContext(shortcut, context);
@@ -331,7 +333,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ': v2 rendered tip ' + id, p.get('jtz-tip-' + id).textContent, L.tips[key]);
   }
   check(lang + ': v2 localized empty state', !!L.empty && layoutMarkup.includes('{L.empty}'));
-  eq(lang + ': v2 runtime dataset excludes tips', Object.keys(p.doc.querySelector('.jtz-wrap').dataset).sort().join(','), 'copied,copy,copyFailed,msgFailed,msgGenerated,msgInvalidJson');
+  eq(lang + ': v2 runtime dataset excludes tips', Object.keys(p.doc.querySelector('.jtz-wrap').dataset).sort().join(','), 'copied,copy,copyFailed,jsonParse,msgFailed,msgGenerated,msgInvalidAt,msgInvalidJson');
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-zod/' + lang + '.mdx'), 'utf8');
   const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
@@ -495,6 +497,86 @@ for (const [name, typeName] of [['用户', '用户'], ['2fa', 'T2fa'], ['class',
   const code = pageOutput('en', name, false, '{"a":1}');
   check('root name ' + JSON.stringify(name) + ' gives ' + typeName, code.includes('const ' + typeName + 'Schema = ') && code.includes('export type ' + typeName + ' = z.infer<typeof ' + typeName + 'Schema>;'), code);
   for (const entry of ['zod', 'zod/v4']) eq('root name ' + JSON.stringify(name) + ' compiles (' + entry + ')', tsErrors(code + '\nexport const sample: ' + typeName + ' = {"a":1};\n', entry).join('; '), '');
+}
+
+// ---------- invalid JSON: line, column and cause in the page language (S2-10) ----------
+// Before S2-10 the status line showed "Invalid JSON: " and the browser's own parser message, in
+// English on every page, with the position counted in the trimmed input. lineCol and
+// jsonSyntaxError are copied verbatim from json-formatter-engine.js; the cause texts are the
+// jsonParse texts of HarFileAnalyzerTool.astro and MarkdownTableGeneratorTool.astro (both compared).
+{
+  const fnSrc = (src, name) => {
+    const lines = src.split('\n');
+    const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+    if (at < 0) return '';
+    const indent = lines[at].match(/^\s*/)[0];
+    let end = at + 1;
+    while (end < lines.length && lines[end] !== indent + '}') end++;
+    return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+  };
+  const stringsOf = (file, from = 0) => {
+    const text = readFileSync(join(root, 'src/components/tools/' + file), 'utf8');
+    const s0 = text.indexOf('const STRINGS = ', from);
+    return new Function('return ' + text.slice(s0 + 'const STRINGS = '.length, text.indexOf('\n};', s0) + 2))();
+  };
+  const jsonEngine = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  check('json-reason block sits outside the engine block', rs > endIndex && re > rs);
+  const reasonSrc = rs > 0 ? source.slice(rs, re) : '';
+  for (const name of ['lineCol', 'jsonSyntaxError']) check(name + ' is the same as in json-formatter-engine.js', fnSrc(reasonSrc, name) !== '' && fnSrc(reasonSrc, name) === fnSrc(jsonEngine, name));
+  const codes = [...new Set([...fnSrc(jsonEngine, 'jsonSyntaxError').matchAll(/fail\('(\w+)'/g)].map((m) => m[1]))];
+  const harStrings = stringsOf('HarFileAnalyzerTool.astro');
+  const mtgSource = readFileSync(join(root, 'src/components/tools/MarkdownTableGeneratorTool.astro'), 'utf8');
+  const mtgStrings = stringsOf('MarkdownTableGeneratorTool.astro', mtgSource.indexOf('strings:start'));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    eq(lang + ': jsonParse texts equal HarFileAnalyzerTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(harStrings[lang].jsonParse));
+    eq(lang + ': jsonParse texts equal MarkdownTableGeneratorTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(mtgStrings[lang].jsonParse));
+    check(lang + ': a jsonParse text for every jsonSyntaxError code', codes.length > 10 && codes.every((c) => typeof L.jsonParse?.[c] === 'string'));
+    check(lang + ': msgInvalidAt starts with msgInvalidJson and has {line}, {col} and {reason}', typeof L.msgInvalidAt === 'string' && L.msgInvalidAt.startsWith(L.msgInvalidJson) && ['{line}', '{col}', '{reason}'].every((k) => L.msgInvalidAt.includes(k)));
+  }
+  const fill = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v[k] != null ? String(v[k]) : m));
+  // [name, input as typed, line, column, cause, character]; positions counted by hand in the input as typed.
+  const SAMPLES = [
+    ['trailing comma', '{"a":1,}', 1, 7, 'trailingComma'],
+    ['leading blank lines and spaces are counted', '\n\n  {"a": 1,\n}', 3, 10, 'trailingComma'],
+    ['a byte order mark at the start is invisible and not counted', '\uFEFF{"a":1,}', 1, 7, 'trailingComma'],
+    ['full-width colon', '{"a"：1}', 1, 5, 'fullWidth', '：'],
+    ['curly quotes', '{“a”:1}', 1, 2, 'smartQuote', '“'],
+    ['single quotes', "{'a': 1}", 1, 2, 'singleQuote'],
+    ['cut off', '{"a": 1', 1, 8, 'unexpectedEnd'],
+    ['Python True', '{"a": True}', 1, 7, 'badLiteral'],
+    ['comment', '{"a": 1 // note\n}', 1, 9, 'comment'],
+    ['two documents', '{"a":1}\n{"a":2}', 2, 1, 'extraData'],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    for (const [name, input, line, col, code, ch] of SAMPLES) {
+      const p = page(lang); run(p);
+      p.input(input); p.advance(300);
+      const text = status(p).textContent;
+      eq(lang + ': ' + name + ': line, column and cause', text, fill(L.msgInvalidAt, { line, col, reason: fill(L.jsonParse?.[code], { ch: ch ?? '' }) }));
+      check(lang + ': ' + name + ': output cleared, Copy disabled, input marked', output(p) === '' && p.get('jtz-copy').disabled === true && p.get('jtz-input').classList.contains('error') && status(p).className.includes('error'));
+      if (lang !== 'en') check(lang + ': ' + name + ': no English parser message', !/Unexpected|Expected|position|JSON input|token/.test(text), text);
+    }
+    // A failure that is not a SyntaxError (a browser limit, for example) keeps the browser's message.
+    const fake = { parse: (s, r) => { if (s === '[[[') throw new RangeError('Maximum call stack size exceeded'); return JSON.parse(s, r); }, stringify: JSON.stringify };
+    const f = page(lang, false, { JSON: fake }); run(f, '[[[');
+    eq(lang + ': a RangeError from JSON.parse keeps the browser message', status(f).textContent, L.msgInvalidJson + 'Maximum call stack size exceeded');
+  }
+  // {/* jtz-error: {"input": "…"} */}: the status line for that input appears as inline code after it.
+  const jtzError = {
+    tag: 'jtz-error',
+    min: 1,
+    verify({ spec, after, lang }) {
+      if (!spec || typeof spec.input !== 'string') return 'annotation needs {"input": "<text>"}';
+      const p = page(lang); run(p, spec.input);
+      const text = status(p).textContent;
+      if (!status(p).className.includes('error')) return 'not an error: ' + text;
+      return after.includes('`' + text + '`') ? null : 'status line not shown: ' + text;
+    },
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ': jtz-error examples show the page status line', contractProblems('json-to-zod', lang, { annotations: [jtzError] }), '');
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');

@@ -16,7 +16,7 @@ faqItems:
     answer: "它从 JSON 对象生成 TypeScript interface（或 type 别名）声明。每个嵌套对象都会被提取为独立的具名接口；数组中的混合类型会生成联合类型。"
   - question: "嵌套对象如何处理？"
     id: "nested"
-    answer: "每个嵌套对象字段会被提取为单独的接口，名称是字段名的 PascalCase。例如字段 address 对应 Address 接口，父接口用这个名称引用它。只有连字符、空格等分隔符后面的字母会变成大写，所以 user-info 得到 UserInfo，same_name 得到 Same_name。中文键名的接口名保留中文，例如「收货地址」。"
+    answer: "每个嵌套对象字段会被提取为单独的接口，名称是字段名的 PascalCase。例如字段 address 对应 Address 接口，父接口用这个名称引用它。只有连字符、空格等分隔符后面的字母会变成大写，所以 user-info 得到 UserInfo，same_name 得到 Same_name。中文键名的接口名保留中文，例如「收货地址」。如果名称与 TypeScript 中只有一个单词的全局类型（如 Date、Response）相同，就在前面加上父级名称（RootObjectDate）。"
   - question: "对象数组如何处理？"
     id: "object-arrays"
     answer: "数组里的所有对象会合并成一个元素接口。只在部分对象里出现的字段加 ?；同一个字段在不同元素里类型不同时，写成联合类型，例如 (null | string)。"
@@ -82,7 +82,7 @@ interface RecordsItem {
 
 类型本身没错，问题在值：`1830000000000000001` 大于 `Number.MAX_SAFE_INTEGER`（9007199254740991，见 [MDN](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER)），前端用 `JSON.parse` 读到的是 `1830000000000000000`，末位已经变了，拿它去查详情或删除会对不上记录。这个工具同样用 `JSON.parse` 读输入，所以既不会提示，也只能给出 `number`。处理办法是让后端把这类 ID 输出成字符串，再把 `id` 的类型改成 `string`。
 
-另外三处也要手动改：`createTime` 是「年-月-日 时:分:秒」格式的字符串，类型就是 `string`；`remark` 在 `records` 数组里，所以是不带 `?` 的 `null`，查文档后改成 `remark: string | null`；分页对象如果还有 `size`、`current` 等字段，要贴进样本里才会出现。
+另外三处要留意：`createTime` 是「年-月-日 时:分:秒」格式的字符串，类型就是 `string`；`remark` 在 `records` 数组里，所以是不带 `?` 的 `null`，查文档后改成 `remark: string | null`；分页对象如果还有 `size`、`current` 等字段，要贴进样本里才会出现。
 
 ## 示例：中文键名
 
@@ -121,15 +121,17 @@ interface 商品列表Item {
 
 - `?: null` 和 `: null`：换成真实类型加 `| null`。
 - `unknown[]`：空数组看不出元素类型，需要补上。
-- 日期：ISO 8601 字符串、「2026-10-08 09:30:00」这类字符串和 Unix 时间戳分别保持 `string`、`number`。
+- 日期：ISO 8601 字符串和「2026-10-08 09:30:00」这类字符串保持 `string`，Unix 时间戳保持 `number`。
 - `ItemsItem`、`Same_name`、`PaymentMeta` 这类名称由键名生成，可以按业务改名。两个同名键的对象字段不同时，第二个会加上父级名称（`payment.meta` 得到 `PaymentMeta`），仍被占用时再加数字（`Meta2`）；根接口始终保留你填的名称。
 - 键名生成不了合法类型名时（`2fa`、空键名），接口名加前缀 `T`（`T2fa`），属性仍用带引号的原键名。
 
 ## 限制
 
-- 输入必须是合法 JSON，不能有注释或末尾逗号。状态栏在「JSON 格式错误：」后面显示浏览器自带的解析错误，Chrome 里是英文并带位置，例如输入 `{"a":1,}` 时显示 `Expected double-quoted property name in JSON at position 7 (line 1 column 8)`。从中文输入法里带进来的全角引号 `“”` 也会报错。
+- {/* jtt-error: {"input":"{\"a\":1,}"} */}输入必须是合法 JSON，不能有注释或末尾逗号。不合法时输出被清空，状态栏给出出错的行、列和可能的原因，行列按你输入的原文计算。例如输入 `{"a":1,}` 时显示 `JSON 格式错误：第 1 行第 7 列，右括号前多了一个逗号。`{/* jtt-error: {"input":"{“订单号”: \"A-1001\"}"} */}从中文输入法里带进来的中文引号（“”）也会被指出来：`{“订单号”: "A-1001"}` 显示 `JSON 格式错误：第 1 行第 2 列，“ 是中文引号，JSON 要用英文双引号（"）。`
 - 根是数组、且对象与其他值混在一起时（如 `[{"id": 1}, "x", null]`），对象合并成以根名称命名的接口，另外生成一个表示整个数组的别名，写法和嵌套数组相同：`type RootObjectArray = (string | null | RootObject)[];`。接口返回值用 `RootObjectArray`。
 - 根接口名称按 ECMAScript 标识符规则处理：保留各国文字的字母、数字以及 `$`、`_`；其他字符被去掉、后一个字母变成大写（`user profile` 得到 `userProfile`）；不能作为开头的加前缀 `T`（`2fa` 得到 `T2fa`）；保留字或基本类型名加后缀 `_`（`class` 得到 `class_`）。什么都不剩时用 RootObject。
+- 与 TypeScript 标准库（`lib.dom.d.ts` 与各个 `lib.es*.d.ts`）中名称只有一个单词的全局类型（如 `Promise`、`Date`、`Map`、`Record`、`Body`、`Response`、`Event`、`JSON`、`URL`）同名时，不会原样使用这个名称：这样的声明在没有 `import` / `export` 的文件里会和全局类型合并，在模块里则会遮住全局类型。嵌套对象改为在前面加父级名称（`{"date": {"year": 2026}}` 得到 `RootObjectDate`，键 `"URL"` 得到 `RootObjectURL`；键 `"url"` 得到 `Url`，不是全局类型），根名称加后缀 `_`（`Map` 得到 `Map_`）。根名称 `globalThis` 同样加 `_`（`globalThis_`）：在没有 `import` / `export` 的文件里，TypeScript 不接受以它命名的声明。只作为全局值存在的名称（如 `Image`、`Intl`、`Proxy`）保持原样，因为同名的 interface 或 type 与它们不冲突。
+- 由多个单词组成的全局类型名（如 `formData` 键生成的 `FormData`）保持生成的名称；要粘进没有 `import` / `export` 的文件，或粘进的模块里还要用这个全局类型时，请自己改名。
 - 嵌套极深时可能超出浏览器的调用栈，这时状态栏显示错误，并清空之前的输出。
 - 类型只来自你粘贴的样本。样本里是字符串、线上有时是数字的字段，仍会是 `string`。
 - 勾选「使用 type 替代 interface」后，每个声明写成 `type Name = { ... }`；状态栏仍显示「接口」。

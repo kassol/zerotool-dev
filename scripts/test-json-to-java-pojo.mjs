@@ -49,6 +49,8 @@ function eq(name, got, want) {
 function classes(json, rootName = 'RootObject') { const c = {}; E.buildClass(JSON.parse(json), rootName, c); return c; }
 function gen(json, mode) { return E.renderClasses(classes(json), mode); }
 function field(c, cls, name) { return (c[cls] || []).find((f) => f.fieldName === name)?.type; }
+// The en labels for the stub pages below (the real markup forwards them in data attributes).
+const stubLabels = vm.runInNewContext('(' + source.match(/const STRINGS = (\{[\s\S]*?\n\});/)[1] + ')').en;
 
 // Run the complete client IIFE, including the real convert() and tab handlers.
 function page(json, mode = 'none', rootName = 'RootObject') {
@@ -60,7 +62,7 @@ function page(json, mode = 'none', rootName = 'RootObject') {
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'root-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jjp-' + id, element()]));
   elements['jjp-root-name'].value = rootName;
   const tabs = ['none', 'jackson', 'gson', 'lombok'].map((ann) => element({ ann }));
-  const wrap = { contains: el => !!el?.inside, dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenerated: 'Generated.', msgGenOne: 'Generated 1 class.', msgGenMany: 'Generated {n} classes.' }, querySelectorAll: () => tabs };
+  const wrap = { contains: el => !!el?.inside, dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgInvalidAt: stubLabels.msgInvalidAt, jsonParse: JSON.stringify(stubLabels.jsonParse), msgGenerated: 'Generated.', msgGenOne: 'Generated 1 class.', msgGenMany: 'Generated {n} classes.' }, querySelectorAll: () => tabs };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener() {} }, {}, { highlightElement() {} }, {}, () => 0, () => {});
@@ -79,7 +81,7 @@ function session() {
   }
   const elements = Object.fromEntries(['input', 'output-code', 'status', 'root-name', 'convert', 'example', 'clear', 'copy'].map((id) => ['jjp-' + id, element()]));
   const tabs = ['none', 'jackson', 'gson', 'lombok'].map((ann) => element({ ann }));
-  const wrap = { contains: el => !!el?.inside, dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgGenerated: 'Generated.', msgGenOne: 'Generated 1 class.', msgGenMany: 'Generated {n} classes.' }, querySelectorAll: () => tabs };
+  const wrap = { contains: el => !!el?.inside, dataset: { copy: 'Copy', copied: 'Copied', msgInvalidJson: 'Invalid JSON: ', msgInvalidAt: stubLabels.msgInvalidAt, jsonParse: JSON.stringify(stubLabels.jsonParse), msgGenerated: 'Generated.', msgGenOne: 'Generated 1 class.', msgGenMany: 'Generated {n} classes.' }, querySelectorAll: () => tabs };
   const script = source.slice(source.indexOf('(function () {'), source.indexOf('</script>', source.indexOf('(function () {')));
   new Function('document', 'window', 'hljs', 'navigator', 'setTimeout', 'clearTimeout', script)(
     { activeElement: { inside: true }, querySelector: () => wrap, getElementById: (id) => elements[id], addEventListener: (t, fn) => (docHandlers[t] = docHandlers[t] || []).push(fn) }, {}, { highlightElement() {} }, {}, (fn) => { fn(); return 0; }, () => {});
@@ -101,6 +103,7 @@ function session() {
   const bad = s.state();
   eq('stale output: invalid JSON clears the output', bad.code, '');
   eq('stale output: invalid JSON shows the error', bad.status.startsWith('Invalid JSON: '), true);
+  eq('stale output: the error names the line, column and cause', bad.status, 'Invalid JSON: line 1, column 18, the input ends too early (a bracket or quote is not closed).');
   eq('stale output: invalid JSON disables Copy', bad.copyDisabled, true);
   s.type('{"age": 30}');
   eq('stale output: the next valid input renders again', /private int age;/.test(s.state().code), true);
@@ -305,7 +308,7 @@ const settle = async () => { await new Promise(setImmediate); await new Promise(
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
 process.on('unhandledRejection', onUnhandled);
-function lifecyclePage(lang, shellFirst = false) {
+function lifecyclePage(lang, shellFirst = false, extra = {}) {
   const copies = [], tracks = [], clears = [], downloads = [], blobs = new Map(), timers = new Map(), docEvents = {};
   let now = 0, timerId = 0, doc;
   const decode = s => s.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
@@ -349,6 +352,7 @@ function lifecyclePage(lang, shellFirst = false) {
   const markup = source.split('\n---')[1].split('<script')[0]
     .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
       '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{JSON\.stringify\(L\.(\w+)\)\}/g, (_, key) => '="' + escape(JSON.stringify(pageLabels[lang][key])) + '"')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -367,6 +371,7 @@ function lifecyclePage(lang, shellFirst = false) {
     trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); copies.push({ value, resolve, reject }); return promise; } } },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+    ...extra,
   };
   context.window = context; vm.createContext(context);
   if (shellFirst) vm.runInContext(shortcut, context);
@@ -446,6 +451,42 @@ try {
 eq('no unhandled clipboard rejections', unhandled.length, 0);
 
 
+// ---------- analytics: one event per committed change or explicit action (S2-10) ----------
+// Before S2-10 every successful conversion sent `generate`: the example seeded on page load, every
+// 300 ms typing pause in the JSON or root-name field and every annotation click. Now an event is
+// sent on a committed change of the JSON or root-name field (the pending conversion runs first), an
+// annotation click and Example, once per JSON + root name + annotation, and only with output.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const ga = lifecyclePage(lang);
+  const sent = () => ga.tracks.length;
+  eq(lang + ': GA: page load with the seeded example sends nothing', sent(), 0);
+  ga.input('{"a":1}'); ga.advance(300);
+  eq(lang + ': GA: typing pause sends nothing', sent(), 0);
+  ga.get('jjp-input').dispatch('change');
+  eq(lang + ': GA: committed change sends one generate', JSON.stringify(ga.tracks), JSON.stringify([['json-to-java-pojo', 'generate']]));
+  ga.input('{"b":"x"}'); ga.get('jjp-input').dispatch('change');
+  eq(lang + ': GA: change before the debounce converts the new input first', [ga.get('jjp-output-code').textContent.includes('private String b;'), sent()].join(), 'true,2');
+  ga.advance(300); eq(lang + ': GA: no second event after the debounce', sent(), 2);
+  ga.get('jjp-input').dispatch('change'); eq(lang + ': GA: change with the same input sends nothing', sent(), 2);
+  ga.get('jjp-root-name').value = 'Api'; ga.get('jjp-root-name').dispatch('input'); ga.advance(300);
+  eq(lang + ': GA: root-name typing pause sends nothing', sent(), 2);
+  ga.get('jjp-root-name').dispatch('change'); eq(lang + ': GA: root-name change sends one', sent(), 3);
+  ga.doc.querySelector('[data-ann="lombok"]').click(); eq(lang + ': GA: annotation click sends one', sent(), 4);
+  ga.doc.querySelector('[data-ann="lombok"]').click(); eq(lang + ': GA: clicking the selected annotation again sends nothing', sent(), 4);
+  ga.get('jjp-example').click(); eq(lang + ': GA: Example sends one', sent(), 5);
+  ga.get('jjp-example').click(); eq(lang + ': GA: Example again with the same settings sends nothing', sent(), 5);
+  ga.input('{'); ga.get('jjp-input').dispatch('change'); eq(lang + ': GA: invalid JSON sends nothing', sent(), 5);
+  ga.doc.querySelector('[data-ann="gson"]').click(); ga.doc.querySelector('[data-ann="lombok"]').click();
+  eq(lang + ': GA: annotation clicks with invalid JSON send nothing', sent(), 5);
+  ga.get('jjp-clear').click(); ga.get('jjp-example').click(); eq(lang + ': GA: Clear resets the last sent input', sent(), 6);
+  const r = lifecyclePage(lang);
+  r.get('jjp-root-name').value = 'Shop'; r.get('jjp-root-name').dispatch('input'); r.get('jjp-root-name').dispatch('change');
+  eq(lang + ': GA: a root-name change runs the pending conversion and sends once', [r.get('jjp-output-code').textContent.includes('public class Shop'), r.tracks.length].join(), 'true,1');
+  const k = lifecyclePage(lang);
+  k.get('jjp-example').click(); k.key('jjp-input', 'l'); k.get('jjp-example').click();
+  eq(lang + ': GA: Ctrl/⌘+L resets the last sent input', k.tracks.length, 2);
+}
+
 // ---------- v2 page layout ----------
 const V2 = {
   "slug": "json-to-java-pojo",
@@ -483,7 +524,7 @@ const V2 = {
       "annotation"
     ]
   ],
-  "scriptSHA": "0150698efcde58a2bc320d507a80547494523144424c4f9a09da36cc398a17ed"
+  "scriptSHA": "a52a1077ba3abad5b5beab71198fb4556ec3a2467bc739a9baf38b1d1b7338c4"
 };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
@@ -491,7 +532,7 @@ const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
 const registration = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 const prefix = V2.prefix;
 eq('v2 convert registration', new RegExp("'" + V2.slug + "':\\s*'convert'").test(registration), true);
-eq('v2 original script preserved except removed redundant Generate listener', hash(pageScript), V2.scriptSHA);
+eq('v2 original script preserved except removed redundant Generate listener, JSON errors in the page language and analytics sent once per committed change (S2-10)', hash(pageScript), V2.scriptSHA);
 eq('v2 direct root', new RegExp('^\\s*<div\\s+class="' + prefix + '-wrap"').test(layoutMarkup), true);
 eq('v2 root fills available height', css.includes('.' + prefix + '-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;'), true);
 eq('v2 control-status-panel reading order', layoutMarkup.indexOf('class="' + prefix + '-config"') < layoutMarkup.indexOf('class="' + prefix + '-actions"') && layoutMarkup.indexOf('class="' + prefix + '-actions"') < layoutMarkup.indexOf('id="' + prefix + '-status"') && layoutMarkup.indexOf('id="' + prefix + '-status"') < layoutMarkup.indexOf('class="' + prefix + '-panels zt-io"'), true);
@@ -520,7 +561,7 @@ for (const lang of ['en','zh','ja','ko']) {
   for (const [id, about, key] of V2.tips) eq(lang + ': v2 localized plain tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]), true);
   eq(lang + ': v2 localized empty text', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'), true);
   const p = lifecyclePage(lang), rootEl = p.doc.querySelector('.' + prefix + '-wrap');
-  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
+  eq(lang + ': v2 only feedback forwarded', Object.keys(rootEl.dataset).sort().join(','), ['copy','copied','copyFailed','jsonParse','msgInvalidAt','msgInvalidJson','msgGenerated','msgGenOne','msgGenMany', ...(prefix === 'jkt' ? ['msgRootList'] : []), ...(prefix === 'jpdc' ? ['download'] : [])].sort().join(','));
   const mdx = readFileSync(join(root, 'src/content/tools/' + V2.slug + '/' + lang + '.mdx'), 'utf8');
   const [,fm,body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const steps = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1].trimEnd().split('\n').map(l => JSON.parse(l.slice(4)));
@@ -540,6 +581,82 @@ for (const lang of ['en','zh','ja','ko']) {
   }
   const q=lifecyclePage(lang);golden(q);const n=q.tracks.length;q.key(prefix+'-input','Enter');eq(lang + ': v2 CtrlEnter main action',q.tracks.length-n,V2.manual?1:0);
   q.key(prefix+'-input','Enter','metaKey');eq(lang + ': v2 MetaEnter main action',q.tracks.length-n,V2.manual?2:0);
+}
+
+
+// ---------- invalid JSON: line, column and cause in the page language (S2-10) ----------
+// Before S2-10 the status line showed "Invalid JSON: " and the browser's own parser message, in
+// English on every page, with the position counted in the trimmed input. lineCol and
+// jsonSyntaxError are copied verbatim from json-formatter-engine.js; the cause texts are the
+// jsonParse texts of HarFileAnalyzerTool.astro and MarkdownTableGeneratorTool.astro (both compared).
+// Copy stays disabled whenever there is no output (the page does this since 2026-10-03).
+{
+  const fnSrc = (src, name) => {
+    const lines = src.split('\n');
+    const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+    if (at < 0) return '';
+    const indent = lines[at].match(/^\s*/)[0];
+    let end = at + 1;
+    while (end < lines.length && lines[end] !== indent + '}') end++;
+    return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+  };
+  const stringsOf = (file, from = 0) => {
+    const text = readFileSync(join(root, 'src/components/tools/' + file), 'utf8');
+    const s0 = text.indexOf('const STRINGS = ', from);
+    return new Function('return ' + text.slice(s0 + 'const STRINGS = '.length, text.indexOf('\n};', s0) + 2))();
+  };
+  const engineEnd = source.indexOf('/* ── engine:end ── */');
+  const jsonEngine = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  eq('json-reason block sits outside the engine block', rs > engineEnd && re > rs, true);
+  const reasonSrc = rs > 0 ? source.slice(rs, re) : '';
+  for (const name of ['lineCol', 'jsonSyntaxError']) eq(name + ' is the same as in json-formatter-engine.js', fnSrc(reasonSrc, name) !== '' && fnSrc(reasonSrc, name) === fnSrc(jsonEngine, name), true);
+  const codes = [...new Set([...fnSrc(jsonEngine, 'jsonSyntaxError').matchAll(/fail\('(\w+)'/g)].map((m) => m[1]))];
+  const harStrings = stringsOf('HarFileAnalyzerTool.astro');
+  const mtgSource = readFileSync(join(root, 'src/components/tools/MarkdownTableGeneratorTool.astro'), 'utf8');
+  const mtgStrings = stringsOf('MarkdownTableGeneratorTool.astro', mtgSource.indexOf('strings:start'));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    eq(lang + ': jsonParse texts equal HarFileAnalyzerTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(harStrings[lang].jsonParse));
+    eq(lang + ': jsonParse texts equal MarkdownTableGeneratorTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(mtgStrings[lang].jsonParse));
+    eq(lang + ': a jsonParse text for every jsonSyntaxError code', codes.length > 10 && codes.every((c) => typeof L.jsonParse?.[c] === 'string'), true);
+    eq(lang + ': msgInvalidAt starts with msgInvalidJson and has {line}, {col} and {reason}', typeof L.msgInvalidAt === 'string' && L.msgInvalidAt.startsWith(L.msgInvalidJson) && ['{line}', '{col}', '{reason}'].every((k) => L.msgInvalidAt.includes(k)), true);
+  }
+  const fill = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v[k] != null ? String(v[k]) : m));
+  // [name, input as typed, line, column, cause, character]; positions counted by hand in the input as typed.
+  const SAMPLES = [
+    ['trailing comma', '{"a":1,}', 1, 7, 'trailingComma'],
+    ['leading blank lines and spaces are counted', '\n\n  {"a": 1,\n}', 3, 10, 'trailingComma'],
+    ['a byte order mark at the start is invisible and not counted', '\uFEFF{"a":1,}', 1, 7, 'trailingComma'],
+    ['full-width colon', '{"a"：1}', 1, 5, 'fullWidth', '：'],
+    ['curly quotes', '{“a”:1}', 1, 2, 'smartQuote', '“'],
+    ['single quotes', "{'a': 1}", 1, 2, 'singleQuote'],
+    ['cut off', '{"a": 1', 1, 8, 'unexpectedEnd'],
+    ['Python True', '{"a": True}', 1, 7, 'badLiteral'],
+    ['comment', '{"a": 1 // note\n}', 1, 9, 'comment'],
+    ['two documents', '{"a":1}\n{"a":2}', 2, 1, 'extraData'],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    const fresh = lifecyclePage(lang);
+    eq(lang + ': Copy is disabled before there is output', fresh.get('jjp-output-code').textContent === '' ? fresh.get('jjp-copy').disabled === true : true, true);
+    for (const [name, input, line, col, code, ch] of SAMPLES) {
+      const p = lifecyclePage(lang); golden(p);
+      eq(lang + ': ' + name + ': Copy is enabled with output', p.get('jjp-copy').disabled, false);
+      p.input(input); p.advance(300);
+      const status = p.get('jjp-status').textContent;
+      eq(lang + ': ' + name + ': line, column and cause', status, fill(L.msgInvalidAt, { line, col, reason: fill(L.jsonParse?.[code], { ch: ch ?? '' }) }));
+      eq(lang + ': ' + name + ': output cleared, Copy disabled, input marked', p.get('jjp-output-code').textContent === '' && p.get('jjp-copy').disabled === true && p.get('jjp-input').classList.contains('error') && p.get('jjp-status').className.includes('error'), true);
+      if (lang !== 'en') eq(lang + ': ' + name + ': no English parser message', /Unexpected|Expected|position|JSON input|token/.test(status), false);
+    }
+    const c = lifecyclePage(lang); golden(c); c.get('jjp-clear').click();
+    eq(lang + ': Clear disables Copy', c.get('jjp-copy').disabled, true);
+    // A failure that is not a SyntaxError (a browser limit, for example) keeps the browser's message.
+    const fake = { parse: (s, r) => { if (s === '[[[') throw new RangeError('Maximum call stack size exceeded'); return JSON.parse(s, r); }, stringify: JSON.stringify };
+    const f = lifecyclePage(lang, false, { JSON: fake }); f.input('[[['); f.advance(300);
+    eq(lang + ': a RangeError from JSON.parse keeps the browser message', f.get('jjp-status').textContent, L.msgInvalidJson + 'Maximum call stack size exceeded');
+  }
+  
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

@@ -157,9 +157,6 @@ eq('JSON.parse rounds the zh snowflake ID', String(JSON.parse('18300000000000000
 {
   const zh = readFileSync(join(root, 'src/content/tools/json-to-typescript/zh.mdx'), 'utf8');
   check('zh: page shows the rounded ID', zh.includes('`1830000000000000000`'));
-  let message = '';
-  try { JSON.parse('{"a":1,}'); } catch (e) { message = e.message; }
-  check('zh: page quotes the V8 trailing-comma message', zh.includes('`' + message + '`'), message);
 }
 
 // ---------- complete page lifecycle: real script/shortcuts, controlled DOM/clipboard/time ----------
@@ -169,13 +166,17 @@ const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
 const shortcut = layout.slice(layout.indexOf('// ── Keyboard shortcuts:'), layout.indexOf('// ── Copy button visual feedback'));
 if (!shortcut.includes("document.addEventListener('keydown'")) throw Error('Shared shortcut not found');
 const engineLines = source.slice(source.lastIndexOf('\n', startIndex) + 1, endIndex + END_MARK.length);
-eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 10604);
-eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), 'be5a3bfd026e952389cf41d79a31a2cf7cff24aec890e42ff41791f2716d284d');
+// S2-10 (approved engine change): LIB_TYPE_NAMES reserves the one-word global type names of
+// lib.esnext.full.d.ts for root and nested names (+16 / -0 lines against v1.140.11). After the
+// S2-10e review it also holds JSON and URL, and globalThis is a reserved root name (5 lines
+// changed; +19 / -3 lines against v1.140.11).
+eq('engine bytes including marker indentation', Buffer.byteLength(engineLines), 12096);
+eq('immutable engine SHA256', createHash('sha256').update(engineLines).digest('hex'), '478afa70c3f6a83f2aba02bf59786b75bdea8917a0e234547ec9d8e077b46aed');
 const settle = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 const unhandled = [];
 const onUnhandled = reason => unhandled.push(String(reason));
 process.on('unhandledRejection', onUnhandled);
-function page(lang, shellFirst = false) {
+function page(lang, shellFirst = false, extra = {}) {
   const copies = [], tracks = [], clears = [], timers = new Map(), docEvents = {};
   let now = 0, timerId = 0, doc;
   const decode = s => s.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
@@ -219,6 +220,7 @@ function page(lang, shellFirst = false) {
   const markup = source.split('\n---')[1].split('<script')[0]
     .replace(/<Toggletip id="([^"]+)" lang=\{lang\} about=\{L\.(\w+)\}>\{L\.tips\.(\w+)\}<\/Toggletip>/g, (_, id, about, tip) =>
       '<span class="zt-tip"><button type="button" data-zt-tip="' + id + '" aria-label="' + escape(tipAbout.replace('{name}', pageLabels[lang][about])) + '"></button><span id="' + id + '" role="note">' + escape(pageLabels[lang].tips[tip]) + '</span></span>')
+    .replace(/=\{JSON\.stringify\(L\.(\w+)\)\}/g, (_, key) => '="' + escape(JSON.stringify(pageLabels[lang][key])) + '"')
     .replace(/=\{L\.(\w+)\}/g, (_, key) => '="' + escape(pageLabels[lang][key]) + '"')
     .replace(/\{L\.(\w+)\}/g, (_, key) => escape(pageLabels[lang][key]));
   const stack = [widget];
@@ -236,6 +238,7 @@ function page(lang, shellFirst = false) {
     trackTool: (...args) => tracks.push(args), ztPersist: { clear: slug => clears.push(slug) },
     navigator: { clipboard: { writeText(value) { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); copies.push({ value, resolve, reject }); return promise; } } },
     setTimeout(fn, ms) { timers.set(++timerId, { fn, due: now + ms }); return timerId; }, clearTimeout(id) { timers.delete(id); },
+    ...extra,
   };
   context.window = context; vm.createContext(context);
   if (shellFirst) vm.runInContext(shortcut, context);
@@ -373,6 +376,213 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   g.input(''); g.get('jtt-input').dispatch('change'); eq(lang + ': analytics: empty input sends nothing', g.tracks.length, 6);
 }
 
+// ---------- names that TypeScript's library declares as global types (S2-10) ----------
+// Before S2-10 the keys "promise", "date" or "response" gave `interface Promise`, `interface Date`
+// and `interface Response`, and the root name Map gave `interface Map`. In a file without import
+// or export such a declaration merges with the global type of TypeScript's default library or
+// conflicts with it ("All declarations of 'Promise' must have identical type parameters"), and in
+// a module it hides the global type. The engine reserves every global type name of
+// lib.esnext.full.d.ts that is one word, capitalized or in capitals (JSON and URL, added after the
+// S2-10e review): a nested name gets the parent prefix (RootObjectDate, RootObjectURL), a root
+// name gets "_" (Map_, JSON_). Names that exist only as global values (Image, Intl, Proxy, ...) do
+// not conflict with an interface or a type alias and are kept, except globalThis ("Declaration name
+// conflicts with built-in global identifier 'globalThis'"), which a root name can give and which
+// gets "_" as well. Checked by compiling the page output as a script file with the ESNext default
+// library (DOM included).
+{
+  const libOptions = { strict: true, noEmit: true, skipLibCheck: true, target: ts.ScriptTarget.ESNext, lib: ['lib.esnext.full.d.ts'], types: [] };
+  const libCache = new Map();
+  function scriptErrors(code) {
+    const fileName = 'script.ts';
+    const host = ts.createCompilerHost(libOptions);
+    const orig = host.getSourceFile;
+    host.getSourceFile = (name, lang) => {
+      if (name === fileName) return ts.createSourceFile(name, code, lang);
+      if (!libCache.has(name)) libCache.set(name, orig.call(host, name, lang));
+      return libCache.get(name);
+    };
+    const program = ts.createProgram([fileName], libOptions, host);
+    const sf = program.getSourceFile(fileName);
+    return [...program.getSyntacticDiagnostics(sf), ...program.getSemanticDiagnostics(sf), ...program.getGlobalDiagnostics()]
+      .map((d) => ts.flattenDiagnosticMessageText(d.messageText, ' '));
+  }
+  // Global names of the installed TypeScript's default ESNext library: type space, and names that
+  // exist only as values or namespaces.
+  const globalNames = (() => {
+    const host = ts.createCompilerHost(libOptions);
+    const orig = host.getSourceFile;
+    host.getSourceFile = (name, lang) => (name === 'x.ts' ? ts.createSourceFile(name, '', lang) : orig.call(host, name, lang));
+    const program = ts.createProgram(['x.ts'], libOptions, host);
+    const sf = program.getSourceFile('x.ts');
+    const checker = program.getTypeChecker();
+    const types = new Set(checker.getSymbolsInScope(sf, ts.SymbolFlags.Type).map((s) => s.name));
+    const values = checker.getSymbolsInScope(sf, ts.SymbolFlags.Value | ts.SymbolFlags.Namespace).map((s) => s.name)
+      .filter((n) => /^[A-Za-z_$][\w$]*$/.test(n) && !types.has(n));
+    return { types: [...types], valueOnly: [...new Set(values)].sort() };
+  })();
+  // One-word global type names: one capitalized word (Date) or one word in capitals (JSON, URL).
+  const libNames = globalNames.types.filter((n) => /^[A-Z](?:[a-z0-9]*|[A-Z0-9]*)$/.test(n)).sort();
+  check('TypeScript ' + ts.version + ' has one-word global types (Promise, Date, Response, JSON, URL)', ['Promise', 'Date', 'Response', 'JSON', 'URL'].every((n) => libNames.includes(n)), libNames.join(' '));
+  let engineNames = [];
+  try { engineNames = new Function(block + '\nreturn LIB_TYPE_NAMES;')(); } catch { engineNames = []; }
+  eq('the reserved names are the one-word global types of lib.esnext.full.d.ts', JSON.stringify([...engineNames].sort()), JSON.stringify(libNames));
+  const outputFor = (json, root, useType) => {
+    const p = page('en');
+    p.get('jtt-root-name').value = root; p.get('jtt-use-type').checked = useType; p.input(json); p.get('jtt-convert').click();
+    return p.get('jtt-output-code').textContent;
+  };
+  const cases = [
+    ['{"promise":{"y":1}}', 'RootObject'],
+    ['{"date":{"year":2026},"response":{"status":200}}', 'RootObject'],
+    ['{"body":{"text":"hi"},"event":{"type":"click"},"location":{"lat":1.5},"parameters":{"q":"x"},"record":{"id":1},"map":{"k":"v"},"error":{"code":1}}', 'Order'],
+    ['[{"date":{"y":1}},{"date":{"y":2},"node":{"id":"n"}}]', 'Api'],
+    ['{"a":1}', 'Map'], ['{"a":1}', 'Date'], ['{"a":1}', 'Array'], ['{"a":1}', 'Response'], ['{"a":1}', 'Record'],
+    ['{"JSON":{"a":1},"URL":{"href":"https://example.com/"}}', 'RootObject'],
+    ['{"a":1}', 'JSON'], ['{"a":1}', 'URL'], ['{"a":1}', 'globalThis'],
+  ];
+  for (const [json, root] of cases) for (const useType of [false, true]) {
+    const code = outputFor(json, root, useType);
+    const name = /^(?:interface|type) ([^\s={]+)/.exec(code)?.[1];
+    const arrayOfObjects = Array.isArray(JSON.parse(json));
+    const errors = scriptErrors(code + '\n\nconst sample: ' + name + (arrayOfObjects ? '[]' : '') + ' = ' + json + ';\n');
+    check('script file compiles with the global library: ' + json + ' / ' + root + (useType ? ' / type' : ''), errors.length === 0, errors.join('; ') + '\n' + code);
+    check('no declaration takes a reserved global name: ' + json + ' / ' + root, ![...code.matchAll(/^(?:interface|type) ([^\s={]+)/gm)].some((m) => libNames.includes(m[1])), code);
+  }
+  eq('date and response under RootObject', E.generateTypeScript(JSON.parse('{"date":{"year":2026},"response":{"status":200}}'), 'RootObject', false, false).code,
+    'interface RootObject {\n  date: RootObjectDate;\n  response: RootObjectResponse;\n}\n\ninterface RootObjectDate {\n  year: number;\n}\n\ninterface RootObjectResponse {\n  status: number;\n}');
+  eq('the root name Map gives Map_', outputFor('{"a":1}', 'Map', false).split('\n')[0], 'interface Map_ {');
+  eq('formData keeps FormData (more than one word)', /interface FormData \{/.test(E.generateTypeScript(JSON.parse('{"formData":{"a":1}}'), 'RootObject', false, false).code), true);
+  // Names that are not one-word global types keep their PascalCase form.
+  eq('meta, user and payment keep their names', /interface Meta \{/.test(E.generateTypeScript(JSON.parse('{"meta":{"a":1}}'), 'RootObject', false, false).code), true);
+  // One word in capitals (S2-10e review): the keys "JSON" and "URL" and the root names JSON and URL.
+  eq('JSON and URL keys under RootObject', E.generateTypeScript(JSON.parse('{"JSON":{"a":1},"URL":{"href":"x"}}'), 'RootObject', false, false).code,
+    'interface RootObject {\n  JSON: RootObjectJSON;\n  URL: RootObjectURL;\n}\n\ninterface RootObjectJSON {\n  a: number;\n}\n\ninterface RootObjectURL {\n  href: string;\n}');
+  for (const [rootName, expected] of [['JSON', 'JSON_'], ['URL', 'URL_'], ['globalThis', 'globalThis_']]) {
+    eq('the root name ' + rootName + ' gives ' + expected, outputFor('{"a":1}', rootName, false).split('\n')[0], 'interface ' + expected + ' {');
+  }
+  // json and url keys give Json and Url, which are not global names.
+  eq('json and url keys keep Json and Url', E.generateTypeScript(JSON.parse('{"json":{"a":1},"url":{"b":2}}'), 'RootObject', false, false).code.split('\n').slice(0, 4).join('\n'),
+    'interface RootObject {\n  json: Json;\n  url: Url;\n}');
+  // Names that exist only as global values or namespaces. An interface or a type alias of the same
+  // name conflicts with none of them in a script file except globalThis (and undefined, already a
+  // reserved type name); every other one is kept as a root name.
+  {
+    // The page passes the root name through safeIdentifier before generating (convert()).
+    const { safeIdentifier } = new Function(block + '\nreturn { safeIdentifier };')();
+    const conflicting = [], keptWrong = [], renamedWrong = [], renamedErrors = [];
+    for (const v of globalNames.valueOnly) {
+      const conflict = scriptErrors('interface ' + v + ' { a: number; }\nconst sample: ' + v + ' = {"a":1};\n').length > 0
+        || scriptErrors('type ' + v + ' = { a: number; };\nconst sample: ' + v + ' = {"a":1};\n').length > 0;
+      if (conflict) conflicting.push(v);
+      for (const useType of [false, true]) {
+        const code = E.generateTypeScript({ a: 1 }, safeIdentifier(v) || 'RootObject', false, useType).code;
+        const name = /^(?:interface|type) ([^\s={]+)/.exec(code)?.[1];
+        if (!conflict && name !== v) keptWrong.push(v + ' → ' + name);
+        if (conflict && name !== v + '_') renamedWrong.push(v + ' → ' + name);
+        if (conflict) {
+          const errors = scriptErrors(code + '\n\nconst sample: ' + name + ' = {"a":1};\n');
+          if (errors.length) renamedErrors.push(v + ': ' + errors.join('; '));
+        }
+      }
+    }
+    check('value-only global names: TypeScript ' + ts.version + ' has more than 200, among them Image, Intl, Proxy and globalThis',
+      globalNames.valueOnly.length > 200 && ['Image', 'Intl', 'Proxy', 'globalThis'].every((n) => globalNames.valueOnly.includes(n)), String(globalNames.valueOnly.length));
+    eq('value-only global names that an interface or type alias conflicts with', conflicting.join(' '), 'globalThis undefined');
+    eq('value-only names without a conflict are kept as root names', keptWrong.join(', '), '');
+    eq('value-only names with a conflict get _', renamedWrong.join(', '), '');
+    eq('renamed value-only root names compile as a script file', renamedErrors.join(' | '), '');
+    const nested = E.generateTypeScript(JSON.parse('{"Image":{"a":1},"Intl":{"b":2},"Proxy":{"c":3}}'), 'RootObject', false, false).code;
+    check('Image, Intl and Proxy keys keep their names', /interface Image \{/.test(nested) && /interface Intl \{/.test(nested) && /interface Proxy \{/.test(nested), nested);
+    eq('Image, Intl and Proxy keys compile as a script file', scriptErrors(nested + '\n\nconst sample: RootObject = {"Image":{"a":1},"Intl":{"b":2},"Proxy":{"c":3}};\n').join('; '), '');
+  }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const text = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
+    check(lang + ': page states the global-name rule with its examples', text.includes('`RootObjectDate`') && text.includes('`Map_`') && text.includes('`FormData`'));
+    check(lang + ': page states JSON, URL, globalThis and the value-only names', ['`JSON`', '`URL`', '`RootObjectURL`', '`globalThis_`', '`Image`', '`Intl`'].every((s) => text.includes(s)));
+  }
+}
+
+// ---------- invalid JSON: line, column and cause in the page language (S2-10) ----------
+// Before S2-10 the status line showed "Invalid JSON: " and the browser's own parser message, in
+// English on every page (Chrome: "Expected double-quoted property name in JSON at position 7
+// (line 1 column 8)"), with the position counted in the trimmed input. lineCol and
+// jsonSyntaxError are copied verbatim from json-formatter-engine.js; the cause texts are the
+// jsonParse texts of HarFileAnalyzerTool.astro and MarkdownTableGeneratorTool.astro (both compared).
+{
+  const fnSrc = (src, name) => {
+    const lines = src.split('\n');
+    const at = lines.findIndex((l) => new RegExp('^\\s*function ' + name + '\\(').test(l));
+    if (at < 0) return '';
+    const indent = lines[at].match(/^\s*/)[0];
+    let end = at + 1;
+    while (end < lines.length && lines[end] !== indent + '}') end++;
+    return lines.slice(at, end + 1).map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join('\n');
+  };
+  const stringsOf = (file, from = 0) => {
+    const text = readFileSync(join(root, 'src/components/tools/' + file), 'utf8');
+    const s0 = text.indexOf('const STRINGS = ', from);
+    return new Function('return ' + text.slice(s0 + 'const STRINGS = '.length, text.indexOf('\n};', s0) + 2))();
+  };
+  const jsonEngine = readFileSync(join(root, 'src/components/tools/json-formatter-engine.js'), 'utf8');
+  const rs = source.indexOf('/* ── json-reason:start ── */'), re = source.indexOf('/* ── json-reason:end ── */');
+  check('json-reason block sits outside the engine block', rs > endIndex && re > rs);
+  const reasonSrc = rs > 0 ? source.slice(rs, re) : '';
+  for (const name of ['lineCol', 'jsonSyntaxError']) check(name + ' is the same as in json-formatter-engine.js', fnSrc(reasonSrc, name) !== '' && fnSrc(reasonSrc, name) === fnSrc(jsonEngine, name));
+  const codes = [...new Set([...fnSrc(jsonEngine, 'jsonSyntaxError').matchAll(/fail\('(\w+)'/g)].map((m) => m[1]))];
+  const harStrings = stringsOf('HarFileAnalyzerTool.astro');
+  const mtgSource = readFileSync(join(root, 'src/components/tools/MarkdownTableGeneratorTool.astro'), 'utf8');
+  const mtgStrings = stringsOf('MarkdownTableGeneratorTool.astro', mtgSource.indexOf('strings:start'));
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    eq(lang + ': jsonParse texts equal HarFileAnalyzerTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(harStrings[lang].jsonParse));
+    eq(lang + ': jsonParse texts equal MarkdownTableGeneratorTool.astro', JSON.stringify(L.jsonParse), JSON.stringify(mtgStrings[lang].jsonParse));
+    check(lang + ': a jsonParse text for every jsonSyntaxError code', codes.length > 10 && codes.every((c) => typeof L.jsonParse?.[c] === 'string'));
+    check(lang + ': msgInvalidAt starts with msgInvalidJson and has {line}, {col} and {reason}', typeof L.msgInvalidAt === 'string' && L.msgInvalidAt.startsWith(L.msgInvalidJson) && ['{line}', '{col}', '{reason}'].every((k) => L.msgInvalidAt.includes(k)));
+  }
+  const fill = (tpl, v) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (v[k] != null ? String(v[k]) : m));
+  // [name, input as typed, line, column, cause, character]; positions counted by hand in the input as typed.
+  const SAMPLES = [
+    ['trailing comma', '{"a":1,}', 1, 7, 'trailingComma'],
+    ['leading blank lines and spaces are counted', '\n\n  {"a": 1,\n}', 3, 10, 'trailingComma'],
+    ['a byte order mark at the start is invisible and not counted', '\uFEFF{"a":1,}', 1, 7, 'trailingComma'],
+    ['full-width colon', '{"a"：1}', 1, 5, 'fullWidth', '：'],
+    ['curly quotes', '{“a”:1}', 1, 2, 'smartQuote', '“'],
+    ['single quotes', "{'a': 1}", 1, 2, 'singleQuote'],
+    ['cut off', '{"a": 1', 1, 8, 'unexpectedEnd'],
+    ['Python True', '{"a": True}', 1, 7, 'badLiteral'],
+    ['comment', '{"a": 1 // note\n}', 1, 9, 'comment'],
+    ['two documents', '{"a":1}\n{"a":2}', 2, 1, 'extraData'],
+  ];
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const L = pageLabels[lang];
+    for (const [name, input, line, col, code, ch] of SAMPLES) {
+      const p = page(lang); golden(p);
+      p.input(input); p.advance(300);
+      const status = p.get('jtt-status').textContent;
+      eq(lang + ': ' + name + ': line, column and cause', status, fill(L.msgInvalidAt, { line, col, reason: fill(L.jsonParse?.[code], { ch: ch ?? '' }) }));
+      check(lang + ': ' + name + ': output cleared, Copy disabled, input marked', p.get('jtt-output-code').textContent === '' && p.get('jtt-copy').disabled === true && p.get('jtt-input').classList.contains('error') && p.get('jtt-status').className.includes('error'));
+      if (lang !== 'en') check(lang + ': ' + name + ': no English parser message', !/Unexpected|Expected|position|JSON input|token/.test(status), status);
+    }
+    // A failure that is not a SyntaxError (a browser limit, for example) keeps the browser's message.
+    const fake = { parse: (s, r) => { if (s === '[[[') throw new RangeError('Maximum call stack size exceeded'); return JSON.parse(s, r); }, stringify: JSON.stringify };
+    const f = page(lang, false, { JSON: fake }); f.input('[[['); f.advance(300);
+    eq(lang + ': a RangeError from JSON.parse keeps the browser message', f.get('jtt-status').textContent, L.msgInvalidJson + 'Maximum call stack size exceeded');
+  }
+  // {/* jtt-error: {"input": "…"} */}: the status line for that input appears as inline code after it.
+  const jttError = {
+    tag: 'jtt-error',
+    min: 1,
+    verify({ spec, after, lang }) {
+      if (!spec || typeof spec.input !== 'string') return 'annotation needs {"input": "<text>"}';
+      const p = page(lang); p.input(spec.input); p.advance(300);
+      const status = p.get('jtt-status').textContent;
+      if (!p.get('jtt-status').className.includes('error')) return 'not an error: ' + status;
+      return after.includes('`' + status + '`') ? null : 'status line not shown: ' + status;
+    },
+  };
+  for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ': jtt-error examples show the page status line', contractProblems('json-to-typescript', lang, { annotations: [jttError] }), '');
+}
+
 // ---------- v2 page layout ----------
 const layoutMarkup = source.split('\n---')[1].split('<script')[0];
 const css = source.match(/<style>([\s\S]*?)<\/style>/)[1];
@@ -404,7 +614,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ': v2 same eight tip keys', Object.keys(L.tips).sort().join(','), tipMap.map(x => x[2]).sort().join(','));
   for (const [id, about, key] of tipMap) check(lang + ': v2 plain localized tip ' + id, typeof L[about] === 'string' && !!L[about].trim() && !/[<>]/.test(L[about]) && typeof L.tips[key] === 'string' && !!L.tips[key].trim() && !/[<>]/.test(L.tips[key]));
   check(lang + ': v2 localized empty hint', typeof L.empty === 'string' && !!L.empty.trim() && layoutMarkup.includes('{L.empty}'));
-  eq(lang + ': v2 only runtime feedback data is forwarded', Object.keys(rootEl.dataset).sort().join(','), 'copied,copy,copyFailed,msgFailed,msgGenMany,msgGenOne,msgGenerated,msgInvalidJson');
+  eq(lang + ': v2 only runtime feedback data is forwarded', Object.keys(rootEl.dataset).sort().join(','), 'copied,copy,copyFailed,jsonParse,msgFailed,msgGenMany,msgGenOne,msgGenerated,msgInvalidAt,msgInvalidJson');
   const mdx = readFileSync(join(root, 'src/content/tools/json-to-typescript/' + lang + '.mdx'), 'utf8');
   const [, fm, body] = mdx.match(/^---\n([\s\S]*?\n)---\n([\s\S]*)$/);
   const stepsText = fm.match(/^steps:\n((?:  - .*\n)+)/m)[1];
