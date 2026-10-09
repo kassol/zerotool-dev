@@ -500,6 +500,15 @@ for (const lang of ['en','zh','ja','ko']) {
   // S2-10f: the limits section shows a JSON syntax error as the page now reports it.
   check(lang+' shows a JSON syntax error example', statuses.some(st => st.startsWith(HAR_S[lang].errJsonAt.slice(0, HAR_S[lang].errJsonAt.indexOf('{line}')))), JSON.stringify(statuses));
   check(lang+' no longer says JSON errors are in English', !/browser's own message|浏览器自带的英文|英語のメッセージ|영어 메시지/.test(body));
+  // S2-10f: exponent forms. CSV → JSON keeps whole numbers above 2^53 − 1 as text in any form (1e21, 1.83E+18);
+  // JSON → CSV writes an exact number as JavaScript writes it (ECMA-262 Number::toString): 1e21 → 1e+21, 1.50 → 1.5.
+  check(lang+' parseTypes tip names exponent forms of large whole numbers', S.tips.parseTypes.includes('1e21'), S.tips.parseTypes);
+  check(lang+' page names 1e21, 1.83E+18 and 1e+21 and cites Number::toString', ['`1e21`', '`1.83E+18`', '1e+21', 'https://tc39.es/ecma262/#sec-numeric-types-number-tostring'].every(k => body.includes(k)));
+  check(lang+' has a JSON → CSV example with 1e+21', notes.some(n => n.spec?.to === 'csv' && !n.spec?.error && fencedBlocks(n.after)[1]?.text.includes('1e+21')));
+  // The statements are the page's own conversions.
+  eq(lang+' CSV → JSON keeps exponent forms of large whole numbers as text', JSON.parse(runPage(lang, {}, 'a,b,c\n1e21,1.83E+18,1e3').out), [{ a: '1e21', b: '1.83E+18', c: 1000 }]);
+  eq(lang+' JSON → CSV writes exact numbers in the shortest form', runPage(lang, { to: 'csv' }, '[{"a":1e21,"b":1.50,"c":1E+3}]').out, 'a,b,c\n1e+21,1.5,1000');
+  eq(lang+' converting it back gives the string "1e+21"', JSON.parse(runPage(lang, {}, 'a,b\n1e+21,1.5').out), [{ a: '1e+21', b: 1.5 }]);
   // S2-10f: the limits show the spaced-header note as the page reports it.
   check(lang+' shows a spaced-header example', typeof S.spacedHeaders === 'string' && statuses.some(st => st.includes(S.spacedHeaders.split('{list}')[0])), JSON.stringify(statuses));
   // Every CSV / JSON code block on the page belongs to a cj-check example, and both directions appear.
