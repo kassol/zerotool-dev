@@ -480,6 +480,16 @@ const { tips: TIPS, ...CLIENT_T } = T;
         copyJsonlBtn.disabled = downloadJsonlBtn.disabled = !lastJsonlOutput;
       }
 
+      // Analytics: one event per successful conversion (button, Ctrl/⌘+Enter, Sample, pretty-print change or
+      // JSON file); the same direction, input and options are sent once. Clear starts over.
+      var lastTracked = null;
+      function trackConversion(action, parts) {
+        var key = [action].concat(parts).join('\u0000');
+        if (key === lastTracked) return;
+        lastTracked = key;
+        window.trackTool && window.trackTool('jsonl-converter', action);
+      }
+
       /* ── json-reason:start ── */
       // Why a JSONL line or the JSON panel is not JSON, in the page language, without the browser's
       // English message. lineCol and jsonSyntaxError are copied verbatim from json-formatter-engine.js
@@ -747,7 +757,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         lastJsonlOutput = jsonl;
         enableOutput();
         setStatus(msg(t.convertedToJson, { n: values.length }), result.errors.length > 0 ? 'info' : 'success');
-        window.trackTool && window.trackTool('jsonl-converter', 'jsonl_to_json');
+        trackConversion('jsonl_to_json', [jsonlEl.value, ignoreEmptyEl.checked, validOnlyEl.checked, prettyJsonEl.checked]);
       }
 
       function convertJsonToJsonl() {
@@ -779,7 +789,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           renderIssues(result.errors);
           setInputError(jsonlEl, false);
           setStatus(msg(t.convertedToJsonl, { n: parsed.values.length }), 'success');
-          window.trackTool && window.trackTool('jsonl-converter', 'json_to_jsonl');
+          trackConversion('json_to_jsonl', [jsonEl.value, prettyJsonEl.checked]);
         } catch (e) {
           setInputError(jsonEl, true);
           setStatus(e && e.name === 'SyntaxError' ? jsonErrorText(jsonEl.value) : t.invalidJson + ': ' + e.message, 'error');
@@ -853,6 +863,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
       document.getElementById('jlc-to-jsonl').addEventListener('click', convertJsonToJsonl);
       function clearAll() {
         cancelPending();
+        lastTracked = null;
         jsonlEl.value = '';
         jsonEl.value = '';
         fileEl.value = '';

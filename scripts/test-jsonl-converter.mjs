@@ -465,8 +465,26 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 
 /* ── v2 page layout ── */
 check('all FIX behavior checks retained', checks.length, 884);
-// S2-10f (2026-10-09) added the json-reason block and the localized JSON syntax errors.
-check('client script only loses runtime localization and redundant Validate listener', hash(js), '7b9365f63713e56de1b0a23a16f7f0f508cb9ce40b4133cd2215a889942ff864');
+// S2-10f GA: one event per successful conversion (button, Ctrl/⌘+Enter, Sample, pretty-print change, JSON file);
+// the same direction, input and options are sent once; failed conversions send nothing; Clear and Ctrl/⌘+L start over.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const g = page(lang), tag = lang + ' GA';
+  check(tag + ' page load sends nothing', g.tracks.length, 0);
+  g.input('jlc-jsonl', '1\n2'); g.advance(350); check(tag + ' automatic validation sends nothing', g.tracks.length, 0);
+  g.get('jlc-to-json').click(); check(tag + ' JSONL → JSON sends one event', g.tracks, [['jsonl-converter', 'jsonl_to_json']]);
+  g.get('jlc-to-json').click(); g.key('jlc-jsonl', 'Enter'); check(tag + ' the same JSONL and options send nothing more', g.tracks.length, 1);
+  g.get('jlc-pretty-json').checked = false; g.get('jlc-pretty-json').dispatch('change'); check(tag + ' a new option converts and sends one', g.tracks.length, 2);
+  g.input('jlc-jsonl', '1\n{bad}'); g.get('jlc-to-json').click(); check(tag + ' a failed conversion sends nothing', g.tracks.length, 2);
+  g.input('jlc-json', '[1, 2]'); g.get('jlc-to-jsonl').click(); g.get('jlc-to-jsonl').click();
+  check(tag + ' JSON → JSONL sends one event for the same JSON', g.tracks.map(t => t[1]), ['jsonl_to_json', 'jsonl_to_json', 'json_to_jsonl']);
+  g.get('jlc-load-sample').click(); g.get('jlc-load-sample').click(); check(tag + ' Sample twice sends one event', g.tracks.length, 4);
+  g.get('jlc-clear').click(); g.get('jlc-load-sample').click(); check(tag + ' after Clear the same Sample sends again', g.tracks.length, 5);
+  g.key('jlc-jsonl'); g.get('jlc-load-sample').click(); check(tag + ' after Ctrl+L the same Sample sends again', g.tracks.length, 6);
+  const f = page(lang); f.open('json').finish('[1]'); f.open('json').finish('[1]'); check(tag + ' the same JSON file twice sends one event', f.tracks.map(t => t[1]), ['json_to_jsonl']);
+}
+// S2-10f (2026-10-09) added the json-reason block and the localized JSON syntax errors, and sends the same
+// conversion to analytics once.
+check('client script only loses runtime localization and redundant Validate listener', hash(js), '865e2705f39c494fe6ba97920f109ed529b5f77f08fa802b348b77d388924ea0');
 const fmEnd = source.indexOf('\n---', source.indexOf('// strings:end'));
 const markup = source.slice(fmEnd + 4, source.indexOf('  <script'));
 check('direct tool root', /^\s*<div class="jlc-wrap"/.test(markup), true);
