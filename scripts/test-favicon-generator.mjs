@@ -35,6 +35,7 @@ import { dirname, join, relative } from 'node:path';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
+import { fencedBlocks, reportContract } from './lib/tool-mdx-contract.mjs';
 
 const root = process.env.ZT_B13_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(process.env.ZT_B13_SOURCE || join(root, 'src/components/tools/FaviconGeneratorTool.astro'), 'utf8');
@@ -388,6 +389,53 @@ for(const lang of ['en','zh','ja','ko']){
  check(lang+' old Usage removed',!/<h2>(How to use|使用方法|使い方|사용 방법)<\/h2>/.test(md));
  if(lang==='en')check('EN at least400 words',md.replace(/^---[\s\S]*?---/,'').replace(/<[^>]*>/g,' ').split(/\s+/).filter(Boolean).length>=400);
 }
+
+// ---------- tool page examples (S2 content contract) ----------
+// `{/* fav-mf: {...} */}`: the fields are applied to the default state (theme #ffffff,
+// transparent background, empty names) and the next json block must equal buildManifest();
+// `bytes` must equal the UTF-8 length, which the package list shows as "N B".
+// `{/* fav-fit: {"w","h","size","padding"} */}`: the real renderToCanvas() draws an image
+// source of w × h into a size × size canvas; the drawn width × height (2 decimals) must be
+// quoted in <code>. With `safe`, the half diagonal of the drawn box and 40 % of the size
+// (web.dev maskable safe zone) are quoted too, and `safe` says whether the box fits.
+const renderFactory = new Function('state', extractFunction('drawShapeClip') + extractFunction('renderToCanvas') + '\nreturn renderToCanvas;');
+const fmt2 = (x) => String(Number(x.toFixed(2)));
+function fitBox(f) {
+  const ops = [];
+  const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => ops.push([k, a])), set: (t, k, v) => { t[k] = v; return true; } });
+  renderFactory({ sourceType: 'image', image: { naturalWidth: f.w, naturalHeight: f.h }, shape: 'square', bgMode: 'transparent', padding: f.padding })({ getContext: () => ctx }, f.size);
+  const d = ops.find((o) => o[0] === 'drawImage')[1];
+  return { x: d[1], y: d[2], w: d[3], h: d[4], half: Math.hypot(d[3], d[4]) / 2, limit: 0.4 * f.size };
+}
+const quoted = (after, text) => after.includes('<code>' + text + '</code>') || after.includes('`' + text + '`');
+reportContract(check, 'favicon-generator', {
+  stepCount: 5,
+  annotations: [
+    {
+      tag: 'fav-mf', min: 1,
+      verify({ spec: s, after }) {
+        const out = buildManifest({ ...state, ...s });
+        if (!fencedBlocks(after).some((b) => b.text === out)) return 'manifest not quoted verbatim:\n' + out;
+        const bytes = new TextEncoder().encode(out).length;
+        if (s.bytes !== undefined && (s.bytes !== bytes || !quoted(after, bytes + ' B'))) return 'manifest is ' + bytes + ' B';
+        return null;
+      },
+    },
+    {
+      tag: 'fav-fit', min: 1,
+      verify({ spec: s, after }) {
+        const b = fitBox(s);
+        const box = fmt2(b.w) + ' × ' + fmt2(b.h);
+        if (!quoted(after, box)) return 'drawn box ' + box + ' not quoted';
+        if (s.safe !== undefined) {
+          if ((b.half <= b.limit) !== s.safe) return 'safe is ' + (b.half <= b.limit);
+          if (!quoted(after, fmt2(b.half)) || !quoted(after, fmt2(b.limit))) return 'half diagonal ' + fmt2(b.half) + ' / limit ' + fmt2(b.limit) + ' not quoted';
+        }
+        return null;
+      },
+    },
+  ],
+});
 
 await flush();
 checkPage(specs[0],'all page async failures handled',unhandled,[]);

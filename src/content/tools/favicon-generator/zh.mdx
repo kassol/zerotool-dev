@@ -8,54 +8,97 @@ steps:
   - "点击下载 ZIP 保存 favicon-package.zip。点击复制取得已完成的 HTML 代码片段，将文件放在站点根目录。"
   - "Ctrl/⌘+L 清除文本、上传素材、预览与图标包，保留素材标签、颜色、字体、形状和内边距。"
 faqItems:
-  - question: "生成的图标包里都有什么？"
-    answer: "共 11 个文件：favicon.ico（包含 16/32/48 三个尺寸，PNG 压缩格式），六个独立 PNG（16/32/48/64/96/128），180×180 的 apple-touch-icon.png，192 和 512 两个 android-chrome PNG，以及 site.webmanifest。把它们放到站点根目录，将 HTML 片段粘贴到 <head>，浏览器、iOS、Android、PWA 安装场景就全覆盖了。"
-  - question: "我的文件会被上传到服务器吗？"
-    answer: "不会。所有操作都在浏览器中通过 Canvas API 完成——图像解码、多尺寸重采样、ICO 与 ZIP 打包，全部由 JavaScript 在本地执行。打开开发者工具的 Network 面板，点击 Generate 时你看不到任何上传请求。"
-  - question: "为什么我的 emoji 在 Windows 和 macOS 上看起来不一样？"
-    answer: "每个操作系统自带一套彩色 emoji 字体（macOS 的 Apple Color Emoji、Windows 的 Segoe UI Emoji、Linux/Android 的 Noto Color Emoji）。生成器使用的是你当前机器的系统字体。若需要跨平台像素级一致的输出，请切换到 Image 或 SVG 标签，提供自己的位图或矢量 logo。"
-  - question: "ICO 用的是 PNG 还是 BMP 条目？"
-    answer: "使用 PNG 压缩条目。每个 ICO 帧是独立 PNG，IE 11 之后所有浏览器都支持，Windows Vista 以后的资源管理器也能识别。这样做能保留 alpha 通道、文件更小，并避免老式 DIB/BMP 编码。仅支持 DIB 帧的老系统按设计不在范围内。"
-  - question: "可以生成 maskable PWA 图标吗？"
-    answer: "不能。manifest 把 192 和 512 PNG 以 `purpose: \"any\"` 声明，图标包不含 maskable 图标，因为 web.dev 不建议一个文件写成 `\"any maskable\"`：为裁切留了边距的图标直接显示时会显得偏小。要单独提供 maskable 图标，用 Padding 滑块让主体落在中心圆（半径为宽度的 40%）内，再生成一张 512 px PNG，以 `purpose: \"maskable\"` 加入 manifest。"
+  - id: "contents"
+    question: "生成的图标包里都有什么？"
+    answer: "共 11 个文件：favicon.ico（内含 16、32、48 px 三张 PNG），六个 PNG（16、32、48、64、96、128），180×180 的 apple-touch-icon.png，192 和 512 两个 android-chrome PNG，以及 site.webmanifest。把它们放到站点根目录，再把 HTML 代码片段贴进 <head>。代码片段引用的是 ICO、16/32/48 px PNG、apple-touch-icon 和 manifest；64、96、128 px 的 PNG 在包里，但没有被引用。只有填写了「站点名称」，Chrome 才会提示安装网站。"
+  - id: "privacy"
+    question: "我的文件会被上传到服务器吗？"
+    answer: "不会。图片解码、在 canvas 上缩放、打包 ICO 和 ZIP 都在页面里完成，图片、文字、SVG 和站点名称不会发送到任何地方，也不会写进 localStorage，关闭标签页就没了。与其他工具页一样，本页加载 Google Analytics 和 AdSense；「生成图标包」和「下载 ZIP」各记录一次事件，只含工具名和操作，不含你的图片。"
+  - id: "emoji-fonts"
+    question: "为什么同一个 emoji 在 Windows 和 macOS 上生成的图标不一样？"
+    answer: "每个操作系统自带一套彩色 emoji 字体（macOS 是 Apple Color Emoji，Windows 是 Segoe UI Emoji，Linux 和 Android 是 Noto Color Emoji）。工具用当前电脑上的字体绘制，所以不同系统生成的 PNG 不同。需要在哪里生成都一样，请改用「图片」或「SVG」标签，提供自己的位图或矢量图。"
+  - id: "ico-png"
+    question: "ICO 里存的是 PNG 还是 BMP？"
+    answer: "是 PNG。ICO 里的三张图（16、32、48 px）各是一个完整的 PNG 文件，这是 Windows Vista 加进 ICO 格式的写法；在那之前 ICO 里存的是 DIB（BMP）数据。PNG 能保留透明通道，文件也更小。只认 DIB 的软件读不了这个 ICO，工具没有 DIB 选项。"
+  - id: "maskable"
+    question: "可以生成 maskable PWA 图标吗？"
+    answer: "不能。manifest 把 192 和 512 PNG 以 `purpose: \"any\"` 声明，图标包不含 maskable 图标，因为 web.dev 不建议一个文件写成 `\"any maskable\"`：为裁切留了边距的图标直接显示时会显得偏小。要单独提供 maskable 图标，用「内边距」滑块让主体落在中心圆（半径为宽度的 40%）内，再生成一张 512 px PNG，以 `purpose: \"maskable\"` 加入 manifest。"
 ---
 
-<h2>为什么仍然需要一整套 favicon</h2>
+<h2>一个站点为什么要准备一整套图标</h2>
 
-<p>网站图标早已不只是浏览器标签上的小图。它出现在搜索结果中域名旁边、收藏夹里、iOS 用户把网站添加到主屏幕时的图标位、Android 的 PWA 安装卡片上。每个场景需要的尺寸不同，少数场景还要求略不同的格式。只放一个 <code>favicon.ico</code> 在视网膜屏和可安装 PWA 上会留下肉眼可见的毛刺。</p>
+<p>网站图标不只出现在浏览器标签上。搜索结果的域名旁、收藏夹、iOS「添加到主屏幕」后的图标、Android 的安装提示，都会用到它，而且各自要的尺寸不同，有的还要不同格式。只放一个 <code>favicon.ico</code>，总有几个地方显示不好。</p>
 
-<p>本工具一键产出整套现代图标：兼容旧浏览器的 ICO、对应现代 <code>&lt;link rel="icon"&gt;</code> 栈的多尺寸 PNG、iOS 用的 apple-touch-icon，以及写明站点名称、<code>start_url</code>、<code>display</code> 与 192、512 图标的 webmanifest，这些正是 Chrome 提示安装网站前检查的字段。</p>
+<p>本工具一次生成整套文件：给老浏览器的 ICO、给 <code>&lt;link rel="icon"&gt;</code> 用的多尺寸 PNG、iOS 用的 apple-touch-icon，以及写明站点名称、<code>start_url</code>、<code>display</code> 和 192、512 图标的 webmanifest，这几项是 Chrome 提示安装网站前要检查的。</p>
 
-<h2>HTML 片段说明</h2>
-
-<p>生成的代码片段约 7 行，覆盖每个现代场景：</p>
+<h2>HTML 代码片段逐行看</h2>
 
 <ul>
-  <li><code>&lt;link rel="icon" type="image/x-icon" href="/favicon.ico"&gt;</code> — 老浏览器和仍优先解析 favicon.ico 的收藏夹的兜底。</li>
-  <li><code>&lt;link rel="icon" type="image/png" sizes="..."&gt;</code> 16/32/48 三档 — HTML 标准把选择权交给浏览器。2026-10-02 实测，2× 屏上的 Chromium 152 在有 ICO 链接时只请求 <code>favicon.ico</code>，只有 PNG 链接时请求 <code>favicon-32.png</code>。</li>
-  <li><code>&lt;link rel="apple-touch-icon"&gt;</code> 180×180 — iOS Safari 在「添加到主屏幕」时使用。</li>
-  <li><code>&lt;link rel="manifest"&gt;</code> — Android Chrome 和 PWA 安装器读取 site.webmanifest，里面写着「站点名称」栏的名称、<code>"start_url": "/"</code>、<code>"display": "standalone"</code>，并用 <code>purpose: "any"</code> 声明 192 与 512 PNG。「站点名称」留空时不写 <code>name</code> 与 <code>short_name</code>，Chrome 不会提示安装网站。</li>
-  <li><code>&lt;meta name="theme-color"&gt;</code> — 控制移动端浏览器地址栏与已安装 PWA 标题栏的颜色。</li>
+  <li><code>&lt;link rel="icon" type="image/x-icon" href="/favicon.ico"&gt;</code>：给会去找 <code>favicon.ico</code> 的浏览器和收藏夹。</li>
+  <li><code>&lt;link rel="icon" type="image/png" sizes="..."&gt;</code> 16、32、48 三档：HTML 标准把选择权交给浏览器。2026-10-02 实测，2× 屏上的 Chromium 152 在有 ICO 链接时只请求 <code>favicon.ico</code>，只有 PNG 链接时请求 <code>favicon-32.png</code>。</li>
+  <li><code>&lt;link rel="apple-touch-icon"&gt;</code> 180×180：iOS Safari「添加到主屏幕」时使用。</li>
+  <li><code>&lt;link rel="manifest"&gt;</code>：指向 <code>site.webmanifest</code>，里面写着「站点名称」栏的名称、<code>"start_url": "/"</code>、<code>"display": "standalone"</code>，并用 <code>purpose: "any"</code> 声明 192 与 512 PNG。「站点名称」留空时不写 <code>name</code> 与 <code>short_name</code>，Chrome 不会提示安装网站。</li>
+  <li><code>&lt;meta name="theme-color"&gt;</code>：「主题色」的值，支持它的浏览器用来给界面着色。</li>
 </ul>
 
-<h2>图标包是怎么生成的</h2>
+<h2>中文站点名写进 manifest</h2>
 
-<p>渲染器对每个目标尺寸单独建立 canvas，应用所选的背景与形状蒙版，按 padding 偏移把素材居中绘制，再调用 <code>canvas.toBlob('image/png')</code> 取得紧凑的 PNG 数据。16/32/48 三个 PNG 通过 PNG 压缩条目格式打包成单一 favicon.ico——三段 PNG 数据接在 ICONDIR 头和三条 16 字节 ICONDIRENTRY 之后。</p>
+<p>假设站点叫「张三的技术博客」，短名称填「技术博客」，主题色选 <code>#c0392b</code>，背景保持透明。图标包里的 <code>site.webmanifest</code> 是：</p>
 
-<p>ZIP 写入器使用 STORED 方法（不做 DEFLATE）：PNG 本身已经是压缩格式，再做 DEFLATE 收益不足 1%，却要多带 5 KB 代码。文件名在通用位标志中标记 UTF-8，确保未来你给文件改名时非 ASCII 名称也不会乱码。</p>
+{/* fav-mf: {"appName":"张三的技术博客","shortName":"技术博客","themeColor":"#c0392b","bytes":452} */}
+<pre><code>{`{
+  "name": "张三的技术博客",
+  "short_name": "技术博客",
+  "start_url": "/",
+  "display": "standalone",
+  "icons": [
+    {
+      "src": "/android-chrome-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/android-chrome-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "theme_color": "#c0392b",
+  "background_color": "#ffffff"
+}`}</code></pre>
 
-<h2>隐私与离线</h2>
+<p>中文按原样写进 JSON，没有转成 <code>\uXXXX</code>；文件按 UTF-8 保存，一个汉字占 3 个字节，图标包列表里这个文件显示为 <code>452 B</code>。背景透明时 <code>background_color</code> 固定写 <code>#ffffff</code>，要别的颜色就把「背景」改成「颜色」。名称前后的空格会被去掉；「短名称」留空时不写 <code>short_name</code>。</p>
+
+<h2>横版 logo 放进 16 px 会怎样</h2>
+
+<p>「图片」素材保持原比例，缩放进去掉内边距后的正方形。很多公司 logo 是横版的，比如 800 × 200。默认内边距 8% 时，在 16 px 图标里它被画成：</p>
+
+{/* fav-fit: {"w":800,"h":200,"size":16,"padding":8} */}
+<p><code>13.44 × 3.36</code> px，高度不到 4 个像素，文字根本看不清。小尺寸建议换成方形标志，或者改用「文字」标签只放一两个字。</p>
+
+<p>「文字」素材里的中文也要注意：汉字是全角，一个字差不多一个字号宽。工具会测量文字宽度，超出正方形就缩小字号，所以四个汉字也能完整放下，但在 16 px 上每个字只有三四个像素宽，笔画会糊成一片。只放一个字最容易看清。</p>
+
+<h2>做 maskable 图标时内边距要多大</h2>
+
+<p>Android 会把 maskable 图标裁成启动器的形状，只保证中间半径为图标 40% 的圆形区域可见（<a href="https://web.dev/articles/maskable-icon" target="_blank" rel="noopener">web.dev</a>）。用 1000 × 1000 的方形图、内边距 22%、512 px 尺寸计算：</p>
+
+{/* fav-fit: {"w":1000,"h":1000,"size":512,"padding":22,"safe":true} */}
+<p>画出的正方形是 <code>286.72 × 286.72</code> px，四角到中心的距离 <code>202.74</code> px，在 <code>204.8</code> px 的圆内。内边距降到 21% 时，正方形变成 296.96 px，四角就超出了这个圆。图标包本身不声明 maskable，这里的数字用于你另外做一张 512 px 图。</p>
+
+<h2>隐私</h2>
 
 <ul>
-  <li>页面从不上传你的文件。打开浏览器网络面板观察——点击 Generate 时不会发出任何请求。</li>
-  <li>页面缓存后可离线工作。Canvas API、ZIP 与 ICO 写入器全部内联在页面包里。</li>
-  <li>只统计使用量。与其他工具页一样，本页加载 Google Analytics；工具只记录一次 generate 和一次 download 事件，事件只含工具名和操作，不含你的图片。</li>
+  <li>图片、文字、SVG 和站点名称都留在页面里，不上传，也不保存到 localStorage。</li>
+  <li>本页与其他工具页一样加载 Google Analytics 和 AdSense。每生成一次图标包记录一次 <code>generate</code>，每下载一次 ZIP 记录一次 <code>download</code>，只含工具名和操作。</li>
 </ul>
 
-<h2>常见坑</h2>
+<h2>限制</h2>
 
 <ul>
-  <li><strong>SVG 含外链图片。</strong> 当 SVG 引用 <code>&lt;image href="https://..."&gt;</code> 时浏览器拒绝把 canvas 读回为 blob（跨域污染）。粘贴前先把外链图片转成 Data URI 内联。</li>
-  <li><strong>Linux 工作机上 emoji 显示空框。</strong> 某些 IT 管控的 Linux 发行版未预装彩色 emoji 字体。预览会显示空框，切到 Text 或 Image 标签即可绕过。</li>
-  <li><strong>16 px 上的细节会消失。</strong> 线宽小于 1.5 px 在 16×16 上会消失。如果 32 上清晰、16 上没了，把设计简化或用背景色提供分割。</li>
+  <li><strong>素材。</strong>图片只收 PNG、JPG、SVG，最大 10 MB，WebP 和 GIF 会被拒绝。文字最多 4 个字符。emoji 只用第一个（ZWJ 组合和国旗算一个），样子取决于系统字体；某些 Linux 系统没有彩色 emoji 字体，会显示空框。</li>
+  <li><strong>SVG 里的外部图片。</strong>粘贴前先把 <code>&lt;image href="https://..."&gt;</code> 转成 Data URI。浏览器不允许读回 canvas 时，状态栏显示「SVG 引用了外部资源，请先内联图片。」，不生成图标包。</li>
+  <li><strong>输出固定。</strong>九种 PNG 尺寸、ICO 的三种尺寸（没有 256 px）、文件名和根目录路径（<code>/favicon.ico</code>、<code>"start_url": "/"</code>）都不能改。站点放在子目录时，要自己改代码片段和 manifest。不生成 SVG favicon，也不生成 maskable 图标。</li>
+  <li><strong>搜索结果里的图标。</strong>Google 要求 favicon 是正方形、至少 8 × 8 px，并建议大于 48 × 48 px（<a href="https://developers.google.com/search/docs/appearance/favicon-in-search?hl=zh-cn" target="_blank" rel="noopener">Google 搜索中心</a>）。代码片段只引用到 48 px 的 PNG，想提供更大的图，可以自己加一行引用 <code>favicon-96.png</code>。</li>
 </ul>
