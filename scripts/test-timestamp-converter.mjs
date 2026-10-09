@@ -16,7 +16,9 @@
 // on the English page; 4-language STRINGS share the same keys.
 // S2-9 (2026-10-09): the execCommand('copy') fallback of the result rows; full-width digits, signs
 // and points read as ASCII; the four-language invalid-timestamp message; the tsc-check worked
-// examples on the four tool pages (with process.env.TZ per example) and the local FAQ answers.
+// examples on the four tool pages (with process.env.TZ per example) and the local FAQ answers;
+// decimal seconds and milliseconds read exactly from the digits (8,000 seeded random values
+// compared with BigInt arithmetic on the decimal string; 1085157552.978 used to give …977).
 //
 // Run: node scripts/test-timestamp-converter.mjs
 
@@ -79,6 +81,49 @@ eq('µs negative', iso('-1500', 'us'), ['1969-12-31T23:59:59.999Z', 'us']);
 // ---------- errors ----------
 for (const bad of ['', 'abc', '1e10', '0x10', '1.2.3', '12 34', '١٢٣']) eq('invalid ' + JSON.stringify(bad), E.readTimestamp(bad, 'auto').error, bad.trim() === '' ? 'empty' : 'num');
 eq('too many seconds', E.readTimestamp('9999999999999999', 's').error, 'range');
+
+// ---------- decimal fractions are exact (S2-9, 2026-10-09) ----------
+// Seconds and milliseconds used to go through Number(text) × 1000 and Math.trunc, so binary
+// rounding moved some values by 1 ms: 1085157552.978 s read as 1085157552977 and
+// 1712160000123.99999 ms as 1712160000124. The expected value is computed from the decimal digits
+// with BigInt (digits × 1000 / 10^decimals for seconds, digits / 10^decimals for milliseconds, cut
+// toward zero), independently of how the engine computes it.
+{
+  const exactMs = (sign, int, frac, unit) => {
+    const ms = BigInt(int + frac) * (unit === 's' ? 1000n : 1n) / 10n ** BigInt(frac.length);
+    return Number(sign === '-' ? -ms : ms);
+  };
+  const msOf = (text, unit = 'auto') => { const r = E.readTimestamp(text, unit); return r.error ? r.error : [r.ms, r.unit]; };
+  eq('1085157552.978 s gives exactly 1085157552978 ms', msOf('1085157552.978'), [1085157552978, 's']);
+  eq('-1085157552.978 s gives exactly -1085157552978 ms', msOf('-1085157552.978'), [-1085157552978, 's']);
+  eq('1712160000123.99999 ms is cut toward zero, not rounded up', msOf('1712160000123.99999'), [1712160000123, 'ms']);
+  eq('digits after the third decimal of a second are dropped', msOf('1700000000.123999'), [1700000000123, 's']);
+  eq('a trailing point reads as whole seconds', msOf('1700000000.'), [1700000000000, 's']);
+  eq('the maximum date in seconds', msOf('8640000000000', 's'), [8640000000000000, 's']);
+  eq('1 ms past the maximum date in seconds is out of range', E.readTimestamp('8640000000000.001', 's').error, 'range');
+  let seed = 20261009;
+  const rand = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const between = (lo, hi) => lo + BigInt(Math.floor(rand() * Number(hi - lo)));
+  const digits = (n) => Array.from({ length: n }, () => Math.floor(rand() * 10)).join('');
+  const groups = [
+    { name: '3-decimal seconds in 1e9–2^31', n: 2000, int: () => between(1000000000n, 2147483648n), frac: () => digits(3), unit: 'auto', read: 's' },
+    { name: '3-decimal seconds in 2^33–1e10', n: 2000, int: () => between(8589934592n, 10000000000n), frac: () => digits(3), unit: 'auto', read: 's' },
+    { name: 'signed seconds below 1e12 with 1–9 decimals', n: 2000, sign: true, int: () => between(0n, 1000000000000n), frac: () => digits(1 + Math.floor(rand() * 9)), unit: 'auto', read: 's' },
+    { name: 'chosen-unit 13-digit seconds with 1–6 decimals', n: 1000, int: () => between(1000000000000n, 8640000000000n), frac: () => digits(1 + Math.floor(rand() * 6)), unit: 's', read: 's' },
+    { name: '13-digit milliseconds whose decimals end in nines', n: 1000, int: () => between(1000000000000n, 10000000000000n), frac: () => digits(Math.floor(rand() * 4)) + '9'.repeat(4 + Math.floor(rand() * 6)), unit: 'auto', read: 'ms' },
+  ];
+  for (const g of groups) {
+    const wrong = [], oldWrong = [];
+    for (let i = 0; i < g.n; i++) {
+      const sign = g.sign && rand() < 0.5 ? '-' : '', int = String(g.int()), frac = g.frac(), text = sign + int + '.' + frac;
+      const want = exactMs(sign, int, frac, g.read), r = E.readTimestamp(text, g.unit);
+      if (r.error || r.ms !== want || r.unit !== g.read) wrong.push(text + ' → ' + (r.error || r.ms) + ', want ' + want);
+      if (Math.trunc(Number(int + '.' + frac) * (g.read === 's' ? 1000 : 1)) !== Math.abs(want)) oldWrong.push(text);
+    }
+    eq('random ' + g.name + ' (' + g.n + ' values) equal the decimal-string result', wrong.slice(0, 5), []);
+    eq('random ' + g.name + ' include values that Number(text) × 1000 reads wrongly', oldWrong.length > 0, true);
+  }
+}
 
 // ---------- page ----------
 const page = readFileSync(join(root, 'src/content/tools/timestamp-converter/en.mdx'), 'utf8');
@@ -374,6 +419,13 @@ try {
     eq(prefix + 'the message no longer offers dates in this field', /or date|或日期|または日付|나 날짜/.test(client.errNum), false);
   }
 
+  // ---------- a fractional second keeps its exact millisecond on the page (S2-9) ----------
+  process.env.TZ = 'UTC';
+  for (const lang of Object.keys(languageText)) {
+    const p = lifecyclePage(lang); convertTimestamp(p, '1085157552.978');
+    eq('decimal/' + lang + ': the page shows the exact millisecond of 1085157552.978', rows(p, upper).slice(0, 3), ['1085157552', '1085157552978', '2004-05-21T16:39:12.978Z']);
+  }
+
   // ---------- worked examples on the tool pages (S2-9, 2026-10-09) ----------
   // {/* tsc-check: {"in": "x" | ["x", …], "unit"?: "auto"|"s"|"ms"|"us"|"ns", "tz"?: "Zone" | ["Zone", …],
   //   "show"?: ["s", "ms", "iso", "utc", "local"], "label"?: true, "status"?: true, "error"?: true} */},
@@ -488,7 +540,8 @@ try {
   for (const tip of tips) check('tip uses build-time language and matching content', /lang=\{lang\}/.test(tip[1]) && /about=\{T\.\w+\}/.test(tip[1]) && tip[2] === '{TIPS.' + /id="tc-tip-([^"]+)"/.exec(tip[1])[1] + '}');
   check('runtime i18n removed and only client strings serialized', /define:vars=\{\{ t: CLIENT_T \}\}/.test(source) && !/data-i18n|STRINGS|TIPS/.test(lifecycleScript));
   const engine = source.match(/^      \/\* ── engine:start ── \*\/[\s\S]*?^      \/\* ── engine:end ── \*\//m)[0];
-  check('exact engine bytes protected', sha(engine) === '478ed4b2739a9d8a0ddb6b24247629961e1988e624e7446675df6680c40f628e');
+  // S2-9 (2026-10-09, approved): seconds and milliseconds are read from the decimal digits with BigInt.
+  check('exact engine bytes protected', sha(engine) === 'dd4b42189023946b70c9dc958611b6038847d74b55e99f920408baddee50dd45');
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const entry = lifecycleStrings[lang], client = clientFor(lang);
     check(lang + ' all four languages share string keys', JSON.stringify(Object.keys(entry).sort()) === JSON.stringify(Object.keys(lifecycleStrings.en).sort()));
