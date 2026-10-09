@@ -298,10 +298,10 @@ for(const lang of ['en','zh','ja','ko']){
   }
   const h=page(lang);analyze(h);h.input('hha-input','X-New: pending');eq(lang+' manual editing preserves displayed results',h.get('hha-json-output').textContent,JSON.stringify(expected,null,2));h.get('hha-copy-json').click();eq(lang+' new Copy exports displayed last analyzed result',h.clipboard.at(-1).value,JSON.stringify(expected,null,2));h.clipboard.at(-1).resolve();await settle();
   analyze(h,'');eq(lang+' empty Analyze prompt and no result',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.pastePrompt,true]);
-  analyze(h,'unparseable');eq(lang+' invalid Analyze prompt and no result',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty,true]);
+  analyze(h,'unparseable');eq(lang+' input with no header line lists the line',[h.get('hha-status').textContent,h.get('hha-result').hidden],[T.empty+T.noteSep+T.invalidLines.replace('{n}','1'),false]);
 }
 await settle();eq('all clipboard rejections handled',unhandled,[]);process.removeListener('unhandledRejection',onUnhandled);
-const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":8264,"sha256":"31b5e1e8cecff2bb57bd4b460a42d921cae6eb6614914cee26c9530e15ada691"}};
+const protectedBytes={"dictionary":{"bytes":10097,"sha256":"fe0b5a0c6c248d1cdd58c90f32954f8282d391f5bc40a88affd3f9180c92d3a1"},"parser":{"bytes":8753,"sha256":"297d1b47bae4fa812b6ea54bf209191902ff999caa4368232d2723721d69801c"}};
 for(const[key,start,end]of[['dictionary',dbStart,dbEnd],['parser',fnStart,fnEnd]])eq(key+' byte-exact',[Buffer.byteLength(source.slice(start,end)),createHash('sha256').update(source.slice(start,end)).digest('hex')],[protectedBytes[key].bytes,protectedBytes[key].sha256]);
 console.log('Page lifecycle: '+(passes-pageStart)+' passed, '+failures+' total failures');
 
@@ -452,6 +452,32 @@ const names=p=>p.headers.map(h=>h.name);
   eq('2 quoted short max-age still warns',sts('max-age="86400"; includeSubDomains; preload'),['warn: max-age < 1 year (31536000s). Many preload lists require ≥ 1 year.']);
   eq('2 plain max-age unchanged',sts('max-age=31536000; includeSubDomains; preload'),[]);
 }
+// 3. A line without an ASCII colon (or with an empty name) is listed as not read, with the
+// original line number; a full-width colon (U+FF1A) has its own note.
+{
+  const p=E.parseHeaders('HTTP/1.1 200 OK\nContent-Type：text/html\nX-A: 1\njust text\n: no-name\nX-Wide：a: b');
+  eq('3 only valid lines are headers',names(p),['X-A']);
+  eq('3 invalid lines with line numbers and reasons',p.invalid,[
+    {line:2,text:'Content-Type：text/html',problem:'fullwidthColon'},
+    {line:4,text:'just text',problem:'noColon'},
+    {line:5,text:': no-name',problem:'noName'},
+    {line:6,text:'X-Wide：a: b',problem:'fullwidthColon'}]);
+  eq('3 obs-fold keeps the first line number',E.parseHeaders('X-A: 1\nbad line\n  continued').invalid,[{line:2,text:'bad line continued',problem:'noColon'}]);
+  eq('3 no invalid lines',E.parseHeaders('X-A: 1').invalid,[]);
+  for(const lang of ['en','zh','ja','ko']){
+    const T=strings[lang],h=page(lang);
+    analyze(h,'HTTP/1.1 200 OK\nContent-Type：text/html\nX-A: 1\njust text');
+    eq(lang+' 3 status counts the lines not read',h.get('hha-status').textContent,T.analyzed.replace('{n}','1').replace('{s}','')+T.noteSep+T.invalidLines.replace('{n}','2'));
+    const section=h.get('hha-panel-cat').querySelector('.hha-cat-invalid');
+    eq(lang+' 3 section heading',section?.querySelector('.hha-cat-title').textContent,T.catInvalid+' 2');
+    eq(lang+' 3 cards list line, text and note',section?.querySelectorAll('.hha-card').map(c=>[c.querySelector('.hha-line-no').textContent,c.querySelector('.hha-h-value').textContent,c.querySelector('.hha-hint').textContent]),
+      [[T.lineLabel.replace('{n}','2'),'Content-Type：text/html',T.hintWarn+': '+T.problems.fullwidthColon],[T.lineLabel.replace('{n}','4'),'just text',T.hintWarn+': '+T.problems.noColon]]);
+    eq(lang+' 3 JSON and raw keep only header fields',[JSON.parse(h.get('hha-json-output').textContent),h.get('hha-raw-output').textContent],[{_status:'HTTP/1.1 200 OK','x-a':'1'},'HTTP/1.1 200 OK\nX-A: 1']);
+    analyze(h,'only text\nmore text');
+    eq(lang+' 3 nothing read: result shows the lines',[h.get('hha-status').textContent,h.get('hha-result').hidden,h.get('hha-panel-cat').querySelectorAll('.hha-card').length],[T.empty+T.noteSep+T.invalidLines.replace('{n}','2'),false,2]);
+    eq(lang+' 3 problem texts are nonempty',['noColon','fullwidthColon','noName'].every(k=>typeof T.problems?.[k]==='string'&&T.problems[k].length>0),true);
+  }
+}
 console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total failures');
 
 // ---------- worked examples on the four pages ----------
@@ -460,7 +486,8 @@ console.log('RFC parsing fixes: '+(passes-rfcStart)+' passed, '+failures+' total
 // in the page language. hints = every card with hints, in page order: the header name, then
 // "  <label>: <hint>" lines. cards = each category heading, then "  <header name>" lines (the
 // status section shows the first line).
-// summary = the visible summary pills, one per line. status = the status line under the buttons. The input is pasted as written; nothing
+// summary = the visible summary pills, one per line. status = the status line under the buttons.
+// invalid = each line not read as a header: "<line label>: <text>", then "  <label>: <reason>". The input is pasted as written; nothing
 // in the examples is a real credential.
 const exampleStart=passes;
 function rendered(lang,input,view){
@@ -470,7 +497,8 @@ function rendered(lang,input,view){
   if(view==='raw')return h.get('hha-raw-output').textContent;
   if(view==='status')return h.get('hha-status').textContent;
   if(view==='summary')return ['hha-summary-type','hha-summary-status','hha-summary-count','hha-summary-security'].map(id=>h.get(id)).filter(el=>!el.hidden).map(el=>el.textContent).join('\n');
-  if(view==='hints')return panel.querySelectorAll('.hha-card').filter(c=>c.querySelectorAll('.hha-hint').length).map(c=>[c.querySelector('.hha-h-name').textContent,...c.querySelectorAll('.hha-hint').map(x=>'  '+x.textContent)].join('\n')).join('\n');
+  if(view==='invalid')return panel.querySelectorAll('.hha-card-invalid').map(c=>c.querySelector('.hha-line-no').textContent+': '+c.querySelector('.hha-h-value').textContent+'\n  '+c.querySelector('.hha-hint').textContent).join('\n');
+  if(view==='hints')return panel.querySelectorAll('.hha-card').filter(c=>c.querySelector('.hha-h-name')&&c.querySelectorAll('.hha-hint').length).map(c=>[c.querySelector('.hha-h-name').textContent,...c.querySelectorAll('.hha-hint').map(x=>'  '+x.textContent)].join('\n')).join('\n');
   if(view==='cards')return panel.querySelectorAll('section').map(s=>[s.querySelector('.hha-cat-title').textContent,...s.querySelectorAll('.hha-h-name, .hha-status-line').map(x=>'  '+x.textContent)].join('\n')).join('\n');
   throw Error('unknown view '+view);
 }

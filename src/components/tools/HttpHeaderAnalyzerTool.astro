@@ -27,6 +27,13 @@ const STRINGS = {
     catContent: 'Content', catCors: 'CORS', catAuth: 'Auth', catCookie: 'Cookie',
     catRange: 'Range', catTransport: 'Transport', catProxy: 'Proxy', catCustom: 'Custom / Other',
     hintWarn: 'Warning', hintInfo: 'Note', hintOk: 'OK',
+    catInvalid: 'Lines not read as headers', lineLabel: 'Line {n}',
+    invalidLines: '{n} line(s) were not read as headers; see “Lines not read as headers”.',
+    problems: {
+      noColon: 'No colon (:), so this is not a header field line (RFC 9112 section 5). It is not counted as a header.',
+      fullwidthColon: 'This line uses a full-width colon (：). HTTP accepts only the ASCII colon (:), so it is not a header field line. Retype the colon as ASCII.',
+      noName: 'The line starts with a colon, so the field name is empty. It is not counted as a header.',
+    },
     noteSep: ' ',
     bodyStop: 'The header section ended at the empty line {line}; the {n} line(s) after it were not read.',
   },
@@ -54,6 +61,13 @@ const STRINGS = {
     catContent: '内容', catCors: 'CORS', catAuth: '鉴权', catCookie: 'Cookie',
     catRange: '范围', catTransport: '传输', catProxy: '代理', catCustom: '自定义 / 其他',
     hintWarn: '警告', hintInfo: '提示', hintOk: '正常',
+    catInvalid: '未作为头部读取的行', lineLabel: '第 {n} 行',
+    invalidLines: '有 {n} 行未作为头部读取，见「未作为头部读取的行」。',
+    problems: {
+      noColon: '没有冒号（:），不是头部字段行（RFC 9112 第 5 节），不计入头部。',
+      fullwidthColon: '这一行用的是全角冒号（：）。HTTP 只认半角冒号（:），所以它不算头部字段行，请改成半角冒号。',
+      noName: '这一行以冒号开头，字段名为空，不计入头部。',
+    },
     noteSep: '',
     bodyStop: '头部在第 {line} 行的空行处结束，后面的 {n} 行未读取。',
   },
@@ -81,6 +95,13 @@ const STRINGS = {
     catContent: 'コンテンツ', catCors: 'CORS', catAuth: '認証', catCookie: 'Cookie',
     catRange: 'レンジ', catTransport: '転送', catProxy: 'プロキシ', catCustom: 'カスタム / その他',
     hintWarn: '警告', hintInfo: '注意', hintOk: 'OK',
+    catInvalid: 'ヘッダーとして読まなかった行', lineLabel: '{n} 行目',
+    invalidLines: 'ヘッダーとして読まなかった行が {n} 行あります（「ヘッダーとして読まなかった行」を参照）。',
+    problems: {
+      noColon: 'コロン（:）がないため、ヘッダーフィールドの行ではありません（RFC 9112 5 節）。ヘッダーには数えません。',
+      fullwidthColon: '全角コロン（：）が使われています。HTTP で区切りになるのは半角コロン（:）だけなので、この行はヘッダーフィールドとして読めません。半角で入力し直してください。',
+      noName: 'コロンで始まっていて、フィールド名が空です。ヘッダーには数えません。',
+    },
     noteSep: '',
     bodyStop: '{line} 行目の空行でヘッダーが終わったと判断し、その後の {n} 行は読み込んでいません。',
   },
@@ -108,6 +129,13 @@ const STRINGS = {
     catContent: '콘텐츠', catCors: 'CORS', catAuth: '인증', catCookie: '쿠키',
     catRange: '범위', catTransport: '전송', catProxy: '프록시', catCustom: '사용자 정의 / 기타',
     hintWarn: '경고', hintInfo: '참고', hintOk: 'OK',
+    catInvalid: '헤더로 읽지 않은 줄', lineLabel: '{n}번째 줄',
+    invalidLines: '헤더로 읽지 않은 줄이 {n}개 있습니다(‘헤더로 읽지 않은 줄’ 참고).',
+    problems: {
+      noColon: '콜론(:)이 없어 헤더 필드 줄이 아닙니다(RFC 9112 5절). 헤더 수에 넣지 않습니다.',
+      fullwidthColon: '전각 콜론(：)을 썼습니다. HTTP는 반각 콜론(:)만 구분자로 인식하므로 이 줄은 헤더 필드로 읽을 수 없습니다. 반각으로 다시 입력하세요.',
+      noName: '콜론으로 시작해 필드 이름이 비어 있습니다. 헤더 수에 넣지 않습니다.',
+    },
     noteSep: ' ',
     bodyStop: '{line}번째 줄의 빈 줄에서 헤더가 끝난 것으로 보고, 그 뒤의 {n}줄은 읽지 않았습니다.',
   },
@@ -403,26 +431,29 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       function parseHeaders(rawText) {
         var unfolded = unfoldHeaders(rawText);
-        var lines = unfolded.lines.map(function (l) { return l.text; });
-        if (lines.length === 0) return { type: 'unknown', statusLine: null, headers: [], stop: null };
+        var lines = unfolded.lines;
+        if (lines.length === 0) return { type: 'unknown', statusLine: null, headers: [], invalid: [], stop: null };
 
-        var type = detectType(lines[0]);
+        var type = detectType(lines[0].text);
         var statusLine = null;
         var headerLines = lines;
         if (type !== 'unknown') {
-          statusLine = lines[0];
+          statusLine = lines[0].text;
           headerLines = lines.slice(1);
         } else {
           for (var pi = 0; pi < lines.length; pi++) {
-            var pm = /^\s*(:[A-Za-z]+)\s*:/.exec(lines[pi]);
+            var pm = /^\s*(:[A-Za-z]+)\s*:/.exec(lines[pi].text);
             var pd = pm && PSEUDO_DB[pm[1].toLowerCase()];
             if (pd) { type = pd.type; break; }
           }
         }
 
         var headers = [];
+        // Lines that are not header field lines (RFC 9112 §5), with the input line number.
+        var invalid = [];
         for (var i = 0; i < headerLines.length; i++) {
-          var line = headerLines[i];
+          var line = headerLines[i].text;
+          var lineNo = headerLines[i].line;
           var pseudo = /^\s*(:[^:\s]+)\s*:(.*)$/.exec(line);
           if (pseudo) {
             var pname = pseudo[1].toLowerCase();
@@ -437,10 +468,17 @@ const { tips: TIPS, ...CLIENT_T } = T;
             continue;
           }
           var idx = line.indexOf(':');
-          if (idx === -1) continue;
+          var wide = line.indexOf('\uFF1A');
+          if (idx === -1 || (wide !== -1 && wide < idx)) {
+            invalid.push({ line: lineNo, text: line, problem: wide !== -1 ? 'fullwidthColon' : 'noColon' });
+            continue;
+          }
           var name = line.slice(0, idx).trim();
           var value = line.slice(idx + 1).trim();
-          if (!name) continue;
+          if (!name) {
+            invalid.push({ line: lineNo, text: line, problem: 'noName' });
+            continue;
+          }
           var lower = name.toLowerCase();
           var entry = HEADER_DB[lower] || null;
           headers.push({
@@ -466,7 +504,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           });
         }
 
-        return { type: type, statusLine: statusLine, headers: headers, stop: unfolded.stop };
+        return { type: type, statusLine: statusLine, headers: headers, invalid: invalid, stop: unfolded.stop };
       }
 
       function applyHints(name, value, type) {
@@ -528,6 +566,10 @@ const { tips: TIPS, ...CLIENT_T } = T;
         return t.hintOk;
       }
 
+      function problemText(bad) {
+        return t.problems[bad.problem] || t.problems.noColon;
+      }
+
       function renderCategorized(parsed) {
         var html = '';
         if (parsed.statusLine) {
@@ -535,6 +577,19 @@ const { tips: TIPS, ...CLIENT_T } = T;
             '<h3 class="hha-cat-title">' + escapeHtml(t.catStatus) + '</h3>' +
             '<div class="hha-status-line"><code>' + escapeHtml(parsed.statusLine) + '</code></div>' +
             '</section>';
+        }
+        if (parsed.invalid.length) {
+          html += '<section class="hha-cat-section hha-cat-invalid">' +
+            '<h3 class="hha-cat-title">' + escapeHtml(t.catInvalid) + ' <span class="hha-cat-count">' + parsed.invalid.length + '</span></h3>';
+          for (var ii = 0; ii < parsed.invalid.length; ii++) {
+            var bad = parsed.invalid[ii];
+            html += '<article class="hha-card hha-card-invalid">' +
+              '<header class="hha-card-head"><span class="hha-line-no">' + escapeHtml(t.lineLabel.replace('{n}', bad.line)) + '</span></header>' +
+              '<div class="hha-h-value"><code>' + escapeHtml(bad.text) + '</code></div>' +
+              '<ul class="hha-hints"><li class="hha-hint hha-hint-warn"><strong>' + escapeHtml(t.hintWarn) + ':</strong> ' + escapeHtml(problemText(bad)) + '</li></ul>' +
+              '</article>';
+          }
+          html += '</section>';
         }
         var groups = {};
         for (var i = 0; i < parsed.headers.length; i++) {
@@ -630,7 +685,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
           return;
         }
         var parsed = parseHeaders(text);
-        if (parsed.headers.length === 0 && !parsed.statusLine) {
+        var readNothing = parsed.headers.length === 0 && !parsed.statusLine;
+        if (readNothing && !parsed.invalid.length) {
           setStatus(t.empty, 'error');
           resultEl.hidden = true;
           lastParsed = null;
@@ -647,9 +703,11 @@ const { tips: TIPS, ...CLIENT_T } = T;
         renderJson(parsed);
         resultEl.hidden = false;
         var n = parsed.headers.length;
-        var message = t.analyzed.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
+        var message = readNothing ? t.empty : t.analyzed.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
+        if (parsed.invalid.length) message += t.noteSep + t.invalidLines.replace('{n}', parsed.invalid.length);
         if (parsed.stop && parsed.stop.rest > 0) message += t.noteSep + t.bodyStop.replace('{line}', parsed.stop.line).replace('{n}', parsed.stop.rest);
-        setStatus(message, 'success');
+        setStatus(message, readNothing ? 'error' : 'success');
+        if (readNothing) return;
         if (text !== lastTracked) {
           lastTracked = text;
           window.trackTool && window.trackTool('http-header-analyzer', 'analyze');
@@ -852,6 +910,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
     font-family: var(--font-mono); font-size: 0.82rem;
     color: var(--color-text); word-break: break-all; line-height: 1.45;
   }
+  .hha-line-no { font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; color: var(--color-text-secondary); }
   .hha-h-desc { font-size: 0.82rem; color: var(--color-text-secondary); margin: 0; line-height: 1.55; }
 
   .hha-hints { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
