@@ -327,7 +327,7 @@ let moduleError='';try{await require('esbuild').transform(compiled.code,{loader:
 const css=compiled.css.join('\n'),scope=css.match(/data-astro-cid-[\w-]+/)[0];
 const hash=v=>createHash('sha256').update(v).digest('hex');
 // Hash updated by S2-9 (2026-10-09): localized error messages, the full-width and space-like notes, analytics on change / copy success, and the copy fallback.
-eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'b48e750c2fafc383813ed9c3f89d54e53530b1540e6f8d85d136613822afeb8e');
+eq('v2 whole client core retained apart from shared Copy class',hash(source.slice(source.indexOf('      var inputEl ='),source.indexOf('  </script>')).replace('csc-copy-btn btn-copy','csc-copy-btn')),'cbe079498a370b86fcdd29f9144272460ebde09dfdf4053e1045d095d7974224');
 check('v2 direct flex root',/^<div class="csc-wrap">/.test(markupTemplate)&&/\.csc-wrap[^{}]*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(css));
 check('v2 input before reserved hint/status before results',markupTemplate.indexOf('id="csc-input"')<markupTemplate.indexOf('csc-hint csc-status')&&markupTemplate.indexOf('csc-hint csc-status')<markupTemplate.indexOf('class="csc-result-section"'));
 check('v2 fixed hint/status height',/\.csc-status[^{}]*\{[^}]*height:\s*2\.8em[^}]*overflow:\s*auto/.test(css));
@@ -453,6 +453,18 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
     eq(lang + ' ' + code + ' note only on the card with it outside quotes', notes, [[(C.spaceAsName ?? '').replace('{code}', code)], []]);
   }
 }
+// Review S2-9 S6: the full-width note is about full-width syntax characters (＃ ． ： ［ ］ （ ） ，
+// ＞ ＋ ～ ＊ ｜ ＝ ＂ ＇ ＾ ＄ ＆) only; full-width letters and digits in a class name such as
+// .ボタンＡ are ordinary name characters and get no note.
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const C = locale(lang).CLIENT_T;
+  const p = page(lang, 'shared-after'); p.type('.ボタンＡ, .ｂｔｎ１, .btn：hover, ＃main'); p.tick(200);
+  eq(lang + ' full-width note only for syntax characters', Array.from(p.result.querySelectorAll('.csc-result-card')).map(c => c.querySelector('.csc-warn')?.textContent ?? ''), ['', '', C.fullwidth, C.fullwidth]);
+}
+// Review S2-9 zh S4 / ja 5 / ko 4: wording of the space-like note.
+check('zh note says 后代组合器', locale('zh').CLIENT_T.spaceAsName.includes('后代组合器'));
+check('ja note says 子孫結合子としては扱いません', locale('ja').CLIENT_T.spaceAsName.includes('子孫結合子としては扱いません'));
+check('ko note says Chrome이 읽는 방식대로', locale('ko').CLIENT_T.spaceAsName.includes('Chrome이 읽는 방식대로'));
 // Analytics: `calc` once per committed change (change event), not after every 200 ms pause;
 // `copy` only after a successful copy.
 for (const lang of ['en', 'zh', 'ja', 'ko']) {
