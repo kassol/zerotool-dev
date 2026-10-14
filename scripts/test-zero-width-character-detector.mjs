@@ -727,6 +727,7 @@ for (const lang of ['en', 'zh']) {
   }
   equal('page script writes innerHTML only for the escaped preview', (script.match(/innerHTML/g) || []).length, 1);
   check('decode block does not touch the DOM', !/document\.|innerHTML|textContent/.test(decBlock));
+  check('input text is not restored by the browser after reload', /<textarea id="zwcd-input"[^>]*autocomplete="off"/.test(source));
   check('password field is not autofilled and not persisted', /id="zwcd-password"[^>]*type="password"[^>]*autocomplete="off"/.test(source));
   check('persistence stays disabled', /'zero-width-character-detector': 'disabled'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
 }
