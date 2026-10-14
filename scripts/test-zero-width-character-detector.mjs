@@ -364,7 +364,7 @@ function pageHarness(lang = 'en', extraGlobals = {}) {
     const mdx = readFileSync(join(root, 'src/content/tools/zero-width-character-detector', lang + '.mdx'), 'utf8');
     const steps = (mdx.match(/steps:\n([\s\S]*?)faqItems:/) || [])[1] || '';
     const values = [...steps.matchAll(/^  - (".*")$/gm)].map(m => JSON.parse(m[1]));
-    equal(lang + ' four steps', values.length, 4);
+    equal(lang + ' five steps', values.length, 5);
     check(lang + ' steps fit schema', values.every(v => v.length <= 280) && values.join('').length <= 1200);
     check(lang + ' old How to use removed', !/^## (?:How to use|使用步骤|使い方|사용 방법)$/m.test(mdx));
     check(lang + ' limits retained', /^## (?:Limits|限制|制限|한계)$/m.test(mdx));
@@ -729,6 +729,54 @@ for (const lang of ['en', 'zh']) {
   check('decode block does not touch the DOM', !/document\.|innerHTML|textContent/.test(decBlock));
   check('password field is not autofilled and not persisted', /id="zwcd-password"[^>]*type="password"[^>]*autocomplete="off"/.test(source));
   check('persistence stays disabled', /'zero-width-character-detector': 'disabled'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
+}
+
+// 10i. worked examples in the four tool pages ({/* zwcd-decode: {...} */}) are recomputed
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const mdx = readFileSync(join(root, 'src/content/tools/zero-width-character-detector', lang + '.mdx'), 'utf8');
+  const S = STRINGS_ALL[lang].dec;
+  const marks = [...mdx.matchAll(/\{\/\* zwcd-decode: (\{[\s\S]*?\}) \*\/\}/g)];
+  check(lang + ' has at least two zwcd-decode examples', marks.length >= 2);
+  for (let i = 0; i < marks.length; i++) {
+    const a = JSON.parse(marks[i][1]);
+    const from = marks[i].index + marks[i][0].length;
+    const nextMark = i + 1 < marks.length ? marks[i + 1].index : mdx.length;
+    const nextH2 = mdx.indexOf('\n## ', from);
+    const section = mdx.slice(from, Math.min(nextMark, nextH2 < 0 ? mdx.length : nextH2));
+    const has = (s, what) => check(lang + ' example ' + (i + 1) + ': ' + what, section.includes(s), JSON.stringify(s));
+    if (a.page) {
+      const text = STEGO_TEXT(lang);
+      const sc = D.scan(text);
+      const r = D.decodeHidden(sc.hits);
+      equal(lang + ' page sample decodes to its secret', r.readings[0].text, STRINGS_ALL[lang].stego.secret);
+      equal(lang + ' example ' + (i + 1) + ': hit count', sc.hits.length, a.hits);
+      has(String(a.hits), 'hit count');
+      has(r.readings[0].text, 'hidden text');
+      has(D.describeReading(r.readings[0], S), 'encoding line');
+    } else if (a.fixture) {
+      const fx = FIX.samples.find(s => s.id === a.fixture);
+      const e = decode(fx.text).encrypted[0];
+      has(S.encrypted.replace('{scheme}', 'StegCloak'), 'encrypted notice');
+      has(a.password, 'password');
+      equal(lang + ' example ' + (i + 1) + ': password from the fixture', a.password, fx.password);
+      if (subtle) {
+        const out = await D.decryptStegCloak(e, a.password, subtle);
+        equal(lang + ' example ' + (i + 1) + ': decrypts', out.text, fx.ref);
+        has(fx.ref, 'decrypted text');
+        has(D.describeReading({ scheme: 'stegcloak', text: fx.ref, decrypted: true, integrity: e.integrity }, S), 'encoding line');
+      }
+    } else if (a.scheme === 'zwl') {
+      const r = decode(ENCODERS.zwl(a.secret).replace(COVER[0], a.cover[0]).replace(COVER.slice(1), a.cover.slice(1)));
+      equal(lang + ' example ' + (i + 1) + ': zero-width-lib secret', r.readings[0] && r.readings[0].text, a.secret);
+      has(a.secret, 'hidden text');
+      has(D.describeReading(r.readings[0], S), 'encoding line');
+    } else if (a.text) {
+      const r = decode(a.text);
+      equal(lang + ' example ' + (i + 1) + ': reading', r.readings[0] && r.readings[0].text, a.maybe);
+      check(lang + ' example ' + (i + 1) + ': marked as possible', r.readings[0] && !r.readings[0].confident);
+      has(S.maybe, 'possible label');
+    } else check(lang + ' example ' + (i + 1) + ': known annotation', false, marks[i][1]);
+  }
 }
 
 console.log(`${passes} passed, ${failures} failed`);

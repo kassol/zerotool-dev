@@ -1,9 +1,10 @@
 ---
 seoTitle: "Invisible Character Detector & Remover | ZeroTool"
-seoDescription: "Paste text to find zero-width spaces, BOMs, Trojan Source bidi controls and ASCII hidden in tag characters. Remove one category and keep emoji intact."
+seoDescription: "Paste text to find zero-width spaces, BOMs, bidi controls and tag characters, decode messages hidden with 330k, zero-width-lib, StegCloak and similar tools, and remove one category."
 steps:
   - "Paste text into Input or choose a sample. Detection runs on every change."
   - "Read the status count and the Detection panel. Hover a chip to see its code point and name; Stats counts each category."
+  - "If something is hidden, the Hidden text card shows the decoded message and the encoding it used, with a copy button. For encrypted StegCloak text, type the sender's password and press Decrypt."
   - "Choose the category under Strip. All removes all detected categories; Tag only keeps emoji joiners and variation selectors."
   - "Use Copy cleaned text or Download .txt to export the complete cleaned text. The download uses UTF-8."
 faqItems:
@@ -18,13 +19,13 @@ faqItems:
     answer: "Many emoji are sequences. A family emoji is three people joined by two zero-width joiners (U+200D), and the red heart ❤️ is U+2764 plus variation selector 16 (U+FE0F). The All mode removes both, so the family falls apart into three people and the heart turns into a text-style glyph. Pick Tag only or Bidi only to remove the suspicious category and leave emoji alone. The England, Scotland and Wales flags are built from tag characters too; the tool recognizes these three and keeps them in every mode."
   - question: "Is my text sent to a server?"
     id: "privacy"
-    answer: "No. Detection and removal run in JavaScript on this page, and the text is not saved in storage, cookies or the URL. This page also loads no analytics or ad scripts. You can check it in DevTools: the Network tab shows no request while you paste and clean text."
+    answer: "No. Detection, decoding, decryption and removal run in JavaScript on this page, and the text is not saved in storage, cookies or the URL. Decoded hidden text and any password you type are likewise only shown and used on this page; they never go to storage, the URL or analytics. This page also loads no analytics or ad scripts. You can check it in DevTools: the Network tab shows no request while you paste, decrypt and clean text."
   - question: "Does removing bidi controls fix a Trojan Source file?"
     id: "trojan-source"
     answer: "It shows you the real order of the code, which is what you need to review it. With the controls removed, a string that looked like a closed literal followed by a comment reads as one string again. It does not tell you whether the code is malicious. Some compilers now reject these characters: since Rust 1.56.1, rustc denies text_direction_codepoint_in_literal and text_direction_codepoint_in_comment by default, so the build fails. Use this page for text that does not pass through such a tool, such as a diff pasted into chat."
   - question: "Can it decode a message hidden with zero-width characters?"
     id: "steganography"
-    answer: "No. Zero-width steganography tools write the message as a pattern of characters such as the zero-width space and the zero-width non-joiner, and each tool uses its own encoding. This page marks every such character in its original order and counts them, so you can see that something is hidden and where, and remove it; reading the message requires knowing the scheme. Tag characters are different: one that mirrors a printable ASCII character is labeled with that character, such as TAG-B."
+    answer: "Usually, yes. On every change the page tries the encodings of common zero-width steganography tools: 330k Unicode Steganography (also served by BFW), zwsp-steg, zero-width-lib, binary digit strings, morse-encrypt, StegCloak, StegZero version 1 and variation selectors; tag characters are joined into an English sentence. It shows a result only when the whole payload decodes to readable characters, and it names the encoding. StegCloak encrypts with a password by default; type the sender's password and the page decrypts it. StegZero passphrase frames and custom formats it does not know cannot be read; for those it shows the raw digit string so you can try another tool."
 ---
 
 ## Example: a hidden instruction next to an emoji
@@ -75,6 +76,37 @@ Now the comparison is visibly against one long string. `accessLevel` is `"user"`
 
 Together these are the 4,174 code points with the Default_Ignorable_Code_Point property in [DerivedCoreProperties.txt](https://www.unicode.org/Public/UCD/latest/ucd/DerivedCoreProperties.txt). [UAX #44](https://www.unicode.org/reports/tr44/) describes them as characters that "should be ignored in rendering (unless explicitly supported)". The bidi row is the full Bidi_Control set from PropList.txt. A regression test checks every code point from U+0000 to U+10FFFF against that list.
 
+## Decoding hidden messages
+
+Zero-width steganography writes a message as a pattern of invisible characters, usually the zero-width space U+200B, the non-joiners and joiners U+200C and U+200D, and the BOM U+FEFF. When you paste text, the **Hidden text** card tries the formats below and shows only a complete decode made of readable characters. Each format was checked against its source code on 2026-10-14.
+
+| Encoding | Where you meet it | Characters | Per hidden character | Readable? |
+|---|---|---|---|---|
+| 330k Unicode Steganography | 330k's page, the BFW copy, CTF write-ups | U+200C U+200D U+202C U+FEFF by default, user-selectable | 8 per UTF-16 unit by default | Yes, with the same character set |
+| zwsp-steg | npm zwsp-steg 1.0.1, zwsp-steg-py | U+200B–U+200F, or U+200B–U+200D | 7 or 11 | Yes |
+| zero-width-lib | npm zero-width-lib 1.1.0, zero-width-web | U+200C U+200D U+200E U+200F U+FEFF, U+200B between characters | base-5 digits per code point | Yes |
+| Binary digit strings | MonoCalc, StegZero legacy, lorossi's zerowidth.py | U+200B and U+200C (or U+FEFF), sometimes U+200D between bytes | 8 per byte | Yes |
+| morse-encrypt | [rover95/morse-encrypt](https://github.com/rover95/morse-encrypt) | U+200B U+200C U+200D | 1–5 per letter | Yes |
+| StegCloak | npm stegcloak 1.1.1 | U+200C U+200D U+2061–U+2064 | 4 per compressed byte | Plain: yes. Encrypted: with the password |
+| StegZero | [stegzero.com](https://stegzero.com/) | eight characters, or U+200B / U+200C | 3 bits or 1 bit each | Version 1: yes. Passphrase: no |
+| Variation selectors | Paul Butler's emoji encoder | U+FE00–U+FE0F, U+E0100–U+E01EF | 1 per byte | Yes |
+| Tag characters | ASCII Smuggler | U+E0020–U+E007E | 1 per ASCII character | Yes |
+
+{/* zwcd-decode: {"page":true,"hits":240} */}
+
+Click the **Zero-width steganography** sample to see it work. The cover is an ordinary note with a CTF-style flag hidden in 330k's default characters. Detection reports 240 invisible characters, a mix of `ZWNJ`, `ZWJ`, `PDF` and `BOM` chips, and the card shows `flag{hidden_in_plain_sight} 🚩` with this line underneath: "Decoded as 330k Unicode Steganography / zwsp-steg: U+200C U+200D U+202C U+FEFF are the digits 0–3, 8 characters per UTF-16 code unit."
+
+{/* zwcd-decode: {"fixture":"stegcloak-hmac-0","password":"hunter2"} */}
+
+StegCloak encrypts by default, so a pasted StegCloak message usually reads "StegCloak message found. It is encrypted; only the sender's password can reveal it." This sample also carries an HMAC. Type `hunter2` and press **Decrypt**, and the card shows `flag{z3r0_w1dth}` and "Decoded as StegCloak: decrypted with the password you entered, integrity check (HMAC) passed." The page repeats StegCloak's own steps with the browser's Web Crypto API: PBKDF2-HMAC-SHA512 with 10,000 iterations for the key, AES-256-CTR, then HMAC-SHA256. With an HMAC, a wrong password fails the check and you get an error. Without one, the page can only reject output that is not readable text, so a very short message can still come out as a few plausible characters.
+
+A few rules keep ordinary text from looking like a secret:
+
+- A joiner, non-joiner or BOM standing alone is ignored. Emoji sequences, Persian, Hindi and a BOM at the start of a file use them one at a time, and the card reports how many it skipped.
+- When a string can be read more than one way, the most likely reading comes first and the rest go under **Other possible readings**. A reading that is short or relies on a guessed code table is labeled as possible, which means it may be a coincidence.
+- If nothing fits, the card lists the raw digit string in code point order so you can try it elsewhere.
+- To delete the hidden message, use **Strip: All**. 330k's default set includes U+202C, a bidi control, so **Zero-Width only** leaves part of the payload behind.
+
 ## How this differs from other invisible character tools
 
 Most viewers remove everything in one pass. On 2026-09-29 we pasted the **Hidden tag text** sample into [Invisible Character Viewer](https://invisiblecharacterviewer.com/). It labeled the zero-width joiners and every tag letter, which is correct. Its **Strip Invisible Characters** button then returned `👨👩👧`: the joiners went with the hidden text. [ASCII Smuggler](https://embracethered.com/blog/ascii-smuggler.html) decodes the tags into one readable sentence, which is easier to read than chips when the message is long. It gives no cleaned copy.
@@ -88,6 +120,6 @@ This page removes one category at a time. **Tag only** deletes the hidden senten
 - The England, Scotland and Wales flags are not flagged and stay in every mode. A flag such as 🏴󠁧󠁢󠁳󠁣󠁴󠁿 is U+1F3F4, the tag letters `gbsct` and U+E007F CANCEL TAG ([UTS #51](https://www.unicode.org/reports/tr51/)), and these three are the only entries in the RGI_Emoji_Tag_Sequence list of [emoji-sequences.txt](https://www.unicode.org/Public/emoji/latest/emoji-sequences.txt) (Emoji 18.0). Every other tag run is flagged, including tag text placed between 🏴 and U+E007F to look like a flag: Tag only removes it and leaves 🏴.
 - The Detection panel draws one page at a time: up to 1,000 invisible characters and 20,000 other characters. Use **Previous** and **Next** for the rest. The counts, the cleaned text, **Copy cleaned text** and **Download .txt** always cover the whole input, so a paste with 100,000 hits is counted and cleaned in full. When nothing is left after stripping, copy and download are disabled.
 - Only one category is removed per pass. To remove tags and bidi controls but keep emoji, run **Tag only**, paste the cleaned text into the input, then run **Bidi only**.
-- Zero-width steganography is shown but not decoded. Schemes that write bits as ZWSP and ZWNJ, like the fingerprinting technique Zach Aysan [described in 2017](https://www.zachaysan.com/writing/2017-12-30-zero-width-characters), appear as a row of chips in their original order. Reading the bits requires knowing the scheme.
+- Decoding covers the formats in the table above. Custom code tables, other tools' own formats such as Teeqq and LittleOne, encryption other than StegCloak's (including StegZero passphrases), and content that was encrypted before it was hidden cannot be read. U+200A, which 330k's page lets you tick and labels as a zero-width space, is a hair space with width; it is not flagged, so a message that uses it does not decode. Short fingerprints, like the 8-bit marks Zach Aysan [described in 2017](https://www.zachaysan.com/writing/2017-12-30-zero-width-characters), read as one or two characters and are labeled as possible coincidences.
 
 Text headed for an AI assistant can also carry API keys. The [Redact API Keys & Secrets](/tools/secret-redactor/) tool replaces them with placeholders before you paste. Styled letters from the [Fancy Text Generator](/tools/unicode-text-converter/), such as 𝐁𝐨𝐥𝐝, are visible characters and pass this check unflagged.
