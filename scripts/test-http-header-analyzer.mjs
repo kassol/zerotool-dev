@@ -269,10 +269,41 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   eq(lang + ' start line trims trailing HTTP whitespace in every view', [h.get('hha-summary-status').textContent, JSON.parse(h.get('hha-json-output').textContent)._status, h.get('hha-raw-output').textContent.split('\n')[0]], ['HTTP/1.1 200 OK', 'HTTP/1.1 200 OK', 'HTTP/1.1 200 OK']);
   eq(lang + ' ignored duplicate STS does not inflate security count', h.get('hha-summary-security').textContent, strings[lang].summarySecurity.replace('{n}', '2'));
   eq(lang + ' JSON retains both STS fields for inspection', JSON.parse(h.get('hha-json-output').textContent)['strict-transport-security'], ['max-age=31536000', 'max-age=0']);
-  for (const target of ['/dav/']) {
-    analyze(h, 'PROPFIND ' + target + ' HTTP/1.1\nHost: example.com');
-    eq(lang + ' unsupported request method has its own explanation ' + target, h.get('hha-panel-cat').querySelector('.hha-cat-invalid .hha-card').textContent.includes(unsupportedMethod[lang]), true);
+  for (const target of ['/dav/', 'http://example.test/a', 'https://example.test:8443/a', '/dav/a:b']) {
+    const request = 'PROPFIND ' + target + ' HTTP/1.1';
+    const note = 'PROPFIND http://example.test/a HTTP/1.1';
+    const expected = {host: 'example.test', 'x-endpoint': 'https://example.test/resource', 'x-note': note};
+    analyze(h, request + '\nHost: example.test\nX-Endpoint: https://example.test/resource\nX-Note: ' + note);
+    const bad = h.get('hha-panel-cat').querySelector('.hha-cat-invalid .hha-card');
+    eq(lang + ' unsupported request method has its own explanation ' + target, bad?.textContent.includes(unsupportedMethod[lang]) ?? false, true);
+    eq(lang + ' unsupported request is identified at original line 1 ' + target,
+      [bad?.querySelector('.hha-line-no')?.textContent, bad?.querySelector('.hha-h-value')?.textContent],
+      [strings[lang].lineLabel.replace('{n}', '1'), request]);
+    eq(lang + ' unsupported request is excluded from JSON while real values are retained ' + target, JSON.parse(h.get('hha-json-output').textContent), expected);
+    eq(lang + ' unsupported request is excluded from normalized raw headers ' + target, h.get('hha-raw-output').textContent,
+      'Host: example.test\nX-Endpoint: https://example.test/resource\nX-Note: ' + note);
+    eq(lang + ' unsupported request does not inflate header count ' + target, h.get('hha-summary-count').textContent, strings[lang].summaryCount.replace('{n}', '3').replace('{s}', 's'));
+    h.get('hha-copy-json').click();
+    eq(lang + ' actual Copy JSON excludes the unsupported request ' + target, h.clipboard.at(-1).value, JSON.stringify(expected, null, 2));
+    h.clipboard.at(-1).resolve(); await settle();
   }
+  analyze(h, '\n* Connected to example.test\n> PROPFIND http://example.test/a HTTP/1.1\n> Host: example.test\n> X-A: 1\n> Broken\n> X-A: 2\n> X-Long: one\n> \ttwo');
+  eq(lang + ' unsupported curl request preserves original diagnostic line positions',
+    h.get('hha-panel-cat').querySelectorAll('.hha-cat-invalid .hha-line-no').map(el => el.textContent),
+    [3, 6].map(n => strings[lang].lineLabel.replace('{n}', n)));
+  eq(lang + ' unsupported curl request retains duplicate fields and ordinary unfolding', JSON.parse(h.get('hha-json-output').textContent),
+    {host: 'example.test', 'x-a': ['1', '2'], 'x-long': 'one two'});
+  h.copyMode('missing'); h.execMode('true'); h.get('hha-copy-json').click();
+  eq(lang + ' fallback Copy JSON also excludes the unsupported request', h.execCalls.at(-1).text,
+    JSON.stringify({host: 'example.test', 'x-a': ['1', '2'], 'x-long': 'one two'}, null, 2));
+  h.copyMode('pending');
+  analyze(h, 'PROPFIND: http://example.test/a HTTP/1.1\nX-Note: PROPFIND /dav/ HTTP/1.1');
+  eq(lang + ' real header named PROPFIND and request-like header value remain intact', JSON.parse(h.get('hha-json-output').textContent),
+    {propfind: 'http://example.test/a HTTP/1.1', 'x-note': 'PROPFIND /dav/ HTTP/1.1'});
+  analyze(h, 'PROPFIND http://example.test/a HTTP/1.1');
+  eq(lang + ' unsupported request without fields exports an empty object and no raw header',
+    [JSON.parse(h.get('hha-json-output').textContent), h.get('hha-raw-output').textContent, h.get('hha-result').hidden],
+    [{}, '', false]);
   // Preserve the parser's current separator policy; the content must describe this limitation.
   analyze(h, 'HTTP/1.1 200 OK\nX-A: 1\n \t\nX-B: 2');
   eq(lang + ' whitespace-only separator remains explicit in status and JSON', [Object.keys(JSON.parse(h.get('hha-json-output').textContent)), h.get('hha-status').textContent.includes(strings[lang].bodyStop.replace('{line}', '3').replace('{n}', '1'))], [['_status', 'x-a'], true]);
