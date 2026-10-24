@@ -226,6 +226,68 @@ unavailable.fire('rgx-pattern', 'a'); unavailable.tick(300);
 eq('no Worker reports failure without synchronous fallback', unavailable.nodes.get('rgx-status').textContent.includes('worker'), true);
 await unavailable.close();
 
+// Deliver engine diagnostics through the real Worker reply handler. The Worker itself stays native.
+const syntaxReasons = {
+  group: ['Invalid group syntax or unbalanced parentheses.', '分组语法无效或圆括号不配对。', 'グループ構文が無効か、丸括弧が対応していません。', '그룹 문법이 잘못되었거나 괄호가 맞지 않습니다.'],
+  characterClass: ['Unclosed or invalid character class.', '字符类未闭合或无效。', '文字クラスが閉じていないか、無効です。', '문자 클래스가 닫히지 않았거나 잘못되었습니다.'],
+  repeat: ['Invalid quantifier or nothing to repeat.', '量词无效或前面没有可重复的内容。', '量指定子が無効か、繰り返す対象がありません。', '수량자가 잘못되었거나 반복할 대상이 없습니다.'],
+  range: ['Character range or repetition bounds are out of order.', '字符范围或重复次数的上下界顺序错误。', '文字範囲または繰り返し回数の上下限が逆です。', '문자 범위나 반복 횟수의 최솟값과 최댓값 순서가 잘못되었습니다.'],
+  escape: ['Invalid or incomplete escape sequence.', '转义序列无效或不完整。', 'エスケープシーケンスが無効か、不完全です。', '이스케이프 시퀀스가 잘못되었거나 불완전합니다.'],
+  name: ['Invalid or duplicate capture group name.', '捕获组名称无效或重复。', 'キャプチャグループ名が無効か、重複しています。', '캡처 그룹 이름이 잘못되었거나 중복되었습니다.'],
+  reference: ['Invalid capture group reference.', '捕获组引用无效。', 'キャプチャグループへの参照が無効です。', '캡처 그룹 참조가 잘못되었습니다.'],
+  generic: ['The browser could not compile this pattern. Check its JavaScript syntax.', '浏览器无法编译此表达式，请检查 JavaScript 正则语法。', 'ブラウザーがこのパターンをコンパイルできません。JavaScript の正規表現構文を確認してください。', '브라우저가 이 패턴을 컴파일하지 못했습니다. JavaScript 정규식 문법을 확인하세요.']
+};
+// Shapes checked against V8 regexp-error.h, Firefox js/public/friend/ErrorNumbers.msg,
+// and WebKit Source/JavaScriptCore/yarr/YarrErrorCode.cpp (2026-10-24).
+const syntaxMessages = [
+  ['group', 'Invalid regular expression: /(?P<x>a)/g: Invalid group'],
+  ['group', 'invalid regexp group'], ['group', 'Invalid regular expression: unrecognized character after (?'],
+  ['group', 'Invalid regular expression: /(/g: Unterminated group'],
+  ['group', 'unterminated parenthetical'], ['group', 'Invalid regular expression: missing )'],
+  ['group', "Invalid regular expression: /)/g: Unmatched ')'"],
+  ['group', "unmatched ) in regular expression"], ['group', 'Invalid regular expression: unmatched parentheses'],
+  ['characterClass', 'Invalid regular expression: /[/g: Unterminated character class'],
+  ['characterClass', 'unterminated character class'], ['characterClass', 'Invalid regular expression: missing terminating ] for character class'],
+  ['repeat', 'Invalid regular expression: /a++/g: Nothing to repeat'],
+  ['repeat', 'nothing to repeat'], ['repeat', 'Invalid regular expression: quantifier without atom'],
+  ['repeat', 'Invalid regular expression: invalid quantifier in regular expression'],
+  ['repeat', 'Invalid regular expression: nothing to repeat'],
+  ['repeat', 'Invalid regular expression: invalid quantifier'],
+  ['range', 'Invalid regular expression: /[z-a]/g: Range out of order in character class'],
+  ['range', 'invalid range in character class'], ['range', 'Invalid regular expression: range out of order in character class'],
+  ['range', 'numbers out of order in {} quantifier'],
+  ['range', 'Invalid regular expression: numbers out of order in {} quantifier'],
+  ['escape', 'Invalid regular expression: /\\/g: \\ at end of pattern'],
+  ['escape', '\\ at end of pattern'], ['escape', 'Invalid regular expression: \\ at end of pattern'],
+  ['escape', 'invalid unicode escape in regular expression'],
+  ['name', 'Invalid regular expression: /(?<1>a)/g: Invalid capture group name'],
+  ['name', 'invalid capture group name in regular expression'],
+  ['name', 'Invalid regular expression: invalid group specifier name'],
+  ['name', 'duplicate capture group name in regular expression'],
+  ['name', 'Invalid regular expression: duplicate group specifier name'],
+  ['reference', 'Invalid regular expression: /(?<a>a)\\k<b>/g: Invalid named capture referenced'],
+  ['reference', 'invalid named capture reference'], ['reference', 'Invalid regular expression: invalid named backreference'],
+  ['reference', 'Invalid regular expression: invalid \\k<> named backreference'],
+  ['generic', 'Unknown future engine failure: private English diagnostic <img>'],
+  ['generic', 'Invalid regular expression: /Nothing to repeat/g: Unknown future engine failure'],
+  ['generic', null], ['generic', { message: 'Invalid group' }]
+];
+for (const [locale, lang] of ['en', 'zh', 'ja', 'ko'].entries()) {
+  const p = pageHarness(lang);
+  try {
+    await p.match('(a)', 'a');
+    for (const [reason, error] of syntaxMessages) {
+      p.fire('rgx-pattern', '['); p.fire('rgx-test', '<original>'); p.tick(300);
+      p.workers.at(-1).onmessage({ data: { error } });
+      eq(`${lang} localized Worker error ${JSON.stringify(error)}`, p.nodes.get('rgx-status').textContent,
+        clientStrings(lang).invalidRegex + syntaxReasons[reason][locale]);
+      eq(`${lang} syntax error removes matches and preserves plain input`, [p.nodes.get('rgx-matches').children.length, p.nodes.get('rgx-highlight').textContent], [0, '<original>']);
+    }
+    await p.match('a', 'a');
+    eq(`${lang} valid match recovers after syntax errors`, p.nodes.get('rgx-status').textContent, clientStrings(lang).matchOne.replace('{n}', '1'));
+  } finally { await p.close(); }
+}
+
 // Actual full page IIFE + actual ToolLayout keydown in both registration orders.
 const workerSource = src.slice(src.indexOf('      function matchWorker() {'), src.indexOf('      function stop() {'));
 eq('native matchWorker bytes unchanged', [Buffer.byteLength(workerSource), createHash('sha256').update(workerSource).digest('hex')],
@@ -396,7 +458,14 @@ function engineRun(pattern, flags, text) {
 }
 function toolText(lang, pattern, flags, text) {
   const t = clientStrings(lang), r = engineRun(pattern, flags, text);
-  if (r.error) return t.invalidRegex + r.error;
+  if (r.error) {
+    const p = pageHarness(lang);
+    try {
+      p.fire('rgx-pattern', pattern); p.fire('rgx-test', text); p.tick(300);
+      p.workers.at(-1).onmessage({ data: r });
+      return p.nodes.get('rgx-status').textContent;
+    } finally { void p.close(); }
+  }
   const lines = [r.count === 0 ? t.noMatches : (r.count > 1 ? t.matchMany : t.matchOne).replace('{n}', r.count)];
   r.matches.slice(0, 100).forEach((m, i) => {
     lines.push(`${t.matchLabel} ${i + 1}: ${m.match} (${t.indexLabel} ${m.index})`);
@@ -415,9 +484,9 @@ const rgxCheck = { tag: 'rgx-check', min: 2, verify({ spec, after, lang }) {
 } };
 for (const lang of ['en', 'zh', 'ja', 'ko']) eq(lang + ' rgx-check examples match the engine', contractProblems('regex-tester', lang, { annotations: [rgxCheck] }), '');
 // Facts quoted beside the examples and in the FAQ
-eq('possessive quantifier is a syntax error', toolText('en', 'a++', 'g', 'aa'), 'Invalid regex: Invalid regular expression: /a++/g: Nothing to repeat');
-eq('atomic group is a syntax error', toolText('en', '(?>a)', 'g', 'a'), 'Invalid regex: Invalid regular expression: /(?>a)/g: Invalid group');
-eq('error message lists g when only i is ticked', toolText('en', '(', 'i', 'a').includes('/(/gi'), true);
+eq('possessive quantifier has a localized syntax reason', toolText('en', 'a++', 'g', 'aa'), 'Invalid regex: Invalid quantifier or nothing to repeat.');
+eq('atomic group has a localized syntax reason', toolText('en', '(?>a)', 'g', 'a'), 'Invalid regex: Invalid group syntax or unbalanced parentheses.');
+eq('error reason does not echo the Worker pattern or internal g flag', toolText('en', '(', 'i', 'a'), 'Invalid regex: Invalid group syntax or unbalanced parentheses.');
 eq('NFKC turns fullwidth digits into ASCII', ['１３８１２３４５６７８', '１５０-０００２'].map((s) => s.normalize('NFKC')), ['13812345678', '150-0002']);
 eq('NFC joins the NFD Hangul of the ko example', '\u1112\u1161\u11ab\u1100\u1173\u11af'.normalize('NFC'), '한글');
 eq('ko NFD example: [가-힣] finds 한글 after NFC', toolText('ko', '[가-힣]+', 'g', '\u1112\u1161\u11ab\u1100\u1173\u11af 파일.txt'.normalize('NFC')).split('\n')[1], '일치 1: 한글 (인덱스 0)');
