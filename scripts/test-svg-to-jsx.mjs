@@ -533,5 +533,26 @@ new Function(script); check('v2 real client script parses without tips', !script
 
 }
 
+// S2-10g: input and settings restore render without recording usage.
+{
+  const p = lifecyclePage();
+  same('GA initial render silent', p.tracks, []);
+  p.convert();
+  same('GA live conversion preserved', p.out.value, lifecycleSpec.expected);
+  same('GA typing silent', p.tracks, []);
+  p.input.dispatch('change');
+  same('GA committed conversion historical name', p.tracks, [['svg_to_jsx', 'convert']]);
+  p.input.dispatch('change');
+  same('GA unchanged result deduplicated', p.tracks.length, 1);
+  p.convert(lifecycleSpec.invalid); p.input.dispatch('change');
+  same('GA refused conversion silent', p.tracks.length, 1);
+  p.convert(lifecycleSpec.next); p.input.dispatch('change');
+  same('GA next committed result counted', p.tracks.length, 2);
+  p.$('stj-name').value = 'OtherIcon'; p.$('stj-name').dispatch('input'); p.advance(200);
+  same('GA name typing silent', p.tracks.length, 2);
+  p.$('stj-name').dispatch('change');
+  same('GA committed component name counted', p.tracks.length, 3);
+}
+
 console.log(passes + ' passed, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);
