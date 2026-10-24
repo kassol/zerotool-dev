@@ -90,7 +90,8 @@ function open(s,lang='en',shellFirst=false){
     Object.defineProperty(n,'innerHTML',{get(){return this._html||'';},set(v){this._html=String(v);this.childNodes=parseFragment(String(v)).childNodes;for(const c of this.childNodes){c.parentNode=this;adapt(c);}}});
     n.setAttribute=(k,v)=>{attrs[k]=String(v);};n.getAttribute=k=>attrs[k]??null;n.removeAttribute=k=>{delete attrs[k];};Object.defineProperty(n,'src',{get:()=>attrs.src||'',set:v=>{attrs.src=String(v);}});n.scrollIntoView=()=>{};
     n.addEventListener=(k,f)=>(handlers[k]??=[]).push(f);
-    n.dispatch=(type,init={})=>{const e={type,target:n,currentTarget:n,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(const f of handlers[type]||[])f.call(n,e);if(!e.cancelBubble)document.dispatch(type,e);return e;};
+    n.handlers=handlers;
+    n.dispatch=(type,init={})=>{const e={type,target:n,currentTarget:n,defaultPrevented:false,cancelBubble:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...init};for(let current=n;current&&!e.cancelBubble;current=current.parentNode){e.currentTarget=current;for(const f of current.handlers?.[type]||[])f.call(current,e);}if(!e.cancelBubble)document.dispatch(type,e);return e;};
     n.click=()=>{if(!n.disabled)n.dispatch('click');};n.focus=()=>{document.activeElement=n;};n.select=()=>{};n.remove=()=>{};n.appendChild=c=>c;
     n.contains=x=>{while(x){if(x===n)return true;x=x.parentNode;}return false;};
     Object.defineProperty(n,'lastChild',{get:()=>n.childNodes.at(-1)});Object.defineProperty(n,'children',{get:()=>n.childNodes.filter(c=>c.tagName)});
@@ -108,16 +109,51 @@ function open(s,lang='en',shellFirst=false){
   function query(sel,within){return queryAll(sel,within)[0]||null;}
   const docHandlers={};document={currentScript:null,documentElement:{lang},getElementById:id=>ids.get(id)||null,querySelector:sel=>sel==='.tool-widget'?wrap:sel==='.tool-widget .btn-primary'?query('.btn-primary',wrap):query(sel),querySelectorAll:sel=>queryAll(sel),addEventListener:(k,f)=>(docHandlers[k]??=[]).push(f),dispatch(type,e){for(const f of docHandlers[type]||[])f(e);},body:{appendChild:c=>c},createElement:tag=>{const n=parseFragment('<'+tag+'></'+tag+'>').childNodes[0];adapt(n);return n;},execCommand:()=>false};
   adapt(tree);const wrap=query(s.root);wrap.closest=()=>wrap;
-  const timers=[],requests=[],assertions=[],persist={cleared:[],saved:[]},events={};let now=0,seq=0;
-  const h={s,L,document,ids,timers,requests,assertions,persist,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
+  const timers=[],requests=[],assertions=[],tracks=[],persist={cleared:[],saved:[]},events={};let now=0,seq=0;
+  const h={s,L,document,ids,timers,requests,assertions,tracks,persist,query:sel=>query(sel,wrap),all:sel=>queryAll(sel,wrap),unhandled:[],syncErrors:[],el:id=>{if(!ids.has(id))throw new Error('Missing actual element '+id);return ids.get(id);},input(id,value,type='input'){const e=this.el(id);e.value=String(value);e.dispatch(type);},click(id=s.copy){try{this.el(id).click();}catch(e){this.syncErrors.push(String(e));}},key(key='l',focus=s.input,meta=false){document.activeElement=focus==='outside'?{}:this.el(focus);document.dispatch('keydown',{key,ctrlKey:!meta,metaKey:meta,preventDefault(){},stopPropagation(){}});},advance(ms){now+=ms;for(const t of timers.filter(t=>!t.cancelled&&!t.ran&&t.due<=now)){t.ran=true;t.fn();}},state(){return {output:this.el(s.output).textContent,label:this.el(s.copy).textContent,aria:this.el(s.copy).getAttribute('aria-label')};}};
   active=h;
-  const globals={document,isSecureContext:true,navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{clear:slug=>persist.cleared.push(slug)},trackTool(){}};
+  const globals={document,isSecureContext:true,navigator:{clipboard:{writeText:text=>new Promise((resolve,reject)=>requests.push({text,resolve,reject}))}},setTimeout:(fn,ms)=>{const id=++seq;timers.push({id,fn,ms,due:now+ms});return id;},clearTimeout:id=>{const t=timers.find(t=>t.id===id);if(t)t.cancelled=true;},addEventListener:(k,f)=>(events[k]??=[]).push(f),console:{...console,assert:(ok,...message)=>assertions.push({passed:!!ok,message})},ztPersist:{clear:slug=>persist.cleared.push(slug)},trackTool(...args){tracks.push(args);}};
   globals.window=globals;const ctx=vm.createContext(globals);const shared='var _slug='+JSON.stringify(s.slug)+';\n'+shortcuts;if(shellFirst)vm.runInContext(shared,ctx);for(const m of source.matchAll(/<script is:inline>([\s\S]*?)<\/script>/g))vm.runInContext(m[1],ctx);if(!shellFirst)vm.runInContext(shared,ctx);h.page={run:code=>vm.runInContext(code,ctx)};h.wrap=wrap;
   return h;
 }
 
   function change(h) {
     h.input('cgg-angle', 180);
+  }
+  for (const lang of ['en', 'zh', 'ja', 'ko']) {
+    const p = open(spec, lang), event = ['css-gradient-generator', 'generate'];
+    check(lang + ' GA boot preview sends nothing', [p.el('cgg-code').textContent.length > 0, p.tracks], [true, []]);
+    p.input('cgg-angle', 180);
+    check(lang + ' GA typing keeps live preview without event', [p.el('cgg-code').textContent.includes('180deg'), p.tracks], [true, []]);
+    p.el('cgg-angle').dispatch('change');
+    check(lang + ' GA successful number commit sends once', p.tracks, [event]);
+    p.input('cgg-angle', 361); p.el('cgg-angle').dispatch('change');
+    check(lang + ' GA invalid number commit sends nothing', p.tracks, [event]);
+    p.query('.cgg-dir-btn[data-deg="0"]').click();
+    check(lang + ' GA direction action recovers and sends once', p.tracks, [event, event]);
+    p.input('cgg-angle-range', 90); p.input('cgg-angle-range', 180);
+    check(lang + ' GA slider drag sends nothing', p.tracks.length, 2);
+    p.el('cgg-angle-range').dispatch('change');
+    check(lang + ' GA slider release sends once', p.tracks.length, 3);
+    const hex = p.query('.cgg-stop-hex');
+    hex.value = '#oops'; hex.dispatch('input'); hex.dispatch('change');
+    p.query('.cgg-tab[data-type="radial"]').click();
+    check(lang + ' GA invalid hex and stale picker result send nothing', p.tracks.length, 3);
+    hex.value = '＃１Ａ７３Ｅ８'; hex.dispatch('input'); hex.dispatch('change');
+    check(lang + ' GA valid full-width hex commit sends once', p.tracks.length, 4);
+    p.input('cgg-radial-shape', 'ellipse', 'change');
+    check(lang + ' GA successful select sends once', p.tracks.length, 5);
+    p.click('cgg-add-stop');
+    check(lang + ' GA explicit add sends once', p.tracks.length, 6);
+    const stop = p.all('.cgg-stop').at(-1), pos = stop.querySelector('.cgg-stop-pos');
+    pos.value = '101'; pos.dispatch('input'); pos.dispatch('change');
+    check(lang + ' GA invalid stop commit sends nothing', p.tracks.length, 6);
+    stop.querySelector('.cgg-stop-remove').click();
+    check(lang + ' GA explicit remove sends once after recovery', p.tracks.length, 7);
+    p.query('.cgg-tab[data-type="conic"]').click();
+    check(lang + ' GA successful tab sends once', p.tracks.length, 8);
+    p.key(); p.advance(2000);
+    check(lang + ' GA clearing sends nothing', p.tracks.length, 8);
   }
   const failedLabels = {en:'Copy failed',zh:'复制失败',ja:'コピーに失敗しました',ko:'복사 실패'};
   for (const lang of ['en','zh','ja','ko']) {

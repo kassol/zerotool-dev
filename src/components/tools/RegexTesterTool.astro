@@ -210,7 +210,7 @@ const { tips: TIPS, ...CLIENT } = T;
           .replace(/"/g, '&quot;');
       }
 
-      function run() {
+      function run(committed) {
         stop();
         rootEl.dataset.empty = patternEl.value || testEl.value ? 'false' : 'true';
         var pattern = patternEl.value;
@@ -255,7 +255,7 @@ const { tips: TIPS, ...CLIENT } = T;
             highlightEl.textContent = text.slice(0, 100000);
             return;
           }
-          render(event.data, text);
+          render(event.data, text, committed === true);
         };
         deadline = setTimeout(function () {
           if (id !== generation) return;
@@ -266,7 +266,7 @@ const { tips: TIPS, ...CLIENT } = T;
         worker.postMessage({ pattern: pattern, flags: getFlags(), text: text });
       }
 
-      function render(result, text) {
+      function render(result, text, committed) {
         var allMatches = result.matches;
         var count = result.count;
         var limited = count > 100 || text.length > 100000 || result.clipped;
@@ -274,7 +274,7 @@ const { tips: TIPS, ...CLIENT } = T;
         allMatches = allMatches.filter(function (m) { return m.end <= text.length; });
         statusEl.textContent = (count === 0 ? t.noMatches : (count > 1 ? t.matchMany : t.matchOne).replace('{n}', count)) + (limited ? t.limited : '');
         statusEl.className = 'rgx-status ' + (count > 0 ? 'success' : 'none');
-        if (count > 0 && !rtTracked) { rtTracked = true; window.trackTool && window.trackTool('regex_tester', 'match'); }
+        if (committed && count > 0 && !rtTracked) { rtTracked = true; window.trackTool && window.trackTool('regex_tester', 'match'); }
 
         // Build highlighted HTML
         var html = '';
@@ -312,18 +312,20 @@ const { tips: TIPS, ...CLIENT } = T;
       }
 
       var _rtTimer = null;
-      function debouncedRun() {
+      function debouncedRun(committed) {
         stop();
         rootEl.dataset.empty = patternEl.value || testEl.value ? 'false' : 'true';
         highlightEl.innerHTML = '';
         matchesEl.innerHTML = '';
         statusEl.textContent = '';
         clearTimeout(_rtTimer);
-        _rtTimer = setTimeout(run, 300);
+        _rtTimer = setTimeout(function () { run(committed === true); }, 300);
       }
       patternEl.addEventListener('input', debouncedRun);
       testEl.addEventListener('input', debouncedRun);
-      flagCheckboxes.forEach(function (cb) { cb.addEventListener('change', debouncedRun); });
+      patternEl.addEventListener('change', function () { debouncedRun(true); });
+      testEl.addEventListener('change', function () { debouncedRun(true); });
+      flagCheckboxes.forEach(function (cb) { cb.addEventListener('change', function () { debouncedRun(true); }); });
       cancelEl.addEventListener('click', function () {
         clearTimeout(_rtTimer);
         stop();

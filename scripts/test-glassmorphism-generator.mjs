@@ -143,15 +143,15 @@ for (const [lang, fill, expected] of [['en', '#112233', '16.14'], ['zh', '#00336
 }
 // Drive the actual inline script through inputs and observable outputs.
 // Canvas is a fixed opaque black background here; real filtering is checked in Ego.
-function mount({ filterSupport = true, canvasFilter = true, reduced = false, forced = false } = {}) {
+function mount({ lang = 'en', filterSupport = true, canvasFilter = true, reduced = false, forced = false } = {}) {
   class Node {
     constructor(value = '') { this.value = this.defaultValue = String(value); this.dataset = {}; this.style = {}; this.children = []; this.handlers = {}; this.attributes = {}; this._text = ''; }
     addEventListener(name, fn) { (this.handlers[name] ||= []).push(fn); }
-    async fire(name) { for (const fn of this.handlers[name] || []) await fn({ target: this }); }
+    async fire(name) { const event = { type: name, target: this }, pending = []; for (let node = this; node; node = node.parentNode) for (const fn of node.handlers[name] || []) pending.push(fn(event)); await Promise.all(pending); }
     setAttribute(name, value) { this.attributes[name] = value; }
     get textContent() { return this._text + this.children.map(n => n.textContent).join(''); }
     set textContent(value) { this._text = String(value); this.children = []; }
-    append(node) { this.children.push(node); }
+    append(node) { this.children.push(node); node.parentNode = this; }
     replaceChildren() { this.children = []; this._text = ''; }
     getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; }
     select() {} focus() {} remove() {} click() {}
@@ -171,21 +171,60 @@ function mount({ filterSupport = true, canvasFilter = true, reduced = false, for
   nodes['preview-canvas'] = new Node(); nodes['preview-canvas'].clientWidth = nodes['preview-canvas'].clientHeight = 100;
   nodes.state = new Node('normal'); nodes.format = new Node('css'); nodes.preset = new Node('sunset'); nodes.file = new Node(); nodes.file.files = [];
   const wrap = new Node();
+  Object.values(nodes).forEach(node => { node.parentNode = wrap; });
   wrap.querySelector = selector => selector.startsWith('#gsg-') ? nodes[selector.slice(5)] : nodes[`swatch-${selector.match(/"(.*?)"/)[1]}`];
   wrap.querySelectorAll = selector => selector === '[data-color]' ? colors.map(n => nodes[`swatch-${n.dataset.hex}`]) : selector === '[data-hex]' ? colors : selector === '[data-range]' ? ranges : selector.startsWith('input[') ? [...colors, ...ranges, ...colors.map(n => nodes[`swatch-${n.dataset.hex}`])] : [...colors, ...ranges, nodes.opaque, nodes.state, nodes.format];
   const media = {};
-  const requests = [], images = [], clipboard = [];
+  const requests = [], images = [], clipboard = [], tracks = [];
   let pendingFrame;
-  const context = vm.createContext({ L: strings.en, document: { currentScript: { closest() { return wrap; } }, createElement() { return new Node(); }, addEventListener() {}, execCommand() { return false; } },
-    window: {}, navigator: { clipboard: { async writeText(text) { clipboard.push(text); } } },
+  const context = vm.createContext({ L: strings[lang], document: { currentScript: { closest() { return wrap; } }, createElement() { return new Node(); }, addEventListener() {}, execCommand() { return false; } },
+    window: { trackTool(...args) { tracks.push(args); } }, navigator: { clipboard: { async writeText(text) { clipboard.push(text); } } },
     matchMedia(query) { return media[query] = { matches: query.includes('forced') ? forced : reduced, addEventListener(name, fn) { this.change = fn; } }; },
     CSS: { supports() { return filterSupport; } }, getComputedStyle() { return { paddingLeft: '16' }; },
-    requestAnimationFrame(fn) { pendingFrame = fn; return 1; }, cancelAnimationFrame() {}, ResizeObserver: class { observe() {} },
+    requestAnimationFrame(fn) { pendingFrame = fn; return 1; }, cancelAnimationFrame() { pendingFrame = null; }, ResizeObserver: class { observe() {} },
     URL: { createObjectURL() { return 'blob:local'; }, revokeObjectURL(url) { requests.push(url); } },
     Image: class { constructor() { this.naturalWidth = this.naturalHeight = 10; images.push(this); } decode() { return new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; }); } }, setTimeout(fn) { fn(); }
   });
   vm.runInContext('(function () {' + source.split('    (function () {')[1].split('</script>')[0], context);
-  return { nodes, media, images, requests, clipboard, context, async input(key, value) { nodes[key].value = String(value); await nodes[key].fire('input'); if (pendingFrame) { const fn = pendingFrame; pendingFrame = null; fn(); } } };
+  const flush = () => { if (pendingFrame) { const fn = pendingFrame; pendingFrame = null; fn(); } };
+  return { nodes, media, images, requests, clipboard, context, tracks, flush, async input(key, value) { nodes[key].value = String(value); await nodes[key].fire('input'); flush(); } };
+}
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = mount({ lang });
+  test(lang + ' GA boot and live typing send nothing', () => assert.deepEqual(p.tracks, []));
+  await p.input('bg', '#abc');
+  test(lang + ' GA successful typing keeps live preview without event', () => {
+    assert.match(p.nodes.code.textContent, /rgba\(170, 187, 204/);
+    assert.deepEqual(p.tracks, []);
+  });
+  p.nodes.bg.value = '#oops'; await p.nodes.bg.fire('input'); await p.nodes.bg.fire('change');
+  test(lang + ' GA invalid commit before the animation frame sends nothing and clears stale code', () => {
+    assert.deepEqual(p.tracks, []);
+    assert.equal(p.nodes.code.textContent, '');
+    assert.equal(p.nodes.copy.disabled, true);
+  });
+  p.flush();
+  p.nodes.bg.value = '#fff'; await p.nodes.bg.fire('input'); await p.nodes.bg.fire('change');
+  test(lang + ' GA valid commit before the frame renders current values and sends once', () => {
+    assert.deepEqual(p.tracks, [['glassmorphism-generator', 'generate']]);
+    assert.match(p.nodes.code.textContent, /rgba\(255, 255, 255/);
+    assert.equal(p.nodes.copy.disabled, false);
+  });
+  p.flush();
+  test(lang + ' GA remaining frame cannot duplicate the committed event', () => assert.equal(p.tracks.length, 1));
+  p.nodes.format.value = 'tailwind'; await p.nodes.format.fire('change');
+  test(lang + ' GA successful menu commit sends once and updates output', () => {
+    assert.equal(p.tracks.length, 2);
+    assert.match(p.nodes.code.textContent, /^@utility glass/);
+  });
+  p.nodes.text.value = '#badcolor'; await p.nodes.text.fire('input'); await p.nodes.format.fire('change'); p.flush();
+  test(lang + ' GA other control with invalid settings sends nothing', () => assert.equal(p.tracks.length, 2));
+  await p.nodes.reset.fire('click');
+  p.media['(prefers-reduced-transparency: reduce)'].change();
+  test(lang + ' GA reset and system changes send nothing', () => assert.equal(p.tracks.length, 2));
+  p.nodes.file.files = [{ size: 1 }]; const loading = p.nodes.file.fire('change');
+  p.images[0].resolve(); await loading;
+  test(lang + ' GA local image decoding sends nothing', () => assert.equal(p.tracks.length, 2));
 }
 const ui = mount();
 await ui.input('bg', '#badcolor');

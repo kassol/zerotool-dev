@@ -95,7 +95,7 @@ function pageHarness(lang = 'en', noWorker = false, order = 'shared-after') {
   }
   const flags = ['g', 'i', 'm', 's'].map(value => Object.assign(element(), { value, checked: value === 'g' }));
   const blobs = new Map(), workers = [], timers = new Map(), events = {};
-  const persistedClears = [], delivery = { hold: false };
+  const persistedClears = [], tracks = [], delivery = { hold: false };
   const widget = { dataset: { empty: markup.match(/class="rgx-wrap" data-empty="([^"]+)"/)[1] },
     contains(el) { return [...nodes.values(), ...flags].includes(el); },
     querySelectorAll(s) { return s === 'textarea, input[type="text"]' ? [nodes.get('rgx-pattern'), nodes.get('rgx-test')] : []; } };
@@ -126,7 +126,7 @@ function pageHarness(lang = 'en', noWorker = false, order = 'shared-after') {
     terminate() { this.terminated = true; return this.thread.terminate(); }
   }
   const context = vm.createContext({ document, S: clientStrings(lang), _slug: 'regex-tester',
-    window: { addEventListener(k, f) { events[k] = f; }, ztPersist: { clear(slug) { persistedClears.push(slug); } } }, Worker: noWorker ? undefined : BrowserWorker,
+    window: { trackTool(...args) { tracks.push(args); }, addEventListener(k, f) { events[k] = f; }, ztPersist: { clear(slug) { persistedClears.push(slug); } } }, Worker: noWorker ? undefined : BrowserWorker,
     Blob: class { constructor(parts) { this.source = parts.join(''); } },
     URL: { createObjectURL(b) { const key = 'blob:' + blobs.size; blobs.set(key, b.source); return key; }, revokeObjectURL() {} },
     setTimeout(f, ms) { const id = ++timerId; timers.set(id, { f, ms }); return id; },
@@ -134,7 +134,7 @@ function pageHarness(lang = 'en', noWorker = false, order = 'shared-after') {
   if (order === 'shared-before') vm.runInContext(shortcut, context);
   vm.runInContext(src.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1], context);
   if (order === 'shared-after') vm.runInContext(shortcut, context);
-  const fire = (id, value) => { nodes.get(id).value = value; nodes.get(id).listeners.input(); };
+  const fire = (id, value) => { const node = nodes.get(id); node.value = value; node.listeners.input({ type: 'input', target: node }); };
   function tick(ms) {
     for (const [id, timer] of [...timers]) if (timer.ms === ms) {
       timers.delete(id); context.callback = timer.f;
@@ -162,7 +162,8 @@ function pageHarness(lang = 'en', noWorker = false, order = 'shared-after') {
     try { return await Promise.race([worker.ready, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Worker result did not arrive')), 5000); })]); }
     finally { clearTimeout(timer); }
   }
-  return { nodes, workers, flags, events, fire, tick, match, key, ready, document, widget, persistedClears, delivery, timers,
+  return { nodes, workers, flags, events, fire, tick, match, key, ready, document, widget, persistedClears, delivery, timers, tracks,
+    change(id) { const node = nodes.get(id); node.listeners.change?.({ type: 'change', target: node }); },
     async close() { await Promise.all(workers.map(w => w.terminate())); } };
 }
 const page = pageHarness();
@@ -225,6 +226,31 @@ const unavailable = pageHarness('en', true);
 unavailable.fire('rgx-pattern', 'a'); unavailable.tick(300);
 eq('no Worker reports failure without synchronous fallback', unavailable.nodes.get('rgx-status').textContent.includes('worker'), true);
 await unavailable.close();
+
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const p = pageHarness(lang), q = pageHarness(lang);
+  try {
+    eq(lang + ' GA no match event on boot', p.tracks, []);
+    await p.match('a', 'aa');
+    eq(lang + ' GA successful typing preview sends nothing', p.tracks, []);
+    p.change('rgx-test'); p.tick(300); await p.ready(p.workers.at(-1));
+    eq(lang + ' GA first committed matching result preserves event', p.tracks, [['regex_tester', 'match']]);
+    p.change('rgx-pattern'); p.tick(300); await p.ready(p.workers.at(-1));
+    eq(lang + ' GA keeps first-success-per-page limit', p.tracks.length, 1);
+    await q.match('z', 'aa'); q.change('rgx-test'); q.tick(300); await q.ready(q.workers.at(-1));
+    eq(lang + ' GA committed no-match sends nothing', q.tracks, []);
+    await q.match('[', 'aa'); q.change('rgx-pattern'); q.tick(300); await q.ready(q.workers.at(-1));
+    eq(lang + ' GA committed invalid pattern sends nothing', q.tracks, []);
+    await q.match('a', 'aa');
+    q.delivery.hold = true; q.change('rgx-test'); q.tick(300);
+    const pending = q.workers.at(-1), reply = await q.ready(pending);
+    q.nodes.get('rgx-cancel').listeners.click(); pending.onmessage({ data: reply });
+    eq(lang + ' GA canceled committed run sends nothing', q.tracks, []);
+    q.delivery.hold = false;
+    q.flags[0].listeners.change(); q.tick(300); await q.ready(q.workers.at(-1));
+    eq(lang + ' GA successful committed flag change is eligible', q.tracks, [['regex_tester', 'match']]);
+  } finally { await p.close(); await q.close(); }
+}
 
 // Deliver engine diagnostics through the real Worker reply handler. The Worker itself stays native.
 const syntaxReasons = {

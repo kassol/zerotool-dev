@@ -315,7 +315,7 @@ console.log(`PASS ${rawChecked} raw CSS values: the tool's verdict matches Chrom
 // Real page input/copy events followed by the real ToolLayout Ctrl/Cmd+L handler.
 // Only DOM, CSS.supports, storage, time and clipboard are boundary doubles.
 function loadClipPage(lang = 'en', supports = null) {
-  const elements = [], ids = new Map(), timers = new Map(), clipboard = [];
+  const elements = [], ids = new Map(), timers = new Map(), clipboard = [], tracks = [];
   const document = { activeElement: null, listeners: {} };
   let sequence = 0;
   function matches(el, selector) {
@@ -336,14 +336,14 @@ function loadClipPage(lang = 'en', supports = null) {
     setAttribute(k, v) { this.attrs[k] = String(v); if (['id', 'type', 'min', 'max', 'step'].includes(k)) this[k] = String(v); if (k === 'class') this.className = String(v); if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(v); }
     getAttribute(k) { return k === 'type' ? this.type : this.attrs[k] ?? null; }
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
-    dispatch(type, init = {}) { for (const fn of this.listeners[type] || []) fn({ type, target: this, preventDefault() {}, ...init }); }
+    dispatch(type, init = {}) { const event = { type, target: this, preventDefault() {}, ...init }; for (let el = this; el; el = el.parentNode) for (const fn of el.listeners[type] || []) fn(event); }
     click() { if (!this.disabled) this.dispatch('click'); }
     focus() { document.activeElement = this; }
     contains(el) { return elements.includes(el); }
     querySelectorAll(selector) { return elements.filter(el => matches(el, selector)); }
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
-    appendChild(el) { this.children.push(el); return el; }
-    append(...children) { this.children.push(...children); }
+    appendChild(el) { this.children.push(el); el.parentNode = this; return el; }
+    append(...children) { children.forEach(el => this.appendChild(el)); }
     remove() {} select() {} setPointerCapture() {}
   }
   const markup = source.slice(source.indexOf('\n---', 4) + 4, source.indexOf('<script'));
@@ -353,6 +353,7 @@ function loadClipPage(lang = 'en', supports = null) {
     el.checked = /\bchecked(?=\s|\/|$)/.test(match[2]); elements.push(el); if (el.id) ids.set(el.id, el);
   }
   const wrap = elements.find(el => matches(el, '.cpg-wrap'));
+  elements.filter(el => el !== wrap).forEach(el => { el.parentNode = wrap; });
   const get = id => { assert.ok(ids.has(id), 'actual markup contains ' + id); return ids.get(id); };
   const startLabels = source.indexOf('const labels = '), endLabels = source.indexOf('const L = ', startLabels);
   const L = vm.runInNewContext(source.slice(startLabels, endLabels) + '\n({...labels[' + JSON.stringify(lang) + '], ...extra[' + JSON.stringify(lang) + ']})');
@@ -362,6 +363,7 @@ function loadClipPage(lang = 'en', supports = null) {
   const sandbox = { document, L, localStorage, toolPersistencePolicy: vm.runInNewContext('(' + policy + ')'), _slug: 'css-clip-path-generator', console,
     navigator: { clipboard: { writeText: value => { clipboard.push(value); return Promise.resolve(); } } },
     CSS: { supports: supports || ((property, value) => property === 'clip-path' && /^(polygon|circle|ellipse|inset)\(/.test(value)) },
+    trackTool(...args) { tracks.push(args); },
     ResizeObserver: class { observe() {} }, setTimeout(fn, ms) { const id = ++sequence; timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id) };
   sandbox.window = sandbox;
   const ctx = vm.createContext(sandbox), layout = fs.readFileSync(new URL('../src/layouts/ToolLayout.astro', import.meta.url), 'utf8');
@@ -369,13 +371,40 @@ function loadClipPage(lang = 'en', supports = null) {
   vm.runInContext(script, ctx);
   const start = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
   vm.runInContext(layout.slice(start, layout.indexOf('// ── Copy button visual feedback', start)), ctx);
-  return { get, wrap, document, clipboard,
+  return { get, wrap, document, clipboard, tracks,
+    tick(ms) { for (const [id, timer] of [...timers]) if (timer.ms <= ms) { timers.delete(id); timer.fn(); } },
     type(value) { const el = get('cpg-raw'); el.value = value; el.dispatch('input'); },
     key(init) { const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...init }; for (const fn of document.listeners.keydown) fn(event); for (const [id, timer] of [...timers]) if (timer.ms === 0) { timers.delete(id); timer.fn(); } return event; }
   };
 }
 let pagePasses = 0, pageFailures = 0;
 function pageCheck(name, ok) { if (ok) pagePasses++; else { pageFailures++; console.error('FAIL ' + name); } }
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const page = loadClipPage(lang);
+  pageCheck(lang + ' GA boot sends nothing', page.tracks.length === 0);
+  page.wrap.querySelector('.cpg-tab[data-shape="raw"]').click();
+  page.type('circle(30% at 40% 60%)'); page.tick(1600);
+  pageCheck(lang + ' GA typing keeps live preview without event', page.get('cpg-preview-el').style.clipPath === 'circle(30% at 40% 60%)' && page.tracks.length === 0);
+  page.get('cpg-raw').dispatch('change');
+  pageCheck(lang + ' GA successful raw commit preserves generate', JSON.stringify(page.tracks) === JSON.stringify([['css-clip-path-generator', 'generate']]));
+  for (const value of ['', 'url(#clip)', 'circle(50%))']) {
+    page.type(value); page.get('cpg-raw').dispatch('change'); page.tick(1600);
+    pageCheck(lang + ' GA invalid raw commit sends nothing: ' + value, page.get('cpg-copy').disabled && page.tracks.length === 1);
+  }
+  page.get('cpg-ratio').value = '2 / 1'; page.get('cpg-ratio').dispatch('change');
+  pageCheck(lang + ' GA option change with invalid result sends nothing', page.tracks.length === 1);
+  page.type('inset(10%)'); page.get('cpg-raw').dispatch('change');
+  pageCheck(lang + ' GA valid recovery commit sends once', page.tracks.length === 2 && !page.get('cpg-copy').disabled);
+  page.wrap.querySelector('.cpg-tab[data-shape="polygon"]').click();
+  page.get('cpg-handles').children[0].dispatch('keydown', { key: 'ArrowRight' }); page.tick(1600);
+  pageCheck(lang + ' GA keyboard vertex preview sends nothing', page.tracks.length === 2);
+  page.get('cpg-reset').click(); page.tick(1600);
+  pageCheck(lang + ' GA reset sends nothing', page.tracks.length === 2);
+  const refused = loadClipPage(lang, () => false);
+  refused.wrap.querySelector('.cpg-tab[data-shape="raw"]').click();
+  refused.type('circle(30%)'); refused.get('cpg-raw').dispatch('change'); refused.tick(1600);
+  pageCheck(lang + ' GA browser-unsupported result sends nothing', refused.get('cpg-copy').disabled && refused.tracks.length === 0);
+}
 for (const modifier of ['ctrlKey', 'metaKey']) {
   const page = loadClipPage();
   page.wrap.querySelector('.cpg-tab[data-shape="raw"]').click();
