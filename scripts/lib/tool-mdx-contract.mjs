@@ -113,12 +113,13 @@ export function readToolMdx(slug, { root = ROOT } = {}) {
 // Keep offsets and line breaks: callers use the masked text to locate boundaries in
 // the original MDX. CommonMark handles fence lengths, fence kinds and nested containers.
 // Pick opaque blocks in source order so a <pre> in a fence (or a fence in a <pre>)
-// cannot hide content after the enclosing block.
-export function withoutCode(body) {
+// cannot hide content after the enclosing block. Existing example readers need
+// inline literals; only structural scans opt into masking inline code and comments.
+export function withoutCode(body, { inlineCode = false, comments = false } = {}) {
   const ranges = [];
   const blank = (text) => text.replace(/[^\n]/g, ' ');
   function visit(node) {
-    if (node.type === 'code' || node.type === 'inlineCode') {
+    if (node.type === 'code' || (inlineCode && node.type === 'inlineCode')) {
       ranges.push([node.position.start.offset, node.position.end.offset]);
     } else {
       for (const child of node.children ?? []) visit(child);
@@ -127,7 +128,9 @@ export function withoutCode(body) {
   // MDX parses Markdown after HTML headings without requiring a blank line.
   // Hide tags from the CommonMark parser so its raw-HTML blocks do not swallow fences.
   visit(fromMarkdown(body.replace(/<!--[\s\S]*?-->|<\/?[A-Za-z][^<>]*>/g, (m) => m.replace(/[^\n]/g, 'x')), markdownOptions));
-  for (const m of body.matchAll(/<!--[\s\S]*?-->/g)) ranges.push([m.index, m.index + m[0].length]);
+  if (comments) {
+    for (const m of body.matchAll(/<!--[\s\S]*?-->/g)) ranges.push([m.index, m.index + m[0].length]);
+  }
   for (const m of body.matchAll(/<pre(?=[\s>])[^>]*>/gi)) {
     if (/\/>$/.test(m[0])) continue;
     const tags = /<\/?pre(?=[\s>])[^>]*>/gi;
@@ -152,7 +155,7 @@ export function withoutCode(body) {
 
 // H2 headings in document order: Markdown `## X` and HTML <h2>X</h2>, outside code.
 export function headings(body) {
-  const text = withoutCode(body);
+  const text = withoutCode(body, { inlineCode: true, comments: true });
   const out = [];
   const re = /^ {0,3}##[ \t]+(.+?)[ \t#]*$|<h2(?=[\s>])[^>]*>([\s\S]*?)<\/h2>/gim;
   for (const m of text.matchAll(re)) {
@@ -201,7 +204,7 @@ export const isLimitsHeading = (lang, heading) => LIMITS[lang].test(heading);
 export function annotations(body, tag) {
   const esc = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`\\{/\\*\\s*${esc}(?::\\s*([\\s\\S]*?))?\\s*\\*/\\}`, 'g');
-  const outside = withoutCode(body);
+  const outside = withoutCode(body, { inlineCode: true, comments: true });
   const found = [...body.matchAll(re)].filter((m) => outside[m.index] === '{');
   return found.map((m, i) => {
     const start = m.index + m[0].length;
@@ -242,7 +245,8 @@ export function examplePairs(body, isInput, isOutput) {
 // ordinary prose, code blocks and a separate table with its own header are boundaries.
 function tableBlankLines(body) {
   const original = body.split('\n');
-  const lines = withoutCode(body.replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))).split('\n');
+  const lines = withoutCode(body.replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' ')),
+    { inlineCode: true, comments: true }).split('\n');
   const blank = (i) => /^[ \t\r]*$/.test(original[i] ?? '');
   const next = (i) => { while (i < lines.length && blank(i)) i++; return i; };
   const row = (i) => {
