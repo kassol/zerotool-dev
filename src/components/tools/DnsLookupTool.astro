@@ -553,6 +553,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
 
       var lastSnapshot = null; // last lookup result for Copy JSON
       var lookupGeneration = 0;
+      var copyGeneration = 0;
 
       function clearResult() {
         lastSnapshot = null;
@@ -855,15 +856,21 @@ const { tips: TIPS, ...CLIENT_T } = T;
       copyJsonBtn.addEventListener('click', function () {
         if (!lastSnapshot) { setStatus(t.lookupFirst, 'error'); return; }
         var generation = lookupGeneration;
+        var request = ++copyGeneration;
         var text = jsonOut.textContent;
-        var done = function () { if (generation === lookupGeneration) setStatus(t.copied, 'success'); };
-        var fail = function () { if (generation === lookupGeneration) setStatus(t.copyFailed, 'error'); };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done, fail); });
-        } else {
-          fallbackCopy(text, done, fail);
-        }
-        window.trackTool && window.trackTool('dns-lookup', 'copy_json');
+        function current() { return generation === lookupGeneration && request === copyGeneration; }
+        var done = function () {
+          if (!current()) return;
+          setStatus(t.copied, 'success');
+          window.trackTool && window.trackTool('dns-lookup', 'copy_json');
+        };
+        var fail = function () { if (current()) setStatus(t.copyFailed, 'error'); };
+        var fallback = function () { if (current()) fallbackCopy(text, done, fail); };
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, fallback);
+          } else fallback();
+        } catch (e) { fallback(); }
       });
 
       function fallbackCopy(text, done, fail) {
@@ -873,7 +880,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
         ta.style.opacity = '0';
         document.body.appendChild(ta);
         ta.select();
-        try { document.execCommand('copy'); done(); }
+        try { if (document.execCommand('copy')) done(); else fail(); }
         catch (e) { fail(); }
         document.body.removeChild(ta);
       }

@@ -531,6 +531,33 @@ for (const lang of ['en', 'zh', 'ja', 'ko'])
         lifeCheck(lang + '/Ctrl+L clears the note', note() === '');
     });
 
+for (const lang of ['en', 'zh', 'ja', 'ko'])
+    await attempt(lang + '/copy-outcome-analytics', async () => {
+        const p = lifecyclePage(lang), copy = p.get('li-copy');
+        const copies = () => p.tracks.filter(x => x[1] === 'copy').length;
+        copy.click();
+        lifeCheck(lang + '/pending copy is silent', copies() === 0);
+        p.clipboard.at(-1).reject(Error('clipboard denied'));
+        await settle();
+        lifeCheck(lang + '/failed copy is silent', copies() === 0);
+        copy.click();
+        p.clipboard.at(-1).resolve();
+        await settle();
+        lifeCheck(lang + '/successful copy keeps historical event', JSON.stringify(p.tracks) === '[["lorem_ipsum","copy"]]');
+        copy.click();
+        const stale = p.clipboard.at(-1);
+        p.get('li-generate').click();
+        stale.resolve();
+        await settle();
+        lifeCheck(lang + '/copy of replaced generation is silent', copies() === 1);
+        copy.click();
+        const cleared = p.clipboard.at(-1);
+        p.ctrlL('li-copy');
+        cleared.resolve();
+        await settle();
+        lifeCheck(lang + '/copy completed after clear is silent', copies() === 1);
+    });
+
 process.removeListener('unhandledRejection', onUnhandled);
 console.log(`LIFECYCLE ${lifecyclePass} passed, ${lifecycleFail} failed`);
 console.log(`FINAL ${passes + lifecyclePass} passed, ${failures + lifecycleFail} failed`);

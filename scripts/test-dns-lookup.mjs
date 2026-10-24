@@ -308,6 +308,7 @@ function pageFixture(lang = 'en', options = {}) {
   const requests = [];
   const clipboard = [];
   const clipboardRequests = [];
+  const tracks = [];
   const timers = new Map();
   let timerId = 0;
   let document;
@@ -374,13 +375,14 @@ function pageFixture(lang = 'en', options = {}) {
     },
     querySelectorAll() { return []; },
     createElement: element,
-    execCommand() { if (options.copyFallbackFails) throw new Error('Copy failed'); return true; },
+    execCommand() { if (options.copyFallbackFails) throw new Error('Copy failed'); return !options.copyFallbackFalse; },
     addEventListener(type, callback) {
       if (!documentListeners.has(type)) documentListeners.set(type, []);
       documentListeners.get(type).push(callback);
     },
   };
   const sandbox = { document, URL, AbortController, console,
+    trackTool(...args) { tracks.push(args); },
     t: ALL_STRINGS ? Object.fromEntries(Object.entries(ALL_STRINGS[lang]).filter(([key]) => key !== 'tips')) : null,
     location: { pathname: '/tools/dns-lookup/' },
     localStorage: { getItem() { return null; }, setItem() {} },
@@ -388,6 +390,7 @@ function pageFixture(lang = 'en', options = {}) {
     MutationObserver: class { observe() {} disconnect() {} },
     navigator: { clipboard: { writeText(text) {
       clipboard.push(text);
+      if (options.copyThrows) throw new Error('Clipboard unavailable');
       if (options.deferClipboard) return new Promise((resolve, reject) => clipboardRequests.push({ resolve, reject }));
       return Promise.resolve();
     } } },
@@ -404,7 +407,7 @@ function pageFixture(lang = 'en', options = {}) {
   }
   vm.runInContext(shortcutScript, context, { filename: 'ToolLayout.astro' });
   return {
-    get, requests, clipboard, clipboardRequests, strings: ALL_STRINGS[lang], document,
+    get, requests, clipboard, clipboardRequests, tracks, strings: ALL_STRINGS[lang], document,
     lookup(value = 'example.com') { get('dnsl-domain').value = value; get('dnsl-lookup').click(); },
     async success(index = requests.length - 1, response = signedA) {
       requests[index].resolve({ ok: true, json: async () => structuredClone(response) });
@@ -599,6 +602,35 @@ for (const action of ['Clear', 'Ctrl+L']) {
     await new Promise(setImmediate);
     eq(action + ': late copy ' + outcome + ' keeps status empty', page.get('dnsl-status').textContent, '');
   }
+}
+
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  for (const fallback of ['success', 'throw', 'false']) {
+    const page = pageFixture(lang, { deferClipboard: true, copyFallbackFails: fallback === 'throw', copyFallbackFalse: fallback === 'false' });
+    const copies = () => page.tracks.filter(x => x[1] === 'copy_json');
+    page.lookup(); await page.success();
+    page.get('dnsl-copy-json').click();
+    eq(lang + '/' + fallback + ': pending copy is silent', copies(), []);
+    page.clipboardRequests.at(-1).reject(new Error('Clipboard denied'));
+    await new Promise(setImmediate);
+    eq(lang + '/' + fallback + ': only successful fallback records copy', copies(), fallback === 'success' ? [['dns-lookup', 'copy_json']] : []);
+    page.get('dnsl-copy-json').click();
+    const stale = page.clipboardRequests.at(-1);
+    page.lookup('new.example');
+    stale.resolve(); await new Promise(setImmediate);
+    eq(lang + '/' + fallback + ': replaced result copy is silent', copies().length, fallback === 'success' ? 1 : 0);
+  }
+  const page = pageFixture(lang, { deferClipboard: true });
+  page.lookup(); await page.success();
+  page.get('dnsl-copy-json').click();
+  page.clipboardRequests.at(-1).resolve(); await new Promise(setImmediate);
+  eq(lang + ': successful clipboard records historical action', page.tracks, [['dns-lookup', 'lookup'], ['dns-lookup', 'copy_json']]);
+  page.get('dnsl-copy-json').click();
+  const older = page.clipboardRequests.at(-1);
+  page.get('dnsl-copy-json').click();
+  page.clipboardRequests.at(-1).resolve(); await new Promise(setImmediate);
+  older.resolve(); await new Promise(setImmediate);
+  eq(lang + ': superseded clipboard completion is silent', page.tracks.filter(x => x[1] === 'copy_json').length, 2);
 }
 
 // ---------- v2 page layout ----------
