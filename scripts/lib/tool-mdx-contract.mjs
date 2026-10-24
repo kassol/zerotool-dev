@@ -4,8 +4,9 @@
 // checks what must stay true when the text changes: the four languages exist, steps fit
 // the llms-full.txt limits, every FAQ item has a question and an answer, the four
 // languages have the same number of FAQ items (and the same FAQ id sequence once ids are
-// used), the old "How to use" section is gone, and a Limits section exists. Worked
-// examples are checked by each tool test with its engine (see annotations() below).
+// used), the old "How to use" section is gone, a Limits section exists, and blank lines
+// do not split intended GFM tables. Worked examples are checked by each tool test with
+// its engine (see annotations() below).
 //
 // The S2 lists below say which tools are still being brought up to the S2 content rules
 // (S2-PLAN.md, 2026-10-08). Only the main session changes them, after each S2 batch.
@@ -14,10 +15,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load as loadYaml } from 'js-yaml';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfm } from 'micromark-extension-gfm';
+import { gfmFromMarkdown } from 'mdast-util-gfm';
 import { MAX_HOWTO_CHARS, MAX_STEP_CHARS, MAX_STEPS } from '../../src/data/llms.mjs';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const LANGS = ['en', 'zh', 'ja', 'ko'];
+const markdownOptions = { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] };
 
 // Tools that have not finished S2: S2-PLAN.md §1.2 table A 32 + table B 15 + §7 29 = 76
 // (S2-evidence/content-stats.py on v1.140.3), plus 3 added by S2-0 = 79; S2-1 (2026-10-08)
@@ -105,18 +110,51 @@ export function readToolMdx(slug, { root = ROOT } = {}) {
   return out;
 }
 
-// Body text with fenced code blocks and <pre> blocks replaced by blank lines.
+// Keep offsets and line breaks: callers use the masked text to locate boundaries in
+// the original MDX. CommonMark handles fence lengths, fence kinds and nested containers.
+// Pick opaque blocks in source order so a <pre> in a fence (or a fence in a <pre>)
+// cannot hide content after the enclosing block.
 export function withoutCode(body) {
-  return body
-    .replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, (m) => m.replace(/[^\n]/g, ''))
-    .replace(/<pre\b[\s\S]*?<\/pre>/gi, (m) => m.replace(/[^\n]/g, ''));
+  const ranges = [];
+  const blank = (text) => text.replace(/[^\n]/g, ' ');
+  function visit(node) {
+    if (node.type === 'code' || node.type === 'inlineCode') {
+      ranges.push([node.position.start.offset, node.position.end.offset]);
+    } else {
+      for (const child of node.children ?? []) visit(child);
+    }
+  }
+  // MDX parses Markdown after HTML headings without requiring a blank line.
+  // Hide tags from the CommonMark parser so its raw-HTML blocks do not swallow fences.
+  visit(fromMarkdown(body.replace(/<!--[\s\S]*?-->|<\/?[A-Za-z][^<>]*>/g, (m) => m.replace(/[^\n]/g, 'x')), markdownOptions));
+  for (const m of body.matchAll(/<!--[\s\S]*?-->/g)) ranges.push([m.index, m.index + m[0].length]);
+  for (const m of body.matchAll(/<pre(?=[\s>])[^>]*>/gi)) {
+    if (/\/>$/.test(m[0])) continue;
+    const tags = /<\/?pre(?=[\s>])[^>]*>/gi;
+    tags.lastIndex = m.index + m[0].length;
+    let depth = 1, end = body.length, tag;
+    while ((tag = tags.exec(body))) {
+      if (/\/>$/.test(tag[0])) continue;
+      depth += /^<\//.test(tag[0]) ? -1 : 1;
+      if (depth === 0) { end = tag.index + tag[0].length; break; }
+    }
+    ranges.push([m.index, end]);
+  }
+  ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  let end = 0, text = '';
+  for (const [start, stop] of ranges) {
+    if (start < end) continue;
+    text += body.slice(end, start) + blank(body.slice(start, stop));
+    end = stop;
+  }
+  return text + body.slice(end);
 }
 
 // H2 headings in document order: Markdown `## X` and HTML <h2>X</h2>, outside code.
 export function headings(body) {
   const text = withoutCode(body);
   const out = [];
-  const re = /^##[ \t]+(.+?)[ \t#]*$|<h2\b[^>]*>([\s\S]*?)<\/h2>/gm;
+  const re = /^ {0,3}##[ \t]+(.+?)[ \t#]*$|<h2(?=[\s>])[^>]*>([\s\S]*?)<\/h2>/gim;
   for (const m of text.matchAll(re)) {
     out.push((m[1] ?? m[2]).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim());
   }
@@ -158,16 +196,18 @@ export const isLimitsHeading = (lang, heading) => LIMITS[lang].test(heading);
 
 // Worked-example annotations: `{/* tag: <JSON> */}` (the JSON part is optional).
 // Returns [{ spec, raw, index, after }] where `after` is the text up to the next
-// annotation with the same tag or the next H2, whichever comes first.
+// annotation with the same tag or the next H2, whichever comes first. Headings and
+// annotation-like text inside code or preformatted blocks do not set boundaries.
 export function annotations(body, tag) {
   const esc = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`\\{/\\*\\s*${esc}(?::\\s*([\\s\\S]*?))?\\s*\\*/\\}`, 'g');
-  const found = [...body.matchAll(re)];
+  const outside = withoutCode(body);
+  const found = [...body.matchAll(re)].filter((m) => outside[m.index] === '{');
   return found.map((m, i) => {
     const start = m.index + m[0].length;
     const next = found[i + 1]?.index ?? body.length;
     const rest = body.slice(start, next);
-    const h2 = rest.search(/^##[ \t]|<h2\b/m);
+    const h2 = outside.slice(start, next).search(/^ {0,3}##(?:[ \t]|$)|<h2(?=[\s>])/im);
     const raw = m[1] ?? '';
     let spec = null;
     if (raw.trim()) {
@@ -196,6 +236,70 @@ export function examplePairs(body, isInput, isOutput) {
     if (isInput(blocks[i]) && isOutput(blocks[i + 1])) { pairs.push([blocks[i], blocks[i + 1]]); i++; }
   }
   return pairs;
+}
+
+// A blank line ends a GFM table. Diagnose only gaps between matching pipe rows:
+// ordinary prose, code blocks and a separate table with its own header are boundaries.
+function tableBlankLines(body) {
+  const original = body.split('\n');
+  const lines = withoutCode(body.replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))).split('\n');
+  const blank = (i) => /^[ \t\r]*$/.test(original[i] ?? '');
+  const next = (i) => { while (i < lines.length && blank(i)) i++; return i; };
+  const row = (i) => {
+    const line = lines[i];
+    if (line === undefined) return null;
+    const pipes = [];
+    for (let j = 0; j < line.length; j++) {
+      if (line[j] !== '|') continue;
+      let slashes = 0;
+      for (let k = j - 1; k >= 0 && line[k] === '\\'; k--) slashes++;
+      if (slashes % 2 === 0) pipes.push(j);
+    }
+    if (!pipes.length) return null;
+    const cells = [], indent = line.match(/^[ \t]*/)[0];
+    let start = 0;
+    for (const p of pipes) { cells.push(line.slice(start, p).trim()); start = p + 1; }
+    cells.push(line.slice(start).trim());
+    const leading = cells[0] === '', trailing = cells.at(-1) === '';
+    if (trailing) cells.pop();
+    if (leading) cells.shift();
+    return cells.length ? { cells, indent, leading, trailing } : null;
+  };
+  const rows = lines.map((_, i) => row(i));
+  const delimiter = (r) => r && r.cells.every((c) => /^:?-+:?$/.test(c));
+  const matches = (a, b) => a && b && a.indent === b.indent && a.cells.length === b.cells.length;
+  const header = (h, d) => {
+    if (h < 0 || !lines[h]?.trim() || !delimiter(rows[d])) return null;
+    const candidate = rows[h] ?? { cells: [lines[h].trim()], indent: lines[h].match(/^[ \t]*/)[0], leading: false, trailing: false };
+    if (!matches(candidate, rows[d])) return null;
+    // GFM also permits a single-column header without a pipe. Let the parser reject
+    // headings, list markers and other blocks that merely look like pipe rows.
+    return fromMarkdown(lines[h] + '\n' + lines[d], markdownOptions).children[0]?.type === 'table' ? candidate : null;
+  };
+  const isHeader = (i) => !!header(i, next(i + 1));
+  const problems = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (!delimiter(rows[i])) continue;
+    let h = i - 1;
+    while (h >= 0 && blank(h)) h--;
+    const head = header(h, i);
+    if (!head || delimiter(head)) continue;
+    if (h + 1 < i) problems.push(`body line ${i + 1}: blank line between table header and delimiter`);
+    let last = i, reference = head;
+    const styles = [head, rows[i]];
+    for (let j = next(i + 1); j < rows.length; j = next(last + 1)) {
+      const r = rows[j];
+      if (!r || delimiter(r) || r.indent !== reference.indent || isHeader(j)) break;
+      if (j > last + 1) {
+        if (!matches(reference, r) || !styles.some((s) => r.leading === s.leading && r.trailing === s.trailing)) break;
+        problems.push(`body line ${j + 1}: blank line between table ${last === i ? 'delimiter and first row' : 'rows'}`);
+      }
+      last = j;
+      reference = r;
+      styles.push(r);
+    }
+  }
+  return problems;
 }
 
 /**
@@ -247,6 +351,8 @@ export function toolMdxContract(slug, opts = {}) {
     const hs = headings(body);
     const usage = hs.filter((h) => isUsageHeading(lang, h));
     add(`${lang} has no Usage section`, usage.length === 0, usage.join(' | '));
+    const tableProblems = tableBlankLines(body);
+    add(`${lang} GFM tables have no internal blank lines`, tableProblems.length === 0, tableProblems.join('; '));
     if (limitsRequired) {
       const named = LIMITS_HEADINGS[slug]?.[lang];
       add(`${lang} has a Limits section`, hs.some((h) => h === named || isLimitsHeading(lang, h)), hs.join(' | ') || 'no H2');

@@ -486,18 +486,16 @@ for (const [name, code, bytes, hash] of protectedParts) {
   for (const lang of ['en', 'zh', 'ja', 'ko']) {
     const body = readToolMdx('markdown-linter')[lang].body;
     for (const note of annotations(body, 'mdl-check')) {
-      const [input] = fencedBlocks(body.slice(note.index));
+      const [input] = fencedBlocks(note.after);
       if (input) {
         const content = input.text + (note.spec?.eol ? '\n' : '');
         if (!linted.has(content)) linted.set(content, await run(content));
       }
     }
   }
-  // The blocks are read from the annotation onward, not from `after`: example inputs contain
-  // `## ` heading lines, which annotations() treats as the end of the section.
-  const mdlCheck = { tag: 'mdl-check', min: 2, verify({ spec, index, body, lang }) {
+  const mdlCheck = { tag: 'mdl-check', min: 2, verify({ spec, after, lang }) {
     if (!spec || typeof spec.eol !== 'boolean') return 'spec needs "eol": true or false';
-    const [input, output] = fencedBlocks(body.slice(index));
+    const [input, output] = fencedBlocks(after);
     if (!input || !output) return 'needs an input block and an output block';
     const issues = linted.get(input.text + (spec.eol ? '\n' : ''));
     const t = strings[lang];

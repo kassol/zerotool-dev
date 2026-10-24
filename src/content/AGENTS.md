@@ -121,6 +121,9 @@ faqItems:                # 可选，结构化 FAQ
 - 4 语言强制齐全：缺任一语言 `src/components/ToolPage.astro` 会在 `getEntry('tools', '${slug}/${lang}')` 处 throw error，build 直接挂
 - 正文要原创，避免 4 语言间机翻雷同（影响 hreflang 评估）
 - FAQ 数量建议 3-5 条，太少 SEO 弱，太多挤占阅读
+- 同一工具四语 FAQ 条数必须相同，使用 YAML 解析后的条目数核对，不能按源码中的 `question:` 次数计算；`audit.mjs` 与内容约定测试同时检查。
+- GFM 表格的表头、分隔行、数据行之间不加空行；拆成独立表格时各自写表头。代码块、`<pre>`、注释中的表格示例不参与这一检查。
+- 复算标注后的范围止于下一个同名标注或正文 H2；代码块和 `<pre>` 内的 `##`、`<h2>` 以及标注样式文本不构成边界。复算测试使用 `annotations().after`，不自行绕过范围向后截取正文。
 
 ## 共同约束
 
