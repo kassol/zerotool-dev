@@ -9,7 +9,7 @@ import { gfm } from 'micromark-extension-gfm';
 import { gfmFromMarkdown } from 'mdast-util-gfm';
 import {
   FAQ_COUNT_MISMATCH, FAQ_ID, FAQ_IDS_TODO, LANGS, LIMITS_EXEMPT, S2_PENDING, STEPS_COUNT_MISMATCH,
-  annotations, bodySize, contractProblems, examplePairs, fencedBlocks, headings, isLimitsHeading, isUsageHeading, proseText, splitToolMdx, toolMdxContract,
+  annotations, bodySize, contractProblems, examplePairs, fencedBlocks, headings, isLimitsHeading, isUsageHeading, proseText, splitToolMdx, toolMdxContract, withoutCode,
 } from './lib/tool-mdx-contract.mjs';
 
 let passes = 0, failures = 0;
@@ -43,6 +43,10 @@ const body = [
   '<h2>Line\n  <code>two</code></h2>',
 ].join('\n');
 equal('headings: Markdown and HTML, code skipped, tags removed', headings(body), ['Examples', 'Limits', 'Line two']);
+check('withoutCode keeps inline literals for existing worked-example readers',
+  withoutCode('Result: `expected-value`.\n```\nblock-value\n```').includes('`expected-value`'));
+check('withoutCode keeps prose comments unless structural masking is requested',
+  withoutCode('Value <!-- literal-comment -->.').includes('<!-- literal-comment -->'));
 
 check('usage heading: en How to Use', isUsageHeading('en', 'How to Use'));
 check('usage heading: en How to use the converter', isUsageHeading('en', 'How to use the converter'));
