@@ -304,6 +304,25 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
 }
 eq('no unhandled clipboard rejection', unhandled.length, 0);
 
+// S2-10g: successful committed results, with per-action result deduplication.
+{
+  const p = page('en');
+  eq('GA initial render silent', JSON.stringify(p.tracked), '[]');
+  p.type('<p>Alpha</p>');
+  eq('GA live minify preserved', p.get('hm-output').value, '<p>Alpha</p>');
+  eq('GA typing silent', JSON.stringify(p.tracked), '[]');
+  p.get('hm-input').dispatch('change');
+  eq('GA committed minify historical name', JSON.stringify(p.tracked), JSON.stringify([['html_minifier', 'minify']]));
+  p.get('hm-minify').click();
+  eq('GA same minify result deduplicated', p.tracked.length, 1);
+  p.get('hm-beautify').click();
+  eq('GA beautify committed action counted', JSON.stringify(p.tracked), JSON.stringify([['html_minifier', 'minify'], ['html_minifier', 'beautify']]));
+  p.get('hm-beautify').click();
+  eq('GA same beautify result deduplicated', p.tracked.length, 2);
+  p.type(''); p.get('hm-input').dispatch('change');
+  eq('GA empty input silent', p.tracked.length, 2);
+}
+
 // ── v2 page layout ──
 const registry = readFileSync(join(root, 'src/data/tool-layouts.ts'), 'utf8');
 check('v2 page layout: convert registry', /['"]html-minifier['"]\s*:\s*['"]convert['"]/.test(registry));

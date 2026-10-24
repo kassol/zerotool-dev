@@ -830,7 +830,8 @@ components:
   /* ── engine:end ── */
 
   // ── Main generate ──
-  function generate(): void {
+  let lastTrackedResult: string | undefined;
+  function generate(track = false): void {
     if (liveTimer !== null) window.clearTimeout(liveTimer);
     resetCopy();
     const raw = inputEl.value.trim();
@@ -888,7 +889,10 @@ components:
       msg += ' ' + MSG_UNRESOLVED.replace('{refs}', result.unsupportedRefs.join(', '));
     }
     setStatus(msg, result.unsupportedRefs.length ? 'error' : 'success');
-    (window as any).trackTool?.('openapi-to-typescript', 'generate');
+    if (track && !result.unsupportedRefs.length && outputCodeEl.textContent !== lastTrackedResult) {
+      lastTrackedResult = outputCodeEl.textContent;
+      (window as any).trackTool?.('openapi-to-typescript', 'generate');
+    }
   }
 
   // Debounced live preview
@@ -896,18 +900,18 @@ components:
   function scheduleGenerate(): void {
     resetCopy();
     if (liveTimer !== null) window.clearTimeout(liveTimer);
-    liveTimer = window.setTimeout(generate, 300);
+    liveTimer = window.setTimeout(() => generate(false), 300);
   }
 
   inputEl.addEventListener('input', scheduleGenerate);
   rootEl.addEventListener('input', scheduleGenerate);
-  optionalEl.addEventListener('change', generate);
-  pathsEl.addEventListener('change', generate);
-  zodEl.addEventListener('change', generate);
+  [inputEl, rootEl, optionalEl, pathsEl, zodEl].forEach(el => {
+    el.addEventListener('change', () => generate(true));
+  });
 
   exampleBtn.addEventListener('click', () => {
     inputEl.value = EXAMPLE;
-    generate();
+    generate(true);
     (window as any).trackTool?.('openapi-to-typescript', 'example_load');
   });
 

@@ -1694,7 +1694,9 @@ const ACTIONS = [['rowAbove', L.rowAbove], ['rowBelow', L.rowBelow], ['deleteRow
     return Object.assign(new Error(code), { code: code, args: args });
   }
 
-  function runImport() {
+  let lastTrackedImport: string | undefined;
+  function runImport(trackUsage = false) {
+    clearTimeout(importTimer);
     const text = importEl.value;
     if (!text.trim()) { setStatus('', 'none'); if (importFailed) { clearImportFailure(); updateOutput(); } return; }
     let format = formatEl.value;
@@ -1766,12 +1768,17 @@ const ACTIONS = [['rowAbove', L.rowAbove], ['rowBelow', L.rowBelow], ['deleteRow
     renderGrid();
     updateOutput();
     setStatus([fmt(T.imported, { rows: table.rows.length, cols: table.headers.length, format: FORMAT_NAMES[format] || format })].concat(notes).join(' '), 'success');
-    track('import_' + format);
+    const resultKey = JSON.stringify([format, lastMarkdown]);
+    if (trackUsage === true && resultKey !== lastTrackedImport) {
+      lastTrackedImport = resultKey;
+      track('import_' + format);
+    }
   }
-  importEl.addEventListener('input', () => { clearTimeout(importTimer); importTimer = setTimeout(runImport, 250); });
-  formatEl.addEventListener('change', runImport);
-  firstHeaderEl.addEventListener('change', runImport);
-  $('mdt-import-example').addEventListener('click', () => { importEl.value = importEl.placeholder; runImport(); });
+  importEl.addEventListener('input', () => { fileSeq++; clearTimeout(importTimer); importTimer = setTimeout(runImport, 250); });
+  [importEl, formatEl, firstHeaderEl].forEach(el => {
+    el.addEventListener('change', () => { fileSeq++; runImport(true); });
+  });
+  $('mdt-import-example').addEventListener('click', () => { fileSeq++; importEl.value = importEl.placeholder; runImport(true); });
 
   /* ── Open file / drop a file ── */
   // An opened file must be UTF-8 text: file.text() would turn every byte that is not UTF-8
@@ -1831,7 +1838,7 @@ const ACTIONS = [['rowAbove', L.rowAbove], ['rowBelow', L.rowBelow], ['deleteRow
     selectTab('import', false);
     clearTimeout(importTimer);
     importEl.value = read.text as string;
-    runImport();
+    runImport(true);
   }
   const fileInput = $('mdt-file') as HTMLInputElement;
   fileInput.addEventListener('change', () => {

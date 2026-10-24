@@ -22,6 +22,7 @@
 //
 // Run: node scripts/test-svg-to-png-converter.mjs
 
+import { loadPage } from './astro-page-harness.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -347,8 +348,8 @@ eq('blank: one visible pixel', E.isBlank(new Uint8ClampedArray([0, 0, 0, 0, 0, 0
   check('v2: the empty hint is in the result box and hides when there is a result', right.includes('<p class="s2p-empty">{T.outEmpty}</p>') && source.includes('.s2p-out:has(.s2p-result:not([hidden])) .s2p-empty,') &&
     source.includes('.s2p-pane--out:has(.s2p-result[hidden]):has(.s2p-notes[hidden]) { display: none; }'));
   check('v2: the input stays visible after a conversion (no tabs, no Other SVG button)', !/s2p-tab\b|s2p-other|s2p-panel-/.test(source) && !/inputSec|activateTab|otherBtn/.test(script));
-  // The code box has no input listener and the page-wide paste handler skips text fields, so Convert is not redundant.
-  check('v2: Convert stays: code in the box is converted by the button or Ctrl/Cmd+Enter only', !/codeInput\.addEventListener\('input'/.test(script) &&
+  // Typing only invalidates pending work; conversion still requires a committed action.
+  check('v2: Convert stays: code in the box is converted by the button or Ctrl/Cmd+Enter only', !/codeInput\.addEventListener\('input'[^\n]*(?:load\(|run\(|schedule\()/.test(script) &&
     script.includes("$('s2p-convert-code').addEventListener('click', convertCode);") &&
     script.includes("if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;"));
 
@@ -396,8 +397,8 @@ eq('blank: one visible pixel', E.isBlank(new Uint8ClampedArray([0, 0, 0, 0, 0, 0
         resultEl: { hidden: false }
       };
       const doc = { activeElement: {}, addEventListener: (type, fn) => { if (type === 'keydown') env.listeners.push(fn); } };
-      new Function('document', 'wrap', 'state', 'timer', 'clearTimeout', 'URL', 'renderActive', 'renderList', 'resultEl', 'setStatus', source.slice(cs, ce))(
-        doc, { contains: () => env.focusInside }, env.state, 42, (id) => env.cleared.push(id), { revokeObjectURL: (u) => env.revoked.push(u) },
+      new Function('document', 'wrap', 'state', 'sourceRevision', 'timer', 'clearTimeout', 'URL', 'renderActive', 'renderList', 'resultEl', 'setStatus', source.slice(cs, ce))(
+        doc, { contains: () => env.focusInside }, env.state, 0, 42, (id) => env.cleared.push(id), { revokeObjectURL: (u) => env.revoked.push(u) },
         () => env.calls.push('active:' + env.state.items.length), () => env.calls.push('list:' + env.state.items.length), env.resultEl, (msg) => { env.status = msg; });
       return env;
     };
@@ -569,6 +570,47 @@ for (const lang of ['en', 'zh', 'ja', 'ko']) {
   check('size wording: ' + lang + ' page states the 65,535 px side limit', mdx.includes('65,535') || mdx.includes('65535'));
 }
 eq('size wording: engine limit is the one the page states', E.MAX_SIDE, 65535);
+
+// S2-10g: production page with browser image/canvas completion at its system boundary.
+{
+  const strings = new Function(source.slice(source.indexOf('// strings:start'), source.indexOf('// strings:end')).replace(/const STRINGS\s*=/, 'return '))();
+  const images = [], tracks = [];
+  class TestImage { constructor() { images.push(this); } }
+  let urlId = 0;
+  const p = loadPage('src/components/tools/SvgToPngConverterTool.astro', {
+    preset:{'s2p-mode':'scale','s2p-scale':'1','s2p-format':'image/png','s2p-quality':'92','s2p-bg':'transparent','s2p-color':'#ffffff'},
+    globals:{ t:strings.en, Blob, TextEncoder, Uint8Array, ArrayBuffer, Image:TestImage, innerHeight:900,
+      DOMParser:class { parseFromString() { return { getElementsByTagName:() => [] }; } },
+      URL:{createObjectURL:() => 'blob:controlled-'+(++urlId),revokeObjectURL() {}},
+      trackTool:(...args) => tracks.push(args),
+    },
+  });
+  p.el('s2p-result').getBoundingClientRect = () => ({top:100,bottom:200});
+  const createElement = p.ctx.document.createElement;
+  p.ctx.document.createElement = tag => tag !== 'canvas' ? createElement(tag) : {
+    width:0,height:0,getContext() { return {fillRect(){},clearRect(){},drawImage(){},getImageData:() => ({data:new Uint8Array([0,0,0,255])})}; },
+    toBlob(done,type) { done(new Blob(['controlled encoded image'], {type})); },
+  };
+  const settle = () => new Promise(setImmediate);
+  const finish = async (image = images.at(-1), failed = false) => { image[failed ? 'onerror' : 'onload'](); await settle(); };
+  eq('GA SVG initial render silent', tracks, []);
+  p.el('s2p-code').value = '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1"/></svg>';
+  p.el('s2p-convert-code').click();
+  eq('GA SVG committed conversion waits', tracks, []);
+  await finish(); eq('GA SVG conversion historical name', tracks, [['svg-to-png-converter','convert']]);
+  p.el('s2p-scale').value = '2'; p.el('s2p-scale').dispatch('input'); p.flush(); await finish();
+  check('GA SVG live numeric conversion preserved', p.el('s2p-dims').textContent.includes('4'));
+  eq('GA SVG numeric typing silent', tracks.length, 1);
+  p.el('s2p-scale').dispatch('change'); p.flush(); await finish();
+  eq('GA SVG numeric commit counted', tracks.length, 2);
+  p.el('s2p-scale').dispatch('change'); p.flush(); await finish();
+  eq('GA SVG identical conversion deduplicated', tracks.length, 2);
+  p.el('s2p-scale').value = '3'; p.el('s2p-scale').dispatch('change'); p.flush(); const obsolete = images.at(-1);
+  p.el('s2p-scale').value = '4'; p.el('s2p-scale').dispatch('input'); await finish(obsolete);
+  eq('GA SVG obsolete conversion silent before debounce', tracks.length, 2);
+  p.el('s2p-scale').dispatch('change'); p.flush(); await finish(images.at(-1), true);
+  eq('GA SVG failed render silent', tracks.length, 2);
+}
 
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

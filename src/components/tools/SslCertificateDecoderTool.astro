@@ -2099,7 +2099,9 @@ const EX = EXAMPLES[lang];
         renderHost();
       }
 
+      var lastTrackedResult;
       async function runDecode(opts) {
+        clearTimeout(inputTimer);
         var run = ++state.run;
         var text = inputEl.value;
         if (!text.trim()) {
@@ -2138,12 +2140,17 @@ const EX = EXAMPLES[lang];
         var summary = lead + (certs.length === 1 ? S.decodedOne : fmt(S.decodedMany, { n: certs.length }));
         setStatus([summary].concat(notes).join('\n'), errors.length || parsed.hasPrivateKey ? 'error' : notes.length ? 'info' : 'success');
         await showSelected();
+        if (run !== state.run || inputEl.value !== text) return;
         // Bring the chain card into view if it starts below the viewport.
         if (opts && opts.reveal) {
           var top = resultsEl.getBoundingClientRect().top;
           if (top > window.innerHeight - 120) statusEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
-        if (typeof window.trackTool === 'function') { try { window.trackTool(SLUG, 'decode'); } catch (e) {} }
+        var resultKey = JSON.stringify(certs.map(function (cert) { return toPem(cert.der); }));
+        if (opts && opts.track === true && !errors.length && resultKey !== lastTrackedResult) {
+          lastTrackedResult = resultKey;
+          if (typeof window.trackTool === 'function') { try { window.trackTool(SLUG, 'decode'); } catch (e) {} }
+        }
       }
 
       function persist(hasKey) {
@@ -2191,17 +2198,19 @@ const EX = EXAMPLES[lang];
 
       var inputTimer = null;
       inputEl.addEventListener('input', function () {
+        state.run++;
         fileLoad++;
         clearTimeout(inputTimer);
         inputTimer = setTimeout(function () { runDecode({ quiet: true, reveal: true }); }, 350);
       });
+      inputEl.addEventListener('change', function () { runDecode({ quiet: true, reveal: true, track: true }); });
       document.getElementById('scd-example').addEventListener('click', function () {
         fileLoad++;
         clearTimeout(inputTimer);
         inputEl.value = EX.pem;
         var hostEl = document.getElementById('scd-host');
         if (hostEl) hostEl.value = EX.host;
-        runDecode({ lead: fmt(S.exampleLoaded, { host: EX.host, date: EX.date }), reveal: true }).then(function () {
+        runDecode({ lead: fmt(S.exampleLoaded, { host: EX.host, date: EX.date }), reveal: true, track: true }).then(function () {
           var h = document.getElementById('scd-host');
           if (h && !h.value) { h.value = EX.host; state.host = EX.host; renderHost(); }
         });
@@ -2237,7 +2246,7 @@ const EX = EXAMPLES[lang];
           inputEl.value = conv.text;
           var kindText = conv.kind === 'der' ? S.fileDer : conv.kind === 'pkcs7' ? fmt(S.filePkcs7, { n: conv.count }) : S.fileText;
           var lead = fmt(S.fileLoaded, { name: file.name, kind: kindText }) + (conv.removedKey ? ' ' + S.fileKeyRemoved : '');
-          runDecode({ lead: lead, reveal: true });
+          runDecode({ lead: lead, reveal: true, track: true });
         }, function () { if (load === fileLoad) setStatus(S.errFileRead, 'error'); });
       }
 

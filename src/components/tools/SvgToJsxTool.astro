@@ -506,7 +506,8 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, ref
         copyError = false;
       }
 
-      function convert() {
+      var lastTrackedResult;
+      function convert(track) {
         invalidateCopy();
         clearTimeout(_debounce);
         var svg   = inputEl.value;
@@ -520,7 +521,10 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, ref
         try {
           outputEl.value = svg ? svgToJsx(svg, name || 'MyIcon', useTs, useFr, useMemo) : '';
           copyBtn.disabled = !outputEl.value;
-          if (svg) window.trackTool && window.trackTool('svg_to_jsx', 'convert');
+          if (track === true && outputEl.value && outputEl.value !== lastTrackedResult) {
+            lastTrackedResult = outputEl.value;
+            window.trackTool && window.trackTool('svg_to_jsx', 'convert');
+          }
         } catch (error) {
           outputEl.value = '';
           copyBtn.disabled = true;
@@ -532,14 +536,14 @@ const CLIENT_T = { copy: T.copy, copied: T.copied, copyFailed: T.copyFailed, ref
       function debounced() {
         invalidateCopy();
         clearTimeout(_debounce);
-        _debounce = setTimeout(convert, 200);
+        _debounce = setTimeout(function () { convert(false); }, 200);
       }
 
       inputEl.addEventListener('input', debounced);
       nameEl.addEventListener('input', debounced);
-      tsEl.addEventListener('change', convert);
-      frEl.addEventListener('change', convert);
-      memoEl.addEventListener('change', convert);
+      [inputEl, nameEl, tsEl, frEl, memoEl].forEach(function (el) {
+        el.addEventListener('change', function () { convert(true); });
+      });
 
       document.addEventListener('keydown', function (e) {
         if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'l') return;

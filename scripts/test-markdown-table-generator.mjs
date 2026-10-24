@@ -593,11 +593,12 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
     get('mdt-style').value = 'aligned';
     get('mdt-cell').value = 'markdown';
     get('mdt-breaks').value = 'br';
-    const clipboard = [];
+    const clipboard = [], tracks = [];
     let timers = [];
     const sandbox = {
       console, JSON, Math, Number, String, Object, Array, Promise, Error, RegExp, Map, Set, Intl, Symbol, isNaN, parseInt, parseFloat,
       Uint8Array, ArrayBuffer, TextDecoder,
+      trackTool: (...args) => tracks.push(args),
       exports: {}, module: { exports: {} }, require: (n) => req(n),
       setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {},
       navigator: { clipboard: { writeText: (t) => { clipboard.push(t); return Promise.resolve(); } } },
@@ -621,10 +622,33 @@ throwsCode('second item not an object', () => E.jsonToTable([{ a: 1 }, 2]), 'jso
     vm.runInNewContext(script, sandbox, { filename: 'MarkdownTableGeneratorTool.astro' });
     const flush = () => { for (let i = 0; i < 50 && timers.length; i++) timers.shift()(); };
     return {
-      el: get, clipboard, tabs,
+      el: get, clipboard, tabs, tracks,
       importText(text, format = 'auto') { get('mdt-format').value = format; get('mdt-import').value = text; get('mdt-import').dispatch('input'); flush(); },
       copy() { get('mdt-copy').click(); },
     };
+  }
+
+  {
+    const p = runPage('en');
+    const same = (name, actual, expected) => check(name, JSON.stringify(actual) === JSON.stringify(expected), JSON.stringify(actual));
+    same('GA table initial render silent', p.tracks, []);
+    p.importText('name,value\nAda,1', 'csv');
+    check('GA table live import preserved', p.el('mdt-output').value.includes('Ada'));
+    same('GA table import typing silent', p.tracks, []);
+    p.el('mdt-import').dispatch('change');
+    same('GA committed table import historical name', p.tracks, [['markdown_table_generator','import_csv']]);
+    p.el('mdt-import').dispatch('change');
+    same('GA unchanged table import deduplicated', p.tracks.length, 1);
+    p.importText('[{', 'json'); p.el('mdt-import').dispatch('change');
+    same('GA table import refusal silent', p.tracks.length, 1);
+    const fresh = runPage('en'); let deliver;
+    fresh.el('mdt-file').files = [{name:'old.csv',size:20,arrayBuffer:() => new Promise(resolve => {deliver=resolve;})}];
+    fresh.el('mdt-file').dispatch('change');
+    fresh.importText('name,value\nCurrent,2','csv'); fresh.el('mdt-import').dispatch('change');
+    deliver(new TextEncoder().encode('name,value\nObsolete,1').buffer); await new Promise(setImmediate);
+    same('GA obsolete imported file silent', fresh.tracks, [['markdown_table_generator','import_csv']]);
+    check('GA obsolete import preserves current table', fresh.el('mdt-output').value.includes('Current'));
+
   }
 
   const cases = [
