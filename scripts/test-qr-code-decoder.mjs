@@ -339,7 +339,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 function pageFixture(options = {}) {
-  const nodes = new Map(), requests = [], permissions = [], images = [], revoked = [], copied = [], timers = new Map();
+  const nodes = new Map(), requests = [], permissions = [], images = [], revoked = [], copied = [], clipboardRequests = [], tracks = [], timers = new Map();
   let timerId = 0, objectId = 0, decodeCalls = 0;
   const markup = source.slice(source.indexOf('\n---\n', 4) + 5, source.indexOf('<script'));
   function element(tag = 'div') {
@@ -395,7 +395,8 @@ function pageFixture(options = {}) {
   const decoder = { prepareZXingModule() { return options.reader?.promise || Promise.resolve(); }, readBarcodes() { decodeCalls++; return options.decode?.promise || Promise.resolve(options.results || []); } };
   const ctx = { t: options.strings || STRINGS.en, pageLang: options.lang || 'en', document, URL: BrowserURL, Blob, Image: BrowserImage, TextEncoder, TextDecoder, Uint8Array, Uint8ClampedArray,
     console, innerHeight: 844, ZXingWASM: decoder,
-    navigator: { clipboard: { writeText(value) { copied.push(value); return Promise.resolve(); } }, mediaDevices: { getUserMedia() { const d = deferred(); permissions.push(d); return d.promise; } } },
+    trackTool(...args) { tracks.push(args); },
+    navigator: { clipboard: { writeText(value) { copied.push(value); if (options.copyThrows) throw Error('Clipboard denied'); if (options.deferClipboard) { const d = deferred(); clipboardRequests.push(d); return d.promise; } return Promise.resolve(); } }, mediaDevices: { getUserMedia() { const d = deferred(); permissions.push(d); return d.promise; } } },
     fetch(url, opts) { const d = deferred(); requests.push({ url, opts, ...d }); return d.promise; },
     setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay }); return id; }, clearTimeout(id) { timers.delete(id); },
     getComputedStyle() { return { getPropertyValue() { return '#b45309'; } }; },
@@ -407,7 +408,7 @@ function pageFixture(options = {}) {
   const layout = readFileSync(join(root, 'src/layouts/ToolLayout.astro'), 'utf8');
   const start = layout.indexOf("document.addEventListener('keydown'", layout.indexOf('// ── Keyboard shortcuts:'));
   vm.runInContext(layout.slice(start, layout.indexOf('// ── Copy button visual feedback', start)), context, { filename: 'ToolLayout.shortcuts' });
-  return { nodes, requests, permissions, images, revoked, copied, timers, document, get decodeCalls() { return decodeCalls; },
+  return { nodes, requests, permissions, images, revoked, copied, clipboardRequests, tracks, timers, document, get decodeCalls() { return decodeCalls; },
     url(v = 'https://example.com/qr.png') { nodes.get('qrd-url-input').value = v; },
     respond(i = 0) { requests[i].resolve({ ok: true, blob() { return Promise.resolve(new Blob(['fixture'], { type: 'image/png' })); } }); },
     shortcut(key = 'l') { nodes.get('qrd-url-input').dispatch('keydown', { key, ctrlKey: true }); }
@@ -548,6 +549,37 @@ for (const failure of ['not-image', 'bad-image', 'decode-error', 'url-fetch', 'u
   check('v2: long multi-code results keep every card', page.nodes.get('qrd-results').children.length === 3);
   walk(page.nodes.get('qrd-results')).find((n) => n.className === 'btn-copy').click(); await settlePage();
   eq('v2: long result copy keeps all text', page.copied.at(-1), longText);
+}
+
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const page = pageFixture({ lang, strings: STRINGS[lang], deferClipboard: true, results: [{ isValid: true, format: 'QRCode', bytes: new TextEncoder().encode('https://example.com/decoded') }] });
+  const file = page.nodes.get('qrd-file');
+  const load = async () => { file.files = [new Blob(['fixture'], { type: 'image/png' })]; file.dispatch('change'); await settlePage(); };
+  const walk = n => [n, ...n.children.flatMap(walk)];
+  const copy = () => walk(page.nodes.get('qrd-results')).find(n => n.classList.contains('btn-copy'));
+  const events = () => page.tracks.filter(x => x[1].startsWith('copy_'));
+  await load();
+  copy().click();
+  eq(lang + ': pending QR copy is silent', events(), []);
+  // Resolve all requests, including superseded ones, in deliberately reversed order.
+  copy().click(); page.clipboardRequests.at(-1).resolve(); await settlePage();
+  eq(lang + ': successful QR copy keeps classified action', events(), [['qr-code-decoder', 'copy_url']]);
+  page.clipboardRequests[0].resolve(); await settlePage();
+  eq(lang + ': superseded QR copy is silent', events().length, 1);
+  copy().click(); const cleared = page.clipboardRequests.at(-1);
+  page.nodes.get('qrd-clear').click(); cleared.resolve(); await settlePage();
+  eq(lang + ': QR copy completed after clear is silent', events().length, 1);
+  await load(); copy().click(); const old = page.clipboardRequests.at(-1);
+  await load(); old.resolve(); await settlePage();
+  eq(lang + ': QR copy completed after replacement is silent', events().length, 1);
+  copy().click(); page.clipboardRequests.at(-1).reject(Error('Clipboard denied')); await settlePage();
+  eq(lang + ': rejected QR copy is handled and silent', events().length, 1);
+  const denied = pageFixture({ lang, strings: STRINGS[lang], copyThrows: true, results: [{ isValid: true, format: 'QRCode', bytes: new TextEncoder().encode('plain text') }] });
+  denied.nodes.get('qrd-file').files = [new Blob(['fixture'], { type: 'image/png' })];
+  denied.nodes.get('qrd-file').dispatch('change'); await settlePage();
+  let threw = false;
+  try { walk(denied.nodes.get('qrd-results')).find(n => n.classList.contains('btn-copy')).click(); } catch { threw = true; }
+  check(lang + ': synchronous QR copy denial is handled without an event', !threw && !denied.tracks.some(x => x[1].startsWith('copy_')));
 }
 
 console.log(passes + ' passed, ' + failures + ' failed');

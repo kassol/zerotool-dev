@@ -548,6 +548,7 @@ const jsonlHref = (lang === 'en' ? '' : '/' + lang) + '/tools/jsonl-converter/';
   let timer: ReturnType<typeof setTimeout> | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let workingTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastTrackedOperation: ReturnType<typeof operationKey> | null = null;
 
   function plural(pair: string[], n: number) { return fmt(n === 1 ? pair[0] : pair[1], { n: n.toLocaleString() }); }
   function size(chars: number) {
@@ -778,9 +779,15 @@ const jsonlHref = (lang === 'en' ? '' : '/' + lang) + '/tools/jsonl-converter/';
     copyBtn.disabled = dlBtn.disabled = true;
     setStatus(fmt(T.workerFail, { message: (error && error.message) || String(error) }), 'error');
   }
-  function run(force: boolean) {
+  function operationKey() { return { text: input.value, settings: JSON.stringify([json5El.checked, opts()]) }; }
+  function sameOperation(a: ReturnType<typeof operationKey>, b: ReturnType<typeof operationKey> | null) {
+    return b !== null && a.text === b.text && a.settings === b.settings;
+  }
+  function run(force: boolean, action?: string) {
+    if (timer) { clearTimeout(timer); timer = null; }
     const text = input.value;
     const gen = ++generation;
+    const key = operationKey();
     if (!force && text.length > AUTO_LIMIT) {
       if (workingTimer) { clearTimeout(workingTimer); workingTimer = null; }
       client.cancel();
@@ -792,9 +799,14 @@ const jsonlHref = (lang === 'en' ? '' : '/' + lang) + '/tools/jsonl-converter/';
       if (!settled(gen)) return;
       docId = r.docId;
       render(r.view);
+      if (action && r.view.ok && sameOperation(key, operationKey()) && !sameOperation(key, lastTrackedOperation)) {
+        lastTrackedOperation = key;
+        track(action);
+      }
     }, (e: any) => failed(gen, e));
   }
   function schedule() {
+    generation++;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => run(false), input.value.length > 200_000 ? 600 : 250);
     if (saveTimer) clearTimeout(saveTimer);
@@ -989,8 +1001,8 @@ const jsonlHref = (lang === 'en' ? '' : '/' + lang) + '/tools/jsonl-converter/';
 
   /* Controls ------------------------------------------------------------------------- */
   function track(action: string) { (window as any).trackTool && (window as any).trackTool('json_formatter', action); }
-  $('jf-format').addEventListener('click', () => { mode = 'pretty'; run(true); save(); track('format'); });
-  $('jf-minify').addEventListener('click', () => { mode = 'min'; run(true); save(); track('minify'); });
+  $('jf-format').addEventListener('click', () => { mode = 'pretty'; run(true, 'format'); save(); });
+  $('jf-minify').addEventListener('click', () => { mode = 'min'; run(true, 'minify'); save(); });
   wrap.querySelectorAll('[data-indent]').forEach((b: any) => b.addEventListener('click', () => {
     indent = b.getAttribute('data-indent'); mode = 'pretty';
     setPressed('[data-indent]', 'data-indent', indent);

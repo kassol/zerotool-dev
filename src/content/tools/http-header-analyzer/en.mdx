@@ -152,12 +152,32 @@ server
 <p>If you need the full request list with timings and bodies, export a HAR file and open it in the HAR analyzer below instead.</p>
 
 <h2>Limitations</h2>
-<p>The summary counts only the first Strict-Transport-Security field; ignored duplicates remain in the results and JSON. Trailing spaces and tabs are removed from the analyzed start line in every result view. A line containing only spaces or tabs currently ends a section just like an empty line; it is not joined to the preceding value. Only the nine request methods listed below are recognized. An unsupported request line without a colon, such as PROPFIND /dav/ HTTP/1.1, gets an explanation that the analyzer does not recognize the method. An unsupported request line containing a colon, for example an absolute URL, may instead be read as a custom field. This is an analyzer limitation, not a method validity check.</p>
+<p>The summary counts only the first Strict-Transport-Security field; ignored duplicates remain in the results and JSON. Trailing spaces and tabs are removed from the analyzed start line in every result view. A line containing only spaces or tabs currently ends a section just like an empty line; it is not joined to the preceding value. The analyzer supports the nine request methods listed below. If the analyzed message starts with another method, the request line is listed under “Lines not read as headers” with an unsupported-method explanation. This also applies to absolute URLs and other targets containing colons: the request line is excluded from Raw, JSON and Copy JSON, while the following headers are still read. Diagnostic line numbers refer to the original input. This is an analyzer limitation, not a method validity check.</p>
+
+<p>For example, the unsupported PROPFIND start line below is excluded, while Host and both X-Trace values are retained in JSON:</p>
+
+{/* hha-check: {"view":"json"} */}
+```http
+PROPFIND http://example.test/a HTTP/1.1
+Host: example.test
+X-Trace: one
+X-Trace: two
+```
+
+```json
+{
+  "host": "example.test",
+  "x-trace": [
+    "one",
+    "two"
+  ]
+}
+```
 
 <ul>
   <li>The descriptions and hint texts are in English on every language version of this page. 88 headers have a description; any other header is listed under Custom / Other without one.</li>
   <li>HTTP/2 and HTTP/3 pseudo-headers such as <code>:status</code> and <code>:path</code>, which browser developer tools copy as the first lines, are listed in their own group with a short description (RFC 9113 §8.3, RFC 8441 for <code>:protocol</code>). Without a status line, <code>:status</code> marks the input as a response and <code>:method</code> as a request.</li>
-  <li>The first line is read as a request line only for GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD, TRACE and CONNECT, written in uppercase. Method names are case-sensitive (RFC 9110 section 9.1), so <code>get / HTTP/1.1</code> is listed under “Lines not read as headers” with a note; unsupported lines such as <code>PROPFIND /dav/ HTTP/1.1</code> get an explanation that this analyzer does not recognize the method.</li>
+  <li>The supported request methods are GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD, TRACE and CONNECT, written in uppercase. Method names are case-sensitive (RFC 9110 section 9.1), so <code>get / HTTP/1.1</code> is listed under “Lines not read as headers” with a note. Unsupported request start lines such as <code>PROPFIND http://example.test/a HTTP/1.1</code> are also listed there with an unsupported-method explanation; they are never exported as header fields.</li>
   <li>One message is analyzed. A header section ends at an empty line (RFC 9112 section 2.1). If the next line is a status line or request line, it starts another message: <code>curl -v</code> gives the request and then the response, <code>curl -iL</code> gives one response per redirect. The tool analyzes the last response, lists the other messages under “Other messages in the input” and says so in the status line. Any other line after an empty line ends the reading, and the status line says how many lines were not read. The tool skips the <code>*</code> lines and data lines such as <code>{'} [5 bytes data]'}</code>, and removes a leading <code>&gt; </code> or <code>&lt; </code>.</li>
   <li>A line that is not a header field line, such as one without an ASCII colon or with a full-width colon (<code>Content-Type：text/html</code>), is not counted. It is listed under “Lines not read as headers” with its line number and the reason, and the status line gives the count. A line with whitespace between the name and the colon is listed there too, because RFC 9112 section 5.1 does not allow it (a server must reject such a request with 400).</li>
   <li>The HSTS check reads <code>max-age</code> as digits or as a quoted value such as <code>max-age="31536000"</code>, which RFC 6797 section 6.1 allows. When a response has more than one Strict-Transport-Security header, only the first is checked; the others get a note that browsers ignore them (RFC 6797 section 8.1).</li>
