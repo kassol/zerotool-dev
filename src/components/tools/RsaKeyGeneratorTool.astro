@@ -6,6 +6,10 @@ const { lang = 'en' } = Astro.props;
 
 const labels = {
   en: {
+    errUnavailable: "Web Crypto is unavailable. Open this page over HTTPS in a supported browser.",
+    errUnsupported: "This browser does not support the selected RSA operation.",
+    errBlocked: "The browser blocked key generation or export. Check its security settings.",
+    errOperation: "The browser could not generate or export the keys. Try again.",
     copyFailed: 'Copy failed. Try again.',
     badge: 'Keys are generated in this browser and are not uploaded or stored',
     keySize: 'Key Size',
@@ -24,6 +28,10 @@ const labels = {
     msgError: 'Error: ',
   },
   zh: {
+    errUnavailable: "Web Crypto 不可用，请通过 HTTPS 在支持的浏览器中打开本页。",
+    errUnsupported: "此浏览器不支持所选 RSA 操作。",
+    errBlocked: "浏览器阻止了密钥生成或导出，请检查安全设置。",
+    errOperation: "浏览器未能生成或导出密钥，请重试。",
     copyFailed: '复制失败，请重试。',
     badge: '密钥在浏览器中生成，不上传、不保存',
     keySize: '密钥长度',
@@ -42,6 +50,10 @@ const labels = {
     msgError: '错误：',
   },
   ja: {
+    errUnavailable: "Web Crypto を利用できません。対応ブラウザーで HTTPS のページを開いてください。",
+    errUnsupported: "このブラウザーは選択した RSA 操作に対応していません。",
+    errBlocked: "ブラウザーが鍵の生成または出力をブロックしました。セキュリティ設定を確認してください。",
+    errOperation: "ブラウザーが鍵を生成または出力できませんでした。再試行してください。",
     copyFailed: 'コピーに失敗しました。再試行してください。',
     badge: '鍵はブラウザ内で生成し、アップロードも保存もしません',
     keySize: '鍵のサイズ',
@@ -60,6 +72,10 @@ const labels = {
     msgError: 'エラー：',
   },
   ko: {
+    errUnavailable: "Web Crypto를 사용할 수 없습니다. 지원되는 브라우저에서 HTTPS로 이 페이지를 여세요.",
+    errUnsupported: "이 브라우저는 선택한 RSA 작업을 지원하지 않습니다.",
+    errBlocked: "브라우저가 키 생성이나 내보내기를 차단했습니다. 보안 설정을 확인하세요.",
+    errOperation: "브라우저가 키를 생성하거나 내보내지 못했습니다. 다시 시도하세요.",
     copyFailed: '복사하지 못했습니다. 다시 시도하세요.',
     badge: '키는 브라우저에서 생성되며 업로드하거나 저장하지 않습니다',
     keySize: '키 크기',
@@ -141,6 +157,10 @@ const L = labels[lang];
   data-msg-generating={L.msgGenerating}
   data-msg-success={L.msgSuccess}
   data-msg-error={L.msgError}
+  data-error-unavailable={L.errUnavailable}
+  data-error-unsupported={L.errUnsupported}
+  data-error-blocked={L.errBlocked}
+  data-error-operation={L.errOperation}
 >
   <div class="rkg-main">
     <aside class="rkg-rail zt-rail">
@@ -225,6 +245,13 @@ const L = labels[lang];
       var MSG_GENERATING = wrap ? wrap.dataset.msgGenerating : 'Generating {bits}-bit key pair…';
       var MSG_SUCCESS = wrap ? wrap.dataset.msgSuccess : 'Key pair generated successfully.';
       var MSG_ERROR = wrap ? wrap.dataset.msgError : 'Error: ';
+      function cryptoError(error) {
+        if (typeof crypto === 'undefined' || !crypto.subtle ||
+            typeof crypto.subtle.generateKey !== 'function' || typeof crypto.subtle.exportKey !== 'function') return wrap.dataset.errorUnavailable;
+        if (error && error.name === 'NotSupportedError') return wrap.dataset.errorUnsupported;
+        if (error && (error.name === 'SecurityError' || error.name === 'NotAllowedError')) return wrap.dataset.errorBlocked;
+        return wrap.dataset.errorOperation;
+      }
 
       var statusEl = document.getElementById('rkg-status');
       var pubBlock = document.getElementById('rkg-pub-block');
@@ -275,15 +302,36 @@ const L = labels[lang];
         if (!text || btn.disabled) return;
         var state = resetCopy(btn, label);
         function current() { return copyStates.get(btn) === state; }
-        function failed() { if (current()) btn.textContent = COPY_FAILED; }
+        function succeeded() {
+          if (!current()) return;
+          btn.textContent = copied;
+          state.timer = setTimeout(function () { if (current()) btn.textContent = label; }, delay);
+        }
+        function fallback() {
+          if (!current()) return;
+          var ta, ok = false;
+          try {
+            ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            ok = document.execCommand('copy') === true;
+          } catch (_) {
+            ok = false;
+          } finally {
+            if (ta && ta.parentNode) ta.parentNode.removeChild(ta);
+            btn.focus();
+          }
+          if (ok) succeeded();
+          else if (current()) btn.textContent = COPY_FAILED;
+        }
         try {
-          if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') { failed(); return; }
-          Promise.resolve(navigator.clipboard.writeText(text)).then(function () {
-            if (!current()) return;
-            btn.textContent = copied;
-            state.timer = setTimeout(function () { if (current()) btn.textContent = label; }, delay);
-          }, failed);
-        } catch (e) { failed(); }
+          if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') { fallback(); return; }
+          Promise.resolve(navigator.clipboard.writeText(text)).then(succeeded, fallback);
+        } catch (e) { fallback(); }
       }
       var generationVersion = 0;
       var generatedFormat = null;
@@ -318,6 +366,11 @@ const L = labels[lang];
         privBlock.style.display = 'none';
 
         try {
+          if (typeof crypto === 'undefined' || !crypto.subtle ||
+              typeof crypto.subtle.generateKey !== 'function' || typeof crypto.subtle.exportKey !== 'function') {
+            setStatus(MSG_ERROR + wrap.dataset.errorUnavailable, true);
+            return;
+          }
           var hashAlgo = 'SHA-256';
           var usages;
           if (algo === 'RSA-OAEP') {
@@ -362,7 +415,7 @@ const L = labels[lang];
           window.trackTool && window.trackTool('rsa-key-generator', 'generate');
         } catch (e) {
           if (version !== generationVersion) return;
-          setStatus(MSG_ERROR + e.message, true);
+          setStatus(MSG_ERROR + cryptoError(e), true);
         } finally {
           if (version !== generationVersion) return;
           btn.disabled = false;

@@ -4,6 +4,7 @@ interface Props { lang?: 'en' | 'zh' | 'ja' | 'ko' }
 const { lang = 'en' } = Astro.props;
 const STRINGS = {
   en: {
+    unsupportedMethod: "This analyzer does not recognize the request method {method}. The line is not a header field; this does not mean the method is invalid.",
     views: "Views",
     emptyResult: "Header categories, hints and JSON will appear here.",
     privacyNote: "Results and copied JSON keep Authorization and Cookie values. Review them before sharing.",
@@ -42,6 +43,7 @@ const STRINGS = {
     bodyStop: 'The header section ended at the empty line {line}; the {n} line(s) after it were not read.',
   },
   zh: {
+    unsupportedMethod: "本分析器不识别请求方法 {method}。此行不是头部字段，但这不代表该方法无效。",
     views: "视图",
     emptyResult: "标头分类、提示和 JSON 将显示在这里。",
     privacyNote: "结果和复制的 JSON 会保留 Authorization 与 Cookie 的值。分享前请检查敏感信息。",
@@ -80,6 +82,7 @@ const STRINGS = {
     bodyStop: '头部在第 {line} 行的空行处结束，后面的 {n} 行未读取。',
   },
   ja: {
+    unsupportedMethod: "この解析ツールはリクエストメソッド {method} を認識しません。この行はヘッダーフィールドではありませんが、メソッドが無効という意味ではありません。",
     views: "表示",
     emptyResult: "ヘッダーのカテゴリ、ヒント、JSON がここに表示されます。",
     privacyNote: "結果とコピーした JSON には Authorization と Cookie の値が残ります。共有前に機密情報を確認してください。",
@@ -118,6 +121,7 @@ const STRINGS = {
     bodyStop: '{line} 行目の空行でヘッダーが終わったと判断し、その後の {n} 行は読み込んでいません。',
   },
   ko: {
+    unsupportedMethod: "이 분석기는 요청 메서드 {method}를 인식하지 못합니다. 이 줄은 헤더 필드가 아니지만 메서드가 잘못되었다는 뜻은 아닙니다.",
     views: "보기",
     emptyResult: "헤더 분류, 힌트, JSON이 여기에 표시됩니다.",
     privacyNote: "결과와 복사한 JSON에는 Authorization 및 Cookie 값이 남습니다. 공유하기 전에 민감한 정보를 확인하세요.",
@@ -636,6 +640,8 @@ const { tips: TIPS, ...CLIENT_T } = T;
       }
 
       function problemText(bad) {
+        var request = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+) +\S+ +HTTP\/\d(?:\.\d)?[ \t]*$/.exec(bad.text);
+        if (request && bad.problem !== 'methodCase') return t.unsupportedMethod.replace('{method}', request[1]);
         var text = t.problems[bad.problem] || t.problems.noColon;
         return text.replace('{method}', bad.method || '').replace('{upper}', bad.upper || '');
       }
@@ -746,7 +752,14 @@ const { tips: TIPS, ...CLIENT_T } = T;
         var n = parsed.headers.length;
         summaryCountEl.textContent = t.summaryCount.replace('{n}', n).replace('{s}', n === 1 ? '' : 's');
 
-        var secCount = parsed.headers.filter(function (h) { return h.cat === 'security'; }).length;
+        var seenSts = false;
+        var secCount = parsed.headers.filter(function (h) {
+          if (h.cat !== 'security') return false;
+          if (h.lower !== 'strict-transport-security') return true;
+          if (seenSts) return false;
+          seenSts = true;
+          return true;
+        }).length;
         if (secCount > 0) {
           summarySecEl.textContent = t.summarySecurity.replace('{n}', secCount);
           summarySecEl.dataset.kind = 'ok';
@@ -768,6 +781,7 @@ const { tips: TIPS, ...CLIENT_T } = T;
           return;
         }
         var parsed = parseHeaders(text);
+        if (parsed.statusLine) parsed.statusLine = parsed.statusLine.replace(/[ \t]+$/, '');
         var readNothing = parsed.headers.length === 0 && !parsed.statusLine;
         if (readNothing && !parsed.invalid.length) {
           setStatus(t.empty, 'error');
