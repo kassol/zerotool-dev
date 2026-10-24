@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fromMarkdown } from 'mdast-util-from-markdown';
-import { gfm } from 'micromark-extension-gfm';
+import { micromark } from 'micromark';
+import { gfm, gfmHtml } from 'micromark-extension-gfm';
 import { gfmFromMarkdown } from 'mdast-util-gfm';
 import {
   FAQ_COUNT_MISMATCH, FAQ_ID, FAQ_IDS_TODO, LANGS, LIMITS_EXEMPT, S2_PENDING, STEPS_COUNT_MISMATCH,
@@ -196,6 +197,17 @@ try {
   equal('GFM: a blank between data rows drops the last row',
     renderedRows(table.replace('| b |', '\n| b |')), [2]);
 
+  const detachedFramedRow = 'Name | Value\n--- | ---\n\n| a | 1 |';
+  const renderGfm = (text) => micromark(text, { extensions: [gfm()], htmlExtensions: [gfmHtml()] });
+  const detachedHtml = renderGfm(detachedFramedRow);
+  check('GFM: mixed optional outer pipes render a header-only table and a detached paragraph',
+    (detachedHtml.match(/<tr>/g) ?? []).length === 1 && detachedHtml.includes('<p>| a | 1 |</p>'),
+    detachedHtml);
+  const joinedHtml = renderGfm(detachedFramedRow.replace('\n\n', '\n'));
+  check('GFM: removing the mixed-pipe gap renders both rows in one table',
+    (joinedHtml.match(/<tr>/g) ?? []).length === 2 && (joinedHtml.match(/<td>/g) ?? []).length === 2 && !joinedHtml.includes('<p>'),
+    joinedHtml);
+
   const brokenTables = [
     ['header and delimiter', table.replace('| --- |', '\n| --- |'), /header and delimiter/],
     ['data rows', table.replace('| b |', '\n\n| b |'), /between table rows/],
@@ -203,6 +215,9 @@ try {
     ['alignment delimiter', '| Name | Value |\n\n| :-- | --: |\n| a | 1 |', /header and delimiter/],
     ['optional outer pipes', 'Name | Value\n--- | ---\na | 1\n\nb | 2', /between table rows/],
     ['mixed outer pipes', 'Name | Value\n| --- | --- |\n\n| a | 1 |', /delimiter and first row/],
+    ['framed row after unframed header and delimiter', detachedFramedRow, /delimiter and first row/],
+    ['leading pipe after unframed header and delimiter', 'Name | Value\n--- | ---\n\n| a | 1', /delimiter and first row/],
+    ['trailing pipe after unframed header and delimiter', 'Name | Value\n--- | ---\n\na | 1 |', /delimiter and first row/],
     ['single-column header', 'Name\n\n| --- |\n| a |', /header and delimiter/],
     ['single-column data', '| Name |\n| --- |\n\n| a |', /delimiter and first row/],
     ['escaped cell pipe', '| Name | Value |\n| --- | --- |\n| a\\|b | 1 |\n\n| c | 2 |', /between table rows/],
@@ -221,6 +236,7 @@ try {
   const validTables = [
     ['blank lines around a table', '\n\n' + table + '\n\nA new paragraph.\n'],
     ['separate complete tables', table + '\n\n' + table],
+    ['separate tables with different outer pipes', 'Name | Value\n--- | ---\na | 1\n\n| Other | Value |\n| --- | --- |\n| b | 2 |'],
     ['separate header-only tables', '| Name | Value |\n| --- | --- |\n\n| Other | Value |\n| --- | --- |'],
     ['prose with a pipe after a framed table', table + '\n\nChoose left | right in the text.\n'],
     ['different-width pipe prose', table + '\n\n| A standalone label |\n'],
@@ -234,6 +250,8 @@ try {
     ['preformatted table examples', '<pre><code>{`\n' + table.replace('| a |', '\n| a |') + '\n`}</code></pre>'],
     ['commented table', '<!--\n' + table.replace('| a |', '\n| a |') + '\n-->'],
     ['MDX annotation after an unframed table', 'Name | Value\n--- | ---\na | 1\n\n{/* check: left | right */}'],
+    ['HTML comment between unframed table and framed prose', 'Name | Value\n--- | ---\n\n<!-- left | right -->\n\n| a | 1 |'],
+    ['MDX comment between unframed table and framed prose', 'Name | Value\n--- | ---\n\n{/* left | right */}\n\n| a | 1 |'],
     ['table inside an MDX comment', '{/*\n' + table.replace('| a |', '\n| a |') + '\n*/}'],
   ];
   for (const [i, [name, extra]] of validTables.entries()) {

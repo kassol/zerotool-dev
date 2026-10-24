@@ -295,7 +295,9 @@ function tableBlankLines(body) {
       const r = rows[j];
       if (!r || delimiter(r) || r.indent !== reference.indent || isHeader(j)) break;
       if (j > last + 1) {
-        if (!matches(reference, r) || !styles.some((s) => r.leading === s.leading && r.trailing === s.trailing)) break;
+        // Outer pipes are optional in GFM. Keep unframed pipe prose separate
+        // unless an earlier row also used that style.
+        if (!matches(reference, r) || (!r.leading && !r.trailing && !styles.some((s) => !s.leading && !s.trailing))) break;
         problems.push(`body line ${j + 1}: blank line between table ${last === i ? 'delimiter and first row' : 'rows'}`);
       }
       last = j;
