@@ -3,7 +3,7 @@
 // Read:  src/components/tools/ZeroWidthCharacterDetectorTool.astro (extracts the real engine block
 //        between the `engine:start` / `engine:end` markers, so this test cannot drift
 //        from the shipped source)
-// Write: stdout only (test results)
+// Write: stdout and temporary MDX fixtures (removed at the end)
 // Exit:  0 if all PASS, 1 if any FAIL
 //
 // Covers: every code point from U+0000 to U+10FFFF is flagged exactly when it has
@@ -17,10 +17,12 @@
 //
 // Run: node scripts/test-zero-width-character-detector.mjs
 
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { fencedBlocks, toolMdxContract } from './lib/tool-mdx-contract.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, 'src/components/tools/ZeroWidthCharacterDetectorTool.astro'), 'utf8');
@@ -730,6 +732,84 @@ for (const lang of ['en', 'zh']) {
   check('input text is not restored by the browser after reload', /<textarea id="zwcd-input"[^>]*autocomplete="off"/.test(source));
   check('password field is not autofilled and not persisted', /id="zwcd-password"[^>]*type="password"[^>]*autocomplete="off"/.test(source));
   check('persistence stays disabled', /'zero-width-character-detector': 'disabled'/.test(readFileSync(join(root, 'src/data/persistence.ts'), 'utf8')));
+}
+
+// Ordinary detection/cleaning examples use the shipped scan/strip engine, independently
+// of the decode examples below. Inputs are escaped code blocks, explicit tag payloads,
+// single characters, or the page's actual sample.
+const pageSamples = new Function('return (' + source.match(/var SAMPLES = (\{[\s\S]*?\n    \});/)[1] + ');')();
+function verifyDetectionExample({ spec, after, lang }) {
+  if (!spec || !spec.counts || !Array.isArray(spec.strip) || !spec.strip.length) return 'needs counts and strip modes';
+  const blocks = fencedBlocks(after);
+  let text;
+  if (spec.sample) text = pageSamples[spec.sample];
+  else if (spec.input === 'block') {
+    if (!blocks[0]) return 'needs an escaped input block';
+    text = blocks[0].text.replace(/\\u(?:\{([0-9a-f]+)\}|([0-9a-f]{4}))/gi,
+      (_, astral, bmp) => String.fromCodePoint(parseInt(astral ?? bmp, 16)));
+  } else if (typeof spec.cover === 'string' && typeof spec.hidden === 'string') {
+    if (!blocks[0]?.text.includes(spec.cover) || !blocks[0].text.includes(spec.hidden)) return 'tag cover and payload must appear in the input example';
+    text = spec.cover + tags(spec.hidden);
+  } else if (typeof spec.text === 'string') {
+    text = spec.text;
+    const escaped = [...text].map((c) => '\\u' + c.codePointAt(0).toString(16).padStart(4, '0')).join('');
+    if (!after.includes(text) && !after.includes(escaped)) return 'input must appear in the example';
+  }
+  if (typeof text !== 'string') return 'unknown example input';
+  const scanned = E.scan(text);
+  const counts = { hits: scanned.hits.length, visible: scanned.visible, total: scanned.total, utf16: text.length };
+  for (const category of ['tag', 'zero-width', 'bidi', 'variation', 'formatting']) {
+    counts[category] = scanned.hits.filter((h) => h.meta.category === category).length;
+  }
+  counts.cleanedUtf16 = E.strip(text, scanned.hits, spec.strip[0]).length;
+  const problems = [];
+  for (const [key, expected] of Object.entries(spec.counts)) {
+    if (counts[key] !== expected) problems.push(`${key}: engine ${counts[key]} != page ${expected}`);
+  }
+  for (const [key, template] of Object.entries(spec.show ?? {})) {
+    if (!(key in counts) || !template.includes('{n}')) { problems.push('unknown displayed count ' + key); continue; }
+    const phrase = template.replace('{n}', counts[key]);
+    if (!after.includes(phrase)) problems.push('missing computed text ' + JSON.stringify(phrase));
+  }
+  if (spec.names && !after.includes(scanned.hits.map((h) => h.meta.name).join(' '))) problems.push('chip names differ');
+  const quoted = blocks.map((b) => b.text).concat([...after.matchAll(/`([^`\n]*)`/g)].map((m) => m[1]));
+  for (const mode of spec.strip) {
+    if (!['all', 'zero-width', 'bidi', 'tag', 'variation'].includes(mode)) { problems.push('unknown strip mode ' + mode); continue; }
+    const cleaned = E.strip(text, scanned.hits, mode);
+    if (cleaned === '') {
+      if (!after.includes(STRINGS_ALL[lang].emptyAfterStrip)) problems.push('missing empty-result placeholder');
+    } else if (!quoted.includes(cleaned)) problems.push(`missing ${mode} output ${JSON.stringify(cleaned)}`);
+  }
+  return problems.join('; ') || null;
+}
+const detectionOptions = {
+  annotations: [{ tag: 'zwcd-check', min: 2, verify: verifyDetectionExample }],
+};
+const detectionContract = toolMdxContract('zero-width-character-detector', detectionOptions);
+for (const result of detectionContract.results) check('MDX contract: ' + result.message, result.ok);
+// A changed fact, count, cleaned output or empty-result message must be rejected at
+// the same public contract seam. These fixtures cannot borrow a later section's output.
+const exampleRoot = mkdtempSync(join(tmpdir(), 'zwcd-mdx-'));
+try {
+  const dir = join(exampleRoot, 'src/content/tools/zero-width-character-detector');
+  mkdirSync(dir, { recursive: true });
+  for (const [lang, doc] of Object.entries(detectionContract.docs)) writeFileSync(join(dir, lang + '.mdx'), doc.text);
+  for (const [lang, before, after] of [
+    ['en', 'reports 27 invisible characters', 'reports 999 invisible characters'],
+    ['zh', '"counts":{"hits":8,', '"counts":{"hits":9,'],
+    ['ja', '要件定義\n画面設計\nテスト計画', '要件定義\n画面設計\n古い出力'],
+    ['ko', "'(제거 후 비어있음)'", "'old empty result'"],
+  ]) {
+    const original = detectionContract.docs[lang].text;
+    check(lang + ' ordinary example mutation changes the fixture', original.includes(before));
+    writeFileSync(join(dir, lang + '.mdx'), original.replace(before, after));
+    const changed = toolMdxContract('zero-width-character-detector', { ...detectionOptions, root: exampleRoot });
+    check(lang + ' ordinary example mutation is rejected by the engine contract',
+      changed.problems.some((p) => p.includes(lang + ' zwcd-check #')));
+    writeFileSync(join(dir, lang + '.mdx'), original);
+  }
+} finally {
+  rmSync(exampleRoot, { recursive: true, force: true });
 }
 
 // 10i. worked examples in the four tool pages ({/* zwcd-decode: {...} */}) are recomputed
