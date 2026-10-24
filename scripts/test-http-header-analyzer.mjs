@@ -257,6 +257,26 @@ const fixture='HTTP/1.1 200 OK\nX-Probe: old\nX-Probe: second\nContent-Type: tex
 const expected={_status:'HTTP/1.1 200 OK','x-probe':['old','second'],'content-type':'text/plain'};
 function analyze(h,text=fixture){h.input('hha-input',text);h.get('hha-analyze').click();}
 function snapshot(h){return{input:h.get('hha-input').value,status:h.get('hha-status').textContent,statusClass:h.get('hha-status').className,hidden:h.get('hha-result').hidden,json:h.get('hha-json-output').textContent,raw:h.get('hha-raw-output').textContent};}
+const unsupportedMethod = {
+  en: 'This analyzer does not recognize the request method PROPFIND. The line is not a header field; this does not mean the method is invalid.',
+  zh: '本分析器不识别请求方法 PROPFIND。此行不是头部字段，但这不代表该方法无效。',
+  ja: 'この解析ツールはリクエストメソッド PROPFIND を認識しません。この行はヘッダーフィールドではありませんが、メソッドが無効という意味ではありません。',
+  ko: '이 분석기는 요청 메서드 PROPFIND를 인식하지 못합니다. 이 줄은 헤더 필드가 아니지만 메서드가 잘못되었다는 뜻은 아닙니다.'
+};
+for (const lang of ['en', 'zh', 'ja', 'ko']) {
+  const h = page(lang);
+  analyze(h, 'HTTP/1.1 200 OK  \t\nStrict-Transport-Security: max-age=31536000\nstrict-transport-security: max-age=0\nContent-Security-Policy: default-src \'self\'');
+  eq(lang + ' start line trims trailing HTTP whitespace in every view', [h.get('hha-summary-status').textContent, JSON.parse(h.get('hha-json-output').textContent)._status, h.get('hha-raw-output').textContent.split('\n')[0]], ['HTTP/1.1 200 OK', 'HTTP/1.1 200 OK', 'HTTP/1.1 200 OK']);
+  eq(lang + ' ignored duplicate STS does not inflate security count', h.get('hha-summary-security').textContent, strings[lang].summarySecurity.replace('{n}', '2'));
+  eq(lang + ' JSON retains both STS fields for inspection', JSON.parse(h.get('hha-json-output').textContent)['strict-transport-security'], ['max-age=31536000', 'max-age=0']);
+  for (const target of ['/dav/']) {
+    analyze(h, 'PROPFIND ' + target + ' HTTP/1.1\nHost: example.com');
+    eq(lang + ' unsupported request method has its own explanation ' + target, h.get('hha-panel-cat').querySelector('.hha-cat-invalid .hha-card').textContent.includes(unsupportedMethod[lang]), true);
+  }
+  // Preserve the parser's current separator policy; the content must describe this limitation.
+  analyze(h, 'HTTP/1.1 200 OK\nX-A: 1\n \t\nX-B: 2');
+  eq(lang + ' whitespace-only separator remains explicit in status and JSON', [Object.keys(JSON.parse(h.get('hha-json-output').textContent)), h.get('hha-status').textContent.includes(strings[lang].bodyStop.replace('{line}', '3').replace('{n}', '1'))], [['_status', 'x-a'], true]);
+}
 for(const lang of ['en','zh','ja','ko']){
   const T=strings[lang],parsed=T.analyzed.replace('{n}','3').replace('{s}','s');
   for(const order of ['shared-before','shared-after']){
