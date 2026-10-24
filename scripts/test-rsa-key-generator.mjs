@@ -254,6 +254,39 @@ async function generateReady(p) { p.get(lifecyclePrefix + '-generate').click(); 
 function emptyState(p) {    return !p.get('rkg-pub-out').value && !p.get('rkg-priv-out').value && p.get('rkg-pub-block').style.display === 'none' && p.get('rkg-priv-block').style.display === 'none' && !p.get('rkg-status').textContent && !p.get('rkg-generate').disabled; }
 const controlIds = ['rkg-keysize', 'rkg-algo', 'rkg-format'];
 const settings = p => JSON.stringify(controlIds.map(id => [id, p.get(id).value, !!p.get(id).checked]));
+const generationErrors = {
+    unavailable: ['Web Crypto is unavailable. Open this page over HTTPS in a supported browser.', 'Web Crypto 不可用，请通过 HTTPS 在支持的浏览器中打开本页。', 'Web Crypto を利用できません。対応ブラウザーで HTTPS のページを開いてください。', 'Web Crypto를 사용할 수 없습니다. 지원되는 브라우저에서 HTTPS로 이 페이지를 여세요.'],
+    NotSupportedError: ['This browser does not support the selected RSA operation.', '此浏览器不支持所选 RSA 操作。', 'このブラウザーは選択した RSA 操作に対応していません。', '이 브라우저는 선택한 RSA 작업을 지원하지 않습니다.'],
+    SecurityError: ['The browser blocked key generation or export. Check its security settings.', '浏览器阻止了密钥生成或导出，请检查安全设置。', 'ブラウザーが鍵の生成または出力をブロックしました。セキュリティ設定を確認してください。', '브라우저가 키 생성이나 내보내기를 차단했습니다. 보안 설정을 확인하세요.'],
+    OperationError: ['The browser could not generate or export the keys. Try again.', '浏览器未能生成或导出密钥，请重试。', 'ブラウザーが鍵を生成または出力できませんでした。再試行してください。', '브라우저가 키를 생성하거나 내보내지 못했습니다. 다시 시도하세요.'],
+};
+for (const [locale, lang] of ['en', 'zh', 'ja', 'ko'].entries()) {
+    for (const boundary of ['generateKey', 'exportKey']) for (const name of ['unavailable', 'NotSupportedError', 'SecurityError', 'OperationError', 'FutureError']) {
+        const p = lifecyclePage(lang);
+        if (name === 'unavailable') p.ctx.crypto = undefined;
+        else p.ctx.crypto.subtle[boundary] = () => Promise.reject(Object.assign(new Error('Raw English browser diagnostic with private details'), { name }));
+        await generateReady(p);
+        const expected = generationErrors[name] || generationErrors.OperationError;
+        lifeCheck(lang + '/' + boundary + '/' + name + ' localized reason', p.get('rkg-status').textContent === lifecycleLabels(lang).msgError + expected[locale]);
+        lifeCheck(lang + ' failed generation leaves no stale key actions', !fullOutput(p) && !p.get('rkg-priv-out').value && targets(p).every(t => t.b.disabled) && !p.get('rkg-generate').disabled);
+    }
+    const p = lifecyclePage(lang);
+    await generateReady(p);
+    p.doc.execCommand = command => { p.execCalls.push({ command, text: p.doc.selectedElement?.value }); return true; };
+    for (const part of ['pub', 'priv']) for (const mode of ['reject', 'throw', 'missing']) {
+        const api = p.ctx.navigator.clipboard, button = p.get('rkg-' + part + '-copy'), output = p.get('rkg-' + part + '-out').value;
+        if (mode === 'throw') p.ctx.navigator.clipboard = { writeText() { throw Error('Denied'); } };
+        if (mode === 'missing') p.ctx.navigator.clipboard = undefined;
+        const before = p.execCalls.length, textareas = p.doc.querySelectorAll('textarea').length;
+        button.click();
+        if (mode === 'reject') p.clipboard.at(-1).reject(Error('Denied'));
+        await settle();
+        lifeCheck(lang + '/' + part + '/' + mode + ' fallback copies full key', p.execCalls.length === before + 1 && p.execCalls.at(-1).command === 'copy' && p.execCalls.at(-1).text === output);
+        lifeCheck(lang + '/' + part + '/' + mode + ' fallback success and focus', button.textContent === lifecycleLabels(lang).copied && p.doc.activeElement === button);
+        lifeCheck(lang + ' fallback removes temporary textarea', p.doc.querySelectorAll('textarea').length === textareas);
+        p.ctx.navigator.clipboard = api;
+    }
+}
 for (const lang of ['en', 'zh', 'ja', 'ko'])
     for (const order of ['shared-before', 'shared-after'])
         await attempt(lang + '/' + order, async () => {
@@ -335,7 +368,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko'])
                         threw = true;
                     }
                     lifeCheck('own undefined clipboard no throw', !threw && Object.hasOwn(nav, 'clipboard'));
-                    lifeCheck('own undefined never native', p.execCalls.length === 0 && p.clipboard.length === calls);
+                    lifeCheck('own undefined uses in-memory fallback with full key', p.execCalls.at(-1)?.command === 'copy' && p.execCalls.at(-1)?.text === t.text() && p.clipboard.length === calls);
                     lifeCheck('own undefined failure visible', b.textContent === expectedCopyFailure[lang]);
                     nav.clipboard = { writeText() { throw Error('controlled sync denial'); } };
                     threw = false;
@@ -417,7 +450,7 @@ for (const lang of ['en', 'zh', 'ja', 'ko'])
             lifeCheck('old generation callbacks do not track', p.tracks.length === beforeTracks);
             lifeCheck('old generation reject handled', unhandled.length === uNew);
 
-            lifeCheck('no native clipboard ever', p.execCalls.length === 0);
+            lifeCheck('fallback attempts contain only complete generated keys', p.execCalls.every(call => call.command === 'copy' && /^(?:-----BEGIN (?:PUBLIC|PRIVATE) KEY-----|\{)/.test(call.text)));
         });
 for (const boundary of ['generateKey', 'exportKey', 'exportKey:2'])
         for (const deny of [false, true])
