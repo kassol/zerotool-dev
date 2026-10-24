@@ -677,6 +677,7 @@ const { tips: TIPS, ...CLIENT_S } = L;
       var cipherFile = { input: document.getElementById('aes-cipher-file-input'), btn: document.getElementById('aes-cipher-file-btn'), chip: document.getElementById('aes-cipher-file'), area: cipherEl, file: null };
       var downloadUrl = null;
       var busy = false;
+      var operation = null;
 
       function fmt(template, vars) {
         return String(template).replace(/\{(\w+)\}/g, function (all, k) { return vars && vars[k] !== undefined ? vars[k] : all; });
@@ -731,6 +732,24 @@ const { tips: TIPS, ...CLIENT_S } = L;
         return { type: 'password', password: pwEl.value };
       }
 
+      function syncCopy() {
+        copyBtn.disabled = busy || !!cipherFile.file || !cipherEl.value;
+      }
+      // Web Crypto cannot be aborted. Forget the operation on an edit so a late
+      // result, error or finally cannot affect the current input or a newer run.
+      function invalidate() {
+        operation = null;
+        setBusy(false);
+        clearDownload();
+        setStatus('');
+      }
+      [plainEl, cipherEl, pwEl, rawEl, ivEl, aadEl].forEach(function (el) {
+        el.addEventListener('input', invalidate);
+        el.addEventListener('change', invalidate);
+      });
+      encodingEl.addEventListener('change', invalidate);
+      window.addEventListener('pagehide', invalidate);
+
       function applyMode() {
         var raw = modeEl.value === 'raw';
         pwEl.hidden = raw;
@@ -740,7 +759,7 @@ const { tips: TIPS, ...CLIENT_S } = L;
         genBtn.hidden = !raw;
         advEl.hidden = !raw;
         rawEl.placeholder = keyFmtEl.value === 'base64' ? S.rawKeyPlaceholderB64 : keyFmtEl.value === 'text' ? S.rawKeyPlaceholderText : S.rawKeyPlaceholder;
-        setStatus('');
+        invalidate();
       }
       modeEl.addEventListener('change', applyMode);
       keyFmtEl.addEventListener('change', applyMode);
@@ -752,7 +771,7 @@ const { tips: TIPS, ...CLIENT_S } = L;
           for (var i = 0; i < 32; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
           rawEl.value = bytesToBase64(b);
         } else rawEl.value = hex;
-        setStatus('');
+        invalidate();
       });
       toggleBtn.addEventListener('click', function () {
         var show = pwEl.type === 'password';
@@ -767,8 +786,7 @@ const { tips: TIPS, ...CLIENT_S } = L;
         slot.area.hidden = !!file;
         slot.chip.hidden = !file;
         if (file) slot.chip.querySelector('.aes-file-name').textContent = file.name + ' · ' + size(file.size);
-        clearDownload();
-        setStatus('');
+        invalidate();
       }
       [plainFile, cipherFile].forEach(function (slot) {
         slot.btn.addEventListener('click', function () { slot.input.click(); });
@@ -787,6 +805,7 @@ const { tips: TIPS, ...CLIENT_S } = L;
         busy = on;
         encBtn.disabled = on;
         decBtn.disabled = on;
+        syncCopy();
         if (on) setStatus(spec.type === 'raw' ? S.workingRaw : fmt(S.working, { n: num(PBKDF2_ITERATIONS[CURRENT_VERSION]) }), 'info');
       }
 
@@ -800,27 +819,37 @@ const { tips: TIPS, ...CLIENT_S } = L;
           setStatus(kind === 'encrypt' ? S.errNoPlaintext : S.errNoCiphertext, 'error');
           return;
         }
+        var file = slot.file;
+        var text = kind === 'encrypt' ? plainEl.value : cipherEl.value;
+        var encoding = encodingEl.value;
+        var job = {};
+        operation = job;
         setBusy(true, spec);
         try {
-          if (slot.file) {
-            if (slot.file.size > MAX_FILE_BYTES + (kind === 'encrypt' ? 0 : 64)) throw fail('fileSize', { bytes: slot.file.size });
-            var input = new Uint8Array(await slot.file.arrayBuffer());
+          if (file) {
+            if (file.size > MAX_FILE_BYTES + (kind === 'encrypt' ? 0 : 64)) throw fail('fileSize', { bytes: file.size });
+            var input = new Uint8Array(await file.arrayBuffer());
+            if (operation !== job) return;
             var out, name;
             if (kind === 'encrypt') {
               out = await encryptFile(spec, input);
-              name = slot.file.name + '.enc';
+              name = file.name + '.enc';
             } else {
               out = await decryptFile(spec, input);
-              name = /\.enc$/i.test(slot.file.name) && slot.file.name.length > 4 ? slot.file.name.slice(0, -4) : slot.file.name + '.decrypted';
+              name = /\.enc$/i.test(file.name) && file.name.length > 4 ? file.name.slice(0, -4) : file.name + '.decrypted';
             }
+            if (operation !== job) return;
             offerDownload(out, name);
             var ivFile = kind === 'encrypt' && spec.iv;
             setStatus(fmt(S.fileReady, { name: name, size: size(out.length) }) + (ivFile ? ' ' + S.ivWarning : ''), ivFile ? 'info' : 'success');
           } else if (kind === 'encrypt') {
-            cipherEl.value = await encryptText(spec, plainEl.value, encodingEl.value);
-            setStatus(fmt(spec.iv ? S.encryptedIv : spec.type === 'raw' ? S.encryptedRaw : S.encrypted, { n: num(new TextEncoder().encode(plainEl.value).length) }) + (spec.iv ? ' ' + S.ivWarning : ''), spec.iv ? 'info' : 'success');
+            var ciphertext = await encryptText(spec, text, encoding);
+            if (operation !== job) return;
+            cipherEl.value = ciphertext;
+            setStatus(fmt(spec.iv ? S.encryptedIv : spec.type === 'raw' ? S.encryptedRaw : S.encrypted, { n: num(new TextEncoder().encode(text).length) }) + (spec.iv ? ' ' + S.ivWarning : ''), spec.iv ? 'info' : 'success');
           } else {
-            var r = await decryptInput(spec, cipherEl.value);
+            var r = await decryptInput(spec, text);
+            if (operation !== job) return;
             var format = spec.type === 'raw' ? (spec.iv ? S.fmtRawIv : S.fmtRaw) : r.version === 2 ? S.fmtV2 : r.iterations === PBKDF2_ITERATIONS[1] ? S.fmtLegacy : S.fmtNoPrefix600;
             if (r.text === null) {
               offerDownload(r.bytes, 'decrypted.bin');
@@ -830,13 +859,14 @@ const { tips: TIPS, ...CLIENT_S } = L;
               setStatus(fmt(S.decrypted, { n: num(r.bytes.length), format: format }), 'success');
             }
           }
-          window.trackTool && window.trackTool('aes-encrypt-decrypt', kind + (slot.file ? '-file' : ''));
+          window.trackTool && window.trackTool('aes-encrypt-decrypt', kind + (file ? '-file' : ''));
         } catch (e) {
-          setStatus(errorMessage(e), 'error');
+          if (operation === job) setStatus(errorMessage(e), 'error');
         } finally {
-          busy = false;
-          encBtn.disabled = false;
-          decBtn.disabled = false;
+          if (operation === job) {
+            operation = null;
+            setBusy(false);
+          }
         }
       }
 
@@ -852,7 +882,10 @@ const { tips: TIPS, ...CLIENT_S } = L;
       // ToolLayout's Ctrl/Cmd+L clears textareas and text inputs; also clear the password and files.
       document.addEventListener('keydown', function (e) {
         if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L') && wrap.contains(document.activeElement)) {
+          plainEl.value = '';
+          cipherEl.value = '';
           pwEl.value = '';
+          rawEl.value = '';
           ivEl.value = '';
           aadEl.value = '';
           setFile(plainFile, null);

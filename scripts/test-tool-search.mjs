@@ -129,6 +129,16 @@ const unchanged = [
   ['ko', 'gif 압축', ['gif-compressor']],
 ];
 for (const [lang, q, list] of unchanged) eq(`${lang} "${q}" results unchanged`, slugsFor(lang, q), list);
+// Korean task wording used in the 2026-10-24 browser assessment. An alias must
+// describe this tool's task; "포맷" must not match every page that merely mentions JSON.
+for (const lang of LANGS) {
+  for (const query of ['json 포맷', 'json포맷', 'JSON 포맷팅', 'json포매팅']) {
+    eq(`${lang} "${query}" finds the JSON formatter`, slugsFor(lang, query), ['json-formatter']);
+  }
+  eq(`${lang}: an alias still requires every query word`, slugsFor(lang, 'json 포맷 jpeg'), []);
+  check(`${lang}: a task alias does not leak to unrelated JSON tools`,
+    !slugsFor(lang, 'json 포맷').includes('json-to-typescript'));
+}
 for (const lang of LANGS) {
   for (const t of allTools) {
     const name = t.translations[lang].name;
